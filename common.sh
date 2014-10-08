@@ -85,7 +85,7 @@ else
 	git checkout master
 fi
 cd $DEST/$LINUXSOURCE
-patch --batch -N -p1 < $SRC/patch/small_lcd_drivers.patch
+patch --batch -N -p1 < $SRC/lib/patch/small_lcd_drivers.patch
 }
 
 
@@ -106,13 +106,13 @@ rm -rf output
 mkdir -p output/boot
 
 # Adding firmware to kernel source
-if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/$FIRMWARE -d $DEST/$LINUXSOURCE/firmware; fi
+if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $DEST/$LINUXSOURCE/firmware; fi
 
 # there are two methods of compilation
 if [[ $LINUXSOURCE == *next* ]]
 then
     # compile from proven config
-	cp $SRC/config/$LINUXSOURCE.config $DEST/$LINUXSOURCE/.config
+	cp $SRC/lib/config/$LINUXSOURCE.config $DEST/$LINUXSOURCE/.config
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- zImage modules $DTBS LOCALVERSION="$LOCALVERSION"
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=output modules_install
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_HDR_PATH=output/usr headers_install
@@ -121,7 +121,7 @@ then
 	cp arch/arm/boot/dts/*.dtb output/boot
 else
     # compile from proven config
-	cp $SRC/config/$LINUXSOURCE.config $DEST/$LINUXSOURCE/.config
+	cp $SRC/lib/config/$LINUXSOURCE.config $DEST/$LINUXSOURCE/.config
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- uImage modules LOCALVERSION="$LOCALVERSION"
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=output modules_install
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_HDR_PATH=output/usr headers_install
@@ -130,7 +130,7 @@ else
 	
 fi
 # add firmware
-unzip $SRC/bin/linux-firmware.zip -d output/lib/firmware
+unzip $SRC/lib/bin/linux-firmware.zip -d output/lib/firmware
 else
 echo "ERROR: Source file $1 does not exists. Check fetch_from_github configuration."
 exit
@@ -236,7 +236,7 @@ rm $DEST/output/sdcard/etc/motd
 touch $DEST/output/sdcard/etc/motd
 
 # choose proper apt list
-cp $SRC/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.list
+cp $SRC/lib/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.list
 
 # update, fix locales
 chroot $DEST/output/sdcard /bin/bash -c "apt-get update"
@@ -253,23 +253,23 @@ APT::Install-Suggests "0";
 END
 
 # script to show graphical boot splash
-cp $SRC/scripts/bootsplash $DEST/output/sdcard/etc/init.d/bootsplash
-cp $SRC/bin/bootsplash.png $DEST/output/sdcard/etc/bootsplash.png
+cp $SRC/lib/scripts/bootsplash $DEST/output/sdcard/etc/init.d/bootsplash
+cp $SRC/lib/bin/bootsplash.png $DEST/output/sdcard/etc/bootsplash.png
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/bootsplash"
 chroot $DEST/output/sdcard /bin/bash -c "update-rc.d bootsplash defaults" 
 
 # scripts for autoresize at first boot
-cp $SRC/scripts/resize2fs $DEST/output/sdcard/etc/init.d
-cp $SRC/scripts/firstrun $DEST/output/sdcard/etc/init.d
+cp $SRC/lib/scripts/resize2fs $DEST/output/sdcard/etc/init.d
+cp $SRC/lib/scripts/firstrun $DEST/output/sdcard/etc/init.d
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/firstrun"
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/resize2fs"
 chroot $DEST/output/sdcard /bin/bash -c "update-rc.d firstrun defaults" 
 
 # install custom bashrc
-cat $SRC/scripts/bashrc >> $DEST/output/sdcard/etc/bash.bashrc 
+cat $SRC/lib/scripts/bashrc >> $DEST/output/sdcard/etc/bash.bashrc 
 
 # install custom motd / hardware dependent
-cp $SRC/scripts/armhwinfo $DEST/output/sdcard/etc/init.d/
+cp $SRC/lib/scripts/armhwinfo $DEST/output/sdcard/etc/init.d/
 sed -e s,"# Update motd","/etc/init.d/armhwinfo",g 	-i $DEST/output/sdcard/etc/init.d/motd
 sed -e s,"uname -snrvm > /var/run/motd.dynamic","",g  -i $DEST/output/sdcard/etc/init.d/motd
 }
@@ -286,7 +286,7 @@ if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard" || $BOARD == "bananapi" |
 		# sunxi tools
 		cp $DEST/sunxi-tools/fex2bin $DEST/sunxi-tools/bin2fex $DEST/sunxi-tools/nand-part $DEST/output/sdcard/usr/bin/
 		# script to install to SATA
-		cp $SRC/scripts/sata-install.sh $DEST/output/sdcard/root
+		cp $SRC/lib/scripts/sata-install.sh $DEST/output/sdcard/root
 		# alter rc.local
 		head -n -1 $DEST/output/sdcard/etc/rc.local > /tmp/out
 		echo 'echo 2 > /proc/irq/$(cat /proc/interrupts | grep eth0 | cut -f 1 -d ":" | tr -d " ")/smp_affinity' >> /tmp/out
@@ -297,36 +297,36 @@ if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard" || $BOARD == "bananapi" |
 fi
 
 if [[ $BOARD == "bananapi-next" ]] ; then
-		cp $SRC/config/uEnv.cubox-i $DEST/output/sdcard/boot/uEnv.txt
+		cp $SRC/lib/config/uEnv.cubox-i $DEST/output/sdcard/boot/uEnv.txt
 fi		
 
 if [[ $BOARD == "bananapi" ]] ; then
-		fex2bin $SRC/config/bananapi.fex $DEST/output/sdcard/boot/bananapi.bin
-		cp $SRC/config/uEnv.bananapi $DEST/output/sdcard/boot/uEnv.txt
+		fex2bin $SRC/lib/config/bananapi.fex $DEST/output/sdcard/boot/bananapi.bin
+		cp $SRC/lib/config/uEnv.bananapi $DEST/output/sdcard/boot/uEnv.txt
 		# script to turn off the LED blinking
-		cp $SRC/scripts/disable_led_banana.sh $DEST/output/sdcard/etc/init.d/disable_led_banana.sh
+		cp $SRC/lib/scripts/disable_led_banana.sh $DEST/output/sdcard/etc/init.d/disable_led_banana.sh
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/disable_led_banana.sh"
 		chroot $DEST/output/sdcard /bin/bash -c "update-rc.d disable_led_banana.sh defaults"
 		# default lirc configuration
 		sed -e 's/DEVICE=""/DEVICE="\/dev\/input\/event1"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
 		sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="devinput"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
-		cp $SRC/config/lirc.conf.bananapi $DEST/output/sdcard/etc/lirc/lircd.conf
+		cp $SRC/lib/config/lirc.conf.bananapi $DEST/output/sdcard/etc/lirc/lircd.conf
 fi
 
 if [[ $BOARD == "cubietruck" ]] ; then
-		fex2bin $SRC/config/cubietruck.fex $DEST/output/sdcard/boot/cubietruck.bin
-		fex2bin $SRC/config/cubieboard2.fex $DEST/output/sdcard/boot/cubieboard2.bin
-		cp $SRC/config/uEnv.cubietruck $DEST/output/sdcard/boot/uEnv.ct
-		cp $SRC/config/uEnv.cubieboard2 $DEST/output/sdcard/boot/uEnv.cb2
+		fex2bin $SRC/lib/config/cubietruck.fex $DEST/output/sdcard/boot/cubietruck.bin
+		fex2bin $SRC/lib/config/cubieboard2.fex $DEST/output/sdcard/boot/cubieboard2.bin
+		cp $SRC/lib/config/uEnv.cubietruck $DEST/output/sdcard/boot/uEnv.ct
+		cp $SRC/lib/config/uEnv.cubieboard2 $DEST/output/sdcard/boot/uEnv.cb2
 		# script to turn off the LED blinking
-		cp $SRC/scripts/disable_led.sh $DEST/output/sdcard/etc/init.d/disable_led.sh
+		cp $SRC/lib/scripts/disable_led.sh $DEST/output/sdcard/etc/init.d/disable_led.sh
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/disable_led.sh"
 		chroot $DEST/output/sdcard /bin/bash -c "update-rc.d disable_led.sh defaults" 
 		# bluetooth device enabler 
-		cp $SRC/bin/brcm_patchram_plus $DEST/output/sdcard/usr/local/bin/brcm_patchram_plus
+		cp $SRC/lib/bin/brcm_patchram_plus $DEST/output/sdcard/usr/local/bin/brcm_patchram_plus
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /usr/local/bin/brcm_patchram_plus"
-		cp $SRC/scripts/brcm40183 $DEST/output/sdcard/etc/default
-		cp $SRC/scripts/brcm40183-patch $DEST/output/sdcard/etc/init.d
+		cp $SRC/lib/scripts/brcm40183 $DEST/output/sdcard/etc/default
+		cp $SRC/lib/scripts/brcm40183-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm40183-patch"
 		chroot $DEST/output/sdcard /bin/bash -c "update-rc.d brcm40183-patch defaults" 
 		# default lirc configuration
@@ -335,25 +335,25 @@ if [[ $BOARD == "cubietruck" ]] ; then
 		sed -i '1i # Cubietruck automatic lirc device detection by Igor Pecovnik' $DEST/output/sdcard/etc/lirc/hardware.conf
 		sed -e 's/DEVICE=""/DEVICE="\/dev\/input\/event1"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
 		sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="devinput"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
-		cp $SRC/config/lirc.conf.cubietruck $DEST/output/sdcard/etc/lirc/lircd.conf
+		cp $SRC/lib/config/lirc.conf.cubietruck $DEST/output/sdcard/etc/lirc/lircd.conf
 		# script to install to NAND
-		cp $SRC/scripts/nand-install.sh $DEST/output/sdcard/root
-		cp $SRC/bin/nand1-cubietruck-debian-boot.tgz $DEST/output/sdcard/root
+		cp $SRC/lib/scripts/nand-install.sh $DEST/output/sdcard/root
+		cp $SRC/lib/bin/nand1-cubietruck-debian-boot.tgz $DEST/output/sdcard/root
 fi
 
 if [[ $BOARD == "cubox-i" ]] ; then
-		cp $SRC/config/uEnv.cubox-i $DEST/output/sdcard/boot/uEnv.txt
+		cp $SRC/lib/config/uEnv.cubox-i $DEST/output/sdcard/boot/uEnv.txt
 		chroot $DEST/output/sdcard /bin/bash -c "chmod 755 /boot/uEnv.txt"
 		# enable serial console (Debian/sysvinit way)
 		echo T0:2345:respawn:/sbin/getty -L ttymxc0 115200 vt100 >> $DEST/output/sdcard/etc/inittab
 		# default lirc configuration 
 		sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
 		sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="default"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
-		cp $SRC/config/lirc.conf.cubox-i $DEST/output/sdcard/etc/lirc/lircd.conf
-		cp $SRC/bin/brcm_patchram_plus_cubox $DEST/output/sdcard/usr/local/bin/brcm_patchram_plus
+		cp $SRC/lib/config/lirc.conf.cubox-i $DEST/output/sdcard/etc/lirc/lircd.conf
+		cp $SRC/lib/lib/bin/brcm_patchram_plus_cubox $DEST/output/sdcard/usr/local/bin/brcm_patchram_plus
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /usr/local/bin/brcm_patchram_plus"
-		cp $SRC/scripts/brcm4330 $DEST/output/sdcard/etc/default
-		cp $SRC/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
+		cp $SRC/lib/lib/scripts/brcm4330 $DEST/output/sdcard/etc/default
+		cp $SRC/lib/lib/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
 		chroot $DEST/output/sdcard /bin/bash -c "update-rc.d brcm4330-patch defaults" 
 		# alter rc.local
@@ -381,7 +381,7 @@ PAKETKI="alsa-utils bash-completion bc bluetooth bridge-utils build-essential ca
 chroot $DEST/output/sdcard /bin/bash -c "apt-get -qq -y install $PAKETKI && apt-get -y clean"
 
 # ramlog
-cp $SRC/bin/ramlog_2.0.0_all.deb $DEST/output/sdcard/tmp
+cp $SRC/lib/bin/ramlog_2.0.0_all.deb $DEST/output/sdcard/tmp
 chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb"
 sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $DEST/output/sdcard/etc/default/ramlog
 sed -e 's/# Required-Start:    $remote_fs $time/# Required-Start:    $remote_fs $time ramlog/g' -i $DEST/output/sdcard/etc/init.d/rsyslog 
@@ -389,8 +389,8 @@ sed -e 's/# Required-Stop:     umountnfs $time/# Required-Stop:     umountnfs $t
 
 # replace hostapd from testing binary.
 cd $DEST/output/sdcard/usr/sbin/
-tar xvfz $SRC/bin/hostapd23.tgz
-cp $SRC/config/hostapd.conf.$BOARD $DEST/output/sdcard/etc/hostapd.conf
+tar xvfz $SRC/lib/lib/bin/hostapd23.tgz
+cp $SRC/lib/lib/config/hostapd.conf.$BOARD $DEST/output/sdcard/etc/hostapd.conf
 
 # console
 chroot $DEST/output/sdcard /bin/bash -c "export TERM=linux" 
@@ -433,18 +433,18 @@ block/mmcblk0/queue/scheduler = noop
 EOT
 
 # load modules
-cp $SRC/config/modules.$BOARD $DEST/output/sdcard/etc/modules
+cp $SRC/lib/lib/config/modules.$BOARD $DEST/output/sdcard/etc/modules
 
 # copy and create symlink to default interfaces configuration
-cp $SRC/config/interfaces.* $DEST/output/sdcard/etc/network/
+cp $SRC/lib/lib/config/interfaces.* $DEST/output/sdcard/etc/network/
 ln -sf interfaces.default $DEST/output/sdcard/etc/network/interfaces
 
 # add noatime to root FS
 echo "/dev/mmcblk0p1  /           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro        0       0" >> $DEST/output/sdcard/etc/fstab
 
 # Configure The System For unattended upgrades
-cp $SRC/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-cp $SRC/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
+cp $SRC/lib/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+cp $SRC/lib/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
 
 # flash media tunning
 sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $DEST/output/sdcard/etc/default/tmpfs
@@ -491,7 +491,7 @@ cp $DEST/usb-redirector-linux-arm-eabi/files/rc.usbsrvd $DEST/output/sdcard/etc/
 
 # temper binary for USB temp meter
 cd $DEST/output/sdcard/usr/local/bin
-tar xvfz $SRC/bin/temper.tgz
+tar xvfz $SRC/lib/lib/bin/temper.tgz
 # some aditional stuff. Some driver as example
 if [[ -n "$MISC3_DIR" ]]; then
 	# https://github.com/pvaret/rtl8192cu-fixes
@@ -524,7 +524,7 @@ echo "" >> $1
 echo "" >> $1
 echo "--------------------------------------------------------------------------------" >> $1
 echo "" >> $1
-cat $SRC/LICENSE >> $1
+cat $SRC/lib/LICENSE >> $1
 echo "" >> $1
 echo "--------------------------------------------------------------------------------" >> $1 
 }
@@ -559,12 +559,12 @@ umount -l $DEST/output/sdcard/
 losetup -d $LOOP
 
 # create documentation
-#pandoc $SRC/README.md $DEST/documentation/Home.md --standalone -o $DEST/output/$VERSION.pdf -V geometry:"top=2.54cm, bottom=2.54cm, left=3.17cm, right=3.17cm" -V geometry:paperwidth=21cm -V geometry:paperheight=29.7cm
+#pandoc $SRC/lib/README.md $DEST/documentation/Home.md --standalone -o $DEST/output/$VERSION.pdf -V geometry:"top=2.54cm, bottom=2.54cm, left=3.17cm, right=3.17cm" -V geometry:paperwidth=21cm -V geometry:paperheight=29.7cm
 mv $DEST/output/debian_rootfs.raw $DEST/output/$VERSION.raw
 cd $DEST/output/
 # creating MD5 sum
 md5sum $VERSION.raw > $VERSION.md5 
-cp $SRC/bin/imagewriter.exe .
+cp $SRC/lib/lib/bin/imagewriter.exe .
 md5sum imagewriter.exe > imagewriter.md5
 zip $VERSION.zip $VERSION.* readme.txt imagewriter.*
 rm $VERSION.raw $VERSION.md5 imagewriter.* readme.txt
