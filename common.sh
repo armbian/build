@@ -350,10 +350,10 @@ if [[ $BOARD == "cubox-i" ]] ; then
 		sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
 		sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="default"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
 		cp $SRC/lib/config/lirc.conf.cubox-i $DEST/output/sdcard/etc/lirc/lircd.conf
-		cp $SRC/lib/lib/bin/brcm_patchram_plus_cubox $DEST/output/sdcard/usr/local/bin/brcm_patchram_plus
+		cp $SRC/lib/bin/brcm_patchram_plus_cubox $DEST/output/sdcard/usr/local/bin/brcm_patchram_plus
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /usr/local/bin/brcm_patchram_plus"
-		cp $SRC/lib/lib/scripts/brcm4330 $DEST/output/sdcard/etc/default
-		cp $SRC/lib/lib/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
+		cp $SRC/lib/scripts/brcm4330 $DEST/output/sdcard/etc/default
+		cp $SRC/lib/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
 		chroot $DEST/output/sdcard /bin/bash -c "update-rc.d brcm4330-patch defaults" 
 		# alter rc.local
@@ -389,8 +389,8 @@ sed -e 's/# Required-Stop:     umountnfs $time/# Required-Stop:     umountnfs $t
 
 # replace hostapd from testing binary.
 cd $DEST/output/sdcard/usr/sbin/
-tar xvfz $SRC/lib/lib/bin/hostapd23.tgz
-cp $SRC/lib/lib/config/hostapd.conf.$BOARD $DEST/output/sdcard/etc/hostapd.conf
+tar xvfz $SRC/lib/bin/hostapd23.tgz
+cp $SRC/lib/config/hostapd.conf.$BOARD $DEST/output/sdcard/etc/hostapd.conf
 
 # console
 chroot $DEST/output/sdcard /bin/bash -c "export TERM=linux" 
@@ -433,18 +433,18 @@ block/mmcblk0/queue/scheduler = noop
 EOT
 
 # load modules
-cp $SRC/lib/lib/config/modules.$BOARD $DEST/output/sdcard/etc/modules
+cp $SRC/lib/config/modules.$BOARD $DEST/output/sdcard/etc/modules
 
 # copy and create symlink to default interfaces configuration
-cp $SRC/lib/lib/config/interfaces.* $DEST/output/sdcard/etc/network/
+cp $SRC/lib/config/interfaces.* $DEST/output/sdcard/etc/network/
 ln -sf interfaces.default $DEST/output/sdcard/etc/network/interfaces
 
 # add noatime to root FS
 echo "/dev/mmcblk0p1  /           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro        0       0" >> $DEST/output/sdcard/etc/fstab
 
 # Configure The System For unattended upgrades
-cp $SRC/lib/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-cp $SRC/lib/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
+cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
 
 # flash media tunning
 sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $DEST/output/sdcard/etc/default/tmpfs
@@ -491,7 +491,7 @@ cp $DEST/usb-redirector-linux-arm-eabi/files/rc.usbsrvd $DEST/output/sdcard/etc/
 
 # temper binary for USB temp meter
 cd $DEST/output/sdcard/usr/local/bin
-tar xvfz $SRC/lib/lib/bin/temper.tgz
+tar xvfz $SRC/lib/bin/temper.tgz
 # some aditional stuff. Some driver as example
 if [[ -n "$MISC3_DIR" ]]; then
 	# https://github.com/pvaret/rtl8192cu-fixes
@@ -564,7 +564,7 @@ mv $DEST/output/debian_rootfs.raw $DEST/output/$VERSION.raw
 cd $DEST/output/
 # creating MD5 sum
 md5sum $VERSION.raw > $VERSION.md5 
-cp $SRC/lib/lib/bin/imagewriter.exe .
+cp $SRC/lib/bin/imagewriter.exe .
 md5sum imagewriter.exe > imagewriter.md5
 zip $VERSION.zip $VERSION.* readme.txt imagewriter.*
 rm $VERSION.raw $VERSION.md5 imagewriter.* readme.txt
