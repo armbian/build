@@ -56,7 +56,7 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 fi
 # cubox / hummingboard
 if [[ $LINUXSOURCE == "linux-cubox-next" ]] ; then
-	if [ -z  "$(patch --dry-run -t -p1 < ../../lib/patch/hb-i2c-spi.patch | grep previ)" ]; then
+	if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/hb-i2c-spi.patch | grep previ)" ]; then
         patch -p1 < $SRC/lib/patch/hb-i2c-spi.patch
         fi
 fi
@@ -114,7 +114,9 @@ else
 	git checkout master
 fi
 cd $DEST/$LINUXSOURCE
-patch --batch -N -p1 < $SRC/lib/patch/small_lcd_drivers.patch
+if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/small_lcd_drivers.patch | grep previ)" ]; then
+patch -p1 < $SRC/lib/patch/small_lcd_drivers.patch
+fi
 }
 
 
