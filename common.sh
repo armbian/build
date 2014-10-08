@@ -7,7 +7,7 @@
 
 download_host_packages (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Download packages for host - Ubuntu 14.04 recommended                     #
+# Download packages for host - Ubuntu 14.04 recommended                     
 #--------------------------------------------------------------------------------------------------------------------------------
 echo "Downloading necessary files."
 # basic 
@@ -49,7 +49,8 @@ make -s CROSS_COMPILE=arm-linux-gnueabihf- clean
 # there are two methods of compilation
 if [[ $BOOTCONFIG == *config* ]]
 then
-	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- && make $CTHREADS CROSS_COMPILE=arm-linux-gnueabihf-
+	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 
+	make $CTHREADS CROSS_COMPILE=arm-linux-gnueabihf-
 else
 	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 
 fi
@@ -70,7 +71,8 @@ cd $DEST/sunxi-tools
 make -s clean && make -s fex2bin && make -s bin2fex
 cp fex2bin bin2fex /usr/local/bin/
 # for destination
-make -s clean && make $CTHREADS 'fex2bin' CC=arm-linux-gnueabihf-gcc && make $CTHREADS 'bin2fex' CC=arm-linux-gnueabihf-gcc && make $CTHREADS 'nand-part' CC=arm-linux-gnueabihf-gcc
+make -s clean && make $CTHREADS 'fex2bin' CC=arm-linux-gnueabihf-gcc
+make $CTHREADS 'bin2fex' CC=arm-linux-gnueabihf-gcc && make $CTHREADS 'nand-part' CC=arm-linux-gnueabihf-gcc
 }
 
 
@@ -163,7 +165,7 @@ sync
 
 creating_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Create and mount SD image	  							                    #
+# Create and mount SD image	  							                    
 #--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Creating SD Images"
 cd $DEST/output
@@ -172,12 +174,12 @@ dd if=/dev/zero of=debian_rootfs.raw bs=1M count=$SDSIZE status=noxfer
 LOOP=$(losetup -f)
 losetup $LOOP debian_rootfs.raw
 sync
-echo "Partitioning, writing boot loader and mounting file-system."
+echo "------ Partitioning, writing boot loader and mounting file-system."
 # create one partition starting at 2048 which is default
 parted -s $LOOP -- mklabel msdos
 parted -s $LOOP -- mkpart primary ext4  2048s -1s
 partprobe $LOOP
-echo "Writing boot loader."
+echo "------ Writing boot loader."
 if [[ $BOARD == "cubox-i" ]] ; then
 	dd if=$DEST/$BOOTSOURCE/SPL of=$LOOP bs=512 seek=2 status=noxfer
 	dd if=$DEST/$BOOTSOURCE/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer
@@ -359,7 +361,7 @@ install_applications (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install applications  								                    
 #--------------------------------------------------------------------------------------------------------------------------------
-echo "Installing aditional applications"
+echo "------ Installing aditional applications"
 
 PAKETKI="alsa-utils bash-completion bc bluetooth bridge-utils build-essential ca-certificates cmake cpufrequtils curl dosfstools evtest fbi fbset figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 ifupdown iproute iputils-ping iperf ir-keytable isc-dhcp-client iw less libbluetooth-dev libbluetooth3 libc6 libfuse2 libnl-dev libssl-dev lirc lsof lvm2 makedev module-init-tools ntfs-3g ntp openssh-server parted pciutils procps python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools udev unattended-upgrades unzip usbutils wireless-tools wpasupplicant"
 
@@ -442,7 +444,7 @@ install_external_applications (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install external applications  								            
 #--------------------------------------------------------------------------------------------------------------------------------
-echo "Installing external applications"
+echo "------ Installing external applications"
 # USB redirector tools http://www.incentivespro.com
 cd $DEST
 wget http://www.incentivespro.com/usb-redirector-linux-arm-eabi.tar.gz
@@ -481,7 +483,7 @@ fingerprint_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Saving build summary to the image 							            
 #--------------------------------------------------------------------------------------------------------------------------------
-echo "Saving build summary to the image"
+echo "------ Saving build summary to the image"
 echo $1
 echo "--------------------------------------------------------------------------------" > $1
 echo "" >> $1
@@ -508,7 +510,7 @@ closing_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Closing image and clean-up 									            
 #--------------------------------------------------------------------------------------------------------------------------------
-echo "Closing image"
+echo "------ Closing image"
 chroot $DEST/output/sdcard /bin/bash -c "sync"
 sync
 sleep 3
