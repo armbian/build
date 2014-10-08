@@ -56,7 +56,9 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 fi
 # cubox / hummingboard
 if [[ $LINUXSOURCE == "linux-cubox-next" ]] ; then
-        patch --batch -f -p1 < $SRC/lib/patch/hb-i2c-spi.patch
+	if [ -z  "$(patch --dry-run -t -p1 < ../../lib/patch/hb-i2c-spi.patch | grep previ)" ]; then
+        patch -p1 < $SRC/lib/patch/hb-i2c-spi.patch
+        fi
 fi
 }
 
