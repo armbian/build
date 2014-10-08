@@ -12,8 +12,8 @@ download_host_packages (){
 echo "Downloading necessary files."
 # basic 
 apt-get -qq -y install pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex gawk gcc-arm-linux-gnueabi 
-apt-get -qq -y install gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libncurses5-dev pkg-config 
-apt-get -qq -y install libusb-1.0-0-dev parted
+apt-get -qq -y install gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libncurses5-dev
+apt-get -qq -y install libusb-1.0-0-dev parted pkg-config
 # for creating PDF documentation
 apt-get -qq -y install pandoc nbibtex texlive-latex-base texlive-latex-recommended texlive-latex-extra preview-latex-style 
 apt-get -qq -y install dvipng texlive-fonts-recommended
