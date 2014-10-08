@@ -110,7 +110,7 @@ make -s CROSS_COMPILE=arm-linux-gnueabihf- clean
 rm -rf output
 mkdir -p output/boot
 
-# Adding firmware to kernel source
+# Adding custom firmware to kernel source
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $DEST/$LINUXSOURCE/firmware; fi
 
 # there are two methods of compilation
@@ -134,7 +134,7 @@ else
     cp arch/arm/boot/uImage output/boot/
 	
 fi
-# add firmware
+# add linux firmwares to output image
 unzip $SRC/lib/bin/linux-firmware.zip -d output/lib/firmware
 else
 echo "ERROR: Source file $1 does not exists. Check fetch_from_github configuration."
