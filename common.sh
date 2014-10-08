@@ -38,6 +38,28 @@ fi
 }
 
 
+patching_sources(){
+#--------------------------------------------------------------------------------------------------------------------------------
+# Patching sources											                   
+#--------------------------------------------------------------------------------------------------------------------------------
+# kernel
+cd $DEST/$LINUXSOURCE
+# sunxi
+if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
+        patch --batch -N -p1 < $SRC/lib/patch/gpio.patch
+        patch --batch -N -p1 < $SRC/lib/patch/spi.patch
+        if [[ $BOARD == "bananapi" ]] ; then
+                patch --batch -N -p1 < $SRC/patch/bananagmac.patch
+        fi
+        # compile sunxi tools
+        compile_sunxi_tools
+fi
+# cubox / hummingboard
+if [[ $LINUXSOURCE == "linux-cubox-next" ]] ; then
+        patch --batch -N -p1 < $SRC/lib/patch/hb-i2c-spi.patch
+fi
+}
+
 compile_uboot (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Compile uboot											                   
