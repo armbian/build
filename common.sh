@@ -6,23 +6,26 @@
 
 
 download_host_packages (){
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
 # Download packages for host - Ubuntu 14.04 recommended                     #
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
 echo "Downloading necessary files."
 # basic 
-apt-get -qq -y install pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex gawk gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libncurses5-dev pkg-config libusb-1.0-0-dev parted
+apt-get -qq -y install pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex gawk gcc-arm-linux-gnueabi 
+apt-get -qq -y gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libncurses5-dev pkg-config 
+apt-get -qq -y libusb-1.0-0-dev parted
 # for creating PDF documentation
-apt-get -qq -y install pandoc nbibtex texlive-latex-base texlive-latex-recommended texlive-latex-extra preview-latex-style dvipng texlive-fonts-recommended
+apt-get -qq -y install pandoc nbibtex texlive-latex-base texlive-latex-recommended texlive-latex-extra preview-latex-style 
+apt-get -qq -y dvipng texlive-fonts-recommended
 echo "Done.";
 }
 
 
 fetch_from_github (){
-#############################################################################
-# Download sources from Github 							                    #
-#############################################################################
-echo "Downloading $2."
+#--------------------------------------------------------------------------------------------------------------------------------
+# Download sources from Github 							                    
+#--------------------------------------------------------------------------------------------------------------------------------
+echo "------ Downloading $2."
 if [ -d "$DEST/$2" ]; then
 	cd $DEST/$2
 		# some patching for TFT display source
@@ -36,9 +39,9 @@ fi
 
 
 compile_uboot (){
-############################################################################
-# Compile uboot											                   #
-############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
+# Compile uboot											                   
+#--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Compiling universal boot loader"
 if [ -d "$DEST/$BOOTSOURCE" ]; then
 cd $DEST/$BOOTSOURCE
@@ -58,9 +61,9 @@ fi
 
 
 compile_sunxi_tools (){
-#############################################################################
-# Compile sunxi_tools									                    #
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
+# Compile sunxi_tools									                    
+#--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Compiling sunxi tools"
 cd $DEST/sunxi-tools
 # for host
@@ -72,9 +75,9 @@ make -s clean && make $CTHREADS 'fex2bin' CC=arm-linux-gnueabihf-gcc && make $CT
 
 
 add_fb_tft (){
-#############################################################################
-# Adding FBTFT library / small TFT display support  	                    #
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
+# Adding FBTFT library / small TFT display support  	                    
+#--------------------------------------------------------------------------------------------------------------------------------
 # there is a change for kernel less than 3.5
 IFS='.' read -a array <<< "$VER"
 cd $DEST/$MISC4_DIR
@@ -90,9 +93,9 @@ patch --batch -N -p1 < $SRC/lib/patch/small_lcd_drivers.patch
 
 
 compile_kernel (){
-#############################################################################
-# Compile kernel	  									                    #
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
+# Compile kernel	  									                    
+#--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Compiling kernel"
 if [ -d "$DEST/$LINUXSOURCE" ]; then 
 # add small TFT display support  
@@ -140,9 +143,9 @@ sync
 
 
 packing_kernel (){
-#############################################################################
-# Pack kernel				  							                    #
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
+# Pack kernel				  							                    
+#--------------------------------------------------------------------------------------------------------------------------------
 cd "$DEST/$LINUXSOURCE/output/lib/modules/$VER$LOCALVERSION"
 # correct link
 rm build source
@@ -159,9 +162,9 @@ sync
 
 
 creating_image (){
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
 # Create and mount SD image	  							                    #
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Creating SD Images"
 cd $DEST/output
 # create 1G image and mount image to next free loop device
@@ -199,45 +202,36 @@ mount -t ext4 $LOOP $DEST/output/sdcard/
 
 
 install_base_debian (){
-#############################################################################
-# Install base Debian	  								                    #
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
+# Install base Debian	  								                    
+#--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Install basic filesystem"
 
 # install base system
 debootstrap --no-check-gpg --arch=armhf --foreign $RELEASE $DEST/output/sdcard/
-
 # we need emulator
 cp /usr/bin/qemu-arm-static $DEST/output/sdcard/usr/bin/
-
 # enable arm binary format so that the cross-architecture chroot environment will work
 test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-
 # mount proc inside chroot
 mount -t proc chproc $DEST/output/sdcard/proc
-
 # second stage unmounts proc 
 chroot $DEST/output/sdcard /bin/bash -c "/debootstrap/debootstrap --second-stage"
-
 # mount proc, sys and dev
 mount -t proc chproc $DEST/output/sdcard/proc
 mount -t sysfs chsys $DEST/output/sdcard/sys
 mount -t devtmpfs chdev $DEST/output/sdcard/dev || mount --bind /dev $DEST/output/sdcard/dev
 mount -t devpts chpts $DEST/output/sdcard/dev/pts
-
 # update /etc/issue
 cat <<EOT > $DEST/output/sdcard/etc/issue
 Debian GNU/Linux $VERSION
 
 EOT
-
 # update /etc/motd
 rm $DEST/output/sdcard/etc/motd
 touch $DEST/output/sdcard/etc/motd
-
 # choose proper apt list
 cp $SRC/lib/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.list
-
 # update, fix locales
 chroot $DEST/output/sdcard /bin/bash -c "apt-get update"
 chroot $DEST/output/sdcard /bin/bash -c "apt-get -qq -y install locales makedev"
@@ -245,29 +239,24 @@ sed -i "s/^# $DEST_LANG/$DEST_LANG/" $DEST/output/sdcard/etc/locale.gen
 chroot $DEST/output/sdcard /bin/bash -c "locale-gen $DEST_LANG"
 chroot $DEST/output/sdcard /bin/bash -c "export LANG=$DEST_LANG LANGUAGE=$DEST_LANG DEBIAN_FRONTEND=noninteractive"
 chroot $DEST/output/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=POSIX"
-
 # set up 'apt
 cat <<END > $DEST/output/sdcard/etc/apt/apt.conf.d/71-no-recommends
 APT::Install-Recommends "0";
 APT::Install-Suggests "0";
 END
-
 # script to show graphical boot splash
 cp $SRC/lib/scripts/bootsplash $DEST/output/sdcard/etc/init.d/bootsplash
 cp $SRC/lib/bin/bootsplash.png $DEST/output/sdcard/etc/bootsplash.png
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/bootsplash"
 chroot $DEST/output/sdcard /bin/bash -c "update-rc.d bootsplash defaults" 
-
 # scripts for autoresize at first boot
 cp $SRC/lib/scripts/resize2fs $DEST/output/sdcard/etc/init.d
 cp $SRC/lib/scripts/firstrun $DEST/output/sdcard/etc/init.d
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/firstrun"
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/resize2fs"
 chroot $DEST/output/sdcard /bin/bash -c "update-rc.d firstrun defaults" 
-
 # install custom bashrc
 cat $SRC/lib/scripts/bashrc >> $DEST/output/sdcard/etc/bash.bashrc 
-
 # install custom motd / hardware dependent
 cp $SRC/lib/scripts/armhwinfo $DEST/output/sdcard/etc/init.d/
 sed -e s,"# Update motd","/etc/init.d/armhwinfo",g 	-i $DEST/output/sdcard/etc/init.d/motd
@@ -276,9 +265,9 @@ sed -e s,"uname -snrvm > /var/run/motd.dynamic","",g  -i $DEST/output/sdcard/etc
 
 
 install_board_specific (){
-#############################################################################
-# Install board specific applications  					                    #
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
+# Install board specific applications  					                    
+#--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Install board specific applications"
 if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard" || $BOARD == "bananapi" || $BOARD == "bananapi-next" ]] ; then
 		# enable serial console (Debian/sysvinit way)
@@ -367,9 +356,9 @@ fi
 
 
 install_applications (){
-#############################################################################
-# Install applications  								                    #
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
+# Install applications  								                    
+#--------------------------------------------------------------------------------------------------------------------------------
 echo "Installing aditional applications"
 
 PAKETKI="alsa-utils bash-completion bc bluetooth bridge-utils build-essential ca-certificates cmake cpufrequtils curl dosfstools evtest fbi fbset figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 ifupdown iproute iputils-ping iperf ir-keytable isc-dhcp-client iw less libbluetooth-dev libbluetooth3 libc6 libfuse2 libnl-dev libssl-dev lirc lsof lvm2 makedev module-init-tools ntfs-3g ntp openssh-server parted pciutils procps python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools udev unattended-upgrades unzip usbutils wireless-tools wpasupplicant"
@@ -386,36 +375,28 @@ chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb"
 sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $DEST/output/sdcard/etc/default/ramlog
 sed -e 's/# Required-Start:    $remote_fs $time/# Required-Start:    $remote_fs $time ramlog/g' -i $DEST/output/sdcard/etc/init.d/rsyslog 
 sed -e 's/# Required-Stop:     umountnfs $time/# Required-Stop:     umountnfs $time ramlog/g' -i $DEST/output/sdcard/etc/init.d/rsyslog   
-
 # replace hostapd from testing binary.
 cd $DEST/output/sdcard/usr/sbin/
 tar xvfz $SRC/lib/bin/hostapd23.tgz
 cp $SRC/lib/config/hostapd.conf.$BOARD $DEST/output/sdcard/etc/hostapd.conf
-
 # console
 chroot $DEST/output/sdcard /bin/bash -c "export TERM=linux" 
-
 # Change Time zone data
 echo $TZDATA > $DEST/output/sdcard/etc/timezone
 chroot $DEST/output/sdcard /bin/bash -c "dpkg-reconfigure -f noninteractive tzdata"
-
 # configure MIN / MAX Speed for cpufrequtils
 sed -e "s/MIN_SPEED=\"0\"/MIN_SPEED=\"$CPUMIN\"/g" -i $DEST/output/sdcard/etc/init.d/cpufrequtils
 sed -e "s/MAX_SPEED=\"0\"/MIN_SPEED=\"$CPUMAX\"/g" -i $DEST/output/sdcard/etc/init.d/cpufrequtils
 sed -e 's/ondemand/interactive/g' -i $DEST/output/sdcard/etc/init.d/cpufrequtils
-
 # set root password and force password change upon first login
 chroot $DEST/output/sdcard /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root"  
 chroot $DEST/output/sdcard /bin/bash -c "chage -d 0 root" 
-
 if [ "$RELEASE" = "jessie" ]; then
 # enable root login for latest ssh on jessie
 sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/output/sdcard/etc/ssh/sshd_config || fail
 fi
-
 # set hostname 
 echo $HOST > $DEST/output/sdcard/etc/hostname
-
 # set hostname in hosts file
 cat > $DEST/output/sdcard/etc/hosts <<EOT
 127.0.0.1   localhost $HOST
@@ -425,34 +406,27 @@ ff00::0     ip6-mcastprefix
 ff02::1     ip6-allnodes
 ff02::2     ip6-allrouters
 EOT
-
 # change default I/O scheduler, noop for flash media and SSD, cfq for mechanical drive
 cat <<EOT >> $DEST/output/sdcard/etc/sysfs.conf
 block/mmcblk0/queue/scheduler = noop
 #block/sda/queue/scheduler = cfq
 EOT
-
 # load modules
 cp $SRC/lib/config/modules.$BOARD $DEST/output/sdcard/etc/modules
-
 # copy and create symlink to default interfaces configuration
 cp $SRC/lib/config/interfaces.* $DEST/output/sdcard/etc/network/
 ln -sf interfaces.default $DEST/output/sdcard/etc/network/interfaces
-
 # add noatime to root FS
 echo "/dev/mmcblk0p1  /           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro        0       0" >> $DEST/output/sdcard/etc/fstab
-
 # Configure The System For unattended upgrades
 cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
-
 # flash media tunning
 sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $DEST/output/sdcard/etc/default/tmpfs
 sed -e 's/#RUN_SIZE=10%/RUN_SIZE=128M/g' -i $DEST/output/sdcard/etc/default/tmpfs 
 sed -e 's/#LOCK_SIZE=/LOCK_SIZE=/g' -i $DEST/output/sdcard/etc/default/tmpfs 
 sed -e 's/#SHM_SIZE=/SHM_SIZE=128M/g' -i $DEST/output/sdcard/etc/default/tmpfs 
 sed -e 's/#TMP_SIZE=/TMP_SIZE=1G/g' -i $DEST/output/sdcard/etc/default/tmpfs 
-
 # uncompress kernel
 cd $DEST/output/sdcard/
 tar -xPf $DEST"/output/"$BOARD"_kernel_"$VER"_mod_head_fw.tar"
@@ -465,9 +439,9 @@ rm -f $DEST/output/*.md5 *.tar
 
 
 install_external_applications (){
-#############################################################################
-# Install external applications  								            #
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
+# Install external applications  								            
+#--------------------------------------------------------------------------------------------------------------------------------
 echo "Installing external applications"
 # USB redirector tools http://www.incentivespro.com
 cd $DEST
@@ -504,9 +478,9 @@ fi
 
 
 fingerprint_image (){
-#############################################################################
-# Saving build summary to the image 							            #
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
+# Saving build summary to the image 							            
+#--------------------------------------------------------------------------------------------------------------------------------
 echo "Saving build summary to the image"
 echo $1
 echo "--------------------------------------------------------------------------------" > $1
@@ -531,9 +505,9 @@ echo "--------------------------------------------------------------------------
 
 
 closing_image (){
-#############################################################################
-# Closing image and clean-up 									            #
-#############################################################################
+#--------------------------------------------------------------------------------------------------------------------------------
+# Closing image and clean-up 									            
+#--------------------------------------------------------------------------------------------------------------------------------
 echo "Closing image"
 chroot $DEST/output/sdcard /bin/bash -c "sync"
 sync
