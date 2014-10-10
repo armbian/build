@@ -56,9 +56,6 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
         	if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" ]; then
                 	patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
                 fi
-        	if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" ]; then
-                	patch --batch -N -p1 < $SRC/lib/patch/bananafbtft.patch
-                fi
         fi
         # compile sunxi tools
         compile_sunxi_tools
@@ -125,6 +122,9 @@ fi
 cd $DEST/$LINUXSOURCE
 if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/small_lcd_drivers.patch | grep previ)" ]; then
 patch -p1 < $SRC/lib/patch/small_lcd_drivers.patch
+fi
+if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" ]; then
+                	patch --batch -N -p1 < $SRC/lib/patch/bananafbtft.patch
 fi
 }
 
