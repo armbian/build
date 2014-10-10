@@ -46,10 +46,19 @@ patching_sources(){
 cd $DEST/$LINUXSOURCE
 # sunxi
 if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
-        patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
-        patch --batch -f -p1 < $SRC/lib/patch/spi.patch
+	if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" ]; then
+	        patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
+        fi
+        if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi.patch | grep previ)" ]; then
+        	patch --batch -f -p1 < $SRC/lib/patch/spi.patch
+        fi
         if [[ $BOARD == "bananapi" ]] ; then
-                patch --batch -N -p1 < $SRC/patch/bananagmac.patch
+        	if [ -z  "$(patch --dry-run -t -p1 < $SRC/patch/bananagmac.patch | grep previ)" ]; then
+                	patch --batch -N -p1 < $SRC/patch/bananagmac.patch
+                fi
+        	if [ -z  "$(patch --dry-run -t -p1 < $SRC/patch/bananafbtft.patch | grep previ)" ]; then
+                	patch --batch -N -p1 < $SRC/patch/bananafbtft.patch
+                fi
         fi
         # compile sunxi tools
         compile_sunxi_tools
