@@ -53,10 +53,10 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
         	patch --batch -f -p1 < $SRC/lib/patch/spi.patch
         fi
         if [[ $BOARD == "bananapi" ]] ; then
-        	if [ -z  "$(patch --dry-run -t -p1 < $SRC/patch/bananagmac.patch | grep previ)" ]; then
+        	if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" ]; then
                 	patch --batch -N -p1 < $SRC/patch/bananagmac.patch
                 fi
-        	if [ -z  "$(patch --dry-run -t -p1 < $SRC/patch/bananafbtft.patch | grep previ)" ]; then
+        	if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" ]; then
                 	patch --batch -N -p1 < $SRC/patch/bananafbtft.patch
                 fi
         fi
