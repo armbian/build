@@ -46,6 +46,10 @@ patching_sources(){
 cd $DEST/$LINUXSOURCE
 # sunxi
 if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
+	# if the source is already patched for banana, do reverse GMAC patch
+	if [ -z  "$(cat arch/arm/kernel/setup.c | grep BANANAPI)" ]; then
+	        patch --batch -t -p1 < $SRC/lib/patch/bananagmac.patch
+        fi
 	if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" ]; then
 	        patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
         fi
