@@ -327,7 +327,7 @@ if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard" || $BOARD == "bananapi" |
 		# alter rc.local
 		head -n -1 $DEST/output/sdcard/etc/rc.local > /tmp/out
 		echo 'echo 2 > /proc/irq/$(cat /proc/interrupts | grep eth0 | cut -f 1 -d ":" | tr -d " ")/smp_affinity' >> /tmp/out
-		echo 'KILLPROC=$(ps uax | pgrep fbi | tail -1); if [ -n "$KILLPROC" ]; then kill $KILLPROC; fi ' >> /tmp/out     
+		#echo 'KILLPROC=$(ps uax | pgrep fbi | tail -1); if [ -n "$KILLPROC" ]; then kill $KILLPROC; fi ' >> /tmp/out     
 		echo 'exit 0' >> /tmp/out
 		mv /tmp/out $DEST/output/sdcard/etc/rc.local
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/rc.local"
@@ -395,7 +395,7 @@ if [[ $BOARD == "cubox-i" ]] ; then
 		chroot $DEST/output/sdcard /bin/bash -c "update-rc.d brcm4330-patch defaults" 
 		# alter rc.local
 		head -n -1 $DEST/output/sdcard/etc/rc.local > /tmp/out
-		echo 'KILLPROC=$(ps uax | pgrep fbi | tail -1); if [ -n "$KILLPROC" ]; then kill $KILLPROC; fi ' >> /tmp/out 
+		#echo 'KILLPROC=$(ps uax | pgrep fbi | tail -1); if [ -n "$KILLPROC" ]; then kill $KILLPROC; fi ' >> /tmp/out 
 		echo 'exit 0' >> /tmp/out
 		mv /tmp/out $DEST/output/sdcard/etc/rc.local
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/rc.local"
