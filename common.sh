@@ -290,23 +290,22 @@ cat <<END > $DEST/output/sdcard/etc/apt/apt.conf.d/71-no-recommends
 APT::Install-Recommends "0";
 APT::Install-Suggests "0";
 END
-# script to show graphical boot splash
-#cp $SRC/lib/scripts/bootsplash $DEST/output/sdcard/etc/init.d/bootsplash
-#cp $SRC/lib/bin/bootsplash.png $DEST/output/sdcard/etc/bootsplash.png
-#chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/bootsplash"
-#chroot $DEST/output/sdcard /bin/bash -c "update-rc.d bootsplash defaults" 
+# script to show (graphical) boot splash
+cp $SRC/lib/scripts/bootsplash $DEST/output/sdcard/etc/init.d/bootsplash
+cp $SRC/lib/bin/bootsplash.png $DEST/output/sdcard/etc/bootsplash.png
+chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/bootsplash"
 # scripts for autoresize at first boot
 cp $SRC/lib/scripts/resize2fs $DEST/output/sdcard/etc/init.d
 cp $SRC/lib/scripts/firstrun $DEST/output/sdcard/etc/init.d
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/firstrun"
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/resize2fs"
-chroot $DEST/output/sdcard /bin/bash -c "update-rc.d firstrun defaults" 
+chroot $DEST/output/sdcard /bin/bash -c "insserv firstrun" 
 # install custom bashrc
 cat $SRC/lib/scripts/bashrc >> $DEST/output/sdcard/etc/bash.bashrc 
 # install custom motd / hardware dependent
 cp $SRC/lib/scripts/armhwinfo $DEST/output/sdcard/etc/init.d/
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/armhwinfo"
-chroot $DEST/output/sdcard /bin/bash -c "update-rc.d firstrun armhwinfo" 
+chroot $DEST/output/sdcard /bin/bash -c "insserv armhwinfo" 
 #sed -e s,"# Update motd","service armhwinfo start",g 	-i $DEST/output/sdcard/etc/init.d/motd
 sed -e s,"uname -snrvm > /var/run/motd.dynamic","",g  -i $DEST/output/sdcard/etc/init.d/motd
 }
@@ -343,7 +342,7 @@ if [[ $BOARD == "bananapi" ]] ; then
 		# script to turn off the LED blinking
 		cp $SRC/lib/scripts/disable_led_banana.sh $DEST/output/sdcard/etc/init.d/disable_led_banana.sh
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/disable_led_banana.sh"
-		chroot $DEST/output/sdcard /bin/bash -c "update-rc.d disable_led_banana.sh defaults"
+		chroot $DEST/output/sdcard /bin/bash -c "insserv disable_led_banana.sh"
 		# default lirc configuration
 		sed -e 's/DEVICE=""/DEVICE="\/dev\/input\/event1"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
 		sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="devinput"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
@@ -358,14 +357,14 @@ if [[ $BOARD == "cubietruck" ]] ; then
 		# script to turn off the LED blinking
 		cp $SRC/lib/scripts/disable_led.sh $DEST/output/sdcard/etc/init.d/disable_led.sh
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/disable_led.sh"
-		chroot $DEST/output/sdcard /bin/bash -c "update-rc.d disable_led.sh defaults" 
+		chroot $DEST/output/sdcard /bin/bash -c "insserv disable_led.sh" 
 		# bluetooth device enabler 
 		cp $SRC/lib/bin/brcm_patchram_plus $DEST/output/sdcard/usr/local/bin/brcm_patchram_plus
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /usr/local/bin/brcm_patchram_plus"
 		cp $SRC/lib/scripts/brcm40183 $DEST/output/sdcard/etc/default
 		cp $SRC/lib/scripts/brcm40183-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm40183-patch"
-		chroot $DEST/output/sdcard /bin/bash -c "update-rc.d brcm40183-patch defaults" 
+		chroot $DEST/output/sdcard /bin/bash -c "insserv brcm40183-patch" 
 		# default lirc configuration
 		sed -i '1i sed -i \x27s/DEVICE="\\/dev\\/input.*/DEVICE="\\/dev\\/input\\/\x27$str\x27"/g\x27 /etc/lirc/hardware.conf' $DEST/output/sdcard/etc/lirc/hardware.conf
 		sed -i '1i str=$(cat /proc/bus/input/devices | grep "H: Handlers=sysrq rfkill kbd event" | awk \x27{print $(NF)}\x27)' $DEST/output/sdcard/etc/lirc/hardware.conf
@@ -392,7 +391,7 @@ if [[ $BOARD == "cubox-i" ]] ; then
 		cp $SRC/lib/scripts/brcm4330 $DEST/output/sdcard/etc/default
 		cp $SRC/lib/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
-		chroot $DEST/output/sdcard /bin/bash -c "update-rc.d brcm4330-patch defaults" 
+		chroot $DEST/output/sdcard /bin/bash -c "insserv brcm4330-patch" 
 		# alter rc.local
 		head -n -1 $DEST/output/sdcard/etc/rc.local > /tmp/out
 		#echo 'KILLPROC=$(ps uax | pgrep fbi | tail -1); if [ -n "$KILLPROC" ]; then kill $KILLPROC; fi ' >> /tmp/out 
