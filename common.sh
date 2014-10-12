@@ -296,6 +296,7 @@ END
 cp $SRC/lib/scripts/bootsplash $DEST/output/sdcard/etc/init.d/bootsplash
 cp $SRC/lib/bin/bootsplash.png $DEST/output/sdcard/etc/bootsplash.png
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/bootsplash"
+chroot $DEST/output/sdcard /bin/bash -c "insserv bootsplash" 
 # scripts for autoresize at first boot
 cp $SRC/lib/scripts/resize2fs $DEST/output/sdcard/etc/init.d
 cp $SRC/lib/scripts/firstrun $DEST/output/sdcard/etc/init.d
@@ -307,8 +308,8 @@ cat $SRC/lib/scripts/bashrc >> $DEST/output/sdcard/etc/bash.bashrc
 # install custom motd / hardware dependent
 cp $SRC/lib/scripts/armhwinfo $DEST/output/sdcard/etc/init.d/
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/armhwinfo"
-chroot $DEST/output/sdcard /bin/bash -c "insserv armhwinfo" 
-#sed -e s,"# Update motd","service armhwinfo start",g 	-i $DEST/output/sdcard/etc/init.d/motd
+#chroot $DEST/output/sdcard /bin/bash -c "insserv armhwinfo" 
+sed -e s,"# Update motd","service armhwinfo start",g 	-i $DEST/output/sdcard/etc/init.d/motd
 sed -e s,"uname -snrvm > /var/run/motd.dynamic","",g  -i $DEST/output/sdcard/etc/init.d/motd
 }
 
