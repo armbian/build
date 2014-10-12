@@ -306,7 +306,8 @@ cat $SRC/lib/scripts/bashrc >> $DEST/output/sdcard/etc/bash.bashrc
 # install custom motd / hardware dependent
 cp $SRC/lib/scripts/armhwinfo $DEST/output/sdcard/etc/init.d/
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/armhwinfo"
-sed -e s,"# Update motd","/etc/init.d/armhwinfo",g 	-i $DEST/output/sdcard/etc/init.d/motd
+chroot $DEST/output/sdcard /bin/bash -c "update-rc.d firstrun armhwinfo" 
+#sed -e s,"# Update motd","service armhwinfo start",g 	-i $DEST/output/sdcard/etc/init.d/motd
 sed -e s,"uname -snrvm > /var/run/motd.dynamic","",g  -i $DEST/output/sdcard/etc/init.d/motd
 }
 
