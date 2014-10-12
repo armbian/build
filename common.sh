@@ -580,13 +580,17 @@ cp $DEST/output/sdcard/root/readme.txt $DEST/output/
 sleep 2
 rm $DEST/output/sdcard/usr/bin/qemu-arm-static 
 umount -l $DEST/output/sdcard/ 
+sleep 2
 losetup -d $LOOP
 
 # create documentation
 #pandoc $SRC/lib/README.md $DEST/documentation/Home.md --standalone -o $DEST/output/$VERSION.pdf -V geometry:"top=2.54cm, bottom=2.54cm, left=3.17cm, right=3.17cm" -V geometry:paperwidth=21cm -V geometry:paperheight=29.7cm
+sync
+sleep 2
 mv $DEST/output/debian_rootfs.raw $DEST/output/$VERSION.raw
 cd $DEST/output/
 # creating MD5 sum
+sync
 md5sum $VERSION.raw > $VERSION.md5 
 cp $SRC/lib/bin/imagewriter.exe .
 md5sum imagewriter.exe > imagewriter.md5
