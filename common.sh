@@ -291,10 +291,10 @@ APT::Install-Recommends "0";
 APT::Install-Suggests "0";
 END
 # script to show graphical boot splash
-cp $SRC/lib/scripts/bootsplash $DEST/output/sdcard/etc/init.d/bootsplash
-cp $SRC/lib/bin/bootsplash.png $DEST/output/sdcard/etc/bootsplash.png
-chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/bootsplash"
-chroot $DEST/output/sdcard /bin/bash -c "update-rc.d bootsplash defaults" 
+#cp $SRC/lib/scripts/bootsplash $DEST/output/sdcard/etc/init.d/bootsplash
+#cp $SRC/lib/bin/bootsplash.png $DEST/output/sdcard/etc/bootsplash.png
+#chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/bootsplash"
+#chroot $DEST/output/sdcard /bin/bash -c "update-rc.d bootsplash defaults" 
 # scripts for autoresize at first boot
 cp $SRC/lib/scripts/resize2fs $DEST/output/sdcard/etc/init.d
 cp $SRC/lib/scripts/firstrun $DEST/output/sdcard/etc/init.d
