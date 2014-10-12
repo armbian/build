@@ -364,7 +364,8 @@ if [[ $BOARD == "cubietruck" ]] ; then
 		cp $SRC/lib/scripts/brcm40183 $DEST/output/sdcard/etc/default
 		cp $SRC/lib/scripts/brcm40183-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm40183-patch"
-		chroot $DEST/output/sdcard /bin/bash -c "insserv brcm40183-patch" 
+		# disabled by default
+		# chroot $DEST/output/sdcard /bin/bash -c "insserv brcm40183-patch" 
 		# default lirc configuration
 		sed -i '1i sed -i \x27s/DEVICE="\\/dev\\/input.*/DEVICE="\\/dev\\/input\\/\x27$str\x27"/g\x27 /etc/lirc/hardware.conf' $DEST/output/sdcard/etc/lirc/hardware.conf
 		sed -i '1i str=$(cat /proc/bus/input/devices | grep "H: Handlers=sysrq rfkill kbd event" | awk \x27{print $(NF)}\x27)' $DEST/output/sdcard/etc/lirc/hardware.conf
