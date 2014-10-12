@@ -175,6 +175,8 @@ else
 fi
 # add linux firmwares to output image
 unzip $SRC/lib/bin/linux-firmware.zip -d output/lib/firmware
+# reverse fbtft patch
+patch --batch -t -p1 < $SRC/lib/patch/bananafbtft.patch
 else
 echo "ERROR: Source file $1 does not exists. Check fetch_from_github configuration."
 exit
