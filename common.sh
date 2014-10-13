@@ -153,7 +153,7 @@ mkdir -p output/boot
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $DEST/$LINUXSOURCE/firmware; fi
 
 # there are two methods of compilation
-if [[ $LINUXSOURCE == *next* ]]
+if [[ $BOARD == "cubox-i" ]]
 then
     # compile from proven config
 	cp $SRC/lib/config/$LINUXSOURCE.config $DEST/$LINUXSOURCE/.config
@@ -163,6 +163,14 @@ then
 	cp Module.symvers output/usr/include
 	cp arch/arm/boot/zImage output/boot/
 	cp arch/arm/boot/dts/*.dtb output/boot
+elif [[ $BOARD == "bananapi-next" || $BOARD == "cubietruck-next" ]]
+	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- LOADADDR=0x40008000 uImage modules $DTBS LOCALVERSION="$LOCALVERSION"
+	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=output modules_install
+	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_HDR_PATH=output/usr headers_install
+	cp Module.symvers output/usr/include
+	cp arch/arm/boot/uImage output/boot/
+	cp arch/arm/boot/dts/*.dtb output/boot
+	mkimage -C none -A arm -T script -d $SRC/lib/config/boot.cmd output/boot/boot.scr
 else
     # compile from proven config
 	cp $SRC/lib/config/$LINUXSOURCE.config $DEST/$LINUXSOURCE/.config
@@ -189,11 +197,13 @@ packing_kernel (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Pack kernel				  							                    
 #--------------------------------------------------------------------------------------------------------------------------------
+
 cd "$DEST/$LINUXSOURCE/output/lib/modules/$VER$LOCALVERSION"
 # correct link
 rm build source
 ln -s /usr/include/ build
 ln -s /usr/include/ source
+
 #
 cd $DEST/$LINUXSOURCE/output
 tar -cPf $DEST"/output/"$BOARD"_kernel_"$VER"_mod_head_fw.tar" *
