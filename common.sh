@@ -164,6 +164,7 @@ then
 	cp arch/arm/boot/zImage output/boot/
 	cp arch/arm/boot/dts/*.dtb output/boot
 elif [[ $BOARD == "bananapi-next" || $BOARD == "cubietruck-next" ]]
+then
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- LOADADDR=0x40008000 uImage modules $DTBS LOCALVERSION="$LOCALVERSION"
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=output modules_install
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_HDR_PATH=output/usr headers_install
