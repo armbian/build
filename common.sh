@@ -139,8 +139,11 @@ compile_kernel (){
 #--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Compiling kernel"
 if [ -d "$DEST/$LINUXSOURCE" ]; then 
+
 # add small TFT display support  
+if [ "$FBTFT" = "yes" ]; then
 add_fb_tft 
+fi
 
 cd $DEST/$LINUXSOURCE
 # delete previous creations
@@ -185,8 +188,12 @@ else
 fi
 # add linux firmwares to output image
 unzip $SRC/lib/bin/linux-firmware.zip -d output/lib/firmware
+
+if [ "$FBTFT" = "yes" ]; then
 # reverse fbtft patch
 patch --batch -t -p1 < $SRC/lib/patch/bananafbtft.patch
+fi
+
 else
 echo "ERROR: Source file $1 does not exists. Check fetch_from_github configuration."
 exit
