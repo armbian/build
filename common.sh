@@ -165,13 +165,14 @@ then
 	cp arch/arm/boot/dts/*.dtb output/boot
 elif [[ $BOARD == "bananapi-next" || $BOARD == "cubietruck-next" ]]
 then
+	cp $SRC/lib/config/$LINUXSOURCE.config $DEST/$LINUXSOURCE/.config
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- LOADADDR=0x40008000 uImage modules $DTBS LOCALVERSION="$LOCALVERSION"
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=output modules_install
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_HDR_PATH=output/usr headers_install
 	cp Module.symvers output/usr/include
 	cp arch/arm/boot/uImage output/boot/
 	cp arch/arm/boot/dts/*.dtb output/boot
-	mkimage -C none -A arm -T script -d $SRC/lib/config/boot.cmd output/boot/boot.scr
+	mkimage -C none -A arm -T script -d $SRC/lib/config/boot-$BOARD.cmd output/boot/boot.scr
 else
     # compile from proven config
 	cp $SRC/lib/config/$LINUXSOURCE.config $DEST/$LINUXSOURCE/.config
