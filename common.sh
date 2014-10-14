@@ -338,7 +338,7 @@ install_board_specific (){
 # Install board specific applications  					                    
 #--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Install board specific applications"
-if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard" || $BOARD == "bananapi" || $BOARD == "bananapi-next" ]] ; then
+if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard" || $BOARD == "bananapi" || $BOARD == "bananapi-next"|| $BOARD == "cubietruck-next" ]] ; then
 		# enable serial console (Debian/sysvinit way)
 		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/output/sdcard/etc/inittab
 		# sunxi tools
