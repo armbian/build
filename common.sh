@@ -124,13 +124,15 @@ else
 	git checkout master
 fi
 cd $DEST/$LINUXSOURCE
-if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/small_lcd_drivers.patch | grep previ)" ]; then
-patch -p1 < $SRC/lib/patch/small_lcd_drivers.patch
-fi
-if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" ]; then
+if [[ $BOARD == "bananapi"  ]]; then
+	if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" ]; then
                 	patch --batch -N -p1 < $SRC/lib/patch/bananafbtft.patch
+	fi
+else
+	if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/small_lcd_drivers.patch | grep previ)" ]; then
+	patch -p1 < $SRC/lib/patch/small_lcd_drivers.patch
+	fi
 fi
-}
 
 
 compile_kernel (){
