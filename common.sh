@@ -455,7 +455,7 @@ cd $DEST/output/sdcard/usr/sbin/
 tar xvfz $SRC/lib/bin/hostapd23.tgz
 cp $SRC/lib/config/hostapd.conf.$BOARD $DEST/output/sdcard/etc/hostapd.conf
 # don't clear screen
-sed -e 's/1:2345:respawn:/sbin/getty 38400 tty1/1:2345:respawn:/sbin/getty --noclear 38400 tty1/g' -i $DEST/output/sdcard/etc/inittab   
+sed -e 's/1:2345:respawn:\/sbin\/getty 38400 tty1/1:2345:respawn:\/sbin\/getty --noclear 38400 tty1/g' -i $DEST/output/sdcard/etc/inittab   
 # console
 chroot $DEST/output/sdcard /bin/bash -c "export TERM=linux" 
 # Change Time zone data
