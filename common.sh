@@ -133,6 +133,7 @@ else
 	patch -p1 < $SRC/lib/patch/small_lcd_drivers.patch
 	fi
 fi
+}
 
 
 compile_kernel (){
