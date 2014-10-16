@@ -317,7 +317,7 @@ END
 cp $SRC/lib/scripts/bootsplash $DEST/output/sdcard/etc/init.d/bootsplash
 cp $SRC/lib/bin/bootsplash.png $DEST/output/sdcard/etc/bootsplash.png
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/bootsplash"
-chroot $DEST/output/sdcard /bin/bash -c "insserv bootsplash" 
+# chroot $DEST/output/sdcard /bin/bash -c "insserv bootsplash" 
 # scripts for autoresize at first boot
 cp $SRC/lib/scripts/resize2fs $DEST/output/sdcard/etc/init.d
 cp $SRC/lib/scripts/firstrun $DEST/output/sdcard/etc/init.d
@@ -451,6 +451,8 @@ sed -e 's/# Required-Stop:     umountnfs $time/# Required-Stop:     umountnfs $t
 cd $DEST/output/sdcard/usr/sbin/
 tar xvfz $SRC/lib/bin/hostapd23.tgz
 cp $SRC/lib/config/hostapd.conf.$BOARD $DEST/output/sdcard/etc/hostapd.conf
+# don't clear screen
+sed -e 's/1:2345:respawn:/sbin/getty 38400 tty1/1:2345:respawn:/sbin/getty --noclear 38400 tty1/g' -i $DEST/output/sdcard/etc/inittab   
 # console
 chroot $DEST/output/sdcard /bin/bash -c "export TERM=linux" 
 # Change Time zone data
@@ -478,7 +480,7 @@ ff00::0     ip6-mcastprefix
 ff02::1     ip6-allnodes
 ff02::2     ip6-allrouters
 EOT
-# change default I/O scheduler, noop for flash media and SSD, cfq for mechanical drive
+# change default I/O scheduler, noop for flash media, deadline for SSD, cfq for mechanical drive
 cat <<EOT >> $DEST/output/sdcard/etc/sysfs.conf
 block/mmcblk0/queue/scheduler = noop
 #block/sda/queue/scheduler = cfq
