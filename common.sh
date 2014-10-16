@@ -444,12 +444,18 @@ PAKETKI="alsa-utils bash-completion bc bluetooth bridge-utils build-essential ca
 
 chroot $DEST/output/sdcard /bin/bash -c "apt-get -qq -y install $PAKETKI && apt-get -y clean"
 
+if [ "$RELEASE" = "jessie" ]; then
+# install busybox-syslogd
+chroot $DEST/output/sdcard /bin/bash -c "apt-get -qq -y install busybox-syslogd && apt-get -y clean"
+else
 # ramlog
 cp $SRC/lib/bin/ramlog_2.0.0_all.deb $DEST/output/sdcard/tmp
 chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb"
 sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $DEST/output/sdcard/etc/default/ramlog
 sed -e 's/# Required-Start:    $remote_fs $time/# Required-Start:    $remote_fs $time ramlog/g' -i $DEST/output/sdcard/etc/init.d/rsyslog 
 sed -e 's/# Required-Stop:     umountnfs $time/# Required-Stop:     umountnfs $time ramlog/g' -i $DEST/output/sdcard/etc/init.d/rsyslog   
+fi
+
 # replace hostapd from testing binary.
 cd $DEST/output/sdcard/usr/sbin/
 tar xvfz $SRC/lib/bin/hostapd23.tgz
