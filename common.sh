@@ -417,6 +417,8 @@ if [[ $BOARD == "cubox-i" ]] ; then
 		cp $SRC/lib/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
 		chroot $DEST/output/sdcard /bin/bash -c "insserv brcm4330-patch" 
+		# script to install to SATA
+		cp $SRC/lib/scripts/sata-install.sh $DEST/output/sdcard/root
 		# alter rc.local
 		head -n -1 $DEST/output/sdcard/etc/rc.local > /tmp/out
 		#echo 'KILLPROC=$(ps uax | pgrep fbi | tail -1); if [ -n "$KILLPROC" ]; then kill $KILLPROC; fi ' >> /tmp/out 
