@@ -436,9 +436,9 @@ install_applications (){
 #--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Installing aditional applications"
 
-PAKETKI="alsa-utils bash-completion bc bluetooth bridge-utils build-essential ca-certificates cmake cpufrequtils curl dosfstools evtest fbi fbset figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 ifupdown iproute iputils-ping iperf ir-keytable isc-dhcp-client iw less libbluetooth-dev libbluetooth3 libc6 libfuse2 libnl-dev libssl-dev lirc lsof lvm2 makedev module-init-tools ntfs-3g ntp openssh-server parted pciutils procps python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools udev unattended-upgrades unzip usbutils wireless-tools wpasupplicant"
+PAKETKI="alsa-utils bash-completion bc bluetooth bridge-utils build-essential ca-certificates cmake cpufrequtils curl dosfstools evtest fbi fbset figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 ifupdown iproute iputils-ping iperf ir-keytable isc-dhcp-client iw less libbluetooth-dev libbluetooth3 libc6 libfuse2 libnl-dev libssl-dev lirc lsof makedev module-init-tools ntfs-3g ntp openssh-server parted pciutils procps python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools udev unattended-upgrades unzip usbutils wireless-tools wpasupplicant"
 
-# PAKETKI=$PAKETKI" console-setup console-data libnl-3-dev" # might be added
+# PAKETKI=$PAKETKI" console-setup console-data libnl-3-dev lvm2" # might be added
 # some packets are different in jessie
 #if [ "$RELEASE" = "jessie" ]; then PAKETKI="${PAKETKI//dhcp3-client/isc-dhcp-client}"; fi
 
