@@ -293,10 +293,10 @@ mount -t sysfs chsys $DEST/output/sdcard/sys
 mount -t devtmpfs chdev $DEST/output/sdcard/dev || mount --bind /dev $DEST/output/sdcard/dev
 mount -t devpts chpts $DEST/output/sdcard/dev/pts
 # update /etc/issue
-cat <<EOT > $DEST/output/sdcard/etc/issue
-Debian GNU/Linux $VERSION
-
-EOT
+#cat <<EOT > $DEST/output/sdcard/etc/issue
+#Debian GNU/Linux $VERSION
+#
+#EOT
 # update /etc/motd
 rm $DEST/output/sdcard/etc/motd
 touch $DEST/output/sdcard/etc/motd
