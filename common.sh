@@ -440,14 +440,11 @@ PAKETKI="alsa-utils bash-completion bc bluetooth bridge-utils build-essential ca
 
 # PAKETKI=$PAKETKI" console-setup console-data libnl-3-dev lvm2" # might be added
 # some packets are different in jessie
-#if [ "$RELEASE" = "jessie" ]; then PAKETKI="${PAKETKI//dhcp3-client/isc-dhcp-client}"; fi
+if [ "$RELEASE" = "jessie" ]; then PAKETKI="${PAKETKI//libnl-dev/libnl-3-dev}";PAKETKI=$PAKETKI" busybox-syslogd"; fi
 
 chroot $DEST/output/sdcard /bin/bash -c "apt-get -qq -y install $PAKETKI && apt-get -y clean"
 
-if [ "$RELEASE" = "jessie" ]; then
-# install busybox-syslogd
-chroot $DEST/output/sdcard /bin/bash -c "apt-get -qq -y install busybox-syslogd && apt-get -y clean"
-else
+if [ "$RELEASE" = "wheezy" ]; then
 # ramlog
 cp $SRC/lib/bin/ramlog_2.0.0_all.deb $DEST/output/sdcard/tmp
 chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb"
