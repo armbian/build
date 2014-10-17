@@ -46,7 +46,7 @@ clear_console
 figlet -f banner "warning"
 echo -e "
 
-This script might erase your hard drive \e[31m($MODEL)\e[39m and copy content of SD card to it
+This script will erase first partition of your hard drive \e[31m($MODEL)\e[39m and copy content of SD card to it
 
 "
 
