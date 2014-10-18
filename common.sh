@@ -130,13 +130,13 @@ else
 fi
 cd $DEST/$LINUXSOURCE
 if [[ $BOARD == "bananapi"  ]]; then
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" != "" ]; then
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" == "" ]; then
                 	patch --batch -N -p1 < $SRC/lib/patch/bananafbtft.patch
 	fi
-else
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/small_lcd_drivers.patch | grep previ)" != "" ]; then
+fi
+# common patch
+if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/small_lcd_drivers.patch | grep previ)" == "" ]; then
 	patch -p1 < $SRC/lib/patch/small_lcd_drivers.patch
-	fi
 fi
 }
 
