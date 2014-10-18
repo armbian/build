@@ -52,16 +52,16 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 		patch --batch -t -p1 < $SRC/lib/patch/bananagmac.patch
 	fi
 	#
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" != "" ]; then
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" == "" ]; then
 		patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
     	fi
 	#
-    	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi.patch | grep previ)" != "" ]; then
+    	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi.patch | grep previ)" == "" ]; then
 		patch --batch -f -p1 < $SRC/lib/patch/spi.patch
     	fi
 	#    
 	if [[ $BOARD == "bananapi" ]] ; then
-        	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" != "" ]; then
+        	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" == "" ]; then
         		patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
         	fi
     	fi
@@ -70,7 +70,7 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 fi
 # cubox / hummingboard
 if [[ $LINUXSOURCE == "linux-cubox-next" ]] ; then
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/hb-i2c-spi.patch | grep previ)" != "" ]; then
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/hb-i2c-spi.patch | grep previ)" == "" ]; then
         patch -p1 < $SRC/lib/patch/hb-i2c-spi.patch
         fi
 fi
