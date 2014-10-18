@@ -47,21 +47,21 @@ cd $DEST/$LINUXSOURCE
 # sunxi
 if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 	# if the source is already patched for banana, do reverse GMAC patch
-	if [ -n  "$(cat arch/arm/kernel/setup.c | grep BANANAPI)" ]; then
+	if [ "$(cat arch/arm/kernel/setup.c | grep BANANAPI)" != "" ]; then
 		echo "Reversing Banana patch"
 		patch --batch -t -p1 < $SRC/lib/patch/bananagmac.patch
 	fi
 	#
-	if [ -n  "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" ]; then
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" != "" ]; then
 		patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
     	fi
 	#
-    	if [ -n  "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi.patch | grep previ)" ]; then
+    	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi.patch | grep previ)" != "" ]; then
 		patch --batch -f -p1 < $SRC/lib/patch/spi.patch
     	fi
 	#    
 	if [[ $BOARD == "bananapi" ]] ; then
-        	if [ -n  "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" ]; then
+        	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" != "" ]; then
         		patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
         	fi
     	fi
@@ -70,7 +70,7 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 fi
 # cubox / hummingboard
 if [[ $LINUXSOURCE == "linux-cubox-next" ]] ; then
-	if [ -n  "$(patch --dry-run -t -p1 < $SRC/lib/patch/hb-i2c-spi.patch | grep previ)" ]; then
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/hb-i2c-spi.patch | grep previ)" != "" ]; then
         patch -p1 < $SRC/lib/patch/hb-i2c-spi.patch
         fi
 fi
@@ -130,11 +130,11 @@ else
 fi
 cd $DEST/$LINUXSOURCE
 if [[ $BOARD == "bananapi"  ]]; then
-	if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" ]; then
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" != "" ]; then
                 	patch --batch -N -p1 < $SRC/lib/patch/bananafbtft.patch
 	fi
 else
-	if [ -z  "$(patch --dry-run -t -p1 < $SRC/lib/patch/small_lcd_drivers.patch | grep previ)" ]; then
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/small_lcd_drivers.patch | grep previ)" != "" ]; then
 	patch -p1 < $SRC/lib/patch/small_lcd_drivers.patch
 	fi
 fi
