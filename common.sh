@@ -163,11 +163,13 @@ mkdir -p output/boot
 # Adding custom firmware to kernel source
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $DEST/$LINUXSOURCE/firmware; fi
 
-# there are two methods of compilation
+# compile from proven config
+cp $SRC/lib/config/$LINUXSOURCE.config $DEST/$LINUXSOURCE/.config
+if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig ; fi
+
+# there are more methods of compilation
 if [[ $BOARD == "cubox-i" ]]
 then
-    # compile from proven config
-	cp $SRC/lib/config/$LINUXSOURCE.config $DEST/$LINUXSOURCE/.config
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- zImage modules $DTBS LOCALVERSION="$LOCALVERSION"
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=output modules_install
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_HDR_PATH=output/usr headers_install
@@ -176,7 +178,6 @@ then
 	cp arch/arm/boot/dts/*.dtb output/boot
 elif [[ $BOARD == "bananapi-next" || $BOARD == "cubietruck-next" ]]
 then
-	cp $SRC/lib/config/$LINUXSOURCE.config $DEST/$LINUXSOURCE/.config
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- LOADADDR=0x40008000 uImage modules $DTBS LOCALVERSION="$LOCALVERSION"
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=output modules_install
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_HDR_PATH=output/usr headers_install
@@ -185,15 +186,13 @@ then
 	cp arch/arm/boot/dts/*.dtb output/boot
 	mkimage -C none -A arm -T script -d $SRC/lib/config/boot-$BOARD.cmd output/boot/boot.scr
 else
-    # compile from proven config
-	cp $SRC/lib/config/$LINUXSOURCE.config $DEST/$LINUXSOURCE/.config
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- uImage modules LOCALVERSION="$LOCALVERSION"
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=output modules_install
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_HDR_PATH=output/usr headers_install
 	cp Module.symvers output/usr/include
-    cp arch/arm/boot/uImage output/boot/
-	
+	cp arch/arm/boot/uImage output/boot/
 fi
+
 # add linux firmwares to output image
 unzip $SRC/lib/bin/linux-firmware.zip -d output/lib/firmware
 
