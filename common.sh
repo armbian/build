@@ -475,7 +475,7 @@ sed -e 's/ondemand/interactive/g' -i $DEST/output/sdcard/etc/init.d/cpufrequtils
 # set root password and force password change upon first login
 #chroot $DEST/output/sdcard /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root"  
 chroot $DEST/output/sdcard /bin/bash -c "(echo $USER_PASSWORD;echo $USER_PASSWORD;echo "";echo "";echo ""; echo ""; echo ""; echo "y";) | adduser $USER"
-echo "$USER	ALL=(ALL:ALL) ALL" $DEST/output/sdcard/etc/sudoers
+echo "$USER	ALL=(ALL:ALL) ALL" >> $DEST/output/sdcard/etc/sudoers
 #chroot $DEST/output/sdcard /bin/bash -c "chage -d 0 root" 
 if [ "$RELEASE" = "jessie" ]; then
 # enable root login for latest ssh on jessie
