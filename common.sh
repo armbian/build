@@ -255,6 +255,9 @@ echo "------ Writing boot loader."
 if [[ $BOARD == "cubox-i" ]] ; then
 	dd if=$DEST/$BOOTSOURCE/SPL of=$LOOP bs=512 seek=2 status=noxfer
 	dd if=$DEST/$BOOTSOURCE/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer
+elif [[ $BOARD == "lime" || $BOARD == "lime2" ]]
+        dd if=$DEST/$BOOTSOURCE/spl/sunxi-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer
+	dd if=$DEST/$BOOTSOURCE/u-boot.bin of=$LOOP bs=1024 seek=32 status=noxfer
 else
 	dd if=$DEST/$BOOTSOURCE/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer
 fi
