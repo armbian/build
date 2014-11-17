@@ -345,7 +345,7 @@ install_board_specific (){
 # Install board specific applications  					                    
 #--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Install board specific applications"
-if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard" || $BOARD == "bananapi" || $BOARD == "bananapi-next"|| $BOARD == "cubietruck-next" ]] ; then
+if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard" || $BOARD == "bananapi" || $BOARD == "lime" || $BOARD == "lime2" || $BOARD == "bananapi-next" || $BOARD == "cubietruck-next" ]] ; then
 		# enable serial console (Debian/sysvinit way)
 		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/output/sdcard/etc/inittab
 		# sunxi tools
@@ -376,6 +376,12 @@ if [[ $BOARD == "bananapi" ]] ; then
 		sed -e 's/DEVICE=""/DEVICE="\/dev\/input\/event1"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
 		sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="devinput"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
 		cp $SRC/lib/config/lirc.conf.bananapi $DEST/output/sdcard/etc/lirc/lircd.conf
+fi
+
+if [[ $BOARD == "lime" || $BOARD == "lime2" ]] ; then
+		fex2bin $SRC/lib/config/$BOARD.fex $DEST/output/sdcard/boot/$BOARD.bin
+		cp $SRC/lib/config/uEnv.bananapi $DEST/output/sdcard/boot/uEnv.txt
+		sed -i "s/banana.bin/$BOARD.bin/" $DEST/output/sdcard/boot/uEnv.txt
 fi
 
 if [[ $BOARD == "cubietruck" ]] ; then
