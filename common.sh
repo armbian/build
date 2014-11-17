@@ -379,9 +379,9 @@ if [[ $BOARD == "bananapi" ]] ; then
 fi
 
 if [[ $BOARD == "lime" || $BOARD == "lime2" ]] ; then
-		fex2bin $SRC/lib/config/$BOARD.fex $DEST/output/sdcard/boot/$BOARD.bin
+		fex2bin $SRC/lib/config/olimex-$BOARD.fex $DEST/output/sdcard/boot/$BOARD.bin
 		cp $SRC/lib/config/uEnv.bananapi $DEST/output/sdcard/boot/uEnv.txt
-		sed -i "s/banana.bin/$BOARD.bin/" $DEST/output/sdcard/boot/uEnv.txt
+		sed -i "s/bananapi.bin/$BOARD.bin/" $DEST/output/sdcard/boot/uEnv.txt
 fi
 
 if [[ $BOARD == "cubietruck" ]] ; then
