@@ -383,6 +383,9 @@ if [[ $BOARD == "lime" || $BOARD == "lime2" ]] ; then
 		fex2bin $SRC/lib/config/olimex-$BOARD.fex $DEST/output/sdcard/boot/$BOARD.bin
 		cp $SRC/lib/config/uEnv.bananapi $DEST/output/sdcard/boot/uEnv.txt
 		sed -i "s/bananapi.bin/$BOARD.bin/" $DEST/output/sdcard/boot/uEnv.txt
+		# script to install to NAND
+		cp $SRC/lib/scripts/nand-install.sh $DEST/output/sdcard/root
+		cp $SRC/lib/bin/nand1-allwinner.tgz $DEST/output/sdcard/root
 fi
 
 if [[ $BOARD == "cubietruck" ]] ; then
@@ -411,7 +414,7 @@ if [[ $BOARD == "cubietruck" ]] ; then
 		cp $SRC/lib/config/lirc.conf.cubietruck $DEST/output/sdcard/etc/lirc/lircd.conf
 		# script to install to NAND
 		cp $SRC/lib/scripts/nand-install.sh $DEST/output/sdcard/root
-		cp $SRC/lib/bin/nand1-cubietruck-debian-boot.tgz $DEST/output/sdcard/root
+		cp $SRC/lib/bin/nand1-allwinner.tgz $DEST/output/sdcard/root
 fi
 
 if [[ $BOARD == "cubox-i" ]] ; then
