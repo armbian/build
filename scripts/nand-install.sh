@@ -71,7 +71,7 @@ e2fsck -f /dev/nand2
 
 echo "Creating NAND bootfs ... few seconds"
 mount /dev/nand1 /mnt
-tar xfz nand1-cubietruck-debian-boot.tgz -C /mnt/
+tar xfz nand1-allwinner.tgz -C /mnt/
 #rm nand1-cubietruck-debian-boot.tgz
 #rm nand_mbr.backup
 
