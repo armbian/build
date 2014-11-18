@@ -47,14 +47,13 @@ VER=$VER.$(cat $DEST/$LINUXSOURCE/Makefile | grep SUBLEVEL | head -1 | awk '{pri
 EXTRAVERSION=$(cat $DEST/$LINUXSOURCE/Makefile | grep EXTRAVERSION | head -1 | awk '{print $(NF)}')
 if [ "$EXTRAVERSION" != "=" ]; then VER=$VER$EXTRAVERSION; fi
 
+# always compile boot loader
+compile_uboot
 
 if [ "$SOURCE_COMPILE" = "yes" ]; then
 #--------------------------------------------------------------------------------------------------------------------------------
 	# Patching sources
 	patching_sources
-
-	# compile boot loader
-	compile_uboot 
 
 	# compile kernel and create archives
 	compile_kernel
