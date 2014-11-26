@@ -584,6 +584,8 @@ tar xvfz $SRC/lib/bin/temper.tgz
 # some aditional stuff. Some driver as example
 if [[ -n "$MISC3_DIR" ]]; then
 	# https://github.com/pvaret/rtl8192cu-fixes
+	# temp
+	git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
 	cd $DEST/$MISC3_DIR
 	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$DEST/$LINUXSOURCE/
 	cp *.ko $DEST/output/sdcard/usr/local/bin
