@@ -60,6 +60,12 @@ if [ "$SOURCE_COMPILE" = "yes" ]; then
 
 	# create tar file
 	packing_kernel
+
+else
+
+	# choose kernel from ready made
+	choosing_kernel
+
 #--------------------------------------------------------------------------------------------------------------------------------
 fi
 

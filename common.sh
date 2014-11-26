@@ -16,8 +16,8 @@ debconf-apt-progress -- apt-get -y install pv bc lzop zip binfmt-support bison b
 debconf-apt-progress -- apt-get -y install gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libncurses5-dev
 debconf-apt-progress -- apt-get -y install libusb-1.0-0-dev parted pkg-config
 # for creating PDF documentation
-debconf-apt-progress -- apt-get -y install pandoc nbibtex texlive-latex-base texlive-latex-recommended texlive-latex-extra preview-latex-style 
-debconf-apt-progress -- apt-get -y install dvipng texlive-fonts-recommended
+# debconf-apt-progress -- apt-get -y install pandoc nbibtex texlive-latex-base texlive-latex-recommended texlive-latex-extra preview-latex-style 
+# debconf-apt-progress -- apt-get -y install dvipng texlive-fonts-recommended
 echo "Done.";
 }
 
@@ -130,7 +130,7 @@ else
 	git checkout master
 fi
 cd $DEST/$LINUXSOURCE
-if [[ $BOARD == "bananapi"  ]]; then
+if [[ $BOARD == "bananapi" || $BOARD == "cubietruck" || $BOARD == "cubieboard2" || $BOARD == "lime" || $BOARD == "lime2" ]]; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" == "" ]; then
                 	patch --batch -N -p1 < $SRC/lib/patch/bananafbtft.patch
 	fi
@@ -159,7 +159,7 @@ cd $DEST/$LINUXSOURCE
 make -s CROSS_COMPILE=arm-linux-gnueabihf- clean
 
 rm -rf output
-mkdir -p output/boot
+mkdir -p output/boot output/boot/dtb
 
 # Adding custom firmware to kernel source
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $DEST/$LINUXSOURCE/firmware; fi
@@ -177,15 +177,16 @@ then
 	cp Module.symvers output/usr/include
 	cp arch/arm/boot/zImage output/boot/
 	cp arch/arm/boot/dts/*.dtb output/boot
-elif [[ $BOARD == "bananapi-next" || $BOARD == "cubietruck-next" ]]
+elif [[ $BOARD == *next* ]]
 then
-	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- LOADADDR=0x40008000 uImage modules $DTBS LOCALVERSION="$LOCALVERSION"
+	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- LOADADDR=0x40008000 uImage modules dtbs LOCALVERSION="$LOCALVERSION"
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=output modules_install
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_HDR_PATH=output/usr headers_install
 	cp Module.symvers output/usr/include
 	cp arch/arm/boot/uImage output/boot/
-	cp arch/arm/boot/dts/*.dtb output/boot
-	mkimage -C none -A arm -T script -d $SRC/lib/config/boot-$BOARD.cmd output/boot/boot.scr
+	cp arch/arm/boot/dts/*.dtb output/boot/dtb
+	sed -e "s/WHICH/$DTBS/g" $SRC/lib/config/boot.cmd > /tmp/boot.cmd
+	mkimage -C none -A arm -T script -d /tmp/boot.cmd output/boot/boot.scr
 else
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- uImage modules LOCALVERSION="$LOCALVERSION"
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=output modules_install
@@ -223,11 +224,12 @@ ln -s /usr/include/ source
 fi
 #
 cd $DEST/$LINUXSOURCE/output
-tar -cPf $DEST"/output/"$BOARD"_kernel_"$VER"_mod_head_fw.tar" *
-cd $DEST/output
+tar -cPf $DEST"/output/kernel/"$BOARD"_kernel_"$VER"_mod_head_fw.tar" *
+cd $DEST/output/kernel
 md5sum "$BOARD"_kernel_"$VER"_mod_head_fw.tar > "$BOARD"_kernel_"$VER"_mod_head_fw.md5
 zip "$BOARD"_kernel_"$VER"_mod_head_fw.zip "$BOARD"_kernel_"$VER"_mod_head_fw.*
 sync
+CHOOSEN_KERNEL="$BOARD"_kernel_"$VER"_mod_head_fw.tar
 }
 
 
@@ -236,7 +238,8 @@ creating_image (){
 # Create and mount SD image	  							                    
 #--------------------------------------------------------------------------------------------------------------------------------
 # check if previously build kernel file exits
-if [ ! -f "$DEST/output/"$BOARD"_kernel_"$VER"_mod_head_fw.tar" ]; then 
+
+if [ ! -f "$DEST/output/kernel/"$CHOOSEN_KERNEL ]; then 
 	echo "Previously compiled kernel does not exits. Please choose compile=yes in configuration and run again!"
 	exit 
 fi
@@ -271,7 +274,7 @@ tune2fs -o journal_data_writeback $LOOP
 # label it
 e2label $LOOP "$BOARD"
 # create mount point and mount image 
-mkdir -p $DEST/output/sdcard/
+mkdir -p $DEST/output/sdcard/ $DEST/output/kernel
 mount -t ext4 $LOOP $DEST/output/sdcard/
 }
 
@@ -346,13 +349,9 @@ install_board_specific (){
 # Install board specific applications  					                    
 #--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Install board specific applications"
-if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard" || $BOARD == "bananapi" || $BOARD == "lime" || $BOARD == "lime2" || $BOARD == "bananapi-next" || $BOARD == "cubietruck-next" ]] ; then
+if [[ $LOCALVERSION == *sunxi ]] ; then
 		# enable serial console (Debian/sysvinit way)
-		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/output/sdcard/etc/inittab
-		# sunxi tools
-		cp $DEST/sunxi-tools/fex2bin $DEST/sunxi-tools/bin2fex $DEST/sunxi-tools/nand-part $DEST/output/sdcard/usr/bin/
-		# script to install to SATA
-		cp $SRC/lib/scripts/sata-install.sh $DEST/output/sdcard/root
+		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/output/sdcard/etc/inittab		
 		# alter rc.local
 		head -n -1 $DEST/output/sdcard/etc/rc.local > /tmp/out
 		echo 'echo 2 > /proc/irq/$(cat /proc/interrupts | grep eth0 | cut -f 1 -d ":" | tr -d " ")/smp_affinity' >> /tmp/out
@@ -360,11 +359,13 @@ if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard" || $BOARD == "bananapi" |
 		echo 'exit 0' >> /tmp/out
 		mv /tmp/out $DEST/output/sdcard/etc/rc.local
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/rc.local"
+		if [[ $BOARD != *next* ]] ; then
+			# sunxi tools
+			cp $DEST/sunxi-tools/fex2bin $DEST/sunxi-tools/bin2fex $DEST/sunxi-tools/nand-part $DEST/output/sdcard/usr/bin/
+			# script to install to SATA
+			cp $SRC/lib/scripts/sata-install.sh $DEST/output/sdcard/root
+		fi
 fi
-
-if [[ $BOARD == "bananapi-next" ]] ; then
-		cp $SRC/lib/config/uEnv.cubox-i $DEST/output/sdcard/boot/uEnv.txt
-fi		
 
 if [[ $BOARD == "bananapi" ]] ; then
 		fex2bin $SRC/lib/config/bananapi.fex $DEST/output/sdcard/boot/bananapi.bin
@@ -388,7 +389,7 @@ if [[ $BOARD == "lime" || $BOARD == "lime2" ]] ; then
 		cp $SRC/lib/bin/nand1-allwinner.tgz $DEST/output/sdcard/root
 fi
 
-if [[ $BOARD == "cubietruck" ]] ; then
+if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard2" ]] ; then
 		fex2bin $SRC/lib/config/cubietruck.fex $DEST/output/sdcard/boot/cubietruck.bin
 		fex2bin $SRC/lib/config/cubieboard2.fex $DEST/output/sdcard/boot/cubieboard2.bin
 		cp $SRC/lib/config/uEnv.cubietruck $DEST/output/sdcard/boot/uEnv.ct
@@ -470,7 +471,8 @@ fi
 # replace hostapd from testing binary.
 cd $DEST/output/sdcard/usr/sbin/
 tar xvfz $SRC/lib/bin/hostapd23.tgz
-cp $SRC/lib/config/hostapd.conf.$BOARD $DEST/output/sdcard/etc/hostapd.conf
+cp $SRC/lib/config/hostapd.conf $DEST/output/sdcard/etc/hostapd.conf
+sed -i "s/BOARD/$BOARD/" $DEST/output/sdcard/etc/hostapd.conf
 # don't clear screen
 sed -e 's/1:2345:respawn:\/sbin\/getty 38400 tty1/1:2345:respawn:\/sbin\/getty --noclear 38400 tty1/g' -i $DEST/output/sdcard/etc/inittab   
 # console
@@ -523,12 +525,31 @@ sed -e 's/#SHM_SIZE=/SHM_SIZE=128M/g' -i $DEST/output/sdcard/etc/default/tmpfs
 sed -e 's/#TMP_SIZE=/TMP_SIZE=1G/g' -i $DEST/output/sdcard/etc/default/tmpfs 
 # uncompress kernel
 cd $DEST/output/sdcard/
-tar -xPf $DEST"/output/"$BOARD"_kernel_"$VER"_mod_head_fw.tar"
-#ls ../*.tar | xargs -i tar xf {}
+tar -xPf $DEST"/output/kernel/"$CHOOSEN_KERNEL
 sync
 sleep 3
 # cleanup
 rm -f $DEST/output/*.md5 *.tar
+# recreate boot.scr if using kernel for different board. Mainline only
+if [[ $BOARD == *next* ]];then
+sed -e "s/WHICH/$DTBS/g" $SRC/lib/config/boot.cmd > /tmp/boot.cmd
+mkimage -C none -A arm -T script -d /tmp/boot.cmd $DEST/output/sdcard/boot/boot.scr
+fi
+}
+
+
+choosing_kernel (){
+#--------------------------------------------------------------------------------------------------------------------------------
+# Choose which kernel to use  								            
+#--------------------------------------------------------------------------------------------------------------------------------
+cd $DEST"/output/kernel/"
+MYLIST=`for x in $(ls -1 *kernel*.tar); do echo $x " -"; done`
+WC=`echo $MYLIST | wc -l`
+if [[ $WC -ne 0 ]]; then
+    whiptail --title "Choose kernel archive" --backtitle "Which kernel do you want to use?" --menu "" 12 60 4 $MYLIST 2>results
+fi
+CHOOSEN_KERNEL=$(<results)
+rm results
 }
 
 
@@ -626,6 +647,7 @@ rm $DEST/output/sdcard/usr/bin/qemu-arm-static
 umount -l $DEST/output/sdcard/ 
 sleep 2
 losetup -d $LOOP
+rm -rf $DEST/output/sdcard/
 
 # create documentation
 #pandoc $SRC/lib/README.md $DEST/documentation/Home.md --standalone -o $DEST/output/$VERSION.pdf -V geometry:"top=2.54cm, bottom=2.54cm, left=3.17cm, right=3.17cm" -V geometry:paperwidth=21cm -V geometry:paperheight=29.7cm
