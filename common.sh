@@ -311,8 +311,8 @@ touch $DEST/output/sdcard/etc/motd
 # choose proper apt list
 cp $SRC/lib/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.list
 # update, fix locales
-chroot $DEST/output/sdcard /bin/bash -c "apt-get update"
-chroot $DEST/output/sdcard /bin/bash -c "apt-get -qq -y install locales makedev"
+chroot $DEST/output/sdcard /bin/bash -c "apt-get -y update"
+chroot $DEST/output/sdcard /bin/bash -c "apt-get -y install locales makedev"
 sed -i "s/^# $DEST_LANG/$DEST_LANG/" $DEST/output/sdcard/etc/locale.gen
 chroot $DEST/output/sdcard /bin/bash -c "locale-gen $DEST_LANG"
 chroot $DEST/output/sdcard /bin/bash -c "export LANG=$DEST_LANG LANGUAGE=$DEST_LANG DEBIAN_FRONTEND=noninteractive"
@@ -451,13 +451,17 @@ install_applications (){
 #--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Installing aditional applications"
 
-PAKETKI="alsa-utils bash-completion bc bluetooth bridge-utils build-essential ca-certificates cmake cpufrequtils curl dosfstools evtest fbi fbset figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 ifupdown iproute iputils-ping iperf ir-keytable isc-dhcp-client iw less libbluetooth-dev libbluetooth3 libc6 libfuse2 libnl-dev libssl-dev lirc lsof makedev module-init-tools ntfs-3g ntp openssh-server parted pciutils procps python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools udev unattended-upgrades unzip usbutils wireless-tools wpasupplicant"
+PAKETKI="alsa-utils bash-completion bc bluetooth bridge-utils build-essential ca-certificates cmake cpufrequtils curl dosfstools evtest fbi fbset figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 ifupdown iproute iputils-ping iperf ir-keytable isc-dhcp-client iw less libbluetooth-dev libbluetooth3 libc6 libfuse2 libnl-dev libssl-dev lirc lsof makedev module-init-tools ntfs-3g ntp openssh-server parted pciutils procps python-smbus rfkill rsyslog rsync screen stress sudo sysfsutils toilet u-boot-tools udev unattended-upgrades unzip usbutils wireless-tools wpasupplicant"
 
 # PAKETKI=$PAKETKI" console-setup console-data libnl-3-dev lvm2" # might be added
 # some packets are different in jessie
 if [ "$RELEASE" = "jessie" ]; then PAKETKI="${PAKETKI//libnl-dev/libnl-3-dev}";PAKETKI=$PAKETKI" busybox-syslogd"; fi
 
-chroot $DEST/output/sdcard /bin/bash -c "apt-get -qq -y install $PAKETKI && apt-get -y clean"
+chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install $PAKETKI"
+chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y clean"
+
+# make a compressed image for use later
+tar -cvpf $DEST/output/$RELEASE.tar --directory=$DEST/output/sdcard --exclude=proc --exclude=sys --exclude=dev/pts .
 
 if [ "$RELEASE" = "wheezy" ]; then
 # ramlog
@@ -584,10 +588,9 @@ tar xvfz $SRC/lib/bin/temper.tgz
 # some aditional stuff. Some driver as example
 if [[ -n "$MISC3_DIR" ]]; then
 	# https://github.com/pvaret/rtl8192cu-fixes
-	# temp
-	git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
 	cd $DEST/$MISC3_DIR
-	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$DEST/$LINUXSOURCE/
+	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
+	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean && make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$DEST/$LINUXSOURCE/
 	cp *.ko $DEST/output/sdcard/usr/local/bin
 	cp blacklist*.conf $DEST/output/sdcard/etc/modprobe.d/
 fi
