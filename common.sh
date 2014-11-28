@@ -215,14 +215,15 @@ packing_kernel (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Pack kernel				  							                    
 #--------------------------------------------------------------------------------------------------------------------------------
-if [ -d "$DEST/$LINUXSOURCE/output/lib/modules/$VER$LOCALVERSION" ]; then 
-cd "$DEST/$LINUXSOURCE/output/lib/modules/$VER$LOCALVERSION"
+if [ -d "$DEST/$LINUXSOURCE"/output/lib/modules/"$VER$LOCALVERSION" ]; then 
+cd "$DEST/$LINUXSOURCE"/output/lib/modules/"$VER$LOCALVERSION"
 # correct link
 rm build source
 ln -s /usr/include/ build
 ln -s /usr/include/ source
 fi
 #
+mkdir -p $DEST/output/kernel
 cd $DEST/$LINUXSOURCE/output
 tar -cPf $DEST"/output/kernel/"$BOARD"_kernel_"$VER"_mod_head_fw.tar" *
 cd $DEST/output/kernel
