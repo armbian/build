@@ -14,7 +14,7 @@ echo "Downloading necessary files."
 apt-get -y install debconf-utils
 debconf-apt-progress -- apt-get -y install pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex gawk gcc-arm-linux-gnueabi 
 debconf-apt-progress -- apt-get -y install gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libncurses5-dev
-debconf-apt-progress -- apt-get -y install libusb-1.0-0-dev parted pkg-config
+debconf-apt-progress -- apt-get -y install libusb-1.0-0-dev parted pkg-config expect
 # for creating PDF documentation
 # debconf-apt-progress -- apt-get -y install pandoc nbibtex texlive-latex-base texlive-latex-recommended texlive-latex-extra preview-latex-style 
 # debconf-apt-progress -- apt-get -y install dvipng texlive-fonts-recommended
@@ -29,8 +29,8 @@ fetch_from_github (){
 echo "------ Downloading $2."
 if [ -d "$DEST/$2" ]; then
 	cd $DEST/$2
-		# some patching for TFT display source
-		if [[ $1 == "https://github.com/notro/fbtft" ]]; then git checkout master; fi
+		# some patching for TFT display source and Realtek RT8192CU drivers
+		if [[ $1 == "https://github.com/notro/fbtft" || $1 == "https://github.com/dz0ny/rt8192cu" ]]; then git checkout master; fi
 	git pull 
 	cd $SRC
 else
@@ -65,9 +65,9 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
         	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" == "" ]; then
         		patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
         	fi
-    	fi
-    	# compile sunxi tools
-    	compile_sunxi_tools
+    fi
+    # compile sunxi tools
+    compile_sunxi_tools
 fi
 # cubox / hummingboard
 if [[ $LINUXSOURCE == "linux-cubox-next" ]] ; then
@@ -130,8 +130,9 @@ else
 	git checkout master
 fi
 cd $DEST/$LINUXSOURCE
-if [[ $BOARD == "bananapi" || $BOARD == "cubietruck" || $BOARD == "cubieboard2" || $BOARD == "lime" || $BOARD == "lime2" ]]; then
+if [[ $BOARD == "bananapi" || $BOARD == "cubietruck" || $BOARD == "cubieboard2" || $BOARD == "cubieboard" || $BOARD == "lime" || $BOARD == "lime2" ]]; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" == "" ]; then
+					# DMA disable
                 	patch --batch -N -p1 < $SRC/lib/patch/bananafbtft.patch
 	fi
 fi
@@ -159,7 +160,7 @@ cd $DEST/$LINUXSOURCE
 make -s CROSS_COMPILE=arm-linux-gnueabihf- clean
 
 rm -rf output
-mkdir -p output/boot output/boot/dtb
+mkdir -p output/boot
 
 # Adding custom firmware to kernel source
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $DEST/$LINUXSOURCE/firmware; fi
@@ -182,6 +183,7 @@ then
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- LOADADDR=0x40008000 uImage modules dtbs LOCALVERSION="$LOCALVERSION"
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=output modules_install
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_HDR_PATH=output/usr headers_install
+	mkdir output/boot/dtb
 	cp Module.symvers output/usr/include
 	cp arch/arm/boot/uImage output/boot/
 	cp arch/arm/boot/dts/*.dtb output/boot/dtb
@@ -215,6 +217,7 @@ packing_kernel (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Pack kernel				  							                    
 #--------------------------------------------------------------------------------------------------------------------------------
+
 if [ -d "$DEST/$LINUXSOURCE"/output/lib/modules/"$VER$LOCALVERSION" ]; then 
 cd "$DEST/$LINUXSOURCE"/output/lib/modules/"$VER$LOCALVERSION"
 # correct link
@@ -234,114 +237,262 @@ CHOOSEN_KERNEL="$BOARD"_kernel_"$VER"_mod_head_fw.tar
 }
 
 
-creating_image (){
+create_debian_template (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Create and mount SD image	  							                    
+# Create Debian image template if it does not exists
 #--------------------------------------------------------------------------------------------------------------------------------
-# check if previously build kernel file exits
-
-if [ ! -f "$DEST/output/kernel/"$CHOOSEN_KERNEL ]; then 
-	echo "Previously compiled kernel does not exits. Please choose compile=yes in configuration and run again!"
-	exit 
-fi
-echo "------ Creating SD Images"
+if [ ! -f "$DEST/output/rootfs/$RELEASE.raw.gz" ]; then
+echo "------ Create Debian $RELEASE image template"
 cd $DEST/output
-# create 1G image and mount image to next free loop device
-dd if=/dev/zero of=debian_rootfs.raw bs=1M count=$SDSIZE status=noxfer
+
+# create needed directories and mount image to next free loop device
+mkdir -p $DEST/output/rootfs $DEST/output/sdcard/ $DEST/output/kernel
+
+# create image file
+dd if=/dev/zero of=$DEST/output/rootfs/$RELEASE.raw bs=1M count=$SDSIZE status=noxfer
+
+# find first avaliable free device
 LOOP=$(losetup -f)
-losetup $LOOP debian_rootfs.raw
+
+# mount image as block device
+losetup $LOOP $DEST/output/rootfs/$RELEASE.raw
+
 sync
-echo "------ Partitioning, writing boot loader and mounting file-system."
+
 # create one partition starting at 2048 which is default
+echo "------ Partitioning and mounting file-system."
 parted -s $LOOP -- mklabel msdos
 parted -s $LOOP -- mkpart primary ext4  2048s -1s
-partprobe $LOOP
-echo "------ Writing boot loader."
-if [[ $BOARD == "cubox-i" ]] ; then
-	dd if=$DEST/$BOOTSOURCE/SPL of=$LOOP bs=512 seek=2 status=noxfer
-	dd if=$DEST/$BOOTSOURCE/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer
-else
-	dd if=$DEST/$BOOTSOURCE/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer
-fi
-sync
-sleep 3
+partprobe $LOOP 
 losetup -d $LOOP
+sleep 2
+
 # 2048 (start) x 512 (block size) = where to mount partition
-losetup -o 1048576 $LOOP debian_rootfs.raw
+losetup -o 1048576 $LOOP $DEST/output/rootfs/$RELEASE.raw
+
 # create filesystem
 mkfs.ext4 $LOOP
+
 # tune filesystem
 tune2fs -o journal_data_writeback $LOOP
+
 # label it
 e2label $LOOP "$BOARD"
-# create mount point and mount image 
-mkdir -p $DEST/output/sdcard/ $DEST/output/kernel
+
+# mount image to already prepared mount point
 mount -t ext4 $LOOP $DEST/output/sdcard/
-}
 
+# debootstrap base system
+debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/output/sdcard/ http://ftp.si.debian.org/debian
 
-install_base_debian (){
-#--------------------------------------------------------------------------------------------------------------------------------
-# Install base Debian	  								                    
-#--------------------------------------------------------------------------------------------------------------------------------
-echo "------ Install basic filesystem"
-
-# install base system
-debootstrap --no-check-gpg --arch=armhf --foreign $RELEASE $DEST/output/sdcard/
-# we need emulator
+# we need emulator for second stage
 cp /usr/bin/qemu-arm-static $DEST/output/sdcard/usr/bin/
+
 # enable arm binary format so that the cross-architecture chroot environment will work
 test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-# mount proc inside chroot
-mount -t proc chproc $DEST/output/sdcard/proc
-# second stage unmounts proc 
+
+# debootstrap second stage
 chroot $DEST/output/sdcard /bin/bash -c "/debootstrap/debootstrap --second-stage"
+
 # mount proc, sys and dev
 mount -t proc chproc $DEST/output/sdcard/proc
 mount -t sysfs chsys $DEST/output/sdcard/sys
 mount -t devtmpfs chdev $DEST/output/sdcard/dev || mount --bind /dev $DEST/output/sdcard/dev
 mount -t devpts chpts $DEST/output/sdcard/dev/pts
-# update /etc/issue
-#cat <<EOT > $DEST/output/sdcard/etc/issue
-#Debian GNU/Linux $VERSION
-#
-#EOT
-# update /etc/motd
+
+# root-fs modifications
 rm $DEST/output/sdcard/etc/motd
 touch $DEST/output/sdcard/etc/motd
+
 # choose proper apt list
 cp $SRC/lib/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.list
-# update, fix locales
-chroot $DEST/output/sdcard /bin/bash -c "apt-get -y update"
-chroot $DEST/output/sdcard /bin/bash -c "apt-get -y install locales makedev"
+
+# update and upgrade
+LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y update"
+
+# install aditional packages
+PAKETKI="alsa-utils bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl dosfstools evtest figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iw less libbluetooth-dev libbluetooth3 libfuse2 libnl-dev libssl-dev lirc lsof makedev module-init-tools ntfs-3g ntp parted pciutils python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools wpasupplicant"
+
+if [ "$RELEASE" = "jessie" ]; then 
+	PAKETKI="${PAKETKI//libnl-dev/libnl-3-dev}"; # change package
+	PAKETKI=$PAKETKI" busybox-syslogd"; # to gain performance
+	LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y remove rsyslog"
+	sed -e s,"TTYVTDisallocate=yes","TTYVTDisallocate=no",g 	-i $DEST/output/sdcard/etc/systemd/system/getty.target.wants/getty@tty1.service
+	# enable root login for latest ssh on jessie
+	sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/output/sdcard/etc/ssh/sshd_config 
+else
+	# don't clear screen
+	sed -e 's/1:2345:respawn:\/sbin\/getty 38400 tty1/1:2345:respawn:\/sbin\/getty --noclear 38400 tty1/g' -i $DEST/output/sdcard/etc/inittab   
+fi
+
+# too much ? udev / cups avahi-daemon colord dbus-x11 consolekit
+
+# generate locales
+LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y -qq install locales"
 sed -i "s/^# $DEST_LANG/$DEST_LANG/" $DEST/output/sdcard/etc/locale.gen
-chroot $DEST/output/sdcard /bin/bash -c "locale-gen $DEST_LANG"
-chroot $DEST/output/sdcard /bin/bash -c "export LANG=$DEST_LANG LANGUAGE=$DEST_LANG DEBIAN_FRONTEND=noninteractive"
-chroot $DEST/output/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=POSIX"
+LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "locale-gen $DEST_LANG"
+LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "export LANG=$DEST_LANG LANGUAGE=$DEST_LANG DEBIAN_FRONTEND=noninteractive"
+LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=POSIX"
+chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install $PAKETKI"
+chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y autoremove"
 # set up 'apt
 cat <<END > $DEST/output/sdcard/etc/apt/apt.conf.d/71-no-recommends
 APT::Install-Recommends "0";
 APT::Install-Suggests "0";
 END
-# script to show (graphical) boot splash
-cp $SRC/lib/scripts/bootsplash $DEST/output/sdcard/etc/init.d/bootsplash
-cp $SRC/lib/bin/bootsplash.png $DEST/output/sdcard/etc/bootsplash.png
-chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/bootsplash"
-# chroot $DEST/output/sdcard /bin/bash -c "insserv bootsplash" 
+
 # scripts for autoresize at first boot
 cp $SRC/lib/scripts/resize2fs $DEST/output/sdcard/etc/init.d
 cp $SRC/lib/scripts/firstrun $DEST/output/sdcard/etc/init.d
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/firstrun"
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/resize2fs"
 chroot $DEST/output/sdcard /bin/bash -c "insserv firstrun" 
-# install custom bashrc
+
+# install custom bashrc and hardware dependent motd
 cat $SRC/lib/scripts/bashrc >> $DEST/output/sdcard/etc/bash.bashrc 
-# install custom motd / hardware dependent
 cp $SRC/lib/scripts/armhwinfo $DEST/output/sdcard/etc/init.d/
-chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/armhwinfo"
-#chroot $DEST/output/sdcard /bin/bash -c "insserv armhwinfo" 
-sed -e s,"# Update motd","service armhwinfo start",g 	-i $DEST/output/sdcard/etc/init.d/motd
+chroot $DEST/output/sdcard /bin/bash -c "insserv armhwinfo" 
+sed -e s,"# Update motd","insserv armhwinfo",g 	-i $DEST/output/sdcard/etc/init.d/motd
 sed -e s,"uname -snrvm > /var/run/motd.dynamic","",g  -i $DEST/output/sdcard/etc/init.d/motd
+
+# install ramlog
+if [ "$RELEASE" = "wheezy" ]; then
+	cp $SRC/lib/bin/ramlog_2.0.0_all.deb $DEST/output/sdcard/tmp
+	chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb"
+	rm $DEST/output/sdcard/tmp/ramlog_2.0.0_all.deb
+	sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $DEST/output/sdcard/etc/default/ramlog
+	sed -e 's/# Required-Start:    $remote_fs $time/# Required-Start:    $remote_fs $time ramlog/g' -i $DEST/output/sdcard/etc/init.d/rsyslog 
+	sed -e 's/# Required-Stop:     umountnfs $time/# Required-Stop:     umountnfs $time ramlog/g' -i $DEST/output/sdcard/etc/init.d/rsyslog   
+fi
+
+# replace hostapd from testing binary
+cd $DEST/output/sdcard/usr/sbin/
+tar xfz $SRC/lib/bin/hostapd24.tgz
+cp $SRC/lib/config/hostapd.conf $DEST/output/sdcard/etc/hostapd.conf
+
+# set console
+chroot $DEST/output/sdcard /bin/bash -c "export TERM=linux"
+
+# change time zone data
+echo $TZDATA > $DEST/output/sdcard/etc/timezone
+chroot $DEST/output/sdcard /bin/bash -c "dpkg-reconfigure -f noninteractive tzdata"
+
+# set root password and force password change upon first login
+chroot $DEST/output/sdcard /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root"  
+chroot $DEST/output/sdcard /bin/bash -c "chage -d 0 root" 
+
+# change default I/O scheduler, noop for flash media, deadline for SSD, cfq for mechanical drive
+cat <<EOT >> $DEST/output/sdcard/etc/sysfs.conf
+block/mmcblk0/queue/scheduler = noop
+#block/sda/queue/scheduler = cfq
+EOT
+
+# add noatime to root FS
+echo "/dev/mmcblk0p1  /           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro        0       0" >> $DEST/output/sdcard/etc/fstab
+
+# Configure The System For unattended upgrades
+cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
+
+# flash media tunning
+sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $DEST/output/sdcard/etc/default/tmpfs
+sed -e 's/#RUN_SIZE=10%/RUN_SIZE=128M/g' -i $DEST/output/sdcard/etc/default/tmpfs 
+sed -e 's/#LOCK_SIZE=/LOCK_SIZE=/g' -i $DEST/output/sdcard/etc/default/tmpfs 
+sed -e 's/#SHM_SIZE=/SHM_SIZE=128M/g' -i $DEST/output/sdcard/etc/default/tmpfs 
+sed -e 's/#TMP_SIZE=/TMP_SIZE=1G/g' -i $DEST/output/sdcard/etc/default/tmpfs
+
+# clean deb cache
+chroot $DEST/output/sdcard /bin/bash -c "apt-get -y clean"	
+
+echo "------ Closing image"
+chroot $DEST/output/sdcard /bin/bash -c "sync"
+sync
+sleep 3
+# unmount proc, sys and dev from chroot
+umount -l $DEST/output/sdcard/dev/pts
+umount -l $DEST/output/sdcard/dev
+umount -l $DEST/output/sdcard/proc
+umount -l $DEST/output/sdcard/sys
+
+# kill process inside
+KILLPROC=$(ps -uax | pgrep ntpd |        tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
+KILLPROC=$(ps -uax | pgrep dbus-daemon | tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
+
+umount -l $DEST/output/sdcard/ 
+sleep 2
+losetup -d $LOOP
+rm -rf $DEST/output/sdcard/	
+	
+gzip $DEST/output/rootfs/$RELEASE.raw	
+fi
+
+
+#
+}
+
+
+install_kernel (){
+#--------------------------------------------------------------------------------------------------------------------------------
+# Install kernel to prepared root filesystem  								                    
+#--------------------------------------------------------------------------------------------------------------------------------
+if [ ! -f "$DEST/output/kernel/"$CHOOSEN_KERNEL ]; then 
+	echo "Previously compiled kernel does not exits. Please choose compile=yes in configuration and run again!"
+	exit 
+fi
+mkdir -p $DEST/output/sdcard/
+gzip -dc < $DEST/output/rootfs/$RELEASE.raw.gz > $DEST/output/debian_rootfs.raw
+LOOP=$(losetup -f)
+losetup -o 1048576 $LOOP $DEST/output/debian_rootfs.raw
+mount -t ext4 $LOOP $DEST/output/sdcard/
+
+# mount proc, sys and dev
+mount -t proc chproc $DEST/output/sdcard/proc
+mount -t sysfs chsys $DEST/output/sdcard/sys
+mount -t devtmpfs chdev $DEST/output/sdcard/dev || mount --bind /dev $DEST/output/sdcard/dev
+mount -t devpts chpts $DEST/output/sdcard/dev/pts
+
+# configure MIN / MAX Speed for cpufrequtils
+sed -e "s/MIN_SPEED=\"0\"/MIN_SPEED=\"$CPUMIN\"/g" -i $DEST/output/sdcard/etc/init.d/cpufrequtils
+sed -e "s/MAX_SPEED=\"0\"/MAX_SPEED=\"$CPUMAX\"/g" -i $DEST/output/sdcard/etc/init.d/cpufrequtils
+sed -e 's/ondemand/interactive/g' -i $DEST/output/sdcard/etc/init.d/cpufrequtils
+
+# alter hostap configuration
+sed -i "s/BOARD/$BOARD/" $DEST/output/sdcard/etc/hostapd.conf
+
+# set hostname 
+echo $HOST > $DEST/output/sdcard/etc/hostname
+
+# set hostname in hosts file
+cat > $DEST/output/sdcard/etc/hosts <<EOT
+127.0.0.1   localhost $HOST
+::1         localhost $HOST ip6-localhost ip6-loopback
+fe00::0     ip6-localnet
+ff00::0     ip6-mcastprefix
+ff02::1     ip6-allnodes
+ff02::2     ip6-allrouters
+EOT
+
+# load modules
+cp $SRC/lib/config/modules.$BOARD $DEST/output/sdcard/etc/modules
+
+# copy and create symlink to default interfaces configuration
+cp $SRC/lib/config/interfaces.* $DEST/output/sdcard/etc/network/
+ln -sf interfaces.default $DEST/output/sdcard/etc/network/interfaces
+
+# uncompress kernel
+cd $DEST/output/sdcard/
+tar -xPf $DEST"/output/kernel/"$CHOOSEN_KERNEL
+sync
+sleep 3
+
+# cleanup
+rm -f $DEST/output/*.md5 *.tar
+
+# recreate boot.scr if using kernel for different board. Mainline only
+if [[ $BOARD == *next* ]];then
+	sed -e "s/WHICH/$DTBS/g" $SRC/lib/config/boot.cmd > /tmp/boot.cmd
+	mkimage -C none -A arm -T script -d /tmp/boot.cmd $DEST/output/sdcard/boot/boot.scr
+fi
 }
 
 
@@ -350,6 +501,7 @@ install_board_specific (){
 # Install board specific applications  					                    
 #--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Install board specific applications"
+#
 if [[ $LOCALVERSION == *sunxi ]] ; then
 		# enable serial console (Debian/sysvinit way)
 		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/output/sdcard/etc/inittab		
@@ -381,7 +533,7 @@ if [[ $BOARD == "bananapi" ]] ; then
 		cp $SRC/lib/config/lirc.conf.bananapi $DEST/output/sdcard/etc/lirc/lircd.conf
 fi
 
-if [[ $BOARD == "lime" || $BOARD == "lime2" ]] ; then
+if [[ $BOARD == "micro" || $BOARD == "lime" || $BOARD == "lime2" ]] ; then
 		fex2bin $SRC/lib/config/olimex-$BOARD.fex $DEST/output/sdcard/boot/$BOARD.bin
 		cp $SRC/lib/config/uEnv.bananapi $DEST/output/sdcard/boot/uEnv.txt
 		sed -i "s/bananapi.bin/$BOARD.bin/" $DEST/output/sdcard/boot/uEnv.txt
@@ -446,109 +598,16 @@ fi
 }
 
 
-install_applications (){
-#--------------------------------------------------------------------------------------------------------------------------------
-# Install applications  								                    
-#--------------------------------------------------------------------------------------------------------------------------------
-echo "------ Installing aditional applications"
-
-PAKETKI="alsa-utils bash-completion bc bluetooth bridge-utils build-essential ca-certificates cmake cpufrequtils curl dosfstools evtest fbi fbset figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 ifupdown iproute iputils-ping iperf ir-keytable isc-dhcp-client iw less libbluetooth-dev libbluetooth3 libc6 libfuse2 libnl-dev libssl-dev lirc lsof makedev module-init-tools ntfs-3g ntp openssh-server parted pciutils procps python-smbus rfkill rsyslog rsync screen stress sudo sysfsutils toilet u-boot-tools udev unattended-upgrades unzip usbutils wireless-tools wpasupplicant"
-
-# PAKETKI=$PAKETKI" console-setup console-data libnl-3-dev lvm2" # might be added
-# some packets are different in jessie
-if [ "$RELEASE" = "jessie" ]; then PAKETKI="${PAKETKI//libnl-dev/libnl-3-dev}";PAKETKI=$PAKETKI" busybox-syslogd"; fi
-
-chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install $PAKETKI"
-chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y clean"
-
-# make a compressed image for use later
-tar -cvpf $DEST/output/$RELEASE.tar --directory=$DEST/output/sdcard --exclude=proc --exclude=sys --exclude=dev/pts .
-
-if [ "$RELEASE" = "wheezy" ]; then
-# ramlog
-cp $SRC/lib/bin/ramlog_2.0.0_all.deb $DEST/output/sdcard/tmp
-chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb"
-sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $DEST/output/sdcard/etc/default/ramlog
-sed -e 's/# Required-Start:    $remote_fs $time/# Required-Start:    $remote_fs $time ramlog/g' -i $DEST/output/sdcard/etc/init.d/rsyslog 
-sed -e 's/# Required-Stop:     umountnfs $time/# Required-Stop:     umountnfs $time ramlog/g' -i $DEST/output/sdcard/etc/init.d/rsyslog   
-fi
-
-# replace hostapd from testing binary.
-cd $DEST/output/sdcard/usr/sbin/
-tar xvfz $SRC/lib/bin/hostapd23.tgz
-cp $SRC/lib/config/hostapd.conf $DEST/output/sdcard/etc/hostapd.conf
-sed -i "s/BOARD/$BOARD/" $DEST/output/sdcard/etc/hostapd.conf
-# don't clear screen
-sed -e 's/1:2345:respawn:\/sbin\/getty 38400 tty1/1:2345:respawn:\/sbin\/getty --noclear 38400 tty1/g' -i $DEST/output/sdcard/etc/inittab   
-# console
-chroot $DEST/output/sdcard /bin/bash -c "export TERM=linux" 
-# Change Time zone data
-echo $TZDATA > $DEST/output/sdcard/etc/timezone
-chroot $DEST/output/sdcard /bin/bash -c "dpkg-reconfigure -f noninteractive tzdata"
-# configure MIN / MAX Speed for cpufrequtils
-sed -e "s/MIN_SPEED=\"0\"/MIN_SPEED=\"$CPUMIN\"/g" -i $DEST/output/sdcard/etc/init.d/cpufrequtils
-sed -e "s/MAX_SPEED=\"0\"/MAX_SPEED=\"$CPUMAX\"/g" -i $DEST/output/sdcard/etc/init.d/cpufrequtils
-sed -e 's/ondemand/interactive/g' -i $DEST/output/sdcard/etc/init.d/cpufrequtils
-# set root password and force password change upon first login
-chroot $DEST/output/sdcard /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root"  
-chroot $DEST/output/sdcard /bin/bash -c "chage -d 0 root" 
-if [ "$RELEASE" = "jessie" ]; then
-# enable root login for latest ssh on jessie
-sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/output/sdcard/etc/ssh/sshd_config || fail
-fi
-# set hostname 
-echo $HOST > $DEST/output/sdcard/etc/hostname
-# set hostname in hosts file
-cat > $DEST/output/sdcard/etc/hosts <<EOT
-127.0.0.1   localhost $HOST
-::1         localhost $HOST ip6-localhost ip6-loopback
-fe00::0     ip6-localnet
-ff00::0     ip6-mcastprefix
-ff02::1     ip6-allnodes
-ff02::2     ip6-allrouters
-EOT
-# change default I/O scheduler, noop for flash media, deadline for SSD, cfq for mechanical drive
-cat <<EOT >> $DEST/output/sdcard/etc/sysfs.conf
-block/mmcblk0/queue/scheduler = noop
-#block/sda/queue/scheduler = cfq
-EOT
-# load modules
-cp $SRC/lib/config/modules.$BOARD $DEST/output/sdcard/etc/modules
-# copy and create symlink to default interfaces configuration
-cp $SRC/lib/config/interfaces.* $DEST/output/sdcard/etc/network/
-ln -sf interfaces.default $DEST/output/sdcard/etc/network/interfaces
-# add noatime to root FS
-echo "/dev/mmcblk0p1  /           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro        0       0" >> $DEST/output/sdcard/etc/fstab
-# Configure The System For unattended upgrades
-cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
-# flash media tunning
-sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $DEST/output/sdcard/etc/default/tmpfs
-sed -e 's/#RUN_SIZE=10%/RUN_SIZE=128M/g' -i $DEST/output/sdcard/etc/default/tmpfs 
-sed -e 's/#LOCK_SIZE=/LOCK_SIZE=/g' -i $DEST/output/sdcard/etc/default/tmpfs 
-sed -e 's/#SHM_SIZE=/SHM_SIZE=128M/g' -i $DEST/output/sdcard/etc/default/tmpfs 
-sed -e 's/#TMP_SIZE=/TMP_SIZE=1G/g' -i $DEST/output/sdcard/etc/default/tmpfs 
-# uncompress kernel
-cd $DEST/output/sdcard/
-tar -xPf $DEST"/output/kernel/"$CHOOSEN_KERNEL
-sync
-sleep 3
-# cleanup
-rm -f $DEST/output/*.md5 *.tar
-# recreate boot.scr if using kernel for different board. Mainline only
-if [[ $BOARD == *next* ]];then
-sed -e "s/WHICH/$DTBS/g" $SRC/lib/config/boot.cmd > /tmp/boot.cmd
-mkimage -C none -A arm -T script -d /tmp/boot.cmd $DEST/output/sdcard/boot/boot.scr
-fi
-}
-
-
 choosing_kernel (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Choose which kernel to use  								            
 #--------------------------------------------------------------------------------------------------------------------------------
 cd $DEST"/output/kernel/"
-MYLIST=`for x in $(ls -1 *kernel*.tar); do echo $x " -"; done`
+if [[ $BRANCH == "next" ]]; then
+MYLIST=`for x in $(ls -1 *next*.tar); do echo $x " -"; done`
+else
+MYLIST=`for x in $(ls -1 *.tar | grep -v next); do echo $x " -"; done`
+fi
 WC=`echo $MYLIST | wc -l`
 if [[ $WC -ne 0 ]]; then
     whiptail --title "Choose kernel archive" --backtitle "Which kernel do you want to use?" --menu "" 12 60 4 $MYLIST 2>results
@@ -590,7 +649,7 @@ tar xvfz $SRC/lib/bin/temper.tgz
 if [[ -n "$MISC3_DIR" ]]; then
 	# https://github.com/pvaret/rtl8192cu-fixes
 	cd $DEST/$MISC3_DIR
-	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
+	git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
 	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean && make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$DEST/$LINUXSOURCE/
 	cp *.ko $DEST/output/sdcard/usr/local/bin
 	cp blacklist*.conf $DEST/output/sdcard/etc/modprobe.d/
@@ -640,7 +699,10 @@ umount -l $DEST/output/sdcard/proc
 umount -l $DEST/output/sdcard/sys
 
 # let's create nice file name
+VERSION=$VERSION" "$VER
 VERSION="${VERSION// /_}"
+VERSION="${VERSION//$BRANCH/}"
+VERSION="${VERSION//__/_}"
 
 # kill process inside
 KILLPROC=$(ps -uax | pgrep ntpd |        tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
@@ -654,6 +716,19 @@ umount -l $DEST/output/sdcard/
 sleep 2
 losetup -d $LOOP
 rm -rf $DEST/output/sdcard/
+
+# write bootloader
+LOOP=$(losetup -f)
+losetup $LOOP $DEST/output/debian_rootfs.raw
+if [[ $BOARD == "cubox-i" ]] ; then
+	dd if=$DEST/$BOOTSOURCE/SPL of=$LOOP bs=512 seek=2 status=noxfer
+	dd if=$DEST/$BOOTSOURCE/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer
+else
+	dd if=$DEST/$BOOTSOURCE/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer
+fi
+sync
+sleep 3
+losetup -d $LOOP
 
 # create documentation
 #pandoc $SRC/lib/README.md $DEST/documentation/Home.md --standalone -o $DEST/output/$VERSION.pdf -V geometry:"top=2.54cm, bottom=2.54cm, left=3.17cm, right=3.17cm" -V geometry:paperwidth=21cm -V geometry:paperheight=29.7cm

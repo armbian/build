@@ -32,7 +32,7 @@ download_host_packages
 mkdir -p $DEST/output
 fetch_from_github "$BOOTLOADER" "$BOOTSOURCE"
 fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE"
-fetch_from_github "$DOCS" "$DOCSDIR"
+if [[ -n "$DOCS" ]]; then fetch_from_github "$DOCS" "$DOCSDIR"; fi
 if [[ -n "$MISC1" ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
 if [[ -n "$MISC2" ]]; then fetch_from_github "$MISC2" "$MISC2_DIR"; fi
 if [[ -n "$MISC3" ]]; then fetch_from_github "$MISC3" "$MISC3_DIR"; fi
@@ -71,16 +71,12 @@ fi
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
-# prepare image with bootloader
-creating_image
+# create or use prepared root file-system
+create_debian_template
 
 #--------------------------------------------------------------------------------------------------------------------------------
-# install base system
-install_base_debian 
-
-#--------------------------------------------------------------------------------------------------------------------------------
-# install additional applications
-install_applications
+# add kernel to the image
+install_kernel
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # install board specific applications
@@ -88,7 +84,9 @@ install_board_specific
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # install external applications
+if [ "$EXTERNAL" = "yes" ]; then
 install_external_applications
+fi
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # add some summary to the image
