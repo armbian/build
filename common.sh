@@ -239,10 +239,10 @@ CHOOSEN_KERNEL="$BOARD"_kernel_"$VER"_mod_head_fw.tar
 
 create_debian_template (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Create Debian image template if it does not exists
+# Create Debian and Ubuntu image template if it does not exists
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ ! -f "$DEST/output/rootfs/$RELEASE.raw.gz" ]; then
-echo "------ Create Debian $RELEASE image template"
+echo "------ Debootstrap $RELEASE to image template"
 cd $DEST/output
 
 # create needed directories and mount image to next free loop device
@@ -283,7 +283,8 @@ e2label $LOOP "$BOARD"
 mount -t ext4 $LOOP $DEST/output/sdcard/
 
 # debootstrap base system
-debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/output/sdcard/ http://ftp.si.debian.org/debian
+debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/output/sdcard/ 
+#debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/output/sdcard/ http://ftp.si.debian.org/debian
 
 # we need emulator for second stage
 cp /usr/bin/qemu-arm-static $DEST/output/sdcard/usr/bin/
@@ -301,7 +302,7 @@ mount -t devtmpfs chdev $DEST/output/sdcard/dev || mount --bind /dev $DEST/outpu
 mount -t devpts chpts $DEST/output/sdcard/dev/pts
 
 # root-fs modifications
-rm $DEST/output/sdcard/etc/motd
+rm 	-f $DEST/output/sdcard/etc/motd
 touch $DEST/output/sdcard/etc/motd
 
 # choose proper apt list
@@ -311,9 +312,9 @@ cp $SRC/lib/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.lis
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y update"
 
 # install aditional packages
-PAKETKI="alsa-utils bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl dosfstools evtest figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iw less libbluetooth-dev libbluetooth3 libfuse2 libnl-dev libssl-dev lirc lsof makedev module-init-tools ntfs-3g ntp parted pciutils python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools wpasupplicant"
+PAKETKI="alsa-utils bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl dosfstools evtest figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iw less libbluetooth-dev libbluetooth3 libfuse2 libnl-dev libssl-dev lirc lsof makedev module-init-tools nano ntfs-3g ntp parted pciutils python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools wpasupplicant"
 
-if [ "$RELEASE" = "jessie" ]; then 
+if [ "$RELEASE" != "wheezy" ]; then 
 	PAKETKI="${PAKETKI//libnl-dev/libnl-3-dev}"; # change package
 	PAKETKI=$PAKETKI" busybox-syslogd"; # to gain performance
 	LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y remove rsyslog"
@@ -325,6 +326,17 @@ else
 	sed -e 's/1:2345:respawn:\/sbin\/getty 38400 tty1/1:2345:respawn:\/sbin\/getty --noclear 38400 tty1/g' -i $DEST/output/sdcard/etc/inittab   
 fi
 
+# Ubuntu fixes
+# that my startup scripts works well
+if [ ! -f "$DEST/output/sdcard/sbin/insserv" ]; then
+chroot $DEST/output/sdcard /bin/bash -c "ln -s /usr/lib/insserv/insserv /sbin/insserv"
+fi
+# that my custom motd works well
+if [ -d "$DEST/output/sdcard/etc/update-motd.d" ]; then
+chroot $DEST/output/sdcard /bin/bash -c "mv /etc/update-motd.d /etc/update-motd.d-backup"
+fi
+#
+
 # too much ? udev / cups avahi-daemon colord dbus-x11 consolekit
 
 # generate locales
@@ -334,6 +346,8 @@ LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "locale-gen $
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "export LANG=$DEST_LANG LANGUAGE=$DEST_LANG DEBIAN_FRONTEND=noninteractive"
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=POSIX"
 chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install $PAKETKI"
+#chroot $DEST/output/sdcard /bin/bash -c "apt-get install $PAKETKI"
+
 chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y autoremove"
 # set up 'apt
 cat <<END > $DEST/output/sdcard/etc/apt/apt.conf.d/71-no-recommends
@@ -346,14 +360,17 @@ cp $SRC/lib/scripts/resize2fs $DEST/output/sdcard/etc/init.d
 cp $SRC/lib/scripts/firstrun $DEST/output/sdcard/etc/init.d
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/firstrun"
 chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/resize2fs"
-chroot $DEST/output/sdcard /bin/bash -c "insserv firstrun" 
+chroot $DEST/output/sdcard /bin/bash -c "insserv firstrun >> /dev/null" 
 
 # install custom bashrc and hardware dependent motd
 cat $SRC/lib/scripts/bashrc >> $DEST/output/sdcard/etc/bash.bashrc 
 cp $SRC/lib/scripts/armhwinfo $DEST/output/sdcard/etc/init.d/
-chroot $DEST/output/sdcard /bin/bash -c "insserv armhwinfo" 
-sed -e s,"# Update motd","insserv armhwinfo",g 	-i $DEST/output/sdcard/etc/init.d/motd
+chroot $DEST/output/sdcard /bin/bash -c "insserv armhwinfo >> /dev/null" 
+
+if [ -f "$DEST/output/sdcard/etc/init.d/motd" ]; then
+sed -e s,"# Update motd","insserv armhwinfo >> /dev/null",g 	-i $DEST/output/sdcard/etc/init.d/motd
 sed -e s,"uname -snrvm > /var/run/motd.dynamic","",g  -i $DEST/output/sdcard/etc/init.d/motd
+fi
 
 # install ramlog
 if [ "$RELEASE" = "wheezy" ]; then
@@ -392,14 +409,25 @@ echo "/dev/mmcblk0p1  /           ext4    defaults,noatime,nodiratime,data=write
 
 # Configure The System For unattended upgrades
 cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
+cp $SRC/lib/scripts/02periodic $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
+sed -e "s/CODENAME/$RELEASE/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+if [[ "$RELEASE" == "wheezy" || "$RELEASE" == "jessie" ]]; then
+	sed -e "s/ORIGIN/Debian/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+else
+	# Ubuntu stuff
+	sed -e "s/ORIGIN/Ubuntu/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+	# Serial console 
+	cp $SRC/lib/config/ttymxc0.conf $DEST/output/sdcard/etc/init
+fi
 
 # flash media tunning
+if [ -f "$DEST/output/sdcard/etc/default/tmpfs" ]; then
 sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $DEST/output/sdcard/etc/default/tmpfs
 sed -e 's/#RUN_SIZE=10%/RUN_SIZE=128M/g' -i $DEST/output/sdcard/etc/default/tmpfs 
 sed -e 's/#LOCK_SIZE=/LOCK_SIZE=/g' -i $DEST/output/sdcard/etc/default/tmpfs 
 sed -e 's/#SHM_SIZE=/SHM_SIZE=128M/g' -i $DEST/output/sdcard/etc/default/tmpfs 
 sed -e 's/#TMP_SIZE=/TMP_SIZE=1G/g' -i $DEST/output/sdcard/etc/default/tmpfs
+fi
 
 # clean deb cache
 chroot $DEST/output/sdcard /bin/bash -c "apt-get -y clean"	
@@ -585,7 +613,7 @@ if [[ $BOARD == "cubox-i" ]] ; then
 		cp $SRC/lib/scripts/brcm4330 $DEST/output/sdcard/etc/default
 		cp $SRC/lib/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
-		chroot $DEST/output/sdcard /bin/bash -c "insserv brcm4330-patch" 
+		chroot $DEST/output/sdcard /bin/bash -c "insserv brcm4330-patch >> /dev/null" 
 		# script to install to SATA
 		cp $SRC/lib/scripts/sata-install.sh $DEST/output/sdcard/root
 		# alter rc.local
@@ -723,6 +751,13 @@ losetup $LOOP $DEST/output/debian_rootfs.raw
 if [[ $BOARD == "cubox-i" ]] ; then
 	dd if=$DEST/$BOOTSOURCE/SPL of=$LOOP bs=512 seek=2 status=noxfer
 	dd if=$DEST/$BOOTSOURCE/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer
+elif [[ $BOARD == "cubieboard4" ]]
+then
+	$SRC/lib/bin/host/cubie-fex2bin $SRC/lib/config/cubieboard4.fex /tmp/sys_config.bin
+	$SRC/lib/bin/host/cubie-uboot-spl $SRC/lib/bin/cb4-u-boot-spl.bin /tmp/sys_config.bin /tmp/u-boot-spl_with_sys_config.bin
+	dd if=/tmp/u-boot-spl_with_sys_config.bin of=$LOOP bs=1024 seek=8 status=noxfer  
+	$SRC/lib/bin/host/cubie-uboot $SRC/lib/bin/cb4-u-boot-sun9iw1p1.bin /tmp/sys_config.bin /tmp/u-boot-sun9iw1p1_with_sys_config.bin
+	dd if=/tmp/u-boot-sun9iw1p1_with_sys_config.bin of=$LOOP bs=1024 seek=19096 status=noxfer
 else
 	dd if=$DEST/$BOOTSOURCE/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer
 fi
