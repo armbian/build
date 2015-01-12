@@ -1,10 +1,8 @@
-
-
-- SDK for ARM 
-- Use proven sources
-- Create SD images for various boards: Cubieboard, BananaPi, Cubox, Humminboard, Olimex, ...
-- Well documented, maintained & easy to use
-- Boot loaders and kernel images are compiled and cached.
+1. SDK for ARM 
+2. Use proven sources
+3. Create SD images for various boards: Cubieboard, BananaPi, Cubox, Humminboard, Olimex, ...
+4. Well documented, maintained & easy to use
+5. Boot loaders and kernel images are compiled and cached.
 
     ```bash
 	#!/bin/bash
