@@ -24,11 +24,11 @@
     TZDATA="Europe/Ljubljana" 					# Timezone
     ROOTPWD="1234"   		  					# Must be changed @first login
     HOST="$BOARD"						 		# Hostname
-    MAINTAINER="Igor Pecovnik"				# deb signature
-    MAINTAINERMAIL="igor.pecovnik@****l.com"		# deb signature
+    MAINTAINER="Igor Pecovnik"					# deb signature
+    MAINTAINERMAIL="igor.pecovnik@****l.com"	# deb signature
     
     # advanced
-    FBTFT="yes"									# [Small TFT support](https://github.com/notro/fbtft) 
+    FBTFT="yes"									# <a href="https://github.com/notro/fbtft">Small TFT support</a> 
     EXTERNAL="no"								# compile extra drivers`
 #-------------------------------------------------------------------------------------------------------------------------
 # source is where we start the script
