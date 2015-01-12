@@ -2,8 +2,7 @@
 
 - Libraries for creating ARM SD images for various boards: Cubieboard, BananaPi, Cubox, Humminboard, Olimex, ...
 - You can compile a default kernel (3.4.x) or mainline
-- Boot loaders are compiled only once and cached - overridden with SOURCE_COMPILE="yes" 
-- Kernel images with headers are also cached - overridden with SOURCE_COMPILE="yes"   
+- Boot loaders and kernel images are compiled only once and cached - overridden with SOURCE_COMPILE="yes" 
 
     ```shell
 	#!/bin/bash
@@ -16,10 +15,10 @@
     REVISION="1.3"								# image release version
     
     # method
-    SOURCE_COMPILE="no"								# force source compilation: yes / no
-    KERNEL_CONFIGURE="no"							# do you want to change my default configuration
-    KERNEL_CLEAN="no"								# run MAKE clean before kernel compilation
-    USEALLCORES="no"								# Use all CPU cores for compiling
+    SOURCE_COMPILE="no"							# force source compilation: yes / no
+    KERNEL_CONFIGURE="no"						# do you want to change my default configuration
+    KERNEL_CLEAN="no"							# run MAKE clean before kernel compilation
+    USEALLCORES="no"							# Use all CPU cores for compiling
     
     # user 
     DEST_LANG="en_US.UTF-8" 	 						# sl_SI.UTF-8, en_US.UTF-8
