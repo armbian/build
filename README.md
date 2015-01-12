@@ -28,9 +28,9 @@
     MAINTAINERMAIL="igor.pecovnik@****l.com"	# deb signature
     
     # advanced
-    FBTFT="yes"									# <a href="https://github.com/notro/fbtft">Small TFT support</a> 
+    FBTFT="yes"									# https://github.com/notro/fbtft 
     EXTERNAL="no"								# compile extra drivers`
-#-------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------
 # source is where we start the script
 SRC=$(pwd)
 # Destination
