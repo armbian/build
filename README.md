@@ -6,7 +6,7 @@
     ```shell
 	#!/bin/bash
 	# 
-	# Edit and execute this script
+	# Edit and execute this script - Ubuntu 14.04 x86/64 recommended
 	#
 	
 	# numbers
@@ -30,7 +30,7 @@
     # advanced
     FBTFT="yes"									# https://github.com/notro/fbtft 
     EXTERNAL="no"								# compile extra drivers`
-#------------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------
 # source is where we start the script
 SRC=$(pwd)
 # Destination
@@ -43,7 +43,7 @@ else
 	git clone https://github.com/igorpecovnik/lib lib
 fi
 source $SRC/lib/main.sh # Main
-#------------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------
     ```
 
 ===
