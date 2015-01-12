@@ -7,29 +7,31 @@
 
     ```shell
 	#!/bin/bash
+	# 
+	# Edit and execute this script
 	#
 	
 	# numbers
-    SDSIZE="1200"									# SD image size in MB
-    REVISION="1.3"									# image release version
+    SDSIZE="1200"								# SD image size in MB
+    REVISION="1.3"								# image release version
     
     # method
-    SOURCE_COMPILE="no"   								# force source compilation: yes / no
-    KERNEL_CONFIGURE="no"								# do you want to change my default configuration
-    KERNEL_CLEAN="no"									# run MAKE clean before kernel compilation
-    USEALLCORES="no"									# Use all CPU cores for compiling
+    SOURCE_COMPILE="no"								# force source compilation: yes / no
+    KERNEL_CONFIGURE="no"							# do you want to change my default configuration
+    KERNEL_CLEAN="no"								# run MAKE clean before kernel compilation
+    USEALLCORES="no"								# Use all CPU cores for compiling
     
     # user 
-    DEST_LANG="en_US.UTF-8" 	 							# sl_SI.UTF-8, en_US.UTF-8
-    TZDATA="Europe/Ljubljana" 								# Timezone
-    ROOTPWD="1234"   		  							# Must be changed @first login
-    HOST="$BOARD"						 			# Hostname
-    MAINTAINER="Igor Pecovnik"								# deb signature
-    MAINTAINERMAIL="igor.pecovnik@****l.com"						# deb signature
+    DEST_LANG="en_US.UTF-8" 	 						# sl_SI.UTF-8, en_US.UTF-8
+    TZDATA="Europe/Ljubljana" 							# Timezone
+    ROOTPWD="1234"   		  						# Must be changed @first login
+    HOST="$BOARD"						 		# Hostname
+    MAINTAINER="Igor Pecovnik"							# deb signature
+    MAINTAINERMAIL="igor.pecovnik@****l.com"					# deb signature
     
     # advanced
-    FBTFT="yes"												# Small TFT support, https://github.com/notro/fbtft
-    EXTERNAL="no"											# compile extra drivers`
+    FBTFT="yes"									# Small TFT support, https://github.com/notro/fbtft
+    EXTERNAL="no"								# compile extra drivers`
 #-------------------------------------------------------------------------------------------------------------------------
 # source is where we start the script
 SRC=$(pwd)
