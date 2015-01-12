@@ -5,6 +5,7 @@
 - Create SD images for various boards: Cubieboard, BananaPi, Cubox, Humminboard, Olimex, ...
 - Well documented, maintained & easy to use
 - Boot loaders and kernel images are compiled and cached 
+- 
 
     ```shell
 	#!/bin/bash
@@ -17,7 +18,7 @@
     REVISION="1.3"								# image release version
     
     # method
-    SOURCE_COMPILE="yes"							# force source compilation: yes / no
+    SOURCE_COMPILE="yes"						# force source compilation: yes / no
     KERNEL_CONFIGURE="no"						# want to change my default configuration
     KERNEL_CLEAN="yes"							# run MAKE clean before kernel compilation
     USEALLCORES="yes"							# Use all CPU cores for compiling
