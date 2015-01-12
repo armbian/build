@@ -86,7 +86,7 @@ fi
 
 # compiler reverse patch. It has already been fixed.
 if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/compiler.patch | grep Reversed)" != "" ]; then
-	patch --batch -t -p1 $SRC/lib/patch/compiler.patch
+	patch --batch -t -p1 < $SRC/lib/patch/compiler.patch
 fi
 
 # u-boot
