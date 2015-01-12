@@ -21,12 +21,12 @@
     USEALLCORES="no"							# Use all CPU cores for compiling
     
     # user 
-    DEST_LANG="en_US.UTF-8" 	 						# sl_SI.UTF-8, en_US.UTF-8
-    TZDATA="Europe/Ljubljana" 							# Timezone
-    ROOTPWD="1234"   		  						# Must be changed @first login
-    HOST="$BOARD"						 		# Hostname
-    MAINTAINER="Igor Pecovnik"							# deb signature
-    MAINTAINERMAIL="igor.pecovnik@****l.com"					# deb signature
+    DEST_LANG="en_US.UTF-8" 	 					# sl_SI.UTF-8, en_US.UTF-8
+    TZDATA="Europe/Ljubljana" 						# Timezone
+    ROOTPWD="1234"   		  					# Must be changed @first login
+    HOST="$BOARD"						 	# Hostname
+    MAINTAINER="Igor Pecovnik"						# deb signature
+    MAINTAINERMAIL="igor.pecovnik@****l.com"				# deb signature
     
     # advanced
     FBTFT="yes"									# Small TFT support, https://github.com/notro/fbtft
