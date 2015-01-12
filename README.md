@@ -30,7 +30,7 @@
     # advanced
     FBTFT="yes"									# https://github.com/notro/fbtft 
     EXTERNAL="no"								# compile extra drivers`
-#-----------------------------------------------------------------------------------------------------
+#----------------------------------------------------------------------
 # source is where we start the script
 SRC=$(pwd)
 # Destination
