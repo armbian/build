@@ -5,8 +5,6 @@
 - Create SD images for various boards: Cubieboard, BananaPi, Cubox, Humminboard, Olimex, ...
 - Well documented, maintained & easy to use
 - Boot loaders and kernel images are compiled and cached 
-- 
-
     ```shell
 	#!/bin/bash
 	# 
@@ -34,11 +32,15 @@
     # advanced
     FBTFT="yes"									# https://github.com/notro/fbtft 
     EXTERNAL="yes"								# compile extra drivers`
+
 #---------------------------------------------------------------------------------------
+
 # source is where we start the script
 SRC=$(pwd)
+
 # Destination
 DEST=$(pwd)/output                      		      	
+
 # get updates of the main build libraries
 if [ -d "$SRC/lib" ]; then
 	cd $SRC/lib
@@ -49,6 +51,3 @@ fi
 source $SRC/lib/main.sh # Main
 #---------------------------------------------------------------------------------------
     ```
-
-===
-<img src="http://cdn.flaticon.com/png/256/47478.png">
