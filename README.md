@@ -16,7 +16,7 @@
     
     # method
     SOURCE_COMPILE="no"							# force source compilation: yes / no
-    KERNEL_CONFIGURE="no"						# do you want to change my default configuration
+    KERNEL_CONFIGURE="no"						# want to change my default configuration
     KERNEL_CLEAN="no"							# run MAKE clean before kernel compilation
     USEALLCORES="no"							# Use all CPU cores for compiling
     
@@ -24,7 +24,7 @@
     DEST_LANG="en_US.UTF-8" 	 				# sl_SI.UTF-8, en_US.UTF-8
     TZDATA="Europe/Ljubljana" 					# Timezone
     ROOTPWD="1234"   		  					# Must be changed @first login
-    HOST="$BOARD"						 	# Hostname
+    HOST="$BOARD"						 		# Hostname
     MAINTAINER="Igor Pecovnik"						# deb signature
     MAINTAINERMAIL="igor.pecovnik@****l.com"				# deb signature
     
