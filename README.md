@@ -1,7 +1,6 @@
 
 
 - Libraries for creating ARM SD images for various boards: Cubieboard, BananaPi, Cubox, Humminboard, Olimex, ...
-- You can compile a default kernel (3.4.x) or mainline
 - Boot loaders and kernel images are compiled only once and cached - overridden with SOURCE_COMPILE="yes" 
 
     ```shell
@@ -25,11 +24,11 @@
     TZDATA="Europe/Ljubljana" 					# Timezone
     ROOTPWD="1234"   		  					# Must be changed @first login
     HOST="$BOARD"						 		# Hostname
-    MAINTAINER="Igor Pecovnik"						# deb signature
-    MAINTAINERMAIL="igor.pecovnik@****l.com"				# deb signature
+    MAINTAINER="Igor Pecovnik"				# deb signature
+    MAINTAINERMAIL="igor.pecovnik@****l.com"		# deb signature
     
     # advanced
-    FBTFT="yes"									# Small TFT support, https://github.com/notro/fbtft
+    FBTFT="yes"									# [Small TFT support](https://github.com/notro/fbtft) 
     EXTERNAL="no"								# compile extra drivers`
 #-------------------------------------------------------------------------------------------------------------------------
 # source is where we start the script
