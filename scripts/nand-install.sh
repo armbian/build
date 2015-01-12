@@ -85,7 +85,19 @@ else
 	cp /boot/uEnv.cb2 /mnt/uEnv.txt
 	cp /boot/cubieboard2.bin /mnt/script.bin
 fi
-cp /boot/lime* /mnt/script.bin
+
+if [ ! -f "/boot/micro.bin" ]; then
+	cp /boot/micro.bin /mnt/script.bin
+fi
+
+if [ ! -f "/boot/lime.bin" ]; then
+	cp /boot/lime.bin /mnt/script.bin
+fi
+
+if [ ! -f "/boot/lime2.bin" ]; then
+	cp /boot/lime2.bin /mnt/script.bin
+fi
+
 cp /boot/uImage /mnt/
 
 # change root from sd card to nand in both configs
