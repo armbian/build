@@ -4,8 +4,9 @@
 - Use proven sources
 - Create SD images for various boards: Cubieboard, BananaPi, Cubox, Humminboard, Olimex, ...
 - Well documented, maintained & easy to use
-- Boot loaders and kernel images are compiled and cached 
-    ```shell
+- Boot loaders and kernel images are compiled and cached.
+
+    ```bash
 	#!/bin/bash
 	# 
 	# Edit and execute this script - Ubuntu 14.04 x86/64 recommended
@@ -38,7 +39,7 @@
 # source is where we start the script
 SRC=$(pwd)
 
-# Destination
+# destination
 DEST=$(pwd)/output                      		      	
 
 # get updates of the main build libraries
@@ -46,8 +47,9 @@ if [ -d "$SRC/lib" ]; then
 	cd $SRC/lib
 	git pull 
 else
-	git clone https://github.com/igorpecovnik/lib lib
+	git clone https://github.com/igorpecovnik/lib
 fi
-source $SRC/lib/main.sh # Main
+
+source $SRC/lib/main.sh
 #---------------------------------------------------------------------------------------
     ```
