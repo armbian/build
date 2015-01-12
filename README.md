@@ -1,6 +1,9 @@
 
 
-- Libraries for creating ARM SD images for various boards: Cubieboard, BananaPi, Cubox, Humminboard, Olimex, ...
+- SDK for ARM 
+- Use proven sources
+- Create SD images for various boards: Cubieboard, BananaPi, Cubox, Humminboard, Olimex, ...
+- Well documented, maintained & easy to use
 - Boot loaders and kernel images are compiled only once and cached - overridden with SOURCE_COMPILE="yes" 
 
     ```shell
@@ -14,10 +17,10 @@
     REVISION="1.3"								# image release version
     
     # method
-    SOURCE_COMPILE="no"							# force source compilation: yes / no
+    SOURCE_COMPILE="yes"							# force source compilation: yes / no
     KERNEL_CONFIGURE="no"						# want to change my default configuration
-    KERNEL_CLEAN="no"							# run MAKE clean before kernel compilation
-    USEALLCORES="no"							# Use all CPU cores for compiling
+    KERNEL_CLEAN="yes"							# run MAKE clean before kernel compilation
+    USEALLCORES="yes"							# Use all CPU cores for compiling
     
     # user 
     DEST_LANG="en_US.UTF-8" 	 				# sl_SI.UTF-8, en_US.UTF-8
@@ -29,7 +32,7 @@
     
     # advanced
     FBTFT="yes"									# https://github.com/notro/fbtft 
-    EXTERNAL="no"								# compile extra drivers`
+    EXTERNAL="yes"								# compile extra drivers`
 #---------------------------------------------------------------------------------------
 # source is where we start the script
 SRC=$(pwd)
