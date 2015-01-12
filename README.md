@@ -3,8 +3,7 @@
 3. Create SD images for various boards: Cubieboard, BananaPi, Cubox, Humminboard, Olimex, ...
 4. Well documented, maintained & easy to use
 5. Boot loaders and kernel images are compiled and cached.
-
-    ```bash
+```bash
 	#!/bin/bash
 	# 
 	# Edit and execute this script - Ubuntu 14.04 x86/64 recommended
