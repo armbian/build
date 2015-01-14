@@ -23,7 +23,6 @@ USEALLCORES="yes"							# Use all CPU cores for compiling
 DEST_LANG="en_US.UTF-8" 	 				# sl_SI.UTF-8, en_US.UTF-8
 TZDATA="Europe/Ljubljana" 					# Timezone
 ROOTPWD="1234"   		  					# Must be changed @first login
-HOST="$BOARD"						 		# Hostname
 MAINTAINER="Igor Pecovnik"					# deb signature
 MAINTAINERMAIL="igor.pecovnik@****l.com"	# deb signature
     
