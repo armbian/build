@@ -58,9 +58,9 @@ if [[ $LINUXCONFIG == *sunxi* ]] ; then
 				cp $DEST/sunxi-tools/fex2bin $DEST/sunxi-tools/bin2fex $DEST/sunxi-tools/nand-part $DEST/output/sdcard/usr/bin/				
 				# remove serial console from hummingboard / cubox
 				rm -f $DEST/output/sdcard/etc/init/ttymxc0.conf
-				# NAND install for all except
+				# NAND & SATA install for all except
+				# cp $SRC/lib/scripts/nand-sata-install.sh $DEST/output/sdcard/root
 				if [[ $BOARD != "bananapi" ]] ; then
-					cp $SRC/lib/scripts/nand-install.sh $DEST/output/sdcard/root
 					cp $SRC/lib/bin/nand1-allwinner.tgz $DEST/output/sdcard/root
 				fi # NAND				
 		
@@ -136,7 +136,7 @@ EOT
 for word in $MODULES; do echo $word >> $DEST/output/sdcard/etc/modules; done
 
 # script to install to SATA
-cp $SRC/lib/scripts/sata-install.sh $DEST/output/sdcard/root
+cp $SRC/lib/scripts/nand-sata-install.sh $DEST/output/sdcard/root
 
 # copy and create symlink to default interfaces configuration
 cp $SRC/lib/config/interfaces.* $DEST/output/sdcard/etc/network/
@@ -163,16 +163,11 @@ if [[ $BRANCH == *next* ]];then
 		mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
 	elif [[ $LINUXCONFIG == *sunxi* ]]; then
 		fex2bin $SRC/lib/config/$BOARD.fex $DEST/output/sdcard/boot/$BOARD.bin
-		cp $SRC/lib/config/uEnv.txt $DEST/output/sdcard/boot/uEnv.txt
-		sed -e "s/vmlinuz/vmlinuz-$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/uEnv.txt
-		sed -e "s/script.bin/$BOARD.bin/g" -i $DEST/output/sdcard/boot/uEnv.txt
-		if [[ $BOARD == "cubietruck" ]] ; then
-			# add cubieboard2 dual boot hack
-			fex2bin $SRC/lib/config/cubieboard2.fex $DEST/output/sdcard/boot/cubieboard2.bin
-			cp $DEST/output/sdcard/boot/uEnv.txt $DEST/output/sdcard/boot/uEnv.cb2
-			mv $DEST/output/sdcard/boot/uEnv.txt $DEST/output/sdcard/boot/uEnv.ct
-			sed -e "s/$BOARD.bin/cubieboard2.bin/g" -i $DEST/output/sdcard/boot/uEnv.cb2
-		fi
+		cp $SRC/lib/config/boot.cmd $DEST/output/sdcard/boot/boot.cmd
+		sed -e "s/zImage/vmlinuz-$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot.cmd
+		sed -e "s/script.bin/$BOARD.bin/g" -i $DEST/output/sdcard/boot/boot.cmd
+		# compile boot script
+		mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
 	else
 		# make symlink to kernel
 		chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/vmlinuz-$CHOOSEN_KERNEL /boot/zImage"

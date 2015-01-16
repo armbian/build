@@ -114,7 +114,14 @@ make -s CROSS_COMPILE=arm-linux-gnueabihf- clean
 # there are two methods of compilation
 if [[ $BOOTCONFIG == *config* ]]
 then
-	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 
+	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf-
+		if [[ $BRANCH != "next" && $LINUXCONFIG == *sunxi* ]] ; then
+			## patch mainline uboot configuration to boot with old kernels
+			echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $DEST/$BOOTSOURCE/.config
+			echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $DEST/$BOOTSOURCE/spl/.config
+			echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $DEST/$BOOTSOURCE/.config
+			echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y"	>> $DEST/$BOOTSOURCE/spl/.config	
+		fi
 	make $CTHREADS CROSS_COMPILE=arm-linux-gnueabihf-
 else
 	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 
@@ -165,7 +172,7 @@ else
 	git checkout master
 fi
 cd $DEST/$LINUXSOURCE
-if [[ $BOARD == "bananapi" || $BOARD == "cubietruck" || $BOARD == "cubieboard2" || $BOARD == "cubieboard" || $BOARD == "lime" || $BOARD == "lime2" ]]; then
+if [[ $BOARD == "bananapi" || $BOARD == *cubie* || $BOARD == lime* || $BOARD == "micro" ]]; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" == "" ]; then
 					# DMA disable
                 	patch --batch -N -p1 < $SRC/lib/patch/bananafbtft.patch
@@ -305,7 +312,7 @@ cp $SRC/lib/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.lis
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y update"
 
 # install aditional packages
-PAKETKI="alsa-utils automake bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl dosfstools evtest figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libnl-dev libssl-dev lirc lsof makedev module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools wpasupplicant"
+PAKETKI="alsa-utils automake bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl dosfstools evtest figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libnl-dev libssl-dev lirc lsof makedev module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools wpasupplicant"
 
 if [ "$RELEASE" != "wheezy" ]; then 
 	PAKETKI="${PAKETKI//libnl-dev/libnl-3-dev}"; # change package
