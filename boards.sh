@@ -156,11 +156,11 @@ if [[ $BRANCH == *next* ]];then
 		# remove .old on new image
 		rm -rf $DEST/output/sdcard/boot/dtb/$CHOOSEN_KERNEL.old
 		# copy boot script and change it acordingly
-		cp $SRC/lib/config/boot-next.cmd $DEST/output/sdcard/boot/boot.cmd
-		sed -e "s/zImage/vmlinuz-$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot.cmd
-		sed -e "s/dtb/dtb\/$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot.cmd
+		cp $SRC/lib/config/boot-next.cmd $DEST/output/sdcard/boot/boot-next.cmd
+		sed -e "s/zImage/vmlinuz-$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot-next.cmd
+		sed -e "s/dtb/dtb\/$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot-next.cmd
 		# compile boot script
-		mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
+		mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot-next.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
 	elif [[ $LINUXCONFIG == *sunxi* ]]; then
 		fex2bin $SRC/lib/config/$BOARD.fex $DEST/output/sdcard/boot/$BOARD.bin
 		cp $SRC/lib/config/boot.cmd $DEST/output/sdcard/boot/boot.cmd

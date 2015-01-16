@@ -205,4 +205,5 @@ if [[ $DESTPART == *sda*  ]]; then
 		echo "/dev/mmcblk0p1        /media/mmc   ext4    defaults        0       0" >> /mnt/etc/fstab
 		echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/etc/fstab
 	fi
+whiptail --title "Reboot required" --msgbox "Press OK to reboot!" 7 60
 fi
