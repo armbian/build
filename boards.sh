@@ -101,6 +101,9 @@ if [[ $BOARD == cubox-i* ]] ; then
 		cp $SRC/lib/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
 		chroot $DEST/output/sdcard /bin/bash -c "insserv brcm4330-patch >> /dev/null" 
+		chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/Release.key | apt-key add -"
+		echo "deb http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+		echo "deb-src http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
 fi
 }
 

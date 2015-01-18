@@ -99,10 +99,10 @@ if [ -f $FLAG ]; then
 	umount /mnt
 	mount /dev/nand2 /mnt
 	whiptail --title "NAND install" --infobox "Checking and counting files." 7 60
-	RSYNCAR="-vrltD --delete --stats --human-readable"
-	TODO=$(rsync ${RSYNCAR} --dry-run --exclude-from=.install-exclude  /  /mnt |grep "^Number of files transferred"|awk '{print $5}')
+	TODO=$(rsync -avrltD --delete --stats --human-readable --dry-run --exclude-from=.install-exclude  /  /mnt |grep "^Number of files:"|awk '{print $4}')
+	TODO="${TODO//./}"
 	whiptail --title "NAND install" --infobox "Copy / creating rootfs on NAND: $TODO files." 7 60
-	rsync $RSYNCAR --exclude-from=.install-exclude  /  /mnt | pv -l -e -p -s $TODO >/dev/null
+	rsync -avrltD --delete --stats --human-readable --exclude-from=.install-exclude  /  /mnt | pv -l -e -p -s $TODO >/dev/null
 	me=`basename $0`
 	# copy this script and my README to NAND that you can coduct NAND / SATA install if you want
 	cp readme.txt $me /mnt/root
@@ -182,10 +182,10 @@ if [[ $DESTPART == *sda*  ]]; then
 	sync
 	sleep 2
 	whiptail --title "$SDA_TYPE install" --infobox "Checking and counting files." 7 60
-	RSYNCAR="-vrltD --delete --stats --human-readable"
-	TODO=$(rsync -vrltD --delete --stats --human-readable --dry-run --exclude-from=.install-exclude  /  /mnt |grep "^Number of files transferred"|awk '{print $5}')
+	TODO=$(rsync -avrltD --delete --stats --human-readable --dry-run --exclude-from=.install-exclude  /  /mnt |grep "^Number of files:"|awk '{print $4}')
+	TODO="${TODO//./}"
 	whiptail --title "$SDA_TYPE install" --infobox "Copy / creating rootfs on $SDA_TYPE: $TODO files." 7 60
-	rsync -vrltD --delete --stats --human-readable --exclude-from=.install-exclude  /  /mnt | pv -l -e -p -s "$TODO" >/dev/null
+	rsync -avrltD --delete --stats --human-readable --exclude-from=.install-exclude  /  /mnt | pv -l -e -p -s "$TODO" >/dev/null
 	if [[ $SOURCE == *nand*  ]]; then
 		sed -e 's,nand_root=\/dev\/nand2,nand_root=/dev/'"$DESTPART"',g' -i /boot/uEnv.txt
 		# change fstab
@@ -196,14 +196,19 @@ if [[ $DESTPART == *sda*  ]]; then
 		sed -e 's,root=\/dev\/mmcblk0p1,root=/dev/'"$DESTPART"',g' -i /boot/boot.cmd
 		mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
 		else
+		sed -e 's,root=\/dev\/mmcblk0p1,root=/dev/'"$DESTPART"',g' -i /boot/uEnv.txt
 		sed -e 's,root=\/dev\/mmcblk0p1,root=/dev/'"$DESTPART"',g' -i /boot/boot-next.cmd
-                mkimage -C none -A arm -T script -d /boot/boot-next.cmd /boot/boot.scr
+                if [ -f /boot/boot-next.cmd ]; then
+                        mkimage -C none -A arm -T script -d /boot/boot-next.cmd /boot/boot.scr
+                fi
 		fi
 		# change fstab
 		sed -e 's/mmcblk0p1/sda1/g' -i /mnt/etc/fstab
+		sed -i "s/data=writeback,//" /mnt/etc/fstab
 		mkdir -p /mnt/media/mmc
 		echo "/dev/mmcblk0p1        /media/mmc   ext4    defaults        0       0" >> /mnt/etc/fstab
 		echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/etc/fstab
 	fi
 whiptail --title "Reboot required" --msgbox "Press OK to reboot!" 7 60
+reboot
 fi

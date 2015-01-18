@@ -73,7 +73,9 @@ cubieboard)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-BOOTCONFIG="Cubieboard_defconfig" 
+BOOTLOADER="https://github.com/linux-sunxi/u-boot-sunxi"
+BOOTSOURCE="u-boot-sunxi"
+BOOTCONFIG="Cubieboard_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 ;;
 
@@ -82,7 +84,9 @@ cubieboard2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-BOOTCONFIG="Cubieboard2_defconfig" 
+BOOTLOADER="https://github.com/linux-sunxi/u-boot-sunxi"
+BOOTSOURCE="u-boot-sunxi"
+BOOTCONFIG="Cubieboard2_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 ;;
 
@@ -91,7 +95,9 @@ cubietruck)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-BOOTCONFIG="Cubietruck_defconfig" 
+BOOTLOADER="https://github.com/linux-sunxi/u-boot-sunxi"
+BOOTSOURCE="u-boot-sunxi"
+BOOTCONFIG="Cubietruck_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i bcmdhd"
 ;;
 
@@ -156,6 +162,21 @@ LINUXCONFIG="linux-cubox"
 LINUXSOURCE="linux-cubox"
 LOCALVERSION="-cubox"
 DTBS="imx6q-cubox-i.dtb imx6dl-cubox-i.dtb imx6dl-hummingboard.dtb imx6q-hummingboard.dtb"
+;;
+
+
+udoo)
+#--------------------------------------------------------------------------------------------------------------------------------
+# cubox-i & hummingboard 3.14.xx
+#--------------------------------------------------------------------------------------------------------------------------------
+BOOTCONFIG="udoo_quad_defconfig"
+CPUMIN="792000"
+CPUMAX="996000"
+MODULES="bonding"
+LINUXKERNEL="https://github.com/linux4kix/linux-linaro-stable-mx6"
+LINUXCONFIG="linux-cubox"
+LINUXSOURCE="linux-cubox"
+LOCALVERSION="-cubox"
 ;;
 
 
