@@ -58,10 +58,14 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 		echo "Reversing Banana patch"
 		patch --batch -t -p1 < $SRC/lib/patch/bananagmac.patch
 	fi
+	# deb packaging patch
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging.patch | grep previ)" == "" ]; then
+		patch --batch -f -p1 < $SRC/lib/patch/packaging.patch
+    fi	
 	# gpio patch
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" == "" ]; then
 		patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
-    	fi
+    fi
 	# SPI functionality
     	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi.patch | grep previ)" == "" ]; then
 		patch --batch -f -p1 < $SRC/lib/patch/spi.patch
@@ -197,7 +201,7 @@ if [ "$FBTFT" = "yes" ]; then add_fb_tft ; fi
 
 cd $DEST/$LINUXSOURCE
 # delete previous creations
-if [ "KERNEL_CLEAN" = "yes" ]; then make -CROSS_COMPILE=arm-linux-gnueabihf- clean ; fi
+if [ "KERNEL_CLEAN" = "yes" ]; then make CROSS_COMPILE=arm-linux-gnueabihf- clean ; fi
 
 # adding custom firmware to kernel source
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $DEST/$LINUXSOURCE/firmware; fi
@@ -207,7 +211,8 @@ cp $SRC/lib/config/$LINUXCONFIG.config $DEST/$LINUXSOURCE/.config
 if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig ; fi
 
 # this way of compilation is much faster. We can use multi threading here but not later
-make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- zImage
+make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- zImage headers modules_prepare 
+# make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- 
 # produce deb packages: image, headers, firmware, libc
 make -j1 deb-pkg KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$BOARD KBUILD_DEBARCH=armhf ARCH=arm DEBFULLNAME="$MAINTAINER" DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE=arm-linux-gnueabihf- 
 # ALTERNATIVE DEB_HOST_ARCH=armhf make-kpkg --rootcmd fakeroot --arch arm --cross-compile arm-linux-gnueabihf- --revision=$REVISION --append-to-version=-$BOARD --jobs 3 --overlay-dir $SRC/lib/scripts/build-kernel kernel_image 
@@ -317,6 +322,7 @@ PAKETKI="alsa-utils automake bash-completion bc bridge-utils bluez build-essenti
 if [ "$RELEASE" != "wheezy" ]; then 
 	PAKETKI="${PAKETKI//libnl-dev/libnl-3-dev}"; # change package
 	PAKETKI=$PAKETKI" busybox-syslogd"; # to gain performance
+	PAKETKI=$PAKETKI" software-properties-common python-software-properties"; # to add PPAs	
 	LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y remove rsyslog"
 	sed -e s,"TTYVTDisallocate=yes","TTYVTDisallocate=no",g 	-i $DEST/output/sdcard/etc/systemd/system/getty.target.wants/getty@tty1.service
 	# enable root login for latest ssh on jessie
@@ -423,6 +429,8 @@ else
 	cp $SRC/lib/config/ttymxc0.conf $DEST/output/sdcard/etc/init
 	cp $SRC/lib/config/ttymxc0.conf $DEST/output/sdcard/etc/init/ttyS0.conf
 	sed -e "s/ttymxc0/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttyS0.conf
+	# don't clear boot messages
+	sed -e "s/sbin\/getty/sbin\/getty --noclear/g" -i $DEST/output/sdcard/etc/init/ttyS0.conf
 	# remove what's anyway not working 
 	rm $DEST/output/sdcard/etc/init/ureadahead*
 	rm $DEST/output/sdcard/etc/init/plymouth*

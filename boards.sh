@@ -34,6 +34,7 @@ install_board_specific (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install board specific applications  					                    
 #--------------------------------------------------------------------------------------------------------------------------------
+clear
 echo "------ Install board specific applications"
 
 if [[ $BOARD == "lime" || $BOARD == "lime2" || $BOARD == "micro" ]] ; then
@@ -105,6 +106,7 @@ if [[ $BOARD == cubox-i* ]] ; then
 		echo "deb http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
 		echo "deb-src http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
 fi
+echo "------ done."
 }
 
 
@@ -153,6 +155,10 @@ chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*.deb"
 
 # name of archive is also kernel name
 CHOOSEN_KERNEL="${CHOOSEN_KERNEL//-$BRANCH.tar/}"
+
+echo "------ Compile headers scripts"
+# recompile headers scripts
+chroot $DEST/output/sdcard /bin/bash -c "cd /usr/src/linux-headers-$CHOOSEN_KERNEL && make scripts"
 
 # recreate boot.scr if using kernel for different board. Mainline only
 if [[ $BRANCH == *next* ]];then
