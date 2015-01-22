@@ -101,6 +101,7 @@ if [ -f $FLAG ]; then
 	whiptail --title "NAND install" --infobox "Checking and counting files." 7 60
 	TODO=$(rsync -avrltD --delete --stats --human-readable --dry-run --exclude-from=.install-exclude  /  /mnt |grep "^Number of files:"|awk '{print $4}')
 	TODO="${TODO//./}"
+	TODO="${TODO//,/}"
 	whiptail --title "NAND install" --infobox "Copy / creating rootfs on NAND: $TODO files." 7 60
 	rsync -avrltD --delete --stats --human-readable --exclude-from=.install-exclude  /  /mnt | pv -l -e -p -s $TODO >/dev/null
 	me=`basename $0`
@@ -184,6 +185,7 @@ if [[ $DESTPART == *sda*  ]]; then
 	whiptail --title "$SDA_TYPE install" --infobox "Checking and counting files." 7 60
 	TODO=$(rsync -avrltD --delete --stats --human-readable --dry-run --exclude-from=.install-exclude  /  /mnt |grep "^Number of files:"|awk '{print $4}')
 	TODO="${TODO//./}"
+	TODO="${TODO//,/}"
 	whiptail --title "$SDA_TYPE install" --infobox "Copy / creating rootfs on $SDA_TYPE: $TODO files." 7 60
 	rsync -avrltD --delete --stats --human-readable --exclude-from=.install-exclude  /  /mnt | pv -l -e -p -s "$TODO" >/dev/null
 	if [[ $SOURCE == *nand*  ]]; then

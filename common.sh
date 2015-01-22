@@ -211,7 +211,7 @@ cp $SRC/lib/config/$LINUXCONFIG.config $DEST/$LINUXSOURCE/.config
 if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig ; fi
 
 # this way of compilation is much faster. We can use multi threading here but not later
-make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- zImage headers modules_prepare 
+make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all zImage modules_prepare
 # make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- 
 # produce deb packages: image, headers, firmware, libc
 make -j1 deb-pkg KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$BOARD KBUILD_DEBARCH=armhf ARCH=arm DEBFULLNAME="$MAINTAINER" DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE=arm-linux-gnueabihf- 

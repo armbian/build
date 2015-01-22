@@ -91,7 +91,13 @@ if [[ $BOARD == cubox-i* ]] ; then
 		cp $DEST/$LINUXSOURCE/arch/arm/boot/dts/*.dtb $DEST/output/sdcard/boot
 		chroot $DEST/output/sdcard /bin/bash -c "chmod 755 /boot/uEnv.txt"
 		# enable serial console (Debian/sysvinit way)
+		rm $DEST/output/sdcard/etc/init/ttyS0.conf
+		if [[ "$RELEASE" == "trusty" ]]; then
+		#chroot $DEST/output/sdcard /bin/bash -c "systemctl enable serial-getty@ttymxc0.service"
+		#chroot $DEST/output/sdcard /bin/bash -c "systemctl start serial-getty@ttymxc0.service"
+		else
 		echo T0:2345:respawn:/sbin/getty -L ttymxc0 115200 vt100 >> $DEST/output/sdcard/etc/inittab
+		fi
 		# default lirc configuration 
 		sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
 		sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="default"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
