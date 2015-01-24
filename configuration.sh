@@ -73,8 +73,8 @@ cubieboard)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-BOOTLOADER="https://github.com/linux-sunxi/u-boot-sunxi"
-BOOTSOURCE="u-boot-sunxi"
+#BOOTLOADER="https://github.com/linux-sunxi/u-boot-sunxi"
+#BOOTSOURCE="u-boot-sunxi"
 BOOTCONFIG="Cubieboard_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 ;;
@@ -84,8 +84,8 @@ cubieboard2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-BOOTLOADER="https://github.com/linux-sunxi/u-boot-sunxi"
-BOOTSOURCE="u-boot-sunxi"
+#BOOTLOADER="https://github.com/linux-sunxi/u-boot-sunxi"
+#BOOTSOURCE="u-boot-sunxi"
 BOOTCONFIG="Cubieboard2_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 ;;
@@ -95,8 +95,8 @@ cubietruck)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-BOOTLOADER="https://github.com/linux-sunxi/u-boot-sunxi"
-BOOTSOURCE="u-boot-sunxi"
+#BOOTLOADER="https://github.com/linux-sunxi/u-boot-sunxi"
+#BOOTSOURCE="u-boot-sunxi"
 BOOTCONFIG="Cubietruck_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i bcmdhd"
 ;;

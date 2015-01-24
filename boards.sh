@@ -95,6 +95,7 @@ if [[ $BOARD == cubox-i* ]] ; then
 		if [[ "$RELEASE" == "trusty" ]]; then
 		#chroot $DEST/output/sdcard /bin/bash -c "systemctl enable serial-getty@ttymxc0.service"
 		#chroot $DEST/output/sdcard /bin/bash -c "systemctl start serial-getty@ttymxc0.service"
+		echo "Trusty"
 		else
 		echo T0:2345:respawn:/sbin/getty -L ttymxc0 115200 vt100 >> $DEST/output/sdcard/etc/inittab
 		fi
