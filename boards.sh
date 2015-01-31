@@ -80,13 +80,18 @@ if [[ $LINUXCONFIG == *sunxi* ]] ; then
 			sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="devinput"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
 			cp $SRC/lib/config/lirc.conf.cubietruck $DEST/output/sdcard/etc/lirc/lircd.conf
 		fi # cubieboards
+		if [[ $BOARD == "orangepi" ]] ; then
+			cp $SRC/lib/bin/hostapd.realtek $DEST/output/sdcard/usr/sbin/hostapd
+			chroot $DEST/output/sdcard /bin/bash -c "chmod +x /usr/sbin/hostapd"
+			cp $SRC/lib/config/hostapd.realtek.conf $DEST/output/sdcard/etc/hostapd.conf
+		fi # orangepi
 		fi #NEXT
 fi # SUNXI
 
 
 
 
-if [[ $BOARD == cubox-i* ]] ; then
+if [[ $BOARD == cubox-i* || $BOARD == udoo* ]] ; then
 		cp $SRC/lib/config/uEnv.cubox-i $DEST/output/sdcard/boot/uEnv.txt
 		cp $DEST/$LINUXSOURCE/arch/arm/boot/dts/*.dtb $DEST/output/sdcard/boot
 		chroot $DEST/output/sdcard /bin/bash -c "chmod 755 /boot/uEnv.txt"
@@ -185,7 +190,8 @@ if [[ $BRANCH == *next* ]];then
 		# compile boot script
 		mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
 	else
-		# make symlink to kernel
+		# make symlink to kernel and uImage
+		mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x10008000" -n "Linux kernel" -d $DEST/output/sdcard/boot/vmlinuz-$CHOOSEN_KERNEL $DEST/output/sdcard/boot/uImage
 		chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/vmlinuz-$CHOOSEN_KERNEL /boot/zImage"
 fi
 

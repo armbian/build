@@ -136,6 +136,8 @@ mkdir -p $DEST/output/u-boot
 CHOOSEN_UBOOT="$BOARD"_"$BRANCH"_u-boot_"$VER".tgz
 if [[ $BOARD == cubox-i* ]] ; then
 	tar cPfz $DEST"/output/u-boot/$CHOOSEN_UBOOT" SPL u-boot.img
+elif [[ $BOARD == udoo* ]] ; then
+	tar cPfz $DEST"/output/u-boot/$CHOOSEN_UBOOT" u-boot.imx
 else
 	tar cPfz $DEST"/output/u-boot/$CHOOSEN_UBOOT" u-boot-sunxi-with-spl.bin
 fi
@@ -602,6 +604,8 @@ tar xvfz $DEST"/output/u-boot/"$CHOOSEN_UBOOT
 if [[ $BOARD == cubox-i* ]] ; then
 	dd if=SPL of=$LOOP bs=512 seek=2 status=noxfer
 	dd if=u-boot.img of=$LOOP bs=1K seek=42 status=noxfer
+elif [[ $BOARD == udoo* ]] ; then
+	dd if=u-boot.imx of=$LOOP bs=1024 seek=1 conv=fsync
 elif [[ $BOARD == "cubieboard4" ]]
 then
 	$SRC/lib/bin/host/cubie-fex2bin $SRC/lib/config/cubieboard4.fex /tmp/sys_config.bin

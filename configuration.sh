@@ -43,6 +43,9 @@ if [[ $BRANCH == *next* ]];then
 	LINUXSOURCE="linux-mainline"
 	LINUXCONFIG="linux-sunxi-next"
 	FIRMWARE=""
+	if [[ $BOARD == "udoo" ]];then
+	LINUXCONFIG="linux-udoo-next"
+	fi
 fi
 
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -147,6 +150,24 @@ MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 ;;
 
 
+orangepi)
+#--------------------------------------------------------------------------------------------------------------------------------
+# Bananapi
+#--------------------------------------------------------------------------------------------------------------------------------
+BOOTCONFIG="Bananapi_defconfig"
+MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
+;;
+
+
+hummingbird)
+#--------------------------------------------------------------------------------------------------------------------------------
+# Bananapi
+#--------------------------------------------------------------------------------------------------------------------------------
+BOOTCONFIG="Hummingbird_A31_config"
+MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
+;;
+
+
 cubox-i)
 #--------------------------------------------------------------------------------------------------------------------------------
 # cubox-i & hummingboard 3.14.xx
@@ -173,10 +194,6 @@ BOOTCONFIG="udoo_quad_defconfig"
 CPUMIN="792000"
 CPUMAX="996000"
 MODULES="bonding"
-LINUXKERNEL="https://github.com/linux4kix/linux-linaro-stable-mx6"
-LINUXCONFIG="linux-cubox"
-LINUXSOURCE="linux-cubox"
-LOCALVERSION="-cubox"
 ;;
 
 
