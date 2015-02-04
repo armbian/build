@@ -65,7 +65,7 @@ if [[ $LINUXCONFIG == *sunxi* ]] ; then
 					cp $SRC/lib/bin/nand1-allwinner.tgz $DEST/output/sdcard/root
 				fi # NAND				
 		
-		if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard2"  || $BOARD == "bananapi" ]] ; then
+		if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard2"  || $BOARD == "bananapi" || $BOARD == "orangepi" ]] ; then
 			# bluetooth device enabler - for cubietruck
 			cp $SRC/lib/bin/brcm_patchram_plus $DEST/output/sdcard/usr/local/bin/brcm_patchram_plus
 			chroot $DEST/output/sdcard /bin/bash -c "chmod +x /usr/local/bin/brcm_patchram_plus"
