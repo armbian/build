@@ -67,11 +67,11 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 		patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
     fi
 	# SPI functionality
-    	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi.patch | grep previ)" == "" ]; then
-		patch --batch -f -p1 < $SRC/lib/patch/spi.patch
+    	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi-sun7i.patch | grep previ)" == "" ]; then
+		patch --batch -f -p1 < $SRC/lib/patch/spi-sun7i.patch
     	fi
-	# banana gmac driver is a bit different  
-	if [[ $BOARD == "bananapi" ]] ; then
+	# banana/orange gmac driver is a bit different  
+	if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]] ; then
         	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" == "" ]; then
         		patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
         	fi
@@ -95,15 +95,20 @@ fi
 
 # u-boot
 cd $DEST/$BOOTSOURCE
+# This fixes sunxi boards not booting with v2015.04-rc1 
+if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/uboot-2014-01.patch | grep previ)" == "" ]; then
+        		patch --batch -N -p1 < $SRC/lib/patch/uboot-2014-01.patch
+fi
+
 # dual boot patch
-if [[ $BOARD == "cubietruck" && $BRANCH != "next" ]] ; then
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/uboot-dualboot.patch | grep previ)" == "" ]; then
-        		patch --batch -N -p1 < $SRC/lib/patch/uboot-dualboot.patch
-	fi
-elif [ "$( cat common/main.c | grep uEnv)" != "" ]; then
-	echo "Reversing Dual Uboot patch"
-	patch --batch -t -p1 < $SRC/lib/patch/uboot-dualboot.patch
-fi 
+#if [[ $BOARD == "cubietruck" && $BRANCH != "next" ]] ; then
+#	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/uboot-dualboot.patch | grep previ)" == "" ]; then
+#        		patch --batch -N -p1 < $SRC/lib/patch/uboot-dualboot.patch
+#	fi
+#elif [ "$( cat common/main.c | grep uEnv)" != "" ]; then
+#	echo "Reversing Dual Uboot patch"
+#	patch --batch -t -p1 < $SRC/lib/patch/uboot-dualboot.patch
+#fi 
 }
 
 
@@ -178,7 +183,7 @@ else
 	git checkout master
 fi
 cd $DEST/$LINUXSOURCE
-if [[ $BOARD == "bananapi" || $BOARD == *cubie* || $BOARD == lime* || $BOARD == "micro" ]]; then
+if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]]; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" == "" ]; then
 					# DMA disable
                 	patch --batch -N -p1 < $SRC/lib/patch/bananafbtft.patch
@@ -203,7 +208,7 @@ if [ "$FBTFT" = "yes" ]; then add_fb_tft ; fi
 
 cd $DEST/$LINUXSOURCE
 # delete previous creations
-if [ "KERNEL_CLEAN" = "yes" ]; then make CROSS_COMPILE=arm-linux-gnueabihf- clean ; fi
+if [ "KERNEL_CLEAN" = "yes" ]; then make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean ; fi
 
 # adding custom firmware to kernel source
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $DEST/$LINUXSOURCE/firmware; fi
