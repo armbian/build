@@ -85,6 +85,9 @@ if [[ $LINUXCONFIG == *sunxi* ]] ; then
 			chroot $DEST/output/sdcard /bin/bash -c "chmod +x /usr/sbin/hostapd"
 			cp $SRC/lib/config/hostapd.realtek.conf $DEST/output/sdcard/etc/hostapd.conf
 		fi # orangepi
+		if [[ $BOARD == "bananapi" ]] ; then
+				fex2bin $SRC/lib/config/bananapipro.fex $DEST/output/sdcard/boot/bananapipro.bin
+		fi # bananapi
 		fi #NEXT
 fi # SUNXI
 

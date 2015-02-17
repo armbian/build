@@ -70,10 +70,13 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
     	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi-sun7i.patch | grep previ)" == "" ]; then
 		patch --batch -f -p1 < $SRC/lib/patch/spi-sun7i.patch
     	fi
-	# banana/orange gmac driver is a bit different  
+	# banana/orange gmac and wireless driver is a bit different  
 	if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]] ; then
         	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" == "" ]; then
         		patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
+        	fi
+			if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/wireless-bananapro.patch | grep previ)" == "" ]; then
+        		patch --batch -N -p1 < $SRC/lib/patch/wireless-bananapro.patch
         	fi
     fi
     # compile sunxi tools
@@ -96,9 +99,9 @@ fi
 # u-boot
 cd $DEST/$BOOTSOURCE
 # This fixes sunxi boards not booting with v2015.04-rc1 
-if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/uboot-2014-01.patch | grep previ)" == "" ]; then
-        		patch --batch -N -p1 < $SRC/lib/patch/uboot-2014-01.patch
-fi
+#if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/uboot-2014-01.patch | grep previ)" == "" ]; then
+#       		patch --batch -N -p1 < $SRC/lib/patch/uboot-2014-01.patch
+#fi
 
 # dual boot patch
 #if [[ $BOARD == "cubietruck" && $BRANCH != "next" ]] ; then
@@ -324,7 +327,7 @@ cp $SRC/lib/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.lis
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y update"
 
 # install aditional packages
-PAKETKI="alsa-utils automake bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl dosfstools evtest figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libnl-dev libssl-dev lirc lsof makedev module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools wget wpasupplicant"
+PAKETKI="alsa-utils automake bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl dosfstools evtest figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iotop iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libnl-dev libssl-dev lirc lsof makedev module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools wget wpasupplicant"
 
 if [ "$RELEASE" != "wheezy" ]; then 
 	PAKETKI="${PAKETKI//libnl-dev/libnl-3-dev}"; # change package

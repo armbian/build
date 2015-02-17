@@ -9,10 +9,6 @@
 # Edit and execute this script - Ubuntu 14.04 x86/64 recommended
 #
 
-# numbers
-SDSIZE="1200"								# SD image size in MB
-REVISION="1.3"								# image release version
-    
 # method
 SOURCE_COMPILE="yes"						# force source compilation: yes / no
 KERNEL_CONFIGURE="no"						# want to change my default configuration

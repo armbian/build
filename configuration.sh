@@ -7,6 +7,7 @@
 # Board definitions
 #
 
+SDSIZE="1200"                               # SD image size in MB
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # common for default allwinner kernel-source
@@ -44,6 +45,10 @@ if [[ $BRANCH == *next* ]];then
 	LINUXCONFIG="linux-sunxi-next"
 	FIRMWARE=""
 	if [[ $BOARD == "udoo" ]];then
+	BOOTLOADER="https://github.com/UDOOboard/U-Boot_Unico-2013"
+	BOOTSOURCE="u-boot-udoo"
+	#LINUXKERNEL="https://github.com/patrykk/linux-udoo"
+	#LINUXSOURCE="linux-udoo"
 	LINUXCONFIG="linux-udoo-next"
 	fi
 fi
@@ -58,6 +63,7 @@ cubieboard4)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboards 3.4.x
 #--------------------------------------------------------------------------------------------------------------------------------
+REVISION="0.0"
 BOOTCONFIG="cubietruck"
 CPUMIN="1200000"
 CPUMAX="1800000"
@@ -76,8 +82,7 @@ cubieboard)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-#BOOTLOADER="https://github.com/linux-sunxi/u-boot-sunxi"
-#BOOTSOURCE="u-boot-sunxi"
+REVISION="3.2"
 BOOTCONFIG="Cubieboard_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 ;;
@@ -87,8 +92,7 @@ cubieboard2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-#BOOTLOADER="https://github.com/linux-sunxi/u-boot-sunxi"
-#BOOTSOURCE="u-boot-sunxi"
+REVISION="3.2"
 BOOTCONFIG="Cubieboard2_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 ;;
@@ -98,8 +102,7 @@ cubietruck)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-#BOOTLOADER="https://github.com/linux-sunxi/u-boot-sunxi"
-#BOOTSOURCE="u-boot-sunxi"
+REVISION="3.2"
 BOOTCONFIG="Cubietruck_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i bcmdhd"
 ;;
@@ -109,6 +112,7 @@ lime)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Olimex Lime
 #--------------------------------------------------------------------------------------------------------------------------------
+REVISION="1.5"
 BOOTCONFIG="A20-OLinuXino-Lime_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
 ;;
@@ -118,6 +122,7 @@ lime2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Olimex Lime 2
 #--------------------------------------------------------------------------------------------------------------------------------
+REVISION="1.5"
 BOOTCONFIG="A20-OLinuXino-Lime2_defconfig" 
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
 ;;
@@ -127,6 +132,7 @@ micro)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Olimex Lime mainline kernel	/ experimental
 #--------------------------------------------------------------------------------------------------------------------------------
+REVISION="1.5"
 BOOTCONFIG="A20-OLinuXino_MICRO_config"
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
 ;;
@@ -136,6 +142,7 @@ pcduino3)
 #--------------------------------------------------------------------------------------------------------------------------------
 # pcduino3
 #--------------------------------------------------------------------------------------------------------------------------------
+REVISION="0.0"
 BOOTCONFIG="Linksprite_pcDuino3_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
 ;;
@@ -145,6 +152,7 @@ bananapi)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
+REVISION="2.2"
 BOOTCONFIG="Bananapi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 ;;
@@ -154,6 +162,7 @@ orangepi)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
+REVISION="1.1"
 BOOTCONFIG="Bananapi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 ;;
@@ -163,6 +172,7 @@ hummingbird)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
+REVISION="0.0"
 BOOTCONFIG="Hummingbird_A31_config"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 ;;
@@ -172,6 +182,7 @@ cubox-i)
 #--------------------------------------------------------------------------------------------------------------------------------
 # cubox-i & hummingboard 3.14.xx
 #--------------------------------------------------------------------------------------------------------------------------------
+REVISION="2.6"
 BOOTLOADER="https://github.com/SolidRun/u-boot-imx6"
 BOOTSOURCE="u-boot-cubox"
 BOOTCONFIG="mx6_cubox-i_config"
@@ -188,12 +199,18 @@ DTBS="imx6q-cubox-i.dtb imx6dl-cubox-i.dtb imx6dl-hummingboard.dtb imx6q-humming
 
 udoo)
 #--------------------------------------------------------------------------------------------------------------------------------
-# cubox-i & hummingboard 3.14.xx
+# Udoo quad
 #--------------------------------------------------------------------------------------------------------------------------------
-BOOTCONFIG="udoo_quad_defconfig"
+REVISION="0.0"
+BOOTLOADER="https://github.com/UDOOboard/U-Boot_Unico-2013"
+BOOTSOURCE="u-boot-udoo"
+BOOTCONFIG="udoo_quad_config"
 CPUMIN="792000"
 CPUMAX="996000"
 MODULES="bonding"
+#LINUXKERNEL="https://github.com/UDOOboard/Kernel_Unico"
+#LINUXSOURCE="linux-udoo"
+#LINUXCONFIG="linux-udoo"
 ;;
 
 
