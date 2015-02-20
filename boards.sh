@@ -91,19 +91,20 @@ if [[ $LINUXCONFIG == *sunxi* ]] ; then
 		fi #NEXT
 fi # SUNXI
 
+if [[ $BOARD == udoo* ]] ; then
+	echo T0:2345:respawn:/sbin/getty -L ttymxc1 115200 vt100 >> $DEST/output/sdcard/etc/inittab
+	# enable serial console (Debian/sysvinit way)
+fi
 
-
-
-if [[ $BOARD == cubox-i* || $BOARD == udoo* ]] ; then
+if [[ $BOARD == cubox-i* ]] ; then
 		cp $SRC/lib/config/uEnv.cubox-i $DEST/output/sdcard/boot/uEnv.txt
 		cp $DEST/$LINUXSOURCE/arch/arm/boot/dts/*.dtb $DEST/output/sdcard/boot
 		chroot $DEST/output/sdcard /bin/bash -c "chmod 755 /boot/uEnv.txt"
 		# enable serial console (Debian/sysvinit way)
 		rm $DEST/output/sdcard/etc/init/ttyS0.conf
-		if [[ "$RELEASE" == "trusty" ]]; then
-		#chroot $DEST/output/sdcard /bin/bash -c "systemctl enable serial-getty@ttymxc0.service"
-		#chroot $DEST/output/sdcard /bin/bash -c "systemctl start serial-getty@ttymxc0.service"
-		echo "Trusty"
+		if [[ "$RELEASE" == "trusty" ]]; then				
+			sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/init/ttyS0.conf
+			mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc0.conf
 		else
 		echo T0:2345:respawn:/sbin/getty -L ttymxc0 115200 vt100 >> $DEST/output/sdcard/etc/inittab
 		fi
@@ -180,7 +181,11 @@ if [[ $BRANCH == *next* ]];then
 		# remove .old on new image
 		rm -rf $DEST/output/sdcard/boot/dtb/$CHOOSEN_KERNEL.old
 		# copy boot script and change it acordingly
-		cp $SRC/lib/config/boot-next.cmd $DEST/output/sdcard/boot/boot-next.cmd
+		if [[ $BOARD == udoo* ]] ; then		
+			cp $SRC/lib/config/boot-udoo-next.cmd $DEST/output/sdcard/boot/boot-next.cmd
+			else
+			cp $SRC/lib/config/boot-next.cmd $DEST/output/sdcard/boot/boot-next.cmd
+		fi		
 		sed -e "s/zImage/vmlinuz-$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot-next.cmd
 		sed -e "s/dtb/dtb\/$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot-next.cmd
 		# compile boot script

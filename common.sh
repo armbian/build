@@ -49,6 +49,9 @@ if [[ $BRANCH == "next" ]] ; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/dtb_to_deb.patch | grep previ)" == "" ]; then
         patch -p1 < $SRC/lib/patch/dtb_to_deb.patch
     fi
+	if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]] ; then
+	cp $SRC/lib/patch/bananapro.dts $DEST/$LINUXSOURCE/arch/arm/boot/dts/sun7i-a20-bananapi.dts
+	fi
 fi
 
 # sunxi 3.4
@@ -98,10 +101,12 @@ fi
 
 # u-boot
 cd $DEST/$BOOTSOURCE
-# This fixes sunxi boards not booting with v2015.04-rc1 
-#if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/uboot-2014-01.patch | grep previ)" == "" ]; then
-#       		patch --batch -N -p1 < $SRC/lib/patch/uboot-2014-01.patch
-#fi
+if [[ $BOARD == udoo* ]] ; then
+	# This enabled bootscript loading from ext partition which is my default setup
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch | grep previ)" == "" ]; then
+       		patch --batch -N -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch
+	fi
+fi
 
 # dual boot patch
 #if [[ $BOARD == "cubietruck" && $BRANCH != "next" ]] ; then
@@ -436,7 +441,7 @@ else
 	# Ubuntu stuff
 	sed -e "s/ORIGIN/Ubuntu/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 	# Serial console, two possible options
-	cp $SRC/lib/config/ttymxc0.conf $DEST/output/sdcard/etc/init
+	# cp $SRC/lib/config/ttymxc0.conf $DEST/output/sdcard/etc/init
 	cp $SRC/lib/config/ttymxc0.conf $DEST/output/sdcard/etc/init/ttyS0.conf
 	sed -e "s/ttymxc0/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttyS0.conf
 	# don't clear boot messages

@@ -45,10 +45,8 @@ if [[ $BRANCH == *next* ]];then
 	LINUXCONFIG="linux-sunxi-next"
 	FIRMWARE=""
 	if [[ $BOARD == "udoo" ]];then
-	BOOTLOADER="https://github.com/UDOOboard/U-Boot_Unico-2013"
-	BOOTSOURCE="u-boot-udoo"
-	#LINUXKERNEL="https://github.com/patrykk/linux-udoo"
-	#LINUXSOURCE="linux-udoo"
+	LINUXKERNEL="https://github.com/patrykk/linux-udoo"
+	LINUXSOURCE="linux-udoo-next"
 	LINUXCONFIG="linux-udoo-next"
 	fi
 fi
@@ -82,7 +80,7 @@ cubieboard)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.2"
+REVISION="3.3"
 BOOTCONFIG="Cubieboard_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 ;;
@@ -92,7 +90,7 @@ cubieboard2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.2"
+REVISION="3.3"
 BOOTCONFIG="Cubieboard2_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 ;;
@@ -102,7 +100,7 @@ cubietruck)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.2"
+REVISION="3.3"
 BOOTCONFIG="Cubietruck_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i bcmdhd"
 ;;
@@ -112,7 +110,7 @@ lime)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Olimex Lime
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.5"
+REVISION="1.6"
 BOOTCONFIG="A20-OLinuXino-Lime_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
 ;;
@@ -122,7 +120,7 @@ lime2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Olimex Lime 2
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.5"
+REVISION="1.6"
 BOOTCONFIG="A20-OLinuXino-Lime2_defconfig" 
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
 ;;
@@ -201,16 +199,11 @@ udoo)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Udoo quad
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="0.0"
-BOOTLOADER="https://github.com/UDOOboard/U-Boot_Unico-2013"
-BOOTSOURCE="u-boot-udoo"
+REVISION="1.0"
 BOOTCONFIG="udoo_quad_config"
 CPUMIN="792000"
 CPUMAX="996000"
 MODULES="bonding"
-#LINUXKERNEL="https://github.com/UDOOboard/Kernel_Unico"
-#LINUXSOURCE="linux-udoo"
-#LINUXCONFIG="linux-udoo"
 ;;
 
 
