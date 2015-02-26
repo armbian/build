@@ -45,11 +45,17 @@ cd $DEST/$LINUXSOURCE
 
 # mainline
 if [[ $BRANCH == "next" ]] ; then
+	# Fix Kernel Tag
+	if [[ KERNELTAG == "" ]] ; then
+		git checkout master
+	else
+		git checkout $KERNELTAG
+	fi
 	# install device tree blobs in linux-image package
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/dtb_to_deb.patch | grep previ)" == "" ]; then
         patch -p1 < $SRC/lib/patch/dtb_to_deb.patch
     fi
-	if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]] ; then
+	if [[ $BOARD == "bananapipro" || $BOARD == "orangepi" ]] ; then
 	cp $SRC/lib/patch/bananapro.dts $DEST/$LINUXSOURCE/arch/arm/boot/dts/sun7i-a20-bananapi.dts
 	fi
 fi
@@ -74,12 +80,14 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 		patch --batch -f -p1 < $SRC/lib/patch/spi-sun7i.patch
     	fi
 	# banana/orange gmac and wireless driver is a bit different  
-	if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]] ; then
+	if [[ $BOARD == "bananapi*" || $BOARD == "orangepi" ]] ; then
         	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" == "" ]; then
         		patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
         	fi
+		if [[ $BOARD == "bananapipro" ]] ; then
 			if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/wireless-bananapro.patch | grep previ)" == "" ]; then
-        		patch --batch -N -p1 < $SRC/lib/patch/wireless-bananapro.patch
+	        		patch --batch -N -p1 < $SRC/lib/patch/wireless-bananapro.patch
+			fi
         	fi
     fi
     # compile sunxi tools
@@ -191,7 +199,7 @@ else
 	git checkout master
 fi
 cd $DEST/$LINUXSOURCE
-if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]]; then
+if [[ $BOARD == "bananapi*" || $BOARD == "orangepi" ]]; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" == "" ]; then
 					# DMA disable
                 	patch --batch -N -p1 < $SRC/lib/patch/bananafbtft.patch
