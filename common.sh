@@ -18,6 +18,18 @@ debconf-apt-progress -- apt-get -y install libusb-1.0-0-dev parted pkg-config ex
 }
 
 
+grab_kernel_version (){
+	#--------------------------------------------------------------------------------------------------------------------------------
+	# grab linux kernel version from Makefile
+	#--------------------------------------------------------------------------------------------------------------------------------
+	VER=$(cat $DEST/$LINUXSOURCE/Makefile | grep VERSION | head -1 | awk '{print $(NF)}')
+	VER=$VER.$(cat $DEST/$LINUXSOURCE/Makefile | grep PATCHLEVEL | head -1 | awk '{print $(NF)}')
+	VER=$VER.$(cat $DEST/$LINUXSOURCE/Makefile | grep SUBLEVEL | head -1 | awk '{print $(NF)}')
+	EXTRAVERSION=$(cat $DEST/$LINUXSOURCE/Makefile | grep EXTRAVERSION | head -1 | awk '{print $(NF)}')
+	if [ "$EXTRAVERSION" != "=" ]; then VER=$VER$EXTRAVERSION; fi
+}
+
+
 fetch_from_github (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Download sources from Github 							                    
