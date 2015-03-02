@@ -45,13 +45,20 @@ cd $DEST/$LINUXSOURCE
 
 # mainline
 if [[ $BRANCH == "next" ]] ; then
+	# Fix Kernel Tag
+	if [[ KERNELTAG == "" ]] ; then
+		git checkout master
+	else
+		git checkout $KERNELTAG
+	fi
 	# install device tree blobs in linux-image package
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/dtb_to_deb.patch | grep previ)" == "" ]; then
         patch -p1 < $SRC/lib/patch/dtb_to_deb.patch
     fi
-	if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]] ; then
-	cp $SRC/lib/patch/bananapro.dts $DEST/$LINUXSOURCE/arch/arm/boot/dts/sun7i-a20-bananapi.dts
-	fi
+	# add bananapro DTS
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-banana-pro-dts.patch | grep previ)" == "" ]; then
+        patch -p1 < $SRC/lib/patch/add-banana-pro-dts.patch
+    fi
 fi
 
 # sunxi 3.4
@@ -66,20 +73,26 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 		patch --batch -f -p1 < $SRC/lib/patch/packaging.patch
     fi	
 	# gpio patch
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" == "" ]; then
-		patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
-    fi
+		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" == "" ]; then
+			patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
+	    fi
 	# SPI functionality
     	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi-sun7i.patch | grep previ)" == "" ]; then
 		patch --batch -f -p1 < $SRC/lib/patch/spi-sun7i.patch
     	fi
-	# banana/orange gmac and wireless driver is a bit different  
+	# banana/orange gmac, wireless and 5&7" touchscreen driver is a bit different  
 	if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]] ; then
         	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" == "" ]; then
         		patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
         	fi
 			if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/wireless-bananapro.patch | grep previ)" == "" ]; then
         		patch --batch -N -p1 < $SRC/lib/patch/wireless-bananapro.patch
+        	fi
+			if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/banana-ts.patch | grep previ)" == "" ]; then
+        		patch --batch -N -p1 < $SRC/lib/patch/banana-ts.patch
+        	fi
+			if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1.patch | grep previ)" == "" ]; then
+        		patch --batch -N -p1 < $SRC/lib/patch/bananapi-r1.patch
         	fi
     fi
     # compile sunxi tools
@@ -101,22 +114,13 @@ fi
 
 # u-boot
 cd $DEST/$BOOTSOURCE
+
 if [[ $BOARD == udoo* ]] ; then
-	# This enabled bootscript loading from ext partition which is my default setup
+	# This enabled boot script loading from ext2 partition which is my default setup
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch | grep previ)" == "" ]; then
        		patch --batch -N -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch
 	fi
 fi
-
-# dual boot patch
-#if [[ $BOARD == "cubietruck" && $BRANCH != "next" ]] ; then
-#	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/uboot-dualboot.patch | grep previ)" == "" ]; then
-#        		patch --batch -N -p1 < $SRC/lib/patch/uboot-dualboot.patch
-#	fi
-#elif [ "$( cat common/main.c | grep uEnv)" != "" ]; then
-#	echo "Reversing Dual Uboot patch"
-#	patch --batch -t -p1 < $SRC/lib/patch/uboot-dualboot.patch
-#fi 
 }
 
 
@@ -212,7 +216,7 @@ echo "------ Compiling kernel"
 if [ -d "$DEST/$LINUXSOURCE" ]; then 
 
 # add small TFT display support  
-if [ "$FBTFT" = "yes" ]; then add_fb_tft ; fi
+if [[ "$FBTFT" = "yes" && $BRANCH != "next" ]]; then add_fb_tft ; fi
 
 cd $DEST/$LINUXSOURCE
 # delete previous creations
@@ -244,7 +248,7 @@ CHOOSEN_KERNEL=$VER"-"$CONFIG_LOCALVERSION$BOARD-$BRANCH".tar"
 
 # go back and patch / unpatch
 cd $DEST/$LINUXSOURCE
-if [ "$FBTFT" = "yes" ]; then
+if [[ "$FBTFT" = "yes" && $BRANCH != "next" ]]; then
 # reverse fbtft patch
 patch --batch -t -p1 < $SRC/lib/patch/bananafbtft.patch
 fi
@@ -332,44 +336,83 @@ cp $SRC/lib/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.lis
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y update"
 
 # install aditional packages
-PAKETKI="alsa-utils automake bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl dosfstools evtest figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iotop iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libnl-dev libssl-dev lirc lsof makedev module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools wget wpasupplicant"
+PAKETKI="alsa-utils automake bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl dosfstools evtest figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iotop iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools wget wpasupplicant"
 
-if [ "$RELEASE" != "wheezy" ]; then 
-	PAKETKI="${PAKETKI//libnl-dev/libnl-3-dev}"; # change package
-	PAKETKI=$PAKETKI" busybox-syslogd"; # to gain performance
-	PAKETKI=$PAKETKI" software-properties-common python-software-properties"; # to add PPAs	
-	LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y remove rsyslog"
-	sed -e s,"TTYVTDisallocate=yes","TTYVTDisallocate=no",g 	-i $DEST/output/sdcard/etc/systemd/system/getty.target.wants/getty@tty1.service
-	# enable root login for latest ssh on jessie
-	sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/output/sdcard/etc/ssh/sshd_config 
-else
-	# don't clear screen on boot console
-	sed -e 's/1:2345:respawn:\/sbin\/getty 38400 tty1/1:2345:respawn:\/sbin\/getty --noclear 38400 tty1/g' -i $DEST/output/sdcard/etc/inittab
-	# disable some getties
-	sed -e 's/3:23:respawn/#3:23:respawn/g' -i $DEST/output/sdcard/etc/inittab
-	sed -e 's/4:23:respawn/#4:23:respawn/g' -i $DEST/output/sdcard/etc/inittab
-	sed -e 's/5:23:respawn/#5:23:respawn/g' -i $DEST/output/sdcard/etc/inittab
-	sed -e 's/6:23:respawn/#6:23:respawn/g' -i $DEST/output/sdcard/etc/inittab
-fi
-
-# Ubuntu fixes
-# that my startup scripts works well
-if [ ! -f "$DEST/output/sdcard/sbin/insserv" ]; then
-chroot $DEST/output/sdcard /bin/bash -c "ln -s /usr/lib/insserv/insserv /sbin/insserv"
-fi
-# that my custom motd works well
-if [ -d "$DEST/output/sdcard/etc/update-motd.d" ]; then
-chroot $DEST/output/sdcard /bin/bash -c "mv /etc/update-motd.d /etc/update-motd.d-backup"
-fi
-#
-
-# generate locales
+# generate locales and install packets
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y -qq install locales"
 sed -i "s/^# $DEST_LANG/$DEST_LANG/" $DEST/output/sdcard/etc/locale.gen
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "locale-gen $DEST_LANG"
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "export LANG=$DEST_LANG LANGUAGE=$DEST_LANG DEBIAN_FRONTEND=noninteractive"
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=POSIX"
 chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install $PAKETKI"
+
+# configure the system for unattended upgrades
+cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+cp $SRC/lib/scripts/02periodic $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
+sed -e "s/CODENAME/$RELEASE/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+
+case $RELEASE in
+#--------------------------------------------------------------------------------------------------------------------------------
+
+wheezy)
+		# specifics packets
+		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install libnl-dev"
+		# add serial console
+		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/output/sdcard/etc/inittab		
+		# don't clear screen on boot console
+		sed -e 's/1:2345:respawn:\/sbin\/getty 38400 tty1/1:2345:respawn:\/sbin\/getty --noclear 38400 tty1/g' -i $DEST/output/sdcard/etc/inittab
+		# disable some getties
+		sed -e 's/3:23:respawn/#3:23:respawn/g' -i $DEST/output/sdcard/etc/inittab
+		sed -e 's/4:23:respawn/#4:23:respawn/g' -i $DEST/output/sdcard/etc/inittab
+		sed -e 's/5:23:respawn/#5:23:respawn/g' -i $DEST/output/sdcard/etc/inittab
+		sed -e 's/6:23:respawn/#6:23:respawn/g' -i $DEST/output/sdcard/etc/inittab
+		# auto upgrading
+		sed -e "s/ORIGIN/Debian/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		;;
+jessie)
+		# add serial console
+		cp $SRC/lib/config/ttyS0.conf $DEST/output/sdcard/etc/init/ttyS0.conf
+		# specifics packets add and remove
+		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install libnl-3-dev busybox-syslogd software-properties-common python-software-properties"
+		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y remove rsyslog"		
+		# don't clear screen tty1
+		sed -e s,"TTYVTDisallocate=yes","TTYVTDisallocate=no",g 	-i $DEST/output/sdcard/etc/systemd/system/getty.target.wants/getty@tty1.service
+		# enable root login for latest ssh on jessie
+		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/output/sdcard/etc/ssh/sshd_config 
+		# auto upgrading
+		sed -e "s/ORIGIN/Debian/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		;;
+trusty)
+		# add serial console
+		cp $SRC/lib/config/ttyS0.conf $DEST/output/sdcard/etc/init/ttyS0.conf
+		# specifics packets add and remove
+		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install libnl-3-dev busybox-syslogd software-properties-common python-software-properties"
+		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y remove rsyslog"		
+		# don't clear screen tty1
+		sed -e s,"TTYVTDisallocate=yes","TTYVTDisallocate=no",g 	-i $DEST/output/sdcard/etc/systemd/system/getty.target.wants/getty@tty1.service
+		# enable root login for latest ssh on trusty
+		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/output/sdcard/etc/ssh/sshd_config 		
+		# that my startup scripts works well
+		if [ ! -f "$DEST/output/sdcard/sbin/insserv" ]; then
+			chroot $DEST/output/sdcard /bin/bash -c "ln -s /usr/lib/insserv/insserv /sbin/insserv"
+		fi
+		# that my custom motd works well
+		if [ -d "$DEST/output/sdcard/etc/update-motd.d" ]; then
+			chroot $DEST/output/sdcard /bin/bash -c "mv /etc/update-motd.d /etc/update-motd.d-backup"
+		fi
+		# auto upgrading
+		sed -e "s/ORIGIN/Ubuntu/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		# remove what's anyway not working 
+		rm $DEST/output/sdcard/etc/init/ureadahead*
+		rm $DEST/output/sdcard/etc/init/plymouth*
+		;;
+*) echo "Relese hasn't been choosen"
+exit
+;;
+esac
+#--------------------------------------------------------------------------------------------------------------------------------
+
+# remove what's not needed
 chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y autoremove"
 
 # set up 'apt
@@ -406,6 +449,10 @@ if [ "$RELEASE" = "wheezy" ]; then
 	sed -e 's/# Required-Stop:     umountnfs $time/# Required-Stop:     umountnfs $time ramlog/g' -i $DEST/output/sdcard/etc/init.d/rsyslog   
 fi
 
+# temper binary for USB temp meter
+cd $DEST/output/sdcard/usr/local/bin
+tar xvfz $SRC/lib/bin/temper.tgz
+
 # replace hostapd from testing binary
 cd $DEST/output/sdcard/usr/sbin/
 tar xfz $SRC/lib/bin/hostapd24.tgz
@@ -431,25 +478,6 @@ EOT
 # add noatime to root FS
 echo "/dev/mmcblk0p1  /           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro        0       0" >> $DEST/output/sdcard/etc/fstab
 
-# Configure The System For unattended upgrades
-cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-cp $SRC/lib/scripts/02periodic $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
-sed -e "s/CODENAME/$RELEASE/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-if [[ "$RELEASE" == "wheezy" || "$RELEASE" == "jessie" ]]; then
-	sed -e "s/ORIGIN/Debian/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-else
-	# Ubuntu stuff
-	sed -e "s/ORIGIN/Ubuntu/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-	# Serial console, two possible options
-	# cp $SRC/lib/config/ttymxc0.conf $DEST/output/sdcard/etc/init
-	cp $SRC/lib/config/ttymxc0.conf $DEST/output/sdcard/etc/init/ttyS0.conf
-	sed -e "s/ttymxc0/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttyS0.conf
-	# don't clear boot messages
-	sed -e "s/sbin\/getty/sbin\/getty --noclear/g" -i $DEST/output/sdcard/etc/init/ttyS0.conf
-	# remove what's anyway not working 
-	rm $DEST/output/sdcard/etc/init/ureadahead*
-	rm $DEST/output/sdcard/etc/init/plymouth*
-fi
 
 # flash media tunning
 if [ -f "$DEST/output/sdcard/etc/default/tmpfs" ]; then
@@ -533,9 +561,7 @@ cp $DEST/usb-redirector-linux-arm-eabi/files/rc.usbsrvd $DEST/output/sdcard/etc/
 # not started by default ----- update.rc rc.usbsrvd defaults
 # chroot $DEST/output/sdcard /bin/bash -c "update-rc.d rc.usbsrvd defaults"
 
-# temper binary for USB temp meter
-cd $DEST/output/sdcard/usr/local/bin
-tar xvfz $SRC/lib/bin/temper.tgz
+
 # some aditional stuff. Some driver as example
 if [[ -n "$MISC3_DIR" ]]; then
 	# https://github.com/pvaret/rtl8192cu-fixes

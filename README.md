@@ -1,6 +1,7 @@
 1. SDK for ARM 
 2. Use proven sources and configurations
-3. Create SD images for various boards: Cubieboard, BananaPi, Cubox, Humminboard, Olimex, ...
+3. Create SD images for various boards: Cubieboard 1, Cubieboard 2, Cubietruck, BananaPi, BananaPi, BananaPi PRO, Banana Pi R1, Cubox, Humminboard, Olimex Lime, Olimex Lime 2, Olimex Micro, Orange Pi, Udoo quad
+
 4. Well documented, maintained & easy to use
 5. Boot loaders and kernel images are compiled and cached.
 ```bash
@@ -23,6 +24,7 @@ MAINTAINER="Igor Pecovnik"					# deb signature
 MAINTAINERMAIL="igor.pecovnik@****l.com"	# deb signature
     
 # advanced
+KERNELTAG="v3.19"							# which kernel version - valid only for mainline
 FBTFT="yes"									# https://github.com/notro/fbtft 
 EXTERNAL="yes"								# compile extra drivers`
 

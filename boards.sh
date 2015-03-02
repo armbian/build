@@ -43,29 +43,28 @@ fi
 
 # for allwinner boards
 if [[ $LINUXCONFIG == *sunxi* ]] ; then
+		
 		# add irq to second core - rc.local
 		head -n -1 $DEST/output/sdcard/etc/rc.local > /tmp/out
 		echo 'echo 2 > /proc/irq/$(cat /proc/interrupts | grep eth0 | cut -f 1 -d ":" | tr -d " ")/smp_affinity' >> /tmp/out
 		echo 'exit 0' >> /tmp/out
 		mv /tmp/out $DEST/output/sdcard/etc/rc.local
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/rc.local"		
-		# enable serial console (Debian/sysvinit way)
-		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/output/sdcard/etc/inittab		
-		if [[ $BRANCH == *next* ]] ; then
-				# remove some unsupported stuff from mainline
-				chroot $DEST/output/sdcard /bin/bash -c "apt-get -y -qq remove cpufrequtils lirc alsa-utils alsa-base && apt-get -y -qq autoremove"
-			else
-				# sunxi tools
-				cp $DEST/sunxi-tools/fex2bin $DEST/sunxi-tools/bin2fex $DEST/sunxi-tools/nand-part $DEST/output/sdcard/usr/bin/				
-				# remove serial console from hummingboard / cubox
-				rm -f $DEST/output/sdcard/etc/init/ttymxc0.conf
-				# NAND & SATA install for all except
-				# cp $SRC/lib/scripts/nand-sata-install.sh $DEST/output/sdcard/root
-				if [[ $BOARD != "bananapi" ]] ; then
-					cp $SRC/lib/bin/nand1-allwinner.tgz $DEST/output/sdcard/root
-				fi # NAND				
 		
-		if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard2"  || $BOARD == "bananapi" || $BOARD == "orangepi" ]] ; then
+		# add sunxi tools
+		cp $DEST/sunxi-tools/fex2bin $DEST/sunxi-tools/bin2fex $DEST/sunxi-tools/nand-part $DEST/output/sdcard/usr/bin/				
+		
+		# add NAND boot content
+		if [[ $BOARD != "bananapi" ]] ; then
+			cp $SRC/lib/bin/nand1-allwinner.tgz $DEST/output/sdcard/root
+		fi
+		
+		# remove some unsupported stuff from mainline
+		if [[ $BRANCH == *next* ]] ; then				
+				chroot $DEST/output/sdcard /bin/bash -c "apt-get -y -qq remove lirc alsa-utils alsa-base && apt-get -y -qq autoremove"
+		fi
+		
+		if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard2"  || $BOARD == bananapi* || $BOARD == "orangepi" ]] ; then
 			# bluetooth device enabler - for cubietruck
 			cp $SRC/lib/bin/brcm_patchram_plus $DEST/output/sdcard/usr/local/bin/brcm_patchram_plus
 			chroot $DEST/output/sdcard /bin/bash -c "chmod +x /usr/local/bin/brcm_patchram_plus"
@@ -81,33 +80,24 @@ if [[ $LINUXCONFIG == *sunxi* ]] ; then
 			cp $SRC/lib/config/lirc.conf.cubietruck $DEST/output/sdcard/etc/lirc/lircd.conf
 		fi # cubieboards
 		if [[ $BOARD == "orangepi" ]] ; then
-			cp $SRC/lib/bin/hostapd.realtek $DEST/output/sdcard/usr/sbin/hostapd
-			chroot $DEST/output/sdcard /bin/bash -c "chmod +x /usr/sbin/hostapd"
+			# realtek have special hostapd
+		    tar xvfz $SRC/lib/bin/hostapd24-rtl871xdrv.tgz -C $DEST/output/sdcard/usr/sbin/			
 			cp $SRC/lib/config/hostapd.realtek.conf $DEST/output/sdcard/etc/hostapd.conf
-		fi # orangepi
-		if [[ $BOARD == "bananapi" ]] ; then
-				fex2bin $SRC/lib/config/bananapipro.fex $DEST/output/sdcard/boot/bananapipro.bin
-		fi # bananapi
-		fi #NEXT
+		fi # orangepi		
 fi # SUNXI
 
 if [[ $BOARD == udoo* ]] ; then
-	echo T0:2345:respawn:/sbin/getty -L ttymxc1 115200 vt100 >> $DEST/output/sdcard/etc/inittab
-	# enable serial console (Debian/sysvinit way)
+		if [ ! -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc1/g" -i $DEST/output/sdcard/etc/inittab; fi
+		if [ ! -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc1.conf; sed -e "s/ttymxc1/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttymxc1.conf; fi	
 fi
 
 if [[ $BOARD == cubox-i* ]] ; then
+		if [ ! -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/inittab; fi
+		if [ ! -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttymxc0/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttymxc0.conf; fi	
 		cp $SRC/lib/config/uEnv.cubox-i $DEST/output/sdcard/boot/uEnv.txt
 		cp $DEST/$LINUXSOURCE/arch/arm/boot/dts/*.dtb $DEST/output/sdcard/boot
 		chroot $DEST/output/sdcard /bin/bash -c "chmod 755 /boot/uEnv.txt"
-		# enable serial console (Debian/sysvinit way)
-		rm $DEST/output/sdcard/etc/init/ttyS0.conf
-		if [[ "$RELEASE" == "trusty" ]]; then				
-			sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/init/ttyS0.conf
-			mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc0.conf
-		else
-		echo T0:2345:respawn:/sbin/getty -L ttymxc0 115200 vt100 >> $DEST/output/sdcard/etc/inittab
-		fi
+	
 		# default lirc configuration 
 		sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
 		sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="default"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
@@ -118,9 +108,9 @@ if [[ $BOARD == cubox-i* ]] ; then
 		cp $SRC/lib/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
 		chroot $DEST/output/sdcard /bin/bash -c "insserv brcm4330-patch >> /dev/null" 
-		chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/Release.key | apt-key add -"
-		echo "deb http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
-		echo "deb-src http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+		#hroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/Release.key | apt-key add -"
+		#echo "deb http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+		#echo "deb-src http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
 fi
 echo "------ done."
 }
@@ -154,10 +144,14 @@ ff02::2     ip6-allrouters
 EOT
 
 # create modules file
+if [[ $BRANCH == *next* ]];then
+for word in $MODULES_NEXT; do echo $word >> $DEST/output/sdcard/etc/modules; done
+else
 for word in $MODULES; do echo $word >> $DEST/output/sdcard/etc/modules; done
-
+fi
 # script to install to SATA
 cp $SRC/lib/scripts/nand-sata-install.sh $DEST/output/sdcard/root
+chroot $DEST/output/sdcard /bin/bash -c "chmod +x /root/nand-sata-install.sh"
 
 # copy and create symlink to default interfaces configuration
 cp $SRC/lib/config/interfaces.* $DEST/output/sdcard/etc/network/
@@ -167,7 +161,8 @@ ln -sf interfaces.default $DEST/output/sdcard/etc/network/interfaces
 rm -rf /tmp/kernel && mkdir -p /tmp/kernel && cd /tmp/kernel
 tar -xPf $DEST"/output/kernel/"$CHOOSEN_KERNEL
 mount --bind /tmp/kernel/ $DEST/output/sdcard/tmp
-chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*.deb"
+chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*image*.deb"
+chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*headers*.deb"
 
 # name of archive is also kernel name
 CHOOSEN_KERNEL="${CHOOSEN_KERNEL//-$BRANCH.tar/}"
@@ -192,6 +187,9 @@ if [[ $BRANCH == *next* ]];then
 		mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot-next.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
 	elif [[ $LINUXCONFIG == *sunxi* ]]; then
 		fex2bin $SRC/lib/config/$BOARD.fex $DEST/output/sdcard/boot/$BOARD.bin
+		if [[ $BOARD == "bananapi" ]] ; then
+				fex2bin $SRC/lib/config/bananapipro.fex $DEST/output/sdcard/boot/bananapipro.bin
+		fi # bananapi
 		cp $SRC/lib/config/boot.cmd $DEST/output/sdcard/boot/boot.cmd
 		sed -e "s/zImage/vmlinuz-$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot.cmd
 		sed -e "s/script.bin/$BOARD.bin/g" -i $DEST/output/sdcard/boot/boot.cmd

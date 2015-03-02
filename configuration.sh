@@ -63,6 +63,8 @@ cubieboard4)
 #--------------------------------------------------------------------------------------------------------------------------------
 REVISION="0.0"
 BOOTCONFIG="cubietruck"
+MODULES=""
+MODULES_NEXT=""
 CPUMIN="1200000"
 CPUMAX="1800000"
 LINUXKERNEL="https://github.com/cubieboard/CC-A80-kernel-source"
@@ -83,6 +85,7 @@ cubieboard)
 REVISION="3.3"
 BOOTCONFIG="Cubieboard_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
+MODULES_NEXT=""
 ;;
 
 
@@ -93,6 +96,7 @@ cubieboard2)
 REVISION="3.3"
 BOOTCONFIG="Cubieboard2_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
+MODULES_NEXT=""
 ;;
 
 
@@ -103,6 +107,7 @@ cubietruck)
 REVISION="3.3"
 BOOTCONFIG="Cubietruck_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i bcmdhd"
+MODULES_NEXT="brcmfmac"
 ;;
 
 
@@ -113,6 +118,7 @@ lime)
 REVISION="1.6"
 BOOTCONFIG="A20-OLinuXino-Lime_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
+MODULES_NEXT=""
 ;;
 
 
@@ -123,6 +129,7 @@ lime2)
 REVISION="1.6"
 BOOTCONFIG="A20-OLinuXino-Lime2_defconfig" 
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
+MODULES_NEXT=""
 ;;
 
 
@@ -130,9 +137,10 @@ micro)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Olimex Lime mainline kernel	/ experimental
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.5"
+REVISION="1.6"
 BOOTCONFIG="A20-OLinuXino_MICRO_config"
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
+MODULES_NEXT=""
 ;;
 
 
@@ -143,6 +151,7 @@ pcduino3)
 REVISION="0.0"
 BOOTCONFIG="Linksprite_pcDuino3_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
+MODULES_NEXT=""
 ;;
 
 
@@ -150,9 +159,10 @@ bananapi)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="2.2"
+REVISION="2.4"
 BOOTCONFIG="Bananapi_defconfig"
-MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
+MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
+MODULES_NEXT="brcmfmac"
 ;;
 
 
@@ -163,6 +173,7 @@ orangepi)
 REVISION="1.1"
 BOOTCONFIG="Bananapi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
+MODULES_NEXT=""
 ;;
 
 
@@ -173,6 +184,7 @@ hummingbird)
 REVISION="0.0"
 BOOTCONFIG="Hummingbird_A31_config"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
+MODULES_NEXT=""
 ;;
 
 
@@ -187,6 +199,7 @@ BOOTCONFIG="mx6_cubox-i_config"
 CPUMIN="792000"
 CPUMAX="996000"
 MODULES="bonding"
+MODULES_NEXT=""
 LINUXKERNEL="https://github.com/linux4kix/linux-linaro-stable-mx6"
 LINUXCONFIG="linux-cubox"
 LINUXSOURCE="linux-cubox"
@@ -204,6 +217,7 @@ BOOTCONFIG="udoo_quad_config"
 CPUMIN="792000"
 CPUMAX="996000"
 MODULES="bonding"
+MODULES_NEXT=""
 ;;
 
 
@@ -215,5 +229,7 @@ esac
 
 # Common part 2 
 # It must be here
+if [[ $BRANCH != *next* ]];then
 MISC4="https://github.com/notro/fbtft"
 MISC4_DIR="$LINUXSOURCE/drivers/video/fbtft"
+fi
