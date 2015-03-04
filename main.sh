@@ -142,14 +142,7 @@ if [[ -n "$MISC3" ]]; then fetch_from_github "$MISC3" "$MISC3_DIR"; fi
 if [[ -n "$MISC4" ]]; then fetch_from_github "$MISC4" "$MISC4_DIR"; fi
 
 
-#--------------------------------------------------------------------------------------------------------------------------------
-# grab linux kernel version from Makefile
-#--------------------------------------------------------------------------------------------------------------------------------
-VER=$(cat $DEST/$LINUXSOURCE/Makefile | grep VERSION | head -1 | awk '{print $(NF)}')
-VER=$VER.$(cat $DEST/$LINUXSOURCE/Makefile | grep PATCHLEVEL | head -1 | awk '{print $(NF)}')
-VER=$VER.$(cat $DEST/$LINUXSOURCE/Makefile | grep SUBLEVEL | head -1 | awk '{print $(NF)}')
-EXTRAVERSION=$(cat $DEST/$LINUXSOURCE/Makefile | grep EXTRAVERSION | head -1 | awk '{print $(NF)}')
-if [ "$EXTRAVERSION" != "=" ]; then VER=$VER$EXTRAVERSION; fi
+grab_kernel_version
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -159,6 +152,9 @@ if [ "$SOURCE_COMPILE" = "yes" ]; then
 
 	# Patching sources
 	patching_sources
+
+	# Grab linux kernel version
+	grab_kernel_version
 
 	# Compile boot loader
 	compile_uboot
