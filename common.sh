@@ -29,7 +29,6 @@ grab_kernel_version (){
 	if [ "$EXTRAVERSION" != "=" ]; then VER=$VER$EXTRAVERSION; fi
 }
 
-
 fetch_from_github (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Download sources from Github 							                    
@@ -71,6 +70,12 @@ if [[ $BRANCH == "next" ]] ; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-banana-pro-dts.patch | grep previ)" == "" ]; then
         patch -p1 < $SRC/lib/patch/add-banana-pro-dts.patch
     fi
+	if [[ $BOARD == udoo* ]] ; then
+	# fix DTS tree
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-dts-fix.patch | grep previ)" == "" ]; then
+        patch -p1 < $SRC/lib/patch/udoo-dts-fix.patch
+    fi	
+	fi
 fi
 
 # sunxi 3.4

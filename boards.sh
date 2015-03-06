@@ -65,6 +65,8 @@ if [[ $LINUXCONFIG == *sunxi* ]] ; then
 		fi
 		
 		if [[ $BOARD == "cubietruck" || $BOARD == "cubieboard2"  || $BOARD == bananapi* || $BOARD == "orangepi" ]] ; then
+			# Bananpi router switch config
+			tar xvfz $SRC/lib/bin/swconfig.tgz -C $DEST/output/sdcard/usr/sbin/
 			# bluetooth device enabler - for cubietruck
 			cp $SRC/lib/bin/brcm_patchram_plus $DEST/output/sdcard/usr/local/bin/brcm_patchram_plus
 			chroot $DEST/output/sdcard /bin/bash -c "chmod +x /usr/local/bin/brcm_patchram_plus"
@@ -86,9 +88,15 @@ if [[ $LINUXCONFIG == *sunxi* ]] ; then
 		fi # orangepi		
 fi # SUNXI
 
-if [[ $BOARD == udoo* ]] ; then
-		if [ ! -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc1/g" -i $DEST/output/sdcard/etc/inittab; fi
-		if [ ! -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc1.conf; sed -e "s/ttymxc1/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttymxc1.conf; fi	
+if [[ $BOARD == udoo* ]] ; then		
+		if [ -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc1/g" -i $DEST/output/sdcard/etc/inittab; fi
+		if [ -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc1.conf; sed -e "s/ttymxc1/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttymxc1.conf; fi	
+		chroot $DEST/output/sdcard /bin/bash -c "apt-get -y -qq remove lirc && apt-get -y -qq autoremove"		
+		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.default
+		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.bonding
+		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.hostapd
+		# Udoo doesn't have interactive 		
+		sed -e 's/interactive/ondemand/g' -i $DEST/output/sdcard/etc/init.d/cpufrequtils
 fi
 
 if [[ $BOARD == cubox-i* ]] ; then
