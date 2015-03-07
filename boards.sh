@@ -197,6 +197,7 @@ if [[ $BRANCH == *next* ]];then
 		fex2bin $SRC/lib/config/$BOARD.fex $DEST/output/sdcard/boot/$BOARD.bin
 		if [[ $BOARD == "bananapi" ]] ; then
 				fex2bin $SRC/lib/config/bananapipro.fex $DEST/output/sdcard/boot/bananapipro.bin
+				fex2bin $SRC/lib/config/bananapir1.fex $DEST/output/sdcard/boot/bananapir1.bin
 		fi # bananapi
 		cp $SRC/lib/config/boot.cmd $DEST/output/sdcard/boot/boot.cmd
 		sed -e "s/zImage/vmlinuz-$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot.cmd
