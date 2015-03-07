@@ -70,6 +70,13 @@ if [[ $BRANCH == "next" ]] ; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-banana-pro-dts.patch | grep previ)" == "" ]; then
         patch -p1 < $SRC/lib/patch/add-banana-pro-dts.patch
     fi
+	# add bananar1 DTS
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-banana-r1-dts.patch | grep previ)" == "" ]; then
+        patch -p1 < $SRC/lib/patch/add-banana-r1-dts.patch
+    fi
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1-next.patch | grep previ)" == "" ]; then
+        patch -p1 < $SRC/lib/patch/bananapi-r1-next.patch
+    fi
 	if [[ $BOARD == udoo* ]] ; then
 	# fix DTS tree
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-dts-fix.patch | grep previ)" == "" ]; then
