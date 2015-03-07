@@ -244,7 +244,7 @@ if [[ "$FBTFT" = "yes" && $BRANCH != "next" ]]; then add_fb_tft ; fi
 
 cd $DEST/$LINUXSOURCE
 # delete previous creations
-if [ "KERNEL_CLEAN" = "yes" ]; then make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean ; fi
+if [ "$KERNEL_CLEAN" = "yes" ]; then make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean ; fi
 
 # adding custom firmware to kernel source
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $DEST/$LINUXSOURCE/firmware; fi
