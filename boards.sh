@@ -100,8 +100,8 @@ if [[ $BOARD == udoo* ]] ; then
 fi
 
 if [[ $BOARD == cubox-i* ]] ; then
-		if [ ! -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/inittab; fi
-		if [ ! -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttymxc0/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttymxc0.conf; fi	
+		if [ -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/inittab; fi
+		if [ -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttymxc0/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttymxc0.conf; fi	
 		cp $SRC/lib/config/uEnv.cubox-i $DEST/output/sdcard/boot/uEnv.txt
 		cp $DEST/$LINUXSOURCE/arch/arm/boot/dts/*.dtb $DEST/output/sdcard/boot
 		chroot $DEST/output/sdcard /bin/bash -c "chmod 755 /boot/uEnv.txt"
@@ -116,9 +116,20 @@ if [[ $BOARD == cubox-i* ]] ; then
 		cp $SRC/lib/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
 		chroot $DEST/output/sdcard /bin/bash -c "insserv brcm4330-patch >> /dev/null" 
-		#hroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/Release.key | apt-key add -"
-		#echo "deb http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
-		#echo "deb-src http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+		case $RELEASE in
+		wheezy)
+		echo "deb http://repo.gbps.io/BSP:/Cubox-i/Debian_Wheezy/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+		chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.gbps.io/BSP:/Cubox-i:/devel/Debian_Wheezy/Release.key | apt-key add -"
+		;;
+		jessie)
+		echo "deb http://repo.gbps.io/BSP:/Cubox-i/Debian_Jessie/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+		chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.gbps.io/BSP:/Cubox-i:/devel/Debian_Wheezy/Release.key | apt-key add -"
+		;;
+		trusty)
+		echo "deb http://repo.gbps.io/BSP:/Cubox-i/Ubuntu_Trusty_Tahr/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+		chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.gbps.io/BSP:/Cubox-i/Ubuntu_Trusty_Tahr/Release.key | apt-key add -"
+		;;
+		esac
 fi
 echo "------ done."
 }
