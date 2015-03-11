@@ -42,6 +42,7 @@ if [ -d "$SRC/lib" ]; then
 	git pull 
 else
 	# download SDK
+	apt-get -y -qq install git
 	git clone https://github.com/igorpecovnik/lib
 fi
 
