@@ -62,21 +62,22 @@ if [[ $BRANCH == "next" ]] ; then
 	else
 		git checkout $KERNELTAG
 	fi
-	# install device tree blobs in linux-image package
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/dtb_to_deb.patch | grep previ)" == "" ]; then
-        patch -p1 < $SRC/lib/patch/dtb_to_deb.patch
+	# install device tree blobs in separate package, link zImage to kernel image script
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-next.patch | grep previ)" == "" ]; then
+        patch -p1 < $SRC/lib/patch/packaging-next.patch
     fi
 	# add bananapro DTS
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-banana-pro-dts.patch | grep previ)" == "" ]; then
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-banana-pro-dts.patch | grep exists)" == "" ]; then
         patch -p1 < $SRC/lib/patch/add-banana-pro-dts.patch
     fi
 	# add bananar1 DTS
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-banana-r1-dts.patch | grep previ)" == "" ]; then
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-banana-r1-dts.patch | grep exists)" == "" ]; then
         patch -p1 < $SRC/lib/patch/add-banana-r1-dts.patch
     fi
-	#if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1-next.patch | grep previ)" == "" ]; then
-        #patch -p1 < $SRC/lib/patch/bananapi-r1-next.patch
-    #fi
+	# add r1 switch driver
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1-next.patch | grep previ)" == "" ]; then
+        patch -p1 < $SRC/lib/patch/bananapi-r1-next.patch
+    fi
 	if [[ $BOARD == udoo* ]] ; then
 	# fix DTS tree
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-dts-fix.patch | grep previ)" == "" ]; then
@@ -100,9 +101,13 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" == "" ]; then
 			patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
 	    fi
+	# Temperature reading from A20 chip
+		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/a20-temp.patch | grep previ)" == "" ]; then
+			patch --batch -f -p1 < $SRC/lib/patch/a20-temp.patch
+	    fi
 	# SPI functionality
-    	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi-sun7i.patch | grep previ)" == "" ]; then
-		patch --batch -f -p1 < $SRC/lib/patch/spi-sun7i.patch
+    	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi.patch | grep previ)" == "" ]; then
+		patch --batch -f -p1 < $SRC/lib/patch/spi.patch
     	fi
 	# banana/orange gmac, wireless and 5&7" touchscreen driver is a bit different  
 	if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]] ; then
@@ -114,6 +119,9 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
         	fi
 			if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/banana-ts.patch | grep previ)" == "" ]; then
         		patch --batch -N -p1 < $SRC/lib/patch/banana-ts.patch
+        	fi
+			if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/banana-ts-extra.patch | grep previ)" == "" ]; then
+        		patch --batch -N -p1 < $SRC/lib/patch/banana-ts-extra.patch
         	fi
 			if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1.patch | grep previ)" == "" ]; then
         		patch --batch -N -p1 < $SRC/lib/patch/bananapi-r1.patch
@@ -129,6 +137,10 @@ if [[ $LINUXSOURCE == "linux-cubox" ]] ; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/hb-i2c-spi.patch | grep previ)" == "" ]; then
         patch -p1 < $SRC/lib/patch/hb-i2c-spi.patch
     fi
+	# deb packaging patch
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-cubox.patch | grep previ)" == "" ]; then
+		patch --batch -f -p1 < $SRC/lib/patch/packaging-cubox.patch
+    fi	
 fi
 
 # compiler reverse patch. It has already been fixed.
@@ -254,7 +266,7 @@ cp $SRC/lib/config/$LINUXCONFIG.config $DEST/$LINUXSOURCE/.config
 if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig ; fi
 
 # this way of compilation is much faster. We can use multi threading here but not later
-make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all zImage modules_prepare
+make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all zImage
 # make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- 
 # produce deb packages: image, headers, firmware, libc
 make -j1 deb-pkg KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$BOARD KBUILD_DEBARCH=armhf ARCH=arm DEBFULLNAME="$MAINTAINER" DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE=arm-linux-gnueabihf- 
@@ -571,6 +583,8 @@ wget http://www.incentivespro.com/usb-redirector-linux-arm-eabi.tar.gz
 tar xvfz usb-redirector-linux-arm-eabi.tar.gz
 rm usb-redirector-linux-arm-eabi.tar.gz
 cd $DEST/usb-redirector-linux-arm-eabi/files/modules/src/tusbd
+# patch to work with newer kernels
+sed -e "s/f_dentry/f_path.dentry/g" -i usbdcdev.c
 make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KERNELDIR=$DEST/$LINUXSOURCE/
 # configure USB redirector
 sed -e 's/%INSTALLDIR_TAG%/\/usr\/local/g' $DEST/usb-redirector-linux-arm-eabi/files/rc.usbsrvd > $DEST/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1
@@ -685,12 +699,15 @@ losetup -d $LOOP
 sync
 sleep 2
 mv $DEST/output/debian_rootfs.raw $DEST/output/$VERSION.raw
-cd $DEST/output/
-# creating MD5 sum
 sync
-md5sum $VERSION.raw > $VERSION.md5 
+cd $DEST/output/
 cp $SRC/lib/bin/imagewriter.exe .
-md5sum imagewriter.exe > imagewriter.md5
-zip $VERSION.zip $VERSION.* readme.txt imagewriter.*
-rm $VERSION.raw $VERSION.md5 imagewriter.* readme.txt
+# sign with PGP
+if [[ $GPGPASS != "" ]] ; then
+	echo $GPGPASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes $VERSION.raw	
+	echo $GPGPASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes imagewriter.exe
+	echo $GPGPASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes readme.txt
+fi
+zip $VERSION.zip $VERSION.* readme.* imagewriter.*
+rm -f $VERSION.raw *.asc imagewriter.* readme.txt
 }

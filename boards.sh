@@ -102,10 +102,13 @@ fi
 if [[ $BOARD == cubox-i* ]] ; then
 		if [ -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/inittab; fi
 		if [ -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttymxc0/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttymxc0.conf; fi	
-		cp $SRC/lib/config/uEnv.cubox-i $DEST/output/sdcard/boot/uEnv.txt
-		cp $DEST/$LINUXSOURCE/arch/arm/boot/dts/*.dtb $DEST/output/sdcard/boot
-		chroot $DEST/output/sdcard /bin/bash -c "chmod 755 /boot/uEnv.txt"
-	
+		
+		#cp $SRC/lib/config/uEnv.cubox-i $DEST/output/sdcard/boot/uEnv.txt
+		#cp $DEST/$LINUXSOURCE/arch/arm/boot/dts/*.dtb $DEST/output/sdcard/boot
+		#chroot $DEST/output/sdcard /bin/bash -c "chmod 755 /boot/uEnv.txt"
+
+		
+		
 		# default lirc configuration 
 		sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
 		sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="default"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
@@ -119,6 +122,9 @@ if [[ $BOARD == cubox-i* ]] ; then
 		case $RELEASE in
 		wheezy)
 		echo "deb http://repo.gbps.io/BSP:/Cubox-i/Debian_Wheezy/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+		cp $SRC/lib/scripts/mxobs $DEST/output/sdcard/etc/apt/preferences.d/mxobs
+		mkdir $DEST/output/sdcard/etc/X11/
+		cp $SRC/lib/config/xorg.conf.cubox $DEST/output/sdcard/etc/X11/xorg.conf
 		chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.gbps.io/BSP:/Cubox-i:/devel/Debian_Wheezy/Release.key | apt-key add -"
 		;;
 		jessie)
@@ -182,7 +188,9 @@ tar -xPf $DEST"/output/kernel/"$CHOOSEN_KERNEL
 mount --bind /tmp/kernel/ $DEST/output/sdcard/tmp
 chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*image*.deb"
 chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*headers*.deb"
-
+if [[ $BRANCH == *next* || $LINUXSOURCE == "linux-cubox" ]];then
+	chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*dtb*.deb"
+fi
 # name of archive is also kernel name
 CHOOSEN_KERNEL="${CHOOSEN_KERNEL//-$BRANCH.tar/}"
 
@@ -191,17 +199,20 @@ echo "------ Compile headers scripts"
 chroot $DEST/output/sdcard /bin/bash -c "cd /usr/src/linux-headers-$CHOOSEN_KERNEL && make scripts"
 
 # recreate boot.scr if using kernel for different board. Mainline only
-if [[ $BRANCH == *next* ]];then
+if [[ $BRANCH == *next* || $BOARD == cubox-i* ]];then
 		# remove .old on new image
-		rm -rf $DEST/output/sdcard/boot/dtb/$CHOOSEN_KERNEL.old
+		rm -rf $DEST/output/sdcard/boot/dtb.old
 		# copy boot script and change it acordingly
 		if [[ $BOARD == udoo* ]] ; then		
 			cp $SRC/lib/config/boot-udoo-next.cmd $DEST/output/sdcard/boot/boot-next.cmd
-			else
+		elif [[ $BOARD == cubox-i* ]]; then
+			cp $SRC/lib/config/boot-cubox.cmd $DEST/output/sdcard/boot/boot-next.cmd
+		else
 			cp $SRC/lib/config/boot-next.cmd $DEST/output/sdcard/boot/boot-next.cmd
 		fi		
-		sed -e "s/zImage/vmlinuz-$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot-next.cmd
-		sed -e "s/dtb/dtb\/$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot-next.cmd
+		#sed -e "s/zImage/vmlinuz-$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot-next.cmd
+		#chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/vmlinuz-$CHOOSEN_KERNEL /boot/zImage"
+		#sed -e "s/dtb/dtb\/$CHOOSEN_KERNEL/g" -i $DEST/output/sdcard/boot/boot-next.cmd
 		# compile boot script
 		mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot-next.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
 	elif [[ $LINUXCONFIG == *sunxi* ]]; then

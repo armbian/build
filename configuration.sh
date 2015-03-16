@@ -28,8 +28,8 @@ MISC1="https://github.com/linux-sunxi/sunxi-tools.git"
 MISC1_DIR="sunxi-tools"
 MISC2=""	
 MISC2_DIR=""						
-MISC3="https://github.com/dz0ny/rt8192cu"	
-MISC3_DIR="rt8192cu"
+#MISC3="https://github.com/dz0ny/rt8192cu"	
+#MISC3_DIR="rt8192cu"
 # MISC4 = RESERVED
 # MISC4_DIR = RESERVED
 
@@ -82,7 +82,7 @@ cubieboard)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.3"
+REVISION="3.4"
 BOOTCONFIG="Cubieboard_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT=""
@@ -93,7 +93,7 @@ cubieboard2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.3"
+REVISION="3.4"
 BOOTCONFIG="Cubieboard2_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT=""
@@ -104,7 +104,7 @@ cubietruck)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.3"
+REVISION="3.4"
 BOOTCONFIG="Cubietruck_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i bcmdhd"
 MODULES_NEXT="brcmfmac"
@@ -159,7 +159,7 @@ bananapi)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="2.4"
+REVISION="2.5"
 BOOTCONFIG="Bananapi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
 MODULES_NEXT="brcmfmac"
@@ -170,8 +170,8 @@ orangepi)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.1"
-BOOTCONFIG="Bananapi_defconfig"
+REVISION="1.2"
+BOOTCONFIG="Orangepi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT=""
 ;;
@@ -192,7 +192,7 @@ cubox-i)
 #--------------------------------------------------------------------------------------------------------------------------------
 # cubox-i & hummingboard 3.14.xx
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="2.7"
+REVISION="2.8"
 BOOTLOADER="https://github.com/SolidRun/u-boot-imx6"
 BOOTSOURCE="u-boot-cubox"
 BOOTCONFIG="mx6_cubox-i_config"
@@ -204,7 +204,6 @@ LINUXKERNEL="https://github.com/linux4kix/linux-linaro-stable-mx6"
 LINUXCONFIG="linux-cubox"
 LINUXSOURCE="linux-cubox"
 LOCALVERSION="-cubox"
-DTBS="imx6q-cubox-i.dtb imx6dl-cubox-i.dtb imx6dl-hummingboard.dtb imx6q-hummingboard.dtb"
 ;;
 
 
@@ -212,7 +211,7 @@ udoo)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Udoo quad
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.2"
+REVISION="1.4"
 BOOTCONFIG="udoo_quad_config"
 CPUMIN="392000"
 CPUMAX="996000"

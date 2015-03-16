@@ -20,6 +20,15 @@ fi
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
+# Get your PGP key signing password  								            
+#--------------------------------------------------------------------------------------------------------------------------------
+if [ "$GPGPASS" == "" ]; then
+GPGPASS=$(whiptail --passwordbox "\nPlease enter your GPG signing password or leave blank for none. \n\nEnd users - ignore - leave blank. " 14 50 --title "Package signing" 3>&1 1>&2 2>&3)    
+exitstatus=$?
+if [ $exitstatus != 0 ]; then exit; fi
+fi
+
+#--------------------------------------------------------------------------------------------------------------------------------
 # Choose for which board you want to compile  								            
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$BOARD" == "" ]; then
@@ -52,7 +61,7 @@ if [ "$RELEASE" == "" ]; then echo "ERROR: You have to choose one distribution";
 # Choose for which branch you want to compile  								            
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$BRANCH" == "" ]; then
-	BRANCH="default 3.4.x next mainline";
+	BRANCH="default 3.4.x-3.14.x next mainline";
 	MYLIST=`for x in $BRANCH; do echo $x ""; done`
 	whiptail --backtitle "" --title "Select distribution" --menu "" 12 30 4 $MYLIST 2>results    
 	BRANCH=$(<results)
