@@ -7,14 +7,14 @@
 # Board definitions
 #
 
-SDSIZE="1200"                               # SD image size in MB
+
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # common for default allwinner kernel-source
 #--------------------------------------------------------------------------------------------------------------------------------
 
 
-BOOTLOADER="https://github.com/RobertCNelson/u-boot"
+BOOTLOADER="git://github.com/RobertCNelson/u-boot"
 BOOTSOURCE="u-boot"
 LINUXKERNEL="https://github.com/dan-and/linux-sunxi"
 LINUXSOURCE="linux-sunxi"

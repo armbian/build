@@ -44,7 +44,7 @@ SOURCE="${SOURCE//root=/}"
 #--------------------------------------------------------------------------------------------------------------------------------
 # Which kernel and bin do we run
 #--------------------------------------------------------------------------------------------------------------------------------
-KERNEL=$(basename $(readlink /boot/zImage))
+KERNEL=$(ls -l /boot/ |grep vmlinuz |awk '{print $NF}')
 BINFILE=$(cat /boot/boot.cmd |grep .bin |awk '{print $NF}')
 
 
@@ -93,7 +93,7 @@ if [ -f $FLAG ]; then
 	tar xfz nand1-allwinner.tgz -C /mnt/
 	cp $BINFILE /mnt/script.bin
 	whiptail --title "NAND install" --infobox "Converting and copying kernel." 7 60
-	mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d $KERNEL /mnt/uImage > /dev/null 2>&1
+	mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /boot/$KERNEL /mnt/uImage > /dev/null 2>&1
 	umount /mnt
 	mount /dev/nand2 /mnt
 	whiptail --title "NAND install" --infobox "Checking and counting files." 7 60
@@ -109,7 +109,7 @@ if [ -f $FLAG ]; then
 	sed -e 's/mmcblk0p1/nand2/g' -i /mnt/etc/fstab
 	echo "/dev/nand1	/boot	vfat	defaults	0	0" >> /mnt/etc/fstab
 	umount /mnt
-	whiptail --title "NAND install" --infobox "All done. Press a key to power off, then remove SD to boot from NAND." 7 60
+	whiptail --title "NAND install" --infobox "All done. Press a key to power off, then remove SD to boot from NAND." 9 60
 	rm $FLAG .install-exclude
 	read konec
 	poweroff

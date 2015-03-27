@@ -34,7 +34,6 @@ install_board_specific (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install board specific applications  					                    
 #--------------------------------------------------------------------------------------------------------------------------------
-clear
 echo "------ Install board specific applications"
 
 if [[ $BOARD == "lime" || $BOARD == "lime2" || $BOARD == "micro" ]] ; then
@@ -195,8 +194,12 @@ fi
 CHOOSEN_KERNEL="${CHOOSEN_KERNEL//-$BRANCH.tar/}"
 
 echo "------ Compile headers scripts"
+
+# patch scripts
+cd $DEST/output/sdcard/usr/src/linux-headers-$CHOOSEN_KERNEL
+patch -p1 < $SRC/lib/patch/headers-debian-byteshift.patch
 # recompile headers scripts
-chroot $DEST/output/sdcard /bin/bash -c "cd /usr/src/linux-headers-$CHOOSEN_KERNEL && make scripts"
+chroot $DEST/output/sdcard /bin/bash -c "cd /usr/src/linux-headers-$CHOOSEN_KERNEL && make headers_check; make headers_install ; make scripts"
 
 # recreate boot.scr if using kernel for different board. Mainline only
 if [[ $BRANCH == *next* || $BOARD == cubox-i* ]];then
@@ -234,4 +237,24 @@ fi
 
 # add linux firmwares to output image
 unzip $SRC/lib/bin/linux-firmware.zip -d $DEST/output/sdcard/lib/firmware
+}
+
+
+install_desktop (){
+#--------------------------------------------------------------------------------------------------------------------------------
+# Install desktop with HW acceleration  								                    
+#--------------------------------------------------------------------------------------------------------------------------------
+echo "------ Install desktop"
+chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install xorg lightdm xfce4 xfce4-goodies tango-icon-theme gnome-icon-theme"
+if [[ $LINUXCONFIG == *sunxi* ]]; then
+ chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install xorg-dev xutils-dev x11proto-dri2-dev"
+ chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install libltdl-dev libtool automake libdrm-dev"
+ # quemu bug walkaround
+ git clone https://github.com/ssvb/xf86-video-fbturbo.git $DEST/output/sdcard/tmp/xf86-video-fbturbo
+ chroot $DEST/output/sdcard /bin/bash -c "cd /tmp/xf86-video-fbturbo && autoreconf -vi"
+ chroot $DEST/output/sdcard /bin/bash -c "cd /tmp/xf86-video-fbturbo && ./configure --prefix=/usr"
+ chroot $DEST/output/sdcard /bin/bash -c "cd /tmp/xf86-video-fbturbo && make && make install && cp xorg.conf /etc/X11/xorg.conf"
+ # clean deb cache
+ chroot $DEST/output/sdcard /bin/bash -c "apt-get -y clean"	
+fi
 }

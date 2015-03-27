@@ -11,6 +11,7 @@
 #
 
 # method
+KERNEL_ONLY="no"							# build only kernel
 SOURCE_COMPILE="yes"						# force source compilation: yes / no
 KERNEL_CONFIGURE="no"						# want to change my default configuration
 KERNEL_CLEAN="yes"							# run MAKE clean before kernel compilation
@@ -24,9 +25,12 @@ MAINTAINER="Igor Pecovnik"					# deb signature
 MAINTAINERMAIL="igor.pecovnik@****l.com"	# deb signature
     
 # advanced
-KERNELTAG="v3.19"							# which kernel version - valid only for mainline
-FBTFT="yes"									# https://github.com/notro/fbtft 
-EXTERNAL="yes"								# compile extra drivers`
+KERNELTAG="v3.19.3"							# which kernel version - valid only for mainline
+FBTFT="yes"									# https://github.com/notro/fbtft , valid only for old kernels
+EXTERNAL="yes"								# compile extra drivers: USB redirector
+SDSIZE="1500"                               # SD image size in MB
+AFTERINSTALL=""								# your command example: apt-get install joe
+BUILD_DESKTOP="no"							# install desktop, hw acceleration for some boards
 
 #---------------------------------------------------------------------------------------
 

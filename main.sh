@@ -22,8 +22,8 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # Get your PGP key signing password  								            
 #--------------------------------------------------------------------------------------------------------------------------------
-if [ "$GPGPASS" == "" ]; then
-GPGPASS=$(whiptail --passwordbox "\nPlease enter your GPG signing password or leave blank for none. \n\nEnd users - ignore - leave blank. " 14 50 --title "Package signing" 3>&1 1>&2 2>&3)    
+if [ "$GPG_PASS" == "" ]; then
+GPG_PASS=$(whiptail --passwordbox "\nPlease enter your GPG signing password or leave blank for none. \n\nEnd users - ignore - leave blank. " 14 50 --title "Package signing" 3>&1 1>&2 2>&3)    
 exitstatus=$?
 if [ $exitstatus != 0 ]; then exit; fi
 fi
@@ -170,6 +170,12 @@ if [ "$SOURCE_COMPILE" = "yes" ]; then
 
 	# compile kernel and create archives
 	compile_kernel
+	if [ "$KERNEL_ONLY" == "yes" ]; then
+		echo "Kernel building done."
+		echo "Target directory: $DEST/output/kernel"
+		echo "File name: $CHOOSEN_KERNEL"
+		exit
+	fi
 
 else
 	
@@ -180,7 +186,9 @@ else
 	fi
 	
 	# choose kernel from ready made
-	choosing_kernel
+	if [ "$CHOOSEN_KERNEL" == "" ]; then
+		choosing_kernel
+	fi
 fi
 
 
@@ -200,9 +208,16 @@ install_kernel
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # install board specific applications
-
 #--------------------------------------------------------------------------------------------------------------------------------
 install_board_specific 
+
+
+#--------------------------------------------------------------------------------------------------------------------------------
+# install desktop
+#--------------------------------------------------------------------------------------------------------------------------------
+if [ "$BUILD_DESKTOP" = "yes" ]; then
+install_desktop
+fi
 
 
 #--------------------------------------------------------------------------------------------------------------------------------

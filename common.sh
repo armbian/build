@@ -382,6 +382,9 @@ LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "export LANG=
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=POSIX"
 chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install $PAKETKI"
 
+# install console setup separate
+LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y install console-setup console-data "
+
 # configure the system for unattended upgrades
 cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 cp $SRC/lib/scripts/02periodic $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
@@ -529,6 +532,7 @@ chroot $DEST/output/sdcard /bin/bash -c "apt-get -y clean"
 
 echo "------ Closing image"
 chroot $DEST/output/sdcard /bin/bash -c "sync"
+chroot $DEST/output/sdcard /bin/bash -c "unset DEBIAN_FRONTEND"
 sync
 sleep 3
 # unmount proc, sys and dev from chroot
@@ -643,6 +647,8 @@ closing_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Closing image and clean-up 									            
 #--------------------------------------------------------------------------------------------------------------------------------
+echo "------ After install"
+chroot $DEST/output/sdcard /bin/bash -c "$AFTERINSTALL"
 echo "------ Closing image"
 chroot $DEST/output/sdcard /bin/bash -c "sync"
 sync
@@ -703,10 +709,10 @@ sync
 cd $DEST/output/
 cp $SRC/lib/bin/imagewriter.exe .
 # sign with PGP
-if [[ $GPGPASS != "" ]] ; then
-	echo $GPGPASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes $VERSION.raw	
-	echo $GPGPASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes imagewriter.exe
-	echo $GPGPASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes readme.txt
+if [[ $GPG_PASS != "" ]] ; then
+	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes $VERSION.raw	
+	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes imagewriter.exe
+	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes readme.txt
 fi
 zip $VERSION.zip $VERSION.* readme.* imagewriter.*
 rm -f $VERSION.raw *.asc imagewriter.* readme.txt
