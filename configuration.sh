@@ -16,7 +16,7 @@
 
 BOOTLOADER="git://github.com/RobertCNelson/u-boot"
 BOOTSOURCE="u-boot"
-LINUXKERNEL="https://github.com/dan-and/linux-sunxi"
+LINUXKERNEL="https://github.com/igorpecovnik/linux-sunxi"
 LINUXSOURCE="linux-sunxi"
 LINUXCONFIG="linux-sunxi"
 CPUMIN="480000"
@@ -115,7 +115,7 @@ lime)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Olimex Lime
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.6"
+REVISION="1.7"
 BOOTCONFIG="A20-OLinuXino-Lime_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
 MODULES_NEXT=""
@@ -126,7 +126,7 @@ lime2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Olimex Lime 2
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.6"
+REVISION="1.7"
 BOOTCONFIG="A20-OLinuXino-Lime2_defconfig" 
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
 MODULES_NEXT=""
@@ -137,7 +137,7 @@ micro)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Olimex Lime mainline kernel	/ experimental
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.6"
+REVISION="1.7"
 BOOTCONFIG="A20-OLinuXino_MICRO_config"
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
 MODULES_NEXT=""
@@ -159,9 +159,31 @@ bananapi)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="2.5"
+REVISION="2.6"
 BOOTCONFIG="Bananapi_defconfig"
-MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
+MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
+MODULES_NEXT="brcmfmac"
+;;
+
+
+bananapipro)
+#--------------------------------------------------------------------------------------------------------------------------------
+# Bananapi
+#--------------------------------------------------------------------------------------------------------------------------------
+REVISION="2.6"
+BOOTCONFIG="Bananapro_defconfig"
+MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
+MODULES_NEXT="brcmfmac"
+;;
+
+
+lamobo-r1)
+#--------------------------------------------------------------------------------------------------------------------------------
+# Bananapi
+#--------------------------------------------------------------------------------------------------------------------------------
+REVISION="2.6"
+BOOTCONFIG="Lamobo_R1_defconfig"
+MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT="brcmfmac"
 ;;
 
@@ -199,11 +221,10 @@ BOOTCONFIG="mx6_cubox-i_config"
 CPUMIN="792000"
 CPUMAX="996000"
 MODULES="bonding"
-MODULES_NEXT=""
+MODULES_NEXT="bonding"
 LINUXKERNEL="https://github.com/linux4kix/linux-linaro-stable-mx6"
 LINUXCONFIG="linux-cubox"
 LINUXSOURCE="linux-cubox"
-LOCALVERSION="-cubox"
 ;;
 
 
@@ -211,7 +232,7 @@ udoo)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Udoo quad
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.4"
+REVISION="1.5"
 BOOTCONFIG="udoo_quad_config"
 CPUMIN="392000"
 CPUMAX="996000"
