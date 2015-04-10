@@ -52,38 +52,48 @@ patching_sources(){
 #--------------------------------------------------------------------------------------------------------------------------------
 # kernel
 
+echo "------ Patching kernel sources."
 cd $DEST/$LINUXSOURCE
 
 # mainline
 if [[ $BRANCH == "next" ]] ; then
-	# Fix Kernel Tag
+
+	# fix kernel tag
 	if [[ KERNELTAG == "" ]] ; then
 		git checkout master
 	else
 		git checkout $KERNELTAG
 	fi
+	
 	# install device tree blobs in separate package, link zImage to kernel image script
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-next.patch | grep previ)" == "" ]; then
-        patch -p1 < $SRC/lib/patch/packaging-next.patch
-    fi
-	# add bananapro DTS
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-banana-pro-dts.patch | grep exists)" == "" ]; then
-        patch -p1 < $SRC/lib/patch/add-banana-pro-dts.patch
-    fi
-	# add bananar1 DTS
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-banana-r1-dts.patch | grep exists)" == "" ]; then
-        patch -p1 < $SRC/lib/patch/add-banana-r1-dts.patch
-    fi
+		patch -p1 < $SRC/lib/patch/packaging-next.patch
+	fi
+
+	# copy bananapro DTS
+	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-bananapipro.dts)" == "" ]; then
+		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-bananapipro.dtb \\/g' arch/arm/boot/dts/Makefile
+		cp $SRC/lib/patch/sun7i-a20-bananapipro.dts arch/arm/boot/dts/
+	fi
+
+	# copy bananar1 DTS
+	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-lamobo-r1.dts)" == "" ]; then
+		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-lamobo-r1.dtb \\/g' arch/arm/boot/dts/Makefile
+		cp $SRC/lib/patch/sun7i-a20-lamobo-r1.dts arch/arm/boot/dts/
+	fi
+	
 	# add r1 switch driver
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1-next.patch | grep previ)" == "" ]; then
-        patch -p1 < $SRC/lib/patch/bananapi-r1-next.patch
-    fi
+		patch -p1 < $SRC/lib/patch/bananapi-r1-next.patch
+	fi
+
 	if [[ $BOARD == udoo* ]] ; then
 	# fix DTS tree
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-dts-fix.patch | grep previ)" == "" ]; then
-        patch -p1 < $SRC/lib/patch/udoo-dts-fix.patch
-    fi	
+		patch -p1 < $SRC/lib/patch/udoo-dts-fix.patch
+	fi	
 	fi
+
 fi
 
 # sunxi 3.4
@@ -94,17 +104,17 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 		patch --batch -t -p1 < $SRC/lib/patch/bananagmac.patch
 	fi
 	# deb packaging patch
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging.patch | grep previ)" == "" ]; then
-		patch --batch -f -p1 < $SRC/lib/patch/packaging.patch
-    fi	
+	#if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging.patch | grep previ)" == "" ]; then
+	#	patch --batch -f -p1 < $SRC/lib/patch/packaging.patch
+    #fi	
 	# gpio patch
-		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" == "" ]; then
-			patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
-	    fi
+	#	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" == "" ]; then
+	#		patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
+	#    fi
 	# Temperature reading from A20 chip
-		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/a20-temp.patch | grep previ)" == "" ]; then
-			patch --batch -f -p1 < $SRC/lib/patch/a20-temp.patch
-	    fi
+	#	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/a20-temp.patch | grep previ)" == "" ]; then
+	#		patch --batch -f -p1 < $SRC/lib/patch/a20-temp.patch
+	#    fi
 	# SPI functionality
     	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi.patch | grep previ)" == "" ]; then
 		patch --batch -f -p1 < $SRC/lib/patch/spi.patch
@@ -114,18 +124,18 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
         	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" == "" ]; then
         		patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
         	fi
-			if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/wireless-bananapro.patch | grep previ)" == "" ]; then
-        		patch --batch -N -p1 < $SRC/lib/patch/wireless-bananapro.patch
-        	fi
-			if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/banana-ts.patch | grep previ)" == "" ]; then
-        		patch --batch -N -p1 < $SRC/lib/patch/banana-ts.patch
-        	fi
-			if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/banana-ts-extra.patch | grep previ)" == "" ]; then
-        		patch --batch -N -p1 < $SRC/lib/patch/banana-ts-extra.patch
-        	fi
-			if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1.patch | grep previ)" == "" ]; then
-        		patch --batch -N -p1 < $SRC/lib/patch/bananapi-r1.patch
-        	fi
+	#		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/wireless-bananapro.patch | grep previ)" == "" ]; then
+    #    		patch --batch -N -p1 < $SRC/lib/patch/wireless-bananapro.patch
+    #    	fi
+	#		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/banana-ts.patch | grep previ)" == "" ]; then
+    #    		patch --batch -N -p1 < $SRC/lib/patch/banana-ts.patch
+    #    	fi
+	#		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/banana-ts-extra.patch | grep previ)" == "" ]; then
+    #    		patch --batch -N -p1 < $SRC/lib/patch/banana-ts-extra.patch
+    #    	fi
+	#		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1.patch | grep previ)" == "" ]; then
+    #    		patch --batch -N -p1 < $SRC/lib/patch/bananapi-r1.patch
+    #    	fi
     fi
     # compile sunxi tools
     compile_sunxi_tools
@@ -150,11 +160,18 @@ fi
 
 # u-boot
 cd $DEST/$BOOTSOURCE
+echo "------ Patching u-boot sources."
 
 if [[ $BOARD == udoo* ]] ; then
 	# This enabled boot script loading from ext2 partition which is my default setup
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch | grep previ)" == "" ]; then
        		patch --batch -N -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch
+	fi
+fi
+if [[ $LINUXCONFIG == *sunxi* ]] ; then
+	# Add router R1 to uboot
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch | grep previ)" == "" ]; then
+		patch --batch -N -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch
 	fi
 fi
 }
@@ -183,17 +200,53 @@ then
 else
 	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 
 fi
-# create package
-mkdir -p $DEST/output/u-boot
+# create .deb package
 #
-CHOOSEN_UBOOT="$BOARD"_"$BRANCH"_u-boot_"$VER".tgz
-if [[ $BOARD == cubox-i* ]] ; then
-	tar cPfz $DEST"/output/u-boot/$CHOOSEN_UBOOT" SPL u-boot.img
-elif [[ $BOARD == udoo* ]] ; then
-	tar cPfz $DEST"/output/u-boot/$CHOOSEN_UBOOT" u-boot.imx
-else
-	tar cPfz $DEST"/output/u-boot/$CHOOSEN_UBOOT" u-boot-sunxi-with-spl.bin
+CHOOSEN_UBOOT="linux-u-boot-$VER-"$BOARD"_"$REVISION"_armhf"
+UBOOT_PCK="linux-u-boot-$VER-"$BOARD
+mkdir -p $DEST/output/u-boot/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+mkdir -p $DEST/output/u-boot/$CHOOSEN_UBOOT/DEBIAN
+# set up post install script
+cat <<END > $DEST/output/u-boot/$CHOOSEN_UBOOT/DEBIAN/postinst
+#!/bin/bash
+set -e
+if [[ \$DEVICE == "" ]]; then DEVICE="/dev/mmcblk0"; fi
+
+if [[ \$DPKG_MAINTSCRIPT_PACKAGE == *cubox* ]] ; then 
+	( dd if=/usr/lib/$CHOOSEN_UBOOT/SPL of=\$DEVICE bs=512 seek=2 status=noxfer ) > /dev/null 2>&1
+	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot.img of=\$DEVICE bs=1K seek=42 status=noxfer ) > /dev/null 2>&1	
+elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *udoo* ]] ; then 
+	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot.imx of=\$DEVICE bs=1024 seek=1 conv=fsync ) > /dev/null 2>&1
+else 
+	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot-sunxi-with-spl.bin of=\$DEVICE bs=1024 seek=8 status=noxfer ) > /dev/null 2>&1	
 fi
+exit 0
+END
+
+chmod 755 $DEST/output/u-boot/$CHOOSEN_UBOOT/DEBIAN/postinst
+# set up control file
+cat <<END > $DEST/output/u-boot/$CHOOSEN_UBOOT/DEBIAN/control
+Package: linux-u-boot-$VER-$BOARD
+Version: $REVISION
+Architecture: all
+Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+Installed-Size: 1
+Section: kernel
+Priority: optional
+Description: Uboot loader
+END
+#
+if [[ $BOARD == cubox-i* ]] ; then
+	cp SPL u-boot.img $DEST/output/u-boot/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+elif [[ $BOARD == udoo* ]] ; then
+	cp u-boot.imx $DEST/output/u-boot/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+else
+	cp u-boot-sunxi-with-spl.bin $DEST/output/u-boot/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+fi
+
+cd $DEST/output/u-boot
+dpkg -b $CHOOSEN_UBOOT
+rm -rf $CHOOSEN_UBOOT
 #
 else
 echo "ERROR: Source file $1 does not exists. Check fetch_from_github configuration."
@@ -278,6 +331,8 @@ CHOOSEN_KERNEL=linux-image-"$VER"-"$CONFIG_LOCALVERSION$BOARD"_"$REVISION"_armhf
 # create tar archive of all deb files 
 mkdir -p $DEST/output/kernel
 cd ..
+# add compatible boot loader to the pack
+cp $DEST/output/u-boot/$CHOOSEN_UBOOT".deb" .
 tar -cPf $DEST"/output/kernel/"$VER"-"$CONFIG_LOCALVERSION$BOARD-$BRANCH".tar" *.deb
 rm *.deb
 CHOOSEN_KERNEL=$VER"-"$CONFIG_LOCALVERSION$BOARD-$BRANCH".tar"
@@ -372,7 +427,7 @@ cp $SRC/lib/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.lis
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y update"
 
 # install aditional packages
-PAKETKI="alsa-utils automake bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl dosfstools evtest figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iotop iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools wget wpasupplicant"
+PAKETKI="alsa-utils automake bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl device-tree-compiler dosfstools evtest figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iotop iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools wget wpasupplicant"
 
 # generate locales and install packets
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y -qq install locales"
@@ -686,23 +741,8 @@ rm -rf $DEST/output/sdcard/
 # write bootloader
 LOOP=$(losetup -f)
 losetup $LOOP $DEST/output/debian_rootfs.raw
-cd /tmp
-tar xvfz $DEST"/output/u-boot/"$CHOOSEN_UBOOT
-if [[ $BOARD == cubox-i* ]] ; then
-	dd if=SPL of=$LOOP bs=512 seek=2 status=noxfer
-	dd if=u-boot.img of=$LOOP bs=1K seek=42 status=noxfer
-elif [[ $BOARD == udoo* ]] ; then
-	dd if=u-boot.imx of=$LOOP bs=1024 seek=1 conv=fsync
-elif [[ $BOARD == "cubieboard4" ]]
-then
-	$SRC/lib/bin/host/cubie-fex2bin $SRC/lib/config/cubieboard4.fex /tmp/sys_config.bin
-	$SRC/lib/bin/host/cubie-uboot-spl $SRC/lib/bin/cb4-u-boot-spl.bin /tmp/sys_config.bin /tmp/u-boot-spl_with_sys_config.bin
-	dd if=/tmp/u-boot-spl_with_sys_config.bin of=$LOOP bs=1024 seek=8 status=noxfer  
-	$SRC/lib/bin/host/cubie-uboot $SRC/lib/bin/cb4-u-boot-sun9iw1p1.bin /tmp/sys_config.bin /tmp/u-boot-sun9iw1p1_with_sys_config.bin
-	dd if=/tmp/u-boot-sun9iw1p1_with_sys_config.bin of=$LOOP bs=1024 seek=19096 status=noxfer
-else
-	dd if=u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer
-fi
+DEVICE=$LOOP dpkg -i $DEST"/output/u-boot/"$CHOOSEN_UBOOT".deb"
+dpkg -r linux-u-boot-"$VER"-"$BOARD"
 sync
 sleep 3
 losetup -d $LOOP
