@@ -466,7 +466,7 @@ wheezy)
 jessie)
 		# add serial console
 		cp $SRC/lib/config/ttyS0.conf $DEST/output/sdcard/etc/init/ttyS0.conf
-		cp $SRC/output/sdcard/lib/systemd/system/serial-getty@.service $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
+		cp $DEST/output/sdcard/lib/systemd/system/serial-getty@.service $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
 		sed -e s/"--keep-baud 115200,38400,9600"/"-L 115200"/g  -i $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
 		# specifics packets add and remove
 		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install libnl-3-dev busybox-syslogd software-properties-common python-software-properties"
@@ -481,7 +481,7 @@ jessie)
 trusty)
 		# add serial console
 		cp $SRC/lib/config/ttyS0.conf $DEST/output/sdcard/etc/init/ttyS0.conf
-		cp $SRC/output/sdcard/lib/systemd/system/serial-getty@.service $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
+		cp $DEST/output/sdcard/lib/systemd/system/serial-getty@.service $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
 		sed -e s/"--keep-baud 115200,38400,9600"/"-L 115200"/g  -i $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
 		# specifics packets add and remove
 		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install libnl-3-dev busybox-syslogd software-properties-common python-software-properties"
