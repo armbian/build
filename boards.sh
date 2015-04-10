@@ -16,10 +16,6 @@ mount -t ext4 $LOOP $DEST/output/sdcard/
 
 # relabel 
 e2label $LOOP "$BOARD"
-# set fstab
-#UUID=$(cat /proc/sys/kernel/random/uuid)
-#tune2fs -U $UUID $LOOP
-#echo "UUID=$UUID  /           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro        0       0" > $DEST/output/sdcard/etc/fstab
 echo "/dev/mmcblk0p1  /           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro        0       0" > $DEST/output/sdcard/etc/fstab
 
 # mount proc, sys and dev
@@ -42,13 +38,6 @@ fi
 
 # for allwinner boards
 if [[ $LINUXCONFIG == *sunxi* ]] ; then
-		
-		# add irq to second core - rc.local
-		head -n -1 $DEST/output/sdcard/etc/rc.local > /tmp/out
-		echo 'echo 2 > /proc/irq/$(cat /proc/interrupts | grep eth0 | cut -f 1 -d ":" | tr -d " ")/smp_affinity' >> /tmp/out
-		echo 'exit 0' >> /tmp/out
-		mv /tmp/out $DEST/output/sdcard/etc/rc.local
-		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/rc.local"		
 		
 		# add sunxi tools
 		cp $DEST/sunxi-tools/fex2bin $DEST/sunxi-tools/bin2fex $DEST/sunxi-tools/nand-part $DEST/output/sdcard/usr/bin/				
@@ -101,12 +90,6 @@ fi
 if [[ $BOARD == cubox-i* ]] ; then
 		if [ -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/inittab; fi
 		if [ -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttymxc0/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttymxc0.conf; fi	
-		
-		#cp $SRC/lib/config/uEnv.cubox-i $DEST/output/sdcard/boot/uEnv.txt
-		#cp $DEST/$LINUXSOURCE/arch/arm/boot/dts/*.dtb $DEST/output/sdcard/boot
-		#chroot $DEST/output/sdcard /bin/bash -c "chmod 755 /boot/uEnv.txt"
-
-		
 		
 		# default lirc configuration 
 		sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
@@ -185,6 +168,7 @@ ln -sf interfaces.default $DEST/output/sdcard/etc/network/interfaces
 rm -rf /tmp/kernel && mkdir -p /tmp/kernel && cd /tmp/kernel
 tar -xPf $DEST"/output/kernel/"$CHOOSEN_KERNEL
 mount --bind /tmp/kernel/ $DEST/output/sdcard/tmp
+chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*u-boot*.deb"
 chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*image*.deb"
 chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*headers*.deb"
 if [[ $BRANCH == *next* || $LINUXSOURCE == "linux-cubox" ]];then
@@ -222,6 +206,8 @@ if [[ $BRANCH == *next* || $BOARD == cubox-i* ]];then
 		fex2bin $SRC/lib/config/$BOARD.fex $DEST/output/sdcard/boot/$BOARD.bin
 		if [[ $BOARD == "bananapi" ]] ; then
 				fex2bin $SRC/lib/config/bananapipro.fex $DEST/output/sdcard/boot/bananapipro.bin
+				fex2bin $SRC/lib/config/bananapiprolcd7.fex $DEST/output/sdcard/boot/bananapiprolcd7.bin
+				fex2bin $SRC/lib/config/bananapilcd7.fex $DEST/output/sdcard/boot/bananapilcd7.bin
 				fex2bin $SRC/lib/config/bananapir1.fex $DEST/output/sdcard/boot/bananapir1.bin
 		fi # bananapi
 		cp $SRC/lib/config/boot.cmd $DEST/output/sdcard/boot/boot.cmd
