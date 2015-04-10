@@ -32,7 +32,7 @@ fi
 # Choose for which board you want to compile  								            
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$BOARD" == "" ]; then
-	BOARDS="Cubieboard A10 Cubieboard2 A20 Cubietruck A20 Lime A20 Lime2 A20 Micro A20 Bananapi A20 Orangepi A20 Hummingbird A31 Cubox-i imx6 Udoo imx6";
+	BOARDS="Cubieboard A10 Cubieboard2 A20 Cubietruck A20 Lime A20 Lime2 A20 Micro A20 Bananapi A20 Bananapro A20 Lamobo-R1 A20 Orangepi A20 Hummingbird A31 Cubox-i imx6 Udoo imx6";
 	MYLIST=`for x in $BOARDS; do echo $x ""; done`
 	whiptail --title "Choose a board" --backtitle "" --menu "\nWhich one?" 18 30 8 $MYLIST 2>results    
 	BOARD=$(<results)
@@ -180,7 +180,8 @@ if [ "$SOURCE_COMPILE" = "yes" ]; then
 else
 	
 	# Compile u-boot if not exits in cache
-	CHOOSEN_UBOOT="$BOARD"_"$BRANCH"_u-boot_"$VER".tgz
+	CHOOSEN_UBOOT="linux-u-boot-$VER-"$BOARD"_"$REVISION"_armhf".deb
+	UBOOT_PCK="linux-u-boot-$VER-"$BOARD
 	if [ ! -f "$DEST/output/u-boot/$CHOOSEN_UBOOT" ]; then
 		compile_uboot
 	fi
