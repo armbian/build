@@ -28,8 +28,8 @@ MISC1="https://github.com/linux-sunxi/sunxi-tools.git"
 MISC1_DIR="sunxi-tools"
 MISC2=""	
 MISC2_DIR=""						
-#MISC3="https://github.com/dz0ny/rt8192cu"	
-#MISC3_DIR="rt8192cu"
+MISC3="https://github.com/dz0ny/rt8192cu"	
+MISC3_DIR="rt8192cu"
 # MISC4 = RESERVED
 # MISC4_DIR = RESERVED
 
@@ -82,7 +82,7 @@ cubieboard)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.4"
+REVISION="3.5"
 BOOTCONFIG="Cubieboard_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT=""
@@ -93,7 +93,7 @@ cubieboard2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.4"
+REVISION="3.5"
 BOOTCONFIG="Cubieboard2_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT=""
@@ -104,10 +104,10 @@ cubietruck)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.4"
+REVISION="3.5"
 BOOTCONFIG="Cubietruck_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i bcmdhd"
-MODULES_NEXT="brcmfmac"
+MODULES_NEXT="brcmfmac rfcomm hidp"
 ;;
 
 
@@ -183,7 +183,7 @@ lamobo-r1)
 #--------------------------------------------------------------------------------------------------------------------------------
 REVISION="2.6"
 BOOTCONFIG="Lamobo_R1_defconfig"
-MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
+MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
 MODULES_NEXT="brcmfmac"
 ;;
 
@@ -194,7 +194,7 @@ orangepi)
 #--------------------------------------------------------------------------------------------------------------------------------
 REVISION="1.2"
 BOOTCONFIG="Orangepi_defconfig"
-MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
+MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT=""
 ;;
 
