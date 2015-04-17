@@ -1,10 +1,12 @@
 #!/bin/bash
 #
-# Copyright (c) 2014 Igor Pecovnik, igor.pecovnik@gma**.com
+# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
-# www.igorpecovnik.com / images + support
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
 #
-# Main branch
+# This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 
 
@@ -20,16 +22,17 @@ fi
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
-# Get your PGP key signing password  								            
+# Get your PGP key signing password
 #--------------------------------------------------------------------------------------------------------------------------------
-if [ "$GPG_PASS" == "" ]; then
-GPG_PASS=$(whiptail --passwordbox "\nPlease enter your GPG signing password or leave blank for none. \n\nEnd users - ignore - leave blank. " 14 50 --title "Package signing" 3>&1 1>&2 2>&3)    
-exitstatus=$?
-if [ $exitstatus != 0 ]; then exit; fi
-fi
+#if [ "$GPG_PASS" == "" ]; then
+#	GPG_PASS=$(whiptail --passwordbox "\nPlease enter your GPG signing password or leave blank for none. \n\nEnd users - ignore - leave blank. " 14 50 --title "Package signing" 3>&1 1>&2 2>&3)    
+#	exitstatus=$?
+#if [ $exitstatus != 0 ]; then exit; fi
+#fi
+
 
 #--------------------------------------------------------------------------------------------------------------------------------
-# Choose for which board you want to compile  								            
+# Choose destination
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$BOARD" == "" ]; then
 	BOARDS="Cubieboard A10 Cubieboard2 A20 Cubietruck A20 Lime A20 Lime2 A20 Micro A20 Bananapi A20 Bananapro A20 Lamobo-R1 A20 Orangepi A20 Hummingbird A31 Cubox-i imx6 Udoo imx6";
@@ -44,7 +47,7 @@ if [ "$BOARD" == "" ]; then echo "ERROR: You have to choose one board"; exit; fi
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
-# Choose for which distribution you want to compile  								            
+# Choose for which distribution you want to compile
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$RELEASE" == "" ]; then
 	RELEASE="wheezy Debian jessie Debian trusty Ubuntu";
@@ -58,7 +61,7 @@ if [ "$RELEASE" == "" ]; then echo "ERROR: You have to choose one distribution";
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
-# Choose for which branch you want to compile  								            
+# Choose for which branch you want to compile
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$BRANCH" == "" ]; then
 	BRANCH="default 3.4.x-3.14.x next mainline";
@@ -82,7 +85,7 @@ fi
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
-# Hostname
+# Let's fix hostname to the board
 #
 HOST="$BOARD"
 
@@ -133,7 +136,9 @@ echo "Building $VERSION."
 #--------------------------------------------------------------------------------------------------------------------------------
 # download packages for host
 #--------------------------------------------------------------------------------------------------------------------------------
+if [[ "$(dpkg -l | grep libncurses5-dev)" == "" || "$(dpkg -l | grep u-boot-tools)" == "" ]]; then
 download_host_packages
+fi
 clear
 echo "Building $VERSION."
 
@@ -180,17 +185,20 @@ if [ "$SOURCE_COMPILE" = "yes" ]; then
 else
 	
 	# Compile u-boot if not exits in cache
-	CHOOSEN_UBOOT="linux-u-boot-$VER-"$BOARD"_"$REVISION"_armhf".deb
+	CHOOSEN_UBOOT="linux-u-boot-$VER-"$BOARD"_"$REVISION"_armhf"
 	UBOOT_PCK="linux-u-boot-$VER-"$BOARD
-	if [ ! -f "$DEST/output/u-boot/$CHOOSEN_UBOOT" ]; then
+	if [ ! -f "$DEST/output/u-boot/$CHOOSEN_UBOOT".deb ]; then
 		compile_uboot
 	fi
 	
 	# choose kernel from ready made
 	if [ "$CHOOSEN_KERNEL" == "" ]; then
+		sleep 2
 		choosing_kernel
 	fi
+
 fi
+
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -202,7 +210,6 @@ mount_debian_template
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # add kernel to the image
-
 #--------------------------------------------------------------------------------------------------------------------------------
 install_kernel
 
@@ -210,7 +217,7 @@ install_kernel
 #--------------------------------------------------------------------------------------------------------------------------------
 # install board specific applications
 #--------------------------------------------------------------------------------------------------------------------------------
-install_board_specific 
+install_board_specific
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
