@@ -1,11 +1,17 @@
 #!/bin/bash
 #
-# Copyright (c) 2014 Igor Pecovnik, igor.pecovnik@gma**.com
+# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
-# www.igorpecovnik.com / images + support
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+#
+# This file is a part of tool chain https://github.com/igorpecovnik/lib
+#
+
 #
 # Image build functions
-
+#
 
 download_host_packages (){
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -19,21 +25,23 @@ debconf-apt-progress -- apt-get -y install libusb-1.0-0-dev parted pkg-config ex
 
 
 grab_kernel_version (){
-	#--------------------------------------------------------------------------------------------------------------------------------
-	# grab linux kernel version from Makefile
-	#--------------------------------------------------------------------------------------------------------------------------------
-	VER=$(cat $DEST/$LINUXSOURCE/Makefile | grep VERSION | head -1 | awk '{print $(NF)}')
-	VER=$VER.$(cat $DEST/$LINUXSOURCE/Makefile | grep PATCHLEVEL | head -1 | awk '{print $(NF)}')
-	VER=$VER.$(cat $DEST/$LINUXSOURCE/Makefile | grep SUBLEVEL | head -1 | awk '{print $(NF)}')
-	EXTRAVERSION=$(cat $DEST/$LINUXSOURCE/Makefile | grep EXTRAVERSION | head -1 | awk '{print $(NF)}')
-	if [ "$EXTRAVERSION" != "=" ]; then VER=$VER$EXTRAVERSION; fi
+#--------------------------------------------------------------------------------------------------------------------------------
+# grab linux kernel version from Makefile
+#--------------------------------------------------------------------------------------------------------------------------------
+VER=$(cat $DEST/$LINUXSOURCE/Makefile | grep VERSION | head -1 | awk '{print $(NF)}')
+VER=$VER.$(cat $DEST/$LINUXSOURCE/Makefile | grep PATCHLEVEL | head -1 | awk '{print $(NF)}')
+VER=$VER.$(cat $DEST/$LINUXSOURCE/Makefile | grep SUBLEVEL | head -1 | awk '{print $(NF)}')
+EXTRAVERSION=$(cat $DEST/$LINUXSOURCE/Makefile | grep EXTRAVERSION | head -1 | awk '{print $(NF)}')
+if [ "$EXTRAVERSION" != "=" ]; then VER=$VER$EXTRAVERSION; fi
 }
+
 
 fetch_from_github (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Download sources from Github 							                    
+# Download sources from Github
 #--------------------------------------------------------------------------------------------------------------------------------
-echo "------ Downloading $2."
+echo -e "[\e[0;32m ok \x1B[0m] Downloading $2"
+#echo "------ Downloading $2."
 if [ -d "$DEST/$2" ]; then
 	cd $DEST/$2
 		# some patching for TFT display source and Realtek RT8192CU drivers
@@ -48,16 +56,15 @@ fi
 
 patching_sources(){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Patching sources											                   
+# Patching sources
 #--------------------------------------------------------------------------------------------------------------------------------
-# kernel
 
+# kernel
 echo "------ Patching kernel sources."
 cd $DEST/$LINUXSOURCE
 
 # mainline
 if [[ $BRANCH == "next" ]] ; then
-
 	# fix kernel tag
 	if [[ KERNELTAG == "" ]] ; then
 		git checkout master
@@ -65,22 +72,27 @@ if [[ $BRANCH == "next" ]] ; then
 		git checkout $KERNELTAG
 	fi
 	
+	# Fix BRCMFMAC AP mode for Cubietruck / Banana PRO
+	if [ "$(cat drivers/net/wireless/brcm80211/brcmfmac/feature.c | grep "mbss\", 0);\*")" == "" ]; then
+		sed -i 's/brcmf_feat_iovar_int_set(ifp, BRCMF_FEAT_MBSS, "mbss", 0);/\/*brcmf_feat_iovar_int_set(ifp, BRCMF_FEAT_MBSS, "mbss", 0);*\//g' drivers/net/wireless/brcm80211/brcmfmac/feature.c
+	fi
+		
 	# install device tree blobs in separate package, link zImage to kernel image script
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-next.patch | grep previ)" == "" ]; then
 		patch -p1 < $SRC/lib/patch/packaging-next.patch
 	fi
 
 	# copy bananapro DTS
-	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-bananapipro.dts)" == "" ]; then
-		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-bananapipro.dtb \\/g' arch/arm/boot/dts/Makefile
-		cp $SRC/lib/patch/sun7i-a20-bananapipro.dts arch/arm/boot/dts/
-	fi
+	#if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-bananapipro.dts)" == "" ]; then
+	#	sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-bananapipro.dtb \\/g' arch/arm/boot/dts/Makefile
+	#	cp $SRC/lib/patch/sun7i-a20-bananapipro.dts arch/arm/boot/dts/
+	#fi
 
 	# copy bananar1 DTS
-	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-lamobo-r1.dts)" == "" ]; then
-		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-lamobo-r1.dtb \\/g' arch/arm/boot/dts/Makefile
-		cp $SRC/lib/patch/sun7i-a20-lamobo-r1.dts arch/arm/boot/dts/
-	fi
+	#if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-lamobo-r1.dts)" == "" ]; then
+	#	sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-lamobo-r1.dtb \\/g' arch/arm/boot/dts/Makefile
+	#	cp $SRC/lib/patch/sun7i-a20-lamobo-r1.dts arch/arm/boot/dts/
+	#fi
 	
 	# add r1 switch driver
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1-next.patch | grep previ)" == "" ]; then
@@ -93,8 +105,8 @@ if [[ $BRANCH == "next" ]] ; then
 		patch -p1 < $SRC/lib/patch/udoo-dts-fix.patch
 	fi	
 	fi
-
 fi
+
 
 # sunxi 3.4
 if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
@@ -103,54 +115,30 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 		echo "Reversing Banana patch"
 		patch --batch -t -p1 < $SRC/lib/patch/bananagmac.patch
 	fi
-	# deb packaging patch
-	#if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging.patch | grep previ)" == "" ]; then
-	#	patch --batch -f -p1 < $SRC/lib/patch/packaging.patch
-    #fi	
-	# gpio patch
-	#	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/gpio.patch | grep previ)" == "" ]; then
-	#		patch --batch -f -p1 < $SRC/lib/patch/gpio.patch
-	#    fi
-	# Temperature reading from A20 chip
-	#	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/a20-temp.patch | grep previ)" == "" ]; then
-	#		patch --batch -f -p1 < $SRC/lib/patch/a20-temp.patch
-	#    fi
 	# SPI functionality
     	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi.patch | grep previ)" == "" ]; then
 		patch --batch -f -p1 < $SRC/lib/patch/spi.patch
     	fi
-	# banana/orange gmac, wireless and 5&7" touchscreen driver is a bit different  
+	# banana/orange gmac  
 	if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]] ; then
-        	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" == "" ]; then
-        		patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
-        	fi
-	#		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/wireless-bananapro.patch | grep previ)" == "" ]; then
-    #    		patch --batch -N -p1 < $SRC/lib/patch/wireless-bananapro.patch
-    #    	fi
-	#		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/banana-ts.patch | grep previ)" == "" ]; then
-    #    		patch --batch -N -p1 < $SRC/lib/patch/banana-ts.patch
-    #    	fi
-	#		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/banana-ts-extra.patch | grep previ)" == "" ]; then
-    #    		patch --batch -N -p1 < $SRC/lib/patch/banana-ts-extra.patch
-    #    	fi
-	#		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1.patch | grep previ)" == "" ]; then
-    #    		patch --batch -N -p1 < $SRC/lib/patch/bananapi-r1.patch
-    #    	fi
-    fi
-    # compile sunxi tools
-    compile_sunxi_tools
+		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" == "" ]; then
+			patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
+		fi
+	fi
+	# compile sunxi tools
+	compile_sunxi_tools
 fi
 
 # cubox / hummingboard 3.14
 if [[ $LINUXSOURCE == "linux-cubox" ]] ; then
 	# SPI and I2C functionality
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/hb-i2c-spi.patch | grep previ)" == "" ]; then
-        patch -p1 < $SRC/lib/patch/hb-i2c-spi.patch
-    fi
+		patch -p1 < $SRC/lib/patch/hb-i2c-spi.patch
+	fi
 	# deb packaging patch
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-cubox.patch | grep previ)" == "" ]; then
 		patch --batch -f -p1 < $SRC/lib/patch/packaging-cubox.patch
-    fi	
+	fi	
 fi
 
 # compiler reverse patch. It has already been fixed.
@@ -170,7 +158,7 @@ if [[ $BOARD == udoo* ]] ; then
 fi
 if [[ $LINUXCONFIG == *sunxi* ]] ; then
 	# Add router R1 to uboot
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch | grep previ)" == "" ]; then
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch | grep create)" == "" ]; then
 		patch --batch -N -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch
 	fi
 fi
@@ -179,7 +167,7 @@ fi
 
 compile_uboot (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Compile uboot											                   
+# Compile uboot
 #--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Compiling universal boot loader"
 if [ -d "$DEST/$BOOTSOURCE" ]; then
@@ -257,7 +245,7 @@ fi
 
 compile_sunxi_tools (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Compile sunxi_tools									                    
+# Compile sunxi_tools
 #--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Compiling sunxi tools"
 cd $DEST/sunxi-tools
@@ -287,7 +275,7 @@ cd $DEST/$LINUXSOURCE
 if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]]; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananafbtft.patch | grep previ)" == "" ]; then
 					# DMA disable
-                	patch --batch -N -p1 < $SRC/lib/patch/bananafbtft.patch
+					patch --batch -N -p1 < $SRC/lib/patch/bananafbtft.patch
 	fi
 fi
 # common patch
@@ -299,7 +287,7 @@ fi
 
 compile_kernel (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Compile kernel	  									                    
+# Compile kernel
 #--------------------------------------------------------------------------------------------------------------------------------
 echo "------ Compiling kernel"
 if [ -d "$DEST/$LINUXSOURCE" ]; then 
@@ -354,10 +342,10 @@ sync
 
 create_debian_template (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Create Debian and Ubuntu image template if it does not exists
+# Create clean and fresh Debian and Ubuntu image template if it does not exists
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ ! -f "$DEST/output/rootfs/$RELEASE.raw.gz" ]; then
-echo "------ Debootstrap $RELEASE to image template"
+echo -e "[\e[0;32m ok \x1B[0m] Debootstrap $RELEASE to image template"
 cd $DEST/output
 
 # create needed directories and mount image to next free loop device
@@ -391,15 +379,11 @@ mkfs.ext4 $LOOP
 # tune filesystem
 tune2fs -o journal_data_writeback $LOOP
 
-# label it
-e2label $LOOP "$BOARD"
-
 # mount image to already prepared mount point
 mount -t ext4 $LOOP $DEST/output/sdcard/
 
 # debootstrap base system
 debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/output/sdcard/ 
-#debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/output/sdcard/ http://ftp.si.debian.org/debian
 
 # we need emulator for second stage
 cp /usr/bin/qemu-arm-static $DEST/output/sdcard/usr/bin/
@@ -415,10 +399,6 @@ mount -t proc chproc $DEST/output/sdcard/proc
 mount -t sysfs chsys $DEST/output/sdcard/sys
 mount -t devtmpfs chdev $DEST/output/sdcard/dev || mount --bind /dev $DEST/output/sdcard/dev
 mount -t devpts chpts $DEST/output/sdcard/dev/pts
-
-# root-fs modifications
-rm 	-f $DEST/output/sdcard/etc/motd
-touch $DEST/output/sdcard/etc/motd
 
 # choose proper apt list
 cp $SRC/lib/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.list
@@ -445,149 +425,15 @@ cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d
 cp $SRC/lib/scripts/02periodic $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
 sed -e "s/CODENAME/$RELEASE/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 
-case $RELEASE in
-#--------------------------------------------------------------------------------------------------------------------------------
-
-wheezy)
-		# specifics packets
-		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install libnl-dev"
-		# add serial console
-		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/output/sdcard/etc/inittab		
-		# don't clear screen on boot console
-		sed -e 's/1:2345:respawn:\/sbin\/getty 38400 tty1/1:2345:respawn:\/sbin\/getty --noclear 38400 tty1/g' -i $DEST/output/sdcard/etc/inittab
-		# disable some getties
-		sed -e 's/3:23:respawn/#3:23:respawn/g' -i $DEST/output/sdcard/etc/inittab
-		sed -e 's/4:23:respawn/#4:23:respawn/g' -i $DEST/output/sdcard/etc/inittab
-		sed -e 's/5:23:respawn/#5:23:respawn/g' -i $DEST/output/sdcard/etc/inittab
-		sed -e 's/6:23:respawn/#6:23:respawn/g' -i $DEST/output/sdcard/etc/inittab
-		# auto upgrading
-		sed -e "s/ORIGIN/Debian/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		;;
-jessie)
-		# add serial console
-		cp $SRC/lib/config/ttyS0.conf $DEST/output/sdcard/etc/init/ttyS0.conf
-		cp $DEST/output/sdcard/lib/systemd/system/serial-getty@.service $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
-		sed -e s/"--keep-baud 115200,38400,9600"/"-L 115200"/g  -i $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
-		# specifics packets add and remove
-		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install libnl-3-dev busybox-syslogd software-properties-common python-software-properties"
-		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y remove rsyslog"		
-		# don't clear screen tty1
-		sed -e s,"TTYVTDisallocate=yes","TTYVTDisallocate=no",g 	-i $DEST/output/sdcard/etc/systemd/system/getty.target.wants/getty@tty1.service
-		# enable root login for latest ssh on jessie
-		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/output/sdcard/etc/ssh/sshd_config 
-		# auto upgrading
-		sed -e "s/ORIGIN/Debian/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		;;
-trusty)
-		# add serial console
-		cp $SRC/lib/config/ttyS0.conf $DEST/output/sdcard/etc/init/ttyS0.conf
-		cp $DEST/output/sdcard/lib/systemd/system/serial-getty@.service $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
-		sed -e s/"--keep-baud 115200,38400,9600"/"-L 115200"/g  -i $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
-		# specifics packets add and remove
-		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install libnl-3-dev busybox-syslogd software-properties-common python-software-properties"
-		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y remove rsyslog"		
-		# don't clear screen tty1
-		sed -e s,"TTYVTDisallocate=yes","TTYVTDisallocate=no",g 	-i $DEST/output/sdcard/etc/systemd/system/getty.target.wants/getty@tty1.service
-		# enable root login for latest ssh on trusty
-		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/output/sdcard/etc/ssh/sshd_config 		
-		# that my startup scripts works well
-		if [ ! -f "$DEST/output/sdcard/sbin/insserv" ]; then
-			chroot $DEST/output/sdcard /bin/bash -c "ln -s /usr/lib/insserv/insserv /sbin/insserv"
-		fi
-		# that my custom motd works well
-		if [ -d "$DEST/output/sdcard/etc/update-motd.d" ]; then
-			chroot $DEST/output/sdcard /bin/bash -c "mv /etc/update-motd.d /etc/update-motd.d-backup"
-		fi
-		# auto upgrading
-		sed -e "s/ORIGIN/Ubuntu/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		# remove what's anyway not working 
-		rm $DEST/output/sdcard/etc/init/ureadahead*
-		rm $DEST/output/sdcard/etc/init/plymouth*
-		;;
-*) echo "Relese hasn't been choosen"
-exit
-;;
-esac
-#--------------------------------------------------------------------------------------------------------------------------------
-
-# remove what's not needed
-chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y autoremove"
-
 # set up 'apt
 cat <<END > $DEST/output/sdcard/etc/apt/apt.conf.d/71-no-recommends
 APT::Install-Recommends "0";
 APT::Install-Suggests "0";
 END
 
-# scripts for autoresize at first boot
-cp $SRC/lib/scripts/resize2fs $DEST/output/sdcard/etc/init.d
-cp $SRC/lib/scripts/firstrun $DEST/output/sdcard/etc/init.d
-chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/firstrun"
-chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/resize2fs"
-chroot $DEST/output/sdcard /bin/bash -c "insserv firstrun >> /dev/null" 
-
-# install custom bashrc and hardware dependent motd
-cat $SRC/lib/scripts/bashrc >> $DEST/output/sdcard/etc/bash.bashrc 
-cp $SRC/lib/scripts/armhwinfo $DEST/output/sdcard/etc/init.d/
-chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/armhwinfo"
-chroot $DEST/output/sdcard /bin/bash -c "insserv armhwinfo >> /dev/null" 
-
-if [ -f "$DEST/output/sdcard/etc/init.d/motd" ]; then
-	sed -e s,"# Update motd","insserv armhwinfo >> /dev/null",g 	-i $DEST/output/sdcard/etc/init.d/motd
-	sed -e s,"uname -snrvm > /var/run/motd.dynamic","",g  -i $DEST/output/sdcard/etc/init.d/motd
-fi
-
-# install ramlog
-if [ "$RELEASE" = "wheezy" ]; then
-	cp $SRC/lib/bin/ramlog_2.0.0_all.deb $DEST/output/sdcard/tmp
-	chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb"
-	rm $DEST/output/sdcard/tmp/ramlog_2.0.0_all.deb
-	sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $DEST/output/sdcard/etc/default/ramlog
-	sed -e 's/# Required-Start:    $remote_fs $time/# Required-Start:    $remote_fs $time ramlog/g' -i $DEST/output/sdcard/etc/init.d/rsyslog 
-	sed -e 's/# Required-Stop:     umountnfs $time/# Required-Stop:     umountnfs $time ramlog/g' -i $DEST/output/sdcard/etc/init.d/rsyslog   
-fi
-
-# temper binary for USB temp meter
-cd $DEST/output/sdcard/usr/local/bin
-tar xvfz $SRC/lib/bin/temper.tgz
-
-# replace hostapd from testing binary
-cd $DEST/output/sdcard/usr/sbin/
-tar xfz $SRC/lib/bin/hostapd24.tgz
-cp $SRC/lib/config/hostapd.conf $DEST/output/sdcard/etc/hostapd.conf
-
-# set console
-chroot $DEST/output/sdcard /bin/bash -c "export TERM=linux"
-
-# change time zone data
-echo $TZDATA > $DEST/output/sdcard/etc/timezone
-chroot $DEST/output/sdcard /bin/bash -c "dpkg-reconfigure -f noninteractive tzdata"
-
-# set root password and force password change upon first login
-chroot $DEST/output/sdcard /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root"  
-chroot $DEST/output/sdcard /bin/bash -c "chage -d 0 root" 
-
-# change default I/O scheduler, noop for flash media, deadline for SSD, cfq for mechanical drive
-cat <<EOT >> $DEST/output/sdcard/etc/sysfs.conf
-block/mmcblk0/queue/scheduler = noop
-#block/sda/queue/scheduler = cfq
-EOT
-
-# add noatime to root FS
-echo "/dev/mmcblk0p1  /           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro        0       0" >> $DEST/output/sdcard/etc/fstab
-
-
-# flash media tunning
-if [ -f "$DEST/output/sdcard/etc/default/tmpfs" ]; then
-sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $DEST/output/sdcard/etc/default/tmpfs
-sed -e 's/#RUN_SIZE=10%/RUN_SIZE=128M/g' -i $DEST/output/sdcard/etc/default/tmpfs 
-sed -e 's/#LOCK_SIZE=/LOCK_SIZE=/g' -i $DEST/output/sdcard/etc/default/tmpfs 
-sed -e 's/#SHM_SIZE=/SHM_SIZE=128M/g' -i $DEST/output/sdcard/etc/default/tmpfs 
-sed -e 's/#TMP_SIZE=/TMP_SIZE=1G/g' -i $DEST/output/sdcard/etc/default/tmpfs
-fi
-
-# clean deb cache
-chroot $DEST/output/sdcard /bin/bash -c "apt-get -y clean"	
+# root-fs modifications
+rm 	-f $DEST/output/sdcard/etc/motd
+touch $DEST/output/sdcard/etc/motd
 
 echo "------ Closing image"
 chroot $DEST/output/sdcard /bin/bash -c "sync"
@@ -607,9 +453,8 @@ KILLPROC=$(ps -uax | pgrep dbus-daemon | tail -1); if [ -n "$KILLPROC" ]; then k
 umount -l $DEST/output/sdcard/ 
 sleep 2
 losetup -d $LOOP
-rm -rf $DEST/output/sdcard/	
-	
-gzip $DEST/output/rootfs/$RELEASE.raw	
+rm -rf $DEST/output/sdcard/
+gzip $DEST/output/rootfs/$RELEASE.raw
 fi
 #
 }
@@ -637,13 +482,13 @@ rm results
 
 install_external_applications (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Install external applications  								            
+# Install external applications example
 #--------------------------------------------------------------------------------------------------------------------------------
-echo "------ Installing external applications"
+echo -e "[\e[0;32m ok \x1B[0m] Installing external applications"
 # USB redirector tools http://www.incentivespro.com
 cd $DEST
 wget http://www.incentivespro.com/usb-redirector-linux-arm-eabi.tar.gz
-tar xvfz usb-redirector-linux-arm-eabi.tar.gz
+tar xfz usb-redirector-linux-arm-eabi.tar.gz
 rm usb-redirector-linux-arm-eabi.tar.gz
 cd $DEST/usb-redirector-linux-arm-eabi/files/modules/src/tusbd
 # patch to work with newer kernels
@@ -667,10 +512,11 @@ cp $DEST/usb-redirector-linux-arm-eabi/files/rc.usbsrvd $DEST/output/sdcard/etc/
 if [[ -n "$MISC3_DIR" ]]; then
 	# https://github.com/pvaret/rtl8192cu-fixes
 	cd $DEST/$MISC3_DIR
-	git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
-	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean && make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$DEST/$LINUXSOURCE/
+	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
+	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
+	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$DEST/$LINUXSOURCE/
 	cp *.ko $DEST/output/sdcard/usr/local/bin
-	cp blacklist*.conf $DEST/output/sdcard/etc/modprobe.d/
+	#cp blacklist*.conf $DEST/output/sdcard/etc/modprobe.d/
 fi
 }
 
