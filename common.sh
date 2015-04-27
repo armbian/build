@@ -64,19 +64,20 @@ echo "------ Patching kernel sources."
 cd $DEST/$LINUXSOURCE
 
 # mainline
-if [[ $BRANCH == "next" ]] ; then
+if [[ $BRANCH == "next" && $LINUXCONFIG == *sunxi* ]] ; then
+
 	# fix kernel tag
 	if [[ KERNELTAG == "" ]] ; then
 		git checkout master
 	else
 		git checkout $KERNELTAG
 	fi
-	
+
 	# Fix BRCMFMAC AP mode for Cubietruck / Banana PRO
 	if [ "$(cat drivers/net/wireless/brcm80211/brcmfmac/feature.c | grep "mbss\", 0);\*")" == "" ]; then
 		sed -i 's/brcmf_feat_iovar_int_set(ifp, BRCMF_FEAT_MBSS, "mbss", 0);/\/*brcmf_feat_iovar_int_set(ifp, BRCMF_FEAT_MBSS, "mbss", 0);*\//g' drivers/net/wireless/brcm80211/brcmfmac/feature.c
 	fi
-		
+
 	# install device tree blobs in separate package, link zImage to kernel image script
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-next.patch | grep previ)" == "" ]; then
 		patch -p1 < $SRC/lib/patch/packaging-next.patch
@@ -89,24 +90,26 @@ if [[ $BRANCH == "next" ]] ; then
 	#fi
 
 	# copy bananar1 DTS
-	#if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-lamobo-r1.dts)" == "" ]; then
-	#	sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-lamobo-r1.dtb \\/g' arch/arm/boot/dts/Makefile
-	#	cp $SRC/lib/patch/sun7i-a20-lamobo-r1.dts arch/arm/boot/dts/
-	#fi
+	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-lamobo-r1.dts)" == "" ]; then
+		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-lamobo-r1.dtb \\/g' arch/arm/boot/dts/Makefile
+		cp $SRC/lib/patch/sun7i-a20-lamobo-r1.dts arch/arm/boot/dts/
+	fi
 	
 	# add r1 switch driver
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1-next.patch | grep previ)" == "" ]; then
 		patch -p1 < $SRC/lib/patch/bananapi-r1-next.patch
 	fi
+fi
 
-	if [[ $BOARD == udoo* ]] ; then
+if [[ $BRANCH == "next" && $BOARD == udoo* ]] ; then
 	# fix DTS tree
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-dts-fix.patch | grep previ)" == "" ]; then
 		patch -p1 < $SRC/lib/patch/udoo-dts-fix.patch
 	fi	
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-udoo.patch | grep previ)" == "" ]; then
+		patch -p1 < $SRC/lib/patch/packaging-udoo.patch
 	fi
 fi
-
 
 # sunxi 3.4
 if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
@@ -120,7 +123,7 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 		patch --batch -f -p1 < $SRC/lib/patch/spi.patch
     	fi
 	# banana/orange gmac  
-	if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]] ; then
+	if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
 		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" == "" ]; then
 			patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
 		fi
