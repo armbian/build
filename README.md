@@ -29,7 +29,7 @@ MAINTAINERMAIL="igor.pecovnik@****l.com"	# deb signature
 GPG_PASS=""									# set GPG password for non-interactive packing
 
 # advanced
-KERNELTAG="v3.19.4"							# which kernel version - valid only for mainline
+KERNELTAG="v3.19.5"							# which kernel version - valid only for mainline
 FBTFT="yes"									# https://github.com/notro/fbtft 
 EXTERNAL="yes"								# compile extra drivers`
 
