@@ -232,7 +232,8 @@ fi # allwinner
 
 if [[ $BOARD == udoo* ]] ; then		
 		if [ -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc1/g" -i $DEST/output/sdcard/etc/inittab; fi
-		if [ -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc1.conf; sed -e "s/ttymxc1/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttymxc1.conf; fi	
+		if [ -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc1.conf; sed -e "s/ttyS0/ttymxc1/g" -i $DEST/output/sdcard/etc/init/ttymxc1.conf; fi	
+		if [ -f $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then mv $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc1.service ; fi
 		chroot $DEST/output/sdcard /bin/bash -c "apt-get -y -qq remove lirc && apt-get -y -qq autoremove"		
 		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.default
 		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.bonding
@@ -255,23 +256,26 @@ if [[ $BOARD == cubox-i* ]] ; then
 		cp $SRC/lib/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
 		chroot $DEST/output/sdcard /bin/bash -c "insserv brcm4330-patch >> /dev/null" 
-		case $RELEASE in
-		wheezy)
-		echo "deb http://repo.gbps.io/BSP:/Cubox-i/Debian_Wheezy/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
-		cp $SRC/lib/scripts/mxobs $DEST/output/sdcard/etc/apt/preferences.d/mxobs
-		mkdir $DEST/output/sdcard/etc/X11/
-		cp $SRC/lib/config/xorg.conf.cubox $DEST/output/sdcard/etc/X11/xorg.conf
-		chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.gbps.io/BSP:/Cubox-i:/devel/Debian_Wheezy/Release.key | apt-key add -"
-		;;
-		jessie)
-		echo "deb http://repo.gbps.io/BSP:/Cubox-i/Debian_Jessie/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
-		chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.gbps.io/BSP:/Cubox-i:/devel/Debian_Wheezy/Release.key | apt-key add -"
-		;;
-		trusty)
-		echo "deb http://repo.gbps.io/BSP:/Cubox-i/Ubuntu_Trusty_Tahr/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
-		chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.gbps.io/BSP:/Cubox-i/Ubuntu_Trusty_Tahr/Release.key | apt-key add -"
-		;;
-		esac
+		chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/Release.key | apt-key add -"
+-		echo "deb http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+-		echo "deb-src http://repo.maltegrosse.de/debian/wheezy/bsp_cuboxi/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+		#case $RELEASE in
+		#wheezy)
+		#echo "deb http://repo.gbps.io/BSP:/Cubox-i/Debian_Wheezy/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+		#cp $SRC/lib/scripts/mxobs $DEST/output/sdcard/etc/apt/preferences.d/mxobs
+		#mkdir $DEST/output/sdcard/etc/X11/
+		#cp $SRC/lib/config/xorg.conf.cubox $DEST/output/sdcard/etc/X11/xorg.conf
+		#chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.gbps.io/BSP:/Cubox-i:/devel/Debian_Wheezy/Release.key | apt-key add -"
+		#;;
+		#jessie)
+		#echo "deb http://repo.gbps.io/BSP:/Cubox-i/Debian_Jessie/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+		#chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.gbps.io/BSP:/Cubox-i:/devel/Debian_Wheezy/Release.key | apt-key add -"
+		#;;
+		#trusty)
+		#echo "deb http://repo.gbps.io/BSP:/Cubox-i/Ubuntu_Trusty_Tahr/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+		#chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.gbps.io/BSP:/Cubox-i/Ubuntu_Trusty_Tahr/Release.key | apt-key add -"
+		#;;
+		#esac
 fi
 cd $DEST/output/rootfs/
 dpkg -b $CHOOSEN_ROOTFS
@@ -349,9 +353,11 @@ if [[ $BRANCH == *next* || $BOARD == cubox-i* ]];then
 		rm -rf $DEST/output/sdcard/boot/dtb.old
 		# copy boot script and change it acordingly
 		if [[ $BOARD == udoo* ]] ; then		
-			cp $SRC/lib/config/boot-udoo-next.cmd $DEST/output/sdcard/boot/boot-next.cmd
+			cp $SRC/lib/config/boot-udoo-next.cmd $DEST/output/sdcard/boot/boot.cmd
+			mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
 		elif [[ $BOARD == cubox-i* ]]; then
-			cp $SRC/lib/config/boot-cubox.cmd $DEST/output/sdcard/boot/boot-next.cmd
+			cp $SRC/lib/config/boot-cubox.cmd $DEST/output/sdcard/boot/boot.cmd
+			mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
 		else
 			cp $SRC/lib/config/boot.cmd $DEST/output/sdcard/boot/boot.cmd
 			mkimage -C none -A arm -T script -d $SRC/lib/config/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
