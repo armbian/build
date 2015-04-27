@@ -90,9 +90,15 @@ if [[ $BRANCH == "next" && $LINUXCONFIG == *sunxi* ]] ; then
 	#fi
 
 	# copy bananar1 DTS
-	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-lamobo-r1.dts)" == "" ]; then
+	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-lamobo-r1)" == "" ]; then
 		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-lamobo-r1.dtb \\/g' arch/arm/boot/dts/Makefile
 		cp $SRC/lib/patch/sun7i-a20-lamobo-r1.dts arch/arm/boot/dts/
+	fi
+	
+	# copy bananar1 DTS
+	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-orangepi)" == "" ]; then
+		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-orangepi.dtb \\/g' arch/arm/boot/dts/Makefile
+		cp $SRC/lib/patch/sun7i-a20-orangepi.dts arch/arm/boot/dts/
 	fi
 	
 	# add r1 switch driver
