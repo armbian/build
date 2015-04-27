@@ -14,9 +14,10 @@
 #--------------------------------------------------------------------------------------------------------------------------------
 
 
-BOOTLOADER="git://github.com/RobertCNelson/u-boot"
+#BOOTLOADER="git://github.com/RobertCNelson/u-boot"
+BOOTLOADER="git://git.denx.de/u-boot.git"
 BOOTSOURCE="u-boot"
-LINUXKERNEL="https://github.com/igorpecovnik/linux-sunxi"
+LINUXKERNEL="https://github.com/dan-and/linux-sunxi"
 LINUXSOURCE="linux-sunxi"
 LINUXCONFIG="linux-sunxi"
 CPUMIN="480000"
@@ -117,7 +118,7 @@ lime)
 #--------------------------------------------------------------------------------------------------------------------------------
 REVISION="1.7"
 BOOTCONFIG="A20-OLinuXino-Lime_defconfig"
-MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
+MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT=""
 ;;
 
@@ -128,7 +129,7 @@ lime2)
 #--------------------------------------------------------------------------------------------------------------------------------
 REVISION="1.7"
 BOOTCONFIG="A20-OLinuXino-Lime2_defconfig" 
-MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
+MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT=""
 ;;
 
@@ -139,7 +140,7 @@ micro)
 #--------------------------------------------------------------------------------------------------------------------------------
 REVISION="1.7"
 BOOTCONFIG="A20-OLinuXino_MICRO_config"
-MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
+MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT=""
 ;;
 
@@ -159,7 +160,7 @@ bananapi)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="2.6"
+REVISION="2.7"
 BOOTCONFIG="Bananapi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT="brcmfmac"
@@ -170,7 +171,7 @@ bananapipro)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="2.6"
+REVISION="2.7"
 BOOTCONFIG="Bananapro_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT="brcmfmac"
@@ -181,8 +182,9 @@ lamobo-r1)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="2.6"
+REVISION="2.7"
 BOOTCONFIG="Lamobo_R1_defconfig"
+#BOOTCONFIG="Bananapi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
 MODULES_NEXT="brcmfmac"
 ;;
@@ -232,7 +234,7 @@ udoo)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Udoo quad
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.5"
+REVISION="1.6"
 BOOTCONFIG="udoo_quad_config"
 CPUMIN="392000"
 CPUMAX="996000"
