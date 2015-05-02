@@ -79,11 +79,22 @@ MISC1_DIR=""
 #--------------------------------------------------------------------------------------------------------------------------------
 
 
+aw-som-a20)
+#--------------------------------------------------------------------------------------------------------------------------------
+# https://aw-som.com/
+#--------------------------------------------------------------------------------------------------------------------------------
+REVISION="1.0"
+BOOTCONFIG="Cubieboard2_config" 
+MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp bonding spi_sun7i"
+MODULES_NEXT=""
+;;
+
+
 cubieboard)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.5"
+REVISION="3.6"
 BOOTCONFIG="Cubieboard_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT=""
@@ -94,7 +105,7 @@ cubieboard2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.5"
+REVISION="3.6"
 BOOTCONFIG="Cubieboard2_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT=""
@@ -105,7 +116,7 @@ cubietruck)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.5"
+REVISION="3.6"
 BOOTCONFIG="Cubietruck_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i bcmdhd"
 MODULES_NEXT="brcmfmac rfcomm hidp"
@@ -240,6 +251,22 @@ CPUMIN="392000"
 CPUMAX="996000"
 MODULES="bonding"
 MODULES_NEXT=""
+;;
+
+
+udoo-neo)
+#--------------------------------------------------------------------------------------------------------------------------------
+# Udoo quad
+#--------------------------------------------------------------------------------------------------------------------------------
+REVISION="1.0"
+BOOTCONFIG="mx6sxsabresd_defconfig"
+CPUMIN="392000"
+CPUMAX="996000"
+MODULES="bonding"
+MODULES_NEXT=""
+LINUXKERNEL="https://github.com/UDOOboard/linux_kernel"
+LINUXCONFIG="linux-udoo-neo"
+LINUXSOURCE="linux-neo"
 ;;
 
 
