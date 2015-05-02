@@ -102,10 +102,10 @@ if [[ $BRANCH == "next" && $LINUXCONFIG == *sunxi* ]] ; then
 	fi
 	
 	# copy AW som DTS
-	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-awsom)" == "" ]; then
-		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-awsom.dtb \\/g' arch/arm/boot/dts/Makefile
-		cp $SRC/lib/patch/sun7i-a20-awsom.dts arch/arm/boot/dts/
-	fi
+	#if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-awsom)" == "" ]; then
+	#	sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-awsom.dtb \\/g' arch/arm/boot/dts/Makefile
+	#	cp $SRC/lib/patch/sun7i-a20-awsom.dts arch/arm/boot/dts/
+	#fi
 	
 	# add r1 switch driver
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1-next.patch | grep previ)" == "" ]; then
