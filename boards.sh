@@ -74,7 +74,7 @@ jessie)
 		cp $DEST/output/sdcard/lib/systemd/system/serial-getty@.service $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
 		sed -e s/"--keep-baud 115200,38400,9600"/"-L 115200"/g  -i $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
 		# specifics packets add and remove
-		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y install libnl-3-dev libnl-genl-3-dev busybox-syslogd software-properties-common python-software-properties"
+		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y install thin-provisioning-tools libnl-3-dev libnl-genl-3-dev busybox-syslogd software-properties-common python-software-properties"
 		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get autoremove"
 		# don't clear screen tty1
 		sed -e s,"TTYVTDisallocate=yes","TTYVTDisallocate=no",g 	-i $DEST/output/sdcard/lib/systemd/system/getty@.service
