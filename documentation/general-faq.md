@@ -1,8 +1,8 @@
-# What is the root password? How can I login?
+# How can I login? What is the default password? 
 
-Login as **root** and with password **1234**. You will be prompet to change this password at first login.
+Login as **root** and use password **1234**. You will be prompted to change this password at first login.
 
-# How do you add users?
+# How do I add users?
 
 To create a normal user do this:
 
@@ -25,7 +25,15 @@ First you need to download a proper pack located at the end of board download se
 
 Reboot into new kernel.
 
-# Aditional step if you update kernel on older image?
+# Optional step if you previously installed your system on NAND?
+
+Your first NAND partition is usually mounted under /boot. In this case all you need to do is:
+
+	mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /boot/zImage /boot/uImage
+
+If you use older image than you might need to mount your first NAND partition (/dev/nand1) and copy new uImage there. Reboot.
+
+# Optional step if you update kernel on older SD image?
 
 If you came from image that doesn't have boot scripts (/boot/boot.scr) you will need to create one - Create /boot/boot.cmd file:
 	
