@@ -152,3 +152,27 @@ Unzipped images can be written with supplied imagewriter.exe on Windows XP/2003/
 
 - (M) means mirror download 
 - (R) means root file system changes. If there were some changes to you want to download this file too but it's rear that you'lll need it.
+ 
+# How can I compile my own image?
+
+First you will need to set-up development environment. Since there are troubles regarding the proper compiler I suggest you to use proven configuration. This image / kernel was successfully cross-compiled on Ubuntu 14.04 LTS x64 – you are going to need [server image](http://releases.ubuntu.com/14.04/) and 15-20G of space. Install only basic system and get [build script from Github](https://github.com/igorpecovnik/lib).
+
+# How to customize keyboard, timezone, ...
+
+keyboard: 
+
+	dpkg-reconfigure keyboard-configuration
+	
+system language: 
+
+	dpkg-reconfigure locales
+
+time zone: 
+
+	dpkg-reconfigure tzdata
+	
+screen resolution - change it + reboot: 
+
+	nano /boot/boot.cmd 
+	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr	
+
