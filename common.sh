@@ -95,10 +95,16 @@ if [[ $BRANCH == "next" && $LINUXCONFIG == *sunxi* ]] ; then
 		cp $SRC/lib/patch/sun7i-a20-lamobo-r1.dts arch/arm/boot/dts/
 	fi
 	
-	# copy bananar1 DTS
+	# copy orange pi DTS
 	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-orangepi)" == "" ]; then
 		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-orangepi.dtb \\/g' arch/arm/boot/dts/Makefile
 		cp $SRC/lib/patch/sun7i-a20-orangepi.dts arch/arm/boot/dts/
+	fi
+	
+	# copy AW som DTS
+	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-awsom)" == "" ]; then
+		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-awsom.dtb \\/g' arch/arm/boot/dts/Makefile
+		cp $SRC/lib/patch/sun7i-a20-awsom.dts arch/arm/boot/dts/
 	fi
 	
 	# add r1 switch driver
@@ -107,7 +113,7 @@ if [[ $BRANCH == "next" && $LINUXCONFIG == *sunxi* ]] ; then
 	fi
 fi
 
-if [[ $BRANCH == "next" && $BOARD == udoo* ]] ; then
+if [[ $BRANCH == "next" && $BOARD == "udoo" ]] ; then
 	# fix DTS tree
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-dts-fix.patch | grep previ)" == "" ]; then
 		patch -p1 < $SRC/lib/patch/udoo-dts-fix.patch
@@ -159,7 +165,7 @@ fi
 cd $DEST/$BOOTSOURCE
 echo "------ Patching u-boot sources."
 
-if [[ $BOARD == udoo* ]] ; then
+if [[ $BOARD == "udoo" ]] ; then
 	# This enabled boot script loading from ext2 partition which is my default setup
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch | grep previ)" == "" ]; then
        		patch --batch -N -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch
