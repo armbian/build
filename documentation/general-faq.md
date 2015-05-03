@@ -1,13 +1,8 @@
-# How can I login? What is the default password? 
+# How to login? 
 
-Login as **root** and use password **1234**. You will be prompted to change this password at first login.
+Login as **root** and use password **1234**. You will be prompted to change this password at first login. This is the only pre-installed user.
 
-# What are those images?
-
-An unofficial port of Debian wheezy, Debian jessie and Ubuntu trusty with dedicated kernel and few adjustments for better performance on ARM boards.
-
-
-# How do I add users?
+# How to add users?
 
 To create a normal user do this:
 
@@ -20,27 +15,35 @@ Put user to sudo group:
 
 # How to update kernel?
 
-First you need to download a proper pack located at the end of board download section (Kernel, U-boot, DTB). This example is for Cubietruck but it's the same for other boards, just get a kernel for that board.
+First you need to download a proper kernel tar pack located at the end of board download section (Kernel, U-boot, DTB). This example is for Cubietruck but it's the same for all other boards - just grab a kernel pack for board of your choice.
 
 	mkdir 3.19.6
 	cd 3.19.6
 	wget http://mirror.igorpecovnik.com/kernel/3.19.6-cubietruck-next.tar
 	tar xvf 3.19.6-cubietruck-next.tar
 	dpkg -i *.deb
+1. Create some temporary directory
+2. Go into it
+3. Grab a kernel pack
+4. Install all .deb files. If some pack refuses to install use: **--force-all**
 
-Reboot into new kernel.
+Reboot.
 
-# Optional step if you previously installed your system on NAND?
+# Optional steps if you have your system on NAND?
 
 Your first NAND partition is usually mounted under /boot. In this case all you need to do is:
 
 	mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /boot/zImage /boot/uImage
 
-If you use older image than you might need to mount your first NAND partition (/dev/nand1) and copy new uImage there. Reboot.
+If you use older image than you might need to mount your first NAND partition (**/dev/nand1**) and copy new uImage there. 
 
-# Optional step if you update kernel on older SD image?
+Reboot.
 
-If you came from image that doesn't have boot scripts (/boot/boot.scr) you will need to create one - Create /boot/boot.cmd file:
+# Optional steps if you update kernel to older SD image?
+
+If you came from image that doesn't have boot scripts (/boot/boot.scr) you will need to create one. 
+
+Create **/boot/boot.cmd** file with this content:
 	
 	setenv bootargs console=tty1 root=/dev/mmcblk0p1 rootwait consoleblank=0
 	if ext4load mmc 0 0x00000000 /boot/.next
@@ -59,26 +62,28 @@ and convert it to boot.scr with this command:
 
 	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
 
-Reboot into new kernel.
+Reboot.
 
-# NAND, SATA & USB install
+# How to install to NAND, SATA & USB?
 
 ![Installer](http://www.igorpecovnik.com/wp-content/uploads/2015/05/sata-installer.png)
 
 Required condition:
 
- * Kernel 3.4.x
+ * Kernel 3.4.x (some newer kernels might work too)
  * NAND, SATA or USB storage
  * a partitioned SATA storage
  * booted Debian from SD-Card
  * Login as root
 
-Then start the install script and follow the guide:
+Start the install script: 
 
     cd /root
     ./nand-sata-install
 
-# Toogle boot output
+and follow the guide.
+
+# How to toggle boot output?
 Edit and change boot parameters in /boot/boot.cmd:
 
     - console=ttyS0,115200
@@ -88,91 +93,100 @@ and convert it to boot.scr with this command:
 
 	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
 
-Reboot into new kernel.
+Reboot.
 
-# Changing network modes
+# How to change network configuration?
 
-There are three predefined configurations, you can find them in those files:
+There are four predefined configurations, you can find them in those files:
 
-	/etc/network/interfaces.hostapd
 	/etc/network/interfaces.default
+	/etc/network/interfaces.hostapd	
 	/etc/network/interfaces.bonding
+	/etc/network/interfaces.r1
 
-Preset - **/etc/network/interfaces** is symlinked to **/etc/network/interfaces.default**
+By default **/etc/network/interfaces** is symlinked to **/etc/network/interfaces.default**
 
 1. DEFAULT: your network adapters are connected classical way. 
-2. HOSTAPD: your network adapters are bridged together and bridge is connected to the network. This allows you to have your AP connected directly to your network / router.
+2. HOSTAPD: your network adapters are bridged together and bridge is connected to the network. This allows you to have your AP connected directly to your router.
 3. BONDING: your network adapters are bonded in fail safe / "notebook" way.
+4. R1: special configuration for Lamobo R1 / Banana R1.
 
 You can switch configuration with re-linking.
 
 	cd /etc/network
 	ln -sf interfaces.x interfaces
-(x=default,hostapd,bonding)
+(x = default,hostapd,bonding,r1)
 
-# AP configuration
+Than check / alter your interfaces:
 
-There are two different hostapd servers. One is default, the other is for Realtek. Both have their own basic configuration.
+	nano /etc/network/interfaces
 
-Default binary and configuration:
+# How to setup Wifi hotspot - AP - hostapd?
+
+There are two different hostap daemons. One is **default** and the other one is for some **Realtek** wifi cards. Both have their own basic configurations and both are patched to gain maximum performances.
+
+Sources: [https://github.com/igorpecovnik/hostapd](https://github.com/igorpecovnik/hostapd "https://github.com/igorpecovnik/hostapd")
+
+Default binary and configuration location:
 
 	/usr/sbin/hostapd
 	/etc/hostapd.conf
 	
-Realtek binary and configuration:
+Realtek binary and configuration location:
 
 	/usr/sbin/hostapd-rt
 	/etc/hostapd.conf-rt
 
-Since is hard to define when to use which you always try both combinations in case of troubles. To start AP automaticly:
+Since its hard to define when to use which you always try both combinations in case of troubles. To start AP automatically:
 
-1. Edit /etc/init.d/hostapd and add location of your conf file **DAEMON_CONF=/etc/hostapd.conf**
+1. Edit /etc/init.d/hostapd and add/alter location of your conf file **DAEMON_CONF=/etc/hostapd.conf** and binary **DAEMON_SBIN=/usr/sbin/hostapd**
 2. Link **/etc/network/interfaces.hostapd** to **/etc/network/interfaces**
 3. Reboot
 4. Predefined network name: "BOARD NAME" password: 12345678
 5. To change parameters, edit /etc/hostapd.conf ... BTW: You can get WPA_PSK (the long blob) from wpa_passphrase YOURNAME YOURPASS
 
-# Alter CPU frequency
+# How to alter CPU frequency?
 
 Some boards allow to adjust CPU speed.
 
 	nano /etc/init.d/cpufrequtils
 
-change
-MAX_SPEED="1200000"
-to
-MAX_SPEED="960000"
-or something else
+Alter **min_speed** or **max_speed** variable.
 
 	service cpufrequtils restart
 
-# Upgrade to simple desktop environment
+# How to upgrade into desktop environment?
+
+simple:
 
 	apt-get -y install xorg lightdm xfce4 xfce4-goodies tango-icon-theme gnome-icon-theme
 	reboot
 
+full featured:
+	
+	apt-get -y install xorg mate-desktop-environment-extras
+	reboot
+
 Check [this site](http://namhuy.net/1085/install-gui-on-debian-7-wheezy.html) for others.
 
-# How to create / write to SD card?
+# How to write an SD card?
 
-Unzipped images can be written with supplied imagewriter.exe on Windows XP/2003/Win7 or with DD command in Linux/Mac:
+Unzipped RAW images can be written with supplied imagewriter.exe on Windows XP/2003/Win7 or with DD command in Linux/Mac:
 
 	dd bs=1M if=filename.raw of=/dev/sdx
 
 (/dev/sdx = your sd card device)
 
-# There are so many download options. I am confused!
+# Why there are more download options?
 
-**Debian Wheezy** with kernel 3.4.x, which is usually latest full featured, is recommended download. **It’s rock stable**, most tested and supported. Jessie and Ubuntu Trusty is for people who wants to go with the flow. Both should be fully operational but not recommended for beginners and/or services deployment. Each image can have some extra downloads: 
+**Debian Wheezy** with kernel 3.4.x, which is usually latest full featured, is recommended download. **It’s rock stable**, most tested and supported. **Jessie and Ubuntu Trusty** is for people who wants to go with the flow. Both should be fully operational but not recommended for beginners and/or services deployment. Each image can have some extra downloads:
 
-- (M) means mirror download 
-- (R) means root file system changes. If there were some changes to you want to download this file too but it's rear that you'lll need it.
+- **(M)** means mirror download 
+- **(R)** means root file system changes. Sometimes you need to download and install this file too.
  
-# How can I compile my own image?
+# How to compile my own kernel or whole image?
 
-First you will need to set-up development environment. Since there are troubles regarding the proper compiler I suggest you to use proven configuration. This image / kernel was successfully cross-compiled on Ubuntu 14.04 LTS x64 – you are going to need [server image](http://releases.ubuntu.com/14.04/) and 15-20G of space. Install only basic system and get [build script from Github](https://github.com/igorpecovnik/lib).
-
-Working example of compile call script:
+First you will need to setup development environment. Since there are troubles regarding the proper compiler I suggest you to use proven configuration. This image / kernel was successfully cross-compiled on Ubuntu 14.04 LTS x64. You are going to need [server image](http://releases.ubuntu.com/14.04/) and 15-20G of space. Install only basic system and create this compile call script:
 
 	#!/bin/bash	
 	# 
@@ -180,7 +194,6 @@ Working example of compile call script:
 	#
 	#   Check https://github.com/igorpecovnik/lib for possible updates
 	#
-
 	# method
 	KERNEL_ONLY="no"                            # build only kernel
 	SOURCE_COMPILE="yes"                        # force source compilation: yes / no
@@ -188,30 +201,24 @@ Working example of compile call script:
 	KERNEL_CLEAN="yes"                          # run MAKE clean before kernel compilation
 	USEALLCORES="yes"                           # Use all CPU cores for compiling
 	BUILD_DESKTOP="no"                          # install desktop, hw acceleration for some boards 
-
 	# user 
 	DEST_LANG="en_US.UTF-8"                     # sl_SI.UTF-8, en_US.UTF-8
 	TZDATA="Europe/Ljubljana"                   # Timezone
 	ROOTPWD="1234"                              # Must be changed @first login
 	SDSIZE="1500"                               # SD image size in MB
-	AFTERINSTALL=""                             # last command before closing image, example: apt-get install joe 
+	AFTERINSTALL=""                             # last command before closing image 
 	MAINTAINER="Igor Pecovnik"                  # deb signature
 	MAINTAINERMAIL="igor.pecovnik@****l.com"    # deb signature
 	GPG_PASS=""                                 # set GPG password for non-interactive packing
-
 	# advanced
 	KERNELTAG="v3.19.6"                         # which kernel version - valid only for mainline
 	FBTFT="yes"                                 # https://github.com/notro/fbtft 
 	EXTERNAL="yes"                              # compile extra drivers`
-
 	#---------------------------------------------------------------------------------------
-
 	# source is where we start the script
 	SRC=$(pwd)
-
 	# destination
 	DEST=$(pwd)/output                                      
-
 	# get updates of the main build libraries
 	if [ -d "$SRC/lib" ]; then
     	cd $SRC/lib
@@ -221,7 +228,6 @@ Working example of compile call script:
    		apt-get -y -qq install git
     	git clone https://github.com/igorpecovnik/lib
 	fi
-	
 	source $SRC/lib/main.sh
 	#---------------------------------------------------------------------------------------
 
@@ -229,18 +235,14 @@ Make script executable and run it.
 
 ![](http://www.igorpecovnik.com/wp-content/uploads/2015/05/choose-a-board.png)
 
-![](http://www.igorpecovnik.com/wp-content/uploads/2015/05/choose-distro.png)
+You need to choose few options than wait for a while. When done check:
 
-![](http://www.igorpecovnik.com/wp-content/uploads/2015/05/choose-kerne.png)
+- **output/choosen-destination-version-distro-kernel-version.zip** = zipped RAW image
+- **output/kernel** = complete upgrade pack with kernel, modules, headers, firmware, dtbs
+- **output/rootfs** = rootfilesystem cache and upgrades only
+- **output/u-boot** = deb packed self installed uboot
 
-Wait for a while ... and than check:
-
-- output/choosen-destination-version-distro-kernel-version.zip = zipped RAW image
-- output/kernel = complete upgrade pack with kernel, modules, headers, firmware, dtbs
-- output/rootfs = rootfilesystem cache and upgrades only
-- u-boot = deb packed selfinstalled uboot
-
-# How to customize keyboard, timezone, ...
+# How to customize keyboard, time zone, ... ?
 
 keyboard: 
 
@@ -259,7 +261,7 @@ screen resolution - change it + reboot:
 	nano /boot/boot.cmd 
 	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr	
 
-# Connect your IR remote
+# How to connect IR remote?
 
 Required conditions: 
 
@@ -278,11 +280,10 @@ Than start the process with:
 
 	irrecord --driver=default --device=/dev/lirc0 /etc/lircd.conf
 
-And finnaly start your service when done with learning:
+And finally start your service when done with learning:
 
 	service lirc start
 
 Test your remote:
 
 	irw /dev/lircd
-
