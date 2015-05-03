@@ -1,3 +1,19 @@
+# Why there are more download options?
+
+**Debian Wheezy** with kernel 3.4.x, which is usually latest full featured, is recommended download. **It’s rock stable**, most tested and supported. **Jessie and Ubuntu Trusty** is for people who wants to go with the flow. Both should be fully operational but not recommended for beginners and/or services deployment. Each image can have some extra downloads:
+
+- **(M)** means mirror download 
+- **(R)** means root file system changes. Sometimes you need to download and install this file too.
+
+
+# How to prepare SD card?
+
+Unzipped RAW images can be written with supplied imagewriter.exe on Windows XP/2003/Win7 or with DD command in Linux/Mac:
+
+	dd bs=1M if=filename.raw of=/dev/sdx
+
+(/dev/sdx = your sd card device)
+
 # How to login? 
 
 Login as **root** and use password **1234**. You will be prompted to change this password at first login. This is the only pre-installed user.
@@ -12,6 +28,169 @@ Put user to sudo group:
 
     usermod -aG sudo FooBar
 
+# How to customize keyboard, time zone, ... ?
+
+keyboard: 
+
+	dpkg-reconfigure keyboard-configuration
+	
+system language: 
+
+	dpkg-reconfigure locales
+
+time zone: 
+
+	dpkg-reconfigure tzdata
+	
+screen resolution - change it + reboot: 
+
+	nano /boot/boot.cmd 
+	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr	
+
+# How to alter CPU frequency?
+
+Some boards allow to adjust CPU speed.
+
+	nano /etc/init.d/cpufrequtils
+
+Alter **min_speed** or **max_speed** variable.
+
+	service cpufrequtils restart
+
+# How to upgrade into desktop environment?
+
+simple:
+
+	apt-get -y install xorg lightdm xfce4 xfce4-goodies tango-icon-theme gnome-icon-theme
+	reboot
+
+full featured:
+	
+	apt-get -y install xorg mate-desktop-environment-extras
+	reboot
+
+Check [this site](http://namhuy.net/1085/install-gui-on-debian-7-wheezy.html) for others.
+
+# How to toggle boot output?
+Edit and change boot parameters in /boot/boot.cmd:
+
+    - console=ttyS0,115200
+    + console=tty1
+
+and convert it to boot.scr with this command:
+
+	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
+
+Reboot.
+
+# How to install to NAND, SATA & USB?
+
+![Installer](http://www.igorpecovnik.com/wp-content/uploads/2015/05/sata-installer.png)
+
+Required condition:
+
+ * Kernel 3.4.x (some newer kernels might work too)
+ * NAND, SATA or USB storage
+ * a partitioned SATA storage
+ * booted Debian from SD-Card
+ * Login as root
+
+Start the install script: 
+
+    cd /root
+    ./nand-sata-install
+
+and follow the guide.
+
+# How to change network configuration?
+
+There are four predefined configurations, you can find them in those files:
+
+	/etc/network/interfaces.default
+	/etc/network/interfaces.hostapd	
+	/etc/network/interfaces.bonding
+	/etc/network/interfaces.r1
+
+By default **/etc/network/interfaces** is symlinked to **/etc/network/interfaces.default**
+
+1. DEFAULT: your network adapters are connected classical way. 
+2. HOSTAPD: your network adapters are bridged together and bridge is connected to the network. This allows you to have your AP connected directly to your router.
+3. BONDING: your network adapters are bonded in fail safe / "notebook" way.
+4. R1: special configuration for Lamobo R1 / Banana R1.
+
+You can switch configuration with re-linking.
+
+	cd /etc/network
+	ln -sf interfaces.x interfaces
+(x = default,hostapd,bonding,r1)
+
+Than check / alter your interfaces:
+
+	nano /etc/network/interfaces
+
+# How to setup fixed IP?
+
+By default your main network adapter's IP is assigned by your router DHCP server.
+
+	iface eth0 inet dhcp 
+
+change to - for example:
+
+	iface eth0 inet static
+	 	address 192.168.1.100
+        netmask 255.255.255.0
+		gateway 192.168.1.1
+
+# How to setup wireless access point?
+
+There are two different hostap daemons. One is **default** and the other one is for some **Realtek** wifi cards. Both have their own basic configurations and both are patched to gain maximum performances.
+
+Sources: [https://github.com/igorpecovnik/hostapd](https://github.com/igorpecovnik/hostapd "https://github.com/igorpecovnik/hostapd")
+
+Default binary and configuration location:
+
+	/usr/sbin/hostapd
+	/etc/hostapd.conf
+	
+Realtek binary and configuration location:
+
+	/usr/sbin/hostapd-rt
+	/etc/hostapd.conf-rt
+
+Since its hard to define when to use which you always try both combinations in case of troubles. To start AP automatically:
+
+1. Edit /etc/init.d/hostapd and add/alter location of your conf file **DAEMON_CONF=/etc/hostapd.conf** and binary **DAEMON_SBIN=/usr/sbin/hostapd**
+2. Link **/etc/network/interfaces.hostapd** to **/etc/network/interfaces**
+3. Reboot
+4. Predefined network name: "BOARD NAME" password: 12345678
+5. To change parameters, edit /etc/hostapd.conf ... BTW: You can get WPA_PSK (the long blob) from wpa_passphrase YOURNAME YOURPASS
+
+# How to connect IR remote?
+
+Required conditions: 
+
+- IR hardware
+- loaded driver
+
+Get your [remote configuration](http://lirc.sourceforge.net/remotes/) (lircd.conf) or [learn](http://kodi.wiki/view/HOW-TO:Setup_Lirc#Learning_Commands). You are going to need the list of all possible commands which you can map to your IR remote keys:
+	
+	irrecord --list-namespace
+
+To start with learning process you need to delete old config:
+		
+	rm /etc/lircd.conf 
+
+Than start the process with:
+
+	irrecord --driver=default --device=/dev/lirc0 /etc/lircd.conf
+
+And finally start your service when done with learning:
+
+	service lirc start
+
+Test your remote:
+
+	irw /dev/lircd
 
 # How to update kernel?
 
@@ -64,127 +243,7 @@ and convert it to boot.scr with this command:
 
 Reboot.
 
-# How to install to NAND, SATA & USB?
-
-![Installer](http://www.igorpecovnik.com/wp-content/uploads/2015/05/sata-installer.png)
-
-Required condition:
-
- * Kernel 3.4.x (some newer kernels might work too)
- * NAND, SATA or USB storage
- * a partitioned SATA storage
- * booted Debian from SD-Card
- * Login as root
-
-Start the install script: 
-
-    cd /root
-    ./nand-sata-install
-
-and follow the guide.
-
-# How to toggle boot output?
-Edit and change boot parameters in /boot/boot.cmd:
-
-    - console=ttyS0,115200
-    + console=tty1
-
-and convert it to boot.scr with this command:
-
-	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
-
-Reboot.
-
-# How to change network configuration?
-
-There are four predefined configurations, you can find them in those files:
-
-	/etc/network/interfaces.default
-	/etc/network/interfaces.hostapd	
-	/etc/network/interfaces.bonding
-	/etc/network/interfaces.r1
-
-By default **/etc/network/interfaces** is symlinked to **/etc/network/interfaces.default**
-
-1. DEFAULT: your network adapters are connected classical way. 
-2. HOSTAPD: your network adapters are bridged together and bridge is connected to the network. This allows you to have your AP connected directly to your router.
-3. BONDING: your network adapters are bonded in fail safe / "notebook" way.
-4. R1: special configuration for Lamobo R1 / Banana R1.
-
-You can switch configuration with re-linking.
-
-	cd /etc/network
-	ln -sf interfaces.x interfaces
-(x = default,hostapd,bonding,r1)
-
-Than check / alter your interfaces:
-
-	nano /etc/network/interfaces
-
-# How to setup Wifi hotspot - AP - hostapd?
-
-There are two different hostap daemons. One is **default** and the other one is for some **Realtek** wifi cards. Both have their own basic configurations and both are patched to gain maximum performances.
-
-Sources: [https://github.com/igorpecovnik/hostapd](https://github.com/igorpecovnik/hostapd "https://github.com/igorpecovnik/hostapd")
-
-Default binary and configuration location:
-
-	/usr/sbin/hostapd
-	/etc/hostapd.conf
-	
-Realtek binary and configuration location:
-
-	/usr/sbin/hostapd-rt
-	/etc/hostapd.conf-rt
-
-Since its hard to define when to use which you always try both combinations in case of troubles. To start AP automatically:
-
-1. Edit /etc/init.d/hostapd and add/alter location of your conf file **DAEMON_CONF=/etc/hostapd.conf** and binary **DAEMON_SBIN=/usr/sbin/hostapd**
-2. Link **/etc/network/interfaces.hostapd** to **/etc/network/interfaces**
-3. Reboot
-4. Predefined network name: "BOARD NAME" password: 12345678
-5. To change parameters, edit /etc/hostapd.conf ... BTW: You can get WPA_PSK (the long blob) from wpa_passphrase YOURNAME YOURPASS
-
-# How to alter CPU frequency?
-
-Some boards allow to adjust CPU speed.
-
-	nano /etc/init.d/cpufrequtils
-
-Alter **min_speed** or **max_speed** variable.
-
-	service cpufrequtils restart
-
-# How to upgrade into desktop environment?
-
-simple:
-
-	apt-get -y install xorg lightdm xfce4 xfce4-goodies tango-icon-theme gnome-icon-theme
-	reboot
-
-full featured:
-	
-	apt-get -y install xorg mate-desktop-environment-extras
-	reboot
-
-Check [this site](http://namhuy.net/1085/install-gui-on-debian-7-wheezy.html) for others.
-
-# How to write an SD card?
-
-Unzipped RAW images can be written with supplied imagewriter.exe on Windows XP/2003/Win7 or with DD command in Linux/Mac:
-
-	dd bs=1M if=filename.raw of=/dev/sdx
-
-(/dev/sdx = your sd card device)
-
-# Why there are more download options?
-
-**Debian Wheezy** with kernel 3.4.x, which is usually latest full featured, is recommended download. **It’s rock stable**, most tested and supported. **Jessie and Ubuntu Trusty** is for people who wants to go with the flow. Both should be fully operational but not recommended for beginners and/or services deployment. Each image can have some extra downloads:
-
-- **(M)** means mirror download 
-- **(R)** means root file system changes. Sometimes you need to download and install this file too.
- 
-# How to compile my own kernel or whole image?
+# How to compile my own kernel or SD image?
 
 First you will need to setup development environment. Since there are troubles regarding the proper compiler I suggest you to use proven configuration. This image / kernel was successfully cross-compiled on Ubuntu 14.04 LTS x64. You are going to need [server image](http://releases.ubuntu.com/14.04/) and 15-20G of space. Install only basic system and create this compile call script:
 
@@ -241,49 +300,3 @@ You need to choose few options than wait for a while. When done check:
 - **output/kernel** = complete upgrade pack with kernel, modules, headers, firmware, dtbs
 - **output/rootfs** = rootfilesystem cache and upgrades only
 - **output/u-boot** = deb packed self installed uboot
-
-# How to customize keyboard, time zone, ... ?
-
-keyboard: 
-
-	dpkg-reconfigure keyboard-configuration
-	
-system language: 
-
-	dpkg-reconfigure locales
-
-time zone: 
-
-	dpkg-reconfigure tzdata
-	
-screen resolution - change it + reboot: 
-
-	nano /boot/boot.cmd 
-	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr	
-
-# How to connect IR remote?
-
-Required conditions: 
-
-- IR hardware
-- loaded driver
-
-Get your [remote configuration](http://lirc.sourceforge.net/remotes/) (lircd.conf) or [learn](http://kodi.wiki/view/HOW-TO:Setup_Lirc#Learning_Commands). You are going to need the list of all possible commands which you can map to your IR remote keys:
-	
-	irrecord --list-namespace
-
-To start with learning process you need to delete old config:
-		
-	rm /etc/lircd.conf 
-
-Than start the process with:
-
-	irrecord --driver=default --device=/dev/lirc0 /etc/lircd.conf
-
-And finally start your service when done with learning:
-
-	service lirc start
-
-Test your remote:
-
-	irw /dev/lircd
