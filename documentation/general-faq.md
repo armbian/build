@@ -63,7 +63,7 @@ Reboot into new kernel.
 
 # NAND, SATA & USB install
 
-![Installer](http://www.igorpecovnik.com/wp-content/uploads/2015/05/sata-installer.png)
+![Installer](http://www.igorpecovnik.com/wp-content/uploads/2015/05/sata-installer-small.png)
 
 Required condition:
 
