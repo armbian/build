@@ -63,7 +63,7 @@ Reboot into new kernel.
 
 # NAND, SATA & USB install
 
-![Installer](http://www.igorpecovnik.com/wp-content/uploads/2015/05/sata-installer-small.png)
+![Installer](http://www.igorpecovnik.com/wp-content/uploads/2015/05/sata-installer.png)
 
 Required condition:
 
@@ -171,6 +171,74 @@ Unzipped images can be written with supplied imagewriter.exe on Windows XP/2003/
 # How can I compile my own image?
 
 First you will need to set-up development environment. Since there are troubles regarding the proper compiler I suggest you to use proven configuration. This image / kernel was successfully cross-compiled on Ubuntu 14.04 LTS x64 – you are going to need [server image](http://releases.ubuntu.com/14.04/) and 15-20G of space. Install only basic system and get [build script from Github](https://github.com/igorpecovnik/lib).
+
+Working example of compile call script:
+
+	#!/bin/bash	
+	# 
+	# 	Edit and execute this script - Ubuntu 14.04 x86/64 recommended
+	#
+	#   Check https://github.com/igorpecovnik/lib for possible updates
+	#
+
+	# method
+	KERNEL_ONLY="no"                            # build only kernel
+	SOURCE_COMPILE="yes"                        # force source compilation: yes / no
+	KERNEL_CONFIGURE="no"                       # want to change my default configuration
+	KERNEL_CLEAN="yes"                          # run MAKE clean before kernel compilation
+	USEALLCORES="yes"                           # Use all CPU cores for compiling
+	BUILD_DESKTOP="no"                          # install desktop, hw acceleration for some boards 
+
+	# user 
+	DEST_LANG="en_US.UTF-8"                     # sl_SI.UTF-8, en_US.UTF-8
+	TZDATA="Europe/Ljubljana"                   # Timezone
+	ROOTPWD="1234"                              # Must be changed @first login
+	SDSIZE="1500"                               # SD image size in MB
+	AFTERINSTALL=""                             # last command before closing image, example: apt-get install joe 
+	MAINTAINER="Igor Pecovnik"                  # deb signature
+	MAINTAINERMAIL="igor.pecovnik@****l.com"    # deb signature
+	GPG_PASS=""                                 # set GPG password for non-interactive packing
+
+	# advanced
+	KERNELTAG="v3.19.6"                         # which kernel version - valid only for mainline
+	FBTFT="yes"                                 # https://github.com/notro/fbtft 
+	EXTERNAL="yes"                              # compile extra drivers`
+
+	#---------------------------------------------------------------------------------------
+
+	# source is where we start the script
+	SRC=$(pwd)
+
+	# destination
+	DEST=$(pwd)/output                                      
+
+	# get updates of the main build libraries
+	if [ -d "$SRC/lib" ]; then
+    	cd $SRC/lib
+		git pull 
+	else
+    	# download SDK
+   		apt-get -y -qq install git
+    	git clone https://github.com/igorpecovnik/lib
+	fi
+	
+	source $SRC/lib/main.sh
+	#---------------------------------------------------------------------------------------
+
+Make script executable and run it.
+
+![](http://www.igorpecovnik.com/wp-content/uploads/2015/05/choose-a-board.png)
+
+![](http://www.igorpecovnik.com/wp-content/uploads/2015/05/choose-distro.png)
+
+![](http://www.igorpecovnik.com/wp-content/uploads/2015/05/choose-kerne.png)
+
+Wait for a while ... and than check:
+
+- output/choosen-destination-version-distro-kernel-version.zip = zipped RAW image
+- output/kernel = complete upgrade pack with kernel, modules, headers, firmware, dtbs
+- output/rootfs = rootfilesystem cache and upgrades only
+- u-boot = deb packed selfinstalled uboot
 
 # How to customize keyboard, timezone, ...
 
