@@ -259,3 +259,30 @@ screen resolution - change it + reboot:
 	nano /boot/boot.cmd 
 	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr	
 
+# Connect your IR remote
+
+Required conditions: 
+
+- IR hardware
+- loaded driver
+
+Get your [remote configuration](http://lirc.sourceforge.net/remotes/) (lircd.conf) or [learn](http://kodi.wiki/view/HOW-TO:Setup_Lirc#Learning_Commands). You are going to need the list of all possible commands which you can map to your IR remote keys:
+	
+	irrecord --list-namespace
+
+To start with learning process you need to delete old config:
+		
+	rm /etc/lircd.conf 
+
+Than start the process with:
+
+	irrecord --driver=default --device=/dev/lirc0 /etc/lircd.conf
+
+And finnaly start your service when done with learning:
+
+	service lirc start
+
+Test your remote:
+
+	irw /dev/lircd
+
