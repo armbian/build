@@ -2,26 +2,31 @@
 
 Login as **root** and use password **1234**. You will be prompted to change this password at first login.
 
+# What are those images?
+
+An unofficial port of Debian wheezy, Debian jessie and Ubuntu trusty with dedicated kernel and few adjustments for better performance on ARM boards.
+
+
 # How do I add users?
 
 To create a normal user do this:
 
-    $ adduser FooBar
+    adduser FooBar
 
 Put user to sudo group:
 
-    $ usermod -aG sudo FooBar
+    usermod -aG sudo FooBar
 
 
 # How to update kernel?
 
 First you need to download a proper pack located at the end of board download section (Kernel, U-boot, DTB). This example is for Cubietruck but it's the same for other boards, just get a kernel for that board.
 
-	$ mkdir 3.19.6
-	$ cd 3.19.6
-	$ wget http://mirror.igorpecovnik.com/kernel/3.19.6-cubietruck-next.tar
-	$ tar xvf 3.19.6-cubietruck-next.tar
-	$ dpkg -i *.deb
+	mkdir 3.19.6
+	cd 3.19.6
+	wget http://mirror.igorpecovnik.com/kernel/3.19.6-cubietruck-next.tar
+	tar xvf 3.19.6-cubietruck-next.tar
+	dpkg -i *.deb
 
 Reboot into new kernel.
 
@@ -58,6 +63,8 @@ Reboot into new kernel.
 
 # NAND, SATA & USB install
 
+![Installer](http://www.igorpecovnik.com/wp-content/uploads/2015/05/sata-installer.png)
+
 Required condition:
 
  * Kernel 3.4.x
@@ -68,8 +75,8 @@ Required condition:
 
 Then start the install script and follow the guide:
 
-    $ cd /root
-    $ ./nand-sata-install
+    cd /root
+    ./nand-sata-install
 
 # Toogle boot output
 Edit and change boot parameters in /boot/boot.cmd:
