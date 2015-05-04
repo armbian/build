@@ -83,17 +83,19 @@ and convert it to boot.scr with this command:
 
 Reboot.
 
+Serial console on imx6 boards are ttymxc0 (Hummingboard, Cubox-i) or ttymxc1 (Udoo)
+
 # How to install to NAND, SATA & USB?
 
 ![Installer](http://www.igorpecovnik.com/wp-content/uploads/2015/05/sata-installer.png)
 
 Required condition:
 
- * Kernel 3.4.x (some newer kernels might work too)
- * NAND, SATA or USB storage
- * a partitioned SATA storage
- * booted Debian from SD-Card
- * Login as root
+ * kernel 3.4.x (some newer kernels might work too)
+ * NAND storage
+ * pre-partitioned SATA or USB storage
+ * system booted from SD card
+ * root privileges
 
 Start the install script: 
 
@@ -200,13 +202,24 @@ First you need to download a proper kernel tar pack located at the end of board 
 	cd 3.19.6
 	wget http://mirror.igorpecovnik.com/kernel/3.19.6-cubietruck-next.tar
 	tar xvf 3.19.6-cubietruck-next.tar
-	dpkg -i *.deb
+	dpkg -i linux-image*.deb
+
+Optional:
+
+	dpkg -i linux-headers*.deb
+	
 1. Create some temporary directory
 2. Go into it
 3. Grab a kernel pack
-4. Install all .deb files. If some pack refuses to install use: **--force-all**
+4. Install at least linux-image
+5. If pack refuses to install, uninstall it and try again.
 
 Reboot.
+
+Optional work after you boot into new kernel - only if you are planning to compile some kernel drivers. 
+
+	cd /usr/src/linux-headers-$(uname -r)
+	make scripts
 
 # Optional steps if you have your system on NAND?
 
@@ -245,7 +258,11 @@ Reboot.
 
 # How to compile my own kernel or SD image?
 
-First you will need to setup development environment. Since there are troubles regarding the proper compiler I suggest you to use proven configuration. This image / kernel was successfully cross-compiled on Ubuntu 14.04 LTS x64. You are going to need [server image](http://releases.ubuntu.com/14.04/) and 15-20G of space. Install only basic system and create this compile call script:
+You will need to setup proven development environment with [Ubuntu 14.04 LTS x64 server image](http://releases.ubuntu.com/14.04/) and cca. 20G of free space. Install basic system and create this call script:
+
+	nano compile.sh
+
+copy and paste the following code:
 
 	#!/bin/bash	
 	# 
@@ -253,27 +270,30 @@ First you will need to setup development environment. Since there are troubles r
 	#
 	#   Check https://github.com/igorpecovnik/lib for possible updates
 	#
+
 	# method
-	KERNEL_ONLY="no"                            # build only kernel
-	SOURCE_COMPILE="yes"                        # force source compilation: yes / no
-	KERNEL_CONFIGURE="no"                       # want to change my default configuration
-	KERNEL_CLEAN="yes"                          # run MAKE clean before kernel compilation
-	USEALLCORES="yes"                           # Use all CPU cores for compiling
-	BUILD_DESKTOP="no"                          # install desktop, hw acceleration for some boards 
+	KERNEL_ONLY="no"                            # build kernel only
+	SOURCE_COMPILE="yes"                        # force source compilation
+	KERNEL_CONFIGURE="no"                       # change default configuration
+	KERNEL_CLEAN="yes"                          # MAKE clean before compilation
+	USEALLCORES="yes"                           # Use all CPU cores
+	BUILD_DESKTOP="no"                          # desktop with hw acceleration for some boards 
+	
 	# user 
 	DEST_LANG="en_US.UTF-8"                     # sl_SI.UTF-8, en_US.UTF-8
-	TZDATA="Europe/Ljubljana"                   # Timezone
-	ROOTPWD="1234"                              # Must be changed @first login
+	TZDATA="Europe/Ljubljana"                   # time zone
+	ROOTPWD="1234"                              # forced to change @first login
 	SDSIZE="1500"                               # SD image size in MB
-	AFTERINSTALL=""                             # last command before closing image 
+	AFTERINSTALL=""                             # command before closing image 
 	MAINTAINER="Igor Pecovnik"                  # deb signature
 	MAINTAINERMAIL="igor.pecovnik@****l.com"    # deb signature
 	GPG_PASS=""                                 # set GPG password for non-interactive packing
+	
 	# advanced
-	KERNELTAG="v3.19.6"                         # which kernel version - valid only for mainline
+	KERNELTAG="v3.19.6"                         # kernel TAG - valid only for mainline
 	FBTFT="yes"                                 # https://github.com/notro/fbtft 
-	EXTERNAL="yes"                              # compile extra drivers`
-	#---------------------------------------------------------------------------------------
+	EXTERNAL="yes"                              # compile extra drivers
+
 	# source is where we start the script
 	SRC=$(pwd)
 	# destination
@@ -288,9 +308,13 @@ First you will need to setup development environment. Since there are troubles r
     	git clone https://github.com/igorpecovnik/lib
 	fi
 	source $SRC/lib/main.sh
-	#---------------------------------------------------------------------------------------
 
-Make script executable and run it.
+Save and exit, than make script executable and run it.
+
+	chmod +x compile.sh
+	./compile.sh
+
+This video shows the whole building process (30 minutes).
 
 *https://youtu.be/TE5XDovsCOo?vq=hd720*
 
