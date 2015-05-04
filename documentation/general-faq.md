@@ -163,7 +163,7 @@ Since its hard to define when to use which you always try both combinations in c
 2. Link **/etc/network/interfaces.hostapd** to **/etc/network/interfaces**
 3. Reboot
 4. Predefined network name: "BOARD NAME" password: 12345678
-5. To change parameters, edit /etc/hostapd.conf ... BTW: You can get WPA_PSK (the long blob) from wpa_passphrase YOURNAME YOURPASS
+5. To change parameters, edit /etc/hostapd.conf BTW: You can get WPAPSK the long blob from wpa_passphrase YOURNAME YOURPASS
 
 # How to connect IR remote?
 
