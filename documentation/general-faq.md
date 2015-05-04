@@ -294,6 +294,8 @@ Make script executable and run it.
 
 [![Video of image compilation](http://www.igorpecovnik.com/wp-content/uploads/2015/05/choose-a-board.png)](https://youtu.be/TE5XDovsCOo)
 
+	[su_youtube_advanced url="https://youtu.be/TE5XDovsCOo" controls="yes" autohide="yes" showinfo="no" rel="no" modestbranding="yes" theme="light" width="640" height="360" responsive="no"]
+
 You need to choose few options than wait for a while. When done check:
 
 - **output/choosen-destination-version-distro-kernel-version.zip** = zipped RAW image
