@@ -292,7 +292,7 @@ First you will need to setup development environment. Since there are troubles r
 
 Make script executable and run it.
 
-[![Video of image compilation](http://www.igorpecovnik.com/wp-content/uploads/2015/05/choose-a-board.png)](https://youtu.be/TE5XDovsCOo)
+*https://youtu.be/TE5XDovsCOo?vq=hd720*
 
 You need to choose few options than wait for a while. When done check:
 
