@@ -126,19 +126,21 @@ and follow the guide.
 
 # How to change network configuration?
 
-There are four predefined configurations, you can find them in those files:
+There are five predefined configurations, you can find them in those files:
 
 	/etc/network/interfaces.default
 	/etc/network/interfaces.hostapd	
 	/etc/network/interfaces.bonding
 	/etc/network/interfaces.r1
+	/etc/network/interfaces.r1switch
 
 By default **/etc/network/interfaces** is symlinked to **/etc/network/interfaces.default**
 
 1. DEFAULT: your network adapters are connected classical way. 
 2. HOSTAPD: your network adapters are bridged together and bridge is connected to the network. This allows you to have your AP connected directly to your router.
 3. BONDING: your network adapters are bonded in fail safe / "notebook" way.
-4. R1: special configuration for Lamobo R1 / Banana R1.
+4. Router configuration for Lamobo R1 / Banana R1.
+5. Switch configuration for Lamobo R1 / Banana R1.
 
 You can switch configuration with re-linking.
 
