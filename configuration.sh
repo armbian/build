@@ -31,8 +31,8 @@ MISC2=""
 MISC2_DIR=""						
 MISC3="https://github.com/dz0ny/rt8192cu"	
 MISC3_DIR="rt8192cu"
-# MISC4 = RESERVED
-# MISC4_DIR = RESERVED
+MISC5="https://github.com/hglm/a10disp/"
+MISC5_DIR="sunxi-display-changer"
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # common for default allwinner kernel-source 
@@ -94,7 +94,7 @@ cubieboard)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.6"
+REVISION="3.7"
 BOOTCONFIG="Cubieboard_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT=""
@@ -105,7 +105,7 @@ cubieboard2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.6"
+REVISION="3.7"
 BOOTCONFIG="Cubieboard2_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT=""
@@ -116,7 +116,7 @@ cubietruck)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.6"
+REVISION="3.7"
 BOOTCONFIG="Cubietruck_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i bcmdhd"
 MODULES_NEXT="brcmfmac rfcomm hidp"
@@ -171,7 +171,7 @@ bananapi)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="2.7"
+REVISION="2.8"
 BOOTCONFIG="Bananapi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT="brcmfmac"
@@ -182,7 +182,7 @@ bananapipro)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="2.7"
+REVISION="2.8"
 BOOTCONFIG="Bananapro_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT="brcmfmac"
@@ -193,7 +193,7 @@ lamobo-r1)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="2.7"
+REVISION="2.8"
 BOOTCONFIG="Lamobo_R1_defconfig"
 #BOOTCONFIG="Bananapi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
@@ -251,6 +251,9 @@ CPUMIN="392000"
 CPUMAX="996000"
 MODULES="bonding"
 MODULES_NEXT=""
+LINUXKERNEL="https://github.com/UDOOboard/linux_kernel"
+LINUXCONFIG="linux-udoo"
+LINUXSOURCE="linux-neo"
 ;;
 
 
@@ -259,8 +262,10 @@ udoo-neo)
 # Udoo quad
 #--------------------------------------------------------------------------------------------------------------------------------
 REVISION="1.0"
-BOOTCONFIG="mx6sxsabresd_defconfig"
-CPUMIN="392000"
+BOOTLOADER="https://github.com/UDOOboard/uboot-imx"
+BOOTSOURCE="u-boot-neo"
+BOOTCONFIG="mx6sxsabresd_config"
+CPUMIN="198000"
 CPUMAX="996000"
 MODULES="bonding"
 MODULES_NEXT=""
