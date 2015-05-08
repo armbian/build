@@ -1,4 +1,4 @@
-**This is a script to build Debian or Ubuntu for various ARM single board computer.** It uses proven sources and configurations to create **uboot**, **kernel** and bootable **SD images** for: 
+**This is a script to build Debian or Ubuntu for various ARM single board computers.** It uses proven sources and configurations to create **uboot**, **kernel** and bootable **SD images** for: 
 	
 -  Cubieboard 1,2,3
 -  BananaPi / PRO / R1
