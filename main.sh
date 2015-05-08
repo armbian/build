@@ -22,20 +22,11 @@ fi
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
-# Get your PGP key signing password
-#--------------------------------------------------------------------------------------------------------------------------------
-#if [ "$GPG_PASS" == "" ]; then
-#	GPG_PASS=$(whiptail --passwordbox "\nPlease enter your GPG signing password or leave blank for none. \n\nEnd users - ignore - leave blank. " 14 50 --title "Package signing" 3>&1 1>&2 2>&3)    
-#	exitstatus=$?
-#if [ $exitstatus != 0 ]; then exit; fi
-#fi
-
-
-#--------------------------------------------------------------------------------------------------------------------------------
 # Choose destination
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$BOARD" == "" ]; then
-	BOARDS="AW-som-a20 A20 Cubieboard A10 Cubieboard2 A20 Cubietruck A20 Lime A20 Lime2 A20 Micro A20 Bananapi A20 Bananapipro A20 Lamobo-R1 A20 Orangepi A20 Hummingbird A31 Cubox-i imx6 Udoo imx6 Udoo-Neo imx6";
+	BOARDS="AW-som-a20 A20 Cubieboard A10 Cubieboard2 A20 Cubietruck A20 Lime A20 Lime2 A20 Micro A20 Bananapi A20 \
+	Bananapipro A20 Lamobo-R1 A20 Orangepi A20 Hummingbird A31 Cubox-i imx6 Udoo imx6 Udoo-Neo imx6";
 	MYLIST=`for x in $BOARDS; do echo $x ""; done`
 	whiptail --title "Choose a board" --backtitle "" --menu "\nWhich one?" 18 30 8 $MYLIST 2>results    
 	BOARD=$(<results)
@@ -77,7 +68,7 @@ if [ "$BRANCH" == "" ]; then echo "ERROR: You have to choose one branch"; exit; 
 #--------------------------------------------------------------------------------------------------------------------------------
 # check which distro we are building
 #--------------------------------------------------------------------------------------------------------------------------------
-if [ "$RELEASE" == "trusty" ]; then
+if [[ "$RELEASE" == "precise" || "$RELEASE" == "trusty" ]]; then
 	DISTRIBUTION="Ubuntu"
 	else
 	DISTRIBUTION="Debian"
@@ -94,6 +85,8 @@ HOST="$BOARD"
 # Load libraries
 #--------------------------------------------------------------------------------------------------------------------------------
 source $SRC/lib/configuration.sh			# Board configuration
+source $SRC/lib/distributions.sh 			# System specific install
+source $SRC/lib/patching.sh 				# Source patching
 source $SRC/lib/boards.sh 					# Board specific install
 source $SRC/lib/common.sh 					# Functions 
 
@@ -124,29 +117,33 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # to display build time at the end
 #--------------------------------------------------------------------------------------------------------------------------------
+if [ "$KERNEL_ONLY" == "yes" ]; then
+	echo -e "[\e[0;32m ok \x1B[0m] Compiling kernel"
+	else
+	echo -e "[\e[0;32m ok \x1B[0m] Building $VERSION"
+fi
+echo -e "[\e[0;32m ok \x1B[0m] Syncing clock"
+ntpdate -s time.ijs.si
 start=`date +%s`
-
-
-#--------------------------------------------------------------------------------------------------------------------------------
-# display what we are doing 
-#--------------------------------------------------------------------------------------------------------------------------------
-echo "Building $VERSION."
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # download packages for host
 #--------------------------------------------------------------------------------------------------------------------------------
-if [[ "$(dpkg -l | grep libncurses5-dev)" == "" || "$(dpkg -l | grep u-boot-tools)" == "" ]]; then
 download_host_packages
-fi
-clear
-echo "Building $VERSION."
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # fetch_from_github [repository, sub directory]
 #--------------------------------------------------------------------------------------------------------------------------------
 mkdir -p $DEST/output
+
+if [ "$FORCE" = "yes" ]; then
+	FORCE="-f"
+	else
+	FORCE=""
+fi
+
 fetch_from_github "$BOOTLOADER" "$BOOTSOURCE"
 fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE"
 if [[ -n "$DOCS" ]]; then fetch_from_github "$DOCS" "$DOCSDIR"; fi
@@ -154,21 +151,21 @@ if [[ -n "$MISC1" ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
 if [[ -n "$MISC2" ]]; then fetch_from_github "$MISC2" "$MISC2_DIR"; fi
 if [[ -n "$MISC3" ]]; then fetch_from_github "$MISC3" "$MISC3_DIR"; fi
 if [[ -n "$MISC4" ]]; then fetch_from_github "$MISC4" "$MISC4_DIR"; fi
+if [[ -n "$MISC5" ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
 
+# compile sunxi tools
+compile_sunxi_tools
 
+# Patching sources
+patching_sources
+
+# What are we building
 grab_kernel_version
-
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # Compile source or choose already packed kernel
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$SOURCE_COMPILE" = "yes" ]; then
-
-	# Patching sources
-	patching_sources
-
-	# Grab linux kernel version
-	grab_kernel_version
 
 	# Compile boot loader
 	compile_uboot
@@ -176,9 +173,9 @@ if [ "$SOURCE_COMPILE" = "yes" ]; then
 	# compile kernel and create archives
 	compile_kernel
 	if [ "$KERNEL_ONLY" == "yes" ]; then
-		echo "Kernel building done."
-		echo "Target directory: $DEST/output/kernel"
-		echo "File name: $CHOOSEN_KERNEL"
+		echo -e "[\e[0;32m ok \x1B[0m] Kernel building done"
+		echo -e "[\e[0;32m ok \x1B[0m] Target directory: $DEST/output/kernel"
+		echo -e "[\e[0;32m ok \x1B[0m] File name: $CHOOSEN_KERNEL"
 		exit
 	fi
 
@@ -204,8 +201,8 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # create or use prepared root file-system
 #--------------------------------------------------------------------------------------------------------------------------------
-create_debian_template
-mount_debian_template
+create_system_template
+mount_system_template
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -217,6 +214,7 @@ install_kernel
 #--------------------------------------------------------------------------------------------------------------------------------
 # install board specific applications
 #--------------------------------------------------------------------------------------------------------------------------------
+install_system_specific
 install_board_specific
 
 
@@ -250,4 +248,4 @@ closing_image
 
 end=`date +%s`
 runtime=$(((end-start)/60))
-echo "Runtime $runtime min."
+echo -e "[\e[0;32m ok \x1B[0m] Runtime $runtime min"
