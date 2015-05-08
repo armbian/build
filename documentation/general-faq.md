@@ -310,9 +310,11 @@ copy and paste the following code:
 	GPG_PASS=""                                 # set GPG password for non-interactive packing
 	
 	# advanced
-	KERNELTAG="v3.19.6"                         # kernel TAG - valid only for mainline
+	KERNELTAG="v3.19.7"                         # kernel TAG - valid only for mainline
+	UBOOTTAG="v2015.04"							# kernel TAG - valid for all sunxi
 	FBTFT="yes"                                 # https://github.com/notro/fbtft 
 	EXTERNAL="yes"                              # compile extra drivers
+	FORCE="yes"									# ignore manual changes to source
 
 	# source is where we start the script
 	SRC=$(pwd)
