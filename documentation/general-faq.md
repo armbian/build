@@ -42,10 +42,19 @@ time zone:
 
 	dpkg-reconfigure tzdata
 	
-screen resolution - change it + reboot: 
+screen resolution: 
 
 	nano /boot/boot.cmd 
+	# change example:
+	# disp.screen0_output_mode=**1920x1080p60**
+	# to
+	# disp.screen0_output_mode=**1280x720p60**
 	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr	
+
+screen resolution interactive - only Allwinner boards with A10 and A20 with kernl 3.4.x:
+	
+	# Example to set console framebuffer resolution to 1280 x 720
+	a10disp changehdmimodeforce 4
 
 # How to alter CPU frequency?
 
@@ -57,19 +66,30 @@ Alter **min_speed** or **max_speed** variable.
 
 	service cpufrequtils restart
 
-# How to upgrade into desktop environment?
+# How to upgrade into simple desktop environment?
 
-simple:
-
-	apt-get -y install xorg lightdm xfce4 xfce4-goodies tango-icon-theme gnome-icon-theme
+	apt-get -y install xorg lightdm xfce4 tango-icon-theme gnome-icon-theme
 	reboot
 
-full featured:
-	
-	apt-get -y install xorg mate-desktop-environment-extras
-	reboot
 
 Check [this site](http://namhuy.net/1085/install-gui-on-debian-7-wheezy.html) for others.
+
+# How to upgrade from Debian Wheezy to Debian Jessie?
+
+	dpkg -r ramlog	
+	cp /etc/apt/sources.list{,.bak}
+    sed -i -e 's/ \(stable\|wheezy\)/ jessie/ig' /etc/apt/sources.list
+    apt-get update
+    apt-get --download-only dist-upgrade
+    apt-get dist-upgrade
+
+
+# How to upgrade from Ubuntu Trusty to Ubuntu Utopic and Vivid?
+	
+	apt-get install update-manager-core
+    do-release-upgrade -d
+  	# further to vivid
+	apt-get dist-upgrade
 
 # How to toggle boot output?
 Edit and change boot parameters in /boot/boot.cmd:
