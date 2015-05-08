@@ -15,18 +15,26 @@
 
 download_host_packages (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Download packages for host - Ubuntu 14.04 recommended                     
+# Download packages for host and install only if missing - Ubuntu 14.04 recommended                     
 #--------------------------------------------------------------------------------------------------------------------------------
 apt-get -y -qq install debconf-utils
-debconf-apt-progress -- apt-get -y install pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex gawk 
-debconf-apt-progress -- apt-get -y install gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip 
-debconf-apt-progress -- apt-get -y install libusb-1.0-0-dev parted pkg-config expect gcc-arm-linux-gnueabi libncurses5-dev
+PAKETKI="device-tree-compiler pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex gawk \
+gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev parted pkg-config \
+expect gcc-arm-linux-gnueabi libncurses5-dev"
+for x in $PAKETKI; do
+	if [ $(dpkg-query -W -f='${Status}' $x 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
+		INSTALL=$INSTALL" "$x
+	fi
+done
+if [[ $INSTALL != "" ]]; then
+debconf-apt-progress -- apt-get -y install $INSTALL 
+fi
 }
 
 
 grab_kernel_version (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# grab linux kernel version from Makefile
+# extract linux kernel version from Makefile
 #--------------------------------------------------------------------------------------------------------------------------------
 VER=$(cat $DEST/$LINUXSOURCE/Makefile | grep VERSION | head -1 | awk '{print $(NF)}')
 VER=$VER.$(cat $DEST/$LINUXSOURCE/Makefile | grep PATCHLEVEL | head -1 | awk '{print $(NF)}')
@@ -41,11 +49,14 @@ fetch_from_github (){
 # Download sources from Github
 #--------------------------------------------------------------------------------------------------------------------------------
 echo -e "[\e[0;32m ok \x1B[0m] Downloading $2"
-#echo "------ Downloading $2."
 if [ -d "$DEST/$2" ]; then
 	cd $DEST/$2
 		# some patching for TFT display source and Realtek RT8192CU drivers
-		if [[ $1 == "https://github.com/notro/fbtft" || $1 == "https://github.com/dz0ny/rt8192cu" ]]; then git checkout master; fi
+	if [[ $2 == "linux-sunxi" ]]; then 
+		git checkout $FORCE -q HEAD 
+	else
+		git checkout $FORCE -q master
+	fi
 	git pull 
 	cd $SRC
 else
@@ -54,137 +65,11 @@ fi
 }
 
 
-patching_sources(){
-#--------------------------------------------------------------------------------------------------------------------------------
-# Patching sources
-#--------------------------------------------------------------------------------------------------------------------------------
-
-# kernel
-echo "------ Patching kernel sources."
-cd $DEST/$LINUXSOURCE
-
-# mainline
-if [[ $BRANCH == "next" && $LINUXCONFIG == *sunxi* ]] ; then
-
-	# fix kernel tag
-	if [[ KERNELTAG == "" ]] ; then
-		git checkout master
-	else
-		git checkout $KERNELTAG
-	fi
-
-	# Fix BRCMFMAC AP mode for Cubietruck / Banana PRO
-	if [ "$(cat drivers/net/wireless/brcm80211/brcmfmac/feature.c | grep "mbss\", 0);\*")" == "" ]; then
-		sed -i 's/brcmf_feat_iovar_int_set(ifp, BRCMF_FEAT_MBSS, "mbss", 0);/\/*brcmf_feat_iovar_int_set(ifp, BRCMF_FEAT_MBSS, "mbss", 0);*\//g' drivers/net/wireless/brcm80211/brcmfmac/feature.c
-	fi
-
-	# install device tree blobs in separate package, link zImage to kernel image script
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-next.patch | grep previ)" == "" ]; then
-		patch -p1 < $SRC/lib/patch/packaging-next.patch
-	fi
-
-	# copy bananapro DTS
-	#if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-bananapipro.dts)" == "" ]; then
-	#	sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-bananapipro.dtb \\/g' arch/arm/boot/dts/Makefile
-	#	cp $SRC/lib/patch/sun7i-a20-bananapipro.dts arch/arm/boot/dts/
-	#fi
-
-	# copy bananar1 DTS
-	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-lamobo-r1)" == "" ]; then
-		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-lamobo-r1.dtb \\/g' arch/arm/boot/dts/Makefile
-		cp $SRC/lib/patch/sun7i-a20-lamobo-r1.dts arch/arm/boot/dts/
-	fi
-	
-	# copy orange pi DTS
-	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-orangepi)" == "" ]; then
-		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-orangepi.dtb \\/g' arch/arm/boot/dts/Makefile
-		cp $SRC/lib/patch/sun7i-a20-orangepi.dts arch/arm/boot/dts/
-	fi
-	
-	# copy AW som DTS
-	#if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-awsom)" == "" ]; then
-	#	sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-awsom.dtb \\/g' arch/arm/boot/dts/Makefile
-	#	cp $SRC/lib/patch/sun7i-a20-awsom.dts arch/arm/boot/dts/
-	#fi
-	
-	# add r1 switch driver
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1-next.patch | grep previ)" == "" ]; then
-		patch -p1 < $SRC/lib/patch/bananapi-r1-next.patch
-	fi
-fi
-
-if [[ $BRANCH == "next" && $BOARD == "udoo" ]] ; then
-	# fix DTS tree
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-dts-fix.patch | grep previ)" == "" ]; then
-		patch -p1 < $SRC/lib/patch/udoo-dts-fix.patch
-	fi	
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-udoo.patch | grep previ)" == "" ]; then
-		patch -p1 < $SRC/lib/patch/packaging-udoo.patch
-	fi
-fi
-
-# sunxi 3.4
-if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
-	# if the source is already patched for banana, do reverse GMAC patch
-	if [ "$(cat arch/arm/kernel/setup.c | grep BANANAPI)" != "" ]; then
-		echo "Reversing Banana patch"
-		patch --batch -t -p1 < $SRC/lib/patch/bananagmac.patch
-	fi
-	# SPI functionality
-    	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi.patch | grep previ)" == "" ]; then
-		patch --batch -f -p1 < $SRC/lib/patch/spi.patch
-    	fi
-	# banana/orange gmac  
-	if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
-		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" == "" ]; then
-			patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
-		fi
-	fi
-	# compile sunxi tools
-	compile_sunxi_tools
-fi
-
-# cubox / hummingboard 3.14
-if [[ $LINUXSOURCE == "linux-cubox" ]] ; then
-	# SPI and I2C functionality
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/hb-i2c-spi.patch | grep previ)" == "" ]; then
-		patch -p1 < $SRC/lib/patch/hb-i2c-spi.patch
-	fi
-	# deb packaging patch
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-cubox.patch | grep previ)" == "" ]; then
-		patch --batch -f -p1 < $SRC/lib/patch/packaging-cubox.patch
-	fi	
-fi
-
-# compiler reverse patch. It has already been fixed.
-if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/compiler.patch | grep Reversed)" != "" ]; then
-	patch --batch -t -p1 < $SRC/lib/patch/compiler.patch
-fi
-
-# u-boot
-cd $DEST/$BOOTSOURCE
-echo "------ Patching u-boot sources."
-
-if [[ $BOARD == "udoo" ]] ; then
-	# This enabled boot script loading from ext2 partition which is my default setup
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch | grep previ)" == "" ]; then
-       		patch --batch -N -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch
-	fi
-fi
-if [[ $LINUXCONFIG == *sunxi* ]] ; then
-	# Add router R1 to uboot
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch | grep create)" == "" ]; then
-		patch --batch -N -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch
-	fi
-fi
-}
-
-
 compile_uboot (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Compile uboot
 #--------------------------------------------------------------------------------------------------------------------------------
-echo "------ Compiling universal boot loader"
+echo -e "[\e[0;32m ok \x1B[0m] Compiling universal boot loader"
 if [ -d "$DEST/$BOOTSOURCE" ]; then
 cd $DEST/$BOOTSOURCE
 make -s CROSS_COMPILE=arm-linux-gnueabihf- clean
@@ -194,10 +79,12 @@ then
 	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf-
 		if [[ $BRANCH != "next" && $LINUXCONFIG == *sunxi* ]] ; then
 			## patch mainline uboot configuration to boot with old kernels
-			echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $DEST/$BOOTSOURCE/.config
-			echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $DEST/$BOOTSOURCE/spl/.config
-			echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $DEST/$BOOTSOURCE/.config
-			echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y"	>> $DEST/$BOOTSOURCE/spl/.config	
+			if [ "$(cat $DEST/$BOOTSOURCE/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
+				echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $DEST/$BOOTSOURCE/.config
+				echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $DEST/$BOOTSOURCE/spl/.config
+				echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $DEST/$BOOTSOURCE/.config
+				echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y"	>> $DEST/$BOOTSOURCE/spl/.config
+			fi
 		fi
 	make $CTHREADS CROSS_COMPILE=arm-linux-gnueabihf-
 else
@@ -251,6 +138,12 @@ cd $DEST/output/u-boot
 dpkg -b $CHOOSEN_UBOOT
 rm -rf $CHOOSEN_UBOOT
 #
+
+FILESIZE=$(wc -c $DEST/output/u-boot/$CHOOSEN_UBOOT'.deb' | cut -f 1 -d ' ')
+if [ $FILESIZE -lt 50000 ]; then
+	echo -e "[\e[0;31m Error \x1B[0m] Building failed, check configuration."
+	exit
+fi
 else
 echo "ERROR: Source file $1 does not exists. Check fetch_from_github configuration."
 exit
@@ -262,29 +155,33 @@ compile_sunxi_tools (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Compile sunxi_tools
 #--------------------------------------------------------------------------------------------------------------------------------
-echo "------ Compiling sunxi tools"
+echo -e "[\e[0;32m ok \x1B[0m] Compiling sunxi tools"
 cd $DEST/sunxi-tools
 # for host
-make -s clean && make -s fex2bin && make -s bin2fex
+make -s clean >/dev/null 2>&1
+make -s fex2bin >/dev/null 2>&1
+make -s bin2fex >/dev/null 2>&1 
 cp fex2bin bin2fex /usr/local/bin/
 # for destination
-make -s clean && make $CTHREADS 'fex2bin' CC=arm-linux-gnueabihf-gcc
-make $CTHREADS 'bin2fex' CC=arm-linux-gnueabihf-gcc && make $CTHREADS 'nand-part' CC=arm-linux-gnueabihf-gcc
+make -s clean >/dev/null 2>&1
+make $CTHREADS 'fex2bin' CC=arm-linux-gnueabihf-gcc >/dev/null 2>&1
+make $CTHREADS 'bin2fex' CC=arm-linux-gnueabihf-gcc >/dev/null 2>&1
+make $CTHREADS 'nand-part' CC=arm-linux-gnueabihf-gcc >/dev/null 2>&1
 }
 
 
 add_fb_tft (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Adding FBTFT library / small TFT display support  	                    
+# Adding FBTFT library / small TFT display support
 #--------------------------------------------------------------------------------------------------------------------------------
 # there is a change for kernel less than 3.5
 IFS='.' read -a array <<< "$VER"
 cd $DEST/$MISC4_DIR
 if (( "${array[0]}" == "3" )) && (( "${array[1]}" < "5" ))
 then
-	git checkout 06f0bba152c036455ae76d26e612ff0e70a83a82
+	git checkout -q 06f0bba152c036455ae76d26e612ff0e70a83a82
 else
-	git checkout master
+	git checkout -q master
 fi
 cd $DEST/$LINUXSOURCE
 if [[ $BOARD == "bananapi" || $BOARD == "orangepi" ]]; then
@@ -304,7 +201,7 @@ compile_kernel (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Compile kernel
 #--------------------------------------------------------------------------------------------------------------------------------
-echo "------ Compiling kernel"
+echo -e "[\e[0;32m ok \x1B[0m] Compiling kernel"
 if [ -d "$DEST/$LINUXSOURCE" ]; then 
 
 # add small TFT display support  
@@ -355,7 +252,7 @@ sync
 }
 
 
-create_debian_template (){
+create_system_template (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Create clean and fresh Debian and Ubuntu image template if it does not exists
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -422,7 +319,7 @@ cp $SRC/lib/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.lis
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y update"
 
 # install aditional packages
-PAKETKI="alsa-utils automake bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl device-tree-compiler dosfstools evtest figlet fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iotop iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools wget wpasupplicant"
+PAKETKI="alsa-utils automake bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl device-tree-compiler dosfstools evtest figlet fbset fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iotop iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools wget wpasupplicant"
 
 # generate locales and install packets
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y -qq install locales"
@@ -533,6 +430,18 @@ if [[ -n "$MISC3_DIR" ]]; then
 	cp *.ko $DEST/output/sdcard/usr/local/bin
 	#cp blacklist*.conf $DEST/output/sdcard/etc/modprobe.d/
 fi
+
+# MISC4 = NOTRO DRIVERS / special handling
+# MISC5 = sunxu display control
+
+if [[ -n "$MISC5_DIR" ]]; then
+	cd $DEST/$MISC5_DIR
+	cp $DEST/$LINUXSOURCE/include/video/sunxi_disp_ioctl.h .
+	make clean >/dev/null 2>&1
+	make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC=$DEST/$LINUXSOURCE/
+	install -m 755 a10disp $DEST/output/sdcard/usr/local/bin
+fi
+
 }
 
 
@@ -604,6 +513,10 @@ LOOP=$(losetup -f)
 losetup $LOOP $DEST/output/debian_rootfs.raw
 DEVICE=$LOOP dpkg -i $DEST"/output/u-boot/"$CHOOSEN_UBOOT".deb"
 dpkg -r linux-u-boot-"$VER"-"$BOARD"
+# temporal exception / sources not working
+if [[ $BOARD == "udoo-neo" ]];then
+dd if=$SRC/lib/bin/u-boot-udoo-neo.imx bs=1k seek=1 of=$LOOP
+fi
 sync
 sleep 3
 losetup -d $LOOP
