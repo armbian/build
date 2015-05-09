@@ -434,7 +434,7 @@ fi
 # MISC4 = NOTRO DRIVERS / special handling
 # MISC5 = sunxu display control
 
-if [[ -n "$MISC5_DIR" ]]; then
+if [[ -n "$MISC5_DIR" && $BRANCH != "next" ]]; then
 	cd $DEST/$MISC5_DIR
 	cp $DEST/$LINUXSOURCE/include/video/sunxi_disp_ioctl.h .
 	make clean >/dev/null 2>&1
