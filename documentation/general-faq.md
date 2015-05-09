@@ -5,6 +5,9 @@
 - **(M)** means mirror download 
 - **(R)** means root file system changes. Sometimes you need to download and install this file too.
 
+# Which kernel to use?
+
+For a headless server or light console / desktop operations mainline kernel (3.19.x and higher) is recommended. If you need support for advanced graphics, audio, IR, NAND, ... you should stick with 3.4.
 
 # How to prepare SD card?
 
