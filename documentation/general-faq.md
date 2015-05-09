@@ -45,10 +45,13 @@ time zone:
 screen resolution: 
 
 	nano /boot/boot.cmd 
-	# change example:
-	# disp.screen0_output_mode=**1920x1080p60**
-	# to
-	# disp.screen0_output_mode=**1280x720p60**
+
+	# example:
+	# change example from 
+	# disp.screen0_output_mode=1920x1080p60 
+	# to 
+	# disp.screen0_output_mode=1280x720p60
+
 	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr	
 
 screen resolution interactive - only Allwinner boards with A10 and A20 with kernl 3.4.x:
