@@ -85,10 +85,16 @@ HOST="$BOARD"
 # Load libraries
 #--------------------------------------------------------------------------------------------------------------------------------
 source $SRC/lib/configuration.sh			# Board configuration
+source $SRC/lib/deboostrap.sh 			# System specific install
 source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/patching.sh 				# Source patching
 source $SRC/lib/boards.sh 					# Board specific install
 source $SRC/lib/common.sh 					# Functions 
+
+if [ "$SOURCE_COMPILE" != "yes" ]; then
+	choosing_kernel
+	if [ "$CHOOSEN_KERNEL" == "" ]; then echo "ERROR: You have to choose one kernel"; exit; fi
+fi
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -189,10 +195,10 @@ else
 	fi
 	
 	# choose kernel from ready made
-	if [ "$CHOOSEN_KERNEL" == "" ]; then
-		sleep 2
-		choosing_kernel
-	fi
+	#if [ "$CHOOSEN_KERNEL" == "" ]; then
+	#	sleep 2
+	#	choosing_kernel
+	#fi
 
 fi
 
@@ -201,9 +207,9 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # create or use prepared root file-system
 #--------------------------------------------------------------------------------------------------------------------------------
-create_system_template
-mount_system_template
-
+#create_system_template
+#mount_system_template
+custom_debootstrap
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # add kernel to the image
