@@ -9,9 +9,6 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 
-#
-# Image build functions
-#
 
 download_host_packages (){
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -146,7 +143,6 @@ if [ $FILESIZE -lt 50000 ]; then
 fi
 else
 echo "ERROR: Source file $1 does not exists. Check fetch_from_github configuration."
-exit
 fi
 }
 
@@ -252,129 +248,9 @@ sync
 }
 
 
-create_system_template (){
-#--------------------------------------------------------------------------------------------------------------------------------
-# Create clean and fresh Debian and Ubuntu image template if it does not exists
-#--------------------------------------------------------------------------------------------------------------------------------
-if [ ! -f "$DEST/output/rootfs/$RELEASE.raw.gz" ]; then
-echo -e "[\e[0;32m ok \x1B[0m] Debootstrap $RELEASE to image template"
-cd $DEST/output
-
-# create needed directories and mount image to next free loop device
-mkdir -p $DEST/output/rootfs $DEST/output/sdcard/ $DEST/output/kernel
-
-# create image file
-dd if=/dev/zero of=$DEST/output/rootfs/$RELEASE.raw bs=1M count=$SDSIZE status=noxfer
-
-# find first avaliable free device
-LOOP=$(losetup -f)
-
-# mount image as block device
-losetup $LOOP $DEST/output/rootfs/$RELEASE.raw
-
-sync
-
-# create one partition starting at 2048 which is default
-echo "------ Partitioning and mounting file-system."
-parted -s $LOOP -- mklabel msdos
-parted -s $LOOP -- mkpart primary ext4  2048s -1s
-partprobe $LOOP 
-losetup -d $LOOP
-sleep 2
-
-# 2048 (start) x 512 (block size) = where to mount partition
-losetup -o 1048576 $LOOP $DEST/output/rootfs/$RELEASE.raw
-
-# create filesystem
-mkfs.ext4 $LOOP
-
-# tune filesystem
-tune2fs -o journal_data_writeback $LOOP
-
-# mount image to already prepared mount point
-mount -t ext4 $LOOP $DEST/output/sdcard/
-
-# debootstrap base system
-debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/output/sdcard/ 
-
-# we need emulator for second stage
-cp /usr/bin/qemu-arm-static $DEST/output/sdcard/usr/bin/
-
-# enable arm binary format so that the cross-architecture chroot environment will work
-test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-
-# debootstrap second stage
-chroot $DEST/output/sdcard /bin/bash -c "/debootstrap/debootstrap --second-stage"
-
-# mount proc, sys and dev
-mount -t proc chproc $DEST/output/sdcard/proc
-mount -t sysfs chsys $DEST/output/sdcard/sys
-mount -t devtmpfs chdev $DEST/output/sdcard/dev || mount --bind /dev $DEST/output/sdcard/dev
-mount -t devpts chpts $DEST/output/sdcard/dev/pts
-
-# choose proper apt list
-cp $SRC/lib/config/sources.list.$RELEASE $DEST/output/sdcard/etc/apt/sources.list
-
-# update and upgrade
-LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y update"
-
-# install aditional packages
-PAKETKI="alsa-utils automake bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl device-tree-compiler dosfstools evtest figlet fbset fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iotop iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools wget wpasupplicant"
-
-# generate locales and install packets
-LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "apt-get -y -qq install locales"
-sed -i "s/^# $DEST_LANG/$DEST_LANG/" $DEST/output/sdcard/etc/locale.gen
-LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "locale-gen $DEST_LANG"
-LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "export LANG=$DEST_LANG LANGUAGE=$DEST_LANG DEBIAN_FRONTEND=noninteractive"
-LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=POSIX"
-chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install $PAKETKI"
-
-# install console setup separate
-LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/output/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y install console-setup console-data kbd console-common unicode-data"
-
-# configure the system for unattended upgrades
-cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-cp $SRC/lib/scripts/02periodic $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
-sed -e "s/CODENAME/$RELEASE/g" -i $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-
-# set up 'apt
-cat <<END > $DEST/output/sdcard/etc/apt/apt.conf.d/71-no-recommends
-APT::Install-Recommends "0";
-APT::Install-Suggests "0";
-END
-
-# root-fs modifications
-rm 	-f $DEST/output/sdcard/etc/motd
-touch $DEST/output/sdcard/etc/motd
-
-echo "------ Closing image"
-chroot $DEST/output/sdcard /bin/bash -c "sync"
-chroot $DEST/output/sdcard /bin/bash -c "unset DEBIAN_FRONTEND"
-sync
-sleep 3
-# unmount proc, sys and dev from chroot
-umount -l $DEST/output/sdcard/dev/pts
-umount -l $DEST/output/sdcard/dev
-umount -l $DEST/output/sdcard/proc
-umount -l $DEST/output/sdcard/sys
-
-# kill process inside
-KILLPROC=$(ps -uax | pgrep ntpd |        tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
-KILLPROC=$(ps -uax | pgrep dbus-daemon | tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
-
-umount -l $DEST/output/sdcard/ 
-sleep 2
-losetup -d $LOOP
-rm -rf $DEST/output/sdcard/
-gzip $DEST/output/rootfs/$RELEASE.raw
-fi
-#
-}
-
-
 choosing_kernel (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Choose which kernel to use  								            
+# Choose which kernel to use
 #--------------------------------------------------------------------------------------------------------------------------------
 cd $DEST"/output/kernel/"
 if [[ $BRANCH == "next" ]]; then
@@ -438,7 +314,7 @@ if [[ -n "$MISC5_DIR" && $BRANCH != "next" ]]; then
 	cd $DEST/$MISC5_DIR
 	cp $DEST/$LINUXSOURCE/include/video/sunxi_disp_ioctl.h .
 	make clean >/dev/null 2>&1
-	make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC=$DEST/$LINUXSOURCE/
+	make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC=$DEST/$LINUXSOURCE/ >/dev/null 2>&1
 	install -m 755 a10disp $DEST/output/sdcard/usr/local/bin
 fi
 
@@ -449,8 +325,8 @@ fingerprint_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Saving build summary to the image 							            
 #--------------------------------------------------------------------------------------------------------------------------------
-echo "------ Saving build summary to the image"
-echo $1
+echo -e "[\e[0;32m ok \x1B[0m] Fingerprinting"
+
 echo "--------------------------------------------------------------------------------" > $1
 echo "" >> $1
 echo "" >> $1
@@ -472,13 +348,68 @@ echo "--------------------------------------------------------------------------
 }
 
 
+shrinking_raw_image (){
+#--------------------------------------------------------------------------------------------------------------------------------
+# Shrink partition and image to real size with 3% space
+#--------------------------------------------------------------------------------------------------------------------------------
+RAWIMAGE=$1
+echo -e "[\e[0;32m ok \x1B[0m] Shrink partition and image to real size with 3% free space"
+# partition prepare
+
+LOOP=$(losetup -f)
+losetup $LOOP $RAWIMAGE
+PARTSTART=$(fdisk -l $LOOP | tail -1 | awk '{ print $2}')
+PARTSTART=$(($PARTSTART*512))
+sleep 1
+losetup -d $LOOP
+sleep 1
+losetup -o $PARTSTART $LOOP $RAWIMAGE
+sleep 1
+fsck -n $LOOP >/dev/null 2>&1
+sleep 1
+tune2fs -O ^has_journal $LOOP >/dev/null 2>&1
+sleep 1
+e2fsck -fy $LOOP >/dev/null 2>&1
+SIZE=$(tune2fs -l $LOOP | grep "Block count" | awk '{ print $NF}')
+FREE=$(tune2fs -l $LOOP | grep "Free blocks" | awk '{ print $NF}')
+UNITSIZE=$(tune2fs -l $LOOP | grep "Block size" | awk '{ print $NF}')
+
+# calculate new partition size and add 3% reserve
+NEWSIZE=$((($SIZE-$FREE)*$UNITSIZE/1024/1024))
+NEWSIZE=$(echo "scale=1; $NEWSIZE * 1.03" | bc -l)
+NEWSIZE=${NEWSIZE%.*}
+
+# resize partition to new size
+BLOCKSIZE=$(resize2fs $LOOP $NEWSIZE"M" | grep "The filesystem on" | awk '{ print $(NF-2)}')
+NEWSIZE=$(($BLOCKSIZE*$UNITSIZE/1024))
+sleep 1
+tune2fs -O has_journal $LOOP >/dev/null 2>&1
+tune2fs -o journal_data_writeback $LOOP >/dev/null 2>&1
+sleep 1
+losetup -d $LOOP
+
+# mount once again and create new partition
+sleep 2
+losetup $LOOP $RAWIMAGE
+PARTITIONS=$(($(fdisk -l $LOOP | grep $LOOP | wc -l)-1))
+((echo d; echo $PARTITIONS; echo n; echo p; echo ; echo ; echo "+"$NEWSIZE"K"; echo w;) | fdisk $LOOP)>/dev/null
+sleep 2
+
+# truncate the image
+TRUNCATE=$(fdisk -l $LOOP | tail -1 | awk '{ print $3}')
+TRUNCATE=$((($TRUNCATE+1)*512))
+
+truncate -s $TRUNCATE $RAWIMAGE >/dev/null 2>&1
+losetup -d $LOOP
+}
+
+
 closing_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Closing image and clean-up 									            
 #--------------------------------------------------------------------------------------------------------------------------------
-echo "------ After install"
+echo -e "[\e[0;32m ok \x1B[0m] Possible after install"
 chroot $DEST/output/sdcard /bin/bash -c "$AFTERINSTALL"
-echo "------ Closing image"
 chroot $DEST/output/sdcard /bin/bash -c "sync"
 sync
 sleep 3
@@ -503,16 +434,18 @@ KILLPROC=$(ps -uax | pgrep dbus-daemon | tail -1); if [ -n "$KILLPROC" ]; then k
 cp $DEST/output/sdcard/root/readme.txt $DEST/output/
 sleep 2
 rm $DEST/output/sdcard/usr/bin/qemu-arm-static 
+sleep 2
+umount -l $DEST/output/sdcard/boot > /dev/null 2>&1 || /bin/true
 umount -l $DEST/output/sdcard/ 
 sleep 2
 losetup -d $LOOP
 rm -rf $DEST/output/sdcard/
-
+echo -e "[\e[0;32m ok \x1B[0m] Writing boot loader"
 # write bootloader
 LOOP=$(losetup -f)
-losetup $LOOP $DEST/output/debian_rootfs.raw
-DEVICE=$LOOP dpkg -i $DEST"/output/u-boot/"$CHOOSEN_UBOOT".deb"
-dpkg -r linux-u-boot-"$VER"-"$BOARD"
+losetup $LOOP $DEST/output/tmprootfs.raw
+DEVICE=$LOOP dpkg -i $DEST"/output/u-boot/"$CHOOSEN_UBOOT".deb" >/dev/null 2>&1
+dpkg -r linux-u-boot-"$VER"-"$BOARD" >/dev/null 2>&1
 # temporal exception / sources not working
 if [[ $BOARD == "udoo-neo" ]];then
 dd if=$SRC/lib/bin/u-boot-udoo-neo.imx bs=1k seek=1 of=$LOOP
@@ -522,8 +455,12 @@ sleep 3
 losetup -d $LOOP
 sync
 sleep 2
-mv $DEST/output/debian_rootfs.raw $DEST/output/$VERSION.raw
+mv $DEST/output/tmprootfs.raw $DEST/output/$VERSION.raw
 sync
+sleep 2
+# let's shrint it
+shrinking_raw_image "$DEST/output/$VERSION.raw"
+sleep 2
 cd $DEST/output/
 cp $SRC/lib/bin/imagewriter.exe .
 # sign with PGP
@@ -532,6 +469,7 @@ if [[ $GPG_PASS != "" ]] ; then
 	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes imagewriter.exe
 	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes readme.txt
 fi
+echo -e "[\e[0;32m ok \x1B[0m] Create and sign download ready ZIP archive"
 zip $VERSION.zip $VERSION.* readme.* imagewriter.*
 rm -f $VERSION.raw *.asc imagewriter.* readme.txt
 }
