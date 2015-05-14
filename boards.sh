@@ -96,11 +96,13 @@ fi
 
 # create board DEB file
 cd $DEST/output/rootfs/
-dpkg -b $CHOOSEN_ROOTFS
+dpkg -b $CHOOSEN_ROOTFS >/dev/null 2>&1
 rm -rf $CHOOSEN_ROOTFS
 # install custom root package 
 cp $CHOOSEN_ROOTFS.deb /tmp/kernel
-chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/$CHOOSEN_ROOTFS.deb"
+chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/$CHOOSEN_ROOTFS.deb >/dev/null 2>&1"
+# enable first run script
+chroot $DEST/output/sdcard /bin/bash -c "update-rc.d firstrun defaults >/dev/null 2>&1"
 }
 
 
@@ -143,52 +145,49 @@ ln -sf interfaces.default $DEST/output/sdcard/etc/network/interfaces
 rm -rf /tmp/kernel && mkdir -p /tmp/kernel && cd /tmp/kernel
 tar -xPf $DEST"/output/kernel/"$CHOOSEN_KERNEL
 mount --bind /tmp/kernel/ $DEST/output/sdcard/tmp
-chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*u-boot*.deb"
-chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*image*.deb"
-chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*headers*.deb"
-if ls $DEST/output/sdcard/tmp/*dtb*.deb 1> /dev/null 2>&1; then
-	chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*dtb*.deb"
+chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*u-boot*.deb >/dev/null 2>&1"
+chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*image*.deb >/dev/null 2>&1"
+if ls $DEST/output/sdcard/tmp/*dtb* 1> /dev/null 2>&1; then
+	chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*dtb*.deb >/dev/null 2>&1"
 fi
 # name of archive is also kernel name
 CHOOSEN_KERNEL="${CHOOSEN_KERNEL//-$BRANCH.tar/}"
 
-echo -e "[\e[0;32m ok \x1B[0m] Compile kernel headers scripts"
-
-# patch scripts
+# recompile headers scripts or use cache if exists 
+chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*headers*.deb >/dev/null 2>&1"
 cd $DEST/output/sdcard/usr/src/linux-headers-$CHOOSEN_KERNEL
-patch -p1 < $SRC/lib/patch/headers-debian-byteshift.patch
-# recompile headers scripts
-chroot $DEST/output/sdcard /bin/bash -c "cd /usr/src/linux-headers-$CHOOSEN_KERNEL && make headers_check; make headers_install ; make scripts"
 
-# recreate boot.scr if using kernel for different board. Mainline only
-if [[ $BRANCH == *next* || $BOARD == cubox-i* || $BOARD == udoo* ]];then
-		# remove .old on new image
-		rm -rf $DEST/output/sdcard/boot/dtb.old
-		# copy boot script and change it acordingly
-		if [[ $BOARD == "udoo" ]] ; then		
-			cp $SRC/lib/config/boot-udoo-next.cmd $DEST/output/sdcard/boot/boot.cmd
-			mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
-		elif [[ $BOARD == "udoo-neo" ]]; then
-			cp $SRC/lib/config/boot-udoo-neo.cmd $DEST/output/sdcard/boot/boot.cmd
-			mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
-			chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/boot.scr /boot.scr"	
-		elif [[ $BOARD == cubox-i* ]]; then
-			cp $SRC/lib/config/boot-cubox.cmd $DEST/output/sdcard/boot/boot.cmd
-			mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
-		else
-			cp $SRC/lib/config/boot.cmd $DEST/output/sdcard/boot/boot.cmd
-			mkimage -C none -A arm -T script -d $SRC/lib/config/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
-		fi		
-	elif [[ $LINUXCONFIG == *sunxi* ]]; then
-		chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/bin/$BOARD.bin /boot/script.bin"
-		cp $SRC/lib/config/boot.cmd $DEST/output/sdcard/boot/boot.cmd
-		# compile boot script
-		mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
-	else
-		# make symlink to kernel and uImage
-		mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x10008000" -n "Linux kernel" -d $DEST/output/sdcard/boot/vmlinuz-$CHOOSEN_KERNEL $DEST/output/sdcard/boot/uImage
-		chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/vmlinuz-$CHOOSEN_KERNEL /boot/zImage"
+if [ ! -f $DEST/output/rootfs/$CHOOSEN_KERNEL-""$REVISION""-headers-make-cache.tgz ]; then
+	echo -e "[\e[0;32m ok \x1B[0m] Compile kernel headers scripts"
+	# patch scripts
+	patch -p1 < $SRC/lib/patch/headers-debian-byteshift.patch
+	chroot $DEST/output/sdcard /bin/bash -c "cd /usr/src/linux-headers-$CHOOSEN_KERNEL && make headers_check; make headers_install ; make scripts"
+	tar czpf $DEST/output/rootfs/$CHOOSEN_KERNEL-""$REVISION""-headers-make-cache.tgz .
+else
+	tar xzpf $DEST/output/rootfs/$CHOOSEN_KERNEL-""$REVISION""-headers-make-cache.tgz
 fi
+
+
+# remove .old on new image
+rm -rf $DEST/output/sdcard/boot/dtb.old
+if [[ $BOARD == "udoo" ]] ; then
+	cp $SRC/lib/config/boot-udoo-next.cmd $DEST/output/sdcard/boot/boot.cmd
+elif [[ $BOARD == "udoo-neo" ]]; then
+	cp $SRC/lib/config/boot-udoo-neo.cmd $DEST/output/sdcard/boot/boot.cmd
+	chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/boot.scr /boot.scr"	
+elif [[ $BOARD == cubox-i* ]]; then
+	cp $SRC/lib/config/boot-cubox.cmd $DEST/output/sdcard/boot/boot.cmd
+else
+	cp $SRC/lib/config/boot.cmd $DEST/output/sdcard/boot/boot.cmd
+	# let's prepare for old kernel too
+	chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/bin/$BOARD.bin /boot/script.bin"
+fi
+# convert to uboot compatible script
+mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
+		
+# make symlink to kernel and uImage
+#mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x10008000" -n "Linux kernel" -d $DEST/output/sdcard/boot/vmlinuz-$CHOOSEN_KERNEL $DEST/output/sdcard/boot/uImage
+#chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/vmlinuz-$CHOOSEN_KERNEL /boot/zImage"
 
 # add linux firmwares to output image
 unzip -q $SRC/lib/bin/linux-firmware.zip -d $DEST/output/sdcard/lib/firmware
