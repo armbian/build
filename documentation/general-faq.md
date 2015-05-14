@@ -11,7 +11,7 @@ For a headless server or light console / desktop operations mainline kernel (3.1
 
 # How to prepare SD card?
 
-Unzipped RAW images can be written with supplied imagewriter.exe on Windows XP/2003/Win7 or with DD command in Linux/Mac:
+Unzipped RAW images can be written with supplied imagewriter.exe on Windows XP/2003/Win7 and with [Win32Diskimager](http://sourceforge.net/projects/win32diskimager/) on Windows 8.x or with DD command in Linux/Mac:
 
 	dd bs=1M if=filename.raw of=/dev/sdx
 
