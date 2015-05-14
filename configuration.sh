@@ -22,6 +22,8 @@ LINUXSOURCE="linux-sunxi"
 LINUXCONFIG="linux-sunxi"
 CPUMIN="480000"
 CPUMAX="1010000"
+OFFSET="1" # MB (1 x 2048 = default)
+BOOTSIZE="0" # Mb size of boot partition
 DOCS=""
 DOCSDIR=""
 FIRMWARE="bin/ap6210.zip"
@@ -262,9 +264,11 @@ udoo-neo)
 # Udoo quad
 #--------------------------------------------------------------------------------------------------------------------------------
 REVISION="1.0"
+BOOTSIZE="16"
 BOOTLOADER="https://github.com/UDOOboard/uboot-imx"
 BOOTSOURCE="u-boot-neo"
-BOOTCONFIG="mx6sxsabresd_config"
+#BOOTCONFIG="mx6sxsabresd_config"
+BOOTCONFIG="udoo_neo_config"
 CPUMIN="198000"
 CPUMAX="996000"
 MODULES="bonding"
