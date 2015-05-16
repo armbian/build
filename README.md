@@ -2,7 +2,7 @@
 	
 -  Cubieboard 1,2,3
 -  BananaPi / PRO / R1
--  Cubox, Humminboard
+-  Cubox, Hummingboard
 -  Olimex Lime, Lime 2, Micro, 
 -  Orange Pi
 -  Udoo quad
