@@ -133,5 +133,9 @@ if [[ $LINUXCONFIG == *sunxi* ]] ; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch | grep create)" == "" ]; then
 		patch --batch -N -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch
 	fi
+	# Add boot splash to uboot
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/sunxi-boot-splash.patch | grep create)" == "" ]; then
+		patch --batch -N -p1 < $SRC/lib/patch/sunxi-boot-splash.patch
+	fi
 fi
 }
