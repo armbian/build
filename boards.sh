@@ -189,6 +189,9 @@ mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/outp
 #mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x10008000" -n "Linux kernel" -d $DEST/output/sdcard/boot/vmlinuz-$CHOOSEN_KERNEL $DEST/output/sdcard/boot/uImage
 #chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/vmlinuz-$CHOOSEN_KERNEL /boot/zImage"
 
+# copy boot splash image
+cp $SRC/lib/bin/$DISTRIBUTION.bmp $DEST/output/sdcard/boot/boot.bmp
+
 # add linux firmwares to output image
 unzip -q $SRC/lib/bin/linux-firmware.zip -d $DEST/output/sdcard/lib/firmware
 }
