@@ -350,10 +350,10 @@ echo "--------------------------------------------------------------------------
 
 shrinking_raw_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Shrink partition and image to real size with 3% space
+# Shrink partition and image to real size with 10% space
 #--------------------------------------------------------------------------------------------------------------------------------
 RAWIMAGE=$1
-echo -e "[\e[0;32m ok \x1B[0m] Shrink partition and image to real size with 3% free space"
+echo -e "[\e[0;32m ok \x1B[0m] Shrink partition and image to real size with 10% free space"
 # partition prepare
 
 LOOP=$(losetup -f)
@@ -374,9 +374,9 @@ SIZE=$(tune2fs -l $LOOP | grep "Block count" | awk '{ print $NF}')
 FREE=$(tune2fs -l $LOOP | grep "Free blocks" | awk '{ print $NF}')
 UNITSIZE=$(tune2fs -l $LOOP | grep "Block size" | awk '{ print $NF}')
 
-# calculate new partition size and add 3% reserve
+# calculate new partition size and add 10% reserve
 NEWSIZE=$((($SIZE-$FREE)*$UNITSIZE/1024/1024))
-NEWSIZE=$(echo "scale=1; $NEWSIZE * 1.03" | bc -l)
+NEWSIZE=$(echo "scale=1; $NEWSIZE * 1.1" | bc -l)
 NEWSIZE=${NEWSIZE%.*}
 
 # resize partition to new size
@@ -447,9 +447,9 @@ losetup $LOOP $DEST/output/tmprootfs.raw
 DEVICE=$LOOP dpkg -i $DEST"/output/u-boot/"$CHOOSEN_UBOOT".deb" >/dev/null 2>&1
 dpkg -r linux-u-boot-"$VER"-"$BOARD" >/dev/null 2>&1
 # temporal exception / sources not working
-if [[ $BOARD == "udoo-neo" ]];then
-dd if=$SRC/lib/bin/u-boot-udoo-neo.imx bs=1k seek=1 of=$LOOP
-fi
+#if [[ $BOARD == "udoo-neo" ]];then
+#dd if=$SRC/lib/bin/u-boot-udoo-neo.imx bs=1k seek=1 of=$LOOP
+#fi
 sync
 sleep 3
 losetup -d $LOOP
