@@ -96,7 +96,7 @@ cubieboard)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.8"
+REVISION="3.9"
 BOOTCONFIG="Cubieboard_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT=""
@@ -107,7 +107,7 @@ cubieboard2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.8"
+REVISION="3.9"
 BOOTCONFIG="Cubieboard2_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT=""
@@ -118,7 +118,7 @@ cubietruck)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.8"
+REVISION="3.9"
 BOOTCONFIG="Cubietruck_config" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp sunxi-ir bonding spi_sun7i bcmdhd"
 MODULES_NEXT="brcmfmac rfcomm hidp"
@@ -129,7 +129,7 @@ lime)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Olimex Lime
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.8"
+REVISION="1.9"
 BOOTCONFIG="A20-OLinuXino-Lime_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT=""
@@ -140,7 +140,7 @@ lime2)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Olimex Lime 2
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.8"
+REVISION="1.9"
 BOOTCONFIG="A20-OLinuXino-Lime2_defconfig" 
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT=""
@@ -151,7 +151,7 @@ micro)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Olimex Lime mainline kernel	/ experimental
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.8"
+REVISION="1.9"
 BOOTCONFIG="A20-OLinuXino_MICRO_config"
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT=""
@@ -173,7 +173,7 @@ bananapi)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.0"
+REVISION="3.1"
 BOOTCONFIG="Bananapi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT="brcmfmac"
@@ -184,7 +184,7 @@ bananapipro)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.0"
+REVISION="3.1"
 BOOTCONFIG="Bananapro_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT="brcmfmac"
@@ -195,7 +195,7 @@ lamobo-r1)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.0"
+REVISION="3.1"
 BOOTCONFIG="Lamobo_R1_defconfig"
 #BOOTCONFIG="Bananapi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
