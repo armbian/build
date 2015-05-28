@@ -338,6 +338,7 @@ printf "Build date:		%s\n" "$now" >> $1
 echo "Author:			Igor Pecovnik, www.igorpecovnik.com" >> $1
 echo "Sources: 		http://github.com/igorpecovnik" >> $1
 echo "" >> $1
+echo "Support: 		http://www.armbian.com" >> $1
 echo "" >> $1
 echo "" >> $1
 echo "--------------------------------------------------------------------------------" >> $1
