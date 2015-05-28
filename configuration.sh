@@ -86,7 +86,7 @@ aw-som-a20)
 # https://aw-som.com/
 #--------------------------------------------------------------------------------------------------------------------------------
 REVISION="1.0"
-BOOTCONFIG="Cubieboard2_config" 
+BOOTCONFIG="Awsom_defconfig" 
 MODULES="hci_uart gpio_sunxi bt_gpio wifi_gpio rfcomm hidp bonding spi_sun7i"
 MODULES_NEXT=""
 ;;

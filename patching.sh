@@ -33,7 +33,7 @@ if [[ $BRANCH == "next" && $LINUXCONFIG == *sunxi* ]] ; then
 	if [ "$(cat drivers/net/wireless/brcm80211/brcmfmac/feature.c | grep "mbss\", 0);\*")" == "" ]; then
 		sed -i 's/brcmf_feat_iovar_int_set(ifp, BRCMF_FEAT_MBSS, "mbss", 0);/\/*brcmf_feat_iovar_int_set(ifp, BRCMF_FEAT_MBSS, "mbss", 0);*\//g' drivers/net/wireless/brcm80211/brcmfmac/feature.c
 	fi
-
+	
 	# install device tree blobs in separate package, link zImage to kernel image script
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-next.patch | grep previ)" == "" ]; then
 		patch -p1 < $SRC/lib/patch/packaging-next.patch
@@ -132,6 +132,10 @@ if [[ $LINUXCONFIG == *sunxi* ]] ; then
 	# Add router R1 to uboot
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch | grep create)" == "" ]; then
 		patch --batch -N -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch
+	fi
+	# Add awsom to uboot
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-awsom-uboot.patch | grep create)" == "" ]; then
+		patch --batch -N -p1 < $SRC/lib/patch/add-awsom-uboot.patch
 	fi
 	# Add boot splash to uboot
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/sunxi-boot-splash.patch | grep create)" == "" ]; then
