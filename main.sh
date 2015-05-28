@@ -64,6 +64,8 @@ fi
 # exit the script on cancel
 if [ "$BRANCH" == "" ]; then echo "ERROR: You have to choose one branch"; exit; fi
 
+# default console if not set
+if [ "$CONSOLE_CHAR" == "" ]; then CONSOLE_CHAR="UTF-8"; fi
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # check which distro we are building
