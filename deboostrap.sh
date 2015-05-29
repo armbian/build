@@ -139,6 +139,9 @@ APT::Install-Recommends "0";
 APT::Install-Suggests "0";
 END
 
+# console fix due to Debian bug 
+sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $DEST/output/sdcard/etc/default/console-setup
+
 # root-fs modifications
 rm 	-f $DEST/output/sdcard/etc/motd
 touch $DEST/output/sdcard/etc/motd
