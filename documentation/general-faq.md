@@ -232,7 +232,7 @@ First you need to download a proper kernel tar pack located at the end of board 
 	tar xvf 3.19.6-cubietruck-next.tar
 	dpkg -i linux-image*.deb
 	
-If u-boot and dtb packets are not installed automatic, install them to:
+If u-boot and dtb packets are not installed automatic, install them too:
 
 	dpkg -i linux-u-boot*.deb
 	dpkg -i linux-dtb*.deb
