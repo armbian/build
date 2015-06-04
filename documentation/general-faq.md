@@ -231,6 +231,11 @@ First you need to download a proper kernel tar pack located at the end of board 
 	wget http://mirror.igorpecovnik.com/kernel/3.19.6-cubietruck-next.tar
 	tar xvf 3.19.6-cubietruck-next.tar
 	dpkg -i linux-image*.deb
+	
+If u-boot and dtb packets are not installed automatic, install them to:
+
+	dpkg -i linux-u-boot*.deb
+	dpkg -i linux-dtb*.deb
 
 Optional:
 
