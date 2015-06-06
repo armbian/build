@@ -20,7 +20,7 @@ echo -e "[\e[0;32m ok \x1B[0m] Patching kernel $KERNELTAG"
 cd $DEST/$LINUXSOURCE
 
 # mainline
-if [[ $BRANCH == "next" && $LINUXCONFIG == *sunxi* ]] ; then
+if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) ]] ; then
 
 	# fix kernel tag
 	if [[ $KERNELTAG == "" ]] ; then
