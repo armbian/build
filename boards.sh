@@ -80,7 +80,8 @@ fi
 # cubox / hummingboard
 if [[ $BOARD == cubox-i* ]] ; then
 		if [ -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/inittab; fi
-		if [ -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttymxc0/ttyS0/g" -i $DEST/output/sdcard/etc/init/ttymxc0.conf; fi	
+		if [ -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/init/ttymxc0.conf; fi	
+		if [ -f $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then mv $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc0.service ; fi
 		
 		# default lirc configuration 
 		sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
@@ -91,8 +92,34 @@ if [[ $BOARD == cubox-i* ]] ; then
 		cp $SRC/lib/scripts/brcm4330 $DEST/output/sdcard/etc/default
 		cp $SRC/lib/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
 		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
-		chroot $DEST/output/sdcard /bin/bash -c "insserv brcm4330-patch >> /dev/null" 
-fi
+		chroot $DEST/output/sdcard /bin/bash -c "update-rc.d brcm4330-patch defaults>> /dev/null"
+		
+		cp $SRC/lib/scripts/mxobs $DEST/output/sdcard/etc/apt/preferences.d/mxobs
+		mkdir -p $DEST/output/sdcard/etc/X11/
+				cp $SRC/lib/config/xorg.conf.cubox $DEST/output/sdcard/etc/X11/xorg.conf
+		
+		case $RELEASE in
+		wheezy)
+			echo "deb http://ftp.debian.org/debian/ wheezy-backports main contrib non-free" >> $DEST/output/sdcard/etc/apt/sources.list
+			echo "deb-src http://ftp.debian.org/debian/ wheezy-backports main contrib non-free" >> $DEST/output/sdcard/etc/apt/sources.list
+			echo "deb http://repo.r00t.website/BSP:/Cubox-i/Debian_Wheezy/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+			chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.r00t.website/BSP:/Cubox-i/Debian_Wheezy/Release.key | apt-key add -"
+			chroot $DEST/output/sdcard /bin/bash -c "apt-get update"		
+			chroot $DEST/output/sdcard /bin/bash -c "apt-get install -y -qq irqbalance-imx"
+		;;
+		jessie)
+			echo "deb http://repo.r00t.website/BSP:/Cubox-i/Debian_Jessie/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+			chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.r00t.website/BSP:/Cubox-i/Debian_Jessie/Release.key | apt-key add -"
+			chroot $DEST/output/sdcard /bin/bash -c "apt-get update"		
+			chroot $DEST/output/sdcard /bin/bash -c "apt-get install -y -qq irqbalance-imx"
+		;;
+		trusty)
+			#echo "deb http://repo.r00t.website/BSP:/Cubox-i/Ubuntu_Trusty_Tahr/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+			#chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.r00t.website/BSP:/Cubox-i/Ubuntu_Trusty_Tahr/Release.key | apt-key add -"
+			echo "" # currently not working
+		;;
+		esac				
+	fi
 
 # create board DEB file
 cd $DEST/output/rootfs/
