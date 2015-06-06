@@ -253,6 +253,11 @@ MODULES_NEXT="bonding"
 LINUXKERNEL="https://github.com/linux4kix/linux-linaro-stable-mx6"
 LINUXCONFIG="linux-cubox"
 LINUXSOURCE="linux-cubox"
+if [[ $BRANCH == *next* ]];then
+	LINUXKERNEL="git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git"
+	LINUXSOURCE="linux-mainline"
+	LINUXCONFIG="linux-cubox-next"
+fi
 ;;
 
 
