@@ -375,9 +375,9 @@ SIZE=$(tune2fs -l $LOOP | grep "Block count" | awk '{ print $NF}')
 FREE=$(tune2fs -l $LOOP | grep "Free blocks" | awk '{ print $NF}')
 UNITSIZE=$(tune2fs -l $LOOP | grep "Block size" | awk '{ print $NF}')
 
-# calculate new partition size and add 10% reserve
+# calculate new partition size and add 20% reserve
 NEWSIZE=$((($SIZE-$FREE)*$UNITSIZE/1024/1024))
-NEWSIZE=$(echo "scale=1; $NEWSIZE * 1.1" | bc -l)
+NEWSIZE=$(echo "scale=1; $NEWSIZE * 1.2" | bc -l)
 NEWSIZE=${NEWSIZE%.*}
 
 # resize partition to new size
