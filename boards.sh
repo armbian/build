@@ -75,6 +75,8 @@ if [[ $BOARD == "udoo-neo" ]] ; then
 		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.default
 		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.bonding
 		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.hostapd
+		# SD card is elsewhere
+		sed 's/mmcblk0p1/mmcblk1p1/' -i $DEST/output/sdcard/etc/fstab
 fi
 
 # cubox / hummingboard
@@ -201,7 +203,7 @@ if [[ $BOARD == "udoo" ]] ; then
 	cp $SRC/lib/config/boot-udoo-next.cmd $DEST/output/sdcard/boot/boot.cmd
 elif [[ $BOARD == "udoo-neo" ]]; then
 	cp $SRC/lib/config/boot-udoo-neo.cmd $DEST/output/sdcard/boot/boot.cmd
-	chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/boot.scr /boot.scr"	
+	#chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/boot.scr /boot.scr"	
 elif [[ $BOARD == cubox-i* ]]; then
 	cp $SRC/lib/config/boot-cubox.cmd $DEST/output/sdcard/boot/boot.cmd
 else
