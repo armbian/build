@@ -128,6 +128,12 @@ if [[ $BOARD == "udoo" ]] ; then
        		patch --batch -N -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch
 	fi
 fi
+if [[ $BOARD == "udoo-neo" ]] ; then
+	# This enables loading boot.scr from / and /boot, fat and ext2
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-neo_fat_and_ext_boot_script_load.patch | grep previ)" == "" ]; then
+       		patch --batch -N -p1 < $SRC/lib/patch/udoo-neo_fat_and_ext_boot_script_load.patch
+	fi
+fi
 if [[ $LINUXCONFIG == *sunxi* ]] ; then
 	# Add router R1 to uboot
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch | grep create)" == "" ]; then
