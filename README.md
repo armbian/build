@@ -33,7 +33,7 @@ copy and paste the following code:
 	# user 
 	DEST_LANG="en_US.UTF-8"                     # sl_SI.UTF-8, en_US.UTF-8
 	CONSOLE_CHAR="UTF-8" 						# console charset
-	TZDATA="Europe/Ljubljana"                   # time zone
+	TZDATA=`cat /etc/timezone`                  # time zone
 	ROOTPWD="1234"                              # forced to change @first login
 	SDSIZE="1500"                               # SD image size in MB
 	AFTERINSTALL=""                             # command before closing image 
