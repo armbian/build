@@ -62,6 +62,20 @@ screen resolution interactive - only Allwinner boards with A10 and A20 with kern
 	# Example to set console framebuffer resolution to 1280 x 720
 	a10disp changehdmimodeforce 4
 
+Other modes:	
+
+	0 480i
+	1 576i
+	2 480p
+	3 576p
+	4 720p 50Hz
+	5 720p 60Hz
+	6 1080i 50 Hz
+	7 1080i 60 Hz
+	8 1080p 24 Hz
+	9 1080p 50 Hz
+	10 1080p 60 Hz
+	
 # How to alter CPU frequency?
 
 Some boards allow to adjust CPU speed.
