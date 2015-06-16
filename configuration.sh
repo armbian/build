@@ -173,7 +173,7 @@ bananapi)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.1"
+REVISION="3.2"
 BOOTCONFIG="Bananapi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT="brcmfmac"
@@ -184,7 +184,7 @@ bananapipro)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.1"
+REVISION="3.2"
 BOOTCONFIG="Bananapro_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT="brcmfmac"
@@ -195,7 +195,7 @@ lamobo-r1)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="3.1"
+REVISION="3.2"
 BOOTCONFIG="Lamobo_R1_defconfig"
 #BOOTCONFIG="Bananapi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
@@ -207,7 +207,7 @@ orangepi)
 #--------------------------------------------------------------------------------------------------------------------------------
 # Bananapi
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="1.3"
+REVISION="1.4"
 BOOTCONFIG="Orangepi_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT=""
