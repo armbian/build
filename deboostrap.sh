@@ -65,9 +65,9 @@ else
 	partprobe $LOOP
 	mkfs.vfat -n "$IMAGEVOLUME" $LOOP"p1" >/dev/null 2>&1
 	mkfs.ext4 -q $LOOP"p2"
-	mount /dev/loop0p2 $DEST/output/sdcard/
+	mount $LOOP"p2" $DEST/output/sdcard/
 	mkdir -p $DEST/output/sdcard/boot
-	mount /dev/loop0p1 $DEST/output/sdcard/boot
+	mount $LOOP"p1" $DEST/output/sdcard/boot
 fi
 
 # Uncompress from cache
