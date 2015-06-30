@@ -98,14 +98,15 @@ if [[ $BOARD == cubox-i* ]] ; then
 		
 		cp $SRC/lib/scripts/mxobs $DEST/output/sdcard/etc/apt/preferences.d/mxobs
 		mkdir -p $DEST/output/sdcard/etc/X11/
-				cp $SRC/lib/config/xorg.conf.cubox $DEST/output/sdcard/etc/X11/xorg.conf
+				cp $SRC/lib/config/xorg.conf.cubox $DEST/output/sdcard/etc/X11/xorg.conf.bak
 		
 		case $RELEASE in
 		wheezy)
 			echo "deb http://ftp.debian.org/debian/ wheezy-backports main contrib non-free" >> $DEST/output/sdcard/etc/apt/sources.list
 			echo "deb-src http://ftp.debian.org/debian/ wheezy-backports main contrib non-free" >> $DEST/output/sdcard/etc/apt/sources.list
-			echo "deb http://repo.r00t.website/BSP:/Cubox-i/Debian_Wheezy/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
-			chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.r00t.website/BSP:/Cubox-i/Debian_Wheezy/Release.key | apt-key add -"
+			echo "deb http://repo.jm0.eu/BSP:/Cubox-i/Debian_Wheezy/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+			echo "deb-src http://repo.jm0.eu/BSP:/Cubox-i/Debian_Wheezy/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
+			chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.jm0.eu/BSP:/Cubox-i/Debian_Wheezy/Release.key | apt-key add -"
 			chroot $DEST/output/sdcard /bin/bash -c "apt-get update"		
 			chroot $DEST/output/sdcard /bin/bash -c "apt-get install -y -qq irqbalance-imx"
 		;;
@@ -231,7 +232,7 @@ install_desktop (){
 # Install desktop with HW acceleration
 #--------------------------------------------------------------------------------------------------------------------------------
 echo -e "[\e[0;32m ok \x1B[0m] Install desktop"
-chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install xorg lightdm xfce4 xfce4-goodies tango-icon-theme gnome-icon-theme"
+chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install xorg lightdm xfce4 xfce4-goodies tango-icon-theme gnome-icon-theme pulseaudio gstreamer0.10-pulseaudio wicd"
 if [[ $LINUXCONFIG == *sunxi* && $RELEASE == "wheezy" ]]; then
  chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install xorg-dev xutils-dev x11proto-dri2-dev"
  chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install libltdl-dev libtool automake libdrm-dev"
