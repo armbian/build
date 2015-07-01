@@ -382,7 +382,7 @@ NEWSIZE=${NEWSIZE%.*}
 
 # resize partition to new size
 BLOCKSIZE=$(resize2fs $LOOP $NEWSIZE"M" | grep "The filesystem on" | awk '{ print $(NF-2)}')
-NEWSIZE=$($BLOCKSIZE*$UNITSIZE/1024)
+NEWSIZE=$(($BLOCKSIZE*$UNITSIZE/1024))
 sleep 1
 tune2fs -O has_journal $LOOP >/dev/null 2>&1
 tune2fs -o journal_data_writeback $LOOP >/dev/null 2>&1
