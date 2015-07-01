@@ -158,13 +158,13 @@ MODULES_NEXT=""
 ;;
 
 
-pcduino3)
+pcduino3nano)
 #--------------------------------------------------------------------------------------------------------------------------------
-# pcduino3
+# pcduino3nano
 #--------------------------------------------------------------------------------------------------------------------------------
-REVISION="0.0"
-BOOTCONFIG="Linksprite_pcDuino3_defconfig"
-MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
+REVISION="1.0"
+BOOTCONFIG="Linksprite_pcDuino3_Nano_defconfig"
+MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT=""
 ;;
 

@@ -26,7 +26,7 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$BOARD" == "" ]; then
 	BOARDS="AW-som-a20 A20 Cubieboard A10 Cubieboard2 A20 Cubietruck A20 Lime A20 Lime2 A20 Micro A20 Bananapi A20 \
-	Bananapipro A20 Lamobo-R1 A20 Orangepi A20 Hummingbird A31 Cubox-i imx6 Udoo imx6 Udoo-Neo imx6";
+	Bananapipro A20 Lamobo-R1 A20 Orangepi A20 Pcduino3nano A20 Hummingbird A31 Cubox-i imx6 Udoo imx6 Udoo-Neo imx6";
 	MYLIST=`for x in $BOARDS; do echo $x ""; done`
 	whiptail --title "Choose a board" --backtitle "" --menu "\nWhich one?" 18 30 8 $MYLIST 2>results    
 	BOARD=$(<results)
