@@ -371,9 +371,9 @@ sleep 1
 tune2fs -O ^has_journal $LOOP >/dev/null 2>&1
 sleep 1
 e2fsck -fy $LOOP >/dev/null 2>&1
-SIZE=$(tune2fs -l $LOOP | grep "Block count" | awk '{ print $NF}')
-FREE=$(tune2fs -l $LOOP | grep "Free blocks" | awk '{ print $NF}')
-UNITSIZE=$(tune2fs -l $LOOP | grep "Block size" | awk '{ print $NF}')
+SIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Block count" | awk '{ print $NF}')
+FREE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Free blocks" | awk '{ print $NF}')
+UNITSIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Block size" | awk '{ print $NF}')
 
 # calculate new partition size and add 20% reserve
 NEWSIZE=$((($SIZE-$FREE)*$UNITSIZE/1024/1024))
@@ -381,7 +381,7 @@ NEWSIZE=$(echo "scale=1; $NEWSIZE * 1.2" | bc -l)
 NEWSIZE=${NEWSIZE%.*}
 
 # resize partition to new size
-BLOCKSIZE=$(resize2fs $LOOP $NEWSIZE"M" | grep "The filesystem on" | awk '{ print $(NF-2)}')
+BLOCKSIZE=$(LANGUAGE=english resize2fs $LOOP $NEWSIZE"M" | grep "The filesystem on" | awk '{ print $(NF-2)}')
 NEWSIZE=$(($BLOCKSIZE*$UNITSIZE/1024))
 sleep 1
 tune2fs -O has_journal $LOOP >/dev/null 2>&1
