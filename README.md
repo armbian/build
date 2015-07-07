@@ -112,7 +112,7 @@ with this content:
 	GPG_PASS=""                                 # set GPG password for non-interactive packing
 	
 	# advanced
-	KERNELTAG="v4.1.0"                          # kernel TAG - valid only for mainline
+	KERNELTAG="v4.1.1"                          # kernel TAG - valid only for mainline
 	UBOOTTAG="v2015.04"							# kernel TAG - valid for all sunxi
 	FBTFT="yes"                                 # https://github.com/notro/fbtft 
 	EXTERNAL="yes"                              # compile extra drivers
