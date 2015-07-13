@@ -71,10 +71,8 @@ if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) 
 fi
 
 if [[ $BRANCH == "next" && $BOARD == "udoo" ]] ; then
-	# fix DTS tree
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-dts-fix.patch | grep previ)" == "" ]; then
-		patch -p1 < $SRC/lib/patch/udoo-dts-fix.patch
-	fi	
+	# hard fixed DTS tree
+	cp $SRC/lib/patch/Makefile-udoo-only arch/arm/boot/dts/Makefile
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-udoo.patch | grep previ)" == "" ]; then
 		patch -p1 < $SRC/lib/patch/packaging-udoo.patch
 	fi
