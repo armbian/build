@@ -12,7 +12,7 @@ Currently supported boards / kernels:
 	- Linksprite Pcduino3 nano		3.4.x and mainline
 	- Olimex Lime, Lime 2, Micro 	3.4.x and mainline
 	- Orange Pi						3.4.x and mainline
-	- Udoo quad						3.18.x
+	- Udoo quad						4.0.8
 	- Udoo Neo						3.14.x
 
 ## General features: ##
