@@ -54,7 +54,7 @@ if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) 
 
     # copy pcduino nano DTS
 	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-pcduino3-nano)" == "" ]; then
-		sed -i 's/sun7i-a20-pcduino3.dtb \\/sun7i-a20-pcduino3.dtb \\\n    sun7i-a20-pcduino3-nano.dtb \\/g' arch/arm/boot/dts/Makefile
+		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-pcduino3-nano.dtb \\/g' arch/arm/boot/dts/Makefile
 		cp $SRC/lib/patch/sun7i-a20-pcduino3-nano.dts arch/arm/boot/dts/
 	fi
 	
