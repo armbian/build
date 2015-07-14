@@ -221,7 +221,7 @@ mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/outp
 
 # copy boot splash image
 cp $SRC/lib/bin/armbian.bmp $DEST/output/sdcard/boot/boot.bmp
-
+	
 # add linux firmwares to output image
 unzip -q $SRC/lib/bin/linux-firmware.zip -d $DEST/output/sdcard/lib/firmware
 }
@@ -232,15 +232,30 @@ install_desktop (){
 # Install desktop with HW acceleration
 #--------------------------------------------------------------------------------------------------------------------------------
 echo -e "[\e[0;32m ok \x1B[0m] Install desktop"
-chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install xorg lightdm xfce4 xfce4-goodies tango-icon-theme gnome-icon-theme pulseaudio gstreamer0.10-pulseaudio wicd"
+#chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install xorg lightdm xfce4 xfce4-goodies tango-icon-theme gnome-icon-theme pulseaudio gstreamer0.10-pulseaudio wicd"
+# pwd expiration causes problems
+chroot $DEST/output/sdcard /bin/bash -c "chage -d 10 root"
+chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install xserver-xorg xserver-xorg-core xfonts-base xinit slim x11-xserver-utils mate-core mozo pluma mate-themes gnome-icon-theme"
+chroot $DEST/output/sdcard /bin/bash -c "chage -d 0 root"
+ 
+# configure slim
+sed "s/current_theme\(.*\)/current_theme$(printf '\t')default/g" -i $DEST/output/sdcard/etc/slim.conf 
+cp $SRC/lib/bin/slim-background.jpg $DEST/output/sdcard/usr/share/slim/themes/default/background.jpg
+cp $SRC/lib/bin/slim-panel.png $DEST/output/sdcard/usr/share/slim/themes/default/panel.png
+
+# skuapj
+# chroot $DEST/output/sdcard /bin/bash -c "apt-get -y install gnome-core gnome-themes gnome-system-tools software-center xorg gdm3"
+
+
 if [[ $LINUXCONFIG == *sunxi* && $RELEASE == "wheezy" ]]; then
- chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install xorg-dev xutils-dev x11proto-dri2-dev"
- chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install libltdl-dev libtool automake libdrm-dev"
+ chroot $DEST/output/sdcard /bin/bash -c "apt-get -y install xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev"
  # quemu bug walkaround
  git clone https://github.com/ssvb/xf86-video-fbturbo.git $DEST/output/sdcard/tmp/xf86-video-fbturbo
  chroot $DEST/output/sdcard /bin/bash -c "cd /tmp/xf86-video-fbturbo && autoreconf -vi"
  chroot $DEST/output/sdcard /bin/bash -c "cd /tmp/xf86-video-fbturbo && ./configure --prefix=/usr"
  chroot $DEST/output/sdcard /bin/bash -c "cd /tmp/xf86-video-fbturbo && make && make install && cp xorg.conf /etc/X11/xorg.conf"
+ # enable root login
+ sed -e "s/auth$(printf '\t')required/#auth$(printf '\t')required/g" -i /etc/pam.d/gdm3
  # clean deb cache
  chroot $DEST/output/sdcard /bin/bash -c "apt-get -y clean"	
 fi
