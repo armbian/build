@@ -33,6 +33,11 @@ if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) 
 	if [ "$(cat drivers/net/wireless/brcm80211/brcmfmac/feature.c | grep "mbss\", 0);\*")" == "" ]; then
 		sed -i 's/brcmf_feat_iovar_int_set(ifp, BRCMF_FEAT_MBSS, "mbss", 0);/\/*brcmf_feat_iovar_int_set(ifp, BRCMF_FEAT_MBSS, "mbss", 0);*\//g' drivers/net/wireless/brcm80211/brcmfmac/feature.c
 	fi
+
+	# Fix wifi stability for Cubietruck / Banana PRO
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/cubie_banana_wifi_patch_4.x.patch | grep previ)" == "" ]; then
+		patch -p1 < $SRC/lib/patch/cubie_banana_wifi_patch_4.x.patch
+	fi
 	
 	# install device tree blobs in separate package, link zImage to kernel image script
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-next.patch | grep previ)" == "" ]; then
