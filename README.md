@@ -60,7 +60,7 @@ Thank you!
 
 ## Where to get Armbian? ##
 
-[http://www.armbian.com](www.armbian.com "Armbian universal operating system")
+[http://www.armbian.com](http://www.armbian.com "Armbian universal operating system")
 
 Armbian is avaliable as SD card image.
 
