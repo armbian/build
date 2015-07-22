@@ -87,7 +87,7 @@ install_external_applications
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # add some summary to the image
-fingerprint_image "$DEST/output/sdcard/root/readme.txt"
+#fingerprint_image "$DEST/output/sdcard/root/readme.txt"
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # closing image
