@@ -241,37 +241,68 @@ if [ ! -f "$DEST/output/"$BOARD"_kernel_"$VER"_mod_head_fw.tar" ]; then
 fi
 echo "------ Creating SD Images"
 cd $DEST/output
+
 # create 1G image and mount image to next free loop device
-dd if=/dev/zero of=debian_rootfs.raw bs=1M count=$SDSIZE status=noxfer
-LOOP=$(losetup -f)
-losetup $LOOP debian_rootfs.raw
-sync
+if [[ -z $DISK ]];
+then
+	dd if=/dev/zero of=debian_rootfs.raw bs=1M count=$SDSIZE status=noxfer
+	LOOP=$(losetup -f)
+	losetup $LOOP debian_rootfs.raw
+	sync
+	parted -s $LOOP -- mklabel msdos
+	parted -s $LOOP -- mkpart primary ext4  2048s -1s
+	partprobe $LOOP
+else
+	for n in $DISK* ; do umount $n ; done
+
+	parted -s $DISK -- mklabel msdos
+	parted -s $DISK -- mkpart primary ext4  2048s -1s
+	partprobe $DISK
+fi
 echo "------ Partitioning, writing boot loader and mounting file-system."
 # create one partition starting at 2048 which is default
-parted -s $LOOP -- mklabel msdos
-parted -s $LOOP -- mkpart primary ext4  2048s -1s
-partprobe $LOOP
 echo "------ Writing boot loader."
-if [[ $BOARD == "cubox-i" ]] ; then
-	dd if=$DEST/$BOOTSOURCE/SPL of=$LOOP bs=512 seek=2 status=noxfer
-	dd if=$DEST/$BOOTSOURCE/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer
+if [[ -z $DISK ]];
+then
+	if [[ $BOARD == "cubox-i" ]] ; then
+		dd if=$DEST/$BOOTSOURCE/SPL of=$LOOP bs=512 seek=2 status=noxfer
+		dd if=$DEST/$BOOTSOURCE/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer
+	else
+		dd if=$DEST/$BOOTSOURCE/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer
+	fi
+	sync
+	sleep 3
+	echo "LOOP"
+	losetup -d $LOOP
+	# 2048 (start) x 512 (block size) = where to mount partition
+	losetup -o 1048576 $LOOP debian_rootfs.raw
+	# create filesystem
+	mkfs.ext4 $LOOP
+	# tune filesystem
+	tune2fs -o journal_data_writeback $LOOP
+	# label it
+	e2label $LOOP "$BOARD"
+	# create mount point and mount image 
+	mkdir -p $DEST/output/sdcard/
+	mount -t ext4 $LOOP $DEST/output/sdcard/
 else
-	dd if=$DEST/$BOOTSOURCE/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer
+	if [[ $BOARD == "cubox-i" ]] ; then
+		dd if=$DEST/$BOOTSOURCE/SPL of="$DISK"1 bs=512 seek=2 status=noxfer
+		dd if=$DEST/$BOOTSOURCE/u-boot.img of="$DISK"1 bs=1K seek=42 status=noxfer
+	else
+		dd if=$DEST/$BOOTSOURCE/u-boot-sunxi-with-spl.bin of="$DISK"1 bs=1024 seek=8 status=noxfer
+	fi
+	sync
+	sleep 3
+	mkfs.ext4 "$DISK"1
+	# tune filesystem
+	tune2fs -o journal_data_writeback "$DISK"1
+	# label it
+	e2label "$DISK"1 "$BOARD"
+	# create mount point and mount image 
+	mkdir -p $DEST/output/sdcard/
+	mount -t ext4 "$DISK"1 $DEST/output/sdcard/
 fi
-sync
-sleep 3
-losetup -d $LOOP
-# 2048 (start) x 512 (block size) = where to mount partition
-losetup -o 1048576 $LOOP debian_rootfs.raw
-# create filesystem
-mkfs.ext4 $LOOP
-# tune filesystem
-tune2fs -o journal_data_writeback $LOOP
-# label it
-e2label $LOOP "$BOARD"
-# create mount point and mount image 
-mkdir -p $DEST/output/sdcard/
-mount -t ext4 $LOOP $DEST/output/sdcard/
 }
 
 
@@ -474,8 +505,8 @@ sed -e "s/MAX_SPEED=\"0\"/MAX_SPEED=\"$CPUMAX\"/g" -i $DEST/output/sdcard/etc/in
 sed -e 's/ondemand/interactive/g' -i $DEST/output/sdcard/etc/init.d/cpufrequtils
 # set root password and force password change upon first login
 #chroot $DEST/output/sdcard /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root"  
-chroot $DEST/output/sdcard /bin/bash -c "(echo $USER_PASSWORD;echo $USER_PASSWORD;echo "";echo "";echo ""; echo ""; echo ""; echo "y";) | adduser $USER"
-echo "$USER	ALL=(ALL:ALL) ALL" $DEST/output/sdcard/etc/sudoers
+chroot $DEST/output/sdcard /bin/bash -c "(echo $USER_PASSWORD;echo $USER_PASSWORD; echo ""; echo ""; echo "";echo ""; echo ""; echo ""; echo "y";) | adduser $USER"
+echo "$USER ALL=(ALL:ALL) ALL" >> $DEST/output/sdcard/etc/sudoers
 #chroot $DEST/output/sdcard /bin/bash -c "chage -d 0 root" 
 if [ "$RELEASE" = "jessie" ]; then
 # enable root login for latest ssh on jessie
@@ -503,7 +534,7 @@ cp $SRC/lib/config/modules.$BOARD $DEST/output/sdcard/etc/modules
 cp $SRC/lib/config/interfaces.* $DEST/output/sdcard/etc/network/
 ln -sf interfaces.default $DEST/output/sdcard/etc/network/interfaces
 # add noatime to root FS
-echo "/dev/mmcblk0p1  /           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro        0       0" >> $DEST/output/sdcard/etc/fstab
+echo "/dev/"$DISK"1  /           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro        0       0" >> $DEST/output/sdcard/etc/fstab
 # Configure The System For unattended upgrades
 cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 cp $SRC/lib/scripts/50unattended-upgrades $DEST/output/sdcard/etc/apt/apt.conf.d/02periodic
@@ -615,21 +646,26 @@ KILLPROC=$(ps -uax | pgrep dbus-daemon | tail -1); if [ -n "$KILLPROC" ]; then k
 cp $DEST/output/sdcard/root/readme.txt $DEST/output/
 sleep 2
 rm $DEST/output/sdcard/usr/bin/qemu-arm-static 
-umount -l $DEST/output/sdcard/ 
-sleep 2
-losetup -d $LOOP
+if [[ -z $DISK ]];
+then
+	umount -l $DEST/output/sdcard/ 
+	sleep 2
+	losetup -d $LOOP
+	# create documentation
+	#pandoc $SRC/lib/README.md $DEST/documentation/Home.md --standalone -o $DEST/output/$VERSION.pdf -V geometry:"top=2.54cm, bottom=2.54cm, left=3.17cm, right=3.17cm" -V 	geometry:paperwidth=21cm -V geometry:paperheight=29.7cm
+	sync
+	sleep 2
+	mv $DEST/output/debian_rootfs.raw $DEST/output/$VERSION.raw
+	cd $DEST/output/
+	# creating MD5 sum
+	sync
+	md5sum $VERSION.raw > $VERSION.md5 
+	cp $SRC/lib/bin/imagewriter.exe .
+	md5sum imagewriter.exe > imagewriter.md5
+	zip $VERSION.zip $VERSION.* readme.txt imagewriter.*
+	rm $VERSION.raw $VERSION.md5 imagewriter.* readme.txt
+else
+	umount -f "$DISK"1
+fi
 
-# create documentation
-#pandoc $SRC/lib/README.md $DEST/documentation/Home.md --standalone -o $DEST/output/$VERSION.pdf -V geometry:"top=2.54cm, bottom=2.54cm, left=3.17cm, right=3.17cm" -V geometry:paperwidth=21cm -V geometry:paperheight=29.7cm
-sync
-sleep 2
-mv $DEST/output/debian_rootfs.raw $DEST/output/$VERSION.raw
-cd $DEST/output/
-# creating MD5 sum
-sync
-md5sum $VERSION.raw > $VERSION.md5 
-cp $SRC/lib/bin/imagewriter.exe .
-md5sum imagewriter.exe > imagewriter.md5
-zip $VERSION.zip $VERSION.* readme.txt imagewriter.*
-rm $VERSION.raw $VERSION.md5 imagewriter.* readme.txt
 }
