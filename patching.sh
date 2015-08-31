@@ -12,57 +12,101 @@
 # Source patching functions
 #
 
+
+
+# description, patch, direction-normal or reverse, section
+patchme ()
+{
+if [ $3 == "reverse" ]; then
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/$4/$2 | grep Reversed)" != "" ]; then 
+		display_alert "... $1" "$4" "info"
+		patch --batch --silent -t -p1 < $SRC/lib/patch/$4/$2 > /dev/null 2>&1
+	else
+		display_alert "... $1 *** back to defaults *** " "$4" "wrn"
+	fi
+else
+	if [ "$(patch --batch -p1 -N < $SRC/lib/patch/$4/$2 | grep Skipping)" != "" ]; then 
+		display_alert "... $1 already applied" "$4" "wrn"
+	else
+		display_alert "... $1" "$4" "info"
+	fi
+fi
+}
+
+addnewdevice()
+{
+if [ $3 == "kernel" ]; then
+	if [ "$(cat arch/arm/boot/dts/Makefile | grep $2)" == "" ]; then
+		display_alert "... adding $1" "kernel" "info"
+		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    '$2'.dtb \\/g' arch/arm/boot/dts/Makefile
+		cp $SRC/lib/patch/devices/$2".dts" arch/arm/boot/dts/
+	fi
+else
+	# add to uboot to , experimental
+	if [ "$(cat $SOURCES/$BOOTSOURCE/arch/arm/dts/Makefile | grep $2)" == "" ]; then
+		display_alert "... adding $1 to u-boot DTS" "kernel" "info"
+		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    '$2'.dtb \\/g' arch/arm/dts/Makefile
+		cp $SRC/lib/patch/devices/$2".dts" $SOURCES/$BOOTSOURCE/arch/arm/dts
+	fi
+fi
+}
+
 patching_sources(){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Patching kernel sources
 #--------------------------------------------------------------------------------------------------------------------------------
-echo -e "[\e[0;32m ok \x1B[0m] Patching kernel $KERNELTAG"
-cd $DEST/$LINUXSOURCE
+cd $SOURCES/$BOOTSOURCE
+
+# fix u-boot tag
+if [[ $UBOOTTAG == "" ]] ; then
+	git checkout $FORCE -q $BOOTDEFAULT
+	else
+	git checkout $FORCE -q $UBOOTTAG
+fi
+
+cd $SOURCES/$LINUXSOURCE
+
+
+if [[ $KERNELTAG == "" ]] ; then KERNELTAG="$LINUXDEFAULT"; fi
+# fix kernel tag
+if [[ $BRANCH == "next" ]] ; then
+		git checkout $FORCE -q $KERNELTAG
+	else
+		git checkout $FORCE -q $LINUXDEFAULT
+
+fi
+
+# What are we building
+grab_kernel_version
+
+display_alert "Patching" "kernel $VER" "info"
+
+# this is for almost all sources
+patchme "compiler bug" 					"compiler.patch" 				"reverse" "kernel"
+
 
 # mainline
 if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) ]] ; then
 
-	# fix kernel tag
-	if [[ $KERNELTAG == "" ]] ; then
-		git checkout -q master
-	else
-		git checkout -q $KERNELTAG
-	fi
-	
-	# Fix BRCMFMAC AP mode for Cubietruck / Banana PRO
-	if [ "$(cat drivers/net/wireless/brcm80211/brcmfmac/feature.c | grep "mbss\", 0);\*")" == "" ]; then
-		sed -i 's/brcmf_feat_iovar_int_set(ifp, BRCMF_FEAT_MBSS, "mbss", 0);/\/*brcmf_feat_iovar_int_set(ifp, BRCMF_FEAT_MBSS, "mbss", 0);*\//g' drivers/net/wireless/brcm80211/brcmfmac/feature.c
-	fi
 
-	# Fix wifi stability for Cubietruck / Banana PRO
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/cubie_banana_wifi_patch_4.x.patch | grep previ)" == "" ]; then
-		patch -p1 < $SRC/lib/patch/cubie_banana_wifi_patch_4.x.patch
-	fi
 	
-	# install device tree blobs in separate package, link zImage to kernel image script
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-next.patch | grep previ)" == "" ]; then
-		patch -p1 < $SRC/lib/patch/packaging-next.patch
-	fi
 
-	# copy bananar1 DTS
-	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-lamobo-r1)" == "" ]; then
-		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-lamobo-r1.dtb \\/g' arch/arm/boot/dts/Makefile
-		cp $SRC/lib/patch/sun7i-a20-lamobo-r1.dts arch/arm/boot/dts/
-	fi
-	
-	# copy orange pi DTS
-	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-orangepi)" == "" ]; then
-		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-orangepi.dtb \\/g' arch/arm/boot/dts/Makefile
-		cp $SRC/lib/patch/sun7i-a20-orangepi.dts arch/arm/boot/dts/
-		cp $SRC/lib/patch/sun4i-a10.h arch/arm/boot/dts/include/dt-bindings/pinctrl
-	fi
 
-    # copy pcduino nano DTS
-	if [ "$(cat arch/arm/boot/dts/Makefile | grep sun7i-a20-pcduino3-nano)" == "" ]; then
-		sed -i 's/sun7i-a20-bananapi.dtb \\/sun7i-a20-bananapi.dtb \\\n    sun7i-a20-pcduino3-nano.dtb \\/g' arch/arm/boot/dts/Makefile
-		cp $SRC/lib/patch/sun7i-a20-pcduino3-nano.dts arch/arm/boot/dts/
-	fi
-	
+	patchme "fix BRCMFMAC AP mode Banana & CT" 					"brcmfmac_ap_banana_ct.patch" 		"default" "kernel"
+	patchme "deb packaging fix" 								"packaging-next.patch" 				"default" "kernel"
+	patchme "update ahb clocks for sun7i" 						"ahb_clocks_sun7i.patch" 			"default" "kernel"	
+	#patchme "Security System #0001" 	"0001-ARM-sun5i-dt-Add-Security-System-to-A10s-SoC-DTS.patch" "default" "kernel"
+	#patchme "Security System #0002" 	"0002-ARM-sun6i-dt-Add-Security-System-to-A31-SoC-DTS.patch" "default" "kernel"
+	#patchme "Security System #0003" 	"0003-ARM-sun4i-dt-Add-Security-System-to-A10-SoC-DTS.patch" "default" "kernel"
+	#patchme "Security System #0004" 	"0004-ARM-sun7i-dt-Add-Security-System-to-A20-SoC-DTS.patch" "default" "kernel"
+	#rm Documentation/devicetree/bindings/crypto/sun4i-ss.txt
+	#patchme "Security System #0005" 	"0005-ARM-sun4i-dt-Add-DT-bindings-documentation-for-SUN4I.patch" "default" "kernel"
+	#rm -r drivers/crypto/sunxi-ss/
+	#patchme "Security System #0006" 	"0006-crypto-Add-Allwinner-Security-System-crypto-accelera.patch" "default" "kernel"
+	#patchme "Security System #0007" 	"0007-MAINTAINERS-Add-myself-as-maintainer-of-Allwinner-Se.patch" "default" "kernel"
+	#patchme "Security System #0008" 	"0008-crypto-sun4i-ss-support-the-Security-System-PRNG.patch" "default" "kernel"
+	#patchme "Security System #0009 remove failed A31" 	"0009-a31_breaks.patch" "default" "kernel"
+		
 	# add r1 switch driver
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1-4.x.patch | grep previ)" == "" ]; then
 		rm -rf drivers/net/phy/b53/
@@ -73,35 +117,41 @@ if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) 
 		rm -f include/uapi/linux/switch.h 
 		patch -p1 -f -s -m < $SRC/lib/patch/bananapi-r1-4.x.patch
 	fi
+
+	# Add new devices
+	addnewdevice "Lamobo R1" 			"sun7i-a20-lamobo-r1"	"kernel"
+	addnewdevice "Orange PI" 			"sun7i-a20-orangepi"	"kernel"
+	addnewdevice "Orange PI mini" 		"sun7i-a20-orangepi-mini"	"kernel"
+	addnewdevice "PCDuino Nano3" 		"sun7i-a20-pcduino3-nano"	"kernel"
+
+	
 fi
 
-if [[ $BRANCH == "next" && $BOARD == "udoo" ]] ; then
+if [[ $BOARD == udoo* ]] ; then
 	# hard fixed DTS tree
-	cp $SRC/lib/patch/Makefile-udoo-only arch/arm/boot/dts/Makefile
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-udoo.patch | grep previ)" == "" ]; then
-		patch -p1 < $SRC/lib/patch/packaging-udoo.patch
+	if [[ $BRANCH == "next" ]] ; then
+		cp $SRC/lib/patch/Makefile-udoo-only arch/arm/boot/dts/Makefile
+		patchme "Install DTB in dedicated package" 				"packaging-next.patch" 			"default" "kernel"
+	else
+	# 
+	patchme "remove strange DTBs from tree" 					"udoo_dtb.patch" 				"default" "kernel"
+	patchme "remove n/a v4l2-capture from Udoo DTS" 			"udoo_dts_fix.patch" 			"default" "kernel"
+	patchme "deb packaging fix" 								"packaging-udoo-fix.patch" 		"default" "kernel"
 	fi
 fi
 
 # sunxi 3.4
 if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
-	# if the source is already patched for banana, do reverse GMAC patch
-	if [ "$(cat arch/arm/kernel/setup.c | grep BANANAPI)" != "" ]; then
-		echo "Reversing Banana patch"
-		patch --batch -t -p1 < $SRC/lib/patch/bananagmac.patch
-	fi
-	# SPI functionality
-    	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/spi.patch | grep previ)" == "" ]; then
-		patch --batch -f -p1 < $SRC/lib/patch/spi.patch
-    	fi
+	patchme "SPI functionality" 					"spi.patch" 								"default" "kernel"
+	patchme "Debian packaging fix" 					"packaging-sunxi-fix.patch" 				"default" "kernel"
+	patchme "Aufs3" 								"linux-sunxi-3.4.108-overlayfs.patch" 		"default" "kernel"
+	
 	# banana/orange gmac  
 	if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
-		if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananagmac.patch | grep previ)" == "" ]; then
-			patch --batch -N -p1 < $SRC/lib/patch/bananagmac.patch
-		fi
+		patchme "Bananapi/Orange/R1 gmac" 								"bananagmac.patch" 		"default" "kernel"
+	else
+		patchme "Banana PI/ PRO / Orange / R1 gmac" 					"bananagmac.patch" 		"reverse" "kernel"
 	fi
-	# compile sunxi tools
-	compile_sunxi_tools
 fi
 
 # cubox / hummingboard 3.14
@@ -110,33 +160,21 @@ if [[ $LINUXSOURCE == "linux-cubox" ]] ; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/hb-i2c-spi.patch | grep previ)" == "" ]; then
 		patch -p1 < $SRC/lib/patch/hb-i2c-spi.patch
 	fi
-	# deb packaging patch
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/packaging-cubox.patch | grep previ)" == "" ]; then
-		patch --batch -f -p1 < $SRC/lib/patch/packaging-cubox.patch
-	fi	
+	patchme "deb packaging fix" 								"packaging-cubox.patch" 				"default" "kernel"
 fi
 
-# compiler reverse patch. It has already been fixed.
-if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/compiler.patch | grep Reversed)" != "" ]; then
-	patch --batch -t -p1 < $SRC/lib/patch/compiler.patch
-fi
 
-# u-boot
-cd $DEST/$BOOTSOURCE
-echo -e "[\e[0;32m ok \x1B[0m] Patching U-boot $UBOOTTAG"
-# fix kernel tag
-	if [[ $UBOOTTAG == "" ]] ; then
-		git checkout -q master
-	else
-		git checkout -q -f $UBOOTTAG
-	fi
+#--------------------------------------------------------------------------------------------------------------------------------
+# Patching u-boot sources
+#--------------------------------------------------------------------------------------------------------------------------------
+
+cd $SOURCES/$BOOTSOURCE
+display_alert "Patching" "u-boot $UBOOTTAG" "info"
 
 if [[ $BOARD == "udoo" ]] ; then
-	# This enabled boot script loading from ext2 partition which is my default setup
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch | grep previ)" == "" ]; then
-       		patch --batch -N -p1 < $SRC/lib/patch/udoo-uboot-fatboot.patch
-	fi
+	patchme "Enabled Udoo boot script loading from ext2" 					"udoo-uboot-fatboot.patch" 		"default" "u-boot"
 fi
+
 if [[ $BOARD == "udoo-neo" ]] ; then
 	# This enables loading boot.scr from / and /boot, fat and ext2
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-neo_fat_and_ext_boot_script_load.patch | grep previ)" == "" ]; then
@@ -144,17 +182,53 @@ if [[ $BOARD == "udoo-neo" ]] ; then
 	fi
 fi
 if [[ $LINUXCONFIG == *sunxi* ]] ; then
-	# Add router R1 to uboot
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch | grep create)" == "" ]; then
-		patch --batch -N -p1 < $SRC/lib/patch/add-lamobo-r1-uboot.patch
-	fi
-	# Add awsom to uboot
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/add-awsom-uboot.patch | grep create)" == "" ]; then
-		patch --batch -N -p1 < $SRC/lib/patch/add-awsom-uboot.patch
-	fi
-	# Add boot splash to uboot
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/sunxi-boot-splash.patch | grep create)" == "" ]; then
-		patch --batch -N -p1 < $SRC/lib/patch/sunxi-boot-splash.patch
-	fi
+	rm -f configs/Lamobo_R1_defconfig configs/Awsom_defconfig
+	patchme "Add Lamobo R1" 					"add-lamobo-r1-uboot.patch" 		"default" "u-boot"
+	patchme "Add AW SOM" 						"add-awsom-uboot.patch" 			"default" "u-boot"
+	patchme "Add boot splash" 					"sunxi-boot-splash.patch" 			"default" "u-boot"
+	
+	# Add new devices
+	addnewdevice "Lamobo R1" 			"sun7i-a20-lamobo-r1"	"u-boot"
+	
 fi
+
+
+
+#--------------------------------------------------------------------------------------------------------------------------------
+# Patching other sources: FBTFT drivers, ...
+#--------------------------------------------------------------------------------------------------------------------------------
+cd $SOURCES/$MISC4_DIR
+display_alert "Patching" "other sources" "info"
+
+
+# add small TFT display support  
+if [[ "$FBTFT" = "yes" && $BRANCH != "next" ]]; then
+IFS='.' read -a array <<< "$VER"
+cd $SOURCES/$MISC4_DIR
+if (( "${array[0]}" == "3" )) && (( "${array[1]}" < "5" ))
+then
+echo "star kernel"
+	git checkout $FORCE -q 06f0bba152c036455ae76d26e612ff0e70a83a82
+else
+	git checkout $FORCE -q master
+fi
+
+if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
+patchme "DMA disable on FBTFT drivers" 					"bananafbtft.patch" 		"default" "misc"
+
+
+else
+patchme "DMA disable on FBTFT drivers" 					"bananafbtft.patch" 		"reverse" "misc"
+fi
+
+mkdir -p $SOURCES/$LINUXSOURCE/drivers/video/fbtft
+mount --bind $SOURCES/$MISC4_DIR $SOURCES/$LINUXSOURCE/drivers/video/fbtft
+cd $SOURCES/$LINUXSOURCE
+patchme "small TFT display support" 					"small_lcd_drivers.patch" 		"default" "kernel"
+else
+patchme "small TFT display support" 					"small_lcd_drivers.patch" 		"reverse" "kernel"
+umount $SOURCES/$LINUXSOURCE/drivers/video/fbtft >/dev/null 2>&1
+fi
+
+
 }
