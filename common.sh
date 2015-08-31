@@ -374,7 +374,6 @@ echo -e "[\e[0;32m ok \x1B[0m] Create and sign download ready ZIP archive"
 mkdir -p $DEST/images
 zip -FS $DEST/images/$VERSION.zip $VERSION.raw* armbian.txt imagewriter.*
 display_alert "Uploading to server" "$VERSION.zip" "info"
-rsync -P $DEST/images/$VERSION.zip -e 'ssh -p 12322' igor@mirror.igorpecovnik.com:/var/www/mirror.igorpecovnik.com
 rm -f $DEST/images/$VERSION.zip
 rm -f $VERSION.raw *.asc imagewriter.* armbian.txt
 }
