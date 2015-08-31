@@ -21,17 +21,28 @@ if [ "$UID" -ne 0 ]
 fi
 
 
+# We'll use this tittle on all menus
+backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik, www.igorpecovnik.com"
+ 
+
 #--------------------------------------------------------------------------------------------------------------------------------
-# Choose destination
+# Choose destination - creating board list from file configuration.sh
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$BOARD" == "" ]; then
-	BOARDS="AW-som-a20 A20 Cubieboard A10 Cubieboard2 A20 Cubietruck A20 Lime-A10 A10 Lime A20 Lime2 A20 Micro A20 Bananapi A20 \
-	Bananapipro A20 Lamobo-R1 A20 Orangepi A20 Pcduino3nano A20 Hummingbird A31 Cubox-i imx6 Udoo imx6 Udoo-Neo imx6";
-	MYLIST=`for x in $BOARDS; do echo $x ""; done`
-	whiptail --title "Choose a board" --backtitle "" --menu "\nWhich one?" 18 30 8 $MYLIST 2>results    
+	IFS=";"
+	MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/)#enabled/ || /#des/' | sed 's/)#enabled//g' | sed 's/#description //g' | sed ':a;N;$!ba;s/\n/;/g'))
+	MYPARAMS=( --title "Choose a board" --backtitle $backtitle --menu "\n Currently supported:" 28 62 18 )
+	i=0
+	j=1
+	while [[ $i -lt ${#MYARRAY[@]} ]]
+	do
+        MYPARAMS+=( "${MYARRAY[$i]}" "         ${MYARRAY[$j]}" )
+        i=$[$i+2];j=$[$j+2]
+	done
+	whiptail "${MYPARAMS[@]}" 2>results  
 	BOARD=$(<results)
-	BOARD=${BOARD,,}
 	rm results
+	unset MYARRAY
 fi
 # exit the script on cancel
 if [ "$BOARD" == "" ]; then echo "ERROR: You have to choose one board"; exit; fi
@@ -40,29 +51,86 @@ if [ "$BOARD" == "" ]; then echo "ERROR: You have to choose one board"; exit; fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # Choose for which distribution you want to compile
 #--------------------------------------------------------------------------------------------------------------------------------
+if [ "$KERNEL_ONLY" != "yes" ]; then
 if [ "$RELEASE" == "" ]; then
-	RELEASE="wheezy Debian jessie Debian trusty Ubuntu";
-	MYLIST=`for x in $RELEASE; do echo $x ""; done`
-	whiptail --backtitle "" --title "Select distribution" --menu "" 12 30 4 $MYLIST 2>results    
+	IFS=";"
+	declare -a MYARRAY=('wheezy' 'Debian 7 Wheezy | oldstable' 'jessie' 'Debian 8 Jessie | stable' 'trusty' 'Ubuntu Trusty Tahr 14.04.x LTS');
+	MYPARAMS=( --title "Choose a distribution" --backtitle $backtitle --menu "\n Root file system:" 13 60 3 )
+	i=0
+	j=1	
+	while [[ $i -lt ${#MYARRAY[@]} ]]
+	do
+        MYPARAMS+=( "${MYARRAY[$i]}" "         ${MYARRAY[$j]}" )
+        i=$[$i+2]
+		j=$[$j+2]
+	done
+	whiptail "${MYPARAMS[@]}" 2>results  
 	RELEASE=$(<results)
 	rm results
+	unset MYARRAY
 fi
 # exit the script on cancel
 if [ "$RELEASE" == "" ]; then echo "ERROR: You have to choose one distribution"; exit; fi
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
+# Choose to build a desktop
+#--------------------------------------------------------------------------------------------------------------------------------
+if [ "$BUILD_DESKTOP" == "" ]; then
+	IFS=";"
+	declare -a MYARRAY=('No' 'Command line interface' 'Yes' 'XFCE graphical interface');
+	MYPARAMS=( --title "Install desktop with HW acceleration on some boards" --backtitle $backtitle --menu "" 11 60 2 )
+	i=0
+	j=1
+	while [[ $i -lt ${#MYARRAY[@]} ]]
+	do
+        MYPARAMS+=( "${MYARRAY[$i]}" "         ${MYARRAY[$j]}" )
+        i=$[$i+2]
+		j=$[$j+2]
+	done
+	whiptail "${MYPARAMS[@]}" 2>results  
+	BUILD_DESKTOP=$(<results)
+	BUILD_DESKTOP=${BUILD_DESKTOP,,}
+	rm results
+	unset MYARRAY
+fi
+# exit the script on cancel
+if [ "$BUILD_DESKTOP" == "" ]; then echo "ERROR: You need to choose"; exit; fi
+
+fi
+
+
+#--------------------------------------------------------------------------------------------------------------------------------
 # Choose for which branch you want to compile
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$BRANCH" == "" ]; then
-	BRANCH="default 3.4.x-3.14.x next mainline";
-	MYLIST=`for x in $BRANCH; do echo $x ""; done`
-	whiptail --backtitle "" --title "Select distribution" --menu "" 12 30 4 $MYLIST 2>results    
+	IFS=";"
+	declare -a MYARRAY=('default' '3.4.x - 3.14.x most supported' 'next' '4.x Vanilla from www.kernel.org');
+	# Exceptions
+	if [[ $BOARD == "cubox-i" || $BOARD == "udoo-neo" ]]; then declare -a MYARRAY=('default' '3.4.x - 3.14.x most supported'); fi
+	MYPARAMS=( --title "Choose a branch" --backtitle $backtitle --menu "\n Kernel:" 11 60 2 )
+	i=0
+	j=1
+	while [[ $i -lt ${#MYARRAY[@]} ]]
+	do
+        MYPARAMS+=( "${MYARRAY[$i]}" "         ${MYARRAY[$j]}" )
+        i=$[$i+2]
+		j=$[$j+2]
+	done
+	whiptail "${MYPARAMS[@]}" 2>results  
 	BRANCH=$(<results)
 	rm results
+	unset MYARRAY
 fi
+
 # exit the script on cancel
 if [ "$BRANCH" == "" ]; then echo "ERROR: You have to choose one branch"; exit; fi
+
+# don't compile external modules on mainline
+if [ "$BRANCH" == "next" ]; then EXTERNAL="no"; fi
+
+# back to normal
+unset IFS
 
 # default console if not set
 if [ "$CONSOLE_CHAR" == "" ]; then CONSOLE_CHAR="UTF-8"; fi
@@ -86,11 +154,13 @@ HOST="$BOARD"
 #--------------------------------------------------------------------------------------------------------------------------------
 # Load libraries
 #--------------------------------------------------------------------------------------------------------------------------------
+source $SRC/lib/general.sh					# General functions
 source $SRC/lib/configuration.sh			# Board configuration
-source $SRC/lib/deboostrap.sh 			# System specific install
+source $SRC/lib/deboostrap.sh 				# System specific install
 source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/patching.sh 				# Source patching
 source $SRC/lib/boards.sh 					# Board specific install
+source $SRC/lib/desktop.sh 					# Desktop specific install
 source $SRC/lib/common.sh 					# Functions 
 
 if [ "$SOURCE_COMPILE" != "yes" ]; then
@@ -98,18 +168,20 @@ if [ "$SOURCE_COMPILE" != "yes" ]; then
 	if [ "$CHOOSEN_KERNEL" == "" ]; then echo "ERROR: You have to choose one kernel"; exit; fi
 fi
 
+# needed if process failed in the middle
+#umount_image
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # The name of the job
 #--------------------------------------------------------------------------------------------------------------------------------
-VERSION="${BOARD^} $DISTRIBUTION $REVISION $RELEASE $BRANCH"
-
+VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
  
 #--------------------------------------------------------------------------------------------------------------------------------
 # let's start with fresh screen
 #--------------------------------------------------------------------------------------------------------------------------------
 clear
 
+display_alert "Dependencies check" "@host" "info"
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # optimize build time with 100% CPU usage
@@ -126,11 +198,11 @@ fi
 # to display build time at the end
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$KERNEL_ONLY" == "yes" ]; then
-	echo -e "[\e[0;32m ok \x1B[0m] Compiling kernel"
+		display_alert "Compiling kernel" "$BOARD" "info"
 	else
-	echo -e "[\e[0;32m ok \x1B[0m] Building $VERSION"
+		display_alert "Building" "$VERSION" "info"
 fi
-echo -e "[\e[0;32m ok \x1B[0m] Syncing clock"
+display_alert "Syncing clock" "host" "info"
 ntpdate -s time.ijs.si
 start=`date +%s`
 
@@ -144,31 +216,56 @@ download_host_packages
 #--------------------------------------------------------------------------------------------------------------------------------
 # fetch_from_github [repository, sub directory]
 #--------------------------------------------------------------------------------------------------------------------------------
-mkdir -p $DEST/output
+mkdir -p $DEST/output -p $SOURCES
 
-if [ "$FORCE" = "yes" ]; then
+if [ "$FORCE_CHECKOUT" = "yes" ]; then
 	FORCE="-f"
 	else
 	FORCE=""
 fi
+display_alert "source downloading" "@host" "info"
 
-fetch_from_github "$BOOTLOADER" "$BOOTSOURCE"
-fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE"
-if [[ -n "$DOCS" ]]; then fetch_from_github "$DOCS" "$DOCSDIR"; fi
+fetch_from_github "$BOOTLOADER" "$BOOTSOURCE" "$BOOTDEFAULT"
+fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE" "$LINUXDEFAULT"
 if [[ -n "$MISC1" ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
 if [[ -n "$MISC2" ]]; then fetch_from_github "$MISC2" "$MISC2_DIR"; fi
 if [[ -n "$MISC3" ]]; then fetch_from_github "$MISC3" "$MISC3_DIR"; fi
-if [[ -n "$MISC4" ]]; then fetch_from_github "$MISC4" "$MISC4_DIR"; fi
+if [[ -n "$MISC4" ]]; then fetch_from_github "$MISC4" "$MISC4_DIR" "master"; fi
 if [[ -n "$MISC5" ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
 
 # compile sunxi tools
+if [[ $LINUXCONFIG == *sunxi* ]]; then 
 compile_sunxi_tools
+fi
+
+# clean open things if scripts stops in the middle
+umount_image
 
 # Patching sources
 patching_sources
 
-# What are we building
-grab_kernel_version
+
+# Compile kernel only if not exits in cache. kernel clean override
+if [[ $BRANCH == "next" ]] ; then KERNEL_BRACH="-next"; UBOOT_BRACH="-next"; else KERNEL_BRACH=""; UBOOT_BRACH=""; fi 
+
+CHOOSEN_UBOOT="linux-u-boot"$UBOOT_BRACH"-"$BOARD"_"$REVISION"_armhf"
+
+if [[ $KERNEL_CLEAN == "no" ]] ; then
+	# check if proper kernel deb exists
+	TMP=linux-image"$KERNEL_BRACH"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
+	if [ -f "$DEST/debs/$TMP" ]; then
+		CHOOSEN_KERNEL=$TMP
+		#echo $TMP
+		SOURCE_COMPILE="no"
+	fi
+	# check if proper u-boot deb exists
+	if [ ! -f "$DEST/debs/$CHOOSEN_UBOOT"".deb" ]; then
+		compile_uboot
+	fi
+	
+fi
+
+
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # Compile source or choose already packed kernel
@@ -181,37 +278,20 @@ if [ "$SOURCE_COMPILE" = "yes" ]; then
 	# compile kernel and create archives
 	compile_kernel
 	if [ "$KERNEL_ONLY" == "yes" ]; then
-		echo -e "[\e[0;32m ok \x1B[0m] Kernel building done"
-		echo -e "[\e[0;32m ok \x1B[0m] Target directory: $DEST/output/kernel"
-		echo -e "[\e[0;32m ok \x1B[0m] File name: $CHOOSEN_KERNEL"
+		display_alert "Kernel building done" "@host" "info"
+		display_alert "Target directory" "$DEST/debs/" "info"
+		display_alert "File name: $CHOOSEN_KERNEL" "$VER" "info"
 		exit
 	fi
-
-else
 	
-	# Compile u-boot if not exits in cache
-	CHOOSEN_UBOOT="linux-u-boot-$VER-"$BOARD"_"$REVISION"_armhf"
-	UBOOT_PCK="linux-u-boot-$VER-"$BOARD
-	if [ ! -f "$DEST/output/u-boot/$CHOOSEN_UBOOT".deb ]; then
-		compile_uboot
-	fi
-	
-	# choose kernel from ready made
-	#if [ "$CHOOSEN_KERNEL" == "" ]; then
-	#	sleep 2
-	#	choosing_kernel
-	#fi
-
 fi
-
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # create or use prepared root file-system
 #--------------------------------------------------------------------------------------------------------------------------------
-#create_system_template
-#mount_system_template
 custom_debootstrap
+
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # add kernel to the image
@@ -240,12 +320,6 @@ fi
 if [ "$EXTERNAL" = "yes" ]; then
 install_external_applications
 fi
-
-
-#--------------------------------------------------------------------------------------------------------------------------------
-# add some summary to the image
-#--------------------------------------------------------------------------------------------------------------------------------
-fingerprint_image "$DEST/output/sdcard/root/readme.txt"
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
