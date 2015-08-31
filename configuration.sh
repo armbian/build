@@ -231,7 +231,7 @@ lamobo-r1)#enabled
 REVISION="3.3"
 BOOTCONFIG="Lamobo_R1_defconfig"
 # temporally
-UBOOTTAG="master"
+UBOOTTAG="v2015.04"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
 MODULES_NEXT="brcmfmac"
 LINUXFAMILY="banana"
