@@ -10,11 +10,35 @@
 #
 
 
+# Target sata drive
+DRIVE="sda"
+
+
+
+
+create_nand_boot ()
+{
+whiptail --title "NAND install" --infobox "Creating NAND bootfs ... few seconds." 7 60
+mkfs.vfat /dev/nand1 > /dev/null 2>&1
+mkfs.ext4 /dev/nand2 > /dev/null 2>&1
+mount /dev/nand1 /mnt
+tar xfz .nand1-allwinner.tgz -C /mnt/
+cp /boot/script.bin /mnt/script.bin
+if [ "$1" != "" ]; then sed -e 's,nand_root=\/dev\/nand2,nand_root=/dev/'"$1"',g' -i /mnt/uEnv.txt; fi
+whiptail --title "NAND install" --infobox "Converting and copying kernel." 7 60
+mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /boot/zImage /mnt/uImage > /dev/null 2>&1
+umount /mnt
+}
+
+
+
+
+
 #--------------------------------------------------------------------------------------------------------------------------------
 # this is file is needed to conduct 2nd stage install for NAND installation
 #--------------------------------------------------------------------------------------------------------------------------------
 FLAG=".reboot-nand-install.pid"
-
+BACKTITLE="Armbian install script, http://www.armbian.com | Author: Igor Pecovnik, www.igorpecovnik.com"
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # we don't need to copy all files. This is the exclusion list
@@ -28,7 +52,6 @@ cat > .install-exclude <<EOF
 /run/*
 /tmp/*
 /boot/*
-/root/*
 EOF
 
 
@@ -44,8 +67,7 @@ SOURCE="${SOURCE//root=/}"
 #--------------------------------------------------------------------------------------------------------------------------------
 # Which kernel and bin do we run
 #--------------------------------------------------------------------------------------------------------------------------------
-KERNEL=$(ls -l /boot/ |grep zImage |awk '{print $NF}')
-BINFILE=$(cat /boot/boot.cmd |grep .bin |awk '{print $NF}')
+KERNEL=$(uname -r | cut -c 1-3)
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -59,7 +81,7 @@ USAGE=${USAGE%?}
 # What are our possible destinations?
 #--------------------------------------------------------------------------------------------------------------------------------
 # NAND
-if [[ $KERNEL == *"3.4"*  ]]; then
+if [[ $KERNEL == "3.4"  ]]; then
 	# There is no NAND support in mainline yet
 	if [ "$(grep nand /proc/partitions)" != "" ]; then
         # We have nand, check size
@@ -70,13 +92,13 @@ fi
 # SATA
 if [ "$(grep sda /proc/partitions)" != "" ]; then
         # We have something as sd, check size
-        SDA_SIZE=$(awk 'BEGIN { printf "%.0f\n", '$(grep sda /proc/partitions | awk '{print $3}' | head -1)'/1024 }')
+        SDA_SIZE=$(awk 'BEGIN { printf "%.0f\n", '$(grep $DRIVE /proc/partitions | awk '{print $3}' | head -1)'/1024 }')
         # Check which type is this drive - SATA or USB
-        SDA_TYPE=$(udevadm info --query=all --name=sda | grep ID_BUS=)
+        SDA_TYPE=$(udevadm info --query=all --name=$DRIVE | grep ID_BUS=)
         SDA_TYPE=${SDA_TYPE#*=}
-        SDA_NAME=$(udevadm info --query=all --name=sda | grep ID_MODEL=)
+        SDA_NAME=$(udevadm info --query=all --name=$DRIVE | grep ID_MODEL=)
         SDA_NAME=${SDA_NAME#*=}
-        SDA_ROOT_PART=/dev/sda1
+        SDA_ROOT_PART=/dev/$DRIVE"1"
 fi
 
 
@@ -85,16 +107,7 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ -f $FLAG ]; then
 	clear
-	whiptail --title "NAND install" --infobox "Formatting and optimizing NAND rootfs ... up to 30 sec." 7 60
-	mkfs.vfat /dev/nand1 > /dev/null 2>&1
-	mkfs.ext4 /dev/nand2 > /dev/null 2>&1
-	mount /dev/nand1 /mnt
-	whiptail --title "NAND install" --infobox "Creating NAND bootfs ... few seconds." 7 60
-	tar xfz .nand1-allwinner.tgz -C /mnt/
-	cp $BINFILE /mnt/script.bin
-	whiptail --title "NAND install" --infobox "Converting and copying kernel." 7 60
-	mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d $KERNEL /mnt/uImage > /dev/null 2>&1
-	umount /mnt
+	create_nand_boot
 	mount /dev/nand2 /mnt
 	whiptail --title "NAND install" --infobox "Checking and counting files." 7 60
 	TODO=$(rsync -avrltD --delete --stats --human-readable --dry-run --exclude-from=.install-exclude  /  /mnt |grep "^Number of files:"|awk '{print $4}')
@@ -104,9 +117,9 @@ if [ -f $FLAG ]; then
 	rsync -avrltD --delete --stats --human-readable --exclude-from=.install-exclude  /  /mnt | pv -l -e -p -s $TODO >/dev/null
 	me=`basename $0`
 	# copy this script and my README to NAND that you can coduct NAND / SATA install if you want
-	cp readme.txt $me /mnt/root
+	# cp readme.txt $me /mnt/root
 	# change fstab - mount NAND boot partition
-	sed -e 's/mmcblk0p1/nand2/g' -i /mnt/etc/fstab
+	echo "/dev/nand2	/       ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro        0       0" > /mnt/etc/fstab
 	echo "/dev/nand1	/boot	vfat	defaults	0	0" >> /mnt/etc/fstab
 	umount /mnt
 	whiptail --title "NAND install" --infobox "All done. Press a key to power off, then remove SD to boot from NAND." 9 60
@@ -116,16 +129,15 @@ if [ -f $FLAG ]; then
 	exit
 fi
 
-
 #--------------------------------------------------------------------------------------------------------------------------------
 # Prepare main selection
 #--------------------------------------------------------------------------------------------------------------------------------
-TEXT="\nSource:\n"
-TEXT=$TEXT"\nRoot file-system:     $SOURCE"
-TEXT=$TEXT"\nKernel file:          $KERNEL"
-TEXT=$TEXT"\nBoard configuration:  $BINFILE"
+#TEXT="\nSource:\n"
+#TEXT=$TEXT"\nRoot file-system:     $SOURCE"
+TEXT="\nKernel family:        $KERNEL"
 TEXT=$TEXT"\nUsed space:           $USAGE MB"
-TEXT=$TEXT"\n\nDestination:\n"
+TEXT=$TEXT"\n"
+
 
 # if we have nand
 if [ "$NAND_ROOT_PART" != "" ]; then LIST=$LIST"%$NAND_ROOT_PART%($NAND_SIZE MB) internal flash"; fi
@@ -136,13 +148,35 @@ if [ "$LIST" == "" ]; then echo "No targets avaliable!"; exit; fi
 
 # Some text
 LIST=${LIST:1}
-BACKTITLE="(c) Igor Pecovnik"
-MENUTITLE="\n$TEXT\nWhere do you want to have root-filesystem?"
+#BACKTITLE="(c) Igor Pecovnik"
+MENUTITLE="\n$TEXT\n"
 
 
 IFS="%"
-DEST=$(whiptail --title "ARM boards installer" --backtitle $BACKTITLE --menu $MENUTITLE 22 60 2 --cancel-button Cancel --ok-button Select $LIST 3>&1 1>&2 2>&3) 
+DEST=$(whiptail --title "Select destination" --backtitle $BACKTITLE --menu $MENUTITLE 16 60 2 --cancel-button Cancel --ok-button Select $LIST 3>&1 1>&2 2>&3) 
 DESTPART="${DEST///dev\//}"
+
+# exit if none avaliable
+if [ "$DEST" == "" ]; then echo "No targets choosen!"; exit; fi
+
+# show option for booting from NAND if choosen destination is sda 
+if [[ $NAND_ROOT_PART != "" && $DESTPART != "nand2" ]]; then
+	LIST="%Yes% ";
+	LIST=$LIST"%No% ";
+	LIST=${LIST:1}
+	MENUTITLE="\n$TEXT\nNAND detected. Move boot to NAND?"
+	DEST=$(whiptail --title "ARM boards installer" --backtitle $BACKTITLE --menu $MENUTITLE 16 60 2 --cancel-button Cancel --ok-button Select $LIST 3>&1 1>&2 2>&3) 
+	SRCPART="${DEST///dev\//}"
+	# exit if none avaliable
+	if [ "$SRCPART" == "" ]; then echo "No decision!"; exit; fi
+fi
+
+BOOTPART="mmcblk0p1"
+if [ "$SRCPART" == "Yes" ]; then 
+	echo "NAND boot install" 
+	create_nand_boot "$DESTPART"
+	BOOTPART="nand1"
+fi
 
 # exit if none avaliable
 if [ "$DEST" == "" ]; then echo "No targets choosen!"; exit; fi
@@ -191,24 +225,43 @@ if [[ $DESTPART == *sda*  ]]; then
 		# change fstab
 		sed -e 's/nand2/sda1/g' -i /mnt/etc/fstab
 	else
-
-		if [[ $KERNEL == *"3.4"*  ]]; then
-		sed -e 's,root=\/dev\/mmcblk0p1,root=/dev/'"$DESTPART"',g' -i /boot/boot.cmd
-		mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
-		else
-		sed -e 's,root=\/dev\/mmcblk0p1,root=/dev/'"$DESTPART"',g' -i /boot/uEnv.txt
-		sed -e 's,root=\/dev\/mmcblk0p1,root=/dev/'"$DESTPART"',g' -i /boot/boot.cmd
-                if [ -f /boot/boot.cmd ]; then
-                        mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
-                fi
+		# if we have boot script
+		if [ -f /boot/boot.cmd ]; then
+			sed -e 's,root=\/dev\/mmcblk0p.,root=/dev/'"$DESTPART"',g' -i /boot/boot.cmd
+			mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
+        fi
+		# if we have env.txt
+		if [ -f /boot/uEnv.txt ]; then
+			sed -e 's,root=\/dev\/mmcblk0p.,root=/dev/'"$DESTPART"',g' -i /boot/uEnv.txt
 		fi
+	
 		# change fstab
-		sed -e 's/mmcblk0p1/sda1/g' -i /mnt/etc/fstab
+		sed -e 's/mmcblk0p./sda1/g' -i /mnt/etc/fstab
 		sed -i "s/data=writeback,//" /mnt/etc/fstab
-		mkdir -p /mnt/media/mmc
-		echo "/dev/mmcblk0p1        /media/mmc   ext4    defaults        0       0" >> /mnt/etc/fstab
-		echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/etc/fstab
+		# if we have one partition system
+		if [[ $SOURCE == *1* && $BOOTPART != *nand* ]]; then
+			mkdir -p /mnt/media/mmc/boot
+			echo "/dev/$BOOTPART        /media/mmc   ext4    defaults        0       0" >> /mnt/etc/fstab
+			echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/etc/fstab
+		else
+			echo "/dev/$BOOTPART        /boot   vfat    defaults        0       0" >> /mnt/etc/fstab
+		fi
 	fi
 whiptail --title "Reboot required" --msgbox "Press OK to reboot!" 7 60
 reboot
 fi
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
