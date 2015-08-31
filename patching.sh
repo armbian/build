@@ -108,14 +108,14 @@ if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) 
 	#patchme "Security System #0009 remove failed A31" 	"0009-a31_breaks.patch" "default" "kernel"
 		
 	# add r1 switch driver
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/bananapi-r1-4.x.patch | grep previ)" == "" ]; then
+	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/kernel/bananapi-r1-4.x.patch | grep previ)" == "" ]; then
 		rm -rf drivers/net/phy/b53/
 		rm -f drivers/net/phy/swconfig.c
 		rm -f drivers/net/phy/swconfig_leds.c
 		rm -f include/linux/platform_data/b53.h
 		rm -f include/linux/switch.h
 		rm -f include/uapi/linux/switch.h 
-		patch -p1 -f -s -m < $SRC/lib/patch/bananapi-r1-4.x.patch
+		patch -p1 -f -s -m < $SRC/lib/patch/kernel/bananapi-r1-4.x.patch
 	fi
 
 	# Add new devices
