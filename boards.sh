@@ -14,125 +14,132 @@ install_board_specific (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install board common and specific applications
 #--------------------------------------------------------------------------------------------------------------------------------
-echo -e "[\e[0;32m ok \x1B[0m] Install board specific applications"
+display_alert "Install board specific applications." "$BOARD" "info"
+
+# add some summary to the image
+fingerprint_image "$DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/armbian.txt"
 
 # Allwinner
 if [[ $LINUXCONFIG == *sunxi* ]] ; then
 
 	# add sunxi tools
-	cp $DEST/sunxi-tools/fex2bin $DEST/sunxi-tools/bin2fex $DEST/sunxi-tools/nand-part $DEST/output/rootfs/$CHOOSEN_ROOTFS/usr/local/bin
+	cp $SOURCES/sunxi-tools/fex2bin $SOURCES/sunxi-tools/bin2fex $SOURCES/sunxi-tools/nand-part $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin
 
+	# add soc temperature app
+	arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin/sunxi_tp_temp
+	
 	# lamobo R1 router switch config
-	tar xfz $SRC/lib/bin/swconfig.tgz -C $DEST/output/rootfs/$CHOOSEN_ROOTFS/usr/local/bin
+	tar xfz $SRC/lib/bin/swconfig.tgz -C $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin
 
 	# add NAND boot content
-	mkdir -p $DEST/output/rootfs/$CHOOSEN_ROOTFS/root
-	cp $SRC/lib/bin/nand1-allwinner.tgz $DEST/output/rootfs/$CHOOSEN_ROOTFS/root/.nand1-allwinner.tgz
+	mkdir -p $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/root
+	cp $SRC/lib/bin/nand1-allwinner.tgz $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/root/.nand1-allwinner.tgz
 	
 	# convert and add fex files
-	mkdir -p $DEST/output/rootfs/$CHOOSEN_ROOTFS/boot/bin
+	unset IFS
+	mkdir -p $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/boot/bin
 	for i in $(ls -w1 $SRC/lib/config/*.fex | xargs -n1 basename); 
-		do fex2bin $SRC/lib/config/${i%*.fex}.fex $DEST/output/rootfs/$CHOOSEN_ROOTFS/boot/bin/${i%*.fex}.bin; 
+		do fex2bin $SRC/lib/config/${i%*.fex}.fex $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/boot/bin/${i%*.fex}.bin; 
 	done
 	
 	# bluetooth device enabler - for cubietruck
-	install -m 755	$SRC/lib/bin/brcm_patchram_plus		$DEST/output/rootfs/$CHOOSEN_ROOTFS/usr/local/bin
-	install			$SRC/lib/scripts/brcm40183 			$DEST/output/rootfs/$CHOOSEN_ROOTFS/etc/default
-	install -m 755  $SRC/lib/scripts/brcm40183-patch    $DEST/output/rootfs/$CHOOSEN_ROOTFS/etc/init.d
+	install -m 755	$SRC/lib/bin/brcm_patchram_plus		$DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin
+	install			$SRC/lib/scripts/brcm40183 			$DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/default
+	install -m 755  $SRC/lib/scripts/brcm40183-patch    $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/init.d
 	
 	# default lirc configuration
-	sed -i '1i sed -i \x27s/DEVICE="\\/dev\\/input.*/DEVICE="\\/dev\\/input\\/\x27$str\x27"/g\x27 /etc/lirc/hardware.conf' $DEST/output/sdcard/etc/lirc/hardware.conf
-	sed -i '1i str=$(cat /proc/bus/input/devices | grep "H: Handlers=sysrq rfkill kbd event" | awk \x27{print $(NF)}\x27)' $DEST/output/sdcard/etc/lirc/hardware.conf
-	sed -i '1i # Cubietruck automatic lirc device detection by Igor Pecovnik' $DEST/output/sdcard/etc/lirc/hardware.conf
-	sed -e 's/DEVICE=""/DEVICE="\/dev\/input\/event1"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
-	sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="devinput"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
-	cp $SRC/lib/config/lirc.conf.cubietruck $DEST/output/sdcard/etc/lirc/lircd.conf
+	sed -i '1i sed -i \x27s/DEVICE="\\/dev\\/input.*/DEVICE="\\/dev\\/input\\/\x27$str\x27"/g\x27 /etc/lirc/hardware.conf' $DEST/cache/sdcard/etc/lirc/hardware.conf
+	sed -i '1i str=$(cat /proc/bus/input/devices | grep "H: Handlers=sysrq rfkill kbd event" | awk \x27{print $(NF)}\x27)' $DEST/cache/sdcard/etc/lirc/hardware.conf
+	sed -i '1i # Cubietruck automatic lirc device detection by Igor Pecovnik' $DEST/cache/sdcard/etc/lirc/hardware.conf
+	sed -e 's/DEVICE=""/DEVICE="\/dev\/input\/event1"/g' -i $DEST/cache/sdcard/etc/lirc/hardware.conf
+	sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="devinput"/g' -i $DEST/cache/sdcard/etc/lirc/hardware.conf
+	cp $SRC/lib/config/lirc.conf.cubietruck $DEST/cache/sdcard/etc/lirc/lircd.conf
 
 fi 
 
 # udoo
 if [[ $BOARD == "udoo" ]] ; then		
-		if [ -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc1/g" -i $DEST/output/sdcard/etc/inittab; fi
-		if [ -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then 
-			mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc1.conf; 
-			sed -e "s/ttyS0/ttymxc1/g" -i $DEST/output/sdcard/etc/init/ttymxc1.conf; 
+		if [ -f $DEST/cache/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc1/g" -i $DEST/cache/sdcard/etc/inittab; fi
+		if [ -f $DEST/cache/sdcard/etc/init/ttyS0.conf ]; then 
+			mv $DEST/cache/sdcard/etc/init/ttyS0.conf $DEST/cache/sdcard/etc/init/ttymxc1.conf; 
+			sed -e "s/ttyS0/ttymxc1/g" -i $DEST/cache/sdcard/etc/init/ttymxc1.conf; 
 		fi
-		if [ -f $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then mv $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc1.service ; fi
-		chroot $DEST/output/sdcard /bin/bash -c "apt-get -y -qq remove lirc && apt-get -y -qq autoremove"		
-		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.default
-		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.bonding
-		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.hostapd
+		if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc1.service ; fi
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc && apt-get -y -qq autoremove"		
+		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.default
+		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.bonding
+		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.hostapd
 		# Udoo doesn't have interactive 		
-		sed -e 's/interactive/ondemand/g' -i $DEST/output/sdcard/etc/init.d/cpufrequtils
+		sed -e 's/interactive/ondemand/g' -i $DEST/cache/sdcard/etc/init.d/cpufrequtils
 fi
 
 # udoo neo
 if [[ $BOARD == "udoo-neo" ]] ; then		
-		if [ -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/inittab; fi
-		if [ -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/init/ttymxc0.conf; fi	
-		if [ -f $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then mv $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc0.service ; fi
-		chroot $DEST/output/sdcard /bin/bash -c "apt-get -y -qq remove lirc && apt-get -y -qq autoremove"		
-		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.default
-		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.bonding
-		sed 's/wlan0/wlan2/' -i $DEST/output/sdcard/etc/network/interfaces.hostapd
+		if [ -f $DEST/cache/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/inittab; fi
+		if [ -f $DEST/cache/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/cache/sdcard/etc/init/ttyS0.conf $DEST/cache/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/init/ttymxc0.conf; fi	
+		if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc0.service ; fi
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc && apt-get -y -qq autoremove"		
+		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.default
+		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.bonding
+		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.hostapd
 		# SD card is elsewhere
-		sed 's/mmcblk0p1/mmcblk1p1/' -i $DEST/output/sdcard/etc/fstab
+		sed 's/mmcblk0p1/mmcblk1p1/' -i $DEST/cache/sdcard/etc/fstab
 fi
 
 # cubox / hummingboard
 if [[ $BOARD == cubox-i* ]] ; then
-		if [ -f $DEST/output/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/inittab; fi
-		if [ -f $DEST/output/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/output/sdcard/etc/init/ttyS0.conf $DEST/output/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttyS0/ttymxc0/g" -i $DEST/output/sdcard/etc/init/ttymxc0.conf; fi	
-		if [ -f $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then mv $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  $DEST/output/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc0.service ; fi
+		if [ -f $DEST/cache/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/inittab; fi
+		if [ -f $DEST/cache/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/cache/sdcard/etc/init/ttyS0.conf $DEST/cache/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/init/ttymxc0.conf; fi	
+		if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc0.service ; fi
 		
 		# default lirc configuration 
-		sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
-		sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="default"/g' -i $DEST/output/sdcard/etc/lirc/hardware.conf
-		cp $SRC/lib/config/lirc.conf.cubox-i $DEST/output/sdcard/etc/lirc/lircd.conf
-		cp $SRC/lib/bin/brcm_patchram_plus_cubox $DEST/output/sdcard/usr/local/bin/brcm_patchram_plus
-		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /usr/local/bin/brcm_patchram_plus"
-		cp $SRC/lib/scripts/brcm4330 $DEST/output/sdcard/etc/default
-		cp $SRC/lib/scripts/brcm4330-patch $DEST/output/sdcard/etc/init.d
-		chroot $DEST/output/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
-		chroot $DEST/output/sdcard /bin/bash -c "update-rc.d brcm4330-patch defaults>> /dev/null"
-		
-		cp $SRC/lib/scripts/mxobs $DEST/output/sdcard/etc/apt/preferences.d/mxobs
-		mkdir -p $DEST/output/sdcard/etc/X11/
-				cp $SRC/lib/config/xorg.conf.cubox $DEST/output/sdcard/etc/X11/xorg.conf.bak
-		
-		case $RELEASE in
-		wheezy)
-			echo "deb http://ftp.debian.org/debian/ wheezy-backports main contrib non-free" >> $DEST/output/sdcard/etc/apt/sources.list
-			echo "deb-src http://ftp.debian.org/debian/ wheezy-backports main contrib non-free" >> $DEST/output/sdcard/etc/apt/sources.list
-			echo "deb http://repo.jm0.eu/BSP:/Cubox-i/Debian_Wheezy/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
-			echo "deb-src http://repo.jm0.eu/BSP:/Cubox-i/Debian_Wheezy/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
-			chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.jm0.eu/BSP:/Cubox-i/Debian_Wheezy/Release.key | apt-key add -"
-			chroot $DEST/output/sdcard /bin/bash -c "apt-get update"		
-			chroot $DEST/output/sdcard /bin/bash -c "apt-get install -y -qq irqbalance-imx"
-		;;
-		jessie)
-			echo "deb http://repo.r00t.website/BSP:/Cubox-i/Debian_Jessie/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
-			chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.r00t.website/BSP:/Cubox-i/Debian_Jessie/Release.key | apt-key add -"
-			chroot $DEST/output/sdcard /bin/bash -c "apt-get update"		
-			chroot $DEST/output/sdcard /bin/bash -c "apt-get install -y -qq irqbalance-imx"
-		;;
-		trusty)
-			#echo "deb http://repo.r00t.website/BSP:/Cubox-i/Ubuntu_Trusty_Tahr/ ./" >> $DEST/output/sdcard/etc/apt/sources.list
-			#chroot $DEST/output/sdcard /bin/bash -c "wget -qO - http://repo.r00t.website/BSP:/Cubox-i/Ubuntu_Trusty_Tahr/Release.key | apt-key add -"
-			echo "" # currently not working
-		;;
-		esac				
-	fi
+		sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $DEST/cache/sdcard/etc/lirc/hardware.conf
+		sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="default"/g' -i $DEST/cache/sdcard/etc/lirc/hardware.conf
+		cp $SRC/lib/config/lirc.conf.cubox-i $DEST/cache/sdcard/etc/lirc/lircd.conf
+		cp $SRC/lib/bin/brcm_patchram_plus_cubox $DEST/cache/sdcard/usr/local/bin/brcm_patchram_plus
+		chroot $DEST/cache/sdcard /bin/bash -c "chmod +x /usr/local/bin/brcm_patchram_plus"
+		cp $SRC/lib/scripts/brcm4330 $DEST/cache/sdcard/etc/default
+		cp $SRC/lib/scripts/brcm4330-patch $DEST/cache/sdcard/etc/init.d
+		chroot $DEST/cache/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
+		chroot $DEST/cache/sdcard /bin/bash -c "update-rc.d brcm4330-patch defaults>> /dev/null"
+					
+fi
 
 # create board DEB file
-cd $DEST/output/rootfs/
+cd $DEST/debs/$RELEASE/
 dpkg -b $CHOOSEN_ROOTFS >/dev/null 2>&1
 rm -rf $CHOOSEN_ROOTFS
 # install custom root package 
-cp $CHOOSEN_ROOTFS.deb /tmp/kernel
-chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/$CHOOSEN_ROOTFS.deb >/dev/null 2>&1"
+#cp $CHOOSEN_ROOTFS.deb /tmp/kernel
+chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/$CHOOSEN_ROOTFS.deb >/dev/null 2>&1"
 # enable first run script
-chroot $DEST/output/sdcard /bin/bash -c "update-rc.d firstrun defaults >/dev/null 2>&1"
+chroot $DEST/cache/sdcard /bin/bash -c "update-rc.d firstrun defaults >/dev/null 2>&1"
+
+display_alert "Creating boot scripts" "$BOARD" "info"
+# remove .old on new image
+rm -rf $DEST/cache/sdcard/boot/dtb.old
+if [[ $BOARD == "udoo" ]] ; then
+	cp $SRC/lib/config/boot-udoo-next.cmd $DEST/cache/sdcard/boot/boot.cmd
+elif [[ $BOARD == "udoo-neo" ]]; then
+	cp $SRC/lib/config/boot-udoo-neo.cmd $DEST/cache/sdcard/boot/boot.cmd
+	#chroot $DEST/cache/sdcard /bin/bash -c "ln -s /boot/boot.scr /boot.scr"	
+elif [[ $BOARD == cubox-i* ]]; then
+	cp $SRC/lib/config/boot-cubox.cmd $DEST/cache/sdcard/boot/boot.cmd
+else
+	cp $SRC/lib/config/boot.cmd $DEST/cache/sdcard/boot/boot.cmd
+	# let's prepare for old kernel too
+	chroot $DEST/cache/sdcard /bin/bash -c "ln -s /boot/bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin"
+fi
+
+# if we have a special fat boot partition, alter rootfs=
+
+if [ "$BOOTSIZE" -gt "0" ]; then
+	display_alert "Adjusting boot scripts" "$BOARD" "info"
+	sed -e 's/p1 /p2 /g' -i $DEST/cache/sdcard/boot/boot.cmd	
+	echo "/dev/mmcblk0p1        /boot   vfat    defaults        0       0" >> $DEST/cache/sdcard/etc/fstab
+fi
+# convert to uboot compatible script
+mkimage -C none -A arm -T script -d $DEST/cache/sdcard/boot/boot.cmd $DEST/cache/sdcard/boot/boot.scr >> /dev/null
 }
 
 
@@ -140,18 +147,23 @@ install_kernel (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install kernel to prepared root file-system
 #--------------------------------------------------------------------------------------------------------------------------------
-echo -e "[\e[0;32m ok \x1B[0m] Install kernel"
-
+display_alert "Install kernel" "$CHOOSEN_KERNEL" "info"
 # configure MIN / MAX speed for cpufrequtils
-sed -e "s/MIN_SPEED=\"0\"/MIN_SPEED=\"$CPUMIN\"/g" -i $DEST/output/sdcard/etc/init.d/cpufrequtils
-sed -e "s/MAX_SPEED=\"0\"/MAX_SPEED=\"$CPUMAX\"/g" -i $DEST/output/sdcard/etc/init.d/cpufrequtils
-sed -e 's/ondemand/interactive/g' -i $DEST/output/sdcard/etc/init.d/cpufrequtils
-
+sed -e "s/MIN_SPEED=\"0\"/MIN_SPEED=\"$CPUMIN\"/g" -i $DEST/cache/sdcard/etc/init.d/cpufrequtils
+sed -e "s/MAX_SPEED=\"0\"/MAX_SPEED=\"$CPUMAX\"/g" -i $DEST/cache/sdcard/etc/init.d/cpufrequtils
+# interactive currently available only on 3.4
+if [[ $BRANCH != *next* ]];then
+	sed -e 's/ondemand/interactive/g' -i $DEST/cache/sdcard/etc/init.d/cpufrequtils
+fi
 # set hostname 
-echo $HOST > $DEST/output/sdcard/etc/hostname
+echo $HOST > $DEST/cache/sdcard/etc/hostname
+
+# this is needed for ubuntu
+rm $DEST/cache/sdcard/etc/resolv.conf
+echo "nameserver 8.8.8.8" >> $DEST/cache/sdcard/etc/resolv.conf
 
 # set hostname in hosts file
-cat > $DEST/output/sdcard/etc/hosts <<EOT
+cat > $DEST/cache/sdcard/etc/hosts <<EOT
 127.0.0.1   localhost $HOST
 ::1         localhost $HOST ip6-localhost ip6-loopback
 fe00::0     ip6-localnet
@@ -161,102 +173,73 @@ ff02::2     ip6-allrouters
 EOT
 
 # create modules file
+IFS=" "
 if [[ $BRANCH == *next* ]];then
-for word in $MODULES_NEXT; do echo $word >> $DEST/output/sdcard/etc/modules; done
+for word in $MODULES_NEXT; do echo $word >> $DEST/cache/sdcard/etc/modules; done
 else
-for word in $MODULES; do echo $word >> $DEST/output/sdcard/etc/modules; done
+for word in $MODULES; do echo $word >> $DEST/cache/sdcard/etc/modules; done
 fi
 
 # copy and create symlink to default interfaces configuration
-cp $SRC/lib/config/interfaces.* $DEST/output/sdcard/etc/network/
-ln -sf interfaces.default $DEST/output/sdcard/etc/network/interfaces
+cp $SRC/lib/config/interfaces.* $DEST/cache/sdcard/etc/network/
+ln -sf interfaces.default $DEST/cache/sdcard/etc/network/interfaces
+
+# mount deb storage to tmp
+mount --bind $DEST/debs/ $DEST/cache/sdcard/tmp
+
+# extract kernel version
+VER=$(dpkg --info $DEST/debs/$CHOOSEN_KERNEL | grep Descr | awk '{print $(NF)}')
+HEADERS_DIR="linux-headers-"$VER
+VER="${VER/-$LINUXFAMILY/}"
+
+# we need package names for dtb, uboot and headers
+UBOOT_TMP="${CHOOSEN_KERNEL/image/u-boot}"
+DTB_TMP="${CHOOSEN_KERNEL/image/dtb}"
+FW_TMP="${CHOOSEN_KERNEL/image/firmware-image}"
+HEADERS_TMP="${CHOOSEN_KERNEL/image/headers}"
+HEADERS_CACHE="${CHOOSEN_KERNEL/image/cache}"
 
 # install kernel
-rm -rf /tmp/kernel && mkdir -p /tmp/kernel && cd /tmp/kernel
-tar -xPf $DEST"/output/kernel/"$CHOOSEN_KERNEL
-mount --bind /tmp/kernel/ $DEST/output/sdcard/tmp
-chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*u-boot*.deb >/dev/null 2>&1"
-chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*image*.deb >/dev/null 2>&1"
-if ls $DEST/output/sdcard/tmp/*dtb* 1> /dev/null 2>&1; then
-	chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*dtb*.deb >/dev/null 2>&1"
+chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$CHOOSEN_KERNEL >/dev/null 2>&1"
+# install uboot
+display_alert "Install u-boot" "$UBOOT_TMP" "info"
+chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$UBOOT_TMP >/dev/null 2>&1"
+# install headers
+display_alert "Install headers" "$HEADERS_TMP" "info"
+chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$HEADERS_TMP >/dev/null 2>&1"
+# install firmware
+display_alert "Install firmware" "$FW_TMP" "info"
+chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$FW_TMP >/dev/null 2>&1"
+# install DTB
+if [ -f $DEST/cache/sdcard/tmp/$DTB_TMP ]; then 
+	display_alert "Install DTB" "$DTB_TMP" "info"
+	chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$DTB_TMP >/dev/null 2>&1"; 
 fi
-# name of archive is also kernel name
-CHOOSEN_KERNEL="${CHOOSEN_KERNEL//-$BRANCH.tar/}"
 
 # recompile headers scripts or use cache if exists 
-chroot $DEST/output/sdcard /bin/bash -c "dpkg -i /tmp/*headers*.deb >/dev/null 2>&1"
-cd $DEST/output/sdcard/usr/src/linux-headers-$CHOOSEN_KERNEL
+cd $DEST/cache/sdcard/usr/src/$HEADERS_DIR
 
-if [ ! -f $DEST/output/rootfs/$CHOOSEN_KERNEL-""$REVISION""-headers-make-cache.tgz ]; then
-	echo -e "[\e[0;32m ok \x1B[0m] Compile kernel headers scripts"
-	# patch scripts
-	patch -p1 < $SRC/lib/patch/headers-debian-byteshift.patch
-	chroot $DEST/output/sdcard /bin/bash -c "cd /usr/src/linux-headers-$CHOOSEN_KERNEL && make headers_check; make headers_install ; make scripts"
-	tar czpf $DEST/output/rootfs/$CHOOSEN_KERNEL-""$REVISION""-headers-make-cache.tgz .
+if [ ! -f $DEST/cache/building/$HEADERS_CACHE.tgz ]; then
+	display_alert "Compile kernel headers scripts" "$VER" "info"
+	chroot $DEST/cache/sdcard /bin/bash -c "cd /usr/src/$HEADERS_DIR && make headers_check; make headers_install ; make scripts"
+	rm -rf $DEST/cache/building/repack
+	mkdir -p $DEST/cache/building -p $DEST/cache/building/repack/usr/src/$HEADERS_DIR -p $DEST/cache/building/repack/DEBIAN
+	dpkg-deb -x $DEST/debs/$HEADERS_TMP $DEST/cache/building/repack
+	dpkg-deb -e $DEST/debs/$HEADERS_TMP $DEST/cache/building/repack/DEBIAN
+	cp -R . $DEST/cache/building/repack/usr/src/$HEADERS_DIR
+	dpkg-deb -b $DEST/cache/building/repack $DEST/debs
+	rm -rf $DEST/cache/building/repack
+	tar czpf $DEST/cache/building/$HEADERS_CACHE".tgz" .	
 else
-	tar xzpf $DEST/output/rootfs/$CHOOSEN_KERNEL-""$REVISION""-headers-make-cache.tgz
+	tar xzpf $DEST/cache/building/$HEADERS_CACHE".tgz"
 fi
 
 
-# remove .old on new image
-rm -rf $DEST/output/sdcard/boot/dtb.old
-if [[ $BOARD == "udoo" ]] ; then
-	cp $SRC/lib/config/boot-udoo-next.cmd $DEST/output/sdcard/boot/boot.cmd
-elif [[ $BOARD == "udoo-neo" ]]; then
-	cp $SRC/lib/config/boot-udoo-neo.cmd $DEST/output/sdcard/boot/boot.cmd
-	#chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/boot.scr /boot.scr"	
-elif [[ $BOARD == cubox-i* ]]; then
-	cp $SRC/lib/config/boot-cubox.cmd $DEST/output/sdcard/boot/boot.cmd
-else
-	cp $SRC/lib/config/boot.cmd $DEST/output/sdcard/boot/boot.cmd
-	# let's prepare for old kernel too
-	chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/bin/$BOARD.bin /boot/script.bin"
-fi
-# convert to uboot compatible script
-mkimage -C none -A arm -T script -d $DEST/output/sdcard/boot/boot.cmd $DEST/output/sdcard/boot/boot.scr >> /dev/null
+
 		
-# make symlink to kernel and uImage
-#mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x10008000" -n "Linux kernel" -d $DEST/output/sdcard/boot/vmlinuz-$CHOOSEN_KERNEL $DEST/output/sdcard/boot/uImage
-#chroot $DEST/output/sdcard /bin/bash -c "ln -s /boot/vmlinuz-$CHOOSEN_KERNEL /boot/zImage"
-
 # copy boot splash image
-cp $SRC/lib/bin/armbian.bmp $DEST/output/sdcard/boot/boot.bmp
+cp $SRC/lib/bin/armbian.bmp $DEST/cache/sdcard/boot/boot.bmp
 	
-# add linux firmwares to output image
-unzip -q $SRC/lib/bin/linux-firmware.zip -d $DEST/output/sdcard/lib/firmware
-}
-
-
-install_desktop (){
-#--------------------------------------------------------------------------------------------------------------------------------
-# Install desktop with HW acceleration
-#--------------------------------------------------------------------------------------------------------------------------------
-echo -e "[\e[0;32m ok \x1B[0m] Install desktop"
-#chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install xorg lightdm xfce4 xfce4-goodies tango-icon-theme gnome-icon-theme pulseaudio gstreamer0.10-pulseaudio wicd"
-# pwd expiration causes problems
-chroot $DEST/output/sdcard /bin/bash -c "chage -d 10 root"
-chroot $DEST/output/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install xserver-xorg xserver-xorg-core xfonts-base xinit slim x11-xserver-utils mate-core mozo pluma mate-themes gnome-icon-theme"
-chroot $DEST/output/sdcard /bin/bash -c "chage -d 0 root"
- 
-# configure slim
-sed "s/current_theme\(.*\)/current_theme$(printf '\t')default/g" -i $DEST/output/sdcard/etc/slim.conf 
-cp $SRC/lib/bin/slim-background.jpg $DEST/output/sdcard/usr/share/slim/themes/default/background.jpg
-cp $SRC/lib/bin/slim-panel.png $DEST/output/sdcard/usr/share/slim/themes/default/panel.png
-
-# skuapj
-# chroot $DEST/output/sdcard /bin/bash -c "apt-get -y install gnome-core gnome-themes gnome-system-tools software-center xorg gdm3"
-
-
-if [[ $LINUXCONFIG == *sunxi* && $RELEASE == "wheezy" ]]; then
- chroot $DEST/output/sdcard /bin/bash -c "apt-get -y install xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev"
- # quemu bug walkaround
- git clone https://github.com/ssvb/xf86-video-fbturbo.git $DEST/output/sdcard/tmp/xf86-video-fbturbo
- chroot $DEST/output/sdcard /bin/bash -c "cd /tmp/xf86-video-fbturbo && autoreconf -vi"
- chroot $DEST/output/sdcard /bin/bash -c "cd /tmp/xf86-video-fbturbo && ./configure --prefix=/usr"
- chroot $DEST/output/sdcard /bin/bash -c "cd /tmp/xf86-video-fbturbo && make && make install && cp xorg.conf /etc/X11/xorg.conf"
- # enable root login
- sed -e "s/auth$(printf '\t')required/#auth$(printf '\t')required/g" -i /etc/pam.d/gdm3
- # clean deb cache
- chroot $DEST/output/sdcard /bin/bash -c "apt-get -y clean"	
-fi
+# add linux firmwares to cache image
+unzip -q $SRC/lib/bin/linux-firmware.zip -d $DEST/cache/sdcard/lib/firmware
 }
