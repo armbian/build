@@ -1,0 +1,183 @@
+From faf8cb104cdae9dd88303fd2788128f8460bd4ca Mon Sep 17 00:00:00 2001
+From: LABBE Corentin <clabbe.montjoie@gmail.com>
+Date: Fri, 27 Mar 2015 10:05:19 +0100
+Subject: [PATCH 8/8] crypto: sun4i-ss: support the Security System PRNG
+
+The Security System have a PRNG.
+This patch add support for it as an hwrng.
+
+Signed-off-by: LABBE Corentin <clabbe.montjoie@gmail.com>
+---
+ drivers/crypto/Kconfig                   |  1 +
+ drivers/crypto/sunxi-ss/Makefile         |  2 +-
+ drivers/crypto/sunxi-ss/sun4i-ss-core.c  |  5 +++
+ drivers/crypto/sunxi-ss/sun4i-ss-hwrng.c | 77 ++++++++++++++++++++++++++++++++
+ drivers/crypto/sunxi-ss/sun4i-ss.h       |  7 +++
+ 5 files changed, 91 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/crypto/sunxi-ss/sun4i-ss-hwrng.c
+
+diff --git a/drivers/crypto/Kconfig b/drivers/crypto/Kconfig
+index 2a5598e..979bc2a 100644
+--- a/drivers/crypto/Kconfig
++++ b/drivers/crypto/Kconfig
+@@ -467,6 +467,7 @@ config CRYPTO_DEV_SUN4I_SS
+ 	select CRYPTO_AES
+ 	select CRYPTO_DES
+ 	select CRYPTO_BLKCIPHER
++	select HW_RANDOM
+ 	help
+ 	  Some Allwinner SoC have a crypto accelerator named
+ 	  Security System. Select this if you want to use it.
+diff --git a/drivers/crypto/sunxi-ss/Makefile b/drivers/crypto/sunxi-ss/Makefile
+index 8f4c7a2..e846fe8 100644
+--- a/drivers/crypto/sunxi-ss/Makefile
++++ b/drivers/crypto/sunxi-ss/Makefile
+@@ -1,2 +1,2 @@
+ obj-$(CONFIG_CRYPTO_DEV_SUN4I_SS) += sun4i-ss.o
+-sun4i-ss-y += sun4i-ss-core.o sun4i-ss-hash.o sun4i-ss-cipher.o
++sun4i-ss-y += sun4i-ss-core.o sun4i-ss-hash.o sun4i-ss-cipher.o sun4i-ss-hwrng.o
+diff --git a/drivers/crypto/sunxi-ss/sun4i-ss-core.c b/drivers/crypto/sunxi-ss/sun4i-ss-core.c
+index fcb4c01..f3a410a 100644
+--- a/drivers/crypto/sunxi-ss/sun4i-ss-core.c
++++ b/drivers/crypto/sunxi-ss/sun4i-ss-core.c
+@@ -331,6 +331,9 @@ static int sun4i_ss_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 	platform_set_drvdata(pdev, ss);
++
++	sun4i_ss_hwrng_register(&ss->hwrng);
++
+ 	return 0;
+ error_alg:
+ 	i--;
+@@ -356,6 +359,8 @@ static int sun4i_ss_remove(struct platform_device *pdev)
+ 	int i;
+ 	struct sun4i_ss_ctx *ss = platform_get_drvdata(pdev);
+ 
++	sun4i_ss_hwrng_remove(&ss->hwrng);
++
+ 	for (i = 0; i < ARRAY_SIZE(driver_algs); i++) {
+ 		switch (driver_algs[i].type) {
+ 		case CRYPTO_ALG_TYPE_ABLKCIPHER:
+diff --git a/drivers/crypto/sunxi-ss/sun4i-ss-hwrng.c b/drivers/crypto/sunxi-ss/sun4i-ss-hwrng.c
+new file mode 100644
+index 0000000..0af67a8a1
+--- /dev/null
++++ b/drivers/crypto/sunxi-ss/sun4i-ss-hwrng.c
+@@ -0,0 +1,77 @@
++#include "sun4i-ss.h"
++
++static int sun4i_ss_hwrng_init(struct hwrng *hwrng)
++{
++	struct sun4i_ss_ctx *ss;
++
++	ss = container_of(hwrng, struct sun4i_ss_ctx, hwrng);
++	get_random_bytes(ss->seed, SS_SEED_LEN);
++
++	return 0;
++}
++
++static int sun4i_ss_hwrng_read(struct hwrng *hwrng, void *buf,
++		size_t max, bool wait)
++{
++	int i;
++	u32 v;
++	u32 *data = buf;
++	u32 mode = SS_OP_PRNG | SS_PRNG_ONESHOT | SS_ENABLED;
++	size_t len;
++	struct sun4i_ss_ctx *ss;
++
++	ss = container_of(hwrng, struct sun4i_ss_ctx, hwrng);
++	len = min_t(size_t, SS_DATA_LEN, max);
++
++	spin_lock_bh(&ss->slock);
++
++	writel(mode, ss->base + SS_CTL);
++	for (i = 0; i < SS_SEED_LEN / 4; i++)
++		writel(ss->seed[i], ss->base + SS_KEY0 + i * 4);
++	writel(mode | SS_PRNG_START, ss->base + SS_CTL);
++
++#define SS_HWRNG_TIMEOUT 30
++	/* if we are in SS_PRNG_ONESHOT mode, wait for completion */
++	if ((mode & SS_PRNG_CONTINUE) == 0) {
++		i = 0;
++		do {
++			v = readl(ss->base + SS_CTL);
++			i++;
++		} while (v != mode && i < SS_HWRNG_TIMEOUT);
++		if (v != mode) {
++			dev_err(ss->dev,
++				"ERROR: hwrng end timeout %d>%d ctl=%x\n",
++				i, SS_HWRNG_TIMEOUT, v);
++			len = -EFAULT;
++			goto release_ss;
++		}
++	}
++
++	for (i = 0; i < len; i += 4) {
++		v = readl(ss->base + SS_MD0 + i);
++		*(data + i / 4) = v;
++	}
++	for (i = 0; i < SS_SEED_LEN / 4; i++) {
++		v = readl(ss->base + SS_KEY0 + i * 4);
++		ss->seed[i] = v;
++	}
++release_ss:
++	writel(0, ss->base + SS_CTL);
++	spin_unlock_bh(&ss->slock);
++	return len;
++}
++
++int sun4i_ss_hwrng_register(struct hwrng *hwrng)
++{
++	hwrng->name = "sunxi Security System";
++	hwrng->init = sun4i_ss_hwrng_init;
++	hwrng->read = sun4i_ss_hwrng_read;
++
++	/*sun4i_ss_hwrng_init(hwrng);*/
++	return hwrng_register(hwrng);
++}
++
++void sun4i_ss_hwrng_remove(struct hwrng *hwrng)
++{
++	hwrng_unregister(hwrng);
++}
+diff --git a/drivers/crypto/sunxi-ss/sun4i-ss.h b/drivers/crypto/sunxi-ss/sun4i-ss.h
+index 6bb0ba8..2185a05 100644
+--- a/drivers/crypto/sunxi-ss/sun4i-ss.h
++++ b/drivers/crypto/sunxi-ss/sun4i-ss.h
+@@ -22,6 +22,7 @@
+ #include <linux/scatterlist.h>
+ #include <linux/interrupt.h>
+ #include <linux/delay.h>
++#include <linux/hw_random.h>
+ #include <crypto/md5.h>
+ #include <crypto/sha.h>
+ #include <crypto/hash.h>
+@@ -120,6 +121,8 @@
+ #define SS_RXFIFO_EMP_INT_ENABLE	(1 << 2)
+ #define SS_TXFIFO_AVA_INT_ENABLE	(1 << 0)
+ 
++#define SS_SEED_LEN (160/8)
++#define SS_DATA_LEN (160 / 8)
+ 
+ struct sun4i_ss_ctx {
+ 	void __iomem *base;
+@@ -129,6 +132,8 @@ struct sun4i_ss_ctx {
+ 	struct device *dev;
+ 	struct resource *res;
+ 	spinlock_t slock; /* control the use of the device */
++	struct hwrng hwrng;
++	u32 seed[SS_SEED_LEN / 4];
+ };
+ 
+ struct sun4i_ss_alg_template {
+@@ -193,3 +198,5 @@ int sun4i_ss_des_setkey(struct crypto_ablkcipher *tfm, const u8 *key,
+ 		unsigned int keylen);
+ int sun4i_ss_des3_setkey(struct crypto_ablkcipher *tfm, const u8 *key,
+ 		unsigned int keylen);
++int sun4i_ss_hwrng_register(struct hwrng *hwrng);
++void sun4i_ss_hwrng_remove(struct hwrng *hwrng);
+-- 
+2.3.6
+
