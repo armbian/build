@@ -151,7 +151,7 @@ sed -i 's/CONFIG_GMAC_CLK_SYS=y/CONFIG_GMAC_CLK_SYS=y\nCONFIG_GMAC_FOR_BANANAPI=
 fi
 
 # hack for deb builder. To pack what's missing in headers pack.
-cp $SRC/lib/patch/headers-debian-byteshift.patch /tmp
+cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
 
 if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig ; fi
 
