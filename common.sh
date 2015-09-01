@@ -359,7 +359,7 @@ echo -e "[\e[0;32m ok \x1B[0m] Shrink partition and image to real size with 10% 
 
 LOOP=$(losetup -f)
 losetup $LOOP $RAWIMAGE
-PARTSTART=$(fdisk -l $LOOP | tail -1 | awk '{ print $2}')
+PARTSTART=$(fdisk -l $LOOP | grep $LOOP | grep Linux | awk '{ print $2}')
 PARTSTART=$(($PARTSTART*512))
 sleep 1
 losetup -d $LOOP
