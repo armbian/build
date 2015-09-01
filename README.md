@@ -1,23 +1,26 @@
-# What is Armbian? #
+## How to build my own image? ##
 
-Linux distribution for [ARM development boards](http://www.armbian.com/download/). It's more or less pure **Debian / Ubuntu** with dedicated kernel and small modifications to operating system. Armbian is this tool chain and [community](http://forum.armbian.com).
+**Prerequisition:**
 
+- x86 machine, 4G ram, SSD, quad core
+- installed virtual box
+- download [Ubuntu 14.04](http://archive.ubuntu.com/ubuntu/dists/trusty-updates/main/installer-amd64/current/images/netboot/mini.iso) (40Mb)
+- install basic Ubuntu server, OpenSSH and Samba (optional)
+- SSH to VM [as root](http://askubuntu.com/questions/469143/how-to-enable-ssh-root-access-on-ubuntu-14-04) and execute:
 
+		apt-get -y install git
+		git clone https://github.com/igorpecovnik/lib
+		cp lib/compile.sh .
+		chmod +x compile.sh
+		./compile.sh
+
+This will download all necessary sources, execute compilation and build an bootable image.
+
+Most of things will be cached so next run will be extremly faster!
 
 [![Paypal donate](https://www.paypalobjects.com/en_US/i/btn/btn_donate_SM.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=CUYH2KR36YB7W)
 
 Thank you!
-
-## Where to download images? ##
-
-[http://www.armbian.com](http://www.armbian.com "Armbian universal operating system"). Armbian is avaliable as SD card image.
-
-## How to build my own image? ##
-
-	git clone https://github.com/igorpecovnik/lib
-	cp lib/compile.sh .
-	chmod +x compile.sh
-	./compile.sh
 
 ## Support ##
 
