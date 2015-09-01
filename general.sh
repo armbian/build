@@ -49,6 +49,12 @@ download_host_packages (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Download packages for host and install only if missing - Ubuntu 14.04 recommended                     
 #--------------------------------------------------------------------------------------------------------------------------------
+if [ ! -f "/etc/apt/sources.list.d/aptly.conf" ]; then
+echo "deb http://repo.aptly.info/ squeeze main" > /etc/apt/sources.list.d/aptly.conf
+apt-key adv --keyserver keys.gnupg.net --recv-keys E083A3782A194991
+apt-get updates
+fi
+
 IFS=" "
 apt-get -y -qq install debconf-utils
 PAKETKI="aptly device-tree-compiler dialog pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex gawk \
