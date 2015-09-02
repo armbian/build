@@ -156,10 +156,7 @@ fi
 
 # cubox / hummingboard 3.14
 if [[ $LINUXSOURCE == "linux-cubox" ]] ; then
-	# SPI and I2C functionality
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/hb-i2c-spi.patch | grep previ)" == "" ]; then
-		patch -p1 < $SRC/lib/patch/hb-i2c-spi.patch
-	fi
+	patchme "SPI and I2C functionality" 						"hb-i2c-spi.patch" 				"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-cubox.patch" 				"default" "kernel"
 fi
 
