@@ -11,12 +11,13 @@
 
 IFS=";"
 START=0
+OLDFAMILY=""
 
 distro-list ()
 {
 declare -a MYARRAY1=('wheezy' 'Debian 7 Wheezy | oldstable' 'jessie' 'Debian 8 Jessie | stable' 'trusty' 'Ubuntu Trusty Tahr 14.04.x LTS');
 k1=0
-l1=1	
+l1=1
 while [[ $k1 -lt ${#MYARRAY1[@]} ]]
 	do
 		BUILD_DESKTOP="no"
@@ -28,10 +29,21 @@ while [[ $k1 -lt ${#MYARRAY1[@]} ]]
 		else
 			BUILD_DESKTOP="no"
 		fi
-        echo "$BOARD $RELEASE $BRANCH $BUILD_DESKTOP"
-		SOURCE_COMPILE="yes"
+		
+	source $SRC/lib/configuration.sh
+	if [[ $KERNEL_ONLY == "yes" ]]; then
+		if [[ "$OLDFAMILY" != *"$LINUXFAMILY$BRANCH"* ]]; then
+		echo "$BOARD $RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY"
 		source $SRC/lib/main.sh
-        k1=$[$k1+2]
+		OLDFAMILY=$OLDFAMILY"$LINUXFAMILY$BRANCH"
+		fi
+	else
+		echo "$BOARD $RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY"
+		source $SRC/lib/main.sh
+	fi # kernel only
+	
+		SOURCE_COMPILE="yes"
+	    k1=$[$k1+2]
 		l1=$[$l1+2]
 	done
 }

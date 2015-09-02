@@ -281,11 +281,11 @@ if [ "$SOURCE_COMPILE" = "yes" ]; then
 		display_alert "Kernel building done" "@host" "info"
 		display_alert "Target directory" "$DEST/debs/" "info"
 		display_alert "File name: $CHOOSEN_KERNEL" "$VER" "info"
-		exit
 	fi
 	
 fi
 
+if [ "$KERNEL_ONLY" != "yes" ]; then
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # create or use prepared root file-system
@@ -327,6 +327,8 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 #read
 closing_image
+
+fi
 
 end=`date +%s`
 runtime=$(((end-start)/60))
