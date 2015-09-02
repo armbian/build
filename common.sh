@@ -263,6 +263,12 @@ SIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Block count" | awk '{ print $NF
 FREE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Free blocks" | awk '{ print $NF}')
 UNITSIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Block size" | awk '{ print $NF}')
 
+# some system reports this in kilobytes and resize fails
+if [[ "$UNITSIZE" == *k* ]]; then
+UNITSIZE="${UNITSIZE//k/}"
+UNITSIZE=$(($UNITSIZE*1024))
+fi
+
 # calculate new partition size and add 15% reserve
 NEWSIZE=$((($SIZE-$FREE)*$UNITSIZE/1024/1024))
 NEWSIZE=$(echo "scale=2; $NEWSIZE * (1+($2/100))" | bc -l | sed 's/...$//')
