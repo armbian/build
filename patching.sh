@@ -131,7 +131,9 @@ if [[ $BOARD == udoo* ]] ; then
 	# hard fixed DTS tree
 	if [[ $BRANCH == "next" ]] ; then
 		cp $SRC/lib/patch/misc/Makefile-udoo-only arch/arm/boot/dts/Makefile
-		patchme "Install DTB in dedicated package" 				"packaging-next.patch" 			"default" "kernel"
+		# temp
+		cp $SRC/lib/patch/kernel/builddeb-fixed-udoo scripts/package/builddeb
+		#patchme "Install DTB in dedicated package" 				"packaging-next.patch" 			"default" "kernel"
 	else
 	# 
 	patchme "remove strange DTBs from tree" 					"udoo_dtb.patch" 				"default" "kernel"
