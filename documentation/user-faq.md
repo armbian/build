@@ -1,25 +1,32 @@
-# Why there are more download options?
+# What to download?
 
 Each board is fully supported with three basic system options: Debian Wheezy, Jessie and Ubuntu Trusty + one desktop build per board. 
 
 # Which kernel to use?
 
-Stable kernels are production ready but they are different:
+All stable kernels are production ready, but you should use them for different purpuses:
 
- * for headless server or light desktop operations mainline kernel (linux-image-next-) is recommended. 
-
- * for video acceleration, audio, IR, NAND, ... you should stick to legacy (linux-image-)
+ * for headless server or light desktop operations use vanilla kernel (linux-image-next-[KERNELFAMILY](http://forum.armbian.com/index.php/topic/211-kernel-update-procedure-has-been-changed/))  
+ * for using video acceleration, audio, IR, NAND, ... you should stick to legacy (linux-image-[KERNELFAMILY](http://forum.armbian.com/index.php/topic/211-kernel-update-procedure-has-been-changed/))
 
 # How to prepare SD card?
 
-Unzipped RAW images can be written with supplied imagewriter.exe on Windows XP/2003/Win7 and with [Win32Diskimager](http://sourceforge.net/projects/win32diskimager/) on Windows 8.x or with DD command in Linux/Mac:
+Unzipped .raw images can be written with supplied imagewriter.exe on Windows XP/2003/Win7, with [Win32Diskimager](http://sourceforge.net/projects/win32diskimager/) on Windows 8.x or with DD command in Linux/Mac:
 
 	dd bs=1M if=filename.raw of=/dev/sdx
 	# /dev/sdx is your sd card device
 
+Image writting takes around 3 minutes on a class 6 SD CARD
+
+# How to boot?
+
+Insert SD card into a slot and power the board. First boot takes around 3 minutes than it reboots and you will need to wait another one minute to login. This delay is because system updates package list and creates 128Mb emergency SWAP on the SD card.
+
+Normal boot (with DHCP) takes around 35 seunds with a class 6 SD CARD.
+
 # How to login? 
 
-Login as **root** and use password **1234**. You will be prompted to change this password at first login. This is the only pre-installed user.
+Login as **root** on console or via SSH and use password **1234**. You will be prompted to change this password at first login. This is the only pre-installed user.
 
 Desktop images starts into desktop without asking for password. To change this add some display manager:
 
@@ -30,6 +37,21 @@ Or edit the contents of file
 	/etc/default/nodm
 
 and change the autologin user.
+
+# How to update kernel?
+
+For Armbian 4.2 and newer.
+
+	apt-get update
+	apt-get upgrade
+	reboot
+	
+For all other cases. Note that this procedure upgrades only kernel with hardware definitions (bin/dtb/firmware) and headers. Operating system and modifications remain as is.
+
+	wget -q -O - http://upgrade.armbian.com | bash
+
+You will be prompted to select and confirm some actions. It's possible to upgrade **from any other distribution**.
+
 
 # How to add users?
 
@@ -249,26 +271,6 @@ And finally start your service when done with learning:
 Test your remote:
 
 	irw /dev/lircd
-
-# How to update kernel?
-
-For Armbian 4.2 and newer.
-
-	apt-get update
-	apt-get upgrade
-	reboot
-	
-For all other cases:
-	
-Add key, repository, update and install armbian
-
-	wget -qO - http://apt.armbian.com/armbian.key | sudo apt-key add -
-	echo "deb http://apt.armbian.com $(lsb_release -cs) main" >> /etc/apt/sources.list
-	apt-get update
-	apt-get install armbian-packets
-	reboot
-
-You will be prompted to confirm some actions.
 
 # How to compile my own kernel or SD image?
 

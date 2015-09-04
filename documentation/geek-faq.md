@@ -17,7 +17,7 @@ Run the script
 
 	./compile.sh
 
-# What is the process behind?
+# What is behind the build process?
 
 
 Build process summary:
@@ -31,11 +31,11 @@ Build process summary:
 
 Additional clarification:
 
-- **KERNEL_ONLY** - if we want to compile kernel, u-boot, headers and dtbs package only. The output is .tar file in target subdirectory. By default this is output/kernel. 
-- **SOURCE_COMPILE** is useful switch when we are building images and we already compiled kernel before. All kernel builds are cached in output/kernel by default until they are removed manually. If we choose this option, we will be selecting one of previously compiled kernels.
+- **KERNEL_ONLY** - if we want to compile kernel, u-boot, headers and dtbs package only.
+- **SOURCE_COMPILE** is useful switch when we are building images and we already compiled kernel before. All kernel builds are cached in output/cache by default until they are removed manually. If we choose this option, we will be selecting one of previously compiled kernels.
 - **KERNEL_CONFIGURE** will bring up kernel configurator otherwise kernel will be compiled with script presets located in lib/config/linux-*.config
 - **KERNEL_CLEAN** executes "MAKE clean" on sources before compilation.
-- **BUILD_DESKTOP** is an experimental feature to build a desktop on the top of the system with hw acceleration for some boards.
+- **BUILD_DESKTOP** builds a desktop on the top of the system with hw acceleration for some boards.
 - **AFTERINSTALL** is a variable with command executed in a process of building just before closing image to insert some of your custom applications or fixes.
 - **KERNELTAG** is a TAG for specific kernel source. Some sources doesn't have that.
 - **FBTFT** is a [driver for small displays](https://github.com/notro/fbtft). Only applicable for old kernels (3.4-3.14)
@@ -64,12 +64,7 @@ Additional clarification:
 
 ## Creating compile environment ##
 
-At first run we are downloading all necessary dependencies. Those packets are going to be installed:
-
-	device-tree-compiler pv bc lzop zip binfmt-support bison build-essential ccache debootstrap 
-	flex gawk gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip
-	libusb-1.0-0-dev parted pkg-config expect gcc-arm-linux-gnueabi libncurses5-dev
-
+At first run we are downloading all necessary dependencies. 
 
 ## Using board configuration ##
 
@@ -89,8 +84,9 @@ We need to get some predefined variables about selected board. Which kernel & ub
 	LINUXKERNEL="https://github.com/UDOOboard/linux_kernel"		# kernel source location
 	LINUXCONFIG="linux-udoo-neo"								# kernel configuration
 	LINUXSOURCE="linux-neo"										# Local folder where to download it
+	LINUXFAMILY="udoo"		# boards share kernel
 
-This **isn't ment to be user configurable** but you can alter variables if you really know what you are doing.
+This **isn't ment to be user configurable** but you can alter variables if you know what you are doing.
 
 ## Downloading sources ##
 
@@ -112,18 +108,9 @@ In patching process we are appling patches to sources. The process is defined in
 
 Debootstrap creates fresh Debian / Ubuntu root filesystem templates or use cached under:
 
-	output/rootfs/$DISTRIBUTION.tgz
+	output/cache/rootfs/$DISTRIBUTION.tgz
 
 To recreate those files you need to remove them manually. 
-
-Those packets are installed on the top of basic system. There are some small differences between distributions:
-
-	alsa-utils automake btrfs-tools bash-completion bc bridge-utils bluez build-essential cmake 
-	cpufrequtils curl device-tree-compiler dosfstools evtest figlet fbset fping git haveged hddtemp
-	hdparm hostapd htop i2c-tools ifenslave-2.6 iperf ir-keytable iotop iw less libbluetooth-dev
-	libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev module-init-tools mtp
-	tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress 
-	sudo sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools wget wpasupplicant
 
 ## Kernel install ##
 
@@ -153,7 +140,7 @@ This place is reserved for custom applications. There is one example of applicat
 
 There is an option to add some extra commands just before closing an image which is also automaticaly shrink to it's actual size with some small reserve.
 
-## SDK directory structure ##
+## Directory structure ##
 
 It will be something like this:
 
@@ -172,6 +159,9 @@ It will be something like this:
 	lib/distributions.sh	system specific installation and fixes
 	lib/main.sh				user input and script calls
 	lib/patching.sh			board and system dependend kernel & u-boot patch calls
+	lib/repo-update.sh		creates and updates your local repository
+	lib/repo-show-sh		show packets in your local repository
+	lib/upgrade.sh			script to upgrade older images
 	sources/				source code for kernel, uboot and other utilities
 	output/repository		repository 
 	output/cache			cache for root filesystem and headers compilation
