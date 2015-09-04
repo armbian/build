@@ -56,6 +56,8 @@ jessie)
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/cache/sdcard/etc/ssh/sshd_config 
 		# auto upgrading
 		sed -e "s/ORIGIN/Debian/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		# mount 256Mb tmpfs to /tmp
+		echo "tmpfs   /tmp         tmpfs   nodev,nosuid,size=256M          0  0" >> $DEST/cache/sdcard/etc/fstab
 		;;
 
 trusty)
