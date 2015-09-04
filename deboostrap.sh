@@ -101,6 +101,7 @@ mount -t devpts chpts $DEST/cache/sdcard/dev/pts
 cp $SRC/lib/config/sources.list.$RELEASE $DEST/cache/sdcard/etc/apt/sources.list
 
 # add armbian key
+echo "deb http://apt.armbian.com $RELEASE main" > $DEST/cache/sdcard/etc/apt/sources.list.d/armbian.list
 cp $SRC/lib/bin/armbian.key $DEST/cache/sdcard 
 chroot $DEST/cache/sdcard /bin/bash -c "cat armbian.key | apt-key add -"
 rm $DEST/cache/sdcard/armbian.key
