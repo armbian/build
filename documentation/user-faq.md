@@ -271,9 +271,3 @@ And finally start your service when done with learning:
 Test your remote:
 
 	irw /dev/lircd
-
-# How to compile my own kernel or SD image?
-
-Check [my build script](http://github.com/igorpecovnik/lib).
-
-
