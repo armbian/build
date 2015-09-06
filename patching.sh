@@ -151,8 +151,10 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 	# banana/orange gmac  
 	if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
 		patchme "Bananapi/Orange/R1 gmac" 								"bananagmac.patch" 		"default" "kernel"
+		patchme "Bananapi PRO wireless" 								"wireless-bananapro.patch" 		"default" "kernel"
 	else
 		patchme "Banana PI/ PRO / Orange / R1 gmac" 					"bananagmac.patch" 		"reverse" "kernel"
+		patchme "Bananapi PRO wireless" 								"wireless-bananapro.patch" 		"reverse" "kernel"
 	fi
 fi
 
