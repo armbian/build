@@ -65,7 +65,9 @@ for x in $PAKETKI; do
 		INSTALL=$INSTALL" "$x
 	fi
 done
+
 if [[ $INSTALL != "" ]]; then
+display_alert "Will install following packages: "$INSTALL
 debconf-apt-progress -- apt-get -y install $INSTALL 
 fi
 }
