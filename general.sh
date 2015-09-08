@@ -34,10 +34,10 @@ display_alert()
 # Let's have unique way of displaying alerts
 #--------------------------------------------------------------------------------------------------------------------------------
 {
-if [[ $2 != "" ]]; then TMPARA="[\e[0;33m $2 \x1B[0m]"; else unset TMPARA; fi
-if [ $3 == "err" ]; then
+if [[ "$2" != "" ]]; then TMPARA="[\e[0;33m $2 \x1B[0m]"; else unset TMPARA; fi
+if [ "$3" == "err" ]; then
 	echo -e "[\e[0;31m error \x1B[0m] $1 $TMPARA"
-elif [ $3 == "wrn" ]; then
+elif [ "$3" == "wrn" ]; then
 	echo -e "[\e[0;35m warn \x1B[0m] $1 $TMPARA"
 else
 	echo -e "[\e[0;32m o.k. \x1B[0m] $1 $TMPARA"
