@@ -1,13 +1,13 @@
 # What to download?
 
-Each board is fully supported with three basic system options: Debian Wheezy, Jessie and Ubuntu Trusty + one desktop build per board. 
+Each board is fully supported with three basic system options: Debian Wheezy, Jessie and Ubuntu Trusty desktop build per board.
 
 # Which kernel to use?
 
 All stable kernels are production ready, but you should use them for different purpuses:
 
- * for headless server or light desktop operations use vanilla kernel (linux-image-next-[KERNELFAMILY](http://forum.armbian.com/index.php/topic/211-kernel-update-procedure-has-been-changed/))  
- * for using video acceleration, audio, IR, NAND, ... you should stick to legacy (linux-image-[KERNELFAMILY](http://forum.armbian.com/index.php/topic/211-kernel-update-procedure-has-been-changed/))
+ * for headless server or light desktop operations use vanilla kernel (linux-image-next-[kernelfamily](http://forum.armbian.com/index.php/topic/211-kernel-update-procedure-has-been-changed/))  
+ * for using video acceleration, audio, IR, NAND, ... you should stick to legacy (linux-image-[kernelfamily](http://forum.armbian.com/index.php/topic/211-kernel-update-procedure-has-been-changed/))
 
 # How to prepare SD card?
 
@@ -16,13 +16,13 @@ Unzipped .raw images can be written with supplied imagewriter.exe on Windows XP/
 	dd bs=1M if=filename.raw of=/dev/sdx
 	# /dev/sdx is your sd card device
 
-Image writting takes around 3 minutes on a class 6 SD CARD
+Image writting takes around 3 minutes on a slow, class 6 SD card.
 
 # How to boot?
 
 Insert SD card into a slot and power the board. First boot takes around 3 minutes than it reboots and you will need to wait another one minute to login. This delay is because system updates package list and creates 128Mb emergency SWAP on the SD card.
 
-Normal boot (with DHCP) takes around 35 seunds with a class 6 SD CARD.
+Normal boot (with DHCP) takes up to 35 seconds with a class 6 SD CARD and cheapest board.
 
 # How to login? 
 
@@ -32,7 +32,7 @@ Desktop images starts into desktop without asking for password. To change this a
 
 	apt-get install lightdm
 
-Or edit the contents of file 
+... or edit the contents of file:
 
 	/etc/default/nodm
 
@@ -46,12 +46,11 @@ For Armbian 4.2 and newer.
 	apt-get upgrade
 	reboot
 	
-For all other cases. Note that this procedure upgrades only kernel with hardware definitions (bin/dtb/firmware) and headers. Operating system and modifications remain as is.
+For all other cases. Note that this procedure upgrades only kernel with hardware definitions (bin, dtb, firmware and headers. Operating system and modifications remain as is.
 
 	wget -q -O - http://upgrade.armbian.com | bash
 
 You will be prompted to select and confirm some actions. It's possible to upgrade **from any other distribution**.
-
 
 # How to add users?
 
@@ -137,6 +136,8 @@ Check [this site](http://namhuy.net/1085/install-gui-on-debian-7-wheezy.html) fo
 
 
 # How to upgrade from Ubuntu Trusty to next LTS?
+
+... when available.
 	
 	apt-get install update-manager-core
     do-release-upgrade -d
@@ -144,7 +145,7 @@ Check [this site](http://namhuy.net/1085/install-gui-on-debian-7-wheezy.html) fo
 	apt-get dist-upgrade
 
 # How to toggle boot output?
-Edit and change boot parameters in /boot/boot.cmd:
+Edit and change [boot parameters](http://redsymbol.net/linux-kernel-boot-parameters/) in /boot/boot.cmd:
 
     - console=ttyS0,115200
     + console=tty1
@@ -155,7 +156,7 @@ and convert it to boot.scr with this command:
 
 Reboot.
 
-Serial console on imx6 boards are ttymxc0 (Hummingboard, Cubox-i) or ttymxc1 (Udoo)
+Serial console on imx6 boards are ttymxc0 (Hummingboard, Cubox-i) or ttymxc1 (Udoo).
 
 # How to install to NAND, SATA & USB?
 
@@ -163,11 +164,15 @@ Serial console on imx6 boards are ttymxc0 (Hummingboard, Cubox-i) or ttymxc1 (Ud
 
 Required condition:
 
- * kernel 3.4.x (some newer kernels might work too)
- * NAND storage
+NAND:
+
+ * kernel 3.4.x and NAND storage
+ * pre-installed system on NAND (stock Android or other Linux)
+
+SATA/USB:
+
+ * any kernel
  * pre-partitioned SATA or USB storage
- * system booted from SD card
- * root privileges
 
 Start the install script: 
 

@@ -29,7 +29,7 @@ Build process summary:
 - debootstrap minimalistic Debian Wheezy, Jessie and Ubuntu Trusty into SD card image,
 - install additional packets, apply customizations and shrink image to it's actual size.
 
-Additional clarification:
+Switches clarification:
 
 - **KERNEL_ONLY** - if we want to compile kernel, u-boot, headers and dtbs package only.
 - **SOURCE_COMPILE** is useful switch when we are building images and we already compiled kernel before. All kernel builds are cached in output/cache by default until they are removed manually. If we choose this option, we will be selecting one of previously compiled kernels.
@@ -72,19 +72,19 @@ We need to get some predefined variables about selected board. Which kernel & ub
 
 **Board configuration example:**
     
-	REVISION="1.1"												# Version number is altered by board maintainer
-	BOOTSIZE="16"												# Size of FAT boot partition. If not defined it's not used.
-	BOOTLOADER="https://github.com/UDOOboard/uboot-imx"			# Uboot source location
-	BOOTSOURCE="u-boot-neo"										# Local folder where to download it
-	BOOTCONFIG="udoo_neo_config"								# Which compile config to use
-	CPUMIN="198000"												# CPU minimum frequency
-	CPUMAX="996000"												# CPU minimum frequency
-	MODULES="bonding"											# old kernel modules
-	MODULES_NEXT=""												# new kernel modules
-	LINUXKERNEL="https://github.com/UDOOboard/linux_kernel"		# kernel source location
-	LINUXCONFIG="linux-udoo-neo"								# kernel configuration
-	LINUXSOURCE="linux-neo"										# Local folder where to download it
-	LINUXFAMILY="udoo"		# boards share kernel
+	REVISION="1.1"											# Version number is altered by board maintainer
+	BOOTSIZE="16"											# FAT boot partition in MB, 0 for none
+	BOOTLOADER="https://github.com/UDOOboard/uboot-imx"		# Uboot source location
+	BOOTSOURCE="u-boot-neo"									# Local folder where to download it
+	BOOTCONFIG="udoo_neo_config"							# Which compile config to use
+	CPUMIN="198000"											# CPU minimum frequency
+	CPUMAX="996000"											# CPU minimum frequency
+	MODULES="bonding"										# old kernel modules
+	MODULES_NEXT=""											# new kernel modules
+	LINUXKERNEL="https://github.com/UDOOboard/linux_kernel"	# kernel source location
+	LINUXCONFIG="linux-udoo-neo"							# kernel configuration
+	LINUXSOURCE="linux-neo"									# Local folder where to download it
+	LINUXFAMILY="udoo"										# boards share kernel
 
 This **isn't ment to be user configurable** but you can alter variables if you know what you are doing.
 
@@ -144,7 +144,7 @@ There is an option to add some extra commands just before closing an image which
 
 It will be something like this:
 
-    compile.sh				
+    compile.sh				compile execution script
 	lib/bin/				blobs, firmwares, static compiled, bootsplash
     lib/config/				kernel, board, u-boot, hostapd, package list
     lib/documentation/		user and developers manual
