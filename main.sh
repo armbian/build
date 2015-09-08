@@ -202,8 +202,11 @@ if [ "$KERNEL_ONLY" == "yes" ]; then
 	else
 		display_alert "Building" "$VERSION" "info"
 fi
-display_alert "Syncing clock" "host" "info"
-ntpdate -s time.ijs.si
+
+if [ "$SYNC_CLOCK" != "no" ]; then
+	display_alert "Synching clock" "host" "info"
+	ntpdate -s time.ijs.si
+fi
 start=`date +%s`
 
 
