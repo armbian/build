@@ -291,7 +291,7 @@ PARTITIONS=$(($(fdisk -l $LOOP | grep $LOOP | wc -l)-1))
 sleep 2
 
 # truncate the image
-TRUNCATE=$(fdisk -l $LOOP | tail -1 | awk '{ print $3}')
+TRUNCATE=$(parted -m $LOOP 'unit s print' | tail -1 | awk -F':' '{ print $3 }' | sed 's/.$//')
 TRUNCATE=$((($TRUNCATE+1)*512))
 
 truncate -s $TRUNCATE $RAWIMAGE >/dev/null 2>&1
