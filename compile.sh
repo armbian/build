@@ -71,7 +71,7 @@ if [ -d "$SRC/lib" ]; then
     git pull
 else
     # download SDK
-    git clone https://github.com/igorpecovnik/lib libclean
+    git clone https://github.com/igorpecovnik/lib
 fi
 
 
