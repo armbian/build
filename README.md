@@ -22,6 +22,6 @@ Most of things will be cached so next run will be extremly faster!
 
 More info:
 
+- [Project at Github](https://github.com/igorpecovnik/lib)
 - [Documentation](http://www.armbian.com/documentation/)
 - [Support forums](http://forum.armbian.com/ "Armbian support forum")
-- [Allwinner SBC community](https://linux-sunxi.org/)
