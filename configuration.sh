@@ -295,7 +295,7 @@ MODULES_NEXT=""
 
 
 cubox-i)#enabled
-#description Frescale iMx dual/quad core Wifi
+#description Freescale iMx dual/quad core Wifi
 #build 1
 #--------------------------------------------------------------------------------------------------------------------------------
 # cubox-i & hummingboard 3.14.xx
@@ -322,7 +322,7 @@ fi
 
 
 udoo)#enabled
-#description Frescale iMx dual/quad core Wifi
+#description Freescale iMx dual/quad core Wifi
 #build 3
 #--------------------------------------------------------------------------------------------------------------------------------
 # Udoo quad
@@ -347,10 +347,10 @@ LINUXFAMILY="udoo"
 
 
 udoo-neo)#enabled
-#description Frescale iMx singe core Wifi
+#description Freescale iMx singe core Wifi
 #build 0
 #--------------------------------------------------------------------------------------------------------------------------------
-# Udoo quad
+# Udoo Neo
 #--------------------------------------------------------------------------------------------------------------------------------
 REVISION="1.2"
 BOOTSIZE="32"
@@ -386,13 +386,10 @@ if [[ $BRANCH == *next* ]];then
 	LINUXFAMILY="sunxi"
 	FIRMWARE=""
 	if [[ $BOARD == "udoo" ]];then
-	BOOTLOADER="git://git.denx.de/u-boot.git"
-	BOOTSOURCE="u-boot"
 	LINUXKERNEL="https://github.com/patrykk/linux-udoo"
 	LINUXSOURCE="linux-udoo-next"
 	LINUXCONFIG="linux-udoo-next"
-	LINUXDEFAULT="4.0.8"
-	UBOOTTAG="v2015.07"
+	LINUXDEFAULT="4.2"
 	KERNELTAG=""
 	LINUXFAMILY="udoo"
 	fi
