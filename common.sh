@@ -275,7 +275,7 @@ NEWSIZE=$(echo "scale=2; $NEWSIZE * (1+($2/100))" | bc -l | sed 's/...$//')
 NEWSIZE=${NEWSIZE%.*}
 
 # resize partition to new size
-BLOCKSIZE=$(LANGUAGE=english resize2fs $LOOP $NEWSIZE"M" | grep "The filesystem on" | awk '{ print $(NF-2)}')
+BLOCKSIZE=$(LANGUAGE=english resize2fs $LOOP $NEWSIZE"M" | grep "The filesystem on" | awk '{ print $(7)}')
 NEWSIZE=$(($BLOCKSIZE*$UNITSIZE/1024))
 sleep 1
 tune2fs -O has_journal $LOOP >/dev/null 2>&1
