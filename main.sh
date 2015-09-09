@@ -30,7 +30,7 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$BOARD" == "" ]; then
 	IFS=";"
-	MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/)#enabled/ || /#des/' | sed 's/)#enabled//g' | sed 's/#description //g' | sed ':a;N;$!ba;s/\n/;/g'))
+	MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/\)#enabled/ || /#des/' | sed 's/)#enabled//g' | sed 's/#description //g' | sed ':a;N;$!ba;s/\n/;/g'))
 	MYPARAMS=( --title "Choose a board" --backtitle $backtitle --menu "\n Currently supported:" 28 62 18 )
 	i=0
 	j=1
