@@ -64,6 +64,8 @@ mkimage -C none -A arm -T script -d  /boot/boot.cmd  /boot/boot.scr
 }
 install_packets_and_repo ()
 {
+clear
+whiptail --title "Armbian upgrade" --infobox "Downloading dependencies and updating packages list" 7 60
 # we need this
 apt-get -y -qq install u-boot-tools debconf-utils lsb-release pv aptitude
 apt-get -y -qq remove hostapd
@@ -92,8 +94,8 @@ SOURCE=$(dmesg |grep root)
 SOURCE=${SOURCE#"${SOURCE%%root=*}"}
 SOURCE=`echo $SOURCE| cut -d' ' -f 1`
 SOURCE="${SOURCE//root=/}"
-if [[ "$ARCH" != arm* ]]; then echo -e "[\e[0;31m error \x1B[0m] Architecture not supported"; fi
-if [[ "$HARDWARE" != "sun7i" && "$HARDWARE" != "Allwinner" ]]; then echo -e "[\e[0;31m error \x1B[0m] Unsupported hw"; fi
+if [[ "$ARCH" != arm* ]]; then echo -e "[\e[0;31m error \x1B[0m] Architecture not supported"; exit; fi
+if [[ !( "$HARDWARE" == "sun7i" || "$HARDWARE" == "Allwinner") ]]; then echo -e "[\e[0;31m error \x1B[0m] Unsupported hw"; exit; fi
 bootdevice="/dev/mmcblk0p1";
 i=0
 if [[ "$(grep nand /proc/partitions)" != "" && "$(grep mmc /proc/partitions)" == "" ]]; then bootdevice="/dev/nand1"; fi
@@ -198,7 +200,7 @@ esac
 remove_old ()
 {
 clear
-whiptail --title "Armbian upgrade" --infobox "Removing old kernel packages ... check upgrade.log" 7 60
+whiptail --title "Armbian upgrade" --infobox "Removing current kernel packages ... Check upgrade.log if case of troubles" 8 60
 aptitude remove ~nlinux-dtb --quiet=100 >> upgrade.log
 aptitude remove ~nlinux-u-boot --quiet=100 >> upgrade.log
 aptitude remove ~nlinux-image --quiet=100 >> upgrade.log
@@ -213,7 +215,7 @@ if [[ $BOARD == "cubox-i" || $BOARD == udoo* || $BRANCH == "next" ]]; then PACKE
 IFS=" "
 
 debconf-apt-progress -- apt-get -y install linux-image$ROOT_BRACH-$LINUXFAMILY
-debconf-apt-progress -- apt-get -y install linux-firmware-image$ROOT_BRACH-$LINUXFAMILY linux-u-boot$ROOT_BRACH-$BOARD linux-headers$ROOT_BRACH-$LINUXFAMILY
+debconf-apt-progress -- apt-get -y install linux-firmware-image$ROOT_BRACH-$LINUXFAMILY linux-u-boot-$BOARD$ROOT_BRACH linux-headers$ROOT_BRACH-$LINUXFAMILY
 debconf-apt-progress -- apt-get -y install linux-$(lsb_release -cs)-root$ROOT_BRACH-$BOARD $PACKETS
 }
 #--------------------------------------------------------------------------------------------------------------------------------
