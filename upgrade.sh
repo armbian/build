@@ -213,7 +213,7 @@ if [[ $BOARD == "cubox-i" || $BOARD == udoo* || $BRANCH == "next" ]]; then PACKE
 IFS=" "
 
 debconf-apt-progress -- apt-get -y install linux-image$ROOT_BRACH-$LINUXFAMILY
-debconf-apt-progress -- apt-get -y install linux-firmware-image$ROOT_BRACH-$LINUXFAMILY linux-u-boot-$BOARD linux-headers$ROOT_BRACH-$LINUXFAMILY
+debconf-apt-progress -- apt-get -y install linux-firmware-image$ROOT_BRACH-$LINUXFAMILY linux-u-boot$ROOT_BRACH-$BOARD linux-headers$ROOT_BRACH-$LINUXFAMILY
 debconf-apt-progress -- apt-get -y install linux-$(lsb_release -cs)-root$ROOT_BRACH-$BOARD $PACKETS
 }
 #--------------------------------------------------------------------------------------------------------------------------------
