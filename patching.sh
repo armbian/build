@@ -94,7 +94,9 @@ if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) 
 
 	patchme "fix BRCMFMAC AP mode Banana & CT" 					"brcmfmac_ap_banana_ct.patch" 		"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-next.patch" 				"default" "kernel"
-	patchme "update ahb clocks for sun7i" 						"ahb_clocks_sun7i.patch" 			"default" "kernel"	
+	patchme "update ahb clocks for sun7i" 						"ahb_clocks_sun7i.patch" 			"default" "kernel"
+
+    #patchme "Banana M2 support, LEDs" 							"Sinoviop-bananas-M2-R1-M1-fixes.patch" 	"default" "kernel"	
 	#patchme "Security System #0001" 	"0001-ARM-sun5i-dt-Add-Security-System-to-A10s-SoC-DTS.patch" "default" "kernel"
 	#patchme "Security System #0002" 	"0002-ARM-sun6i-dt-Add-Security-System-to-A31-SoC-DTS.patch" "default" "kernel"
 	#patchme "Security System #0003" 	"0003-ARM-sun4i-dt-Add-Security-System-to-A10-SoC-DTS.patch" "default" "kernel"
@@ -119,11 +121,13 @@ if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) 
 	fi
 
 	# Add new devices
-	addnewdevice "Lamobo R1" 			"sun7i-a20-lamobo-r1"	"kernel"
-	addnewdevice "Orange PI" 			"sun7i-a20-orangepi"	"kernel"
-	addnewdevice "Orange PI mini" 		"sun7i-a20-orangepi-mini"	"kernel"
-	addnewdevice "PCDuino Nano3" 		"sun7i-a20-pcduino3-nano"	"kernel"
-
+	addnewdevice "Lamobo R1" 			"sun7i-a20-lamobo-r1"					"kernel"
+	#addnewdevice "Orange PI" 			"sun7i-a20-orangepi"					"kernel"
+	#addnewdevice "Orange PI mini" 		"sun7i-a20-orangepi-mini"				"kernel"
+	#addnewdevice "PCDuino Nano3" 		"sun7i-a20-pcduino3-nano"				"kernel"
+	addnewdevice "Bananapi M2 A31s" 	"sun6i-a31s-bananapi-m2"				"kernel"
+	addnewdevice "Bananapi M1 Plus" 	"sun7i-a20-bananapi-m1-plus"			"kernel"
+	addnewdevice "Bananapi R1" 			"sun7i-a20-bananapi-r1"					"kernel"
 	
 fi
 
@@ -159,7 +163,7 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 fi
 
 # cubox / hummingboard 3.14
-if [[ $LINUXSOURCE == "linux-cubox" ]] ; then
+if [[ $LINUXSOURCE == linux-cubox* ]] ; then
 	patchme "SPI and I2C functionality" 						"hb-i2c-spi.patch" 				"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-cubox.patch" 				"default" "kernel"
 fi
