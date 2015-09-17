@@ -168,11 +168,6 @@ It will be something like this:
 	output/debs				deb packeges
 	output/images			zip packed RAW image
 
-## Support ##
+## Additional info ##
 
-
-- [Using Armbian FAQ](https://github.com/igorpecovnik/lib/blob/next/documentation/general-faq.md)
-- [Forums on http://forum.armbian.com/](http://forum.armbian.com/ "Armbian support forum")
 - [Allwinner SBC community](https://linux-sunxi.org/)
-
-**Have fun with building ;)**
