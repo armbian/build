@@ -13,6 +13,8 @@
 BOARD=""
 
 #--------------------------------------------------------------------------------------------------------------------------------
+# Show warning at start
+#--------------------------------------------------------------------------------------------------------------------------------
 display_warning()
 {
 read -r -d '' MOJTEXT << EOM
@@ -30,11 +32,15 @@ read -r -d '' MOJTEXT << EOM
 
 7. You might need to power cycle the board.
 EOM
-whiptail --title "Armbian upgrade script 1.3" --msgbox "$MOJTEXT" 25 60
+whiptail --title "Armbian upgrade script 1.4" --msgbox "$MOJTEXT" 25 60
 }
+
+
+#--------------------------------------------------------------------------------------------------------------------------------
+# Create boot scripts for Allwinner boards
+#--------------------------------------------------------------------------------------------------------------------------------
 create_boot_script ()
 {
-# create boot script $1 = where $2 root device
 cat > /boot/boot.cmd <<EOT
 setenv bootargs console=tty1 root=$rootdevice rootwait rootfstype=ext4 sunxi_ve_mem_reserve=0 sunxi_g2d_mem_reserve=0 sunxi_no_mali_mem_reserve sunxi_fb_mem_reserve=16 hdmi.audio=EDID:0 disp.screen0_output_mode=1920x1080p60 panic=10 consoleblank=0 enforcing=0 loglevel=1
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -62,10 +68,15 @@ fi
 EOT
 mkimage -C none -A arm -T script -d  /boot/boot.cmd  /boot/boot.scr
 }
+
+
+#--------------------------------------------------------------------------------------------------------------------------------
+# Install packeges and repository
+#--------------------------------------------------------------------------------------------------------------------------------
 install_packets_and_repo ()
 {
 clear
-whiptail --title "Armbian upgrade" --infobox "Downloading dependencies and updating packages list" 7 60
+whiptail --title "Armbian upgrade script 1.4" --infobox "Downloading dependencies and updating packages list" 7 60
 # we need this
 apt-get -y -qq install u-boot-tools debconf-utils lsb-release pv aptitude
 apt-get -y -qq remove hostapd
@@ -85,41 +96,39 @@ if [ ! -f "/etc/apt/sources.list.d/armbian.list" ]; then
 	apt-get update >/dev/null 2>&1
 fi
 }
+
+
 get_hardware_info ()
-# determine root and boot partitions
+#--------------------------------------------------------------------------------------------------------------------------------
+# determine root and boot partitions, arhitecture, cpu, ...
+#--------------------------------------------------------------------------------------------------------------------------------
 {
+# arhitecture
 ARCH=$(lscpu | grep Architecture  | awk '{print $2}')
-HARDWARE=$(cat /proc/cpuinfo | grep Hardware | awk '{print $3}')
-SOURCE=$(dmesg |grep root)
-SOURCE=${SOURCE#"${SOURCE%%root=*}"}
-SOURCE=`echo $SOURCE| cut -d' ' -f 1`
-SOURCE="${SOURCE//root=/}"
 if [[ "$ARCH" != arm* ]]; then echo -e "[\e[0;31m error \x1B[0m] Architecture not supported"; exit; fi
+# CPU
+HARDWARE=$(cat /proc/cpuinfo | grep Hardware | awk '{print $3}')
 if [[ !( "$HARDWARE" == "sun7i" || "$HARDWARE" == "Allwinner") ]]; then echo -e "[\e[0;31m error \x1B[0m] Unsupported hw"; exit; fi
+# boot partition
 bootdevice="/dev/mmcblk0p1";
-i=0
+# if mmc is not present than boot can only be nand1
 if [[ "$(grep nand /proc/partitions)" != "" && "$(grep mmc /proc/partitions)" == "" ]]; then bootdevice="/dev/nand1"; fi
-if [ "$(grep mmc /proc/partitions)" != "" ]; then get_root_device mmc p; i=$[$i+1];fi
-root[$i]=$rootdevice
-if [ "$(grep sda /proc/partitions)" != "" ]; then get_root_device sda; i=$[$i+1];fi
-root[$i]=$rootdevice
-# if we have both options ask to confirm
-if [[ "$SOURCE" == "${root[1]}" ]]; then default="--defaultno"; fi 
-if [[ "${root[0]}" != "" && "${root[1]}" != "" ]]; then
-	if (whiptail $default --yesno "I detected the default settings. Just make sure." --title "Running from ?" \
-	--yes-button "${root[0]}" --no-button "${root[1]}" 7 48); 
-		then rootdevice=${root[0]};
-		else rootdevice=${root[1]};
-	fi
+# root partition
+root_device=$(mountpoint -d /)
+for file in /dev/* ; do
+CURRENT_DEVICE=$(printf "%d:%d" $(stat --printf="0x%t 0x%T" $file))
+if [ $CURRENT_DEVICE = $root_device ]; then
+	rootdevice=$file
+	break;
 fi
+done
 }
-get_root_device ()
-{
-rootdevice="/dev/"$(lsblk -idn -o NAME | grep $1)
-partitions=$(($(fdisk -l $rootdevice | grep $rootdevice | wc -l)-1))
-rootdevice="/dev/"$(lsblk -idn -o NAME | grep $1)$2$partitions
-}
+
+
 mount_boot_device ()
+#--------------------------------------------------------------------------------------------------------------------------------
+# mount boot device
+#--------------------------------------------------------------------------------------------------------------------------------
 {
 if [[ "$bootdevice" == "/dev/mmcblk0p1" && "$rootdevice" != "/dev/mmcblk0p1" ]]; then
 	umount /boot /media/mmc 
@@ -136,9 +145,14 @@ if [[ "$bootdevice" == "/dev/nand1" ]]; then
 	mount /dev/nand1 /mnt
 fi
 }
+
+
 select_boards ()
+#--------------------------------------------------------------------------------------------------------------------------------
+# This might be changed once with board detection which is already very accurate
+#--------------------------------------------------------------------------------------------------------------------------------
 {
-backtitle="Armbian upgrade"
+backtitle="Armbian upgrade script 1.4"
 if [ "$BOARD" == "" ]; then
 	BOARDS="AW-som-a20 A20 Cubieboard A10 Cubieboard2 A20 Cubietruck A20 Lime-A10 A10 Lime A20 Lime2 A20 Micro A20 Bananapi A20 \
     Lamobo-R1 A20 Orangepi A20 Pcduino3nano A20 Cubox-i imx6 Udoo imx6";
@@ -197,10 +211,15 @@ LINUXFAMILY="sunxi"
 ;;
 esac
  }
+
+ 
 remove_old ()
+#--------------------------------------------------------------------------------------------------------------------------------
+# Delete previous kernel
+#--------------------------------------------------------------------------------------------------------------------------------
 {
 clear
-whiptail --title "Armbian upgrade" --infobox "Removing current kernel packages ... Check upgrade.log if case of troubles" 8 60
+whiptail --title "Armbian upgrade script 1.4" --infobox "Removing current kernel packages. \n\n Check upgrade.log in case of troubles!" 8 60
 aptitude remove ~nlinux-dtb --quiet=100 >> upgrade.log
 aptitude remove ~nlinux-u-boot --quiet=100 >> upgrade.log
 aptitude remove ~nlinux-image --quiet=100 >> upgrade.log
@@ -208,7 +227,12 @@ aptitude remove ~nlinux-headers --quiet=100 >> upgrade.log
 aptitude remove ~nlinux-firmware --quiet=100 >> upgrade.log
 aptitude remove ~nlinux-$(lsb_release -cs)-root --quiet=100 >> upgrade.log
 }
+
+
 install_new ()
+#--------------------------------------------------------------------------------------------------------------------------------
+# install new one
+#--------------------------------------------------------------------------------------------------------------------------------
 {
 PACKETS="  "
 if [[ $BOARD == "cubox-i" || $BOARD == udoo* || $BRANCH == "next" ]]; then PACKETS="linux-dtb$ROOT_BRACH-$LINUXFAMILY"; fi
@@ -218,8 +242,6 @@ debconf-apt-progress -- apt-get -y install linux-image$ROOT_BRACH-$LINUXFAMILY
 debconf-apt-progress -- apt-get -y install linux-firmware-image$ROOT_BRACH-$LINUXFAMILY linux-u-boot-$BOARD$ROOT_BRACH linux-headers$ROOT_BRACH-$LINUXFAMILY
 debconf-apt-progress -- apt-get -y install linux-$(lsb_release -cs)-root$ROOT_BRACH-$BOARD $PACKETS
 }
-#--------------------------------------------------------------------------------------------------------------------------------
-
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -235,6 +257,7 @@ select_boards
 remove_old
 install_new
 
+
 apt-get -y upgrade
 
 echo ""
@@ -242,7 +265,7 @@ echo "All done. Check boot scripts and reboot for changes to take effect!"
 echo ""
 
 if [[ "$bootdevice" == "/dev/nand1" ]]; then
-	cp /boot/bin/$BOARD /mnt/script.bin
+	cp /boot/bin/$BOARD.bin /mnt/script.bin
 	whiptail --title "NAND install" --infobox "Converting and copying kernel." 7 60
     sed -e 's,script=.*,script=script.bin,g' -i /mnt/uEnv.txt 	
 	mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /boot/zImage /mnt/uImage
