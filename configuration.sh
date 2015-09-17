@@ -230,8 +230,6 @@ lamobo-r1)#enabled
 #--------------------------------------------------------------------------------------------------------------------------------
 REVISION="3.3"
 BOOTCONFIG="Lamobo_R1_defconfig"
-# temporally
-UBOOTTAG="v2015.04"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
 MODULES_NEXT="brcmfmac"
 LINUXFAMILY="banana"
@@ -310,9 +308,11 @@ CPUMAX="996000"
 MODULES="bonding"
 MODULES_NEXT="bonding"
 LINUXKERNEL="https://github.com/linux4kix/linux-linaro-stable-mx6"
+#LINUXKERNEL="https://github.com/SolidRun/linux-fslc"
 LINUXFAMILY="cubox"
 LINUXCONFIG="linux-cubox"
 LINUXSOURCE="linux-cubox"
+#LINUXSOURCE="linux-cubox-new"
 if [[ $BRANCH == *next* ]];then
 	LINUXKERNEL="git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git"
 	LINUXSOURCE="linux-mainline"
@@ -323,7 +323,7 @@ fi
 
 udoo)#enabled
 #description Freescale iMx dual/quad core Wifi
-#build 3
+#build 2
 #--------------------------------------------------------------------------------------------------------------------------------
 # Udoo quad
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -366,6 +366,27 @@ LINUXCONFIG="linux-udoo-neo"
 LINUXSOURCE="linux-neo"
 LINUXFAMILY="udoo"
 ;;
+
+
+rpi)#disabled
+#--------------------------------------------------------------------------------------------------------------------------------
+# Udoo Neo
+#--------------------------------------------------------------------------------------------------------------------------------
+REVISION="1.2"
+BOOTSIZE="32"
+BOOTLOADER="https://github.com/UDOOboard/uboot-imx"
+BOOTSOURCE="u-boot-neo"
+BOOTCONFIG="udoo_neo_config"
+CPUMIN="198000"
+CPUMAX="996000"
+MODULES="bonding"
+MODULES_NEXT=""
+LINUXKERNEL="https://github.com/raspberrypi/linux"
+LINUXCONFIG="linux-rpi.config"
+LINUXSOURCE="linux-rpi"
+LINUXFAMILY="rpi"
+;;
+
 
 
 *) echo "Board configuration not found"
