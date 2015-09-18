@@ -417,4 +417,4 @@ if [[ $BRANCH == *next* ]];then
 fi
 
 # all boards have same revision
-REVISION="4.3"
+REVISION="4.4"
