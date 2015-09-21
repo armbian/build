@@ -20,8 +20,26 @@ This will download all necessary sources, execute compilation and build an boota
 
 Most of things will be cached so next run will be extremly faster!
 
+## How to build my own kernel? ##
+
+**Prerequisition are the same as building an image!**
+
+Edit *compile.sh* prior to running and alter switch:
+
+	KERNEL_ONLY="yes"
+
+In directory (output/debs) you will find deb packed kernel, together with headers, firmware and u-boot.
+
+If you are doing changes to kernel source, disable GIT lock with:
+
+	FORCE_CHECKOUT="no"
+
+If you want to invoke menu configuration:
+
+	KERNEL_CONFIGURE="yes"
+
 More info:
 
-- [Project at Github](https://github.com/igorpecovnik/lib)
 - [Documentation](http://www.armbian.com/documentation/)
 - [Support forums](http://forum.armbian.com/ "Armbian support forum")
+- [Project at Github](https://github.com/igorpecovnik/lib)
