@@ -180,7 +180,9 @@ cd $SOURCES/$BOOTSOURCE
 display_alert "Patching" "u-boot $UBOOTTAG" "info"
 
 if [[ $BOARD == "udoo" ]] ; then
-	patchme "Enabled Udoo boot script loading from ext2" 					"udoo-uboot-fatboot.patch" 		"default" "u-boot"
+	#patchme "Enabled Udoo boot script loading from ext2" 					"udoo-uboot-fatboot.patch" 		"default" "u-boot"
+	# temp instead of this patch
+	cp $SRC/lib/patch/u-boot/udoo.h include/configs/
 fi
 
 if [[ $BOARD == "udoo-neo" ]] ; then

@@ -118,11 +118,8 @@ chroot $DEST/cache/sdcard /bin/bash -c "update-rc.d firstrun defaults >/dev/null
 display_alert "Creating boot scripts" "$BOARD" "info"
 # remove .old on new image
 rm -rf $DEST/cache/sdcard/boot/dtb.old
-if [[ $BOARD == "udoo" ]] ; then
-	cp $SRC/lib/config/boot-udoo-next.cmd $DEST/cache/sdcard/boot/boot.cmd
-elif [[ $BOARD == "udoo-neo" ]]; then
-	cp $SRC/lib/config/boot-udoo-neo.cmd $DEST/cache/sdcard/boot/boot.cmd
-	#chroot $DEST/cache/sdcard /bin/bash -c "ln -s /boot/boot.scr /boot.scr"	
+if [[ $BOARD == udoo* ]] ; then
+	cp $SRC/lib/config/boot-udoo.cmd $DEST/cache/sdcard/boot/boot.cmd
 elif [[ $BOARD == cubox-i* ]]; then
 	cp $SRC/lib/config/boot-cubox.cmd $DEST/cache/sdcard/boot/boot.cmd
 else
