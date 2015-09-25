@@ -335,4 +335,4 @@ fi
 
 end=`date +%s`
 runtime=$(((end-start)/60))
-echo -e "[\e[0;32m ok \x1B[0m] Runtime $runtime min"
+display_alert "Runtime" "$runtime min" "info"
