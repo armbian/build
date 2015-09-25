@@ -84,10 +84,14 @@ if [ ! -f "$DEST/cache/rootfs/$RELEASE.tgz" ]; then
 display_alert "Debootstrap basic system to image template" "$RELEASE" "info"
 
 # debootstrap base system
-debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ 
+debootstrap  --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ 
 
 # we need emulator for second stage
 cp /usr/bin/qemu-arm-static $DEST/cache/sdcard/usr/bin/
+
+# and keys
+d=$DEST/cache/sdcard/usr/share/keyrings/
+test -d "$d" || mkdir -p "$d" && cp /usr/share/keyrings/debian-archive-keyring.gpg "$d" 
 
 # enable arm binary format so that the cross-architecture chroot environment will work
 test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
@@ -129,13 +133,11 @@ LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "locale-gen $D
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "export CHARMAP=$CONSOLE_CHAR FONTFACE=8x16 LANG=$DEST_LANG LANGUAGE=$DEST_LANG DEBIAN_FRONTEND=noninteractive"
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=POSIX"
 
-chroot $DEST/cache/sdcard /bin/bash -c "debconf-apt-progress -- apt-get -y install $PAKETKI"
 
-display_alert "Install console data" "" "info"
+install_packet "$PAKETKI" "Installing aditional packages"
 
-# install console setup separate
-LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y install \
-console-setup console-data kbd console-common unicode-data"
+install_packet "console-setup console-data kbd console-common unicode-data" "Installing console packages"
+
 
 # configure the system for unattended upgrades
 cp $SRC/lib/scripts/50unattended-upgrades $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
