@@ -155,6 +155,8 @@ cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
 
 if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig ; fi
 
+export LOCALVERSION="-"$LINUXFAMILY
+
 # this way of compilation is much faster. We can use multi threading here but not later
 make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all zImage
 # make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- 
@@ -171,7 +173,7 @@ fi
 # we need a name
 CHOOSEN_KERNEL=linux-image"$KERNEL_BRACH"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
 cd ..
-mv *.deb $DEST/debs/
+mv *.deb $DEST/debs/ || exit
 else
 display_alert "Source file $1 does not exists. Check fetch_from_github configuration." "" "err"
 exit
@@ -313,7 +315,7 @@ umount -l $DEST/cache/sdcard/dev/pts
 umount -l $DEST/cache/sdcard/dev
 umount -l $DEST/cache/sdcard/proc
 umount -l $DEST/cache/sdcard/sys
-umount -l $DEST/cache/sdcard/tmp
+umount -l $DEST/cache/sdcard/tmp >/dev/null 2>&1
 
 # let's create nice file name
 VER="${VER/-$LINUXFAMILY/}"
@@ -349,12 +351,12 @@ losetup $LOOP $DEST/cache/tmprootfs.raw
 dpkg -x $DEST"/debs/"$CHOOSEN_UBOOT".deb" /tmp/
 
 if [[ $BOARD == *cubox* ]] ; then 
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/SPL of=$LOOP bs=512 seek=2 status=noxfer ) 
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer ) 	
+	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/SPL of=$LOOP bs=512 seek=2 status=noxfer >/dev/null 2>&1) 
+	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer >/dev/null 2>&1) 	
 elif [[ $BOARD == *udoo* ]] ; then 
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.imx of=$LOOP bs=1024 seek=1 conv=fsync ) 
+	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.imx of=$LOOP bs=1024 seek=1 conv=fsync >/dev/null 2>&1) 
 else 
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer ) 	
+	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1) 	
 fi
 rm -r /tmp/usr
 sync
@@ -376,9 +378,9 @@ if [[ $GPG_PASS != "" ]] ; then
 	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes imagewriter.exe
 	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
 fi
-echo -e "[\e[0;32m ok \x1B[0m] Create and sign download ready ZIP archive"
+display_alert "Create and sign" "$VERSION.zip" "info"
 mkdir -p $DEST/images
-zip -FS $DEST/images/$VERSION.zip $VERSION.raw* armbian.txt imagewriter.*
-display_alert "Uploading to server" "$VERSION.zip" "info"
+zip -FSq $DEST/images/$VERSION.zip $VERSION.raw* armbian.txt imagewriter.*
+#display_alert "Uploading to server" "$VERSION.zip" "info"
 rm -f $VERSION.raw *.asc imagewriter.* armbian.txt
 }
