@@ -65,7 +65,7 @@ if [[ $BOARD == "udoo" ]] ; then
 			sed -e "s/ttyS0/ttymxc1/g" -i $DEST/cache/sdcard/etc/init/ttymxc1.conf; 
 		fi
 		if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc1.service ; fi
-		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc && apt-get -y -qq autoremove"		
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc >/dev/null 2>&1 && apt-get -y -qq autoremove >/dev/null 2>&1"		
 		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.default
 		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.bonding
 		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.hostapd
