@@ -94,7 +94,6 @@ if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) 
 
 	patchme "fix BRCMFMAC AP mode Banana & CT" 					"brcmfmac_ap_banana_ct.patch" 		"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-next.patch" 				"default" "kernel"
-	patchme "update ahb clocks for sun7i" 						"ahb_clocks_sun7i.patch" 			"default" "kernel"
 	patchme "Banana M2 support, LEDs" 							"Sinoviop-bananas-M2-R1-M1-fixes.patch" 	"default" "kernel"	
 	
 	#patchme "Security System #0001" 	"0001-ARM-sun5i-dt-Add-Security-System-to-A10s-SoC-DTS.patch" "default" "kernel"
