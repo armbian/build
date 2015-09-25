@@ -27,7 +27,7 @@ MAINTAINERMAIL="igor.pecovnik@****l.com"    # deb signature
 GPG_PASS=""									# signing password
 
 # advanced
-KERNELTAG="v4.2"                          # which kernel version - valid only for mainline
+KERNELTAG="v4.2.1"                          # which kernel version - valid only for mainline
 FBTFT="yes"                                 # https://github.com/notro/fbtft 
 EXTERNAL="yes"                              # compile extra drivers`
 FORCE_CHECKOUT="yes"						# igre manual changes to source
