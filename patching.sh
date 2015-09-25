@@ -150,7 +150,7 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 	patchme "SPI functionality" 					"spi.patch" 								"default" "kernel"
 	patchme "Debian packaging fix" 					"packaging-sunxi-fix.patch" 				"default" "kernel"
 	patchme "Aufs3" 								"linux-sunxi-3.4.108-overlayfs.patch" 		"default" "kernel"
-#	patchme "More I2S and Spdif" 					"i2s_spdif_sunxi.patch" 		"default" "kernel"
+	patchme "More I2S and Spdif" 					"i2s_spdif_sunxi.patch" 		"default" "kernel"
 	
 	
 	
