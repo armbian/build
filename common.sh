@@ -236,66 +236,38 @@ fi
 }
 
 
-
-
-
 shrinking_raw_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Shrink partition and image to real size with 10% space
 #--------------------------------------------------------------------------------------------------------------------------------
 RAWIMAGE=$1
-display_alert "Shrink partition and image to real size" "$2 % free space" "info"
+display_alert "Shrink image last partition to" "minimum" "info"
 # partition prepare
-
 LOOP=$(losetup -f)
 losetup $LOOP $RAWIMAGE
 PARTSTART=$(fdisk -l $LOOP | grep $LOOP | grep Linux | awk '{ print $2}')
 PARTSTART=$(($PARTSTART*512))
-sleep 1
-losetup -d $LOOP
-sleep 1
-losetup -o $PARTSTART $LOOP $RAWIMAGE
-sleep 1
-fsck -n $LOOP >/dev/null 2>&1
-sleep 1
-tune2fs -O ^has_journal $LOOP >/dev/null 2>&1
-sleep 1
-e2fsck -fy $LOOP >/dev/null 2>&1
-SIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Block count" | awk '{ print $NF}')
-FREE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Free blocks" | awk '{ print $NF}')
-UNITSIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Block size" | awk '{ print $NF}')
-
-# some system reports this in kilobytes and resize fails
-if [[ "$UNITSIZE" == *k* ]]; then
-UNITSIZE="${UNITSIZE//k/}"
-UNITSIZE=$(($UNITSIZE*1024))
-fi
-
-# calculate new partition size and add 15% reserve
-NEWSIZE=$((($SIZE-$FREE)*$UNITSIZE/1024/1024))
-NEWSIZE=$(echo "scale=2; $NEWSIZE * (1+($2/100))" | bc -l | sed 's/...$//')
-NEWSIZE=${NEWSIZE%.*}
-
-# resize partition to new size
-BLOCKSIZE=$(LANGUAGE=english resize2fs $LOOP $NEWSIZE"M" | grep "The filesystem on" | awk '{ print $(7)}')
-NEWSIZE=$(($BLOCKSIZE*$UNITSIZE/1024))
-sleep 1
-tune2fs -O has_journal $LOOP >/dev/null 2>&1
-tune2fs -o journal_data_writeback $LOOP >/dev/null 2>&1
-sleep 1
-losetup -d $LOOP
+sleep 1; losetup -d $LOOP
+sleep 1; losetup -o $PARTSTART $LOOP $RAWIMAGE
+sleep 1; fsck -n $LOOP >/dev/null 2>&1
+sleep 1; tune2fs -O ^has_journal $LOOP >/dev/null 2>&1
+sleep 1; e2fsck -fy $LOOP >/dev/null 2>&1
+resize2fs $LOOP -M > /dev/null 2>&1
+BLOCKSIZE=$(LANGUAGE=english dumpe2fs -h $LOOP | grep "Block count" | awk '{ print $(NF)}')
+NEWSIZE=$(($BLOCKSIZE*4096/1024))
+sleep 1; tune2fs -O has_journal $LOOP >/dev/null 2>&1
+sleep 1; tune2fs -o journal_data_writeback $LOOP >/dev/null 2>&1
+sleep 1; losetup -d $LOOP
 
 # mount once again and create new partition
-sleep 2
-losetup $LOOP $RAWIMAGE
+sleep 1; losetup $LOOP $RAWIMAGE
 PARTITIONS=$(($(fdisk -l $LOOP | grep $LOOP | wc -l)-1))
 ((echo d; echo $PARTITIONS; echo n; echo p; echo ; echo ; echo "+"$NEWSIZE"K"; echo w;) | fdisk $LOOP)>/dev/null
-sleep 2
+sleep 1
 
 # truncate the image
 TRUNCATE=$(parted -m $LOOP 'unit s print' | tail -1 | awk -F':' '{ print $3 }' | sed 's/.$//')
 TRUNCATE=$((($TRUNCATE+1)*512))
-
 truncate -s $TRUNCATE $RAWIMAGE >/dev/null 2>&1
 losetup -d $LOOP
 }
