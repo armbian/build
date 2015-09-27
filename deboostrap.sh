@@ -75,7 +75,7 @@ if [ -f "$DEST/cache/rootfs/$RELEASE.tgz" ]; then
 	tar xpfz "$DEST/cache/rootfs/$RELEASE.tgz" -C $DEST/cache/sdcard/
 	if [ "$diff" -gt "0" ]; then
 	display_alert "Force package update" "please wait" "info"
-	chroot $DEST/cache/sdcard /bin/bash -c "apt-get update"
+	chroot $DEST/cache/sdcard /bin/bash -c "apt-get update >/dev/null 2>&1"
 	fi
 fi
 
