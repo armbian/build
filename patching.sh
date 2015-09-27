@@ -135,6 +135,7 @@ if [[ $BOARD == udoo* ]] ; then
 	if [[ $BRANCH == "next" ]] ; then
 		cp $SRC/lib/patch/misc/Makefile-udoo-only arch/arm/boot/dts/Makefile
 		patchme "Install DTB in dedicated package" 				"packaging-next.patch" 			"default" "kernel"
+		patchme "Upgrade to 4.2.1" 								"patch-4.2.1" 			"default" "kernel"
 	else
 	# 
 	patchme "remove strange DTBs from tree" 					"udoo_dtb.patch" 				"default" "kernel"
@@ -151,7 +152,8 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 	patchme "Debian packaging fix" 					"packaging-sunxi-fix.patch" 				"default" "kernel"
 	patchme "Aufs3" 								"linux-sunxi-3.4.108-overlayfs.patch" 		"default" "kernel"
 	patchme "More I2S and Spdif" 					"i2s_spdif_sunxi.patch" 		"default" "kernel"
-	
+	patchme "A fix for rt8192" 						"rt8192cu-missing-case.patch" 		"default" "kernel"
+	patchme "Upgrade to 3.4.109" 					"patch-3.4.108-109" 		"default" "kernel"
 	
 	
 	# banana/orange gmac  
