@@ -151,9 +151,9 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 	patchme "SPI functionality" 					"spi.patch" 								"default" "kernel"
 	patchme "Debian packaging fix" 					"packaging-sunxi-fix.patch" 				"default" "kernel"
 	patchme "Aufs3" 								"linux-sunxi-3.4.108-overlayfs.patch" 		"default" "kernel"
-	patchme "More I2S and Spdif" 					"i2s_spdif_sunxi.patch" 		"default" "kernel"
-	patchme "A fix for rt8192" 						"rt8192cu-missing-case.patch" 		"default" "kernel"
-	patchme "Upgrade to 3.4.109" 					"patch-3.4.108-109" 		"default" "kernel"
+	patchme "More I2S and Spdif" 					"i2s_spdif_sunxi.patch" 					"default" "kernel"
+	patchme "A fix for rt8192" 						"rt8192cu-missing-case.patch" 				"default" "kernel"
+	patchme "Upgrade to 3.4.109" 					"patch-3.4.108-109" 						"default" "kernel"
 	
 	
 	# banana/orange gmac  
@@ -170,6 +170,12 @@ fi
 if [[ $LINUXSOURCE == linux-cubox* ]] ; then
 	patchme "SPI and I2C functionality" 						"hb-i2c-spi.patch" 				"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-cubox.patch" 				"default" "kernel"
+	patchme "Upgrade to 3.14.53" 								"cubox-patch-3.14.14-53.patch" 				"default" "kernel"
+	# download and apply patches
+	#for (( c=14; c<=52; c++ ))
+	#do
+     #   wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f
+	#done
 fi
 
 
