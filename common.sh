@@ -252,9 +252,10 @@ sleep 1; losetup -o $PARTSTART $LOOP $RAWIMAGE
 sleep 1; fsck -n $LOOP >/dev/null 2>&1
 sleep 1; tune2fs -O ^has_journal $LOOP >/dev/null 2>&1
 sleep 1; e2fsck -fy $LOOP >/dev/null 2>&1
-resize2fs $LOOP -M > /dev/null 2>&1
+resize2fs $LOOP -M >/dev/null 2>&1
 BLOCKSIZE=$(LANGUAGE=english dumpe2fs -h $LOOP | grep "Block count" | awk '{ print $(NF)}')
-NEWSIZE=$(($BLOCKSIZE*4096/1024))
+NEWSIZE=$(($BLOCKSIZE*4500/1024)) # overhead hardcoded to number
+BLOCKSIZE=$(LANGUAGE=english resize2fs $LOOP $NEWSIZE"K" >/dev/null 2>&1)
 sleep 1; tune2fs -O has_journal $LOOP >/dev/null 2>&1
 sleep 1; tune2fs -o journal_data_writeback $LOOP >/dev/null 2>&1
 sleep 1; losetup -d $LOOP
