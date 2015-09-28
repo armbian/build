@@ -170,12 +170,13 @@ fi
 if [[ $LINUXSOURCE == linux-cubox* ]] ; then
 	patchme "SPI and I2C functionality" 						"hb-i2c-spi.patch" 				"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-cubox.patch" 				"default" "kernel"
-	patchme "Upgrade to 3.14.53" 								"cubox-patch-3.14.14-53.patch" 				"default" "kernel"
-	# download and apply patches
-	#for (( c=14; c<=52; c++ ))
-	#do
-     #   wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f
-	#done
+	# Upgrade to 3.14.53
+	for (( c=14; c<=52; c++ ))
+	do
+		display_alert "Patching" "3.14.$c-$(( $c+1 ))" "info"
+		wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f -s >/dev/null 2>&1     
+	done
+	
 fi
 
 
