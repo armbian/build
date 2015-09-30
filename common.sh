@@ -158,7 +158,7 @@ if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=a
 export LOCALVERSION="-"$LINUXFAMILY 
 
 # this way of compilation is much faster. We can use multi threading here but not later
-make $CTHREADS EXTRA_CFLAGS="" ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all zImage | dialog  --progressbox "Compiling kernel ..." 20 70
+make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all zImage | dialog  --progressbox "Compiling kernel ..." 20 70
 # make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- 
 # produce deb packages: image, headers, firmware, libc
 make -j1 deb-pkg KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=armhf ARCH=arm DEBFULLNAME="$MAINTAINER" \
