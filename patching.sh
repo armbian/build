@@ -136,6 +136,7 @@ if [[ $BOARD == udoo* ]] ; then
 		cp $SRC/lib/patch/misc/Makefile-udoo-only arch/arm/boot/dts/Makefile
 		patchme "Install DTB in dedicated package" 				"packaging-next.patch" 			"default" "kernel"
 		patchme "Upgrade to 4.2.1" 								"patch-4.2.1" 			"default" "kernel"
+		patchme "Upgrade to 4.2.2" 								"patch-4.2.1-2" 			"default" "kernel"
 	else
 	# 
 	patchme "remove strange DTBs from tree" 					"udoo_dtb.patch" 				"default" "kernel"
