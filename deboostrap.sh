@@ -39,7 +39,15 @@ if [ "$BOOTSIZE" -ne "0" ]; then
 	display_alert "Creating FAT boot partition" "$BOOTSIZE Mb" "info"
 fi
 # Create image file
-dd if=/dev/zero of=$DEST/cache/tmprootfs.raw bs=1M count=$SDSIZE status=noxfer >/dev/null 2>&1
+while read line;do
+  [[ "$line" =~ "records out" ]] &&
+  echo "$(( ${line%+*}*100/$SDSIZE +1 ))" | dialog --gauge "Creating blank image ($SDSIZE Mb), please wait ..." 10 70
+done< <( dd if=/dev/zero of=$DEST/cache/tmprootfs.raw bs=1M count=$SDSIZE 2>&1 &
+         pid=$!
+         sleep 1
+         while kill -USR1 $pid 2>/dev/null;do
+           sleep 1
+         done )
 
 # Find first available free device
 LOOP=$(losetup -f)
@@ -73,18 +81,16 @@ if [ -f "$DEST/cache/rootfs/$RELEASE.tgz" ]; then
 	diff=$(( (currtime - filemtime) / 86400 ))
 	display_alert "Extracting $RELEASE from cache" "$diff days old" "info"
 	tar xpfz "$DEST/cache/rootfs/$RELEASE.tgz" -C $DEST/cache/sdcard/
-	if [ "$diff" -gt "0" ]; then
-	display_alert "Force package update" "please wait" "info"
-	chroot $DEST/cache/sdcard /bin/bash -c "apt-get update >/dev/null 2>&1"
+	if [ "$diff" -gt "1" ]; then
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get update" | dialog --progressbox "Force package update ..." 20 70
 	fi
 fi
 
 # If we don't have a filesystem cached, let's make em
 if [ ! -f "$DEST/cache/rootfs/$RELEASE.tgz" ]; then
-display_alert "Debootstrap basic system to image template" "$RELEASE" "info"
 
 # debootstrap base system
-debootstrap  --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ 
+debootstrap  --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ | dialog --progressbox "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." 20 70
 
 # we need emulator for second stage
 cp /usr/bin/qemu-arm-static $DEST/cache/sdcard/usr/bin/
@@ -97,7 +103,7 @@ test -d "$d" || mkdir -p "$d" && cp /usr/share/keyrings/debian-archive-keyring.g
 test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
 
 # debootstrap second stage
-chroot $DEST/cache/sdcard /bin/bash -c "/debootstrap/debootstrap --second-stage"
+chroot $DEST/cache/sdcard /bin/bash -c "/debootstrap/debootstrap --second-stage" | dialog --progressbox "Installing $DISTRIBUTION $RELEASE base system to image template ..." 20 70
 
 # mount proc, sys and dev
 mount -t proc chproc $DEST/cache/sdcard/proc
@@ -115,7 +121,7 @@ chroot $DEST/cache/sdcard /bin/bash -c "cat armbian.key | apt-key add -"
 rm $DEST/cache/sdcard/armbian.key
 
 # update and upgrade
-LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y update"
+LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y update" | dialog --progressbox "Updating package databases ..." 20 70
 
 # install aditional packages
 PAKETKI="alsa-utils automake btrfs-tools bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl \
@@ -123,7 +129,7 @@ device-tree-compiler dosfstools evtest figlet fbset fping git haveged hddtemp hd
 iperf ir-keytable iotop iozone3 iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev \
 module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo subversion \
 sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools weather-util weather-util-data wget \
-wpasupplicant iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan dvb-tools"
+wpasupplicant iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan apt-transport-https"
 
 # generate locales and install packets
 display_alert "Install locales" "$DEST_LANG" "info"
@@ -134,7 +140,7 @@ LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "export CHARMA
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=POSIX"
 
 
-install_packet "$PAKETKI" "Installing aditional packages"
+install_packet "$PAKETKI" "Installing Armbian on the top of $DISTRIBUTION $RELEASE base system ..."
 
 install_packet "console-setup console-data kbd console-common unicode-data" "Installing console packages"
 

@@ -87,7 +87,7 @@ procent=$(echo "scale=2;($j/$skupaj)*100"|bc)
 			tail $DEST/cache/sdcard/tmp/install.log
 			exit
 		fi
-		printf '%.0f\n' $procent | dialog --gauge "$2\n\n$x" 9 50
+		printf '%.0f\n' $procent | dialog --gauge "$2\n\n$x" 9 70
 		i=$[$i+1]
 		j=$[$j+1]
 done

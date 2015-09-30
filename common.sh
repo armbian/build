@@ -14,14 +14,13 @@ compile_uboot (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Compile uboot from sources
 #--------------------------------------------------------------------------------------------------------------------------------
-display_alert "Compiling universal boot loader" "@host" "info"
 
 if [ -d "$SOURCES/$BOOTSOURCE" ]; then
 	cd $SOURCES/$BOOTSOURCE
-		make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean 
+		make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
 	# there are two methods of compilation
 	if [[ $BOOTCONFIG == *config* ]]; then
-		make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf-
+		make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- >/dev/null 2>&1
 		if [[ $BRANCH != "next" && $LINUXCONFIG == *sunxi* ]] ; then
 			## patch mainline uboot configuration to boot with old kernels
 			if [ "$(cat $SOURCES/$BOOTSOURCE/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
@@ -31,9 +30,9 @@ if [ -d "$SOURCES/$BOOTSOURCE" ]; then
 				echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y"	>> $SOURCES/$BOOTSOURCE/spl/.config
 			fi
 		fi
-	make $CTHREADS CROSS_COMPILE=arm-linux-gnueabihf-
+	make $CTHREADS CROSS_COMPILE=arm-linux-gnueabihf- 2>&1 | dialog  --progressbox "Compiling universal boot loader..." 20 70
 else
-	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 
+	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 2>&1 | dialog  --progressbox "Compiling universal boot loader..." 20 70
 fi
 
 grab_u-boot_version
@@ -90,7 +89,8 @@ else
 fi
 
 cd $DEST/debs
-dpkg -b $CHOOSEN_UBOOT
+display_alert "Building deb" "$CHOOSEN_UBOOT.deb" "info"
+dpkg -b $CHOOSEN_UBOOT >/dev/null 2>&1
 rm -rf $CHOOSEN_UBOOT
 #
 
@@ -137,7 +137,7 @@ if [ -d "$SOURCES/$LINUXSOURCE" ]; then
 
 cd $SOURCES/$LINUXSOURCE
 # delete previous creations
-if [ "$KERNEL_CLEAN" = "yes" ]; then make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean ; fi
+if [ "$KERNEL_CLEAN" = "yes" ]; then make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean | dialog  --progressbox "Cleaning kernel source ..." 20 70; fi
 
 # adding custom firmware to kernel source
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCE/firmware; fi
@@ -153,16 +153,16 @@ fi
 # hack for deb builder. To pack what's missing in headers pack.
 cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
 
-if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig ; fi
+if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig | dialog  --progressbox "Preparing menu configuration ..." 20 70 ; fi
 
-export LOCALVERSION="-"$LINUXFAMILY
+export LOCALVERSION="-"$LINUXFAMILY 
 
 # this way of compilation is much faster. We can use multi threading here but not later
-make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all zImage
+make $CTHREADS EXTRA_CFLAGS="" ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all zImage | dialog  --progressbox "Compiling kernel ..." 20 70
 # make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- 
 # produce deb packages: image, headers, firmware, libc
 make -j1 deb-pkg KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=armhf ARCH=arm DEBFULLNAME="$MAINTAINER" \
-DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE=arm-linux-gnueabihf- 
+DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE=arm-linux-gnueabihf- | dialog  --progressbox "Packaging kernel ..." 20 70
 
 if [[ $BRANCH == "next" ]] ; then
 	KERNEL_BRACH="-next"

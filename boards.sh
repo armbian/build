@@ -217,8 +217,8 @@ fi
 cd $DEST/cache/sdcard/usr/src/$HEADERS_DIR
 
 if [ ! -f $DEST/cache/building/$HEADERS_CACHE.tgz ]; then
-	display_alert "Compile kernel headers scripts" "$VER" "info"
-	chroot $DEST/cache/sdcard /bin/bash -c "cd /usr/src/$HEADERS_DIR && make headers_check; make headers_install ; make scripts"
+	#display_alert "Compile kernel headers scripts" "$VER" "info"
+	chroot $DEST/cache/sdcard /bin/bash -c "cd /usr/src/$HEADERS_DIR && make headers_check; make headers_install ; make scripts" | dialog --progressbox "Compile kernel headers scripts ..." 20 70
 	rm -rf $DEST/cache/building/repack
 	mkdir -p $DEST/cache/building -p $DEST/cache/building/repack/usr/src/$HEADERS_DIR -p $DEST/cache/building/repack/DEBIAN
 	dpkg-deb -x $DEST/debs/$HEADERS_TMP $DEST/cache/building/repack
