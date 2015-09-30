@@ -23,7 +23,11 @@ fi
 
 # We'll use this tittle on all menus
 backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik, www.igorpecovnik.com"
- 
+
+# Install menu support
+if [ $(dpkg-query -W -f='${Status}' whiptail 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
+apt-get install -qq -y whiptail > /dev/null 2>&1
+fi 
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # Choose destination - creating board list from file configuration.sh
