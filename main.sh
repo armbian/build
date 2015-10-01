@@ -173,7 +173,7 @@ if [ "$SOURCE_COMPILE" != "yes" ]; then
 fi
 
 # needed if process failed in the middle
-#umount_image
+umount_image
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # The name of the job

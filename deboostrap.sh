@@ -52,6 +52,10 @@ done< <( dd if=/dev/zero of=$DEST/cache/tmprootfs.raw bs=1M count=$SDSIZE 2>&1 &
 # Find first available free device
 LOOP=$(losetup -f)
 
+if [[ "$LOOP" != "/dev/loop0" && "$LOOP" != "/dev/loop1" ]]; then
+display_alert "You run out of loop devices" "pleese reboot" "error"
+fi
+
 # Mount image as block device
 losetup $LOOP $DEST/cache/tmprootfs.raw
 sync
