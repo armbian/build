@@ -54,6 +54,7 @@ LOOP=$(losetup -f)
 
 if [[ "$LOOP" != "/dev/loop0" && "$LOOP" != "/dev/loop1" ]]; then
 display_alert "You run out of loop devices" "pleese reboot" "error"
+exit
 fi
 
 # Mount image as block device
