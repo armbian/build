@@ -153,7 +153,7 @@ fi
 # hack for deb builder. To pack what's missing in headers pack.
 cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
 
-if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig | dialog  --progressbox "Preparing menu configuration ..." 20 70 ; fi
+if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig; fi
 
 export LOCALVERSION="-"$LINUXFAMILY 
 
