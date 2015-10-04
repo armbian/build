@@ -43,21 +43,48 @@ wheezy)
 		;;
 
 jessie)
-		# add serial console
-		cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/ttyS0.conf
-		cp $DEST/cache/sdcard/lib/systemd/system/serial-getty@.service $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
-		sed -e s/"--keep-baud 115200,38400,9600"/"-L 115200"/g  -i $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
 		# specifics packets add and remove
-		install_packet "thin-provisioning-tools libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties" "Installing Jessie packages"
+		install_packet "thin-provisioning-tools libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties libnss-myhostname" "Installing Jessie packages"
 		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get autoremove >/dev/null 2>&1"
-		# don't clear screen tty1
-		sed -e s,"TTYVTDisallocate=yes","TTYVTDisallocate=no",g 	-i $DEST/cache/sdcard/lib/systemd/system/getty@.service
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/cache/sdcard/etc/ssh/sshd_config 
 		# auto upgrading
 		sed -e "s/ORIGIN/Debian/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 		# mount 256Mb tmpfs to /tmp
 		echo "tmpfs   /tmp         tmpfs   nodev,nosuid,size=256M          0  0" >> $DEST/cache/sdcard/etc/fstab
+		# we will use systemd and sysvinit
+		if [ "$USESYSTEMD" == "yes" ]; then
+			# add serial console
+			cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/ttyS0.conf
+			cp $DEST/cache/sdcard/lib/systemd/system/serial-getty@.service $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
+			sed -e s/"--keep-baud 115200,38400,9600"/"-L 115200"/g  -i $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
+			# don't clear screen tty1
+			sed -e s,"TTYVTDisallocate=yes","TTYVTDisallocate=no",g 	-i $DEST/cache/sdcard/lib/systemd/system/getty@.service
+		else
+			# with sysvinit
+			# fix selinux error 
+			chroot $DEST/cache/sdcard /bin/bash -c "mkdir /selinux"
+			# add serial console
+			echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/cache/sdcard/etc/inittab
+			# don't clear screen on boot console
+			sed -e 's/1:2345:respawn:\/sbin\/getty 38400 tty1/1:2345:respawn:\/sbin\/getty --noclear 38400 tty1/g' -i $DEST/cache/sdcard/etc/inittab
+			# disable some getties
+			sed -e 's/3:23:respawn/#3:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
+			sed -e 's/4:23:respawn/#4:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
+			sed -e 's/5:23:respawn/#5:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
+			sed -e 's/6:23:respawn/#6:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
+			# install ramlog
+			cp $SRC/lib/bin/ramlog_2.0.0_all.deb $DEST/cache/sdcard/tmp
+			chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb >/dev/null 2>&1" 
+			# enabled back at first run. To remove errors
+			chroot $DEST/cache/sdcard /bin/bash -c "service ramlog disable >/dev/null 2>&1"
+			rm $DEST/cache/sdcard/tmp/ramlog_2.0.0_all.deb
+			sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $DEST/cache/sdcard/etc/default/ramlog
+			# supress warning
+			sed -e 's/update-rc.d $prog start 2 2 3 4 5 . stop 99 0 1 6 . >\/dev\/null/#update-rc.d $prog start 2 2 3 4 5 . stop 99 0 1 6 . >\/dev\/null\n\t\tupdate-rc.d $prog defaults/g' -i $DEST/cache/sdcard/etc/init.d/ramlog		
+			sed -e 's/# Required-Start:    $remote_fs $time/# Required-Start:    $remote_fs $time ramlog/g' -i $DEST/cache/sdcard/etc/init.d/rsyslog 
+			sed -e 's/# Required-Stop:     umountnfs $time/# Required-Stop:     umountnfs $time ramlog/g' -i $DEST/cache/sdcard/etc/init.d/rsyslog  
+		fi
 		;;
 
 trusty)

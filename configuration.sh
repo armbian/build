@@ -23,6 +23,7 @@
 SDSIZE="4000" # SD image size in MB
 UBOOTTAG="v2015.07"
 USEALLCORES="yes"                           # Use all CPU cores for compiling
+USESYSTEMD="yes"							# use (default) systemd startup manager under Jessie.
 BOOTLOADER="git://git.denx.de/u-boot.git"
 BOOTSOURCE="u-boot"
 LINUXKERNEL="https://github.com/dan-and/linux-sunxi"
@@ -417,4 +418,4 @@ if [[ $BRANCH == *next* ]];then
 fi
 
 # all boards have same revision
-REVISION="4.4"
+REVISION="4.5"
