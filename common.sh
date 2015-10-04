@@ -21,6 +21,8 @@ if [ -d "$SOURCES/$BOOTSOURCE" ]; then
 	# there are two methods of compilation
 	if [[ $BOOTCONFIG == *config* ]]; then
 		make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- >/dev/null 2>&1
+		sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
+		sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
 		if [[ $BRANCH != "next" && $LINUXCONFIG == *sunxi* ]] ; then
 			## patch mainline uboot configuration to boot with old kernels
 			if [ "$(cat $SOURCES/$BOOTSOURCE/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
