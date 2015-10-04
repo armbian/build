@@ -97,10 +97,9 @@ if [ ! -f "$DEST/cache/rootfs/$RELEASE.tgz" ]; then
 # debootstrap base system
 debootstrap --include=sysvinit-core,openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ | dialog --progressbox "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." 20 70
 
-# remove systemd if wanted
-
-if [[ "$USESYSTEMD" != "yes" && $RELEASE == "jessie" ]]; then
-sed -i -e 's/systemd systemd-sysv //g' $DEST/cache/sdcard/debootstrap/required
+# remove systemd default load. It's installed and can be used with kernel parameter
+if [[ $RELEASE == "jessie" ]]; then
+sed -i -e 's/systemd-sysv //g' $DEST/cache/sdcard/debootstrap/required
 fi
 
 # we need emulator for second stage
