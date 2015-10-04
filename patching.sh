@@ -137,6 +137,7 @@ if [[ $BOARD == udoo* ]] ; then
 		patchme "Install DTB in dedicated package" 				"packaging-next.patch" 			"default" "kernel"
 		patchme "Upgrade to 4.2.1" 								"patch-4.2.1" 			"default" "kernel"
 		patchme "Upgrade to 4.2.2" 								"patch-4.2.1-2" 			"default" "kernel"
+		patchme "Upgrade to 4.2.3" 								"patch-4.2.2-3" 			"default" "kernel"
 	else
 	# 
 	patchme "remove strange DTBs from tree" 					"udoo_dtb.patch" 				"default" "kernel"
@@ -171,8 +172,8 @@ fi
 if [[ $LINUXSOURCE == linux-cubox* ]] ; then
 	patchme "SPI and I2C functionality" 						"hb-i2c-spi.patch" 				"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-cubox.patch" 				"default" "kernel"
-	# Upgrade to 3.14.53
-	for (( c=14; c<=52; c++ ))
+	# Upgrade to 3.14.54
+	for (( c=14; c<=53; c++ ))
 	do
 		display_alert "Patching" "3.14.$c-$(( $c+1 ))" "info"
 		wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f -s >/dev/null 2>&1     
