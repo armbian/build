@@ -191,6 +191,8 @@ mkdir -p $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/sbin/
 tar xfz $SRC/lib/bin/hostapd25-rt.tgz -C $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/sbin/
 tar xfz $SRC/lib/bin/hostapd25.tgz -C $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/sbin/
 
+# module evbug is loaded automagically at boot time but we don't want that
+echo "blacklist evbug" > $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/modprobe.d/ev-debug-blacklist.conf
 
 # script to install to SATA
 mkdir -p $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/root
