@@ -52,6 +52,37 @@ For all other cases. Note that this procedure upgrades only kernel with hardware
 
 You will be prompted to select and confirm some actions. It's possible to upgrade **from any other distribution**.
 
+# How to troubleshoot?
+
+If you mess up the system you can try to get into system this way - you have to get to u-boot command prompt, using either a serial adapter or monitor and usb keyboard. 
+
+After switching power on or rebooting, when u-boot loads up, press some keys on the keyboard (or send some key presses via terminal) to abort default boot sequence and get to the command prompt:
+
+	U-Boot SPL 2015.07-dirty (Oct 01 2015 - 15:05:21)
+	...
+	Hit any key to stop autoboot:  0
+	sunxi#
+
+Enter these commands, replacing root device path if necessary. Select setenv line with ttyS0 for serial, tty1 for keyboard+monitor:
+
+	setenv bootargs init=/bin/bash root=/dev/mmcblk0p1 rootwait console=ttyS0,115200
+	# or
+	setenv bootargs init=/bin/bash root=/dev/mmcblk0p1 rootwait console=tty1
+
+	ext4load mmc 0 0x49000000 /boot/dtb/${fdtfile}
+	ext4load mmc 0 0x46000000 /boot/zImage
+	env set fdt_high ffffffff
+	bootz 0x46000000 - 0x49000000
+
+System should eventually boot to bash shell:
+
+	root@(none):/#
+
+Now you can try to fix your broken system.
+
+
+- [Fix a Jessie systemd problem due to upgrade from 3.4 to 4.x](https://github.com/igorpecovnik/lib/issues/111)
+
 # How to add users?
 
 To create a normal user do this:
