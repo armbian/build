@@ -54,9 +54,9 @@ You will be prompted to select and confirm some actions. It's possible to upgrad
 
 # How to troubleshoot?
 
-If you mess up the system you can try to get into system this way - you have to get to u-boot command prompt, using either a serial adapter or monitor and usb keyboard. 
+If you broke the system you can try to get in this way. You have to get to u-boot command prompt, using either a serial adapter or monitor and usb keyboard. 
 
-After switching power on or rebooting, when u-boot loads up, press some keys on the keyboard (or send some key presses via terminal) to abort default boot sequence and get to the command prompt:
+After switching power on or rebooting, when u-boot loads up, press some key on the keyboard (or send some key presses via terminal) to abort default boot sequence and get to the command prompt:
 
 	U-Boot SPL 2015.07-dirty (Oct 01 2015 - 15:05:21)
 	...
