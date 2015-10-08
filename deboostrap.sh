@@ -95,8 +95,8 @@ fi
 if [ ! -f "$DEST/cache/rootfs/$RELEASE.tgz" ]; then
 
 # debootstrap base system
-if [[ $RELEASE == "jessie" ]]; then sysvinit="sysvinit-core,"; fi
-debootstrap --include=$sysvinit,openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ | dialog --progressbox "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." 20 70
+if [[ $RELEASE == "jessie" ]]; then sysvinit=",sysvinit-core"; fi
+debootstrap --include=openssh-server,debconf-utils$sysvinit --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ | dialog --progressbox "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." 20 70
 
 # remove systemd default load. It's installed and can be used with kernel parameter
 if [[ $RELEASE == "jessie" ]]; then
