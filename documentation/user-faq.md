@@ -83,6 +83,29 @@ Now you can try to fix your broken system.
 
 - [Fix a Jessie systemd problem due to upgrade from 3.4 to 4.x](https://github.com/igorpecovnik/lib/issues/111)
 
+# How to unbrick the system?
+
+When something goes terribly wrong and you are not able to boot the system, this is the way you to proceed. You need some linux machine, where you can mount the failed SD card. With this procedure you will reinstall the u-boot, kernel and hardware settings. In most cases this should be enought to unbrick the board. It's recommended to issue a filesystem check before mounting:
+
+	fsck /dev/sdX -f
+
+Than mount the SD card and download those files (This example is only for Banana R1): 
+
+	http://apt.armbian.com/pool/main/l/linux-trusty-root-next-lamobo-r1/linux-trusty-root-next-lamobo-r1_4.4_armhf.deb
+	http://apt.armbian.com/pool/main/l/linux-upstream/linux-image-next-sunxi_4.4_armhf.deb
+	http://apt.armbian.com/pool/main/l/linux-upstream/linux-firmware-image-next-sunxi_4.4_armhf.deb
+	http://apt.armbian.com/pool/main/l/linux-upstream/linux-dtb-next-sunxi_4.4_armhf.deb
+
+This is just an example for: **Ubuntu Trusty, Lamobo R1, Vanilla kernel** (next). Alter packages naming according to [this](http://forum.armbian.com/index.php/topic/211-kernel-update-procedure-has-been-changed/).
+
+Mount SD card and extract all those deb files to it's mount point.
+
+	dpkg -x DEB_FILE /mnt 
+
+Go to /mnt/boot and link (or copy) **vmlinuz-4.x.x-sunxi** kernel file to **zImage**.
+
+Unmount SD card, move it to the board and power on.
+
 # How to add users?
 
 To create a normal user do this:
