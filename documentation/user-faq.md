@@ -85,7 +85,7 @@ Now you can try to fix your broken system.
 
 # How to unbrick the system?
 
-When something goes terribly wrong and you are not able to boot the system, this is the way you to proceed. You need some linux machine, where you can mount the failed SD card. With this procedure you will reinstall the u-boot, kernel and hardware settings. In most cases this should be enought to unbrick the board. It's recommended to issue a filesystem check before mounting:
+When something goes terribly wrong and you are not able to boot the system, this is the way to proceed. You need some linux machine, where you can mount the failed SD card. With this procedure you will reinstall the u-boot, kernel and hardware settings. In most cases this should be enought to unbrick the board. It's recommended to issue a filesystem check before mounting:
 
 	fsck /dev/sdX -f
 

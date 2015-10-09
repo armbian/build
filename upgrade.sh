@@ -11,6 +11,8 @@
 
 
 BOARD=""
+RELEASE=$(lsb_release -cs)
+if [[ "$RELEASE" == "sid" ]]; then RELEASE="jessie"; fi
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # Show warning at start
@@ -91,7 +93,7 @@ echo "" >> /etc/motd
 fi
 if [ ! -f "/etc/apt/sources.list.d/armbian.list" ]; then
 	echo -e "[\e[0;32m o.k. \x1B[0m] Updating package list. Please wait"
-	echo "deb http://apt.armbian.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/armbian.list
+	echo "deb http://apt.armbian.com $RELEASE main" > /etc/apt/sources.list.d/armbian.list
 	apt-key adv --keyserver keys.gnupg.net --recv-keys 0x93D6889F9F0E78D5 >/dev/null 2>&1
 	apt-get update >/dev/null 2>&1
 fi
@@ -225,7 +227,7 @@ aptitude remove ~nlinux-u-boot --quiet=100 >> upgrade.log
 aptitude remove ~nlinux-image --quiet=100 >> upgrade.log
 aptitude remove ~nlinux-headers --quiet=100 >> upgrade.log
 aptitude remove ~nlinux-firmware --quiet=100 >> upgrade.log
-aptitude remove ~nlinux-$(lsb_release -cs)-root --quiet=100 >> upgrade.log
+aptitude remove ~nlinux-$RELEASE-root --quiet=100 >> upgrade.log
 }
 
 
@@ -240,7 +242,7 @@ IFS=" "
 
 debconf-apt-progress -- apt-get -y install linux-image$ROOT_BRACH-$LINUXFAMILY
 debconf-apt-progress -- apt-get -y install linux-firmware-image$ROOT_BRACH-$LINUXFAMILY linux-u-boot-$BOARD$ROOT_BRACH linux-headers$ROOT_BRACH-$LINUXFAMILY
-debconf-apt-progress -- apt-get -y install linux-$(lsb_release -cs)-root$ROOT_BRACH-$BOARD $PACKETS
+debconf-apt-progress -- apt-get -y install linux-$RELEASE-root$ROOT_BRACH-$BOARD $PACKETS
 }
 
 
