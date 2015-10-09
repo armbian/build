@@ -13,6 +13,7 @@
 BOARD=""
 RELEASE=$(lsb_release -cs)
 if [[ "$RELEASE" == "sid" ]]; then RELEASE="jessie"; fi
+if [[ "$RELEASE" == "testing" ]]; then RELEASE="jessie"; fi
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # Show warning at start
