@@ -24,6 +24,7 @@
 
 REVISION="4.5" 											# all boards have same revision
 SDSIZE="4000" 											# SD image size in MB
+TZDATA=`cat /etc/timezone`								# Timezone for target is taken from host or defined here.
 USEALLCORES="yes"                           			# Use all CPU cores for compiling
 SYSTEMD="yes"											# Enable or disable systemd on Jessie. 
 OFFSET="1" 												# Bootloader space in MB (1 x 2048 = default)
@@ -43,6 +44,13 @@ MISC4="https://github.com/notro/fbtft"					# Small TFT display driver
 MISC4_DIR="fbtft-drivers"								# local directory
 MISC5="https://github.com/hglm/a10disp/"				# Display changer for Allwinner
 MISC5_DIR="sunxi-display-changer"						# local directory
+
+#--------------------------------------------------------------------------------------------------------------------------------
+# If KERNELTAG is not defined, let's compile latest stable. Vanilla kernel only
+#--------------------------------------------------------------------------------------------------------------------------------
+if [ "$KERNELTAG" == "" ]; then
+KERNELTAG="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest stable" | awk '{print $NF}'`
+fi
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # common for legacy allwinner kernel-source

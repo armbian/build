@@ -20,19 +20,16 @@ KERNEL_CLEAN="yes"                         		# run MAKE clean before kernel comp
 AFTERINSTALL=""						# last command before closing image, example: apt-get install joe
 DEST_LANG="en_US.UTF-8"                     		# sl_SI.UTF-8, en_US.UTF-8
 CONSOLE_CHAR="UTF-8"
-TZDATA=`cat /etc/timezone`               		# Timezone
 ROOTPWD="1234"                          		# Must be changed @first login
 MAINTAINER="Igor Pecovnik"                  # deb signature
 MAINTAINERMAIL="igor.pecovnik@****l.com"    # deb signature
 GPG_PASS=""									# signing password
 
 # advanced
-KERNELTAG="v4.2.2"                          # which kernel version - valid only for mainline
 FBTFT="yes"                                 # https://github.com/notro/fbtft 
 EXTERNAL="yes"                              # compile extra drivers`
 FORCE_CHECKOUT="yes"						# igre manual changes to source
 BUILD_ALL="no"								# cycle through selected boards and make images
-
 #--------------------------------------------------------------------------------------------------------------------------------
 
 # source is where we start the script
