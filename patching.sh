@@ -242,7 +242,7 @@ if [[ $LINUXCONFIG == *sun* ]] ; then
 	rm -f configs/Lamobo_R1_defconfig configs/Awsom_defconfig
 	rm -f configs/Bananapi_M2_defconfig arch/arm/dts/sun6i-a31s-bananapi-m2.dts
 	patchme "Add Lamobo R1" 							"add-lamobo-r1-uboot.patch" 		"default" "u-boot"
-	patchme "Add Banana Pi M2 A31S" 					"bananam2-a31s.patch" 		"default" "u-boot"
+	#patchme "Add Banana Pi M2 A31S" 					"bananam2-a31s.patch" 		"default" "u-boot"
 	patchme "Add AW SOM" 								"add-awsom-uboot.patch" 			"default" "u-boot"
 	patchme "Add Armbian boot splash" 					"sunxi-boot-splash.patch" 			"default" "u-boot"
 		
@@ -266,7 +266,6 @@ IFS='.' read -a array <<< "$VER"
 cd $SOURCES/$MISC4_DIR
 if (( "${array[0]}" == "3" )) && (( "${array[1]}" < "5" ))
 then
-echo "star kernel"
 	git checkout $FORCE -q 06f0bba152c036455ae76d26e612ff0e70a83a82
 else
 	git checkout $FORCE -q master
