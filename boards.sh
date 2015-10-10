@@ -20,7 +20,7 @@ display_alert "Install board specific applications." "$BOARD" "info"
 fingerprint_image "$DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/armbian.txt"
 
 # Allwinner
-if [[ $LINUXCONFIG == *sunxi* ]] ; then
+if [[ $LINUXCONFIG == *sun* ]] ; then
 
 	# add sunxi tools
 	cp $SOURCES/sunxi-tools/fex2bin $SOURCES/sunxi-tools/bin2fex $SOURCES/sunxi-tools/nand-part $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin

@@ -85,7 +85,7 @@ fi
 sed "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" -i $DEST/cache/sdcard/etc/default/nodm
  
 # Compile Turbo Frame buffer for sunxi
-if [[ $LINUXCONFIG == *sunxi* && $BRANCH != "next" ]]; then
+if [[ $LINUXCONFIG == *sun* && $BRANCH != "next" ]]; then
  install_packet "xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev" "Installing support libraries"
  # quemu bug walkaround
  git clone https://github.com/ssvb/xf86-video-fbturbo.git $DEST/cache/sdcard/tmp/xf86-video-fbturbo

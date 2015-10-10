@@ -19,10 +19,10 @@ patchme ()
 {
 if [ $3 == "reverse" ]; then
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/$4/$2 | grep Reversed)" != "" ]; then 
-		display_alert "... $1" "$4" "info"
+		display_alert "... $1 [\e[0;35m reverting patch \x1B[0m] " "$4" "info"
 		patch --batch --silent -t -p1 < $SRC/lib/patch/$4/$2 > /dev/null 2>&1
 	else
-		display_alert "... $1 *** back to defaults *** " "$4" "wrn"
+		display_alert "... $1 [\e[0;35m already reverted \x1B[0m] " "$4" "info"
 	fi
 else
 	if [ "$(patch --batch -p1 -N < $SRC/lib/patch/$4/$2 | grep Skipping)" != "" ]; then 
@@ -83,7 +83,6 @@ display_alert "Patching" "kernel $VER" "info"
 
 # this is for almost all sources
 patchme "compiler bug" 					"compiler.patch" 				"reverse" "kernel"
-
 
 # mainline
 if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) ]] ; then
@@ -148,15 +147,16 @@ if [[ $BOARD == udoo* ]] ; then
 	fi
 fi
 
-# sunxi 3.4
+# sunxi 3.4 dan and me
 if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
+	rm drivers/spi/spi-sun7i.c
+	rm -r drivers/net/wireless/ap6210/
 	patchme "SPI functionality" 					"spi.patch" 								"default" "kernel"
 	patchme "Debian packaging fix" 					"packaging-sunxi-fix.patch" 				"default" "kernel"
 	patchme "Aufs3" 								"linux-sunxi-3.4.108-overlayfs.patch" 		"default" "kernel"
 	patchme "More I2S and Spdif" 					"i2s_spdif_sunxi.patch" 					"default" "kernel"
 	patchme "A fix for rt8192" 						"rt8192cu-missing-case.patch" 				"default" "kernel"
 	patchme "Upgrade to 3.4.109" 					"patch-3.4.108-109" 						"default" "kernel"
-	
 	
 	# banana/orange gmac  
 	if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
@@ -166,6 +166,43 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 		patchme "Banana PI/ PRO / Orange / R1 gmac" 					"bananagmac.patch" 		"reverse" "kernel"
 		patchme "Bananapi PRO wireless" 								"wireless-bananapro.patch" 		"reverse" "kernel"
 	fi
+fi
+
+# sunxi 3.4 dev
+if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
+
+	# remove files to patch clearly
+	rm -f drivers/spi/spi-sun7i.c
+	rm -rf drivers/net/wireless/ap6210/
+	rm -rf firmware/ap6210/
+	rm -f include/linux/compiler-gcc5.h
+	rm -f Documentation/lzo.txt 
+	rm -f net/ipv6/output_core.c	
+	rm -f arch/arm/mach-pxa/pxa_cplds_irqs.c
+	rm -rf fs/overlayfs
+	rm -f Documentation/filesystems/overlayfs.txt
+	rm -rf drivers/net/phy/b53/
+	rm -rf include/uapi
+	rm -f drivers/net/phy/swconfig.c
+	rm -f drivers/net/phy/swconfig_leds.c
+	rm -f include/linux/platform_data/b53.h
+	
+	patchme "Debian packaging fix" 						"dev-packaging.patch" 						"default" "kernel"
+	patchme "Upgrade to 3.4.104" 						"patch-3.4.103-104" 						"default" "kernel"
+	patchme "Upgrade to 3.4.105" 						"patch-3.4.104-105" 						"default" "kernel"
+	patchme "Upgrade to 3.4.106" 						"patch-3.4.105-106" 						"default" "kernel"
+	patchme "Upgrade to 3.4.107" 						"patch-3.4.106-107" 						"default" "kernel"
+	patchme "Upgrade to 3.4.108" 						"patch-3.4.107-108" 						"default" "kernel"
+	patchme "Upgrade to 3.4.109" 						"patch-3.4.108-109" 						"default" "kernel"
+	patchme "Aufs3" 									"linux-sunxi-3.4.108-overlayfs.patch" 		"default" "kernel"
+	patchme "SPI Sun7i functionality" 					"dev-spi-sun7i.patch" 						"default" "kernel"
+	patchme "I2S driver" 								"dev-i2s-spdif.patch" 						"default" "kernel"
+	patchme "Clustering" 								"clustering-patch-3.4-ja1.patch" 			"default" "kernel"
+	patchme "AP6210 driver Cubietruck / Banana PRO" 	"ap6210_module.patch" 						"default" "kernel"
+	patchme "A fix for rt8192" 							"rt8192cu-missing-case.patch" 				"default" "kernel"
+	patchme "R1 switch driver" 							"dev-bananapi-r1.patch" 					"default" "kernel"
+	patchme "Chip ID patch and MAC fixing" 				"dev-chip-id-and-gmac-fixing-mac.patch" 	"default" "kernel"
+
 fi
 
 # cubox / hummingboard 3.14
@@ -201,12 +238,14 @@ if [[ $BOARD == "udoo-neo" ]] ; then
        		patch --batch -N -p1 < $SRC/lib/patch/udoo-neo_fat_and_ext_boot_script_load.patch
 	fi
 fi
-if [[ $LINUXCONFIG == *sunxi* ]] ; then
+if [[ $LINUXCONFIG == *sun* ]] ; then
 	rm -f configs/Lamobo_R1_defconfig configs/Awsom_defconfig
-	patchme "Add Lamobo R1" 					"add-lamobo-r1-uboot.patch" 		"default" "u-boot"
-	patchme "Add AW SOM" 						"add-awsom-uboot.patch" 			"default" "u-boot"
-	patchme "Add boot splash" 					"sunxi-boot-splash.patch" 			"default" "u-boot"
-	
+	rm -f configs/Bananapi_M2_defconfig arch/arm/dts/sun6i-a31s-bananapi-m2.dts
+	patchme "Add Lamobo R1" 							"add-lamobo-r1-uboot.patch" 		"default" "u-boot"
+	patchme "Add Banana Pi M2 A31S" 					"bananam2-a31s.patch" 		"default" "u-boot"
+	patchme "Add AW SOM" 								"add-awsom-uboot.patch" 			"default" "u-boot"
+	patchme "Add Armbian boot splash" 					"sunxi-boot-splash.patch" 			"default" "u-boot"
+		
 	# Add new devices
 	addnewdevice "Lamobo R1" 			"sun7i-a20-lamobo-r1"	"u-boot"
 	
@@ -250,5 +289,7 @@ patchme "small TFT display support" 					"small_lcd_drivers.patch" 		"reverse" "
 umount $SOURCES/$LINUXSOURCE/drivers/video/fbtft >/dev/null 2>&1
 fi
 
+# sleep 
+sleep 2
 
 }

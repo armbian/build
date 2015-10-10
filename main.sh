@@ -241,7 +241,7 @@ if [[ -n "$MISC4" ]]; then fetch_from_github "$MISC4" "$MISC4_DIR" "master"; fi
 if [[ -n "$MISC5" ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
 
 # compile sunxi tools
-if [[ $LINUXCONFIG == *sunxi* ]]; then 
+if [[ $LINUXCONFIG == *sun* ]]; then 
 compile_sunxi_tools
 fi
 
