@@ -10,6 +10,21 @@
 #
 
 
+cleaning()
+#--------------------------------------------------------------------------------------------------------------------------------
+# Let's clean stuff
+#--------------------------------------------------------------------------------------------------------------------------------
+{
+display_alert "Cleaning" "$SOURCES/$BOOTSOURCE" "info"
+display_alert "Cleaning" "$SOURCES/$LINUXSOURCE" "info"
+display_alert "Removing deb packages" "$DEST/debs/*$REVISION*_armhf.deb" "info"
+display_alert "Removing root filesystem cache" "$DEST/cache" "info"
+display_alert "Removing deb packages" "$DEST/debs" "info"
+display_alert "Removing SD card images" "$DEST/images" "info"
+display_alert "Removing all sources" "$SOURCES" "info"
+}
+
+
 fetch_from_github (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Download or updates sources from Github

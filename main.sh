@@ -185,6 +185,9 @@ VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
 #--------------------------------------------------------------------------------------------------------------------------------
 clear
 
+# not yet ready
+#cleaning "$CLEAN_LEVEL"
+
 display_alert "Dependencies check" "@host" "info"
 
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -339,4 +342,5 @@ fi
 
 end=`date +%s`
 runtime=$(((end-start)/60))
+umount $SOURCES/$LINUXSOURCE/drivers/video/fbtft >/dev/null 2>&1
 display_alert "Runtime" "$runtime min" "info"
