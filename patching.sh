@@ -201,6 +201,10 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 	patchme "I2S driver" 								"dev-i2s-spdif.patch" 						"default" "kernel"
 	patchme "Clustering" 								"clustering-patch-3.4-ja1.patch" 			"default" "kernel"
 	patchme "AP6210 driver Cubietruck / Banana PRO" 	"ap6210_module.patch" 						"default" "kernel"
+	
+	patchme "Banana touch screen driver fix" 			"banana_touch_screen.patch" 				"default" "kernel"
+	patchme "GPIO fix" 									"gpio.patch" 								"default" "kernel"
+	
 	patchme "A fix for rt8192" 							"rt8192cu-missing-case.patch" 				"default" "kernel"
 	patchme "R1 switch driver" 							"dev-bananapi-r1.patch" 					"default" "kernel"
 	patchme "Chip ID patch and MAC fixing" 				"dev-chip-id-and-gmac-fixing-mac.patch" 	"default" "kernel"
