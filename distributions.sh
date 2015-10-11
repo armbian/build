@@ -71,17 +71,19 @@ jessie)
 		sed -e 's/4:23:respawn/#4:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
 		sed -e 's/5:23:respawn/#5:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
 		sed -e 's/6:23:respawn/#6:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
-		# install ramlog
-		cp $SRC/lib/bin/ramlog_2.0.0_all.deb $DEST/cache/sdcard/tmp
-		chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb >/dev/null 2>&1" 
-		# enabled back at first run. To remove errors
-		chroot $DEST/cache/sdcard /bin/bash -c "service ramlog disable >/dev/null 2>&1"
-		rm $DEST/cache/sdcard/tmp/ramlog_2.0.0_all.deb
-		sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $DEST/cache/sdcard/etc/default/ramlog
-		# supress warning
-		sed -e 's/update-rc.d $prog start 2 2 3 4 5 . stop 99 0 1 6 . >\/dev\/null/#update-rc.d $prog start 2 2 3 4 5 . stop 99 0 1 6 . >\/dev\/null\n\t\tupdate-rc.d $prog defaults/g' -i $DEST/cache/sdcard/etc/init.d/ramlog		
-		sed -e 's/# Required-Start:    $remote_fs $time/# Required-Start:    $remote_fs $time ramlog/g' -i $DEST/cache/sdcard/etc/init.d/rsyslog 
-		sed -e 's/# Required-Stop:     umountnfs $time/# Required-Stop:     umountnfs $time ramlog/g' -i $DEST/cache/sdcard/etc/init.d/rsyslog  
+		if [[ $SYSTEMD == "no" ]]; then
+			# install ramlog
+			cp $SRC/lib/bin/ramlog_2.0.0_all.deb $DEST/cache/sdcard/tmp
+			chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb >/dev/null 2>&1" 
+			# enabled back at first run. To remove errors
+			chroot $DEST/cache/sdcard /bin/bash -c "service ramlog disable >/dev/null 2>&1"
+			rm $DEST/cache/sdcard/tmp/ramlog_2.0.0_all.deb
+			sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $DEST/cache/sdcard/etc/default/ramlog
+			# supress warning
+			sed -e 's/update-rc.d $prog start 2 2 3 4 5 . stop 99 0 1 6 . >\/dev\/null/#update-rc.d $prog start 2 2 3 4 5 . stop 99 0 1 6 . >\/dev\/null\n\t\tupdate-rc.d $prog defaults/g' -i $DEST/cache/sdcard/etc/init.d/ramlog	
+			sed -e 's/# Required-Start:    $remote_fs $time/# Required-Start:    $remote_fs $time ramlog/g' -i $DEST/cache/sdcard/etc/init.d/rsyslog
+			sed -e 's/# Required-Stop:     umountnfs $time/# Required-Stop:     umountnfs $time ramlog/g' -i $DEST/cache/sdcard/etc/init.d/rsyslog  
+		fi
 		;;
 
 trusty)
