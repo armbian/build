@@ -251,7 +251,9 @@ if [[ $LINUXCONFIG == *sun* ]] ; then
 	#patchme "Add Banana Pi M2 A31S" 					"bananam2-a31s.patch" 		"default" "u-boot"
 	patchme "Add AW SOM" 								"add-awsom-uboot.patch" 			"default" "u-boot"
 	patchme "Add Armbian boot splash" 					"sunxi-boot-splash.patch" 			"default" "u-boot"
-	patchme "Cubieboard2 second SD card" 					"second_sd_card_cubieboard2.patch" 			"default" "u-boot"	
+	
+	#optional, need to test more
+	#patchme "Cubieboard2 second SD card" 					"second_sd_card_cubieboard2.patch" 			"default" "u-boot"	
 		
 		
 	# Add new devices
