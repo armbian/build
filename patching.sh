@@ -172,6 +172,7 @@ fi
 if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 
 	# remove files to patch clearly
+	rm -f drivers/hwmon/a20-tp.c
 	rm -f drivers/spi/spi-sun7i.c
 	rm -rf drivers/net/wireless/ap6210/
 	rm -rf firmware/ap6210/
@@ -195,6 +196,7 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 	patchme "Upgrade to 3.4.108" 						"patch-3.4.107-108" 						"default" "kernel"
 	patchme "Upgrade to 3.4.109" 						"patch-3.4.108-109" 						"default" "kernel"
 	patchme "Aufs3" 									"linux-sunxi-3.4.108-overlayfs.patch" 		"default" "kernel"
+	patchme "Standalone driver for the A20 Soc temp" 	"a20-temp.patch" 							"default" "kernel"
 	patchme "SPI Sun7i functionality" 					"dev-spi-sun7i.patch" 						"default" "kernel"
 	patchme "I2S driver" 								"dev-i2s-spdif.patch" 						"default" "kernel"
 	patchme "Clustering" 								"clustering-patch-3.4-ja1.patch" 			"default" "kernel"
