@@ -140,7 +140,7 @@ if [[ $BOARD == udoo* ]] ; then
 	else
 	# 
 	patchme "remove strange DTBs from tree" 					"udoo_dtb.patch" 				"default" "kernel"
-	patchme "remove n/a v4l2-capture from Udoo DTS" 			"udoo_dts_fix.patch" 			"default" "kernel"
+	#patchme "remove n/a v4l2-capture from Udoo DTS" 			"udoo_dts_fix.patch" 			"default" "kernel"
 	# patchme "deb packaging fix" 								"packaging-udoo-fix.patch" 		"default" "kernel"
 	# temp instead of this patch
 	cp $SRC/lib/patch/kernel/builddeb-fixed-udoo scripts/package/builddeb
