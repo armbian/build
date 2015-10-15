@@ -200,7 +200,7 @@ fi
 
 case $BOARD in
 bananapi | bananapipro | lamobo-r1 | orangepi | orangepimini)
-LINUXFAMILY="banana"
+LINUXFAMILY="sun7i"
 if [[ $BRANCH == "next" ]] ; then LINUXFAMILY="sunxi"; fi
 ;;
 cubox-i)
@@ -210,7 +210,7 @@ udoo | udoo-neo)
 LINUXFAMILY="udoo"
 ;;
 *)
-LINUXFAMILY="sunxi"
+LINUXFAMILY="sun7i"
 ;;
 esac
  }
