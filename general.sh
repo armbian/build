@@ -82,7 +82,7 @@ for x in $PAKETKI; do
 done
 if [[ $INSTALL != "" ]]; then
 	debconf-apt-progress -- apt-get -y install $INSTALL 
-	if [ $? -ne 0 ] || [ ! -f $SRC/hostap/hostapd/hostapd ]; then
+	if [ $? -ne 0 ]; then
 		display_alert "Installation of package failed" "$INSTALL" "err"
 		exit 1
 	fi
