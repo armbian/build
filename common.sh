@@ -233,7 +233,7 @@ if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCE == *sunxi*  ]]; then
 	cd $SOURCES/$MISC5_DIR
 	cp $SOURCES/$LINUXSOURCE/include/video/sunxi_disp_ioctl.h .
 	make clean >/dev/null 2>&1
-	make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC=$SOURCES/$LINUXSOURCE/ >/dev/null 2>&1
+	make $CTHREADS ARCH=arm CC=arm-linux-gnueabi-gcc KSRC=$SOURCES/$LINUXSOURCE/ >/dev/null 2>&1
 	install -m 755 a10disp $DEST/cache/sdcard/usr/local/bin
 fi
 
