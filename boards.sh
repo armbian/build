@@ -84,6 +84,9 @@ if [[ $BOARD == "udoo-neo" ]] ; then
 		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.hostapd
 		# SD card is elsewhere
 		sed 's/mmcblk0p1/mmcblk1p1/' -i $DEST/cache/sdcard/etc/fstab
+		# firmware for M4
+		mkdir -p $DEST/cache/sdcard/boot/bin/
+		cp $SRC/lib/bin/m4startup.fw* $DEST/cache/sdcard/boot/bin/
 fi
 
 # cubox / hummingboard
@@ -119,7 +122,7 @@ display_alert "Creating boot scripts" "$BOARD" "info"
 # remove .old on new image
 rm -rf $DEST/cache/sdcard/boot/dtb.old
 if [[ $BOARD == udoo* ]] ; then
-	cp $SRC/lib/config/boot-udoo.cmd $DEST/cache/sdcard/boot/boot.cmd
+	cp $SRC/lib/config/boot-$BOARD.cmd $DEST/cache/sdcard/boot/boot.cmd
 elif [[ $BOARD == cubox-i* ]]; then
 	cp $SRC/lib/config/boot-cubox.cmd $DEST/cache/sdcard/boot/boot.cmd
 else
