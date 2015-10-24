@@ -21,8 +21,8 @@ if [ -d "$SOURCES/$BOOTSOURCE" ]; then
 	# there are two methods of compilation
 	if [[ $BOOTCONFIG == *config* ]]; then
 		make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- >/dev/null 2>&1
-		sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
-		sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
+		[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
+		[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
 		touch .scmversion
 		if [[ $BRANCH != "next" && $LINUXCONFIG == *sun* ]] ; then
 			## patch mainline uboot configuration to boot with old kernels
@@ -163,10 +163,17 @@ export LOCALVERSION="-"$LINUXFAMILY
 # this way of compilation is much faster. We can use multi threading here but not later
 make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- oldconfig
 make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all zImage | dialog  --progressbox "Compiling kernel ..." 20 70
+
+if [ $? -ne 0 ] || [ ! -f arch/arm/boot/zImage ]; then
+		display_alert "Kernel was not built" "@host" "err"
+	    exit 1
+fi
+
+
 # make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- 
 # produce deb packages: image, headers, firmware, libc
-make -j1 deb-pkg KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=armhf ARCH=arm DEBFULLNAME="$MAINTAINER" \
-DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE=arm-linux-gnueabihf- | dialog  --progressbox "Packaging kernel ..." 20 70
+make $CTHREADS deb-pkg KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=armhf ARCH=arm DEBFULLNAME="$MAINTAINER" \
+DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE=arm-linux-gnueabihf- 
 
 if [[ $BRANCH == "next" ]] ; then
 	KERNEL_BRACH="-next"
@@ -233,7 +240,7 @@ if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCE == *sunxi*  ]]; then
 	cd $SOURCES/$MISC5_DIR
 	cp $SOURCES/$LINUXSOURCE/include/video/sunxi_disp_ioctl.h .
 	make clean >/dev/null 2>&1
-	make $CTHREADS ARCH=arm CC=arm-linux-gnueabi-gcc KSRC=$SOURCES/$LINUXSOURCE/ >/dev/null 2>&1
+	make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC=$SOURCES/$LINUXSOURCE/ >/dev/null 2>&1
 	install -m 755 a10disp $DEST/cache/sdcard/usr/local/bin
 fi
 
