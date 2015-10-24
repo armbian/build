@@ -118,6 +118,14 @@ if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) 
 		patch -p1 -f -s -m < $SRC/lib/patch/kernel/bananapi-r1-4.x.patch
 	fi
 
+	# add H3
+	display_alert "Patching" "Allwinner H3 support" "info"
+	rm -f drivers/clk/sunxi/clk-bus-gates.c
+	rm -f drivers/pinctrl/sunxi/pinctrl-sun8i-h3.c
+	rm -f arch/arm/boot/dts/sun8i-h3-orangepi-plus.dts
+	rm -f arch/arm/boot/dts/sun8i-h3.dtsi
+	for i in $SRC/lib/patch/kernel/h3*.patch; do patch -p1 -l -f -s < $i; done
+	
 	# Add new devices
 	addnewdevice "Lamobo R1" 			"sun7i-a20-lamobo-r1"					"kernel"
 	#addnewdevice "Orange PI" 			"sun7i-a20-orangepi"					"kernel"
@@ -137,15 +145,34 @@ if [[ $BOARD == udoo* ]] ; then
 		patchme "Upgrade to 4.2.1" 								"patch-4.2.1" 			"default" "kernel"
 		patchme "Upgrade to 4.2.2" 								"patch-4.2.1-2" 			"default" "kernel"
 		patchme "Upgrade to 4.2.3" 								"patch-4.2.2-3" 			"default" "kernel"
+		patchme "Upgrade to 4.2.4" 								"patch-4.2.3-4" 			"default" "kernel"
 	else
 	# 
-	patchme "remove strange DTBs from tree" 					"udoo_dtb.patch" 				"default" "kernel"
+	#patchme "remove strange DTBs from tree" 					"udoo_dtb.patch" 				"default" "kernel"
 	#patchme "remove n/a v4l2-capture from Udoo DTS" 			"udoo_dts_fix.patch" 			"default" "kernel"
 	# patchme "deb packaging fix" 								"packaging-udoo-fix.patch" 		"default" "kernel"
 	# temp instead of this patch
+	
+	# Upgrade to 3.14.55 (until 34 auto)
+	for (( c=28; c<=34; c++ ))
+	do
+		display_alert "Patching" "3.14.$c-$(( $c+1 ))" "info"
+		wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f -s >/dev/null 2>&1     
+	done
+	
+	patchme "Upgrade to 3.14.36" 								"neo-patch-3.14.35-36" 			"default" "kernel"
+	patchme "Upgrade to 3.14.37" 								"neo-patch-3.14.36-37" 			"default" "kernel"
+	patchme "Upgrade to 3.14.38" 								"neo-patch-3.14.37-38" 			"default" "kernel"
+	patchme "Upgrade to 3.14.39" 								"neo-patch-3.14.38-39" 			"default" "kernel"
+	for (( c=39; c<=54; c++ ))
+	do
+		display_alert "Patching" "3.14.$c-$(( $c+1 ))" "info"
+		wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f -s >/dev/null 2>&1     
+	done	
 	cp $SRC/lib/patch/kernel/builddeb-fixed-udoo scripts/package/builddeb
 	fi
 fi
+
 
 # sunxi 3.4 dan and me
 if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
@@ -156,7 +183,7 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 	patchme "Aufs3" 								"linux-sunxi-3.4.108-overlayfs.patch" 		"default" "kernel"
 	patchme "More I2S and Spdif" 					"i2s_spdif_sunxi.patch" 					"default" "kernel"
 	patchme "A fix for rt8192" 						"rt8192cu-missing-case.patch" 				"default" "kernel"
-	patchme "Upgrade to 3.4.109" 					"patch-3.4.108-109" 						"default" "kernel"
+	#patchme "Upgrade to 3.4.109" 					"patch-3.4.108-109" 						"default" "kernel"
 	
 	# banana/orange gmac  
 	if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
@@ -195,6 +222,7 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 	patchme "Upgrade to 3.4.107" 						"patch-3.4.106-107" 						"default" "kernel"
 	patchme "Upgrade to 3.4.108" 						"patch-3.4.107-108" 						"default" "kernel"
 	patchme "Upgrade to 3.4.109" 						"patch-3.4.108-109" 						"default" "kernel"
+	patchme "Upgrade to 3.4.110" 						"patch-3.4.109-110" 						"default" "kernel"
 	patchme "Aufs3" 									"linux-sunxi-3.4.108-overlayfs.patch" 		"default" "kernel"
 	patchme "Standalone driver for the A20 Soc temp" 	"a20-temp.patch" 							"default" "kernel"
 	patchme "SPI Sun7i functionality" 					"dev-spi-sun7i.patch" 						"default" "kernel"
@@ -215,15 +243,31 @@ fi
 if [[ $LINUXSOURCE == linux-cubox* ]] ; then
 	patchme "SPI and I2C functionality" 						"hb-i2c-spi.patch" 				"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-cubox.patch" 				"default" "kernel"
-	# Upgrade to 3.14.54
-	for (( c=14; c<=53; c++ ))
+	# Upgrade to 3.14.55
+	for (( c=14; c<=54; c++ ))
 	do
-		display_alert "Patching" "3.14.$c-$(( $c+1 ))" "info"
+		display_alert "... upgrading" "3.14.$c-$(( $c+1 ))" "info"
 		wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f -s >/dev/null 2>&1     
 	done
 	
 fi
 
+# linux allwinner legacy: H3, A80, ...
+if [[ $LINUXSOURCE == "linux-allwinner" ]] ; then
+	rm arch/arm/mach-sunxi/power/brom/mksunxichecksum.c
+	patchme "Debian packaging fix" 					"allwinnner-packaging.patch" 				"default" "kernel"
+	# http://moinejf.free.fr/opi2/
+	patchme "Orangepi 2 compiler fix" 					"allwinner-h3-orange.patch" 				"default" "kernel"
+	# Upgrades. Need fixing
+#	for (( c=39; c<=40; c++ ))
+#	do
+#		display_alert "Patching" "3.14.$c-$(( $c+1 ))" "info"
+#		wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.4.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f     
+#	done
+fi
+
+# What are we building
+grab_kernel_version
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # Patching u-boot sources
@@ -239,11 +283,12 @@ if [[ $BOARD == "udoo" ]] ; then
 fi
 
 if [[ $BOARD == "udoo-neo" ]] ; then
+    cp $SRC/lib/patch/u-boot/udoo_neo.h include/configs/
 	# This enables loading boot.scr from / and /boot, fat and ext2
-	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-neo_fat_and_ext_boot_script_load.patch | grep previ)" == "" ]; then
-       		patch --batch -N -p1 < $SRC/lib/patch/udoo-neo_fat_and_ext_boot_script_load.patch
+#	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/udoo-neo_fat_and_ext_boot_script_load.patch | grep previ)" == "" ]; then
+ #      		patch --batch -N -p1 < $SRC/lib/patch/udoo-neo_fat_and_ext_boot_script_load.patch
 	fi
-fi
+#fi
 if [[ $LINUXCONFIG == *sun* ]] ; then
 	rm -f configs/Lamobo_R1_defconfig configs/Awsom_defconfig
 	#rm -f configs/Bananapi_M2_defconfig arch/arm/dts/sun6i-a31s-bananapi-m2.dts
@@ -251,6 +296,7 @@ if [[ $LINUXCONFIG == *sun* ]] ; then
 	#patchme "Add Banana Pi M2 A31S" 					"bananam2-a31s.patch" 		"default" "u-boot"
 	patchme "Add AW SOM" 								"add-awsom-uboot.patch" 			"default" "u-boot"
 	patchme "Add Armbian boot splash" 					"sunxi-boot-splash.patch" 			"default" "u-boot"
+	#patchme "Add overscan" 					"u-boot-overscan-sunxi.patch" 			"default" "u-boot"
 	
 	#optional, need to test more
 	#patchme "Cubieboard2 second SD card" 					"second_sd_card_cubieboard2.patch" 			"default" "u-boot"	
@@ -269,9 +315,9 @@ fi
 cd $SOURCES/$MISC4_DIR
 display_alert "Patching" "other sources" "info"
 
-
 # add small TFT display support  
 if [[ "$FBTFT" = "yes" && $BRANCH != "next" ]]; then
+
 IFS='.' read -a array <<< "$VER"
 cd $SOURCES/$MISC4_DIR
 if (( "${array[0]}" == "3" )) && (( "${array[1]}" < "5" ))
@@ -293,9 +339,9 @@ mkdir -p $SOURCES/$LINUXSOURCE/drivers/video/fbtft
 mount --bind $SOURCES/$MISC4_DIR $SOURCES/$LINUXSOURCE/drivers/video/fbtft
 cd $SOURCES/$LINUXSOURCE
 patchme "small TFT display support" 					"small_lcd_drivers.patch" 		"default" "kernel"
-else
-patchme "small TFT display support" 					"small_lcd_drivers.patch" 		"reverse" "kernel"
-umount $SOURCES/$LINUXSOURCE/drivers/video/fbtft >/dev/null 2>&1
+#else
+#patchme "small TFT display support" 					"small_lcd_drivers.patch" 		"reverse" "kernel"
+#umount $SOURCES/$LINUXSOURCE/drivers/video/fbtft >/dev/null 2>&1
 fi
 
 # sleep 

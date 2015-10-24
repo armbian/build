@@ -403,7 +403,7 @@ esac
 #--------------------------------------------------------------------------------------------------------------------------------
 if [[ $BRANCH == *next* ]];then
 	# All next compilations are using mainline u-boot & kernel
-	LINUXKERNEL="git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git"
+	LINUXKERNEL="git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git --depth 1"
 	LINUXSOURCE="linux-mainline"
 	LINUXCONFIG="linux-sunxi-next"
 	LINUXDEFAULT="master"
