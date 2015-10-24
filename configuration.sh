@@ -30,7 +30,7 @@ SYSTEMD="yes"											# Enable or disable systemd on Jessie.
 OFFSET="1" 												# Bootloader space in MB (1 x 2048 = default)
 BOOTSIZE="0" 											# Mb size of boot partition
 UBOOTTAG="v2015.10"										# U-boot TAG
-BOOTLOADER="git://git.denx.de/u-boot.git"				# mainline u-boot sources
+BOOTLOADER="git://git.denx.de/u-boot.git --depth 1"		# mainline u-boot sources
 BOOTSOURCE="u-boot"										# mainline u-boot local directory
 BOOTDEFAULT="master" 									# default branch that git checkout works properly
 LINUXDEFAULT="HEAD" 									# default branch that git checkout works properly
@@ -38,11 +38,11 @@ MISC1="https://github.com/linux-sunxi/sunxi-tools.git"	# Allwinner fex compiler 
 MISC1_DIR="sunxi-tools"									# local directory
 MISC2=""												# Reserved
 MISC2_DIR=""											# local directory
-MISC3="https://github.com/dz0ny/rt8192cu"				# Realtek drivers
+MISC3="https://github.com/dz0ny/rt8192cu --depth 1"		# Realtek drivers
 MISC3_DIR="rt8192cu"									# local directory
-MISC4="https://github.com/notro/fbtft"					# Small TFT display driver
+MISC4="https://github.com/notro/fbtft --depth 1"		# Small TFT display driver
 MISC4_DIR="fbtft-drivers"								# local directory
-MISC5="https://github.com/hglm/a10disp/"				# Display changer for Allwinner
+MISC5="https://github.com/hglm/a10disp/ --depth 1"		# Display changer for Allwinner
 MISC5_DIR="sunxi-display-changer"						# local directory
 
 #--------------------------------------------------------------------------------------------------------------------------------
