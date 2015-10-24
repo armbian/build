@@ -63,12 +63,13 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # Get updates of the main build libraries
 #--------------------------------------------------------------------------------------------------------------------------------
+apt-get -qq -y install git
 if [ -d "$SRC/lib" ]; then
     cd $SRC/lib
     git pull
 else
     # download SDK
-    git clone https://github.com/igorpecovnik/lib
+    git clone --depth 1 https://github.com/igorpecovnik/lib
 fi
 
 

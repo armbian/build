@@ -22,7 +22,7 @@ fi
 
 
 # We'll use this tittle on all menus
-backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik, www.igorpecovnik.com"
+backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
 
 # Install menu support
 if [ $(dpkg-query -W -f='${Status}' whiptail 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
@@ -35,7 +35,7 @@ fi
 if [ "$BOARD" == "" ]; then
 	IFS=";"
 	MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/\)#enabled/ || /#des/' | sed 's/)#enabled//g' | sed 's/#description //g' | sed ':a;N;$!ba;s/\n/;/g'))
-	MYPARAMS=( --title "Choose a board" --backtitle $backtitle --menu "\n Currently supported:" 28 62 18 )
+	MYPARAMS=( --title "Choose a board" --backtitle $backtitle --menu "\n Supported:" 28 62 18 )
 	i=0
 	j=1
 	while [[ $i -lt ${#MYARRAY[@]} ]]
@@ -109,9 +109,10 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 if [ "$BRANCH" == "" ]; then
 	IFS=";"
-	declare -a MYARRAY=('default' '3.4.x - 3.14.x most supported' 'next' '4.x Vanilla from www.kernel.org');
+	declare -a MYARRAY=('default' '3.4.x - 3.14.x most supported' 'next' 'Vanilla / mainline latest stable');
 	# Exceptions
 	if [[ $BOARD == "cubox-i" || $BOARD == "udoo-neo" ]]; then declare -a MYARRAY=('default' '3.4.x - 3.14.x most supported'); fi
+	if [[ $BOARD == "cubieboard4" || $BOARD == "bananapim2" ]]; then declare -a MYARRAY=('next' 'Latest stable from www.kernel.org'); fi
 	MYPARAMS=( --title "Choose a branch" --backtitle $backtitle --menu "\n Kernel:" 11 60 2 )
 	i=0
 	j=1
@@ -210,17 +211,21 @@ if [ "$KERNEL_ONLY" == "yes" ]; then
 		display_alert "Building" "$VERSION" "info"
 fi
 
-if [ "$SYNC_CLOCK" != "no" ]; then
-	display_alert "Synching clock" "host" "info"
-	ntpdate -s time.ijs.si
-fi
-start=`date +%s`
-
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # download packages for host
 #--------------------------------------------------------------------------------------------------------------------------------
 download_host_packages
+
+
+#--------------------------------------------------------------------------------------------------------------------------------
+# sync clock
+#--------------------------------------------------------------------------------------------------------------------------------
+if [ "$SYNC_CLOCK" != "no" ]; then
+	display_alert "Synching clock" "host" "info"
+	ntpdate -s time.ijs.si
+fi
+start=`date +%s`
 
 
 #--------------------------------------------------------------------------------------------------------------------------------

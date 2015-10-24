@@ -74,14 +74,18 @@ IFS=" "
 apt-get -y -qq install debconf-utils
 PAKETKI="aptly device-tree-compiler dialog pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex gawk \
 gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev parted pkg-config \
-expect gcc-arm-linux-gnueabi libncurses5-dev whiptail debian-keyring debian-archive-keyring"
+expect gcc-arm-linux-gnueabi libncurses5-dev whiptail debian-keyring debian-archive-keyring ntpdate"
 for x in $PAKETKI; do
 	if [ $(dpkg-query -W -f='${Status}' $x 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
 		INSTALL=$INSTALL" "$x
 	fi
 done
 if [[ $INSTALL != "" ]]; then
-debconf-apt-progress -- apt-get -y install $INSTALL 
+	debconf-apt-progress -- apt-get -y install $INSTALL 
+	if [ $? -ne 0 ] || [ ! -f $SRC/hostap/hostapd/hostapd ]; then
+		display_alert "Installation of package failed" "$INSTALL" "err"
+		exit 1
+	fi
 fi
 }
 
