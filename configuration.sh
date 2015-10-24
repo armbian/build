@@ -22,14 +22,14 @@
 # common options
 #--------------------------------------------------------------------------------------------------------------------------------
 
-REVISION="4.5" 											# all boards have same revision
+REVISION="4.6" 											# all boards have same revision
 SDSIZE="4000" 											# SD image size in MB
 TZDATA=`cat /etc/timezone`								# Timezone for target is taken from host or defined here.
 USEALLCORES="yes"                           			# Use all CPU cores for compiling
 SYSTEMD="yes"											# Enable or disable systemd on Jessie. 
 OFFSET="1" 												# Bootloader space in MB (1 x 2048 = default)
 BOOTSIZE="0" 											# Mb size of boot partition
-UBOOTTAG="v2015.07"										# U-boot TAG
+UBOOTTAG="v2015.10"										# U-boot TAG
 BOOTLOADER="git://git.denx.de/u-boot.git"				# mainline u-boot sources
 BOOTSOURCE="u-boot"										# mainline u-boot local directory
 BOOTDEFAULT="master" 									# default branch that git checkout works properly
@@ -62,7 +62,7 @@ LINUXFAMILY="sunxi"
 LINUXCONFIG="linux-sunxi"
 
 # linux-sunxi
-LINUXKERNEL="https://github.com/linux-sunxi/linux-sunxi"
+LINUXKERNEL="https://github.com/linux-sunxi/linux-sunxi --depth 1"
 LINUXSOURCE="linux-sunxi-dev"
 LINUXFAMILY="sun7i"
 LINUXCONFIG="linux-sun7i"
@@ -77,18 +77,19 @@ CPUMAX="1010000"
 case $BOARD in
 
 
-cubieboard4)
+cubieboard4)#disabled
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboards 3.4.x
 #--------------------------------------------------------------------------------------------------------------------------------
 OFFSET="20"
 BOOTSIZE="16"
-BOOTCONFIG="Merrii_A80_Optimus_defconfig"
+BOOTCONFIG="Bananapi_defconfig" # we don't use it. binnary
 CPUMIN="1200000"
 CPUMAX="1800000"
-#LINUXKERNEL="https://github.com/cubieboard/CC-A80-kernel-source"
-#LINUXSOURCE="linux-sunxi-a80"
-#LINUXCONFIG="linux-sunxi-a80.config"
+LINUXFAMILY="sun9i"
+LINUXKERNEL="https://github.com/cubieboard/CC-A80-kernel-source"
+LINUXSOURCE="linux-sun9i"
+LINUXCONFIG="linux-sun9i"
 ;;
 
 
@@ -110,8 +111,6 @@ cubieboard)#enabled
 #--------------------------------------------------------------------------------------------------------------------------------
 # Cubieboard
 #--------------------------------------------------------------------------------------------------------------------------------
-LINUXKERNEL="https://github.com/linux-sunxi/linux-sunxi"
-LINUXSOURCE="linux-sunxi-dev"
 LINUXFAMILY="sun4i"
 LINUXCONFIG="linux-sun4i"
 BOOTCONFIG="Cubieboard_config" 
@@ -284,21 +283,38 @@ MODULES_NEXT="bonding"
 ;;
 
 
+orangepiplus)#disabled
+#--------------------------------------------------------------------------------------------------------------------------------
+# Orange pi plus
+#--------------------------------------------------------------------------------------------------------------------------------
+#OFFSET="20"
+#yBOOTSIZE="16"
+BOOTCONFIG="Bananapi_defconfig"
+LINUXFAMILY="sun8i"
+CPUMIN="1200000"
+CPUMAX="1200000"
+LINUXKERNEL="https://github.com/cubieboard/Cubietruck_Plus-kernel-source"
+LINUXSOURCE="linux-allwinner"
+LINUXCONFIG="linux-sun8i"
+;;
+
+
 cubox-i)#enabled
 #description Freescale iMx dual/quad core Wifi
 #build 1
 #--------------------------------------------------------------------------------------------------------------------------------
 # cubox-i & hummingboard 3.14.xx
 #--------------------------------------------------------------------------------------------------------------------------------
-BOOTLOADER="https://github.com/SolidRun/u-boot-imx6"
+BOOTLOADER="https://github.com/SolidRun/u-boot-imx6 --depth 1"
 BOOTDEFAULT="HEAD"
+UBOOTTAG=""
 BOOTSOURCE="u-boot-cubox"
 BOOTCONFIG="mx6_cubox-i_config"
 CPUMIN="396000"
 CPUMAX="996000"
 MODULES="bonding"
 MODULES_NEXT="bonding"
-LINUXKERNEL="https://github.com/linux4kix/linux-linaro-stable-mx6"
+LINUXKERNEL="https://github.com/linux4kix/linux-linaro-stable-mx6 --depth 1"
 LINUXFAMILY="cubox"
 LINUXCONFIG="linux-cubox"
 LINUXSOURCE="linux-cubox"
@@ -312,7 +328,7 @@ fi
 
 udoo)#enabled
 #description Freescale iMx dual/quad core Wifi
-#build 2
+#build 3
 #--------------------------------------------------------------------------------------------------------------------------------
 # Udoo quad
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -326,9 +342,9 @@ CPUMAX="996000"
 MODULES="bonding"
 MODULES_NEXT=""
 KERNELTAG=""
-LINUXKERNEL="https://github.com/UDOOboard/linux_kernel"
+LINUXKERNEL="https://github.com/UDOOboard/linux_kernel --depth 1"
 LINUXCONFIG="linux-udoo"
-LINUXSOURCE="linux-neo"
+LINUXSOURCE="linux-udoo"
 LINUXDEFAULT="imx_3.14.28_1.0.0_ga_udoo"
 LINUXFAMILY="udoo"
 ;;
@@ -340,15 +356,16 @@ udoo-neo)#enabled
 #--------------------------------------------------------------------------------------------------------------------------------
 # Udoo Neo
 #--------------------------------------------------------------------------------------------------------------------------------
-BOOTSIZE="32"
+#BOOTSIZE="32"
+BOOTCONFIG="udoo_neo_config"
 BOOTLOADER="https://github.com/UDOOboard/uboot-imx"
 BOOTSOURCE="u-boot-neo"
-BOOTCONFIG="udoo_neo_config"
+UBOOTTAG=""
 CPUMIN="198000"
 CPUMAX="996000"
 MODULES="bonding"
 MODULES_NEXT=""
-LINUXKERNEL="https://github.com/UDOOboard/linux_kernel -b udooneo-wl1831"
+LINUXKERNEL="--depth 1 https://github.com/UDOOboard/linux_kernel -b imx_3.14.28_1.0.0_ga_neo_dev"
 LINUXCONFIG="linux-udoo-neo"
 LINUXSOURCE="linux-neo"
 LINUXFAMILY="neo"
