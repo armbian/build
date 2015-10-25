@@ -317,7 +317,6 @@ display_alert "Patching" "other sources" "info"
 
 # add small TFT display support  
 if [[ "$FBTFT" = "yes" && $BRANCH != "next" ]]; then
-
 IFS='.' read -a array <<< "$VER"
 cd $SOURCES/$MISC4_DIR
 if (( "${array[0]}" == "3" )) && (( "${array[1]}" < "5" ))
