@@ -19,7 +19,7 @@ case $RELEASE in
 
 wheezy)
 		# specifics packets
-		install_packet "libnl-dev" "Installing Wheezy packages"
+		install_packet "libnl-dev" "Installing Wheezy packages" "" "quiet"
 		# add serial console
 		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/cache/sdcard/etc/inittab
 		# don't clear screen on boot console
@@ -44,7 +44,7 @@ wheezy)
 
 jessie)
 		# specifics packets add and remove
-		install_packet "thin-provisioning-tools libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties libnss-myhostname" "Installing Jessie packages"
+		install_packet "thin-provisioning-tools libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties libnss-myhostname" "Installing Jessie packages" "" "quiet"
 		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get autoremove >/dev/null 2>&1"
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/cache/sdcard/etc/ssh/sshd_config 
@@ -92,7 +92,7 @@ trusty)
 		#cp $DEST/cache/sdcard/lib/systemd/system/serial-getty@.service $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
 		#sed -e s/"--keep-baud 115200,38400,9600"/"-L 115200"/g  -i $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
 		# specifics packets add and remove
-		install_packet "libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties" "Installing Trusty packages"
+		install_packet "libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties" "Installing Trusty packages" "" "quiet"
 		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get autoremove >/dev/null 2>&1"
 		# don't clear screen tty1
 		sed -e s,"exec /sbin/getty","exec /sbin/getty --noclear",g 	-i $DEST/cache/sdcard/etc/init/tty1.conf
