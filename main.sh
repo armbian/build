@@ -23,10 +23,11 @@ fi
 
 # We'll use this tittle on all menus
 backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
+mkdir -p $DEST/debug
 
 # Install menu support
 if [ $(dpkg-query -W -f='${Status}' whiptail 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
-apt-get install -qq -y whiptail > /dev/null 2>&1
+apt-get install -qq -y whiptail >/dev/null 2>&1
 fi 
 
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -168,10 +169,6 @@ source $SRC/lib/boards.sh 					# Board specific install
 source $SRC/lib/desktop.sh 					# Desktop specific install
 source $SRC/lib/common.sh 					# Functions 
 
-if [ "$SOURCE_COMPILE" != "yes" ]; then
-	choosing_kernel
-	if [ "$CHOOSEN_KERNEL" == "" ]; then echo "ERROR: You have to choose one kernel"; exit; fi
-fi
 
 # needed if process failed in the middle
 umount_image
@@ -180,16 +177,15 @@ umount_image
 # The name of the job
 #--------------------------------------------------------------------------------------------------------------------------------
 VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
- 
+echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION > $DEST/debug/install.log 
+
+
 #--------------------------------------------------------------------------------------------------------------------------------
 # let's start with fresh screen
 #--------------------------------------------------------------------------------------------------------------------------------
 clear
-
-# not yet ready
-#cleaning "$CLEAN_LEVEL"
-
 display_alert "Dependencies check" "@host" "info"
+
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # optimize build time with 100% CPU usage
@@ -215,7 +211,12 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # download packages for host
 #--------------------------------------------------------------------------------------------------------------------------------
-download_host_packages
+PAKETKI="aptly device-tree-compiler dialog pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex gawk \
+gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev parted pkg-config \
+expect gcc-arm-linux-gnueabi libncurses5-dev whiptail debian-keyring debian-archive-keyring ntpdate"
+if [ "$(LANGUAGE=english apt-get -s install $PAKETKI | grep "0 newly installed")" == "" ]; then
+	install_packet "$PAKETKI" "Checking and installing host dependencies" "host"
+fi
 
 
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -233,11 +234,7 @@ start=`date +%s`
 #--------------------------------------------------------------------------------------------------------------------------------
 mkdir -p $DEST -p $SOURCES
 
-if [ "$FORCE_CHECKOUT" = "yes" ]; then
-	FORCE="-f"
-	else
-	FORCE=""
-fi
+if [ "$FORCE_CHECKOUT" = "yes" ]; then FORCE="-f"; else FORCE=""; fi
 display_alert "source downloading" "@host" "info"
 
 fetch_from_github "$BOOTLOADER" "$BOOTSOURCE" "$BOOTDEFAULT"
@@ -256,57 +253,28 @@ fi
 # clean open things if scripts stops in the middle
 umount_image
 
-# Patching sources
+# cleaning level 0,1,2,3
+cleaning "$CLEAN_LEVEL"
+
+# patching sources
 patching_sources
 
-
-# Compile kernel only if not exits in cache. kernel clean override
-if [[ $BRANCH == "next" ]] ; then KERNEL_BRACH="-next"; UBOOT_BRACH="-next"; else KERNEL_BRACH=""; UBOOT_BRACH=""; fi 
-
-CHOOSEN_UBOOT="linux-u-boot"$UBOOT_BRACH"-"$BOARD"_"$REVISION"_armhf"
-
-if [[ $KERNEL_CLEAN == "no" ]] ; then
-	# check if proper kernel deb exists
-	TMP=linux-image"$KERNEL_BRACH"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
-	if [ -f "$DEST/debs/$TMP" ]; then
-		CHOOSEN_KERNEL=$TMP
-		#echo $TMP
-		SOURCE_COMPILE="no"
-	fi
-	# check if proper u-boot deb exists
-	if [ ! -f "$DEST/debs/$CHOOSEN_UBOOT"".deb" ]; then
-		compile_uboot
-	fi
-	
-fi
-
-
-
 #--------------------------------------------------------------------------------------------------------------------------------
-# Compile source or choose already packed kernel
+# Compile source if packed not exits
 #--------------------------------------------------------------------------------------------------------------------------------
-if [ "$SOURCE_COMPILE" = "yes" ]; then
+[ ! -f "$DEST/debs/$CHOOSEN_UBOOT" ] && compile_uboot
+[ ! -f "$DEST/debs/$CHOOSEN_KERNEL" ] && compile_kernel
 
-	# Compile boot loader
-	compile_uboot
 
-	# compile kernel and create archives
-	compile_kernel
-	if [ "$KERNEL_ONLY" == "yes" ]; then
+if [ "$KERNEL_ONLY" == "yes" ]; then
 		display_alert "Kernel building done" "@host" "info"
 		display_alert "Target directory" "$DEST/debs/" "info"
-		display_alert "File name: $CHOOSEN_KERNEL" "$VER" "info"
-	fi
-	
-fi
-
-if [ "$KERNEL_ONLY" != "yes" ]; then
-
+		display_alert "File name" "$CHOOSEN_KERNEL" "info"
+else
 #--------------------------------------------------------------------------------------------------------------------------------
 # create or use prepared root file-system
 #--------------------------------------------------------------------------------------------------------------------------------
 custom_debootstrap
-
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # add kernel to the image
