@@ -30,7 +30,7 @@ SYSTEMD="yes"											# Enable or disable systemd on Jessie.
 OFFSET="1" 												# Bootloader space in MB (1 x 2048 = default)
 BOOTSIZE="0" 											# Mb size of boot partition
 UBOOTTAG="v2015.10"										# U-boot TAG
-BOOTLOADER="git://git.denx.de/u-boot.git --depth 1"		# mainline u-boot sources
+BOOTLOADER="git://git.denx.de/u-boot.git"				# mainline u-boot sources
 BOOTSOURCE="u-boot"										# mainline u-boot local directory
 BOOTDEFAULT="master" 									# default branch that git checkout works properly
 LINUXDEFAULT="HEAD" 									# default branch that git checkout works properly
@@ -403,7 +403,7 @@ esac
 #--------------------------------------------------------------------------------------------------------------------------------
 if [[ $BRANCH == *next* ]];then
 	# All next compilations are using mainline u-boot & kernel
-	LINUXKERNEL="git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git --depth 1"
+	LINUXKERNEL="git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git"
 	LINUXSOURCE="linux-mainline"
 	LINUXCONFIG="linux-sunxi-next"
 	LINUXDEFAULT="master"
