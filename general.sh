@@ -15,13 +15,56 @@ cleaning()
 # Let's clean stuff
 #--------------------------------------------------------------------------------------------------------------------------------
 {
-display_alert "Cleaning" "$SOURCES/$BOOTSOURCE" "info"
-display_alert "Cleaning" "$SOURCES/$LINUXSOURCE" "info"
-display_alert "Removing deb packages" "$DEST/debs/*$REVISION*_armhf.deb" "info"
-display_alert "Removing root filesystem cache" "$DEST/cache" "info"
-display_alert "Removing deb packages" "$DEST/debs" "info"
-display_alert "Removing SD card images" "$DEST/images" "info"
-display_alert "Removing all sources" "$SOURCES" "info"
+if [[ $BRANCH == "next" ]] ; then KERNEL_BRACH="-next"; UBOOT_BRACH="-next"; else KERNEL_BRACH=""; UBOOT_BRACH=""; fi 
+CHOOSEN_UBOOT=linux-u-boot"$UBOOT_BRACH"-"$BOARD"_"$REVISION"_armhf.deb
+CHOOSEN_KERNEL=linux-image"$KERNEL_BRACH"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
+
+case $1 in
+1)	# Clean u-boot and kernel sources
+	[ -d "$SOURCES/$BOOTSOURCE" ] &&
+	display_alert "Cleaning" "$SOURCES/$BOOTSOURCE" "info" && cd $SOURCES/$BOOTSOURCE && make -q ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
+	[ -d "$SOURCES/$LINUXSOURCE" ] && 
+	display_alert "Cleaning" "$SOURCES/$LINUXSOURCE" "info" && cd $SOURCES/$LINUXSOURCE && make -q ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean	
+;;
+2) display_alert "No cleaning" "sources" "info"
+;;
+3)	# Choosing kernel if debs are present
+	if [[ $BRANCH == "next" ]]; then
+		MYARRAY=($(ls -1 $DEST/debs/linux-image* | awk '/next/' | sed ':a;N;$!ba;s/\n/;/g'))
+		else
+		MYARRAY=($(ls -1 $DEST/debs/linux-image* | awk '!/next/' | sed ':a;N;$!ba;s/\n/;/g'))
+	fi
+	if [[ ${#MYARRAY[@]} != "0" ]]; then choosing_kernel; fi
+;;
+4)	# Delete all in output except repository
+	display_alert "Removing deb packages" "$DEST/debs/" "info"
+	rm -rf $DEST/debs
+	display_alert "Removing root filesystem cache" "$DEST/cache" "info"
+	rm -rf $DEST/cache
+	display_alert "Removing SD card images" "$DEST/images" "info"
+	rm -rf $DEST/images
+;;
+5)	# Delete all output and sources
+	display_alert "Removing deb packages" "$DEST/debs/" "info"
+	rm -rf $DEST/debs
+	display_alert "Removing root filesystem cache" "$DEST/cache" "info"
+	rm -rf $DEST/cache
+	display_alert "Removing SD card images" "$DEST/images" "info"
+	rm -rf $DEST/images
+	display_alert "Removing all sources" "$DEST/debs/" "info"
+	rm -rf $SOURCES
+;;
+*)	# Clean u-boot and kernel sources and remove debs
+	[ -d "$SOURCES/$BOOTSOURCE" ] &&
+	display_alert "Cleaning" "$SOURCES/$BOOTSOURCE" "info" && cd $SOURCES/$BOOTSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
+	[ -f "$DEST/debs/$CHOOSEN_UBOOT" ] && 
+	display_alert "Removing" "$DEST/debs/$CHOOSEN_UBOOT" "info" && rm $DEST/debs/$CHOOSEN_UBOOT
+	[ -d "$SOURCES/$LINUXSOURCE" ] && 
+	display_alert "Cleaning" "$SOURCES/$LINUXSOURCE" "info" && cd $SOURCES/$LINUXSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean	
+	[ -f "$DEST/debs/$CHOOSEN_KERNEL" ] && 
+	display_alert "Removing" "$DEST/debs/$CHOOSEN_KERNEL" "info" && rm $DEST/debs/$CHOOSEN_KERNEL
+;;
+esac
 }
 
 
@@ -60,7 +103,7 @@ fi
 }
 
 
-download_host_packages (){
+add_aptly (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Download packages for host and install only if missing - Ubuntu 14.04 recommended                     
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -69,25 +112,8 @@ echo "deb http://repo.aptly.info/ squeeze main" > /etc/apt/sources.list.d/aptly.
 apt-key adv --keyserver keys.gnupg.net --recv-keys E083A3782A194991
 apt-get update
 fi
-
-IFS=" "
-apt-get -y -qq install debconf-utils
-PAKETKI="aptly device-tree-compiler dialog pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex gawk \
-gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev parted pkg-config \
-expect gcc-arm-linux-gnueabi libncurses5-dev whiptail debian-keyring debian-archive-keyring ntpdate"
-for x in $PAKETKI; do
-	if [ $(dpkg-query -W -f='${Status}' $x 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
-		INSTALL=$INSTALL" "$x
-	fi
-done
-if [[ $INSTALL != "" ]]; then
-	debconf-apt-progress -- apt-get -y install $INSTALL 
-	if [ $? -ne 0 ]; then
-		display_alert "Installation of package failed" "$INSTALL" "err"
-		exit 1
-	fi
-fi
 }
+
 
 install_packet ()
 {
@@ -100,18 +126,21 @@ declare -a PACKETS=($1)
 skupaj=${#PACKETS[@]}
 while [[ $i -lt $skupaj ]]; do
 procent=$(echo "scale=2;($j/$skupaj)*100"|bc)
-procent=${procent%.*}
-		x=${PACKETS[$i]}	
-		if [ "$(chroot $DEST/cache/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -qq -y install $x >/tmp/install.log 2>&1 || echo 'Installation failed'" | grep 'Installation failed')" != "" ]; then 
-			echo -e "[\e[0;31m error \x1B[0m] Installation failed"
-			tail $DEST/cache/sdcard/tmp/install.log
-			exit
+		x=${PACKETS[$i]}
+		if [[ $3 == "host" ]]; then
+			DEBIAN_FRONTEND=noninteractive apt-get -qq -y install $x >> $DEST/debug/install.log  2>&1
+		else
+			chroot $DEST/cache/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -qq -y install $x" >> $DEST/debug/install.log 2>&1
 		fi
-		printf '%.0f\n' $procent | dialog --gauge "$2\n\n$x" 9 70
+		
+		if [ $? -ne 0 ]; then display_alert "Installation of package failed" "$INSTALL" "err"; exit 1; fi
+		
+		if [[ $4 != "quiet" ]]; then
+			printf '%.0f\n' $procent | dialog --backtitle "$backtitle" --title "$2" --gauge "\n\n$x" 9 70
+		fi
 		i=$[$i+1]
 		j=$[$j+1]
 done
-echo ""
 }
 
 grab_kernel_version (){
@@ -123,10 +152,6 @@ VER=$VER.$(cat $SOURCES/$LINUXSOURCE/Makefile | grep PATCHLEVEL | head -1 | awk 
 VER=$VER.$(cat $SOURCES/$LINUXSOURCE/Makefile | grep SUBLEVEL | head -1 | awk '{print $(NF)}')
 EXTRAVERSION=$(cat $SOURCES/$LINUXSOURCE/Makefile | grep EXTRAVERSION | head -1 | awk '{print $(NF)}' | cut -d '-' -f 2)
 if [ "$EXTRAVERSION" != "=" ]; then VER=$VER$EXTRAVERSION; fi
-#
-if [ "$SOURCE_COMPILE" != "yes" ]; then 
-	VER=$(echo $CHOOSEN_KERNEL | sed 's/\-.*$//')
-fi
 }
 
 
@@ -136,7 +161,8 @@ grab_u-boot_version (){
 #--------------------------------------------------------------------------------------------------------------------------------
 UBOOTVER=$(cat $SOURCES/$BOOTSOURCE/Makefile | grep VERSION | head -1 | awk '{print $(NF)}')
 UBOOTVER=$UBOOTVER.$(cat $SOURCES/$BOOTSOURCE/Makefile | grep PATCHLEVEL | head -1 | awk '{print $(NF)}')
-UBOOTVER=$UBOOTVER.$(cat $SOURCES/$BOOTSOURCE/Makefile | grep SUBLEVEL | head -1 | awk '{print $(NF)}' | cut -d '=' -f 2)
+UBOOTSUB=$(cat $SOURCES/$BOOTSOURCE/Makefile | grep SUBLEVEL | head -1 | awk '{print $(NF)}' | cut -d '=' -f 2)
+[ "$UBOOTSUB" != "" ] && UBOOTVER=$UBOOTVER.$UBOOTSUB
 EXTRAVERSION=$(cat $SOURCES/$BOOTSOURCE/Makefile | grep EXTRAVERSION | head -1 | awk '{print $(NF)}' | cut -d '-' -f 2)
 if [ "$EXTRAVERSION" != "=" ]; then UBOOTVER=$UBOOTVER$EXTRAVERSION; fi
 }

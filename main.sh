@@ -29,6 +29,8 @@ mkdir -p $DEST/debug
 if [ $(dpkg-query -W -f='${Status}' whiptail 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
 apt-get install -qq -y whiptail >/dev/null 2>&1
 fi 
+# Add aptly
+add_aptly
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # Choose destination - creating board list from file configuration.sh
