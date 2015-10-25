@@ -5,7 +5,7 @@ You will need to setup development environment within [Ubuntu 14.04 LTS x64 serv
 Login as root and run:
 
 	apt-get -y -qq install git
-    git clone https://github.com/igorpecovnik/lib
+    git clone --depth 1 https://github.com/igorpecovnik/lib
 	cp lib/compile.sh .
 	nano compile.sh # alter if necessary
 	
@@ -32,12 +32,16 @@ Build process summary:
 Switches clarification:
 
 - **KERNEL_ONLY** - if we want to compile kernel, u-boot, headers and dtbs package only.
-- **SOURCE_COMPILE** is useful switch when we are building images and we already compiled kernel before. All kernel builds are cached in output/cache by default until they are removed manually. If we choose this option, we will be selecting one of previously compiled kernels.
 - **KERNEL_CONFIGURE** will bring up kernel configurator otherwise kernel will be compiled with script presets located in lib/config/linux-*.config
-- **KERNEL_CLEAN** executes "MAKE clean" on sources before compilation.
+- **CLEAN_LEVEL** defines what should be cached. This is useful when we are rebuilind images or builind more than one image.
+	- 0 = executes make clean and delete previously created deb files [default]
+	- 1 = executes make clean
+	- 2 = does nothing
+	- 3 = provide kernel selection if any present 
+	- 4 = delete all output files (rootfs cache, debs) 
+	- 5 = delete all output files (rootfs cache, debs) and sources 
 - **BUILD_DESKTOP** builds a desktop on the top of the system with hw acceleration for some boards.
 - **AFTERINSTALL** is a variable with command executed in a process of building just before closing image to insert some of your custom applications or fixes.
-- **KERNELTAG** is a TAG for specific kernel source. Some sources doesn't have that.
 - **FBTFT** is a [driver for small displays](https://github.com/notro/fbtft). Only applicable for old kernels (3.4-3.14)
 - **EXTERNAL** compiles custom drivers
 - **FORCE** ignore manual changes to source
