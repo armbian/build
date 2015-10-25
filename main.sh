@@ -29,8 +29,15 @@ mkdir -p $DEST/debug
 if [ $(dpkg-query -W -f='${Status}' whiptail 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
 apt-get install -qq -y whiptail >/dev/null 2>&1
 fi 
-# Add aptly
-add_aptly
+
+#--------------------------------------------------------------------------------------------------------------------------------
+# Download packages for host and install only if missing - Ubuntu 14.04 recommended                     
+#--------------------------------------------------------------------------------------------------------------------------------
+if [ ! -f "/etc/apt/sources.list.d/aptly.list" ]; then
+echo "deb http://repo.aptly.info/ squeeze main" > /etc/apt/sources.list.d/aptly.list
+apt-key adv --keyserver keys.gnupg.net --recv-keys E083A3782A194991
+apt-get update
+fi
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # Choose destination - creating board list from file configuration.sh

@@ -103,18 +103,6 @@ fi
 }
 
 
-add_aptly (){
-#--------------------------------------------------------------------------------------------------------------------------------
-# Download packages for host and install only if missing - Ubuntu 14.04 recommended                     
-#--------------------------------------------------------------------------------------------------------------------------------
-if [ ! -f "/etc/apt/sources.list.d/aptly.list" ]; then
-echo "deb http://repo.aptly.info/ squeeze main" > /etc/apt/sources.list.d/aptly.list
-apt-key adv --keyserver keys.gnupg.net --recv-keys E083A3782A194991
-apt-get update
-fi
-}
-
-
 install_packet ()
 {
 #--------------------------------------------------------------------------------------------------------------------------------
