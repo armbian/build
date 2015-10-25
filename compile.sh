@@ -11,11 +11,10 @@
 #--------------------------------------------------------------------------------------------------------------------------------
 
 # method
-KERNEL_ONLY="no"					# build only kernel
-SOURCE_COMPILE="yes"                       		# force source compilation: yes / no
-KERNEL_CONFIGURE="no"                       		# want to change my default configuration
-KERNEL_CLEAN="yes"                         		# run MAKE clean before kernel compilation
-
+KERNEL_ONLY="no"							# build only kernel
+KERNEL_CONFIGURE="no"                       # want to change my default configuration
+CLEAN_LEVEL=""								# 0 = make clean + del debs, 1 = only make clean, 2 = nothing
+											# 3 = choosing kernel if present 4 = del all output 5 = del sources
 # user 
 AFTERINSTALL=""						# last command before closing image, example: apt-get install joe
 DEST_LANG="en_US.UTF-8"                     		# sl_SI.UTF-8, en_US.UTF-8
