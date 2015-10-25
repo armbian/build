@@ -16,8 +16,11 @@ compile_uboot (){
 #--------------------------------------------------------------------------------------------------------------------------------
 
 if [ -d "$SOURCES/$BOOTSOURCE" ]; then
+	grab_u-boot_version
+	display_alert "Compiling uboot. Please wait." "$UBOOTVER" "info"
+	echo `date +"%d.%m.%Y %H:%M:%S"` $SOURCES/$BOOTSOURCE/$BOOTCONFIG >> $DEST/debug/install.log 
 	cd $SOURCES/$BOOTSOURCE
-		make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
+	make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
 	# there are two methods of compilation
 	if [[ $BOOTCONFIG == *config* ]]; then
 		make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- >/dev/null 2>&1
@@ -28,17 +31,15 @@ if [ -d "$SOURCES/$BOOTSOURCE" ]; then
 			## patch mainline uboot configuration to boot with old kernels
 			if [ "$(cat $SOURCES/$BOOTSOURCE/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
 				echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $SOURCES/$BOOTSOURCE/.config
-#				echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $SOURCES/$BOOTSOURCE/spl/.config
 				echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $SOURCES/$BOOTSOURCE/.config
-#				echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y"	>> $SOURCES/$BOOTSOURCE/spl/.config
 			fi
-		fi
-	make $CTHREADS CROSS_COMPILE=arm-linux-gnueabihf- 2>&1 | dialog  --progressbox "Compiling universal boot loader..." 20 70
+		fi	
+	make $CTHREADS CROSS_COMPILE=arm-linux-gnueabihf- >> $DEST/debug/install.log 2>&1
 else
-	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 2>&1 | dialog  --progressbox "Compiling universal boot loader..." 20 70
+	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- >> $DEST/debug/install.log 2>&1
 fi
 
-grab_u-boot_version
+
 
 
 # create .deb package
@@ -92,6 +93,7 @@ else
 fi
 
 cd $DEST/debs
+display_alert "Target directory" "$DEST/debs/" "info"
 display_alert "Building deb" "$CHOOSEN_UBOOT.deb" "info"
 dpkg -b $CHOOSEN_UBOOT >/dev/null 2>&1
 rm -rf $CHOOSEN_UBOOT
@@ -206,7 +208,7 @@ rm usb-redirector-linux-arm-eabi.tar.gz
 cd $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd
 # patch to work with newer kernels
 sed -e "s/f_dentry/f_path.dentry/g" -i usbdcdev.c
-make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KERNELDIR=$SOURCES/$LINUXSOURCE/
+make -j1 ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KERNELDIR=$SOURCES/$LINUXSOURCE/ >> $DEST/debug/install.log
 # configure USB redirector
 sed -e 's/%INSTALLDIR_TAG%/\/usr\/local/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1
 sed -e 's/%PIDFILE_TAG%/\/var\/run\/usbsrvd.pid/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
@@ -228,7 +230,7 @@ if [[ -n "$MISC3_DIR" ]]; then
 	cd $SOURCES/$MISC3_DIR
 	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
 	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
-	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$SOURCES/$LINUXSOURCE/
+	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$SOURCES/$LINUXSOURCE/ >> $DEST/debug/install.log
 	cp *.ko $DEST/cache/sdcard/usr/local/bin
 	#cp blacklist*.conf $DEST/cache/sdcard/etc/modprobe.d/
 fi
@@ -332,7 +334,7 @@ rm -rf $DEST/cache/sdcard/
 LOOP=$(losetup -f)
 display_alert "Writing boot loader" "$LOOP" "info"
 losetup $LOOP $DEST/cache/tmprootfs.raw
-dpkg -x $DEST"/debs/"$CHOOSEN_UBOOT".deb" /tmp/
+dpkg -x $DEST"/debs/"$CHOOSEN_UBOOT /tmp/
 
 if [[ $BOARD == *cubox* ]] ; then 
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/SPL of=$LOOP bs=512 seek=2 status=noxfer >/dev/null 2>&1) 
