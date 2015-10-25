@@ -41,7 +41,7 @@ fi
 # Create image file
 while read line;do
   [[ "$line" =~ "records out" ]] &&
-  echo "$(( ${line%+*}*100/$SDSIZE +1 ))" | dialog --gauge "Creating blank image ($SDSIZE Mb), please wait ..." 10 70
+  echo "$(( ${line%+*}*100/$SDSIZE +1 ))" | dialog --backtitle "$backtitle" --title "Creating blank image ($SDSIZE Mb), please wait ..." --gauge "" 5 70
 done< <( dd if=/dev/zero of=$DEST/cache/tmprootfs.raw bs=1M count=$SDSIZE 2>&1 &
          pid=$!
          sleep 1
@@ -87,7 +87,7 @@ if [ -f "$DEST/cache/rootfs/$RELEASE.tgz" ]; then
 	display_alert "Extracting $RELEASE from cache" "$diff days old" "info"
 	tar xpfz "$DEST/cache/rootfs/$RELEASE.tgz" -C $DEST/cache/sdcard/
 	if [ "$diff" -gt "1" ]; then
-		chroot $DEST/cache/sdcard /bin/bash -c "apt-get update" | dialog --progressbox "Force package update ..." 20 70
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get update" | dialog --backtitle "$backtitle" --title "Force package update ..." --progressbox 20 70
 	fi
 fi
 
