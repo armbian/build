@@ -290,7 +290,7 @@ if [[ $BOARD == "udoo-neo" ]] ; then
 	fi
 #fi
 if [[ $LINUXCONFIG == *sun* ]] ; then
-	rm -f configs/Lamobo_R1_defconfig configs/Awsom_defconfig
+	rm -f configs/Lamobo_R1_defconfig configs/Awsom_defconfig arch/arm/dts/sun7i-a20-lamobo-r1.dts
 	#rm -f configs/Bananapi_M2_defconfig arch/arm/dts/sun6i-a31s-bananapi-m2.dts
 	patchme "Add Lamobo R1" 							"add-lamobo-r1-uboot.patch" 		"default" "u-boot"
 	#patchme "Add Banana Pi M2 A31S" 					"bananam2-a31s.patch" 		"default" "u-boot"
