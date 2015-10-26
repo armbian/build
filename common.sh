@@ -97,12 +97,13 @@ display_alert "Target directory" "$DEST/debs/" "info"
 display_alert "Building deb" "$CHOOSEN_UBOOT.deb" "info"
 dpkg -b $CHOOSEN_UBOOT >/dev/null 2>&1
 rm -rf $CHOOSEN_UBOOT
+CHOOSEN_UBOOT=$CHOOSEN_UBOOT".deb"
 #
 
-FILESIZE=$(wc -c $DEST/debs/$CHOOSEN_UBOOT'.deb' | cut -f 1 -d ' ')
+FILESIZE=$(wc -c $DEST/debs/$CHOOSEN_UBOOT | cut -f 1 -d ' ')
 if [ $FILESIZE -lt 50000 ]; then
 	display_alert "Building failed, check configuration." "$CHOOSEN_UBOOT deleted" "err"
-	rm $DEST/debs/$CHOOSEN_UBOOT".deb"
+	rm $DEST/debs/$CHOOSEN_UBOOT
 	exit
 fi
 else
