@@ -44,16 +44,6 @@ case $1 in
 	display_alert "Removing SD card images" "$DEST/images" "info"
 	rm -rf $DEST/images
 ;;
-5)	# Delete all output and sources
-	display_alert "Removing deb packages" "$DEST/debs/" "info"
-	rm -rf $DEST/debs
-	display_alert "Removing root filesystem cache" "$DEST/cache" "info"
-	rm -rf $DEST/cache
-	display_alert "Removing SD card images" "$DEST/images" "info"
-	rm -rf $DEST/images
-	display_alert "Removing all sources" "$DEST/debs/" "info"
-	rm -rf $SOURCES
-;;
 *)	# Clean u-boot and kernel sources and remove debs
 	[ -d "$SOURCES/$BOOTSOURCE" ] &&
 	display_alert "Cleaning" "$SOURCES/$BOOTSOURCE" "info" && cd $SOURCES/$BOOTSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean

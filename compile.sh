@@ -12,21 +12,21 @@
 
 # method
 KERNEL_ONLY="no"							# build only kernel
-KERNEL_CONFIGURE="no"                       # want to change my default configuration
+KERNEL_CONFIGURE="no"						# want to change my default configuration
 CLEAN_LEVEL=""								# 0 = make clean + del debs, 1 = only make clean, 2 = nothing
-											# 3 = choosing kernel if present 4 = del all output 5 = del sources
+											# 3 = choosing kernel if present 4 = del all output
 # user 
-AFTERINSTALL=""						# last command before closing image, example: apt-get install joe
-DEST_LANG="en_US.UTF-8"                     		# sl_SI.UTF-8, en_US.UTF-8
+AFTERINSTALL=""								# last command before closing image, example: apt-get install joe
+DEST_LANG="en_US.UTF-8"						# sl_SI.UTF-8, en_US.UTF-8
 CONSOLE_CHAR="UTF-8"
-ROOTPWD="1234"                          		# Must be changed @first login
-MAINTAINER="Igor Pecovnik"                  # deb signature
-MAINTAINERMAIL="igor.pecovnik@****l.com"    # deb signature
+ROOTPWD="1234"								# Must be changed @first login
+MAINTAINER="Igor Pecovnik"					# deb signature
+MAINTAINERMAIL="igor.pecovnik@****l.com"	# deb signature
 GPG_PASS=""									# signing password
 
 # advanced
-FBTFT="yes"                                 # https://github.com/notro/fbtft 
-EXTERNAL="yes"                              # compile extra drivers`
+FBTFT="yes"									# https://github.com/notro/fbtft 
+EXTERNAL="yes"								# compile extra drivers`
 FORCE_CHECKOUT="yes"						# igre manual changes to source
 BUILD_ALL="no"								# cycle through selected boards and make images
 #--------------------------------------------------------------------------------------------------------------------------------

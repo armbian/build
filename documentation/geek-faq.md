@@ -39,7 +39,6 @@ Switches clarification:
 	- 2 = does nothing
 	- 3 = provide kernel selection if any present 
 	- 4 = delete all output files (rootfs cache, debs) 
-	- 5 = delete all output files (rootfs cache, debs) and sources 
 - **BUILD_DESKTOP** builds a desktop on the top of the system with hw acceleration for some boards.
 - **AFTERINSTALL** is a variable with command executed in a process of building just before closing image to insert some of your custom applications or fixes.
 - **FBTFT** is a [driver for small displays](https://github.com/notro/fbtft). Only applicable for old kernels (3.4-3.14)
