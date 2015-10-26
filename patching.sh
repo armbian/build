@@ -86,7 +86,7 @@ patchme "compiler bug" 					"compiler.patch" 				"reverse" "kernel"
 
 # mainline
 if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) ]] ; then
-
+    rm -f drivers/leds/trigger/ledtrig-usbdev.c
 
 	
 
