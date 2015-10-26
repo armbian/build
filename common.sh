@@ -131,6 +131,7 @@ make -s clean >/dev/null 2>&1
 make $CTHREADS 'fex2bin' CC=arm-linux-gnueabi-gcc >/dev/null 2>&1
 make $CTHREADS 'bin2fex' CC=arm-linux-gnueabi-gcc >/dev/null 2>&1
 make $CTHREADS 'nand-part' CC=arm-linux-gnueabi-gcc >/dev/null 2>&1
+git checkout -q -f master
 }
 
 
