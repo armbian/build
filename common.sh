@@ -117,8 +117,8 @@ compile_sunxi_tools (){
 #--------------------------------------------------------------------------------------------------------------------------------
 display_alert "Compiling sunxi tools" "@host & target" "info"
 # temp addon
-git checkout -q -f 6cc91f10625d080a92ae8118bc23f72cae8fc9a7
 cd $SOURCES/sunxi-tools
+git checkout -q -f 6cc91f10625d080a92ae8118bc23f72cae8fc9a7
 # for host
 make -s clean >/dev/null 2>&1
 make -s fex2bin >/dev/null 2>&1
