@@ -218,7 +218,7 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 	patchme "Upgrade to 3.4.106" 						"patch-3.4.105-106" 						"default" "kernel"
 	patchme "Upgrade to 3.4.107" 						"patch-3.4.106-107" 						"default" "kernel"
 	patchme "Upgrade to 3.4.108" 						"patch-3.4.107-108" 						"default" "kernel"
-	read
+	
 	# RT patch. Disabled by default
 	#patchme "RT Kernel 3.4.108" 						"patch-3.4.108-rt136.patch" 				"default" "rt_kernel"	
 	#patchme "Sunxi-Codec Low Latency" 					"sunxi-codec_LL.patch" 					"default" "rt_kernel"	 
