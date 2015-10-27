@@ -87,10 +87,6 @@ patchme "compiler bug" 					"compiler.patch" 				"reverse" "kernel"
 # mainline
 if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) ]] ; then
     rm -f drivers/leds/trigger/ledtrig-usbdev.c
-
-	
-
-
 	patchme "fix BRCMFMAC AP mode Banana & CT" 					"brcmfmac_ap_banana_ct.patch" 		"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-next.patch" 				"default" "kernel"
 	patchme "Banana M2 support, LEDs" 							"Sinoviop-bananas-M2-R1-M1-fixes.patch" 	"default" "kernel"	
@@ -146,6 +142,7 @@ if [[ $BOARD == udoo* ]] ; then
 		patchme "Upgrade to 4.2.2" 								"patch-4.2.1-2" 			"default" "kernel"
 		patchme "Upgrade to 4.2.3" 								"patch-4.2.2-3" 			"default" "kernel"
 		patchme "Upgrade to 4.2.4" 								"patch-4.2.3-4" 			"default" "kernel"
+		patchme "Upgrade to 4.2.5" 								"patch-4.2.4-5" 			"default" "kernel"
 	else
 	# 
 	#patchme "remove strange DTBs from tree" 					"udoo_dtb.patch" 				"default" "kernel"
@@ -164,7 +161,7 @@ if [[ $BOARD == udoo* ]] ; then
 	patchme "Upgrade to 3.14.37" 								"neo-patch-3.14.36-37" 			"default" "kernel"
 	patchme "Upgrade to 3.14.38" 								"neo-patch-3.14.37-38" 			"default" "kernel"
 	patchme "Upgrade to 3.14.39" 								"neo-patch-3.14.38-39" 			"default" "kernel"
-	for (( c=39; c<=54; c++ ))
+	for (( c=39; c<=55; c++ ))
 	do
 		display_alert "Patching" "3.14.$c-$(( $c+1 ))" "info"
 		wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f -s >/dev/null 2>&1     
@@ -221,6 +218,11 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 	patchme "Upgrade to 3.4.106" 						"patch-3.4.105-106" 						"default" "kernel"
 	patchme "Upgrade to 3.4.107" 						"patch-3.4.106-107" 						"default" "kernel"
 	patchme "Upgrade to 3.4.108" 						"patch-3.4.107-108" 						"default" "kernel"
+	read
+	# RT patch. Disabled by default
+	#patchme "RT Kernel 3.4.108" 						"patch-3.4.108-rt136.patch" 				"default" "rt_kernel"	
+	#patchme "Sunxi-Codec Low Latency" 					"sunxi-codec_LL.patch" 					"default" "rt_kernel"	 
+	#
 	patchme "Upgrade to 3.4.109" 						"patch-3.4.108-109" 						"default" "kernel"
 	patchme "Upgrade to 3.4.110" 						"patch-3.4.109-110" 						"default" "kernel"
 	patchme "Aufs3" 									"linux-sunxi-3.4.108-overlayfs.patch" 		"default" "kernel"
@@ -243,8 +245,8 @@ fi
 if [[ $LINUXSOURCE == linux-cubox* ]] ; then
 	patchme "SPI and I2C functionality" 						"hb-i2c-spi.patch" 				"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-cubox.patch" 				"default" "kernel"
-	# Upgrade to 3.14.55
-	for (( c=14; c<=54; c++ ))
+	# Upgrade to 3.14.56
+	for (( c=14; c<=55; c++ ))
 	do
 		display_alert "... upgrading" "3.14.$c-$(( $c+1 ))" "info"
 		wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f -s >/dev/null 2>&1     
