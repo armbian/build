@@ -34,7 +34,7 @@ case $1 in
 		else
 		MYARRAY=($(ls -1 $DEST/debs/linux-image* | awk '!/next/' | sed ':a;N;$!ba;s/\n/;/g'))
 	fi
-	if [[ ${#MYARRAY[@]} != "0" ]]; then choosing_kernel; fi
+	if [[ ${#MYARRAY[@]} != "0" && $KERNEL_ONLY != "yes" ]]; then choosing_kernel; fi
 ;;
 4)	# Delete all in output except repository
 	display_alert "Removing deb packages" "$DEST/debs/" "info"
