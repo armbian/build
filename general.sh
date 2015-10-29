@@ -104,6 +104,7 @@ declare -a PACKETS=($1)
 skupaj=${#PACKETS[@]}
 while [[ $i -lt $skupaj ]]; do
 procent=$(echo "scale=2;($j/$skupaj)*100"|bc)
+procent=${procent%.*}
 		x=${PACKETS[$i]}
 		if [[ $3 == "host" ]]; then
 			DEBIAN_FRONTEND=noninteractive apt-get -qq -y install $x >> $DEST/debug/install.log  2>&1
