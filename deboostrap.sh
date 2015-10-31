@@ -86,7 +86,7 @@ if [ -f "$DEST/cache/rootfs/$RELEASE.tgz" ]; then
 	diff=$(( (currtime - filemtime) / 86400 ))
 	display_alert "Extracting $RELEASE from cache" "$diff days old" "info"
 	tar xpfz "$DEST/cache/rootfs/$RELEASE.tgz" -C $DEST/cache/sdcard/
-	if [ "$diff" -gt "1" ]; then
+	if [ "$diff" -gt "3" ]; then
 		chroot $DEST/cache/sdcard /bin/bash -c "apt-get update" | dialog --backtitle "$backtitle" --title "Force package update ..." --progressbox 20 70
 	fi
 fi

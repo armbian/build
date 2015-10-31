@@ -115,12 +115,12 @@ if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) 
 	fi
 
 	# add H3
-	display_alert "Patching" "Allwinner H3 support" "info"
-	rm -f drivers/clk/sunxi/clk-bus-gates.c
-	rm -f drivers/pinctrl/sunxi/pinctrl-sun8i-h3.c
-	rm -f arch/arm/boot/dts/sun8i-h3-orangepi-plus.dts
-	rm -f arch/arm/boot/dts/sun8i-h3.dtsi
-	for i in $SRC/lib/patch/kernel/h3*.patch; do patch -p1 -l -f -s < $i; done
+	#display_alert "Patching" "Allwinner H3 support" "info"
+	#rm -f drivers/clk/sunxi/clk-bus-gates.c
+	#rm -f drivers/pinctrl/sunxi/pinctrl-sun8i-h3.c
+	#rm -f arch/arm/boot/dts/sun8i-h3-orangepi-plus.dts
+	#rm -f arch/arm/boot/dts/sun8i-h3.dtsi
+	#for i in $SRC/lib/patch/kernel/h3*.patch; do patch -p1 -l -f -s < $i; done
 	
 	# Add new devices
 	addnewdevice "Lamobo R1" 			"sun7i-a20-lamobo-r1"					"kernel"
@@ -221,7 +221,7 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 	
 	# RT patch. Disabled by default
 	#patchme "RT Kernel 3.4.108" 						"patch-3.4.108-rt136.patch" 				"default" "kernel"	
-	#patchme "Sunxi-Codec Low Latency" 					"sunxi-codec_LL.patch" 					"default" "kernel"	 
+	#patchme "Sunxi-Codec Low Latency" 					"sunxi-codec_LL.patch" 						"default" "kernel"	 
 	#
 	patchme "Upgrade to 3.4.109" 						"patch-3.4.108-109" 						"default" "kernel"
 	patchme "Upgrade to 3.4.110" 						"patch-3.4.109-110" 						"default" "kernel"
