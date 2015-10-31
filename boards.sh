@@ -25,8 +25,10 @@ if [[ $LINUXCONFIG == *sun* ]] ; then
 	# add sunxi tools
 	cp $SOURCES/sunxi-tools/fex2bin $SOURCES/sunxi-tools/bin2fex $SOURCES/sunxi-tools/nand-part $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin
 
-	# add soc temperature app
-	arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin/sunxi_tp_temp
+	if [ "$BRANCH" != "next" ]; then
+		# add soc temperature app
+		arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin/sunxi_tp_temp
+	fi
 	
 	# lamobo R1 router switch config
 	tar xfz $SRC/lib/bin/swconfig.tgz -C $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin
