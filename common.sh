@@ -146,7 +146,7 @@ if [ -d "$SOURCES/$LINUXSOURCE" ]; then
 
 cd $SOURCES/$LINUXSOURCE
 # delete previous creations
-if [ "$KERNEL_CLEAN" = "yes" ]; then make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean | dialog  --progressbox "Cleaning kernel source ..." 20 70; fi
+if [ "$KERNEL_CLEAN" = "yes" ]; then make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean | dialog --backtitle "$backtitle" --progressbox "Cleaning kernel source ..." 20 70; fi
 
 # adding custom firmware to kernel source
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCE/firmware; fi
@@ -168,7 +168,7 @@ export LOCALVERSION="-"$LINUXFAMILY
 
 # this way of compilation is much faster. We can use multi threading here but not later
 make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- oldconfig
-make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all zImage | dialog  --progressbox "Compiling kernel ..." 20 70
+make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all zImage | dialog --backtitle "$backtitle" --progressbox "Compiling kernel ..." 20 70
 
 if [ $? -ne 0 ] || [ ! -f arch/arm/boot/zImage ]; then
 		display_alert "Kernel was not built" "@host" "err"
@@ -241,15 +241,13 @@ fi
 
 # MISC4 = NOTRO DRIVERS / special handling
 # MISC5 = sunxu display control
-
-if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCE == *sunxi*  ]]; then
+if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCE == *sunxi* ]]; then
 	cd $SOURCES/$MISC5_DIR
 	cp $SOURCES/$LINUXSOURCE/include/video/sunxi_disp_ioctl.h .
 	make clean >/dev/null 2>&1
 	make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC=$SOURCES/$LINUXSOURCE/ >/dev/null 2>&1
 	install -m 755 a10disp $DEST/cache/sdcard/usr/local/bin
 fi
-
 }
 
 
@@ -262,25 +260,31 @@ display_alert "Shrink image last partition to" "minimum" "info"
 # partition prepare
 LOOP=$(losetup -f)
 losetup $LOOP $RAWIMAGE
-PARTSTART=$(fdisk -l $LOOP | grep $LOOP | grep Linux | awk '{ print $2}')
+#PARTSTART=$(fdisk -l $LOOP | grep $LOOP | grep Linux | awk '{ print $2}')
+PARTSTART=$(parted /dev/loop0 unit s print -sm | tail -1 | cut -d: -f2 | sed 's/s//')
 PARTSTART=$(($PARTSTART*512))
 sleep 1; losetup -d $LOOP
+# convert from EXT4 to EXT2
 sleep 1; losetup -o $PARTSTART $LOOP $RAWIMAGE
 sleep 1; fsck -n $LOOP >/dev/null 2>&1
 sleep 1; tune2fs -O ^has_journal $LOOP >/dev/null 2>&1
 sleep 1; e2fsck -fy $LOOP >/dev/null 2>&1
 resize2fs $LOOP -M >/dev/null 2>&1
-BLOCKSIZE=$(LANGUAGE=english dumpe2fs -h $LOOP | grep "Block count" | awk '{ print $(NF)}')
-NEWSIZE=$(($BLOCKSIZE*4500/1024)) # overhead hardcoded to number
-BLOCKSIZE=$(LANGUAGE=english resize2fs $LOOP $NEWSIZE"K" >/dev/null 2>&1)
-sleep 1; tune2fs -O has_journal $LOOP >/dev/null 2>&1
-sleep 1; tune2fs -o journal_data_writeback $LOOP >/dev/null 2>&1
-sleep 1; losetup -d $LOOP
+BLOCKSIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Block count" | awk '{ print $(NF)}')
+resize2fs $LOOP $BLOCKSIZE >/dev/null 2>&1
+tune2fs -O has_journal $LOOP >/dev/null 2>&1
+tune2fs -o journal_data_writeback $LOOP >/dev/null 2>&1
+losetup -d $LOOP
 
 # mount once again and create new partition
 sleep 1; losetup $LOOP $RAWIMAGE
-PARTITIONS=$(($(fdisk -l $LOOP | grep $LOOP | wc -l)-1))
-((echo d; echo $PARTITIONS; echo n; echo p; echo ; echo ; echo "+"$NEWSIZE"K"; echo w;) | fdisk $LOOP)>/dev/null
+#PARTITIONS=$(($(fdisk -l $LOOP | grep $LOOP | wc -l)-1))
+PARTITIONS=$(parted -m $LOOP 'print' | tail -1 | awk -F':' '{ print $1 }')
+
+#((echo d; echo $PARTITIONS; echo n; echo p; echo ; echo ; echo "+"$NEWSIZE"K"; echo w;) | fdisk $LOOP)>/dev/null
+parted $LOOP rm $PARTITIONS >/dev/null 2>&1
+NEWSIZE=$(($BLOCKSIZE*4500/1024)) # overhead hardcoded to number
+((echo n; echo p; echo ; echo ; echo "+"$NEWSIZE"K"; echo w;) | fdisk $LOOP)>/dev/null
 sleep 1
 
 # truncate the image
