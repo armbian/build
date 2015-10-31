@@ -30,6 +30,9 @@ if [ $(dpkg-query -W -f='${Status}' whiptail 2>/dev/null | grep -c "ok installed
 apt-get install -qq -y whiptail >/dev/null 2>&1
 fi 
 
+# if language not set, set to english
+[ "$LANGUAGE" == "" ] && export LANGUAGE=en_US:en
+
 #--------------------------------------------------------------------------------------------------------------------------------
 # Download packages for host and install only if missing - Ubuntu 14.04 recommended                     
 #--------------------------------------------------------------------------------------------------------------------------------

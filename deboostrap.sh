@@ -96,7 +96,7 @@ if [ ! -f "$DEST/cache/rootfs/$RELEASE.tgz" ]; then
 
 # debootstrap base system
 if [[ $RELEASE == "jessie" && $SYSTEMD == "no" ]]; then sysvinit=",sysvinit-core"; fi
-debootstrap --include=openssh-server,debconf-utils$sysvinit --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ | dialog --progressbox "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." 20 70
+debootstrap --include=openssh-server,debconf-utils$sysvinit --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox 20 70
 
 # remove systemd default load. It's installed and can be used with kernel parameter
 if [[ $RELEASE == "jessie" && $SYSTEMD == "no" ]]; then
@@ -114,7 +114,7 @@ test -d "$d" || mkdir -p "$d" && cp /usr/share/keyrings/debian-archive-keyring.g
 test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
 
 # debootstrap second stage
-chroot $DEST/cache/sdcard /bin/bash -c "/debootstrap/debootstrap --second-stage" | dialog --progressbox "Installing $DISTRIBUTION $RELEASE base system to image template ..." 20 70
+chroot $DEST/cache/sdcard /bin/bash -c "/debootstrap/debootstrap --second-stage" | dialog --backtitle "$backtitle" --title "Installing $DISTRIBUTION $RELEASE base system to image template ..." --progressbox 20 70
 
 # mount proc, sys and dev
 mount -t proc chproc $DEST/cache/sdcard/proc
