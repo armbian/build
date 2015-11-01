@@ -74,6 +74,7 @@ else
 	display_alert "... downloading" "$2" "info"
 	git clone $1 $SOURCES/$2	
 fi
+if [ $? -ne 0 ]; then display_alert "Github download failed" "$1" "err"; exit 1; fi
 }
 
 
