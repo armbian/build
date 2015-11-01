@@ -30,6 +30,10 @@ if [ $(dpkg-query -W -f='${Status}' whiptail 2>/dev/null | grep -c "ok installed
 apt-get install -qq -y whiptail bc >/dev/null 2>&1
 fi 
 
+if [ $(dpkg-query -W -f='${Status}' bc 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
+apt-get install -qq -y bc >/dev/null 2>&1
+fi 
+
 # if language not set, set to english
 [ "$LANGUAGE" == "" ] && export LANGUAGE=en_US:en
 
