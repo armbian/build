@@ -87,6 +87,7 @@ patchme "compiler bug" 					"compiler.patch" 				"reverse" "kernel"
 # mainline
 if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) ]] ; then
     rm -f drivers/leds/trigger/ledtrig-usbdev.c
+	patchme "sun4i: spi: Allow transfers larger than FIFO size" "spi_allow_transfer_larger.patch" 		"default" "kernel"
 	patchme "fix BRCMFMAC AP mode Banana & CT" 					"brcmfmac_ap_banana_ct.patch" 		"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-next.patch" 				"default" "kernel"
 	patchme "Banana M2 support, LEDs" 							"Sinoviop-bananas-M2-R1-M1-fixes.patch" 	"default" "kernel"	
