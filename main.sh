@@ -25,13 +25,17 @@ fi
 backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
 mkdir -p $DEST/debug
 
-# Install menu support
+# Install some basic support if not here yet
 if [ $(dpkg-query -W -f='${Status}' whiptail 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
 apt-get install -qq -y whiptail bc >/dev/null 2>&1
 fi 
 
 if [ $(dpkg-query -W -f='${Status}' bc 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
 apt-get install -qq -y bc >/dev/null 2>&1
+fi 
+
+if [ $(dpkg-query -W -f='${Status}' dialog 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
+apt-get install -qq -y dialog >/dev/null 2>&1
 fi 
 
 # if language not set, set to english
@@ -227,7 +231,7 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # download packages for host
 #--------------------------------------------------------------------------------------------------------------------------------
-PAKETKI="aptly device-tree-compiler dialog pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex gawk \
+PAKETKI="aptly device-tree-compiler pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex gawk \
 gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev parted pkg-config \
 expect gcc-arm-linux-gnueabi libncurses5-dev whiptail debian-keyring debian-archive-keyring ntpdate"
 if [ "$(LANGUAGE=english apt-get -s install $PAKETKI | grep "0 newly installed")" == "" ]; then
