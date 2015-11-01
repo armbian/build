@@ -91,10 +91,10 @@ When something goes terribly wrong and you are not able to boot the system, this
 
 Than mount the SD card and download those files (This example is only for Banana R1): 
 
-	http://apt.armbian.com/pool/main/l/linux-trusty-root-next-lamobo-r1/linux-trusty-root-next-lamobo-r1_4.4_armhf.deb
-	http://apt.armbian.com/pool/main/l/linux-upstream/linux-image-next-sunxi_4.4_armhf.deb
-	http://apt.armbian.com/pool/main/l/linux-upstream/linux-firmware-image-next-sunxi_4.4_armhf.deb
-	http://apt.armbian.com/pool/main/l/linux-upstream/linux-dtb-next-sunxi_4.4_armhf.deb
+	http://apt.armbian.com/pool/main/l/linux-trusty-root-next-lamobo-r1/linux-trusty-root-next-lamobo-r1_4.5_armhf.deb
+	http://apt.armbian.com/pool/main/l/linux-upstream/linux-image-next-sunxi_4.5_armhf.deb
+	http://apt.armbian.com/pool/main/l/linux-upstream/linux-firmware-image-next-sunxi_4.5_armhf.deb
+	http://apt.armbian.com/pool/main/l/linux-upstream/linux-dtb-next-sunxi_4.5_armhf.deb
 
 This is just an example for: **Ubuntu Trusty, Lamobo R1, Vanilla kernel** (next). Alter packages naming according to [this](http://forum.armbian.com/index.php/topic/211-kernel-update-procedure-has-been-changed/).
 
