@@ -87,11 +87,15 @@ patchme "compiler bug" 					"compiler.patch" 				"reverse" "kernel"
 # mainline
 if [[ $BRANCH == "next" && ($LINUXCONFIG == *sunxi* || $LINUXCONFIG == *cubox*) ]] ; then
     rm -f drivers/leds/trigger/ledtrig-usbdev.c
+	rm -f drivers/net/can/sun4i_can.c  
+	rm -f Documentation/devicetree/bindings/net/can/sun4i_can.txt
 	patchme "sun4i: spi: Allow transfers larger than FIFO size" "spi_allow_transfer_larger.patch" 		"default" "kernel"
 	patchme "fix BRCMFMAC AP mode Banana & CT" 					"brcmfmac_ap_banana_ct.patch" 		"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-next.patch" 				"default" "kernel"
 	patchme "Banana M2 support, LEDs" 							"Sinoviop-bananas-M2-R1-M1-fixes.patch" 	"default" "kernel"	
 	patchme "Cubieboard2 double SD version" 					"support_for_second_mmc_cubieboard2.patch" 	"default" "kernel"
+	patchme "Allwinner A10/A20 CAN Controller support" 			"allwinner-a10-a20-can-v8.patch" 	"default" "kernel"
+	
 	#patchme "Security System #0001" 	"0001-ARM-sun5i-dt-Add-Security-System-to-A10s-SoC-DTS.patch" "default" "kernel"
 	#patchme "Security System #0002" 	"0002-ARM-sun6i-dt-Add-Security-System-to-A31-SoC-DTS.patch" "default" "kernel"
 	#patchme "Security System #0003" 	"0003-ARM-sun4i-dt-Add-Security-System-to-A10-SoC-DTS.patch" "default" "kernel"
