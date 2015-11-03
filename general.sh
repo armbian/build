@@ -21,10 +21,8 @@ CHOOSEN_KERNEL=linux-image"$KERNEL_BRACH"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$R
 
 case $1 in
 1)	# Clean u-boot and kernel sources
-	[ -d "$SOURCES/$BOOTSOURCE" ] &&
-	display_alert "Cleaning" "$SOURCES/$BOOTSOURCE" "info" && cd $SOURCES/$BOOTSOURCE && make -q ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
-	[ -d "$SOURCES/$LINUXSOURCE" ] && 
-	display_alert "Cleaning" "$SOURCES/$LINUXSOURCE" "info" && cd $SOURCES/$LINUXSOURCE && make -q ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean	
+	[ -d "$SOURCES/$BOOTSOURCE" ] && display_alert "Cleaning" "$SOURCES/$BOOTSOURCE" "info" && cd $SOURCES/$BOOTSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
+	[ -d "$SOURCES/$LINUXSOURCE" ] && display_alert "Cleaning" "$SOURCES/$LINUXSOURCE" "info" && cd $SOURCES/$LINUXSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean	
 ;;
 2) display_alert "No cleaning" "sources" "info"
 ;;
