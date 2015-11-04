@@ -4,7 +4,7 @@
 
 - x86 machine running any OS, 4G ram, SSD, quad core (recommended),
 - [virtual box](https://www.virtualbox.org/wiki/Downloads) or similar virtualization software, **(highly recommended)**
-- host system is recommended to be [Ubuntu 14.04](http://archive.ubuntu.com/ubuntu/dists/trusty-updates/main/installer-amd64/current/images/netboot/mini.iso) (Ubuntu 15.04, Mint 17.2 and Debian Jessie reported working),
+- host system is **highly recommended** to be [Ubuntu 14.04](http://archive.ubuntu.com/ubuntu/dists/trusty-updates/main/installer-amd64/current/images/netboot/mini.iso) (**some but not all** sources can also compile on Ubuntu 15.04, Mint 17.2 and Debian Jessie),
 - installed basic system, OpenSSH and Samba (optional),
 - root access.
 
