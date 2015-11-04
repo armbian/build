@@ -247,11 +247,23 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 fi
 
 # cubox / hummingboard 3.14
-if [[ $LINUXSOURCE == linux-cubox* ]] ; then
+if [[ $LINUXSOURCE == linux-cubox ]] ; then
 	patchme "SPI and I2C functionality" 						"hb-i2c-spi.patch" 				"default" "kernel"
 	patchme "deb packaging fix" 								"packaging-cubox.patch" 				"default" "kernel"
 	# Upgrade to 3.14.56
 	for (( c=14; c<=55; c++ ))
+	do
+		display_alert "... upgrading" "3.14.$c-$(( $c+1 ))" "info"
+		wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f -s >/dev/null 2>&1     
+	done
+	
+fi
+
+# cubox / hummingboard 3.14.54 new kernel
+if [[ $LINUXSOURCE == linux-cubox-edge ]] ; then
+	patchme "deb packaging fix" 								"packaging-cubox.patch" 				"default" "kernel"
+	# Upgrade to 3.14.56
+	for (( c=54; c<=55; c++ ))
 	do
 		display_alert "... upgrading" "3.14.$c-$(( $c+1 ))" "info"
 		wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f -s >/dev/null 2>&1     
