@@ -234,7 +234,7 @@ if [[ -n "$MISC3_DIR" ]]; then
 	cd $SOURCES/$MISC3_DIR
 	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
 	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
-	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$SOURCES/$LINUXSOURCE/ >> $DEST/debug/install.log
+	(make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$SOURCES/$LINUXSOURCE/ >/dev/null 2>&1)
 	cp *.ko $DEST/cache/sdcard/usr/local/bin
 	#cp blacklist*.conf $DEST/cache/sdcard/etc/modprobe.d/
 fi
@@ -245,7 +245,7 @@ if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCE == *sunxi* ]]; then
 	cd $SOURCES/$MISC5_DIR
 	cp $SOURCES/$LINUXSOURCE/include/video/sunxi_disp_ioctl.h .
 	make clean >/dev/null 2>&1
-	make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC=$SOURCES/$LINUXSOURCE/ >/dev/null 2>&1
+	(make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC=$SOURCES/$LINUXSOURCE/ >/dev/null 2>&1)
 	install -m 755 a10disp $DEST/cache/sdcard/usr/local/bin
 fi
 }
@@ -271,6 +271,8 @@ sleep 1; tune2fs -O ^has_journal $LOOP >/dev/null 2>&1
 sleep 1; e2fsck -fy $LOOP >/dev/null 2>&1
 resize2fs $LOOP -M >/dev/null 2>&1
 BLOCKSIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Block count" | awk '{ print $(NF)}')
+RESERVEDBLOCKSIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Reserved block count" | awk '{ print $(NF)}')
+BLOCKSIZE=$(($BLOCKSIZE+$RESERVEDBLOCKSIZE))
 resize2fs $LOOP $BLOCKSIZE >/dev/null 2>&1
 tune2fs -O has_journal $LOOP >/dev/null 2>&1
 tune2fs -o journal_data_writeback $LOOP >/dev/null 2>&1
@@ -283,7 +285,7 @@ PARTITIONS=$(parted -m $LOOP 'print' | tail -1 | awk -F':' '{ print $1 }')
 
 #((echo d; echo $PARTITIONS; echo n; echo p; echo ; echo ; echo "+"$NEWSIZE"K"; echo w;) | fdisk $LOOP)>/dev/null
 parted $LOOP rm $PARTITIONS >/dev/null 2>&1
-NEWSIZE=$(($BLOCKSIZE*4500/1024)) # overhead hardcoded to number
+NEWSIZE=$(($BLOCKSIZE*4700/1024)) # overhead hardcoded to number
 ((echo n; echo p; echo ; echo ; echo "+"$NEWSIZE"K"; echo w;) | fdisk $LOOP)>/dev/null
 sleep 1
 
@@ -343,6 +345,7 @@ LOOP=$(losetup -f)
 display_alert "Writing boot loader" "$LOOP" "info"
 losetup $LOOP $DEST/cache/tmprootfs.raw
 dpkg -x $DEST"/debs/"$CHOOSEN_UBOOT /tmp/
+CHOOSEN_UBOOT="${CHOOSEN_UBOOT//.deb/}"
 
 if [[ $BOARD == *cubox* ]] ; then 
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/SPL of=$LOOP bs=512 seek=2 status=noxfer >/dev/null 2>&1) 
@@ -351,6 +354,10 @@ elif [[ $BOARD == *udoo* ]] ; then
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.imx of=$LOOP bs=1024 seek=1 conv=fsync >/dev/null 2>&1) 
 else 
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1) 	
+fi
+if [ $? -ne 0 ]; then
+		display_alert "U-boot failed to install" "@host" "err"
+	    exit 1
 fi
 rm -r /tmp/usr
 sync
