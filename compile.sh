@@ -25,6 +25,8 @@ MAINTAINERMAIL="igor.pecovnik@****l.com"				# deb signature
 GPG_PASS=""								# signing password
 
 # advanced
+KERNEL_KEEP_CONFIG="yes"				# overwrite kernel config before compilation
+USE_CCACHE="yes"						# use ccache for kernel compilation
 FBTFT="yes"								# https://github.com/notro/fbtft 
 EXTERNAL="yes"								# compile extra drivers`
 FORCE_CHECKOUT="yes"							# igre manual changes to source
