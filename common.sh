@@ -34,7 +34,7 @@ if [ -d "$SOURCES/$BOOTSOURCE" ]; then
 				echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $SOURCES/$BOOTSOURCE/.config
 			fi
 		fi	
-	make $CTHREADS CROSS_COMPILE=arm-linux-gnueabihf- >> $DEST/debug/install.log 2>&1
+	make $CTHREADS CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" >> $DEST/debug/install.log 2>&1
 else
 	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- >> $DEST/debug/install.log 2>&1
 fi
@@ -152,7 +152,7 @@ if [ "$KERNEL_CLEAN" = "yes" ]; then make ARCH=arm CROSS_COMPILE=arm-linux-gnuea
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCE/firmware; fi
 
 # use proven config
-cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCE/.config
+if [ "$KERNEL_KEEP_CONFIG" != "yes" ]; then cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCE/.config; fi
 
 # hacks for banana
 if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
@@ -168,24 +168,38 @@ export LOCALVERSION="-"$LINUXFAMILY
 
 # this way of compilation is much faster. We can use multi threading here but not later
 make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- oldconfig
-make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all zImage | dialog --backtitle "$backtitle" --progressbox "Compiling kernel ..." 20 70
 
-if [ $? -ne 0 ] || [ ! -f arch/arm/boot/zImage ]; then
+make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" zImage modules 2>&1 | dialog --backtitle "$backtitle" --progressbox "Compiling kernel $CCACHE ..." 20 80
+
+if [ ${PIPESTATUS[0]} -ne 0 ] || [ ! -f arch/arm/boot/zImage ]; then
 		display_alert "Kernel was not built" "@host" "err"
 	    exit 1
 fi
+make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" dtbs 2>&1 | dialog --backtitle "$backtitle" --progressbox "Compiling DTB $CCACHE ..." 20 80
+if [ ${PIPESTATUS[0]} -ne 0 ]; then
+		display_alert "DTBs was not build" "@host" "err"
+	    exit 1
+fi
 
-
-# make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- 
-# produce deb packages: image, headers, firmware, libc
-make -j1 deb-pkg KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=armhf ARCH=arm DEBFULLNAME="$MAINTAINER" \
-DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE=arm-linux-gnueabihf- 
 
 if [[ $BRANCH == "next" ]] ; then
 	KERNEL_BRACH="-next"
 	else
 	KERNEL_BRACH=""
 fi 
+
+# different packaging for 4.3+ // probably temporaly soution
+KERNEL_PACKING="deb-pkg"
+IFS='.' read -a array <<< "$VER"
+if (( "${array[0]}" == "4" )) && (( "${array[1]}" >= "3" )); then
+KERNEL_PACKING="bindeb-pkg"
+fi
+
+# make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- 
+# produce deb packages: image, headers, firmware, libc
+make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=armhf ARCH=arm DEBFULLNAME="$MAINTAINER" \
+DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1 | dialog --backtitle "$backtitle" --progressbox "Packing kernel $CCACHE ..." 20 80
+
 
 # we need a name
 CHOOSEN_KERNEL=linux-image"$KERNEL_BRACH"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb

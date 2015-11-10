@@ -217,6 +217,9 @@ else
 CTHREADS="-j${CPUS}";
 fi
 
+#
+if [ "$USE_CCACHE" = "yes" ]; then CCACHE="ccache"; else CCACHE=""; fi
+
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # to display build time at the end
