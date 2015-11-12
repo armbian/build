@@ -151,23 +151,8 @@ if [[ $BOARD == udoo* ]] ; then
 		patchme "Upgrade to 4.2.6" 								"patch-4.2.5-6" 			"default" "kernel"
 	else
 	# 
-	#patchme "remove strange DTBs from tree" 					"udoo_dtb.patch" 				"default" "kernel"
-	#patchme "remove n/a v4l2-capture from Udoo DTS" 			"udoo_dts_fix.patch" 			"default" "kernel"
-	# patchme "deb packaging fix" 								"packaging-udoo-fix.patch" 		"default" "kernel"
-	# temp instead of this patch
-	
-	# Upgrade to 3.14.55 (until 34 auto)
-	for (( c=28; c<=34; c++ ))
-	do
-		display_alert "Patching" "3.14.$c-$(( $c+1 ))" "info"
-		wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f -s >/dev/null 2>&1     
-	done
-	
-	patchme "Upgrade to 3.14.36" 								"neo-patch-3.14.35-36" 			"default" "kernel"
-	patchme "Upgrade to 3.14.37" 								"neo-patch-3.14.36-37" 			"default" "kernel"
-	patchme "Upgrade to 3.14.38" 								"neo-patch-3.14.37-38" 			"default" "kernel"
-	patchme "Upgrade to 3.14.39" 								"neo-patch-3.14.38-39" 			"default" "kernel"
-	for (( c=39; c<=56; c++ ))
+	patchme "remove strange DTBs from tree" 					"udoo_dtb.patch" 				"default" "kernel"
+	for (( c=56; c<=56; c++ ))
 	do
 		display_alert "Patching" "3.14.$c-$(( $c+1 ))" "info"
 		wget wget -qO - "https://www.kernel.org/pub/linux/kernel/v3.x/incr/patch-3.14.$c-$(( $c+1 )).gz" | gzip -d | patch -p1 -l -f -s >/dev/null 2>&1     
