@@ -140,7 +140,7 @@ device-tree-compiler dosfstools evtest figlet fbset fping git haveged hddtemp hd
 iperf ir-keytable iotop iozone3 iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev \
 module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo subversion \
 sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools weather-util weather-util-data wget \
-wpasupplicant iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan apt-transport-https sysbench"
+wpasupplicant iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan apt-transport-https sysbench libusb-dev"
 
 # generate locales and install packets
 display_alert "Install locales" "$DEST_LANG" "info"
@@ -159,7 +159,6 @@ install_packet "console-setup console-data kbd console-common unicode-data" "Ins
 # configure the system for unattended upgrades
 cp $SRC/lib/scripts/50unattended-upgrades $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 cp $SRC/lib/scripts/02periodic $DEST/cache/sdcard/etc/apt/apt.conf.d/02periodic
-sed -e "s/CODENAME/$RELEASE/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 
 # copy hostapd configurations
 install -m 755 $SRC/lib/config/hostapd.conf $DEST/cache/sdcard/etc/hostapd.conf 

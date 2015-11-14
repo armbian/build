@@ -31,6 +31,8 @@ wheezy)
 		sed -e 's/6:23:respawn/#6:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
 		# auto upgrading
 		sed -e "s/ORIGIN/Debian/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		sed -e "s/n=CODENAME/a=old-stable/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		
 		# install ramlog
 		cp $SRC/lib/bin/ramlog_2.0.0_all.deb $DEST/cache/sdcard/tmp
 		chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb >/dev/null 2>&1" 
@@ -50,6 +52,7 @@ jessie)
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/cache/sdcard/etc/ssh/sshd_config 
 		# auto upgrading
 		sed -e "s/ORIGIN/Debian/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		sed -e "s/CODENAME/$RELEASE/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 		# mount 256Mb tmpfs to /tmp
 		echo "tmpfs   /tmp         tmpfs   nodev,nosuid,size=256M          0  0" >> $DEST/cache/sdcard/etc/fstab
 		# configuration for systemd and sysvinit
@@ -111,6 +114,7 @@ trusty)
 		fi
 		# auto upgrading
 		sed -e "s/ORIGIN/Ubuntu/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		sed -e "s/CODENAME/$RELEASE/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 		# remove what's anyway not working 
 		rm $DEST/cache/sdcard/etc/init/ureadahead*
 		rm $DEST/cache/sdcard/etc/init/plymouth*

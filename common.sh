@@ -114,24 +114,13 @@ fi
 
 compile_sunxi_tools (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Compile sunxi_tools
+# Compile sunxi_tools for host
 #--------------------------------------------------------------------------------------------------------------------------------
 display_alert "Compiling sunxi tools" "@host & target" "info"
-# temp addon
-cd $SOURCES/sunxi-tools
-git checkout -q -f master
-git checkout -q -f 6cc91f10625d080a92ae8118bc23f72cae8fc9a7
-# for host
+cd $SOURCES/$MISC1_DIR
 make -s clean >/dev/null 2>&1
-make -s fex2bin >/dev/null 2>&1
-make -s bin2fex >/dev/null 2>&1 
+make -s >/dev/null 2>&1
 cp fex2bin bin2fex /usr/local/bin/
-# for destination
-make -s clean >/dev/null 2>&1
-make $CTHREADS 'fex2bin' CC=arm-linux-gnueabi-gcc >/dev/null 2>&1
-make $CTHREADS 'bin2fex' CC=arm-linux-gnueabi-gcc >/dev/null 2>&1
-make $CTHREADS 'nand-part' CC=arm-linux-gnueabi-gcc >/dev/null 2>&1
-git checkout -q -f master
 }
 
 
