@@ -38,6 +38,6 @@ If you want to invoke menu configuration:
 
 More info:
 
-- [Documentation](http://www.armbian.com/documentation/)
+- [Documentation](http://www.armbian.com/using-armbian-tools/)
 - [Support forums](http://forum.armbian.com/ "Armbian support forum")
 - [Project at Github](https://github.com/igorpecovnik/lib)
