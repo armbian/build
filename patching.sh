@@ -204,7 +204,6 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 	rm -f include/linux/platform_data/b53.h
 	
 	patchme "Debian packaging fix" 						"dev-packaging.patch" 						"default" "kernel"
-	patchme "Upgrade to 3.4.104" 						"patch-3.4.103-104" 						"default" "kernel"
 	patchme "Upgrade to 3.4.105" 						"patch-3.4.104-105" 						"default" "kernel"
 	patchme "Upgrade to 3.4.106" 						"patch-3.4.105-106" 						"default" "kernel"
 	patchme "Upgrade to 3.4.107" 						"patch-3.4.106-107" 						"default" "kernel"
@@ -229,7 +228,9 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 	patchme "A fix for rt8192" 							"rt8192cu-missing-case.patch" 				"default" "kernel"
 	patchme "R1 switch driver" 							"dev-bananapi-r1.patch" 					"default" "kernel"
 	patchme "Chip ID patch and MAC fixing" 				"dev-chip-id-and-gmac-fixing-mac.patch" 	"default" "kernel"
-
+	patchme "HDMI 8channel" 				"0001-ARM-sun7i-Fix-HDMI-Audio-driver-s-Alsa-interface-and.patch" 	"default" "kernel"
+	
+	
 fi
 
 # cubox / hummingboard 3.14
