@@ -46,6 +46,8 @@ Switches clarification:
 - **FORCE** ignore manual changes to source
 - **BUILD_ALL** cycle through selected boards and make images
 
+Image compiling example with partial cache:
+
 [su_youtube_advanced url="https:\/\/youtu.be\/zeShf12MNLg" controls="yes" showinfo="no" loop="yes" rel="no" modestbranding="yes"]
 
 ## Creating compile environment ##
