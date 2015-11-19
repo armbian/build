@@ -126,7 +126,7 @@ fi
 
 # CPU
 HARDWARE=$(cat /proc/cpuinfo | grep Hardware | awk '{print $3}')
-if [[ !( "$HARDWARE" == "sun7i" || "$HARDWARE" == "Allwinner") ]]; then 
+if [[ !( "$HARDWARE" == "sun7i" || "$HARDWARE" == "Allwinner" || "$HARDWARE" == "sun4i" ) ]]; then 
 	echo -e "[\e[0;31m error \x1B[0m] Unsupported hw"; exit; 
 fi
 
