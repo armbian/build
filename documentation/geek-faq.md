@@ -46,24 +46,7 @@ Switches clarification:
 - **FORCE** ignore manual changes to source
 - **BUILD_ALL** cycle through selected boards and make images
 
-## Select additional build options ##
-
-- **Choose a board:**
-
-	
-
-![](http://www.igorpecovnik.com/wp-content/uploads/2015/05/choose-a-board.png)
-
-- **Choose a distribution:**
-
-![](http://www.igorpecovnik.com/wp-content/uploads/2015/05/choose-distro.png)
-
-- **Choose kernel:**
-	- 3.4 - 3.14 (legacy)
-	- latest vanilla stable from www.kernel.org
-
-![](http://www.igorpecovnik.com/wp-content/uploads/2015/05/choose-kerne.png)
-
+[su_youtube_advanced url="https:\/\/youtu.be\/zeShf12MNLg" controls="yes" showinfo="no" loop="yes" rel="no" modestbranding="yes"]
 
 ## Creating compile environment ##
 
