@@ -52,10 +52,7 @@ For all other cases. Note that this procedure upgrades only kernel with hardware
 
 You will be prompted to select and confirm some actions. It's possible to upgrade **from any other distribution**.
 
-[su_note note_color="#dfdfdf" radius="1"]
-[su_youtube_advanced url="https:\/\/youtu.be\/iPAlPW3sv3I" controls="yes" showinfo="no" loop="yes" rel="no" modestbranding="yes"]
-</ul>
-[/su_note]
+[su_note note_color="#dfdfdf" radius="1"][su_youtube_advanced url="https:\/\/youtu.be\/iPAlPW3sv3I" controls="yes" showinfo="no" loop="yes" rel="no" modestbranding="yes"][\/su_note]
 
 
 # How to troubleshoot?
