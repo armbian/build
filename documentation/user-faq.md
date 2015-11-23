@@ -216,7 +216,7 @@ Serial console on imx6 boards are ttymxc0 (Hummingboard, Cubox-i) or ttymxc1 (Ud
 
 # How to install to NAND, SATA & USB?
 
-![Installer](http://www.igorpecovnik.com/wp-content/uploads/2015/05/sata-installer.png)
+[su_youtube_advanced url="https:\/\/youtu.be\/6So8MA-qru8" controls="yes" showinfo="no" loop="yes" rel="no" modestbranding="yes"]
 
 Required condition:
 
@@ -232,8 +232,7 @@ SATA/USB:
 
 Start the install script: 
 
-    cd /root
-    ./nand-sata-install
+	nand-sata-install
 
 and follow the guide. You can create up to three scenarios:
 
