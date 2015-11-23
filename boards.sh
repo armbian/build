@@ -32,10 +32,6 @@ if [[ $LINUXCONFIG == *sun* ]] ; then
 	
 	# lamobo R1 router switch config
 	tar xfz $SRC/lib/bin/swconfig.tgz -C $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin
-
-	# add NAND boot content
-	mkdir -p $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/root
-	cp $SRC/lib/bin/nand1-allwinner.tgz $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/root/.nand1-allwinner.tgz
 	
 	# convert and add fex files
 	unset IFS
