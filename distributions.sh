@@ -184,8 +184,12 @@ fi
 END
 install $SRC/lib/scripts/bashrc $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/bash.bashrc.custom
 install -m 755 $SRC/lib/scripts/armhwinfo $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/init.d 
+echo "set -e" >> $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/DEBIAN/postinst
 echo "update-rc.d armhwinfo defaults >/dev/null 2>&1" >> $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/DEBIAN/postinst
 echo "update-rc.d -f motd remove >/dev/null 2>&1" >> $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/DEBIAN/postinst
+echo "[[ -f /root/.nand1-allwinner.tgz ]] && rm /root/.nand1-allwinner.tgz" >> $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/DEBIAN/postinst
+echo "[[ -f /root/nand-sata-install ]] && rm /root/nand-sata-install" >> $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/DEBIAN/postinst
+echo "exit 0" >> $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/DEBIAN/postinst
 
 # temper binary for USB temp meter
 mkdir -p $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin
@@ -202,6 +206,5 @@ mkdir -p $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/modprobe.d/
 echo "blacklist evbug" > $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/modprobe.d/ev-debug-blacklist.conf
 
 # script to install to SATA
-mkdir -p $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/root
-install -m 755 $SRC/lib/scripts/nand-sata-install $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/root/nand-sata-install
+cp -R $SRC/lib/scripts/nand-sata-install/usr $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/
 }
