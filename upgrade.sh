@@ -168,7 +168,7 @@ if [[ "$bootdevice" == "/dev/mmcblk0p1" && "$rootdevice" != "/dev/mmcblk0p1" ]];
 fi
 if [[ "$bootdevice" == "/dev/nand1" ]]; then
 	umount /boot /mnt
-	mount /dev/nand1 /mnt
+	mount /dev/nand1 /boot
 fi
 }
 
@@ -314,16 +314,8 @@ install_new "" "Installing packages..."
 
 apt-get -y upgrade 2>&1 | dialog --title "$title" --backtitle "$backtitle" --progressbox "System upgrade" 20 80
 
-if [[ "$bootdevice" == "/dev/nand1" ]]; then
-	cp /boot/bin/$BOARD.bin /mnt/script.bin
-	whiptail --title "NAND install" --infobox "Converting and copying kernel." 7 60
-    sed -e 's,script=.*,script=script.bin,g' -i /mnt/uEnv.txt 	
-elif [[ "$rootdevice" == "/dev/mmcblk0p2" ]]; then
-	# fat boot, two partitions
-	cp /boot/bin/$BOARD.bin /boot/script.bin
-else
-   ln -sf /boot/bin/$BOARD.bin /boot/script.bin
-fi
+[[ "$bootdevice" == "/dev/nand1" ]] && sed -e 's,script=.*,script=script.bin,g' -i /boot/uEnv.txt
+ln -sf /boot/bin/$BOARD.bin /boot/script.bin || cp /boot/bin/$BOARD.bin /boot/script.bin
 
 dialog --title "$title" --backtitle "$backtitle"  --yes-label "Reboot" --no-label "Exit" \
 --yesno "\nAll done." 7 60
