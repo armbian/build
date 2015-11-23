@@ -2,20 +2,20 @@
 
 **v4.5 / 14.10.2015**
 
-– vanilla kernel upgraded to 4.2.3 for Allwinner based boards
-– legacy kernel for Allwinner compiled from new sources (linux-sunxi)
-– udoo vanilla upgraded to 4.2.3
-– cubox / hummingboard upgraded to 3.14.54
-– changed kernel naming: A10 = linux-image-sun4i, A20 = linux-image-sun7i
-– new boards: Banana M2, Orange+(A31S), Cubieboard 1, Cubieboard 2 Dual SD, Lime A10
-– fixed Udoo legacy wireless problems
-– fixed Jessie boot problems by disabling systemd. It’s possible to re-enable within boot scripts
-– added ramlog to Jessie because we don’t have systemd anymore
-– changed wireless driver for Cubietruck and Banana PRO (now it’s ap6210)
-– added ZRAM to vanilla kernel
-– fixed dvbsky modules
+- vanilla kernel upgraded to 4.2.3 for Allwinner based boards
+- legacy kernel for Allwinner compiled from new sources (linux-sunxi)
+- udoo vanilla upgraded to 4.2.3
+- cubox / hummingboard upgraded to 3.14.54
+- changed kernel naming: A10 = linux-image-sun4i, A20 = linux-image-sun7i
+- new boards: Banana M2, Orange+(A31S), Cubieboard 1, Cubieboard 2 Dual SD, Lime A10
+- fixed Udoo legacy wireless problems
+- fixed Jessie boot problems by disabling systemd. It’s possible to re-enable within boot scripts
+- added ramlog to Jessie because we don’t have systemd anymore
+- changed wireless driver for Cubietruck and Banana PRO (now it’s ap6210)
+- added ZRAM to vanilla kernel
+- fixed dvbsky modules
 
-… and a bunch of small fixes.
+and a bunch of small fixes.
 
 **v4.4 / 1.10.2015**
 
