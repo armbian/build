@@ -162,7 +162,7 @@ if [[ $BOARD == udoo* ]] ; then
 fi
 
 
-# sunxi 3.4 dan and me
+# sunxi 3.4 dan and me https://github.com/dan-and/linux-sunxi
 if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 	rm drivers/spi/spi-sun7i.c
 	rm -r drivers/net/wireless/ap6210/
@@ -170,8 +170,7 @@ if [[ $LINUXSOURCE == "linux-sunxi" ]] ; then
 	patchme "Debian packaging fix" 					"packaging-sunxi-fix.patch" 				"default" "kernel"
 	patchme "Aufs3" 								"linux-sunxi-3.4.108-overlayfs.patch" 		"default" "kernel"
 	patchme "More I2S and Spdif" 					"i2s_spdif_sunxi.patch" 					"default" "kernel"
-	patchme "A fix for rt8192" 						"rt8192cu-missing-case.patch" 				"default" "kernel"
-	#patchme "Upgrade to 3.4.109" 					"patch-3.4.108-109" 						"default" "kernel"
+	patchme "A fix for rt8192" 						"rt8192cu-missing-case.patch" 				"default" "kernel"	
 	
 	# banana/orange gmac  
 	if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
@@ -212,7 +211,7 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 	# RT patch. Disabled by default
 	#patchme "RT Kernel 3.4.108" 						"patch-3.4.108-rt136.patch" 				"default" "kernel"	
 	#patchme "Sunxi-Codec Low Latency" 					"sunxi-codec_LL.patch" 						"default" "kernel"	 
-	#
+	
 	patchme "Upgrade to 3.4.109" 						"patch-3.4.108-109" 						"default" "kernel"
 	patchme "Upgrade to 3.4.110" 						"patch-3.4.109-110" 						"default" "kernel"
 	patchme "Aufs3" 									"linux-sunxi-3.4.108-overlayfs.patch" 		"default" "kernel"
@@ -229,7 +228,6 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 	patchme "R1 switch driver" 							"dev-bananapi-r1.patch" 					"default" "kernel"
 	patchme "Chip ID patch and MAC fixing" 				"dev-chip-id-and-gmac-fixing-mac.patch" 	"default" "kernel"
 	patchme "HDMI 8channel" 				"0001-ARM-sun7i-Fix-HDMI-Audio-driver-s-Alsa-interface-and.patch" 	"default" "kernel"
-	
 	
 fi
 
@@ -275,9 +273,9 @@ fi
 # What are we building
 grab_kernel_version
 
-#--------------------------------------------------------------------------------------------------------------------------------
+#----------------------------------------------------------------------------------------------------------------------------------
 # Patching u-boot sources
-#--------------------------------------------------------------------------------------------------------------------------------
+#----------------------------------------------------------------------------------------------------------------------------------
 
 cd $SOURCES/$BOOTSOURCE
 display_alert "Patching" "u-boot $UBOOTTAG" "info"
@@ -302,7 +300,6 @@ if [[ $LINUXCONFIG == *sun* ]] ; then
 	#patchme "Add Banana Pi M2 A31S" 					"bananam2-a31s.patch" 		"default" "u-boot"
 	patchme "Add AW SOM" 								"add-awsom-uboot.patch" 			"default" "u-boot"
 	patchme "Add Armbian boot splash" 					"sunxi-boot-splash.patch" 			"default" "u-boot"
-	#patchme "Add overscan" 					"u-boot-overscan-sunxi.patch" 			"default" "u-boot"
 	
 	#optional, need to test more
 	#patchme "Cubieboard2 second SD card" 					"second_sd_card_cubieboard2.patch" 			"default" "u-boot"	
