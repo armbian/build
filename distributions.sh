@@ -207,4 +207,6 @@ echo "blacklist evbug" > $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/modprobe.d/ev-d
 
 # script to install to SATA
 cp -R $SRC/lib/scripts/nand-sata-install/usr $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/
+chmod +x $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/lib/nand-sata-install/nand-sata-install.sh
+ln -s ../lib/nand-sata-install/nand-sata-install.sh $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/sbin/nand-sata-install
 }

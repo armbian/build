@@ -325,17 +325,11 @@ cd $SOURCES/$MISC4_DIR
 if (( "${array[0]}" == "3" )) && (( "${array[1]}" < "5" ))
 then
 	git checkout $FORCE -q 06f0bba152c036455ae76d26e612ff0e70a83a82
-else
+	else
 	git checkout $FORCE -q master
 fi
 
-if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
 patchme "DMA disable on FBTFT drivers" 					"bananafbtft.patch" 		"default" "misc"
-
-
-else
-patchme "DMA disable on FBTFT drivers" 					"bananafbtft.patch" 		"reverse" "misc"
-fi
 
 mkdir -p $SOURCES/$LINUXSOURCE/drivers/video/fbtft
 mount --bind $SOURCES/$MISC4_DIR $SOURCES/$LINUXSOURCE/drivers/video/fbtft
