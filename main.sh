@@ -188,7 +188,7 @@ source $SRC/lib/patching.sh 				# Source patching
 source $SRC/lib/boards.sh 					# Board specific install
 source $SRC/lib/desktop.sh 					# Desktop specific install
 source $SRC/lib/common.sh 					# Functions 
-
+source $SRC/lib/makeboarddeb.sh 					# Functions 
 
 # needed if process failed in the middle
 umount_image
@@ -308,7 +308,8 @@ install_kernel
 #--------------------------------------------------------------------------------------------------------------------------------
 # install board specific applications
 #--------------------------------------------------------------------------------------------------------------------------------
-install_system_specific
+install_distribution_specific
+create_board_package
 install_board_specific
 
 

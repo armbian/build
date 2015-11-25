@@ -14,46 +14,23 @@ install_board_specific (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install board common and specific applications
 #--------------------------------------------------------------------------------------------------------------------------------
-display_alert "Install board specific applications." "$BOARD" "info"
 
-# add some summary to the image
-fingerprint_image "$DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/armbian.txt"
 
-# Allwinner
-if [[ $LINUXCONFIG == *sun* ]] ; then
-
-	# add sunxi tools
-	# cp $SOURCES/sunxi-tools/fex2bin $SOURCES/sunxi-tools/bin2fex $SOURCES/sunxi-tools/nand-part $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin
-	tar xfz $SRC/lib/bin/sunxitools.tgz -C $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin
-	if [ "$BRANCH" != "next" ]; then
-		# add soc temperature app
-		arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin/sunxi_tp_temp
-	fi
-	
-	# lamobo R1 router switch config
-	tar xfz $SRC/lib/bin/swconfig.tgz -C $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin
-	
-	# convert and add fex files
-	unset IFS
-	mkdir -p $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/boot/bin
-	for i in $(ls -w1 $SRC/lib/config/*.fex | xargs -n1 basename); 
-		do fex2bin $SRC/lib/config/${i%*.fex}.fex $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/boot/bin/${i%*.fex}.bin; 
-	done
-	
-	# bluetooth device enabler - for cubietruck
-	install -m 755	$SRC/lib/bin/brcm_patchram_plus		$DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/usr/local/bin
-	install			$SRC/lib/scripts/brcm40183 			$DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/default
-	install -m 755  $SRC/lib/scripts/brcm40183-patch    $DEST/debs/$RELEASE/$CHOOSEN_ROOTFS/etc/init.d
+# Allwinner's
+if [[ $LINUXFAMILY == sun* ]] ; then	
 	
 	# default lirc configuration
-	sed -i '1i sed -i \x27s/DEVICE="\\/dev\\/input.*/DEVICE="\\/dev\\/input\\/\x27$str\x27"/g\x27 /etc/lirc/hardware.conf' $DEST/cache/sdcard/etc/lirc/hardware.conf
-	sed -i '1i str=$(cat /proc/bus/input/devices | grep "H: Handlers=sysrq rfkill kbd event" | awk \x27{print $(NF)}\x27)' $DEST/cache/sdcard/etc/lirc/hardware.conf
+	sed -i '1i sed -i \x27s/DEVICE="\\/dev\\/input.*/DEVICE="\\/dev\\/input\\/\x27$str\x27"/g\x27 /etc/lirc/hardware.conf' \
+	$DEST/cache/sdcard/etc/lirc/hardware.conf
+	sed -i '1i str=$(cat /proc/bus/input/devices | grep "H: Handlers=sysrq rfkill kbd event" | awk \x27{print $(NF)}\x27)' \
+	$DEST/cache/sdcard/etc/lirc/hardware.conf
 	sed -i '1i # Cubietruck automatic lirc device detection by Igor Pecovnik' $DEST/cache/sdcard/etc/lirc/hardware.conf
 	sed -e 's/DEVICE=""/DEVICE="\/dev\/input\/event1"/g' -i $DEST/cache/sdcard/etc/lirc/hardware.conf
 	sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="devinput"/g' -i $DEST/cache/sdcard/etc/lirc/hardware.conf
 	cp $SRC/lib/config/lirc.conf.cubietruck $DEST/cache/sdcard/etc/lirc/lircd.conf
 
 fi 
+
 
 # udoo
 if [[ $BOARD == "udoo" ]] ; then		
@@ -62,8 +39,12 @@ if [[ $BOARD == "udoo" ]] ; then
 			mv $DEST/cache/sdcard/etc/init/ttyS0.conf $DEST/cache/sdcard/etc/init/ttymxc1.conf; 
 			sed -e "s/ttyS0/ttymxc1/g" -i $DEST/cache/sdcard/etc/init/ttymxc1.conf; 
 		fi
-		if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc1.service ; fi
-		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc >/dev/null 2>&1 && apt-get -y -qq autoremove >/dev/null 2>&1"		
+		if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then 
+			mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  \
+			$DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc1.service
+		fi
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc >/dev/null 2>&1"
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq autoremove >/dev/null 2>&1"		
 		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.default
 		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.bonding
 		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.hostapd
@@ -71,11 +52,18 @@ if [[ $BOARD == "udoo" ]] ; then
 		sed -e 's/interactive/ondemand/g' -i $DEST/cache/sdcard/etc/init.d/cpufrequtils
 fi
 
+
 # udoo neo
 if [[ $BOARD == "udoo-neo" ]] ; then		
 		if [ -f $DEST/cache/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/inittab; fi
-		if [ -f $DEST/cache/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/cache/sdcard/etc/init/ttyS0.conf $DEST/cache/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/init/ttymxc0.conf; fi	
-		if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc0.service ; fi
+		if [ -f $DEST/cache/sdcard/etc/init/ttyS0.conf ]; then 
+			mv $DEST/cache/sdcard/etc/init/ttyS0.conf $DEST/cache/sdcard/etc/init/ttymxc0.conf
+			sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/init/ttymxc0.conf
+		fi	
+		if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then 
+			mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  \
+			$DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc0.service 
+		fi
 		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc && apt-get -y -qq autoremove"		
 		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.default
 		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.bonding
@@ -87,11 +75,18 @@ if [[ $BOARD == "udoo-neo" ]] ; then
 		cp $SRC/lib/bin/m4startup.fw* $DEST/cache/sdcard/boot/bin/
 fi
 
+
 # cubox / hummingboard
 if [[ $BOARD == cubox-i* ]] ; then
 		if [ -f $DEST/cache/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/inittab; fi
-		if [ -f $DEST/cache/sdcard/etc/init/ttyS0.conf ]; then mv $DEST/cache/sdcard/etc/init/ttyS0.conf $DEST/cache/sdcard/etc/init/ttymxc0.conf; sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/init/ttymxc0.conf; fi	
-		if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc0.service ; fi
+		if [ -f $DEST/cache/sdcard/etc/init/ttyS0.conf ]; then 
+			mv $DEST/cache/sdcard/etc/init/ttyS0.conf $DEST/cache/sdcard/etc/init/ttymxc0.conf
+			sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/init/ttymxc0.conf
+		fi	
+		if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then 
+			mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  \
+			$DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc0.service 
+		fi
 		
 		# default lirc configuration 
 		sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $DEST/cache/sdcard/etc/lirc/hardware.conf
@@ -106,17 +101,14 @@ if [[ $BOARD == cubox-i* ]] ; then
 					
 fi
 
-# create board DEB file
-cd $DEST/debs/$RELEASE/
-dpkg -b $CHOOSEN_ROOTFS >/dev/null 2>&1
-rm -rf $CHOOSEN_ROOTFS
 # install custom root package 
-#cp $CHOOSEN_ROOTFS.deb /tmp/kernel
 chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/$CHOOSEN_ROOTFS.deb >/dev/null 2>&1"
+
 # enable first run script
 chroot $DEST/cache/sdcard /bin/bash -c "update-rc.d firstrun defaults >/dev/null 2>&1"
 
 display_alert "Creating boot scripts" "$BOARD" "info"
+
 # remove .old on new image
 rm -rf $DEST/cache/sdcard/boot/dtb.old
 if [[ $BOARD == udoo* ]] ; then
@@ -126,16 +118,17 @@ elif [[ $BOARD == cubox-i* ]]; then
 else
 	cp $SRC/lib/config/boot.cmd $DEST/cache/sdcard/boot/boot.cmd
 	# let's prepare for old kernel too
-	chroot $DEST/cache/sdcard /bin/bash -c "ln -s /boot/bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin"
+	chroot $DEST/cache/sdcard /bin/bash -c \
+	"ln -s /boot/bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin"
 fi
 
 # if we have a special fat boot partition, alter rootfs=
-
 if [ "$BOOTSIZE" -gt "0" ]; then
 	display_alert "Adjusting boot scripts" "$BOARD" "info"
 	sed -e 's/p1 /p2 /g' -i $DEST/cache/sdcard/boot/boot.cmd	
 	echo "/dev/mmcblk0p1        /boot   vfat    defaults        0       0" >> $DEST/cache/sdcard/etc/fstab
 fi
+
 # convert to uboot compatible script
 mkimage -C none -A arm -T script -d $DEST/cache/sdcard/boot/boot.cmd $DEST/cache/sdcard/boot/boot.scr >> /dev/null
 }
