@@ -61,6 +61,7 @@ sed -e 's,\/dev\/mmcblk0p.,'"$2"',g' -i /mnt/rootfs/etc/fstab
 # creating fstab, kernel and boot script for NAND partition
 if [ -n "$1" ]; then
 REMOVESDTXT="and remove SD to boot from NAND"
+sed -i '/boot/d' /mnt/rootfs/etc/fstab
 echo "$1 /boot vfat	defaults 0 0" >> /mnt/rootfs/etc/fstab
 dialog --title "$title" --backtitle "$backtitle" --infobox "\nConverting kernel ... few seconds." 5 60
 mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d \
