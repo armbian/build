@@ -18,11 +18,14 @@ cleaning()
 if [[ $BRANCH == "next" ]] ; then KERNEL_BRACH="-next"; UBOOT_BRACH="-next"; else KERNEL_BRACH=""; UBOOT_BRACH=""; fi 
 CHOOSEN_UBOOT=linux-u-boot"$UBOOT_BRACH"-"$BOARD"_"$REVISION"_armhf.deb
 CHOOSEN_KERNEL=linux-image"$KERNEL_BRACH"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
+HEADERS_CACHE="${CHOOSEN_KERNEL/image/cache}"
 
 case $1 in
 1)	# Clean u-boot and kernel sources
 	[ -d "$SOURCES/$BOOTSOURCE" ] && display_alert "Cleaning" "$SOURCES/$BOOTSOURCE" "info" && cd $SOURCES/$BOOTSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
 	[ -d "$SOURCES/$LINUXSOURCE" ] && display_alert "Cleaning" "$SOURCES/$LINUXSOURCE" "info" && cd $SOURCES/$LINUXSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean	
+	[ -f $DEST/cache/building/$HEADERS_CACHE.tgz ] && display_alert "Cleaning" "$HEADERS_CACHE.tgz" "info" && rm -f $DEST/cache/building/$HEADERS_CACHE.tgz
+	
 ;;
 2) display_alert "No cleaning" "sources" "info"
 ;;
@@ -51,6 +54,7 @@ case $1 in
 	display_alert "Cleaning" "$SOURCES/$LINUXSOURCE" "info" && cd $SOURCES/$LINUXSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean	
 	[ -f "$DEST/debs/$CHOOSEN_KERNEL" ] && 
 	display_alert "Removing" "$DEST/debs/$CHOOSEN_KERNEL" "info" && rm $DEST/debs/$CHOOSEN_KERNEL
+	[ -f $DEST/cache/building/$HEADERS_CACHE.tgz ] && display_alert "Cleaning" "$HEADERS_CACHE.tgz" "info" && rm -f $DEST/cache/building/$HEADERS_CACHE.tgz
 ;;
 esac
 }
