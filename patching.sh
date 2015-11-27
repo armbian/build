@@ -201,6 +201,7 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 	rm -f drivers/net/phy/swconfig.c
 	rm -f drivers/net/phy/swconfig_leds.c
 	rm -f include/linux/platform_data/b53.h
+	rm -f drivers/leds/ledtrig-disk.c
 	
 	patchme "Debian packaging fix" 						"dev-packaging.patch" 						"default" "kernel"
 	patchme "Upgrade to 3.4.105" 						"patch-3.4.104-105" 						"default" "kernel"
@@ -228,6 +229,7 @@ if [[ $LINUXSOURCE == "linux-sunxi-dev" ]] ; then
 	patchme "R1 switch driver" 							"dev-bananapi-r1.patch" 					"default" "kernel"
 	patchme "Chip ID patch and MAC fixing" 				"dev-chip-id-and-gmac-fixing-mac.patch" 	"default" "kernel"
 	patchme "HDMI 8channel" 				"0001-ARM-sun7i-Fix-HDMI-Audio-driver-s-Alsa-interface-and.patch" 	"default" "kernel"
+	patchme "IDE leds"	"IDE-led-trigger-to-generic-disk-activity.patch" "default" "kernel"
 	
 fi
 
