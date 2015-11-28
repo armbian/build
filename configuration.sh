@@ -347,7 +347,7 @@ KERNELTAG=""
 LINUXKERNEL="https://github.com/UDOOboard/linux_kernel --depth 1"
 LINUXCONFIG="linux-udoo"
 LINUXSOURCE="linux-udoo"
-LINUXDEFAULT="imx_3.14.28_1.0.0_ga_udoo"
+LINUXDEFAULT="3.14-1.0.x-udoo"
 LINUXFAMILY="udoo"
 ;;
 
