@@ -15,11 +15,6 @@ cleaning()
 # Let's clean stuff
 #--------------------------------------------------------------------------------------------------------------------------------
 {
-if [[ $BRANCH == "next" ]] ; then KERNEL_BRACH="-next"; UBOOT_BRACH="-next"; else KERNEL_BRACH=""; UBOOT_BRACH=""; fi 
-CHOOSEN_UBOOT=linux-u-boot"$UBOOT_BRACH"-"$BOARD"_"$REVISION"_armhf.deb
-CHOOSEN_KERNEL=linux-image"$KERNEL_BRACH"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
-HEADERS_CACHE="${CHOOSEN_KERNEL/image/cache}"
-
 case $1 in
 1)	# Clean u-boot and kernel sources
 	[ -d "$SOURCES/$BOOTSOURCE" ] && display_alert "Cleaning" "$SOURCES/$BOOTSOURCE" "info" && cd $SOURCES/$BOOTSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
