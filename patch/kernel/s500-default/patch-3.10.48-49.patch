@@ -1,0 +1,1621 @@
+diff --git a/Makefile b/Makefile
+index f7e5680740f9..b8b8d33eab55 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 3
+ PATCHLEVEL = 10
+-SUBLEVEL = 48
++SUBLEVEL = 49
+ EXTRAVERSION =
+ NAME = TOSSUG Baby Fish
+ 
+diff --git a/arch/arm64/include/asm/memory.h b/arch/arm64/include/asm/memory.h
+index 381f556b664e..bf0838323896 100644
+--- a/arch/arm64/include/asm/memory.h
++++ b/arch/arm64/include/asm/memory.h
+@@ -51,6 +51,8 @@
+ #define TASK_SIZE_32		UL(0x100000000)
+ #define TASK_SIZE		(test_thread_flag(TIF_32BIT) ? \
+ 				TASK_SIZE_32 : TASK_SIZE_64)
++#define TASK_SIZE_OF(tsk)	(test_tsk_thread_flag(tsk, TIF_32BIT) ? \
++				TASK_SIZE_32 : TASK_SIZE_64)
+ #else
+ #define TASK_SIZE		TASK_SIZE_64
+ #endif /* CONFIG_COMPAT */
+diff --git a/arch/parisc/kernel/hardware.c b/arch/parisc/kernel/hardware.c
+index 872275659d98..c22c3d84e28b 100644
+--- a/arch/parisc/kernel/hardware.c
++++ b/arch/parisc/kernel/hardware.c
+@@ -1205,7 +1205,8 @@ static struct hp_hardware hp_hardware_list[] = {
+ 	{HPHW_FIO, 0x004, 0x00320, 0x0, "Metheus Frame Buffer"}, 
+ 	{HPHW_FIO, 0x004, 0x00340, 0x0, "BARCO CX4500 VME Grphx Cnsl"}, 
+ 	{HPHW_FIO, 0x004, 0x00360, 0x0, "Hughes TOG VME FDDI"}, 
+-	{HPHW_FIO, 0x076, 0x000AD, 0x00, "Crestone Peak RS-232"},
++	{HPHW_FIO, 0x076, 0x000AD, 0x0, "Crestone Peak Core RS-232"},
++	{HPHW_FIO, 0x077, 0x000AD, 0x0, "Crestone Peak Fast? Core RS-232"},
+ 	{HPHW_IOA, 0x185, 0x0000B, 0x00, "Java BC Summit Port"}, 
+ 	{HPHW_IOA, 0x1FF, 0x0000B, 0x00, "Hitachi Ghostview Summit Port"}, 
+ 	{HPHW_IOA, 0x580, 0x0000B, 0x10, "U2-IOA BC Runway Port"}, 
+diff --git a/arch/powerpc/include/asm/perf_event_server.h b/arch/powerpc/include/asm/perf_event_server.h
+index f265049dd7d6..960bf64788a3 100644
+--- a/arch/powerpc/include/asm/perf_event_server.h
++++ b/arch/powerpc/include/asm/perf_event_server.h
+@@ -59,7 +59,7 @@ struct power_pmu {
+ #define PPMU_SIAR_VALID		0x00000010 /* Processor has SIAR Valid bit */
+ #define PPMU_HAS_SSLOT		0x00000020 /* Has sampled slot in MMCRA */
+ #define PPMU_HAS_SIER		0x00000040 /* Has SIER */
+-#define PPMU_BHRB		0x00000080 /* has BHRB feature enabled */
++#define PPMU_ARCH_207S		0x00000080 /* PMC is architecture v2.07S */
+ 
+ /*
+  * Values for flags to get_alternatives()
+diff --git a/arch/powerpc/perf/core-book3s.c b/arch/powerpc/perf/core-book3s.c
+index d3ee2e50a3a6..846861a20b07 100644
+--- a/arch/powerpc/perf/core-book3s.c
++++ b/arch/powerpc/perf/core-book3s.c
+@@ -749,7 +749,22 @@ static void power_pmu_read(struct perf_event *event)
+ 	} while (local64_cmpxchg(&event->hw.prev_count, prev, val) != prev);
+ 
+ 	local64_add(delta, &event->count);
+-	local64_sub(delta, &event->hw.period_left);
++
++	/*
++	 * A number of places program the PMC with (0x80000000 - period_left).
++	 * We never want period_left to be less than 1 because we will program
++	 * the PMC with a value >= 0x800000000 and an edge detected PMC will
++	 * roll around to 0 before taking an exception. We have seen this
++	 * on POWER8.
++	 *
++	 * To fix this, clamp the minimum value of period_left to 1.
++	 */
++	do {
++		prev = local64_read(&event->hw.period_left);
++		val = prev - delta;
++		if (val < 1)
++			val = 1;
++	} while (local64_cmpxchg(&event->hw.period_left, prev, val) != prev);
+ }
+ 
+ /*
+@@ -1327,6 +1342,9 @@ static int can_go_on_limited_pmc(struct perf_event *event, u64 ev,
+ 	if (ppmu->limited_pmc_event(ev))
+ 		return 1;
+ 
++	if (ppmu->flags & PPMU_ARCH_207S)
++		mtspr(SPRN_MMCR2, 0);
++
+ 	/*
+ 	 * The requested event_id isn't on a limited PMC already;
+ 	 * see if any alternative code goes on a limited PMC.
+@@ -1421,7 +1439,7 @@ static int power_pmu_event_init(struct perf_event *event)
+ 
+ 	if (has_branch_stack(event)) {
+ 	        /* PMU has BHRB enabled */
+-		if (!(ppmu->flags & PPMU_BHRB))
++		if (!(ppmu->flags & PPMU_ARCH_207S))
+ 			return -EOPNOTSUPP;
+ 	}
+ 
+diff --git a/arch/powerpc/perf/power8-pmu.c b/arch/powerpc/perf/power8-pmu.c
+index 9aefaebedef1..ee3b4048ab4d 100644
+--- a/arch/powerpc/perf/power8-pmu.c
++++ b/arch/powerpc/perf/power8-pmu.c
+@@ -592,7 +592,7 @@ static struct power_pmu power8_pmu = {
+ 	.get_constraint		= power8_get_constraint,
+ 	.get_alternatives	= power8_get_alternatives,
+ 	.disable_pmc		= power8_disable_pmc,
+-	.flags			= PPMU_HAS_SSLOT | PPMU_HAS_SIER | PPMU_BHRB,
++	.flags			= PPMU_HAS_SSLOT | PPMU_HAS_SIER | PPMU_ARCH_207S,
+ 	.n_generic		= ARRAY_SIZE(power8_generic_events),
+ 	.generic_events		= power8_generic_events,
+ 	.attr_groups		= power8_pmu_attr_groups,
+diff --git a/arch/score/Kconfig b/arch/score/Kconfig
+index c8def8bc9020..91182e95b887 100644
+--- a/arch/score/Kconfig
++++ b/arch/score/Kconfig
+@@ -109,3 +109,6 @@ source "security/Kconfig"
+ source "crypto/Kconfig"
+ 
+ source "lib/Kconfig"
++
++config NO_IOMEM
++       def_bool y
+diff --git a/arch/score/Makefile b/arch/score/Makefile
+index 974aefe86123..9e3e060290e0 100644
+--- a/arch/score/Makefile
++++ b/arch/score/Makefile
+@@ -20,8 +20,8 @@ cflags-y += -G0 -pipe -mel -mnhwloop -D__SCOREEL__ \
+ #
+ KBUILD_AFLAGS += $(cflags-y)
+ KBUILD_CFLAGS += $(cflags-y)
+-KBUILD_AFLAGS_MODULE += -mlong-calls
+-KBUILD_CFLAGS_MODULE += -mlong-calls
++KBUILD_AFLAGS_MODULE +=
++KBUILD_CFLAGS_MODULE +=
+ LDFLAGS += --oformat elf32-littlescore
+ LDFLAGS_vmlinux	+= -G0 -static -nostdlib
+ 
+diff --git a/arch/score/include/asm/checksum.h b/arch/score/include/asm/checksum.h
+index f909ac3144a4..961bd64015a8 100644
+--- a/arch/score/include/asm/checksum.h
++++ b/arch/score/include/asm/checksum.h
+@@ -184,48 +184,57 @@ static inline __sum16 csum_ipv6_magic(const struct in6_addr *saddr,
+ 				__wsum sum)
+ {
+ 	__asm__ __volatile__(
+-		".set\tnoreorder\t\t\t# csum_ipv6_magic\n\t"
+-		".set\tnoat\n\t"
+-		"addu\t%0, %5\t\t\t# proto (long in network byte order)\n\t"
+-		"sltu\t$1, %0, %5\n\t"
+-		"addu\t%0, $1\n\t"
+-		"addu\t%0, %6\t\t\t# csum\n\t"
+-		"sltu\t$1, %0, %6\n\t"
+-		"lw\t%1, 0(%2)\t\t\t# four words source address\n\t"
+-		"addu\t%0, $1\n\t"
+-		"addu\t%0, %1\n\t"
+-		"sltu\t$1, %0, %1\n\t"
+-		"lw\t%1, 4(%2)\n\t"
+-		"addu\t%0, $1\n\t"
+-		"addu\t%0, %1\n\t"
+-		"sltu\t$1, %0, %1\n\t"
+-		"lw\t%1, 8(%2)\n\t"
+-		"addu\t%0, $1\n\t"
+-		"addu\t%0, %1\n\t"
+-		"sltu\t$1, %0, %1\n\t"
+-		"lw\t%1, 12(%2)\n\t"
+-		"addu\t%0, $1\n\t"
+-		"addu\t%0, %1\n\t"
+-		"sltu\t$1, %0, %1\n\t"
+-		"lw\t%1, 0(%3)\n\t"
+-		"addu\t%0, $1\n\t"
+-		"addu\t%0, %1\n\t"
+-		"sltu\t$1, %0, %1\n\t"
+-		"lw\t%1, 4(%3)\n\t"
+-		"addu\t%0, $1\n\t"
+-		"addu\t%0, %1\n\t"
+-		"sltu\t$1, %0, %1\n\t"
+-		"lw\t%1, 8(%3)\n\t"
+-		"addu\t%0, $1\n\t"
+-		"addu\t%0, %1\n\t"
+-		"sltu\t$1, %0, %1\n\t"
+-		"lw\t%1, 12(%3)\n\t"
+-		"addu\t%0, $1\n\t"
+-		"addu\t%0, %1\n\t"
+-		"sltu\t$1, %0, %1\n\t"
+-		"addu\t%0, $1\t\t\t# Add final carry\n\t"
+-		".set\tnoat\n\t"
+-		".set\tnoreorder"
++		".set\tvolatile\t\t\t# csum_ipv6_magic\n\t"
++		"add\t%0, %0, %5\t\t\t# proto (long in network byte order)\n\t"
++		"cmp.c\t%5, %0\n\t"
++		"bleu 1f\n\t"
++		"addi\t%0, 0x1\n\t"
++		"1:add\t%0, %0, %6\t\t\t# csum\n\t"
++		"cmp.c\t%6, %0\n\t"
++		"lw\t%1, [%2, 0]\t\t\t# four words source address\n\t"
++		"bleu 1f\n\t"
++		"addi\t%0, 0x1\n\t"
++		"1:add\t%0, %0, %1\n\t"
++		"cmp.c\t%1, %0\n\t"
++		"1:lw\t%1, [%2, 4]\n\t"
++		"bleu 1f\n\t"
++		"addi\t%0, 0x1\n\t"
++		"1:add\t%0, %0, %1\n\t"
++		"cmp.c\t%1, %0\n\t"
++		"lw\t%1, [%2,8]\n\t"
++		"bleu 1f\n\t"
++		"addi\t%0, 0x1\n\t"
++		"1:add\t%0, %0, %1\n\t"
++		"cmp.c\t%1, %0\n\t"
++		"lw\t%1, [%2, 12]\n\t"
++		"bleu 1f\n\t"
++		"addi\t%0, 0x1\n\t"
++		"1:add\t%0, %0,%1\n\t"
++		"cmp.c\t%1, %0\n\t"
++		"lw\t%1, [%3, 0]\n\t"
++		"bleu 1f\n\t"
++		"addi\t%0, 0x1\n\t"
++		"1:add\t%0, %0, %1\n\t"
++		"cmp.c\t%1, %0\n\t"
++		"lw\t%1, [%3, 4]\n\t"
++		"bleu 1f\n\t"
++		"addi\t%0, 0x1\n\t"
++		"1:add\t%0, %0, %1\n\t"
++		"cmp.c\t%1, %0\n\t"
++		"lw\t%1, [%3, 8]\n\t"
++		"bleu 1f\n\t"
++		"addi\t%0, 0x1\n\t"
++		"1:add\t%0, %0, %1\n\t"
++		"cmp.c\t%1, %0\n\t"
++		"lw\t%1, [%3, 12]\n\t"
++		"bleu 1f\n\t"
++		"addi\t%0, 0x1\n\t"
++		"1:add\t%0, %0, %1\n\t"
++		"cmp.c\t%1, %0\n\t"
++		"bleu 1f\n\t"
++		"addi\t%0, 0x1\n\t"
++		"1:\n\t"
++		".set\toptimize"
+ 		: "=r" (sum), "=r" (proto)
+ 		: "r" (saddr), "r" (daddr),
+ 		  "0" (htonl(len)), "1" (htonl(proto)), "r" (sum));
+diff --git a/arch/score/include/asm/io.h b/arch/score/include/asm/io.h
+index fbbfd7132e3b..574c8827abe2 100644
+--- a/arch/score/include/asm/io.h
++++ b/arch/score/include/asm/io.h
+@@ -5,5 +5,4 @@
+ 
+ #define virt_to_bus	virt_to_phys
+ #define bus_to_virt	phys_to_virt
+-
+ #endif /* _ASM_SCORE_IO_H */
+diff --git a/arch/score/include/asm/pgalloc.h b/arch/score/include/asm/pgalloc.h
+index 059a61b7071b..716b3fd1d863 100644
+--- a/arch/score/include/asm/pgalloc.h
++++ b/arch/score/include/asm/pgalloc.h
+@@ -2,7 +2,7 @@
+ #define _ASM_SCORE_PGALLOC_H
+ 
+ #include <linux/mm.h>
+-
++#include <linux/highmem.h>
+ static inline void pmd_populate_kernel(struct mm_struct *mm, pmd_t *pmd,
+ 	pte_t *pte)
+ {
+diff --git a/arch/score/kernel/entry.S b/arch/score/kernel/entry.S
+index 7234ed09b7b7..befb87d30a89 100644
+--- a/arch/score/kernel/entry.S
++++ b/arch/score/kernel/entry.S
+@@ -264,7 +264,7 @@ resume_kernel:
+ 	disable_irq
+ 	lw	r8, [r28, TI_PRE_COUNT]
+ 	cmpz.c	r8
+-	bne	r8, restore_all
++	bne	restore_all
+ need_resched:
+ 	lw	r8, [r28, TI_FLAGS]
+ 	andri.c	r9, r8, _TIF_NEED_RESCHED
+@@ -415,7 +415,7 @@ ENTRY(handle_sys)
+ 	sw	r9, [r0, PT_EPC]
+ 
+ 	cmpi.c	r27, __NR_syscalls 	# check syscall number
+-	bgeu	illegal_syscall
++	bcs	illegal_syscall
+ 
+ 	slli	r8, r27, 2		# get syscall routine
+ 	la	r11, sys_call_table
+diff --git a/arch/score/kernel/process.c b/arch/score/kernel/process.c
+index f4c6d02421d3..a1519ad3d49d 100644
+--- a/arch/score/kernel/process.c
++++ b/arch/score/kernel/process.c
+@@ -78,8 +78,8 @@ int copy_thread(unsigned long clone_flags, unsigned long usp,
+ 	p->thread.reg0 = (unsigned long) childregs;
+ 	if (unlikely(p->flags & PF_KTHREAD)) {
+ 		memset(childregs, 0, sizeof(struct pt_regs));
+-		p->thread->reg12 = usp;
+-		p->thread->reg13 = arg;
++		p->thread.reg12 = usp;
++		p->thread.reg13 = arg;
+ 		p->thread.reg3 = (unsigned long) ret_from_kernel_thread;
+ 	} else {
+ 		*childregs = *current_pt_regs();
+diff --git a/arch/score/kernel/vmlinux.lds.S b/arch/score/kernel/vmlinux.lds.S
+index eebcbaa4e978..7274b5c4287e 100644
+--- a/arch/score/kernel/vmlinux.lds.S
++++ b/arch/score/kernel/vmlinux.lds.S
+@@ -49,6 +49,7 @@ SECTIONS
+ 	}
+ 
+ 	. = ALIGN(16);
++	_sdata =  .;			/* Start of data section */
+ 	RODATA
+ 
+ 	EXCEPTION_TABLE(16)
+diff --git a/arch/x86/crypto/sha512_ssse3_glue.c b/arch/x86/crypto/sha512_ssse3_glue.c
+index 6cbd8df348d2..9f5e71f06671 100644
+--- a/arch/x86/crypto/sha512_ssse3_glue.c
++++ b/arch/x86/crypto/sha512_ssse3_glue.c
+@@ -141,7 +141,7 @@ static int sha512_ssse3_final(struct shash_desc *desc, u8 *out)
+ 
+ 	/* save number of bits */
+ 	bits[1] = cpu_to_be64(sctx->count[0] << 3);
+-	bits[0] = cpu_to_be64(sctx->count[1] << 3) | sctx->count[0] >> 61;
++	bits[0] = cpu_to_be64(sctx->count[1] << 3 | sctx->count[0] >> 61);
+ 
+ 	/* Pad out to 112 mod 128 and append length */
+ 	index = sctx->count[0] & 0x7f;
+diff --git a/arch/x86/mm/ioremap.c b/arch/x86/mm/ioremap.c
+index 9a1e6583910c..86c758de4b34 100644
+--- a/arch/x86/mm/ioremap.c
++++ b/arch/x86/mm/ioremap.c
+@@ -50,6 +50,21 @@ int ioremap_change_attr(unsigned long vaddr, unsigned long size,
+ 	return err;
+ }
+ 
++static int __ioremap_check_ram(unsigned long start_pfn, unsigned long nr_pages,
++			       void *arg)
++{
++	unsigned long i;
++
++	for (i = 0; i < nr_pages; ++i)
++		if (pfn_valid(start_pfn + i) &&
++		    !PageReserved(pfn_to_page(start_pfn + i)))
++			return 1;
++
++	WARN_ONCE(1, "ioremap on RAM pfn 0x%lx\n", start_pfn);
++
++	return 0;
++}
++
+ /*
+  * Remap an arbitrary physical address space into the kernel virtual
+  * address space. Needed when the kernel wants to access high addresses
+@@ -93,14 +108,11 @@ static void __iomem *__ioremap_caller(resource_size_t phys_addr,
+ 	/*
+ 	 * Don't allow anybody to remap normal RAM that we're using..
+ 	 */
++	pfn      = phys_addr >> PAGE_SHIFT;
+ 	last_pfn = last_addr >> PAGE_SHIFT;
+-	for (pfn = phys_addr >> PAGE_SHIFT; pfn <= last_pfn; pfn++) {
+-		int is_ram = page_is_ram(pfn);
+-
+-		if (is_ram && pfn_valid(pfn) && !PageReserved(pfn_to_page(pfn)))
+-			return NULL;
+-		WARN_ON_ONCE(is_ram);
+-	}
++	if (walk_system_ram_range(pfn, last_pfn - pfn + 1, NULL,
++				  __ioremap_check_ram) == 1)
++		return NULL;
+ 
+ 	/*
+ 	 * Mappings have to be page-aligned
+diff --git a/drivers/acpi/battery.c b/drivers/acpi/battery.c
+index 99427d7307af..7ae5ebd1e70e 100644
+--- a/drivers/acpi/battery.c
++++ b/drivers/acpi/battery.c
+@@ -34,6 +34,7 @@
+ #include <linux/dmi.h>
+ #include <linux/slab.h>
+ #include <linux/suspend.h>
++#include <linux/delay.h>
+ #include <asm/unaligned.h>
+ 
+ #ifdef CONFIG_ACPI_PROCFS_POWER
+@@ -1081,6 +1082,28 @@ static struct dmi_system_id bat_dmi_table[] = {
+ 	{},
+ };
+ 
++/*
++ * Some machines'(E,G Lenovo Z480) ECs are not stable
++ * during boot up and this causes battery driver fails to be
++ * probed due to failure of getting battery information
++ * from EC sometimes. After several retries, the operation
++ * may work. So add retry code here and 20ms sleep between
++ * every retries.
++ */
++static int acpi_battery_update_retry(struct acpi_battery *battery)
++{
++	int retry, ret;
++
++	for (retry = 5; retry; retry--) {
++		ret = acpi_battery_update(battery);
++		if (!ret)
++			break;
++
++		msleep(20);
++	}
++	return ret;
++}
++
+ static int acpi_battery_add(struct acpi_device *device)
+ {
+ 	int result = 0;
+@@ -1100,9 +1123,11 @@ static int acpi_battery_add(struct acpi_device *device)
+ 	if (ACPI_SUCCESS(acpi_get_handle(battery->device->handle,
+ 			"_BIX", &handle)))
+ 		set_bit(ACPI_BATTERY_XINFO_PRESENT, &battery->flags);
+-	result = acpi_battery_update(battery);
++
++	result = acpi_battery_update_retry(battery);
+ 	if (result)
+ 		goto fail;
++
+ #ifdef CONFIG_ACPI_PROCFS_POWER
+ 	result = acpi_battery_add_fs(device);
+ #endif
+diff --git a/drivers/acpi/resource.c b/drivers/acpi/resource.c
+index c2dd598e25a2..b9cfaf1d94d8 100644
+--- a/drivers/acpi/resource.c
++++ b/drivers/acpi/resource.c
+@@ -77,7 +77,7 @@ bool acpi_dev_resource_memory(struct acpi_resource *ares, struct resource *res)
+ 	switch (ares->type) {
+ 	case ACPI_RESOURCE_TYPE_MEMORY24:
+ 		memory24 = &ares->data.memory24;
+-		if (!memory24->address_length)
++		if (!memory24->minimum && !memory24->address_length)
+ 			return false;
+ 		acpi_dev_get_memresource(res, memory24->minimum,
+ 					 memory24->address_length,
+@@ -85,7 +85,7 @@ bool acpi_dev_resource_memory(struct acpi_resource *ares, struct resource *res)
+ 		break;
+ 	case ACPI_RESOURCE_TYPE_MEMORY32:
+ 		memory32 = &ares->data.memory32;
+-		if (!memory32->address_length)
++		if (!memory32->minimum && !memory32->address_length)
+ 			return false;
+ 		acpi_dev_get_memresource(res, memory32->minimum,
+ 					 memory32->address_length,
+@@ -93,7 +93,7 @@ bool acpi_dev_resource_memory(struct acpi_resource *ares, struct resource *res)
+ 		break;
+ 	case ACPI_RESOURCE_TYPE_FIXED_MEMORY32:
+ 		fixed_memory32 = &ares->data.fixed_memory32;
+-		if (!fixed_memory32->address_length)
++		if (!fixed_memory32->address && !fixed_memory32->address_length)
+ 			return false;
+ 		acpi_dev_get_memresource(res, fixed_memory32->address,
+ 					 fixed_memory32->address_length,
+@@ -150,7 +150,7 @@ bool acpi_dev_resource_io(struct acpi_resource *ares, struct resource *res)
+ 	switch (ares->type) {
+ 	case ACPI_RESOURCE_TYPE_IO:
+ 		io = &ares->data.io;
+-		if (!io->address_length)
++		if (!io->minimum && !io->address_length)
+ 			return false;
+ 		acpi_dev_get_ioresource(res, io->minimum,
+ 					io->address_length,
+@@ -158,7 +158,7 @@ bool acpi_dev_resource_io(struct acpi_resource *ares, struct resource *res)
+ 		break;
+ 	case ACPI_RESOURCE_TYPE_FIXED_IO:
+ 		fixed_io = &ares->data.fixed_io;
+-		if (!fixed_io->address_length)
++		if (!fixed_io->address && !fixed_io->address_length)
+ 			return false;
+ 		acpi_dev_get_ioresource(res, fixed_io->address,
+ 					fixed_io->address_length,
+diff --git a/drivers/clk/spear/spear3xx_clock.c b/drivers/clk/spear/spear3xx_clock.c
+index 080c3c5e33f6..1fe259021747 100644
+--- a/drivers/clk/spear/spear3xx_clock.c
++++ b/drivers/clk/spear/spear3xx_clock.c
+@@ -211,7 +211,7 @@ static inline void spear310_clk_init(void) { }
+ /* array of all spear 320 clock lookups */
+ #ifdef CONFIG_MACH_SPEAR320
+ 
+-#define SPEAR320_CONTROL_REG		(soc_config_base + 0x0000)
++#define SPEAR320_CONTROL_REG		(soc_config_base + 0x0010)
+ #define SPEAR320_EXT_CTRL_REG		(soc_config_base + 0x0018)
+ 
+ 	#define SPEAR320_UARTX_PCLK_MASK		0x1
+diff --git a/drivers/cpufreq/Makefile b/drivers/cpufreq/Makefile
+index 315b9231feb1..3b95322fec5e 100644
+--- a/drivers/cpufreq/Makefile
++++ b/drivers/cpufreq/Makefile
+@@ -50,7 +50,7 @@ obj-$(CONFIG_ARM_BIG_LITTLE_CPUFREQ)	+= arm_big_little.o
+ # LITTLE drivers, so that it is probed last.
+ obj-$(CONFIG_ARM_DT_BL_CPUFREQ)		+= arm_big_little_dt.o
+ 
+-obj-$(CONFIG_ARCH_DAVINCI_DA850)	+= davinci-cpufreq.o
++obj-$(CONFIG_ARCH_DAVINCI)		+= davinci-cpufreq.o
+ obj-$(CONFIG_UX500_SOC_DB8500)		+= dbx500-cpufreq.o
+ obj-$(CONFIG_ARM_EXYNOS_CPUFREQ)	+= exynos-cpufreq.o
+ obj-$(CONFIG_ARM_EXYNOS4210_CPUFREQ)	+= exynos4210-cpufreq.o
+diff --git a/drivers/gpu/drm/radeon/evergreen.c b/drivers/gpu/drm/radeon/evergreen.c
+index 93e26339051d..e62a9ce3e4dc 100644
+--- a/drivers/gpu/drm/radeon/evergreen.c
++++ b/drivers/gpu/drm/radeon/evergreen.c
+@@ -94,7 +94,7 @@ static const u32 evergreen_golden_registers[] =
+ 	0x8c1c, 0xffffffff, 0x00001010,
+ 	0x28350, 0xffffffff, 0x00000000,
+ 	0xa008, 0xffffffff, 0x00010000,
+-	0x5cc, 0xffffffff, 0x00000001,
++	0x5c4, 0xffffffff, 0x00000001,
+ 	0x9508, 0xffffffff, 0x00000002,
+ 	0x913c, 0x0000000f, 0x0000000a
+ };
+@@ -381,7 +381,7 @@ static const u32 cedar_golden_registers[] =
+ 	0x8c1c, 0xffffffff, 0x00001010,
+ 	0x28350, 0xffffffff, 0x00000000,
+ 	0xa008, 0xffffffff, 0x00010000,
+-	0x5cc, 0xffffffff, 0x00000001,
++	0x5c4, 0xffffffff, 0x00000001,
+ 	0x9508, 0xffffffff, 0x00000002
+ };
+ 
+@@ -540,7 +540,7 @@ static const u32 juniper_mgcg_init[] =
+ static const u32 supersumo_golden_registers[] =
+ {
+ 	0x5eb4, 0xffffffff, 0x00000002,
+-	0x5cc, 0xffffffff, 0x00000001,
++	0x5c4, 0xffffffff, 0x00000001,
+ 	0x7030, 0xffffffff, 0x00000011,
+ 	0x7c30, 0xffffffff, 0x00000011,
+ 	0x6104, 0x01000300, 0x00000000,
+@@ -624,7 +624,7 @@ static const u32 sumo_golden_registers[] =
+ static const u32 wrestler_golden_registers[] =
+ {
+ 	0x5eb4, 0xffffffff, 0x00000002,
+-	0x5cc, 0xffffffff, 0x00000001,
++	0x5c4, 0xffffffff, 0x00000001,
+ 	0x7030, 0xffffffff, 0x00000011,
+ 	0x7c30, 0xffffffff, 0x00000011,
+ 	0x6104, 0x01000300, 0x00000000,
+diff --git a/drivers/gpu/drm/radeon/rs600.c b/drivers/gpu/drm/radeon/rs600.c
+index 670b555d2ca2..ae813fef0818 100644
+--- a/drivers/gpu/drm/radeon/rs600.c
++++ b/drivers/gpu/drm/radeon/rs600.c
+@@ -582,8 +582,10 @@ int rs600_gart_set_page(struct radeon_device *rdev, int i, uint64_t addr)
+ 		return -EINVAL;
+ 	}
+ 	addr = addr & 0xFFFFFFFFFFFFF000ULL;
+-	addr |= R600_PTE_VALID | R600_PTE_SYSTEM | R600_PTE_SNOOPED;
+-	addr |= R600_PTE_READABLE | R600_PTE_WRITEABLE;
++	if (addr != rdev->dummy_page.addr)
++		addr |= R600_PTE_VALID | R600_PTE_READABLE |
++			R600_PTE_WRITEABLE;
++	addr |= R600_PTE_SYSTEM | R600_PTE_SNOOPED;
+ 	writeq(addr, ptr + (i * 8));
+ 	return 0;
+ }
+diff --git a/drivers/hv/connection.c b/drivers/hv/connection.c
+index fd02cb79a99c..b9f5d295cbec 100644
+--- a/drivers/hv/connection.c
++++ b/drivers/hv/connection.c
+@@ -304,9 +304,13 @@ static void process_chn_event(u32 relid)
+ 		 */
+ 
+ 		do {
+-			hv_begin_read(&channel->inbound);
++			if (read_state)
++				hv_begin_read(&channel->inbound);
+ 			channel->onchannel_callback(arg);
+-			bytes_to_read = hv_end_read(&channel->inbound);
++			if (read_state)
++				bytes_to_read = hv_end_read(&channel->inbound);
++			else
++				bytes_to_read = 0;
+ 		} while (read_state && (bytes_to_read != 0));
+ 	} else {
+ 		pr_err("no channel callback for relid - %u\n", relid);
+diff --git a/drivers/hwmon/adm1021.c b/drivers/hwmon/adm1021.c
+index f920619cd6da..27ad7fb06572 100644
+--- a/drivers/hwmon/adm1021.c
++++ b/drivers/hwmon/adm1021.c
+@@ -185,7 +185,7 @@ static ssize_t set_temp_max(struct device *dev,
+ 	struct i2c_client *client = to_i2c_client(dev);
+ 	struct adm1021_data *data = i2c_get_clientdata(client);
+ 	long temp;
+-	int err;
++	int reg_val, err;
+ 
+ 	err = kstrtol(buf, 10, &temp);
+ 	if (err)
+@@ -193,10 +193,11 @@ static ssize_t set_temp_max(struct device *dev,
+ 	temp /= 1000;
+ 
+ 	mutex_lock(&data->update_lock);
+-	data->temp_max[index] = clamp_val(temp, -128, 127);
++	reg_val = clamp_val(temp, -128, 127);
++	data->temp_max[index] = reg_val * 1000;
+ 	if (!read_only)
+ 		i2c_smbus_write_byte_data(client, ADM1021_REG_TOS_W(index),
+-					  data->temp_max[index]);
++					  reg_val);
+ 	mutex_unlock(&data->update_lock);
+ 
+ 	return count;
+@@ -210,7 +211,7 @@ static ssize_t set_temp_min(struct device *dev,
+ 	struct i2c_client *client = to_i2c_client(dev);
+ 	struct adm1021_data *data = i2c_get_clientdata(client);
+ 	long temp;
+-	int err;
++	int reg_val, err;
+ 
+ 	err = kstrtol(buf, 10, &temp);
+ 	if (err)
+@@ -218,10 +219,11 @@ static ssize_t set_temp_min(struct device *dev,
+ 	temp /= 1000;
+ 
+ 	mutex_lock(&data->update_lock);
+-	data->temp_min[index] = clamp_val(temp, -128, 127);
++	reg_val = clamp_val(temp, -128, 127);
++	data->temp_min[index] = reg_val * 1000;
+ 	if (!read_only)
+ 		i2c_smbus_write_byte_data(client, ADM1021_REG_THYST_W(index),
+-					  data->temp_min[index]);
++					  reg_val);
+ 	mutex_unlock(&data->update_lock);
+ 
+ 	return count;
+diff --git a/drivers/hwmon/adm1029.c b/drivers/hwmon/adm1029.c
+index 9ee5e066423b..39441e5d922c 100644
+--- a/drivers/hwmon/adm1029.c
++++ b/drivers/hwmon/adm1029.c
+@@ -232,6 +232,9 @@ static ssize_t set_fan_div(struct device *dev,
+ 	/* Update the value */
+ 	reg = (reg & 0x3F) | (val << 6);
+ 
++	/* Update the cache */
++	data->fan_div[attr->index] = reg;
++
+ 	/* Write value */
+ 	i2c_smbus_write_byte_data(client,
+ 				  ADM1029_REG_FAN_DIV[attr->index], reg);
+diff --git a/drivers/hwmon/adm1031.c b/drivers/hwmon/adm1031.c
+index 253ea396106d..bdceca0d7e22 100644
+--- a/drivers/hwmon/adm1031.c
++++ b/drivers/hwmon/adm1031.c
+@@ -365,6 +365,7 @@ set_auto_temp_min(struct device *dev, struct device_attribute *attr,
+ 	if (ret)
+ 		return ret;
+ 
++	val = clamp_val(val, 0, 127000);
+ 	mutex_lock(&data->update_lock);
+ 	data->auto_temp[nr] = AUTO_TEMP_MIN_TO_REG(val, data->auto_temp[nr]);
+ 	adm1031_write_value(client, ADM1031_REG_AUTO_TEMP(nr),
+@@ -394,6 +395,7 @@ set_auto_temp_max(struct device *dev, struct device_attribute *attr,
+ 	if (ret)
+ 		return ret;
+ 
++	val = clamp_val(val, 0, 127000);
+ 	mutex_lock(&data->update_lock);
+ 	data->temp_max[nr] = AUTO_TEMP_MAX_TO_REG(val, data->auto_temp[nr],
+ 						  data->pwm[nr]);
+@@ -696,7 +698,7 @@ static ssize_t set_temp_min(struct device *dev, struct device_attribute *attr,
+ 	if (ret)
+ 		return ret;
+ 
+-	val = clamp_val(val, -55000, nr == 0 ? 127750 : 127875);
++	val = clamp_val(val, -55000, 127000);
+ 	mutex_lock(&data->update_lock);
+ 	data->temp_min[nr] = TEMP_TO_REG(val);
+ 	adm1031_write_value(client, ADM1031_REG_TEMP_MIN(nr),
+@@ -717,7 +719,7 @@ static ssize_t set_temp_max(struct device *dev, struct device_attribute *attr,
+ 	if (ret)
+ 		return ret;
+ 
+-	val = clamp_val(val, -55000, nr == 0 ? 127750 : 127875);
++	val = clamp_val(val, -55000, 127000);
+ 	mutex_lock(&data->update_lock);
+ 	data->temp_max[nr] = TEMP_TO_REG(val);
+ 	adm1031_write_value(client, ADM1031_REG_TEMP_MAX(nr),
+@@ -738,7 +740,7 @@ static ssize_t set_temp_crit(struct device *dev, struct device_attribute *attr,
+ 	if (ret)
+ 		return ret;
+ 
+-	val = clamp_val(val, -55000, nr == 0 ? 127750 : 127875);
++	val = clamp_val(val, -55000, 127000);
+ 	mutex_lock(&data->update_lock);
+ 	data->temp_crit[nr] = TEMP_TO_REG(val);
+ 	adm1031_write_value(client, ADM1031_REG_TEMP_CRIT(nr),
+diff --git a/drivers/hwmon/amc6821.c b/drivers/hwmon/amc6821.c
+index 4fe49d2bfe1d..09d2d78d482b 100644
+--- a/drivers/hwmon/amc6821.c
++++ b/drivers/hwmon/amc6821.c
+@@ -707,7 +707,7 @@ static SENSOR_DEVICE_ATTR(temp1_max_alarm, S_IRUGO,
+ 	get_temp_alarm, NULL, IDX_TEMP1_MAX);
+ static SENSOR_DEVICE_ATTR(temp1_crit_alarm, S_IRUGO,
+ 	get_temp_alarm, NULL, IDX_TEMP1_CRIT);
+-static SENSOR_DEVICE_ATTR(temp2_input, S_IRUGO | S_IWUSR,
++static SENSOR_DEVICE_ATTR(temp2_input, S_IRUGO,
+ 	get_temp, NULL, IDX_TEMP2_INPUT);
+ static SENSOR_DEVICE_ATTR(temp2_min, S_IRUGO | S_IWUSR, get_temp,
+ 	set_temp, IDX_TEMP2_MIN);
+diff --git a/drivers/md/dm-io.c b/drivers/md/dm-io.c
+index ea49834377c8..d1de1626a9d2 100644
+--- a/drivers/md/dm-io.c
++++ b/drivers/md/dm-io.c
+@@ -10,6 +10,7 @@
+ #include <linux/device-mapper.h>
+ 
+ #include <linux/bio.h>
++#include <linux/completion.h>
+ #include <linux/mempool.h>
+ #include <linux/module.h>
+ #include <linux/sched.h>
+@@ -34,7 +35,7 @@ struct dm_io_client {
+ struct io {
+ 	unsigned long error_bits;
+ 	atomic_t count;
+-	struct task_struct *sleeper;
++	struct completion *wait;
+ 	struct dm_io_client *client;
+ 	io_notify_fn callback;
+ 	void *context;
+@@ -122,8 +123,8 @@ static void dec_count(struct io *io, unsigned int region, int error)
+ 			invalidate_kernel_vmap_range(io->vma_invalidate_address,
+ 						     io->vma_invalidate_size);
+ 
+-		if (io->sleeper)
+-			wake_up_process(io->sleeper);
++		if (io->wait)
++			complete(io->wait);
+ 
+ 		else {
+ 			unsigned long r = io->error_bits;
+@@ -386,6 +387,7 @@ static int sync_io(struct dm_io_client *client, unsigned int num_regions,
+ 	 */
+ 	volatile char io_[sizeof(struct io) + __alignof__(struct io) - 1];
+ 	struct io *io = (struct io *)PTR_ALIGN(&io_, __alignof__(struct io));
++	DECLARE_COMPLETION_ONSTACK(wait);
+ 
+ 	if (num_regions > 1 && (rw & RW_MASK) != WRITE) {
+ 		WARN_ON(1);
+@@ -394,7 +396,7 @@ static int sync_io(struct dm_io_client *client, unsigned int num_regions,
+ 
+ 	io->error_bits = 0;
+ 	atomic_set(&io->count, 1); /* see dispatch_io() */
+-	io->sleeper = current;
++	io->wait = &wait;
+ 	io->client = client;
+ 
+ 	io->vma_invalidate_address = dp->vma_invalidate_address;
+@@ -402,15 +404,7 @@ static int sync_io(struct dm_io_client *client, unsigned int num_regions,
+ 
+ 	dispatch_io(rw, num_regions, where, dp, io, 1);
+ 
+-	while (1) {
+-		set_current_state(TASK_UNINTERRUPTIBLE);
+-
+-		if (!atomic_read(&io->count))
+-			break;
+-
+-		io_schedule();
+-	}
+-	set_current_state(TASK_RUNNING);
++	wait_for_completion_io(&wait);
+ 
+ 	if (error_bits)
+ 		*error_bits = io->error_bits;
+@@ -433,7 +427,7 @@ static int async_io(struct dm_io_client *client, unsigned int num_regions,
+ 	io = mempool_alloc(client->pool, GFP_NOIO);
+ 	io->error_bits = 0;
+ 	atomic_set(&io->count, 1); /* see dispatch_io() */
+-	io->sleeper = NULL;
++	io->wait = NULL;
+ 	io->client = client;
+ 	io->callback = fn;
+ 	io->context = context;
+diff --git a/drivers/usb/serial/cp210x.c b/drivers/usb/serial/cp210x.c
+index ded751ca104a..b14379659e35 100644
+--- a/drivers/usb/serial/cp210x.c
++++ b/drivers/usb/serial/cp210x.c
+@@ -153,6 +153,7 @@ static const struct usb_device_id id_table[] = {
+ 	{ USB_DEVICE(0x1843, 0x0200) }, /* Vaisala USB Instrument Cable */
+ 	{ USB_DEVICE(0x18EF, 0xE00F) }, /* ELV USB-I2C-Interface */
+ 	{ USB_DEVICE(0x1ADB, 0x0001) }, /* Schweitzer Engineering C662 Cable */
++	{ USB_DEVICE(0x1B1C, 0x1C00) }, /* Corsair USB Dongle */
+ 	{ USB_DEVICE(0x1BE3, 0x07A6) }, /* WAGO 750-923 USB Service Cable */
+ 	{ USB_DEVICE(0x1E29, 0x0102) }, /* Festo CPX-USB */
+ 	{ USB_DEVICE(0x1E29, 0x0501) }, /* Festo CMSP */
+diff --git a/drivers/usb/serial/ftdi_sio.c b/drivers/usb/serial/ftdi_sio.c
+index 3e315de9bbd4..9e75e3eaea4f 100644
+--- a/drivers/usb/serial/ftdi_sio.c
++++ b/drivers/usb/serial/ftdi_sio.c
+@@ -723,7 +723,8 @@ static struct usb_device_id id_table_combined [] = {
+ 	{ USB_DEVICE(FTDI_VID, FTDI_ACG_HFDUAL_PID) },
+ 	{ USB_DEVICE(FTDI_VID, FTDI_YEI_SERVOCENTER31_PID) },
+ 	{ USB_DEVICE(FTDI_VID, FTDI_THORLABS_PID) },
+-	{ USB_DEVICE(TESTO_VID, TESTO_USB_INTERFACE_PID) },
++	{ USB_DEVICE(TESTO_VID, TESTO_1_PID) },
++	{ USB_DEVICE(TESTO_VID, TESTO_3_PID) },
+ 	{ USB_DEVICE(FTDI_VID, FTDI_GAMMA_SCOUT_PID) },
+ 	{ USB_DEVICE(FTDI_VID, FTDI_TACTRIX_OPENPORT_13M_PID) },
+ 	{ USB_DEVICE(FTDI_VID, FTDI_TACTRIX_OPENPORT_13S_PID) },
+@@ -947,6 +948,8 @@ static struct usb_device_id id_table_combined [] = {
+ 	{ USB_DEVICE(BRAINBOXES_VID, BRAINBOXES_US_842_2_PID) },
+ 	{ USB_DEVICE(BRAINBOXES_VID, BRAINBOXES_US_842_3_PID) },
+ 	{ USB_DEVICE(BRAINBOXES_VID, BRAINBOXES_US_842_4_PID) },
++	/* Infineon Devices */
++	{ USB_DEVICE_INTERFACE_NUMBER(INFINEON_VID, INFINEON_TRIBOARD_PID, 1) },
+ 	{ },					/* Optional parameter entry */
+ 	{ }					/* Terminating entry */
+ };
+diff --git a/drivers/usb/serial/ftdi_sio_ids.h b/drivers/usb/serial/ftdi_sio_ids.h
+index 500474c48f4b..c4777bc6aee0 100644
+--- a/drivers/usb/serial/ftdi_sio_ids.h
++++ b/drivers/usb/serial/ftdi_sio_ids.h
+@@ -584,6 +584,12 @@
+ #define RATOC_PRODUCT_ID_USB60F	0xb020
+ 
+ /*
++ * Infineon Technologies
++ */
++#define INFINEON_VID		0x058b
++#define INFINEON_TRIBOARD_PID	0x0028 /* DAS JTAG TriBoard TC1798 V1.0 */
++
++/*
+  * Acton Research Corp.
+  */
+ #define ACTON_VID		0x0647	/* Vendor ID */
+@@ -798,7 +804,8 @@
+  * Submitted by Colin Leroy
+  */
+ #define TESTO_VID			0x128D
+-#define TESTO_USB_INTERFACE_PID		0x0001
++#define TESTO_1_PID			0x0001
++#define TESTO_3_PID			0x0003
+ 
+ /*
+  * Mobility Electronics products.
+diff --git a/drivers/usb/serial/option.c b/drivers/usb/serial/option.c
+index e25e8ca09fe2..9da566a3f5c8 100644
+--- a/drivers/usb/serial/option.c
++++ b/drivers/usb/serial/option.c
+@@ -1487,6 +1487,8 @@ static const struct usb_device_id option_ids[] = {
+ 		.driver_info = (kernel_ulong_t)&net_intf2_blacklist },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1426, 0xff, 0xff, 0xff),  /* ZTE MF91 */
+ 		.driver_info = (kernel_ulong_t)&net_intf2_blacklist },
++	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1428, 0xff, 0xff, 0xff),  /* Telewell TW-LTE 4G v2 */
++		.driver_info = (kernel_ulong_t)&net_intf2_blacklist },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1533, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1534, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1535, 0xff, 0xff, 0xff) },
+diff --git a/fs/ext4/ialloc.c b/fs/ext4/ialloc.c
+index 3da3bf1b2cd0..1ecd3a8c2444 100644
+--- a/fs/ext4/ialloc.c
++++ b/fs/ext4/ialloc.c
+@@ -780,6 +780,13 @@ got:
+ 		goto out;
+ 	}
+ 
++	BUFFER_TRACE(group_desc_bh, "get_write_access");
++	err = ext4_journal_get_write_access(handle, group_desc_bh);
++	if (err) {
++		ext4_std_error(sb, err);
++		goto out;
++	}
++
+ 	/* We may have to initialize the block bitmap if it isn't already */
+ 	if (ext4_has_group_desc_csum(sb) &&
+ 	    gdp->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
+@@ -816,13 +823,6 @@ got:
+ 		}
+ 	}
+ 
+-	BUFFER_TRACE(group_desc_bh, "get_write_access");
+-	err = ext4_journal_get_write_access(handle, group_desc_bh);
+-	if (err) {
+-		ext4_std_error(sb, err);
+-		goto out;
+-	}
+-
+ 	/* Update the relevant bg descriptor fields */
+ 	if (ext4_has_group_desc_csum(sb)) {
+ 		int free;
+diff --git a/fs/ext4/super.c b/fs/ext4/super.c
+index a7a5f7ea74db..1fc14f7a08b2 100644
+--- a/fs/ext4/super.c
++++ b/fs/ext4/super.c
+@@ -1483,8 +1483,6 @@ static int handle_mount_opt(struct super_block *sb, char *opt, int token,
+ 			arg = JBD2_DEFAULT_MAX_COMMIT_AGE;
+ 		sbi->s_commit_interval = HZ * arg;
+ 	} else if (token == Opt_max_batch_time) {
+-		if (arg == 0)
+-			arg = EXT4_DEF_MAX_BATCH_TIME;
+ 		sbi->s_max_batch_time = arg;
+ 	} else if (token == Opt_min_batch_time) {
+ 		sbi->s_min_batch_time = arg;
+@@ -2687,10 +2685,11 @@ static void print_daily_error_info(unsigned long arg)
+ 	es = sbi->s_es;
+ 
+ 	if (es->s_error_count)
+-		ext4_msg(sb, KERN_NOTICE, "error count: %u",
++		/* fsck newer than v1.41.13 is needed to clean this condition. */
++		ext4_msg(sb, KERN_NOTICE, "error count since last fsck: %u",
+ 			 le32_to_cpu(es->s_error_count));
+ 	if (es->s_first_error_time) {
+-		printk(KERN_NOTICE "EXT4-fs (%s): initial error at %u: %.*s:%d",
++		printk(KERN_NOTICE "EXT4-fs (%s): initial error at time %u: %.*s:%d",
+ 		       sb->s_id, le32_to_cpu(es->s_first_error_time),
+ 		       (int) sizeof(es->s_first_error_func),
+ 		       es->s_first_error_func,
+@@ -2704,7 +2703,7 @@ static void print_daily_error_info(unsigned long arg)
+ 		printk("\n");
+ 	}
+ 	if (es->s_last_error_time) {
+-		printk(KERN_NOTICE "EXT4-fs (%s): last error at %u: %.*s:%d",
++		printk(KERN_NOTICE "EXT4-fs (%s): last error at time %u: %.*s:%d",
+ 		       sb->s_id, le32_to_cpu(es->s_last_error_time),
+ 		       (int) sizeof(es->s_last_error_func),
+ 		       es->s_last_error_func,
+diff --git a/fs/jbd2/transaction.c b/fs/jbd2/transaction.c
+index a6917125f215..ec34e11d6854 100644
+--- a/fs/jbd2/transaction.c
++++ b/fs/jbd2/transaction.c
+@@ -1442,9 +1442,12 @@ int jbd2_journal_stop(handle_t *handle)
+ 	 * to perform a synchronous write.  We do this to detect the
+ 	 * case where a single process is doing a stream of sync
+ 	 * writes.  No point in waiting for joiners in that case.
++	 *
++	 * Setting max_batch_time to 0 disables this completely.
+ 	 */
+ 	pid = current->pid;
+-	if (handle->h_sync && journal->j_last_sync_writer != pid) {
++	if (handle->h_sync && journal->j_last_sync_writer != pid &&
++	    journal->j_max_batch_time) {
+ 		u64 commit_time, trans_time;
+ 
+ 		journal->j_last_sync_writer = pid;
+diff --git a/include/linux/ring_buffer.h b/include/linux/ring_buffer.h
+index d69cf637a15a..49a4d6f59108 100644
+--- a/include/linux/ring_buffer.h
++++ b/include/linux/ring_buffer.h
+@@ -97,7 +97,7 @@ __ring_buffer_alloc(unsigned long size, unsigned flags, struct lock_class_key *k
+ 	__ring_buffer_alloc((size), (flags), &__key);	\
+ })
+ 
+-void ring_buffer_wait(struct ring_buffer *buffer, int cpu);
++int ring_buffer_wait(struct ring_buffer *buffer, int cpu);
+ int ring_buffer_poll_wait(struct ring_buffer *buffer, int cpu,
+ 			  struct file *filp, poll_table *poll_table);
+ 
+diff --git a/kernel/cpuset.c b/kernel/cpuset.c
+index d9dd521ddd6b..067750bbdad8 100644
+--- a/kernel/cpuset.c
++++ b/kernel/cpuset.c
+@@ -1153,7 +1153,13 @@ done:
+ 
+ int current_cpuset_is_being_rebound(void)
+ {
+-	return task_cs(current) == cpuset_being_rebound;
++	int ret;
++
++	rcu_read_lock();
++	ret = task_cs(current) == cpuset_being_rebound;
++	rcu_read_unlock();
++
++	return ret;
+ }
+ 
+ static int update_relax_domain_level(struct cpuset *cs, s64 val)
+diff --git a/kernel/rtmutex-debug.h b/kernel/rtmutex-debug.h
+index 14193d596d78..ab29b6a22669 100644
+--- a/kernel/rtmutex-debug.h
++++ b/kernel/rtmutex-debug.h
+@@ -31,3 +31,8 @@ static inline int debug_rt_mutex_detect_deadlock(struct rt_mutex_waiter *waiter,
+ {
+ 	return (waiter != NULL);
+ }
++
++static inline void rt_mutex_print_deadlock(struct rt_mutex_waiter *w)
++{
++	debug_rt_mutex_print_deadlock(w);
++}
+diff --git a/kernel/rtmutex.c b/kernel/rtmutex.c
+index 1e09308bf2a1..d9ca207cec0c 100644
+--- a/kernel/rtmutex.c
++++ b/kernel/rtmutex.c
+@@ -82,6 +82,47 @@ static inline void mark_rt_mutex_waiters(struct rt_mutex *lock)
+ 		owner = *p;
+ 	} while (cmpxchg(p, owner, owner | RT_MUTEX_HAS_WAITERS) != owner);
+ }
++
++/*
++ * Safe fastpath aware unlock:
++ * 1) Clear the waiters bit
++ * 2) Drop lock->wait_lock
++ * 3) Try to unlock the lock with cmpxchg
++ */
++static inline bool unlock_rt_mutex_safe(struct rt_mutex *lock)
++	__releases(lock->wait_lock)
++{
++	struct task_struct *owner = rt_mutex_owner(lock);
++
++	clear_rt_mutex_waiters(lock);
++	raw_spin_unlock(&lock->wait_lock);
++	/*
++	 * If a new waiter comes in between the unlock and the cmpxchg
++	 * we have two situations:
++	 *
++	 * unlock(wait_lock);
++	 *					lock(wait_lock);
++	 * cmpxchg(p, owner, 0) == owner
++	 *					mark_rt_mutex_waiters(lock);
++	 *					acquire(lock);
++	 * or:
++	 *
++	 * unlock(wait_lock);
++	 *					lock(wait_lock);
++	 *					mark_rt_mutex_waiters(lock);
++	 *
++	 * cmpxchg(p, owner, 0) != owner
++	 *					enqueue_waiter();
++	 *					unlock(wait_lock);
++	 * lock(wait_lock);
++	 * wake waiter();
++	 * unlock(wait_lock);
++	 *					lock(wait_lock);
++	 *					acquire(lock);
++	 */
++	return rt_mutex_cmpxchg(lock, owner, NULL);
++}
++
+ #else
+ # define rt_mutex_cmpxchg(l,c,n)	(0)
+ static inline void mark_rt_mutex_waiters(struct rt_mutex *lock)
+@@ -89,6 +130,17 @@ static inline void mark_rt_mutex_waiters(struct rt_mutex *lock)
+ 	lock->owner = (struct task_struct *)
+ 			((unsigned long)lock->owner | RT_MUTEX_HAS_WAITERS);
+ }
++
++/*
++ * Simple slow path only version: lock->owner is protected by lock->wait_lock.
++ */
++static inline bool unlock_rt_mutex_safe(struct rt_mutex *lock)
++	__releases(lock->wait_lock)
++{
++	lock->owner = NULL;
++	raw_spin_unlock(&lock->wait_lock);
++	return true;
++}
+ #endif
+ 
+ /*
+@@ -142,6 +194,11 @@ static void rt_mutex_adjust_prio(struct task_struct *task)
+  */
+ int max_lock_depth = 1024;
+ 
++static inline struct rt_mutex *task_blocked_on_lock(struct task_struct *p)
++{
++	return p->pi_blocked_on ? p->pi_blocked_on->lock : NULL;
++}
++
+ /*
+  * Adjust the priority chain. Also used for deadlock detection.
+  * Decreases task's usage by one - may thus free the task.
+@@ -150,6 +207,7 @@ int max_lock_depth = 1024;
+ static int rt_mutex_adjust_prio_chain(struct task_struct *task,
+ 				      int deadlock_detect,
+ 				      struct rt_mutex *orig_lock,
++				      struct rt_mutex *next_lock,
+ 				      struct rt_mutex_waiter *orig_waiter,
+ 				      struct task_struct *top_task)
+ {
+@@ -183,7 +241,7 @@ static int rt_mutex_adjust_prio_chain(struct task_struct *task,
+ 		}
+ 		put_task_struct(task);
+ 
+-		return deadlock_detect ? -EDEADLK : 0;
++		return -EDEADLK;
+ 	}
+  retry:
+ 	/*
+@@ -208,13 +266,32 @@ static int rt_mutex_adjust_prio_chain(struct task_struct *task,
+ 		goto out_unlock_pi;
+ 
+ 	/*
++	 * We dropped all locks after taking a refcount on @task, so
++	 * the task might have moved on in the lock chain or even left
++	 * the chain completely and blocks now on an unrelated lock or
++	 * on @orig_lock.
++	 *
++	 * We stored the lock on which @task was blocked in @next_lock,
++	 * so we can detect the chain change.
++	 */
++	if (next_lock != waiter->lock)
++		goto out_unlock_pi;
++
++	/*
+ 	 * Drop out, when the task has no waiters. Note,
+ 	 * top_waiter can be NULL, when we are in the deboosting
+ 	 * mode!
+ 	 */
+-	if (top_waiter && (!task_has_pi_waiters(task) ||
+-			   top_waiter != task_top_pi_waiter(task)))
+-		goto out_unlock_pi;
++	if (top_waiter) {
++		if (!task_has_pi_waiters(task))
++			goto out_unlock_pi;
++		/*
++		 * If deadlock detection is off, we stop here if we
++		 * are not the top pi waiter of the task.
++		 */
++		if (!detect_deadlock && top_waiter != task_top_pi_waiter(task))
++			goto out_unlock_pi;
++	}
+ 
+ 	/*
+ 	 * When deadlock detection is off then we check, if further
+@@ -230,11 +307,16 @@ static int rt_mutex_adjust_prio_chain(struct task_struct *task,
+ 		goto retry;
+ 	}
+ 
+-	/* Deadlock detection */
++	/*
++	 * Deadlock detection. If the lock is the same as the original
++	 * lock which caused us to walk the lock chain or if the
++	 * current lock is owned by the task which initiated the chain
++	 * walk, we detected a deadlock.
++	 */
+ 	if (lock == orig_lock || rt_mutex_owner(lock) == top_task) {
+ 		debug_rt_mutex_deadlock(deadlock_detect, orig_waiter, lock);
+ 		raw_spin_unlock(&lock->wait_lock);
+-		ret = deadlock_detect ? -EDEADLK : 0;
++		ret = -EDEADLK;
+ 		goto out_unlock_pi;
+ 	}
+ 
+@@ -281,11 +363,26 @@ static int rt_mutex_adjust_prio_chain(struct task_struct *task,
+ 		__rt_mutex_adjust_prio(task);
+ 	}
+ 
++	/*
++	 * Check whether the task which owns the current lock is pi
++	 * blocked itself. If yes we store a pointer to the lock for
++	 * the lock chain change detection above. After we dropped
++	 * task->pi_lock next_lock cannot be dereferenced anymore.
++	 */
++	next_lock = task_blocked_on_lock(task);
++
+ 	raw_spin_unlock_irqrestore(&task->pi_lock, flags);
+ 
+ 	top_waiter = rt_mutex_top_waiter(lock);
+ 	raw_spin_unlock(&lock->wait_lock);
+ 
++	/*
++	 * We reached the end of the lock chain. Stop right here. No
++	 * point to go back just to figure that out.
++	 */
++	if (!next_lock)
++		goto out_put_task;
++
+ 	if (!detect_deadlock && waiter != top_waiter)
+ 		goto out_put_task;
+ 
+@@ -396,8 +493,21 @@ static int task_blocks_on_rt_mutex(struct rt_mutex *lock,
+ {
+ 	struct task_struct *owner = rt_mutex_owner(lock);
+ 	struct rt_mutex_waiter *top_waiter = waiter;
+-	unsigned long flags;
++	struct rt_mutex *next_lock;
+ 	int chain_walk = 0, res;
++	unsigned long flags;
++
++	/*
++	 * Early deadlock detection. We really don't want the task to
++	 * enqueue on itself just to untangle the mess later. It's not
++	 * only an optimization. We drop the locks, so another waiter
++	 * can come in before the chain walk detects the deadlock. So
++	 * the other will detect the deadlock and return -EDEADLOCK,
++	 * which is wrong, as the other waiter is not in a deadlock
++	 * situation.
++	 */
++	if (owner == task)
++		return -EDEADLK;
+ 
+ 	raw_spin_lock_irqsave(&task->pi_lock, flags);
+ 	__rt_mutex_adjust_prio(task);
+@@ -418,20 +528,28 @@ static int task_blocks_on_rt_mutex(struct rt_mutex *lock,
+ 	if (!owner)
+ 		return 0;
+ 
++	raw_spin_lock_irqsave(&owner->pi_lock, flags);
+ 	if (waiter == rt_mutex_top_waiter(lock)) {
+-		raw_spin_lock_irqsave(&owner->pi_lock, flags);
+ 		plist_del(&top_waiter->pi_list_entry, &owner->pi_waiters);
+ 		plist_add(&waiter->pi_list_entry, &owner->pi_waiters);
+ 
+ 		__rt_mutex_adjust_prio(owner);
+ 		if (owner->pi_blocked_on)
+ 			chain_walk = 1;
+-		raw_spin_unlock_irqrestore(&owner->pi_lock, flags);
+-	}
+-	else if (debug_rt_mutex_detect_deadlock(waiter, detect_deadlock))
++	} else if (debug_rt_mutex_detect_deadlock(waiter, detect_deadlock)) {
+ 		chain_walk = 1;
++	}
++
++	/* Store the lock on which owner is blocked or NULL */
++	next_lock = task_blocked_on_lock(owner);
+ 
+-	if (!chain_walk)
++	raw_spin_unlock_irqrestore(&owner->pi_lock, flags);
++	/*
++	 * Even if full deadlock detection is on, if the owner is not
++	 * blocked itself, we can avoid finding this out in the chain
++	 * walk.
++	 */
++	if (!chain_walk || !next_lock)
+ 		return 0;
+ 
+ 	/*
+@@ -443,8 +561,8 @@ static int task_blocks_on_rt_mutex(struct rt_mutex *lock,
+ 
+ 	raw_spin_unlock(&lock->wait_lock);
+ 
+-	res = rt_mutex_adjust_prio_chain(owner, detect_deadlock, lock, waiter,
+-					 task);
++	res = rt_mutex_adjust_prio_chain(owner, detect_deadlock, lock,
++					 next_lock, waiter, task);
+ 
+ 	raw_spin_lock(&lock->wait_lock);
+ 
+@@ -454,7 +572,8 @@ static int task_blocks_on_rt_mutex(struct rt_mutex *lock,
+ /*
+  * Wake up the next waiter on the lock.
+  *
+- * Remove the top waiter from the current tasks waiter list and wake it up.
++ * Remove the top waiter from the current tasks pi waiter list and
++ * wake it up.
+  *
+  * Called with lock->wait_lock held.
+  */
+@@ -475,10 +594,23 @@ static void wakeup_next_waiter(struct rt_mutex *lock)
+ 	 */
+ 	plist_del(&waiter->pi_list_entry, &current->pi_waiters);
+ 
+-	rt_mutex_set_owner(lock, NULL);
++	/*
++	 * As we are waking up the top waiter, and the waiter stays
++	 * queued on the lock until it gets the lock, this lock
++	 * obviously has waiters. Just set the bit here and this has
++	 * the added benefit of forcing all new tasks into the
++	 * slow path making sure no task of lower priority than
++	 * the top waiter can steal this lock.
++	 */
++	lock->owner = (void *) RT_MUTEX_HAS_WAITERS;
+ 
+ 	raw_spin_unlock_irqrestore(&current->pi_lock, flags);
+ 
++	/*
++	 * It's safe to dereference waiter as it cannot go away as
++	 * long as we hold lock->wait_lock. The waiter task needs to
++	 * acquire it in order to dequeue the waiter.
++	 */
+ 	wake_up_process(waiter->task);
+ }
+ 
+@@ -493,8 +625,8 @@ static void remove_waiter(struct rt_mutex *lock,
+ {
+ 	int first = (waiter == rt_mutex_top_waiter(lock));
+ 	struct task_struct *owner = rt_mutex_owner(lock);
++	struct rt_mutex *next_lock = NULL;
+ 	unsigned long flags;
+-	int chain_walk = 0;
+ 
+ 	raw_spin_lock_irqsave(&current->pi_lock, flags);
+ 	plist_del(&waiter->list_entry, &lock->wait_list);
+@@ -518,15 +650,15 @@ static void remove_waiter(struct rt_mutex *lock,
+ 		}
+ 		__rt_mutex_adjust_prio(owner);
+ 
+-		if (owner->pi_blocked_on)
+-			chain_walk = 1;
++		/* Store the lock on which owner is blocked or NULL */
++		next_lock = task_blocked_on_lock(owner);
+ 
+ 		raw_spin_unlock_irqrestore(&owner->pi_lock, flags);
+ 	}
+ 
+ 	WARN_ON(!plist_node_empty(&waiter->pi_list_entry));
+ 
+-	if (!chain_walk)
++	if (!next_lock)
+ 		return;
+ 
+ 	/* gets dropped in rt_mutex_adjust_prio_chain()! */
+@@ -534,7 +666,7 @@ static void remove_waiter(struct rt_mutex *lock,
+ 
+ 	raw_spin_unlock(&lock->wait_lock);
+ 
+-	rt_mutex_adjust_prio_chain(owner, 0, lock, NULL, current);
++	rt_mutex_adjust_prio_chain(owner, 0, lock, next_lock, NULL, current);
+ 
+ 	raw_spin_lock(&lock->wait_lock);
+ }
+@@ -547,6 +679,7 @@ static void remove_waiter(struct rt_mutex *lock,
+ void rt_mutex_adjust_pi(struct task_struct *task)
+ {
+ 	struct rt_mutex_waiter *waiter;
++	struct rt_mutex *next_lock;
+ 	unsigned long flags;
+ 
+ 	raw_spin_lock_irqsave(&task->pi_lock, flags);
+@@ -556,12 +689,13 @@ void rt_mutex_adjust_pi(struct task_struct *task)
+ 		raw_spin_unlock_irqrestore(&task->pi_lock, flags);
+ 		return;
+ 	}
+-
++	next_lock = waiter->lock;
+ 	raw_spin_unlock_irqrestore(&task->pi_lock, flags);
+ 
+ 	/* gets dropped in rt_mutex_adjust_prio_chain()! */
+ 	get_task_struct(task);
+-	rt_mutex_adjust_prio_chain(task, 0, NULL, NULL, task);
++
++	rt_mutex_adjust_prio_chain(task, 0, NULL, next_lock, NULL, task);
+ }
+ 
+ /**
+@@ -613,6 +747,26 @@ __rt_mutex_slowlock(struct rt_mutex *lock, int state,
+ 	return ret;
+ }
+ 
++static void rt_mutex_handle_deadlock(int res, int detect_deadlock,
++				     struct rt_mutex_waiter *w)
++{
++	/*
++	 * If the result is not -EDEADLOCK or the caller requested
++	 * deadlock detection, nothing to do here.
++	 */
++	if (res != -EDEADLOCK || detect_deadlock)
++		return;
++
++	/*
++	 * Yell lowdly and stop the task right here.
++	 */
++	rt_mutex_print_deadlock(w);
++	while (1) {
++		set_current_state(TASK_INTERRUPTIBLE);
++		schedule();
++	}
++}
++
+ /*
+  * Slow path lock function:
+  */
+@@ -650,8 +804,10 @@ rt_mutex_slowlock(struct rt_mutex *lock, int state,
+ 
+ 	set_current_state(TASK_RUNNING);
+ 
+-	if (unlikely(ret))
++	if (unlikely(ret)) {
+ 		remove_waiter(lock, &waiter);
++		rt_mutex_handle_deadlock(ret, detect_deadlock, &waiter);
++	}
+ 
+ 	/*
+ 	 * try_to_take_rt_mutex() sets the waiter bit
+@@ -707,12 +863,49 @@ rt_mutex_slowunlock(struct rt_mutex *lock)
+ 
+ 	rt_mutex_deadlock_account_unlock(current);
+ 
+-	if (!rt_mutex_has_waiters(lock)) {
+-		lock->owner = NULL;
+-		raw_spin_unlock(&lock->wait_lock);
+-		return;
++	/*
++	 * We must be careful here if the fast path is enabled. If we
++	 * have no waiters queued we cannot set owner to NULL here
++	 * because of:
++	 *
++	 * foo->lock->owner = NULL;
++	 *			rtmutex_lock(foo->lock);   <- fast path
++	 *			free = atomic_dec_and_test(foo->refcnt);
++	 *			rtmutex_unlock(foo->lock); <- fast path
++	 *			if (free)
++	 *				kfree(foo);
++	 * raw_spin_unlock(foo->lock->wait_lock);
++	 *
++	 * So for the fastpath enabled kernel:
++	 *
++	 * Nothing can set the waiters bit as long as we hold
++	 * lock->wait_lock. So we do the following sequence:
++	 *
++	 *	owner = rt_mutex_owner(lock);
++	 *	clear_rt_mutex_waiters(lock);
++	 *	raw_spin_unlock(&lock->wait_lock);
++	 *	if (cmpxchg(&lock->owner, owner, 0) == owner)
++	 *		return;
++	 *	goto retry;
++	 *
++	 * The fastpath disabled variant is simple as all access to
++	 * lock->owner is serialized by lock->wait_lock:
++	 *
++	 *	lock->owner = NULL;
++	 *	raw_spin_unlock(&lock->wait_lock);
++	 */
++	while (!rt_mutex_has_waiters(lock)) {
++		/* Drops lock->wait_lock ! */
++		if (unlock_rt_mutex_safe(lock) == true)
++			return;
++		/* Relock the rtmutex and try again */
++		raw_spin_lock(&lock->wait_lock);
+ 	}
+ 
++	/*
++	 * The wakeup next waiter path does not suffer from the above
++	 * race. See the comments there.
++	 */
+ 	wakeup_next_waiter(lock);
+ 
+ 	raw_spin_unlock(&lock->wait_lock);
+@@ -959,7 +1152,8 @@ int rt_mutex_start_proxy_lock(struct rt_mutex *lock,
+ 		return 1;
+ 	}
+ 
+-	ret = task_blocks_on_rt_mutex(lock, waiter, task, detect_deadlock);
++	/* We enforce deadlock detection for futexes */
++	ret = task_blocks_on_rt_mutex(lock, waiter, task, 1);
+ 
+ 	if (ret && !rt_mutex_owner(lock)) {
+ 		/*
+diff --git a/kernel/rtmutex.h b/kernel/rtmutex.h
+index a1a1dd06421d..f6a1f3c133b1 100644
+--- a/kernel/rtmutex.h
++++ b/kernel/rtmutex.h
+@@ -24,3 +24,8 @@
+ #define debug_rt_mutex_print_deadlock(w)		do { } while (0)
+ #define debug_rt_mutex_detect_deadlock(w,d)		(d)
+ #define debug_rt_mutex_reset_waiter(w)			do { } while (0)
++
++static inline void rt_mutex_print_deadlock(struct rt_mutex_waiter *w)
++{
++	WARN(1, "rtmutex deadlock detected\n");
++}
+diff --git a/kernel/trace/ring_buffer.c b/kernel/trace/ring_buffer.c
+index fd12cc56371f..8e94c1102636 100644
+--- a/kernel/trace/ring_buffer.c
++++ b/kernel/trace/ring_buffer.c
+@@ -543,7 +543,7 @@ static void rb_wake_up_waiters(struct irq_work *work)
+  * as data is added to any of the @buffer's cpu buffers. Otherwise
+  * it will wait for data to be added to a specific cpu buffer.
+  */
+-void ring_buffer_wait(struct ring_buffer *buffer, int cpu)
++int ring_buffer_wait(struct ring_buffer *buffer, int cpu)
+ {
+ 	struct ring_buffer_per_cpu *cpu_buffer;
+ 	DEFINE_WAIT(wait);
+@@ -557,6 +557,8 @@ void ring_buffer_wait(struct ring_buffer *buffer, int cpu)
+ 	if (cpu == RING_BUFFER_ALL_CPUS)
+ 		work = &buffer->irq_work;
+ 	else {
++		if (!cpumask_test_cpu(cpu, buffer->cpumask))
++			return -ENODEV;
+ 		cpu_buffer = buffer->buffers[cpu];
+ 		work = &cpu_buffer->irq_work;
+ 	}
+@@ -591,6 +593,7 @@ void ring_buffer_wait(struct ring_buffer *buffer, int cpu)
+ 		schedule();
+ 
+ 	finish_wait(&work->waiters, &wait);
++	return 0;
+ }
+ 
+ /**
+diff --git a/kernel/trace/trace.c b/kernel/trace/trace.c
+index 21920add7972..8fe92ce43f39 100644
+--- a/kernel/trace/trace.c
++++ b/kernel/trace/trace.c
+@@ -1027,13 +1027,13 @@ update_max_tr_single(struct trace_array *tr, struct task_struct *tsk, int cpu)
+ }
+ #endif /* CONFIG_TRACER_MAX_TRACE */
+ 
+-static void default_wait_pipe(struct trace_iterator *iter)
++static int default_wait_pipe(struct trace_iterator *iter)
+ {
+ 	/* Iterators are static, they should be filled or empty */
+ 	if (trace_buffer_iter(iter, iter->cpu_file))
+-		return;
++		return 0;
+ 
+-	ring_buffer_wait(iter->trace_buffer->buffer, iter->cpu_file);
++	return ring_buffer_wait(iter->trace_buffer->buffer, iter->cpu_file);
+ }
+ 
+ #ifdef CONFIG_FTRACE_STARTUP_TEST
+@@ -4054,17 +4054,19 @@ tracing_poll_pipe(struct file *filp, poll_table *poll_table)
+  *
+  *     Anyway, this is really very primitive wakeup.
+  */
+-void poll_wait_pipe(struct trace_iterator *iter)
++int poll_wait_pipe(struct trace_iterator *iter)
+ {
+ 	set_current_state(TASK_INTERRUPTIBLE);
+ 	/* sleep for 100 msecs, and try again. */
+ 	schedule_timeout(HZ / 10);
++	return 0;
+ }
+ 
+ /* Must be called with trace_types_lock mutex held. */
+ static int tracing_wait_pipe(struct file *filp)
+ {
+ 	struct trace_iterator *iter = filp->private_data;
++	int ret;
+ 
+ 	while (trace_empty(iter)) {
+ 
+@@ -4074,10 +4076,13 @@ static int tracing_wait_pipe(struct file *filp)
+ 
+ 		mutex_unlock(&iter->mutex);
+ 
+-		iter->trace->wait_pipe(iter);
++		ret = iter->trace->wait_pipe(iter);
+ 
+ 		mutex_lock(&iter->mutex);
+ 
++		if (ret)
++			return ret;
++
+ 		if (signal_pending(current))
+ 			return -EINTR;
+ 
+@@ -5011,8 +5016,12 @@ tracing_buffers_read(struct file *filp, char __user *ubuf,
+ 				goto out_unlock;
+ 			}
+ 			mutex_unlock(&trace_types_lock);
+-			iter->trace->wait_pipe(iter);
++			ret = iter->trace->wait_pipe(iter);
+ 			mutex_lock(&trace_types_lock);
++			if (ret) {
++				size = ret;
++				goto out_unlock;
++			}
+ 			if (signal_pending(current)) {
+ 				size = -EINTR;
+ 				goto out_unlock;
+@@ -5224,8 +5233,10 @@ tracing_buffers_splice_read(struct file *file, loff_t *ppos,
+ 			goto out;
+ 		}
+ 		mutex_unlock(&trace_types_lock);
+-		iter->trace->wait_pipe(iter);
++		ret = iter->trace->wait_pipe(iter);
+ 		mutex_lock(&trace_types_lock);
++		if (ret)
++			goto out;
+ 		if (signal_pending(current)) {
+ 			ret = -EINTR;
+ 			goto out;
+diff --git a/kernel/trace/trace.h b/kernel/trace/trace.h
+index 51b44483eb78..aa0e736b72ac 100644
+--- a/kernel/trace/trace.h
++++ b/kernel/trace/trace.h
+@@ -342,7 +342,7 @@ struct tracer {
+ 	void			(*stop)(struct trace_array *tr);
+ 	void			(*open)(struct trace_iterator *iter);
+ 	void			(*pipe_open)(struct trace_iterator *iter);
+-	void			(*wait_pipe)(struct trace_iterator *iter);
++	int			(*wait_pipe)(struct trace_iterator *iter);
+ 	void			(*close)(struct trace_iterator *iter);
+ 	void			(*pipe_close)(struct trace_iterator *iter);
+ 	ssize_t			(*read)(struct trace_iterator *iter,
+@@ -557,7 +557,7 @@ void trace_init_global_iter(struct trace_iterator *iter);
+ 
+ void tracing_iter_reset(struct trace_iterator *iter, int cpu);
+ 
+-void poll_wait_pipe(struct trace_iterator *iter);
++int poll_wait_pipe(struct trace_iterator *iter);
+ 
+ void ftrace(struct trace_array *tr,
+ 			    struct trace_array_cpu *data,
+diff --git a/kernel/workqueue.c b/kernel/workqueue.c
+index 652f36dd40de..c2f9d6ca7e5e 100644
+--- a/kernel/workqueue.c
++++ b/kernel/workqueue.c
+@@ -3373,6 +3373,7 @@ int workqueue_sysfs_register(struct workqueue_struct *wq)
+ 		}
+ 	}
+ 
++	dev_set_uevent_suppress(&wq_dev->dev, false);
+ 	kobject_uevent(&wq_dev->dev.kobj, KOBJ_ADD);
+ 	return 0;
+ }
+@@ -4967,7 +4968,7 @@ static void __init wq_numa_init(void)
+ 	BUG_ON(!tbl);
+ 
+ 	for_each_node(node)
+-		BUG_ON(!alloc_cpumask_var_node(&tbl[node], GFP_KERNEL,
++		BUG_ON(!zalloc_cpumask_var_node(&tbl[node], GFP_KERNEL,
+ 				node_online(node) ? node : NUMA_NO_NODE));
+ 
+ 	for_each_possible_cpu(cpu) {
+diff --git a/mm/mempolicy.c b/mm/mempolicy.c
+index 1124d5fc06e9..b2061bb5af73 100644
+--- a/mm/mempolicy.c
++++ b/mm/mempolicy.c
+@@ -2086,7 +2086,6 @@ struct mempolicy *__mpol_dup(struct mempolicy *old)
+ 	} else
+ 		*new = *old;
+ 
+-	rcu_read_lock();
+ 	if (current_cpuset_is_being_rebound()) {
+ 		nodemask_t mems = cpuset_mems_allowed(current);
+ 		if (new->flags & MPOL_F_REBINDING)
+@@ -2094,7 +2093,6 @@ struct mempolicy *__mpol_dup(struct mempolicy *old)
+ 		else
+ 			mpol_rebind_policy(new, &mems, MPOL_REBIND_ONCE);
+ 	}
+-	rcu_read_unlock();
+ 	atomic_set(&new->refcnt, 1);
+ 	return new;
+ }

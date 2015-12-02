@@ -1,0 +1,719 @@
+diff --git a/Makefile b/Makefile
+index bd9fb5b72fc0..bd51b50a567b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 3
+ PATCHLEVEL = 10
+-SUBLEVEL = 37
++SUBLEVEL = 38
+ EXTRAVERSION =
+ NAME = TOSSUG Baby Fish
+ 
+diff --git a/arch/sparc/Kconfig b/arch/sparc/Kconfig
+index 9ac9f1666339..2668b3142fa2 100644
+--- a/arch/sparc/Kconfig
++++ b/arch/sparc/Kconfig
+@@ -25,7 +25,7 @@ config SPARC
+ 	select RTC_DRV_M48T59
+ 	select HAVE_DMA_ATTRS
+ 	select HAVE_DMA_API_DEBUG
+-	select HAVE_ARCH_JUMP_LABEL
++	select HAVE_ARCH_JUMP_LABEL if SPARC64
+ 	select HAVE_GENERIC_HARDIRQS
+ 	select GENERIC_IRQ_SHOW
+ 	select ARCH_WANT_IPC_PARSE_VERSION
+diff --git a/arch/sparc/include/asm/uaccess_64.h b/arch/sparc/include/asm/uaccess_64.h
+index e562d3caee57..ad7e178337f1 100644
+--- a/arch/sparc/include/asm/uaccess_64.h
++++ b/arch/sparc/include/asm/uaccess_64.h
+@@ -262,8 +262,8 @@ extern unsigned long __must_check __clear_user(void __user *, unsigned long);
+ extern __must_check long strlen_user(const char __user *str);
+ extern __must_check long strnlen_user(const char __user *str, long n);
+ 
+-#define __copy_to_user_inatomic ___copy_to_user
+-#define __copy_from_user_inatomic ___copy_from_user
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
+ 
+ struct pt_regs;
+ extern unsigned long compute_effective_address(struct pt_regs *,
+diff --git a/arch/sparc/kernel/pci.c b/arch/sparc/kernel/pci.c
+index baf4366e2d6a..906cbf0f8608 100644
+--- a/arch/sparc/kernel/pci.c
++++ b/arch/sparc/kernel/pci.c
+@@ -399,8 +399,8 @@ static void apb_fake_ranges(struct pci_dev *dev,
+ 	apb_calc_first_last(map, &first, &last);
+ 	res = bus->resource[1];
+ 	res->flags = IORESOURCE_MEM;
+-	region.start = (first << 21);
+-	region.end = (last << 21) + ((1 << 21) - 1);
++	region.start = (first << 29);
++	region.end = (last << 29) + ((1 << 29) - 1);
+ 	pcibios_bus_to_resource(dev, res, &region);
+ }
+ 
+diff --git a/arch/sparc/kernel/process_64.c b/arch/sparc/kernel/process_64.c
+index baebab215492..b9cc9763faf4 100644
+--- a/arch/sparc/kernel/process_64.c
++++ b/arch/sparc/kernel/process_64.c
+@@ -57,9 +57,12 @@ void arch_cpu_idle(void)
+ {
+ 	if (tlb_type != hypervisor) {
+ 		touch_nmi_watchdog();
++		local_irq_enable();
+ 	} else {
+ 		unsigned long pstate;
+ 
++		local_irq_enable();
++
+                 /* The sun4v sleeping code requires that we have PSTATE.IE cleared over
+                  * the cpu sleep hypervisor call.
+                  */
+@@ -81,7 +84,6 @@ void arch_cpu_idle(void)
+ 			: "=&r" (pstate)
+ 			: "i" (PSTATE_IE));
+ 	}
+-	local_irq_enable();
+ }
+ 
+ #ifdef CONFIG_HOTPLUG_CPU
+diff --git a/arch/sparc/kernel/syscalls.S b/arch/sparc/kernel/syscalls.S
+index 73ec8a798d95..c79c687fbe1e 100644
+--- a/arch/sparc/kernel/syscalls.S
++++ b/arch/sparc/kernel/syscalls.S
+@@ -189,7 +189,8 @@ linux_sparc_syscall32:
+ 	 mov	%i0, %l5				! IEU1
+ 5:	call	%l7					! CTI	Group brk forced
+ 	 srl	%i5, 0, %o5				! IEU1
+-	ba,a,pt	%xcc, 3f
++	ba,pt	%xcc, 3f
++	 sra	%o0, 0, %o0
+ 
+ 	/* Linux native system calls enter here... */
+ 	.align	32
+@@ -217,7 +218,6 @@ linux_sparc_syscall:
+ 3:	stx	%o0, [%sp + PTREGS_OFF + PT_V9_I0]
+ ret_sys_call:
+ 	ldx	[%sp + PTREGS_OFF + PT_V9_TSTATE], %g3
+-	sra	%o0, 0, %o0
+ 	mov	%ulo(TSTATE_XCARRY | TSTATE_ICARRY), %g2
+ 	sllx	%g2, 32, %g2
+ 
+diff --git a/arch/x86/kernel/early-quirks.c b/arch/x86/kernel/early-quirks.c
+index 63bdb29b2549..4f7c82cdd0f5 100644
+--- a/arch/x86/kernel/early-quirks.c
++++ b/arch/x86/kernel/early-quirks.c
+@@ -202,18 +202,15 @@ static void __init intel_remapping_check(int num, int slot, int func)
+ 	revision = read_pci_config_byte(num, slot, func, PCI_REVISION_ID);
+ 
+ 	/*
+- 	 * Revision 13 of all triggering devices id in this quirk have
+-	 * a problem draining interrupts when irq remapping is enabled,
+-	 * and should be flagged as broken.  Additionally revisions 0x12
+-	 * and 0x22 of device id 0x3405 has this problem.
++	 * Revision <= 13 of all triggering devices id in this quirk
++	 * have a problem draining interrupts when irq remapping is
++	 * enabled, and should be flagged as broken. Additionally
++	 * revision 0x22 of device id 0x3405 has this problem.
+ 	 */
+-	if (revision == 0x13)
++	if (revision <= 0x13)
+ 		set_irq_remapping_broken();
+-	else if ((device == 0x3405) &&
+-	    ((revision == 0x12) ||
+-	     (revision == 0x22)))
++	else if (device == 0x3405 && revision == 0x22)
+ 		set_irq_remapping_broken();
+-
+ }
+ 
+ #define QFLAG_APPLY_ONCE 	0x1
+diff --git a/drivers/char/ipmi/ipmi_bt_sm.c b/drivers/char/ipmi/ipmi_bt_sm.c
+index a22a7a502740..8156cafad11a 100644
+--- a/drivers/char/ipmi/ipmi_bt_sm.c
++++ b/drivers/char/ipmi/ipmi_bt_sm.c
+@@ -352,7 +352,7 @@ static inline void write_all_bytes(struct si_sm_data *bt)
+ 
+ static inline int read_all_bytes(struct si_sm_data *bt)
+ {
+-	unsigned char i;
++	unsigned int i;
+ 
+ 	/*
+ 	 * length is "framing info", minimum = 4: NetFn, Seq, Cmd, cCode.
+diff --git a/drivers/staging/comedi/drivers/8255_pci.c b/drivers/staging/comedi/drivers/8255_pci.c
+index 05bcf0dffb8c..e54031c558e8 100644
+--- a/drivers/staging/comedi/drivers/8255_pci.c
++++ b/drivers/staging/comedi/drivers/8255_pci.c
+@@ -59,6 +59,7 @@ Configuration Options: not applicable, uses PCI auto config
+ #include "../comedidev.h"
+ 
+ #include "8255.h"
++#include "mite.h"
+ 
+ enum pci_8255_boardid {
+ 	BOARD_ADLINK_PCI7224,
+@@ -82,6 +83,7 @@ struct pci_8255_boardinfo {
+ 	const char *name;
+ 	int dio_badr;
+ 	int n_8255;
++	unsigned int has_mite:1;
+ };
+ 
+ static const struct pci_8255_boardinfo pci_8255_boards[] = {
+@@ -129,36 +131,43 @@ static const struct pci_8255_boardinfo pci_8255_boards[] = {
+ 		.name		= "ni_pci-dio-96",
+ 		.dio_badr	= 1,
+ 		.n_8255		= 4,
++		.has_mite	= 1,
+ 	},
+ 	[BOARD_NI_PCIDIO96B] = {
+ 		.name		= "ni_pci-dio-96b",
+ 		.dio_badr	= 1,
+ 		.n_8255		= 4,
++		.has_mite	= 1,
+ 	},
+ 	[BOARD_NI_PXI6508] = {
+ 		.name		= "ni_pxi-6508",
+ 		.dio_badr	= 1,
+ 		.n_8255		= 4,
++		.has_mite	= 1,
+ 	},
+ 	[BOARD_NI_PCI6503] = {
+ 		.name		= "ni_pci-6503",
+ 		.dio_badr	= 1,
+ 		.n_8255		= 1,
++		.has_mite	= 1,
+ 	},
+ 	[BOARD_NI_PCI6503B] = {
+ 		.name		= "ni_pci-6503b",
+ 		.dio_badr	= 1,
+ 		.n_8255		= 1,
++		.has_mite	= 1,
+ 	},
+ 	[BOARD_NI_PCI6503X] = {
+ 		.name		= "ni_pci-6503x",
+ 		.dio_badr	= 1,
+ 		.n_8255		= 1,
++		.has_mite	= 1,
+ 	},
+ 	[BOARD_NI_PXI_6503] = {
+ 		.name		= "ni_pxi-6503",
+ 		.dio_badr	= 1,
+ 		.n_8255		= 1,
++		.has_mite	= 1,
+ 	},
+ };
+ 
+@@ -166,6 +175,25 @@ struct pci_8255_private {
+ 	void __iomem *mmio_base;
+ };
+ 
++static int pci_8255_mite_init(struct pci_dev *pcidev)
++{
++	void __iomem *mite_base;
++	u32 main_phys_addr;
++
++	/* ioremap the MITE registers (BAR 0) temporarily */
++	mite_base = pci_ioremap_bar(pcidev, 0);
++	if (!mite_base)
++		return -ENOMEM;
++
++	/* set data window to main registers (BAR 1) */
++	main_phys_addr = pci_resource_start(pcidev, 1);
++	writel(main_phys_addr | WENAB, mite_base + MITE_IODWBSR);
++
++	/* finished with MITE registers */
++	iounmap(mite_base);
++	return 0;
++}
++
+ static int pci_8255_mmio(int dir, int port, int data, unsigned long iobase)
+ {
+ 	void __iomem *mmio_base = (void __iomem *)iobase;
+@@ -205,6 +233,12 @@ static int pci_8255_auto_attach(struct comedi_device *dev,
+ 	if (ret)
+ 		return ret;
+ 
++	if (board->has_mite) {
++		ret = pci_8255_mite_init(pcidev);
++		if (ret)
++			return ret;
++	}
++
+ 	is_mmio = (pci_resource_flags(pcidev, board->dio_badr) &
+ 		   IORESOURCE_MEM) != 0;
+ 	if (is_mmio) {
+diff --git a/drivers/tty/tty_io.c b/drivers/tty/tty_io.c
+index 59d26ef538d8..3723c0ebb316 100644
+--- a/drivers/tty/tty_io.c
++++ b/drivers/tty/tty_io.c
+@@ -1267,12 +1267,13 @@ static void pty_line_name(struct tty_driver *driver, int index, char *p)
+  *
+  *	Locking: None
+  */
+-static void tty_line_name(struct tty_driver *driver, int index, char *p)
++static ssize_t tty_line_name(struct tty_driver *driver, int index, char *p)
+ {
+ 	if (driver->flags & TTY_DRIVER_UNNUMBERED_NODE)
+-		strcpy(p, driver->name);
++		return sprintf(p, "%s", driver->name);
+ 	else
+-		sprintf(p, "%s%d", driver->name, index + driver->name_base);
++		return sprintf(p, "%s%d", driver->name,
++			       index + driver->name_base);
+ }
+ 
+ /**
+@@ -3538,9 +3539,19 @@ static ssize_t show_cons_active(struct device *dev,
+ 		if (i >= ARRAY_SIZE(cs))
+ 			break;
+ 	}
+-	while (i--)
+-		count += sprintf(buf + count, "%s%d%c",
+-				 cs[i]->name, cs[i]->index, i ? ' ':'\n');
++	while (i--) {
++		int index = cs[i]->index;
++		struct tty_driver *drv = cs[i]->device(cs[i], &index);
++
++		/* don't resolve tty0 as some programs depend on it */
++		if (drv && (cs[i]->index > 0 || drv->major != TTY_MAJOR))
++			count += tty_line_name(drv, index, buf + count);
++		else
++			count += sprintf(buf + count, "%s%d",
++					 cs[i]->name, cs[i]->index);
++
++		count += sprintf(buf + count, "%c", i ? ' ':'\n');
++	}
+ 	console_unlock();
+ 
+ 	return count;
+diff --git a/fs/btrfs/disk-io.c b/fs/btrfs/disk-io.c
+index b8b60b660c8f..4354b9127713 100644
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -3161,6 +3161,8 @@ static int barrier_all_devices(struct btrfs_fs_info *info)
+ 	/* send down all the barriers */
+ 	head = &info->fs_devices->devices;
+ 	list_for_each_entry_rcu(dev, head, dev_list) {
++		if (dev->missing)
++			continue;
+ 		if (!dev->bdev) {
+ 			errors_send++;
+ 			continue;
+@@ -3175,6 +3177,8 @@ static int barrier_all_devices(struct btrfs_fs_info *info)
+ 
+ 	/* wait for all the barriers */
+ 	list_for_each_entry_rcu(dev, head, dev_list) {
++		if (dev->missing)
++			continue;
+ 		if (!dev->bdev) {
+ 			errors_wait++;
+ 			continue;
+diff --git a/fs/ext4/extents.c b/fs/ext4/extents.c
+index a2b625e279db..84d817b842a8 100644
+--- a/fs/ext4/extents.c
++++ b/fs/ext4/extents.c
+@@ -2511,6 +2511,27 @@ ext4_ext_rm_leaf(handle_t *handle, struct inode *inode,
+ 	ex_ee_block = le32_to_cpu(ex->ee_block);
+ 	ex_ee_len = ext4_ext_get_actual_len(ex);
+ 
++	/*
++	 * If we're starting with an extent other than the last one in the
++	 * node, we need to see if it shares a cluster with the extent to
++	 * the right (towards the end of the file). If its leftmost cluster
++	 * is this extent's rightmost cluster and it is not cluster aligned,
++	 * we'll mark it as a partial that is not to be deallocated.
++	 */
++
++	if (ex != EXT_LAST_EXTENT(eh)) {
++		ext4_fsblk_t current_pblk, right_pblk;
++		long long current_cluster, right_cluster;
++
++		current_pblk = ext4_ext_pblock(ex) + ex_ee_len - 1;
++		current_cluster = (long long)EXT4_B2C(sbi, current_pblk);
++		right_pblk = ext4_ext_pblock(ex + 1);
++		right_cluster = (long long)EXT4_B2C(sbi, right_pblk);
++		if (current_cluster == right_cluster &&
++			EXT4_PBLK_COFF(sbi, right_pblk))
++			*partial_cluster = -right_cluster;
++	}
++
+ 	trace_ext4_ext_rm_leaf(inode, start, ex, *partial_cluster);
+ 
+ 	while (ex >= EXT_FIRST_EXTENT(eh) &&
+@@ -4032,7 +4053,7 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
+ 	struct ext4_extent newex, *ex, *ex2;
+ 	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
+ 	ext4_fsblk_t newblock = 0;
+-	int free_on_err = 0, err = 0, depth;
++	int free_on_err = 0, err = 0, depth, ret;
+ 	unsigned int allocated = 0, offset = 0;
+ 	unsigned int allocated_clusters = 0;
+ 	struct ext4_allocation_request ar;
+@@ -4093,9 +4114,13 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
+ 			if (!ext4_ext_is_uninitialized(ex))
+ 				goto out;
+ 
+-			allocated = ext4_ext_handle_uninitialized_extents(
++			ret = ext4_ext_handle_uninitialized_extents(
+ 				handle, inode, map, path, flags,
+ 				allocated, newblock);
++			if (ret < 0)
++				err = ret;
++			else
++				allocated = ret;
+ 			goto out3;
+ 		}
+ 	}
+diff --git a/fs/fs-writeback.c b/fs/fs-writeback.c
+index e3ab1e4dc442..387213ac2608 100644
+--- a/fs/fs-writeback.c
++++ b/fs/fs-writeback.c
+@@ -87,16 +87,29 @@ static inline struct inode *wb_inode(struct list_head *head)
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/writeback.h>
+ 
++static void bdi_wakeup_thread(struct backing_dev_info *bdi)
++{
++	spin_lock_bh(&bdi->wb_lock);
++	if (test_bit(BDI_registered, &bdi->state))
++		mod_delayed_work(bdi_wq, &bdi->wb.dwork, 0);
++	spin_unlock_bh(&bdi->wb_lock);
++}
++
+ static void bdi_queue_work(struct backing_dev_info *bdi,
+ 			   struct wb_writeback_work *work)
+ {
+ 	trace_writeback_queue(bdi, work);
+ 
+ 	spin_lock_bh(&bdi->wb_lock);
++	if (!test_bit(BDI_registered, &bdi->state)) {
++		if (work->done)
++			complete(work->done);
++		goto out_unlock;
++	}
+ 	list_add_tail(&work->list, &bdi->work_list);
+-	spin_unlock_bh(&bdi->wb_lock);
+-
+ 	mod_delayed_work(bdi_wq, &bdi->wb.dwork, 0);
++out_unlock:
++	spin_unlock_bh(&bdi->wb_lock);
+ }
+ 
+ static void
+@@ -112,7 +125,7 @@ __bdi_start_writeback(struct backing_dev_info *bdi, long nr_pages,
+ 	work = kzalloc(sizeof(*work), GFP_ATOMIC);
+ 	if (!work) {
+ 		trace_writeback_nowork(bdi);
+-		mod_delayed_work(bdi_wq, &bdi->wb.dwork, 0);
++		bdi_wakeup_thread(bdi);
+ 		return;
+ 	}
+ 
+@@ -159,7 +172,7 @@ void bdi_start_background_writeback(struct backing_dev_info *bdi)
+ 	 * writeback as soon as there is no other work to do.
+ 	 */
+ 	trace_writeback_wake_background(bdi);
+-	mod_delayed_work(bdi_wq, &bdi->wb.dwork, 0);
++	bdi_wakeup_thread(bdi);
+ }
+ 
+ /*
+@@ -1016,7 +1029,7 @@ void bdi_writeback_workfn(struct work_struct *work)
+ 	current->flags |= PF_SWAPWRITE;
+ 
+ 	if (likely(!current_is_workqueue_rescuer() ||
+-		   list_empty(&bdi->bdi_list))) {
++		   !test_bit(BDI_registered, &bdi->state))) {
+ 		/*
+ 		 * The normal path.  Keep writing back @bdi until its
+ 		 * work_list is empty.  Note that this path is also taken
+@@ -1038,10 +1051,10 @@ void bdi_writeback_workfn(struct work_struct *work)
+ 		trace_writeback_pages_written(pages_written);
+ 	}
+ 
+-	if (!list_empty(&bdi->work_list) ||
+-	    (wb_has_dirty_io(wb) && dirty_writeback_interval))
+-		queue_delayed_work(bdi_wq, &wb->dwork,
+-			msecs_to_jiffies(dirty_writeback_interval * 10));
++	if (!list_empty(&bdi->work_list))
++		mod_delayed_work(bdi_wq, &wb->dwork, 0);
++	else if (wb_has_dirty_io(wb) && dirty_writeback_interval)
++		bdi_wakeup_thread_delayed(bdi);
+ 
+ 	current->flags &= ~PF_SWAPWRITE;
+ }
+diff --git a/fs/jffs2/compr_rtime.c b/fs/jffs2/compr_rtime.c
+index 16a5047903a6..406d9cc84ba8 100644
+--- a/fs/jffs2/compr_rtime.c
++++ b/fs/jffs2/compr_rtime.c
+@@ -33,7 +33,7 @@ static int jffs2_rtime_compress(unsigned char *data_in,
+ 				unsigned char *cpage_out,
+ 				uint32_t *sourcelen, uint32_t *dstlen)
+ {
+-	short positions[256];
++	unsigned short positions[256];
+ 	int outpos = 0;
+ 	int pos=0;
+ 
+@@ -74,7 +74,7 @@ static int jffs2_rtime_decompress(unsigned char *data_in,
+ 				  unsigned char *cpage_out,
+ 				  uint32_t srclen, uint32_t destlen)
+ {
+-	short positions[256];
++	unsigned short positions[256];
+ 	int outpos = 0;
+ 	int pos=0;
+ 
+diff --git a/fs/jffs2/nodelist.h b/fs/jffs2/nodelist.h
+index e4619b00f7c5..fa35ff79ab35 100644
+--- a/fs/jffs2/nodelist.h
++++ b/fs/jffs2/nodelist.h
+@@ -231,7 +231,7 @@ struct jffs2_tmp_dnode_info
+ 	uint32_t version;
+ 	uint32_t data_crc;
+ 	uint32_t partial_crc;
+-	uint16_t csize;
++	uint32_t csize;
+ 	uint16_t overlapped;
+ };
+ 
+diff --git a/fs/jffs2/nodemgmt.c b/fs/jffs2/nodemgmt.c
+index 03310721712f..b6bd4affd9ad 100644
+--- a/fs/jffs2/nodemgmt.c
++++ b/fs/jffs2/nodemgmt.c
+@@ -179,6 +179,7 @@ int jffs2_reserve_space(struct jffs2_sb_info *c, uint32_t minsize,
+ 					spin_unlock(&c->erase_completion_lock);
+ 
+ 					schedule();
++					remove_wait_queue(&c->erase_wait, &wait);
+ 				} else
+ 					spin_unlock(&c->erase_completion_lock);
+ 			} else if (ret)
+@@ -211,20 +212,25 @@ out:
+ int jffs2_reserve_space_gc(struct jffs2_sb_info *c, uint32_t minsize,
+ 			   uint32_t *len, uint32_t sumsize)
+ {
+-	int ret = -EAGAIN;
++	int ret;
+ 	minsize = PAD(minsize);
+ 
+ 	jffs2_dbg(1, "%s(): Requested 0x%x bytes\n", __func__, minsize);
+ 
+-	spin_lock(&c->erase_completion_lock);
+-	while(ret == -EAGAIN) {
++	while (true) {
++		spin_lock(&c->erase_completion_lock);
+ 		ret = jffs2_do_reserve_space(c, minsize, len, sumsize);
+ 		if (ret) {
+ 			jffs2_dbg(1, "%s(): looping, ret is %d\n",
+ 				  __func__, ret);
+ 		}
++		spin_unlock(&c->erase_completion_lock);
++
++		if (ret == -EAGAIN)
++			cond_resched();
++		else
++			break;
+ 	}
+-	spin_unlock(&c->erase_completion_lock);
+ 	if (!ret)
+ 		ret = jffs2_prealloc_raw_node_refs(c, c->nextblock, 1);
+ 
+diff --git a/include/linux/backing-dev.h b/include/linux/backing-dev.h
+index c3881553f7d1..4cfdbf28fc6a 100644
+--- a/include/linux/backing-dev.h
++++ b/include/linux/backing-dev.h
+@@ -95,7 +95,7 @@ struct backing_dev_info {
+ 	unsigned int max_ratio, max_prop_frac;
+ 
+ 	struct bdi_writeback wb;  /* default writeback info for this bdi */
+-	spinlock_t wb_lock;	  /* protects work_list */
++	spinlock_t wb_lock;	  /* protects work_list & wb.dwork scheduling */
+ 
+ 	struct list_head work_list;
+ 
+diff --git a/kernel/exit.c b/kernel/exit.c
+index 7bb73f9d09db..6682b2ea5b11 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -570,9 +570,6 @@ static void reparent_leader(struct task_struct *father, struct task_struct *p,
+ 				struct list_head *dead)
+ {
+ 	list_move_tail(&p->sibling, &p->real_parent->children);
+-
+-	if (p->exit_state == EXIT_DEAD)
+-		return;
+ 	/*
+ 	 * If this is a threaded reparent there is no need to
+ 	 * notify anyone anything has happened.
+@@ -580,9 +577,19 @@ static void reparent_leader(struct task_struct *father, struct task_struct *p,
+ 	if (same_thread_group(p->real_parent, father))
+ 		return;
+ 
+-	/* We don't want people slaying init.  */
++	/*
++	 * We don't want people slaying init.
++	 *
++	 * Note: we do this even if it is EXIT_DEAD, wait_task_zombie()
++	 * can change ->exit_state to EXIT_ZOMBIE. If this is the final
++	 * state, do_notify_parent() was already called and ->exit_signal
++	 * doesn't matter.
++	 */
+ 	p->exit_signal = SIGCHLD;
+ 
++	if (p->exit_state == EXIT_DEAD)
++		return;
++
+ 	/* If it has exited notify the new parent about this child's death. */
+ 	if (!p->ptrace &&
+ 	    p->exit_state == EXIT_ZOMBIE && thread_group_empty(p)) {
+@@ -794,6 +801,8 @@ void do_exit(long code)
+ 	exit_shm(tsk);
+ 	exit_files(tsk);
+ 	exit_fs(tsk);
++	if (group_dead)
++		disassociate_ctty(1);
+ 	exit_task_namespaces(tsk);
+ 	exit_task_work(tsk);
+ 	check_stack_usage();
+@@ -809,13 +818,9 @@ void do_exit(long code)
+ 
+ 	cgroup_exit(tsk, 1);
+ 
+-	if (group_dead)
+-		disassociate_ctty(1);
+-
+ 	module_put(task_thread_info(tsk)->exec_domain->module);
+ 
+ 	proc_exit_connector(tsk);
+-
+ 	/*
+ 	 * FIXME: do that only when needed, using sched_exit tracepoint
+ 	 */
+diff --git a/kernel/pid_namespace.c b/kernel/pid_namespace.c
+index 6917e8edb48e..e32703d5e0ab 100644
+--- a/kernel/pid_namespace.c
++++ b/kernel/pid_namespace.c
+@@ -312,7 +312,9 @@ static void *pidns_get(struct task_struct *task)
+ 	struct pid_namespace *ns;
+ 
+ 	rcu_read_lock();
+-	ns = get_pid_ns(task_active_pid_ns(task));
++	ns = task_active_pid_ns(task);
++	if (ns)
++		get_pid_ns(ns);
+ 	rcu_read_unlock();
+ 
+ 	return ns;
+diff --git a/kernel/user_namespace.c b/kernel/user_namespace.c
+index 9064b919a406..9bea1d7dd21f 100644
+--- a/kernel/user_namespace.c
++++ b/kernel/user_namespace.c
+@@ -148,7 +148,7 @@ static u32 map_id_range_down(struct uid_gid_map *map, u32 id, u32 count)
+ 
+ 	/* Find the matching extent */
+ 	extents = map->nr_extents;
+-	smp_read_barrier_depends();
++	smp_rmb();
+ 	for (idx = 0; idx < extents; idx++) {
+ 		first = map->extent[idx].first;
+ 		last = first + map->extent[idx].count - 1;
+@@ -172,7 +172,7 @@ static u32 map_id_down(struct uid_gid_map *map, u32 id)
+ 
+ 	/* Find the matching extent */
+ 	extents = map->nr_extents;
+-	smp_read_barrier_depends();
++	smp_rmb();
+ 	for (idx = 0; idx < extents; idx++) {
+ 		first = map->extent[idx].first;
+ 		last = first + map->extent[idx].count - 1;
+@@ -195,7 +195,7 @@ static u32 map_id_up(struct uid_gid_map *map, u32 id)
+ 
+ 	/* Find the matching extent */
+ 	extents = map->nr_extents;
+-	smp_read_barrier_depends();
++	smp_rmb();
+ 	for (idx = 0; idx < extents; idx++) {
+ 		first = map->extent[idx].lower_first;
+ 		last = first + map->extent[idx].count - 1;
+@@ -611,9 +611,8 @@ static ssize_t map_write(struct file *file, const char __user *buf,
+ 	 * were written before the count of the extents.
+ 	 *
+ 	 * To achieve this smp_wmb() is used on guarantee the write
+-	 * order and smp_read_barrier_depends() is guaranteed that we
+-	 * don't have crazy architectures returning stale data.
+-	 *
++	 * order and smp_rmb() is guaranteed that we don't have crazy
++	 * architectures returning stale data.
+ 	 */
+ 	mutex_lock(&id_map_mutex);
+ 
+diff --git a/mm/backing-dev.c b/mm/backing-dev.c
+index 502517492258..eea1a9dfac38 100644
+--- a/mm/backing-dev.c
++++ b/mm/backing-dev.c
+@@ -287,13 +287,19 @@ int bdi_has_dirty_io(struct backing_dev_info *bdi)
+  * Note, we wouldn't bother setting up the timer, but this function is on the
+  * fast-path (used by '__mark_inode_dirty()'), so we save few context switches
+  * by delaying the wake-up.
++ *
++ * We have to be careful not to postpone flush work if it is scheduled for
++ * earlier. Thus we use queue_delayed_work().
+  */
+ void bdi_wakeup_thread_delayed(struct backing_dev_info *bdi)
+ {
+ 	unsigned long timeout;
+ 
+ 	timeout = msecs_to_jiffies(dirty_writeback_interval * 10);
+-	mod_delayed_work(bdi_wq, &bdi->wb.dwork, timeout);
++	spin_lock_bh(&bdi->wb_lock);
++	if (test_bit(BDI_registered, &bdi->state))
++		queue_delayed_work(bdi_wq, &bdi->wb.dwork, timeout);
++	spin_unlock_bh(&bdi->wb_lock);
+ }
+ 
+ /*
+@@ -306,9 +312,6 @@ static void bdi_remove_from_list(struct backing_dev_info *bdi)
+ 	spin_unlock_bh(&bdi_lock);
+ 
+ 	synchronize_rcu_expedited();
+-
+-	/* bdi_list is now unused, clear it to mark @bdi dying */
+-	INIT_LIST_HEAD(&bdi->bdi_list);
+ }
+ 
+ int bdi_register(struct backing_dev_info *bdi, struct device *parent,
+@@ -359,6 +362,11 @@ static void bdi_wb_shutdown(struct backing_dev_info *bdi)
+ 	 */
+ 	bdi_remove_from_list(bdi);
+ 
++	/* Make sure nobody queues further work */
++	spin_lock_bh(&bdi->wb_lock);
++	clear_bit(BDI_registered, &bdi->state);
++	spin_unlock_bh(&bdi->wb_lock);
++
+ 	/*
+ 	 * Drain work list and shutdown the delayed_work.  At this point,
+ 	 * @bdi->bdi_list is empty telling bdi_Writeback_workfn() that @bdi
+diff --git a/net/bluetooth/hci_event.c b/net/bluetooth/hci_event.c
+index dcaa6dbbab2c..cfca44f8d048 100644
+--- a/net/bluetooth/hci_event.c
++++ b/net/bluetooth/hci_event.c
+@@ -3619,7 +3619,13 @@ static void hci_le_ltk_request_evt(struct hci_dev *hdev, struct sk_buff *skb)
+ 
+ 	hci_send_cmd(hdev, HCI_OP_LE_LTK_REPLY, sizeof(cp), &cp);
+ 
+-	if (ltk->type & HCI_SMP_STK) {
++	/* Ref. Bluetooth Core SPEC pages 1975 and 2004. STK is a
++	 * temporary key used to encrypt a connection following
++	 * pairing. It is used during the Encrypted Session Setup to
++	 * distribute the keys. Later, security can be re-established
++	 * using a distributed LTK.
++	 */
++	if (ltk->type == HCI_SMP_STK_SLAVE) {
+ 		list_del(&ltk->list);
+ 		kfree(ltk);
+ 	}

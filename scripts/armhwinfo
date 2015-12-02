@@ -5,9 +5,10 @@
 # Required-Stop:     glibc
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
-# Short-Description: Get some info about hardware for some ARM boards
+# Short-Description: Get some info about hardware for some ARM single board computers and set some basic things
 ### END INIT INFO
 
+SERVER_IP=$(ifconfig  | grep 'inet addr:'| grep -v '127.0.0.1' | cut -d: -f2 | awk '{ print $1}')
 CORES=$(grep -c ^processor /proc/cpuinfo)
 MEMTOTAL=$(awk 'BEGIN { printf "%.0f\n", '$(grep MemTotal /proc/meminfo | awk '{print $2}')'/1024/1024 }')
 ARCH=$(lscpu | grep Architecture  | awk '{print $2}')
@@ -16,61 +17,116 @@ HB_PCI=$(dmesg | grep '16c3:abcd')
 HARDWARE=$(cat /proc/cpuinfo | grep Hardware | awk '{print $3}')
 GMAC=$(dmesg | grep "sun6i_gmac")
 LEDS=$(dmesg |grep "green:ph02:led1")
+TERMINUS=$(lsusb  | grep "1a40:0101")
+SWITCH=$(dmesg | grep "BCM53125")
+INTERUPT=$(cat /proc/interrupts | grep "eth0")
+DISTROID=$(lsb_release -s -i)
+DISTROCODE=$(lsb_release -s -c)
+KERNELID=$(uname -r)
 
+#KERNELDATE=$(uname -v |sed 's/.*EMPT //g' | awk '{print "date -d\""$1FS$2FS$3"\" +%e.%B.%Y"}' | bash)
 case "$1" in
     start)
 # ARM
-if [ "$ARCH" = "armv7l" ]; then
-       if [ $HARDWARE = "sun7i" ] || [ $HARDWARE = "Allwinner" ]; then
-                ID="Allwinner"
-                if [ "$MEMTOTAL" = 2 ]; then
-                        ID="Cubietruck"
-                        else
-                        if [ -n "$GMAC" ]; then
-                                ID="Banana PI"
-                                # there is more
-                                if [ "$LEDS" != "" ]; then
-                                        ID="Lime 2"
-                                fi
-                                else
-                                ID="Cubieboard"
-                                # there is more
-                                if [ "$LEDS" != "" ]; then
-                                        ID="Lime"
-                                fi
-                        fi
-                fi
-        fi
-        if [ "$HARDWARE" = "Freescale" ]; then
-                ID="Freescale"
-                if [ "$MEMTOTAL" = 2 ]; then
-                        ID="Cubox i4"
-                        else
-                        if [ "$HB_PCI" != "" ]; then
-                                ID="HB i2eX"
-                                else
-                                if [ "$RTC" = "rtc0" ]; then
-                                        ID="Cubox i2eX"
-                                        else
-                                        ID="HB i2"
-                                        if [ "$CORES" = 1 ]; then ID="HB i1"; fi
-                                fi
-                        fi
-                fi
-        fi
+
+# fix for eth0 no brought up
+if [ "$SERVER_IP" == "" ]; then 
+echo -e "[\e[0;32m ok \x1B[0m] Fixing RTC and reloading eth0"
+date -s "2015-01-01 10:00:00" > /dev/null 2>&1 
+hwclock -w
+ifdown eth0 > /dev/null 2>&1 
+ifup eth0 > /dev/null 2>&1
 fi
 
-# mainline kernel - read from machine info
 
-MACHINE=$(dmesg |grep "Machine model")
+for i in $( lsblk -idn -o NAME ); do
+    ROTATE=$(cat /sys/block/$i/queue/rotational)
+
+    # mechanical drives
+    if [ "$ROTATE" = 1 ]; then echo cfq  > /sys/block/$i/queue/scheduler; 
+        echo -e "[\e[0;32m ok \x1B[0m] Setting cfg I/O scheduler for $i"
+
+    # solid state drives
+    elif [ "$ROTATE" = 0 ]; then echo noop  > /sys/block/$i/queue/scheduler; 
+        echo -e "[\e[0;32m ok \x1B[0m] Setting noop I/O scheduler for $i"
+    fi
+done
+
+
+
+if [ "$ARCH" = "armv7l" ]; then
+    if [ $HARDWARE = "sun4i" ] || [ $HARDWARE = "Allwinner" ]; then
+		ID="Cubieboard"
+	fi
+    if [ $HARDWARE = "sun7i" ] || [ $HARDWARE = "Allwinner" ]; then
+        # redistribute irq to dedicated core
+		if [ "$INTERUPT" != "" ] && [ "$CORES" -gt 1 ]; then
+            echo 2 > /proc/irq/$(cat /proc/interrupts | grep eth0 | cut -f 1 -d ":" | tr -d " ")/smp_affinity
+        fi
+
+        if [ "$MEMTOTAL" = 2 ]; then
+            ID="Cubietruck"
+        elif [ -n "$GMAC" ]; then
+            if [ "$TERMINUS" != "" ]; then
+                ID="Orange"
+            elif [ "$SWITCH" != "" ]; then
+                ID="Lamobo R1"
+            elif [ "$LEDS" != "" ]; then
+                ID="Lime 2"
+            else
+                ID="Banana"
+            fi
+        elif [ "$LEDS" != "" ]; then
+            ID="Lime"
+        elif [ "$MEMTOTAL" = 1 ]; then
+            ID="Micro"
+        else
+            ID="Cubieboard"
+        fi
+
+    elif [ "$HARDWARE" = "Freescale" ]; then
+        if [ "$MEMTOTAL" = 2 ]; then
+            ID="Cubox i4"
+        elif [ "$HB_PCI" != "" ]; then
+            ID="HB i2eX"
+        elif [ "$RTC" = "rtc0" ]; then
+            ID="Cubox i2eX"
+        elif [ "$CORES" = 1 ]; then
+            ID="HB i1"
+        else
+            ID="HB i2"
+        fi
+		[ -f /proc/asound/imxvt1613audio/id ] && ID="Udoo"
+    fi
+fi
+
+[ -f /proc/device-tree/model ] && MACHINE=$(cat /proc/device-tree/model)
 
 if [[ $MACHINE == *LIME2 ]]; then ID="Lime 2"; fi
 if [[ $MACHINE == *LIME ]]; then ID="Lime"; fi
-if [[ $MACHINE == *"Banana Pi" ]]; then ID="Banana PI"; fi
+if [[ $MACHINE == *Micro ]]; then ID="Micro"; fi
+if [[ $MACHINE == *Banana* ]]; then ID="Banana"; fi
+if [[ $MACHINE == *Udoo* ]]; then ID="udoo"; fi
+if [[ $MACHINE == *Lamobo* ]]; then ID="Lamobo R1"; fi
+if [[ $MACHINE == *Orange* ]]; then ID="Orange"; fi
+if [[ $MACHINE == *Neo* ]]; then ID="Udoo Neo"; fi
+if [[ $MACHINE == *Cubietruck* ]]; then ID="Cubietruck"; fi
+if [[ $MACHINE == *Cubieboard* ]]; then ID="Cubieboard"; fi
+
+if [[ $MACHINE == *M2* ]]; then ID=$ID" M2"; fi
+
+echo -e "[\e[0;32m ok \x1B[0m] Starting ARM hardware info: $ID"
+
+echo $ID  >> /var/run/machine.id
 
 echo "" > /var/run/motd.dynamic
 toilet -f standard -F metal  "$ID" >> /var/run/motd.dynamic
+echo -e  "Welcome to \e[0;31mARMBIAN\x1B[0m ($DISTROID $DISTROCODE $KERNELID)" >> /var/run/motd.dynamic
 echo "" >> /var/run/motd.dynamic
+
+;;
+stop|reload|restart|force-reload|status)
+echo -e "[\e[0;32m ok \x1B[0m] Stopping ARM hardware info ..."
 ;;
     *)
         ## If no parameters are given, print which are avaiable.
