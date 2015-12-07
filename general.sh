@@ -56,21 +56,77 @@ esac
 
 
 fetch_from_github (){
-#--------------------------------------------------------------------------------------------------------------------------------
-# Download or updates sources from Github
-#--------------------------------------------------------------------------------------------------------------------------------
-if [ -d "$SOURCES/$2" ]; then
+#---------------------------------------------------------------------------------------------------------------------------------
+# Download or updates sources from Github $1 = URL $2 = DIR $3 = TAG
+#---------------------------------------------------------------------------------------------------------------------------------
+local tag=$3
+[[ ($BRANCH == "next" || $BRANCH == "dev") && -z "$tag" ]] && local tag=$(git ls-remote $1 | tail -2 | head -1 | awk '{print $NF}')
+tag="${tag//refs\/tags\//}"
+if [ -d "$SOURCES/$2" ]; then	
 	cd $SOURCES/$2
-	if [[ "$3" != "" ]]; then
-		PULL=$(git checkout $FORCE -q $3)
+	
+	# no tags
+	if [[ -z "$tag" ]]; then
+	
+		local command=$(git pull | grep "Already up-to")
+		if [ -z "$command" ]; then 
+			display_alert "... updating" "$tag" "info"
+		else 
+			display_alert "... updated" "$tag" "info"
+		fi	
+
+	# tag already exists		
+	elif [[ -n "$(git tag | grep -w "$tag")" ]]; then
+
+		# switch to this tag
+		#git checkout $FORCE -q $tag	
+		git reset --hard $tag
+		git checkout $FORCE $tag
+		# git pull commmand exec
+		local command=$(git pull | grep "Already up-to") 
+		if [ -z "$command" ]; then 
+			display_alert "... updating" "$tag" "info"
+		else 
+			display_alert "... updated" "$tag" "info"
+		fi
+	
+	# download existing new remote tag
+	elif [[ -n "$(git ls-remote -q | grep "$tag")" ]]; then
+		
+		display_alert "... fetch new tag" "$tag" "info"
+		#git branch "armbian-"$tag
+		git fetch $1 refs/tags/$tag:refs/tags/$tag --depth 1
+		# create a shallow clone to local branch and switch to this tag	
+		#git checkout $tag $FORCE
+		git checkout $FORCE -b "armbian-"$tag $tag
+		
+	else 
+		local command=$(git pull | grep "Already up-to")
+		if [ -z "$command" ]; then 
+			display_alert "... updating" "repository" "info"
+		else 
+			display_alert "... updated" "repository" "info"
+		fi	
 	fi
-	display_alert "... updating" "$2" "info"
-	PULL=$(git pull)
-	cd $SRC
+
+	
 else
-	display_alert "... downloading" "$2" "info"
-	git clone $1 $SOURCES/$2	
+	
+	
+	if [[ -n $tag && -n "$(git ls-remote $1 | grep "$tag")" ]]; then
+		display_alert "... creating a shallow clone" "$2 $tag" "info"
+		git clone -n $1 $SOURCES/$2 -b $tag --depth 1
+	else
+		display_alert "... creating a full clone" "$2 $tag" "wrn"
+		git clone -n $1 $SOURCES/$2
+	fi	
+	cd $SOURCES/$2	
+	#git checkout -q $tag
+	#git branch -q "armbian-"$tag
+	git checkout -b "armbian-"$tag $tag
+	git status
 fi
+cd $SRC
 if [ $? -ne 0 ]; then display_alert "Github download failed" "$1" "err"; exit 1; fi
 }
 
