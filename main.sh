@@ -24,7 +24,8 @@
 	# We'll use this tittle on all menus
 	backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
 	mkdir -p $DEST/debug $SRC/userpatches/kernel $SRC/userpatches/u-boot
-	echo "Place your patches here. They'll be automaticly included during patching process!" > $SRC/userpatches/readme.txt
+	echo -e "Place your patches and kernel.config / u-boot.config here.\n" > $SRC/userpatches/readme.txt
+	echo -e "They'll be automaticly included if placed here!" >> $SRC/userpatches/readme.txt
 
 	# Install some basic support if not here yet
 	if [ $(dpkg-query -W -f='${Status}' whiptail 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
@@ -56,8 +57,8 @@
 	# Choose destination - creating board list from file configuration.sh
 	if [ "$BOARD" == "" ]; then
 		IFS=";"
-		MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/\)#enabled/ || /#des/' | sed 's/)#enabled//g' \
-		| sed 's/#description //g' | sed ':a;N;$!ba;s/\n/;/g'))
+		MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/\)#enabled/ || /#des/' | sed -e 's/\t\t//' | sed 's/)#enabled//g' \
+		| sed 's/#description //g' | sed -e 's/\t//' | sed ':a;N;$!ba;s/\n/;/g'))
 		MYPARAMS=( --title "Choose a board" --backtitle $backtitle --menu "\n Supported:" 34 67 24 )
 		i=0; j=1
 		while [[ $i -lt ${#MYARRAY[@]} ]];	do
@@ -121,7 +122,7 @@
 	# Choose for which branch you want to compile
 	if [ "$BRANCH" == "" ]; then	
 		# get info crom configuration which kernel can be build for certain board
-		line_number=$(grep -n "$BOARD)" $SRC/lib/configuration.sh | grep -Eo '^[^:]+')
+		line_number=$(grep -n "$BOARD)" $SRC/lib/configuration.sh | grep -Eo '^[^:]+' | head -1)
 		display_para=$(tail -n +$line_number $SRC/lib/configuration.sh | grep -in "#build" | head -1 | awk '{print $NF}')
 
 		if [[ "$display_para" == *wip ]]; then 
@@ -131,10 +132,28 @@
 		fi
 
 		IFS=";"
-		declare -a MYARRAY=('default' '3.4.x - 3.14.x most supported' 'next' 'Vanilla / mainline latest stable');
-		if [[ $display_para == "1" ]]; then declare -a MYARRAY=('default' '3.4.x - 3.14.x most supported'); fi
-		if [[ $display_para == "2" ]]; then declare -a MYARRAY=('next' 'Latest stable from www.kernel.org'); fi
-		MYPARAMS=( --title "Choose a branch" --backtitle "$backtitle" --menu "\n Kernel:" 11 60 2 )
+		
+		# define all possible combinations
+		if [[ $display_para == "1" ]]; then 
+			declare -a MYARRAY=('default' '3.4.x - 3.14.x legacy'); 
+		fi
+		if [[ $display_para == "2" ]]; then 
+			declare -a MYARRAY=('next' 'Latest stable @kernel.org'); 
+			fi
+		if [[ $display_para == "3" ]]; then 
+			declare -a MYARRAY=('default' '3.4.x - 3.14.x legacy' 'next' 'Latest stable @kernel.org'); 
+			fi
+		if [[ $display_para == "4" ]]; then 
+			declare -a MYARRAY=('dev' 'Latest dev @kernel.org'); 
+			fi
+		if [[ $display_para == "5" ]]; then 
+			declare -a MYARRAY=('next' 'Latest stable @kernel.org' 'dev' 'Latest dev @kernel.org'); 
+			fi
+		if [[ $display_para == "6" || $display_para == "0" ]]; then 
+			declare -a MYARRAY=('default' '3.4.x - 3.14.x legacy' 'next' 'Latest stable @kernel.org' 'dev' 'Latest dev @kernel.org'); 
+			fi
+		
+		MYPARAMS=( --title "Choose a branch" --backtitle "$backtitle" --menu "\n Kernel:" 10 60 3 )
 		i=0; j=1
 		while [[ $i -lt ${#MYARRAY[@]} ]]; do
 			MYPARAMS+=( "${MYARRAY[$i]}" "         ${MYARRAY[$j]}" )
@@ -149,7 +168,7 @@
 	if [ "$BRANCH" == "" ]; then echo "ERROR: You have to choose one branch"; exit; fi
 
 	# don't compile external modules on mainline
-	if [ "$BRANCH" == "next" ]; then EXTERNAL="no"; fi
+	if [ "$BRANCH" != "default" ]; then EXTERNAL="no"; fi
 
 	# back to normal
 	unset IFS
@@ -159,6 +178,10 @@
 
 	# set hostname to the board	
 	HOST="$BOARD"
+
+	# The name of the job
+	VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
+	echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION > $DEST/debug/install.log 
 	
 	# Load libraries
 	source $SRC/lib/general.sh					# General functions
@@ -173,11 +196,6 @@
 
 	# needed if process failed in the middle
 	umount_image
-
-	# The name of the job
-	VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
-	echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION > $DEST/debug/install.log 
-
 
 	# let's start with fresh screen
 	clear
@@ -225,16 +243,22 @@
 	mkdir -p $DEST -p $SOURCES
 
 	if [ "$FORCE_CHECKOUT" = "yes" ]; then FORCE="-f"; else FORCE=""; fi
-	display_alert "source downloading" "@host" "info"
+	
+	# Some old branches are tagged
+	#if [ "$BRANCH" == "default" ]; then	KERNELTAG="$LINUXBRANCH"; fi
 
-	fetch_from_github "$BOOTLOADER" "$BOOTSOURCE" "$BOOTDEFAULT"
-	fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE" "$LINUXDEFAULT"
-	if [[ -n "$MISC1" ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
+	
+	display_alert "source downloading" "@host" "info"
+	fetch_from_github "$BOOTLOADER" "$BOOTSOURCE" "$UBOOTTAG" "yes"
+	fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE" "$KERNELTAG" "yes"
+	
+	
+	
+	if [[ -n "$MISC1" ]]; then fetch_from_github "$MISC1" "$MISC1_DIR" "v1.3"; fi
 	if [[ -n "$MISC2" ]]; then fetch_from_github "$MISC2" "$MISC2_DIR"; fi
 	if [[ -n "$MISC3" ]]; then fetch_from_github "$MISC3" "$MISC3_DIR"; fi
-	if [[ -n "$MISC4" ]]; then fetch_from_github "$MISC4" "$MISC4_DIR" "master"; fi
+	if [[ -n "$MISC4" ]]; then fetch_from_github "$MISC4" "$MISC4_DIR"; fi
 	if [[ -n "$MISC5" ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
-
 	# compile sunxi tools
 	if [[ $LINUXFAMILY == *sun* ]]; then 
 		compile_sunxi_tools
@@ -291,6 +315,5 @@
 	fi
 
 	end=`date +%s`
-	runtime=$(((end-start)/60))
-	umount $SOURCES/$LINUXSOURCE/drivers/video/fbtft >/dev/null 2>&1
+	runtime=$(((end-start)/60))	
 	display_alert "Runtime" "$runtime min" "info"
