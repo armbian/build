@@ -13,48 +13,82 @@
 #
 #
 
-
+# advanced_patch <dest> <family> <device> <description>
+#
+# parameters:
+# <dest>: u-boot, kernel
+# <family>: u-boot: u-boot, u-boot-neo; kernel: sun4i-default, sunxi-next, ...
+# <device>: cubieboard, cubieboard2, cubietruck, ...
+# <description>: additional description text
+#
+# priority:
+# $SRC/userpatches/<dest>/<family>/<device>
+# $SRC/userpatches/<dest>/<family>
+# $SRC/lib/patch/<dest>/<family>/<device>
+# $SRC/lib/patch/<dest>/<family>
+#
 advanced_patch () {
-#---------------------------------------------------------------------------------------------------------------------------------
-# Patching from certain subdirectory
-#---------------------------------------------------------------------------------------------------------------------------------
 
-	# count files
-	shopt -s nullglob dotglob # To include hidden files
-	local files=($1/*.patch)
-	if [ ${#files[@]} -gt 0 ]; then 
-		display_alert "Patching $2" "$3" "info"; 
-	fi
-	
-	# go through all patch files
-	for patch in $1*.patch; do	
-	
-		# check if directory exits
-		if [[ ! -d $1 ]]; then 
-			display_alert "... directory not exists" "$1" "wrn"; 
-			break; 
-		fi	
-		
-		# check if files exits
-		test -f "$patch" || continue 	
-		
-		# detect and remove files which patch will create
-		LANGUAGE=english patch --batch --dry-run -p1 -N < $patch | grep create \
-		| awk '{print $NF}' | sed -n 's/,//p' | xargs -I % sh -c 'rm %'
-	
-		# main patch command
-		echo "$patch" >> $DEST/debug/install.log
-		patch --batch --silent -p1 -N < $patch >> $DEST/debug/install.log 2>&1
-		
-		if [ $? -ne 0 ]; then 			
-			# display warning if patching fails
-			display_alert "... "${patch#*$1} "failed" "wrn"; 
-		else	
-			# display patching information
-			display_alert "... "${patch#*$1} "succeeded" "info"
-		fi
+	local dest=$1
+	local family=$2
+	local device=$3
+	local description=$4
+
+	local names=()
+	local dirs=("$SRC/userpatches/$dest/$family/$device" "$SRC/userpatches/$dest/$family" "$SRC/lib/patch/$dest/$family/$device" "$SRC/lib/patch/$dest/$family")
+
+	# required for "for" command
+	shopt -s nullglob dotglob
+
+	# get patch file names
+	for dir in "${dirs[@]}"; do
+		for patch in $dir/*.patch; do
+			names+=($(basename $patch))
+		done
 	done
 
+	# remove duplicates
+	names=$(echo "${names[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+
+	# apply patches
+	for name in "${names[@]}"; do
+		for dir in "${dirs[@]}"; do
+			if [ -f "$dir/$name" ] || [ -L "$dir/$name" ]; then
+				if [ -s "$dir/$name" ]; then
+					process_patch_file "$dir/$name" "$description"
+				else
+					display_alert "... ${description} ${name}" "skipped" "info"
+				fi
+				break # next name
+			fi
+		done
+	done
+}
+	
+# process_patch_file <file> <description>
+#
+# parameters:
+# <file>: path to patch file
+# <description>: additional description text
+#
+process_patch_file() {
+
+	local patch=$1
+	local description=$2
+
+	# detect and remove files which patch will create
+	LANGUAGE=english patch --batch --dry-run -p1 -N < $patch | grep create \
+		| awk '{print $NF}' | sed -n 's/,//p' | xargs -I % sh -c 'rm %'
+
+	# main patch command
+	echo "$patch" >> $DEST/debug/install.log
+	patch --batch --silent -p1 -N < $patch >> $DEST/debug/install.log 2>&1
+
+	if [ $? -ne 0 ]; then
+		display_alert "... $(basename $patch) $description" "failed" "wrn";
+	else
+		display_alert "... $(basename $patch) $description" "succeeded" "info"
+	fi
 }
 
 
@@ -89,11 +123,7 @@ patching_sources(){
 		LINUXFAMILY="banana";
 	fi
 
-	# system patches
-	advanced_patch "$SRC/lib/patch/kernel/$LINUXFAMILY-$BRANCH/" "kernel" "$LINUXFAMILY-$BRANCH $VER"
-
-	# user patches
-	advanced_patch "$SRC/userpatches/kernel/" "kernel with user patches" "$LINUXFAMILY-$BRANCH $VER"
+	advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH $VER"
 
 	# it can be changed in this process
 	grab_kernel_version
@@ -112,12 +142,7 @@ patching_sources(){
 		git checkout $FORCE -q $UBOOTTAG;
 	fi
 
-	# system patches
-	advanced_patch "$SRC/lib/patch/u-boot/$BOOTSOURCE/" "u-boot" "$UBOOTTAG"
-	
-	# user patches
-	advanced_patch "$SRC/userpatches/u-boot/" "u-boot with user patches" "$UBOOTTAG"
-
+	advanced_patch "u-boot" "$BOOTSOURCE" "$BOARD" "$UBOOTTAG"
 
 #---------------------------------------------------------------------------------------------------------------------------------
 # Patching others: FBTFT drivers, ...
