@@ -60,17 +60,22 @@ if [ -d "$DEST/output" ]; then
 	read
 fi
 
+if [ $EUID != 0 ]; then
+	echo -e "[\e[0;35m warn \x1B[0m] This script requires root privileges"
+	sudo "$0" "$@"
+	exit 1
+fi
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # Get updates of the main build libraries
 #--------------------------------------------------------------------------------------------------------------------------------
 apt-get -qq -y install git
 if [ -d "$SRC/lib" ]; then
-    cd $SRC/lib
-    git pull
+	cd $SRC/lib
+	git pull
 else
-    # download SDK
-    git clone --depth 1 https://github.com/igorpecovnik/lib
+	# download SDK
+	git clone --depth 1 https://github.com/igorpecovnik/lib
 fi
 
 
