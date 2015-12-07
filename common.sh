@@ -148,7 +148,7 @@ if [ "$KERNEL_CLEAN" = "yes" ]; then make ARCH=arm CROSS_COMPILE=arm-linux-gnuea
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCE/firmware; fi
 
 # use proven config
-if [ "$KERNEL_KEEP_CONFIG" != "yes" ]; then cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCE/.config; fi
+if [ "$KERNEL_KEEP_CONFIG" != "yes" ] || [ ! -f $SOURCES/$LINUXSOURCE/.config ]; then cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCE/.config; fi
 
 # hacks for banana
 if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
