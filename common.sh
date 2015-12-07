@@ -158,12 +158,16 @@ fi
 # hack for deb builder. To pack what's missing in headers pack.
 cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
 
-if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig; fi
-
 export LOCALVERSION="-"$LINUXFAMILY 
 
 # this way of compilation is much faster. We can use multi threading here but not later
-make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- oldconfig
+if [ "$KERNEL_CONFIGURE" != "yes" ]; then
+	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
+else
+	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- oldconfig
+fi
+
+if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig; fi
 
 make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" zImage modules 2>&1 | dialog --backtitle "$backtitle" --progressbox "Compiling kernel $CCACHE ..." 20 80
 
