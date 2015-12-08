@@ -88,6 +88,6 @@ else
 	source $SRC/lib/main.sh
 fi
 
-# If you are editing this file, increment VERSION
+# If you are committing new version of this file, increment VERSION
 # Only integers are supported
 # VERSION=3
