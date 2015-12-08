@@ -13,6 +13,16 @@
 #
 #
 
+	# Script parameters handling
+	for i in "$@"; do
+		if [[ "$i" == *"="* ]]; then
+			parameter=${i%%=*}
+			value=${i##*=}
+			echo "[info] Command line: setting $parameter to ${value:-(empty)}"
+			eval $parameter=$value
+		fi
+	done
+
 	# We'll use this tittle on all menus
 	backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
 	mkdir -p $DEST/debug $SRC/userpatches/kernel $SRC/userpatches/u-boot
