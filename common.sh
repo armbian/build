@@ -162,7 +162,11 @@ export LOCALVERSION="-"$LINUXFAMILY
 
 # this way of compilation is much faster. We can use multi threading here but not later
 if [ "$KERNEL_CONFIGURE" != "yes" ]; then
-	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
+	if [ "$BRANCH" = "default" ]; then
+		make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- silentoldconfig
+	else
+		make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
+	fi
 else
 	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- oldconfig
 fi
