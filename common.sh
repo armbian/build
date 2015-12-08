@@ -141,8 +141,6 @@ sleep 2
 if [ -d "$SOURCES/$LINUXSOURCE" ]; then 
 
 cd $SOURCES/$LINUXSOURCE
-# delete previous creations
-if [ "$KERNEL_CLEAN" = "yes" ]; then make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean | dialog --backtitle "$backtitle" --progressbox "Cleaning kernel source ..." 20 70; fi
 
 # adding custom firmware to kernel source
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCE/firmware; fi
