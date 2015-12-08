@@ -23,6 +23,14 @@
 		fi
 	done
 
+	# compile.sh version checking
+	ver1=$(grep '^# VERSION' "$SRC/compile.sh" | cut -d'=' -f2)
+	ver2=$(grep '^# VERSION' "$SRC/lib/compile.sh" | cut -d'=' -f2)
+	if [ -z "$ver1" ] || [ "$ver1" -lt "$ver2" ]; then
+		echo -e "[\e[0;35m warn \x1B[0m] File $0 is outdated. Please copy it again, \nchange options if needed and restart compilation process"
+		read -p "Press <Ctrl-C> to abort compilation, <Enter> to continue"
+	fi
+
 	# We'll use this tittle on all menus
 	backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
 
