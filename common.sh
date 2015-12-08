@@ -38,7 +38,7 @@ if [ -d "$SOURCES/$BOOTSOURCE" ]; then
 		${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'}
 else
 	eval 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 2>&1' \
-		${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." 20 80'}
+		${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'}
 fi
 
 
