@@ -34,24 +34,26 @@ advanced_patch () {
 	local device=$3
 	local description=$4
 
+	display_alert "Started patching process for" "$dest" "info"
+
 	local names=()
 	local dirs=("$SRC/userpatches/$dest/$family/$device" "$SRC/userpatches/$dest/$family" "$SRC/lib/patch/$dest/$family/$device" "$SRC/lib/patch/$dest/$family")
 
 	# required for "for" command
 	shopt -s nullglob dotglob
 
-	# get patch file names
-	for dir in "${dirs[@]}"; do
+	# get patch file names	
+	for dir in "${dirs[@]}"; do	
 		for patch in $dir/*.patch; do
 			names+=($(basename $patch))
-		done
+		done		
 	done
 
 	# remove duplicates
-	names=$(echo "${names[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+	local names_s=($(echo "${names[@]}" | tr ' ' '\n' | LC_ALL=C sort -u | tr '\n' ' '))
 
 	# apply patches
-	for name in "${names[@]}"; do
+	for name in "${names_s[@]}"; do
 		for dir in "${dirs[@]}"; do
 			if [ -f "$dir/$name" ] || [ -L "$dir/$name" ]; then
 				if [ -s "$dir/$name" ]; then
@@ -123,6 +125,9 @@ patching_sources(){
 		LINUXFAMILY="banana";
 	fi
 
+	# this exception is needed since AW boards share single mainline kernel
+	[[ $LINUXFAMILY == sun*i && $BRANCH != "default" ]] && LINUXFAMILY="sunxi"
+		
 	advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH $VER"
 
 	# it can be changed in this process
@@ -143,35 +148,4 @@ patching_sources(){
 	fi
 
 	advanced_patch "u-boot" "$BOOTSOURCE" "$BOARD" "$UBOOTTAG"
-
-#---------------------------------------------------------------------------------------------------------------------------------
-# Patching others: FBTFT drivers, ...
-#---------------------------------------------------------------------------------------------------------------------------------
-
-	cd $SOURCES/$MISC4_DIR
-	display_alert "Patching" "other sources $VER" "info"
-
-	# add small TFT display support  
-	if [[ "$FBTFT" = "yes" && $BRANCH != "next" ]]; then
-		IFS='.' read -a array <<< "$VER"		
-		if (( "${array[0]}" == "3" )) && (( "${array[1]}" < "14" )); then
-			git checkout $FORCE -q 06f0bba152c036455ae76d26e612ff0e70a83a82
-		else
-			git checkout $FORCE -q master
-		fi
-		
-		# DMA disable on FBTFT drivers
-		patch --batch -p1 -N -r - < $SRC/lib/patch/misc/bananafbtft.patch >> \
-		$DEST/debug/install.log 2>&1 || check_error "fbtft"
-		
-		# mount bind fbtft sources to kernel sources
-		mkdir -p $SOURCES/$LINUXSOURCE/drivers/video/fbtft
-		mount --bind $SOURCES/$MISC4_DIR $SOURCES/$LINUXSOURCE/drivers/video/fbtft
-
-		cd $SOURCES/$LINUXSOURCE
-		# patch / add fbtft drivers to kernel
-		patch --batch -p1 -N -r - < $SRC/lib/patch/kernel/small_lcd_drivers.patch >> \
-		$DEST/debug/install.log 2>&1 || check_error "fbtft"
-	fi
-
 }
