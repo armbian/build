@@ -10,15 +10,24 @@
 #
 
 
+# cleaning <#>
+# 0 = make clean + del debs
+# 1 = only make clean
+# 2 = nothing
+# 3 = choosing kernel if present
+# 4 = del all output and sources
+
 cleaning()
-#--------------------------------------------------------------------------------------------------------------------------------
-# Let's clean stuff
-#--------------------------------------------------------------------------------------------------------------------------------
 {
 case $1 in
-1)	# Clean u-boot and kernel sources
-	[ -d "$SOURCES/$BOOTSOURCE" ] && display_alert "Cleaning" "$SOURCES/$BOOTSOURCE" "info" && cd $SOURCES/$BOOTSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
-	[ -d "$SOURCES/$LINUXSOURCE" ] && display_alert "Cleaning" "$SOURCES/$LINUXSOURCE" "info" && cd $SOURCES/$LINUXSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean	
+		1)	# Clean u-boot and kernel sources
+			if [ -d "$SOURCES/$BOOTSOURCEDIR" ]; then 
+				display_alert "Cleaning" "$SOURCES/$BOOTSOURCEDIR" "info"
+				cd $SOURCES/$BOOTSOURCEDIR
+				make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
+			fi
+				
+	[ -d "$SOURCES/$LINUXSOURCEDIR" ] && display_alert "Cleaning" "$SOURCES/$LINUXSOURCEDIR" "info" && cd $SOURCES/$LINUXSOURCEDIR && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean	
 	[ -f $DEST/cache/building/$HEADERS_CACHE.tgz ] && display_alert "Cleaning" "$HEADERS_CACHE.tgz" "info" && rm -f $DEST/cache/building/$HEADERS_CACHE.tgz
 	
 ;;
@@ -39,14 +48,16 @@ case $1 in
 	rm -rf $DEST/cache
 	display_alert "Removing SD card images" "$DEST/images" "info"
 	rm -rf $DEST/images
+	display_alert "Removing sources" "$DEST/images" "info"
+	rm -rf $SOURCES
 ;;
 *)	# Clean u-boot and kernel sources and remove debs
-	[ -d "$SOURCES/$BOOTSOURCE" ] &&
-	display_alert "Cleaning" "$SOURCES/$BOOTSOURCE" "info" && cd $SOURCES/$BOOTSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
+	[ -d "$SOURCES/$BOOTSOURCEDIR" ] &&
+	display_alert "Cleaning" "$SOURCES/$BOOTSOURCEDIR" "info" && cd $SOURCES/$BOOTSOURCEDIR && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
 	[ -f "$DEST/debs/$CHOOSEN_UBOOT" ] && 
 	display_alert "Removing" "$DEST/debs/$CHOOSEN_UBOOT" "info" && rm $DEST/debs/$CHOOSEN_UBOOT
-	[ -d "$SOURCES/$LINUXSOURCE" ] && 
-	display_alert "Cleaning" "$SOURCES/$LINUXSOURCE" "info" && cd $SOURCES/$LINUXSOURCE && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean	
+	[ -d "$SOURCES/$LINUXSOURCEDIR" ] && 
+	display_alert "Cleaning" "$SOURCES/$LINUXSOURCEDIR" "info" && cd $SOURCES/$LINUXSOURCEDIR && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean	
 	[ -f "$DEST/debs/$CHOOSEN_KERNEL" ] && 
 	display_alert "Removing" "$DEST/debs/$CHOOSEN_KERNEL" "info" && rm $DEST/debs/$CHOOSEN_KERNEL
 	[ -f $DEST/cache/building/$HEADERS_CACHE.tgz ] && display_alert "Cleaning" "$HEADERS_CACHE.tgz" "info" && rm -f $DEST/cache/building/$HEADERS_CACHE.tgz
@@ -55,76 +66,39 @@ esac
 }
 
 
+
+
+# fetch_from_github <URL> <directory> <tag> <tagsintosubdir>
+#
+# parameters:
+# <URL>: Git repository
+# <directory>: where to place under SOURCES
+# <device>: cubieboard, cubieboard2, cubietruck, ...
+# <description>: additional description text
+# <tagintosubdir>: boolean
+
 fetch_from_github (){
-#---------------------------------------------------------------------------------------------------------------------------------
-# Download or updates sources from Github $1 = URL $2 = DIR $3 = TAG
-#---------------------------------------------------------------------------------------------------------------------------------
-local tag=$3
-[[ ($BRANCH == "next" || $BRANCH == "dev") && -z "$tag" ]] && local tag=$(git ls-remote $1 | tail -2 | head -1 | awk '{print $NF}')
-tag="${tag//refs\/tags\//}"
-if [ -d "$SOURCES/$2" ]; then	
-	cd $SOURCES/$2
-	
-	# no tags
-	if [[ -z "$tag" ]]; then
-	
-		local command=$(git pull | grep "Already up-to")
-		if [ -z "$command" ]; then 
-			display_alert "... updating" "$tag" "info"
-		else 
-			display_alert "... updated" "$tag" "info"
-		fi	
-
-	# tag already exists		
-	elif [[ -n "$(git tag | grep -w "$tag")" ]]; then
-
-		# switch to this tag
-		#git checkout $FORCE -q $tag	
-		git reset --hard $tag
-		git checkout $FORCE $tag
-		# git pull commmand exec
-		local command=$(git pull | grep "Already up-to") 
-		if [ -z "$command" ]; then 
-			display_alert "... updating" "$tag" "info"
-		else 
-			display_alert "... updated" "$tag" "info"
-		fi
-	
-	# download existing new remote tag
-	elif [[ -n "$(git ls-remote -q | grep "$tag")" ]]; then
-		
-		display_alert "... fetch new tag" "$tag" "info"
-		#git branch "armbian-"$tag
-		git fetch $1 refs/tags/$tag:refs/tags/$tag --depth 1
-		# create a shallow clone to local branch and switch to this tag	
-		#git checkout $tag $FORCE
-		git checkout $FORCE -b "armbian-"$tag $tag
-		
-	else 
-		local command=$(git pull | grep "Already up-to")
-		if [ -z "$command" ]; then 
-			display_alert "... updating" "repository" "info"
-		else 
-			display_alert "... updated" "repository" "info"
-		fi	
-	fi
-
-	
-else
-	
-	
-	if [[ -n $tag && -n "$(git ls-remote $1 | grep "$tag")" ]]; then
-		display_alert "... creating a shallow clone" "$2 $tag" "info"
-		git clone -n $1 $SOURCES/$2 -b $tag --depth 1
+GITHUBSUBDIR=$3
+[[ -z "$3" ]] && GITHUBSUBDIR="branchless"
+[[ -z "$4" ]] && GITHUBSUBDIR="" # only kernel and u-boot have subdirs for tags
+if [ -d "$SOURCES/$2/$GITHUBSUBDIR" ]; then	
+	cd $SOURCES/$2/$GITHUBSUBDIR
+	git checkout -q $FORCE $3
+	display_alert "... updating" "$2" "info"
+	PULL=$(git pull -q)
+else	
+	if [[ -n $3 && -n "$(git ls-remote $1 | grep "$tag")" ]]; then	
+		display_alert "... creating a shallow clone" "$2 $3" "info"
+		git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 --depth 1
+		cd $SOURCES/$2/$GITHUBSUBDIR		
+		git checkout -q $3
 	else
-		display_alert "... creating a full clone" "$2 $tag" "wrn"
-		git clone -n $1 $SOURCES/$2
-	fi	
-	cd $SOURCES/$2	
-	#git checkout -q $tag
-	#git branch -q "armbian-"$tag
-	git checkout -b "armbian-"$tag $tag
-	git status
+		display_alert "... creating a shallow clone" "$2" "info"	
+		git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR --depth 1
+		cd $SOURCES/$2/$GITHUBSUBDIR
+		git checkout -q
+	fi
+	
 fi
 cd $SRC
 if [ $? -ne 0 ]; then display_alert "Github download failed" "$1" "err"; exit 1; fi
@@ -186,28 +160,21 @@ procent=${procent%.*}
 done
 }
 
-grab_kernel_version (){
-#--------------------------------------------------------------------------------------------------------------------------------
-# extract linux kernel version from Makefile
-#--------------------------------------------------------------------------------------------------------------------------------
-VER=$(cat $SOURCES/$LINUXSOURCE/Makefile | grep VERSION | head -1 | awk '{print $(NF)}')
-VER=$VER.$(cat $SOURCES/$LINUXSOURCE/Makefile | grep PATCHLEVEL | head -1 | awk '{print $(NF)}')
-VER=$VER.$(cat $SOURCES/$LINUXSOURCE/Makefile | grep SUBLEVEL | head -1 | awk '{print $(NF)}')
-EXTRAVERSION=$(cat $SOURCES/$LINUXSOURCE/Makefile | grep EXTRAVERSION | head -1 | awk '{print $(NF)}' | cut -d '-' -f 2)
-if [ "$EXTRAVERSION" != "=" ]; then VER=$VER$EXTRAVERSION; fi
-}
 
-
-grab_u-boot_version (){
-#--------------------------------------------------------------------------------------------------------------------------------
-# extract uboot version from Makefile
-#--------------------------------------------------------------------------------------------------------------------------------
-UBOOTVER=$(cat $SOURCES/$BOOTSOURCE/Makefile | grep VERSION | head -1 | awk '{print $(NF)}')
-UBOOTVER=$UBOOTVER.$(cat $SOURCES/$BOOTSOURCE/Makefile | grep PATCHLEVEL | head -1 | awk '{print $(NF)}')
-UBOOTSUB=$(cat $SOURCES/$BOOTSOURCE/Makefile | grep SUBLEVEL | head -1 | awk '{print $(NF)}' | cut -d '=' -f 2)
-[ "$UBOOTSUB" != "" ] && UBOOTVER=$UBOOTVER.$UBOOTSUB
-EXTRAVERSION=$(cat $SOURCES/$BOOTSOURCE/Makefile | grep EXTRAVERSION | head -1 | awk '{print $(NF)}' | cut -d '-' -f 2)
-if [ "$EXTRAVERSION" != "=" ]; then UBOOTVER=$UBOOTVER$EXTRAVERSION; fi
+#---------------------------------------------------------------------------------------------------------------------------------
+# grab_version <PATH>
+#
+# <PATH>: Extract kernel or uboot version from Makefile
+#---------------------------------------------------------------------------------------------------------------------------------
+grab_version ()
+{
+	local var=("VERSION" "PATCHLEVEL" "SUBLEVEL" "EXTRAVERSION")
+	unset VER
+	for dir in "${var[@]}"; do
+		tmp=$(cat $1/Makefile | grep $dir | head -1 | awk '{print $(NF)}' | cut -d '=' -f 2)"#"
+		[[ $tmp != "#" ]] && VER=$VER"$tmp"
+	done
+	VER=${VER//#/.}; VER=${VER%.}; VER="v"${VER//.-/-}
 }
 
 
@@ -273,7 +240,6 @@ echo "--------------------------------------------------------------------------
 umount_image (){
 FBTFTMOUNT=$(mount | grep fbtft | awk '{ print $3 }')
 umount $FBTFTMOUNT >/dev/null 2>&1
-umount $SOURCES/$LINUXSOURCE/drivers/video/fbtft >/dev/null 2>&1
 umount -l $DEST/cache/sdcard/dev/pts >/dev/null 2>&1
 umount -l $DEST/cache/sdcard/dev >/dev/null 2>&1
 umount -l $DEST/cache/sdcard/proc >/dev/null 2>&1

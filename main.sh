@@ -247,18 +247,21 @@
 	# Some old branches are tagged
 	#if [ "$BRANCH" == "default" ]; then	KERNELTAG="$LINUXBRANCH"; fi
 
+	[ $CLEAN_LEVEL == 4 ] && cleaning "$CLEAN_LEVEL"
 	
 	display_alert "source downloading" "@host" "info"
-	fetch_from_github "$BOOTLOADER" "$BOOTSOURCE" "$UBOOTTAG" "yes"
-	fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE" "$KERNELTAG" "yes"
+	fetch_from_github "$BOOTLOADER" "$BOOTSOURCE" "$BOOTBRANCH" "yes"
+	BOOTSOURCEDIR=$BOOTSOURCE/$GITHUBSUBDIR
+	fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE" "$KERNELBRANCH" "yes"	
+	LINUXSOURCEDIR=$LINUXSOURCE/$GITHUBSUBDIR
 	
-	
-	
-	if [[ -n "$MISC1" ]]; then fetch_from_github "$MISC1" "$MISC1_DIR" "v1.3"; fi
+	if [[ -n "$MISC1" ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
 	if [[ -n "$MISC2" ]]; then fetch_from_github "$MISC2" "$MISC2_DIR"; fi
 	if [[ -n "$MISC3" ]]; then fetch_from_github "$MISC3" "$MISC3_DIR"; fi
 	if [[ -n "$MISC4" ]]; then fetch_from_github "$MISC4" "$MISC4_DIR"; fi
 	if [[ -n "$MISC5" ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
+
+
 	# compile sunxi tools
 	if [[ $LINUXFAMILY == *sun* ]]; then 
 		compile_sunxi_tools
@@ -272,7 +275,7 @@
 	HEADERS_CACHE="${CHOOSEN_KERNEL/image/cache}"
 
 	# cleaning level 0,1,2,3
-	cleaning "$CLEAN_LEVEL"
+	[ $CLEAN_LEVEL != 4 ] && cleaning "$CLEAN_LEVEL"	
 
 	# patching sources
 	patching_sources

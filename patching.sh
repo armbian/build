@@ -34,6 +34,8 @@ advanced_patch () {
 	local device=$3
 	local description=$4
 
+	display_alert "Started patching process for" "$dest $description" "info"
+
 	local names=()
 	local dirs=("$SRC/userpatches/$dest/$family/$device" "$SRC/userpatches/$dest/$family" "$SRC/lib/patch/$dest/$family/$device" "$SRC/lib/patch/$dest/$family")
 
@@ -48,10 +50,10 @@ advanced_patch () {
 	done
 
 	# remove duplicates
-	names=$(echo "${names[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+	local names_s=($(echo "${names[@]}" | tr ' ' '\n' | LC_ALL=C sort -u | tr '\n' ' '))
 
 	# apply patches
-	for name in "${names[@]}"; do
+	for name in "${names_s[@]}"; do
 		for dir in "${dirs[@]}"; do
 			if [ -f "$dir/$name" ] || [ -L "$dir/$name" ]; then
 				if [ -s "$dir/$name" ]; then
@@ -97,21 +99,10 @@ patching_sources(){
 # Patching kernel
 #--------------------------------------------------------------------------------------------------------------------------------
 
-	cd $SOURCES/$LINUXSOURCE
-
-	# fix kernel tag
-	if [[ $KERNELTAG == "" ]] ; then 
-		KERNELTAG="$LINUXDEFAULT"; 
-	fi
-	
-	if [[ $BRANCH == "next" ]] ; then 
-		git checkout $FORCE -q $KERNELTAG; 
-	else 
-		git checkout $FORCE -q $LINUXDEFAULT; 
-	fi
+	cd $SOURCES/$LINUXSOURCEDIR
 
 	# what are we building
-	grab_kernel_version
+	#grab_kernel_version
 
 	# this is a patch that Ubuntu Trusty compiler works
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/kernel/compiler.patch | grep Reversed)" != "" ]; then 
@@ -125,26 +116,17 @@ patching_sources(){
 
 	# this exception is needed since AW boards share single mainline kernel
 	[[ $LINUXFAMILY == sun*i && $BRANCH != "default" ]] && LINUXFAMILY="sunxi"
-		
-	advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH $VER"
-
+	
 	# it can be changed in this process
-	grab_kernel_version
+	grab_version "$SOURCES/$LINUXSOURCEDIR"	
+	advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH $VER"
 
 
 #---------------------------------------------------------------------------------------------------------------------------------
 # Patching u-boot
 #---------------------------------------------------------------------------------------------------------------------------------
 	
-	cd $SOURCES/$BOOTSOURCE
-
-	# fix u-boot tag
-	if [ -z $UBOOTTAG ] ; then 
-		git checkout $FORCE -q $BOOTDEFAULT; 
-	else 
-		git checkout $FORCE -q $UBOOTTAG;
-	fi
-
-	advanced_patch "u-boot" "$BOOTSOURCE" "$BOARD" "$UBOOTTAG"
-
+	cd $SOURCES/$BOOTSOURCEDIR
+	grab_version "$SOURCES/$BOOTSOURCEDIR"
+	advanced_patch "u-boot" "$BOOTSOURCE" "$BOARD" "$UBOOTTAG $VER"
 }

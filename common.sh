@@ -15,11 +15,10 @@ compile_uboot (){
 # Compile uboot from sources
 #--------------------------------------------------------------------------------------------------------------------------------
 
-if [ -d "$SOURCES/$BOOTSOURCE" ]; then
-	grab_u-boot_version
-	display_alert "Compiling uboot. Please wait." "$UBOOTVER" "info"
-	echo `date +"%d.%m.%Y %H:%M:%S"` $SOURCES/$BOOTSOURCE/$BOOTCONFIG >> $DEST/debug/install.log 
-	cd $SOURCES/$BOOTSOURCE
+if [ -d "$SOURCES/$BOOTSOURCEDIR" ]; then
+	display_alert "Compiling uboot. Please wait." "$VER" "info"
+	echo `date +"%d.%m.%Y %H:%M:%S"` $SOURCES/$BOOTSOURCEDIR/$BOOTCONFIG >> $DEST/debug/install.log 
+	cd $SOURCES/$BOOTSOURCEDIR
 	make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
 	# there are two methods of compilation
 	if [[ $BOOTCONFIG == *config* ]]; then
@@ -29,9 +28,9 @@ if [ -d "$SOURCES/$BOOTSOURCE" ]; then
 		touch .scmversion
 		if [[ $BRANCH != "next" && $LINUXCONFIG == *sun* ]] ; then
 			## patch mainline uboot configuration to boot with old kernels
-			if [ "$(cat $SOURCES/$BOOTSOURCE/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
-				echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $SOURCES/$BOOTSOURCE/.config
-				echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $SOURCES/$BOOTSOURCE/.config
+			if [ "$(cat $SOURCES/$BOOTSOURCEDIR/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
+				echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
+				echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
 			fi
 		fi	
 	make $CTHREADS CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" >> $DEST/debug/install.log 2>&1
@@ -83,7 +82,7 @@ Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 Installed-Size: 1
 Section: kernel
 Priority: optional
-Description: Uboot loader $UBOOTVER
+Description: Uboot loader $VER
 END
 #
 
@@ -138,17 +137,17 @@ compile_kernel (){
 display_alert "Compiling kernel" "@host" "info"
 sleep 2
 
-if [ -d "$SOURCES/$LINUXSOURCE" ]; then 
+if [ -d "$SOURCES/$LINUXSOURCEDIR" ]; then 
 
-cd $SOURCES/$LINUXSOURCE
+cd $SOURCES/$LINUXSOURCEDIR/
 # delete previous creations
 if [ "$KERNEL_CLEAN" = "yes" ]; then make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean | dialog --backtitle "$backtitle" --progressbox "Cleaning kernel source ..." 20 70; fi
 
 # adding custom firmware to kernel source
-if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCE/firmware; fi
+if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCEDIR/firmware; fi
 
 # use proven config
-if [ "$KERNEL_KEEP_CONFIG" != "yes" ]; then cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCE/.config; fi
+if [ "$KERNEL_KEEP_CONFIG" != "yes" ]; then cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config; fi
 
 # hacks for banana
 if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
@@ -222,7 +221,7 @@ rm usb-redirector-linux-arm-eabi.tar.gz
 cd $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd
 # patch to work with newer kernels
 sed -e "s/f_dentry/f_path.dentry/g" -i usbdcdev.c
-make -j1 ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KERNELDIR=$SOURCES/$LINUXSOURCE/ >> $DEST/debug/install.log
+make -j1 ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KERNELDIR=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/install.log
 # configure USB redirector
 sed -e 's/%INSTALLDIR_TAG%/\/usr\/local/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1
 sed -e 's/%PIDFILE_TAG%/\/var\/run\/usbsrvd.pid/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
@@ -244,18 +243,18 @@ if [[ -n "$MISC3_DIR" ]]; then
 	cd $SOURCES/$MISC3_DIR
 	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
 	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
-	(make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$SOURCES/$LINUXSOURCE/ >/dev/null 2>&1)
+	(make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
 	cp *.ko $DEST/cache/sdcard/usr/local/bin
 	#cp blacklist*.conf $DEST/cache/sdcard/etc/modprobe.d/
 fi
 
 # MISC4 = NOTRO DRIVERS / special handling
 # MISC5 = sunxu display control
-if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCE == *sunxi* ]]; then
+if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sunxi* ]]; then
 	cd $SOURCES/$MISC5_DIR
-	cp $SOURCES/$LINUXSOURCE/include/video/sunxi_disp_ioctl.h .
+	cp $SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h .
 	make clean >/dev/null 2>&1
-	(make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC=$SOURCES/$LINUXSOURCE/ >/dev/null 2>&1)
+	(make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
 	install -m 755 a10disp $DEST/cache/sdcard/usr/local/bin
 fi
 }
