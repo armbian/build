@@ -13,14 +13,6 @@
 #
 #
 
-
-	# currently there is no option to create an image without root
-	# you can compile a kernel but you can complete the whole process
-	# if you find a way, please submit code corrections. Thanks.
-	if [ "$UID" -ne 0 ]
-		then echo "Please run as root";	exit
-	fi
-
 	# We'll use this tittle on all menus
 	backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
 	mkdir -p $DEST/debug $SRC/userpatches/kernel $SRC/userpatches/u-boot
