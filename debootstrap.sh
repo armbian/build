@@ -189,7 +189,7 @@ umount -l $DEST/cache/sdcard/sys
 KILLPROC=$(ps -uax | pgrep ntpd |        tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
 KILLPROC=$(ps -uax | pgrep dbus-daemon | tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
 
-display_alert "Closing deboostrap process and preparing cache." "" "info"
+display_alert "Closing debootstrap process and preparing cache." "" "info"
 tar cpf - --directory=$DEST/cache/sdcard/ --exclude=dev --exclude=proc --exclude=run --exclude=tmp --exclude=mnt --exclude=sys . \
 | pigz > $DEST/cache/rootfs/$RELEASE.tgz
 fi

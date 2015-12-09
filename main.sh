@@ -204,7 +204,7 @@
 	# Load libraries
 	source $SRC/lib/general.sh					# General functions
 	source $SRC/lib/configuration.sh			# Board configuration
-	source $SRC/lib/deboostrap.sh 				# System specific install
+	source $SRC/lib/debootstrap.sh 				# System specific install
 	source $SRC/lib/distributions.sh 			# System specific install
 	source $SRC/lib/patching.sh 				# Source patching
 	source $SRC/lib/boards.sh 					# Board specific install

@@ -152,7 +152,7 @@ It will be something like this:
 	lib/boards.sh			board specfic installation, kernel install, desktop install
 	lib/common.sh			creates environment, compiles, shrink image
 	lib/configuration.sh	boards presets - kernel source, config, modules, ...
-	lib/deboostrap.sh		basic system template creation
+	lib/debootstrap.sh		basic system template creation
 	lib/distributions.sh	system specific installation and fixes
 	lib/main.sh				user input and script calls
 	lib/patching.sh			board and system dependend kernel & u-boot patch calls
