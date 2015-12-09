@@ -34,8 +34,12 @@
 	# We'll use this tittle on all menus
 	backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
 
-	if [ "$USE_DIALOG" = "no" ]; then unset USE_DIALOG; else USE_DIALOG=yes; fi
-	if [ "$USE_DIALOG_LOGGING" = "yes" ]; then rm -f $DEST/debug/compilation.log; fi
+	if [ "$PROGRESS_DISPLAY" = "none" ]; then
+		OUTPUT_VERYSILENT=yes;
+	elif [ "$PROGRESS_DISPLAY" != "plain" ]; then
+		OUTPUT_DIALOG=yes;
+	fi
+	if [ "$PROGRESS_LOG_TO_FILE" = "yes" ]; then rm -f $DEST/debug/compilation.log; else unset PROGRESS_LOG_TO_FILE; fi
 
 	mkdir -p $DEST/debug $SRC/userpatches/kernel $SRC/userpatches/u-boot
 	echo -e "Place your patches and kernel.config / u-boot.config here.\n" > $SRC/userpatches/readme.txt

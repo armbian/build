@@ -41,12 +41,14 @@ if [ -d "$SOURCES/$BOOTSOURCEDIR" ]; then
 		fi	
 		
 		eval 'make $CTHREADS CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1' \
-		${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | \
-		dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'}
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'} \
+		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 	else
-		eval 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 2>&1' \
-		${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | \
-		dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'}
+		eval 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1' \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'} \
+		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 	fi
 
 
@@ -196,14 +198,18 @@ fi
 if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig; fi
 
 eval 'make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" zImage modules 2>&1' \
-	${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." 20 80'}
+	${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+	${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." 20 80'} \
+	${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 if [ ${PIPESTATUS[0]} -ne 0 ] || [ ! -f arch/arm/boot/zImage ]; then
 		display_alert "Kernel was not built" "@host" "err"
 	    exit 1
 fi
 eval 'make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" dtbs 2>&1' \
-	${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling Device Tree..." 20 80'}
+	${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+	${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling Device Tree..." 20 80'} \
+	${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 if [ ${PIPESTATUS[0]} -ne 0 ]; then
 		display_alert "DTBs was not build" "@host" "err"
