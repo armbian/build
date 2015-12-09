@@ -281,15 +281,18 @@
 
 
 	# compile sunxi tools
-	if [[ $LINUXFAMILY == *sun* ]]; then 
+	if [[ $LINUXFAMILY == sun*i ]]; then 
 		compile_sunxi_tools
+		[[ $BRANCH != "default" ]] && LINUXFAMILY="sunxi"
 	fi
 
 	# define some packages
-	if [[ $BRANCH == "next" ]] ; then KERNEL_BRACH="-next"; UBOOT_BRACH="-next"; else KERNEL_BRACH=""; UBOOT_BRACH=""; fi 
-	CHOOSEN_UBOOT=linux-u-boot"$UBOOT_BRACH"-"$BOARD"_"$REVISION"_armhf.deb
-	CHOOSEN_KERNEL=linux-image"$KERNEL_BRACH"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
-	CHOOSEN_ROOTFS=linux-"$RELEASE"-root"$ROOT_BRACH"-"$BOARD"_"$REVISION"_armhf
+	branch="${BRANCH//default/}"
+	[[ -n "$branch" ]] && branch="-"$branch
+	
+	CHOOSEN_UBOOT=linux-u-boot"$branch"-"$BOARD"_"$REVISION"_armhf.deb
+	CHOOSEN_KERNEL=linux-image"$branch"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
+	CHOOSEN_ROOTFS=linux-"$RELEASE"-root"$branch"-"$BOARD"_"$REVISION"_armhf
 	HEADERS_CACHE="${CHOOSEN_KERNEL/image/cache}"
 
 	# cleaning level 0,1,2,3
