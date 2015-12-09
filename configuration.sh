@@ -27,23 +27,23 @@
 	
 	# common options
 
-	REVISION="5.00" 										# all boards have same revision
-	SDSIZE="4000" 											# SD image size in MB
-	TZDATA=`cat /etc/timezone`								# Timezone for target is taken from host or defined here.
-	USEALLCORES="yes"                           			# Use all CPU cores for compiling
-	SYSTEMD="no"											# Enable or disable systemd on Jessie. 
-	OFFSET="1" 												# Bootloader space in MB (1 x 2048 = default)
-	BOOTSIZE="0" 											# Mb size of boot partition
-	MISC1="https://github.com/linux-sunxi/sunxi-tools.git"	# Allwinner fex compiler / decompiler	
-	MISC1_DIR="sunxi-tools"									# local directory
-	MISC2=""												# Reserved
-	MISC2_DIR=""											# local directory
-	MISC3="https://github.com/dz0ny/rt8192cu --depth 1"		# Realtek drivers
-	MISC3_DIR="rt8192cu"									# local directory
+	REVISION="5.00" # all boards have same revision
+	SDSIZE="4000" # SD image size in MB
+	TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
+	USEALLCORES="yes" # Use all CPU cores for compiling
+	SYSTEMD="no" # Enable or disable systemd on Jessie in debootstrap process 
+	OFFSET="1" # Bootloader space in MB (1 x 2048 = default)
+	BOOTSIZE="0" # Mb size of boot partition
+	MISC1="https://github.com/linux-sunxi/sunxi-tools.git" # Allwinner fex compiler / decompiler	
+	MISC1_DIR="sunxi-tools"	# local directory
+	MISC2="" # Reserved
+	MISC2_DIR="" # local directory
+	MISC3="https://github.com/dz0ny/rt8192cu" # Realtek drivers
+	MISC3_DIR="rt8192cu" # local directory
 	MISC4=""
 	MISC4_DIR=""
-	MISC5="https://github.com/hglm/a10disp/ --depth 1"		# Display changer for Allwinner
-	MISC5_DIR="sunxi-display-changer"						# local directory
+	MISC5="https://github.com/hglm/a10disp/" # Display changer for Allwinner
+	MISC5_DIR="sunxi-display-changer" # local directory
 
 
 

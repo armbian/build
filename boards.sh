@@ -148,6 +148,8 @@ install_board_specific (){
 		cp $SRC/lib/config/boot-cubox.cmd $DEST/cache/sdcard/boot/boot.cmd
 	elif [[ $BOARD == guitar* ]]; then
 		cp $SRC/lib/config/boot-guitar.cmd $DEST/cache/sdcard/boot/boot.cmd
+	elif [[ $BOARD == odroid* ]]; then
+		cp $SRC/lib/config/boot-odroid.ini $DEST/cache/sdcard/boot/boot.ini	
 	else
 		cp $SRC/lib/config/boot.cmd $DEST/cache/sdcard/boot/boot.cmd
 		# let's prepare for old kernel too
@@ -156,13 +158,14 @@ install_board_specific (){
 	fi
 
 	# if we have a special fat boot partition, alter rootfs=
-	if [ "$BOOTSIZE" -gt "0" ]; then
+	if [[ "$BOOTSIZE" -gt "0" && -f "$DEST/cache/sdcard/boot/boot.cmd" ]]; then
 		display_alert "Adjusting boot scripts" "$BOARD" "info"
 		sed -e 's/p1 /p2 /g' -i $DEST/cache/sdcard/boot/boot.cmd	
 		echo "/dev/mmcblk0p1        /boot   vfat    defaults        0       0" >> $DEST/cache/sdcard/etc/fstab
 	fi
 
 	# convert to uboot compatible script
+	[[ -f "$DEST/cache/sdcard/boot/boot.cmd" ]] && \
 	mkimage -C none -A arm -T script -d $DEST/cache/sdcard/boot/boot.cmd $DEST/cache/sdcard/boot/boot.scr >> /dev/null
 }
 
@@ -254,7 +257,8 @@ install_kernel (){
 	cd $DEST/cache/sdcard/usr/src/$HEADERS_DIR
 
 	if [ ! -f $DEST/cache/building/$HEADERS_CACHE.tgz ]; then		
-		chroot $DEST/cache/sdcard /bin/bash -c "cd /usr/src/$HEADERS_DIR && make headers_check; make headers_install ; make scripts" | dialog --progressbox "Compile kernel headers scripts ..." 20 70
+		chroot $DEST/cache/sdcard /bin/bash -c "cd /usr/src/$HEADERS_DIR && make headers_check; make headers_install ; make scripts" \
+		| dialog --progressbox "Compile kernel headers scripts ..." 20 70
 		rm -rf $DEST/cache/building/repack
 		mkdir -p $DEST/cache/building -p $DEST/cache/building/repack/usr/src/$HEADERS_DIR -p $DEST/cache/building/repack/DEBIAN
 		dpkg-deb -x $DEST/debs/$HEADERS_TMP $DEST/cache/building/repack
@@ -262,9 +266,9 @@ install_kernel (){
 		cp -R . $DEST/cache/building/repack/usr/src/$HEADERS_DIR
 		dpkg-deb -b $DEST/cache/building/repack $DEST/debs
 		rm -rf $DEST/cache/building/repack
-		tar czpf $DEST/cache/building/$HEADERS_CACHE".tgz" .	
+		tar cpf - .	| pigz > $DEST/cache/building/$HEADERS_CACHE".tgz"
 	else
-		tar xzpf $DEST/cache/building/$HEADERS_CACHE".tgz"
+		pigz -dc $DEST/cache/building/$HEADERS_CACHE".tgz" | tar xpf -		
 	fi
 		
 	# copy boot splash image

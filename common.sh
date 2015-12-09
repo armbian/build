@@ -103,9 +103,9 @@ END
 		[ ! -f "u-boot-dtb.bin" ] || cp u-boot-dtb.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT	
 		[ ! -f "$SRC/lib/bin/s500-bootloader.bin" ] || cp $SRC/lib/bin/s500-bootloader.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT/bootloader.bin
 	elif [[ $BOARD == odroid* ]] ; then	
-		[ ! -f "hardkernel/bl1.bin.hardkernel" ] || cp hardkernel/bl1.bin.hardkernel $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT	
-		[ ! -f "hardkernel/bl2.bin.hardkernel" ] || cp hardkernel/bl2.bin.hardkernel $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
-		[ ! -f "hardkernel/tzsw.bin.hardkernel" ] || cp hardkernel/tzsw.bin.hardkernel $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+		[ ! -f "sd_fuse/hardkernel/bl1.bin.hardkernel" ] || cp sd_fuse/hardkernel/bl1.bin.hardkernel $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT	
+		[ ! -f "sd_fuse/hardkernel/bl2.bin.hardkernel" ] || cp sd_fuse/hardkernel/bl2.bin.hardkernel $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+		[ ! -f "sd_fuse/hardkernel/tzsw.bin.hardkernel" ] || cp sd_fuse/hardkernel/tzsw.bin.hardkernel $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
 		[ ! -f "u-boot.bin" ] || cp u-boot.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT/
 	elif [[ $BOARD == udoo* ]] ; then
 		[ ! -f "u-boot.imx" ] || cp u-boot.imx $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
@@ -401,6 +401,11 @@ elif [[ $BOARD == *udoo* ]] ; then
 elif [[ $BOARD == *guitar* ]] ; then 
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/bootloader.bin of=$LOOP bs=512 seek=4097 conv=fsync > /dev/null 2>&1)
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-dtb.bin of=$LOOP bs=512 seek=6144 conv=fsync > /dev/null 2>&1)
+elif [[ $BOARD == *odroid* ]] ; then 
+	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/bl1.bin.hardkernel of=$LOOP seek=1 conv=fsync ) > /dev/null 2>&1
+	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/bl2.bin.hardkernel of=$LOOP seek=31 conv=fsync ) > /dev/null 2>&1
+	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.bin of=$LOOP bs=512 seek=63 conv=fsync ) > /dev/null 2>&1
+	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/tzsw.bin.hardkernel of=$LOOP seek=719 conv=fsync ) > /dev/null 2>&1
 else 
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1) 	
 fi
