@@ -157,45 +157,50 @@ compile_sunxi_tools (){
 
 
 compile_kernel (){
-#--------------------------------------------------------------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------------------------------
 # Compile kernel
-#--------------------------------------------------------------------------------------------------------------------------------
-display_alert "Compiling kernel" "@host" "info"
-sleep 2
+#---------------------------------------------------------------------------------------------------------------------------------
 
 if [ -d "$SOURCES/$LINUXSOURCEDIR" ]; then 
 
-cd $SOURCES/$LINUXSOURCEDIR/
-# delete previous creations
+	local branch="${BRANCH//default/}"
+	[[ -n "$branch" ]] && branch="-"$branch	
+	
+	# read kernel version to variable $VER
+	grab_version "$SOURCES/$LINUXSOURCEDIR"	
 
-# adding custom firmware to kernel source
-if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCEDIR/firmware; fi
+	display_alert "Compiling kernel" "@host" "info"
+	cd $SOURCES/$LINUXSOURCEDIR/
 
-# use proven config
-if [ "$KERNEL_KEEP_CONFIG" != "yes" ] || [ ! -f $SOURCES/$LINUXSOURCEDIR/.config ]; then cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config; fi
+	# adding custom firmware to kernel source
+	if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCEDIR/firmware; fi
 
-# hacks for banana
-if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
-sed -i 's/CONFIG_GMAC_CLK_SYS=y/CONFIG_GMAC_CLK_SYS=y\nCONFIG_GMAC_FOR_BANANAPI=y/g' .config
-fi
-
-# hack for deb builder. To pack what's missing in headers pack.
-cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
-
-export LOCALVERSION="-"$LINUXFAMILY 
-
-# this way of compilation is much faster. We can use multi threading here but not later
-if [ "$KERNEL_CONFIGURE" != "yes" ]; then
-	if [ "$BRANCH" = "default" ]; then
-		make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- silentoldconfig
-	else
-		make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
+	# use proven config
+	if [ "$KERNEL_KEEP_CONFIG" != "yes" ] || [ ! -f $SOURCES/$LINUXSOURCEDIR/.config ]; then 
+		cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config; 
 	fi
-else
-	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- oldconfig
-fi
 
-if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig; fi
+	# hacks for banana family
+	if [[ $LINUXFAMILY == "banana" ]] ; then
+		sed -i 's/CONFIG_GMAC_CLK_SYS=y/CONFIG_GMAC_CLK_SYS=y\nCONFIG_GMAC_FOR_BANANAPI=y/g' .config
+	fi
+
+	# hack for deb builder. To pack what's missing in headers pack.
+	cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
+
+	export LOCALVERSION="-"$LINUXFAMILY
+
+	# We can use multi threading here but not later since it's not working. This way of compilation is much faster. 
+	if [ "$KERNEL_CONFIGURE" != "yes" ]; then
+		if [ "$BRANCH" = "default" ]; then
+			make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- silentoldconfig
+		else
+			make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig			
+		fi
+	else
+		make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- oldconfig
+		make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig
+	fi
 
 eval 'make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" zImage modules 2>&1' \
 	${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
@@ -217,12 +222,6 @@ if [ ${PIPESTATUS[0]} -ne 0 ]; then
 fi
 
 
-if [[ $BRANCH == "next" ]] ; then
-	KERNEL_BRACH="-next"
-	else
-	KERNEL_BRACH=""
-fi 
-
 # different packaging for 4.3+ // probably temporaly soution
 KERNEL_PACKING="deb-pkg"
 IFS='.' read -a array <<< "$VER"
@@ -237,7 +236,7 @@ DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1 | d
 
 
 # we need a name
-CHOOSEN_KERNEL=linux-image"$KERNEL_BRACH"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
+CHOOSEN_KERNEL=linux-image"$branch"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
 cd ..
 mv *.deb $DEST/debs/ || exit
 else
