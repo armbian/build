@@ -16,6 +16,9 @@ compile_uboot (){
 #---------------------------------------------------------------------------------------------------------------------------------
 if [ -d "$SOURCES/$BOOTSOURCEDIR" ]; then
 	
+	local branch="${BRANCH//default/}"
+	[[ -n "$branch" ]] && branch="-"$branch	
+		
 	display_alert "Compiling uboot. Please wait." "$VER" "info"
 	echo `date +"%d.%m.%Y %H:%M:%S"` $SOURCES/$BOOTSOURCEDIR/$BOOTCONFIG >> $DEST/debug/install.log 
 	cd $SOURCES/$BOOTSOURCEDIR
@@ -44,22 +47,15 @@ if [ -d "$SOURCES/$BOOTSOURCEDIR" ]; then
 		eval 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 2>&1' \
 		${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | \
 		dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'}
-fi
+	fi
 
 
+	# create .deb package
 
-
-# create .deb package
-#
-if [[ $BRANCH == "next" ]] ; then
-	UBOOT_BRACH="-next"
-	else
-	UBOOT_BRACH=""
-fi 
-CHOOSEN_UBOOT="linux-u-boot"$UBOOT_BRACH"-"$BOARD"_"$REVISION"_armhf"
-UBOOT_PCK="linux-u-boot-"$BOARD""$UBOOT_BRACH
-mkdir -p $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
-mkdir -p $DEST/debs/$CHOOSEN_UBOOT/DEBIAN
+	CHOOSEN_UBOOT="linux-u-boot"$branch"-"$BOARD"_"$REVISION"_armhf"
+	UBOOT_PCK="linux-u-boot-"$BOARD""$branch
+	mkdir -p $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT $DEST/debs/$CHOOSEN_UBOOT/DEBIAN
+	
 # set up post install script
 cat <<END > $DEST/debs/$CHOOSEN_UBOOT/DEBIAN/postinst
 #!/bin/bash
@@ -72,6 +68,11 @@ if [[ \$DPKG_MAINTSCRIPT_PACKAGE == *cubox* ]] ; then
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *guitar* ]] ; then 
 	( dd if=/usr/lib/$CHOOSEN_UBOOT/bootloader.bin of=\$DEVICE bs=512 seek=4097 conv=fsync ) > /dev/null 2>&1
 	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot-dtb.bin of=\$DEVICE bs=512 seek=6144 conv=fsync ) > /dev/null 2>&1
+elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *odroid* ]] ; then 
+	( dd if=/usr/lib/$CHOOSEN_UBOOT/bl1.bin.hardkernel of=\$DEVICE seek=1 conv=fsync ) > /dev/null 2>&1
+	( dd if=/usr/lib/$CHOOSEN_UBOOT/bl2.bin.hardkernel of=\$DEVICE seek=31 conv=fsync ) > /dev/null 2>&1
+	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot.bin of=\$DEVICE bs=512 seek=63 conv=fsync ) > /dev/null 2>&1
+	( dd if=/usr/lib/$CHOOSEN_UBOOT/tzsw.bin.hardkernel of=\$DEVICE seek=719 conv=fsync ) > /dev/null 2>&1
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *udoo* ]] ; then 
 	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot.imx of=\$DEVICE bs=1024 seek=1 conv=fsync ) > /dev/null 2>&1
 else 
@@ -79,11 +80,12 @@ else
 fi
 exit 0
 END
+#
 
 chmod 755 $DEST/debs/$CHOOSEN_UBOOT/DEBIAN/postinst
 # set up control file
 cat <<END > $DEST/debs/$CHOOSEN_UBOOT/DEBIAN/control
-Package: linux-u-boot-$BOARD$UBOOT_BRACH
+Package: linux-u-boot-$BOARD$branch
 Version: $REVISION
 Architecture: armhf
 Maintainer: $MAINTAINER <$MAINTAINERMAIL>
@@ -94,34 +96,41 @@ Description: Uboot loader $VER
 END
 #
 
-if [[ $BOARD == cubox-i* ]] ; then
-	[ ! -f "SPL" ] || cp SPL u-boot.img $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
-elif [[ $BOARD == guitar* ]] ; then
-	[ ! -f "u-boot-dtb.bin" ] || cp u-boot-dtb.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT	
-	[ ! -f "$SRC/lib/bin/s500-bootloader.bin" ] || cp $SRC/lib/bin/s500-bootloader.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT/bootloader.bin
-elif [[ $BOARD == udoo* ]] ; then
-	[ ! -f "u-boot.imx" ] || cp u-boot.imx $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
-else
-	[ ! -f "u-boot-sunxi-with-spl.bin" ] || cp u-boot-sunxi-with-spl.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT 
-fi
+	# copy proper uboot files to place
+	if [[ $BOARD == cubox-i* ]] ; then
+		[ ! -f "SPL" ] || cp SPL u-boot.img $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+	elif [[ $BOARD == guitar* ]] ; then
+		[ ! -f "u-boot-dtb.bin" ] || cp u-boot-dtb.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT	
+		[ ! -f "$SRC/lib/bin/s500-bootloader.bin" ] || cp $SRC/lib/bin/s500-bootloader.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT/bootloader.bin
+	elif [[ $BOARD == odroid* ]] ; then	
+		[ ! -f "hardkernel/bl1.bin.hardkernel" ] || cp hardkernel/bl1.bin.hardkernel $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT	
+		[ ! -f "hardkernel/bl2.bin.hardkernel" ] || cp hardkernel/bl2.bin.hardkernel $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+		[ ! -f "hardkernel/tzsw.bin.hardkernel" ] || cp hardkernel/tzsw.bin.hardkernel $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+		[ ! -f "u-boot.bin" ] || cp u-boot.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT/
+	elif [[ $BOARD == udoo* ]] ; then
+		[ ! -f "u-boot.imx" ] || cp u-boot.imx $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+	else
+		[ ! -f "u-boot-sunxi-with-spl.bin" ] || cp u-boot-sunxi-with-spl.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT 
+	fi
 
-cd $DEST/debs
-display_alert "Target directory" "$DEST/debs/" "info"
-display_alert "Building deb" "$CHOOSEN_UBOOT.deb" "info"
-dpkg -b $CHOOSEN_UBOOT >/dev/null 2>&1
-rm -rf $CHOOSEN_UBOOT
-CHOOSEN_UBOOT=$CHOOSEN_UBOOT".deb"
-#
+	cd $DEST/debs
+	display_alert "Target directory" "$DEST/debs/" "info"
+	display_alert "Building deb" "$CHOOSEN_UBOOT.deb" "info"
+	dpkg -b $CHOOSEN_UBOOT >/dev/null 2>&1
+	rm -rf $CHOOSEN_UBOOT
+	CHOOSEN_UBOOT=$CHOOSEN_UBOOT".deb"
 
-FILESIZE=$(wc -c $DEST/debs/$CHOOSEN_UBOOT | cut -f 1 -d ' ')
 
-if [ $FILESIZE -lt 50000 ]; then
-	display_alert "Building failed, check configuration." "$CHOOSEN_UBOOT deleted" "err"
-	rm $DEST/debs/$CHOOSEN_UBOOT
-	exit
-fi
-else
-display_alert "Source file $1 does not exists. Check fetch_from_github configuration." "" "err"
+	FILESIZE=$(wc -c $DEST/debs/$CHOOSEN_UBOOT | cut -f 1 -d ' ')
+
+	if [ $FILESIZE -lt 50000 ]; then
+		display_alert "Building failed, check configuration." "$CHOOSEN_UBOOT deleted" "err"
+		rm $DEST/debs/$CHOOSEN_UBOOT
+		exit
+	fi
+	
+	else
+		display_alert "Source file $1 does not exists. Check fetch_from_github configuration." "" "err"
 fi
 }
 
