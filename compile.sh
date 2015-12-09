@@ -87,3 +87,7 @@ if [ "$BUILD_ALL" == "yes" ]; then
 else
 	source $SRC/lib/main.sh
 fi
+
+# If you are committing new version of this file, increment VERSION
+# Only integers are supported
+# VERSION=3

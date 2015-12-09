@@ -33,9 +33,11 @@ if [ -d "$SOURCES/$BOOTSOURCEDIR" ]; then
 				echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
 			fi
 		fi	
-	make $CTHREADS CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" >> $DEST/debug/install.log 2>&1
+	eval 'make $CTHREADS CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1' \
+		${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'}
 else
-	make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- >> $DEST/debug/install.log 2>&1
+	eval 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 2>&1' \
+		${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'}
 fi
 
 
@@ -141,13 +143,12 @@ if [ -d "$SOURCES/$LINUXSOURCEDIR" ]; then
 
 cd $SOURCES/$LINUXSOURCEDIR/
 # delete previous creations
-if [ "$KERNEL_CLEAN" = "yes" ]; then make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean | dialog --backtitle "$backtitle" --progressbox "Cleaning kernel source ..." 20 70; fi
 
 # adding custom firmware to kernel source
 if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCEDIR/firmware; fi
 
 # use proven config
-if [ "$KERNEL_KEEP_CONFIG" != "yes" ]; then cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config; fi
+if [ "$KERNEL_KEEP_CONFIG" != "yes" ] || [ ! -f $SOURCES/$LINUXSOURCEDIR/.config ]; then cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config; fi
 
 # hacks for banana
 if [[ $BOARD == banana* || $BOARD == orangepi* || $BOARD == lamobo* ]] ; then
@@ -157,20 +158,31 @@ fi
 # hack for deb builder. To pack what's missing in headers pack.
 cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
 
-if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig; fi
-
 export LOCALVERSION="-"$LINUXFAMILY 
 
 # this way of compilation is much faster. We can use multi threading here but not later
-make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- oldconfig
+if [ "$KERNEL_CONFIGURE" != "yes" ]; then
+	if [ "$BRANCH" = "default" ]; then
+		make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- silentoldconfig
+	else
+		make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
+	fi
+else
+	make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- oldconfig
+fi
 
-make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" zImage modules 2>&1 | dialog --backtitle "$backtitle" --progressbox "Compiling kernel $CCACHE ..." 20 80
+if [ "$KERNEL_CONFIGURE" = "yes" ]; then make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig; fi
+
+eval 'make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" zImage modules 2>&1' \
+	${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." 20 80'}
 
 if [ ${PIPESTATUS[0]} -ne 0 ] || [ ! -f arch/arm/boot/zImage ]; then
 		display_alert "Kernel was not built" "@host" "err"
 	    exit 1
 fi
-make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" dtbs 2>&1 | dialog --backtitle "$backtitle" --progressbox "Compiling DTB $CCACHE ..." 20 80
+eval 'make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" dtbs 2>&1' \
+	${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling Device Tree..." 20 80'}
+
 if [ ${PIPESTATUS[0]} -ne 0 ]; then
 		display_alert "DTBs was not build" "@host" "err"
 	    exit 1
