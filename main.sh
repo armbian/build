@@ -261,7 +261,7 @@
 	# Some old branches are tagged
 	#if [ "$BRANCH" == "default" ]; then	KERNELTAG="$LINUXBRANCH"; fi
 
-	[ $CLEAN_LEVEL == 4 ] && cleaning "$CLEAN_LEVEL"
+	[ "$CLEAN_LEVEL" == "4" ] && cleaning "$CLEAN_LEVEL"
 	
 	display_alert "source downloading" "@host" "info"
 	fetch_from_github "$BOOTLOADER" "$BOOTSOURCE" "$BOOTBRANCH" "yes"
@@ -289,7 +289,7 @@
 	HEADERS_CACHE="${CHOOSEN_KERNEL/image/cache}"
 
 	# cleaning level 0,1,2,3
-	[ $CLEAN_LEVEL != 4 ] && cleaning "$CLEAN_LEVEL"	
+	[ "$CLEAN_LEVEL" != "4" ] && cleaning "$CLEAN_LEVEL"	
 
 	# patching sources
 	patching_sources

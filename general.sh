@@ -174,7 +174,7 @@ grab_version ()
 		tmp=$(cat $1/Makefile | grep $dir | head -1 | awk '{print $(NF)}' | cut -d '=' -f 2)"#"
 		[[ $tmp != "#" ]] && VER=$VER"$tmp"
 	done
-	VER=${VER//#/.}; VER=${VER%.}; VER="v"${VER//.-/-}
+	VER=${VER//#/.}; VER=${VER%.}; VER=${VER//.-/-}
 }
 
 
