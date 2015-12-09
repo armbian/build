@@ -11,33 +11,39 @@
 
 
 compile_uboot (){
-#--------------------------------------------------------------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------------------------------
 # Compile uboot from sources
-#--------------------------------------------------------------------------------------------------------------------------------
-
+#---------------------------------------------------------------------------------------------------------------------------------
 if [ -d "$SOURCES/$BOOTSOURCEDIR" ]; then
+	
 	display_alert "Compiling uboot. Please wait." "$VER" "info"
 	echo `date +"%d.%m.%Y %H:%M:%S"` $SOURCES/$BOOTSOURCEDIR/$BOOTCONFIG >> $DEST/debug/install.log 
 	cd $SOURCES/$BOOTSOURCEDIR
 	make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
+	
 	# there are two methods of compilation
 	if [[ $BOOTCONFIG == *config* ]]; then
+	
 		make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- >/dev/null 2>&1
 		[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
 		[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
 		touch .scmversion
-		if [[ $BRANCH != "next" && $LINUXCONFIG == *sun* ]] ; then
-			## patch mainline uboot configuration to boot with old kernels
+		
+		# patch mainline uboot configuration to boot with old kernels
+		if [[ $BRANCH == "default" && $LINUXFAMILY == sun*i ]] ; then
 			if [ "$(cat $SOURCES/$BOOTSOURCEDIR/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
 				echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
 				echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
 			fi
 		fi	
-	eval 'make $CTHREADS CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1' \
-		${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'}
-else
-	eval 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 2>&1' \
-		${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'}
+		
+		eval 'make $CTHREADS CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1' \
+		${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | \
+		dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'}
+	else
+		eval 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- 2>&1' \
+		${USE_DIALOG_LOGGING:+' | tee -a $DEST/debug/compilation.log'} ${USE_DIALOG:+' | \
+		dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'}
 fi
 
 
