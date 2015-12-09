@@ -238,7 +238,7 @@
 	fi
 
 	# download packages for host	
-	PAK="aptly device-tree-compiler pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex ntpdate "
+	PAK="aptly device-tree-compiler pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex ntpdate pigz "
 	PAK=$PAK"gawk gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev "
 	PAK=$PAK"parted pkg-config expect gcc-arm-linux-gnueabi libncurses5-dev whiptail debian-keyring debian-archive-keyring"
 	
