@@ -93,7 +93,10 @@ create_board_package (){
 	if [[ $LINUXCONFIG == *sun* ]] ; then
 
 		# add sunxi tools	
-		tar xfz $SRC/lib/bin/sunxitools.tgz -C $destination/usr/local/bin
+		cp $SOURCES/$MISC1_DIR/sunxi-nand-part $destination/usr/local/bin/nand-part
+		cp $SOURCES/$MISC1_DIR/sunxi-fexc $destination/usr/local/bin/sunxi-fexc
+		ln -s $destination/usr/sbin/sunxi-fexc $destination/usr/sbin/fex2bin
+		ln -s $destination/usr/sbin/sunxi-fexc $destination/usr/sbin/bin2fex
 		if [ "$BRANCH" != "next" ]; then
 			# add soc temperature app
 			arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/local/bin/sunxi_tp_temp
