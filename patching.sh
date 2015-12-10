@@ -128,5 +128,5 @@ patching_sources(){
 	
 	cd $SOURCES/$BOOTSOURCEDIR
 	grab_version "$SOURCES/$BOOTSOURCEDIR"
-	advanced_patch "u-boot" "$BOOTSOURCE" "$BOARD" "$UBOOTTAG $VER"
+	advanced_patch "u-boot" "$BOOTSOURCE-$BRANCH" "$BOARD" "$BOOTSOURCE-$BRANCH $VER"
 }

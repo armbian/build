@@ -200,9 +200,12 @@
 
 		orangepiplus)#enabled
 			#description H3 quad core 1Gb SoC Wifi USB hub
-			#build 2wip
+			#build 4wip
 			LINUXFAMILY="sun8i"		
 			BOOTCONFIG="orangepi_plus_defconfig"
+			LINUXKERNEL="https://github.com/jwrdegoede/linux-sunxi"
+			LINUXSOURCE="hans"
+			KERNELBRANCH="sunxi-wip"
 		;;
 
 		cubox-i)#enabled
@@ -247,8 +250,7 @@
 		odroid)#enabled
 			#description Exynos5422 XU3/XU4 octa core
 			#build 3wip	
-			LINUXFAMILY="odroid"	
-			OFFSET="16" 
+			LINUXFAMILY="odroid"				
 			BOOTSIZE="16"
 			BOOTCONFIG="odroid_config"		
 			MODULES="ethernet wlan_8723bs bonding"
@@ -265,7 +267,7 @@
 	# board family configurations
 	case $LINUXFAMILY in
 	
-		sun4i|sun7i|sun6i|sun9i)
+		sun4i|sun7i|sun8i|sun6i|sun9i)
 			[[ -z $LINUXCONFIG && $BRANCH == "default" ]] && LINUXCONFIG="linux-"$LINUXFAMILY-"$BRANCH"
 			[[ -z $LINUXCONFIG && $BRANCH != "default" ]] && LINUXCONFIG="linux-sunxi-"$BRANCH
 			# Kernel
@@ -279,9 +281,15 @@
 			KERNEL_DEV_BRANCH=""
 			KERNEL_DEV_SOURCE="linux-vanilla"
 			# U-boot
-			UBOOT="git://git.denx.de/u-boot.git"
-			UBOOT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
-			UBOOT_SOURCE="u-boot"
+			UBOOT_DEFAULT="git://git.denx.de/u-boot.git"
+			UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
+			UBOOT_DEFAULT_SOURCE="u-boot"
+			UBOOT_NEXT=$UBOOT_DEFAULT
+			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
+			UBOOT_DEV=$UBOOT_DEFAULT
+			UBOOT_DEV_BRANCH=""
+			UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 		;;
 	
 		odroid)
@@ -291,9 +299,15 @@
 			KERNEL_NEXT='https://github.com/tobetter/linux'
 			KERNEL_NEXT_BRANCH="odroidxu4-v4.2"
 			KERNEL_NEXT_SOURCE="linux-odroid-next"		
-			UBOOT="https://github.com/hardkernel/u-boot.git"
-			UBOOT_BRANCH="odroidxu3-v2012.07"
-			UBOOT_SOURCE="u-boot-odroid"
+			UBOOT_DEFAULT="https://github.com/hardkernel/u-boot.git"
+			UBOOT_DEFAULT_BRANCH="odroidxu3-v2012.07"
+			UBOOT_DEFAULT_SOURCE="u-boot-odroid"
+			UBOOT_NEXT=$UBOOT_DEFAULT
+			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
+			UBOOT_DEV=$UBOOT_DEFAULT
+			UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 		;;
 		
 		udoo)
@@ -303,36 +317,60 @@
 			KERNEL_NEXT="https://github.com/patrykk/linux-udoo"
 			KERNEL_NEXT_BRANCH="4.2-5.0.11.p7.1"
 			KERNEL_NEXT_SOURCE="linux-udoo-next"		
-			UBOOT="https://github.com/UDOOboard/uboot-imx"
-			UBOOT_BRANCH="master"
-			UBOOT_SOURCE="u-boot-neo"
+			UBOOT_DEFAULT="https://github.com/UDOOboard/uboot-imx"
+			UBOOT_DEFAULT_BRANCH="master"
+			UBOOT_DEFAULT_SOURCE="u-boot-neo"
+			UBOOT_NEXT=$UBOOT_DEFAULT
+			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
+			UBOOT_DEV=$UBOOT_DEFAULT
+			UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 		;;
 		
 		neo)
 			KERNEL_DEFAULT='https://github.com/UDOOboard/linux_kernel'
 			KERNEL_DEFAULT_BRANCH="imx_3.14.28_1.0.0_ga_neo_dev"
 			KERNEL_DEFAULT_SOURCE="linux-udoo-neo"		
-			UBOOT="https://github.com/UDOOboard/uboot-imx"
-			UBOOT_BRANCH="master"
-			UBOOT_SOURCE="u-boot-neo"
+			UBOOT_DEFAULT="https://github.com/UDOOboard/uboot-imx"
+			UBOOT_DEFAULT_BRANCH="master"
+			UBOOT_DEFAULT_SOURCE="u-boot-neo"
+			UBOOT_NEXT=$UBOOT_DEFAULT
+			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
+			UBOOT_DEV=$UBOOT_DEFAULT
+			UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 		;;
 		
 		cubox)
 			KERNEL_DEFAULT='https://github.com/linux4kix/linux-linaro-stable-mx6'
 			KERNEL_DEFAULT_BRANCH="imx_3.14.28_1.0.0_ga_neo_dev"
 			KERNEL_DEFAULT_SOURCE="linux-linaro-lsk-v3.14-mx6"		
-			UBOOT="https://github.com/SolidRun/u-boot-imx6"
-			UBOOT_BRANCH="imx6"
-			UBOOT_SOURCE="u-boot-cubox"
+			UBOOT_DEFAULT="https://github.com/SolidRun/u-boot-imx6"
+			UBOOT_DEFAULT_BRANCH="imx6"
+			UBOOT_DEFAULT_SOURCE="u-boot-cubox"
+			UBOOT_NEXT=$UBOOT_DEFAULT
+			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
+			UBOOT_DEV=$UBOOT_DEFAULT
+			UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 		;;
 		
 		s500)
 			KERNEL_DEFAULT='https://github.com/LeMaker/linux-actions'
 			KERNEL_DEFAULT_BRANCH="s500-master"
 			KERNEL_DEFAULT_SOURCE="linux-s500"
-			UBOOT="https://github.com/LeMaker/u-boot-actions"
-			UBOOT_BRANCH="s500-master"
-			UBOOT_SOURCE="u-boot-s500"
+			UBOOT_DEFAULT="https://github.com/LeMaker/u-boot-actions"
+			UBOOT_DEFAULT_BRANCH="s500-master"
+			UBOOT_DEFAULT_SOURCE="u-boot-s500"
+			UBOOT_NEXT=$UBOOT_DEFAULT
+			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
+			UBOOT_DEV=$UBOOT_DEFAULT
+			UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 		;;	
 		
 		*) echo "Defaults not found"
@@ -346,9 +384,9 @@
 	[[ -z $LINUXKERNEL ]] && eval LINUXKERNEL=\$KERNEL_${BRANCH^^} 
 	[[ -z $LINUXSOURCE ]] && eval LINUXSOURCE=\$KERNEL_${BRANCH^^}"_SOURCE"
 	[[ -z $KERNELBRANCH ]] && eval KERNELBRANCH=\$KERNEL_${BRANCH^^}"_BRANCH"
-	[[ -z $BOOTLOADER ]] && eval BOOTLOADER=\$UBOOT
-	[[ -z $BOOTSOURCE ]] && eval BOOTSOURCE=\$UBOOT_SOURCE
-	[[ -z $BOOTBRANCH ]] && eval BOOTBRANCH=\$UBOOT_BRANCH
+	[[ -z $BOOTLOADER ]] && eval BOOTLOADER=\$UBOOT_${BRANCH^^}
+	[[ -z $BOOTSOURCE ]] && eval BOOTSOURCE=\$UBOOT_${BRANCH^^}"_SOURCE"
+	[[ -z $BOOTBRANCH ]] && eval BOOTBRANCH=\$UBOOT_${BRANCH^^}"_BRANCH"
 	[[ -z $CPUMIN && $LINUXFAMILY == sun*i ]] && CPUMIN="480000" && CPUMAX="1010000" && GOVERNOR="interactive"
 	[[ -z $CPUMIN && $LINUXFAMILY == odroid ]] && CPUMIN="600000" && CPUMAX="1800000" && GOVERNOR="conservative"
 	[[ -z $CPUMIN && $LINUXFAMILY == cubox ]] && CPUMIN="396000" && CPUMAX="996000" && GOVERNOR="interactive"
