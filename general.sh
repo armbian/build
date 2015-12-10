@@ -10,63 +10,44 @@
 #
 
 
-# cleaning <#>
-# 0 = make clean + del debs
-# 1 = only make clean
-# 2 = nothing
-# 3 = choosing kernel if present
-# 4 = del all output and sources
-
+# cleaning <target>
+#
+# target: what to clean
+# "make" - "make clean" for selected kernel and u-boot
+# "debs" - delete output/debs
+# "cache" - delete output/cache
+# "images" - delete output/images
+# "sources" - delete output/sources
+#
 cleaning()
 {
-case $1 in
-		1)	# Clean u-boot and kernel sources
-			if [ -d "$SOURCES/$BOOTSOURCEDIR" ]; then 
-				display_alert "Cleaning" "$SOURCES/$BOOTSOURCEDIR" "info"
-				cd $SOURCES/$BOOTSOURCEDIR
-				make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
-			fi
-				
-	[ -d "$SOURCES/$LINUXSOURCEDIR" ] && display_alert "Cleaning" "$SOURCES/$LINUXSOURCEDIR" "info" && cd $SOURCES/$LINUXSOURCEDIR && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean	
-	[ -f $DEST/cache/building/$HEADERS_CACHE.tgz ] && display_alert "Cleaning" "$HEADERS_CACHE.tgz" "info" && rm -f $DEST/cache/building/$HEADERS_CACHE.tgz
-	
-;;
-2) display_alert "No cleaning" "sources" "info"
-;;
-3)	# Choosing kernel if debs are present
-	if [[ $BRANCH == "next" ]]; then
-		MYARRAY=($(ls -1 $DEST/debs/linux-image* | awk '/next/' | sed ':a;N;$!ba;s/\n/;/g'))
-		else
-		MYARRAY=($(ls -1 $DEST/debs/linux-image* | awk '!/next/' | sed ':a;N;$!ba;s/\n/;/g'))
-	fi
-	if [[ ${#MYARRAY[@]} != "0" && $KERNEL_ONLY != "yes" ]]; then choosing_kernel; fi
-;;
-4)	# Delete all in output except repository
-	display_alert "Removing deb packages" "$DEST/debs/" "info"
-	rm -rf $DEST/debs
-	display_alert "Removing root filesystem cache" "$DEST/cache" "info"
-	rm -rf $DEST/cache
-	display_alert "Removing SD card images" "$DEST/images" "info"
-	rm -rf $DEST/images
-	display_alert "Removing sources" "$DEST/images" "info"
-	rm -rf $SOURCES
-;;
-*)	# Clean u-boot and kernel sources and remove debs
-	[ -d "$SOURCES/$BOOTSOURCEDIR" ] &&
-	display_alert "Cleaning" "$SOURCES/$BOOTSOURCEDIR" "info" && cd $SOURCES/$BOOTSOURCEDIR && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
-	[ -f "$DEST/debs/$CHOOSEN_UBOOT" ] && 
-	display_alert "Removing" "$DEST/debs/$CHOOSEN_UBOOT" "info" && rm $DEST/debs/$CHOOSEN_UBOOT
-	[ -d "$SOURCES/$LINUXSOURCEDIR" ] && 
-	display_alert "Cleaning" "$SOURCES/$LINUXSOURCEDIR" "info" && cd $SOURCES/$LINUXSOURCEDIR && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean	
-	[ -f "$DEST/debs/$CHOOSEN_KERNEL" ] && 
-	display_alert "Removing" "$DEST/debs/$CHOOSEN_KERNEL" "info" && rm $DEST/debs/$CHOOSEN_KERNEL
-	[ -f $DEST/cache/building/$HEADERS_CACHE.tgz ] && display_alert "Cleaning" "$HEADERS_CACHE.tgz" "info" && rm -f $DEST/cache/building/$HEADERS_CACHE.tgz
-;;
-esac
+	case $1 in
+		"make")	# clean u-boot and kernel sources
+		[ -d "$SOURCES/$BOOTSOURCEDIR" ] && display_alert "Cleaning" "$SOURCES/$BOOTSOURCEDIR" "info" && cd $SOURCES/$BOOTSOURCEDIR && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
+		[ -d "$SOURCES/$LINUXSOURCEDIR" ] && display_alert "Cleaning" "$SOURCES/$LINUXSOURCEDIR" "info" && cd $SOURCES/$LINUXSOURCEDIR && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean
+		;;
+
+		"debs") # delete output/debs
+		[ -d "$DEST/debs" ] && display_alert "Cleaning" "$DEST/debs" "info" && rm -rf $DEST/debs
+		;;
+
+		"cache") # delete output/cache
+		[ -d "$DEST/cache" ] && display_alert "Cleaning" "$DEST/cache" "info" && rm -rf $DEST/cache
+		;;
+
+		"images") # delete output/images
+		[ -d "$DEST/images" ] && display_alert "Cleaning" "$DEST/images" "info" && rm -rf $DEST/images
+		;;
+
+		"sources") # delete output/sources
+		[ -d "$SOURCES" ] && display_alert "Cleaning" "$SOURCES" "info" && rm -rf $SOURCES
+		;;
+
+		*) # unknown
+		display_alert "Cleaning: unrecognized option" "$1" "wrn"
+		;;
+	esac
 }
-
-
-
 
 # fetch_from_github <URL> <directory> <tag> <tagsintosubdir>
 #

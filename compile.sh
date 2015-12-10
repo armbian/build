@@ -13,8 +13,9 @@
 # method
 KERNEL_ONLY="no"					# build only kernel
 KERNEL_CONFIGURE="no"					# want to change my default configuration
-CLEAN_LEVEL=""						# 0 = make clean + del debs, 1 = only make clean, 2 = nothing
-							# 3 = choosing kernel if present 4 = del all output
+CLEAN_LEVEL="make,debs"					# comma-sparated list of clean targets: "make" = make clean for selected kernel and u-boot,
+							# "images" = delete "./output/images", "debs" = delete "./output/debs",
+							# "cache" = delete "./output/cache", "sources" = delete "./sources"
 # user 
 AFTERINSTALL=""						# last command before closing image, example: apt-get install joe
 DEST_LANG="en_US.UTF-8"					# sl_SI.UTF-8, en_US.UTF-8
@@ -90,4 +91,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=3
+# VERSION=4

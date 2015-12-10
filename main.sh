@@ -265,7 +265,7 @@
 	# Some old branches are tagged
 	#if [ "$BRANCH" == "default" ]; then	KERNELTAG="$LINUXBRANCH"; fi
 
-	[[ "$CLEAN_LEVEL" == "4" ]] && cleaning "$CLEAN_LEVEL"
+	[[ "$CLEAN_LEVEL" == *sources* ]] && cleaning "sources"
 	
 	display_alert "source downloading" "@host" "info"
 	fetch_from_github "$BOOTLOADER" "$BOOTSOURCE" "$BOOTBRANCH" "yes"
@@ -295,8 +295,17 @@
 	CHOOSEN_ROOTFS=linux-"$RELEASE"-root"$branch"-"$BOARD"_"$REVISION"_armhf
 	HEADERS_CACHE="${CHOOSEN_KERNEL/image/cache}"
 
-	# cleaning level 0,1,2,3
-	[[ "$CLEAN_LEVEL" != "4" ]] && cleaning "$CLEAN_LEVEL"	
+	# Choosing kernel if debs are present
+	#if [[ $BRANCH == "next" ]]; then
+	#	MYARRAY=($(ls -1 $DEST/debs/linux-image* | awk '/next/' | sed ':a;N;$!ba;s/\n/;/g'))
+	#	else
+	#	MYARRAY=($(ls -1 $DEST/debs/linux-image* | awk '!/next/' | sed ':a;N;$!ba;s/\n/;/g'))
+	#fi
+	#if [[ ${#MYARRAY[@]} != "0" && $KERNEL_ONLY != "yes" ]]; then choosing_kernel; fi
+
+	for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
+		[ "$option" != "sources" ] && cleaning "$option"
+	done
 
 	# patching sources
 	patching_sources
