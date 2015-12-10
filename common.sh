@@ -152,6 +152,7 @@ compile_sunxi_tools (){
 	rm -f sunxi-fexc sunxi-nand-part
 	make $CTHREADS 'sunxi-nand-part' CC=arm-linux-gnueabihf-gcc >> $DEST/debug/install.log 
 	make $CTHREADS 'sunxi-fexc' CC=arm-linux-gnueabihf-gcc >> $DEST/debug/install.log 
+	make $CTHREADS 'meminfo' CC=arm-linux-gnueabihf-gcc >> $DEST/debug/install.log 
 
 }
 
