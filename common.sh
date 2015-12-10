@@ -75,6 +75,7 @@ elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *odroid* ]] ; then
 	( dd if=/usr/lib/$CHOOSEN_UBOOT/bl2.bin.hardkernel of=\$DEVICE seek=31 conv=fsync ) > /dev/null 2>&1
 	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot.bin of=\$DEVICE bs=512 seek=63 conv=fsync ) > /dev/null 2>&1
 	( dd if=/usr/lib/$CHOOSEN_UBOOT/tzsw.bin.hardkernel of=\$DEVICE seek=719 conv=fsync ) > /dev/null 2>&1
+	( dd if=/dev/zero of=\$DEVICE seek=1231 count=32 bs=512 conv=fsync ) > /dev/null 2>&1
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *udoo* ]] ; then 
 	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot.imx of=\$DEVICE bs=1024 seek=1 conv=fsync ) > /dev/null 2>&1
 else 
@@ -170,7 +171,7 @@ if [ -d "$SOURCES/$LINUXSOURCEDIR" ]; then
 	# read kernel version to variable $VER
 	grab_version "$SOURCES/$LINUXSOURCEDIR"	
 
-	display_alert "Compiling kernel" "@host" "info"
+	display_alert "Compiling $BRANCH kernel" "@host" "info"
 	cd $SOURCES/$LINUXSOURCEDIR/
 
 	# adding custom firmware to kernel source
@@ -412,6 +413,7 @@ elif [[ $BOARD == *odroid* ]] ; then
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/bl2.bin.hardkernel of=$LOOP seek=31 conv=fsync ) > /dev/null 2>&1
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.bin of=$LOOP bs=512 seek=63 conv=fsync ) > /dev/null 2>&1
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/tzsw.bin.hardkernel of=$LOOP seek=719 conv=fsync ) > /dev/null 2>&1
+	( dd if=/dev/zero of=$LOOP seek=1231 count=32 bs=512 conv=fsync ) > /dev/null 2>&1
 else 
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1) 	
 fi
