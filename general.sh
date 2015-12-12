@@ -282,3 +282,117 @@ while [[ $j -lt ${#DISTROS[@]} ]]
         j=$[$j+1]
 done
 }
+
+# prepare_host
+#
+# * checks and installs necessary packages
+# * creates directory structure
+# * changes system settings
+#
+prepare_host() {
+
+	display_alert "Preparing" "host" "info"
+
+	# dialog may be used to display progress
+	if [[ "$(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null)" != *ii* ]]; then
+		display_alert "Installing package" "dialog" "info"
+		apt-get install -qq -y dialog >/dev/null 2>&1
+	fi
+
+	# wget is needed
+	if [[ "$(dpkg-query -W -f='${db:Status-Abbrev}\n' wget 2>/dev/null)" != *ii* ]]; then
+		display_alert "Installing package" "wget" "info"
+		apt-get install -qq -y wget >/dev/null 2>&1
+	fi
+
+	# need lsb_release to decide what to install
+	if [[ "$(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null)" != *ii* ]]; then
+		display_alert "Installing package" "lsb-release" "info"
+		apt-get install -qq -y lsb-release >/dev/null 2>&1
+	fi
+
+	# packages list for host
+	PAK="aptly ca-certificates device-tree-compiler pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex ntpdate pigz \
+	gawk gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate\
+	parted pkg-config expect libncurses5-dev whiptail debian-keyring debian-archive-keyring"
+
+	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
+	# set NO_APT_CACHER=yes to prevent installation errors in such case
+	if [ "$NO_APT_CACHER" != "yes" ]; then PAK="$PAK apt-cacher-ng"; fi
+
+	local codename=$(lsb_release -sc)
+	if [[ $codename == "" || "jessie trusty wily" != *"$codename"* ]]; then
+		display_alert "Host system support was not tested" "${codename:-(unknown)}" "wrn"
+	fi
+
+	if [ "$codename" = "jessie" ]; then
+		PAK="$PAK crossbuild-essential-armhf";
+		if [ ! -f "/etc/apt/sources.list.d/crosstools.list" ]; then
+			display_alert "Adding repository for jessie" "cross-tools" "info"
+			dpkg --add-architecture armhf > /dev/null 2>&1
+			echo 'deb http://emdebian.org/tools/debian/ jessie main' > /etc/apt/sources.list.d/crosstools.list
+			wget 'http://emdebian.org/tools/debian/emdebian-toolchain-archive.key' -O - | apt-key add - >/dev/null
+		fi
+	fi
+
+	if [ "$codename" = "trusty" ]; then
+		PAK="$PAK libc6-dev-armhf-cross";
+		if [ ! -f "/etc/apt/sources.list.d/aptly.list" ]; then
+			display_alert "Adding repository for trusty" "aptly" "info"
+			echo 'deb http://repo.aptly.info/ squeeze main' > /etc/apt/sources.list.d/aptly.list
+			apt-key adv --keyserver keys.gnupg.net --recv-keys E083A3782A194991
+		fi
+	fi
+
+	if [ "$codename" = "wily" ]; then PAK="$PAK gcc-4.9-arm-linux-gnueabihf"; fi
+
+	local deps=()
+	local installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
+
+	for packet in $PAK; do
+		grep -q -x -e "$packet" <<< "$installed"
+		if [ "$?" -ne "0" ]; then deps+=("$packet"); fi
+	done
+
+	if [ "${#deps[@]}" -gt "0" ]; then
+		eval '( apt-get update; apt-get -y install "${deps[@]}" )' \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/output.log'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing ${#deps[@]} host dependencies..." 20 80'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+	fi
+
+	# TODO: Check for failed installation process
+	# test exit code propagation for commands in parentheses
+
+	# enable arm binary format so that the cross-architecture chroot environment will work
+	test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
+
+	# create directory structure
+	mkdir -p $SOURCES $DEST/debug $SRC/userpatches/
+	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
+
+	# TODO: needs better documentation
+	echo 'Place your patches and kernel.config / u-boot.config here.' > $SRC/userpatches/readme.txt
+	echo 'They will be automatically included if placed here!' >> $SRC/userpatches/readme.txt
+
+	# legacy kernel compilation needs cross-gcc version 4.9 or lower
+	# gcc-arm-linux-gnueabihf installs gcc version 5 by default on wily
+	if [ "$codename" = "wily" ]; then
+		local GCC=$(which arm-linux-gnueabihf-gcc)
+		while [ -L "$GCC" ]; do
+			GCC=$(readlink "$GCC")
+		done
+		local version=$(basename "$GCC" | awk -F '-' '{print $NF}')
+		if (( $(echo "$version > 4.9" | bc -l) )); then
+			update-alternatives --install /usr/bin/arm-linux-gnueabihf-gcc arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-4.9 10 \
+				--slave /usr/bin/arm-linux-gnueabihf-cpp arm-linux-gnueabihf-cpp /usr/bin/arm-linux-gnueabihf-cpp-4.9 \
+				--slave /usr/bin/arm-linux-gnueabihf-gcov arm-linux-gnueabihf-gcov /usr/bin/arm-linux-gnueabihf-gcov-4.9
+
+			update-alternatives --install /usr/bin/arm-linux-gnueabihf-gcc arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-5 11 \
+				--slave /usr/bin/arm-linux-gnueabihf-cpp arm-linux-gnueabihf-cpp /usr/bin/arm-linux-gnueabihf-cpp-5 \
+				--slave /usr/bin/arm-linux-gnueabihf-gcov arm-linux-gnueabihf-gcov /usr/bin/arm-linux-gnueabihf-gcov-5
+
+			update-alternatives --set arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-4.9
+		fi
+	fi
+}

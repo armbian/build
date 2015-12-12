@@ -13,26 +13,18 @@
 #
 #
 
+# Include here to make "display_alert" and "prepare_host" available
+source $SRC/lib/general.sh					# General functions
+
 # Script parameters handling
 for i in "$@"; do
 	if [[ "$i" == *"="* ]]; then
 		parameter=${i%%=*}
 		value=${i##*=}
-		echo "[info] Command line: setting $parameter to ${value:-(empty)}"
+		display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
 		eval $parameter=$value
 	fi
 done
-
-# compile.sh version checking
-ver1=$(grep '^# VERSION' "$SRC/compile.sh" | cut -d'=' -f2)
-ver2=$(grep '^# VERSION' "$SRC/lib/compile.sh" | cut -d'=' -f2)
-if [ -z "$ver1" ] || [ "$ver1" -lt "$ver2" ]; then
-	echo -e "[\e[0;35m warn \x1B[0m] File $0 is outdated. Please copy it again, \nchange options if needed and restart compilation process"
-	read -p "Press <Ctrl-C> to abort compilation, <Enter> to continue"
-fi
-
-# We'll use this tittle on all menus
-backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
 
 if [ "$PROGRESS_DISPLAY" = "none" ]; then
 	OUTPUT_VERYSILENT=yes;
@@ -41,22 +33,16 @@ elif [ "$PROGRESS_DISPLAY" != "plain" ]; then
 fi
 if [ "$PROGRESS_LOG_TO_FILE" = "yes" ]; then rm -f $DEST/debug/compilation.log; else unset PROGRESS_LOG_TO_FILE; fi
 
-mkdir -p $DEST/debug $SRC/userpatches/kernel $SRC/userpatches/u-boot
-echo -e "Place your patches and kernel.config / u-boot.config here.\n" > $SRC/userpatches/readme.txt
-echo -e "They'll be automaticly included if placed here!" >> $SRC/userpatches/readme.txt
+# compile.sh version checking
+ver1=$(grep '^# VERSION' "$SRC/compile.sh" | cut -d'=' -f2)
+ver2=$(grep '^# VERSION' "$SRC/lib/compile.sh" | cut -d'=' -f2)
+if [ -z "$ver1" ] || [ "$ver1" -lt "$ver2" ]; then
+	display_alert "File $0 is outdated. Please overwrite is with updated version from" "$SRC/lib" "wrn"
+	read -p "Press <Ctrl-C> to abort compilation, <Enter> to ignore and continue"
+fi
 
-# Install some basic support if not here yet
-if [ $(dpkg-query -W -f='${Status}' whiptail 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
-	apt-get install -qq -y whiptail bc >/dev/null 2>&1
-fi 
-
-if [ $(dpkg-query -W -f='${Status}' bc 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
-	apt-get install -qq -y bc >/dev/null 2>&1
-fi 
-
-if [ $(dpkg-query -W -f='${Status}' dialog 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
-	apt-get install -qq -y dialog >/dev/null 2>&1
-fi 
+# We'll use this title on all menus
+backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
 
 # if language not set, set to english
 [ "$LANGUAGE" == "" ] && export LANGUAGE="en_US:en"
@@ -64,13 +50,8 @@ fi
 # default console if not set
 [ "$CONSOLE_CHAR" == "" ] && export CONSOLE_CHAR="UTF-8"
 
-# Add aptly repository for repo handling                    
-if [ ! -f "/etc/apt/sources.list.d/aptly.list" ]; then
-	echo "deb http://repo.aptly.info/ squeeze main" > /etc/apt/sources.list.d/aptly.list
-	apt-key adv --keyserver keys.gnupg.net --recv-keys E083A3782A194991
-	apt-get update
-fi
-
+# Check and fix dependencies, directory structure and settings
+prepare_host
 
 # Choose destination - creating board list from file configuration.sh
 if [ "$BOARD" == "" ]; then
@@ -90,7 +71,6 @@ if [ "$BOARD" == "" ]; then
 fi
 	
 if [ "$BOARD" == "" ]; then echo "ERROR: You have to choose one board"; exit; fi
-
 
 # This section is left out if we only compile kernel
 if [ "$KERNEL_ONLY" != "yes" ]; then
@@ -114,7 +94,6 @@ if [ "$KERNEL_ONLY" != "yes" ]; then
 
 	if [ "$RELEASE" == "" ]; then echo "ERROR: You have to choose one distribution"; exit; fi
 
-
 	# Choose to build a desktop
 	if [ "$BUILD_DESKTOP" == "" ]; then
 		IFS=";"
@@ -135,7 +114,6 @@ if [ "$KERNEL_ONLY" != "yes" ]; then
 	if [ "$BUILD_DESKTOP" == "" ]; then echo "ERROR: You need to choose"; exit; fi
 
 fi
-
 
 # Choose for which branch you want to compile
 if [ "$BRANCH" == "" ]; then	
@@ -194,7 +172,7 @@ unset IFS
 # naming to distro 
 if [[ "$RELEASE" == "precise" || "$RELEASE" == "trusty" ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
-# set hostname to the board	
+# set hostname to the board
 HOST="$BOARD"
 
 # The name of the job
@@ -202,15 +180,14 @@ VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
 echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION > $DEST/debug/install.log 
 
 # Load libraries
-source $SRC/lib/general.sh					# General functions
 source $SRC/lib/configuration.sh			# Board configuration
 source $SRC/lib/debootstrap.sh 				# System specific install
 source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/patching.sh 				# Source patching
-source $SRC/lib/boards.sh 					# Board specific install
-source $SRC/lib/desktop.sh 					# Desktop specific install
-source $SRC/lib/common.sh 					# Functions 
-source $SRC/lib/makeboarddeb.sh 			# Create board support package 
+source $SRC/lib/boards.sh 				# Board specific install
+source $SRC/lib/desktop.sh 				# Desktop specific install
+source $SRC/lib/common.sh 				# Functions
+source $SRC/lib/makeboarddeb.sh 			# Create board support package
 
 # needed if process failed in the middle
 umount_image
@@ -241,15 +218,6 @@ else
 	display_alert "Building" "$VERSION" "info"
 fi
 
-# download packages for host	
-PAK="aptly device-tree-compiler pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex ntpdate pigz "
-PAK=$PAK"gawk gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev "
-PAK=$PAK"parted pkg-config expect gcc-arm-linux-gnueabi libncurses5-dev whiptail debian-keyring debian-archive-keyring"
-
-if [ "$(LANGUAGE=english apt-get -s install $PAK | grep "0 newly installed")" == "" ]; then
-	install_packet "$PAK" "Checking and installing host dependencies" "host"
-fi
-
 # sync clock
 if [ "$SYNC_CLOCK" != "no" ]; then
 	display_alert "Synching clock" "host" "info"
@@ -278,7 +246,6 @@ if [[ -n "$MISC2" ]]; then fetch_from_github "$MISC2" "$MISC2_DIR"; fi
 if [[ -n "$MISC3" ]]; then fetch_from_github "$MISC3" "$MISC3_DIR"; fi
 if [[ -n "$MISC4" ]]; then fetch_from_github "$MISC4" "$MISC4_DIR"; fi
 if [[ -n "$MISC5" ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
-
 
 # compile sunxi tools
 if [[ $LINUXFAMILY == sun*i ]]; then 
@@ -313,7 +280,6 @@ patching_sources
 # Compile source if packed not exits
 [ ! -f "$DEST/debs/$CHOOSEN_UBOOT" ] && compile_uboot
 [ ! -f "$DEST/debs/$CHOOSEN_KERNEL" ] && compile_kernel
-
 
 if [ "$KERNEL_ONLY" == "yes" ]; then
 	[[ -n "$RELEASE" ]] && create_board_package
