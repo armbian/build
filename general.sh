@@ -312,9 +312,9 @@ prepare_host() {
 	fi
 
 	# packages list for host
-	PAK="aptly ca-certificates device-tree-compiler pv bc lzop zip binfmt-support bison build-essential ccache debootstrap flex ntpdate pigz \
-	gawk gcc-arm-linux-gnueabihf lvm2 qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate\
-	parted pkg-config expect libncurses5-dev whiptail debian-keyring debian-archive-keyring"
+	PAK="aptly ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate pigz \
+	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
+	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring"
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
@@ -344,7 +344,7 @@ prepare_host() {
 		fi
 	fi
 
-	if [ "$codename" = "wily" ]; then PAK="$PAK gcc-4.9-arm-linux-gnueabihf"; fi
+	if [ "$codename" = "wily" ]; then PAK="$PAK gcc-4.9-arm-linux-gnueabihf libc6-dev-armhf-cross"; fi
 
 	local deps=()
 	local installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
