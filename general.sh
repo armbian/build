@@ -296,19 +296,19 @@ prepare_host() {
 	# dialog may be used to display progress
 	if [[ "$(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null)" != *ii* ]]; then
 		display_alert "Installing package" "dialog" "info"
-		apt-get install -qq -y dialog >/dev/null 2>&1
+		apt-get install -qq -y --no-install-recommends dialog >/dev/null 2>&1
 	fi
 
 	# wget is needed
 	if [[ "$(dpkg-query -W -f='${db:Status-Abbrev}\n' wget 2>/dev/null)" != *ii* ]]; then
 		display_alert "Installing package" "wget" "info"
-		apt-get install -qq -y wget >/dev/null 2>&1
+		apt-get install -qq -y --no-install-recommends wget >/dev/null 2>&1
 	fi
 
 	# need lsb_release to decide what to install
 	if [[ "$(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null)" != *ii* ]]; then
 		display_alert "Installing package" "lsb-release" "info"
-		apt-get install -qq -y lsb-release >/dev/null 2>&1
+		apt-get install -qq -y --no-install-recommends lsb-release >/dev/null 2>&1
 	fi
 
 	# packages list for host
@@ -355,7 +355,7 @@ prepare_host() {
 	done
 
 	if [ "${#deps[@]}" -gt "0" ]; then
-		eval '( apt-get update; apt-get -y install "${deps[@]}" )' \
+		eval '( apt-get update; apt-get -y --no-install-recommends install "${deps[@]}" )' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/output.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing ${#deps[@]} host dependencies..." 20 80'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}

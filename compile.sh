@@ -70,7 +70,7 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # Get updates of the main build libraries
 #--------------------------------------------------------------------------------------------------------------------------------
-apt-get -qq -y install git
+apt-get -qq -y --no-install-recommends install git
 if [ -d "$SRC/lib" ]; then
 	cd $SRC/lib
 	git pull
@@ -91,4 +91,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=4
+# VERSION=5
