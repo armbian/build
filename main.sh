@@ -175,10 +175,6 @@ if [[ "$RELEASE" == "precise" || "$RELEASE" == "trusty" ]]; then DISTRIBUTION="U
 # set hostname to the board
 HOST="$BOARD"
 
-# The name of the job
-VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
-echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION > $DEST/debug/install.log 
-
 # Load libraries
 source $SRC/lib/configuration.sh			# Board configuration
 source $SRC/lib/debootstrap.sh 				# System specific install
@@ -188,6 +184,10 @@ source $SRC/lib/boards.sh 				# Board specific install
 source $SRC/lib/desktop.sh 				# Desktop specific install
 source $SRC/lib/common.sh 				# Functions
 source $SRC/lib/makeboarddeb.sh 			# Create board support package
+
+# The name of the job
+VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
+echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION > $DEST/debug/install.log 
 
 # needed if process failed in the middle
 umount_image
