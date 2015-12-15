@@ -147,6 +147,7 @@
 			#build 5
 			LINUXFAMILY="sun6i"
 			BOOTLOADER="https://github.com/BPI-SINOVOIP/BPI-Mainline-uboot"
+			BOOTBRANCH="master"
 			BOOTCONFIG="Bananapi_M2_defconfig"
 			BOOTSOURCE="u-boot-bpi-m2"	
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
