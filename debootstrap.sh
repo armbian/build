@@ -92,13 +92,7 @@ fi
 if [ ! -f "$DEST/cache/rootfs/$RELEASE.tgz" ]; then
 
 # debootstrap base system
-if [[ $RELEASE == "jessie" && $SYSTEMD == "no" ]]; then sysvinit=",sysvinit-core"; fi
-debootstrap --include=openssh-server,debconf-utils$sysvinit --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox 20 70
-
-# remove systemd default load. It's installed and can be used with kernel parameter
-if [[ $RELEASE == "jessie" && $SYSTEMD == "no" ]]; then
-sed -i -e 's/systemd-sysv //g' $DEST/cache/sdcard/debootstrap/required
-fi
+debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox 20 70
 
 # we need emulator for second stage
 cp /usr/bin/qemu-arm-static $DEST/cache/sdcard/usr/bin/
@@ -137,7 +131,7 @@ device-tree-compiler dosfstools evtest figlet fbset fping git haveged hddtemp hd
 iperf ir-keytable iotop iozone3 iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev \
 module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo subversion \
 sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools weather-util weather-util-data wget \
-wpasupplicant iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan apt-transport-https sysbench libusb-dev dialog"
+wpasupplicant iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan apt-transport-https sysbench libusb-dev dialog fake-hwclock"
 
 # generate locales and install packets
 display_alert "Install locales" "$DEST_LANG" "info"
