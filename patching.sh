@@ -35,6 +35,7 @@ advanced_patch () {
 	local description=$4
 
 	display_alert "Started patching process for" "$dest $description" "info"
+	display_alert "Looking for user patches in" "userpatches/$dest/$family" "info"
 
 	local names=()
 	local dirs=("$SRC/userpatches/$dest/$family/$device" "$SRC/userpatches/$dest/$family" "$SRC/lib/patch/$dest/$family/$device" "$SRC/lib/patch/$dest/$family")
