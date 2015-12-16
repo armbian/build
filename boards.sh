@@ -167,6 +167,9 @@ install_board_specific (){
 	# convert to uboot compatible script
 	[[ -f "$DEST/cache/sdcard/boot/boot.cmd" ]] && \
 	mkimage -C none -A arm -T script -d $DEST/cache/sdcard/boot/boot.cmd $DEST/cache/sdcard/boot/boot.scr >> /dev/null
+
+	# initial date for fake-hwclock
+	date -u '+%Y-%m-%d %H:%M:%S' > $DEST/cache/sdcard/etc/fake-hwclock.data
 }
 
 
