@@ -180,15 +180,9 @@ install_kernel (){
 	# configure MIN / MAX speed for cpufrequtils
 	echo "ENABLE=true" > $DEST/cache/sdcard/etc/default/cpufrequtils
 	echo "MIN_SPEED=$CPUMIN" >> $DEST/cache/sdcard/etc/default/cpufrequtils
-	echo "MAX_SPEED=$CPUMAX" >> $DEST/cache/sdcard/etc/default/cpufrequtils
-
-	# interactive currently available only on 3.4
-	if [[ $BRANCH != *next* ]];then
-		echo "GOVERNOR=interactive" >> $DEST/cache/sdcard/etc/default/cpufrequtils
-	else
-		echo "GOVERNOR=ondemand" >> $DEST/cache/sdcard/etc/default/cpufrequtils
-	fi
-
+	echo "MAX_SPEED=$CPUMAX" >> $DEST/cache/sdcard/etc/default/cpufrequtils	
+	echo "GOVERNOR=$GOVERNOR" >> $DEST/cache/sdcard/etc/default/cpufrequtils
+	
 	# set hostname 
 	echo $HOST > $DEST/cache/sdcard/etc/hostname
 
