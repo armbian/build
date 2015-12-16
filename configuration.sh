@@ -276,9 +276,11 @@
 			KERNEL_DEFAULT_BRANCH="sunxi-3.4"
 			KERNEL_DEFAULT_SOURCE="linux-sunxi"
 			KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
+			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 			KERNEL_NEXT_BRANCH="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1`
 			KERNEL_NEXT_SOURCE="linux-vanilla"
 			KERNEL_DEV='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
+			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 			KERNEL_DEV_BRANCH=""
 			KERNEL_DEV_SOURCE="linux-vanilla"
 			# U-boot
