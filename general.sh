@@ -372,7 +372,7 @@ prepare_host() {
 	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
 
 	# TODO: needs better documentation
-	echo 'Place your patches and kernel.config / u-boot.config here.' > $SRC/userpatches/readme.txt
+	echo 'Place your patches and kernel.config / u-boot.config / lib.config here.' > $SRC/userpatches/readme.txt
 	echo 'They will be automatically included if placed here!' >> $SRC/userpatches/readme.txt
 
 	# legacy kernel compilation needs cross-gcc version 4.9 or lower

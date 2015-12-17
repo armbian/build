@@ -398,6 +398,12 @@
 	[[ -z $CPUMIN && ($LINUXFAMILY == udoo || $LINUXFAMILY == neo ) ]] && CPUMIN="392000" && CPUMAX="996000" && GOVERNOR="interactive"
 	[[ -z $GOVERNOR ]] && GOVERNOR="ondemand"
 	
+	# For user override	
+	if [[ -f "$SRC/userpatches/lib.config" ]]; then 
+		display_alert "Using user configuration override" "$SRC/userpatches/lib.config" "info"
+		source $SRC/userpatches/lib.config
+	fi
+	
 # debug
 echo -e "Config: $LINUXCONFIG\nKernel source: $LINUXKERNEL\nBranch: $KERNELBRANCH" >> $DEST/debug/install.log 
 echo -e "linuxsource: $LINUXSOURCE\nOffset: $OFFSET\nbootsize: $BOOTSIZE" >> $DEST/debug/install.log 
