@@ -18,6 +18,8 @@ Unzipped .raw images can be written with supplied imagewriter.exe on Windows XP/
 
 Image writting takes around 3 minutes on a slow, class 6 SD card.
 
+Make sure you use **good & reliable** SD card. If you encounter boot troubles, check them with [F3](http://oss.digirati.com.br/f3/) or [H2testw](http://www.heise.de/download/h2testw.html).
+
 # How to boot?
 
 Insert SD card into a slot and power the board. First boot takes around 3 minutes than it reboots and you will need to wait another one minute to login. This delay is because system updates package list and creates 128Mb emergency SWAP on the SD card.
