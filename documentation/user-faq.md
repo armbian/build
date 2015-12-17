@@ -65,7 +65,7 @@ After switching power on or rebooting, when u-boot loads up, press some key on t
 	Hit any key to stop autoboot:  0
 	sunxi#
 
-Enter these commands, replacing root device path if necessary. Select setenv line with ttyS0 for serial, tty1 for keyboard+monitor:
+Enter these commands, replacing root device path if necessary. Select setenv line with ttyS0 for serial, tty1 for keyboard+monitor (these are for booting with mainline kernel, check boot.cmd for your device for commands related to legacy kernel):
 
 	setenv bootargs init=/bin/bash root=/dev/mmcblk0p1 rootwait console=ttyS0,115200
 	# or
@@ -112,11 +112,11 @@ Unmount SD card, move it to the board and power on.
 
 To create a normal user do this:
 
-    adduser MyNewUsername
+	adduser MyNewUsername
 
 Put user to sudo group:
 
-    usermod -aG sudo MyNewUsername
+	usermod -aG sudo MyNewUsername
 
 # How to customize keyboard, time zone?
 
@@ -185,10 +185,10 @@ Check [this site](http://namhuy.net/1085/install-gui-on-debian-7-wheezy.html) fo
 
 	dpkg -r ramlog	
 	cp /etc/apt/sources.list{,.bak}
-    sed -i -e 's/ \(old-stable\|wheezy\)/ jessie/ig' /etc/apt/sources.list
-    apt-get update
-    apt-get --download-only dist-upgrade
-    apt-get dist-upgrade
+	sed -i -e 's/ \(old-stable\|wheezy\)/ jessie/ig' /etc/apt/sources.list
+	apt-get update
+	apt-get --download-only dist-upgrade
+	apt-get dist-upgrade
 
 
 # How to upgrade from Ubuntu Trusty to next LTS?
