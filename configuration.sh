@@ -28,7 +28,7 @@
 	# common options
 
 	REVISION="5.00" # all boards have same revision
-	SDSIZE="4000" # SD image size in MB
+	SDSIZE="4G" # SD image size in MB
 	TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 	USEALLCORES="yes" # Use all CPU cores for compiling
 	SYSTEMD="no" # Enable or disable systemd on Jessie in debootstrap process 

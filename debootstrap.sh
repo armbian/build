@@ -19,10 +19,10 @@ custom_debootstrap (){
 #---------------------------------------------------------------------------------------------------------------------------------
 
 # is boot partition to big?
-if [ "$SDSIZE" -le "$(($OFFSET+$BOOTSIZE))" ]; then 
-	display_alert "Image size too small." "$BOOTSIZE > $SDSIZE" "err"
-	exit
-fi
+#if [ "$SDSIZE" -le "$(($OFFSET+$BOOTSIZE))" ]; then
+#	display_alert "Image size too small." "$BOOTSIZE > $SDSIZE" "err"
+#	exit
+#fi
 
 # create needed directories and mount image to next free loop device
 rm -rf $DEST/cache/sdcard/
