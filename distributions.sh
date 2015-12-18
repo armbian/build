@@ -94,6 +94,11 @@ jessie)
 		# disable some getties
 		sed -e 's/5:23:respawn/#5:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
 		sed -e 's/6:23:respawn/#6:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab		
+		
+		# seting timeout
+		mkdir -p $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/
+		echo "[Service]" > $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf 
+		echo "TimeoutStopSec=10" >> $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf		
 		;;
 
 # Ubuntu Trusty

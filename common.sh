@@ -323,6 +323,7 @@ losetup $LOOP $RAWIMAGE
 PARTSTART=$(parted $LOOP unit s print -sm | tail -1 | cut -d: -f2 | sed 's/s//')
 PARTEND=$(parted $LOOP unit s print -sm | head -3 | tail -1 | cut -d: -f3 | sed 's/s//') # end of first partition
 PARTSTARTBLOCKS=$(($PARTSTART*512))
+echo "PARTSTART $PARTSTART PARTEND $PARTEND PARTSTARTBLOCKS $PARTSTARTBLOCKS" >> $DEST/debug/install.log 
 sleep 1; losetup -d $LOOP
 # convert from EXT4 to EXT2
 sleep 1; losetup -o $PARTSTARTBLOCKS $LOOP $RAWIMAGE
@@ -333,6 +334,7 @@ resize2fs $LOOP -M >/dev/null 2>&1
 BLOCKSIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Block count" | awk '{ print $(NF)}')
 RESERVEDBLOCKSIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Reserved block count" | awk '{ print $(NF)}')
 BLOCKSIZE=$(($PARTSTART+$BLOCKSIZE+$RESERVEDBLOCKSIZE))
+echo "BLOCKSIZE $BLOCKSIZE RESERVEDBLOCKSIZE $RESERVEDBLOCKSIZE" >> $DEST/debug/install.log 
 resize2fs $LOOP $BLOCKSIZE >/dev/null 2>&1
 tune2fs -O has_journal $LOOP >/dev/null 2>&1
 tune2fs -o journal_data_writeback $LOOP >/dev/null 2>&1
@@ -345,7 +347,7 @@ PARTITIONS=$(parted -m $LOOP 'print' | tail -1 | awk -F':' '{ print $1 }')
 
 #((echo d; echo $PARTITIONS; echo n; echo p; echo ; echo ; echo "+"$NEWSIZE"K"; echo w;) | fdisk $LOOP)>/dev/null
 parted $LOOP rm $PARTITIONS >/dev/null 2>&1
-NEWSIZE=$(($BLOCKSIZE*4700/1024)) # overhead hardcoded to number
+NEWSIZE=$((($BLOCKSIZE+$RESERVEDBLOCKSIZE)*5000/1024)) # overhead hardcoded to number
 STARTFROM=$(($PARTEND+1)) # if we have two partitions, start of second one is where first one ends +1
 [[ $PARTITIONS == 1 ]] && STARTFROM=$PARTSTART
 
@@ -357,6 +359,7 @@ TRUNCATE=$(parted -m $LOOP 'unit s print' | tail -1 | awk -F':' '{ print $3 }' |
 TRUNCATE=$((($TRUNCATE+1)*512))
 truncate -s $TRUNCATE $RAWIMAGE >/dev/null 2>&1
 losetup -d $LOOP
+echo "NEWSIZE $NEWSIZE STARTFROM $STARTFROM TRUNCATE $TRUNCATE" >> $DEST/debug/install.log 
 }
 
 
