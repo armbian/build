@@ -78,7 +78,7 @@ if [ -d "$SOURCES/$2/$GITHUBSUBDIR" ]; then
 	cd $SOURCES/$2/$GITHUBSUBDIR
 	git checkout -q $FORCE $3
 	display_alert "... updating" "$2" "info"
-	PULL=$(git pull -q)
+	PULL=$(git pull)
 else	
 	if [[ -n $3 && -n "$(git ls-remote $1 | grep "$tag")" ]]; then	
 		display_alert "... creating a shallow clone" "$2 $3" "info"
