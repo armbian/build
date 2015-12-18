@@ -92,21 +92,7 @@ jessie)
 		
 		# disable some getties
 		sed -e 's/5:23:respawn/#5:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
-		sed -e 's/6:23:respawn/#6:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
-		
-		# install ramlog if we don't have systemd
-		if [[ $SYSTEMD == "no" ]]; then
-			cp $SRC/lib/bin/ramlog_2.0.0_all.deb $DEST/cache/sdcard/tmp
-			chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb >/dev/null 2>&1" 
-			# enabled back at first run. To remove errors
-			chroot $DEST/cache/sdcard /bin/bash -c "service ramlog disable >/dev/null 2>&1"
-			rm $DEST/cache/sdcard/tmp/ramlog_2.0.0_all.deb
-			sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $DEST/cache/sdcard/etc/default/ramlog
-			# supress warning
-			sed -e 's/update-rc.d $prog.*/update-rc.d $prog defaults/g' -i $DEST/cache/sdcard/etc/init.d/ramlog				
-			sed -e 's/$remote_fs $time/$remote_fs $time ramlog/g' -i $DEST/cache/sdcard/etc/init.d/rsyslog
-			sed -e 's/umountnfs $time/umountnfs $time ramlog/g' -i $DEST/cache/sdcard/etc/init.d/rsyslog  
-		fi
+		sed -e 's/6:23:respawn/#6:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab		
 		;;
 
 # Ubuntu Trusty
