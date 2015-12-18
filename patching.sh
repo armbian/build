@@ -11,7 +11,10 @@
 #
 # Source patching functions
 #
-#
+# Functions:
+# advanced_patch
+# process_patch_file
+# patching_sources
 
 # advanced_patch <dest> <family> <device> <description>
 #

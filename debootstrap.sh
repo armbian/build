@@ -9,8 +9,8 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 #
-# Create system template
-#
+# Functions:
+# custom_debootstrap
 #
 
 custom_debootstrap (){
