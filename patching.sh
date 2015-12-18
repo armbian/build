@@ -11,7 +11,10 @@
 #
 # Source patching functions
 #
-#
+# Functions:
+# advanced_patch
+# process_patch_file
+# patching_sources
 
 # advanced_patch <dest> <family> <device> <description>
 #
@@ -60,7 +63,7 @@ advanced_patch () {
 				if [ -s "$dir/$name" ]; then
 					process_patch_file "$dir/$name" "$description"
 				else
-					display_alert "... ${description} ${name}" "skipped" "info"
+					display_alert "... $name" "skipped" "info"
 				fi
 				break # next name
 			fi
@@ -84,13 +87,13 @@ process_patch_file() {
 		| awk '{print $NF}' | sed -n 's/,//p' | xargs -I % sh -c 'rm %'
 
 	# main patch command
-	echo "$patch" >> $DEST/debug/install.log
+	echo "$patch $description" >> $DEST/debug/install.log
 	patch --batch --silent -p1 -N < $patch >> $DEST/debug/install.log 2>&1
 
 	if [ $? -ne 0 ]; then
-		display_alert "... $(basename $patch) $description" "failed" "wrn";
+		display_alert "... $(basename $patch)" "failed" "wrn";
 	else
-		display_alert "... $(basename $patch) $description" "succeeded" "info"
+		display_alert "... $(basename $patch)" "succeeded" "info"
 	fi
 }
 

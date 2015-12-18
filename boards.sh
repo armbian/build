@@ -9,9 +9,9 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 #
-# Board speciefic
-#
-#
+# Functions:
+# install_board_specific
+# install_kernel
 
 install_board_specific (){
 #---------------------------------------------------------------------------------------------------------------------------------

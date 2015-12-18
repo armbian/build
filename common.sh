@@ -9,6 +9,13 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 
+# Functions:
+# compile_uboot
+# compile_sunxi_tools
+# compile_kernel
+# install_external_applications
+# shrinking_raw_image
+# closing_image
 
 compile_uboot (){
 #---------------------------------------------------------------------------------------------------------------------------------

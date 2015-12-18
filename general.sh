@@ -9,6 +9,18 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 
+# Functions:
+# cleaning
+# fetch_from_github
+# display_alert
+# check_error
+# install_packet
+# grab_version
+# choosing_kernel
+# fingerprint_image
+# umount_image
+# addtorepo
+# prepare_host
 
 # cleaning <target>
 #

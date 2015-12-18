@@ -11,7 +11,8 @@
 #
 # Create board support packages
 #
-#
+# Functions:
+# create_board_package
 
 create_board_package (){
 #---------------------------------------------------------------------------------------------------------------------------------

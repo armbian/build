@@ -9,8 +9,8 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 #
-# Create system template
-#
+# Functions:
+# custom_debootstrap
 #
 
 custom_debootstrap (){
@@ -19,10 +19,10 @@ custom_debootstrap (){
 #---------------------------------------------------------------------------------------------------------------------------------
 
 # is boot partition to big?
-if [ "$SDSIZE" -le "$(($OFFSET+$BOOTSIZE))" ]; then 
-	display_alert "Image size too small." "$BOOTSIZE > $SDSIZE" "err"
-	exit
-fi
+#if [ "$SDSIZE" -le "$(($OFFSET+$BOOTSIZE))" ]; then
+#	display_alert "Image size too small." "$BOOTSIZE > $SDSIZE" "err"
+#	exit
+#fi
 
 # create needed directories and mount image to next free loop device
 rm -rf $DEST/cache/sdcard/
@@ -36,15 +36,13 @@ ROOTSTART=$(($BOOTSTART+($BOOTSIZE*2048)))
 BOOTEND=$(($ROOTSTART-1))
 
 # Create image file
-while read line;do
-  [[ "$line" =~ "records out" ]] &&
-  echo "$(( ${line%+*}*100/$SDSIZE +1 ))" | dialog --backtitle "$backtitle" --title "Creating blank image ($SDSIZE Mb), please wait ..." --gauge "" 5 70
-done< <( dd if=/dev/zero of=$DEST/cache/tmprootfs.raw bs=1M count=$SDSIZE 2>&1 &
-         pid=$!
-         sleep 1
-         while kill -USR1 $pid 2>/dev/null;do
-           sleep 1
-         done )
+
+if [ "$OUTPUT_DIALOG" = "yes" ]; then
+	(pv -n -s $SDSIZE -S /dev/zero | dd status=none of=$DEST/cache/tmprootfs.raw) 2>&1 \
+	| dialog --backtitle "$backtitle" --title "Creating blank image ($SDSIZE Mb), please wait ..." --gauge "" 5 70
+else
+	pv -p -b -r -s $SDSIZE -S /dev/zero | dd status=none of=$DEST/cache/tmprootfs.raw
+fi
 
 # Find first available free device
 LOOP=$(losetup -f)

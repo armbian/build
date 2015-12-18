@@ -8,7 +8,8 @@
 #
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
-
+# Functions:
+# install_distribution_specific
 
 install_distribution_specific (){
 #---------------------------------------------------------------------------------------------------------------------------------
