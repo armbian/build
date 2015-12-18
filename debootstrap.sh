@@ -38,10 +38,10 @@ BOOTEND=$(($ROOTSTART-1))
 # Create image file
 
 if [ "$OUTPUT_DIALOG" = "yes" ]; then
-	(pv -n -s $SDSIZE -S /dev/zero | dd status=none of=$DEST/cache/tmprootfs.raw) 2>&1 \
-	| dialog --backtitle "$backtitle" --title "Creating blank image ($SDSIZE Mb), please wait ..." --gauge "" 5 70
+	(dd if=/dev/zero bs=1M status=none count=$SDSIZE | pv -n -s $(( $SDSIZE * 1024 * 1024 )) | dd status=none of=$DEST/cache/tmprootfs.raw) 2>&1 \
+	| dialog --backtitle "$backtitle" --title "Creating blank image ($SDSIZE), please wait ..." --gauge "" 5 70
 else
-	pv -p -b -r -s $SDSIZE -S /dev/zero | dd status=none of=$DEST/cache/tmprootfs.raw
+	dd if=/dev/zero bs=1M status=none count=$SDSIZE | pv -p -b -r -s $(( $SDSIZE * 1024 * 1024 )) | dd status=none of=$DEST/cache/tmprootfs.raw
 fi
 
 # Find first available free device
