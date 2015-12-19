@@ -16,7 +16,6 @@
 # check_error
 # install_packet
 # grab_version
-# choosing_kernel
 # fingerprint_image
 # umount_image
 # addtorepo
