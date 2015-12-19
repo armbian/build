@@ -170,37 +170,6 @@ grab_version ()
 	VER=${VER//#/.}; VER=${VER%.}; VER=${VER//.-/-}
 }
 
-
-choosing_kernel (){
-#--------------------------------------------------------------------------------------------------------------------------------
-# Choose which kernel to use
-#--------------------------------------------------------------------------------------------------------------------------------
-IFS=";"	
-cd $DEST"/debs/"
-if [[ $BRANCH == "next" ]]; then
-MYARRAY=($(ls -1 linux-image* | awk '/next/' | sed ':a;N;$!ba;s/\n/;/g'))
-else
-MYARRAY=($(ls -1 linux-image* | awk '!/next/' | sed ':a;N;$!ba;s/\n/;/g'))
-fi
-# if there are no precompiled kernels proceed with compilation
-if [[ ${#MYARRAY[@]} == "0" ]]; then
-SOURCE_COMPILE="yes"
-fi
-
-MYPARAMS=( --title "Choose a kernel" --backtitle $backtitle --menu "\n Prebuild packages:" 25 60 16 )
-i=0
-while [[ $i -lt ${#MYARRAY[@]} ]]
-	do
-        MYPARAMS+=( "${MYARRAY[$i]}" " -" )
-        i=$[$i+1]
-	done
-whiptail "${MYPARAMS[@]}" 2>results  
-CHOOSEN_KERNEL=$(<results)
-rm results
-unset MYARRAY
-}
-
-
 fingerprint_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Saving build summary to the image 							            

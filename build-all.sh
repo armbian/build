@@ -41,8 +41,7 @@ while [[ $k1 -lt ${#MYARRAY1[@]} ]]
 		echo "$BOARD $RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY"
 		source $SRC/lib/main.sh
 	fi # kernel only
-	
-		SOURCE_COMPILE="yes"
+
 	    k1=$[$k1+2]
 		l1=$[$l1+2]
 	done

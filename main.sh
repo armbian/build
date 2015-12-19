@@ -262,24 +262,19 @@ CHOOSEN_KERNEL=linux-image"$branch"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISIO
 CHOOSEN_ROOTFS=linux-"$RELEASE"-root"$branch"-"$BOARD"_"$REVISION"_armhf
 HEADERS_CACHE="${CHOOSEN_KERNEL/image/cache}"
 
-# Choosing kernel if debs are present
-#if [[ $BRANCH == "next" ]]; then
-#	MYARRAY=($(ls -1 $DEST/debs/linux-image* | awk '/next/' | sed ':a;N;$!ba;s/\n/;/g'))
-#	else
-#	MYARRAY=($(ls -1 $DEST/debs/linux-image* | awk '!/next/' | sed ':a;N;$!ba;s/\n/;/g'))
-#fi
-#if [[ ${#MYARRAY[@]} != "0" && $KERNEL_ONLY != "yes" ]]; then choosing_kernel; fi
-
 for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[ "$option" != "sources" ] && cleaning "$option"
 done
 
-# patching sources
-patching_sources
+[ ! -f "$DEST/debs/$CHOOSEN_UBOOT" ] && local needs_uboot=yes
+[ ! -f "$DEST/debs/$CHOOSEN_KERNEL" ] && local needs_kernel=yes
 
-# Compile source if packed not exits
-[ ! -f "$DEST/debs/$CHOOSEN_UBOOT" ] && compile_uboot
-[ ! -f "$DEST/debs/$CHOOSEN_KERNEL" ] && compile_kernel
+# patching sources if we need to compile u-boot or kernel
+[[ $needs_uboot == yes || $needs_kernel == yes ]] && patching_sources
+
+# Compile source if packed not exists
+[ "$needs_uboot" = "yes" ] && compile_uboot
+[ "$needs_kernel" = "yes" ] && compile_kernel
 
 if [ "$KERNEL_ONLY" == "yes" ]; then
 	[[ -n "$RELEASE" ]] && create_board_package
