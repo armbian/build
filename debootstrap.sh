@@ -131,6 +131,18 @@ module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv pytho
 sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools weather-util weather-util-data wget \
 wpasupplicant iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan apt-transport-https sysbench libusb-dev dialog fake-hwclock"
 
+case $RELEASE in
+	wheezy)
+	PAKETKI="$PAKETKI libnl-dev"
+	;;
+	jessie)
+	PAKETKI="$PAKETKI thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd software-properties-common python-software-properties libnss-myhostname"
+	;;
+	trusty)
+	PAKETKI="$PAKETKI libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties"
+	;;
+esac
+
 # generate locales and install packets
 display_alert "Install locales" "$DEST_LANG" "info"
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq install locales"
@@ -143,28 +155,6 @@ LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "update-locale
 install_packet "$PAKETKI" "Installing Armbian on the top of $DISTRIBUTION $RELEASE base system ..."
 
 install_packet "console-setup console-data kbd console-common unicode-data" "Installing console packages"
-
-
-# configure the system for unattended upgrades
-cp $SRC/lib/scripts/50unattended-upgrades $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-cp $SRC/lib/scripts/02periodic $DEST/cache/sdcard/etc/apt/apt.conf.d/02periodic
-
-# copy hostapd configurations
-install -m 755 $SRC/lib/config/hostapd.conf $DEST/cache/sdcard/etc/hostapd.conf 
-install -m 755 $SRC/lib/config/hostapd.realtek.conf $DEST/cache/sdcard/etc/hostapd.conf-rt
-
-# set up 'apt
-cat <<END > $DEST/cache/sdcard/etc/apt/apt.conf.d/71-no-recommends
-APT::Install-Recommends "0";
-APT::Install-Suggests "0";
-END
-
-# console fix due to Debian bug 
-sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $DEST/cache/sdcard/etc/default/console-setup
-
-# root-fs modifications
-rm 	-f $DEST/cache/sdcard/etc/motd
-touch $DEST/cache/sdcard/etc/motd
 
 chroot $DEST/cache/sdcard /bin/bash -c "apt-get clean"
 chroot $DEST/cache/sdcard /bin/bash -c "sync"

@@ -22,9 +22,6 @@ case $RELEASE in
 # Debian Wheezy
 wheezy)
 		
-		# specifics packets
-		install_packet "libnl-dev" "Installing Wheezy packages" "" "quiet"
-		
 		# add serial console
 		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/cache/sdcard/etc/inittab
 		
@@ -52,12 +49,6 @@ wheezy)
 
 # Debian Jessie
 jessie)
-
-		# specifics packets add and remove
-		install_packet "thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd \
-		software-properties-common python-software-properties libnss-myhostname" "Installing Jessie packages" "" "quiet"
-		
-		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get autoremove >/dev/null 2>&1"
 		
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/cache/sdcard/etc/ssh/sshd_config 
@@ -70,20 +61,20 @@ jessie)
 		echo "tmpfs   /tmp         tmpfs   nodev,nosuid,size=256M          0  0" >> $DEST/cache/sdcard/etc/fstab
 		
 		# fix selinux error 
-		chroot $DEST/cache/sdcard /bin/bash -c "mkdir /selinux"
-				
-		# configuration for systemd
+		mkdir $DEST/cache/sdcard/selinux
 		
 		# add serial console
-		local systemdpath="$DEST/cache/sdcard/lib/systemd/system"
 		cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/ttyS0.conf
-		cp $systemdpath/serial-getty@.service $systemdpath/getty.target.wants/serial-getty@ttyS0.service
-		sed -e s/"--keep-baud 115200,38400,9600"/"-L 115200"/g -i $systemdpath/getty.target.wants/serial-getty@ttyS0.service
-		
+		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@ttyS0.service"
+		mkdir -p "$DEST/cache/sdcard/etc/systemd/system/serial-getty@ttyS0.service.d"
+		echo "[Service]" > "$DEST/cache/sdcard/etc/systemd/system/serial-getty@ttyS0.service.d/10-rate.conf"
+		echo "ExecStart=" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@ttyS0.service.d/10-rate.conf"
+		echo "ExecStart=-/sbin/agetty -L 115200 %I $TERM" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@ttyS0.service.d/10-rate.conf"
+
 		# don't clear screen tty1
-		sed -e s,"TTYVTDisallocate=yes","TTYVTDisallocate=no",g -i $DEST/cache/sdcard/lib/systemd/system/getty@.service
-		
-		# configuration for sysvinit
+		mkdir -p "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/"
+		echo "[Service]" > "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
+		echo "TTYVTDisallocate=no" >> "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
 				
 		# add serial console
 		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/cache/sdcard/etc/inittab
@@ -103,12 +94,6 @@ jessie)
 
 # Ubuntu Trusty
 trusty)
-
-		# specifics packets add and remove
-		install_packet "libnl-3-dev libnl-genl-3-dev software-properties-common \
-		python-software-properties" "Installing Trusty packages" "" "quiet"
-		
-		LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get autoremove >/dev/null 2>&1"
 		
 		# add serial console
 		cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/ttyS0.conf
@@ -117,18 +102,18 @@ trusty)
 		sed -e s,"exec /sbin/getty","exec /sbin/getty --noclear",g 	-i $DEST/cache/sdcard/etc/init/tty1.conf
 		
 		# disable some getties
-		chroot $DEST/cache/sdcard /bin/bash -c "rm /etc/init/tty5.conf"
-		chroot $DEST/cache/sdcard /bin/bash -c "rm /etc/init/tty6.conf"
+		rm -f $DEST/cache/sdcard/etc/init/tty5.conf
+		rm -f $DEST/cache/sdcard/etc/init/tty6.conf
 		
 		# enable root login for latest ssh on trusty
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/cache/sdcard/etc/ssh/sshd_config 		
 		
 		# fix selinux error 
-		chroot $DEST/cache/sdcard /bin/bash -c "mkdir /selinux"
+		mkdir $DEST/cache/sdcard/selinux
 
 		# that my custom motd works well
 		if [ -d "$DEST/cache/sdcard/etc/update-motd.d" ]; then
-			chroot $DEST/cache/sdcard /bin/bash -c "mv /etc/update-motd.d /etc/update-motd.d-backup"
+			mv $DEST/cache/sdcard/etc/update-motd.d $DEST/cache/sdcard/etc/update-motd.d-backup
 		fi
 
 		# auto upgrading
@@ -146,6 +131,27 @@ exit
 esac
 
 # Common
+
+# set up apt
+cat <<END > $DEST/cache/sdcard/etc/apt/apt.conf.d/71-no-recommends
+APT::Install-Recommends "0";
+APT::Install-Suggests "0";
+END
+
+# configure the system for unattended upgrades
+cp $SRC/lib/scripts/50unattended-upgrades $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+cp $SRC/lib/scripts/02periodic $DEST/cache/sdcard/etc/apt/apt.conf.d/02periodic
+
+# copy hostapd configurations
+install -m 755 $SRC/lib/config/hostapd.conf $DEST/cache/sdcard/etc/hostapd.conf 
+install -m 755 $SRC/lib/config/hostapd.realtek.conf $DEST/cache/sdcard/etc/hostapd.conf-rt
+
+# console fix due to Debian bug 
+sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $DEST/cache/sdcard/etc/default/console-setup
+
+# root-fs modifications
+rm 	-f $DEST/cache/sdcard/etc/motd
+touch $DEST/cache/sdcard/etc/motd
 
 # change time zone data
 echo $TZDATA > $DEST/cache/sdcard/etc/timezone
