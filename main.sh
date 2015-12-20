@@ -266,8 +266,8 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[ "$option" != "sources" ] && cleaning "$option"
 done
 
-[ ! -f "$DEST/debs/$CHOOSEN_UBOOT" ] && local needs_uboot=yes
-[ ! -f "$DEST/debs/$CHOOSEN_KERNEL" ] && local needs_kernel=yes
+[ ! -f "$DEST/debs/$CHOOSEN_UBOOT" ] && needs_uboot=yes
+[ ! -f "$DEST/debs/$CHOOSEN_KERNEL" ] && needs_kernel=yes
 
 # patching sources if we need to compile u-boot or kernel
 [[ $needs_uboot == yes || $needs_kernel == yes ]] && patching_sources
