@@ -31,7 +31,7 @@ if [ "$PROGRESS_DISPLAY" = "none" ]; then
 elif [ "$PROGRESS_DISPLAY" != "plain" ]; then
 	OUTPUT_DIALOG=yes;
 fi
-if [ "$PROGRESS_LOG_TO_FILE" = "yes" ]; then rm -f $DEST/debug/compilation.log; else unset PROGRESS_LOG_TO_FILE; fi
+if [ "$PROGRESS_LOG_TO_FILE" != "yes" ]; then unset PROGRESS_LOG_TO_FILE; fi
 
 # compile.sh version checking
 ver1=$(grep '^# VERSION' "$SRC/compile.sh" | cut -d'=' -f2)
@@ -187,6 +187,11 @@ source $SRC/lib/makeboarddeb.sh 			# Create board support package
 
 # The name of the job
 VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
+
+# compress and remove old logs
+(cd $DEST/debug; tar -czf logs-$(date +"%d_%m_%Y-%H_%M_%S").tgz "*.log")
+rm -f $DEST/debug/*.log
+
 echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION > $DEST/debug/install.log 
 
 # needed if process failed in the middle
@@ -194,7 +199,7 @@ umount_image
 
 # let's start with fresh screen
 clear
-display_alert "Dependencies check" "@host" "info"
+display_alert "Starting Armbian build script" "@host" "info"
 
 # optimize build time with 100% CPU usage
 CPUS=$(grep -c 'processor' /proc/cpuinfo)
@@ -220,7 +225,7 @@ fi
 
 # sync clock
 if [ "$SYNC_CLOCK" != "no" ]; then
-	display_alert "Synching clock" "host" "info"
+	display_alert "Syncing clock" "host" "info"
 	ntpdate -s time.ijs.si
 fi
 start=`date +%s`
