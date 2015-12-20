@@ -84,7 +84,8 @@ elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *odroid* ]] ; then
 	( dd if=/usr/lib/$CHOOSEN_UBOOT/tzsw.bin.hardkernel of=\$DEVICE seek=719 conv=fsync ) > /dev/null 2>&1
 	( dd if=/dev/zero of=\$DEVICE seek=1231 count=32 bs=512 conv=fsync ) > /dev/null 2>&1
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *udoo* ]] ; then 
-	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot.imx of=\$DEVICE bs=1024 seek=1 conv=fsync ) > /dev/null 2>&1
+	( dd if=/usr/lib/$CHOOSEN_UBOOT/SPL of=\$DEVICE bs=1k seek=1 status=noxfer ) > /dev/null 2>&1
+	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot.img of=\$DEVICE bs=1K seek=69 status=noxfer ) > /dev/null 2>&1		
 else 
 	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot-sunxi-with-spl.bin of=\$DEVICE bs=1024 seek=8 status=noxfer ) > /dev/null 2>&1	
 fi
@@ -108,7 +109,7 @@ END
 
 	# copy proper uboot files to place
 	if [[ $BOARD == cubox-i* ]] ; then
-		[ ! -f "SPL" ] || cp SPL u-boot.img $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+		[ ! -f "SPL" ] || cp SPL u-boot.img $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT		
 	elif [[ $BOARD == guitar* ]] ; then
 		[ ! -f "u-boot-dtb.bin" ] || cp u-boot-dtb.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT	
 		[ ! -f "$SRC/lib/bin/s500-bootloader.bin" ] || cp $SRC/lib/bin/s500-bootloader.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT/bootloader.bin
@@ -118,7 +119,7 @@ END
 		[ ! -f "sd_fuse/hardkernel/tzsw.bin.hardkernel" ] || cp sd_fuse/hardkernel/tzsw.bin.hardkernel $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
 		[ ! -f "u-boot.bin" ] || cp u-boot.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT/
 	elif [[ $BOARD == udoo* ]] ; then
-		[ ! -f "u-boot.imx" ] || cp u-boot.imx $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+		[ ! -f "u-boot.img" ] || cp SPL u-boot.img $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
 	else
 		[ ! -f "u-boot-sunxi-with-spl.bin" ] || cp u-boot-sunxi-with-spl.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT 
 	fi
@@ -417,7 +418,8 @@ if [[ $BOARD == *cubox* ]] ; then
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/SPL of=$LOOP bs=512 seek=2 status=noxfer >/dev/null 2>&1) 
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer >/dev/null 2>&1) 	
 elif [[ $BOARD == *udoo* ]] ; then 
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.imx of=$LOOP bs=1024 seek=1 conv=fsync >/dev/null 2>&1) 
+	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/SPL of=$LOOP bs=1k seek=1 status=noxfer >/dev/null 2>&1) 
+	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.img of=$LOOP bs=1k seek=69 conv=fsync >/dev/null 2>&1) 	
 elif [[ $BOARD == *guitar* ]] ; then 
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/bootloader.bin of=$LOOP bs=512 seek=4097 conv=fsync > /dev/null 2>&1)
 	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-dtb.bin of=$LOOP bs=512 seek=6144 conv=fsync > /dev/null 2>&1)

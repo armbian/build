@@ -222,7 +222,7 @@
 			#description Freescale iMx dual/quad core Wifi
 			#build 3
 			LINUXFAMILY="udoo"
-			BOOTCONFIG="udoo_quad_config"
+			BOOTCONFIG="udoo_qdl_config"
 			MODULES="bonding"
 			MODULES_NEXT=""	
 		;;
@@ -315,14 +315,14 @@
 		
 		udoo)
 			KERNEL_DEFAULT="https://github.com/UDOOboard/linux_kernel"
-			KERNEL_DEFAULT_BRANCH="imx_3.14.28_1.0.0_ga_neo_dev"
+			KERNEL_DEFAULT_BRANCH="3.14-1.0.x-udoo"
 			KERNEL_DEFAULT_SOURCE="linux-udoo"
 			KERNEL_NEXT="https://github.com/patrykk/linux-udoo"
 			KERNEL_NEXT_BRANCH="4.2-5.0.11.p7.1"
 			KERNEL_NEXT_SOURCE="linux-udoo-next"		
 			UBOOT_DEFAULT="https://github.com/UDOOboard/uboot-imx"
-			UBOOT_DEFAULT_BRANCH="master"
-			UBOOT_DEFAULT_SOURCE="u-boot-neo"
+			UBOOT_DEFAULT_BRANCH="2015.10.fslc-qdl"
+			UBOOT_DEFAULT_SOURCE="u-boot-udoo"
 			UBOOT_NEXT=$UBOOT_DEFAULT
 			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
 			UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
@@ -336,7 +336,7 @@
 			KERNEL_DEFAULT_BRANCH="imx_3.14.28_1.0.0_ga_neo_dev"
 			KERNEL_DEFAULT_SOURCE="linux-udoo-neo"		
 			UBOOT_DEFAULT="https://github.com/UDOOboard/uboot-imx"
-			UBOOT_DEFAULT_BRANCH="master"
+			UBOOT_DEFAULT_BRANCH="2015.04.imx-neo"
 			UBOOT_DEFAULT_SOURCE="u-boot-neo"
 			UBOOT_NEXT=$UBOOT_DEFAULT
 			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
