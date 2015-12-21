@@ -87,8 +87,7 @@ create_board_package (){
 	# first login and reboot note when updated
 	mkdir -p $destination/root $destination/tmp $destination/etc/profile.d
 	install -m 755 $SRC/lib/scripts/check_first_login_reboot.sh 	$destination/etc/profile.d
-	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d
-	touch $destination/root/.not_logged_in_yet
+	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d	
 	touch $destination/tmp/.reboot_required
 
 	if [[ $LINUXCONFIG == *sun* ]] ; then
