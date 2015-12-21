@@ -281,8 +281,9 @@ done
 [ "$needs_uboot" = "yes" ] && compile_uboot
 [ "$needs_kernel" = "yes" ] && compile_kernel
 
+[[ -n "$RELEASE" ]] && create_board_package
+
 if [ "$KERNEL_ONLY" == "yes" ]; then
-	[[ -n "$RELEASE" ]] && create_board_package
 	display_alert "Kernel building done" "@host" "info"
 	display_alert "Target directory" "$DEST/debs/" "info"
 	display_alert "File name" "$CHOOSEN_KERNEL" "info"
@@ -296,7 +297,6 @@ else
 
 	# install board specific applications
 	install_distribution_specific
-	create_board_package
 	install_board_specific
 
 	# install desktop
