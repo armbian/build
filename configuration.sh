@@ -174,7 +174,7 @@
 
 		lamobo-r1)#enabled
 			#description A20 dual core 1Gb SoC Switch
-			#build 3	
+			#build 6	
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="Lamobo_R1_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
@@ -183,7 +183,7 @@
 
 		orangepi)#enabled
 			#description A20 dual core 1Gb SoC Wifi USB hub
-			#build 3
+			#build 6
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="Orangepi_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
