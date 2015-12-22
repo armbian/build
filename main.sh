@@ -189,7 +189,7 @@ source $SRC/lib/makeboarddeb.sh 			# Create board support package
 VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
 
 # compress and remove old logs
-(cd $DEST/debug; tar -czf logs-$(date +"%d_%m_%Y-%H_%M_%S").tgz "*.log")
+(cd $DEST/debug; tar -czf logs-$(date +"%d_%m_%Y-%H_%M_%S").tgz *.log)
 rm -f $DEST/debug/*.log
 
 echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION > $DEST/debug/install.log 
