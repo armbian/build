@@ -348,7 +348,7 @@ prepare_host() {
 	test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
 
 	# create directory structure
-	mkdir -p $SOURCES $DEST/debug $DEST/cache $DEST/rootfs $SRC/userpatches/
+	mkdir -p $SOURCES $DEST/debug $DEST/cache $DEST/cache/rootfs $SRC/userpatches/
 	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
 
 	# TODO: needs better documentation
