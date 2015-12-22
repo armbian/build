@@ -369,10 +369,10 @@ closing_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Closing image and clean-up 									            
 #--------------------------------------------------------------------------------------------------------------------------------
-display_alert "Possible after install." "$AFTERINSTALL" "info"
+display_alert "Possible after install." "customize-image.sh" "info"
 cp $SRC/userpatches/customize-image.sh $DEST/cache/sdcard/tmp/customize-image.sh
 chmod +x $DEST/cache/sdcard/tmp/customize-image.sh
-chroot $DEST/cache/sdcard /bin/bash "$DEST/cache/sdcard/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
+chroot $DEST/cache/sdcard /bin/bash "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
 chroot $DEST/cache/sdcard /bin/bash -c "sync"
 sync
 sleep 3
