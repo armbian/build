@@ -97,8 +97,7 @@ if [[ $LINUXCONFIG == *sun* && $BRANCH != "next" ]]; then
  # A
  git clone https://github.com/linux-sunxi/libvdpau-sunxi.git $DEST/cache/sdcard/tmp/libvdpau-sunxi 
  # temporaly fix
- chroot $DEST/cache/sdcard /bin/bash -c "git checkout 906c36ed45ceb53fecd5fc72e821c11849eeb1a3"
- chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/libvdpau-sunxi && make"
+ chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/libvdpau-sunxi; git checkout 906c36ed45ceb53fecd5fc72e821c11849eeb1a3; make"
  d=$DEST/cache/sdcard/usr/lib/vdpau
  test -d "$d" || mkdir -p "$d" && cp $DEST/cache/sdcard/tmp/libvdpau-sunxi/libvdpau_sunxi.so.1 "$d"
  ln -s $d/libvdpau_sunxi.so $d/libvdpau_sunxi.so.1
