@@ -17,7 +17,6 @@ CLEAN_LEVEL="make,debs"					# comma-sparated list of clean targets: "make" = mak
 							# "images" = delete "./output/images", "debs" = delete "./output/debs",
 							# "cache" = delete "./output/cache", "sources" = delete "./sources"
 # user 
-AFTERINSTALL=""						# last command before closing image, example: apt-get install joe
 DEST_LANG="en_US.UTF-8"					# sl_SI.UTF-8, en_US.UTF-8
 CONSOLE_CHAR="UTF-8"
 ROOTPWD="1234"						# Must be changed @first login
@@ -91,4 +90,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=5
+# VERSION=6

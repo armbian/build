@@ -351,6 +351,8 @@ prepare_host() {
 	mkdir -p $SOURCES $DEST/debug $DEST/cache $DEST/cache/rootfs $SRC/userpatches/
 	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
 
+	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/lib/scripts/customize-image.sh.template $SRC/userpatches/customize-image.sh
+
 	# TODO: needs better documentation
 	echo 'Place your patches and kernel.config / u-boot.config / lib.config here.' > $SRC/userpatches/readme.txt
 	echo 'They will be automatically included if placed here!' >> $SRC/userpatches/readme.txt
