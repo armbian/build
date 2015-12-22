@@ -39,19 +39,19 @@ cleaning()
 		;;
 
 		"debs") # delete output/debs
-		[ -d "$DEST/debs" ] && display_alert "Cleaning" "$DEST/debs" "info" && rm -rf $DEST/debs
+		[ -d "$DEST/debs" ] && display_alert "Cleaning" "$DEST/debs" "info" && rm -rf $DEST/debs/*
 		;;
 
 		"cache") # delete output/cache
-		[ -d "$DEST/cache" ] && display_alert "Cleaning" "$DEST/cache" "info" && rm -rf $DEST/cache
+		[ -d "$DEST/cache" ] && display_alert "Cleaning" "$DEST/cache" "info" && rm -rf $DEST/cache/*
 		;;
 
 		"images") # delete output/images
-		[ -d "$DEST/images" ] && display_alert "Cleaning" "$DEST/images" "info" && rm -rf $DEST/images
+		[ -d "$DEST/images" ] && display_alert "Cleaning" "$DEST/images" "info" && rm -rf $DEST/images/*
 		;;
 
 		"sources") # delete output/sources
-		[ -d "$SOURCES" ] && display_alert "Cleaning" "$SOURCES" "info" && rm -rf $SOURCES
+		[ -d "$SOURCES" ] && display_alert "Cleaning" "$SOURCES" "info" && rm -rf $SOURCES/*
 		;;
 
 		*) # unknown
