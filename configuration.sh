@@ -50,7 +50,7 @@ MISC5_DIR="sunxi-display-changer"						# local directory
 #-----------------------------------------------------------------------------------------------------------------------------------
 # If KERNELTAG is not defined, let's compile latest stable. Vanilla kernel only
 #-----------------------------------------------------------------------------------------------------------------------------------
-[[ -z "$KERNELTAG" ]] && KERNELTAG="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}'`
+[[ -z "$KERNELTAG" ]] && KERNELTAG="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk 'NR==1{print $NF}'`
 
 
 #-----------------------------------------------------------------------------------------------------------------------------------
