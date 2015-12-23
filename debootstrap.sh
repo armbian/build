@@ -154,24 +154,24 @@ esac
 # additional desktop packages
 if [[ $BUILD_DESKTOP == yes ]]; then
 	# common packages
-	PACKAGES="$PACKAGES xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray wicd thunar-volman galculator \
+	PAKETKI="$PAKETKI xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray wicd thunar-volman galculator \
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl"
 	# release specific desktop packages
 	case $RELEASE in
 		wheezy)
-		PACKAGES="$PACKAGES mozo pluma iceweasel icedove"
+		PAKETKI="$PAKETKI mozo pluma iceweasel icedove"
 		;;
 		jessie)
-		PACKAGES="$PACKAGES mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove"
+		PAKETKI="$PAKETKI mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove"
 		;;
 		trusty)
-		PACKAGES="$PACKAGES libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
+		PAKETKI="$PAKETKI libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
 		;;
 	esac
 	# hardware acceleration support packages
 	# cache is not LINUXCONFIG and BRANCH specific, so installing anyway
 	#if [[ $LINUXCONFIG == *sun* && $BRANCH != "next" ]] &&
-	PACKAGES="$PACKAGES xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev"
+	PAKETKI="$PAKETKI xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev"
 fi
 
 # generate locales and install packets
