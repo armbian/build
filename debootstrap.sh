@@ -74,20 +74,24 @@ else
 	mount $LOOP"p1" $DEST/cache/sdcard/boot
 fi
 
+# rootfs cache file name
+[[ $BUILD_DESKTOP == yes ]] && local variant_desktop=yes
+local cache_fname="$DEST/cache/rootfs/$RELEASE${variant_desktop:+_desktop}.tgz"
+
 # Uncompress from cache
-if [ -f "$DEST/cache/rootfs/$RELEASE.tgz" ]; then
-	filemtime=`stat -c %Y $DEST/cache/rootfs/$RELEASE.tgz`
+if [ -f "$cache_fname" ]; then
+	filemtime=`stat -c %Y $cache_fname`
 	currtime=`date +%s`
 	diff=$(( (currtime - filemtime) / 86400 ))
 	display_alert "Extracting $RELEASE from cache" "$diff days old" "info"
-	pv -p -b -r -c -N "$RELEASE.tgz" "$DEST/cache/rootfs/$RELEASE.tgz" | pigz -dc | tar xp -C $DEST/cache/sdcard/
+	pv -p -b -r -c -N "$RELEASE.tgz" "$cache_fname" | pigz -dc | tar xp -C $DEST/cache/sdcard/
 	if [ "$diff" -gt "3" ]; then
 		chroot $DEST/cache/sdcard /bin/bash -c "apt-get update" | dialog --backtitle "$backtitle" --title "Force package update ..." --progressbox 20 70
 	fi
 fi
 
 # If we don't have a filesystem cached, let's make em
-if [ ! -f "$DEST/cache/rootfs/$RELEASE.tgz" ]; then
+if [ ! -f "$cache_fname" ]; then
 
 # debootstrap base system
 debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox 20 70
@@ -134,6 +138,7 @@ module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv pytho
 sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools weather-util weather-util-data wget \
 wpasupplicant iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan apt-transport-https sysbench libusb-dev dialog fake-hwclock"
 
+# additional distributios-specific packages
 case $RELEASE in
 	wheezy)
 	PAKETKI="$PAKETKI libnl-dev"
@@ -145,6 +150,29 @@ case $RELEASE in
 	PAKETKI="$PAKETKI libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties"
 	;;
 esac
+
+# additional desktop packages
+if [[ $BUILD_DESKTOP == yes ]]; then
+	# common packages
+	PACKAGES="$PACKAGES xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray wicd thunar-volman galculator \
+	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl"
+	# release specific desktop packages
+	case $RELEASE in
+		wheezy)
+		PACKAGES="$PACKAGES mozo pluma iceweasel icedove"
+		;;
+		jessie)
+		PACKAGES="$PACKAGES mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove"
+		;;
+		trusty)
+		PACKAGES="$PACKAGES libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
+		;;
+	esac
+	# hardware acceleration support packages
+	# cache is not LINUXCONFIG and BRANCH specific, so installing anyway
+	#if [[ $LINUXCONFIG == *sun* && $BRANCH != "next" ]] &&
+	PACKAGES="$PACKAGES xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev"
+fi
 
 # generate locales and install packets
 display_alert "Install locales" "$DEST_LANG" "info"
@@ -175,8 +203,8 @@ KILLPROC=$(ps -uax | pgrep ntpd |        tail -1); if [ -n "$KILLPROC" ]; then k
 KILLPROC=$(ps -uax | pgrep dbus-daemon | tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
 
 display_alert "Closing debootstrap process and preparing cache." "" "info"
-tar cp --directory=$DEST/cache/sdcard/ --exclude='dev/*' --exclude='proc/*' --exclude='run/*' --exclude='tmp/*' \
---exclude='mnt/*' . | pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "$RELEASE.tgz" | pigz > $DEST/cache/rootfs/$RELEASE.tgz
+tar cp --directory=$DEST/cache/sdcard/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
+--exclude='./mnt/*' --exclude='./sys/*' . | pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "$RELEASE.tgz" | pigz > $cache_fname
 fi
 #
 # mount proc, sys and dev

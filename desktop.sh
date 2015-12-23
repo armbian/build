@@ -19,15 +19,9 @@ display_alert "Installing desktop" "XFCE" "info"
 umount $DEST/cache/sdcard/tmp >/dev/null 2>&1
 mount --bind $SRC/lib/bin/ $DEST/cache/sdcard/tmp
 
-# Declare office packages if any
-OFFICE_PACKETS="libreoffice-writer libreoffice-java-common"
-
 # Debian Wheezy
 #--------------------------------------------------------------------------------------------------------------------------------
 if [[ $RELEASE == "wheezy" ]]; then
-BASIC_PACKETS="xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 mozo pluma wicd thunar-volman \
-galculator iceweasel libgnome2-perl gcj-jre-headless gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin \
-xfce4-screenshooter icedove radiotray mirage xterm lxtask"
 # copy wallpapers and default desktop settings
 d=$DEST/cache/sdcard/usr/share/xfce4/backdrops/
 test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"
@@ -38,9 +32,6 @@ fi
 # Debian Jessie
 #--------------------------------------------------------------------------------------------------------------------------------
 if [[ $RELEASE == "jessie" ]]; then
-BASIC_PACKETS="xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 mozo pluma wicd thunar-volman \
-galculator iceweasel libgnome2-perl gcj-jre-headless gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin \
-$OFFICE_PACKETS xfce4-screenshooter icedove radiotray mirage xterm lxtask"
 # copy wallpapers
 d=$DEST/cache/sdcard/usr/share/backgrounds/xfce/
 test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"
@@ -51,18 +42,12 @@ fi
 # Ubuntu trusty
 #--------------------------------------------------------------------------------------------------------------------------------
 if [[ $RELEASE == "trusty" ]]; then
-BASIC_PACKETS="xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 wicd thunar-volman galculator \
-libgnome2-perl gcj-jre-headless gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin \
-$OFFICE_PACKETS xfce4-screenshooter thunderbird firefox radiotray mirage gnome-icon-theme-full \
-tango-icon-theme xterm lxtask gvfs-backends"
 # copy wallpapers and default desktop settings
 d=$DEST/cache/sdcard/usr/share/backgrounds/xfce/
 test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"
 #cp $SRC/lib/config/trusty-desktop.tgz /tmp/kernel # start configuration
 chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/trusty-desktop.tgz -C /root/"
 fi
-
-install_packet "$BASIC_PACKETS" "Installing desktop"
 
 # Install custom icons and theme
 #cp $SRC/lib/bin/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb /tmp/kernel
@@ -86,7 +71,6 @@ sed "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" -i $DEST/cache/sdcard/etc/defaul
  
 # Compile Turbo Frame buffer for sunxi
 if [[ $LINUXCONFIG == *sun* && $BRANCH != "next" ]]; then
- install_packet "xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev" "Installing support libraries"
  # quemu bug walkaround
  git clone https://github.com/ssvb/xf86-video-fbturbo.git $DEST/cache/sdcard/tmp/xf86-video-fbturbo
  chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/xf86-video-fbturbo && autoreconf -vi"
