@@ -211,7 +211,7 @@
 
 		cubox-i)#enabled
 			#description Freescale iMx dual/quad core Wifi
-			#build 1
+			#build 3
 			LINUXFAMILY="cubox"	
 			BOOTCONFIG="mx6_cubox-i_config"
 			MODULES="bonding"
@@ -250,7 +250,7 @@
 		
 		odroid)#enabled
 			#description Exynos5422 XU3/XU4 octa core
-			#build 3wip	
+			#build 3	
 			LINUXFAMILY="odroid"				
 			BOOTSIZE="16"
 			BOOTCONFIG="odroid_config"		
