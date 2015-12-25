@@ -254,7 +254,7 @@
 			LINUXFAMILY="odroid"				
 			BOOTSIZE="16"
 			BOOTCONFIG="odroid_config"		
-			MODULES="ethernet wlan_8723bs bonding"
+			MODULES="bonding"
 			MODULES_NEXT=""
 		;;
 
