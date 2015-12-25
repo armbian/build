@@ -349,7 +349,11 @@
 		cubox)
 			KERNEL_DEFAULT='https://github.com/linux4kix/linux-linaro-stable-mx6'
 			KERNEL_DEFAULT_BRANCH="imx_3.14.28_1.0.0_ga_neo_dev"
-			KERNEL_DEFAULT_SOURCE="linux-linaro-lsk-v3.14-mx6"		
+			KERNEL_DEFAULT_SOURCE="linux-linaro-lsk-v3.14-mx6"
+			KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
+			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
+			KERNEL_NEXT_BRANCH="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1`
+			KERNEL_NEXT_SOURCE="linux-vanilla"
 			UBOOT_DEFAULT="https://github.com/SolidRun/u-boot-imx6"
 			UBOOT_DEFAULT_BRANCH="imx6"
 			UBOOT_DEFAULT_SOURCE="u-boot-cubox"
