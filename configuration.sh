@@ -248,10 +248,10 @@
 			MODULES_NEXT=""
 		;;
 		
-		odroid)#enabled
+		odroidxu)#enabled
 			#description Exynos5422 XU3/XU4 octa core
 			#build 3	
-			LINUXFAMILY="odroid"				
+			LINUXFAMILY="odroidxu"				
 			BOOTSIZE="16"
 			BOOTCONFIG="odroid_config"		
 			MODULES="bonding"
@@ -295,16 +295,16 @@
 			UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 		;;
 	
-		odroid)
+		odroidxu)
 			KERNEL_DEFAULT='https://github.com/hardkernel/linux'
 			KERNEL_DEFAULT_BRANCH="odroidxu3-3.10.y"
-			KERNEL_DEFAULT_SOURCE="linux-odroid"
+			KERNEL_DEFAULT_SOURCE="linux-odroidxu"
 			KERNEL_NEXT='https://github.com/tobetter/linux'
 			KERNEL_NEXT_BRANCH="odroidxu4-v4.2"
-			KERNEL_NEXT_SOURCE="linux-odroid-next"		
+			KERNEL_NEXT_SOURCE="linux-odroidxu-next"		
 			UBOOT_DEFAULT="https://github.com/hardkernel/u-boot.git"
 			UBOOT_DEFAULT_BRANCH="odroidxu3-v2012.07"
-			UBOOT_DEFAULT_SOURCE="u-boot-odroid"
+			UBOOT_DEFAULT_SOURCE="u-boot-odroidxu"
 			UBOOT_NEXT=$UBOOT_DEFAULT
 			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
 			UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE

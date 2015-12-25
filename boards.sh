@@ -58,7 +58,7 @@ install_board_specific (){
 	fi
 
 	# Odroid
-	if [[ $BOARD == "odroid" ]] ; then
+	if [[ $BOARD == "odroidxu" ]] ; then
 			if [ -f $DEST/cache/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttySAC2/g" -i $DEST/cache/sdcard/etc/inittab; fi		
 			echo "blacklist ina231_sensor" > $DEST/cache/sdcard/etc/modprobe.d/blacklist-odroid.conf
 			chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc && apt-get -y -qq autoremove"		
