@@ -16,6 +16,7 @@
 # install_external_applications
 # shrinking_raw_image
 # closing_image
+# write_uboot
 
 compile_uboot (){
 #---------------------------------------------------------------------------------------------------------------------------------
@@ -412,35 +413,8 @@ rm -rf $DEST/cache/sdcard/
 
 # write bootloader
 LOOP=$(losetup -f)
-display_alert "Writing boot loader" "$LOOP" "info"
 losetup $LOOP $DEST/cache/tmprootfs.raw
-dpkg -x $DEST"/debs/"$CHOOSEN_UBOOT /tmp/
-CHOOSEN_UBOOT="${CHOOSEN_UBOOT//.deb/}"
-
-if [[ $BOARD == *cubox* ]] ; then 
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/SPL of=$LOOP bs=512 seek=2 status=noxfer >/dev/null 2>&1) 
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer >/dev/null 2>&1) 	
-elif [[ $BOARD == *udoo* ]] ; then 
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/SPL of=$LOOP bs=1k seek=1 status=noxfer >/dev/null 2>&1) 
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.img of=$LOOP bs=1k seek=69 conv=fsync >/dev/null 2>&1) 	
-elif [[ $BOARD == *guitar* ]] ; then 
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/bootloader.bin of=$LOOP bs=512 seek=4097 conv=fsync > /dev/null 2>&1)
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-dtb.bin of=$LOOP bs=512 seek=6144 conv=fsync > /dev/null 2>&1)
-elif [[ $BOARD == *odroid* ]] ; then 
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/bl1.bin.hardkernel of=$LOOP seek=1 conv=fsync ) > /dev/null 2>&1
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/bl2.bin.hardkernel of=$LOOP seek=31 conv=fsync ) > /dev/null 2>&1
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.bin of=$LOOP bs=512 seek=63 conv=fsync ) > /dev/null 2>&1
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/tzsw.bin.hardkernel of=$LOOP seek=719 conv=fsync ) > /dev/null 2>&1
-	( dd if=/dev/zero of=$LOOP seek=1231 count=32 bs=512 conv=fsync ) > /dev/null 2>&1
-else 
-	( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1) 	
-fi
-if [ $? -ne 0 ]; then
-		display_alert "U-boot failed to install" "@host" "err"
-	    exit 1
-fi
-rm -r /tmp/usr
-sync
+write_uboot $LOOP
 sleep 3
 losetup -d $LOOP
 sync
@@ -464,4 +438,42 @@ mkdir -p $DEST/images
 zip -FSq $DEST/images/$VERSION.zip $VERSION.raw* armbian.txt imagewriter.*
 #display_alert "Uploading to server" "$VERSION.zip" "info"
 rm -f $VERSION.raw *.asc imagewriter.* armbian.txt
+}
+
+# write_uboot <loopdev>
+#
+# writes u-boot to loop device
+# Parameters:
+# loopdev: loop device with mounted rootfs image
+write_uboot()
+{
+	LOOP=$1
+	display_alert "Writing bootloader" "$LOOP" "info"
+	dpkg -x $DEST"/debs/"$CHOOSEN_UBOOT /tmp/
+	CHOOSEN_UBOOT="${CHOOSEN_UBOOT//.deb/}"
+
+	if [[ $BOARD == *cubox* ]] ; then
+		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/SPL of=$LOOP bs=512 seek=2 status=noxfer >/dev/null 2>&1)
+		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer >/dev/null 2>&1)
+	elif [[ $BOARD == *udoo* ]] ; then
+		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/SPL of=$LOOP bs=1k seek=1 status=noxfer >/dev/null 2>&1)
+		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.img of=$LOOP bs=1k seek=69 conv=fsync >/dev/null 2>&1)
+	elif [[ $BOARD == *guitar* ]] ; then
+		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/bootloader.bin of=$LOOP bs=512 seek=4097 conv=fsync > /dev/null 2>&1)
+		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-dtb.bin of=$LOOP bs=512 seek=6144 conv=fsync > /dev/null 2>&1)
+	elif [[ $BOARD == *odroid* ]] ; then
+		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/bl1.bin.hardkernel of=$LOOP seek=1 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/bl2.bin.hardkernel of=$LOOP seek=31 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.bin of=$LOOP bs=512 seek=63 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/tzsw.bin.hardkernel of=$LOOP seek=719 conv=fsync ) > /dev/null 2>&1
+		( dd if=/dev/zero of=$LOOP seek=1231 count=32 bs=512 conv=fsync ) > /dev/null 2>&1
+	else
+		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1)
+	fi
+	if [ $? -ne 0 ]; then
+		display_alert "U-boot failed to install" "@host" "err"
+		exit 1
+	fi
+	rm -r /tmp/usr
+	sync
 }
