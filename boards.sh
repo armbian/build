@@ -57,6 +57,11 @@ install_board_specific (){
 
 	fi
 
+	# Odroid
+	if [[ $BOARD == "odroid" ]] ; then
+			if [ -f $DEST/cache/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttySAC2/g" -i $DEST/cache/sdcard/etc/inittab; fi		
+			echo "blacklist ina231_sensor" > $DEST/cache/sdcard/etc/modprobe.d/blacklist-odroid.conf
+	fi	
 
 	# Udoo
 	if [[ $BOARD == "udoo" ]] ; then		
@@ -158,9 +163,9 @@ install_board_specific (){
 	fi
 
 	# if we have a special fat boot partition, alter rootfs=
-	if [[ "$BOOTSIZE" -gt "0" && -f "$DEST/cache/sdcard/boot/boot.cmd" ]]; then
+	if [[ "$BOOTSIZE" -gt "0" ]]; then
 		display_alert "Adjusting boot scripts" "$BOARD" "info"
-		sed -e 's/p1 /p2 /g' -i $DEST/cache/sdcard/boot/boot.cmd	
+		[[ -f "$DEST/cache/sdcard/boot/boot.cmd" ]] && sed -e 's/p1 /p2 /g' -i $DEST/cache/sdcard/boot/boot.cmd	
 		echo "/dev/mmcblk0p1        /boot   vfat    defaults        0       0" >> $DEST/cache/sdcard/etc/fstab
 	fi
 
