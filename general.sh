@@ -43,7 +43,7 @@ cleaning()
 		;;
 
 		"cache") # delete output/cache
-		[ -d "$DEST/cache" ] && display_alert "Cleaning" "$DEST/cache" "info" && rm -rf $DEST/cache/*
+		[ -d "$DEST/cache" ] && display_alert "Cleaning" "$DEST/cache" "info" && find $DEST/cache/ -type f -delete
 		;;
 
 		"images") # delete output/images
@@ -102,6 +102,9 @@ display_alert()
 # Let's have unique way of displaying alerts
 #--------------------------------------------------------------------------------------------------------------------------------
 {
+# log function parameters to install.log
+echo "Displaying message: $@" >> $DEST/debug/install.log
+
 if [[ $2 != "" ]]; then TMPARA="[\e[0;33m $2 \x1B[0m]"; else unset TMPARA; fi
 if [ $3 == "err" ]; then
 	echo -e "[\e[0;31m error \x1B[0m] $1 $TMPARA"
@@ -294,7 +297,7 @@ prepare_host() {
 	# packages list for host
 	PAK="aptly ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate pigz \
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
-	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring"
+	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools"
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case

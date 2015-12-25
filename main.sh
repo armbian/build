@@ -16,6 +16,10 @@
 # Include here to make "display_alert" and "prepare_host" available
 source $SRC/lib/general.sh					# General functions
 
+# compress and remove old logs
+(cd $DEST/debug && tar -czf logs-$(date +"%d_%m_%Y-%H_%M_%S").tgz *.log) > /dev/null 2>&1
+rm -f $DEST/debug/*.log > /dev/null 2>&1
+
 # Script parameters handling
 for i in "$@"; do
 	if [[ "$i" == *"="* ]]; then
@@ -188,11 +192,7 @@ source $SRC/lib/makeboarddeb.sh 			# Create board support package
 # The name of the job
 VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
 
-# compress and remove old logs
-(cd $DEST/debug; tar -czf logs-$(date +"%d_%m_%Y-%H_%M_%S").tgz *.log)
-rm -f $DEST/debug/*.log
-
-echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION > $DEST/debug/install.log 
+echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION >> $DEST/debug/install.log
 
 # needed if process failed in the middle
 umount_image
@@ -231,7 +231,6 @@ fi
 start=`date +%s`
 
 # fetch_from_github [repository, sub directory]
-mkdir -p $DEST -p $SOURCES
 
 if [ "$FORCE_CHECKOUT" = "yes" ]; then FORCE="-f"; else FORCE=""; fi
 
