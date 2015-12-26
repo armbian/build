@@ -78,7 +78,7 @@ jessie)
 		# add serial console
 		cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/$SERIALCON.conf
 		sed -e "s/ttyS0/$SERIALCON/g" -i $DEST/cache/sdcard/etc/init/$SERIALCON.conf
-		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service"
+		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
 		mkdir -p "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d"
 		echo "[Service]" > "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
 		echo "ExecStart=" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
