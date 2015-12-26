@@ -34,6 +34,7 @@
 	SYSTEMD="no" # Enable or disable systemd on Jessie in debootstrap process 
 	OFFSET="1" # Bootloader space in MB (1 x 2048 = default)
 	BOOTSIZE="0" # Mb size of boot partition
+	SERIALCON="ttyS0"
 	MISC1="https://github.com/linux-sunxi/sunxi-tools.git" # Allwinner fex compiler / decompiler	
 	MISC1_DIR="sunxi-tools"	# local directory
 	MISC2="" # Reserved
@@ -216,6 +217,7 @@
 			BOOTCONFIG="mx6_cubox-i_config"
 			MODULES="bonding"
 			MODULES_NEXT="bonding"
+			SERIALCON="ttymxc0"
 		;;
 
 		udoo)#enabled
@@ -225,6 +227,7 @@
 			BOOTCONFIG="udoo_qdl_config"
 			MODULES="bonding"
 			MODULES_NEXT=""	
+			SERIALCON="ttymxc1"
 		;;
 
 		udoo-neo)#enabled
@@ -235,6 +238,7 @@
 			BOOTCONFIG="udoo_neo_config"
 			MODULES="bonding"
 			MODULES_NEXT=""
+			SERIALCON="ttymxc0"
 		;;
 
 		guitar)#enabled
@@ -246,6 +250,7 @@
 			BOOTCONFIG="s500_defconfig"		
 			MODULES="ethernet wlan_8723bs bonding"
 			MODULES_NEXT=""
+			SERIALCON="ttyS3"
 		;;
 		
 		odroidxu)#enabled
@@ -256,6 +261,7 @@
 			BOOTCONFIG="odroid_config"		
 			MODULES="bonding"
 			MODULES_NEXT=""
+			SERIALCON="ttySAC2"
 		;;
 
 		*) echo "Board configuration not found"

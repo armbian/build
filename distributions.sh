@@ -17,13 +17,25 @@ install_distribution_specific (){
 #---------------------------------------------------------------------------------------------------------------------------------
 display_alert "Fixing release custom applications." "$RELEASE" "info"
 
+# Common
+
+# set up apt
+cat <<END > $DEST/cache/sdcard/etc/apt/apt.conf.d/71-no-recommends
+APT::Install-Recommends "0";
+APT::Install-Suggests "0";
+END
+
+# configure the system for unattended upgrades
+cp $SRC/lib/scripts/50unattended-upgrades $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+cp $SRC/lib/scripts/02periodic $DEST/cache/sdcard/etc/apt/apt.conf.d/02periodic
+
 case $RELEASE in
 
 # Debian Wheezy
 wheezy)
 		
 		# add serial console
-		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/cache/sdcard/etc/inittab
+		echo T0:2345:respawn:/sbin/getty -L $SERIALCON 115200 vt100 >> $DEST/cache/sdcard/etc/inittab
 		
 		# don't clear screen on boot console
 		sed -e 's/getty 38400 tty1/getty --noclear 38400 tty1/g' -i $DEST/cache/sdcard/etc/inittab
@@ -64,28 +76,19 @@ jessie)
 		mkdir $DEST/cache/sdcard/selinux
 		
 		# add serial console
-		cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/ttyS0.conf
-		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@ttyS0.service"
-		mkdir -p "$DEST/cache/sdcard/etc/systemd/system/serial-getty@ttyS0.service.d"
-		echo "[Service]" > "$DEST/cache/sdcard/etc/systemd/system/serial-getty@ttyS0.service.d/10-rate.conf"
-		echo "ExecStart=" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@ttyS0.service.d/10-rate.conf"
-		echo "ExecStart=-/sbin/agetty -L 115200 %I $TERM" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@ttyS0.service.d/10-rate.conf"
+		cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/$SERIALCON.conf
+		sed -e "s/ttyS0/$SERIALCON/g" -i $DEST/cache/sdcard/etc/init/$SERIALCON.conf
+		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service"
+		mkdir -p "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d"
+		echo "[Service]" > "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+		echo "ExecStart=" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+		echo "ExecStart=-/sbin/agetty -L 115200 %I $TERM" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
 
 		# don't clear screen tty1
 		mkdir -p "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/"
 		echo "[Service]" > "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
 		echo "TTYVTDisallocate=no" >> "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
-				
-		# add serial console
-		echo T0:2345:respawn:/sbin/getty -L ttyS0 115200 vt100 >> $DEST/cache/sdcard/etc/inittab
-		
-		# don't clear screen on boot console
-		sed -e 's/getty 38400 tty1/getty --noclear 38400 tty1/g' -i $DEST/cache/sdcard/etc/inittab
-		
-		# disable some getties
-		sed -e 's/5:23:respawn/#5:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
-		sed -e 's/6:23:respawn/#6:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab		
-		
+	
 		# seting timeout
 		mkdir -p $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/
 		echo "[Service]" > $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf 
@@ -96,7 +99,8 @@ jessie)
 trusty)
 		
 		# add serial console
-		cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/ttyS0.conf
+		cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/$SERIALCON.conf
+		sed -e "s/ttyS0/$SERIALCON/g" -i $DEST/cache/sdcard/etc/init/$SERIALCON.conf
 
 		# don't clear screen tty1
 		sed -e s,"exec /sbin/getty","exec /sbin/getty --noclear",g 	-i $DEST/cache/sdcard/etc/init/tty1.conf
@@ -129,18 +133,6 @@ trusty)
 exit
 ;;
 esac
-
-# Common
-
-# set up apt
-cat <<END > $DEST/cache/sdcard/etc/apt/apt.conf.d/71-no-recommends
-APT::Install-Recommends "0";
-APT::Install-Suggests "0";
-END
-
-# configure the system for unattended upgrades
-cp $SRC/lib/scripts/50unattended-upgrades $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-cp $SRC/lib/scripts/02periodic $DEST/cache/sdcard/etc/apt/apt.conf.d/02periodic
 
 # copy hostapd configurations
 install -m 755 $SRC/lib/config/hostapd.conf $DEST/cache/sdcard/etc/hostapd.conf 

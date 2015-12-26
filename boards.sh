@@ -37,52 +37,31 @@ install_board_specific (){
 	# Lemaker Guitar
 	if [[ $BOARD == "guitar" ]] ; then		
 
-			if [ -f $DEST/cache/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttyS3/g" -i $DEST/cache/sdcard/etc/inittab; fi		
-			if [ -f $DEST/cache/sdcard/etc/init/ttyS0.conf ]; then 
-				mv $DEST/cache/sdcard/etc/init/ttyS0.conf $DEST/cache/sdcard/etc/init/ttyS3.conf; 
-				sed -e "s/ttyS0/ttyS3/g" -i $DEST/cache/sdcard/etc/init/ttyS3.conf; 
-			fi
-			if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then 
-				mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  \
-				$DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS3.service
-			fi		
-			chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq autoremove >/dev/null 2>&1"
-			echo "blacklist wlan_8723bs_vq0" > $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf
-			echo "blacklist ctp_gslX680" >> $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf
-			echo "blacklist ctp_gsl3680" >> $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf
-			echo "blacklist gsensor_mir3da" >> $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf
-			echo "blacklist gsensor_stk8313" >> $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf
-			echo "blacklist gsensor_bma222" >> $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf
-			echo "blacklist lightsensor_ltr301" >> $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf		
+		echo "blacklist wlan_8723bs_vq0" > $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf
+		echo "blacklist ctp_gslX680" >> $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf
+		echo "blacklist ctp_gsl3680" >> $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf
+		echo "blacklist gsensor_mir3da" >> $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf
+		echo "blacklist gsensor_stk8313" >> $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf
+		echo "blacklist gsensor_bma222" >> $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf
+		echo "blacklist lightsensor_ltr301" >> $DEST/cache/sdcard/etc/modprobe.d/blacklist-guitar.conf		
 
 	fi
 
 	# Odroid
 	if [[ $BOARD == "odroidxu" ]] ; then
-			if [ -f $DEST/cache/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttySAC2/g" -i $DEST/cache/sdcard/etc/inittab; fi		
-			echo "blacklist ina231_sensor" > $DEST/cache/sdcard/etc/modprobe.d/blacklist-odroid.conf
-			chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc && apt-get -y -qq autoremove"		
+		
+		echo "blacklist ina231_sensor" > $DEST/cache/sdcard/etc/modprobe.d/blacklist-odroid.conf
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc"		
+		
 	fi	
 
 	# Udoo
 	if [[ $BOARD == "udoo" ]] ; then		
 
-			if [ -f $DEST/cache/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc1/g" -i $DEST/cache/sdcard/etc/inittab; fi
-			if [ -f $DEST/cache/sdcard/etc/init/ttyS0.conf ]; then 
-				mv $DEST/cache/sdcard/etc/init/ttyS0.conf $DEST/cache/sdcard/etc/init/ttymxc1.conf; 
-				sed -e "s/ttyS0/ttymxc1/g" -i $DEST/cache/sdcard/etc/init/ttymxc1.conf; 
-			fi
-			if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then 
-				mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  \
-				$DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc1.service
-			fi
-			chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc >/dev/null 2>&1"
-			chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq autoremove >/dev/null 2>&1"		
-			sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.default
-			sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.bonding
-			sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.hostapd
-			# Udoo doesn't have interactive 		
-			sed -e 's/interactive/ondemand/g' -i $DEST/cache/sdcard/etc/init.d/cpufrequtils
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc >/dev/null 2>&1"
+		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.default
+		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.bonding
+		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.hostapd
 
 	fi
 
@@ -90,57 +69,41 @@ install_board_specific (){
 	# Udoo neo
 	if [[ $BOARD == "udoo-neo" ]] ; then		
 
-			if [ -f $DEST/cache/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/inittab; fi
-			if [ -f $DEST/cache/sdcard/etc/init/ttyS0.conf ]; then 
-				mv $DEST/cache/sdcard/etc/init/ttyS0.conf $DEST/cache/sdcard/etc/init/ttymxc0.conf
-				sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/init/ttymxc0.conf
-			fi	
-			if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then 
-				mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  \
-				$DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc0.service 
-			fi
-			chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc && apt-get -y -qq autoremove"		
-			sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.default
-			sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.bonding
-			sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.hostapd
-			# SD card is elsewhere
-			sed 's/mmcblk0p1/mmcblk1p1/' -i $DEST/cache/sdcard/etc/fstab
-			# firmware for M4
-			mkdir -p $DEST/cache/sdcard/boot/bin/
-			cp $SRC/lib/bin/m4startup.fw* $DEST/cache/sdcard/boot/bin/
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc"
+		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.default
+		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.bonding
+		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.hostapd
+		# SD card is elsewhere
+		sed 's/mmcblk0p1/mmcblk1p1/' -i $DEST/cache/sdcard/etc/fstab
+		# firmware for M4
+		mkdir -p $DEST/cache/sdcard/boot/bin/
+		cp $SRC/lib/bin/m4startup.fw* $DEST/cache/sdcard/boot/bin/
 
 	fi
 
 
 	# cubox / hummingboard
 	if [[ $BOARD == cubox-i* ]] ; then
-
-			if [ -f $DEST/cache/sdcard/etc/inittab ]; then sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/inittab; fi
-			if [ -f $DEST/cache/sdcard/etc/init/ttyS0.conf ]; then 
-				mv $DEST/cache/sdcard/etc/init/ttyS0.conf $DEST/cache/sdcard/etc/init/ttymxc0.conf
-				sed -e "s/ttyS0/ttymxc0/g" -i $DEST/cache/sdcard/etc/init/ttymxc0.conf
-			fi	
-			if [ -f $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service ]; then 
-				mv $DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service  \
-				$DEST/cache/sdcard/etc/systemd/system/getty.target.wants/serial-getty@ttymxc0.service 
-			fi
 			
-			# default lirc configuration 
-			sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $DEST/cache/sdcard/etc/lirc/hardware.conf
-			sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="default"/g' -i $DEST/cache/sdcard/etc/lirc/hardware.conf
-			cp $SRC/lib/config/lirc.conf.cubox-i $DEST/cache/sdcard/etc/lirc/lircd.conf
-			cp $SRC/lib/bin/brcm_patchram_plus_cubox $DEST/cache/sdcard/usr/local/bin/brcm_patchram_plus
-			chroot $DEST/cache/sdcard /bin/bash -c "chmod +x /usr/local/bin/brcm_patchram_plus"
-			cp $SRC/lib/scripts/brcm4330 $DEST/cache/sdcard/etc/default
-			cp $SRC/lib/scripts/brcm4330-patch $DEST/cache/sdcard/etc/init.d
-			chroot $DEST/cache/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
-			chroot $DEST/cache/sdcard /bin/bash -c "update-rc.d brcm4330-patch defaults>> /dev/null"
+		# default lirc configuration 
+		sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $DEST/cache/sdcard/etc/lirc/hardware.conf
+		sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="default"/g' -i $DEST/cache/sdcard/etc/lirc/hardware.conf
+		cp $SRC/lib/config/lirc.conf.cubox-i $DEST/cache/sdcard/etc/lirc/lircd.conf
+		cp $SRC/lib/bin/brcm_patchram_plus_cubox $DEST/cache/sdcard/usr/local/bin/brcm_patchram_plus
+		chroot $DEST/cache/sdcard /bin/bash -c "chmod +x /usr/local/bin/brcm_patchram_plus"
+		cp $SRC/lib/scripts/brcm4330 $DEST/cache/sdcard/etc/default
+		cp $SRC/lib/scripts/brcm4330-patch $DEST/cache/sdcard/etc/init.d
+		chroot $DEST/cache/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
+		chroot $DEST/cache/sdcard /bin/bash -c "update-rc.d brcm4330-patch defaults>> /dev/null"
 						
 	fi
 
 	# install custom root package 
 	chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/$CHOOSEN_ROOTFS.deb >/dev/null 2>&1"
 
+	# remove not needed packages
+	chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq autoremove >/dev/null 2>&1"
+	
 	# enable first run script
 	chroot $DEST/cache/sdcard /bin/bash -c "update-rc.d firstrun defaults >/dev/null 2>&1"
 
