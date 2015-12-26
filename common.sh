@@ -314,12 +314,14 @@ fi
 }
 
 
-shrinking_raw_image (){
-#--------------------------------------------------------------------------------------------------------------------------------
-# Shrink partition and image to real size with 10% space
-#--------------------------------------------------------------------------------------------------------------------------------
+
+shrinking_raw_image (){ # Parameter: RAW image with full path
+#---------------------------------------------------------------------------------------------------------------------------------
+# Shrink partition and image to real size with a place for 128Mb swap space
+#---------------------------------------------------------------------------------------------------------------------------------
 RAWIMAGE=$1
 display_alert "Shrink image last partition to" "minimum" "info"
+
 # partition prepare
 LOOP=$(losetup -f)
 losetup $LOOP $RAWIMAGE
@@ -328,6 +330,7 @@ PARTEND=$(parted $LOOP unit s print -sm | head -3 | tail -1 | cut -d: -f3 | sed 
 PARTSTARTBLOCKS=$(($PARTSTART*512))
 echo "PARTSTART $PARTSTART PARTEND $PARTEND PARTSTARTBLOCKS $PARTSTARTBLOCKS" >> $DEST/debug/install.log 
 sleep 1; losetup -d $LOOP
+
 # convert from EXT4 to EXT2
 sleep 1; losetup -o $PARTSTARTBLOCKS $LOOP $RAWIMAGE
 sleep 1; fsck -n $LOOP >/dev/null 2>&1
@@ -336,7 +339,7 @@ sleep 1; e2fsck -fy $LOOP >/dev/null 2>&1
 resize2fs $LOOP -M >/dev/null 2>&1
 BLOCKSIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Block count" | awk '{ print $(NF)}')
 RESERVEDBLOCKSIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Reserved block count" | awk '{ print $(NF)}')
-BLOCKSIZE=$(($PARTSTART+$BLOCKSIZE+$RESERVEDBLOCKSIZE))
+BLOCKSIZE=$(($PARTSTART+$BLOCKSIZE+50000)) # fixed reserve to be enough for swap file creation
 echo "BLOCKSIZE $BLOCKSIZE RESERVEDBLOCKSIZE $RESERVEDBLOCKSIZE" >> $DEST/debug/install.log 
 resize2fs $LOOP $BLOCKSIZE >/dev/null 2>&1
 tune2fs -O has_journal $LOOP >/dev/null 2>&1
@@ -345,19 +348,18 @@ losetup -d $LOOP
 
 # mount once again and create new partition
 sleep 1; losetup $LOOP $RAWIMAGE
-#PARTITIONS=$(($(fdisk -l $LOOP | grep $LOOP | wc -l)-1))
 PARTITIONS=$(parted -m $LOOP 'print' | tail -1 | awk -F':' '{ print $1 }')
 
-#((echo d; echo $PARTITIONS; echo n; echo p; echo ; echo ; echo "+"$NEWSIZE"K"; echo w;) | fdisk $LOOP)>/dev/null
 parted $LOOP rm $PARTITIONS >/dev/null 2>&1
-NEWSIZE=$((($BLOCKSIZE+$RESERVEDBLOCKSIZE)*5000/1024)) # overhead hardcoded to number
+NEWSIZE=$((($BLOCKSIZE)*4096/1024))
+
 STARTFROM=$(($PARTEND+1)) # if we have two partitions, start of second one is where first one ends +1
 [[ $PARTITIONS == 1 ]] && STARTFROM=$PARTSTART
 
 ((echo n; echo p; echo ; echo $STARTFROM; echo "+"$NEWSIZE"K"; echo w;) | fdisk $LOOP)>/dev/null
 sleep 1
-# truncate the image
 
+# truncate the image
 TRUNCATE=$(parted -m $LOOP 'unit s print' | tail -1 | awk -F':' '{ print $3 }' | sed 's/.$//')
 TRUNCATE=$((($TRUNCATE+1)*512))
 truncate -s $TRUNCATE $RAWIMAGE >/dev/null 2>&1
