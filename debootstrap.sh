@@ -84,7 +84,7 @@ if [ -f "$cache_fname" ]; then
 	currtime=`date +%s`
 	diff=$(( (currtime - filemtime) / 86400 ))
 	display_alert "Extracting $RELEASE from cache" "$diff days old" "info"
-	pv -p -b -r -c -N "$RELEASE.tgz" "$cache_fname" | pigz -dc | tar xp -C $DEST/cache/sdcard/
+	pv -p -b -r -c -N "$cache_fname" "$cache_fname" | pigz -dc | tar xp -C $DEST/cache/sdcard/
 	if [ "$diff" -gt "3" ]; then
 		chroot $DEST/cache/sdcard /bin/bash -c "apt-get update" | dialog --backtitle "$backtitle" --title "Force package update ..." --progressbox 20 70
 	fi
@@ -204,7 +204,7 @@ KILLPROC=$(ps -uax | pgrep dbus-daemon | tail -1); if [ -n "$KILLPROC" ]; then k
 
 display_alert "Closing debootstrap process and preparing cache." "" "info"
 tar cp --directory=$DEST/cache/sdcard/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
---exclude='./mnt/*' --exclude='./sys/*' . | pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "$RELEASE.tgz" | pigz > $cache_fname
+--exclude='./mnt/*' --exclude='./sys/*' . | pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "$cache_fname" | pigz > $cache_fname
 fi
 #
 # mount proc, sys and dev
