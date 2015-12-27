@@ -40,7 +40,7 @@ while [[ $k1 -lt ${#MYARRAY1[@]} ]]
 		else
 			BUILD_DESKTOP="no"
 		fi
-		
+	unset IFS
 	source $SRC/lib/configuration.sh
 	if [[ $KERNEL_ONLY == "yes" ]]; then
 		if [[ "$OLDFAMILY" != *"$LINUXFAMILY$BRANCH"* ]]; then
@@ -52,7 +52,8 @@ while [[ $k1 -lt ${#MYARRAY1[@]} ]]
 		echo "$BOARD $RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY"
 		[[ $BUILD_ALL != "demo" ]] && source $SRC/lib/main.sh
 	fi # kernel only
-
+	IFS=";"
+	
 	    k1=$[$k1+2]
 		l1=$[$l1+2]
 	done
