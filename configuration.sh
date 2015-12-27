@@ -410,7 +410,7 @@
 	
 	# For user override	
 	if [[ -f "$SRC/userpatches/lib.config" ]]; then 
-		#display_alert "Using user configuration override" "$SRC/userpatches/lib.config" "info"
+		display_alert "Using user configuration override" "$SRC/userpatches/lib.config" "info"
 		source $SRC/userpatches/lib.config
 	fi
 	

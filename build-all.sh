@@ -24,6 +24,9 @@ OLDFAMILY=""
 # build 5 = next and dev kernels
 # build 6 = legacy and next and dev kernel
 
+# Include here to make "display_alert" and "prepare_host" available
+source $SRC/lib/general.sh					# General functions
+
 distro-list ()
 {
 declare -a MYARRAY1=('wheezy' 'Debian 7 Wheezy | oldstable' 'jessie' 'Debian 8 Jessie | stable' 'trusty' 'Ubuntu Trusty Tahr 14.04.x LTS');
@@ -40,16 +43,16 @@ while [[ $k1 -lt ${#MYARRAY1[@]} ]]
 		else
 			BUILD_DESKTOP="no"
 		fi
-	unset IFS
+	unset IFS LINUXFAMILY LINUXCONFIG LINUXKERNEL LINUXSOURCE KERNELBRANCH BOOTLOADER BOOTSOURCE BOOTBRANCH CPUMIN GOVERNOR
 	source $SRC/lib/configuration.sh
 	if [[ $KERNEL_ONLY == "yes" ]]; then
 		if [[ "$OLDFAMILY" != *"$LINUXFAMILY$BRANCH"* ]]; then
-		echo "$BOARD $RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY"
+		display_alert "$BOARD" "$RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY" "info"
 		[[ $BUILD_ALL != "demo" ]] && source $SRC/lib/main.sh
 		OLDFAMILY=$OLDFAMILY"$LINUXFAMILY$BRANCH"
 		fi
 	else
-		echo "$BOARD $RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY"
+		display_alert "$BOARD" "$RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY" "info"
 		[[ $BUILD_ALL != "demo" ]] && source $SRC/lib/main.sh
 	fi # kernel only
 	IFS=";"
