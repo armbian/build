@@ -12,6 +12,17 @@
 IFS=";"
 START=0
 OLDFAMILY=""
+#BUILD_ALL="demo"
+
+# vaid options for automatic building and menu selection
+#
+# build 0 = don't build
+# build 1 = old kernel
+# build 2 = next kernel
+# build 3 = both kernels
+# build 4 = dev kernel
+# build 5 = next and dev kernels
+# build 6 = legacy and next and dev kernel
 
 distro-list ()
 {
@@ -34,12 +45,12 @@ while [[ $k1 -lt ${#MYARRAY1[@]} ]]
 	if [[ $KERNEL_ONLY == "yes" ]]; then
 		if [[ "$OLDFAMILY" != *"$LINUXFAMILY$BRANCH"* ]]; then
 		echo "$BOARD $RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY"
-		source $SRC/lib/main.sh
+		[[ $BUILD_ALL != "demo" ]] && source $SRC/lib/main.sh
 		OLDFAMILY=$OLDFAMILY"$LINUXFAMILY$BRANCH"
 		fi
 	else
 		echo "$BOARD $RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY"
-		source $SRC/lib/main.sh
+		[[ $BUILD_ALL != "demo" ]] && source $SRC/lib/main.sh
 	fi # kernel only
 
 	    k1=$[$k1+2]
@@ -48,22 +59,22 @@ while [[ $k1 -lt ${#MYARRAY1[@]} ]]
 }
 
 IFS=";"
-MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/)#enabled/ || /#des/ || /#build/' | sed 's/)#enabled//g' | sed 's/#description //g' | sed 's/#build //g' | sed ':a;N;$!ba;s/\n/;/g'))
+
+MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/)#enabled/ || /#des/ || /#build/' | sed -e 's/\t\t//' | sed 's/)#enabled//g' | sed 's/#description //g' | sed -e 's/\t//' | sed 's/#build //g' | sed ':a;N;$!ba;s/\n/;/g'))
 	i1=$[0+$START]
 	j1=$[1+$START]
 	o1=$[2+$START]
 	while [[ $i1 -lt ${#MYARRAY[@]} ]]
 	do
 		
-		if [ "${MYARRAY[$o1]}" == "1" ]; then 
+		if [[ "${MYARRAY[$o1]}" == "1" || "${MYARRAY[$o1]}" == "3" || "${MYARRAY[$o1]}" == "6" ]]; then 
 			distro-list "${MYARRAY[$i1]}" "default"
 		fi
-		if [ "${MYARRAY[$o1]}" == "2" ]; then 
+		if [[ "${MYARRAY[$o1]}" == "2" || "${MYARRAY[$o1]}" == "3" || "${MYARRAY[$o1]}" == "5" || "${MYARRAY[$o1]}" == "6" ]]; then 
 			distro-list "${MYARRAY[$i1]}" "next"
 		fi
-		if [ "${MYARRAY[$o1]}" == "3" ]; then 
-			distro-list "${MYARRAY[$i1]}" "default"
-			distro-list "${MYARRAY[$i1]}" "next"
+		if [[ "${MYARRAY[$o1]}" == "4" || "${MYARRAY[$o1]}" == "5" || "${MYARRAY[$o1]}" == "6" ]]; then 
+			distro-list "${MYARRAY[$i1]}" "dev"
 		fi
 		
         i1=$[$i1+3];j1=$[$j1+3];o1=$[$o1+3]

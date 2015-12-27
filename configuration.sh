@@ -54,7 +54,7 @@
 
 		cubieboard4)#enabled
 			#description A80 octa core 2Gb soc wifi
-			#build 5
+			#build 0
 			LINUXFAMILY="sun9i"		
 			BOOTCONFIG="Cubieboard4_defconfig"
 			CPUMIN="1200000"
@@ -73,7 +73,7 @@
 
 		cubieboard)#enabled
 			#description A10 single core 1Gb SoC
-			#build 6	
+			#build 6
 			LINUXFAMILY="sun4i"		
 			BOOTCONFIG="Cubieboard_config" 
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sunxi"
@@ -82,7 +82,7 @@
 
 		cubieboard2)#enabled
 			#description A20 dual core 1Gb SoC
-			#build 6		
+			#build 6
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="Cubieboard2_config" 
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
@@ -91,7 +91,7 @@
 
 		cubietruck)#enabled
 			#description A20 dual core 2Gb SoC Wifi
-			#build 6	
+			#build 6
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="Cubietruck_config" 
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i ap6210"
@@ -100,7 +100,7 @@
 
 		lime-a10)#enabled
 			#description A10 single core 512Mb SoC
-			#build 6		
+			#build 6
 			LINUXFAMILY="sun4i"
 			BOOTCONFIG="A10-OLinuXino-Lime_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
@@ -118,7 +118,7 @@
 
 		lime2)#enabled
 			#description A20 dual core 1Gb SoC
-			#build 6	
+			#build 6
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="A20-OLinuXino-Lime2_defconfig" 
 			MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
@@ -126,7 +126,7 @@
 		;;
 
 		micro)#enabled
-			#description A20 dual core 1Gb SoC	
+			#description A20 dual core 1Gb SoC
 			#build 6
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="A20-OLinuXino_MICRO_config"
@@ -136,7 +136,7 @@
 
 		pcduino3nano)#enabled
 			#description A20 dual core 1Gb SoC
-			#build 6	
+			#build 6
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="Linksprite_pcDuino3_Nano_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
@@ -150,14 +150,14 @@
 			BOOTLOADER="https://github.com/BPI-SINOVOIP/BPI-Mainline-uboot"
 			BOOTBRANCH="master"
 			BOOTCONFIG="Bananapi_M2_defconfig"
-			BOOTSOURCE="u-boot-bpi-m2"	
+			BOOTSOURCE="u-boot-bpi-m2"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 			MODULES_NEXT="brcmfmac bonding"
 		;;
 
 		bananapi)#enabled
 			#description A20 dual core 1Gb SoC
-			#build 6		
+			#build 6
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="Bananapi_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
@@ -166,7 +166,7 @@
 
 		bananapipro)#enabled
 			#description A20 dual core 1Gb SoC Wifi
-			#build 0	
+			#build 0
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="Bananapro_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp ap6210"
@@ -175,7 +175,7 @@
 
 		lamobo-r1)#enabled
 			#description A20 dual core 1Gb SoC Switch
-			#build 6	
+			#build 6
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="Lamobo_R1_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
@@ -203,7 +203,7 @@
 		orangepiplus)#enabled
 			#description H3 quad core 1Gb SoC Wifi USB hub
 			#build 4wip
-			LINUXFAMILY="sun8i"		
+			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_plus_defconfig"
 			LINUXKERNEL="https://github.com/jwrdegoede/linux-sunxi"
 			LINUXSOURCE="hans"
@@ -213,7 +213,7 @@
 		cubox-i)#enabled
 			#description Freescale iMx dual/quad core Wifi
 			#build 3
-			LINUXFAMILY="cubox"	
+			LINUXFAMILY="cubox"
 			BOOTCONFIG="mx6_cubox-i_config"
 			MODULES="bonding"
 			MODULES_NEXT="bonding"
@@ -226,13 +226,13 @@
 			LINUXFAMILY="udoo"
 			BOOTCONFIG="udoo_qdl_config"
 			MODULES="bonding"
-			MODULES_NEXT=""	
+			MODULES_NEXT=""
 			SERIALCON="ttymxc1"
 		;;
 
 		udoo-neo)#enabled
 			#description Freescale iMx singe core Wifi
-			#build 1wip	
+			#build 1wip
 			#BOOTSIZE="32"
 			LINUXFAMILY="neo"
 			BOOTCONFIG="udoo_neo_config"
@@ -243,11 +243,11 @@
 
 		guitar)#enabled
 			#description S500 Lemaker Guitar Action quad core
-			#build 1wip	
-			LINUXFAMILY="s500"	
-			OFFSET="16" 
+			#build 1wip
+			LINUXFAMILY="s500"
+			OFFSET="16"
 			BOOTSIZE="16"
-			BOOTCONFIG="s500_defconfig"		
+			BOOTCONFIG="s500_defconfig"
 			MODULES="ethernet wlan_8723bs bonding"
 			MODULES_NEXT=""
 			SERIALCON="ttyS3"
@@ -255,10 +255,10 @@
 		
 		odroidxu)#enabled
 			#description Exynos5422 XU3/XU4 octa core
-			#build 3	
-			LINUXFAMILY="odroidxu"				
+			#build 1
+			LINUXFAMILY="odroidxu"
 			BOOTSIZE="16"
-			BOOTCONFIG="odroid_config"		
+			BOOTCONFIG="odroid_config"
 			MODULES="bonding"
 			MODULES_NEXT=""
 			SERIALCON="ttySAC2"
@@ -410,7 +410,7 @@
 	
 	# For user override	
 	if [[ -f "$SRC/userpatches/lib.config" ]]; then 
-		display_alert "Using user configuration override" "$SRC/userpatches/lib.config" "info"
+		#display_alert "Using user configuration override" "$SRC/userpatches/lib.config" "info"
 		source $SRC/userpatches/lib.config
 	fi
 	
