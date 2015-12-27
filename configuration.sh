@@ -248,7 +248,7 @@
 			OFFSET="16"
 			BOOTSIZE="16"
 			BOOTCONFIG="s500_defconfig"
-			MODULES="ethernet wlan_8723bs bonding"
+			MODULES="ethernet wlan_8723bs"
 			MODULES_NEXT=""
 			SERIALCON="ttyS3"
 		;;
