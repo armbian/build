@@ -162,7 +162,7 @@ if [[ $BUILD_DESKTOP == yes ]]; then
 		PAKETKI="$PAKETKI mozo pluma iceweasel icedove"
 		;;
 		jessie)
-		PAKETKI="$PAKETKI mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove"
+		PAKETKI="$PAKETKI mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove mpv"
 		;;
 		trusty)
 		PAKETKI="$PAKETKI libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
