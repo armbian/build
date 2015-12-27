@@ -188,8 +188,13 @@ if [ -d "$SOURCES/$LINUXSOURCEDIR" ]; then
 	if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCEDIR/firmware; fi
 
 	# use proven config
-	if [ "$KERNEL_KEEP_CONFIG" != "yes" ] || [ ! -f $SOURCES/$LINUXSOURCEDIR/.config ]; then 
-		cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config; 
+	if [ "$KERNEL_KEEP_CONFIG" != "yes" ] || [ ! -f $SOURCES/$LINUXSOURCEDIR/.config ]; then
+		if [ -f $SRC/userpatches/$LINUXCONFIG.config ]; then
+			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
+			cp $SRC/userpatches/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config
+		else
+			cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config
+		fi
 	fi
 
 	# hacks for banana family
