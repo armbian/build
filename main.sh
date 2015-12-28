@@ -198,7 +198,7 @@ echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION >> $DEST/debug/install.log
 umount_image
 
 # let's start with fresh screen
-clear
+
 display_alert "Starting Armbian build script" "@host" "info"
 
 # optimize build time with 100% CPU usage

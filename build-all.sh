@@ -43,18 +43,18 @@ while [[ $k1 -lt ${#MYARRAY1[@]} ]]
 		else
 			BUILD_DESKTOP="no"
 		fi
-	unset IFS LINUXFAMILY LINUXCONFIG LINUXKERNEL LINUXSOURCE KERNELBRANCH BOOTLOADER BOOTSOURCE BOOTBRANCH CPUMIN GOVERNOR
+	unset IFS LINUXFAMILY LINUXCONFIG LINUXKERNEL LINUXSOURCE KERNELBRANCH BOOTLOADER BOOTSOURCE BOOTBRANCH CPUMIN GOVERNOR needs_uboot needs_kernel
 	source $SRC/lib/configuration.sh
-	if [[ $KERNEL_ONLY == "yes" ]]; then
-		if [[ "$OLDFAMILY" != *"$LINUXFAMILY$BRANCH"* ]]; then
+#	if [[ $KERNEL_ONLY == "yes" ]]; then
+#		if [[ "$OLDFAMILY" != *"$LINUXFAMILY$BRANCH"* ]]; then
+#		display_alert "$BOARD" "$RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY" "info"
+#		[[ $BUILD_ALL != "demo" ]] && source $SRC/lib/main.sh
+#		OLDFAMILY=$OLDFAMILY"$LINUXFAMILY$BRANCH"
+#		fi
+#	else
 		display_alert "$BOARD" "$RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY" "info"
 		[[ $BUILD_ALL != "demo" ]] && source $SRC/lib/main.sh
-		OLDFAMILY=$OLDFAMILY"$LINUXFAMILY$BRANCH"
-		fi
-	else
-		display_alert "$BOARD" "$RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY" "info"
-		[[ $BUILD_ALL != "demo" ]] && source $SRC/lib/main.sh
-	fi # kernel only
+#	fi # kernel only
 	IFS=";"
 	
 	    k1=$[$k1+2]
