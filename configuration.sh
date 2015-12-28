@@ -27,7 +27,7 @@
 	
 	# common options
 
-	REVISION="5.00" # all boards have same revision
+	REVISION="4.81" # all boards have same revision
 	SDSIZE="4000" # SD image size in MB
 	TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 	USEALLCORES="yes" # Use all CPU cores for compiling
@@ -243,7 +243,7 @@
 
 		guitar)#enabled
 			#description S500 Lemaker Guitar Action quad core
-			#build 1wip
+			#build 1
 			LINUXFAMILY="s500"
 			OFFSET="16"
 			BOOTSIZE="16"
@@ -255,7 +255,7 @@
 		
 		odroidxu)#enabled
 			#description Exynos5422 XU3/XU4 octa core
-			#build 1
+			#build 3
 			LINUXFAMILY="odroidxu"
 			BOOTSIZE="16"
 			BOOTCONFIG="odroid_config"
