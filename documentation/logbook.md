@@ -1,5 +1,37 @@
 # Release history
 
+**v4.81 / 28.12.2015**
+
+- complete build script rework
+- new development kernel package linux-image-dev-sunxi (4.4RC6) for Allwinner boards
+- added Lemaker Guitar, kernel 3.10.55
+- added Odroid XU3/4, kernel 3.10.94 and Vanilla 4.2.8
+- Vanilla kernel for Allwinner based boards upgraded to 4.3.3
+- Udoo vanilla upgraded to 4.2.8, legacy to 3.14.58
+- cubox / hummingboard upgraded to 3.14.58, added Vanilla kernel 4.4
+- fixed Jessie RTC bug, systemd default on Jessie images
+
+**v4.70 / 30.11.2015**
+
+- Bugfix update(apt-get update && apt-get upgrade)
+- small changes and fixes
+
+**v4.6 / 24.11.2015** 
+
+- Update only (apt-get update && apt-get upgrade)
+- Vanilla kernel for Allwinner based boards upgraded to 4.2.6
+- Legacy kernel for Allwinner based boards upgraded to 3.4.110
+- added new board: Udoo Neo
+- added USB printer, CAN, CMA, ZSWAP, USB video class, CDROM fs, sensor classs, … to Allwinner Vanilla kernel
+- nand-sata-install scripts rewrite. Now it’s possible to install to any partition.
+- fixed nand install for Allwinner A10 based boards: Cubieboard 1 / Lime A10
+- universal upgrade script bugfix / rewrite.
+- 8 channel HDMI support for legacy Allwinner kernel
+- unattended upgrade fixed
+- sunxi tools fixed
+- added two new options to build script: keep kernel config and use_ccache
+- added kernel version to motd
+
 **v4.5 / 14.10.2015**
 
 - vanilla kernel upgraded to 4.2.3 for Allwinner based boards
