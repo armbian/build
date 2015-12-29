@@ -297,7 +297,7 @@ prepare_host() {
 	# packages list for host
 	PAK="aptly ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate pigz \
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
-	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl"
+	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync"
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
