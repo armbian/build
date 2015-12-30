@@ -71,6 +71,15 @@
 			MODULES_NEXT="bonding"
 		;;
 
+		olinux-som-a13)#enabled
+			#description A13 single core 512Mb SoM
+			#build 6
+			LINUXFAMILY="sun5i"		
+			BOOTCONFIG="A13-OLinuXino_defconfig" 
+			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sunxi"
+			MODULES_NEXT="bonding"
+		;;
+
 		cubieboard)#enabled
 			#description A10 single core 1Gb SoC
 			#build 6
