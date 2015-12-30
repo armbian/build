@@ -10,8 +10,10 @@
 #
 #--------------------------------------------------------------------------------------------------------------------------------
 
-# version
-LIB_TAG=""						# empty for latest version or one of listed here: https://github.com/igorpecovnik/lib/tags
+# build script version to use
+LIB_TAG=""						# empty for latest version,
+							# one of listed here: https://github.com/igorpecovnik/lib/tags for stable versions,
+							# or commit hash
 
 # method
 KERNEL_ONLY="no"					# build only kernel
