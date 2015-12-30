@@ -117,12 +117,6 @@ and place to:
 
 	userpatches/ 
 
-## Compiling or choosing from cache ##
-
-
-- compile from scratch with additional source cleaning and menu config.
-- select cached / already made kernel 
-
 ## Debootstrap ##
 
 Debootstrap creates fresh Debian / Ubuntu root filesystem templates or use cached under:
