@@ -71,19 +71,11 @@ We need to get some predefined variables about selected board. Which kernel & ub
 
 **Board configuration example:**
     
-	REVISION="1.1"											# Version number is altered by board maintainer
 	BOOTSIZE="16"											# FAT boot partition in MB, 0 for none
-	BOOTLOADER="https://github.com/UDOOboard/uboot-imx"		# Uboot source location
-	BOOTSOURCE="u-boot-neo"									# Local folder where to download it
-	BOOTCONFIG="udoo_neo_config"							# Which compile config to use
-	CPUMIN="198000"											# CPU minimum frequency
-	CPUMAX="996000"											# CPU minimum frequency
-	MODULES="bonding"										# old kernel modules
-	MODULES_NEXT=""											# new kernel modules
-	LINUXKERNEL="https://github.com/UDOOboard/linux_kernel"	# kernel source location
-	LINUXCONFIG="linux-udoo-neo"							# kernel configuration
-	LINUXSOURCE="linux-neo"									# Local folder where to download it
+	BOOTCONFIG="udoo_neo_config"							# Which compile config to use		
 	LINUXFAMILY="udoo"										# boards share kernel
+
+Note that in this case, all main config options (kernel and uboot source) are covered within FAMILY. Check [configuration.sh](https://github.com/igorpecovnik/lib/blob/master/configuration.sh) for more config options.
 
 This **isn't ment to be user configurable** but you can alter variables if you know what you are doing.
 
@@ -95,14 +87,35 @@ When we know where are the sources and where they need to be the download / upda
 
 In patching process we are appling patches to sources. The process is defined in:
 
-	lib/patching.sh
+	lib/patch/kernel/sun7i-default
+	lib/patch/kernel/sunxi-dev	
+	...
+	lib/patch/u-boot/u-boot-default
+	lib/patch/u-boot/u-boot-neo-default
+	...
+
+Patch rules for subdirectories are: **KERNEL_FAMILY-BRANCH** for kernel and **U-BOOT-SOURCE-BRANCH** for U-boot.
 
 ## User patching ##
 
-You can add your own patches outside build script. Place your patches inside appropriate directory, for kernel or u-boot. There are no limitations except all patches must have ending **.patch**
+You can add your own patches outside build script. Place your patches inside appropriate directory, for kernel or u-boot. There are no limitations except all patches must have ending **.patch**. Subdirectory logic is the same as for default patches.
 
-	userpatches/kernel
-	userpatches/u-boot
+	userpatches/kernel/sun7i-default
+	userpatches/kernel/sunxi-dev	
+	...
+	userpatches/u-boot/u-boot-default
+	userpatches/u-boot/u-boot-neo-default
+	...
+
+## User kernel config ##
+
+You can use your own kernel config outside build script. Name it as follows:
+
+**linux-KERNELFAMILY-KERNELBRANCH.config**
+
+and place to:
+
+	userpatches/ 
 
 ## Compiling or choosing from cache ##
 
@@ -164,6 +177,7 @@ It will be something like this:
 	lib/debootstrap.sh		basic system template creation
 	lib/distributions.sh	system specific installation and fixes
 	lib/main.sh				user input and script calls
+	lib/makeboarddeb.sh		creates board support package .deb
 	lib/patching.sh			board and system dependend kernel & u-boot patch calls
 	lib/repo-update.sh		creates and updates your local repository
 	lib/repo-show-sh		show packets in your local repository
@@ -175,6 +189,7 @@ It will be something like this:
 	output/images			zip packed RAW image
 	userpatches/kernel		put your kernel patches here
 	userpatches/u-boot		put your u-boot patches here
+	userpatches/			put your kernel config here
 
 
 ## Additional info ##
