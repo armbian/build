@@ -34,7 +34,6 @@ Options clarification:
 	- "debs" = delete "./output/debs",
 	- "cache" = delete "./output/cache",
 	- "sources" = delete "./sources"
-- **AFTERINSTALL** (string): is a variable with command executed in a process of building just before closing image to insert some of your custom applications or fixes
 - **KERNEL\_KEEP\_CONFIG** (yes|no): overwrite or keep kernel config before compilation
 - **USE_CCACHE** (yes|no): use a C compiler cache to speed up the build process
 - **BUILD_DESKTOP** (yes|no): builds a desktop on the top of the system with hw acceleration for some boards.
@@ -116,6 +115,14 @@ You can use your own kernel config outside build script. Name it as follows:
 and place to:
 
 	userpatches/ 
+
+## User root filesystem install ##
+
+Edit:
+
+	userpatches/customize-image.sh
+
+and place your custom code here, different for each base. Those commands will be executed in a process of building just before closing image.
 
 ## Debootstrap ##
 
