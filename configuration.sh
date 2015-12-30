@@ -76,7 +76,7 @@
 			#build 6
 			LINUXFAMILY="sun5i"		
 			BOOTCONFIG="A13-OLinuXino_defconfig" 
-			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sunxi"
+			MODULES="gpio_sunxi spi_sunxi"
 			MODULES_NEXT="bonding"
 		;;
 
