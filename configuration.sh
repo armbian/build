@@ -283,7 +283,7 @@
 	# board family configurations
 	case $LINUXFAMILY in
 	
-		sun4i|sun7i|sun8i|sun6i|sun9i)
+		sun4i|sun5i|sun7i|sun8i|sun6i|sun9i)
 			[[ -z $LINUXCONFIG && $BRANCH == "default" ]] && LINUXCONFIG="linux-"$LINUXFAMILY-"$BRANCH"
 			[[ -z $LINUXCONFIG && $BRANCH != "default" ]] && LINUXCONFIG="linux-sunxi-"$BRANCH
 			# Kernel
