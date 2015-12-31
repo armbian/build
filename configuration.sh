@@ -253,10 +253,10 @@
 			SERIALCON="ttyS3"
 		;;
 		
-		odroidxu)#enabled
+		odroidxu4)#enabled
 			#description Exynos5422 XU3/XU4 octa core
 			#build 3
-			LINUXFAMILY="odroidxu"
+			LINUXFAMILY="odroidxu4"
 			BOOTSIZE="16"
 			BOOTCONFIG="odroid_config"
 			MODULES="bonding"
@@ -301,7 +301,7 @@
 			UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 		;;
 	
-		odroidxu)
+		odroidxu4)
 			KERNEL_DEFAULT='https://github.com/hardkernel/linux'
 			KERNEL_DEFAULT_BRANCH="odroidxu3-3.10.y"
 			KERNEL_DEFAULT_SOURCE="linux-odroidxu"
