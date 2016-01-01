@@ -78,7 +78,7 @@ apt-get -qq -y --no-install-recommends install git
 if [[ ! -d $SRC/lib ]]; then
 	git clone https://github.com/igorpecovnik/lib
 fi
-cd $SRC/lib; git pull; git checkout ${LIB_TAG:- HEAD}
+cd $SRC/lib; git pull; git checkout ${LIB_TAG:- master}
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # Do we need to build all images
