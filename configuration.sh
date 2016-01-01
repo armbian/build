@@ -255,7 +255,7 @@
 		
 		odroidxu4)#enabled
 			#description Exynos5422 XU3/XU4 octa core
-			#build 3
+			#build 1
 			LINUXFAMILY="odroidxu4"
 			BOOTSIZE="16"
 			BOOTCONFIG="odroid_config"
