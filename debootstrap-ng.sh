@@ -370,7 +370,7 @@ prepare_partitions()
 	BOOTEND=$(($ROOTSTART - 1))
 
 	# stage: create partition table
-	display_alert "Creating partitions" "${parttype[$bootfs]}:+ /boot: ${parttype[$bootfs]} }root: ${parttype[$rootfs]}" "info"
+	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $rootfs" "info"
 	parted -s $DEST/cache/tmprootfs.raw -- mklabel msdos
 	if [[ $BOOTSIZE == 0 ]]; then
 		parted -s $DEST/cache/tmprootfs.raw -- mkpart primary ${parttype[$rootfs]} ${ROOTSTART}s -1s
