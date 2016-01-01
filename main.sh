@@ -181,7 +181,8 @@ HOST="$BOARD"
 
 # Load libraries
 source $SRC/lib/configuration.sh			# Board configuration
-source $SRC/lib/debootstrap.sh 				# System specific install
+source $SRC/lib/debootstrap.sh				# System specific install (old)
+source $SRC/lib/debootstrap-ng.sh 			# System specific install (experimental)
 source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/patching.sh 				# Source patching
 source $SRC/lib/boards.sh 				# Board specific install
@@ -226,7 +227,7 @@ fi
 # sync clock
 if [ "$SYNC_CLOCK" != "no" ]; then
 	display_alert "Syncing clock" "host" "info"
-	ntpdate -s time.ijs.si
+	eval ntpdate -s ${NTP_SERVER:- time.ijs.si}
 fi
 start=`date +%s`
 
@@ -282,34 +283,39 @@ done
 
 [[ -n "$RELEASE" ]] && create_board_package
 
-if [ "$KERNEL_ONLY" == "yes" ]; then
+if [[ $KERNEL_ONLY != yes ]]; then
+	if [[ $EXPERIMENTAL_DEBOOTSTRAP == yes ]]; then
+		debootstrap_ng
+	else
+	
+		# create or use prepared root file-system
+		custom_debootstrap
+
+		# add kernel to the image
+		install_kernel
+
+		# install board specific applications
+		install_distribution_specific
+		install_board_specific
+
+		# install desktop
+		if [ "$BUILD_DESKTOP" = "yes" ]; then
+			install_desktop
+		fi
+
+		# install external applications
+		if [ "$EXTERNAL" = "yes" ]; then
+			install_external_applications
+		fi
+
+		# closing image
+		closing_image
+	fi
+
+else
 	display_alert "Kernel building done" "@host" "info"
 	display_alert "Target directory" "$DEST/debs/" "info"
 	display_alert "File name" "$CHOOSEN_KERNEL" "info"
-else
-	
-	# create or use prepared root file-system
-	custom_debootstrap
-
-	# add kernel to the image
-	install_kernel
-
-	# install board specific applications
-	install_distribution_specific
-	install_board_specific
-
-	# install desktop
-	if [ "$BUILD_DESKTOP" = "yes" ]; then
-		install_desktop
-	fi
-
-	# install external applications
-	if [ "$EXTERNAL" = "yes" ]; then
-		install_external_applications
-	fi
-
-	# closing image
-	closing_image
 fi
 
 end=`date +%s`
