@@ -193,6 +193,7 @@ if [ -d "$SOURCES/$LINUXSOURCEDIR" ]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
 			cp $SRC/userpatches/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config
 		else
+			display_alert "Using kernel config file" "lib/config/$LINUXCONFIG.config" "info"
 			cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config
 		fi
 	fi
