@@ -85,6 +85,8 @@ if [ -f "$cache_fname" ]; then
 	diff=$(( (currtime - filemtime) / 86400 ))
 	display_alert "Extracting $RELEASE from cache" "$diff days old" "info"
 	pv -p -b -r -c -N "$cache_fname" "$cache_fname" | pigz -dc | tar xp -C $DEST/cache/sdcard/
+	rm $DEST/cache/sdcard/etc/resolv.conf
+	echo "nameserver 8.8.8.8" > $DEST/cache/sdcard/etc/resolv.conf
 	if [ "$diff" -gt "3" ]; then
 		chroot $DEST/cache/sdcard /bin/bash -c "apt-get update" | dialog --backtitle "$backtitle" --title "Force package update ..." --progressbox 20 70
 	fi
