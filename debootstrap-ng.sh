@@ -475,6 +475,7 @@ create_image()
 
 	# DEBUG: stage: final customizations
 	touch $DEST/cache/mount/boot/.enable_ttyS0
+	touch $DEST/cache/mount/root/.not_logged_in_yet
 
 	# unmount /boot first, rootfs second, image file last
 	if [[ $BOOTSIZE != 0 ]]; then umount -l $DEST/cache/mount/boot; fi
