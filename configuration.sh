@@ -27,7 +27,7 @@
 	
 	# common options
 
-	REVISION="4.81" # all boards have same revision
+	REVISION="4.82" # all boards have same revision
 	SDSIZE="4000" # SD image size in MB
 	TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 	USEALLCORES="yes" # Use all CPU cores for compiling
