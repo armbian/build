@@ -30,12 +30,18 @@ for i in "$@"; do
 	fi
 done
 
-if [ "$PROGRESS_DISPLAY" = "none" ]; then
+if [[ $PROGRESS_DISPLAY == none ]]; then
 	OUTPUT_VERYSILENT=yes;
-elif [ "$PROGRESS_DISPLAY" != "plain" ]; then
+elif [[ $PROGRESS_DISPLAY != plain ]]; then
 	OUTPUT_DIALOG=yes;
 fi
-if [ "$PROGRESS_LOG_TO_FILE" != "yes" ]; then unset PROGRESS_LOG_TO_FILE; fi
+if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
+
+if [[ $USE_CCACHE != no ]]; then
+	CCACHE=ccache
+else
+	CCACHE=""
+fi
 
 # compile.sh version checking
 ver1=$(grep '^# VERSION' "$SRC/compile.sh" | cut -d'=' -f2)
@@ -208,13 +214,6 @@ if [ "$USEALLCORES" = "yes" ]; then
 	CTHREADS="-j$(($CPUS + $CPUS/2))";
 else
 	CTHREADS="-j${CPUS}";
-fi
-
-# Use C compiler cache
-if [ "$USE_CCACHE" = "yes" ]; then 
-	CCACHE="ccache"; 
-else 
-	CCACHE=""; 
 fi
 
 # display what we do	
