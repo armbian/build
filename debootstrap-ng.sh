@@ -90,6 +90,12 @@ debootstrap_ng()
 	# stage: cleanup
 	rm -f $DEST/cache/sdcard/usr/sbin/policy-rc.d
 	rm -f $DEST/cache/sdcard/usr/bin/qemu-arm-static
+	if [[ -x $DEST/cache/sdcard/sbin/initctl.REAL ]]; then
+		mv -f $DEST/cache/sdcard/sbin/initctl.REAL $DEST/cache/sdcard/sbin/initctl
+	fi
+	if [[ -x $DEST/cache/sdcard/sbin/start-stop-daemon.REAL ]]; then
+		mv -f $DEST/cache/sdcard/sbin/start-stop-daemon.REAL $DEST/cache/sdcard/sbin/start-stop-daemon
+	fi
 
 	umount -l $DEST/cache/sdcard/dev/pts
 	umount -l $DEST/cache/sdcard/dev
@@ -169,7 +175,26 @@ cat <<EOF > $DEST/cache/sdcard/usr/sbin/policy-rc.d
 #!/bin/sh
 exit 101
 EOF
-		chmod +x $DEST/cache/sdcard/usr/sbin/policy-rc.d
+		chmod 755 $DEST/cache/sdcard/usr/sbin/policy-rc.d
+
+		# ported from debootstrap and multistrap for upstart support
+		if [[ -x $DEST/cache/sdcard/sbin/initctl ]]; then
+			mv $DEST/cache/sdcard/sbin/start-stop-daemon $DEST/cache/sdcard/sbin/start-stop-daemon.REAL
+cat <<EOF > $DEST/cache/sdcard/sbin/start-stop-daemon
+#!/bin/sh
+echo "Warning: Fake start-stop-daemon called, doing nothing"
+EOF
+			chmod 755 $DEST/cache/sdcard/sbin/start-stop-daemon
+		fi
+
+		if [[ -x $DEST/cache/sdcard/sbin/initctl ]]; then
+			mv $DEST/cache/sdcard/sbin/initctl $DEST/cache/sdcard/sbin/initctl.REAL
+cat <<EOF > $DEST/cache/sdcard/sbin/initctl
+#!/bin/sh
+echo "Warning: Fake initctl called, doing nothing"
+EOF
+			chmod 755 $DEST/cache/sdcard/sbin/initctl
+		fi
 
 		# stage: configure language and locales
 		display_alert "Configuring locales" "$DEST_LANG" "info"
@@ -450,6 +475,7 @@ create_image()
 
 	# DEBUG: stage: final customizations
 	touch $DEST/cache/mount/boot/.enable_ttyS0
+	touch $DEST/cache/mount/root/.not_logged_in_yet
 
 	# unmount /boot first, rootfs second, image file last
 	if [[ $BOOTSIZE != 0 ]]; then umount -l $DEST/cache/mount/boot; fi
