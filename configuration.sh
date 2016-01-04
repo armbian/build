@@ -286,7 +286,7 @@
 			KERNEL_NEXT_BRANCH="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1`
 			KERNEL_NEXT_SOURCE="linux-vanilla"
 			KERNEL_DEV='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
-			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
+			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_DEV='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 			KERNEL_DEV_BRANCH=""
 			KERNEL_DEV_SOURCE="linux-vanilla"
 			# U-boot
@@ -410,7 +410,7 @@
 	
 	# For user override	
 	if [[ -f "$SRC/userpatches/lib.config" ]]; then 
-		display_alert "Using user configuration override" "$SRC/userpatches/lib.config" "info"
+		display_alert "Using user configuration override" "userpatches/lib.config" "info"
 		source $SRC/userpatches/lib.config
 	fi
 	

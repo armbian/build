@@ -435,7 +435,8 @@ prepare_partitions()
 		echo "/dev/mmcblk0p1 /boot ${parttype[$bootfs]} defaults${mountopts[$bootfs]} 0 0" >> $DEST/cache/sdcard/etc/fstab
 	fi
 	echo "tmpfs /tmp tmpfs defaults,rw,nosuid,nodev 0 0" >> $DEST/cache/sdcard/etc/fstab
-}
+
+} #############################################################################
 
 # create_image
 #
