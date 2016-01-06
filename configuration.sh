@@ -266,12 +266,22 @@
 
 		toradex)#enabled
 			#description Freescale iMx
-			#build 3wip
+			#build 1wip
 			LINUXFAMILY="toradex"
 			BOOTCONFIG="colibri_imx6_defconfig"
 			MODULES=""
 			MODULES_NEXT=""
 			SERIALCON="ttymxc0"
+		;;
+		
+		armada)#enabled
+			#description Marvell Armada 38x
+			#build 1wip
+			LINUXFAMILY="marvell"
+			BOOTCONFIG="armada_38x_clearfog_config"
+			MODULES=""
+			MODULES_NEXT=""
+			SERIALCON="ttymS0"
 		;;
 		
 		*) echo "Board configuration not found"
@@ -403,6 +413,21 @@
 			UBOOT_DEFAULT="git://git.toradex.com/u-boot-toradex.git"
 			UBOOT_DEFAULT_BRANCH="2015.04-toradex"
 			UBOOT_DEFAULT_SOURCE="u-boot-toradex"
+			UBOOT_NEXT=$UBOOT_DEFAULT
+			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
+			UBOOT_DEV=$UBOOT_DEFAULT
+			UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		;;	
+		
+		marvell)
+			KERNEL_DEFAULT="https://github.com/SolidRun/linux-armada38x"
+			KERNEL_DEFAULT_BRANCH="linux-3.10.70-15t1-clearfog"
+			KERNEL_DEFAULT_SOURCE="linux-armada"
+			UBOOT_DEFAULT="https://github.com/SolidRun/u-boot-armada38x"
+			UBOOT_DEFAULT_BRANCH="u-boot-2013.01-15t1-clearfog"
+			UBOOT_DEFAULT_SOURCE="u-boot-armada"
 			UBOOT_NEXT=$UBOOT_DEFAULT
 			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
 			UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
