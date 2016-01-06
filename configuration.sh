@@ -252,7 +252,7 @@
 			MODULES_NEXT=""
 			SERIALCON="ttyS3"
 		;;
-		
+
 		odroidxu4)#enabled
 			#description Exynos5422 XU3/XU4 octa core
 			#build 1
@@ -264,6 +264,16 @@
 			SERIALCON="ttySAC2"
 		;;
 
+		toradex)#enabled
+			#description Freescale iMx
+			#build 3wip
+			LINUXFAMILY="toradex"
+			BOOTCONFIG="colibri_imx6_defconfig"
+			MODULES=""
+			MODULES_NEXT=""
+			SERIALCON="ttymxc0"
+		;;
+		
 		*) echo "Board configuration not found"
 			exit
 		;;
@@ -378,6 +388,21 @@
 			UBOOT_DEFAULT="https://github.com/LeMaker/u-boot-actions"
 			UBOOT_DEFAULT_BRANCH="s500-master"
 			UBOOT_DEFAULT_SOURCE="u-boot-s500"
+			UBOOT_NEXT=$UBOOT_DEFAULT
+			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
+			UBOOT_DEV=$UBOOT_DEFAULT
+			UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
+			UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		;;	
+		
+		toradex)
+			KERNEL_DEFAULT="git://git.toradex.com/linux-toradex.git"
+			KERNEL_DEFAULT_BRANCH="toradex_imx_3.14.28_1.0.0_ga"
+			KERNEL_DEFAULT_SOURCE="linux-toradex"
+			UBOOT_DEFAULT="git://git.toradex.com/u-boot-toradex.git"
+			UBOOT_DEFAULT_BRANCH="2015.04-toradex"
+			UBOOT_DEFAULT_SOURCE="u-boot-toradex"
 			UBOOT_NEXT=$UBOOT_DEFAULT
 			UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
 			UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE

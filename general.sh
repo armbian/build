@@ -80,8 +80,9 @@ if [ -d "$SOURCES/$2/$GITHUBSUBDIR" ]; then
 	PULL=$(git pull)
 else	
 	if [[ -n $3 && -n "$(git ls-remote $1 | grep "$tag")" ]]; then	
-		display_alert "... creating a shallow clone" "$2 $3" "info"
-		git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 --depth 1
+		display_alert "... creating a shallow clone" "$2 $3" "info"		
+		# Toradex git's doesn't support shallow clone. Need different solution than this.
+		git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 --depth 1 || git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 
 		cd $SOURCES/$2/$GITHUBSUBDIR		
 		git checkout -q $3
 	else
