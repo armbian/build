@@ -17,6 +17,7 @@
 source $SRC/lib/general.sh					# General functions
 
 # compress and remove old logs
+mkdir -p $DEST/debug
 (cd $DEST/debug && tar -czf logs-$(date +"%d_%m_%Y-%H_%M_%S").tgz *.log) > /dev/null 2>&1
 rm -f $DEST/debug/*.log > /dev/null 2>&1
 
