@@ -277,20 +277,27 @@ prepare_host() {
 
 	display_alert "Preparing" "host" "info"
 
+	if [[ $(dpkg --print-architecture) == armhf ]]; then
+		display_alert "Running this tool on board itself is not supported" "..." "err"
+		display_alert "Please read documentation to set up proper compilation environment" "..." "err"
+		display_alert "http://www.armbian.com/using-armbian-tools/" "..." "err"
+		exit 1
+	fi
+
 	# dialog may be used to display progress
-	if [[ "$(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null)" != *ii* ]]; then
+	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "dialog" "info"
 		apt-get install -qq -y --no-install-recommends dialog >/dev/null 2>&1
 	fi
 
 	# wget is needed
-	if [[ "$(dpkg-query -W -f='${db:Status-Abbrev}\n' wget 2>/dev/null)" != *ii* ]]; then
+	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' wget 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "wget" "info"
 		apt-get install -qq -y --no-install-recommends wget >/dev/null 2>&1
 	fi
 
 	# need lsb_release to decide what to install
-	if [[ "$(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null)" != *ii* ]]; then
+	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "lsb-release" "info"
 		apt-get install -qq -y --no-install-recommends lsb-release >/dev/null 2>&1
 	fi
@@ -302,16 +309,16 @@ prepare_host() {
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
-	if [ "$NO_APT_CACHER" != "yes" ]; then PAK="$PAK apt-cacher-ng"; fi
+	if [[ $NO_APT_CACHER != yes ]]; then PAK="$PAK apt-cacher-ng"; fi
 
 	local codename=$(lsb_release -sc)
 	if [[ $codename == "" || "jessie trusty wily" != *"$codename"* ]]; then
 		display_alert "Host system support was not tested" "${codename:-(unknown)}" "wrn"
 	fi
 
-	if [ "$codename" = "jessie" ]; then
+	if [[ $codename = jessie ]]; then
 		PAK="$PAK crossbuild-essential-armhf";
-		if [ ! -f "/etc/apt/sources.list.d/crosstools.list" ]; then
+		if [[ ! -f /etc/apt/sources.list.d/crosstools.list ]]; then
 			display_alert "Adding repository for jessie" "cross-tools" "info"
 			dpkg --add-architecture armhf > /dev/null 2>&1
 			echo 'deb http://emdebian.org/tools/debian/ jessie main' > /etc/apt/sources.list.d/crosstools.list
@@ -319,16 +326,16 @@ prepare_host() {
 		fi
 	fi
 
-	if [ "$codename" = "trusty" ]; then
+	if [[ $codename = trusty ]]; then
 		PAK="$PAK libc6-dev-armhf-cross";
-		if [ ! -f "/etc/apt/sources.list.d/aptly.list" ]; then
+		if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
 			display_alert "Adding repository for trusty" "aptly" "info"
 			echo 'deb http://repo.aptly.info/ squeeze main' > /etc/apt/sources.list.d/aptly.list
 			apt-key adv --keyserver keys.gnupg.net --recv-keys E083A3782A194991
 		fi
 	fi
 
-	if [ "$codename" = "wily" ]; then PAK="$PAK gcc-4.9-arm-linux-gnueabihf libc6-dev-armhf-cross"; fi
+	if [[ $codename = wily ]]; then PAK="$PAK gcc-4.9-arm-linux-gnueabihf libc6-dev-armhf-cross"; fi
 
 	local deps=()
 	local installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
@@ -338,7 +345,7 @@ prepare_host() {
 		if [ "$?" -ne "0" ]; then deps+=("$packet"); fi
 	done
 
-	if [ "${#deps[@]}" -gt "0" ]; then
+	if [[ ${#deps[@]} -gt 0 ]]; then
 		eval '( apt-get update; apt-get -y --no-install-recommends install "${deps[@]}" )' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/output.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing ${#deps[@]} host dependencies..." 20 80'} \
@@ -363,9 +370,9 @@ prepare_host() {
 
 	# legacy kernel compilation needs cross-gcc version 4.9 or lower
 	# gcc-arm-linux-gnueabihf installs gcc version 5 by default on wily
-	if [ "$codename" = "wily" ]; then
+	if [[ $codename = wily ]]; then
 		local GCC=$(which arm-linux-gnueabihf-gcc)
-		while [ -L "$GCC" ]; do
+		while [[ -L $GCC ]]; do
 			GCC=$(readlink "$GCC")
 		done
 		local version=$(basename "$GCC" | awk -F '-' '{print $NF}')
