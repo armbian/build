@@ -276,7 +276,7 @@
 		
 		armada)#enabled
 			#description Marvell Armada 38x
-			#build 1wip
+			#build 6wip
 			LINUXFAMILY="marvell"
 			BOOTCONFIG="armada_38x_clearfog_config"
 			MODULES=""
@@ -425,6 +425,14 @@
 			KERNEL_DEFAULT="https://github.com/SolidRun/linux-armada38x"
 			KERNEL_DEFAULT_BRANCH="linux-3.10.70-15t1-clearfog"
 			KERNEL_DEFAULT_SOURCE="linux-armada"
+			KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
+			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
+			KERNEL_NEXT_BRANCH="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1`
+			KERNEL_NEXT_SOURCE="linux-vanilla"
+			KERNEL_DEV='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
+			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_DEV='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
+			KERNEL_DEV_BRANCH=""
+			KERNEL_DEV_SOURCE="linux-vanilla"
 			UBOOT_DEFAULT="https://github.com/SolidRun/u-boot-armada38x"
 			UBOOT_DEFAULT_BRANCH="u-boot-2013.01-15t1-clearfog"
 			UBOOT_DEFAULT_SOURCE="u-boot-armada"
