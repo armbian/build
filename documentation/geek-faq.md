@@ -20,12 +20,12 @@ Run the script
 - **KERNEL_CONFIGURE** (yes|no):
     - set to "yes" to configure kernel (add or remove modules or features). Kernel configuration menu will be brought up before compilation
     - set to "no" to compile kernel without changing default or custom provided configuration
-- **CLEAN_LEVEL** (comma-separated list): defines what should be cleaned. Default value is "make,debs" - remove all packages and clean sources. Changing this option can be useful when rebuilding images or building more than one image
-    - "make" = execute _make clean_ for selected kernel and u-boot sources,
-	- "images" = delete "./output/images" (complete OS images),
-	- "debs" = delete "./output/debs" (kernel, u-boot and other packages),
-	- "cache" = delete "./output/cache" (rootfs cache),
-	- "sources" = delete "./sources" (all downloaded sources)
+- **CLEAN_LEVEL** (comma-separated list): defines what should be cleaned. Default value is `"make,debs"` - clean sources and remove all packages. Changing this option can be useful when rebuilding images or building more than one image
+    - "make" = execute `make clean` for selected kernel and u-boot sources,
+	- "images" = delete `output/images` (complete OS images),
+	- "debs" = delete "`output/debs` (kernel, u-boot and other packages),
+	- "cache" = delete `output/cache` (rootfs cache),
+	- "sources" = delete `sources` (all downloaded sources)
 - **KERNEL\_KEEP\_CONFIG** (yes|no):
     - set to "yes" to use kernel config file from previous compilation for the same branch, device family and version
     - set to "no" to use default or user-provided config file
@@ -47,17 +47,17 @@ Run the script
 ### Hidden options to minimize user input for build automation:
 - **BOARD** (string): you can set name of board manually to skip dialog prompt
 - **BRANCH** (default|next|dev): you can set kernel and u-boot branch manually to skip dialog prompt; some options may not be available for all devices
-- **RELEASE** (wheezy|jessie|trusty): you can set OS release manually to skip dialog prompt; use this option with KERNEL_ONLY=yes to create board support package
+- **RELEASE** (wheezy|jessie|trusty): you can set OS release manually to skip dialog prompt; use this option with `KERNEL_ONLY=yes` to create board support package
 
 ### Hidden options for advanced users (default values are marked **bold**):
 - **USE_CCACHE** (**yes**|no): use a C compiler cache to speed up the build process
 - **PROGRESS_DISPLAY** (none|plain|**dialog**): way to display output of verbose processes - compilation, packaging, debootstrap
-- **PROGRESS_LOG_TO_FILE** (yes|**no**): duplicate output, affected by previous option, to log file (./output/debug/*.log)
-- **USE_MAINLINE_GOOGLE_MIRROR** (yes|**no**): use googlesource.com mirror for downloading mainline kernel sources, may be faster than git.kernel.org depending on your location
+- **PROGRESS_LOG_TO_FILE** (yes|**no**): duplicate output, affected by previous option, to log files `output/debug/*.log`
+- **USE_MAINLINE_GOOGLE_MIRROR** (yes|**no**): use `googlesource.com` mirror for downloading mainline kernel sources, may be faster than `git.kernel.org` depending on your location
 - **EXPERIMENTAL_DEBOOTSTRAP** (yes|**no**): use new debootstrap and image creation process. NOTE: work in progress, it may not create proper images for some boards yet
-- **FORCE_USE_RAMDISK** (yes|no): overrides autodetect for using tmpfs in new debootstrap and image creation process. Takes effect only if EXPERIMENTAL_DEBOOTSTRAP is set to "yes"
-- **FIXED_IMAGE_SIZE** (integer): create image file of this size (in megabytes) instead of minimal. Takes effect only if EXPERIMENTAL_DEBOOTSTRAP is set to "yes"
-- **USE_F2FS_ROOT** (yes|**no**): create image with [F2FS](https://en.wikipedia.org/wiki/F2FS) root filesystem instead of ext4. Requires setting FIXED_IMAGE_SIZE to actual size of your SD card. Takes effect only if EXPERIMENTAL_DEBOOTSTRAP is set to "yes"
+- **FORCE_USE_RAMDISK** (yes|no): overrides autodetect for using tmpfs in new debootstrap and image creation process. Takes effect only if `EXPERIMENTAL_DEBOOTSTRAP` is set to "yes"
+- **FIXED_IMAGE_SIZE** (integer): create image file of this size (in megabytes) instead of minimal. Takes effect only if `EXPERIMENTAL_DEBOOTSTRAP` is set to "yes"
+- **USE_F2FS_ROOT** (yes|**no**): create image with [F2FS](https://en.wikipedia.org/wiki/F2FS) root filesystem instead of ext4. Requires setting `FIXED_IMAGE_SIZE` to actual size of your SD card. Takes effect only if `EXPERIMENTAL_DEBOOTSTRAP` is set to "yes"
 
 ### Supplying options via command line parameters
 Instead of editing compile.sh to set options, you can set them by supplying command line parameters to compile.sh
@@ -65,31 +65,32 @@ Example:
 
     ./compile.sh BRANCH=next BOARD=cubietruck KERNEL_ONLY=yes PROGRESS_DISPLAY=plain RELEASE=jessie
 
+Note: Option `BUILD_ALL` cannot be set to "yes" via command line parameter.
+
 ## User provided patches
-You can add your own patches outside build script. Place your patches inside appropriate directory, for kernel or u-boot. There are no limitations except all patches must have ending **.patch**. User patches directory structure mirrors directory structure of "lib/patch". Look for the hint at the beginning of patching process to select proper directory for patches. Example:
+You can add your own patches outside build script. Place your patches inside appropriate directory, for kernel or u-boot. There are no limitations except all patches must have file name extension `.patch`. User patches directory structure mirrors directory structure of `lib/patch`. Look for the hint at the beginning of patching process to select proper directory for patches. Example:
 
     [ o.k. ] Started patching process for [ kernel sunxi-dev 4.4.0-rc6 ]
     [ o.k. ] Looking for user patches in [ userpatches/kernel/sunxi-dev ]
 
-Patch with same file name in "userpatches" directory tree substitutes one in "lib/patch". To _replace_ a patch provided by Armbian maintainers, copy it from "lib/patch" to corresponding directory in "userpatches" and edit it to your needs. To _disable_ a patch, create empty file in corresponding directory in "userpatches".
+Patch with same file name in `userpatches` directory tree substitutes one in `lib/patch`. To _replace_ a patch provided by Armbian maintainers, copy it from `lib/patch` to corresponding directory in `userpatches` and edit it to your needs. To _disable_ a patch, create empty file in corresponding directory in `userpatches`.
 
 ## User provided kernel config
-If file **"userpatches/linux-KERNELFAMILY-KERNELBRANCH.config"** exists, it will be used instead of default one from "lib/config". Look for the hint at the beginning of kernel compilation process to select proper config file name. Example:
+If file `userpatches/linux-$KERNELFAMILY-$KERNELBRANCH.config` exists, it will be used instead of default one from `lib/config`. Look for the hint at the beginning of kernel compilation process to select proper config file name. Example:
 
     [ o.k. ] Compiling dev kernel [ @host ]
     [ o.k. ] Using kernel config file [ lib/config/linux-sunxi-dev.config ]
 
 ## User provided image customization script
-You can run custom commands to customize created image. Edit file:
+You can run additional commands to customize created image. Edit file:
 
-	userpatches/customize-image.sh
+    userpatches/customize-image.sh
 
-and place your custom code here. You may test values of variables noted in the file to use different commands for different configurations. Those commands will be executed in a process of building just before closing image.
+and place your code here. You may test values of variables noted in the file to use different commands for different configurations. Those commands will be executed in a process of building just before closing image.
 
 # What is behind the build process?
 
 Build process summary:
-
 - creates development environment on the top of X86/AMD64 Ubuntu 14.04 LTS,
 - downloads proven sources, applies patches and uses tested configurations,
 - cross-compiles universal boot loader (u-boot), kernel and other tools and drivers,
