@@ -304,7 +304,7 @@ prepare_host() {
 
 	# packages list for host
 	PAK="aptly ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate pigz \
-	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
+	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync"
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
@@ -316,8 +316,8 @@ prepare_host() {
 		display_alert "Host system support was not tested" "${codename:-(unknown)}" "wrn"
 	fi
 
-	if [[ $codename = jessie ]]; then
-		PAK="$PAK crossbuild-essential-armhf";
+	if [[ $codename == jessie ]]; then
+		PAK="$PAK crossbuild-essential-armhf crossbuild-essential-armel";
 		if [[ ! -f /etc/apt/sources.list.d/crosstools.list ]]; then
 			display_alert "Adding repository for jessie" "cross-tools" "info"
 			dpkg --add-architecture armhf > /dev/null 2>&1
@@ -326,8 +326,8 @@ prepare_host() {
 		fi
 	fi
 
-	if [[ $codename = trusty ]]; then
-		PAK="$PAK libc6-dev-armhf-cross";
+	if [[ $codename == trusty ]]; then
+		PAK="$PAK libc6-dev-armhf-cross libc6-dev-armel-cross";
 		if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
 			display_alert "Adding repository for trusty" "aptly" "info"
 			echo 'deb http://repo.aptly.info/ squeeze main' > /etc/apt/sources.list.d/aptly.list
@@ -335,7 +335,9 @@ prepare_host() {
 		fi
 	fi
 
-	if [[ $codename = wily ]]; then PAK="$PAK gcc-4.9-arm-linux-gnueabihf libc6-dev-armhf-cross"; fi
+	if [[ $codename == wily || $codename == xenial ]]; then
+		PAK="$PAK gcc-4.9-arm-linux-gnueabihf gcc-4.9-arm-linux-gnueabi libc6-dev-armhf-cross libc6-dev-armel-cross"
+	fi
 
 	local deps=()
 	local installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
@@ -369,8 +371,9 @@ prepare_host() {
 	echo 'They will be automatically included if placed here!' >> $SRC/userpatches/readme.txt
 
 	# legacy kernel compilation needs cross-gcc version 4.9 or lower
-	# gcc-arm-linux-gnueabihf installs gcc version 5 by default on wily
-	if [[ $codename = wily ]]; then
+	# gcc-arm-linux-gnueabi(hf) installs gcc version 5 by default on wily
+	if [[ $codename == wily || $codename == xenial ]]; then
+		# hard float
 		local GCC=$(which arm-linux-gnueabihf-gcc)
 		while [[ -L $GCC ]]; do
 			GCC=$(readlink "$GCC")
@@ -386,6 +389,23 @@ prepare_host() {
 				--slave /usr/bin/arm-linux-gnueabihf-gcov arm-linux-gnueabihf-gcov /usr/bin/arm-linux-gnueabihf-gcov-5
 
 			update-alternatives --set arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-4.9
+		fi
+		# soft float
+		GCC=$(which arm-linux-gnueabi-gcc)
+		while [[ -L $GCC ]]; do
+			GCC=$(readlink "$GCC")
+		done
+		version=$(basename "$GCC" | awk -F '-' '{print $NF}')
+		if (( $(echo "$version > 4.9" | bc -l) )); then
+			update-alternatives --install /usr/bin/arm-linux-gnueabi-gcc arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-4.9 10 \
+				--slave /usr/bin/arm-linux-gnueabi-cpp arm-linux-gnueabi-cpp /usr/bin/arm-linux-gnueabi-cpp-4.9 \
+				--slave /usr/bin/arm-linux-gnueabi-gcov arm-linux-gnueabi-gcov /usr/bin/arm-linux-gnueabi-gcov-4.9
+
+			update-alternatives --install /usr/bin/arm-linux-gnueabi-gcc arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-5 11 \
+				--slave /usr/bin/arm-linux-gnueabi-cpp arm-linux-gnueabi-cpp /usr/bin/arm-linux-gnueabi-cpp-5 \
+				--slave /usr/bin/arm-linux-gnueabi-gcov arm-linux-gnueabi-gcov /usr/bin/arm-linux-gnueabi-gcov-5
+
+			update-alternatives --set arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-4.9
 		fi
 	fi
 }
