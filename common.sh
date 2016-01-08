@@ -41,6 +41,9 @@ if [ -d "$SOURCES/$BOOTSOURCEDIR" ]; then
 		[ -f $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp ] && cp $SRC/lib/bin/armbian-u-boot.bmp $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp
 		touch .scmversion
 		
+		# special compilation for armada
+		[[ $LINUXFAMILY == "marvell" ]] && local MAKEPARA="u-boot.mmc"
+		
 		# patch mainline uboot configuration to boot with old kernels
 		if [[ $BRANCH == "default" && $LINUXFAMILY == sun*i ]] ; then
 			if [ "$(cat $SOURCES/$BOOTSOURCEDIR/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
@@ -49,12 +52,12 @@ if [ -d "$SOURCES/$BOOTSOURCEDIR" ]; then
 			fi
 		fi	
 		
-		eval 'make $CTHREADS CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1' \
+		eval 'make $MAKEPARA $CTHREADS CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 	else
-		eval 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1' \
+		eval 'make $MAKEPARA $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." 20 80'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -88,6 +91,8 @@ elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *odroid* ]] ; then
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *udoo* ]] ; then 
 	( dd if=/usr/lib/$CHOOSEN_UBOOT/SPL of=\$DEVICE bs=1k seek=1 status=noxfer ) > /dev/null 2>&1
 	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot.img of=\$DEVICE bs=1K seek=69 status=noxfer ) > /dev/null 2>&1		
+elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *armada* ]] ; then 
+	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot.mmc of=\$DEVICE bs=512 seek=1 status=noxfer ) > /dev/null 2>&1	
 else 
 	( dd if=/usr/lib/$CHOOSEN_UBOOT/u-boot-sunxi-with-spl.bin of=\$DEVICE bs=1024 seek=8 status=noxfer ) > /dev/null 2>&1	
 fi
@@ -122,6 +127,8 @@ END
 		[ ! -f "u-boot.bin" ] || cp u-boot.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT/
 	elif [[ $BOARD == udoo* ]] ; then
 		[ ! -f "u-boot.img" ] || cp SPL u-boot.img $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
+	elif [[ $BOARD == armada* ]] ; then
+		[ ! -f "u-boot.mmc" ] || cp u-boot.mmc $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT
 	else
 		[ ! -f "u-boot-sunxi-with-spl.bin" ] || cp u-boot-sunxi-with-spl.bin $DEST/debs/$CHOOSEN_UBOOT/usr/lib/$CHOOSEN_UBOOT 
 	fi
@@ -463,6 +470,8 @@ write_uboot()
 	if [[ $BOARD == *cubox* ]] ; then
 		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/SPL of=$LOOP bs=512 seek=2 status=noxfer >/dev/null 2>&1)
 		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer >/dev/null 2>&1)
+	elif [[ $BOARD == *armada* ]] ; then
+		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.mmc of=$LOOP bs=512 seek=1 status=noxfer >/dev/null 2>&1)		
 	elif [[ $BOARD == *udoo* ]] ; then
 		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/SPL of=$LOOP bs=1k seek=1 status=noxfer >/dev/null 2>&1)
 		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot.img of=$LOOP bs=1k seek=69 conv=fsync >/dev/null 2>&1)
