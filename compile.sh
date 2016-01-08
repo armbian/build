@@ -24,10 +24,6 @@ CLEAN_LEVEL="make,debs"					# comma-sparated list of clean targets: "make" = mak
 # user 
 DEST_LANG="en_US.UTF-8"					# sl_SI.UTF-8, en_US.UTF-8
 CONSOLE_CHAR="UTF-8"
-ROOTPWD="1234"						# Must be changed @first login
-MAINTAINER="Igor Pecovnik"				# deb signature
-MAINTAINERMAIL="igor.pecovnik@****l.com"		# deb signature
-GPG_PASS=""						# signing password
 
 # advanced
 KERNEL_KEEP_CONFIG="no"					# overwrite kernel config before compilation

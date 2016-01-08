@@ -27,13 +27,18 @@
 	
 	# common options
 
-	REVISION="4.82" # all boards have same revision
+	REVISION="4.83" # all boards have same revision
+	ROOTPWD="1234" # Must be changed @first login
+	MAINTAINER="Igor Pecovnik" # deb signature
+	MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
+	GPG_PASS="" # signing password
 	SDSIZE="4000" # SD image size in MB
 	TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 	USEALLCORES="yes" # Use all CPU cores for compiling
 	SYSTEMD="no" # Enable or disable systemd on Jessie in debootstrap process 
 	OFFSET="1" # Bootloader space in MB (1 x 2048 = default)
 	BOOTSIZE="0" # Mb size of boot partition
+	EXIT_PATCHING_ERROR="" # exit patching if failed
 	SERIALCON="ttyS0"
 	MISC1="https://github.com/linux-sunxi/sunxi-tools.git" # Allwinner fex compiler / decompiler	
 	MISC1_DIR="sunxi-tools"	# local directory
