@@ -2,6 +2,24 @@
 
 Each board is fully supported with three basic system options: Debian Wheezy, Jessie and Ubuntu Trusty desktop build per board.
 
+# How to check download authenticity?
+
+All our images are digitally signed and therefore it's possible to check theirs authentication. You need to unzip the download package and issue those commands (Linux):
+
+	# download my public key from the database
+	gpg --keyserver pgp.mit.edu --recv-key 9F0E78D5
+	gpg --verify Armbian_4.83_Armada_Debian_jessie_3.10.94.raw.asc
+	
+	# proper respond
+	gpg: Signature made sob 09 jan 2016 15:01:03 CET using RSA key ID 9F0E78D5
+	gpg: Good signature from "Igor Pecovnik (Ljubljana, Slovenia) <igor.++++++++++++@gmail.com>"	
+	
+	# wrong repond. Not genuine Armbian image!
+	gpg: Signature made Sun 03 Jan 2016 11:46:25 AM CET using RSA key ID 9F0E78D5
+	gpg: BAD signature from "Igor Pecovnik (Ljubljana, Slovenia) <igor.++++++++++++@gmail.com>"
+
+It is safe to ignore WARNING: This key is not certified with a trusted signature!
+
 # Which kernel to use?
 
 All stable kernels are production ready, but you should use them for different purpuses:
