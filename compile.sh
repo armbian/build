@@ -86,4 +86,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=7
+# VERSION=8
