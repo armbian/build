@@ -461,12 +461,15 @@ create_image()
 		rsync -rLtWh --info=progress2,stats1 $DEST/cache/sdcard/boot $DEST/cache/mount/boot
 	fi
 
-	# stage: install custom u-boot script
-	# should work with mainline u-boot on SD card
-	# probably breaks NAND/SATA installation
-	rm -f $DEST/cache/mount/boot/boot.cmd $DEST/cache/mount/boot/boot.scr
-	cp $SRC/lib/config/boot-next.cmd $DEST/cache/mount/boot/boot.cmd
-	mkimage -C none -A arm -T script -d $DEST/cache/mount/boot/boot.cmd $DEST/cache/mount/boot/boot.scr > /dev/null
+	# stage: fix u-boot script
+	# needs rewriting and testing u-boot scripts
+	# for other boards
+
+	if [[ $BOOTSIZE != 0 ]]; then
+		rm -f $DEST/cache/mount/boot/boot.scr
+		sed -i 's/mmcblk0p1/mmcblk0p2/' $DEST/cache/mount/boot/boot.cmd
+		mkimage -C none -A arm -T script -d $DEST/cache/mount/boot/boot.cmd $DEST/cache/mount/boot/boot.scr > /dev/null
+	fi
 
 	# DEBUG: print free space
 	df -h | grep "$DEST/cache/" | tee -a $DEST/debug/debootstrap.log
@@ -475,7 +478,6 @@ create_image()
 	write_uboot $LOOP
 
 	# DEBUG: stage: final customizations
-	touch $DEST/cache/mount/boot/.enable_ttyS0
 	touch $DEST/cache/mount/root/.not_logged_in_yet
 
 	# unmount /boot first, rootfs second, image file last
