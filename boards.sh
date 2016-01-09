@@ -117,6 +117,8 @@ install_board_specific (){
 		cp $SRC/lib/config/boot-cubox.cmd $DEST/cache/sdcard/boot/boot.cmd
 	elif [[ $BOARD == guitar* ]]; then
 		cp $SRC/lib/config/boot-guitar.cmd $DEST/cache/sdcard/boot/boot.cmd
+	elif [[ $BOARD == armada* ]]; then
+		cp $SRC/lib/config/boot-marvell.cmd $DEST/cache/sdcard/boot/boot.cmd
 	elif [[ $BOARD == odroid* ]]; then
 		cp $SRC/lib/config/boot-odroid.ini $DEST/cache/sdcard/boot/boot.ini	
 	else

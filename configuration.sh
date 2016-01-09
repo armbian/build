@@ -286,7 +286,7 @@
 			BOOTCONFIG="armada_38x_clearfog_config"
 			MODULES=""
 			MODULES_NEXT=""
-			SERIALCON="ttymS0"
+			SERIALCON="ttyS0"
 		;;
 		
 		*) echo "Board configuration not found"
