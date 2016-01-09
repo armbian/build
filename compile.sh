@@ -10,15 +10,14 @@
 #
 #--------------------------------------------------------------------------------------------------------------------------------
 
-# build script version to use
-LIB_TAG=""						# empty for latest version,
-							# one of listed here: https://github.com/igorpecovnik/lib/tags for stable versions,
-							# or commit hash
+# Read build script documentation
+# http://www.armbian.com/using-armbian-tools/
+# for detailed explanation of these parameters
 
 # method
 KERNEL_ONLY="no"					# build only kernel
 KERNEL_CONFIGURE="no"					# want to change my default configuration
-CLEAN_LEVEL="make,debs"					# comma-sparated list of clean targets: "make" = make clean for selected kernel and u-boot,
+CLEAN_LEVEL="make,debs"					# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
 							# "images" = delete "./output/images", "debs" = delete "./output/debs",
 							# "cache" = delete "./output/cache", "sources" = delete "./sources"
 # user 
@@ -31,6 +30,11 @@ FBTFT="yes"						# https://github.com/notro/fbtft
 EXTERNAL="yes"						# compile extra drivers`
 FORCE_CHECKOUT="yes"					# igre manual changes to source
 BUILD_ALL="no"						# cycle through selected boards and make images
+
+# build script version to use
+LIB_TAG=""						# empty for latest version,
+							# one of listed here: https://github.com/igorpecovnik/lib/tags for stable versions,
+							# or commit hash
 #--------------------------------------------------------------------------------------------------------------------------------
 
 # source is where we start the script

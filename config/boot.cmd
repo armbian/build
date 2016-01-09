@@ -4,20 +4,20 @@ setenv bootargs "console=tty1 root=/dev/mmcblk0p1 rootwait rootfstype=ext4 cgrou
 #--------------------------------------------------------------------------------------------------------------------------------
 # Boot loader script to boot with different boot methods for old and new kernel
 #--------------------------------------------------------------------------------------------------------------------------------
-if ext4load mmc 0 0x00000000 /boot/.next || fatload mmc 0 0x00000000 .next
+if ext4load mmc 0 0x00000000 /boot/.next || fatload mmc 0 0x00000000 .next || ext4load mmc 0 0x00000000 .next
 then
 # sunxi mainline kernel
 #--------------------------------------------------------------------------------------------------------------------------------
-ext4load mmc 0 0x49000000 /boot/dtb/${fdtfile} || fatload mmc 0 0x49000000 /dtb/${fdtfile}
-ext4load mmc 0 0x46000000 /boot/zImage || fatload mmc 0 0x46000000 zImage
+ext4load mmc 0 0x49000000 /boot/dtb/${fdtfile} || fatload mmc 0 0x49000000 /dtb/${fdtfile} || ext4load mmc 0 0x49000000 /dtb/${fdtfile}
+ext4load mmc 0 0x46000000 /boot/zImage || fatload mmc 0 0x46000000 zImage || ext4load mmc 0 0x46000000 zImage
 env set fdt_high ffffffff
 bootz 0x46000000 - 0x49000000
 #--------------------------------------------------------------------------------------------------------------------------------
 else
 # sunxi android kernel
 #--------------------------------------------------------------------------------------------------------------------------------
-ext4load mmc 0 0x43000000 /boot/script.bin || fatload mmc 0 0x43000000 script.bin
-ext4load mmc 0 0x48000000 /boot/zImage || fatload mmc 0 0x48000000 zImage
+ext4load mmc 0 0x43000000 /boot/script.bin || fatload mmc 0 0x43000000 script.bin || ext4load mmc 0 0x43000000 script.bin
+ext4load mmc 0 0x48000000 /boot/zImage || fatload mmc 0 0x48000000 zImage || ext4load mmc 0 0x48000000 zImage
 bootz 0x48000000
 #--------------------------------------------------------------------------------------------------------------------------------
 fi
