@@ -468,6 +468,8 @@ create_image()
 	if [[ $BOOTSIZE != 0 ]]; then
 		rm -f $DEST/cache/mount/boot/boot.scr
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $DEST/cache/mount/boot/boot.cmd
+		# rely on rootfs type autodetect
+		sed -i 's/rootfstype=ext4//' $DEST/cache/mount/boot/boot.cmd
 		mkimage -C none -A arm -T script -d $DEST/cache/mount/boot/boot.cmd $DEST/cache/mount/boot/boot.scr > /dev/null
 	fi
 

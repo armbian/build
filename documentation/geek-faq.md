@@ -35,7 +35,7 @@ Run the script
 - **FBTFT** (yes|no):
     - set to "yes" to add a [driver for small displays](https://github.com/notro/fbtft). Only applicable for old kernels (3.4-3.14)
 - **EXTERNAL** (yes|no):
-    - set to "yes" to compile and install some extra applications and drivers (only for **default** kernel branch:
+    - set to "yes" to compile and install some extra applications and drivers (only for **default** kernel branch):
         - [USB redirector](http://www.incentivespro.com)
         - Realtek RT8192 wireless driver
         - Sunxi display control
