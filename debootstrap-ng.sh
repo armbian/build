@@ -411,7 +411,10 @@ prepare_partitions()
 		display_alert "Unable to find free loop device" "err"
 		exit 1
 	fi
-	losetup -P $LOOP $DEST/cache/tmprootfs.raw
+
+	# NOTE: losetup -P option is not available in Trusty
+	losetup $LOOP $DEST/cache/tmprootfs.raw
+	partprobe $LOOP
 
 	# stage: create fs
 	if [[ $BOOTSIZE == 0 ]]; then
