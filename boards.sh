@@ -51,7 +51,7 @@ install_board_specific (){
 	if [[ $BOARD == "odroidxu4" ]] ; then
 		
 		echo "blacklist ina231_sensor" > $DEST/cache/sdcard/etc/modprobe.d/blacklist-odroid.conf
-		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc"		
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc >/dev/null 2>&1"
 		
 	fi	
 
