@@ -116,7 +116,7 @@ fi
 # No parameters. Fixed solution.
 #-----------------------------------------------------------------------------------------------------------------------
 formatnand(){
-dialog --title "$title" --backtitle "$backtitle"  --infobox "\nPartitioning and formating ... up to one minute." 5 60
+dialog --title "$title" --backtitle "$backtitle"  --infobox "\nFormating ... up to one minute." 5 60
 if [[ "$DEVICE_TYPE" = "a20" ]]; then
 (echo y;) | nand-part -f a20 /dev/nand 65536 'bootloader 65536' 'linux 0' >/dev/null 2>&1
 else
