@@ -55,6 +55,13 @@ install_board_specific (){
 		
 	fi	
 
+	# Armada
+	if [[ $BOARD == "armada" ]] ; then
+		
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc linux-sound-base alsa-base alsa-utils bluez>/dev/null 2>&1"
+		
+	fi	
+	
 	# Udoo
 	if [[ $BOARD == "udoo" ]] ; then		
 
