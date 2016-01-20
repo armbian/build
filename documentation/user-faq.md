@@ -1,6 +1,19 @@
 # What to download?
 
-Each board is fully supported with three basic system options: Debian Wheezy, Jessie and Ubuntu Trusty desktop build per board.
+Each board is fully supported with up to **three basic system** options: 
+	
+- Debian Wheezy
+- Debian Jessie 
+- Ubuntu Trusty
+
+Some boards also have a desktop version of Ubuntu or Jessie.
+
+# Legacy or Vanilla?
+
+Both kernels are stable and production ready, but you should use them for different purpuses since their basic support differ:
+
+ * for headless server or light desktop operations use vanilla kernel
+ * for using video acceleration, NAND, ... you should stick to legacy
 
 # How to check download authenticity?
 
@@ -19,13 +32,6 @@ All our images are digitally signed and therefore it's possible to check theirs 
 	gpg: BAD signature from "Igor Pecovnik (Ljubljana, Slovenia) <igor.++++++++++++@gmail.com>"
 
 It is safe to ignore WARNING: This key is not certified with a trusted signature!
-
-# Which kernel to use?
-
-All stable kernels are production ready, but you should use them for different purpuses:
-
- * for headless server or light desktop operations use vanilla kernel (linux-image-next-[kernelfamily](http://forum.armbian.com/index.php/topic/211-kernel-update-procedure-has-been-changed/))  
- * for using video acceleration, NAND, ... you should stick to legacy (linux-image-[kernelfamily](http://forum.armbian.com/index.php/topic/211-kernel-update-procedure-has-been-changed/))
 
 # How to prepare SD card?
 
@@ -60,17 +66,21 @@ and change the autologin user.
 
 # How to update kernel?
 
-For Armbian 4.2 and newer.
-
 	apt-get update
 	apt-get upgrade
 	reboot
-	
-For all other cases. Note that this procedure upgrades only kernel with hardware definitions (bin, dtb, firmware and headers. Operating system and modifications remain as is.
 
+Working on Armbian 4.2 and newer.
+
+# How to upgrade kernel?
+
+If you are running **legacy kernel** and you want to switch to **vanilla**, **development** or vice versa, you can do it this way:
+	
 	wget -q -O - http://upgrade.armbian.com | bash
 
-You will be prompted to select and confirm some actions. It's possible to upgrade **from any other distribution**.
+You will be prompted to select and confirm some actions. It's possible to upgrade **from any other distribution**. Note that this procedure upgrades only kernel with hardware definitions (bin, dtb, firmware and headers. Operating system and modifications remain as is.
+
+Check [this for manual way](http://www.armbian.com/kernel/) and more info.
 
 [su_youtube_advanced url="https:\/\/youtu.be\/iPAlPW3sv3I" controls="yes" showinfo="no" loop="yes" rel="no" modestbranding="yes"]
 
