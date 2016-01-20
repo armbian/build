@@ -181,7 +181,7 @@ install_kernel (){
 
 	# create modules file
 	IFS=" "
-	if [[ $BRANCH == *next* ]];then
+	if [[ $BRANCH == *next* || $BRANCH == *dev* ]];then
 		for word in $MODULES_NEXT; do 
 			echo $word >> $DEST/cache/sdcard/etc/modules; 
 		done
