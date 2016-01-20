@@ -55,15 +55,15 @@ create_board_package (){
 	install -m 755 $SRC/lib/scripts/resize2fs $destination/etc/init.d
 	install -m 755 $SRC/lib/scripts/firstrun  $destination/etc/init.d
 
-	# install custom bashrc and hardware dependent motd
-
-	install $SRC/lib/scripts/bashrc $destination/etc/bash.bashrc.custom
+	# install hardware info script
 	install -m 755 $SRC/lib/scripts/armhwinfo $destination/etc/init.d 
 	echo "set -e" >> $destination/DEBIAN/postinst
 	echo "update-rc.d armhwinfo defaults >/dev/null 2>&1" >> $destination/DEBIAN/postinst
 	echo "update-rc.d -f motd remove >/dev/null 2>&1" >> $destination/DEBIAN/postinst
 	echo "[[ -f /root/.nand1-allwinner.tgz ]] && rm /root/.nand1-allwinner.tgz" >> $destination/DEBIAN/postinst
 	echo "[[ -f /root/nand-sata-install ]] && rm /root/nand-sata-install" >> $destination/DEBIAN/postinst
+	echo "ln -sf /var/run/motd /etc/motd" >> $destination/DEBIAN/postinst	
+	echo "[[ -f /etc/bash.bashrc.custom ]] && rm /etc/bash.bashrc.custom" >> $destination/DEBIAN/postinst
 	echo "exit 0" >> $destination/DEBIAN/postinst
 
 	# temper binary for USB temp meter
@@ -83,11 +83,14 @@ create_board_package (){
 	cp -R $SRC/lib/scripts/nand-sata-install/usr $destination/
 	chmod +x $destination/usr/lib/nand-sata-install/nand-sata-install.sh
 	ln -s ../lib/nand-sata-install/nand-sata-install.sh $destination/usr/sbin/nand-sata-install
-
-	# first login and reboot note when updated
-	mkdir -p $destination/root $destination/tmp $destination/etc/profile.d
+	
+	# install custom motd with reboot and upgrade checking
+	mkdir -p $destination/root $destination/tmp $destination/etc/update-motd.d/ $destination/etc/profile.d
+	install -m 755 $SRC/lib/scripts/update-motd.d/* $destination/etc/update-motd.d/	
 	install -m 755 $SRC/lib/scripts/check_first_login_reboot.sh 	$destination/etc/profile.d
 	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d	
+	cd $destination/
+	ln -s ../var/run/motd etc/motd
 	touch $destination/tmp/.reboot_required
 
 	if [[ $LINUXCONFIG == *sun* ]] ; then
