@@ -76,6 +76,15 @@
 			MODULES_NEXT="bonding"
 		;;
 
+		olinux-som-a13)#enabled
+			#description A13 single core 512Mb SoM
+			#build 6
+			LINUXFAMILY="sun5i"		
+			BOOTCONFIG="A13-OLinuXino_defconfig" 
+			MODULES="gpio_sunxi spi_sunxi"
+			MODULES_NEXT="bonding"
+		;;
+
 		cubieboard)#enabled
 			#description A10 single core 1Gb SoC
 			#build 6
@@ -299,7 +308,7 @@
 	# board family configurations
 	case $LINUXFAMILY in
 	
-		sun4i|sun7i|sun8i|sun6i|sun9i)
+		sun4i|sun5i|sun7i|sun8i|sun6i|sun9i)
 			[[ -z $LINUXCONFIG && $BRANCH == "default" ]] && LINUXCONFIG="linux-"$LINUXFAMILY-"$BRANCH"
 			[[ -z $LINUXCONFIG && $BRANCH != "default" ]] && LINUXCONFIG="linux-sunxi-"$BRANCH
 			# Kernel
