@@ -367,84 +367,6 @@ index a2b625e279db..84d817b842a8 100644
  			goto out3;
  		}
  	}
-diff --git a/fs/fs-writeback.c b/fs/fs-writeback.c
-index e3ab1e4dc442..387213ac2608 100644
---- a/fs/fs-writeback.c
-+++ b/fs/fs-writeback.c
-@@ -87,16 +87,29 @@ static inline struct inode *wb_inode(struct list_head *head)
- #define CREATE_TRACE_POINTS
- #include <trace/events/writeback.h>
- 
-+static void bdi_wakeup_thread(struct backing_dev_info *bdi)
-+{
-+	spin_lock_bh(&bdi->wb_lock);
-+	if (test_bit(BDI_registered, &bdi->state))
-+		mod_delayed_work(bdi_wq, &bdi->wb.dwork, 0);
-+	spin_unlock_bh(&bdi->wb_lock);
-+}
-+
- static void bdi_queue_work(struct backing_dev_info *bdi,
- 			   struct wb_writeback_work *work)
- {
- 	trace_writeback_queue(bdi, work);
- 
- 	spin_lock_bh(&bdi->wb_lock);
-+	if (!test_bit(BDI_registered, &bdi->state)) {
-+		if (work->done)
-+			complete(work->done);
-+		goto out_unlock;
-+	}
- 	list_add_tail(&work->list, &bdi->work_list);
--	spin_unlock_bh(&bdi->wb_lock);
--
- 	mod_delayed_work(bdi_wq, &bdi->wb.dwork, 0);
-+out_unlock:
-+	spin_unlock_bh(&bdi->wb_lock);
- }
- 
- static void
-@@ -112,7 +125,7 @@ __bdi_start_writeback(struct backing_dev_info *bdi, long nr_pages,
- 	work = kzalloc(sizeof(*work), GFP_ATOMIC);
- 	if (!work) {
- 		trace_writeback_nowork(bdi);
--		mod_delayed_work(bdi_wq, &bdi->wb.dwork, 0);
-+		bdi_wakeup_thread(bdi);
- 		return;
- 	}
- 
-@@ -159,7 +172,7 @@ void bdi_start_background_writeback(struct backing_dev_info *bdi)
- 	 * writeback as soon as there is no other work to do.
- 	 */
- 	trace_writeback_wake_background(bdi);
--	mod_delayed_work(bdi_wq, &bdi->wb.dwork, 0);
-+	bdi_wakeup_thread(bdi);
- }
- 
- /*
-@@ -1016,7 +1029,7 @@ void bdi_writeback_workfn(struct work_struct *work)
- 	current->flags |= PF_SWAPWRITE;
- 
- 	if (likely(!current_is_workqueue_rescuer() ||
--		   list_empty(&bdi->bdi_list))) {
-+		   !test_bit(BDI_registered, &bdi->state))) {
- 		/*
- 		 * The normal path.  Keep writing back @bdi until its
- 		 * work_list is empty.  Note that this path is also taken
-@@ -1038,10 +1051,10 @@ void bdi_writeback_workfn(struct work_struct *work)
- 		trace_writeback_pages_written(pages_written);
- 	}
- 
--	if (!list_empty(&bdi->work_list) ||
--	    (wb_has_dirty_io(wb) && dirty_writeback_interval))
--		queue_delayed_work(bdi_wq, &wb->dwork,
--			msecs_to_jiffies(dirty_writeback_interval * 10));
-+	if (!list_empty(&bdi->work_list))
-+		mod_delayed_work(bdi_wq, &wb->dwork, 0);
-+	else if (wb_has_dirty_io(wb) && dirty_writeback_interval)
-+		bdi_wakeup_thread_delayed(bdi);
- 
- 	current->flags &= ~PF_SWAPWRITE;
- }
 diff --git a/fs/jffs2/compr_rtime.c b/fs/jffs2/compr_rtime.c
 index 16a5047903a6..406d9cc84ba8 100644
 --- a/fs/jffs2/compr_rtime.c
@@ -521,19 +443,6 @@ index 03310721712f..b6bd4affd9ad 100644
 -	spin_unlock(&c->erase_completion_lock);
  	if (!ret)
  		ret = jffs2_prealloc_raw_node_refs(c, c->nextblock, 1);
- 
-diff --git a/include/linux/backing-dev.h b/include/linux/backing-dev.h
-index c3881553f7d1..4cfdbf28fc6a 100644
---- a/include/linux/backing-dev.h
-+++ b/include/linux/backing-dev.h
-@@ -95,7 +95,7 @@ struct backing_dev_info {
- 	unsigned int max_ratio, max_prop_frac;
- 
- 	struct bdi_writeback wb;  /* default writeback info for this bdi */
--	spinlock_t wb_lock;	  /* protects work_list */
-+	spinlock_t wb_lock;	  /* protects work_list & wb.dwork scheduling */
- 
- 	struct list_head work_list;
  
 diff --git a/kernel/exit.c b/kernel/exit.c
 index 7bb73f9d09db..6682b2ea5b11 100644
@@ -651,53 +560,6 @@ index 9064b919a406..9bea1d7dd21f 100644
  	 */
  	mutex_lock(&id_map_mutex);
  
-diff --git a/mm/backing-dev.c b/mm/backing-dev.c
-index 502517492258..eea1a9dfac38 100644
---- a/mm/backing-dev.c
-+++ b/mm/backing-dev.c
-@@ -287,13 +287,19 @@ int bdi_has_dirty_io(struct backing_dev_info *bdi)
-  * Note, we wouldn't bother setting up the timer, but this function is on the
-  * fast-path (used by '__mark_inode_dirty()'), so we save few context switches
-  * by delaying the wake-up.
-+ *
-+ * We have to be careful not to postpone flush work if it is scheduled for
-+ * earlier. Thus we use queue_delayed_work().
-  */
- void bdi_wakeup_thread_delayed(struct backing_dev_info *bdi)
- {
- 	unsigned long timeout;
- 
- 	timeout = msecs_to_jiffies(dirty_writeback_interval * 10);
--	mod_delayed_work(bdi_wq, &bdi->wb.dwork, timeout);
-+	spin_lock_bh(&bdi->wb_lock);
-+	if (test_bit(BDI_registered, &bdi->state))
-+		queue_delayed_work(bdi_wq, &bdi->wb.dwork, timeout);
-+	spin_unlock_bh(&bdi->wb_lock);
- }
- 
- /*
-@@ -306,9 +312,6 @@ static void bdi_remove_from_list(struct backing_dev_info *bdi)
- 	spin_unlock_bh(&bdi_lock);
- 
- 	synchronize_rcu_expedited();
--
--	/* bdi_list is now unused, clear it to mark @bdi dying */
--	INIT_LIST_HEAD(&bdi->bdi_list);
- }
- 
- int bdi_register(struct backing_dev_info *bdi, struct device *parent,
-@@ -359,6 +362,11 @@ static void bdi_wb_shutdown(struct backing_dev_info *bdi)
- 	 */
- 	bdi_remove_from_list(bdi);
- 
-+	/* Make sure nobody queues further work */
-+	spin_lock_bh(&bdi->wb_lock);
-+	clear_bit(BDI_registered, &bdi->state);
-+	spin_unlock_bh(&bdi->wb_lock);
-+
- 	/*
- 	 * Drain work list and shutdown the delayed_work.  At this point,
- 	 * @bdi->bdi_list is empty telling bdi_Writeback_workfn() that @bdi
 diff --git a/net/bluetooth/hci_event.c b/net/bluetooth/hci_event.c
 index dcaa6dbbab2c..cfca44f8d048 100644
 --- a/net/bluetooth/hci_event.c
