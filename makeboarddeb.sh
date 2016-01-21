@@ -64,6 +64,7 @@ create_board_package (){
 	echo "[[ -f /root/nand-sata-install ]] && rm /root/nand-sata-install" >> $destination/DEBIAN/postinst
 	echo "ln -sf /var/run/motd /etc/motd" >> $destination/DEBIAN/postinst	
 	echo "[[ -f /etc/bash.bashrc.custom ]] && rm /etc/bash.bashrc.custom" >> $destination/DEBIAN/postinst
+	echo "apt-get install -qq -y fake-hwclock" >> $destination/DEBIAN/postinst
 	echo "exit 0" >> $destination/DEBIAN/postinst
 
 	# temper binary for USB temp meter

@@ -298,7 +298,7 @@ if [[ $(dpkg-query -W -f='${Status}' dialog 2>/dev/null | grep -c "ok installed"
 	  $(dpkg-query -W -f='${Status}' aptitude 2>/dev/null | grep -c "ok installed") -eq 0 \
 	]]; then
 echo "Downloading dependencies ... please wait"
-apt-get install -qq -y dialog u-boot-tools debconf-utils lsb-release aptitude >/dev/null 2>&1
+apt-get install -qq -y dialog u-boot-tools debconf-utils lsb-release aptitude fake-hwclock >/dev/null 2>&1
 fi 
 
 display_warning
