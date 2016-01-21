@@ -126,9 +126,6 @@ cp $SRC/lib/bin/armbian.key $DEST/cache/sdcard
 chroot $DEST/cache/sdcard /bin/bash -c "cat armbian.key | apt-key add -"
 rm $DEST/cache/sdcard/armbian.key
 
-# display welcome message at first root login
-touch $DEST/cache/sdcard/root/.not_logged_in_yet
-
 # update and upgrade
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y update" | dialog --progressbox "Updating package databases ..." 20 70
 
