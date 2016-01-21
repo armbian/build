@@ -13,6 +13,7 @@
 - fixed USB boot, added PWM on Vanilla
 - readded USB sound
 - added [A13 Olimex SOM](https://www.olimex.com/Products/SOM/A13/A13-SOM-512/)
+- added [LIRC GPIO receive and send driver](https://github.com/igorpecovnik/lib/issues/135) for legacy Allwinner
 
 **v4.81 / 28.12.2015**
 
