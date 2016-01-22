@@ -176,6 +176,9 @@ if [ -f /etc/bash.bashrc.custom ]; then
 fi
 END
 
+# display welcome message at first root login
+touch $DEST/cache/mount/root/.not_logged_in_yet
+
 # remove hostapd because it's replaced with ours
 chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove hostapd >/dev/null 2>&1"
 }

@@ -482,9 +482,6 @@ create_image()
 	# stage: write u-boot
 	write_uboot $LOOP
 
-	# DEBUG: stage: final customizations
-	touch $DEST/cache/mount/root/.not_logged_in_yet
-
 	# unmount /boot first, rootfs second, image file last
 	if [[ $BOOTSIZE != 0 ]]; then umount -l $DEST/cache/mount/boot; fi
 	umount -l $DEST/cache/mount/
