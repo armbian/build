@@ -503,7 +503,7 @@ create_image()
 	mkdir -p $DEST/images
 
 	# stage: compressing or copying image file
-	if [[ -n $FIXED_IMAGE_SIZE ]]; then
+	if [[ -n $FIXED_IMAGE_SIZE || $COMPRESS_OUTPUTIMAGE == no ]]; then
 		display_alert "Copying image file" "$VERSION.raw" "info"
 		mv -f $DEST/cache/$VERSION.raw $DEST/images/$VERSION.raw
 		display_alert "Done building" "$DEST/images/$VERSION.raw" "info"
