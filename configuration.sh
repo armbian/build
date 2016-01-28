@@ -363,7 +363,7 @@
 			KERNEL_DEFAULT_BRANCH="3.14-1.0.x-udoo"
 			KERNEL_DEFAULT_SOURCE="linux-udoo"
 			KERNEL_NEXT="https://github.com/patrykk/linux-udoo"
-			KERNEL_NEXT_BRANCH="4.2-5.0.11.p7.1"
+			KERNEL_NEXT_BRANCH="4.2.8-5.0.11.p7.3"
 			KERNEL_NEXT_SOURCE="linux-udoo-next"		
 			UBOOT_DEFAULT="https://github.com/UDOOboard/uboot-imx"
 			UBOOT_DEFAULT_BRANCH="2015.10.fslc-qdl"
