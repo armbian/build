@@ -216,12 +216,14 @@
 
 		orangepiplus)#enabled
 			#description H3 quad core 1Gb SoC Wifi USB hub
-			#build 4wip
+			#build 3wip
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_plus_defconfig"
 			LINUXKERNEL="https://github.com/jwrdegoede/linux-sunxi"
 			LINUXSOURCE="hans"
-			KERNELBRANCH="sunxi-wip"
+			LINUXKERNEL="https://github.com/ssvb/linux-sunxi"
+			LINUXSOURCE="ssvb"
+			KERNELBRANCH="20151207-embedded-lima-memtester-h3"
 		;;
 
 		cubox-i)#enabled
