@@ -216,14 +216,11 @@
 
 		orangepiplus)#enabled
 			#description H3 quad core 1Gb SoC Wifi USB hub
-			#build 3wip
+			#build 6wip
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_plus_defconfig"
-			LINUXKERNEL="https://github.com/jwrdegoede/linux-sunxi"
-			LINUXSOURCE="hans"
-			LINUXKERNEL="https://github.com/ssvb/linux-sunxi"
-			LINUXSOURCE="ssvb"
-			KERNELBRANCH="20151207-embedded-lima-memtester-h3"
+			MODULES="bonding"
+			MODULES_NEXT="bonding"
 		;;
 
 		cubox-i)#enabled
@@ -316,7 +313,13 @@
 			# Kernel
 			KERNEL_DEFAULT='https://github.com/linux-sunxi/linux-sunxi'
 			KERNEL_DEFAULT_BRANCH="sunxi-3.4"
-			KERNEL_DEFAULT_SOURCE="linux-sunxi"
+			KERNEL_DEFAULT_SOURCE="linux-sunxi"			
+			# sun8i legacy
+			if [[ $LINUXFAMILY == sun8i ]]; then
+				KERNEL_DEFAULT="https://github.com/ssvb/linux-sunxi"
+				KERNEL_DEFAULT_BRANCH="20151207-embedded-lima-memtester-h3"
+				KERNEL_DEFAULT_SOURCE="linux-sun8i"
+			fi			
 			KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 			KERNEL_NEXT_BRANCH="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1`
@@ -336,7 +339,7 @@
 			UBOOT_DEV_BRANCH=""
 			UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 		;;
-	
+		
 		odroidxu4)
 			KERNEL_DEFAULT='https://github.com/hardkernel/linux'
 			KERNEL_DEFAULT_BRANCH="odroidxu3-3.10.y"
@@ -448,7 +451,7 @@
 			KERNEL_DEV='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_DEV='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 			KERNEL_DEV_BRANCH=""
-			KERNEL_DEV_SOURCE="linux-vanilla"
+			KERNEL_DEV_SOURCE="linux-vanilla"			
 			UBOOT_DEFAULT="https://github.com/SolidRun/u-boot-armada38x"
 			UBOOT_DEFAULT_BRANCH="u-boot-2013.01-15t1-clearfog"
 			UBOOT_DEFAULT_SOURCE="u-boot-armada"
