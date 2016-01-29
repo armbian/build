@@ -378,7 +378,7 @@
 		
 		neo)
 			KERNEL_DEFAULT='https://github.com/UDOOboard/linux_kernel'
-			KERNEL_DEFAULT_BRANCH="imx_3.14.28_1.0.0_ga_neo_dev"
+			KERNEL_DEFAULT_BRANCH="imx_3.14.28_1.0.0_ga_neo"
 			KERNEL_DEFAULT_SOURCE="linux-udoo-neo"		
 			UBOOT_DEFAULT="https://github.com/UDOOboard/uboot-imx"
 			UBOOT_DEFAULT_BRANCH="2015.04.imx-neo"
