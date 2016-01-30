@@ -31,7 +31,6 @@
 	ROOTPWD="1234" # Must be changed @first login
 	MAINTAINER="Igor Pecovnik" # deb signature
 	MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
-	GPG_PASS="" # signing password
 	SDSIZE="4000" # SD image size in MB
 	TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 	USEALLCORES="yes" # Use all CPU cores for compiling
