@@ -74,6 +74,12 @@ extraargs=console=tty1 hdmi.audio=EDID:0 disp.screen0_output_mode=EDID:0 console
 EOF
 sync
 [[ $DEVICE_TYPE = "a20" ]] && echo "machid=10bb" >> /mnt/bootfs/uEnv.txt
+# ugly hack becouse we don't have sources for A10 nand uboot
+if [[ $(cat /var/run/machine.id) == "Cubieboard" ]]; then 
+	cp /mnt/bootfs/uEnv.txt /mnt/rootfs/boot/uEnv.txt
+	cp /mnt/bootfs/script.bin /mnt/rootfs/boot/script.bin
+	cp /mnt/bootfs/uImage /mnt/rootfs/boot/uImage
+fi
 umountdevice "/dev/nand"
 tune2fs -o journal_data_writeback /dev/nand2 >/dev/null 2>&1
 tune2fs -O ^has_journal /dev/nand2 >/dev/null 2>&1
