@@ -140,7 +140,7 @@ wpasupplicant iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-s
 # additional distributios-specific packages
 case $RELEASE in
 	wheezy)
-	PAKETKI="$PAKETKI libnl-dev"
+	PAKETKI="$PAKETKI libnl-dev acpid acpi-support-base"
 	;;
 	jessie)
 	PAKETKI="$PAKETKI thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd software-properties-common python-software-properties libnss-myhostname"

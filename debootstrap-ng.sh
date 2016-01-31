@@ -235,7 +235,7 @@ EOF
 		# NOTE: wheezy doen't have f2fs-tools package available
 		case $RELEASE in
 			wheezy)
-			package_list="$package_list libnl-dev"
+			package_list="$package_list libnl-dev acpid acpi-support-base"
 			;;
 			jessie)
 			package_list="$package_list thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd \
@@ -472,7 +472,7 @@ create_image()
 		rm -f $DEST/cache/mount/boot/boot.scr
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $DEST/cache/mount/boot/boot.cmd
 		# rely on rootfs type autodetect
-		sed -i 's/rootfstype=ext4//' $DEST/cache/mount/boot/boot.cmd
+		sed -i 's/rootfstype=ext4/rootfstype=f2fs/' $DEST/cache/mount/boot/boot.cmd
 		mkimage -C none -A arm -T script -d $DEST/cache/mount/boot/boot.cmd $DEST/cache/mount/boot/boot.scr > /dev/null 2>&1
 	fi
 
