@@ -91,8 +91,12 @@ jessie)
 	
 		# seting timeout
 		mkdir -p $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/
-		echo "[Service]" > $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf 
-		echo "TimeoutStopSec=10" >> $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf		
+		echo "[Service]" > $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
+		echo "TimeoutStopSec=10" >> $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
+
+		# handle PMU power button
+		mkdir -p $DEST/cache/sdcard/etc/udev/rules.d/
+		cp $SRC/lib/config/71-axp-power-button.rules $DEST/cache/sdcard/etc/udev/rules.d/
 		;;
 
 # Ubuntu Trusty
