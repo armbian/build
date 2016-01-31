@@ -146,7 +146,7 @@ case $RELEASE in
 	PAKETKI="$PAKETKI thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd software-properties-common python-software-properties libnss-myhostname"
 	;;
 	trusty)
-	PAKETKI="$PAKETKI libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties"
+	PAKETKI="$PAKETKI libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties acpid"
 	;;
 esac
 

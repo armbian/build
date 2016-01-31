@@ -242,7 +242,7 @@ EOF
 				software-properties-common python-software-properties libnss-myhostname f2fs-tools"
 			;;
 			trusty)
-			package_list="$package_list libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties f2fs-tools"
+			package_list="$package_list libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties f2fs-tools acpid"
 			;;
 		esac
 
