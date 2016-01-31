@@ -57,7 +57,7 @@ Run the script
 - **EXPERIMENTAL_DEBOOTSTRAP** (yes|**no**): use new debootstrap and image creation process. NOTE: work in progress, it may not create proper images for some boards yet
 - **FORCE_USE_RAMDISK** (yes|no): overrides autodetect for using tmpfs in new debootstrap and image creation process. Takes effect only if `EXPERIMENTAL_DEBOOTSTRAP` is set to "yes"
 - **FIXED_IMAGE_SIZE** (integer): create image file of this size (in megabytes) instead of minimal. Takes effect only if `EXPERIMENTAL_DEBOOTSTRAP` is set to "yes"
-- **COMPRESS_OUTPUTIMAGE** (**yes**|no): create image file of this size (in megabytes) instead of minimal. Takes effect only if `EXPERIMENTAL_DEBOOTSTRAP` is set to "yes"
+- **COMPRESS_OUTPUTIMAGE** (**yes**|no): create zip archive with image file and GPG signature for redistribution. Takes effect only if `EXPERIMENTAL_DEBOOTSTRAP` is set to "yes"
 - **USE_F2FS_ROOT** (yes|**no**): create ZIP archive of RAW image. Takes effect only if `EXPERIMENTAL_DEBOOTSTRAP` is set to "yes"
 
 ### Supplying options via command line parameters
