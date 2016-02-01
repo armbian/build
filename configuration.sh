@@ -215,11 +215,11 @@
 
 		orangepiplus)#enabled
 			#description H3 quad core 1Gb SoC Wifi USB hub
-			#build 6wip
+			#build 3wip
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_plus_defconfig"
-			MODULES="bonding"
-			MODULES_NEXT="bonding"
+			MODULES="8189es"
+			MODULES_NEXT=""
 		;;
 
 		cubox-i)#enabled
