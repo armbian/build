@@ -69,7 +69,7 @@ if [ "$BOARD" == "" ]; then
 	IFS=";"
 	MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/\)#enabled/ || /#des/' | sed -e 's/\t\t//' | sed 's/)#enabled//g' \
 	| sed 's/#description //g' | sed -e 's/\t//' | sed ':a;N;$!ba;s/\n/;/g'))
-	MYPARAMS=( --title "Choose a board" --backtitle $backtitle --menu "\n Supported:" 34 67 24 )
+	MYPARAMS=( --title "Choose a board" --backtitle $backtitle --menu "\n Supported:" 36 67 26 )
 	i=0; j=1
 	while [[ $i -lt ${#MYARRAY[@]} ]];	do
 		MYPARAMS+=( "${MYARRAY[$i]}" "         ${MYARRAY[$j]}" )
