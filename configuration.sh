@@ -27,7 +27,7 @@
 	
 	# common options
 
-	REVISION="4.83" # all boards have same revision
+	REVISION="4.90" # all boards have same revision
 	ROOTPWD="1234" # Must be changed @first login
 	MAINTAINER="Igor Pecovnik" # deb signature
 	MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -288,7 +288,7 @@
 		
 		armada)#enabled
 			#description Marvell Armada 38x
-			#build 6wip
+			#build 3
 			LINUXFAMILY="marvell"
 			BOOTCONFIG="armada_38x_clearfog_config"
 			MODULES=""
@@ -392,7 +392,9 @@
 		
 		cubox)
 			KERNEL_DEFAULT='https://github.com/linux4kix/linux-linaro-stable-mx6'
+			#KERNEL_DEFAULT='https://github.com/SolidRun/linux-fslc'
 			KERNEL_DEFAULT_BRANCH="linux-linaro-lsk-v3.14-mx6"
+			#KERNEL_DEFAULT_BRANCH="3.14-1.0.x-mx6-sr"
 			KERNEL_DEFAULT_SOURCE="linux-cubox"
 			KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
