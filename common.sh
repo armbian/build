@@ -450,9 +450,13 @@ if [[ $GPG_PASS != "" ]] ; then
 fi
 display_alert "Create and sign" "$VERSION.zip" "info"
 mkdir -p $DEST/images
-zip -FSq $DEST/images/$VERSION.zip $VERSION.raw* armbian.txt imagewriter.*
-#display_alert "Uploading to server" "$VERSION.zip" "info"
-rm -f $VERSION.raw *.asc imagewriter.* armbian.txt
+if [[ $COMPRESS_OUTPUTIMAGE == no ]]; then
+	rm -f *.asc imagewriter.* armbian.txt
+	mv *.raw $DEST/images/
+else
+	zip -FSq $DEST/images/$VERSION.zip $VERSION.raw* armbian.txt imagewriter.*	
+	rm -f $VERSION.raw *.asc imagewriter.* armbian.txt	
+fi
 }
 
 # write_uboot <loopdev>
