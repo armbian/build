@@ -347,7 +347,7 @@ prepare_partitions()
 	mkfs[fat]=vfat
 	mkfs[f2fs]=f2fs
 
-	mountopts[ext4]=',commit=600'
+	mountopts[ext4]=',commit=600,errors=remount-ro'
 #	mountopts[fat] is empty
 #	mountopts[f2fs] is empty
 
@@ -384,9 +384,10 @@ prepare_partitions()
 	# boot
 	if [[ $USE_F2FS_ROOT == yes && $BOOTSIZE == 0 ]]; then
 		local bootfs=ext4
-		BOOTSIZE=32 #MiB
+		BOOTSIZE=32 # MiB
 	elif [[ $BOOTSIZE != 0 ]]; then
 		local bootfs=fat
+		BOOTSIZE=64 # MiB, fix for rsync duplicating zImage
 	fi
 
 	# stage: calculate boot partition size
@@ -428,10 +429,10 @@ prepare_partitions()
 	rm -f $DEST/cache/sdcard/etc/fstab
 	if [[ $BOOTSIZE == 0 ]]; then
 		mount ${LOOP}p1 $DEST/cache/mount/
-		echo "/dev/mmcblk0p1 / ${parttype[$rootfs]} defaults,noatime,nodiratime,errors=remount-ro${mountopts[$rootfs]} 0 0" >> $DEST/cache/sdcard/etc/fstab
+		echo "/dev/mmcblk0p1 / ${parttype[$rootfs]} defaults,noatime,nodiratime${mountopts[$rootfs]} 0 0" >> $DEST/cache/sdcard/etc/fstab
 	else
 		mount ${LOOP}p2 $DEST/cache/mount/
-		echo "/dev/mmcblk0p2 / ${parttype[$rootfs]} defaults,noatime,nodiratime,errors=remount-ro${mountopts[$rootfs]} 0 0" >> $DEST/cache/sdcard/etc/fstab
+		echo "/dev/mmcblk0p2 / ${parttype[$rootfs]} defaults,noatime,nodiratime${mountopts[$rootfs]} 0 0" >> $DEST/cache/sdcard/etc/fstab
 		# create /boot on rootfs after it is mounted
 		mkdir -p $DEST/cache/mount/boot/
 		mount ${LOOP}p1 $DEST/cache/mount/boot/
@@ -454,7 +455,7 @@ create_image()
 
 	# stage: rsync all except /boot if its filesystem is fat
 	display_alert "Copying files to image" "tmprootfs.raw" "info"
-	eval 'rsync -aHAXWh ${boot_workaround:+ --exclude="/boot/*"} --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
+	eval 'rsync -aHWh ${boot_workaround:+ --exclude="/boot/*"} --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
 		--exclude="/sys/*" --info=progress2,stats1 $DEST/cache/sdcard/ $DEST/cache/mount/'
 
 	# stage: rsync /boot
@@ -481,6 +482,9 @@ create_image()
 
 	# stage: write u-boot
 	write_uboot $LOOP
+
+	# stage: copy armbian.txt TODO: Copy only if creating zip file?
+	cp $DEST/cache/sdcard/etc/armbian.txt $DEST/cache/
 
 	# unmount /boot first, rootfs second, image file last
 	if [[ $BOOTSIZE != 0 ]]; then umount -l $DEST/cache/mount/boot; fi
