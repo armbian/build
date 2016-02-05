@@ -224,7 +224,7 @@
 
 		cubox-i)#enabled
 			#description Freescale iMx dual/quad core Wifi
-			#build 3
+			#build 6
 			LINUXFAMILY="cubox"
 			BOOTCONFIG="mx6_cubox-i_config"
 			MODULES="bonding"
@@ -255,7 +255,7 @@
 
 		guitar)#enabled
 			#description S500 Lemaker Guitar Action quad core
-			#build 1
+			#build 3
 			LINUXFAMILY="s500"
 			OFFSET="16"
 			BOOTSIZE="16"
@@ -391,15 +391,16 @@
 		;;
 		
 		cubox)
-			KERNEL_DEFAULT='https://github.com/linux4kix/linux-linaro-stable-mx6'
-			#KERNEL_DEFAULT='https://github.com/SolidRun/linux-fslc'
-			KERNEL_DEFAULT_BRANCH="linux-linaro-lsk-v3.14-mx6"
-			#KERNEL_DEFAULT_BRANCH="3.14-1.0.x-mx6-sr"
+			KERNEL_DEFAULT='https://github.com/linux4kix/linux-linaro-stable-mx6'			
+			KERNEL_DEFAULT_BRANCH="linux-linaro-lsk-v3.14-mx6"			
 			KERNEL_DEFAULT_SOURCE="linux-cubox"
 			KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 			KERNEL_NEXT_BRANCH="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1`
-			KERNEL_NEXT_SOURCE="linux-vanilla"
+			KERNEL_NEXT_SOURCE="linux-vanilla"			
+			KERNEL_DEV='https://github.com/SolidRun/linux-fslc'
+			KERNEL_DEV_BRANCH="3.14-1.0.x-mx6-sr"
+			KERNEL_DEV_SOURCE="linux-cubox"
 			UBOOT_DEFAULT="https://github.com/SolidRun/u-boot-imx6"
 			UBOOT_DEFAULT_BRANCH="imx6"
 			UBOOT_DEFAULT_SOURCE="u-boot-cubox"
@@ -415,6 +416,9 @@
 			KERNEL_DEFAULT='https://github.com/LeMaker/linux-actions'
 			KERNEL_DEFAULT_BRANCH="s500-master"
 			KERNEL_DEFAULT_SOURCE="linux-s500"
+			KERNEL_NEXT='https://github.com/LeMaker/linux-actions'
+			KERNEL_NEXT_BRANCH="linux-linaro-3.10.94-test"
+			KERNEL_NEXT_SOURCE="linux-s500"
 			UBOOT_DEFAULT="https://github.com/LeMaker/u-boot-actions"
 			UBOOT_DEFAULT_BRANCH="s500-master"
 			UBOOT_DEFAULT_SOURCE="u-boot-s500"
