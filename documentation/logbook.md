@@ -14,7 +14,9 @@
 - readded USB sound
 - added [A13 Olimex SOM](https://www.olimex.com/Products/SOM/A13/A13-SOM-512/)
 - added [LIRC GPIO receive and send driver](https://github.com/igorpecovnik/lib/issues/135) for legacy Allwinner
+- added LED MMC activity to Vanilla kernels for Cubietruck and Cubieboard A10
 - build script: option to build images with F2FS root filesystem for Allwinner boards
+
 
 **v4.81 / 28.12.2015**
 
