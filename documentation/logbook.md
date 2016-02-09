@@ -10,12 +10,15 @@
 - [added motd](http://forum.armbian.com/index.php/topic/602-new-motd-for-ubuntudebian/#entry4223) to /etc/updated.motd ... redesign, added battery info for Allwinner boards, bugfix, coloring
 - fixed temperature reading on Cubox / Hummingboard legacy kernel
 - fixed FB turbo building on Allwinner
+- fixed NAND install on A10 boards (Legacy kernel only)
 - fixed USB boot, added PWM on Vanilla
+- fixed Banana PRO/+ onboard wireless on Vanilla kernel - running with normal Banana DT.
 - readded USB sound
 - added [A13 Olimex SOM](https://www.olimex.com/Products/SOM/A13/A13-SOM-512/)
 - added [LIRC GPIO receive and send driver](https://github.com/igorpecovnik/lib/issues/135) for legacy Allwinner
 - added LED MMC activity to Vanilla kernels for Cubietruck and Cubieboard A10
 - build script: option to build images with F2FS root filesystem for Allwinner boards
+- build script: added alternative kernel for Lemaker Guitar (NEXT), Cubox (DEV)
 
 
 **v4.81 / 28.12.2015**
