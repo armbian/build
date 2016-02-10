@@ -85,10 +85,11 @@
 		cubieboard)#enabled
 			#description A10 single core 1Gb SoC
 			#build 6
-			LINUXFAMILY="sun4i"		
-			BOOTCONFIG="Cubieboard_config" 
+			LINUXFAMILY="sun4i"
+			BOOTCONFIG="Cubieboard_config"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sunxi"
 			MODULES_NEXT="bonding"
+			DESKTOP_TARGET="trusty,default"
 		;;
 
 		cubieboard2)#enabled
@@ -98,6 +99,7 @@
 			BOOTCONFIG="Cubieboard2_config" 
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 			MODULES_NEXT="bonding"
+			DESKTOP_TARGET="trusty,default"
 		;;
 
 		cubietruck)#enabled
@@ -107,6 +109,7 @@
 			BOOTCONFIG="Cubietruck_config" 
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i ap6210"
 			MODULES_NEXT="brcmfmac rfcomm hidp bonding"
+			DESKTOP_TARGET="trusty,%"
 		;;
 
 		lime-a10)#enabled
@@ -116,6 +119,7 @@
 			BOOTCONFIG="A10-OLinuXino-Lime_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 			MODULES_NEXT="bonding"
+			DESKTOP_TARGET="trusty,next"
 		;;
 
 		lime)#enabled
@@ -125,6 +129,7 @@
 			BOOTCONFIG="A20-OLinuXino-Lime_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 			MODULES_NEXT="bonding"
+			DESKTOP_TARGET="trusty,default"
 		;;
 
 		lime2)#enabled
@@ -134,6 +139,7 @@
 			BOOTCONFIG="A20-OLinuXino-Lime2_defconfig" 
 			MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 			MODULES_NEXT="bonding"
+			DESKTOP_TARGET="trusty,default"
 		;;
 
 		micro)#enabled
@@ -143,6 +149,7 @@
 			BOOTCONFIG="A20-OLinuXino_MICRO_config"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 			MODULES_NEXT="bonding"
+			DESKTOP_TARGET="trusty,default"
 		;;
 
 		pcduino3nano)#enabled
@@ -152,6 +159,7 @@
 			BOOTCONFIG="Linksprite_pcDuino3_Nano_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 			MODULES_NEXT="bonding"
+			DESKTOP_TARGET="trusty,default"
 		;;
 
 		bananapim2)#enabled
@@ -161,6 +169,7 @@
 			BOOTCONFIG="Sinovoip_BPI_M2_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 			MODULES_NEXT="brcmfmac bonding"
+			DESKTOP_TARGET="trusty,next"
 		;;
 
 		bananapi)#enabled
@@ -170,6 +179,7 @@
 			BOOTCONFIG="Bananapi_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp ap6210"
 			MODULES_NEXT="brcmfmac bonding"
+			DESKTOP_TARGET="trusty,%"
 		;;
 
 		lamobo-r1)#enabled
@@ -178,7 +188,7 @@
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="Lamobo_R1_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
-			MODULES_NEXT="brcmfmac bonding"
+			MODULES_NEXT="brcmfmac bonding"			
 		;;
 
 		orangepi)#enabled
@@ -188,6 +198,7 @@
 			BOOTCONFIG="Orangepi_defconfig"
 			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 			MODULES_NEXT="bonding"
+			DESKTOP_TARGET="trusty,%"
 		;;
 
 		orangepimini)#enabled
@@ -205,7 +216,7 @@
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_plus_defconfig"
 			MODULES="8189es"
-			MODULES_NEXT=""
+			MODULES_NEXT=""			
 		;;
 
 		cubox-i)#enabled
@@ -216,6 +227,7 @@
 			MODULES="bonding"
 			MODULES_NEXT="bonding"
 			SERIALCON="ttymxc0"
+			DESKTOP_TARGET="jessie,default"
 		;;
 
 		udoo)#enabled
@@ -226,6 +238,7 @@
 			MODULES="bonding"
 			MODULES_NEXT=""
 			SERIALCON="ttymxc1"
+			DESKTOP_TARGET="jessie,%"
 		;;
 
 		udoo-neo)#enabled
@@ -260,6 +273,7 @@
 			MODULES="bonding"
 			MODULES_NEXT=""
 			SERIALCON="ttySAC2"
+			DESKTOP_TARGET="jessie,default"
 		;;
 
 		toradex)#disabled

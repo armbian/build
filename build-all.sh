@@ -25,11 +25,15 @@ OLDFAMILY=""
 # build 6 = legacy and next and dev kernel
 
 # Include here to make "display_alert" and "prepare_host" available
-source $SRC/lib/general.sh					# General functions
+source $SRC/lib/general.sh
 
+# Function display and runs compilation with desired parameters
+#
+# Two parameters: $1 = BOARD $2 = BRANCH
+#
 distro-list ()
 {
-declare -a MYARRAY1=('wheezy' 'Debian 7 Wheezy | oldstable' 'jessie' 'Debian 8 Jessie | stable' 'trusty' 'Ubuntu Trusty Tahr 14.04.x LTS');
+declare -a MYARRAY1=('wheezy' '' 'jessie' '' 'trusty' '');
 k1=0
 l1=1
 while [[ $k1 -lt ${#MYARRAY1[@]} ]]
@@ -38,41 +42,51 @@ while [[ $k1 -lt ${#MYARRAY1[@]} ]]
 		BOARD=$1
 		RELEASE=${MYARRAY1[$k1]}
 		BRANCH=$2
-		if [[ $2 == "default"  && "$RELEASE" == "trusty" ]]; then 
-			BUILD_DESKTOP="yes"
-		else
-			BUILD_DESKTOP="no"
-		fi
-	unset IFS LINUXFAMILY LINUXCONFIG LINUXKERNEL LINUXSOURCE KERNELBRANCH BOOTLOADER BOOTSOURCE BOOTBRANCH CPUMIN GOVERNOR needs_uboot needs_kernel
+		unset IFS array DESKTOP_TARGET LINUXFAMILY LINUXCONFIG LINUXKERNEL LINUXSOURCE KERNELBRANCH \
+		BOOTLOADER BOOTSOURCE BOOTBRANCH CPUMIN GOVERNOR needs_uboot needs_kernel
+
 	source $SRC/lib/configuration.sh
-	display_alert "$BOARD" "$RELEASE $BRANCH $BUILD_DESKTOP $LINUXFAMILY" "ext"
+ 	array=(${DESKTOP_TARGET//,/ })
+
+	# % means all BRANCH / DISTRIBUTION
+	[[ ${array[0]} == "%" ]] && array[0]=$RELEASE
+	[[ ${array[1]} == "%" ]] && array[1]=$2
+	
+	# we define desktop building in config
+	if [[ "$RELEASE" == "${array[0]}" && $2 == "${array[1]}" ]]; then
+			display_alert "$BOARD desktop" "$RELEASE - $BRANCH - $LINUXFAMILY" "ext" 
+                        BUILD_DESKTOP="yes"
+	 else
+                        display_alert "$BOARD" "$RELEASE - $BRANCH - $LINUXFAMILY" "info" 
+			BUILD_DESKTOP="no"
+	fi
+
+	# demo - for debugging purposes
 	[[ $BUILD_ALL != "demo" ]] && source $SRC/lib/main.sh
 
 	IFS=";"
-	
-	    k1=$[$k1+2]
-		l1=$[$l1+2]
+	k1=$[$k1+2]
+	l1=$[$l1+2]
 	done
 }
 
 IFS=";"
 
-MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/)#enabled/ || /#des/ || /#build/' | sed -e 's/\t\t//' | sed 's/)#enabled//g' | sed 's/#description //g' | sed -e 's/\t//' | sed 's/#build //g' | sed ':a;N;$!ba;s/\n/;/g'))
-	i1=$[0+$START]
-	j1=$[1+$START]
-	o1=$[2+$START]
-	while [[ $i1 -lt ${#MYARRAY[@]} ]]
-	do
-		
-		if [[ "${MYARRAY[$o1]}" == "1" || "${MYARRAY[$o1]}" == "3" || "${MYARRAY[$o1]}" == "6" ]]; then 
-			distro-list "${MYARRAY[$i1]}" "default"
-		fi
-		if [[ "${MYARRAY[$o1]}" == "2" || "${MYARRAY[$o1]}" == "3" || "${MYARRAY[$o1]}" == "5" || "${MYARRAY[$o1]}" == "6" ]]; then 
-			distro-list "${MYARRAY[$i1]}" "next"
-		fi
-		if [[ "${MYARRAY[$o1]}" == "4" || "${MYARRAY[$o1]}" == "5" || "${MYARRAY[$o1]}" == "6" ]]; then 
-			distro-list "${MYARRAY[$i1]}" "dev"
-		fi
-		
-        i1=$[$i1+3];j1=$[$j1+3];o1=$[$o1+3]
-	done
+MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/)#enabled/ || /#des/ || /#build/' | sed -e 's/\t\t//' | sed 's/)#enabled//g' \
+| sed 's/#description //g' | sed -e 's/\t//' | sed 's/#build //g' | sed ':a;N;$!ba;s/\n/;/g'))
+i1=$[0+$START]
+j1=$[1+$START]
+o1=$[2+$START]
+while [[ $i1 -lt ${#MYARRAY[@]} ]]
+do
+	if [[ "${MYARRAY[$o1]}" == "1" || "${MYARRAY[$o1]}" == "3" || "${MYARRAY[$o1]}" == "6" ]]; then 
+		distro-list "${MYARRAY[$i1]}" "default"
+	fi
+	if [[ "${MYARRAY[$o1]}" == "2" || "${MYARRAY[$o1]}" == "3" || "${MYARRAY[$o1]}" == "5" || "${MYARRAY[$o1]}" == "6" ]]; then 
+		distro-list "${MYARRAY[$i1]}" "next"
+	fi
+	if [[ "${MYARRAY[$o1]}" == "4" || "${MYARRAY[$o1]}" == "5" || "${MYARRAY[$o1]}" == "6" ]]; then 
+		distro-list "${MYARRAY[$i1]}" "dev"
+	fi
+    i1=$[$i1+3];j1=$[$j1+3];o1=$[$o1+3]
+done
