@@ -89,4 +89,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=8
+# VERSION=9
