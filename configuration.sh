@@ -57,8 +57,6 @@
 	case $BOARD in
 
 		cubieboard4)#disabled
-			#d e s c r i p t i o n A80 octa core 2Gb soc wifi
-			#build 0
 			LINUXFAMILY="sun9i"		
 			BOOTCONFIG="Cubieboard4_defconfig"
 			CPUMIN="1200000"
@@ -174,15 +172,6 @@
 			MODULES_NEXT="brcmfmac bonding"
 		;;
 
-		bananapipro)#disabled
-			#d e s c ription A20 dual core 1Gb SoC Wifi
-			#build 0
-			LINUXFAMILY="sun7i"
-			BOOTCONFIG="Bananapro_defconfig"
-			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp ap6210"
-			MODULES_NEXT="brcmfmac bonding"
-		;;
-
 		lamobo-r1)#enabled
 			#description A20 dual core 1Gb SoC Switch
 			#build 6
@@ -274,8 +263,6 @@
 		;;
 
 		toradex)#disabled
-			#d escription Freescale iMx
-			#build 1wip
 			LINUXFAMILY="toradex"
 			BOOTCONFIG="colibri_imx6_defconfig"
 			MODULES=""
