@@ -32,8 +32,6 @@ Run the script
 - **BUILD_DESKTOP** (yes|no):
     - set to "yes" to build image with minimal desktop environment
     - set to "no" to build image with console interface only
-- **FBTFT** (yes|no):
-    - set to "yes" to add a [driver for small displays](https://github.com/notro/fbtft). Only applicable for old kernels (3.4-3.14)
 - **EXTERNAL** (yes|no):
     - set to "yes" to compile and install some extra applications and drivers (only for **default** kernel branch):
         - [USB redirector](http://www.incentivespro.com)
@@ -58,7 +56,7 @@ Run the script
 - **FORCE_USE_RAMDISK** (yes|no): overrides autodetect for using tmpfs in new debootstrap and image creation process. Takes effect only if `EXPERIMENTAL_DEBOOTSTRAP` is set to "yes"
 - **FIXED_IMAGE_SIZE** (integer): create image file of this size (in megabytes) instead of minimal. Takes effect only if `EXPERIMENTAL_DEBOOTSTRAP` is set to "yes"
 - **COMPRESS_OUTPUTIMAGE** (**yes**|no): create zip archive with image file and GPG signature for redistribution.
-- **USE_F2FS_ROOT** (yes|**no**): create image with [F2FS](https://en.wikipedia.org/wiki/F2FS) root filesystem instead of default ext4. Requires mainline kernel for Allwinner devices. Requires setting FIXED_IMAGE_SIZE to actual size of your SD card. Takes effect only if `EXPERIMENTAL_DEBOOTSTRAP` is set to "yes"
+- **USE_F2FS_ROOT** (yes|**no**): create ZIP archive of RAW image. Takes effect only if `EXPERIMENTAL_DEBOOTSTRAP` is set to "yes"
 
 ### Supplying options via command line parameters
 Instead of editing compile.sh to set options, you can set them by supplying command line parameters to compile.sh

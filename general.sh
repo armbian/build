@@ -203,8 +203,6 @@ echo "--------------------------------------------------------------------------
 
 
 umount_image (){
-FBTFTMOUNT=$(mount | grep fbtft | awk '{ print $3 }')
-umount $FBTFTMOUNT >/dev/null 2>&1
 umount -l $DEST/cache/sdcard/dev/pts >/dev/null 2>&1
 umount -l $DEST/cache/sdcard/dev >/dev/null 2>&1
 umount -l $DEST/cache/sdcard/proc >/dev/null 2>&1
