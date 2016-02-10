@@ -111,6 +111,8 @@ if [ $3 == "err" ]; then
 	echo -e "[\e[0;31m error \x1B[0m] $1 $TMPARA"
 elif [ $3 == "wrn" ]; then
 	echo -e "[\e[0;35m warn \x1B[0m] $1 $TMPARA"
+elif [ $3 == "ext" ]; then
+	echo -e "[\e[0;32m o.k. \x1B[0m] \e[1;32m$1\x1B[0m $TMPARA"
 else
 	echo -e "[\e[0;32m o.k. \x1B[0m] $1 $TMPARA"
 fi
