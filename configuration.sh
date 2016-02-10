@@ -27,7 +27,7 @@
 	
 	# common options
 
-	REVISION="4.90" # all boards have same revision
+	REVISION="5.00" # all boards have same revision
 	ROOTPWD="1234" # Must be changed @first login
 	MAINTAINER="Igor Pecovnik" # deb signature
 	MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -56,8 +56,8 @@
 
 	case $BOARD in
 
-		cubieboard4)#enabled
-			#description A80 octa core 2Gb soc wifi
+		cubieboard4)#disabled
+			#d e s c r i p t i o n A80 octa core 2Gb soc wifi
 			#build 0
 			LINUXFAMILY="sun9i"		
 			BOOTCONFIG="Cubieboard4_defconfig"
@@ -77,7 +77,7 @@
 
 		olinux-som-a13)#enabled
 			#description A13 single core 512Mb SoM
-			#build 6
+			#build 0
 			LINUXFAMILY="sun5i"		
 			BOOTCONFIG="A13-OLinuXino_defconfig" 
 			MODULES="gpio_sunxi spi_sunxi"
@@ -170,12 +170,12 @@
 			#build 6
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="Bananapi_defconfig"
-			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
+			MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp ap6210"
 			MODULES_NEXT="brcmfmac bonding"
 		;;
 
-		bananapipro)#enabled
-			#description A20 dual core 1Gb SoC Wifi
+		bananapipro)#disabled
+			#d e s c ription A20 dual core 1Gb SoC Wifi
 			#build 0
 			LINUXFAMILY="sun7i"
 			BOOTCONFIG="Bananapro_defconfig"
@@ -273,8 +273,8 @@
 			SERIALCON="ttySAC2"
 		;;
 
-		toradex)#enabled
-			#description Freescale iMx
+		toradex)#disabled
+			#d escription Freescale iMx
 			#build 1wip
 			LINUXFAMILY="toradex"
 			BOOTCONFIG="colibri_imx6_defconfig"
