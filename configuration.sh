@@ -221,7 +221,7 @@
 
 		cubox-i)#enabled
 			#description Freescale iMx dual/quad core Wifi
-			#build 6
+			#build 3
 			LINUXFAMILY="cubox"
 			BOOTCONFIG="mx6_cubox-i_config"
 			MODULES="bonding"
