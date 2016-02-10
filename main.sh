@@ -16,6 +16,9 @@
 # Include here to make "display_alert" and "prepare_host" available
 source $SRC/lib/general.sh					# General functions
 
+# clean unfinished DEB packing
+rm -rf $DEST/debs/*/*/
+
 # compress and remove old logs
 mkdir -p $DEST/debug
 (cd $DEST/debug && tar -czf logs-$(date +"%d_%m_%Y-%H_%M_%S").tgz *.log) > /dev/null 2>&1
