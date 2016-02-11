@@ -254,7 +254,7 @@
 
 		guitar)#enabled
 			#description S500 Lemaker Guitar Action quad core
-			#build 3
+			#build 0
 			LINUXFAMILY="s500"
 			OFFSET="16"
 			BOOTSIZE="16"
