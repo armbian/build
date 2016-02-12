@@ -1,6 +1,6 @@
 # Release history
 
-**v5.00 / 12.2.2015** 
+**v5.00 / 12.2.2016** 
 
 - Vanilla kernel for Allwinner based boards upgraded to 4.4.1
 - Allwinner audio driver playback and capture on kernel 4.4.1, [UAS](http://linux-sunxi.org/USB/UAS), USB OTG, battery readings,  
