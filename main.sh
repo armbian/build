@@ -48,9 +48,9 @@ else
 fi
 
 # compile.sh version checking
-ver1=$(grep '^# VERSION' "$SRC/compile.sh" | cut -d'=' -f2)
-ver2=$(grep '^# VERSION' "$SRC/lib/compile.sh" | cut -d'=' -f2)
-if [ -z "$ver1" ] || [ "$ver1" -lt "$ver2" ]; then
+ver1=$(awk -F"=" '/^# VERSION/ {print $2}' <"$SRC/compile.sh")
+ver2=$(awk -F"=" '/^# VERSION/ {print $2}' <"$SRC/lib/compile.sh" 2>/dev/null) || ver2=0
+if [ -z "$ver1" ] || [ $ver1 -lt $ver2 ]; then
 	display_alert "File $0 is outdated. Please overwrite is with updated version from" "$SRC/lib" "wrn"
 	read -p "Press <Ctrl-C> to abort compilation, <Enter> to ignore and continue"
 fi
