@@ -216,7 +216,31 @@
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_plus_defconfig"
 			MODULES="8189es"
-			MODULES_NEXT=""			
+			MODULES_NEXT=""
+			CPUMIN="480000"
+			CPUMAX="1296000"
+		;;
+
+		orangepipc)#enabled
+			#description H3 quad core 1Gb SoC
+			#build 3wip
+			LINUXFAMILY="sun8i"
+			BOOTCONFIG="orangepi_pc_defconfig"
+			MODULES=""
+			MODULES_NEXT=""
+			CPUMIN="480000"
+			CPUMAX="1296000"
+		;;
+
+		orangepione)#enabled
+			#description H3 quad core 512Mb SoC
+			#build 3wip
+			LINUXFAMILY="sun8i"
+			BOOTCONFIG="orangepi_pc_defconfig"
+			MODULES=""
+			MODULES_NEXT=""
+			CPUMIN="648000"
+			CPUMAX="1200000"
 		;;
 
 		cubox-i)#enabled
@@ -313,8 +337,10 @@
 			KERNEL_DEFAULT_SOURCE="linux-sunxi"			
 			# sun8i legacy
 			if [[ $LINUXFAMILY == sun8i ]]; then
-				KERNEL_DEFAULT="https://github.com/ssvb/linux-sunxi"
-				KERNEL_DEFAULT_BRANCH="20151207-embedded-lima-memtester-h3"
+				# KERNEL_DEFAULT="https://github.com/ssvb/linux-sunxi"
+				# KERNEL_DEFAULT_BRANCH="20151207-embedded-lima-memtester-h3"
+				KERNEL_DEFAULT="https://github.com/O-Computers/linux-sunxi"
+				KERNEL_DEFAULT_BRANCH="h3"
 				KERNEL_DEFAULT_SOURCE="linux-sun8i"
 			fi			
 			KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
