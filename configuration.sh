@@ -219,6 +219,7 @@
 			MODULES_NEXT=""
 			CPUMIN="480000"
 			CPUMAX="1296000"
+			GOVERNOR="interactive"
 		;;
 
 		orangepipc)#enabled
@@ -230,6 +231,7 @@
 			MODULES_NEXT=""
 			CPUMIN="480000"
 			CPUMAX="1296000"
+			GOVERNOR="interactive"
 		;;
 
 		orangepione)#enabled
@@ -241,6 +243,7 @@
 			MODULES_NEXT=""
 			CPUMIN="648000"
 			CPUMAX="1200000"
+			GOVERNOR="interactive"
 		;;
 
 		cubox-i)#enabled
@@ -340,7 +343,7 @@
 				# KERNEL_DEFAULT="https://github.com/ssvb/linux-sunxi"
 				# KERNEL_DEFAULT_BRANCH="20151207-embedded-lima-memtester-h3"
 				KERNEL_DEFAULT="https://github.com/O-Computers/linux-sunxi"
-				KERNEL_DEFAULT_BRANCH="h3"
+				KERNEL_DEFAULT_BRANCH="h3-wip"
 				KERNEL_DEFAULT_SOURCE="linux-sun8i"
 			fi			
 			KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
