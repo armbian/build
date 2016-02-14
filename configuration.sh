@@ -232,6 +232,7 @@
 			CPUMIN="480000"
 			CPUMAX="1296000"
 			GOVERNOR="interactive"
+		;;
 
 		orangepipc)#enabled
 			#description H3 quad core 1Gb SoC
