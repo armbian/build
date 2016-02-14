@@ -222,6 +222,17 @@
 			GOVERNOR="interactive"
 		;;
 
+		orangepi2)#enabled
+			#description H3 quad core 1Gb SoC Wifi USB hub
+			#build 3wip
+			LINUXFAMILY="sun8i"
+			BOOTCONFIG="orangepi_pc_defconfig"
+			MODULES="8189es"
+			MODULES_NEXT=""
+			CPUMIN="480000"
+			CPUMAX="1296000"
+			GOVERNOR="interactive"
+
 		orangepipc)#enabled
 			#description H3 quad core 1Gb SoC
 			#build 3wip
@@ -240,6 +251,18 @@
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_pc_defconfig"
 			MODULES=""
+			MODULES_NEXT=""
+			CPUMIN="648000"
+			CPUMAX="1200000"
+			GOVERNOR="interactive"
+		;;
+
+		orangepilite)#enabled
+			#description H3 quad core 512Mb SoC Wifi
+			#build 3wip
+			LINUXFAMILY="sun8i"
+			BOOTCONFIG="orangepi_pc_defconfig"
+			MODULES="8189es"
 			MODULES_NEXT=""
 			CPUMIN="648000"
 			CPUMAX="1200000"
