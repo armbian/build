@@ -143,7 +143,7 @@ END
 
 	FILESIZE=$(wc -c $DEST/debs/$CHOOSEN_UBOOT | cut -f 1 -d ' ')
 
-	if [ $FILESIZE -lt 50000 ]; then
+	if [[ $FILESIZE -lt 50000 ]]; then
 		display_alert "Building failed, check configuration." "$CHOOSEN_UBOOT deleted" "err"
 		rm $DEST/debs/$CHOOSEN_UBOOT
 		exit
