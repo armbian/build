@@ -115,6 +115,17 @@ create_board_package (){
 		mkdir -p $destination/boot/bin
 		for i in $(ls -w1 $SRC/lib/config/*.fex | xargs -n1 basename); do
 			fex2bin $SRC/lib/config/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin; 
+			case ${i%*.fex} in
+				orangepiplus|orangepi2|orangepipc|orangepione|orangepilite)
+					# H3 based devices need a fix when used with DVI displays
+					# so we provide a 2nd script.bin to be replaced manually
+					# when using kernel 3.4.x
+					sed '/\[hdmi_para\]/a \
+hdcp_enable = 0\
+hdmi_cts_compatibility = 1\
+' <"${SRC}/lib/config/${i%*.fex}.fex" | fex2bin - "${destination}/boot/bin/${i%*.fex}_hdmi2dvi.bin"
+				;;
+			esac
 		done
 	
 		# bluetooth device enabler - for cubietruck

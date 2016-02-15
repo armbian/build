@@ -211,7 +211,7 @@
 		;;
 
 		orangepiplus)#enabled
-			#description H3 quad core 1Gb SoC Wifi USB hub
+			#description H3 quad core 1Gb SoC Wifi GbE USB hub
 			#build 3wip
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_plus_defconfig"
