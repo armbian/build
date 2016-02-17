@@ -27,7 +27,7 @@
 	
 	# common options
 
-	REVISION="5.00" # all boards have same revision
+	REVISION="5.01" # all boards have same revision
 	ROOTPWD="1234" # Must be changed @first login
 	MAINTAINER="Igor Pecovnik" # deb signature
 	MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -538,7 +538,7 @@
 	[[ -z $CPUMIN && $LINUXFAMILY == odroidxu4 ]] && CPUMIN="600000" && CPUMAX="2000000" && GOVERNOR="conservative"
 	[[ -z $CPUMIN && $LINUXFAMILY == cubox ]] && CPUMIN="396000" && CPUMAX="996000" && GOVERNOR="interactive"
 	[[ -z $CPUMIN && $LINUXFAMILY == s500 ]] && CPUMIN="408000" && CPUMAX="1104000" && GOVERNOR="interactive"
-	[[ -z $CPUMIN && $LINUXFAMILY == marvell ]] && CPUMIN="800000" && CPUMAX="1600000" && GOVERNOR="interactive"
+	[[ -z $CPUMIN && $LINUXFAMILY == marvell ]] && CPUMIN="800000" && CPUMAX="1600000" && GOVERNOR="ondemand"
 	[[ -z $CPUMIN && ($LINUXFAMILY == udoo || $LINUXFAMILY == neo ) ]] && CPUMIN="392000" && CPUMAX="996000" && GOVERNOR="interactive"
 	[[ -z $GOVERNOR ]] && GOVERNOR="ondemand"
 	
