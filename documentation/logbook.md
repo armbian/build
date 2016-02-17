@@ -1,5 +1,8 @@
 # Release history
 
+**v5.01 / 17.2.2016**
+- Bugfix update for Allwinner boards
+
 **v5.00 / 12.2.2016** 
 
 - Vanilla kernel for Allwinner based boards upgraded to 4.4.1
