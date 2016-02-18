@@ -1,7 +1,9 @@
 # Release history
 
 **v5.01 / 17.2.2016**
-- Bugfix update for Allwinner boards
+
+- Bugfix update for [Allwinner boards](http://forum.armbian.com/index.php/topic/691-banana-pro-testers-wanted-sata-drive-not-working-on-some-boards/)
+- Update [for H3 based boards](https://github.com/igorpecovnik/lib/commit/c93d7dfb3538c36739fb8841bd314d75e7d7cbe5)
 
 **v5.00 / 12.2.2016** 
 
