@@ -254,7 +254,7 @@
 			MODULES="gpio_sunxi w1-sunxi w1-gpio w1-therm"
 			MODULES_NEXT=""
 			CPUMIN="648000"
-			CPUMAX="1200000"
+			CPUMAX="1104000"
 			GOVERNOR="interactive"
 		;;
 
@@ -266,7 +266,7 @@
 			MODULES="8189es gpio_sunxi w1-sunxi w1-gpio w1-therm"
 			MODULES_NEXT=""
 			CPUMIN="648000"
-			CPUMAX="1200000"
+			CPUMAX="1104000"
 			GOVERNOR="interactive"
 		;;
 
