@@ -1,0 +1,352 @@
+diff -Nur a/drivers/media/rc/Kconfig b/drivers/media/rc/Kconfig
+--- a/drivers/media/rc/Kconfig	2015-01-27 03:29:27.000000000 +0100
++++ b/drivers/media/rc/Kconfig	2016-02-07 03:25:15.040765088 +0100
+@@ -274,5 +274,15 @@
+ 
+ 	   To compile this driver as a module, choose M here: the module will
+ 	   be called gpio-ir-recv.
++	   
++config IR_SUNXI
++	tristate "SUNXI IR remote control"
++	depends on RC_CORE && !IR_RX_SUNXI
++	depends on ARCH_SUNXI
++	---help---
++	   Say Y if you want to use sunXi internal IR Controller
++
++	   To compile this driver as a module, choose M here: the module will
++	   be called sunxi-cir.
+ 
+ endif #RC_CORE
+diff -Nur a/drivers/media/rc/Makefile b/drivers/media/rc/Makefile
+--- a/drivers/media/rc/Makefile	2015-01-27 03:29:27.000000000 +0100
++++ b/drivers/media/rc/Makefile	2016-02-06 23:07:35.000000000 +0100
+@@ -27,3 +27,4 @@
+ obj-$(CONFIG_IR_WINBOND_CIR) += winbond-cir.o
+ obj-$(CONFIG_RC_LOOPBACK) += rc-loopback.o
+ obj-$(CONFIG_IR_GPIO_CIR) += gpio-ir-recv.o
++obj-$(CONFIG_IR_SUNXI) += sunxi-cir.o
+diff -Nur a/drivers/media/rc/sunxi-cir.c b/drivers/media/rc/sunxi-cir.c
+--- a/drivers/media/rc/sunxi-cir.c	1970-01-01 01:00:00.000000000 +0100
++++ b/drivers/media/rc/sunxi-cir.c	2016-02-16 00:19:39.938126949 +0100
+@@ -0,0 +1,321 @@
++/*
++ * Driver for Allwinner sunXi IR controller
++ *
++ * Copyright (C) 2014 Alexsey Shestacov <wingrime@linux-sunxi.org>
++ * Copyright (C) 2014 Alexander Bersenev <bay@hackerdom.ru>
++ * 
++ * Backported by:
++ * Copyright (C) 2016 Jernej Skrabec <jernej.skrabec@siol.net>
++ *
++ * Based on sun5i-ir.c:
++ * Copyright (C) 2007-2012 Daniel Wang
++ * Allwinner Technology Co., Ltd. <www.allwinnertech.com>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of
++ * the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ */
++
++#include <linux/clk.h>
++#include <linux/interrupt.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <media/rc-core.h>
++#include <mach/sunxi-smc.h>
++#include <linux/pinctrl/consumer.h>
++
++#include <linux/clk/clk-sun8iw7.h>
++#define IR0_BASE         (void __iomem *)(0xf1f02000)
++
++#define SUNXI_IR_DEV "sunxi-ir"
++
++#ifndef GENMASK
++#define GENMASK(h, l) \
++        (((~0UL) << (l)) & (~0UL >> (BITS_PER_LONG - 1 - (h))))
++#endif
++
++/* Registers */
++/* IR Control */
++#define SUNXI_IR_CTL_REG      0x00
++/* Global Enable */
++#define REG_CTL_GEN			BIT(0)
++/* RX block enable */
++#define REG_CTL_RXEN			BIT(1)
++/* CIR mode */
++#define REG_CTL_MD			(BIT(4) | BIT(5))
++
++/* Rx Config */
++#define SUNXI_IR_RXCTL_REG    0x10
++/* Pulse Polarity Invert flag */
++#define REG_RXCTL_RPPI			BIT(2)
++
++/* Rx Data */
++#define SUNXI_IR_RXFIFO_REG   0x20
++
++/* Rx Interrupt Enable */
++#define SUNXI_IR_RXINT_REG    0x2C
++/* Rx FIFO Overflow */
++#define REG_RXINT_ROI_EN		BIT(0)
++/* Rx Packet End */
++#define REG_RXINT_RPEI_EN		BIT(1)
++/* Rx FIFO Data Available */
++#define REG_RXINT_RAI_EN		BIT(4)
++
++/* Rx FIFO available byte level */
++#define REG_RXINT_RAL(val)    ((val) << 8)
++
++/* Rx Interrupt Status */
++#define SUNXI_IR_RXSTA_REG    0x30
++/* RX FIFO Get Available Counter */
++#define REG_RXSTA_GET_AC(val) (((val) >> 8) & (ir->fifo_size * 2 - 1))
++/* Clear all interrupt status value */
++#define REG_RXSTA_CLEARALL    0xff
++
++/* IR Sample Config */
++#define SUNXI_IR_CIR_REG      0x34
++/* CIR_REG register noise threshold */
++#define REG_CIR_NTHR(val)    (((val) << 2) & (GENMASK(7, 2)))
++/* CIR_REG register idle threshold */
++#define REG_CIR_ITHR(val)    (((val) << 8) & (GENMASK(15, 8)))
++
++/* Required frequency for IR0 or IR1 clock in CIR mode */
++#define SUNXI_IR_BASE_CLK     8000000
++/* Frequency after IR internal divider  */
++#define SUNXI_IR_CLK          (SUNXI_IR_BASE_CLK / 64)
++/* Sample period in ns */
++#define SUNXI_IR_SAMPLE       (1000000000ul / SUNXI_IR_CLK)
++/* Noise threshold in samples  */
++#define SUNXI_IR_RXNOISE      1
++/* Idle Threshold in samples */
++#define SUNXI_IR_RXIDLE       20
++/* Time after which device stops sending data in ms */
++#define SUNXI_IR_TIMEOUT      120
++
++
++struct sunxi_ir {
++	spinlock_t      ir_lock;
++	struct rc_dev   *rc;
++	void __iomem    *base;
++	int             fifo_size;
++	struct clk      *clk;
++	struct clk      *apb_clk;
++	struct pinctrl  *pinctrl;
++};
++
++static char ir_dev_name[] = "s_cir0";
++
++struct sunxi_ir *ir;
++
++static irqreturn_t sunxi_ir_irq(int irqno, void *dev_id)
++{
++	unsigned long status;
++	unsigned char dt;
++	unsigned int cnt, rc;
++	DEFINE_IR_RAW_EVENT(rawir);
++
++	spin_lock(&ir->ir_lock);
++
++	status = sunxi_smc_readl(ir->base + SUNXI_IR_RXSTA_REG);
++
++	/* clean all pending statuses */
++	sunxi_smc_writel(status | REG_RXSTA_CLEARALL, ir->base + SUNXI_IR_RXSTA_REG);
++
++	if (status & (REG_RXINT_RAI_EN | REG_RXINT_RPEI_EN)) {
++		/* How many messages in fifo */
++		rc  = REG_RXSTA_GET_AC(status);
++		/* Sanity check */
++		rc = rc > ir->fifo_size ? ir->fifo_size : rc;
++		/* If we have data */
++		for (cnt = 0; cnt < rc; cnt++) {
++			/* for each bit in fifo */
++			dt = (unsigned char)(sunxi_smc_readl(ir->base + SUNXI_IR_RXFIFO_REG));
++			rawir.pulse = (dt & 0x80) != 0;
++			rawir.duration = ((dt & 0x7f) + 1) * SUNXI_IR_SAMPLE;
++			ir_raw_event_store_with_filter(ir->rc, &rawir);
++		}
++	}
++
++	if (status & REG_RXINT_ROI_EN) {
++		ir_raw_event_reset(ir->rc);
++	} else if (status & REG_RXINT_RPEI_EN) {
++		ir_raw_event_set_idle(ir->rc, true);
++		ir_raw_event_handle(ir->rc);
++	}
++
++	spin_unlock(&ir->ir_lock);
++
++	return IRQ_HANDLED;
++}
++
++static int __init ir_rx_init(void)
++{
++	int ret = 0;
++	unsigned long tmp = 0;
++
++	ir = kzalloc(sizeof(struct sunxi_ir), GFP_KERNEL);
++	if (!ir)
++		return -ENOMEM;
++	
++	ir->fifo_size = 64;
++
++	spin_lock_init(&ir->ir_lock);
++
++	/* Clock */
++	ir->apb_clk = clk_get(NULL, HOSC_CLK);
++	if (IS_ERR(ir->apb_clk)) {
++		pr_err("failed to get a apb clock.\n");
++		return PTR_ERR(ir->apb_clk);
++	}
++	ir->clk = clk_get(NULL, "cpurcir");
++	if (IS_ERR(ir->clk)) {
++		pr_err("failed to get a ir clock.\n");
++		return PTR_ERR(ir->clk);
++	}
++	
++	if(clk_set_parent(ir->clk, ir->apb_clk)) {
++        pr_err("%s: set ir_clk parent to ir_clk_source failed!\n", __func__);
++    }
++
++	ret = clk_set_rate(ir->clk, SUNXI_IR_BASE_CLK);
++	if (ret) {
++		pr_err("set ir base clock failed!\n");
++		goto exit_reset_assert;
++	}
++
++	if (clk_prepare_enable(ir->apb_clk)) {
++		pr_err("try to enable apb_ir_clk failed\n");
++		ret = -EINVAL;
++		goto exit_reset_assert;
++	}
++
++	if (clk_prepare_enable(ir->clk)) {
++		pr_err("try to enable ir_clk failed\n");
++		ret = -EINVAL;
++		goto exit_clkdisable_apb_clk;
++	}
++
++	/* IO */
++	ir->base = IR0_BASE;
++	if (IS_ERR(ir->base)) {
++		pr_err("failed to map registers\n");
++		ret = PTR_ERR(ir->base);
++		goto exit_clkdisable_clk;
++	}
++
++	ir->rc = rc_allocate_device();
++	if (!ir->rc) {
++		pr_err("failed to allocate device\n");
++		ret = -ENOMEM;
++		goto exit_clkdisable_clk;
++	}
++
++	ir->rc->priv = ir;
++	ir->rc->input_name = SUNXI_IR_DEV;
++	ir->rc->input_phys = "sunxi-ir/input1";
++	ir->rc->input_id.bustype = BUS_HOST;
++	ir->rc->input_id.vendor = 0x0001;
++	ir->rc->input_id.product = 0x0001;
++	ir->rc->input_id.version = 0x0100;
++	ir->rc->map_name = RC_MAP_EMPTY;
++	ir->rc->driver_type = RC_DRIVER_IR_RAW;
++	ir->rc->allowed_protos = RC_TYPE_ALL;
++	ir->rc->rx_resolution = SUNXI_IR_SAMPLE;
++	ir->rc->timeout = MS_TO_NS(SUNXI_IR_TIMEOUT);
++	ir->rc->driver_name = SUNXI_IR_DEV;
++
++	ret = rc_register_device(ir->rc);
++	if (ret) {
++		pr_err("failed to register rc device\n");
++		goto exit_free_dev;
++	}
++	
++	/* pin config */
++	ir->rc->dev.init_name = &ir_dev_name[0];
++	ir->pinctrl = devm_pinctrl_get_select_default(&ir->rc->dev);
++	if (IS_ERR_OR_NULL(ir->pinctrl)) {
++		pr_err("%s: config ir rx pin err.\n", __func__);
++		goto exit_free_dev;
++	}
++
++	ret = request_irq(SUNXI_IRQ_R_CIR_RX, sunxi_ir_irq, 0, SUNXI_IR_DEV, ir);
++	if (ret) {
++		pr_err("failed request irq\n");
++		goto exit_free_pinctrl;
++	}
++
++	/* Enable CIR Mode */
++	sunxi_smc_writel(REG_CTL_MD, ir->base+SUNXI_IR_CTL_REG);
++
++	/* Set noise threshold and idle threshold */
++	sunxi_smc_writel(REG_CIR_NTHR(SUNXI_IR_RXNOISE)|REG_CIR_ITHR(SUNXI_IR_RXIDLE),
++	       ir->base + SUNXI_IR_CIR_REG);
++
++	/* Invert Input Signal */
++	sunxi_smc_writel(REG_RXCTL_RPPI, ir->base + SUNXI_IR_RXCTL_REG);
++
++	/* Clear All Rx Interrupt Status */
++	sunxi_smc_writel(REG_RXSTA_CLEARALL, ir->base + SUNXI_IR_RXSTA_REG);
++
++	/*
++	 * Enable IRQ on overflow, packet end, FIFO available with trigger
++	 * level
++	 */
++	sunxi_smc_writel(REG_RXINT_ROI_EN | REG_RXINT_RPEI_EN |
++	       REG_RXINT_RAI_EN | REG_RXINT_RAL(ir->fifo_size / 2 - 1),
++	       ir->base + SUNXI_IR_RXINT_REG);
++
++	/* Enable IR Module */
++	tmp = sunxi_smc_readl(ir->base + SUNXI_IR_CTL_REG);
++	sunxi_smc_writel(tmp | REG_CTL_GEN | REG_CTL_RXEN, ir->base + SUNXI_IR_CTL_REG);
++	
++	return 0;
++
++exit_free_pinctrl:
++	devm_pinctrl_put(ir->pinctrl);
++exit_free_dev:
++	rc_free_device(ir->rc);
++exit_clkdisable_clk:
++	clk_disable_unprepare(ir->clk);
++exit_clkdisable_apb_clk:
++	clk_disable_unprepare(ir->apb_clk);
++exit_reset_assert:
++
++	return ret;
++}
++
++static void __exit ir_rx_exit(void)
++{
++	unsigned long flags;
++
++	clk_disable_unprepare(ir->clk);
++	clk_disable_unprepare(ir->apb_clk);
++
++	spin_lock_irqsave(&ir->ir_lock, flags);
++	/* disable IR IRQ */
++	sunxi_smc_writel(0, ir->base + SUNXI_IR_RXINT_REG);
++	/* clear All Rx Interrupt Status */
++	sunxi_smc_writel(REG_RXSTA_CLEARALL, ir->base + SUNXI_IR_RXSTA_REG);
++	/* disable IR */
++	sunxi_smc_writel(0, ir->base + SUNXI_IR_CTL_REG);
++	spin_unlock_irqrestore(&ir->ir_lock, flags);
++	
++	free_irq(SUNXI_IRQ_R_CIR_RX, ir);
++	
++	devm_pinctrl_put(ir->pinctrl);
++
++	rc_unregister_device(ir->rc);
++}
++
++
++module_init(ir_rx_init);
++module_exit(ir_rx_exit);
++
++MODULE_DESCRIPTION("Allwinner sunXi IR controller driver");
++MODULE_AUTHOR("Alexsey Shestacov <wingrime@linux-sunxi.org>");
++MODULE_LICENSE("GPL");
