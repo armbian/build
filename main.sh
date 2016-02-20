@@ -254,6 +254,7 @@ if [[ -n "$MISC2" ]]; then fetch_from_github "$MISC2" "$MISC2_DIR"; fi
 if [[ -n "$MISC3" ]]; then fetch_from_github "$MISC3" "$MISC3_DIR"; fi
 if [[ -n "$MISC4" ]]; then fetch_from_github "$MISC4" "$MISC4_DIR"; fi
 if [[ -n "$MISC5" ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
+if [[ -n "$MISC6" ]]; then fetch_from_github "$MISC6" "$MISC6_DIR"; fi
 
 # compile sunxi tools
 if [[ $LINUXFAMILY == sun*i ]]; then 
