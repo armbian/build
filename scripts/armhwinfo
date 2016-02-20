@@ -8,27 +8,29 @@
 # Short-Description: Get some info about hardware for some ARM single board computers and set some basic things
 ### END INIT INFO
 
-SERVER_IP=$(ifconfig  | grep 'inet addr:'| grep -v '127.0.0.1' | cut -d: -f2 | awk '{ print $1}')
+TMPFILE=$(mktemp /tmp/${0##*/}.XXXXXX)
+trap "rm \"${TMPFILE}\" ; exit 0" 0 1 2 3 15
+dmesg >"${TMPFILE}"
+SERVER_IP=$(hostname -I)
 CORES=$(grep -c ^processor /proc/cpuinfo)
-MEMTOTAL=$(awk 'BEGIN { printf "%.0f\n", '$(grep MemTotal /proc/meminfo | awk '{print $2}')'/1024/1024 }')
-ARCH=$(lscpu | grep Architecture  | awk '{print $2}')
-RTC=$(dmesg | grep rtc0 | awk '{print $(NF)}')
-HB_PCI=$(dmesg | grep '16c3:abcd')
-HARDWARE=$(cat /proc/cpuinfo | grep Hardware | awk '{print $3}')
-GMAC=$(dmesg | grep "sun6i_gmac")$(dmesg | grep "gmac0-")
-LEDS=$(dmesg |grep "green:ph02:led1")
-TERMINUS=$(lsusb  | grep "1a40:0101")
-SWITCH=$(dmesg | grep "BCM53125")
-INTERUPT=$(cat /proc/interrupts | grep "eth0")
+MEMTOTAL=$(( $(awk -F" " '/^MemTotal/ {print $2}' </proc/meminfo) / 1024 ))
+ARCH=$(lscpu | awk '/Architecture/ {print $2}')
+RTC=$(awk '/rtc0/ {print $(NF)}' <"${TMPFILE}")
+HB_PCI=$(grep '16c3:abcd' "${TMPFILE}")
+HARDWARE=$(awk '/Hardware/ {print $3}' </proc/cpuinfo)
+GMAC=$(grep "sun6i_gmac" "${TMPFILE}")$(grep "gmac0-" "${TMPFILE}")
+LEDS=$(grep "green:ph02:led1" "${TMPFILE}")
+TERMINUS=$(lsusb | grep "1a40:0101")
+SWITCH=$(grep "BCM53125" "${TMPFILE}")
+INTERUPT=$(grep "eth0" /proc/interrupts)
 WIFI8189ES=$(lsmod | grep 8189es)
-ORANGEPC=$([[ -f /boot/script.bin ]] && ls -l /boot/script.bin | grep pc)
 
 case "$1" in
     start)
 # ARM
 
 for i in $( lsblk -idn -o NAME ); do
-    ROTATE=$(cat /sys/block/$i/queue/rotational)
+    read ROTATE </sys/block/$i/queue/rotational
 
     # mechanical drives
     if [ "$ROTATE" = 1 ]; then echo cfq  > /sys/block/$i/queue/scheduler; 
@@ -54,22 +56,26 @@ if [ "$ARCH" = "armv7l" ]; then
 		ID="Orange H3"
 		if [ "$TERMINUS" != "" ]; then
 			ID="Orange Pi+"
-			if [ "$MEMTOTAL" = 2 ]; then
+			if [ $MEMTOTAL -gt 1500 ]; then
 			ID="Orange Pi+ 2"
 			fi
 			if [ "$GMAC" == "" ]; then
 				if [ "$WIFI8189ES" != "" ]; then
-                        		ID="Orange Pi 2"
+					ID="Orange Pi 2"
 				else
 					ID="Orange Pi 2 mini"
-                	        fi
+				fi
 			fi
 		elif [ "$WIFI8189ES" != "" ]; then
 			ID="Orange Pi Lite"
-		elif [ "$ORANGEPC" != "" ]; then
+		elif [ $MEMTOTAL -gt 600 ]; then
 			ID="Orange Pi PC"
+			# redistribute USB irqs to dedicated cores
+			echo 2 >/proc/irq/$(awk -F":" '/usb2/ {print $1}' </proc/interrupts)/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" '/usb3/ {print $1}' </proc/interrupts)/smp_affinity
+			echo 8 >/proc/irq/$(awk -F":" '/usb4/ {print $1}' </proc/interrupts)/smp_affinity
 		else
-                        ID="Orange Pi One"
+			ID="Orange Pi One"
 		fi
     	fi
     if [ $HARDWARE = "sun4i" ] || [ $HARDWARE = "Allwinner" ]; then
@@ -78,10 +84,10 @@ if [ "$ARCH" = "armv7l" ]; then
     if [ $HARDWARE = "sun7i" ] || [ $HARDWARE = "Allwinner" ]; then
         # redistribute irq to dedicated core
 		if [ "$INTERUPT" != "" ] && [ "$CORES" -gt 1 ]; then
-            echo 2 > /proc/irq/$(cat /proc/interrupts | grep eth0 | cut -f 1 -d ":" | tr -d " ")/smp_affinity
+			echo 2 >/proc/irq/$(awk -F":" '/eth0/ {print $1}' </proc/interrupts)/smp_affinity
         fi
 
-        if [ "$MEMTOTAL" = 2 ]; then
+        if [ $MEMTOTAL -gt 1500 ]; then
             ID="Cubietruck"
         elif [ -n "$GMAC" ]; then
             if [ "$TERMINUS" != "" ]; then
@@ -95,14 +101,14 @@ if [ "$ARCH" = "armv7l" ]; then
             fi
         elif [ "$LEDS" != "" ]; then
             ID="Lime"
-        elif [ "$MEMTOTAL" = 1 ]; then
+        elif [ $MEMTOTAL -lt 1500 ]; then
             ID="Micro"
         else
             ID="Cubieboard"
         fi
 
     elif [ "$HARDWARE" = "Freescale" ]; then
-        if [ "$MEMTOTAL" = 2 ]; then
+        if [ $MEMTOTAL -gt 1500 ]; then
             ID="Cubox i4"
         elif [ "$HB_PCI" != "" ]; then
             ID="HB i2eX"
@@ -133,7 +139,7 @@ if [[ $MACHINE == *Pro* ]]; then ID="Banana Pro"; fi
 if [[ $MACHINE == *M2* ]]; then ID="Banana M2"; fi
 
 echo -e "[\e[0;32m ok \x1B[0m] Starting ARM hardware info: $ID"
-echo $ID  >> /var/run/machine.id
+echo $ID >> /var/run/machine.id
 ;;
 stop|reload|restart|force-reload|status)
 echo -e "[\e[0;32m ok \x1B[0m] Stopping ARM hardware info ..."
