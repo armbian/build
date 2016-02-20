@@ -10,9 +10,14 @@
 #
 
 IFS=";"
-START=0
+#START=45
+#STOP=57
+
 OLDFAMILY=""
 #BUILD_ALL="demo"
+
+declare -a MYARRAY1=('jessie' '');
+#declare -a MYARRAY1=('wheezy' '' 'jessie' '' 'trusty' '');
 
 # vaid options for automatic building and menu selection
 #
@@ -33,7 +38,7 @@ source $SRC/lib/general.sh
 #
 distro-list ()
 {
-declare -a MYARRAY1=('wheezy' '' 'jessie' '' 'trusty' '');
+
 k1=0
 l1=1
 while [[ $k1 -lt ${#MYARRAY1[@]} ]]
@@ -89,4 +94,8 @@ do
 		distro-list "${MYARRAY[$i1]}" "dev"
 	fi
     i1=$[$i1+3];j1=$[$j1+3];o1=$[$o1+3]
+	
+	[[ $BUILD_ALL == "demo" ]] && echo $i1
+	if [[ "$i1" -gt "$STOP" ]]; then exit; fi
+	
 done
