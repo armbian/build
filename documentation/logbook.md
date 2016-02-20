@@ -1,4 +1,11 @@
 # Release history
+**v5.03 / 20.2.2016**
+
+- H3 images rebuilded
+
+**v5.02 / 18.2.2016**
+
+- H3 images rebuilded
 
 **v5.01 / 17.2.2016**
 
