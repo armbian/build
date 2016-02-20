@@ -10,8 +10,8 @@
 #
 
 IFS=";"
-#START=45
-#STOP=57
+START=45
+STOP=57
 
 OLDFAMILY=""
 #BUILD_ALL="demo"
