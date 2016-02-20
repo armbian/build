@@ -49,6 +49,8 @@
 	MISC4_DIR=""
 	MISC5="https://github.com/hglm/a10disp/" # Display changer for Allwinner
 	MISC5_DIR="sunxi-display-changer" # local directory
+	MISC6="https://github.com/porjo/mt7601/" # Display changer for Allwinner
+	MISC6_DIR="mt7601" # local directory
 
 
 
