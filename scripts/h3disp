@@ -1,0 +1,140 @@
+#!/bin/bash
+#
+# h3disp
+#
+# Patches fex/script.bin settings to modify display settings. Currently
+# rather limited and only supporting HDMI and the available presets.
+#
+#############################################################################
+#
+# Background informations:
+#
+# Only a certain amount of predefined video modes is available on H3 devices
+# as can be seen here: http://linux-sunxi.org/Fex_Guide#disp_init_configuration
+#
+# Purpose of this script is to display the available reasonable settings and
+# let the user choose from them to adjust fex file accordingly afterwards.
+#
+# If HDMI-to-DVI adapters are used another fix has to be applied to the fex
+# file: http://linux-sunxi.org/Orange_Pi_One#HDMI_to_DVI_converters -- so ask
+# user whether he plans to use such an adapter and adjust fex file accordingly
+#
+#############################################################################
+#
+# CHANGES:
+#
+# v0.1: Initial release to adjust display settings in script.bin on commonly
+#       used Debian based OS images for H3 devices running Linux.
+#
+#############################################################################
+#
+# TODO:
+# 
+# - implement real user interaction: dialog that asks which of the available 
+#   HDMI modes to choose and whether a HDMI-to-DVI converter is used or not
+#
+# - maybe implement live resolution switching as outlined by Jernej:
+#   http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5305
+#   (we would also need a working set of fbset modes in /etc/fb.modes
+#   of course)
+#
+# - maybe add the chosen mode to /boot/boot.cmd and create /boot/boot.scr
+#   afterwards?
+#
+#############################################################################
+
+Main() {
+	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+	
+	# ensure script is running as root
+	if [ "$(id -u)" != "0" ]; then
+	        echo "This script must be executed as root. Exiting" >&2
+	        exit 1
+	fi
+	
+	# Provide a list with possible HDMI display settings and store the chosen
+	# one in the HDMIMode variable
+	:
+	
+	# ask the user whether he uses a HDMI-to-DVI converter and if true then
+	# set DVIUsed=TRUE
+	:
+	
+	HDMIMode=4
+	DVIUsed=TRUE
+	
+	echo -e "Now trying to patch script.bin with your settings. \c"
+	PatchScriptBin ${HDMIMode} ${DVIUsed}
+	echo "Successfully finished. Please reboot for changes to take effect"
+} # Main
+
+PatchScriptBin() {	
+	# This function will be called with 2 arguments:
+	# $1 HDMI mode to set
+	# $2 wether HDMI-to-DVI converter should be used or not (has to be TRUE)
+	
+	# check whether we've the necessary tools available
+	Fex2Bin="$(which fex2bin)"
+	if [ "X${Fex2Bin}" = "X" ]; then
+	        apt-get -f -qq -y install sunxi-tools >/dev/null 2>&1 || InstallSunxiTools >/dev/null 2>&1
+	fi
+	which fex2bin >/dev/null 2>&1 || (echo -e "Aborted\nfex2bin/bin2fex not found and unable to install. Exiting" >&2 ; exit 1)
+	
+	# try to find location of script.bin
+	Path2ScriptBin=/boot
+	if [ ! -f "${Path2ScriptBin}/script.bin" ]; then
+		Path2ScriptBin="$(df | awk -F" " '/^\/dev\/mmcblk0p1/ {print $6}')"
+		if [ ! -f "${Path2ScriptBin}/script.bin" ]; then
+			echo -e "Aborted\nCan not find script.bin. Ensure boot partition is mounted" >&2
+			logger "Can not find script.bin. Ensure boot partition is mounted"
+			exit 1
+		fi
+	fi
+	
+	# resolve symlink to modify the original instead of the link
+	ScriptBin="$(readlink -f "${Path2ScriptBin}/script.bin")"
+
+	# create temp file	
+	MyTmpFile="$(mktemp /tmp/${0##*/}.XXXXXX)"
+	# trap "rm \"${MyTmpFile}\" ; exit 0" 0 1 2 3 15
+
+	# convert script.bin to temporary fex file	
+	bin2fex <"${ScriptBin}" 2>/dev/null | grep -v "^screen0_output" \
+		| grep -v "^screen1_output" | grep -v "hdcp_enable" \
+		| grep -v "hdmi_cts_compatibility" >"${MyTmpFile}"
+	if [ $? -ne 0 ]; then
+		echo -e "Aborted\nCould not convert script.bin to fex. Exiting" >&2
+		logger "Could not convert script.bin to fex"
+		exit 1
+	fi
+	# create backup to be able to recover from failed conversion
+	cp -p "${ScriptBin}" "${Path2ScriptBin}/script.bin.bak"
+
+	sed -i "/\[disp_init\]/a screen0_output_type = 3\nscreen0_output_mode = $1\nscreen1_output_type = 3\nscreen1_output_mode = $1" "${MyTmpFile}"
+	
+	if [ "X$2" = "XTRUE" ]; then
+		# add entries necessary for HDMI-to-DVI adapters	
+		sed -i '/\[hdmi_para\]/a hdcp_enable = 0\nhdmi_cts_compatibility = 1' "${MyTmpFile}"
+	fi
+	
+	# convert temporary fex file back to script.bin
+	fex2bin "${MyTmpFile}" "${ScriptBin}" 2>/dev/null
+	if [ $? -ne 0 ]; then
+	        mv "${Path2ScriptBin}/script.bin.bak" "${ScriptBin}"
+	        echo -e "Aborted\nWriting script.bin went wrong. Nothing changed" >&2
+	        logger "Writing script.bin went wrong. Nothing changed"
+	        exit 1
+	fi
+} # PatchScriptBin
+
+InstallSunxiTools() {
+	sleep 1
+	apt-get -f -qq -y install libusb-1.0-0-dev || (echo -e "Aborted\nNot possible to install a sunxi-tools requirement" ; exit 1)
+	cd /tmp
+	git clone https://github.com/linux-sunxi/sunxi-tools
+	cd sunxi-tools
+	make
+	make install
+} # InstallSunxiTools
+
+Main
