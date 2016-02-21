@@ -329,8 +329,6 @@ fi
 if [[ -n "$MISC6_DIR" && $BRANCH != "next" ]]; then
 	display_alert "Installing external applications" "MT7601U - driver" "info"
 	cd $SOURCES/$MISC6_DIR
-	if ! test -a src/dkms.conf
-	then
 	cat >> fix_build.patch << _EOF_
 diff --git a/src/dkms.conf b/src/dkms.conf
 new file mode 100644
@@ -374,8 +372,7 @@ index 1b6a631..c336611 100755
  #ifdef OS_ABL_FUNC_SUPPORT
 _EOF_
 
-	patch -p1 < fix_build.patch
-	fi
+	patch -f -s -p1 -r - <fix_build.patch >/dev/null
 	cd src
 	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
 	(make -j4 ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- LINUX_SRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
