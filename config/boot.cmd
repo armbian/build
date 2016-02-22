@@ -1,5 +1,5 @@
 # disp.screen0_output_mode=1920x1080p60 to set video mode
-setenv bootargs "console=tty1 root=/dev/mmcblk0p1 rootwait rootfstype=ext4 cgroup-enable=memory swapaccount=1 sunxi_ve_mem_reserve=0 sunxi_g2d_mem_reserve=0 sunxi_no_mali_mem_reserve sunxi_fb_mem_reserve=16 hdmi.audio=EDID:0 panic=10 consoleblank=0 enforcing=0 loglevel=1"
+setenv bootargs "console=ttyS0,115200 root=/dev/mmcblk0p1 rootwait rootfstype=ext4 cgroup-enable=memory swapaccount=1 sunxi_ve_mem_reserve=0 sunxi_g2d_mem_reserve=0 sunxi_no_mali_mem_reserve sunxi_fb_mem_reserve=16 hdmi.audio=EDID:0 panic=10 consoleblank=0 enforcing=0 loglevel=8"
 #--------------------------------------------------------------------------------------------------------------------------------
 # Boot loader script to boot with different boot methods for old and new kernel
 #--------------------------------------------------------------------------------------------------------------------------------
