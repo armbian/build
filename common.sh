@@ -374,13 +374,13 @@ _EOF_
 
 	patch -f -s -p1 -r - <fix_build.patch >/dev/null
 	cd src
-	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
-	(make -j4 ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- LINUX_SRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
+	make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
+	(make -s -j4 ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- LINUX_SRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
 	cp os/linux/*.ko $DEST/cache/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
 	mkdir -p $DEST/cache/sdcard/etc/Wireless/RT2870STA
 	cp RT2870STA.dat $DEST/cache/sdcard/etc/Wireless/RT2870STA/
 	depmod -b $DEST/cache/sdcard/ $VER-$LINUXFAMILY
-	make clean 1>&2 2>/dev/null
+	make -s clean 1>&2 2>/dev/null
 	cd ..
 	mkdir -p $DEST/cache/sdcard/usr/src/
 	cp -R src $DEST/cache/sdcard/usr/src/mt7601-3.0.0.4
