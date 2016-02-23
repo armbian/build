@@ -217,7 +217,7 @@
 			#build 3wip
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_plus_defconfig"
-			MODULES="8189es gpio_sunxi w1-sunxi w1-gpio w1-therm"
+			MODULES="8189es"
 			MODULES_NEXT=""
 			CPUMIN="480000"
 			CPUMAX="1296000"
@@ -229,7 +229,7 @@
 			#build 3wip
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_pc_defconfig"
-			MODULES="8189es gpio_sunxi w1-sunxi w1-gpio w1-therm"
+			MODULES="8189es"
 			MODULES_NEXT=""
 			CPUMIN="480000"
 			CPUMAX="1296000"
@@ -241,7 +241,7 @@
 			#build 3wip
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_pc_defconfig"
-			MODULES="gpio_sunxi w1-sunxi w1-gpio w1-therm"
+			MODULES=""
 			MODULES_NEXT=""
 			CPUMIN="480000"
 			CPUMAX="1296000"
@@ -253,7 +253,7 @@
 			#build 3wip
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_one_defconfig"
-			MODULES="gpio_sunxi w1-sunxi w1-gpio w1-therm"
+			MODULES=""
 			MODULES_NEXT=""
 			CPUMIN="648000"
 			CPUMAX="1200000"
@@ -265,7 +265,7 @@
 			#build 3wip
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_pc_defconfig"
-			MODULES="8189es gpio_sunxi w1-sunxi w1-gpio w1-therm"
+			MODULES="8189es"
 			MODULES_NEXT=""
 			CPUMIN="648000"
 			CPUMAX="1200000"

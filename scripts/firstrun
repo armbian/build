@@ -15,6 +15,15 @@
 #
 # Create this file to speed up boot process
 #
+
+# Immediately exit if not called correctly
+if [ "X$1" != "Xstart" ]; then
+	exit 1
+fi
+
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# create helper script to set swap settings
 cat > /tmp/create_swap.sh <<EOT
 #!/bin/bash
 # 
@@ -56,28 +65,24 @@ if [ -f "/var/run/reboot" ]; then reboot; fi
 rm -f /tmp/create_swap.sh
 EOT
 chmod +x /tmp/create_swap.sh
-#
-#
-#
 
+collect_informations() {
+	# get some info about the board
+	CURKERNE=$(uname -r | sed 's/\([0-9]\+\.[0-9]\+\)\..*/\1/')
+	DISTRIBUTION=$(lsb_release -cs)
+	HARDWARE=$(awk '/Hardware/ {print $3}' </proc/cpuinfo)
 
-#
-#
-# get some info about the board
-CURKERNE=$(uname -r | sed 's/\([0-9]\+\.[0-9]\+\)\..*/\1/')
-DISTRIBUTION=$(lsb_release -cs)
-HARDWARE=$(awk '/Hardware/ {print $3}' </proc/cpuinfo)
-
-root_device=$(mountpoint -d /)
-for file in /dev/* ; do
-CURRENT_DEVICE=$(printf "%d:%d" $(stat --printf="0x%t 0x%T" $file))
-if [ $CURRENT_DEVICE = $root_device ]; then
-	root_partition=$file
-	break;
-fi
-done
-rootfstype=$(blkid -s TYPE -o value $root_partition)
-set -e
+	root_device=$(mountpoint -d /)
+	for file in /dev/* ; do
+		CURRENT_DEVICE=$(printf "%d:%d" $(stat --printf="0x%t 0x%T" $file))
+		if [ $CURRENT_DEVICE = $root_device ]; then
+			root_partition=$file
+			break;
+		fi
+	done
+	rootfstype=$(blkid -s TYPE -o value $root_partition)
+	set -e
+} # collect_informations
 
 display_alert() {
 	if [ "$DISTRIBUTION" == "wheezy" ]; then
@@ -88,8 +93,9 @@ display_alert() {
 }
 
 autodetect_h3() {
-	# This function adjusts script.bin and cpufreq settings based on /run/machine.id so
-	# that a single OS image built for Orange Pi PC can be shipped.
+	# This function adjusts script.bin, hostname and cpufreq settings based on 
+	# /run/machine.id so that two OS images (one built for Orange Pi Plus and one
+	# for the other H3 devices using the internal Ethernet PHY) can be shipped.
 	
 	# wait for armhwinfo
 	sleep 3
@@ -120,10 +126,6 @@ autodetect_h3() {
 	touch /var/run/reboot
 } # autodetect_h3
 
-#if [ "X${HARDWARE}" = "Xsun8i" ]; then
-#	autodetect_h3
-#fi
-
 do_expand_rootfs() {
 	device="/dev/"$(lsblk -idn -o NAME | grep mmcblk0)
 	PARTITIONS=$(($(fdisk -l $device | grep $device | wc -l)-1))
@@ -142,29 +144,32 @@ do_expand_rootfs() {
 		display_alert "Automatic reboot is needed. Please wait"
 		update-rc.d resize2fs defaults >/dev/null 2>&1 
 	fi
-return 0
+	return 0
 }
 
-case "$1" in
-	start)
-		display_alert "Force password change upon first login"
-		chage -d 0 root
-		
-		if [[ "$rootfstype" == "ext4" && ! -f "/root/.no_rootfs_resize" ]]; then
-			display_alert "Expand ext4 root filesystem"
-			do_expand_rootfs
-		fi
-		display_alert "Creating 128Mb emergency swap area"
-		display_alert "SSH keys recreation. One moment please"
-		display_alert "Updating packages"
-		#resize2fs $root_partition
-		/tmp/create_swap.sh &
-		update-rc.d -f firstrun remove >/dev/null 2>&1		
-        ;;
-	*)        
-        exit 1
-        ;;
-esac
+main() {
+	collect_informations
+	display_alert "Force password change upon first login"
+	chage -d 0 root
 
+	if [[ "$rootfstype" == "ext4" && ! -f "/root/.no_rootfs_resize" ]]; then
+		display_alert "Expand ext4 root filesystem"
+		do_expand_rootfs
+	fi
+
+	display_alert "Creating 128Mb emergency swap area"
+	display_alert "SSH keys recreation. One moment please"
+	display_alert "Updating packages"
+	/tmp/create_swap.sh &
+
+	if [ "X${HARDWARE}" = "Xsun8i" ]; then
+		autodetect_h3
+	fi
+
+	update-rc.d -f firstrun remove >/dev/null 2>&1
+	sed -i 's/allow-hotplug\ eth0/auto eth0/' /etc/network/interfaces.default
+} # main
+
+main
 exit 0
 
