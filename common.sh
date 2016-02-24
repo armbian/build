@@ -387,6 +387,11 @@ _EOF_
 	# TODO: Set the module to build automatically via dkms in the future here
 
 fi
+
+# h3disp for sun8i/3.4.x
+if [ "$BOARD" = "orangepiplus" -o "$BOARD" = "orangepih3" ]; then
+	install -m 755 "$SRC/lib/scripts/h3disp" "$DEST/cache/sdcard/usr/local/bin"
+fi
 }
 
 

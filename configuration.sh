@@ -213,62 +213,26 @@
 		;;
 
 		orangepiplus)#enabled
-			#description H3 quad core 1Gb SoC Wifi GbE USB hub
+			#description H3 quad core (Orange Pi Plus or Plus 2)
 			#build 3wip
 			LINUXFAMILY="sun8i"
 			BOOTCONFIG="orangepi_plus_defconfig"
-			MODULES="8189es"
+			MODULES="8189es #gpio_sunxi #w1-sunxi #w1-gpio #w1-therm #gc2035"
 			MODULES_NEXT=""
 			CPUMIN="480000"
 			CPUMAX="1296000"
 			GOVERNOR="interactive"
 		;;
 
-		orangepi2)#enabled
-			#description H3 quad core 1Gb SoC Wifi USB hub
+		orangepih3)#enabled
+			#description H3 quad core (Orange Pi PC/One/2/Lite)
 			#build 3wip
 			LINUXFAMILY="sun8i"
-			BOOTCONFIG="orangepi_pc_defconfig"
-			MODULES="8189es"
+			BOOTCONFIG="orangepi_h3_defconfig"
+			MODULES="8189es #gpio_sunxi #w1-sunxi #w1-gpio #w1-therm #gc2035"
 			MODULES_NEXT=""
 			CPUMIN="480000"
 			CPUMAX="1296000"
-			GOVERNOR="interactive"
-		;;
-
-		orangepipc)#enabled
-			#description H3 quad core 1Gb SoC
-			#build 3wip
-			LINUXFAMILY="sun8i"
-			BOOTCONFIG="orangepi_pc_defconfig"
-			MODULES=""
-			MODULES_NEXT=""
-			CPUMIN="480000"
-			CPUMAX="1296000"
-			GOVERNOR="interactive"
-		;;
-
-		orangepione)#enabled
-			#description H3 quad core 512Mb SoC
-			#build 3wip
-			LINUXFAMILY="sun8i"
-			BOOTCONFIG="orangepi_one_defconfig"
-			MODULES=""
-			MODULES_NEXT=""
-			CPUMIN="648000"
-			CPUMAX="1200000"
-			GOVERNOR="interactive"
-		;;
-
-		orangepilite)#enabled
-			#description H3 quad core 512Mb SoC Wifi
-			#build 3wip
-			LINUXFAMILY="sun8i"
-			BOOTCONFIG="orangepi_pc_defconfig"
-			MODULES="8189es"
-			MODULES_NEXT=""
-			CPUMIN="648000"
-			CPUMAX="1200000"
 			GOVERNOR="interactive"
 		;;
 
