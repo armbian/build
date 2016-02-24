@@ -132,7 +132,7 @@ install_board_specific (){
 		cp $SRC/lib/config/boot.cmd $DEST/cache/sdcard/boot/boot.cmd
 		# orangepi h3 temp exceptions
 		[[ $LINUXFAMILY == "sun8i" ]] && sed -i '1s/^/gpio set PA15\nsetenv machid 1029\nsetenv bootm_boot_mode sec\n/' $DEST/cache/sdcard/boot/boot.cmd
-		[[ $BOARD == orangepip* ]] && sed -i '/^gpio set PA15/a gpio set PG11' $DEST/cache/sdcard/boot/boot.cmd 
+		[[ $BOARD == orangepiplus ]] && sed -i '/^gpio set PA15/a gpio set PG11' $DEST/cache/sdcard/boot/boot.cmd 
 		# let's prepare for old kernel too
 		chroot $DEST/cache/sdcard /bin/bash -c \
 		"ln -s /boot/bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin"
