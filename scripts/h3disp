@@ -14,6 +14,8 @@
 #
 # Purpose of this script is to display the available reasonable settings and
 # let the user choose from them to adjust fex file accordingly afterwards.
+# In the meantime it's also possible to specify available resolutions on the
+# command line. To display possible values use the -h switch.
 #
 # If HDMI-to-DVI adapters are used another fix has to be applied to the fex
 # file: http://linux-sunxi.org/Orange_Pi_One#HDMI_to_DVI_converters -- so ask
@@ -22,6 +24,11 @@
 #############################################################################
 #
 # CHANGES:
+#
+# v0.2: Added non-interactive mode. You can provide one or two arguments on
+#       the command line, eg. 'h3disp -m 1080p60 -d' (1920x1080@60Hz DVI) or 
+#       'h3disp -m 720i' (1280x720@30Hz HDMI). Complete list of modes via
+#       'h3disp -h'
 #
 # v0.1: Initial release to adjust display settings in script.bin on commonly
 #       used Debian based OS images for H3 devices running Linux.
@@ -52,21 +59,133 @@ Main() {
 	        exit 1
 	fi
 	
-	# Provide a list with possible HDMI display settings and store the chosen
-	# one in the HDMIMode variable
-	:
-	
-	# ask the user whether he uses a HDMI-to-DVI converter and if true then
-	# set DVIUsed=TRUE
-	:
-	
-	HDMIMode=4
-	DVIUsed=TRUE
+	# interactive mode if no arguments are provided -- currently not implemented
+	# otherwise we try to parse the command line arguments and use these
+	if [ $# -eq 0 ]; then
+		DisplayUsage ; exit 0
+		# Provide a list with possible HDMI display settings and store the chosen
+		# one in the HDMIMode variable
+		:
+		
+		# ask the user whether he uses a HDMI-to-DVI converter and if true then
+		# set DVIUsed=TRUE
+		:
+	else
+		ParseOptions "$@"
+		case ${VideoMode} in
+			0|480i) # res
+				HDMIMode=0
+				;;
+			1|576i) # res
+				HDMIMode=1
+				;;
+			2|480p) # res
+				HDMIMode=2
+				;;
+			3|576p) # res
+				HDMIMode=3
+				;;
+			4|720p50|1280x720p50) # res
+				HDMIMode=4
+				;;
+			5|720p60|720p|1280x720p60) # res
+				HDMIMode=5
+				;;
+			6|1080i50|1920x1080i50) # res
+				HDMIMode=6
+				;;
+			7|1080i60|1080i|1920x1080i60) # res
+				HDMIMode=7
+				;;
+			8|1080p24|1920x1080p24) # res
+				HDMIMode=8
+				;;
+			9|1080p50|1920x1080p50) # res
+				HDMIMode=9
+				;;
+			10|1080p60|1080p|1920x1080p60) # res
+				HDMIMode=10
+				;;			
+			*)
+				if [ "X${VideoMode}" = "X" ]; then
+					echo -e "$0: missing video mode. Try one of the following:\n"
+				else
+					echo -e "$0: illegal video mode \"-m ${VideoMode}\". Try one of the following:\n"
+				fi
+				ShowVideoModes
+				exit 0
+				;;		
+		esac
+	fi
 	
 	echo -e "Now trying to patch script.bin with your settings. \c"
 	PatchScriptBin ${HDMIMode} ${DVIUsed}
 	echo "Successfully finished. Please reboot for changes to take effect"
+	
+	# Let's see whether we have to collect debug output
+	case ${Debug} in
+		TRUE)
+			which curl >/dev/null 2>&1 || apt-get -f -qq -y install curl
+			echo -e "\nDebug output has been collected at the following URL: \c"
+			(cat "${DebugOutput}"; echo -e "\n\n\nfex contents:\n" ; cat "${MyTmpFile}") \
+				| curl -F 'sprunge=<-' http://sprunge.us
+			;;
+	esac
 } # Main
+
+ParseOptions() {
+	while getopts 'hvVdDm:M:' c ; do
+	case ${c} in
+		h)
+			DisplayUsage
+			exit 0
+			;;
+		v|V)
+			# Increase verbosity. Will try to upload debug output from script
+			# to ease reporting of bugs or strange behaviour. Use only when 
+			# asked for.
+			export Debug=TRUE
+			DebugOutput="$(mktemp /tmp/${0##*/}.XXXXXX)"
+			trap "rm \"${DebugOutput}\" ; exit 0" 0 1 2 3 15
+			set -x
+			exec 2>"${DebugOutput}"
+			;;
+		d|D)
+			# use HDMI-to-DVI converter
+			export DVIUsed=TRUE
+			;;
+		m|M)
+			# The HDMI mode in question
+			export VideoMode=${OPTARG}
+			;;
+	esac
+	done
+} # ParseOptions
+
+DisplayUsage() {
+	echo -e "Usage: ${0##*/} -m [video mode] [-d]\n"
+	echo -e "############################################################################\n"
+	echo "Detailed Description:"
+	grep "^#" "$0" | grep -v "^#\!/bin/bash" | sed 's/^#//'
+	echo -e "\n Short summary: This is a tool to set the display resolution of your Orange"
+	echo -e " Pi by patching script.bin.\n\n In case you use an HDMI-to-DVI converter\c"
+	echo -e " please use the -d switch.\n\n The resolution can be set using the -m switch.\c"
+	echo -e " The following resolutions\n are currently supported:\n"
+	ShowVideoModes
+	echo -e "############################################################################\n"
+} # DisplayUsage
+
+ShowVideoModes() {
+	OIFS=${IFS}
+	IFS="|"
+	awk -F" " '/ # res/ {print $1}' <"${0}" | tr -d ')' | grep -v 'awk' | while read ; do
+		set ${REPLY}
+		echo -e "    ${2}\tuse \"-m ${2}\" or \"-m ${1}\""
+	done		
+	IFS=${OIFS}
+	echo -e "\n Two examples:\n\n    ${0##*/} -m 1080p60 -d' (1920x1080@60Hz DVI)"
+	echo -e "    ${0##*/} -m 720i' (1280x720@30Hz HDMI)\n"
+} # ShowVideoModes
 
 PatchScriptBin() {	
 	# This function will be called with 2 arguments:
@@ -96,7 +215,6 @@ PatchScriptBin() {
 
 	# create temp file	
 	MyTmpFile="$(mktemp /tmp/${0##*/}.XXXXXX)"
-	# trap "rm \"${MyTmpFile}\" ; exit 0" 0 1 2 3 15
 
 	# convert script.bin to temporary fex file	
 	bin2fex <"${ScriptBin}" 2>/dev/null | grep -v "^screen0_output" \
@@ -137,4 +255,4 @@ InstallSunxiTools() {
 	make install
 } # InstallSunxiTools
 
-Main
+Main "$@"
