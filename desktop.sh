@@ -71,46 +71,23 @@ if [[ $LINUXFAMILY == *sun* && $BRANCH == "default" ]]; then
 	if [[ $? -eq 1 || $error_num -eq 1 ]]
 	then
 	error_num=0
-	display_alert "Compiling support for Mali - acceleration" "sunxi" "info"
-	chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y install libx11-dev libxext-dev libdrm-dev x11proto-dri2-dev libxfixes-dev 2>&1 >/dev/null"
-	chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y install libdri2-dev 2>&1 >/dev/null"
+	display_alert "Adding support for Mali - acceleration" "sunxi" "info"
+	git clone -q https://github.com/WereCatf/armbian-debs.git $DEST/cache/sdcard/tmp/armbian-debs
+	chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y install libdri2-1 libdri2-dev 2>&1 >/dev/null"
 	if [ $? -gt 0 ]; then
-	git clone -q https://github.com/robclark/libdri2 $DEST/cache/sdcard/tmp/libdri2
-	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/libdri2 && ./autogen.sh 2>&1 >/dev/null"
-	error_num=$(($error_num+$?))
-	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/libdri2 && ./configure --prefix=/usr 2>&1 >/dev/null"
-	error_num=$(($error_num+$?))
-	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/libdri2 && make -s $CTHREADS && make -s install && ldconfig 2>&1 >/dev/null"
+	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/armbian-debs && dpkg -i libdri2_1.0-1_armhf.deb 2>&1 >/dev/null"
 	error_num=$(($error_num+$?))
 	fi
-	if [ $error_num -gt 0 ]; then display_alert "Compiling failed" "Mali - acceleration" "err"; exit 1
+	if [ $error_num -gt 0 ]; then display_alert "Installation failed" "Mali - libdri2" "err"; exit 1
 	else
-	chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y install git build-essential autoconf libtool 2>&1 >/dev/null"
-	git clone -q https://github.com/linux-sunxi/libump.git $DEST/cache/sdcard/tmp/libump
-	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/libump && autoreconf -i 2>&1 >/dev/null"
+	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/armbian-debs && dpkg -i libump_3.0-0sunxi1_armhf.deb libump-dev_3.0-0sunxi1_armhf.deb 2>&1 >/dev/null"
 	error_num=$(($error_num+$?))
-	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/libump && ./configure --prefix=/usr 2>&1 >/dev/null"
-	error_num=$(($error_num+$?))
-	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/libump && make -s $CTHREADS && make -s install 2>&1 >/dev/null"
-	error_num=$(($error_num+$?))
-	if [ $error_num -gt 0 ]; then display_alert "Compiling failed" "Mali - acceleration" "err"; exit 1
+	if [ $error_num -gt 0 ]; then display_alert "Installation failed" "Mali - libump" "err"; exit 1
 	else
-	chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y install git build-essential autoconf automake xutils-dev 2>&1 >/dev/null"
-	git clone -q --recursive https://github.com/WhiteWind/sunxi-mali $DEST/cache/sdcard/tmp/sunxi-mali
-	sed 's/(prefix)lib\//(prefix)lib\/mali\//' -i $DEST/cache/sdcard/tmp/sunxi-mali/Makefile.setup
-	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/sunxi-mali && ABI=armhf VERSION=r3p0 EGL_TYPE=x11 make -s config 2>&1 >/dev/null"
+	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/armbian-debs && dpkg -i sunxi-mali-r3p0_4.0.0.0_armhf.deb 2>&1 >/dev/null"
 	error_num=$(($error_num+$?))
-	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/sunxi-mali && make -s -f Makefile.pc 2>&1 >/dev/null"
-	error_num=$(($error_num+$?))
-	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/sunxi-mali && make -s install 2>&1 >/dev/null"
-	error_num=$(($error_num+$?))
-	mkdir -p $DEST/cache/sdcard/usr/lib/pkgconfig
-	mv $DEST/cache/sdcard/usr/lib/mali/pkgconfig/* $DEST/cache/sdcard/usr/lib/pkgconfig/
-	mkdir -p $DEST/cache/sdcard/etc/udev/rules.d
-	cp $SRC/lib/config/sunxi-udev/* $DEST/cache/sdcard/etc/udev/rules.d/
-	sed 's/# Multiarch support/\/usr\/lib\/mali\n# Multiarch support/' -i $DEST/cache/sdcard/etc/ld.so.conf.d/arm-linux-gnueabihf.conf
 	chroot $DEST/cache/sdcard /bin/bash -c "ldconfig"
-	if [ $error_num -gt 0 ]; then display_alert "Compiling failed" "Mali - acceleration" "err"; exit 1;fi
+	if [ $error_num -gt 0 ]; then display_alert "Installation failed" "Mali r3p0" "err"; exit 1;fi
 	fi
 	fi
 	fi
