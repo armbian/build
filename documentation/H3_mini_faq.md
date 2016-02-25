@@ -6,7 +6,7 @@ Armbian supports starting with release 5.04 all available H3 based Orange Pi boa
 
 - HDMI/DVI works (bug in boot.cmd settings)
 - Reboot issues fixed (bug in fex settings)
-- 1-Wire useable (we chose to stay compatible to loboris' images so the data pin is 37 by default. You can change this in the [fex file](https://github.com/igorpecovnik/lib/blob/6d995e31583e5361c758b401ea44634d406ac3da/config/orangepiplus.fex#L1284-L1286)
+- 1-Wire useable (we chose to stay compatible to loboris' images so the data pin is 37 by default. You're able to change this in the [fex file](https://github.com/igorpecovnik/lib/blob/6d995e31583e5361c758b401ea44634d406ac3da/config/orangepiplus.fex#L1284-L1286))
 - changing display resolution and choosing between HDMI and DVI now possible with the included _h3disp_ tool (should also work in the [stand-alone version](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5480) with Debian based OS images from loboris/Xunlong)
 - Ethernet issues fixed (combination of kernel and fex fixes)
 - USB-to-SATA bridge on the Orange Pi Plus works
@@ -38,11 +38,14 @@ Armbian supports starting with release 5.04 all available H3 based Orange Pi boa
 - get back to us with [feedback regarding our OS images](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?view=getlastpost)
 - fork our repo, fix things and send pull requests
 
-***Known to *not* work yet***
+***Known to NOT work yet***
 
-- camera support. We included [@lex' patches](http://www.orangepi.org/orangepibbsen/forum.php?mod=redirect&goto=findpost&ptid=443&pid=7263) but miss [phelum's basic patches](http://www.orangepi.org/orangepibbsen/forum.php?mod=redirect&goto=findpost&ptid=70&pid=2905). Fixes welcome
+- Camera support. We included [@lex' patches](http://www.orangepi.org/orangepibbsen/forum.php?mod=redirect&goto=findpost&ptid=443&pid=7263) but miss [phelum's basic patches](http://www.orangepi.org/orangepibbsen/forum.php?mod=redirect&goto=findpost&ptid=70&pid=2905). Fixes welcome
 - HW accelerated video decoding. Fixes welcome (anyone willing to port the stuff from the [H3 OpenELEC port](https://github.com/jernejsk/OpenELEC-OPi2)?)
 
 **OS images with vanilla Kernel (4.x)**
 
+Mainlining effort for H3 and Orange Pi's is progressing nicely but since Ethernet support still isn't ready we currently do not provide OS images with vanilla kernel.
+
+But since we collected a bunch of [necessary H3 patches](https://github.com/igorpecovnik/lib/commit/79c7662a491b46caf07f05880403903dccc33cd1) you're already able to build your own 4.4.x image at this time. Choose Orange Pi Plus as target and when trying to use the resulting image with OPi PC or OPi One then overwrite the contents of the Plus' .dtb file with the one from PC (ugly hack but at least you get all USB ports working this way). But please remember that you end up with a rather limited image where just SMP, UART and USB is working.
 
