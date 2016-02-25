@@ -68,7 +68,7 @@ if [[ $LINUXFAMILY == *sun* && $BRANCH == "default" ]]; then
 	grep "CONFIG_MALI is not set" $SOURCES/$LINUXSOURCEDIR/.config 2>&1 >/dev/null
 	local error_num=$?
 	grep "CONFIG_UMP is not set" $SOURCES/$LINUXSOURCEDIR/.config 2>&1 >/dev/null
-	if [[ $? -eq 1 || $error_num -eq 1 ]]
+	if [[ $? -eq 1 && $error_num -eq 1 ]]
 	then
 	error_num=0
 	display_alert "Adding support for Mali - acceleration" "sunxi" "info"
