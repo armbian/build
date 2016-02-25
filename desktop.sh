@@ -75,10 +75,10 @@ if [[ $LINUXFAMILY == *sun* && $BRANCH == "default" ]]; then
 	git clone -q https://github.com/WereCatf/armbian-debs.git $DEST/cache/sdcard/tmp/armbian-debs
 	chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y install libdri2-1 libdri2-dev 2>&1 >/dev/null"
 	if [ $? -gt 0 ]; then
-	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/armbian-debs && dpkg -i libdri2_1.0-1_armhf.deb 2>&1 >/dev/null"
+	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/armbian-debs && dpkg -i libdri2-1_1.0-1_armhf.deb 2>&1 >/dev/null"
 	error_num=$(($error_num+$?))
 	fi
-	if [ $error_num -gt 0 ]; then display_alert "Installation failed" "Mali - libdri2" "err"; exit 1
+	if [ $error_num -gt 0 ]; then display_alert "Installation failed" "Mali - libdri2-1" "err"; exit 1
 	else
 	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/armbian-debs && dpkg -i libump_3.0-0sunxi1_armhf.deb libump-dev_3.0-0sunxi1_armhf.deb 2>&1 >/dev/null"
 	error_num=$(($error_num+$?))
