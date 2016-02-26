@@ -25,6 +25,7 @@ if [[ $RELEASE == "wheezy" ]]; then
 	d=$DEST/cache/sdcard/usr/share/xfce4/backdrops/
 	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"	
 	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/wheezy-desktop.tgz -C /etc/skel/"
+	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/wheezy-desktop.tgz -C /root/"
 fi
 
 # Debian Jessie
@@ -33,6 +34,7 @@ if [[ $RELEASE == "jessie" ]]; then
 	d=$DEST/cache/sdcard/usr/share/backgrounds/xfce/
 	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"	
 	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/jessie-desktop.tgz -C /etc/skel/"
+	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/jessie-desktop.tgz -C /root/"
 fi
 
 # Ubuntu trusty
@@ -41,6 +43,7 @@ if [[ $RELEASE == "trusty" ]]; then
 	d=$DEST/cache/sdcard/usr/share/backgrounds/xfce/
 	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"	
 	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/trusty-desktop.tgz -C /etc/skel/"
+	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/trusty-desktop.tgz -C /etc/root/"
 fi
 
 # Install custom icons and theme
