@@ -78,7 +78,8 @@ fi
 
 # rootfs cache file name
 [[ $BUILD_DESKTOP == yes ]] && local variant_desktop=yes
-local cache_fname="$DEST/cache/rootfs/$RELEASE${variant_desktop:+_desktop}.tgz"
+local packages_hash=$(md5sum <<< $PACKAGE_LIST | cut -d' ' -f 1)
+local cache_fname="$DEST/cache/rootfs/$RELEASE${variant_desktop:+_desktop}.$packages_hash.tgz"
 
 # Uncompress from cache
 if [ -f "$cache_fname" ]; then
@@ -86,7 +87,7 @@ if [ -f "$cache_fname" ]; then
 	currtime=`date +%s`
 	diff=$(( (currtime - filemtime) / 86400 ))
 	display_alert "Extracting $RELEASE from cache" "$diff days old" "info"
-	pv -p -b -r -c -N "$cache_fname" "$cache_fname" | pigz -dc | tar xp -C $DEST/cache/sdcard/
+	pv -p -b -r -c -N "$(basename $cache_fname)" "$cache_fname" | pigz -dc | tar xp -C $DEST/cache/sdcard/
 	rm $DEST/cache/sdcard/etc/resolv.conf
 	echo "nameserver 8.8.8.8" > $DEST/cache/sdcard/etc/resolv.conf
 	if [ "$diff" -gt "3" ]; then
@@ -131,50 +132,6 @@ rm $DEST/cache/sdcard/armbian.key
 # update and upgrade
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y update" | dialog --progressbox "Updating package databases ..." 20 70
 
-# install aditional packages
-PAKETKI="alsa-utils automake btrfs-tools bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl psmisc \
-device-tree-compiler dosfstools evtest figlet fbset fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 \
-iperf ir-keytable iotop iozone3 iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev \
-module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo subversion \
-sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools weather-util weather-util-data wget \
-wpasupplicant iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan apt-transport-https sysbench libusb-dev dialog fake-hwclock man-db"
-
-# additional distributios-specific packages
-case $RELEASE in
-	wheezy)
-	PAKETKI="$PAKETKI libnl-dev acpid acpi-support-base"
-	;;
-	jessie)
-	PAKETKI="$PAKETKI thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd software-properties-common python-software-properties libnss-myhostname"
-	;;
-	trusty)
-	PAKETKI="$PAKETKI libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties acpid"
-	;;
-esac
-
-# additional desktop packages
-if [[ $BUILD_DESKTOP == yes ]]; then
-	# common packages
-	PAKETKI="$PAKETKI xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray wicd thunar-volman galculator \
-	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl"
-	# release specific desktop packages
-	case $RELEASE in
-		wheezy)
-		PAKETKI="$PAKETKI mozo pluma iceweasel icedove"
-		;;
-		jessie)
-		PAKETKI="$PAKETKI mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove mpv"
-		;;
-		trusty)
-		PAKETKI="$PAKETKI libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
-		;;
-	esac
-	# hardware acceleration support packages
-	# cache is not LINUXCONFIG and BRANCH specific, so installing anyway
-	#if [[ $LINUXCONFIG == *sun* && $BRANCH != "next" ]] &&
-	PAKETKI="$PAKETKI xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev"
-fi
-
 # generate locales and install packets
 display_alert "Install locales" "$DEST_LANG" "info"
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq install locales"
@@ -183,10 +140,7 @@ LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "locale-gen $D
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "export CHARMAP=$CONSOLE_CHAR FONTFACE=8x16 LANG=$DEST_LANG LANGUAGE=$DEST_LANG DEBIAN_FRONTEND=noninteractive"
 LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=POSIX"
 
-
-install_packet "$PAKETKI" "Installing Armbian on the top of $DISTRIBUTION $RELEASE base system ..."
-
-install_packet "console-setup console-data kbd console-common unicode-data" "Installing console packages"
+install_packet "$PACKAGE_LIST" "Installing Armbian on the top of $DISTRIBUTION $RELEASE base system ..."
 
 chroot $DEST/cache/sdcard /bin/bash -c "apt-get clean"
 chroot $DEST/cache/sdcard /bin/bash -c "sync"
@@ -205,7 +159,7 @@ KILLPROC=$(ps -uax | pgrep dbus-daemon | tail -1); if [ -n "$KILLPROC" ]; then k
 
 display_alert "Closing debootstrap process and preparing cache." "" "info"
 tar cp --directory=$DEST/cache/sdcard/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
---exclude='./mnt/*' --exclude='./sys/*' . | pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "$cache_fname" | pigz > $cache_fname
+--exclude='./mnt/*' --exclude='./sys/*' . | pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "$(basename $cache_fname)" | pigz > $cache_fname
 fi
 #
 # mount proc, sys and dev

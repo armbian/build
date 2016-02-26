@@ -125,13 +125,14 @@ debootstrap_ng()
 create_rootfs_cache()
 {
 	[[ $BUILD_DESKTOP == yes ]] && local variant_desktop=yes
-	local cache_fname="$DEST/cache/rootfs/$RELEASE${variant_desktop:+_desktop}-ng.tgz"
+	local packages_hash=$(md5sum <<< $PACKAGE_LIST | cut -d' ' -f 1)
+	local cache_fname="$DEST/cache/rootfs/$RELEASE${variant_desktop:+_desktop}-ng.$packages_hash.tgz"
 	if [[ -f $cache_fname ]]; then
 		local filemtime=$(stat -c %Y $cache_fname)
 		local currtime=$(date +%s)
 		local diff=$(( (currtime - filemtime) / 86400 ))
 		display_alert "Extracting $(basename $cache_fname)" "$diff days old" "info"
-		pv -p -b -r -c -N "$(basename $cache_fname)" "$cache_fname" | pigz -dc | tar xp -C $DEST/cache/sdcard/
+		pv -p -b -r -c -N "$RELEASE${variant_desktop:+_desktop}-ng.tgz" "$cache_fname" | pigz -dc | tar xp -C $DEST/cache/sdcard/
 	else
 		display_alert "Creating new rootfs for" "$RELEASE" "info"
 
@@ -222,56 +223,9 @@ EOF
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Updating package lists..." 20 80'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		# common packages
-		local package_list="alsa-utils automake btrfs-tools bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl psmisc \
-			device-tree-compiler dosfstools evtest figlet fbset fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 \
-			iperf ir-keytable iotop iozone3 iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev \
-			module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo subversion \
-			sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools weather-util weather-util-data wget wpasupplicant \
-			iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan apt-transport-https sysbench libusb-dev dialog fake-hwclock \
-			console-setup console-data kbd console-common unicode-data openssh-server man-db"
-
-		# release specific packages
-		# NOTE: wheezy doen't have f2fs-tools package available
-		case $RELEASE in
-			wheezy)
-			package_list="$package_list libnl-dev acpid acpi-support-base"
-			;;
-			jessie)
-			package_list="$package_list thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd \
-				software-properties-common python-software-properties libnss-myhostname f2fs-tools"
-			;;
-			trusty)
-			package_list="$package_list libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties f2fs-tools acpid"
-			;;
-		esac
-
-		# additional desktop packages
-		if [[ $BUILD_DESKTOP == yes ]]; then
-			# common packages
-			package_list="$package_list xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray wicd thunar-volman galculator \
-			gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl"
-			# release specific desktop packages
-			case $RELEASE in
-				wheezy)
-				package_list="$package_list mozo pluma iceweasel icedove"
-				;;
-				jessie)
-				package_list="$package_list mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove"
-				;;
-				trusty)
-				package_list="$package_list libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
-				;;
-			esac
-			# hardware acceleration support packages
-			# cache is not LINUXCONFIG and BRANCH specific, so installing anyway
-			#if [[ $LINUXCONFIG == *sun* && $BRANCH != "next" ]] &&
-			package_list="$package_list xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev"
-		fi
-
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
-		eval 'LC_ALL=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y $apt_extra --no-install-recommends install $package_list"' \
+		eval 'LC_ALL=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y $apt_extra --no-install-recommends install $PACKAGE_LIST"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." 20 80'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -294,7 +248,7 @@ EOF
 
 		tar cp --directory=$DEST/cache/sdcard/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 			--exclude='./sys/*' . | \
-		pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "$(basename $cache_fname)" | pigz > $cache_fname
+		pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "$RELEASE${variant_desktop:+_desktop}-ng.tgz" | pigz > $cache_fname
 	fi
 
 } #############################################################################

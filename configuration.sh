@@ -512,11 +512,66 @@ esac
 [[ -z $CPUMIN && ($LINUXFAMILY == udoo || $LINUXFAMILY == neo ) ]] && CPUMIN="392000" && CPUMAX="996000" && GOVERNOR="interactive"
 [[ -z $GOVERNOR ]] && GOVERNOR="ondemand"
 
+
+# Essential packages
+PACKAGE_LIST="alsa-utils automake btrfs-tools bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl psmisc \
+	device-tree-compiler dosfstools evtest figlet fbset fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 \
+	iperf ir-keytable iotop iozone3 iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev \
+	module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo subversion \
+	sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools weather-util weather-util-data wget wpasupplicant \
+	iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan apt-transport-https sysbench libusb-dev dialog fake-hwclock \
+	console-setup console-data kbd console-common unicode-data openssh-server man-db"
+
+# Non-essential packages
+PACKAGE_LIST_ADDITIONAL=""
+
+# Release specific packages
+case $RELEASE in
+	wheezy)
+	PACKAGE_LIST_RELEASE="libnl-dev acpid acpi-support-base"
+	;;
+	jessie)
+	PACKAGE_LIST_RELEASE="thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd \
+		software-properties-common python-software-properties libnss-myhostname f2fs-tools"
+	;;
+	trusty)
+	PACKAGE_LIST_RELEASE="libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties f2fs-tools acpid"
+	;;
+esac
+
+# additional desktop packages
+if [[ $BUILD_DESKTOP == yes ]]; then
+	# common packages
+	PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray wicd thunar-volman galculator \
+	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl"
+	# release specific desktop packages
+	case $RELEASE in
+		wheezy)
+		PACKAGE_LIST_DESKTOP="mozo pluma iceweasel icedove"
+		;;
+		jessie)
+		PACKAGE_LIST_DESKTOP="mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove"
+		;;
+		trusty)
+		PACKAGE_LIST_DESKTOP="libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
+		;;
+	esac
+	# hardware acceleration support packages
+	# cache is not LINUXCONFIG and BRANCH specific, so installing anyway
+	#if [[ $LINUXCONFIG == *sun* && $BRANCH != "next" ]] &&
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev"
+else
+	PACKAGE_LIST_DESKTOP=""
+fi
+
 # For user override	
 if [[ -f "$SRC/userpatches/lib.config" ]]; then 
 	display_alert "Using user configuration override" "userpatches/lib.config" "info"
 	source $SRC/userpatches/lib.config
 fi
+
+# Build final package list after possible override
+PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL $PACKAGE_LIST_DESKTOP"
 	
 # debug
 echo -e "Config: $LINUXCONFIG\nKernel source: $LINUXKERNEL\nBranch: $KERNELBRANCH" >> $DEST/debug/install.log 
