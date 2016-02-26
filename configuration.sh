@@ -547,13 +547,13 @@ if [[ $BUILD_DESKTOP == yes ]]; then
 	# release specific desktop packages
 	case $RELEASE in
 		wheezy)
-		PACKAGE_LIST_DESKTOP="mozo pluma iceweasel icedove"
+		PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel icedove"
 		;;
 		jessie)
-		PACKAGE_LIST_DESKTOP="mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove"
+		PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove"
 		;;
 		trusty)
-		PACKAGE_LIST_DESKTOP="libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
+		PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
 		;;
 	esac
 	# hardware acceleration support packages
