@@ -18,10 +18,9 @@ if [ "$-" != "${-#*i}" ]; then
 		if [ -f /etc/init.d/nodm ] ; then 
 			sed -i "s/NODM_USER=\(.*\)/NODM_USER=${RealUserName}/" /etc/default/nodm
 			sed -i "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" /etc/default/nodm
-			# update-rc.d nodm enable >/dev/null 2>&1
-			echo -e "\n\e[1m\e[39mOne more reboot necessary...\x1B[0m\n"
+			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
 			sleep 1
-			reboot
+			service nodm start
 		fi
 	fi
 fi
