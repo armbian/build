@@ -12,13 +12,15 @@ Armbian supports starting with release 5.04 all available H3 based Orange Pi boa
 - USB-to-SATA bridge on the Orange Pi Plus works
 - stability problems on Orange Pi One fixed (due to undervoltage based on wrong fex settings)
 - problems with 2 USB ports on the PC fixed (wrong kernel config)
+- Mali400MP acceleration (EGL/GLES) works now
+- suspend to RAM and resume by power button works now (consumption less than 0.4W without peripherals)
 - already useable as stable headless/server board
 
 ***Important to know***
 
 - [User documentation](http://www.armbian.com/documentation/)
 - [Geek documentation](http://www.armbian.com/using-armbian-tools/)
-- 1st boot takes longer (up to 5 minutes). Please do not interrupt while the red LED is blinking, the board reboots automatically one time
+- 1st boot takes longer (up to 5 minutes). Please do not interrupt while the red LED is blinking, the board reboots automatically one time and the green LED starts to blink when ready
 - CPU frequency settings are 648-1200 MHz on OPi One/Lite and 480-1296 MHz on the other boards (cpufreq governor is _interactive_ therefore the board only increases CPU speed and consumption when needed)
 - These are still test images regarding everything beyond headless/server usage
 - In case you experience instabilities, think about installing [RPi-Monitor for H3](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5076) to get an idea whether you suffer from overheating
