@@ -27,7 +27,7 @@
 	
 	# common options
 
-	REVISION="5.03" # all boards have same revision
+	REVISION="5.04" # all boards have same revision
 	ROOTPWD="1234" # Must be changed @first login
 	MAINTAINER="Igor Pecovnik" # deb signature
 	MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -438,7 +438,7 @@
 			KERNEL_DEFAULT_BRANCH="s500-master"
 			KERNEL_DEFAULT_SOURCE="linux-s500"
 			KERNEL_NEXT='https://github.com/LeMaker/linux-actions'
-			KERNEL_NEXT_BRANCH="linux-linaro-3.10.94-test"
+			KERNEL_NEXT_BRANCH="linux-3.10.y"
 			KERNEL_NEXT_SOURCE="linux-s500"
 			UBOOT_DEFAULT="https://github.com/LeMaker/u-boot-actions"
 			UBOOT_DEFAULT_BRANCH="s500-master"
