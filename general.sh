@@ -14,7 +14,6 @@
 # fetch_from_github
 # display_alert
 # check_error
-# install_packet
 # grab_version
 # fingerprint_image
 # umount_image
@@ -127,37 +126,6 @@ if [ $? -ne 0 ]; then
 		display_alert "... failed. More info: debug/install.log" "$1" "wrn"; 
 fi
 }
-
-
-install_packet ()
-{
-#--------------------------------------------------------------------------------------------------------------------------------
-# Install packets inside chroot
-#--------------------------------------------------------------------------------------------------------------------------------
-i=0
-j=1
-declare -a PACKETS=($1)
-skupaj=${#PACKETS[@]}
-while [[ $i -lt $skupaj ]]; do
-procent=$(echo "scale=2;($j/$skupaj)*100"|bc)
-procent=${procent%.*}
-		x=${PACKETS[$i]}
-		if [[ $3 == "host" ]]; then
-			DEBIAN_FRONTEND=noninteractive apt-get -qq -y install $x >> $DEST/debug/install.log  2>&1
-		else
-			chroot $DEST/cache/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -qq -y install $x" >> $DEST/debug/install.log 2>&1
-		fi
-		
-		if [ $? -ne 0 ]; then display_alert "Installation of package failed" "$INSTALL" "err"; exit 1; fi
-		
-		if [[ $4 != "quiet" ]]; then
-			printf '%.0f\n' $procent | dialog --backtitle "$backtitle" --title "$2" --gauge "\n\n$x" 9 70
-		fi
-		i=$[$i+1]
-		j=$[$j+1]
-done
-}
-
 
 #---------------------------------------------------------------------------------------------------------------------------------
 # grab_version <PATH>
