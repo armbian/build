@@ -36,6 +36,7 @@ Run the script
     - set to "yes" to compile and install some extra applications and drivers (only for **default** kernel branch):
         - [USB redirector](http://www.incentivespro.com)
         - Realtek RT8192 wireless driver
+        - Mediatek MT7601U wireless - driver
         - Sunxi display control
 - **FORCE_CHECKOUT** (yes|no):
     - set to "yes" to force overwrite any changed or manually patched kernel, u-boot and other sources
