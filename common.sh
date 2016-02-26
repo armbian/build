@@ -138,7 +138,6 @@ END
 	rm -rf $CHOOSEN_UBOOT
 	CHOOSEN_UBOOT=$CHOOSEN_UBOOT".deb"
 
-
 	FILESIZE=$(wc -c $DEST/debs/$CHOOSEN_UBOOT | cut -f 1 -d ' ')
 
 	if [[ $FILESIZE -lt 50000 ]]; then
@@ -151,7 +150,6 @@ END
 		display_alert "Source file $1 does not exists. Check fetch_from_github configuration." "" "err"
 fi
 }
-
 
 compile_sunxi_tools (){
 #---------------------------------------------------------------------------------------------------------------------------------
@@ -300,7 +298,6 @@ cp $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd $DEST/cache/sdcard/et
 # not started by default ----- update.rc rc.usbsrvd defaults
 # chroot $DEST/cache/sdcard /bin/bash -c "update-rc.d rc.usbsrvd defaults"
 
-
 # some aditional stuff. Some driver as example
 if [[ -n "$MISC3_DIR" ]]; then
 	display_alert "Installing external applications" "RT8192 driver" "info"
@@ -314,10 +311,15 @@ if [[ -n "$MISC3_DIR" ]]; then
 fi
 
 # MISC4 = NOTRO DRIVERS / special handling
-# MISC5 = sunxu display control
-if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sunxi* ]]; then
+
+# MISC5 = sunxi display control
+if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sunxi* -o $LINUXSOURCEDIR == *sun8i* ]]; then
 	cd $SOURCES/$MISC5_DIR
-	cp $SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h .
+	if [ -f "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" ]; then
+		cp "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" .
+	else
+		wget -q "https://raw.githubusercontent.com/linux-sunxi/linux-sunxi/sunxi-3.4/include/video/sunxi_disp_ioctl.h"
+	fi
 	make clean >/dev/null 2>&1
 	(make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
 	install -m 755 a10disp $DEST/cache/sdcard/usr/local/bin

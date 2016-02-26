@@ -14,13 +14,28 @@ if [ "$-" != "${-#*i}" ]; then
 		RealName="$(awk -F":" "/^${RealUserName}:/ {print \$5}" </etc/passwd | cut -d',' -f1)"
 		echo -e "\nDear ${RealName}, your account ${RealUserName} has been created and is sudo enabled."
 		echo -e "Please use this account for your daily work from now on.\n"
+
+		# check for H3 since this is FAQ stuff, add other boards later
+		HARDWARE=$(awk '/Hardware/ {print $3}' </proc/cpuinfo)
+		if [ "X${HARDWARE}" = "Xsun8i" ]; then
+			setterm -default
+			echo -e "\nYour display settings are currently 720p (1280x720). To change this use the"
+			echo -e "h3disp utility. Do you want to change display settings now? [yN] \c"
+			read -n1 ConfigureDisplay
+			if [ "X${ConfigureDisplay}" = "Xy" -o "X${ConfigureDisplay}" = "XY" ]; then
+				echo -e "\n" ; /usr/local/bin/h3disp
+			fi
+		fi
+
 		# check whether desktop environment has to be considered
 		if [ -f /etc/init.d/nodm ] ; then 
 			sed -i "s/NODM_USER=\(.*\)/NODM_USER=${RealUserName}/" /etc/default/nodm
 			sed -i "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" /etc/default/nodm
-			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
-			sleep 1
-			service nodm start
+			if [ "X${ConfigureDisplay}" != "Xy" -a "X${ConfigureDisplay}" != "XY" ]; then
+				echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
+				sleep 3
+				service nodm start
+			fi
 		fi
 	fi
 fi
