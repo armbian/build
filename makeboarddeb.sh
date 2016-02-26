@@ -100,6 +100,8 @@ create_board_package (){
 		cp $SOURCES/$MISC1_DIR/meminfo $destination/usr/local/bin/meminfo
 		cp $SOURCES/$MISC1_DIR/sunxi-nand-part $destination/usr/local/bin/nand-part
 		cp $SOURCES/$MISC1_DIR/sunxi-fexc $destination/usr/local/bin/sunxi-fexc
+		cp $SOURCES/$MISC1_DIR/sunxi-fel $destination/usr/local/bin/sunxi-fel
+		cp $SOURCES/$MISC1_DIR/sunxi-pio $destination/usr/local/bin/sunxi-pio
 		ln -s $destination/usr/sbin/sunxi-fexc $destination/usr/sbin/fex2bin
 		ln -s $destination/usr/sbin/sunxi-fexc $destination/usr/sbin/bin2fex
 		if [ "$BRANCH" != "next" ]; then
