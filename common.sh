@@ -313,16 +313,20 @@ fi
 # MISC4 = NOTRO DRIVERS / special handling
 
 # MISC5 = sunxi display control
-if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sunxi* -o $LINUXSOURCEDIR == *sun8i* ]]; then
-	cd $SOURCES/$MISC5_DIR
-	if [ -f "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" ]; then
-		cp "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" .
-	else
-		wget -q "https://raw.githubusercontent.com/linux-sunxi/linux-sunxi/sunxi-3.4/include/video/sunxi_disp_ioctl.h"
-	fi
+if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sunxi* ]]; then
+	cd "$SOURCES/$MISC5_DIR"
+	cp "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" .
 	make clean >/dev/null 2>&1
-	(make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
-	install -m 755 a10disp $DEST/cache/sdcard/usr/local/bin
+	(make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null 2>&1)
+	install -m 755 a10disp "$DEST/cache/sdcard/usr/local/bin"
+fi
+# MISC5 = sunxi display control / compile it for sun8i just in case sun7i stuff gets ported to sun8i and we're able to use it
+if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sun8i* ]]; then
+	cd "$SOURCES/$MISC5_DIR"
+	wget -q "https://raw.githubusercontent.com/linux-sunxi/linux-sunxi/sunxi-3.4/include/video/sunxi_disp_ioctl.h"
+	make clean >/dev/null 2>&1
+	(make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null 2>&1)
+	install -m 755 a10disp "$DEST/cache/sdcard/usr/local/bin"
 fi
 
 # MT7601U
