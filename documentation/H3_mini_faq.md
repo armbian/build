@@ -7,13 +7,14 @@ Armbian supports starting with release 5.04 all available H3 based Orange Pi boa
 - HDMI/DVI works (bug in boot.cmd settings)
 - Reboot issues fixed (bug in fex settings)
 - 1-Wire useable (we chose to stay compatible to loboris' images so the data pin is 37 by default. You're able to change this in the [fex file](https://github.com/igorpecovnik/lib/blob/6d995e31583e5361c758b401ea44634d406ac3da/config/orangepiplus.fex#L1284-L1286))
-- changing display resolution and choosing between HDMI and DVI now possible with the included _h3disp_ tool (should also work in the [stand-alone version](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5480) with Debian based OS images from loboris/Xunlong)
+- changing display resolution and choosing between HDMI and DVI now possible with the included _h3disp_ tool (should also work in the [stand-alone version](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5480) with Debian based OS images from loboris/Xunlong). Use _sudo h3disp_ in a terminal to get the idea.
 - Ethernet issues fixed (combination of kernel and fex fixes)
 - USB-to-SATA bridge on the Orange Pi Plus works
 - stability problems on Orange Pi One fixed (due to undervoltage based on wrong fex settings)
 - problems with 2 USB ports on the PC fixed (wrong kernel config)
 - Mali400MP acceleration (EGL/GLES) works now
 - suspend to RAM and resume by power button works now (consumption less than 0.4W without peripherals)
+- Enforce user account creation before starting the GUI
 - already useable as stable headless/server board
 
 ***Important to know***
@@ -25,12 +26,12 @@ Armbian supports starting with release 5.04 all available H3 based Orange Pi boa
 - These are still test images regarding everything beyond headless/server usage
 - In case you experience instabilities, think about installing [RPi-Monitor for H3](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5076) to get an idea whether you suffer from overheating
 
-***Areas that need testing***
+***Areas that need testing/feedback***
 
 - SPI
 - I2C
 - GPIO in general
-- GPU acceleration (needs _boot.cmd_ adjustments and at least _mali_ module loaded)
+- GPU acceleration
 - Wi-Fi on OPi Plus, Plus 2 and 2
 - USB wireless dongles
 
@@ -49,4 +50,4 @@ Armbian supports starting with release 5.04 all available H3 based Orange Pi boa
 
 Mainlining effort for H3 and Orange Pi's is progressing nicely but since Ethernet support still isn't ready we currently do not provide OS images with vanilla kernel (for the impatient: early patches [here](http://sunxi.montjoie.ovh/patchs_current/) and discussion [there](https://groups.google.com/forum/#!topic/linux-sunxi/ZrVjF74mliY))
 
-But since we collected a bunch of [necessary H3 patches](https://github.com/igorpecovnik/lib/commit/79c7662a491b46caf07f05880403903dccc33cd1) you're already able to build your own 4.4.x image at this time. Just choose Orange Pi Plus as target or Orange Pi H3 for PC/One/2/Lite. But please remember that you end up with a rather limited image where just SMP, UART and USB is working. The good news: With a GbE Ethernet dongle network gets faster on all Oranges except the Plus and since you can make use of [USB Attached SCSI](http://linux-sunxi.org/USB/UAS) with mainline kernel USB performance also increases.
+But since we collected a bunch of [necessary H3 patches](https://github.com/igorpecovnik/lib/commit/79c7662a491b46caf07f05880403903dccc33cd1) you're already able to build your own 4.4.x image at this time. Just choose Orange Pi Plus as target or Orange Pi H3 for PC/One/2/Lite. But please remember that you end up with a rather limited image where just SMP, UART and USB is working. The good news: With a GbE Ethernet dongle network gets faster on all Oranges except the Plus and since you can make use of [USB Attached SCSI](http://linux-sunxi.org/USB/UAS) with mainline kernel USB performance also increases when your drive enclosure supports UAS.
