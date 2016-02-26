@@ -43,7 +43,7 @@ if [[ $RELEASE == "trusty" ]]; then
 	d=$DEST/cache/sdcard/usr/share/backgrounds/xfce/
 	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"	
 	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/trusty-desktop.tgz -C /etc/skel/"
-	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/trusty-desktop.tgz -C /etc/root/"
+	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/trusty-desktop.tgz -C /root/"
 fi
 
 # Install custom icons and theme
