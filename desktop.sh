@@ -73,6 +73,7 @@ if [[ $LINUXFAMILY == *sun* && $BRANCH == "default" ]]; then
 	error_num=0
 	display_alert "Adding support for Mali - acceleration" "sunxi" "info"
 	git clone -q https://github.com/WereCatf/armbian-debs.git $DEST/cache/sdcard/tmp/armbian-debs
+	chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y install mesa-utils-extra 2>&1 >/dev/null"	
 	chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y install libdri2-1 libdri2-dev 2>&1 >/dev/null"
 	if [ $? -gt 0 ]; then
 	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/armbian-debs && dpkg -i libdri2-1_1.0-1_armhf.deb 2>&1 >/dev/null"
