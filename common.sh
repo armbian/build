@@ -163,11 +163,11 @@ compile_sunxi_tools (){
 	display_alert "Compiling sunxi tools" "@host & target" "info"
 	cd $SOURCES/$MISC1_DIR
 	make -s clean >/dev/null 2>&1
-	rm -f sunxi-fexc sunxi-nand-part sunxi-fel sunxi-pio 2>/dev/null
+	rm -f sunxi-fexc sunxi-nand-part
 	make -s >/dev/null 2>&1
 	cp fex2bin bin2fex /usr/local/bin/
 	make -s clean >/dev/null 2>&1
-	rm -f sunxi-fexc sunxi-nand-part
+	rm -f sunxi-fexc sunxi-nand-part meminfo sunxi-fel sunxi-pio 2>/dev/null
 	make $CTHREADS 'sunxi-nand-part' CC=arm-linux-gnueabihf-gcc >> $DEST/debug/install.log 2>&1
 	make $CTHREADS 'sunxi-fexc' CC=arm-linux-gnueabihf-gcc >> $DEST/debug/install.log 2>&1
 	make $CTHREADS 'sunxi-fel' CC=arm-linux-gnueabihf-gcc >> $DEST/debug/install.log 2>&1
