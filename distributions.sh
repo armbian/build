@@ -185,4 +185,9 @@ touch $DEST/cache/sdcard/root/.not_logged_in_yet
 
 # remove hostapd because it's replaced with ours
 chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove hostapd >/dev/null 2>&1"
+
+# install sunxi-tools
+cp $SRC/lib/bin/sunxi-tools_1.3-1_armhf.deb $DEST/cache/sdcard/tmp/
+# libusb dependency should already be satisfied by usbutils
+chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/sunxi-tools_1.3-1_armhf.deb"
 }

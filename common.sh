@@ -168,9 +168,9 @@ compile_sunxi_tools (){
 	cp fex2bin bin2fex /usr/local/bin/
 	make -s clean >/dev/null 2>&1
 	rm -f sunxi-fexc sunxi-nand-part
-	make $CTHREADS 'sunxi-nand-part' CC=arm-linux-gnueabihf-gcc >> $DEST/debug/install.log 
-	make $CTHREADS 'sunxi-fexc' CC=arm-linux-gnueabihf-gcc >> $DEST/debug/install.log 
-	make $CTHREADS 'meminfo' CC=arm-linux-gnueabihf-gcc >> $DEST/debug/install.log 
+	make $CTHREADS 'sunxi-nand-part' CC=arm-linux-gnueabihf-gcc >> $DEST/debug/install.log 2>&1
+	make $CTHREADS 'sunxi-fexc' CC=arm-linux-gnueabihf-gcc >> $DEST/debug/install.log 2>&1
+	make $CTHREADS 'meminfo' CC=arm-linux-gnueabihf-gcc >> $DEST/debug/install.log 2>&1
 
 }
 
