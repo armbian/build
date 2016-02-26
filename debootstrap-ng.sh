@@ -229,7 +229,7 @@ EOF
 			module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo subversion \
 			sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools weather-util weather-util-data wget wpasupplicant \
 			iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan apt-transport-https sysbench libusb-dev dialog fake-hwclock \
-			console-setup console-data kbd console-common unicode-data openssh-server"
+			console-setup console-data kbd console-common unicode-data openssh-server man-db"
 
 		# release specific packages
 		# NOTE: wheezy doen't have f2fs-tools package available
