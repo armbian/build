@@ -65,9 +65,36 @@ sed "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" -i $DEST/cache/sdcard/etc/defaul
 # Compile Turbo Frame buffer for sunxi
 if [[ $LINUXFAMILY == *sun* && $BRANCH == "default" ]]; then
 
+	grep "CONFIG_MALI is not set" $SOURCES/$LINUXSOURCEDIR/.config 2>&1 >/dev/null
+	local error_num=$?
+	grep "CONFIG_UMP is not set" $SOURCES/$LINUXSOURCEDIR/.config 2>&1 >/dev/null
+	if [[ $? -eq 1 && $error_num -eq 1 ]]
+	then
+	error_num=0
+	display_alert "Adding support for Mali - acceleration" "sunxi" "info"
+	git clone -q https://github.com/WereCatf/armbian-debs.git $DEST/cache/sdcard/tmp/armbian-debs
+	chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y install libdri2-1 libdri2-dev 2>&1 >/dev/null"
+	if [ $? -gt 0 ]; then
+	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/armbian-debs && dpkg -i libdri2-1_1.0-1_armhf.deb 2>&1 >/dev/null"
+	error_num=$(($error_num+$?))
+	fi
+	if [ $error_num -gt 0 ]; then display_alert "Installation failed" "Mali - libdri2-1" "err"; exit 1
+	else
+	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/armbian-debs && dpkg -i libump_3.0-0sunxi1_armhf.deb libump-dev_3.0-0sunxi1_armhf.deb 2>&1 >/dev/null"
+	error_num=$(($error_num+$?))
+	if [ $error_num -gt 0 ]; then display_alert "Installation failed" "Mali - libump" "err"; exit 1
+	else
+	chroot $DEST/cache/sdcard /bin/bash -c "cd /tmp/armbian-debs && dpkg -i sunxi-mali-r3p0_4.0.0.0_armhf.deb 2>&1 >/dev/null"
+	error_num=$(($error_num+$?))
+	chroot $DEST/cache/sdcard /bin/bash -c "ldconfig"
+	if [ $error_num -gt 0 ]; then display_alert "Installation failed" "Mali r3p0" "err"; exit 1;fi
+	fi
+	fi
+	fi
+
 	display_alert "Compiling FB Turbo" "sunxi" "info"
 
-	local error_num=0
+	error_num=0
 	
 	# quemu bug walkaround
 	git clone -q https://github.com/ssvb/xf86-video-fbturbo.git $DEST/cache/sdcard/tmp/xf86-video-fbturbo
