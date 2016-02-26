@@ -24,7 +24,7 @@ if [[ $RELEASE == "wheezy" ]]; then
 	# copy wallpapers and default desktop settings
 	d=$DEST/cache/sdcard/usr/share/xfce4/backdrops/
 	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"	
-	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/wheezy-desktop.tgz -C /root/"
+	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/wheezy-desktop.tgz -C /etc/skel/"
 fi
 
 # Debian Jessie
@@ -32,7 +32,7 @@ if [[ $RELEASE == "jessie" ]]; then
 	# copy wallpapers and default desktop settings
 	d=$DEST/cache/sdcard/usr/share/backgrounds/xfce/
 	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"	
-	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/jessie-desktop.tgz -C /root/"
+	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/jessie-desktop.tgz -C /etc/skel/"
 fi
 
 # Ubuntu trusty
@@ -40,7 +40,7 @@ if [[ $RELEASE == "trusty" ]]; then
 	# copy wallpapers and default desktop settings
 	d=$DEST/cache/sdcard/usr/share/backgrounds/xfce/
 	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"	
-	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/trusty-desktop.tgz -C /root/"
+	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/trusty-desktop.tgz -C /etc/skel/"
 fi
 
 # Install custom icons and theme
@@ -59,8 +59,8 @@ if [[ $BOARD != "udoo" ]]; then
 	echo "wireless_interface = wlan0" >> $DEST/cache/sdcard/etc/wicd/manager-settings.conf
 fi
 
-# Enable desktop moode autostart without password
-sed "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" -i $DEST/cache/sdcard/etc/default/nodm
+# Disable desktop mode autostart for now to enforce creation of normal user account
+sed "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=false/g" -i $DEST/cache/sdcard/etc/default/nodm
  
 # Compile Turbo Frame buffer for sunxi
 if [[ $LINUXFAMILY == *sun* && $BRANCH == "default" ]]; then

@@ -11,13 +11,16 @@ if [ "$-" != "${-#*i}" ]; then
 			usermod -aG ${additionalgroup} ${RealUserName}
 		done
 		rm -f "$HOME/.not_logged_in_yet"
-		echo -e "\nYour accout ${RealUserName} has been created and is sudo enabled.\n"
+		RealName="$(awk -F":" "/^${RealUserName}:/ {print \$5}" </etc/passwd | cut -d',' -f1)"
+		echo -e "\nDear ${RealName}, your account ${RealUserName} has been created and is sudo enabled."
+		echo -e "Please use this account for your daily work from now on.\n"
 		# check whether desktop environment has to be considered
 		if [ -f /etc/init.d/nodm ] ; then 
-			sed -i "s/NODM_USER=root/NODM_USER=${RealUserName}/" /etc/default/nodm
-			update-rc.d nodm enable >/dev/null 2>&1
-			echo -e "\n\e[1m\e[39mReboot necessary...\x1B[0m\n"
-			reboot
+			sed -i "s/NODM_USER=\(.*\)/NODM_USER=${RealUserName}/" /etc/default/nodm
+			sed -i "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" /etc/default/nodm
+			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
+			sleep 1
+			service nodm start
 		fi
 	fi
 fi
