@@ -1,4 +1,8 @@
 # Release history
+**v5.04 / 27.2.2016**
+
+- added desktop images for H3 based boards
+
 **v5.04 / 26.2.2016**
 
 - H3 images rebuilded
