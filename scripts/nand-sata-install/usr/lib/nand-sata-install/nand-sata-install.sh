@@ -56,7 +56,7 @@ rsync -avrltD  --delete --exclude-from=$EX_LIST  /  /mnt/rootfs | nl | awk '{ pr
 | dialog --backtitle "$backtitle"  --title "$title" --gauge "\n Creating rootfs on $2 ($USAGE Mb). Please wait!" 8 60
 
 # creating fstab - root partition
-sed -e 's,\/dev\/mmcblk0p.,'"$2"',g' -i /mnt/rootfs/etc/fstab
+sed -e 's,'"$root_partition"','"$2"',g' -i /mnt/rootfs/etc/fstab
 
 # creating fstab, kernel and boot script for NAND partition
 if [ -n "$1" ]; then
@@ -84,12 +84,15 @@ umountdevice "/dev/nand"
 tune2fs -o journal_data_writeback /dev/nand2 >/dev/null 2>&1
 tune2fs -O ^has_journal /dev/nand2 >/dev/null 2>&1
 e2fsck -f /dev/nand2 >/dev/null 2>&1
-elif [ -f /boot/boot.cmd ]; then
-	sed -e 's,root=\/dev\/mmcblk0p.,root='"$2"',g' -i /boot/boot.cmd
+elif [[ -f /boot/boot.cmd ]]; then
+	sed -e 's,root='"$root_partition"',root='"$2"',g' -i /boot/boot.cmd	
 	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
 	mkdir -p /mnt/rootfs/media/mmc/boot
 	echo "/dev/mmcblk0p1        /media/mmc   ext4    defaults        0       0" >> /mnt/rootfs/etc/fstab
 	echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/rootfs/etc/fstab
+	sed -i "s/data=writeback,//" /mnt/rootfs/etc/fstab
+elif [[ -f /boot/boot.ini ]]; then
+	sed -e 's,root='"$root_partition"',root='"$2"',g' -i /boot/boot.ini
 	sed -i "s/data=writeback,//" /mnt/rootfs/etc/fstab
 fi
 umountdevice "/dev/sda"
@@ -113,6 +116,23 @@ if [ -n "$1" ]; then
 		fi
 	done
 fi
+}
+
+#-----------------------------------------------------------------------------------------------------------------------
+# Recognize root filesystem
+#-----------------------------------------------------------------------------------------------------------------------
+recognize_root (){
+local device="/dev/"$(lsblk -idn -o NAME | grep mmcblk0)
+local partitions=$(($(fdisk -l $device | grep $device | wc -l)-1))
+local device="/dev/"$(lsblk -idn -o NAME | grep mmcblk0)"p"$partitions
+local root_device=$(mountpoint -d /)
+for file in /dev/* ; do
+local current_device=$(printf "%d:%d" $(stat --printf="0x%t 0x%T" $file))
+if [ $current_device = $root_device ]; then
+        root_partition=$file
+        break;
+fi
+done
 }
 
 
@@ -139,8 +159,9 @@ mkfs.ext4 /dev/nand2 >/dev/null 2>&1
 # Accept device as parameter: for example /dev/sda3
 #-----------------------------------------------------------------------------------------------------------------------
 formatsata(){
-dialog --title "$title" --backtitle "$backtitle"  --infobox "\nPartitioning and formating ... up to one minute." 5 60
+dialog --title "$title" --backtitle "$backtitle"  --infobox "\Formating ... up to one minute." 5 60
 mkfs.ext4 $1 >/dev/null 2>&1
+tune2fs $1 -o journal_data_writeback >/dev/null 2>&1
 }
 
 
@@ -217,6 +238,7 @@ if cat /proc/cpuinfo | grep -q 'sun4i'; then DEVICE_TYPE="a10"; else DEVICE_TYPE
 BOOTLOADER="${CWD}/${DEVICE_TYPE}/bootloader"											# Define bootloader
 nandcheck=$(grep nand /proc/partitions)													# check NAND 
 satacheck=$(grep sd /proc/partitions)													# check SATA/USB
+recognize_root # find out root partitions
 IFS="'"
 options=()
 [[ -n "$nandcheck" ]] 							&& options=(${options[@]} 1 'Boot from NAND - system on NAND')
@@ -225,7 +247,7 @@ options=()
 [[ ${#options[@]} -eq 0 ]] 						&& dialog --title "$title" --backtitle "$backtitle"  --colors --infobox\
 												"\n\Z1There are no targets. Please check your drives.\Zn" 5 60 && exit 1
 
-cmd=(dialog --title "Choose an option:" --backtitle "$backtitle" --menu "\n" 9 60 3)
+cmd=(dialog --title "Choose an option:" --backtitle "$backtitle" --menu "\nCurrent root: $root_partition \n \n" 14 60 7)
 choices=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
 if [ $? -ne 0 ]; then
 	    exit 1
