@@ -1,11 +1,12 @@
 # Release history
-**v5.04 / 27.2.2016**
 
-- added desktop images for H3 based boards
-
-**v5.04 / 26.2.2016**
+**v5.04 / 28.2.2016**
 
 - H3 images rebuilded
+- added desktop images for H3 based boards
+- rebuilded Cubieboard 1 & 2 with 3.4.110 and 4.4.3
+- fixed Bluetooth on Cubietruck + rebuild with 3.4.110 and 4.4.3
+- all new images has no login policy: forced user generation
 
 **v5.03 / 20.2.2016**
 
