@@ -236,6 +236,17 @@ case $BOARD in
 		GOVERNOR="interactive"
 	;;
 
+	bananapim2plus)#disabled
+		#description H3 quad core 1Gb SoC Wifi
+		LINUXFAMILY="sun8i"
+		BOOTCONFIG="bananapim2_plus_defconfig"
+		MODULES="ap6210 #gpio_sunxi #w1-sunxi #w1-gpio #w1-therm"
+		MODULES_NEXT="brcmfmac"
+		CPUMIN="0"
+		CPUMAX="0"
+		GOVERNOR="interactive"
+	;;
+
 	cubox-i)#enabled
 		#description Freescale iMx dual/quad core Wifi
 		#build 6
