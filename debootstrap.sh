@@ -99,7 +99,8 @@ fi
 if [ ! -f "$cache_fname" ]; then
 
 # debootstrap base system
-debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ http://httpredir.debian.org/debian/ | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox 20 70
+[[ $DISTRIBUTION == "Debian" ]] && local redir="http://httpredir.debian.org/debian/"
+debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ $redir | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox 20 70
 
 # we need emulator for second stage
 cp /usr/bin/qemu-arm-static $DEST/cache/sdcard/usr/bin/
