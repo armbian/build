@@ -122,6 +122,7 @@ create_board_package (){
 		cp -p "$destination/boot/bin/orangepi2.bin" "$destination/boot/bin/orangepih3.bin"
 	
 		# bluetooth device enabler - for cubietruck
+		install -m 755	$SRC/lib/bin/brcm_bt_reset			$destination/usr/local/bin
 		install -m 755	$SRC/lib/bin/brcm_patchram_plus		$destination/usr/local/bin
 		install			$SRC/lib/scripts/brcm40183 			$destination/etc/default
 		install -m 755  $SRC/lib/scripts/brcm40183-patch    $destination/etc/init.d
