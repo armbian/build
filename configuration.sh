@@ -237,7 +237,7 @@ case $BOARD in
 	;;
 
 	bananapim2plus)#disabled
-		#description H3 quad core 1Gb SoC Wifi
+		# description H3 quad core 1Gb SoC Wifi
 		LINUXFAMILY="sun8i"
 		BOOTCONFIG="bananapim2_plus_defconfig"
 		MODULES="ap6210 #gpio_sunxi #w1-sunxi #w1-gpio #w1-therm"
