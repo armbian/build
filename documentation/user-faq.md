@@ -35,14 +35,16 @@ It is safe to ignore WARNING: This key is not certified with a trusted signature
 
 # How to prepare SD card?
 
-Unzipped .raw images can be written with supplied imagewriter.exe on Windows XP/2003/Win7, with [Rufus](https://rufus.akeo.ie) on Windows 8.x / 10 or with DD command in Linux/Mac:
+Unzipped .raw images can be written with supplied imagewriter.exe on Windows XP/2003/Win7, with [Rufus](https://rufus.akeo.ie) on Windows 8.x / 10 or with DD command in Linux/Mac (on OS X use 'bs=1m' and /dev/rdiskx instead):
 
+	# Linux example: /dev/sdx is your sd card device
 	dd bs=1M if=filename.raw of=/dev/sdx
-	# /dev/sdx is your sd card device
+	# OS X example: /dev/[r]diskx is your sd card device:
+	diskutil unmountDisk diskx && dd bs=1m if=filename.raw of=/dev/rdiskx && diskutil eject diskx
 
 Image writting takes around 3 minutes on a slow, class 6 SD card.
 
-Make sure you use **good & reliable** SD card. If you encounter boot troubles, check them with [F3](http://oss.digirati.com.br/f3/) or [H2testw](http://www.heise.de/download/h2testw.html).
+Make sure you use a **good & reliable** SD card. If you encounter boot troubles or simply as a measure of precaution, check them with [F3](http://oss.digirati.com.br/f3/) or [H2testw](http://www.heise.de/download/h2testw.html).
 
 # How to boot?
 
@@ -52,7 +54,7 @@ Normal boot (with DHCP) takes up to 35 seconds with a class 6 SD CARD and cheape
 
 # How to login? 
 
-Login as **root** on console or via SSH and use password **1234**. You will be prompted to change this password at first login. This is the only pre-installed user.
+Login as **root** on console or via SSH and use password **1234**. You will be prompted to change this password at first login. You will then be asked to create a normal user account that is sudo enabled (beware of default QWERTY keyboard settings at this stage).
 
 Desktop images starts into desktop without asking for password. To change this add some display manager:
 
@@ -166,7 +168,12 @@ time zone:
 
 	dpkg-reconfigure tzdata
 	
-screen resolution: 
+screen settings on H3 devices:
+
+	# Example to set resolution to 1920 x 1080, full colour-range and DVI
+	h3disp -m 1080p60 -d -c 1
+
+screen resolution on other boards: 
 
 	nano /boot/boot.cmd 
 
