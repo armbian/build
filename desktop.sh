@@ -67,6 +67,8 @@ sed "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=false/g" -i $DEST/cache/sdcard/etc/defau
  
 # Compile Turbo Frame buffer for sunxi
 if [[ $LINUXFAMILY == *sun* && $BRANCH == "default" ]]; then
+	mkdir -p $DEST/cache/sdcard/etc/udev/rules.d
+	cp $SRC/lib/config/sunxi-udev/* $DEST/cache/sdcard/etc/udev/rules.d/
 
 	grep "CONFIG_MALI is not set" $SOURCES/$LINUXSOURCEDIR/.config 2>&1 >/dev/null
 	local error_num=$?
