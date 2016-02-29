@@ -156,9 +156,12 @@ keyboard:
 
 	dpkg-reconfigure keyboard-configuration
 	
-system language: 
+system language:
 
+	# Debian --> https://wiki.debian.org/ChangeLanguage
 	dpkg-reconfigure locales
+	# Ubuntu --> https://help.ubuntu.com/community/Locale
+	update-locale LANG=[options] && dpkg-reconfigure locales
 
 console font, codepage:
 
