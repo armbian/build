@@ -21,7 +21,7 @@ Armbian supports starting with release 5.04 all available H3 based Orange Pi boa
 
 ***Known issues with 5.04***
 
-- It seems auto detection for the Orange Pi 2 doesn't work properly. Please have a look [in the forum](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5718). Will be fixed in 5.05 if we ever get feedback (otherwise image for Orange Pi 2 will be withdrawn
+- Auto detection for the Orange Pi 2 doesn't work properly. Please have a look [for a manual fix](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5718) or wait for 5.05 where this will be fixed
 - Mali acceleration currently only working for root user. Please apply [a fix](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5719) manually or wait for 5.05 to fix this
 
 ***Important to know***
