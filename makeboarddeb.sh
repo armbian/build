@@ -71,6 +71,9 @@ create_board_package (){
 	mkdir -p $destination/usr/local/bin
 	tar xfz $SRC/lib/bin/temper.tgz -C $destination/usr/local/bin
 
+	# add USB OTG port mode switcher
+	install -m 755 $SRC/lib/scripts/sunxi-musb 			$destination/usr/local/bin
+	
 	# replace hostapd from latest self compiled & patched
 	mkdir -p $destination/usr/sbin/
 	tar xfz $SRC/lib/bin/hostapd25-rt.tgz -C $destination/usr/sbin/
