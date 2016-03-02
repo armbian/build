@@ -182,7 +182,7 @@ select_boards ()
 if [ -z "$BOARD" ]; then
 	IFS=" "
 	Options="Cubieboard A10 Cubieboard2 A20 Cubietruck A20 Lime-A10 A10 Lime \
-A20 Lime2 A20 Micro A20 Bananapi A20 Lamobo-R1 A20 Orangepi A20 Pcduino3nano A20"
+A20 Lime2 A20 Micro A20 Bananapipro A20 Lamobo-R1 A20 Orangepi A20 Pcduino3nano A20"
 	BoardOptions=($Options);
 	BoardCmd=(dialog --title "Choose a board:" --backtitle "$backtitle" --menu "\n$infos" 20 60 26)
 	BoardChoices=$("${BoardCmd[@]}" "${BoardOptions[@]}" 2>&1 >/dev/tty)
@@ -216,7 +216,7 @@ if [[ $BRANCH == "vanilla" ]] ; then
 fi 
 
 case $BOARD in
-bananapi | bananapipro | lamobo-r1 | orangepi | orangepimini)
+bananapipro | lamobo-r1 | orangepi | orangepimini)
 LINUXFAMILY="sun7i"
 if [[ $BRANCH == "vanilla" ]] ; then LINUXFAMILY="sunxi"; fi
 ;;

@@ -16,7 +16,7 @@
 # Create this file to speed up boot process
 #
 
-# Immediately exit if not called correctly
+# Immediately exit if not called by init system
 if [ "X$1" != "Xstart" ]; then
 	exit 1
 fi
@@ -94,10 +94,16 @@ display_alert() {
 	fi
 }
 
+autodetect_a20() {
+sleep 3
+MACHINE="$(tail -n1 /run/machine.id)"
+}
+
 autodetect_h3() {
 	# This function adjusts script.bin, hostname and cpufreq settings based on 
-	# /run/machine.id so that two OS images (one built for Orange Pi Plus and one
-	# for the other H3 devices using the internal Ethernet PHY) can be shipped.
+	# /run/machine.id so that two OS images (one built for GbE H3 devices like
+	# Orange Pi Plus or Banana Pi M2+ and one for the other H3 devices using 
+	# the internal Ethernet PHY) can be shipped.
 	#
 	# TODO for mainline kernel: Ship with u-boot debs for all Oranges and install
 	# the right one instead of trying to relink script.bin if detecting mainline
@@ -111,9 +117,16 @@ autodetect_h3() {
 	# wait for armhwinfo
 	sleep 3
 	MACHINE="$(tail -n1 /run/machine.id)"
+	NEWHOSTNAME="$(echo "${MACHINE}" | tr '[:upper:]' '[:lower:]' | sed -e 's/+/plus/' -e 's/\ //g')"
+	ScriptBinName="$(echo "${NEWHOSTNAME}" | sed -e 's/2mini$/2/g' -e 's/plus2$/plus/g').bin"
+	ScriptBinUsed="$(readlink -f "/boot/script.bin")"
 	case ${MACHINE} in
 		"Orange Pi+"*)
-			ln -sf /boot/bin/orangepiplus.bin /boot/script.bin
+			if [ "X${ScriptBinName}" != "X${ScriptBinUsed##*/}" ]; then
+				# wrong detection due to disabled Ethernet on 1st boot
+				ln -sf /boot/bin/orangepi2.bin /boot/script.bin
+				NEWHOSTNAME="orangepi2"
+			fi
 			;;
 		"Orange Pi 2"*)
 			ln -sf /boot/bin/orangepi2.bin /boot/script.bin
@@ -131,8 +144,14 @@ autodetect_h3() {
 			sed -i -e 's/MIN_SPEED=480000/MIN_SPEED=648000/' \
 			-e 's/MAX_SPEED=1296000/MAX_SPEED=1200000/' /etc/default/cpufrequtils
 			;;
+		"Banana Pi M2+")
+			if [ "X${ScriptBinName}" != "X${ScriptBinUsed##*/}" ]; then
+				# wrong detection due to disabled Ethernet on 1st boot
+				ln -sf /boot/bin/orangepipc.bin /boot/script.bin
+				NEWHOSTNAME="orangepipc"
+			fi
+			;;
 	esac
-	NEWHOSTNAME="$(echo "${MACHINE}" | tr '[:upper:]' '[:lower:]' | sed -e 's/+/plus/' -e 's/\ //g')"
 	echo "${NEWHOSTNAME}" >/etc/hostname
 	sed -i "s/orangepih3/${NEWHOSTNAME}/" /etc/hosts
 	rm /boot/bin/orangepih3.bin
@@ -160,7 +179,14 @@ do_expand_rootfs() {
 	return 0
 }
 
+check_prerequisits() {
+	for needed_tool in fdisk parted partprobe resize2fs ; do
+		which ${needed_tool} >/dev/null 2>&1 || exit 1
+	done
+} # check_prerequisits
+
 main() {
+	check_prerequisits
 	collect_informations
 	display_alert "Force password change upon first login"
 	chage -d 0 root
@@ -179,10 +205,13 @@ main() {
 		autodetect_h3
 	fi
 
+	if [ "X${HARDWARE}" = "Xsun7i" ]; then
+                autodetect_a20
+	fi
+	
 	update-rc.d -f firstrun remove >/dev/null 2>&1
 	sed -i 's/allow-hotplug\ eth0/auto eth0/' /etc/network/interfaces.default
 } # main
 
 main
 exit 0
-

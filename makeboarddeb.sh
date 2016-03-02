@@ -71,6 +71,9 @@ create_board_package (){
 	mkdir -p $destination/usr/local/bin
 	tar xfz $SRC/lib/bin/temper.tgz -C $destination/usr/local/bin
 
+	# add USB OTG port mode switcher
+	install -m 755 $SRC/lib/scripts/sunxi-musb 			$destination/usr/local/bin
+	
 	# replace hostapd from latest self compiled & patched
 	mkdir -p $destination/usr/sbin/
 	tar xfz $SRC/lib/bin/hostapd25-rt.tgz -C $destination/usr/sbin/
@@ -122,6 +125,7 @@ create_board_package (){
 		cp -p "$destination/boot/bin/orangepi2.bin" "$destination/boot/bin/orangepih3.bin"
 	
 		# bluetooth device enabler - for cubietruck
+		install -m 755	$SRC/lib/bin/brcm_bt_reset			$destination/usr/local/bin
 		install -m 755	$SRC/lib/bin/brcm_patchram_plus		$destination/usr/local/bin
 		install			$SRC/lib/scripts/brcm40183 			$destination/etc/default
 		install -m 755  $SRC/lib/scripts/brcm40183-patch    $destination/etc/init.d

@@ -1,11 +1,21 @@
 # Release history
-**v5.04 / 27.2.2016**
 
-- added desktop images for H3 based boards
+**v5.04 / 1.3.2016**
 
-**v5.04 / 26.2.2016**
+- Banana M1/PRO/M1+ rebuilded
+- fixed SATA problem
+- set OTG port in HOST mode in vanilla kernel
+- wireless is working on PRO out of the box
+- added utility to switch between OTG and HOST in vanilla kernel
+- Bugs left: OTG mode not working, M1+ wireless not work in vanilla kernel
+
+**v5.04 / 28.2.2016**
 
 - H3 images rebuilded
+- added desktop images for H3 based boards
+- rebuilded Cubieboard 1 & 2 with 3.4.110 and 4.4.3
+- fixed Bluetooth on Cubietruck + rebuild with 3.4.110 and 4.4.3
+- all new images has no login policy: forced user generation
 
 **v5.03 / 20.2.2016**
 

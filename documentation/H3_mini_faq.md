@@ -19,6 +19,11 @@ Armbian supports starting with release 5.04 all available H3 based Orange Pi boa
 - Full HDMI colour-range adjustable/accessible through _h3disp_ utility
 - already useable as stable headless/server board
 
+***Known issues with 5.04***
+
+- Auto detection for the Orange Pi 2 doesn't work properly. Please have a look [for a manual fix](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5718) or wait for 5.05 where this will be fixed
+- Mali acceleration currently only working for root user. Please apply [a fix](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5719) manually or wait for 5.05 to fix this
+
 ***Important to know***
 
 - 1st boot takes longer (up to 5 minutes). Please do not interrupt while the red LED is blinking, the board reboots automatically one time and the green LED starts to blink when ready

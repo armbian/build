@@ -174,12 +174,12 @@ case $BOARD in
 		DESKTOP_TARGET="trusty,next"
 	;;
 
-	bananapi)#enabled
+	bananapipro)#enabled
 		#description A20 dual core 1Gb SoC
 		#build 6
 		LINUXFAMILY="sun7i"
-		BOOTCONFIG="Bananapi_defconfig"
-		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp ap6210"
+		BOOTCONFIG="Bananapro_defconfig"
+		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp #ap6211"
 		MODULES_NEXT="brcmfmac bonding"
 		DESKTOP_TARGET="trusty,%"
 	;;
