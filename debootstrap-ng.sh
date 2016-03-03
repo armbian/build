@@ -225,7 +225,7 @@ EOF
 
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
-		eval 'LC_ALL=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y $apt_extra --no-install-recommends install $PACKAGE_LIST"' \
+		eval 'LC_ALL=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q $apt_extra --no-install-recommends install $PACKAGE_LIST"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." 20 80'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -433,6 +433,12 @@ create_image()
 
 	# DEBUG: print free space
 	df -h | grep "$DEST/cache/" | tee -a $DEST/debug/debootstrap.log
+
+	if [[ $FEL_BOOT == yes ]]; then
+		FEL_ROOTFS=$DEST/cache/sdcard/
+		display_alert "Trying FEL boot" "$BOARD" "info"
+		source $SRC/lib/fel-load.sh
+	fi
 
 	# stage: write u-boot
 	write_uboot $LOOP
