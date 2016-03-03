@@ -30,6 +30,7 @@ fel_prepare_script()
 	if [[ -z $FEL_LOCAL_IP ]]; then
 		FEL_LOCAL_IP=$(ifconfig | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p')
 	fi
+	sed -i "s#BRANCH#$BRANCH#" $FEL_ROOTFS/boot/boot.cmd
 	sed -i "s#FEL_LOCAL_IP#$FEL_LOCAL_IP#" $FEL_ROOTFS/boot/boot.cmd
 	sed -i "s#FEL_ROOTFS#$FEL_ROOTFS#" $FEL_ROOTFS/boot/boot.cmd
 	mkimage -C none -A arm -T script -d $FEL_ROOTFS/boot/boot.cmd $FEL_ROOTFS/boot/boot.scr > /dev/null
@@ -39,13 +40,18 @@ fel_load()
 {
 	echo > $FEL_ROOTFS/etc/fstab
 	if [[ -z $FEL_DTB_FILE ]]; then
-		FEL_DTB_FILE=$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/.config | cut -d '"' -f2).dtb
+		if [[ $BRANCH == default ]]; then
+			# don't care for now if it's more complicated than it needs to be
+			FEL_DTB_FILE=boot/bin/$(basename $(readlink $FEL_ROOTFS/boot/script.bin))
+		else
+			FEL_DTB_FILE=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/.config | cut -d '"' -f2).dtb
+		fi
 	fi
 	display_alert "Loading files via" "FEL USB" "info"
-	sunxi-fel -v uboot $SOURCES/$BOOTSOURCEDIR/u-boot-sunxi-with-spl.bin \
-             write 0x42000000 $FEL_ROOTFS/boot/zImage \
-             write 0x43000000 $FEL_ROOTFS/boot/dtb/$FEL_DTB_FILE \
-             write 0x43100000 $FEL_ROOTFS/boot/boot.scr
+	sunxi-fel -v -p uboot $SOURCES/$BOOTSOURCEDIR/u-boot-sunxi-with-spl.bin \
+		write 0x42000000 $FEL_ROOTFS/boot/zImage \
+		write 0x43000000 $FEL_ROOTFS/$FEL_DTB_FILE \
+		write 0x43100000 $FEL_ROOTFS/boot/boot.scr
 }
 
 fel_prepare_host
