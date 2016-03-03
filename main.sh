@@ -322,6 +322,9 @@ else
 	display_alert "File name" "$CHOOSEN_KERNEL" "info"
 fi
 
+# workaround for bug introduced with desktop build -- please remove when fixed
+chmod 777 /tmp
+
 end=`date +%s`
 runtime=$(((end-start)/60))	
 display_alert "Runtime" "$runtime min" "info"
