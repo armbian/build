@@ -132,6 +132,9 @@ create_board_package (){
 		
 	fi
 
+	# enable verbose kernel messages on first boot
+	touch $destination/boot/.verbose
+
 	# add some summary to the image
 	fingerprint_image "$destination/etc/armbian.txt"
 	
