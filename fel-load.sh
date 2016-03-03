@@ -53,3 +53,4 @@ fel_prepare_script
 fel_load
 display_alert "Press <Enter> to finish" "FEL load" "info"
 read
+service nfs-kernel-server restart
