@@ -1,0 +1,417 @@
+#!/bin/bash
+#
+# armbianmonitor
+#
+# This script serves different purposes based on how it is called:
+#
+# - toggle boot verbosity (works)
+# - monitoring mode: continually print monitoring info (WiP)
+# - uploading /var/log/armhwinfo.log to online pastebin service
+#
+# Without arguments called it should present a simple user
+# interface that guides through:
+#
+# - installation of RPi-Monitor if not already installed by user
+# - active basic or more verbose monitoring mode
+# - provides monitoring parameters for connected disks
+#
+# The second part is WiP and all the user interaction part
+# still completely missing.
+#
+# This script is used to configure armbianmonitor behaviour.
+# It will ask the user whether to activate monitoring or not,
+# whether to enable debug monitoring and also how to deal with
+# connected disks. In fact it walks through the list of available
+# disks, checks them, tries to patch hddtemp.db if necessary
+# and provides a proposal for /etc/armbianmonitor/disks.conf
+# when a new disk is found.
+#
+# In case monitoring should be activated the following file 
+# will be created: /etc/armbianmonitor/start-monitoring. If 
+# debug output has been chosen, then DEBUG will be written to 
+# the file.
+#
+# The script will install smartmontools/gdisk if not already
+# installed and patches smartmontools' update-smart-drivedb 
+# script if necessary. For disks the 'device model' will be
+# shown but internally we rely always on the GUID. This is the
+# key for entry in /etc/armbianmonitor/disks.conf
+#
+# When the script exits and the user activated monitoring it
+# recommends doing a restart since on the next reboot the
+# setup-armbian-monitoring-environment script will configure 
+# monitoring sources and decides based on the existence and 
+# contents of /etc/armbianmonitor/start-monitoring whether 
+# rpimonitord should be started or not.
+#
+# The format of /etc/armbianmonitor/disks.conf is as follows:
+#
+# ${GUID}:${Name}:${smartctl prefix}:${temp call}:${CRC}:${LCC}
+#
+# Two examples:
+#
+# A57BF307-7D82-4783-BD1D-B346CA8C195B:WD Green::199:193 # WD HDD on SATA
+# F8D372DC-63DB-494B-B802-87DC47FAD4E1:Samsung EVO:sat::199: # SSD in USB enclosure
+#
+# - GUID is the GUID as determined by gdisk
+# - 'Name': The name as it will later be shown in RPi-Monitor, defaults to 
+#   the 'device model' read out through smartctl but can be changed to
+#   be more significant (beware that this string must contain colons!)
+# - "smartctl prefix" can be empty or should be the the necessary prefix for 
+#   USB disks, eg. '-d sat' or '-d usbjmicron' and so on -- please have a 
+#   look at https://www.smartmontools.org/wiki/Supported_USB-Devices
+# - "temp call" when being omitted indicates that hddtemp should be used. 
+#   Otherwise it should contain the complete command line ('DISK' will be 
+#   dynamically replaced by the device node when the actual monitoring 
+#   happens), for example:
+#   /sbin/hdparm -C DISK | egrep -q "standby|sleeping" || /usr/sbin/smartctl -d sat -a DISK | awk -F" " '/Temperature_Cel/ {printf $10}'
+# - 'CRC attribute': The decimal value of the S.M.A.R.T. attribute that
+#   is used to store the count of checksum errors between disk and host 
+#   controller (might be omitted if the drive doesn't support it)
+# - 'LCC attribute': The decimal value of the S.M.A.R.T. attribute that 
+#   should contain the load cycle counter value (might be omitted
+#   if the drive doesn't support it)
+#
+# TODO:
+#
+# - develop main functionality ;) asking the user regarding monitoring
+# - deal with 'SMART overall-health self-assessment test result:'
+# - write documentation
+#
+############################################################################
+
+Main() {
+	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+	
+	ParseOptions "$@"
+
+	PreRequisits
+	
+	# check whether user runs rpimonitord on his own or we activated it
+	if [ -f /etc/armbianmonitor/start-monitoring ]; then
+		# we should already provide monitoring, check whether DEBUG
+		# is also set
+		ArmbianMonitoring=TRUE
+		read DebugMode </etc/armbianmonitor/start-monitoring
+	fi
+	
+	# check whether rpimonitord is running and compare with ${ArmbianMonitoring}
+	# In case the user chose to run rpimonitord on his own, we skip the config
+	# part and only output disk info
+	:
+	
+	# check available disk devices
+	CheckDisks
+} # Main
+
+ParseOptions() {
+	while getopts 'hHbBuUm:M:' c ; do
+	case ${c} in
+		H)
+			# display full help test
+			export FullUsage=TRUE
+			DisplayUsage
+			exit 0
+			;;
+		h)
+			# display short help
+			DisplayUsage
+			exit 0
+			;;
+		b|B)
+			# toggle boot verbosity
+			if [ -f /boot/.force-verbose ]; then
+				rm /boot/.force-verbose
+				echo -e "Verbose kernel messages have been disabled. Needs a reboot"
+			else
+				date "+%s" >/boot/.force-verbose
+				echo -e "Verbose kernel messages have been enabled. Needs a reboot"
+			fi
+			exit 0
+			;;
+		m|M)
+			# monitoring mode
+			MonitorMode ${OPTARG}
+			exit 0
+			;;
+		u|U)
+			# Upload /var/log/armhwinfo.log to be of help in support forum.
+			# TODO: ping sprunge.us before to detect network/firewall problems
+			which curl >/dev/null 2>&1 || apt-get -f -qq -y install curl
+			echo -e "/var/log/armhwinfo.log has been uploaded to \c"
+			(cat /var/log/armhwinfo.log ; echo -e "\n### dmesg now:\n$(dmesg)") \
+				| curl -F 'sprunge=<-' http://sprunge.us
+			echo -e "Please post the URL in the Armbian forum where you've been asked for"
+			exit 0
+			;;
+	esac
+	done
+} # ParseOptions
+
+DisplayUsage() {
+	# check if stdout is a terminal...
+	if test -t 1; then
+		# see if it supports colors...
+		ncolors=$(tput colors)
+		if test -n "$ncolors" && test $ncolors -ge 8; then
+			BOLD="$(tput bold)"
+			NC='\033[0m' # No Color
+			LGREEN='\033[1;32m'
+		fi
+	fi
+	echo -e "Usage: ${BOLD}${0##*/} [-h/-H] [-b] [-m] [-u]${NC}\n"
+	echo -e "############################################################################"
+	if [ ${FullUsage} ]; then
+		echo -e "\nDetailed Description:"
+		grep "^#" "$0" | grep -v "^#\!/bin/bash" | sed 's/^#//'
+	fi
+	echo -e "\n This is WiP now\n"
+	echo -e "############################################################################\n"
+} # DisplayUsage
+
+MonitorMode() {
+	# $1 is the time in seconds to pause between two prints, defaults to 5 seconds
+	# This functions prints out endlessly:
+	# - time/date
+	# - average 1m load
+	# - detailed CPU statistics
+	# - Soc temperature if available
+	# - PMIC temperature if available
+	# TODO: Format output nicely
+	Sensors="/etc/armbianmonitor/datasources/"
+	while true ; do
+		LoadAvg=$(cut -f1 </proc/loadavg)
+		echo -e "$(date "+%Y-%m-%d %H:%M:%S"):\t${LoadAvg}\t$(ProcessStats)\c"
+		[ -f "${Sensors}/soctemp" ] && echo -e "\t$(awk '{printf ("%0.1f",$1/1000); }' <"${Sensors}/soctemp")°C\c"
+		[ -f "${Sensors}/pmictemp" ] && echo -e "\t$(awk '{printf ("%0.1f",$1/1000); }' <"${Sensors}/pmictemp")°C"
+		sleep ${1:-5}
+	done
+} # MonitorMode
+
+ProcessStats() {
+	set $(awk -F" " '/^cpu / {print $2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$7"\t"$8}' </proc/stat)
+	UserStat=$1
+	NiceStat=$2
+	SystemStat=$3
+	IdleStat=$4
+	IOWaitStat=$5
+	IrqStat=$6
+	SoftIrqStat=$7
+	
+	UserDiff=$(( ${UserStat} - ${LastUserStat} ))
+	NiceDiff=$(( ${NiceStat} - ${LastNiceStat} ))
+	SystemDiff=$(( ${SystemStat} - ${LastSystemStat} ))
+	IdleDiff=$(( ${IdleStat} - ${LastIdleStat} ))
+	IOWaitDiff=$(( ${IOWaitStat} - ${LastIOWaitStat} ))
+	IrqDiff=$(( ${IrqStat} - ${LastIrqStat} ))
+	SoftIrqDiff=$(( ${SoftIrqStat} - ${LastSoftIrqStat} ))
+	
+	Total=$(( ${UserDiff} + ${NiceDiff} + ${SystemDiff} + ${IdleDiff} + ${IOWaitDiff} + ${IrqDiff} + ${SoftIrqDiff} ))
+	CPULoad=$(( ( ${Total} - ${IdleDiff} ) * 100 / ${Total} ))
+	UserLoad=$(( ${UserDiff} *100 / ${Total} ))
+	SystemLoad=$(( ${SystemDiff} *100 / ${Total} ))
+	NiceLoad=$(( ${NiceDiff} *100 / ${Total} ))
+	IOWaitLoad=$(( ${IOWaitDiff} *100 / ${Total} ))
+	IrqCombinedLoad=$(( ( ${IrqDiff} + ${SoftIrqDiff} ) *100 / ${Total} ))
+	
+	echo "${CPULoad} ${SystemLoad} ${UserLoad} ${NiceLoad} ${IOWaitLoad} ${IrqCombinedLoad}"
+
+	LastUserStat=${UserStat}
+	LastNiceStat=${NiceStat}
+	LastSystemStat=${SystemStat}
+	LastIdleStat=${IdleStat}
+	LastIOWaitStat=${IOWaitStat}
+	LastIrqStat=${IrqStat}
+	LastSoftIrqStat=${SoftIrqStat}
+} # ProcessStats
+
+CheckDisks() {
+	# This function walks through all block devices whose name starts with sd* and
+	# then gets the name hddtemp expects, the model name from smartctl, looks whether
+	# the drive only lists one temperature value and patches hddtemp.db if necessary
+	# and also tries to get CRC and LCC S.M.A.R.T. attributes to provide the user
+	# with the necessary config file contents for /etc/armbianmonitor/disks.conf:
+	
+	ls /sys/block/sd* >/dev/null 2>&1 || exit 0
+	
+	for i in /sys/block/sd* ; do
+		DeviceNode=/dev/${i##*/}
+		# get GUID/UUID for disk and check whether a partition table is existent. If
+		# not GUID will always be random
+		gdisk -l ${DeviceNode} >"${MyTempDir}/gdisk.txt"
+		GUID=$(awk -F" " '/^Disk identifier/ {print $4}' <"${MyTempDir}/gdisk.txt")
+		CountOfUnavailablePartitionTables=$(grep ': not present' "${MyTempDir}/gdisk.txt" | wc -l)
+		if [ ${CountOfUnavailablePartitionTables} -eq 4 ]; then
+			echo -e "\nSkipping ${DeviceNode} due to missing partition table. Use parted to create one."
+			break
+		else
+			echo -e "\nExamining ${DeviceNode} with GUID ${GUID}\c"
+		fi
+		
+		# get name hddtemp needs
+		HddtempName="$(hddtemp --debug ${DeviceNode} | awk -F": " '/^Model: / {print $2}' | \
+			cut -c-40 | sed 's/^[ \t]*//;s/[ \t]*$//')"
+		# store smartctl output in temporary file
+		smartctl -q noserial -s on -a ${DeviceNode} >"${MyTempDir}/smartctl.txt" 2>&1
+		DeviceModel="$(awk -F": " '/^Device Model/ {print $2}' <"${MyTempDir}/smartctl.txt" | \
+			sed 's/^[ \t]*//;s/[ \t]*$//')"
+		if [ "X${DeviceModel}" = "X" ]; then
+			# Reading S.M.A.R.T. failed, we try autodetect mode iterating through all
+			# known smartctl modes (-d auto|sat|usbcypress|usbjmicron|usbprolific|usbsunplus)
+			SMARTPrefix="$(CheckSMARTModes ${DeviceNode} 2>/dev/null)"
+			if [ "X${SMARTPrefix}" = "X" ]; then
+				# we can't query the disk. Time to give up
+				echo -e ". Unable to query the disk through S.M.A.R.T.\nPlease investigate manually using smartctl\n"
+				break
+			fi
+		fi
+		
+		# user feedback
+		if [ "X${SMARTPrefix}" = "X" ]; then
+			echo -e " (accessible through S.M.A.R.T.)"
+		else
+			echo -e " (can be queried with \"-d ${SMARTPrefix}\" through S.M.A.R.T.)"
+		fi
+
+		# check for CRC and LCC attributes
+		CRCAttribute=$(awk -F" " '/CRC_Error_Count/ {print $1}' <"${MyTempDir}/smartctl.txt")
+		LCCAttribute=$(grep -i "load.cycle" "${MyTempDir}/smartctl.txt" | awk -F" " '{print $1}')
+		
+		# check whether /etc/hddtemp.db should be patched
+		grep -q "${HddtempName}" /etc/hddtemp.db
+		if [ $? -ne 0 ]; then
+			# No entry into hddtemp database, we've a look whether there's a 'temperature'
+			# attribute available (we take the 1st we find) and if that's the case we use this
+			DiskTemp=$(awk -F" " '/Temperature/ {print $1}' <"${MyTempDir}/smartctl.txt" | head -n1)
+			if [[ ${DiskTemp} -gt 0 ]]; then
+				echo -e "\"${HddtempName}\" ${DiskTemp} C \"${DeviceModel}\"" >>/etc/hddtemp.db
+				echo -e "\nAdded disk \"${DeviceModel}\"/\"${HddtempName}\" to /etc/hddtemp.db using S.M.A.R.T. attribute ${DiskTemp}\nbased on the following available thermal values:"
+				grep "Temperature" "${MyTempDir}/smartctl.txt"
+				# check hddtemp result
+				HddtempResult=$(hddtemp -n ${DeviceNode} | awk -F" " '{print $1}')
+				if [ "X${HddtempResult}" = "X${DeviceNode}:" ]; then
+					# hddtemp isn't able to query the disk
+					HddtempStatus="does not work. Please check with smartctl and adjust config accordingly"
+					echo -e "\nhddtemp output: $(hddtemp ${DeviceNode})"
+					echo -e "\nIt seems we can not rely on hddtemp to query this disk. Please try smartctl instead\n"
+				else
+					HddtempStatus="will work"
+					echo -e "\nhddtemp output: ${HddtempResult})"
+					echo -e "\nIn case this seems not to be correct please adjust /etc/hddtemp.db manually\n"
+				fi
+			else
+				HddtempStatus="does not work. Please check with smartctl and adjust config accordingly"
+			fi
+		else
+			HddtempStatus="will work"
+		fi
+		
+		# check for firmware updates
+		FirmwareUpdate="$(grep "^http" "${MyTempDir}/smartctl.txt")"
+		
+		# Check whether the disk (based on GUID) is already configured in our config file
+		# /etc/armbianmonitor/disks.conf or not
+		
+		grep -q "^${GUID}:" /etc/armbianmonitor/disks.conf >/dev/null 2>/dev/null
+		case $? in
+			0)
+				# already listed, we provide just infos:
+				echo -e "Disk is already configured by the following monitoring config:\n$(grep "^${GUID}:" /etc/armbianmonitor/disks.conf)\n"
+				;;
+			*)
+				# new disk, we recommend an entry for /etc/armbianmonitor/disks.conf
+				echo -e "Disk not configured for monitoring. We were able to extract the following information:\nGUID: ${GUID}"
+				if [ "X${SMARTPrefix}" != "X" ]; then
+					echo -e "QueryMode: -d ${SMARTPrefix}"
+				fi
+				echo -e "hddtemp: ${HddtempStatus}\nCRC attribute: ${CRCAttribute}\nLCC Attribute: ${LCCAttribute}"
+				case ${HddtempStatus} in
+					"will work")
+						echo -e "If you want to monitor the disk please add to /etc/armbianmonitor/disks.conf:\n${GUID}:${DeviceModel}:${SMARTPrefix}::${CRCAttribute}:${LCCAttribute}"
+						;;
+					*)
+						echo -e "Proposal for /etc/armbianmonitor/disks.conf:\n${GUID}:${DeviceModel}:${SMARTPrefix}:FIXME:${CRCAttribute}:${LCCAttribute}"
+						echo -e "You have to figure out how to query the disk for its thermal sensor."
+						echo -e "Please check the output of \"hddtemp --debug ${DeviceNode}\" and smartctl\n"
+						;;
+				esac		
+				;;
+		esac
+		if [ "X${FirmwareUpdate}" != "X" ]; then
+			echo -e "\nWARNING: A firmware update seems to be available:\n${FirmwareUpdate}\n"
+		fi
+	done
+} # CheckDisks
+
+CheckSMARTModes() {
+	# This function tries to access USB disks through S.M.A.R.T. and returns the necessary
+	# '-d' call as well as fills in ${MyTempDir}/smartctl.txt
+	
+	for i in auto sat usbcypress usbjmicron usbprolific usbsunplus ; do
+		# user feedback
+		echo -n "." >/dev/tty
+		# query disk using the specific protocol
+		echo -n "" >"${MyTempDir}/smartctl.txt"
+		smartctl -q noserial -s on -d ${i} -a ${1} >"${MyTempDir}/smartctl.txt" 2>/dev/null
+		DeviceModel="$(awk -F": " '/^Device Model/ {print $2}' <"${MyTempDir}/smartctl.txt" | \
+			sed 's/^[ \t]*//;s/[ \t]*$//')"
+		if [ "X${DeviceModel}" != "X" ]; then
+			echo ${i}
+			break
+		fi
+	done
+} # CheckSMARTModes
+
+PreRequisits() {
+	# Ensure that we're running as root since otherwise querying SATA/USB disks won't work
+	if [ "$(id -u)" != "0" ]; then
+		echo "This script must be run as root" >&2
+		exit 1
+	fi
+
+	export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+	unset LANG
+	DISTROCODE=$(lsb_release -s -c)
+	
+	# check whether gdisk/smartctl are available and up to date
+	echo -e "Check whether necessary software is available\c"
+	which gdisk >/dev/null 2>&1 || (echo -e " Installing gdisk\c" ; apt-get -f -qq -y install gdisk)
+	which smartctl >/dev/null 2>&1 || (echo -e " Installing smartmontools\c" ; apt-get -f -qq -y install smartmontools)
+	echo -e " [done]\nUpdating smartmontools' drivedb\c"
+	/usr/sbin/update-smart-drivedb >/dev/null 2>&1
+	if [ $? -ne 0 -a "X${DISTROCODE}" = "Xwheezy" ]; then
+		sed -i "/^SRCEXPR/{s#=.*#='http://sourceforge.net/p/smartmontools/code/HEAD/tree/\$location/smartmontools/drivedb.h?format=raw'#}" /usr/sbin/update-smart-drivedb
+		/usr/sbin/update-smart-drivedb
+	fi
+	echo -e " [done]"
+	CreateTempDir
+} # PreRequisits
+
+CreateTempDir() {
+	# create a safe temporary dir
+	MyTempDir=$(mktemp -d /tmp/${0##*/}.XXXXXX)
+	if [ ! -d "${MyTempDir}" ]; then
+		MyTempDir=/tmp/${0##*/}.$RANDOM.$RANDOM.$RANDOM.$$
+		(umask 066 && mkdir ${MyTempDir}) || (echo "Failed to create temp dir. Aborting" >&2 ; exit 1)
+	fi
+	chmod 711 "${MyTempDir}"
+	trap "rm -rf \"${MyTempDir}\" ; exit 0" 0 1 2 3 15
+	for file in smartctl.txt gdisk.txt ; do
+		touch "${MyTempDir}/${file}"
+		chmod 644 "${MyTempDir}/${file}"
+	done
+} #CreateTempFiles
+
+InstallRPiMonitor() {
+	# Installs rpimonitord based on the official instructions from
+	# http://rpi-experiences.blogspot.fr/p/rpi-monitor-installation.html
+	apt-get -qq -y update
+	apt-get -f -qq -y install apt-transport-https ca-certificates
+	wget -q http://goo.gl/rsel0F -O /etc/apt/sources.list.d/rpimonitor.list
+	apt-key adv --recv-keys --keyserver keyserver.ubuntu.com 2C0D3C0F
+	apt-get -qq -y update
+	apt-get -f -qq -y install rpimonitor
+	/usr/share/rpimonitor/scripts/updatePackagesStatus.pl &
+} # InstallRPiMonitor
+
+Main "$@"
