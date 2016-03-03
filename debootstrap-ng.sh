@@ -125,7 +125,7 @@ debootstrap_ng()
 create_rootfs_cache()
 {
 	[[ $BUILD_DESKTOP == yes ]] && local variant_desktop=yes
-	local packages_hash=$(md5sum <<< $PACKAGE_LIST | cut -d' ' -f 1)
+	local packages_hash=$(get_package_list_hash $PACKAGE_LIST)
 	local cache_fname="$DEST/cache/rootfs/$RELEASE${variant_desktop:+_desktop}-ng.$packages_hash.tgz"
 	if [[ -f $cache_fname ]]; then
 		local filemtime=$(stat -c %Y $cache_fname)

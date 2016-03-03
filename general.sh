@@ -11,6 +11,7 @@
 
 # Functions:
 # cleaning
+# get_package_list_hash
 # fetch_from_github
 # display_alert
 # check_error
@@ -57,6 +58,16 @@ cleaning()
 		display_alert "Cleaning: unrecognized option" "$1" "wrn"
 		;;
 	esac
+}
+
+# get_package_list_hash <package_list>
+#
+# outputs md5hash for space-separated <package_list>
+# for rootfs cache
+
+get_package_list_hash()
+{
+	echo $(printf '%s\n' $PACKAGE_LIST | sort -u | md5sum | cut -d' ' -f 1)
 }
 
 # fetch_from_github <URL> <directory> <tag> <tagsintosubdir>

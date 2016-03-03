@@ -525,16 +525,18 @@ esac
 
 
 # Essential packages
-PACKAGE_LIST="alsa-utils automake btrfs-tools bash-completion bc bridge-utils bluez build-essential cmake cpufrequtils curl psmisc \
-	device-tree-compiler dosfstools evtest figlet fbset fping git haveged hddtemp hdparm hostapd htop i2c-tools ifenslave-2.6 \
-	iperf ir-keytable iotop iozone3 iw less libbluetooth-dev libbluetooth3 libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev \
-	module-init-tools mtp-tools nano ntfs-3g ntp parted pkg-config pciutils pv python-smbus rfkill rsync screen stress sudo subversion \
-	sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools weather-util weather-util-data wget wpasupplicant \
-	iptables dvb-apps libdigest-sha-perl libproc-processtable-perl w-scan apt-transport-https sysbench libusb-dev dialog fake-hwclock \
+PACKAGE_LIST="alsa-utils automake bash-completion bc bridge-utils build-essential cmake cpufrequtils \
+	device-tree-compiler dosfstools figlet fbset fping git haveged hdparm hostapd ifenslave-2.6 psmisc \
+	iw less libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev fake-hwclock wpasupplicant \
+	module-init-tools nano ntp parted pkg-config pv rfkill rsync sudo curl dialog \
+	sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools wget \
+	iptables libdigest-sha-perl libproc-processtable-perl w-scan libusb-dev \
 	console-setup console-data kbd console-common unicode-data openssh-server man-db"
 
 # Non-essential packages
-PACKAGE_LIST_ADDITIONAL=""
+PACKAGE_LIST_ADDITIONAL="btrfs-tools bluez hddtemp i2c-tools iperf ir-keytable iotop iozone3 weather-util weather-util-data stress \
+	dvb-apps sysbench libbluetooth-dev libbluetooth3 subversion screen ntfs-3g vim pciutils evtest htop mtp-tools python-smbus \
+	apt-transport-https"
 
 # Release specific packages
 case $RELEASE in
