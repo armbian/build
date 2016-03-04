@@ -9,6 +9,21 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 
+# NOTES
+#
+# Set FEL_NET_IFNAME to name of your network interface if you have
+# more than one non-loopback interface with assigned IPv4 address
+#
+# Set FEL_LOCAL_IP to IP address that can be used to reach NFS on your build host
+# if it can't be obtained from ifconfig (i.e. port forwarding to VM guest)
+#
+# Set FEL_DTB_FILE to relative path to .dtb or .bin file if it can't be obtained
+# from u-boot config (mainline) or boot/script.bin (legacy)
+#
+# FEL_ROOTFS should be set to path to debootstrapped root filesystem
+# unless you want to kill your /etc/fstab and share your rootfs on NFS
+# without any access control
+
 fel_prepare_host()
 {
 	# remove and re-add NFS share
@@ -22,7 +37,7 @@ fel_prepare_target()
 {
 	cp $SRC/lib/scripts/fel-boot.cmd.template $FEL_ROOTFS/boot/boot.cmd
 	if [[ -z $FEL_LOCAL_IP ]]; then
-		FEL_LOCAL_IP=$(ifconfig | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p')
+		FEL_LOCAL_IP=$(ifconfig $FEL_NET_IFNAME | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p')
 	fi
 	sed -i "s#BRANCH#$BRANCH#" $FEL_ROOTFS/boot/boot.cmd
 	sed -i "s#FEL_LOCAL_IP#$FEL_LOCAL_IP#" $FEL_ROOTFS/boot/boot.cmd
