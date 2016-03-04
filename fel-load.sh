@@ -33,7 +33,12 @@ fel_prepare_target()
 	echo > $FEL_ROOTFS/etc/fstab
 	if [[ -z $FEL_DTB_FILE ]]; then
 		if [[ $BRANCH == default ]]; then
-			FEL_DTB_FILE=boot/script.bin
+			# script.bin is either regular file or absolute symlink
+			if [[ -L $FEL_ROOTFS/boot/script.bin ]]; then
+				FEL_DTB_FILE=boot/bin/$(basename $(readlink $FEL_ROOTFS/boot/script.bin))
+			else
+				FEL_DTB_FILE=boot/script.bin
+			fi
 		else
 			FEL_DTB_FILE=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/.config | cut -d '"' -f2).dtb
 		fi
