@@ -11,20 +11,14 @@
 
 fel_prepare_host()
 {
-	# install necessary packages; assume that sunxi-tools is installed manually by user
-	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' nfs-kernel-server 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "nfs-kernel-server" "info"
-		apt-get install -q -y --no-install-recommends nfs-kernel-server
-	fi
-	if [[ ! -f /etc/exports.d/armbian.exports ]]; then
-		display_alert "Creating NFS share for" "rootfs" "info"
-		mkdir -p /etc/exports.d
-		echo "$FEL_ROOTFS *(rw,async,no_subtree_check,no_root_squash,fsid=root)" > /etc/exports.d/armbian.exports
-		exportfs -ra
-	fi
+	# remove and re-add NFS share
+	rm -f /etc/exports.d/armbian.exports
+	mkdir -p /etc/exports.d
+	echo "$FEL_ROOTFS *(rw,async,no_subtree_check,no_root_squash,fsid=root)" > /etc/exports.d/armbian.exports
+	exportfs -ra
 }
 
-fel_prepare_script()
+fel_prepare_target()
 {
 	cp $SRC/lib/scripts/fel-boot.cmd.template $FEL_ROOTFS/boot/boot.cmd
 	if [[ -z $FEL_LOCAL_IP ]]; then
@@ -34,19 +28,20 @@ fel_prepare_script()
 	sed -i "s#FEL_LOCAL_IP#$FEL_LOCAL_IP#" $FEL_ROOTFS/boot/boot.cmd
 	sed -i "s#FEL_ROOTFS#$FEL_ROOTFS#" $FEL_ROOTFS/boot/boot.cmd
 	mkimage -C none -A arm -T script -d $FEL_ROOTFS/boot/boot.cmd $FEL_ROOTFS/boot/boot.scr > /dev/null
-}
 
-fel_load()
-{
+	# kill /etc/fstab on target
 	echo > $FEL_ROOTFS/etc/fstab
 	if [[ -z $FEL_DTB_FILE ]]; then
 		if [[ $BRANCH == default ]]; then
-			# don't care for now if it's more complicated than it needs to be
-			FEL_DTB_FILE=boot/bin/$(basename $(readlink $FEL_ROOTFS/boot/script.bin))
+			FEL_DTB_FILE=boot/script.bin
 		else
 			FEL_DTB_FILE=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/.config | cut -d '"' -f2).dtb
 		fi
 	fi
+}
+
+fel_load()
+{
 	display_alert "Loading files via" "FEL USB" "info"
 	sunxi-fel -v -p uboot $SOURCES/$BOOTSOURCEDIR/u-boot-sunxi-with-spl.bin \
 		write 0x42000000 $FEL_ROOTFS/boot/zImage \
@@ -54,9 +49,17 @@ fel_load()
 		write 0x43100000 $FEL_ROOTFS/boot/boot.scr
 }
 
-fel_prepare_host
-fel_prepare_script
-fel_load
-display_alert "Press <Enter> to finish" "FEL load" "info"
-read
-service nfs-kernel-server restart
+# basic sanity check
+if [[ -n $FEL_ROOTFS ]]; then
+	fel_prepare_host
+	fel_prepare_target
+	RES=b
+	while [[ $RES == b ]]; do
+		display_alert "Connect device in FEL mode and press" "<Enter>" "info"
+		read
+		fel_load
+		read -n 1 -p "Press <b> to boot again, <q> to finish: " RES
+		echo
+	done
+	service nfs-kernel-server restart
+fi
