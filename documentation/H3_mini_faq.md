@@ -1,8 +1,21 @@
-# Armbian H3 mini FAQ
+# Armbian H3 mini FAQ -- 5.05
 
 **OS images with legacy Kernel (3.4.110)**
 
-Armbian supports starting with release 5.04 all available H3 based Orange Pi boards (also [One](http://forum.armbian.com/index.php/topic/724-quick-review-of-orange-pi-one/) and Lite when available). Compared to the preliminary releases the following has been fixed/improved:
+Armbian started beginning with release 5.04 to support all available H3 based Orange Pi boards (including [One](http://forum.armbian.com/index.php/topic/724-quick-review-of-orange-pi-one/) and Lite when available).
+
+***Changes in 5.05 (not yet released!)***
+
+- Auto detection for the Orange Pi 2 does work now
+- Mali acceleration works for all users not only root
+- verbose boot logging on 1st boot and after crashes (you can toggle verbose logging using 'sudo armbianmonitor -b')
+- more WiFi dongles supported due to backported firmware loader patch
+- all 3 USB ports on Orange Pi One (Lite) available ([2 of them need soldering](http://forum.armbian.com/index.php/topic/755-tutorial-orange-pi-one-adding-usb-analog-audio-out-tv-out-mic-and-ir-receiver/))
+- I2S possible on all Orange Pis (compare with the [mini tutorial](http://forum.armbian.com/index.php/topic/759-tutorial-i2s-on-orange-pi-h3/) since you need to tweak script.bin)
+- default display resolution set to 720p60 to fix possible overscan issues on 1st boot
+- HW accelerated video decoding works for most formats
+
+***Changes in 5.04 compared to pre-releases***
 
 - HDMI/DVI works (bug in boot.cmd settings)
 - Reboot issues fixed (bug in fex settings)
@@ -19,10 +32,8 @@ Armbian supports starting with release 5.04 all available H3 based Orange Pi boa
 - Full HDMI colour-range adjustable/accessible through _h3disp_ utility
 - already useable as stable headless/server board
 
-***Known issues with 5.04***
+***Known issues with 5.05***
 
-- Auto detection for the Orange Pi 2 doesn't work properly. Please have a look [for a manual fix](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5718) or wait for 5.05 where this will be fixed
-- Mali acceleration currently only working for root user. Please apply [a fix](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5719) manually or wait for 5.05 to fix this
 - Booting from NAND on OPi Plus currently not supported
 
 ***Important to know***
@@ -31,7 +42,6 @@ Armbian supports starting with release 5.04 all available H3 based Orange Pi boa
 - our [User documentation](http://www.armbian.com/documentation/) (one exception currently: use _h3disp_ to adjust display settings)
 - our [Geek documentation](http://www.armbian.com/using-armbian-tools/) (in case you want to build your own images)
 - CPU frequency settings are 648-1200 MHz on OPi One/Lite and 480-1296 MHz on the other boards (cpufreq governor is _interactive_ therefore the board only increases CPU speed and consumption when needed)
-- These are still test images regarding everything beyond headless/server usage
 - In case you experience instabilities, think about installing [RPi-Monitor for H3](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5076) to get an idea whether you suffer from overheating
 
 ***Areas that need testing/feedback***
@@ -39,7 +49,6 @@ Armbian supports starting with release 5.04 all available H3 based Orange Pi boa
 - SPI
 - I2C
 - GPIO in general
-- GPU acceleration
 - Wi-Fi on OPi Plus, Plus 2 and 2
 - USB wireless dongles
 - user experience
@@ -53,7 +62,6 @@ Armbian supports starting with release 5.04 all available H3 based Orange Pi boa
 ***Known to NOT work (reliably) yet***
 
 - Camera support. We included [@lex' patches](http://www.orangepi.org/orangepibbsen/forum.php?mod=redirect&goto=findpost&ptid=443&pid=7263) but miss [phelum's basic patches](http://www.orangepi.org/orangepibbsen/forum.php?mod=redirect&goto=findpost&ptid=70&pid=2905). Fixes welcome
-- HW accelerated video decoding. Fixes welcome (anyone willing to port the stuff from the [H3 OpenELEC port](https://github.com/jernejsk/OpenELEC-OPi2)?)
 - live display resolution switching. Fixes welcome (anyone willing to port the stuff from the [H3 OpenELEC port](https://github.com/jernejsk/OpenELEC-OPi2)?)
 - onboard Wi-Fi (it works somehow but chip/driver are cheap and bad -- we can't do much to improve the situation)
 
