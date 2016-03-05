@@ -73,6 +73,9 @@ create_board_package (){
 
 	# add USB OTG port mode switcher
 	install -m 755 $SRC/lib/scripts/sunxi-musb 			$destination/usr/local/bin
+
+	# armbianmonitor (currently only to toggle boot verbosity and log upload)
+	install -m 755 $SRC/lib/scripts/armbianmonitor/armbianmonitor $destination/usr/local/bin
 	
 	# replace hostapd from latest self compiled & patched
 	mkdir -p $destination/usr/sbin/

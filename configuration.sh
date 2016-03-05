@@ -529,7 +529,7 @@ PACKAGE_LIST="alsa-utils automake bash-completion bc bridge-utils build-essentia
 	module-init-tools nano ntp parted pkg-config pv rfkill rsync sudo curl dialog \
 	sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools wget \
 	iptables libdigest-sha-perl libproc-processtable-perl w-scan libusb-dev ncurses-term \
-	console-setup console-data kbd console-common unicode-data openssh-server man-db"
+	console-setup console-data kbd console-common unicode-data openssh-server man-db libmtp-runtime"
 
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="btrfs-tools bluez hddtemp i2c-tools iperf ir-keytable iotop iozone3 weather-util weather-util-data stress \
