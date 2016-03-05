@@ -24,12 +24,39 @@ debootstrap_ng()
 {
 	display_alert "Starting build process for" "$BOARD $RELEASE" "info"
 
+	# default rootfs type is ext4
+	if [[ -z $ROOTFS_TYPE ]]; then
+		ROOTFS_TYPE=ext4
+	fi
+
+	if [[ "ext4 f2fs btrfs nfs fel" != *"$ROOTFS_TYPE"* ]]; then
+		display_alert "Unknown rootfs type" "$ROOTFS_TYPE" "err"
+		exit -1
+	fi
+
+	# Fixed image size is in 1M dd blocks (MiB)
+	# to get size of block device /dev/sdX execute as root:
+	# echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
+	if [[ "btrfs f2fs" == *"$ROOTFS_TYPE"* && -z $FIXED_IMAGE_SIZE ]]; then
+		display_alert "$ROOTFS_TYPE root needs user-defined SD card size" "FIXED_IMAGE_SIZE" "err"
+		exit 1
+	fi
+
+	if [[ $ROOTFS_TYPE != ext4 ]]; then
+		display_alert "Please make sure selected kernel version supports $ROOTFS_TYPE" "$CHOOSEN_KERNEL" "wrn"
+	fi
+
+	# small SD card with kernel, boot scritpt and .dtb/.bin files
+	if [[ $ROOTFS_TYPE == nfs ]]; then
+		FIXED_IMAGE_SIZE=64
+	fi
+
 	# trap to unmount stuff in case of error/manual interruption
 	trap unmount_on_exit INT TERM EXIT
 
 	# stage: clean and create directories
 	rm -rf $DEST/cache/sdcard $DEST/cache/mount
-	mkdir -p $DEST/cache/sdcard $DEST/cache/mount
+	mkdir -p $DEST/cache/sdcard $DEST/cache/mount $DEST/images
 
 	# stage: verify tmpfs configuration and mount
 	# default maximum size for tmpfs mount is 1/2 of available RAM
@@ -57,8 +84,6 @@ debootstrap_ng()
 	mount -t devpts chpts $DEST/cache/sdcard/dev/pts
 
 	# stage: install distribution specific
-	# NOTE: can be called from create_rootfs_cache
-	# but it makes a little difference
 	install_distribution_specific
 
 	# stage: install kernel and u-boot packages
@@ -102,11 +127,17 @@ debootstrap_ng()
 	umount -l $DEST/cache/sdcard/proc
 	umount -l $DEST/cache/sdcard/sys
 
-	# stage: create partitions, format, mount image
-	prepare_partitions
+	if [[ $ROOTFS_TYPE == fel ]]; then
+		FEL_ROOTFS=$DEST/cache/sdcard/
+		display_alert "Starting FEL boot" "$BOARD" "info"
+		source $SRC/lib/fel-load.sh
+	else
+		# create partitions, format, mount image
+		prepare_partitions
 
-	# stage: create image
-	create_image
+		# create full image
+		create_image
+	fi
 
 	# stage: unmount tmpfs
 	if [[ $use_tmpfs = yes ]]; then
@@ -127,12 +158,13 @@ create_rootfs_cache()
 	[[ $BUILD_DESKTOP == yes ]] && local variant_desktop=yes
 	local packages_hash=$(get_package_list_hash $PACKAGE_LIST)
 	local cache_fname="$DEST/cache/rootfs/$RELEASE${variant_desktop:+_desktop}-ng.$packages_hash.tgz"
+	local display_name=$RELEASE${variant_desktop:+_desktop}-ng.${packages_hash:0:3}...${packages_hash:29}.tgz
 	if [[ -f $cache_fname ]]; then
 		local filemtime=$(stat -c %Y $cache_fname)
 		local currtime=$(date +%s)
 		local diff=$(( (currtime - filemtime) / 86400 ))
-		display_alert "Extracting $(basename $cache_fname)" "$diff days old" "info"
-		pv -p -b -r -c -N "$RELEASE${variant_desktop:+_desktop}-ng.tgz" "$cache_fname" | pigz -dc | tar xp -C $DEST/cache/sdcard/
+		display_alert "Extracting $display_name" "$diff days old" "info"
+		pv -p -b -r -c -N "$display_name" "$cache_fname" | pigz -dc | tar xp -C $DEST/cache/sdcard/
 	else
 		display_alert "Creating new rootfs for" "$RELEASE" "info"
 
@@ -248,7 +280,7 @@ EOF
 
 		tar cp --directory=$DEST/cache/sdcard/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 			--exclude='./sys/*' . | \
-		pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "$RELEASE${variant_desktop:+_desktop}-ng.tgz" | pigz > $cache_fname
+			pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "$display_name" | pigz > $cache_fname
 	fi
 
 } #############################################################################
@@ -263,26 +295,15 @@ prepare_partitions()
 {
 	display_alert "Preparing image file for rootfs" "$BOARD $RELEASE" "info"
 
-	# Fixed image size is in 1M dd blocks (MiB)
-	# to get size of block device /dev/sdX execute as root:
-	# echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
-	if [[ $USE_F2FS_ROOT == yes && -z $FIXED_IMAGE_SIZE ]]; then
-		display_alert "F2FS root needs user-defined SD card size" "FIXED_IMAGE_SIZE" "err"
-		exit 1
-	fi
-
-	if [[ $USE_F2FS_ROOT == yes ]]; then
-		display_alert "Building image with F2FS root filesystem. Make sure selected kernel version supports F2FS" "$CHOOSEN_KERNEL" "info"
-	fi
-
 	# possible partition combinations
-	# ext4 root only (BOOTSIZE == 0 && USE_F2FS_ROOT != yes)
-	# fat32 boot + ext4 root (BOOTSIZE > 0 && USE_F2FS_ROOT != yes)
-	# fat32 boot + f2fs root (BOOTSIZE > 0; USE_F2FS_ROOT == yes)
-	# ext4 boot + f2fs root (BOOTSIZE == 0; USE_F2FS_ROOT == yes)
+	# ext4 root only (BOOTSIZE == 0 && ROOTFS_TYPE == ext4)
+	# ext4 boot + non-ext4 local root (BOOTSIZE == 0; ROOTFS_TYPE != ext4 or nfs)
+	# fat32 boot + ext4 root (BOOTSIZE > 0 && ROOTFS_TYPE == ext4)
+	# fat32 boot + non-ext4 local root (BOOTSIZE > 0; ROOTFS_TYPE != ext4 or nfs)
+	# ext4 boot + NFS root (BOOTSIZE == 0; ROOTFS_TYPE == nfs)
+	# fat32 boot + NFS root (BOOTSIZE > 0; ROOTFS_TYPE == nfs)
 
-	# declare makes local variables by default
-	# if used inside a function
+	# declare makes local variables by default if used inside a function
 	# NOTE: mountopts string should always start with comma if not empty
 
 	# array copying in old bash versions is tricky, so having filesystems as arrays
@@ -292,18 +313,26 @@ prepare_partitions()
 	parttype[ext4]=ext4
 	parttype[fat]=fat16
 	parttype[f2fs]=ext4 # not a copy-paste error
+	parttype[btrfs]=btrfs
+	# parttype[nfs] is empty
 
 	mkopts[ext4]='-q' # "-O journal_data_writeback" can be set here
 	mkopts[fat]='-n boot'
-#	mkopts[f2fs] is empty
+	# mkopts[f2fs] is empty
+	# mkopts[btrfs] is empty
+	# mkopts[nfs] is empty
 
 	mkfs[ext4]=ext4
 	mkfs[fat]=vfat
 	mkfs[f2fs]=f2fs
+	mkfs[btrfs]=btrfs
+	# mkfs[nfs] is empty
 
 	mountopts[ext4]=',commit=600,errors=remount-ro'
-#	mountopts[fat] is empty
-#	mountopts[f2fs] is empty
+	# mountopts[fat] is empty
+	# mountopts[f2fs] is empty
+	# mountopts[btrfs] is empty
+	# mountopts[nfs] is empty
 
 	# stage: calculate rootfs size
 	local rootfs_size=$(du -sm $DEST/cache/sdcard/ | cut -f1) # MiB
@@ -312,7 +341,7 @@ prepare_partitions()
 		display_alert "Using user-defined image size" "$FIXED_IMAGE_SIZE MiB" "info"
 		local sdsize=$FIXED_IMAGE_SIZE
 		# basic sanity check
-		if [[ $sdsize -lt $rootfs_size ]]; then
+		if [[ $ROOTFS_TYPE != nfs && $sdsize -lt $rootfs_size ]]; then
 			display_alert "User defined image size is too small" "$sdsize <= $rootfs_size" "err"
 			exit 1
 		fi
@@ -328,15 +357,8 @@ prepare_partitions()
 	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=$DEST/cache/tmprootfs.raw
 
 	# stage: determine partition configuration
-	# root
-	if [[ $USE_F2FS_ROOT == yes ]]; then
-		local rootfs=f2fs
-	else
-		local rootfs=ext4
-	fi
-
 	# boot
-	if [[ $USE_F2FS_ROOT == yes && $BOOTSIZE == 0 ]]; then
+	if [[ $ROOTFS_TYPE != ext4 && $BOOTSIZE == 0 ]]; then
 		local bootfs=ext4
 		BOOTSIZE=32 # MiB
 	elif [[ $BOOTSIZE != 0 ]]; then
@@ -350,13 +372,15 @@ prepare_partitions()
 	BOOTEND=$(($ROOTSTART - 1))
 
 	# stage: create partition table
-	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $rootfs" "info"
+	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
 	parted -s $DEST/cache/tmprootfs.raw -- mklabel msdos
-	if [[ $BOOTSIZE == 0 ]]; then
-		parted -s $DEST/cache/tmprootfs.raw -- mkpart primary ${parttype[$rootfs]} ${ROOTSTART}s -1s
+	if [[ $ROOTFS_TYPE == nfs ]]; then
+		parted -s $DEST/cache/tmprootfs.raw -- mkpart primary ${parttype[$bootfs]} ${BOOTSTART}s -1s
+	elif [[ $BOOTSIZE == 0 ]]; then
+		parted -s $DEST/cache/tmprootfs.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${ROOTSTART}s -1s
 	else
 		parted -s $DEST/cache/tmprootfs.raw -- mkpart primary ${parttype[$bootfs]} ${BOOTSTART}s ${BOOTEND}s
-		parted -s $DEST/cache/tmprootfs.raw -- mkpart primary ${parttype[$rootfs]} ${ROOTSTART}s -1s
+		parted -s $DEST/cache/tmprootfs.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${ROOTSTART}s -1s
 	fi
 
 	# stage: mount image
@@ -373,26 +397,48 @@ prepare_partitions()
 
 	# stage: create fs
 	if [[ $BOOTSIZE == 0 ]]; then
-		eval mkfs.${mkfs[$rootfs]} ${mkopts[$rootfs]} ${LOOP}p1 ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+		eval mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${LOOP}p1 ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 	else
+		if [[ $ROOTFS_TYPE != nfs ]]; then
+			eval mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${LOOP}p2 ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+		fi
 		eval mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${LOOP}p1 ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-		eval mkfs.${mkfs[$rootfs]} ${mkopts[$rootfs]} ${LOOP}p2 ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 	fi
 
 	# stage: mount partitions and create proper fstab
 	rm -f $DEST/cache/sdcard/etc/fstab
 	if [[ $BOOTSIZE == 0 ]]; then
 		mount ${LOOP}p1 $DEST/cache/mount/
-		echo "/dev/mmcblk0p1 / ${parttype[$rootfs]} defaults,noatime,nodiratime${mountopts[$rootfs]} 0 0" >> $DEST/cache/sdcard/etc/fstab
+		echo "/dev/mmcblk0p1 / ${parttype[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $DEST/cache/sdcard/etc/fstab
 	else
-		mount ${LOOP}p2 $DEST/cache/mount/
-		echo "/dev/mmcblk0p2 / ${parttype[$rootfs]} defaults,noatime,nodiratime${mountopts[$rootfs]} 0 0" >> $DEST/cache/sdcard/etc/fstab
+		if [[ $ROOTFS_TYPE != nfs ]]; then
+			mount ${LOOP}p2 $DEST/cache/mount/
+			echo "/dev/mmcblk0p2 / ${parttype[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $DEST/cache/sdcard/etc/fstab
+		fi
 		# create /boot on rootfs after it is mounted
 		mkdir -p $DEST/cache/mount/boot/
 		mount ${LOOP}p1 $DEST/cache/mount/boot/
-		echo "/dev/mmcblk0p1 /boot ${parttype[$bootfs]} defaults${mountopts[$bootfs]} 0 0" >> $DEST/cache/sdcard/etc/fstab
+		echo "/dev/mmcblk0p1 /boot ${parttype[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $DEST/cache/sdcard/etc/fstab
 	fi
-	echo "tmpfs /tmp tmpfs defaults,rw,nosuid,nodev 0 0" >> $DEST/cache/sdcard/etc/fstab
+	echo "tmpfs /tmp tmpfs defaults,rw,nosuid 0 0" >> $DEST/cache/sdcard/etc/fstab
+
+	# stage: create boot script
+	rm -f $DEST/cache/mount/boot/boot.scr
+
+	if [[ $ROOTFS_TYPE == nfs ]]; then
+		# copy script provided by user if exists
+		if [[ -f $SRC/userpatches/nfs-boot.cmd ]]; then
+			display_alert "Using custom NFS boot script" "userpatches/nfs-boot.cmd" "info"
+			cp $SRC/userpatches/nfs-boot.cmd $DEST/cache/sdcard/boot/boot.cmd
+		else
+			cp $SRC/lib/scripts/nfs-boot.cmd.template $DEST/cache/sdcard/boot/boot.cmd
+		fi
+	elif [[ $BOOTSIZE != 0 ]]; then
+		sed -i 's/mmcblk0p1/mmcblk0p2/' $DEST/cache/sdcard/boot/boot.cmd
+		sed -i "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" $DEST/cache/sdcard/boot/boot.cmd
+	fi
+
+	mkimage -C none -A arm -T script -d $DEST/cache/sdcard/boot/boot.cmd $DEST/cache/sdcard/boot/boot.scr > /dev/null 2>&1
 
 } #############################################################################
 
@@ -402,43 +448,38 @@ prepare_partitions()
 #
 create_image()
 {
-	# stage: check for fat /boot workaround
-	# using this method to avoid using another global variable
-	local bootfstype=$(findmnt --target $DEST/cache/mount/boot -o FSTYPE -n)
-	[[ $bootfstype == vfat ]] && local boot_workaround=yes
+	# stage: create file name
+	VER=${VER/-$LINUXFAMILY/}
+	VERSION=$VERSION" "$VER
+	VERSION=${VERSION// /_}
+	VERSION=${VERSION//$BRANCH/}
+	VERSION=${VERSION//__/_}
+	[[ $BUILD_DESKTOP == yes ]] && VERSION=${VERSION}_desktop
+	[[ $ROOTFS_TYPE == nfs ]] && VERSION=${VERSION}_nfsboot
 
-	# stage: rsync all except /boot if its filesystem is fat
-	display_alert "Copying files to image" "tmprootfs.raw" "info"
-	eval 'rsync -aHWh ${boot_workaround:+ --exclude="/boot/*"} --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
-		--exclude="/sys/*" --info=progress2,stats1 $DEST/cache/sdcard/ $DEST/cache/mount/'
-
-	# stage: rsync /boot
-	# needs other options for fat32 compatibility
-	if [[ $boot_workaround == yes ]]; then
-		display_alert "Copying files to /boot partition" "tmprootfs.raw" "info"
-		rsync -rLtWh --info=progress2,stats1 $DEST/cache/sdcard/boot $DEST/cache/mount/boot
+	if [[ $ROOTFS_TYPE != nfs ]]; then
+		display_alert "Copying files to image" "tmprootfs.raw" "info"
+		eval 'rsync -aHWh --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
+			--exclude="/sys/*" --info=progress2,stats1 $DEST/cache/sdcard/ $DEST/cache/mount/'
+	else
+		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
+		tar cp --directory=$DEST/cache/sdcard/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
+			--exclude='./sys/*' . | \
+			pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "rootfs.tgz" | pigz > $DEST/images/$VERSION-rootfs.tgz
 	fi
 
-	# stage: fix u-boot script
-	# needs rewriting and testing u-boot scripts
-	# for other boards
-
-	if [[ $BOOTSIZE != 0 && -f $DEST/cache/mount/boot/boot.scr ]]; then
-		rm -f $DEST/cache/mount/boot/boot.scr
-		sed -i 's/mmcblk0p1/mmcblk0p2/' $DEST/cache/mount/boot/boot.cmd
-		# rely on rootfs type autodetect
-		sed -i 's/rootfstype=ext4/rootfstype=f2fs/' $DEST/cache/mount/boot/boot.cmd
-		mkimage -C none -A arm -T script -d $DEST/cache/mount/boot/boot.cmd $DEST/cache/mount/boot/boot.scr > /dev/null 2>&1
+	# stage: rsync /boot
+	display_alert "Copying files to /boot partition" "tmprootfs.raw" "info"
+	if [[ $(findmnt --target $DEST/cache/mount/boot -o FSTYPE -n) == vfat ]]; then
+		# fat32
+		rsync -rLtWh --info=progress2,stats1 $DEST/cache/sdcard/boot $DEST/cache/mount/boot
+	else
+		# ext4
+		rsync -aHWh --info=progress2,stats1 $DEST/cache/sdcard/boot $DEST/cache/mount/boot
 	fi
 
 	# DEBUG: print free space
 	df -h | grep "$DEST/cache/" | tee -a $DEST/debug/debootstrap.log
-
-	if [[ $FEL_BOOT == yes ]]; then
-		FEL_ROOTFS=$DEST/cache/sdcard/
-		display_alert "Trying FEL boot" "$BOARD" "info"
-		source $SRC/lib/fel-load.sh
-	fi
 
 	# stage: write u-boot
 	write_uboot $LOOP
@@ -448,23 +489,11 @@ create_image()
 
 	# unmount /boot first, rootfs second, image file last
 	if [[ $BOOTSIZE != 0 ]]; then umount -l $DEST/cache/mount/boot; fi
-	umount -l $DEST/cache/mount/
+	if [[ $ROOTFS_TYPE != nfs ]]; then umount -l $DEST/cache/mount/; fi
 	losetup -d $LOOP
-
-	# # stage: create file name
-	VER="${VER/-$LINUXFAMILY/}"
-	VERSION=$VERSION" "$VER
-	VERSION="${VERSION// /_}"
-	VERSION="${VERSION//$BRANCH/}"
-	VERSION="${VERSION//__/_}"
-
-	if [[ $BUILD_DESKTOP = yes ]]; then
-		VERSION=$VERSION"_desktop"
-	fi
 
 	mv $DEST/cache/tmprootfs.raw $DEST/cache/$VERSION.raw
 	cd $DEST/cache/
-	mkdir -p $DEST/images
 
 	# stage: compressing or copying image file
 	if [[ -n $FIXED_IMAGE_SIZE || $COMPRESS_OUTPUTIMAGE == no ]]; then
@@ -474,7 +503,7 @@ create_image()
 	else
 		display_alert "Signing and compressing" "$VERSION.zip" "info"
 		# stage: sign with PGP
-		if [[ $GPG_PASS != "" ]]; then
+		if [[ -n $GPG_PASS ]]; then
 			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes $VERSION.raw
 			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
 		fi
@@ -489,18 +518,18 @@ create_image()
 #
 unmount_on_exit()
 {
-		umount -l $DEST/cache/sdcard/dev/pts >/dev/null 2>&1
-		umount -l $DEST/cache/sdcard/dev >/dev/null 2>&1
-		umount -l $DEST/cache/sdcard/proc >/dev/null 2>&1
-		umount -l $DEST/cache/sdcard/sys >/dev/null 2>&1
+	umount -l $DEST/cache/sdcard/dev/pts >/dev/null 2>&1
+	umount -l $DEST/cache/sdcard/dev >/dev/null 2>&1
+	umount -l $DEST/cache/sdcard/proc >/dev/null 2>&1
+	umount -l $DEST/cache/sdcard/sys >/dev/null 2>&1
 
-		umount -l $DEST/cache/sdcard/ >/dev/null 2>&1
+	umount -l $DEST/cache/sdcard/ >/dev/null 2>&1
 
-		umount -l $DEST/cache/mount/boot >/dev/null 2>&1
-		umount -l $DEST/cache/mount/ >/dev/null 2>&1
+	umount -l $DEST/cache/mount/boot >/dev/null 2>&1
+	umount -l $DEST/cache/mount/ >/dev/null 2>&1
 
-		losetup -d $LOOP >/dev/null 2>&1
+	losetup -d $LOOP >/dev/null 2>&1
 
-		exit 1
+	exit 1
 
 } #############################################################################

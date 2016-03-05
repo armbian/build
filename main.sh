@@ -192,7 +192,7 @@ HOST="$BOARD"
 # Load libraries
 source $SRC/lib/configuration.sh			# Board configuration
 source $SRC/lib/debootstrap.sh				# System specific install (old)
-source $SRC/lib/debootstrap-ng.sh 			# System specific install (experimental)
+source $SRC/lib/debootstrap-ng.sh 			# System specific install (extended)
 source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/patching.sh 				# Source patching
 source $SRC/lib/boards.sh 				# Board specific install
@@ -288,7 +288,7 @@ done
 [[ -n "$RELEASE" ]] && create_board_package
 
 if [[ $KERNEL_ONLY != yes ]]; then
-	if [[ $EXPERIMENTAL_DEBOOTSTRAP == yes ]]; then
+	if [[ $EXTENDED_DEBOOTSTRAP == yes ]]; then
 		debootstrap_ng
 	else
 	
