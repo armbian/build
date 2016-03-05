@@ -234,22 +234,22 @@ install_kernel (){
 	fi
 
 	# recompile headers scripts or use cache if exists 
-	#cd $DEST/cache/sdcard/usr/src/$HEADERS_DIR
+	cd $DEST/cache/sdcard/usr/src/$HEADERS_DIR
 
-	#if [ ! -f $DEST/cache/building/$HEADERS_CACHE.tgz ]; then		
-	#	chroot $DEST/cache/sdcard /bin/bash -c "cd /usr/src/$HEADERS_DIR && make headers_check; make headers_install ; make scripts" \
-	#	| dialog --progressbox "Compile kernel headers scripts ..." 20 70
-	#	rm -rf $DEST/cache/building/repack
-	#	mkdir -p $DEST/cache/building -p $DEST/cache/building/repack/usr/src/$HEADERS_DIR -p $DEST/cache/building/repack/DEBIAN
-	#	dpkg-deb -x $DEST/debs/$HEADERS_TMP $DEST/cache/building/repack
-	#	dpkg-deb -e $DEST/debs/$HEADERS_TMP $DEST/cache/building/repack/DEBIAN
-	#	cp -R . $DEST/cache/building/repack/usr/src/$HEADERS_DIR
-	#	dpkg-deb -b $DEST/cache/building/repack $DEST/debs
-	#	rm -rf $DEST/cache/building/repack
-	#	tar cpf - .	| pigz > $DEST/cache/building/$HEADERS_CACHE".tgz"
-	#else
-	#	pigz -dc $DEST/cache/building/$HEADERS_CACHE".tgz" | tar xpf -		
-	#fi
+	if [ ! -f $DEST/cache/building/$HEADERS_CACHE.tgz ]; then		
+		chroot $DEST/cache/sdcard /bin/bash -c "cd /usr/src/$HEADERS_DIR && make headers_check; make headers_install ; make scripts" \
+		| dialog --progressbox "Compile kernel headers scripts ..." 20 70
+		rm -rf $DEST/cache/building/repack
+		mkdir -p $DEST/cache/building -p $DEST/cache/building/repack/usr/src/$HEADERS_DIR -p $DEST/cache/building/repack/DEBIAN
+		dpkg-deb -x $DEST/debs/$HEADERS_TMP $DEST/cache/building/repack
+		dpkg-deb -e $DEST/debs/$HEADERS_TMP $DEST/cache/building/repack/DEBIAN
+		cp -R . $DEST/cache/building/repack/usr/src/$HEADERS_DIR
+		dpkg-deb -b $DEST/cache/building/repack $DEST/debs
+		rm -rf $DEST/cache/building/repack
+		tar cpf - .	| pigz > $DEST/cache/building/$HEADERS_CACHE".tgz"
+	else
+		pigz -dc $DEST/cache/building/$HEADERS_CACHE".tgz" | tar xpf -		
+	fi
 		
 	# copy boot splash image
 	cp $SRC/lib/bin/armbian.bmp $DEST/cache/sdcard/boot/boot.bmp
