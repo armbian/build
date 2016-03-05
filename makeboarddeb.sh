@@ -99,14 +99,6 @@ create_board_package (){
 
 	if [[ $LINUXCONFIG == *sun* ]] ; then
 
-		# add sunxi tools -- not necessary any more since .deb gets installed
-		# cp $SOURCES/$MISC1_DIR/meminfo $destination/usr/local/bin/meminfo
-		# cp $SOURCES/$MISC1_DIR/sunxi-nand-part $destination/usr/local/bin/nand-part
-		# cp $SOURCES/$MISC1_DIR/sunxi-fexc $destination/usr/local/bin/sunxi-fexc
-		# cp $SOURCES/$MISC1_DIR/sunxi-fel $destination/usr/local/bin/sunxi-fel
-		# cp $SOURCES/$MISC1_DIR/sunxi-pio $destination/usr/local/bin/sunxi-pio
-		# ln -s $destination/usr/sbin/sunxi-fexc $destination/usr/sbin/fex2bin
-		# ln -s $destination/usr/sbin/sunxi-fexc $destination/usr/sbin/bin2fex
 		if [ "$BRANCH" != "next" ]; then
 			# add soc temperature app
 			arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/local/bin/sunxi_tp_temp
@@ -133,6 +125,7 @@ create_board_package (){
 	fi
 
 	# enable verbose kernel messages on first boot
+	mkdir -p $destination/boot
 	touch $destination/boot/.verbose
 
 	# add some summary to the image
