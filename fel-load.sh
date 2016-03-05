@@ -9,7 +9,7 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 
-# NOTES
+## NOTES
 #
 # Set FEL_NET_IFNAME to name of your network interface if you have
 # more than one non-loopback interface with assigned IPv4 address
@@ -17,12 +17,17 @@
 # Set FEL_LOCAL_IP to IP address that can be used to reach NFS on your build host
 # if it can't be obtained from ifconfig (i.e. port forwarding to VM guest)
 #
+# It's a good idea to set these settings in userpatches/lib.config if needed
+
+
 # Set FEL_DTB_FILE to relative path to .dtb or .bin file if it can't be obtained
 # from u-boot config (mainline) or boot/script.bin (legacy)
 #
 # FEL_ROOTFS should be set to path to debootstrapped root filesystem
 # unless you want to kill your /etc/fstab and share your rootfs on NFS
 # without any access control
+#
+
 
 fel_prepare_host()
 {
@@ -78,8 +83,8 @@ if [[ -n $FEL_ROOTFS ]]; then
 		display_alert "Connect device in FEL mode and press" "<Enter>" "info"
 		read
 		fel_load
-		read -n 1 -p "Press <b> to boot again, <q> to finish: " RES
-		echo
+		display_alert "Press <b> to boot again, <q> to finish" "FEL" "info"
+		read -n 1 RES
 	done
 	service nfs-kernel-server restart
 fi
