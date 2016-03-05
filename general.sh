@@ -11,10 +11,10 @@
 
 # Functions:
 # cleaning
+# exit_with_error
 # get_package_list_hash
 # fetch_from_github
 # display_alert
-# check_error
 # grab_version
 # fingerprint_image
 # umount_image
@@ -58,6 +58,26 @@ cleaning()
 		display_alert "Cleaning: unrecognized option" "$1" "wrn"
 		;;
 	esac
+}
+
+# exit_with_error <message> <highlight>
+#
+# a way to terminate build process
+# with verbose error message
+#
+
+exit_with_error()
+{
+	local _file=$(basename ${BASH_SOURCE[1]})
+	local _line=${BASH_LINENO[0]}
+	local _function=${FUNCNAME[1]}
+	local _description=$1
+	local _highlight=$2
+
+	display_alert "ERROR in function $_function" "$_file:$_line" "err"
+	display_alert "$_description" "$_highlight" "err"
+	display_alert "Process terminated" "" "info"
+	exit -1
 }
 
 # get_package_list_hash <package_list>
@@ -125,16 +145,6 @@ elif [ $3 == "ext" ]; then
 	echo -e "[\e[0;32m o.k. \x1B[0m] \e[1;32m$1\x1B[0m $TMPARA"
 else
 	echo -e "[\e[0;32m o.k. \x1B[0m] $1 $TMPARA"
-fi
-}
-
-
-check_error ()
-# check last command and display warning only
-{
-if [ $? -ne 0 ]; then 
-		# display warning if patching fails
-		display_alert "... failed. More info: debug/install.log" "$1" "wrn"; 
 fi
 }
 
@@ -257,10 +267,9 @@ prepare_host() {
 	display_alert "Preparing" "host" "info"
 
 	if [[ $(dpkg --print-architecture) == armhf ]]; then
-		display_alert "Running this tool on board itself is not supported" "..." "err"
-		display_alert "Please read documentation to set up proper compilation environment" "..." "err"
-		display_alert "http://www.armbian.com/using-armbian-tools/" "..." "err"
-		exit 1
+		display_alert "Please read documentation to set up proper compilation environment" "..." "info"
+		display_alert "http://www.armbian.com/using-armbian-tools/" "..." "info"
+		exit_with_error "Running this tool on board itself is not supported"
 	fi
 
 	# dialog may be used to display progress

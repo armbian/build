@@ -20,8 +20,9 @@ compile_uboot (){
 #---------------------------------------------------------------------------------------------------------------------------------
 # Compile uboot from sources
 #---------------------------------------------------------------------------------------------------------------------------------
-if [ -d "$SOURCES/$BOOTSOURCEDIR" ]; then
-	
+	if [[ ! -d "$SOURCES/$BOOTSOURCEDIR" ]]; then
+		exit_with_error "Error building u-boot: source directory does not exist" "$BOOTSOURCEDIR"
+	fi
 	local branch="${BRANCH//default/}"
 	[[ -n "$branch" ]] && branch="-"$branch	
 		
@@ -141,14 +142,10 @@ END
 	FILESIZE=$(wc -c $DEST/debs/$CHOOSEN_UBOOT | cut -f 1 -d ' ')
 
 	if [[ $FILESIZE -lt 50000 ]]; then
-		display_alert "Building failed, check configuration." "$CHOOSEN_UBOOT deleted" "err"
 		rm $DEST/debs/$CHOOSEN_UBOOT
-		exit
+		exit_with_error "Building u-boot failed, check configuration." "$CHOOSEN_UBOOT deleted" "err"
 	fi
 	
-	else
-		display_alert "Source file $1 does not exists. Check fetch_from_github configuration." "" "err"
-fi
 }
 
 compile_sunxi_tools (){
@@ -176,7 +173,9 @@ compile_kernel (){
 # Compile kernel
 #---------------------------------------------------------------------------------------------------------------------------------
 
-if [ -d "$SOURCES/$LINUXSOURCEDIR" ]; then 
+	if [[ ! -d "$SOURCES/$LINUXSOURCEDIR" ]]; then
+		exit_with_error "Error building kernel: source directory does not exist" "$LINUXSOURCEDIR"
+	fi
 
 	local branch="${BRANCH//default/}"
 	[[ -n "$branch" ]] && branch="-"$branch	
@@ -223,51 +222,43 @@ if [ -d "$SOURCES/$LINUXSOURCEDIR" ]; then
 		make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig
 	fi
 
-eval 'make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" zImage modules 2>&1' \
-	${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
-	${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." 20 80'} \
-	${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+	eval 'make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" zImage modules 2>&1' \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." 20 80'} \
+		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-if [ ${PIPESTATUS[0]} -ne 0 ] || [ ! -f arch/arm/boot/zImage ]; then
-		display_alert "Kernel was not built" "@host" "err"
-	    exit 1
-fi
-eval 'make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" dtbs 2>&1' \
-	${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
-	${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling Device Tree..." 20 80'} \
-	${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+	if [ ${PIPESTATUS[0]} -ne 0 ] || [ ! -f arch/arm/boot/zImage ]; then
+			exit_with_error "Kernel was not built" "@host"
+	fi
+	eval 'make $CTHREADS ARCH=arm CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" dtbs 2>&1' \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling Device Tree..." 20 80'} \
+		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-if [ ${PIPESTATUS[0]} -ne 0 ]; then
-		display_alert "DTBs was not build" "@host" "err"
-	    exit 1
-fi
+	if [ ${PIPESTATUS[0]} -ne 0 ]; then
+		exit_with_error "DTBs were not build" "@host"
+	fi
 
 
-# different packaging for 4.3+ // probably temporaly soution
-KERNEL_PACKING="deb-pkg"
-IFS='.' read -a array <<< "$VER"
-if (( "${array[0]}" == "4" )) && (( "${array[1]}" >= "3" )); then
-KERNEL_PACKING="bindeb-pkg"
-fi
+	# different packaging for 4.3+ // probably temporaly soution
+	KERNEL_PACKING="deb-pkg"
+	IFS='.' read -a array <<< "$VER"
+	if (( "${array[0]}" == "4" )) && (( "${array[1]}" >= "3" )); then
+		KERNEL_PACKING="bindeb-pkg"
+	fi
 
-# make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- 
-# produce deb packages: image, headers, firmware, libc
-eval 'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=armhf ARCH=arm DEBFULLNAME="$MAINTAINER" \
-	DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1 ' \
-	${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
-	${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." 20 80'} \
-	${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+	# make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- 
+	# produce deb packages: image, headers, firmware, libc
+	eval 'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=armhf ARCH=arm DEBFULLNAME="$MAINTAINER" \
+		DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1 ' \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." 20 80'} \
+		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-
-# we need a name
-CHOOSEN_KERNEL=linux-image"$branch"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
-cd ..
-mv *.deb $DEST/debs/ || exit
-else
-display_alert "Source file $1 does not exists. Check fetch_from_github configuration." "" "err"
-exit
-fi
-sync
+	# we need a name
+	CHOOSEN_KERNEL=linux-image"$branch"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
+	cd ..
+	mv *.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
 }
 
 
@@ -431,8 +422,7 @@ write_uboot()
 		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1)
 	fi
 	if [ $? -ne 0 ]; then
-		display_alert "U-boot failed to install" "@host" "err"
-		exit 1
+		exit_with_error "U-boot failed to install" "@host" "err"
 	fi
 	rm -r /tmp/usr
 	sync

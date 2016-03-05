@@ -322,8 +322,7 @@ case $BOARD in
 		SERIALCON="ttyS0"
 	;;
 	
-	*) echo "Board configuration not found"
-		exit
+	*) exit_with_error "Board configuration not found" "$BOARD"
 	;;
 esac
 
@@ -500,8 +499,7 @@ case $LINUXFAMILY in
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 	;;	
 	
-	*) echo "Defaults not found"
-		exit
+	*) exit_with_error "Defaults not found" "$LINUXFAMILY"
 	;;
 esac
 
@@ -530,7 +528,7 @@ PACKAGE_LIST="alsa-utils automake bash-completion bc bridge-utils build-essentia
 	iw less libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev fake-hwclock wpasupplicant \
 	module-init-tools nano ntp parted pkg-config pv rfkill rsync sudo curl dialog \
 	sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools wget \
-	iptables libdigest-sha-perl libproc-processtable-perl w-scan libusb-dev \
+	iptables libdigest-sha-perl libproc-processtable-perl w-scan libusb-dev ncurses-term \
 	console-setup console-data kbd console-common unicode-data openssh-server man-db"
 
 # Non-essential packages

@@ -30,20 +30,18 @@ debootstrap_ng()
 	fi
 
 	if [[ "ext4 f2fs btrfs nfs fel" != *"$ROOTFS_TYPE"* ]]; then
-		display_alert "Unknown rootfs type" "$ROOTFS_TYPE" "err"
-		exit -1
+		exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
 	fi
 
 	# Fixed image size is in 1M dd blocks (MiB)
 	# to get size of block device /dev/sdX execute as root:
 	# echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
 	if [[ "btrfs f2fs" == *"$ROOTFS_TYPE"* && -z $FIXED_IMAGE_SIZE ]]; then
-		display_alert "$ROOTFS_TYPE root needs user-defined SD card size" "FIXED_IMAGE_SIZE" "err"
-		exit 1
+		exit_with_error "$ROOTFS_TYPE root needs user-defined SD card size" "FIXED_IMAGE_SIZE"
 	fi
 
 	if [[ $ROOTFS_TYPE != ext4 ]]; then
-		display_alert "Please make sure selected kernel version supports $ROOTFS_TYPE" "$CHOOSEN_KERNEL" "wrn"
+		display_alert "Assuming $CHOOSEN_KERNEL supports $ROOTFS_TYPE" "" "wrn"
 	fi
 
 	# small SD card with kernel, boot scritpt and .dtb/.bin files
@@ -342,8 +340,7 @@ prepare_partitions()
 		local sdsize=$FIXED_IMAGE_SIZE
 		# basic sanity check
 		if [[ $ROOTFS_TYPE != nfs && $sdsize -lt $rootfs_size ]]; then
-			display_alert "User defined image size is too small" "$sdsize <= $rootfs_size" "err"
-			exit 1
+			exit_with_error "User defined image size is too small" "$sdsize <= $rootfs_size" "err"
 		fi
 	else
 		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE )) # MiB
@@ -387,8 +384,7 @@ prepare_partitions()
 	LOOP=$(losetup -f)
 	if [[ -z $LOOP ]]; then
 		# NOTE: very unlikely with this debootstrap process
-		display_alert "Unable to find free loop device" "err"
-		exit 1
+		exit_with_error "Unable to find free loop device"
 	fi
 
 	# NOTE: losetup -P option is not available in Trusty
@@ -530,6 +526,6 @@ unmount_on_exit()
 
 	losetup -d $LOOP >/dev/null 2>&1
 
-	exit 1
+	exit_with_error "debootstrap-ng was interrupted"
 
 } #############################################################################

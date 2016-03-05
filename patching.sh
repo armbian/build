@@ -92,7 +92,7 @@ process_patch_file() {
 
 	if [ $? -ne 0 ]; then
 		display_alert "... $(basename $patch)" "failed" "wrn";
-		if [[ $EXIT_PATCHING_ERROR == "yes" ]]; then exit; fi
+		if [[ $EXIT_PATCHING_ERROR == "yes" ]]; then exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"; fi
 	else
 		display_alert "... $(basename $patch)" "succeeded" "info"
 	fi
