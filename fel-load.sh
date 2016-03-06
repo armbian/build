@@ -27,7 +27,8 @@
 # unless you want to kill your /etc/fstab and share your rootfs on NFS
 # without any access control
 #
-
+# Set FEL_AUTO to "yes" to skip prompt before trying FEL load
+#
 
 fel_prepare_host()
 {
@@ -68,7 +69,7 @@ fel_prepare_target()
 fel_load()
 {
 	display_alert "Loading files via" "FEL USB" "info"
-	sunxi-fel -v -p uboot $SOURCES/$BOOTSOURCEDIR/u-boot-sunxi-with-spl.bin \
+	sunxi-fel -p uboot $SOURCES/$BOOTSOURCEDIR/u-boot-sunxi-with-spl.bin \
 		write 0x42000000 $FEL_ROOTFS/boot/zImage \
 		write 0x43000000 $FEL_ROOTFS/$FEL_DTB_FILE \
 		write 0x43100000 $FEL_ROOTFS/boot/boot.scr
@@ -80,8 +81,10 @@ if [[ -n $FEL_ROOTFS ]]; then
 	fel_prepare_target
 	RES=b
 	while [[ $RES == b ]]; do
-		display_alert "Connect device in FEL mode and press" "<Enter>" "info"
-		read
+		if [[ $FEL_AUTO != yes ]]; then
+			display_alert "Connect device in FEL mode and press" "<Enter>" "info"
+			read
+		fi
 		fel_load
 		display_alert "Press <b> to boot again, <q> to finish" "FEL" "info"
 		read -n 1 RES
