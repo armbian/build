@@ -29,6 +29,10 @@ END
 cp $SRC/lib/scripts/50unattended-upgrades $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 cp $SRC/lib/scripts/02periodic $DEST/cache/sdcard/etc/apt/apt.conf.d/02periodic
 
+# setting window title for remote sessions
+mkdir -p $DEST/cache/sdcard/etc/profile.d
+install -m 755 $SRC/lib/scripts/ssh-title.sh $DEST/cache/sdcard/etc/profile.d/ssh-title.sh
+
 case $RELEASE in
 
 # Debian Wheezy
@@ -189,5 +193,5 @@ chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove hostapd >/dev/null
 # install sunxi-tools
 cp $SRC/lib/bin/sunxi-tools_1.3-1_armhf.deb $DEST/cache/sdcard/tmp/
 # libusb dependency should already be satisfied by usbutils
-chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/sunxi-tools_1.3-1_armhf.deb"
+chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/sunxi-tools_1.3-1_armhf.deb >/dev/null 2>&1"
 }
