@@ -143,7 +143,7 @@ END
 
 	if [[ $FILESIZE -lt 50000 ]]; then
 		rm $DEST/debs/$CHOOSEN_UBOOT
-		exit_with_error "Building u-boot failed, check configuration." "$CHOOSEN_UBOOT deleted" "err"
+		exit_with_error "Building u-boot failed, check configuration"
 	fi
 	
 }
@@ -422,7 +422,7 @@ write_uboot()
 		( dd if=/tmp/usr/lib/"$CHOOSEN_UBOOT"/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1)
 	fi
 	if [ $? -ne 0 ]; then
-		exit_with_error "U-boot failed to install" "@host" "err"
+		exit_with_error "U-boot failed to install" "@host"
 	fi
 	rm -r /tmp/usr
 	sync

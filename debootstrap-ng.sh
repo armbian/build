@@ -340,7 +340,7 @@ prepare_partitions()
 		local sdsize=$FIXED_IMAGE_SIZE
 		# basic sanity check
 		if [[ $ROOTFS_TYPE != nfs && $sdsize -lt $rootfs_size ]]; then
-			exit_with_error "User defined image size is too small" "$sdsize <= $rootfs_size" "err"
+			exit_with_error "User defined image size is too small" "$sdsize <= $rootfs_size"
 		fi
 	else
 		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE )) # MiB

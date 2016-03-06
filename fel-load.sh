@@ -85,6 +85,7 @@ if [[ -n $FEL_ROOTFS ]]; then
 		fel_load
 		display_alert "Press <b> to boot again, <q> to finish" "FEL" "info"
 		read -n 1 RES
+		echo
 	done
 	service nfs-kernel-server restart
 fi
