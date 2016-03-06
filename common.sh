@@ -297,7 +297,8 @@ if [[ -n "$MISC3_DIR" ]]; then
 	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
 	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
 	(make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
-	cp *.ko $DEST/cache/sdcard/usr/local/bin
+	cp *.ko $DEST/cache/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
+	depmod -b $DEST/cache/sdcard/ $VER-$LINUXFAMILY
 	#cp blacklist*.conf $DEST/cache/sdcard/etc/modprobe.d/
 fi
 
