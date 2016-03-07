@@ -528,7 +528,7 @@ esac
 PACKAGE_LIST="alsa-utils automake bash-completion bc bridge-utils build-essential cmake cpufrequtils \
 	device-tree-compiler dosfstools figlet fbset fping git haveged hdparm hostapd ifenslave-2.6 psmisc \
 	iw less libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev fake-hwclock wpasupplicant \
-	module-init-tools nano ntp parted pkg-config pv rfkill rsync sudo curl dialog \
+	module-init-tools nano ntp parted pkg-config pv rfkill rsync sudo curl dialog crda wireless-regdb \
 	sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools wget \
 	iptables libdigest-sha-perl libproc-processtable-perl w-scan libusb-dev ncurses-term \
 	console-setup console-data kbd console-common unicode-data openssh-server man-db libmtp-runtime"
