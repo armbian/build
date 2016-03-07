@@ -64,7 +64,7 @@ install_board_specific (){
 	
 	# Udoo
 	if [[ $BOARD == "udoo" ]] ; then		
-
+		 
 		chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove lirc >/dev/null 2>&1"
 		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.default
 		sed 's/wlan0/wlan2/' -i $DEST/cache/sdcard/etc/network/interfaces.bonding
@@ -85,6 +85,9 @@ install_board_specific (){
 		# firmware for M4
 		mkdir -p $DEST/cache/sdcard/boot/bin/
 		cp $SRC/lib/bin/m4startup.fw* $DEST/cache/sdcard/boot/bin/
+		# fix for BT
+		cp $SRC/lib/bin/udoo-neo-debs/udooneo-bluetooth_1.2-1_armhf.deb /tmp
+		chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/udooneo-bluetooth_1.2-1_armhf.deb >/dev/null 2>&1"
 
 	fi
 
