@@ -4,7 +4,7 @@
 
 FEL/NFS boot mode is a possibility to test freshly created Armbian distribution without using SD card. It is implemented by loading u-boot, kernel, boot script and .bin/.dtb file via [USB FEL mode](https://linux-sunxi.org/FEL/USBBoot) and providing root filesystem via NFS share.
 
-Note, this mode is designed only for testing. To use root on NFS, use `ROOTFS_TYPE=nfs` option.
+Note, this mode is designed only for testing. To use root on NFS permanently, use `ROOTFS_TYPE=nfs` option.
 
 ### Requirements
 
