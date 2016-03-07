@@ -91,7 +91,7 @@ if [ -f "$cache_fname" ]; then
 	rm $DEST/cache/sdcard/etc/resolv.conf
 	echo "nameserver 8.8.8.8" > $DEST/cache/sdcard/etc/resolv.conf
 	if [ "$diff" -gt "3" ]; then
-		chroot $DEST/cache/sdcard /bin/bash -c "apt-get update" | dialog --backtitle "$backtitle" --title "Force package update ..." --progressbox 20 70
+		chroot $DEST/cache/sdcard /bin/bash -c "apt-get update" | dialog --backtitle "$backtitle" --title "Force package update ..." --progressbox $TTY_Y $TTY_X
 	fi
 fi
 
@@ -100,7 +100,7 @@ if [ ! -f "$cache_fname" ]; then
 
 # debootstrap base system
 [[ $DISTRIBUTION == "Debian" ]] && local redir="http://httpredir.debian.org/debian/"
-debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ $redir | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox 20 70
+debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ $redir | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox $TTY_Y $TTY_X
 
 # we need emulator for second stage
 cp /usr/bin/qemu-arm-static $DEST/cache/sdcard/usr/bin/
@@ -113,7 +113,7 @@ test -d "$d" || mkdir -p "$d" && cp /usr/share/keyrings/debian-archive-keyring.g
 test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
 
 # debootstrap second stage
-chroot $DEST/cache/sdcard /bin/bash -c "/debootstrap/debootstrap --second-stage" | dialog --backtitle "$backtitle" --title "Installing $DISTRIBUTION $RELEASE base system to image template ..." --progressbox 20 70
+chroot $DEST/cache/sdcard /bin/bash -c "/debootstrap/debootstrap --second-stage" | dialog --backtitle "$backtitle" --title "Installing $DISTRIBUTION $RELEASE base system to image template ..." --progressbox $TTY_Y $TTY_X
 
 # mount proc, sys and dev
 mount -t proc chproc $DEST/cache/sdcard/proc
@@ -131,7 +131,7 @@ chroot $DEST/cache/sdcard /bin/bash -c "cat armbian.key | apt-key add -"
 rm $DEST/cache/sdcard/armbian.key
 
 # update and upgrade
-LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y update" | dialog --progressbox "Updating package databases ..." 20 70
+LC_ALL=C LANGUAGE=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y update" | dialog --progressbox "Updating package databases ..." $TTY_Y $TTY_X
 
 # generate locales and install packets
 display_alert "Install locales" "$DEST_LANG" "info"
