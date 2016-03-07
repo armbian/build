@@ -95,7 +95,7 @@ Main() {
 		# we should already provide monitoring, check whether DEBUG
 		# is also set
 		ArmbianMonitoring=TRUE
-		read DebugMode </etc/armbianmonitor/start-monitoring
+		read DebugMode </etc/armbianmonitor/start-monitoring 2>/dev/null
 	fi
 	
 	# check whether rpimonitord is running and compare with ${ArmbianMonitoring}
@@ -108,7 +108,7 @@ Main() {
 } # Main
 
 ParseOptions() {
-	while getopts 'hHbBuUrRmM' c ; do
+	while getopts 'hHbBuUrRmMdD' c ; do
 	case ${c} in
 		H)
 			# display full help test
@@ -164,6 +164,23 @@ ParseOptions() {
 			echo -e "\nNow you're able to enjoy RPi-Monitor at http://$((ifconfig -a) | sed -n '/inet addr/s/.*addr.\([^ ]*\) .*/\1/p' | head -1):8888"
 			exit 0
 			;;
+		d|D)
+			fping sprunge.us | grep -q alive || \
+				(echo "Network/firewall problem detected. Please fix this prior to installing RPi-Monitor." >&2 ; exit 1)
+			DebugOutput="$(mktemp /tmp/${0##*/}.XXXXXX)"
+			trap "rm \"${DebugOutput}\" ; exit 0" 0 1 2 3 15
+			set -x
+			exec 2>"${DebugOutput}"
+			PreRequisits >/dev/null 2>&1
+			CheckDisks
+			which curl >/dev/null 2>&1 || apt-get -f -qq -y install curl
+			echo -e "\nDebug output has been collected at the following URL: \c"
+			(cat "${DebugOutput}"; echo -e "\n\n\ngdisk.txt contents:\n" ; cat "${MyTempDir}/gdisk.txt" ;\
+				echo -e "\n\n\nsmartctl.txt contents:\n" ; cat "${MyTempDir}/smartctl.txt") \
+				| curl -F 'sprunge=<-' http://sprunge.us
+			echo -e "Please post the URL in the Armbian forum where you've been asked for."
+			exit 0			
+			;;
 	esac
 	done
 } # ParseOptions
@@ -179,15 +196,16 @@ DisplayUsage() {
 			LGREEN='\033[1;32m'
 		fi
 	fi
-	echo -e "Usage: ${BOLD}${0##*/} [-h] [-b] -m [interval] [-r] [-u]${NC}\n"
+	echo -e "Usage: ${BOLD}${0##*/} [-h] [-b] [-d] [-m] [-r] [-u]${NC}\n"
 	echo -e "############################################################################"
 	if [ ${FullUsage} ]; then
 		echo -e "\nDetailed Description:"
 		grep "^#" "$0" | grep -v "^#\!/bin/bash" | sed 's/^#//'
 	fi
-	echo -e "\n Use ${BOLD}armbianmonitor${NC} to toggle boot verbosity or upload support data:\n"
+	echo -e "\n Use ${BOLD}armbianmonitor${NC} for the following tasks:\n"
 	echo -e " armbianmonitor ${BOLD}-b${NC} switches between verbose and normal boot"
-	echo -e " armbianmonitor ${BOLD}-m [interval]${NC} provides simple CLI monitoring"
+	echo -e " armbianmonitor ${BOLD}-d${NC} tries to upload debug disk info to improve armbianmonitor"
+	echo -e " armbianmonitor ${BOLD}-m${NC} provides simple CLI monitoring"
 	echo -e " armbianmonitor ${BOLD}-r${NC} tries to install RPi-Monitor"
 	echo -e " armbianmonitor ${BOLD}-u${NC} tries to upload armhwinfo.log for support purposes\n"
 	echo -e "############################################################################\n"
@@ -316,16 +334,16 @@ CheckDisks() {
 			SMARTPrefix="$(CheckSMARTModes ${DeviceNode} 2>/dev/null)"
 			if [ "X${SMARTPrefix}" = "X" ]; then
 				# we can't query the disk. Time to give up
-				echo -e ". Unable to query the disk through S.M.A.R.T.\nPlease investigate manually using smartctl\n"
+				echo -e "\nUnable to query the disk through S.M.A.R.T.\nPlease investigate manually using smartctl\n"
 				break
 			fi
 		fi
 		
 		# user feedback
 		if [ "X${SMARTPrefix}" = "X" ]; then
-			echo -e " (accessible through S.M.A.R.T.)"
+			echo -e " \n(accessible through S.M.A.R.T.)"
 		else
-			echo -e " (can be queried with \"-d ${SMARTPrefix}\" through S.M.A.R.T.)"
+			echo -e " \n(can be queried with \"-d ${SMARTPrefix}\" through S.M.A.R.T.)"
 		fi
 
 		# check for CRC and LCC attributes
@@ -343,8 +361,8 @@ CheckDisks() {
 				echo -e "\nAdded disk \"${DeviceModel}\"/\"${HddtempName}\" to /etc/hddtemp.db using S.M.A.R.T. attribute ${DiskTemp}\nbased on the following available thermal values:"
 				grep "Temperature" "${MyTempDir}/smartctl.txt"
 				# check hddtemp result
-				HddtempResult=$(hddtemp -n ${DeviceNode} | awk -F" " '{print $1}')
-				if [ "X${HddtempResult}" = "X${DeviceNode}:" ]; then
+				HddtempResult=$(hddtemp -n ${DeviceNode} | grep -v 'not available' | awk -F" " '{print $1}')
+				if [ "X${HddtempResult}" != "X${DeviceNode}:" ]; then
 					# hddtemp isn't able to query the disk
 					HddtempStatus="does not work. Please check with smartctl and adjust config accordingly"
 					echo -e "\nhddtemp output: $(hddtemp ${DeviceNode})"
@@ -375,11 +393,11 @@ CheckDisks() {
 				;;
 			*)
 				# new disk, we recommend an entry for /etc/armbianmonitor/disks.conf
-				echo -e "Disk not configured for monitoring. We were able to extract the following information:\nGUID: ${GUID}"
+				echo -e "Disk not configured for monitoring. We were able to extract the following \ninformation:\n   GUID: ${GUID}"
 				if [ "X${SMARTPrefix}" != "X" ]; then
-					echo -e "QueryMode: -d ${SMARTPrefix}"
+					echo -e "   QueryMode: -d ${SMARTPrefix}"
 				fi
-				echo -e "hddtemp: ${HddtempStatus}\nCRC attribute: ${CRCAttribute}\nLCC Attribute: ${LCCAttribute}"
+				echo -e "   hddtemp: ${HddtempStatus}\n   CRC attribute: ${CRCAttribute}\n   LCC Attribute: ${LCCAttribute}"
 				case ${HddtempStatus} in
 					"will work")
 						echo -e "If you want to monitor the disk please add to /etc/armbianmonitor/disks.conf:\n${GUID}:${DeviceModel}:${SMARTPrefix}::${CRCAttribute}:${LCCAttribute}"
@@ -404,7 +422,7 @@ CheckSMARTModes() {
 	
 	for i in auto sat usbcypress usbjmicron usbprolific usbsunplus ; do
 		# user feedback
-		echo -n "." >/dev/tty
+		# echo -n "." >/dev/tty
 		# query disk using the specific protocol
 		echo -n "" >"${MyTempDir}/smartctl.txt"
 		smartctl -q noserial -s on -d ${i} -a ${1} >"${MyTempDir}/smartctl.txt" 2>/dev/null
