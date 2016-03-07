@@ -142,6 +142,8 @@ debootstrap_ng()
 		umount $DEST/cache/sdcard
 	fi
 
+	rm -rf $DEST/cache/sdcard
+
 	# remove exit trap
 	trap - INT TERM EXIT
 
@@ -168,7 +170,7 @@ create_rootfs_cache()
 
 		# stage: debootstrap base system
 		# apt-cacher-ng mirror configurarion
-		if [[ $RELEASE = trusty ]]; then
+		if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then
 			local apt_mirror="http://localhost:3142/ports.ubuntu.com/"
 		else
 			local apt_mirror="http://localhost:3142/httpredir.debian.org/debian"
@@ -525,6 +527,8 @@ unmount_on_exit()
 	umount -l $DEST/cache/mount/ >/dev/null 2>&1
 
 	losetup -d $LOOP >/dev/null 2>&1
+
+	rm -rf $DEST/cache/sdcard
 
 	exit_with_error "debootstrap-ng was interrupted"
 

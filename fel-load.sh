@@ -9,26 +9,9 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 
-## NOTES
-#
-# Set FEL_NET_IFNAME to name of your network interface if you have
-# more than one non-loopback interface with assigned IPv4 address
-#
-# Set FEL_LOCAL_IP to IP address that can be used to reach NFS on your build host
-# if it can't be obtained from ifconfig (i.e. port forwarding to VM guest)
-#
-# It's a good idea to set these settings in userpatches/lib.config if needed
-
-
-# Set FEL_DTB_FILE to relative path to .dtb or .bin file if it can't be obtained
-# from u-boot config (mainline) or boot/script.bin (legacy)
-#
 # FEL_ROOTFS should be set to path to debootstrapped root filesystem
 # unless you want to kill your /etc/fstab and share your rootfs on NFS
 # without any access control
-#
-# Set FEL_AUTO to "yes" to skip prompt before trying FEL load
-#
 
 fel_prepare_host()
 {
@@ -41,7 +24,12 @@ fel_prepare_host()
 
 fel_prepare_target()
 {
-	cp $SRC/lib/scripts/fel-boot.cmd.template $FEL_ROOTFS/boot/boot.cmd
+	if [[ -f $SRC/userpatches/fel-boot.cmd ]]; then
+		display_alert "Using custom boot script" "userpatches/fel-boot.cmd" "info"
+		cp $SRC/userpatches/fel-boot.cmd $FEL_ROOTFS/boot/boot.cmd
+	else
+		cp $SRC/lib/scripts/fel-boot.cmd.template $FEL_ROOTFS/boot/boot.cmd
+	fi
 	if [[ -z $FEL_LOCAL_IP ]]; then
 		FEL_LOCAL_IP=$(ifconfig $FEL_NET_IFNAME | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p')
 	fi
