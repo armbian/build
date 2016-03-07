@@ -108,7 +108,7 @@ Main() {
 } # Main
 
 ParseOptions() {
-	while getopts 'hHbBuUm:M:' c ; do
+	while getopts 'hHbBuUrRmM' c ; do
 	case ${c} in
 		H)
 			# display full help test
@@ -135,7 +135,8 @@ ParseOptions() {
 			;;
 		m|M)
 			# monitoring mode
-			# MonitorMode ${OPTARG}
+			echo -e "Stop monitoring using [ctrl]-[c]"
+			MonitorMode ${OPTARG}
 			exit 0
 			;;
 		u|U)
@@ -148,6 +149,19 @@ ParseOptions() {
 			(cat /var/log/armhwinfo.log ; echo -e "\n### dmesg now:\n$(dmesg | tail -n 1000)") \
 				| curl -F 'sprunge=<-' http://sprunge.us
 			echo -e "Please post the URL in the Armbian forum where you've been asked for."
+			exit 0
+			;;
+		r|R)
+			# Installs RPi-Monitor and patches config on sun8i
+			fping armbian.com | grep -q alive || \
+				(echo "Network/firewall problem detected. Please fix this prior to installing RPi-Monitor." >&2 ; exit 1)
+			InstallRPiMonitor
+			case $(awk '/Hardware/ {print $3}' </proc/cpuinfo) in
+				sun8i)
+					PatchRPiMonitor_for_sun8i
+					;;
+			esac
+			echo -e "\nNow you're able to enjoy RPi-Monitor at http://$((ifconfig -a) | sed -n '/inet addr/s/.*addr.\([^ ]*\) .*/\1/p' | head -1):8888"
 			exit 0
 			;;
 	esac
@@ -165,7 +179,7 @@ DisplayUsage() {
 			LGREEN='\033[1;32m'
 		fi
 	fi
-	echo -e "Usage: ${BOLD}${0##*/} [-h] [-b] [-u]${NC}\n"
+	echo -e "Usage: ${BOLD}${0##*/} [-h] [-b] -m [interval] [-r] [-u]${NC}\n"
 	echo -e "############################################################################"
 	if [ ${FullUsage} ]; then
 		echo -e "\nDetailed Description:"
@@ -173,6 +187,8 @@ DisplayUsage() {
 	fi
 	echo -e "\n Use ${BOLD}armbianmonitor${NC} to toggle boot verbosity or upload support data:\n"
 	echo -e " armbianmonitor ${BOLD}-b${NC} switches between verbose and normal boot"
+	echo -e " armbianmonitor ${BOLD}-m [interval]${NC} provides simple CLI monitoring"
+	echo -e " armbianmonitor ${BOLD}-r${NC} tries to install RPi-Monitor"
 	echo -e " armbianmonitor ${BOLD}-u${NC} tries to upload armhwinfo.log for support purposes\n"
 	echo -e "############################################################################\n"
 } # DisplayUsage
@@ -186,51 +202,82 @@ MonitorMode() {
 	# - Soc temperature if available
 	# - PMIC temperature if available
 	# TODO: Format output nicely
+	LastUserStat=0
+	LastNiceStat=0
+	LastSystemStat=0
+	LastIdleStat=0
+	LastIOWaitStat=0
+	LastIrqStat=0
+	LastSoftIrqStat=0
+	LastCpuStatCheck=0
+
 	Sensors="/etc/armbianmonitor/datasources/"
+	echo -e "Time        CPU    load %cpu %sys %usr %nice %io %irq\c"
+	[ -f "${Sensors}/soctemp" ] && echo -e "   CPU\c"
+	[ -f "${Sensors}/pmictemp" ] && echo -e "   PMIC\c"
 	while true ; do
-		LoadAvg=$(cut -f1 </proc/loadavg)
-		echo -e "$(date "+%Y-%m-%d %H:%M:%S"):\t${LoadAvg}\t$(ProcessStats)\c"
-		[ -f "${Sensors}/soctemp" ] && echo -e "\t$(awk '{printf ("%0.1f",$1/1000); }' <"${Sensors}/soctemp")°C\c"
-		[ -f "${Sensors}/pmictemp" ] && echo -e "\t$(awk '{printf ("%0.1f",$1/1000); }' <"${Sensors}/pmictemp")°C"
+		LoadAvg=$(cut -f1 -d" " </proc/loadavg)
+		CpuFreq=$(awk '{printf ("%0.0f",$1/1000); }' </sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq)
+		echo -e "\n$(date "+%H:%M:%S"): $(printf "%4s" ${CpuFreq})MHz $(printf "%5s" ${LoadAvg}) $(ProcessStats)\c"
+		if [ -f "${Sensors}/soctemp" ]; then
+			read SocTemp <"${Sensors}/soctemp"
+			if [ ${SocTemp} -ge 1000 ]; then
+				SocTemp=$(awk '{printf ("%0.1f",$1/1000); }' <"${Sensors}/soctemp")
+			fi
+			echo -e " $(printf "%4s" ${SocTemp})°C\c"
+		fi
+		[ -f "${Sensors}/pmictemp" ] && \
+			(PMICTemp=$(awk '{printf ("%0.1f",$1/1000); }' <"${Sensors}/pmictemp") ; echo -e " $(printf "%4s" ${PMICTemp})°C\c")
 		sleep ${1:-5}
 	done
 } # MonitorMode
 
 ProcessStats() {
-	set $(awk -F" " '/^cpu / {print $2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$7"\t"$8}' </proc/stat)
-	UserStat=$1
-	NiceStat=$2
-	SystemStat=$3
-	IdleStat=$4
-	IOWaitStat=$5
-	IrqStat=$6
-	SoftIrqStat=$7
-	
-	UserDiff=$(( ${UserStat} - ${LastUserStat} ))
-	NiceDiff=$(( ${NiceStat} - ${LastNiceStat} ))
-	SystemDiff=$(( ${SystemStat} - ${LastSystemStat} ))
-	IdleDiff=$(( ${IdleStat} - ${LastIdleStat} ))
-	IOWaitDiff=$(( ${IOWaitStat} - ${LastIOWaitStat} ))
-	IrqDiff=$(( ${IrqStat} - ${LastIrqStat} ))
-	SoftIrqDiff=$(( ${SoftIrqStat} - ${LastSoftIrqStat} ))
-	
-	Total=$(( ${UserDiff} + ${NiceDiff} + ${SystemDiff} + ${IdleDiff} + ${IOWaitDiff} + ${IrqDiff} + ${SoftIrqDiff} ))
-	CPULoad=$(( ( ${Total} - ${IdleDiff} ) * 100 / ${Total} ))
-	UserLoad=$(( ${UserDiff} *100 / ${Total} ))
-	SystemLoad=$(( ${SystemDiff} *100 / ${Total} ))
-	NiceLoad=$(( ${NiceDiff} *100 / ${Total} ))
-	IOWaitLoad=$(( ${IOWaitDiff} *100 / ${Total} ))
-	IrqCombinedLoad=$(( ( ${IrqDiff} + ${SoftIrqDiff} ) *100 / ${Total} ))
-	
-	echo "${CPULoad} ${SystemLoad} ${UserLoad} ${NiceLoad} ${IOWaitLoad} ${IrqCombinedLoad}"
+	if [ -f /tmp/cpustat ]; then
+		# RPi-Monitor/Armbianmonitor already running and providing processed values
+		set $(awk -F" " '{print $1"\t"$2"\t"$3"\t"$4"\t"$5"\t"$6}' </tmp/cpustat)
+		CPULoad=$1
+		SystemLoad=$2
+		UserLoad=$3
+		NiceLoad=$4
+		IOWaitLoad=$5
+		IrqCombinedLoad=$6		
+	else
+		set $(awk -F" " '/^cpu / {print $2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$7"\t"$8}' </proc/stat)
+		UserStat=$1
+		NiceStat=$2
+		SystemStat=$3
+		IdleStat=$4
+		IOWaitStat=$5
+		IrqStat=$6
+		SoftIrqStat=$7
+		
+		UserDiff=$(( ${UserStat} - ${LastUserStat} ))
+		NiceDiff=$(( ${NiceStat} - ${LastNiceStat} ))
+		SystemDiff=$(( ${SystemStat} - ${LastSystemStat} ))
+		IdleDiff=$(( ${IdleStat} - ${LastIdleStat} ))
+		IOWaitDiff=$(( ${IOWaitStat} - ${LastIOWaitStat} ))
+		IrqDiff=$(( ${IrqStat} - ${LastIrqStat} ))
+		SoftIrqDiff=$(( ${SoftIrqStat} - ${LastSoftIrqStat} ))
+		
+		Total=$(( ${UserDiff} + ${NiceDiff} + ${SystemDiff} + ${IdleDiff} + ${IOWaitDiff} + ${IrqDiff} + ${SoftIrqDiff} ))
+		CPULoad=$(( ( ${Total} - ${IdleDiff} ) * 100 / ${Total} ))
+		UserLoad=$(( ${UserDiff} *100 / ${Total} ))
+		SystemLoad=$(( ${SystemDiff} *100 / ${Total} ))
+		NiceLoad=$(( ${NiceDiff} *100 / ${Total} ))
+		IOWaitLoad=$(( ${IOWaitDiff} *100 / ${Total} ))
+		IrqCombinedLoad=$(( ( ${IrqDiff} + ${SoftIrqDiff} ) *100 / ${Total} ))
 
-	LastUserStat=${UserStat}
-	LastNiceStat=${NiceStat}
-	LastSystemStat=${SystemStat}
-	LastIdleStat=${IdleStat}
-	LastIOWaitStat=${IOWaitStat}
-	LastIrqStat=${IrqStat}
-	LastSoftIrqStat=${SoftIrqStat}
+		LastUserStat=${UserStat}
+		LastNiceStat=${NiceStat}
+		LastSystemStat=${SystemStat}
+		LastIdleStat=${IdleStat}
+		LastIOWaitStat=${IOWaitStat}
+		LastIrqStat=${IrqStat}
+		LastSoftIrqStat=${SoftIrqStat}
+	fi
+	echo -e "$(printf "%3s" ${CPULoad})%$(printf "%4s" ${SystemLoad})%$(printf "%4s" ${UserLoad})%$(printf "%4s" ${NiceLoad})%$(printf "%4s" ${IOWaitLoad})%$(printf "%4s" ${IrqCombinedLoad})%"
+
 } # ProcessStats
 
 CheckDisks() {
@@ -413,13 +460,168 @@ CreateTempDir() {
 InstallRPiMonitor() {
 	# Installs rpimonitord based on the official instructions from
 	# http://rpi-experiences.blogspot.fr/p/rpi-monitor-installation.html
+	if [ "$(id -u)" != "0" ]; then
+		echo "Installing RPi-Monitor requires root privileges, try sudo please. Exiting" >&2
+		exit 1
+	fi
+	echo -e "Installing RPi-Monitor. This can take up to 5 minutes. Be patient please\c"
 	apt-get -qq -y update
 	apt-get -f -qq -y install apt-transport-https ca-certificates
 	wget -q http://goo.gl/rsel0F -O /etc/apt/sources.list.d/rpimonitor.list
-	apt-key adv --recv-keys --keyserver keyserver.ubuntu.com 2C0D3C0F
+	apt-key adv --recv-keys --keyserver keyserver.ubuntu.com 2C0D3C0F >/dev/null 2>&1
 	apt-get -qq -y update
 	apt-get -f -qq -y install rpimonitor
 	/usr/share/rpimonitor/scripts/updatePackagesStatus.pl &
 } # InstallRPiMonitor
+
+PatchRPiMonitor_for_sun8i() {
+	echo -e "\nNow patching RPi-Monitor to deal correctly with H3"
+	cd / && echo "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
+BAKBQCAQCAQCgUAgEAgEwjPhPzou6T0AoAAA" | base64 --decode | tar xzf -
+	which systemctl >/dev/null 2>&1
+	case $? in
+		0)
+			# Jessie
+			systemctl enable rpimonitor-helper >/dev/null 2>&1
+			systemctl start rpimonitor-helper >/dev/null 2>&1
+			systemctl restart rpimonitor >/dev/null 2>&1
+			;;
+		*)
+			# Wheezy|Trusty
+			insserv rpimonitor-helper >/dev/null 2>&1 || update-rc.d rpimonitor-helper defaults 90 10 >/dev/null 2>&1
+			cd /tmp && nohup /usr/local/sbin/rpimonitor-helper.sh & >/dev/null 2>&1
+			/etc/init.d/rpimonitor stop >/dev/null 2>&1
+			/etc/init.d/rpimonitor start >/dev/null 2>&1
+			;;
+	esac
+} # PatchRPiMonitor_for_sun8i
 
 Main "$@"

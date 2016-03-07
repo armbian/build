@@ -34,7 +34,7 @@ Armbian started beginning with release 5.04 to support all available H3 based Or
 
 ***Known issues with 5.05***
 
-- Booting from NAND on OPi Plus currently not supported
+- Booting from eMMC on OPi Plus currently not supported
 
 ***Important to know***
 
@@ -43,6 +43,7 @@ Armbian started beginning with release 5.04 to support all available H3 based Or
 - our [Geek documentation](http://www.armbian.com/using-armbian-tools/) (in case you want to build your own images)
 - CPU frequency settings are 648-1200 MHz on OPi One/Lite and 480-1296 MHz on the other boards (cpufreq governor is _interactive_ therefore the board only increases CPU speed and consumption when needed)
 - In case you experience instabilities, think about installing [RPi-Monitor for H3](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5076) to get an idea whether you suffer from overheating
+- In case you're unsure whether to test a desktop or CLI image simply try out the GUI version since you can always get 'CLI behaviour' by running 'sudo update-rc.d -f nodm disable' later (this disables the start of X windows and desktop images behave like those made for headless use afterwards. If you're experienced you could also reclaim disk space by removing the _libxfce4util-common_ package and doing an _apt-get autoremove_ later)
 
 ***Areas that need testing/feedback***
 
