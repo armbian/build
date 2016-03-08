@@ -14,6 +14,7 @@ Armbian started beginning with release 5.04 to support all available H3 based Or
 - I2S possible on all Orange Pis (compare with the [mini tutorial](http://forum.armbian.com/index.php/topic/759-tutorial-i2s-on-orange-pi-h3/) since you need to tweak script.bin)
 - default display resolution set to 720p60 to fix possible overscan issues on 1st boot
 - HW accelerated video decoding works for most formats
+- Booting from eMMC on OPi Plus now possible
 
 ***Changes in 5.04 compared to pre-releases***
 
@@ -34,7 +35,7 @@ Armbian started beginning with release 5.04 to support all available H3 based Or
 
 ***Known issues with 5.05***
 
-- Booting from eMMC on OPi Plus currently not supported
+- Playing HEVC/H.265 video with 10 bit depth not supported
 
 ***Important to know***
 
@@ -44,6 +45,7 @@ Armbian started beginning with release 5.04 to support all available H3 based Or
 - CPU frequency settings are 648-1200 MHz on OPi One/Lite and 480-1296 MHz on the other boards (cpufreq governor is _interactive_ therefore the board only increases CPU speed and consumption when needed)
 - In case you experience instabilities, think about installing [RPi-Monitor for H3](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5076) to get an idea whether you suffer from overheating
 - In case you're unsure whether to test a desktop or CLI image simply try out the GUI version since you can always get 'CLI behaviour' by running 'sudo update-rc.d -f nodm disable' later (this disables the start of X windows and desktop images behave like those made for headless use afterwards. If you're experienced you could also reclaim disk space by removing the _libxfce4util-common_ package and doing an _apt-get autoremove_ later)
+- especially for desktop images the speed of your SD card matters. If possible try to use our _nand-sata-install_ script to move the rootfs away from SD card. The script also works with USB disks flawlessly ([some background information](http://forum.armbian.com/index.php/topic/793-moving-to-harddisk/))
 
 ***Areas that need testing/feedback***
 
