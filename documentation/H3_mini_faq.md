@@ -4,7 +4,7 @@
 
 Armbian started beginning with release 5.04 to support all available H3 based Orange Pi boards (including [One](http://forum.armbian.com/index.php/topic/724-quick-review-of-orange-pi-one/) and Lite when available).
 
-***Changes in 5.05 (not yet released!)***
+***Changes in 5.05***
 
 - Auto detection for the Orange Pi 2 does work now
 - Mali acceleration works for all users not only root
