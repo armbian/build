@@ -470,10 +470,10 @@ create_image()
 	display_alert "Copying files to /boot partition" "tmprootfs.raw" "info"
 	if [[ $(findmnt --target $DEST/cache/mount/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
-		rsync -rLtWh --info=progress2,stats1 $DEST/cache/sdcard/boot $DEST/cache/mount/boot
+		rsync -rLtWh --info=progress2,stats1 $DEST/cache/sdcard/boot $DEST/cache/mount
 	else
 		# ext4
-		rsync -aHWh --info=progress2,stats1 $DEST/cache/sdcard/boot $DEST/cache/mount/boot
+		rsync -aHWh --info=progress2,stats1 $DEST/cache/sdcard/boot $DEST/cache/mount
 	fi
 
 	# DEBUG: print free space
