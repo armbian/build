@@ -1,5 +1,10 @@
 # Release history
 
+**v5.05 / 8.3.2016**
+
+- H3 images rebuilded
+- Udoo quad images upgraded to 4.4.4
+
 **v5.04 / 1.3.2016**
 
 - Banana M1/PRO/M1+ rebuilded
