@@ -137,9 +137,47 @@ trusty)
 		rm $DEST/cache/sdcard/etc/init/plymouth*
 		;;
 
-*) echo "Release hasn't been choosen"
-exit
-;;
+xenial)
+		# enable root login for latest ssh on jessie
+		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/cache/sdcard/etc/ssh/sshd_config
+
+		# auto upgrading (disabled while testing)
+		#sed -e "s/ORIGIN/Debian/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		#sed -e "s/CODENAME/$RELEASE/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+
+		# mount 256Mb tmpfs to /tmp (disabled while supported by debootstrap-ng only)
+		#echo "tmpfs   /tmp         tmpfs   nodev,nosuid,size=256M          0  0" >> $DEST/cache/sdcard/etc/fstab
+
+		# fix selinux error
+		mkdir $DEST/cache/sdcard/selinux
+
+		# add serial console (needs testing whether it's still needed)
+		#cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/$SERIALCON.conf
+		#sed -e "s/ttyS0/$SERIALCON/g" -i $DEST/cache/sdcard/etc/init/$SERIALCON.conf
+		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
+		#mkdir -p "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d"
+		#echo "[Service]" > "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+		#echo "ExecStart=" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+		#echo "ExecStart=-/sbin/agetty -L 115200 %I $TERM" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+
+		# don't clear screen tty1
+		mkdir -p "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/"
+		echo "[Service]" > "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
+		echo "TTYVTDisallocate=no" >> "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
+
+		# seting timeout
+		mkdir -p $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/
+		echo "[Service]" > $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
+		echo "TimeoutStopSec=10" >> $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
+
+		# handle PMU power button
+		mkdir -p $DEST/cache/sdcard/etc/udev/rules.d/
+		cp $SRC/lib/config/71-axp-power-button.rules $DEST/cache/sdcard/etc/udev/rules.d/
+		;;
+
+	*)
+	exit_with_error "Unknown OS release selected"
+	;;
 esac
 
 # copy hostapd configurations

@@ -525,30 +525,34 @@ esac
 
 
 # Essential packages
-PACKAGE_LIST="alsa-utils automake bash-completion bc bridge-utils build-essential cmake cpufrequtils \
-	device-tree-compiler dosfstools figlet fbset fping git haveged hdparm hostapd ifenslave-2.6 psmisc \
-	iw less libtool libwrap0-dev libfuse2 libssl-dev lirc lsof makedev fake-hwclock wpasupplicant \
-	module-init-tools nano ntp parted pkg-config pv rfkill rsync sudo curl dialog crda wireless-regdb \
-	sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools wget \
-	iptables libdigest-sha-perl libproc-processtable-perl w-scan libusb-dev ncurses-term \
-	console-setup console-data kbd console-common unicode-data openssh-server man-db libmtp-runtime"
+PACKAGE_LIST="automake bash-completion bc bridge-utils build-essential cmake cpufrequtils \
+	device-tree-compiler dosfstools figlet fbset fping git haveged hdparm hostapd ifenslave-2.6 \
+	iw libtool libwrap0-dev libssl-dev lirc lsof fake-hwclock wpasupplicant libusb-dev psmisc \
+	ntp parted pkg-config pv rfkill rsync sudo curl dialog crda wireless-regdb ncurses-term \
+	sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools \
+	console-setup console-data console-common unicode-data openssh-server libmtp-runtime"
 
 # Non-essential packages
-PACKAGE_LIST_ADDITIONAL="btrfs-tools bluez hddtemp i2c-tools iperf ir-keytable iotop iozone3 weather-util weather-util-data stress \
+PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools bluez hddtemp i2c-tools iperf ir-keytable iotop iozone3 weather-util weather-util-data stress \
 	dvb-apps sysbench libbluetooth-dev libbluetooth3 subversion screen ntfs-3g vim pciutils evtest htop mtp-tools python-smbus \
-	apt-transport-https"
+	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan"
 
 # Release specific packages
 case $RELEASE in
 	wheezy)
-	PACKAGE_LIST_RELEASE="libnl-dev acpid acpi-support-base"
+	PACKAGE_LIST_RELEASE="less makedev kbd libnl-dev acpid acpi-support-base"
 	;;
 	jessie)
-	PACKAGE_LIST_RELEASE="thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd \
+	PACKAGE_LIST_RELEASE="less makedev kbd thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd \
 		software-properties-common python-software-properties libnss-myhostname f2fs-tools"
 	;;
 	trusty)
-	PACKAGE_LIST_RELEASE="libnl-3-dev libnl-genl-3-dev software-properties-common python-software-properties f2fs-tools acpid"
+	PACKAGE_LIST_RELEASE="man-db wget iptables nano libnl-3-dev libnl-genl-3-dev software-properties-common \
+		python-software-properties f2fs-tools acpid"
+	;;
+	xenial)
+	PACKAGE_LIST_RELEASE="man-db wget iptables nano thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd \
+		software-properties-common python-software-properties libnss-myhostname f2fs-tools"
 	;;
 esac
 
@@ -567,6 +571,9 @@ if [[ $BUILD_DESKTOP == yes ]]; then
 		;;
 		trusty)
 		PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
+		;;
+		xenial)
+		PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
 		;;
 	esac
 	# hardware acceleration support packages

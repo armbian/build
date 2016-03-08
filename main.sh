@@ -184,7 +184,7 @@ if [ "$BRANCH" != "default" ]; then EXTERNAL="no"; fi
 unset IFS
 
 # naming to distro 
-if [[ "$RELEASE" == "precise" || "$RELEASE" == "trusty" ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
+if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
 # set hostname to the board
 HOST="$BOARD"
