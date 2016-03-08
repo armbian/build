@@ -157,6 +157,9 @@ umount -l $DEST/cache/sdcard/sys
 # kill process inside
 KILLPROC=$(ps -uax | pgrep ntpd |        tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
 KILLPROC=$(ps -uax | pgrep dbus-daemon | tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
+KILLPROC=$(ps -uax | pgrep bluetoothd | tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
+KILLPROC=$(ps -uax | pgrep acpid | tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
+KILLPROC=$(ps -uax | pgrep python | tail -1); if [ -n "$KILLPROC" ]; then kill -9 $KILLPROC; fi  
 
 display_alert "Closing debootstrap process and preparing cache." "" "info"
 tar cp --directory=$DEST/cache/sdcard/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
