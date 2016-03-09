@@ -1,5 +1,3 @@
-#!/bin/bash
-#
 # Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
@@ -14,6 +12,8 @@
 # create_rootfs_cache
 # prepare_partitions
 # create_image
+# mount_chroot
+# umount_chroot
 # unmount_on_exit
 
 # custom_debootstrap_ng
@@ -25,29 +25,19 @@ debootstrap_ng()
 	display_alert "Starting build process for" "$BOARD $RELEASE" "info"
 
 	# default rootfs type is ext4
-	if [[ -z $ROOTFS_TYPE ]]; then
-		ROOTFS_TYPE=ext4
-	fi
+	[[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4
 
-	if [[ "ext4 f2fs btrfs nfs fel" != *"$ROOTFS_TYPE"* ]]; then
-		exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
-	fi
+	[[ "ext4 f2fs btrfs nfs fel" != *"$ROOTFS_TYPE"* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
 
 	# Fixed image size is in 1M dd blocks (MiB)
 	# to get size of block device /dev/sdX execute as root:
 	# echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
-	if [[ "btrfs f2fs" == *"$ROOTFS_TYPE"* && -z $FIXED_IMAGE_SIZE ]]; then
-		exit_with_error "$ROOTFS_TYPE root needs user-defined SD card size" "FIXED_IMAGE_SIZE"
-	fi
+	[[ "btrfs f2fs" == *"$ROOTFS_TYPE"* && -z $FIXED_IMAGE_SIZE ]] && exit_with_error "please define FIXED_IMAGE_SIZE"
 
-	if [[ $ROOTFS_TYPE != ext4 ]]; then
-		display_alert "Assuming $CHOOSEN_KERNEL supports $ROOTFS_TYPE" "" "wrn"
-	fi
+	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming $CHOOSEN_KERNEL supports $ROOTFS_TYPE" "" "wrn"
 
 	# small SD card with kernel, boot scritpt and .dtb/.bin files
-	if [[ $ROOTFS_TYPE == nfs ]]; then
-		FIXED_IMAGE_SIZE=64
-	fi
+	[[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
 
 	# trap to unmount stuff in case of error/manual interruption
 	trap unmount_on_exit INT TERM EXIT
@@ -75,18 +65,9 @@ debootstrap_ng()
 	# stage: prepare basic rootfs: unpack cache or create from scratch
 	create_rootfs_cache
 
-	# stage: mount or remount chroot special filesystems
-	mount -t proc chproc $DEST/cache/sdcard/proc
-	mount -t sysfs chsys $DEST/cache/sdcard/sys
-	mount -t devtmpfs chdev $DEST/cache/sdcard/dev || mount --bind /dev $DEST/cache/sdcard/dev
-	mount -t devpts chpts $DEST/cache/sdcard/dev/pts
-
-	# stage: install distribution specific
-	install_distribution_specific
-
 	# stage: install kernel and u-boot packages
-	# install board specific applications
-	display_alert "Installing kernel, u-boot and board specific" "$RELEASE $BOARD" "info"
+	# install distribution and board specific applications
+	install_distribution_specific
 	install_kernel
 	install_board_specific
 
@@ -120,20 +101,14 @@ debootstrap_ng()
 		mv -f $DEST/cache/sdcard/sbin/start-stop-daemon.REAL $DEST/cache/sdcard/sbin/start-stop-daemon
 	fi
 
-	umount -l $DEST/cache/sdcard/dev/pts
-	umount -l $DEST/cache/sdcard/dev
-	umount -l $DEST/cache/sdcard/proc
-	umount -l $DEST/cache/sdcard/sys
+	umount_chroot
 
 	if [[ $ROOTFS_TYPE == fel ]]; then
 		FEL_ROOTFS=$DEST/cache/sdcard/
 		display_alert "Starting FEL boot" "$BOARD" "info"
 		source $SRC/lib/fel-load.sh
 	else
-		# create partitions, format, mount image
 		prepare_partitions
-
-		# create full image
 		create_image
 	fi
 
@@ -146,7 +121,6 @@ debootstrap_ng()
 
 	# remove exit trap
 	trap - INT TERM EXIT
-
 } #############################################################################
 
 # create_rootfs_cache
@@ -195,11 +169,7 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 2/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		# stage: prepare chroot environment to install extra packages
-		mount -t proc chproc $DEST/cache/sdcard/proc
-		mount -t sysfs chsys $DEST/cache/sdcard/sys
-		mount -t devtmpfs chdev $DEST/cache/sdcard/dev || mount --bind /dev $DEST/cache/sdcard/dev
-		mount -t devpts chpts $DEST/cache/sdcard/dev/pts
+		mount_chroot
 
 		# policy-rc.d script prevents starting or reloading services
 		# from dpkg pre- and post-install scripts during image creation
@@ -273,16 +243,13 @@ EOF
 		sync
 		# the only reason to unmount here is compression progress display
 		# based on rootfs size calculation
-		umount -l $DEST/cache/sdcard/dev/pts
-		umount -l $DEST/cache/sdcard/dev
-		umount -l $DEST/cache/sdcard/proc
-		umount -l $DEST/cache/sdcard/sys
+		umount_chroot
 
 		tar cp --directory=$DEST/cache/sdcard/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 			--exclude='./sys/*' . | \
 			pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "$display_name" | pigz > $cache_fname
 	fi
-
+	mount_chroot
 } #############################################################################
 
 # prepare_partitions
@@ -421,8 +388,6 @@ prepare_partitions()
 	echo "tmpfs /tmp tmpfs defaults,rw,nosuid 0 0" >> $DEST/cache/sdcard/etc/fstab
 
 	# stage: create boot script
-	rm -f $DEST/cache/mount/boot/boot.scr
-
 	if [[ $ROOTFS_TYPE == nfs ]]; then
 		# copy script provided by user if exists
 		if [[ -f $SRC/userpatches/nfs-boot.cmd ]]; then
@@ -435,7 +400,6 @@ prepare_partitions()
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $DEST/cache/sdcard/boot/boot.cmd
 		sed -i "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" $DEST/cache/sdcard/boot/boot.cmd
 	fi
-
 	mkimage -C none -A arm -T script -d $DEST/cache/sdcard/boot/boot.cmd $DEST/cache/sdcard/boot/boot.scr > /dev/null 2>&1
 
 } #############################################################################
@@ -487,7 +451,7 @@ create_image()
 
 	# unmount /boot first, rootfs second, image file last
 	if [[ $BOOTSIZE != 0 ]]; then umount -l $DEST/cache/mount/boot; fi
-	if [[ $ROOTFS_TYPE != nfs ]]; then umount -l $DEST/cache/mount/; fi
+	if [[ $ROOTFS_TYPE != nfs ]]; then umount -l $DEST/cache/mount; fi
 	losetup -d $LOOP
 
 	mv $DEST/cache/tmprootfs.raw $DEST/cache/$VERSION.raw
@@ -509,27 +473,41 @@ create_image()
 		rm -f $VERSION.raw *.asc armbian.txt
 		display_alert "Done building" "$DEST/images/$VERSION.zip" "info"
 	fi
+} #############################################################################
 
+# mount_chroot
+#
+# helper to reduce code duplication
+#
+mount_chroot()
+{
+	mount -t proc chproc $DEST/cache/sdcard/proc
+	mount -t sysfs chsys $DEST/cache/sdcard/sys
+	mount -t devtmpfs chdev $DEST/cache/sdcard/dev || mount --bind /dev $DEST/cache/sdcard/dev
+	mount -t devpts chpts $DEST/cache/sdcard/dev/pts
+} #############################################################################
+
+# umount_chroot
+#
+# helper to reduce code duplication
+#
+umount_chroot()
+{
+	umount -l $DEST/cache/sdcard/dev/pts
+	umount -l $DEST/cache/sdcard/dev
+	umount -l $DEST/cache/sdcard/proc
+	umount -l $DEST/cache/sdcard/sys
 } #############################################################################
 
 # unmount_on_exit
 #
 unmount_on_exit()
 {
-	umount -l $DEST/cache/sdcard/dev/pts >/dev/null 2>&1
-	umount -l $DEST/cache/sdcard/dev >/dev/null 2>&1
-	umount -l $DEST/cache/sdcard/proc >/dev/null 2>&1
-	umount -l $DEST/cache/sdcard/sys >/dev/null 2>&1
-
-	umount -l $DEST/cache/sdcard/ >/dev/null 2>&1
-
+	umount_chroot
+	umount -l $DEST/cache/sdcard >/dev/null 2>&1
 	umount -l $DEST/cache/mount/boot >/dev/null 2>&1
-	umount -l $DEST/cache/mount/ >/dev/null 2>&1
-
+	umount -l $DEST/cache/mount >/dev/null 2>&1
 	losetup -d $LOOP >/dev/null 2>&1
-
 	rm -rf $DEST/cache/sdcard
-
 	exit_with_error "debootstrap-ng was interrupted"
-
 } #############################################################################
