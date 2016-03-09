@@ -2,7 +2,7 @@
 
 **v5.05 / 8.3.2016**
 
-- H3 images rebuilded
+- H3 images rebuilded. Updating from older also possible.
 - Udoo quad images upgraded to 4.4.4
 
 **v5.04 / 1.3.2016**
