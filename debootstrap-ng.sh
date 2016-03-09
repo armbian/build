@@ -226,6 +226,7 @@ EOF
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		# stage: install additional packages
+		# NOTE: --show-progress is not available in Wheezy
 		display_alert "Installing packages for" "Armbian" "info"
 		eval 'LC_ALL=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q $apt_extra --no-install-recommends install $PACKAGE_LIST"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
