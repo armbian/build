@@ -124,7 +124,9 @@ else
 	
 fi
 cd $SRC
-if [ $? -ne 0 ]; then display_alert "Github download failed" "$1" "err"; exit 1; fi
+if [ $? -ne 0 ]; then
+	exit_with_error "Github download failed" "$1" 
+fi
 }
 
 
@@ -325,7 +327,8 @@ prepare_host() {
 	fi
 
 	if [[ $codename == wily || $codename == xenial ]]; then
-		PAK="$PAK gcc-4.9-arm-linux-gnueabihf gcc-4.9-arm-linux-gnueabi libc6-dev-armhf-cross libc6-dev-armel-cross"
+		# gcc-4.9-arm-linux-gnueabihf gcc-4.9-arm-linux-gnueabi
+		PAK="$PAK libc6-dev-armhf-cross libc6-dev-armel-cross"
 	fi
 
 	local deps=()
@@ -361,40 +364,40 @@ prepare_host() {
 
 	# legacy kernel compilation needs cross-gcc version 4.9 or lower
 	# gcc-arm-linux-gnueabi(hf) installs gcc version 5 by default on wily
-	if [[ $codename == wily || $codename == xenial ]]; then
-		# hard float
-		local GCC=$(which arm-linux-gnueabihf-gcc)
-		while [[ -L $GCC ]]; do
-			GCC=$(readlink "$GCC")
-		done
-		local version=$(basename "$GCC" | awk -F '-' '{print $NF}')
-		if (( $(echo "$version > 4.9" | bc -l) )); then
-			update-alternatives --install /usr/bin/arm-linux-gnueabihf-gcc arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-4.9 10 \
-				--slave /usr/bin/arm-linux-gnueabihf-cpp arm-linux-gnueabihf-cpp /usr/bin/arm-linux-gnueabihf-cpp-4.9 \
-				--slave /usr/bin/arm-linux-gnueabihf-gcov arm-linux-gnueabihf-gcov /usr/bin/arm-linux-gnueabihf-gcov-4.9
+	#if [[ $codename == wily || $codename == xenial ]]; then
+	#	# hard float
+	#	local GCC=$(which arm-linux-gnueabihf-gcc)
+	#	while [[ -L $GCC ]]; do
+	#		GCC=$(readlink "$GCC")
+	#	done
+	#	local version=$(basename "$GCC" | awk -F '-' '{print $NF}')
+	#	if (( $(echo "$version > 4.9" | bc -l) )); then
+	#		update-alternatives --install /usr/bin/arm-linux-gnueabihf-gcc arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-4.9 10 \
+	#			--slave /usr/bin/arm-linux-gnueabihf-cpp arm-linux-gnueabihf-cpp /usr/bin/arm-linux-gnueabihf-cpp-4.9 \
+	#			--slave /usr/bin/arm-linux-gnueabihf-gcov arm-linux-gnueabihf-gcov /usr/bin/arm-linux-gnueabihf-gcov-4.9
 
-			update-alternatives --install /usr/bin/arm-linux-gnueabihf-gcc arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-5 11 \
-				--slave /usr/bin/arm-linux-gnueabihf-cpp arm-linux-gnueabihf-cpp /usr/bin/arm-linux-gnueabihf-cpp-5 \
-				--slave /usr/bin/arm-linux-gnueabihf-gcov arm-linux-gnueabihf-gcov /usr/bin/arm-linux-gnueabihf-gcov-5
+	#		update-alternatives --install /usr/bin/arm-linux-gnueabihf-gcc arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-5 11 \
+	#			--slave /usr/bin/arm-linux-gnueabihf-cpp arm-linux-gnueabihf-cpp /usr/bin/arm-linux-gnueabihf-cpp-5 \
+	#			--slave /usr/bin/arm-linux-gnueabihf-gcov arm-linux-gnueabihf-gcov /usr/bin/arm-linux-gnueabihf-gcov-5
 
-			update-alternatives --set arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-4.9
-		fi
-		# soft float
-		GCC=$(which arm-linux-gnueabi-gcc)
-		while [[ -L $GCC ]]; do
-			GCC=$(readlink "$GCC")
-		done
-		version=$(basename "$GCC" | awk -F '-' '{print $NF}')
-		if (( $(echo "$version > 4.9" | bc -l) )); then
-			update-alternatives --install /usr/bin/arm-linux-gnueabi-gcc arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-4.9 10 \
-				--slave /usr/bin/arm-linux-gnueabi-cpp arm-linux-gnueabi-cpp /usr/bin/arm-linux-gnueabi-cpp-4.9 \
-				--slave /usr/bin/arm-linux-gnueabi-gcov arm-linux-gnueabi-gcov /usr/bin/arm-linux-gnueabi-gcov-4.9
+	#		update-alternatives --set arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-4.9
+	#	fi
+	#	# soft float
+	#	GCC=$(which arm-linux-gnueabi-gcc)
+	#	while [[ -L $GCC ]]; do
+	#		GCC=$(readlink "$GCC")
+	#	done
+	#	version=$(basename "$GCC" | awk -F '-' '{print $NF}')
+	#	if (( $(echo "$version > 4.9" | bc -l) )); then
+	#		update-alternatives --install /usr/bin/arm-linux-gnueabi-gcc arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-4.9 10 \
+	#			--slave /usr/bin/arm-linux-gnueabi-cpp arm-linux-gnueabi-cpp /usr/bin/arm-linux-gnueabi-cpp-4.9 \
+	#			--slave /usr/bin/arm-linux-gnueabi-gcov arm-linux-gnueabi-gcov /usr/bin/arm-linux-gnueabi-gcov-4.9
 
-			update-alternatives --install /usr/bin/arm-linux-gnueabi-gcc arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-5 11 \
-				--slave /usr/bin/arm-linux-gnueabi-cpp arm-linux-gnueabi-cpp /usr/bin/arm-linux-gnueabi-cpp-5 \
-				--slave /usr/bin/arm-linux-gnueabi-gcov arm-linux-gnueabi-gcov /usr/bin/arm-linux-gnueabi-gcov-5
+	#		update-alternatives --install /usr/bin/arm-linux-gnueabi-gcc arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-5 11 \
+	#			--slave /usr/bin/arm-linux-gnueabi-cpp arm-linux-gnueabi-cpp /usr/bin/arm-linux-gnueabi-cpp-5 \
+	#			--slave /usr/bin/arm-linux-gnueabi-gcov arm-linux-gnueabi-gcov /usr/bin/arm-linux-gnueabi-gcov-5
 
-			update-alternatives --set arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-4.9
-		fi
-	fi
+	#		update-alternatives --set arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-4.9
+	#	fi
+	#fi
 }
