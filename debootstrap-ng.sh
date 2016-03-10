@@ -144,19 +144,22 @@ create_rootfs_cache()
 
 		# stage: debootstrap base system
 		# apt-cacher-ng mirror configurarion
+		[[ -n $APT_PROXY_ADDR ]] && display_alert "Using custom apt-cacher-ng address" "$APT_PROXY_ADDR" "info"
 		if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then
-			local apt_mirror="http://localhost:3142/ports.ubuntu.com/"
+			local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/ports.ubuntu.com/"
 		else
-			local apt_mirror="http://localhost:3142/httpredir.debian.org/debian"
+			local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/httpredir.debian.org/debian"
 		fi
 		# apt-cacher-ng apt-get proxy parameter
-		local apt_extra='-o Acquire::http::Proxy="http://localhost:3142"'
+		local apt_extra='-o Acquire::http::Proxy="http://${APT_PROXY_ADDR:-localhost:3142}"'
 
 		display_alert "Installing base system" "Stage 1/2" "info"
 		eval 'debootstrap --include=debconf-utils,locales --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ $apt_mirror' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Debootstrap base system first stage failed"
 
 		cp /usr/bin/qemu-arm-static $DEST/cache/sdcard/usr/bin/
 		# NOTE: not needed?
@@ -168,6 +171,8 @@ create_rootfs_cache()
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 2/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Debootstrap base system second stage failed"
 
 		mount_chroot
 
@@ -233,7 +238,11 @@ EOF
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian packages failed"
+
 		# DEBUG: print free space
+		echo
+		echo "Free space:"
 		df -h | grep "$DEST/cache/" | tee -a $DEST/debug/debootstrap.log
 
 		# stage: remove downloaded packages
@@ -442,6 +451,8 @@ create_image()
 	fi
 
 	# DEBUG: print free space
+	echo
+	echo "Free space:"
 	df -h | grep "$DEST/cache/" | tee -a $DEST/debug/debootstrap.log
 
 	# stage: write u-boot
@@ -494,10 +505,10 @@ mount_chroot()
 #
 umount_chroot()
 {
-	umount -l $DEST/cache/sdcard/dev/pts
-	umount -l $DEST/cache/sdcard/dev
-	umount -l $DEST/cache/sdcard/proc
-	umount -l $DEST/cache/sdcard/sys
+	umount -l $DEST/cache/sdcard/dev/pts >/dev/null 2>&1
+	umount -l $DEST/cache/sdcard/dev >/dev/null 2>&1
+	umount -l $DEST/cache/sdcard/proc >/dev/null 2>&1
+	umount -l $DEST/cache/sdcard/sys >/dev/null 2>&1
 } #############################################################################
 
 # unmount_on_exit
