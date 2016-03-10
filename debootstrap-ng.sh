@@ -152,6 +152,8 @@ create_rootfs_cache()
 		fi
 		# apt-cacher-ng apt-get proxy parameter
 		local apt_extra='-o Acquire::http::Proxy="http://${APT_PROXY_ADDR:-localhost:3142}"'
+		# fancy progress bars (except for Wheezy target)
+		[[ -z $OUTPUT_DIALOG && $RELEASE != wheezy ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
 
 		display_alert "Installing base system" "Stage 1/2" "info"
 		eval 'debootstrap --include=debconf-utils,locales --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ $apt_mirror' \
@@ -231,9 +233,9 @@ EOF
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		# stage: install additional packages
-		# NOTE: --show-progress is not available in Wheezy
 		display_alert "Installing packages for" "Armbian" "info"
-		eval 'LC_ALL=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q $apt_extra --no-install-recommends install $PACKAGE_LIST"' \
+		eval 'LC_ALL=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_LIST"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
