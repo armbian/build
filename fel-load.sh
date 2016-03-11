@@ -40,6 +40,11 @@ fel_prepare_target()
 
 	# kill /etc/fstab on target
 	echo > $FEL_ROOTFS/etc/fstab
+	echo "tmpfs /tmp tmpfs defaults,rw,nosuid 0 0" >> $FEL_ROOTFS/etc/fstab
+
+	# to prevent creating swap file
+	touch $FEL_ROOTFS/var/swap
+
 	if [[ -z $FEL_DTB_FILE ]]; then
 		if [[ $BRANCH == default ]]; then
 			# script.bin is either regular file or absolute symlink

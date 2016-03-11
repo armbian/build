@@ -436,6 +436,9 @@ create_image()
 		eval 'rsync -aHWh --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
 			--exclude="/sys/*" --info=progress2,stats1 $DEST/cache/sdcard/ $DEST/cache/mount/'
 	else
+		# to prevent creating swap file on NFS share as it needs special kernel config option turned on
+		touch $DEST/cache/sdcard/var/swap
+
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --directory=$DEST/cache/sdcard/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 			--exclude='./sys/*' . | \
