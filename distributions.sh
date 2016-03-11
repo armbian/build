@@ -173,6 +173,10 @@ xenial)
 		# handle PMU power button
 		mkdir -p $DEST/cache/sdcard/etc/udev/rules.d/
 		cp $SRC/lib/config/71-axp-power-button.rules $DEST/cache/sdcard/etc/udev/rules.d/
+
+		# disable ureadahead
+		# needs kernel tracing options that AFAIK are present only in mainline TODO: fix later
+		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload mask ureadahead.service >/dev/null 2>&1"
 		;;
 
 	*)
