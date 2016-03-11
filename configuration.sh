@@ -573,13 +573,14 @@ if [[ $BUILD_DESKTOP == yes ]]; then
 		PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
 		;;
 		xenial)
-		PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
+		PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends 
+			policykit-1 xserver-xorg-video-fbdev"
 		;;
 	esac
 	# hardware acceleration support packages
-	# cache is not LINUXCONFIG and BRANCH specific, so installing anyway
-	#if [[ $LINUXCONFIG == *sun* && $BRANCH != "next" ]] &&
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev"
+	if [[ $LINUXCONFIG == *sun* && $BRANCH == default ]]; then
+		PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev"
+	fi
 else
 	PACKAGE_LIST_DESKTOP=""
 fi
