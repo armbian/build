@@ -31,10 +31,12 @@ if [ "$-" != "${-#*i}" ]; then
 		if [ -f /etc/init.d/nodm ] ; then 
 			sed -i "s/NODM_USER=\(.*\)/NODM_USER=${RealUserName}/" /etc/default/nodm
 			sed -i "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" /etc/default/nodm
-			if [ "X${ConfigureDisplay}" = "Xn" -o "X${ConfigureDisplay}" = "XN" ]; then
+			if [[ -z $ConfigureDisplay || $ConfigureDisplay == n || $ConfigureDisplay == N ]]; then
 				echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
 				sleep 3
-				service nodm restart
+				service nodm stop
+				sleep 1
+				service nodm start
 			fi
 		fi
 	fi

@@ -48,12 +48,20 @@ if [[ $RELEASE == "trusty" ]]; then
 	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/trusty-desktop.tgz -C /root/"
 fi
 
+# Ubuntu Xenial
+if [[ $RELEASE == xenial ]]; then
+	# copy wallpapers and default desktop settings
+	d=$DEST/cache/sdcard/usr/share/backgrounds/xfce/
+	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"
+	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/xenial-desktop.tgz -C /etc/skel/"
+	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/xenial-desktop.tgz -C /root/"
+	mkdir -p $DEST/cache/sdcard/etc/polkit-1/localauthority/50-local.d
+	cp $SRC/lib/config/polkit-jessie/*.pkla $DEST/cache/sdcard/etc/polkit-1/localauthority/50-local.d/
+fi
+
 # Install custom icons and theme
 chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"
 chroot $DEST/cache/sdcard /bin/bash -c "unzip -qq /tmp/NumixHolo.zip -d /usr/share/themes"
-# cleanup
-chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y autoremove >/dev/null 2>&1"
-chroot $DEST/cache/sdcard /bin/bash -c "apt-get clean >/dev/null 2>&1"
 
 # unmount bind mount
 umount $DEST/cache/sdcard/tmp >/dev/null 2>&1
