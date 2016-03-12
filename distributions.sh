@@ -177,6 +177,7 @@ xenial)
 		# disable ureadahead
 		# needs kernel tracing options that AFAIK are present only in mainline TODO: fix later
 		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload mask ureadahead.service >/dev/null 2>&1"
+		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
 		;;
 
 	*)
