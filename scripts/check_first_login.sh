@@ -10,6 +10,9 @@ if [ "$-" != "${-#*i}" ]; then
 		for additionalgroup in sudo netdev audio video dialout plugdev ; do
 			usermod -aG ${additionalgroup} ${RealUserName}
 		done
+		# fix for gksu in Xenial
+		touch /home/$RealUserName/.Xauthority
+		chown $RealUserName:$RealUserName /home/$RealUserName/.Xauthority
 		rm -f "$HOME/.not_logged_in_yet"
 		RealName="$(awk -F":" "/^${RealUserName}:/ {print \$5}" </etc/passwd | cut -d',' -f1)"
 		echo -e "\nDear ${RealName}, your account ${RealUserName} has been created and is sudo enabled."
