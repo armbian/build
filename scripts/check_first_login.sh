@@ -34,7 +34,7 @@ if [ "$-" != "${-#*i}" ]; then
 			if [ "X${ConfigureDisplay}" = "Xn" -o "X${ConfigureDisplay}" = "XN" ]; then
 				echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
 				sleep 3
-				service nodm start
+				service nodm restart
 			fi
 		fi
 	fi
