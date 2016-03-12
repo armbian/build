@@ -439,6 +439,11 @@ create_image()
 		# to prevent creating swap file on NFS share as it needs special kernel config option turned on
 		touch $DEST/cache/sdcard/var/swap
 
+		# kill /etc/network/interfaces on target to prevent conflicts between kernel
+		# and userspace network config (mainly on Xenial)
+		rm -f $FEL_ROOTFS/etc/network/interfaces
+		printf "auto lo\niface lo inet loopback" > $FEL_ROOTFS/etc/network/interfaces
+
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --directory=$DEST/cache/sdcard/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 			--exclude='./sys/*' . | \

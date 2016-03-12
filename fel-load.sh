@@ -42,6 +42,12 @@ fel_prepare_target()
 	echo > $FEL_ROOTFS/etc/fstab
 	echo "tmpfs /tmp tmpfs defaults,rw,nosuid 0 0" >> $FEL_ROOTFS/etc/fstab
 
+	# kill /etc/network/interfaces on target to prevent conflicts between kernel
+	# and userspace network config (mainly on Xenial)
+	rm -f $FEL_ROOTFS/etc/network/interfaces
+	printf "auto lo\niface lo inet loopback" > $FEL_ROOTFS/etc/network/interfaces
+
+
 	# to prevent creating swap file
 	touch $FEL_ROOTFS/var/swap
 
