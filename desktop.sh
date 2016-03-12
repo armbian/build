@@ -35,6 +35,8 @@ if [[ $RELEASE == "jessie" ]]; then
 	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"	
 	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/jessie-desktop.tgz -C /etc/skel/"
 	chroot $DEST/cache/sdcard /bin/bash -c "tar xfz /tmp/jessie-desktop.tgz -C /root/"
+	mkdir -p $DEST/cache/sdcard/etc/polkit-1/localauthority/50-local.d
+	cp $SRC/lib/config/polkit-jessie/*.pkla $DEST/cache/sdcard/etc/polkit-1/localauthority/50-local.d/
 fi
 
 # Ubuntu trusty
