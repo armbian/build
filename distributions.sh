@@ -230,6 +230,9 @@ END
 # display welcome message at first root login
 touch $DEST/cache/sdcard/root/.not_logged_in_yet
 
+# force change root password at first login
+chroot $DEST/cache/sdcard /bin/bash -c "chage -d 0 root"
+
 # remove hostapd because it's replaced with ours
 chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove hostapd >/dev/null 2>&1"
 
