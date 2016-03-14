@@ -41,16 +41,11 @@ fel_prepare_target()
 	# kill /etc/fstab on target
 	echo > $FEL_ROOTFS/etc/fstab
 	echo "tmpfs /tmp tmpfs defaults,rw,nosuid 0 0" >> $FEL_ROOTFS/etc/fstab
+}
 
-	# kill /etc/network/interfaces on target to prevent conflicts between kernel
-	# and userspace network config (mainly on Xenial)
-	rm -f $FEL_ROOTFS/etc/network/interfaces
-	printf "auto lo\niface lo inet loopback" > $FEL_ROOTFS/etc/network/interfaces
-
-
-	# to prevent creating swap file
-	touch $FEL_ROOTFS/var/swap
-
+fel_load()
+{
+	# update each time in case boot/script.bin link was changed in multi-board images
 	if [[ -z $FEL_DTB_FILE ]]; then
 		if [[ $BRANCH == default ]]; then
 			# script.bin is either regular file or absolute symlink
@@ -60,15 +55,16 @@ fel_prepare_target()
 				FEL_DTB_FILE=boot/script.bin
 			fi
 		else
-			FEL_DTB_FILE=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/.config | cut -d '"' -f2).dtb
+			if [[ -f $SOURCES/$BOOTSOURCEDIR/.config ]]; then
+				FEL_DTB_FILE=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/.config | cut -d '"' -f2).dtb
+			else
+				FEL_DTB_FILE=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/configs/$BOOTCONFIG | cut -d '"' -f2).dtb
+			fi
 		fi
 	fi
-}
 
-fel_load()
-{
 	display_alert "Loading files via" "FEL USB" "info"
-	sunxi-fel -p uboot $SOURCES/$BOOTSOURCEDIR/u-boot-sunxi-with-spl.bin \
+	sunxi-fel -p uboot $FEL_ROOTFS/usr/lib/$CHOOSEN_UBOOT/u-boot-sunxi-with-spl.bin \
 		write 0x42000000 $FEL_ROOTFS/boot/zImage \
 		write 0x43000000 $FEL_ROOTFS/$FEL_DTB_FILE \
 		write 0x43100000 $FEL_ROOTFS/boot/boot.scr
