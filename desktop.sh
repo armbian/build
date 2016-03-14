@@ -81,7 +81,7 @@ if [[ $LINUXFAMILY == *sun* && $BRANCH == "default" ]]; then
 	cp $SRC/lib/config/sunxi-udev/* $DEST/cache/sdcard/etc/udev/rules.d/
 	cp $SRC/lib/config/xorg.conf.sunxi $DEST/cache/sdcard/etc/X11/xorg.conf
 
-	if [[ $RELEASE == "jessie" || $RELEASE == "xenial" ]]; then
+	if [[ $RELEASE == "jessie" ]]; then
 		cp -R $SRC/lib/bin/sunxi-debs $DEST/cache/sdcard/tmp/debs
 		error_num=0
 		display_alert "Installing desktop-extras for sunxi" "sunxi" "info"
