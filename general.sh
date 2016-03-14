@@ -38,7 +38,16 @@ cleaning()
 		[ -d "$SOURCES/$LINUXSOURCEDIR" ] && display_alert "Cleaning" "$SOURCES/$LINUXSOURCEDIR" "info" && cd $SOURCES/$LINUXSOURCEDIR && make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
 		;;
 
-		"debs") # delete output/debs
+		"debs") # delete output/debs for current branch and family
+		if [ -d "$DEST/debs" ]; then
+			display_alert "Cleaning $DEST/debs for" "$BOARD $BRANCH" "info"
+			# easier than dealing with variable expansion and escaping dashes in file names
+			find $DEST/debs -name '*.deb' | grep -E "${CHOSEN_KERNEL/image/.*}|$CHOSEN_UBOOT" | xargs rm -f
+			[[ -n $RELEASE ]] && rm -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_armhf.deb
+		fi
+		;;
+
+		"alldebs") # delete output/debs
 		[ -d "$DEST/debs" ] && display_alert "Cleaning" "$DEST/debs" "info" && rm -rf $DEST/debs/*
 		;;
 
