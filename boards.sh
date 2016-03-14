@@ -109,7 +109,7 @@ install_board_specific (){
 	fi
 
 	# install custom root package 
-	chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/$CHOOSEN_ROOTFS.deb >/dev/null 2>&1"
+	chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_armhf.deb > /dev/null"
 
 	# remove not needed packages
 	chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq autoremove >/dev/null 2>&1"
@@ -161,7 +161,7 @@ install_kernel (){
 # Install kernel to prepared root file-system
 #--------------------------------------------------------------------------------------------------------------------------------
 
-	display_alert "Install kernel" "$CHOOSEN_KERNEL" "info"
+	display_alert "Install kernel" "$CHOSEN_KERNEL" "info"
 
 	# configure MIN / MAX speed for cpufrequtils
 	echo "ENABLE=true" > $DEST/cache/sdcard/etc/default/cpufrequtils
@@ -204,55 +204,34 @@ install_kernel (){
 	mount --bind $DEST/debs/ $DEST/cache/sdcard/tmp
 
 	# extract kernel version
-	VER=$(dpkg --info $DEST/debs/$CHOOSEN_KERNEL | grep Descr | awk '{print $(NF)}')
-	HEADERS_DIR="linux-headers-"$VER
+	VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_armhf.deb | grep Descr | awk '{print $(NF)}')
 	VER="${VER/-$LINUXFAMILY/}"
 
 	# we need package names for dtb, uboot and headers
-	UBOOT_TMP="${CHOOSEN_KERNEL/image/u-boot}"
-	DTB_TMP="${CHOOSEN_KERNEL/image/dtb}"
-	FW_TMP="${CHOOSEN_KERNEL/image/firmware-image}"
-	HEADERS_TMP="${CHOOSEN_KERNEL/image/headers}"
-	HEADERS_CACHE="${CHOOSEN_KERNEL/image/cache}"
+	DTB_TMP="${CHOSEN_KERNEL/image/dtb}"
+	FW_TMP="${CHOSEN_KERNEL/image/firmware-image}"
+	HEADERS_TMP="${CHOSEN_KERNEL/image/headers}"
 
 	# install kernel
-	chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$CHOOSEN_KERNEL >/dev/null 2>&1"
+	chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_KERNEL}_${REVISION}_armhf.deb > dev/null"
 
 	# install uboot
-	display_alert "Install u-boot" "$UBOOT_TMP" "info"
-	chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$UBOOT_TMP >/dev/null 2>&1"
+	display_alert "Install u-boot" "$CHOSEN_UBOOT" "info"
+	chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_UBOOT}_${REVISION}_armhf.deb > /dev/null"
 	
 	# install headers
 	display_alert "Install headers" "$HEADERS_TMP" "info"
-	chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$HEADERS_TMP >/dev/null 2>&1"
+	chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/${HEADERS_TMP}_${REVISION}_armhf.deb > /dev/null"
 	
 	# install firmware
 	display_alert "Install firmware" "$FW_TMP" "info"
-	chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$FW_TMP >/dev/null 2>&1"
+	chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_armhf.deb > /dev/null"
 
 	# install DTB
-	if [ -f $DEST/cache/sdcard/tmp/$DTB_TMP ]; then 
+	if [[ -f $DEST/cache/sdcard/tmp/${DTB_TMP}_${REVISION}_armhf.deb ]]; then
 		display_alert "Install DTB" "$DTB_TMP" "info"
-		chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/$DTB_TMP >/dev/null 2>&1"; 
+		chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/${DTB_TMP}_${REVISION}_armhf.deb > /dev/null"
 	fi
-
-	# recompile headers scripts or use cache if exists 
-	#cd $DEST/cache/sdcard/usr/src/$HEADERS_DIR
-
-	#if [ ! -f $DEST/cache/building/$HEADERS_CACHE.tgz ]; then		
-	#	chroot $DEST/cache/sdcard /bin/bash -c "cd /usr/src/$HEADERS_DIR && make headers_check; make headers_install ; make scripts" \
-	#	| dialog --progressbox "Compile kernel headers scripts ..." 20 70
-	#	rm -rf $DEST/cache/building/repack
-	#	mkdir -p $DEST/cache/building -p $DEST/cache/building/repack/usr/src/$HEADERS_DIR -p $DEST/cache/building/repack/DEBIAN
-	#	dpkg-deb -x $DEST/debs/$HEADERS_TMP $DEST/cache/building/repack
-	#	dpkg-deb -e $DEST/debs/$HEADERS_TMP $DEST/cache/building/repack/DEBIAN
-	#	cp -R . $DEST/cache/building/repack/usr/src/$HEADERS_DIR
-	#	dpkg-deb -b $DEST/cache/building/repack $DEST/debs
-	#	rm -rf $DEST/cache/building/repack
-	#	tar cpf - .	| pigz > $DEST/cache/building/$HEADERS_CACHE".tgz"
-	#else
-	#	pigz -dc $DEST/cache/building/$HEADERS_CACHE".tgz" | tar xpf -		
-	#fi
 		
 	# copy boot splash image
 	cp $SRC/lib/bin/armbian.bmp $DEST/cache/sdcard/boot/boot.bmp

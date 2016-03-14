@@ -46,27 +46,29 @@ fel_prepare_target()
 fel_load()
 {
 	# update each time in case boot/script.bin link was changed in multi-board images
-	if [[ -z $FEL_DTB_FILE ]]; then
+	if [[ -n $FEL_DTB_FILE ]]; then
+		local dtb_file=$FEL_DTB_FILE
+	else
 		if [[ $BRANCH == default ]]; then
 			# script.bin is either regular file or absolute symlink
 			if [[ -L $FEL_ROOTFS/boot/script.bin ]]; then
-				FEL_DTB_FILE=boot/bin/$(basename $(readlink $FEL_ROOTFS/boot/script.bin))
+				local dtb_file=boot/bin/$(basename $(readlink $FEL_ROOTFS/boot/script.bin))
 			else
-				FEL_DTB_FILE=boot/script.bin
+				local dtb_file=boot/script.bin
 			fi
 		else
 			if [[ -f $SOURCES/$BOOTSOURCEDIR/.config ]]; then
-				FEL_DTB_FILE=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/.config | cut -d '"' -f2).dtb
+				local dtb_file=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/.config | cut -d '"' -f2).dtb
 			else
-				FEL_DTB_FILE=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/configs/$BOOTCONFIG | cut -d '"' -f2).dtb
+				local dtb_file=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/configs/$BOOTCONFIG | cut -d '"' -f2).dtb
 			fi
 		fi
 	fi
 
 	display_alert "Loading files via" "FEL USB" "info"
-	sunxi-fel -p uboot $FEL_ROOTFS/usr/lib/$CHOOSEN_UBOOT/u-boot-sunxi-with-spl.bin \
+	sunxi-fel -p uboot $FEL_ROOTFS/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot-sunxi-with-spl.bin \
 		write 0x42000000 $FEL_ROOTFS/boot/zImage \
-		write 0x43000000 $FEL_ROOTFS/$FEL_DTB_FILE \
+		write 0x43000000 $FEL_ROOTFS/$dtb_file \
 		write 0x43100000 $FEL_ROOTFS/boot/boot.scr
 }
 

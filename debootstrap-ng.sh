@@ -34,7 +34,7 @@ debootstrap_ng()
 	# echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
 	[[ "btrfs f2fs" == *"$ROOTFS_TYPE"* && -z $FIXED_IMAGE_SIZE ]] && exit_with_error "please define FIXED_IMAGE_SIZE"
 
-	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming $CHOOSEN_KERNEL supports $ROOTFS_TYPE" "" "wrn"
+	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming $BOARD $BRANCH kernel supports $ROOTFS_TYPE" "" "wrn"
 
 	# small SD card with kernel, boot scritpt and .dtb/.bin files
 	[[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
