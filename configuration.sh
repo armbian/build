@@ -535,7 +535,7 @@ PACKAGE_LIST="automake bash-completion bc bridge-utils build-essential cmake cpu
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools bluez hddtemp i2c-tools iperf ir-keytable iotop iozone3 weather-util weather-util-data stress \
 	dvb-apps sysbench libbluetooth-dev libbluetooth3 subversion screen ntfs-3g vim pciutils evtest htop mtp-tools python-smbus \
-	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan"
+	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan aptitude dnsutils"
 
 # Release specific packages
 case $RELEASE in
