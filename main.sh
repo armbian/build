@@ -238,9 +238,6 @@ start=`date +%s`
 
 if [ "$FORCE_CHECKOUT" = "yes" ]; then FORCE="-f"; else FORCE=""; fi
 
-# Some old branches are tagged
-#if [ "$BRANCH" == "default" ]; then	KERNELTAG="$LINUXBRANCH"; fi
-
 [[ "$CLEAN_LEVEL" == *sources* ]] && cleaning "sources"
 
 display_alert "source downloading" "@host" "info"
@@ -262,30 +259,32 @@ if [[ $LINUXFAMILY == sun*i ]]; then
 	[[ $BRANCH != "default" ]] && LINUXFAMILY="sunxi"
 fi
 
-# define some packages
-branch="${BRANCH//default/}"
-[[ -n "$branch" ]] && branch="-"$branch
+# define package names
+DEB_BRANCH=${BRANCH//default}
+# if not empty, append рнзрут
+DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
 
-CHOOSEN_UBOOT=linux-u-boot"$branch"-"$BOARD"_"$REVISION"_armhf.deb
-CHOOSEN_KERNEL=linux-image"$branch"-"$CONFIG_LOCALVERSION$LINUXFAMILY"_"$REVISION"_armhf.deb
-CHOOSEN_ROOTFS=linux-"$RELEASE"-root"$branch"-"$BOARD"_"$REVISION"_armhf
-HEADERS_CACHE="${CHOOSEN_KERNEL/image/cache}"
+CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
+
+CHOSEN_KERNEL=linux-image-${DEB_BRANCH}${LINUXFAMILY}
+
+CHOSEN_ROOTFS=linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
 
 for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
-	[ "$option" != "sources" ] && cleaning "$option"
+	[[ $option != sources ]] && cleaning "$option"
 done
 
-[ ! -f "$DEST/debs/$CHOOSEN_UBOOT" ] && needs_uboot=yes
-[ ! -f "$DEST/debs/$CHOOSEN_KERNEL" ] && needs_kernel=yes
+[[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_armhf.deb ]] && needs_uboot=yes
+[[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_armhf.deb ]] && needs_kernel=yes
 
 # patching sources if we need to compile u-boot or kernel
 [[ $needs_uboot == yes || $needs_kernel == yes ]] && patching_sources
 
 # Compile source if packed not exists
-[ "$needs_uboot" = "yes" ] && compile_uboot
-[ "$needs_kernel" = "yes" ] && compile_kernel
+[[ $needs_uboot = yes ]] && compile_uboot
+[[ $needs_kernel = yes ]] && compile_kernel
 
-[[ -n "$RELEASE" ]] && create_board_package
+[[ -n $RELEASE ]] && create_board_package
 
 if [[ $KERNEL_ONLY != yes ]]; then
 	if [[ $EXTENDED_DEBOOTSTRAP == yes ]]; then
@@ -319,7 +318,7 @@ if [[ $KERNEL_ONLY != yes ]]; then
 else
 	display_alert "Kernel building done" "@host" "info"
 	display_alert "Target directory" "$DEST/debs/" "info"
-	display_alert "File name" "$CHOOSEN_KERNEL" "info"
+	display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_armhf.deb" "info"
 fi
 
 # workaround for bug introduced with desktop build -- please remove when fixed
