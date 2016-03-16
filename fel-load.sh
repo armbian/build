@@ -64,18 +64,25 @@ fel_load()
 			fi
 		fi
 	fi
+	[[ $(type -t fel_pre_load) == function ]] && fel_pre_load
 
 	display_alert "Loading files via" "FEL USB" "info"
-	sunxi-fel -p uboot $FEL_ROOTFS/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot-sunxi-with-spl.bin \
+	sunxi-fel $FEL_EXTRA_ARGS -p uboot $FEL_ROOTFS/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot-sunxi-with-spl.bin \
 		write 0x42000000 $FEL_ROOTFS/boot/zImage \
 		write 0x43000000 $FEL_ROOTFS/$dtb_file \
 		write 0x43100000 $FEL_ROOTFS/boot/boot.scr
 }
 
+if [[ -f $SRC/userpatches/fel-hooks.sh ]]; then
+	display_alert "Using additional FEL hooks in" "userpatches/fel-hooks.sh" "info"
+	source $SRC/userpatches/fel-hooks.sh
+fi
+
 # basic sanity check
 if [[ -n $FEL_ROOTFS ]]; then
 	fel_prepare_host
 	fel_prepare_target
+	[[ $(type -t fel_post_prepare) == function ]] && fel_post_prepare
 	RES=b
 	while [[ $RES == b ]]; do
 		if [[ $FEL_AUTO != yes ]]; then

@@ -107,7 +107,7 @@ debootstrap_ng()
 		# kill /etc/network/interfaces on target to prevent conflicts between kernel
 		# and userspace network config (mainly on Xenial)
 		rm -f $DEST/cache/sdcard/etc/network/interfaces
-		printf "auto lo\niface lo inet loopback" > $DEST/cache/sdcard/etc/network/interfaces
+		printf "auto lo\niface lo inet loopback\n\niface eth0 inet manual" > $DEST/cache/sdcard/etc/network/interfaces
 	fi
 
 	if [[ $ROOTFS_TYPE != ext4 ]]; then
