@@ -1,0 +1,1493 @@
+diff --git a/Documentation/filesystems/efivarfs.txt b/Documentation/filesystems/efivarfs.txt
+index c477af086e65..686a64bba775 100644
+--- a/Documentation/filesystems/efivarfs.txt
++++ b/Documentation/filesystems/efivarfs.txt
+@@ -14,3 +14,10 @@ filesystem.
+ efivarfs is typically mounted like this,
+ 
+ 	mount -t efivarfs none /sys/firmware/efi/efivars
++
++Due to the presence of numerous firmware bugs where removing non-standard
++UEFI variables causes the system firmware to fail to POST, efivarfs
++files that are not well-known standardized variables are created
++as immutable files.  This doesn't prevent removal - "chattr -i" will work -
++but it does prevent this kind of failure from being accomplished
++accidentally.
+diff --git a/Makefile b/Makefile
+index 40d4d3bf52c3..4be9e643cef0 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 3
+ PATCHLEVEL = 10
+-SUBLEVEL = 100
++SUBLEVEL = 101
+ EXTRAVERSION =
+ NAME = TOSSUG Baby Fish
+ 
+diff --git a/arch/powerpc/kernel/module_64.c b/arch/powerpc/kernel/module_64.c
+index 6ee59a0eb268..48b4cf6b2a24 100644
+--- a/arch/powerpc/kernel/module_64.c
++++ b/arch/powerpc/kernel/module_64.c
+@@ -192,7 +192,7 @@ static void dedotify(Elf64_Sym *syms, unsigned int numsyms, char *strtab)
+ 		if (syms[i].st_shndx == SHN_UNDEF) {
+ 			char *name = strtab + syms[i].st_name;
+ 			if (name[0] == '.')
+-				memmove(name, name+1, strlen(name));
++				syms[i].st_name++;
+ 		}
+ 	}
+ }
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index 04cc2fa7744f..335fe70967a8 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -1487,6 +1487,13 @@ static void add_atomic_switch_msr(struct vcpu_vmx *vmx, unsigned msr,
+ 			return;
+ 		}
+ 		break;
++	case MSR_IA32_PEBS_ENABLE:
++		/* PEBS needs a quiescent period after being disabled (to write
++		 * a record).  Disabling PEBS through VMX MSR swapping doesn't
++		 * provide that period, so a CPU could write host's record into
++		 * guest's memory.
++		 */
++		wrmsrl(MSR_IA32_PEBS_ENABLE, 0);
+ 	}
+ 
+ 	for (i = 0; i < m->nr; ++i)
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 41ba726c1ce2..7f2b6dec4b2b 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -1941,6 +1941,8 @@ static void accumulate_steal_time(struct kvm_vcpu *vcpu)
+ 
+ static void record_steal_time(struct kvm_vcpu *vcpu)
+ {
++	accumulate_steal_time(vcpu);
++
+ 	if (!(vcpu->arch.st.msr_val & KVM_MSR_ENABLED))
+ 		return;
+ 
+@@ -2074,12 +2076,6 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
+ 		if (!(data & KVM_MSR_ENABLED))
+ 			break;
+ 
+-		vcpu->arch.st.last_steal = current->sched_info.run_delay;
+-
+-		preempt_disable();
+-		accumulate_steal_time(vcpu);
+-		preempt_enable();
+-
+ 		kvm_make_request(KVM_REQ_STEAL_UPDATE, vcpu);
+ 
+ 		break;
+@@ -2758,7 +2754,6 @@ void kvm_arch_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
+ 		vcpu->cpu = cpu;
+ 	}
+ 
+-	accumulate_steal_time(vcpu);
+ 	kvm_make_request(KVM_REQ_STEAL_UPDATE, vcpu);
+ }
+ 
+diff --git a/crypto/af_alg.c b/crypto/af_alg.c
+index 0ca108f3c840..1aaa555fab56 100644
+--- a/crypto/af_alg.c
++++ b/crypto/af_alg.c
+@@ -125,23 +125,6 @@ int af_alg_release(struct socket *sock)
+ }
+ EXPORT_SYMBOL_GPL(af_alg_release);
+ 
+-void af_alg_release_parent(struct sock *sk)
+-{
+-	struct alg_sock *ask = alg_sk(sk);
+-	bool last;
+-
+-	sk = ask->parent;
+-	ask = alg_sk(sk);
+-
+-	lock_sock(sk);
+-	last = !--ask->refcnt;
+-	release_sock(sk);
+-
+-	if (last)
+-		sock_put(sk);
+-}
+-EXPORT_SYMBOL_GPL(af_alg_release_parent);
+-
+ static int alg_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
+ {
+ 	struct sock *sk = sock->sk;
+@@ -149,7 +132,6 @@ static int alg_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
+ 	struct sockaddr_alg *sa = (void *)uaddr;
+ 	const struct af_alg_type *type;
+ 	void *private;
+-	int err;
+ 
+ 	if (sock->state == SS_CONNECTED)
+ 		return -EINVAL;
+@@ -175,22 +157,16 @@ static int alg_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
+ 		return PTR_ERR(private);
+ 	}
+ 
+-	err = -EBUSY;
+ 	lock_sock(sk);
+-	if (ask->refcnt)
+-		goto unlock;
+ 
+ 	swap(ask->type, type);
+ 	swap(ask->private, private);
+ 
+-	err = 0;
+-
+-unlock:
+ 	release_sock(sk);
+ 
+ 	alg_do_release(type, private);
+ 
+-	return err;
++	return 0;
+ }
+ 
+ static int alg_setkey(struct sock *sk, char __user *ukey,
+@@ -223,15 +199,11 @@ static int alg_setsockopt(struct socket *sock, int level, int optname,
+ 	struct sock *sk = sock->sk;
+ 	struct alg_sock *ask = alg_sk(sk);
+ 	const struct af_alg_type *type;
+-	int err = -EBUSY;
++	int err = -ENOPROTOOPT;
+ 
+ 	lock_sock(sk);
+-	if (ask->refcnt)
+-		goto unlock;
+-
+ 	type = ask->type;
+ 
+-	err = -ENOPROTOOPT;
+ 	if (level != SOL_ALG || !type)
+ 		goto unlock;
+ 
+@@ -280,8 +252,7 @@ int af_alg_accept(struct sock *sk, struct socket *newsock)
+ 
+ 	sk2->sk_family = PF_ALG;
+ 
+-	if (!ask->refcnt++)
+-		sock_hold(sk);
++	sock_hold(sk);
+ 	alg_sk(sk2)->parent = sk;
+ 	alg_sk(sk2)->type = type;
+ 
+diff --git a/drivers/firmware/efi/efivars.c b/drivers/firmware/efi/efivars.c
+index 8bd1bb6dbe47..24ae2a694e9b 100644
+--- a/drivers/firmware/efi/efivars.c
++++ b/drivers/firmware/efi/efivars.c
+@@ -219,7 +219,8 @@ efivar_store_raw(struct efivar_entry *entry, const char *buf, size_t count)
+ 	}
+ 
+ 	if ((new_var->Attributes & ~EFI_VARIABLE_MASK) != 0 ||
+-	    efivar_validate(new_var, new_var->Data, new_var->DataSize) == false) {
++	    efivar_validate(new_var->VendorGuid, new_var->VariableName,
++			    new_var->Data, new_var->DataSize) == false) {
+ 		printk(KERN_ERR "efivars: Malformed variable content\n");
+ 		return -EINVAL;
+ 	}
+@@ -334,7 +335,8 @@ static ssize_t efivar_create(struct file *filp, struct kobject *kobj,
+ 		return -EACCES;
+ 
+ 	if ((new_var->Attributes & ~EFI_VARIABLE_MASK) != 0 ||
+-	    efivar_validate(new_var, new_var->Data, new_var->DataSize) == false) {
++	    efivar_validate(new_var->VendorGuid, new_var->VariableName,
++			    new_var->Data, new_var->DataSize) == false) {
+ 		printk(KERN_ERR "efivars: Malformed variable content\n");
+ 		return -EINVAL;
+ 	}
+@@ -405,35 +407,27 @@ efivar_create_sysfs_entry(struct efivar_entry *new_var)
+ {
+ 	int i, short_name_size;
+ 	char *short_name;
+-	unsigned long variable_name_size;
+-	efi_char16_t *variable_name;
+-
+-	variable_name = new_var->var.VariableName;
+-	variable_name_size = ucs2_strlen(variable_name) * sizeof(efi_char16_t);
++	unsigned long utf8_name_size;
++	efi_char16_t *variable_name = new_var->var.VariableName;
+ 
+ 	/*
+-	 * Length of the variable bytes in ASCII, plus the '-' separator,
++	 * Length of the variable bytes in UTF8, plus the '-' separator,
+ 	 * plus the GUID, plus trailing NUL
+ 	 */
+-	short_name_size = variable_name_size / sizeof(efi_char16_t)
+-				+ 1 + EFI_VARIABLE_GUID_LEN + 1;
+-
+-	short_name = kzalloc(short_name_size, GFP_KERNEL);
++	utf8_name_size = ucs2_utf8size(variable_name);
++	short_name_size = utf8_name_size + 1 + EFI_VARIABLE_GUID_LEN + 1;
+ 
++	short_name = kmalloc(short_name_size, GFP_KERNEL);
+ 	if (!short_name)
+ 		return 1;
+ 
+-	/* Convert Unicode to normal chars (assume top bits are 0),
+-	   ala UTF-8 */
+-	for (i=0; i < (int)(variable_name_size / sizeof(efi_char16_t)); i++) {
+-		short_name[i] = variable_name[i] & 0xFF;
+-	}
++	ucs2_as_utf8(short_name, variable_name, short_name_size);
++
+ 	/* This is ugly, but necessary to separate one vendor's
+ 	   private variables from another's.         */
+-
+-	*(short_name + strlen(short_name)) = '-';
++	short_name[utf8_name_size] = '-';
+ 	efi_guid_unparse(&new_var->var.VendorGuid,
+-			 short_name + strlen(short_name));
++			 short_name + utf8_name_size + 1);
+ 
+ 	new_var->kobj.kset = efivars_kset;
+ 
+diff --git a/drivers/firmware/efi/vars.c b/drivers/firmware/efi/vars.c
+index 7dbc319e1cf5..9f82b5545edd 100644
+--- a/drivers/firmware/efi/vars.c
++++ b/drivers/firmware/efi/vars.c
+@@ -42,7 +42,7 @@ DECLARE_WORK(efivar_work, NULL);
+ EXPORT_SYMBOL_GPL(efivar_work);
+ 
+ static bool
+-validate_device_path(struct efi_variable *var, int match, u8 *buffer,
++validate_device_path(efi_char16_t *var_name, int match, u8 *buffer,
+ 		     unsigned long len)
+ {
+ 	struct efi_generic_dev_path *node;
+@@ -75,7 +75,7 @@ validate_device_path(struct efi_variable *var, int match, u8 *buffer,
+ }
+ 
+ static bool
+-validate_boot_order(struct efi_variable *var, int match, u8 *buffer,
++validate_boot_order(efi_char16_t *var_name, int match, u8 *buffer,
+ 		    unsigned long len)
+ {
+ 	/* An array of 16-bit integers */
+@@ -86,18 +86,18 @@ validate_boot_order(struct efi_variable *var, int match, u8 *buffer,
+ }
+ 
+ static bool
+-validate_load_option(struct efi_variable *var, int match, u8 *buffer,
++validate_load_option(efi_char16_t *var_name, int match, u8 *buffer,
+ 		     unsigned long len)
+ {
+ 	u16 filepathlength;
+ 	int i, desclength = 0, namelen;
+ 
+-	namelen = ucs2_strnlen(var->VariableName, sizeof(var->VariableName));
++	namelen = ucs2_strnlen(var_name, EFI_VAR_NAME_LEN);
+ 
+ 	/* Either "Boot" or "Driver" followed by four digits of hex */
+ 	for (i = match; i < match+4; i++) {
+-		if (var->VariableName[i] > 127 ||
+-		    hex_to_bin(var->VariableName[i] & 0xff) < 0)
++		if (var_name[i] > 127 ||
++		    hex_to_bin(var_name[i] & 0xff) < 0)
+ 			return true;
+ 	}
+ 
+@@ -132,12 +132,12 @@ validate_load_option(struct efi_variable *var, int match, u8 *buffer,
+ 	/*
+ 	 * And, finally, check the filepath
+ 	 */
+-	return validate_device_path(var, match, buffer + desclength + 6,
++	return validate_device_path(var_name, match, buffer + desclength + 6,
+ 				    filepathlength);
+ }
+ 
+ static bool
+-validate_uint16(struct efi_variable *var, int match, u8 *buffer,
++validate_uint16(efi_char16_t *var_name, int match, u8 *buffer,
+ 		unsigned long len)
+ {
+ 	/* A single 16-bit integer */
+@@ -148,7 +148,7 @@ validate_uint16(struct efi_variable *var, int match, u8 *buffer,
+ }
+ 
+ static bool
+-validate_ascii_string(struct efi_variable *var, int match, u8 *buffer,
++validate_ascii_string(efi_char16_t *var_name, int match, u8 *buffer,
+ 		      unsigned long len)
+ {
+ 	int i;
+@@ -165,67 +165,133 @@ validate_ascii_string(struct efi_variable *var, int match, u8 *buffer,
+ }
+ 
+ struct variable_validate {
++	efi_guid_t vendor;
+ 	char *name;
+-	bool (*validate)(struct efi_variable *var, int match, u8 *data,
++	bool (*validate)(efi_char16_t *var_name, int match, u8 *data,
+ 			 unsigned long len);
+ };
+ 
++/*
++ * This is the list of variables we need to validate, as well as the
++ * whitelist for what we think is safe not to default to immutable.
++ *
++ * If it has a validate() method that's not NULL, it'll go into the
++ * validation routine.  If not, it is assumed valid, but still used for
++ * whitelisting.
++ *
++ * Note that it's sorted by {vendor,name}, but globbed names must come after
++ * any other name with the same prefix.
++ */
+ static const struct variable_validate variable_validate[] = {
+-	{ "BootNext", validate_uint16 },
+-	{ "BootOrder", validate_boot_order },
+-	{ "DriverOrder", validate_boot_order },
+-	{ "Boot*", validate_load_option },
+-	{ "Driver*", validate_load_option },
+-	{ "ConIn", validate_device_path },
+-	{ "ConInDev", validate_device_path },
+-	{ "ConOut", validate_device_path },
+-	{ "ConOutDev", validate_device_path },
+-	{ "ErrOut", validate_device_path },
+-	{ "ErrOutDev", validate_device_path },
+-	{ "Timeout", validate_uint16 },
+-	{ "Lang", validate_ascii_string },
+-	{ "PlatformLang", validate_ascii_string },
+-	{ "", NULL },
++	{ EFI_GLOBAL_VARIABLE_GUID, "BootNext", validate_uint16 },
++	{ EFI_GLOBAL_VARIABLE_GUID, "BootOrder", validate_boot_order },
++	{ EFI_GLOBAL_VARIABLE_GUID, "Boot*", validate_load_option },
++	{ EFI_GLOBAL_VARIABLE_GUID, "DriverOrder", validate_boot_order },
++	{ EFI_GLOBAL_VARIABLE_GUID, "Driver*", validate_load_option },
++	{ EFI_GLOBAL_VARIABLE_GUID, "ConIn", validate_device_path },
++	{ EFI_GLOBAL_VARIABLE_GUID, "ConInDev", validate_device_path },
++	{ EFI_GLOBAL_VARIABLE_GUID, "ConOut", validate_device_path },
++	{ EFI_GLOBAL_VARIABLE_GUID, "ConOutDev", validate_device_path },
++	{ EFI_GLOBAL_VARIABLE_GUID, "ErrOut", validate_device_path },
++	{ EFI_GLOBAL_VARIABLE_GUID, "ErrOutDev", validate_device_path },
++	{ EFI_GLOBAL_VARIABLE_GUID, "Lang", validate_ascii_string },
++	{ EFI_GLOBAL_VARIABLE_GUID, "OsIndications", NULL },
++	{ EFI_GLOBAL_VARIABLE_GUID, "PlatformLang", validate_ascii_string },
++	{ EFI_GLOBAL_VARIABLE_GUID, "Timeout", validate_uint16 },
++	{ LINUX_EFI_CRASH_GUID, "*", NULL },
++	{ NULL_GUID, "", NULL },
+ };
+ 
++static bool
++variable_matches(const char *var_name, size_t len, const char *match_name,
++		 int *match)
++{
++	for (*match = 0; ; (*match)++) {
++		char c = match_name[*match];
++		char u = var_name[*match];
++
++		/* Wildcard in the matching name means we've matched */
++		if (c == '*')
++			return true;
++
++		/* Case sensitive match */
++		if (!c && *match == len)
++			return true;
++
++		if (c != u)
++			return false;
++
++		if (!c)
++			return true;
++	}
++	return true;
++}
++
+ bool
+-efivar_validate(struct efi_variable *var, u8 *data, unsigned long len)
++efivar_validate(efi_guid_t vendor, efi_char16_t *var_name, u8 *data,
++		unsigned long data_size)
+ {
+ 	int i;
+-	u16 *unicode_name = var->VariableName;
++	unsigned long utf8_size;
++	u8 *utf8_name;
+ 
+-	for (i = 0; variable_validate[i].validate != NULL; i++) {
+-		const char *name = variable_validate[i].name;
+-		int match;
++	utf8_size = ucs2_utf8size(var_name);
++	utf8_name = kmalloc(utf8_size + 1, GFP_KERNEL);
++	if (!utf8_name)
++		return false;
+ 
+-		for (match = 0; ; match++) {
+-			char c = name[match];
+-			u16 u = unicode_name[match];
++	ucs2_as_utf8(utf8_name, var_name, utf8_size);
++	utf8_name[utf8_size] = '\0';
+ 
+-			/* All special variables are plain ascii */
+-			if (u > 127)
+-				return true;
++	for (i = 0; variable_validate[i].name[0] != '\0'; i++) {
++		const char *name = variable_validate[i].name;
++		int match = 0;
+ 
+-			/* Wildcard in the matching name means we've matched */
+-			if (c == '*')
+-				return variable_validate[i].validate(var,
+-							     match, data, len);
++		if (efi_guidcmp(vendor, variable_validate[i].vendor))
++			continue;
+ 
+-			/* Case sensitive match */
+-			if (c != u)
++		if (variable_matches(utf8_name, utf8_size+1, name, &match)) {
++			if (variable_validate[i].validate == NULL)
+ 				break;
+-
+-			/* Reached the end of the string while matching */
+-			if (!c)
+-				return variable_validate[i].validate(var,
+-							     match, data, len);
++			kfree(utf8_name);
++			return variable_validate[i].validate(var_name, match,
++							     data, data_size);
+ 		}
+ 	}
+-
++	kfree(utf8_name);
+ 	return true;
+ }
+ EXPORT_SYMBOL_GPL(efivar_validate);
+ 
++bool
++efivar_variable_is_removable(efi_guid_t vendor, const char *var_name,
++			     size_t len)
++{
++	int i;
++	bool found = false;
++	int match = 0;
++
++	/*
++	 * Check if our variable is in the validated variables list
++	 */
++	for (i = 0; variable_validate[i].name[0] != '\0'; i++) {
++		if (efi_guidcmp(variable_validate[i].vendor, vendor))
++			continue;
++
++		if (variable_matches(var_name, len,
++				     variable_validate[i].name, &match)) {
++			found = true;
++			break;
++		}
++	}
++
++	/*
++	 * If it's in our list, it is removable.
++	 */
++	return found;
++}
++EXPORT_SYMBOL_GPL(efivar_variable_is_removable);
++
+ static efi_status_t
+ check_var_size(u32 attributes, unsigned long size)
+ {
+@@ -797,7 +863,7 @@ int efivar_entry_set_get_size(struct efivar_entry *entry, u32 attributes,
+ 
+ 	*set = false;
+ 
+-	if (efivar_validate(&entry->var, data, *size) == false)
++	if (efivar_validate(*vendor, name, data, *size) == false)
+ 		return -EINVAL;
+ 
+ 	/*
+diff --git a/fs/efivarfs/file.c b/fs/efivarfs/file.c
+index 8dd524f32284..08f105a06fbf 100644
+--- a/fs/efivarfs/file.c
++++ b/fs/efivarfs/file.c
+@@ -10,6 +10,7 @@
+ #include <linux/efi.h>
+ #include <linux/fs.h>
+ #include <linux/slab.h>
++#include <linux/mount.h>
+ 
+ #include "internal.h"
+ 
+@@ -108,9 +109,79 @@ out_free:
+ 	return size;
+ }
+ 
++static int
++efivarfs_ioc_getxflags(struct file *file, void __user *arg)
++{
++	struct inode *inode = file->f_mapping->host;
++	unsigned int i_flags;
++	unsigned int flags = 0;
++
++	i_flags = inode->i_flags;
++	if (i_flags & S_IMMUTABLE)
++		flags |= FS_IMMUTABLE_FL;
++
++	if (copy_to_user(arg, &flags, sizeof(flags)))
++		return -EFAULT;
++	return 0;
++}
++
++static int
++efivarfs_ioc_setxflags(struct file *file, void __user *arg)
++{
++	struct inode *inode = file->f_mapping->host;
++	unsigned int flags;
++	unsigned int i_flags = 0;
++	int error;
++
++	if (!inode_owner_or_capable(inode))
++		return -EACCES;
++
++	if (copy_from_user(&flags, arg, sizeof(flags)))
++		return -EFAULT;
++
++	if (flags & ~FS_IMMUTABLE_FL)
++		return -EOPNOTSUPP;
++
++	if (!capable(CAP_LINUX_IMMUTABLE))
++		return -EPERM;
++
++	if (flags & FS_IMMUTABLE_FL)
++		i_flags |= S_IMMUTABLE;
++
++
++	error = mnt_want_write_file(file);
++	if (error)
++		return error;
++
++	mutex_lock(&inode->i_mutex);
++	inode->i_flags &= ~S_IMMUTABLE;
++	inode->i_flags |= i_flags;
++	mutex_unlock(&inode->i_mutex);
++
++	mnt_drop_write_file(file);
++
++	return 0;
++}
++
++long
++efivarfs_file_ioctl(struct file *file, unsigned int cmd, unsigned long p)
++{
++	void __user *arg = (void __user *)p;
++
++	switch (cmd) {
++	case FS_IOC_GETFLAGS:
++		return efivarfs_ioc_getxflags(file, arg);
++	case FS_IOC_SETFLAGS:
++		return efivarfs_ioc_setxflags(file, arg);
++	}
++
++	return -ENOTTY;
++}
++
+ const struct file_operations efivarfs_file_operations = {
+ 	.open	= simple_open,
+ 	.read	= efivarfs_file_read,
+ 	.write	= efivarfs_file_write,
+ 	.llseek	= no_llseek,
++	.unlocked_ioctl = efivarfs_file_ioctl,
+ };
+diff --git a/fs/efivarfs/inode.c b/fs/efivarfs/inode.c
+index 7e787fb90293..d0351bc7b533 100644
+--- a/fs/efivarfs/inode.c
++++ b/fs/efivarfs/inode.c
+@@ -15,7 +15,8 @@
+ #include "internal.h"
+ 
+ struct inode *efivarfs_get_inode(struct super_block *sb,
+-				const struct inode *dir, int mode, dev_t dev)
++				const struct inode *dir, int mode,
++				dev_t dev, bool is_removable)
+ {
+ 	struct inode *inode = new_inode(sb);
+ 
+@@ -23,6 +24,7 @@ struct inode *efivarfs_get_inode(struct super_block *sb,
+ 		inode->i_ino = get_next_ino();
+ 		inode->i_mode = mode;
+ 		inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
++		inode->i_flags = is_removable ? 0 : S_IMMUTABLE;
+ 		switch (mode & S_IFMT) {
+ 		case S_IFREG:
+ 			inode->i_fop = &efivarfs_file_operations;
+@@ -102,22 +104,17 @@ static void efivarfs_hex_to_guid(const char *str, efi_guid_t *guid)
+ static int efivarfs_create(struct inode *dir, struct dentry *dentry,
+ 			  umode_t mode, bool excl)
+ {
+-	struct inode *inode;
++	struct inode *inode = NULL;
+ 	struct efivar_entry *var;
+ 	int namelen, i = 0, err = 0;
++	bool is_removable = false;
+ 
+ 	if (!efivarfs_valid_name(dentry->d_name.name, dentry->d_name.len))
+ 		return -EINVAL;
+ 
+-	inode = efivarfs_get_inode(dir->i_sb, dir, mode, 0);
+-	if (!inode)
+-		return -ENOMEM;
+-
+ 	var = kzalloc(sizeof(struct efivar_entry), GFP_KERNEL);
+-	if (!var) {
+-		err = -ENOMEM;
+-		goto out;
+-	}
++	if (!var)
++		return -ENOMEM;
+ 
+ 	/* length of the variable name itself: remove GUID and separator */
+ 	namelen = dentry->d_name.len - EFI_VARIABLE_GUID_LEN - 1;
+@@ -125,6 +122,16 @@ static int efivarfs_create(struct inode *dir, struct dentry *dentry,
+ 	efivarfs_hex_to_guid(dentry->d_name.name + namelen + 1,
+ 			&var->var.VendorGuid);
+ 
++	if (efivar_variable_is_removable(var->var.VendorGuid,
++					 dentry->d_name.name, namelen))
++		is_removable = true;
++
++	inode = efivarfs_get_inode(dir->i_sb, dir, mode, 0, is_removable);
++	if (!inode) {
++		err = -ENOMEM;
++		goto out;
++	}
++
+ 	for (i = 0; i < namelen; i++)
+ 		var->var.VariableName[i] = dentry->d_name.name[i];
+ 
+@@ -138,7 +145,8 @@ static int efivarfs_create(struct inode *dir, struct dentry *dentry,
+ out:
+ 	if (err) {
+ 		kfree(var);
+-		iput(inode);
++		if (inode)
++			iput(inode);
+ 	}
+ 	return err;
+ }
+diff --git a/fs/efivarfs/internal.h b/fs/efivarfs/internal.h
+index b5ff16addb7c..b4505188e799 100644
+--- a/fs/efivarfs/internal.h
++++ b/fs/efivarfs/internal.h
+@@ -15,7 +15,8 @@ extern const struct file_operations efivarfs_file_operations;
+ extern const struct inode_operations efivarfs_dir_inode_operations;
+ extern bool efivarfs_valid_name(const char *str, int len);
+ extern struct inode *efivarfs_get_inode(struct super_block *sb,
+-			const struct inode *dir, int mode, dev_t dev);
++			const struct inode *dir, int mode, dev_t dev,
++			bool is_removable);
+ 
+ extern struct list_head efivarfs_list;
+ 
+diff --git a/fs/efivarfs/super.c b/fs/efivarfs/super.c
+index 141aee31884f..5a3655f690d9 100644
+--- a/fs/efivarfs/super.c
++++ b/fs/efivarfs/super.c
+@@ -128,8 +128,9 @@ static int efivarfs_callback(efi_char16_t *name16, efi_guid_t vendor,
+ 	struct dentry *dentry, *root = sb->s_root;
+ 	unsigned long size = 0;
+ 	char *name;
+-	int len, i;
++	int len;
+ 	int err = -ENOMEM;
++	bool is_removable = false;
+ 
+ 	entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+ 	if (!entry)
+@@ -138,15 +139,17 @@ static int efivarfs_callback(efi_char16_t *name16, efi_guid_t vendor,
+ 	memcpy(entry->var.VariableName, name16, name_size);
+ 	memcpy(&(entry->var.VendorGuid), &vendor, sizeof(efi_guid_t));
+ 
+-	len = ucs2_strlen(entry->var.VariableName);
++	len = ucs2_utf8size(entry->var.VariableName);
+ 
+ 	/* name, plus '-', plus GUID, plus NUL*/
+ 	name = kmalloc(len + 1 + EFI_VARIABLE_GUID_LEN + 1, GFP_KERNEL);
+ 	if (!name)
+ 		goto fail;
+ 
+-	for (i = 0; i < len; i++)
+-		name[i] = entry->var.VariableName[i] & 0xFF;
++	ucs2_as_utf8(name, entry->var.VariableName, len);
++
++	if (efivar_variable_is_removable(entry->var.VendorGuid, name, len))
++		is_removable = true;
+ 
+ 	name[len] = '-';
+ 
+@@ -154,7 +157,8 @@ static int efivarfs_callback(efi_char16_t *name16, efi_guid_t vendor,
+ 
+ 	name[len + EFI_VARIABLE_GUID_LEN+1] = '\0';
+ 
+-	inode = efivarfs_get_inode(sb, root->d_inode, S_IFREG | 0644, 0);
++	inode = efivarfs_get_inode(sb, root->d_inode, S_IFREG | 0644, 0,
++				   is_removable);
+ 	if (!inode)
+ 		goto fail_name;
+ 
+@@ -210,7 +214,7 @@ static int efivarfs_fill_super(struct super_block *sb, void *data, int silent)
+ 	sb->s_d_op		= &efivarfs_d_ops;
+ 	sb->s_time_gran         = 1;
+ 
+-	inode = efivarfs_get_inode(sb, NULL, S_IFDIR | 0755, 0);
++	inode = efivarfs_get_inode(sb, NULL, S_IFDIR | 0755, 0, true);
+ 	if (!inode)
+ 		return -ENOMEM;
+ 	inode->i_op = &efivarfs_dir_inode_operations;
+diff --git a/include/crypto/if_alg.h b/include/crypto/if_alg.h
+index 2f38daaab3d7..d61c11170213 100644
+--- a/include/crypto/if_alg.h
++++ b/include/crypto/if_alg.h
+@@ -30,8 +30,6 @@ struct alg_sock {
+ 
+ 	struct sock *parent;
+ 
+-	unsigned int refcnt;
+-
+ 	const struct af_alg_type *type;
+ 	void *private;
+ };
+@@ -66,7 +64,6 @@ int af_alg_register_type(const struct af_alg_type *type);
+ int af_alg_unregister_type(const struct af_alg_type *type);
+ 
+ int af_alg_release(struct socket *sock);
+-void af_alg_release_parent(struct sock *sk);
+ int af_alg_accept(struct sock *sk, struct socket *newsock);
+ 
+ int af_alg_make_sg(struct af_alg_sgl *sgl, void __user *addr, int len,
+@@ -83,6 +80,11 @@ static inline struct alg_sock *alg_sk(struct sock *sk)
+ 	return (struct alg_sock *)sk;
+ }
+ 
++static inline void af_alg_release_parent(struct sock *sk)
++{
++	sock_put(alg_sk(sk)->parent);
++}
++
+ static inline void af_alg_init_completion(struct af_alg_completion *completion)
+ {
+ 	init_completion(&completion->completion);
+diff --git a/include/linux/efi.h b/include/linux/efi.h
+index 2bc0ad78d058..63fa51c864ec 100644
+--- a/include/linux/efi.h
++++ b/include/linux/efi.h
+@@ -769,8 +769,10 @@ struct efivars {
+  * and we use a page for reading/writing.
+  */
+ 
++#define EFI_VAR_NAME_LEN	1024
++
+ struct efi_variable {
+-	efi_char16_t  VariableName[1024/sizeof(efi_char16_t)];
++	efi_char16_t  VariableName[EFI_VAR_NAME_LEN/sizeof(efi_char16_t)];
+ 	efi_guid_t    VendorGuid;
+ 	unsigned long DataSize;
+ 	__u8          Data[1024];
+@@ -832,7 +834,10 @@ int efivar_entry_iter(int (*func)(struct efivar_entry *, void *),
+ struct efivar_entry *efivar_entry_find(efi_char16_t *name, efi_guid_t guid,
+ 				       struct list_head *head, bool remove);
+ 
+-bool efivar_validate(struct efi_variable *var, u8 *data, unsigned long len);
++bool efivar_validate(efi_guid_t vendor, efi_char16_t *var_name, u8 *data,
++		     unsigned long data_size);
++bool efivar_variable_is_removable(efi_guid_t vendor, const char *name,
++				  size_t len);
+ 
+ extern struct work_struct efivar_work;
+ void efivar_run_worker(void);
+diff --git a/include/linux/module.h b/include/linux/module.h
+index 46f1ea01e6f6..761dc2848ffa 100644
+--- a/include/linux/module.h
++++ b/include/linux/module.h
+@@ -220,6 +220,12 @@ struct module_ref {
+ 	unsigned long decs;
+ } __attribute((aligned(2 * sizeof(unsigned long))));
+ 
++struct mod_kallsyms {
++	Elf_Sym *symtab;
++	unsigned int num_symtab;
++	char *strtab;
++};
++
+ struct module
+ {
+ 	enum module_state state;
+@@ -308,14 +314,9 @@ struct module
+ #endif
+ 
+ #ifdef CONFIG_KALLSYMS
+-	/*
+-	 * We keep the symbol and string tables for kallsyms.
+-	 * The core_* fields below are temporary, loader-only (they
+-	 * could really be discarded after module init).
+-	 */
+-	Elf_Sym *symtab, *core_symtab;
+-	unsigned int num_symtab, core_num_syms;
+-	char *strtab, *core_strtab;
++	/* Protected by RCU and/or module_mutex: use rcu_dereference() */
++	struct mod_kallsyms *kallsyms;
++	struct mod_kallsyms core_kallsyms;
+ 
+ 	/* Section attributes */
+ 	struct module_sect_attrs *sect_attrs;
+diff --git a/include/linux/tracepoint.h b/include/linux/tracepoint.h
+index 0b2d0cbe0bab..36e5e9998865 100644
+--- a/include/linux/tracepoint.h
++++ b/include/linux/tracepoint.h
+@@ -129,9 +129,6 @@ static inline void tracepoint_synchronize_unregister(void)
+ 		void *it_func;						\
+ 		void *__data;						\
+ 									\
+-		if (!cpu_online(raw_smp_processor_id()))		\
+-			return;						\
+-									\
+ 		if (!(cond))						\
+ 			return;						\
+ 		prercu;							\
+@@ -265,15 +262,19 @@ static inline void tracepoint_synchronize_unregister(void)
+  * "void *__data, proto" as the callback prototype.
+  */
+ #define DECLARE_TRACE_NOARGS(name)					\
+-		__DECLARE_TRACE(name, void, , 1, void *__data, __data)
++	__DECLARE_TRACE(name, void, ,					\
++			cpu_online(raw_smp_processor_id()),		\
++			void *__data, __data)
+ 
+ #define DECLARE_TRACE(name, proto, args)				\
+-		__DECLARE_TRACE(name, PARAMS(proto), PARAMS(args), 1,	\
+-				PARAMS(void *__data, proto),		\
+-				PARAMS(__data, args))
++	__DECLARE_TRACE(name, PARAMS(proto), PARAMS(args),		\
++			cpu_online(raw_smp_processor_id()),		\
++			PARAMS(void *__data, proto),			\
++			PARAMS(__data, args))
+ 
+ #define DECLARE_TRACE_CONDITION(name, proto, args, cond)		\
+-	__DECLARE_TRACE(name, PARAMS(proto), PARAMS(args), PARAMS(cond), \
++	__DECLARE_TRACE(name, PARAMS(proto), PARAMS(args),		\
++			cpu_online(raw_smp_processor_id()) && (PARAMS(cond)), \
+ 			PARAMS(void *__data, proto),			\
+ 			PARAMS(__data, args))
+ 
+diff --git a/include/linux/ucs2_string.h b/include/linux/ucs2_string.h
+index cbb20afdbc01..bb679b48f408 100644
+--- a/include/linux/ucs2_string.h
++++ b/include/linux/ucs2_string.h
+@@ -11,4 +11,8 @@ unsigned long ucs2_strlen(const ucs2_char_t *s);
+ unsigned long ucs2_strsize(const ucs2_char_t *data, unsigned long maxlength);
+ int ucs2_strncmp(const ucs2_char_t *a, const ucs2_char_t *b, size_t len);
+ 
++unsigned long ucs2_utf8size(const ucs2_char_t *src);
++unsigned long ucs2_as_utf8(u8 *dest, const ucs2_char_t *src,
++			   unsigned long maxlength);
++
+ #endif /* _LINUX_UCS2_STRING_H_ */
+diff --git a/kernel/module.c b/kernel/module.c
+index 70a4754c001f..f8a4f48b48a9 100644
+--- a/kernel/module.c
++++ b/kernel/module.c
+@@ -179,6 +179,9 @@ struct load_info {
+ 	struct _ddebug *debug;
+ 	unsigned int num_debug;
+ 	bool sig_ok;
++#ifdef CONFIG_KALLSYMS
++	unsigned long mod_kallsyms_init_off;
++#endif
+ 	struct {
+ 		unsigned int sym, str, mod, vers, info, pcpu;
+ 	} index;
+@@ -2346,8 +2349,20 @@ static void layout_symtab(struct module *mod, struct load_info *info)
+ 	strsect->sh_entsize = get_offset(mod, &mod->init_size, strsect,
+ 					 info->index.str) | INIT_OFFSET_MASK;
+ 	pr_debug("\t%s\n", info->secstrings + strsect->sh_name);
++
++	/* We'll tack temporary mod_kallsyms on the end. */
++	mod->init_size = ALIGN(mod->init_size,
++			       __alignof__(struct mod_kallsyms));
++	info->mod_kallsyms_init_off = mod->init_size;
++	mod->init_size += sizeof(struct mod_kallsyms);
++	mod->init_size = debug_align(mod->init_size);
+ }
+ 
++/*
++ * We use the full symtab and strtab which layout_symtab arranged to
++ * be appended to the init section.  Later we switch to the cut-down
++ * core-only ones.
++ */
+ static void add_kallsyms(struct module *mod, const struct load_info *info)
+ {
+ 	unsigned int i, ndst;
+@@ -2356,28 +2371,33 @@ static void add_kallsyms(struct module *mod, const struct load_info *info)
+ 	char *s;
+ 	Elf_Shdr *symsec = &info->sechdrs[info->index.sym];
+ 
+-	mod->symtab = (void *)symsec->sh_addr;
+-	mod->num_symtab = symsec->sh_size / sizeof(Elf_Sym);
++	/* Set up to point into init section. */
++	mod->kallsyms = mod->module_init + info->mod_kallsyms_init_off;
++
++	mod->kallsyms->symtab = (void *)symsec->sh_addr;
++	mod->kallsyms->num_symtab = symsec->sh_size / sizeof(Elf_Sym);
+ 	/* Make sure we get permanent strtab: don't use info->strtab. */
+-	mod->strtab = (void *)info->sechdrs[info->index.str].sh_addr;
++	mod->kallsyms->strtab = (void *)info->sechdrs[info->index.str].sh_addr;
+ 
+ 	/* Set types up while we still have access to sections. */
+-	for (i = 0; i < mod->num_symtab; i++)
+-		mod->symtab[i].st_info = elf_type(&mod->symtab[i], info);
+-
+-	mod->core_symtab = dst = mod->module_core + info->symoffs;
+-	mod->core_strtab = s = mod->module_core + info->stroffs;
+-	src = mod->symtab;
+-	for (ndst = i = 0; i < mod->num_symtab; i++) {
++	for (i = 0; i < mod->kallsyms->num_symtab; i++)
++		mod->kallsyms->symtab[i].st_info
++			= elf_type(&mod->kallsyms->symtab[i], info);
++
++	/* Now populate the cut down core kallsyms for after init. */
++	mod->core_kallsyms.symtab = dst = mod->module_core + info->symoffs;
++	mod->core_kallsyms.strtab = s = mod->module_core + info->stroffs;
++	src = mod->kallsyms->symtab;
++	for (ndst = i = 0; i < mod->kallsyms->num_symtab; i++) {
+ 		if (i == 0 ||
+ 		    is_core_symbol(src+i, info->sechdrs, info->hdr->e_shnum)) {
+ 			dst[ndst] = src[i];
+-			dst[ndst++].st_name = s - mod->core_strtab;
+-			s += strlcpy(s, &mod->strtab[src[i].st_name],
++			dst[ndst++].st_name = s - mod->core_kallsyms.strtab;
++			s += strlcpy(s, &mod->kallsyms->strtab[src[i].st_name],
+ 				     KSYM_NAME_LEN) + 1;
+ 		}
+ 	}
+-	mod->core_num_syms = ndst;
++	mod->core_kallsyms.num_symtab = ndst;
+ }
+ #else
+ static inline void layout_symtab(struct module *mod, struct load_info *info)
+@@ -3117,9 +3137,8 @@ static int do_init_module(struct module *mod)
+ 	module_put(mod);
+ 	trim_init_extable(mod);
+ #ifdef CONFIG_KALLSYMS
+-	mod->num_symtab = mod->core_num_syms;
+-	mod->symtab = mod->core_symtab;
+-	mod->strtab = mod->core_strtab;
++	/* Switch to core kallsyms now init is done: kallsyms may be walking! */
++	rcu_assign_pointer(mod->kallsyms, &mod->core_kallsyms);
+ #endif
+ 	unset_module_init_ro_nx(mod);
+ 	module_free(mod, mod->module_init);
+@@ -3398,9 +3417,9 @@ static inline int is_arm_mapping_symbol(const char *str)
+ 	       && (str[2] == '\0' || str[2] == '.');
+ }
+ 
+-static const char *symname(struct module *mod, unsigned int symnum)
++static const char *symname(struct mod_kallsyms *kallsyms, unsigned int symnum)
+ {
+-	return mod->strtab + mod->symtab[symnum].st_name;
++	return kallsyms->strtab + kallsyms->symtab[symnum].st_name;
+ }
+ 
+ static const char *get_ksymbol(struct module *mod,
+@@ -3410,6 +3429,7 @@ static const char *get_ksymbol(struct module *mod,
+ {
+ 	unsigned int i, best = 0;
+ 	unsigned long nextval;
++	struct mod_kallsyms *kallsyms = rcu_dereference_sched(mod->kallsyms);
+ 
+ 	/* At worse, next value is at end of module */
+ 	if (within_module_init(addr, mod))
+@@ -3419,32 +3439,32 @@ static const char *get_ksymbol(struct module *mod,
+ 
+ 	/* Scan for closest preceding symbol, and next symbol. (ELF
+ 	   starts real symbols at 1). */
+-	for (i = 1; i < mod->num_symtab; i++) {
+-		if (mod->symtab[i].st_shndx == SHN_UNDEF)
++	for (i = 1; i < kallsyms->num_symtab; i++) {
++		if (kallsyms->symtab[i].st_shndx == SHN_UNDEF)
+ 			continue;
+ 
+ 		/* We ignore unnamed symbols: they're uninformative
+ 		 * and inserted at a whim. */
+-		if (*symname(mod, i) == '\0'
+-		    || is_arm_mapping_symbol(symname(mod, i)))
++		if (*symname(kallsyms, i) == '\0'
++		    || is_arm_mapping_symbol(symname(kallsyms, i)))
+ 			continue;
+ 
+-		if (mod->symtab[i].st_value <= addr
+-		    && mod->symtab[i].st_value > mod->symtab[best].st_value)
++		if (kallsyms->symtab[i].st_value <= addr
++		    && kallsyms->symtab[i].st_value > kallsyms->symtab[best].st_value)
+ 			best = i;
+-		if (mod->symtab[i].st_value > addr
+-		    && mod->symtab[i].st_value < nextval)
+-			nextval = mod->symtab[i].st_value;
++		if (kallsyms->symtab[i].st_value > addr
++		    && kallsyms->symtab[i].st_value < nextval)
++			nextval = kallsyms->symtab[i].st_value;
+ 	}
+ 
+ 	if (!best)
+ 		return NULL;
+ 
+ 	if (size)
+-		*size = nextval - mod->symtab[best].st_value;
++		*size = nextval - kallsyms->symtab[best].st_value;
+ 	if (offset)
+-		*offset = addr - mod->symtab[best].st_value;
+-	return symname(mod, best);
++		*offset = addr - kallsyms->symtab[best].st_value;
++	return symname(kallsyms, best);
+ }
+ 
+ /* For kallsyms to ask for address resolution.  NULL means not found.  Careful
+@@ -3540,18 +3560,21 @@ int module_get_kallsym(unsigned int symnum, unsigned long *value, char *type,
+ 
+ 	preempt_disable();
+ 	list_for_each_entry_rcu(mod, &modules, list) {
++		struct mod_kallsyms *kallsyms;
++
+ 		if (mod->state == MODULE_STATE_UNFORMED)
+ 			continue;
+-		if (symnum < mod->num_symtab) {
+-			*value = mod->symtab[symnum].st_value;
+-			*type = mod->symtab[symnum].st_info;
+-			strlcpy(name, symname(mod, symnum), KSYM_NAME_LEN);
++		kallsyms = rcu_dereference_sched(mod->kallsyms);
++		if (symnum < kallsyms->num_symtab) {
++			*value = kallsyms->symtab[symnum].st_value;
++			*type = kallsyms->symtab[symnum].st_info;
++			strlcpy(name, symname(kallsyms, symnum), KSYM_NAME_LEN);
+ 			strlcpy(module_name, mod->name, MODULE_NAME_LEN);
+ 			*exported = is_exported(name, *value, mod);
+ 			preempt_enable();
+ 			return 0;
+ 		}
+-		symnum -= mod->num_symtab;
++		symnum -= kallsyms->num_symtab;
+ 	}
+ 	preempt_enable();
+ 	return -ERANGE;
+@@ -3560,11 +3583,12 @@ int module_get_kallsym(unsigned int symnum, unsigned long *value, char *type,
+ static unsigned long mod_find_symname(struct module *mod, const char *name)
+ {
+ 	unsigned int i;
++	struct mod_kallsyms *kallsyms = rcu_dereference_sched(mod->kallsyms);
+ 
+-	for (i = 0; i < mod->num_symtab; i++)
+-		if (strcmp(name, symname(mod, i)) == 0 &&
+-		    mod->symtab[i].st_info != 'U')
+-			return mod->symtab[i].st_value;
++	for (i = 0; i < kallsyms->num_symtab; i++)
++		if (strcmp(name, symname(kallsyms, i)) == 0 &&
++		    kallsyms->symtab[i].st_info != 'U')
++			return kallsyms->symtab[i].st_value;
+ 	return 0;
+ }
+ 
+@@ -3603,11 +3627,14 @@ int module_kallsyms_on_each_symbol(int (*fn)(void *, const char *,
+ 	int ret;
+ 
+ 	list_for_each_entry(mod, &modules, list) {
++		/* We hold module_mutex: no need for rcu_dereference_sched */
++		struct mod_kallsyms *kallsyms = mod->kallsyms;
++
+ 		if (mod->state == MODULE_STATE_UNFORMED)
+ 			continue;
+-		for (i = 0; i < mod->num_symtab; i++) {
+-			ret = fn(data, symname(mod, i),
+-				 mod, mod->symtab[i].st_value);
++		for (i = 0; i < kallsyms->num_symtab; i++) {
++			ret = fn(data, symname(kallsyms, i),
++				 mod, kallsyms->symtab[i].st_value);
+ 			if (ret != 0)
+ 				return ret;
+ 		}
+diff --git a/lib/ucs2_string.c b/lib/ucs2_string.c
+index 6f500ef2301d..f0b323abb4c6 100644
+--- a/lib/ucs2_string.c
++++ b/lib/ucs2_string.c
+@@ -49,3 +49,65 @@ ucs2_strncmp(const ucs2_char_t *a, const ucs2_char_t *b, size_t len)
+         }
+ }
+ EXPORT_SYMBOL(ucs2_strncmp);
++
++unsigned long
++ucs2_utf8size(const ucs2_char_t *src)
++{
++	unsigned long i;
++	unsigned long j = 0;
++
++	for (i = 0; i < ucs2_strlen(src); i++) {
++		u16 c = src[i];
++
++		if (c >= 0x800)
++			j += 3;
++		else if (c >= 0x80)
++			j += 2;
++		else
++			j += 1;
++	}
++
++	return j;
++}
++EXPORT_SYMBOL(ucs2_utf8size);
++
++/*
++ * copy at most maxlength bytes of whole utf8 characters to dest from the
++ * ucs2 string src.
++ *
++ * The return value is the number of characters copied, not including the
++ * final NUL character.
++ */
++unsigned long
++ucs2_as_utf8(u8 *dest, const ucs2_char_t *src, unsigned long maxlength)
++{
++	unsigned int i;
++	unsigned long j = 0;
++	unsigned long limit = ucs2_strnlen(src, maxlength);
++
++	for (i = 0; maxlength && i < limit; i++) {
++		u16 c = src[i];
++
++		if (c >= 0x800) {
++			if (maxlength < 3)
++				break;
++			maxlength -= 3;
++			dest[j++] = 0xe0 | (c & 0xf000) >> 12;
++			dest[j++] = 0x80 | (c & 0x0fc0) >> 6;
++			dest[j++] = 0x80 | (c & 0x003f);
++		} else if (c >= 0x80) {
++			if (maxlength < 2)
++				break;
++			maxlength -= 2;
++			dest[j++] = 0xc0 | (c & 0x7c0) >> 6;
++			dest[j++] = 0x80 | (c & 0x03f);
++		} else {
++			maxlength -= 1;
++			dest[j++] = c & 0x7f;
++		}
++	}
++	if (maxlength)
++		dest[j] = '\0';
++	return j;
++}
++EXPORT_SYMBOL(ucs2_as_utf8);
+diff --git a/net/mac80211/agg-rx.c b/net/mac80211/agg-rx.c
+index 31bf2586fb84..864408026202 100644
+--- a/net/mac80211/agg-rx.c
++++ b/net/mac80211/agg-rx.c
+@@ -290,7 +290,7 @@ void ieee80211_process_addba_request(struct ieee80211_local *local,
+ 	}
+ 
+ 	/* prepare A-MPDU MLME for Rx aggregation */
+-	tid_agg_rx = kmalloc(sizeof(struct tid_ampdu_rx), GFP_KERNEL);
++	tid_agg_rx = kzalloc(sizeof(*tid_agg_rx), GFP_KERNEL);
+ 	if (!tid_agg_rx)
+ 		goto end;
+ 
+diff --git a/net/mac80211/rc80211_minstrel_ht.c b/net/mac80211/rc80211_minstrel_ht.c
+index f3bbea1eb9e7..13f10aab9213 100644
+--- a/net/mac80211/rc80211_minstrel_ht.c
++++ b/net/mac80211/rc80211_minstrel_ht.c
+@@ -454,7 +454,7 @@ minstrel_aggr_check(struct ieee80211_sta *pubsta, struct sk_buff *skb)
+ 	if (skb_get_queue_mapping(skb) == IEEE80211_AC_VO)
+ 		return;
+ 
+-	ieee80211_start_tx_ba_session(pubsta, tid, 5000);
++	ieee80211_start_tx_ba_session(pubsta, tid, 0);
+ }
+ 
+ static void
+diff --git a/net/wireless/wext-core.c b/net/wireless/wext-core.c
+index c8717c1d082e..87dd619fb2e9 100644
+--- a/net/wireless/wext-core.c
++++ b/net/wireless/wext-core.c
+@@ -342,6 +342,39 @@ static const int compat_event_type_size[] = {
+ 
+ /* IW event code */
+ 
++static void wireless_nlevent_flush(void)
++{
++	struct sk_buff *skb;
++	struct net *net;
++
++	ASSERT_RTNL();
++
++	for_each_net(net) {
++		while ((skb = skb_dequeue(&net->wext_nlevents)))
++			rtnl_notify(skb, net, 0, RTNLGRP_LINK, NULL,
++				    GFP_KERNEL);
++	}
++}
++
++static int wext_netdev_notifier_call(struct notifier_block *nb,
++				     unsigned long state, void *ptr)
++{
++	/*
++	 * When a netdev changes state in any way, flush all pending messages
++	 * to avoid them going out in a strange order, e.g. RTM_NEWLINK after
++	 * RTM_DELLINK, or with IFF_UP after without IFF_UP during dev_close()
++	 * or similar - all of which could otherwise happen due to delays from
++	 * schedule_work().
++	 */
++	wireless_nlevent_flush();
++
++	return NOTIFY_OK;
++}
++
++static struct notifier_block wext_netdev_notifier = {
++	.notifier_call = wext_netdev_notifier_call,
++};
++
+ static int __net_init wext_pernet_init(struct net *net)
+ {
+ 	skb_queue_head_init(&net->wext_nlevents);
+@@ -360,7 +393,12 @@ static struct pernet_operations wext_pernet_ops = {
+ 
+ static int __init wireless_nlevent_init(void)
+ {
+-	return register_pernet_subsys(&wext_pernet_ops);
++	int err = register_pernet_subsys(&wext_pernet_ops);
++
++	if (err)
++		return err;
++
++	return register_netdevice_notifier(&wext_netdev_notifier);
+ }
+ 
+ subsys_initcall(wireless_nlevent_init);
+@@ -368,17 +406,8 @@ subsys_initcall(wireless_nlevent_init);
+ /* Process events generated by the wireless layer or the driver. */
+ static void wireless_nlevent_process(struct work_struct *work)
+ {
+-	struct sk_buff *skb;
+-	struct net *net;
+-
+ 	rtnl_lock();
+-
+-	for_each_net(net) {
+-		while ((skb = skb_dequeue(&net->wext_nlevents)))
+-			rtnl_notify(skb, net, 0, RTNLGRP_LINK, NULL,
+-				    GFP_KERNEL);
+-	}
+-
++	wireless_nlevent_flush();
+ 	rtnl_unlock();
+ }
+ 
+diff --git a/sound/soc/codecs/wm8958-dsp2.c b/sound/soc/codecs/wm8958-dsp2.c
+index 754f88e1fdab..4892966fc1b8 100644
+--- a/sound/soc/codecs/wm8958-dsp2.c
++++ b/sound/soc/codecs/wm8958-dsp2.c
+@@ -459,7 +459,7 @@ static int wm8958_put_mbc_enum(struct snd_kcontrol *kcontrol,
+ 	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+ 	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
+ 	struct wm8994 *control = wm8994->wm8994;
+-	int value = ucontrol->value.integer.value[0];
++	int value = ucontrol->value.enumerated.item[0];
+ 	int reg;
+ 
+ 	/* Don't allow on the fly reconfiguration */
+@@ -549,7 +549,7 @@ static int wm8958_put_vss_enum(struct snd_kcontrol *kcontrol,
+ 	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+ 	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
+ 	struct wm8994 *control = wm8994->wm8994;
+-	int value = ucontrol->value.integer.value[0];
++	int value = ucontrol->value.enumerated.item[0];
+ 	int reg;
+ 
+ 	/* Don't allow on the fly reconfiguration */
+@@ -582,7 +582,7 @@ static int wm8958_put_vss_hpf_enum(struct snd_kcontrol *kcontrol,
+ 	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+ 	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
+ 	struct wm8994 *control = wm8994->wm8994;
+-	int value = ucontrol->value.integer.value[0];
++	int value = ucontrol->value.enumerated.item[0];
+ 	int reg;
+ 
+ 	/* Don't allow on the fly reconfiguration */
+@@ -749,7 +749,7 @@ static int wm8958_put_enh_eq_enum(struct snd_kcontrol *kcontrol,
+ 	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+ 	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
+ 	struct wm8994 *control = wm8994->wm8994;
+-	int value = ucontrol->value.integer.value[0];
++	int value = ucontrol->value.enumerated.item[0];
+ 	int reg;
+ 
+ 	/* Don't allow on the fly reconfiguration */
+diff --git a/sound/soc/codecs/wm8994.c b/sound/soc/codecs/wm8994.c
+index 6e746c7474bf..cda3cf23474b 100644
+--- a/sound/soc/codecs/wm8994.c
++++ b/sound/soc/codecs/wm8994.c
+@@ -361,7 +361,7 @@ static int wm8994_put_drc_enum(struct snd_kcontrol *kcontrol,
+ 	struct wm8994 *control = wm8994->wm8994;
+ 	struct wm8994_pdata *pdata = &control->pdata;
+ 	int drc = wm8994_get_drc(kcontrol->id.name);
+-	int value = ucontrol->value.integer.value[0];
++	int value = ucontrol->value.enumerated.item[0];
+ 
+ 	if (drc < 0)
+ 		return drc;
+@@ -468,7 +468,7 @@ static int wm8994_put_retune_mobile_enum(struct snd_kcontrol *kcontrol,
+ 	struct wm8994 *control = wm8994->wm8994;
+ 	struct wm8994_pdata *pdata = &control->pdata;
+ 	int block = wm8994_get_retune_mobile_block(kcontrol->id.name);
+-	int value = ucontrol->value.integer.value[0];
++	int value = ucontrol->value.enumerated.item[0];
+ 
+ 	if (block < 0)
+ 		return block;
+diff --git a/tools/testing/selftests/efivarfs/efivarfs.sh b/tools/testing/selftests/efivarfs/efivarfs.sh
+index 77edcdcc016b..057278448515 100644
+--- a/tools/testing/selftests/efivarfs/efivarfs.sh
++++ b/tools/testing/selftests/efivarfs/efivarfs.sh
+@@ -88,7 +88,11 @@ test_delete()
+ 		exit 1
+ 	fi
+ 
+-	rm $file
++	rm $file 2>/dev/null
++	if [ $? -ne 0 ]; then
++		chattr -i $file
++		rm $file
++	fi
+ 
+ 	if [ -e $file ]; then
+ 		echo "$file couldn't be deleted" >&2
+@@ -111,6 +115,7 @@ test_zero_size_delete()
+ 		exit 1
+ 	fi
+ 
++	chattr -i $file
+ 	printf "$attrs" > $file
+ 
+ 	if [ -e $file ]; then
+@@ -141,7 +146,11 @@ test_valid_filenames()
+ 			echo "$file could not be created" >&2
+ 			ret=1
+ 		else
+-			rm $file
++			rm $file 2>/dev/null
++			if [ $? -ne 0 ]; then
++				chattr -i $file
++				rm $file
++			fi
+ 		fi
+ 	done
+ 
+@@ -174,7 +183,11 @@ test_invalid_filenames()
+ 
+ 		if [ -e $file ]; then
+ 			echo "Creating $file should have failed" >&2
+-			rm $file
++			rm $file 2>/dev/null
++			if [ $? -ne 0 ]; then
++				chattr -i $file
++				rm $file
++			fi
+ 			ret=1
+ 		fi
+ 	done
+diff --git a/tools/testing/selftests/efivarfs/open-unlink.c b/tools/testing/selftests/efivarfs/open-unlink.c
+index 8c0764407b3c..4af74f733036 100644
+--- a/tools/testing/selftests/efivarfs/open-unlink.c
++++ b/tools/testing/selftests/efivarfs/open-unlink.c
+@@ -1,10 +1,68 @@
++#include <errno.h>
+ #include <stdio.h>
+ #include <stdint.h>
+ #include <stdlib.h>
+ #include <unistd.h>
++#include <sys/ioctl.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <fcntl.h>
++#include <linux/fs.h>
++
++static int set_immutable(const char *path, int immutable)
++{
++	unsigned int flags;
++	int fd;
++	int rc;
++	int error;
++
++	fd = open(path, O_RDONLY);
++	if (fd < 0)
++		return fd;
++
++	rc = ioctl(fd, FS_IOC_GETFLAGS, &flags);
++	if (rc < 0) {
++		error = errno;
++		close(fd);
++		errno = error;
++		return rc;
++	}
++
++	if (immutable)
++		flags |= FS_IMMUTABLE_FL;
++	else
++		flags &= ~FS_IMMUTABLE_FL;
++
++	rc = ioctl(fd, FS_IOC_SETFLAGS, &flags);
++	error = errno;
++	close(fd);
++	errno = error;
++	return rc;
++}
++
++static int get_immutable(const char *path)
++{
++	unsigned int flags;
++	int fd;
++	int rc;
++	int error;
++
++	fd = open(path, O_RDONLY);
++	if (fd < 0)
++		return fd;
++
++	rc = ioctl(fd, FS_IOC_GETFLAGS, &flags);
++	if (rc < 0) {
++		error = errno;
++		close(fd);
++		errno = error;
++		return rc;
++	}
++	close(fd);
++	if (flags & FS_IMMUTABLE_FL)
++		return 1;
++	return 0;
++}
+ 
+ int main(int argc, char **argv)
+ {
+@@ -27,7 +85,7 @@ int main(int argc, char **argv)
+ 	buf[4] = 0;
+ 
+ 	/* create a test variable */
+-	fd = open(path, O_WRONLY | O_CREAT);
++	fd = open(path, O_WRONLY | O_CREAT, 0600);
+ 	if (fd < 0) {
+ 		perror("open(O_WRONLY)");
+ 		return EXIT_FAILURE;
+@@ -41,6 +99,18 @@ int main(int argc, char **argv)
+ 
+ 	close(fd);
+ 
++	rc = get_immutable(path);
++	if (rc < 0) {
++		perror("ioctl(FS_IOC_GETFLAGS)");
++		return EXIT_FAILURE;
++	} else if (rc) {
++		rc = set_immutable(path, 0);
++		if (rc < 0) {
++			perror("ioctl(FS_IOC_SETFLAGS)");
++			return EXIT_FAILURE;
++		}
++	}
++
+ 	fd = open(path, O_RDONLY);
+ 	if (fd < 0) {
+ 		perror("open");
