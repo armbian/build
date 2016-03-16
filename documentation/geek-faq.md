@@ -1,3 +1,11 @@
+# How to contribute to the code?
+
+1. [Fork](http://help.github.com/forking/) the project
+2. Make one or more well commented and clean commits to the repository. You can make a new branch here if you are modifying more than one part or feature.
+3. Perform a [pull request](http://help.github.com/pull-requests/) in github's web interface.
+
+If it is a new feature request, don't start the coding first. Remember to [open an issue](https://guides.github.com/features/issues/) to discuss the new feature.
+
 # How to build Armbian image or custom kernel?
 
 You will need to setup development environment within [Ubuntu 14.04 LTS x64 server image](http://releases.ubuntu.com/14.04/) and cca. 20G of free space. 
