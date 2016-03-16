@@ -214,7 +214,7 @@ case $BOARD in
 
 	orangepiplus)#enabled
 		#description H3 quad core (Orange Pi Plus or Plus 2)
-		#build 3wip
+		#build 6wip
 		LINUXFAMILY="sun8i"
 		BOOTCONFIG="orangepi_plus_defconfig"
 		MODULES="8189es #gpio_sunxi #w1-sunxi #w1-gpio #w1-therm #gc2035"
@@ -226,7 +226,7 @@ case $BOARD in
 
 	orangepih3)#enabled
 		#description H3 quad core (Orange Pi PC/One/2/Lite)
-		#build 3wip
+		#build 6wip
 		LINUXFAMILY="sun8i"
 		BOOTCONFIG="orangepi_h3_defconfig"
 		MODULES="8189es #gpio_sunxi #w1-sunxi #w1-gpio #w1-therm #gc2035"
@@ -364,6 +364,11 @@ case $LINUXFAMILY in
 		UBOOT_DEV=$UBOOT_DEFAULT
 		UBOOT_DEV_BRANCH=""
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		# latest stable v2016.03 broken gmac on sun7i, fixing it for DEFAULT and NEXT
+		if [[ $LINUXFAMILY != sun8i ]]; then
+			UBOOT_DEFAULT_BRANCH="v2016.01"
+			UBOOT_NEXT_BRANCH="v2016.01"
+		fi
 	;;
 	
 	odroidxu4)
