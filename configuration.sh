@@ -356,11 +356,7 @@ case $LINUXFAMILY in
 		KERNEL_DEV_SOURCE="linux-vanilla"
 		# U-boot
 		UBOOT_DEFAULT="git://git.denx.de/u-boot.git"
-		if [[ $LINUXFAMILY == sun8i ]]; then
-			UBOOT_DEFAULT_BRANCH="v2016.03-rc2"
-		else
-			UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
-		fi
+		UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
 		UBOOT_DEFAULT_SOURCE="u-boot"
 		UBOOT_NEXT=$UBOOT_DEFAULT
 		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
