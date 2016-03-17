@@ -36,12 +36,12 @@ Example:
 Once you start FEL boot, you will see this prompt:
 
 ```
-[ o.k. ] Press <b> to boot again, <q> to finish [ FEL ]
+[ o.k. ] Press any key to boot again, <q> to finish [ FEL ]
 ```
 
-Pressing `q` (or any key other than `b`) deletes current rootfs and finishes build process, so you need to shut down or reboot your board to avoid possible problems. All changes to root filesystem will persist until you exit FEL mode.
+Pressing `q` deletes current rootfs and finishes build process, so you need to shut down or reboot your board to avoid possible problems unmounting/deleting temporary rootfs. All changes to root filesystem will persist until you exit FEL mode.
 
-To reboot again into testing system, switch your board into FEL mode and press `b`.
+To reboot again into testing system, switch your board into FEL mode and press any key other than `q`.
 
 Because kernel and .bin/.dtb file are loaded from rootfs each time, it's possible to update kernel or its configuration (via `apt-get`, `dtc`, `fex2bin`/`bin2fex`) from within running system.
 
@@ -59,7 +59,7 @@ Set `FEL_LOCAL_IP` to IP address that can be used to reach NFS server on your bu
 
 Set `FEL_AUTO=yes` to skip prompt before trying FEL load
 
-### Customisation
+### Customization
 
 You can even create `userpatches/fel-hooks.sh` and define there 2 functions: `fel_post_prepare` and `fel_pre_load`. All normal build variables like $BOARD, $BRANCH and so on can be used in these functions to define specific actions.
 
