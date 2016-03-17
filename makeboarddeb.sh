@@ -21,11 +21,11 @@ create_board_package (){
 
 	display_alert "Creating board support package." "$BOARD" "info"
 
-	if [[ $BRANCH == "next" ]]; then 
-		ROOT_BRACH="-next"; 
-	else 
-		ROOT_BRACH=""; 
-	fi  
+	if [[ $BRANCH == "next" ]]; then
+		ROOT_BRACH="-next";
+	else
+		ROOT_BRACH="";
+	fi
 	
 	local destination=$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_armhf
 	local controlfile=$destination/DEBIAN/control
@@ -54,7 +54,7 @@ create_board_package (){
 	install -m 755 $SRC/lib/scripts/firstrun  $destination/etc/init.d
 
 	# install hardware info script
-	install -m 755 $SRC/lib/scripts/armhwinfo $destination/etc/init.d 
+	install -m 755 $SRC/lib/scripts/armhwinfo $destination/etc/init.d
 	echo "set -e" >> $destination/DEBIAN/postinst
 	echo "update-rc.d armhwinfo defaults >/dev/null 2>&1" >> $destination/DEBIAN/postinst
 	echo "update-rc.d -f motd remove >/dev/null 2>&1" >> $destination/DEBIAN/postinst

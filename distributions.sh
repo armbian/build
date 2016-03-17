@@ -20,167 +20,164 @@ display_alert "Fixing release custom applications." "$RELEASE" "info"
 # Common
 
 # set up apt
-cat <<END > $DEST/cache/sdcard/etc/apt/apt.conf.d/71-no-recommends
+cat <<END > $CACHEDIR/sdcard/etc/apt/apt.conf.d/71-no-recommends
 APT::Install-Recommends "0";
 APT::Install-Suggests "0";
 END
 
 # configure the system for unattended upgrades
-cp $SRC/lib/scripts/50unattended-upgrades $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-cp $SRC/lib/scripts/02periodic $DEST/cache/sdcard/etc/apt/apt.conf.d/02periodic
+cp $SRC/lib/scripts/50unattended-upgrades $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+cp $SRC/lib/scripts/02periodic $CACHEDIR/sdcard/etc/apt/apt.conf.d/02periodic
 
 # setting window title for remote sessions
-mkdir -p $DEST/cache/sdcard/etc/profile.d
-install -m 755 $SRC/lib/scripts/ssh-title.sh $DEST/cache/sdcard/etc/profile.d/ssh-title.sh
+mkdir -p $CACHEDIR/sdcard/etc/profile.d
+install -m 755 $SRC/lib/scripts/ssh-title.sh $CACHEDIR/sdcard/etc/profile.d/ssh-title.sh
 
 case $RELEASE in
 
 # Debian Wheezy
 wheezy)
-		
 		# add serial console
-		echo T0:2345:respawn:/sbin/getty -L $SERIALCON 115200 vt100 >> $DEST/cache/sdcard/etc/inittab
-		
+		echo T0:2345:respawn:/sbin/getty -L $SERIALCON 115200 vt100 >> $CACHEDIR/sdcard/etc/inittab
+
 		# don't clear screen on boot console
-		sed -e 's/getty 38400 tty1/getty --noclear 38400 tty1/g' -i $DEST/cache/sdcard/etc/inittab
-		
+		sed -e 's/getty 38400 tty1/getty --noclear 38400 tty1/g' -i $CACHEDIR/sdcard/etc/inittab
+
 		# disable some getties
-		sed -e 's/5:23:respawn/#5:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
-		sed -e 's/6:23:respawn/#6:23:respawn/g' -i $DEST/cache/sdcard/etc/inittab
-		
+		sed -e 's/5:23:respawn/#5:23:respawn/g' -i $CACHEDIR/sdcard/etc/inittab
+		sed -e 's/6:23:respawn/#6:23:respawn/g' -i $CACHEDIR/sdcard/etc/inittab
+
 		# auto upgrading
-		sed -e "s/ORIGIN/Debian/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		sed -e "s/n=CODENAME/a=old-stable/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades		
-		
+		sed -e "s/ORIGIN/Debian/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		sed -e "s/n=CODENAME/a=old-stable/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+
 		# install ramlog
-		cp $SRC/lib/bin/ramlog_2.0.0_all.deb $DEST/cache/sdcard/tmp
-		chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb >/dev/null 2>&1" 		
+		cp $SRC/lib/bin/ramlog_2.0.0_all.deb $CACHEDIR/sdcard/tmp
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb >/dev/null 2>&1"
 		# enabled back at first run. To remove errors
-		chroot $DEST/cache/sdcard /bin/bash -c "service ramlog disable >/dev/null 2>&1"
-		rm $DEST/cache/sdcard/tmp/ramlog_2.0.0_all.deb
-		sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $DEST/cache/sdcard/etc/default/ramlog
-		sed -e 's/$remote_fs $time/$remote_fs $time ramlog/g' -i $DEST/cache/sdcard/etc/init.d/rsyslog 
-		sed -e 's/umountnfs $time/umountnfs $time ramlog/g' -i $DEST/cache/sdcard/etc/init.d/rsyslog  
+		chroot $CACHEDIR/sdcard /bin/bash -c "service ramlog disable >/dev/null 2>&1"
+		rm $CACHEDIR/sdcard/tmp/ramlog_2.0.0_all.deb
+		sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $CACHEDIR/sdcard/etc/default/ramlog
+		sed -e 's/$remote_fs $time/$remote_fs $time ramlog/g' -i $CACHEDIR/sdcard/etc/init.d/rsyslog
+		sed -e 's/umountnfs $time/umountnfs $time ramlog/g' -i $CACHEDIR/sdcard/etc/init.d/rsyslog
 		;;
 
 # Debian Jessie
 jessie)
-		
 		# enable root login for latest ssh on jessie
-		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/cache/sdcard/etc/ssh/sshd_config 
-		
+		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
+
 		# auto upgrading
-		sed -e "s/ORIGIN/Debian/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		sed -e "s/CODENAME/$RELEASE/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		
+		sed -e "s/ORIGIN/Debian/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		sed -e "s/CODENAME/$RELEASE/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+
 		# mount 256Mb tmpfs to /tmp
-		echo "tmpfs   /tmp         tmpfs   nodev,nosuid,size=256M          0  0" >> $DEST/cache/sdcard/etc/fstab
-		
-		# fix selinux error 
-		mkdir $DEST/cache/sdcard/selinux
-		
+		echo "tmpfs   /tmp         tmpfs   nodev,nosuid,size=256M          0  0" >> $CACHEDIR/sdcard/etc/fstab
+
+		# fix selinux error
+		mkdir $CACHEDIR/sdcard/selinux
+
 		# add serial console
-		cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/$SERIALCON.conf
-		sed -e "s/ttyS0/$SERIALCON/g" -i $DEST/cache/sdcard/etc/init/$SERIALCON.conf
-		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
-		mkdir -p "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d"
-		echo "[Service]" > "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
-		echo "ExecStart=" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
-		echo "ExecStart=-/sbin/agetty -L 115200 %I $TERM" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+		cp $SRC/lib/config/ttyS0.conf $CACHEDIR/sdcard/etc/init/$SERIALCON.conf
+		sed -e "s/ttyS0/$SERIALCON/g" -i $CACHEDIR/sdcard/etc/init/$SERIALCON.conf
+		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
+		mkdir -p "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d"
+		echo "[Service]" > "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+		echo "ExecStart=" >> "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+		echo "ExecStart=-/sbin/agetty -L 115200 %I $TERM" >> "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
 
 		# don't clear screen tty1
-		mkdir -p "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/"
-		echo "[Service]" > "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
-		echo "TTYVTDisallocate=no" >> "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
-	
+		mkdir -p "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/"
+		echo "[Service]" > "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
+		echo "TTYVTDisallocate=no" >> "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
+
 		# seting timeout
-		mkdir -p $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/
-		echo "[Service]" > $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
-		echo "TimeoutStopSec=10" >> $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
+		mkdir -p $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/
+		echo "[Service]" > $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
+		echo "TimeoutStopSec=10" >> $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
 
 		# handle PMU power button
-		mkdir -p $DEST/cache/sdcard/etc/udev/rules.d/
-		cp $SRC/lib/config/71-axp-power-button.rules $DEST/cache/sdcard/etc/udev/rules.d/
+		mkdir -p $CACHEDIR/sdcard/etc/udev/rules.d/
+		cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/sdcard/etc/udev/rules.d/
 		;;
 
 # Ubuntu Trusty
 trusty)
-		
 		# add serial console
-		cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/$SERIALCON.conf
-		sed -e "s/ttyS0/$SERIALCON/g" -i $DEST/cache/sdcard/etc/init/$SERIALCON.conf
+		cp $SRC/lib/config/ttyS0.conf $CACHEDIR/sdcard/etc/init/$SERIALCON.conf
+		sed -e "s/ttyS0/$SERIALCON/g" -i $CACHEDIR/sdcard/etc/init/$SERIALCON.conf
 
 		# don't clear screen tty1
-		sed -e s,"exec /sbin/getty","exec /sbin/getty --noclear",g 	-i $DEST/cache/sdcard/etc/init/tty1.conf
-		
+		sed -e s,"exec /sbin/getty","exec /sbin/getty --noclear",g 	-i $CACHEDIR/sdcard/etc/init/tty1.conf
+
 		# disable some getties
-		rm -f $DEST/cache/sdcard/etc/init/tty5.conf
-		rm -f $DEST/cache/sdcard/etc/init/tty6.conf
-		
+		rm -f $CACHEDIR/sdcard/etc/init/tty5.conf
+		rm -f $CACHEDIR/sdcard/etc/init/tty6.conf
+
 		# enable root login for latest ssh on trusty
-		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/cache/sdcard/etc/ssh/sshd_config 		
-		
-		# fix selinux error 
-		mkdir $DEST/cache/sdcard/selinux
+		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
+
+		# fix selinux error
+		mkdir $CACHEDIR/sdcard/selinux
 
 		# that my custom motd works well
-		if [ -d "$DEST/cache/sdcard/etc/update-motd.d" ]; then
-			mv $DEST/cache/sdcard/etc/update-motd.d $DEST/cache/sdcard/etc/update-motd.d-backup
+		if [ -d "$CACHEDIR/sdcard/etc/update-motd.d" ]; then
+			mv $CACHEDIR/sdcard/etc/update-motd.d $CACHEDIR/sdcard/etc/update-motd.d-backup
 		fi
 
 		# auto upgrading
-		sed -e "s/ORIGIN/Ubuntu/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		sed -e "s/CODENAME/$RELEASE/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		sed -e "s/ORIGIN/Ubuntu/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		sed -e "s/CODENAME/$RELEASE/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 
-		# remove what's anyway not working 
-		rm $DEST/cache/sdcard/etc/init/ureadahead*
-		rm $DEST/cache/sdcard/etc/init/plymouth*
+		# remove what's anyway not working
+		rm $CACHEDIR/sdcard/etc/init/ureadahead*
+		rm $CACHEDIR/sdcard/etc/init/plymouth*
 		;;
 
 xenial)
 		# enable root login for latest ssh on jessie
-		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $DEST/cache/sdcard/etc/ssh/sshd_config
+		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
 
 		# auto upgrading (disabled while testing)
-		#sed -e "s/ORIGIN/Debian/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		#sed -e "s/CODENAME/$RELEASE/g" -i $DEST/cache/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		#sed -e "s/ORIGIN/Debian/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		#sed -e "s/CODENAME/$RELEASE/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 
 		# mount 256Mb tmpfs to /tmp (disabled while supported by debootstrap-ng only)
-		#echo "tmpfs   /tmp         tmpfs   nodev,nosuid,size=256M          0  0" >> $DEST/cache/sdcard/etc/fstab
+		#echo "tmpfs   /tmp         tmpfs   nodev,nosuid,size=256M          0  0" >> $CACHEDIR/sdcard/etc/fstab
 
 		# fix selinux error
-		mkdir $DEST/cache/sdcard/selinux
+		mkdir $CACHEDIR/sdcard/selinux
 
 		# add serial console (needs testing whether it's still needed)
-		#cp $SRC/lib/config/ttyS0.conf $DEST/cache/sdcard/etc/init/$SERIALCON.conf
-		#sed -e "s/ttyS0/$SERIALCON/g" -i $DEST/cache/sdcard/etc/init/$SERIALCON.conf
-		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
-		#mkdir -p "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d"
-		#echo "[Service]" > "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
-		#echo "ExecStart=" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
-		#echo "ExecStart=-/sbin/agetty -L 115200 %I $TERM" >> "$DEST/cache/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+		#cp $SRC/lib/config/ttyS0.conf $CACHEDIR/sdcard/etc/init/$SERIALCON.conf
+		#sed -e "s/ttyS0/$SERIALCON/g" -i $CACHEDIR/sdcard/etc/init/$SERIALCON.conf
+		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
+		#mkdir -p "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d"
+		#echo "[Service]" > "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+		#echo "ExecStart=" >> "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+		#echo "ExecStart=-/sbin/agetty -L 115200 %I $TERM" >> "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
 
 		# don't clear screen tty1
-		mkdir -p "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/"
-		echo "[Service]" > "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
-		echo "TTYVTDisallocate=no" >> "$DEST/cache/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
+		mkdir -p "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/"
+		echo "[Service]" > "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
+		echo "TTYVTDisallocate=no" >> "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
 
 		# seting timeout
-		mkdir -p $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/
-		echo "[Service]" > $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
-		echo "TimeoutStopSec=10" >> $DEST/cache/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
+		mkdir -p $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/
+		echo "[Service]" > $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
+		echo "TimeoutStopSec=10" >> $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
 
 		# handle PMU power button
-		mkdir -p $DEST/cache/sdcard/etc/udev/rules.d/
-		cp $SRC/lib/config/71-axp-power-button.rules $DEST/cache/sdcard/etc/udev/rules.d/
+		mkdir -p $CACHEDIR/sdcard/etc/udev/rules.d/
+		cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/sdcard/etc/udev/rules.d/
 
 		# disable ureadahead
 		# needs kernel tracing options that AFAIK are present only in mainline TODO: fix later
-		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload mask ureadahead.service >/dev/null 2>&1"
-		chroot $DEST/cache/sdcard /bin/bash -c "systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
+		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask ureadahead.service >/dev/null 2>&1"
+		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
 
 		# disable initramfs
-		sed -i 's/update_initramfs=yes/update_initramfs=no/' $DEST/cache/sdcard//etc/initramfs-tools/update-initramfs.conf
+		sed -i 's/update_initramfs=yes/update_initramfs=no/' $CACHEDIR/sdcard//etc/initramfs-tools/update-initramfs.conf
 		;;
 
 	*)
@@ -189,58 +186,58 @@ xenial)
 esac
 
 # copy hostapd configurations
-install -m 755 $SRC/lib/config/hostapd.conf $DEST/cache/sdcard/etc/hostapd.conf 
-install -m 755 $SRC/lib/config/hostapd.realtek.conf $DEST/cache/sdcard/etc/hostapd.conf-rt
+install -m 755 $SRC/lib/config/hostapd.conf $CACHEDIR/sdcard/etc/hostapd.conf
+install -m 755 $SRC/lib/config/hostapd.realtek.conf $CACHEDIR/sdcard/etc/hostapd.conf-rt
 
-# console fix due to Debian bug 
-sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $DEST/cache/sdcard/etc/default/console-setup
+# console fix due to Debian bug
+sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $CACHEDIR/sdcard/etc/default/console-setup
 
 # root-fs modifications
-rm 	-f $DEST/cache/sdcard/etc/motd
-touch $DEST/cache/sdcard/etc/motd
+rm 	-f $CACHEDIR/sdcard/etc/motd
+touch $CACHEDIR/sdcard/etc/motd
 
 # change time zone data
-echo $TZDATA > $DEST/cache/sdcard/etc/timezone
-chroot $DEST/cache/sdcard /bin/bash -c "dpkg-reconfigure -f noninteractive tzdata >/dev/null 2>&1"
+echo $TZDATA > $CACHEDIR/sdcard/etc/timezone
+chroot $CACHEDIR/sdcard /bin/bash -c "dpkg-reconfigure -f noninteractive tzdata >/dev/null 2>&1"
 
-# set root password 
-chroot $DEST/cache/sdcard /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"  
+# set root password
+chroot $CACHEDIR/sdcard /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
 
 # create proper fstab
-if [ "$BOOTSIZE" -eq "0" ]; then 
+if [ "$BOOTSIZE" -eq "0" ]; then
 	local device="/dev/mmcblk0p1	/           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro"
 else
-	local device="/dev/mmcblk0p2	/           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro" 
+	local device="/dev/mmcblk0p2	/           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro"
 fi
-echo "$device        0       0" >> $DEST/cache/sdcard/etc/fstab
+echo "$device        0       0" >> $CACHEDIR/sdcard/etc/fstab
 
 # flash media tunning
-if [ -f "$DEST/cache/sdcard/etc/default/tmpfs" ]; then
-	sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $DEST/cache/sdcard/etc/default/tmpfs
-	sed -e 's/#RUN_SIZE=10%/RUN_SIZE=128M/g' -i $DEST/cache/sdcard/etc/default/tmpfs 
-	sed -e 's/#LOCK_SIZE=/LOCK_SIZE=/g' -i $DEST/cache/sdcard/etc/default/tmpfs 
-	sed -e 's/#SHM_SIZE=/SHM_SIZE=128M/g' -i $DEST/cache/sdcard/etc/default/tmpfs 
-	sed -e 's/#TMP_SIZE=/TMP_SIZE=1G/g' -i $DEST/cache/sdcard/etc/default/tmpfs
+if [ -f "$CACHEDIR/sdcard/etc/default/tmpfs" ]; then
+	sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
+	sed -e 's/#RUN_SIZE=10%/RUN_SIZE=128M/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
+	sed -e 's/#LOCK_SIZE=/LOCK_SIZE=/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
+	sed -e 's/#SHM_SIZE=/SHM_SIZE=128M/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
+	sed -e 's/#TMP_SIZE=/TMP_SIZE=1G/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
 fi
 
 # add custom bashrc loading
-cat <<END >> $DEST/cache/sdcard/etc/bash.bashrc
+cat <<END >> $CACHEDIR/sdcard/etc/bash.bashrc
 if [ -f /etc/bash.bashrc.custom ]; then
     . /etc/bash.bashrc.custom
 fi
 END
 
 # display welcome message at first root login
-touch $DEST/cache/sdcard/root/.not_logged_in_yet
+touch $CACHEDIR/sdcard/root/.not_logged_in_yet
 
 # force change root password at first login
-chroot $DEST/cache/sdcard /bin/bash -c "chage -d 0 root"
+chroot $CACHEDIR/sdcard /bin/bash -c "chage -d 0 root"
 
 # remove hostapd because it's replaced with ours
-chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y -qq remove hostapd >/dev/null 2>&1"
+chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove hostapd >/dev/null 2>&1"
 
 # install sunxi-tools
-cp $SRC/lib/bin/sunxi-tools_1.3-1_armhf.deb $DEST/cache/sdcard/tmp/
+cp $SRC/lib/bin/sunxi-tools_1.3-1_armhf.deb $CACHEDIR/sdcard/tmp/
 # libusb dependency should already be satisfied by usbutils
-chroot $DEST/cache/sdcard /bin/bash -c "dpkg -i /tmp/sunxi-tools_1.3-1_armhf.deb >/dev/null 2>&1"
+chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/sunxi-tools_1.3-1_armhf.deb >/dev/null 2>&1"
 }

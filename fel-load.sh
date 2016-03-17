@@ -84,13 +84,13 @@ if [[ -n $FEL_ROOTFS ]]; then
 	fel_prepare_target
 	[[ $(type -t fel_post_prepare) == function ]] && fel_post_prepare
 	RES=b
-	while [[ $RES == b ]]; do
+	while [[ $RES != q ]]; do
 		if [[ $FEL_AUTO != yes ]]; then
 			display_alert "Connect device in FEL mode and press" "<Enter>" "info"
 			read
 		fi
 		fel_load
-		display_alert "Press <b> to boot again, <q> to finish" "FEL" "info"
+		display_alert "Press any key to boot again, <q> to finish" "FEL" "info"
 		read -n 1 RES
 		echo
 	done

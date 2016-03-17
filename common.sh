@@ -23,32 +23,32 @@ compile_uboot (){
 	if [[ ! -d "$SOURCES/$BOOTSOURCEDIR" ]]; then
 		exit_with_error "Error building u-boot: source directory does not exist" "$BOOTSOURCEDIR"
 	fi
-		
+
 	display_alert "Compiling uboot. Please wait." "$VER" "info"
-	echo `date +"%d.%m.%Y %H:%M:%S"` $SOURCES/$BOOTSOURCEDIR/$BOOTCONFIG >> $DEST/debug/install.log 
+	echo `date +"%d.%m.%Y %H:%M:%S"` $SOURCES/$BOOTSOURCEDIR/$BOOTCONFIG >> $DEST/debug/install.log
 	cd $SOURCES/$BOOTSOURCEDIR
 	make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
-	
+
 	# there are two methods of compilation
 	if [[ $BOOTCONFIG == *config* ]]; then
-	
+
 		make $CTHREADS $BOOTCONFIG CROSS_COMPILE=arm-linux-gnueabihf- >/dev/null 2>&1
 		[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
-		[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config			
+		[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
 		[ -f $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp ] && cp $SRC/lib/bin/armbian-u-boot.bmp $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp
 		touch .scmversion
-		
+
 		# special compilation for armada
 		[[ $LINUXFAMILY == "marvell" ]] && local MAKEPARA="u-boot.mmc"
-		
+
 		# patch mainline uboot configuration to boot with old kernels
 		if [[ $BRANCH == "default" && $LINUXFAMILY == sun*i ]] ; then
 			if [ "$(cat $SOURCES/$BOOTSOURCEDIR/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
 				echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
 				echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
 			fi
-		fi	
-		
+		fi
+
 		eval 'make $MAKEPARA $CTHREADS CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
@@ -66,32 +66,32 @@ compile_uboot (){
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_armhf
 
 	mkdir -p $DEST/debs/$uboot_name/usr/lib/$uboot_name $DEST/debs/$uboot_name/DEBIAN
-	
+
 # set up post install script
 cat <<END > $DEST/debs/$uboot_name/DEBIAN/postinst
 #!/bin/bash
 set -e
 if [[ \$DEVICE == "" ]]; then DEVICE="/dev/mmcblk0"; fi
 
-if [[ \$DPKG_MAINTSCRIPT_PACKAGE == *cubox* ]] ; then 
+if [[ \$DPKG_MAINTSCRIPT_PACKAGE == *cubox* ]] ; then
 	( dd if=/usr/lib/$uboot_name/SPL of=\$DEVICE bs=512 seek=2 status=noxfer ) > /dev/null 2>&1
-	( dd if=/usr/lib/$uboot_name/u-boot.img of=\$DEVICE bs=1K seek=42 status=noxfer ) > /dev/null 2>&1	
-elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *guitar* ]] ; then 
+	( dd if=/usr/lib/$uboot_name/u-boot.img of=\$DEVICE bs=1K seek=42 status=noxfer ) > /dev/null 2>&1
+elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *guitar* ]] ; then
 	( dd if=/usr/lib/$uboot_name/bootloader.bin of=\$DEVICE bs=512 seek=4097 conv=fsync ) > /dev/null 2>&1
 	( dd if=/usr/lib/$uboot_name/u-boot-dtb.bin of=\$DEVICE bs=512 seek=6144 conv=fsync ) > /dev/null 2>&1
-elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *odroid* ]] ; then 
+elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *odroid* ]] ; then
 	( dd if=/usr/lib/$uboot_name/bl1.bin.hardkernel of=\$DEVICE seek=1 conv=fsync ) > /dev/null 2>&1
 	( dd if=/usr/lib/$uboot_name/bl2.bin.hardkernel of=\$DEVICE seek=31 conv=fsync ) > /dev/null 2>&1
 	( dd if=/usr/lib/$uboot_name/u-boot.bin of=\$DEVICE bs=512 seek=63 conv=fsync ) > /dev/null 2>&1
 	( dd if=/usr/lib/$uboot_name/tzsw.bin.hardkernel of=\$DEVICE seek=719 conv=fsync ) > /dev/null 2>&1
 	( dd if=/dev/zero of=\$DEVICE seek=1231 count=32 bs=512 conv=fsync ) > /dev/null 2>&1
-elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *udoo* ]] ; then 
+elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *udoo* ]] ; then
 	( dd if=/usr/lib/$uboot_name/SPL of=\$DEVICE bs=1k seek=1 status=noxfer ) > /dev/null 2>&1
-	( dd if=/usr/lib/$uboot_name/u-boot.img of=\$DEVICE bs=1K seek=69 status=noxfer ) > /dev/null 2>&1		
-elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *armada* ]] ; then 
-	( dd if=/usr/lib/$uboot_name/u-boot.mmc of=\$DEVICE bs=512 seek=1 status=noxfer ) > /dev/null 2>&1	
-else 
-	( dd if=/usr/lib/$uboot_name/u-boot-sunxi-with-spl.bin of=\$DEVICE bs=1024 seek=8 status=noxfer ) > /dev/null 2>&1	
+	( dd if=/usr/lib/$uboot_name/u-boot.img of=\$DEVICE bs=1K seek=69 status=noxfer ) > /dev/null 2>&1
+elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *armada* ]] ; then
+	( dd if=/usr/lib/$uboot_name/u-boot.mmc of=\$DEVICE bs=512 seek=1 status=noxfer ) > /dev/null 2>&1
+else
+	( dd if=/usr/lib/$uboot_name/u-boot-sunxi-with-spl.bin of=\$DEVICE bs=1024 seek=8 status=noxfer ) > /dev/null 2>&1
 fi
 exit 0
 END
@@ -113,12 +113,12 @@ END
 
 	# copy proper uboot files to place
 	if [[ $BOARD == cubox-i* ]] ; then
-		[ ! -f "SPL" ] || cp SPL u-boot.img $DEST/debs/$uboot_name/usr/lib/$uboot_name		
+		[ ! -f "SPL" ] || cp SPL u-boot.img $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == guitar* ]] ; then
-		[ ! -f "u-boot-dtb.bin" ] || cp u-boot-dtb.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name	
+		[ ! -f "u-boot-dtb.bin" ] || cp u-boot-dtb.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 		[ ! -f "$SRC/lib/bin/s500-bootloader.bin" ] || cp $SRC/lib/bin/s500-bootloader.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name/bootloader.bin
-	elif [[ $BOARD == odroid* ]] ; then	
-		[ ! -f "sd_fuse/hardkernel/bl1.bin.hardkernel" ] || cp sd_fuse/hardkernel/bl1.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name	
+	elif [[ $BOARD == odroid* ]] ; then
+		[ ! -f "sd_fuse/hardkernel/bl1.bin.hardkernel" ] || cp sd_fuse/hardkernel/bl1.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name
 		[ ! -f "sd_fuse/hardkernel/bl2.bin.hardkernel" ] || cp sd_fuse/hardkernel/bl2.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name
 		[ ! -f "sd_fuse/hardkernel/tzsw.bin.hardkernel" ] || cp sd_fuse/hardkernel/tzsw.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name
 		[ ! -f "u-boot.bin" ] || cp u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name/
@@ -127,7 +127,7 @@ END
 	elif [[ $BOARD == armada* ]] ; then
 		[ ! -f "u-boot.mmc" ] || cp u-boot.mmc $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	else
-		[ ! -f "u-boot-sunxi-with-spl.bin" ] || cp u-boot-sunxi-with-spl.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name 
+		[ ! -f "u-boot-sunxi-with-spl.bin" ] || cp u-boot-sunxi-with-spl.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	fi
 
 	cd $DEST/debs
@@ -172,9 +172,9 @@ compile_kernel (){
 	if [[ ! -d "$SOURCES/$LINUXSOURCEDIR" ]]; then
 		exit_with_error "Error building kernel: source directory does not exist" "$LINUXSOURCEDIR"
 	fi
-	
+
 	# read kernel version to variable $VER
-	grab_version "$SOURCES/$LINUXSOURCEDIR"	
+	grab_version "$SOURCES/$LINUXSOURCEDIR"
 
 	display_alert "Compiling $BRANCH kernel" "@host" "info"
 	cd $SOURCES/$LINUXSOURCEDIR/
@@ -203,12 +203,12 @@ compile_kernel (){
 
 	export LOCALVERSION="-"$LINUXFAMILY
 
-	# We can use multi threading here but not later since it's not working. This way of compilation is much faster. 
+	# We can use multi threading here but not later since it's not working. This way of compilation is much faster.
 	if [ "$KERNEL_CONFIGURE" != "yes" ]; then
 		if [ "$BRANCH" = "default" ]; then
 			make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- silentoldconfig
 		else
-			make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig			
+			make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
 		fi
 	else
 		make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- oldconfig
@@ -240,7 +240,7 @@ compile_kernel (){
 		KERNEL_PACKING="bindeb-pkg"
 	fi
 
-	# make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- 
+	# make $CTHREADS ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
 	# produce deb packages: image, headers, firmware, libc
 	eval 'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=armhf ARCH=arm DEBFULLNAME="$MAINTAINER" \
 		DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-" 2>&1 ' \
@@ -274,11 +274,11 @@ sed -e 's/%STUBNAME_TAG%/tusbd/g' $SOURCES/usb-redirector-linux-arm-eabi/files/r
 sed -e 's/%DAEMONNAME_TAG%/usbsrvd/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
 chmod +x $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
 # copy to root
-cp $SOURCES/usb-redirector-linux-arm-eabi/files/usb* $DEST/cache/sdcard/usr/local/bin/ 
-cp $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd/tusbd.ko $DEST/cache/sdcard/usr/local/bin/ 
-cp $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd $DEST/cache/sdcard/etc/init.d/
+cp $SOURCES/usb-redirector-linux-arm-eabi/files/usb* $CACHEDIR/sdcard/usr/local/bin/
+cp $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd/tusbd.ko $CACHEDIR/sdcard/usr/local/bin/
+cp $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd $CACHEDIR/sdcard/etc/init.d/
 # not started by default ----- update.rc rc.usbsrvd defaults
-# chroot $DEST/cache/sdcard /bin/bash -c "update-rc.d rc.usbsrvd defaults"
+# chroot $CACHEDIR/sdcard /bin/bash -c "update-rc.d rc.usbsrvd defaults"
 
 # some aditional stuff. Some driver as example
 if [[ -n "$MISC3_DIR" ]]; then
@@ -288,9 +288,9 @@ if [[ -n "$MISC3_DIR" ]]; then
 	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
 	make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
 	(make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- KSRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
-	cp *.ko $DEST/cache/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
-	depmod -b $DEST/cache/sdcard/ $VER-$LINUXFAMILY
-	#cp blacklist*.conf $DEST/cache/sdcard/etc/modprobe.d/
+	cp *.ko $CACHEDIR/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
+	depmod -b $CACHEDIR/sdcard/ $VER-$LINUXFAMILY
+	#cp blacklist*.conf $CACHEDIR/sdcard/etc/modprobe.d/
 fi
 
 # MISC4 = NOTRO DRIVERS / special handling
@@ -301,7 +301,7 @@ if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sunxi* ]]; the
 	cp "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" .
 	make clean >/dev/null 2>&1
 	(make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null 2>&1)
-	install -m 755 a10disp "$DEST/cache/sdcard/usr/local/bin"
+	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
 fi
 # MISC5 = sunxi display control / compile it for sun8i just in case sun7i stuff gets ported to sun8i and we're able to use it
 if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sun8i* ]]; then
@@ -309,7 +309,7 @@ if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sun8i* ]]; the
 	wget -q "https://raw.githubusercontent.com/linux-sunxi/linux-sunxi/sunxi-3.4/include/video/sunxi_disp_ioctl.h"
 	make clean >/dev/null 2>&1
 	(make ARCH=arm CC=arm-linux-gnueabihf-gcc KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null 2>&1)
-	install -m 755 a10disp "$DEST/cache/sdcard/usr/local/bin"
+	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
 fi
 
 # MT7601U
@@ -363,21 +363,21 @@ _EOF_
 	cd src
 	make -s ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- clean >/dev/null 2>&1
 	(make -s -j4 ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- LINUX_SRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
-	cp os/linux/*.ko $DEST/cache/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
-	mkdir -p $DEST/cache/sdcard/etc/Wireless/RT2870STA
-	cp RT2870STA.dat $DEST/cache/sdcard/etc/Wireless/RT2870STA/
-	depmod -b $DEST/cache/sdcard/ $VER-$LINUXFAMILY
+	cp os/linux/*.ko $CACHEDIR/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
+	mkdir -p $CACHEDIR/sdcard/etc/Wireless/RT2870STA
+	cp RT2870STA.dat $CACHEDIR/sdcard/etc/Wireless/RT2870STA/
+	depmod -b $CACHEDIR/sdcard/ $VER-$LINUXFAMILY
 	make -s clean 1>&2 2>/dev/null
 	cd ..
-	mkdir -p $DEST/cache/sdcard/usr/src/
-	cp -R src $DEST/cache/sdcard/usr/src/mt7601-3.0.0.4
+	mkdir -p $CACHEDIR/sdcard/usr/src/
+	cp -R src $CACHEDIR/sdcard/usr/src/mt7601-3.0.0.4
 	# TODO: Set the module to build automatically via dkms in the future here
 
 fi
 
 # h3disp for sun8i/3.4.x
 if [ "$BOARD" = "orangepiplus" -o "$BOARD" = "orangepih3" ]; then
-	install -m 755 "$SRC/lib/scripts/h3disp" "$DEST/cache/sdcard/usr/local/bin"
+	install -m 755 "$SRC/lib/scripts/h3disp" "$CACHEDIR/sdcard/usr/local/bin"
 fi
 }
 
@@ -396,7 +396,7 @@ write_uboot()
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/SPL of=$LOOP bs=512 seek=2 status=noxfer >/dev/null 2>&1)
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer >/dev/null 2>&1)
 	elif [[ $BOARD == *armada* ]] ; then
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.mmc of=$LOOP bs=512 seek=1 status=noxfer >/dev/null 2>&1)		
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.mmc of=$LOOP bs=512 seek=1 status=noxfer >/dev/null 2>&1)
 	elif [[ $BOARD == *udoo* ]] ; then
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/SPL of=$LOOP bs=1k seek=1 status=noxfer >/dev/null 2>&1)
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.img of=$LOOP bs=1k seek=69 conv=fsync >/dev/null 2>&1)

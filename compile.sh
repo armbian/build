@@ -20,7 +20,7 @@ KERNEL_CONFIGURE="no"					# want to change my default configuration
 CLEAN_LEVEL="make,debs"					# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
 							# "images" = delete "./output/images", "debs" = delete "./output/debs",
 							# "cache" = delete "./output/cache", "sources" = delete "./sources"
-# user 
+# user
 DEST_LANG="en_US.UTF-8"					# sl_SI.UTF-8, en_US.UTF-8
 CONSOLE_CHAR="UTF-8"
 
@@ -49,8 +49,8 @@ SOURCES=$(pwd)/sources
 # To preserve proper librarires updating
 #--------------------------------------------------------------------------------------------------------------------------------
 if [[ -f main.sh && -d bin ]]; then
-	echo -e "[\e[0;31m error \x1B[0m] Copy this file one level up, alter and run again." 
-	exit 
+	echo -e "[\e[0;31m error \x1B[0m] Copy this file one level up, alter and run again."
+	exit
 fi
 
 

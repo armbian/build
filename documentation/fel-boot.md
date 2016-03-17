@@ -58,3 +58,14 @@ Set `FEL_NET_IFNAME` to name of your network interface if you have more than one
 Set `FEL_LOCAL_IP` to IP address that can be used to reach NFS server on your build host if it can't be obtained from ifconfig (i.e. port forwarding to VM guest)
 
 Set `FEL_AUTO=yes` to skip prompt before trying FEL load
+
+### Customisation
+
+You can even create `userpatches/fel-hooks.sh` and define there 2 functions: `fel_post_prepare` and `fel_pre_load`. All normal build variables like $BOARD, $BRANCH and so on can be used in these functions to define specific actions.
+
+`fel_post_prepare` is executed once after setting up u-boot script and NFS share, you can use it to add extra stuff to boot.scr (like `gpio set` or `setenv machid`) based on device name.
+
+`fel_pre_load` is executed before calling sunxi-fel, you can use it to implement logic to select one of multiple connected boards; to pass additional arguments to `sunxi-fel` you can use `FEL_EXTRA_ARGS` variable.
+
+An example is provided as `scripts/fel-hooks.sh.example`.
+
