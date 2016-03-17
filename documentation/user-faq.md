@@ -42,9 +42,11 @@ Unzipped .raw images can be written with supplied imagewriter.exe on Windows XP/
 	# OS X example: /dev/[r]diskx is your sd card device:
 	diskutil unmountDisk diskx && dd bs=1m if=filename.raw of=/dev/rdiskx && diskutil eject diskx
 
-Image writting takes around 3 minutes on a slow, class 6 SD card.
+Image writing takes around 3 minutes on a slow, class 6 SD card.
 
-Make sure you use a **good & reliable** SD card. If you encounter boot troubles or simply as a measure of precaution, check them with [F3](http://oss.digirati.com.br/f3/) or [H2testw](http://www.heise.de/download/h2testw.html).
+Important: Make sure you use a **good & reliable** SD card. If you encounter boot troubles or simply as a measure of precaution, check them with [F3](http://oss.digirati.com.br/f3/) or [H2testw](http://www.heise.de/download/h2testw.html).
+
+Also important: SD cards are optimised for sequential reads/writes as it's commong in digital cameras. This is what the *speed class* is about. And while you should not buy any card rated less than *class 10* you should also take care to choose one that is known to show high random I/O performance (see this [benchmarked comparison](http://www.jeffgeerling.com/blogs/jeff-geerling/raspberry-pi-microsd-card)) since this is way more performance relevant when used with any SBC.
 
 # How to boot?
 
@@ -375,3 +377,4 @@ And finally start your service when done with learning:
 Test your remote:
 
 	irw /dev/lircd
+

@@ -34,12 +34,11 @@ MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
 SDSIZE="4000" # SD image size in MB
 TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 USEALLCORES="yes" # Use all CPU cores for compiling
-SYSTEMD="no" # Enable or disable systemd on Jessie in debootstrap process 
 OFFSET="1" # Bootloader space in MB (1 x 2048 = default)
 BOOTSIZE="0" # Mb size of boot partition
 EXIT_PATCHING_ERROR="" # exit patching if failed
 SERIALCON="ttyS0"
-MISC1="https://github.com/linux-sunxi/sunxi-tools.git" # Allwinner fex compiler / decompiler	
+MISC1="https://github.com/linux-sunxi/sunxi-tools.git" # Allwinner fex compiler / decompiler
 MISC1_DIR="sunxi-tools"	# local directory
 MISC2="" # Reserved
 MISC2_DIR="" # local directory
@@ -53,13 +52,14 @@ MISC6="https://github.com/porjo/mt7601/" # Display changer for Allwinner
 MISC6_DIR="mt7601" # local directory
 TTY_X=$(($(stty size| awk '{print $2}')-6)) # determine terminal width
 TTY_Y=$(($(stty size| awk '{print $1}')-6)) # determine terminal height
+CACHEDIR=$DEST/cache
 
 # board configurations
 
 case $BOARD in
 
 	cubieboard4)#disabled
-		LINUXFAMILY="sun9i"		
+		LINUXFAMILY="sun9i"
 		BOOTCONFIG="Cubieboard4_defconfig"
 		CPUMIN="1200000"
 		CPUMAX="1800000"
@@ -70,7 +70,7 @@ case $BOARD in
 		#description A20 dual core SoM
 		#build 0
 		LINUXFAMILY="sun7i"
-		BOOTCONFIG="Awsom_defconfig" 
+		BOOTCONFIG="Awsom_defconfig"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i"
 		MODULES_NEXT="bonding"
 	;;
@@ -78,8 +78,8 @@ case $BOARD in
 	olinux-som-a13)#enabled
 		#description A13 single core 512Mb SoM
 		#build 0
-		LINUXFAMILY="sun5i"		
-		BOOTCONFIG="A13-OLinuXino_defconfig" 
+		LINUXFAMILY="sun5i"
+		BOOTCONFIG="A13-OLinuXino_defconfig"
 		MODULES="gpio_sunxi spi_sunxi"
 		MODULES_NEXT="bonding"
 	;;
@@ -98,7 +98,7 @@ case $BOARD in
 		#description A20 dual core 1Gb SoC
 		#build 6
 		LINUXFAMILY="sun7i"
-		BOOTCONFIG="Cubieboard2_config" 
+		BOOTCONFIG="Cubieboard2_config"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 		MODULES_NEXT="bonding"
 		DESKTOP_TARGET="trusty,default"
@@ -108,7 +108,7 @@ case $BOARD in
 		#description A20 dual core 2Gb SoC Wifi
 		#build 6
 		LINUXFAMILY="sun7i"
-		BOOTCONFIG="Cubietruck_config" 
+		BOOTCONFIG="Cubietruck_config"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i ap6210"
 		MODULES_NEXT="brcmfmac rfcomm hidp bonding"
 		DESKTOP_TARGET="trusty,%"
@@ -138,7 +138,7 @@ case $BOARD in
 		#description A20 dual core 1Gb SoC
 		#build 6
 		LINUXFAMILY="sun7i"
-		BOOTCONFIG="A20-OLinuXino-Lime2_defconfig" 
+		BOOTCONFIG="A20-OLinuXino-Lime2_defconfig"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 		MODULES_NEXT="bonding"
 		DESKTOP_TARGET="trusty,default"
@@ -190,7 +190,7 @@ case $BOARD in
 		LINUXFAMILY="sun7i"
 		BOOTCONFIG="Lamobo_R1_defconfig"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
-		MODULES_NEXT="brcmfmac bonding"			
+		MODULES_NEXT="brcmfmac bonding"
 	;;
 
 	orangepi)#enabled
@@ -311,7 +311,7 @@ case $BOARD in
 		MODULES_NEXT=""
 		SERIALCON="ttymxc0"
 	;;
-	
+
 	armada)#enabled
 		#description Marvell Armada 38x
 		#build 3
@@ -321,7 +321,7 @@ case $BOARD in
 		MODULES_NEXT=""
 		SERIALCON="ttyS0"
 	;;
-	
+
 	*) exit_with_error "Board configuration not found" "$BOARD"
 	;;
 esac
@@ -337,7 +337,7 @@ case $LINUXFAMILY in
 		# Kernel
 		KERNEL_DEFAULT='https://github.com/linux-sunxi/linux-sunxi'
 		KERNEL_DEFAULT_BRANCH="sunxi-3.4"
-		KERNEL_DEFAULT_SOURCE="linux-sunxi"			
+		KERNEL_DEFAULT_SOURCE="linux-sunxi"
 		# sun8i legacy
 		if [[ $LINUXFAMILY == sun8i ]]; then
 			# KERNEL_DEFAULT="https://github.com/ssvb/linux-sunxi"
@@ -345,7 +345,7 @@ case $LINUXFAMILY in
 			KERNEL_DEFAULT="https://github.com/O-Computers/linux-sunxi"
 			KERNEL_DEFAULT_BRANCH="h3-wip"
 			KERNEL_DEFAULT_SOURCE="linux-sun8i"
-		fi			
+		fi
 		KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 		[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 		KERNEL_NEXT_BRANCH="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1`
@@ -370,14 +370,14 @@ case $LINUXFAMILY in
 			UBOOT_NEXT_BRANCH="v2016.01"
 		fi
 	;;
-	
+
 	odroidxu4)
 		KERNEL_DEFAULT='https://github.com/hardkernel/linux'
 		KERNEL_DEFAULT_BRANCH="odroidxu3-3.10.y"
 		KERNEL_DEFAULT_SOURCE="linux-odroidxu"
 		KERNEL_NEXT='https://github.com/tobetter/linux'
 		KERNEL_NEXT_BRANCH="odroidxu4-v4.2"
-		KERNEL_NEXT_SOURCE="linux-odroidxu-next"		
+		KERNEL_NEXT_SOURCE="linux-odroidxu-next"
 		UBOOT_DEFAULT="https://github.com/hardkernel/u-boot.git"
 		UBOOT_DEFAULT_BRANCH="odroidxu3-v2012.07"
 		UBOOT_DEFAULT_SOURCE="u-boot-odroidxu"
@@ -388,14 +388,14 @@ case $LINUXFAMILY in
 		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 	;;
-	
+
 	udoo)
 		KERNEL_DEFAULT="https://github.com/UDOOboard/linux_kernel"
 		KERNEL_DEFAULT_BRANCH="3.14-1.0.x-udoo"
 		KERNEL_DEFAULT_SOURCE="linux-udoo"
 		KERNEL_NEXT="https://github.com/patrykk/linux-udoo"
 		KERNEL_NEXT_BRANCH="v4.4.0-6-vivante-5.0.11.p7.3"
-		KERNEL_NEXT_SOURCE="linux-udoo-next"		
+		KERNEL_NEXT_SOURCE="linux-udoo-next"
 		UBOOT_DEFAULT="https://github.com/UDOOboard/uboot-imx"
 		UBOOT_DEFAULT_BRANCH="2015.10.fslc-qdl"
 		UBOOT_DEFAULT_SOURCE="u-boot-udoo"
@@ -406,12 +406,12 @@ case $LINUXFAMILY in
 		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 	;;
-	
+
 	neo)
 		KERNEL_DEFAULT='https://github.com/UDOOboard/linux_kernel'
 		#KERNEL_DEFAULT_BRANCH="imx_3.14.28_1.0.0_ga_neo"
 		KERNEL_DEFAULT_BRANCH="3.14-1.0.x-udoo"
-		#KERNEL_DEFAULT_SOURCE="linux-udoo-neo"		
+		#KERNEL_DEFAULT_SOURCE="linux-udoo-neo"
 		KERNEL_DEFAULT_SOURCE="linux-udoo"
 		UBOOT_DEFAULT="https://github.com/UDOOboard/uboot-imx"
 		UBOOT_DEFAULT_BRANCH="2015.04.imx-neo"
@@ -423,15 +423,15 @@ case $LINUXFAMILY in
 		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 	;;
-	
+
 	cubox)
-		KERNEL_DEFAULT='https://github.com/linux4kix/linux-linaro-stable-mx6'			
-		KERNEL_DEFAULT_BRANCH="linux-linaro-lsk-v3.14-mx6"			
+		KERNEL_DEFAULT='https://github.com/linux4kix/linux-linaro-stable-mx6'
+		KERNEL_DEFAULT_BRANCH="linux-linaro-lsk-v3.14-mx6"
 		KERNEL_DEFAULT_SOURCE="linux-cubox"
 		KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 		[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 		KERNEL_NEXT_BRANCH="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1`
-		KERNEL_NEXT_SOURCE="linux-vanilla"			
+		KERNEL_NEXT_SOURCE="linux-vanilla"
 		KERNEL_DEV='https://github.com/SolidRun/linux-fslc'
 		KERNEL_DEV_BRANCH="3.14-1.0.x-mx6-sr"
 		KERNEL_DEV_SOURCE="linux-cubox"
@@ -445,7 +445,7 @@ case $LINUXFAMILY in
 		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 	;;
-	
+
 	s500)
 		KERNEL_DEFAULT='https://github.com/LeMaker/linux-actions'
 		KERNEL_DEFAULT_BRANCH="s500-master"
@@ -462,8 +462,8 @@ case $LINUXFAMILY in
 		UBOOT_DEV=$UBOOT_DEFAULT
 		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
-	;;	
-	
+	;;
+
 	toradex)
 		KERNEL_DEFAULT="git://git.toradex.com/linux-toradex.git"
 		KERNEL_DEFAULT_BRANCH="toradex_imx_3.14.28_1.0.0_ga"
@@ -477,8 +477,8 @@ case $LINUXFAMILY in
 		UBOOT_DEV=$UBOOT_DEFAULT
 		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
-	;;	
-	
+	;;
+
 	marvell)
 		KERNEL_DEFAULT="https://github.com/SolidRun/linux-armada38x"
 		KERNEL_DEFAULT_BRANCH="linux-3.10.70-15t1-clearfog"
@@ -490,7 +490,7 @@ case $LINUXFAMILY in
 		KERNEL_DEV='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 		[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_DEV='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 		KERNEL_DEV_BRANCH=""
-		KERNEL_DEV_SOURCE="linux-vanilla"			
+		KERNEL_DEV_SOURCE="linux-vanilla"
 		UBOOT_DEFAULT="https://github.com/SolidRun/u-boot-armada38x"
 		UBOOT_DEFAULT_BRANCH="u-boot-2013.01-15t1-clearfog"
 		UBOOT_DEFAULT_SOURCE="u-boot-armada"
@@ -500,8 +500,8 @@ case $LINUXFAMILY in
 		UBOOT_DEV=$UBOOT_DEFAULT
 		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
-	;;	
-	
+	;;
+
 	*) exit_with_error "Defaults not found" "$LINUXFAMILY"
 	;;
 esac
@@ -509,7 +509,7 @@ esac
 
 # Let's set defalt data if not defined in board configuration above
 [[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-$LINUXFAMILY-$BRANCH"
-[[ -z $LINUXKERNEL ]] && eval LINUXKERNEL=\$KERNEL_${BRANCH^^} 
+[[ -z $LINUXKERNEL ]] && eval LINUXKERNEL=\$KERNEL_${BRANCH^^}
 [[ -z $LINUXSOURCE ]] && eval LINUXSOURCE=\$KERNEL_${BRANCH^^}"_SOURCE"
 [[ -z $KERNELBRANCH ]] && eval KERNELBRANCH=\$KERNEL_${BRANCH^^}"_BRANCH"
 [[ -z $BOOTLOADER ]] && eval BOOTLOADER=\$UBOOT_${BRANCH^^}
@@ -586,17 +586,17 @@ else
 	PACKAGE_LIST_DESKTOP=""
 fi
 
-# For user override	
-if [[ -f "$SRC/userpatches/lib.config" ]]; then 
+# For user override
+if [[ -f "$SRC/userpatches/lib.config" ]]; then
 	display_alert "Using user configuration override" "userpatches/lib.config" "info"
 	source $SRC/userpatches/lib.config
 fi
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL $PACKAGE_LIST_DESKTOP"
-	
+
 # debug
-echo -e "Config: $LINUXCONFIG\nKernel source: $LINUXKERNEL\nBranch: $KERNELBRANCH" >> $DEST/debug/install.log 
-echo -e "linuxsource: $LINUXSOURCE\nOffset: $OFFSET\nbootsize: $BOOTSIZE" >> $DEST/debug/install.log 
-echo -e "bootloader: $BOOTLOADER\nbootsource: $BOOTSOURCE\nbootbranch: $BOOTBRANCH" >> $DEST/debug/install.log 
-echo -e "CPU $CPUMIN / $CPUMAX with $GOVERNOR" >> $DEST/debug/install.log 
+echo -e "Config: $LINUXCONFIG\nKernel source: $LINUXKERNEL\nBranch: $KERNELBRANCH" >> $DEST/debug/install.log
+echo -e "linuxsource: $LINUXSOURCE\nOffset: $OFFSET\nbootsize: $BOOTSIZE" >> $DEST/debug/install.log
+echo -e "bootloader: $BOOTLOADER\nbootsource: $BOOTSOURCE\nbootbranch: $BOOTBRANCH" >> $DEST/debug/install.log
+echo -e "CPU $CPUMIN / $CPUMAX with $GOVERNOR" >> $DEST/debug/install.log

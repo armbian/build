@@ -43,8 +43,8 @@ debootstrap_ng()
 	trap unmount_on_exit INT TERM EXIT
 
 	# stage: clean and create directories
-	rm -rf $DEST/cache/sdcard $DEST/cache/mount
-	mkdir -p $DEST/cache/sdcard $DEST/cache/mount $DEST/images
+	rm -rf $CACHEDIR/sdcard $CACHEDIR/mount
+	mkdir -p $CACHEDIR/sdcard $CACHEDIR/mount $DEST/images
 
 	# stage: verify tmpfs configuration and mount
 	# default maximum size for tmpfs mount is 1/2 of available RAM
@@ -59,7 +59,7 @@ debootstrap_ng()
 	fi
 
 	if [[ $use_tmpfs == yes ]]; then
-		mount -t tmpfs -o size=${tmpfs_max_size}M tmpfs $DEST/cache/sdcard
+		mount -t tmpfs -o size=${tmpfs_max_size}M tmpfs $CACHEDIR/sdcard
 	fi
 
 	# stage: prepare basic rootfs: unpack cache or create from scratch
@@ -72,7 +72,7 @@ debootstrap_ng()
 	install_board_specific
 
 	# cleanup for install_kernel and install_board_specific
-	umount $DEST/cache/sdcard/tmp
+	umount $CACHEDIR/sdcard/tmp
 
 	# install desktop files
 	if [[ $BUILD_DESKTOP == yes ]]; then
@@ -86,19 +86,19 @@ debootstrap_ng()
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
-	cp $SRC/userpatches/customize-image.sh $DEST/cache/sdcard/tmp/customize-image.sh
-	chmod +x $DEST/cache/sdcard/tmp/customize-image.sh
+	cp $SRC/userpatches/customize-image.sh $CACHEDIR/sdcard/tmp/customize-image.sh
+	chmod +x $CACHEDIR/sdcard/tmp/customize-image.sh
 	display_alert "Calling image customization script" "customize-image.sh" "info"
-	chroot $DEST/cache/sdcard /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
+	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
 
 	# stage: cleanup
-	rm -f $DEST/cache/sdcard/usr/sbin/policy-rc.d
-	rm -f $DEST/cache/sdcard/usr/bin/qemu-arm-static
-	if [[ -x $DEST/cache/sdcard/sbin/initctl.REAL ]]; then
-		mv -f $DEST/cache/sdcard/sbin/initctl.REAL $DEST/cache/sdcard/sbin/initctl
+	rm -f $CACHEDIR/sdcard/usr/sbin/policy-rc.d
+	rm -f $CACHEDIR/sdcard/usr/bin/qemu-arm-static
+	if [[ -x $CACHEDIR/sdcard/sbin/initctl.REAL ]]; then
+		mv -f $CACHEDIR/sdcard/sbin/initctl.REAL $CACHEDIR/sdcard/sbin/initctl
 	fi
-	if [[ -x $DEST/cache/sdcard/sbin/start-stop-daemon.REAL ]]; then
-		mv -f $DEST/cache/sdcard/sbin/start-stop-daemon.REAL $DEST/cache/sdcard/sbin/start-stop-daemon
+	if [[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL ]]; then
+		mv -f $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL $CACHEDIR/sdcard/sbin/start-stop-daemon
 	fi
 
 	umount_chroot
@@ -106,8 +106,8 @@ debootstrap_ng()
 	if [[ $ROOTFS_TYPE == fel || $ROOTFS_TYPE == nfs ]]; then
 		# kill /etc/network/interfaces on target to prevent conflicts between kernel
 		# and userspace network config (mainly on Xenial)
-		rm -f $DEST/cache/sdcard/etc/network/interfaces
-		printf "auto lo\niface lo inet loopback\n\niface eth0 inet manual" > $DEST/cache/sdcard/etc/network/interfaces
+		rm -f $CACHEDIR/sdcard/etc/network/interfaces
+		printf "auto lo\niface lo inet loopback\n\niface eth0 inet manual" > $CACHEDIR/sdcard/etc/network/interfaces
 	fi
 
 	if [[ $ROOTFS_TYPE != ext4 ]]; then
@@ -117,7 +117,7 @@ debootstrap_ng()
 	fi
 
 	if [[ $ROOTFS_TYPE == fel ]]; then
-		FEL_ROOTFS=$DEST/cache/sdcard/
+		FEL_ROOTFS=$CACHEDIR/sdcard/
 		display_alert "Starting FEL boot" "$BOARD" "info"
 		source $SRC/lib/fel-load.sh
 	else
@@ -127,10 +127,10 @@ debootstrap_ng()
 
 	# stage: unmount tmpfs
 	if [[ $use_tmpfs = yes ]]; then
-		umount $DEST/cache/sdcard
+		umount $CACHEDIR/sdcard
 	fi
 
-	rm -rf $DEST/cache/sdcard
+	rm -rf $CACHEDIR/sdcard
 
 	# remove exit trap
 	trap - INT TERM EXIT
@@ -144,14 +144,14 @@ create_rootfs_cache()
 {
 	[[ $BUILD_DESKTOP == yes ]] && local variant_desktop=yes
 	local packages_hash=$(get_package_list_hash $PACKAGE_LIST)
-	local cache_fname="$DEST/cache/rootfs/$RELEASE${variant_desktop:+_desktop}-ng.$packages_hash.tgz"
+	local cache_fname="$CACHEDIR/rootfs/$RELEASE${variant_desktop:+_desktop}-ng.$packages_hash.tgz"
 	local display_name=$RELEASE${variant_desktop:+_desktop}-ng.${packages_hash:0:3}...${packages_hash:29}.tgz
 	if [[ -f $cache_fname ]]; then
 		local filemtime=$(stat -c %Y $cache_fname)
 		local currtime=$(date +%s)
 		local diff=$(( (currtime - filemtime) / 86400 ))
 		display_alert "Extracting $display_name" "$diff days old" "info"
-		pv -p -b -r -c -N "$display_name" "$cache_fname" | pigz -dc | tar xp -C $DEST/cache/sdcard/
+		pv -p -b -r -c -N "$display_name" "$cache_fname" | pigz -dc | tar xp -C $CACHEDIR/sdcard/
 	else
 		display_alert "Creating new rootfs for" "$RELEASE" "info"
 
@@ -169,20 +169,20 @@ create_rootfs_cache()
 		[[ -z $OUTPUT_DIALOG && $RELEASE != wheezy ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
 
 		display_alert "Installing base system" "Stage 1/2" "info"
-		eval 'debootstrap --include=debconf-utils,locales --arch=armhf --foreign $RELEASE $DEST/cache/sdcard/ $apt_mirror' \
+		eval 'debootstrap --include=debconf-utils,locales --arch=armhf --foreign $RELEASE $CACHEDIR/sdcard/ $apt_mirror' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Debootstrap base system first stage failed"
 
-		cp /usr/bin/qemu-arm-static $DEST/cache/sdcard/usr/bin/
+		cp /usr/bin/qemu-arm-static $CACHEDIR/sdcard/usr/bin/
 		# NOTE: not needed?
-		mkdir -p $DEST/cache/sdcard/usr/share/keyrings/
-		cp /usr/share/keyrings/debian-archive-keyring.gpg $DEST/cache/sdcard/usr/share/keyrings/
+		mkdir -p $CACHEDIR/sdcard/usr/share/keyrings/
+		cp /usr/share/keyrings/debian-archive-keyring.gpg $CACHEDIR/sdcard/usr/share/keyrings/
 
 		display_alert "Installing base system" "Stage 2/2" "info"
-		eval 'chroot $DEST/cache/sdcard /bin/bash -c "/debootstrap/debootstrap --second-stage"' \
+		eval 'chroot $CACHEDIR/sdcard /bin/bash -c "/debootstrap/debootstrap --second-stage"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 2/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -194,60 +194,60 @@ create_rootfs_cache()
 		# policy-rc.d script prevents starting or reloading services
 		# from dpkg pre- and post-install scripts during image creation
 
-cat <<EOF > $DEST/cache/sdcard/usr/sbin/policy-rc.d
+cat <<EOF > $CACHEDIR/sdcard/usr/sbin/policy-rc.d
 #!/bin/sh
 exit 101
 EOF
-		chmod 755 $DEST/cache/sdcard/usr/sbin/policy-rc.d
+		chmod 755 $CACHEDIR/sdcard/usr/sbin/policy-rc.d
 
 		# ported from debootstrap and multistrap for upstart support
-		if [[ -x $DEST/cache/sdcard/sbin/initctl ]]; then
-			mv $DEST/cache/sdcard/sbin/start-stop-daemon $DEST/cache/sdcard/sbin/start-stop-daemon.REAL
-cat <<EOF > $DEST/cache/sdcard/sbin/start-stop-daemon
+		if [[ -x $CACHEDIR/sdcard/sbin/initctl ]]; then
+			mv $CACHEDIR/sdcard/sbin/start-stop-daemon $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL
+cat <<EOF > $CACHEDIR/sdcard/sbin/start-stop-daemon
 #!/bin/sh
 echo "Warning: Fake start-stop-daemon called, doing nothing"
 EOF
-			chmod 755 $DEST/cache/sdcard/sbin/start-stop-daemon
+			chmod 755 $CACHEDIR/sdcard/sbin/start-stop-daemon
 		fi
 
-		if [[ -x $DEST/cache/sdcard/sbin/initctl ]]; then
-			mv $DEST/cache/sdcard/sbin/initctl $DEST/cache/sdcard/sbin/initctl.REAL
-cat <<EOF > $DEST/cache/sdcard/sbin/initctl
+		if [[ -x $CACHEDIR/sdcard/sbin/initctl ]]; then
+			mv $CACHEDIR/sdcard/sbin/initctl $CACHEDIR/sdcard/sbin/initctl.REAL
+cat <<EOF > $CACHEDIR/sdcard/sbin/initctl
 #!/bin/sh
 echo "Warning: Fake initctl called, doing nothing"
 EOF
-			chmod 755 $DEST/cache/sdcard/sbin/initctl
+			chmod 755 $CACHEDIR/sdcard/sbin/initctl
 		fi
 
 		# stage: configure language and locales
 		display_alert "Configuring locales" "$DEST_LANG" "info"
 
-		if [ -f $DEST/cache/sdcard/etc/locale.gen ]; then sed -i "s/^# $DEST_LANG/$DEST_LANG/" $DEST/cache/sdcard/etc/locale.gen; fi
-		eval 'LC_ALL=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "locale-gen $DEST_LANG"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-		eval 'LC_ALL=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=POSIX"' \
+		if [ -f $CACHEDIR/sdcard/etc/locale.gen ]; then sed -i "s/^# $DEST_LANG/$DEST_LANG/" $CACHEDIR/sdcard/etc/locale.gen; fi
+		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "locale-gen $DEST_LANG"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=POSIX"' \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-		LC_ALL=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "export CHARMAP=$CONSOLE_CHAR FONTFACE=8x16"
+		LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "export CHARMAP=$CONSOLE_CHAR FONTFACE=8x16"
 
 		# stage: copy proper apt sources list
-		cp $SRC/lib/config/sources.list.$RELEASE $DEST/cache/sdcard/etc/apt/sources.list
+		cp $SRC/lib/config/sources.list.$RELEASE $CACHEDIR/sdcard/etc/apt/sources.list
 
 		# stage: add armbian repository and install key
-		echo "deb http://apt.armbian.com $RELEASE main" > $DEST/cache/sdcard/etc/apt/sources.list.d/armbian.list
-		cp $SRC/lib/bin/armbian.key $DEST/cache/sdcard
-		eval 'chroot $DEST/cache/sdcard /bin/bash -c "cat armbian.key | apt-key add -"' \
+		echo "deb http://apt.armbian.com $RELEASE main" > $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian.list
+		cp $SRC/lib/bin/armbian.key $CACHEDIR/sdcard
+		eval 'chroot $CACHEDIR/sdcard /bin/bash -c "cat armbian.key | apt-key add -"' \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-		rm $DEST/cache/sdcard/armbian.key
+		rm $CACHEDIR/sdcard/armbian.key
 
 		# stage: update packages list
 		display_alert "Updating package list" "$RELEASE" "info"
-		eval 'LC_ALL=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "apt-get -y $apt_extra update"' \
+		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y $apt_extra update"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Updating package lists..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
-		eval 'LC_ALL=C LANG=C chroot $DEST/cache/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
 			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_LIST"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." $TTY_Y $TTY_X'} \
@@ -258,10 +258,10 @@ EOF
 		# DEBUG: print free space
 		echo
 		echo "Free space:"
-		df -h | grep "$DEST/cache/" | tee -a $DEST/debug/debootstrap.log
+		df -h | grep "$CACHEDIR/" | tee -a $DEST/debug/debootstrap.log
 
 		# stage: remove downloaded packages
-		chroot $DEST/cache/sdcard /bin/bash -c "apt-get clean"
+		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get clean"
 
 		# stage: make rootfs cache archive
 		display_alert "Ending debootstrap process and preparing cache" "$RELEASE" "info"
@@ -270,9 +270,9 @@ EOF
 		# based on rootfs size calculation
 		umount_chroot
 
-		tar cp --directory=$DEST/cache/sdcard/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
+		tar cp --directory=$CACHEDIR/sdcard/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 			--exclude='./sys/*' . | \
-			pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "$display_name" | pigz > $cache_fname
+			pv -p -b -r -s $(du -sb $CACHEDIR/sdcard/ | cut -f1) -N "$display_name" | pigz > $cache_fname
 	fi
 	mount_chroot
 } #############################################################################
@@ -327,7 +327,7 @@ prepare_partitions()
 	# mountopts[nfs] is empty
 
 	# stage: calculate rootfs size
-	local rootfs_size=$(du -sm $DEST/cache/sdcard/ | cut -f1) # MiB
+	local rootfs_size=$(du -sm $CACHEDIR/sdcard/ | cut -f1) # MiB
 	display_alert "Current rootfs size" "$rootfs_size MiB" "info"
 	if [[ -n $FIXED_IMAGE_SIZE && $FIXED_IMAGE_SIZE =~ ^[0-9]+$ ]]; then
 		display_alert "Using user-defined image size" "$FIXED_IMAGE_SIZE MiB" "info"
@@ -345,7 +345,7 @@ prepare_partitions()
 
 	# stage: create blank image
 	display_alert "Creating blank image for rootfs" "$sdsize MiB" "info"
-	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=$DEST/cache/tmprootfs.raw
+	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=$CACHEDIR/tmprootfs.raw
 
 	# stage: determine partition configuration
 	# boot
@@ -364,14 +364,14 @@ prepare_partitions()
 
 	# stage: create partition table
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
-	parted -s $DEST/cache/tmprootfs.raw -- mklabel msdos
+	parted -s $CACHEDIR/tmprootfs.raw -- mklabel msdos
 	if [[ $ROOTFS_TYPE == nfs ]]; then
-		parted -s $DEST/cache/tmprootfs.raw -- mkpart primary ${parttype[$bootfs]} ${BOOTSTART}s -1s
+		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$bootfs]} ${BOOTSTART}s -1s
 	elif [[ $BOOTSIZE == 0 ]]; then
-		parted -s $DEST/cache/tmprootfs.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${ROOTSTART}s -1s
+		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${ROOTSTART}s -1s
 	else
-		parted -s $DEST/cache/tmprootfs.raw -- mkpart primary ${parttype[$bootfs]} ${BOOTSTART}s ${BOOTEND}s
-		parted -s $DEST/cache/tmprootfs.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${ROOTSTART}s -1s
+		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$bootfs]} ${BOOTSTART}s ${BOOTEND}s
+		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${ROOTSTART}s -1s
 	fi
 
 	# stage: mount image
@@ -382,7 +382,7 @@ prepare_partitions()
 	fi
 
 	# NOTE: losetup -P option is not available in Trusty
-	losetup $LOOP $DEST/cache/tmprootfs.raw
+	losetup $LOOP $CACHEDIR/tmprootfs.raw
 	partprobe $LOOP
 
 	# stage: create fs
@@ -396,36 +396,36 @@ prepare_partitions()
 	fi
 
 	# stage: mount partitions and create proper fstab
-	rm -f $DEST/cache/sdcard/etc/fstab
+	rm -f $CACHEDIR/sdcard/etc/fstab
 	if [[ $BOOTSIZE == 0 ]]; then
-		mount ${LOOP}p1 $DEST/cache/mount/
-		echo "/dev/mmcblk0p1 / ${parttype[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $DEST/cache/sdcard/etc/fstab
+		mount ${LOOP}p1 $CACHEDIR/mount/
+		echo "/dev/mmcblk0p1 / ${parttype[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
 	else
 		if [[ $ROOTFS_TYPE != nfs ]]; then
-			mount ${LOOP}p2 $DEST/cache/mount/
-			echo "/dev/mmcblk0p2 / ${parttype[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $DEST/cache/sdcard/etc/fstab
+			mount ${LOOP}p2 $CACHEDIR/mount/
+			echo "/dev/mmcblk0p2 / ${parttype[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
 		fi
 		# create /boot on rootfs after it is mounted
-		mkdir -p $DEST/cache/mount/boot/
-		mount ${LOOP}p1 $DEST/cache/mount/boot/
-		echo "/dev/mmcblk0p1 /boot ${parttype[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $DEST/cache/sdcard/etc/fstab
+		mkdir -p $CACHEDIR/mount/boot/
+		mount ${LOOP}p1 $CACHEDIR/mount/boot/
+		echo "/dev/mmcblk0p1 /boot ${parttype[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $CACHEDIR/sdcard/etc/fstab
 	fi
-	echo "tmpfs /tmp tmpfs defaults,rw,nosuid 0 0" >> $DEST/cache/sdcard/etc/fstab
+	echo "tmpfs /tmp tmpfs defaults,rw,nosuid 0 0" >> $CACHEDIR/sdcard/etc/fstab
 
 	# stage: create boot script
 	if [[ $ROOTFS_TYPE == nfs ]]; then
 		# copy script provided by user if exists
 		if [[ -f $SRC/userpatches/nfs-boot.cmd ]]; then
 			display_alert "Using custom NFS boot script" "userpatches/nfs-boot.cmd" "info"
-			cp $SRC/userpatches/nfs-boot.cmd $DEST/cache/sdcard/boot/boot.cmd
+			cp $SRC/userpatches/nfs-boot.cmd $CACHEDIR/sdcard/boot/boot.cmd
 		else
-			cp $SRC/lib/scripts/nfs-boot.cmd.template $DEST/cache/sdcard/boot/boot.cmd
+			cp $SRC/lib/scripts/nfs-boot.cmd.template $CACHEDIR/sdcard/boot/boot.cmd
 		fi
 	elif [[ $BOOTSIZE != 0 ]]; then
-		sed -i 's/mmcblk0p1/mmcblk0p2/' $DEST/cache/sdcard/boot/boot.cmd
-		sed -i "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" $DEST/cache/sdcard/boot/boot.cmd
+		sed -i 's/mmcblk0p1/mmcblk0p2/' $CACHEDIR/sdcard/boot/boot.cmd
+		sed -i "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" $CACHEDIR/sdcard/boot/boot.cmd
 	fi
-	mkimage -C none -A arm -T script -d $DEST/cache/sdcard/boot/boot.cmd $DEST/cache/sdcard/boot/boot.scr > /dev/null 2>&1
+	mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr > /dev/null 2>&1
 
 } #############################################################################
 
@@ -447,47 +447,47 @@ create_image()
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files to image" "tmprootfs.raw" "info"
 		eval 'rsync -aHWh --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
-			--exclude="/sys/*" --info=progress2,stats1 $DEST/cache/sdcard/ $DEST/cache/mount/'
+			--exclude="/sys/*" --info=progress2,stats1 $CACHEDIR/sdcard/ $CACHEDIR/mount/'
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
-		tar cp --directory=$DEST/cache/sdcard/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
+		tar cp --directory=$CACHEDIR/sdcard/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 			--exclude='./sys/*' . | \
-			pv -p -b -r -s $(du -sb $DEST/cache/sdcard/ | cut -f1) -N "rootfs.tgz" | pigz > $DEST/images/$VERSION-rootfs.tgz
+			pv -p -b -r -s $(du -sb $CACHEDIR/sdcard/ | cut -f1) -N "rootfs.tgz" | pigz > $DEST/images/$VERSION-rootfs.tgz
 	fi
 
 	# stage: rsync /boot
 	display_alert "Copying files to /boot partition" "tmprootfs.raw" "info"
-	if [[ $(findmnt --target $DEST/cache/mount/boot -o FSTYPE -n) == vfat ]]; then
+	if [[ $(findmnt --target $CACHEDIR/mount/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
-		rsync -rLtWh --info=progress2,stats1 $DEST/cache/sdcard/boot $DEST/cache/mount
+		rsync -rLtWh --info=progress2,stats1 $CACHEDIR/sdcard/boot $CACHEDIR/mount
 	else
 		# ext4
-		rsync -aHWh --info=progress2,stats1 $DEST/cache/sdcard/boot $DEST/cache/mount
+		rsync -aHWh --info=progress2,stats1 $CACHEDIR/sdcard/boot $CACHEDIR/mount
 	fi
 
 	# DEBUG: print free space
 	echo
 	echo "Free space:"
-	df -h | grep "$DEST/cache/" | tee -a $DEST/debug/debootstrap.log
+	df -h | grep "$CACHEDIR/" | tee -a $DEST/debug/debootstrap.log
 
 	# stage: write u-boot
 	write_uboot $LOOP
 
 	# stage: copy armbian.txt TODO: Copy only if creating zip file?
-	cp $DEST/cache/sdcard/etc/armbian.txt $DEST/cache/
+	cp $CACHEDIR/sdcard/etc/armbian.txt $CACHEDIR/
 
 	# unmount /boot first, rootfs second, image file last
-	if [[ $BOOTSIZE != 0 ]]; then umount -l $DEST/cache/mount/boot; fi
-	if [[ $ROOTFS_TYPE != nfs ]]; then umount -l $DEST/cache/mount; fi
+	if [[ $BOOTSIZE != 0 ]]; then umount -l $CACHEDIR/mount/boot; fi
+	if [[ $ROOTFS_TYPE != nfs ]]; then umount -l $CACHEDIR/mount; fi
 	losetup -d $LOOP
 
-	mv $DEST/cache/tmprootfs.raw $DEST/cache/$VERSION.raw
-	cd $DEST/cache/
+	mv $CACHEDIR/tmprootfs.raw $CACHEDIR/$VERSION.raw
+	cd $CACHEDIR/
 
 	# stage: compressing or copying image file
 	if [[ -n $FIXED_IMAGE_SIZE || $COMPRESS_OUTPUTIMAGE == no ]]; then
 		display_alert "Copying image file" "$VERSION.raw" "info"
-		mv -f $DEST/cache/$VERSION.raw $DEST/images/$VERSION.raw
+		mv -f $CACHEDIR/$VERSION.raw $DEST/images/$VERSION.raw
 		display_alert "Done building" "$DEST/images/$VERSION.raw" "info"
 	else
 		display_alert "Signing and compressing" "$VERSION.zip" "info"
@@ -508,10 +508,10 @@ create_image()
 #
 mount_chroot()
 {
-	mount -t proc chproc $DEST/cache/sdcard/proc
-	mount -t sysfs chsys $DEST/cache/sdcard/sys
-	mount -t devtmpfs chdev $DEST/cache/sdcard/dev || mount --bind /dev $DEST/cache/sdcard/dev
-	mount -t devpts chpts $DEST/cache/sdcard/dev/pts
+	mount -t proc chproc $CACHEDIR/sdcard/proc
+	mount -t sysfs chsys $CACHEDIR/sdcard/sys
+	mount -t devtmpfs chdev $CACHEDIR/sdcard/dev || mount --bind /dev $CACHEDIR/sdcard/dev
+	mount -t devpts chpts $CACHEDIR/sdcard/dev/pts
 } #############################################################################
 
 # umount_chroot
@@ -520,10 +520,10 @@ mount_chroot()
 #
 umount_chroot()
 {
-	umount -l $DEST/cache/sdcard/dev/pts >/dev/null 2>&1
-	umount -l $DEST/cache/sdcard/dev >/dev/null 2>&1
-	umount -l $DEST/cache/sdcard/proc >/dev/null 2>&1
-	umount -l $DEST/cache/sdcard/sys >/dev/null 2>&1
+	umount -l $CACHEDIR/sdcard/dev/pts >/dev/null 2>&1
+	umount -l $CACHEDIR/sdcard/dev >/dev/null 2>&1
+	umount -l $CACHEDIR/sdcard/proc >/dev/null 2>&1
+	umount -l $CACHEDIR/sdcard/sys >/dev/null 2>&1
 } #############################################################################
 
 # unmount_on_exit
@@ -531,10 +531,10 @@ umount_chroot()
 unmount_on_exit()
 {
 	umount_chroot
-	umount -l $DEST/cache/sdcard >/dev/null 2>&1
-	umount -l $DEST/cache/mount/boot >/dev/null 2>&1
-	umount -l $DEST/cache/mount >/dev/null 2>&1
+	umount -l $CACHEDIR/sdcard >/dev/null 2>&1
+	umount -l $CACHEDIR/mount/boot >/dev/null 2>&1
+	umount -l $CACHEDIR/mount >/dev/null 2>&1
 	losetup -d $LOOP >/dev/null 2>&1
-	rm -rf $DEST/cache/sdcard
+	rm -rf $CACHEDIR/sdcard
 	exit_with_error "debootstrap-ng was interrupted"
 } #############################################################################

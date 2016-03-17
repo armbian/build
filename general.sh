@@ -52,7 +52,7 @@ cleaning()
 		;;
 
 		"cache") # delete output/cache
-		[ -d "$DEST/cache" ] && display_alert "Cleaning" "$DEST/cache" "info" && find $DEST/cache/ -type f -delete
+		[ -d "$CACHEDIR" ] && display_alert "Cleaning" "$CACHEDIR" "info" && find $CACHEDIR/ -type f -delete
 		;;
 
 		"images") # delete output/images
@@ -112,29 +112,29 @@ fetch_from_github (){
 GITHUBSUBDIR=$3
 [[ -z "$3" ]] && GITHUBSUBDIR="branchless"
 [[ -z "$4" ]] && GITHUBSUBDIR="" # only kernel and u-boot have subdirs for tags
-if [ -d "$SOURCES/$2/$GITHUBSUBDIR" ]; then	
+if [ -d "$SOURCES/$2/$GITHUBSUBDIR" ]; then
 	cd $SOURCES/$2/$GITHUBSUBDIR
 	git checkout -q $FORCE $3
 	display_alert "... updating" "$2" "info"
 	PULL=$(git pull)
-else	
-	if [[ -n $3 && -n "$(git ls-remote $1 | grep "$tag")" ]]; then	
-		display_alert "... creating a shallow clone" "$2 $3" "info"		
+else
+	if [[ -n $3 && -n "$(git ls-remote $1 | grep "$tag")" ]]; then
+		display_alert "... creating a shallow clone" "$2 $3" "info"
 		# Toradex git's doesn't support shallow clone. Need different solution than this.
-		git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 --depth 1 || git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 
-		cd $SOURCES/$2/$GITHUBSUBDIR		
+		git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 --depth 1 || git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3
+		cd $SOURCES/$2/$GITHUBSUBDIR
 		git checkout -q $3
 	else
-		display_alert "... creating a shallow clone" "$2" "info"	
+		display_alert "... creating a shallow clone" "$2" "info"
 		git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR --depth 1
 		cd $SOURCES/$2/$GITHUBSUBDIR
 		git checkout -q
 	fi
-	
+
 fi
 cd $SRC
 if [ $? -ne 0 ]; then
-	exit_with_error "Github download failed" "$1" 
+	exit_with_error "Github download failed" "$1"
 fi
 }
 
@@ -177,7 +177,7 @@ grab_version ()
 
 fingerprint_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
-# Saving build summary to the image 							            
+# Saving build summary to the image
 #--------------------------------------------------------------------------------------------------------------------------------
 display_alert "Fingerprinting." "$VERSION Linux $VER" "info"
 #echo -e "[\e[0;32m ok \x1B[0m] Fingerprinting"
@@ -200,21 +200,21 @@ echo "--------------------------------------------------------------------------
 echo "" >> $1
 cat $SRC/lib/LICENSE >> $1
 echo "" >> $1
-echo "--------------------------------------------------------------------------------" >> $1 
+echo "--------------------------------------------------------------------------------" >> $1
 }
 
 
 umount_image (){
-umount -l $DEST/cache/sdcard/dev/pts >/dev/null 2>&1
-umount -l $DEST/cache/sdcard/dev >/dev/null 2>&1
-umount -l $DEST/cache/sdcard/proc >/dev/null 2>&1
-umount -l $DEST/cache/sdcard/sys >/dev/null 2>&1
-umount -l $DEST/cache/sdcard/tmp >/dev/null 2>&1
-umount -l $DEST/cache/sdcard >/dev/null 2>&1
+umount -l $CACHEDIR/sdcard/dev/pts >/dev/null 2>&1
+umount -l $CACHEDIR/sdcard/dev >/dev/null 2>&1
+umount -l $CACHEDIR/sdcard/proc >/dev/null 2>&1
+umount -l $CACHEDIR/sdcard/sys >/dev/null 2>&1
+umount -l $CACHEDIR/sdcard/tmp >/dev/null 2>&1
+umount -l $CACHEDIR/sdcard >/dev/null 2>&1
 IFS=" "
 x=$(losetup -a |awk '{ print $1 }' | rev | cut -c 2- | rev | tac);
 for x in $x; do
-	losetup -d $x 
+	losetup -d $x
 done
 }
 
@@ -231,38 +231,38 @@ while [[ $j -lt ${#DISTROS[@]} ]]
         do
         # add each packet to distribution
 		DIS=${DISTROS[$j]}
-		
+
 		# let's drop from publish if exits
-		if [ "$(aptly publish list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $DIS)" != "" ]; then 
+		if [ "$(aptly publish list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $DIS)" != "" ]; then
 		aptly publish drop -config=config/aptly.conf $DIS > /dev/null 2>&1
 		fi
 		#aptly db cleanup -config=config/aptly.conf
 
-		if [ "$1" == "remove" ]; then 
+		if [ "$1" == "remove" ]; then
 		# remove repository
 			aptly repo drop -config=config/aptly.conf $DIS > /dev/null 2>&1
 			aptly db cleanup -config=config/aptly.conf > /dev/null 2>&1
 		fi
-		
+
 		# create repository if not exist
 		OUT=$(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $DIS)
 		if [[ "$OUT" != "$DIS" ]]; then
 			display_alert "Creating section" "$DIS" "info"
 			aptly repo create -config=config/aptly.conf -distribution=$DIS -component=main -comment="Armbian stable" $DIS > /dev/null 2>&1
 		fi
-		
+
 		# add all packages
 		aptly repo add -force-replace=true -config=config/aptly.conf $DIS $POT/*.deb
-		
+
 		# add all distribution packages
 		if [ -d "$POT/$DIS" ]; then
 			aptly repo add -force-replace=true -config=config/aptly.conf $DIS $POT/$DIS/*.deb
 		fi
-		
+
 		aptly publish -passphrase=$GPG_PASS -force-overwrite=true -config=config/aptly.conf -component="main" --distribution=$DIS repo $DIS > /dev/null 2>&1
-		
+
 		#aptly repo show -config=config/aptly.conf $DIS
-		
+
         j=$[$j+1]
 done
 }
@@ -362,7 +362,7 @@ prepare_host() {
 	test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
 
 	# create directory structure
-	mkdir -p $SOURCES $DEST/debug $DEST/cache $DEST/cache/rootfs $SRC/userpatches/
+	mkdir -p $SOURCES $DEST/debug $CACHEDIR $CACHEDIR/rootfs $SRC/userpatches/
 	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
 
 	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/lib/scripts/customize-image.sh.template $SRC/userpatches/customize-image.sh
