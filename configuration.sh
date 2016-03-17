@@ -365,10 +365,10 @@ case $LINUXFAMILY in
 		UBOOT_DEV_BRANCH=""
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 		# latest stable v2016.03 broken gmac on sun7i, fixing it for DEFAULT and NEXT
-		if [[ $LINUXFAMILY != sun8i ]]; then
-			UBOOT_DEFAULT_BRANCH="v2016.01"
-			UBOOT_NEXT_BRANCH="v2016.01"
-		fi
+		#if [[ $LINUXFAMILY != sun8i ]]; then
+		#	UBOOT_DEFAULT_BRANCH="v2016.01"
+		#	UBOOT_NEXT_BRANCH="v2016.01"
+		#fi
 	;;
 	
 	odroidxu4)
