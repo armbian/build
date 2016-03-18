@@ -91,6 +91,7 @@ Main() {
 			BOLD="$(tput bold)"
 			NC='\033[0m' # No Color
 			LGREEN='\033[1;32m'
+			LRED='\e[0;91m'
 		fi
 	fi
 	
@@ -202,7 +203,7 @@ ParseOptions() {
 } # ParseOptions
 
 DisplayUsage() {
-	echo -e "Usage: ${BOLD}${0##*/} [-h] [-b] [-d \$path] [-d] [-m] [-r] [-u]${NC}\n"
+	echo -e "Usage: ${BOLD}${0##*/} [-h] [-b] [-c \$path] [-d] [-m] [-r] [-u]${NC}\n"
 	echo -e "############################################################################"
 	if [ ${FullUsage} ]; then
 		echo -e "\nDetailed Description:"
@@ -681,21 +682,22 @@ CheckCard() {
 	trap "rm -rf \"${TestDir}\" ; exit 0" 0 1 2 3 15
 	
 	# start actual test, create a small file for some space reserve
-	fallocate -l 32M "${TestDir}/empty.32m"
+	fallocate -l 32M "${TestDir}/empty.32m" 2>/dev/null || dd if=/dev/zero of="${TestDir}/empty.32m" bs=1M count=32 status=noxfer >/dev/null 2>&1
 	# Start writing
-	echo -e "Now starting to write to the card, please be patient, this might take a very long time"
+	echo -e "Starting to fill ${DeviceName} with test patterns, please be patient this might take a very long time"
 	f3write "${TestDir}" | tee /tmp/CheckCard.log
-	touch "${TestDir}/.starttime" || (echo -e "\n${BOLD}Test stopped, read-only filesystem" ; dmesg | grep 'I/O error' ; echo -e "${NC}" ; exit 1)
+	touch "${TestDir}/.starttime" || (echo -e "\n${BOLD}${LRED}Test stopped, read-only filesystem\n$(dmesg | grep 'I/O error')${NC}" ; exit 1)
 	rm "${TestDir}/empty.32m"
 	# Start verify
 	echo -e "\nNow verifying the written data:"
 	f3read "${TestDir}" | tee -a /tmp/CheckCard.log
-	touch "${TestDir}/.starttime" || (echo -e "\n${BOLD}Test stopped, read-only filesystem" ; dmesg | grep 'I/O error' ; echo -e "${NC}" ; exit 1)
+	touch "${TestDir}/.starttime" || (echo -e "\n${BOLD}${LRED}Test stopped, read-only filesystem\n$(dmesg | grep 'I/O error')${NC}" ; exit 1)
 	rm "${TestDir}/"*.h2w
-	echo -e "\nStarting iozone tests:"
+	echo -e "\nStarting iozone tests. Be patient, this can take a very long time to complete:"
 	cd "${TestDir}"
-	iozone -e -I -a -s 100M -r 4k -r 512k -r 16M -i 0 -i 1 -i 2 "${TestDir}" | tee -a /tmp/CheckCard.log
-	touch "${TestDir}/.starttime" || (echo -e "\n${BOLD}Test stopped, read-only filesystem" ; dmesg | grep 'I/O error' ; echo -e "${NC}" ; exit 1)
+	# iozone -e -I -a -s 100M -r 4k -r 512k -r 16M -i 0 -i 1 -i 2 | tee -a /tmp/CheckCard.log | cut -c-80 | tail -f -n +30
+	iozone -e -I -a -s 100M -r 4k -r 512k -r 16M -i 0 -i 1 -i 2 | tee -a /tmp/CheckCard.log
+	touch "${TestDir}/.starttime" || (echo -e "\n${BOLD}${LRED}Test stopped, read-only filesystem\n$(dmesg | grep 'I/O error')${NC}" ; exit 1)
 	echo -e "\n${BOLD}The results from testing ${DeviceName} (${FileSystem}):${NC}"
 	egrep "Average|Data" /tmp/CheckCard.log | sort -r
 	echo "                                            random    random"
@@ -704,12 +706,16 @@ CheckCard() {
 
 	# check health
 	echo -e "\n${BOLD}Health summary: \c"
-	grep -q "Data LOST: 0.00 Byte" /tmp/CheckCard.log && echo "OK" || \
-		(echo -e "${DeviceName} is faulty. Replace it as soon as possible!" ; \
+	grep -q "Data LOST: 0.00 Byte" /tmp/CheckCard.log && echo "${LGREEN}OK" || \
+		(echo -e "${LRED}${DeviceName} is faulty. Replace it as soon as possible!" ; \
 		grep -A3 "^Data LOST" /tmp/CheckCard.log)
 
 	# check performance
 	RandomSpeed=$(awk -F" " '/102400       4/ {print $7"\t"$8}' </tmp/CheckCard.log)
+	if [ "X${RandomSpeed}" = "X" ]; then
+		# something went wrong before, we better stop here
+		exit 1
+	fi
 	set ${RandomSpeed}
 	RandomReadSpead=$1
 	RandomWriteSpead=$2
@@ -720,10 +726,12 @@ CheckCard() {
 	else
 		RawReadSpead$(echo "$1" | cut -f1 -d.)
 	fi
-	echo -e "\nPerformance summary:${NC}\nSequential reading speed: $1 $2 \c"
-	[ ${RawReadSpead} -le 5000 ] && echo -e "${BOLD}(too low)${NC}\c"
+	echo -e "\n${NC}${BOLD}Performance summary:${NC}\nSequential reading speed:$(printf "%6s" $1) $2 \c"
+	[ ${RawReadSpead} -le 2500 ] && Exclamation="${LRED}way " || Exclamation=""
+	[ ${RawReadSpead} -le 5000 ] && echo -e "(${BOLD}${Exclamation}too low${NC})\c"
 	echo -e "\n 4K random reading speed:$(printf "%6s" ${RandomReadSpead}) KB/s \c"
-	[ ${RandomReadSpead} -le 1500 ] && echo -e "${BOLD}(too low)${NC}\c"
+	[ ${RandomReadSpead} -le 750 ] && Exclamation="${LRED}way " || Exclamation=""
+	[ ${RandomReadSpead} -le 1500 ] && echo -e "(${BOLD}${Exclamation}too low${NC})\c"
 	WriteSpeed=$(awk -F" " '/Average writing speed/ {print $4"\t"$5}' </tmp/CheckCard.log)
 	set ${WriteSpeed}
 	if [ "X$2" = "XMB/s" ]; then
@@ -731,10 +739,12 @@ CheckCard() {
 	else
 		RawWriteSpeed=$(echo "$1" | cut -f1 -d.)
 	fi
-	echo -e "\nSequential writing speed: $1 $2 \c"
-	[ ${RawWriteSpeed} -le 5000 ] && echo -e "${BOLD}(too low)${NC}\c"
+	echo -e "\nSequential writing speed:$(printf "%6s" $1) $2 \c"
+	[ ${RawWriteSpeed} -le 2500 ] && Exclamation="${LRED}way " || Exclamation=""
+	[ ${RawWriteSpeed} -le 5000 ] && echo -e "(${BOLD}${Exclamation}too low${NC})\c"
 	echo -e "\n 4K random writing speed:$(printf "%6s" ${RandomWriteSpead}) KB/s \c"
-	[ ${RandomWriteSpead} -le 750 ] && echo -e "${BOLD}(too low)${NC}\c"
+	[ ${RandomWriteSpead} -le 400 ] && Exclamation="${LRED}way " || Exclamation=""
+	[ ${RandomWriteSpead} -le 750 ] && echo -e "(${BOLD}${Exclamation}too low${NC})\c"
 	echo -e "\n\nTo interpret the results above correctly or search for alternatives 
 please refer to http://oss.digirati.com.br/f3/ and also
 http://www.jeffgeerling.com/blogs/jeff-geerling/raspberry-pi-microsd-card
