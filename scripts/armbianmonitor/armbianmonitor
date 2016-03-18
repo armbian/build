@@ -82,6 +82,17 @@
 
 Main() {
 	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+	# check if stdout is a terminal...
+	if test -t 1; then
+		# see if it supports colors...
+		ncolors=$(tput colors)
+		if test -n "$ncolors" && test $ncolors -ge 8; then
+			BOLD="$(tput bold)"
+			NC='\033[0m' # No Color
+			LGREEN='\033[1;32m'
+		fi
+	fi
 	
 	[ $# -eq 0 ] && (DisplayUsage ; exit 0)
 	
@@ -108,7 +119,7 @@ Main() {
 } # Main
 
 ParseOptions() {
-	while getopts 'hHbBuUrRmMdD' c ; do
+	while getopts 'hHbBuUrRmMdDc:C:' c ; do
 	case ${c} in
 		H)
 			# display full help test
@@ -181,22 +192,17 @@ ParseOptions() {
 			echo -e "Please post the URL in the Armbian forum where you've been asked for."
 			exit 0			
 			;;
+		c|C)
+			# check card mode
+			CheckCard "${OPTARG}"
+			exit 0
+			;;
 	esac
 	done
 } # ParseOptions
 
 DisplayUsage() {
-	# check if stdout is a terminal...
-	if test -t 1; then
-		# see if it supports colors...
-		ncolors=$(tput colors)
-		if test -n "$ncolors" && test $ncolors -ge 8; then
-			BOLD="$(tput bold)"
-			NC='\033[0m' # No Color
-			LGREEN='\033[1;32m'
-		fi
-	fi
-	echo -e "Usage: ${BOLD}${0##*/} [-h] [-b] [-d] [-m] [-r] [-u]${NC}\n"
+	echo -e "Usage: ${BOLD}${0##*/} [-h] [-b] [-d \$path] [-d] [-m] [-r] [-u]${NC}\n"
 	echo -e "############################################################################"
 	if [ ${FullUsage} ]; then
 		echo -e "\nDetailed Description:"
@@ -204,6 +210,7 @@ DisplayUsage() {
 	fi
 	echo -e "\n Use ${BOLD}armbianmonitor${NC} for the following tasks:\n"
 	echo -e " armbianmonitor ${BOLD}-b${NC} switches between verbose and normal boot"
+	echo -e " armbianmonitor ${BOLD}-c /path/to/test${NC} performs disk health/performance tests"
 	echo -e " armbianmonitor ${BOLD}-d${NC} tries to upload debug disk info to improve armbianmonitor"
 	echo -e " armbianmonitor ${BOLD}-m${NC} provides simple CLI monitoring"
 	echo -e " armbianmonitor ${BOLD}-r${NC} tries to install RPi-Monitor"
@@ -641,5 +648,108 @@ BAKBQCAQCAQCgUAgEAgEwjPhPzou6T0AoAAA" | base64 --decode | tar xzf -
 			;;
 	esac
 } # PatchRPiMonitor_for_sun8i
+
+CheckCard() {
+	if [ "$(id -u)" = "0" ]; then
+		echo "Checking disks is not permitted as root or through sudo. Exiting" >&2
+		exit 1
+	fi
+	
+	if [ ! -d "$1" ]; then
+		echo "\"$1\" does not exist or is no directory. Exiting" >&2
+		exit 1
+	fi
+	TargetDir="$1"
+
+	# check requirements
+	which f3write >/dev/null 2>&1 || MissingTools=" f3"
+	which iozone >/dev/null 2>&1 || MissingTools="${MissingTools} iozone3"
+	if [ "X${MissingTools}" != "X" ]; then
+		echo "Some tools are missing, please do an \"sudo apt-get -f -y install${MissingTools}\" before and try again" >&2
+		exit 1
+	fi
+	
+	# check provided path
+	Device="$(GetDevice "$1")"
+	set ${Device}
+	DeviceName=$1
+	FileSystem=$2
+	echo "${DeviceName}" | grep -q "mmcblk0" || echo -e "\n${BOLD}WARNING:${NC} It seems you're not testing the SD card but instead ${DeviceName} (${FileSystem})\n"
+	
+	TestDir="$(mktemp -d "${TargetDir}/cardtest.XXXXXX" || exit 1)"
+	date "+%s" >"${TestDir}/.starttime" || exit 1
+	trap "rm -rf \"${TestDir}\" ; exit 0" 0 1 2 3 15
+	
+	# start actual test, create a small file for some space reserve
+	fallocate -l 32M "${TestDir}/empty.32m"
+	# Start writing
+	echo -e "Now starting to write to the card, please be patient, this might take a very long time"
+	f3write "${TestDir}" | tee /tmp/CheckCard.log
+	touch "${TestDir}/.starttime" || (echo -e "\n${BOLD}Test stopped, read-only filesystem" ; dmesg | grep 'I/O error' ; echo -e "${NC}" ; exit 1)
+	rm "${TestDir}/empty.32m"
+	# Start verify
+	echo -e "\nNow verifying the written data:"
+	f3read "${TestDir}" | tee -a /tmp/CheckCard.log
+	touch "${TestDir}/.starttime" || (echo -e "\n${BOLD}Test stopped, read-only filesystem" ; dmesg | grep 'I/O error' ; echo -e "${NC}" ; exit 1)
+	rm "${TestDir}/"*.h2w
+	echo -e "\nStarting iozone tests:"
+	cd "${TestDir}"
+	iozone -e -I -a -s 100M -r 4k -r 512k -r 16M -i 0 -i 1 -i 2 "${TestDir}" | tee -a /tmp/CheckCard.log
+	touch "${TestDir}/.starttime" || (echo -e "\n${BOLD}Test stopped, read-only filesystem" ; dmesg | grep 'I/O error' ; echo -e "${NC}" ; exit 1)
+	echo -e "\n${BOLD}The results from testing ${DeviceName} (${FileSystem}):${NC}"
+	egrep "Average|Data" /tmp/CheckCard.log | sort -r
+	echo "                                            random    random"
+	echo -e "reclen    write  rewrite    read    reread    read     write\c"
+	awk -F"102400  " '/102400/ {print $2}' </tmp/CheckCard.log
+
+	# check health
+	echo -e "\n${BOLD}Health summary: \c"
+	grep -q "Data LOST: 0.00 Byte" /tmp/CheckCard.log && echo "OK" || \
+		(echo -e "${DeviceName} is faulty. Replace it as soon as possible!" ; \
+		grep -A3 "^Data LOST" /tmp/CheckCard.log)
+
+	# check performance
+	RandomSpeed=$(awk -F" " '/102400       4/ {print $7"\t"$8}' </tmp/CheckCard.log)
+	set ${RandomSpeed}
+	RandomReadSpead=$1
+	RandomWriteSpead=$2
+	ReadSpeed=$(awk -F" " '/Average reading speed/ {print $4"\t"$5}' </tmp/CheckCard.log)
+	set ${ReadSpeed}
+	if [ "X$2" = "XMB/s" ]; then
+		RawReadSpead=$(echo "$1 * 1000" | bc -s | cut -f1 -d.)
+	else
+		RawReadSpead$(echo "$1" | cut -f1 -d.)
+	fi
+	echo -e "\nPerformance summary:${NC}\nSequential reading speed: $1 $2 \c"
+	[ ${RawReadSpead} -le 5000 ] && echo -e "${BOLD}(too low)${NC}\c"
+	echo -e "\n 4K random reading speed:$(printf "%6s" ${RandomReadSpead}) KB/s \c"
+	[ ${RandomReadSpead} -le 1500 ] && echo -e "${BOLD}(too low)${NC}\c"
+	WriteSpeed=$(awk -F" " '/Average writing speed/ {print $4"\t"$5}' </tmp/CheckCard.log)
+	set ${WriteSpeed}
+	if [ "X$2" = "XMB/s" ]; then
+		RawWriteSpeed=$(echo "$1 * 1000" | bc -s | cut -f1 -d.)
+	else
+		RawWriteSpeed=$(echo "$1" | cut -f1 -d.)
+	fi
+	echo -e "\nSequential writing speed: $1 $2 \c"
+	[ ${RawWriteSpeed} -le 5000 ] && echo -e "${BOLD}(too low)${NC}\c"
+	echo -e "\n 4K random writing speed:$(printf "%6s" ${RandomWriteSpead}) KB/s \c"
+	[ ${RandomWriteSpead} -le 750 ] && echo -e "${BOLD}(too low)${NC}\c"
+	echo -e "\n\nTo interpret the results above correctly or search for alternatives 
+please refer to http://oss.digirati.com.br/f3/ and also
+http://www.jeffgeerling.com/blogs/jeff-geerling/raspberry-pi-microsd-card
+http://thewirecutter.com/reviews/best-microsd-card/"
+} # CheckCard
+
+GetDevice() {
+	TestPath=$(findmnt "$1" | awk -F" " '/\/dev\// {print $2"\t"$3}')
+	if [[ -z ${TestPath} && -n "${1%/*}" ]]; then
+		GetDevice "${1%/*}"
+	elif [[ -z ${TestPath} && -z "${1%/*}" ]]; then
+		findmnt / | awk -F" " '/\/dev\// {print $2"\t"$3}'
+	else
+		echo "${TestPath}"
+	fi
+} # GetDevice
 
 Main "$@"
