@@ -10,31 +10,22 @@
 #
 
 IFS=";"
-START=45
-STOP=57
 
-OLDFAMILY=""
+#OLDFAMILY=""
+
+#START=9
+#STOP=9
 #BUILD_ALL="demo"
 
-declare -a MYARRAY1=('jessie' '');
-#declare -a MYARRAY1=('wheezy' '' 'jessie' '' 'trusty' '');
-
-# vaid options for automatic building and menu selection
-#
-# build 0 = don't build
-# build 1 = old kernel
-# build 2 = next kernel
-# build 3 = both kernels
-# build 4 = dev kernel
-# build 5 = next and dev kernels
-# build 6 = legacy and next and dev kernel
+declare -a MYARRAY1=('wheezy' '' 'jessie' '' 'trusty' '');
+#declare -a MYARRAY1=('wheezy' '' 'jessie' '' 'trusty' '' 'xenial' '');
 
 # Include here to make "display_alert" and "prepare_host" available
 source $SRC/lib/general.sh
 
 # Function display and runs compilation with desired parameters
 #
-# Two parameters: $1 = BOARD $2 = BRANCH
+# Two parameters: $1 = BOARD $2 = BRANCH $3 = $TARGET
 #
 distro-list ()
 {
@@ -52,17 +43,22 @@ while [[ $k1 -lt ${#MYARRAY1[@]} ]]
 
 	source $SRC/lib/configuration.sh
  	array=(${DESKTOP_TARGET//,/ })
-
+	arrax=(${CLI_TARGET//,/ })
+	
 	# % means all BRANCH / DISTRIBUTION
 	[[ ${array[0]} == "%" ]] && array[0]=$RELEASE
 	[[ ${array[1]} == "%" ]] && array[1]=$2
+	[[ ${arrax[0]} == "%" ]] && arrax[0]=$RELEASE
+	[[ ${arrax[1]} == "%" ]] && arrax[1]=$2
 	
 	# we define desktop building in config
-	if [[ "$RELEASE" == "${array[0]}" && $2 == "${array[1]}" ]]; then
+	if [[ "$RELEASE" == "${array[0]}" && $2 == "${array[1]}" && $3 == "desktop" ]]; then
 			display_alert "$BOARD desktop" "$RELEASE - $BRANCH - $LINUXFAMILY" "ext" 
-                        BUILD_DESKTOP="yes"
-	 else
-                        display_alert "$BOARD" "$RELEASE - $BRANCH - $LINUXFAMILY" "info" 
+			BUILD_DESKTOP="yes"
+	fi
+	
+	if [[ "$RELEASE" == "${arrax[0]}" && $2 == "${arrax[1]}" && $3 == "cli" ]]; then
+			display_alert "$BOARD CLI" "$RELEASE - $BRANCH - $LINUXFAMILY" "ext" 
 			BUILD_DESKTOP="no"
 	fi
 
@@ -76,7 +72,7 @@ while [[ $k1 -lt ${#MYARRAY1[@]} ]]
 }
 
 IFS=";"
-
+[[ -z "$START" ]] && START=0
 MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/)#enabled/ || /#des/ || /#build/' | sed -e 's/\t\t//' | sed 's/)#enabled//g' \
 | sed 's/#description //g' | sed -e 's/\t//' | sed 's/#build //g' | sed ':a;N;$!ba;s/\n/;/g'))
 i1=$[0+$START]
@@ -85,17 +81,20 @@ o1=$[2+$START]
 while [[ $i1 -lt ${#MYARRAY[@]} ]]
 do
 	if [[ "${MYARRAY[$o1]}" == "1" || "${MYARRAY[$o1]}" == "3" || "${MYARRAY[$o1]}" == "6" ]]; then 
-		distro-list "${MYARRAY[$i1]}" "default"
+		distro-list "${MYARRAY[$i1]}" "default" "cli"
+		distro-list "${MYARRAY[$i1]}" "default" "desktop"		
+		
 	fi
 	if [[ "${MYARRAY[$o1]}" == "2" || "${MYARRAY[$o1]}" == "3" || "${MYARRAY[$o1]}" == "5" || "${MYARRAY[$o1]}" == "6" ]]; then 
-		distro-list "${MYARRAY[$i1]}" "next"
+		distro-list "${MYARRAY[$i1]}" "next" "cli" 
+		distro-list "${MYARRAY[$i1]}" "next" "desktop"
 	fi
-	if [[ "${MYARRAY[$o1]}" == "4" || "${MYARRAY[$o1]}" == "5" || "${MYARRAY[$o1]}" == "6" ]]; then 
-		distro-list "${MYARRAY[$i1]}" "dev"
-	fi
+	#if [[ "${MYARRAY[$o1]}" == "4" || "${MYARRAY[$o1]}" == "5" || "${MYARRAY[$o1]}" == "6" ]]; then 
+	#	distro-list "${MYARRAY[$i1]}" "dev"
+	#fi
     i1=$[$i1+3];j1=$[$j1+3];o1=$[$o1+3]
 	
-	[[ $BUILD_ALL == "demo" ]] && echo $i1
-	if [[ "$i1" -gt "$STOP" ]]; then exit; fi
+	#[[ $BUILD_ALL == "demo" ]] && echo $i1
+	if [[ -n "$STOP" && "$i1" -gt "$STOP" ]]; then exit; fi
 	
 done

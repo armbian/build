@@ -91,7 +91,8 @@ case $BOARD in
 		BOOTCONFIG="Cubieboard_config"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sunxi"
 		MODULES_NEXT="bonding"
-		DESKTOP_TARGET="trusty,default"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,%"
 	;;
 
 	cubieboard2)#enabled
@@ -101,7 +102,8 @@ case $BOARD in
 		BOOTCONFIG="Cubieboard2_config"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 		MODULES_NEXT="bonding"
-		DESKTOP_TARGET="trusty,default"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,%"
 	;;
 
 	cubietruck)#enabled
@@ -111,7 +113,8 @@ case $BOARD in
 		BOOTCONFIG="Cubietruck_config"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i ap6210"
 		MODULES_NEXT="brcmfmac rfcomm hidp bonding"
-		DESKTOP_TARGET="trusty,%"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,%"
 	;;
 
 	lime-a10)#enabled
@@ -121,7 +124,8 @@ case $BOARD in
 		BOOTCONFIG="A10-OLinuXino-Lime_defconfig"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 		MODULES_NEXT="bonding"
-		DESKTOP_TARGET="trusty,next"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,%"
 	;;
 
 	lime)#enabled
@@ -131,7 +135,8 @@ case $BOARD in
 		BOOTCONFIG="A20-OLinuXino-Lime_defconfig"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 		MODULES_NEXT="bonding"
-		DESKTOP_TARGET="trusty,default"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,%"
 	;;
 
 	lime2)#enabled
@@ -141,7 +146,8 @@ case $BOARD in
 		BOOTCONFIG="A20-OLinuXino-Lime2_defconfig"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 		MODULES_NEXT="bonding"
-		DESKTOP_TARGET="trusty,default"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,%"
 	;;
 
 	micro)#enabled
@@ -151,7 +157,8 @@ case $BOARD in
 		BOOTCONFIG="A20-OLinuXino_MICRO_config"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 		MODULES_NEXT="bonding"
-		DESKTOP_TARGET="trusty,default"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,%"
 	;;
 
 	pcduino3nano)#enabled
@@ -161,7 +168,8 @@ case $BOARD in
 		BOOTCONFIG="Linksprite_pcDuino3_Nano_defconfig"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 		MODULES_NEXT="bonding"
-		DESKTOP_TARGET="trusty,default"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,%"
 	;;
 
 	bananapim2)#enabled
@@ -171,7 +179,8 @@ case $BOARD in
 		BOOTCONFIG="Sinovoip_BPI_M2_defconfig"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 		MODULES_NEXT="brcmfmac bonding"
-		DESKTOP_TARGET="trusty,next"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,next"
 	;;
 
 	bananapipro)#enabled
@@ -181,7 +190,8 @@ case $BOARD in
 		BOOTCONFIG="Bananapro_defconfig"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp #ap6211"
 		MODULES_NEXT="brcmfmac bonding"
-		DESKTOP_TARGET="trusty,%"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,%"
 	;;
 
 	lamobo-r1)#enabled
@@ -190,7 +200,7 @@ case $BOARD in
 		LINUXFAMILY="sun7i"
 		BOOTCONFIG="Lamobo_R1_defconfig"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q"
-		MODULES_NEXT="brcmfmac bonding"
+		CLI_TARGET="%,%"		
 	;;
 
 	orangepi)#enabled
@@ -200,7 +210,8 @@ case $BOARD in
 		BOOTCONFIG="Orangepi_defconfig"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 		MODULES_NEXT="bonding"
-		DESKTOP_TARGET="trusty,%"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,%"
 	;;
 
 	orangepimini)#enabled
@@ -210,6 +221,8 @@ case $BOARD in
 		BOOTCONFIG="Orangepi_mini_defconfig"
 		MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp"
 		MODULES_NEXT="bonding"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,%"
 	;;
 
 	orangepiplus)#enabled
@@ -222,6 +235,8 @@ case $BOARD in
 		CPUMIN="480000"
 		CPUMAX="1296000"
 		GOVERNOR="interactive"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,default"		
 	;;
 
 	orangepih3)#enabled
@@ -234,6 +249,8 @@ case $BOARD in
 		CPUMIN="480000"
 		CPUMAX="1296000"
 		GOVERNOR="interactive"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,default"		
 	;;
 
 	bananapim2plus)#disabled
@@ -255,7 +272,8 @@ case $BOARD in
 		MODULES="bonding"
 		MODULES_NEXT="bonding"
 		SERIALCON="ttymxc0"
-		DESKTOP_TARGET="jessie,default"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,%"
 	;;
 
 	udoo)#enabled
@@ -266,6 +284,7 @@ case $BOARD in
 		MODULES="bonding"
 		MODULES_NEXT=""
 		SERIALCON="ttymxc1"
+		CLI_TARGET="%,%"
 		DESKTOP_TARGET="jessie,%"
 	;;
 
@@ -278,6 +297,8 @@ case $BOARD in
 		MODULES="bonding"
 		MODULES_NEXT=""
 		SERIALCON="ttymxc0"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,default"		
 	;;
 
 	guitar)#enabled
@@ -301,6 +322,7 @@ case $BOARD in
 		MODULES="bonding"
 		MODULES_NEXT=""
 		SERIALCON="ttySAC2"
+		CLI_TARGET="%,%"
 		DESKTOP_TARGET="jessie,default"
 	;;
 
@@ -320,6 +342,7 @@ case $BOARD in
 		MODULES=""
 		MODULES_NEXT=""
 		SERIALCON="ttyS0"
+		CLI_TARGET="%,%"
 	;;
 
 	*) exit_with_error "Board configuration not found" "$BOARD"
