@@ -18,7 +18,8 @@
 KERNEL_ONLY="no"					# build only kernel
 KERNEL_CONFIGURE="no"					# want to change my default configuration
 CLEAN_LEVEL="make,debs"					# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
-							# "images" = delete "./output/images", "debs" = delete "./output/debs",
+							# "debs" = delete pckages in "./output/debs" for current branch and family,
+							# "alldebs" - delete all packages in "./output/debs", "images" = delete "./output/images",
 							# "cache" = delete "./output/cache", "sources" = delete "./sources"
 # user
 DEST_LANG="en_US.UTF-8"					# sl_SI.UTF-8, en_US.UTF-8
@@ -93,4 +94,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=11
+# VERSION=12

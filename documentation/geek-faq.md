@@ -33,7 +33,8 @@ Run the script
 - **CLEAN_LEVEL** (comma-separated list): defines what should be cleaned. Default value is `"make,debs"` - clean sources and remove all packages. Changing this option can be useful when rebuilding images or building more than one image
     - "make" = execute `make clean` for selected kernel and u-boot sources,
 	- "images" = delete `output/images` (complete OS images),
-	- "debs" = delete "`output/debs` (kernel, u-boot and other packages),
+	- "debs" = delete packages in `output/debs` for current branch and device family,
+	- "alldebs" = delete all packages in `output/debs`,
 	- "cache" = delete `output/cache` (rootfs cache),
 	- "sources" = delete `sources` (all downloaded sources)
 - **KERNEL\_KEEP\_CONFIG** (yes|no):
@@ -97,6 +98,8 @@ You can run additional commands to customize created image. Edit file:
     userpatches/customize-image.sh
 
 and place your code here. You may test values of variables noted in the file to use different commands for different configurations. Those commands will be executed in a process of building just before closing image.
+
+To add files to image easily, put them in `userpatches/overlay` and access them in `/tmp/overlay` from `customize-image.sh`
 
 # What is behind the build process?
 
