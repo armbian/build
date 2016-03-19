@@ -76,8 +76,11 @@ apt-get -qq -y --no-install-recommends install git
 if [[ ! -d $SRC/lib ]]; then
 	git clone https://github.com/igorpecovnik/lib
 fi
-cd $SRC/lib; git pull; git checkout ${LIB_TAG:- master}
-
+cd $SRC/lib; git pull >/dev/null 2>&1
+CHANGED_FILES=$(git checkout ${LIB_TAG:- master} | grep -P '^M' | awk '{print $2}' | tr '\n' ' ')
+if [[ $? == 0 ]]; then
+echo -e "[\e[0;35m warn \x1B[0m] Can't update [lib/] since you made changes to: [\e[0;33m ${CHANGED_FILES::-1} \x1B[0m]"
+fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # Do we need to build all images
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -89,4 +92,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=9
+# VERSION=10
