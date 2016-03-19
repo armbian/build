@@ -15,6 +15,7 @@
 # compile_kernel
 # install_external_applications
 # write_uboot
+# customize_image
 
 compile_uboot (){
 #---------------------------------------------------------------------------------------------------------------------------------
@@ -417,4 +418,15 @@ write_uboot()
 	fi
 	rm -r /tmp/usr
 	sync
+}
+
+customize_image()
+{
+	cp $SRC/userpatches/customize-image.sh $CACHEDIR/sdcard/tmp/customize-image.sh
+	chmod +x $CACHEDIR/sdcard/tmp/customize-image.sh
+	mkdir -p $CACHEDIR/sdcard/tmp/overlay
+	mount --bind $SRC/userpatches/overlay $CACHEDIR/sdcard/tmp/overlay
+	display_alert "Calling image customization script" "customize-image.sh" "info"
+	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
+	umount $CACHEDIR/sdcard/tmp/overlay
 }

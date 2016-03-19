@@ -86,10 +86,7 @@ debootstrap_ng()
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
-	cp $SRC/userpatches/customize-image.sh $CACHEDIR/sdcard/tmp/customize-image.sh
-	chmod +x $CACHEDIR/sdcard/tmp/customize-image.sh
-	display_alert "Calling image customization script" "customize-image.sh" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
+	customize_image
 
 	# stage: cleanup
 	rm -f $CACHEDIR/sdcard/usr/sbin/policy-rc.d
@@ -106,6 +103,7 @@ debootstrap_ng()
 	if [[ $ROOTFS_TYPE == fel || $ROOTFS_TYPE == nfs ]]; then
 		# kill /etc/network/interfaces on target to prevent conflicts between kernel
 		# and userspace network config (mainly on Xenial)
+
 		rm -f $CACHEDIR/sdcard/etc/network/interfaces
 		printf "auto lo\niface lo inet loopback\n\niface eth0 inet manual" > $CACHEDIR/sdcard/etc/network/interfaces
 	fi
