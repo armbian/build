@@ -46,7 +46,7 @@ Image writing takes around 3 minutes on a slow, class 6 SD card.
 
 Important: Make sure you use a **good & reliable** SD card. If you encounter boot troubles or simply as a measure of precaution, check them with [F3](http://oss.digirati.com.br/f3/) or [H2testw](http://www.heise.de/download/h2testw.html).
 
-Also important: SD cards are optimised for sequential reads/writes as it's commong in digital cameras. This is what the *speed class* is about. And while you should not buy any card rated less than *class 10* you should also take care to choose one that is known to show high random I/O performance (see this [benchmarked comparison](http://www.jeffgeerling.com/blogs/jeff-geerling/raspberry-pi-microsd-card)) since this is way more performance relevant when used with any SBC.
+Also important: SD cards are optimised for sequential reads/writes as it's common in digital cameras. This is what the *speed class* is about. And while you shouldn't buy any card rated less than *class 10* today you should especially take care to choose one that is known to show high random I/O performance since this is way more performance relevant when used with any SBC (see [this](http://www.jeffgeerling.com/blogs/jeff-geerling/raspberry-pi-microsd-card) or [this](http://thewirecutter.com/reviews/best-microsd-card/) or benchmarked comparison for example).
 
 # How to boot?
 
