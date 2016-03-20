@@ -153,13 +153,11 @@ ParseOptions() {
 			;;
 		u|U)
 			# Upload /var/log/armhwinfo.log to be of help in support forum.
-			# TODO: ping sprunge.us before to detect network/firewall problems
 			fping sprunge.us | grep -q alive || \
 				(echo "Network/firewall problem detected. Please fix this or upload /var/log/armhwinfo.log manually." >&2 ; exit 1)
 			which curl >/dev/null 2>&1 || apt-get -f -qq -y install curl
 			echo -e "/var/log/armhwinfo.log has been uploaded to \c"
-			(cat /var/log/armhwinfo.log ; echo -e "\n### dmesg now:\n$(dmesg | tail -n 1000)") \
-				| curl -F 'sprunge=<-' http://sprunge.us
+			CollectSupportInfo | curl -F 'sprunge=<-' http://sprunge.us
 			echo -e "Please post the URL in the Armbian forum where you've been asked for."
 			exit 0
 			;;
@@ -650,6 +648,17 @@ BAKBQCAQCAQCgUAgEAgEwjPhPzou6T0AoAAA" | base64 --decode | tar xzf -
 	esac
 } # PatchRPiMonitor_for_sun8i
 
+CollectSupportInfo() {
+	cat /var/log/armhwinfo.log
+	echo -e "\n### dmesg now:\n\n$(dmesg | tail -n 250)"
+	for file in /tmp/armbianmonitor_checks_* ; do
+		echo -e "\n### \c"
+		ls "${file}" | cut -f1 -d.
+		echo
+		cat "${file}"
+	done
+} # CollectSupportInfo
+
 CheckCard() {
 	if [ "$(id -u)" = "0" ]; then
 		echo "Checking disks is not permitted as root or through sudo. Exiting" >&2
@@ -680,76 +689,99 @@ CheckCard() {
 	TestDir="$(mktemp -d "${TargetDir}/cardtest.XXXXXX" || exit 1)"
 	date "+%s" >"${TestDir}/.starttime" || exit 1
 	trap "rm -rf \"${TestDir}\" ; exit 0" 0 1 2 3 15
+	LogFile="$(mktemp /tmp/armbianmonitor_checks_${DeviceName##*/}_${FileSystem}.XXXXXX)"
 	
 	# start actual test, create a small file for some space reserve
 	fallocate -l 32M "${TestDir}/empty.32m" 2>/dev/null || dd if=/dev/zero of="${TestDir}/empty.32m" bs=1M count=32 status=noxfer >/dev/null 2>&1
+	ShowWarning=false
 	# Start writing
 	echo -e "Starting to fill ${DeviceName} with test patterns, please be patient this might take a very long time"
-	f3write "${TestDir}" | tee /tmp/CheckCard.log
-	touch "${TestDir}/.starttime" || (echo -e "\n${BOLD}${LRED}Test stopped, read-only filesystem\n$(dmesg | grep 'I/O error')${NC}" ; exit 1)
+	f3write "${TestDir}" | tee "${LogFile}"
+	touch "${TestDir}/.starttime" || ShowDeviceWarning
 	rm "${TestDir}/empty.32m"
 	# Start verify
 	echo -e "\nNow verifying the written data:"
-	f3read "${TestDir}" | tee -a /tmp/CheckCard.log
-	touch "${TestDir}/.starttime" || (echo -e "\n${BOLD}${LRED}Test stopped, read-only filesystem\n$(dmesg | grep 'I/O error')${NC}" ; exit 1)
+	echo "" >>"${LogFile}"
+	f3read "${TestDir}" | tee -a "${LogFile}"
+	touch "${TestDir}/.starttime" || ShowDeviceWarning
 	rm "${TestDir}/"*.h2w
 	echo -e "\nStarting iozone tests. Be patient, this can take a very long time to complete:"
+	echo "" >>"${LogFile}"
 	cd "${TestDir}"
-	# iozone -e -I -a -s 100M -r 4k -r 512k -r 16M -i 0 -i 1 -i 2 | tee -a /tmp/CheckCard.log | cut -c-80 | tail -f -n +30
-	iozone -e -I -a -s 100M -r 4k -r 512k -r 16M -i 0 -i 1 -i 2 | tee -a /tmp/CheckCard.log
-	touch "${TestDir}/.starttime" || (echo -e "\n${BOLD}${LRED}Test stopped, read-only filesystem\n$(dmesg | grep 'I/O error')${NC}" ; exit 1)
+	iozone -e -I -a -s 100M -r 4k -r 512k -r 16M -i 0 -i 1 -i 2 | tee -a "${LogFile}"
+	touch "${TestDir}/.starttime" || ShowDeviceWarning
 	echo -e "\n${BOLD}The results from testing ${DeviceName} (${FileSystem}):${NC}"
-	egrep "Average|Data" /tmp/CheckCard.log | sort -r
+	egrep "Average|Data" "${LogFile}" | sort -r
 	echo "                                            random    random"
 	echo -e "reclen    write  rewrite    read    reread    read     write\c"
-	awk -F"102400  " '/102400/ {print $2}' </tmp/CheckCard.log
+	awk -F"102400  " '/102400/ {print $2}' <"${LogFile}"
 
 	# check health
 	echo -e "\n${BOLD}Health summary: \c"
-	grep -q "Data LOST: 0.00 Byte" /tmp/CheckCard.log && echo "${LGREEN}OK" || \
-		(echo -e "${LRED}${DeviceName} is faulty. Replace it as soon as possible!" ; \
-		grep -A3 "^Data LOST" /tmp/CheckCard.log)
+	egrep -q "Read-only|Input/output error" "${LogFile}" && (echo -e "${LRED}${BOLD}${DeviceName} failed${NC}" ; exit 0)
+	grep -q "Data LOST: 0.00 Byte" "${LogFile}" && echo -e "${LGREEN}OK" || \
+		(echo -e "${LRED}${BOLD}${DeviceName} failed. Replace it as soon as possible!" ; \
+		grep -A3 "^Data LOST" "${LogFile}")
 
 	# check performance
-	RandomSpeed=$(awk -F" " '/102400       4/ {print $7"\t"$8}' </tmp/CheckCard.log)
-	if [ "X${RandomSpeed}" = "X" ]; then
-		# something went wrong before, we better stop here
-		exit 1
-	fi
-	set ${RandomSpeed}
-	RandomReadSpead=$1
-	RandomWriteSpead=$2
-	ReadSpeed=$(awk -F" " '/Average reading speed/ {print $4"\t"$5}' </tmp/CheckCard.log)
-	set ${ReadSpeed}
-	if [ "X$2" = "XMB/s" ]; then
-		RawReadSpead=$(echo "$1 * 1000" | bc -s | cut -f1 -d.)
-	else
-		RawReadSpead$(echo "$1" | cut -f1 -d.)
-	fi
-	echo -e "\n${NC}${BOLD}Performance summary:${NC}\nSequential reading speed:$(printf "%6s" $1) $2 \c"
-	[ ${RawReadSpead} -le 2500 ] && Exclamation="${LRED}way " || Exclamation=""
-	[ ${RawReadSpead} -le 5000 ] && echo -e "(${BOLD}${Exclamation}too low${NC})\c"
-	echo -e "\n 4K random reading speed:$(printf "%6s" ${RandomReadSpead}) KB/s \c"
-	[ ${RandomReadSpead} -le 750 ] && Exclamation="${LRED}way " || Exclamation=""
-	[ ${RandomReadSpead} -le 1500 ] && echo -e "(${BOLD}${Exclamation}too low${NC})\c"
-	WriteSpeed=$(awk -F" " '/Average writing speed/ {print $4"\t"$5}' </tmp/CheckCard.log)
-	set ${WriteSpeed}
-	if [ "X$2" = "XMB/s" ]; then
-		RawWriteSpeed=$(echo "$1 * 1000" | bc -s | cut -f1 -d.)
-	else
-		RawWriteSpeed=$(echo "$1" | cut -f1 -d.)
-	fi
-	echo -e "\nSequential writing speed:$(printf "%6s" $1) $2 \c"
-	[ ${RawWriteSpeed} -le 2500 ] && Exclamation="${LRED}way " || Exclamation=""
-	[ ${RawWriteSpeed} -le 5000 ] && echo -e "(${BOLD}${Exclamation}too low${NC})\c"
-	echo -e "\n 4K random writing speed:$(printf "%6s" ${RandomWriteSpead}) KB/s \c"
-	[ ${RandomWriteSpead} -le 400 ] && Exclamation="${LRED}way " || Exclamation=""
-	[ ${RandomWriteSpead} -le 750 ] && echo -e "(${BOLD}${Exclamation}too low${NC})\c"
-	echo -e "\n\nTo interpret the results above correctly or search for alternatives 
-please refer to http://oss.digirati.com.br/f3/ and also
+	RandomSpeed=$(awk -F" " '/102400       4/ {print $7"\t"$8}' <"${LogFile}")
+	if [ "X${RandomSpeed}" != "X" ]; then
+		# Only continue when we're able to read out iozone results
+		set ${RandomSpeed}
+		RandomReadSpead=$1
+		RandomWriteSpead=$2
+		ReadSpeed=$(awk -F" " '/Average reading speed/ {print $4"\t"$5}' <"${LogFile}")
+		set ${ReadSpeed}
+		if [ "X$2" = "XMB/s" ]; then
+			RawReadSpead=$(echo "$1 * 1000" | bc -s | cut -f1 -d.)
+		else
+			RawReadSpead$(echo "$1" | cut -f1 -d.)
+		fi
+		echo -e "\n${NC}${BOLD}Performance summary:${NC}\nSequential reading speed:$(printf "%6s" $1) $2 \c"
+		[ ${RawReadSpead} -le 2500 ] && Exclamation="${LRED}${BOLD}way " || Exclamation=""
+		[ ${RawReadSpead} -le 5000 ] && Exclamation="${Exclamation}${BOLD}too "
+		[ ${RawReadSpead} -le 7500 ] && echo -e "(${Exclamation}low${NC})\c"
+		echo "${Exclamation}" | grep -q "too" && ShowWarning=true
+		echo -e "\n 4K random reading speed:$(printf "%6s" ${RandomReadSpead}) KB/s \c"
+		[ ${RandomReadSpead} -le 700 ] && Exclamation="${LRED}${BOLD}way " || Exclamation=""
+		[ ${RandomReadSpead} -le 1400 ] && Exclamation="${Exclamation}${BOLD}too "
+		[ ${RandomReadSpead} -le 2500 ] && echo -e "(${Exclamation}low${NC})\c"
+		echo "${Exclamation}" | grep -q "too" && ShowWarning=true
+		WriteSpeed=$(awk -F" " '/Average writing speed/ {print $4"\t"$5}' <"${LogFile}")
+		set ${WriteSpeed}
+		if [ "X$2" = "XMB/s" ]; then
+			RawWriteSpeed=$(echo "$1 * 1000" | bc -s | cut -f1 -d.)
+		else
+			RawWriteSpeed=$(echo "$1" | cut -f1 -d.)
+		fi
+		echo -e "\nSequential writing speed:$(printf "%6s" $1) $2 \c"
+		[ ${RawWriteSpeed} -le 2500 ] && Exclamation="${LRED}${BOLD}way " || Exclamation=""
+		[ ${RawWriteSpeed} -le 4000 ] && Exclamation="${Exclamation}${BOLD}too "
+		[ ${RawWriteSpeed} -le 6000 ] && echo -e "(${Exclamation}low${NC})\c"
+		echo "${Exclamation}" | grep -q "too" && ShowWarning=true
+		echo -e "\n 4K random writing speed:$(printf "%6s" ${RandomWriteSpead}) KB/s \c"
+		[ ${RandomWriteSpead} -le 400 ] && Exclamation="${LRED}${BOLD}way " || Exclamation=""
+		[ ${RandomWriteSpead} -le 750 ] && Exclamation="${Exclamation}${BOLD}too "
+		[ ${RandomWriteSpead} -lt 1000 ] && echo -e "(${Exclamation}low${NC})\c"
+		echo "${Exclamation}" | grep -q "too" && ShowWarning=true
+		if [ "X${ShowWarning}" = "Xtrue" ]; then
+			echo -e "\n\n${BOLD}The device you tested seems to perform too slow to be used with Armbian."
+			echo -e "This applies especially to desktop images where slow storage is responsible"
+			echo -e "for sluggish behaviour. If you want to have fun with your device do NOT use"
+			echo -e "this media to put the OS image or the user homedirs on.${NC}\c"
+		fi
+		echo -e "\n\nTo interpret the results above correctly or search for better storage
+alternatives please refer to http://oss.digirati.com.br/f3/ and also
 http://www.jeffgeerling.com/blogs/jeff-geerling/raspberry-pi-microsd-card
-http://thewirecutter.com/reviews/best-microsd-card/"
+and http://thewirecutter.com/reviews/best-microsd-card/"
+	fi
 } # CheckCard
+
+ShowDeviceWarning() {
+	echo -e "\n${LRED}${BOLD}Test stopped, read-only filesystem\n\n${NC}${LRED}$(dmesg | grep 'I/O error')"
+	echo -e "\n${BOLD}Please be careful using this media since it seems it's already broken. Exiting test.\n${NC}"
+	exit 0
+} # ShowDeviceWarning
 
 GetDevice() {
 	TestPath=$(findmnt "$1" | awk -F" " '/\/dev\// {print $2"\t"$3}')
