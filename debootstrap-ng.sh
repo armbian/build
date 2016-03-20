@@ -100,12 +100,10 @@ debootstrap_ng()
 
 	umount_chroot
 
-	if [[ $ROOTFS_TYPE == fel || $ROOTFS_TYPE == nfs ]]; then
-		# kill /etc/network/interfaces on target to prevent conflicts between kernel
-		# and userspace network config (mainly on Xenial)
-
+	if [[ ( $ROOTFS_TYPE == fel || $ROOTFS_TYPE == nfs ) && $RELEASE == xenial ]]; then
+		# kill /etc/network/interfaces on target to prevent hang on shutdown on Xenial target
 		rm -f $CACHEDIR/sdcard/etc/network/interfaces
-		printf "auto lo\niface lo inet loopback\n\niface eth0 inet manual" > $CACHEDIR/sdcard/etc/network/interfaces
+		printf "auto lo\niface lo inet loopback\n" > $CACHEDIR/sdcard/etc/network/interfaces
 	fi
 
 	if [[ $ROOTFS_TYPE != ext4 ]]; then
@@ -397,16 +395,16 @@ prepare_partitions()
 	rm -f $CACHEDIR/sdcard/etc/fstab
 	if [[ $BOOTSIZE == 0 ]]; then
 		mount ${LOOP}p1 $CACHEDIR/mount/
-		echo "/dev/mmcblk0p1 / ${parttype[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
+		echo "/dev/mmcblk0p1 / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
 	else
 		if [[ $ROOTFS_TYPE != nfs ]]; then
 			mount ${LOOP}p2 $CACHEDIR/mount/
-			echo "/dev/mmcblk0p2 / ${parttype[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
+			echo "/dev/mmcblk0p2 / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
 		fi
 		# create /boot on rootfs after it is mounted
 		mkdir -p $CACHEDIR/mount/boot/
 		mount ${LOOP}p1 $CACHEDIR/mount/boot/
-		echo "/dev/mmcblk0p1 /boot ${parttype[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $CACHEDIR/sdcard/etc/fstab
+		echo "/dev/mmcblk0p1 /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $CACHEDIR/sdcard/etc/fstab
 	fi
 	echo "tmpfs /tmp tmpfs defaults,rw,nosuid 0 0" >> $CACHEDIR/sdcard/etc/fstab
 
