@@ -225,9 +225,11 @@ install_kernel (){
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${HEADERS_TMP}_${REVISION}_armhf.deb > /dev/null"
 
 	# install firmware
-	display_alert "Install firmware" "$FW_TMP" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_armhf.deb > /dev/null"
-
+	if [[ -f $CACHEDIR/sdcard/tmp/${FW_TMP}_${REVISION}_armhf.deb ]]; then
+		display_alert "Install firmware" "$FW_TMP" "info"
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_armhf.deb > /dev/null"
+	fi
+	
 	# install DTB
 	if [[ -f $CACHEDIR/sdcard/tmp/${DTB_TMP}_${REVISION}_armhf.deb ]]; then
 		display_alert "Install DTB" "$DTB_TMP" "info"
