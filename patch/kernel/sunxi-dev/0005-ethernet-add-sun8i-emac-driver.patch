@@ -1,24 +1,24 @@
-From c9869459825598ad1597ea263514d0fe6a8d9695 Mon Sep 17 00:00:00 2001
+From 1b1fa6d2064332ea73ef1f8da97d966ea1b23f99 Mon Sep 17 00:00:00 2001
 From: LABBE Corentin <clabbe.montjoie@gmail.com>
 Date: Thu, 14 Jan 2016 11:40:23 +0100
-Subject: [PATCH 5/5] ethernet: add sun8i-emac driver
+Subject: [PATCH] ethernet: add sun8i-emac driver
 
 This patch add support for sun8i-emac ethernet MAC hardware.
 It could be found in Allwinner H3/A83T/A64 SoCs.
 
 Signed-off-by: LABBE Corentin <clabbe.montjoie@gmail.com>
 ---
- drivers/net/ethernet/allwinner/Kconfig      |   14 +
+ drivers/net/ethernet/allwinner/Kconfig      |   13 +
  drivers/net/ethernet/allwinner/Makefile     |    1 +
- drivers/net/ethernet/allwinner/sun8i-emac.c | 1565 +++++++++++++++++++++++++++
- 3 files changed, 1580 insertions(+)
+ drivers/net/ethernet/allwinner/sun8i-emac.c | 1615 +++++++++++++++++++++++++++
+ 3 files changed, 1629 insertions(+)
  create mode 100644 drivers/net/ethernet/allwinner/sun8i-emac.c
 
 diff --git a/drivers/net/ethernet/allwinner/Kconfig b/drivers/net/ethernet/allwinner/Kconfig
-index 47da7e7..43cf91f 100644
+index 47da7e7..31ed97e 100644
 --- a/drivers/net/ethernet/allwinner/Kconfig
 +++ b/drivers/net/ethernet/allwinner/Kconfig
-@@ -33,4 +33,18 @@ config SUN4I_EMAC
+@@ -33,4 +33,17 @@ config SUN4I_EMAC
            To compile this driver as a module, choose M here.  The module
            will be called sun4i-emac.
  
@@ -29,7 +29,6 @@ index 47da7e7..43cf91f 100644
 +	select CRC32
 +	select MII
 +	select PHYLIB
-+	select MDIO_SUN4I
 +        ---help---
 +          Support for Allwinner H3 EMAC ethernet driver.
 +
@@ -48,10 +47,10 @@ index 03129f7..8bd1693c 100644
 +obj-$(CONFIG_SUN8I_EMAC) += sun8i-emac.o
 diff --git a/drivers/net/ethernet/allwinner/sun8i-emac.c b/drivers/net/ethernet/allwinner/sun8i-emac.c
 new file mode 100644
-index 0000000..013cc2e
+index 0000000..6b07f68
 --- /dev/null
 +++ b/drivers/net/ethernet/allwinner/sun8i-emac.c
-@@ -0,0 +1,1565 @@
+@@ -0,0 +1,1615 @@
 +/*
 + * sun8i-h3-emac driver
 + *
@@ -128,6 +127,8 @@ index 0000000..013cc2e
 +
 +#define SUN8I_COULD_BE_USED_BY_DMA BIT(31)
 +
++/*#define EMAC_DEBUG*/
++
 +struct dma_desc {
 +	u32 status;
 +	u32 st;
@@ -138,7 +139,7 @@ index 0000000..013cc2e
 +static int flow_ctrl;
 +static int pause = 0x400;
 +
-+static int nbdesc = 8;
++static int nbdesc = 16;
 +struct sun8i_emac_priv {
 +	void __iomem *base;
 +	int irq;
@@ -167,8 +168,14 @@ index 0000000..013cc2e
 +	struct sk_buff **tx_sk;
 +
 +	int tx_slot;
-+
++	int tx_dma_start;
 +};
++
++void rb_inc(int *p) {
++	(*p)++;
++	if (*p >= nbdesc)
++		*p = 0;
++}
 +
 +static int sun8i_ephy_hack(struct net_device *ndev);
 +
@@ -186,7 +193,8 @@ index 0000000..013cc2e
 +
 +	ddesc->st = 0;
 +
-+	sk = netdev_alloc_skb_ip_align(ndev, ndev->mtu);
++	/* TODO need to recheck this value */
++	sk = netdev_alloc_skb_ip_align(ndev, 2000);
 +	if (!sk)
 +		return -ENOMEM;
 +
@@ -204,12 +212,12 @@ index 0000000..013cc2e
 +		dev_kfree_skb(sk);
 +		return -EINVAL;
 +	}
-+	ddesc->st |= ndev->mtu;
++	ddesc->st |= 2000;
 +	ddesc->status = BIT(31);
 +
-+	dev_info(priv->dev, "Init ddesc %02d at %pad buff=%p %x status=(%x %x) len=%d\n",
++/*	dev_info(priv->dev, "Init ddesc %02d at %pad buff=%p %x status=(%x %x) len=%d\n",
 +		 i, &ddesc, &sk->data, ddesc->buf_addr, ddesc->status,
-+		 ddesc->st, ndev->mtu);
++		 ddesc->st, ndev->mtu);*/
 +
 +	return 0;
 +}
@@ -230,17 +238,13 @@ index 0000000..013cc2e
 +
 +	v = (addr[5] << 8) | addr[4];
 +	writel(v, priv->base + SUN8I_EMAC_MACADDR_HI + index * 8);
-+	dev_info(priv->dev, "Set macaddr %x\n", v);
 +	v = (addr[3] << 24) | (addr[2] << 16) | (addr[1] << 8) | addr[0];
 +	writel(v, priv->base + SUN8I_EMAC_MACADDR_HI + index * 8);
-+	dev_info(priv->dev, "Set macaddr %x\n", v);
 +}
 +
 +void sun8i_emac_set_link_mode(struct sun8i_emac_priv *priv)
 +{
 +	u32 v;
-+
-+	dev_info(priv->dev, "%s duplex=%x\n", __func__, priv->duplex);
 +
 +	switch (priv->phy_interface) {
 +	case PHY_INTERFACE_MODE_MII:
@@ -292,8 +296,6 @@ index 0000000..013cc2e
 +		dev_err(priv->dev, "Unknown PHY type %d\n", priv->phy_interface);
 +		return;
 +	}
-+
-+	dev_info(priv->dev, "%s set %x\n", __func__, v);
 +}
 +
 +static void sun8i_emac_flow_ctrl(struct sun8i_emac_priv *priv, int duplex, int fc,
@@ -336,26 +338,25 @@ index 0000000..013cc2e
 +
 +	ddesc = priv->dd_rx + i;
 +
-+	if ((ddesc->status & BIT(9)) == 0) {
-+		dev_warn(priv->dev, "Multi frame not implemented\n");
-+	}
-+	if ((ddesc->status & BIT(8)) == 0) {
-+		dev_warn(priv->dev, "Multi frame not implemented\n");
-+	}
 +	/* possible erros */
 +	if ((ddesc->status & BIT(0)) > 0) {
-+		dev_warn(priv->dev, "the checksum or length of received frameâ€™s payload is wrong.\n");
++		/*dev_warn(priv->dev, "the checksum or length of received frame's payload is wrong.\n");*/
 +	}
 +	if ((ddesc->status & BIT(7)) > 0) {
-+		dev_warn(priv->dev, "RX_HEADER_ERR\n");
++		/*dev_warn(priv->dev, "RX_HEADER_ERR\n");*/
 +	}
 +
-+
++	if ((ddesc->status & BIT(9)) == 0) {
++		/* begin of a frame */
++		dev_warn(priv->dev, "This should not happen\n");
++	}
 +	frame_len = (ddesc->status >> 16) & 0x3FFF;
 +	skb = priv->rx_sk[i];
 +
++	#ifdef EMAC_DEBUG
 +	dev_info(priv->dev, "%s from %02d %pad len=%d status=%x st=%x\n",
 +		__func__, i, &ddesc, frame_len, ddesc->status, ddesc->st);
++	#endif
 +
 +	skb_put(skb, frame_len);
 +
@@ -366,12 +367,22 @@ index 0000000..013cc2e
 +
 +	priv->ndev->stats.rx_packets++;
 +	priv->ndev->stats.rx_bytes += frame_len;
-+
-+	netif_rx(skb);
-+
 +	priv->rx_sk[i] = NULL;
 +
++	/* this frame is not the last */
++	/*
++	if ((ddesc->status & BIT(8)) == 0) {
++		dev_warn(priv->dev, "Multi frame not implemented currlen=%d\n", frame_len);
++		rb_inc(&i);
++		ddesc = priv->dd_rx + i;
++		frame_len = (ddesc->status >> 16) & 0x3FFF;
++		dev_info(priv->dev, "Multi frame currlen=%d\n", frame_len);
++	}
++	*/
++
 +	sun8i_emac_rx_sk(ndev, i);
++
++	netif_rx(skb);
 +
 +	return 0;
 +}
@@ -398,7 +409,9 @@ index 0000000..013cc2e
 +	struct dma_desc *ddesc;
 +	int i, frame_len;
 +
++	#ifdef EMAC_DEBUG
 +	dev_info(priv->dev, "%s\n", __func__);
++	#endif
 +
 +	/*spin_lock(&priv->tx_lock);*/
 +	for (i = 0; i < nbdesc; i++) {
@@ -406,15 +419,24 @@ index 0000000..013cc2e
 +		if (ddesc->status & BIT(31))
 +			continue;
 +		if (ddesc->status != 0 || ddesc->st) {
-+			frame_len = ddesc->st & 0x3FF;
++			frame_len = ddesc->st & 0x3FFF;
++			#ifdef EMAC_DEBUG
 +			dev_info(priv->dev, "%s found slot to clean %d at %pad %x %x (len=%d)\n",
 +				 __func__, i, &ddesc, ddesc->status, ddesc->st,
 +				 frame_len);
++			#endif
++			if (priv->tx_sk[i]) {
++				dev_kfree_skb_irq(priv->tx_sk[i]);
++				priv->tx_sk[i] = NULL;
++				priv->ndev->stats.tx_packets++;
 +			dma_unmap_single(priv->dev, ddesc->buf_addr,
 +					 frame_len, DMA_TO_DEVICE);
-+			priv->tx_sk[i] = NULL;
++			} else {
++				dma_unmap_page(priv->dev, ddesc->buf_addr, frame_len, DMA_TO_DEVICE);
++			}
 +			ddesc->status = 0;
 +			ddesc->st = 0;
++			priv->ndev->stats.tx_bytes += frame_len;
 +		}
 +	}
 +	/*spin_unlock(&priv->tx_lock);*/
@@ -869,7 +891,7 @@ index 0000000..013cc2e
 +	value = phy_read(phydev, MII_BMCR);
 +	phy_write(phydev, MII_BMCR, (value & ~BMCR_PDOWN));
 +
-+	dev_info(priv->dev, "PHY supported %x\n", phydev->supported);
++	/* mask with MAC supported features */
 +	phydev->supported &= PHY_GBIT_FEATURES;
 +	phydev->advertising = phydev->supported;
 +	phy_print_status(phydev);
@@ -899,8 +921,7 @@ index 0000000..013cc2e
 +	struct dma_desc *ddesc;
 +	int i;
 +	int timeout = 0;
-+
-+	dev_info(priv->dev, "%s\n", __func__);
++	unsigned long rate;
 +
 +	err = sun8i_emac_mdio_probe(ndev);
 +	if (err)
@@ -916,6 +937,19 @@ index 0000000..013cc2e
 +	} while ((v & 0x01) != 0 && timeout++ < 50);
 +	if (timeout >= 50)
 +		dev_warn(priv->dev, "EMAC reset timeout\n");
++	/*TODO continue or die ? */
++
++	rate = clk_get_rate(priv->ahb_clk);
++	if (rate > 160000000)
++		v = 0x3 << 20; /* AHB / 128 */
++	else if (rate > 80000000)
++		v = 0x2 << 20; /* AHB / 64 */
++	else if (rate > 40000000)
++		v = 0x1 << 20; /* AHB / 32 */
++	else
++		v = 0x0 << 20; /* AHB / 16 */
++	dev_info(priv->dev, "MDC auto : %x\n", v);
++	writel(v, priv->base + SUN8I_EMAC_MDIO_CMD);
 +
 +	/* DMA */
 +	v = (8 << 24);/* burst len */
@@ -925,7 +959,6 @@ index 0000000..013cc2e
 +#define TX_UNF_INT              BIT(4)
 +	writel(RX_INT | TX_INT | TX_UNF_INT, priv->base + SUN8I_EMAC_INT_EN);
 +	v = readl(priv->base + SUN8I_EMAC_INT_EN);
-+	dev_info(priv->dev, "INT %x\n", v);
 +
 +	v = readl(priv->base + SUN8I_EMAC_TX_CTL0);
 +	/* TX_FRM_LEN_CL */
@@ -940,11 +973,6 @@ index 0000000..013cc2e
 +	/* JUMBO_FRM_EN */
 +	v |= BIT(29);
 +	writel(v, priv->base + SUN8I_EMAC_RX_CTL0);
-+	dev_info(priv->dev, "SUN8I_EMAC_RX_CTL0 %x\n", v);
-+
-+	/* TODO removing that line make PHY to not work. why (since MDC is configured elsewhere)? */
-+	priv->mdc = 0x02;
-+	writel((priv->mdc << 20), priv->base + SUN8I_EMAC_MDIO_CMD);
 +
 +	v = readl(priv->base + SUN8I_EMAC_TX_CTL1);
 +	/* TX_MD Transmission starts after a full frame located in TX DMA FIFO */
@@ -985,8 +1013,6 @@ index 0000000..013cc2e
 +	for (i = 0; i < nbdesc; i++) {
 +		sun8i_emac_rx_sk(ndev, i);
 +		ddesc->next = (u32)priv->dd_rx_phy + (i + 1) * sizeof(struct dma_desc);
-+		dev_info(priv->dev, "%d %pad to %x (base is %pad)",
-+			 i, &ddesc, ddesc->next, &priv->dd_rx);
 +		ddesc++;
 +	}
 +	/* last descriptor point back to first one */
@@ -1008,18 +1034,14 @@ index 0000000..013cc2e
 +		ddesc->status = 0;
 +		ddesc->st = 0;
 +		ddesc->next = (u32)(priv->dd_tx_phy + (i + 1) * sizeof(struct dma_desc));
-+		dev_info(priv->dev, "TXdesc %02d %p to %x",
-+			 i, ddesc, ddesc->next);
 +		ddesc++;
 +	}
 +	/* last descriptor point back to first one */
 +	ddesc--;
 +	ddesc->next = (u32)priv->dd_tx_phy;
 +	i--;
-+	dev_info(priv->dev, "TXdesc %02d %p to %x", i, ddesc, ddesc->next);
 +
 +	if (ndev->phydev) {
-+		dev_info(priv->dev, "on start le phy\n");
 +		phy_start(ndev->phydev);
 +	}
 +
@@ -1029,26 +1051,22 @@ index 0000000..013cc2e
 +	/*v |= (1 << 31);*/
 +	/*dev_info(priv->dev, "%s %lx %lx\n", __func__, 0x40000000, BIT(30));*/
 +	writel(v, priv->base + SUN8I_EMAC_RX_CTL1);
-+	dev_info(priv->dev, "SUN8I_EMAC_RX_CTL1 %x\n", v);
 +
 +	writel(priv->dd_tx_phy, priv->base + SUN8I_EMAC_TX_DESC_LIST);
 +	v = readl(priv->base + SUN8I_EMAC_TX_CTL1);
 +	v |= BIT(30);
 +/*	v |= (1 << 31);*/
 +	writel(v, priv->base + SUN8I_EMAC_TX_CTL1);
-+	dev_info(priv->dev, "SUN8I_EMAC_TX_CTL1 %x\n", v);
 +
 +	/* activate TX */
 +	v = readl(priv->base + SUN8I_EMAC_TX_CTL0);
 +	v |= (1 << 31);
 +	writel(v, priv->base + SUN8I_EMAC_TX_CTL0);
-+	dev_info(priv->dev, "SUN8I_EMAC_TX_CTL0 %x\n", v);
 +
 +	/* activate RX */
 +	v = readl(priv->base + SUN8I_EMAC_RX_CTL0);
 +	v |= (1 << 31);
 +	writel(v, priv->base + SUN8I_EMAC_RX_CTL0);
-+	dev_info(priv->dev, "SUN8I_EMAC_RX_CTL0 %x\n", v);
 +
 +	writel(0x3FFF, priv->base + SUN8I_EMAC_INT_STA);
 +	netif_start_queue(ndev);
@@ -1057,7 +1075,6 @@ index 0000000..013cc2e
 +	vtxphy = readl(priv->base + SUN8I_EMAC_TX_DESC_LIST);
 +	dt = readl(priv->base + SUN8I_EMAC_TX_DMA_STA);
 +	dr = readl(priv->base + SUN8I_EMAC_RX_DMA_STA);
-+	dev_info(priv->dev, "Verify DMA RX LIST %x %x %x %x TXphy=%x/%x\n", v, priv->dd_rx_phy, dr, dt, vtxphy, priv->dd_tx_phy);
 +
 +	return 0;
 +dma_tx_error:
@@ -1077,6 +1094,9 @@ index 0000000..013cc2e
 +
 +	dev_info(priv->dev, "%s\n", __func__);
 +
++	/* Stop receiver */
++	writel(0, priv->base + SUN8I_EMAC_RX_CTL0);
++
 +	netif_stop_queue(ndev);
 +	netif_carrier_off(ndev);
 +
@@ -1090,17 +1110,18 @@ index 0000000..013cc2e
 +{
 +	struct sun8i_emac_priv *priv = netdev_priv(ndev);
 +	struct dma_desc *ddesc;
-+	int i = 0;
++	int i = 0, rbd_i;
 +	unsigned int len;
-+	char *p;
 +	u32 v;
++	int n;
++	int nf;
++	const skb_frag_t *frag;
 +
-+	/* TODO len > mtu */
-+
-+	p = skb->data;
 +	len = skb_headlen(skb);
 +
-+	dev_info(priv->dev, "%s xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx len=%u\n", __func__, len);
++	#ifdef EMAC_DEBUG
++	dev_info(priv->dev, "%s xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx len=%u skblen=%u\n", __func__, len, skb->len);
++	#endif
 +	/*hex_dump_to_buffer(*/
 +
 +	spin_lock(&priv->tx_lock);
@@ -1109,9 +1130,11 @@ index 0000000..013cc2e
 +	ddesc = priv->dd_tx + priv->tx_slot;
 +	if (ddesc->status == 0) {
 +		i = priv->tx_slot;
-+		priv->tx_slot++;
-+		if (priv->tx_slot >= nbdesc)
-+			priv->tx_slot = 0;
++		rb_inc(&priv->tx_slot);
++		#ifdef EMAC_DEBUG
++		dev_info(priv->dev, "%s found txslot %d at %pad (txslot=%d)\n",
++						__func__, i, &ddesc, priv->tx_slot);
++		#endif
 +	} else {
 +		while (i < nbdesc) {
 +			ddesc = priv->dd_tx + i;
@@ -1120,13 +1143,15 @@ index 0000000..013cc2e
 +				break;
 +			i++;
 +		}
-+	}
-+	dev_info(priv->dev, "%s found slot %d at %pad (slot=%d)\n",
++		#ifdef EMAC_DEBUG
++		dev_info(priv->dev, "%s found slot %d at %pad (txslot=%d)\n",
 +						__func__, i, &ddesc, priv->tx_slot);
++		#endif
++	}
++
 +	if (i >= nbdesc) {
 +		dev_err(priv->dev, "ERROR: TX is full\n");
 +		spin_unlock(&priv->tx_lock);
-+		return NETDEV_TX_OK; /* TODO DEBUG */
 +		return NETDEV_TX_BUSY;
 +	}
 +
@@ -1149,22 +1174,63 @@ index 0000000..013cc2e
 +	ddesc->st |= BIT(28);
 +	/* frame begin */
 +	ddesc->st |= BIT(29);
++	rbd_i = i;
++
++	/* handle fragmented skb */
++	n = skb_shinfo(skb)->nr_frags;
++	if (n > 0) {
++		/*dev_info(priv->dev, "FRAGMENTS %d\n", n);*/
++		for (nf = 0; nf < n; nf++) {
++			frag = &skb_shinfo(skb)->frags[nf];
++			rb_inc(&i);
++			/*dev_info(priv->dev, "FRAG %02d %u on %d\n", nf, skb_frag_size(frag), i);*/
++			ddesc = priv->dd_tx + i;
++			/* TODO check used*/
++			if (ddesc->st & BIT(31))
++				dev_err(priv->dev, "Already used\n");
++			ddesc->st = skb_frag_size(frag);
++			ddesc->st |= BIT(24);
++			ddesc->buf_addr = skb_frag_dma_map(priv->dev, frag, 0, skb_frag_size(frag), DMA_TO_DEVICE);
++			if (dma_mapping_error(priv->dev, ddesc->buf_addr)) {
++				dev_err(priv->dev, "DMA MAP ERROR\n");
++				/* TODO dma err*/
++			}
++			/*ddesc->buf_addr = dma_map_single(priv->dev, skb->data, len,*/
++		}
++
++	}
++
 +	/* frame end */
 +	ddesc->st |= BIT(30);
 +	/* We want an interrupt after transmission */
 +	ddesc->st |= BIT(31);
-+	/* DMA can work on it */
-+	ddesc->status = BIT(31);
++
++	rb_inc(&i);
++	do {
++		ddesc = priv->dd_tx + rbd_i;
++		ddesc->st |= BIT(27);
++		ddesc->st |= BIT(28);
++		/* DMA can work on it */
++		ddesc->status = BIT(31);
++		#ifdef EMAC_DEBUG
++		dev_info(priv->dev, "xmit final %02d %x %x\n", rbd_i, ddesc->status, ddesc->st);
++		#endif
++		rb_inc(&rbd_i);
++	} while (rbd_i != i);
++	priv->tx_slot = i;
 +
 +	v = readl(priv->base + SUN8I_EMAC_TX_CTL0);
 +	v |= BIT(31);/* TODO do a define */
 +	writel(v, priv->base + SUN8I_EMAC_TX_CTL0);
-+	v = readl(priv->base + SUN8I_EMAC_TX_CTL1);
-+	v |= BIT(31);/* mandatory */
-+	v |= BIT(30);/* TODO do a define */
-+	writel(v, priv->base + SUN8I_EMAC_TX_CTL1);
 +
-+	ndev->stats.tx_bytes += skb->len;
++	if (priv->tx_dma_start == 0) {
++		v = readl(priv->base + SUN8I_EMAC_TX_CTL1);
++		v |= BIT(31);/* mandatory */
++		v |= BIT(30);/* TODO do a define */
++		writel(v, priv->base + SUN8I_EMAC_TX_CTL1);
++		priv->tx_dma_start = 1;
++	}
++
 +
 +	spin_unlock(&priv->tx_lock);
 +
@@ -1176,7 +1242,7 @@ index 0000000..013cc2e
 +	struct sun8i_emac_priv *priv = netdev_priv(ndev);
 +	int max_mtu;
 +
-+	dev_info(priv->dev, "%s\n", __func__);
++	dev_info(priv->dev, "%s set MTU to %d\n", __func__, new_mtu);
 +
 +	if (netif_running(ndev)) {
 +		dev_err(priv->dev, "%s: must be stopped to change its MTU\n",
@@ -1233,7 +1299,6 @@ index 0000000..013cc2e
 +	int i = 0;
 +	struct netdev_hw_addr *ha;
 +
-+	dev_info(priv->dev, "%s\n", __func__);
 +	/* Disable address filter */
 +	v |= BIT(31);
 +	/* Receive all multicast frames */
@@ -1263,10 +1328,7 @@ index 0000000..013cc2e
 +
 +static int sun8i_emac_ioctl(struct net_device *ndev, struct ifreq *rq, int cmd)
 +{
-+	struct sun8i_emac_priv *priv = netdev_priv(ndev);
 +	struct phy_device *phydev = ndev->phydev;
-+
-+	dev_info(priv->dev, "%s %x\n", __func__, cmd);
 +
 +	if (!netif_running(ndev))
 +		return -EINVAL;
@@ -1408,11 +1470,12 @@ index 0000000..013cc2e
 +	struct net_device *ndev = (struct net_device *)dev_id;
 +	struct sun8i_emac_priv *priv = netdev_priv(ndev);
 +	u32 v, u;
-+/*	struct dma_desc *ddesc;*/
 +
 +	v = readl(priv->base + SUN8I_EMAC_INT_STA);
 +
++	#ifdef EMAC_DEBUG
 +	dev_info(priv->dev, "%s %x\n", __func__, v);
++	#endif
 +
 +	/* When this bit is asserted, a frame transmission is completed. */
 +	if (v & BIT(0))
@@ -1420,25 +1483,25 @@ index 0000000..013cc2e
 +
 +	/* When this bit is asserted, the TX DMA FSM is stopped. */
 +	if (v & BIT(1)) {
-+		u = readl(priv->base + SUN8I_EMAC_TX_CUR_DDESC);
-+		dev_info(priv->dev, "TX DMA currddesc=%x\n", u);
++	/*
 +		u = readl(priv->base + SUN8I_EMAC_TX_CTL1);
++		#ifdef EMAC_DEBUG
 +		dev_info(priv->dev, "Re-start TX DMA %x\n", u);
-+		writel(u | BIT(31), priv->base + SUN8I_EMAC_TX_CTL1);
++		#endif
++		writel(u | BIT(31), priv->base + SUN8I_EMAC_TX_CTL1);*/
++		priv->tx_dma_start = 0;
 +	}
 +	/* When this asserted, the TX DMA can not acquire next TX descriptor
 +	 * and TX DMA FSM is suspended.
 +	*/
 +	if (v & BIT(2)) {
-+		u = readl(priv->base + SUN8I_EMAC_TX_CUR_DDESC);
-+		dev_info(priv->dev, "TX DMA currddesc=%x\n", u);
-+		/*ddesc = priv->dd_tx;
-+		ddesc->status = BIT(31);*/
-+		/*writel(u + 0x10, priv->base + SUN8I_EMAC_TX_DESC_LIST);*/
-+
++	/*
 +		u = readl(priv->base + SUN8I_EMAC_TX_CTL1);
++		#ifdef EMAC_DEBUG
 +		dev_info(priv->dev, "Re-run TX DMA %x\n", u);
-+		writel(u | BIT(31), priv->base + SUN8I_EMAC_TX_CTL1);
++		#endif
++		writel(u | BIT(31), priv->base + SUN8I_EMAC_TX_CTL1);*/
++		priv->tx_dma_start = 0;
 +	}
 +
 +	if (v & BIT(3))
@@ -1447,8 +1510,10 @@ index 0000000..013cc2e
 +		dev_info(priv->dev, "Unhandled interrupt TX EARLY\n");
 +
 +	/* When this bit asserted , the frame is transmitted to FIFO totally. */
++	#ifdef EMAC_DEBUG
 +	if (v & BIT(5))
 +		dev_info(priv->dev, "Unhandled interrupt TX_EARLY_INT\n");
++	#endif
 +
 +	/* When this bit is asserted, a frame reception is completed  */
 +	if (v & BIT(8))
@@ -1476,8 +1541,6 @@ index 0000000..013cc2e
 +
 +	writel(v & 0x3FFF, priv->base + SUN8I_EMAC_INT_STA);
 +
-+	debug_printall_desc(ndev);
-+
 +	return IRQ_HANDLED;
 +}
 +
@@ -1487,9 +1550,6 @@ index 0000000..013cc2e
 +	struct sun8i_emac_priv *priv;
 +	struct net_device *ndev;
 +	int ret;
-+
-+	if (!pdev->dev.of_node)
-+		return -ENODEV;
 +
 +	ndev = alloc_etherdev(sizeof(*priv));
 +	if (!ndev)
@@ -1502,53 +1562,44 @@ index 0000000..013cc2e
 +	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 +	priv->base = devm_ioremap_resource(&pdev->dev, res);
 +	if (IS_ERR(priv->base)) {
-+		dev_err(&pdev->dev, "Cannot request MMIO\n");
-+		return PTR_ERR(priv->base);
++		ret = PTR_ERR(priv->base);
++		dev_err(&pdev->dev, "Cannot request MMIO: %d\n", ret);
++		goto probe_err;
 +	}
 +
 +	priv->irq = platform_get_irq(pdev, 0);
 +	if (priv->irq < 0) {
-+		dev_err(&pdev->dev, "Cannot claim IRQ\n");
-+		return priv->irq;
++		ret = priv->irq;
++		dev_err(&pdev->dev, "Cannot claim IRQ: %d\n", ret);
++		goto probe_err;
 +	}
 +
 +	ret = devm_request_irq(&pdev->dev, priv->irq, sun8i_emac_dma_interrupt,
 +			       0, dev_name(&pdev->dev), ndev);
 +	if (ret) {
-+		dev_err(&pdev->dev, "Cannot request IRQ\n");
-+		return ret;
++		dev_err(&pdev->dev, "Cannot request IRQ: %d\n", ret);
++		goto probe_err;
 +	}
 +
 +	priv->ahb_clk = devm_clk_get(&pdev->dev, "bus_gmac");
 +	if (IS_ERR(priv->ahb_clk)) {
 +		ret = PTR_ERR(priv->ahb_clk);
 +		dev_err(&pdev->dev, "Cannot get AHB clock err=%d\n", ret);
-+		return ret;
++		goto probe_err;
 +	}
-+/*	ret = clk_prepare_enable(priv->ahb_clk);
-+	if (ret != 0) {
-+		dev_err(&pdev->dev, "Cannot prepare_enable ahb_clk\n");
-+		return ret;
-+	}*/
++
 +	priv->rst = devm_reset_control_get_optional(&pdev->dev, "ahb");
 +	if (IS_ERR(priv->rst)) {
 +		ret = PTR_ERR(priv->rst);
 +		dev_info(&pdev->dev, "no mac reset control found %d\n", ret);
 +		priv->rst = NULL;
 +	}
-+	/*
-+	if (priv->rst) {
-+		ret = reset_control_deassert(priv->rst);
-+		if (ret)
-+			dev_info(&pdev->dev, "Cannot deassert mac\n");
-+	}
-+*/
++
 +	spin_lock_init(&priv->lock);
 +	spin_lock_init(&priv->tx_lock);
 +
 +	priv->tx_slot = 0;
 +
-+	ether_setup(ndev);
 +	ndev->netdev_ops = &sun8i_emac_netdev_ops;
 +	ndev->ethtool_ops = &sun8i_emac_ethtool_ops;
 +
@@ -1566,17 +1617,18 @@ index 0000000..013cc2e
 +
 +	ndev->watchdog_timeo = msecs_to_jiffies(5000);
 +
-+	/*stmmac_set_ethtool_ops(ndev);*/
-+
 +	ret = register_netdev(ndev);
 +	if (ret) {
 +		dev_err(&pdev->dev, "ERROR: Register %s failed\n", ndev->name);
-+		return ret;
++		goto probe_err;
 +	}
 +
 +	sun8i_emac_set_macaddr(priv, ndev->dev_addr, 0);
 +
 +	return 0;
++probe_err:
++	free_netdev(ndev);
++	return ret;
 +}
 +
 +static int sun8i_emac_remove(struct platform_device *pdev)
@@ -1584,10 +1636,7 @@ index 0000000..013cc2e
 +	struct net_device *ndev = platform_get_drvdata(pdev);
 +	struct sun8i_emac_priv *priv = netdev_priv(ndev);
 +
-+	clk_disable_unprepare(priv->ahb_clk);
 +	clk_disable_unprepare(priv->tx_clk);
-+	if (priv->rst)
-+		reset_control_assert(priv->rst);
 +	if (priv->rst_phy)
 +		reset_control_assert(priv->rst_phy);
 +
@@ -1618,5 +1667,5 @@ index 0000000..013cc2e
 +MODULE_LICENSE("GPL");
 +MODULE_AUTHOR("LABBE Corentin <clabbe.montjoie@gmail.co");
 -- 
-2.4.10
+2.7.3
 
