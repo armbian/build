@@ -494,15 +494,22 @@ create_image()
 		mv -f $CACHEDIR/$VERSION.raw $DEST/images/$VERSION.raw
 		display_alert "Done building" "$DEST/images/$VERSION.raw" "info"
 	else
-		display_alert "Signing and compressing" "$VERSION.zip" "info"
+		display_alert "Signing and compressing" "Please wait!" "info"
 		# stage: sign with PGP
 		if [[ -n $GPG_PASS ]]; then
 			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes $VERSION.raw
 			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
 		fi
-		zip -FSq $DEST/images/$VERSION.zip $VERSION.raw* armbian.txt
+		if [[ $SEVENZIP == yes ]]; then
+			FILENAME=$DEST/images/$VERSION.7z
+			7za a -t7z -bd -m0=lzma2 -mx=4 -mfb=64 -md=32m -ms=on $FILENAME $VERSION.raw* armbian.txt >/dev/null 2>&1
+		else
+			FILENAME=$DEST/images/$VERSION.zip
+			zip -FSq $FILENAME $VERSION.raw* armbian.txt
+		fi
 		rm -f $VERSION.raw *.asc armbian.txt
-		display_alert "Done building" "$DEST/images/$VERSION.zip" "info"
+		FILESIZE=$(ls -l --b=M $FILENAME | cut -d " " -f5)
+		display_alert "Done building" "$FILENAME [$FILESIZE]" "info"		
 	fi
 } #############################################################################
 

@@ -292,14 +292,22 @@ if [[ $GPG_PASS != "" ]] ; then
 	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes imagewriter.exe
 	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
 fi
-display_alert "Create and sign" "$VERSION.zip" "info"
+display_alert "Signing and compressing" "Please wait!" "info"
 mkdir -p $DEST/images
 if [[ $COMPRESS_OUTPUTIMAGE == no ]]; then
 	rm -f *.asc imagewriter.* armbian.txt
 	mv *.raw $DEST/images/
 else
-	zip -FSq $DEST/images/$VERSION.zip $VERSION.raw* armbian.txt imagewriter.*
-	rm -f $VERSION.raw *.asc imagewriter.* armbian.txt
+	if [[ $SEVENZIP == yes ]]; then
+		FILENAME=$DEST/images/$VERSION.7z
+		7za a -t7z -bd -m0=lzma2 -mx=4 -mfb=64 -md=32m -ms=on $FILENAME $VERSION.raw* armbian.txt imagewriter.* >/dev/null 2>&1
+	else
+		FILENAME=$DEST/images/$VERSION.zip
+		zip -FSq $FILENAME $VERSION.raw* armbian.txt imagewriter.*
+	fi
+	rm -f $VERSION.raw *.asc armbian.txt
+	FILESIZE=$(ls -l --b=M $FILENAME | cut -d " " -f5)
+	display_alert "Done building" "$FILENAME [$FILESIZE]" "info"
 fi
 }
 
