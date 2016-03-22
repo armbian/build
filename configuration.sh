@@ -318,6 +318,7 @@ case $BOARD in
 		#build 1
 		LINUXFAMILY="odroidxu4"
 		BOOTSIZE="16"
+		OFFSET="2"
 		BOOTCONFIG="odroid_config"
 		MODULES="bonding"
 		MODULES_NEXT=""
@@ -326,6 +327,20 @@ case $BOARD in
 		DESKTOP_TARGET="jessie,default"
 	;;
 
+	odroidc1)#enabled
+		#description S805 C1 quad core
+		#build 1wip
+		LINUXFAMILY="odroidc1"
+		BOOTSIZE="16"
+		OFFSET="2"
+		BOOTCONFIG="odroidc_config"
+		MODULES="bonding"
+		MODULES_NEXT=""
+		SERIALCON="ttyS0"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,default"
+	;;
+	
 	toradex)#disabled
 		LINUXFAMILY="toradex"
 		BOOTCONFIG="colibri_imx6_defconfig"
@@ -397,7 +412,7 @@ case $LINUXFAMILY in
 	odroidxu4)
 		KERNEL_DEFAULT='https://github.com/hardkernel/linux'
 		KERNEL_DEFAULT_BRANCH="odroidxu3-3.10.y"
-		KERNEL_DEFAULT_SOURCE="linux-odroidxu"
+		KERNEL_DEFAULT_SOURCE="linux-odroid"
 		KERNEL_NEXT='https://github.com/tobetter/linux'
 		KERNEL_NEXT_BRANCH="odroidxu4-v4.2"
 		KERNEL_NEXT_SOURCE="linux-odroidxu-next"
@@ -412,6 +427,24 @@ case $LINUXFAMILY in
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 	;;
 
+	odroidc1)
+		KERNEL_DEFAULT='https://github.com/hardkernel/linux'
+		KERNEL_DEFAULT_BRANCH="odroidc-3.10.y"
+		KERNEL_DEFAULT_SOURCE="linux-odroid"
+		KERNEL_NEXT='https://github.com/tobetter/linux'
+		KERNEL_NEXT_BRANCH="odroidxu4-v4.2"
+		KERNEL_NEXT_SOURCE="linux-odroidxu-next"
+		UBOOT_DEFAULT="https://github.com/hardkernel/u-boot.git"
+		UBOOT_DEFAULT_BRANCH="odroidc-v2011.03"
+		UBOOT_DEFAULT_SOURCE="u-boot-odroidxu"
+		UBOOT_NEXT=$UBOOT_DEFAULT
+		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
+		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
+		UBOOT_DEV=$UBOOT_DEFAULT
+		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
+		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+	;;
+	
 	udoo)
 		KERNEL_DEFAULT="https://github.com/UDOOboard/linux_kernel"
 		KERNEL_DEFAULT_BRANCH="3.14-1.0.x-udoo"
