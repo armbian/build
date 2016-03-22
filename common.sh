@@ -97,6 +97,7 @@ elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *udoo* ]] ; then
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *armada* ]] ; then
 	( dd if=/usr/lib/$uboot_name/u-boot.mmc of=\$DEVICE bs=512 seek=1 status=noxfer ) > /dev/null 2>&1
 else
+	( dd if=/dev/zero of=\$DEVICE bs=1k count=1023 seek=1 status=noxfer ) > /dev/null 2>&1
 	( dd if=/usr/lib/$uboot_name/u-boot-sunxi-with-spl.bin of=\$DEVICE bs=1024 seek=8 status=noxfer ) > /dev/null 2>&1
 fi
 exit 0
@@ -422,8 +423,9 @@ write_uboot()
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/bl1.bin.hardkernel of=$LOOP seek=1 seek=442 conv=fsync ) > /dev/null 2>&1	
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/bl1.bin.hardkernel of=$LOOP seek=512 skip=1 seek=1 conv=fsync ) > /dev/null 2>&1	
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.bin of=$LOOP bs=512 seek=64 conv=fsync ) > /dev/null 2>&1	
-		( dd if=/dev/zero of=\$DEVICE seek=1024 count=32 bs=512 conv=fsync ) > /dev/null 2>&1
+		( dd if=/dev/zero of=$LOOP seek=1024 count=32 bs=512 conv=fsync ) > /dev/null 2>&1
 	else
+		( dd if=/dev/zero of=$LOOP bs=1k count=1023 seek=1 status=noxfer ) > /dev/null 2>&1
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1)
 	fi
 	if [ $? -ne 0 ]; then
