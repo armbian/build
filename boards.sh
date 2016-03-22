@@ -220,7 +220,7 @@ install_kernel (){
 
 	# install uboot
 	display_alert "Install u-boot" "$CHOSEN_UBOOT" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_UBOOT}_${REVISION}_armhf.deb > /dev/null"
+	chroot $CACHEDIR/sdcard /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/${CHOSEN_UBOOT}_${REVISION}_armhf.deb > /dev/null"
 
 	# install headers
 	display_alert "Install headers" "$HEADERS_TMP" "info"

@@ -73,7 +73,9 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # Get updates of the main build libraries
 #--------------------------------------------------------------------------------------------------------------------------------
-apt-get -qq -y --no-install-recommends install git
+[[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' git 2>/dev/null) != *ii* ]] && \
+	apt-get -qq -y --no-install-recommends install git
+
 if [[ ! -d $SRC/lib ]]; then
 	git clone https://github.com/igorpecovnik/lib
 fi
@@ -101,4 +103,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=14
+# VERSION=15
