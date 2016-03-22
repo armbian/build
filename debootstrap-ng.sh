@@ -241,6 +241,14 @@ EOF
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Updating package lists..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
+		# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
+		display_alert "Updating base packages" "Armbian" "info"
+		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+			$apt_extra $apt_extra_progress upgrade"' \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Upgrading base packages..." $TTY_Y $TTY_X'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
 		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
