@@ -77,14 +77,18 @@ apt-get -qq -y --no-install-recommends install git
 if [[ ! -d $SRC/lib ]]; then
 	git clone https://github.com/igorpecovnik/lib
 fi
-cd $SRC/lib;
-echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
-git pull
-CHANGED_FILES=$(git checkout ${LIB_TAG:- master} | grep -P '^M')
-if [[ -n $CHANGED_FILES ]]; then
-CHANGED_FILES=$(git checkout ${LIB_TAG:- master} | grep -P '^M' | awk '{print $2}' | tr '\n' ' ')
-echo -e "[\e[0;35m warn \x1B[0m] Can't update [lib/] since you made changes to: [\e[0;33m ${CHANGED_FILES::-1} \x1B[0m]"
-read -p "Press <Ctrl-C> to abort compilation, <Enter> to ignore and continue" 
+cd $SRC/lib
+if [[ ! -f $SRC/.ignore_changes ]]; then
+	echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
+	git pull
+	CHANGED_FILES=$(git diff --name-only)
+	if [[ -n $CHANGED_FILES ]]; then
+		echo -e "[\e[0;35m warn \x1B[0m] Can't update [\e[0;33mlib/\x1B[0m] since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
+		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
+		read
+	else
+		git checkout ${LIB_TAG:- master}
+	fi
 fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # Do we need to build all images
@@ -97,4 +101,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=13
+# VERSION=14
