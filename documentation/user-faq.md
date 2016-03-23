@@ -393,10 +393,4 @@ And finally start your service when done with learning:
 Test your remote:
 
 	irw /dev/lircd
-
-# How to play Youtube video from command line?
-
-If you want to have smooth playback you need to use our prebuild desktop with HW accelerated video playback. Currently avaliable on legacy Allwinner kernel.
-
-
-    mpv --vo=vdpau --hwdec=vdpau --framedrop=vo --hwdec-codecs=all https://www.youtube.com/watch?v=FGBhQbmPwH8
+****
