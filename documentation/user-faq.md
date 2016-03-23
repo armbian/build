@@ -1,20 +1,19 @@
 # What to download?
 
-Each board is fully supported with up to **three basic system** options: 
+Each board is fully supported with up to **four basic system** options: 
 	
-- Debian Wheezy
-- Debian Jessie 
-- Ubuntu Trusty
+- Debian Wheezy or Jessie 
+- Ubuntu Trusty or Xenial
 
-Some boards also have a desktop version of Ubuntu or Jessie.
+Some boards also have a desktop version Debian Jessie.
 
 # Legacy or Vanilla?
 
 Both kernels are stable and production ready, but you should use them for different purpuses since their basic support differ:
 
- * for headless server or light desktop operations use vanilla kernel
- * for using video acceleration, NAND, ... you should stick to legacy
-
+ - legacy: video acceleration, NAND support, connecting displays 
+ - vanilla: headless server, light desktop operations 
+ 
 # How to check download authenticity?
 
 All our images are digitally signed and therefore it's possible to check theirs authentication. You need to unzip the download package and issue those commands (Linux):
@@ -260,6 +259,23 @@ Reboot.
 
 Serial console on imx6 boards are ttymxc0 (Hummingboard, Cubox-i) or ttymxc1 (Udoo).
 
+# How to toogle verbose boot?
+
+    touch /boot/.force-verbose # enable
+You need to reboot to conduct changes.
+
+	rm /boot/.force-verbose # disable
+
+# How to provide boot logs for inspection?
+
+When computer behaves strange first step is to look into kernel logs. We made a tool that grabs info and paste it to the website.
+
+	sudo armbianmonitor -b
+	reboot
+	sudo armbianmonitor -u  
+Copy and past URL of your log to the forum, mail, ...
+
+
 # How to install to NAND, SATA & USB?
 
 [su_youtube_advanced url="https:\/\/youtu.be\/6So8MA-qru8" controls="yes" showinfo="no" loop="yes" rel="no" modestbranding="yes"]
@@ -378,3 +394,9 @@ Test your remote:
 
 	irw /dev/lircd
 
+# How to play Youtube video from command line?
+
+If you want to have smooth playback you need to use our prebuild desktop with HW accelerated video playback. Currently avaliable on legacy Allwinner kernel.
+
+
+    mpv --vo=vdpau --hwdec=vdpau --framedrop=vo --hwdec-codecs=all https://www.youtube.com/watch?v=FGBhQbmPwH8

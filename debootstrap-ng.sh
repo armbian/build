@@ -502,7 +502,7 @@ create_image()
 		fi
 		if [[ $SEVENZIP == yes ]]; then
 			FILENAME=$DEST/images/$VERSION.7z
-			7za a -t7z -bd -m0=lzma2 -mx=4 -mfb=64 -md=32m -ms=on $FILENAME $VERSION.raw* armbian.txt >/dev/null 2>&1
+			7za a -t7z -bd -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $FILENAME $VERSION.raw* armbian.txt >/dev/null 2>&1
 		else
 			FILENAME=$DEST/images/$VERSION.zip
 			zip -FSq $FILENAME $VERSION.raw* armbian.txt
