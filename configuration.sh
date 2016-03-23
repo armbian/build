@@ -28,6 +28,9 @@
 # common options
 
 REVISION="5.06" # all boards have same revision
+ARCH="arm"
+CROSS_COMPILE="arm-linux-gnueabihf-"
+TARGETS="zImage"
 ROOTPWD="1234" # Must be changed @first login
 MAINTAINER="Igor Pecovnik" # deb signature
 MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -344,6 +347,10 @@ case $BOARD in
 	odroidc2)#enabled
 		#description S905 C2 quad core
 		#build 1wip
+		ARCH="arm64"
+		CROSS_COMPILE="aarch64-linux-gnu-"
+		CCACHE=""
+		TARGETS="Image"
 		LINUXFAMILY="odroidc2"
 		BOOTSIZE="32"
 		OFFSET="1"
