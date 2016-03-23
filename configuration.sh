@@ -28,7 +28,7 @@
 # common options
 
 REVISION="5.06" # all boards have same revision
-ARCH="arm"
+ARCH="armhf"
 CROSS_COMPILE="arm-linux-gnueabihf-"
 TARGETS="zImage"
 ROOTPWD="1234" # Must be changed @first login
