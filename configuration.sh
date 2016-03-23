@@ -341,6 +341,23 @@ case $BOARD in
 		DESKTOP_TARGET="jessie,default"
 	;;
 	
+	odroidc2)#enabled
+		#description S905 C2 quad core
+		#build 1wip
+		LINUXFAMILY="odroidc2"
+		BOOTSIZE="32"
+		OFFSET="1"
+		BOOTCONFIG="odroidc2_config"
+		MODULES="bonding"
+		MODULES_NEXT=""
+        CPUMIN="100000"
+		CPUMAX="2016000"
+		GOVERNOR="performance"
+		SERIALCON="ttyS0"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,default"
+	;;
+	
 	toradex)#disabled
 		LINUXFAMILY="toradex"
 		BOOTCONFIG="colibri_imx6_defconfig"
@@ -436,7 +453,25 @@ case $LINUXFAMILY in
 		KERNEL_NEXT_SOURCE="linux-odroidxu-next"
 		UBOOT_DEFAULT="https://github.com/hardkernel/u-boot.git"
 		UBOOT_DEFAULT_BRANCH="odroidc-v2011.03"
-		UBOOT_DEFAULT_SOURCE="u-boot-odroidxu"
+		UBOOT_DEFAULT_SOURCE="u-boot-odroidc1"
+		UBOOT_NEXT=$UBOOT_DEFAULT
+		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
+		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
+		UBOOT_DEV=$UBOOT_DEFAULT
+		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
+		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+	;;
+	
+	odroidc2)
+		KERNEL_DEFAULT='https://github.com/hardkernel/linux'
+		KERNEL_DEFAULT_BRANCH="odroidc2-3.14.y"
+		KERNEL_DEFAULT_SOURCE="linux-odroidc2"
+		KERNEL_NEXT='https://github.com/hardkernel/linux'
+		KERNEL_NEXT_BRANCH="odroidc2-3.14.y"
+		KERNEL_NEXT_SOURCE="linux-odroidc2-next"
+		UBOOT_DEFAULT="https://github.com/hardkernel/u-boot.git"
+		UBOOT_DEFAULT_BRANCH="odroidc2-v2015.01"
+		UBOOT_DEFAULT_SOURCE="u-boot-odroidc2"
 		UBOOT_NEXT=$UBOOT_DEFAULT
 		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
 		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE

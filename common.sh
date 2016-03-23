@@ -91,6 +91,11 @@ elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *odroidc1* ]] ; then
 	( dd if=/usr/lib/$uboot_name/bl1.bin.hardkernel of=\$DEVICE seek=512 skip=1 seek=1 conv=fsync ) > /dev/null 2>&1	
 	( dd if=/usr/lib/$uboot_name/u-boot.bin of=\$DEVICE bs=512 seek=64 conv=fsync ) > /dev/null 2>&1	
 	( dd if=/dev/zero of=\$DEVICE seek=1024 count=32 bs=512 conv=fsync ) > /dev/null 2>&1
+elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *odroidc2* ]] ; then
+	( dd if=/usr/lib/$uboot_name/bl1.bin.hardkernel of=$LOOP bs=1 count=442 conv=fsync ) > /dev/null 2>&1
+	( dd if=/usr/lib/$uboot_name/bl1.bin.hardkernel of=$LOOP bs=512 skip=1 seek=1 conv=fsync ) > /dev/null 2>&1
+	( dd if=/usr/lib/$uboot_name/u-boot.bin of=$LOOP bs=512 seek=97 conv=fsync ) > /dev/null 2>&1
+	( dd if=/dev/zero of=$LOOP seek=1249 count=799 bs=512 conv=fsync ) > /dev/null 2>&1 
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *udoo* ]] ; then
 	( dd if=/usr/lib/$uboot_name/SPL of=\$DEVICE bs=1k seek=1 status=noxfer ) > /dev/null 2>&1
 	( dd if=/usr/lib/$uboot_name/u-boot.img of=\$DEVICE bs=1K seek=69 status=noxfer ) > /dev/null 2>&1
@@ -131,7 +136,10 @@ END
 		[ ! -f "u-boot.bin" ] || cp u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name/
 	elif [[ $BOARD == odroidc1 ]] ; then
 		[ ! -f "sd_fuse/bl1.bin.hardkernel" ] || cp sd_fuse/bl1.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name		
-		[ ! -f "sd_fuse/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name		
+		[ ! -f "sd_fuse/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
+	elif [[ $BOARD == odroidc2 ]] ; then
+		[ ! -f "sd_fuse/bl1.bin.hardkernel" ] || cp sd_fuse/bl1.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name		
+		[ ! -f "sd_fuse/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == udoo* ]] ; then
 		[ ! -f "u-boot.img" ] || cp SPL u-boot.img $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == armada* ]] ; then
@@ -424,6 +432,11 @@ write_uboot()
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/bl1.bin.hardkernel of=$LOOP seek=512 skip=1 seek=1 conv=fsync ) > /dev/null 2>&1	
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.bin of=$LOOP bs=512 seek=64 conv=fsync ) > /dev/null 2>&1	
 		( dd if=/dev/zero of=$LOOP seek=1024 count=32 bs=512 conv=fsync ) > /dev/null 2>&1
+	elif [[ $BOARD == *odroidc2* ]] ; then
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/bl1.bin.hardkernel of=$LOOP bs=1 count=442 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/bl1.bin.hardkernel of=$LOOP bs=512 skip=1 seek=1 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.bin of=$LOOP bs=512 seek=97 conv=fsync ) > /dev/null 2>&1
+		( dd if=/dev/zero of=$LOOP seek=1249 count=799 bs=512 conv=fsync ) > /dev/null 2>&1
 	else
 		( dd if=/dev/zero of=$LOOP bs=1k count=1023 seek=1 status=noxfer ) > /dev/null 2>&1
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1)

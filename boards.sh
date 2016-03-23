@@ -133,6 +133,8 @@ install_board_specific (){
 		cp $SRC/lib/config/boot-odroid-xu4.ini $CACHEDIR/sdcard/boot/boot.ini
 	elif [[ $BOARD == odroidc1 ]]; then
 		cp $SRC/lib/config/boot-odroid-c1.ini $CACHEDIR/sdcard/boot/boot.ini
+	elif [[ $BOARD == odroidc2 ]]; then
+		cp $SRC/lib/config/boot-odroid-c2.ini $CACHEDIR/sdcard/boot/boot.ini
 	else
 		cp $SRC/lib/config/boot.cmd $CACHEDIR/sdcard/boot/boot.cmd
 		# orangepi h3 temp exceptions
