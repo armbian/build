@@ -114,7 +114,7 @@ chmod 755 $DEST/debs/$uboot_name/DEBIAN/postinst
 cat <<END > $DEST/debs/$uboot_name/DEBIAN/control
 Package: linux-u-boot-${BOARD}-${BRANCH}
 Version: $REVISION
-Architecture: armhf
+Architecture: $ARCH
 Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 Installed-Size: 1
 Section: kernel
@@ -220,28 +220,30 @@ compile_kernel (){
 	cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
 
 	export LOCALVERSION="-"$LINUXFAMILY
+	
+	if [[ $ARCH == *64* ]]; then ARCHITECTURE=arm64; else ARCHITECTURE=arm; fi
 
 	# We can use multi threading here but not later since it's not working. This way of compilation is much faster.
 	if [ "$KERNEL_CONFIGURE" != "yes" ]; then
 		if [ "$BRANCH" = "default" ]; then
-			make $CTHREADS ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE silentoldconfig
+			make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE silentoldconfig
 		else
-			make $CTHREADS ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+			make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE olddefconfig
 		fi
 	else
-		make $CTHREADS ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE oldconfig
-		make $CTHREADS ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE menuconfig
+		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE oldconfig
+		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE menuconfig
 	fi
 
-	eval 'make $CTHREADS ARCH=$ARCH CROSS_COMPILE="$CCACHE $CROSS_COMPILE" $TARGETS modules 2>&1' \
+	eval 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $CROSS_COMPILE" $TARGETS modules 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-	if [ ${PIPESTATUS[0]} -ne 0 ] || [ ! -f arch/$ARCH/boot/$TARGETS ]; then
+	if [ ${PIPESTATUS[0]} -ne 0 ] || [ ! -f arch/$ARCHITECTURE/boot/$TARGETS ]; then
 			exit_with_error "Kernel was not built" "@host"
 	fi
-	eval 'make $CTHREADS ARCH=$ARCH CROSS_COMPILE="$CCACHE $CROSS_COMPILE" dtbs 2>&1' \
+	eval 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $CROSS_COMPILE" dtbs 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling Device Tree..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -260,7 +262,7 @@ compile_kernel (){
 
 	# make $CTHREADS ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE
 	# produce deb packages: image, headers, firmware, libc
-	eval 'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=$ARCH ARCH=$ARCH DEBFULLNAME="$MAINTAINER" \
+	eval 'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=$ARCH ARCH=$ARCHITECTURE DEBFULLNAME="$MAINTAINER" \
 		DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE $CROSS_COMPILE" 2>&1 ' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
