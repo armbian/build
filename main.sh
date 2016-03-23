@@ -274,8 +274,8 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
 done
 
-[[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_armhf.deb ]] && needs_uboot=yes
-[[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_armhf.deb ]] && needs_kernel=yes
+[[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] && needs_uboot=yes
+[[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]] && needs_kernel=yes
 
 # patching sources if we need to compile u-boot or kernel
 [[ $needs_uboot == yes || $needs_kernel == yes ]] && patching_sources
@@ -318,7 +318,7 @@ if [[ $KERNEL_ONLY != yes ]]; then
 else
 	display_alert "Kernel building done" "@host" "info"
 	display_alert "Target directory" "$DEST/debs/" "info"
-	display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_armhf.deb" "info"
+	display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
 fi
 
 # workaround for bug introduced with desktop build -- please remove when fixed

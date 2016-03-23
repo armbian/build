@@ -27,7 +27,7 @@ create_board_package (){
 		ROOT_BRACH="";
 	fi
 	
-	local destination=$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_armhf
+	local destination=$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
 	local controlfile=$destination/DEBIAN/control
 	
 	mkdir -p $destination/DEBIAN	
@@ -134,9 +134,9 @@ create_board_package (){
 	# create board DEB file
 	cd $DEST/debs/$RELEASE/
 	display_alert "Building deb package." "$CHOSEN_ROOTFS" "info"
-	dpkg -b ${CHOSEN_ROOTFS}_${REVISION}_armhf >/dev/null
+	dpkg -b ${CHOSEN_ROOTFS}_${REVISION}_${ARCH} >/dev/null
 	
 	# clean up
-	rm -rf ${CHOSEN_ROOTFS}_${REVISION}_armhf
+	rm -rf ${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
 	rm -f ../.reboot_required
 }

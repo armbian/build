@@ -91,6 +91,7 @@ debootstrap_ng()
 	# stage: cleanup
 	rm -f $CACHEDIR/sdcard/usr/sbin/policy-rc.d
 	rm -f $CACHEDIR/sdcard/usr/bin/qemu-arm-static
+	rm -f $CACHEDIR/sdcard/usr/bin/qemu-aarch64-static
 	if [[ -x $CACHEDIR/sdcard/sbin/initctl.REAL ]]; then
 		mv -f $CACHEDIR/sdcard/sbin/initctl.REAL $CACHEDIR/sdcard/sbin/initctl
 	fi
@@ -165,14 +166,20 @@ create_rootfs_cache()
 		[[ -z $OUTPUT_DIALOG && $RELEASE != wheezy ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
 
 		display_alert "Installing base system" "Stage 1/2" "info"
-		eval 'debootstrap --include=debconf-utils,locales --arch=armhf --foreign $RELEASE $CACHEDIR/sdcard/ $apt_mirror' \
+		eval 'debootstrap --include=debconf-utils,locales --arch=$ARCH --foreign $RELEASE $CACHEDIR/sdcard/ $apt_mirror' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Debootstrap base system first stage failed"
 
-		cp /usr/bin/qemu-arm-static $CACHEDIR/sdcard/usr/bin/
+		
+		if [[ $ARCH == *64* ]]; then
+			cp /usr/bin/qemu-aarch64-static $CACHEDIR/sdcard/usr/bin/		
+		else
+			cp /usr/bin/qemu-arm-static $CACHEDIR/sdcard/usr/bin/
+		fi
+		
 		# NOTE: not needed?
 		mkdir -p $CACHEDIR/sdcard/usr/share/keyrings/
 		cp /usr/share/keyrings/debian-archive-keyring.gpg $CACHEDIR/sdcard/usr/share/keyrings/

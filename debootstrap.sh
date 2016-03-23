@@ -100,10 +100,14 @@ if [ ! -f "$cache_fname" ]; then
 
 # debootstrap base system
 [[ $DISTRIBUTION == "Debian" ]] && local redir="http://httpredir.debian.org/debian/"
-debootstrap --include=openssh-server,debconf-utils --arch=armhf --foreign $RELEASE $CACHEDIR/sdcard/ $redir | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox $TTY_Y $TTY_X
+debootstrap --include=openssh-server,debconf-utils --arch=$ARCH --foreign $RELEASE $CACHEDIR/sdcard/ $redir | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox $TTY_Y $TTY_X
 
 # we need emulator for second stage
-cp /usr/bin/qemu-arm-static $CACHEDIR/sdcard/usr/bin/
+if [[ $ARCH == *64* ]]; then
+	cp /usr/bin/qemu-aarch64-static $CACHEDIR/sdcard/usr/bin/		
+	else
+	cp /usr/bin/qemu-arm-static $CACHEDIR/sdcard/usr/bin/
+fi
 
 # and keys
 d=$CACHEDIR/sdcard/usr/share/keyrings/

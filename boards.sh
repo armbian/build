@@ -109,7 +109,7 @@ install_board_specific (){
 	fi
 
 	# install custom root package
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_armhf.deb > /dev/null"
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb > /dev/null"
 
 	# remove not needed packages
 	chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq autoremove >/dev/null 2>&1"
@@ -209,7 +209,7 @@ install_kernel (){
 	mount --bind $DEST/debs/ $CACHEDIR/sdcard/tmp
 
 	# extract kernel version
-	VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_armhf.deb | grep Descr | awk '{print $(NF)}')
+	VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
 	VER="${VER/-$LINUXFAMILY/}"
 
 	# we need package names for dtb, uboot and headers
@@ -218,26 +218,26 @@ install_kernel (){
 	HEADERS_TMP="${CHOSEN_KERNEL/image/headers}"
 
 	# install kernel
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_KERNEL}_${REVISION}_armhf.deb > dev/null"
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb > dev/null"
 
 	# install uboot
 	display_alert "Install u-boot" "$CHOSEN_UBOOT" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/${CHOSEN_UBOOT}_${REVISION}_armhf.deb > /dev/null"
+	chroot $CACHEDIR/sdcard /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb > /dev/null"
 
 	# install headers
 	display_alert "Install headers" "$HEADERS_TMP" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${HEADERS_TMP}_${REVISION}_armhf.deb > /dev/null"
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${HEADERS_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
 
 	# install firmware
-	if [[ -f $CACHEDIR/sdcard/tmp/${FW_TMP}_${REVISION}_armhf.deb ]]; then
+	if [[ -f $CACHEDIR/sdcard/tmp/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
 		display_alert "Install firmware" "$FW_TMP" "info"
-		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_armhf.deb > /dev/null"
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
 	fi
 	
 	# install DTB
-	if [[ -f $CACHEDIR/sdcard/tmp/${DTB_TMP}_${REVISION}_armhf.deb ]]; then
+	if [[ -f $CACHEDIR/sdcard/tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb ]]; then
 		display_alert "Install DTB" "$DTB_TMP" "info"
-		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${DTB_TMP}_${REVISION}_armhf.deb > /dev/null"
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
 	fi
 
 	# copy boot splash image

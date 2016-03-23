@@ -64,7 +64,7 @@ compile_uboot (){
 
 	# create .deb package
 
-	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_armhf
+	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
 
 	mkdir -p $DEST/debs/$uboot_name/usr/lib/$uboot_name $DEST/debs/$uboot_name/DEBIAN
 
@@ -260,7 +260,7 @@ compile_kernel (){
 
 	# make $CTHREADS ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE
 	# produce deb packages: image, headers, firmware, libc
-	eval 'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=$ARCHhf ARCH=$ARCH DEBFULLNAME="$MAINTAINER" \
+	eval 'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=$ARCH ARCH=$ARCH DEBFULLNAME="$MAINTAINER" \
 		DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE $CROSS_COMPILE" 2>&1 ' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
@@ -408,38 +408,38 @@ write_uboot()
 {
 	LOOP=$1
 	display_alert "Writing bootloader" "$LOOP" "info"
-	dpkg -x ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_armhf.deb /tmp/
+	dpkg -x ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb /tmp/
 
 	if [[ $BOARD == *cubox* ]] ; then
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/SPL of=$LOOP bs=512 seek=2 status=noxfer >/dev/null 2>&1)
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer >/dev/null 2>&1)
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/SPL of=$LOOP bs=512 seek=2 status=noxfer >/dev/null 2>&1)
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot.img of=$LOOP bs=1K seek=42 status=noxfer >/dev/null 2>&1)
 	elif [[ $BOARD == *armada* ]] ; then
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.mmc of=$LOOP bs=512 seek=1 status=noxfer >/dev/null 2>&1)
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot.mmc of=$LOOP bs=512 seek=1 status=noxfer >/dev/null 2>&1)
 	elif [[ $BOARD == *udoo* ]] ; then
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/SPL of=$LOOP bs=1k seek=1 status=noxfer >/dev/null 2>&1)
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.img of=$LOOP bs=1k seek=69 conv=fsync >/dev/null 2>&1)
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/SPL of=$LOOP bs=1k seek=1 status=noxfer >/dev/null 2>&1)
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot.img of=$LOOP bs=1k seek=69 conv=fsync >/dev/null 2>&1)
 	elif [[ $BOARD == *guitar* ]] ; then
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/bootloader.bin of=$LOOP bs=512 seek=4097 conv=fsync > /dev/null 2>&1)
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot-dtb.bin of=$LOOP bs=512 seek=6144 conv=fsync > /dev/null 2>&1)
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/bootloader.bin of=$LOOP bs=512 seek=4097 conv=fsync > /dev/null 2>&1)
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot-dtb.bin of=$LOOP bs=512 seek=6144 conv=fsync > /dev/null 2>&1)
 	elif [[ $BOARD == *odroidxu4* ]] ; then
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/bl1.bin.hardkernel of=$LOOP seek=1 conv=fsync ) > /dev/null 2>&1
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/bl2.bin.hardkernel of=$LOOP seek=31 conv=fsync ) > /dev/null 2>&1
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.bin of=$LOOP bs=512 seek=63 conv=fsync ) > /dev/null 2>&1
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/tzsw.bin.hardkernel of=$LOOP seek=719 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/bl1.bin.hardkernel of=$LOOP seek=1 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/bl2.bin.hardkernel of=$LOOP seek=31 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot.bin of=$LOOP bs=512 seek=63 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/tzsw.bin.hardkernel of=$LOOP seek=719 conv=fsync ) > /dev/null 2>&1
 		( dd if=/dev/zero of=$LOOP seek=1231 count=32 bs=512 conv=fsync ) > /dev/null 2>&1		
 	elif [[ $BOARD == *odroidc1* ]] ; then
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/bl1.bin.hardkernel of=$LOOP seek=1 seek=442 conv=fsync ) > /dev/null 2>&1	
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/bl1.bin.hardkernel of=$LOOP seek=512 skip=1 seek=1 conv=fsync ) > /dev/null 2>&1	
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.bin of=$LOOP bs=512 seek=64 conv=fsync ) > /dev/null 2>&1	
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/bl1.bin.hardkernel of=$LOOP seek=1 seek=442 conv=fsync ) > /dev/null 2>&1	
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/bl1.bin.hardkernel of=$LOOP seek=512 skip=1 seek=1 conv=fsync ) > /dev/null 2>&1	
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot.bin of=$LOOP bs=512 seek=64 conv=fsync ) > /dev/null 2>&1	
 		( dd if=/dev/zero of=$LOOP seek=1024 count=32 bs=512 conv=fsync ) > /dev/null 2>&1
 	elif [[ $BOARD == *odroidc2* ]] ; then
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/bl1.bin.hardkernel of=$LOOP bs=1 count=442 conv=fsync ) > /dev/null 2>&1
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/bl1.bin.hardkernel of=$LOOP bs=512 skip=1 seek=1 conv=fsync ) > /dev/null 2>&1
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot.bin of=$LOOP bs=512 seek=97 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/bl1.bin.hardkernel of=$LOOP bs=1 count=442 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/bl1.bin.hardkernel of=$LOOP bs=512 skip=1 seek=1 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot.bin of=$LOOP bs=512 seek=97 conv=fsync ) > /dev/null 2>&1
 		( dd if=/dev/zero of=$LOOP seek=1249 count=799 bs=512 conv=fsync ) > /dev/null 2>&1
 	else
 		( dd if=/dev/zero of=$LOOP bs=1k count=1023 seek=1 status=noxfer ) > /dev/null 2>&1
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1)
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1)
 	fi
 	if [ $? -ne 0 ]; then
 		exit_with_error "U-boot failed to install" "@host"
