@@ -34,7 +34,7 @@ create_board_package (){
 	
 	echo "Package: linux-$RELEASE-root$ROOT_BRACH-$BOARD" > $controlfile	
 	echo "Version: $REVISION" >> $controlfile
-	echo "Architecture: armhf" >> $controlfile
+	echo "Architecture: $ARCH" >> $controlfile
 	echo "Maintainer: $MAINTAINER <$MAINTAINERMAIL>" >> $controlfile
 	echo "Installed-Size: 1" >> $controlfile
 	echo "Section: kernel" >> $controlfile

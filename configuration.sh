@@ -655,6 +655,9 @@ case $RELEASE in
 	;;
 esac
 
+# Remove ARM64 missing packages. Temporally
+PACKAGE_LIST_RELEASE=${PACKAGE_LIST_RELEASE//thin-provisioning-tools }
+
 # additional desktop packages
 if [[ $BUILD_DESKTOP == yes ]]; then
 	# common packages

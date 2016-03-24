@@ -92,10 +92,10 @@ elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *odroidc1* ]] ; then
 	( dd if=/usr/lib/$uboot_name/u-boot.bin of=\$DEVICE bs=512 seek=64 conv=fsync ) > /dev/null 2>&1	
 	( dd if=/dev/zero of=\$DEVICE seek=1024 count=32 bs=512 conv=fsync ) > /dev/null 2>&1
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *odroidc2* ]] ; then
-	( dd if=/usr/lib/$uboot_name/bl1.bin.hardkernel of=$LOOP bs=1 count=442 conv=fsync ) > /dev/null 2>&1
-	( dd if=/usr/lib/$uboot_name/bl1.bin.hardkernel of=$LOOP bs=512 skip=1 seek=1 conv=fsync ) > /dev/null 2>&1
-	( dd if=/usr/lib/$uboot_name/u-boot.bin of=$LOOP bs=512 seek=97 conv=fsync ) > /dev/null 2>&1
-	( dd if=/dev/zero of=$LOOP seek=1249 count=799 bs=512 conv=fsync ) > /dev/null 2>&1 
+	( dd if=/usr/lib/$uboot_name/bl1.bin.hardkernel of=\$DEVICE bs=1 count=442 conv=fsync ) > /dev/null 2>&1
+	( dd if=/usr/lib/$uboot_name/bl1.bin.hardkernel of=\$DEVICE bs=512 skip=1 seek=1 conv=fsync ) > /dev/null 2>&1
+	( dd if=/usr/lib/$uboot_name/u-boot.bin of=\$DEVICE bs=512 seek=97 conv=fsync ) > /dev/null 2>&1
+	( dd if=/dev/zero of=\$DEVICE seek=1249 count=799 bs=512 conv=fsync ) > /dev/null 2>&1 
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *udoo* ]] ; then
 	( dd if=/usr/lib/$uboot_name/SPL of=\$DEVICE bs=1k seek=1 status=noxfer ) > /dev/null 2>&1
 	( dd if=/usr/lib/$uboot_name/u-boot.img of=\$DEVICE bs=1K seek=69 status=noxfer ) > /dev/null 2>&1
