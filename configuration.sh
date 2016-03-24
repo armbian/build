@@ -629,7 +629,7 @@ PACKAGE_LIST="automake bash-completion bc bridge-utils build-essential cmake cpu
 	iw libtool libwrap0-dev libssl-dev lirc lsof fake-hwclock wpasupplicant libusb-dev psmisc \
 	ntp parted pkg-config pv rfkill rsync sudo curl dialog crda wireless-regdb ncurses-term \
 	sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools \
-	console-setup console-data console-common unicode-data openssh-server libmtp-runtime"
+	console-setup console-data console-common unicode-data openssh-server libmtp-runtime initramfs-tools"
 
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools bluez hddtemp i2c-tools iperf ir-keytable iotop iozone3 weather-util weather-util-data stress \
