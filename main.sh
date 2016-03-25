@@ -93,8 +93,8 @@ if [ "$KERNEL_ONLY" != "yes" ]; then
 	if [ "$RELEASE" == "" ]; then
 		IFS=";"
 		declare -a MYARRAY=('wheezy' 'Debian 7 Wheezy | oldstable' 'jessie' 'Debian 8 Jessie | stable' \
-		'trusty' 'Ubuntu Trusty Tahr 14.04.x LTS');
-		MYPARAMS=( --title "Choose a distribution" --backtitle $backtitle --menu "\n Root file system:" 10 60 3 )
+		'trusty' 'Ubuntu Trusty Tahr 14.04.x LTS | stable' 'xenial' 'Ubuntu Xenial Xerus 16.04.x LTS | testing');
+		MYPARAMS=( --title "Choose a distribution" --backtitle $backtitle --menu "\n Root file system:" 11 66 4 )
 		i=0; j=1	
 		while [[ $i -lt ${#MYARRAY[@]} ]]; do
 			MYPARAMS+=( "${MYARRAY[$i]}" "         ${MYARRAY[$j]}" )
