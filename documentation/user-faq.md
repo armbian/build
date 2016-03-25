@@ -275,6 +275,45 @@ When computer behaves strange first step is to look into kernel logs. We made a 
 	sudo armbianmonitor -u  
 Copy and past URL of your log to the forum, mail, ...
 
+# How to build a wireless driver ?
+
+- recreate kernel headers scripts (optional)
+	
+		cd /usr/src/linux-headers-$(uname -r)
+		make scripts
+
+- go back to root directory and fetch sources (working example, use ARCH=arm64 on 64bit system)
+
+		cd 		
+		git clone https://github.com/pvaret/rtl8192cu-fixes.git
+		cd rtl8192cu-fixes
+		make ARCH=arm
+- load driver for test
+ 
+		insmod 8192cu.ko
+
+- check dmesg and the last entry will be:
+
+		usbcore: registered new interface driver rtl8192cu
+
+- plug the USB wireless adaptor and issue a command:
+
+		iwconfig wlan0
+- you should see this:
+
+		wlan0   unassociated  Nickname:"<WIFI@REALTEK>"
+				Mode:Auto  Frequency=2.412 GHz  Access Point: Not-Associated   
+				Sensitivity:0/0  
+				Retry:off   RTS thr:off   Fragment thr:off
+				Encryption key:off
+				Power Management:off
+				Link Quality=0/100  Signal level=0 dBm  Noise level=0 dBm
+				Rx invalid nwid:0  Rx invalid crypt:0  Rx invalid frag:0
+				Tx excessive retries:0  Invalid misc:0   Missed beacon:0		  
+
+- check which wireless stations / routers are in range
+
+		iwlist wlan0 scan | grep ESSID
 
 # How to install to NAND, SATA & USB?
 
