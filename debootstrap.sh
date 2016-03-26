@@ -79,7 +79,7 @@ fi
 # rootfs cache file name
 [[ $BUILD_DESKTOP == yes ]] && local variant_desktop=yes
 local packages_hash=$(get_package_list_hash $PACKAGE_LIST)
-local cache_fname="$CACHEDIR/rootfs/$RELEASE${variant_desktop:+_desktop}.$packages_hash.tgz"
+local cache_fname="$CACHEDIR/rootfs/$RELEASE${variant_desktop:+_desktop}-$ARCH.$packages_hash.tgz"
 
 # Uncompress from cache
 if [ -f "$cache_fname" ]; then

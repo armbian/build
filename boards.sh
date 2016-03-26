@@ -57,11 +57,17 @@ install_board_specific (){
 
 	# Armada
 	if [[ $BOARD == "armada" ]] ; then
-
 		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove lirc linux-sound-base alsa-base alsa-utils bluez>/dev/null 2>&1"
-
 	fi
 
+	# Odroid C2
+	if [[ $BOARD == "odroidc2" ]] ; then
+		install -m 755 $SRC/lib/scripts/c2_init.sh $CACHEDIR/sdcard/etc/
+		sed -e 's/exit 0//g' -i $CACHEDIR/sdcard/etc/rc.local
+		echo "/etc/c2_init.sh" >> $CACHEDIR/sdcard/etc/rc.local
+		echo "exit 0" >> $CACHEDIR/sdcard/etc/rc.local
+	fi
+	
 	# Udoo
 	if [[ $BOARD == "udoo" ]] ; then
 
