@@ -357,11 +357,11 @@ case $BOARD in
 		BOOTCONFIG="odroidc2_config"
 		MODULES="bonding"
 		MODULES_NEXT=""
-        CPUMIN="100000"
+        CPUMIN="500000"
 		CPUMAX="2016000"
-		GOVERNOR="performance"
+		GOVERNOR="conservative"
 		SERIALCON="ttyS0"
-		CLI_TARGET="%,%"
+		CLI_TARGET="jessie,default"
 		DESKTOP_TARGET="jessie,default"
 	;;
 	
