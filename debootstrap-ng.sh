@@ -141,8 +141,8 @@ create_rootfs_cache()
 {
 	[[ $BUILD_DESKTOP == yes ]] && local variant_desktop=yes
 	local packages_hash=$(get_package_list_hash $PACKAGE_LIST)
-	local cache_fname="$CACHEDIR/rootfs/$RELEASE${variant_desktop:+_desktop}-ng.$packages_hash.tgz"
-	local display_name=$RELEASE${variant_desktop:+_desktop}-ng.${packages_hash:0:3}...${packages_hash:29}.tgz
+	local cache_fname="$CACHEDIR/rootfs/$RELEASE${variant_desktop:+_desktop}-ng-$ARCH.$packages_hash.tgz"
+	local display_name=$RELEASE${variant_desktop:+_desktop}-ng-$ARCH.${packages_hash:0:3}...${packages_hash:29}.tgz
 	if [[ -f $cache_fname ]]; then
 		local filemtime=$(stat -c %Y $cache_fname)
 		local currtime=$(date +%s)
