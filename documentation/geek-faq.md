@@ -57,7 +57,7 @@ Run the script
 ### Hidden options to minimize user input for build automation:
 - **BOARD** (string): you can set name of board manually to skip dialog prompt
 - **BRANCH** (default|next|dev): you can set kernel and u-boot branch manually to skip dialog prompt; some options may not be available for all devices
-- **RELEASE** (wheezy|jessie|trusty): you can set OS release manually to skip dialog prompt; use this option with `KERNEL_ONLY=yes` to create board support package
+- **RELEASE** (wheezy|jessie|trusty|xenial): you can set OS release manually to skip dialog prompt; use this option with `KERNEL_ONLY=yes` to create board support package
 
 ### Hidden options for advanced users (default values are marked **bold**):
 - **USE_CCACHE** (**yes**|no): use a C compiler cache to speed up the build process
@@ -101,6 +101,12 @@ You can run additional commands to customize created image. Edit file:
 and place your code here. You may test values of variables noted in the file to use different commands for different configurations. Those commands will be executed in a process of building just before closing image.
 
 To add files to image easily, put them in `userpatches/overlay` and access them in `/tmp/overlay` from `customize-image.sh`
+
+## Partitioning of the SD card
+
+In case you define `$FIXED_IMAGE_SIZE` at build time the partition containing the rootfs will be made of this size. Default behaviour when this is not defined and `$ROOTFS_TYPE` is set to _ext4_ is to shrink the partition to minimum size at build time and expand it to the card's maximum capacity at boot time (leaving an unpartitioned spare area of ~5% when the size is 4GB or less to help the SD card's controller with wear leveling and garbage collection on old/slow cards).
+
+You can prevent the partition expansion from within `customize-image.sh` by a `touch /root/.no_rootfs_resize` or configure the resize operation by either a percentage or a sector count using `/root/.rootfs_resize` (`50%` will use only half of the card's size if the image size doesn't exceed this or `3887103s` for example will use sector 3887103 as partition end. Values without either `%` or `s` will be ignored)
 
 # What is behind the build process?
 
