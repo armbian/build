@@ -33,15 +33,17 @@ compile_uboot (){
 	# there are two methods of compilation
 	if [[ $BOOTCONFIG == *config* ]]; then
 
+		# workarounds
+		local cthreads=$CTHREADS
+		[[ $LINUXFAMILY == "marvell" ]] && local MAKEPARA="u-boot.mmc"
+		[[ $BOARD == "odroidc2" ]] && local MAKEPARA="ARCH=arm" && local cthreads=""
+	
 		make $CTHREADS $BOOTCONFIG CROSS_COMPILE=$CROSS_COMPILE >/dev/null 2>&1
 		[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
 		[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
 		[ -f $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp ] && cp $SRC/lib/bin/armbian-u-boot.bmp $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp
-		touch .scmversion
-
-		# special compilation for armada
-		[[ $LINUXFAMILY == "marvell" ]] && local MAKEPARA="u-boot.mmc"
-
+		touch .scmversion	
+		
 		# patch mainline uboot configuration to boot with old kernels
 		if [[ $BRANCH == "default" && $LINUXFAMILY == sun*i ]] ; then
 			if [ "$(cat $SOURCES/$BOOTSOURCEDIR/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
@@ -50,12 +52,12 @@ compile_uboot (){
 			fi
 		fi
 
-		eval 'make $MAKEPARA $CTHREADS CROSS_COMPILE="$CCACHE $CROSS_COMPILE" 2>&1' \
+		eval 'make $MAKEPARA $cthreads CROSS_COMPILE="$CCACHE $CROSS_COMPILE" 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 	else
-		eval 'make $MAKEPARA $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CCACHE $CROSS_COMPILE" 2>&1' \
+		eval 'make $MAKEPARA $cthreads $BOOTCONFIG CROSS_COMPILE="$CCACHE $CROSS_COMPILE" 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -139,7 +141,7 @@ END
 		[ ! -f "sd_fuse/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == odroidc2 ]] ; then
 		[ ! -f "sd_fuse/bl1.bin.hardkernel" ] || cp sd_fuse/bl1.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name		
-		[ ! -f "sd_fuse/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
+		[ ! -f "build/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == udoo* ]] ; then
 		[ ! -f "u-boot.img" ] || cp SPL u-boot.img $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == armada* ]] ; then
