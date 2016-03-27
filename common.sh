@@ -74,8 +74,8 @@ compile_uboot (){
 cat <<END > $DEST/debs/$uboot_name/DEBIAN/postinst
 #!/bin/bash
 set -e
+if [[ \$DEVICE == "/dev/null" ]]; then exit 0; fi
 if [[ \$DEVICE == "" ]]; then DEVICE="/dev/mmcblk0"; fi
-
 if [[ \$DPKG_MAINTSCRIPT_PACKAGE == *cubox* ]] ; then
 	( dd if=/usr/lib/$uboot_name/SPL of=\$DEVICE bs=512 seek=2 status=noxfer ) > /dev/null 2>&1
 	( dd if=/usr/lib/$uboot_name/u-boot.img of=\$DEVICE bs=1K seek=42 status=noxfer ) > /dev/null 2>&1
