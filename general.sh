@@ -351,7 +351,7 @@ prepare_host() {
 	if [[ ${#deps[@]} -gt 0 ]]; then
 		eval '( apt-get update; apt-get -y --no-install-recommends install "${deps[@]}" )' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/output.log'} \
-			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing ${#deps[@]} host dependencies..." 20 80'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing ${#deps[@]} host dependencies..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 	fi
 

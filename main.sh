@@ -13,6 +13,9 @@
 #
 #
 
+TTY_X=$(($(stty size| awk '{print $2}')-6)) # determine terminal width
+TTY_Y=$(($(stty size| awk '{print $1}')-6)) # determine terminal height
+
 # Include here to make "display_alert" and "prepare_host" available
 source $SRC/lib/general.sh					# General functions
 
