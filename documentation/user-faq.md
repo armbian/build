@@ -49,16 +49,9 @@ Also important: SD cards are optimised for sequential reads/writes as it's commo
 
 Recommended cards - from minimum to overkill:
 
-- <a href="http://www.amazon.com/dp/B00IVPU7KE">Samsung EVO 16GB UHS-I</a>
- 
-	![](http://www.armbian.com/wp-content/uploads/2016/03/sdcard-samsung-1.png)
-
-- <a href="http://www.amazon.com/gp/product/B00BLHWYWS">Transcend Ultimate 16 GB UHS-I</a>
-
-	![](http://www.armbian.com/wp-content/uploads/2016/03/sdcard-transcend-1.png)
-- <a href="http://www.amazon.com/dp/B008HK1YAA">SanDisk Extreme Pro 16 GB UHS-I</a>
-
-	![](http://www.armbian.com/wp-content/uploads/2016/03/sdcard-sandisk-1.png)
+[![Samsung EVO 16GB UHS-I](http://www.armbian.com/wp-content/uploads/2016/03/sdcard-samsung-1.png)](http://www.amazon.com/dp/B00IVPU7KE)
+[![Transcend Ultimate 16 GB UHS-I](http://www.armbian.com/wp-content/uploads/2016/03/sdcard-transcend-1.png)](http://www.amazon.com/gp/product/B00BLHWYWS)
+[![SanDisk Extreme Pro 16 GB UHS-I](http://www.armbian.com/wp-content/uploads/2016/03/sdcard-sandisk-1.png)](http://www.amazon.com/dp/B008HK1YAA)
 
 
 # How to boot?
