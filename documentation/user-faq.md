@@ -47,6 +47,20 @@ Important: Make sure you use a **good & reliable** SD card. If you encounter boo
 
 Also important: SD cards are optimised for sequential reads/writes as it's common in digital cameras. This is what the *speed class* is about. And while you shouldn't buy any card rated less than *class 10* today you should especially take care to choose one that is known to show high random I/O performance since this is way more performance relevant when used with any SBC (see [this](http://www.jeffgeerling.com/blogs/jeff-geerling/raspberry-pi-microsd-card) or [this](http://thewirecutter.com/reviews/best-microsd-card/) or benchmarked comparison for example).
 
+Recommended cards - from minimum to overkill:
+
+- <a href="http://www.amazon.com/dp/B00IVPU7KE">Samsung EVO 16GB UHS-I</a>
+ 
+	![](http://www.armbian.com/wp-content/uploads/2016/03/sdcard-samsung-1.png)
+
+- <a href="http://www.amazon.com/gp/product/B00BLHWYWS">Transcend Ultimate 16 GB UHS-I</a>
+
+	![](http://www.armbian.com/wp-content/uploads/2016/03/sdcard-transcend-1.png)
+- <a href="http://www.amazon.com/dp/B008HK1YAA">SanDisk Extreme Pro 16 GB UHS-I</a>
+
+	![](http://www.armbian.com/wp-content/uploads/2016/03/sdcard-sandisk-1.png)
+
+
 # How to boot?
 
 Insert SD card into a slot and power the board. First boot takes around 3 minutes then it reboots and you will need to wait another one minute to login. This delay is because system updates package list and creates 128Mb emergency SWAP on the SD card.
