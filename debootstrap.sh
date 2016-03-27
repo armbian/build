@@ -266,7 +266,7 @@ KILLPROC=$(ps -uax | pgrep acpid | tail -1); if [ -n "$KILLPROC" ]; then kill -9
 # same info outside the image
 cp $CACHEDIR/sdcard/etc/armbian.txt $CACHEDIR/
 sleep 2
-rm $CACHEDIR/sdcard/usr/bin/qemu-arm-static
+rm -f $CACHEDIR/sdcard/usr/bin/qemu-arm-static $CACHEDIR/sdcard/usr/bin/qemu-aarch64-static
 sleep 2
 umount -l $CACHEDIR/sdcard/boot > /dev/null 2>&1 || /bin/true
 umount -l $CACHEDIR/sdcard/
