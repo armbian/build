@@ -6,7 +6,7 @@
 
 If it is a new feature request, don't start the coding first. Remember to [open an issue](https://guides.github.com/features/issues/) to discuss the new feature.
 
-If you are strougling, check [this detailed step by step guide on contributing](https://www.exchangecore.com/blog/contributing-concrete5-github/).
+If you are struggling, check [this detailed step by step guide on contributing](https://www.exchangecore.com/blog/contributing-concrete5-github/).
 
 # How to build Armbian image or custom kernel?
 
@@ -67,7 +67,7 @@ Run the script
 - **EXTENDED_DEBOOTSTRAP** (yes|**no**): use new debootstrap and image creation process
 - **FORCE_USE_RAMDISK** (yes|no): overrides autodetect for using tmpfs in new debootstrap and image creation process. Takes effect only if `EXTENDED_DEBOOTSTRAP` is set to "yes"
 - **FIXED_IMAGE_SIZE** (integer): create image file of this size (in megabytes) instead of minimal. Takes effect only if `EXTENDED_DEBOOTSTRAP` is set to "yes"
-- **COMPRESS_OUTPUTIMAGE** (**yes**|no): create zip archive with image file and GPG signature for redistribution
+- **COMPRESS_OUTPUTIMAGE** (**yes**|no): create compressed archive with image file and GPG signature for redistribution
 - **SEVENZIP** (yes|**no**): create .7z archive with extreme compression ratio instead of .zip
 - **ROOTFS_TYPE** (**ext4**|f2fs|btrfs|nfs|fel): create image with different root filesystems instead of default ext4. Requires setting FIXED_IMAGE_SIZE to actual size of your SD card for F2FS and BTRFS. Takes effect only if `EXTENDED_DEBOOTSTRAP` is set to "yes"
 
@@ -98,7 +98,7 @@ You can run additional commands to customize created image. Edit file:
 
     userpatches/customize-image.sh
 
-and place your code here. You may test values of variables noted in the file to use different commands for different configurations. Those commands will be executed in a process of building just before closing image.
+and place your code here. You may test values of variables noted in the file to use different commands for different configurations. Those commands will be executed in a chroot environment just before closing image.
 
 To add files to image easily, put them in `userpatches/overlay` and access them in `/tmp/overlay` from `customize-image.sh`
 
@@ -167,7 +167,7 @@ To recreate those files you need to remove them manually.
 
 ## Kernel install ##
 
-When root filesystem is ready we need to instal kernel image with modules, board definitions, firmwares. Along with this we set the CPU frequency min/max, hostname, modules, network interfaces templates. Here is also the place to install headers and fix + native compile them on the way.
+When root filesystem is ready we need to install kernel image with modules, board definitions, firmwares. Along with this we set the CPU frequency min/max, hostname, modules, network interfaces templates. Here is also the place to install headers and fix + native compile them on the way.
 
 ## Distribution fixes ##
 
