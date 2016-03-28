@@ -330,15 +330,14 @@ case $BOARD in
 
 	odroidc1)#enabled
 		#description S805 C1 quad core
-		#build 1wip
+		#build 1
 		LINUXFAMILY="odroidc1"
-		BOOTSIZE="16"
-		OFFSET="2"
+		BOOTSIZE="32"
 		BOOTCONFIG="odroidc_config"
 		MODULES="bonding"
 		MODULES_NEXT=""
 		SERIALCON="ttyS0"
-		CLI_TARGET="%,%"
+		CLI_TARGET="jessie,default"
 		DESKTOP_TARGET="jessie,default"
 	;;
 	
@@ -434,7 +433,7 @@ case $LINUXFAMILY in
 	odroidxu4)
 		KERNEL_DEFAULT='https://github.com/hardkernel/linux'
 		KERNEL_DEFAULT_BRANCH="odroidxu3-3.10.y"
-		KERNEL_DEFAULT_SOURCE="linux-odroid"
+		KERNEL_DEFAULT_SOURCE="linux-odroidxu4"
 		KERNEL_NEXT='https://github.com/tobetter/linux'
 		KERNEL_NEXT_BRANCH="odroidxu4-v4.2"
 		KERNEL_NEXT_SOURCE="linux-odroidxu-next"
@@ -452,7 +451,7 @@ case $LINUXFAMILY in
 	odroidc1)
 		KERNEL_DEFAULT='https://github.com/hardkernel/linux'
 		KERNEL_DEFAULT_BRANCH="odroidc-3.10.y"
-		KERNEL_DEFAULT_SOURCE="linux-odroid"
+		KERNEL_DEFAULT_SOURCE="linux-odroidc1"
 		KERNEL_NEXT='https://github.com/tobetter/linux'
 		KERNEL_NEXT_BRANCH="odroidxu4-v4.2"
 		KERNEL_NEXT_SOURCE="linux-odroidxu-next"
