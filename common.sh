@@ -141,7 +141,7 @@ END
 		[ ! -f "sd_fuse/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == odroidc2 ]] ; then
 		[ ! -f "sd_fuse/bl1.bin.hardkernel" ] || cp sd_fuse/bl1.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name		
-		[ ! -f "build/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
+		[ ! -f "build/u-boot.bin" ] || cp build/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == udoo* ]] ; then
 		[ ! -f "u-boot.img" ] || cp SPL u-boot.img $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == armada* ]] ; then
