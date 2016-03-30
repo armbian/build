@@ -38,7 +38,7 @@ SDSIZE="4000" # SD image size in MB
 TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 USEALLCORES="yes" # Use all CPU cores for compiling
 OFFSET="1" # Bootloader space in MB (1 x 2048 = default)
-BOOTSIZE="0" # Mb size of boot partition
+BOOTSIZE=${BOOTSIZE-0} # Mb size of boot partition
 EXIT_PATCHING_ERROR="" # exit patching if failed
 SERIALCON="ttyS0"
 MISC1="https://github.com/linux-sunxi/sunxi-tools.git" # Allwinner fex compiler / decompiler
