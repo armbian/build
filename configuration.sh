@@ -254,14 +254,14 @@ case $BOARD in
 		DESKTOP_TARGET="jessie,default"		
 	;;
 
-	bananapim2plus)#disabled
+	bananapim2plus)#enabled
 		# description H3 quad core 1Gb SoC Wifi
 		LINUXFAMILY="sun8i"
-		BOOTCONFIG="bananapim2_plus_defconfig"
-		MODULES="ap6210 #gpio_sunxi #w1-sunxi #w1-gpio #w1-therm"
+		BOOTCONFIG="orangepi_plus_defconfig"
+		MODULES="#gpio_sunxi #w1-sunxi #w1-gpio #w1-therm #ap6211"
 		MODULES_NEXT="brcmfmac"
-		CPUMIN="0"
-		CPUMAX="0"
+		CPUMIN="648000"
+		CPUMAX="1200000"
 		GOVERNOR="interactive"
 	;;
 
