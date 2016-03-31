@@ -130,6 +130,7 @@ trusty)
 		sed -e "s/CODENAME/$RELEASE/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 
 		# remove what's anyway not working
+		#chroot $CACHEDIR/sdcard /bin/bash -c "apt-get remove --auto-remove ureadahead"		
 		rm $CACHEDIR/sdcard/etc/init/ureadahead*
 		rm $CACHEDIR/sdcard/etc/init/plymouth*
 		;;
@@ -177,7 +178,7 @@ xenial)
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
 
 		# disable initramfs
-		sed -i 's/update_initramfs=yes/update_initramfs=no/' $CACHEDIR/sdcard//etc/initramfs-tools/update-initramfs.conf
+		sed -i 's/update_initramfs=yes/update_initramfs=no/' $CACHEDIR/sdcard/etc/initramfs-tools/update-initramfs.conf
 		;;
 
 	*)

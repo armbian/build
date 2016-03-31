@@ -224,7 +224,7 @@ install_kernel (){
 	HEADERS_TMP="${CHOSEN_KERNEL/image/headers}"
 
 	# install kernel
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb > dev/null"
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb >/dev/null 2>&1"
 
 	# install uboot
 	display_alert "Install u-boot" "$CHOSEN_UBOOT" "info"
