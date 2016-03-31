@@ -39,9 +39,15 @@ create_board_package (){
 	echo "Installed-Size: 1" >> $controlfile
 	echo "Section: kernel" >> $controlfile
 	echo "Priority: optional" >> $controlfile
-	echo "Recommends: fake-hwclock" >> $controlfile
+	echo "Recommends: fake-hwclock, initramfs-tools" >> $controlfile
 	echo "Description: Root file system tweaks for $BOARD" >> $controlfile
 
+	# set up pre install script
+	echo "#!/bin/bash" > $destination/DEBIAN/preinst	
+	chmod 755 $destination/DEBIAN/preinst
+	echo "[[ -d /boot/bin ]] && rm -rf /boot/bin" >> $destination/DEBIAN/preinst
+	echo "exit 0" >> $destination/DEBIAN/preinst
+	
 	# set up post install script
 	echo "#!/bin/bash" > $destination/DEBIAN/postinst	
 	chmod 755 $destination/DEBIAN/postinst
@@ -92,7 +98,17 @@ create_board_package (){
 	mkdir -p $destination/root $destination/tmp $destination/etc/update-motd.d/ $destination/etc/profile.d
 	install -m 755 $SRC/lib/scripts/update-motd.d/* $destination/etc/update-motd.d/	
 	install -m 755 $SRC/lib/scripts/check_first_login_reboot.sh 	$destination/etc/profile.d
-	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d	
+	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d
+	
+	# export arhitecture
+	echo "#!/bin/bash" > $destination/etc/profile.d/arhitecture.sh
+	if [[ $ARCH == *64* ]]; then 
+		echo "export ARCH=arm64" >> $destination/etc/profile.d/arhitecture.sh
+	else
+		echo "export ARCH=arm" >> $destination/etc/profile.d/arhitecture.sh 
+	fi
+	chmod 755 $destination/etc/profile.d/arhitecture.sh
+	
 	cd $destination/
 	ln -s ../var/run/motd etc/motd
 	touch $destination/tmp/.reboot_required
@@ -135,7 +151,7 @@ create_board_package (){
 	cd $DEST/debs/$RELEASE/
 	display_alert "Building deb package." "$CHOSEN_ROOTFS" "info"
 	dpkg -b ${CHOSEN_ROOTFS}_${REVISION}_${ARCH} >/dev/null
-	
+
 	# clean up
 	rm -rf ${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
 	rm -f ../.reboot_required
