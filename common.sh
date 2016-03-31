@@ -141,7 +141,7 @@ END
 		[ ! -f "sd_fuse/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == odroidc2 ]] ; then
 		[ ! -f "sd_fuse/bl1.bin.hardkernel" ] || cp sd_fuse/bl1.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name		
-		[ ! -f "build/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
+		[ ! -f "sd_fuse/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == udoo* ]] ; then
 		[ ! -f "u-boot.img" ] || cp SPL u-boot.img $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == armada* ]] ; then
@@ -280,6 +280,7 @@ install_external_applications (){
 # Install external applications example
 #--------------------------------------------------------------------------------------------------------------------------------
 display_alert "Installing external applications" "USB redirector" "info"
+if [[ $ARCH == *64* ]]; then ARCHITECTURE=arm64; else ARCHITECTURE=arm; fi
 # USB redirector tools http://www.incentivespro.com
 cd $SOURCES
 wget -q http://www.incentivespro.com/usb-redirector-linux-arm-eabi.tar.gz
@@ -288,7 +289,7 @@ rm usb-redirector-linux-arm-eabi.tar.gz
 cd $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd
 # patch to work with newer kernels
 sed -e "s/f_dentry/f_path.dentry/g" -i usbdcdev.c
-make -j1 ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE KERNELDIR=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/install.log
+make -j1 ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE KERNELDIR=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/install.log
 # configure USB redirector
 sed -e 's/%INSTALLDIR_TAG%/\/usr\/local/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1
 sed -e 's/%PIDFILE_TAG%/\/var\/run\/usbsrvd.pid/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
@@ -308,8 +309,8 @@ if [[ -n "$MISC3_DIR" ]]; then
 	# https://github.com/pvaret/rtl8192cu-fixes
 	cd $SOURCES/$MISC3_DIR
 	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
-	make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE clean >/dev/null 2>&1
-	(make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE KSRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
+	make ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE clean >/dev/null 2>&1
+	(make ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE KSRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
 	cp *.ko $CACHEDIR/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
 	depmod -b $CACHEDIR/sdcard/ $VER-$LINUXFAMILY
 	#cp blacklist*.conf $CACHEDIR/sdcard/etc/modprobe.d/
@@ -322,7 +323,7 @@ if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sunxi* ]]; the
 	cd "$SOURCES/$MISC5_DIR"
 	cp "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" .
 	make clean >/dev/null 2>&1
-	(make ARCH=$ARCH CC=$CROSS_COMPILE"gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null 2>&1)
+	(make ARCH=$ARCHITECTURE CC=$CROSS_COMPILE"gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null 2>&1)
 	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
 fi
 # MISC5 = sunxi display control / compile it for sun8i just in case sun7i stuff gets ported to sun8i and we're able to use it
@@ -330,7 +331,7 @@ if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sun8i* ]]; the
 	cd "$SOURCES/$MISC5_DIR"
 	wget -q "https://raw.githubusercontent.com/linux-sunxi/linux-sunxi/sunxi-3.4/include/video/sunxi_disp_ioctl.h"
 	make clean >/dev/null 2>&1
-	(make ARCH=$ARCH CC=$CROSS_COMPILEgcc KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null 2>&1)
+	(make ARCH=$ARCHITECTURE CC=$CROSS_COMPILEgcc KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null 2>&1)
 	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
 fi
 
@@ -383,8 +384,8 @@ _EOF_
 
 	patch -f -s -p1 -r - <fix_build.patch >/dev/null
 	cd src
-	make -s ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE clean >/dev/null 2>&1
-	(make -s -j4 ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE LINUX_SRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
+	make -s ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE clean >/dev/null 2>&1
+	(make -s -j4 ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE LINUX_SRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
 	cp os/linux/*.ko $CACHEDIR/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
 	mkdir -p $CACHEDIR/sdcard/etc/Wireless/RT2870STA
 	cp RT2870STA.dat $CACHEDIR/sdcard/etc/Wireless/RT2870STA/
