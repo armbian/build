@@ -1,5 +1,15 @@
 # Armbian H3 mini FAQ -- 5.06
 
+**Important to know**
+
+- 1st boot takes longer (up to 5 minutes). Please do not interrupt while the red LED is blinking, the board reboots automatically one time and the green LED starts to blink when ready
+- our [User documentation](http://www.armbian.com/documentation/) (one exception currently: use _h3disp_ to adjust display settings)
+- our [Geek documentation](http://www.armbian.com/using-armbian-tools/) (in case you want to build your own images)
+- CPU frequency settings are 648-1200 MHz on OPi One/Lite and 480-1296 MHz on the other boards (cpufreq governor is _interactive_ therefore the board only increases CPU speed and consumption when needed)
+- In case you experience instabilities check your SD card using `armbianmonitor -c $HOME` and think about installing [RPi-Monitor for H3](http://www.cnx-software.com/2016/03/17/rpi-monitor-is-a-web-based-remote-monitor-for-arm-development-boards-such-as-raspberry-pi-and-orange-pi/) to get an idea whether you suffer from overheating (`sudo armbianmonitor -r` will install everything needed)
+- In case you're unsure whether to test a desktop or CLI image simply try out the GUI version since you can always get 'CLI behaviour' by running `sudo update-rc.d -f nodm disable` later (this disables the start of X windows and desktop images behave like those made for headless use afterwards. If you're experienced you could also reclaim disk space by removing the `libxfce4util-common` package and doing an `apt-get autoremove` later)
+- especially for desktop images the speed of your SD card matters. If possible try to use our _nand-sata-install_ script to move the rootfs away from SD card. The script also works with USB disks flawlessly ([some background information](http://forum.armbian.com/index.php/topic/793-moving-to-harddisk/))
+
 #OS images with legacy Kernel (3.4.111)
 
 Armbian started beginning with release 5.04 to support all available H3 based Orange Pi boards (including [One](http://forum.armbian.com/index.php/topic/724-quick-review-of-orange-pi-one/) and Lite when available).
@@ -12,7 +22,7 @@ Armbian started beginning with release 5.04 to support all available H3 based Or
 - Possible to use _Ubuntu Xenial Xerus_ as target
 - changed behaviour of board leds (green == power, red == warning)
 - speed improvements for 1st automated reboot
-- integrates OverlayFS backport
+- Integrates OverlayFS backport
 
 **Changes in 5.05**
 
@@ -43,19 +53,9 @@ Armbian started beginning with release 5.04 to support all available H3 based Or
 - Full HDMI colour-range adjustable/accessible through _h3disp_ utility
 - already useable as stable headless/server board
 
-**Known issues with 5.05**
+**Known issues with 5.06**
 
 - Playing HEVC/H.265 video with 10 bit depth not supported
-
-**Important to know**
-
-- 1st boot takes longer (up to 5 minutes). Please do not interrupt while the red LED is blinking, the board reboots automatically one time and the green LED starts to blink when ready
-- our [User documentation](http://www.armbian.com/documentation/) (one exception currently: use _h3disp_ to adjust display settings)
-- our [Geek documentation](http://www.armbian.com/using-armbian-tools/) (in case you want to build your own images)
-- CPU frequency settings are 648-1200 MHz on OPi One/Lite and 480-1296 MHz on the other boards (cpufreq governor is _interactive_ therefore the board only increases CPU speed and consumption when needed)
-- In case you experience instabilities check your SD card using `armbianmonitor -c $HOME` and think about installing [RPi-Monitor for H3](http://www.cnx-software.com/2016/03/17/rpi-monitor-is-a-web-based-remote-monitor-for-arm-development-boards-such-as-raspberry-pi-and-orange-pi/) to get an idea whether you suffer from overheating (`sudo armbianmonitor -r` will install everything needed)
-- In case you're unsure whether to test a desktop or CLI image simply try out the GUI version since you can always get 'CLI behaviour' by running `sudo update-rc.d -f nodm disable` later (this disables the start of X windows and desktop images behave like those made for headless use afterwards. If you're experienced you could also reclaim disk space by removing the `libxfce4util-common` package and doing an `apt-get autoremove` later)
-- especially for desktop images the speed of your SD card matters. If possible try to use our _nand-sata-install_ script to move the rootfs away from SD card. The script also works with USB disks flawlessly ([some background information](http://forum.armbian.com/index.php/topic/793-moving-to-harddisk/))
 
 **Areas that need testing/feedback**
 
