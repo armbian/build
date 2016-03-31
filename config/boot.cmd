@@ -13,8 +13,10 @@ then
 # sunxi mainline kernel
 #--------------------------------------------------------------------------------------------------------------------------------
 ext4load mmc 0 0x49000000 /boot/dtb/${fdtfile} || fatload mmc 0 0x49000000 /dtb/${fdtfile} || ext4load mmc 0 0x49000000 /dtb/${fdtfile}
+#ext4load mmc 0 0x42000000 /boot/uInitrd || fatload mmc 0 0x42000000 /boot/uInitrd || ext4load mmc 0 0x42000000 /boot/uInitrd
 ext4load mmc 0 0x46000000 /boot/zImage || fatload mmc 0 0x46000000 zImage || ext4load mmc 0 0x46000000 zImage
 env set fdt_high ffffffff
+#bootz 0x46000000 0x42000000 0x49000000
 bootz 0x46000000 - 0x49000000
 #--------------------------------------------------------------------------------------------------------------------------------
 else
