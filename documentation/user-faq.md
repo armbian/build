@@ -96,6 +96,8 @@ Check [this for manual way](http://www.armbian.com/kernel/) and more info.
 
 # How to troubleshoot?
 
+**Important: If you came here since you can't get Armbian running on your board please keep in mind that in 95 percent of all cases it's either a faulty/fraud/counterfeit SD card or an insufficient power supply that's causing these sorts of _doesn't work_ issues!**
+
 If you broke the system you can try to get in this way. You have to get to u-boot command prompt, using either a serial adapter or monitor and usb keyboard. 
 
 After switching power on or rebooting, when u-boot loads up, press some key on the keyboard (or send some key presses via terminal) to abort default boot sequence and get to the command prompt:
