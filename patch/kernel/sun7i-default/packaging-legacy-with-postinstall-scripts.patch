@@ -1,5 +1,5 @@
 diff --git a/scripts/package/builddeb b/scripts/package/builddeb
-index ed7ccdc..4bda948 100644
+index ed7ccdc..bf30624 100644
 --- a/scripts/package/builddeb
 +++ b/scripts/package/builddeb
 @@ -35,15 +35,17 @@ create_package() {
@@ -24,16 +24,24 @@ index ed7ccdc..4bda948 100644
  	*)
  		echo "" >&2
  		echo "** ** **  WARNING  ** ** **" >&2
-@@ -62,7 +64,7 @@ create_package() {
+@@ -61,8 +63,15 @@ create_package() {
+ 		forcearch="-DArchitecture=$debarch"
  	fi
  
++	# Create postinstall script for headers
++	if [[ "$1" == *headers* ]]; then
++		echo "cd /usr/src/linux-headers-$version; echo \"Compiling headers - please wait ...\"; make -s scripts >/dev/null 2>&1 " >> $pdir/DEBIAN/postinst
++		echo "exit 0" >> $pdir/DEBIAN/postinst
++		chmod 775 $pdir/DEBIAN/postinst
++	fi 
++	
  	# Create the package
 -	dpkg-gencontrol -isp $forcearch -Vkernel:debarch="${debarch:-$(dpkg --print-architecture)}" -p$pname -P"$pdir"
 +	dpkg-gencontrol $forcearch -Vkernel:debarch="${debarch:-$(dpkg --print-architecture)}" -p$pname -P"$pdir"
  	dpkg --build "$pdir" ..
  }
  
-@@ -78,21 +80,39 @@ tmpdir="$objtree/debian/tmp"
+@@ -78,21 +87,39 @@ tmpdir="$objtree/debian/tmp"
  fwdir="$objtree/debian/fwtmp"
  kernel_headers_dir="$objtree/debian/hdrtmp"
  libc_headers_dir="$objtree/debian/headertmp"
@@ -79,7 +87,7 @@ index ed7ccdc..4bda948 100644
  mkdir -m 755 -p "$libc_headers_dir/DEBIAN"
  mkdir -p "$libc_headers_dir/usr/share/doc/$libc_headers_packagename"
  mkdir -m 755 -p "$kernel_headers_dir/DEBIAN"
-@@ -101,26 +121,29 @@ mkdir -p "$kernel_headers_dir/lib/modules/$version/"
+@@ -101,26 +128,29 @@ mkdir -p "$kernel_headers_dir/lib/modules/$version/"
  if [ "$ARCH" = "um" ] ; then
  	mkdir -p "$tmpdir/usr/lib/uml/modules/$version" "$tmpdir/usr/bin"
  fi
@@ -120,7 +128,7 @@ index ed7ccdc..4bda948 100644
  	INSTALL_MOD_PATH="$tmpdir" $MAKE KBUILD_SRC= modules_install
  	rm -f "$tmpdir/lib/modules/$version/build"
  	rm -f "$tmpdir/lib/modules/$version/source"
-@@ -128,17 +151,46 @@ if grep -q '^CONFIG_MODULES=y' .config ; then
+@@ -128,17 +158,46 @@ if grep -q '^CONFIG_MODULES=y' .config ; then
  		mv "$tmpdir/lib/modules/$version"/* "$tmpdir/usr/lib/uml/modules/$version/"
  		rmdir "$tmpdir/lib/modules/$version"
  	fi
@@ -169,7 +177,7 @@ index ed7ccdc..4bda948 100644
  for script in postinst postrm preinst prerm ; do
  	mkdir -p "$tmpdir$debhookdir/$script.d"
  	cat <<EOF > "$tmpdir/DEBIAN/$script"
-@@ -149,12 +201,39 @@ set -e
+@@ -149,12 +208,66 @@ set -e
  # Pass maintainer script parameters to hook scripts
  export DEB_MAINT_PARAMS="\$*"
  
@@ -186,14 +194,22 @@ index ed7ccdc..4bda948 100644
 +##
 +## Create sym link to kernel image
 +##
++sed -e "s/set -e//g" -i $tmpdir/DEBIAN/postinst
 +sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/postinst
 +cat >> $tmpdir/DEBIAN/postinst <<EOT 
 +if [ "\$(grep nand /proc/partitions)" != "" ] && [ "\$(grep mmc /proc/partitions)" = "" ]; then
-+mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /$installed_image_path /tmp/uImage  > /dev/null 2>&1
-+rm -f /$installed_image_path /boot/zImage
-+mv /tmp/uImage /boot/uImage
++mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /$installed_image_path /boot/uImage
++cp /boot/uImage /tmp/uImage
++sync
++mountpoint -q /boot || mount /boot
++cp /tmp/uImage /boot/uImage
++rm -f /$installed_image_path
 +else
 +ln -sf $(basename $installed_image_path) /boot/zImage > /dev/null 2>&1 || mv /$installed_image_path /boot/zImage
++fi
++if [ -f "/boot/initrd.img-$version" ]; then 
++mkimage -A $UTS_MACHINE -O linux -T ramdisk -C gzip -a 0 -e 0 -n uInitrd -d /boot/initrd.img-$version /boot/uInitrd
++rm /boot/initrd.img-$version
 +fi
 +rm -f /boot/.next
 +exit 0
@@ -201,16 +217,35 @@ index ed7ccdc..4bda948 100644
 +##
 +## FAT install workaround
 +##
++sed -e "s/set -e//g" -i $tmpdir/DEBIAN/preinst
 +sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/preinst
 +cat >> $tmpdir/DEBIAN/preinst <<EOT 
++# exit if we are running chroot
++if [ "\$(stat -c %d:%i /)" != "\$(stat -c %d:%i /proc/1/root/.)" ]; then exit 0; fi
 +rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/zImage /boot/uImage /boot/initrd*
++
++check_and_unmount (){
++boot_device=\$(mountpoint -d /boot)
++
++for file in /dev/* ; do
++	CURRENT_DEVICE=\$(printf "%d:%d" \$(stat --printf="0x%t 0x%T" \$file))
++	if [ \$CURRENT_DEVICE = \$boot_device ]; then
++		boot_partition=\$file
++		break;
++	fi
++done
++
++bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
++if [ "\$bootfstype" = "vfat" ]; then umount /boot; fi
++}
++mountpoint -q /boot || check_and_unmount
 +EOT
 +echo "exit 0" >> $tmpdir/DEBIAN/preinst 
 +
  # Try to determine maintainer and email values
  if [ -n "$DEBEMAIL" ]; then
         email=$DEBEMAIL
-@@ -242,14 +320,17 @@ EOF
+@@ -242,17 +344,22 @@ EOF
  
  fi
  
@@ -234,7 +269,12 @@ index ed7ccdc..4bda948 100644
  ln -sf "/usr/src/linux-headers-$version" "$kernel_headers_dir/lib/modules/$version/build"
  rm -f "$objtree/debian/hdrsrcfiles" "$objtree/debian/hdrobjfiles"
  
-@@ -266,7 +347,8 @@ EOF
++olddir="$(pwd)"; cd "$destdir"; make M=scripts clean; cd $olddir
++
+ cat <<EOF >> debian/control
+ 
+ Package: $kernel_headers_packagename
+@@ -266,7 +373,8 @@ EOF
  
  # Do we have firmware? Move it out of the way and build it into a package.
  if [ -e "$tmpdir/lib/firmware" ]; then
@@ -244,7 +284,7 @@ index ed7ccdc..4bda948 100644
  
  	cat <<EOF >> debian/control
  
-@@ -292,9 +374,35 @@ EOF
+@@ -292,9 +400,35 @@ EOF
  
  if [ "$ARCH" != "um" ]; then
  	create_package "$kernel_headers_packagename" "$kernel_headers_dir"
