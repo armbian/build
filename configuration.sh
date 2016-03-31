@@ -27,7 +27,7 @@
 
 # common options
 
-REVISION="5.06" # all boards have same revision
+REVISION="5.07" # all boards have same revision
 ARCH="armhf"
 CROSS_COMPILE="arm-linux-gnueabihf-"
 TARGETS="zImage"
@@ -626,7 +626,7 @@ PACKAGE_LIST="automake bash-completion bc bridge-utils build-essential cmake cpu
 	iw libtool libwrap0-dev libssl-dev lirc lsof fake-hwclock wpasupplicant libusb-dev psmisc \
 	ntp parted pkg-config pv rfkill rsync sudo curl dialog crda wireless-regdb ncurses-term \
 	sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools \
-	console-setup console-data console-common unicode-data openssh-server libmtp-runtime initramfs-tools"
+	console-setup console-data console-common unicode-data openssh-server libmtp-runtime initramfs-tools ca-certificates"
 
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools bluez hddtemp i2c-tools iperf ir-keytable iotop iozone3 weather-util weather-util-data stress \
@@ -637,18 +637,22 @@ PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools bluez hddtemp i2c-tools iperf ir
 case $RELEASE in
 	wheezy)
 	PACKAGE_LIST_RELEASE="less makedev kbd libnl-dev acpid acpi-support-base"
+	PACKAGE_LIST_EXCLUDE=""
 	;;
 	jessie)
 	PACKAGE_LIST_RELEASE="less makedev kbd thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd \
 		software-properties-common python-software-properties libnss-myhostname f2fs-tools"
+	PACKAGE_LIST_EXCLUDE=""
 	;;
-	trusty)
+	trusty)	
 	PACKAGE_LIST_RELEASE="man-db wget iptables nano libnl-3-dev libnl-genl-3-dev software-properties-common \
 		python-software-properties f2fs-tools acpid"
+	PACKAGE_LIST_EXCLUDE="ureadahead plymouth"
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget iptables nano thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd \
 		software-properties-common python-software-properties libnss-myhostname f2fs-tools"
+	PACKAGE_LIST_EXCLUDE=""
 	;;
 esac
 
