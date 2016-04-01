@@ -256,6 +256,7 @@ case $BOARD in
 
 	bananapim2plus)#enabled
 		# description H3 quad core 1Gb SoC Wifi
+		#build 6wip
 		LINUXFAMILY="sun8i"
 		BOOTCONFIG="orangepi_plus_defconfig"
 		MODULES="#gpio_sunxi #w1-sunxi #w1-gpio #w1-therm #ap6211"
@@ -263,6 +264,8 @@ case $BOARD in
 		CPUMIN="648000"
 		CPUMAX="1200000"
 		GOVERNOR="interactive"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,default"		
 	;;
 
 	cubox-i)#enabled
