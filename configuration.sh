@@ -255,7 +255,7 @@ case $BOARD in
 	;;
 
 	bananapim2plus)#enabled
-		# description H3 quad core 1Gb SoC Wifi
+		#description H3 quad core 1Gb SoC Wifi
 		#build 6wip
 		LINUXFAMILY="sun8i"
 		BOOTCONFIG="orangepi_plus_defconfig"
