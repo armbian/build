@@ -264,7 +264,7 @@ fi
 
 # define package names
 DEB_BRANCH=${BRANCH//default}
-# if not empty, append рнзрут
+# if not empty, append hyphen
 DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
 
 CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
