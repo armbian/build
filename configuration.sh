@@ -265,7 +265,7 @@ case $BOARD in
 		CPUMAX="1200000"
 		GOVERNOR="interactive"
 		CLI_TARGET="%,%"
-		DESKTOP_TARGET="jessie,default"		
+		DESKTOP_TARGET="jessie,default"
 	;;
 
 	cubox-i)#enabled
@@ -397,25 +397,28 @@ case $LINUXFAMILY in
 		[[ -z $LINUXCONFIG && $BRANCH == "default" ]] && LINUXCONFIG="linux-"$LINUXFAMILY-"$BRANCH"
 		[[ -z $LINUXCONFIG && $BRANCH != "default" ]] && LINUXCONFIG="linux-sunxi-"$BRANCH
 		# Kernel
-		KERNEL_DEFAULT='https://github.com/linux-sunxi/linux-sunxi'
-		KERNEL_DEFAULT_BRANCH="sunxi-3.4"
-		KERNEL_DEFAULT_SOURCE="linux-sunxi"
-		# sun8i legacy
+		# sun8i switches
 		if [[ $LINUXFAMILY == sun8i ]]; then
-			# KERNEL_DEFAULT="https://github.com/ssvb/linux-sunxi"
-			# KERNEL_DEFAULT_BRANCH="20151207-embedded-lima-memtester-h3"
 			KERNEL_DEFAULT="https://github.com/O-Computers/linux-sunxi"
 			KERNEL_DEFAULT_BRANCH="h3-wip"
 			KERNEL_DEFAULT_SOURCE="linux-sun8i"
+			KERNEL_DEV=https://github.com/wens/linux
+			KERNEL_DEV_BRANCH=h3-emac
+			KERNEL_DEV_SOURCE="linux-sun8i-mainline"
+		else
+			KERNEL_DEFAULT='https://github.com/linux-sunxi/linux-sunxi'
+			KERNEL_DEFAULT_BRANCH="sunxi-3.4"
+			KERNEL_DEFAULT_SOURCE="linux-sunxi"
+			KERNEL_DEV='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
+			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_DEV='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
+			KERNEL_DEV_BRANCH=""
+			KERNEL_DEV_SOURCE="linux-vanilla"
 		fi
 		KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 		[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 		KERNEL_NEXT_BRANCH="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1`
 		KERNEL_NEXT_SOURCE="linux-vanilla"
-		KERNEL_DEV='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
-		[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_DEV='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
-		KERNEL_DEV_BRANCH=""
-		KERNEL_DEV_SOURCE="linux-vanilla"
+
 		# U-boot
 		UBOOT_DEFAULT="git://git.denx.de/u-boot.git"
 		UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
@@ -705,3 +708,4 @@ echo -e "Config: $LINUXCONFIG\nKernel source: $LINUXKERNEL\nBranch: $KERNELBRANC
 echo -e "linuxsource: $LINUXSOURCE\nOffset: $OFFSET\nbootsize: $BOOTSIZE" >> $DEST/debug/install.log
 echo -e "bootloader: $BOOTLOADER\nbootsource: $BOOTSOURCE\nbootbranch: $BOOTBRANCH" >> $DEST/debug/install.log
 echo -e "CPU $CPUMIN / $CPUMAX with $GOVERNOR" >> $DEST/debug/install.log
+
