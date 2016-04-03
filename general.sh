@@ -314,6 +314,8 @@ prepare_host() {
 	local codename=$(lsb_release -sc)
 	if [[ $codename == "" || "jessie trusty wily" != *"$codename"* ]]; then
 		display_alert "Host system support was not tested" "${codename:-(unknown)}" "wrn"
+		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
+		read
 	fi
 
 	if [[ $codename == jessie ]]; then
