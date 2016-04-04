@@ -70,7 +70,7 @@ cp /boot/script.bin /mnt/bootfs/
 cat > /mnt/bootfs/uEnv.txt <<EOF
 console=ttyS0,115200
 root=$2 rootwait
-extraargs=console="tty1 hdmi.audio=EDID:0 disp.screen0_output_mode=EDID:0 consoleblank=0 loglevel=1"
+extraargs="console=tty1 hdmi.audio=EDID:0 disp.screen0_output_mode=EDID:0 consoleblank=0 loglevel=1"
 EOF
 sync
 [[ $DEVICE_TYPE = "a20" ]] && echo "machid=10bb" >> /mnt/bootfs/uEnv.txt
