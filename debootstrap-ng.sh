@@ -176,7 +176,7 @@ create_rootfs_cache()
 
 		
 		if [[ $ARCH == *64* ]]; then
-			cp /usr/bin/qemu-aarch64-static $CACHEDIR/sdcard/usr/bin/		
+			cp /usr/bin/qemu-aarch64-static $CACHEDIR/sdcard/usr/bin/
 		else
 			cp /usr/bin/qemu-arm-static $CACHEDIR/sdcard/usr/bin/
 		fi

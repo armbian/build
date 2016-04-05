@@ -15,7 +15,7 @@ install_distribution_specific (){
 #---------------------------------------------------------------------------------------------------------------------------------
 # Install board common applications
 #---------------------------------------------------------------------------------------------------------------------------------
-display_alert "Fixing release custom applications." "$RELEASE" "info"
+display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 
 # Common
 
@@ -137,7 +137,7 @@ trusty)
 
 xenial)
 		# enable root login for latest ssh on jessie
-		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
+		sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
 
 		# auto upgrading (disabled while testing)
 		#sed -e "s/ORIGIN/Debian/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
