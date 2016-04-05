@@ -28,7 +28,7 @@ CONSOLE_CHAR="UTF-8"
 # advanced
 KERNEL_KEEP_CONFIG="no"					# overwrite kernel config before compilation
 EXTERNAL="yes"						# compile extra drivers`
-FORCE_CHECKOUT="yes"					# igre manual changes to source
+FORCE_CHECKOUT="yes"					# ignore manual changes to source
 BUILD_ALL="no"						# cycle through selected boards and make images
 
 # build script version to use
