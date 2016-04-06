@@ -45,14 +45,19 @@ Image writing takes around 3 minutes on a slow, class 6 SD card.
 
 Important: Make sure you use a **good & reliable** SD card. If you encounter boot troubles or simply as a measure of precaution, check them with [F3](http://oss.digirati.com.br/f3/) or [H2testw](http://www.heise.de/download/h2testw.html).
 
-Also important: SD cards are optimised for sequential reads/writes as it's common in digital cameras. This is what the *speed class* is about. And while you shouldn't buy any card rated less than *class 10* today you should especially take care to choose one that is known to show high random I/O performance since this is way more performance relevant when used with any SBC (see [this](http://www.jeffgeerling.com/blogs/jeff-geerling/raspberry-pi-microsd-card) or [this](http://thewirecutter.com/reviews/best-microsd-card/) or benchmarked comparison for example).
+Also important: SD cards are optimised for sequential reads/writes as it's common in digital cameras. This is what the *speed class* is about. And while you shouldn't buy any card rated less than *class 10* today you should especially take care to choose one that is known to show high random I/O performance since this is way more performance relevant when used with any SBC. 
 
-Recommended cards - from minimum to overkill:
+You won't be wrong picking one of these:
 
 [![Samsung EVO 16GB UHS-I](http://www.armbian.com/wp-content/uploads/2016/03/sdcard-samsung-1.png)](http://www.amazon.com/dp/B00IVPU7KE)
 [![Transcend Ultimate 16 GB UHS-I](http://www.armbian.com/wp-content/uploads/2016/03/sdcard-transcend-1.png)](http://www.amazon.com/gp/product/B00BLHWYWS)
 [![SanDisk Extreme Pro 16 GB UHS-I](http://www.armbian.com/wp-content/uploads/2016/03/sdcard-sandisk-1.png)](http://www.amazon.com/dp/B008HK1YAA)
 
+Detailed informations regarding SD cards performance:
+
+- [SD card performance with Armbian - Thomas Kaiser](http://forum.armbian.com/index.php/topic/954-sd-card-performance/)
+- [Raspberry Pi microSD card performance comparison - Jeff Geerling](http://www.jeffgeerling.com/blogs/jeff-geerling/raspberry-pi-microsd-card)
+- [The Best microSD Card - Kimber Streams](http://thewirecutter.com/reviews/best-microsd-card/)
 
 # How to boot?
 
