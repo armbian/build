@@ -402,7 +402,7 @@ fi
 if [ "${LINUXFAMILY}" = "sun8i" -a "${BRANCH}" = "default" ]; then
 	install -m 755 "$SRC/lib/scripts/h3disp" "$CACHEDIR/sdcard/usr/local/bin"
 	install -m 755 "$SRC/lib/scripts/sun8i-corekeeper.sh" "$CACHEDIR/sdcard/usr/local/bin"
-	sed -i 's|^exit\ 0$|/usr/local/bin/corekeeper.sh \&\n\n&|' "$CACHEDIR/sdcard/etc/rc.local"
+	sed -i 's|^exit\ 0$|/usr/local/bin/sun8i-corekeeper.sh \&\n\n&|' "$CACHEDIR/sdcard/etc/rc.local"
 fi
 }
 
