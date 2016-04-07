@@ -110,14 +110,15 @@ install_board_specific (){
 		cp $SRC/lib/scripts/brcm4330 $CACHEDIR/sdcard/etc/default
 		cp $SRC/lib/scripts/brcm4330-patch $CACHEDIR/sdcard/etc/init.d
 		chroot $CACHEDIR/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
-		chroot $CACHEDIR/sdcard /bin/bash -c "update-rc.d brcm4330-patch defaults>> /dev/null"
+		chroot $CACHEDIR/sdcard /bin/bash -c "LC_ALL=C LANG=C update-rc.d brcm4330-patch defaults>> /dev/null"
 
 	fi
 
 	# install custom root package
+	display_alert "Install board support package" "$BOARD" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb > /dev/null"
 
-	# remove not needed packages
+	# remove not needed packages	
 	chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq autoremove >/dev/null 2>&1"
 
 	# enable first run script
