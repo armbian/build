@@ -279,29 +279,33 @@ install_external_applications (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install external applications example
 #--------------------------------------------------------------------------------------------------------------------------------
-display_alert "Installing external applications" "USB redirector" "info"
-if [[ $ARCH == *64* ]]; then ARCHITECTURE=arm64; else ARCHITECTURE=arm; fi
-# USB redirector tools http://www.incentivespro.com
-cd $SOURCES
-wget -q http://www.incentivespro.com/usb-redirector-linux-arm-eabi.tar.gz
-tar xfz usb-redirector-linux-arm-eabi.tar.gz
-rm usb-redirector-linux-arm-eabi.tar.gz
-cd $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd
-# patch to work with newer kernels
-sed -e "s/f_dentry/f_path.dentry/g" -i usbdcdev.c
-make -j1 ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE KERNELDIR=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/install.log
-# configure USB redirector
-sed -e 's/%INSTALLDIR_TAG%/\/usr\/local/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1
-sed -e 's/%PIDFILE_TAG%/\/var\/run\/usbsrvd.pid/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
-sed -e 's/%STUBNAME_TAG%/tusbd/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1
-sed -e 's/%DAEMONNAME_TAG%/usbsrvd/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
-chmod +x $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
-# copy to root
-cp $SOURCES/usb-redirector-linux-arm-eabi/files/usb* $CACHEDIR/sdcard/usr/local/bin/
-cp $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd/tusbd.ko $CACHEDIR/sdcard/usr/local/bin/
-cp $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd $CACHEDIR/sdcard/etc/init.d/
-# not started by default ----- update.rc rc.usbsrvd defaults
-# chroot $CACHEDIR/sdcard /bin/bash -c "update-rc.d rc.usbsrvd defaults"
+IFS='.' read -a array <<< "$VER"
+# USB redirector broken for old kernels
+if (( "${array[0]}" == "4" )) && (( "${array[1]}" >= "1" )); then
+	display_alert "Installing external applications" "USB redirector" "info"
+	if [[ $ARCH == *64* ]]; then ARCHITECTURE=arm64; else ARCHITECTURE=arm; fi
+	# USB redirector tools http://www.incentivespro.com
+	cd $SOURCES
+	wget -q http://www.incentivespro.com/usb-redirector-linux-arm-eabi.tar.gz
+	tar xfz usb-redirector-linux-arm-eabi.tar.gz
+	rm usb-redirector-linux-arm-eabi.tar.gz
+	cd $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd
+	# patch to work with newer kernels
+	sed -e "s/f_dentry/f_path.dentry/g" -i usbdcdev.c
+	make -j1 ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE KERNELDIR=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/install.log
+	# configure USB redirector
+	sed -e 's/%INSTALLDIR_TAG%/\/usr\/local/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1
+	sed -e 's/%PIDFILE_TAG%/\/var\/run\/usbsrvd.pid/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
+	sed -e 's/%STUBNAME_TAG%/tusbd/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1
+	sed -e 's/%DAEMONNAME_TAG%/usbsrvd/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
+	chmod +x $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
+	# copy to root
+	cp $SOURCES/usb-redirector-linux-arm-eabi/files/usb* $CACHEDIR/sdcard/usr/local/bin/
+	cp $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd/tusbd.ko $CACHEDIR/sdcard/usr/local/bin/
+	cp $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd $CACHEDIR/sdcard/etc/init.d/
+	# not started by default ----- update.rc rc.usbsrvd defaults
+	# chroot $CACHEDIR/sdcard /bin/bash -c "update-rc.d rc.usbsrvd defaults
+fi
 
 # some aditional stuff. Some driver as example
 if [[ -n "$MISC3_DIR" ]]; then
