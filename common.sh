@@ -26,43 +26,35 @@ compile_uboot (){
 	fi
 
 	display_alert "Compiling uboot. Please wait." "$VER" "info"
-	echo `date +"%d.%m.%Y %H:%M:%S"` $SOURCES/$BOOTSOURCEDIR/$BOOTCONFIG >> $DEST/debug/install.log
+	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} echo 'Using gcc $(${CROSS_COMPILE}gcc --version | head -1)' | tee -a $DEST/debug/install.log
+	echo
 	cd $SOURCES/$BOOTSOURCEDIR
-	make -s ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE clean >/dev/null 2>&1
 
-	# there are two methods of compilation
-	if [[ $BOOTCONFIG == *config* ]]; then
+	local cthreads=$CTHREADS
+	[[ $LINUXFAMILY == "marvell" ]] && local MAKEPARA="u-boot.mmc"
+	[[ $BOARD == "odroidc2" ]] && local MAKEPARA="ARCH=arm" && local cthreads=""
 
-		# workarounds
-		local cthreads=$CTHREADS
-		[[ $LINUXFAMILY == "marvell" ]] && local MAKEPARA="u-boot.mmc"
-		[[ $BOARD == "odroidc2" ]] && local MAKEPARA="ARCH=arm" && local cthreads=""
+	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CROSS_COMPILE"' 2>&1 \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+	[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
+	[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
+	[ -f $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp ] && cp $SRC/lib/bin/armbian-u-boot.bmp $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp
+	touch .scmversion
 	
-		make $CTHREADS $BOOTCONFIG CROSS_COMPILE=$CROSS_COMPILE >/dev/null 2>&1
-		[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
-		[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
-		[ -f $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp ] && cp $SRC/lib/bin/armbian-u-boot.bmp $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp
-		touch .scmversion	
-		
-		# patch mainline uboot configuration to boot with old kernels
-		if [[ $BRANCH == "default" && $LINUXFAMILY == sun*i ]] ; then
-			if [ "$(cat $SOURCES/$BOOTSOURCEDIR/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
-				echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
-				echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
-			fi
+	# patch mainline uboot configuration to boot with old kernels
+	if [[ $BRANCH == "default" && $LINUXFAMILY == sun*i ]] ; then
+		if [ "$(cat $SOURCES/$BOOTSOURCEDIR/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
+			echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
+			echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
 		fi
-
-		eval 'make $MAKEPARA $cthreads CROSS_COMPILE="$CCACHE $CROSS_COMPILE" 2>&1' \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
-		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
-		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-	else
-		eval 'make $MAKEPARA $cthreads $BOOTCONFIG CROSS_COMPILE="$CCACHE $CROSS_COMPILE" 2>&1' \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
-		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
-		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 	fi
 
+	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} 'make $MAKEPARA $cthreads CROSS_COMPILE="$CROSS_COMPILE"' 2>&1 \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
+		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 	# create .deb package
 
@@ -177,6 +169,7 @@ compile_sunxi_tools (){
 	cp fex2bin bin2fex /usr/local/bin/
 	# make -s clean >/dev/null 2>&1
 	# rm -f sunxi-fexc sunxi-nand-part meminfo sunxi-fel sunxi-pio 2>/dev/null
+	# NOTE: Fix CC=$CROSS_COMPILE"gcc" before reenabling
 	# make $CTHREADS 'sunxi-nand-part' CC=$CROSS_COMPILE"gcc" >> $DEST/debug/install.log 2>&1
 	# make $CTHREADS 'sunxi-fexc' CC=$CROSS_COMPILE"gcc" >> $DEST/debug/install.log 2>&1
 	# make $CTHREADS 'meminfo' CC=$CROSS_COMPILE"gcc" >> $DEST/debug/install.log 2>&1
@@ -197,6 +190,8 @@ compile_kernel (){
 	grab_version "$SOURCES/$LINUXSOURCEDIR"
 
 	display_alert "Compiling $BRANCH kernel" "@host" "info"
+	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} echo 'Using gcc $(${CROSS_COMPILE}gcc --version | head -1)' | tee -a $DEST/debug/install.log
+	echo
 	cd $SOURCES/$LINUXSOURCEDIR/
 
 	# adding custom firmware to kernel source
@@ -228,16 +223,16 @@ compile_kernel (){
 	# We can use multi threading here but not later since it's not working. This way of compilation is much faster.
 	if [ "$KERNEL_CONFIGURE" != "yes" ]; then
 		if [ "$BRANCH" = "default" ]; then
-			make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE silentoldconfig
+			eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" silentoldconfig'
 		else
-			make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+			eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" olddefconfig'
 		fi
 	else
-		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE oldconfig
-		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE menuconfig
+		eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" oldconfig'
+		eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" menuconfig'
 	fi
 
-	eval 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $CROSS_COMPILE" $TARGETS modules 2>&1' \
+	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" $TARGETS modules dtbs 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -245,15 +240,6 @@ compile_kernel (){
 	if [ ${PIPESTATUS[0]} -ne 0 ] || [ ! -f arch/$ARCHITECTURE/boot/$TARGETS ]; then
 			exit_with_error "Kernel was not built" "@host"
 	fi
-	eval 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $CROSS_COMPILE" dtbs 2>&1' \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
-		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling Device Tree..." $TTY_Y $TTY_X'} \
-		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-
-	if [ ${PIPESTATUS[0]} -ne 0 ]; then
-		exit_with_error "DTBs were not build" "@host"
-	fi
-
 
 	# different packaging for 4.3+ // probably temporaly soution
 	KERNEL_PACKING="deb-pkg"
@@ -262,10 +248,9 @@ compile_kernel (){
 		KERNEL_PACKING="bindeb-pkg"
 	fi
 
-	# make $CTHREADS ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE
-	# produce deb packages: image, headers, firmware, libc
-	eval 'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY KBUILD_DEBARCH=$ARCH ARCH=$ARCHITECTURE DEBFULLNAME="$MAINTAINER" \
-		DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE $CROSS_COMPILE" 2>&1 ' \
+	# produce deb packages: image, headers, firmware, dtb
+	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY \
+		KBUILD_DEBARCH=$ARCH ARCH=$ARCHITECTURE DEBFULLNAME="$MAINTAINER" DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CROSS_COMPILE" 2>&1 ' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -292,7 +277,7 @@ if (( "${array[0]}" == "4" )) && (( "${array[1]}" >= "1" )); then
 	cd $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd
 	# patch to work with newer kernels
 	sed -e "s/f_dentry/f_path.dentry/g" -i usbdcdev.c
-	make -j1 ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE KERNELDIR=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/install.log
+	make -j1 ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" KERNELDIR=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/install.log
 	# configure USB redirector
 	sed -e 's/%INSTALLDIR_TAG%/\/usr\/local/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1
 	sed -e 's/%PIDFILE_TAG%/\/var\/run\/usbsrvd.pid/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
@@ -313,8 +298,8 @@ if [[ -n "$MISC3_DIR" ]]; then
 	# https://github.com/pvaret/rtl8192cu-fixes
 	cd $SOURCES/$MISC3_DIR
 	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
-	make ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE clean >/dev/null 2>&1
-	(make ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE KSRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
+	make ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" clean >/dev/null 2>&1
+	(make ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" KSRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
 	cp *.ko $CACHEDIR/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
 	depmod -b $CACHEDIR/sdcard/ $VER-$LINUXFAMILY
 	#cp blacklist*.conf $CACHEDIR/sdcard/etc/modprobe.d/
@@ -327,7 +312,7 @@ if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sunxi* ]]; the
 	cd "$SOURCES/$MISC5_DIR"
 	cp "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" .
 	make clean >/dev/null 2>&1
-	(make ARCH=$ARCHITECTURE CC=$CROSS_COMPILE"gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null 2>&1)
+	(make ARCH=$ARCHITECTURE CC="${CROSS_COMPILE}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null)
 	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
 fi
 # MISC5 = sunxi display control / compile it for sun8i just in case sun7i stuff gets ported to sun8i and we're able to use it
@@ -335,7 +320,7 @@ if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sun8i* ]]; the
 	cd "$SOURCES/$MISC5_DIR"
 	wget -q "https://raw.githubusercontent.com/linux-sunxi/linux-sunxi/sunxi-3.4/include/video/sunxi_disp_ioctl.h"
 	make clean >/dev/null 2>&1
-	(make ARCH=$ARCHITECTURE CC=$CROSS_COMPILEgcc KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null 2>&1)
+	(make ARCH=$ARCHITECTURE CC="${CROSS_COMPILE}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null)
 	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
 fi
 
@@ -388,8 +373,8 @@ _EOF_
 
 	patch -f -s -p1 -r - <fix_build.patch >/dev/null
 	cd src
-	make -s ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE clean >/dev/null 2>&1
-	(make -s -j4 ARCH=$ARCHITECTURE CROSS_COMPILE=$CROSS_COMPILE LINUX_SRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
+	make -s ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" clean >/dev/null 2>&1
+	(make -s -j4 ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" LINUX_SRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
 	cp os/linux/*.ko $CACHEDIR/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
 	mkdir -p $CACHEDIR/sdcard/etc/Wireless/RT2870STA
 	cp RT2870STA.dat $CACHEDIR/sdcard/etc/Wireless/RT2870STA/

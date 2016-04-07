@@ -29,7 +29,7 @@
 
 REVISION="5.07" # all boards have same revision
 ARCH="armhf"
-CROSS_COMPILE="arm-linux-gnueabihf-"
+CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-"
 TARGETS="zImage"
 ROOTPWD="1234" # Must be changed @first login
 MAINTAINER="Igor Pecovnik" # deb signature
@@ -348,7 +348,7 @@ case $BOARD in
 		#description S905 C2 quad core
 		#build 1wip
 		ARCH="arm64"
-		CROSS_COMPILE="aarch64-linux-gnu-"
+		CROSS_COMPILE="$CCACHE aarch64-linux-gnu-"
 		CCACHE=""
 		TARGETS="Image"
 		LINUXFAMILY="odroidc2"
