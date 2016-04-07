@@ -258,7 +258,7 @@ case $BOARD in
 		#description H3 quad core 1Gb SoC Wifi
 		#build 6wip
 		LINUXFAMILY="sun8i"
-		BOOTCONFIG="orangepi_plus_defconfig"
+		BOOTCONFIG="Sinovoip_BPI_M2_plus_defconfig"
 		MODULES="#gpio_sunxi #w1-sunxi #w1-gpio #w1-therm #ap6211"
 		MODULES_NEXT="brcmfmac"
 		CPUMIN="240000"
