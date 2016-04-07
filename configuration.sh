@@ -261,7 +261,7 @@ case $BOARD in
 		BOOTCONFIG="orangepi_plus_defconfig"
 		MODULES="#gpio_sunxi #w1-sunxi #w1-gpio #w1-therm #ap6211"
 		MODULES_NEXT="brcmfmac"
-		CPUMIN="648000"
+		CPUMIN="240000"
 		CPUMAX="1200000"
 		GOVERNOR="interactive"
 		CLI_TARGET="%,%"
