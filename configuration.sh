@@ -348,8 +348,8 @@ case $BOARD in
 		#description S905 C2 quad core
 		#build 1wip
 		ARCH="arm64"
+		#CROSS_COMPILE="$CCACHE aarch64-linux-gnu-"
 		CROSS_COMPILE="aarch64-linux-gnu-"
-		CCACHE=""
 		TARGETS="Image"
 		LINUXFAMILY="odroidc2"
 		BOOTSIZE="32"
@@ -357,7 +357,7 @@ case $BOARD in
 		BOOTCONFIG="odroidc2_config"
 		MODULES="bonding"
 		MODULES_NEXT=""
-        CPUMIN="500000"
+		CPUMIN="500000"
 		CPUMAX="2016000"
 		GOVERNOR="conservative"
 		SERIALCON="ttyS0"
@@ -384,7 +384,12 @@ case $BOARD in
 		CLI_TARGET="%,%"
 	;;
 
-	*) exit_with_error "Board configuration not found" "$BOARD"
+	*)
+		if [[ -f $SRC/lib/config/boards/$BOARD.board ]]; then
+			source $SRC/lib/config/boards/$BOARD.board
+		else
+			exit_with_error "Board configuration not found" "$BOARD"
+		fi
 	;;
 esac
 
@@ -603,7 +608,12 @@ case $LINUXFAMILY in
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 	;;
 
-	*) exit_with_error "Defaults not found" "$LINUXFAMILY"
+	*)
+		if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.family ]]; then
+			source $SRC/lib/config/sources/$LINUXFAMILY.family
+		else
+			exit_with_error "Sources configuration not found" "$LINUXFAMILY"
+		fi
 	;;
 esac
 
