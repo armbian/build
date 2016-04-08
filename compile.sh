@@ -27,7 +27,7 @@ CONSOLE_CHAR="UTF-8"
 
 # advanced
 KERNEL_KEEP_CONFIG="no"					# overwrite kernel config before compilation
-EXTERNAL="yes"						# compile extra drivers`
+EXTERNAL="yes"						# install extra applications and drivers
 FORCE_CHECKOUT="yes"					# ignore manual changes to source
 BUILD_ALL="no"						# cycle through selected boards and make images
 

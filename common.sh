@@ -260,131 +260,33 @@ compile_kernel (){
 }
 
 
-install_external_applications (){
+install_external_applications ()
+{
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install external applications example
 #--------------------------------------------------------------------------------------------------------------------------------
-IFS='.' read -a array <<< "$VER"
-# USB redirector broken for old kernels
-if (( "${array[0]}" == "4" )) && (( "${array[1]}" >= "1" )); then
-	display_alert "Installing external applications" "USB redirector" "info"
-	if [[ $ARCH == *64* ]]; then ARCHITECTURE=arm64; else ARCHITECTURE=arm; fi
-	# USB redirector tools http://www.incentivespro.com
-	cd $SOURCES
-	wget -q http://www.incentivespro.com/usb-redirector-linux-arm-eabi.tar.gz
-	tar xfz usb-redirector-linux-arm-eabi.tar.gz
-	rm usb-redirector-linux-arm-eabi.tar.gz
-	cd $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd
-	# patch to work with newer kernels
-	sed -e "s/f_dentry/f_path.dentry/g" -i usbdcdev.c
-	make -j1 ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" KERNELDIR=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/install.log
-	# configure USB redirector
-	sed -e 's/%INSTALLDIR_TAG%/\/usr\/local/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1
-	sed -e 's/%PIDFILE_TAG%/\/var\/run\/usbsrvd.pid/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
-	sed -e 's/%STUBNAME_TAG%/tusbd/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1
-	sed -e 's/%DAEMONNAME_TAG%/usbsrvd/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
-	chmod +x $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
-	# copy to root
-	cp $SOURCES/usb-redirector-linux-arm-eabi/files/usb* $CACHEDIR/sdcard/usr/local/bin/
-	cp $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd/tusbd.ko $CACHEDIR/sdcard/usr/local/bin/
-	cp $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd $CACHEDIR/sdcard/etc/init.d/
-	# not started by default ----- update.rc rc.usbsrvd defaults
-	# chroot $CACHEDIR/sdcard /bin/bash -c "update-rc.d rc.usbsrvd defaults
-fi
+display_alert "Installing extra applications and drivers" "customize-image.sh" "info"
 
-# some aditional stuff. Some driver as example
-if [[ -n "$MISC3_DIR" ]]; then
-	display_alert "Installing external applications" "RT8192 driver" "info"
-	# https://github.com/pvaret/rtl8192cu-fixes
-	cd $SOURCES/$MISC3_DIR
-	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
-	make ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" clean >/dev/null 2>&1
-	(make ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" KSRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
-	cp *.ko $CACHEDIR/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
-	depmod -b $CACHEDIR/sdcard/ $VER-$LINUXFAMILY
-	#cp blacklist*.conf $CACHEDIR/sdcard/etc/modprobe.d/
-fi
-
-# MISC4 = NOTRO DRIVERS / special handling
+for plugin in $SRC/lib/extras/*.sh; do
+	source $plugin
+done
 
 # MISC5 = sunxi display control
 if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sunxi* ]]; then
 	cd "$SOURCES/$MISC5_DIR"
 	cp "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" .
-	make clean >/dev/null 2>&1
-	(make ARCH=$ARCHITECTURE CC="${CROSS_COMPILE}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null)
+	make clean >/dev/null
+	make ARCH=$ARCHITECTURE CC="${CROSS_COMPILE}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
 	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
 fi
+
 # MISC5 = sunxi display control / compile it for sun8i just in case sun7i stuff gets ported to sun8i and we're able to use it
 if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sun8i* ]]; then
 	cd "$SOURCES/$MISC5_DIR"
 	wget -q "https://raw.githubusercontent.com/linux-sunxi/linux-sunxi/sunxi-3.4/include/video/sunxi_disp_ioctl.h"
 	make clean >/dev/null 2>&1
-	(make ARCH=$ARCHITECTURE CC="${CROSS_COMPILE}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >/dev/null)
+	make ARCH=$ARCHITECTURE CC="${CROSS_COMPILE}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
 	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
-fi
-
-# MT7601U
-if [[ -n "$MISC6_DIR" && $BRANCH != "next" ]]; then
-	display_alert "Installing external applications" "MT7601U - driver" "info"
-	cd $SOURCES/$MISC6_DIR
-	cat >> fix_build.patch << _EOF_
-diff --git a/src/dkms.conf b/src/dkms.conf
-new file mode 100644
-index 0000000..7563b5a
---- /dev/null
-+++ b/src/dkms.conf
-@@ -0,0 +1,8 @@
-+PACKAGE_NAME="mt7601-sta-dkms"
-+PACKAGE_VERSION="3.0.0.4"
-+CLEAN="make clean"
-+BUILT_MODULE_NAME[0]="mt7601Usta"
-+BUILT_MODULE_LOCATION[0]="./os/linux/"
-+DEST_MODULE_LOCATION[0]="/kernel/drivers/net/wireless"
-+AUTOINSTALL=yes
-+MAKE[0]="make -j4 KERNELVER=\$kernelver"
-diff --git a/src/include/os/rt_linux.h b/src/include/os/rt_linux.h
-index 3726b9e..b8be886 100755
---- a/src/include/os/rt_linux.h
-+++ b/src/include/os/rt_linux.h
-@@ -279,7 +279,7 @@ typedef struct file* RTMP_OS_FD;
- 
- typedef struct _OS_FS_INFO_
- {
--#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0)
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,4,0)
- 	uid_t				fsuid;
- 	gid_t				fsgid;
- #else
-diff --git a/src/os/linux/rt_linux.c b/src/os/linux/rt_linux.c
-index 1b6a631..c336611 100755
---- a/src/os/linux/rt_linux.c
-+++ b/src/os/linux/rt_linux.c
-@@ -51,7 +51,7 @@
- #define RT_CONFIG_IF_OPMODE_ON_STA(__OpMode)
- #endif
- 
--ULONG RTDebugLevel = RT_DEBUG_TRACE;
-+ULONG RTDebugLevel = 0;
- ULONG RTDebugFunc = 0;
- 
- #ifdef OS_ABL_FUNC_SUPPORT
-_EOF_
-
-	patch -f -s -p1 -r - <fix_build.patch >/dev/null
-	cd src
-	make -s ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" clean >/dev/null 2>&1
-	(make -s -j4 ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" LINUX_SRC=$SOURCES/$LINUXSOURCEDIR/ >/dev/null 2>&1)
-	cp os/linux/*.ko $CACHEDIR/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
-	mkdir -p $CACHEDIR/sdcard/etc/Wireless/RT2870STA
-	cp RT2870STA.dat $CACHEDIR/sdcard/etc/Wireless/RT2870STA/
-	depmod -b $CACHEDIR/sdcard/ $VER-$LINUXFAMILY
-	make -s clean 1>&2 2>/dev/null
-	cd ..
-	mkdir -p $CACHEDIR/sdcard/usr/src/
-	cp -R src $CACHEDIR/sdcard/usr/src/mt7601-3.0.0.4
-	# TODO: Set the module to build automatically via dkms in the future here
-
 fi
 
 # h3disp/sun8i-corekeeper.sh for sun8i/3.4.x

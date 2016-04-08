@@ -80,9 +80,7 @@ debootstrap_ng()
 	fi
 
 	# install additional applications
-	if [[ $EXTERNAL == yes ]]; then
-		install_external_applications
-	fi
+	[[ $EXTERNAL == yes ]] && install_external_applications
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount

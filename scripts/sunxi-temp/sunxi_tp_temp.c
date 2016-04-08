@@ -13,7 +13,7 @@
 
 //#define _debug ;
 
-const SoCTempAdjustment = 1447 ;
+const int SoCTempAdjustment = 1447 ;
 
 int main(int argc, char *argv[])
 {
@@ -31,7 +31,7 @@ int main(int argc, char *argv[])
     printf("r 0x01c25020: %08lx\n", mmio_read(0x01c25020)) ;
   #endif
 
-  printf("%0.1f\n",(float)(mmio_read(0x01c25020)-SoCTempAdjustment)/10);
+  printf("%0.1f\n",(float)(mmio_read(0x01c25020)-SoCTempAdjustment)/10.0);
 
   return 0;
 

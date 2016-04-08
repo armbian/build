@@ -180,9 +180,6 @@ fi
 
 if [ "$BRANCH" == "" ]; then echo "ERROR: You have to choose one branch"; exit; fi
 
-# don't compile external modules on mainline
-if [ "$BRANCH" != "default" ]; then EXTERNAL="no"; fi
-
 # back to normal
 unset IFS
 
@@ -250,11 +247,7 @@ fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE" "$KERNELBRANCH" "yes"
 LINUXSOURCEDIR=$LINUXSOURCE/$GITHUBSUBDIR
 
 if [[ -n "$MISC1" ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
-if [[ -n "$MISC2" ]]; then fetch_from_github "$MISC2" "$MISC2_DIR"; fi
-if [[ -n "$MISC3" ]]; then fetch_from_github "$MISC3" "$MISC3_DIR"; fi
-if [[ -n "$MISC4" ]]; then fetch_from_github "$MISC4" "$MISC4_DIR"; fi
 if [[ -n "$MISC5" ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
-if [[ -n "$MISC6" ]]; then fetch_from_github "$MISC6" "$MISC6_DIR"; fi
 
 # compile sunxi tools
 if [[ $LINUXFAMILY == sun*i ]]; then 
@@ -310,9 +303,7 @@ if [[ $KERNEL_ONLY != yes ]]; then
 		fi
 
 		# install external applications
-		if [ "$EXTERNAL" = "yes" ]; then
-			install_external_applications
-		fi
+		[[ $EXTERNAL == yes ]] && install_external_applications
 
 		# closing image
 		closing_image
