@@ -321,7 +321,7 @@ prepare_partitions()
 	# parttype[nfs] is empty
 
 	mkopts[ext4]='-q' # "-O journal_data_writeback" can be set here
-	mkopts[fat]='-n boot'
+	mkopts[fat]='-n BOOT'
 	# mkopts[f2fs] is empty
 	# mkopts[btrfs] is empty
 	# mkopts[nfs] is empty
@@ -472,14 +472,15 @@ create_image()
 	if [[ $(findmnt --target $CACHEDIR/mount/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
 		rsync -rLtWh --info=progress2,stats1 $CACHEDIR/sdcard/boot $CACHEDIR/mount
+		
 	else
 		# ext4
 		rsync -aHWh --info=progress2,stats1 $CACHEDIR/sdcard/boot $CACHEDIR/mount
+		
 	fi
 
 	# DEBUG: print free space
-	echo
-	echo "Free space:"
+	display_alert "Free space:" "SD card" "info"	
 	df -h | grep "$CACHEDIR/" | tee -a $DEST/debug/debootstrap.log
 
 	# stage: write u-boot
