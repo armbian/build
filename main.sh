@@ -270,15 +270,15 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
 done
 
-[[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] && needs_uboot=yes
-[[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]] && needs_kernel=yes
+[[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] && NEEDS_UBOOT=yes
+[[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]] && NEEDS_KERNEL=yes
 
 # patching sources if we need to compile u-boot or kernel
-[[ $needs_uboot == yes || $needs_kernel == yes ]] && patching_sources
+[[ $NEEDS_UBOOT == yes || $NEEDS_KERNEL == yes ]] && patching_sources
 
 # Compile source if packed not exists
-[[ $needs_uboot = yes ]] && compile_uboot
-[[ $needs_kernel = yes ]] && compile_kernel
+[[ $NEEDS_UBOOT = yes ]] && compile_uboot
+[[ $NEEDS_KERNEL = yes ]] && compile_kernel
 
 [[ -n $RELEASE ]] && create_board_package
 

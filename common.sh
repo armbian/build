@@ -265,7 +265,7 @@ install_external_applications ()
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install external applications example
 #--------------------------------------------------------------------------------------------------------------------------------
-display_alert "Installing extra applications and drivers" "customize-image.sh" "info"
+display_alert "Installing extra applications and drivers" "" "info"
 
 for plugin in $SRC/lib/extras/*.sh; do
 	source $plugin

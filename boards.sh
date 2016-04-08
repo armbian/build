@@ -173,7 +173,7 @@ install_kernel (){
 # Install kernel to prepared root file-system
 #--------------------------------------------------------------------------------------------------------------------------------
 
-	display_alert "Install kernel" "$CHOSEN_KERNEL" "info"
+	display_alert "Installing packages" "$CHOSEN_KERNEL" "info"
 
 	# configure MIN / MAX speed for cpufrequtils
 	echo "ENABLE=true" > $CACHEDIR/sdcard/etc/default/cpufrequtils
@@ -228,22 +228,22 @@ install_kernel (){
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb >/dev/null 2>&1"
 
 	# install uboot
-	display_alert "Install u-boot" "$CHOSEN_UBOOT" "info"
+	display_alert "Installing u-boot" "$CHOSEN_UBOOT" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb > /dev/null"
 
 	# install headers
-	display_alert "Install headers" "$HEADERS_TMP" "info"
+	display_alert "Installing headers" "$HEADERS_TMP" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${HEADERS_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
 
 	# install firmware
 	if [[ -f $CACHEDIR/sdcard/tmp/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
-		display_alert "Install firmware" "$FW_TMP" "info"
+		display_alert "Installing firmware" "$FW_TMP" "info"
 		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
 	fi
 	
 	# install DTB
 	if [[ -f $CACHEDIR/sdcard/tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb ]]; then
-		display_alert "Install DTB" "$DTB_TMP" "info"
+		display_alert "Installing DTB" "$DTB_TMP" "info"
 		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
 	fi
 
