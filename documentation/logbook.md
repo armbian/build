@@ -2,12 +2,12 @@
 
 **v5.05 / 8.3.2016**
 
-- H3 images rebuilded. Updating from older also possible.
+- H3 images rebuilt. Updating from older also possible.
 - Udoo quad images upgraded to 4.4.4
 
 **v5.04 / 1.3.2016**
 
-- Banana M1/PRO/M1+ rebuilded
+- Banana M1/PRO/M1+ rebuilt
 - fixed SATA problem
 - set OTG port in HOST mode in vanilla kernel
 - wireless is working on PRO out of the box
@@ -16,19 +16,19 @@
 
 **v5.04 / 28.2.2016**
 
-- H3 images rebuilded
+- H3 images rebuilt
 - added desktop images for H3 based boards
-- rebuilded Cubieboard 1 & 2 with 3.4.110 and 4.4.3
+- rebuilt Cubieboard 1 & 2 with 3.4.110 and 4.4.3
 - fixed Bluetooth on Cubietruck + rebuild with 3.4.110 and 4.4.3
 - all new images has no login policy: forced user generation
 
 **v5.03 / 20.2.2016**
 
-- H3 images rebuilded
+- H3 images rebuilt
 
 **v5.02 / 18.2.2016**
 
-- H3 images rebuilded
+- H3 images rebuilt
 
 **v5.01 / 17.2.2016**
 
