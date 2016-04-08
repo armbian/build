@@ -26,7 +26,7 @@ compile_uboot (){
 	fi
 
 	display_alert "Compiling uboot. Please wait." "$VER" "info"
-	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} echo 'Using gcc $(${CROSS_COMPILE}gcc --version | head -1)' | tee -a $DEST/debug/install.log
+	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${CROSS_COMPILE}gcc --version | head -1 | tee -a $DEST/debug/install.log
 	echo
 	cd $SOURCES/$BOOTSOURCEDIR
 
@@ -190,7 +190,7 @@ compile_kernel (){
 	grab_version "$SOURCES/$LINUXSOURCEDIR"
 
 	display_alert "Compiling $BRANCH kernel" "@host" "info"
-	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} echo 'Using gcc $(${CROSS_COMPILE}gcc --version | head -1)' | tee -a $DEST/debug/install.log
+	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${CROSS_COMPILE}gcc --version | head -1 | tee -a $DEST/debug/install.log
 	echo
 	cd $SOURCES/$LINUXSOURCEDIR/
 
