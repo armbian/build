@@ -51,13 +51,13 @@ install_board_specific (){
 	if [[ $BOARD == "odroidxu4" ]] ; then
 
 		echo "blacklist ina231_sensor" > $CACHEDIR/sdcard/etc/modprobe.d/blacklist-odroid.conf
-		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove lirc >/dev/null 2>&1"
+		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove --auto-remove lirc >/dev/null 2>&1"
 
 	fi
 
 	# Armada
 	if [[ $BOARD == "armada" ]] ; then
-		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove lirc linux-sound-base alsa-base alsa-utils bluez>/dev/null 2>&1"
+		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove --auto-remove lirc linux-sound-base alsa-base alsa-utils bluez>/dev/null 2>&1"
 	fi
 
 	# Odroid C2
@@ -71,7 +71,7 @@ install_board_specific (){
 	# Udoo
 	if [[ $BOARD == "udoo" ]] ; then
 
-		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove lirc >/dev/null 2>&1"
+		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove --auto-remove lirc >/dev/null 2>&1"
 		sed 's/wlan0/wlan2/' -i $CACHEDIR/sdcard/etc/network/interfaces.default
 		sed 's/wlan0/wlan2/' -i $CACHEDIR/sdcard/etc/network/interfaces.bonding
 		sed 's/wlan0/wlan2/' -i $CACHEDIR/sdcard/etc/network/interfaces.hostapd
@@ -82,7 +82,7 @@ install_board_specific (){
 	# Udoo neo
 	if [[ $BOARD == "udoo-neo" ]] ; then
 
-		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove lirc"
+		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove --auto-remove lirc"
 		sed 's/wlan0/wlan2/' -i $CACHEDIR/sdcard/etc/network/interfaces.default
 		sed 's/wlan0/wlan2/' -i $CACHEDIR/sdcard/etc/network/interfaces.bonding
 		sed 's/wlan0/wlan2/' -i $CACHEDIR/sdcard/etc/network/interfaces.hostapd
@@ -117,9 +117,6 @@ install_board_specific (){
 	# install custom root package
 	display_alert "Install board support package" "$BOARD" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb > /dev/null"
-
-	# remove not needed packages	
-	chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq autoremove >/dev/null 2>&1"
 
 	# enable first run script
 	chroot $CACHEDIR/sdcard /bin/bash -c "update-rc.d firstrun defaults >/dev/null 2>&1"
