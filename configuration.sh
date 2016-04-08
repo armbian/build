@@ -348,7 +348,7 @@ case $BOARD in
 		#description S905 C2 quad core
 		#build 1wip
 		ARCH="arm64"
-		CROSS_COMPILE="$CCACHE aarch64-linux-gnu-"
+		CROSS_COMPILE="aarch64-linux-gnu-"
 		CCACHE=""
 		TARGETS="Image"
 		LINUXFAMILY="odroidc2"
