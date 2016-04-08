@@ -19,20 +19,21 @@ create_board_package (){
 # create .deb package for the rest
 #---------------------------------------------------------------------------------------------------------------------------------
 
-	display_alert "Creating board support package." "$BOARD" "info"
+	display_alert "Creating board support package" "$BOARD" "info"
 
 	if [[ $BRANCH == "next" ]]; then
 		ROOT_BRACH="-next";
 	else
 		ROOT_BRACH="";
 	fi
-	
+
 	local destination=$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
 	local controlfile=$destination/DEBIAN/control
-	
-	mkdir -p $destination/DEBIAN	
-	
-	echo "Package: linux-$RELEASE-root$ROOT_BRACH-$BOARD" > $controlfile	
+	local configfilelist=$destination/DEBIAN/conffiles
+
+	mkdir -p $destination/DEBIAN
+
+	echo "Package: linux-$RELEASE-root$ROOT_BRACH-$BOARD" > $controlfile
 	echo "Version: $REVISION" >> $controlfile
 	echo "Architecture: $ARCH" >> $controlfile
 	echo "Maintainer: $MAINTAINER <$MAINTAINERMAIL>" >> $controlfile
@@ -43,14 +44,18 @@ create_board_package (){
 	echo "Description: Root file system tweaks for $BOARD" >> $controlfile
 
 	# set up pre install script
-	echo "#!/bin/bash" > $destination/DEBIAN/preinst	
+	echo "#!/bin/bash" > $destination/DEBIAN/preinst
 	chmod 755 $destination/DEBIAN/preinst
 	echo "[[ -d /boot/bin ]] && rm -rf /boot/bin" >> $destination/DEBIAN/preinst
 	echo "exit 0" >> $destination/DEBIAN/preinst
-	
+
 	# set up post install script
-	echo "#!/bin/bash" > $destination/DEBIAN/postinst	
+	echo "#!/bin/bash" > $destination/DEBIAN/postinst
 	chmod 755 $destination/DEBIAN/postinst
+
+	# won't recreate files if they were removed by user
+	echo "/tmp/.reboot_required" > $configfilelist
+	echo "/boot/.verbose" >> $configfilelist
 
 	# scripts for autoresize at first boot
 	mkdir -p $destination/etc/init.d
@@ -66,7 +71,7 @@ create_board_package (){
 	echo "update-rc.d -f motd remove >/dev/null 2>&1" >> $destination/DEBIAN/postinst
 	echo "[[ -f /root/.nand1-allwinner.tgz ]] && rm /root/.nand1-allwinner.tgz" >> $destination/DEBIAN/postinst
 	echo "[[ -f /root/nand-sata-install ]] && rm /root/nand-sata-install" >> $destination/DEBIAN/postinst
-	echo "ln -sf /var/run/motd /etc/motd" >> $destination/DEBIAN/postinst	
+	echo "ln -sf /var/run/motd /etc/motd" >> $destination/DEBIAN/postinst
 	echo "[[ -f /etc/bash.bashrc.custom ]] && rm /etc/bash.bashrc.custom" >> $destination/DEBIAN/postinst
 	echo "if [[ -d /boot/bin && ! -f /boot/script.bin ]]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi">> $destination/DEBIAN/postinst
 	echo "exit 0" >> $destination/DEBIAN/postinst
@@ -80,7 +85,7 @@ create_board_package (){
 
 	# armbianmonitor (currently only to toggle boot verbosity and log upload)
 	install -m 755 $SRC/lib/scripts/armbianmonitor/armbianmonitor $destination/usr/local/bin
-	
+
 	# replace hostapd from latest self compiled & patched
 	mkdir -p $destination/usr/sbin/
 	tar xfz $SRC/lib/bin/hostapd25-rt.tgz -C $destination/usr/sbin/
@@ -94,22 +99,22 @@ create_board_package (){
 	cp -R $SRC/lib/scripts/nand-sata-install/usr $destination/
 	chmod +x $destination/usr/lib/nand-sata-install/nand-sata-install.sh
 	ln -s ../lib/nand-sata-install/nand-sata-install.sh $destination/usr/sbin/nand-sata-install
-	
+
 	# install custom motd with reboot and upgrade checking
 	mkdir -p $destination/root $destination/tmp $destination/etc/update-motd.d/ $destination/etc/profile.d
-	install -m 755 $SRC/lib/scripts/update-motd.d/* $destination/etc/update-motd.d/	
+	install -m 755 $SRC/lib/scripts/update-motd.d/* $destination/etc/update-motd.d/
 	install -m 755 $SRC/lib/scripts/check_first_login_reboot.sh 	$destination/etc/profile.d
 	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d
-	
+
 	# export arhitecture
 	echo "#!/bin/bash" > $destination/etc/profile.d/arhitecture.sh
-	if [[ $ARCH == *64* ]]; then 
+	if [[ $ARCH == *64* ]]; then
 		echo "export ARCH=arm64" >> $destination/etc/profile.d/arhitecture.sh
 	else
-		echo "export ARCH=arm" >> $destination/etc/profile.d/arhitecture.sh 
+		echo "export ARCH=arm" >> $destination/etc/profile.d/arhitecture.sh
 	fi
 	chmod 755 $destination/etc/profile.d/arhitecture.sh
-	
+
 	cd $destination/
 	ln -s ../var/run/motd etc/motd
 	touch $destination/tmp/.reboot_required
@@ -120,25 +125,25 @@ create_board_package (){
 			# add soc temperature app
 			arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/local/bin/sunxi_tp_temp
 		fi
-	
+
 		# lamobo R1 router switch config
 		tar xfz $SRC/lib/bin/swconfig.tgz -C $destination/usr/local/bin
-	
+
 		# convert and add fex files
 		unset IFS
 		mkdir -p $destination/boot/bin
 		for i in $(ls -w1 $SRC/lib/config/*.fex | xargs -n1 basename); do
-			fex2bin $SRC/lib/config/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin; 
+			fex2bin $SRC/lib/config/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
 		done
 		# One H3 image for all Fast Ethernet equipped Orange Pi H3
 		cp -p "$destination/boot/bin/orangepi2.bin" "$destination/boot/bin/orangepih3.bin"
-	
+
 		# bluetooth device enabler - for cubietruck
 		install -m 755	$SRC/lib/bin/brcm_bt_reset			$destination/usr/local/bin
 		install -m 755	$SRC/lib/bin/brcm_patchram_plus		$destination/usr/local/bin
 		install			$SRC/lib/scripts/brcm40183 			$destination/etc/default
 		install -m 755  $SRC/lib/scripts/brcm40183-patch    $destination/etc/init.d
-		
+
 	fi
 
 	# enable verbose kernel messages on first boot
@@ -147,10 +152,10 @@ create_board_package (){
 
 	# add some summary to the image
 	fingerprint_image "$destination/etc/armbian.txt"
-	
+
 	# create board DEB file
 	cd $DEST/debs/$RELEASE/
-	display_alert "Building deb package." "$CHOSEN_ROOTFS" "info"
+	display_alert "Building package" "$CHOSEN_ROOTFS" "info"
 	dpkg -b ${CHOSEN_ROOTFS}_${REVISION}_${ARCH} >/dev/null
 
 	# clean up
