@@ -67,7 +67,8 @@ create_board_package (){
 	echo "[[ -f /root/.nand1-allwinner.tgz ]] && rm /root/.nand1-allwinner.tgz" >> $destination/DEBIAN/postinst
 	echo "[[ -f /root/nand-sata-install ]] && rm /root/nand-sata-install" >> $destination/DEBIAN/postinst
 	echo "ln -sf /var/run/motd /etc/motd" >> $destination/DEBIAN/postinst	
-	echo "[[ -f /etc/bash.bashrc.custom ]] && rm /etc/bash.bashrc.custom" >> $destination/DEBIAN/postinst	
+	echo "[[ -f /etc/bash.bashrc.custom ]] && rm /etc/bash.bashrc.custom" >> $destination/DEBIAN/postinst
+	echo "if [[ -d /boot/bin && ! -f /boot/script.bin ]]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi">> $destination/DEBIAN/postinst
 	echo "exit 0" >> $destination/DEBIAN/postinst
 
 	# temper binary for USB temp meter

@@ -148,8 +148,8 @@ install_board_specific (){
 		[[ $LINUXFAMILY == "sun8i" ]] && sed -i -e '1s/^/gpio set PL10\ngpio set PG11\nsetenv machid 1029\nsetenv bootm_boot_mode sec\n/' \
 			-e 's/\ disp.screen0_output_mode=1920x1080p60//' -e 's/\ hdmi.audio=EDID:0//' $CACHEDIR/sdcard/boot/boot.cmd
 		# let's prepare for old kernel too
-		chroot $CACHEDIR/sdcard /bin/bash -c \
-		"ln -s /boot/bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin"
+		#chroot $CACHEDIR/sdcard /bin/bash -c \
+		#"ln -s /boot/bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin"
 	fi
 
 	# if we have a special fat boot partition, alter rootfs=
