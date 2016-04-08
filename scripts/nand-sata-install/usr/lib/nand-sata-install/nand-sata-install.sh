@@ -88,8 +88,10 @@ elif [[ -f /boot/boot.cmd ]]; then
 	sed -e 's,root='"$root_partition"',root='"$2"',g' -i /boot/boot.cmd	
 	mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
 	mkdir -p /mnt/rootfs/media/mmc/boot
-	echo "/dev/mmcblk0p1        /media/mmc   ext4    defaults        0       0" >> /mnt/rootfs/etc/fstab
-	echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/rootfs/etc/fstab
+	if ! grep -q "/boot" /mnt/rootfs/etc/fstab; then # in two partition setup
+		echo "/dev/mmcblk0p1        /media/mmc   ext4    defaults        0       0" >> /mnt/rootfs/etc/fstab
+		echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/rootfs/etc/fstab
+	fi
 	sed -i "s/data=writeback,//" /mnt/rootfs/etc/fstab
 elif [[ -f /boot/boot.ini ]]; then
 	sed -e 's,root='"$root_partition"',root='"$2"',g' -i /boot/boot.ini
