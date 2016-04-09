@@ -51,13 +51,13 @@ install_board_specific (){
 	if [[ $BOARD == "odroidxu4" ]] ; then
 
 		echo "blacklist ina231_sensor" > $CACHEDIR/sdcard/etc/modprobe.d/blacklist-odroid.conf
-		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove lirc >/dev/null 2>&1"
+		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove --auto-remove lirc >/dev/null 2>&1"
 
 	fi
 
 	# Armada
 	if [[ $BOARD == "armada" ]] ; then
-		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove lirc linux-sound-base alsa-base alsa-utils bluez>/dev/null 2>&1"
+		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove --auto-remove lirc linux-sound-base alsa-base alsa-utils bluez>/dev/null 2>&1"
 	fi
 
 	# Odroid C2
@@ -71,7 +71,7 @@ install_board_specific (){
 	# Udoo
 	if [[ $BOARD == "udoo" ]] ; then
 
-		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove lirc >/dev/null 2>&1"
+		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove --auto-remove lirc >/dev/null 2>&1"
 		sed 's/wlan0/wlan2/' -i $CACHEDIR/sdcard/etc/network/interfaces.default
 		sed 's/wlan0/wlan2/' -i $CACHEDIR/sdcard/etc/network/interfaces.bonding
 		sed 's/wlan0/wlan2/' -i $CACHEDIR/sdcard/etc/network/interfaces.hostapd
@@ -82,7 +82,7 @@ install_board_specific (){
 	# Udoo neo
 	if [[ $BOARD == "udoo-neo" ]] ; then
 
-		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove lirc"
+		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove --auto-remove lirc"
 		sed 's/wlan0/wlan2/' -i $CACHEDIR/sdcard/etc/network/interfaces.default
 		sed 's/wlan0/wlan2/' -i $CACHEDIR/sdcard/etc/network/interfaces.bonding
 		sed 's/wlan0/wlan2/' -i $CACHEDIR/sdcard/etc/network/interfaces.hostapd
@@ -117,9 +117,6 @@ install_board_specific (){
 	# install custom root package
 	display_alert "Install board support package" "$BOARD" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb > /dev/null"
-
-	# remove not needed packages	
-	chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq autoremove >/dev/null 2>&1"
 
 	# enable first run script
 	chroot $CACHEDIR/sdcard /bin/bash -c "update-rc.d firstrun defaults >/dev/null 2>&1"
@@ -173,7 +170,7 @@ install_kernel (){
 # Install kernel to prepared root file-system
 #--------------------------------------------------------------------------------------------------------------------------------
 
-	display_alert "Install kernel" "$CHOSEN_KERNEL" "info"
+	display_alert "Installing packages" "$CHOSEN_KERNEL" "info"
 
 	# configure MIN / MAX speed for cpufrequtils
 	echo "ENABLE=true" > $CACHEDIR/sdcard/etc/default/cpufrequtils
@@ -228,22 +225,22 @@ install_kernel (){
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb >/dev/null 2>&1"
 
 	# install uboot
-	display_alert "Install u-boot" "$CHOSEN_UBOOT" "info"
+	display_alert "Installing u-boot" "$CHOSEN_UBOOT" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb > /dev/null"
 
 	# install headers
-	display_alert "Install headers" "$HEADERS_TMP" "info"
+	display_alert "Installing headers" "$HEADERS_TMP" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${HEADERS_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
 
 	# install firmware
 	if [[ -f $CACHEDIR/sdcard/tmp/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
-		display_alert "Install firmware" "$FW_TMP" "info"
+		display_alert "Installing firmware" "$FW_TMP" "info"
 		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
 	fi
 	
 	# install DTB
 	if [[ -f $CACHEDIR/sdcard/tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb ]]; then
-		display_alert "Install DTB" "$DTB_TMP" "info"
+		display_alert "Installing DTB" "$DTB_TMP" "info"
 		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
 	fi
 

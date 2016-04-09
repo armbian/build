@@ -43,16 +43,8 @@ EXIT_PATCHING_ERROR="" # exit patching if failed
 SERIALCON="ttyS0"
 MISC1="https://github.com/linux-sunxi/sunxi-tools.git" # Allwinner fex compiler / decompiler
 MISC1_DIR="sunxi-tools"	# local directory
-MISC2="" # Reserved
-MISC2_DIR="" # local directory
-MISC3="https://github.com/dz0ny/rt8192cu" # Realtek drivers
-MISC3_DIR="rt8192cu" # local directory
-MISC4=""
-MISC4_DIR=""
 MISC5="https://github.com/hglm/a10disp/" # Display changer for Allwinner
 MISC5_DIR="sunxi-display-changer" # local directory
-MISC6="https://github.com/porjo/mt7601/" # Display changer for Allwinner
-MISC6_DIR="mt7601" # local directory
 CACHEDIR=$DEST/cache
 
 # board configurations
@@ -634,6 +626,7 @@ esac
 [[ -z $CPUMIN && ($LINUXFAMILY == udoo || $LINUXFAMILY == neo ) ]] && CPUMIN="392000" && CPUMAX="996000" && GOVERNOR="interactive"
 [[ -z $GOVERNOR ]] && GOVERNOR="ondemand"
 
+if [[ $ARCH == *64* ]]; then ARCHITECTURE=arm64; else ARCHITECTURE=arm; fi
 
 # Essential packages
 PACKAGE_LIST="automake bash-completion bc bridge-utils build-essential cmake cpufrequtils \

@@ -180,9 +180,6 @@ fi
 
 if [ "$BRANCH" == "" ]; then echo "ERROR: You have to choose one branch"; exit; fi
 
-# don't compile external modules on mainline
-if [ "$BRANCH" != "default" ]; then EXTERNAL="no"; fi
-
 # back to normal
 unset IFS
 
@@ -250,11 +247,7 @@ fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE" "$KERNELBRANCH" "yes"
 LINUXSOURCEDIR=$LINUXSOURCE/$GITHUBSUBDIR
 
 if [[ -n "$MISC1" ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
-if [[ -n "$MISC2" ]]; then fetch_from_github "$MISC2" "$MISC2_DIR"; fi
-if [[ -n "$MISC3" ]]; then fetch_from_github "$MISC3" "$MISC3_DIR"; fi
-if [[ -n "$MISC4" ]]; then fetch_from_github "$MISC4" "$MISC4_DIR"; fi
 if [[ -n "$MISC5" ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
-if [[ -n "$MISC6" ]]; then fetch_from_github "$MISC6" "$MISC6_DIR"; fi
 
 # compile sunxi tools
 if [[ $LINUXFAMILY == sun*i ]]; then 
@@ -277,15 +270,15 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
 done
 
-[[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] && needs_uboot=yes
-[[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]] && needs_kernel=yes
+[[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] && NEEDS_UBOOT=yes
+[[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]] && NEEDS_KERNEL=yes
 
 # patching sources if we need to compile u-boot or kernel
-[[ $needs_uboot == yes || $needs_kernel == yes ]] && patching_sources
+[[ $NEEDS_UBOOT == yes || $NEEDS_KERNEL == yes ]] && patching_sources
 
 # Compile source if packed not exists
-[[ $needs_uboot = yes ]] && compile_uboot
-[[ $needs_kernel = yes ]] && compile_kernel
+[[ $NEEDS_UBOOT = yes ]] && compile_uboot
+[[ $NEEDS_KERNEL = yes ]] && compile_kernel
 
 [[ -n $RELEASE ]] && create_board_package
 
@@ -310,9 +303,7 @@ if [[ $KERNEL_ONLY != yes ]]; then
 		fi
 
 		# install external applications
-		if [ "$EXTERNAL" = "yes" ]; then
-			install_external_applications
-		fi
+		[[ $EXTERNAL == yes ]] && install_external_applications
 
 		# closing image
 		closing_image
