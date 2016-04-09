@@ -46,7 +46,7 @@ create_board_package (){
 	# set up pre install script
 	echo "#!/bin/bash" > $destination/DEBIAN/preinst
 	chmod 755 $destination/DEBIAN/preinst
-	echo "[[ -d /boot/bin ]] && rm -rf /boot/bin" >> $destination/DEBIAN/preinst
+	echo "[[ -d /boot/bin ]] && mv /boot/bin /boot/bin.old" >> $destination/DEBIAN/preinst
 	echo "exit 0" >> $destination/DEBIAN/preinst
 
 	# set up post install script
