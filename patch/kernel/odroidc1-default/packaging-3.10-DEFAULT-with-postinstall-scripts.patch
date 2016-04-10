@@ -1,5 +1,7 @@
 diff --git a/scripts/package/builddeb b/scripts/package/builddeb
-index 3001ec5..e62350d 100644
+old mode 100644
+new mode 100755
+index 3001ec5..dc76d3c
 --- a/scripts/package/builddeb
 +++ b/scripts/package/builddeb
 @@ -35,15 +35,17 @@ create_package() {
@@ -24,16 +26,39 @@ index 3001ec5..e62350d 100644
  	*)
  		echo "" >&2
  		echo "** ** **  WARNING  ** ** **" >&2
-@@ -62,7 +64,7 @@ create_package() {
+@@ -61,8 +63,30 @@ create_package() {
+ 		forcearch="-DArchitecture=$debarch"
  	fi
  
++	# Create preinstall and post install script to remove dtb
++	if [[ "$1" == *dtb* ]]; then
++		echo "if [ -d /boot/dtb ]; then rm -rf /boot/dtb; fi" >> $pdir/DEBIAN/preinst
++		echo "if [ -d /boot/dtb-$version ]; then rm -rf /boot/dtb-$version; fi" >> $pdir/DEBIAN/preinst
++		echo "if [ -d /boot/dtb.old ]; then rm -rf /boot/dtb.old; fi" >> $pdir/DEBIAN/preinst
++		echo "if [ -d /dtb ]; then rm -rf /dtb; fi" >> $pdir/DEBIAN/preinst
++		echo "exit 0" >> $pdir/DEBIAN/preinst
++		chmod 775 $pdir/DEBIAN/preinst
++		#
++		echo "if [ -d /boot/dtb.old ]; then rm -rf /boot/dtb.old; fi" >> $pdir/DEBIAN/postinst
++		echo "ln -sf dtb-$version /boot/dtb > /dev/null 2>&1 || mv /boot/dtb-$version /boot/dtb" >> $pdir/DEBIAN/postinst
++		echo "exit 0" >> $pdir/DEBIAN/postinst
++		chmod 775 $pdir/DEBIAN/postinst
++	fi
++	
++	# Create postinstall script for headers
++	if [[ "$1" == *headers* ]]; then
++		echo "cd /usr/src/linux-headers-$version; echo \"Compiling headers - please wait ...\"; make -s scripts >/dev/null 2>&1" >> $pdir/DEBIAN/postinst
++		echo "exit 0" >> $pdir/DEBIAN/postinst
++		chmod 775 $pdir/DEBIAN/postinst
++	fi
++	
  	# Create the package
 -	dpkg-gencontrol -isp $forcearch -Vkernel:debarch="${debarch:-$(dpkg --print-architecture)}" -p$pname -P"$pdir"
 +	dpkg-gencontrol $forcearch -Vkernel:debarch="${debarch:-$(dpkg --print-architecture)}" -p$pname -P"$pdir"
  	dpkg --build "$pdir" ..
  }
  
-@@ -78,49 +80,76 @@ tmpdir="$objtree/debian/tmp"
+@@ -78,49 +102,76 @@ tmpdir="$objtree/debian/tmp"
  fwdir="$objtree/debian/fwtmp"
  kernel_headers_dir="$objtree/debian/hdrtmp"
  libc_headers_dir="$objtree/debian/headertmp"
@@ -81,7 +106,7 @@ index 3001ec5..e62350d 100644
  mkdir -p "$libc_headers_dir/usr/share/doc/$libc_headers_packagename"
 +
 +mkdir -m 755 -p "$dtb_dir/DEBIAN"
-+mkdir -p "$dtb_dir/boot/dtb" "$dtb_dir/usr/share/doc/$dtb_packagename"
++mkdir -p "$dtb_dir/boot/dtb-$version" "$dtb_dir/usr/share/doc/$dtb_packagename"
 +
  mkdir -m 755 -p "$kernel_headers_dir/DEBIAN"
  mkdir -p "$kernel_headers_dir/usr/share/doc/$kernel_headers_packagename"
@@ -126,7 +151,7 @@ index 3001ec5..e62350d 100644
  	INSTALL_MOD_PATH="$tmpdir" $MAKE KBUILD_SRC= modules_install
  	rm -f "$tmpdir/lib/modules/$version/build"
  	rm -f "$tmpdir/lib/modules/$version/source"
-@@ -128,6 +157,24 @@ if grep -q '^CONFIG_MODULES=y' .config ; then
+@@ -128,6 +179,24 @@ if grep -q '^CONFIG_MODULES=y' .config ; then
  		mv "$tmpdir/lib/modules/$version"/* "$tmpdir/usr/lib/uml/modules/$version/"
  		rmdir "$tmpdir/lib/modules/$version"
  	fi
@@ -145,13 +170,13 @@ index 3001ec5..e62350d 100644
 +fi
 +
 +if grep -q '^CONFIG_OF=y' $KCONFIG_CONFIG ; then
-+	mkdir -p "$tmpdir/boot/dtb"
-+	cp $objtree/arch/arm/boot/dts/*.dtb $dtb_dir/boot/dtb
++	mkdir -p "$tmpdir/boot/dtb-""$version"
++   cp $objtree/arch/arm/boot/dts/*.dtb $dtb_dir/boot/dtb-$version
 +	#INSTALL_DTBS_PATH="$dtb_dir/boot/dtb" $MAKE KBUILD_SRC= dtbs_install
  fi
  
  if [ "$ARCH" != "um" ]; then
-@@ -137,8 +184,15 @@ fi
+@@ -137,8 +206,15 @@ fi
  
  # Install the maintainer scripts
  # Note: hook scripts under /etc/kernel are also executed by official Debian
@@ -168,7 +193,7 @@ index 3001ec5..e62350d 100644
  for script in postinst postrm preinst prerm ; do
  	mkdir -p "$tmpdir$debhookdir/$script.d"
  	cat <<EOF > "$tmpdir/DEBIAN/$script"
-@@ -147,14 +201,32 @@ for script in postinst postrm preinst prerm ; do
+@@ -147,14 +223,65 @@ for script in postinst postrm preinst prerm ; do
  set -e
  
  # Pass maintainer script parameters to hook scripts
@@ -190,19 +215,73 @@ index 3001ec5..e62350d 100644
 +## Create sym link to kernel image
 +##
 +kernel_tmp_version="${installed_image_path////\\/}"
-+sed -e "s#exit 0#ln -sf $(basename $kernel_tmp_version) /boot/zImage >/dev/null 2>&1 || mv /$kernel_tmp_version /boot/zImage#g" -i $tmpdir/DEBIAN/postinst
-+echo "update-initramfs -c -t -k $version >/dev/null 2>&1" >> $tmpdir/DEBIAN/postinst 
-+echo "mkimage -A $UTS_MACHINE -O linux -T ramdisk -C none -a 0 -e 0 -n uInitrd -d /boot/initrd.img-$version /boot/uInitrd >/dev/null 2>&1" >> $tmpdir/DEBIAN/postinst 
-+echo "rm /boot/initrd.img-$version" >> $tmpdir/DEBIAN/postinst 
-+echo "exit 0" >> $tmpdir/DEBIAN/postinst
++sed -e "s/set -e//g" -i $tmpdir/DEBIAN/postinst
++sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/postinst
++cat >> $tmpdir/DEBIAN/postinst <<EOT 
++ln -sf $(basename $kernel_tmp_version) /boot/zImage > /dev/null 2>&1 || mv /$kernel_tmp_version /boot/zImage
 +
-+## some stuf to preinstall
-+sed -e "s#exit 0#rm -f /boot/config-$version /boot/System.map-$version#g" -i $tmpdir/DEBIAN/preinst
++if [ -f "/boot/initrd.img-$version" ]; then 
++mkimage -A $UTS_MACHINE -O linux -T ramdisk -C gzip -a 0 -e 0 -n uInitrd -d /boot/initrd.img-$version /boot/uInitrd > /dev/null 2>&1
++rm /boot/initrd.img-$version
++fi
++
++exit 0
++EOT
++##
++## FAT install workaround
++##
++sed -e "s/set -e//g" -i $tmpdir/DEBIAN/preinst
++sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/preinst
++cat >> $tmpdir/DEBIAN/preinst <<EOT 
++# exit if we are running chroot
++if [ "\$(stat -c %d:%i /)" != "\$(stat -c %d:%i /proc/1/root/.)" ]; then exit 0; fi
++
++check_and_unmount (){
++boot_device=\$(mountpoint -d /boot)
++
++for file in /dev/* ; do
++	CURRENT_DEVICE=\$(printf "%d:%d" \$(stat --printf="0x%t 0x%T" \$file))
++	if [ \$CURRENT_DEVICE = \$boot_device ]; then
++		boot_partition=\$file
++		break;
++	fi
++done
++
++bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
++if [ "\$bootfstype" = "vfat" ]; then 
++rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/zImage /boot/uImage /boot/*nitrd*
++fi
++}
++mountpoint -q /boot && check_and_unmount
++EOT
++echo "exit 0" >> $tmpdir/DEBIAN/preinst 
++
 +
  # Try to determine maintainer and email values
  if [ -n "$DEBEMAIL" ]; then
         email=$DEBEMAIL
-@@ -242,21 +314,30 @@ EOF
+@@ -172,9 +299,19 @@ else
+ fi
+ maintainer="$name <$email>"
+ 
++# Try to determine distribution
++if [ -n "$KDEB_CHANGELOG_DIST" ]; then
++        distribution=$KDEB_CHANGELOG_DIST
++elif distribution=$(lsb_release -cs 2>/dev/null) && [ -n "$distribution" ]; then
++        : # nothing to do in this case
++else
++        distribution="unstable"
++        echo >&2 "Using default distribution of 'unstable' in the changelog"
++        echo >&2 "Install lsb-release or set \$KDEB_CHANGELOG_DIST explicitly"
++fi
+ # Generate a simple changelog template
+ cat <<EOF > debian/changelog
+-linux-upstream ($packageversion) unstable; urgency=low
++linux-upstream ($packageversion) $distribution; urgency=low
+ 
+   * Custom built Linux kernel.
+ 
+@@ -242,21 +379,32 @@ EOF
  
  fi
  
@@ -232,6 +311,8 @@ index 3001ec5..e62350d 100644
  ln -sf "/usr/src/linux-headers-$version" "$kernel_headers_dir/lib/modules/$version/build"
  rm -f "$objtree/debian/hdrsrcfiles" "$objtree/debian/hdrobjfiles"
  
++(cd "$destdir"; make M=scripts clean)
++
  cat <<EOF >> debian/control
  
  Package: $kernel_headers_packagename
@@ -240,7 +321,7 @@ index 3001ec5..e62350d 100644
  Architecture: any
  Description: Linux kernel headers for $KERNELRELEASE on \${kernel:debarch}
   This package provides kernel header files for $KERNELRELEASE on \${kernel:debarch}
-@@ -282,6 +363,16 @@ fi
+@@ -282,6 +430,16 @@ fi
  
  cat <<EOF >> debian/control
  
@@ -257,7 +338,7 @@ index 3001ec5..e62350d 100644
  Package: $libc_headers_packagename
  Section: devel
  Provides: linux-kernel-headers
-@@ -293,9 +384,35 @@ EOF
+@@ -293,9 +451,35 @@ EOF
  
  if [ "$ARCH" != "um" ]; then
  	create_package "$kernel_headers_packagename" "$kernel_headers_dir"
