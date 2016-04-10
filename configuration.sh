@@ -299,7 +299,7 @@ case $BOARD in
 
 	guitar)#enabled
 		#description S500 Lemaker Guitar Action quad core
-		#build 0
+		#build 1
 		LINUXFAMILY="s500"
 		OFFSET="16"
 		BOOTSIZE="16"
@@ -543,13 +543,10 @@ case $LINUXFAMILY in
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 	;;
 
-	s500)
+	s500)		
 		KERNEL_DEFAULT='https://github.com/LeMaker/linux-actions'
-		KERNEL_DEFAULT_BRANCH="s500-master"
+		KERNEL_DEFAULT_BRANCH="linux-3.10.y"
 		KERNEL_DEFAULT_SOURCE="linux-s500"
-		KERNEL_NEXT='https://github.com/LeMaker/linux-actions'
-		KERNEL_NEXT_BRANCH="linux-3.10.y"
-		KERNEL_NEXT_SOURCE="linux-s500"
 		UBOOT_DEFAULT="https://github.com/LeMaker/u-boot-actions"
 		UBOOT_DEFAULT_BRANCH="s500-master"
 		UBOOT_DEFAULT_SOURCE="u-boot-s500"
