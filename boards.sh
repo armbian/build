@@ -110,7 +110,7 @@ install_board_specific (){
 		cp $SRC/lib/scripts/brcm4330 $CACHEDIR/sdcard/etc/default
 		cp $SRC/lib/scripts/brcm4330-patch $CACHEDIR/sdcard/etc/init.d
 		chroot $CACHEDIR/sdcard /bin/bash -c "chmod +x /etc/init.d/brcm4330-patch"
-		chroot $CACHEDIR/sdcard /bin/bash -c "LC_ALL=C LANG=C update-rc.d brcm4330-patch defaults>> /dev/null"
+		#chroot $CACHEDIR/sdcard /bin/bash -c "LC_ALL=C LANG=C update-rc.d brcm4330-patch defaults>> /dev/null"
 
 	fi
 
