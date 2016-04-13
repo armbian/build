@@ -395,8 +395,11 @@ case $LINUXFAMILY in
 		# Kernel
 		# sun8i switches
 		if [[ $LINUXFAMILY == sun8i ]]; then
-			KERNEL_DEFAULT="https://github.com/O-Computers/linux-sunxi"
-			KERNEL_DEFAULT_BRANCH="h3-wip"
+			#KERNEL_DEFAULT="https://github.com/O-Computers/linux-sunxi"
+			#KERNEL_DEFAULT_BRANCH="h3-wip"
+			#KERNEL_DEFAULT_SOURCE="linux-sun8i"
+			KERNEL_DEFAULT="https://github.com/igorpecovnik/linux"
+			KERNEL_DEFAULT_BRANCH="sun8i"
 			KERNEL_DEFAULT_SOURCE="linux-sun8i"
 			KERNEL_DEV=https://github.com/wens/linux
 			KERNEL_DEV_BRANCH=h3-emac
