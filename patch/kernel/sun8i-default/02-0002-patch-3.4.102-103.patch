@@ -1,0 +1,1133 @@
+diff --git a/Makefile b/Makefile
+index dd03fa5777a0..36f0913bd1d6 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 3
+ PATCHLEVEL = 4
+-SUBLEVEL = 102
++SUBLEVEL = 103
+ EXTRAVERSION =
+ NAME = Saber-toothed Squirrel
+ 
+diff --git a/arch/sparc/include/asm/pgtable_64.h b/arch/sparc/include/asm/pgtable_64.h
+index 656de8bc0ed6..cd24caf1732d 100644
+--- a/arch/sparc/include/asm/pgtable_64.h
++++ b/arch/sparc/include/asm/pgtable_64.h
+@@ -24,7 +24,8 @@
+ 
+ /* The kernel image occupies 0x4000000 to 0x6000000 (4MB --> 96MB).
+  * The page copy blockops can use 0x6000000 to 0x8000000.
+- * The TSB is mapped in the 0x8000000 to 0xa000000 range.
++ * The 8K TSB is mapped in the 0x8000000 to 0x8400000 range.
++ * The 4M TSB is mapped in the 0x8400000 to 0x8800000 range.
+  * The PROM resides in an area spanning 0xf0000000 to 0x100000000.
+  * The vmalloc area spans 0x100000000 to 0x200000000.
+  * Since modules need to be in the lowest 32-bits of the address space,
+@@ -33,7 +34,8 @@
+  * 0x400000000.
+  */
+ #define	TLBTEMP_BASE		_AC(0x0000000006000000,UL)
+-#define	TSBMAP_BASE		_AC(0x0000000008000000,UL)
++#define	TSBMAP_8K_BASE		_AC(0x0000000008000000,UL)
++#define	TSBMAP_4M_BASE		_AC(0x0000000008400000,UL)
+ #define MODULES_VADDR		_AC(0x0000000010000000,UL)
+ #define MODULES_LEN		_AC(0x00000000e0000000,UL)
+ #define MODULES_END		_AC(0x00000000f0000000,UL)
+diff --git a/arch/sparc/include/asm/tlbflush_64.h b/arch/sparc/include/asm/tlbflush_64.h
+index f0d6a9700f4c..1a4bb971e06d 100644
+--- a/arch/sparc/include/asm/tlbflush_64.h
++++ b/arch/sparc/include/asm/tlbflush_64.h
+@@ -35,6 +35,8 @@ static inline void flush_tlb_range(struct vm_area_struct *vma,
+ {
+ }
+ 
++void flush_tlb_kernel_range(unsigned long start, unsigned long end);
++
+ #define __HAVE_ARCH_ENTER_LAZY_MMU_MODE
+ 
+ extern void flush_tlb_pending(void);
+@@ -49,11 +51,6 @@ extern void __flush_tlb_kernel_range(unsigned long start, unsigned long end);
+ 
+ #ifndef CONFIG_SMP
+ 
+-#define flush_tlb_kernel_range(start,end) \
+-do {	flush_tsb_kernel_range(start,end); \
+-	__flush_tlb_kernel_range(start,end); \
+-} while (0)
+-
+ static inline void global_flush_tlb_page(struct mm_struct *mm, unsigned long vaddr)
+ {
+ 	__flush_tlb_page(CTX_HWBITS(mm->context), vaddr);
+@@ -64,11 +61,6 @@ static inline void global_flush_tlb_page(struct mm_struct *mm, unsigned long vad
+ extern void smp_flush_tlb_kernel_range(unsigned long start, unsigned long end);
+ extern void smp_flush_tlb_page(struct mm_struct *mm, unsigned long vaddr);
+ 
+-#define flush_tlb_kernel_range(start, end) \
+-do {	flush_tsb_kernel_range(start,end); \
+-	smp_flush_tlb_kernel_range(start, end); \
+-} while (0)
+-
+ #define global_flush_tlb_page(mm, vaddr) \
+ 	smp_flush_tlb_page(mm, vaddr)
+ 
+diff --git a/arch/sparc/kernel/ldc.c b/arch/sparc/kernel/ldc.c
+index 435e406fdec3..1beaf60a5f78 100644
+--- a/arch/sparc/kernel/ldc.c
++++ b/arch/sparc/kernel/ldc.c
+@@ -1339,7 +1339,7 @@ int ldc_connect(struct ldc_channel *lp)
+ 	if (!(lp->flags & LDC_FLAG_ALLOCED_QUEUES) ||
+ 	    !(lp->flags & LDC_FLAG_REGISTERED_QUEUES) ||
+ 	    lp->hs_state != LDC_HS_OPEN)
+-		err = -EINVAL;
++		err = ((lp->hs_state > LDC_HS_OPEN) ? 0 : -EINVAL);
+ 	else
+ 		err = start_handshake(lp);
+ 
+diff --git a/arch/sparc/kernel/smp_64.c b/arch/sparc/kernel/smp_64.c
+index bb2886ac1df3..bbf7e955cb19 100644
+--- a/arch/sparc/kernel/smp_64.c
++++ b/arch/sparc/kernel/smp_64.c
+@@ -151,7 +151,7 @@ void cpu_panic(void)
+ #define NUM_ROUNDS	64	/* magic value */
+ #define NUM_ITERS	5	/* likewise */
+ 
+-static DEFINE_SPINLOCK(itc_sync_lock);
++static DEFINE_RAW_SPINLOCK(itc_sync_lock);
+ static unsigned long go[SLAVE + 1];
+ 
+ #define DEBUG_TICK_SYNC	0
+@@ -259,7 +259,7 @@ static void smp_synchronize_one_tick(int cpu)
+ 	go[MASTER] = 0;
+ 	membar_safe("#StoreLoad");
+ 
+-	spin_lock_irqsave(&itc_sync_lock, flags);
++	raw_spin_lock_irqsave(&itc_sync_lock, flags);
+ 	{
+ 		for (i = 0; i < NUM_ROUNDS*NUM_ITERS; i++) {
+ 			while (!go[MASTER])
+@@ -270,7 +270,7 @@ static void smp_synchronize_one_tick(int cpu)
+ 			membar_safe("#StoreLoad");
+ 		}
+ 	}
+-	spin_unlock_irqrestore(&itc_sync_lock, flags);
++	raw_spin_unlock_irqrestore(&itc_sync_lock, flags);
+ }
+ 
+ #if defined(CONFIG_SUN_LDOMS) && defined(CONFIG_HOTPLUG_CPU)
+diff --git a/arch/sparc/kernel/sys32.S b/arch/sparc/kernel/sys32.S
+index d97f3eb72e06..085c60fd4b6b 100644
+--- a/arch/sparc/kernel/sys32.S
++++ b/arch/sparc/kernel/sys32.S
+@@ -87,7 +87,7 @@ SIGN1(sys32_io_submit, compat_sys_io_submit, %o1)
+ SIGN1(sys32_mq_open, compat_sys_mq_open, %o1)
+ SIGN1(sys32_select, compat_sys_select, %o0)
+ SIGN1(sys32_mkdir, sys_mkdir, %o1)
+-SIGN3(sys32_futex, compat_sys_futex, %o1, %o2, %o5)
++SIGN1(sys32_futex, compat_sys_futex, %o1)
+ SIGN1(sys32_sysfs, compat_sys_sysfs, %o0)
+ SIGN2(sys32_sendfile, compat_sys_sendfile, %o0, %o1)
+ SIGN2(sys32_sendfile64, compat_sys_sendfile64, %o0, %o1)
+diff --git a/arch/sparc/kernel/unaligned_64.c b/arch/sparc/kernel/unaligned_64.c
+index dae85bc2eda5..a3c3a5bcd126 100644
+--- a/arch/sparc/kernel/unaligned_64.c
++++ b/arch/sparc/kernel/unaligned_64.c
+@@ -156,17 +156,23 @@ static unsigned long *fetch_reg_addr(unsigned int reg, struct pt_regs *regs)
+ unsigned long compute_effective_address(struct pt_regs *regs,
+ 					unsigned int insn, unsigned int rd)
+ {
++	int from_kernel = (regs->tstate & TSTATE_PRIV) != 0;
+ 	unsigned int rs1 = (insn >> 14) & 0x1f;
+ 	unsigned int rs2 = insn & 0x1f;
+-	int from_kernel = (regs->tstate & TSTATE_PRIV) != 0;
++	unsigned long addr;
+ 
+ 	if (insn & 0x2000) {
+ 		maybe_flush_windows(rs1, 0, rd, from_kernel);
+-		return (fetch_reg(rs1, regs) + sign_extend_imm13(insn));
++		addr = (fetch_reg(rs1, regs) + sign_extend_imm13(insn));
+ 	} else {
+ 		maybe_flush_windows(rs1, rs2, rd, from_kernel);
+-		return (fetch_reg(rs1, regs) + fetch_reg(rs2, regs));
++		addr = (fetch_reg(rs1, regs) + fetch_reg(rs2, regs));
+ 	}
++
++	if (!from_kernel && test_thread_flag(TIF_32BIT))
++		addr &= 0xffffffff;
++
++	return addr;
+ }
+ 
+ /* This is just to make gcc think die_if_kernel does return... */
+diff --git a/arch/sparc/lib/NG2memcpy.S b/arch/sparc/lib/NG2memcpy.S
+index 0aed75653b50..e993fc8d7c66 100644
+--- a/arch/sparc/lib/NG2memcpy.S
++++ b/arch/sparc/lib/NG2memcpy.S
+@@ -236,6 +236,7 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	 */
+ 	VISEntryHalf
+ 
++	membar		#Sync
+ 	alignaddr	%o1, %g0, %g0
+ 
+ 	add		%o1, (64 - 1), %o4
+diff --git a/arch/sparc/math-emu/math_32.c b/arch/sparc/math-emu/math_32.c
+index aa4d55b0bdf0..5ce8f2f64604 100644
+--- a/arch/sparc/math-emu/math_32.c
++++ b/arch/sparc/math-emu/math_32.c
+@@ -499,7 +499,7 @@ static int do_one_mathemu(u32 insn, unsigned long *pfsr, unsigned long *fregs)
+ 		case 0: fsr = *pfsr;
+ 			if (IR == -1) IR = 2;
+ 			/* fcc is always fcc0 */
+-			fsr &= ~0xc00; fsr |= (IR << 10); break;
++			fsr &= ~0xc00; fsr |= (IR << 10);
+ 			*pfsr = fsr;
+ 			break;
+ 		case 1: rd->s = IR; break;
+diff --git a/arch/sparc/mm/fault_64.c b/arch/sparc/mm/fault_64.c
+index 1fe0429b6314..1387acafc62c 100644
+--- a/arch/sparc/mm/fault_64.c
++++ b/arch/sparc/mm/fault_64.c
+@@ -95,38 +95,51 @@ static unsigned int get_user_insn(unsigned long tpc)
+ 	pte_t *ptep, pte;
+ 	unsigned long pa;
+ 	u32 insn = 0;
+-	unsigned long pstate;
+ 
+-	if (pgd_none(*pgdp))
+-		goto outret;
++	if (pgd_none(*pgdp) || unlikely(pgd_bad(*pgdp)))
++		goto out;
+ 	pudp = pud_offset(pgdp, tpc);
+-	if (pud_none(*pudp))
+-		goto outret;
+-	pmdp = pmd_offset(pudp, tpc);
+-	if (pmd_none(*pmdp))
+-		goto outret;
+-
+-	/* This disables preemption for us as well. */
+-	__asm__ __volatile__("rdpr %%pstate, %0" : "=r" (pstate));
+-	__asm__ __volatile__("wrpr %0, %1, %%pstate"
+-				: : "r" (pstate), "i" (PSTATE_IE));
+-	ptep = pte_offset_map(pmdp, tpc);
+-	pte = *ptep;
+-	if (!pte_present(pte))
++	if (pud_none(*pudp) || unlikely(pud_bad(*pudp)))
+ 		goto out;
+ 
+-	pa  = (pte_pfn(pte) << PAGE_SHIFT);
+-	pa += (tpc & ~PAGE_MASK);
+-
+-	/* Use phys bypass so we don't pollute dtlb/dcache. */
+-	__asm__ __volatile__("lduwa [%1] %2, %0"
+-			     : "=r" (insn)
+-			     : "r" (pa), "i" (ASI_PHYS_USE_EC));
++	/* This disables preemption for us as well. */
++	local_irq_disable();
+ 
++	pmdp = pmd_offset(pudp, tpc);
++	if (pmd_none(*pmdp) || unlikely(pmd_bad(*pmdp)))
++		goto out_irq_enable;
++
++#ifdef CONFIG_TRANSPARENT_HUGEPAGE
++	if (pmd_trans_huge(*pmdp)) {
++		if (pmd_trans_splitting(*pmdp))
++			goto out_irq_enable;
++
++		pa  = pmd_pfn(*pmdp) << PAGE_SHIFT;
++		pa += tpc & ~HPAGE_MASK;
++
++		/* Use phys bypass so we don't pollute dtlb/dcache. */
++		__asm__ __volatile__("lduwa [%1] %2, %0"
++				     : "=r" (insn)
++				     : "r" (pa), "i" (ASI_PHYS_USE_EC));
++	} else
++#endif
++	{
++		ptep = pte_offset_map(pmdp, tpc);
++		pte = *ptep;
++		if (pte_present(pte)) {
++			pa  = (pte_pfn(pte) << PAGE_SHIFT);
++			pa += (tpc & ~PAGE_MASK);
++
++			/* Use phys bypass so we don't pollute dtlb/dcache. */
++			__asm__ __volatile__("lduwa [%1] %2, %0"
++					     : "=r" (insn)
++					     : "r" (pa), "i" (ASI_PHYS_USE_EC));
++		}
++		pte_unmap(ptep);
++	}
++out_irq_enable:
++	local_irq_enable();
+ out:
+-	pte_unmap(ptep);
+-	__asm__ __volatile__("wrpr %0, 0x0, %%pstate" : : "r" (pstate));
+-outret:
+ 	return insn;
+ }
+ 
+@@ -154,7 +167,8 @@ show_signal_msg(struct pt_regs *regs, int sig, int code,
+ extern unsigned long compute_effective_address(struct pt_regs *, unsigned int, unsigned int);
+ 
+ static void do_fault_siginfo(int code, int sig, struct pt_regs *regs,
+-			     unsigned int insn, int fault_code)
++			     unsigned long fault_addr, unsigned int insn,
++			     int fault_code)
+ {
+ 	unsigned long addr;
+ 	siginfo_t info;
+@@ -162,10 +176,18 @@ static void do_fault_siginfo(int code, int sig, struct pt_regs *regs,
+ 	info.si_code = code;
+ 	info.si_signo = sig;
+ 	info.si_errno = 0;
+-	if (fault_code & FAULT_CODE_ITLB)
++	if (fault_code & FAULT_CODE_ITLB) {
+ 		addr = regs->tpc;
+-	else
+-		addr = compute_effective_address(regs, insn, 0);
++	} else {
++		/* If we were able to probe the faulting instruction, use it
++		 * to compute a precise fault address.  Otherwise use the fault
++		 * time provided address which may only have page granularity.
++		 */
++		if (insn)
++			addr = compute_effective_address(regs, insn, 0);
++		else
++			addr = fault_addr;
++	}
+ 	info.si_addr = (void __user *) addr;
+ 	info.si_trapno = 0;
+ 
+@@ -240,7 +262,7 @@ static void __kprobes do_kernel_fault(struct pt_regs *regs, int si_code,
+ 		/* The si_code was set to make clear whether
+ 		 * this was a SEGV_MAPERR or SEGV_ACCERR fault.
+ 		 */
+-		do_fault_siginfo(si_code, SIGSEGV, regs, insn, fault_code);
++		do_fault_siginfo(si_code, SIGSEGV, regs, address, insn, fault_code);
+ 		return;
+ 	}
+ 
+@@ -260,18 +282,6 @@ static void noinline __kprobes bogus_32bit_fault_tpc(struct pt_regs *regs)
+ 	show_regs(regs);
+ }
+ 
+-static void noinline __kprobes bogus_32bit_fault_address(struct pt_regs *regs,
+-							 unsigned long addr)
+-{
+-	static int times;
+-
+-	if (times++ < 10)
+-		printk(KERN_ERR "FAULT[%s:%d]: 32-bit process "
+-		       "reports 64-bit fault address [%lx]\n",
+-		       current->comm, current->pid, addr);
+-	show_regs(regs);
+-}
+-
+ asmlinkage void __kprobes do_sparc64_fault(struct pt_regs *regs)
+ {
+ 	struct mm_struct *mm = current->mm;
+@@ -300,10 +310,8 @@ asmlinkage void __kprobes do_sparc64_fault(struct pt_regs *regs)
+ 				goto intr_or_no_mm;
+ 			}
+ 		}
+-		if (unlikely((address >> 32) != 0)) {
+-			bogus_32bit_fault_address(regs, address);
++		if (unlikely((address >> 32) != 0))
+ 			goto intr_or_no_mm;
+-		}
+ 	}
+ 
+ 	if (regs->tstate & TSTATE_PRIV) {
+@@ -515,7 +523,7 @@ do_sigbus:
+ 	 * Send a sigbus, regardless of whether we were in kernel
+ 	 * or user mode.
+ 	 */
+-	do_fault_siginfo(BUS_ADRERR, SIGBUS, regs, insn, fault_code);
++	do_fault_siginfo(BUS_ADRERR, SIGBUS, regs, address, insn, fault_code);
+ 
+ 	/* Kernel mode? Handle exceptions or die */
+ 	if (regs->tstate & TSTATE_PRIV)
+diff --git a/arch/sparc/mm/init_64.c b/arch/sparc/mm/init_64.c
+index 7f8238f4f954..7eb24bddf268 100644
+--- a/arch/sparc/mm/init_64.c
++++ b/arch/sparc/mm/init_64.c
+@@ -308,6 +308,10 @@ void update_mmu_cache(struct vm_area_struct *vma, unsigned long address, pte_t *
+ 	tsb_index = MM_TSB_BASE;
+ 	tsb_hash_shift = PAGE_SHIFT;
+ 
++	/* Don't insert a non-valid PTE into the TSB, we'll deadlock.  */
++	if (!(pte_val(pte) & _PAGE_VALID))
++		return;
++
+ 	spin_lock_irqsave(&mm->context.lock, flags);
+ 
+ #ifdef CONFIG_HUGETLB_PAGE
+@@ -2417,3 +2421,26 @@ void __flush_tlb_all(void)
+ 	__asm__ __volatile__("wrpr	%0, 0, %%pstate"
+ 			     : : "r" (pstate));
+ }
++
++#ifdef CONFIG_SMP
++#define do_flush_tlb_kernel_range	smp_flush_tlb_kernel_range
++#else
++#define do_flush_tlb_kernel_range	__flush_tlb_kernel_range
++#endif
++
++void flush_tlb_kernel_range(unsigned long start, unsigned long end)
++{
++	if (start < HI_OBP_ADDRESS && end > LOW_OBP_ADDRESS) {
++		if (start < LOW_OBP_ADDRESS) {
++			flush_tsb_kernel_range(start, LOW_OBP_ADDRESS);
++			do_flush_tlb_kernel_range(start, LOW_OBP_ADDRESS);
++		}
++		if (end > HI_OBP_ADDRESS) {
++			flush_tsb_kernel_range(end, HI_OBP_ADDRESS);
++			do_flush_tlb_kernel_range(end, HI_OBP_ADDRESS);
++		}
++	} else {
++		flush_tsb_kernel_range(start, end);
++		do_flush_tlb_kernel_range(start, end);
++	}
++}
+diff --git a/arch/sparc/mm/tsb.c b/arch/sparc/mm/tsb.c
+index f4e84f3440dd..41530193e6d6 100644
+--- a/arch/sparc/mm/tsb.c
++++ b/arch/sparc/mm/tsb.c
+@@ -150,7 +150,19 @@ static void setup_tsb_params(struct mm_struct *mm, unsigned long tsb_idx, unsign
+ 	mm->context.tsb_block[tsb_idx].tsb_nentries =
+ 		tsb_bytes / sizeof(struct tsb);
+ 
+-	base = TSBMAP_BASE;
++	switch (tsb_idx) {
++	case MM_TSB_BASE:
++		base = TSBMAP_8K_BASE;
++		break;
++#if defined(CONFIG_HUGETLB_PAGE) || defined(CONFIG_TRANSPARENT_HUGEPAGE)
++	case MM_TSB_HUGE:
++		base = TSBMAP_4M_BASE;
++		break;
++#endif
++	default:
++		BUG();
++	}
++
+ 	tte = pgprot_val(PAGE_KERNEL_LOCKED);
+ 	tsb_paddr = __pa(mm->context.tsb_block[tsb_idx].tsb);
+ 	BUG_ON(tsb_paddr & (tsb_bytes - 1UL));
+diff --git a/drivers/net/macvlan.c b/drivers/net/macvlan.c
+index c4bb95b051f3..6749acf6f3f4 100644
+--- a/drivers/net/macvlan.c
++++ b/drivers/net/macvlan.c
+@@ -455,6 +455,7 @@ static int macvlan_init(struct net_device *dev)
+ 				  (lowerdev->state & MACVLAN_STATE_MASK);
+ 	dev->features 		= lowerdev->features & MACVLAN_FEATURES;
+ 	dev->features		|= NETIF_F_LLTX;
++	dev->vlan_features	= lowerdev->vlan_features & MACVLAN_FEATURES;
+ 	dev->gso_max_size	= lowerdev->gso_max_size;
+ 	dev->iflink		= lowerdev->ifindex;
+ 	dev->hard_header_len	= lowerdev->hard_header_len;
+diff --git a/drivers/net/ppp/pptp.c b/drivers/net/ppp/pptp.c
+index 8327cc596c34..9f047a04215e 100644
+--- a/drivers/net/ppp/pptp.c
++++ b/drivers/net/ppp/pptp.c
+@@ -281,7 +281,7 @@ static int pptp_xmit(struct ppp_channel *chan, struct sk_buff *skb)
+ 	nf_reset(skb);
+ 
+ 	skb->ip_summed = CHECKSUM_NONE;
+-	ip_select_ident(skb, &rt->dst, NULL);
++	ip_select_ident(skb, NULL);
+ 	ip_send_check(iph);
+ 
+ 	ip_local_out(skb);
+diff --git a/drivers/sbus/char/bbc_envctrl.c b/drivers/sbus/char/bbc_envctrl.c
+index 160e7510aca6..0787b9756165 100644
+--- a/drivers/sbus/char/bbc_envctrl.c
++++ b/drivers/sbus/char/bbc_envctrl.c
+@@ -452,6 +452,9 @@ static void attach_one_temp(struct bbc_i2c_bus *bp, struct platform_device *op,
+ 	if (!tp)
+ 		return;
+ 
++	INIT_LIST_HEAD(&tp->bp_list);
++	INIT_LIST_HEAD(&tp->glob_list);
++
+ 	tp->client = bbc_i2c_attach(bp, op);
+ 	if (!tp->client) {
+ 		kfree(tp);
+@@ -497,6 +500,9 @@ static void attach_one_fan(struct bbc_i2c_bus *bp, struct platform_device *op,
+ 	if (!fp)
+ 		return;
+ 
++	INIT_LIST_HEAD(&fp->bp_list);
++	INIT_LIST_HEAD(&fp->glob_list);
++
+ 	fp->client = bbc_i2c_attach(bp, op);
+ 	if (!fp->client) {
+ 		kfree(fp);
+diff --git a/drivers/sbus/char/bbc_i2c.c b/drivers/sbus/char/bbc_i2c.c
+index 542668292900..7179f72b11ea 100644
+--- a/drivers/sbus/char/bbc_i2c.c
++++ b/drivers/sbus/char/bbc_i2c.c
+@@ -301,13 +301,18 @@ static struct bbc_i2c_bus * __init attach_one_i2c(struct platform_device *op, in
+ 	if (!bp)
+ 		return NULL;
+ 
++	INIT_LIST_HEAD(&bp->temps);
++	INIT_LIST_HEAD(&bp->fans);
++
+ 	bp->i2c_control_regs = of_ioremap(&op->resource[0], 0, 0x2, "bbc_i2c_regs");
+ 	if (!bp->i2c_control_regs)
+ 		goto fail;
+ 
+-	bp->i2c_bussel_reg = of_ioremap(&op->resource[1], 0, 0x1, "bbc_i2c_bussel");
+-	if (!bp->i2c_bussel_reg)
+-		goto fail;
++	if (op->num_resources == 2) {
++		bp->i2c_bussel_reg = of_ioremap(&op->resource[1], 0, 0x1, "bbc_i2c_bussel");
++		if (!bp->i2c_bussel_reg)
++			goto fail;
++	}
+ 
+ 	bp->waiting = 0;
+ 	init_waitqueue_head(&bp->wq);
+diff --git a/drivers/tty/serial/sunsab.c b/drivers/tty/serial/sunsab.c
+index f0d93eb7e6ec..c9549aa135b2 100644
+--- a/drivers/tty/serial/sunsab.c
++++ b/drivers/tty/serial/sunsab.c
+@@ -157,6 +157,15 @@ receive_chars(struct uart_sunsab_port *up,
+ 	    (up->port.line == up->port.cons->index))
+ 		saw_console_brk = 1;
+ 
++	if (count == 0) {
++		if (unlikely(stat->sreg.isr1 & SAB82532_ISR1_BRK)) {
++			stat->sreg.isr0 &= ~(SAB82532_ISR0_PERR |
++					     SAB82532_ISR0_FERR);
++			up->port.icount.brk++;
++			uart_handle_break(&up->port);
++		}
++	}
++
+ 	for (i = 0; i < count; i++) {
+ 		unsigned char ch = buf[i], flag;
+ 
+diff --git a/include/net/inetpeer.h b/include/net/inetpeer.h
+index 2d643649f0f8..168d30dfe807 100644
+--- a/include/net/inetpeer.h
++++ b/include/net/inetpeer.h
+@@ -46,13 +46,12 @@ struct inet_peer {
+ 	};
+ 	/*
+ 	 * Once inet_peer is queued for deletion (refcnt == -1), following fields
+-	 * are not available: rid, ip_id_count, tcp_ts, tcp_ts_stamp
++	 * are not available: rid, tcp_ts, tcp_ts_stamp
+ 	 * We can share memory with rcu_head to help keep inet_peer small.
+ 	 */
+ 	union {
+ 		struct {
+ 			atomic_t			rid;		/* Frag reception counter */
+-			atomic_t			ip_id_count;	/* IP ID for the next packet */
+ 			__u32				tcp_ts;
+ 			__u32				tcp_ts_stamp;
+ 		};
+@@ -102,7 +101,7 @@ extern bool inet_peer_xrlim_allow(struct inet_peer *peer, int timeout);
+ extern void inetpeer_invalidate_tree(int family);
+ 
+ /*
+- * temporary check to make sure we dont access rid, ip_id_count, tcp_ts,
++ * temporary check to make sure we dont access rid, tcp_ts,
+  * tcp_ts_stamp if no refcount is taken on inet_peer
+  */
+ static inline void inet_peer_refcheck(const struct inet_peer *p)
+@@ -110,13 +109,4 @@ static inline void inet_peer_refcheck(const struct inet_peer *p)
+ 	WARN_ON_ONCE(atomic_read(&p->refcnt) <= 0);
+ }
+ 
+-
+-/* can be called with or without local BH being disabled */
+-static inline int inet_getid(struct inet_peer *p, int more)
+-{
+-	more++;
+-	inet_peer_refcheck(p);
+-	return atomic_add_return(more, &p->ip_id_count) - more;
+-}
+-
+ #endif /* _NET_INETPEER_H */
+diff --git a/include/net/ip.h b/include/net/ip.h
+index 6d6b12f4753c..34d004892143 100644
+--- a/include/net/ip.h
++++ b/include/net/ip.h
+@@ -264,9 +264,10 @@ int ip_dont_fragment(struct sock *sk, struct dst_entry *dst)
+ 		 !(dst_metric_locked(dst, RTAX_MTU)));
+ }
+ 
+-extern void __ip_select_ident(struct iphdr *iph, struct dst_entry *dst, int more);
++u32 ip_idents_reserve(u32 hash, int segs);
++void __ip_select_ident(struct iphdr *iph, int segs);
+ 
+-static inline void ip_select_ident(struct sk_buff *skb, struct dst_entry *dst, struct sock *sk)
++static inline void ip_select_ident_segs(struct sk_buff *skb, struct sock *sk, int segs)
+ {
+ 	struct iphdr *iph = ip_hdr(skb);
+ 
+@@ -276,24 +277,20 @@ static inline void ip_select_ident(struct sk_buff *skb, struct dst_entry *dst, s
+ 		 * does not change, they drop every other packet in
+ 		 * a TCP stream using header compression.
+ 		 */
+-		iph->id = (sk && inet_sk(sk)->inet_daddr) ?
+-					htons(inet_sk(sk)->inet_id++) : 0;
+-	} else
+-		__ip_select_ident(iph, dst, 0);
+-}
+-
+-static inline void ip_select_ident_more(struct sk_buff *skb, struct dst_entry *dst, struct sock *sk, int more)
+-{
+-	struct iphdr *iph = ip_hdr(skb);
+-
+-	if ((iph->frag_off & htons(IP_DF)) && !skb->local_df) {
+ 		if (sk && inet_sk(sk)->inet_daddr) {
+ 			iph->id = htons(inet_sk(sk)->inet_id);
+-			inet_sk(sk)->inet_id += 1 + more;
+-		} else
++			inet_sk(sk)->inet_id += segs;
++		} else {
+ 			iph->id = 0;
+-	} else
+-		__ip_select_ident(iph, dst, more);
++		}
++	} else {
++		__ip_select_ident(iph, segs);
++	}
++}
++
++static inline void ip_select_ident(struct sk_buff *skb, struct sock *sk)
++{
++	ip_select_ident_segs(skb, sk, 1);
+ }
+ 
+ /*
+diff --git a/include/net/ipip.h b/include/net/ipip.h
+index 4dccfe3bf731..e8ee3bb1b1ca 100644
+--- a/include/net/ipip.h
++++ b/include/net/ipip.h
+@@ -50,7 +50,7 @@ struct ip_tunnel_prl_entry {
+ 	int pkt_len = skb->len - skb_transport_offset(skb);		\
+ 									\
+ 	skb->ip_summed = CHECKSUM_NONE;					\
+-	ip_select_ident(skb, &rt->dst, NULL);				\
++	ip_select_ident(skb, NULL);				\
+ 									\
+ 	err = ip_local_out(skb);					\
+ 	if (likely(net_xmit_eval(err) == 0)) {				\
+diff --git a/include/net/ipv6.h b/include/net/ipv6.h
+index fa7af9183dc9..117eaa578d0d 100644
+--- a/include/net/ipv6.h
++++ b/include/net/ipv6.h
+@@ -392,14 +392,19 @@ void ip6_frag_init(struct inet_frag_queue *q, void *a);
+ int ip6_frag_match(struct inet_frag_queue *q, void *a);
+ 
+ /* more secured version of ipv6_addr_hash() */
+-static inline u32 ipv6_addr_jhash(const struct in6_addr *a)
++static inline u32 __ipv6_addr_jhash(const struct in6_addr *a, const u32 initval)
+ {
+ 	u32 v = (__force u32)a->s6_addr32[0] ^ (__force u32)a->s6_addr32[1];
+ 
+ 	return jhash_3words(v,
+ 			    (__force u32)a->s6_addr32[2],
+ 			    (__force u32)a->s6_addr32[3],
+-			    ipv6_hash_secret);
++			    initval);
++}
++
++static inline u32 ipv6_addr_jhash(const struct in6_addr *a)
++{
++	return __ipv6_addr_jhash(a, ipv6_hash_secret);
+ }
+ 
+ static inline int ipv6_addr_any(const struct in6_addr *a)
+diff --git a/include/net/secure_seq.h b/include/net/secure_seq.h
+index c2e542b27a5a..b1c3d1c63c4e 100644
+--- a/include/net/secure_seq.h
++++ b/include/net/secure_seq.h
+@@ -3,8 +3,6 @@
+ 
+ #include <linux/types.h>
+ 
+-extern __u32 secure_ip_id(__be32 daddr);
+-extern __u32 secure_ipv6_id(const __be32 daddr[4]);
+ extern u32 secure_ipv4_port_ephemeral(__be32 saddr, __be32 daddr, __be16 dport);
+ extern u32 secure_ipv6_port_ephemeral(const __be32 *saddr, const __be32 *daddr,
+ 				      __be16 dport);
+diff --git a/net/compat.c b/net/compat.c
+index 93f542335e19..2c774d889d39 100644
+--- a/net/compat.c
++++ b/net/compat.c
+@@ -85,7 +85,7 @@ int verify_compat_iovec(struct msghdr *kern_msg, struct iovec *kern_iov,
+ {
+ 	int tot_len;
+ 
+-	if (kern_msg->msg_namelen) {
++	if (kern_msg->msg_name && kern_msg->msg_namelen) {
+ 		if (mode == VERIFY_READ) {
+ 			int err = move_addr_to_kernel(kern_msg->msg_name,
+ 						      kern_msg->msg_namelen,
+@@ -93,10 +93,11 @@ int verify_compat_iovec(struct msghdr *kern_msg, struct iovec *kern_iov,
+ 			if (err < 0)
+ 				return err;
+ 		}
+-		if (kern_msg->msg_name)
+-			kern_msg->msg_name = kern_address;
+-	} else
++		kern_msg->msg_name = kern_address;
++	} else {
+ 		kern_msg->msg_name = NULL;
++		kern_msg->msg_namelen = 0;
++	}
+ 
+ 	tot_len = iov_from_user_compat_to_kern(kern_iov,
+ 					  (struct compat_iovec __user *)kern_msg->msg_iov,
+diff --git a/net/core/iovec.c b/net/core/iovec.c
+index 7fd34a56aeb3..d1628b79286b 100644
+--- a/net/core/iovec.c
++++ b/net/core/iovec.c
+@@ -39,7 +39,7 @@ int verify_iovec(struct msghdr *m, struct iovec *iov, struct sockaddr_storage *a
+ {
+ 	int size, ct, err;
+ 
+-	if (m->msg_namelen) {
++	if (m->msg_name && m->msg_namelen) {
+ 		if (mode == VERIFY_READ) {
+ 			void __user *namep;
+ 			namep = (void __user __force *) m->msg_name;
+@@ -48,10 +48,10 @@ int verify_iovec(struct msghdr *m, struct iovec *iov, struct sockaddr_storage *a
+ 			if (err < 0)
+ 				return err;
+ 		}
+-		if (m->msg_name)
+-			m->msg_name = address;
++		m->msg_name = address;
+ 	} else {
+ 		m->msg_name = NULL;
++		m->msg_namelen = 0;
+ 	}
+ 
+ 	size = m->msg_iovlen * sizeof(struct iovec);
+@@ -157,6 +157,10 @@ EXPORT_SYMBOL(memcpy_fromiovec);
+ int memcpy_fromiovecend(unsigned char *kdata, const struct iovec *iov,
+ 			int offset, int len)
+ {
++	/* No data? Done! */
++	if (len == 0)
++		return 0;
++
+ 	/* Skip over the finished iovecs */
+ 	while (offset >= iov->iov_len) {
+ 		offset -= iov->iov_len;
+diff --git a/net/core/secure_seq.c b/net/core/secure_seq.c
+index 99b2596531bb..6ecbd58418b3 100644
+--- a/net/core/secure_seq.c
++++ b/net/core/secure_seq.c
+@@ -79,29 +79,6 @@ u32 secure_ipv6_port_ephemeral(const __be32 *saddr, const __be32 *daddr,
+ #endif
+ 
+ #ifdef CONFIG_INET
+-__u32 secure_ip_id(__be32 daddr)
+-{
+-	u32 hash[MD5_DIGEST_WORDS];
+-
+-	hash[0] = (__force __u32) daddr;
+-	hash[1] = net_secret[13];
+-	hash[2] = net_secret[14];
+-	hash[3] = net_secret[15];
+-
+-	md5_transform(hash, net_secret);
+-
+-	return hash[0];
+-}
+-
+-__u32 secure_ipv6_id(const __be32 daddr[4])
+-{
+-	__u32 hash[4];
+-
+-	memcpy(hash, daddr, 16);
+-	md5_transform(hash, net_secret);
+-
+-	return hash[0];
+-}
+ 
+ __u32 secure_tcp_sequence_number(__be32 saddr, __be32 daddr,
+ 				 __be16 sport, __be16 dport)
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 8de819475378..728f49babfe0 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -2748,7 +2748,6 @@ struct sk_buff *skb_segment(struct sk_buff *skb, netdev_features_t features)
+ 		tail = nskb;
+ 
+ 		__copy_skb_header(nskb, skb);
+-		nskb->mac_len = skb->mac_len;
+ 
+ 		/* nskb and skb might have different headroom */
+ 		if (nskb->ip_summed == CHECKSUM_PARTIAL)
+@@ -2758,6 +2757,7 @@ struct sk_buff *skb_segment(struct sk_buff *skb, netdev_features_t features)
+ 		skb_set_network_header(nskb, skb->mac_len);
+ 		nskb->transport_header = (nskb->network_header +
+ 					  skb_network_header_len(skb));
++		skb_reset_mac_len(nskb);
+ 		skb_copy_from_linear_data(skb, nskb->data, doffset);
+ 
+ 		if (fskb != skb_shinfo(skb)->frag_list)
+diff --git a/net/ipv4/igmp.c b/net/ipv4/igmp.c
+index 3f0bb3b3819d..782467708c10 100644
+--- a/net/ipv4/igmp.c
++++ b/net/ipv4/igmp.c
+@@ -343,7 +343,7 @@ static struct sk_buff *igmpv3_newpack(struct net_device *dev, int size)
+ 	pip->saddr    = fl4.saddr;
+ 	pip->protocol = IPPROTO_IGMP;
+ 	pip->tot_len  = 0;	/* filled in later */
+-	ip_select_ident(skb, &rt->dst, NULL);
++	ip_select_ident(skb, NULL);
+ 	((u8*)&pip[1])[0] = IPOPT_RA;
+ 	((u8*)&pip[1])[1] = 4;
+ 	((u8*)&pip[1])[2] = 0;
+@@ -687,7 +687,7 @@ static int igmp_send_report(struct in_device *in_dev, struct ip_mc_list *pmc,
+ 	iph->daddr    = dst;
+ 	iph->saddr    = fl4.saddr;
+ 	iph->protocol = IPPROTO_IGMP;
+-	ip_select_ident(skb, &rt->dst, NULL);
++	ip_select_ident(skb, NULL);
+ 	((u8*)&iph[1])[0] = IPOPT_RA;
+ 	((u8*)&iph[1])[1] = 4;
+ 	((u8*)&iph[1])[2] = 0;
+diff --git a/net/ipv4/inetpeer.c b/net/ipv4/inetpeer.c
+index d63a9268cff6..db1b6a73e0ff 100644
+--- a/net/ipv4/inetpeer.c
++++ b/net/ipv4/inetpeer.c
+@@ -26,20 +26,7 @@
+  *  Theory of operations.
+  *  We keep one entry for each peer IP address.  The nodes contains long-living
+  *  information about the peer which doesn't depend on routes.
+- *  At this moment this information consists only of ID field for the next
+- *  outgoing IP packet.  This field is incremented with each packet as encoded
+- *  in inet_getid() function (include/net/inetpeer.h).
+- *  At the moment of writing this notes identifier of IP packets is generated
+- *  to be unpredictable using this code only for packets subjected
+- *  (actually or potentially) to defragmentation.  I.e. DF packets less than
+- *  PMTU in size when local fragmentation is disabled use a constant ID and do
+- *  not use this code (see ip_select_ident() in include/net/ip.h).
+  *
+- *  Route cache entries hold references to our nodes.
+- *  New cache entries get references via lookup by destination IP address in
+- *  the avl tree.  The reference is grabbed only when it's needed i.e. only
+- *  when we try to output IP packet which needs an unpredictable ID (see
+- *  __ip_select_ident() in net/ipv4/route.c).
+  *  Nodes are removed only when reference counter goes to 0.
+  *  When it's happened the node may be removed when a sufficient amount of
+  *  time has been passed since its last use.  The less-recently-used entry can
+@@ -62,7 +49,6 @@
+  *		refcnt: atomically against modifications on other CPU;
+  *		   usually under some other lock to prevent node disappearing
+  *		daddr: unchangeable
+- *		ip_id_count: atomic value (no lock needed)
+  */
+ 
+ static struct kmem_cache *peer_cachep __read_mostly;
+@@ -488,10 +474,6 @@ relookup:
+ 		p->daddr = *daddr;
+ 		atomic_set(&p->refcnt, 1);
+ 		atomic_set(&p->rid, 0);
+-		atomic_set(&p->ip_id_count,
+-				(daddr->family == AF_INET) ?
+-					secure_ip_id(daddr->addr.a4) :
+-					secure_ipv6_id(daddr->addr.a6));
+ 		p->tcp_ts_stamp = 0;
+ 		p->metrics[RTAX_LOCK-1] = INETPEER_METRICS_NEW;
+ 		p->rate_tokens = 0;
+diff --git a/net/ipv4/ip_output.c b/net/ipv4/ip_output.c
+index d6407b563fd8..7827436ae843 100644
+--- a/net/ipv4/ip_output.c
++++ b/net/ipv4/ip_output.c
+@@ -161,7 +161,7 @@ int ip_build_and_send_pkt(struct sk_buff *skb, struct sock *sk,
+ 	iph->daddr    = (opt && opt->opt.srr ? opt->opt.faddr : daddr);
+ 	iph->saddr    = saddr;
+ 	iph->protocol = sk->sk_protocol;
+-	ip_select_ident(skb, &rt->dst, sk);
++	ip_select_ident(skb, sk);
+ 
+ 	if (opt && opt->opt.optlen) {
+ 		iph->ihl += opt->opt.optlen>>2;
+@@ -403,8 +403,7 @@ packet_routed:
+ 		ip_options_build(skb, &inet_opt->opt, inet->inet_daddr, rt, 0);
+ 	}
+ 
+-	ip_select_ident_more(skb, &rt->dst, sk,
+-			     (skb_shinfo(skb)->gso_segs ?: 1) - 1);
++	ip_select_ident_segs(skb, sk, skb_shinfo(skb)->gso_segs ?: 1);
+ 
+ 	skb->priority = sk->sk_priority;
+ 	skb->mark = sk->sk_mark;
+@@ -1347,7 +1346,7 @@ struct sk_buff *__ip_make_skb(struct sock *sk,
+ 	iph->ihl = 5;
+ 	iph->tos = inet->tos;
+ 	iph->frag_off = df;
+-	ip_select_ident(skb, &rt->dst, sk);
++	ip_select_ident(skb, sk);
+ 	iph->ttl = ttl;
+ 	iph->protocol = sk->sk_protocol;
+ 	ip_copy_addrs(iph, fl4);
+diff --git a/net/ipv4/ipmr.c b/net/ipv4/ipmr.c
+index 94cd1ef1e319..5ccef6e06dc5 100644
+--- a/net/ipv4/ipmr.c
++++ b/net/ipv4/ipmr.c
+@@ -1576,7 +1576,7 @@ static void ip_encap(struct sk_buff *skb, __be32 saddr, __be32 daddr)
+ 	iph->protocol	=	IPPROTO_IPIP;
+ 	iph->ihl	=	5;
+ 	iph->tot_len	=	htons(skb->len);
+-	ip_select_ident(skb, skb_dst(skb), NULL);
++	ip_select_ident(skb, NULL);
+ 	ip_send_check(iph);
+ 
+ 	memset(&(IPCB(skb)->opt), 0, sizeof(IPCB(skb)->opt));
+diff --git a/net/ipv4/raw.c b/net/ipv4/raw.c
+index 48c6ebcb7fe0..c1b3970caa68 100644
+--- a/net/ipv4/raw.c
++++ b/net/ipv4/raw.c
+@@ -384,7 +384,7 @@ static int raw_send_hdrinc(struct sock *sk, struct flowi4 *fl4,
+ 		iph->check   = 0;
+ 		iph->tot_len = htons(length);
+ 		if (!iph->id)
+-			ip_select_ident(skb, &rt->dst, NULL);
++			ip_select_ident(skb, NULL);
+ 
+ 		iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
+ 	}
+diff --git a/net/ipv4/route.c b/net/ipv4/route.c
+index 90bc88bbd2a4..fd6843371f2e 100644
+--- a/net/ipv4/route.c
++++ b/net/ipv4/route.c
+@@ -1341,46 +1341,53 @@ void rt_bind_peer(struct rtable *rt, __be32 daddr, int create)
+ 		rt->rt_peer_genid = rt_peer_genid();
+ }
+ 
+-/*
+- * Peer allocation may fail only in serious out-of-memory conditions.  However
+- * we still can generate some output.
+- * Random ID selection looks a bit dangerous because we have no chances to
+- * select ID being unique in a reasonable period of time.
+- * But broken packet identifier may be better than no packet at all.
++#define IP_IDENTS_SZ 2048u
++struct ip_ident_bucket {
++	atomic_t	id;
++	u32		stamp32;
++};
++
++static struct ip_ident_bucket *ip_idents __read_mostly;
++
++/* In order to protect privacy, we add a perturbation to identifiers
++ * if one generator is seldom used. This makes hard for an attacker
++ * to infer how many packets were sent between two points in time.
+  */
+-static void ip_select_fb_ident(struct iphdr *iph)
++u32 ip_idents_reserve(u32 hash, int segs)
+ {
+-	static DEFINE_SPINLOCK(ip_fb_id_lock);
+-	static u32 ip_fallback_id;
+-	u32 salt;
++	struct ip_ident_bucket *bucket = ip_idents + hash % IP_IDENTS_SZ;
++	u32 old = ACCESS_ONCE(bucket->stamp32);
++	u32 now = (u32)jiffies;
++	u32 delta = 0;
++
++	if (old != now && cmpxchg(&bucket->stamp32, old, now) == old) {
++		u64 x = random32();
++
++		x *= (now - old);
++		delta = (u32)(x >> 32);
++	}
+ 
+-	spin_lock_bh(&ip_fb_id_lock);
+-	salt = secure_ip_id((__force __be32)ip_fallback_id ^ iph->daddr);
+-	iph->id = htons(salt & 0xFFFF);
+-	ip_fallback_id = salt;
+-	spin_unlock_bh(&ip_fb_id_lock);
++	return atomic_add_return(segs + delta, &bucket->id) - segs;
+ }
++EXPORT_SYMBOL(ip_idents_reserve);
+ 
+-void __ip_select_ident(struct iphdr *iph, struct dst_entry *dst, int more)
++void __ip_select_ident(struct iphdr *iph, int segs)
+ {
+-	struct rtable *rt = (struct rtable *) dst;
+-
+-	if (rt && !(rt->dst.flags & DST_NOPEER)) {
+-		if (rt->peer == NULL)
+-			rt_bind_peer(rt, rt->rt_dst, 1);
++	static u32 ip_idents_hashrnd __read_mostly;
++	static bool hashrnd_initialized = false;
++	u32 hash, id;
+ 
+-		/* If peer is attached to destination, it is never detached,
+-		   so that we need not to grab a lock to dereference it.
+-		 */
+-		if (rt->peer) {
+-			iph->id = htons(inet_getid(rt->peer, more));
+-			return;
+-		}
+-	} else if (!rt)
+-		printk(KERN_DEBUG "rt_bind_peer(0) @%p\n",
+-		       __builtin_return_address(0));
++	if (unlikely(!hashrnd_initialized)) {
++		hashrnd_initialized = true;
++		get_random_bytes(&ip_idents_hashrnd, sizeof(ip_idents_hashrnd));
++	}
+ 
+-	ip_select_fb_ident(iph);
++	hash = jhash_3words((__force u32)iph->daddr,
++			    (__force u32)iph->saddr,
++			    iph->protocol,
++			    ip_idents_hashrnd);
++	id = ip_idents_reserve(hash, segs);
++	iph->id = htons(id);
+ }
+ EXPORT_SYMBOL(__ip_select_ident);
+ 
+@@ -3009,7 +3016,6 @@ static int rt_fill_info(struct net *net,
+ 	error = rt->dst.error;
+ 	if (peer) {
+ 		inet_peer_refcheck(rt->peer);
+-		id = atomic_read(&peer->ip_id_count) & 0xffff;
+ 		if (peer->tcp_ts_stamp) {
+ 			ts = peer->tcp_ts;
+ 			tsage = get_seconds() - peer->tcp_ts_stamp;
+@@ -3441,6 +3447,12 @@ int __init ip_rt_init(void)
+ {
+ 	int rc = 0;
+ 
++	ip_idents = kmalloc(IP_IDENTS_SZ * sizeof(*ip_idents), GFP_KERNEL);
++	if (!ip_idents)
++		panic("IP: failed to allocate ip_idents\n");
++
++	get_random_bytes(ip_idents, IP_IDENTS_SZ * sizeof(*ip_idents));
++
+ #ifdef CONFIG_IP_ROUTE_CLASSID
+ 	ip_rt_acct = __alloc_percpu(256 * sizeof(struct ip_rt_acct), __alignof__(struct ip_rt_acct));
+ 	if (!ip_rt_acct)
+diff --git a/net/ipv4/tcp_vegas.c b/net/ipv4/tcp_vegas.c
+index 80fa2bfd7ede..c042e529a11e 100644
+--- a/net/ipv4/tcp_vegas.c
++++ b/net/ipv4/tcp_vegas.c
+@@ -218,7 +218,8 @@ static void tcp_vegas_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+ 			 * This is:
+ 			 *     (actual rate in segments) * baseRTT
+ 			 */
+-			target_cwnd = tp->snd_cwnd * vegas->baseRTT / rtt;
++			target_cwnd = (u64)tp->snd_cwnd * vegas->baseRTT;
++			do_div(target_cwnd, rtt);
+ 
+ 			/* Calculate the difference between the window we had,
+ 			 * and the window we would like to have. This quantity
+diff --git a/net/ipv4/tcp_veno.c b/net/ipv4/tcp_veno.c
+index ac43cd747bce..b4d1858be550 100644
+--- a/net/ipv4/tcp_veno.c
++++ b/net/ipv4/tcp_veno.c
+@@ -144,7 +144,7 @@ static void tcp_veno_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+ 
+ 		rtt = veno->minrtt;
+ 
+-		target_cwnd = (tp->snd_cwnd * veno->basertt);
++		target_cwnd = (u64)tp->snd_cwnd * veno->basertt;
+ 		target_cwnd <<= V_PARAM_SHIFT;
+ 		do_div(target_cwnd, rtt);
+ 
+diff --git a/net/ipv4/xfrm4_mode_tunnel.c b/net/ipv4/xfrm4_mode_tunnel.c
+index 938553efbf8e..5531eb2a56a5 100644
+--- a/net/ipv4/xfrm4_mode_tunnel.c
++++ b/net/ipv4/xfrm4_mode_tunnel.c
+@@ -54,12 +54,12 @@ static int xfrm4_mode_tunnel_output(struct xfrm_state *x, struct sk_buff *skb)
+ 
+ 	top_iph->frag_off = (flags & XFRM_STATE_NOPMTUDISC) ?
+ 		0 : (XFRM_MODE_SKB_CB(skb)->frag_off & htons(IP_DF));
+-	ip_select_ident(skb, dst->child, NULL);
+ 
+ 	top_iph->ttl = ip4_dst_hoplimit(dst->child);
+ 
+ 	top_iph->saddr = x->props.saddr.a4;
+ 	top_iph->daddr = x->id.daddr.a4;
++	ip_select_ident(skb, NULL);
+ 
+ 	return 0;
+ }
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index 6225b7cf12b9..2bf7916c816f 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -599,22 +599,19 @@ int ip6_find_1stfragopt(struct sk_buff *skb, u8 **nexthdr)
+ 
+ void ipv6_select_ident(struct frag_hdr *fhdr, struct rt6_info *rt)
+ {
+-	static atomic_t ipv6_fragmentation_id;
+-	int ident;
++	static u32 ip6_idents_hashrnd __read_mostly;
++	static bool hashrnd_initialized = false;
++	u32 hash, id;
+ 
+-	if (rt && !(rt->dst.flags & DST_NOPEER)) {
+-		struct inet_peer *peer;
+-
+-		if (!rt->rt6i_peer)
+-			rt6_bind_peer(rt, 1);
+-		peer = rt->rt6i_peer;
+-		if (peer) {
+-			fhdr->identification = htonl(inet_getid(peer, 0));
+-			return;
+-		}
++	if (unlikely(!hashrnd_initialized)) {
++		hashrnd_initialized = true;
++		get_random_bytes(&ip6_idents_hashrnd, sizeof(ip6_idents_hashrnd));
+ 	}
+-	ident = atomic_inc_return(&ipv6_fragmentation_id);
+-	fhdr->identification = htonl(ident);
++	hash = __ipv6_addr_jhash(&rt->rt6i_dst.addr, ip6_idents_hashrnd);
++	hash = __ipv6_addr_jhash(&rt->rt6i_src.addr, hash);
++
++	id = ip_idents_reserve(hash, 1);
++	fhdr->identification = htonl(id);
+ }
+ 
+ int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+diff --git a/net/netfilter/ipvs/ip_vs_xmit.c b/net/netfilter/ipvs/ip_vs_xmit.c
+index ec78ab63dd46..559d307163b1 100644
+--- a/net/netfilter/ipvs/ip_vs_xmit.c
++++ b/net/netfilter/ipvs/ip_vs_xmit.c
+@@ -853,7 +853,7 @@ ip_vs_tunnel_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
+ 	iph->daddr		=	cp->daddr.ip;
+ 	iph->saddr		=	saddr;
+ 	iph->ttl		=	old_iph->ttl;
+-	ip_select_ident(skb, &rt->dst, NULL);
++	ip_select_ident(skb, NULL);
+ 
+ 	/* Another hack: avoid icmp_send in ip_fragment */
+ 	skb->local_df = 1;
+diff --git a/net/sctp/associola.c b/net/sctp/associola.c
+index 25b207b3ffe4..da54d2922f51 100644
+--- a/net/sctp/associola.c
++++ b/net/sctp/associola.c
+@@ -1188,6 +1188,7 @@ void sctp_assoc_update(struct sctp_association *asoc,
+ 	asoc->c = new->c;
+ 	asoc->peer.rwnd = new->peer.rwnd;
+ 	asoc->peer.sack_needed = new->peer.sack_needed;
++	asoc->peer.auth_capable = new->peer.auth_capable;
+ 	asoc->peer.i = new->peer.i;
+ 	sctp_tsnmap_init(&asoc->peer.tsn_map, SCTP_TSN_MAP_INITIAL,
+ 			 asoc->peer.i.initial_tsn, GFP_ATOMIC);
+diff --git a/net/sctp/output.c b/net/sctp/output.c
+index cf3e22c586a6..5bd9aa93139d 100644
+--- a/net/sctp/output.c
++++ b/net/sctp/output.c
+@@ -587,7 +587,7 @@ out:
+ 	return err;
+ no_route:
+ 	kfree_skb(nskb);
+-	IP_INC_STATS_BH(&init_net, IPSTATS_MIB_OUTNOROUTES);
++	IP_INC_STATS(&init_net, IPSTATS_MIB_OUTNOROUTES);
+ 
+ 	/* FIXME: Returning the 'err' will effect all the associations
+ 	 * associated with a socket, although only one of the paths of the
