@@ -25,7 +25,7 @@ install_rtl8192cu()
 	#cp blacklist*.conf $CACHEDIR/sdcard/etc/modprobe.d/
 }
 
-if [[ $BRANCH == default ]]; then
+if [[ $BRANCH == default && $ARCHITECTURE == arm ]]; then
 	display_alert "Installing additional driver" "RT8192" "info"
 	install_rtl8192cu
 fi
