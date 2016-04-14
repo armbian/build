@@ -205,11 +205,6 @@ VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
 
 echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION >> $DEST/debug/install.log
 
-# needed if process failed in the middle
-umount_image
-
-# let's start with fresh screen
-
 display_alert "Starting Armbian build script" "@host" "info"
 
 # optimize build time with 100% CPU usage
