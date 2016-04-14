@@ -99,7 +99,7 @@ if [ ! -f "$cache_fname" ]; then
 # debootstrap base system
 [[ -n $PACKAGE_LIST_EXCLUDE ]] && local package_exclude="--exclude="${PACKAGE_LIST_EXCLUDE// /,}
 [[ $DISTRIBUTION == "Debian" ]] && local redir="http://httpredir.debian.org/debian/"
-debootstrap --include=openssh-server,debconf-utils $package_exclude --arch=$ARCH --foreign $RELEASE $CACHEDIR/sdcard/ $redir | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox $TTY_Y $TTY_X
+debootstrap --include=openssh-server $package_exclude --arch=$ARCH --foreign $RELEASE $CACHEDIR/sdcard/ $redir | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox $TTY_Y $TTY_X
 
 # we need emulator for second stage
 if [[ $ARCH == *64* ]]; then

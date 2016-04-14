@@ -165,7 +165,7 @@ create_rootfs_cache()
 		[[ -z $OUTPUT_DIALOG && $RELEASE != wheezy ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
 
 		display_alert "Installing base system" "Stage 1/2" "info"
-		eval 'debootstrap --include=debconf-utils,locales $package_exclude --arch=$ARCH --foreign $RELEASE $CACHEDIR/sdcard/ $apt_mirror' \
+		eval 'debootstrap --include=locales $package_exclude --arch=$ARCH --foreign $RELEASE $CACHEDIR/sdcard/ $apt_mirror' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
