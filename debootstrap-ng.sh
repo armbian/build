@@ -487,6 +487,8 @@ create_image()
 	# stage: copy armbian.txt TODO: Copy only if creating zip file?
 	cp $CACHEDIR/sdcard/etc/armbian.txt $CACHEDIR/
 
+	sync
+
 	# unmount /boot first, rootfs second, image file last
 	if [[ $BOOTSIZE != 0 ]]; then umount -l $CACHEDIR/mount/boot; fi
 	if [[ $ROOTFS_TYPE != nfs ]]; then umount -l $CACHEDIR/mount; fi

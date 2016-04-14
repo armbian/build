@@ -14,17 +14,15 @@
 # shrinking_raw_image
 # closing_image
 # install_packet
+# umount_image
 
 custom_debootstrap (){
 #---------------------------------------------------------------------------------------------------------------------------------
 # Create clean and fresh Debian and Ubuntu image template if it does not exists
 #---------------------------------------------------------------------------------------------------------------------------------
 
-# is boot partition to big?
-#if [ "$SDSIZE" -le "$(($OFFSET+$BOOTSIZE))" ]; then
-#	display_alert "Image size too small." "$BOOTSIZE > $SDSIZE" "err"
-#	exit
-#fi
+# needed if process failed in the middle
+umount_image
 
 # create needed directories and mount image to next free loop device
 rm -rf $CACHEDIR/sdcard/
@@ -342,5 +340,19 @@ procent=${procent%.*}
 		fi
 		i=$[$i+1]
 		j=$[$j+1]
+done
+}
+
+umount_image (){
+umount -l $CACHEDIR/sdcard/dev/pts >/dev/null 2>&1
+umount -l $CACHEDIR/sdcard/dev >/dev/null 2>&1
+umount -l $CACHEDIR/sdcard/proc >/dev/null 2>&1
+umount -l $CACHEDIR/sdcard/sys >/dev/null 2>&1
+umount -l $CACHEDIR/sdcard/tmp >/dev/null 2>&1
+umount -l $CACHEDIR/sdcard >/dev/null 2>&1
+IFS=" "
+x=$(losetup -a |awk '{ print $1 }' | rev | cut -c 2- | rev | tac);
+for x in $x; do
+	losetup -d $x
 done
 }

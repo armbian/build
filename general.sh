@@ -17,7 +17,6 @@
 # display_alert
 # grab_version
 # fingerprint_image
-# umount_image
 # addtorepo
 # prepare_host
 
@@ -202,22 +201,6 @@ echo "" >> $1
 echo "--------------------------------------------------------------------------------" >> $1
 }
 
-
-umount_image (){
-umount -l $CACHEDIR/sdcard/dev/pts >/dev/null 2>&1
-umount -l $CACHEDIR/sdcard/dev >/dev/null 2>&1
-umount -l $CACHEDIR/sdcard/proc >/dev/null 2>&1
-umount -l $CACHEDIR/sdcard/sys >/dev/null 2>&1
-umount -l $CACHEDIR/sdcard/tmp >/dev/null 2>&1
-umount -l $CACHEDIR/sdcard >/dev/null 2>&1
-IFS=" "
-x=$(losetup -a |awk '{ print $1 }' | rev | cut -c 2- | rev | tac);
-for x in $x; do
-	losetup -d $x
-done
-}
-
-
 addtorepo ()
 {
 # add all deb files to repository
@@ -301,7 +284,7 @@ prepare_host() {
 	fi
 
 	# packages list for host
-	PAK="aptly ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate pigz \
+	PAK="ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate pigz \
 	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-tools gcc-aarch64-linux-gnu"
@@ -356,6 +339,11 @@ prepare_host() {
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 	fi
 
+	# install aptly separately
+	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' aptly 2>/dev/null) != *ii* ]]; then
+		apt-get install -qq -y --no-install-recommends aptly >/dev/null 2>&1
+	fi
+
 	# TODO: Check for failed installation process
 	# test exit code propagation for commands in parentheses
 
@@ -371,43 +359,4 @@ prepare_host() {
 	# TODO: needs better documentation
 	echo 'Place your patches and kernel.config / u-boot.config / lib.config here.' > $SRC/userpatches/readme.txt
 	echo 'They will be automatically included if placed here!' >> $SRC/userpatches/readme.txt
-
-	# legacy kernel compilation needs cross-gcc version 4.9 or lower
-	# gcc-arm-linux-gnueabi(hf) installs gcc version 5 by default on wily
-	#if [[ $codename == wily || $codename == xenial ]]; then
-	#	# hard float
-	#	local GCC=$(which arm-linux-gnueabihf-gcc)
-	#	while [[ -L $GCC ]]; do
-	#		GCC=$(readlink "$GCC")
-	#	done
-	#	local version=$(basename "$GCC" | awk -F '-' '{print $NF}')
-	#	if (( $(echo "$version > 4.9" | bc -l) )); then
-	#		update-alternatives --install /usr/bin/arm-linux-gnueabihf-gcc arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-4.9 10 \
-	#			--slave /usr/bin/arm-linux-gnueabihf-cpp arm-linux-gnueabihf-cpp /usr/bin/arm-linux-gnueabihf-cpp-4.9 \
-	#			--slave /usr/bin/arm-linux-gnueabihf-gcov arm-linux-gnueabihf-gcov /usr/bin/arm-linux-gnueabihf-gcov-4.9
-
-	#		update-alternatives --install /usr/bin/arm-linux-gnueabihf-gcc arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-5 11 \
-	#			--slave /usr/bin/arm-linux-gnueabihf-cpp arm-linux-gnueabihf-cpp /usr/bin/arm-linux-gnueabihf-cpp-5 \
-	#			--slave /usr/bin/arm-linux-gnueabihf-gcov arm-linux-gnueabihf-gcov /usr/bin/arm-linux-gnueabihf-gcov-5
-
-	#		update-alternatives --set arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-4.9
-	#	fi
-	#	# soft float
-	#	GCC=$(which arm-linux-gnueabi-gcc)
-	#	while [[ -L $GCC ]]; do
-	#		GCC=$(readlink "$GCC")
-	#	done
-	#	version=$(basename "$GCC" | awk -F '-' '{print $NF}')
-	#	if (( $(echo "$version > 4.9" | bc -l) )); then
-	#		update-alternatives --install /usr/bin/arm-linux-gnueabi-gcc arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-4.9 10 \
-	#			--slave /usr/bin/arm-linux-gnueabi-cpp arm-linux-gnueabi-cpp /usr/bin/arm-linux-gnueabi-cpp-4.9 \
-	#			--slave /usr/bin/arm-linux-gnueabi-gcov arm-linux-gnueabi-gcov /usr/bin/arm-linux-gnueabi-gcov-4.9
-
-	#		update-alternatives --install /usr/bin/arm-linux-gnueabi-gcc arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-5 11 \
-	#			--slave /usr/bin/arm-linux-gnueabi-cpp arm-linux-gnueabi-cpp /usr/bin/arm-linux-gnueabi-cpp-5 \
-	#			--slave /usr/bin/arm-linux-gnueabi-gcov arm-linux-gnueabi-gcov /usr/bin/arm-linux-gnueabi-gcov-5
-
-	#		update-alternatives --set arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-4.9
-	#	fi
-	#fi
 }

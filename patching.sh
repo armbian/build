@@ -114,11 +114,6 @@ patching_sources(){
 		patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch > /dev/null 2>&1
 	fi
 
-	# this exception is needed if we switch to legacy sunxi sources in configuration.sh to https://github.com/dan-and/linux-sunxi
-	if [[ $LINUXKERNEL == *dan-and* && ($BOARD == bana* || $BOARD == orangepi* || $BOARD == lamobo*) ]]; then 
-		LINUXFAMILY="banana";
-	fi
-
 	# this exception is needed since AW boards share single mainline kernel
 	[[ $LINUXFAMILY == sun*i && $BRANCH != "default" ]] && LINUXFAMILY="sunxi"
 	

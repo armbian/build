@@ -208,11 +208,6 @@ compile_kernel (){
 		fi
 	fi
 
-	# hacks for banana family
-	if [[ $LINUXFAMILY == "banana" ]] ; then
-		sed -i 's/CONFIG_GMAC_CLK_SYS=y/CONFIG_GMAC_CLK_SYS=y\nCONFIG_GMAC_FOR_BANANAPI=y/g' .config
-	fi
-
 	# hack for deb builder. To pack what's missing in headers pack.
 	cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
 
