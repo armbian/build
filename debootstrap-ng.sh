@@ -44,7 +44,7 @@ debootstrap_ng()
 
 	# stage: clean and create directories
 	rm -rf $CACHEDIR/sdcard $CACHEDIR/mount
-	mkdir -p $CACHEDIR/sdcard $CACHEDIR/mount $DEST/images
+	mkdir -p $CACHEDIR/sdcard $CACHEDIR/mount $DEST/images $CACHEDIR/rootfs
 
 	# stage: verify tmpfs configuration and mount
 	# default maximum size for tmpfs mount is 1/2 of available RAM
