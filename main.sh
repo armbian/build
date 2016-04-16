@@ -70,118 +70,60 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 # Check and fix dependencies, directory structure and settings
 prepare_host
 
-# Choose destination - creating board list from file configuration.sh
-if [ "$BOARD" == "" ]; then
-	IFS=";"
-	MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/\)#enabled/ || /#des/' | sed -e 's/\t\t//' | sed 's/)#enabled//g' \
-	| sed 's/#description //g' | sed -e 's/\t//' | sed ':a;N;$!ba;s/\n/;/g'))
-	MYPARAMS=( --title "Choose a board" --backtitle $backtitle --menu "\n Supported:" 36 67 26 )
-	i=0; j=1
-	while [[ $i -lt ${#MYARRAY[@]} ]];	do
-		MYPARAMS+=( "${MYARRAY[$i]}" "         ${MYARRAY[$j]}" )
-		i=$[$i+2]; j=$[$j+2]
+if [[ -z $KERNEL_ONLY ]]; then
+	options+=("yes" "Kernel, u-boot and other packages")
+	options+=("no" "Full OS image for writing to SD card")
+	KERNEL_ONLY=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select what to build" $TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+	unset options
+	[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected"
+fi
+
+if [[ -z $BOARD ]]; then
+	options=()
+	for board in $SRC/lib/config/boards/*.conf; do
+		options+=("$(basename $board | cut -d'.' -f1)" "$(head -1 $board | cut -d'#' -f2)")
 	done
-	whiptail "${MYPARAMS[@]}" 2>results  
-	BOARD=$(<results)
-	rm results
-	unset MYARRAY
-fi
-	
-if [ "$BOARD" == "" ]; then echo "ERROR: You have to choose one board"; exit; fi
-
-# This section is left out if we only compile kernel
-if [ "$KERNEL_ONLY" != "yes" ]; then
-	
-	# Choose for which distribution you want to compile
-	if [ "$RELEASE" == "" ]; then
-		IFS=";"
-		declare -a MYARRAY=('wheezy' 'Debian 7 Wheezy | oldstable' 'jessie' 'Debian 8 Jessie | stable' \
-		'trusty' 'Ubuntu Trusty Tahr 14.04.x LTS | stable' 'xenial' 'Ubuntu Xenial Xerus 16.04.x LTS | testing');
-		MYPARAMS=( --title "Choose a distribution" --backtitle $backtitle --menu "\n Root file system:" 11 66 4 )
-		i=0; j=1	
-		while [[ $i -lt ${#MYARRAY[@]} ]]; do
-			MYPARAMS+=( "${MYARRAY[$i]}" "         ${MYARRAY[$j]}" )
-			i=$[$i+2]; j=$[$j+2]
-		done
-		whiptail "${MYPARAMS[@]}" 2>results  
-		RELEASE=$(<results)
-		rm results
-		unset MYARRAY
-	fi
-
-	if [ "$RELEASE" == "" ]; then echo "ERROR: You have to choose one distribution"; exit; fi
-
-	# Choose to build a desktop
-	if [ "$BUILD_DESKTOP" == "" ]; then
-		IFS=";"
-		declare -a MYARRAY=('No' 'Command line interface' 'Yes' 'XFCE graphical interface');
-		MYPARAMS=( --title "Install desktop?" --backtitle $backtitle --menu "" 10 60 3 )
-		i=0; j=1
-		while [[ $i -lt ${#MYARRAY[@]} ]]; do
-			MYPARAMS+=( "${MYARRAY[$i]}" "         ${MYARRAY[$j]}" )
-			i=$[$i+2]; j=$[$j+2]
-		done
-		whiptail "${MYPARAMS[@]}" 2>results  
-		BUILD_DESKTOP=$(<results)
-		BUILD_DESKTOP=${BUILD_DESKTOP,,}
-		rm results
-		unset MYARRAY
-	fi
-
-	if [ "$BUILD_DESKTOP" == "" ]; then echo "ERROR: You need to choose"; exit; fi
-
+	BOARD=$(dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar --menu "Select one of supported boards" $TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+	unset options
+	[[ -z $BOARD ]] && exit_with_error "No board selected"
 fi
 
-# Choose for which branch you want to compile
-if [ "$BRANCH" == "" ]; then	
-	# get info crom configuration which kernel can be build for certain board
-	line_number=$(grep -n "$BOARD)" $SRC/lib/configuration.sh | grep -Eo '^[^:]+' | head -1)
-	display_para=$(tail -n +$line_number $SRC/lib/configuration.sh | grep -in "#build" | head -1 | awk '{print $NF}')
+source $SRC/lib/config/boards/$BOARD.conf
 
-	if [[ "$display_para" == *wip ]]; then 
-		display_para=${display_para//[!0-9]/}
-		whiptail --title "Warning Warning Warning" --msgbox "This is a work in progress. \
-		Building might not succeed. \n\nYou must hit OK to continue." 9 63
-	fi
+[[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
 
-	IFS=";"
-	
-	# define all possible combinations
-	if [[ $display_para == "1" ]]; then 
-		declare -a MYARRAY=('default' '3.4.x - 3.14.x legacy'); 
+if [[ -z $BRANCH ]]; then
+	options=()
+	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "3.4.x - 3.14.x legacy")
+	[[ $KERNEL_TARGET == *next* ]] && options+=("next" "Latest stable @kernel.org")
+	[[ $KERNEL_TARGET == *dev* ]] && options+=("dev" "Latest dev @kernel.org")
+	# do not display selection dialog if only one kernel branch is available
+	if [[ "${#options[@]}" == 2 ]]; then
+		BRANCH="${#options[0]}"
+	else
+		BRANCH=$(dialog --stdout --title "Choose a kernel" --backtitle "$backtitle" --menu "Select one of supported kernels" $TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 	fi
-	if [[ $display_para == "2" ]]; then 
-		declare -a MYARRAY=('next' 'Latest stable @kernel.org'); 
-		fi
-	if [[ $display_para == "3" ]]; then 
-		declare -a MYARRAY=('default' '3.4.x - 3.14.x legacy' 'next' 'Latest stable @kernel.org'); 
-		fi
-	if [[ $display_para == "4" ]]; then 
-		declare -a MYARRAY=('dev' 'Latest dev @kernel.org'); 
-		fi
-	if [[ $display_para == "5" ]]; then 
-		declare -a MYARRAY=('next' 'Latest stable @kernel.org' 'dev' 'Latest dev @kernel.org'); 
-		fi
-	if [[ $display_para == "6" || $display_para == "0" ]]; then 
-		declare -a MYARRAY=('default' '3.4.x - 3.14.x legacy' 'next' 'Latest stable @kernel.org' 'dev' 'Latest dev @kernel.org'); 
-		fi
-	
-	MYPARAMS=( --title "Choose a branch" --backtitle "$backtitle" --menu "\n Kernel:" 10 60 3 )
-	i=0; j=1
-	while [[ $i -lt ${#MYARRAY[@]} ]]; do
-		MYPARAMS+=( "${MYARRAY[$i]}" "         ${MYARRAY[$j]}" )
-		i=$[$i+2]; j=$[$j+2]
-	done
-	whiptail "${MYPARAMS[@]}" 2>results  
-	BRANCH=$(<results)
-	rm results
-	unset MYARRAY
+	unset options
+	[[ -z $BRANCH ]] && exit_with_error "No kernel branch selected"
 fi
 
-if [ "$BRANCH" == "" ]; then echo "ERROR: You have to choose one branch"; exit; fi
+if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
+	options=()
+	options+=("wheezy" "Debian 7 Wheezy (oldstable)")
+	options+=("jessie" "Debian 8 Jessie (stable)")
+	options+=("trusty" "Ubuntu Trusty 14.04.x LTS")
+	options+=("xenial" "Ubuntu Xenial 16.04.x LTS")
+	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select one of supported releases" $TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+	unset options
+	[[ -z $RELEASE ]] && exit_with_error "No release selected"
 
-# back to normal
-unset IFS
+	options=()
+	options+=("no" "Image with console interface")
+	options+=("yes" "Image with desktop environment")
+	BUILD_DESKTOP=$(dialog --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags --menu "Select image type" $TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+	unset options
+	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
+fi
 
 # naming to distro 
 if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi

@@ -28,26 +28,22 @@
 # common options
 
 REVISION="5.07" # all boards have same revision
-ARCH="armhf"
-CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-"
-TARGETS="zImage"
 ROOTPWD="1234" # Must be changed @first login
 MAINTAINER="Igor Pecovnik" # deb signature
 MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
 SDSIZE="4000" # SD image size in MB
 TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 USEALLCORES="yes" # Use all CPU cores for compiling
-OFFSET="1" # Bootloader space in MB (1 x 2048 = default)
-BOOTSIZE=${BOOTSIZE-0} # Mb size of boot partition
 EXIT_PATCHING_ERROR="" # exit patching if failed
-SERIALCON="ttyS0"
 MISC1="https://github.com/linux-sunxi/sunxi-tools.git" # Allwinner fex compiler / decompiler
 MISC1_DIR="sunxi-tools"	# local directory
 MISC5="https://github.com/hglm/a10disp/" # Display changer for Allwinner
 MISC5_DIR="sunxi-display-changer" # local directory
 CACHEDIR=$DEST/cache
 
-# board configurations
+# board configurations (obsolete, used only for build-all.sh to determine build targets)
+# please edit board templates in config/boards to change configuration
+if false; then
 
 case $BOARD in
 
@@ -374,17 +370,8 @@ case $BOARD in
 		SERIALCON="ttyS0"
 		CLI_TARGET="%,%"
 	;;
-
-	*)
-		if [[ -f $SRC/lib/config/boards/$BOARD.board ]]; then
-			source $SRC/lib/config/boards/$BOARD.board
-		else
-			exit_with_error "Board configuration not found" "$BOARD"
-		fi
-	;;
 esac
-
-
+fi
 
 # board family configurations
 case $LINUXFAMILY in
@@ -608,8 +595,13 @@ case $LINUXFAMILY in
 	;;
 esac
 
-
 # Let's set defalt data if not defined in board configuration above
+
+[[ -z $OFFSET ]] && OFFSET=1 # Bootloader space in MB (1 x 2048 = default)
+[[ -z $ARCH ]] && ARCH=armhf
+[[ -z $SERIALCON ]] && SERIALCON=ttyS0
+[[ -z $BOOTSIZE ]] && BOOTSIZE=0 # Mb size of boot partition
+
 [[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-$LINUXFAMILY-$BRANCH"
 [[ -z $LINUXKERNEL ]] && eval LINUXKERNEL=\$KERNEL_${BRANCH^^}
 [[ -z $LINUXSOURCE ]] && eval LINUXSOURCE=\$KERNEL_${BRANCH^^}"_SOURCE"
@@ -626,7 +618,19 @@ esac
 [[ -z $CPUMIN && ($LINUXFAMILY == udoo || $LINUXFAMILY == neo ) ]] && CPUMIN="392000" && CPUMAX="996000" && GOVERNOR="interactive"
 [[ -z $GOVERNOR ]] && GOVERNOR="ondemand"
 
-if [[ $ARCH == *64* ]]; then ARCHITECTURE=arm64; else ARCHITECTURE=arm; fi
+case $ARCH in
+	arm64)
+	TARGETS=Image
+	CROSS_COMPILE="$CCACHE aarch64-linux-gnu-"
+	ARCHITECTURE=arm64
+	;;
+
+	armhf)
+	TARGETS=zImage
+	CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-"
+	ARCHITECTURE=arm
+	;;
+esac
 
 # Essential packages
 PACKAGE_LIST="automake bash-completion bc bridge-utils build-essential cmake cpufrequtils \
