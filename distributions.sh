@@ -187,8 +187,8 @@ xenial)
 esac
 
 # copy hostapd configurations
-install -m 755 $SRC/lib/config/hostapd.conf $CACHEDIR/sdcard/etc/hostapd.conf
-install -m 755 $SRC/lib/config/hostapd.realtek.conf $CACHEDIR/sdcard/etc/hostapd.conf-rt
+install -m 755 $SRC/lib/config/hostapd/hostapd.conf $CACHEDIR/sdcard/etc/hostapd.conf
+install -m 755 $SRC/lib/config/hostapd/hostapd.realtek.conf $CACHEDIR/sdcard/etc/hostapd.conf-rt
 
 # console fix due to Debian bug
 sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $CACHEDIR/sdcard/etc/default/console-setup

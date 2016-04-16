@@ -256,6 +256,20 @@ case $BOARD in
 		DESKTOP_TARGET="jessie,default"
 	;;
 
+	nanopim1)#enabled
+		#description H3 quad core 512Mb SoC
+		#build 6wip
+		LINUXFAMILY="sun8i"
+		BOOTCONFIG="FriendlyARM_NanoPi_M1_defconfig"
+		MODULES="#gpio_sunxi #w1-sunxi #w1-gpio #w1-therm #ap6211"
+		MODULES_NEXT="brcmfmac"
+		CPUMIN="240000"
+		CPUMAX="1200000"
+		GOVERNOR="interactive"
+		CLI_TARGET="%,%"
+		DESKTOP_TARGET="jessie,default"
+	;;
+	
 	cubox-i)#enabled
 		#description Freescale iMx dual/quad core Wifi
 		#build 6
@@ -648,12 +662,12 @@ PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools bluez hddtemp i2c-tools iperf ir
 # Release specific packages
 case $RELEASE in
 	wheezy)
-	PACKAGE_LIST_RELEASE="less makedev kbd libnl-dev acpid acpi-support-base"
+	PACKAGE_LIST_RELEASE="less makedev kbd libnl-3-dev acpid acpi-support-base libnl-genl-3-dev"
 	PACKAGE_LIST_EXCLUDE=""
 	;;
 	jessie)
 	PACKAGE_LIST_RELEASE="less makedev kbd thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd \
-		software-properties-common python-software-properties libnss-myhostname f2fs-tools"
+		software-properties-common python-software-properties libnss-myhostname f2fs-tools libnl-genl-3-dev"
 	PACKAGE_LIST_EXCLUDE=""
 	;;
 	trusty)	

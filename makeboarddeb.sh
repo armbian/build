@@ -86,16 +86,12 @@ create_board_package (){
 	# armbianmonitor (currently only to toggle boot verbosity and log upload)
 	install -m 755 $SRC/lib/scripts/armbianmonitor/armbianmonitor $destination/usr/local/bin
 
-	# replace hostapd from latest self compiled & patched
-	mkdir -p $destination/usr/sbin/
-	tar xfz $SRC/lib/bin/hostapd25-rt.tgz -C $destination/usr/sbin/
-	tar xfz $SRC/lib/bin/hostapd25.tgz -C $destination/usr/sbin/
-
 	# module evbug is loaded automagically at boot time but we don't want that
 	mkdir -p $destination/etc/modprobe.d/
 	echo "blacklist evbug" > $destination/etc/modprobe.d/ev-debug-blacklist.conf
 
 	# script to install to SATA
+	mkdir -p $destination/usr/sbin/
 	cp -R $SRC/lib/scripts/nand-sata-install/usr $destination/
 	chmod +x $destination/usr/lib/nand-sata-install/nand-sata-install.sh
 	ln -s ../lib/nand-sata-install/nand-sata-install.sh $destination/usr/sbin/nand-sata-install
