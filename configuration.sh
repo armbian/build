@@ -8,22 +8,6 @@
 #
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
-#
-# Board configurations
-#
-#
-
-
-# vaid options for automatic building and menu selection
-#
-# build 0 = don't build
-# build 1 = old kernel
-# build 2 = next kernel
-# build 3 = both kernels
-# build 4 = dev kernel
-# build 5 = next and dev kernels
-# build 6 = legacy and next and dev kernel
-
 
 # common options
 

@@ -6,7 +6,8 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/li
+# This file is a part of tool chain https://github.com/igorpecovnik/lib
+#
 
 # Include here to make "display_alert" and "prepare_host" available
 source $SRC/lib/general.sh
