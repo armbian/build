@@ -550,6 +550,7 @@ umount_chroot()
 #
 unmount_on_exit()
 {
+	trap - INT TERM EXIT
 	umount_chroot
 	umount -l $CACHEDIR/sdcard >/dev/null 2>&1
 	umount -l $CACHEDIR/mount/boot >/dev/null 2>&1

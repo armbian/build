@@ -13,8 +13,8 @@
 #
 #
 
-TTY_X=$(($(stty size| awk '{print $2}')-6)) # determine terminal width
-TTY_Y=$(($(stty size| awk '{print $1}')-6)) # determine terminal height
+TTY_X=$(($(stty size | awk '{print $2}')-6)) # determine terminal width
+TTY_Y=$(($(stty size | awk '{print $1}')-6)) # determine terminal height
 
 # Include here to make "display_alert" and "prepare_host" available
 source $SRC/lib/general.sh					# General functions
@@ -62,10 +62,10 @@ fi
 backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
 
 # if language not set, set to english
-[ "$LANGUAGE" == "" ] && export LANGUAGE="en_US:en"
+[[ -z $LANGUAGE ]] && export LANGUAGE="en_US:en"
 
 # default console if not set
-[ "$CONSOLE_CHAR" == "" ] && export CONSOLE_CHAR="UTF-8"
+[[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8"
 
 # Check and fix dependencies, directory structure and settings
 prepare_host
@@ -151,21 +151,21 @@ display_alert "Starting Armbian build script" "@host" "info"
 
 # optimize build time with 100% CPU usage
 CPUS=$(grep -c 'processor' /proc/cpuinfo)
-if [ "$USEALLCORES" = "yes" ]; then
-	CTHREADS="-j$(($CPUS + $CPUS/2))";
+if [[ $USEALLCORES != no ]]; then
+	CTHREADS="-j$(($CPUS + $CPUS/2))"
 else
-	CTHREADS="-j${CPUS}";
+	CTHREADS="-j1"
 fi
 
 # display what we do	
-if [ "$KERNEL_ONLY" == "yes" ]; then
+if [[ $KERNEL_ONLY == yes ]]; then
 	display_alert "Compiling kernel" "$BOARD" "info"
 else
 	display_alert "Building" "$VERSION" "info"
 fi
 
 # sync clock
-if [ "$SYNC_CLOCK" != "no" ]; then
+if [[ $SYNC_CLOCK != no ]]; then
 	display_alert "Syncing clock" "host" "info"
 	eval ntpdate -s ${NTP_SERVER:- time.ijs.si}
 fi
@@ -173,23 +173,23 @@ start=`date +%s`
 
 # fetch_from_github [repository, sub directory]
 
-if [ "$FORCE_CHECKOUT" = "yes" ]; then FORCE="-f"; else FORCE=""; fi
+if [[ $FORCE_CHECKOUT == yes ]]; then FORCE="-f"; else FORCE=""; fi
 
-[[ "$CLEAN_LEVEL" == *sources* ]] && cleaning "sources"
+[[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 
 display_alert "source downloading" "@host" "info"
 fetch_from_github "$BOOTLOADER" "$BOOTSOURCE" "$BOOTBRANCH" "yes"
 BOOTSOURCEDIR=$BOOTSOURCE/$GITHUBSUBDIR
-fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE" "$KERNELBRANCH" "yes"	
+fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE" "$KERNELBRANCH" "yes"
 LINUXSOURCEDIR=$LINUXSOURCE/$GITHUBSUBDIR
 
-if [[ -n "$MISC1" ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
-if [[ -n "$MISC5" ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
+if [[ -n $MISC1 ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
+if [[ -n $MISC5 ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
 
 # compile sunxi tools
 if [[ $LINUXFAMILY == sun*i ]]; then 
 	compile_sunxi_tools
-	[[ $BRANCH != "default" ]] && LINUXFAMILY="sunxi"
+	[[ $BRANCH != default ]] && LINUXFAMILY="sunxi"
 fi
 
 # define package names
@@ -235,7 +235,7 @@ if [[ $KERNEL_ONLY != yes ]]; then
 		install_board_specific
 
 		# install desktop
-		if [ "$BUILD_DESKTOP" = "yes" ]; then
+		if [[ $BUILD_DESKTOP == yes ]]; then
 			install_desktop
 		fi
 
@@ -256,5 +256,5 @@ fi
 chmod 777 /tmp
 
 end=`date +%s`
-runtime=$(((end-start)/60))	
+runtime=$(((end-start)/60))
 display_alert "Runtime" "$runtime min" "info"
