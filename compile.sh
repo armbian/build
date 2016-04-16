@@ -29,7 +29,7 @@ CONSOLE_CHAR="UTF-8"
 KERNEL_KEEP_CONFIG="no"					# overwrite kernel config before compilation
 EXTERNAL="yes"						# install extra applications and drivers
 FORCE_CHECKOUT="yes"					# ignore manual changes to source
-BUILD_ALL="no"						# cycle through selected boards and make images
+BUILD_ALL="no"						# cycle through available boards and make images or kernel/u-boot packages
 
 # build script version to use
 LIB_TAG=""						# empty for latest version,
@@ -37,19 +37,17 @@ LIB_TAG=""						# empty for latest version,
 							# or commit hash
 #--------------------------------------------------------------------------------------------------------------------------------
 
-# source is where we start the script
-SRC=$(pwd)
-
+# source is where compile.sh is located
+SRC=$(dirname $(realpath $0))
 # destination
-DEST=$(pwd)/output
-
-# sources download
-SOURCES=$(pwd)/sources
+DEST=$SRC/output
+# sources for compilation
+SOURCES=$SRC/sources
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # To preserve proper librarires updating
 #--------------------------------------------------------------------------------------------------------------------------------
-if [[ -f main.sh && -d bin ]]; then
+if [[ -f $SRC/main.sh && -d $SRC/bin ]]; then
 	echo -e "[\e[0;31m error \x1B[0m] Copy this file one level up, alter and run again."
 	exit
 fi
@@ -95,7 +93,7 @@ fi
 #--------------------------------------------------------------------------------------------------------------------------------
 # Do we need to build all images
 #--------------------------------------------------------------------------------------------------------------------------------
-if [[ $BUILD_ALL == yes ]]; then
+if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
 	source $SRC/lib/build-all.sh
 else
 	source $SRC/lib/main.sh
@@ -103,4 +101,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=15
+# VERSION=16

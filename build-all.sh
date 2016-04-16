@@ -6,95 +6,89 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
-#
-
-IFS=";"
-
-#OLDFAMILY=""
-
-#START=9
-#STOP=9
-#BUILD_ALL="demo"
-
-declare -a MYARRAY1=('wheezy' '' 'jessie' '' 'trusty' '');
-#declare -a MYARRAY1=('wheezy' '' 'jessie' '' 'trusty' '' 'xenial' '');
+# This file is a part of tool chain https://github.com/igorpecovnik/li
 
 # Include here to make "display_alert" and "prepare_host" available
 source $SRC/lib/general.sh
 
-# Function display and runs compilation with desired parameters
-#
-# Two parameters: $1 = BOARD $2 = BRANCH $3 = $TARGET
-#
-distro-list ()
+RELEASE_LIST=("trusty" "xenial" "wheezy" "jessie")
+
+create_images_list()
 {
-
-k1=0
-l1=1
-while [[ $k1 -lt ${#MYARRAY1[@]} ]]
-	do
-		BUILD_DESKTOP="no"
-		BOARD=$1
-		RELEASE=${MYARRAY1[$k1]}
-		BRANCH=$2
-		unset IFS array DESKTOP_TARGET LINUXFAMILY LINUXCONFIG LINUXKERNEL LINUXSOURCE KERNELBRANCH \
-		BOOTLOADER BOOTSOURCE BOOTBRANCH CPUMIN GOVERNOR NEEDS_UBOOT NEEDS_KERNEL BOOTSIZE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN
-
-	source $SRC/lib/configuration.sh
- 	array=(${DESKTOP_TARGET//,/ })
-	arrax=(${CLI_TARGET//,/ })
-	
-	# % means all BRANCH / DISTRIBUTION
-	[[ ${array[0]} == "%" ]] && array[0]=$RELEASE
-	[[ ${array[1]} == "%" ]] && array[1]=$2
-	[[ ${arrax[0]} == "%" ]] && arrax[0]=$RELEASE
-	[[ ${arrax[1]} == "%" ]] && arrax[1]=$2
-	
-	# we define desktop building in config
-	if [[ "$RELEASE" == "${array[0]}" && $2 == "${array[1]}" && $3 == "desktop" ]]; then
-			display_alert "$BOARD desktop" "$RELEASE - $BRANCH - $LINUXFAMILY" "ext" 
-			BUILD_DESKTOP="yes"
-	fi
-	
-	if [[ "$RELEASE" == "${arrax[0]}" && $2 == "${arrax[1]}" && $3 == "cli" ]]; then
-			display_alert "$BOARD CLI" "$RELEASE - $BRANCH - $LINUXFAMILY" "ext" 
-			BUILD_DESKTOP="no"
-	fi
-
-	# demo - for debugging purposes
-	[[ $BUILD_ALL != "demo" ]] && source $SRC/lib/main.sh
-
-	IFS=";"
-	k1=$[$k1+2]
-	l1=$[$l1+2]
+	for board in $SRC/lib/config/boards/*.conf; do
+		BOARD=$(basename $board | cut -d'.' -f1)
+		source $SRC/lib/config/boards/$BOARD.conf
+		if [[ -n $CLI_TARGET ]]; then
+			build_settings=($(tr ',' ' ' <<< "$CLI_TARGET"))
+			# release
+			[[ ${build_settings[0]} == "%" ]] && build_settings[0]="${RELEASE_LIST[@]}"
+			# kernel
+			# NOTE: This prevents building images with "dev" kernel - may need another solution for sun8i
+			[[ ${build_settings[1]} == "%" ]] && build_settings[1]=$(tr ',' ' ' <<< "${KERNEL_TARGET//dev}")
+			for release in ${build_settings[0]}; do
+				for kernel in ${build_settings[1]}; do
+					buildlist+=("$BOARD $kernel $release no")
+				done
+			done
+		fi
+		if [[ -n $DESKTOP_TARGET ]]; then
+			build_settings=($(tr ',' ' ' <<< "$DESKTOP_TARGET"))
+			# release
+			[[ ${build_settings[0]} == "%" ]] && build_settings[0]="${RELEASE_LIST[@]}"
+			# kernel
+			# NOTE: This prevents building images with "dev" kernel - may need another solution for sun8i
+			[[ ${build_settings[1]} == "%" ]] && build_settings[1]=$(tr ',' ' ' <<< "${KERNEL_TARGET//dev}")
+			for release in ${build_settings[0]}; do
+				for kernel in ${build_settings[1]}; do
+					buildlist+=("$BOARD $kernel $release yes")
+				done
+			done
+		fi
+		unset CLI_TARGET DESKTOP_TARGET KERNEL_TARGET
 	done
 }
 
-IFS=";"
-[[ -z "$START" ]] && START=0
-MYARRAY=($(cat $SRC/lib/configuration.sh | awk '/)#enabled/ || /#des/ || /#build/' | sed -e 's/\t\t//' | sed 's/)#enabled//g' \
-| sed 's/#description //g' | sed -e 's/\t//' | sed 's/#build //g' | sed ':a;N;$!ba;s/\n/;/g'))
-i1=$[0+$START]
-j1=$[1+$START]
-o1=$[2+$START]
-while [[ $i1 -lt ${#MYARRAY[@]} ]]
-do
-	if [[ "${MYARRAY[$o1]}" == "1" || "${MYARRAY[$o1]}" == "3" || "${MYARRAY[$o1]}" == "6" ]]; then 
-		distro-list "${MYARRAY[$i1]}" "default" "cli"
-		distro-list "${MYARRAY[$i1]}" "default" "desktop"		
-		
-	fi
-	if [[ "${MYARRAY[$o1]}" == "2" || "${MYARRAY[$o1]}" == "3" || "${MYARRAY[$o1]}" == "5" || "${MYARRAY[$o1]}" == "6" ]]; then 
-		distro-list "${MYARRAY[$i1]}" "next" "cli" 
-		distro-list "${MYARRAY[$i1]}" "next" "desktop"
-	fi
-	#if [[ "${MYARRAY[$o1]}" == "4" || "${MYARRAY[$o1]}" == "5" || "${MYARRAY[$o1]}" == "6" ]]; then 
-	#	distro-list "${MYARRAY[$i1]}" "dev"
-	#fi
-    i1=$[$i1+3];j1=$[$j1+3];o1=$[$o1+3]
-	
-	#[[ $BUILD_ALL == "demo" ]] && echo $i1
-	if [[ -n "$STOP" && "$i1" -gt "$STOP" ]]; then exit; fi
-	
+create_kernels_list()
+{
+	for board in $SRC/lib/config/boards/*.conf; do
+		BOARD=$(basename $board | cut -d'.' -f1)
+		source $SRC/lib/config/boards/$BOARD.conf
+		if [[ -n $KERNEL_TARGET ]]; then
+			for kernel in $(tr ',' ' ' <<< $KERNEL_TARGET); do
+				buildlist+=("$BOARD $kernel")
+			done
+		fi
+		unset KERNEL_TARGET
+	done
+}
+
+buildlist=()
+
+if [[ $KERNEL_ONLY == yes ]]; then
+	create_kernels_list
+	printf "%-20s %-10s %-10s %-10s\n" BOARD BRANCH
+else
+	create_images_list
+	printf "%-20s %-10s %-10s %-10s\n" BOARD BRANCH RELEASE DESKTOP
+fi
+
+for line in "${buildlist[@]}"; do
+	printf "%-20s %-10s %-10s %-10s\n" $line
 done
+echo -e "\n${#buildlist[@]} total\n"
+
+[[ $BUILD_ALL == demo ]] && exit 0
+
+buildall_start=`date +%s`
+
+for line in "${buildlist[@]}"; do
+	unset IFS LINUXFAMILY LINUXCONFIG LINUXKERNEL LINUXSOURCE KERNELBRANCH BOOTLOADER BOOTSOURCE BOOTBRANCH \
+		CPUMIN GOVERNOR NEEDS_UBOOT NEEDS_KERNEL BOOTSIZE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN
+	read BOARD BRANCH RELEASE BUILD_DESKTOP <<< $line
+	display_alert "Building" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
+	source $SRC/lib/main.sh
+done
+
+buildall_end=`date +%s`
+buildall_runtime=$(((buildall_end - buildall_start) / 60))
+display_alert "Runtime" "$buildall_runtime min" "info"
