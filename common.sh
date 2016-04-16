@@ -262,6 +262,9 @@ install_external_applications ()
 #--------------------------------------------------------------------------------------------------------------------------------
 display_alert "Installing extra applications and drivers" "" "info"
 
+# cleanup for install_kernel and install_board_specific
+umount $CACHEDIR/sdcard/tmp >/dev/null 2>&1
+
 for plugin in $SRC/lib/extras/*.sh; do
 	source $plugin
 done
