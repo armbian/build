@@ -38,7 +38,7 @@ LIB_TAG=""						# empty for latest version,
 #--------------------------------------------------------------------------------------------------------------------------------
 
 # source is where compile.sh is located
-SRC=$(dirname $(realpath $0))
+SRC=$(pwd)
 # destination
 DEST=$SRC/output
 # sources for compilation
