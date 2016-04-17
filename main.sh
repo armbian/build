@@ -99,7 +99,7 @@ if [[ -z $BRANCH ]]; then
 	[[ $KERNEL_TARGET == *dev* ]] && options+=("dev" "Latest dev @kernel.org")
 	# do not display selection dialog if only one kernel branch is available
 	if [[ "${#options[@]}" == 2 ]]; then
-		BRANCH="${#options[0]}"
+		BRANCH="${options[0]}"
 	else
 		BRANCH=$(dialog --stdout --title "Choose a kernel" --backtitle "$backtitle" --menu "Select one of supported kernels" $TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 	fi
