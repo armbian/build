@@ -318,7 +318,7 @@ prepare_partitions()
 	parttype[btrfs]=btrfs
 	# parttype[nfs] is empty
 
-	mkopts[ext4]='-q' # "-O journal_data_writeback" can be set here
+	mkopts[ext4]='-q -m 2'
 	mkopts[fat]='-n BOOT'
 	# mkopts[f2fs] is empty
 	# mkopts[btrfs] is empty
@@ -348,9 +348,9 @@ prepare_partitions()
 		fi
 	else
 		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE )) # MiB
-		# Hardcoded overhead +30% for ext4 leaves ~10% free on root partition
+		# Hardcoded overhead +20% and +128MB for ext4 leaves ~15% free on root partition
 		# extra 128 MiB for emergency swap file
-		local sdsize=$(bc -l <<< "scale=0; ($imagesize * 1.3) / 1 + 128")
+		local sdsize=$(bc -l <<< "scale=0; ($imagesize * 1.2) / 1 + 128")
 	fi
 
 	# stage: create blank image
@@ -358,7 +358,6 @@ prepare_partitions()
 	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=$CACHEDIR/tmprootfs.raw
 
 	# stage: determine partition configuration
-	# boot
 	if [[ $ROOTFS_TYPE != ext4 && $BOOTSIZE == 0 ]]; then
 		local bootfs=ext4
 		BOOTSIZE=32 # MiB
@@ -398,9 +397,11 @@ prepare_partitions()
 	# stage: create fs
 	if [[ $BOOTSIZE == 0 ]]; then
 		eval mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${LOOP}p1 ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback ${LOOP}p1 > /dev/null
 	else
 		if [[ $ROOTFS_TYPE != nfs ]]; then
 			eval mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${LOOP}p2 ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+			[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback ${LOOP}p2 > /dev/null
 		fi
 		eval mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${LOOP}p1 ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 	fi
@@ -470,15 +471,13 @@ create_image()
 	if [[ $(findmnt --target $CACHEDIR/mount/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
 		rsync -rLtWh --info=progress2,stats1 $CACHEDIR/sdcard/boot $CACHEDIR/mount
-		
 	else
 		# ext4
 		rsync -aHWh --info=progress2,stats1 $CACHEDIR/sdcard/boot $CACHEDIR/mount
-		
 	fi
 
 	# DEBUG: print free space
-	display_alert "Free space:" "SD card" "info"	
+	display_alert "Free space:" "SD card" "info"
 	df -h | grep "$CACHEDIR/" | tee -a $DEST/debug/debootstrap.log
 
 	# stage: write u-boot
@@ -518,7 +517,7 @@ create_image()
 		fi
 		rm -f $VERSION.raw *.asc armbian.txt
 		FILESIZE=$(ls -l --b=M $FILENAME | cut -d " " -f5)
-		display_alert "Done building" "$FILENAME [$FILESIZE]" "info"		
+		display_alert "Done building" "$FILENAME [$FILESIZE]" "info"
 	fi
 } #############################################################################
 
