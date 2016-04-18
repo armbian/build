@@ -28,30 +28,19 @@ CACHEDIR=$DEST/cache
 # board family configurations
 case $LINUXFAMILY in
 
-	sun4i|sun5i|sun7i|sun8i|sun6i|sun9i)
+	sun4i|sun5i|sun6i|sun7i|sun9i)
 		[[ -z $LINUXCONFIG && $BRANCH == "default" ]] && LINUXCONFIG="linux-"$LINUXFAMILY-"$BRANCH"
 		[[ -z $LINUXCONFIG && $BRANCH != "default" ]] && LINUXCONFIG="linux-sunxi-"$BRANCH
 		# Kernel
-		# sun8i switches
-		if [[ $LINUXFAMILY == sun8i ]]; then
-			#KERNEL_DEFAULT="https://github.com/O-Computers/linux-sunxi"
-			#KERNEL_DEFAULT_BRANCH="h3-wip"
-			#KERNEL_DEFAULT_SOURCE="linux-sun8i"
-			KERNEL_DEFAULT="https://github.com/igorpecovnik/linux"
-			KERNEL_DEFAULT_BRANCH="sun8i"
-			KERNEL_DEFAULT_SOURCE="linux-sun8i"
-			KERNEL_DEV=https://github.com/wens/linux
-			KERNEL_DEV_BRANCH=h3-emac
-			KERNEL_DEV_SOURCE="linux-sun8i-mainline"
-		else
-			KERNEL_DEFAULT='https://github.com/linux-sunxi/linux-sunxi'
-			KERNEL_DEFAULT_BRANCH="sunxi-3.4"
-			KERNEL_DEFAULT_SOURCE="linux-sunxi"
-			KERNEL_DEV='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
-			[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_DEV='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
-			KERNEL_DEV_BRANCH=""
-			KERNEL_DEV_SOURCE="linux-vanilla"
-		fi
+
+		KERNEL_DEFAULT='https://github.com/linux-sunxi/linux-sunxi'
+		KERNEL_DEFAULT_BRANCH="sunxi-3.4"
+		KERNEL_DEFAULT_SOURCE="linux-sunxi"
+		KERNEL_DEV='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
+		[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_DEV='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
+		KERNEL_DEV_BRANCH=""
+		KERNEL_DEV_SOURCE="linux-vanilla"
+
 		KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 		[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 		KERNEL_NEXT_BRANCH="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1`
@@ -59,7 +48,9 @@ case $LINUXFAMILY in
 
 		# U-boot
 		UBOOT_DEFAULT="git://git.denx.de/u-boot.git"
-		UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
+		# latest stable v2016.03 broken gmac on sun7i, fixing it for DEFAULT and NEXT
+		#UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
+		UBOOT_DEFAULT_BRANCH="v2016.01"
 		UBOOT_DEFAULT_SOURCE="u-boot"
 		UBOOT_NEXT=$UBOOT_DEFAULT
 		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
@@ -67,11 +58,27 @@ case $LINUXFAMILY in
 		UBOOT_DEV=$UBOOT_DEFAULT
 		UBOOT_DEV_BRANCH=""
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
-		# latest stable v2016.03 broken gmac on sun7i, fixing it for DEFAULT and NEXT
-		if [[ $LINUXFAMILY != sun8i ]]; then
-			UBOOT_DEFAULT_BRANCH="v2016.01"
-			UBOOT_NEXT_BRANCH="v2016.01"
-		fi
+	;;
+
+	sun8i)
+		[[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-"$LINUXFAMILY-"$BRANCH"
+
+		#KERNEL_DEFAULT="https://github.com/O-Computers/linux-sunxi"
+		#KERNEL_DEFAULT_BRANCH="h3-wip"
+		#KERNEL_DEFAULT_SOURCE="linux-sun8i"
+		KERNEL_DEFAULT="https://github.com/igorpecovnik/linux"
+		KERNEL_DEFAULT_BRANCH="sun8i"
+		KERNEL_DEFAULT_SOURCE="linux-sun8i"
+		KERNEL_DEV="https://github.com/wens/linux"
+		KERNEL_DEV_BRANCH=h3-emac
+		KERNEL_DEV_SOURCE="linux-sun8i-mainline"
+
+		UBOOT_DEFAULT="git://git.denx.de/u-boot.git"
+		UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
+		UBOOT_DEFAULT_SOURCE="u-boot"
+		UBOOT_DEV=$UBOOT_DEFAULT
+		UBOOT_DEV_BRANCH=""
+		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 	;;
 
 	odroidxu4)

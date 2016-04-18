@@ -105,6 +105,8 @@ if [[ -z $BRANCH ]]; then
 	fi
 	unset options
 	[[ -z $BRANCH ]] && exit_with_error "No kernel branch selected"
+else
+	[[ $KERNEL_TARGET != *$BRANCH* ]] && exit_with_error "Kernel branch not defined for this board" "$BRANCH"
 fi
 
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
@@ -189,7 +191,7 @@ if [[ -n $MISC5 ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
 # compile sunxi tools
 if [[ $LINUXFAMILY == sun*i ]]; then 
 	compile_sunxi_tools
-	[[ $BRANCH != default ]] && LINUXFAMILY="sunxi"
+	[[ $BRANCH != default && $LINUXFAMILY != sun8i ]] && LINUXFAMILY="sunxi"
 fi
 
 # define package names

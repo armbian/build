@@ -106,21 +106,14 @@ patching_sources(){
 
 	cd $SOURCES/$LINUXSOURCEDIR
 
-	# what are we building
-	#grab_kernel_version
-
 	# this is a patch that Ubuntu Trusty compiler works
 	if [ "$(patch --dry-run -t -p1 < $SRC/lib/patch/kernel/compiler.patch | grep Reversed)" != "" ]; then 
 		patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch > /dev/null 2>&1
 	fi
-
-	# this exception is needed since AW boards share single mainline kernel
-	[[ $LINUXFAMILY == sun*i && $BRANCH != "default" ]] && LINUXFAMILY="sunxi"
 	
 	# it can be changed in this process
-	grab_version "$SOURCES/$LINUXSOURCEDIR"	
+	grab_version "$SOURCES/$LINUXSOURCEDIR"
 	advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH $VER"
-
 
 #---------------------------------------------------------------------------------------------------------------------------------
 # Patching u-boot
