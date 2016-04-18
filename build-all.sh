@@ -13,6 +13,7 @@
 source $SRC/lib/general.sh
 
 RELEASE_LIST=("trusty" "xenial" "wheezy" "jessie")
+BRANCH_LIST=("default" "next" "dev")
 
 create_images_list()
 {
@@ -20,32 +21,41 @@ create_images_list()
 		BOARD=$(basename $board | cut -d'.' -f1)
 		source $SRC/lib/config/boards/$BOARD.conf
 		if [[ -n $CLI_TARGET ]]; then
-			build_settings=($(tr ',' ' ' <<< "$CLI_TARGET"))
-			# release
-			[[ ${build_settings[0]} == "%" ]] && build_settings[0]="${RELEASE_LIST[@]}"
-			# kernel
-			# NOTE: This prevents building images with "dev" kernel - may need another solution for sun8i
-			[[ ${build_settings[1]} == "%" ]] && build_settings[1]=$(tr ',' ' ' <<< "${KERNEL_TARGET//dev}")
-			for release in ${build_settings[0]}; do
-				for kernel in ${build_settings[1]}; do
+		
+			# RELEASES : BRANCHES
+			CLI_TARGET=($(tr ':' ' ' <<< "$CLI_TARGET"))
+		
+			build_settings_target=($(tr ',' ' ' <<< "${CLI_TARGET[0]}"))
+			build_settings_branch=($(tr ',' ' ' <<< "${CLI_TARGET[1]}"))
+		
+			[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
+			[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
+			
+			for release in ${build_settings_target[@]}; do
+				for kernel in ${build_settings_branch[@]}; do
 					buildlist+=("$BOARD $kernel $release no")
 				done
 			done
 		fi
 		if [[ -n $DESKTOP_TARGET ]]; then
-			build_settings=($(tr ',' ' ' <<< "$DESKTOP_TARGET"))
-			# release
-			[[ ${build_settings[0]} == "%" ]] && build_settings[0]="${RELEASE_LIST[@]}"
-			# kernel
-			# NOTE: This prevents building images with "dev" kernel - may need another solution for sun8i
-			[[ ${build_settings[1]} == "%" ]] && build_settings[1]=$(tr ',' ' ' <<< "${KERNEL_TARGET//dev}")
-			for release in ${build_settings[0]}; do
-				for kernel in ${build_settings[1]}; do
+			
+			# RELEASES : BRANCHES
+			DESKTOP_TARGET=($(tr ':' ' ' <<< "$DESKTOP_TARGET"))
+			
+			build_settings_target=($(tr ',' ' ' <<< "${DESKTOP_TARGET[0]}"))
+			build_settings_branch=($(tr ',' ' ' <<< "${DESKTOP_TARGET[1]}"))
+			
+			[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
+			[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
+		
+			for release in ${build_settings_target[@]}; do
+				for kernel in ${build_settings_branch[@]}; do
 					buildlist+=("$BOARD $kernel $release yes")
 				done
 			done
+
 		fi
-		unset CLI_TARGET DESKTOP_TARGET KERNEL_TARGET
+		unset CLI_TARGET CLI_BRANCH DESKTOP_TARGET DESKTOP_BRANCH KERNEL_TARGET
 	done
 }
 

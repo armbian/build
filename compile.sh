@@ -15,7 +15,6 @@
 # for detailed explanation of these parameters
 
 # method
-KERNEL_ONLY="no"					# build only kernel
 KERNEL_CONFIGURE="no"					# want to change my default configuration
 CLEAN_LEVEL="make,debs"					# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
 							# "debs" = delete pckages in "./output/debs" for current branch and family,
@@ -101,4 +100,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=16
+# VERSION=17
