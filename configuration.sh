@@ -32,7 +32,6 @@ case $LINUXFAMILY in
 		[[ -z $LINUXCONFIG && $BRANCH == "default" ]] && LINUXCONFIG="linux-"$LINUXFAMILY-"$BRANCH"
 		[[ -z $LINUXCONFIG && $BRANCH != "default" ]] && LINUXCONFIG="linux-sunxi-"$BRANCH
 		# Kernel
-
 		KERNEL_DEFAULT='https://github.com/linux-sunxi/linux-sunxi'
 		KERNEL_DEFAULT_BRANCH="sunxi-3.4"
 		KERNEL_DEFAULT_SOURCE="linux-sunxi"
@@ -40,24 +39,20 @@ case $LINUXFAMILY in
 		[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_DEV='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 		KERNEL_DEV_BRANCH=""
 		KERNEL_DEV_SOURCE="linux-vanilla"
-
 		KERNEL_NEXT='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 		[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_NEXT='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 		KERNEL_NEXT_BRANCH="v"`wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1`
 		KERNEL_NEXT_SOURCE="linux-vanilla"
-
 		# U-boot
-		UBOOT_DEFAULT="git://git.denx.de/u-boot.git"
+		BOOTLOADER="git://git.denx.de/u-boot.git"
 		# latest stable v2016.03 broken gmac on sun7i, fixing it for DEFAULT and NEXT
 		#UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
 		UBOOT_DEFAULT_BRANCH="v2016.01"
 		UBOOT_DEFAULT_SOURCE="u-boot"
-		UBOOT_NEXT=$UBOOT_DEFAULT
 		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
 		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
-		UBOOT_DEV=$UBOOT_DEFAULT
 		UBOOT_DEV_BRANCH=""
-		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		UBOOT_DEV_SOURCE="u-boot-dev"
 	;;
 
 	sun8i)
@@ -72,11 +67,9 @@ case $LINUXFAMILY in
 		KERNEL_DEV="https://github.com/wens/linux"
 		KERNEL_DEV_BRANCH=h3-emac
 		KERNEL_DEV_SOURCE="linux-sun8i-mainline"
-
-		UBOOT_DEFAULT="git://git.denx.de/u-boot.git"
+		BOOTLOADER="git://git.denx.de/u-boot.git"
 		UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
 		UBOOT_DEFAULT_SOURCE="u-boot"
-		UBOOT_DEV=$UBOOT_DEFAULT
 		UBOOT_DEV_BRANCH=""
 		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 	;;
@@ -88,15 +81,9 @@ case $LINUXFAMILY in
 		KERNEL_NEXT='https://github.com/tobetter/linux'
 		KERNEL_NEXT_BRANCH="odroidxu4-v4.2"
 		KERNEL_NEXT_SOURCE="linux-odroidxu-next"
-		UBOOT_DEFAULT="https://github.com/hardkernel/u-boot.git"
-		UBOOT_DEFAULT_BRANCH="odroidxu3-v2012.07"
-		UBOOT_DEFAULT_SOURCE="u-boot-odroidxu"
-		UBOOT_NEXT=$UBOOT_DEFAULT
-		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
-		UBOOT_DEV=$UBOOT_DEFAULT
-		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		BOOTLOADER="https://github.com/hardkernel/u-boot.git"
+		BOOTBRANCH="odroidxu3-v2012.07"
+		BOOTSOURCE="u-boot-odroidxu"
 	;;
 
 	odroidc1)
@@ -106,33 +93,18 @@ case $LINUXFAMILY in
 		KERNEL_NEXT='https://github.com/tobetter/linux'
 		KERNEL_NEXT_BRANCH="odroidxu4-v4.2"
 		KERNEL_NEXT_SOURCE="linux-odroidxu-next"
-		UBOOT_DEFAULT="https://github.com/hardkernel/u-boot.git"
-		UBOOT_DEFAULT_BRANCH="odroidc-v2011.03"
-		UBOOT_DEFAULT_SOURCE="u-boot-odroidc1"
-		UBOOT_NEXT=$UBOOT_DEFAULT
-		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
-		UBOOT_DEV=$UBOOT_DEFAULT
-		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		BOOTLOADER="https://github.com/hardkernel/u-boot.git"
+		BOOTBRANCH="odroidc-v2011.03"
+		BOOTSOURCE="u-boot-odroidc1"
 	;;
 	
 	odroidc2)
 		KERNEL_DEFAULT='https://github.com/hardkernel/linux'
 		KERNEL_DEFAULT_BRANCH="odroidc2-3.14.y"
 		KERNEL_DEFAULT_SOURCE="linux-odroidc2"
-		KERNEL_NEXT='https://github.com/hardkernel/linux'
-		KERNEL_NEXT_BRANCH="odroidc2-3.14.y"
-		KERNEL_NEXT_SOURCE="linux-odroidc2-next"
-		UBOOT_DEFAULT="https://github.com/hardkernel/u-boot.git"
-		UBOOT_DEFAULT_BRANCH="odroidc2-v2015.01"
-		UBOOT_DEFAULT_SOURCE="u-boot-odroidc2"
-		UBOOT_NEXT=$UBOOT_DEFAULT
-		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
-		UBOOT_DEV=$UBOOT_DEFAULT
-		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		BOOTLOADER="https://github.com/hardkernel/u-boot.git"
+		BOOTBRANCH="odroidc2-v2015.01"
+		BOOTSOURCE="u-boot-odroidc2"
 	;;
 	
 	udoo)
@@ -142,15 +114,9 @@ case $LINUXFAMILY in
 		KERNEL_NEXT="https://github.com/patrykk/linux-udoo"
 		KERNEL_NEXT_BRANCH="v4.4.0-6-vivante-5.0.11.p7.3"
 		KERNEL_NEXT_SOURCE="linux-udoo-next"
-		UBOOT_DEFAULT="https://github.com/UDOOboard/uboot-imx"
-		UBOOT_DEFAULT_BRANCH="2015.10.fslc-qdl"
-		UBOOT_DEFAULT_SOURCE="u-boot-udoo"
-		UBOOT_NEXT=$UBOOT_DEFAULT
-		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
-		UBOOT_DEV=$UBOOT_DEFAULT
-		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		BOOTLOADER="https://github.com/UDOOboard/uboot-imx"
+		BOOTBRANCH="2015.10.fslc-qdl"
+		BOOTSOURCE="u-boot-udoo"
 	;;
 
 	neo)
@@ -159,15 +125,9 @@ case $LINUXFAMILY in
 		KERNEL_DEFAULT_BRANCH="3.14-1.0.x-udoo"
 		#KERNEL_DEFAULT_SOURCE="linux-udoo-neo"
 		KERNEL_DEFAULT_SOURCE="linux-udoo"
-		UBOOT_DEFAULT="https://github.com/UDOOboard/uboot-imx"
-		UBOOT_DEFAULT_BRANCH="2015.04.imx-neo"
-		UBOOT_DEFAULT_SOURCE="u-boot-neo"
-		UBOOT_NEXT=$UBOOT_DEFAULT
-		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
-		UBOOT_DEV=$UBOOT_DEFAULT
-		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		BOOTLOADER="https://github.com/UDOOboard/uboot-imx"
+		BOOTBRANCH="2015.04.imx-neo"
+		BOOTSOURCE="u-boot-neo"
 	;;
 
 	cubox)
@@ -181,45 +141,27 @@ case $LINUXFAMILY in
 		KERNEL_DEV='https://github.com/SolidRun/linux-fslc'
 		KERNEL_DEV_BRANCH="3.14-1.0.x-mx6-sr"
 		KERNEL_DEV_SOURCE="linux-cubox"
-		UBOOT_DEFAULT="https://github.com/SolidRun/u-boot-imx6"
-		UBOOT_DEFAULT_BRANCH="imx6"
-		UBOOT_DEFAULT_SOURCE="u-boot-cubox"
-		UBOOT_NEXT=$UBOOT_DEFAULT
-		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
-		UBOOT_DEV=$UBOOT_DEFAULT
-		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		BOOTLOADER="https://github.com/SolidRun/u-boot-imx6"
+		BOOTBRANCH="imx6"
+		BOOTSOURCE="u-boot-cubox"
 	;;
 
-	s500)		
+	s500)
 		KERNEL_DEFAULT='https://github.com/LeMaker/linux-actions'
 		KERNEL_DEFAULT_BRANCH="linux-3.10.y"
 		KERNEL_DEFAULT_SOURCE="linux-s500"
-		UBOOT_DEFAULT="https://github.com/LeMaker/u-boot-actions"
-		UBOOT_DEFAULT_BRANCH="s500-master"
-		UBOOT_DEFAULT_SOURCE="u-boot-s500"
-		UBOOT_NEXT=$UBOOT_DEFAULT
-		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
-		UBOOT_DEV=$UBOOT_DEFAULT
-		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		BOOTLOADER="https://github.com/LeMaker/u-boot-actions"
+		BOOTBRANCH="s500-master"
+		BOOTSOURCE="u-boot-s500"
 	;;
 
 	toradex)
 		KERNEL_DEFAULT="git://git.toradex.com/linux-toradex.git"
 		KERNEL_DEFAULT_BRANCH="toradex_imx_3.14.28_1.0.0_ga"
 		KERNEL_DEFAULT_SOURCE="linux-toradex"
-		UBOOT_DEFAULT="git://git.toradex.com/u-boot-toradex.git"
-		UBOOT_DEFAULT_BRANCH="2015.04-toradex"
-		UBOOT_DEFAULT_SOURCE="u-boot-toradex"
-		UBOOT_NEXT=$UBOOT_DEFAULT
-		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
-		UBOOT_DEV=$UBOOT_DEFAULT
-		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		BOOTLOADER="git://git.toradex.com/u-boot-toradex.git"
+		BOOTBRANCH="2015.04-toradex"
+		BOOTSOURCE="u-boot-toradex"
 	;;
 
 	marvell)
@@ -234,15 +176,9 @@ case $LINUXFAMILY in
 		[ "$USE_MAINLINE_GOOGLE_MIRROR" = "yes" ] && KERNEL_DEV='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 		KERNEL_DEV_BRANCH=""
 		KERNEL_DEV_SOURCE="linux-vanilla"
-		UBOOT_DEFAULT="https://github.com/SolidRun/u-boot-armada38x"
-		UBOOT_DEFAULT_BRANCH="u-boot-2013.01-15t1-clearfog"
-		UBOOT_DEFAULT_SOURCE="u-boot-armada"
-		UBOOT_NEXT=$UBOOT_DEFAULT
-		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
-		UBOOT_DEV=$UBOOT_DEFAULT
-		UBOOT_DEV_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
+		BOOTLOADER="https://github.com/SolidRun/u-boot-armada38x"
+		BOOTBRANCH="u-boot-2013.01-15t1-clearfog"
+		BOOTSOURCE="u-boot-armada"
 	;;
 
 	*)
@@ -282,12 +218,14 @@ case $ARCH in
 	TARGETS=Image
 	CROSS_COMPILE="$CCACHE aarch64-linux-gnu-"
 	ARCHITECTURE=arm64
+	QEMU_BINARY="qemu-aarch64-static"
 	;;
 
 	armhf)
 	TARGETS=zImage
 	CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-"
 	ARCHITECTURE=arm
+	QEMU_BINARY="qemu-arm-static"
 	;;
 esac
 

@@ -102,11 +102,7 @@ if [ ! -f "$cache_fname" ]; then
 debootstrap --include=openssh-server $package_exclude --arch=$ARCH --foreign $RELEASE $CACHEDIR/sdcard/ $redir | dialog --backtitle "$backtitle" --title "Debootstrap $DISTRIBUTION $RELEASE base system to image template ..." --progressbox $TTY_Y $TTY_X
 
 # we need emulator for second stage
-if [[ $ARCH == *64* ]]; then
-	cp /usr/bin/qemu-aarch64-static $CACHEDIR/sdcard/usr/bin/		
-	else
-	cp /usr/bin/qemu-arm-static $CACHEDIR/sdcard/usr/bin/
-fi
+cp /usr/bin/$QEMU_BINARY $CACHEDIR/sdcard/usr/bin/
 
 # and keys
 d=$CACHEDIR/sdcard/usr/share/keyrings/
@@ -265,7 +261,7 @@ KILLPROC=$(ps -uax | pgrep acpid | tail -1); if [ -n "$KILLPROC" ]; then kill -9
 # same info outside the image
 cp $CACHEDIR/sdcard/etc/armbian.txt $CACHEDIR/
 sleep 2
-rm -f $CACHEDIR/sdcard/usr/bin/qemu-arm-static $CACHEDIR/sdcard/usr/bin/qemu-aarch64-static
+rm -f $CACHEDIR/sdcard/usr/bin/$QEMU_BINARY
 sleep 2
 umount -l $CACHEDIR/sdcard/boot > /dev/null 2>&1 || /bin/true
 umount -l $CACHEDIR/sdcard/

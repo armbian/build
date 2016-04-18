@@ -88,8 +88,7 @@ debootstrap_ng()
 
 	# stage: cleanup
 	rm -f $CACHEDIR/sdcard/usr/sbin/policy-rc.d
-	rm -f $CACHEDIR/sdcard/usr/bin/qemu-arm-static
-	rm -f $CACHEDIR/sdcard/usr/bin/qemu-aarch64-static
+	rm -f $CACHEDIR/sdcard/usr/bin/$QEMU_BINARY
 	if [[ -x $CACHEDIR/sdcard/sbin/initctl.REAL ]]; then
 		mv -f $CACHEDIR/sdcard/sbin/initctl.REAL $CACHEDIR/sdcard/sbin/initctl
 	fi
@@ -138,15 +137,12 @@ debootstrap_ng()
 create_rootfs_cache()
 {
 	[[ $BUILD_DESKTOP == yes ]] && local variant_desktop=yes
-	[[ -n $PACKAGE_LIST_EXCLUDE ]] && local package_exclude="--exclude="${PACKAGE_LIST_EXCLUDE// /,}
 	local packages_hash=$(get_package_list_hash $PACKAGE_LIST)
 	local cache_fname="$CACHEDIR/rootfs/$RELEASE${variant_desktop:+_desktop}-ng-$ARCH.$packages_hash.tgz"
 	local display_name=$RELEASE${variant_desktop:+_desktop}-ng-$ARCH.${packages_hash:0:3}...${packages_hash:29}.tgz
 	if [[ -f $cache_fname ]]; then
-		local filemtime=$(stat -c %Y $cache_fname)
-		local currtime=$(date +%s)
-		local diff=$(( (currtime - filemtime) / 86400 ))
-		display_alert "Extracting $display_name" "$diff days old" "info"
+		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
+		display_alert "Extracting $display_name" "$date_diff days old" "info"
 		pv -p -b -r -c -N "$display_name" "$cache_fname" | pigz -dc | tar xp -C $CACHEDIR/sdcard/
 	else
 		display_alert "Creating new rootfs for" "$RELEASE" "info"
@@ -165,20 +161,15 @@ create_rootfs_cache()
 		[[ -z $OUTPUT_DIALOG && $RELEASE != wheezy ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
 
 		display_alert "Installing base system" "Stage 1/2" "info"
-		eval 'debootstrap --include=locales $package_exclude --arch=$ARCH --foreign $RELEASE $CACHEDIR/sdcard/ $apt_mirror' \
+		eval 'debootstrap --include=locales ${PACKAGE_LIST_EXCLUDE:+ --exclude=${PACKAGE_LIST_EXCLUDE// /,}} \
+			--arch=$ARCH --foreign $RELEASE $CACHEDIR/sdcard/ $apt_mirror' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Debootstrap base system first stage failed"
 
-		
-		if [[ $ARCH == *64* ]]; then
-			cp /usr/bin/qemu-aarch64-static $CACHEDIR/sdcard/usr/bin/
-		else
-			cp /usr/bin/qemu-arm-static $CACHEDIR/sdcard/usr/bin/
-		fi
-		
+		cp /usr/bin/$QEMU_BINARY $CACHEDIR/sdcard/usr/bin/
 		# NOTE: not needed?
 		mkdir -p $CACHEDIR/sdcard/usr/share/keyrings/
 		cp /usr/share/keyrings/debian-archive-keyring.gpg $CACHEDIR/sdcard/usr/share/keyrings/
@@ -195,29 +186,17 @@ create_rootfs_cache()
 
 		# policy-rc.d script prevents starting or reloading services
 		# from dpkg pre- and post-install scripts during image creation
-
-cat <<EOF > $CACHEDIR/sdcard/usr/sbin/policy-rc.d
-#!/bin/sh
-exit 101
-EOF
+		printf '#!/bin/sh\nexit 101' > $CACHEDIR/sdcard/usr/sbin/policy-rc.d
 		chmod 755 $CACHEDIR/sdcard/usr/sbin/policy-rc.d
-
 		# ported from debootstrap and multistrap for upstart support
 		if [[ -x $CACHEDIR/sdcard/sbin/initctl ]]; then
 			mv $CACHEDIR/sdcard/sbin/start-stop-daemon $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL
-cat <<EOF > $CACHEDIR/sdcard/sbin/start-stop-daemon
-#!/bin/sh
-echo "Warning: Fake start-stop-daemon called, doing nothing"
-EOF
+			printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"' > $CACHEDIR/sdcard/sbin/start-stop-daemon
 			chmod 755 $CACHEDIR/sdcard/sbin/start-stop-daemon
 		fi
-
 		if [[ -x $CACHEDIR/sdcard/sbin/initctl ]]; then
 			mv $CACHEDIR/sdcard/sbin/initctl $CACHEDIR/sdcard/sbin/initctl.REAL
-cat <<EOF > $CACHEDIR/sdcard/sbin/initctl
-#!/bin/sh
-echo "Warning: Fake initctl called, doing nothing"
-EOF
+			printf '#!/bin/sh\necho "Warning: Fake initctl called, doing nothing"' $CACHEDIR/sdcard/sbin/initctl
 			chmod 755 $CACHEDIR/sdcard/sbin/initctl
 		fi
 
@@ -266,8 +245,7 @@ EOF
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian packages failed"
 
 		# DEBUG: print free space
-		echo
-		echo "Free space:"
+		echo -e "\nFree space:"
 		df -h | grep "$CACHEDIR/" | tee -a $DEST/debug/debootstrap.log
 
 		# stage: remove downloaded packages
