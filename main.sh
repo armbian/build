@@ -16,16 +16,41 @@
 TTY_X=$(($(stty size | awk '{print $2}')-6)) # determine terminal width
 TTY_Y=$(($(stty size | awk '{print $1}')-6)) # determine terminal height
 
-# Include here to make "display_alert" and "prepare_host" available
-source $SRC/lib/general.sh					# General functions
+# We'll use this title on all menus
+backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
 
-# clean unfinished DEB packing
-rm -rf $DEST/debs/*/*/
+# if language not set, set to english
+[[ -z $LANGUAGE ]] && export LANGUAGE="en_US:en"
+
+# default console if not set
+[[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8"
+
+# Load libraries
+source $SRC/lib/debootstrap.sh				# System specific install (old)
+source $SRC/lib/debootstrap-ng.sh 			# System specific install (extended)
+source $SRC/lib/distributions.sh 			# System specific install
+source $SRC/lib/boards.sh 				# Board specific install
+source $SRC/lib/desktop.sh 				# Desktop specific install
+source $SRC/lib/common.sh 				# Functions
+source $SRC/lib/makeboarddeb.sh 			# Create board support package
+source $SRC/lib/general.sh				# General functions
 
 # compress and remove old logs
 mkdir -p $DEST/debug
 (cd $DEST/debug && tar -czf logs-$(date +"%d_%m_%Y-%H_%M_%S").tgz *.log) > /dev/null 2>&1
 rm -f $DEST/debug/*.log > /dev/null 2>&1
+
+# compile.sh version checking
+ver1=$(awk -F"=" '/^# VERSION/ {print $2}' <"$SRC/compile.sh")
+ver2=$(awk -F"=" '/^# VERSION/ {print $2}' <"$SRC/lib/compile.sh" 2>/dev/null) || ver2=0
+if [[ -z $ver1 || $ver1 -lt $ver2 ]]; then
+	display_alert "File $0 is outdated. Please overwrite is with an updated version from" "$SRC/lib" "wrn"
+	echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
+	read
+fi
+
+# clean unfinished DEB packing
+rm -rf $DEST/debs/*/*/
 
 # Script parameters handling
 for i in "$@"; do
@@ -50,25 +75,10 @@ else
 	CCACHE=""
 fi
 
-# compile.sh version checking
-ver1=$(awk -F"=" '/^# VERSION/ {print $2}' <"$SRC/compile.sh")
-ver2=$(awk -F"=" '/^# VERSION/ {print $2}' <"$SRC/lib/compile.sh" 2>/dev/null) || ver2=0
-if [ -z "$ver1" ] || [ $ver1 -lt $ver2 ]; then
-	display_alert "File $0 is outdated. Please overwrite is with updated version from" "$SRC/lib" "wrn"
-	read -p "Press <Ctrl-C> to abort compilation, <Enter> to ignore and continue"
-fi
-
-# We'll use this title on all menus
-backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
-
-# if language not set, set to english
-[[ -z $LANGUAGE ]] && export LANGUAGE="en_US:en"
-
-# default console if not set
-[[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8"
-
 # Check and fix dependencies, directory structure and settings
 prepare_host
+
+# if KERNEL_ONLY, BOARD, BRANCH or RELEASE are not set, display selection manu
 
 if [[ -z $KERNEL_ONLY ]]; then
 	options+=("yes" "Kernel, u-boot and other packages")
@@ -127,22 +137,13 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
 fi
 
-# naming to distro 
+# naming to distro
 if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
 # set hostname to the board
 HOST="$BOARD"
 
-# Load libraries
-source $SRC/lib/configuration.sh			# Board configuration
-source $SRC/lib/debootstrap.sh				# System specific install (old)
-source $SRC/lib/debootstrap-ng.sh 			# System specific install (extended)
-source $SRC/lib/distributions.sh 			# System specific install
-source $SRC/lib/patching.sh 				# Source patching
-source $SRC/lib/boards.sh 				# Board specific install
-source $SRC/lib/desktop.sh 				# Desktop specific install
-source $SRC/lib/common.sh 				# Functions
-source $SRC/lib/makeboarddeb.sh 			# Create board support package
+source $SRC/lib/configuration.sh
 
 # The name of the job
 VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
@@ -159,7 +160,7 @@ else
 	CTHREADS="-j1"
 fi
 
-# display what we do	
+# display what we do
 if [[ $KERNEL_ONLY == yes ]]; then
 	display_alert "Compiling kernel" "$BOARD" "info"
 else
@@ -198,26 +199,35 @@ fi
 DEB_BRANCH=${BRANCH//default}
 # if not empty, append hyphen
 DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
-
 CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
-
 CHOSEN_KERNEL=linux-image-${DEB_BRANCH}${LINUXFAMILY}
-
 CHOSEN_ROOTFS=linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
 
 for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
 done
 
-[[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] && NEEDS_UBOOT=yes
-[[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]] && NEEDS_KERNEL=yes
+# Compile u-boot if packed .deb does not exist
+if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+	cd $SOURCES/$BOOTSOURCEDIR
+	grab_version "$SOURCES/$BOOTSOURCEDIR" "UBOOT_VER"
+	advanced_patch "u-boot" "$BOOTSOURCE-$BRANCH" "$BOARD" "$BOOTSOURCE-$BRANCH $UBOOT_VER"
+	compile_uboot
+fi
 
-# patching sources if we need to compile u-boot or kernel
-[[ $NEEDS_UBOOT == yes || $NEEDS_KERNEL == yes ]] && patching_sources
+# Compile kernel if packed .deb does not exist
+if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+	cd $SOURCES/$LINUXSOURCEDIR
 
-# Compile source if packed not exists
-[[ $NEEDS_UBOOT = yes ]] && compile_uboot
-[[ $NEEDS_KERNEL = yes ]] && compile_kernel
+	# this is a patch that Ubuntu Trusty compiler works
+	if [[ $(patch --dry-run -t -p1 < $SRC/lib/patch/kernel/compiler.patch | grep Reversed) != "" ]]; then
+		patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch > /dev/null 2>&1
+	fi
+
+	grab_version "$SOURCES/$LINUXSOURCEDIR" "KERNEL_VER"
+	advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH $KERNEL_VER"
+	compile_kernel
+fi
 
 [[ -n $RELEASE ]] && create_board_package
 

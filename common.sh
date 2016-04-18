@@ -13,6 +13,8 @@
 # compile_uboot
 # compile_sunxi_tools
 # compile_kernel
+# advanced_patch
+# process_patch_file
 # install_external_applications
 # write_uboot
 # customize_image
@@ -187,7 +189,7 @@ compile_kernel (){
 	fi
 
 	# read kernel version to variable $VER
-	grab_version "$SOURCES/$LINUXSOURCEDIR"
+	grab_version "$SOURCES/$LINUXSOURCEDIR" "VER"
 
 	display_alert "Compiling $BRANCH kernel" "@host" "info"
 	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${CROSS_COMPILE}gcc --version | head -1 | tee -a $DEST/debug/install.log
@@ -254,6 +256,84 @@ compile_kernel (){
 	mv *.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
 }
 
+# advanced_patch <dest> <family> <device> <description>
+#
+# parameters:
+# <dest>: u-boot, kernel
+# <family>: u-boot: u-boot, u-boot-neo; kernel: sun4i-default, sunxi-next, ...
+# <device>: cubieboard, cubieboard2, cubietruck, ...
+# <description>: additional description text
+#
+# priority:
+# $SRC/userpatches/<dest>/<family>/<device>
+# $SRC/userpatches/<dest>/<family>
+# $SRC/lib/patch/<dest>/<family>/<device>
+# $SRC/lib/patch/<dest>/<family>
+#
+advanced_patch () {
+
+	local dest=$1
+	local family=$2
+	local device=$3
+	local description=$4
+
+	display_alert "Started patching process for" "$dest $description" "info"
+	display_alert "Looking for user patches in" "userpatches/$dest/$family" "info"
+
+	local names=()
+	local dirs=("$SRC/userpatches/$dest/$family/$device" "$SRC/userpatches/$dest/$family" "$SRC/lib/patch/$dest/$family/$device" "$SRC/lib/patch/$dest/$family")
+
+	# required for "for" command
+	shopt -s nullglob dotglob
+	# get patch file names
+	for dir in "${dirs[@]}"; do
+		for patch in $dir/*.patch; do
+			names+=($(basename $patch))
+		done
+	done
+	# remove duplicates
+	local names_s=($(echo "${names[@]}" | tr ' ' '\n' | LC_ALL=C sort -u | tr '\n' ' '))
+	# apply patches
+	for name in "${names_s[@]}"; do
+		for dir in "${dirs[@]}"; do
+			if [[ -f $dir/$name || -L $dir/$name ]]; then
+				if [[ -s $dir/$name ]]; then
+					process_patch_file "$dir/$name" "$description"
+				else
+					display_alert "... $name" "skipped" "info"
+				fi
+				break # next name
+			fi
+		done
+	done
+}
+
+# process_patch_file <file> <description>
+#
+# parameters:
+# <file>: path to patch file
+# <description>: additional description text
+#
+process_patch_file() {
+
+	local patch=$1
+	local description=$2
+
+	# detect and remove files which patch will create
+	LANGUAGE=english patch --batch --dry-run -p1 -N < $patch | grep create \
+		| awk '{print $NF}' | sed -n 's/,//p' | xargs -I % sh -c 'rm %'
+
+	# main patch command
+	echo "$patch $description" >> $DEST/debug/install.log
+	patch --batch --silent -p1 -N < $patch >> $DEST/debug/install.log 2>&1
+
+	if [ $? -ne 0 ]; then
+		display_alert "... $(basename $patch)" "failed" "wrn";
+		if [[ $EXIT_PATCHING_ERROR == "yes" ]]; then exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"; fi
+	else
+		display_alert "... $(basename $patch)" "succeeded" "info"
+	fi
+}
 
 install_external_applications ()
 {

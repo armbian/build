@@ -159,19 +159,21 @@ fi
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------
-# grab_version <PATH>
+# grab_version <path> <var_name>
 #
 # <PATH>: Extract kernel or uboot version from Makefile
+# <var_name>: write version to this variable
 #---------------------------------------------------------------------------------------------------------------------------------
 grab_version ()
 {
 	local var=("VERSION" "PATCHLEVEL" "SUBLEVEL" "EXTRAVERSION")
-	unset VER
+	local ver=""
 	for dir in "${var[@]}"; do
 		tmp=$(cat $1/Makefile | grep $dir | head -1 | awk '{print $(NF)}' | cut -d '=' -f 2)"#"
-		[[ $tmp != "#" ]] && VER=$VER"$tmp"
+		[[ $tmp != "#" ]] && ver=$ver$tmp
 	done
-	VER=${VER//#/.}; VER=${VER%.}; VER=${VER//.-/-}
+	ver=${ver//#/.}; ver=${ver%.}; ver=${ver//.-/-}
+	eval $"$2"="$ver"
 }
 
 fingerprint_image (){

@@ -212,7 +212,6 @@ It will be something like this:
 	lib/distributions.sh	system specific installation and fixes
 	lib/main.sh				user input and script calls
 	lib/makeboarddeb.sh		creates board support package .deb
-	lib/patching.sh			board and system dependend kernel & u-boot patch calls
 	lib/repo-update.sh		creates and updates your local repository
 	lib/repo-show-sh		show packets in your local repository
 	lib/upgrade.sh			script to upgrade older images
