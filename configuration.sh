@@ -45,19 +45,16 @@ case $LINUXFAMILY in
 		KERNEL_NEXT_SOURCE="linux-vanilla"
 		# U-boot
 		BOOTLOADER="git://git.denx.de/u-boot.git"
+		BOOTSOURCE="u-boot"
 		# latest stable v2016.03 broken gmac on sun7i, fixing it for DEFAULT and NEXT
 		#UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
 		UBOOT_DEFAULT_BRANCH="v2016.01"
-		UBOOT_DEFAULT_SOURCE="u-boot"
 		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
-		UBOOT_NEXT_SOURCE=$UBOOT_DEFAULT_SOURCE
 		UBOOT_DEV_BRANCH=""
-		UBOOT_DEV_SOURCE="u-boot-dev"
 	;;
 
 	sun8i)
 		[[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-"$LINUXFAMILY-"$BRANCH"
-
 		#KERNEL_DEFAULT="https://github.com/O-Computers/linux-sunxi"
 		#KERNEL_DEFAULT_BRANCH="h3-wip"
 		#KERNEL_DEFAULT_SOURCE="linux-sun8i"
@@ -68,10 +65,9 @@ case $LINUXFAMILY in
 		KERNEL_DEV_BRANCH=h3-emac
 		KERNEL_DEV_SOURCE="linux-sun8i-mainline"
 		BOOTLOADER="git://git.denx.de/u-boot.git"
+		BOOTSOURCE="u-boot"
 		UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
-		UBOOT_DEFAULT_SOURCE="u-boot"
 		UBOOT_DEV_BRANCH=""
-		UBOOT_DEV_SOURCE=$UBOOT_DEFAULT_SOURCE
 	;;
 
 	odroidxu4)
