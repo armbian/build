@@ -213,9 +213,7 @@ compile_kernel (){
 	# hack for deb builder. To pack what's missing in headers pack.
 	cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
 
-	export LOCALVERSION="-"$LINUXFAMILY
-	
-	if [[ $ARCH == *64* ]]; then ARCHITECTURE=arm64; else ARCHITECTURE=arm; fi
+	export LOCALVERSION="-$LINUXFAMILY"
 
 	# We can use multi threading here but not later since it's not working. This way of compilation is much faster.
 	if [ "$KERNEL_CONFIGURE" != "yes" ]; then

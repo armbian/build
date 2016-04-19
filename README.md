@@ -1,39 +1,39 @@
-## How to build my own image? ##
+# Armbian
+
+Ubuntu/Debian images for ARM based single-board computers
+http://www.armbian.com
+
+## How to build my own image or kernel?
 
 **Preparation**
 
-- x86 machine running any OS, 4G ram, SSD, quad core (recommended),
-- [virtual box](https://www.virtualbox.org/wiki/Downloads) or similar virtualization software, **(highly recommended)**
-- host system is **highly recommended** to be [Ubuntu 14.04](http://archive.ubuntu.com/ubuntu/dists/trusty-updates/main/installer-amd64/current/images/netboot/mini.iso) (**some but not all** sources can also compile on Ubuntu 15.04, Mint 17.2 and Debian Jessie),
+- x86/x64 machine running any OS; 4G ram, SSD, quad core (recommended),
+- [VirtualBox](https://www.virtualbox.org/wiki/Downloads) or similar virtualization software **(highly recommended)**,
+- alternatively - [Docker](https://github.com/igorpecovnik/lib/pull/255#issuecomment-205045273), [systemd-nspawn](https://www.freedesktop.org/software/systemd/man/systemd-nspawn.html) or other containerization software,
+- compilation environment is **highly recommended** to be [Ubuntu Trusty 14.04](http://archive.ubuntu.com/ubuntu/dists/trusty-updates/main/installer-amd64/current/images/netboot/mini.iso) or Ubuntu Xenial 16.04 (other releases are **not officially supported**),
 - installed basic system, OpenSSH and Samba (optional),
-- gain root access.
+- superuser rights (configured `sudo` or root shell).
 
 **Execution**
 	
 	apt-get -y install git
 	git clone https://github.com/igorpecovnik/lib --depth 1
-	cp lib/compile.sh .	
+	cp lib/compile.sh .
 	./compile.sh
 	
-This will download all necessary sources, execute compilation and build an bootable image. Most of things will be cached so next run will be extremly faster!
+This will download all necessary sources, execute compilation and/or build a bootable image. Most of things will be cached so next run will be extremely faster!
 
-## How to build my own kernel? ##
+## How to edit kernel configuration?
 
-**Prerequisition are the same as building an image!**
-
-Edit *compile.sh* prior to running and alter switch:
-
-	KERNEL_ONLY="yes"
-
-In directory (output/debs) you will find deb packed kernel, together with headers, firmware and u-boot.
-
-
-If you want to invoke menu configuration:
+Edit `compile.sh` and set
 
 	KERNEL_CONFIGURE="yes"
+
+to display kernel configuration menu prior to compilation
 
 More info:
 
 - [Documentation](http://www.armbian.com/using-armbian-tools/)
+- [Prebuilt images](http://www.armbian.com/download/)
 - [Support forums](http://forum.armbian.com/ "Armbian support forum")
 - [Project at Github](https://github.com/igorpecovnik/lib)
