@@ -396,6 +396,29 @@ change to - for example:
         netmask 255.255.255.0
 		gateway 192.168.1.1
 
+# How to run Docker?
+
+Preinstallation requirements:
+
+- Armian 5.1 or newer with Kernel 3.10 or higher
+- Debian Jessie (might work elsewhere with some modifications)
+- root access
+
+Execute this as root:
+
+	echo "deb https://packagecloud.io/Hypriot/Schatzkiste/debian/ wheezy main" > /etc/apt/sources.list.d/hypriot.list
+	curl https://packagecloud.io/gpg.key | sudo apt-key add -
+	apt-get update
+	apt-get -y install --no-install-recommends docker-hypriot
+	apt-get -y install cgroupfs-mount
+	reboot
+
+Test example:
+
+	docker run -d -p 80:80 hypriot/rpi-busybox-httpd
+
+[More info in this forum topic](http://forum.armbian.com/index.php/topic/490-docker-on-armbian/)
+
 # How to set wireless access point?
 
 There are two different hostap daemons. One is **default** and the other one is for some **Realtek** wifi cards. Both have their own basic configurations and both are patched to gain maximum performances.
