@@ -13,6 +13,8 @@
 # compile_uboot
 # compile_sunxi_tools
 # compile_kernel
+# check_toolchain
+# find_toolchain
 # advanced_patch
 # process_patch_file
 # install_external_applications
@@ -23,7 +25,7 @@ compile_uboot (){
 #---------------------------------------------------------------------------------------------------------------------------------
 # Compile uboot from sources
 #---------------------------------------------------------------------------------------------------------------------------------
-	if [[ ! -d "$SOURCES/$BOOTSOURCEDIR" ]]; then
+	if [[ ! -d $SOURCES/$BOOTSOURCEDIR ]]; then
 		exit_with_error "Error building u-boot: source directory does not exist" "$BOOTSOURCEDIR"
 	fi
 
@@ -33,8 +35,8 @@ compile_uboot (){
 	cd $SOURCES/$BOOTSOURCEDIR
 
 	local cthreads=$CTHREADS
-	[[ $LINUXFAMILY == "marvell" ]] && local MAKEPARA="u-boot.mmc"
-	[[ $BOARD == "odroidc2" ]] && local MAKEPARA="ARCH=arm" && local cthreads=""
+	[[ $LINUXFAMILY == marvell ]] && local MAKEPARA="u-boot.mmc"
+	[[ $BOARD == odroidc2 ]] && local MAKEPARA="ARCH=arm" && local cthreads=""
 
 	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CROSS_COMPILE"' 2>&1 \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
@@ -46,10 +48,9 @@ compile_uboot (){
 	touch .scmversion
 	
 	# patch mainline uboot configuration to boot with old kernels
-	if [[ $BRANCH == "default" && $LINUXFAMILY == sun*i ]] ; then
-		if [ "$(cat $SOURCES/$BOOTSOURCEDIR/.config | grep CONFIG_ARMV7_BOOT_SEC_DEFAULT=y)" == "" ]; then
-			echo "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
-			echo "CONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> $SOURCES/$BOOTSOURCEDIR/.config
+	if [[ $BRANCH == default && $LINUXFAMILY == sun*i ]] ; then
+		if ! grep -q "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" .config ; then
+			echo -e "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y\nCONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> .config
 		fi
 	fi
 
@@ -184,7 +185,7 @@ compile_kernel (){
 # Compile kernel
 #---------------------------------------------------------------------------------------------------------------------------------
 
-	if [[ ! -d "$SOURCES/$LINUXSOURCEDIR" ]]; then
+	if [[ ! -d $SOURCES/$LINUXSOURCEDIR ]]; then
 		exit_with_error "Error building kernel: source directory does not exist" "$LINUXSOURCEDIR"
 	fi
 
@@ -197,11 +198,11 @@ compile_kernel (){
 	cd $SOURCES/$LINUXSOURCEDIR/
 
 	# adding custom firmware to kernel source
-	if [[ -n "$FIRMWARE" ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCEDIR/firmware; fi
+	if [[ -n $FIRMWARE ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCEDIR/firmware; fi
 
 	# use proven config
-	if [ "$KERNEL_KEEP_CONFIG" != "yes" ] || [ ! -f $SOURCES/$LINUXSOURCEDIR/.config ]; then
-		if [ -f $SRC/userpatches/$LINUXCONFIG.config ]; then
+	if [[ $KERNEL_KEEP_CONFIG != yes || ! -f $SOURCES/$LINUXSOURCEDIR/.config ]]; then
+		if [[ -f $SRC/userpatches/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
 			cp $SRC/userpatches/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config
 		else
@@ -216,8 +217,8 @@ compile_kernel (){
 	export LOCALVERSION="-$LINUXFAMILY"
 
 	# We can use multi threading here but not later since it's not working. This way of compilation is much faster.
-	if [ "$KERNEL_CONFIGURE" != "yes" ]; then
-		if [ "$BRANCH" = "default" ]; then
+	if [[ $KERNEL_CONFIGURE != yes ]]; then
+		if [[ $BRANCH == default ]]; then
 			eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" silentoldconfig'
 		else
 			eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" olddefconfig'
@@ -252,6 +253,49 @@ compile_kernel (){
 
 	cd ..
 	mv *.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
+}
+
+# check_toolchain <expression> <path>
+#
+# checks if system default toolchain version satisfies <expression>
+# <expression>: "< x.y"; "> x.y"; "== x.y"
+check_toolchain()
+{
+	local expression=$1
+	local path=$2
+	# get major.minor gcc version
+	local gcc_ver=$(${COMPILER}gcc -dumpversion | grep -oE "^[[:digit:]].[[:digit:]]")
+	awk "BEGIN{exit ! ($gcc_ver $expression)}" && return 0
+	return 1
+}
+
+# find_toolchain <expression> <var_name>
+#
+# writes path to toolchain that satisfies <expression> to <var_name>
+#
+find_toolchain()
+{
+	local expression=$1
+	local var_name=$2
+	local dist=10
+	local toolchain=""
+	for dir in $SRC/toolchains/*/; do
+		# check if is a toolchain for current $ARCH
+		[[ ! -f ${dir}bin/${COMPILER}gcc ]] && continue
+		# get toolchain major.minor version
+		local gcc_ver=$(${dir}bin/${COMPILER}gcc -dumpversion | grep -oE "^[[:digit:]].[[:digit:]]")
+		# check if toolchain version satisfies requirement
+		awk "BEGIN{exit ! ($gcc_ver $expression)}" || continue
+		# extract target major.minor version from expression
+		local target_ver=$(grep -oE "[[:digit:]].[[:digit:]]" <<< "$expression")
+		# check if found version is the closest to target
+		local d=$(awk '{x = $1 - $2}{printf "%.1f\n", (x > 0) ? x : -x}' <<< "$target_ver $gcc_ver")
+		if awk "BEGIN{exit ! ($d < $dist)}" ; then
+			dist=$d
+			toolchain=${dir}bin
+		fi
+	done
+	eval $"$var_name"="$toolchain"
 }
 
 # advanced_patch <dest> <family> <device> <description>

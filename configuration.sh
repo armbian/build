@@ -213,6 +213,7 @@ case $ARCH in
 	arm64)
 	TARGETS=Image
 	CROSS_COMPILE="$CCACHE aarch64-linux-gnu-"
+	COMPILER="aarch64-linux-gnu-"
 	ARCHITECTURE=arm64
 	QEMU_BINARY="qemu-aarch64-static"
 	;;
@@ -220,6 +221,7 @@ case $ARCH in
 	armhf)
 	TARGETS=zImage
 	CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-"
+	COMPILER="arm-linux-gnueabihf-"
 	ARCHITECTURE=arm
 	QEMU_BINARY="qemu-arm-static"
 	;;
