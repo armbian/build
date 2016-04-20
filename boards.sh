@@ -194,15 +194,10 @@ install_kernel (){
 	echo "ff02::2     ip6-allrouters" >> $CACHEDIR/sdcard/etc/hosts
 
 	# create modules file
-	IFS=" "
-	if [[ $BRANCH == *next* || $BRANCH == *dev* ]];then
-		for word in $MODULES_NEXT; do
-			echo $word >> $CACHEDIR/sdcard/etc/modules;
-		done
+	if [[ $BRANCH == next || $BRANCH == dev ]]; then
+		tr ' ' '\n' <<< "$MODULES_NEXT" >> $CACHEDIR/sdcard/etc/modules
 	else
-		for word in $MODULES; do
-			echo $word >> $CACHEDIR/sdcard/etc/modules;
-		done
+		tr ' ' '\n' <<< "$MODULES" >> $CACHEDIR/sdcard/etc/modules
 	fi
 
 	# copy and create symlink to default interfaces configuration

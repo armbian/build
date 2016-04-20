@@ -320,22 +320,14 @@ j=1
 declare -a PACKETS=($1)
 skupaj=${#PACKETS[@]}
 while [[ $i -lt $skupaj ]]; do
-procent=$(echo "scale=2;($j/$skupaj)*100"|bc)
-procent=${procent%.*}
-		x=${PACKETS[$i]}
-		if [[ $3 == "host" ]]; then
-			DEBIAN_FRONTEND=noninteractive apt-get -qq -y install $x >> $DEST/debug/install.log  2>&1
-		else
-			chroot $CACHEDIR/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -qq -y install $x --no-install-recommends" >> $DEST/debug/install.log 2>&1
-		fi
-
-		if [ $? -ne 0 ]; then display_alert "Installation of package failed" "$INSTALL" "err"; exit 1; fi
-
-		if [[ $4 != "quiet" ]]; then
-			printf '%.0f\n' $procent | dialog --backtitle "$backtitle" --title "$2" --gauge "\n\n$x" 9 70
-		fi
-		i=$[$i+1]
-		j=$[$j+1]
+	procent=$(echo "scale=2;($j/$skupaj)*100"|bc)
+	procent=${procent%.*}
+	x=${PACKETS[$i]}
+	chroot $CACHEDIR/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -qq -y install $x --no-install-recommends" >> $DEST/debug/install.log 2>&1
+	if [ $? -ne 0 ]; then display_alert "Installation of package failed" "$INSTALL" "err"; exit 1; fi
+	printf '%.0f\n' $procent | dialog --backtitle "$backtitle" --title "$2" --gauge "\n\n$x" 9 70
+	i=$[$i+1]
+	j=$[$j+1]
 done
 }
 
@@ -346,9 +338,8 @@ umount -l $CACHEDIR/sdcard/proc >/dev/null 2>&1
 umount -l $CACHEDIR/sdcard/sys >/dev/null 2>&1
 umount -l $CACHEDIR/sdcard/tmp >/dev/null 2>&1
 umount -l $CACHEDIR/sdcard >/dev/null 2>&1
-IFS=" "
-x=$(losetup -a |awk '{ print $1 }' | rev | cut -c 2- | rev | tac);
-for x in $x; do
-	losetup -d $x
+x=$(losetup -a | awk '{ print $1 }' | rev | cut -c 2- | rev | tac)
+for y in $x; do
+	losetup -d $y
 done
 }

@@ -21,16 +21,16 @@ create_images_list()
 		BOARD=$(basename $board | cut -d'.' -f1)
 		source $SRC/lib/config/boards/$BOARD.conf
 		if [[ -n $CLI_TARGET ]]; then
-		
+
 			# RELEASES : BRANCHES
 			CLI_TARGET=($(tr ':' ' ' <<< "$CLI_TARGET"))
-		
+
 			build_settings_target=($(tr ',' ' ' <<< "${CLI_TARGET[0]}"))
 			build_settings_branch=($(tr ',' ' ' <<< "${CLI_TARGET[1]}"))
-		
+
 			[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
 			[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
-			
+
 			for release in ${build_settings_target[@]}; do
 				for kernel in ${build_settings_branch[@]}; do
 					buildlist+=("$BOARD $kernel $release no")
@@ -38,16 +38,16 @@ create_images_list()
 			done
 		fi
 		if [[ -n $DESKTOP_TARGET ]]; then
-			
+
 			# RELEASES : BRANCHES
 			DESKTOP_TARGET=($(tr ':' ' ' <<< "$DESKTOP_TARGET"))
-			
+
 			build_settings_target=($(tr ',' ' ' <<< "${DESKTOP_TARGET[0]}"))
 			build_settings_branch=($(tr ',' ' ' <<< "${DESKTOP_TARGET[1]}"))
-			
+
 			[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
 			[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
-		
+
 			for release in ${build_settings_target[@]}; do
 				for kernel in ${build_settings_branch[@]}; do
 					buildlist+=("$BOARD $kernel $release yes")
@@ -93,7 +93,7 @@ echo -e "\n${#buildlist[@]} total\n"
 buildall_start=`date +%s`
 
 for line in "${buildlist[@]}"; do
-	unset IFS LINUXFAMILY LINUXCONFIG LINUXKERNEL LINUXSOURCE KERNELBRANCH BOOTLOADER BOOTSOURCE BOOTBRANCH ARCH\
+	unset LINUXFAMILY LINUXCONFIG LINUXKERNEL LINUXSOURCE KERNELBRANCH BOOTLOADER BOOTSOURCE BOOTBRANCH ARCH UBOOT_NEEDS_GCC KERNEL_NEEDS_GCC \
 		CPUMIN CPUMAX UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN PACKAGE_LIST_EXCLUDE
 	read BOARD BRANCH RELEASE BUILD_DESKTOP <<< $line
 	display_alert "Building" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"

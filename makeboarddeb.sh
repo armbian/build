@@ -116,8 +116,7 @@ create_board_package (){
 	touch $destination/tmp/.reboot_required
 
 	if [[ $LINUXCONFIG == *sun* ]] ; then
-
-		if [ "$BRANCH" != "next" ]; then
+		if [[ $BRANCH != next ]]; then
 			# add soc temperature app
 			arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/local/bin/sunxi_tp_temp
 		fi
@@ -126,7 +125,6 @@ create_board_package (){
 		tar xfz $SRC/lib/bin/swconfig.tgz -C $destination/usr/local/bin
 
 		# convert and add fex files
-		unset IFS
 		mkdir -p $destination/boot/bin
 		for i in $(ls -w1 $SRC/lib/config/*.fex | xargs -n1 basename); do
 			fex2bin $SRC/lib/config/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin

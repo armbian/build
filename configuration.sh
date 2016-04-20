@@ -23,6 +23,7 @@ MISC1="https://github.com/linux-sunxi/sunxi-tools.git" # Allwinner fex compiler 
 MISC1_DIR="sunxi-tools"	# local directory
 MISC5="https://github.com/hglm/a10disp/" # Display changer for Allwinner
 MISC5_DIR="sunxi-display-changer" # local directory
+HOST="$BOARD" # set hostname to the board
 CACHEDIR=$DEST/cache
 
 # board family configurations
@@ -208,6 +209,9 @@ esac
 [[ -z $CPUMIN && $LINUXFAMILY == marvell ]] && CPUMIN="800000" && CPUMAX="1600000" && GOVERNOR="ondemand"
 [[ -z $CPUMIN && ($LINUXFAMILY == udoo || $LINUXFAMILY == neo ) ]] && CPUMIN="392000" && CPUMAX="996000" && GOVERNOR="interactive"
 [[ -z $GOVERNOR ]] && GOVERNOR="ondemand"
+
+# naming to distro
+if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
 case $ARCH in
 	arm64)

@@ -137,12 +137,6 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
 fi
 
-# naming to distro
-if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
-
-# set hostname to the board
-HOST="$BOARD"
-
 source $SRC/lib/configuration.sh
 
 # The name of the job
