@@ -49,6 +49,7 @@ Run the script
         - Realtek RT8192 wireless driver
         - Mediatek MT7601U wireless - driver
         - Sunxi display control
+        - hostapd from sources
 - **FORCE_CHECKOUT** (yes|no):
     - set to "yes" to force overwrite any changed or manually patched kernel, u-boot and other sources
     - set to "no" to keep all changes to sources
