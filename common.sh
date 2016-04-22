@@ -74,7 +74,7 @@ if [[ \$DEVICE == "" ]]; then DEVICE="/dev/mmcblk0"; fi
 if [[ \$DPKG_MAINTSCRIPT_PACKAGE == *cubox* ]] ; then
 	( dd if=/usr/lib/$uboot_name/SPL of=\$DEVICE bs=512 seek=2 status=noxfer ) > /dev/null 2>&1
 	( dd if=/usr/lib/$uboot_name/u-boot.img of=\$DEVICE bs=1K seek=42 status=noxfer ) > /dev/null 2>&1
-elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *guitar* ]] ; then
+elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *guitar* || \$DPKG_MAINTSCRIPT_PACKAGE == roseapple* ]] ; then
 	( dd if=/usr/lib/$uboot_name/bootloader.bin of=\$DEVICE bs=512 seek=4097 conv=fsync ) > /dev/null 2>&1
 	( dd if=/usr/lib/$uboot_name/u-boot-dtb.bin of=\$DEVICE bs=512 seek=6144 conv=fsync ) > /dev/null 2>&1
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *odroidxu4* ]] ; then
@@ -123,7 +123,7 @@ END
 	# copy proper uboot files to place
 	if [[ $BOARD == cubox-i* ]] ; then
 		[ ! -f "SPL" ] || cp SPL u-boot.img $DEST/debs/$uboot_name/usr/lib/$uboot_name
-	elif [[ $BOARD == guitar* ]] ; then
+	elif [[ $BOARD == guitar* || $BOARD == roseapple* ]] ; then
 		[ ! -f "u-boot-dtb.bin" ] || cp u-boot-dtb.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 		[ ! -f "$SRC/lib/bin/s500-bootloader.bin" ] || cp $SRC/lib/bin/s500-bootloader.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name/bootloader.bin
 	elif [[ $BOARD == odroidxu4 ]] ; then
@@ -436,7 +436,7 @@ write_uboot()
 	elif [[ $BOARD == *udoo* ]] ; then
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/SPL of=$LOOP bs=1k seek=1 status=noxfer >/dev/null 2>&1)
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot.img of=$LOOP bs=1k seek=69 conv=fsync >/dev/null 2>&1)
-	elif [[ $BOARD == *guitar* ]] ; then
+	elif [[ $BOARD == *guitar* || $BOARD == *roseapple* ]] ; then
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/bootloader.bin of=$LOOP bs=512 seek=4097 conv=fsync > /dev/null 2>&1)
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot-dtb.bin of=$LOOP bs=512 seek=6144 conv=fsync > /dev/null 2>&1)
 	elif [[ $BOARD == *odroidxu4* ]] ; then
