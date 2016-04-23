@@ -42,9 +42,9 @@ compile_uboot (){
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-	[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
-	[ -f .config ] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
-	[ -f $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp ] && cp $SRC/lib/bin/armbian-u-boot.bmp $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp
+	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
+	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
+	[[ -f $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp ]] && cp $SRC/lib/bin/armbian-u-boot.bmp $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp
 	touch .scmversion
 	
 	# patch mainline uboot configuration to boot with old kernels
@@ -132,10 +132,10 @@ END
 		[ ! -f "sd_fuse/hardkernel/tzsw.bin.hardkernel" ] || cp sd_fuse/hardkernel/tzsw.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name
 		[ ! -f "u-boot.bin" ] || cp u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name/
 	elif [[ $BOARD == odroidc1 ]] ; then
-		[ ! -f "sd_fuse/bl1.bin.hardkernel" ] || cp sd_fuse/bl1.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name		
+		[ ! -f "sd_fuse/bl1.bin.hardkernel" ] || cp sd_fuse/bl1.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name
 		[ ! -f "sd_fuse/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == odroidc2 ]] ; then
-		[ ! -f "sd_fuse/bl1.bin.hardkernel" ] || cp sd_fuse/bl1.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name		
+		[ ! -f "sd_fuse/bl1.bin.hardkernel" ] || cp sd_fuse/bl1.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name
 		[ ! -f "sd_fuse/u-boot.bin" ] || cp sd_fuse/u-boot.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == udoo* ]] ; then
 		[ ! -f "u-boot.img" ] || cp SPL u-boot.img $DEST/debs/$uboot_name/usr/lib/$uboot_name
@@ -233,8 +233,8 @@ compile_kernel (){
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-	if [ ${PIPESTATUS[0]} -ne 0 ] || [ ! -f arch/$ARCHITECTURE/boot/$TARGETS ]; then
-			exit_with_error "Kernel was not built" "@host"
+	if [[ ${PIPESTATUS[0]} -ne 0 || ! -f arch/$ARCHITECTURE/boot/$TARGETS ]]; then
+		exit_with_error "Kernel was not built" "@host"
 	fi
 
 	# different packaging for 4.3+ // probably temporaly soution
@@ -392,7 +392,7 @@ for plugin in $SRC/lib/extras/*.sh; do
 done
 
 # MISC5 = sunxi display control
-if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sunxi* ]]; then
+if [[ -n $MISC5_DIR && $BRANCH != next && $LINUXSOURCEDIR == *sunxi* ]]; then
 	cd "$SOURCES/$MISC5_DIR"
 	cp "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" .
 	make clean >/dev/null
@@ -401,7 +401,7 @@ if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sunxi* ]]; the
 fi
 
 # MISC5 = sunxi display control / compile it for sun8i just in case sun7i stuff gets ported to sun8i and we're able to use it
-if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sun8i* ]]; then
+if [[ -n $MISC5_DIR && $BRANCH != next && $LINUXSOURCEDIR == *sun8i* ]]; then
 	cd "$SOURCES/$MISC5_DIR"
 	wget -q "https://raw.githubusercontent.com/linux-sunxi/linux-sunxi/sunxi-3.4/include/video/sunxi_disp_ioctl.h"
 	make clean >/dev/null 2>&1
@@ -410,7 +410,7 @@ if [[ -n "$MISC5_DIR" && $BRANCH != "next" && $LINUXSOURCEDIR == *sun8i* ]]; the
 fi
 
 # h3disp/sun8i-corekeeper.sh for sun8i/3.4.x
-if [ "${LINUXFAMILY}" = "sun8i" -a "${BRANCH}" = "default" ]; then
+if [[ $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
 	install -m 755 "$SRC/lib/scripts/h3disp" "$CACHEDIR/sdcard/usr/local/bin"
 	install -m 755 "$SRC/lib/scripts/sun8i-corekeeper.sh" "$CACHEDIR/sdcard/usr/local/bin"
 	sed -i 's|^exit\ 0$|/usr/local/bin/sun8i-corekeeper.sh \&\n\n&|' "$CACHEDIR/sdcard/etc/rc.local"
@@ -459,9 +459,7 @@ write_uboot()
 		( dd if=/dev/zero of=$LOOP bs=1k count=1023 seek=1 status=noxfer ) > /dev/null 2>&1
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1)
 	fi
-	if [ $? -ne 0 ]; then
-		exit_with_error "U-boot failed to install" "@host"
-	fi
+	[[ $? -ne 0 ]] && exit_with_error "U-boot failed to install" "@host"
 	rm -r /tmp/usr
 	sync
 }

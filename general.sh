@@ -296,20 +296,10 @@ prepare_host() {
 	if [[ $NO_APT_CACHER != yes ]]; then PAK="$PAK apt-cacher-ng"; fi
 
 	local codename=$(lsb_release -sc)
-	if [[ $codename == "" || "jessie trusty wily xenial" != *"$codename"* ]]; then
+	if [[ $codename == "" || "trusty wily xenial" != *"$codename"* ]]; then
 		display_alert "Host system support was not tested" "${codename:-(unknown)}" "wrn"
 		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
 		read
-	fi
-
-	if [[ $codename == jessie ]]; then
-		PAK="$PAK crossbuild-essential-armhf crossbuild-essential-armel";
-		if [[ ! -f /etc/apt/sources.list.d/crosstools.list ]]; then
-			display_alert "Adding repository for jessie" "cross-tools" "info"
-			dpkg --add-architecture armhf > /dev/null 2>&1
-			echo 'deb http://emdebian.org/tools/debian/ jessie main' > /etc/apt/sources.list.d/crosstools.list
-			wget 'http://emdebian.org/tools/debian/emdebian-toolchain-archive.key' -O - | apt-key add - >/dev/null
-		fi
 	fi
 
 	if [[ $codename == trusty ]]; then
@@ -322,7 +312,6 @@ prepare_host() {
 	fi
 
 	if [[ $codename == wily || $codename == xenial ]]; then
-		# gcc-4.9-arm-linux-gnueabihf gcc-4.9-arm-linux-gnueabi
 		PAK="$PAK libc6-dev-armhf-cross libc6-dev-armel-cross"
 	fi
 

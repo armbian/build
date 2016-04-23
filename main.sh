@@ -54,7 +54,7 @@ rm -rf $DEST/debs/*/*/
 
 # Script parameters handling
 for i in "$@"; do
-	if [[ "$i" == *"="* ]]; then
+	if [[ $i == *=* ]]; then
 		parameter=${i%%=*}
 		value=${i##*=}
 		display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
@@ -63,9 +63,9 @@ for i in "$@"; do
 done
 
 if [[ $PROGRESS_DISPLAY == none ]]; then
-	OUTPUT_VERYSILENT=yes;
+	OUTPUT_VERYSILENT=yes
 elif [[ $PROGRESS_DISPLAY != plain ]]; then
-	OUTPUT_DIALOG=yes;
+	OUTPUT_DIALOG=yes
 fi
 if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
 

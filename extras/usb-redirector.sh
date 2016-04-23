@@ -14,7 +14,7 @@ install_usb_redirector()
 	IFS='.' read -a array <<< "$VER"
 	# Current USB redirector is broken for old kernels
 	cd $SOURCES
-	if (( "${array[0]}" == "4" )) && (( "${array[1]}" >= "1" )); then		
+	if (( "${array[0]}" == "4" )) && (( "${array[1]}" >= "1" )); then
 		wget -q http://www.incentivespro.com/usb-redirector-linux-arm-eabi.tar.gz
 	else
 		cp $SRC/lib/bin/usb-redirector-old.tgz usb-redirector-linux-arm-eabi.tar.gz
@@ -41,9 +41,5 @@ install_usb_redirector()
 	# chroot $CACHEDIR/sdcard /bin/bash -c "update-rc.d rc.usbsrvd defaults
 }
 
-
-
-
 display_alert "Installing additional application" "USB redirector" "info"
 install_usb_redirector
-
