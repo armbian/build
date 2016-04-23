@@ -191,6 +191,7 @@ esac
 
 [[ -z $OFFSET ]] && OFFSET=1 # Bootloader space in MB (1 x 2048 = default)
 [[ -z $ARCH ]] && ARCH=armhf
+[[ -z $TARGETS ]] && TARGETS=zImage
 [[ -z $SERIALCON ]] && SERIALCON=ttyS0
 [[ -z $BOOTSIZE ]] && BOOTSIZE=0 # Mb size of boot partition
 
@@ -204,6 +205,7 @@ esac
 [[ -z $CPUMIN && $LINUXFAMILY == sun*i ]] && CPUMIN="480000" && CPUMAX="1010000" && GOVERNOR="interactive"
 [[ $BRANCH != "default" && $LINUXFAMILY == sun*i ]] && GOVERNOR="ondemand"
 [[ -z $CPUMIN && $LINUXFAMILY == odroidxu4 ]] && CPUMIN="600000" && CPUMAX="2000000" && GOVERNOR="conservative"
+[[ -z $CPUMIN && $LINUXFAMILY == odroidc1 ]] && CPUMIN="600000" && CPUMAX="1600000" && GOVERNOR="interactive"
 [[ -z $CPUMIN && $LINUXFAMILY == cubox ]] && CPUMIN="396000" && CPUMAX="996000" && GOVERNOR="interactive"
 [[ -z $CPUMIN && $LINUXFAMILY == s500 ]] && CPUMIN="408000" && CPUMAX="1104000" && GOVERNOR="interactive"
 [[ -z $CPUMIN && $LINUXFAMILY == marvell ]] && CPUMIN="800000" && CPUMAX="1600000" && GOVERNOR="ondemand"
@@ -215,7 +217,6 @@ if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; e
 
 case $ARCH in
 	arm64)
-	TARGETS=Image
 	CROSS_COMPILE="$CCACHE aarch64-linux-gnu-"
 	COMPILER="aarch64-linux-gnu-"
 	ARCHITECTURE=arm64
@@ -223,7 +224,6 @@ case $ARCH in
 	;;
 
 	armhf)
-	TARGETS=zImage
 	CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-"
 	COMPILER="arm-linux-gnueabihf-"
 	ARCHITECTURE=arm
