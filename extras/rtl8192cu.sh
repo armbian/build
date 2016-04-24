@@ -19,6 +19,38 @@ install_rtl8192cu()
 	cd $SOURCES/$plugin_dir
 	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
 	make ARCH=$ARCHITECTURE CROSS_COMPILE="${CROSS_COMPILE//ccache}" clean >> $DEST/debug/compilation.log
+
+	# GCC5 compatibility patch
+	patch --batch --silent -p1 -N <<-'EOF'
+	diff --git a/include/ieee80211.h b/include/ieee80211.h
+	index e283a5f..d07bdb8 100755
+	--- a/include/ieee80211.h
+	+++ b/include/ieee80211.h
+	@@ -1194,18 +1194,18 @@ enum ieee80211_state {
+	 (((Addr[2]) & 0xff) == 0xff) && (((Addr[3]) & 0xff) == 0xff) && (((Addr[4]) & 0xff) == 0xff) && \
+	 (((Addr[5]) & 0xff) == 0xff))
+	 #else
+	-extern __inline int is_multicast_mac_addr(const u8 *addr)
+	+static __inline int is_multicast_mac_addr(const u8 *addr)
+	 {
+	         return ((addr[0] != 0xff) && (0x01 & addr[0]));
+	 }
+	 
+	-extern __inline int is_broadcast_mac_addr(const u8 *addr)
+	+static __inline int is_broadcast_mac_addr(const u8 *addr)
+	 {
+	 	return ((addr[0] == 0xff) && (addr[1] == 0xff) && (addr[2] == 0xff) &&   \
+	 		(addr[3] == 0xff) && (addr[4] == 0xff) && (addr[5] == 0xff));
+	 }
+	 
+	-extern __inline int is_zero_mac_addr(const u8 *addr)
+	+static __inline int is_zero_mac_addr(const u8 *addr)
+	 {
+	 	return ((addr[0] == 0x00) && (addr[1] == 0x00) && (addr[2] == 0x00) &&   \
+	 		(addr[3] == 0x00) && (addr[4] == 0x00) && (addr[5] == 0x00));
+	EOF
+	# GCC5 compatibility patch end
+
 	make ARCH=$ARCHITECTURE CROSS_COMPILE="${CROSS_COMPILE//ccache}" KSRC=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/compilation.log
 	cp *.ko $CACHEDIR/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
 	depmod -b $CACHEDIR/sdcard/ $VER-$LINUXFAMILY
