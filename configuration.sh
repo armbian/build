@@ -93,6 +93,7 @@ case $LINUXFAMILY in
 		BOOTLOADER="https://github.com/hardkernel/u-boot.git"
 		BOOTBRANCH="odroidc-v2011.03"
 		BOOTSOURCE="u-boot-odroidc1"
+		UBOOT_NEEDS_GCC="< 5.0"
 	;;
 	
 	odroidc2)
@@ -191,7 +192,7 @@ esac
 
 [[ -z $OFFSET ]] && OFFSET=1 # Bootloader space in MB (1 x 2048 = default)
 [[ -z $ARCH ]] && ARCH=armhf
-[[ -z $TARGETS ]] && TARGETS=zImage
+[[ -z $KERNEL_IMAGE_TYPE ]] && KERNEL_IMAGE_TYPE=zImage
 [[ -z $SERIALCON ]] && SERIALCON=ttyS0
 [[ -z $BOOTSIZE ]] && BOOTSIZE=0 # Mb size of boot partition
 
