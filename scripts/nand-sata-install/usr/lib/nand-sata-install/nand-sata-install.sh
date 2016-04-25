@@ -182,7 +182,7 @@ formatemmc()
 	parted -s $1 -- mkpart primary ext4  2048s -1s
 	partprobe $1
 	# create fs
-	mkfs.ext4 -q $1"p1"
+	mkfs.ext4 -qF $1"p1" >/dev/null 2>&1
 	
 }
 
