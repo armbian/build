@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash
 #
 # Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
@@ -206,8 +206,8 @@ compile_kernel (){
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
 			cp $SRC/userpatches/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config
 		else
-			display_alert "Using kernel config file" "lib/config/$LINUXCONFIG.config" "info"
-			cp $SRC/lib/config/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config
+			display_alert "Using kernel config file" "lib/config/kernel/$LINUXCONFIG.config" "info"
+			cp $SRC/lib/config/kernel/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config
 		fi
 	fi
 

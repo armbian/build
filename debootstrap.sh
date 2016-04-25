@@ -121,7 +121,7 @@ mount -t devtmpfs chdev $CACHEDIR/sdcard/dev || mount --bind /dev $CACHEDIR/sdca
 mount -t devpts chpts $CACHEDIR/sdcard/dev/pts
 
 # choose proper apt list
-cp $SRC/lib/config/sources.list.$RELEASE $CACHEDIR/sdcard/etc/apt/sources.list
+cp $SRC/lib/config/apt/sources.list.$RELEASE $CACHEDIR/sdcard/etc/apt/sources.list
 
 # add armbian key
 echo "deb http://apt.armbian.com $RELEASE main" > $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian.list

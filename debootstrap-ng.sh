@@ -210,7 +210,7 @@ create_rootfs_cache()
 		LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "export CHARMAP=$CONSOLE_CHAR FONTFACE=8x16"
 
 		# stage: copy proper apt sources list
-		cp $SRC/lib/config/sources.list.$RELEASE $CACHEDIR/sdcard/etc/apt/sources.list
+		cp $SRC/lib/config/apt/sources.list.$RELEASE $CACHEDIR/sdcard/etc/apt/sources.list
 
 		# stage: add armbian repository and install key
 		echo "deb http://apt.armbian.com $RELEASE main" > $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian.list

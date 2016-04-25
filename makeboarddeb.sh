@@ -126,8 +126,8 @@ create_board_package (){
 
 		# convert and add fex files
 		mkdir -p $destination/boot/bin
-		for i in $(ls -w1 $SRC/lib/config/*.fex | xargs -n1 basename); do
-			fex2bin $SRC/lib/config/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
+		for i in $(ls -w1 $SRC/lib/config/fex/*.fex | xargs -n1 basename); do
+			fex2bin $SRC/lib/config/fex/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
 		done
 		# One H3 image for all Fast Ethernet equipped Orange Pi H3
 		cp -p "$destination/boot/bin/orangepi2.bin" "$destination/boot/bin/orangepih3.bin"

@@ -201,7 +201,7 @@ install_kernel (){
 	fi
 
 	# copy and create symlink to default interfaces configuration
-	cp $SRC/lib/config/interfaces.* $CACHEDIR/sdcard/etc/network/
+	cp $SRC/lib/config/network/interfaces.* $CACHEDIR/sdcard/etc/network/
 	ln -sf interfaces.default $CACHEDIR/sdcard/etc/network/interfaces
 
 	# mount deb storage to tmp
