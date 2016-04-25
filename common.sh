@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash
 #
 # Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
