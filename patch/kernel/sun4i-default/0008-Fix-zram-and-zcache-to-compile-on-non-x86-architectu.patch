@@ -1,0 +1,275 @@
+From 3f0c829646330b709827f80e10b8f053c77692c7 Mon Sep 17 00:00:00 2001
+From: Stefan Liehmann <listef@listef.de>
+Date: Wed, 2 Sep 2015 09:56:32 +0200
+Subject: [PATCH 08/19] Fix zram and zcache to compile on non-x86 architecture.
+
+These "borrowed" fixes are contained in e76c984a5293f1f0eed278add98de2b429f0dec9
+and 50d6ef2ea173e0f5c58b7b299b1e1075bcaf5605.
+---
+ drivers/staging/zcache/Kconfig           |  5 +-
+ drivers/staging/zram/Kconfig             |  5 +-
+ drivers/staging/zram/zram_drv.c          | 20 ++++---
+ drivers/staging/zsmalloc/Kconfig         |  4 --
+ drivers/staging/zsmalloc/zsmalloc-main.c | 99 ++++++++++++++++++++++----------
+ drivers/staging/zsmalloc/zsmalloc_int.h  |  5 +-
+ 6 files changed, 86 insertions(+), 52 deletions(-)
+
+diff --git a/drivers/staging/zcache/Kconfig b/drivers/staging/zcache/Kconfig
+index 7048e01..4881839 100644
+--- a/drivers/staging/zcache/Kconfig
++++ b/drivers/staging/zcache/Kconfig
+@@ -1,9 +1,6 @@
+ config ZCACHE
+ 	bool "Dynamic compression of swap pages and clean pagecache pages"
+-	# X86 dependency is because zsmalloc uses non-portable pte/tlb
+-	# functions
+-	depends on (CLEANCACHE || FRONTSWAP) && CRYPTO=y && X86
+-	select ZSMALLOC
++	depends on (CLEANCACHE || FRONTSWAP) && CRYPTO=y && ZSMALLOC=y
+ 	select CRYPTO_LZO
+ 	default n
+ 	help
+diff --git a/drivers/staging/zram/Kconfig b/drivers/staging/zram/Kconfig
+index 9d11a4c..be5abe8 100644
+--- a/drivers/staging/zram/Kconfig
++++ b/drivers/staging/zram/Kconfig
+@@ -1,9 +1,6 @@
+ config ZRAM
+ 	tristate "Compressed RAM block device support"
+-	# X86 dependency is because zsmalloc uses non-portable pte/tlb
+-	# functions
+-	depends on BLOCK && SYSFS && X86
+-	select ZSMALLOC
++	depends on BLOCK && SYSFS && ZSMALLOC
+ 	select LZO_COMPRESS
+ 	select LZO_DECOMPRESS
+ 	default n
+diff --git a/drivers/staging/zram/zram_drv.c b/drivers/staging/zram/zram_drv.c
+index cdac567..0428adb 100644
+--- a/drivers/staging/zram/zram_drv.c
++++ b/drivers/staging/zram/zram_drv.c
+@@ -104,33 +104,37 @@ static int page_zero_filled(void *ptr)
+ 	return 1;
+ }
+ 
+-static void zram_set_disksize(struct zram *zram, size_t totalram_bytes)
++static void zram_set_disksize(struct zram *zram)
+ {
++	u64 totalram_bytes = ((u64) totalram_pages) << PAGE_SHIFT;
++
+ 	if (!zram->disksize) {
++		u64 bytes = totalram_bytes;
+ 		pr_info(
+ 		"disk size not provided. You can use disksize_kb module "
+ 		"param to specify size.\nUsing default: (%u%% of RAM).\n",
+ 		default_disksize_perc_ram
+ 		);
+-		zram->disksize = default_disksize_perc_ram *
+-					(totalram_bytes / 100);
++		do_div(bytes, 100);
++		zram->disksize = default_disksize_perc_ram * bytes;
+ 	}
+ 
+-	if (zram->disksize > 2 * (totalram_bytes)) {
++	if (zram->disksize > 2 * totalram_bytes) {
+ 		pr_info(
+ 		"There is little point creating a zram of greater than "
+ 		"twice the size of memory since we expect a 2:1 compression "
+ 		"ratio. Note that zram uses about 0.1%% of the size of "
+ 		"the disk when not in use so a huge zram is "
+ 		"wasteful.\n"
+-		"\tMemory Size: %zu kB\n"
++		"\tMemory Size: %llu kB\n"
+ 		"\tSize you selected: %llu kB\n"
+ 		"Continuing anyway ...\n",
+-		totalram_bytes >> 10, zram->disksize
++		totalram_bytes >> 10, zram->disksize >> 10
+ 		);
+ 	}
+ 
+-	zram->disksize &= PAGE_MASK;
++	/* can't use PAGE_MASK because it does not extend correctly to 64 bit */
++	zram->disksize &= ~((1ULL << PAGE_SHIFT) - 1);
+ }
+ 
+ static void zram_free_page(struct zram *zram, size_t index)
+@@ -640,7 +644,7 @@ int zram_init_device(struct zram *zram)
+ 		return 0;
+ 	}
+ 
+-	zram_set_disksize(zram, totalram_pages << PAGE_SHIFT);
++	zram_set_disksize(zram);
+ 
+ 	zram->compress_workmem = kzalloc(LZO1X_MEM_COMPRESS, GFP_KERNEL);
+ 	if (!zram->compress_workmem) {
+diff --git a/drivers/staging/zsmalloc/Kconfig b/drivers/staging/zsmalloc/Kconfig
+index a5ab720..9084565 100644
+--- a/drivers/staging/zsmalloc/Kconfig
++++ b/drivers/staging/zsmalloc/Kconfig
+@@ -1,9 +1,5 @@
+ config ZSMALLOC
+ 	tristate "Memory allocator for compressed pages"
+-	# X86 dependency is because of the use of __flush_tlb_one and set_pte
+-	# in zsmalloc-main.c.
+-	# TODO: convert these to portable functions
+-	depends on X86
+ 	default n
+ 	help
+ 	  zsmalloc is a slab-based memory allocator designed to store
+diff --git a/drivers/staging/zsmalloc/zsmalloc-main.c b/drivers/staging/zsmalloc/zsmalloc-main.c
+index 175b3c9..4cd0f04 100644
+--- a/drivers/staging/zsmalloc/zsmalloc-main.c
++++ b/drivers/staging/zsmalloc/zsmalloc-main.c
+@@ -425,6 +425,57 @@ static struct page *find_get_zspage(struct size_class *class)
+ 	return page;
+ }
+ 
++static void zs_copy_map_object(char *buf, struct page *firstpage,
++				int off, int size)
++{
++	struct page *pages[2];
++	int sizes[2];
++	void *addr;
++
++	pages[0] = firstpage;
++	pages[1] = get_next_page(firstpage);
++	BUG_ON(!pages[1]);
++
++	sizes[0] = PAGE_SIZE - off;
++	sizes[1] = size - sizes[0];
++
++	/* disable page faults to match kmap_atomic() return conditions */
++	pagefault_disable();
++
++	/* copy object to per-cpu buffer */
++	addr = kmap_atomic(pages[0]);
++	memcpy(buf, addr + off, sizes[0]);
++	kunmap_atomic(addr);
++	addr = kmap_atomic(pages[1]);
++	memcpy(buf + sizes[0], addr, sizes[1]);
++	kunmap_atomic(addr);
++}
++
++static void zs_copy_unmap_object(char *buf, struct page *firstpage,
++				int off, int size)
++{
++	struct page *pages[2];
++	int sizes[2];
++	void *addr;
++
++	pages[0] = firstpage;
++	pages[1] = get_next_page(firstpage);
++	BUG_ON(!pages[1]);
++
++	sizes[0] = PAGE_SIZE - off;
++	sizes[1] = size - sizes[0];
++
++	/* copy per-cpu buffer to object */
++	addr = kmap_atomic(pages[0]);
++	memcpy(addr + off, buf, sizes[0]);
++	kunmap_atomic(addr);
++	addr = kmap_atomic(pages[1]);
++	memcpy(addr, buf + sizes[0], sizes[1]);
++	kunmap_atomic(addr);
++
++	/* enable page faults to match kunmap_atomic() return conditions */
++	pagefault_enable();
++}
+ 
+ static int zs_cpu_notifier(struct notifier_block *nb, unsigned long action,
+ 				void *pcpu)
+@@ -435,18 +486,23 @@ static int zs_cpu_notifier(struct notifier_block *nb, unsigned long action,
+ 	switch (action) {
+ 	case CPU_UP_PREPARE:
+ 		area = &per_cpu(zs_map_area, cpu);
+-		if (area->vm)
+-			break;
+-		area->vm = alloc_vm_area(2 * PAGE_SIZE, area->vm_ptes);
+-		if (!area->vm)
+-			return notifier_from_errno(-ENOMEM);
++		/*
++		 * Make sure we don't leak memory if a cpu UP notification
++		 * and zs_init() race and both call zs_cpu_up() on the same cpu
++		 */
++		if (area->vm_buf)
++			return 0;
++		area->vm_buf = (char *)__get_free_page(GFP_KERNEL);
++		if (!area->vm_buf)
++			return -ENOMEM;
++		return 0;
+ 		break;
+ 	case CPU_DEAD:
+ 	case CPU_UP_CANCELED:
+ 		area = &per_cpu(zs_map_area, cpu);
+-		if (area->vm)
+-			free_vm_area(area->vm);
+-		area->vm = NULL;
++		if (area->vm_buf)
++			free_page((unsigned long)area->vm_buf);
++		area->vm_buf = NULL;
+ 		break;
+ 	}
+ 
+@@ -664,22 +720,11 @@ void *zs_map_object(struct zs_pool *pool, void *handle)
+ 	if (off + class->size <= PAGE_SIZE) {
+ 		/* this object is contained entirely within a page */
+ 		area->vm_addr = kmap_atomic(page);
+-	} else {
+-		/* this object spans two pages */
+-		struct page *nextp;
+-
+-		nextp = get_next_page(page);
+-		BUG_ON(!nextp);
+-
+-
+-		set_pte(area->vm_ptes[0], mk_pte(page, PAGE_KERNEL));
+-		set_pte(area->vm_ptes[1], mk_pte(nextp, PAGE_KERNEL));
+-
+-		/* We pre-allocated VM area so mapping can never fail */
+-		area->vm_addr = area->vm->addr;
++		return area->vm_addr + off;
+ 	}
+ 
+-	return area->vm_addr + off;
++	zs_copy_map_object(area->vm_buf, page, off, class->size);
++	return area->vm_buf;
+ }
+ EXPORT_SYMBOL_GPL(zs_map_object);
+ 
+@@ -701,14 +746,10 @@ void zs_unmap_object(struct zs_pool *pool, void *handle)
+ 	off = obj_idx_to_offset(page, obj_idx, class->size);
+ 
+ 	area = &__get_cpu_var(zs_map_area);
+-	if (off + class->size <= PAGE_SIZE) {
++	if (off + class->size <= PAGE_SIZE)
+ 		kunmap_atomic(area->vm_addr);
+-	} else {
+-		set_pte(area->vm_ptes[0], __pte(0));
+-		set_pte(area->vm_ptes[1], __pte(0));
+-		__flush_tlb_one((unsigned long)area->vm_addr);
+-		__flush_tlb_one((unsigned long)area->vm_addr + PAGE_SIZE);
+-	}
++	else
++		zs_copy_unmap_object(area->vm_buf, page, off, class->size);
+ 	put_cpu_var(zs_map_area);
+ }
+ EXPORT_SYMBOL_GPL(zs_unmap_object);
+diff --git a/drivers/staging/zsmalloc/zsmalloc_int.h b/drivers/staging/zsmalloc/zsmalloc_int.h
+index 92eefc6..a6f3109 100644
+--- a/drivers/staging/zsmalloc/zsmalloc_int.h
++++ b/drivers/staging/zsmalloc/zsmalloc_int.h
+@@ -110,9 +110,8 @@ enum fullness_group {
+ static const int fullness_threshold_frac = 4;
+ 
+ struct mapping_area {
+-	struct vm_struct *vm;
+-	pte_t *vm_ptes[2];
+-	char *vm_addr;
++	char *vm_buf; /* copy buffer for objects that span pages */
++	char *vm_addr; /* address of kmap_atomic()'ed pages */
+ };
+ 
+ struct size_class {
+-- 
+1.9.1
+
