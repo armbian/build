@@ -475,7 +475,7 @@ create_image()
 	cd $CACHEDIR/
 
 	# stage: compressing or copying image file
-	if [[ -n $FIXED_IMAGE_SIZE || $COMPRESS_OUTPUTIMAGE == no ]]; then
+	if [[ $COMPRESS_OUTPUTIMAGE != yes ]]; then
 		display_alert "Copying image file" "$VERSION.raw" "info"
 		mv -f $CACHEDIR/$VERSION.raw $DEST/images/$VERSION.raw
 		display_alert "Done building" "$DEST/images/$VERSION.raw" "info"

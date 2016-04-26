@@ -238,7 +238,7 @@ fi
 [[ -n $RELEASE ]] && create_board_package
 
 if [[ $KERNEL_ONLY != yes ]]; then
-	if [[ $EXTENDED_DEBOOTSTRAP == yes ]]; then
+	if [[ $EXTENDED_DEBOOTSTRAP != no ]]; then
 		debootstrap_ng
 	else
 	

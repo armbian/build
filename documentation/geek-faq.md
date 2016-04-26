@@ -65,10 +65,10 @@ Run the script
 - **PROGRESS_DISPLAY** (none|plain|**dialog**): way to display output of verbose processes - compilation, packaging, debootstrap
 - **PROGRESS_LOG_TO_FILE** (yes|**no**): duplicate output, affected by previous option, to log files `output/debug/*.log`
 - **USE_MAINLINE_GOOGLE_MIRROR** (yes|**no**): use `googlesource.com` mirror for downloading mainline kernel sources, may be faster than `git.kernel.org` depending on your location
-- **EXTENDED_DEBOOTSTRAP** (yes|**no**): use new debootstrap and image creation process
+- **EXTENDED_DEBOOTSTRAP** (**yes**|no): use new debootstrap and image creation process
 - **FORCE_USE_RAMDISK** (yes|no): overrides autodetect for using tmpfs in new debootstrap and image creation process. Takes effect only if `EXTENDED_DEBOOTSTRAP` is set to "yes"
 - **FIXED_IMAGE_SIZE** (integer): create image file of this size (in megabytes) instead of minimal. Takes effect only if `EXTENDED_DEBOOTSTRAP` is set to "yes"
-- **COMPRESS_OUTPUTIMAGE** (**yes**|no): create compressed archive with image file and GPG signature for redistribution
+- **COMPRESS_OUTPUTIMAGE** (yes|**no**): create compressed archive with image file and GPG signature for redistribution
 - **SEVENZIP** (yes|**no**): create .7z archive with extreme compression ratio instead of .zip
 - **ROOTFS_TYPE** (**ext4**|f2fs|btrfs|nfs|fel): create image with different root filesystems instead of default ext4. Requires setting FIXED_IMAGE_SIZE to actual size of your SD card for F2FS and BTRFS. Takes effect only if `EXTENDED_DEBOOTSTRAP` is set to "yes"
 

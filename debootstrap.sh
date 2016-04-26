@@ -293,7 +293,7 @@ if [[ $GPG_PASS != "" ]] ; then
 fi
 display_alert "Signing and compressing" "Please wait!" "info"
 mkdir -p $DEST/images
-if [[ $COMPRESS_OUTPUTIMAGE == no ]]; then
+if [[ $COMPRESS_OUTPUTIMAGE != yes ]]; then
 	rm -f *.asc imagewriter.* armbian.txt
 	mv *.raw $DEST/images/
 else
