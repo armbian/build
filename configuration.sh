@@ -48,8 +48,9 @@ case $LINUXFAMILY in
 		BOOTLOADER="git://git.denx.de/u-boot.git"
 		BOOTSOURCE="u-boot"
 		# latest stable v2016.03 broken gmac on sun7i, fixing it for DEFAULT and NEXT
-		#UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)
+		#UBOOT_DEFAULT_BRANCH="v"$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v "\^" | tail -1 | cut -d "v" -f 2)		
 		UBOOT_DEFAULT_BRANCH="v2016.01"
+		if [[ $BOARD == lime* || $BOARD == micro ]]; then UBOOT_DEFAULT_BRANCH="v2016.05-rc1"; fi 
 		UBOOT_NEXT_BRANCH=$UBOOT_DEFAULT_BRANCH
 		UBOOT_DEV_BRANCH=""
 	;;
