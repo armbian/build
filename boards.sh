@@ -55,6 +55,14 @@ install_board_specific (){
 
 	fi
 
+	if [[ $BOARD == "odroidc2" ]] ; then
+		sed -i 's/MODULES=.*/MODULES="meson-ir"/' $CACHEDIR/sdcard/etc/lirc/hardware.conf
+		sed -i 's/LOAD_MODULES=.*/LOAD_MODULES="true"/' $CACHEDIR/sdcard/etc/lirc/hardware.conf
+		sed -i 's/DEVICE=.*/DEVICE="\/dev\/lirc0"/' $CACHEDIR/sdcard/etc/lirc/hardware.conf
+		sed -i 's/LIRCD_ARGS=.*/LIRCD_ARGS="--uinput"/' $CACHEDIR/sdcard/etc/lirc/hardware.conf
+		cp $SRC/lib/config/lirc.conf.odroidc2 $CACHEDIR/sdcard/etc/lirc/lircd.conf
+	fi
+	
 	# Armada
 	if [[ $BOARD == "armada" ]] ; then
 		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove --auto-remove lirc linux-sound-base alsa-base alsa-utils bluez>/dev/null 2>&1"
