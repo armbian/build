@@ -75,10 +75,20 @@ else
 	CCACHE=""
 fi
 
+if [[ $FORCE_CHECKOUT == yes ]]; then FORCE="-f"; else FORCE=""; fi
+
+# optimize build time with 100% CPU usage
+CPUS=$(grep -c 'processor' /proc/cpuinfo)
+if [[ $USEALLCORES != no ]]; then
+	CTHREADS="-j$(($CPUS + $CPUS/2))"
+else
+	CTHREADS="-j1"
+fi
+
 # Check and fix dependencies, directory structure and settings
 prepare_host
 
-# if KERNEL_ONLY, BOARD, BRANCH or RELEASE are not set, display selection manu
+# if KERNEL_ONLY, BOARD, BRANCH or RELEASE are not set, display selection menu
 
 if [[ -z $KERNEL_ONLY ]]; then
 	options+=("yes" "Kernel, u-boot and other packages")
@@ -146,14 +156,6 @@ echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION >> $DEST/debug/install.log
 
 display_alert "Starting Armbian build script" "@host" "info"
 
-# optimize build time with 100% CPU usage
-CPUS=$(grep -c 'processor' /proc/cpuinfo)
-if [[ $USEALLCORES != no ]]; then
-	CTHREADS="-j$(($CPUS + $CPUS/2))"
-else
-	CTHREADS="-j1"
-fi
-
 # display what we do
 if [[ $KERNEL_ONLY == yes ]]; then
 	display_alert "Compiling kernel" "$BOARD" "info"
@@ -169,8 +171,6 @@ fi
 start=`date +%s`
 
 # fetch_from_github [repository, sub directory]
-
-if [[ $FORCE_CHECKOUT == yes ]]; then FORCE="-f"; else FORCE=""; fi
 
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 

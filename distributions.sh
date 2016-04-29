@@ -121,7 +121,7 @@ trusty)
 		mkdir $CACHEDIR/sdcard/selinux
 
 		# that my custom motd works well
-		if [ -d "$CACHEDIR/sdcard/etc/update-motd.d" ]; then
+		if [[ -d $CACHEDIR/sdcard/etc/update-motd.d ]]; then
 			mv $CACHEDIR/sdcard/etc/update-motd.d $CACHEDIR/sdcard/etc/update-motd.d-backup
 		fi
 
@@ -130,7 +130,7 @@ trusty)
 		sed -e "s/CODENAME/$RELEASE/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 
 		# remove what's anyway not working
-		#chroot $CACHEDIR/sdcard /bin/bash -c "apt-get remove --auto-remove ureadahead"		
+		#chroot $CACHEDIR/sdcard /bin/bash -c "apt-get remove --auto-remove ureadahead"
 		rm $CACHEDIR/sdcard/etc/init/ureadahead*
 		rm $CACHEDIR/sdcard/etc/init/plymouth*
 		;;
@@ -178,7 +178,7 @@ xenial)
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
 
 		# disable initramfs
-		sed -i 's/update_initramfs=yes/update_initramfs=no/' $CACHEDIR/sdcard/etc/initramfs-tools/update-initramfs.conf
+		#sed -i 's/update_initramfs=yes/update_initramfs=no/' $CACHEDIR/sdcard/etc/initramfs-tools/update-initramfs.conf
 		;;
 
 	*)
@@ -205,7 +205,7 @@ chroot $CACHEDIR/sdcard /bin/bash -c "dpkg-reconfigure -f noninteractive tzdata 
 chroot $CACHEDIR/sdcard /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
 
 # create proper fstab
-if [ "$BOOTSIZE" -eq "0" ]; then
+if [[ $BOOTSIZE -eq 0 ]]; then
 	local device="/dev/mmcblk0p1	/           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro"
 else
 	local device="/dev/mmcblk0p2	/           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro"
@@ -213,7 +213,7 @@ fi
 echo "$device        0       0" >> $CACHEDIR/sdcard/etc/fstab
 
 # flash media tunning
-if [ -f "$CACHEDIR/sdcard/etc/default/tmpfs" ]; then
+if [[ -f $CACHEDIR/sdcard/etc/default/tmpfs ]]; then
 	sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
 	sed -e 's/#RUN_SIZE=10%/RUN_SIZE=128M/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
 	sed -e 's/#LOCK_SIZE=/LOCK_SIZE=/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
@@ -223,7 +223,7 @@ fi
 
 # add custom bashrc loading
 cat <<END >> $CACHEDIR/sdcard/etc/bash.bashrc
-if [ -f /etc/bash.bashrc.custom ]; then
+if [[ -f /etc/bash.bashrc.custom ]]; then
     . /etc/bash.bashrc.custom
 fi
 END

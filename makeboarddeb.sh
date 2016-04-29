@@ -21,7 +21,7 @@ create_board_package (){
 
 	display_alert "Creating board support package" "$BOARD" "info"
 
-	if [[ $BRANCH == "next" ]]; then
+	if [[ $BRANCH == next ]]; then
 		ROOT_BRACH="-next";
 	else
 		ROOT_BRACH="";
