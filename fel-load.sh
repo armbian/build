@@ -40,7 +40,11 @@ fel_prepare_target()
 
 	# kill /etc/fstab on target
 	echo > $FEL_ROOTFS/etc/fstab
+	echo "/dev/nfs / nfs defaults 0 0" >> $FEL_ROOTFS/etc/fstab
 	echo "tmpfs /tmp tmpfs defaults,rw,nosuid 0 0" >> $FEL_ROOTFS/etc/fstab
+
+	# if for some reason uInitrd doesn't exist
+	[[ ! -f $FEL_ROOTFS/boot/uInitrd ]] && touch $FEL_ROOTFS/boot/uInitrd
 }
 
 fel_load()
@@ -70,6 +74,7 @@ fel_load()
 	sunxi-fel $FEL_EXTRA_ARGS -p uboot $FEL_ROOTFS/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot-sunxi-with-spl.bin \
 		write 0x42000000 $FEL_ROOTFS/boot/zImage \
 		write 0x43000000 $FEL_ROOTFS/$dtb_file \
+		write 0x43300000 $FEL_ROOTFS/boot/uInitrd \
 		write 0x43100000 $FEL_ROOTFS/boot/boot.scr
 }
 

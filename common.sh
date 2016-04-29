@@ -338,7 +338,7 @@ advanced_patch () {
 	# apply patches
 	for name in "${names_s[@]}"; do
 		for dir in "${dirs[@]}"; do
-			if [[ -f $dir/$name || -L $dir/$name ]]; then
+			if [[ -f $dir/$name ]]; then
 				if [[ -s $dir/$name ]]; then
 					process_patch_file "$dir/$name" "$description"
 				else
