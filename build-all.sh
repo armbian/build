@@ -12,6 +12,9 @@
 # Include here to make "display_alert" and "prepare_host" available
 source $SRC/lib/general.sh
 
+# when we want to build from certain start
+from=0
+
 RELEASE_LIST=("trusty" "xenial" "wheezy" "jessie")
 BRANCH_LIST=("default" "next" "dev")
 
@@ -77,27 +80,32 @@ buildlist=()
 
 if [[ $KERNEL_ONLY == yes ]]; then
 	create_kernels_list
-	printf "%-20s %-10s %-10s %-10s\n" BOARD BRANCH
+	printf "%-3s %-20s %-10s %-10s %-10s\n" \#   BOARD BRANCH
 else
 	create_images_list
-	printf "%-20s %-10s %-10s %-10s\n" BOARD BRANCH RELEASE DESKTOP
+	printf "%-3s %-20s %-10s %-10s %-10s\n" \#   BOARD BRANCH RELEASE DESKTOP
 fi
 
+n=0
 for line in "${buildlist[@]}"; do
-	printf "%-20s %-10s %-10s %-10s\n" $line
+	n=$[$n+1]
+	printf "%-3s %-20s %-10s %-10s %-10s\n" $n $line
 done
 echo -e "\n${#buildlist[@]} total\n"
 
 [[ $BUILD_ALL == demo ]] && exit 0
 
 buildall_start=`date +%s`
-
+n=0
 for line in "${buildlist[@]}"; do
 	unset LINUXFAMILY LINUXCONFIG LINUXKERNEL LINUXSOURCE KERNELBRANCH BOOTLOADER BOOTSOURCE BOOTBRANCH ARCH UBOOT_NEEDS_GCC KERNEL_NEEDS_GCC \
 		CPUMIN CPUMAX UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN PACKAGE_LIST_EXCLUDE KERNEL_IMAGE_TYPE
-	read BOARD BRANCH RELEASE BUILD_DESKTOP <<< $line
-	display_alert "Building" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
-	source $SRC/lib/main.sh
+	read BOARD BRANCH RELEASE BUILD_DESKTOP <<< $line	
+	n=$[$n+1]
+	if [ "$from" -le "$n" ]; then
+		display_alert "Building" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
+		source $SRC/lib/main.sh
+	fi
 done
 
 buildall_end=`date +%s`
