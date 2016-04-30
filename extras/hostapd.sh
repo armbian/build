@@ -128,4 +128,14 @@ END
 	mv $CACHEDIR/sdcard/tmp/armbian-hostapd${TARGET}_${REVISION}_${ARCH}.deb $DEST/debs
 }
 
-compile_hostapd
+
+if [[ -f "$DEST/debs/armbian-hostapd${TARGET}_${REVISION}_${ARCH}.deb" ]]; then
+	# install
+	echo "Installing hostapd" > $DEST/debug/hostapd-build.log 2>&1
+	display_alert "Installing" "armbian-hostapd${TARGET}_${REVISION}_${ARCH}.deb" "info"
+	cp $DEST/debs/armbian-hostapd${TARGET}_${REVISION}_${ARCH}.deb $CACHEDIR/sdcard/tmp
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-hostapd${TARGET}_${REVISION}_${ARCH}.deb" >> $DEST/debug/hostapd-build.log 2>&1 
+else
+	# compile
+	compile_hostapd
+fi
