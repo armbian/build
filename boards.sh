@@ -158,14 +158,14 @@ install_board_specific (){
 	fi
 
 	# if we have a special fat boot partition, alter rootfs=
-	if [[ "$BOOTSIZE" -gt "0" ]]; then
+	if [[ $BOOTSIZE -gt 0 ]]; then
 		display_alert "Adjusting boot scripts" "$BOARD" "info"
-		[[ -f "$CACHEDIR/sdcard/boot/boot.cmd" ]] && sed -e 's/p1 /p2 /g' -i $CACHEDIR/sdcard/boot/boot.cmd
+		[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && sed -e 's/p1 /p2 /g' -i $CACHEDIR/sdcard/boot/boot.cmd
 		echo "/dev/mmcblk0p1        /boot   vfat    defaults        0       0" >> $CACHEDIR/sdcard/etc/fstab
 	fi
 
 	# convert to uboot compatible script
-	[[ -f "$CACHEDIR/sdcard/boot/boot.cmd" ]] && \
+	[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && \
 	mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr >> /dev/null
 
 	# initial date for fake-hwclock

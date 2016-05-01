@@ -58,9 +58,7 @@ debootstrap_ng()
 		local use_tmpfs=yes
 	fi
 
-	if [[ $use_tmpfs == yes ]]; then
-		mount -t tmpfs -o size=${tmpfs_max_size}M tmpfs $CACHEDIR/sdcard
-	fi
+	[[ $use_tmpfs == yes ]] && mount -t tmpfs -o size=${tmpfs_max_size}M tmpfs $CACHEDIR/sdcard
 
 	# stage: prepare basic rootfs: unpack cache or create from scratch
 	create_rootfs_cache
@@ -75,9 +73,7 @@ debootstrap_ng()
 	umount $CACHEDIR/sdcard/tmp
 
 	# install desktop files
-	if [[ $BUILD_DESKTOP == yes ]]; then
-		install_desktop
-	fi
+	[[ $BUILD_DESKTOP == yes ]] && install_desktop
 
 	# install additional applications
 	[[ $EXTERNAL == yes ]] && install_external_applications
@@ -89,26 +85,14 @@ debootstrap_ng()
 	# stage: cleanup
 	rm -f $CACHEDIR/sdcard/usr/sbin/policy-rc.d
 	rm -f $CACHEDIR/sdcard/usr/bin/$QEMU_BINARY
-	if [[ -x $CACHEDIR/sdcard/sbin/initctl.REAL ]]; then
-		mv -f $CACHEDIR/sdcard/sbin/initctl.REAL $CACHEDIR/sdcard/sbin/initctl
-	fi
-	if [[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL ]]; then
-		mv -f $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL $CACHEDIR/sdcard/sbin/start-stop-daemon
-	fi
+	[[ -x $CACHEDIR/sdcard/sbin/initctl.REAL ]] && mv -f $CACHEDIR/sdcard/sbin/initctl.REAL $CACHEDIR/sdcard/sbin/initctl
+	[[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL ]] && mv -f $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL $CACHEDIR/sdcard/sbin/start-stop-daemon
 
 	umount_chroot
 
-	if [[ ( $ROOTFS_TYPE == fel || $ROOTFS_TYPE == nfs ) && $RELEASE == xenial ]]; then
-		# kill /etc/network/interfaces on target to prevent hang on shutdown on Xenial target
-		rm -f $CACHEDIR/sdcard/etc/network/interfaces
-		printf "auto lo\niface lo inet loopback\n" > $CACHEDIR/sdcard/etc/network/interfaces
-	fi
-
-	if [[ $ROOTFS_TYPE != ext4 ]]; then
-		# to prevent creating swap file on NFS (needs specific kernel options)
-		# and f2fs/btrfs (not recommended or needs specific kernel options)
-		touch $FEL_ROOTFS/var/swap
-	fi
+	# to prevent creating swap file on NFS (needs specific kernel options)
+	# and f2fs/btrfs (not recommended or needs specific kernel options)
+	[[ $ROOTFS_TYPE != ext4 ]] && touch $CACHEDIR/sdcard/var/swap
 
 	if [[ $ROOTFS_TYPE == fel ]]; then
 		FEL_ROOTFS=$CACHEDIR/sdcard/
@@ -120,9 +104,7 @@ debootstrap_ng()
 	fi
 
 	# stage: unmount tmpfs
-	if [[ $use_tmpfs = yes ]]; then
-		umount $CACHEDIR/sdcard
-	fi
+	[[ $use_tmpfs = yes ]] && umount $CACHEDIR/sdcard
 
 	rm -rf $CACHEDIR/sdcard
 
@@ -136,10 +118,9 @@ debootstrap_ng()
 #
 create_rootfs_cache()
 {
-	[[ $BUILD_DESKTOP == yes ]] && local variant_desktop=yes
 	local packages_hash=$(get_package_list_hash $PACKAGE_LIST)
-	local cache_fname="$CACHEDIR/rootfs/$RELEASE${variant_desktop:+_desktop}-ng-$ARCH.$packages_hash.tgz"
-	local display_name=$RELEASE${variant_desktop:+_desktop}-ng-$ARCH.${packages_hash:0:3}...${packages_hash:29}.tgz
+	local cache_fname=$CACHEDIR/rootfs/${RELEASE}-ng-$ARCH.$packages_hash.tgz
+	local display_name=${RELEASE}-ng-$ARCH.${packages_hash:0:3}...${packages_hash:29}.tgz
 	if [[ -f $cache_fname ]]; then
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
@@ -184,8 +165,7 @@ create_rootfs_cache()
 
 		mount_chroot
 
-		# policy-rc.d script prevents starting or reloading services
-		# from dpkg pre- and post-install scripts during image creation
+		# policy-rc.d script prevents starting or reloading services during image creation
 		printf '#!/bin/sh\nexit 101' > $CACHEDIR/sdcard/usr/sbin/policy-rc.d
 		chmod 755 $CACHEDIR/sdcard/usr/sbin/policy-rc.d
 		# ported from debootstrap and multistrap for upstart support
@@ -227,7 +207,7 @@ create_rootfs_cache()
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
-		display_alert "Updating base packages" "Armbian" "info"
+		display_alert "Upgrading base packages" "Armbian" "info"
 		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
 			$apt_extra $apt_extra_progress upgrade"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
@@ -363,10 +343,7 @@ prepare_partitions()
 
 	# stage: mount image
 	LOOP=$(losetup -f)
-	if [[ -z $LOOP ]]; then
-		# NOTE: very unlikely with this debootstrap process
-		exit_with_error "Unable to find free loop device"
-	fi
+	[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device"
 
 	# NOTE: losetup -P option is not available in Trusty
 	losetup $LOOP $CACHEDIR/tmprootfs.raw
@@ -401,7 +378,7 @@ prepare_partitions()
 		mount ${LOOP}p1 $CACHEDIR/mount/boot/
 		echo "/dev/mmcblk0p1 /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $CACHEDIR/sdcard/etc/fstab
 	fi
-	echo "tmpfs /tmp tmpfs defaults,rw,nosuid 0 0" >> $CACHEDIR/sdcard/etc/fstab
+	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $CACHEDIR/sdcard/etc/fstab
 
 	# stage: create boot script
 	if [[ $ROOTFS_TYPE == nfs ]]; then
@@ -469,8 +446,8 @@ create_image()
 	sync
 
 	# unmount /boot first, rootfs second, image file last
-	if [[ $BOOTSIZE != 0 ]]; then umount -l $CACHEDIR/mount/boot; fi
-	if [[ $ROOTFS_TYPE != nfs ]]; then umount -l $CACHEDIR/mount; fi
+	[[ $BOOTSIZE != 0 ]] && umount -l $CACHEDIR/mount/boot
+	[[ $ROOTFS_TYPE != nfs ]] && umount -l $CACHEDIR/mount
 	losetup -d $LOOP
 
 	mv $CACHEDIR/tmprootfs.raw $CACHEDIR/$VERSION.raw
