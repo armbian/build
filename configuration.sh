@@ -244,7 +244,7 @@ PACKAGE_LIST="automake bash-completion bc bridge-utils build-essential cmake cpu
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools bluez hddtemp i2c-tools iperf ir-keytable iotop iozone3 weather-util weather-util-data stress \
 	dvb-apps sysbench libbluetooth-dev libbluetooth3 subversion screen ntfs-3g vim pciutils evtest htop mtp-tools python-smbus \
-	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan aptitude dnsutils f3"
+	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan aptitude dnsutils"
 
 # Release specific packages
 case $RELEASE in
@@ -254,17 +254,17 @@ case $RELEASE in
 	;;
 	jessie)
 	PACKAGE_LIST_RELEASE="less makedev kbd thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd \
-		software-properties-common python-software-properties libnss-myhostname f2fs-tools libnl-genl-3-dev"
+		software-properties-common python-software-properties libnss-myhostname f2fs-tools libnl-genl-3-dev f3"
 	PACKAGE_LIST_EXCLUDE=""
 	;;
 	trusty)	
 	PACKAGE_LIST_RELEASE="man-db wget iptables nano libnl-3-dev libnl-genl-3-dev software-properties-common \
-		python-software-properties f2fs-tools acpid"
+		python-software-properties f2fs-tools acpid f3"
 	PACKAGE_LIST_EXCLUDE="ureadahead plymouth"
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget iptables nano thin-provisioning-tools libnl-3-dev libnl-genl-3-dev libpam-systemd \
-		software-properties-common python-software-properties libnss-myhostname f2fs-tools"
+		software-properties-common python-software-properties libnss-myhostname f2fs-tools f3"
 	PACKAGE_LIST_EXCLUDE=""
 	;;
 esac
