@@ -1,5 +1,67 @@
 # Release history
 
+**v5.10 / 1.5.2016**
+
+Images:
+
+- all 3.10+ kernels [are Docker ready](http://forum.armbian.com/index.php/topic/490-docker-on-armbian/)
+- all A10/A20/H3 comes with HW acccelerated video playback in desktop build
+- [fixed root exploid on H3 boards](https://github.com/igorpecovnik/lib/issues/282)
+- [fixed kswapd 100% bug on H3 boards](https://github.com/igorpecovnik/lib/issues/219)
+- fixed SPDIF / I2S audio driver in legacy kernel
+- fixed Udoo Neo wireless
+- fixed slow SD cards boot
+- fixed Allwinner SS driver
+- fixed bluetooth on Cubietruck, both kernels
+- fixed wireless driver on H3 boards
+- [fixed R1 switch driver](https://github.com/igorpecovnik/lib/commit/94194dc06529529015bfd04767865bbd04d29d9b)
+- kernel for Allwinner boards was upgraded to 3.4.112 & 4.5.2
+- kernel for iMx6 boards was upgraded to 3.14.67 & 4.5.2
+- kernel for Armada (Clearfog) was upgraded to 3.10.101 & 4.5.2
+- kernel for Udoo boards was updated to 3.14.67 & 4.4.8
+- kernel for Guitar (Lemaker) was upgraded to 3.10.101
+- kernel for H3/sun8i legacy come from new Allwinner updated source (friendlyarm)
+- [added support for Olimex Lime2 eMMC](https://github.com/igorpecovnik/lib/issues/258)
+- [increased MALI clockspeed on sun8i/legacy](https://github.com/igorpecovnik/lib/issues/265)
+- added [Armbianmonitor](http://forum.armbian.com/index.php/topic/881-prepare-v51-v201604/?p=7095)
+- added Odroid C1, C2, Nanopi M1, Banana M2+. CLI and desktop
+- added wifi radar to desktop
+- added preview vanilla kernel images for H3 boards (4.6.RC1)
+- added initrd creation on all Allwinner images
+- added Hummigboard 2 with working PCI and onboard wireless with legacy kernel 3.14.65
+- added eMMC installer for H3
+- added support for IFB and net scheduling for sun7i-legacy
+- added ax88179_178a USB 3.0 Ethernet driver for sun7i-legacy
+- hostapd comes as separate package (armbian-hostapd)
+- changed first boot procedure and force user creation
+- verbose / no verbose boot works almost on all boards
+- enabled I2S on sun8i
+- removed Debian Wheezy from auto build
+- installing headers autocompile scripts
+- all images come compressed with 7zip
+
+Build script:
+
+- GCC 5 support for vanilla and allwinner legacy
+- RAW images are not compressed by default
+- added arm64 building support
+- added docker as host
+- Added Belink X2 (H3 based media player), and Roseapple (S500), Pcduino 2 and Pcduino 3 as WIP target
+- introducted CLI_TARGET per board
+- prepared FEL boot
+- prepared Xenial target
+- fixed USB redirector building on all kernels
+- support for Xenial as a build host is 95% ready.
+- implemented automatic toolchain selection
+- come cleanup, configurations are subfoldered
+- extended_deboostrap becomes default
+ 
+Known bugs:
+
+- Udoo Neo reboots takes a while, 1min+
+- headers within sun8i needs some fixing
+- H3 board autodetection fail under certain conditions 
+
 **v5.05 / 8.3.2016**
 
 - H3 images rebuilt. Updating from older also possible.
