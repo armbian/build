@@ -279,6 +279,8 @@ find_toolchain()
 	local var_name=$2
 	local dist=10
 	local toolchain=""
+	# extract target major.minor version from expression
+	local target_ver=$(grep -oE "[[:digit:]].[[:digit:]]" <<< "$expression")
 	for dir in $SRC/toolchains/*/; do
 		# check if is a toolchain for current $ARCH
 		[[ ! -f ${dir}bin/${COMPILER}gcc ]] && continue
@@ -286,8 +288,6 @@ find_toolchain()
 		local gcc_ver=$(${dir}bin/${COMPILER}gcc -dumpversion | grep -oE "^[[:digit:]].[[:digit:]]")
 		# check if toolchain version satisfies requirement
 		awk "BEGIN{exit ! ($gcc_ver $expression)}" || continue
-		# extract target major.minor version from expression
-		local target_ver=$(grep -oE "[[:digit:]].[[:digit:]]" <<< "$expression")
 		# check if found version is the closest to target
 		local d=$(awk '{x = $1 - $2}{printf "%.1f\n", (x > 0) ? x : -x}' <<< "$target_ver $gcc_ver")
 		if awk "BEGIN{exit ! ($d < $dist)}" ; then
