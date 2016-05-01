@@ -98,12 +98,6 @@ debootstrap_ng()
 
 	umount_chroot
 
-	if [[ ( $ROOTFS_TYPE == fel || $ROOTFS_TYPE == nfs ) && $RELEASE == xenial ]]; then
-		# kill /etc/network/interfaces on target to prevent hang on shutdown on Xenial target
-		rm -f $CACHEDIR/sdcard/etc/network/interfaces
-		printf "auto lo\niface lo inet loopback\n" > $CACHEDIR/sdcard/etc/network/interfaces
-	fi
-
 	if [[ $ROOTFS_TYPE != ext4 ]]; then
 		# to prevent creating swap file on NFS (needs specific kernel options)
 		# and f2fs/btrfs (not recommended or needs specific kernel options)
@@ -136,10 +130,9 @@ debootstrap_ng()
 #
 create_rootfs_cache()
 {
-	[[ $BUILD_DESKTOP == yes ]] && local variant_desktop=yes
 	local packages_hash=$(get_package_list_hash $PACKAGE_LIST)
-	local cache_fname="$CACHEDIR/rootfs/$RELEASE${variant_desktop:+_desktop}-ng-$ARCH.$packages_hash.tgz"
-	local display_name=$RELEASE${variant_desktop:+_desktop}-ng-$ARCH.${packages_hash:0:3}...${packages_hash:29}.tgz
+	local cache_fname=$CACHEDIR/rootfs/${RELEASE}-ng-$ARCH.$packages_hash.tgz
+	local display_name=${RELEASE}-ng-$ARCH.${packages_hash:0:3}...${packages_hash:29}.tgz
 	if [[ -f $cache_fname ]]; then
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
@@ -227,7 +220,7 @@ create_rootfs_cache()
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
-		display_alert "Updating base packages" "Armbian" "info"
+		display_alert "Upgrading base packages" "Armbian" "info"
 		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
 			$apt_extra $apt_extra_progress upgrade"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
@@ -401,7 +394,7 @@ prepare_partitions()
 		mount ${LOOP}p1 $CACHEDIR/mount/boot/
 		echo "/dev/mmcblk0p1 /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $CACHEDIR/sdcard/etc/fstab
 	fi
-	echo "tmpfs /tmp tmpfs defaults,rw,nosuid 0 0" >> $CACHEDIR/sdcard/etc/fstab
+	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $CACHEDIR/sdcard/etc/fstab
 
 	# stage: create boot script
 	if [[ $ROOTFS_TYPE == nfs ]]; then

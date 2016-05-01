@@ -82,19 +82,15 @@ jessie)
 		sed -e "s/ttyS0/$SERIALCON/g" -i $CACHEDIR/sdcard/etc/init/$SERIALCON.conf
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
 		mkdir -p "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d"
-		echo "[Service]" > "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
-		echo "ExecStart=" >> "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
-		echo "ExecStart=-/sbin/agetty -L 115200 %I $TERM" >> "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+		printf "[Service]\nExecStart=\nExecStart=-/sbin/agetty -L 115200 %I $TERM" > "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
 
 		# don't clear screen tty1
 		mkdir -p "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/"
-		echo "[Service]" > "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
-		echo "TTYVTDisallocate=no" >> "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
+		printf "[Service]\nTTYVTDisallocate=no" > "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
 
 		# seting timeout
 		mkdir -p $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/
-		echo "[Service]" > $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
-		echo "TimeoutStopSec=10" >> $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
+		printf "[Service]\nTimeoutStopSec=10" > $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
 
 		# handle PMU power button
 		mkdir -p $CACHEDIR/sdcard/etc/udev/rules.d/
@@ -143,9 +139,6 @@ xenial)
 		#sed -e "s/ORIGIN/Debian/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 		#sed -e "s/CODENAME/$RELEASE/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 
-		# mount 256Mb tmpfs to /tmp (disabled while supported by debootstrap-ng only)
-		#echo "tmpfs   /tmp         tmpfs   nodev,nosuid,size=256M          0  0" >> $CACHEDIR/sdcard/etc/fstab
-
 		# fix selinux error
 		mkdir $CACHEDIR/sdcard/selinux
 
@@ -160,13 +153,11 @@ xenial)
 
 		# don't clear screen tty1
 		mkdir -p "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/"
-		echo "[Service]" > "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
-		echo "TTYVTDisallocate=no" >> "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
+		printf "[Service]\nTTYVTDisallocate=no" > "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
 
 		# seting timeout
 		mkdir -p $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/
-		echo "[Service]" > $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
-		echo "TimeoutStopSec=10" >> $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
+		printf "[Service]\nTimeoutStopSec=10" > $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
 
 		# handle PMU power button
 		mkdir -p $CACHEDIR/sdcard/etc/udev/rules.d/
@@ -177,8 +168,10 @@ xenial)
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask ureadahead.service >/dev/null 2>&1"
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
 
-		# disable initramfs
-		#sed -i 's/update_initramfs=yes/update_initramfs=no/' $CACHEDIR/sdcard/etc/initramfs-tools/update-initramfs.conf
+		# disable stopping network interfaces
+		# fixes shutdown with root on NFS
+		mkdir -p $CACHEDIR/sdcard/etc/systemd/system/networking.service.d/
+		printf "[Service]\nExecStop=\n" > $CACHEDIR/sdcard/etc/systemd/system/networking.service.d/10-nostop.conf
 		;;
 
 	*)

@@ -41,7 +41,7 @@ fel_prepare_target()
 	# kill /etc/fstab on target
 	echo > $FEL_ROOTFS/etc/fstab
 	echo "/dev/nfs / nfs defaults 0 0" >> $FEL_ROOTFS/etc/fstab
-	echo "tmpfs /tmp tmpfs defaults,rw,nosuid 0 0" >> $FEL_ROOTFS/etc/fstab
+	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $FEL_ROOTFS/etc/fstab
 
 	# if for some reason uInitrd doesn't exist
 	[[ ! -f $FEL_ROOTFS/boot/uInitrd ]] && touch $FEL_ROOTFS/boot/uInitrd
