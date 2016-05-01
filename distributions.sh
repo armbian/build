@@ -82,7 +82,7 @@ jessie)
 		sed -e "s/ttyS0/$SERIALCON/g" -i $CACHEDIR/sdcard/etc/init/$SERIALCON.conf
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
 		mkdir -p "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d"
-		printf "[Service]\nExecStart=\nExecStart=-/sbin/agetty -L 115200 %I $TERM" > "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
+		printf "[Service]\nExecStart=\nExecStart=-/sbin/agetty -L 115200 %%I $TERM" > "$CACHEDIR/sdcard/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
 
 		# don't clear screen tty1
 		mkdir -p "$CACHEDIR/sdcard/etc/systemd/system/getty@tty1.service.d/"
