@@ -24,7 +24,7 @@ Images:
 - [added support for Olimex Lime2 eMMC](https://github.com/igorpecovnik/lib/issues/258)
 - [increased MALI clockspeed on sun8i/legacy](https://github.com/igorpecovnik/lib/issues/265)
 - added [Armbianmonitor](http://forum.armbian.com/index.php/topic/881-prepare-v51-v201604/?p=7095)
-- added Odroid C1, C2, Nanopi M1, Banana M2+. CLI and desktop
+- added Odroid C1, C2(arm64), Nanopi M1, Banana M2+, Pcduino 2 and Pcduino 3. CLI and desktop
 - added wifi radar to desktop
 - added preview vanilla kernel images for H3 boards (4.6.RC1)
 - added initrd creation on all Allwinner images
@@ -46,7 +46,7 @@ Build script:
 - RAW images are not compressed by default
 - added arm64 building support
 - added docker as host
-- Added Belink X2 (H3 based media player), and Roseapple (S500), Pcduino 2 and Pcduino 3 as WIP target
+- Added Belink X2 (H3 based media player), and Roseapple (S500) as WIP target
 - introducted CLI_TARGET per board
 - prepared FEL boot
 - prepared Xenial target
