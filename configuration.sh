@@ -47,12 +47,13 @@ fi
 
 # temporary overrides
 case $LINUXFAMILY in
-	sun4i|sun5i|sun6i|sun7i|sun9i)
+	sun4i|sun5i|sun7i)
 	# latest stable u-boot v2016.03 broke gmac on sun7i, fixing it for DEFAULT and NEXT
 	[[ $BRANCH == default || $BRANCH == next ]] && BOOTBRANCH='v2016.01'
 	# fix for olimex boards
 	[[ ($BRANCH == default || $BRANCH == next) && ($BOARD == lime* || $BOARD == micro) ]] && BOOTBRANCH='v2016.05-rc1'
 	;;
+
 	sun8i)
 	# fix compilation of sun8i-dev u-boot
 	[[ $BRANCH == dev ]] && BOOTBRANCH='v2016.05-rc1'
