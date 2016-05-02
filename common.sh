@@ -36,6 +36,7 @@ compile_uboot (){
 
 	local cthreads=$CTHREADS
 	[[ $LINUXFAMILY == marvell ]] && local MAKEPARA="u-boot.mmc"
+	[[ $LINUXFAMILY == s500 ]] && local MAKEPARA="u-boot-dtb.img"
 	[[ $BOARD == odroidc2 ]] && local MAKEPARA="ARCH=arm" && local cthreads=""
 
 	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CROSS_COMPILE"' 2>&1 \
@@ -76,7 +77,7 @@ if [[ \$DPKG_MAINTSCRIPT_PACKAGE == *cubox* ]] ; then
 	( dd if=/usr/lib/$uboot_name/u-boot.img of=\$DEVICE bs=1K seek=42 status=noxfer ) > /dev/null 2>&1
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *guitar* || \$DPKG_MAINTSCRIPT_PACKAGE == roseapple* ]] ; then
 	( dd if=/usr/lib/$uboot_name/bootloader.bin of=\$DEVICE bs=512 seek=4097 conv=fsync ) > /dev/null 2>&1
-	( dd if=/usr/lib/$uboot_name/u-boot-dtb.bin of=\$DEVICE bs=512 seek=6144 conv=fsync ) > /dev/null 2>&1
+	( dd if=/usr/lib/$uboot_name/u-boot-dtb.img of=\$DEVICE bs=512 seek=6144 conv=fsync ) > /dev/null 2>&1
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *odroidxu4* ]] ; then
 	( dd if=/usr/lib/$uboot_name/bl1.bin.hardkernel of=\$DEVICE seek=1 conv=fsync ) > /dev/null 2>&1
 	( dd if=/usr/lib/$uboot_name/bl2.bin.hardkernel of=\$DEVICE seek=31 conv=fsync ) > /dev/null 2>&1
@@ -123,9 +124,12 @@ END
 	# copy proper uboot files to place
 	if [[ $BOARD == cubox-i* ]] ; then
 		[ ! -f "SPL" ] || cp SPL u-boot.img $DEST/debs/$uboot_name/usr/lib/$uboot_name
-	elif [[ $BOARD == guitar* || $BOARD == roseapple* ]] ; then
-		[ ! -f "u-boot-dtb.bin" ] || cp u-boot-dtb.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
-		[ ! -f "$SRC/lib/bin/s500-bootloader.bin" ] || cp $SRC/lib/bin/s500-bootloader.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name/bootloader.bin
+	elif [[ $BOARD == guitar* ]] ; then
+		[ ! -f "u-boot-dtb.img" ] || cp u-boot-dtb.img $DEST/debs/$uboot_name/usr/lib/$uboot_name
+		[ ! -f "$SRC/lib/bin/s500-bootloader-guitar.bin" ] || cp $SRC/lib/bin/s500-bootloader-guitar.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name/bootloader.bin
+	elif [[ $BOARD == roseapple* ]] ; then
+		[ ! -f "u-boot-dtb.img" ] || cp u-boot-dtb.img $DEST/debs/$uboot_name/usr/lib/$uboot_name
+		[ ! -f "$SRC/lib/bin/s500-bootloader-roseapple.bin" ] || cp $SRC/lib/bin/s500-bootloader-roseapple.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name/bootloader.bin	
 	elif [[ $BOARD == odroidxu4 ]] ; then
 		[ ! -f "sd_fuse/hardkernel/bl1.bin.hardkernel" ] || cp sd_fuse/hardkernel/bl1.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name
 		[ ! -f "sd_fuse/hardkernel/bl2.bin.hardkernel" ] || cp sd_fuse/hardkernel/bl2.bin.hardkernel $DEST/debs/$uboot_name/usr/lib/$uboot_name
@@ -438,7 +442,7 @@ write_uboot()
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot.img of=$LOOP bs=1k seek=69 conv=fsync >/dev/null 2>&1)
 	elif [[ $BOARD == *guitar* || $BOARD == *roseapple* ]] ; then
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/bootloader.bin of=$LOOP bs=512 seek=4097 conv=fsync > /dev/null 2>&1)
-		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot-dtb.bin of=$LOOP bs=512 seek=6144 conv=fsync > /dev/null 2>&1)
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot-dtb.img of=$LOOP bs=512 seek=6144 conv=fsync > /dev/null 2>&1)
 	elif [[ $BOARD == *odroidxu4* ]] ; then
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/bl1.bin.hardkernel of=$LOOP seek=1 conv=fsync ) > /dev/null 2>&1
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/bl2.bin.hardkernel of=$LOOP seek=31 conv=fsync ) > /dev/null 2>&1
