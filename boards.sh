@@ -139,6 +139,8 @@ install_board_specific (){
 		cp $SRC/lib/config/boot-cubox.cmd $CACHEDIR/sdcard/boot/boot.cmd
 	elif [[ $BOARD == guitar* ]]; then
 		cp $SRC/lib/config/boot-guitar.cmd $CACHEDIR/sdcard/boot/boot.cmd
+	elif [[ $BOARD == roseapple* ]]; then
+		cp $SRC/lib/config/boot-roseapple.cmd $CACHEDIR/sdcard/boot/boot.cmd	
 	elif [[ $BOARD == armada* ]]; then
 		cp $SRC/lib/config/boot-marvell.cmd $CACHEDIR/sdcard/boot/boot.cmd
 	elif [[ $BOARD == odroidxu4 ]]; then
