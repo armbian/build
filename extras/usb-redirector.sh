@@ -26,7 +26,7 @@ install_usb_redirector()
 	# patch to work with newer kernels
 	sed -e "s/f_dentry/f_path.dentry/g" -i usbdcdev.c
 	if [[ $ARCH == *64* ]]; then ARCHITECTURE=arm64; else ARCHITECTURE=arm; fi
-	make -j1 ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" KERNELDIR=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/install.log 2>&1
+	make -j1 ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" KERNELDIR=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/install.log 2>&1
 	# configure USB redirector
 	sed -e 's/%INSTALLDIR_TAG%/\/usr\/local/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1
 	sed -e 's/%PIDFILE_TAG%/\/var\/run\/usbsrvd.pid/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd

@@ -33,8 +33,8 @@ cleaning()
 {
 	case $1 in
 		"make")	# clean u-boot and kernel sources
-		[ -d "$SOURCES/$BOOTSOURCEDIR" ] && display_alert "Cleaning" "$SOURCES/$BOOTSOURCEDIR" "info" && cd $SOURCES/$BOOTSOURCEDIR && make -s ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" clean >/dev/null
-		[ -d "$SOURCES/$LINUXSOURCEDIR" ] && display_alert "Cleaning" "$SOURCES/$LINUXSOURCEDIR" "info" && cd $SOURCES/$LINUXSOURCEDIR && make -s ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" clean >/dev/null
+		[ -d "$SOURCES/$BOOTSOURCEDIR" ] && display_alert "Cleaning" "$SOURCES/$BOOTSOURCEDIR" "info" && cd $SOURCES/$BOOTSOURCEDIR && make -s ARCH=$ARCHITECTURE CROSS_COMPILE=$UBOOT_COMPILER clean >/dev/null
+		[ -d "$SOURCES/$LINUXSOURCEDIR" ] && display_alert "Cleaning" "$SOURCES/$LINUXSOURCEDIR" "info" && cd $SOURCES/$LINUXSOURCEDIR && make -s ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER clean >/dev/null
 		;;
 
 		"debs") # delete output/debs for current branch and family
@@ -289,7 +289,7 @@ prepare_host() {
 	PAK="ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate pigz \
 	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
-	nfs-kernel-server btrfs-tools gcc-aarch64-linux-gnu ncurses-term p7zip-full"
+	nfs-kernel-server btrfs-tools gcc-aarch64-linux-gnu ncurses-term p7zip-full dos2unix"
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case

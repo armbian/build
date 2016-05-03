@@ -30,7 +30,7 @@ compile_uboot (){
 	fi
 
 	display_alert "Compiling uboot. Please wait." "$VER" "info"
-	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${CROSS_COMPILE}gcc --version | head -1 | tee -a $DEST/debug/install.log
+	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc --version | head -1 | tee -a $DEST/debug/install.log
 	echo
 	cd $SOURCES/$BOOTSOURCEDIR
 
@@ -39,7 +39,7 @@ compile_uboot (){
 	[[ $LINUXFAMILY == s500 ]] && local MAKEPARA="u-boot-dtb.img"
 	[[ $BOARD == odroidc2 ]] && local MAKEPARA="ARCH=arm" && local cthreads=""
 
-	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CROSS_COMPILE"' 2>&1 \
+	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
@@ -55,7 +55,7 @@ compile_uboot (){
 		fi
 	fi
 
-	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} 'make $MAKEPARA $cthreads CROSS_COMPILE="$CROSS_COMPILE"' 2>&1 \
+	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} 'make $MAKEPARA $cthreads CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -99,6 +99,9 @@ elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *udoo* ]] ; then
 	( dd if=/usr/lib/$uboot_name/u-boot.img of=\$DEVICE bs=1K seek=69 status=noxfer ) > /dev/null 2>&1
 elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *armada* ]] ; then
 	( dd if=/usr/lib/$uboot_name/u-boot.mmc of=\$DEVICE bs=512 seek=1 status=noxfer ) > /dev/null 2>&1
+elif [[ \$DPKG_MAINTSCRIPT_PACKAGE == *pine64* ]] ; then
+	( dd if=/usr/lib/$uboot_name/boot0.bin of=\$DEVICE bs=1k seek=8 status=noxfer ) > /dev/null 2>&1
+	( dd if=/usr/lib/$uboot_name/u-boot-with-dtb.bin of=\$DEVICE bs=1k seek=19096 status=noxfer ) > /dev/null 2>&1
 else
 	( dd if=/dev/zero of=\$DEVICE bs=1k count=1023 seek=1 status=noxfer ) > /dev/null 2>&1
 	( dd if=/usr/lib/$uboot_name/u-boot-sunxi-with-spl.bin of=\$DEVICE bs=1024 seek=8 status=noxfer ) > /dev/null 2>&1
@@ -145,6 +148,9 @@ END
 		[ ! -f "u-boot.img" ] || cp SPL u-boot.img $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	elif [[ $BOARD == armada* ]] ; then
 		[ ! -f "u-boot.mmc" ] || cp u-boot.mmc $DEST/debs/$uboot_name/usr/lib/$uboot_name
+	elif [[ $BOARD == pine64plus ]] ; then
+		[ ! -f "u-boot-with-dtb.bin" ] || cp u-boot-with-dtb.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
+		[ ! -f "boot0.bin" ] || cp boot0.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	else
 		[ ! -f "u-boot-sunxi-with-spl.bin" ] || cp u-boot-sunxi-with-spl.bin $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	fi
@@ -197,7 +203,7 @@ compile_kernel (){
 	grab_version "$SOURCES/$LINUXSOURCEDIR" "VER"
 
 	display_alert "Compiling $BRANCH kernel" "@host" "info"
-	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${CROSS_COMPILE}gcc --version | head -1 | tee -a $DEST/debug/install.log
+	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc --version | head -1 | tee -a $DEST/debug/install.log
 	echo
 	cd $SOURCES/$LINUXSOURCEDIR/
 
@@ -223,16 +229,16 @@ compile_kernel (){
 	# We can use multi threading here but not later since it's not working. This way of compilation is much faster.
 	if [[ $KERNEL_CONFIGURE != yes ]]; then
 		if [[ $BRANCH == default ]]; then
-			eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" silentoldconfig'
+			eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" silentoldconfig'
 		else
-			eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" olddefconfig'
+			eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" olddefconfig'
 		fi
 	else
-		eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" oldconfig'
-		eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" menuconfig'
+		eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" oldconfig'
+		eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" menuconfig'
 	fi
 
-	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" $KERNEL_IMAGE_TYPE modules dtbs 2>&1' \
+	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" $KERNEL_IMAGE_TYPE modules dtbs 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -250,7 +256,7 @@ compile_kernel (){
 
 	# produce deb packages: image, headers, firmware, dtb
 	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY \
-		KBUILD_DEBARCH=$ARCH ARCH=$ARCHITECTURE DEBFULLNAME="$MAINTAINER" DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CROSS_COMPILE" 2>&1 ' \
+		KBUILD_DEBARCH=$ARCH ARCH=$ARCHITECTURE DEBFULLNAME="$MAINTAINER" DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" 2>&1 ' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -400,7 +406,7 @@ if [[ -n $MISC5_DIR && $BRANCH != next && $LINUXSOURCEDIR == *sunxi* ]]; then
 	cd "$SOURCES/$MISC5_DIR"
 	cp "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" .
 	make clean >/dev/null
-	make ARCH=$ARCHITECTURE CC="${CROSS_COMPILE}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
+	make ARCH=$ARCHITECTURE CC="${KERNEL_COMPILER}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
 	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
 fi
 
@@ -409,7 +415,7 @@ if [[ -n $MISC5_DIR && $BRANCH != next && $LINUXSOURCEDIR == *sun8i* ]]; then
 	cd "$SOURCES/$MISC5_DIR"
 	wget -q "https://raw.githubusercontent.com/linux-sunxi/linux-sunxi/sunxi-3.4/include/video/sunxi_disp_ioctl.h"
 	make clean >/dev/null 2>&1
-	make ARCH=$ARCHITECTURE CC="${CROSS_COMPILE}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
+	make ARCH=$ARCHITECTURE CC="${KERNEL_COMPILER}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
 	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
 fi
 
@@ -459,6 +465,9 @@ write_uboot()
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/bl1.bin.hardkernel of=$LOOP bs=512 skip=1 seek=1 conv=fsync ) > /dev/null 2>&1
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot.bin of=$LOOP bs=512 seek=97 conv=fsync ) > /dev/null 2>&1
 		( dd if=/dev/zero of=$LOOP seek=1249 count=799 bs=512 conv=fsync ) > /dev/null 2>&1
+	elif [[ $BOARD == *pine64* ]] ; then
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/boot0.bin of=$LOOP bs=1k seek=8 conv=fsync ) > /dev/null 2>&1
+		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot-with-dtb.bin of=$LOOP bs=1k seek=19096 conv=fsync ) > /dev/null 2>&1
 	else
 		( dd if=/dev/zero of=$LOOP bs=1k count=1023 seek=1 status=noxfer ) > /dev/null 2>&1
 		( dd if=/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}/u-boot-sunxi-with-spl.bin of=$LOOP bs=1024 seek=8 status=noxfer >/dev/null 2>&1)

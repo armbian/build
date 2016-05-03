@@ -45,21 +45,6 @@ else
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 fi
 
-# temporary overrides
-case $LINUXFAMILY in
-	sun4i|sun5i|sun7i)
-	# latest stable u-boot v2016.03 broke gmac on sun7i, fixing it for DEFAULT and NEXT
-	[[ $BRANCH == default || $BRANCH == next ]] && BOOTBRANCH='v2016.01'
-	# fix for olimex boards
-	[[ ($BRANCH == default || $BRANCH == next) && ($BOARD == lime* || $BOARD == micro) ]] && BOOTBRANCH='v2016.05-rc1'
-	;;
-
-	sun8i)
-	# fix compilation of sun8i-dev u-boot
-	[[ $BRANCH == dev ]] && BOOTBRANCH='v2016.05-rc1'
-	;;
-esac
-
 # Let's set defalt data if not defined in board configuration above
 
 [[ -z $OFFSET ]] && OFFSET=1 # Bootloader space in MB (1 x 2048 = default)
@@ -76,17 +61,37 @@ if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; e
 
 case $ARCH in
 	arm64)
-	CROSS_COMPILE="$CCACHE aarch64-linux-gnu-"
-	COMPILER="aarch64-linux-gnu-"
+	KERNEL_COMPILER="aarch64-linux-gnu-"
+	UBOOT_COMPILER="aarch64-linux-gnu-"
 	ARCHITECTURE=arm64
 	QEMU_BINARY="qemu-aarch64-static"
 	;;
 
 	armhf)
-	CROSS_COMPILE="$CCACHE arm-linux-gnueabihf-"
-	COMPILER="arm-linux-gnueabihf-"
+	KERNEL_COMPILER="arm-linux-gnueabihf-"
+	UBOOT_COMPILER="arm-linux-gnueabihf-"
 	ARCHITECTURE=arm
 	QEMU_BINARY="qemu-arm-static"
+	;;
+esac
+
+# temporary hacks/overrides
+case $LINUXFAMILY in
+	sun4i|sun5i|sun7i)
+	# latest stable u-boot v2016.03 broke gmac on sun7i, fixing it for DEFAULT and NEXT
+	[[ $BRANCH == default || $BRANCH == next ]] && BOOTBRANCH='v2016.01'
+	# fix for olimex boards
+	[[ ($BRANCH == default || $BRANCH == next) && ($BOARD == lime* || $BOARD == micro) ]] && BOOTBRANCH='v2016.05-rc1'
+	;;
+
+	sun8i)
+	# fix compilation of sun8i-dev u-boot
+	[[ $BRANCH == dev ]] && BOOTBRANCH='v2016.05-rc1'
+	;;
+
+	pine64)
+	# fix for u-boot needing armhf GCC 4.8
+	UBOOT_COMPILER="arm-linux-gnueabihf-"
 	;;
 esac
 

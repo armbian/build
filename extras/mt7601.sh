@@ -63,8 +63,8 @@ install_mt7601()
 	EOF
 
 	cd src
-	make -s ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" clean >> $DEST/debug/compilation.log 2>&1
-	make -s -j4 ARCH=$ARCHITECTURE CROSS_COMPILE="$CROSS_COMPILE" LINUX_SRC=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/compilation.log 2>&1
+	make -s ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" clean >> $DEST/debug/compilation.log 2>&1
+	make -s -j4 ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" LINUX_SRC=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/compilation.log 2>&1
 	cp os/linux/*.ko $CACHEDIR/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
 	mkdir -p $CACHEDIR/sdcard/etc/Wireless/RT2870STA
 	cp RT2870STA.dat $CACHEDIR/sdcard/etc/Wireless/RT2870STA/

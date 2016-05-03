@@ -18,7 +18,7 @@ install_rtl8192cu()
 	fetch_from_github "$plugin_repo" "$plugin_dir"
 	cd $SOURCES/$plugin_dir
 	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
-	make ARCH=$ARCHITECTURE CROSS_COMPILE="${CROSS_COMPILE//ccache}" clean >> $DEST/debug/compilation.log
+	make ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER clean >> $DEST/debug/compilation.log
 
 	# GCC5 compatibility patch
 	patch --batch --silent -p1 -N <<-'EOF'
@@ -51,7 +51,7 @@ install_rtl8192cu()
 	EOF
 	# GCC5 compatibility patch end
 
-	make ARCH=$ARCHITECTURE CROSS_COMPILE="${CROSS_COMPILE//ccache}" KSRC=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/compilation.log
+	make ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER KSRC=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/compilation.log
 	cp *.ko $CACHEDIR/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
 	depmod -b $CACHEDIR/sdcard/ $VER-$LINUXFAMILY
 	#cp blacklist*.conf $CACHEDIR/sdcard/etc/modprobe.d/
