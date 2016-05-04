@@ -71,6 +71,7 @@ if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
 
 if [[ $USE_CCACHE != no ]]; then
 	CCACHE=ccache
+	export PATH="/usr/lib/ccache:$PATH"
 else
 	CCACHE=""
 fi

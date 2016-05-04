@@ -86,7 +86,7 @@ compile_uboot (){
 
 	# copy files to build directory
 	for f in $UBOOT_FILES; do
-		[[ ! -f $f ]] && exit_with_error "U-boot file not found" "$(basename f)"
+		[[ ! -f $f ]] && exit_with_error "U-boot file not found" "$(basename $f)"
 		cp $f $DEST/debs/$uboot_name/usr/lib/$uboot_name
 	done
 

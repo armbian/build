@@ -146,11 +146,24 @@ esac
 # Remove ARM64 missing packages. Temporally
 PACKAGE_LIST_RELEASE=${PACKAGE_LIST_RELEASE//thin-provisioning-tools }
 
+DEBIAN_MIRROR='httpredir.debian.org/debian'
+UBUNTU_MIRROR='ports.ubuntu.com/'
+
 # For user override
 if [[ -f $SRC/userpatches/lib.config ]]; then
 	display_alert "Using user configuration override" "userpatches/lib.config" "info"
 	source $SRC/userpatches/lib.config
 fi
+
+# apt-cacher-ng mirror configurarion
+
+if [[ DISTRIBUTION == Ubuntu ]]; then
+	APT_MIRROR=$UBUNTU_MIRROR
+else
+	APT_MIRROR=$DEBIAN_MIRROR
+fi
+
+[[ -n $APT_PROXY_ADDR ]] && display_alert "Using custom apt-cacher-ng address" "$APT_PROXY_ADDR" "info"
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"

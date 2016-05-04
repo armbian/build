@@ -129,15 +129,14 @@ create_rootfs_cache()
 		display_alert "Creating new rootfs for" "$RELEASE" "info"
 
 		# stage: debootstrap base system
-		# apt-cacher-ng mirror configurarion
-		[[ -n $APT_PROXY_ADDR ]] && display_alert "Using custom apt-cacher-ng address" "$APT_PROXY_ADDR" "info"
-		if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then
-			local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/ports.ubuntu.com/"
+		if [[ $NO_APT_CACHER != yes ]]; then
+			# apt-cacher-ng apt-get proxy parameter
+			local apt_extra='-o Acquire::http::Proxy="http://${APT_PROXY_ADDR:-localhost:3142}"'
+			local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142/}$APT_MIRROR"
 		else
-			local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/httpredir.debian.org/debian"
+			local apt_mirror=$APT_MIRROR
 		fi
-		# apt-cacher-ng apt-get proxy parameter
-		local apt_extra='-o Acquire::http::Proxy="http://${APT_PROXY_ADDR:-localhost:3142}"'
+
 		# fancy progress bars (except for Wheezy target)
 		[[ -z $OUTPUT_DIALOG && $RELEASE != wheezy ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
 
@@ -190,6 +189,7 @@ create_rootfs_cache()
 		LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "export CHARMAP=$CONSOLE_CHAR FONTFACE=8x16"
 
 		# stage: copy proper apt sources list
+		# TODO: Generate sources based on $APT_MIRROR
 		cp $SRC/lib/config/apt/sources.list.$RELEASE $CACHEDIR/sdcard/etc/apt/sources.list
 
 		# stage: add armbian repository and install key
@@ -206,6 +206,8 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Updating package lists..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
+		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Updating package lists failed"
+
 		# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
 		display_alert "Upgrading base packages" "Armbian" "info"
 		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
@@ -213,6 +215,8 @@ create_rootfs_cache()
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Upgrading base packages..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Upgrading base packages failed"
 
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
@@ -389,11 +393,12 @@ prepare_partitions()
 		else
 			cp $SRC/lib/scripts/nfs-boot.cmd.template $CACHEDIR/sdcard/boot/boot.cmd
 		fi
-	elif [[ $BOOTSIZE != 0 ]]; then
+	elif [[ $BOOTSIZE != 0 && -f $CACHEDIR/sdcard/boot/boot.cmd ]]; then
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $CACHEDIR/sdcard/boot/boot.cmd
 		sed -i "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" $CACHEDIR/sdcard/boot/boot.cmd
 	fi
-	mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr > /dev/null 2>&1
+	[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && \
+		mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr > /dev/null 2>&1
 
 } #############################################################################
 
