@@ -200,37 +200,40 @@ compile_kernel (){
 	mv *.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
 }
 
-# check_toolchain <expression> <path>
+# check_toolchain <UBOOT|KERNEL> <expression>
 #
 # checks if system default toolchain version satisfies <expression>
 # <expression>: "< x.y"; "> x.y"; "== x.y"
 check_toolchain()
 {
-	local expression=$1
-	local path=$2
+	local target=$1
+	local expression=$2
+	eval local compiler=\$${target}_COMPILER
 	# get major.minor gcc version
-	local gcc_ver=$(${COMPILER}gcc -dumpversion | grep -oE "^[[:digit:]].[[:digit:]]")
+	local gcc_ver=$(${compiler}gcc -dumpversion | grep -oE "^[[:digit:]].[[:digit:]]")
 	awk "BEGIN{exit ! ($gcc_ver $expression)}" && return 0
 	return 1
 }
 
-# find_toolchain <expression> <var_name>
+# find_toolchain <UBOOT|KERNEL> <expression> <var_name>
 #
 # writes path to toolchain that satisfies <expression> to <var_name>
 #
 find_toolchain()
 {
-	local expression=$1
-	local var_name=$2
+	local target=$1
+	local expression=$2
+	local var_name=$3
 	local dist=10
+	eval local compiler=\$${target}_COMPILER
 	local toolchain=""
 	# extract target major.minor version from expression
 	local target_ver=$(grep -oE "[[:digit:]].[[:digit:]]" <<< "$expression")
 	for dir in $SRC/toolchains/*/; do
 		# check if is a toolchain for current $ARCH
-		[[ ! -f ${dir}bin/${COMPILER}gcc ]] && continue
+		[[ ! -f ${dir}bin/${compiler}gcc ]] && continue
 		# get toolchain major.minor version
-		local gcc_ver=$(${dir}bin/${COMPILER}gcc -dumpversion | grep -oE "^[[:digit:]].[[:digit:]]")
+		local gcc_ver=$(${dir}bin/${compiler}gcc -dumpversion | grep -oE "^[[:digit:]].[[:digit:]]")
 		# check if toolchain version satisfies requirement
 		awk "BEGIN{exit ! ($gcc_ver $expression)}" || continue
 		# check if found version is the closest to target

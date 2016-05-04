@@ -204,9 +204,9 @@ done
 # Compile u-boot if packed .deb does not exist
 if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 	# if requires specific toolchain, check if default is suitable
-	if [[ -n $UBOOT_NEEDS_GCC ]] && ! check_toolchain "$UBOOT_NEEDS_GCC" ; then
+	if [[ -n $UBOOT_NEEDS_GCC ]] && ! check_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" ; then
 		# try to find suitable in $SRC/toolchains
-		find_toolchain "$UBOOT_NEEDS_GCC" UBOOT_TOOLCHAIN
+		find_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" "UBOOT_TOOLCHAIN"
 		[[ -z $UBOOT_TOOLCHAIN ]] && exit_with_error "Could not find required u-boot toolchain" "$UBOOT_NEEDS_GCC"
 	fi
 	cd $SOURCES/$BOOTSOURCEDIR
@@ -218,9 +218,9 @@ fi
 # Compile kernel if packed .deb does not exist
 if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 	# if requires specific toolchain, check if default is suitable
-	if [[ -n $KERNEL_NEEDS_GCC ]] && ! check_toolchain $KERNEL_NEEDS_GCC ; then
+	if [[ -n $KERNEL_NEEDS_GCC ]] && ! check_toolchain "$KERNEL" "$KERNEL_NEEDS_GCC" ; then
 		# try to find suitable in $SRC/toolchains
-		find_toolchain $KERNEL_NEEDS_GCC KERNEL_TOOLCHAIN
+		find_toolchain "KERNEL" "$KERNEL_NEEDS_GCC" "KERNEL_TOOLCHAIN"
 		[[ -z $KERNEL_TOOLCHAIN ]] && exit_with_error "Could not find required kernel toolchain" "$KERNEL_NEEDS_GCC"
 	fi
 	cd $SOURCES/$LINUXSOURCEDIR
