@@ -161,6 +161,8 @@ compile_kernel (){
 
 	export LOCALVERSION="-$LINUXFAMILY"
 
+	sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
+
 	# We can use multi threading here but not later since it's not working. This way of compilation is much faster.
 	if [[ $KERNEL_CONFIGURE != yes ]]; then
 		if [[ $BRANCH == default ]]; then

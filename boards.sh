@@ -140,7 +140,7 @@ install_board_specific (){
 	elif [[ $BOARD == guitar* ]]; then
 		cp $SRC/lib/config/boot-guitar.cmd $CACHEDIR/sdcard/boot/boot.cmd
 	elif [[ $BOARD == roseapple* ]]; then
-		cp $SRC/lib/config/boot-roseapple.cmd $CACHEDIR/sdcard/boot/boot.cmd	
+		cp $SRC/lib/config/boot-roseapple.cmd $CACHEDIR/sdcard/boot/boot.cmd
 	elif [[ $BOARD == armada* ]]; then
 		cp $SRC/lib/config/boot-marvell.cmd $CACHEDIR/sdcard/boot/boot.cmd
 	elif [[ $BOARD == odroidxu4 ]]; then
@@ -149,6 +149,8 @@ install_board_specific (){
 		cp $SRC/lib/config/boot-odroid-c1.ini $CACHEDIR/sdcard/boot/boot.ini
 	elif [[ $BOARD == odroidc2 ]]; then
 		cp $SRC/lib/config/boot-odroid-c2.ini $CACHEDIR/sdcard/boot/boot.ini
+	elif [[ $BOARD == pine64* ]]; then
+		cp $SRC/lib/config/boot-pine64.cmd $CACHEDIR/sdcard/boot/boot.cmd
 	else
 		cp $SRC/lib/config/boot.cmd $CACHEDIR/sdcard/boot/boot.cmd
 		# orangepi h3 temp exceptions
