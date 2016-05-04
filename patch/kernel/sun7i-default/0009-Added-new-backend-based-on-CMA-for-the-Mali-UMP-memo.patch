@@ -1,0 +1,632 @@
+From 16ad799b917a761b1b3c269a1063e5f0e991d35c Mon Sep 17 00:00:00 2001
+From: Martin Ostertag <martin.ostertag@gmx.de>
+Date: Tue, 29 Dec 2015 23:37:47 +0100
+Subject: [PATCH 9/9] Added new backend based on CMA for the Mali UMP memory
+ block allocator.
+
+This one is necesary for a zero-copy interworking between Cedarx and Mali hardware
+---
+ drivers/gpu/mali/ump/Kbuild                        |   1 +
+ .../mali/ump/arch-ca7-virtex820-m400-2/config.h    |   4 +-
+ .../mali/ump/arch-ca8-virtex820-m400-1/config.h    |   4 +-
+ drivers/gpu/mali/ump/common/ump_kernel_api.c       |  27 ++-
+ drivers/gpu/mali/ump/common/ump_kernel_types.h     |  13 +-
+ drivers/gpu/mali/ump/common/ump_uk_types.h         |  11 ++
+ drivers/gpu/mali/ump/common/ump_ukk.h              |   2 +
+ drivers/gpu/mali/ump/linux/ump_ioctl.h             |   1 +
+ drivers/gpu/mali/ump/linux/ump_kernel_linux.c      |  29 +--
+ .../mali/ump/linux/ump_kernel_memory_backend_cma.c | 209 +++++++++++++++++++++
+ .../mali/ump/linux/ump_kernel_memory_backend_cma.h |  27 +++
+ drivers/gpu/mali/ump/linux/ump_memory_backend.c    |   8 +-
+ drivers/gpu/mali/ump/linux/ump_ukk_wrappers.c      |  40 ++++
+ drivers/gpu/mali/ump/linux/ump_ukk_wrappers.h      |   1 +
+ 14 files changed, 358 insertions(+), 19 deletions(-)
+ create mode 100644 drivers/gpu/mali/ump/linux/ump_kernel_memory_backend_cma.c
+ create mode 100644 drivers/gpu/mali/ump/linux/ump_kernel_memory_backend_cma.h
+
+diff --git a/drivers/gpu/mali/ump/Kbuild b/drivers/gpu/mali/ump/Kbuild
+index 62380fa..a581a27 100644
+--- a/drivers/gpu/mali/ump/Kbuild
++++ b/drivers/gpu/mali/ump/Kbuild
+@@ -43,6 +43,7 @@ ump-y = common/ump_kernel_common.o \
+ 	linux/ump_kernel_linux.o \
+ 	linux/ump_kernel_memory_backend_os.o \
+ 	linux/ump_kernel_memory_backend_dedicated.o \
++	linux/ump_kernel_memory_backend_cma.o \
+ 	linux/ump_memory_backend.o \
+ 	linux/ump_ukk_wrappers.o \
+ 	linux/ump_ukk_ref_wrappers.o \
+diff --git a/drivers/gpu/mali/ump/arch-ca7-virtex820-m400-2/config.h b/drivers/gpu/mali/ump/arch-ca7-virtex820-m400-2/config.h
+index 9560e96..9199061 100644
+--- a/drivers/gpu/mali/ump/arch-ca7-virtex820-m400-2/config.h
++++ b/drivers/gpu/mali/ump/arch-ca7-virtex820-m400-2/config.h
+@@ -1,8 +1,8 @@
+ #ifndef __ARCH_CONFIG_H__
+ #define __ARCH_CONFIG_H__
+ 
+-#define ARCH_UMP_BACKEND_DEFAULT          1
++#define ARCH_UMP_BACKEND_DEFAULT          2
+ #define ARCH_UMP_MEMORY_ADDRESS_DEFAULT   0x5E000000
+ #define ARCH_UMP_MEMORY_SIZE_DEFAULT 128UL * 1024UL * 1024UL
+ 
+-#endif /* __ARCH_CONFIG_H__ */
+\ No newline at end of file
++#endif /* __ARCH_CONFIG_H__ */
+diff --git a/drivers/gpu/mali/ump/arch-ca8-virtex820-m400-1/config.h b/drivers/gpu/mali/ump/arch-ca8-virtex820-m400-1/config.h
+index 9560e96..9199061 100644
+--- a/drivers/gpu/mali/ump/arch-ca8-virtex820-m400-1/config.h
++++ b/drivers/gpu/mali/ump/arch-ca8-virtex820-m400-1/config.h
+@@ -1,8 +1,8 @@
+ #ifndef __ARCH_CONFIG_H__
+ #define __ARCH_CONFIG_H__
+ 
+-#define ARCH_UMP_BACKEND_DEFAULT          1
++#define ARCH_UMP_BACKEND_DEFAULT          2
+ #define ARCH_UMP_MEMORY_ADDRESS_DEFAULT   0x5E000000
+ #define ARCH_UMP_MEMORY_SIZE_DEFAULT 128UL * 1024UL * 1024UL
+ 
+-#endif /* __ARCH_CONFIG_H__ */
+\ No newline at end of file
++#endif /* __ARCH_CONFIG_H__ */
+diff --git a/drivers/gpu/mali/ump/common/ump_kernel_api.c b/drivers/gpu/mali/ump/common/ump_kernel_api.c
+index e86bc33..e5ce026 100644
+--- a/drivers/gpu/mali/ump/common/ump_kernel_api.c
++++ b/drivers/gpu/mali/ump/common/ump_kernel_api.c
+@@ -7,6 +7,8 @@
+  * A copy of the licence is included with the program, and can also be obtained from Free Software
+  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+  */
++#include <asm/memory.h>
++#include <mach/memory.h>
+ 
+ #include "mali_osk.h"
+ #include "mali_osk_list.h"
+@@ -16,7 +18,6 @@
+ #include "ump_kernel_common.h"
+ 
+ 
+-
+ /* ---------------- UMP kernel space API functions follows ---------------- */
+ 
+ 
+@@ -291,6 +292,30 @@ _mali_osk_errcode_t _ump_ukk_size_get( _ump_uk_size_get_s *user_interaction )
+ 	return ret;
+ }
+ 
++_mali_osk_errcode_t _ump_ukk_phys_addr_get( _ump_uk_phys_addr_get_s *user_interaction )
++{
++	ump_dd_mem * mem;
++	_mali_osk_errcode_t ret = _MALI_OSK_ERR_FAULT;
++
++	DEBUG_ASSERT_POINTER( user_interaction );
++
++	/* We lock the mappings so things don't get removed while we are looking for the memory */
++	_mali_osk_lock_wait(device.secure_id_map_lock, _MALI_OSK_LOCKMODE_RW);
++	if (0 == ump_descriptor_mapping_get(device.secure_id_map, (int)user_interaction->secure_id, (void**)&mem))
++	{
++		user_interaction->phys_addr = __phys_to_bus(mem->block_array[0].addr);
++		DBG_MSG(4, ("Returning physical address. ID: %u, phys_addr: 0x%x ", (ump_secure_id)user_interaction->secure_id, (unsigned long)user_interaction->phys_addr));
++		ret = _MALI_OSK_ERR_OK;
++	}
++	else
++	{
++		 user_interaction->phys_addr = 0;
++		DBG_MSG(1, ("Failed to look up mapping in ump_ioctl_phys_addr_get(). ID: %u\n", (ump_secure_id)user_interaction->secure_id));
++	}
++
++	_mali_osk_lock_signal(device.secure_id_map_lock, _MALI_OSK_LOCKMODE_RW);
++	return ret;
++}
+ 
+ 
+ void _ump_ukk_msync( _ump_uk_msync_s *args )
+diff --git a/drivers/gpu/mali/ump/common/ump_kernel_types.h b/drivers/gpu/mali/ump/common/ump_kernel_types.h
+index fdacd86..45d4939 100644
+--- a/drivers/gpu/mali/ump/common/ump_kernel_types.h
++++ b/drivers/gpu/mali/ump/common/ump_kernel_types.h
+@@ -13,7 +13,10 @@
+ 
+ #include "ump_kernel_interface.h"
+ #include "mali_osk.h"
++#include <linux/cdev.h>
++#include <linux/device.h>
+ 
++#define UMP_LICENSE_IS_GPL 1
+ 
+ typedef enum
+ {
+@@ -40,6 +43,7 @@ typedef struct ump_dd_mem
+ 	unsigned long size_bytes;
+ 	unsigned long nr_blocks;
+ 	ump_dd_physical_block * block_array;
++	void * cpu_addr;
+ 	void (*release_func)(void * ctx, struct ump_dd_mem * descriptor);
+ 	void * ctx;
+ 	void * backend_info;
+@@ -48,6 +52,13 @@ typedef struct ump_dd_mem
+ 	ump_lock_usage lock_usage;
+ } ump_dd_mem;
+ 
+-
++struct ump_device
++{
++	struct cdev cdev;
++#if UMP_LICENSE_IS_GPL
++	struct class * ump_class;
++	struct device *mdev;
++#endif
++};
+ 
+ #endif /* __UMP_KERNEL_TYPES_H__ */
+diff --git a/drivers/gpu/mali/ump/common/ump_uk_types.h b/drivers/gpu/mali/ump/common/ump_uk_types.h
+index 24f4596..bd0cc8d 100644
+--- a/drivers/gpu/mali/ump/common/ump_uk_types.h
++++ b/drivers/gpu/mali/ump/common/ump_uk_types.h
+@@ -49,6 +49,7 @@ typedef enum
+ 	_UMP_IOC_SWITCH_HW_USAGE,
+ 	_UMP_IOC_LOCK,
+ 	_UMP_IOC_UNLOCK,
++	_UMP_IOC_PHYS_ADDR_GET,
+ }_ump_uk_functions;
+ 
+ typedef enum
+@@ -118,6 +119,16 @@ typedef struct _ump_uk_size_get_s
+ } _ump_uk_size_get_s;
+ 
+ /**
++ * PHYS_ADDR_GET ([in] u32 secure_id, [out]phys_addr )
++ */
++typedef struct _ump_uk_phys_addr_get_s
++{
++	void *ctx;                              /**< [in,out] user-kernel context (trashed on output) */
++	u32 secure_id;                          /**< Input to DD */
++	void *phys_addr;                        /**< Returned physical address; output */
++} _ump_uk_phys_addr_get_s;
++
++/**
+  * Release ([in] u32 secure_id)
+  */
+ typedef struct _ump_uk_release_s
+diff --git a/drivers/gpu/mali/ump/common/ump_ukk.h b/drivers/gpu/mali/ump/common/ump_ukk.h
+index 4e6bb86..926a286 100644
+--- a/drivers/gpu/mali/ump/common/ump_ukk.h
++++ b/drivers/gpu/mali/ump/common/ump_ukk.h
+@@ -36,6 +36,8 @@ _mali_osk_errcode_t _ump_ukk_release( _ump_uk_release_s *release_info );
+ 
+ _mali_osk_errcode_t _ump_ukk_size_get( _ump_uk_size_get_s *user_interaction );
+ 
++_mali_osk_errcode_t _ump_ukk_phys_addr_get( _ump_uk_phys_addr_get_s *user_interaction );
++
+ _mali_osk_errcode_t _ump_ukk_map_mem( _ump_uk_map_mem_s *args );
+ 
+ _mali_osk_errcode_t _ump_uku_get_api_version( _ump_uk_api_version_s *args );
+diff --git a/drivers/gpu/mali/ump/linux/ump_ioctl.h b/drivers/gpu/mali/ump/linux/ump_ioctl.h
+index 675e36e..6778b67 100644
+--- a/drivers/gpu/mali/ump/linux/ump_ioctl.h
++++ b/drivers/gpu/mali/ump/linux/ump_ioctl.h
+@@ -46,6 +46,7 @@ extern "C"
+ #define UMP_IOC_LOCK          _IOW(UMP_IOCTL_NR,  _UMP_IOC_LOCK, _ump_uk_lock_s)
+ #define UMP_IOC_UNLOCK        _IOW(UMP_IOCTL_NR,  _UMP_IOC_UNLOCK, _ump_uk_unlock_s)
+ 
++#define UMP_IOC_PHYS_ADDR_GET _IOWR(UMP_IOCTL_NR,  _UMP_IOC_PHYS_ADDR_GET, _ump_uk_phys_addr_get_s)
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/drivers/gpu/mali/ump/linux/ump_kernel_linux.c b/drivers/gpu/mali/ump/linux/ump_kernel_linux.c
+index 40514fe..02b12b4 100644
+--- a/drivers/gpu/mali/ump/linux/ump_kernel_linux.c
++++ b/drivers/gpu/mali/ump/linux/ump_kernel_linux.c
+@@ -17,6 +17,7 @@
+ #include <asm/atomic.h>
+ #include <linux/device.h>
+ #include <linux/debugfs.h>
++#include <linux/dma-mapping.h>
+ 
+ #include "config.h"             /* Configuration for current platform. The symlinc for arch is set by Makefile */
+ #include "ump_ioctl.h"
+@@ -65,16 +66,10 @@ typedef struct ump_vma_usage_tracker
+ 	ump_dd_handle handle;
+ } ump_vma_usage_tracker;
+ 
+-struct ump_device
+-{
+-	struct cdev cdev;
+-#if UMP_LICENSE_IS_GPL
+-	struct class * ump_class;
+-#endif
+-};
++
+ 
+ /* The global variable containing the global device data */
+-static struct ump_device ump_device;
++struct ump_device ump_device;
+ 
+ 
+ /* Forward declare static functions */
+@@ -207,14 +202,19 @@ int ump_kernel_device_initialize(void)
+ 			}
+ 			else
+ 			{
+-				struct device * mdev;
+-				mdev = device_create(ump_device.ump_class, NULL, dev, NULL, ump_dev_name);
+-				if (!IS_ERR(mdev))
++				ump_device.mdev = device_create(ump_device.ump_class, NULL, dev, NULL, ump_dev_name);
++				if (!IS_ERR(ump_device.mdev))
+ 				{
++					DBG_MSG(2, ("dma_set_mask_and_coherent calling\n"));
++					err = dma_set_coherent_mask(ump_device.mdev, DMA_BIT_MASK(28));
++					DBG_MSG(2, ("dma_set_mask_and_coherent result=%d\n", err));
++					if(err < 0)
++					  	DBG_MSG(2, ("dma_set_mask_and_coherent failed\n"));
++
+ 					return 0;
+ 				}
+ 
+-				err = PTR_ERR(mdev);
++				err = PTR_ERR(ump_device.mdev);
+ 			}
+ 			cdev_del(&ump_device.cdev);
+ #else
+@@ -367,6 +367,10 @@ static int ump_file_ioctl(struct inode *inode, struct file *filp, unsigned int c
+ 		case UMP_IOC_UNLOCK:
+ 			err = ump_unlock_wrapper((u32 __user *)argument, session_data);
+ 			break;
++			
++		case UMP_IOC_PHYS_ADDR_GET:
++			err = ump_phys_addr_get_wrapper((u32 __user *)argument, session_data);
++			break;
+ 
+ 		default:
+ 			DBG_MSG(1, ("No handler for IOCTL. cmd: 0x%08x, arg: 0x%08lx\n", cmd, arg));
+@@ -449,6 +453,7 @@ EXPORT_SYMBOL(ump_dd_phys_blocks_get);
+ EXPORT_SYMBOL(ump_dd_size_get);
+ EXPORT_SYMBOL(ump_dd_reference_add);
+ EXPORT_SYMBOL(ump_dd_reference_release);
++EXPORT_SYMBOL(ump_device);
+ 
+ /* Export our own extended kernel space allocator */
+ EXPORT_SYMBOL(ump_dd_handle_create_from_phys_blocks);
+diff --git a/drivers/gpu/mali/ump/linux/ump_kernel_memory_backend_cma.c b/drivers/gpu/mali/ump/linux/ump_kernel_memory_backend_cma.c
+new file mode 100644
+index 0000000..84021cd
+--- /dev/null
++++ b/drivers/gpu/mali/ump/linux/ump_kernel_memory_backend_cma.c
+@@ -0,0 +1,209 @@
++/*
++ * Based on code originally written by ARM Limited.
++ * Copyright (C) 2010-2011 ARM Limited. All rights reserved.
++ * Copyright 2015    Martin Ostertag Martin.Ostertag@gmx.de
++ * 
++ *
++ * This program is free software and is provided to you under the terms of the GNU General Public License version 2
++ * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
++ *
++ * A copy of the licence is included with the program, and can also be obtained from Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
++ */
++
++/* needed to detect kernel version specific code */
++#include <linux/version.h>
++
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
++#include <linux/semaphore.h>
++#else /* pre 2.6.26 the file was in the arch specific location */
++#include <asm/semaphore.h>
++#endif
++
++#include <linux/dma-mapping.h>
++#include <linux/mm.h>
++#include <linux/slab.h>
++#include <asm/atomic.h>
++#include <linux/vmalloc.h>
++#include <asm/cacheflush.h>
++#include "ump_kernel_common.h"
++#include "ump_kernel_memory_backend.h"
++
++
++extern struct ump_device ump_device;
++
++typedef struct os_allocator
++{
++	struct semaphore mutex;
++	u32 mem_maximum;       	/**< Maximum number of pages to allocate from the CMA */
++	u32 mem_allocated; 	/**< Number of pages allocated from the CMA */
++} cma_allocator;
++
++
++
++static void cma_free(void* ctx, ump_dd_mem * descriptor);
++static int cma_allocate(void* ctx, ump_dd_mem * descriptor);
++static void cma_memory_backend_destroy(ump_memory_backend * backend);
++static u32 cma_stat(struct ump_memory_backend *backend);
++
++
++
++/*
++ * Create CMA memory backend
++ */
++ump_memory_backend * ump_cma_memory_backend_create(const int max_allocation)
++{
++	ump_memory_backend * backend;
++	cma_allocator * info;
++
++	info = kmalloc(sizeof(cma_allocator), GFP_KERNEL);
++	if (NULL == info)
++	{
++		return NULL;
++	}
++
++	info->mem_maximum = max_allocation;
++	info->mem_allocated = 0;
++
++	sema_init(&info->mutex, 1);
++
++	backend = kmalloc(sizeof(ump_memory_backend), GFP_KERNEL);
++	if (NULL == backend)
++	{
++		kfree(info);
++		return NULL;
++	}
++
++	backend->ctx = info;
++	backend->allocate = cma_allocate;
++	backend->release = cma_free;
++	backend->shutdown = cma_memory_backend_destroy;
++	backend->stat = cma_stat;
++	backend->pre_allocate_physical_check = NULL;
++	backend->adjust_to_mali_phys = NULL;
++
++	return backend;
++}
++
++
++
++/*
++ * Destroy specified OS memory backend
++ */
++static void cma_memory_backend_destroy(ump_memory_backend * backend)
++{
++	cma_allocator * info = (cma_allocator*)backend->ctx;
++
++	DBG_MSG_IF(1, 0 != info->mem_allocated, ("%d bytes still in use during shutdown\n", info->mem_allocated));
++
++	kfree(info);
++	kfree(backend);
++}
++
++
++
++/*
++ * Allocate UMP memory
++ */
++static int cma_allocate(void* ctx, ump_dd_mem * descriptor)
++{
++	u32 left;
++	cma_allocator * info;
++	int pages_allocated = 0;
++	int is_cached;
++	dma_addr_t paddr;
++
++	BUG_ON(!descriptor);
++	BUG_ON(!ctx);
++
++	info = (cma_allocator*)ctx;
++	left = descriptor->size_bytes;
++	is_cached = descriptor->is_cached;
++
++	if (down_interruptible(&info->mutex))
++	{
++		DBG_MSG(1, ("Failed to get mutex in os_free\n"));
++		return 0; /* failure */
++	}
++
++	descriptor->backend_info = NULL;
++	descriptor->nr_blocks = ((left + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1)) >> PAGE_SHIFT;
++
++	DBG_MSG(5, ("Allocating page array. Size: %lu\n", descriptor->nr_blocks * sizeof(ump_dd_physical_block)));
++
++	descriptor->block_array = (ump_dd_physical_block *)vmalloc(sizeof(ump_dd_physical_block) * descriptor->nr_blocks);
++	if (NULL == descriptor->block_array)
++	{
++		up(&info->mutex);
++		DBG_MSG(1, ("Block array could not be allocated\n"));
++		return 0; /* failure */
++	}
++
++	descriptor->cpu_addr = dma_alloc_coherent(/* ump_device.mdev */ NULL, descriptor->size_bytes, &paddr, GFP_KERNEL | GFP_DMA);
++	if(! descriptor->cpu_addr)
++	{
++		up(&info->mutex);
++		DBG_MSG(1, ("Failed to allocate needed CMA memory %d bytes\n", descriptor->size_bytes));
++		return 0; /* failure */
++	}
++
++	if(is_cached)
++		DBG_MSG(1, ("caching not supported\n"));
++
++	for (; pages_allocated < descriptor->nr_blocks; pages_allocated++)
++	{
++		descriptor->block_array[pages_allocated].addr = ((char*)paddr) + (PAGE_SIZE * pages_allocated);
++		descriptor->block_array[pages_allocated].size = PAGE_SIZE;
++	}
++
++	DBG_MSG(5, ("Alloce for ID:%2d got %d pages\n", descriptor->secure_id,  pages_allocated));
++
++	info->mem_allocated += descriptor->size_bytes;
++
++	DBG_MSG(6, ("%d out of %d bytes now allocated\n", info->mem_allocated, info->mem_maximum));
++
++	up(&info->mutex);
++
++	return 1; /* success*/
++}
++
++
++/*
++ * Free specified UMP memory
++ */
++static void cma_free(void* ctx, ump_dd_mem * descriptor)
++{
++	cma_allocator * info;
++	int i;
++
++	BUG_ON(!ctx);
++	BUG_ON(!descriptor);
++
++	info = (cma_allocator*)ctx;
++
++	BUG_ON(descriptor->nr_blocks * PAGE_SIZE > info->mem_allocated);
++
++	if (down_interruptible(&info->mutex))
++	{
++		DBG_MSG(1, ("Failed to get mutex in cma_free\n"));
++		return;
++	}
++
++	DBG_MSG(5, ("Releasing %lu OS pages\n", descriptor->nr_blocks));
++
++	info->mem_allocated -= descriptor->nr_blocks * PAGE_SIZE;
++
++	up(&info->mutex);
++
++	dma_free_coherent(ump_device.mdev, descriptor->nr_blocks * PAGE_SIZE, 
++			  descriptor->cpu_addr, descriptor->block_array[0].addr);
++	vfree(descriptor->block_array);
++}
++
++
++static u32 cma_stat(struct ump_memory_backend *backend)
++{
++	cma_allocator *info;
++	info = (cma_allocator*)backend->ctx;
++	return info->mem_allocated;
++}
+diff --git a/drivers/gpu/mali/ump/linux/ump_kernel_memory_backend_cma.h b/drivers/gpu/mali/ump/linux/ump_kernel_memory_backend_cma.h
+new file mode 100644
+index 0000000..7687b58
+--- /dev/null
++++ b/drivers/gpu/mali/ump/linux/ump_kernel_memory_backend_cma.h
+@@ -0,0 +1,27 @@
++/*
++ * Based on code originally written by ARM Limited.
++ * Copyright (C) 2010-2011 ARM Limited. All rights reserved.
++ * Copyright 2015    Martin Ostertag Martin.Ostertag@gmx.de
++ *
++ * This program is free software and is provided to you under the terms of the GNU General Public License version 2
++ * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
++ *
++ * A copy of the licence is included with the program, and can also be obtained from Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
++ * 
++ * Modified 2015: Martin Ostertag <martin.ostertag@gmx.de>
++ */
++
++/**
++ * @file ump_kernel_memory_backend_CMA.h
++ */
++
++#ifndef __UMP_KERNEL_MEMORY_BACKEND_CMA_H__
++#define __UMP_KERNEL_MEMORY_BACKEND_CMA_H__
++
++#include "ump_kernel_memory_backend.h"
++
++ump_memory_backend * ump_cma_memory_backend_create(const int max_allocation);
++
++#endif /* __UMP_KERNEL_MEMORY_BACKEND_CMA_H__ */
++
+diff --git a/drivers/gpu/mali/ump/linux/ump_memory_backend.c b/drivers/gpu/mali/ump/linux/ump_memory_backend.c
+index 9242819..76c5c96 100644
+--- a/drivers/gpu/mali/ump/linux/ump_memory_backend.c
++++ b/drivers/gpu/mali/ump/linux/ump_memory_backend.c
+@@ -17,11 +17,12 @@
+ #include "ump_kernel_common.h"
+ #include "ump_kernel_memory_backend_os.h"
+ #include "ump_kernel_memory_backend_dedicated.h"
++#include "ump_kernel_memory_backend_cma.h"
+ 
+ /* Configure which dynamic memory allocator to use */
+ int ump_backend = ARCH_UMP_BACKEND_DEFAULT;
+ module_param(ump_backend, int, S_IRUGO); /* r--r--r-- */
+-MODULE_PARM_DESC(ump_backend, "0 = dedicated memory backend (default), 1 = OS memory backend");
++MODULE_PARM_DESC(ump_backend, "0 = dedicated memory backend (default), 1 = OS memory backend, 2 = CMA based backend");
+ 
+ /* The base address of the memory block for the dedicated memory backend */
+ unsigned int ump_memory_address = ARCH_UMP_MEMORY_ADDRESS_DEFAULT;
+@@ -56,6 +57,11 @@ ump_memory_backend* ump_memory_backend_create ( void )
+ 		DBG_MSG(2, ("Using OS memory backend, allocation limit: %d\n", ump_memory_size));
+ 		backend = ump_os_memory_backend_create(ump_memory_size);
+ 	}
++	else if (2 == ump_backend)
++	{
++		DBG_MSG(2, ("Using CMA memory backend, allocation limit: %d\n", ump_memory_size));
++		backend = ump_cma_memory_backend_create(ump_memory_size);	  
++	}
+ 
+ 	return backend;
+ }
+diff --git a/drivers/gpu/mali/ump/linux/ump_ukk_wrappers.c b/drivers/gpu/mali/ump/linux/ump_ukk_wrappers.c
+index e5c5903..1f06242 100644
+--- a/drivers/gpu/mali/ump/linux/ump_ukk_wrappers.c
++++ b/drivers/gpu/mali/ump/linux/ump_ukk_wrappers.c
+@@ -138,6 +138,46 @@ int ump_size_get_wrapper(u32 __user * argument, struct ump_session_data  * sessi
+ }
+ 
+ /*
++ * IOCTL operation; Return physical address for specified UMP memory.
++ */
++int ump_phys_addr_get_wrapper(u32 __user * argument, struct ump_session_data  * session_data)
++{
++	_ump_uk_phys_addr_get_s user_interaction;
++	_mali_osk_errcode_t err;
++
++	/* Sanity check input parameters */
++	if (NULL == argument || NULL == session_data)
++	{
++		MSG_ERR(("NULL parameter in ump_ioctl_size_get()\n"));
++		return -ENOTTY;
++	}
++
++	if (0 != copy_from_user(&user_interaction, argument, sizeof(user_interaction)))
++	{
++		MSG_ERR(("copy_from_user() in ump_ioctl_size_get()\n"));
++		return -EFAULT;
++	}
++
++	user_interaction.ctx = (void *) session_data;
++	err = _ump_ukk_phys_addr_get( &user_interaction );
++	if( _MALI_OSK_ERR_OK != err )
++	{
++		MSG_ERR(("_ump_ukk_size_get() failed in ump_ioctl_size_get()\n"));
++		return map_errcode(err);
++	}
++
++	user_interaction.ctx = NULL;
++
++	if (0 != copy_to_user(argument, &user_interaction, sizeof(user_interaction)))
++	{
++		MSG_ERR(("copy_to_user() failed in ump_ioctl_size_get()\n"));
++		return -EFAULT;
++	}
++
++	return 0; /* success */
++}
++
++/*
+  * IOCTL operation; Do cache maintenance on specified UMP memory.
+  */
+ int ump_msync_wrapper(u32 __user * argument, struct ump_session_data  * session_data)
+diff --git a/drivers/gpu/mali/ump/linux/ump_ukk_wrappers.h b/drivers/gpu/mali/ump/linux/ump_ukk_wrappers.h
+index 1cbacf7..acb3505 100644
+--- a/drivers/gpu/mali/ump/linux/ump_ukk_wrappers.h
++++ b/drivers/gpu/mali/ump/linux/ump_ukk_wrappers.h
+@@ -34,6 +34,7 @@ int ump_cache_operations_control_wrapper(u32 __user * argument, struct ump_sessi
+ int ump_switch_hw_usage_wrapper(u32 __user * argument, struct ump_session_data  * session_data);
+ int ump_lock_wrapper(u32 __user * argument, struct ump_session_data  * session_data);
+ int ump_unlock_wrapper(u32 __user * argument, struct ump_session_data  * session_data);
++int ump_phys_addr_get_wrapper(u32 __user * argument, struct ump_session_data  * session_data);
+ 
+ 
+ 
+-- 
+2.7.0
+
