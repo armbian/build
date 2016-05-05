@@ -112,18 +112,17 @@ compile_sunxi_tools (){
 	display_alert "Compiling sunxi tools" "@host & target" "info"
 	cd $SOURCES/$MISC1_DIR
 	make -s clean >/dev/null 2>&1
-	rm -f sunxi-fexc sunxi-nand-part
 	make -s >/dev/null 2>&1
-	cp fex2bin bin2fex /usr/local/bin/
+	mkdir -p /usr/local/bin/
+	cp fex2bin bin2fex sunxi-fel /usr/local/bin/
 	# make -s clean >/dev/null 2>&1
-	# rm -f sunxi-fexc sunxi-nand-part meminfo sunxi-fel sunxi-pio 2>/dev/null
+
 	# NOTE: Fix CC=$CROSS_COMPILE"gcc" before reenabling
 	# make $CTHREADS 'sunxi-nand-part' CC=$CROSS_COMPILE"gcc" >> $DEST/debug/install.log 2>&1
 	# make $CTHREADS 'sunxi-fexc' CC=$CROSS_COMPILE"gcc" >> $DEST/debug/install.log 2>&1
 	# make $CTHREADS 'meminfo' CC=$CROSS_COMPILE"gcc" >> $DEST/debug/install.log 2>&1
 
 }
-
 
 compile_kernel (){
 #---------------------------------------------------------------------------------------------------------------------------------
