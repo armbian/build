@@ -32,13 +32,13 @@
 cleaning()
 {
 	case $1 in
-		"make")	# clean u-boot and kernel sources
-		[ -d "$SOURCES/$BOOTSOURCEDIR" ] && display_alert "Cleaning" "$SOURCES/$BOOTSOURCEDIR" "info" && cd $SOURCES/$BOOTSOURCEDIR && make -s ARCH=$ARCHITECTURE CROSS_COMPILE=$UBOOT_COMPILER clean >/dev/null
-		[ -d "$SOURCES/$LINUXSOURCEDIR" ] && display_alert "Cleaning" "$SOURCES/$LINUXSOURCEDIR" "info" && cd $SOURCES/$LINUXSOURCEDIR && make -s ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER clean >/dev/null
+		make)	# clean u-boot and kernel sources
+		[[ -d $SOURCES/$BOOTSOURCEDIR ]] && display_alert "Cleaning" "$BOOTSOURCEDIR" "info" && cd $SOURCES/$BOOTSOURCEDIR && make -s ARCH=$ARCHITECTURE CROSS_COMPILE=$UBOOT_COMPILER clean >/dev/null
+		[[ -d $SOURCES/$LINUXSOURCEDIR ]] && display_alert "Cleaning" "$LINUXSOURCEDIR" "info" && cd $SOURCES/$LINUXSOURCEDIR && make -s ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER clean >/dev/null
 		;;
 
-		"debs") # delete output/debs for current branch and family
-		if [ -d "$DEST/debs" ]; then
+		debs) # delete output/debs for current branch and family
+		if [[ -d $DEST/debs ]]; then
 			display_alert "Cleaning $DEST/debs for" "$BOARD $BRANCH" "info"
 			# easier than dealing with variable expansion and escaping dashes in file names
 			find $DEST/debs -name '*.deb' | grep -E "${CHOSEN_KERNEL/image/.*}|$CHOSEN_UBOOT" | xargs rm -f
@@ -46,20 +46,20 @@ cleaning()
 		fi
 		;;
 
-		"alldebs") # delete output/debs
-		[ -d "$DEST/debs" ] && display_alert "Cleaning" "$DEST/debs" "info" && rm -rf $DEST/debs/*
+		alldebs) # delete output/debs
+		[[ -d $DEST/debs ]] && display_alert "Cleaning" "$DEST/debs" "info" && rm -rf $DEST/debs/*
 		;;
 
-		"cache") # delete output/cache
-		[ -d "$CACHEDIR" ] && display_alert "Cleaning" "$CACHEDIR" "info" && find $CACHEDIR/ -type f -delete
+		cache) # delete output/cache
+		[[ -d $CACHEDIR ]] && display_alert "Cleaning" "$CACHEDIR" "info" && find $CACHEDIR/ -type f -delete
 		;;
 
-		"images") # delete output/images
-		[ -d "$DEST/images" ] && display_alert "Cleaning" "$DEST/images" "info" && rm -rf $DEST/images/*
+		images) # delete output/images
+		[[ -d $DEST/images ]] && display_alert "Cleaning" "$DEST/images" "info" && rm -rf $DEST/images/*
 		;;
 
-		"sources") # delete output/sources
-		[ -d "$SOURCES" ] && display_alert "Cleaning" "$SOURCES" "info" && rm -rf $SOURCES/*
+		sources) # delete output/sources
+		[[ -d $SOURCES ]] && display_alert "Cleaning" "$SOURCES" "info" && rm -rf $SOURCES/*
 		;;
 
 		*) # unknown
