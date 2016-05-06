@@ -28,7 +28,7 @@ write_uboot_platform()
 }
 
 family_tweaks()
-
+{
 	# default lirc configuration
 	sed -i '1i sed -i \x27s/DEVICE="\\/dev\\/input.*/DEVICE="\\/dev\\/input\\/\x27$str\x27"/g\x27 /etc/lirc/hardware.conf' \
 		$CACHEDIR/sdcard/etc/lirc/hardware.conf
