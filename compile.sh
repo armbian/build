@@ -18,7 +18,7 @@
 KERNEL_ONLY=""						# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
 KERNEL_CONFIGURE="no"					# want to change my default configuration
 CLEAN_LEVEL="make,debs"					# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
-							# "debs" = delete pckages in "./output/debs" for current branch and family,
+							# "debs" = delete packages in "./output/debs" for current branch and family,
 							# "alldebs" - delete all packages in "./output/debs", "images" = delete "./output/images",
 							# "cache" = delete "./output/cache", "sources" = delete "./sources"
 # user
