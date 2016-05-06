@@ -157,7 +157,7 @@ fi
 
 # apt-cacher-ng mirror configurarion
 
-if [[ DISTRIBUTION == Ubuntu ]]; then
+if [[ $DISTRIBUTION == Ubuntu ]]; then
 	APT_MIRROR=$UBUNTU_MIRROR
 else
 	APT_MIRROR=$DEBIAN_MIRROR
