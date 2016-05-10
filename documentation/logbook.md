@@ -5,8 +5,8 @@
 Images:
 
 - all 3.10+ kernels [are Docker ready](http://forum.armbian.com/index.php/topic/490-docker-on-armbian/)
-- all A10/A20/H3 comes with HW acccelerated video playback in desktop build
-- [fixed root exploid on H3 boards](https://github.com/igorpecovnik/lib/issues/282)
+- all A10/A20/H3 comes with HW accelerated video playback in desktop build
+- [fixed root exploit on H3 boards](https://github.com/igorpecovnik/lib/issues/282)
 - [fixed kswapd 100% bug on H3 boards](https://github.com/igorpecovnik/lib/issues/219)
 - fixed SPDIF / I2S audio driver in legacy kernel
 - fixed Udoo Neo wireless
