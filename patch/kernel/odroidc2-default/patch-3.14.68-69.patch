@@ -1,0 +1,771 @@
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 900d98eec2fc..8efefbd1a853 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -3247,8 +3247,8 @@ F:	Documentation/x86/efi-stub.txt
+ F:	arch/ia64/kernel/efi.c
+ F:	arch/x86/boot/compressed/eboot.[ch]
+ F:	arch/x86/include/asm/efi.h
+-F:	arch/x86/platform/efi/*
+-F:	drivers/firmware/efi/*
++F:	arch/x86/platform/efi/
++F:	drivers/firmware/efi/
+ F:	include/linux/efi*.h
+ 
+ EFI VARIABLE FILESYSTEM
+diff --git a/Makefile b/Makefile
+index 5ec8a7dda8ba..c6762fdfc967 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 3
+ PATCHLEVEL = 14
+-SUBLEVEL = 68
++SUBLEVEL = 69
+ EXTRAVERSION =
+ NAME = Remembering Coco
+ 
+diff --git a/arch/arm/mach-socfpga/headsmp.S b/arch/arm/mach-socfpga/headsmp.S
+index 95c115d8b5ee..b143f946bb79 100644
+--- a/arch/arm/mach-socfpga/headsmp.S
++++ b/arch/arm/mach-socfpga/headsmp.S
+@@ -11,6 +11,7 @@
+ #include <linux/init.h>
+ 
+ 	.arch	armv7-a
++	.arm
+ 
+ ENTRY(secondary_trampoline)
+ 	movw	r2, #:lower16:cpu1start_addr
+diff --git a/arch/powerpc/include/uapi/asm/cputable.h b/arch/powerpc/include/uapi/asm/cputable.h
+index de2c0e4ee1aa..67de80a8e178 100644
+--- a/arch/powerpc/include/uapi/asm/cputable.h
++++ b/arch/powerpc/include/uapi/asm/cputable.h
+@@ -31,6 +31,7 @@
+ #define PPC_FEATURE_PSERIES_PERFMON_COMPAT \
+ 					0x00000040
+ 
++/* Reserved - do not use		0x00000004 */
+ #define PPC_FEATURE_TRUE_LE		0x00000002
+ #define PPC_FEATURE_PPC_LE		0x00000001
+ 
+diff --git a/arch/powerpc/kernel/prom.c b/arch/powerpc/kernel/prom.c
+index f58c0d3aaeb4..3f70874faf24 100644
+--- a/arch/powerpc/kernel/prom.c
++++ b/arch/powerpc/kernel/prom.c
+@@ -159,7 +159,7 @@ static struct ibm_pa_feature {
+ 	{CPU_FTR_NOEXECUTE, 0, 0,	0, 6, 0},
+ 	{CPU_FTR_NODSISRALIGN, 0, 0,	1, 1, 1},
+ 	{0, MMU_FTR_CI_LARGE_PAGE, 0,	1, 2, 0},
+-	{CPU_FTR_REAL_LE, PPC_FEATURE_TRUE_LE, 5, 0, 0},
++	{CPU_FTR_REAL_LE, 0, PPC_FEATURE_TRUE_LE, 5, 0, 0},
+ };
+ 
+ static void __init scan_features(unsigned long node, unsigned char *ftrs,
+diff --git a/arch/x86/kernel/sysfb_efi.c b/arch/x86/kernel/sysfb_efi.c
+index b285d4e8c68e..5da924bbf0a0 100644
+--- a/arch/x86/kernel/sysfb_efi.c
++++ b/arch/x86/kernel/sysfb_efi.c
+@@ -106,14 +106,24 @@ static int __init efifb_set_system(const struct dmi_system_id *id)
+ 					continue;
+ 				for (i = 0; i < DEVICE_COUNT_RESOURCE; i++) {
+ 					resource_size_t start, end;
++					unsigned long flags;
++
++					flags = pci_resource_flags(dev, i);
++					if (!(flags & IORESOURCE_MEM))
++						continue;
++
++					if (flags & IORESOURCE_UNSET)
++						continue;
++
++					if (pci_resource_len(dev, i) == 0)
++						continue;
+ 
+ 					start = pci_resource_start(dev, i);
+-					if (start == 0)
+-						break;
+ 					end = pci_resource_end(dev, i);
+ 					if (screen_info.lfb_base >= start &&
+ 					    screen_info.lfb_base < end) {
+ 						found_bar = 1;
++						break;
+ 					}
+ 				}
+ 			}
+diff --git a/arch/x86/kernel/tsc_msr.c b/arch/x86/kernel/tsc_msr.c
+index 92ae6acac8a7..6aa0f4d9eea6 100644
+--- a/arch/x86/kernel/tsc_msr.c
++++ b/arch/x86/kernel/tsc_msr.c
+@@ -92,7 +92,7 @@ unsigned long try_msr_calibrate_tsc(void)
+ 
+ 	if (freq_desc_tables[cpu_index].msr_plat) {
+ 		rdmsr(MSR_PLATFORM_INFO, lo, hi);
+-		ratio = (lo >> 8) & 0x1f;
++		ratio = (lo >> 8) & 0xff;
+ 	} else {
+ 		rdmsr(MSR_IA32_PERF_STATUS, lo, hi);
+ 		ratio = (hi >> 8) & 0x1f;
+diff --git a/drivers/acpi/acpica/dsmethod.c b/drivers/acpi/acpica/dsmethod.c
+index 81a78ba84311..465872560ba2 100644
+--- a/drivers/acpi/acpica/dsmethod.c
++++ b/drivers/acpi/acpica/dsmethod.c
+@@ -267,6 +267,9 @@ acpi_ds_begin_method_execution(struct acpi_namespace_node *method_node,
+ 				obj_desc->method.mutex->mutex.
+ 				    original_sync_level =
+ 				    obj_desc->method.mutex->mutex.sync_level;
++
++				obj_desc->method.mutex->mutex.thread_id =
++				    acpi_os_get_thread_id();
+ 			}
+ 		}
+ 
+diff --git a/drivers/block/nbd.c b/drivers/block/nbd.c
+index d18093681af2..200c4e2c716e 100644
+--- a/drivers/block/nbd.c
++++ b/drivers/block/nbd.c
+@@ -581,8 +581,8 @@ static void do_nbd_request(struct request_queue *q)
+ 		BUG_ON(nbd->magic != NBD_MAGIC);
+ 
+ 		if (unlikely(!nbd->sock)) {
+-			dev_err(disk_to_dev(nbd->disk),
+-				"Attempted send on closed socket\n");
++			dev_err_ratelimited(disk_to_dev(nbd->disk),
++					    "Attempted send on closed socket\n");
+ 			req->errors++;
+ 			nbd_end_request(req);
+ 			spin_lock_irq(q->queue_lock);
+diff --git a/drivers/clk/versatile/clk-sp810.c b/drivers/clk/versatile/clk-sp810.c
+index 5122ef25f595..e63c3ef9b5ec 100644
+--- a/drivers/clk/versatile/clk-sp810.c
++++ b/drivers/clk/versatile/clk-sp810.c
+@@ -141,6 +141,7 @@ void __init clk_sp810_of_setup(struct device_node *node)
+ 	const char *parent_names[2];
+ 	char name[12];
+ 	struct clk_init_data init;
++	static int instance;
+ 	int i;
+ 
+ 	if (!sp810) {
+@@ -172,7 +173,7 @@ void __init clk_sp810_of_setup(struct device_node *node)
+ 	init.num_parents = ARRAY_SIZE(parent_names);
+ 
+ 	for (i = 0; i < ARRAY_SIZE(sp810->timerclken); i++) {
+-		snprintf(name, ARRAY_SIZE(name), "timerclken%d", i);
++		snprintf(name, sizeof(name), "sp810_%d_%d", instance, i);
+ 
+ 		sp810->timerclken[i].sp810 = sp810;
+ 		sp810->timerclken[i].channel = i;
+@@ -184,5 +185,6 @@ void __init clk_sp810_of_setup(struct device_node *node)
+ 	}
+ 
+ 	of_clk_add_provider(node, clk_sp810_timerclken_of_get, sp810);
++	instance++;
+ }
+ CLK_OF_DECLARE(sp810, "arm,sp810", clk_sp810_of_setup);
+diff --git a/drivers/iio/magnetometer/ak8975.c b/drivers/iio/magnetometer/ak8975.c
+index 053117c02bbc..afcf3491f579 100644
+--- a/drivers/iio/magnetometer/ak8975.c
++++ b/drivers/iio/magnetometer/ak8975.c
+@@ -151,6 +151,8 @@ static int ak8975_setup_irq(struct ak8975_data *data)
+ 	int rc;
+ 	int irq;
+ 
++	init_waitqueue_head(&data->data_ready_queue);
++	clear_bit(0, &data->flags);
+ 	if (client->irq)
+ 		irq = client->irq;
+ 	else
+@@ -166,8 +168,6 @@ static int ak8975_setup_irq(struct ak8975_data *data)
+ 		return rc;
+ 	}
+ 
+-	init_waitqueue_head(&data->data_ready_queue);
+-	clear_bit(0, &data->flags);
+ 	data->eoc_irq = irq;
+ 
+ 	return rc;
+diff --git a/drivers/input/touchscreen/ads7846.c b/drivers/input/touchscreen/ads7846.c
+index 45a06e495ed2..3512a686873d 100644
+--- a/drivers/input/touchscreen/ads7846.c
++++ b/drivers/input/touchscreen/ads7846.c
+@@ -668,18 +668,22 @@ static int ads7846_no_filter(void *ads, int data_idx, int *val)
+ 
+ static int ads7846_get_value(struct ads7846 *ts, struct spi_message *m)
+ {
++	int value;
+ 	struct spi_transfer *t =
+ 		list_entry(m->transfers.prev, struct spi_transfer, transfer_list);
+ 
+ 	if (ts->model == 7845) {
+-		return be16_to_cpup((__be16 *)&(((char*)t->rx_buf)[1])) >> 3;
++		value = be16_to_cpup((__be16 *)&(((char *)t->rx_buf)[1]));
+ 	} else {
+ 		/*
+ 		 * adjust:  on-wire is a must-ignore bit, a BE12 value, then
+ 		 * padding; built from two 8 bit values written msb-first.
+ 		 */
+-		return be16_to_cpup((__be16 *)t->rx_buf) >> 3;
++		value = be16_to_cpup((__be16 *)t->rx_buf);
+ 	}
++
++	/* enforce ADC output is 12 bits width */
++	return (value >> 3) & 0xfff;
+ }
+ 
+ static void ads7846_update_value(struct spi_message *m, int val)
+diff --git a/drivers/input/touchscreen/zforce_ts.c b/drivers/input/touchscreen/zforce_ts.c
+index 2175f3419002..dd5cc262bb50 100644
+--- a/drivers/input/touchscreen/zforce_ts.c
++++ b/drivers/input/touchscreen/zforce_ts.c
+@@ -350,8 +350,8 @@ static int zforce_touch_event(struct zforce_ts *ts, u8 *payload)
+ 			point.coord_x = point.coord_y = 0;
+ 		}
+ 
+-		point.state = payload[9 * i + 5] & 0x03;
+-		point.id = (payload[9 * i + 5] & 0xfc) >> 2;
++		point.state = payload[9 * i + 5] & 0x0f;
++		point.id = (payload[9 * i + 5] & 0xf0) >> 4;
+ 
+ 		/* determine touch major, minor and orientation */
+ 		point.area_major = max(payload[9 * i + 6],
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index 68c94cc85c35..39dc1d43eec1 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -2697,7 +2697,7 @@ lpfc_online(struct lpfc_hba *phba)
+ 	}
+ 
+ 	vports = lpfc_create_vport_work_array(phba);
+-	if (vports != NULL)
++	if (vports != NULL) {
+ 		for (i = 0; i <= phba->max_vports && vports[i] != NULL; i++) {
+ 			struct Scsi_Host *shost;
+ 			shost = lpfc_shost_from_vport(vports[i]);
+@@ -2714,7 +2714,8 @@ lpfc_online(struct lpfc_hba *phba)
+ 			}
+ 			spin_unlock_irq(shost->host_lock);
+ 		}
+-		lpfc_destroy_vport_work_array(phba, vports);
++	}
++	lpfc_destroy_vport_work_array(phba, vports);
+ 
+ 	lpfc_unblock_mgmt_io(phba);
+ 	return 0;
+diff --git a/drivers/usb/serial/cp210x.c b/drivers/usb/serial/cp210x.c
+index b689a2fd960c..16f1b199d46b 100644
+--- a/drivers/usb/serial/cp210x.c
++++ b/drivers/usb/serial/cp210x.c
+@@ -108,6 +108,7 @@ static const struct usb_device_id id_table[] = {
+ 	{ USB_DEVICE(0x10C4, 0x826B) }, /* Cygnal Integrated Products, Inc., Fasttrax GPS demonstration module */
+ 	{ USB_DEVICE(0x10C4, 0x8281) }, /* Nanotec Plug & Drive */
+ 	{ USB_DEVICE(0x10C4, 0x8293) }, /* Telegesis ETRX2USB */
++	{ USB_DEVICE(0x10C4, 0x82F4) }, /* Starizona MicroTouch */
+ 	{ USB_DEVICE(0x10C4, 0x82F9) }, /* Procyon AVS */
+ 	{ USB_DEVICE(0x10C4, 0x8341) }, /* Siemens MC35PU GPRS Modem */
+ 	{ USB_DEVICE(0x10C4, 0x8382) }, /* Cygnal Integrated Products, Inc. */
+@@ -117,6 +118,7 @@ static const struct usb_device_id id_table[] = {
+ 	{ USB_DEVICE(0x10C4, 0x8418) }, /* IRZ Automation Teleport SG-10 GSM/GPRS Modem */
+ 	{ USB_DEVICE(0x10C4, 0x846E) }, /* BEI USB Sensor Interface (VCP) */
+ 	{ USB_DEVICE(0x10C4, 0x8477) }, /* Balluff RFID */
++	{ USB_DEVICE(0x10C4, 0x84B6) }, /* Starizona Hyperion */
+ 	{ USB_DEVICE(0x10C4, 0x85EA) }, /* AC-Services IBUS-IF */
+ 	{ USB_DEVICE(0x10C4, 0x85EB) }, /* AC-Services CIS-IBUS */
+ 	{ USB_DEVICE(0x10C4, 0x85F8) }, /* Virtenio Preon32 */
+@@ -140,6 +142,8 @@ static const struct usb_device_id id_table[] = {
+ 	{ USB_DEVICE(0x10C4, 0xF004) }, /* Elan Digital Systems USBcount50 */
+ 	{ USB_DEVICE(0x10C5, 0xEA61) }, /* Silicon Labs MobiData GPRS USB Modem */
+ 	{ USB_DEVICE(0x10CE, 0xEA6A) }, /* Silicon Labs MobiData GPRS USB Modem 100EU */
++	{ USB_DEVICE(0x12B8, 0xEC60) }, /* Link G4 ECU */
++	{ USB_DEVICE(0x12B8, 0xEC62) }, /* Link G4+ ECU */
+ 	{ USB_DEVICE(0x13AD, 0x9999) }, /* Baltech card reader */
+ 	{ USB_DEVICE(0x1555, 0x0004) }, /* Owen AC4 USB-RS485 Converter */
+ 	{ USB_DEVICE(0x166A, 0x0201) }, /* Clipsal 5500PACA C-Bus Pascal Automation Controller */
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index be78847782c4..842ba1e59706 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -844,7 +844,8 @@ static ssize_t environ_read(struct file *file, char __user *buf,
+ 	int ret = 0;
+ 	struct mm_struct *mm = file->private_data;
+ 
+-	if (!mm)
++	/* Ensure the process spawned far enough to have an environment. */
++	if (!mm || !mm->env_end)
+ 		return 0;
+ 
+ 	page = (char *)__get_free_page(GFP_TEMPORARY);
+diff --git a/include/linux/compiler-gcc.h b/include/linux/compiler-gcc.h
+index 02ae99e8e6d3..633716ef19b0 100644
+--- a/include/linux/compiler-gcc.h
++++ b/include/linux/compiler-gcc.h
+@@ -100,10 +100,122 @@
+ #define __maybe_unused			__attribute__((unused))
+ #define __always_unused			__attribute__((unused))
+ 
+-#define __gcc_header(x) #x
+-#define _gcc_header(x) __gcc_header(linux/compiler-gcc##x.h)
+-#define gcc_header(x) _gcc_header(x)
+-#include gcc_header(__GNUC__)
++/* gcc version specific checks */
++
++#if GCC_VERSION < 30200
++# error Sorry, your compiler is too old - please upgrade it.
++#endif
++
++#if GCC_VERSION < 30300
++# define __used			__attribute__((__unused__))
++#else
++# define __used			__attribute__((__used__))
++#endif
++
++#ifdef CONFIG_GCOV_KERNEL
++# if GCC_VERSION < 30400
++#   error "GCOV profiling support for gcc versions below 3.4 not included"
++# endif /* __GNUC_MINOR__ */
++#endif /* CONFIG_GCOV_KERNEL */
++
++#if GCC_VERSION >= 30400
++#define __must_check		__attribute__((warn_unused_result))
++#endif
++
++#if GCC_VERSION >= 40000
++
++/* GCC 4.1.[01] miscompiles __weak */
++#ifdef __KERNEL__
++# if GCC_VERSION >= 40100 &&  GCC_VERSION <= 40101
++#  error Your version of gcc miscompiles the __weak directive
++# endif
++#endif
++
++#define __used			__attribute__((__used__))
++#define __compiler_offsetof(a, b)					\
++	__builtin_offsetof(a, b)
++
++#if GCC_VERSION >= 40100 && GCC_VERSION < 40600
++# define __compiletime_object_size(obj) __builtin_object_size(obj, 0)
++#endif
++
++#if GCC_VERSION >= 40300
++/* Mark functions as cold. gcc will assume any path leading to a call
++ * to them will be unlikely.  This means a lot of manual unlikely()s
++ * are unnecessary now for any paths leading to the usual suspects
++ * like BUG(), printk(), panic() etc. [but let's keep them for now for
++ * older compilers]
++ *
++ * Early snapshots of gcc 4.3 don't support this and we can't detect this
++ * in the preprocessor, but we can live with this because they're unreleased.
++ * Maketime probing would be overkill here.
++ *
++ * gcc also has a __attribute__((__hot__)) to move hot functions into
++ * a special section, but I don't see any sense in this right now in
++ * the kernel context
++ */
++#define __cold			__attribute__((__cold__))
++
++#define __UNIQUE_ID(prefix) __PASTE(__PASTE(__UNIQUE_ID_, prefix), __COUNTER__)
++
++#ifndef __CHECKER__
++# define __compiletime_warning(message) __attribute__((warning(message)))
++# define __compiletime_error(message) __attribute__((error(message)))
++#endif /* __CHECKER__ */
++#endif /* GCC_VERSION >= 40300 */
++
++#if GCC_VERSION >= 40500
++/*
++ * Mark a position in code as unreachable.  This can be used to
++ * suppress control flow warnings after asm blocks that transfer
++ * control elsewhere.
++ *
++ * Early snapshots of gcc 4.5 don't support this and we can't detect
++ * this in the preprocessor, but we can live with this because they're
++ * unreleased.  Really, we need to have autoconf for the kernel.
++ */
++#define unreachable() __builtin_unreachable()
++
++/* Mark a function definition as prohibited from being cloned. */
++#define __noclone	__attribute__((__noclone__, __optimize__("no-tracer")))
++
++#endif /* GCC_VERSION >= 40500 */
++
++#if GCC_VERSION >= 40600
++/*
++ * Tell the optimizer that something else uses this function or variable.
++ */
++#define __visible	__attribute__((externally_visible))
++#endif
++
++/*
++ * GCC 'asm goto' miscompiles certain code sequences:
++ *
++ *   http://gcc.gnu.org/bugzilla/show_bug.cgi?id=58670
++ *
++ * Work it around via a compiler barrier quirk suggested by Jakub Jelinek.
++ *
++ * (asm goto is automatically volatile - the naming reflects this.)
++ */
++#define asm_volatile_goto(x...)	do { asm goto(x); asm (""); } while (0)
++
++#ifdef CONFIG_ARCH_USE_BUILTIN_BSWAP
++#if GCC_VERSION >= 40400
++#define __HAVE_BUILTIN_BSWAP32__
++#define __HAVE_BUILTIN_BSWAP64__
++#endif
++#if GCC_VERSION >= 40800 || (defined(__powerpc__) && GCC_VERSION >= 40600)
++#define __HAVE_BUILTIN_BSWAP16__
++#endif
++#endif /* CONFIG_ARCH_USE_BUILTIN_BSWAP */
++
++#if GCC_VERSION >= 50000
++#define KASAN_ABI_VERSION 4
++#elif GCC_VERSION >= 40902
++#define KASAN_ABI_VERSION 3
++#endif
++
++#endif	/* gcc version >= 40000 specific checks */
+ 
+ #if !defined(__noclone)
+ #define __noclone	/* not needed */
+diff --git a/include/linux/compiler-gcc3.h b/include/linux/compiler-gcc3.h
+deleted file mode 100644
+index 7d89febe4d79..000000000000
+--- a/include/linux/compiler-gcc3.h
++++ /dev/null
+@@ -1,23 +0,0 @@
+-#ifndef __LINUX_COMPILER_H
+-#error "Please don't include <linux/compiler-gcc3.h> directly, include <linux/compiler.h> instead."
+-#endif
+-
+-#if GCC_VERSION < 30200
+-# error Sorry, your compiler is too old - please upgrade it.
+-#endif
+-
+-#if GCC_VERSION >= 30300
+-# define __used			__attribute__((__used__))
+-#else
+-# define __used			__attribute__((__unused__))
+-#endif
+-
+-#if GCC_VERSION >= 30400
+-#define __must_check		__attribute__((warn_unused_result))
+-#endif
+-
+-#ifdef CONFIG_GCOV_KERNEL
+-# if GCC_VERSION < 30400
+-#   error "GCOV profiling support for gcc versions below 3.4 not included"
+-# endif /* __GNUC_MINOR__ */
+-#endif /* CONFIG_GCOV_KERNEL */
+diff --git a/include/linux/compiler-gcc4.h b/include/linux/compiler-gcc4.h
+deleted file mode 100644
+index 2507fd2a1eb4..000000000000
+--- a/include/linux/compiler-gcc4.h
++++ /dev/null
+@@ -1,88 +0,0 @@
+-#ifndef __LINUX_COMPILER_H
+-#error "Please don't include <linux/compiler-gcc4.h> directly, include <linux/compiler.h> instead."
+-#endif
+-
+-/* GCC 4.1.[01] miscompiles __weak */
+-#ifdef __KERNEL__
+-# if GCC_VERSION >= 40100 &&  GCC_VERSION <= 40101
+-#  error Your version of gcc miscompiles the __weak directive
+-# endif
+-#endif
+-
+-#define __used			__attribute__((__used__))
+-#define __must_check 		__attribute__((warn_unused_result))
+-#define __compiler_offsetof(a,b) __builtin_offsetof(a,b)
+-
+-#if GCC_VERSION >= 40100 && GCC_VERSION < 40600
+-# define __compiletime_object_size(obj) __builtin_object_size(obj, 0)
+-#endif
+-
+-#if GCC_VERSION >= 40300
+-/* Mark functions as cold. gcc will assume any path leading to a call
+-   to them will be unlikely.  This means a lot of manual unlikely()s
+-   are unnecessary now for any paths leading to the usual suspects
+-   like BUG(), printk(), panic() etc. [but let's keep them for now for
+-   older compilers]
+-
+-   Early snapshots of gcc 4.3 don't support this and we can't detect this
+-   in the preprocessor, but we can live with this because they're unreleased.
+-   Maketime probing would be overkill here.
+-
+-   gcc also has a __attribute__((__hot__)) to move hot functions into
+-   a special section, but I don't see any sense in this right now in
+-   the kernel context */
+-#define __cold			__attribute__((__cold__))
+-
+-#define __UNIQUE_ID(prefix) __PASTE(__PASTE(__UNIQUE_ID_, prefix), __COUNTER__)
+-
+-#ifndef __CHECKER__
+-# define __compiletime_warning(message) __attribute__((warning(message)))
+-# define __compiletime_error(message) __attribute__((error(message)))
+-#endif /* __CHECKER__ */
+-#endif /* GCC_VERSION >= 40300 */
+-
+-#if GCC_VERSION >= 40500
+-/*
+- * Mark a position in code as unreachable.  This can be used to
+- * suppress control flow warnings after asm blocks that transfer
+- * control elsewhere.
+- *
+- * Early snapshots of gcc 4.5 don't support this and we can't detect
+- * this in the preprocessor, but we can live with this because they're
+- * unreleased.  Really, we need to have autoconf for the kernel.
+- */
+-#define unreachable() __builtin_unreachable()
+-
+-/* Mark a function definition as prohibited from being cloned. */
+-#define __noclone	__attribute__((__noclone__))
+-
+-#endif /* GCC_VERSION >= 40500 */
+-
+-#if GCC_VERSION >= 40600
+-/*
+- * Tell the optimizer that something else uses this function or variable.
+- */
+-#define __visible __attribute__((externally_visible))
+-#endif
+-
+-/*
+- * GCC 'asm goto' miscompiles certain code sequences:
+- *
+- *   http://gcc.gnu.org/bugzilla/show_bug.cgi?id=58670
+- *
+- * Work it around via a compiler barrier quirk suggested by Jakub Jelinek.
+- * Fixed in GCC 4.8.2 and later versions.
+- *
+- * (asm goto is automatically volatile - the naming reflects this.)
+- */
+-#define asm_volatile_goto(x...)	do { asm goto(x); asm (""); } while (0)
+-
+-#ifdef CONFIG_ARCH_USE_BUILTIN_BSWAP
+-#if GCC_VERSION >= 40400
+-#define __HAVE_BUILTIN_BSWAP32__
+-#define __HAVE_BUILTIN_BSWAP64__
+-#endif
+-#if GCC_VERSION >= 40800 || (defined(__powerpc__) && GCC_VERSION >= 40600)
+-#define __HAVE_BUILTIN_BSWAP16__
+-#endif
+-#endif /* CONFIG_ARCH_USE_BUILTIN_BSWAP */
+diff --git a/include/linux/compiler-gcc5.h b/include/linux/compiler-gcc5.h
+deleted file mode 100644
+index cdd1cc202d51..000000000000
+--- a/include/linux/compiler-gcc5.h
++++ /dev/null
+@@ -1,66 +0,0 @@
+-#ifndef __LINUX_COMPILER_H
+-#error "Please don't include <linux/compiler-gcc5.h> directly, include <linux/compiler.h> instead."
+-#endif
+-
+-#define __used				__attribute__((__used__))
+-#define __must_check			__attribute__((warn_unused_result))
+-#define __compiler_offsetof(a, b)	__builtin_offsetof(a, b)
+-
+-/* Mark functions as cold. gcc will assume any path leading to a call
+-   to them will be unlikely.  This means a lot of manual unlikely()s
+-   are unnecessary now for any paths leading to the usual suspects
+-   like BUG(), printk(), panic() etc. [but let's keep them for now for
+-   older compilers]
+-
+-   Early snapshots of gcc 4.3 don't support this and we can't detect this
+-   in the preprocessor, but we can live with this because they're unreleased.
+-   Maketime probing would be overkill here.
+-
+-   gcc also has a __attribute__((__hot__)) to move hot functions into
+-   a special section, but I don't see any sense in this right now in
+-   the kernel context */
+-#define __cold			__attribute__((__cold__))
+-
+-#define __UNIQUE_ID(prefix) __PASTE(__PASTE(__UNIQUE_ID_, prefix), __COUNTER__)
+-
+-#ifndef __CHECKER__
+-# define __compiletime_warning(message) __attribute__((warning(message)))
+-# define __compiletime_error(message) __attribute__((error(message)))
+-#endif /* __CHECKER__ */
+-
+-/*
+- * Mark a position in code as unreachable.  This can be used to
+- * suppress control flow warnings after asm blocks that transfer
+- * control elsewhere.
+- *
+- * Early snapshots of gcc 4.5 don't support this and we can't detect
+- * this in the preprocessor, but we can live with this because they're
+- * unreleased.  Really, we need to have autoconf for the kernel.
+- */
+-#define unreachable() __builtin_unreachable()
+-
+-/* Mark a function definition as prohibited from being cloned. */
+-#define __noclone	__attribute__((__noclone__))
+-
+-/*
+- * Tell the optimizer that something else uses this function or variable.
+- */
+-#define __visible __attribute__((externally_visible))
+-
+-/*
+- * GCC 'asm goto' miscompiles certain code sequences:
+- *
+- *   http://gcc.gnu.org/bugzilla/show_bug.cgi?id=58670
+- *
+- * Work it around via a compiler barrier quirk suggested by Jakub Jelinek.
+- * Fixed in GCC 4.8.2 and later versions.
+- *
+- * (asm goto is automatically volatile - the naming reflects this.)
+- */
+-#define asm_volatile_goto(x...)	do { asm goto(x); asm (""); } while (0)
+-
+-#ifdef CONFIG_ARCH_USE_BUILTIN_BSWAP
+-#define __HAVE_BUILTIN_BSWAP32__
+-#define __HAVE_BUILTIN_BSWAP64__
+-#define __HAVE_BUILTIN_BSWAP16__
+-#endif /* CONFIG_ARCH_USE_BUILTIN_BSWAP */
+diff --git a/include/linux/mod_devicetable.h b/include/linux/mod_devicetable.h
+index 45e921401b06..740c6df3b3a7 100644
+--- a/include/linux/mod_devicetable.h
++++ b/include/linux/mod_devicetable.h
+@@ -398,6 +398,7 @@ struct virtio_device_id {
+ /*
+  * For Hyper-V devices we use the device guid as the id.
+  */
++#define vmbus_device_id hv_vmbus_device_id
+ struct hv_vmbus_device_id {
+ 	__u8 guid[16];
+ 	kernel_ulong_t driver_data;	/* Data private to the driver */
+@@ -548,6 +549,11 @@ struct amba_id {
+  * See documentation of "x86_match_cpu" for details.
+  */
+ 
++/*
++ * MODULE_DEVICE_TABLE expects this struct to be called x86cpu_device_id.
++ * Although gcc seems to ignore this error, clang fails without this define.
++ */
++#define x86cpu_device_id x86_cpu_id
+ struct x86_cpu_id {
+ 	__u16 vendor;
+ 	__u16 family;
+@@ -575,6 +581,7 @@ struct ipack_device_id {
+ #define MEI_CL_MODULE_PREFIX "mei:"
+ #define MEI_CL_NAME_SIZE 32
+ 
++#define mei_device_id mei_cl_device_id
+ struct mei_cl_device_id {
+ 	char name[MEI_CL_NAME_SIZE];
+ 	kernel_ulong_t driver_info;
+@@ -594,6 +601,7 @@ struct mei_cl_device_id {
+  * Identifies a RapidIO device based on both the device/vendor IDs and
+  * the assembly device/vendor IDs.
+  */
++#define rapidio_device_id rio_device_id
+ struct rio_device_id {
+ 	__u16 did, vid;
+ 	__u16 asm_did, asm_vid;
+diff --git a/kernel/trace/trace_events.c b/kernel/trace/trace_events.c
+index bb1ac9cbe30a..a8bd1ca97e03 100644
+--- a/kernel/trace/trace_events.c
++++ b/kernel/trace/trace_events.c
+@@ -1546,8 +1546,13 @@ event_create_dir(struct dentry *parent, struct ftrace_event_file *file)
+ 	trace_create_file("filter", 0644, file->dir, file,
+ 			  &ftrace_event_filter_fops);
+ 
+-	trace_create_file("trigger", 0644, file->dir, file,
+-			  &event_trigger_fops);
++	/*
++	 * Only event directories that can be enabled should have
++	 * triggers.
++	 */
++	if (!(call->flags & TRACE_EVENT_FL_IGNORE_ENABLE))
++		trace_create_file("trigger", 0644, file->dir, file,
++				  &event_trigger_fops);
+ 
+ 	trace_create_file("format", 0444, file->dir, call,
+ 			  &ftrace_event_format_fops);
+diff --git a/net/batman-adv/routing.c b/net/batman-adv/routing.c
+index a953d5b196a3..a4f76e3cdfe3 100644
+--- a/net/batman-adv/routing.c
++++ b/net/batman-adv/routing.c
+@@ -88,6 +88,15 @@ static void _batadv_update_route(struct batadv_priv *bat_priv,
+ 		neigh_node = NULL;
+ 
+ 	spin_lock_bh(&orig_node->neigh_list_lock);
++	/* curr_router used earlier may not be the current orig_ifinfo->router
++	 * anymore because it was dereferenced outside of the neigh_list_lock
++	 * protected region. After the new best neighbor has replace the current
++	 * best neighbor the reference counter needs to decrease. Consequently,
++	 * the code needs to ensure the curr_router variable contains a pointer
++	 * to the replaced best neighbor.
++	 */
++	curr_router = rcu_dereference_protected(orig_ifinfo->router, true);
++
+ 	rcu_assign_pointer(orig_ifinfo->router, neigh_node);
+ 	spin_unlock_bh(&orig_node->neigh_list_lock);
+ 	batadv_orig_ifinfo_free_ref(orig_ifinfo);
+diff --git a/net/batman-adv/send.c b/net/batman-adv/send.c
+index 843febd1e519..07efffae6829 100644
+--- a/net/batman-adv/send.c
++++ b/net/batman-adv/send.c
+@@ -610,6 +610,9 @@ batadv_purge_outstanding_packets(struct batadv_priv *bat_priv,
+ 
+ 		if (pending) {
+ 			hlist_del(&forw_packet->list);
++			if (!forw_packet->own)
++				atomic_inc(&bat_priv->bcast_queue_left);
++
+ 			batadv_forw_packet_free(forw_packet);
+ 		}
+ 	}
+@@ -637,6 +640,9 @@ batadv_purge_outstanding_packets(struct batadv_priv *bat_priv,
+ 
+ 		if (pending) {
+ 			hlist_del(&forw_packet->list);
++			if (!forw_packet->own)
++				atomic_inc(&bat_priv->batman_queue_left);
++
+ 			batadv_forw_packet_free(forw_packet);
+ 		}
+ 	}
+diff --git a/net/batman-adv/soft-interface.c b/net/batman-adv/soft-interface.c
+index f82c267e1886..8532f8bb84c4 100644
+--- a/net/batman-adv/soft-interface.c
++++ b/net/batman-adv/soft-interface.c
+@@ -356,11 +356,17 @@ void batadv_interface_rx(struct net_device *soft_iface,
+ 	 */
+ 	nf_reset(skb);
+ 
++	if (unlikely(!pskb_may_pull(skb, ETH_HLEN)))
++		goto dropped;
++
+ 	vid = batadv_get_vid(skb, 0);
+ 	ethhdr = eth_hdr(skb);
+ 
+ 	switch (ntohs(ethhdr->h_proto)) {
+ 	case ETH_P_8021Q:
++		if (!pskb_may_pull(skb, VLAN_ETH_HLEN))
++			goto dropped;
++
+ 		vhdr = (struct vlan_ethhdr *)skb->data;
+ 
+ 		if (vhdr->h_vlan_encapsulated_proto != ethertype)
+@@ -372,8 +378,6 @@ void batadv_interface_rx(struct net_device *soft_iface,
+ 	}
+ 
+ 	/* skb->dev & skb->pkt_type are set here */
+-	if (unlikely(!pskb_may_pull(skb, ETH_HLEN)))
+-		goto dropped;
+ 	skb->protocol = eth_type_trans(skb, soft_iface);
+ 
+ 	/* should not be necessary anymore as we use skb_pull_rcsum()
+diff --git a/net/netfilter/ipvs/ip_vs_pe_sip.c b/net/netfilter/ipvs/ip_vs_pe_sip.c
+index bed5f7042529..bb318e4623a3 100644
+--- a/net/netfilter/ipvs/ip_vs_pe_sip.c
++++ b/net/netfilter/ipvs/ip_vs_pe_sip.c
+@@ -88,7 +88,7 @@ ip_vs_sip_fill_param(struct ip_vs_conn_param *p, struct sk_buff *skb)
+ 	dptr = skb->data + dataoff;
+ 	datalen = skb->len - dataoff;
+ 
+-	if (get_callid(dptr, dataoff, datalen, &matchoff, &matchlen))
++	if (get_callid(dptr, 0, datalen, &matchoff, &matchlen))
+ 		return -EINVAL;
+ 
+ 	/* N.B: pe_data is only set on success,
