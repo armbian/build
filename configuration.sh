@@ -77,7 +77,7 @@ esac
 
 # temporary hacks/overrides
 case $LINUXFAMILY in
-	sun4i|sun5i|sun7i)
+	sun4i|sun5i|sun6i|sun7i)
 	# latest stable u-boot v2016.03 broke gmac on sun7i, fixing it for DEFAULT and NEXT
 	[[ $BRANCH == default || $BRANCH == next ]] && BOOTBRANCH='v2016.01'
 	# fix for olimex boards
