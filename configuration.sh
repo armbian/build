@@ -136,7 +136,7 @@ case $RELEASE in
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget iptables nano thin-provisioning-tools libnl-genl-3-dev libpam-systemd \
-		software-properties-common python-software-properties libnss-myhostname f2fs-tools"
+		software-properties-common libnss-myhostname f2fs-tools"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends \
 			policykit-1 xserver-xorg-video-fbdev"
 	PACKAGE_LIST_EXCLUDE=""
