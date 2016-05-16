@@ -315,6 +315,15 @@ prepare_host() {
 		PAK="$PAK libc6-dev-armhf-cross libc6-dev-armel-cross"
 	fi
 
+	# Deboostrap in trusty breaks due too old debootstrap. We are installing Xenial package
+	local debootstrap_version=$(apt-cache show debootstrap | grep Version | head -1 | awk '{print $2}' | cut -f1 -d"+")
+	local debootstrap_minimal="1.0.78"
+
+	if [[ "$debootstrap_version" < "$debootstrap_minimal" ]]; then 
+		display_alert "Upgrading" "debootstrap" "info"
+		dpkg -i $SRC/lib/bin/debootstrap_1.0.78+nmu1ubuntu1.1_all.deb
+	fi
+	
 	local deps=()
 	local installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
 
