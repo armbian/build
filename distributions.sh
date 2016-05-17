@@ -116,6 +116,9 @@ trusty)
 		# fix selinux error
 		mkdir $CACHEDIR/sdcard/selinux
 
+		# remove legal info from Ubuntu
+		[[ -f $CACHEDIR/sdcard/etc/legal ]] && rm $CACHEDIR/sdcard/etc/legal
+		
 		# that my custom motd works well
 		if [[ -d $CACHEDIR/sdcard/etc/update-motd.d ]]; then
 			mv $CACHEDIR/sdcard/etc/update-motd.d $CACHEDIR/sdcard/etc/update-motd.d-backup
@@ -136,12 +139,15 @@ xenial)
 		sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
 
 		# auto upgrading (disabled while testing)
-		#sed -e "s/ORIGIN/Debian/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		#sed -e "s/CODENAME/$RELEASE/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		sed -e "s/ORIGIN/Ubuntu/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
+		sed -e "s/CODENAME/$RELEASE/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 
 		# fix selinux error
 		mkdir $CACHEDIR/sdcard/selinux
-
+		
+		# remove legal info from Ubuntu
+		[[ -f $CACHEDIR/sdcard/etc/legal ]] && rm $CACHEDIR/sdcard/etc/legal
+		
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
 
 		# Fix for PuTTY/KiTTY & ncurses-based dialogs (i.e. alsamixer) over serial

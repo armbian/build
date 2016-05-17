@@ -73,6 +73,8 @@ create_board_package (){
 	echo "[[ -f /root/nand-sata-install ]] && rm /root/nand-sata-install" >> $destination/DEBIAN/postinst
 	echo "ln -sf /var/run/motd /etc/motd" >> $destination/DEBIAN/postinst
 	echo "[[ -f /etc/bash.bashrc.custom ]] && rm /etc/bash.bashrc.custom" >> $destination/DEBIAN/postinst
+	echo "[[ -f /etc/update-motd.d/00-header ]] && rm /etc/update-motd.d/00-header" >> $destination/DEBIAN/postinst
+	echo "[[ -f /etc/update-motd.d/10-help-text ]] && rm /etc/update-motd.d/10-help-text" >> $destination/DEBIAN/postinst
 	echo "if [[ -d /boot/bin && ! -f /boot/script.bin ]]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi">> $destination/DEBIAN/postinst
 	echo "exit 0" >> $destination/DEBIAN/postinst
 
