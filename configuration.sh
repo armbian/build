@@ -81,6 +81,10 @@ case $LINUXFAMILY in
 	# fix for u-boot needing armhf GCC 4.8
 	UBOOT_COMPILER="arm-linux-gnueabihf-"
 	;;
+	marvell)
+	# fix for u-boot needing arm soft float
+	UBOOT_COMPILER="arm-eabi-"
+	;;
 esac
 
 # Essential packages
