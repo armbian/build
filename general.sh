@@ -113,9 +113,25 @@ GITHUBSUBDIR=$3
 [[ -z "$4" ]] && GITHUBSUBDIR="" # only kernel and u-boot have subdirs for tags
 if [ -d "$SOURCES/$2/$GITHUBSUBDIR" ]; then
 	cd $SOURCES/$2/$GITHUBSUBDIR
-	git checkout -q $FORCE $3
-	display_alert "... updating" "$2" "info"
-	PULL=$(git pull)
+	git checkout -q $FORCE $3 2> /dev/null
+	local bar1=$(git ls-remote $1 --tags $3* | sed -n '1p' | cut -f1)
+	local bar2=$(git ls-remote $1 --tags $3* | sed -n '2p' | cut -f1)
+	local bar3=$(git ls-remote $1 --tags HEAD * | sed -n '1p' | cut -f1)
+	local localbar="$(git rev-parse HEAD)"
+	if [[ "$3" != "" ]] && [[ "$bar1" == "$localbar" || "$bar2" == "$localbar" ]] || [[ "$3" == "" && "$bar3" == "$localbar" ]] ; then
+		display_alert "... you have latest sources" "$2 $3" "info"
+	else		
+		display_alert "... your sources are outdated - creating new shallow clone" "$2 $3" "info"
+		rm -rf $SOURCES/$2".old"
+		mv $SOURCES/$2 $SOURCES/$2".old" 
+		if [[ -n $3 && -n "$(git ls-remote $1 | grep "$tag")" ]]; then
+			git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 --depth 1 || git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3
+		else
+			git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR --depth 1
+		fi
+		cd $SOURCES/$2/$GITHUBSUBDIR
+		git checkout -q
+	fi
 else
 	if [[ -n $3 && -n "$(git ls-remote $1 | grep "$tag")" ]]; then
 		display_alert "... creating a shallow clone" "$2 $3" "info"
