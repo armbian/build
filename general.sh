@@ -33,8 +33,8 @@ cleaning()
 {
 	case $1 in
 		make)	# clean u-boot and kernel sources
-		[[ -d $SOURCES/$BOOTSOURCEDIR ]] && display_alert "Cleaning" "$BOOTSOURCEDIR" "info" && cd $SOURCES/$BOOTSOURCEDIR && make -s ARCH=$ARCHITECTURE CROSS_COMPILE=$UBOOT_COMPILER clean >/dev/null
-		[[ -d $SOURCES/$LINUXSOURCEDIR ]] && display_alert "Cleaning" "$LINUXSOURCEDIR" "info" && cd $SOURCES/$LINUXSOURCEDIR && make -s ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER clean >/dev/null
+		[[ -d $SOURCES/$BOOTSOURCEDIR ]] && display_alert "Cleaning" "$BOOTSOURCEDIR" "info" && cd $SOURCES/$BOOTSOURCEDIR && eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} 'make clean CROSS_COMPILE="$CCACHE $UBOOT_COMPILER" >/dev/null 2>/dev/null'
+		[[ -d $SOURCES/$LINUXSOURCEDIR ]] && display_alert "Cleaning" "$LINUXSOURCEDIR" "info" && cd $SOURCES/$LINUXSOURCEDIR && eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} 'make clean CROSS_COMPILE="$CCACHE $UBOOT_COMPILER" >/dev/null 2>/dev/null'
 		;;
 
 		debs) # delete output/debs for current branch and family
@@ -109,21 +109,38 @@ get_package_list_hash()
 
 fetch_from_github (){
 GITHUBSUBDIR=$3
+local githuburl=$1
 [[ -z "$3" ]] && GITHUBSUBDIR="branchless"
 [[ -z "$4" ]] && GITHUBSUBDIR="" # only kernel and u-boot have subdirs for tags
 if [ -d "$SOURCES/$2/$GITHUBSUBDIR" ]; then
 	cd $SOURCES/$2/$GITHUBSUBDIR
-	git checkout -q $FORCE $3 2> /dev/null
-	local bar1=$(git ls-remote $1 --tags $3* | sed -n '1p' | cut -f1)
-	local bar2=$(git ls-remote $1 --tags $3* | sed -n '2p' | cut -f1)
-	local bar3=$(git ls-remote $1 --tags HEAD * | sed -n '1p' | cut -f1)
-	local localbar="$(git rev-parse HEAD)"
-	if [[ "$3" != "" ]] && [[ "$bar1" == "$localbar" || "$bar2" == "$localbar" ]] || [[ "$3" == "" && "$bar3" == "$localbar" ]] ; then
+	git checkout -q $FORCE $3 2> /dev/null	
+	local bar_1=$(git ls-remote $githuburl --tags $GITHUBSUBDIR* | sed -n '1p' | cut -f1 | cut -c1-7)
+	local bar_2=$(git ls-remote $githuburl --tags $GITHUBSUBDIR* | sed -n '2p' | cut -f1 | cut -c1-7)
+	local bar_3=$(git ls-remote $githuburl --tags HEAD * | sed -n '1p' | cut -f1 | cut -c1-7)
+	local localbar="$(git rev-parse HEAD | cut -c1-7)"
+	
+	# debug
+	# echo "git ls-remote $githuburl --tags $GITHUBSUBDIR* | sed -n '1p' | cut -f1"
+	# echo "git ls-remote $githuburl --tags $GITHUBSUBDIR* | sed -n '2p' | cut -f1"	
+	# echo "git ls-remote $githuburl --tags HEAD * | sed -n '1p' | cut -f1"		
+	# echo "$3 - $bar_1 || $bar_2 = $localbar"
+	# echo "$3 - $bar_3 = $localbar"
+	
+	# ===>> workaround >> [[ $bar_1 == "" && $bar_2 == "" ]]
+	
+	if [[ "$3" != "" ]] && [[ "$bar_1" == "$localbar" || "$bar_2" == "$localbar" ]] || [[ "$3" == "" && "$bar_3" == "$localbar" ]] || [[ $bar_1 == "" && $bar_2 == "" ]]; then
 		display_alert "... you have latest sources" "$2 $3" "info"
 	else		
 		display_alert "... your sources are outdated - creating new shallow clone" "$2 $3" "info"
-		rm -rf $SOURCES/$2".old"
-		mv $SOURCES/$2 $SOURCES/$2".old" 
+		if [[ -z "$GITHUBSUBDIR" ]]; then 
+			rm -rf $SOURCES/$2".old"
+			mv $SOURCES/$2 $SOURCES/$2".old" 
+		else
+			rm -rf $SOURCES/$2/$GITHUBSUBDIR".old"
+			mv $SOURCES/$2/$GITHUBSUBDIR $SOURCES/$2/$GITHUBSUBDIR".old" 
+		fi
+		
 		if [[ -n $3 && -n "$(git ls-remote $1 | grep "$tag")" ]]; then
 			git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 --depth 1 || git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3
 		else

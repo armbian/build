@@ -83,7 +83,7 @@ case $LINUXFAMILY in
 	;;
 	marvell)
 	# fix for u-boot needing arm soft float
-	UBOOT_COMPILER="arm-eabi-"
+	UBOOT_COMPILER="arm-linux-gnueabi-"
 	;;
 esac
 
