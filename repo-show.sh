@@ -11,7 +11,7 @@
 
 # This scripts shows packages in local repository 
 
-DISTROS=("wheezy" "jessie" "trusty")
+DISTROS=("wheezy" "jessie" "trusty" "xenial")
  
 showall ()
 {

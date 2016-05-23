@@ -241,7 +241,7 @@ addtorepo ()
 # add all deb files to repository
 # parameter "remove" dumps all and creates new
 # function: cycle trough distributions
-DISTROS=("wheezy" "jessie" "trusty")
+DISTROS=("wheezy" "jessie" "trusty" "xenial")
 IFS=" "
 j=0
 while [[ $j -lt ${#DISTROS[@]} ]]
