@@ -401,4 +401,8 @@ prepare_host() {
 	# TODO: needs better documentation
 	echo 'Place your patches and kernel.config / u-boot.config / lib.config here.' > $SRC/userpatches/readme.txt
 	echo 'They will be automatically included if placed here!' >> $SRC/userpatches/readme.txt
+
+	# check free space (basic)
+	local freespace=$(( $(findmnt --target $SRC -n -o AVAIL -b) / 1024 / 1024 / 1024 )) # in GiB
+	[[ -n $freespace && $freespace -lt 10 ]] && display_alert "Low free space left" "$freespace GiB" "wrn"
 }
