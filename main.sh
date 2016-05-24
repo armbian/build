@@ -206,9 +206,8 @@ done
 if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 	# if requires specific toolchain, check if default is suitable
 	if [[ -n $UBOOT_NEEDS_GCC ]] && ! check_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" ; then
-		# try to find suitable in $SRC/toolchains
+		# try to find suitable in $SRC/toolchains, exit if not found
 		find_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" "UBOOT_TOOLCHAIN"
-		[[ -z $UBOOT_TOOLCHAIN ]] && exit_with_error "Could not find required u-boot toolchain" "$UBOOT_NEEDS_GCC"
 	fi
 	cd $SOURCES/$BOOTSOURCEDIR
 	grab_version "$SOURCES/$BOOTSOURCEDIR" "UBOOT_VER"
@@ -220,9 +219,8 @@ fi
 if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 	# if requires specific toolchain, check if default is suitable
 	if [[ -n $KERNEL_NEEDS_GCC ]] && ! check_toolchain "$KERNEL" "$KERNEL_NEEDS_GCC" ; then
-		# try to find suitable in $SRC/toolchains
+		# try to find suitable in $SRC/toolchains, exit if not found
 		find_toolchain "KERNEL" "$KERNEL_NEEDS_GCC" "KERNEL_TOOLCHAIN"
-		[[ -z $KERNEL_TOOLCHAIN ]] && exit_with_error "Could not find required kernel toolchain" "$KERNEL_NEEDS_GCC"
 	fi
 	cd $SOURCES/$LINUXSOURCEDIR
 

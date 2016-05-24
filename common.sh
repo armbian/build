@@ -249,6 +249,7 @@ find_toolchain()
 			toolchain=${dir}bin
 		fi
 	done
+	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${compiler}gcc $expression"
 	eval $"$var_name"="$toolchain"
 }
 
