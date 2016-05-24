@@ -179,16 +179,25 @@ display_alert()
 # log function parameters to install.log
 echo "Displaying message: $@" >> $DEST/debug/install.log
 
-if [[ $2 != "" ]]; then TMPARA="[\e[0;33m $2 \x1B[0m]"; else unset TMPARA; fi
-if [ $3 == "err" ]; then
-	echo -e "[\e[0;31m error \x1B[0m] $1 $TMPARA"
-elif [ $3 == "wrn" ]; then
-	echo -e "[\e[0;35m warn \x1B[0m] $1 $TMPARA"
-elif [ $3 == "ext" ]; then
-	echo -e "[\e[0;32m o.k. \x1B[0m] \e[1;32m$1\x1B[0m $TMPARA"
-else
-	echo -e "[\e[0;32m o.k. \x1B[0m] $1 $TMPARA"
-fi
+[[ -n $2 ]] && local tmp="[\e[0;33m $2 \x1B[0m]"
+
+case $3 in
+	err)
+	echo -e "[\e[0;31m error \x1B[0m] $1 $tmp"
+	;;
+
+	wrn)
+	echo -e "[\e[0;35m warn \x1B[0m] $1 $tmp"
+	;;
+
+	ext)
+	echo -e "[\e[0;32m o.k. \x1B[0m] \e[1;32m$1\x1B[0m $tmp"
+	;;
+
+	*) # info or empty
+	echo -e "[\e[0;32m o.k. \x1B[0m] $1 $tmp"
+	;;
+esac
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------

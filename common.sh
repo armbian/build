@@ -31,11 +31,9 @@ compile_uboot (){
 
 	# read uboot version to variable $VER
 	grab_version "$SOURCES/$BOOTSOURCEDIR" "VER"
-	
-	display_alert "Compiling uboot. Please wait." "$VER" "info"	
-	echo -en "[\e[0;32m o.k. \x1B[0m] Compiler: \e[0;33m"
-	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc --version | head -1 | tee -a $DEST/debug/install.log	
-	echo -en "\x1B[0m"
+
+	display_alert "Compiling uboot" "$VER" "info"
+	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
 	cd $SOURCES/$BOOTSOURCEDIR
 
 	local cthreads=$CTHREADS
@@ -140,10 +138,8 @@ compile_kernel (){
 	# read kernel version to variable $VER
 	grab_version "$SOURCES/$LINUXSOURCEDIR" "VER"
 
-	display_alert "Compiling $BRANCH kernel" "@host" "info"
-	echo -en "[\e[0;32m o.k. \x1B[0m] Compiler: \e[0;33m"
-	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc --version | head -1 | tee -a $DEST/debug/install.log
-	echo -en "\x1B[0m"
+	display_alert "Compiling $BRANCH kernel" "$VER" "info"
+	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
 	cd $SOURCES/$LINUXSOURCEDIR/
 
 	# adding custom firmware to kernel source
@@ -188,7 +184,7 @@ compile_kernel (){
 		exit_with_error "Kernel was not built" "@host"
 	fi
 
-	# different packaging for 4.3+ // probably temporaly soution
+	# different packaging for 4.3+
 	KERNEL_PACKING="deb-pkg"
 	IFS='.' read -a array <<< "$VER"
 	if (( "${array[0]}" == "4" )) && (( "${array[1]}" >= "3" )); then
