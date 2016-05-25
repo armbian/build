@@ -288,7 +288,7 @@ prepare_partitions()
 	parttype[btrfs]=btrfs
 	# parttype[nfs] is empty
 
-	mkopts[ext4]='-q -m 2'
+	mkopts[ext4]='-O ^64bit -q -m 2'
 	mkopts[fat]='-n BOOT'
 	# mkopts[f2fs] is empty
 	# mkopts[btrfs] is empty
