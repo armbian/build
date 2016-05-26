@@ -92,6 +92,15 @@ create_board_package (){
 	mkdir -p $destination/etc/modprobe.d/
 	echo "blacklist evbug" > $destination/etc/modprobe.d/ev-debug-blacklist.conf
 
+	# updating uInitrd image in update-initramfs trigger
+	mkdir -p $destination/etc/initramfs/post-update.d/
+	cat <<-EOF > $destination/etc/initramfs/post-update.d/99-uboot
+	#!/bin/sh
+	mkimage -A $ARCHITECTURE -O linux -T ramdisk -C gzip -n uInitrd -d \$2 /boot/uInitrd > /dev/null
+	exit 0
+	EOF
+	chmod +x $destination/etc/initramfs/post-update.d/99-uboot
+
 	# script to install to SATA
 	mkdir -p $destination/usr/sbin/
 	cp -R $SRC/lib/scripts/nand-sata-install/usr $destination/

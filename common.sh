@@ -137,9 +137,6 @@ compile_kernel (){
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
 	cd $SOURCES/$LINUXSOURCEDIR/
 
-	# adding custom firmware to kernel source
-	if [[ -n $FIRMWARE ]]; then unzip -o $SRC/lib/$FIRMWARE -d $SOURCES/$LINUXSOURCEDIR/firmware; fi
-
 	# use proven config
 	if [[ $KERNEL_KEEP_CONFIG != yes || ! -f $SOURCES/$LINUXSOURCEDIR/.config ]]; then
 		if [[ -f $SRC/userpatches/$LINUXCONFIG.config ]]; then
