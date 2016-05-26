@@ -303,7 +303,7 @@ prepare_host() {
 
 	display_alert "Preparing" "host" "info"
 
-	if [[ $(dpkg --print-architecture) == armhf ]]; then
+	if [[ $(dpkg --print-architecture) == arm* ]]; then
 		display_alert "Please read documentation to set up proper compilation environment" "..." "info"
 		display_alert "http://www.armbian.com/using-armbian-tools/" "..." "info"
 		exit_with_error "Running this tool on board itself is not supported"
@@ -328,48 +328,42 @@ prepare_host() {
 	fi
 
 	# packages list for host
-	PAK="ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate pigz \
+	local hostdeps="ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate pigz \
 	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
-	nfs-kernel-server btrfs-tools gcc-aarch64-linux-gnu ncurses-term p7zip-full dos2unix dosfstools"
+	nfs-kernel-server btrfs-tools gcc-aarch64-linux-gnu ncurses-term p7zip-full dos2unix dosfstools libc6-dev-armhf-cross libc6-dev-armel-cross\
+	libc6-dev-arm64-cross"
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
-	if [[ $NO_APT_CACHER != yes ]]; then PAK="$PAK apt-cacher-ng"; fi
+	if [[ $NO_APT_CACHER != yes ]]; then hostdeps="$hostdeps apt-cacher-ng"; fi
 
 	local codename=$(lsb_release -sc)
-	if [[ $codename == "" || "trusty wily xenial" != *"$codename"* ]]; then
+	if [[ -z $codename || "trusty wily xenial" != *"$codename"* ]]; then
 		display_alert "Host system support was not tested" "${codename:-(unknown)}" "wrn"
 		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
 		read
 	fi
 
-	if [[ $codename == trusty ]]; then
-		PAK="$PAK libc6-dev-armhf-cross libc6-dev-armel-cross";
-		if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
-			display_alert "Adding repository for trusty" "aptly" "info"
-			echo 'deb http://repo.aptly.info/ squeeze main' > /etc/apt/sources.list.d/aptly.list
-			apt-key adv --keyserver keys.gnupg.net --recv-keys 9E3E53F19C7DE460
-		fi
-	fi
-
-	if [[ $codename == wily || $codename == xenial ]]; then
-		PAK="$PAK libc6-dev-armhf-cross libc6-dev-armel-cross"
+	if [[ $codename == trusty && ! -f /etc/apt/sources.list.d/aptly.list ]]; then
+		display_alert "Adding repository for trusty" "aptly" "info"
+		echo 'deb http://repo.aptly.info/ squeeze main' > /etc/apt/sources.list.d/aptly.list
+		apt-key adv --keyserver keys.gnupg.net --recv-keys 9E3E53F19C7DE460
 	fi
 
 	# Deboostrap in trusty breaks due too old debootstrap. We are installing Xenial package
-	local debootstrap_version=$(apt-cache show debootstrap | grep Version | head -1 | awk '{print $2}' | cut -f1 -d"+")
+	local debootstrap_version=$(dpkg-query -W -f='${Version}\n' debootstrap | cut -f1 -d'+')
 	local debootstrap_minimal="1.0.78"
 
 	if [[ "$debootstrap_version" < "$debootstrap_minimal" ]]; then 
 		display_alert "Upgrading" "debootstrap" "info"
 		dpkg -i $SRC/lib/bin/debootstrap_1.0.78+nmu1ubuntu1.1_all.deb
 	fi
-	
+
 	local deps=()
 	local installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
 
-	for packet in $PAK; do
+	for packet in $hostdeps; do
 		if ! grep -q -x -e "$packet" <<< "$installed"; then deps+=("$packet"); fi
 	done
 
@@ -398,11 +392,13 @@ prepare_host() {
 
 	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/lib/scripts/customize-image.sh.template $SRC/userpatches/customize-image.sh
 
-	# TODO: needs better documentation
-	echo 'Place your patches and kernel.config / u-boot.config / lib.config here.' > $SRC/userpatches/readme.txt
-	echo 'They will be automatically included if placed here!' >> $SRC/userpatches/readme.txt
+	if [[ ! -f $SRC/userpatches/README ]]; then
+		rm $SRC/userpatches/readme.txt
+		echo 'Please read documentation about customizing build configuration' > $SRC/userpatches/README
+		echo 'http://www.armbian.com/using-armbian-tools/' >> $SRC/userpatches/README
+	fi
 
-	# check free space (basic)
-	local freespace=$(( $(findmnt --target $SRC -n -o AVAIL -b) / 1024 / 1024 / 1024 )) # in GiB
-	[[ -n $freespace && $freespace -lt 10 ]] && display_alert "Low free space left" "$freespace GiB" "wrn"
+	# check free space (basic), doesn't work on Trusty
+	local freespace=$(findmnt --target $SRC -n -o AVAIL -b 2>/dev/null) # in bytes
+	[[ -n $freespace && $(( $freespace / 1073741824 )) -lt 10 ]] && display_alert "Low free space left" "$(( $freespace / 1073741824 )) GiB" "wrn"
 }

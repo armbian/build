@@ -149,7 +149,7 @@ create_rootfs_cache()
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Debootstrap base system first stage failed"
 
 		cp /usr/bin/$QEMU_BINARY $CACHEDIR/sdcard/usr/bin/
-		# NOTE: not needed?
+
 		mkdir -p $CACHEDIR/sdcard/usr/share/keyrings/
 		cp /usr/share/keyrings/debian-archive-keyring.gpg $CACHEDIR/sdcard/usr/share/keyrings/
 
@@ -159,14 +159,13 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 2/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Debootstrap base system second stage failed"
+		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $CACHEDIR/sdcard/bin/bash ]] && exit_with_error "Debootstrap base system second stage failed"
 
 		mount_chroot
 
 		# policy-rc.d script prevents starting or reloading services during image creation
 		printf '#!/bin/sh\nexit 101' > $CACHEDIR/sdcard/usr/sbin/policy-rc.d
 		chmod 755 $CACHEDIR/sdcard/usr/sbin/policy-rc.d
-		# ported from debootstrap and multistrap for upstart support
 		if [[ -x $CACHEDIR/sdcard/sbin/initctl ]]; then
 			mv $CACHEDIR/sdcard/sbin/start-stop-daemon $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL
 			printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"' > $CACHEDIR/sdcard/sbin/start-stop-daemon
@@ -319,7 +318,8 @@ prepare_partitions()
 		fi
 	else
 		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE )) # MiB
-		# Hardcoded overhead +20% and +128MB for ext4 leaves ~15% free on root partition
+		# Hardcoded overhead +40% and +128MB for ext4 leaves ~15% free on root partition
+		# TODO: Verify and reduce overhead
 		# extra 128 MiB for emergency swap file
 		local sdsize=$(bc -l <<< "scale=0; ($imagesize * 1.4) / 1 + 128")
 	fi
@@ -334,7 +334,6 @@ prepare_partitions()
 		BOOTSIZE=32 # MiB
 	elif [[ $BOOTSIZE != 0 ]]; then
 		local bootfs=fat
-		BOOTSIZE=64 # MiB, fix for rsync duplicating zImage
 	fi
 
 	# stage: calculate boot partition size
@@ -456,9 +455,8 @@ create_image()
 	# stage: copy armbian.txt TODO: Copy only if creating zip file?
 	cp $CACHEDIR/sdcard/etc/armbian.txt $CACHEDIR/
 
-	sync
-
 	# unmount /boot first, rootfs second, image file last
+	sync
 	[[ $BOOTSIZE != 0 ]] && umount -l $CACHEDIR/mount/boot
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $CACHEDIR/mount
 	losetup -d $LOOP
