@@ -61,7 +61,7 @@ parted -s $LOOP -- mklabel msdos
 if [ "$BOOTSIZE" -eq "0" ]; then
 	parted -s $LOOP -- mkpart primary ext4  $ROOTSTART"s" -1s
 	partprobe $LOOP
-	mkfs.ext4 -q $LOOP"p1"
+	mkfs.ext4 -O ^64bit,^metadata_csum,uninit_bg -q $LOOP"p1"
 	mount $LOOP"p1" $CACHEDIR/sdcard/
 else
 	parted -s $LOOP -- mkpart primary fat16  $BOOTSTART"s" $BOOTEND"s"
