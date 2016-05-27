@@ -300,8 +300,15 @@ prepare_partitions()
 	parttype[f2fs]=ext4 # not a copy-paste error
 	parttype[btrfs]=btrfs
 	# parttype[nfs] is empty
-
-	mkopts[ext4]='-O ^64bit,^metadata_csum,uninit_bg -q -m 2'
+	
+	# older mkfs.ext4 desn't know about 64bit and metadata_csum options
+	local codename=$(lsb_release -sc)
+	if [[ "$codename" == "trusty" ]]; then
+		mkopts[ext4]='-q -m 2'
+	else
+		mkopts[ext4]='-O ^64bit,^metadata_csum,uninit_bg -q -m 2'
+	fi
+		
 	mkopts[fat]='-n BOOT'
 	# mkopts[f2fs] is empty
 	# mkopts[btrfs] is empty
