@@ -129,7 +129,12 @@ create_board_package (){
 	if [[ $LINUXCONFIG == *sun* ]] ; then
 		if [[ $BRANCH != next ]]; then
 			# add soc temperature app
-			arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/local/bin/sunxi_tp_temp
+			local codename=$(lsb_release -sc)
+			if [[ -z $codename || "sid" == *"$codename"* ]]; then
+				arm-linux-gnueabihf-gcc-5 $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/local/bin/sunxi_tp_temp
+			else
+				arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/local/bin/sunxi_tp_temp
+			fi
 		fi
 
 		# lamobo R1 router switch config
