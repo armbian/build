@@ -166,7 +166,7 @@ create_rootfs_cache()
 		# policy-rc.d script prevents starting or reloading services during image creation
 		printf '#!/bin/sh\nexit 101' > $CACHEDIR/sdcard/usr/sbin/policy-rc.d
 		chmod 755 $CACHEDIR/sdcard/usr/sbin/policy-rc.d
-		if [[ -x $CACHEDIR/sdcard/sbin/initctl ]]; then
+		if [[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon ]]; then
 			mv $CACHEDIR/sdcard/sbin/start-stop-daemon $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL
 			printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"' > $CACHEDIR/sdcard/sbin/start-stop-daemon
 			chmod 755 $CACHEDIR/sdcard/sbin/start-stop-daemon
@@ -226,6 +226,19 @@ create_rootfs_cache()
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Upgrading base packages failed"
+
+		# new initctl and start-stop-daemon may be installed after upgrading base packages
+		# TODO: Reduce code duplication
+		if [[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon ]]; then
+			mv $CACHEDIR/sdcard/sbin/start-stop-daemon $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL
+			printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"' > $CACHEDIR/sdcard/sbin/start-stop-daemon
+			chmod 755 $CACHEDIR/sdcard/sbin/start-stop-daemon
+		fi
+		if [[ -x $CACHEDIR/sdcard/sbin/initctl ]]; then
+			mv $CACHEDIR/sdcard/sbin/initctl $CACHEDIR/sdcard/sbin/initctl.REAL
+			printf '#!/bin/sh\necho "Warning: Fake initctl called, doing nothing"' $CACHEDIR/sdcard/sbin/initctl
+			chmod 755 $CACHEDIR/sdcard/sbin/initctl
+		fi
 
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
