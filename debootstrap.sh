@@ -64,10 +64,10 @@ if [ "$BOOTSIZE" -eq "0" ]; then
 	
 	# older mkfs.ext4 desn't know about 64bit and metadata_csum options
 	local codename=$(lsb_release -sc)
-	if [[ "$codename" == "trusty" ]]; then
-		mkfs.ext4 -q $LOOP"p1"
+	if [[ "$codename" == "sid" ]]; then
+		mkfs.ext4 -O ^64bit,^metadata_csum,uninit_bg -q $LOOP"p1"		
 	else
-		mkfs.ext4 -O ^64bit,^metadata_csum,uninit_bg -q $LOOP"p1"
+		mkfs.ext4 -q $LOOP"p1"
 	fi
 	
 	mount $LOOP"p1" $CACHEDIR/sdcard/

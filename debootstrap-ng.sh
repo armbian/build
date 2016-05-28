@@ -303,10 +303,10 @@ prepare_partitions()
 	
 	# older mkfs.ext4 desn't know about 64bit and metadata_csum options
 	local codename=$(lsb_release -sc)
-	if [[ "$codename" == "trusty" ]]; then
-		mkopts[ext4]='-q -m 2'
-	else
+	if [[ "$codename" == "sid" ]]; then
 		mkopts[ext4]='-O ^64bit,^metadata_csum,uninit_bg -q -m 2'
+	else
+		mkopts[ext4]='-q -m 2'		
 	fi
 		
 	mkopts[fat]='-n BOOT'
