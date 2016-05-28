@@ -12,6 +12,7 @@
 # create_rootfs_cache
 # prepare_partitions
 # create_image
+# install_dummy_initctl
 # mount_chroot
 # umount_chroot
 # unmount_on_exit
@@ -166,16 +167,7 @@ create_rootfs_cache()
 		# policy-rc.d script prevents starting or reloading services during image creation
 		printf '#!/bin/sh\nexit 101' > $CACHEDIR/sdcard/usr/sbin/policy-rc.d
 		chmod 755 $CACHEDIR/sdcard/usr/sbin/policy-rc.d
-		if [[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon ]]; then
-			mv $CACHEDIR/sdcard/sbin/start-stop-daemon $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL
-			printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"' > $CACHEDIR/sdcard/sbin/start-stop-daemon
-			chmod 755 $CACHEDIR/sdcard/sbin/start-stop-daemon
-		fi
-		if [[ -x $CACHEDIR/sdcard/sbin/initctl ]]; then
-			mv $CACHEDIR/sdcard/sbin/initctl $CACHEDIR/sdcard/sbin/initctl.REAL
-			printf '#!/bin/sh\necho "Warning: Fake initctl called, doing nothing"' $CACHEDIR/sdcard/sbin/initctl
-			chmod 755 $CACHEDIR/sdcard/sbin/initctl
-		fi
+		install_dummy_initctl
 
 		# stage: configure language and locales
 		display_alert "Configuring locales" "$DEST_LANG" "info"
@@ -228,17 +220,7 @@ create_rootfs_cache()
 		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Upgrading base packages failed"
 
 		# new initctl and start-stop-daemon may be installed after upgrading base packages
-		# TODO: Reduce code duplication
-		if [[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon ]]; then
-			mv $CACHEDIR/sdcard/sbin/start-stop-daemon $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL
-			printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"' > $CACHEDIR/sdcard/sbin/start-stop-daemon
-			chmod 755 $CACHEDIR/sdcard/sbin/start-stop-daemon
-		fi
-		if [[ -x $CACHEDIR/sdcard/sbin/initctl ]]; then
-			mv $CACHEDIR/sdcard/sbin/initctl $CACHEDIR/sdcard/sbin/initctl.REAL
-			printf '#!/bin/sh\necho "Warning: Fake initctl called, doing nothing"' $CACHEDIR/sdcard/sbin/initctl
-			chmod 755 $CACHEDIR/sdcard/sbin/initctl
-		fi
+		install_dummy_initctl
 
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
@@ -300,15 +282,15 @@ prepare_partitions()
 	parttype[f2fs]=ext4 # not a copy-paste error
 	parttype[btrfs]=btrfs
 	# parttype[nfs] is empty
-	
-	# older mkfs.ext4 desn't know about 64bit and metadata_csum options
+
+	# metadata_csum is supported since e2fsprogs 1.43
 	local codename=$(lsb_release -sc)
-	if [[ "$codename" == "sid" ]]; then
+	if [[ $codename == sid || $codename == stretch ]]; then
 		mkopts[ext4]='-O ^64bit,^metadata_csum,uninit_bg -q -m 2'
 	else
-		mkopts[ext4]='-q -m 2'		
+		mkopts[ext4]='-q -m 2'
 	fi
-		
+
 	mkopts[fat]='-n BOOT'
 	# mkopts[f2fs] is empty
 	# mkopts[btrfs] is empty
@@ -506,6 +488,24 @@ create_image()
 		rm -f $VERSION.raw *.asc armbian.txt
 		FILESIZE=$(ls -l --b=M $FILENAME | cut -d " " -f5)
 		display_alert "Done building" "$FILENAME [$FILESIZE]" "info"
+	fi
+} #############################################################################
+
+# install_dummy_initctl
+#
+# helper to reduce code duplication
+#
+install_dummy_initctl()
+{
+	if [[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon ]]; then
+		mv $CACHEDIR/sdcard/sbin/start-stop-daemon $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL
+		printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"' > $CACHEDIR/sdcard/sbin/start-stop-daemon
+		chmod 755 $CACHEDIR/sdcard/sbin/start-stop-daemon
+	fi
+	if [[ -x $CACHEDIR/sdcard/sbin/initctl ]]; then
+		mv $CACHEDIR/sdcard/sbin/initctl $CACHEDIR/sdcard/sbin/initctl.REAL
+		printf '#!/bin/sh\necho "Warning: Fake initctl called, doing nothing"' $CACHEDIR/sdcard/sbin/initctl
+		chmod 755 $CACHEDIR/sdcard/sbin/initctl
 	fi
 } #############################################################################
 
