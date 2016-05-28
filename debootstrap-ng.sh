@@ -131,8 +131,8 @@ create_rootfs_cache()
 		# stage: debootstrap base system
 		if [[ $NO_APT_CACHER != yes ]]; then
 			# apt-cacher-ng apt-get proxy parameter
-			local apt_extra='-o Acquire::http::Proxy="http://${APT_PROXY_ADDR:-localhost:3142}"'
-			local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142/}$APT_MIRROR"
+			local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
+			local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/$APT_MIRROR"
 		else
 			local apt_mirror="http://$APT_MIRROR"
 		fi
@@ -195,7 +195,7 @@ create_rootfs_cache()
 
 		# stage: update packages list
 		display_alert "Updating package list" "$RELEASE" "info"
-		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y $apt_extra update"' \
+		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -q -y $apt_extra update"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Updating package lists..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
