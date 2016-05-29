@@ -67,6 +67,12 @@ install_board_specific (){
 		echo "/dev/mmcblk0p1        /boot   vfat    defaults        0       0" >> $CACHEDIR/sdcard/etc/fstab
 	fi
 
+	if [[ $BOARD == cubox-i && $BRANCH == next && -f $CACHEDIR/sdcard/boot/boot.cmd ]] ; then
+		sed -e 's/mmcblk0/mmcblk1/g' -i $CACHEDIR/sdcard/boot/boot.cmd
+		sed -e 's/console=tty1 //g' -i $CACHEDIR/sdcard/boot/boot.cmd
+		sed -e 's/loglevel=1/loglevel=9/g' -i $CACHEDIR/sdcard/boot/boot.cmd
+	fi
+	
 	# convert to uboot compatible script
 	[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && \
 		mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr >> /dev/null
