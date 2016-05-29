@@ -497,12 +497,12 @@ create_image()
 #
 install_dummy_initctl()
 {
-	if [[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon ]]; then
+	if [[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon ]] && ! cmp -s $CACHEDIR/sdcard/sbin/start-stop-daemon $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL; then
 		mv $CACHEDIR/sdcard/sbin/start-stop-daemon $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL
 		printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"' > $CACHEDIR/sdcard/sbin/start-stop-daemon
 		chmod 755 $CACHEDIR/sdcard/sbin/start-stop-daemon
 	fi
-	if [[ -x $CACHEDIR/sdcard/sbin/initctl ]]; then
+	if [[ -x $CACHEDIR/sdcard/sbin/initctl ]] && ! cmp -s $CACHEDIR/sdcard/sbin/initctl $CACHEDIR/sdcard/sbin/initctl.REAL; then
 		mv $CACHEDIR/sdcard/sbin/initctl $CACHEDIR/sdcard/sbin/initctl.REAL
 		printf '#!/bin/sh\necho "Warning: Fake initctl called, doing nothing"' $CACHEDIR/sdcard/sbin/initctl
 		chmod 755 $CACHEDIR/sdcard/sbin/initctl
