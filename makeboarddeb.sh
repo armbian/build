@@ -78,19 +78,20 @@ create_board_package (){
 	echo "if [[ -d /boot/bin && ! -f /boot/script.bin ]]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi">> $destination/DEBIAN/postinst
 	echo "exit 0" >> $destination/DEBIAN/postinst
 
+-	# configure MIN / MAX speed for cpufrequtils
+-	echo "ENABLE=true" > $CACHEDIR/sdcard/etc/default/cpufrequtils
+-	echo "MIN_SPEED=$CPUMIN" >> $CACHEDIR/sdcard/etc/default/cpufrequtils
+-	echo "MAX_SPEED=$CPUMAX" >> $CACHEDIR/sdcard/etc/default/cpufrequtils
+-	echo "GOVERNOR=$GOVERNOR" >> $CACHEDIR/sdcard/etc/default/cpufrequtils
+
 	# temper binary for USB temp meter
 	mkdir -p $destination/usr/local/bin
-	tar xfz $SRC/lib/bin/temper.tgz -C $destination/usr/local/bin
 
 	# add USB OTG port mode switcher
 	install -m 755 $SRC/lib/scripts/sunxi-musb 			$destination/usr/local/bin
 
 	# armbianmonitor (currently only to toggle boot verbosity and log upload)
 	install -m 755 $SRC/lib/scripts/armbianmonitor/armbianmonitor $destination/usr/local/bin
-
-	# module evbug is loaded automagically at boot time but we don't want that
-	mkdir -p $destination/etc/modprobe.d/
-	echo "blacklist evbug" > $destination/etc/modprobe.d/ev-debug-blacklist.conf
 
 	# updating uInitrd image in update-initramfs trigger
 	mkdir -p $destination/etc/initramfs/post-update.d/

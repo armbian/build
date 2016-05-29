@@ -232,8 +232,4 @@ chroot $CACHEDIR/sdcard /bin/bash -c "chage -d 0 root"
 # remove hostapd because it's replaced with ours
 chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove hostapd >/dev/null 2>&1"
 
-# install sunxi-tools
-cp $SRC/lib/bin/sunxi-tools_1.3-1_armhf.deb $CACHEDIR/sdcard/tmp/
-# libusb dependency should already be satisfied by usbutils
-chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/sunxi-tools_1.3-1_armhf.deb >/dev/null 2>&1"
 }

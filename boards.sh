@@ -74,12 +74,6 @@ install_board_specific (){
 	# initial date for fake-hwclock
 	date -u '+%Y-%m-%d %H:%M:%S' > $CACHEDIR/sdcard/etc/fake-hwclock.data
 
-	# configure MIN / MAX speed for cpufrequtils
-	echo "ENABLE=true" > $CACHEDIR/sdcard/etc/default/cpufrequtils
-	echo "MIN_SPEED=$CPUMIN" >> $CACHEDIR/sdcard/etc/default/cpufrequtils
-	echo "MAX_SPEED=$CPUMAX" >> $CACHEDIR/sdcard/etc/default/cpufrequtils
-	echo "GOVERNOR=$GOVERNOR" >> $CACHEDIR/sdcard/etc/default/cpufrequtils
-
 	# set hostname
 	echo $HOST > $CACHEDIR/sdcard/etc/hostname
 
