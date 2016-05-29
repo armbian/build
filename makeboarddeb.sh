@@ -78,11 +78,12 @@ create_board_package (){
 	echo "if [[ -d /boot/bin && ! -f /boot/script.bin ]]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi">> $destination/DEBIAN/postinst
 	echo "exit 0" >> $destination/DEBIAN/postinst
 
--	# configure MIN / MAX speed for cpufrequtils
--	echo "ENABLE=true" > $CACHEDIR/sdcard/etc/default/cpufrequtils
--	echo "MIN_SPEED=$CPUMIN" >> $CACHEDIR/sdcard/etc/default/cpufrequtils
--	echo "MAX_SPEED=$CPUMAX" >> $CACHEDIR/sdcard/etc/default/cpufrequtils
--	echo "GOVERNOR=$GOVERNOR" >> $CACHEDIR/sdcard/etc/default/cpufrequtils
+	# configure MIN / MAX speed for cpufrequtils
+	mkdir -p $destination/etc/default
+	echo "ENABLE=true" > $destination/etc/default/cpufrequtils
+	echo "MIN_SPEED=$CPUMIN" >> $destination/etc/default/cpufrequtils
+	echo "MAX_SPEED=$CPUMAX" >> $destination/etc/default/cpufrequtils
+	echo "GOVERNOR=$GOVERNOR" >> $destination/etc/default/cpufrequtils
 
 	# temper binary for USB temp meter
 	mkdir -p $destination/usr/local/bin
