@@ -1,5 +1,10 @@
 # Release history
 
+**v5.11 / 24.5.2016**
+
+- Various bug fixes
+- new working images for Actions Semi S500 boards
+
 **v5.10 / 1.5.2016**
 
 Images:
