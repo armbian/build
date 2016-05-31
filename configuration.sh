@@ -91,7 +91,7 @@ esac
 PACKAGE_LIST="automake bash-completion bc bridge-utils build-essential cmake cpufrequtils \
 	device-tree-compiler dosfstools figlet fbset fping git haveged hdparm hostapd ifenslave-2.6 \
 	iw libtool libwrap0-dev libssl-dev lirc lsof fake-hwclock wpasupplicant libusb-dev libusb-1.0-0-dev psmisc \
-	ntp parted pkg-config pv rfkill rsync sudo curl dialog crda wireless-regdb ncurses-term \
+	ntp parted pkg-config pv rfkill rsync sudo curl dialog crda wireless-regdb ncurses-term python-apt \
 	sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools libnl-3-dev \
 	console-setup console-data console-common unicode-data openssh-server libmtp-runtime initramfs-tools ca-certificates"
 
