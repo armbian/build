@@ -3,6 +3,7 @@
 **v5.12 / 31.5.2016**
 
 - updated C1 images
+- added wifi driver for new Oranges (modprobe 8189fs)
 
 **v5.11 / 24.5.2016**
 
