@@ -1,5 +1,9 @@
 # Release history
 
+**v5.12 / 31.5.2016**
+
+- updated C1 images
+
 **v5.11 / 24.5.2016**
 
 - Various bug fixes
