@@ -4,6 +4,7 @@
 
 - updated C1 images
 - added wifi driver for new Oranges (modprobe 8189fs)
+- added Orange Pi Lite and Plus 2E images
 
 **v5.11 / 24.5.2016**
 
