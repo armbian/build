@@ -1,5 +1,9 @@
 # Release history
 
+**v5.14 / 1.6.2016**
+
+- fixed eMMC installer, updated images and repository for Opi PC Plus and Opi Plus 2E
+
 **v5.12 / 31.5.2016**
 
 - updated C1 images
