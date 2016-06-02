@@ -1,0 +1,742 @@
+diff --git a/Makefile b/Makefile
+index bc3311a0893b..98282e65bb46 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 3
+ PATCHLEVEL = 14
+-SUBLEVEL = 70
++SUBLEVEL = 71
+ EXTRAVERSION =
+ NAME = Remembering Coco
+ 
+diff --git a/arch/arm/kvm/mmu.c b/arch/arm/kvm/mmu.c
+index c612e37166ad..2036f191c56f 100644
+--- a/arch/arm/kvm/mmu.c
++++ b/arch/arm/kvm/mmu.c
+@@ -682,11 +682,14 @@ static int stage2_set_pmd_huge(struct kvm *kvm, struct kvm_mmu_memory_cache
+ 	VM_BUG_ON(pmd_present(*pmd) && pmd_pfn(*pmd) != pmd_pfn(*new_pmd));
+ 
+ 	old_pmd = *pmd;
+-	kvm_set_pmd(pmd, *new_pmd);
+-	if (pmd_present(old_pmd))
++	if (pmd_present(old_pmd)) {
++		pmd_clear(pmd);
+ 		kvm_tlb_flush_vmid_ipa(kvm, addr);
+-	else
++	} else {
+ 		get_page(virt_to_page(pmd));
++	}
++
++	kvm_set_pmd(pmd, *new_pmd);
+ 	return 0;
+ }
+ 
+@@ -723,12 +726,14 @@ static int stage2_set_pte(struct kvm *kvm, struct kvm_mmu_memory_cache *cache,
+ 
+ 	/* Create 2nd stage page table mapping - Level 3 */
+ 	old_pte = *pte;
+-	kvm_set_pte(pte, *new_pte);
+-	if (pte_present(old_pte))
++	if (pte_present(old_pte)) {
++		kvm_set_pte(pte, __pte(0));
+ 		kvm_tlb_flush_vmid_ipa(kvm, addr);
+-	else
++	} else {
+ 		get_page(virt_to_page(pte));
++	}
+ 
++	kvm_set_pte(pte, *new_pte);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/acpi/osl.c b/drivers/acpi/osl.c
+index 726c969b8a81..f83020db593a 100644
+--- a/drivers/acpi/osl.c
++++ b/drivers/acpi/osl.c
+@@ -138,7 +138,7 @@ static struct osi_linux {
+ 	unsigned int	enable:1;
+ 	unsigned int	dmi:1;
+ 	unsigned int	cmdline:1;
+-	unsigned int	default_disabling:1;
++	u8		default_disabling;
+ } osi_linux = {0, 0, 0, 0};
+ 
+ static u32 acpi_osi_handler(acpi_string interface, u32 supported)
+@@ -1420,10 +1420,13 @@ void __init acpi_osi_setup(char *str)
+ 	if (*str == '!') {
+ 		str++;
+ 		if (*str == '\0') {
+-			osi_linux.default_disabling = 1;
++			/* Do not override acpi_osi=!* */
++			if (!osi_linux.default_disabling)
++				osi_linux.default_disabling =
++					ACPI_DISABLE_ALL_VENDOR_STRINGS;
+ 			return;
+ 		} else if (*str == '*') {
+-			acpi_update_interfaces(ACPI_DISABLE_ALL_STRINGS);
++			osi_linux.default_disabling = ACPI_DISABLE_ALL_STRINGS;
+ 			for (i = 0; i < OSI_STRING_ENTRIES_MAX; i++) {
+ 				osi = &osi_setup_entries[i];
+ 				osi->enable = false;
+@@ -1496,10 +1499,13 @@ static void __init acpi_osi_setup_late(void)
+ 	acpi_status status;
+ 
+ 	if (osi_linux.default_disabling) {
+-		status = acpi_update_interfaces(ACPI_DISABLE_ALL_VENDOR_STRINGS);
++		status = acpi_update_interfaces(osi_linux.default_disabling);
+ 
+ 		if (ACPI_SUCCESS(status))
+-			printk(KERN_INFO PREFIX "Disabled all _OSI OS vendors\n");
++			printk(KERN_INFO PREFIX "Disabled all _OSI OS vendors%s\n",
++				osi_linux.default_disabling ==
++				ACPI_DISABLE_ALL_STRINGS ?
++				" and feature groups" : "");
+ 	}
+ 
+ 	for (i = 0; i < OSI_STRING_ENTRIES_MAX; i++) {
+diff --git a/drivers/bluetooth/hci_vhci.c b/drivers/bluetooth/hci_vhci.c
+index 1ef6990a5c7e..bbe6643e299d 100644
+--- a/drivers/bluetooth/hci_vhci.c
++++ b/drivers/bluetooth/hci_vhci.c
+@@ -340,6 +340,7 @@ static int vhci_release(struct inode *inode, struct file *file)
+ 		hci_free_dev(hdev);
+ 	}
+ 
++	skb_queue_purge(&data->readq);
+ 	file->private_data = NULL;
+ 	kfree(data);
+ 
+diff --git a/drivers/crypto/caam/jr.c b/drivers/crypto/caam/jr.c
+index b512a4ba7569..33308810d1b5 100644
+--- a/drivers/crypto/caam/jr.c
++++ b/drivers/crypto/caam/jr.c
+@@ -244,7 +244,7 @@ static void caam_jr_dequeue(unsigned long devarg)
+ struct device *caam_jr_alloc(void)
+ {
+ 	struct caam_drv_private_jr *jrpriv, *min_jrpriv = NULL;
+-	struct device *dev = NULL;
++	struct device *dev = ERR_PTR(-ENODEV);
+ 	int min_tfm_cnt	= INT_MAX;
+ 	int tfm_cnt;
+ 
+diff --git a/drivers/mfd/omap-usb-tll.c b/drivers/mfd/omap-usb-tll.c
+index 5ee50f779ef6..0ce45874c14b 100644
+--- a/drivers/mfd/omap-usb-tll.c
++++ b/drivers/mfd/omap-usb-tll.c
+@@ -269,6 +269,8 @@ static int usbtll_omap_probe(struct platform_device *pdev)
+ 
+ 		if (IS_ERR(tll->ch_clk[i]))
+ 			dev_dbg(dev, "can't get clock : %s\n", clkname);
++		else
++			clk_prepare(tll->ch_clk[i]);
+ 	}
+ 
+ 	pm_runtime_put_sync(dev);
+@@ -301,9 +303,12 @@ static int usbtll_omap_remove(struct platform_device *pdev)
+ 	tll_dev = NULL;
+ 	spin_unlock(&tll_lock);
+ 
+-	for (i = 0; i < tll->nch; i++)
+-		if (!IS_ERR(tll->ch_clk[i]))
++	for (i = 0; i < tll->nch; i++) {
++		if (!IS_ERR(tll->ch_clk[i])) {
++			clk_unprepare(tll->ch_clk[i]);
+ 			clk_put(tll->ch_clk[i]);
++		}
++	}
+ 
+ 	pm_runtime_disable(&pdev->dev);
+ 	return 0;
+@@ -421,7 +426,7 @@ int omap_tll_enable(struct usbhs_omap_platform_data *pdata)
+ 			if (IS_ERR(tll->ch_clk[i]))
+ 				continue;
+ 
+-			r = clk_prepare_enable(tll->ch_clk[i]);
++			r = clk_enable(tll->ch_clk[i]);
+ 			if (r) {
+ 				dev_err(tll_dev,
+ 				 "Error enabling ch %d clock: %d\n", i, r);
+@@ -449,7 +454,7 @@ int omap_tll_disable(struct usbhs_omap_platform_data *pdata)
+ 	for (i = 0; i < tll->nch; i++) {
+ 		if (omap_usb_mode_needs_tll(pdata->port_mode[i])) {
+ 			if (!IS_ERR(tll->ch_clk[i]))
+-				clk_disable_unprepare(tll->ch_clk[i]);
++				clk_disable(tll->ch_clk[i]);
+ 		}
+ 	}
+ 
+diff --git a/drivers/mmc/card/block.c b/drivers/mmc/card/block.c
+index 92aeb1d2b41b..508380b6a10d 100644
+--- a/drivers/mmc/card/block.c
++++ b/drivers/mmc/card/block.c
+@@ -2352,11 +2352,12 @@ static const struct mmc_fixup blk_fixups[] =
+ 		  MMC_QUIRK_BLK_NO_CMD23),
+ 
+ 	/*
+-	 * Some Micron MMC cards needs longer data read timeout than
+-	 * indicated in CSD.
++	 * Some MMC cards need longer data read timeout than indicated in CSD.
+ 	 */
+ 	MMC_FIXUP(CID_NAME_ANY, CID_MANFID_MICRON, 0x200, add_quirk_mmc,
+ 		  MMC_QUIRK_LONG_READ_TIME),
++	MMC_FIXUP("008GE0", CID_MANFID_TOSHIBA, CID_OEMID_ANY, add_quirk_mmc,
++		  MMC_QUIRK_LONG_READ_TIME),
+ 
+ 	/*
+ 	 * On these Samsung MoviNAND parts, performing secure erase or
+diff --git a/drivers/mmc/core/core.c b/drivers/mmc/core/core.c
+index 4a50b5049c51..1bbe372a9e04 100644
+--- a/drivers/mmc/core/core.c
++++ b/drivers/mmc/core/core.c
+@@ -822,11 +822,11 @@ void mmc_set_data_timeout(struct mmc_data *data, const struct mmc_card *card)
+ 	/*
+ 	 * Some cards require longer data read timeout than indicated in CSD.
+ 	 * Address this by setting the read timeout to a "reasonably high"
+-	 * value. For the cards tested, 300ms has proven enough. If necessary,
++	 * value. For the cards tested, 600ms has proven enough. If necessary,
+ 	 * this value can be increased if other problematic cards require this.
+ 	 */
+ 	if (mmc_card_long_read_time(card) && data->flags & MMC_DATA_READ) {
+-		data->timeout_ns = 300000000;
++		data->timeout_ns = 600000000;
+ 		data->timeout_clks = 0;
+ 	}
+ 
+diff --git a/drivers/mmc/core/mmc.c b/drivers/mmc/core/mmc.c
+index 98e9eb0f6643..229407229ecd 100644
+--- a/drivers/mmc/core/mmc.c
++++ b/drivers/mmc/core/mmc.c
+@@ -267,6 +267,9 @@ static void mmc_select_card_type(struct mmc_card *card)
+ 	card->ext_csd.card_type = card_type;
+ }
+ 
++/* Minimum partition switch timeout in milliseconds */
++#define MMC_MIN_PART_SWITCH_TIME	300
++
+ /*
+  * Decode extended CSD.
+  */
+@@ -331,6 +334,10 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
+ 
+ 		/* EXT_CSD value is in units of 10ms, but we store in ms */
+ 		card->ext_csd.part_time = 10 * ext_csd[EXT_CSD_PART_SWITCH_TIME];
++		/* Some eMMC set the value too low so set a minimum */
++		if (card->ext_csd.part_time &&
++		    card->ext_csd.part_time < MMC_MIN_PART_SWITCH_TIME)
++			card->ext_csd.part_time = MMC_MIN_PART_SWITCH_TIME;
+ 
+ 		/* Sleep / awake timeout in 100ns units */
+ 		if (sa_shift > 0 && sa_shift <= 0x17)
+diff --git a/drivers/tty/serial/samsung.c b/drivers/tty/serial/samsung.c
+index 7d3a3f5cb5ba..0a70d12fe33c 100644
+--- a/drivers/tty/serial/samsung.c
++++ b/drivers/tty/serial/samsung.c
+@@ -734,6 +734,8 @@ static void s3c24xx_serial_set_termios(struct uart_port *port,
+ 	/* check to see if we need  to change clock source */
+ 
+ 	if (ourport->baudclk != clk) {
++		clk_prepare_enable(clk);
++
+ 		s3c24xx_serial_setsource(port, clk_sel);
+ 
+ 		if (!IS_ERR(ourport->baudclk)) {
+@@ -741,8 +743,6 @@ static void s3c24xx_serial_set_termios(struct uart_port *port,
+ 			ourport->baudclk = ERR_PTR(-EINVAL);
+ 		}
+ 
+-		clk_prepare_enable(clk);
+-
+ 		ourport->baudclk = clk;
+ 		ourport->baudclk_rate = clk ? clk_get_rate(clk) : 0;
+ 	}
+diff --git a/drivers/tty/vt/vt.c b/drivers/tty/vt/vt.c
+index 693091ab726b..abf17b6fe237 100644
+--- a/drivers/tty/vt/vt.c
++++ b/drivers/tty/vt/vt.c
+@@ -3512,9 +3512,10 @@ static int do_register_con_driver(const struct consw *csw, int first, int last)
+ 		goto err;
+ 
+ 	desc = csw->con_startup();
+-
+-	if (!desc)
++	if (!desc) {
++		retval = -ENODEV;
+ 		goto err;
++	}
+ 
+ 	retval = -EINVAL;
+ 
+diff --git a/drivers/usb/serial/io_edgeport.c b/drivers/usb/serial/io_edgeport.c
+index c0866971db2b..1947ea0e0988 100644
+--- a/drivers/usb/serial/io_edgeport.c
++++ b/drivers/usb/serial/io_edgeport.c
+@@ -2856,14 +2856,16 @@ static int edge_startup(struct usb_serial *serial)
+ 				/* not set up yet, so do it now */
+ 				edge_serial->interrupt_read_urb =
+ 						usb_alloc_urb(0, GFP_KERNEL);
+-				if (!edge_serial->interrupt_read_urb)
+-					return -ENOMEM;
++				if (!edge_serial->interrupt_read_urb) {
++					response = -ENOMEM;
++					break;
++				}
+ 
+ 				edge_serial->interrupt_in_buffer =
+ 					kmalloc(buffer_size, GFP_KERNEL);
+ 				if (!edge_serial->interrupt_in_buffer) {
+-					usb_free_urb(edge_serial->interrupt_read_urb);
+-					return -ENOMEM;
++					response = -ENOMEM;
++					break;
+ 				}
+ 				edge_serial->interrupt_in_endpoint =
+ 						endpoint->bEndpointAddress;
+@@ -2891,14 +2893,16 @@ static int edge_startup(struct usb_serial *serial)
+ 				/* not set up yet, so do it now */
+ 				edge_serial->read_urb =
+ 						usb_alloc_urb(0, GFP_KERNEL);
+-				if (!edge_serial->read_urb)
+-					return -ENOMEM;
++				if (!edge_serial->read_urb) {
++					response = -ENOMEM;
++					break;
++				}
+ 
+ 				edge_serial->bulk_in_buffer =
+ 					kmalloc(buffer_size, GFP_KERNEL);
+ 				if (!edge_serial->bulk_in_buffer) {
+-					usb_free_urb(edge_serial->read_urb);
+-					return -ENOMEM;
++					response = -ENOMEM;
++					break;
+ 				}
+ 				edge_serial->bulk_in_endpoint =
+ 						endpoint->bEndpointAddress;
+@@ -2924,9 +2928,22 @@ static int edge_startup(struct usb_serial *serial)
+ 			}
+ 		}
+ 
+-		if (!interrupt_in_found || !bulk_in_found || !bulk_out_found) {
+-			dev_err(ddev, "Error - the proper endpoints were not found!\n");
+-			return -ENODEV;
++		if (response || !interrupt_in_found || !bulk_in_found ||
++							!bulk_out_found) {
++			if (!response) {
++				dev_err(ddev, "expected endpoints not found\n");
++				response = -ENODEV;
++			}
++
++			usb_free_urb(edge_serial->interrupt_read_urb);
++			kfree(edge_serial->interrupt_in_buffer);
++
++			usb_free_urb(edge_serial->read_urb);
++			kfree(edge_serial->bulk_in_buffer);
++
++			kfree(edge_serial);
++
++			return response;
+ 		}
+ 
+ 		/* start interrupt read for this edgeport this interrupt will
+@@ -2949,16 +2966,9 @@ static void edge_disconnect(struct usb_serial *serial)
+ {
+ 	struct edgeport_serial *edge_serial = usb_get_serial_data(serial);
+ 
+-	/* stop reads and writes on all ports */
+-	/* free up our endpoint stuff */
+ 	if (edge_serial->is_epic) {
+ 		usb_kill_urb(edge_serial->interrupt_read_urb);
+-		usb_free_urb(edge_serial->interrupt_read_urb);
+-		kfree(edge_serial->interrupt_in_buffer);
+-
+ 		usb_kill_urb(edge_serial->read_urb);
+-		usb_free_urb(edge_serial->read_urb);
+-		kfree(edge_serial->bulk_in_buffer);
+ 	}
+ }
+ 
+@@ -2971,6 +2981,16 @@ static void edge_release(struct usb_serial *serial)
+ {
+ 	struct edgeport_serial *edge_serial = usb_get_serial_data(serial);
+ 
++	if (edge_serial->is_epic) {
++		usb_kill_urb(edge_serial->interrupt_read_urb);
++		usb_free_urb(edge_serial->interrupt_read_urb);
++		kfree(edge_serial->interrupt_in_buffer);
++
++		usb_kill_urb(edge_serial->read_urb);
++		usb_free_urb(edge_serial->read_urb);
++		kfree(edge_serial->bulk_in_buffer);
++	}
++
+ 	kfree(edge_serial);
+ }
+ 
+diff --git a/drivers/usb/serial/keyspan.c b/drivers/usb/serial/keyspan.c
+index 35297a845a63..118dba285b5d 100644
+--- a/drivers/usb/serial/keyspan.c
++++ b/drivers/usb/serial/keyspan.c
+@@ -2406,6 +2406,10 @@ static void keyspan_release(struct usb_serial *serial)
+ 
+ 	s_priv = usb_get_serial_data(serial);
+ 
++	/* Make sure to unlink the URBs submitted in attach. */
++	usb_kill_urb(s_priv->instat_urb);
++	usb_kill_urb(s_priv->indat_urb);
++
+ 	usb_free_urb(s_priv->instat_urb);
+ 	usb_free_urb(s_priv->indat_urb);
+ 	usb_free_urb(s_priv->glocont_urb);
+diff --git a/drivers/usb/serial/mxuport.c b/drivers/usb/serial/mxuport.c
+index 460a40669967..d029b2fc0f75 100644
+--- a/drivers/usb/serial/mxuport.c
++++ b/drivers/usb/serial/mxuport.c
+@@ -1263,6 +1263,15 @@ static int mxuport_attach(struct usb_serial *serial)
+ 	return 0;
+ }
+ 
++static void mxuport_release(struct usb_serial *serial)
++{
++	struct usb_serial_port *port0 = serial->port[0];
++	struct usb_serial_port *port1 = serial->port[1];
++
++	usb_serial_generic_close(port1);
++	usb_serial_generic_close(port0);
++}
++
+ static int mxuport_open(struct tty_struct *tty, struct usb_serial_port *port)
+ {
+ 	struct mxuport_port *mxport = usb_get_serial_port_data(port);
+@@ -1365,6 +1374,7 @@ static struct usb_serial_driver mxuport_device = {
+ 	.probe			= mxuport_probe,
+ 	.port_probe		= mxuport_port_probe,
+ 	.attach			= mxuport_attach,
++	.release		= mxuport_release,
+ 	.calc_num_ports		= mxuport_calc_num_ports,
+ 	.open			= mxuport_open,
+ 	.close			= mxuport_close,
+diff --git a/drivers/usb/serial/option.c b/drivers/usb/serial/option.c
+index 99c89d7fa1ad..bcb6f5c2bae4 100644
+--- a/drivers/usb/serial/option.c
++++ b/drivers/usb/serial/option.c
+@@ -375,18 +375,22 @@ static void option_instat_callback(struct urb *urb);
+ #define HAIER_PRODUCT_CE81B			0x10f8
+ #define HAIER_PRODUCT_CE100			0x2009
+ 
+-/* Cinterion (formerly Siemens) products */
+-#define SIEMENS_VENDOR_ID				0x0681
+-#define CINTERION_VENDOR_ID				0x1e2d
++/* Gemalto's Cinterion products (formerly Siemens) */
++#define SIEMENS_VENDOR_ID			0x0681
++#define CINTERION_VENDOR_ID			0x1e2d
++#define CINTERION_PRODUCT_HC25_MDMNET		0x0040
+ #define CINTERION_PRODUCT_HC25_MDM		0x0047
+-#define CINTERION_PRODUCT_HC25_MDMNET	0x0040
++#define CINTERION_PRODUCT_HC28_MDMNET		0x004A /* same for HC28J */
+ #define CINTERION_PRODUCT_HC28_MDM		0x004C
+-#define CINTERION_PRODUCT_HC28_MDMNET	0x004A /* same for HC28J */
+ #define CINTERION_PRODUCT_EU3_E			0x0051
+ #define CINTERION_PRODUCT_EU3_P			0x0052
+ #define CINTERION_PRODUCT_PH8			0x0053
+ #define CINTERION_PRODUCT_AHXX			0x0055
+ #define CINTERION_PRODUCT_PLXX			0x0060
++#define CINTERION_PRODUCT_PH8_2RMNET		0x0082
++#define CINTERION_PRODUCT_PH8_AUDIO		0x0083
++#define CINTERION_PRODUCT_AHXX_2RMNET		0x0084
++#define CINTERION_PRODUCT_AHXX_AUDIO		0x0085
+ 
+ /* Olivetti products */
+ #define OLIVETTI_VENDOR_ID			0x0b3c
+@@ -641,6 +645,10 @@ static const struct option_blacklist_info telit_le922_blacklist_usbcfg3 = {
+ 	.reserved = BIT(1) | BIT(2) | BIT(3),
+ };
+ 
++static const struct option_blacklist_info cinterion_rmnet2_blacklist = {
++	.reserved = BIT(4) | BIT(5),
++};
++
+ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE(OPTION_VENDOR_ID, OPTION_PRODUCT_COLT) },
+ 	{ USB_DEVICE(OPTION_VENDOR_ID, OPTION_PRODUCT_RICOLA) },
+@@ -1712,7 +1720,13 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE_INTERFACE_CLASS(CINTERION_VENDOR_ID, CINTERION_PRODUCT_AHXX, 0xff) },
+ 	{ USB_DEVICE(CINTERION_VENDOR_ID, CINTERION_PRODUCT_PLXX),
+ 		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
+-	{ USB_DEVICE(CINTERION_VENDOR_ID, CINTERION_PRODUCT_HC28_MDM) }, 
++	{ USB_DEVICE_INTERFACE_CLASS(CINTERION_VENDOR_ID, CINTERION_PRODUCT_PH8_2RMNET, 0xff),
++		.driver_info = (kernel_ulong_t)&cinterion_rmnet2_blacklist },
++	{ USB_DEVICE_INTERFACE_CLASS(CINTERION_VENDOR_ID, CINTERION_PRODUCT_PH8_AUDIO, 0xff),
++		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	{ USB_DEVICE_INTERFACE_CLASS(CINTERION_VENDOR_ID, CINTERION_PRODUCT_AHXX_2RMNET, 0xff) },
++	{ USB_DEVICE_INTERFACE_CLASS(CINTERION_VENDOR_ID, CINTERION_PRODUCT_AHXX_AUDIO, 0xff) },
++	{ USB_DEVICE(CINTERION_VENDOR_ID, CINTERION_PRODUCT_HC28_MDM) },
+ 	{ USB_DEVICE(CINTERION_VENDOR_ID, CINTERION_PRODUCT_HC28_MDMNET) },
+ 	{ USB_DEVICE(SIEMENS_VENDOR_ID, CINTERION_PRODUCT_HC25_MDM) },
+ 	{ USB_DEVICE(SIEMENS_VENDOR_ID, CINTERION_PRODUCT_HC25_MDMNET) },
+diff --git a/drivers/usb/serial/quatech2.c b/drivers/usb/serial/quatech2.c
+index 7725ed261ed6..62e449db24c3 100644
+--- a/drivers/usb/serial/quatech2.c
++++ b/drivers/usb/serial/quatech2.c
+@@ -141,6 +141,7 @@ static void qt2_release(struct usb_serial *serial)
+ 
+ 	serial_priv = usb_get_serial_data(serial);
+ 
++	usb_kill_urb(serial_priv->read_urb);
+ 	usb_free_urb(serial_priv->read_urb);
+ 	kfree(serial_priv->read_buffer);
+ 	kfree(serial_priv);
+diff --git a/fs/btrfs/ioctl.c b/fs/btrfs/ioctl.c
+index d40ae42ba6d4..a65fa2ae094f 100644
+--- a/fs/btrfs/ioctl.c
++++ b/fs/btrfs/ioctl.c
+@@ -1574,7 +1574,7 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
+ 
+ 		src_inode = file_inode(src.file);
+ 		if (src_inode->i_sb != file_inode(file)->i_sb) {
+-			btrfs_info(BTRFS_I(src_inode)->root->fs_info,
++			btrfs_info(BTRFS_I(file_inode(file))->root->fs_info,
+ 				   "Snapshot src from another FS");
+ 			ret = -EINVAL;
+ 		} else if (!inode_owner_or_capable(src_inode)) {
+diff --git a/fs/cifs/sess.c b/fs/cifs/sess.c
+index e87387dbf39f..bbb50be00ef5 100644
+--- a/fs/cifs/sess.c
++++ b/fs/cifs/sess.c
+@@ -399,19 +399,27 @@ int build_ntlmssp_auth_blob(unsigned char *pbuffer,
+ 	sec_blob->LmChallengeResponse.MaximumLength = 0;
+ 
+ 	sec_blob->NtChallengeResponse.BufferOffset = cpu_to_le32(tmp - pbuffer);
+-	rc = setup_ntlmv2_rsp(ses, nls_cp);
+-	if (rc) {
+-		cifs_dbg(VFS, "Error %d during NTLMSSP authentication\n", rc);
+-		goto setup_ntlmv2_ret;
+-	}
+-	memcpy(tmp, ses->auth_key.response + CIFS_SESS_KEY_SIZE,
+-			ses->auth_key.len - CIFS_SESS_KEY_SIZE);
+-	tmp += ses->auth_key.len - CIFS_SESS_KEY_SIZE;
++	if (ses->user_name != NULL) {
++		rc = setup_ntlmv2_rsp(ses, nls_cp);
++		if (rc) {
++			cifs_dbg(VFS, "Error %d during NTLMSSP authentication\n", rc);
++			goto setup_ntlmv2_ret;
++		}
++		memcpy(tmp, ses->auth_key.response + CIFS_SESS_KEY_SIZE,
++				ses->auth_key.len - CIFS_SESS_KEY_SIZE);
++		tmp += ses->auth_key.len - CIFS_SESS_KEY_SIZE;
+ 
+-	sec_blob->NtChallengeResponse.Length =
+-			cpu_to_le16(ses->auth_key.len - CIFS_SESS_KEY_SIZE);
+-	sec_blob->NtChallengeResponse.MaximumLength =
+-			cpu_to_le16(ses->auth_key.len - CIFS_SESS_KEY_SIZE);
++		sec_blob->NtChallengeResponse.Length =
++				cpu_to_le16(ses->auth_key.len - CIFS_SESS_KEY_SIZE);
++		sec_blob->NtChallengeResponse.MaximumLength =
++				cpu_to_le16(ses->auth_key.len - CIFS_SESS_KEY_SIZE);
++	} else {
++		/*
++		 * don't send an NT Response for anonymous access
++		 */
++		sec_blob->NtChallengeResponse.Length = 0;
++		sec_blob->NtChallengeResponse.MaximumLength = 0;
++	}
+ 
+ 	if (ses->domainName == NULL) {
+ 		sec_blob->DomainName.BufferOffset = cpu_to_le32(tmp - pbuffer);
+diff --git a/fs/cifs/smb2glob.h b/fs/cifs/smb2glob.h
+index bc0bb9c34f72..0ffa18094335 100644
+--- a/fs/cifs/smb2glob.h
++++ b/fs/cifs/smb2glob.h
+@@ -44,6 +44,7 @@
+ #define SMB2_OP_DELETE 7
+ #define SMB2_OP_HARDLINK 8
+ #define SMB2_OP_SET_EOF 9
++#define SMB2_OP_RMDIR 10
+ 
+ /* Used when constructing chained read requests. */
+ #define CHAINED_REQUEST 1
+diff --git a/fs/cifs/smb2inode.c b/fs/cifs/smb2inode.c
+index 215f8d3e3e53..f970c5d5b253 100644
+--- a/fs/cifs/smb2inode.c
++++ b/fs/cifs/smb2inode.c
+@@ -80,6 +80,10 @@ smb2_open_op_close(const unsigned int xid, struct cifs_tcon *tcon,
+ 		 * SMB2_open() call.
+ 		 */
+ 		break;
++	case SMB2_OP_RMDIR:
++		tmprc = SMB2_rmdir(xid, tcon, fid.persistent_fid,
++				   fid.volatile_fid);
++		break;
+ 	case SMB2_OP_RENAME:
+ 		tmprc = SMB2_rename(xid, tcon, fid.persistent_fid,
+ 				    fid.volatile_fid, (__le16 *)data);
+@@ -191,8 +195,8 @@ smb2_rmdir(const unsigned int xid, struct cifs_tcon *tcon, const char *name,
+ 	   struct cifs_sb_info *cifs_sb)
+ {
+ 	return smb2_open_op_close(xid, tcon, cifs_sb, name, DELETE, FILE_OPEN,
+-				  CREATE_NOT_FILE | CREATE_DELETE_ON_CLOSE,
+-				  NULL, SMB2_OP_DELETE);
++				  CREATE_NOT_FILE,
++				  NULL, SMB2_OP_RMDIR);
+ }
+ 
+ int
+diff --git a/fs/cifs/smb2pdu.c b/fs/cifs/smb2pdu.c
+index ae375dff03da..fc656bc5d6cb 100644
+--- a/fs/cifs/smb2pdu.c
++++ b/fs/cifs/smb2pdu.c
+@@ -2291,6 +2291,22 @@ SMB2_rename(const unsigned int xid, struct cifs_tcon *tcon,
+ }
+ 
+ int
++SMB2_rmdir(const unsigned int xid, struct cifs_tcon *tcon,
++		  u64 persistent_fid, u64 volatile_fid)
++{
++	__u8 delete_pending = 1;
++	void *data;
++	unsigned int size;
++
++	data = &delete_pending;
++	size = 1; /* sizeof __u8 */
++
++	return send_set_info(xid, tcon, persistent_fid, volatile_fid,
++			current->tgid, FILE_DISPOSITION_INFORMATION, 1, &data,
++			&size);
++}
++
++int
+ SMB2_set_hardlink(const unsigned int xid, struct cifs_tcon *tcon,
+ 		  u64 persistent_fid, u64 volatile_fid, __le16 *target_file)
+ {
+diff --git a/fs/cifs/smb2proto.h b/fs/cifs/smb2proto.h
+index 0ce48db20a65..8e0d57bf446b 100644
+--- a/fs/cifs/smb2proto.h
++++ b/fs/cifs/smb2proto.h
+@@ -134,6 +134,8 @@ extern int SMB2_query_directory(const unsigned int xid, struct cifs_tcon *tcon,
+ extern int SMB2_rename(const unsigned int xid, struct cifs_tcon *tcon,
+ 		       u64 persistent_fid, u64 volatile_fid,
+ 		       __le16 *target_file);
++extern int SMB2_rmdir(const unsigned int xid, struct cifs_tcon *tcon,
++		      u64 persistent_fid, u64 volatile_fid);
+ extern int SMB2_set_hardlink(const unsigned int xid, struct cifs_tcon *tcon,
+ 			     u64 persistent_fid, u64 volatile_fid,
+ 			     __le16 *target_file);
+diff --git a/kernel/trace/ring_buffer.c b/kernel/trace/ring_buffer.c
+index c798ed2fc281..0d3af0a47c6d 100644
+--- a/kernel/trace/ring_buffer.c
++++ b/kernel/trace/ring_buffer.c
+@@ -463,7 +463,7 @@ struct ring_buffer_per_cpu {
+ 	raw_spinlock_t			reader_lock;	/* serialize readers */
+ 	arch_spinlock_t			lock;
+ 	struct lock_class_key		lock_key;
+-	unsigned int			nr_pages;
++	unsigned long			nr_pages;
+ 	struct list_head		*pages;
+ 	struct buffer_page		*head_page;	/* read from head */
+ 	struct buffer_page		*tail_page;	/* write to tail */
+@@ -483,7 +483,7 @@ struct ring_buffer_per_cpu {
+ 	u64				write_stamp;
+ 	u64				read_stamp;
+ 	/* ring buffer pages to update, > 0 to add, < 0 to remove */
+-	int				nr_pages_to_update;
++	long				nr_pages_to_update;
+ 	struct list_head		new_pages; /* new pages to add */
+ 	struct work_struct		update_pages_work;
+ 	struct completion		update_done;
+@@ -1120,10 +1120,10 @@ static int rb_check_pages(struct ring_buffer_per_cpu *cpu_buffer)
+ 	return 0;
+ }
+ 
+-static int __rb_allocate_pages(int nr_pages, struct list_head *pages, int cpu)
++static int __rb_allocate_pages(long nr_pages, struct list_head *pages, int cpu)
+ {
+-	int i;
+ 	struct buffer_page *bpage, *tmp;
++	long i;
+ 
+ 	for (i = 0; i < nr_pages; i++) {
+ 		struct page *page;
+@@ -1160,7 +1160,7 @@ free_pages:
+ }
+ 
+ static int rb_allocate_pages(struct ring_buffer_per_cpu *cpu_buffer,
+-			     unsigned nr_pages)
++			     unsigned long nr_pages)
+ {
+ 	LIST_HEAD(pages);
+ 
+@@ -1185,7 +1185,7 @@ static int rb_allocate_pages(struct ring_buffer_per_cpu *cpu_buffer,
+ }
+ 
+ static struct ring_buffer_per_cpu *
+-rb_allocate_cpu_buffer(struct ring_buffer *buffer, int nr_pages, int cpu)
++rb_allocate_cpu_buffer(struct ring_buffer *buffer, long nr_pages, int cpu)
+ {
+ 	struct ring_buffer_per_cpu *cpu_buffer;
+ 	struct buffer_page *bpage;
+@@ -1284,8 +1284,9 @@ struct ring_buffer *__ring_buffer_alloc(unsigned long size, unsigned flags,
+ 					struct lock_class_key *key)
+ {
+ 	struct ring_buffer *buffer;
++	long nr_pages;
+ 	int bsize;
+-	int cpu, nr_pages;
++	int cpu;
+ 
+ 	/* keep it in its own cache line */
+ 	buffer = kzalloc(ALIGN(sizeof(*buffer), cache_line_size()),
+@@ -1408,12 +1409,12 @@ static inline unsigned long rb_page_write(struct buffer_page *bpage)
+ }
+ 
+ static int
+-rb_remove_pages(struct ring_buffer_per_cpu *cpu_buffer, unsigned int nr_pages)
++rb_remove_pages(struct ring_buffer_per_cpu *cpu_buffer, unsigned long nr_pages)
+ {
+ 	struct list_head *tail_page, *to_remove, *next_page;
+ 	struct buffer_page *to_remove_page, *tmp_iter_page;
+ 	struct buffer_page *last_page, *first_page;
+-	unsigned int nr_removed;
++	unsigned long nr_removed;
+ 	unsigned long head_bit;
+ 	int page_entries;
+ 
+@@ -1630,7 +1631,7 @@ int ring_buffer_resize(struct ring_buffer *buffer, unsigned long size,
+ 			int cpu_id)
+ {
+ 	struct ring_buffer_per_cpu *cpu_buffer;
+-	unsigned nr_pages;
++	unsigned long nr_pages;
+ 	int cpu, err = 0;
+ 
+ 	/*
+@@ -1644,14 +1645,13 @@ int ring_buffer_resize(struct ring_buffer *buffer, unsigned long size,
+ 	    !cpumask_test_cpu(cpu_id, buffer->cpumask))
+ 		return size;
+ 
+-	size = DIV_ROUND_UP(size, BUF_PAGE_SIZE);
+-	size *= BUF_PAGE_SIZE;
++	nr_pages = DIV_ROUND_UP(size, BUF_PAGE_SIZE);
+ 
+ 	/* we need a minimum of two pages */
+-	if (size < BUF_PAGE_SIZE * 2)
+-		size = BUF_PAGE_SIZE * 2;
++	if (nr_pages < 2)
++		nr_pages = 2;
+ 
+-	nr_pages = DIV_ROUND_UP(size, BUF_PAGE_SIZE);
++	size = nr_pages * BUF_PAGE_SIZE;
+ 
+ 	/*
+ 	 * Don't succeed if resizing is disabled, as a reader might be
+@@ -4609,8 +4609,9 @@ static int rb_cpu_notify(struct notifier_block *self,
+ 	struct ring_buffer *buffer =
+ 		container_of(self, struct ring_buffer, cpu_notify);
+ 	long cpu = (long)hcpu;
+-	int cpu_i, nr_pages_same;
+-	unsigned int nr_pages;
++	long nr_pages_same;
++	int cpu_i;
++	unsigned long nr_pages;
+ 
+ 	switch (action) {
+ 	case CPU_UP_PREPARE:
