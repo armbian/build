@@ -352,11 +352,9 @@ if [[ -n $MISC5_DIR && $BRANCH != next && $LINUXSOURCEDIR == *sun8i* ]]; then
 	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
 fi
 
-# h3disp/sun8i-corekeeper.sh for sun8i/3.4.x
+# h3disp for sun8i/3.4.x
 if [[ $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
 	install -m 755 "$SRC/lib/scripts/h3disp" "$CACHEDIR/sdcard/usr/local/bin"
-	install -m 755 "$SRC/lib/scripts/sun8i-corekeeper.sh" "$CACHEDIR/sdcard/usr/local/bin"
-	sed -i 's|^exit\ 0$|/usr/local/bin/sun8i-corekeeper.sh \&\n\n&|' "$CACHEDIR/sdcard/etc/rc.local"
 fi
 }
 
