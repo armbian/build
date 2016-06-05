@@ -1,7 +1,7 @@
 # Release history
 
 **v5.14 / 5.6.2016**
-- Odroid C2 and Banana M2+ images rebuilt 
+- Odroid C2 and Orange Pi+ images rebuilt 
 - fixed eMMC installer, updated images and repository for Opi PC Plus and Opi Plus 2E
 
 **v5.12 / 31.5.2016**
