@@ -14,28 +14,24 @@
 CWD="/usr/lib/nand-sata-install"
 EX_LIST="${CWD}/exclude.txt"
 backtitle="Armbian install script, http://www.armbian.com | Author: Igor Pecovnik"
-title="NAND, SATA and USB Armbian installer"
+title="NAND, eMMC, SATA and USB Armbian installer"
 emmcdevice="/dev/mmcblk1"
 nanddevice="/dev/nand"
 if cat /proc/cpuinfo | grep -q 'sun4i'; then DEVICE_TYPE="a10"; else DEVICE_TYPE="a20"; fi 	# Determine device
-BOOTLOADER="${CWD}/${DEVICE_TYPE}/bootloader"											# Define bootloader
-nandcheck=$(grep nand /proc/partitions)		# check NAND
-emmcchech=$(grep mmcblk1 /proc/partitions)	# check eMMC
-satacheck=$(grep sd /proc/partitions)		# check SATA/USB
-
-
+BOOTLOADER="${CWD}/${DEVICE_TYPE}/bootloader"							# Define bootloader
+nandcheck=$(grep nand /proc/partitions)								# check NAND
+emmccheck=$(grep mmcblk1 /proc/partitions)							# check eMMC
+satacheck=$(grep sd /proc/partitions)								# check SATA/USB
 
 
 # Create boot and root file system $1 = boot, $2 = root (Example: create_armbian "/dev/nand1" "/dev/sda3")
-create_armbian ()
-{
+create_armbian() {
 	# create mount points, mount and clean
 	sync
 	mkdir -p /mnt/bootfs /mnt/rootfs
 	[ -n "$2" ] && mount $2 /mnt/rootfs	
 	[[ -n "$1" && "$1" != "$2" ]] && mount $1 /mnt/bootfs
 	rm -rf /mnt/bootfs/* /mnt/rootfs/*
-	
 	
 	# calculate usage and see if it fits on destination
 	USAGE=$(df -BM | grep ^/dev | head -1 | awk '{print $3}' | tr -cd '[0-9]. \n')
@@ -54,7 +50,7 @@ create_armbian ()
 		
 	# count files is needed for progress bar
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\n  Counting files ... few seconds." 5 40
-	TODO=$(rsync -ahvrltDn --delete --stats --exclude-from=$EX_LIST /  /mnt/rootfs |grep "Number of files:"|awk '{print $4}' | tr -d '.,')
+	TODO=$(rsync -ahvrltDn --delete --stats --exclude-from=$EX_LIST / /mnt/rootfs | grep "Number of files:"|awk '{print $4}' | tr -d '.,')
 
 	# creating rootfs
 	rsync -avrltD  --delete --exclude-from=$EX_LIST  /  /mnt/rootfs | nl | awk '{ printf "%.0f\n", 100*$1/"'"$TODO"'" }' \
@@ -65,13 +61,12 @@ create_armbian ()
 
 	# creating fstab, kernel and boot script for NAND partition
 	if [[ "$1" == *nand* ]]; then
-		
 		REMOVESDTXT="and remove SD to boot from NAND"
 		sed -i '/boot/d' /mnt/rootfs/etc/fstab
 		echo "$1 /boot vfat	defaults 0 0" >> /mnt/rootfs/etc/fstab
 		dialog --title "$title" --backtitle "$backtitle" --infobox "\nConverting kernel ... few seconds." 5 60
 		mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d \
-		/boot/zImage /mnt/bootfs/uImage >/dev/null 2>&1
+			/boot/zImage /mnt/bootfs/uImage >/dev/null 2>&1
 		cp /boot/script.bin /mnt/bootfs/
 		cat > /mnt/bootfs/uEnv.txt <<EOF
 console=ttyS0,115200
@@ -91,14 +86,14 @@ EOF
 		tune2fs -o journal_data_writeback /dev/nand2 >/dev/null 2>&1
 		tune2fs -O ^has_journal /dev/nand2 >/dev/null 2>&1
 		e2fsck -f /dev/nand2 >/dev/null 2>&1
-		
+
 	elif [[ "$2" == "/dev/mmcblk1p1" ]]; then
 		
 		# eMMC install
 		# fix that we can have one exlude file
 		cp -R /boot/ /mnt/rootfs
 		# determine u-boot and write it
-		name_of_ubootpackage=$(aptitude versions '~i linux-u-boot*'|head -1| awk '{print $2}' | sed 's/linux-u-boot-//g' | cut -f1 -d"-")
+		name_of_ubootpackage=$(aptitude versions '~i linux-u-boot*'| head -1 | awk '{print $2}' | sed 's/linux-u-boot-//g' | cut -f1 -d"-")
 		version_of_ubootpkg=$(aptitude versions '~i linux-u-boot*'| tail -1 |  awk '{print $2}')
 		arhitecture=$(dpkg --print-architecture)
 		uboot="/usr/lib/linux-u-boot-"$name_of_ubootpackage"_"$version_of_ubootpkg"_"$arhitecture""/u-boot-sunxi-with-spl.bin
@@ -116,9 +111,9 @@ EOF
 	elif [[ -f /boot/boot.ini ]]; then
 		sed -e 's,root='"$root_partition"',root='"$2"',g' -i /boot/boot.ini
 		sed -i "s/data=writeback,//" /mnt/rootfs/etc/fstab
-fi
-umountdevice "/dev/sda"
-}
+	fi
+	umountdevice "/dev/sda"
+} # create_armbian
 
 
 # Accept device as parameter: for example /dev/sda unmounts all their mounts
@@ -133,31 +128,27 @@ umountdevice() {
 			fi
 		done
 	fi
-	
-}
+} # umountdevice
 
 
 # Recognize root filesystem
-recognize_root (){
-
+recognize_root() {
 	local device="/dev/"$(lsblk -idn -o NAME | grep mmcblk0)
 	local partitions=$(($(fdisk -l $device | grep $device | wc -l)-1))
 	local device="/dev/"$(lsblk -idn -o NAME | grep mmcblk0)"p"$partitions
 	local root_device=$(mountpoint -d /)
 	for file in /dev/* ; do
-	local current_device=$(printf "%d:%d" $(stat --printf="0x%t 0x%T" $file))
-	if [ $current_device = $root_device ]; then
+		local current_device=$(printf "%d:%d" $(stat --printf="0x%t 0x%T" $file))
+		if [ $current_device = $root_device ]; then
 			root_partition=$file
 			break;
-	fi
+		fi
 	done
-	
-}
+} # recognize_root
 
 
 # Formatting NAND - no parameters. Fixed solution.
-formatnand(){
-
+formatnand() {
 	[[ ! -e /dev/nand ]] && echo "NAND error" && exit 0
 	dialog --title "$title" --backtitle "$backtitle"  --infobox "\nFormating ... up to one minute." 5 40
 	if [[ "$DEVICE_TYPE" = "a20" ]]; then
@@ -167,14 +158,11 @@ formatnand(){
 	fi
 	mkfs.vfat /dev/nand1 >/dev/null 2>&1
 	mkfs.ext4 /dev/nand2 >/dev/null 2>&1
-
-}
+} # formatnand
 
 
 # Formatting eMMC [device] example /dev/mmcblk1
-formatemmc()
-{
-	
+formatemmc() {
 	# deletes all partitions
 	dialog --title "$title" --backtitle "$backtitle"  --infobox "\n  Formating eMMC ... one moment." 5 40
 	dd bs=1 seek=446 count=64 if=/dev/zero of=$1 >/dev/null 2>&1
@@ -183,30 +171,25 @@ formatemmc()
 	partprobe $1
 	# create fs
 	mkfs.ext4 -qF $1"p1" >/dev/null 2>&1
-	
-}
+} # formatemmc
 
 
 # formatting SATA/USB [device] example /dev/sda3
-formatsata(){
-	
+formatsata() {
 	dialog --title "$title" --backtitle "$backtitle"  --infobox "\nFormating ... up to one minute." 5 40
 	mkfs.ext4 $1 >/dev/null 2>&1
 	tune2fs $1 -o journal_data_writeback >/dev/null 2>&1
-	
-}
+} # formatsata
 
 
 # choose target SATA/USB partition.
-function checksatatarget
-{
-	
+checksatatarget() {
 	IFS=" "
-	SataTargets=$(cat /proc/partitions | grep sd | awk '{print "/dev/"$4}' | grep -E '[0-9]{1,4}' | nl | xargs echo -n)
+	SataTargets=$(awk '/sd/ {print "/dev/"$4}' </proc/partitions | grep -E '[0-9]{1,4}' | nl | xargs echo -n)
 	if [[ "$SataTargets" == "" ]]; then
-		dialog --title "$title" --backtitle "$backtitle"  --colors --infobox\
+		dialog --title "$title" --backtitle "$backtitle"  --colors --infobox \
 		"\n\Z1There are no avaliable partitions. Please create them.\Zn" 5 60
-	exit 1
+		exit 1
 	fi
 
 	SataOptions=($SataTargets)
@@ -214,20 +197,16 @@ function checksatatarget
 	SataChoices=$("${SataCmd[@]}" "${SataOptions[@]}" 2>&1 >/dev/tty)
 	if [ $? -ne 0 ]; then exit 1; fi
 	SDA_ROOT_PART=${SataOptions[(2*$SataChoices)-1]}
-	
-}
+} # checksatatarget
 
 
 # show warning [TEXT]
-function ShowWarning
-{
-	
+ShowWarning() {
 	dialog --title "$title" --backtitle "$backtitle" --cr-wrap --colors --yesno " \Z1$(toilet -f mono12 WARNING)\Zn\n$1" 17 74
 	if [ $? -ne 0 ]; then exit 1; fi
+} # ShowWarning
 
-}
-
-
+main() {
 	# This tool must run under root
 
 	if [[ ${EUID} -ne 0 ]]; then 
@@ -249,11 +228,10 @@ function ShowWarning
 		exit 1
 	fi
 	
-
 	recognize_root
 	IFS="'"
 	options=()
-	if [[ -n "$emmcchech" ]]; then 
+	if [[ -n "$emmccheck" ]]; then 
 		ichip="eMMC"; 
 		dest_boot="/dev/mmcblk1p1";
 		dest_root="/dev/mmcblk1p1";
@@ -263,9 +241,9 @@ function ShowWarning
 		dest_root="/dev/nand2";
 	fi
 	
-	[[ -n "$nandcheck" || -n "$emmcchech" ]] 						&& options=(${options[@]} 1 'Boot from '$ichip' - system on '$ichip)
-	[[ ( -n "$nandcheck" || -n "$emmcchech" ) && -n "$satacheck" ]]	&& options=(${options[@]} 2 'Boot from '$ichip' - system on SATA or USB')
-	[[ -n "$satacheck" ]]											&& options=(${options[@]} 3 'Boot from SD   - system on SATA or USB')
+	[[ -n "$nandcheck" || -n "$emmccheck" ]] && options=(${options[@]} 1 'Boot from '$ichip' - system on '$ichip)
+	[[ ( -n "$nandcheck" || -n "$emmccheck" ) && -n "$satacheck" ]]	&& options=(${options[@]} 2 'Boot from '$ichip' - system on SATA or USB')
+	[[ -n "$satacheck" ]] && options=(${options[@]} 3 'Boot from SD   - system on SATA or USB')
 	
 	[[ ${#options[@]} -eq 0 ]] && dialog --title "$title" --backtitle "$backtitle"  --colors --infobox "\n\Z1There are no targets. Please check your drives.\Zn" 5 60 && exit 1
 
@@ -280,7 +258,7 @@ function ShowWarning
 				title="$ichip install"
 				command="Power off"
 				ShowWarning "This script will erase your $ichip. Continue?"
-				if [[ -n "$emmcchech" ]]; then 
+				if [[ -n "$emmccheck" ]]; then 
 					umountdevice "/dev/mmcblk1" 
 					formatemmc "/dev/mmcblk1"
 					else
@@ -294,7 +272,7 @@ function ShowWarning
 				command="Power off"
 				checksatatarget
 				ShowWarning "This script will erase your $ichip and $SDA_ROOT_PART. Continue?"
-				if [[ -n "$emmcchech" ]]; then 
+				if [[ -n "$emmccheck" ]]; then 
 					umountdevice "/dev/mmcblk1" 
 					formatemmc "/dev/mmcblk1"
 					else
@@ -318,3 +296,6 @@ function ShowWarning
 
 	dialog --title "$title" --backtitle "$backtitle"  --yes-label "$command" --no-label "Exit" --yesno "\nAll done. $command $REMOVESDTXT" 7 60
 	if [ $? -eq 0 ]; then "$(echo ${command,,} | sed 's/ //')"; fi
+} # main
+
+main "$@"
