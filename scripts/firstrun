@@ -103,9 +103,13 @@ display_alert() {
 }
 
 adjust_sunxi_settings() {
-
-	# set some mac address to wifi	
+	# set some mac address for wifi	
 	[[ "$(lsmod | grep 8189fs)" != "" ]] && printf 'options 8189fs rtw_initmac=00:60:2F:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256] > /etc/modprobe.d/8189fs.conf
+
+	# set some mac address for BT
+	[[ "$(lsmod | grep bcmdhd)" != "" ]] && \
+		(MACADDR=$(printf '43:29:B1:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]) ; \
+		sed -i "s/^MAC_ADDR=.*/MAC_ADDR=${MACADDR}/" /etc/default/brcm40183)
 	
 	# trigger red or blue LED as user feedback
 	echo heartbeat >/sys/class/leds/*red*/trigger 2>/dev/null || echo heartbeat >/sys/class/leds/*blue*/trigger 2>/dev/null	
@@ -149,6 +153,11 @@ do_expand_rootfs() {
 				;;
 		esac
 	else
+		# Unattended mode. We run a q&d benchmark to be able to identify cards way too slow easily
+		cd /root
+		echo -e "\n### quick iozone test:\c" >>/var/log/armhwinfo.log
+		iozone -e -I -a -s 1M -r 4k -i 0 -i 1 -i 2 | grep '^            1024' | sed 's/            1024      //' >>/var/log/armhwinfo.log
+
 		# check device capacity. If 4GB or below do not use whole card but leave a 5% spare area
 		# to help older cards with wear leveling and garbage collection. In case this reduced card
 		# capacity is less than the actual image capacity this is a clear sign that someone wants
@@ -156,13 +165,17 @@ do_expand_rootfs() {
 		# should know what he's doing)
 		CAPACITY=$(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", \$2 / ( 1024 / \$4 ))}")
 		if [ ${CAPACITY} -lt 4000000 ]; then
-			# we also run a q&d benchmark to be able to identify cards way too slow easily
-			cd /root
-			echo -e "\n### quick iozone test:\c" >>/var/log/armhwinfo.log
-			iozone -e -I -a -s 1M -r 4k -i 0 -i 1 -i 2 | grep '^            1024' | sed 's/            1024      //' >>/var/log/armhwinfo.log
 			SPAREAREA=$(( ${CAPACITY} / 20000 ))
 			LASTSECTOR=$(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {print \$2 - (${SPAREAREA} * 1024 * ( 1024 / \$4 ))}")
 			if [ ${LASTSECTOR} -lt ${PARTEND} ]; then unset LASTSECTOR ; fi
+		elif [ ${CAPACITY} -lt 8000000 ]; then
+			# Leave 2 percent unpartitioned
+			LASTSECTOR=$(( 32 * $(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", ( \$2 * 98 / 3200))}") -1 ))
+			if [ ${LASTSECTOR} -lt ${PARTEND} ]; then unset LASTSECTOR ; fi
+		else
+			# Leave 1 percent unpartitioned
+                        LASTSECTOR=$(( 32 * $(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", ( \$2 * 99 / 3200))}") -1 ))
+                        if [ ${LASTSECTOR} -lt ${PARTEND} ]; then unset LASTSECTOR ; fi
 		fi
 	fi
 
