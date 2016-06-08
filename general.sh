@@ -390,21 +390,22 @@ prepare_host() {
 	mkdir -p $SOURCES $DEST/debug $CACHEDIR/rootfs $SRC/userpatches/overlay $SRC/toolchains
 	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
 
-	# donwload external Linaro compiler and missing special dependencies since they are needed for certain sources	
+	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 	cd $SRC/toolchains
-	[[ ! -d $SRC/toolchains/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu ]] 		&& display_alert "Updating external compilers" "aarch64-linux-gnu 4.9" "info" 	\
-	&& curl -LS --progress-bar "http://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/aarch64-linux-gnu/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu.tar.xz" | tar xJf -	
-	[[ ! -d $SRC/toolchains/gcc-linaro-4.9-2016.02-x86_64_arm-eabi ]] 				&& display_alert "Updating external compilers" "arm-eabi 4.9" "info" 			\
-	&& curl -LS --progress-bar "http://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-eabi/gcc-linaro-4.9-2016.02-x86_64_arm-eabi.tar.xz" | tar xJf -	
-	[[ ! -d $SRC/toolchains/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi ]] 		&& display_alert "Updating external compilers" "arm-linux-gnueabi 4.9" "info" 	\
-	&& curl -LS --progress-bar "http://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabi/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi.tar.xz" | tar xJf -	
-	[[ ! -d $SRC/toolchains/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf ]]	&& display_alert "Updating external compilers" "arm-linux-gnueabihf 4.9" "info" \
-	&& curl -LS --progress-bar "http://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabihf/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf.tar.xz" | tar xJf -	
-	[[ ! -d $SRC/toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux ]] 	&& display_alert "Updating external compilers" "arm-linux-gnueabihf 4.8" "info" \
-	&& curl -LS --progress-bar "http://releases.linaro.org/14.04/components/toolchain/binaries/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz" | tar xJf -	
+	[[ ! -d $SRC/toolchains/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu ]] && display_alert "Updating external compiler" "aarch64-linux-gnu 4.9" "info" \
+		&& curl -LS --progress-bar "http://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/aarch64-linux-gnu/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu.tar.xz" | tar xJf -
+	#[[ ! -d $SRC/toolchains/gcc-linaro-4.9-2016.02-x86_64_arm-eabi ]] && display_alert "Updating external compiler" "arm-eabi 4.9" "info" \
+	#	&& curl -LS --progress-bar "http://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-eabi/gcc-linaro-4.9-2016.02-x86_64_arm-eabi.tar.xz" | tar xJf -
+	[[ ! -d $SRC/toolchains/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi ]] && display_alert "Updating external compilers" "arm-linux-gnueabi 4.9" "info" \
+		&& curl -LS --progress-bar "http://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabi/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi.tar.xz" | tar xJf -
+	[[ ! -d $SRC/toolchains/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf ]] && display_alert "Updating external compilers" "arm-linux-gnueabihf 4.9" "info" \
+		&& curl -LS --progress-bar "http://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabihf/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf.tar.xz" | tar xJf -
+	[[ ! -d $SRC/toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux ]] && display_alert "Updating external compilers" "arm-linux-gnueabihf 4.8" "info" \
+		&& curl -LS --progress-bar "http://releases.linaro.org/14.04/components/toolchain/binaries/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz" | tar xJf -
+
 	dpkg --add-architecture i386
 	apt-get install -qq -y --no-install-recommends lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 zlib1g:i386 >/dev/null 2>&1
-	
+
 	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/lib/scripts/customize-image.sh.template $SRC/userpatches/customize-image.sh
 
 	if [[ ! -f $SRC/userpatches/README ]]; then
