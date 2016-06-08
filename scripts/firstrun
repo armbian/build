@@ -22,6 +22,7 @@ if [ "X$1" != "Xstart" ]; then
 fi
 
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Log=/var/log/armhwinfo.log
 
 # create helper script to set swap settings
 cat > /tmp/create_swap.sh <<EOT
@@ -32,17 +33,20 @@ cat > /tmp/create_swap.sh <<EOT
 # SSH Keys creation
 rm -f /etc/ssh/ssh_host*
 dpkg-reconfigure openssh-server >/dev/null 2>&1
+echo -e "\n### [firstrun] Recreated SSH keys" >>${Log}
 MEMTOTAL=$(( $(awk -F" " '/^MemTotal/ {print $2}' </proc/meminfo) / 1024 ))
 FREESIZE=\$(df -hm / | awk '/\// {print \$(NF-2)}')
-if [[ ! -f "/var/swap" && "\$FREESIZE" -gt "132" ]]; then
-fallocate -l 128M /var/swap >/dev/null 2>&1
-if [ $? -eq 1 ]; then dd if=/dev/zero of=/var/swap bs=1M count=128 status=noxfer >/dev/null 2>&1; fi
-chown root:root /var/swap
-chmod 0600 /var/swap
-mkswap /var/swap >/dev/null 2>&1
-swapon /var/swap >/dev/null 2>&1
-if ! grep -q swap /etc/fstab; then echo "/var/swap none swap sw 0 0" >> /etc/fstab; fi 
-if ! grep -q swap /etc/sysctl.conf; then echo "vm.swappiness=0" >> /etc/sysctl.conf; fi 
+SWAPFILE=/var/swap
+if [[ ! -f "$SWAPFILE" && "\$FREESIZE" -gt "132" ]]; then
+fallocate -l 128M $SWAPFILE >/dev/null 2>&1
+if [ $? -eq 1 ]; then dd if=/dev/zero of=$SWAPFILE bs=1M count=128 status=noxfer >/dev/null 2>&1; fi
+chown root:root $SWAPFILE
+chmod 0600 $SWAPFILE
+mkswap $SWAPFILE >/dev/null 2>&1
+swapon $SWAPFILE >/dev/null 2>&1
+if ! grep -q swap /etc/fstab; then echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab; fi
+if ! grep -q swap /etc/sysctl.conf; then echo "vm.swappiness=0" >> /etc/sysctl.conf; fi
+echo -e "\n### [firstrun] Created 128MB emergency swap as $SWAPFILE" >>${Log}
 fi
 # RAMLOG
 if [[ "$(apt-cache policy ramlog | grep Installed)" != "" ]]; then
@@ -103,19 +107,24 @@ display_alert() {
 
 adjust_sunxi_settings() {
 	# set some mac address for wifi	
-	[[ "$(lsmod | grep 8189fs)" != "" ]] && printf 'options 8189fs rtw_initmac=00:60:2F:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256] > /etc/modprobe.d/8189fs.conf
+	[[ "$(lsmod | grep 8189fs)" != "" ]] && \
+		(MACADDR=$(printf '43:29:B1:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]) ; \
+		echo "options 8189fs rtw_initmac=${MACADDR}" > /etc/modprobe.d/8189fs.conf \
+		echo -e "\n### [firstrun] Use MAC address ${MACADDR} for Wi-Fi from now" >>${Log})
 
 	# set some mac address for BT
 	[[ "$(lsmod | grep bcmdhd)" != "" ]] && \
 		(MACADDR=$(printf '43:29:B1:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]) ; \
-		sed -i "s/^MAC_ADDR=.*/MAC_ADDR=${MACADDR}/" /etc/default/brcm40183)
+		sed -i "s/^MAC_ADDR=.*/MAC_ADDR=${MACADDR}/" /etc/default/brcm40183 \
+		echo -e "\n### [firstrun] Use MAC address ${MACADDR} for Bluetooth from now" >>${Log})
 	
 	# trigger red or blue LED as user feedback
 	echo heartbeat >/sys/class/leds/*red*/trigger 2>/dev/null || echo heartbeat >/sys/class/leds/*blue*/trigger 2>/dev/null	
 	[ -f /etc/wicd/wired-settings.conf ] && \
 		read HOSTNAME </etc/hostname
 		sed -i "s/^dhcphostname =.*/dhcphostname = ${HOSTNAME}/" /etc/wicd/wired-settings.conf && \
-		sed -i "s/wpa_driver =.*/wpa_driver = none/" /etc/wicd/manager-settings.conf
+		sed -i "s/wpa_driver =.*/wpa_driver = none/" /etc/wicd/manager-settings.conf \
+		echo -e "\n### [firstrun] Use ${HOSTNAME} for wicd settings" >>${Log}
 } # adjust_sunxi_settings
 
 do_expand_rootfs() {
@@ -135,6 +144,7 @@ do_expand_rootfs() {
 	# this case the value will be ignored and resizing to the whole card size happens.
 	if [ -f "/root/.rootfs_resize" ]; then
 		read RESIZE_VALUE <"/root/.rootfs_resize"
+		ResizeLog="Resize rule ${RESIZE_VALUE} defined for ${root_partition}"
 		case ${RESIZE_VALUE} in
 			*%)
 				# percentage value, we try to use 16MiB to align partitions since this is
@@ -165,31 +175,49 @@ do_expand_rootfs() {
 		if [ ${CAPACITY} -lt 4000000 ]; then
 			SPAREAREA=$(( ${CAPACITY} / 20000 ))
 			LASTSECTOR=$(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {print \$2 - (${SPAREAREA} * 1024 * ( 1024 / \$4 ))}")
-			if [ ${LASTSECTOR} -lt ${PARTEND} ]; then unset LASTSECTOR ; fi
+			if [ ${LASTSECTOR} -lt ${PARTEND} ]; then
+				unset LASTSECTOR
+			else
+				ResizeLog="4GB media so leaving 200MB spare area on ${root_partition}"
+			fi
 		elif [ ${CAPACITY} -lt 8000000 ]; then
 			# Leave 2 percent unpartitioned
 			LASTSECTOR=$(( 32 * $(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", ( \$2 * 98 / 3200))}") -1 ))
-			if [ ${LASTSECTOR} -lt ${PARTEND} ]; then unset LASTSECTOR ; fi
+			if [ ${LASTSECTOR} -lt ${PARTEND} ]; then
+				unset LASTSECTOR
+			else
+				ResizeLog="8GB media so leaving 2 percent spare area on ${root_partition}"
+			fi
 		else
 			# Leave 1 percent unpartitioned
-                        LASTSECTOR=$(( 32 * $(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", ( \$2 * 99 / 3200))}") -1 ))
-                        if [ ${LASTSECTOR} -lt ${PARTEND} ]; then unset LASTSECTOR ; fi
+            LASTSECTOR=$(( 32 * $(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", ( \$2 * 99 / 3200))}") -1 ))
+			if [ ${LASTSECTOR} -lt ${PARTEND} ]; then
+				unset LASTSECTOR
+			else
+				ResizeLog="Leaving 1 percent spare area on ${root_partition}"
+			fi
 		fi
 	fi
 
 	# Start resizing
+	echo -e "\n### [firstrun] ${ResizeLog}. Start resizing\n\nPartitions now:\n" >>${Log}
+	cat /proc/partitions >>${Log}
+	echo -e "\nAnd then:\n" >>${Log}
 	((echo d; echo $PARTITIONS; echo n; echo p; echo ; echo $STARTFROM; echo ${LASTSECTOR} ; echo w;) | fdisk ${DEVICE}) >/dev/null || true
 	s=0	
 	fsck -f $root_partition >/dev/null 2>&1 || true
 	partprobe ${DEVICE} >/dev/null 2>&1 || s=$?
-	resize2fs $root_partition >/dev/null 2>&1 || true
+	cat /proc/partitions >>${Log}
+	echo -e "\nNow executing resize2fs to enlarge ${root_partition} to the maximum\n:" >>${Log}
+	resize2fs $root_partition >>${Log} 2>&1 || true
 	
 	# check whether reboot is necessary for resize2fs to take effect
 	FREESIZE=$(df -hm / | awk '/\// {print $(NF-2)}')
 	if [[ "$DISTRIBUTION" == "wheezy" || "$s" != "0" || "$FREESIZE" -lt "152" ]]; then
 		touch /var/run/reboot
 		display_alert "Automatic reboot is needed. Please wait"
-		update-rc.d resize2fs defaults >/dev/null 2>&1 
+		update-rc.d resize2fs defaults >/dev/null 2>&1
+		echo -e "\nAutomated reboot needed to let /etc/init.d/resize2fs do the job\n" >>${Log}
 	fi
 	return 0
 } # do_expand_rootfs
@@ -230,4 +258,3 @@ main() {
 } # main
 
 main
-exit 0

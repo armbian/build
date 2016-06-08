@@ -5,7 +5,7 @@
 # Required-Stop:     glibc
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
-# Short-Description: Armbian gathering information about hardware
+# Short-Description: Armbian gathering hardware information
 ### END INIT INFO
 
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -33,6 +33,9 @@ collect_information() {
 	SPDIF=$(lsmod | grep spdif)
 	read VERSION </proc/version
 	KERNELID=$(echo $VERSION | awk -F" " '{print $3}')
+
+	# Starting with 5.15 read in $BOARD (odroidc2), $ID ("Odroid C2") and $VERSION (5.15)
+	[[ -f /etc/armbian-release ]] && source /etc/armbian-release
 } # collect_information
 
 set_io_scheduler() {
@@ -50,13 +53,8 @@ set_io_scheduler() {
 	done
 } # set_io_scheduler
 
-do_initialisation() {
-	# parse /etc/armbian-boards.conf and adjust everything
-	:
-} # do_initialisation
-
-detect_board() {
-	# Start soon obsolete auto detection stuff
+prepare_board() {
+	#### Start soon obsolete auto detection stuff
 	if [ "$ARCH" = "armv7l" ]; then
 		if [ $HARDWARE = "ODROID-XU3" ]; then
 			ID="Odroid XU4"
@@ -185,9 +183,10 @@ detect_board() {
 	if [[ $MACHINE == *M2* ]]; then ID="Banana Pi M2"; fi
 	if [[ $MACHINE == *AMLOGIC* ]]; then ID="Odroid C1"; fi
 	if [[ $MACHINE == *HummingBoard2* ]]; then ID="HB 2"; fi
-	# Finish soon obsolete auto detection stuff
+	#### Finish soon obsolete auto detection stuff
 
-	# Starting with 5.15 read in $BOARD (odroidc2), $ID ("Odroid C2") and $VERSION (5.15)
+	# The next line can be eliminated with the above stuff once 5.15 is out since it's 
+	# part of collect_information function already so this task can be sent to background
 	[[ -f /etc/armbian-release ]] && source /etc/armbian-release
 
 	# IRQ distribution based on $HARDWARE and/or $ID, probably some sort of user feedback (leds)
@@ -206,8 +205,10 @@ detect_board() {
 			echo 8 >/proc/irq/$(awk -F":" "/sdcard/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
 			;;
 		Marvell)
-			# Clearfog
-			:
+			# Clearfog: Send network IRQs to cpu1 on both kernels
+			for i in $(awk -F':' '/mwlwifi|mvneta|eth0/{print $1}' /proc/interrupts); do
+				echo 2 >/proc/irq/$i/smp_affinity
+			done
 			;;
 		ODROID-C2)
 			# ODROID-C2, IRQs might be handled by c2_init.sh
@@ -282,7 +283,7 @@ detect_board() {
 			esac
 			;;
 	esac
-} # detect_board
+} # prepare_board
 
 log_hardware_info() {
 	Log=/var/log/armhwinfo.log
@@ -338,9 +339,8 @@ chmod +x /etc/update-motd.d/90-warning
 } # show_motd_warning
 
 check_sd_card_speed() {
-	# function that checks on 3rd boot whether firstrun script made a quick
-	# benchmark when a SD card with 4GB or less capacity has been detected
-	# and displays a warning when random I/O is below some tresholds.
+	# function that checks on 3rd boot whether firstrun script made a quick benchmark
+	# and displays a motd warning when _random_ I/O is below some tresholds.
 	if [ -f /var/log/armhwinfo.log ]; then
 		RebootCount=$(grep -c '^### df:' /var/log/armhwinfo.log)
 		if [ ${RebootCount} -eq 2 ]; then
@@ -363,14 +363,14 @@ case $1 in
 		# set optimal disk scheduler settings
 		set_io_scheduler &
 		
-		# check sd card speed once
+		# check sd card speed once on 3rd boot too warn for too slow media
 		check_sd_card_speed &
 
-		# get hardware informations
+		# get hardware information and rely on contents of /etc/armbian-release
 		collect_information
 		
-		# hardware detection
-		detect_board
+		# hardware preparation
+		prepare_board &
 		
 		# display message, log hardware id to file, write log
 		echo -e "[\e[0;32m ok \x1B[0m] Starting ARM hardware info: $ID (${VERSION})"
@@ -379,6 +379,7 @@ case $1 in
 			# most probably readonly fs. We'll try to warn the user.
 			show_motd_warning "It seems the rootfs is readonly at the moment. Please check your SD card for errors"
 		fi
+
 		# check whether auto detection override exists and if true use this for machine.id
 		[ -f /root/.machine.id ] && cat /root/.machine.id >/var/run/machine.id
 		log_hardware_info
@@ -390,7 +391,7 @@ case $1 in
 	query)
 		# armbianmonitor mode -- only interested in hardware info
 		collect_information >/dev/null
-		detect_board >/dev/null
+		prepare_board >/dev/null
 		export HARDWARE ARCH KERNELID MACHINE ID VERSION
 		;;
 	*stop*)
