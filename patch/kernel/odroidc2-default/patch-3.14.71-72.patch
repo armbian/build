@@ -1,0 +1,521 @@
+diff --git a/Makefile b/Makefile
+index 98282e65bb46..6155aaf6342a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 3
+ PATCHLEVEL = 14
+-SUBLEVEL = 71
++SUBLEVEL = 72
+ EXTRAVERSION =
+ NAME = Remembering Coco
+ 
+diff --git a/arch/mips/ath79/early_printk.c b/arch/mips/ath79/early_printk.c
+index b955fafc58ba..d1adc59af5bf 100644
+--- a/arch/mips/ath79/early_printk.c
++++ b/arch/mips/ath79/early_printk.c
+@@ -31,13 +31,15 @@ static inline void prom_putchar_wait(void __iomem *reg, u32 mask, u32 val)
+ 	} while (1);
+ }
+ 
++#define BOTH_EMPTY (UART_LSR_TEMT | UART_LSR_THRE)
++
+ static void prom_putchar_ar71xx(unsigned char ch)
+ {
+ 	void __iomem *base = (void __iomem *)(KSEG1ADDR(AR71XX_UART_BASE));
+ 
+-	prom_putchar_wait(base + UART_LSR * 4, UART_LSR_THRE, UART_LSR_THRE);
++	prom_putchar_wait(base + UART_LSR * 4, BOTH_EMPTY, BOTH_EMPTY);
+ 	__raw_writel(ch, base + UART_TX * 4);
+-	prom_putchar_wait(base + UART_LSR * 4, UART_LSR_THRE, UART_LSR_THRE);
++	prom_putchar_wait(base + UART_LSR * 4, BOTH_EMPTY, BOTH_EMPTY);
+ }
+ 
+ static void prom_putchar_ar933x(unsigned char ch)
+diff --git a/arch/mips/include/uapi/asm/siginfo.h b/arch/mips/include/uapi/asm/siginfo.h
+index e81174432bab..6e1218ae916c 100644
+--- a/arch/mips/include/uapi/asm/siginfo.h
++++ b/arch/mips/include/uapi/asm/siginfo.h
+@@ -48,13 +48,13 @@ typedef struct siginfo {
+ 
+ 		/* kill() */
+ 		struct {
+-			pid_t _pid;		/* sender's pid */
++			__kernel_pid_t _pid;	/* sender's pid */
+ 			__ARCH_SI_UID_T _uid;	/* sender's uid */
+ 		} _kill;
+ 
+ 		/* POSIX.1b timers */
+ 		struct {
+-			timer_t _tid;		/* timer id */
++			__kernel_timer_t _tid;	/* timer id */
+ 			int _overrun;		/* overrun count */
+ 			char _pad[sizeof( __ARCH_SI_UID_T) - sizeof(int)];
+ 			sigval_t _sigval;	/* same as below */
+@@ -63,26 +63,26 @@ typedef struct siginfo {
+ 
+ 		/* POSIX.1b signals */
+ 		struct {
+-			pid_t _pid;		/* sender's pid */
++			__kernel_pid_t _pid;	/* sender's pid */
+ 			__ARCH_SI_UID_T _uid;	/* sender's uid */
+ 			sigval_t _sigval;
+ 		} _rt;
+ 
+ 		/* SIGCHLD */
+ 		struct {
+-			pid_t _pid;		/* which child */
++			__kernel_pid_t _pid;	/* which child */
+ 			__ARCH_SI_UID_T _uid;	/* sender's uid */
+ 			int _status;		/* exit code */
+-			clock_t _utime;
+-			clock_t _stime;
++			__kernel_clock_t _utime;
++			__kernel_clock_t _stime;
+ 		} _sigchld;
+ 
+ 		/* IRIX SIGCHLD */
+ 		struct {
+-			pid_t _pid;		/* which child */
+-			clock_t _utime;
++			__kernel_pid_t _pid;	/* which child */
++			__kernel_clock_t _utime;
+ 			int _status;		/* exit code */
+-			clock_t _stime;
++			__kernel_clock_t _stime;
+ 		} _irix_sigchld;
+ 
+ 		/* SIGILL, SIGFPE, SIGSEGV, SIGBUS */
+diff --git a/arch/mips/math-emu/cp1emu.c b/arch/mips/math-emu/cp1emu.c
+index 0b4e2e38294b..68af633cba76 100644
+--- a/arch/mips/math-emu/cp1emu.c
++++ b/arch/mips/math-emu/cp1emu.c
+@@ -676,9 +676,11 @@ static int isBranchInstr(struct pt_regs *regs, struct mm_decoded_insn dec_insn,
+ 	case spec_op:
+ 		switch (insn.r_format.func) {
+ 		case jalr_op:
+-			regs->regs[insn.r_format.rd] =
+-				regs->cp0_epc + dec_insn.pc_inc +
+-				dec_insn.next_pc_inc;
++			if (insn.r_format.rd != 0) {
++				regs->regs[insn.r_format.rd] =
++					regs->cp0_epc + dec_insn.pc_inc +
++					dec_insn.next_pc_inc;
++			}
+ 			/* Fall through */
+ 		case jr_op:
+ 			*contpc = regs->regs[insn.r_format.rs];
+diff --git a/arch/powerpc/kernel/exceptions-64s.S b/arch/powerpc/kernel/exceptions-64s.S
+index 5193116eadc0..2c35b11a14c0 100644
+--- a/arch/powerpc/kernel/exceptions-64s.S
++++ b/arch/powerpc/kernel/exceptions-64s.S
+@@ -946,11 +946,6 @@ hv_facility_unavailable_relon_trampoline:
+ #endif
+ 	STD_RELON_EXCEPTION_PSERIES(0x5700, 0x1700, altivec_assist)
+ 
+-	/* Other future vectors */
+-	.align	7
+-	.globl	__end_interrupts
+-__end_interrupts:
+-
+ 	.align	7
+ system_call_entry_direct:
+ #if defined(CONFIG_RELOCATABLE)
+@@ -1304,6 +1299,17 @@ __end_handlers:
+ 	STD_RELON_EXCEPTION_PSERIES_OOL(0xf60, facility_unavailable)
+ 	STD_RELON_EXCEPTION_HV_OOL(0xf80, hv_facility_unavailable)
+ 
++	/*
++	 * The __end_interrupts marker must be past the out-of-line (OOL)
++	 * handlers, so that they are copied to real address 0x100 when running
++	 * a relocatable kernel. This ensures they can be reached from the short
++	 * trampoline handlers (like 0x4f00, 0x4f20, etc.) which branch
++	 * directly, without using LOAD_HANDLER().
++	 */
++	.align	7
++	.globl	__end_interrupts
++__end_interrupts:
++
+ #if defined(CONFIG_PPC_PSERIES) || defined(CONFIG_PPC_POWERNV)
+ /*
+  * Data area reserved for FWNMI option.
+diff --git a/drivers/cpuidle/cpuidle.c b/drivers/cpuidle/cpuidle.c
+index 1adc039fe74d..7a8f94d834f9 100644
+--- a/drivers/cpuidle/cpuidle.c
++++ b/drivers/cpuidle/cpuidle.c
+@@ -313,6 +313,8 @@ static void __cpuidle_unregister_device(struct cpuidle_device *dev)
+ 	list_del(&dev->device_list);
+ 	per_cpu(cpuidle_devices, dev->cpu) = NULL;
+ 	module_put(drv->owner);
++
++	dev->registered = 0;
+ }
+ 
+ static void __cpuidle_device_init(struct cpuidle_device *dev)
+diff --git a/drivers/gpu/drm/drm_fb_helper.c b/drivers/gpu/drm/drm_fb_helper.c
+index 98a03639b413..68d54c7d01bf 100644
+--- a/drivers/gpu/drm/drm_fb_helper.c
++++ b/drivers/gpu/drm/drm_fb_helper.c
+@@ -1347,7 +1347,6 @@ static int drm_pick_crtcs(struct drm_fb_helper *fb_helper,
+ 			  int n, int width, int height)
+ {
+ 	int c, o;
+-	struct drm_device *dev = fb_helper->dev;
+ 	struct drm_connector *connector;
+ 	struct drm_connector_helper_funcs *connector_funcs;
+ 	struct drm_encoder *encoder;
+@@ -1366,7 +1365,7 @@ static int drm_pick_crtcs(struct drm_fb_helper *fb_helper,
+ 	if (modes[n] == NULL)
+ 		return best_score;
+ 
+-	crtcs = kzalloc(dev->mode_config.num_connector *
++	crtcs = kzalloc(fb_helper->connector_count *
+ 			sizeof(struct drm_fb_helper_crtc *), GFP_KERNEL);
+ 	if (!crtcs)
+ 		return best_score;
+@@ -1412,7 +1411,7 @@ static int drm_pick_crtcs(struct drm_fb_helper *fb_helper,
+ 		if (score > best_score) {
+ 			best_score = score;
+ 			memcpy(best_crtcs, crtcs,
+-			       dev->mode_config.num_connector *
++			       fb_helper->connector_count *
+ 			       sizeof(struct drm_fb_helper_crtc *));
+ 		}
+ 	}
+diff --git a/drivers/gpu/drm/gma500/mdfld_dsi_pkg_sender.c b/drivers/gpu/drm/gma500/mdfld_dsi_pkg_sender.c
+index 489ffd2c66e5..a3d37e4a84ae 100644
+--- a/drivers/gpu/drm/gma500/mdfld_dsi_pkg_sender.c
++++ b/drivers/gpu/drm/gma500/mdfld_dsi_pkg_sender.c
+@@ -85,7 +85,7 @@ static const char *const dsi_errors[] = {
+ 	"RX Prot Violation",
+ 	"HS Generic Write FIFO Full",
+ 	"LP Generic Write FIFO Full",
+-	"Generic Read Data Avail"
++	"Generic Read Data Avail",
+ 	"Special Packet Sent",
+ 	"Tearing Effect",
+ };
+diff --git a/drivers/input/misc/uinput.c b/drivers/input/misc/uinput.c
+index 772835938a52..46631c62e9a4 100644
+--- a/drivers/input/misc/uinput.c
++++ b/drivers/input/misc/uinput.c
+@@ -845,9 +845,15 @@ static long uinput_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+ }
+ 
+ #ifdef CONFIG_COMPAT
++
++#define UI_SET_PHYS_COMPAT	_IOW(UINPUT_IOCTL_BASE, 108, compat_uptr_t)
++
+ static long uinput_compat_ioctl(struct file *file,
+ 				unsigned int cmd, unsigned long arg)
+ {
++	if (cmd == UI_SET_PHYS_COMPAT)
++		cmd = UI_SET_PHYS;
++
+ 	return uinput_ioctl_handler(file, cmd, arg, compat_ptr(arg));
+ }
+ #endif
+diff --git a/drivers/net/wireless/ath/ath5k/led.c b/drivers/net/wireless/ath/ath5k/led.c
+index f77ef36acf87..61879b1f7083 100644
+--- a/drivers/net/wireless/ath/ath5k/led.c
++++ b/drivers/net/wireless/ath/ath5k/led.c
+@@ -77,7 +77,7 @@ static DEFINE_PCI_DEVICE_TABLE(ath5k_led_devices) = {
+ 	/* HP Compaq CQ60-206US (ddreggors@jumptv.com) */
+ 	{ ATH_SDEVICE(PCI_VENDOR_ID_HP, 0x0137a), ATH_LED(3, 1) },
+ 	/* HP Compaq C700 (nitrousnrg@gmail.com) */
+-	{ ATH_SDEVICE(PCI_VENDOR_ID_HP, 0x0137b), ATH_LED(3, 1) },
++	{ ATH_SDEVICE(PCI_VENDOR_ID_HP, 0x0137b), ATH_LED(3, 0) },
+ 	/* LiteOn AR5BXB63 (magooz@salug.it) */
+ 	{ ATH_SDEVICE(PCI_VENDOR_ID_ATHEROS, 0x3067), ATH_LED(3, 0) },
+ 	/* IBM-specific AR5212 (all others) */
+diff --git a/drivers/net/wireless/rtlwifi/base.c b/drivers/net/wireless/rtlwifi/base.c
+index 93bb384eb001..0484de7847e9 100644
+--- a/drivers/net/wireless/rtlwifi/base.c
++++ b/drivers/net/wireless/rtlwifi/base.c
+@@ -1401,9 +1401,9 @@ void rtl_watchdog_wq_callback(void *data)
+ 		if (((rtlpriv->link_info.num_rx_inperiod +
+ 		      rtlpriv->link_info.num_tx_inperiod) > 8) ||
+ 		    (rtlpriv->link_info.num_rx_inperiod > 2))
+-			rtlpriv->enter_ps = true;
+-		else
+ 			rtlpriv->enter_ps = false;
++		else
++			rtlpriv->enter_ps = true;
+ 
+ 		/* LeisurePS only work in infra mode. */
+ 		schedule_work(&rtlpriv->works.lps_change_work);
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index 146b13752572..58e81e0389bb 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -175,9 +175,6 @@ int __pci_read_base(struct pci_dev *dev, enum pci_bar_type type,
+ 	struct pci_bus_region region, inverted_region;
+ 	bool bar_too_big = false, bar_disabled = false;
+ 
+-	if (dev->non_compliant_bars)
+-		return 0;
+-
+ 	mask = type ? PCI_ROM_ADDRESS_MASK : ~0;
+ 
+ 	/* No printks while decoding is disabled! */
+@@ -319,6 +316,9 @@ static void pci_read_bases(struct pci_dev *dev, unsigned int howmany, int rom)
+ {
+ 	unsigned int pos, reg;
+ 
++	if (dev->non_compliant_bars)
++		return;
++
+ 	for (pos = 0; pos < howmany; pos++) {
+ 		struct resource *res = &dev->resource[pos];
+ 		reg = PCI_BASE_ADDRESS_0 + (pos << 2);
+diff --git a/drivers/scsi/aacraid/commsup.c b/drivers/scsi/aacraid/commsup.c
+index 6b32ddcefc11..ce177a50ec05 100644
+--- a/drivers/scsi/aacraid/commsup.c
++++ b/drivers/scsi/aacraid/commsup.c
+@@ -590,10 +590,10 @@ int aac_fib_send(u16 command, struct fib *fibptr, unsigned long size,
+ 					}
+ 					return -EFAULT;
+ 				}
+-				/* We used to udelay() here but that absorbed
+-				 * a CPU when a timeout occured. Not very
+-				 * useful. */
+-				cpu_relax();
++				/*
++				 * Allow other processes / CPUS to use core
++				 */
++				schedule();
+ 			}
+ 		} else if (down_interruptible(&fibptr->event_wait)) {
+ 			/* Do nothing ... satisfy
+@@ -1921,6 +1921,10 @@ int aac_command_thread(void *data)
+ 		if (difference <= 0)
+ 			difference = 1;
+ 		set_current_state(TASK_INTERRUPTIBLE);
++
++		if (kthread_should_stop())
++			break;
++
+ 		schedule_timeout(difference);
+ 
+ 		if (kthread_should_stop())
+diff --git a/drivers/xen/events/events_base.c b/drivers/xen/events/events_base.c
+index 082b23be5409..68b7810139e8 100644
+--- a/drivers/xen/events/events_base.c
++++ b/drivers/xen/events/events_base.c
+@@ -506,7 +506,8 @@ static void eoi_pirq(struct irq_data *data)
+ 	if (!VALID_EVTCHN(evtchn))
+ 		return;
+ 
+-	if (unlikely(irqd_is_setaffinity_pending(data))) {
++	if (unlikely(irqd_is_setaffinity_pending(data)) &&
++	    likely(!irqd_irq_disabled(data))) {
+ 		int masked = test_and_set_mask(evtchn);
+ 
+ 		clear_evtchn(evtchn);
+@@ -1408,7 +1409,8 @@ static void ack_dynirq(struct irq_data *data)
+ 	if (!VALID_EVTCHN(evtchn))
+ 		return;
+ 
+-	if (unlikely(irqd_is_setaffinity_pending(data))) {
++	if (unlikely(irqd_is_setaffinity_pending(data)) &&
++	    likely(!irqd_irq_disabled(data))) {
+ 		int masked = test_and_set_mask(evtchn);
+ 
+ 		clear_evtchn(evtchn);
+diff --git a/fs/ext4/ialloc.c b/fs/ext4/ialloc.c
+index a8d1a64d8cb0..4920cbdd47cc 100644
+--- a/fs/ext4/ialloc.c
++++ b/fs/ext4/ialloc.c
+@@ -1097,11 +1097,13 @@ struct inode *ext4_orphan_get(struct super_block *sb, unsigned long ino)
+ 		goto iget_failed;
+ 
+ 	/*
+-	 * If the orphans has i_nlinks > 0 then it should be able to be
+-	 * truncated, otherwise it won't be removed from the orphan list
+-	 * during processing and an infinite loop will result.
++	 * If the orphans has i_nlinks > 0 then it should be able to
++	 * be truncated, otherwise it won't be removed from the orphan
++	 * list during processing and an infinite loop will result.
++	 * Similarly, it must not be a bad inode.
+ 	 */
+-	if (inode->i_nlink && !ext4_can_truncate(inode))
++	if ((inode->i_nlink && !ext4_can_truncate(inode)) ||
++	    is_bad_inode(inode))
+ 		goto bad_orphan;
+ 
+ 	if (NEXT_ORPHAN(inode) > max_ino)
+diff --git a/fs/ext4/mballoc.c b/fs/ext4/mballoc.c
+index c4a5e4df8ca3..4a79ce1ecaa1 100644
+--- a/fs/ext4/mballoc.c
++++ b/fs/ext4/mballoc.c
+@@ -1236,6 +1236,7 @@ static void ext4_mb_unload_buddy(struct ext4_buddy *e4b)
+ static int mb_find_order_for_block(struct ext4_buddy *e4b, int block)
+ {
+ 	int order = 1;
++	int bb_incr = 1 << (e4b->bd_blkbits - 1);
+ 	void *bb;
+ 
+ 	BUG_ON(e4b->bd_bitmap == e4b->bd_buddy);
+@@ -1248,7 +1249,8 @@ static int mb_find_order_for_block(struct ext4_buddy *e4b, int block)
+ 			/* this block is part of buddy of order 'order' */
+ 			return order;
+ 		}
+-		bb += 1 << (e4b->bd_blkbits - order);
++		bb += bb_incr;
++		bb_incr >>= 1;
+ 		order++;
+ 	}
+ 	return 0;
+@@ -2535,7 +2537,7 @@ int ext4_mb_init(struct super_block *sb)
+ {
+ 	struct ext4_sb_info *sbi = EXT4_SB(sb);
+ 	unsigned i, j;
+-	unsigned offset;
++	unsigned offset, offset_incr;
+ 	unsigned max;
+ 	int ret;
+ 
+@@ -2564,11 +2566,13 @@ int ext4_mb_init(struct super_block *sb)
+ 
+ 	i = 1;
+ 	offset = 0;
++	offset_incr = 1 << (sb->s_blocksize_bits - 1);
+ 	max = sb->s_blocksize << 2;
+ 	do {
+ 		sbi->s_mb_offsets[i] = offset;
+ 		sbi->s_mb_maxs[i] = max;
+-		offset += 1 << (sb->s_blocksize_bits - i);
++		offset += offset_incr;
++		offset_incr = offset_incr >> 1;
+ 		max = max >> 1;
+ 		i++;
+ 	} while (i <= sb->s_blocksize_bits + 1);
+diff --git a/fs/pipe.c b/fs/pipe.c
+index 46f1ab264a4c..a03801186366 100644
+--- a/fs/pipe.c
++++ b/fs/pipe.c
+@@ -401,6 +401,7 @@ pipe_read(struct kiocb *iocb, const struct iovec *_iov,
+ 			void *addr;
+ 			size_t chars = buf->len, remaining;
+ 			int error, atomic;
++			int offset;
+ 
+ 			if (chars > total_len)
+ 				chars = total_len;
+@@ -414,9 +415,10 @@ pipe_read(struct kiocb *iocb, const struct iovec *_iov,
+ 
+ 			atomic = !iov_fault_in_pages_write(iov, chars);
+ 			remaining = chars;
++			offset = buf->offset;
+ redo:
+ 			addr = ops->map(pipe, buf, atomic);
+-			error = pipe_iov_copy_to_user(iov, addr, &buf->offset,
++			error = pipe_iov_copy_to_user(iov, addr, &offset,
+ 						      &remaining, atomic);
+ 			ops->unmap(pipe, buf, addr);
+ 			if (unlikely(error)) {
+@@ -432,6 +434,7 @@ redo:
+ 				break;
+ 			}
+ 			ret += chars;
++			buf->offset += chars;
+ 			buf->len -= chars;
+ 
+ 			/* Was it a packet buffer? Clean up and exit */
+diff --git a/fs/xfs/xfs_inode.c b/fs/xfs/xfs_inode.c
+index 5d90b8db0ac7..fb8579d35cd4 100644
+--- a/fs/xfs/xfs_inode.c
++++ b/fs/xfs/xfs_inode.c
+@@ -2923,13 +2923,14 @@ xfs_iflush_cluster(
+ 		 * We need to check under the i_flags_lock for a valid inode
+ 		 * here. Skip it if it is not valid or the wrong inode.
+ 		 */
+-		spin_lock(&ip->i_flags_lock);
+-		if (!ip->i_ino ||
++		spin_lock(&iq->i_flags_lock);
++		if (!iq->i_ino ||
++		    __xfs_iflags_test(iq, XFS_ISTALE) ||
+ 		    (XFS_INO_TO_AGINO(mp, iq->i_ino) & mask) != first_index) {
+-			spin_unlock(&ip->i_flags_lock);
++			spin_unlock(&iq->i_flags_lock);
+ 			continue;
+ 		}
+-		spin_unlock(&ip->i_flags_lock);
++		spin_unlock(&iq->i_flags_lock);
+ 
+ 		/*
+ 		 * Do an un-protected check to see if the inode is dirty and
+@@ -3045,7 +3046,7 @@ xfs_iflush(
+ 	struct xfs_buf		**bpp)
+ {
+ 	struct xfs_mount	*mp = ip->i_mount;
+-	struct xfs_buf		*bp;
++	struct xfs_buf		*bp = NULL;
+ 	struct xfs_dinode	*dip;
+ 	int			error;
+ 
+@@ -3087,14 +3088,22 @@ xfs_iflush(
+ 	}
+ 
+ 	/*
+-	 * Get the buffer containing the on-disk inode.
++	 * Get the buffer containing the on-disk inode. We are doing a try-lock
++	 * operation here, so we may get  an EAGAIN error. In that case, we
++	 * simply want to return with the inode still dirty.
++	 *
++	 * If we get any other error, we effectively have a corruption situation
++	 * and we cannot flush the inode, so we treat it the same as failing
++	 * xfs_iflush_int().
+ 	 */
+ 	error = xfs_imap_to_bp(mp, NULL, &ip->i_imap, &dip, &bp, XBF_TRYLOCK,
+ 			       0);
+-	if (error || !bp) {
++	if (error == -EAGAIN) {
+ 		xfs_ifunlock(ip);
+ 		return error;
+ 	}
++	if (error)
++		goto corrupt_out;
+ 
+ 	/*
+ 	 * First flush out the inode that xfs_iflush was called with.
+@@ -3122,7 +3131,8 @@ xfs_iflush(
+ 	return 0;
+ 
+ corrupt_out:
+-	xfs_buf_relse(bp);
++	if (bp)
++		xfs_buf_relse(bp);
+ 	xfs_force_shutdown(mp, SHUTDOWN_CORRUPT_INCORE);
+ cluster_corrupt_out:
+ 	error = XFS_ERROR(EFSCORRUPTED);
+diff --git a/lib/dma-debug.c b/lib/dma-debug.c
+index 1cbfc16d0b37..1ba298a9e15d 100644
+--- a/lib/dma-debug.c
++++ b/lib/dma-debug.c
+@@ -646,9 +646,9 @@ static struct dma_debug_entry *dma_entry_alloc(void)
+ 	spin_lock_irqsave(&free_entries_lock, flags);
+ 
+ 	if (list_empty(&free_entries)) {
+-		pr_err("DMA-API: debugging out of memory - disabling\n");
+ 		global_disable = true;
+ 		spin_unlock_irqrestore(&free_entries_lock, flags);
++		pr_err("DMA-API: debugging out of memory - disabling\n");
+ 		return NULL;
+ 	}
+ 
+diff --git a/net/sunrpc/auth_gss/svcauth_gss.c b/net/sunrpc/auth_gss/svcauth_gss.c
+index 0f73f4507746..ae9b1fe46f8f 100644
+--- a/net/sunrpc/auth_gss/svcauth_gss.c
++++ b/net/sunrpc/auth_gss/svcauth_gss.c
+@@ -855,8 +855,8 @@ unwrap_integ_data(struct svc_rqst *rqstp, struct xdr_buf *buf, u32 seq, struct g
+ 		goto out;
+ 	if (svc_getnl(&buf->head[0]) != seq)
+ 		goto out;
+-	/* trim off the mic at the end before returning */
+-	xdr_buf_trim(buf, mic.len + 4);
++	/* trim off the mic and padding at the end before returning */
++	xdr_buf_trim(buf, round_up_to_quad(mic.len) + 4);
+ 	stat = 0;
+ out:
+ 	kfree(mic.data);
