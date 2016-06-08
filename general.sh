@@ -218,31 +218,24 @@ grab_version ()
 	eval $"$2"="$ver"
 }
 
-fingerprint_image (){
+fingerprint_image()
+{
 #--------------------------------------------------------------------------------------------------------------------------------
 # Saving build summary to the image
 #--------------------------------------------------------------------------------------------------------------------------------
-display_alert "Fingerprinting" "$VERSION Linux" "info"
-
-echo "--------------------------------------------------------------------------------" > $1
-echo "" >> $1
-echo "" >> $1
-echo "" >> $1
-echo "Title:			$VERSION (unofficial)" >> $1
-echo "Kernel:			Linux $VER" >> $1
-now="$(date +'%d.%m.%Y')" >> $1
-printf "Build date:		%s\n" "$now" >> $1
-echo "Author:			Igor Pecovnik, www.igorpecovnik.com" >> $1
-echo "Sources: 		http://github.com/igorpecovnik" >> $1
-echo "" >> $1
-echo "Support: 		http://www.armbian.com" >> $1
-echo "" >> $1
-echo "" >> $1
-echo "--------------------------------------------------------------------------------" >> $1
-echo "" >> $1
-cat $SRC/lib/LICENSE >> $1
-echo "" >> $1
-echo "--------------------------------------------------------------------------------" >> $1
+	display_alert "Fingerprinting" "$VERSION" "info"
+	cat <<-EOF > $1
+	--------------------------------------------------------------------------------
+	Title:			$VERSION
+	Kernel:			Linux $VER
+	Build date:		$(date +'%d.%m.%Y')
+	Author:			Igor Pecovnik, www.igorpecovnik.com
+	Sources: 		http://github.com/igorpecovnik/lib
+	Support: 		http://www.armbian.com, http://forum.armbian.com/
+	--------------------------------------------------------------------------------
+	$(cat $SRC/lib/LICENSE)
+	--------------------------------------------------------------------------------
+	EOF
 }
 
 addtorepo ()
