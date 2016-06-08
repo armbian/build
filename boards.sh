@@ -21,10 +21,6 @@ install_board_specific (){
 	# execute $LINUXFAMILY-specific tweaks from $BOARD.conf
 	[[ $(type -t family_tweaks) == function ]] && family_tweaks
 
-	# install custom root package
-	display_alert "Installing board support package" "$BOARD" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb > /dev/null"
-
 	# enable first run script
 	chroot $CACHEDIR/sdcard /bin/bash -c "update-rc.d firstrun defaults >/dev/null 2>&1"
 
@@ -117,6 +113,10 @@ install_kernel (){
 
 	# mount deb storage to tmp
 	mount --bind $DEST/debs/ $CACHEDIR/sdcard/tmp
+
+	# install custom root package
+	display_alert "Installing board support package" "$BOARD" "info"
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb > /dev/null"
 
 	# extract kernel version
 	VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')

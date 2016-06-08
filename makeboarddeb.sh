@@ -14,48 +14,66 @@
 # Functions:
 # create_board_package
 
-create_board_package (){
-#---------------------------------------------------------------------------------------------------------------------------------
-# create .deb package for the rest
-#---------------------------------------------------------------------------------------------------------------------------------
-
+create_board_package()
+{
 	display_alert "Creating board support package" "$BOARD" "info"
 
-	if [[ $BRANCH == next ]]; then
-		ROOT_BRACH="-next";
-	else
-		ROOT_BRACH="";
-	fi
-
 	local destination=$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
-	local controlfile=$destination/DEBIAN/control
-	local configfilelist=$destination/DEBIAN/conffiles
 
 	mkdir -p $destination/DEBIAN
 
-	echo "Package: linux-$RELEASE-root$ROOT_BRACH-$BOARD" > $controlfile
-	echo "Version: $REVISION" >> $controlfile
-	echo "Architecture: $ARCH" >> $controlfile
-	echo "Maintainer: $MAINTAINER <$MAINTAINERMAIL>" >> $controlfile
-	echo "Installed-Size: 1" >> $controlfile
-	echo "Section: kernel" >> $controlfile
-	echo "Priority: optional" >> $controlfile
-	echo "Recommends: fake-hwclock, initramfs-tools" >> $controlfile
-	echo "Description: Root file system tweaks for $BOARD" >> $controlfile
+	cat <<-EOF > $destination/DEBIAN/control
+	Package: linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
+	Version: $REVISION
+	Architecture: $ARCH
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Installed-Size: 1
+	Section: kernel
+	Priority: optional
+	Provides: armbian-bsp
+	Conflicts: armbian-bsp
+	Replaces: base-files
+	Recommends: fake-hwclock, initramfs-tools
+	Description: Armbian tweaks for $BOARD ($BRANCH branch)
+	EOF
 
 	# set up pre install script
-	echo "#!/bin/bash" > $destination/DEBIAN/preinst
+	cat <<-EOF > $destination/DEBIAN/preinst
+	#!/bin/sh
+	[ "$1" = "upgrade" ] && touch /var/run/.reboot_required
+	[ -d "/boot/bin" ] && mv /boot/bin /boot/bin.old
+	exit 0
+	EOF
+
 	chmod 755 $destination/DEBIAN/preinst
-	echo "[[ -d /boot/bin ]] && mv /boot/bin /boot/bin.old" >> $destination/DEBIAN/preinst
-	echo "exit 0" >> $destination/DEBIAN/preinst
 
 	# set up post install script
-	echo "#!/bin/bash" > $destination/DEBIAN/postinst
+	cat <<-EOF > $destination/DEBIAN/postinst
+	#!/bin/sh
+	update-rc.d armhwinfo defaults >/dev/null 2>&1
+	update-rc.d -f motd remove >/dev/null 2>&1
+	[ -f "/root/.nand1-allwinner.tgz" ] && rm /root/.nand1-allwinner.tgz
+	[ -f "/root/nand-sata-install" ] && rm /root/nand-sata-install
+	ln -sf /var/run/motd /etc/motd
+	[ -f "/etc/bash.bashrc.custom" ] && rm /etc/bash.bashrc.custom
+	[ -f "/etc/update-motd.d/00-header" ] && rm /etc/update-motd.d/00-header
+	[ -f "/etc/update-motd.d/10-help-text" ] && rm /etc/update-motd.d/10-help-text
+	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
+	exit 0
+	EOF
+
 	chmod 755 $destination/DEBIAN/postinst
 
 	# won't recreate files if they were removed by user
-	echo "/tmp/.reboot_required" > $configfilelist
-	echo "/boot/.verbose" >> $configfilelist
+	# everything in /etc is a conffile by default
+	cat <<-EOF > $destination/DEBIAN/conffiles
+	/boot/.verbose
+	EOF
+
+	# trigget uInitrd creation after installation, just in case
+	cat <<-EOF > $destination/DEBIAN/triggers
+	activate update-initramfs
+	EOF
 
 	# scripts for autoresize at first boot
 	mkdir -p $destination/etc/init.d
@@ -63,27 +81,16 @@ create_board_package (){
 
 	install -m 755 $SRC/lib/scripts/resize2fs $destination/etc/init.d
 	install -m 755 $SRC/lib/scripts/firstrun  $destination/etc/init.d
-
-	# install hardware info script
 	install -m 755 $SRC/lib/scripts/armhwinfo $destination/etc/init.d
-	echo "set -e" >> $destination/DEBIAN/postinst
-	echo "update-rc.d armhwinfo defaults >/dev/null 2>&1" >> $destination/DEBIAN/postinst
-	echo "update-rc.d -f motd remove >/dev/null 2>&1" >> $destination/DEBIAN/postinst
-	echo "[[ -f /root/.nand1-allwinner.tgz ]] && rm /root/.nand1-allwinner.tgz" >> $destination/DEBIAN/postinst
-	echo "[[ -f /root/nand-sata-install ]] && rm /root/nand-sata-install" >> $destination/DEBIAN/postinst
-	echo "ln -sf /var/run/motd /etc/motd" >> $destination/DEBIAN/postinst
-	echo "[[ -f /etc/bash.bashrc.custom ]] && rm /etc/bash.bashrc.custom" >> $destination/DEBIAN/postinst
-	echo "[[ -f /etc/update-motd.d/00-header ]] && rm /etc/update-motd.d/00-header" >> $destination/DEBIAN/postinst
-	echo "[[ -f /etc/update-motd.d/10-help-text ]] && rm /etc/update-motd.d/10-help-text" >> $destination/DEBIAN/postinst
-	echo "if [[ -d /boot/bin && ! -f /boot/script.bin ]]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi">> $destination/DEBIAN/postinst
-	echo "exit 0" >> $destination/DEBIAN/postinst
 
 	# configure MIN / MAX speed for cpufrequtils
 	mkdir -p $destination/etc/default
-	echo "ENABLE=true" > $destination/etc/default/cpufrequtils
-	echo "MIN_SPEED=$CPUMIN" >> $destination/etc/default/cpufrequtils
-	echo "MAX_SPEED=$CPUMAX" >> $destination/etc/default/cpufrequtils
-	echo "GOVERNOR=$GOVERNOR" >> $destination/etc/default/cpufrequtils
+	cat <<-EOF > $destination/etc/default/cpufrequtils
+	ENABLE=true
+	MIN_SPEED=$CPUMIN
+	MAX_SPEED=$CPUMAX
+	GOVERNOR=$GOVERNOR
+	EOF
 
 	# armhwinfo, firstrun, armbianmonitor, etc. config file
 	cat <<-EOF > $destination/etc/armbian-release
@@ -91,6 +98,8 @@ create_board_package (){
 	BOARD=$BOARD
 	ID="$BOARD_NAME"
 	VERSION=$REVISION
+	LINUXFAMILY=$LINUXFAMILY
+	BRANCH=$BRANCH
 	EOF
 
 	# temper binary for USB temp meter
@@ -132,10 +141,6 @@ create_board_package (){
 	fi
 	chmod 755 $destination/etc/profile.d/arhitecture.sh
 
-	cd $destination/
-	ln -s ../var/run/motd etc/motd
-	touch $destination/tmp/.reboot_required
-
 	if [[ $LINUXCONFIG == *sun* ]] ; then
 		if [[ $BRANCH != next ]]; then
 			# add soc temperature app
@@ -172,11 +177,10 @@ create_board_package (){
 	fingerprint_image "$destination/etc/armbian.txt"
 
 	# create board DEB file
-	cd $DEST/debs/$RELEASE/
 	display_alert "Building package" "$CHOSEN_ROOTFS" "info"
+	cd $DEST/debs/$RELEASE/
 	dpkg -b ${CHOSEN_ROOTFS}_${REVISION}_${ARCH} >/dev/null
 
-	# clean up
+	# cleanup
 	rm -rf ${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
-	rm -f ../.reboot_required
 }
