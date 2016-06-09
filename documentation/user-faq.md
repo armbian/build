@@ -83,6 +83,9 @@ and change the autologin user.
 
 	apt-get update
 	apt-get upgrade
+
+This will not only update distribution packages (Debian/Ubuntu) but also updates Armbian kernel, u-boot and board support package if available. So if you've seen in the list of updated packages the names _u-boot_ or _linux_ the following command is required for changes to take effect:
+
 	reboot
 
 # How to switch kernels or upgrade from other systems?
@@ -101,7 +104,7 @@ Check [this for manual way](http://www.armbian.com/kernel/) and more info.
 
 **Important: If you came here since you can't get Armbian running on your board please keep in mind that in 95 percent of all cases it's either a faulty/fraud/counterfeit SD card or an insufficient power supply that's causing these sorts of _doesn't work_ issues!**
 
-If you broke the system you can try to get in this way. You have to get to u-boot command prompt, using either a serial adapter or monitor and usb keyboard. 
+If you broke the system you can try to get in this way. You have to get to u-boot command prompt, using either a serial adapter or monitor and usb keyboard (USB support in u-boot currently not enabled on all H3 boards). 
 
 After switching power on or rebooting, when u-boot loads up, press some key on the keyboard (or send some key presses via terminal) to abort default boot sequence and get to the command prompt:
 
@@ -235,8 +238,7 @@ Alter **min_speed** or **max_speed** variable.
 	apt-get -y install xorg lightdm xfce4 tango-icon-theme gnome-icon-theme
 	reboot
 
-
-Check [this site](http://namhuy.net/1085/install-gui-on-debian-7-wheezy.html) for others.
+Check [this site](http://namhuy.net/1085/install-gui-on-debian-7-wheezy.html) for others and be prepared that some desktop image features currently might not work afterwards (eg. 2D/3D/video HW acceleration, so downgrading a _desktop_ image, removing the `libxfce4util-common` package and doing an `apt-get autoremove` later might be the better idea in such cases)
 
 # How to upgrade Debian from Wheezy to Jessie?
 
@@ -248,16 +250,15 @@ Check [this site](http://namhuy.net/1085/install-gui-on-debian-7-wheezy.html) fo
 	apt-get dist-upgrade
 
 
-# How to upgrade from Ubuntu Trusty to next LTS?
+# How to upgrade from Ubuntu Trusty to 16.04 LTS (Xenial Xerus)?
 
-... when available.
-	
 	apt-get install update-manager-core
-    do-release-upgrade -d
-  	# further to vivid
+	do-release-upgrade -d
+  	# further to xenial
 	apt-get dist-upgrade
 
 # How to toggle boot output?
+
 Edit and change [boot parameters](http://redsymbol.net/linux-kernel-boot-parameters/) in /boot/boot.cmd:
 
     - console=ttyS0,115200
@@ -274,6 +275,7 @@ Serial console on imx6 boards are ttymxc0 (Hummingboard, Cubox-i) or ttymxc1 (Ud
 # How to toogle verbose boot?
 
     touch /boot/.force-verbose # enable
+
 You need to reboot to conduct changes.
 
 	rm /boot/.force-verbose # disable
@@ -327,7 +329,7 @@ Check which wireless stations / routers are in range
 
 	iwlist wlan0 scan | grep ESSID
 
-# How to install to NAND, SATA & USB?
+# How to install to eMMC, NAND, SATA & USB?
 
 [su_youtube_advanced url="https:\/\/youtu.be\/6So8MA-qru8" controls="yes" showinfo="no" loop="yes" rel="no" modestbranding="yes"]
 
@@ -338,10 +340,10 @@ NAND:
  * kernel 3.4.x and NAND storage
  * pre-installed system on NAND (stock Android or other Linux)
 
-SATA/USB:
+eMMC/SATA/USB:
 
  * any kernel
- * pre-partitioned SATA or USB storage
+ * onboard eMMC storage or permanently attached SATA or USB storage
 
 Start the install script: 
 
@@ -350,8 +352,8 @@ Start the install script:
 and follow the guide. You can create up to three scenarios:
 
  * boot from SD, system on SATA / USB
- * boot from NAND, system on NAND
- * boot from NAND, system on SATA / USB
+ * boot from eMMC / NAND, system on eMMC/NAND
+ * boot from eMMC / NAND, system on SATA / USB
 
 # How to change network configuration?
 

@@ -33,7 +33,7 @@ cat > /tmp/create_swap.sh <<EOT
 # SSH Keys creation
 rm -f /etc/ssh/ssh_host*
 dpkg-reconfigure openssh-server >/dev/null 2>&1
-echo -e "\n### [firstrun] Recreated SSH keys" >>${Log}
+echo -e "### [firstrun] Recreated SSH keys" >>${Log}
 MEMTOTAL=$(( $(awk -F" " '/^MemTotal/ {print $2}' </proc/meminfo) / 1024 ))
 FREESIZE=\$(df -hm / | awk '/\// {print \$(NF-2)}')
 SWAPFILE=/var/swap
@@ -65,6 +65,7 @@ fi
 while [ -f /tmp/firstrun_running ]; do sleep 1; done
 if [ -f "/var/run/reboot" ]; then reboot; fi
 rm -f /tmp/create_swap.sh
+sync &
 EOT
 chmod +x /tmp/create_swap.sh
 
@@ -163,8 +164,7 @@ do_expand_rootfs() {
 	else
 		# Unattended mode. We run a q&d benchmark to be able to identify cards way too slow easily
 		cd /root
-		echo -e "\n### quick iozone test:\c" >>/var/log/armhwinfo.log
-		iozone -e -I -a -s 1M -r 4k -i 0 -i 1 -i 2 | grep '^            1024' | sed 's/            1024      //' >>/var/log/armhwinfo.log
+		echo -e "\n### quick iozone test:$(iozone -e -I -a -s 1M -r 4k -i 0 -i 1 -i 2 | grep '^            1024' | sed 's/            1024      //')" >>/var/log/armhwinfo.log
 
 		# check device capacity. If 4GB or below do not use whole card but leave a 5% spare area
 		# to help older cards with wear leveling and garbage collection. In case this reduced card
@@ -202,19 +202,28 @@ do_expand_rootfs() {
 	# Start resizing
 	echo -e "\n### [firstrun] ${ResizeLog}. Start resizing Partition now:\n" >>${Log}
 	cat /proc/partitions >>${Log}
-	echo -e "\nExecuting fdisk, fsck and partprobe:\n" >>${Log}
-	if [ "X${DISTRIBUTION}" = "Xxenial" -a "X${PARTITIONS}" = "X1" ]; then
-		((echo d; echo n; echo p; echo ; echo $STARTFROM; echo ${LASTSECTOR} ; echo w;) | fdisk ${DEVICE}) >>${Log} 2>&1 || true
+	echo -e "\nExecuting fdisk, fsck and partprobe:" >>${Log}
+	UtilLinuxVersion=$(echo q | fdisk ${DEVICE} | awk -F"util-linux " '/ fdisk / {print $2}')
+	if [ "X${PARTITIONS}" = "X1" ]; then
+		case ${UtilLinuxVersion} in
+			2.27.1*)
+				# if dealing with fdisk from util-linux 2.27.1 we need a workaround for just 1 partition
+				# https://github.com/igorpecovnik/lib/issues/353#issuecomment-224728506
+				((echo d; echo n; echo p; echo ; echo $STARTFROM; echo ${LASTSECTOR} ; echo w;) | fdisk ${DEVICE}) >>${Log} 2>&1 || true
+				;;
+			*)
+				((echo d; echo $PARTITIONS; echo n; echo p; echo ; echo $STARTFROM; echo ${LASTSECTOR} ; echo w;) | fdisk ${DEVICE}) >>${Log} 2>&1 || true
+				;;
+		esac
 	else
 		((echo d; echo $PARTITIONS; echo n; echo p; echo ; echo $STARTFROM; echo ${LASTSECTOR} ; echo w;) | fdisk ${DEVICE}) >>${Log} 2>&1 || true
 	fi
-	echo -e "\nNew partition table:\n" >>${Log}
 	s=0	
-	fsck -f $root_partition >>${Log} ll 2>&1 || true
-	partprobe ${DEVICE} >>${Log} ll 2>&1 || s=$?
+	fsck -f $root_partition >>${Log} 2>&1 || true
+	partprobe ${DEVICE} >>${Log} 2>&1 || s=$?
 	echo -e "\nNew partition table:\n" >>${Log}
 	cat /proc/partitions >>${Log}
-	echo -e "\nNow executing resize2fs to enlarge ${root_partition} to the maximum\n:" >>${Log}
+	echo -e "\nNow executing resize2fs to enlarge ${root_partition} to the maximum:\n" >>${Log}
 	resize2fs $root_partition >>${Log} 2>&1 || true
 	
 	# check whether reboot is necessary for resize2fs to take effect
@@ -223,7 +232,7 @@ do_expand_rootfs() {
 		touch /var/run/reboot
 		display_alert "Automatic reboot is needed. Please wait"
 		update-rc.d resize2fs defaults >/dev/null 2>&1
-		echo -e "\n### [firstrun] Automated reboot needed to let /etc/init.d/resize2fs do the job\n" >>${Log}
+		echo -e "\n### [firstrun] Automated reboot needed to let /etc/init.d/resize2fs do the job" >>${Log}
 	fi
 	return 0
 } # do_expand_rootfs
