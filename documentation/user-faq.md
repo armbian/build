@@ -79,19 +79,17 @@ Desktop images starts into desktop without asking for password. To change this a
 
 and change the autologin user.
 
-# How to update kernel?
+# How to update?
 
 	apt-get update
 	apt-get upgrade
 	reboot
 
-Working on Armbian 4.2 and newer.
-
-# How to upgrade kernel?
+# How to switch kernels or upgrade from other systems?
 
 If you are running **legacy kernel** and you want to switch to **vanilla**, **development** or vice versa, you can do it this way:
-	
-	wget -q -O - http://upgrade.armbian.com | bash
+
+		wget -q -O - http://upgrade.armbian.com | bash
 
 You will be prompted to select and confirm some actions. It's possible to upgrade **from any other distribution**. Note that this procedure upgrades only kernel with hardware definitions (bin, dtb, firmware and headers. Operating system and modifications remain as is.
 
