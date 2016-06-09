@@ -34,7 +34,7 @@ It is safe to ignore WARNING: This key is not certified with a trusted signature
 
 # How to prepare SD card?
 
-7z and zip arhives can be uncompressed with [7-Zip](http://www.7-zip.org/) on Windows, [Keka](http://www.kekaosx.com/en/) on Mac and 7z on Linux (apt-get install p7zip-full). RAW images can be written with [Rufus](https://rufus.akeo.ie/) (Win) or DD in Linux/Mac:
+7z and zip archives can be uncompressed with [7-Zip](http://www.7-zip.org/) on Windows, [Keka](http://www.kekaosx.com/en/) on Mac and 7z on Linux (apt-get install p7zip-full). RAW images can be written with [Rufus](https://rufus.akeo.ie/) (Win) or DD in Linux/Mac:
 
 	# Linux example: /dev/sdx is your sd card device
 	dd bs=1M if=filename.raw of=/dev/sdx
