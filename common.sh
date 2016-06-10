@@ -90,7 +90,7 @@ compile_uboot (){
 	cd $DEST/debs
 	display_alert "Target directory" "$DEST/debs/" "info"
 	display_alert "Building deb" "$uboot_name.deb" "info"
-	dpkg -b $uboot_name > $DEST/debug/install.log 2>&1
+	dpkg -b $uboot_name >> $DEST/debug/install.log 2>&1
 	rm -rf $uboot_name
 
 	FILESIZE=$(wc -c $DEST/debs/$uboot_name.deb | cut -f 1 -d ' ')
