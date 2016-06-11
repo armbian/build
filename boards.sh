@@ -49,7 +49,10 @@ install_board_specific (){
 	else
 		cp $SRC/lib/config/boot.cmd $CACHEDIR/sdcard/boot/boot.cmd
 		# orangepi h3 temp exceptions
-		[[ $LINUXFAMILY == "sun8i" ]] && sed -i -e '1s/^/gpio set PL10\ngpio set PG11\nsetenv machid 1029\nsetenv bootm_boot_mode sec\n/' \
+                # orangepilite uses Power LED on PL10 - Will fail to turn on
+                # orangepilite uses Power LED on PG11 - Is used for camera pin CSI_EN
+                # orangepilite uses Status LED on PA15 - Turn on "Status LED" early
+		[[ $LINUXFAMILY == "sun8i" ]] && sed -i -e '1s/^/gpio set PL10\ngpio set PG11\ngpio set PA15\nsetenv machid 1029\nsetenv bootm_boot_mode sec\n/' \
 			-e 's/\ disp.screen0_output_mode=1920x1080p60//' -e 's/\ hdmi.audio=EDID:0//' $CACHEDIR/sdcard/boot/boot.cmd
 		# let's prepare for old kernel too
 		#chroot $CACHEDIR/sdcard /bin/bash -c \
