@@ -232,6 +232,7 @@ fingerprint_image()
 	Author:			Igor Pecovnik, www.igorpecovnik.com
 	Sources: 		http://github.com/igorpecovnik/lib
 	Support: 		http://www.armbian.com, http://forum.armbian.com/
+	Changelog: 		http://www.armbian.com/logbook/
 	--------------------------------------------------------------------------------
 	$(cat $SRC/lib/LICENSE)
 	--------------------------------------------------------------------------------
