@@ -1,20 +1,51 @@
-# Armbian H3 mini FAQ -- 5.06
+# Armbian H3 mini FAQ -- 5.15
 
 **Important to know**
 
+- this will be the last version of the H3 mini FAQ since H3 boards are from now on officially supported
+- Updating Armbian images prior to 5.13 to 5.15 or higher is **not** recommended -- see below
 - 1st boot takes longer (up to 5 minutes). Please do not interrupt while the red LED is blinking, the board reboots automatically one time and the green LED starts to blink when ready
 - our [User documentation](http://www.armbian.com/documentation/) (one exception currently: use _h3disp_ to adjust display settings)
 - our [Geek documentation](http://www.armbian.com/using-armbian-tools/) (in case you want to build your own images)
-- CPU frequency settings are 648-1200 MHz on OPi One/Lite and 480-1296 MHz on the other boards (cpufreq governor is _interactive_ therefore the board only increases CPU speed and consumption when needed)
+- CPU frequency settings are 240-1200 MHz on BPi M2+, NanoPi M1 and Beelink X2, 480-1200 MHz on OPi One/Lite and 480-1296 MHz on the other boards (cpufreq governor is _interactive_ therefore the boards only increase CPU speed and consumption when needed)
 - In case you experience instabilities check your SD card using `armbianmonitor -c $HOME` and think about installing [RPi-Monitor for H3](http://www.cnx-software.com/2016/03/17/rpi-monitor-is-a-web-based-remote-monitor-for-arm-development-boards-such-as-raspberry-pi-and-orange-pi/) to get an idea whether you suffer from overheating (`sudo armbianmonitor -r` will install everything needed)
 - In case you're unsure whether to test a desktop or CLI image simply try out the GUI version since you can always get 'CLI behaviour' by running `sudo update-rc.d -f nodm disable` later (this disables the start of X windows and desktop images behave like those made for headless use afterwards. If you're experienced you could also reclaim disk space by removing the `libxfce4util-common` package and doing an `apt-get autoremove` later)
 - especially for desktop images the speed of your SD card matters. If possible try to use our _nand-sata-install_ script to move the rootfs away from SD card. The script also works with USB disks flawlessly ([some background information](http://forum.armbian.com/index.php/topic/793-moving-to-harddisk/))
 
-#OS images with legacy Kernel (3.4.111)
+**Upgrading from older images**
 
-Armbian started beginning with release 5.04 to support all available H3 based Orange Pi boards (including [One](http://forum.armbian.com/index.php/topic/724-quick-review-of-orange-pi-one/) and Lite when available).
+Upgrading from any of the H3 pre-built images (read as: all between version 5.03 and 5.12) is **not** recommended. We had one fundamental change while developing/improving H3 board support (switching away from providing one OS image for various boards and trying to rely on _board auto detection_ at first boot) that might cause loads of problems when upgrading.
 
-**Changes in 5.06 (not released yet)**
+Therefore it's strongly recommended to backup settings and `$HOME` contents, start with a fresh 5.15 OS image from scratch and then copy back stuff. We're sorry for any inconveniences caused by this and [provide a few tips/tweaks in the forum](http://forum.armbian.com/index.php/topic/1400-upgrading-h3-pre-built-armbian-images-to-515-or-above/)
+
+#OS images with legacy Kernel (3.4.112)
+
+Armbian started beginning with release 5.04 to support all available H3 based Orange Pi boards back then and extended the support to a few more H3 devices (also from other vendors) in the meantime. For a board overview you can look through our [buyer's guide](http://forum.armbian.com/index.php/topic/1351-h3-board-buyers-guide/) and/or Jean-Luc's [nice comparison table](http://www.cnx-software.com/2016/06/08/allwinner-h3-boards-comparison-tables-with-orange-pi-banana-pi-m2-nanopi-p1-and-h3-olinuxino-nano-boards/#comments).
+
+**Changes between 5.06 and 5.15 (not released yet)**
+
+- Added [improved camera driver](https://github.com/avafinger/gc2035) for Xunlong's cheap 2MP GC2035 camera
+- Improved throttling/DRAM settings for the new 3 overheating H3 devices (BPi M2+, NanoPi M1, Beelink X2)
+- Added official support for Beelink X2, NanoPi M1, Banana Pi M2+
+- Improved console output (serial + display)
+- Finally got rid of (broken) board auto detection. We do not ship any more one image for several devices that tries to detect/fix things on 1st boot but provide one dedicated image per board (Plus and Plus 2 and both NanoPi M1 variants being handled as the same device since only size of DRAM/eMMC differs)
+- Tried to improve user experience with better/unified led handling (light directly after boot, communicate booting states through blinking)
+- Improve partitioning and filesystem resize on 1st boot making it easier to clone every installation media afterwards
+- fully support installation on eMMC on all H3 devices (`u-boot` and `nand-sata-install.sh` fixes)
+- Improved performance/thermal/throttling behaviour on all H3 boards (especially newer Oranges)
+- Prevent HDMI screen artefacts (disabling interfering TV Out by default)
+- Enhanced 8189ETV driver for older Oranges
+- Added support for OPi Lite, PC Plus and Plus 2E including new 8189FTV Wi-Fi (client, AP and monitoring mode, added fix for random MAC address)
+- Added in-kernel corekeeper patch (bringing back killed CPU cores after heavy overheating situations when thermal situation is ok again)
+- Added TV Out patch for Orange Pi PC
+- Further improve driver compilation due to improved kernel headers scripts compilation
+- Initrd support
+- increased kernel version to 3.4.112
+- Exchanged whole kernel source tree to [newer BSP variant](https://github.com/friendlyarm/h3_lichee), cleaned up sources, rebased all +100 patches (fixed display issues and kswapd bug, new and more performant GPU driver, increase Mali400MP2 clock to 600MHz)
+- Added RTL2832U drivers to kernel (DVB-T)
+- Many minor fixes
+
+**Changes in 5.06**
 
 - increase kernel version to 3.4.111
 - headers auto creation while install (eases kernel/driver compilation)
@@ -53,37 +84,22 @@ Armbian started beginning with release 5.04 to support all available H3 based Or
 - Full HDMI colour-range adjustable/accessible through _h3disp_ utility
 - already useable as stable headless/server board
 
-**Known issues with 5.06**
+**Known issues with 5.15**
 
-- Playing HEVC/H.265 video with 10 bit depth not supported
-
-**Areas that need testing/feedback**
-
-- SPI
-- I2C
-- GPIO in general
-- Wi-Fi on OPi Plus, Plus 2 and 2
-- USB wireless dongles
-- user experience
+- Playing HEVC/H.265 video with 10 bit depth not supported since H3 lacks this feature
+- (still) not possible to upgrade _server_ to _desktop_ images -- better go the other way around if unsure
 
 **What you can do to improve the situation**
 
-- improve software support for Orange Pi One by [testing DRAM reliability](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5455)!
 - get back to us with [feedback regarding our OS images](http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?view=getlastpost)
 - fork our repo, fix things and send pull requests
 
 **Known to NOT work (reliably) yet**
 
-- Camera support. We included [@lex' patches](http://www.orangepi.org/orangepibbsen/forum.php?mod=redirect&goto=findpost&ptid=443&pid=7263) but miss [phelum's basic patches](http://www.orangepi.org/orangepibbsen/forum.php?mod=redirect&goto=findpost&ptid=70&pid=2905). Fixes welcome
 - live display resolution switching. Fixes welcome (anyone willing to port the stuff from the [H3 OpenELEC port](https://github.com/jernejsk/OpenELEC-OPi2)?)
-- onboard Wi-Fi (it works somehow but chip/driver are cheap and bad -- we can't do much to improve the situation)
 
 #OS images with vanilla Kernel (4.x)
 
-**Important: Currently no thermal readouts and no throttling/cpufreq adjustments are implemented in mainline kernel. Therefore it's possible to permanently damage your H3 when running demanding workloads on it. Keep this in mind and think about reducing maximum clockspeed in u-boot (816 MHz max for example)**
+**Important: Currently no thermal readouts and no throttling/cpufreq adjustments are implemented in mainline kernel (THS). Therefore it's possible to permanently damage your H3 when running demanding workloads on it. Keep this in mind especially when you use any of the H3 devices not from Xunlong since they all overheat badly and think about reducing maximum clockspeed in u-boot (816 MHz max for example)**
 
-Mainlining effort for H3 and Orange Pi's is progressing nicely but since Ethernet support still isn't ready we currently do not provide OS images with vanilla kernel (for the impatient: early patches [here](http://sunxi.montjoie.ovh/patchs_current/) and discussion [there](https://groups.google.com/forum/#!topic/linux-sunxi/ZrVjF74mliY)). Our build system is already prepared, board auto detection also works with mainline kernel so as soon as Ethernet is ready we'll release OS images (in the lab an Orange Pi PC is serving files as NAS since weeks stable with kernel 4.4)
-
-But since we collected a bunch of [necessary H3 patches](https://github.com/igorpecovnik/lib/commit/79c7662a491b46caf07f05880403903dccc33cd1) you're already able to build your own 4.4.x image at this time. Just choose Orange Pi Plus as target or Orange Pi H3 for PC/One/2/Lite. But please remember that you end up with a rather limited image where just SMP, UART and USB is working. 
-
-The good news: With a GbE Ethernet dongle network will be way faster on all Oranges except the Plus and since you can make use of [USB Attached SCSI](http://linux-sunxi.org/USB/UAS) with mainline kernel USB performance also increases when your drive enclosure supports UAS.
+Mainlining effort for H3 and Orange Pi's is progressing nicely but since Ethernet is still missing some bits and especially THS support isn't ready we currently do not provide OS images with vanilla kernel. Our build system is already prepared, so as soon as THS and Ethernet are fully ready we'll release OS images (in the lab an Orange Pi PC is serving files as NAS since months stable with kernel 4.4 and USB-Ethernet and now 4.6.2 with native Ethernet driver).
