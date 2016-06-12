@@ -1,4 +1,8 @@
 # Release history
+**v5.14 / 12.6.2016**
+- Cubieboard 1 images rebuilt 
+- Cubox / Hummingboard kernel upgrade to 3.14.72 and 4.6.2
+- Trusty wes replaced with Xenial on those two boards  
 
 **v5.14 / 5.6.2016**
 - Odroid C2 and Orange Pi+ images rebuilt 

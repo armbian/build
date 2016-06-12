@@ -64,9 +64,7 @@ install_board_specific (){
 	fi
 
 	if [[ $BOARD == cubox-i && $BRANCH == next && -f $CACHEDIR/sdcard/boot/boot.cmd ]] ; then
-		sed -e 's/mmcblk0/mmcblk1/g' -i $CACHEDIR/sdcard/boot/boot.cmd
-		sed -e 's/console=tty1 //g' -i $CACHEDIR/sdcard/boot/boot.cmd
-		sed -e 's/loglevel=1/loglevel=9/g' -i $CACHEDIR/sdcard/boot/boot.cmd
+		sed -e 's/console=tty1 //g' -i $CACHEDIR/sdcard/boot/boot.cmd		
 	fi
 	
 	# convert to uboot compatible script
