@@ -50,6 +50,9 @@ Run the script
         - Mediatek MT7601U wireless - driver
         - Sunxi display control
         - hostapd from sources
+- **DEBUG_MODE** (yes|no)
+	- set to "yes" will prompt you right before the compilation starts to make changes to the source code. Separate for u-boot and kernel. It will also create a patch out of this. If you want that this patch is included in the normal run, you need to copy it to appropriate directory
+	- set to "no" compilation will run uninterrupted 
 - **FORCE_CHECKOUT** (yes|no):
     - set to "yes" to force overwrite any changed or manually patched kernel, u-boot and other sources
     - set to "no" to keep all changes to sources

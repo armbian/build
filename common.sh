@@ -31,7 +31,10 @@ compile_uboot (){
 
 	# read uboot version to variable $VER
 	grab_version "$SOURCES/$BOOTSOURCEDIR" "VER"
-
+	
+	# create patch for manual source changes in debug mode
+	userpatch_create "u-boot"
+	
 	display_alert "Compiling uboot" "$VER" "info"
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
 	cd $SOURCES/$BOOTSOURCEDIR
@@ -133,6 +136,9 @@ compile_kernel (){
 	# read kernel version to variable $VER
 	grab_version "$SOURCES/$LINUXSOURCEDIR" "VER"
 
+	# create patch for manual source changes in debug mode
+	userpatch_create "kernel"
+	
 	display_alert "Compiling $BRANCH kernel" "$VER" "info"
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
 	cd $SOURCES/$LINUXSOURCEDIR/
@@ -383,4 +389,27 @@ customize_image()
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
 	umount $CACHEDIR/sdcard/tmp/overlay
+}
+
+userpatch_create()
+{
+	if [[ $DEBUG_MODE == yes ]]; then 	
+		# configure
+		mkdir -p $SRC/userpatches/patch
+		git config --global user.name 'John Doe' 
+		git config --global user.email johndoe@somedomain.com
+	
+		# create commit to start from clean source
+		git add .
+		git commit -q -m "Cleaning"
+	
+		# prompt to alter source
+		display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
+		display_alert "You will find a patch here:" "$SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch" "wrn"		
+		read -p 'Press <Enter> after you are done with changes to the source'
+		git add .
+		# create patch out of changes
+		git diff --staged > $SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch
+		git reset --soft HEAD~ 
+	fi
 }
