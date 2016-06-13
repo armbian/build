@@ -393,23 +393,21 @@ customize_image()
 
 userpatch_create()
 {
-	if [[ $DEBUG_MODE == yes ]]; then 	
+	if [[ $DEBUG_MODE == yes ]]; then
 		# configure
 		mkdir -p $SRC/userpatches/patch
-		git config --global user.name 'John Doe' 
-		git config --global user.email johndoe@somedomain.com
-	
+
 		# create commit to start from clean source
 		git add .
-		git commit -q -m "Cleaning"
-	
+		git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
+
 		# prompt to alter source
 		display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
-		display_alert "You will find a patch here:" "$SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch" "wrn"		
+		display_alert "You will find a patch here:" "$SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch" "wrn"
 		read -p 'Press <Enter> after you are done with changes to the source'
 		git add .
 		# create patch out of changes
 		git diff --staged > $SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch
-		git reset --soft HEAD~ 
+		git reset --soft HEAD~
 	fi
 }
