@@ -37,3 +37,8 @@ family_tweaks()
 	sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="devinput"/g' -i $CACHEDIR/sdcard/etc/lirc/hardware.conf
 	cp $SRC/lib/config/lirc.conf.cubietruck $CACHEDIR/sdcard/etc/lirc/lircd.conf
 }
+
+install_boot_script()
+{
+	cp $SRC/lib/config/bootscripts/boot-sunxi.cmd $CACHEDIR/sdcard/boot/boot.cmd
+}

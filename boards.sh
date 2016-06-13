@@ -28,33 +28,11 @@ install_board_specific (){
 
 	rm -rf $CACHEDIR/sdcard/boot/dtb.old # remove .old on new image
 
-	if [[ $BOARD == udoo* ]] ; then
-		cp $SRC/lib/config/boot-$BOARD.cmd $CACHEDIR/sdcard/boot/boot.cmd
-	elif [[ $BOARD == cubox-i* ]]; then
-		cp $SRC/lib/config/boot-cubox.cmd $CACHEDIR/sdcard/boot/boot.cmd
-	elif [[ $BOARD == guitar* ]]; then
-		cp $SRC/lib/config/boot-guitar.cmd $CACHEDIR/sdcard/boot/boot.cmd
-	elif [[ $BOARD == roseapple* ]]; then
-		cp $SRC/lib/config/boot-roseapple.cmd $CACHEDIR/sdcard/boot/boot.cmd
-	elif [[ $BOARD == armada* ]]; then
-		cp $SRC/lib/config/boot-marvell.cmd $CACHEDIR/sdcard/boot/boot.cmd
-	elif [[ $BOARD == odroidxu4 ]]; then
-		cp $SRC/lib/config/boot-odroid-xu4.ini $CACHEDIR/sdcard/boot/boot.ini
-	elif [[ $BOARD == odroidc1 ]]; then
-		cp $SRC/lib/config/boot-odroid-c1.ini $CACHEDIR/sdcard/boot/boot.ini
-	elif [[ $BOARD == odroidc2 ]]; then
-		cp $SRC/lib/config/boot-odroid-c2.ini $CACHEDIR/sdcard/boot/boot.ini
-	elif [[ $BOARD == pine64* ]]; then
-		cp $SRC/lib/config/boot-pine64.cmd $CACHEDIR/sdcard/boot/boot.cmd
-	else
-		cp $SRC/lib/config/boot.cmd $CACHEDIR/sdcard/boot/boot.cmd
-		# orangepi h3 temp exceptions
-		[[ $LINUXFAMILY == "sun8i" ]] && sed -i -e '1s/^/gpio set PL10\ngpio set PG11\nsetenv machid 1029\nsetenv bootm_boot_mode sec\n/' \
-			-e 's/\ disp.screen0_output_mode=1920x1080p60//' -e 's/\ hdmi.audio=EDID:0//' $CACHEDIR/sdcard/boot/boot.cmd
-		# let's prepare for old kernel too
-		#chroot $CACHEDIR/sdcard /bin/bash -c \
-		#"ln -s /boot/bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin"
-	fi
+	[[ $(type -t install_boot_script) == function ]] && install_boot_script
+
+	# orangepi h3 temp exceptions
+	[[ $LINUXFAMILY == "sun8i" ]] && sed -i -e '1s/^/gpio set PL10\ngpio set PG11\nsetenv machid 1029\nsetenv bootm_boot_mode sec\n/' \
+		-e 's/\ disp.screen0_output_mode=1920x1080p60//' -e 's/\ hdmi.audio=EDID:0//' $CACHEDIR/sdcard/boot/boot.cmd
 
 	# if we have a special fat boot partition, alter rootfs=
 	if [[ $BOOTSIZE -gt 0 ]]; then
@@ -64,7 +42,7 @@ install_board_specific (){
 	fi
 
 	if [[ $BOARD == cubox-i && $BRANCH == next && -f $CACHEDIR/sdcard/boot/boot.cmd ]] ; then
-		sed -e 's/console=tty1 //g' -i $CACHEDIR/sdcard/boot/boot.cmd		
+		sed -e 's/console=tty1 //g' -i $CACHEDIR/sdcard/boot/boot.cmd
 	fi
 	
 	# convert to uboot compatible script
