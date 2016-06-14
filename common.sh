@@ -403,11 +403,15 @@ userpatch_create()
 
 		# prompt to alter source
 		display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
-		display_alert "You will find a patch here:" "$SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch" "wrn"
 		read -p 'Press <Enter> after you are done with changes to the source'
 		git add .
 		# create patch out of changes
-		git diff --staged > $SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch
+		if [[ "$(git status --porcelain)" ]]; then
+			git diff --staged > $SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch
+			display_alert "You will find your patch here:" "$SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch" "info"
+		else
+			display_alert "No changes found, skipping patch creation" "" "wrn"
+		fi
 		git reset --soft HEAD~
 	fi
 }
