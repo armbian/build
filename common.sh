@@ -407,7 +407,8 @@ userpatch_create()
 		read -p 'Press <Enter> after you are done with changes to the source'
 		git add .
 		# create patch out of changes
-		git diff --staged > $SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch
+		local temp=$(git diff --staged)
+		[[ -z $TEMP ]] && echo "${temp}" > $SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch
 		git reset --soft HEAD~
 	fi
 }
