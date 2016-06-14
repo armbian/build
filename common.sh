@@ -31,10 +31,10 @@ compile_uboot (){
 
 	# read uboot version to variable $VER
 	grab_version "$SOURCES/$BOOTSOURCEDIR" "VER"
-	
+
 	# create patch for manual source changes in debug mode
 	userpatch_create "u-boot"
-	
+
 	display_alert "Compiling uboot" "$VER" "info"
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
 	cd $SOURCES/$BOOTSOURCEDIR
@@ -104,24 +104,17 @@ compile_uboot (){
 	fi
 }
 
-compile_sunxi_tools (){
+compile_sunxi_tools ()
+{
 #---------------------------------------------------------------------------------------------------------------------------------
 # https://github.com/linux-sunxi/sunxi-tools Tools to help hacking Allwinner devices
 #---------------------------------------------------------------------------------------------------------------------------------
-
 	display_alert "Compiling sunxi tools" "@host & target" "info"
 	cd $SOURCES/$MISC1_DIR
-	make -s clean >/dev/null 2>&1
-	make -s >/dev/null 2>&1
+	make -s clean >/dev/null
+	make -s tools >/dev/null
 	mkdir -p /usr/local/bin/
-	cp fex2bin bin2fex sunxi-fel /usr/local/bin/
-	# make -s clean >/dev/null 2>&1
-
-	# NOTE: Fix CC=$CROSS_COMPILE"gcc" before reenabling
-	# make $CTHREADS 'sunxi-nand-part' CC=$CROSS_COMPILE"gcc" >> $DEST/debug/install.log 2>&1
-	# make $CTHREADS 'sunxi-fexc' CC=$CROSS_COMPILE"gcc" >> $DEST/debug/install.log 2>&1
-	# make $CTHREADS 'meminfo' CC=$CROSS_COMPILE"gcc" >> $DEST/debug/install.log 2>&1
-
+	make install-tools >/dev/null
 }
 
 compile_kernel (){
@@ -320,7 +313,7 @@ process_patch_file() {
 
 	if [[ $? -ne 0 ]]; then
 		display_alert "... $(basename $patch)" "failed" "wrn";
-		if [[ $EXIT_PATCHING_ERROR == yes ]]; then exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"; fi
+		[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
 	else
 		display_alert "... $(basename $patch)" "succeeded" "info"
 	fi
@@ -394,9 +387,6 @@ customize_image()
 userpatch_create()
 {
 	if [[ $DEBUG_MODE == yes ]]; then
-		# configure
-		mkdir -p $SRC/userpatches/patch
-
 		# create commit to start from clean source
 		git add .
 		git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
@@ -406,7 +396,8 @@ userpatch_create()
 		read -p 'Press <Enter> after you are done with changes to the source'
 		git add .
 		# create patch out of changes
-		if [[ "$(git status --porcelain)" ]]; then
+		if ! git diff-index --quiet --cached HEAD; then
+		#if [[ "$(git status --porcelain)" ]]; then
 			git diff --staged > $SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch
 			display_alert "You will find your patch here:" "$SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch" "info"
 		else
