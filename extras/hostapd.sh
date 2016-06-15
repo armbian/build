@@ -9,133 +9,122 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 
-
-compile_hostapd ()
+compile_hostapd()
 {
-	sync
-	echo "Building hostapd" > $DEST/debug/hostapd-build.log 2>&1
 	display_alert "Building deb" "hostapd" "info"
 
-	local tmpdir="sdcard/tmp/hostap"
+	local tmpdir="$CACHEDIR/sdcard/root/hostapd"
 
-	if [ -d "$CACHEDIR/$tmpdir" ]; then
-		cd $CACHEDIR/$tmpdir		
-		git checkout -f -q master >> $DEST/debug/hostapd-build.log 2>&1
+	mkdir -p $tmpdir
+
+	if [[ -d $tmpdir/hostap ]]; then
+		cd $tmpdir/hostap
+		display_alert "Updating sources" "hostapd" "info"
+		git checkout -f -q master
 		git pull -q
-		display_alert "Updating sources" "hostapd" "info"		
 	else
-		display_alert "Downloading sources" "hostapd" "info"		
-		git clone -q git://w1.fi/hostap.git $CACHEDIR/$tmpdir >> $DEST/debug/hostapd-build.log 2>&1
+		display_alert "Downloading sources" "hostapd" "info"
+		# TODO: Replace with fetch_from_github
+		git clone -q git://w1.fi/hostap.git $tmpdir/hostap
 	fi
 
-
-	pack_to_deb ()
+	pack_to_deb()
 	{
-		cd $CACHEDIR/sdcard/tmp
-		apt-get -qq -d install hostapd
-		dpkg-deb -R /var/cache/apt/archives/hostapd* armbian-hostapd${TARGET}"_"${REVISION}_${ARCH}
+		chroot $CACHEDIR/sdcard /bin/bash -c "cd /root/hostapd; apt-get -qq download hostapd > /dev/null 2>&1"
+		cd $tmpdir
+		#apt-get -qq download hostapd > /dev/null 2>&1
+		dpkg-deb -R hostapd*.deb armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}
+		rm hostapd*.deb
 
 		# set up control file
-cat <<END > armbian-hostapd${TARGET}_${REVISION}_${ARCH}/DEBIAN/control
-Package: armbian-hostapd$TARGET
-Version: $REVISION
-Architecture: $ARCH
-Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-Installed-Size: 1
-Section: kernel
-Conflicts: hostapd
-Priority: optional
-Description: Patched hostapd
-END
-#
+		cat <<-END > armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}/DEBIAN/control
+		Package: armbian-hostapd-$RELEASE
+		Version: $REVISION
+		Architecture: $ARCH
+		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+		Installed-Size: 1
+		Section: net
+		Provides: armbian-hostapd
+		Conflicts: armbian-hostapd, hostapd
+		Priority: optional
+		Description: Patched hostapd for $RELEASE
+		END
 
-		cp "$CACHEDIR/$tmpdir/hostapd/hostapd" 			armbian-hostapd${TARGET}_${REVISION}_${ARCH}/usr/sbin
-		cp "$CACHEDIR/$tmpdir/hostapd/hostapd-rt" 		armbian-hostapd${TARGET}_${REVISION}_${ARCH}/usr/sbin
-		cp "$CACHEDIR/$tmpdir/hostapd/hostapd_cli"  	armbian-hostapd${TARGET}_${REVISION}_${ARCH}/usr/sbin
-		cp "$CACHEDIR/$tmpdir/hostapd/hostapd_cli-rt" 	armbian-hostapd${TARGET}_${REVISION}_${ARCH}/usr/sbin
+		cp $tmpdir/hostap/hostapd/{hostapd,hostapd-rt,hostapd_cli,hostapd_cli-rt} armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}/usr/sbin
 
-		cd armbian-hostapd${TARGET}_${REVISION}_${ARCH}
+		cd armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}
 		find . -type f ! -regex '.*.hg.*' ! -regex '.*?debian-binary.*' ! -regex '.*?DEBIAN.*' -printf '%P ' | xargs md5sum > DEBIAN/md5sums
 		cd ..
-		dpkg -b armbian-hostapd${TARGET}_${REVISION}_${ARCH} >/dev/null 2>&1
-		rm -rf armbian-hostapd${TARGET}_${REVISION}_${ARCH}
+		dpkg -b armbian-hostapd-${RELEASE}_${REVISION}_${ARCH} >/dev/null
+		mv *.deb $DEST/debs
+		cd $CACHEDIR
+		rm -rf $tmpdir
 	}
-	
-	
-	compiling ()
-	{	
-		chroot $CACHEDIR/sdcard /bin/bash -c "cd /tmp/hostap/hostapd; make clean" >> $DEST/debug/hostapd-build.log 2>&1
-		chroot $CACHEDIR/sdcard /bin/bash -c "cd /tmp/hostap/hostapd; make $CTHREADS" >> $DEST/debug/hostapd-build.log 2>&1	
-		if [ $? -ne 0 ] || [ ! -f $CACHEDIR/$tmpdir/hostapd/hostapd ]; then
-			display_alert "Not built" "hostapd" "err"
-			exit 1
+
+	compiling()
+	{
+		chroot $CACHEDIR/sdcard /bin/bash -c "cd /root/hostapd/hostap/hostapd; make clean" >> $DEST/debug/hostapd-build.log 2>&1
+		chroot $CACHEDIR/sdcard /bin/bash -c "cd /root/hostapd/hostap/hostapd; make $CTHREADS" >> $DEST/debug/hostapd-build.log 2>&1
+		if [[ $? -ne 0 || ! -f $tmpdir/hostap/hostapd/hostapd ]]; then
+			cd $CACHEDIR
+			rm -rf $tmpdir
+			exit_with_error "Error building" "hostapd"
 		fi
 	}
 
-
-	patching ()
+	patching()
 	{
 		# Other usefull patches:
 		# https://dev.openwrt.org/browser/trunk/package/network/services/hostapd/patches?order=name
 
-		cp $SRC/lib/config/hostapd/files/*.* $CACHEDIR/$tmpdir/src/drivers/
+		cp $SRC/lib/config/hostapd/files/*.* $tmpdir/hostap/src/drivers/
 
+		cd $tmpdir/hostap
 		# brute force for 40Mhz
-		if [ "$(patch --dry-run -t -p1 < $SRC/lib/config/hostapd/patch/300-noscan.patch | grep previ)" == "" ]; then
+		if [[ -z $(patch --dry-run -t -p1 < $SRC/lib/config/hostapd/patch/300-noscan.patch | grep previ) ]]; then
 			patch --batch -f -p1 < $SRC/lib/config/hostapd/patch/300-noscan.patch >> $DEST/debug/hostapd-build.log 2>&1
 		fi
 		# patch for realtek
-		if [ "$1" == "realtek" ]; then
-			cp $SRC/lib/config/hostapd/config/config_realtek $CACHEDIR/$tmpdir/hostapd/.config
+		if [[ $1 == realtek ]]; then
+			cp $SRC/lib/config/hostapd/config/config_realtek $tmpdir/hostap/hostapd/.config
 			patch --batch -f -p1 < $SRC/lib/config/hostapd/patch/realtek.patch >> $DEST/debug/hostapd-build.log 2>&1
 		else
-			cp $SRC/lib/config/hostapd/config/config_default $CACHEDIR/$tmpdir/hostapd/.config
-			if [ "$(cat $CACHEDIR/$tmpdir/hostapd/main.c | grep rtl871)" != "" ]; then
+			cp $SRC/lib/config/hostapd/config/config_default $tmpdir/hostap/hostapd/.config
+			if ! grep -q rtl871 $tmpdir/hostap/hostapd/main.c ; then
 				patch --batch -t -p1 < $SRC/lib/config/hostapd/patch/realtek.patch >> $DEST/debug/hostapd-build.log 2>&1
 			fi
 		fi
 	}
 
-
-	checkout ()
+	checkout()
 	{
-		if [ "$1" == "stable" ]; then
-			cd $CACHEDIR/$tmpdir
-			git checkout -f -q "hostap_2_5" >> ../build.log 2>&1
+		cd $tmpdir/hostap
+		if [[ $1 == stable ]]; then
+			git checkout -f -q "hostap_2_5" >> $DEST/debug/hostapd-build.log 2>&1
 		else
-			git checkout -f -q >> ../build.log 2>&1
+			git checkout -f -q >> $DEST/debug/hostapd-build.log 2>&1
 		fi
 	}
 
+	checkout "stable"
+	local apver=$(grep '#define VERSION_STR ' $tmpdir/hostap/src/common/version.h | awk '{ print $3 }' | sed 's/\"//g')
 
-	
-	checkout "stable"
-	local apver=$(cat $CACHEDIR/$tmpdir/src/common/version.h | grep "#define VERSION_STR " | awk '{ print $3 }' | sed 's/\"//g')
-	
-	display_alert "Compiling" "v$apver" "info"
-	
-	patching	
+	display_alert "Compiling hostapd" "v$apver" "info"
+
+	patching "realtek"
 	compiling
-		mv $CACHEDIR/$tmpdir/hostapd/hostapd 		$CACHEDIR/$tmpdir/hostapd/hostapd-rt
-		mv $CACHEDIR/$tmpdir/hostapd/hostapd_cli 	$CACHEDIR/$tmpdir/hostapd/hostapd_cli-rt
+
+	mv $tmpdir/hostap/hostapd/hostapd $tmpdir/hostap/hostapd/hostapd-rt
+	mv $tmpdir/hostap/hostapd/hostapd_cli $tmpdir/hostap/hostapd/hostapd_cli-rt
+
 	checkout "stable"
-	patching 
+	patching
 	compiling
+
 	pack_to_deb
-
-	display_alert "Installing" "armbian-hostapd${TARGET}_${REVISION}_${ARCH}.deb" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-hostapd${TARGET}_${REVISION}_${ARCH}.deb" >> $DEST/debug/hostapd-build.log 2>&1 
-	mv $CACHEDIR/sdcard/tmp/armbian-hostapd${TARGET}_${REVISION}_${ARCH}.deb $DEST/debs
 }
 
+[[ ! -f $DEST/debs/armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}.deb ]] && compile_hostapd
 
-if [[ -f "$DEST/debs/armbian-hostapd${TARGET}_${REVISION}_${ARCH}.deb" ]]; then
-	# install
-	echo "Installing hostapd" > $DEST/debug/hostapd-build.log 2>&1
-	display_alert "Installing" "armbian-hostapd${TARGET}_${REVISION}_${ARCH}.deb" "info"
-	cp $DEST/debs/armbian-hostapd${TARGET}_${REVISION}_${ARCH}.deb $CACHEDIR/sdcard/tmp
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-hostapd${TARGET}_${REVISION}_${ARCH}.deb" >> $DEST/debug/hostapd-build.log 2>&1 
-else
-	# compile
-	compile_hostapd
-fi
+display_alert "Installing" "armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}.deb" "info"
+chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}.deb" >> $DEST/debug/hostapd-build.log
