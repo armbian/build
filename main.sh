@@ -235,8 +235,6 @@ if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 	compile_kernel
 fi
 
-[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_${ARCH}.deb ]] && compile_firmware
-
 [[ -n $RELEASE ]] && create_board_package
 
 if [[ $KERNEL_ONLY != yes ]]; then

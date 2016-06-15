@@ -179,7 +179,8 @@ display_alert()
 # log function parameters to install.log
 echo "Displaying message: $@" >> $DEST/debug/install.log
 
-[[ -n $2 ]] && local tmp="[\e[0;33m $2 \x1B[0m]"
+local tmp=""
+[[ -n $2 ]] && tmp="[\e[0;33m $2 \x1B[0m]"
 
 case $3 in
 	err)

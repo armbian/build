@@ -21,7 +21,8 @@
 # write_uboot
 # customize_image
 
-compile_uboot (){
+compile_uboot()
+{
 #---------------------------------------------------------------------------------------------------------------------------------
 # Compile uboot from sources
 #---------------------------------------------------------------------------------------------------------------------------------
@@ -104,7 +105,7 @@ compile_uboot (){
 	fi
 }
 
-compile_sunxi_tools ()
+compile_sunxi_tools()
 {
 #---------------------------------------------------------------------------------------------------------------------------------
 # https://github.com/linux-sunxi/sunxi-tools Tools to help hacking Allwinner devices
@@ -114,43 +115,11 @@ compile_sunxi_tools ()
 	make -s clean >/dev/null
 	make -s tools >/dev/null
 	mkdir -p /usr/local/bin/
-	make install-tools >/dev/null
+	make install-tools >/dev/null 2>&1
 }
 
-compile_firmware ()
+compile_kernel()
 {
-#---------------------------------------------------------------------------------------------------------------------------------
-# http://git.kernel.org/cgit/linux/kernel/git/firmware/linux-firmware.git + some ours
-#---------------------------------------------------------------------------------------------------------------------------------
-	display_alert "Merging and packing linux firmware" "@host" "info"
-	cd $SOURCES/$MISC6_DIR
-	# overlay our firmware
-	cp -R $SRC/lib/bin/firmware-overlay/. .
-	# cleanup what's not needed for sure
-	rm -rf amdgpu amd-ucode radeon 
-	cd ..
-	cd ..
-	# set up control file
-	mkdir -p DEBIAN
-	cat <<-END > DEBIAN/control
-	Package: armbian-firmware
-	Version: $REVISION
-	Architecture: $ARCH
-	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-	Installed-Size: 1
-	Section: kernel
-	Priority: optional
-	Description: Linux firmware
-	END
-	cd ..
-	# pack
-	mv armbian-firmware armbian-firmware_${REVISION}_${ARCH}
-	dpkg -b armbian-firmware_${REVISION}_${ARCH} >> $DEST/debug/install.log 2>&1
-	mv armbian-firmware_${REVISION}_${ARCH} armbian-firmware
-	mv armbian-firmware*.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
-}
-
-compile_kernel (){
 #---------------------------------------------------------------------------------------------------------------------------------
 # Compile kernel
 #---------------------------------------------------------------------------------------------------------------------------------
@@ -352,15 +321,12 @@ process_patch_file() {
 	fi
 }
 
-install_external_applications ()
+install_external_applications()
 {
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install external applications example
 #--------------------------------------------------------------------------------------------------------------------------------
 display_alert "Installing extra applications and drivers" "" "info"
-
-# cleanup for install_kernel and install_board_specific
-umount $CACHEDIR/sdcard/tmp >/dev/null 2>&1
 
 for plugin in $SRC/lib/extras/*.sh; do
 	source $plugin

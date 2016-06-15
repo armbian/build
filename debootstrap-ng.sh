@@ -65,18 +65,22 @@ debootstrap_ng()
 
 	# stage: install kernel and u-boot packages
 	# install distribution and board specific applications
+
+	# mount deb storage to tmp
+	mount --bind $DEST/debs/ $CACHEDIR/sdcard/tmp
+
 	install_distribution_specific
 	install_kernel
 	install_board_specific
-
-	# cleanup for install_kernel and install_board_specific
-	umount $CACHEDIR/sdcard/tmp
 
 	# install desktop files
 	[[ $BUILD_DESKTOP == yes ]] && install_desktop
 
 	# install additional applications
 	[[ $EXTERNAL == yes ]] && install_external_applications
+
+	# cleanup for install_kernel and install_board_specific
+	umount $CACHEDIR/sdcard/tmp
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
@@ -539,6 +543,7 @@ unmount_on_exit()
 {
 	trap - INT TERM EXIT
 	umount_chroot
+	umount -l $CACHEDIR/sdcard/tmp >/dev/null 2>&1
 	umount -l $CACHEDIR/sdcard >/dev/null 2>&1
 	umount -l $CACHEDIR/mount/boot >/dev/null 2>&1
 	umount -l $CACHEDIR/mount >/dev/null 2>&1
