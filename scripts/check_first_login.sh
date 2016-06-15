@@ -5,7 +5,7 @@ if [ "$-" != "${-#*i}" ]; then
 		echo -e "\n\e[0;31mThank you for choosing Armbian! Support: \e[1m\e[39mwww.armbian.com\x1B[0m\n"
 		echo -e "Creating new account. Please provide a username (eg. your forename): \c"
 		read username
-		RealUserName="$(echo "${username}" | tr '[:upper:]' '[:lower:]' | tr -d -c '[:alpha:]')"
+		RealUserName="$(echo "${username}" | tr '[:upper:]' '[:lower:]' | tr -d -c '[:alnum:]')"
 		adduser ${RealUserName} || reboot
 		for additionalgroup in sudo netdev audio video dialout plugdev bluetooth ; do
 			usermod -aG ${additionalgroup} ${RealUserName} 2>/dev/null
