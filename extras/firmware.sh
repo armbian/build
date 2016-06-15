@@ -15,7 +15,7 @@ build_firmware()
 	local plugin_dir="armbian-firmware"
 
 	#fetch_from_github "$plugin_repo" "$plugin_dir/lib/firmware"
-	mkdir -p $plugin_dir/lib/firmware
+	mkdir -p $SOURCES/$plugin_dir/lib/firmware
 	# overlay our firmware
 	cp -R $SRC/lib/bin/firmware-overlay/* $SOURCES/$plugin_dir/lib/firmware
 
