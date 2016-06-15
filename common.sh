@@ -117,6 +117,39 @@ compile_sunxi_tools ()
 	make install-tools >/dev/null
 }
 
+compile_firmware ()
+{
+#---------------------------------------------------------------------------------------------------------------------------------
+# http://git.kernel.org/cgit/linux/kernel/git/firmware/linux-firmware.git + some ours
+#---------------------------------------------------------------------------------------------------------------------------------
+	display_alert "Merging and packing linux firmware" "@host" "info"
+	cd $SOURCES/$MISC6_DIR
+	# overlay our firmware
+	cp -R $SRC/lib/bin/firmware-overlay/. .
+	# cleanup what's not needed for sure
+	rm -rf amdgpu amd-ucode radeon 
+	cd ..
+	cd ..
+	# set up control file
+	mkdir -p DEBIAN
+	cat <<-END > DEBIAN/control
+	Package: armbian-firmware
+	Version: $REVISION
+	Architecture: $ARCH
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Installed-Size: 1
+	Section: kernel
+	Priority: optional
+	Description: Linux firmware
+	END
+	cd ..
+	# pack
+	mv armbian-firmware armbian-firmware_${REVISION}_${ARCH}
+	dpkg -b armbian-firmware_${REVISION}_${ARCH} >> $DEST/debug/install.log 2>&1
+	mv armbian-firmware_${REVISION}_${ARCH} armbian-firmware
+	mv armbian-firmware*.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
+}
+
 compile_kernel (){
 #---------------------------------------------------------------------------------------------------------------------------------
 # Compile kernel

@@ -115,9 +115,15 @@ install_kernel (){
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${HEADERS_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
 
 	# install firmware
-	if [[ -f $CACHEDIR/sdcard/tmp/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
-		display_alert "Installing firmware" "$FW_TMP" "info"
-		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
+	#if [[ -f $CACHEDIR/sdcard/tmp/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
+	#	display_alert "Installing firmware" "$FW_TMP" "info"
+	#	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
+	#fi
+	
+	# install generic firmware instead
+	if [[ -f $CACHEDIR/sdcard/tmp/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
+		display_alert "Installing generic firmware" "armbian-firmware" "info"
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-firmware_${REVISION}_${ARCH}.deb > /dev/null"
 	fi
 	
 	# install DTB
@@ -130,5 +136,5 @@ install_kernel (){
 	cp $SRC/lib/bin/armbian.bmp $CACHEDIR/sdcard/boot/boot.bmp
 
 	# add our linux firmwares to cache image
-	unzip -q $SRC/lib/bin/linux-firmware.zip -d $CACHEDIR/sdcard/lib/firmware
+	# unzip -q $SRC/lib/bin/linux-firmware.zip -d $CACHEDIR/sdcard/lib/firmware
 }

@@ -23,6 +23,8 @@ MISC1="https://github.com/linux-sunxi/sunxi-tools.git" # Allwinner fex compiler 
 MISC1_DIR="sunxi-tools"	# local directory
 MISC5="https://github.com/hglm/a10disp/" # Display changer for Allwinner
 MISC5_DIR="sunxi-display-changer" # local directory
+MISC6="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git" # Linux firmware
+MISC6_DIR="armbian-firmware/lib/firmware" # local directory
 HOST="$BOARD" # set hostname to the board
 CACHEDIR=$DEST/cache
 

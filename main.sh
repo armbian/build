@@ -183,6 +183,7 @@ LINUXSOURCEDIR=$LINUXSOURCE/$GITHUBSUBDIR
 
 if [[ -n $MISC1 ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
 if [[ -n $MISC5 ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
+if [[ -n $MISC6 ]]; then fetch_from_github "$MISC6" "$MISC6_DIR"; fi
 
 # compile sunxi tools
 if [[ $LINUXFAMILY == sun*i ]]; then 
@@ -233,6 +234,8 @@ if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 	advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH $KERNEL_VER"
 	compile_kernel
 fi
+
+[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_${ARCH}.deb ]] && compile_firmware
 
 [[ -n $RELEASE ]] && create_board_package
 
