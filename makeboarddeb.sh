@@ -52,6 +52,11 @@ create_board_package()
 	#!/bin/sh
 	update-rc.d armhwinfo defaults >/dev/null 2>&1
 	update-rc.d -f motd remove >/dev/null 2>&1
+	if [ -L "/etc/network/interfaces" ]; then
+		cp /etc/network/interfaces /etc/network/interfaces.tmp
+		rm /etc/network/interfaces
+		mv /etc/network/interfaces.tmp /etc/network/interfaces
+	fi
 	[ ! -f "/etc/network/interfaces" ] && cp /etc/network/interfaces.default /etc/network/interfaces
 	[ -f "/root/.nand1-allwinner.tgz" ] && rm /root/.nand1-allwinner.tgz
 	[ -f "/root/nand-sata-install" ] && rm /root/nand-sata-install
@@ -124,6 +129,7 @@ create_board_package()
 	# network interfaces configuration
 	mkdir -p $destination/etc/network/
 	cp $SRC/lib/config/network/interfaces.* $destination/etc/network/
+	[[ $RELEASE = wheezy ]] && sed -i 's/allow-hotplug/auto/g' $destination/etc/network/interfaces.default
 
 	# apt configuration
 	mkdir -p $destination/etc/apt/apt.conf.d/
