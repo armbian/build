@@ -52,6 +52,7 @@ create_board_package()
 	#!/bin/sh
 	update-rc.d armhwinfo defaults >/dev/null 2>&1
 	update-rc.d -f motd remove >/dev/null 2>&1
+	[ ! -f "/etc/network/interfaces" ] && cp /etc/network/interfaces.default /etc/network/interfaces
 	[ -f "/root/.nand1-allwinner.tgz" ] && rm /root/.nand1-allwinner.tgz
 	[ -f "/root/nand-sata-install" ] && rm /root/nand-sata-install
 	ln -sf /var/run/motd /etc/motd
@@ -106,7 +107,7 @@ create_board_package()
 	mkdir -p $destination/usr/local/bin
 
 	# add USB OTG port mode switcher
-	install -m 755 $SRC/lib/scripts/sunxi-musb 			$destination/usr/local/bin
+	install -m 755 $SRC/lib/scripts/sunxi-musb $destination/usr/local/bin
 
 	# armbianmonitor (currently only to toggle boot verbosity and log upload)
 	install -m 755 $SRC/lib/scripts/armbianmonitor/armbianmonitor $destination/usr/local/bin
@@ -119,6 +120,17 @@ create_board_package()
 	exit 0
 	EOF
 	chmod +x $destination/etc/initramfs/post-update.d/99-uboot
+
+	# network interfaces configuration
+	mkdir -p $destination/etc/network/
+	cp $SRC/lib/config/network/interfaces.* $destination/etc/network/
+
+	# apt configuration
+	mkdir -p $destination/etc/apt/apt.conf.d/
+	cat <<-EOF > $destination/etc/apt/apt.conf.d/71-no-recommends
+	APT::Install-Recommends "0";
+	APT::Install-Suggests "0";
+	EOF
 
 	# script to install to SATA
 	mkdir -p $destination/usr/sbin/
@@ -153,6 +165,7 @@ create_board_package()
 		fi
 
 		# lamobo R1 router switch config
+		# TODO: compile from sources in sunxi-tools
 		tar xfz $SRC/lib/bin/swconfig.tgz -C $destination/usr/local/bin
 
 		# convert and add fex files
@@ -162,10 +175,9 @@ create_board_package()
 		done
 
 		# bluetooth device enabler - for cubietruck
-		install -m 755	$SRC/lib/bin/brcm_bt_reset			$destination/usr/local/bin
-		install -m 755	$SRC/lib/bin/brcm_patchram_plus		$destination/usr/local/bin
-		install			$SRC/lib/scripts/brcm40183 			$destination/etc/default
-		install -m 755  $SRC/lib/scripts/brcm40183-patch    $destination/etc/init.d
+		# TODO: move to tools or sunxi-common.inc
+		install		$SRC/lib/scripts/brcm40183		$destination/etc/default
+		install -m 755	$SRC/lib/scripts/brcm40183-patch	$destination/etc/init.d
 
 	fi
 

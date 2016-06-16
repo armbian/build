@@ -19,12 +19,6 @@ display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 
 # Common
 
-# set up apt
-cat <<END > $CACHEDIR/sdcard/etc/apt/apt.conf.d/71-no-recommends
-APT::Install-Recommends "0";
-APT::Install-Suggests "0";
-END
-
 # configure the system for unattended upgrades
 cp $SRC/lib/scripts/50unattended-upgrades $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 cp $SRC/lib/scripts/02periodic $CACHEDIR/sdcard/etc/apt/apt.conf.d/02periodic
@@ -182,15 +176,11 @@ xenial)
 esac
 
 # copy hostapd configurations
-install -m 755 $SRC/lib/config/hostapd/hostapd.conf $CACHEDIR/sdcard/etc/hostapd.conf
-install -m 755 $SRC/lib/config/hostapd/hostapd.realtek.conf $CACHEDIR/sdcard/etc/hostapd.conf-rt
+install $SRC/lib/config/hostapd/hostapd.conf $CACHEDIR/sdcard/etc/hostapd.conf
+install $SRC/lib/config/hostapd/hostapd.realtek.conf $CACHEDIR/sdcard/etc/hostapd.conf-rt
 
 # console fix due to Debian bug
 sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $CACHEDIR/sdcard/etc/default/console-setup
-
-# root-fs modifications
-rm 	-f $CACHEDIR/sdcard/etc/motd
-touch $CACHEDIR/sdcard/etc/motd
 
 # change time zone data
 echo $TZDATA > $CACHEDIR/sdcard/etc/timezone
@@ -207,7 +197,7 @@ else
 fi
 echo "$device        0       0" >> $CACHEDIR/sdcard/etc/fstab
 
-# flash media tunning
+# flash media tuning
 if [[ -f $CACHEDIR/sdcard/etc/default/tmpfs ]]; then
 	sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
 	sed -e 's/#RUN_SIZE=10%/RUN_SIZE=128M/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
@@ -228,8 +218,4 @@ touch $CACHEDIR/sdcard/root/.not_logged_in_yet
 
 # force change root password at first login
 chroot $CACHEDIR/sdcard /bin/bash -c "chage -d 0 root"
-
-# remove hostapd because it's replaced with ours
-chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -qq remove hostapd >/dev/null 2>&1"
-
 }
