@@ -19,6 +19,9 @@ display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 
 # Common
 
+# remove default interfaces file if present
+rm $CACHEDIR/sdcard/etc/network/interfaces
+
 # configure the system for unattended upgrades
 cp $SRC/lib/scripts/50unattended-upgrades $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 cp $SRC/lib/scripts/02periodic $CACHEDIR/sdcard/etc/apt/apt.conf.d/02periodic
