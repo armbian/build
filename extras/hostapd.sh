@@ -44,6 +44,7 @@ compile_hostapd()
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 		Installed-Size: 1
 		Section: net
+		Depends: libc6, libnl-3-200, libnl-genl-3-200, libssl1.0.0
 		Provides: armbian-hostapd
 		Conflicts: armbian-hostapd, hostapd
 		Priority: optional
