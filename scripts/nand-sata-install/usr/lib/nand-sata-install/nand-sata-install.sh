@@ -56,6 +56,9 @@ create_armbian() {
 	rsync -avrltD  --delete --exclude-from=$EX_LIST  /  /mnt/rootfs | nl | awk '{ printf "%.0f\n", 100*$1/"'"$TODO"'" }' \
 	| dialog --backtitle "$backtitle"  --title "$title" --gauge "\n\n  Creating rootfs on $2 ($USAGE Mb). Please wait!" 10 80
 
+	# run rsync again to silently catch outstanding changes between / and /mnt/rootfs/
+	rsync -avrltD  --delete --exclude-from=$EX_LIST  /  /mnt/rootfs >/dev/null 2>&1
+
 	# creating fstab - root partition
 	sed -e 's,'"$root_partition"','"$2"',g' -i /mnt/rootfs/etc/fstab
 
