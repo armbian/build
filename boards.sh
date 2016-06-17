@@ -73,10 +73,6 @@ install_board_specific (){
 	else
 		tr ' ' '\n' <<< "$MODULES" >> $CACHEDIR/sdcard/etc/modules
 	fi
-
-	# copy and create symlink to default interfaces configuration
-	cp $SRC/lib/config/network/interfaces.* $CACHEDIR/sdcard/etc/network/
-	ln -sf interfaces.default $CACHEDIR/sdcard/etc/network/interfaces
 }
 
 

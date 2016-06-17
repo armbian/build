@@ -73,11 +73,11 @@ debootstrap_ng()
 	install_kernel
 	install_board_specific
 
-	# install desktop files
-	[[ $BUILD_DESKTOP == yes ]] && install_desktop
-
 	# install additional applications
 	[[ $EXTERNAL == yes ]] && install_external_applications
+
+	# install desktop files
+	[[ $BUILD_DESKTOP == yes ]] && install_desktop
 
 	# cleanup for install_kernel and install_board_specific
 	umount $CACHEDIR/sdcard/tmp

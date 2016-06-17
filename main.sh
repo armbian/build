@@ -39,6 +39,8 @@ source $SRC/lib/general.sh				# General functions
 mkdir -p $DEST/debug
 (cd $DEST/debug && tar -czf logs-$(date +"%d_%m_%Y-%H_%M_%S").tgz *.log) > /dev/null 2>&1
 rm -f $DEST/debug/*.log > /dev/null 2>&1
+# delete compressed logs older than 7 days
+(cd $DEST/debug && find . -name '*.tgz' -atime +7 -delete) > /dev/null
 
 # compile.sh version checking
 ver1=$(awk -F"=" '/^# VERSION/ {print $2}' <"$SRC/compile.sh")

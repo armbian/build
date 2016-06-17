@@ -44,6 +44,7 @@ compile_hostapd()
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 		Installed-Size: 1
 		Section: net
+		Depends: libc6, libnl-3-200, libnl-genl-3-200, libssl1.0.0
 		Provides: armbian-hostapd
 		Conflicts: armbian-hostapd, hostapd
 		Priority: optional
@@ -127,4 +128,5 @@ compile_hostapd()
 [[ ! -f $DEST/debs/armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}.deb ]] && compile_hostapd
 
 display_alert "Installing" "armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}.deb" "info"
-chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}.deb" >> $DEST/debug/hostapd-build.log
+chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -r hostapd" >> $DEST/debug/output.log
+chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}.deb" >> $DEST/debug/output.log
