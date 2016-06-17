@@ -397,7 +397,7 @@ userpatch_create()
 		# create patch out of changes
 		if ! git diff-index --quiet --cached HEAD; then
 		#if [[ "$(git status --porcelain)" ]]; then
-			git diff --staged > $SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch
+			git diff --staged > $SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y_%H_%M_%S').patch
 			display_alert "You will find your patch here:" "$SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch" "info"
 		else
 			display_alert "No changes found, skipping patch creation" "" "wrn"
