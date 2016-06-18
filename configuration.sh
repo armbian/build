@@ -96,7 +96,8 @@ PACKAGE_LIST="automake bash-completion bc bridge-utils build-essential cmake cpu
 
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools hddtemp iotop iozone3 stress sysbench screen ntfs-3g vim pciutils evtest htop pv lsof \
-	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan aptitude dnsutils f3 haveged hdparm rfkill vlan"
+	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan aptitude dnsutils f3 haveged hdparm rfkill \
+	vlan sysstat"
 
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray wicd thunar-volman galculator \
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu wifi-radar bluetooth"
