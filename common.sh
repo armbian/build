@@ -374,6 +374,8 @@ write_uboot()
 
 customize_image()
 {
+	# for users that need to prepare files at host
+	[[ -f $SRC/userpatches/customize-image-host.sh ]] && source $SRC/userpatches/customize-image-host.sh
 	cp $SRC/userpatches/customize-image.sh $CACHEDIR/sdcard/tmp/customize-image.sh
 	chmod +x $CACHEDIR/sdcard/tmp/customize-image.sh
 	mkdir -p $CACHEDIR/sdcard/tmp/overlay
@@ -381,6 +383,7 @@ customize_image()
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
 	umount $CACHEDIR/sdcard/tmp/overlay
+	rm -r $CACHEDIR/sdcard/tmp/overlay
 }
 
 userpatch_create()
