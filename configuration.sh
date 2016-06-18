@@ -91,7 +91,7 @@ esac
 PACKAGE_LIST="automake bash-completion bc bridge-utils build-essential cmake cpufrequtils device-tree-compiler \
 	dosfstools figlet fbset fping git hostapd ifenslave-2.6 iw libtool libwrap0-dev libssl-dev lirc fake-hwclock \
 	wpasupplicant libusb-dev libusb-1.0-0-dev psmisc ntp parted pkg-config rsync sudo curl dialog crda wireless-regdb \
-	ncurses-term python-apt sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools libnl-3-dev \
+	ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools libnl-3-dev \
 	console-setup console-data console-common unicode-data openssh-server initramfs-tools ca-certificates"
 
 # Non-essential packages
@@ -116,12 +116,12 @@ case $RELEASE in
 	;;
 	jessie)
 	PACKAGE_LIST_RELEASE="less makedev kbd libnl-genl-3-dev libpam-systemd iperf3 \
-		software-properties-common python-software-properties libnss-myhostname f2fs-tools libnl-genl-3-dev"
+		software-properties-common libnss-myhostname f2fs-tools libnl-genl-3-dev"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove gvfs policykit-1 policykit-1-gnome eject"
 	;;
-	trusty)	
+	trusty)
 	PACKAGE_LIST_RELEASE="man-db wget nano libnl-genl-3-dev software-properties-common iperf \
-		python-software-properties f2fs-tools acpid"
+		f2fs-tools acpid"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
 	PACKAGE_LIST_EXCLUDE="ureadahead plymouth"
 	;;
