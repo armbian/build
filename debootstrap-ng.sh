@@ -92,7 +92,7 @@ debootstrap_ng()
 	[[ -x $CACHEDIR/sdcard/sbin/initctl.REAL ]] && mv -f $CACHEDIR/sdcard/sbin/initctl.REAL $CACHEDIR/sdcard/sbin/initctl
 	[[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL ]] && mv -f $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL $CACHEDIR/sdcard/sbin/start-stop-daemon
 
-	umount_chroot
+	umount_chroot "$CACHEDIR/sdcard"
 
 	# to prevent creating swap file on NFS (needs specific kernel options)
 	# and f2fs/btrfs (not recommended or needs specific kernel options)
@@ -166,7 +166,7 @@ create_rootfs_cache()
 
 		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $CACHEDIR/sdcard/bin/bash ]] && exit_with_error "Debootstrap base system second stage failed"
 
-		mount_chroot
+		mount_chroot "$CACHEDIR/sdcard"
 
 		# policy-rc.d script prevents starting or reloading services during image creation
 		printf '#!/bin/sh\nexit 101' > $CACHEDIR/sdcard/usr/sbin/policy-rc.d
@@ -176,7 +176,7 @@ create_rootfs_cache()
 		# stage: configure language and locales
 		display_alert "Configuring locales" "$DEST_LANG" "info"
 
-		if [[ -f $CACHEDIR/sdcard/etc/locale.gen ]]; then sed -i "s/^# $DEST_LANG/$DEST_LANG/" $CACHEDIR/sdcard/etc/locale.gen; fi
+		[[ -f $CACHEDIR/sdcard/etc/locale.gen ]] && sed -i "s/^# $DEST_LANG/$DEST_LANG/" $CACHEDIR/sdcard/etc/locale.gen
 		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "locale-gen $DEST_LANG"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=$DEST_LANG"' \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -248,12 +248,12 @@ create_rootfs_cache()
 		sync
 		# the only reason to unmount here is compression progress display
 		# based on rootfs size calculation
-		umount_chroot
+		umount_chroot "$CACHEDIR/sdcard"
 
 		tar cp --xattrs --directory=$CACHEDIR/sdcard/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $CACHEDIR/sdcard/ | cut -f1) -N "$display_name" | pigz > $cache_fname
 	fi
-	mount_chroot
+	mount_chroot "$CACHEDIR/sdcard"
 } #############################################################################
 
 # prepare_partitions
@@ -513,28 +513,29 @@ install_dummy_initctl()
 	fi
 } #############################################################################
 
-# mount_chroot
+# mount_chroot <target>
 #
 # helper to reduce code duplication
 #
 mount_chroot()
 {
-	mount -t proc chproc $CACHEDIR/sdcard/proc
-	mount -t sysfs chsys $CACHEDIR/sdcard/sys
-	mount -t devtmpfs chdev $CACHEDIR/sdcard/dev || mount --bind /dev $CACHEDIR/sdcard/dev
-	mount -t devpts chpts $CACHEDIR/sdcard/dev/pts
+	local target=$1
+	mount -t proc chproc $target/proc
+	mount -t sysfs chsys $target/sys
+	mount -t devtmpfs chdev $target/dev || mount --bind /dev $target/dev
+	mount -t devpts chpts $target/dev/pts
 } #############################################################################
 
-# umount_chroot
+# umount_chroot <target>
 #
 # helper to reduce code duplication
 #
 umount_chroot()
 {
-	umount -l $CACHEDIR/sdcard/dev/pts >/dev/null 2>&1
-	umount -l $CACHEDIR/sdcard/dev >/dev/null 2>&1
-	umount -l $CACHEDIR/sdcard/proc >/dev/null 2>&1
-	umount -l $CACHEDIR/sdcard/sys >/dev/null 2>&1
+	umount -l $target/dev/pts >/dev/null 2>&1
+	umount -l $target/dev >/dev/null 2>&1
+	umount -l $target/proc >/dev/null 2>&1
+	umount -l $target/sys >/dev/null 2>&1
 } #############################################################################
 
 # unmount_on_exit
@@ -542,7 +543,7 @@ umount_chroot()
 unmount_on_exit()
 {
 	trap - INT TERM EXIT
-	umount_chroot
+	umount_chroot "$CACHEDIR/sdcard/"
 	umount -l $CACHEDIR/sdcard/tmp >/dev/null 2>&1
 	umount -l $CACHEDIR/sdcard >/dev/null 2>&1
 	umount -l $CACHEDIR/mount/boot >/dev/null 2>&1
