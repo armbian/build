@@ -26,6 +26,9 @@ satacheck=$(grep sd /proc/partitions)								# check SATA/USB
 
 # Create boot and root file system $1 = boot, $2 = root (Example: create_armbian "/dev/nand1" "/dev/sda3")
 create_armbian() {
+	# read in board info
+	[[ -f /etc/armbian-release ]] && source /etc/armbian-release || read ID </run/machine.id
+
 	# create mount points, mount and clean
 	sync
 	mkdir -p /mnt/bootfs /mnt/rootfs
@@ -80,7 +83,7 @@ EOF
 
 		[[ $DEVICE_TYPE = "a20" ]] && echo "machid=10bb" >> /mnt/bootfs/uEnv.txt
 		# ugly hack becouse we don't have sources for A10 nand uboot
-		if [[ $(cat /var/run/machine.id) == "Cubieboard" ]]; then 
+		if [[ "${ID}" == "Cubieboard" ]]; then 
 			cp /mnt/bootfs/uEnv.txt /mnt/rootfs/boot/uEnv.txt
 			cp /mnt/bootfs/script.bin /mnt/rootfs/boot/script.bin
 			cp /mnt/bootfs/uImage /mnt/rootfs/boot/uImage
