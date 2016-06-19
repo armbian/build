@@ -34,6 +34,7 @@ source $SRC/lib/desktop.sh 				# Desktop specific install
 source $SRC/lib/common.sh 				# Functions
 source $SRC/lib/makeboarddeb.sh 			# Create board support package
 source $SRC/lib/general.sh				# General functions
+source $SRC/lib/chroot-buildpackages.sh			# Building packages in chroot
 
 # compress and remove old logs
 mkdir -p $DEST/debug
@@ -188,7 +189,7 @@ if [[ -n $MISC5 ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
 if [[ -n $MISC6 ]]; then fetch_from_github "$MISC6" "$MISC6_DIR"; fi
 
 # compile sunxi tools
-if [[ $LINUXFAMILY == sun*i ]]; then 
+if [[ $LINUXFAMILY == sun*i ]]; then
 	compile_sunxi_tools
 	[[ $BRANCH != default && $LINUXFAMILY != sun8i ]] && LINUXFAMILY="sunxi"
 fi
@@ -239,13 +240,17 @@ fi
 
 [[ -n $RELEASE ]] && create_board_package
 
+[[ $KERNEL_ONLY == yes && ($RELEASE == jessie || $RELEASE == xenial) && \
+	$EXPERIMENTAL_BUILDPKG == yes && $(lsb_release -sc) == xenial ]] && chroot_build_packages
+
 if [[ $KERNEL_ONLY != yes ]]; then
 	if [[ $EXTENDED_DEBOOTSTRAP != no ]]; then
 		debootstrap_ng
 	else
-	
 		# create or use prepared root file-system
 		custom_debootstrap
+
+		mount --bind $DEST/debs/ $CACHEDIR/sdcard/tmp
 
 		# add kernel to the image
 		install_kernel
@@ -254,13 +259,15 @@ if [[ $KERNEL_ONLY != yes ]]; then
 		install_distribution_specific
 		install_board_specific
 
+		# install external applications
+		[[ $EXTERNAL == yes ]] && install_external_applications
+
 		# install desktop
 		if [[ $BUILD_DESKTOP == yes ]]; then
 			install_desktop
 		fi
 
-		# install external applications
-		[[ $EXTERNAL == yes ]] && install_external_applications
+		umount $CACHEDIR/sdcard/tmp > /dev/null 2>&1
 
 		# closing image
 		closing_image

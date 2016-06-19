@@ -346,6 +346,8 @@ prepare_host() {
 		apt-key adv --keyserver keys.gnupg.net --recv-keys 9E3E53F19C7DE460
 	fi
 
+	if [[ $codename == xenial ]]; then hostdeps="$hostdeps systemd-container"; fi
+
 	# Deboostrap in trusty breaks due too old debootstrap. We are installing Xenial package
 	local debootstrap_version=$(dpkg-query -W -f='${Version}\n' debootstrap | cut -f1 -d'+')
 	local debootstrap_minimal="1.0.78"

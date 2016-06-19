@@ -80,7 +80,7 @@ debootstrap_ng()
 	[[ $BUILD_DESKTOP == yes ]] && install_desktop
 
 	# cleanup for install_kernel and install_board_specific
-	umount $CACHEDIR/sdcard/tmp
+	umount $CACHEDIR/sdcard/tmp > /dev/null 2>&1
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
