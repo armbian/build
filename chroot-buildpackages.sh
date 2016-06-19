@@ -58,7 +58,7 @@ chroot_build_packages()
 
 	for plugin in $SRC/lib/extras-buildpkgs/*.conf; do
 		source $plugin
-		display_alert "Building" "$package_name" "info"
+		display_alert "Creating package" "$package_name" "info"
 
 		# create build script
 		cat <<-EOF > $DEST/buildpkg/$RELEASE/root/build.sh
@@ -93,7 +93,7 @@ chroot_build_packages()
 		display_alert "Done building"
 		ls *.deb
 		# install in chroot if other libraries depend on them
-		[[ $package_install == yes ]] && dpkg -i *.deb
+		[[ "$package_install" == yes ]] && dpkg -i *.deb
 		mv *.deb /root
 		EOF
 
@@ -103,6 +103,9 @@ chroot_build_packages()
 			/bin/bash -c "/root/build.sh"
 		# TODO: move built packages to $DEST/debs
 		# mv $DEST/buildpkg/$RELEASE/root/build/*.deb $DEST/debs/
+		# DEBUG:
+		#systemd-nspawn -D $DEST/buildpkg/$RELEASE --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
+		#	/bin/bash
 		# cleanup
 		unset package_name package_repo package_dir package_branch package_overlay package_builddeps package_commit package_install
 	done
