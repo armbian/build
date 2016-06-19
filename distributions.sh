@@ -23,7 +23,6 @@ display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 rm $CACHEDIR/sdcard/etc/network/interfaces
 
 # configure the system for unattended upgrades
-cp $SRC/lib/scripts/50unattended-upgrades $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 cp $SRC/lib/scripts/02periodic $CACHEDIR/sdcard/etc/apt/apt.conf.d/02periodic
 
 # setting window title for remote sessions
@@ -44,10 +43,6 @@ wheezy)
 		sed -e 's/5:23:respawn/#5:23:respawn/g' -i $CACHEDIR/sdcard/etc/inittab
 		sed -e 's/6:23:respawn/#6:23:respawn/g' -i $CACHEDIR/sdcard/etc/inittab
 
-		# auto upgrading
-		sed -e "s/ORIGIN/Debian/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		sed -e "s/n=CODENAME/a=old-stable/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-
 		# install ramlog
 		cp $SRC/lib/bin/ramlog_2.0.0_all.deb $CACHEDIR/sdcard/tmp
 		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb >/dev/null 2>&1"
@@ -63,10 +58,6 @@ wheezy)
 jessie)
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
-
-		# auto upgrading
-		sed -e "s/ORIGIN/Debian/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		sed -e "s/CODENAME/$RELEASE/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 
 		# mount 256Mb tmpfs to /tmp
 		echo "tmpfs   /tmp         tmpfs   nodev,nosuid,size=256M          0  0" >> $CACHEDIR/sdcard/etc/fstab
@@ -121,10 +112,6 @@ trusty)
 			mv $CACHEDIR/sdcard/etc/update-motd.d $CACHEDIR/sdcard/etc/update-motd.d-backup
 		fi
 
-		# auto upgrading
-		sed -e "s/ORIGIN/Ubuntu/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		sed -e "s/CODENAME/$RELEASE/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-
 		# remove what's anyway not working
 		#chroot $CACHEDIR/sdcard /bin/bash -c "apt-get remove --auto-remove ureadahead"
 		rm $CACHEDIR/sdcard/etc/init/ureadahead*
@@ -134,10 +121,6 @@ trusty)
 xenial)
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
-
-		# auto upgrading (disabled while testing)
-		sed -e "s/ORIGIN/Ubuntu/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
-		sed -e "s/CODENAME/$RELEASE/g" -i $CACHEDIR/sdcard/etc/apt/apt.conf.d/50unattended-upgrades
 
 		# fix selinux error
 		mkdir $CACHEDIR/sdcard/selinux

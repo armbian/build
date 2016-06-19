@@ -23,7 +23,8 @@ create_board_package()
 	mkdir -p $destination/DEBIAN
 
 	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
-	# Replaces: unattended-upgrades is needed to replace /etc/apt/apt.conf.d/50unattended-upgrades on wheezy, jessie and trusty
+	# Replaces: unattended-upgrades may be needed to replace /etc/apt/apt.conf.d/50unattended-upgrades
+	# (distributions provide good defaults, so this is not needed currently)
 	cat <<-EOF > $destination/DEBIAN/control
 	Package: linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
 	Version: $REVISION
@@ -32,10 +33,11 @@ create_board_package()
 	Installed-Size: 1
 	Section: kernel
 	Priority: optional
+	Depends: bash, python3-apt
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
-	Replaces: base-files, unattended-upgrades
-	Recommends: fake-hwclock, initramfs-tools, python3-apt
+	Replaces: base-files
+	Recommends: fake-hwclock, initramfs-tools
 	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
 	EOF
 
