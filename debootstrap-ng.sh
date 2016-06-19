@@ -532,6 +532,7 @@ mount_chroot()
 #
 umount_chroot()
 {
+	local target=$1
 	umount -l $target/dev/pts >/dev/null 2>&1
 	umount -l $target/dev >/dev/null 2>&1
 	umount -l $target/proc >/dev/null 2>&1
