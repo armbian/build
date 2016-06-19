@@ -214,7 +214,7 @@ if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 	fi
 	cd $SOURCES/$BOOTSOURCEDIR
 	grab_version "$SOURCES/$BOOTSOURCEDIR" "UBOOT_VER"
-	advanced_patch "u-boot" "$BOOTSOURCE-$BRANCH" "$BOARD" "$BOOTSOURCE-$BRANCH $UBOOT_VER"
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTSOURCE-$BRANCH" "$BOARD" "$BOOTSOURCE-$BRANCH $UBOOT_VER"
 	compile_uboot
 fi
 
@@ -229,11 +229,11 @@ if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 
 	# this is a patch that Ubuntu Trusty compiler works
 	if [[ $(patch --dry-run -t -p1 < $SRC/lib/patch/kernel/compiler.patch | grep Reversed) != "" ]]; then
-		patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch > /dev/null 2>&1
+		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch > /dev/null 2>&1
 	fi
 
 	grab_version "$SOURCES/$LINUXSOURCEDIR" "KERNEL_VER"
-	advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH $KERNEL_VER"
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH $KERNEL_VER"
 	compile_kernel
 fi
 
