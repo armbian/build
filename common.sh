@@ -392,19 +392,27 @@ userpatch_create()
 		# create commit to start from clean source
 		git add .
 		git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
+		
+		local patch="$SRC/userpatches/patch/$1-$LINUXFAMILY-$BRANCH.patch"
+		
+		# apply previous user debug mode created patches
+		[[ -f "$patch" && $1 == "u-boot" ]] && display_alert "Applying existing u-boot patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
+		[[ -f "$patch" && $1 == "kernel" ]] && display_alert "Applying existing kernel patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
 
 		# prompt to alter source
 		display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
-		read -p 'Press <Enter> after you are done with changes to the source'
+		display_alert "Press <Enter> after you are done" "waiting" "wrn"
+		read
+		tput cuu1
 		git add .
 		# create patch out of changes
-		if ! git diff-index --quiet --cached HEAD; then
-		#if [[ "$(git status --porcelain)" ]]; then
-			git diff --staged > $SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y_%H_%M_%S').patch
-			display_alert "You will find your patch here:" "$SRC/userpatches/patch/$1-$LINUXFAMILY-$(date +'%d.%m.%Y').patch" "info"
+		if ! git diff-index --quiet --cached HEAD; then		
+			git diff --staged > $patch
+			display_alert "You will find your patch here:" "$patch" "info"
 		else
 			display_alert "No changes found, skipping patch creation" "" "wrn"
 		fi
 		git reset --soft HEAD~
+		for i in {3..1..1};do echo -n "$i." && sleep 1; done
 	fi
 }

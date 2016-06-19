@@ -132,19 +132,21 @@ if [ -d "$SOURCES/$2/$GITHUBSUBDIR" ]; then
 	if [[ "$3" != "" ]] && [[ "$bar_1" == "$localbar" || "$bar_2" == "$localbar" ]] || [[ "$3" == "" && "$bar_3" == "$localbar" ]] || [[ $bar_1 == "" && $bar_2 == "" ]]; then
 		display_alert "... you have latest sources" "$2 $3" "info"
 	else		
-		display_alert "... your sources are outdated - creating new shallow clone" "$2 $3" "info"
-		if [[ -z "$GITHUBSUBDIR" ]]; then 
-			rm -rf $SOURCES/$2".old"
-			mv $SOURCES/$2 $SOURCES/$2".old" 
-		else
-			rm -rf $SOURCES/$2/$GITHUBSUBDIR".old"
-			mv $SOURCES/$2/$GITHUBSUBDIR $SOURCES/$2/$GITHUBSUBDIR".old" 
-		fi
-		
-		if [[ -n $3 && -n "$(git ls-remote $1 | grep "$tag")" ]]; then
-			git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 --depth 1 || git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3
-		else
-			git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR --depth 1
+		if [ $DEBUG_MODE != yes ]; then
+			display_alert "... your sources are outdated - creating new shallow clone" "$2 $3" "info"
+			if [[ -z "$GITHUBSUBDIR" ]]; then 
+				rm -rf $SOURCES/$2".old"
+				mv $SOURCES/$2 $SOURCES/$2".old" 
+			else
+				rm -rf $SOURCES/$2/$GITHUBSUBDIR".old"
+				mv $SOURCES/$2/$GITHUBSUBDIR $SOURCES/$2/$GITHUBSUBDIR".old" 
+			fi
+			
+			if [[ -n $3 && -n "$(git ls-remote $1 | grep "$tag")" ]]; then
+				git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 --depth 1 || git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3
+			else
+				git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR --depth 1
+			fi
 		fi
 		cd $SOURCES/$2/$GITHUBSUBDIR
 		git checkout -q
