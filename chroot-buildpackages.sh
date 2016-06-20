@@ -11,57 +11,62 @@
 
 create_chroot()
 {
+	local target_dir="$1"
 	debootstrap --variant=buildd --include=ccache,locales,git,ca-certificates,devscripts --arch=$ARCH \
-		--foreign $RELEASE $DEST/buildpkg/$RELEASE "http://localhost:3142/$APT_MIRROR"
-	[[ $? -ne 0 || ! -f $DEST/buildpkg/$RELEASE/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
-	cp /usr/bin/$QEMU_BINARY $DEST/buildpkg/$RELEASE/usr/bin/
-	chroot $DEST/buildpkg/$RELEASE /bin/bash -c "/debootstrap/debootstrap --second-stage"
-	[[ $? -ne 0 || ! -f $DEST/buildpkg/$RELEASE/bin/bash ]] && exit_with_error "Create chroot second stage failed"
-	cp $SRC/lib/config/apt/sources.list.$RELEASE $DEST/buildpkg/$RELEASE/etc/apt/sources.list
-	echo 'Acquire::http { Proxy "http://localhost:3142"; };' > $DEST/buildpkg/$RELEASE/etc/apt/apt.conf.d/02proxy
-	cat <<-EOF > $DEST/buildpkg/$RELEASE/etc/apt/apt.conf.d/71-no-recommends
+		--foreign $RELEASE $target_dir "http://localhost:3142/$APT_MIRROR"
+	[[ $? -ne 0 || ! -f $target_dir/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
+	cp /usr/bin/$QEMU_BINARY $target_dir/usr/bin/
+	chroot $target_dir /bin/bash -c "/debootstrap/debootstrap --second-stage"
+	[[ $? -ne 0 || ! -f $target_dir/bin/bash ]] && exit_with_error "Create chroot second stage failed"
+	cp $SRC/lib/config/apt/sources.list.$RELEASE $target_dir/etc/apt/sources.list
+	echo 'Acquire::http { Proxy "http://localhost:3142"; };' > $target_dir/etc/apt/apt.conf.d/02proxy
+	cat <<-EOF > $target_dir/etc/apt/apt.conf.d/71-no-recommends
 	APT::Install-Recommends "0";
 	APT::Install-Suggests "0";
 	EOF
-	[[ -f $DEST/buildpkg/$RELEASE/etc/locale.gen ]] && sed -i "s/^# en_US.UTF-8/en_US.UTF-8/" $DEST/buildpkg/$RELEASE/etc/locale.gen
-	chroot $DEST/buildpkg/$RELEASE /bin/bash -c "locale-gen; update-locale LANG=en_US:en LC_ALL=en_US.UTF-8"
-	printf '#!/bin/sh\nexit 101' > $DEST/buildpkg/$RELEASE/usr/sbin/policy-rc.d
-	chmod 755 $DEST/buildpkg/$RELEASE/usr/sbin/policy-rc.d
-	mkdir -p $DEST/buildpkg/$RELEASE/root/build $DEST/buildpkg/$RELEASE/root/overlay $DEST/buildpkg/$RELEASE/selinux
+	[[ -f $target_dir/etc/locale.gen ]] && sed -i "s/^# en_US.UTF-8/en_US.UTF-8/" $target_dir/etc/locale.gen
+	chroot $target_dir /bin/bash -c "locale-gen; update-locale LANG=en_US:en LC_ALL=en_US.UTF-8"
+	printf '#!/bin/sh\nexit 101' > $target_dir/usr/sbin/policy-rc.d
+	chmod 755 $target_dir/usr/sbin/policy-rc.d
+	mkdir -p $target_dir/root/{build,overlay} $target_dir/selinux
 	# TODO: check if resolvconf edit is needed
-	touch $DEST/buildpkg/$RELEASE/root/.debootstrap-complete
+	touch $target_dir/root/.debootstrap-complete
 }
 
 update_chroot()
 {
+	local target_dir="$1"
 	# apt-get update && apt-get dist-upgrade
-	systemd-nspawn -a -q -D $DEST/buildpkg/$RELEASE /bin/bash -c "apt-get -q update; apt-get -q -y upgrade"
+	systemd-nspawn -a -q -D $target_dir /bin/bash -c "apt-get -q update; apt-get -q -y upgrade"
 	# helper script
-	cat <<-'EOF' > $DEST/buildpkg/$RELEASE/root/install-deps.sh
+	cat <<-'EOF' > $target_dir/root/install-deps.sh
 	#!/bin/bash
 	deps=()
 	installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
 	for packet in "$@"; do grep -q -x -e "$packet" <<< "$installed" || deps+=("$packet"); done
 	[[ ${#deps[@]} -gt 0 ]] && apt-get -y --no-install-recommends install "${deps[@]}"
 	EOF
-	chmod +x $DEST/buildpkg/$RELEASE/root/install-deps.sh
+	chmod +x $target_dir/root/install-deps.sh
 }
 
 chroot_build_packages()
 {
 	display_alert "Starting package building process" "$RELEASE" "info"
-	[[ ! -f $DEST/buildpkg/$RELEASE/root/.debootstrap-complete ]] && create_chroot
 
-	[[ ! -f $DEST/buildpkg/$RELEASE/bin/bash ]] && exit_with_error "Creating chroot failed" "$RELEASE"
+	local target_dir=$DEST/buildpkg/${RELEASE}-${ARCH}
 
-	update_chroot
+	[[ ! -f $target_dir/root/.debootstrap-complete ]] && create_chroot "$target_dir"
+
+	[[ ! -f $target_dir/bin/bash ]] && exit_with_error "Creating chroot failed" "$RELEASE"
+
+	update_chroot "$target_dir"
 
 	for plugin in $SRC/lib/extras-buildpkgs/*.conf; do
 		source $plugin
 		display_alert "Creating package" "$package_name" "info"
 
 		# create build script
-		cat <<-EOF > $DEST/buildpkg/$RELEASE/root/build.sh
+		cat <<-EOF > $target_dir/root/build.sh
 		#!/bin/bash
 		export PATH="/usr/lib/ccache:$PATH"
 		export HOME="/root"
@@ -90,20 +95,25 @@ chroot_build_packages()
 		# build
 		display_alert "Building package"
 		dpkg-buildpackage -b -uc -us -jauto
-		cd /root/build
-		display_alert "Done building" "$package_name" "ext"
-		ls *.deb
-		# install in chroot if other libraries depend on them
-		[[ "$package_install" == yes ]] && dpkg -i *.deb
-		mv *.deb /root
+		if [[ \$? -eq 0 ]]; then
+			cd /root/build
+			display_alert "Done building" "$package_name" "ext"
+			ls *.deb
+			# install in chroot if other libraries depend on them
+			[[ "$package_install" == yes ]] && dpkg -i *.deb
+			mv *.deb /root
+		else
+			display_alert "Failed building" "$package_name" "err"
+		fi
+		exit 0
 		EOF
 
-		chmod +x $DEST/buildpkg/$RELEASE/root/build.sh
+		chmod +x $target_dir/root/build.sh
 		# run build script in chroot
-		systemd-nspawn -a -q -D $DEST/buildpkg/$RELEASE --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
+		systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
 			/bin/bash -c "/root/build.sh"
 		# TODO: move built packages to $DEST/debs/extras
-		# mv $DEST/buildpkg/$RELEASE/root/build/*.deb $DEST/debs/extras
+		# mv $target_dir/root/build/*.deb $DEST/debs/extras
 		# cleanup
 		unset package_name package_repo package_dir package_branch package_overlay package_builddeps package_commit package_install package_prebuild_eval
 	done
