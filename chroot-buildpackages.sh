@@ -24,7 +24,7 @@ create_chroot()
 	APT::Install-Suggests "0";
 	EOF
 	[[ -f $DEST/buildpkg/$RELEASE/etc/locale.gen ]] && sed -i "s/^# en_US.UTF-8/en_US.UTF-8/" $DEST/buildpkg/$RELEASE/etc/locale.gen
-	systemd-nspawn -D $DEST/buildpkg/$RELEASE /bin/bash -c "locale-gen; update-locale LANG=en_US:en LC_ALL=en_US.UTF-8"
+	chroot $DEST/buildpkg/$RELEASE /bin/bash -c "locale-gen; update-locale LANG=en_US:en LC_ALL=en_US.UTF-8"
 	printf '#!/bin/sh\nexit 101' > $DEST/buildpkg/$RELEASE/usr/sbin/policy-rc.d
 	chmod 755 $DEST/buildpkg/$RELEASE/usr/sbin/policy-rc.d
 	mkdir -p $DEST/buildpkg/$RELEASE/root/build $DEST/buildpkg/$RELEASE/root/overlay $DEST/buildpkg/$RELEASE/selinux
@@ -35,7 +35,7 @@ create_chroot()
 update_chroot()
 {
 	# apt-get update && apt-get dist-upgrade
-	systemd-nspawn -D $DEST/buildpkg/$RELEASE /bin/bash -c "apt-get -q update; apt-get -q -y upgrade"
+	systemd-nspawn -a -q -D $DEST/buildpkg/$RELEASE /bin/bash -c "apt-get -q update; apt-get -q -y upgrade"
 	# helper script
 	cat <<-'EOF' > $DEST/buildpkg/$RELEASE/root/install-deps.sh
 	#!/bin/bash
@@ -83,6 +83,7 @@ chroot_build_packages()
 		[[ -n "$package_commit" ]] && git checkout -f $package_commit
 		# unpack debianization files if needed
 		[[ -n "$package_overlay" ]] && tar xf /root/overlay/$package_overlay -C /root/build/$package_dir
+		[[ -n "$package_prebuild_eval" ]] && eval "$package_prebuild_eval"
 		# TODO: increment base version if needed
 		# set local version
 		debchange -l~armbian${REVISION}+ "New Armbian release"
@@ -90,7 +91,7 @@ chroot_build_packages()
 		display_alert "Building package"
 		dpkg-buildpackage -b -uc -us -jauto
 		cd /root/build
-		display_alert "Done building"
+		display_alert "Done building" "$package_name" "ext"
 		ls *.deb
 		# install in chroot if other libraries depend on them
 		[[ "$package_install" == yes ]] && dpkg -i *.deb
@@ -99,14 +100,11 @@ chroot_build_packages()
 
 		chmod +x $DEST/buildpkg/$RELEASE/root/build.sh
 		# run build script in chroot
-		systemd-nspawn -D $DEST/buildpkg/$RELEASE --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
+		systemd-nspawn -a -q -D $DEST/buildpkg/$RELEASE --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
 			/bin/bash -c "/root/build.sh"
-		# TODO: move built packages to $DEST/debs
-		# mv $DEST/buildpkg/$RELEASE/root/build/*.deb $DEST/debs/
-		# DEBUG:
-		#systemd-nspawn -D $DEST/buildpkg/$RELEASE --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
-		#	/bin/bash
+		# TODO: move built packages to $DEST/debs/extras
+		# mv $DEST/buildpkg/$RELEASE/root/build/*.deb $DEST/debs/extras
 		# cleanup
-		unset package_name package_repo package_dir package_branch package_overlay package_builddeps package_commit package_install
+		unset package_name package_repo package_dir package_branch package_overlay package_builddeps package_commit package_install package_prebuild_eval
 	done
 }
