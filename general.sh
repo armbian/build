@@ -306,6 +306,12 @@ prepare_host() {
 		exit_with_error "Running this tool on board itself is not supported"
 	fi
 
+	if [[ $(dpkg --print-architecture) == i386 ]]; then
+		display_alert "Please read documentation to set up proper compilation environment" "..." "info"
+		display_alert "http://www.armbian.com/using-armbian-tools/" "..." "info"
+		display_alert "Running this tool on non-x64 build host in not supported officially" "wrn"
+	fi
+
 	# dialog may be used to display progress
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "dialog" "info"
