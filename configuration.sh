@@ -114,7 +114,7 @@ PACKAGE_LIST_EXCLUDE=""
 # Release specific packages
 case $RELEASE in
 	wheezy)
-	PACKAGE_LIST_RELEASE="less makedev kbd acpid acpi-support-base iperf"
+	PACKAGE_LIST_RELEASE="less makedev kbd acpid acpi-support-base iperf libudev1"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel icedove"
 	;;
 	jessie)
