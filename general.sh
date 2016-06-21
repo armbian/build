@@ -132,7 +132,7 @@ if [ -d "$SOURCES/$2/$GITHUBSUBDIR" ]; then
 	if [[ "$3" != "" ]] && [[ "$bar_1" == "$localbar" || "$bar_2" == "$localbar" ]] || [[ "$3" == "" && "$bar_3" == "$localbar" ]] || [[ $bar_1 == "" && $bar_2 == "" ]]; then
 		display_alert "... you have latest sources" "$2 $3" "info"
 	else		
-		if [ $DEBUG_MODE != yes ]; then
+		if [ "$DEBUG_MODE" != yes ]; then
 			display_alert "... your sources are outdated - creating new shallow clone" "$2 $3" "info"
 			if [[ -z "$GITHUBSUBDIR" ]]; then 
 				rm -rf $SOURCES/$2".old"
