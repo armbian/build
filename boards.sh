@@ -41,6 +41,10 @@ install_board_specific (){
 		echo "/dev/mmcblk0p1        /boot   vfat    defaults        0       0" >> $CACHEDIR/sdcard/etc/fstab
 	fi
 
+	if [[ $BOARD == odroidxu4 && $BRANCH == next && -f $CACHEDIR/sdcard/etc/fstab ]] ; then
+		sed -e 's/mmcblk0/mmcblk1/g' -i $CACHEDIR/sdcard/etc/fstab
+	fi
+	
 	if [[ $BOARD == cubox-i && $BRANCH == next && -f $CACHEDIR/sdcard/boot/boot.cmd ]] ; then
 		sed -e 's/console=tty1 //g' -i $CACHEDIR/sdcard/boot/boot.cmd
 	fi
