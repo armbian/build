@@ -30,10 +30,6 @@ install_board_specific (){
 
 	[[ $(type -t install_boot_script) == function ]] && install_boot_script
 
-	# orangepi h3 temp exceptions
-	[[ $LINUXFAMILY == "sun8i" ]] && sed -i -e '1s/^/gpio set PL10\ngpio set PG11\nsetenv machid 1029\nsetenv bootm_boot_mode sec\n/' \
-		-e 's/\ disp.screen0_output_mode=1920x1080p60//' -e 's/\ hdmi.audio=EDID:0//' $CACHEDIR/sdcard/boot/boot.cmd
-
 	# if we have a special fat boot partition, alter rootfs=
 	if [[ $BOOTSIZE -gt 0 ]]; then
 		display_alert "Adjusting boot scripts" "$BOARD" "info"
@@ -41,14 +37,6 @@ install_board_specific (){
 		echo "/dev/mmcblk0p1        /boot   vfat    defaults        0       0" >> $CACHEDIR/sdcard/etc/fstab
 	fi
 
-	if [[ $BOARD == odroidxu4 && $BRANCH == next && -f $CACHEDIR/sdcard/etc/fstab ]] ; then
-		sed -e 's/mmcblk0/mmcblk1/g' -i $CACHEDIR/sdcard/etc/fstab
-	fi
-	
-	if [[ $BOARD == cubox-i && $BRANCH == next && -f $CACHEDIR/sdcard/boot/boot.cmd ]] ; then
-		sed -e 's/console=tty1 //g' -i $CACHEDIR/sdcard/boot/boot.cmd
-	fi
-	
 	# convert to uboot compatible script
 	[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && \
 		mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr >> /dev/null
