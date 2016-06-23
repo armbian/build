@@ -396,6 +396,22 @@ change to - for example:
         netmask 255.255.255.0
 		gateway 192.168.1.1
 
+# How to froze your filesystem? 
+
+In certain situations, it is desirable to have an virtual read-only root filesystem. This prevents any changes from occurring on the root filesystem that may alter system behavior, and it allows a simple reboot to restore a system to its clean state.
+
+You need an A10, A20 or H3 board with legacy kernel (3.4.x) where we added support for overlayfs. We tested it on Ubuntu Xenial but it should work elsewhere too. Login as root and execute:
+
+	apt-get install overlayroot
+	echo 'overlayroot="tmpfs"' >> /etc/overlayroot.conf
+	reboot
+
+After your system boots up it will always remain as is. If you want to make any permanent changes, you need to run: 
+
+	overlayroot-chroot
+
+Changes inside this will be preserved.	 
+
 # How to run Docker?
 
 Preinstallation requirements:
