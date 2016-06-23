@@ -134,6 +134,7 @@ create_board_package()
 	mkdir -p $destination/etc/network/
 	cp $SRC/lib/config/network/interfaces.* $destination/etc/network/
 	[[ $RELEASE = wheezy ]] && sed -i 's/allow-hotplug/auto/g' $destination/etc/network/interfaces.default
+	[[ $RELEASE = xenial ]] && sed -i 's/#no-auto-down/no-auto-down/g' $destination/etc/network/interfaces.default
 
 	# apt configuration
 	mkdir -p $destination/etc/apt/apt.conf.d/

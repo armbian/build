@@ -153,8 +153,9 @@ xenial)
 
 		# disable stopping network interfaces
 		# fixes shutdown with root on NFS
-		mkdir -p $CACHEDIR/sdcard/etc/systemd/system/networking.service.d/
-		printf "[Service]\nExecStop=\n" > $CACHEDIR/sdcard/etc/systemd/system/networking.service.d/10-nostop.conf
+		# NOTE: fixed by "no-auto-down eth0" in interfaces.default
+		#mkdir -p $CACHEDIR/sdcard/etc/systemd/system/networking.service.d/
+		#printf "[Service]\nExecStop=\n" > $CACHEDIR/sdcard/etc/systemd/system/networking.service.d/10-nostop.conf
 		;;
 	*)
 	exit_with_error "Unknown OS release selected"
