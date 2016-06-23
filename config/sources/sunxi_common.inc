@@ -36,9 +36,15 @@ family_tweaks()
 	sed -e 's/DEVICE=""/DEVICE="\/dev\/input\/event1"/g' -i $CACHEDIR/sdcard/etc/lirc/hardware.conf
 	sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="devinput"/g' -i $CACHEDIR/sdcard/etc/lirc/hardware.conf
 	cp $SRC/lib/config/lirc.conf.cubietruck $CACHEDIR/sdcard/etc/lirc/lircd.conf
+
+
 }
 
 install_boot_script()
 {
 	cp $SRC/lib/config/bootscripts/boot-sunxi.cmd $CACHEDIR/sdcard/boot/boot.cmd
+
+	# orangepi h3 temp exceptions
+	[[ $LINUXFAMILY == sun8i ]] && sed -i -e '1s/^/gpio set PL10\ngpio set PG11\nsetenv machid 1029\nsetenv bootm_boot_mode sec\n/' \
+		-e 's/\ disp.screen0_output_mode=1920x1080p60//' -e 's/\ hdmi.audio=EDID:0//' $CACHEDIR/sdcard/boot/boot.cmd
 }

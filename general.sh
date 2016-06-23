@@ -132,19 +132,21 @@ if [ -d "$SOURCES/$2/$GITHUBSUBDIR" ]; then
 	if [[ "$3" != "" ]] && [[ "$bar_1" == "$localbar" || "$bar_2" == "$localbar" ]] || [[ "$3" == "" && "$bar_3" == "$localbar" ]] || [[ $bar_1 == "" && $bar_2 == "" ]]; then
 		display_alert "... you have latest sources" "$2 $3" "info"
 	else		
-		display_alert "... your sources are outdated - creating new shallow clone" "$2 $3" "info"
-		if [[ -z "$GITHUBSUBDIR" ]]; then 
-			rm -rf $SOURCES/$2".old"
-			mv $SOURCES/$2 $SOURCES/$2".old" 
-		else
-			rm -rf $SOURCES/$2/$GITHUBSUBDIR".old"
-			mv $SOURCES/$2/$GITHUBSUBDIR $SOURCES/$2/$GITHUBSUBDIR".old" 
-		fi
-		
-		if [[ -n $3 && -n "$(git ls-remote $1 | grep "$tag")" ]]; then
-			git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 --depth 1 || git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3
-		else
-			git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR --depth 1
+		if [ "$DEBUG_MODE" != yes ]; then
+			display_alert "... your sources are outdated - creating new shallow clone" "$2 $3" "info"
+			if [[ -z "$GITHUBSUBDIR" ]]; then 
+				rm -rf $SOURCES/$2".old"
+				mv $SOURCES/$2 $SOURCES/$2".old" 
+			else
+				rm -rf $SOURCES/$2/$GITHUBSUBDIR".old"
+				mv $SOURCES/$2/$GITHUBSUBDIR $SOURCES/$2/$GITHUBSUBDIR".old" 
+			fi
+			
+			if [[ -n $3 && -n "$(git ls-remote $1 | grep "$tag")" ]]; then
+				git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3 --depth 1 || git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR -b $3
+			else
+				git clone -n $1 $SOURCES/$2/$GITHUBSUBDIR --depth 1
+			fi
 		fi
 		cd $SOURCES/$2/$GITHUBSUBDIR
 		git checkout -q
@@ -304,6 +306,12 @@ prepare_host() {
 		exit_with_error "Running this tool on board itself is not supported"
 	fi
 
+	if [[ $(dpkg --print-architecture) == i386 ]]; then
+		display_alert "Please read documentation to set up proper compilation environment" "..." "info"
+		display_alert "http://www.armbian.com/using-armbian-tools/" "..." "info"
+		display_alert "Running this tool on non-x64 build host in not supported officially" "wrn"
+	fi
+
 	# dialog may be used to display progress
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "dialog" "info"
@@ -345,6 +353,8 @@ prepare_host() {
 		echo 'deb http://repo.aptly.info/ squeeze main' > /etc/apt/sources.list.d/aptly.list
 		apt-key adv --keyserver keys.gnupg.net --recv-keys 9E3E53F19C7DE460
 	fi
+
+	if [[ $codename == xenial ]]; then hostdeps="$hostdeps systemd-container"; fi
 
 	# Deboostrap in trusty breaks due too old debootstrap. We are installing Xenial package
 	local debootstrap_version=$(dpkg-query -W -f='${Version}\n' debootstrap | cut -f1 -d'+')

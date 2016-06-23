@@ -56,11 +56,12 @@ create_armbian() {
 	TODO=$(rsync -ahvrltDn --delete --stats --exclude-from=$EX_LIST / /mnt/rootfs | grep "Number of files:"|awk '{print $4}' | tr -d '.,')
 
 	# creating rootfs
-	rsync -avrltD  --delete --exclude-from=$EX_LIST  /  /mnt/rootfs | nl | awk '{ printf "%.0f\n", 100*$1/"'"$TODO"'" }' \
+	rsync -avrltD  --delete --exclude-from=$EX_LIST / /mnt/rootfs | nl | awk '{ printf "%.0f\n", 100*$1/"'"$TODO"'" }' \
 	| dialog --backtitle "$backtitle"  --title "$title" --gauge "\n\n  Creating rootfs on $2 ($USAGE Mb). Please wait!" 10 80
 
 	# run rsync again to silently catch outstanding changes between / and /mnt/rootfs/
-	rsync -avrltD  --delete --exclude-from=$EX_LIST  /  /mnt/rootfs >/dev/null 2>&1
+	dialog --title "$title" --backtitle "$backtitle" --infobox "\n  Cleaning up ... few seconds." 5 40
+	rsync -avrltD  --delete --exclude-from=$EX_LIST / /mnt/rootfs >/dev/null 2>&1
 
 	# creating fstab - root partition
 	sed -e 's,'"$root_partition"','"$2"',g' -i /mnt/rootfs/etc/fstab
@@ -101,8 +102,8 @@ EOF
 		# determine u-boot and write it
 		name_of_ubootpackage=$(aptitude versions '~i linux-u-boot*'| head -1 | awk '{print $2}' | sed 's/linux-u-boot-//g' | cut -f1 -d"-")
 		version_of_ubootpkg=$(aptitude versions '~i linux-u-boot*'| tail -1 |  awk '{print $2}')
-		arhitecture=$(dpkg --print-architecture)
-		uboot="/usr/lib/linux-u-boot-"$name_of_ubootpackage"_"$version_of_ubootpkg"_"$arhitecture""/u-boot-sunxi-with-spl.bin
+		architecture=$(dpkg --print-architecture)
+		uboot="/usr/lib/linux-u-boot-"$name_of_ubootpackage"_"$version_of_ubootpkg"_"$architecture""/u-boot-sunxi-with-spl.bin
 		dd if=$uboot of=$emmcdevice bs=1024 seek=8
 		
 	elif [[ -f /boot/boot.cmd ]]; then
@@ -139,6 +140,7 @@ umountdevice() {
 
 # Recognize root filesystem
 recognize_root() {
+	# replace with PARTUUID approach parsing /proc/cmdline when ready
 	local device="/dev/"$(lsblk -idn -o NAME | grep mmcblk0)
 	local partitions=$(($(fdisk -l $device | grep $device | wc -l)-1))
 	local device="/dev/"$(lsblk -idn -o NAME | grep mmcblk0)"p"$partitions
@@ -172,8 +174,20 @@ formatemmc() {
 	# deletes all partitions
 	dialog --title "$title" --backtitle "$backtitle"  --infobox "\n  Formating eMMC ... one moment." 5 40
 	dd bs=1 seek=446 count=64 if=/dev/zero of=$1 >/dev/null 2>&1
+	# calculate capacity and reserve some unused space to ease cloning of the installation
+	# to other media 'of the same size' (one sector less and cloning will fail)
+	QUOTED_DEVICE=$(echo "${1}" | sed 's:/:\\\/:g')
+	CAPACITY=$(parted ${1} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", \$2 / ( 1024 / \$4 ))}")
+	if [ ${CAPACITY} -lt 4000000 ]; then
+		# Leave 2 percent unpartitioned when eMMC size is less than 4GB (unlikely)
+		LASTSECTOR=$(( 32 * $(parted ${1} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", ( \$2 * 98 / 3200))}") -1 ))
+	else
+		# Leave 1 percent unpartitioned
+		LASTSECTOR=$(( 32 * $(parted ${1} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", ( \$2 * 99 / 3200))}") -1 ))
+	fi
+
 	parted -s $1 -- mklabel msdos
-	parted -s $1 -- mkpart primary ext4  2048s -1s
+	parted -s $1 -- mkpart primary ext4 2048s ${LASTSECTOR}s
 	partprobe $1
 	# create fs
 	mkfs.ext4 -qF $1"p1" >/dev/null 2>&1
@@ -213,19 +227,14 @@ ShowWarning() {
 } # ShowWarning
 
 main() {
+	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 	# This tool must run under root
 
 	if [[ ${EUID} -ne 0 ]]; then 
 		echo "This tool must run as root. Exiting ..."
 		exit 1
 	fi
-
-	# Downloading dependencies
-
-	if [ $(dpkg-query -W -f='${Status}' dialog 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
-		echo "Downloading dependencies ... please wait"
-		apt-get install -qq -y dialog >/dev/null 2>&1
-	fi 
 
 	# Check if we run it from SD card
 

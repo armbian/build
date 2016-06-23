@@ -88,11 +88,13 @@ case $LINUXFAMILY in
 esac
 
 # Essential packages
-PACKAGE_LIST="automake bash-completion bc bridge-utils build-essential cmake cpufrequtils device-tree-compiler \
-	dosfstools figlet fbset fping git hostapd ifenslave-2.6 iw libtool libwrap0-dev libssl-dev lirc fake-hwclock \
-	wpasupplicant libusb-dev libusb-1.0-0-dev psmisc ntp parted pkg-config rsync sudo curl dialog crda wireless-regdb \
-	ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils wireless-tools libnl-3-dev \
-	console-setup console-data console-common unicode-data openssh-server initramfs-tools ca-certificates"
+PACKAGE_LIST="bash-completion bc bridge-utils build-essential cpufrequtils device-tree-compiler dosfstools figlet \
+	fbset fping git hostapd ifenslave-2.6 iw lirc fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl \
+	dialog crda wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
+	unzip usbutils wireless-tools console-setup console-data console-common unicode-data openssh-server initramfs-tools ca-certificates"
+
+# development related packages. remove when they are not needed for building packages in chroot
+PACKAGE_LIST="$PACKAGE_LIST automake cmake libwrap0-dev libssl-dev libtool pkg-config libusb-dev libusb-1.0-0-dev libnl-3-dev libnl-genl-3-dev"
 
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools hddtemp iotop iozone3 stress sysbench screen ntfs-3g vim pciutils evtest htop pv lsof \
@@ -102,7 +104,7 @@ PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools hddtemp iotop iozone3 stress sys
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray wicd thunar-volman galculator \
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu wifi-radar bluetooth"
 
-# hardware acceleration support packages
+# hardware acceleration support packages. remove when they are not needed for building packages in chroot
 if [[ $LINUXCONFIG == *sun* && $BRANCH == default ]]; then
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev"
 fi
@@ -112,22 +114,21 @@ PACKAGE_LIST_EXCLUDE=""
 # Release specific packages
 case $RELEASE in
 	wheezy)
-	PACKAGE_LIST_RELEASE="less makedev kbd acpid acpi-support-base libnl-genl-3-dev iperf"
+	PACKAGE_LIST_RELEASE="less makedev kbd acpid acpi-support-base iperf libudev1"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel icedove"
 	;;
 	jessie)
-	PACKAGE_LIST_RELEASE="less makedev kbd libnl-genl-3-dev libpam-systemd iperf3 \
-		software-properties-common libnss-myhostname f2fs-tools libnl-genl-3-dev"
+	PACKAGE_LIST_RELEASE="less makedev kbd libpam-systemd iperf3 software-properties-common \
+		libnss-myhostname f2fs-tools"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove gvfs policykit-1 policykit-1-gnome eject"
 	;;
 	trusty)
-	PACKAGE_LIST_RELEASE="man-db wget nano libnl-genl-3-dev software-properties-common iperf \
-		f2fs-tools acpid"
+	PACKAGE_LIST_RELEASE="man-db wget nano software-properties-common iperf f2fs-tools acpid"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
 	PACKAGE_LIST_EXCLUDE="ureadahead plymouth"
 	;;
 	xenial)
-	PACKAGE_LIST_RELEASE="man-db wget nano libnl-genl-3-dev libpam-systemd software-properties-common libnss-myhostname f2fs-tools iperf3"
+	PACKAGE_LIST_RELEASE="man-db wget nano libpam-systemd software-properties-common libnss-myhostname f2fs-tools iperf3"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends \
 			policykit-1 xserver-xorg-video-fbdev"
 	;;
