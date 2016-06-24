@@ -18,6 +18,13 @@ from=0
 RELEASE_LIST=("trusty" "xenial" "wheezy" "jessie")
 BRANCH_LIST=("default" "next" "dev")
 
+# add dependencies for converting .md to .pdf
+if [[ ! -f /etc/apt/sources.list.d/nodesource.list ]]; then
+	curl -sL https://deb.nodesource.com/setup_6.x | sudo -E bash -
+	apt-get install -y libfontconfig1 nodejs
+	npm install -g markdown-pdf
+fi
+
 create_images_list()
 {
 	for board in $SRC/lib/config/boards/*.conf; do
@@ -92,6 +99,10 @@ for line in "${buildlist[@]}"; do
 	printf "%-3s %-20s %-10s %-10s %-10s\n" $n $line
 done
 echo -e "\n${#buildlist[@]} total\n"
+
+# create PDF from files inside lib/documentation
+temprevision=$(cat $SRC/lib/configuration.sh | grep REVISION | grep -o '".*"' | sed 's/"//g' | cut -f1 -d"$")
+markdown-pdf $SRC/lib/documentation/*.md -o "$DEST/images/Armbian_"$temprevision"_documentations.pdf"
 
 [[ $BUILD_ALL == demo ]] && exit 0
 
