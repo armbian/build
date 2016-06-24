@@ -110,6 +110,7 @@ create_board_package()
 	VERSION=$REVISION
 	LINUXFAMILY=$LINUXFAMILY
 	BRANCH=$BRANCH
+	ARCH=$ARCHITECTURE
 	EOF
 
 	# temper binary for USB temp meter
@@ -143,6 +144,9 @@ create_board_package()
 	APT::Install-Suggests "0";
 	EOF
 
+	# configure the system for unattended upgrades
+	cp $SRC/lib/scripts/02periodic $destination/etc/apt/apt.conf.d/02periodic
+
 	# pin priority for armbian repo
 	# reference: man apt_preferences
 	# this allows providing own versions of hostapd, libdri2 and sunxi-tools
@@ -165,16 +169,10 @@ create_board_package()
 	install -m 755 $SRC/lib/scripts/check_first_login_reboot.sh 	$destination/etc/profile.d
 	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d
 
-	# export arhitecture
-	echo "#!/bin/bash" > $destination/etc/profile.d/arhitecture.sh
-	if [[ $ARCH == *64* ]]; then
-		echo "export ARCH=arm64" >> $destination/etc/profile.d/arhitecture.sh
-	else
-		echo "export ARCH=arm" >> $destination/etc/profile.d/arhitecture.sh
-	fi
-	chmod 755 $destination/etc/profile.d/arhitecture.sh
+	# setting window title for remote sessions
+	install -m 755 $SRC/lib/scripts/ssh-title.sh $destination/etc/profile.d/ssh-title.sh
 
-	if [[ $LINUXCONFIG == *sun* ]] ; then
+	if [[ $LINUXCONFIG == *sun* ]]; then
 		if [[ $BRANCH != next ]]; then
 			# add soc temperature app
 			local codename=$(lsb_release -sc)

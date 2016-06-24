@@ -209,7 +209,6 @@ It will be something like this:
 	lib/scripts/			firstrun, arm hardware info, firmware loaders
 	lib/LICENSE				licence description
 	lib/README.md			quick manual
-	lib/boards.sh			board specfic installation, kernel install, desktop install
 	lib/common.sh			creates environment, compiles, shrink image
 	lib/configuration.sh	boards presets - kernel source, config, modules, ...
 	lib/debootstrap.sh		basic system template creation

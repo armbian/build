@@ -178,6 +178,16 @@ mount -t proc chproc $CACHEDIR/sdcard/proc
 mount -t sysfs chsys $CACHEDIR/sdcard/sys
 mount -t devtmpfs chdev $CACHEDIR/sdcard/dev || mount --bind /dev $CACHEDIR/sdcard/dev
 mount -t devpts chpts $CACHEDIR/sdcard/dev/pts
+
+# create proper fstab
+if [[ $BOOTSIZE -eq 0 ]]; then
+	local device="/dev/mmcblk0p1	/           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro"
+else
+	local device="/dev/mmcblk0p2	/           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro"
+	echo "/dev/mmcblk0p1        /boot   vfat    defaults        0       0" >> $CACHEDIR/sdcard/etc/fstab
+fi
+echo "$device        0       0" >> $CACHEDIR/sdcard/etc/fstab
+
 }
 
 shrinking_raw_image (){ # Parameter: RAW image with full path
@@ -237,6 +247,15 @@ closing_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Closing image and clean-up
 #--------------------------------------------------------------------------------------------------------------------------------
+# if we have a special fat boot partition, alter rootfs=
+if [[ $BOOTSIZE -gt 0 ]]; then
+	display_alert "Adjusting boot scripts" "$BOARD" "info"
+	[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && sed -e 's/p1 /p2 /g' -i $CACHEDIR/sdcard/boot/boot.cmd
+fi
+# convert to uboot compatible script
+[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && \
+	mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr >> /dev/null
+
 customize_image
 chroot $CACHEDIR/sdcard /bin/bash -c "sync"
 sync
