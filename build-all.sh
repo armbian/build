@@ -21,7 +21,7 @@ BRANCH_LIST=("default" "next" "dev")
 # add dependencies for converting .md to .pdf
 if [[ ! -f /etc/apt/sources.list.d/nodesource.list ]]; then
 	curl -sL https://deb.nodesource.com/setup_6.x | sudo -E bash -
-	apt-get install -y libfontconfig1 nodejs
+	apt-get install -y libfontconfig1 nodejs 
 	npm install -g markdown-pdf
 fi
 
@@ -101,8 +101,13 @@ done
 echo -e "\n${#buildlist[@]} total\n"
 
 # create PDF from files inside lib/documentation
+mkdir -p $DEST/cache/documentation
+markdown-pdf $SRC/lib/documentation/header*.md -o "$DEST/cache/documentation/header.pdf"
+markdown-pdf $SRC/lib/documentation/main*.md -o "$DEST/cache/documentation/main.pdf"
+markdown-pdf $SRC/lib/documentation/footer*.md -o "$DEST/cache/documentation/footer.pdf"
+# merge header - main - footer
 temprevision=$(cat $SRC/lib/configuration.sh | grep REVISION | grep -o '".*"' | sed 's/"//g' | cut -f1 -d"$")
-markdown-pdf $SRC/lib/documentation/*.md -o "$DEST/images/Armbian_"$temprevision"_documentations.pdf"
+pdftk "$DEST/cache/documentation/header.pdf" "$DEST/cache/documentation/main.pdf" "$DEST/cache/documentation/footer.pdf" cat output "$DEST/images/Armbian_"$temprevision"_documentations.pdf"
 
 [[ $BUILD_ALL == demo ]] && exit 0
 
