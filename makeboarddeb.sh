@@ -131,6 +131,29 @@ create_board_package()
 	EOF
 	chmod +x $destination/etc/initramfs/post-update.d/99-uboot
 
+	# removing old initrd.img on upgrade
+	mkdir -p $destination/etc/kernel/preinst.d/
+	cat <<-EOF > $destination/etc/kernel/preinst.d/initramfs-cleanup
+	#!/bin/sh
+	version="\$1"
+	[ -x /usr/sbin/update-initramfs ] || exit 0
+	# passing the kernel version is required
+	if [ -z "\${version}" ]; then
+		echo >&2 "W: initramfs-tools: \${DPKG_MAINTSCRIPT_PACKAGE:-kernel package} did not pass a version number"
+		exit 0
+	fi
+	# avoid running multiple times
+	if [ -n "\$DEB_MAINT_PARAMS" ]; then
+		eval set -- "\$DEB_MAINT_PARAMS"
+		if [ -z "\$1" ] || [ "\$1" != "upgrade" ]; then
+			exit 0
+		fi
+	fi
+	# delete old initrd images
+	find /boot -name "initrd.img*" ! -name "*\$version" -printf "Removing obsolete file %f\n" -delete
+	EOF
+	chmod +x $destination/etc/kernel/preinst.d/initramfs-cleanup
+
 	# network interfaces configuration
 	mkdir -p $destination/etc/network/
 	cp $SRC/lib/config/network/interfaces.* $destination/etc/network/
