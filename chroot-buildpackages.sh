@@ -70,6 +70,7 @@ chroot_build_packages()
 		#!/bin/bash
 		export PATH="/usr/lib/ccache:$PATH"
 		export HOME="/root"
+		export DEBIAN_FRONTEND="noninteractive"
 		# for display_alert logging
 		export DEST="/tmp"
 		mkdir -p /tmp/debug

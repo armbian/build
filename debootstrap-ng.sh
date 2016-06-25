@@ -70,8 +70,7 @@ debootstrap_ng()
 	mount --bind $DEST/debs/ $CACHEDIR/sdcard/tmp
 
 	install_distribution_specific
-	install_kernel
-	install_board_specific
+	install_common
 
 	# install additional applications
 	[[ $EXTERNAL == yes ]] && install_external_applications

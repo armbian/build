@@ -29,7 +29,6 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 source $SRC/lib/debootstrap.sh				# System specific install (old)
 source $SRC/lib/debootstrap-ng.sh 			# System specific install (extended)
 source $SRC/lib/distributions.sh 			# System specific install
-source $SRC/lib/boards.sh 				# Board specific install
 source $SRC/lib/desktop.sh 				# Desktop specific install
 source $SRC/lib/common.sh 				# Functions
 source $SRC/lib/makeboarddeb.sh 			# Create board support package
@@ -252,12 +251,9 @@ if [[ $KERNEL_ONLY != yes ]]; then
 
 		mount --bind $DEST/debs/ $CACHEDIR/sdcard/tmp
 
-		# add kernel to the image
-		install_kernel
-
 		# install board specific applications
 		install_distribution_specific
-		install_board_specific
+		install_common
 
 		# install external applications
 		[[ $EXTERNAL == yes ]] && install_external_applications

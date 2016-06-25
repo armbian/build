@@ -110,6 +110,7 @@ create_board_package()
 	VERSION=$REVISION
 	LINUXFAMILY=$LINUXFAMILY
 	BRANCH=$BRANCH
+	ARCH=$ARCHITECTURE
 	EOF
 
 	# temper binary for USB temp meter
@@ -130,6 +131,29 @@ create_board_package()
 	EOF
 	chmod +x $destination/etc/initramfs/post-update.d/99-uboot
 
+	# removing old initrd.img on upgrade
+	mkdir -p $destination/etc/kernel/preinst.d/
+	cat <<-EOF > $destination/etc/kernel/preinst.d/initramfs-cleanup
+	#!/bin/sh
+	version="\$1"
+	[ -x /usr/sbin/update-initramfs ] || exit 0
+	# passing the kernel version is required
+	if [ -z "\${version}" ]; then
+		echo >&2 "W: initramfs-tools: \${DPKG_MAINTSCRIPT_PACKAGE:-kernel package} did not pass a version number"
+		exit 0
+	fi
+	# avoid running multiple times
+	if [ -n "\$DEB_MAINT_PARAMS" ]; then
+		eval set -- "\$DEB_MAINT_PARAMS"
+		if [ -z "\$1" ] || [ "\$1" != "upgrade" ]; then
+			exit 0
+		fi
+	fi
+	# delete old initrd images
+	find /boot -name "initrd.img*" ! -name "*\$version" -printf "Removing obsolete file %f\n" -delete
+	EOF
+	chmod +x $destination/etc/kernel/preinst.d/initramfs-cleanup
+
 	# network interfaces configuration
 	mkdir -p $destination/etc/network/
 	cp $SRC/lib/config/network/interfaces.* $destination/etc/network/
@@ -142,6 +166,9 @@ create_board_package()
 	APT::Install-Recommends "0";
 	APT::Install-Suggests "0";
 	EOF
+
+	# configure the system for unattended upgrades
+	cp $SRC/lib/scripts/02periodic $destination/etc/apt/apt.conf.d/02periodic
 
 	# pin priority for armbian repo
 	# reference: man apt_preferences
@@ -165,16 +192,10 @@ create_board_package()
 	install -m 755 $SRC/lib/scripts/check_first_login_reboot.sh 	$destination/etc/profile.d
 	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d
 
-	# export arhitecture
-	echo "#!/bin/bash" > $destination/etc/profile.d/arhitecture.sh
-	if [[ $ARCH == *64* ]]; then
-		echo "export ARCH=arm64" >> $destination/etc/profile.d/arhitecture.sh
-	else
-		echo "export ARCH=arm" >> $destination/etc/profile.d/arhitecture.sh
-	fi
-	chmod 755 $destination/etc/profile.d/arhitecture.sh
+	# setting window title for remote sessions
+	install -m 755 $SRC/lib/scripts/ssh-title.sh $destination/etc/profile.d/ssh-title.sh
 
-	if [[ $LINUXCONFIG == *sun* ]] ; then
+	if [[ $LINUXCONFIG == *sun* ]]; then
 		if [[ $BRANCH != next ]]; then
 			# add soc temperature app
 			local codename=$(lsb_release -sc)

@@ -9,30 +9,139 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 # Functions:
+# install_common
 # install_distribution_specific
 
-install_distribution_specific (){
-#---------------------------------------------------------------------------------------------------------------------------------
-# Install board common applications
-#---------------------------------------------------------------------------------------------------------------------------------
-display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
+install_common()
+{
+	display_alert "Applying common tweaks" "" "info"
 
-# Common
+	# create modules file
+	if [[ $BRANCH == next || $BRANCH == dev ]]; then
+		tr ' ' '\n' <<< "$MODULES_NEXT" > $CACHEDIR/sdcard/etc/modules
+	else
+		tr ' ' '\n' <<< "$MODULES" > $CACHEDIR/sdcard/etc/modules
+	fi
 
-# remove default interfaces file if present
-rm $CACHEDIR/sdcard/etc/network/interfaces
+	# remove default interfaces file if present
+	# before installing board support package
+	rm $CACHEDIR/sdcard/etc/network/interfaces
 
-# configure the system for unattended upgrades
-cp $SRC/lib/scripts/02periodic $CACHEDIR/sdcard/etc/apt/apt.conf.d/02periodic
+	# copy hostapd configurations
+	# TODO: move to hostapd package
+	install $SRC/lib/config/hostapd/hostapd.conf $CACHEDIR/sdcard/etc/hostapd.conf
+	install $SRC/lib/config/hostapd/hostapd.realtek.conf $CACHEDIR/sdcard/etc/hostapd.conf-rt
 
-# setting window title for remote sessions
-mkdir -p $CACHEDIR/sdcard/etc/profile.d
-install -m 755 $SRC/lib/scripts/ssh-title.sh $CACHEDIR/sdcard/etc/profile.d/ssh-title.sh
+	# console fix due to Debian bug
+	sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $CACHEDIR/sdcard/etc/default/console-setup
 
-case $RELEASE in
+	# change time zone data
+	echo $TZDATA > $CACHEDIR/sdcard/etc/timezone
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg-reconfigure -f noninteractive tzdata >/dev/null 2>&1"
 
-# Debian Wheezy
-wheezy)
+	# set root password
+	chroot $CACHEDIR/sdcard /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
+	# force change root password at first login
+	chroot $CACHEDIR/sdcard /bin/bash -c "chage -d 0 root"
+
+	# tmpfs configuration
+	if [[ -f $CACHEDIR/sdcard/etc/default/tmpfs ]]; then
+		sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
+		sed -e 's/#RUN_SIZE=10%/RUN_SIZE=128M/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
+		sed -e 's/#LOCK_SIZE=/LOCK_SIZE=/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
+		sed -e 's/#SHM_SIZE=/SHM_SIZE=128M/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
+		sed -e 's/#TMP_SIZE=/TMP_SIZE=1G/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
+	fi
+
+	# add custom bashrc loading
+	cat <<-EOF >> $CACHEDIR/sdcard/etc/bash.bashrc
+	if [[ -f /etc/bash.bashrc.custom ]]; then
+	    . /etc/bash.bashrc.custom
+	fi
+	EOF
+
+	# display welcome message at first root login
+	touch $CACHEDIR/sdcard/root/.not_logged_in_yet
+
+	[[ $(type -t install_boot_script) == function ]] && install_boot_script
+
+	# initial date for fake-hwclock
+	date -u '+%Y-%m-%d %H:%M:%S' > $CACHEDIR/sdcard/etc/fake-hwclock.data
+
+	# set hostname
+	echo $HOST > $CACHEDIR/sdcard/etc/hostname
+
+	# this is needed for ubuntu
+	rm $CACHEDIR/sdcard/etc/resolv.conf
+	echo "nameserver 8.8.8.8" >> $CACHEDIR/sdcard/etc/resolv.conf
+
+	# set hostname in hosts file
+	echo "127.0.0.1   localhost $HOST" > $CACHEDIR/sdcard/etc/hosts
+	echo "::1         localhost $HOST ip6-localhost ip6-loopback" >> $CACHEDIR/sdcard/etc/hosts
+	echo "fe00::0     ip6-localnet" >> $CACHEDIR/sdcard/etc/hosts
+	echo "ff00::0     ip6-mcastprefix" >> $CACHEDIR/sdcard/etc/hosts
+	echo "ff02::1     ip6-allnodes" >> $CACHEDIR/sdcard/etc/hosts
+	echo "ff02::2     ip6-allrouters" >> $CACHEDIR/sdcard/etc/hosts
+
+	# install custom root package
+	display_alert "Installing board support package" "$BOARD" "info"
+
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb > /dev/null"
+
+	# extract kernel version
+	VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
+	VER="${VER/-$LINUXFAMILY/}"
+
+	# we need package names for dtb, uboot and headers
+	DTB_TMP="${CHOSEN_KERNEL/image/dtb}"
+	FW_TMP="${CHOSEN_KERNEL/image/firmware-image}"
+	HEADERS_TMP="${CHOSEN_KERNEL/image/headers}"
+
+	display_alert "Installing kernel" "$CHOSEN_KERNEL" "info"
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb >/dev/null 2>&1"
+
+	display_alert "Installing u-boot" "$CHOSEN_UBOOT" "info"
+	chroot $CACHEDIR/sdcard /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb > /dev/null"
+
+	display_alert "Installing headers" "$HEADERS_TMP" "info"
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${HEADERS_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
+
+	# install firmware
+	#if [[ -f $CACHEDIR/sdcard/tmp/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
+	#	display_alert "Installing firmware" "$FW_TMP" "info"
+	#	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
+	#fi
+
+	if [[ -f $CACHEDIR/sdcard/tmp/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
+		display_alert "Installing generic firmware" "armbian-firmware" "info"
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-firmware_${REVISION}_${ARCH}.deb > /dev/null"
+	fi
+
+	if [[ -f $CACHEDIR/sdcard/tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb ]]; then
+		display_alert "Installing DTB" "$DTB_TMP" "info"
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
+	fi
+
+	# copy boot splash image
+	cp $SRC/lib/bin/armbian.bmp $CACHEDIR/sdcard/boot/boot.bmp
+
+	# execute $LINUXFAMILY-specific tweaks from $BOARD.conf
+	[[ $(type -t family_tweaks) == function ]] && family_tweaks
+
+	# enable firstrun script
+	chroot $CACHEDIR/sdcard /bin/bash -c "update-rc.d firstrun defaults >/dev/null 2>&1"
+
+	# remove .old on new image
+	rm -rf $CACHEDIR/sdcard/boot/dtb.old
+}
+
+install_distribution_specific()
+{
+	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
+
+	case $RELEASE in
+
+	wheezy) # Debian Wheezy
 		# add serial console
 		echo T0:2345:respawn:/sbin/getty -L $SERIALCON 115200 vt100 >> $CACHEDIR/sdcard/etc/inittab
 
@@ -54,13 +163,10 @@ wheezy)
 		sed -e 's/umountnfs $time/umountnfs $time ramlog/g' -i $CACHEDIR/sdcard/etc/init.d/rsyslog
 		;;
 
-# Debian Jessie
-jessie)
+	# Debian Jessie
+	jessie)
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
-
-		# mount 256Mb tmpfs to /tmp
-		echo "tmpfs   /tmp         tmpfs   nodev,nosuid,size=256M          0  0" >> $CACHEDIR/sdcard/etc/fstab
 
 		# fix selinux error
 		mkdir $CACHEDIR/sdcard/selinux
@@ -85,14 +191,14 @@ jessie)
 		cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/sdcard/etc/udev/rules.d/
 		;;
 
-# Ubuntu Trusty
-trusty)
+	# Ubuntu Trusty
+	trusty)
 		# add serial console
 		cp $SRC/lib/config/ttyS0.conf $CACHEDIR/sdcard/etc/init/$SERIALCON.conf
 		sed -e "s/ttyS0/$SERIALCON/g" -i $CACHEDIR/sdcard/etc/init/$SERIALCON.conf
 
 		# don't clear screen tty1
-		sed -e s,"exec /sbin/getty","exec /sbin/getty --noclear",g 	-i $CACHEDIR/sdcard/etc/init/tty1.conf
+		sed -e s,"exec /sbin/getty","exec /sbin/getty --noclear",g -i $CACHEDIR/sdcard/etc/init/tty1.conf
 
 		# disable some getties
 		rm -f $CACHEDIR/sdcard/etc/init/tty5.conf
@@ -106,7 +212,7 @@ trusty)
 
 		# remove legal info from Ubuntu
 		[[ -f $CACHEDIR/sdcard/etc/legal ]] && rm $CACHEDIR/sdcard/etc/legal
-		
+
 		# that my custom motd works well
 		if [[ -d $CACHEDIR/sdcard/etc/update-motd.d ]]; then
 			mv $CACHEDIR/sdcard/etc/update-motd.d $CACHEDIR/sdcard/etc/update-motd.d-backup
@@ -118,16 +224,16 @@ trusty)
 		rm $CACHEDIR/sdcard/etc/init/plymouth*
 		;;
 
-xenial)
+	xenial)
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
 
 		# fix selinux error
 		mkdir $CACHEDIR/sdcard/selinux
-		
+
 		# remove legal info from Ubuntu
 		[[ -f $CACHEDIR/sdcard/etc/legal ]] && rm $CACHEDIR/sdcard/etc/legal
-		
+
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
 
 		# Fix for PuTTY/KiTTY & ncurses-based dialogs (i.e. alsamixer) over serial
@@ -150,59 +256,10 @@ xenial)
 		# needs kernel tracing options that AFAIK are present only in mainline
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask ureadahead.service >/dev/null 2>&1"
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
-
-		# disable stopping network interfaces
-		# fixes shutdown with root on NFS
-		# NOTE: fixed by "no-auto-down eth0" in interfaces.default
-		#mkdir -p $CACHEDIR/sdcard/etc/systemd/system/networking.service.d/
-		#printf "[Service]\nExecStop=\n" > $CACHEDIR/sdcard/etc/systemd/system/networking.service.d/10-nostop.conf
 		;;
+
 	*)
-	exit_with_error "Unknown OS release selected"
-	;;
-esac
-
-# copy hostapd configurations
-install $SRC/lib/config/hostapd/hostapd.conf $CACHEDIR/sdcard/etc/hostapd.conf
-install $SRC/lib/config/hostapd/hostapd.realtek.conf $CACHEDIR/sdcard/etc/hostapd.conf-rt
-
-# console fix due to Debian bug
-sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $CACHEDIR/sdcard/etc/default/console-setup
-
-# change time zone data
-echo $TZDATA > $CACHEDIR/sdcard/etc/timezone
-chroot $CACHEDIR/sdcard /bin/bash -c "dpkg-reconfigure -f noninteractive tzdata >/dev/null 2>&1"
-
-# set root password
-chroot $CACHEDIR/sdcard /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
-
-# create proper fstab
-if [[ $BOOTSIZE -eq 0 ]]; then
-	local device="/dev/mmcblk0p1	/           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro"
-else
-	local device="/dev/mmcblk0p2	/           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro"
-fi
-echo "$device        0       0" >> $CACHEDIR/sdcard/etc/fstab
-
-# flash media tuning
-if [[ -f $CACHEDIR/sdcard/etc/default/tmpfs ]]; then
-	sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
-	sed -e 's/#RUN_SIZE=10%/RUN_SIZE=128M/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
-	sed -e 's/#LOCK_SIZE=/LOCK_SIZE=/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
-	sed -e 's/#SHM_SIZE=/SHM_SIZE=128M/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
-	sed -e 's/#TMP_SIZE=/TMP_SIZE=1G/g' -i $CACHEDIR/sdcard/etc/default/tmpfs
-fi
-
-# add custom bashrc loading
-cat <<END >> $CACHEDIR/sdcard/etc/bash.bashrc
-if [[ -f /etc/bash.bashrc.custom ]]; then
-    . /etc/bash.bashrc.custom
-fi
-END
-
-# display welcome message at first root login
-touch $CACHEDIR/sdcard/root/.not_logged_in_yet
-
-# force change root password at first login
-chroot $CACHEDIR/sdcard /bin/bash -c "chage -d 0 root"
+		exit_with_error "Unknown OS release selected"
+		;;
+	esac
 }
