@@ -128,5 +128,5 @@ compile_hostapd()
 [[ ! -f $DEST/debs/armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}.deb ]] && compile_hostapd
 
 display_alert "Installing" "armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}.deb" "info"
-chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -r hostapd" >> $DEST/debug/output.log
-chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}.deb" >> $DEST/debug/output.log
+chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -r hostapd" >> $DEST/debug/install.log
+chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-hostapd-${RELEASE}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log

@@ -179,7 +179,7 @@ display_alert()
 #--------------------------------------------------------------------------------------------------------------------------------
 {
 # log function parameters to install.log
-echo "Displaying message: $@" >> $DEST/debug/install.log
+echo "Displaying message: $@" >> $DEST/debug/output.log
 
 local tmp=""
 [[ -n $2 ]] && tmp="[\e[0;33m $2 \x1B[0m]"
