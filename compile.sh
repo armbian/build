@@ -22,7 +22,7 @@ function do_clean_up()
 #trap '{ echo "Hey, you pressed Ctrl-C.  Time to quit." ; do_clean_up; exit 1; }' INT
 
 # method
-KERNEL_ONLY="no"						# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
+KERNEL_ONLY=""						# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
 KERNEL_CONFIGURE="no"					# want to change my default configuration
 CLEAN_LEVEL="make,debs"					# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
 							# "debs" = delete packages in "./output/debs" for current branch and family,
@@ -35,7 +35,7 @@ CONSOLE_CHAR="UTF-8"
 # advanced
 KERNEL_KEEP_CONFIG="no"					# overwrite kernel config before compilation
 EXTERNAL="yes"						# build and install extra applications and drivers
-DEBUG_MODE="no"					# wait that you make changes to uboot and kernel source and creates patches
+DEBUG_MODE="no"						# wait that you make changes to uboot and kernel source and creates patches
 FORCE_CHECKOUT="yes"					# ignore manual changes to source
 BUILD_ALL="no"						# cycle through available boards and make images or kernel/u-boot packages.
 							# set KERNEL_ONLY to "yes" or "no" to build all kernels/all images
@@ -118,4 +118,4 @@ do_clean_up;
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=19
+# VERSION=20
