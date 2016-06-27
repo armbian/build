@@ -14,8 +14,15 @@
 # http://www.armbian.com/using-armbian-tools/
 # for detailed explanation of these parameters
 
+function do_clean_up()
+{
+	chown -R $(/usr/bin/logname):$(/usr/bin/id -g $(/usr/bin/logname)) $SRC
+}
+
+#trap '{ echo "Hey, you pressed Ctrl-C.  Time to quit." ; do_clean_up; exit 1; }' INT
+
 # method
-KERNEL_ONLY=""						# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
+KERNEL_ONLY="no"						# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
 KERNEL_CONFIGURE="no"					# want to change my default configuration
 CLEAN_LEVEL="make,debs"					# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
 							# "debs" = delete packages in "./output/debs" for current branch and family,
@@ -64,23 +71,17 @@ if [[ -d $DEST/output ]]; then
 	read
 fi
 
-if [[ $EUID != 0 ]]; then
-	echo -e "[\e[0;35m warn \x1B[0m] This script requires root privileges"
-	sudo "$0" "$@"
-	exit 1
-fi
-
 #--------------------------------------------------------------------------------------------------------------------------------
 # Get updates of the main build libraries
 #--------------------------------------------------------------------------------------------------------------------------------
 [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' git 2>/dev/null) != *ii* ]] && \
 	apt-get -qq -y --no-install-recommends install git
 
-if [[ ! -d $SRC/lib ]]; then
+if [[ $EUID != 0 && ! -d $SRC/lib ]]; then
 	git clone https://github.com/igorpecovnik/lib
 fi
 cd $SRC/lib
-if [[ ! -f $SRC/.ignore_changes ]]; then
+if [[ $EUID != 0 && ! -f $SRC/.ignore_changes ]]; then
 	echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
 	git pull
 	CHANGED_FILES=$(git diff --name-only)
@@ -92,6 +93,18 @@ if [[ ! -f $SRC/.ignore_changes ]]; then
 		git checkout ${LIB_TAG:- master}
 	fi
 fi
+
+#--------------------------------------------------------------------------------------------------------------------------------
+# force superuser
+#--------------------------------------------------------------------------------------------------------------------------------
+
+if [[ $EUID != 0 ]]; then
+	cd $SRC
+	echo -e "[\e[0;35m warn \x1B[0m] This script requires root privileges"
+	sudo "$0" "$@"
+	exit 1
+fi
+
 #--------------------------------------------------------------------------------------------------------------------------------
 # Do we need to build all images
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -100,6 +113,8 @@ if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
 else
 	source $SRC/lib/main.sh
 fi
+
+do_clean_up;
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
