@@ -16,7 +16,7 @@
 
 create_board_package()
 {
-	display_alert "Creating board support package" "$BOARD" "info"
+	display_alert "Creating board support package" "$BOARD $BRANCH" "info"
 
 	local destination=$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
 
