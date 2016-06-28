@@ -28,6 +28,7 @@ CONSOLE_CHAR="UTF-8"
 # advanced
 KERNEL_KEEP_CONFIG="no"					# overwrite kernel config before compilation
 EXTERNAL="yes"						# build and install extra applications and drivers
+DEBUG_MODE="no"					# wait that you make changes to uboot and kernel source and creates patches
 FORCE_CHECKOUT="yes"					# ignore manual changes to source
 BUILD_ALL="no"						# cycle through available boards and make images or kernel/u-boot packages.
 							# set KERNEL_ONLY to "yes" or "no" to build all kernels/all images
@@ -102,4 +103,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=18
+# VERSION=19

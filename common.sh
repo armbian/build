@@ -21,7 +21,8 @@
 # write_uboot
 # customize_image
 
-compile_uboot (){
+compile_uboot()
+{
 #---------------------------------------------------------------------------------------------------------------------------------
 # Compile uboot from sources
 #---------------------------------------------------------------------------------------------------------------------------------
@@ -31,6 +32,9 @@ compile_uboot (){
 
 	# read uboot version to variable $VER
 	grab_version "$SOURCES/$BOOTSOURCEDIR" "VER"
+
+	# create patch for manual source changes in debug mode
+	userpatch_create "u-boot"
 
 	display_alert "Compiling uboot" "$VER" "info"
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
@@ -62,11 +66,15 @@ compile_uboot (){
 	mkdir -p $DEST/debs/$uboot_name/usr/lib/$uboot_name $DEST/debs/$uboot_name/DEBIAN
 
 	# set up postinstall script
-	printf '#!/bin/bash\nset -e\n[[ $DEVICE == /dev/null ]] && exit 0\n[[ -z $DEVICE ]] && DEVICE="/dev/mmcblk0"\n' > $DEST/debs/$uboot_name/DEBIAN/postinst
-	printf "DIR=/usr/lib/$uboot_name\n" >> $DEST/debs/$uboot_name/DEBIAN/postinst
-	declare -f write_uboot_platform >> $DEST/debs/$uboot_name/DEBIAN/postinst
-	printf 'write_uboot_platform $DIR $DEVICE\n' >> $DEST/debs/$uboot_name/DEBIAN/postinst
-	printf 'exit 0\n' >> $DEST/debs/$uboot_name/DEBIAN/postinst
+	cat <<-EOF > $DEST/debs/$uboot_name/DEBIAN/postinst
+	#!/bin/bash
+	[[ \$DEVICE == /dev/null ]] && exit 0
+	[[ -z \$DEVICE ]] && DEVICE="/dev/mmcblk0"
+	DIR=/usr/lib/$uboot_name
+	$(declare -f write_uboot_platform)
+	write_uboot_platform \$DIR \$DEVICE
+	exit 0
+	EOF
 	chmod 755 $DEST/debs/$uboot_name/DEBIAN/postinst
 
 	# set up control file
@@ -90,7 +98,7 @@ compile_uboot (){
 	cd $DEST/debs
 	display_alert "Target directory" "$DEST/debs/" "info"
 	display_alert "Building deb" "$uboot_name.deb" "info"
-	dpkg -b $uboot_name >> $DEST/debug/install.log 2>&1
+	dpkg -b $uboot_name >> $DEST/debug/compilation.log 2>&1
 	rm -rf $uboot_name
 
 	FILESIZE=$(wc -c $DEST/debs/$uboot_name.deb | cut -f 1 -d ' ')
@@ -101,27 +109,21 @@ compile_uboot (){
 	fi
 }
 
-compile_sunxi_tools (){
+compile_sunxi_tools()
+{
 #---------------------------------------------------------------------------------------------------------------------------------
 # https://github.com/linux-sunxi/sunxi-tools Tools to help hacking Allwinner devices
 #---------------------------------------------------------------------------------------------------------------------------------
-
 	display_alert "Compiling sunxi tools" "@host & target" "info"
 	cd $SOURCES/$MISC1_DIR
-	make -s clean >/dev/null 2>&1
-	make -s >/dev/null 2>&1
+	make -s clean >/dev/null
+	make -s tools >/dev/null
 	mkdir -p /usr/local/bin/
-	cp fex2bin bin2fex sunxi-fel /usr/local/bin/
-	# make -s clean >/dev/null 2>&1
-
-	# NOTE: Fix CC=$CROSS_COMPILE"gcc" before reenabling
-	# make $CTHREADS 'sunxi-nand-part' CC=$CROSS_COMPILE"gcc" >> $DEST/debug/install.log 2>&1
-	# make $CTHREADS 'sunxi-fexc' CC=$CROSS_COMPILE"gcc" >> $DEST/debug/install.log 2>&1
-	# make $CTHREADS 'meminfo' CC=$CROSS_COMPILE"gcc" >> $DEST/debug/install.log 2>&1
-
+	make install-tools >/dev/null 2>&1
 }
 
-compile_kernel (){
+compile_kernel()
+{
 #---------------------------------------------------------------------------------------------------------------------------------
 # Compile kernel
 #---------------------------------------------------------------------------------------------------------------------------------
@@ -133,6 +135,9 @@ compile_kernel (){
 	# read kernel version to variable $VER
 	grab_version "$SOURCES/$LINUXSOURCEDIR" "VER"
 
+	# create patch for manual source changes in debug mode
+	userpatch_create "kernel"
+	
 	display_alert "Compiling $BRANCH kernel" "$VER" "info"
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
 	cd $SOURCES/$LINUXSOURCEDIR/
@@ -309,26 +314,22 @@ process_patch_file() {
 		| awk '{print $NF}' | sed -n 's/,//p' | xargs -I % sh -c 'rm %'
 
 	# main patch command
-	echo "$patch $description" >> $DEST/debug/install.log
-	patch --batch --silent -p1 -N < $patch >> $DEST/debug/install.log 2>&1
+	patch --batch --silent -p1 -N < $patch >> $DEST/debug/patching.log 2>&1
 
 	if [[ $? -ne 0 ]]; then
 		display_alert "... $(basename $patch)" "failed" "wrn";
-		if [[ $EXIT_PATCHING_ERROR == yes ]]; then exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"; fi
+		[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
 	else
 		display_alert "... $(basename $patch)" "succeeded" "info"
 	fi
 }
 
-install_external_applications ()
+install_external_applications()
 {
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install external applications example
 #--------------------------------------------------------------------------------------------------------------------------------
 display_alert "Installing extra applications and drivers" "" "info"
-
-# cleanup for install_kernel and install_board_specific
-umount $CACHEDIR/sdcard/tmp >/dev/null 2>&1
 
 for plugin in $SRC/lib/extras/*.sh; do
 	source $plugin
@@ -376,6 +377,8 @@ write_uboot()
 
 customize_image()
 {
+	# for users that need to prepare files at host
+	[[ -f $SRC/userpatches/customize-image-host.sh ]] && source $SRC/userpatches/customize-image-host.sh
 	cp $SRC/userpatches/customize-image.sh $CACHEDIR/sdcard/tmp/customize-image.sh
 	chmod +x $CACHEDIR/sdcard/tmp/customize-image.sh
 	mkdir -p $CACHEDIR/sdcard/tmp/overlay
@@ -383,4 +386,36 @@ customize_image()
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
 	umount $CACHEDIR/sdcard/tmp/overlay
+	rm -r $CACHEDIR/sdcard/tmp/overlay
+}
+
+userpatch_create()
+{
+	if [[ $DEBUG_MODE == yes ]]; then
+		# create commit to start from clean source
+		git add .
+		git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
+		
+		local patch="$SRC/userpatches/patch/$1-$LINUXFAMILY-$BRANCH.patch"
+		
+		# apply previous user debug mode created patches
+		[[ -f "$patch" && $1 == "u-boot" ]] && display_alert "Applying existing u-boot patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
+		[[ -f "$patch" && $1 == "kernel" ]] && display_alert "Applying existing kernel patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
+
+		# prompt to alter source
+		display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
+		display_alert "Press <Enter> after you are done" "waiting" "wrn"
+		read
+		tput cuu1
+		git add .
+		# create patch out of changes
+		if ! git diff-index --quiet --cached HEAD; then		
+			git diff --staged > $patch
+			display_alert "You will find your patch here:" "$patch" "info"
+		else
+			display_alert "No changes found, skipping patch creation" "" "wrn"
+		fi
+		git reset --soft HEAD~
+		for i in {3..1..1};do echo -n "$i." && sleep 1; done
+	fi
 }

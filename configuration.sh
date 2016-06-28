@@ -88,55 +88,51 @@ case $LINUXFAMILY in
 esac
 
 # Essential packages
-PACKAGE_LIST="automake bash-completion bc bridge-utils build-essential cmake cpufrequtils \
-	device-tree-compiler dosfstools figlet fbset fping git haveged hdparm hostapd ifenslave-2.6 \
-	iw libtool libwrap0-dev libssl-dev lirc lsof fake-hwclock wpasupplicant libusb-dev libusb-1.0-0-dev psmisc \
-	ntp parted pkg-config pv rfkill rsync sudo curl dialog crda wireless-regdb ncurses-term python-apt \
-	sysfsutils toilet u-boot-tools unattended-upgrades unzip usbutils vlan wireless-tools libnl-3-dev \
-	console-setup console-data console-common unicode-data openssh-server libmtp-runtime initramfs-tools ca-certificates"
+PACKAGE_LIST="bash-completion bc bridge-utils build-essential cpufrequtils device-tree-compiler dosfstools figlet \
+	fbset fping git hostapd ifenslave-2.6 iw lirc fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl \
+	dialog crda wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
+	unzip usbutils wireless-tools console-setup console-data console-common unicode-data openssh-server initramfs-tools ca-certificates"
+
+# development related packages. remove when they are not needed for building packages in chroot
+PACKAGE_LIST="$PACKAGE_LIST automake cmake libwrap0-dev libssl-dev libtool pkg-config libusb-dev libusb-1.0-0-dev libnl-3-dev libnl-genl-3-dev"
 
 # Non-essential packages
-PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools bluez hddtemp i2c-tools iperf ir-keytable iotop iozone3 weather-util weather-util-data stress \
-	dvb-apps sysbench libbluetooth-dev libbluetooth3 subversion screen ntfs-3g vim pciutils evtest htop mtp-tools python-smbus \
-	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan aptitude dnsutils f3"
+PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools hddtemp iotop iozone3 stress sysbench screen ntfs-3g vim pciutils evtest htop pv lsof \
+	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan aptitude dnsutils f3 haveged hdparm rfkill \
+	vlan sysstat"
 
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray wicd thunar-volman galculator \
-gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu wifi-radar"
-# hardware acceleration support packages
+	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu wifi-radar bluetooth"
+
+# hardware acceleration support packages. remove when they are not needed for building packages in chroot
 if [[ $LINUXCONFIG == *sun* && $BRANCH == default ]]; then
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev"
 fi
 
+PACKAGE_LIST_EXCLUDE=""
+
 # Release specific packages
 case $RELEASE in
 	wheezy)
-	PACKAGE_LIST_RELEASE="less makedev kbd acpid acpi-support-base libnl-genl-3-dev"
+	PACKAGE_LIST_RELEASE="less makedev kbd acpid acpi-support-base iperf libudev1"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel icedove"
-	PACKAGE_LIST_EXCLUDE=""
 	;;
 	jessie)
-	PACKAGE_LIST_RELEASE="less makedev kbd thin-provisioning-tools libnl-genl-3-dev libpam-systemd \
-		software-properties-common python-software-properties libnss-myhostname f2fs-tools libnl-genl-3-dev"
+	PACKAGE_LIST_RELEASE="less makedev kbd libpam-systemd iperf3 software-properties-common \
+		libnss-myhostname f2fs-tools"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove gvfs policykit-1 policykit-1-gnome eject"
-	PACKAGE_LIST_EXCLUDE=""
 	;;
-	trusty)	
-	PACKAGE_LIST_RELEASE="man-db wget iptables nano libnl-genl-3-dev software-properties-common \
-		python-software-properties f2fs-tools acpid"
+	trusty)
+	PACKAGE_LIST_RELEASE="man-db wget nano software-properties-common iperf f2fs-tools acpid"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
 	PACKAGE_LIST_EXCLUDE="ureadahead plymouth"
 	;;
 	xenial)
-	PACKAGE_LIST_RELEASE="man-db wget iptables nano thin-provisioning-tools libnl-genl-3-dev libpam-systemd \
-		software-properties-common libnss-myhostname f2fs-tools"
+	PACKAGE_LIST_RELEASE="man-db wget nano libpam-systemd software-properties-common libnss-myhostname f2fs-tools iperf3"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends \
 			policykit-1 xserver-xorg-video-fbdev"
-	PACKAGE_LIST_EXCLUDE=""
 	;;
 esac
-
-# Remove ARM64 missing packages. Temporally
-PACKAGE_LIST_RELEASE=${PACKAGE_LIST_RELEASE//thin-provisioning-tools }
 
 DEBIAN_MIRROR='httpredir.debian.org/debian'
 UBUNTU_MIRROR='ports.ubuntu.com/'
@@ -148,7 +144,6 @@ if [[ -f $SRC/userpatches/lib.config ]]; then
 fi
 
 # apt-cacher-ng mirror configurarion
-
 if [[ $DISTRIBUTION == Ubuntu ]]; then
 	APT_MIRROR=$UBUNTU_MIRROR
 else
@@ -162,8 +157,16 @@ PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 [[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
 
 # debug
-echo -e "Config: $LINUXCONFIG\nKernel source: $LINUXKERNEL\nBranch: $KERNELBRANCH" >> $DEST/debug/install.log
-echo -e "linuxsource: $LINUXSOURCE\nOffset: $OFFSET\nbootsize: $BOOTSIZE" >> $DEST/debug/install.log
-echo -e "bootloader: $BOOTLOADER\nbootsource: $BOOTSOURCE\nbootbranch: $BOOTBRANCH" >> $DEST/debug/install.log
-echo -e "CPU $CPUMIN / $CPUMAX with $GOVERNOR" >> $DEST/debug/install.log
-
+cat <<-EOF >> $DEST/debug/output.log
+## BUILD CONFIGURATION
+Config: $LINUXCONFIG
+Kernel source: $LINUXKERNEL
+Branch: $KERNELBRANCH
+linuxsource: $LINUXSOURCE
+Offset: $OFFSET
+bootsize: $BOOTSIZE
+bootloader: $BOOTLOADER
+bootsource: $BOOTSOURCE
+bootbranch: $BOOTBRANCH
+CPU $CPUMIN / $CPUMAX with $GOVERNOR
+EOF

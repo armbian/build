@@ -178,6 +178,16 @@ mount -t proc chproc $CACHEDIR/sdcard/proc
 mount -t sysfs chsys $CACHEDIR/sdcard/sys
 mount -t devtmpfs chdev $CACHEDIR/sdcard/dev || mount --bind /dev $CACHEDIR/sdcard/dev
 mount -t devpts chpts $CACHEDIR/sdcard/dev/pts
+
+# create proper fstab
+if [[ $BOOTSIZE -eq 0 ]]; then
+	local device="/dev/mmcblk0p1	/           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro"
+else
+	local device="/dev/mmcblk0p2	/           ext4    defaults,noatime,nodiratime,data=writeback,commit=600,errors=remount-ro"
+	echo "/dev/mmcblk0p1        /boot   vfat    defaults        0       0" >> $CACHEDIR/sdcard/etc/fstab
+fi
+echo "$device        0       0" >> $CACHEDIR/sdcard/etc/fstab
+
 }
 
 shrinking_raw_image (){ # Parameter: RAW image with full path
@@ -193,7 +203,7 @@ losetup $LOOP $RAWIMAGE
 PARTSTART=$(parted $LOOP unit s print -sm | tail -1 | cut -d: -f2 | sed 's/s//')
 PARTEND=$(parted $LOOP unit s print -sm | head -3 | tail -1 | cut -d: -f3 | sed 's/s//') # end of first partition
 PARTSTARTBLOCKS=$(($PARTSTART*512))
-echo "PARTSTART $PARTSTART PARTEND $PARTEND PARTSTARTBLOCKS $PARTSTARTBLOCKS" >> $DEST/debug/install.log
+echo "PARTSTART $PARTSTART PARTEND $PARTEND PARTSTARTBLOCKS $PARTSTARTBLOCKS" >> $DEST/debug/output.log
 sleep 1; losetup -d $LOOP
 
 # convert from EXT4 to EXT2
@@ -205,7 +215,7 @@ resize2fs $LOOP -M >/dev/null 2>&1
 BLOCKSIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Block count" | awk '{ print $(NF)}')
 RESERVEDBLOCKSIZE=$(LANGUAGE=english tune2fs -l $LOOP | grep "Reserved block count" | awk '{ print $(NF)}')
 BLOCKSIZE=$(($PARTSTART+$BLOCKSIZE+50000)) # fixed reserve to be enough for swap file creation
-echo "BLOCKSIZE $BLOCKSIZE RESERVEDBLOCKSIZE $RESERVEDBLOCKSIZE" >> $DEST/debug/install.log
+echo "BLOCKSIZE $BLOCKSIZE RESERVEDBLOCKSIZE $RESERVEDBLOCKSIZE" >> $DEST/debug/output.log
 resize2fs $LOOP $BLOCKSIZE >/dev/null 2>&1
 tune2fs -O has_journal $LOOP >/dev/null 2>&1
 tune2fs -o journal_data_writeback $LOOP >/dev/null 2>&1
@@ -237,6 +247,15 @@ closing_image (){
 #--------------------------------------------------------------------------------------------------------------------------------
 # Closing image and clean-up
 #--------------------------------------------------------------------------------------------------------------------------------
+# if we have a special fat boot partition, alter rootfs=
+if [[ $BOOTSIZE -gt 0 ]]; then
+	display_alert "Adjusting boot scripts" "$BOARD" "info"
+	[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && sed -e 's/p1 /p2 /g' -i $CACHEDIR/sdcard/boot/boot.cmd
+fi
+# convert to uboot compatible script
+[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && \
+	mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr >> /dev/null
+
 customize_image
 chroot $CACHEDIR/sdcard /bin/bash -c "sync"
 sync
@@ -331,7 +350,7 @@ while [[ $i -lt $skupaj ]]; do
 	procent=$(echo "scale=2;($j/$skupaj)*100"|bc)
 	procent=${procent%.*}
 	x=${PACKETS[$i]}
-	chroot $CACHEDIR/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -qq -y install $x --no-install-recommends" >> $DEST/debug/install.log 2>&1
+	chroot $CACHEDIR/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -qq -y install $x --no-install-recommends" >> $DEST/debug/debootstrap.log 2>&1
 	if [ $? -ne 0 ]; then display_alert "Installation of package failed" "$INSTALL" "err"; exit 1; fi
 	printf '%.0f\n' $procent | dialog --backtitle "$backtitle" --title "$2" --gauge "\n\n$x" 9 70
 	i=$[$i+1]

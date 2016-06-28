@@ -18,6 +18,13 @@ from=0
 RELEASE_LIST=("trusty" "xenial" "wheezy" "jessie")
 BRANCH_LIST=("default" "next" "dev")
 
+# add dependencies for converting .md to .pdf
+if [[ ! -f /etc/apt/sources.list.d/nodesource.list ]]; then
+	curl -sL https://deb.nodesource.com/setup_6.x | sudo -E bash -
+	apt-get install -y libfontconfig1 nodejs 
+	npm install -g markdown-pdf
+fi
+
 create_images_list()
 {
 	for board in $SRC/lib/config/boards/*.conf; do
@@ -93,6 +100,15 @@ for line in "${buildlist[@]}"; do
 done
 echo -e "\n${#buildlist[@]} total\n"
 
+# create PDF from files inside lib/documentation
+mkdir -p $DEST/cache/documentation
+markdown-pdf $SRC/lib/documentation/header*.md -o "$DEST/cache/documentation/header.pdf"
+markdown-pdf $SRC/lib/documentation/main*.md -o "$DEST/cache/documentation/main.pdf"
+markdown-pdf $SRC/lib/documentation/footer*.md -o "$DEST/cache/documentation/footer.pdf"
+# merge header - main - footer
+temprevision=$(cat $SRC/lib/configuration.sh | grep REVISION | grep -o '".*"' | sed 's/"//g' | cut -f1 -d"$")
+pdftk "$DEST/cache/documentation/header.pdf" "$DEST/cache/documentation/main.pdf" "$DEST/cache/documentation/footer.pdf" cat output "$DEST/images/Armbian_"$temprevision"_documentations.pdf"
+
 [[ $BUILD_ALL == demo ]] && exit 0
 
 buildall_start=`date +%s`
@@ -100,7 +116,7 @@ n=0
 for line in "${buildlist[@]}"; do
 	unset LINUXFAMILY LINUXCONFIG LINUXKERNEL LINUXSOURCE KERNELBRANCH BOOTLOADER BOOTSOURCE BOOTBRANCH ARCH UBOOT_NEEDS_GCC KERNEL_NEEDS_GCC \
 		CPUMIN CPUMAX UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN PACKAGE_LIST_EXCLUDE KERNEL_IMAGE_TYPE \
-		write_uboot_platform family_tweaks UBOOT_FILES LOCALVERSION UBOOT_COMPILER KERNEL_COMPILER UBOOT_TARGET
+		write_uboot_platform family_tweaks install_boot_script UBOOT_FILES LOCALVERSION UBOOT_COMPILER KERNEL_COMPILER UBOOT_TARGET
 
 	read BOARD BRANCH RELEASE BUILD_DESKTOP <<< $line
 	n=$[$n+1]
