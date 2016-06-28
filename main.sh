@@ -155,7 +155,7 @@ source $SRC/lib/configuration.sh
 # The name of the job
 VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
 
-echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION >> $DEST/debug/install.log
+echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION >> $DEST/debug/output.log
 
 display_alert "Starting Armbian build script" "@host" "info"
 

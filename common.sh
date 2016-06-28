@@ -66,11 +66,15 @@ compile_uboot()
 	mkdir -p $DEST/debs/$uboot_name/usr/lib/$uboot_name $DEST/debs/$uboot_name/DEBIAN
 
 	# set up postinstall script
-	printf '#!/bin/bash\nset -e\n[[ $DEVICE == /dev/null ]] && exit 0\n[[ -z $DEVICE ]] && DEVICE="/dev/mmcblk0"\n' > $DEST/debs/$uboot_name/DEBIAN/postinst
-	printf "DIR=/usr/lib/$uboot_name\n" >> $DEST/debs/$uboot_name/DEBIAN/postinst
-	declare -f write_uboot_platform >> $DEST/debs/$uboot_name/DEBIAN/postinst
-	printf 'write_uboot_platform $DIR $DEVICE\n' >> $DEST/debs/$uboot_name/DEBIAN/postinst
-	printf 'exit 0\n' >> $DEST/debs/$uboot_name/DEBIAN/postinst
+	cat <<-EOF > $DEST/debs/$uboot_name/DEBIAN/postinst
+	#!/bin/bash
+	[[ \$DEVICE == /dev/null ]] && exit 0
+	[[ -z \$DEVICE ]] && DEVICE="/dev/mmcblk0"
+	DIR=/usr/lib/$uboot_name
+	$(declare -f write_uboot_platform)
+	write_uboot_platform \$DIR \$DEVICE
+	exit 0
+	EOF
 	chmod 755 $DEST/debs/$uboot_name/DEBIAN/postinst
 
 	# set up control file
@@ -94,7 +98,7 @@ compile_uboot()
 	cd $DEST/debs
 	display_alert "Target directory" "$DEST/debs/" "info"
 	display_alert "Building deb" "$uboot_name.deb" "info"
-	dpkg -b $uboot_name >> $DEST/debug/install.log 2>&1
+	dpkg -b $uboot_name >> $DEST/debug/compilation.log 2>&1
 	rm -rf $uboot_name
 
 	FILESIZE=$(wc -c $DEST/debs/$uboot_name.deb | cut -f 1 -d ' ')
@@ -310,8 +314,7 @@ process_patch_file() {
 		| awk '{print $NF}' | sed -n 's/,//p' | xargs -I % sh -c 'rm %'
 
 	# main patch command
-	echo "$patch $description" >> $DEST/debug/install.log
-	patch --batch --silent -p1 -N < $patch >> $DEST/debug/install.log 2>&1
+	patch --batch --silent -p1 -N < $patch >> $DEST/debug/patching.log 2>&1
 
 	if [[ $? -ne 0 ]]; then
 		display_alert "... $(basename $patch)" "failed" "wrn";

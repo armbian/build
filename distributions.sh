@@ -83,11 +83,6 @@ install_common()
 	echo "ff02::1     ip6-allnodes" >> $CACHEDIR/sdcard/etc/hosts
 	echo "ff02::2     ip6-allrouters" >> $CACHEDIR/sdcard/etc/hosts
 
-	# install custom root package
-	display_alert "Installing board support package" "$BOARD" "info"
-
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb > /dev/null"
-
 	# extract kernel version
 	VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
 	VER="${VER/-$LINUXFAMILY/}"
@@ -98,29 +93,33 @@ install_common()
 	HEADERS_TMP="${CHOSEN_KERNEL/image/headers}"
 
 	display_alert "Installing kernel" "$CHOSEN_KERNEL" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb >/dev/null 2>&1"
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
 	display_alert "Installing u-boot" "$CHOSEN_UBOOT" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb > /dev/null"
+	chroot $CACHEDIR/sdcard /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
 	display_alert "Installing headers" "$HEADERS_TMP" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${HEADERS_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${HEADERS_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
 	# install firmware
 	#if [[ -f $CACHEDIR/sdcard/tmp/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
 	#	display_alert "Installing firmware" "$FW_TMP" "info"
-	#	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
+	#	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 	#fi
 
 	if [[ -f $CACHEDIR/sdcard/tmp/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
 		display_alert "Installing generic firmware" "armbian-firmware" "info"
-		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-firmware_${REVISION}_${ARCH}.deb > /dev/null"
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 	fi
 
 	if [[ -f $CACHEDIR/sdcard/tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb ]]; then
 		display_alert "Installing DTB" "$DTB_TMP" "info"
-		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb > /dev/null"
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 	fi
+
+	# install board support package
+	display_alert "Installing board support package" "$BOARD" "info"
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
 	# copy boot splash image
 	cp $SRC/lib/bin/armbian.bmp $CACHEDIR/sdcard/boot/boot.bmp

@@ -157,8 +157,16 @@ PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 [[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
 
 # debug
-echo -e "Config: $LINUXCONFIG\nKernel source: $LINUXKERNEL\nBranch: $KERNELBRANCH" >> $DEST/debug/install.log
-echo -e "linuxsource: $LINUXSOURCE\nOffset: $OFFSET\nbootsize: $BOOTSIZE" >> $DEST/debug/install.log
-echo -e "bootloader: $BOOTLOADER\nbootsource: $BOOTSOURCE\nbootbranch: $BOOTBRANCH" >> $DEST/debug/install.log
-echo -e "CPU $CPUMIN / $CPUMAX with $GOVERNOR" >> $DEST/debug/install.log
-
+cat <<-EOF >> $DEST/debug/output.log
+## BUILD CONFIGURATION
+Config: $LINUXCONFIG
+Kernel source: $LINUXKERNEL
+Branch: $KERNELBRANCH
+linuxsource: $LINUXSOURCE
+Offset: $OFFSET
+bootsize: $BOOTSIZE
+bootloader: $BOOTLOADER
+bootsource: $BOOTSOURCE
+bootbranch: $BOOTBRANCH
+CPU $CPUMIN / $CPUMAX with $GOVERNOR
+EOF
