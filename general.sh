@@ -356,7 +356,7 @@ prepare_host() {
 	fi
 
 	if [[ $codename == xenial ]]; then
-		hostdeps="$hostdeps systemd-container"
+		hostdeps="$hostdeps systemd-container udev"
 		if systemd-detect-virt -q; then
 			display_alert "Running in container" "$(systemd-detect-virt)" "info"
 			# TODO: force disable ramdisk and apt-cacher-ng by default?
