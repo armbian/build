@@ -355,7 +355,18 @@ prepare_host() {
 		apt-key adv --keyserver keys.gnupg.net --recv-keys 9E3E53F19C7DE460
 	fi
 
-	if [[ $codename == xenial ]]; then hostdeps="$hostdeps systemd-container"; fi
+	if [[ $codename == xenial ]]; then
+		hostdeps="$hostdeps systemd-container"
+		if systemd-detect-virt -q; then
+			display_alert "Running in container" "$(systemd-detect-virt)" "info"
+			# TODO: force disable ramdisk and apt-cacher-ng by default?
+			#FORCE_USE_RAMDISK=no
+			# create device nodes for loop devices
+			for i in {0..6}; do
+				mknod -m0660 /dev/loop$i b 7 $i
+			done
+		fi
+	fi
 
 	# Deboostrap in trusty breaks due too old debootstrap. We are installing Xenial package
 	local debootstrap_version=$(dpkg-query -W -f='${Version}\n' debootstrap | cut -f1 -d'+')
