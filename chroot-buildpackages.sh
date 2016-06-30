@@ -12,8 +12,8 @@
 create_chroot()
 {
 	local target_dir="$1"
-	debootstrap --variant=buildd --include=ccache,locales,git,ca-certificates,devscripts --arch=$ARCH \
-		--foreign $RELEASE $target_dir "http://localhost:3142/$APT_MIRROR"
+	debootstrap --variant=buildd --include=ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl \
+		--arch=$ARCH --foreign $RELEASE $target_dir "http://localhost:3142/$APT_MIRROR"
 	[[ $? -ne 0 || ! -f $target_dir/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
 	cp /usr/bin/$QEMU_BINARY $target_dir/usr/bin/
 	chroot $target_dir /bin/bash -c "/debootstrap/debootstrap --second-stage"
@@ -84,13 +84,17 @@ chroot_build_packages()
 		[[ -n "$package_builddeps" ]] && /root/install-deps.sh $package_builddeps
 		cd /root/build
 		display_alert "Downloading sources"
-		git clone $package_repo $package_dir ${package_branch:+ -b $package_branch} --single-branch
+		GIT_EXTRA="--single-branch"
+		[[ -z "$package_commit" ]] && GIT_EXTRA="\$GIT_EXTRA --depth 1"
+		[[ -n "$package_branch" ]] && GIT_EXTRA="\$GIT_EXTRA -b $package_branch"
+		git clone $package_repo $package_dir \$GIT_EXTRA
 		cd $package_dir
 		[[ -n "$package_commit" ]] && git checkout -f $package_commit
 		# unpack debianization files if needed
 		[[ -n "$package_overlay" ]] && tar xf /root/overlay/$package_overlay -C /root/build/$package_dir
 		[[ -n "$package_prebuild_eval" ]] && eval "$package_prebuild_eval"
-		# TODO: increment base version if needed
+		# set upstream version
+		[[ -n "$package_upstream_version" ]] && debchange --preserve --newversion "$package_upstream_version" "Import from upstream"
 		# set local version
 		debchange -l~armbian${REVISION}+ "New Armbian release"
 		# build
@@ -116,6 +120,7 @@ chroot_build_packages()
 		# TODO: move built packages to $DEST/debs/extras
 		# mv $target_dir/root/build/*.deb $DEST/debs/extras
 		# cleanup
-		unset package_name package_repo package_dir package_branch package_overlay package_builddeps package_commit package_install package_prebuild_eval
+		unset package_name package_repo package_dir package_branch package_overlay package_builddeps package_commit package_install \
+			package_prebuild_eval package_upstream_version
 	done
 }
