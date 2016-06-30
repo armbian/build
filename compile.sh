@@ -14,6 +14,14 @@
 # http://www.armbian.com/using-armbian-tools/
 # for detailed explanation of these parameters
 
+function do_clean_up()
+{
+	# update all "lib" files to logname user (for forked "lib" and github RSA keys)
+	chown -R $(/usr/bin/logname):$(/usr/bin/id -g $(/usr/bin/logname)) $SRC/lib
+}
+
+#trap '{ echo "Hey, you pressed Ctrl-C.  Time to quit." ; do_clean_up; exit 1; }' INT
+
 # method
 KERNEL_ONLY=""						# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
 KERNEL_CONFIGURE="no"					# want to change my default configuration
@@ -101,6 +109,8 @@ else
 	source $SRC/lib/main.sh
 fi
 
+do_clean_up;
+
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=19
+# VERSION=20
