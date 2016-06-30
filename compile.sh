@@ -14,13 +14,6 @@
 # http://www.armbian.com/using-armbian-tools/
 # for detailed explanation of these parameters
 
-function do_clean_up()
-{
-	chown -R $(/usr/bin/logname):$(/usr/bin/id -g $(/usr/bin/logname)) $SRC
-}
-
-#trap '{ echo "Hey, you pressed Ctrl-C.  Time to quit." ; do_clean_up; exit 1; }' INT
-
 # method
 KERNEL_ONLY=""						# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
 KERNEL_CONFIGURE="no"					# want to change my default configuration
@@ -35,7 +28,7 @@ CONSOLE_CHAR="UTF-8"
 # advanced
 KERNEL_KEEP_CONFIG="no"					# overwrite kernel config before compilation
 EXTERNAL="yes"						# build and install extra applications and drivers
-DEBUG_MODE="no"						# wait that you make changes to uboot and kernel source and creates patches
+DEBUG_MODE="no"					# wait that you make changes to uboot and kernel source and creates patches
 FORCE_CHECKOUT="yes"					# ignore manual changes to source
 BUILD_ALL="no"						# cycle through available boards and make images or kernel/u-boot packages.
 							# set KERNEL_ONLY to "yes" or "no" to build all kernels/all images
@@ -71,17 +64,23 @@ if [[ -d $DEST/output ]]; then
 	read
 fi
 
+if [[ $EUID != 0 ]]; then
+	echo -e "[\e[0;35m warn \x1B[0m] This script requires root privileges"
+	sudo "$0" "$@"
+	exit 1
+fi
+
 #--------------------------------------------------------------------------------------------------------------------------------
 # Get updates of the main build libraries
 #--------------------------------------------------------------------------------------------------------------------------------
 [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' git 2>/dev/null) != *ii* ]] && \
 	apt-get -qq -y --no-install-recommends install git
 
-if [[ $EUID != 0 && ! -d $SRC/lib ]]; then
+if [[ ! -d $SRC/lib ]]; then
 	git clone https://github.com/igorpecovnik/lib
 fi
 cd $SRC/lib
-if [[ $EUID != 0 && ! -f $SRC/.ignore_changes ]]; then
+if [[ ! -f $SRC/.ignore_changes ]]; then
 	echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
 	git pull
 	CHANGED_FILES=$(git diff --name-only)
@@ -93,18 +92,6 @@ if [[ $EUID != 0 && ! -f $SRC/.ignore_changes ]]; then
 		git checkout ${LIB_TAG:- master}
 	fi
 fi
-
-#--------------------------------------------------------------------------------------------------------------------------------
-# force superuser
-#--------------------------------------------------------------------------------------------------------------------------------
-
-if [[ $EUID != 0 ]]; then
-	cd $SRC
-	echo -e "[\e[0;35m warn \x1B[0m] This script requires root privileges"
-	sudo "$0" "$@"
-	exit 1
-fi
-
 #--------------------------------------------------------------------------------------------------------------------------------
 # Do we need to build all images
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -114,8 +101,6 @@ else
 	source $SRC/lib/main.sh
 fi
 
-do_clean_up;
-
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=20
+# VERSION=19
