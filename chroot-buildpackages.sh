@@ -12,7 +12,7 @@
 create_chroot()
 {
 	local target_dir="$1"
-	debootstrap --variant=buildd --include=ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl \
+	debootstrap --variant=buildd --include=ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper \
 		--arch=$ARCH --foreign $RELEASE $target_dir "http://localhost:3142/$APT_MIRROR"
 	[[ $? -ne 0 || ! -f $target_dir/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
 	cp /usr/bin/$QEMU_BINARY $target_dir/usr/bin/
@@ -125,7 +125,7 @@ chroot_build_packages()
 		# TODO: move built packages to $DEST/debs/extras
 		# mv $target_dir/root/build/*.deb $DEST/debs/extras
 		# cleanup
-		unset package_name package_repo package_dir package_branch package_overlay package_builddeps package_commit package_install \
+		unset package_name package_repo package_dir package_branch package_overlay package_builddeps package_commit package_install_chroot \
 			package_prebuild_eval package_upstream_version
 	done
 }
