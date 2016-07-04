@@ -46,6 +46,11 @@ create_board_package()
 	#!/bin/sh
 	[ "$1" = "upgrade" ] && touch /var/run/.reboot_required
 	[ -d "/boot/bin" ] && mv /boot/bin /boot/bin.old
+	if [ -L "/etc/network/interfaces" ]; then
+		cp /etc/network/interfaces /etc/network/interfaces.tmp
+		rm /etc/network/interfaces
+		mv /etc/network/interfaces.tmp /etc/network/interfaces
+	fi
 	exit 0
 	EOF
 
@@ -56,16 +61,11 @@ create_board_package()
 	#!/bin/sh
 	update-rc.d armhwinfo defaults >/dev/null 2>&1
 	update-rc.d -f motd remove >/dev/null 2>&1
-	if [ -L "/etc/network/interfaces" ]; then
-		cp /etc/network/interfaces /etc/network/interfaces.tmp
-		rm /etc/network/interfaces
-		mv /etc/network/interfaces.tmp /etc/network/interfaces
-	fi
 	[ ! -f "/etc/network/interfaces" ] && cp /etc/network/interfaces.default /etc/network/interfaces
 	[ -f "/root/.nand1-allwinner.tgz" ] && rm /root/.nand1-allwinner.tgz
 	[ -f "/root/nand-sata-install" ] && rm /root/nand-sata-install
 	ln -sf /var/run/motd /etc/motd
-	[ -f "/etc/bash.bashrc.custom" ] && rm /etc/bash.bashrc.custom
+	[ -f "/etc/bash.bashrc.custom" ] && mv /etc/bash.bashrc.custom /etc/bash.bashrc.custom.old
 	[ -f "/etc/update-motd.d/00-header" ] && rm /etc/update-motd.d/00-header
 	[ -f "/etc/update-motd.d/10-help-text" ] && rm /etc/update-motd.d/10-help-text
 	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
@@ -80,7 +80,8 @@ create_board_package()
 	/boot/.verbose
 	EOF
 
-	# trigget uInitrd creation after installation, just in case
+	# trigger uInitrd creation after installation, to apply
+	# /etc/initramfs/post-update.d/99-uboot
 	cat <<-EOF > $destination/DEBIAN/triggers
 	activate update-initramfs
 	EOF
