@@ -86,7 +86,7 @@ chroot_build_packages()
 		display_alert "Downloading sources"
 		GIT_EXTRA="--single-branch"
 		[[ -z "$package_commit" ]] && GIT_EXTRA="\$GIT_EXTRA --depth 1"
-		[[ -n "$package_branch" ]] && GIT_EXTRA="\$GIT_EXTRA -b $package_branch"
+		[[ -n "$package_branch" ]] && GIT_EXTRA="\$GIT_EXTRA --single-branch -b $package_branch"
 		git clone $package_repo $package_dir \$GIT_EXTRA
 		cd $package_dir
 		[[ -n "$package_commit" ]] && git checkout -f $package_commit
@@ -105,7 +105,12 @@ chroot_build_packages()
 			display_alert "Done building" "$package_name" "ext"
 			ls *.deb
 			# install in chroot if other libraries depend on them
-			[[ "$package_install" == yes ]] && dpkg -i *.deb
+			if [[ -n "$package_install_chroot" ]]; then
+				display_alert "Installing packages"
+				for p in $package_install_chroot; do
+					dpkg -i \${p}_*.deb
+				done
+			fi
 			mv *.deb /root
 		else
 			display_alert "Failed building" "$package_name" "err"
