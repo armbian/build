@@ -37,8 +37,9 @@ source $SRC/lib/chroot-buildpackages.sh			# Building packages in chroot
 
 # compress and remove old logs
 mkdir -p $DEST/debug
-(cd $DEST/debug && tar -czf logs-$(date +"%d_%m_%Y-%H_%M_%S").tgz *.log) > /dev/null 2>&1
+(cd $DEST/debug && tar -czf logs-$(<timestamp).tgz *.log) > /dev/null 2>&1
 rm -f $DEST/debug/*.log > /dev/null 2>&1
+date +"%d_%m_%Y-%H_%M_%S" > $DEST/debug/timestamp
 # delete compressed logs older than 7 days
 (cd $DEST/debug && find . -name '*.tgz' -atime +7 -delete) > /dev/null
 
