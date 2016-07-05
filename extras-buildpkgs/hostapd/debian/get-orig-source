@@ -1,0 +1,92 @@
+#!/bin/sh
+set -e
+
+if [ -n "${1}" ]; then
+	CURDIR="${1}"
+else
+	echo "ERROR: not called with \$(CURDIR) parameter" >&2
+	exit 1
+fi
+
+# parse versions
+VERSION="$(dpkg-parsechangelog -l${CURDIR}/debian/changelog | sed -ne 's,^Version: *\([0-9]*:\)\?\(.*\)$,\2,p')"
+DEB_VER="$(echo ${VERSION} | sed 's,\-[0-9a-z\~\.]*,,')"
+UP_VER="$(echo ${DEB_VER} | sed 's,\~,\-,g')"
+SNAPDATE="$(echo ${DEB_VER} | sed 's/.*\+git\([0-9]*\).*/\1/')"
+
+case "${UP_VER}" in
+*+git[0-9\.]*+*)
+	UP_VER_TAG="$(echo $UP_VER | sed 's,.*+git[0-9\.]*+,,')"
+	;;
+*)
+	UP_VER_TAG="hostap_$(echo $UP_VER | sed -e 's,\.,_,g' -e 's,\-,_,g')"
+	;;
+esac
+
+# set upstream (git-) Vcs
+UP_VCS="git://w1.fi/srv/git/hostap.git"
+if dpkg --compare-versions "${DEB_VER}" lt "2~"; then
+	UP_VCS="git://w1.fi/srv/git/hostap-1.git"
+fi
+
+# write to ../{,_}tarballs/, if it exists - ../ otherwise
+if [ -d "${CURDIR}/../tarballs" ]; then
+	ORIG_TARBALL="${CURDIR}/../tarballs/wpa_${DEB_VER}.orig.tar.xz"
+elif [ -d "${CURDIR}/../_tarballs" ]; then
+	ORIG_TARBALL="${CURDIR}/../_tarballs/wpa_${DEB_VER}.orig.tar.xz"
+else
+	ORIG_TARBALL="${CURDIR}/../wpa_${DEB_VER}.orig.tar.xz"
+fi
+
+# don't overwrite existing tarballs
+if [ -e "${ORIG_TARBALL}" ]; then
+	echo "ERROR: don't overwrite existing ${ORIG_TARBALL}" >&2
+	exit 2
+fi
+
+TEMP_SOURCE="$(mktemp -d --tmpdir wpa-orig-source.XXXXXXXXXX)"
+if [ "$?" -ne 0 ] || [ -z "${TEMP_SOURCE}" ] || [ ! -d "${TEMP_SOURCE}" ]; then
+	echo "ERROR: failed to create temporary working directory" >&2
+	exit 3
+fi
+
+# clone upstream git repository
+echo "clone ${UP_VCS}:"
+git clone "${UP_VCS}" "${TEMP_SOURCE}"
+if [ "$?" -ne 0 ] || [ ! -d "${TEMP_SOURCE}" ]; then
+	echo "ERROR: cloning ${UP_VCS} failed" >&2
+	rm -rf "${TEMP_SOURCE}"
+	exit 4
+fi
+
+# add CONTRIBUTIONS for wpa 2.2~
+# (it's available since 2.0~, but only gets included in 2.2~)
+if dpkg --compare-versions "${DEB_VER}" ge "2.2~"; then
+	CONTRIBUTIONS="CONTRIBUTIONS"
+fi
+
+# add Hotspot 2.0 OSU server for wpa 2.2~
+if dpkg --compare-versions "${DEB_VER}" ge "2.2~"; then
+	HS20="hs20"
+elif dpkg --compare-versions "${DEB_VER}" ge "2.1+" && [ "${SNAPDATE}" -ge "20140526" ]; then
+	HS20="hs20"
+fi
+
+# create new upstream tarball
+cd "${TEMP_SOURCE}" && \
+	git archive \
+		--format=tar \
+		--prefix="wpa-${UP_VER}/" \
+		"${UP_VER_TAG}" \
+			README COPYING $CONTRIBUTIONS patches src wpa_supplicant hostapd $HS20 | \
+				xz -c6 > "${ORIG_TARBALL}"
+if [ "$?" -ne 0 ] || [ ! -e "${ORIG_TARBALL}" ]; then
+	echo "ERROR: failure to create ${ORIG_TARBALL}" >&2
+	rm -rf "${TEMP_SOURCE}"
+	exit 5
+else
+	echo "SUCCESS: New upstream tarball has been saved at ${ORIG_TARBALL}"
+	rm -rf "${TEMP_SOURCE}"
+	exit 0
+fi
+

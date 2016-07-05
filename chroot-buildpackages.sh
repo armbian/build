@@ -8,7 +8,14 @@
 #
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
+# Functions:
+# create_chroot
+# update_chroot
+# chroot_build_packages
 
+# create_chroot <target_dir>
+# <target_dir>: directory to put files
+#
 create_chroot()
 {
 	local target_dir="$1"
@@ -33,6 +40,9 @@ create_chroot()
 	touch $target_dir/root/.debootstrap-complete
 }
 
+# update_chroot <target_dir>
+# <target_dir>: directory to put files
+#
 update_chroot()
 {
 	local target_dir="$1"
@@ -49,6 +59,8 @@ update_chroot()
 	chmod +x $target_dir/root/install-deps.sh
 }
 
+# chroot_build_packages
+#
 chroot_build_packages()
 {
 	display_alert "Starting package building process" "$RELEASE" "info"
@@ -90,8 +102,9 @@ chroot_build_packages()
 		git clone $package_repo $package_dir \$GIT_EXTRA
 		cd $package_dir
 		[[ -n "$package_commit" ]] && git checkout -f $package_commit
-		# unpack debianization files if needed
-		[[ -n "$package_overlay" ]] && tar xf /root/overlay/$package_overlay -C /root/build/$package_dir
+		# copy overlay / "debianization" files
+		[[ -d "/root/overlay/$package_dir/" ]] && cp -ar /root/overlay/$package_dir/* /root/build/$package_dir
+		# execute additional commands before building
 		[[ -n "$package_prebuild_eval" ]] && eval "$package_prebuild_eval"
 		# set upstream version
 		[[ -n "$package_upstream_version" ]] && debchange --preserve --newversion "$package_upstream_version" "Import from upstream"
@@ -125,7 +138,7 @@ chroot_build_packages()
 		# TODO: move built packages to $DEST/debs/extras
 		# mv $target_dir/root/build/*.deb $DEST/debs/extras
 		# cleanup
-		unset package_name package_repo package_dir package_branch package_overlay package_builddeps package_commit package_install_chroot \
+		unset package_name package_repo package_dir package_branch package_builddeps package_commit package_install_chroot \
 			package_prebuild_eval package_upstream_version
 	done
 }

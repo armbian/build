@@ -1,0 +1,181 @@
+#!/usr/bin/make -f
+
+# This enables verbose mode.
+#export DH_VERBOSE=1
+export V=1
+
+# Determine the debian directory, which is the directory of this makefile.
+# The path of this makefile is the first word in the MAKEFILE_LIST.
+DEBIAN_DIR = $(dir $(firstword $(MAKEFILE_LIST)))
+
+# Get the Debian version revision:
+DEB_VERSION  := $(shell dpkg-parsechangelog -l$(DEBIAN_DIR)changelog -SVersion)
+DEB_REVISION := $(word 2, $(subst -, ,$(DEB_VERSION)))
+
+# Get the architecture triplet:
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+
+# Get the host architecture/OS:
+DEB_HOST_ARCH_OS   ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
+DEB_HOST_ARCH      ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+
+# Ubuntu ld adds -Bsymbolic-functions by default, but that prevents FFmpeg from building.
+export DEB_LDFLAGS_MAINT_STRIP=-Wl,-Bsymbolic-functions
+
+# Enable as many features as possible, as long as the result is still GPLv2+ (a GPLv3+ variant is built as libavcodec-extra flavor).
+# The following flags (and build-dependencies) are not added, because they would require a libavformat-extra flavor:
+#   --enable-libsmbclient           (libsmbclient-dev [!hurd-i386 !m68k !sparc64])
+# The following flags are not added, because the necessary libraries are not in Debian:
+#   --enable-decklink
+#   --enable-libcelt                (see #676592: removed from Debian as abandoned upstream, replaced by opus)
+#   --enable-libdcadec
+#   --enable-libilbc                (see #675959 for the RFP bug)
+#   --enable-libkvazaar
+#   --enable-libmfx
+#   --enable-libnut
+#   --enable-libopenh264
+#   --enable-libstagefright-h264
+#   --enable-libutvideo
+#   --enable-libvidstab             (see #709193 for the RFP bug)
+#   --enable-libxavs
+# The following flags are not added for various reasons:
+#   * --enable-libquvi: The wrapper wasn't updated for recent versions (due to license concerns) and thus might produce problems, e.g. for mpv.
+#   * --enable-libv4l2 [!hurd-any]: This is only needed for very old devices and may cause problems for others.
+#                                   Should anyone need it, using LD_PRELOAD pointing on libv4l2 has the same effect.
+#   * --enable-opencl [!hurd-any]:  This is considered an experimental API.
+# For the shared libraries there are several ways to build:
+#  * Without further option: This will have no compatibility with Libav, but some sonames clash. Therefore no good choice.
+#  * With --enable-incompatible-libav-abi, packages build against Libav would work with these libraries, but probably not the other way around.
+#    This could be used together with Breaks:, Replaces: against the corresponding Libav libraries.
+#  * With --enable-raise-major, the resulting binaries should be co-installable with the Libav ones and thus no conflicts would be necessary.
+#    But this could break versioned configure checks.
+#  * With --build-suffix="-ffmpeg" the library names are changed, so there can't be a conflict with Libav.
+CONFIG := --prefix=/usr \
+	--extra-version="$(DEB_REVISION)" \
+	--build-suffix="-ffmpeg" \
+	--toolchain=hardened \
+	--libdir=/usr/lib/$(DEB_HOST_MULTIARCH) \
+	--incdir=/usr/include/$(DEB_HOST_MULTIARCH) \
+	--cc=$(CC) \
+	--cxx=$(CXX) \
+	--enable-gpl \
+	--enable-shared \
+	--disable-stripping \
+	--disable-decoder=libopenjpeg \
+	--disable-decoder=libschroedinger \
+	--enable-avresample \
+	--enable-avisynth \
+	--enable-gnutls \
+	--enable-ladspa \
+	--enable-libass \
+	--enable-libbluray \
+	--enable-libbs2b \
+	--enable-libcaca \
+	--enable-libcdio \
+	--enable-libflite \
+	--enable-libfontconfig \
+	--enable-libfreetype \
+	--enable-libfribidi \
+	--enable-libgme \
+	--enable-libgsm \
+	--enable-libmodplug \
+	--enable-libmp3lame \
+	--enable-libopenjpeg \
+	--enable-libopus \
+	--enable-libpulse \
+	--enable-librtmp \
+	--enable-libschroedinger \
+	--enable-libshine \
+	--enable-libsnappy \
+	--enable-libsoxr \
+	--enable-libspeex \
+	--enable-libssh \
+	--enable-libtheora \
+	--enable-libtwolame \
+	--enable-libvorbis \
+	--enable-libvpx \
+	--enable-libwavpack \
+	--enable-libwebp \
+	--enable-libx265 \
+	--enable-libxvid \
+	--enable-libzvbi \
+	--enable-openal \
+	--enable-opengl \
+	--enable-x11grab
+
+# Disable optimizations if requested.
+ifneq (,$(filter $(DEB_BUILD_OPTIONS),noopt))
+	CONFIG += --disable-optimizations
+endif
+
+# Some libraries are build only on linux.
+ifeq ($(DEB_HOST_ARCH_OS),linux)
+	CONFIG += --enable-libdc1394 \
+		--enable-libiec61883
+endif
+
+# ffmpeg is involed in build-dependency cycles with opencv and x264, so disable them in stage one.
+# Also disable frei0r, which build-depends on opencv.
+ifneq ($(filter stage1,$(DEB_BUILD_PROFILES)),)
+	CONFIG += --disable-libx264 --disable-libopencv --disable-frei0r
+else
+	CONFIG += --enable-frei0r
+
+	# Some libraries are unusable (#792921) on sparc64.
+	ifeq (,$(filter $(DEB_HOST_ARCH),sparc64))
+		CONFIG += --enable-libx264
+	endif
+
+	# OpenCV is not available on some architectures.
+	ifeq (,$(filter $(DEB_HOST_ARCH),sh4 sparc64))
+		CONFIG += --enable-libopencv
+	endif
+endif
+
+# Use the default debhelper scripts, where possible.
+# Enable parallel building.
+%:
+	dh $@ --parallel
+
+# Add configuration options:
+override_dh_auto_configure:
+	$(info DEB_BUILD_OPTIONS = $(DEB_BUILD_OPTIONS))
+	mkdir -p debian/standard
+	cd debian/standard; ../../configure $(CONFIG) || (cat config.log && exit 1); cd ../..
+
+override_dh_auto_clean:
+	[ ! -d debian/standard ] || rm -r debian/standard
+
+# Create doxygen documentation:
+override_dh_auto_build-indep:
+	dh_auto_build -i --sourcedirectory=debian/standard -- apidoc
+	# Create the minified CSS files.
+	lessc debian/missing-sources/ffmpeg-web/src/less/style.less | cleancss > debian/standard/doc/style.min.css
+
+override_dh_auto_build-arch:
+	cd debian/standard; make tools/qt-faststart; cd ../..; \
+	dh_auto_build -a --sourcedirectory=debian/standard || (cat debian/standard/config.log && exit 1)
+
+# Set the library path for the dynamic linker, because the tests otherwise don't find the libraries.
+override_dh_auto_test:
+	export LD_LIBRARY_PATH="libavcodec:libavdevice:libavfilter:libavformat:libavresample:libavutil:libpostproc:libswresample:libswscale"; dh_auto_test --sourcedirectory=debian/standard -- -k
+
+override_dh_auto_install:
+	dh_auto_install --sourcedirectory=debian/standard
+	# Create symbolic links from the standard library lib*.so symlinks, pkg-config files and static libraries to the suffixed ones.
+	for lib in `find debian/ -name lib*-ffmpeg.so; find debian/ -name lib*.pc; find debian/ -name lib*.a`; do \
+		dir=`dirname $$lib`; \
+		base=`basename $$lib`; \
+		link=`echo $$base | sed 's/-ffmpeg//'`; \
+		ln -sf $$base $$link; \
+		mv $$link $$dir; \
+	done
+
+# Don't compress the example source code files.
+override_dh_compress:
+	dh_compress -Xexamples
+
+# Download the latest upstream tarball.
+get-orig-source:
+	cd $(DEBIAN_DIR)../ && \
+	uscan --rename --force-download --destdir $(CURDIR)
