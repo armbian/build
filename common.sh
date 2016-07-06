@@ -316,7 +316,6 @@ process_patch_file() {
 	# main patch command
 	echo "Processing file $(basename $patch)" >> $DEST/debug/patching.log
 	patch --batch --silent -p1 -N < $patch >> $DEST/debug/patching.log 2>&1
-	echo > $DEST/debug/patching.log
 
 	if [[ $? -ne 0 ]]; then
 		display_alert "... $(basename $patch)" "failed" "wrn";
@@ -324,6 +323,7 @@ process_patch_file() {
 	else
 		display_alert "... $(basename $patch)" "succeeded" "info"
 	fi
+	echo >> $DEST/debug/patching.log
 }
 
 install_external_applications()
