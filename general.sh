@@ -337,10 +337,6 @@ prepare_host() {
 	nfs-kernel-server btrfs-tools gcc-aarch64-linux-gnu ncurses-term p7zip-full dos2unix dosfstools libc6-dev-armhf-cross libc6-dev-armel-cross\
 	libc6-dev-arm64-cross curl pdftk"
 
-	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
-	# set NO_APT_CACHER=yes to prevent installation errors in such case
-	if [[ $NO_APT_CACHER != yes ]]; then hostdeps="$hostdeps apt-cacher-ng"; fi
-
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
 	if [[ -z $codename || "trusty wily xenial" != *"$codename"* ]]; then
@@ -359,14 +355,21 @@ prepare_host() {
 		hostdeps="$hostdeps systemd-container udev"
 		if systemd-detect-virt -q; then
 			display_alert "Running in container" "$(systemd-detect-virt)" "info"
-			# TODO: force disable ramdisk and apt-cacher-ng by default?
-			#FORCE_USE_RAMDISK=no
+			# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
+			if [[ $NO_APT_CACHER != no ]]; then
+				display_alert "apt-cacher is disabled"
+				NO_APT_CACHER=yes
+			fi
 			# create device nodes for loop devices
 			for i in {0..6}; do
 				mknod -m0660 /dev/loop$i b 7 $i
 			done
 		fi
 	fi
+
+	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
+	# set NO_APT_CACHER=yes to prevent installation errors in such case
+	if [[ $NO_APT_CACHER != yes ]]; then hostdeps="$hostdeps apt-cacher-ng"; fi
 
 	# Deboostrap in trusty breaks due too old debootstrap. We are installing Xenial package
 	local debootstrap_version=$(dpkg-query -W -f='${Version}\n' debootstrap | cut -f1 -d'+')
