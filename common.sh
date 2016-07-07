@@ -314,6 +314,7 @@ process_patch_file() {
 		| awk '{print $NF}' | sed -n 's/,//p' | xargs -I % sh -c 'rm %'
 
 	# main patch command
+	echo "Processing file $(basename $patch)" >> $DEST/debug/patching.log
 	patch --batch --silent -p1 -N < $patch >> $DEST/debug/patching.log 2>&1
 
 	if [[ $? -ne 0 ]]; then
@@ -322,6 +323,7 @@ process_patch_file() {
 	else
 		display_alert "... $(basename $patch)" "succeeded" "info"
 	fi
+	echo >> $DEST/debug/patching.log
 }
 
 install_external_applications()
