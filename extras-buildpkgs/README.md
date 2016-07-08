@@ -27,7 +27,7 @@
 
 * Add hostapd-realtek package - copy of hostapd with realtek-specific patches
 
-* Delete unused files (i.e. *.lintian-overrides) - **done***
+* Delete unused files (i.e. \*.lintian-overrides) - **done***
 
 * Add missing udev rules to appropriate packages
 
