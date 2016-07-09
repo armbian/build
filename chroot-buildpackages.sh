@@ -174,8 +174,13 @@ chroot_build_packages()
 # fetch_rom_repo <url> <directory> <ref> <ref_subdir>
 # <url>: remote repository URL
 # <directory>: local directory; subdir for branch/tag will be created
-# <ref>: <none> for HEAD, branch:name or tag:name
+# <ref>:
+#	branch:name
+#	tag:name
+#	HEAD
+#	commit:hash@depth
 # <ref_subdir>: "yes" to create subdirectory for tag or branch name
+#
 fetch_from_repo()
 {
 	local url=$1
@@ -221,7 +226,7 @@ fetch_from_repo()
 		case $ref_type in
 			branch) git fetch --depth 1 origin $ref_name ;;
 			tag) git fetch --depth 1 origin tags/$ref_name ;;
-			head) git fetch --depth 1 origin HEAD
+			head) git fetch --depth 1 origin HEAD ;;
 		esac
 		display_alert "... checking out"
 		git checkout -f -q FETCH_HEAD

@@ -4,7 +4,9 @@
 
 * Add a function for installing packages
 
-* Add a variable for dependencies or function for extracting dependencies from deb files
+* ~~Add a variable for dependencies or function for extracting dependencies from deb files~~
+
+* Use aptly to create local repository: this will allow solving dependencies on installation automatically
 
 * Add a variable for list of packages to install during debootstrap - **done**
 
@@ -19,7 +21,7 @@
 
 * Add a code to check if package exists / package needs (re)building - **done**
 
-* Add logging to file
+* Add logging to file for build process
 
 ### All packages:
 
@@ -29,7 +31,7 @@
 
 * Delete unused files (i.e. \*.lintian-overrides) - **done***
 
-* Add missing udev rules to appropriate packages
+* Add missing udev rules to appropriate packages - **done**
 
 ```
 KERNEL=="disp", MODE="0660", GROUP="video"
@@ -44,5 +46,7 @@ KERNEL=="mali", MODE="0660", GROUP="video"
 * ffmpeg: disable building documentation - **done**
 
 * ffmpeg: disable unused features
+
+* mpv: disable unused features
 
 * libvdpau-sunxi: select branch (master or dev)
