@@ -28,16 +28,10 @@ write_uboot_platform()
 family_tweaks()
 {
 	# default lirc configuration
-	sed -i '1i sed -i \x27s/DEVICE="\\/dev\\/input.*/DEVICE="\\/dev\\/input\\/\x27$str\x27"/g\x27 /etc/lirc/hardware.conf' \
-		$CACHEDIR/sdcard/etc/lirc/hardware.conf
-	sed -i '1i str=$(cat /proc/bus/input/devices | grep "H: Handlers=sysrq rfkill kbd event" | awk \x27{print $(NF)}\x27)' \
-		$CACHEDIR/sdcard/etc/lirc/hardware.conf
-	sed -i '1i # Cubietruck automatic lirc device detection by Igor Pecovnik' $CACHEDIR/sdcard/etc/lirc/hardware.conf
-	sed -e 's/DEVICE=""/DEVICE="\/dev\/input\/event1"/g' -i $CACHEDIR/sdcard/etc/lirc/hardware.conf
-	sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="devinput"/g' -i $CACHEDIR/sdcard/etc/lirc/hardware.conf
+	sed -e 's/DEVICE=""/DEVICE="\/dev\/lirc0"/g' -i $CACHEDIR/sdcard/etc/lirc/hardware.conf
+	sed -e 's/MODULES=""/MODULES="sunxi_cir"/g' -i $CACHEDIR/sdcard/etc/lirc/hardware.conf
+	sed -e 's/DRIVER="UNCONFIGURED"/DRIVER="default"/g' -i $CACHEDIR/sdcard/etc/lirc/hardware.conf
 	cp $SRC/lib/config/lirc.conf.cubietruck $CACHEDIR/sdcard/etc/lirc/lircd.conf
-
-
 }
 
 install_boot_script()
