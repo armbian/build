@@ -52,9 +52,6 @@ if [[ -z $ver1 || $ver1 -lt $ver2 ]]; then
 	read
 fi
 
-# clean unfinished DEB packing
-rm -rf $DEST/debs/*/*/
-
 # Script parameters handling
 for i in "$@"; do
 	if [[ $i == *=* ]]; then
