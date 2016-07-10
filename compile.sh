@@ -40,8 +40,10 @@ LIB_TAG=""						# empty for latest version,
 #--------------------------------------------------------------------------------------------------------------------------------
 # to use the config helper: cp lib/helper_compile.sh . 
 # then uncomment next line and *if needed* uncomment the line "do_clean_up" at the bottom 
+# you can also create a file e.g. helper_compile_xu4.sh with your config for odroid-xu4
+# and call with ./compile.sh xu4
 
-#source ./helper_compile.sh
+#source ./helper_compile{1:+_}${1:+$1}.sh
 
 #--------------------------------------------------------------------------------------------------------------------------------
 
