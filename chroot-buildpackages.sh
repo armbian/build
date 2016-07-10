@@ -13,6 +13,7 @@
 # update_chroot
 # chroot_build_packages
 # fetch_from_repo
+# chroot_installpackages
 
 # create_chroot <target_dir>
 # <target_dir>: directory to put files
@@ -73,6 +74,12 @@ chroot_build_packages()
 	display_alert "Starting package building process" "$RELEASE" "info"
 
 	local target_dir=$DEST/buildpkg/${RELEASE}-${ARCH}
+	# to avoid conflicts between published and self-built packages
+	# higher pin-priority may be enough
+	# may use hostname or other unique identifier
+	# local builddate=$(date +"%Y%m%d")
+
+	mkdir -p $DEST/debs/extra/$RELEASE
 
 	[[ ! -f $target_dir/root/.debootstrap-complete ]] && create_chroot "$target_dir"
 
@@ -81,13 +88,16 @@ chroot_build_packages()
 	update_chroot "$target_dir"
 
 	for plugin in $SRC/lib/extras-buildpkgs/*.conf; do
+		unset package_name package_repo package_ref package_builddeps package_install_chroot package_install_target \
+			package_prebuild_eval package_upstream_version needs_building
 		source $plugin
 
 		# check if needs building
 		local needs_building=no
 		if [[ -n $package_install_target ]]; then
 			for f in $package_install_target; do
-				if [[ -z $(find $DEST/debs/extra/ -name "${f}_*$REVISION*_$ARCH.deb") ]]; then
+				if [[ -z $(find $DEST/debs/extra/$RELEASE/ -name "${f}_*$REVISION*_$ARCH.deb" \
+					-o -name "${f}_*$REVISION*_all.deb") ]]; then
 					needs_building=yes
 					break
 				fi
@@ -128,6 +138,7 @@ chroot_build_packages()
 		# set upstream version
 		[[ -n "$package_upstream_version" ]] && debchange --preserve --newversion "$package_upstream_version" "Import from upstream"
 		# set local version
+		# debchange -l~armbian${REVISION}-${builddate}+ "New Armbian release"
 		debchange -l~armbian${REVISION}+ "New Armbian release"
 		# build
 		display_alert "Building package"
@@ -158,16 +169,14 @@ chroot_build_packages()
 		# run build script in chroot
 		systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
 			--bind-ro $SRC/sources/extra/:/root/sources /bin/bash -c "/root/build.sh"
-		# move built packages to $DEST/debs/extras
+		# move built packages to $DEST/debs/extras/$RELEASE
 		if [[ -n $package_install_target ]]; then
 			for f in $package_install_target; do
-				mv $target_dir/root/${f}_*.deb $DEST/debs/extra/
+				mv $target_dir/root/${f}_*.deb $DEST/debs/extra/$RELEASE/
 			done
 		fi
 		# cleanup
 		rm $target_dir/root/*.deb 2>/dev/null
-		unset package_name package_repo package_ref package_builddeps package_install_chroot package_install_target \
-			package_prebuild_eval package_upstream_version needs_building
 	done
 } #############################################################################
 
@@ -196,6 +205,7 @@ fetch_from_repo()
 	# doesn't work with git:// remote URLs
 	# local ref_name=$(git ls-remote --symref $url HEAD | grep -o 'refs/heads/\S*' | sed 's%refs/heads/%%')
 
+	# TODO: Remove hardcoded "extra" part
 	if [[ $ref_subdir == yes ]]; then
 		mkdir -p $SOURCES/extra/$dir/$ref_name
 		cd $SOURCES/extra/$dir/$ref_name
@@ -238,4 +248,64 @@ fetch_from_repo()
 		# working directory is clean, nothing to do
 		display_alert "... up to date"
 	fi
+} #############################################################################
+
+# chroot_installpackages
+#
+chroot_installpackages()
+{
+	local conf="/tmp/aptly-temp/aptly.conf"
+	mkdir -p /tmp/aptly-temp/
+	cat <<-'EOF' > $conf
+	{
+	  "rootDir": "/tmp/aptly-temp/",
+	  "downloadConcurrency": 4,
+	  "downloadSpeedLimit": 0,
+	  "architectures": [],
+	  "dependencyFollowSuggests": false,
+	  "dependencyFollowRecommends": false,
+	  "dependencyFollowAllVariants": false,
+	  "dependencyFollowSource": false,
+	  "gpgDisableSign": false,
+	  "gpgDisableVerify": false,
+	  "downloadSourcePackages": false,
+	  "ppaDistributorID": "ubuntu",
+	  "ppaCodename": "",
+	  "S3PublishEndpoints": {},
+	  "SwiftPublishEndpoints": {}
+	}
+	EOF
+	aptly -config=$conf repo create temp
+	# NOTE: this works recursively
+	aptly -config=$conf -force-replace=true repo add temp $DEST/debs/extra/$RELEASE/
+	# -gpg-key="128290AF"
+	aptly -secret-keyring="$SRC/lib/extras-buildpkgs/buildpkg.gpg" -batch -config=$conf \
+		 -component=temp -distribution=$RELEASE publish repo temp
+	aptly -config=$conf -listen=":8189" serve &
+	local aptly_pid=$!
+	cp $SRC/lib/extras-buildpkgs/buildpkg.key $CACHEDIR/sdcard/tmp/buildpkg.key
+	chroot $CACHEDIR/sdcard /bin/bash -c "cat /tmp/buildpkg.key | apt-key add -"
+	rm $CACHEDIR/sdcard/tmp/buildpkg.key
+	cat <<-EOF > $CACHEDIR/sdcard/etc/apt/preferences.d/90-armbian-temp.pref
+	Package: *
+	Pin: origin "localhost"
+	Pin-Priority: 995
+	EOF
+	cat <<-EOF > $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian-temp.list
+	deb http://localhost:8189/ $RELEASE temp
+	EOF
+	local install_list=""
+	for plugin in $SRC/lib/extras-buildpkgs/*.conf; do
+		source $plugin
+		# TODO: check install condition
+		install_list="$install_list $package_install_target"
+		unset package_install_target
+	done
+	chroot $CACHEDIR/sdcard /bin/bash -c "apt-get update; apt-get install -y $install_list"
+	rm $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian-temp.list
+	chroot $CACHEDIR/sdcard /bin/bash -c "apt-key del 128290AF"
+	rm $CACHEDIR/sdcard/etc/apt/preferences.d/90-armbian-temp.pref
+	kill $aptly_pid
+	rm -rf /tmp/aptly-temp/
+
 } #############################################################################

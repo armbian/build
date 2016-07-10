@@ -2,11 +2,11 @@
 
 ### Installing packages to images:
 
-* Add a function for installing packages
+* Add a function for installing packages - **done**
 
 * ~~Add a variable for dependencies or function for extracting dependencies from deb files~~
 
-* Use aptly to create local repository: this will allow solving dependencies on installation automatically
+* Use aptly to create local repository: this will allow solving dependencies on installation automatically - **done**
 
 * Add a variable for list of packages to install during debootstrap - **done**
 
@@ -27,7 +27,7 @@
 
 * Add sunxi-mali package if BLOBs license allows redistribution, otherwise create an installer like oracle-jdk
 
-* Add hostapd-realtek package - copy of hostapd with realtek-specific patches
+* Add hostapd-realtek package - copy of hostapd with realtek-specific patches - **done**
 
 * Delete unused files (i.e. \*.lintian-overrides) - **done***
 
