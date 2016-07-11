@@ -255,6 +255,7 @@ fetch_from_repo()
 chroot_installpackages()
 {
 	local conf="/tmp/aptly-temp/aptly.conf"
+	rm -rf /tmp/aptly-temp/
 	mkdir -p /tmp/aptly-temp/
 	cat <<-'EOF' > $conf
 	{
@@ -284,8 +285,6 @@ chroot_installpackages()
 	aptly -config=$conf -listen=":8189" serve &
 	local aptly_pid=$!
 	cp $SRC/lib/extras-buildpkgs/buildpkg.key $CACHEDIR/sdcard/tmp/buildpkg.key
-	chroot $CACHEDIR/sdcard /bin/bash -c "cat /tmp/buildpkg.key | apt-key add -"
-	rm $CACHEDIR/sdcard/tmp/buildpkg.key
 	cat <<-EOF > $CACHEDIR/sdcard/etc/apt/preferences.d/90-armbian-temp.pref
 	Package: *
 	Pin: origin "localhost"
@@ -297,15 +296,24 @@ chroot_installpackages()
 	local install_list=""
 	for plugin in $SRC/lib/extras-buildpkgs/*.conf; do
 		source $plugin
-		# TODO: check install condition
-		install_list="$install_list $package_install_target"
-		unset package_install_target
+		if [[ $(type -t package_checkinstall) == function ]] && package_checkinstall; then
+			install_list="$install_list $package_install_target"
+		fi
+		unset package_install_target package_checkinstall
 	done
-	chroot $CACHEDIR/sdcard /bin/bash -c "apt-get update; apt-get install -y $install_list"
-	rm $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian-temp.list
-	chroot $CACHEDIR/sdcard /bin/bash -c "apt-key del 128290AF"
-	rm $CACHEDIR/sdcard/etc/apt/preferences.d/90-armbian-temp.pref
+	cat <<-EOF > $CACHEDIR/sdcard/tmp/install.sh
+	#!/bin/bash
+	cat /tmp/buildpkg.key | apt-key add -
+	apt-get update
+	apt-get install -o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" \
+		--show-progress -o DPKG::Progress-Fancy=1 -y $install_list
+	apt-get clean
+	apt-key del 128290AF
+	rm /etc/apt/sources.list.d/armbian-temp.list /etc/apt/preferences.d/90-armbian-temp.pref /tmp/buildpkg.key
+	rm -- "\$0"
+	EOF
+	chmod +x $CACHEDIR/sdcard/tmp/install.sh
+	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/install.sh"
 	kill $aptly_pid
-	rm -rf /tmp/aptly-temp/
 
 } #############################################################################

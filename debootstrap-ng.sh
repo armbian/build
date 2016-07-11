@@ -78,6 +78,8 @@ debootstrap_ng()
 	# install desktop files
 	[[ $BUILD_DESKTOP == yes ]] && install_desktop
 
+	[[ $EXTERNAL_NEW == yes ]] && chroot_installpackages
+
 	# cleanup for install_kernel and install_board_specific
 	umount $CACHEDIR/sdcard/tmp > /dev/null 2>&1
 
