@@ -357,7 +357,7 @@ prepare_host() {
 			display_alert "Running in container" "$(systemd-detect-virt)" "info"
 			# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
 			if [[ $NO_APT_CACHER != no ]]; then
-				display_alert "apt-cacher is disabled"
+				display_alert "apt-cacher is disabled, set NO_APT_CACHER=no to override" "" "wrn"
 				NO_APT_CACHER=yes
 			fi
 			# create device nodes for loop devices
