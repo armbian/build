@@ -38,7 +38,6 @@ create_chroot()
 	chroot $target_dir /bin/bash -c "locale-gen; update-locale LANG=en_US:en LC_ALL=en_US.UTF-8"
 	printf '#!/bin/sh\nexit 101' > $target_dir/usr/sbin/policy-rc.d
 	chmod 755 $target_dir/usr/sbin/policy-rc.d
-	# TODO: check if resolvconf edit is needed
 	touch $target_dir/root/.debootstrap-complete
 } #############################################################################
 
@@ -164,7 +163,7 @@ chroot_build_packages()
 		chmod +x $target_dir/root/build.sh
 
 		# fetch sources
-		fetch_from_repo $package_repo $package_name $package_ref
+		fetch_from_repo "$package_repo" "extra/$package_name" "$package_ref"
 
 		# run build script in chroot
 		systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
@@ -186,8 +185,10 @@ chroot_build_packages()
 # <ref>:
 #	branch:name
 #	tag:name
-#	HEAD
-#	commit:hash@depth
+#	HEAD*
+#	commit:hash@depth*
+#
+# *: Work in progress
 # <ref_subdir>: "yes" to create subdirectory for tag or branch name
 #
 fetch_from_repo()
@@ -201,28 +202,29 @@ fetch_from_repo()
 	local ref_type=${ref%%:*}
 	local ref_name=${ref##*:}
 
+	display_alert "Checking git sources" "$ref_subdir $ref_name"
+
 	# get default remote branch name without cloning
 	# doesn't work with git:// remote URLs
 	# local ref_name=$(git ls-remote --symref $url HEAD | grep -o 'refs/heads/\S*' | sed 's%refs/heads/%%')
 
-	# TODO: Remove hardcoded "extra" part
 	if [[ $ref_subdir == yes ]]; then
-		mkdir -p $SOURCES/extra/$dir/$ref_name
-		cd $SOURCES/extra/$dir/$ref_name
+		mkdir -p $SOURCES/$dir/$ref_name
+		cd $SOURCES/$dir/$ref_name
 	else
-		mkdir -p $SOURCES/extra/$dir/
-		cd $SOURCES/extra/$dir/
+		mkdir -p $SOURCES/$dir/
+		cd $SOURCES/$dir/
 	fi
 
 	# this may not work if $SRC is a part of git repository
 	if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null) != true ]]; then
-		# initial clone
-		display_alert "... creating shallow clone"
-		git clone -n --depth 1 $url .
+		display_alert "... creating local copy"
+		git init -q .
+		git remote add origin $url
+		#git clone -n --depth 1 $url .
 	fi
 
-	# update from remote if needed
-	local local_hash=$(git rev-parse @)
+	local local_hash=$(git rev-parse @ 2>/dev/null)
 	# even though tags are unlikely to change on remote
 	case $ref_type in
 		branch) local remote_hash=$(git ls-remote -h origin $ref_name | cut -f1) ;;
@@ -247,6 +249,10 @@ fetch_from_repo()
 	else
 		# working directory is clean, nothing to do
 		display_alert "... up to date"
+	fi
+	if [[ -f .gitmodules ]]; then
+		display_alert "... updating submodules"
+		git submodule update --init --depth 1
 	fi
 } #############################################################################
 

@@ -4,13 +4,11 @@
 
 * Add a function for installing packages - **done**
 
-* ~~Add a variable for dependencies or function for extracting dependencies from deb files~~
-
 * Use aptly to create local repository: this will allow solving dependencies on installation automatically - **done**
 
 * Add a variable for list of packages to install during debootstrap - **done**
 
-* Add a variable for installing condition (branch, release, desktop, ...)
+* Add a variable for installing condition (branch, release, desktop, ...) - **done**
 
 
 ### Building:
@@ -25,7 +23,7 @@
 
 ### All packages:
 
-* Add sunxi-mali package if BLOBs license allows redistribution, otherwise create an installer like oracle-jdk
+* Add sunxi-mali package if BLOBs license allows redistribution, otherwise create an installer like oracle-jdk - **done**
 
 * Add hostapd-realtek package - copy of hostapd with realtek-specific patches - **done**
 
