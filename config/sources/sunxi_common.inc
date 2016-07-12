@@ -30,6 +30,9 @@ install_boot_script()
 	cp $SRC/lib/config/bootscripts/boot-sunxi.cmd $CACHEDIR/sdcard/boot/boot.cmd
 
 	# orangepi h3 temp exceptions
-	[[ $LINUXFAMILY == sun8i ]] && sed -i -e '1s/^/gpio set PL10\ngpio set PG11\nsetenv machid 1029\nsetenv bootm_boot_mode sec\n/' \
+	# u-boot default is nonsec.  Legacy requires sec, Mainline requires nonsec for SMP
+	H3_BOOT_MODE="sec"
+	[[ $BRANCH != default ]] && H3_BOOT_MODE="nonsec"
+	[[ $LINUXFAMILY == sun8i ]] && sed -i -e "1s/^/gpio set PL10\ngpio set PG11\nsetenv machid 1029\nsetenv bootm_boot_mode $H3_BOOT_MODE\n/" \
 		-e 's/\ disp.screen0_output_mode=1920x1080p60//' -e 's/\ hdmi.audio=EDID:0//' $CACHEDIR/sdcard/boot/boot.cmd
 }
