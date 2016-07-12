@@ -91,6 +91,9 @@ chroot_build_packages()
 			package_prebuild_eval package_upstream_version needs_building
 		source $plugin
 
+		# check build arch
+		[[ $package_arch != $ARCH || $package_arch != all ]] && continue
+
 		# check if needs building
 		local needs_building=no
 		if [[ -n $package_install_target ]]; then
