@@ -34,7 +34,7 @@ install_boot_script()
 		# u-boot default is nonsec. Legacy requires sec, mainline requires nonsec for SMP
 		local boot_mode=nonsec
 		[[ $BRANCH == default ]] && boot_mode=sec
-		sed -i -e '1s/^/gpio set PL10\ngpio set PG11\nsetenv machid 1029\nsetenv bootm_boot_mode $boot_mode\n/' \
+		sed -i -e "1s/^/gpio set PL10\ngpio set PG11\nsetenv machid 1029\nsetenv bootm_boot_mode $boot_mode\n/" \
 			-e 's/\ disp.screen0_output_mode=1920x1080p60//' -e 's/\ hdmi.audio=EDID:0//' $CACHEDIR/sdcard/boot/boot.cmd
 	fi
 }
