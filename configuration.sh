@@ -36,7 +36,8 @@ MAINLINE_KERNEL_BRANCH="v$(wget -qO-  https://www.kernel.org/finger_banner | gre
 MAINLINE_KERNEL_SOURCE="linux-vanilla"
 
 MAINLINE_UBOOT='git://git.denx.de/u-boot.git'
-MAINLINE_UBOOT_BRANCH="v$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v '\^' | tail -1 | cut -d'v' -f 2)"
+#MAINLINE_UBOOT_BRANCH="v$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v '\^' | tail -1 | cut -d'v' -f 2)"
+MAINLINE_UBOOT_BRANCH="v2016.05"
 MAINLINE_UBOOT_SOURCE='u-boot'
 
 if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]]; then

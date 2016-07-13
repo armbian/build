@@ -28,7 +28,7 @@ build_firmware()
 	cat <<-END > DEBIAN/control
 	Package: armbian-firmware
 	Version: $REVISION
-	Architecture: all
+	Architecture: $ARCH
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Installed-Size: 1
 	Section: kernel
@@ -38,14 +38,14 @@ build_firmware()
 
 	cd $SOURCES
 	# pack
-	mv armbian-firmware armbian-firmware_${REVISION}_all
-	dpkg -b armbian-firmware_${REVISION}_all >> $DEST/debug/install.log 2>&1
-	mv armbian-firmware_${REVISION}_all armbian-firmware
-	mv armbian-firmware_${REVISION}_all.deb $DEST/debs/ || exit_with_error "Failed moving firmware package"
+	mv armbian-firmware armbian-firmware_${REVISION}_${ARCH}
+	dpkg -b armbian-firmware_${REVISION}_${ARCH} >> $DEST/debug/install.log 2>&1
+	mv armbian-firmware_${REVISION}_${ARCH} armbian-firmware
+	mv armbian-firmware_${REVISION}_${ARCH}.deb $DEST/debs/ || exit_with_error "Failed moving firmware package"
 }
 
-[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_all.deb ]] && build_firmware
+[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_${ARCH}.deb ]] && build_firmware
 
 # install
 display_alert "Installing linux firmware" "$REVISION" "info"
-chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-firmware_${REVISION}_all.deb" >> $DEST/debug/install.log
+chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log

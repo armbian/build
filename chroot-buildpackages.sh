@@ -22,7 +22,7 @@ create_chroot()
 {
 	local target_dir="$1"
 	debootstrap --variant=buildd --arch=$ARCH --foreign \
-		--include=ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync \
+		--include=ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3 \
 		$RELEASE $target_dir "http://localhost:3142/$APT_MIRROR"
 	[[ $? -ne 0 || ! -f $target_dir/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
 	cp /usr/bin/$QEMU_BINARY $target_dir/usr/bin/
@@ -38,7 +38,6 @@ create_chroot()
 	chroot $target_dir /bin/bash -c "locale-gen; update-locale LANG=en_US:en LC_ALL=en_US.UTF-8"
 	printf '#!/bin/sh\nexit 101' > $target_dir/usr/sbin/policy-rc.d
 	chmod 755 $target_dir/usr/sbin/policy-rc.d
-	# TODO: check if resolvconf edit is needed
 	touch $target_dir/root/.debootstrap-complete
 } #############################################################################
 
@@ -51,12 +50,10 @@ update_chroot()
 	local t=$target_dir/root/.update-timestamp
 	# apply changes to previously created chroots
 	mkdir -p $target_dir/root/{build,overlay,sources} $target_dir/selinux
-	# apt-get update && apt-get dist-upgrade
-	if [[ -f $t && $(( ($(date +%s) - $(<$t)) / 86400 )) -gt 2 ]]; then
+	if [[ ! -f $t || $(( ($(date +%s) - $(<$t)) / 86400 )) -gt 2 ]]; then
 		systemd-nspawn -a -q -D $target_dir /bin/bash -c "apt-get -q update; apt-get -q -y upgrade"
 		date +%s > $t
 	fi
-	# helper script
 	cat <<-'EOF' > $target_dir/root/install-deps.sh
 	#!/bin/bash
 	deps=()
@@ -71,7 +68,9 @@ update_chroot()
 #
 chroot_build_packages()
 {
-	display_alert "Starting package building process" "$RELEASE" "info"
+	[[ $RELEASE != jessie && $RELEASE != xenial ]] && return
+
+	display_alert "Starting package building process" "$RELEASE"
 
 	local target_dir=$DEST/buildpkg/${RELEASE}-${ARCH}
 	# to avoid conflicts between published and self-built packages
@@ -91,6 +90,9 @@ chroot_build_packages()
 		unset package_name package_repo package_ref package_builddeps package_install_chroot package_install_target \
 			package_prebuild_eval package_upstream_version needs_building
 		source $plugin
+
+		# check build arch
+		[[ $package_arch != $ARCH && $package_arch != all ]] && continue
 
 		# check if needs building
 		local needs_building=no
@@ -116,7 +118,6 @@ chroot_build_packages()
 		export PATH="/usr/lib/ccache:$PATH"
 		export HOME="/root"
 		export DEBIAN_FRONTEND="noninteractive"
-		# for display_alert logging
 		export DEST="/tmp"
 		mkdir -p /tmp/debug
 		export DEB_BUILD_OPTIONS="ccache nocheck"
@@ -124,7 +125,6 @@ chroot_build_packages()
 		export DEBFULLNAME="$MAINTAINER"
 		export DEBEMAIL="$MAINTAINERMAIL"
 		$(declare -f display_alert)
-		# check and install build dependencies
 		display_alert "Installing build dependencies"
 		[[ -n "$package_builddeps" ]] && /root/install-deps.sh $package_builddeps
 		cd /root/build
@@ -164,19 +164,13 @@ chroot_build_packages()
 		chmod +x $target_dir/root/build.sh
 
 		# fetch sources
-		fetch_from_repo $package_repo $package_name $package_ref
+		fetch_from_repo "$package_repo" "extra/$package_name" "$package_ref"
 
 		# run build script in chroot
 		systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
 			--bind-ro $SRC/sources/extra/:/root/sources /bin/bash -c "/root/build.sh"
 		# move built packages to $DEST/debs/extras/$RELEASE
-		if [[ -n $package_install_target ]]; then
-			for f in $package_install_target; do
-				mv $target_dir/root/${f}_*.deb $DEST/debs/extra/$RELEASE/
-			done
-		fi
-		# cleanup
-		rm $target_dir/root/*.deb 2>/dev/null
+		mv $target_dir/root/*.deb $DEST/debs/extra/$RELEASE/
 	done
 } #############################################################################
 
@@ -186,8 +180,10 @@ chroot_build_packages()
 # <ref>:
 #	branch:name
 #	tag:name
-#	HEAD
-#	commit:hash@depth
+#	HEAD*
+#	commit:hash@depth*
+#
+# *: Work in progress
 # <ref_subdir>: "yes" to create subdirectory for tag or branch name
 #
 fetch_from_repo()
@@ -201,28 +197,28 @@ fetch_from_repo()
 	local ref_type=${ref%%:*}
 	local ref_name=${ref##*:}
 
+	display_alert "Checking git sources" "$dir $ref_name"
+
 	# get default remote branch name without cloning
 	# doesn't work with git:// remote URLs
 	# local ref_name=$(git ls-remote --symref $url HEAD | grep -o 'refs/heads/\S*' | sed 's%refs/heads/%%')
 
-	# TODO: Remove hardcoded "extra" part
 	if [[ $ref_subdir == yes ]]; then
-		mkdir -p $SOURCES/extra/$dir/$ref_name
-		cd $SOURCES/extra/$dir/$ref_name
+		mkdir -p $SOURCES/$dir/$ref_name
+		cd $SOURCES/$dir/$ref_name
 	else
-		mkdir -p $SOURCES/extra/$dir/
-		cd $SOURCES/extra/$dir/
+		mkdir -p $SOURCES/$dir/
+		cd $SOURCES/$dir/
 	fi
 
 	# this may not work if $SRC is a part of git repository
 	if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null) != true ]]; then
-		# initial clone
-		display_alert "... creating shallow clone"
-		git clone -n --depth 1 $url .
+		display_alert "... creating local copy"
+		git init -q .
+		git remote add origin $url
 	fi
 
-	# update from remote if needed
-	local local_hash=$(git rev-parse @)
+	local local_hash=$(git rev-parse @ 2>/dev/null)
 	# even though tags are unlikely to change on remote
 	case $ref_type in
 		branch) local remote_hash=$(git ls-remote -h origin $ref_name | cut -f1) ;;
@@ -247,6 +243,10 @@ fetch_from_repo()
 	else
 		# working directory is clean, nothing to do
 		display_alert "... up to date"
+	fi
+	if [[ -f .gitmodules ]]; then
+		display_alert "... updating submodules"
+		git submodule update --init --depth 1
 	fi
 } #############################################################################
 
@@ -315,5 +315,4 @@ chroot_installpackages()
 	chmod +x $CACHEDIR/sdcard/tmp/install.sh
 	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/install.sh"
 	kill $aptly_pid
-
 } #############################################################################

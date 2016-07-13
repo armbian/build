@@ -282,7 +282,7 @@ while [[ $j -lt ${#DISTROS[@]} ]]
 			aptly repo add -force-replace=true -config=config/aptly.conf $DIS $POT/$DIS/*.deb
 		fi
 
-		aptly publish -passphrase=$GPG_PASS -force-overwrite=true -config=config/aptly.conf -component="main" --distribution=$DIS repo $DIS > /dev/null 2>&1
+		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -force-overwrite=true -config=config/aptly.conf -component="main" --distribution=$DIS repo $DIS > /dev/null 2>&1
 
 		#aptly repo show -config=config/aptly.conf $DIS
 
