@@ -115,7 +115,7 @@ chroot_build_packages()
 		# create build script
 		cat <<-EOF > $target_dir/root/build.sh
 		#!/bin/bash
-		export PATH="/usr/lib/ccache:$PATH"
+		export PATH="/usr/lib/ccache:\$PATH"
 		export HOME="/root"
 		export DEBIAN_FRONTEND="noninteractive"
 		export DEST="/tmp"
@@ -168,7 +168,7 @@ chroot_build_packages()
 
 		# run build script in chroot
 		systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
-			--bind-ro $SRC/sources/extra/:/root/sources /bin/bash -c "/root/build.sh"
+			--bind-ro $SRC/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 | tee -a $DEST/debug/buildpkg.log
 		# move built packages to $DEST/debs/extras/$RELEASE
 		mv $target_dir/root/*.deb $DEST/debs/extra/$RELEASE/
 	done
