@@ -237,9 +237,8 @@ fi
 
 [[ -n $RELEASE ]] && create_board_package
 
-# chroot-build-ackages
-[[ $KERNEL_ONLY == yes && ($RELEASE == jessie || $RELEASE == xenial) && \
-	$EXTERNAL_NEW == yes && $(lsb_release -sc) == xenial ]] && chroot_build_packages
+# chroot-buildpackages
+[[ $EXTERNAL_NEW == yes && $(lsb_release -sc) == xenial ]] && chroot_build_packages
 
 if [[ $KERNEL_ONLY != yes ]]; then
 	if [[ $EXTENDED_DEBOOTSTRAP != no ]]; then

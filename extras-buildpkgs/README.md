@@ -43,8 +43,8 @@ KERNEL=="mali", MODE="0660", GROUP="video"
 
 * ffmpeg: disable building documentation - **done**
 
-* ffmpeg: disable unused features
+* ffmpeg: disable unused features - **done**
 
-* mpv: disable unused features
+* mpv: disable unused features **done**
 
 * libvdpau-sunxi: select branch (master or dev)
