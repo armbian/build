@@ -19,7 +19,7 @@
 
 * Add a code to check if package exists / package needs (re)building - **done**
 
-* Add logging to file for build process
+* Add logging to file for build process - **done**
 
 ### All packages:
 
@@ -48,3 +48,5 @@ KERNEL=="mali", MODE="0660", GROUP="video"
 * mpv: disable unused features **done**
 
 * libvdpau-sunxi: select branch (master or dev)
+
+* libcsptr-dev: upgrade to debhelper version 9
