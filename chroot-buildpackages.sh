@@ -50,6 +50,11 @@ update_chroot()
 	local t=$target_dir/root/.update-timestamp
 	# apply changes to previously created chroots
 	mkdir -p $target_dir/root/{build,overlay,sources} $target_dir/selinux
+	# it is symlinked to /run/lock by default
+	if [[ -L $target_dir/var/lock ]]; then
+		rm -rf $target_dir/var/lock
+		mkdir -p $target_dir/var/lock
+	fi
 	if [[ ! -f $t || $(( ($(date +%s) - $(<$t)) / 86400 )) -gt 2 ]]; then
 		systemd-nspawn -a -q -D $target_dir /bin/bash -c "apt-get -q update; apt-get -q -y upgrade"
 		date +%s > $t
@@ -79,9 +84,7 @@ chroot_build_packages()
 	# local builddate=$(date +"%Y%m%d")
 
 	mkdir -p $DEST/debs/extra/$RELEASE
-
 	[[ ! -f $target_dir/root/.debootstrap-complete ]] && create_chroot "$target_dir"
-
 	[[ ! -f $target_dir/bin/bash ]] && exit_with_error "Creating chroot failed" "$RELEASE"
 
 	update_chroot "$target_dir"
@@ -98,8 +101,7 @@ chroot_build_packages()
 		local needs_building=no
 		if [[ -n $package_install_target ]]; then
 			for f in $package_install_target; do
-				if [[ -z $(find $DEST/debs/extra/$RELEASE/ -name "${f}_*$REVISION*_$ARCH.deb" \
-					-o -name "${f}_*$REVISION*_all.deb") ]]; then
+				if [[ -z $(find $DEST/debs/extra/$RELEASE/ -name "${f}_*$REVISION*_$ARCH.deb") ]]; then
 					needs_building=yes
 					break
 				fi
@@ -140,7 +142,6 @@ chroot_build_packages()
 		# set local version
 		# debchange -l~armbian${REVISION}-${builddate}+ "New Armbian release"
 		debchange -l~armbian${REVISION}+ "New Armbian release"
-		# build
 		display_alert "Building package"
 		dpkg-buildpackage -b -uc -us -jauto
 		if [[ \$? -eq 0 ]]; then
@@ -163,13 +164,11 @@ chroot_build_packages()
 
 		chmod +x $target_dir/root/build.sh
 
-		# fetch sources
 		fetch_from_repo "$package_repo" "extra/$package_name" "$package_ref"
 
-		# run build script in chroot
-		systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
-			--bind-ro $SRC/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 | tee -a $DEST/debug/buildpkg.log
-		# move built packages to $DEST/debs/extras/$RELEASE
+		eval systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
+			--bind-ro $SRC/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/buildpkg.log'}
 		mv $target_dir/root/*.deb $DEST/debs/extra/$RELEASE/
 	done
 } #############################################################################
@@ -238,8 +237,12 @@ fetch_from_repo()
 		git checkout -f -q FETCH_HEAD
 	elif [[ -n $(git status -uno --porcelain) ]]; then
 		# working directory is not clean
-		display_alert "... checking out"
-		git checkout -f -q HEAD
+		if [[ $FORCE_CHECKOUT == yes ]]; then
+			display_alert "... checking out"
+			git checkout -f -q HEAD
+		else
+			display_alert "... skipping checkout"
+		fi
 	else
 		# working directory is clean, nothing to do
 		display_alert "... up to date"
