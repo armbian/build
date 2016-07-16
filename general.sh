@@ -353,7 +353,7 @@ prepare_host() {
 
 	if [[ $codename == xenial ]]; then
 		hostdeps="$hostdeps systemd-container udev"
-		if systemd-detect-virt -q; then
+		if systemd-detect-virt -q -c; then
 			display_alert "Running in container" "$(systemd-detect-virt)" "info"
 			# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
 			if [[ $NO_APT_CACHER != no ]]; then
@@ -362,7 +362,7 @@ prepare_host() {
 			fi
 			# create device nodes for loop devices
 			for i in {0..6}; do
-				mknod -m0660 /dev/loop$i b 7 $i
+				mknod -m0660 /dev/loop$i b 7 $i > /dev/null 2>&1
 			done
 		fi
 	fi
