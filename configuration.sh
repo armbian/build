@@ -110,13 +110,8 @@ PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools hddtemp iotop iozone3 stress sys
 	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan aptitude dnsutils f3 haveged hdparm rfkill \
 	vlan sysstat"
 
-PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray wicd thunar-volman galculator \
+PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray wicd thunar-volman galculator \
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu wifi-radar bluetooth"
-
-# hardware acceleration support packages. remove when they are not needed for building packages in chroot
-if [[ $LINUXCONFIG == *sun* && $BRANCH == default ]]; then
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev"
-fi
 
 PACKAGE_LIST_EXCLUDE=""
 
@@ -127,19 +122,17 @@ case $RELEASE in
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel icedove"
 	;;
 	jessie)
-	PACKAGE_LIST_RELEASE="less makedev kbd libpam-systemd iperf3 software-properties-common \
-		libnss-myhostname f2fs-tools"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove gvfs policykit-1 policykit-1-gnome eject"
+	PACKAGE_LIST_RELEASE="less makedev kbd libpam-systemd iperf3 software-properties-common libnss-myhostname f2fs-tools"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel libreoffice-writer icedove policykit-1 policykit-1-gnome eject"
 	;;
 	trusty)
 	PACKAGE_LIST_RELEASE="man-db wget nano software-properties-common iperf f2fs-tools acpid"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme"
 	PACKAGE_LIST_EXCLUDE="ureadahead plymouth"
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget nano libpam-systemd software-properties-common libnss-myhostname f2fs-tools iperf3"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends \
-			policykit-1 xserver-xorg-video-fbdev"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme policykit-1"
 	;;
 esac
 
