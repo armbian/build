@@ -1,3 +1,9 @@
+# Prerequisites for **NEW** users
+
+Please, make sure you have:
+- a proper power supply according to the board manufacturer requirements
+- a reliable SD card (see below "How to prepare SD card?")
+
 # What to download?
 
 Each board is fully supported with up to **four basic system** options: 
