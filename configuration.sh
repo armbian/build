@@ -37,7 +37,7 @@ MAINLINE_KERNEL_SOURCE="linux-vanilla"
 
 MAINLINE_UBOOT='git://git.denx.de/u-boot.git'
 #MAINLINE_UBOOT_BRANCH="v$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v '\^' | tail -1 | cut -d'v' -f 2)"
-MAINLINE_UBOOT_BRANCH="v2016.05"
+MAINLINE_UBOOT_BRANCH="v2016.07"
 MAINLINE_UBOOT_SOURCE='u-boot'
 
 if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]]; then
@@ -78,6 +78,10 @@ esac
 
 # temporary hacks/overrides
 case $LINUXFAMILY in
+	sun*i)
+	# 2016.07 compilation fails due to GCC bug
+	UBOOT_NEEDS_GCC='< 5.4'
+	;;
 	pine64)
 	# fix for u-boot needing armhf GCC 4.8
 	UBOOT_COMPILER="arm-linux-gnueabihf-"
