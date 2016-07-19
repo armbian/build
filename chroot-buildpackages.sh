@@ -155,7 +155,7 @@ chroot_build_packages()
 					dpkg -i \${p}_*.deb
 				done
 			fi
-			mv *.deb /root
+			mv *.deb /root 2>/dev/null
 		else
 			display_alert "Failed building" "$package_name" "err"
 		fi
@@ -284,7 +284,7 @@ chroot_installpackages()
 	aptly -config=$conf -force-replace=true repo add temp $DEST/debs/extra/$RELEASE/
 	# -gpg-key="128290AF"
 	aptly -secret-keyring="$SRC/lib/extras-buildpkgs/buildpkg.gpg" -batch -config=$conf \
-		 -component=temp -distribution=$RELEASE publish repo temp
+		 -force-overwrite=true -component=temp -distribution=$RELEASE publish repo temp
 	aptly -config=$conf -listen=":8189" serve &
 	local aptly_pid=$!
 	cp $SRC/lib/extras-buildpkgs/buildpkg.key $CACHEDIR/sdcard/tmp/buildpkg.key

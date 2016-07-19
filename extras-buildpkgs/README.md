@@ -49,4 +49,7 @@ KERNEL=="mali", MODE="0660", GROUP="video"
 
 * libvdpau-sunxi: select branch (master or dev)
 
-* libcsptr-dev: upgrade to debhelper version 9
+* libcsptr-dev: upgrade to debhelper version 9 - **done**
+
+## Note
+libcedrus compiled without USE_UMP=1 requires access to /dev/ion
