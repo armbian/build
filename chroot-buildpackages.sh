@@ -218,14 +218,29 @@ fetch_from_repo()
 	fi
 
 	local local_hash=$(git rev-parse @ 2>/dev/null)
-	# even though tags are unlikely to change on remote
+
+	local changed=false
 	case $ref_type in
-		branch) local remote_hash=$(git ls-remote -h origin $ref_name | cut -f1) ;;
-		tag) local remote_hash=$(git ls-remote -t origin $ref_name | cut -f1) ;;
-		head) local remote_hash=$(git ls-remote origin HEAD | cut -f1) ;;
+		branch)
+		local remote_hash=$(git ls-remote -h origin "$ref_name" | cut -f1)
+		[[ $local_hash != $remote_hash ]] && changed=true
+		;;
+
+		tag)
+		local remote_hash=$(git ls-remote -t origin "$ref_name" | cut -f1)
+		if [[ $local_hash != $remote_hash ]]; then
+			remote_hash=$(git ls-remote -t origin "$ref_name^{}" | cut -f1)
+			if [[ -z $remote_hash || $local_hash != $remote_hash ]] && changed=true
+		fi
+		;;
+
+		head)
+		local remote_hash=$(git ls-remote origin HEAD | cut -f1)
+		[[ $local_hash != $remote_hash ]] && changed=true
+		;;
 	esac
 
-	if [[ $local_hash != $remote_hash ]]; then
+	if [[ $changed == true ]]; then
 		# remote was updated, fetch and check out updates
 		display_alert "... fetching updates"
 		case $ref_type in
@@ -308,6 +323,8 @@ chroot_installpackages()
 	#!/bin/bash
 	cat /tmp/buildpkg.key | apt-key add -
 	apt-get update
+	# uncomment to debug
+	# /bin/bash
 	apt-get install -o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" \
 		--show-progress -o DPKG::Progress-Fancy=1 -y $install_list
 	apt-get clean
