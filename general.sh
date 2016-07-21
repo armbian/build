@@ -178,29 +178,33 @@ display_alert()
 # Let's have unique way of displaying alerts
 #--------------------------------------------------------------------------------------------------------------------------------
 {
-# log function parameters to install.log
-echo "Displaying message: $@" >> $DEST/debug/output.log
+	# log function parameters to install.log
+	echo "Displaying message: $@" >> $DEST/debug/output.log
 
-local tmp=""
-[[ -n $2 ]] && tmp="[\e[0;33m $2 \x1B[0m]"
+	local tmp=""
+	[[ -n $2 ]] && tmp="[\e[0;33m $2 \x1B[0m]"
 
-case $3 in
-	err)
-	echo -e "[\e[0;31m error \x1B[0m] $1 $tmp"
-	;;
+	case $3 in
+		err)
+		echo -e "[\e[0;31m error \x1B[0m] $1 $tmp"
+		;;
 
-	wrn)
-	echo -e "[\e[0;35m warn \x1B[0m] $1 $tmp"
-	;;
+		wrn)
+		echo -e "[\e[0;35m warn \x1B[0m] $1 $tmp"
+		;;
 
-	ext)
-	echo -e "[\e[0;32m o.k. \x1B[0m] \e[1;32m$1\x1B[0m $tmp"
-	;;
+		ext)
+		echo -e "[\e[0;32m o.k. \x1B[0m] \e[1;32m$1\x1B[0m $tmp"
+		;;
 
-	*) # info or empty
-	echo -e "[\e[0;32m o.k. \x1B[0m] $1 $tmp"
-	;;
-esac
+		info)
+		echo -e "[\e[0;32m o.k. \x1B[0m] $1 $tmp"
+		;;
+
+		*)
+		echo -e "[\e[0;32m .... \x1B[0m] $1 $tmp"
+		;;
+	esac
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------
@@ -293,32 +297,32 @@ prepare_host() {
 	display_alert "Preparing" "host" "info"
 
 	if [[ $(dpkg --print-architecture) == arm* ]]; then
-		display_alert "Please read documentation to set up proper compilation environment" "..." "info"
-		display_alert "http://www.armbian.com/using-armbian-tools/" "..." "info"
+		display_alert "Please read documentation to set up proper compilation environment"
+		display_alert "http://www.armbian.com/using-armbian-tools/"
 		exit_with_error "Running this tool on board itself is not supported"
 	fi
 
 	if [[ $(dpkg --print-architecture) == i386 ]]; then
-		display_alert "Please read documentation to set up proper compilation environment" "..." "info"
-		display_alert "http://www.armbian.com/using-armbian-tools/" "..." "info"
-		display_alert "Running this tool on non-x64 build host in not supported officially" "wrn"
+		display_alert "Please read documentation to set up proper compilation environment"
+		display_alert "http://www.armbian.com/using-armbian-tools/"
+		display_alert "Running this tool on non-x64 build host in not supported officially" "" "wrn"
 	fi
 
 	# dialog may be used to display progress
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "dialog" "info"
+		display_alert "Installing package" "dialog"
 		apt-get install -qq -y --no-install-recommends dialog >/dev/null 2>&1
 	fi
 
 	# wget is needed
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' wget 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "wget" "info"
+		display_alert "Installing package" "wget"
 		apt-get install -qq -y --no-install-recommends wget >/dev/null 2>&1
 	fi
 
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "lsb-release" "info"
+		display_alert "Installing package" "lsb-release"
 		apt-get install -qq -y --no-install-recommends lsb-release >/dev/null 2>&1
 	fi
 
