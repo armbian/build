@@ -230,7 +230,7 @@ fetch_from_repo()
 		local remote_hash=$(git ls-remote -t origin "$ref_name" | cut -f1)
 		if [[ $local_hash != $remote_hash ]]; then
 			remote_hash=$(git ls-remote -t origin "$ref_name^{}" | cut -f1)
-			if [[ -z $remote_hash || $local_hash != $remote_hash ]] && changed=true
+			[[ -z $remote_hash || $local_hash != $remote_hash ]] && changed=true
 		fi
 		;;
 
