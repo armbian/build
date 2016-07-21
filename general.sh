@@ -242,52 +242,44 @@ fingerprint_image()
 	EOF
 }
 
-addtorepo ()
+addtorepo()
 {
 # add all deb files to repository
 # parameter "remove" dumps all and creates new
 # function: cycle trough distributions
-DISTROS=("wheezy" "jessie" "trusty" "xenial")
-IFS=" "
-j=0
-while [[ $j -lt ${#DISTROS[@]} ]]
-        do
-        # add each packet to distribution
-		DIS=${DISTROS[$j]}
+	local distributions=("wheezy" "jessie" "trusty" "xenial")
 
+	for release in "${distributions[@]}"; do
 		# let's drop from publish if exits
-		if [ "$(aptly publish list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $DIS)" != "" ]; then
-		aptly publish drop -config=config/aptly.conf $DIS > /dev/null 2>&1
+		if [[ -n $(aptly publish list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
+			aptly publish drop -config=config/aptly.conf $release > /dev/null 2>&1
 		fi
 		#aptly db cleanup -config=config/aptly.conf
 
-		if [ "$1" == "remove" ]; then
+		if [[ $1 == remove ]]; then
 		# remove repository
-			aptly repo drop -config=config/aptly.conf $DIS > /dev/null 2>&1
+			aptly repo drop -config=config/aptly.conf $release > /dev/null 2>&1
 			aptly db cleanup -config=config/aptly.conf > /dev/null 2>&1
 		fi
 
 		# create repository if not exist
-		OUT=$(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $DIS)
-		if [[ "$OUT" != "$DIS" ]]; then
-			display_alert "Creating section" "$DIS" "info"
-			aptly repo create -config=config/aptly.conf -distribution=$DIS -component=main -comment="Armbian stable" $DIS > /dev/null 2>&1
+		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
+			display_alert "Creating section" "$release" "info"
+			aptly repo create -config=config/aptly.conf -distribution=$release -component=main -comment="Armbian stable" $release > /dev/null 2>&1
 		fi
 
 		# add all packages
-		aptly repo add -force-replace=true -config=config/aptly.conf $DIS $POT/*.deb
+		aptly repo add -force-replace=true -config=config/aptly.conf $release $POT/*.deb
 
 		# add all distribution packages
-		if [ -d "$POT/$DIS" ]; then
-			aptly repo add -force-replace=true -config=config/aptly.conf $DIS $POT/$DIS/*.deb
+		if [[ -d $POT/$release ]]; then
+			aptly repo add -force-replace=true -config=config/aptly.conf $release $POT/*.deb
 		fi
 
-		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -force-overwrite=true -config=config/aptly.conf -component="main" --distribution=$DIS repo $DIS > /dev/null 2>&1
+		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -force-overwrite=true -config=config/aptly.conf -component=main --distribution=$release repo $release > /dev/null 2>&1
 
-		#aptly repo show -config=config/aptly.conf $DIS
-
-        j=$[$j+1]
-done
+		#aptly repo show -config=config/aptly.conf $release
+	done
 }
 
 # prepare_host
