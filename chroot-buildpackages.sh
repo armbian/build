@@ -91,17 +91,20 @@ chroot_build_packages()
 
 	for plugin in $SRC/lib/extras-buildpkgs/*.conf; do
 		unset package_name package_repo package_ref package_builddeps package_install_chroot package_install_target \
-			package_prebuild_eval package_upstream_version needs_building
+			package_prebuild_eval package_upstream_version needs_building plugin_target_dir package_component
 		source $plugin
 
 		# check build arch
 		[[ $package_arch != $ARCH && $package_arch != all ]] && continue
 
+		local plugin_target_dir=$DEST/debs/extra/$RELEASE/$package_component/
+		mkdir -p $plugin_target_dir
+
 		# check if needs building
 		local needs_building=no
 		if [[ -n $package_install_target ]]; then
 			for f in $package_install_target; do
-				if [[ -z $(find $DEST/debs/extra/$RELEASE/ -name "${f}_*$REVISION*_$ARCH.deb") ]]; then
+				if [[ -z $(find $plugin_target_dir -name "${f}_*$REVISION*_$ARCH.deb") ]]; then
 					needs_building=yes
 					break
 				fi
@@ -169,7 +172,7 @@ chroot_build_packages()
 		eval systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
 			--bind-ro $SRC/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/buildpkg.log'}
-		mv $target_dir/root/*.deb $DEST/debs/extra/$RELEASE/
+		mv $target_dir/root/*.deb $plugin_target_dir
 	done
 } #############################################################################
 
