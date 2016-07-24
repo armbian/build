@@ -21,7 +21,7 @@
 POT="../output/debs/"
 
 # load functions
-source general.sh			
+source general.sh
 
 # run repository update
 addtorepo

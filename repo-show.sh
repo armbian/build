@@ -9,26 +9,19 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 
-# This scripts shows packages in local repository 
+# This scripts shows packages in local repository
+
+# load functions
+source general.sh
 
 DISTROS=("wheezy" "jessie" "trusty" "xenial")
  
-showall ()
+showall()
 {
-
-
-# function: cycle trough distributions
-IFS=" "
-j=0
-while [[ $j -lt ${#DISTROS[@]} ]]
-        do
-        # add each packet to distribution
-		DIS=${DISTROS[$j]}
-		echo $DIS
-		aptly repo show -with-packages  -config=config/aptly.conf $DIS | tail -n +7
-		
-        j=$[$j+1]
-done
+	for release in "${DISTROS[@]}"; do
+		display_alert "Displaying repository contents for" "$release" "ext"
+		aptly repo show -with-packages -config=config/aptly.conf $release | tail -n +7
+	done
 }
 
 showall

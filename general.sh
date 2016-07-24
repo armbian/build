@@ -178,29 +178,33 @@ display_alert()
 # Let's have unique way of displaying alerts
 #--------------------------------------------------------------------------------------------------------------------------------
 {
-# log function parameters to install.log
-echo "Displaying message: $@" >> $DEST/debug/output.log
+	# log function parameters to install.log
+	echo "Displaying message: $@" >> $DEST/debug/output.log
 
-local tmp=""
-[[ -n $2 ]] && tmp="[\e[0;33m $2 \x1B[0m]"
+	local tmp=""
+	[[ -n $2 ]] && tmp="[\e[0;33m $2 \x1B[0m]"
 
-case $3 in
-	err)
-	echo -e "[\e[0;31m error \x1B[0m] $1 $tmp"
-	;;
+	case $3 in
+		err)
+		echo -e "[\e[0;31m error \x1B[0m] $1 $tmp"
+		;;
 
-	wrn)
-	echo -e "[\e[0;35m warn \x1B[0m] $1 $tmp"
-	;;
+		wrn)
+		echo -e "[\e[0;35m warn \x1B[0m] $1 $tmp"
+		;;
 
-	ext)
-	echo -e "[\e[0;32m o.k. \x1B[0m] \e[1;32m$1\x1B[0m $tmp"
-	;;
+		ext)
+		echo -e "[\e[0;32m o.k. \x1B[0m] \e[1;32m$1\x1B[0m $tmp"
+		;;
 
-	*) # info or empty
-	echo -e "[\e[0;32m o.k. \x1B[0m] $1 $tmp"
-	;;
-esac
+		info)
+		echo -e "[\e[0;32m o.k. \x1B[0m] $1 $tmp"
+		;;
+
+		*)
+		echo -e "[\e[0;32m .... \x1B[0m] $1 $tmp"
+		;;
+	esac
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------
@@ -242,52 +246,44 @@ fingerprint_image()
 	EOF
 }
 
-addtorepo ()
+addtorepo()
 {
 # add all deb files to repository
 # parameter "remove" dumps all and creates new
 # function: cycle trough distributions
-DISTROS=("wheezy" "jessie" "trusty" "xenial")
-IFS=" "
-j=0
-while [[ $j -lt ${#DISTROS[@]} ]]
-        do
-        # add each packet to distribution
-		DIS=${DISTROS[$j]}
+	local distributions=("wheezy" "jessie" "trusty" "xenial")
 
+	for release in "${distributions[@]}"; do
 		# let's drop from publish if exits
-		if [ "$(aptly publish list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $DIS)" != "" ]; then
-		aptly publish drop -config=config/aptly.conf $DIS > /dev/null 2>&1
+		if [[ -n $(aptly publish list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
+			aptly publish drop -config=config/aptly.conf $release > /dev/null 2>&1
 		fi
 		#aptly db cleanup -config=config/aptly.conf
 
-		if [ "$1" == "remove" ]; then
+		if [[ $1 == remove ]]; then
 		# remove repository
-			aptly repo drop -config=config/aptly.conf $DIS > /dev/null 2>&1
+			aptly repo drop -config=config/aptly.conf $release > /dev/null 2>&1
 			aptly db cleanup -config=config/aptly.conf > /dev/null 2>&1
 		fi
 
 		# create repository if not exist
-		OUT=$(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $DIS)
-		if [[ "$OUT" != "$DIS" ]]; then
-			display_alert "Creating section" "$DIS" "info"
-			aptly repo create -config=config/aptly.conf -distribution=$DIS -component=main -comment="Armbian stable" $DIS > /dev/null 2>&1
+		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
+			display_alert "Creating section" "$release" "info"
+			aptly repo create -config=config/aptly.conf -distribution=$release -component=main -comment="Armbian stable" $release > /dev/null 2>&1
 		fi
 
 		# add all packages
-		aptly repo add -force-replace=true -config=config/aptly.conf $DIS $POT/*.deb
+		aptly repo add -force-replace=true -config=config/aptly.conf $release $POT/*.deb
 
 		# add all distribution packages
-		if [ -d "$POT/$DIS" ]; then
-			aptly repo add -force-replace=true -config=config/aptly.conf $DIS $POT/$DIS/*.deb
+		if [[ -d $POT/$release ]]; then
+			aptly repo add -force-replace=true -config=config/aptly.conf $release $POT/*.deb
 		fi
 
-		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -force-overwrite=true -config=config/aptly.conf -component="main" --distribution=$DIS repo $DIS > /dev/null 2>&1
+		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -force-overwrite=true -config=config/aptly.conf -component=main --distribution=$release repo $release > /dev/null 2>&1
 
-		#aptly repo show -config=config/aptly.conf $DIS
-
-        j=$[$j+1]
-done
+		#aptly repo show -config=config/aptly.conf $release
+	done
 }
 
 # prepare_host
@@ -301,32 +297,32 @@ prepare_host() {
 	display_alert "Preparing" "host" "info"
 
 	if [[ $(dpkg --print-architecture) == arm* ]]; then
-		display_alert "Please read documentation to set up proper compilation environment" "..." "info"
-		display_alert "http://www.armbian.com/using-armbian-tools/" "..." "info"
+		display_alert "Please read documentation to set up proper compilation environment"
+		display_alert "http://www.armbian.com/using-armbian-tools/"
 		exit_with_error "Running this tool on board itself is not supported"
 	fi
 
 	if [[ $(dpkg --print-architecture) == i386 ]]; then
-		display_alert "Please read documentation to set up proper compilation environment" "..." "info"
-		display_alert "http://www.armbian.com/using-armbian-tools/" "..." "info"
-		display_alert "Running this tool on non-x64 build host in not supported officially" "wrn"
+		display_alert "Please read documentation to set up proper compilation environment"
+		display_alert "http://www.armbian.com/using-armbian-tools/"
+		display_alert "Running this tool on non-x64 build host in not supported officially" "" "wrn"
 	fi
 
 	# dialog may be used to display progress
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "dialog" "info"
+		display_alert "Installing package" "dialog"
 		apt-get install -qq -y --no-install-recommends dialog >/dev/null 2>&1
 	fi
 
 	# wget is needed
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' wget 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "wget" "info"
+		display_alert "Installing package" "wget"
 		apt-get install -qq -y --no-install-recommends wget >/dev/null 2>&1
 	fi
 
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "lsb-release" "info"
+		display_alert "Installing package" "lsb-release"
 		apt-get install -qq -y --no-install-recommends lsb-release >/dev/null 2>&1
 	fi
 
