@@ -440,16 +440,13 @@ download_toolchain()
 	local filename=${url##*/}
 	local dirname=${filename//.tar.xz}
 
-	display_alert "Checking toolchain" "$dirname" "info"
-
 	if [[ -f $SRC/toolchains/$dirname/.download-complete ]]; then
-		display_alert "Up to date"
 		return
 	fi
 
 	cd $SRC/toolchains/
 
-	display_alert "Downloading"
+	display_alert "Downloading toolchain" "$dirname" "info"
 	curl -Lf --progress-bar $url -o $filename
 	curl -Lf --progress-bar ${url}.asc -o ${filename}.asc
 
