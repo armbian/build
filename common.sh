@@ -390,7 +390,7 @@ customize_image()
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
 	umount $CACHEDIR/sdcard/tmp/overlay
-	rm -r $CACHEDIR/sdcard/tmp/overlay
+	mountpoint -q $CACHEDIR/sdcard/tmp/overlay || rm -r $CACHEDIR/sdcard/tmp/overlay
 }
 
 userpatch_create()
