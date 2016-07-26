@@ -51,5 +51,7 @@ KERNEL=="mali", MODE="0660", GROUP="video"
 
 * libcsptr-dev: upgrade to debhelper version 9 - **done**
 
-## Note
+* hostapd(-realtek): add /etc/hostapd.conf templates
+
+## Notes
 libcedrus compiled without USE_UMP=1 requires access to /dev/ion
