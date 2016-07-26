@@ -34,7 +34,7 @@ compile_uboot()
 	grab_version "$SOURCES/$BOOTSOURCEDIR" "VER"
 
 	# create patch for manual source changes in debug mode
-	userpatch_create "u-boot"
+	[[ $DEBUG_MODE == yes ]] && userpatch_create "u-boot"
 
 	display_alert "Compiling uboot" "$VER" "info"
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
@@ -136,8 +136,8 @@ compile_kernel()
 	grab_version "$SOURCES/$LINUXSOURCEDIR" "VER"
 
 	# create patch for manual source changes in debug mode
-	userpatch_create "kernel"
-	
+	[[ $DEBUG_MODE == yes ]] && userpatch_create "kernel"
+
 	display_alert "Compiling $BRANCH kernel" "$VER" "info"
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
 	cd $SOURCES/$LINUXSOURCEDIR/
@@ -385,6 +385,8 @@ customize_image()
 	chmod +x $CACHEDIR/sdcard/tmp/customize-image.sh
 	mkdir -p $CACHEDIR/sdcard/tmp/overlay
 	mount --bind $SRC/userpatches/overlay $CACHEDIR/sdcard/tmp/overlay
+	# separate remount command for compatibility with Trusty (util-linux < 2.27)
+	mount -o remount,ro $CACHEDIR/sdcard/tmp/overlay
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
 	umount $CACHEDIR/sdcard/tmp/overlay
@@ -393,31 +395,29 @@ customize_image()
 
 userpatch_create()
 {
-	if [[ $DEBUG_MODE == yes ]]; then
-		# create commit to start from clean source
-		git add .
-		git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
-		
-		local patch="$SRC/userpatches/patch/$1-$LINUXFAMILY-$BRANCH.patch"
-		
-		# apply previous user debug mode created patches
-		[[ -f "$patch" && $1 == "u-boot" ]] && display_alert "Applying existing u-boot patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
-		[[ -f "$patch" && $1 == "kernel" ]] && display_alert "Applying existing kernel patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
+	# create commit to start from clean source
+	git add .
+	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
 
-		# prompt to alter source
-		display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
-		display_alert "Press <Enter> after you are done" "waiting" "wrn"
-		read
-		tput cuu1
-		git add .
-		# create patch out of changes
-		if ! git diff-index --quiet --cached HEAD; then		
-			git diff --staged > $patch
-			display_alert "You will find your patch here:" "$patch" "info"
-		else
-			display_alert "No changes found, skipping patch creation" "" "wrn"
-		fi
-		git reset --soft HEAD~
-		for i in {3..1..1};do echo -n "$i." && sleep 1; done
+	local patch="$SRC/userpatches/patch/$1-$LINUXFAMILY-$BRANCH.patch"
+
+	# apply previous user debug mode created patches
+	[[ -f "$patch" && $1 == "u-boot" ]] && display_alert "Applying existing u-boot patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
+	[[ -f "$patch" && $1 == "kernel" ]] && display_alert "Applying existing kernel patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
+
+	# prompt to alter source
+	display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
+	display_alert "Press <Enter> after you are done" "waiting" "wrn"
+	read
+	tput cuu1
+	git add .
+	# create patch out of changes
+	if ! git diff-index --quiet --cached HEAD; then
+		git diff --staged > $patch
+		display_alert "You will find your patch here:" "$patch" "info"
+	else
+		display_alert "No changes found, skipping patch creation" "" "wrn"
 	fi
+	git reset --soft HEAD~
+	for i in {3..1..1};do echo -n "$i." && sleep 1; done
 }
