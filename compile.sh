@@ -89,6 +89,10 @@ else
 	source $SRC/lib/main.sh
 fi
 
+# hook for function to run after build, i.e. to change owner of $SRC
+# NOTE: this will run only if there were no errors during build process
+[[ $(type -t run_after_build) == function ]] && run_after_build
+
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=20
+# VERSION=21
