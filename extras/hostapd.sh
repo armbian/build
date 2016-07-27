@@ -91,7 +91,7 @@ compile_hostapd()
 			patch --batch -f -p1 < $SRC/lib/config/hostapd/patch/realtek.patch >> $DEST/debug/hostapd-build.log 2>&1
 		else
 			cp $SRC/lib/config/hostapd/config/config_default $tmpdir/hostap/hostapd/.config
-			if ! grep -q rtl871 $tmpdir/hostap/hostapd/main.c ; then
+			if grep -q rtl871 $tmpdir/hostap/hostapd/main.c ; then
 				patch --batch -t -p1 < $SRC/lib/config/hostapd/patch/realtek.patch >> $DEST/debug/hostapd-build.log 2>&1
 			fi
 		fi
