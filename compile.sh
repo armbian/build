@@ -44,7 +44,7 @@ DEST=$SRC/output
 SOURCES=$SRC/sources
 
 #--------------------------------------------------------------------------------------------------------------------------------
-# To preserve proper librarires updating
+# To preserve proper libraries updating
 #--------------------------------------------------------------------------------------------------------------------------------
 if [[ -f $SRC/main.sh && -d $SRC/bin ]]; then
 	echo -e "[\e[0;31m error \x1B[0m] Copy this file one level up, alter and run again."

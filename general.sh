@@ -40,31 +40,34 @@ cleaning()
 
 		debs) # delete output/debs for current branch and family
 		if [[ -d $DEST/debs ]]; then
-			display_alert "Cleaning $DEST/debs for" "$BOARD $BRANCH" "info"
+			display_alert "Cleaning output/debs for" "$BOARD $BRANCH" "info"
 			# easier than dealing with variable expansion and escaping dashes in file names
 			find $DEST/debs -name '*.deb' | grep -E "${CHOSEN_KERNEL/image/.*}|$CHOSEN_UBOOT" | xargs rm -f
 			[[ -n $RELEASE ]] && rm -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_*_${ARCH}.deb
 		fi
 		;;
 
+		extras) # delete output/debs/extra/$RELEASE for all architectures
+		if [[ -n $RELEASE && -d $DEST/debs/extra/$RELEASE ]]; then
+			display_alert "Cleaning output/debs/extra for" "$RELEASE" "info"
+			rm -rf $DEST/debs/extra/$RELEASE
+		fi
+		;;
+
 		alldebs) # delete output/debs
-		[[ -d $DEST/debs ]] && display_alert "Cleaning" "$DEST/debs" "info" && rm -rf $DEST/debs/*
+		[[ -d $DEST/debs ]] && display_alert "Cleaning" "output/debs" "info" && rm -rf $DEST/debs/*
 		;;
 
 		cache) # delete output/cache
-		[[ -d $CACHEDIR ]] && display_alert "Cleaning" "$CACHEDIR" "info" && find $CACHEDIR/ -type f -delete
+		[[ -d $CACHEDIR ]] && display_alert "Cleaning" "output/cache" "info" && find $CACHEDIR/ -type f -delete
 		;;
 
 		images) # delete output/images
-		[[ -d $DEST/images ]] && display_alert "Cleaning" "$DEST/images" "info" && rm -rf $DEST/images/*
+		[[ -d $DEST/images ]] && display_alert "Cleaning" "output/images" "info" && rm -rf $DEST/images/*
 		;;
 
-		sources) # delete output/sources
-		[[ -d $SOURCES ]] && display_alert "Cleaning" "$SOURCES" "info" && rm -rf $SOURCES/*
-		;;
-
-		*) # unknown
-		display_alert "Cleaning: unrecognized option" "$1" "wrn"
+		sources) # delete output/sources and output/buildpkg
+		[[ -d $SOURCES ]] && display_alert "Cleaning" "sources" "info" && rm -rf $SOURCES/* $DEST/buildpkg/*
 		;;
 	esac
 }
@@ -86,6 +89,7 @@ exit_with_error()
 	display_alert "ERROR in function $_function" "$_file:$_line" "err"
 	display_alert "$_description" "$_highlight" "err"
 	display_alert "Process terminated" "" "info"
+	# TODO: execute run_after_build here?
 	exit -1
 }
 

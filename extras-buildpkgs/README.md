@@ -15,7 +15,7 @@
 
 * Add a function / code to move packages to $DEST/debs/extras - **done**
 
-* Adjust "debs" option of CLEAN_LEVEL to delete old packages in "extras" subdirectory
+* Adjust "debs" option of CLEAN_LEVEL to delete old packages in "extras" subdirectory - **done**
 
 * Add a code to check if package exists / package needs (re)building - **done**
 
@@ -30,14 +30,6 @@
 * Delete unused files (i.e. \*.lintian-overrides) - **done***
 
 * Add missing udev rules to appropriate packages - **done**
-
-```
-KERNEL=="disp", MODE="0660", GROUP="video"
-KERNEL=="cedar_dev", MODE="0660", GROUP="video"
-KERNEL=="ump", MODE="0660", GROUP="video"
-KERNEL=="mali", MODE="0660", GROUP="video"
-```
-
 
 ### Package-specific:
 
