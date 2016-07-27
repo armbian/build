@@ -91,8 +91,8 @@ fi
 
 # hook for function to run after build, i.e. to change owner of $SRC
 # NOTE: this will run only if there were no errors during build process
-[[ $(type -t run_after_build) == function ]] && run_after_build
+[[ $(type -t run_after_build) == function ]] && run_after_build || true
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=21
+# VERSION=22
