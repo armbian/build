@@ -465,7 +465,7 @@ download_toolchain()
 	fi
 	if [[ $verified == true ]]; then
 		display_alert "Extracting"
-		tar --overwrite -xf $filename && touch $dirname/.download-complete
+		tar --overwrite -xf $filename && touch $SRC/toolchains/$dirname/.download-complete
 		display_alert "Download complete" "" "info"
 	else
 		display_alert "Verification failed" "" "wrn"
