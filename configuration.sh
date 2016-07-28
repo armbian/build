@@ -83,7 +83,8 @@ esac
 case $LINUXFAMILY in
 	sun*i)
 	# 2016.07 compilation fails due to GCC bug
-	UBOOT_NEEDS_GCC='< 5.4'
+	# works on Linaro 5.3.1, fails on Ubuntu 5.3.1
+	UBOOT_NEEDS_GCC='< 5.3'
 	;;
 	pine64)
 	# fix for u-boot needing armhf GCC 4.8
