@@ -10,33 +10,30 @@
 #
 #--------------------------------------------------------------------------------------------------------------------------------
 
-# Read build script documentation
-# http://www.armbian.com/using-armbian-tools/
-# for detailed explanation of these parameters
+# Read build script documentation http://www.armbian.com/using-armbian-tools/
+# for detailed explanation of these options and for additional options not listed here
 
-# method
-KERNEL_ONLY=""						# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
-KERNEL_CONFIGURE="no"					# want to change my default configuration
-CLEAN_LEVEL="make,debs"					# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
-							# "debs" = delete packages in "./output/debs" for current branch and family,
-							# "alldebs" - delete all packages in "./output/debs", "images" = delete "./output/images",
-							# "cache" = delete "./output/cache", "sources" = delete "./sources"
-# user
-DEST_LANG="en_US.UTF-8"					# sl_SI.UTF-8, en_US.UTF-8
-CONSOLE_CHAR="UTF-8"
+KERNEL_ONLY=""				# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
+KERNEL_CONFIGURE="no"			# change provided kernel configuration
+CLEAN_LEVEL="make,debs"			# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
+					# "debs" = delete packages in "./output/debs" for current branch and family,
+					# "alldebs" - delete all packages in "./output/debs", "images" = delete "./output/images",
+					# "cache" = delete "./output/cache", "sources" = delete "./sources"
+
+DEST_LANG="en_US.UTF-8"			# sl_SI.UTF-8, en_US.UTF-8
 
 # advanced
-KERNEL_KEEP_CONFIG="no"					# overwrite kernel config before compilation
-EXTERNAL="yes"						# build and install extra applications and drivers
-DEBUG_MODE="no"					# wait that you make changes to uboot and kernel source and creates patches
-FORCE_CHECKOUT="yes"					# ignore manual changes to source
-BUILD_ALL="no"						# cycle through available boards and make images or kernel/u-boot packages.
-							# set KERNEL_ONLY to "yes" or "no" to build all kernels/all images
+KERNEL_KEEP_CONFIG="no"			# do not overwrite kernel config before compilation
+EXTERNAL="yes"				# build and install extra applications and drivers
+DEBUG_MODE="no"				# wait that you make changes to uboot and kernel source and creates patches
+FORCE_CHECKOUT="yes"			# ignore manual changes to source
+BUILD_ALL="no"				# cycle through available boards and make images or kernel/u-boot packages.
+					# set KERNEL_ONLY to "yes" or "no" to build all packages/all images
 
 # build script version to use
-LIB_TAG=""						# empty for latest version,
-							# one of listed here: https://github.com/igorpecovnik/lib/tags for stable versions,
-							# or commit hash
+LIB_TAG=""				# empty for latest version,
+					# one of listed here: https://github.com/igorpecovnik/lib/tags for stable versions,
+					# or commit hash
 #--------------------------------------------------------------------------------------------------------------------------------
 
 # source is where compile.sh is located
@@ -47,27 +44,17 @@ DEST=$SRC/output
 SOURCES=$SRC/sources
 
 #--------------------------------------------------------------------------------------------------------------------------------
-# To preserve proper librarires updating
+# To preserve proper libraries updating
 #--------------------------------------------------------------------------------------------------------------------------------
 if [[ -f $SRC/main.sh && -d $SRC/bin ]]; then
 	echo -e "[\e[0;31m error \x1B[0m] Copy this file one level up, alter and run again."
-	exit
-fi
-
-
-#--------------------------------------------------------------------------------------------------------------------------------
-# Show warning for those who updated the script
-#--------------------------------------------------------------------------------------------------------------------------------
-if [[ -d $DEST/output ]]; then
-	echo -e "[\e[0;35m warn \x1B[0m] Structure has been changed. Remove all files and start in a clean directory. \
-	CTRL-C to exit or any key to continue. Only sources will be doubled ..."
-	read
+	exit -1
 fi
 
 if [[ $EUID != 0 ]]; then
 	echo -e "[\e[0;35m warn \x1B[0m] This script requires root privileges"
 	sudo "$0" "$@"
-	exit 1
+	exit $?
 fi
 
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -85,22 +72,27 @@ if [[ ! -f $SRC/.ignore_changes ]]; then
 	git pull
 	CHANGED_FILES=$(git diff --name-only)
 	if [[ -n $CHANGED_FILES ]]; then
-		echo -e "[\e[0;35m warn \x1B[0m] Can't update [\e[0;33mlib/\x1B[0m] since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
+		echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
 		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
 		read
 	else
 		git checkout ${LIB_TAG:- master}
 	fi
 fi
-#--------------------------------------------------------------------------------------------------------------------------------
-# Do we need to build all images
-#--------------------------------------------------------------------------------------------------------------------------------
+
+# source additional configuration file
+[[ -n $1 && -f $SRC/config-$1.conf ]] && source $SRC/config-$1.conf
+
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
 	source $SRC/lib/build-all.sh
 else
 	source $SRC/lib/main.sh
 fi
 
+# hook for function to run after build, i.e. to change owner of $SRC
+# NOTE: this will run only if there were no errors during build process
+[[ $(type -t run_after_build) == function ]] && run_after_build || true
+
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=19
+# VERSION=22

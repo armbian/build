@@ -15,7 +15,7 @@
 
 * Add a function / code to move packages to $DEST/debs/extras - **done**
 
-* Adjust "debs" option of CLEAN_LEVEL to delete old packages in "extras" subdirectory
+* Adjust "debs" option of CLEAN_LEVEL to delete old packages in "extras" subdirectory - **done**
 
 * Add a code to check if package exists / package needs (re)building - **done**
 
@@ -31,14 +31,6 @@
 
 * Add missing udev rules to appropriate packages - **done**
 
-```
-KERNEL=="disp", MODE="0660", GROUP="video"
-KERNEL=="cedar_dev", MODE="0660", GROUP="video"
-KERNEL=="ump", MODE="0660", GROUP="video"
-KERNEL=="mali", MODE="0660", GROUP="video"
-```
-
-
 ### Package-specific:
 
 * ffmpeg: disable building documentation - **done**
@@ -51,5 +43,7 @@ KERNEL=="mali", MODE="0660", GROUP="video"
 
 * libcsptr-dev: upgrade to debhelper version 9 - **done**
 
-## Note
+* hostapd(-realtek): add /etc/hostapd.conf templates
+
+## Notes
 libcedrus compiled without USE_UMP=1 requires access to /dev/ion

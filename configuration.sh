@@ -32,7 +32,10 @@ if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
 else
 	MAINLINE_KERNEL='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 fi
-MAINLINE_KERNEL_BRANCH="v$(wget -qO-  https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1)"
+# allow upgrades for same major.minor versions
+ARMBIAN_MAINLINE_KERNEL_VERSION="4.6"
+MAINLINE_KERNEL_BRANCH=v$(wget -qO- https://www.kernel.org/finger_banner | awk '{print $NF}' | grep -oE "^${ARMBIAN_MAINLINE_KERNEL_VERSION//./\\.}\.?[[:digit:]]*")
+#MAINLINE_KERNEL_BRANCH="v$(wget -qO- https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1)"
 MAINLINE_KERNEL_SOURCE="linux-vanilla"
 
 MAINLINE_UBOOT='git://git.denx.de/u-boot.git'
@@ -80,7 +83,8 @@ esac
 case $LINUXFAMILY in
 	sun*i)
 	# 2016.07 compilation fails due to GCC bug
-	UBOOT_NEEDS_GCC='< 5.4'
+	# works on Linaro 5.3.1, fails on Ubuntu 5.3.1
+	UBOOT_NEEDS_GCC='< 5.3'
 	;;
 	pine64)
 	# fix for u-boot needing armhf GCC 4.8

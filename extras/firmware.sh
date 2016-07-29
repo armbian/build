@@ -20,7 +20,7 @@ build_firmware()
 	cp -R $SRC/lib/bin/firmware-overlay/* $SOURCES/$plugin_dir/lib/firmware
 
 	# cleanup what's not needed for sure
-	rm -rf $plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia}
+	rm -rf $SOURCES/$plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox}
 	cd $SOURCES/$plugin_dir
 
 	# set up control file

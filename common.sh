@@ -34,13 +34,14 @@ compile_uboot()
 	grab_version "$SOURCES/$BOOTSOURCEDIR" "VER"
 
 	# create patch for manual source changes in debug mode
-	userpatch_create "u-boot"
+	[[ $DEBUG_MODE == yes ]] && userpatch_create "u-boot"
 
 	display_alert "Compiling uboot" "$VER" "info"
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
 	cd $SOURCES/$BOOTSOURCEDIR
 
-	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} 'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
+	eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
+		'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
@@ -56,7 +57,8 @@ compile_uboot()
 		fi
 	fi
 
-	eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} 'make $UBOOT_TARGET $CTHREADS CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
+	eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
+		'make $UBOOT_TARGET $CTHREADS CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -96,7 +98,6 @@ compile_uboot()
 	done
 
 	cd $DEST/debs
-	display_alert "Target directory" "$DEST/debs/" "info"
 	display_alert "Building deb" "$uboot_name.deb" "info"
 	dpkg -b $uboot_name >> $DEST/debug/compilation.log 2>&1
 	rm -rf $uboot_name
@@ -136,8 +137,8 @@ compile_kernel()
 	grab_version "$SOURCES/$LINUXSOURCEDIR" "VER"
 
 	# create patch for manual source changes in debug mode
-	userpatch_create "kernel"
-	
+	[[ $DEBUG_MODE == yes ]] && userpatch_create "kernel"
+
 	display_alert "Compiling $BRANCH kernel" "$VER" "info"
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
 	cd $SOURCES/$LINUXSOURCEDIR/
@@ -160,7 +161,6 @@ compile_kernel()
 
 	sed -i 's/EXTRAVERSION = .*/EXTRAVERSION =/' Makefile
 
-	# We can use multi threading here but not later since it's not working. This way of compilation is much faster.
 	if [[ $KERNEL_CONFIGURE != yes ]]; then
 		if [[ $BRANCH == default ]]; then
 			eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" silentoldconfig'
@@ -172,7 +172,8 @@ compile_kernel()
 		eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" menuconfig'
 	fi
 
-	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" $KERNEL_IMAGE_TYPE modules dtbs 2>&1' \
+	eval CCACHE_BASEDIR="$(pwd)" ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} \
+		'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" $KERNEL_IMAGE_TYPE modules dtbs 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -189,8 +190,9 @@ compile_kernel()
 	fi
 
 	# produce deb packages: image, headers, firmware, dtb
-	eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY \
-		KBUILD_DEBARCH=$ARCH ARCH=$ARCHITECTURE DEBFULLNAME="$MAINTAINER" DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" 2>&1 ' \
+	eval CCACHE_BASEDIR="$(pwd)" ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} \
+		'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY \
+		KBUILD_DEBARCH=$ARCH ARCH=$ARCHITECTURE DEBFULLNAME="$MAINTAINER" DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -384,40 +386,43 @@ customize_image()
 	cp $SRC/userpatches/customize-image.sh $CACHEDIR/sdcard/tmp/customize-image.sh
 	chmod +x $CACHEDIR/sdcard/tmp/customize-image.sh
 	mkdir -p $CACHEDIR/sdcard/tmp/overlay
-	mount --bind $SRC/userpatches/overlay $CACHEDIR/sdcard/tmp/overlay
+	if [[ $(lsb_release -sc) == xenial ]]; then
+		# util-linux >= 2.27 required
+		mount -o bind,ro $SRC/userpatches/overlay $CACHEDIR/sdcard/tmp/overlay
+	else
+		mount -o bind $SRC/userpatches/overlay $CACHEDIR/sdcard/tmp/overlay
+	fi
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
 	umount $CACHEDIR/sdcard/tmp/overlay
-	rm -r $CACHEDIR/sdcard/tmp/overlay
+	mountpoint -q $CACHEDIR/sdcard/tmp/overlay || rm -r $CACHEDIR/sdcard/tmp/overlay
 }
 
 userpatch_create()
 {
-	if [[ $DEBUG_MODE == yes ]]; then
-		# create commit to start from clean source
-		git add .
-		git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
-		
-		local patch="$SRC/userpatches/patch/$1-$LINUXFAMILY-$BRANCH.patch"
-		
-		# apply previous user debug mode created patches
-		[[ -f "$patch" && $1 == "u-boot" ]] && display_alert "Applying existing u-boot patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
-		[[ -f "$patch" && $1 == "kernel" ]] && display_alert "Applying existing kernel patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
+	# create commit to start from clean source
+	git add .
+	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
 
-		# prompt to alter source
-		display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
-		display_alert "Press <Enter> after you are done" "waiting" "wrn"
-		read
-		tput cuu1
-		git add .
-		# create patch out of changes
-		if ! git diff-index --quiet --cached HEAD; then		
-			git diff --staged > $patch
-			display_alert "You will find your patch here:" "$patch" "info"
-		else
-			display_alert "No changes found, skipping patch creation" "" "wrn"
-		fi
-		git reset --soft HEAD~
-		for i in {3..1..1};do echo -n "$i." && sleep 1; done
+	local patch="$SRC/userpatches/patch/$1-$LINUXFAMILY-$BRANCH.patch"
+
+	# apply previous user debug mode created patches
+	[[ -f "$patch" && $1 == "u-boot" ]] && display_alert "Applying existing u-boot patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
+	[[ -f "$patch" && $1 == "kernel" ]] && display_alert "Applying existing kernel patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
+
+	# prompt to alter source
+	display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
+	display_alert "Press <Enter> after you are done" "waiting" "wrn"
+	read
+	tput cuu1
+	git add .
+	# create patch out of changes
+	if ! git diff-index --quiet --cached HEAD; then
+		git diff --staged > $patch
+		display_alert "You will find your patch here:" "$patch" "info"
+	else
+		display_alert "No changes found, skipping patch creation" "" "wrn"
 	fi
+	git reset --soft HEAD~
+	for i in {3..1..1};do echo -n "$i." && sleep 1; done
 }

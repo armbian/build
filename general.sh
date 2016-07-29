@@ -19,6 +19,7 @@
 # fingerprint_image
 # addtorepo
 # prepare_host
+# download_toolchain
 
 # cleaning <target>
 #
@@ -39,31 +40,34 @@ cleaning()
 
 		debs) # delete output/debs for current branch and family
 		if [[ -d $DEST/debs ]]; then
-			display_alert "Cleaning $DEST/debs for" "$BOARD $BRANCH" "info"
+			display_alert "Cleaning output/debs for" "$BOARD $BRANCH" "info"
 			# easier than dealing with variable expansion and escaping dashes in file names
 			find $DEST/debs -name '*.deb' | grep -E "${CHOSEN_KERNEL/image/.*}|$CHOSEN_UBOOT" | xargs rm -f
 			[[ -n $RELEASE ]] && rm -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_*_${ARCH}.deb
 		fi
 		;;
 
+		extras) # delete output/debs/extra/$RELEASE for all architectures
+		if [[ -n $RELEASE && -d $DEST/debs/extra/$RELEASE ]]; then
+			display_alert "Cleaning output/debs/extra for" "$RELEASE" "info"
+			rm -rf $DEST/debs/extra/$RELEASE
+		fi
+		;;
+
 		alldebs) # delete output/debs
-		[[ -d $DEST/debs ]] && display_alert "Cleaning" "$DEST/debs" "info" && rm -rf $DEST/debs/*
+		[[ -d $DEST/debs ]] && display_alert "Cleaning" "output/debs" "info" && rm -rf $DEST/debs/*
 		;;
 
 		cache) # delete output/cache
-		[[ -d $CACHEDIR ]] && display_alert "Cleaning" "$CACHEDIR" "info" && find $CACHEDIR/ -type f -delete
+		[[ -d $CACHEDIR ]] && display_alert "Cleaning" "output/cache" "info" && find $CACHEDIR/ -type f -delete
 		;;
 
 		images) # delete output/images
-		[[ -d $DEST/images ]] && display_alert "Cleaning" "$DEST/images" "info" && rm -rf $DEST/images/*
+		[[ -d $DEST/images ]] && display_alert "Cleaning" "output/images" "info" && rm -rf $DEST/images/*
 		;;
 
-		sources) # delete output/sources
-		[[ -d $SOURCES ]] && display_alert "Cleaning" "$SOURCES" "info" && rm -rf $SOURCES/*
-		;;
-
-		*) # unknown
-		display_alert "Cleaning: unrecognized option" "$1" "wrn"
+		sources) # delete output/sources and output/buildpkg
+		[[ -d $SOURCES ]] && display_alert "Cleaning" "sources" "info" && rm -rf $SOURCES/* $DEST/buildpkg/*
 		;;
 	esac
 }
@@ -85,6 +89,7 @@ exit_with_error()
 	display_alert "ERROR in function $_function" "$_file:$_line" "err"
 	display_alert "$_description" "$_highlight" "err"
 	display_alert "Process terminated" "" "info"
+	# TODO: execute run_after_build here?
 	exit -1
 }
 
@@ -240,6 +245,7 @@ fingerprint_image()
 	Sources: 		http://github.com/igorpecovnik/lib
 	Support: 		http://www.armbian.com, http://forum.armbian.com/
 	Changelog: 		http://www.armbian.com/logbook/
+	Documantation:		http://docs.armbian.com/
 	--------------------------------------------------------------------------------
 	$(cat $SRC/lib/LICENSE)
 	--------------------------------------------------------------------------------
@@ -407,19 +413,13 @@ prepare_host() {
 	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
 
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
-	cd $SRC/toolchains
-	[[ ! -d $SRC/toolchains/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu ]] && display_alert "Updating external compiler" "aarch64-linux-gnu 4.9" "info" \
-		&& curl -LS --progress-bar "http://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/aarch64-linux-gnu/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu.tar.xz" | tar xJf -
-	#[[ ! -d $SRC/toolchains/gcc-linaro-4.9-2016.02-x86_64_arm-eabi ]] && display_alert "Updating external compiler" "arm-eabi 4.9" "info" \
-	#	&& curl -LS --progress-bar "http://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-eabi/gcc-linaro-4.9-2016.02-x86_64_arm-eabi.tar.xz" | tar xJf -
-	[[ ! -d $SRC/toolchains/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi ]] && display_alert "Updating external compilers" "arm-linux-gnueabi 4.9" "info" \
-		&& curl -LS --progress-bar "http://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabi/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi.tar.xz" | tar xJf -
-	[[ ! -d $SRC/toolchains/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf ]] && display_alert "Updating external compilers" "arm-linux-gnueabihf 4.9" "info" \
-		&& curl -LS --progress-bar "http://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabihf/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf.tar.xz" | tar xJf -
-	[[ ! -d $SRC/toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux ]] && display_alert "Updating external compilers" "arm-linux-gnueabihf 4.8" "info" \
-		&& curl -LS --progress-bar "http://releases.linaro.org/14.04/components/toolchain/binaries/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz" | tar xJf -
-	[[ ! -d $SRC/toolchains/gcc-linaro-5.3-2016.02-x86_64_arm-linux-gnueabihf ]] && display_alert "Updating external compilers" "arm-linux-gnueabihf 5.3" "info" \
-		&& curl -LS --progress-bar "https://releases.linaro.org/components/toolchain/binaries/5.3-2016.02/arm-linux-gnueabihf/gcc-linaro-5.3-2016.02-x86_64_arm-linux-gnueabihf.tar.xz" | tar xJf -
+	download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/aarch64-linux-gnu/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu.tar.xz"
+	download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabi/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi.tar.xz"
+	download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabihf/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf.tar.xz"
+	#download_toolchain "https://releases.linaro.org/components/toolchain/binaries/5.3-2016.02/arm-linux-gnueabihf/gcc-linaro-5.3-2016.02-x86_64_arm-linux-gnueabihf.tar.xz"
+	download_toolchain "https://releases.linaro.org/components/toolchain/binaries/5.2-2015.11-2/arm-linux-gnueabihf/gcc-linaro-5.2-2015.11-2-x86_64_arm-linux-gnueabihf.tar.xz"
+	#download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-eabi/gcc-linaro-4.9-2016.02-x86_64_arm-eabi.tar.xz"
+	download_toolchain "https://releases.linaro.org/14.04/components/toolchain/binaries/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
 
 	dpkg --add-architecture i386
 	apt-get install -qq -y --no-install-recommends lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 zlib1g:i386 >/dev/null 2>&1
@@ -435,4 +435,40 @@ prepare_host() {
 	# check free space (basic), doesn't work on Trusty
 	local freespace=$(findmnt --target $SRC -n -o AVAIL -b 2>/dev/null) # in bytes
 	[[ -n $freespace && $(( $freespace / 1073741824 )) -lt 10 ]] && display_alert "Low free space left" "$(( $freespace / 1073741824 )) GiB" "wrn"
+}
+
+# download_toolchain <url>
+#
+download_toolchain()
+{
+	local url=$1
+	local filename=${url##*/}
+	local dirname=${filename//.tar.xz}
+
+	if [[ -f $SRC/toolchains/$dirname/.download-complete ]]; then
+		return
+	fi
+
+	cd $SRC/toolchains/
+
+	display_alert "Downloading toolchain" "$dirname" "info"
+	curl -Lf --progress-bar $url -o $filename
+	curl -Lf --progress-bar ${url}.asc -o ${filename}.asc
+
+	local verified=false
+
+	display_alert "Verifying"
+	if grep -q 'BEGIN PGP SIGNATURE' ${filename}.asc; then
+		gpg --list-keys 8F427EAF || gpg --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF
+		gpg --verify -q ${filename}.asc 2>/dev/null && verified=true
+	else
+		md5sum -c --status ${filename}.asc && verified=true
+	fi
+	if [[ $verified == true ]]; then
+		display_alert "Extracting"
+		tar --overwrite -xf $filename && touch $SRC/toolchains/$dirname/.download-complete
+		display_alert "Download complete" "" "info"
+	else
+		display_alert "Verification failed" "" "wrn"
+	fi
 }
