@@ -100,7 +100,8 @@ esac
 PACKAGE_LIST="bash-completion bc bridge-utils build-essential cpufrequtils device-tree-compiler dosfstools figlet \
 	fbset fping git hostapd ifenslave-2.6 iw lirc fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl \
 	dialog crda wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
-	unzip usbutils wireless-tools console-setup console-data console-common unicode-data openssh-server initramfs-tools ca-certificates"
+	unzip usbutils wireless-tools console-setup console-data console-common unicode-data openssh-server \
+	initramfs-tools ca-certificates firmware-realtek firmware-ralink"
 
 # development related packages. remove when they are not needed for building packages in chroot
 PACKAGE_LIST="$PACKAGE_LIST automake cmake libwrap0-dev libssl-dev libtool pkg-config libusb-dev libusb-1.0-0-dev libnl-3-dev libnl-genl-3-dev"
