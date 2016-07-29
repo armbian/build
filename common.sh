@@ -386,9 +386,12 @@ customize_image()
 	cp $SRC/userpatches/customize-image.sh $CACHEDIR/sdcard/tmp/customize-image.sh
 	chmod +x $CACHEDIR/sdcard/tmp/customize-image.sh
 	mkdir -p $CACHEDIR/sdcard/tmp/overlay
-	mount --bind $SRC/userpatches/overlay $CACHEDIR/sdcard/tmp/overlay
-	# separate remount command for compatibility with Trusty (util-linux < 2.27)
-	mount -o remount,ro $CACHEDIR/sdcard/tmp/overlay
+	if [[ $(lsb_release -sc) == xenial ]]; then
+		# util-linux >= 2.27 required
+		mount -o bind,ro $SRC/userpatches/overlay $CACHEDIR/sdcard/tmp/overlay
+	else
+		mount -o bind $SRC/userpatches/overlay $CACHEDIR/sdcard/tmp/overlay
+	fi
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
 	umount $CACHEDIR/sdcard/tmp/overlay
