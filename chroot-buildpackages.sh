@@ -283,10 +283,10 @@ chroot_installpackages()
 	mkdir -p /tmp/aptly-temp/
 	aptly -config=$conf repo create temp
 	# NOTE: this works recursively
-	aptly -config=$conf -force-replace=true repo add temp $DEST/debs/extra/$RELEASE/
+	aptly -config=$conf repo add temp $DEST/debs/extra/$RELEASE/
 	# -gpg-key="128290AF"
 	aptly -secret-keyring="$SRC/lib/extras-buildpkgs/buildpkg.gpg" -batch -config=$conf \
-		 -force-overwrite=true -component=temp -distribution=$RELEASE publish repo temp
+		 -component=temp -distribution=$RELEASE publish repo temp
 	aptly -config=$conf -listen=":8189" serve &
 	local aptly_pid=$!
 	cp $SRC/lib/extras-buildpkgs/buildpkg.key $CACHEDIR/sdcard/tmp/buildpkg.key
@@ -309,10 +309,12 @@ chroot_installpackages()
 	cat <<-EOF > $CACHEDIR/sdcard/tmp/install.sh
 	#!/bin/bash
 	apt-key add /tmp/buildpkg.key
-	apt-get -q update
+	apt-get -o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" \
+		-o Acquire::http::Proxy::localhost="DIRECT" -q update
 	# uncomment to debug
 	# /bin/bash
 	apt-get -q -o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" \
+		-o Acquire::http::Proxy::localhost="DIRECT" \
 		--show-progress -o DPKG::Progress-Fancy=1 install -y $install_list
 	apt-get clean
 	apt-key del 128290AF
