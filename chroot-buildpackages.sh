@@ -175,7 +175,7 @@ chroot_build_packages()
 		eval systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
 			--bind-ro $SRC/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/buildpkg.log'}
-		mv $target_dir/root/*.deb $plugin_target_dir
+		mv $target_dir/root/*.deb $plugin_target_dir 2>/dev/null
 	done
 } #############################################################################
 
