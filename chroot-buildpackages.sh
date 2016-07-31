@@ -22,11 +22,20 @@ create_chroot()
 {
 	display_alert "Creating build chroot" "$RELEASE" "info"
 	local target_dir="$1"
-	debootstrap --variant=buildd --arch=$ARCH --foreign \
-		--include=ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3 \
-		$RELEASE $target_dir "http://localhost:3142/$APT_MIRROR"
+	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3"
+	case $RELEASE in
+		jessie)
+		includes="$includes,debian-keyring,debian-archive-keyring"
+		;;
+		xenial)
+		includes="$includes,ubuntu-keyring"
+		;;
+	esac
+	debootstrap --variant=buildd --arch=$ARCH --foreign --include="$includes" $RELEASE $target_dir "http://localhost:3142/$APT_MIRROR"
 	[[ $? -ne 0 || ! -f $target_dir/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
 	cp /usr/bin/$QEMU_BINARY $target_dir/usr/bin/
+	[[ ! -f $target_dir/usr/share/keyrings/debian-archive-keyring.gpg ]] && \
+		cp /usr/share/keyrings/debian-archive-keyring.gpg $target_dir/usr/share/keyrings/
 	chroot $target_dir /bin/bash -c "/debootstrap/debootstrap --second-stage"
 	[[ $? -ne 0 || ! -f $target_dir/bin/bash ]] && exit_with_error "Create chroot second stage failed"
 	cp $SRC/lib/config/apt/sources.list.$RELEASE $target_dir/etc/apt/sources.list
