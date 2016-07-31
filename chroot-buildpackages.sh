@@ -76,7 +76,7 @@ update_chroot()
 	deps=()
 	installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
 	for packet in "$@"; do grep -q -x -e "$packet" <<< "$installed" || deps+=("$packet"); done
-	[[ ${#deps[@]} -gt 0 ]] && apt-get -y --no-install-recommends install "${deps[@]}"
+	[[ ${#deps[@]} -gt 0 ]] && apt-get -y --force-yes --no-install-recommends install "${deps[@]}"
 	EOF
 	chmod +x $target_dir/root/install-deps.sh
 } #############################################################################
