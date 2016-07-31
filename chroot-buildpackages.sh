@@ -35,6 +35,7 @@ create_chroot()
 	[[ $? -ne 0 || ! -f $target_dir/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
 	cp /usr/bin/$QEMU_BINARY $target_dir/usr/bin/
 	[[ ! -f $target_dir/usr/share/keyrings/debian-archive-keyring.gpg ]] && \
+		mkdir -p  $target_dir/usr/share/keyrings/ && \
 		cp /usr/share/keyrings/debian-archive-keyring.gpg $target_dir/usr/share/keyrings/
 	chroot $target_dir /bin/bash -c "/debootstrap/debootstrap --second-stage"
 	[[ $? -ne 0 || ! -f $target_dir/bin/bash ]] && exit_with_error "Create chroot second stage failed"
@@ -80,7 +81,7 @@ update_chroot()
 	deps=()
 	installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
 	for packet in "$@"; do grep -q -x -e "$packet" <<< "$installed" || deps+=("$packet"); done
-	[[ ${#deps[@]} -gt 0 ]] && apt-get -y --force-yes --no-install-recommends install "${deps[@]}"
+	[[ ${#deps[@]} -gt 0 ]] && apt-get -y --no-install-recommends install "${deps[@]}"
 	EOF
 	chmod +x $target_dir/root/install-deps.sh
 } #############################################################################
