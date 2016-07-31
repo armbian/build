@@ -74,8 +74,6 @@ install_desktop ()
 				chroot $CACHEDIR/sdcard /bin/bash -c "cd /tmp/debs && dpkg -i libdri2*.deb 2>&1 >/dev/null"
 				error_num=$(($error_num+$?))
 			fi
-			chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y install mesa-utils-extra 2>&1 >/dev/null"
-			error_num=$(($error_num+$?))
 			chroot $CACHEDIR/sdcard /bin/bash -c "cd /tmp/debs && dpkg -i libump*.deb 2>&1 >/dev/null"
 			error_num=$(($error_num+$?))
 			chroot $CACHEDIR/sdcard /bin/bash -c "cd /tmp/debs && dpkg -i libcedrus*.deb 2>&1 >/dev/null"
@@ -88,6 +86,8 @@ install_desktop ()
 			error_num=$(($error_num+$?))
 			chroot $CACHEDIR/sdcard /bin/bash -c "cd /tmp/debs && dpkg -i mpv_*.deb 2>&1 >/dev/null"
 			chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y -f install 2>&1 >/dev/null"
+			chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -y install mesa-utils mesa-utils-extra 2>&1 >/dev/null"
+			error_num=$(($error_num+$?))
 			error_num=$(($error_num+$?))
 			[[ $error_num -gt 0 ]] && exit_with_error "Installation failed" "desktop-extras for sunxi"
 			# Disable compositing by default
