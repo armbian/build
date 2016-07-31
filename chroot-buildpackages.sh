@@ -48,6 +48,10 @@ create_chroot()
 	chroot $target_dir /bin/bash -c "locale-gen; update-locale LANG=en_US:en LC_ALL=en_US.UTF-8"
 	printf '#!/bin/sh\nexit 101' > $target_dir/usr/sbin/policy-rc.d
 	chmod 755 $target_dir/usr/sbin/policy-rc.d
+	rm $target_dir/etc/resolv.conf
+	echo "8.8.8.8" > $target_dir/etc/resolv.conf
+	rm $target_dir/etc/hosts
+	echo "127.0.0.1 localhost" > $target_dir/etc/hosts
 	touch $target_dir/root/.debootstrap-complete
 	display_alert "Debootstrap complete" "$RELEASE" "info"
 } #############################################################################
