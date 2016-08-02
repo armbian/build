@@ -22,11 +22,21 @@ create_chroot()
 {
 	display_alert "Creating build chroot" "$RELEASE" "info"
 	local target_dir="$1"
-	debootstrap --variant=buildd --arch=$ARCH --foreign \
-		--include=ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3 \
-		$RELEASE $target_dir "http://localhost:3142/$APT_MIRROR"
+	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3"
+	case $RELEASE in
+		jessie)
+		includes="$includes,debian-keyring,debian-archive-keyring"
+		;;
+		xenial)
+		includes="$includes,ubuntu-keyring"
+		;;
+	esac
+	debootstrap --variant=buildd --arch=$ARCH --foreign --include="$includes" $RELEASE $target_dir "http://localhost:3142/$APT_MIRROR"
 	[[ $? -ne 0 || ! -f $target_dir/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
 	cp /usr/bin/$QEMU_BINARY $target_dir/usr/bin/
+	[[ ! -f $target_dir/usr/share/keyrings/debian-archive-keyring.gpg ]] && \
+		mkdir -p  $target_dir/usr/share/keyrings/ && \
+		cp /usr/share/keyrings/debian-archive-keyring.gpg $target_dir/usr/share/keyrings/
 	chroot $target_dir /bin/bash -c "/debootstrap/debootstrap --second-stage"
 	[[ $? -ne 0 || ! -f $target_dir/bin/bash ]] && exit_with_error "Create chroot second stage failed"
 	cp $SRC/lib/config/apt/sources.list.$RELEASE $target_dir/etc/apt/sources.list
@@ -39,6 +49,10 @@ create_chroot()
 	chroot $target_dir /bin/bash -c "locale-gen; update-locale LANG=en_US:en LC_ALL=en_US.UTF-8"
 	printf '#!/bin/sh\nexit 101' > $target_dir/usr/sbin/policy-rc.d
 	chmod 755 $target_dir/usr/sbin/policy-rc.d
+	rm $target_dir/etc/resolv.conf
+	echo "8.8.8.8" > $target_dir/etc/resolv.conf
+	rm $target_dir/etc/hosts
+	echo "127.0.0.1 localhost" > $target_dir/etc/hosts
 	touch $target_dir/root/.debootstrap-complete
 	display_alert "Debootstrap complete" "$RELEASE" "info"
 } #############################################################################
@@ -175,7 +189,7 @@ chroot_build_packages()
 		eval systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
 			--bind-ro $SRC/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/buildpkg.log'}
-		mv $target_dir/root/*.deb $plugin_target_dir
+		mv $target_dir/root/*.deb $plugin_target_dir 2>/dev/null
 	done
 } #############################################################################
 
