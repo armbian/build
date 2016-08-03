@@ -139,7 +139,9 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select one of supported releases" $TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $RELEASE ]] && exit_with_error "No release selected"
+fi
 
+if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	options=()
 	options+=("no" "Image with console interface")
 	options+=("yes" "Image with desktop environment")
