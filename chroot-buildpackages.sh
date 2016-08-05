@@ -298,9 +298,9 @@ chroot_installpackages()
 	aptly -config=$conf repo create temp
 	# NOTE: this works recursively
 	aptly -config=$conf repo add temp $DEST/debs/extra/$RELEASE/
-	# -gpg-key="128290AF"
-	aptly -secret-keyring="$SRC/lib/extras-buildpkgs/buildpkg.gpg" -batch -config=$conf \
-		 -component=temp -distribution=$RELEASE publish repo temp
+	# -gpg-key="925644A6"
+	aptly -keyring="$SRC/lib/extras-buildpkgs/buildpkg-public.gpg" -secret-keyring="$SRC/lib/extras-buildpkgs/buildpkg.gpg" -batch=true -config=$conf \
+		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution=$RELEASE publish repo temp
 	aptly -config=$conf -listen=":8189" serve &
 	local aptly_pid=$!
 	cp $SRC/lib/extras-buildpkgs/buildpkg.key $CACHEDIR/sdcard/tmp/buildpkg.key
@@ -331,7 +331,7 @@ chroot_installpackages()
 		-o Acquire::http::Proxy::localhost="DIRECT" \
 		--show-progress -o DPKG::Progress-Fancy=1 install -y $install_list
 	apt-get clean
-	apt-key del 128290AF
+	apt-key del "925644A6"
 	rm /etc/apt/sources.list.d/armbian-temp.list /etc/apt/preferences.d/90-armbian-temp.pref /tmp/buildpkg.key
 	rm -- "\$0"
 	EOF
