@@ -6,9 +6,9 @@
 
 Progress:
 
-* sunxi-mali: fix pkgconfig files for multiarch
+* sunxi-mali: fix pkgconfig files for multiarch - **done**
 
-* fbturbo: check xserver plugin search path
+* fbturbo: check xserver plugin search path for multiarch
 
 ### Installing packages to images:
 
