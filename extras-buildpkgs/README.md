@@ -4,6 +4,12 @@
 
 * Switch from chroot to native multiarch
 
+Progress:
+
+* sunxi-mali: fix pkgconfig files for multiarch - **done**
+
+* fbturbo: check xserver plugin search path for multiarch
+
 ### Installing packages to images:
 
 * Add a function for installing packages - **done**
