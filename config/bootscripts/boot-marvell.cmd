@@ -5,6 +5,12 @@ else
 setenv verbosity 1
 fi
 
+# configure addresses
+setenv kerneladdr 0x2000000
+setenv fdtaddr 0x5F00000
+setenv ramdiskaddr 0x6000000
+setenv fdt_high 0x07a12000
+
 setenv ethaddr  00:50:43:84:fb:2f
 setenv eth1addr 00:50:43:25:fb:84
 setenv eth2addr 00:50:43:84:25:2f
