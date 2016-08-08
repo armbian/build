@@ -185,6 +185,7 @@ create_rootfs_cache()
 		if [[ -f $CACHEDIR/sdcard/etc/default/console-setup ]]; then
 			sed -e 's/CHARMAP=.*/CHARMAP="UTF-8"/' -e 's/FONTSIZE=.*/FONTSIZE="8x16"/' \
 				-e 's/CODESET=.*/CODESET="guess"/' -i $CACHEDIR/sdcard/etc/default/console-setup
+			eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "setupcon --save"'
 		fi
 
 		# stage: copy proper apt sources list
