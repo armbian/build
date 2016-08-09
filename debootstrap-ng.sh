@@ -185,6 +185,7 @@ create_rootfs_cache()
 		if [[ -f $CACHEDIR/sdcard/etc/default/console-setup ]]; then
 			sed -e 's/CHARMAP=.*/CHARMAP="UTF-8"/' -e 's/FONTSIZE=.*/FONTSIZE="8x16"/' \
 				-e 's/CODESET=.*/CODESET="guess"/' -i $CACHEDIR/sdcard/etc/default/console-setup
+			eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "setupcon --save"'
 		fi
 
 		# stage: copy proper apt sources list
@@ -206,13 +207,6 @@ create_rootfs_cache()
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Updating package lists failed"
-
-		# debootstrap in trusty fails to configure all packages, run apt-get to fix them
-		[[ $RELEASE == xenial ]] && eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c \
-			"DEBIAN_FRONTEND=noninteractive apt-get -y -q $apt_extra $apt_extra_progress install -f"' \
-			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
-			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Configure base packages..." $TTY_Y $TTY_X'} \
-			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
 		display_alert "Upgrading base packages" "Armbian" "info"
