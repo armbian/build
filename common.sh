@@ -374,7 +374,7 @@ write_uboot()
 	display_alert "Writing bootloader" "$loop" "info"
 	mkdir -p /tmp/u-boot/
 	dpkg -x ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb /tmp/u-boot/
-	write_uboot_platform "/tmp/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}" "$loop"
+	write_uboot_platform "/tmp/u-boot/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}" "$loop"
 	[[ $? -ne 0 ]] && exit_with_error "U-boot failed to install" "@host"
 	rm -r /tmp/u-boot/
 	sync
