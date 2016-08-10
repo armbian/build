@@ -26,8 +26,7 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 [[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8"
 
 # Load libraries
-source $SRC/lib/debootstrap.sh				# System specific install (old)
-source $SRC/lib/debootstrap-ng.sh 			# System specific install (extended)
+source $SRC/lib/debootstrap-ng.sh 			# System specific install
 source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/desktop.sh 				# Desktop specific install
 source $SRC/lib/common.sh 				# Functions
@@ -243,40 +242,12 @@ fi
 [[ $EXTERNAL_NEW == yes && $(lsb_release -sc) == xenial ]] && chroot_build_packages
 
 if [[ $KERNEL_ONLY != yes ]]; then
-	if [[ $EXTENDED_DEBOOTSTRAP != no ]]; then
-		debootstrap_ng
-	else
-		# create or use prepared root file-system
-		custom_debootstrap
-
-		mount --bind $DEST/debs/ $CACHEDIR/sdcard/tmp
-
-		# install board specific applications
-		install_distribution_specific
-		install_common
-
-		# install external applications
-		[[ $EXTERNAL == yes ]] && install_external_applications
-
-		# install desktop
-		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_desktop
-		fi
-
-		umount $CACHEDIR/sdcard/tmp > /dev/null 2>&1
-
-		# closing image
-		closing_image
-	fi
-
+	debootstrap_ng
 else
 	display_alert "Kernel building done" "@host" "info"
 	display_alert "Target directory" "$DEST/debs/" "info"
 	display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
 fi
-
-# workaround for bug introduced with desktop build -- please remove when fixed
-chmod 777 /tmp
 
 end=`date +%s`
 runtime=$(((end-start)/60))

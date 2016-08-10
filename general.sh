@@ -184,7 +184,7 @@ display_alert()
 #--------------------------------------------------------------------------------------------------------------------------------
 {
 	# log function parameters to install.log
-	echo "Displaying message: $@" >> $DEST/debug/output.log
+	[[ -n $DEST ]] && echo "Displaying message: $@" >> $DEST/debug/output.log
 
 	local tmp=""
 	[[ -n $2 ]] && tmp="[\e[0;33m $2 \x1B[0m]"
@@ -258,8 +258,8 @@ addtorepo()
 # parameter "remove" dumps all and creates new
 # function: cycle trough distributions
 	local distributions=("wheezy" "jessie" "trusty" "xenial")
-
 	for release in "${distributions[@]}"; do
+
 		# let's drop from publish if exits
 		if [[ -n $(aptly publish list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			aptly publish drop -config=config/aptly.conf $release > /dev/null 2>&1
@@ -272,24 +272,59 @@ addtorepo()
 			aptly db cleanup -config=config/aptly.conf > /dev/null 2>&1
 		fi
 
-		# create repository if not exist
+		if [[ $1 == replace ]]; then
+			local replace=true
+		else
+			local replace=false
+		fi
+
+		# create local repository if not exist
 		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			display_alert "Creating section" "$release" "info"
-			aptly repo create -config=config/aptly.conf -distribution=$release -component=main -comment="Armbian stable" $release > /dev/null 2>&1
+			aptly repo create -config=config/aptly.conf -distribution=$release -component="main" -comment="Armbian main repository" $release
+		fi
+		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release"-utils") ]]; then
+			aptly repo create -config=config/aptly.conf -distribution=$release -component="utils" -comment="Armbian utilities" "$release"-utils
+		fi
+		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release"-desktop") ]]; then
+			aptly repo create -config=config/aptly.conf -distribution=$release -component="desktop" -comment="Armbian desktop" "$release"-desktop
+		fi
+		# create local repository if not exist
+
+		# adding main
+		if find $POT -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+			display_alert "Adding to repository $release" "main" "ext"
+			aptly repo add -force-replace=${replace} -config=config/aptly.conf $release $POT/*.deb
+		else
+			display_alert "Not adding $release" "main" "wrn"
+		fi
+		# adding utils
+		if find ${POT}extra/$release/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+			display_alert "Adding to repository $release" "utils" "ext"
+			aptly repo add -force-replace=${replace} -config=config/aptly.conf "$release"-utils ${POT}extra/$release/utils/*.deb
+		else
+			display_alert "Not adding $release" "utils" "wrn"
 		fi
 
-		# add all packages
-		aptly repo add -force-replace=true -config=config/aptly.conf $release $POT/*.deb
-
-		# add all distribution packages
-		if [[ -d $POT/$release ]]; then
-			aptly repo add -force-replace=true -config=config/aptly.conf $release $POT/*.deb
+		# adding desktop
+		if find ${POT}extra/$release/desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+			display_alert "Adding to repository $release" "desktop" "ext"
+			aptly repo add -force-replace=${replace} -config=config/aptly.conf "$release"-desktop ${POT}extra/$release/desktop/*.deb
+		else
+			display_alert "Not adding $release" "desktop" "wrn"
 		fi
 
-		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -force-overwrite=true -config=config/aptly.conf -component=main --distribution=$release repo $release > /dev/null 2>&1
+		# publish
+		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=config/aptly.conf -component=main,utils,desktop \
+			--distribution=$release repo $release $release"-utils" $release"-desktop" > /dev/null 2>&1
 
-		#aptly repo show -config=config/aptly.conf $release
+		if [ $? -ne 0 ]; then
+			display_alert "Publishing failed" "$release" "err"
+			exit 0
+		fi
 	done
+	display_alert "List of local repos" "local" "info"
+	(aptly repo list -config=config/aptly.conf) | egrep packages
 }
 
 # prepare_host
