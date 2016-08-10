@@ -291,12 +291,10 @@ addtorepo()
 		fi
 		# create local repository if not exist
 		
-		local empty=true
 		# adding main
 		if find $POT -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "main" "ext"
 			aptly repo add -force-replace=${replace} -config=config/aptly.conf $release $POT/*.deb
-			empty=false
 		else
 			display_alert "Not adding $release" "main" "wrn"
 		fi
@@ -304,7 +302,6 @@ addtorepo()
 		if find ${POT}extra/$release/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then		
 			display_alert "Adding to repository $release" "utils" "ext" 
 			aptly repo add -force-replace=${replace} -config=config/aptly.conf "$release"-utils ${POT}extra/$release/utils/*.deb
-			empty=false
 		else
 			display_alert "Not adding $release" "utils" "wrn"
 		fi
@@ -313,16 +310,14 @@ addtorepo()
 		if find ${POT}extra/$release/desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then				
 			display_alert "Adding to repository $release" "desktop" "ext"
 			aptly repo add -force-replace=${replace} -config=config/aptly.conf "$release"-desktop ${POT}extra/$release/desktop/*.deb
-			empty=false
 		else
 			display_alert "Not adding $release" "desktop" "wrn"
 		fi
 			
-		# publish		
-		if [ "$empty" = false ] ; then
+		# publish
 		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=config/aptly.conf -component=main,utils,desktop \
-		--distribution=$release repo $release $release"-utils" $release"-desktop" > /dev/null 2>&1
-		fi
+		--distribution=$release repo $release $release"-utils" $release"-desktop" > /dev/null 2>&1 
+
 		if [ $? -ne 0 ]; then
 			display_alert "Publishing failed" "$release" "err"
 			exit 0
