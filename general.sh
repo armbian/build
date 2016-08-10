@@ -257,9 +257,9 @@ addtorepo()
 # add all deb files to repository
 # parameter "remove" dumps all and creates new
 # function: cycle trough distributions
-	local distributions=("wheezy" "jessie" "trusty" "xenial")	
+	local distributions=("wheezy" "jessie" "trusty" "xenial")
 	for release in "${distributions[@]}"; do
-	
+
 		# let's drop from publish if exits
 		if [[ -n $(aptly publish list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			aptly publish drop -config=config/aptly.conf $release > /dev/null 2>&1
@@ -274,14 +274,14 @@ addtorepo()
 
 		if [[ $1 == replace ]]; then
 			local replace=true
-		else 
-			local replace=false		
+		else
+			local replace=false
 		fi
-		
+
 		# create local repository if not exist
 		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			display_alert "Creating section" "$release" "info"
-			aptly repo create -config=config/aptly.conf -distribution=$release -component="main" -comment="Armbian main repository" $release			
+			aptly repo create -config=config/aptly.conf -distribution=$release -component="main" -comment="Armbian main repository" $release
 		fi
 		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release"-utils") ]]; then
 			aptly repo create -config=config/aptly.conf -distribution=$release -component="utils" -comment="Armbian utilities" "$release"-utils
@@ -290,7 +290,7 @@ addtorepo()
 			aptly repo create -config=config/aptly.conf -distribution=$release -component="desktop" -comment="Armbian desktop" "$release"-desktop
 		fi
 		# create local repository if not exist
-		
+
 		# adding main
 		if find $POT -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "main" "ext"
@@ -299,32 +299,32 @@ addtorepo()
 			display_alert "Not adding $release" "main" "wrn"
 		fi
 		# adding utils
-		if find ${POT}extra/$release/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then		
-			display_alert "Adding to repository $release" "utils" "ext" 
+		if find ${POT}extra/$release/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+			display_alert "Adding to repository $release" "utils" "ext"
 			aptly repo add -force-replace=${replace} -config=config/aptly.conf "$release"-utils ${POT}extra/$release/utils/*.deb
 		else
 			display_alert "Not adding $release" "utils" "wrn"
 		fi
-		
+
 		# adding desktop
-		if find ${POT}extra/$release/desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then				
+		if find ${POT}extra/$release/desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "desktop" "ext"
 			aptly repo add -force-replace=${replace} -config=config/aptly.conf "$release"-desktop ${POT}extra/$release/desktop/*.deb
 		else
 			display_alert "Not adding $release" "desktop" "wrn"
 		fi
-			
+
 		# publish
 		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=config/aptly.conf -component=main,utils,desktop \
-		--distribution=$release repo $release $release"-utils" $release"-desktop" > /dev/null 2>&1 
+			--distribution=$release repo $release $release"-utils" $release"-desktop" > /dev/null 2>&1
 
 		if [ $? -ne 0 ]; then
 			display_alert "Publishing failed" "$release" "err"
 			exit 0
 		fi
 	done
-display_alert "List of local repos" "local" "info"
-(aptly repo list -config=config/aptly.conf) | egrep packages
+	display_alert "List of local repos" "local" "info"
+	(aptly repo list -config=config/aptly.conf) | egrep packages
 }
 
 # prepare_host
