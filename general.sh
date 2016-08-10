@@ -257,8 +257,7 @@ addtorepo()
 # add all deb files to repository
 # parameter "remove" dumps all and creates new
 # function: cycle trough distributions
-	local distributions=("wheezy" "jessie" "trusty" "xenial")
-	
+	local distributions=("wheezy" "jessie" "trusty" "xenial")	
 	for release in "${distributions[@]}"; do
 	
 		# let's drop from publish if exits
@@ -292,30 +291,45 @@ addtorepo()
 		fi
 		# create local repository if not exist
 		
+		local empty=true
 		# adding main
-		if [[ -d $POT ]]; then
+		if find $POT -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "main" "ext"
 			aptly repo add -force-replace=${replace} -config=config/aptly.conf $release $POT/*.deb
-		fi	
-		
+			empty=false
+		else
+			display_alert "Not adding $release" "main" "wrn"
+		fi
 		# adding utils
-		if [[ -d ${POT}extra/$release/utils ]]; then 
+		if find ${POT}extra/$release/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then		
 			display_alert "Adding to repository $release" "utils" "ext" 
 			aptly repo add -force-replace=${replace} -config=config/aptly.conf "$release"-utils ${POT}extra/$release/utils/*.deb
+			empty=false
+		else
+			display_alert "Not adding $release" "utils" "wrn"
 		fi
 		
 		# adding desktop
-		if [[ -d ${POT}extra/$release/desktop ]]; then 
+		if find ${POT}extra/$release/desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then				
 			display_alert "Adding to repository $release" "desktop" "ext"
 			aptly repo add -force-replace=${replace} -config=config/aptly.conf "$release"-desktop ${POT}extra/$release/desktop/*.deb
+			empty=false
+		else
+			display_alert "Not adding $release" "desktop" "wrn"
 		fi
-
-		# publish
+			
+		# publish		
+		if [ "$empty" = false ] ; then
 		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=config/aptly.conf -component=main,utils,desktop \
-		--distribution=$release repo $release $release"-utils" $release"-desktop" 
-
+		--distribution=$release repo $release $release"-utils" $release"-desktop" > /dev/null 2>&1
+		fi
+		if [ $? -ne 0 ]; then
+			display_alert "Publishing failed" "$release" "err"
+			exit 0
+		fi
 	done
-aptly repo list -config=config/aptly.conf
+display_alert "List of local repos" "local" "info"
+(aptly repo list -config=config/aptly.conf) | egrep packages
 }
 
 # prepare_host
