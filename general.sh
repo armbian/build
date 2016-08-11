@@ -590,7 +590,7 @@ download_toolchain()
 	display_alert "Verifying"
 	if grep -q 'BEGIN PGP SIGNATURE' ${filename}.asc; then
 		gpg --list-keys 8F427EAF || gpg --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF
-		gpg --verify -q ${filename}.asc 2>/dev/null && verified=true
+		gpg --verify --trust-model always -q ${filename}.asc && verified=true
 	else
 		md5sum -c --status ${filename}.asc && verified=true
 	fi
