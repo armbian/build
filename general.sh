@@ -286,7 +286,7 @@ addtorepo()
 		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
 			aptly repo create -config=config/aptly.conf -distribution=$release -component="${release}-utils" -comment="Armbian utilities" ${release}-utils
 		fi
-		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release-desktop") ]]; then
+		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
 			aptly repo create -config=config/aptly.conf -distribution=$release -component="${release}-desktop" -comment="Armbian desktop" ${release}-desktop
 		fi
 		# create local repository if not exist
