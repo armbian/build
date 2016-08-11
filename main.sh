@@ -155,6 +155,7 @@ source $SRC/lib/configuration.sh
 VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
 
 echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION >> $DEST/debug/output.log
+(cd $SRC/lib; echo "Build script version: $(git rev-parse @)") >> $DEST/debug/output.log
 
 display_alert "Starting Armbian build script" "@host" "info"
 
