@@ -12,7 +12,6 @@
 # create_chroot
 # update_chroot
 # chroot_build_packages
-# fetch_from_repo
 # chroot_installpackages
 
 # create_chroot <target_dir>
@@ -191,101 +190,6 @@ chroot_build_packages()
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/buildpkg.log'}
 		mv $target_dir/root/*.deb $plugin_target_dir 2>/dev/null
 	done
-} #############################################################################
-
-# fetch_rom_repo <url> <directory> <ref> <ref_subdir>
-# <url>: remote repository URL
-# <directory>: local directory; subdir for branch/tag will be created
-# <ref>:
-#	branch:name
-#	tag:name
-#	HEAD*
-#	commit:hash@depth*
-#
-# *: Work in progress
-# <ref_subdir>: "yes" to create subdirectory for tag or branch name
-#
-fetch_from_repo()
-{
-	local url=$1
-	local dir=$2
-	local ref=$3
-	local ref_subdir=$4
-
-	[[ -z $ref || ( $ref != tag:* && $ref != branch:* ) ]] && exit_with_error "Error in configuration"
-	local ref_type=${ref%%:*}
-	local ref_name=${ref##*:}
-
-	display_alert "Checking git sources" "$dir $ref_name" "info"
-
-	# get default remote branch name without cloning
-	# doesn't work with git:// remote URLs
-	# local ref_name=$(git ls-remote --symref $url HEAD | grep -o 'refs/heads/\S*' | sed 's%refs/heads/%%')
-
-	if [[ $ref_subdir == yes ]]; then
-		mkdir -p $SOURCES/$dir/$ref_name
-		cd $SOURCES/$dir/$ref_name
-	else
-		mkdir -p $SOURCES/$dir/
-		cd $SOURCES/$dir/
-	fi
-
-	# this may not work if $SRC is a part of git repository
-	if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null) != true ]]; then
-		display_alert "Creating local copy"
-		git init -q .
-		git remote add origin $url
-	fi
-
-	local local_hash=$(git rev-parse @ 2>/dev/null)
-
-	local changed=false
-	case $ref_type in
-		branch)
-		local remote_hash=$(git ls-remote -h origin "$ref_name" | cut -f1)
-		[[ $local_hash != $remote_hash ]] && changed=true
-		;;
-
-		tag)
-		local remote_hash=$(git ls-remote -t origin "$ref_name" | cut -f1)
-		if [[ $local_hash != $remote_hash ]]; then
-			remote_hash=$(git ls-remote -t origin "$ref_name^{}" | cut -f1)
-			[[ -z $remote_hash || $local_hash != $remote_hash ]] && changed=true
-		fi
-		;;
-
-		head)
-		local remote_hash=$(git ls-remote origin HEAD | cut -f1)
-		[[ $local_hash != $remote_hash ]] && changed=true
-		;;
-	esac
-
-	if [[ $changed == true ]]; then
-		# remote was updated, fetch and check out updates
-		display_alert "Fetching updates"
-		case $ref_type in
-			branch) git fetch --depth 1 origin $ref_name ;;
-			tag) git fetch --depth 1 origin tags/$ref_name ;;
-			head) git fetch --depth 1 origin HEAD ;;
-		esac
-		display_alert "Checking out"
-		git checkout -f -q FETCH_HEAD
-	elif [[ -n $(git status -uno --porcelain) ]]; then
-		# working directory is not clean
-		if [[ $FORCE_CHECKOUT == yes ]]; then
-			display_alert "Checking out"
-			git checkout -f -q HEAD
-		else
-			display_alert "Skipping checkout"
-		fi
-	else
-		# working directory is clean, nothing to do
-		display_alert "Up to date"
-	fi
-	if [[ -f .gitmodules ]]; then
-		display_alert "Updating submodules"
-		git submodule update --init --depth 1
-	fi
 } #############################################################################
 
 # chroot_installpackages

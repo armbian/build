@@ -28,20 +28,20 @@ CACHEDIR=$DEST/cache
 
 # used by multiple sources - reduce code duplication
 if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
-	MAINLINE_KERNEL='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
+	MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 else
-	MAINLINE_KERNEL='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
+	MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 fi
 # allow upgrades for same major.minor versions
 ARMBIAN_MAINLINE_KERNEL_VERSION="4.6"
 MAINLINE_KERNEL_BRANCH=v$(wget -qO- https://www.kernel.org/finger_banner | awk '{print $NF}' | grep -oE "^${ARMBIAN_MAINLINE_KERNEL_VERSION//./\\.}\.?[[:digit:]]*")
 #MAINLINE_KERNEL_BRANCH="v$(wget -qO- https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1)"
-MAINLINE_KERNEL_SOURCE="linux-vanilla"
+MAINLINE_KERNEL_DIR="linux-vanilla"
 
-MAINLINE_UBOOT='git://git.denx.de/u-boot.git'
+MAINLINE_UBOOT_SOURCE='git://git.denx.de/u-boot.git'
 #MAINLINE_UBOOT_BRANCH="v$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v '\^' | tail -1 | cut -d'v' -f 2)"
 MAINLINE_UBOOT_BRANCH="v2016.07"
-MAINLINE_UBOOT_SOURCE='u-boot'
+MAINLINE_UBOOT_DIR='u-boot'
 
 if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]]; then
 	source $SRC/lib/config/sources/$LINUXFAMILY.conf
@@ -168,14 +168,17 @@ PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 # debug
 cat <<-EOF >> $DEST/debug/output.log
 ## BUILD CONFIGURATION
-Config: $LINUXCONFIG
-Kernel source: $LINUXKERNEL
+Kernel configuration:
+Repository: $KERNELSOURCE
 Branch: $KERNELBRANCH
-linuxsource: $LINUXSOURCE
+Config file: $LINUXCONFIG
+
+U-boot configuration:
+Repository: $BOOTSOURCE
+Branch: $BOOTBRANCH
 Offset: $OFFSET
-bootsize: $BOOTSIZE
-bootloader: $BOOTLOADER
-bootsource: $BOOTSOURCE
-bootbranch: $BOOTBRANCH
-CPU $CPUMIN / $CPUMAX with $GOVERNOR
+Size: $BOOTSIZE
+
+CPU configuration:
+$CPUMIN - $CPUMAX with $GOVERNOR
 EOF

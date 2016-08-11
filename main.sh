@@ -177,10 +177,10 @@ start=`date +%s`
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 
 display_alert "source downloading" "@host" "info"
-fetch_from_github "$BOOTLOADER" "$BOOTSOURCE" "$BOOTBRANCH" "yes"
-BOOTSOURCEDIR=$BOOTSOURCE/$GITHUBSUBDIR
-fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE" "$KERNELBRANCH" "yes"
-LINUXSOURCEDIR=$LINUXSOURCE/$GITHUBSUBDIR
+fetch_from_github "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
+BOOTSOURCEDIR=$BOOTDIR/$GITHUBSUBDIR
+fetch_from_github "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
+LINUXSOURCEDIR=$KERNELDIR/$GITHUBSUBDIR
 
 if [[ -n $MISC1 ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
 if [[ -n $MISC5 ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
@@ -213,7 +213,7 @@ if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 	fi
 	cd $SOURCES/$BOOTSOURCEDIR
 	grab_version "$SOURCES/$BOOTSOURCEDIR" "UBOOT_VER"
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTSOURCE-$BRANCH" "$BOARD" "$BOOTSOURCE-$BRANCH $UBOOT_VER"
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTDIR-$BRANCH" "$BOARD" "$BOOTDIR-$BRANCH $UBOOT_VER"
 	compile_uboot
 fi
 
