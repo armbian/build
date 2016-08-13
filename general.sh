@@ -184,10 +184,11 @@ fi
 # <ref>:
 #	branch:name
 #	tag:name
-#	HEAD*
-#	commit:hash@depth*
+#	head(*)
+#	commit:hash@depth(**)
 #
-# *: Work in progress
+# *: Implies ref_subdir=no
+# **: Not implemented yet
 # <ref_subdir>: "yes" to create subdirectory for tag or branch name
 #
 fetch_from_repo()
@@ -197,51 +198,55 @@ fetch_from_repo()
 	local ref=$3
 	local ref_subdir=$4
 
-	[[ -z $ref || ( $ref != tag:* && $ref != branch:* ) ]] && exit_with_error "Error in configuration"
+	[[ -z $ref || ( $ref != tag:* && $ref != branch:* && $ref != head ) ]] && exit_with_error "Error in configuration"
 	local ref_type=${ref%%:*}
-	local ref_name=${ref##*:}
+	if [[ $ref_type == head ]]; then
+		local ref_name=HEAD
+	else
+		local ref_name=${ref##*:}
+	fi
 
 	display_alert "Checking git sources" "$dir $ref_name" "info"
 
 	# get default remote branch name without cloning
-	# doesn't work with git:// remote URLs
 	# local ref_name=$(git ls-remote --symref $url HEAD | grep -o 'refs/heads/\S*' | sed 's%refs/heads/%%')
+	# for git:// protocol comparing hashes of "git ls-remote -h $url" and "git ls-remote --symref $url HEAD" is needed
 
 	if [[ $ref_subdir == yes ]]; then
-		mkdir -p $SOURCES/$dir/$ref_name
-		cd $SOURCES/$dir/$ref_name
+		local workdir=$dir/$ref_name
 	else
-		mkdir -p $SOURCES/$dir/
-		cd $SOURCES/$dir/
+		local workdir=$dir
 	fi
+	mkdir -p $SOURCES/$workdir
+	cd $SOURCES/$workdir
 
-	# this may not work if $SRC is a part of git repository
-	if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null) != true ]]; then
+	if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null) != true || \
+				$(git rev-parse --show-toplevel) != $(pwd) ]]; then
 		display_alert "Creating local copy"
 		git init -q .
 		git remote add origin $url
 	fi
 
-	local local_hash=$(git rev-parse @ 2>/dev/null)
-
 	local changed=false
+
+	local local_hash=$(git rev-parse @ 2>/dev/null)
 	case $ref_type in
 		branch)
-		local remote_hash=$(git ls-remote -h origin "$ref_name" | cut -f1)
-		[[ $local_hash != $remote_hash ]] && changed=true
+		local remote_hash=$(git ls-remote -h $url "$ref_name" | cut -f1)
+		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
 		;;
 
 		tag)
-		local remote_hash=$(git ls-remote -t origin "$ref_name" | cut -f1)
-		if [[ $local_hash != $remote_hash ]]; then
-			remote_hash=$(git ls-remote -t origin "$ref_name^{}" | cut -f1)
+		local remote_hash=$(git ls-remote -t $url "$ref_name" | cut -f1)
+		if [[ -z $local_hash || $local_hash != $remote_hash ]]; then
+			remote_hash=$(git ls-remote -t $url "$ref_name^{}" | cut -f1)
 			[[ -z $remote_hash || $local_hash != $remote_hash ]] && changed=true
 		fi
 		;;
 
 		head)
-		local remote_hash=$(git ls-remote origin HEAD | cut -f1)
-		[[ $local_hash != $remote_hash ]] && changed=true
+		local remote_hash=$(git ls-remote $url HEAD | cut -f1)
+		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
 		;;
 	esac
 
@@ -255,7 +260,7 @@ fetch_from_repo()
 		esac
 		display_alert "Checking out"
 		git checkout -f -q FETCH_HEAD
-	elif [[ -n $(git status -uno --porcelain) ]]; then
+	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
 		if [[ $FORCE_CHECKOUT == yes ]]; then
 			display_alert "Checking out"
@@ -268,8 +273,19 @@ fetch_from_repo()
 		display_alert "Up to date"
 	fi
 	if [[ -f .gitmodules ]]; then
-		display_alert "Updating submodules"
-		git submodule update --init --depth 1
+		display_alert "Updating submodules" "" "ext"
+		# FML: http://stackoverflow.com/a/17692710
+		for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
+			cd $SOURCES/$workdir
+			local surl=$(git config -f .gitmodules --get "submodule.$i.url")
+			local sref=$(git config -f .gitmodules --get "submodule.$i.branch")
+			if [[ -n $sref ]]; then
+				sref="branch:$sref"
+			else
+				sref="head"
+			fi
+			fetch_from_repo "$surl" "$workdir/$i" "$sref"
+		done
 	fi
 } #############################################################################
 
