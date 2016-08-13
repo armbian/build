@@ -88,10 +88,10 @@ case $LINUXFAMILY in
 	;;
 	pine64)
 	# fix for u-boot needing armhf GCC 4.8
-	UBOOT_COMPILER="arm-linux-gnueabihf-"
+	[[ $BRANCH == default ]] && UBOOT_COMPILER="arm-linux-gnueabihf-"
 	;;
 	marvell)
-	# fix for u-boot needing arm soft float
+	# fix for u-boot needing arm soft float compiler
 	UBOOT_COMPILER="arm-linux-gnueabi-"
 	;;
 esac
