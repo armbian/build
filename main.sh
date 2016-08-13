@@ -173,15 +173,15 @@ if [[ $SYNC_CLOCK != no ]]; then
 fi
 start=`date +%s`
 
-# fetch_from_github [repository, sub directory]
+# fetch_from_repo <url> <dir> <ref> <subdir_flag>
 
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 
-display_alert "source downloading" "@host" "info"
-fetch_from_github "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
-BOOTSOURCEDIR=$BOOTDIR/$GITHUBSUBDIR
-fetch_from_github "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
-LINUXSOURCEDIR=$KERNELDIR/$GITHUBSUBDIR
+display_alert "Downloading sources" "" "info"
+fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
+BOOTSOURCEDIR=$BOOTDIR/${BOOTBRANCH##*:}
+fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
+LINUXSOURCEDIR=$KERNELDIR/${KERNELBRANCH##*:}
 
 if [[ -n $MISC1 ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
 if [[ -n $MISC5 ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
