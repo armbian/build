@@ -127,7 +127,7 @@ create_board_package()
 	mkdir -p $destination/etc/initramfs/post-update.d/
 	cat <<-EOF > $destination/etc/initramfs/post-update.d/99-uboot
 	#!/bin/sh
-	mkimage -A $ARCHITECTURE -O linux -T ramdisk -C gzip -n uInitrd -d \$2 /boot/uInitrd > /dev/null
+	mkimage -A $INITRD_ARCH -O linux -T ramdisk -C gzip -n uInitrd -d \$2 /boot/uInitrd > /dev/null
 	exit 0
 	EOF
 	chmod +x $destination/etc/initramfs/post-update.d/99-uboot
