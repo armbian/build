@@ -394,8 +394,8 @@ addtorepo()
 			display_alert "Creating section" "$release" "info"
 			aptly repo create -config=config/aptly.conf -distribution=$release -component=main -comment="Armbian main repository" $release
 		fi
-		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
-			aptly repo create -config=config/aptly.conf -distribution=$release -component="${release}-utils" -comment="Armbian utilities" ${release}-utils
+		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep "^utils") ]]; then
+			aptly repo create -config=config/aptly.conf -distribution=$release -component="utils" -comment="Armbian utilities" utils
 		fi
 		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
 			aptly repo create -config=config/aptly.conf -distribution=$release -component="${release}-desktop" -comment="Armbian desktop" ${release}-desktop
@@ -412,7 +412,7 @@ addtorepo()
 		# adding utils
 		if find ${POT}extra/$release/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
-			aptly repo add -force-replace=$replace -config=config/aptly.conf "${release}-utils" ${POT}extra/$release/utils/*.deb
+			aptly repo add -force-replace=$replace -config=config/aptly.conf "utils" ${POT}extra/$release/utils/*.deb
 		else
 			display_alert "Not adding $release" "utils" "wrn"
 		fi
@@ -426,8 +426,8 @@ addtorepo()
 		fi
 
 		# publish
-		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=config/aptly.conf -component=main,${release}-utils,${release}-desktop \
-			--distribution=$release repo $release ${release}-utils ${release}-desktop > /dev/null 2>&1
+		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=config/aptly.conf -component=main,utils,${release}-desktop \
+			--distribution=$release repo $release utils ${release}-desktop 
 
 		if [[ $? -ne 0 ]]; then
 			display_alert "Publishing failed" "$release" "err"

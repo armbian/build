@@ -9,10 +9,10 @@
 
 install_mt7601()
 {
-	local plugin_repo="https://github.com/porjo/mt7601/"
+	local plugin_repo="https://github.com/igorpecovnik/mt7601"
 	local plugin_dir="mt7601"
 
-	fetch_from_github "$plugin_repo" "$plugin_dir"
+	fetch_from_github "$plugin_repo" "$plugin_dir" "old"
 
 	cd $SOURCES/$plugin_dir
 
