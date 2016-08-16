@@ -68,6 +68,7 @@ case $ARCH in
 	KERNEL_COMPILER="aarch64-linux-gnu-"
 	UBOOT_COMPILER="aarch64-linux-gnu-"
 	ARCHITECTURE=arm64
+	INITRD_ARCH=arm64
 	QEMU_BINARY="qemu-aarch64-static"
 	;;
 
@@ -75,6 +76,7 @@ case $ARCH in
 	KERNEL_COMPILER="arm-linux-gnueabihf-"
 	UBOOT_COMPILER="arm-linux-gnueabihf-"
 	ARCHITECTURE=arm
+	INITRD_ARCH=arm
 	QEMU_BINARY="qemu-arm-static"
 	;;
 esac
@@ -87,8 +89,8 @@ case $LINUXFAMILY in
 	UBOOT_NEEDS_GCC='< 5.3'
 	;;
 	pine64)
-	# fix for u-boot needing armhf GCC 4.8
-	[[ $BRANCH == default ]] && UBOOT_COMPILER="arm-linux-gnueabihf-"
+	# fix for initramfs update script in board support package
+	[[ $BRANCH == default ]] && INITRD_ARCH=arm
 	;;
 	marvell)
 	# fix for u-boot needing arm soft float compiler
