@@ -14,6 +14,7 @@
 # exit_with_error
 # get_package_list_hash
 # fetch_from_github
+# fetch_from_repo
 # display_alert
 # grab_version
 # fingerprint_image
@@ -177,6 +178,116 @@ if [ $? -ne 0 ]; then
 fi
 }
 
+# fetch_rom_repo <url> <directory> <ref> <ref_subdir>
+# <url>: remote repository URL
+# <directory>: local directory; subdir for branch/tag will be created
+# <ref>:
+#	branch:name
+#	tag:name
+#	head(*)
+#	commit:hash@depth(**)
+#
+# *: Implies ref_subdir=no
+# **: Not implemented yet
+# <ref_subdir>: "yes" to create subdirectory for tag or branch name
+#
+fetch_from_repo()
+{
+	local url=$1
+	local dir=$2
+	local ref=$3
+	local ref_subdir=$4
+
+	[[ -z $ref || ( $ref != tag:* && $ref != branch:* && $ref != head ) ]] && exit_with_error "Error in configuration"
+	local ref_type=${ref%%:*}
+	if [[ $ref_type == head ]]; then
+		local ref_name=HEAD
+	else
+		local ref_name=${ref##*:}
+	fi
+
+	display_alert "Checking git sources" "$dir $ref_name" "info"
+
+	# get default remote branch name without cloning
+	# local ref_name=$(git ls-remote --symref $url HEAD | grep -o 'refs/heads/\S*' | sed 's%refs/heads/%%')
+	# for git:// protocol comparing hashes of "git ls-remote -h $url" and "git ls-remote --symref $url HEAD" is needed
+
+	if [[ $ref_subdir == yes ]]; then
+		local workdir=$dir/$ref_name
+	else
+		local workdir=$dir
+	fi
+	mkdir -p $SOURCES/$workdir
+	cd $SOURCES/$workdir
+
+	if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null) != true || \
+				$(git rev-parse --show-toplevel) != $(pwd) ]]; then
+		display_alert "Creating local copy"
+		git init -q .
+		git remote add origin $url
+	fi
+
+	local changed=false
+
+	local local_hash=$(git rev-parse @ 2>/dev/null)
+	case $ref_type in
+		branch)
+		local remote_hash=$(git ls-remote -h $url "$ref_name" | cut -f1)
+		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
+		;;
+
+		tag)
+		local remote_hash=$(git ls-remote -t $url "$ref_name" | cut -f1)
+		if [[ -z $local_hash || $local_hash != $remote_hash ]]; then
+			remote_hash=$(git ls-remote -t $url "$ref_name^{}" | cut -f1)
+			[[ -z $remote_hash || $local_hash != $remote_hash ]] && changed=true
+		fi
+		;;
+
+		head)
+		local remote_hash=$(git ls-remote $url HEAD | cut -f1)
+		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
+		;;
+	esac
+
+	if [[ $changed == true ]]; then
+		# remote was updated, fetch and check out updates
+		display_alert "Fetching updates"
+		case $ref_type in
+			branch) git fetch --depth 1 origin $ref_name ;;
+			tag) git fetch --depth 1 origin tags/$ref_name ;;
+			head) git fetch --depth 1 origin HEAD ;;
+		esac
+		display_alert "Checking out"
+		git checkout -f -q FETCH_HEAD
+	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
+		# working directory is not clean
+		if [[ $FORCE_CHECKOUT == yes ]]; then
+			display_alert "Checking out"
+			git checkout -f -q HEAD
+		else
+			display_alert "Skipping checkout"
+		fi
+	else
+		# working directory is clean, nothing to do
+		display_alert "Up to date"
+	fi
+	if [[ -f .gitmodules ]]; then
+		display_alert "Updating submodules" "" "ext"
+		# FML: http://stackoverflow.com/a/17692710
+		for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
+			cd $SOURCES/$workdir
+			local surl=$(git config -f .gitmodules --get "submodule.$i.url")
+			local sref=$(git config -f .gitmodules --get "submodule.$i.branch")
+			if [[ -n $sref ]]; then
+				sref="branch:$sref"
+			else
+				sref="head"
+			fi
+			fetch_from_repo "$surl" "$workdir/$i" "$sref"
+		done
+	fi
+} #############################################################################
 
 display_alert()
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -258,9 +369,8 @@ addtorepo()
 # parameter "remove" dumps all and creates new
 # function: cycle trough distributions
 	local distributions=("wheezy" "jessie" "trusty" "xenial")
-	
 	for release in "${distributions[@]}"; do
-	
+
 		# let's drop from publish if exits
 		if [[ -n $(aptly publish list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			aptly publish drop -config=config/aptly.conf $release > /dev/null 2>&1
@@ -275,47 +385,57 @@ addtorepo()
 
 		if [[ $1 == replace ]]; then
 			local replace=true
-		else 
-			local replace=false		
+		else
+			local replace=false
 		fi
-		
+
 		# create local repository if not exist
 		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			display_alert "Creating section" "$release" "info"
-			aptly repo create -config=config/aptly.conf -distribution=$release -component="main" -comment="Armbian main repository" $release			
+			aptly repo create -config=config/aptly.conf -distribution=$release -component=main -comment="Armbian main repository" $release
 		fi
-		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release"-utils") ]]; then
-			aptly repo create -config=config/aptly.conf -distribution=$release -component="utils" -comment="Armbian utilities" "$release"-utils
+		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep "^utils") ]]; then
+			aptly repo create -config=config/aptly.conf -distribution=$release -component="utils" -comment="Armbian utilities" utils
 		fi
-		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release"-desktop") ]]; then
-			aptly repo create -config=config/aptly.conf -distribution=$release -component="desktop" -comment="Armbian desktop" "$release"-desktop
+		if [[ -z $(aptly repo list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
+			aptly repo create -config=config/aptly.conf -distribution=$release -component="${release}-desktop" -comment="Armbian desktop" ${release}-desktop
 		fi
 		# create local repository if not exist
-		
+
 		# adding main
-		if [[ -d $POT ]]; then
+		if find $POT -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "main" "ext"
-			aptly repo add -force-replace=${replace} -config=config/aptly.conf $release $POT/*.deb
-		fi	
-		
-		# adding utils
-		if [[ -d ${POT}extra/$release/utils ]]; then 
-			display_alert "Adding to repository $release" "utils" "ext" 
-			aptly repo add -force-replace=${replace} -config=config/aptly.conf "$release"-utils ${POT}extra/$release/utils/*.deb
+			aptly repo add -force-replace=$replace -config=config/aptly.conf $release $POT/*.deb
+		else
+			display_alert "Not adding $release" "main" "wrn"
 		fi
-		
+		# adding utils
+		if find ${POT}extra/$release/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+			display_alert "Adding to repository $release" "utils" "ext"
+			aptly repo add -force-replace=$replace -config=config/aptly.conf "utils" ${POT}extra/$release/utils/*.deb
+		else
+			display_alert "Not adding $release" "utils" "wrn"
+		fi
+
 		# adding desktop
-		if [[ -d ${POT}extra/$release/desktop ]]; then 
+		if find ${POT}extra/$release/desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "desktop" "ext"
-			aptly repo add -force-replace=${replace} -config=config/aptly.conf "$release"-desktop ${POT}extra/$release/desktop/*.deb
+			aptly repo add -force-replace=$replace -config=config/aptly.conf "${release}-desktop" ${POT}extra/$release/desktop/*.deb
+		else
+			display_alert "Not adding $release" "desktop" "wrn"
 		fi
 
 		# publish
-		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=config/aptly.conf -component=main,utils,desktop \
-		--distribution=$release repo $release $release"-utils" $release"-desktop" 
+		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=config/aptly.conf -component=main,utils,${release}-desktop \
+			--distribution=$release repo $release utils ${release}-desktop 
 
+		if [[ $? -ne 0 ]]; then
+			display_alert "Publishing failed" "$release" "err"
+			exit 0
+		fi
 	done
-aptly repo list -config=config/aptly.conf
+	display_alert "List of local repos" "local" "info"
+	(aptly repo list -config=config/aptly.conf) | egrep packages
 }
 
 # prepare_host
@@ -439,16 +559,17 @@ prepare_host() {
 	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
 
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
-	download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/aarch64-linux-gnu/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu.tar.xz"
-	download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabi/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi.tar.xz"
-	download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabihf/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf.tar.xz"
-	#download_toolchain "https://releases.linaro.org/components/toolchain/binaries/5.3-2016.02/arm-linux-gnueabihf/gcc-linaro-5.3-2016.02-x86_64_arm-linux-gnueabihf.tar.xz"
-	download_toolchain "https://releases.linaro.org/components/toolchain/binaries/5.2-2015.11-2/arm-linux-gnueabihf/gcc-linaro-5.2-2015.11-2-x86_64_arm-linux-gnueabihf.tar.xz"
-	#download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-eabi/gcc-linaro-4.9-2016.02-x86_64_arm-eabi.tar.xz"
-	download_toolchain "https://releases.linaro.org/14.04/components/toolchain/binaries/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-
-	dpkg --add-architecture i386
-	apt-get install -qq -y --no-install-recommends lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 zlib1g:i386 >/dev/null 2>&1
+	if [[ $codename == xenial ]]; then
+		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/aarch64-linux-gnu/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu.tar.xz"
+		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabi/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi.tar.xz"
+		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabihf/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf.tar.xz"
+		#download_toolchain "https://releases.linaro.org/components/toolchain/binaries/5.3-2016.02/arm-linux-gnueabihf/gcc-linaro-5.3-2016.02-x86_64_arm-linux-gnueabihf.tar.xz"
+		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/5.2-2015.11-2/arm-linux-gnueabihf/gcc-linaro-5.2-2015.11-2-x86_64_arm-linux-gnueabihf.tar.xz"
+		#download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-eabi/gcc-linaro-4.9-2016.02-x86_64_arm-eabi.tar.xz"
+		download_toolchain "https://releases.linaro.org/14.04/components/toolchain/binaries/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+		dpkg --add-architecture i386
+		apt-get install -qq -y --no-install-recommends lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 zlib1g:i386 >/dev/null 2>&1
+	fi
 
 	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/lib/scripts/customize-image.sh.template $SRC/userpatches/customize-image.sh
 
@@ -485,8 +606,9 @@ download_toolchain()
 
 	display_alert "Verifying"
 	if grep -q 'BEGIN PGP SIGNATURE' ${filename}.asc; then
-		gpg --list-keys 8F427EAF || gpg --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF
-		gpg --verify -q ${filename}.asc 2>/dev/null && verified=true
+		(gpg --list-keys 8F427EAF || gpg --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF) 2>&1 | tee -a $DEST/debug/output.log
+		gpg --verify --trust-model always -q ${filename}.asc 2>&1 | tee -a $DEST/debug/output.log
+		[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true
 	else
 		md5sum -c --status ${filename}.asc && verified=true
 	fi

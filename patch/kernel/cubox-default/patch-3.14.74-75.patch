@@ -1,0 +1,553 @@
+diff --git a/Makefile b/Makefile
+index d2fb4dae6ecb..9e6e6131e986 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 3
+ PATCHLEVEL = 14
+-SUBLEVEL = 74
++SUBLEVEL = 75
+ EXTRAVERSION =
+ NAME = Remembering Coco
+ 
+diff --git a/arch/arc/kernel/stacktrace.c b/arch/arc/kernel/stacktrace.c
+index fb98769b6a98..3e349aefdb9e 100644
+--- a/arch/arc/kernel/stacktrace.c
++++ b/arch/arc/kernel/stacktrace.c
+@@ -131,7 +131,7 @@ arc_unwind_core(struct task_struct *tsk, struct pt_regs *regs,
+ 	 * prelogue is setup (callee regs saved and then fp set and not other
+ 	 * way around
+ 	 */
+-	pr_warn("CONFIG_ARC_DW2_UNWIND needs to be enabled\n");
++	pr_warn_once("CONFIG_ARC_DW2_UNWIND needs to be enabled\n");
+ 	return 0;
+ 
+ #endif
+diff --git a/arch/arc/mm/tlbex.S b/arch/arc/mm/tlbex.S
+index 79bfc81358c9..0af8fc213546 100644
+--- a/arch/arc/mm/tlbex.S
++++ b/arch/arc/mm/tlbex.S
+@@ -89,7 +89,7 @@ ex_saved_reg1:
+ #ifdef CONFIG_SMP
+ 	sr  r0, [ARC_REG_SCRATCH_DATA0]	; freeup r0 to code with
+ 	GET_CPU_ID  r0			; get to per cpu scratch mem,
+-	lsl r0, r0, L1_CACHE_SHIFT	; cache line wide per cpu
++	asl r0, r0, L1_CACHE_SHIFT	; cache line wide per cpu
+ 	add r0, @ex_saved_reg1, r0
+ #else
+ 	st    r0, [@ex_saved_reg1]
+@@ -108,7 +108,7 @@ ex_saved_reg1:
+ .macro TLBMISS_RESTORE_REGS
+ #ifdef CONFIG_SMP
+ 	GET_CPU_ID  r0			; get to per cpu scratch mem
+-	lsl r0, r0, L1_CACHE_SHIFT	; each is cache line wide
++	asl r0, r0, L1_CACHE_SHIFT	; each is cache line wide
+ 	add r0, @ex_saved_reg1, r0
+ 	ld_s  r3, [r0,12]
+ 	ld_s  r2, [r0, 8]
+@@ -220,7 +220,7 @@ ex_saved_reg1:
+ 
+ .macro CONV_PTE_TO_TLB
+ 	and    r3, r0, PTE_BITS_RWX	;       r w x
+-	lsl    r2, r3, 3		; r w x 0 0 0
++	asl    r2, r3, 3		; Kr Kw Kx 0  0  0 (GLOBAL, kernel only)
+ 	and.f  0,  r0, _PAGE_GLOBAL
+ 	or.z   r2, r2, r3		; r w x r w x
+ 
+diff --git a/drivers/input/joystick/xpad.c b/drivers/input/joystick/xpad.c
+index 517829f6a58b..4b67f70feab9 100644
+--- a/drivers/input/joystick/xpad.c
++++ b/drivers/input/joystick/xpad.c
+@@ -844,6 +844,9 @@ static int xpad_probe(struct usb_interface *intf, const struct usb_device_id *id
+ 	struct usb_endpoint_descriptor *ep_irq_in;
+ 	int i, error;
+ 
++	if (intf->cur_altsetting->desc.bNumEndpoints != 2)
++		return -ENODEV;
++
+ 	for (i = 0; xpad_device[i].idVendor; i++) {
+ 		if ((le16_to_cpu(udev->descriptor.idVendor) == xpad_device[i].idVendor) &&
+ 		    (le16_to_cpu(udev->descriptor.idProduct) == xpad_device[i].idProduct))
+diff --git a/drivers/input/touchscreen/wacom_w8001.c b/drivers/input/touchscreen/wacom_w8001.c
+index 2792ca397dd0..3ed0ce1e4dcb 100644
+--- a/drivers/input/touchscreen/wacom_w8001.c
++++ b/drivers/input/touchscreen/wacom_w8001.c
+@@ -27,7 +27,7 @@ MODULE_AUTHOR("Jaya Kumar <jayakumar.lkml@gmail.com>");
+ MODULE_DESCRIPTION(DRIVER_DESC);
+ MODULE_LICENSE("GPL");
+ 
+-#define W8001_MAX_LENGTH	11
++#define W8001_MAX_LENGTH	13
+ #define W8001_LEAD_MASK		0x80
+ #define W8001_LEAD_BYTE		0x80
+ #define W8001_TAB_MASK		0x40
+diff --git a/drivers/mmc/card/block.c b/drivers/mmc/card/block.c
+index 508380b6a10d..2cc6082d0060 100644
+--- a/drivers/mmc/card/block.c
++++ b/drivers/mmc/card/block.c
+@@ -1610,8 +1610,8 @@ static void mmc_blk_packed_hdr_wrq_prep(struct mmc_queue_req *mqrq,
+ 
+ 	packed_cmd_hdr = packed->cmd_hdr;
+ 	memset(packed_cmd_hdr, 0, sizeof(packed->cmd_hdr));
+-	packed_cmd_hdr[0] = (packed->nr_entries << 16) |
+-		(PACKED_CMD_WR << 8) | PACKED_CMD_VER;
++	packed_cmd_hdr[0] = cpu_to_le32((packed->nr_entries << 16) |
++		(PACKED_CMD_WR << 8) | PACKED_CMD_VER);
+ 	hdr_blocks = mmc_large_sector(card) ? 8 : 1;
+ 
+ 	/*
+@@ -1625,14 +1625,14 @@ static void mmc_blk_packed_hdr_wrq_prep(struct mmc_queue_req *mqrq,
+ 			((brq->data.blocks * brq->data.blksz) >=
+ 			 card->ext_csd.data_tag_unit_size);
+ 		/* Argument of CMD23 */
+-		packed_cmd_hdr[(i * 2)] =
++		packed_cmd_hdr[(i * 2)] = cpu_to_le32(
+ 			(do_rel_wr ? MMC_CMD23_ARG_REL_WR : 0) |
+ 			(do_data_tag ? MMC_CMD23_ARG_TAG_REQ : 0) |
+-			blk_rq_sectors(prq);
++			blk_rq_sectors(prq));
+ 		/* Argument of CMD18 or CMD25 */
+-		packed_cmd_hdr[((i * 2)) + 1] =
++		packed_cmd_hdr[((i * 2)) + 1] = cpu_to_le32(
+ 			mmc_card_blockaddr(card) ?
+-			blk_rq_pos(prq) : blk_rq_pos(prq) << 9;
++			blk_rq_pos(prq) : blk_rq_pos(prq) << 9);
+ 		packed->blocks += blk_rq_sectors(prq);
+ 		i++;
+ 	}
+diff --git a/drivers/net/can/at91_can.c b/drivers/net/can/at91_can.c
+index 6efe27458116..8e2d394628ed 100644
+--- a/drivers/net/can/at91_can.c
++++ b/drivers/net/can/at91_can.c
+@@ -730,9 +730,10 @@ static int at91_poll_rx(struct net_device *dev, int quota)
+ 
+ 	/* upper group completed, look again in lower */
+ 	if (priv->rx_next > get_mb_rx_low_last(priv) &&
+-	    quota > 0 && mb > get_mb_rx_last(priv)) {
++	    mb > get_mb_rx_last(priv)) {
+ 		priv->rx_next = get_mb_rx_first(priv);
+-		goto again;
++		if (quota > 0)
++			goto again;
+ 	}
+ 
+ 	return received;
+diff --git a/drivers/net/can/dev.c b/drivers/net/can/dev.c
+index 84ad2b44377c..fa78e45a2bee 100644
+--- a/drivers/net/can/dev.c
++++ b/drivers/net/can/dev.c
+@@ -665,6 +665,9 @@ static int can_changelink(struct net_device *dev,
+ 		}
+ 	}
+ 
++	if (!data)
++		return 0;
++
+ 	if (data[IFLA_CAN_CTRLMODE]) {
+ 		struct can_ctrlmode *cm;
+ 
+@@ -768,6 +771,11 @@ static int can_newlink(struct net *src_net, struct net_device *dev,
+ 	return -EOPNOTSUPP;
+ }
+ 
++static void can_dellink(struct net_device *dev, struct list_head *head)
++{
++	return;
++}
++
+ static struct rtnl_link_ops can_link_ops __read_mostly = {
+ 	.kind		= "can",
+ 	.maxtype	= IFLA_CAN_MAX,
+@@ -775,6 +783,7 @@ static struct rtnl_link_ops can_link_ops __read_mostly = {
+ 	.setup		= can_setup,
+ 	.newlink	= can_newlink,
+ 	.changelink	= can_changelink,
++	.dellink	= can_dellink,
+ 	.get_size	= can_get_size,
+ 	.fill_info	= can_fill_info,
+ 	.get_xstats_size = can_get_xstats_size,
+diff --git a/drivers/net/ethernet/marvell/mvneta.c b/drivers/net/ethernet/marvell/mvneta.c
+index c089fa1ceea9..f4c86225be36 100644
+--- a/drivers/net/ethernet/marvell/mvneta.c
++++ b/drivers/net/ethernet/marvell/mvneta.c
+@@ -213,7 +213,7 @@
+ /* Various constants */
+ 
+ /* Coalescing */
+-#define MVNETA_TXDONE_COAL_PKTS		1
++#define MVNETA_TXDONE_COAL_PKTS		0	/* interrupt per packet */
+ #define MVNETA_RX_COAL_PKTS		32
+ #define MVNETA_RX_COAL_USEC		100
+ 
+diff --git a/drivers/pinctrl/pinctrl-single.c b/drivers/pinctrl/pinctrl-single.c
+index fa2dcbcdb921..c2f616f515c3 100644
+--- a/drivers/pinctrl/pinctrl-single.c
++++ b/drivers/pinctrl/pinctrl-single.c
+@@ -1616,6 +1616,9 @@ static inline void pcs_irq_set(struct pcs_soc_data *pcs_soc,
+ 		else
+ 			mask &= ~soc_mask;
+ 		pcs->write(mask, pcswi->reg);
++
++		/* flush posted write */
++		mask = pcs->read(pcswi->reg);
+ 		raw_spin_unlock(&pcs->lock);
+ 	}
+ 
+diff --git a/drivers/s390/net/qeth_l2_main.c b/drivers/s390/net/qeth_l2_main.c
+index 908d82529ee9..668acd6c7bc8 100644
+--- a/drivers/s390/net/qeth_l2_main.c
++++ b/drivers/s390/net/qeth_l2_main.c
+@@ -906,6 +906,7 @@ static void qeth_l2_remove_device(struct ccwgroup_device *cgdev)
+ 		qeth_l2_set_offline(cgdev);
+ 
+ 	if (card->dev) {
++		netif_napi_del(&card->napi);
+ 		unregister_netdev(card->dev);
+ 		card->dev = NULL;
+ 	}
+diff --git a/drivers/s390/net/qeth_l3_main.c b/drivers/s390/net/qeth_l3_main.c
+index 3524d34ff694..59759f72c24f 100644
+--- a/drivers/s390/net/qeth_l3_main.c
++++ b/drivers/s390/net/qeth_l3_main.c
+@@ -3333,6 +3333,7 @@ static void qeth_l3_remove_device(struct ccwgroup_device *cgdev)
+ 		qeth_l3_set_offline(cgdev);
+ 
+ 	if (card->dev) {
++		netif_napi_del(&card->napi);
+ 		unregister_netdev(card->dev);
+ 		card->dev = NULL;
+ 	}
+diff --git a/drivers/scsi/ipr.c b/drivers/scsi/ipr.c
+index 2b7bc7df1edf..9d92f798b8b2 100644
+--- a/drivers/scsi/ipr.c
++++ b/drivers/scsi/ipr.c
+@@ -9644,6 +9644,7 @@ static int ipr_probe_ioa(struct pci_dev *pdev,
+ 		ioa_cfg->intr_flag = IPR_USE_MSI;
+ 	else {
+ 		ioa_cfg->intr_flag = IPR_USE_LSI;
++		ioa_cfg->clear_isr = 1;
+ 		ioa_cfg->nvectors = 1;
+ 		dev_info(&pdev->dev, "Cannot enable MSI.\n");
+ 	}
+diff --git a/drivers/xen/xen-pciback/conf_space.c b/drivers/xen/xen-pciback/conf_space.c
+index 75fe3d466515..ba3fac8318bb 100644
+--- a/drivers/xen/xen-pciback/conf_space.c
++++ b/drivers/xen/xen-pciback/conf_space.c
+@@ -183,8 +183,7 @@ int xen_pcibk_config_read(struct pci_dev *dev, int offset, int size,
+ 		field_start = OFFSET(cfg_entry);
+ 		field_end = OFFSET(cfg_entry) + field->size;
+ 
+-		if ((req_start >= field_start && req_start < field_end)
+-		    || (req_end > field_start && req_end <= field_end)) {
++		 if (req_end > field_start && field_end > req_start) {
+ 			err = conf_space_read(dev, cfg_entry, field_start,
+ 					      &tmp_val);
+ 			if (err)
+@@ -230,8 +229,7 @@ int xen_pcibk_config_write(struct pci_dev *dev, int offset, int size, u32 value)
+ 		field_start = OFFSET(cfg_entry);
+ 		field_end = OFFSET(cfg_entry) + field->size;
+ 
+-		if ((req_start >= field_start && req_start < field_end)
+-		    || (req_end > field_start && req_end <= field_end)) {
++		 if (req_end > field_start && field_end > req_start) {
+ 			tmp_val = 0;
+ 
+ 			err = xen_pcibk_config_read(dev, field_start,
+diff --git a/fs/ecryptfs/file.c b/fs/ecryptfs/file.c
+index 03df50211c48..eb0c26a36b03 100644
+--- a/fs/ecryptfs/file.c
++++ b/fs/ecryptfs/file.c
+@@ -178,6 +178,19 @@ out:
+ 	return rc;
+ }
+ 
++static int ecryptfs_mmap(struct file *file, struct vm_area_struct *vma)
++{
++	struct file *lower_file = ecryptfs_file_to_lower(file);
++	/*
++	 * Don't allow mmap on top of file systems that don't support it
++	 * natively.  If FILESYSTEM_MAX_STACK_DEPTH > 2 or ecryptfs
++	 * allows recursive mounting, this will need to be extended.
++	 */
++	if (!lower_file->f_op->mmap)
++		return -ENODEV;
++	return generic_file_mmap(file, vma);
++}
++
+ /**
+  * ecryptfs_open
+  * @inode: inode speciying file to open
+@@ -349,7 +362,7 @@ const struct file_operations ecryptfs_main_fops = {
+ #ifdef CONFIG_COMPAT
+ 	.compat_ioctl = ecryptfs_compat_ioctl,
+ #endif
+-	.mmap = generic_file_mmap,
++	.mmap = ecryptfs_mmap,
+ 	.open = ecryptfs_open,
+ 	.flush = ecryptfs_flush,
+ 	.release = ecryptfs_release,
+diff --git a/fs/ecryptfs/kthread.c b/fs/ecryptfs/kthread.c
+index 9b661a4ccee7..f1ea610362c6 100644
+--- a/fs/ecryptfs/kthread.c
++++ b/fs/ecryptfs/kthread.c
+@@ -25,7 +25,6 @@
+ #include <linux/slab.h>
+ #include <linux/wait.h>
+ #include <linux/mount.h>
+-#include <linux/file.h>
+ #include "ecryptfs_kernel.h"
+ 
+ struct ecryptfs_open_req {
+@@ -148,7 +147,7 @@ int ecryptfs_privileged_open(struct file **lower_file,
+ 	flags |= IS_RDONLY(lower_dentry->d_inode) ? O_RDONLY : O_RDWR;
+ 	(*lower_file) = dentry_open(&req.path, flags, cred);
+ 	if (!IS_ERR(*lower_file))
+-		goto have_file;
++		goto out;
+ 	if ((flags & O_ACCMODE) == O_RDONLY) {
+ 		rc = PTR_ERR((*lower_file));
+ 		goto out;
+@@ -166,16 +165,8 @@ int ecryptfs_privileged_open(struct file **lower_file,
+ 	mutex_unlock(&ecryptfs_kthread_ctl.mux);
+ 	wake_up(&ecryptfs_kthread_ctl.wait);
+ 	wait_for_completion(&req.done);
+-	if (IS_ERR(*lower_file)) {
++	if (IS_ERR(*lower_file))
+ 		rc = PTR_ERR(*lower_file);
+-		goto out;
+-	}
+-have_file:
+-	if ((*lower_file)->f_op->mmap == NULL) {
+-		fput(*lower_file);
+-		*lower_file = NULL;
+-		rc = -EMEDIUMTYPE;
+-	}
+ out:
+ 	return rc;
+ }
+diff --git a/fs/ext4/extents.c b/fs/ext4/extents.c
+index 4e237a6b4b33..a3be02e03021 100644
+--- a/fs/ext4/extents.c
++++ b/fs/ext4/extents.c
+@@ -452,6 +452,10 @@ static int __ext4_ext_check(const char *function, unsigned int line,
+ 		error_msg = "invalid extent entries";
+ 		goto corrupted;
+ 	}
++	if (unlikely(depth > 32)) {
++		error_msg = "too large eh_depth";
++		goto corrupted;
++	}
+ 	/* Verify checksum on non-root extent tree nodes */
+ 	if (ext_depth(inode) != depth &&
+ 	    !ext4_extent_block_csum_verify(inode, eh)) {
+diff --git a/fs/nilfs2/the_nilfs.c b/fs/nilfs2/the_nilfs.c
+index 94c451ce6d24..30c047e0bad2 100644
+--- a/fs/nilfs2/the_nilfs.c
++++ b/fs/nilfs2/the_nilfs.c
+@@ -431,7 +431,7 @@ static int nilfs_valid_sb(struct nilfs_super_block *sbp)
+ 	if (!sbp || le16_to_cpu(sbp->s_magic) != NILFS_SUPER_MAGIC)
+ 		return 0;
+ 	bytes = le16_to_cpu(sbp->s_bytes);
+-	if (bytes > BLOCK_SIZE)
++	if (bytes < sumoff + 4 || bytes > BLOCK_SIZE)
+ 		return 0;
+ 	crc = crc32_le(le32_to_cpu(sbp->s_crc_seed), (unsigned char *)sbp,
+ 		       sumoff);
+diff --git a/net/ceph/osdmap.c b/net/ceph/osdmap.c
+index bde94d853b2b..64bc3d959992 100644
+--- a/net/ceph/osdmap.c
++++ b/net/ceph/osdmap.c
+@@ -825,6 +825,110 @@ bad:
+ }
+ 
+ /*
++ * Encoding order is (new_up_client, new_state, new_weight).  Need to
++ * apply in the (new_weight, new_state, new_up_client) order, because
++ * an incremental map may look like e.g.
++ *
++ *     new_up_client: { osd=6, addr=... } # set osd_state and addr
++ *     new_state: { osd=6, xorstate=EXISTS } # clear osd_state
++ */
++static int decode_new_up_state_weight(void **p, void *end,
++				      struct ceph_osdmap *map)
++{
++	void *new_up_client;
++	void *new_state;
++	void *new_weight_end;
++	u32 len;
++
++	new_up_client = *p;
++	ceph_decode_32_safe(p, end, len, e_inval);
++	len *= sizeof(u32) + sizeof(struct ceph_entity_addr);
++	ceph_decode_need(p, end, len, e_inval);
++	*p += len;
++
++	new_state = *p;
++	ceph_decode_32_safe(p, end, len, e_inval);
++	len *= sizeof(u32) + sizeof(u8);
++	ceph_decode_need(p, end, len, e_inval);
++	*p += len;
++
++	/* new_weight */
++	ceph_decode_32_safe(p, end, len, e_inval);
++	while (len--) {
++		s32 osd;
++		u32 w;
++
++		ceph_decode_need(p, end, 2*sizeof(u32), e_inval);
++		osd = ceph_decode_32(p);
++		w = ceph_decode_32(p);
++		BUG_ON(osd >= map->max_osd);
++		pr_info("osd%d weight 0x%x %s\n", osd, w,
++		     w == CEPH_OSD_IN ? "(in)" :
++		     (w == CEPH_OSD_OUT ? "(out)" : ""));
++		map->osd_weight[osd] = w;
++
++		/*
++		 * If we are marking in, set the EXISTS, and clear the
++		 * AUTOOUT and NEW bits.
++		 */
++		if (w) {
++			map->osd_state[osd] |= CEPH_OSD_EXISTS;
++			map->osd_state[osd] &= ~(CEPH_OSD_AUTOOUT |
++						 CEPH_OSD_NEW);
++		}
++	}
++	new_weight_end = *p;
++
++	/* new_state (up/down) */
++	*p = new_state;
++	len = ceph_decode_32(p);
++	while (len--) {
++		s32 osd;
++		u8 xorstate;
++
++		osd = ceph_decode_32(p);
++		xorstate = ceph_decode_8(p);
++		if (xorstate == 0)
++			xorstate = CEPH_OSD_UP;
++		BUG_ON(osd >= map->max_osd);
++		if ((map->osd_state[osd] & CEPH_OSD_UP) &&
++		    (xorstate & CEPH_OSD_UP))
++			pr_info("osd%d down\n", osd);
++		if ((map->osd_state[osd] & CEPH_OSD_EXISTS) &&
++		    (xorstate & CEPH_OSD_EXISTS)) {
++			pr_info("osd%d does not exist\n", osd);
++			map->osd_weight[osd] = CEPH_OSD_IN;
++			memset(map->osd_addr + osd, 0, sizeof(*map->osd_addr));
++			map->osd_state[osd] = 0;
++		} else {
++			map->osd_state[osd] ^= xorstate;
++		}
++	}
++
++	/* new_up_client */
++	*p = new_up_client;
++	len = ceph_decode_32(p);
++	while (len--) {
++		s32 osd;
++		struct ceph_entity_addr addr;
++
++		osd = ceph_decode_32(p);
++		ceph_decode_copy(p, &addr, sizeof(addr));
++		ceph_decode_addr(&addr);
++		BUG_ON(osd >= map->max_osd);
++		pr_info("osd%d up\n", osd);
++		map->osd_state[osd] |= CEPH_OSD_EXISTS | CEPH_OSD_UP;
++		map->osd_addr[osd] = addr;
++	}
++
++	*p = new_weight_end;
++	return 0;
++
++e_inval:
++	return -EINVAL;
++}
++
++/*
+  * decode and apply an incremental map update.
+  */
+ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
+@@ -939,50 +1043,10 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
+ 			__remove_pg_pool(&map->pg_pools, pi);
+ 	}
+ 
+-	/* new_up */
+-	err = -EINVAL;
+-	ceph_decode_32_safe(p, end, len, bad);
+-	while (len--) {
+-		u32 osd;
+-		struct ceph_entity_addr addr;
+-		ceph_decode_32_safe(p, end, osd, bad);
+-		ceph_decode_copy_safe(p, end, &addr, sizeof(addr), bad);
+-		ceph_decode_addr(&addr);
+-		pr_info("osd%d up\n", osd);
+-		BUG_ON(osd >= map->max_osd);
+-		map->osd_state[osd] |= CEPH_OSD_UP;
+-		map->osd_addr[osd] = addr;
+-	}
+-
+-	/* new_state */
+-	ceph_decode_32_safe(p, end, len, bad);
+-	while (len--) {
+-		u32 osd;
+-		u8 xorstate;
+-		ceph_decode_32_safe(p, end, osd, bad);
+-		xorstate = **(u8 **)p;
+-		(*p)++;  /* clean flag */
+-		if (xorstate == 0)
+-			xorstate = CEPH_OSD_UP;
+-		if (xorstate & CEPH_OSD_UP)
+-			pr_info("osd%d down\n", osd);
+-		if (osd < map->max_osd)
+-			map->osd_state[osd] ^= xorstate;
+-	}
+-
+-	/* new_weight */
+-	ceph_decode_32_safe(p, end, len, bad);
+-	while (len--) {
+-		u32 osd, off;
+-		ceph_decode_need(p, end, sizeof(u32)*2, bad);
+-		osd = ceph_decode_32(p);
+-		off = ceph_decode_32(p);
+-		pr_info("osd%d weight 0x%x %s\n", osd, off,
+-		     off == CEPH_OSD_IN ? "(in)" :
+-		     (off == CEPH_OSD_OUT ? "(out)" : ""));
+-		if (osd < map->max_osd)
+-			map->osd_weight[osd] = off;
+-	}
++	/* new_up_client, new_state, new_weight */
++	err = decode_new_up_state_weight(p, end, map);
++	if (err)
++		goto bad;
+ 
+ 	/* new_pg_temp */
+ 	ceph_decode_32_safe(p, end, len, bad);
+diff --git a/sound/core/timer.c b/sound/core/timer.c
+index 38742e826900..3476895ee1fb 100644
+--- a/sound/core/timer.c
++++ b/sound/core/timer.c
+@@ -1208,6 +1208,7 @@ static void snd_timer_user_ccallback(struct snd_timer_instance *timeri,
+ 		tu->tstamp = *tstamp;
+ 	if ((tu->filter & (1 << event)) == 0 || !tu->tread)
+ 		return;
++	memset(&r1, 0, sizeof(r1));
+ 	r1.event = event;
+ 	r1.tstamp = *tstamp;
+ 	r1.val = resolution;
+@@ -1242,6 +1243,7 @@ static void snd_timer_user_tinterrupt(struct snd_timer_instance *timeri,
+ 	}
+ 	if ((tu->filter & (1 << SNDRV_TIMER_EVENT_RESOLUTION)) &&
+ 	    tu->last_resolution != resolution) {
++		memset(&r1, 0, sizeof(r1));
+ 		r1.event = SNDRV_TIMER_EVENT_RESOLUTION;
+ 		r1.tstamp = tstamp;
+ 		r1.val = resolution;
+@@ -1707,6 +1709,7 @@ static int snd_timer_user_params(struct file *file,
+ 	if (tu->timeri->flags & SNDRV_TIMER_IFLG_EARLY_EVENT) {
+ 		if (tu->tread) {
+ 			struct snd_timer_tread tread;
++			memset(&tread, 0, sizeof(tread));
+ 			tread.event = SNDRV_TIMER_EVENT_EARLY;
+ 			tread.tstamp.tv_sec = 0;
+ 			tread.tstamp.tv_nsec = 0;

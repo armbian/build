@@ -155,6 +155,7 @@ source $SRC/lib/configuration.sh
 VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
 
 echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION >> $DEST/debug/output.log
+(cd $SRC/lib; echo "Build script version: $(git rev-parse @)") >> $DEST/debug/output.log
 
 display_alert "Starting Armbian build script" "@host" "info"
 
@@ -172,15 +173,15 @@ if [[ $SYNC_CLOCK != no ]]; then
 fi
 start=`date +%s`
 
-# fetch_from_github [repository, sub directory]
+# fetch_from_repo <url> <dir> <ref> <subdir_flag>
 
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 
-display_alert "source downloading" "@host" "info"
-fetch_from_github "$BOOTLOADER" "$BOOTSOURCE" "$BOOTBRANCH" "yes"
-BOOTSOURCEDIR=$BOOTSOURCE/$GITHUBSUBDIR
-fetch_from_github "$LINUXKERNEL" "$LINUXSOURCE" "$KERNELBRANCH" "yes"
-LINUXSOURCEDIR=$LINUXSOURCE/$GITHUBSUBDIR
+display_alert "Downloading sources" "" "info"
+fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
+BOOTSOURCEDIR=$BOOTDIR/${BOOTBRANCH##*:}
+fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
+LINUXSOURCEDIR=$KERNELDIR/${KERNELBRANCH##*:}
 
 if [[ -n $MISC1 ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
 if [[ -n $MISC5 ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
@@ -213,7 +214,7 @@ if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 	fi
 	cd $SOURCES/$BOOTSOURCEDIR
 	grab_version "$SOURCES/$BOOTSOURCEDIR" "UBOOT_VER"
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTSOURCE-$BRANCH" "$BOARD" "$BOOTSOURCE-$BRANCH $UBOOT_VER"
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTDIR-$BRANCH" "$BOARD" "$BOOTDIR-$BRANCH $UBOOT_VER"
 	compile_uboot
 fi
 
