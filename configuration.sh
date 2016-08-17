@@ -33,7 +33,7 @@ else
 	MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 fi
 # allow upgrades for same major.minor versions
-ARMBIAN_MAINLINE_KERNEL_VERSION="4.6"
+ARMBIAN_MAINLINE_KERNEL_VERSION="4.7"
 MAINLINE_KERNEL_BRANCH=tag:v$(wget -qO- https://www.kernel.org/finger_banner | awk '{print $NF}' | grep -oE "^${ARMBIAN_MAINLINE_KERNEL_VERSION//./\\.}\.?[[:digit:]]*")
 #MAINLINE_KERNEL_BRANCH="v$(wget -qO- https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1)"
 MAINLINE_KERNEL_DIR="linux-vanilla"
