@@ -27,11 +27,6 @@ install_common()
 	# before installing board support package
 	rm $CACHEDIR/sdcard/etc/network/interfaces
 
-	# copy hostapd configurations
-	# TODO: move to hostapd package
-	install $SRC/lib/config/hostapd/hostapd.conf $CACHEDIR/sdcard/etc/hostapd.conf
-	install $SRC/lib/config/hostapd/hostapd.realtek.conf $CACHEDIR/sdcard/etc/hostapd.conf-rt
-
 	# console fix due to Debian bug
 	sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $CACHEDIR/sdcard/etc/default/console-setup
 
