@@ -13,10 +13,7 @@ compile_tools()
 {
 	local tmpdir=$CACHEDIR/sdcard/root/tools
 
-	display_alert "Building deb" "sunxi-tools" "info"
-
-	display_alert "... downloading sources" "sunxi-tools" "info"
-	git clone -q https://github.com/linux-sunxi/sunxi-tools $tmpdir/sunxi-tools >> $DEST/debug/sunxi-tools-build.log 2>&1
+	display_alert "Building deb" "armbian-tools" "info"
 
 	display_alert "... downloading sources" "temper" "info"
 	git clone -q https://github.com/padelt/pcsensor-temper $tmpdir/temper >> $DEST/debug/temper-build.log 2>&1
@@ -42,15 +39,8 @@ compile_tools()
 		Depends: libc6 (>= 2.10), libusb-1.0-0 (>= 2:1.0.8), libusb-0.1-4, libudev1
 		Section: utils
 		Priority: optional
-		Description: Armbian tools, sunxi, temper
+		Description: Armbian tools, temper, Cubie bt utils
 		END
-
-		echo 'SUBSYSTEMS=="usb", ATTR{idVendor}=="1f3a", ATTR{idProduct}=="efe8", GROUP="sunxi-fel"' > $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/lib/udev/rules.d/60-sunxi-tools.rules
-
-		cp $tmpdir/sunxi-tools/{sunxi-bootinfo,sunxi-fel,sunxi-fexc,sunxi-nand-part,sunxi-pio} $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/usr/bin
-
-		ln -s sunxi-fexc $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/usr/bin/fex2bin
-		ln -s sunxi-fexc $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/usr/bin/bin2fex
 
 		# temper
 		cp $tmpdir/temper/src/pcsensor $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/usr/bin/temper
@@ -68,16 +58,6 @@ compile_tools()
 
 	compiling()
 	{
-		display_alert "... compiling" "sunxitools" "info"
-		cd $tmpdir/sunxi-tools
-		git checkout -f -q ce9cf33606492076b81e1157ba9fc54b56379335 >> $DEST/debug/tools-build.log 2>&1
-		chroot $CACHEDIR/sdcard /bin/bash -c "cd /root/tools/sunxi-tools; make clean" >> $DEST/debug/tools-build.log 2>&1
-		chroot $CACHEDIR/sdcard /bin/bash -c "cd /root/tools/sunxi-tools; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
-		if [[ $? -ne 0 || ! -f $tmpdir/sunxi-tools/sunxi-fexc ]]; then
-			cd $CACHEDIR
-			rm -rf $tmpdir
-			exit_with_error "Error building" "sunxi-tools"
-		fi
 		display_alert "... compiling" "temper" "info"
 		chroot $CACHEDIR/sdcard /bin/bash -c "cd /root/tools/temper/src; make clean" >> $DEST/debug/tools-build.log 2>&1
 		chroot $CACHEDIR/sdcard /bin/bash -c "cd /root/tools/temper/src; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
