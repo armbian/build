@@ -229,7 +229,8 @@ if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 
 	# this is a patch that Ubuntu Trusty compiler works
 	if [[ $(patch --dry-run -t -p1 < $SRC/lib/patch/kernel/compiler.patch | grep Reversed) != "" ]]; then
-		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch > /dev/null 2>&1
+		display_alert "Patching kernel for compiler support"
+		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
 	fi
 
 	grab_version "$SOURCES/$LINUXSOURCEDIR" "KERNEL_VER"
@@ -240,7 +241,7 @@ fi
 [[ -n $RELEASE ]] && create_board_package
 
 # chroot-buildpackages
-[[ $EXTERNAL_NEW == yes && $(lsb_release -sc) == xenial ]] && chroot_build_packages
+[[ $EXTERNAL_NEW == yes ]] && chroot_build_packages
 
 if [[ $KERNEL_ONLY != yes ]]; then
 	debootstrap_ng
