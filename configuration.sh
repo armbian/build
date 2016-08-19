@@ -115,7 +115,7 @@ PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools hddtemp iotop iozone3 stress sys
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray thunar-volman galculator \
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu bluetooth \
 	network-manager network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common libgcr-base-3-1 libgcr-ui-3-1 p11-kit p11-kit-modules \
-	pasystray pavucontrol pulseaudio paman paprefs pavumeter pulseaudio-module-gconf pulseaudio-module-zeroconf"
+	pasystray pavucontrol pulseaudio paman pavumeter pulseaudio-module-gconf pulseaudio-module-zeroconf"
 
 PACKAGE_LIST_EXCLUDE=""
 
@@ -135,7 +135,7 @@ case $RELEASE in
 	PACKAGE_LIST_EXCLUDE="ureadahead plymouth"
 	;;
 	xenial)
-	PACKAGE_LIST_RELEASE="man-db wget nano libpam-systemd software-properties-common libnss-myhostname f2fs-tools iperf3"
+	PACKAGE_LIST_RELEASE="man-db wget nano libpam-systemd software-properties-common libnss-myhostname f2fs-tools iperf3 paprefs"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme policykit-1"
 	;;
 esac
