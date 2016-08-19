@@ -47,14 +47,18 @@ install_desktop ()
 	# unmount bind mount
 	umount $CACHEDIR/sdcard/tmp >/dev/null 2>&1
 
-	# fix for udoo
-	if [[ $BOARD != udoo ]]; then
-		cat <<-EOF > $CACHEDIR/sdcard/etc/wicd/manager-settings.conf
-		[Settings]
-		wireless_interface = wlan0
-		EOF
+	# Enable network manager
+	if [ -f "${CACHEDIR}/sdcard/etc/NetworkManager/NetworkManager.conf" ]; then
+		sed "s/managed=\(.*\)/managed=true/g" -i $CACHEDIR/sdcard/etc/NetworkManager/NetworkManager.conf
+		# Disable dns management withing NM
+		sed "s/\[main\]/\[main\]\ndns=none/g" -i $CACHEDIR/sdcard/etc/NetworkManager/NetworkManager.conf	
 	fi
-
+	
+	# Disable Pulseaudio timer scheduling which does not work with sndhdmi driver
+	if [ -f "${CACHEDIR}/sdcard/etc/pulse/default.pa" ]; then
+		sed "s/load-module module-udev-detect$/& tsched=0/g" -i  $CACHEDIR/sdcard/etc/pulse/default.pa
+	fi
+	
 	# Disable desktop mode autostart for now to enforce creation of normal user account
 	sed "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=false/g" -i $CACHEDIR/sdcard/etc/default/nodm
 
