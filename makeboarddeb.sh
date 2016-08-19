@@ -207,10 +207,6 @@ create_board_package()
 			fi
 		fi
 
-		# lamobo R1 router switch config
-		# TODO: compile from sources in sunxi-tools
-		tar xfz $SRC/lib/bin/swconfig.tgz -C $destination/usr/local/bin
-
 		# convert and add fex files
 		mkdir -p $destination/boot/bin
 		for i in $(ls -w1 $SRC/lib/config/fex/*.fex | xargs -n1 basename); do
