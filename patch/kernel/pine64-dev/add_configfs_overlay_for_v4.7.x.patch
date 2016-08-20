@@ -1,8 +1,8 @@
 diff --git a/drivers/of/Kconfig b/drivers/of/Kconfig
-index e2a4841..690552d 100644
+index bc07ad3..e9da9cf 100644
 --- a/drivers/of/Kconfig
 +++ b/drivers/of/Kconfig
-@@ -112,4 +112,11 @@ config OF_OVERLAY
+@@ -113,6 +113,13 @@ config OF_OVERLAY
  	  While this option is selected automatically when needed, you can
  	  enable it manually to improve device tree unit test coverage.
  
@@ -13,16 +13,19 @@ index e2a4841..690552d 100644
 +        help
 +          Enable a simple user-space driven DT overlay interface.
 +
- endif # OF
+ config OF_NUMA
+ 	bool
+ 
 diff --git a/drivers/of/Makefile b/drivers/of/Makefile
-index 156c072..7d912da 100644
+index d7efd9d..a06cc35 100644
 --- a/drivers/of/Makefile
 +++ b/drivers/of/Makefile
-@@ -14,5 +14,6 @@ obj-$(CONFIG_OF_MTD)  += of_mtd.o
+@@ -13,6 +13,7 @@ obj-$(CONFIG_OF_PCI_IRQ)  += of_pci_irq.o
  obj-$(CONFIG_OF_RESERVED_MEM) += of_reserved_mem.o
  obj-$(CONFIG_OF_RESOLVE)  += resolver.o
  obj-$(CONFIG_OF_OVERLAY) += overlay.o
 +obj-$(CONFIG_OF_CONFIGFS) += configfs.o
+ obj-$(CONFIG_OF_NUMA) += of_numa.o
  
  obj-$(CONFIG_OF_UNITTEST) += unittest-data/
 diff --git a/drivers/of/configfs.c b/drivers/of/configfs.c
@@ -78,7 +81,7 @@ index 0000000..68f889d
 +	int err;
 +
 +	/* unflatten the tree */
-+	of_fdt_unflatten_tree(blob, &overlay->overlay);
++	of_fdt_unflatten_tree(blob, NULL, &overlay->overlay);
 +	if (overlay->overlay == NULL) {
 +		pr_err("%s: failed to unflatten tree\n", __func__);
 +		err = -EINVAL;
@@ -342,54 +345,6 @@ index 0000000..68f889d
 +	return ret;
 +}
 +late_initcall(of_cfs_init);
-diff --git a/drivers/of/fdt.c b/drivers/of/fdt.c
-index 3349d2a..1e26605 100644
---- a/drivers/of/fdt.c
-+++ b/drivers/of/fdt.c
-@@ -960,19 +960,38 @@ int __init early_init_dt_scan_chosen(unsigned long node, const char *uname,
- 
- 	/* Retrieve command line */
- 	p = of_get_flat_dt_prop(node, "bootargs", &l);
--	if (p != NULL && l > 0)
--		strlcpy(data, p, min((int)l, COMMAND_LINE_SIZE));
- 
- 	/*
- 	 * CONFIG_CMDLINE is meant to be a default in case nothing else
- 	 * managed to set the command line, unless CONFIG_CMDLINE_FORCE
- 	 * is set in which case we override whatever was found earlier.
-+	 *
-+	 * However, it can be useful to be able to treat the default as
-+	 * a starting point to be extended using CONFIG_CMDLINE_EXTEND.
- 	 */
-+	((char *)data)[0] = '\0';
-+
- #ifdef CONFIG_CMDLINE
--#ifndef CONFIG_CMDLINE_FORCE
--	if (!((char *)data)[0])
-+	strlcpy(data, CONFIG_CMDLINE, COMMAND_LINE_SIZE);
-+
-+	if (p != NULL && l > 0)	{
-+#if defined(CONFIG_CMDLINE_EXTEND)
-+		int len = strlen(data);
-+		if (len > 0) {
-+			strlcat(data, " ", COMMAND_LINE_SIZE);
-+			len++;
-+		}
-+		strlcpy((char *)data + len, p, min((int)l, COMMAND_LINE_SIZE - len));
-+#elif defined(CONFIG_CMDLINE_FORCE)
-+		pr_warning("Ignoring bootargs property (using the default kernel command line)\n");
-+#else
-+		/* Neither extend nor force - just override */
-+		strlcpy(data, p, min((int)l, COMMAND_LINE_SIZE));
- #endif
--		strlcpy(data, CONFIG_CMDLINE, COMMAND_LINE_SIZE);
-+	}
-+#else /* CONFIG_CMDLINE */
-+	if (p != NULL && l > 0)
-+		strlcpy(data, p, min((int)l, COMMAND_LINE_SIZE));
- #endif /* CONFIG_CMDLINE */
- 
- 	pr_debug("Command line is: %s\n", (char*)data);
 diff --git a/drivers/of/fdt_address.c b/drivers/of/fdt_address.c
 index dca8f9b..ec7e167 100644
 --- a/drivers/of/fdt_address.c
@@ -404,18 +359,12 @@ index dca8f9b..ec7e167 100644
  	int parent, len;
  	const struct of_bus *bus, *pbus;
 diff --git a/drivers/of/resolver.c b/drivers/of/resolver.c
-index d313d49..5f0fb70 100644
+index 46325d6..867d1cf 100644
 --- a/drivers/of/resolver.c
 +++ b/drivers/of/resolver.c
-@@ -313,9 +313,16 @@ int of_resolve_phandles(struct device_node *resolve)
- 	phandle phandle, phandle_delta;
- 	int err;
- 
-+	if (!resolve)
-+		pr_err("%s: null node\n", __func__);
-+	if (resolve && !of_node_check_flag(resolve, OF_DETACHED))
-+		pr_err("%s: node %s not detached\n", __func__,
-+			 resolve->full_name);
+@@ -321,8 +321,10 @@ int of_resolve_phandles(struct device_node *resolve)
+ 		pr_err("%s: node %s not detached\n", __func__,
+ 			 resolve->full_name);
  	/* the resolve node must exist, and be detached */
 -	if (!resolve || !of_node_check_flag(resolve, OF_DETACHED))
 +	if (!resolve || !of_node_check_flag(resolve, OF_DETACHED)) {
@@ -425,7 +374,7 @@ index d313d49..5f0fb70 100644
  
  	/* first we need to adjust the phandles */
  	phandle_delta = of_get_tree_max_phandle() + 1;
-@@ -331,8 +338,10 @@ int of_resolve_phandles(struct device_node *resolve)
+@@ -338,8 +340,10 @@ int of_resolve_phandles(struct device_node *resolve)
  		/* resolve root is guaranteed to be the '/' */
  		err = __of_adjust_tree_phandle_references(childroot,
  				resolve, 0);
@@ -437,11 +386,3 @@ index d313d49..5f0fb70 100644
  
  		BUG_ON(__of_adjust_tree_phandle_references(childroot,
  				resolve, phandle_delta));
-@@ -370,6 +379,7 @@ int of_resolve_phandles(struct device_node *resolve)
- 	/* we need to fixup, but no root symbols... */
- 	if (!root_sym) {
- 		err = -EINVAL;
-+		pr_err("%s: no symbols in root of device tree.\n", __func__);
- 		goto out;
- 	}
- 
