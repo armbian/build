@@ -31,21 +31,14 @@ else
 	MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 fi
 # allow upgrades for same major.minor versions
-ARMBIAN_MAINLINE_KERNEL_VERSION="4.7"
+ARMBIAN_MAINLINE_KERNEL_VERSION='4.7'
 MAINLINE_KERNEL_BRANCH=tag:v$(wget -qO- https://www.kernel.org/finger_banner | awk '{print $NF}' | grep -oE "^${ARMBIAN_MAINLINE_KERNEL_VERSION//./\\.}\.?[[:digit:]]*")
-#MAINLINE_KERNEL_BRANCH="v$(wget -qO- https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1)"
-MAINLINE_KERNEL_DIR="linux-vanilla"
+MAINLINE_KERNEL_DIR='linux-vanilla'
 
 MAINLINE_UBOOT_SOURCE='git://git.denx.de/u-boot.git'
 #MAINLINE_UBOOT_BRANCH="v$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v '\^' | tail -1 | cut -d'v' -f 2)"
 MAINLINE_UBOOT_BRANCH='tag:v2016.07'
 MAINLINE_UBOOT_DIR='u-boot'
-
-if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]]; then
-	source $SRC/lib/config/sources/$LINUXFAMILY.conf
-else
-	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
-fi
 
 # Let's set defalt data if not defined in board configuration above
 
@@ -54,12 +47,6 @@ fi
 [[ -z $KERNEL_IMAGE_TYPE ]] && KERNEL_IMAGE_TYPE=zImage
 [[ -z $SERIALCON ]] && SERIALCON=ttyS0
 [[ -z $BOOTSIZE ]] && BOOTSIZE=0 # Mb size of boot partition
-
-[[ $LINUXFAMILY == sun*i && $BRANCH != default && $LINUXFAMILY != sun8i ]] && LINUXCONFIG="linux-sunxi-${BRANCH}"
-[[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
-
-# naming to distro
-if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
 case $ARCH in
 	arm64)
@@ -79,20 +66,25 @@ case $ARCH in
 	;;
 esac
 
+if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]]; then
+	source $SRC/lib/config/sources/$LINUXFAMILY.conf
+else
+	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
+fi
+
+[[ $LINUXFAMILY == sun*i && $BRANCH != default && $LINUXFAMILY != sun8i ]] && LINUXCONFIG="linux-sunxi-${BRANCH}"
+[[ $LINUXFAMILY == udoo && $BRANCH == default ]] && LINUXCONFIG="linux-$BOARD-default"
+[[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
+
+# naming to distro
+if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
+
 # temporary hacks/overrides
 case $LINUXFAMILY in
 	sun*i)
 	# 2016.07 compilation fails due to GCC bug
 	# works on Linaro 5.3.1, fails on Ubuntu 5.3.1
 	UBOOT_NEEDS_GCC='< 5.3'
-	;;
-	pine64)
-	# fix for initramfs update script in board support package
-	[[ $BRANCH == default ]] && INITRD_ARCH=arm
-	;;
-	marvell)
-	# fix for u-boot needing arm soft float compiler
-	UBOOT_COMPILER="arm-linux-gnueabi-"
 	;;
 esac
 
