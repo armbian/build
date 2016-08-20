@@ -112,15 +112,17 @@ compile_uboot()
 
 compile_sunxi_tools()
 {
-#---------------------------------------------------------------------------------------------------------------------------------
-# https://github.com/linux-sunxi/sunxi-tools Tools to help hacking Allwinner devices
-#---------------------------------------------------------------------------------------------------------------------------------
-	display_alert "Compiling sunxi tools" "@host & target" "info"
-	cd $SOURCES/$MISC1_DIR
-	make -s clean >/dev/null
-	make -s tools >/dev/null
-	mkdir -p /usr/local/bin/
-	make install-tools >/dev/null 2>&1
+	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools.git" "sunxi-tools" "branch:master"
+	# Compile and install only if git commit hash changed
+	cd $SOURCES/sunxi-tools
+	if [[ ! -f .commit_id || $(git rev-parse @ 2>/dev/null) != $(<.commit_id) ]]; then
+		display_alert "Compiling" "sunxi-tools" "info"
+		make -s clean >/dev/null
+		make -s tools >/dev/null
+		mkdir -p /usr/local/bin/
+		make install-tools >/dev/null 2>&1
+		git rev-parse @ 2>/dev/null > .commit_id
+	fi
 }
 
 compile_kernel()

@@ -183,7 +183,6 @@ BOOTSOURCEDIR=$BOOTDIR/${BOOTBRANCH##*:}
 fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
 LINUXSOURCEDIR=$KERNELDIR/${KERNELBRANCH##*:}
 
-if [[ -n $MISC1 ]]; then fetch_from_github "$MISC1" "$MISC1_DIR"; fi
 if [[ -n $MISC5 ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
 if [[ -n $MISC6 ]]; then fetch_from_github "$MISC6" "$MISC6_DIR"; fi
 
