@@ -117,7 +117,7 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	network-manager network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common libgcr-base-3-1 libgcr-ui-3-1 p11-kit p11-kit-modules \
 	pasystray pavucontrol pulseaudio paman pavumeter pulseaudio-module-gconf pulseaudio-module-zeroconf pulseaudio-module-bluetooth blueman"
 
-PACKAGE_LIST_EXCLUDE=""
+PACKAGE_LIST_EXCLUDE="xfce4-mixer"
 
 # Release specific packages
 case $RELEASE in
@@ -132,7 +132,7 @@ case $RELEASE in
 	trusty)
 	PACKAGE_LIST_RELEASE="man-db wget nano software-properties-common iperf f2fs-tools acpid"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme"
-	PACKAGE_LIST_EXCLUDE="ureadahead plymouth"
+	PACKAGE_LIST_EXCLUDE="$PACKAGE_LIST_EXCLUDE ureadahead plymouth"
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget nano libpam-systemd software-properties-common libnss-myhostname f2fs-tools iperf3 paprefs"
