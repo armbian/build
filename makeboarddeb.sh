@@ -76,9 +76,9 @@ create_board_package()
 
 	# won't recreate files if they were removed by user
 	# TODO: Add proper handling for updated conffiles
-	cat <<-EOF > $destination/DEBIAN/conffiles
-	/boot/.verbose
-	EOF
+	#cat <<-EOF > $destination/DEBIAN/conffiles
+	#/boot/.verbose
+	#EOF
 
 	# trigger uInitrd creation after installation, to apply
 	# /etc/initramfs/post-update.d/99-uboot
