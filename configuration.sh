@@ -42,35 +42,35 @@ MAINLINE_UBOOT_DIR='u-boot'
 
 # Let's set defalt data if not defined in board configuration above
 
-[[ -z $OFFSET ]] && OFFSET=1 # Bootloader space in MB (1 x 2048 = default)
-[[ -z $ARCH ]] && ARCH=armhf
-[[ -z $KERNEL_IMAGE_TYPE ]] && KERNEL_IMAGE_TYPE=zImage
-[[ -z $SERIALCON ]] && SERIALCON=ttyS0
-[[ -z $BOOTSIZE ]] && BOOTSIZE=0 # Mb size of boot partition
-
-case $ARCH in
-	arm64)
-	KERNEL_COMPILER="aarch64-linux-gnu-"
-	UBOOT_COMPILER="aarch64-linux-gnu-"
-	ARCHITECTURE=arm64
-	INITRD_ARCH=arm64
-	QEMU_BINARY="qemu-aarch64-static"
-	;;
-
-	armhf)
-	KERNEL_COMPILER="arm-linux-gnueabihf-"
-	UBOOT_COMPILER="arm-linux-gnueabihf-"
-	ARCHITECTURE=arm
-	INITRD_ARCH=arm
-	QEMU_BINARY="qemu-arm-static"
-	;;
-esac
+OFFSET=1 # Bootloader space in MB (1 x 2048 = default)
+ARCH=armhf
+KERNEL_IMAGE_TYPE=zImage
+SERIALCON=ttyS0
+BOOTSIZE=0 # Mb size of boot partition
 
 if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]]; then
 	source $SRC/lib/config/sources/$LINUXFAMILY.conf
 else
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 fi
+
+case $ARCH in
+	arm64)
+	[[ -z $KERNEL_COMPILER ]] && KERNEL_COMPILER="aarch64-linux-gnu-"
+	[[ -z $UBOOT_COMPILER ]] && UBOOT_COMPILER="aarch64-linux-gnu-"
+	[[ -z $INITRD_ARCH ]] && INITRD_ARCH=arm64
+	QEMU_BINARY="qemu-aarch64-static"
+	ARCHITECTURE=arm64
+	;;
+
+	armhf)
+	[[ -z $KERNEL_COMPILER ]] && KERNEL_COMPILER="arm-linux-gnueabihf-"
+	[[ -z $UBOOT_COMPILER ]] && UBOOT_COMPILER="arm-linux-gnueabihf-"
+	[[ -z $INITRD_ARCH ]] && INITRD_ARCH=arm
+	QEMU_BINARY="qemu-arm-static"
+	ARCHITECTURE=arm
+	;;
+esac
 
 [[ $LINUXFAMILY == sun*i && $BRANCH != default && $LINUXFAMILY != sun8i ]] && LINUXCONFIG="linux-sunxi-${BRANCH}"
 [[ $LINUXFAMILY == udoo && $BRANCH == default ]] && LINUXCONFIG="linux-$BOARD-default"
