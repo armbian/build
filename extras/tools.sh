@@ -43,8 +43,7 @@ compile_tools()
 		END
 
 		cat <<-END > $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/DEBIAN/postinst
-		systemctl enable brcm40183-patch.service
-		systemctl start brcm40183-patch.service	
+		update-rc.d brcm40183 defaults		
 		exit 0
 		END
 		
@@ -55,8 +54,7 @@ compile_tools()
 		# brcm
 		cp $tmpdir/brcm/{brcm_bt_reset,brcm_patchram_plus} $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/usr/bin
 		# brcm configs and service
-		install -m 600 $SRC/lib/scripts/brcm40183					$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default
-		install	-m 600	$SRC/lib/scripts/brcm40183-patch.service	$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/lib/systemd/system
+		install -m 644 $SRC/lib/scripts/brcm40183					$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default		
 		install -m 755	$SRC/lib/scripts/brcm40183-patch			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
 		
 		cd $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}
