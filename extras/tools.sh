@@ -42,11 +42,13 @@ compile_tools()
 		Description: Armbian tools, temper, Cubie bt utils
 		END
 
-		cat <<-END > $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/DEBIAN/postinst		
+		cat <<-END > $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/DEBIAN/postinst
 		systemctl enable brcm40183-patch.service
 		systemctl start brcm40183-patch.service	
 		exit 0
 		END
+		
+		chmod 755 $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/DEBIAN/postinst
 		
 		# temper
 		cp $tmpdir/temper/src/pcsensor $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/usr/bin/temper
