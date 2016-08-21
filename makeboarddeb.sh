@@ -168,6 +168,21 @@ create_board_package()
 	APT::Install-Suggests "0";
 	EOF
 
+	# xorg configuration
+	mkdir -p $destination/etc/X11/xorg.conf.d/
+	cat <<-EOF > $destination/etc/X11/xorg.conf.d/01-armbian-defaults
+	Section "Monitor"
+		Identifier		"Monitor0"
+		Option			"DPMS" "false"
+	EndSection
+	Section "ServerFlags"
+		Option			"BlankTime" "0"
+		Option			"StandbyTime" "0"
+		Option			"SuspendTime" "0"
+		Option			"OffTime" "0"
+	EndSection
+	EOF
+	
 	# configure the system for unattended upgrades
 	cp $SRC/lib/scripts/02periodic $destination/etc/apt/apt.conf.d/02periodic
 
