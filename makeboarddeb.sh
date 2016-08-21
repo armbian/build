@@ -170,7 +170,7 @@ create_board_package()
 
 	# xorg configuration
 	mkdir -p $destination/etc/X11/xorg.conf.d/
-	cat <<-EOF > $destination/etc/X11/xorg.conf.d/01-armbian-defaults
+	cat <<-EOF > $destination/etc/X11/xorg.conf.d/01-armbian-defaults.conf
 	Section "Monitor"
 		Identifier		"Monitor0"
 		Option			"DPMS" "false"
@@ -182,7 +182,7 @@ create_board_package()
 		Option			"OffTime" "0"
 	EndSection
 	EOF
-	
+
 	# configure the system for unattended upgrades
 	cp $SRC/lib/scripts/02periodic $destination/etc/apt/apt.conf.d/02periodic
 
