@@ -27,8 +27,8 @@ create_chroot()
 	qemu_binary['arm64']='qemu-aarch64-static'
 	declare -A apt_mirror
 	apt_mirror['jessie']='httpredir.debian.org/debian'
-	apt_mirror['xenial']='archive.ubuntu.com/ubuntu'
-	display_alert "Creating build chroot" "$release" "info"
+	apt_mirror['xenial']='ports.ubuntu.com'
+	display_alert "Creating build chroot" "$release $arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3"
 	debootstrap --variant=buildd --arch=$arch --foreign --include="$includes" $release $target_dir "http://localhost:3142/${apt_mirror[$release]}"
 	[[ $? -ne 0 || ! -f $target_dir/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
@@ -58,7 +58,7 @@ create_chroot()
 		mkdir -p $target_dir/var/lock
 	fi
 	touch $target_dir/root/.debootstrap-complete
-	display_alert "Debootstrap complete" "$release" "info"
+	display_alert "Debootstrap complete" "$release $arch" "info"
 } #############################################################################
 
 # chroot_build_packages
