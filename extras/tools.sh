@@ -43,7 +43,7 @@ compile_tools()
 		END
 
 		cat <<-END > $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/DEBIAN/postinst
-		update-rc.d brcm40183 defaults		
+		update-rc.d brcm40183-patch defaults		
 		exit 0
 		END
 		
