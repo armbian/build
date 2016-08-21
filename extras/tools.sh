@@ -25,7 +25,7 @@ compile_tools()
 
 	pack_to_deb()
 	{
-		mkdir -p $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/{DEBIAN,usr/bin,lib/udev/rules.d,lib/systemd/system,/etc/default,/etc/init.d}
+		mkdir -p $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/{DEBIAN,usr/bin,/etc/default,/etc/init.d}
 
 		# set up control file
 		cat <<-END > $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/DEBIAN/control
@@ -35,7 +35,7 @@ compile_tools()
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 		Installed-Size: 1
 		Provides: armbian-tools
-		Conflicts: armbian-tools, sunxi-tools
+		Conflicts: armbian-tools
 		Depends: libc6 (>= 2.10), libusb-1.0-0 (>= 2:1.0.8), libusb-0.1-4, libudev1
 		Section: utils
 		Priority: optional
