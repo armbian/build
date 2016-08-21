@@ -44,7 +44,7 @@ create_board_package()
 	# set up pre install script
 	cat <<-EOF > $destination/DEBIAN/preinst
 	#!/bin/sh
-	[ "$1" = "upgrade" ] && touch /var/run/.reboot_required
+	[ "\$1" = "upgrade" ] && touch /var/run/.reboot_required
 	[ -d "/boot/bin" ] && mv /boot/bin /boot/bin.old
 	if [ -L "/etc/network/interfaces" ]; then
 		cp /etc/network/interfaces /etc/network/interfaces.tmp
@@ -75,10 +75,10 @@ create_board_package()
 	chmod 755 $destination/DEBIAN/postinst
 
 	# won't recreate files if they were removed by user
-	# everything in /etc is a conffile by default
-	cat <<-EOF > $destination/DEBIAN/conffiles
-	/boot/.verbose
-	EOF
+	# TODO: Add proper handling for updated conffiles
+	#cat <<-EOF > $destination/DEBIAN/conffiles
+	#/boot/.verbose
+	#EOF
 
 	# trigger uInitrd creation after installation, to apply
 	# /etc/initramfs/post-update.d/99-uboot
@@ -207,10 +207,6 @@ create_board_package()
 			fi
 		fi
 
-		# lamobo R1 router switch config
-		# TODO: compile from sources in sunxi-tools
-		tar xfz $SRC/lib/bin/swconfig.tgz -C $destination/usr/local/bin
-
 		# convert and add fex files
 		mkdir -p $destination/boot/bin
 		for i in $(ls -w1 $SRC/lib/config/fex/*.fex | xargs -n1 basename); do
@@ -219,14 +215,10 @@ create_board_package()
 
 		# bluetooth device enabler - for cubietruck
 		# TODO: move to tools or sunxi-common.inc
-		install		$SRC/lib/scripts/brcm40183		$destination/etc/default
-		install -m 755	$SRC/lib/scripts/brcm40183-patch	$destination/etc/init.d
+		#install		$SRC/lib/scripts/brcm40183		$destination/etc/default
+		#install -m 755	$SRC/lib/scripts/brcm40183-patch	$destination/etc/init.d
 
 	fi
-
-	# enable verbose kernel messages on first boot
-	mkdir -p $destination/boot
-	touch $destination/boot/.verbose
 
 	# add some summary to the image
 	fingerprint_image "$destination/etc/armbian.txt"

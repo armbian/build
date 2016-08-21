@@ -1,5 +1,5 @@
 
-if ext4load mmc 0:1 /boot/.next || fatload mmc 0:1 .next || ext4load mmc 0:1 .next; then
+if ext4load mmc 0 0x00000000 /boot/.next || fatload mmc 0 0x00000000 .next || ext4load mmc 0 0x00000000 .next; then
 	setenv bootargs "console=ttyS0,115200 root=/dev/mmcblk0p1 rootwait rootfstype=ext4 panic=10 consoleblank=0 enforcing=0 loglevel=1"
 	ext4load mmc 0 ${fdt_addr_r} /boot/dtb/allwinner/${fdtfile} || fatload mmc 0 ${fdt_addr_r} /dtb/allwinner/${fdtfile} || ext4load mmc 0 ${fdt_addr_r} /dtb/allwinner/${fdtfile}
 	ext4load mmc 0 ${ramdisk_addr_r} /boot/uInitrd || fatload mmc 0 ${ramdisk_addr_r} uInitrd || ext4load mmc 0 ${ramdisk_addr_r} uInitrd || setenv ramdisk_addr_r "-"

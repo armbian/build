@@ -19,8 +19,6 @@ SDSIZE="4000" # SD image size in MB
 TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 USEALLCORES="yes" # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
-MISC1="https://github.com/linux-sunxi/sunxi-tools.git" # Allwinner fex compiler / decompiler
-MISC1_DIR="sunxi-tools"	# local directory
 MISC5="https://github.com/hglm/a10disp/" # Display changer for Allwinner
 MISC5_DIR="sunxi-display-changer" # local directory
 HOST="$BOARD" # set hostname to the board
@@ -33,15 +31,22 @@ else
 	MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 fi
 # allow upgrades for same major.minor versions
-ARMBIAN_MAINLINE_KERNEL_VERSION="4.7"
+ARMBIAN_MAINLINE_KERNEL_VERSION='4.7'
 MAINLINE_KERNEL_BRANCH=tag:v$(wget -qO- https://www.kernel.org/finger_banner | awk '{print $NF}' | grep -oE "^${ARMBIAN_MAINLINE_KERNEL_VERSION//./\\.}\.?[[:digit:]]*")
-#MAINLINE_KERNEL_BRANCH="v$(wget -qO- https://www.kernel.org/finger_banner | grep "The latest st" | awk '{print $NF}' | head -1)"
-MAINLINE_KERNEL_DIR="linux-vanilla"
+MAINLINE_KERNEL_DIR='linux-vanilla'
 
 MAINLINE_UBOOT_SOURCE='git://git.denx.de/u-boot.git'
 #MAINLINE_UBOOT_BRANCH="v$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v '\^' | tail -1 | cut -d'v' -f 2)"
 MAINLINE_UBOOT_BRANCH='tag:v2016.07'
 MAINLINE_UBOOT_DIR='u-boot'
+
+# Let's set defalt data if not defined in board configuration above
+
+OFFSET=1 # Bootloader space in MB (1 x 2048 = default)
+ARCH=armhf
+KERNEL_IMAGE_TYPE=zImage
+SERIALCON=ttyS0
+BOOTSIZE=0 # Mb size of boot partition
 
 if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]]; then
 	source $SRC/lib/config/sources/$LINUXFAMILY.conf
@@ -49,37 +54,30 @@ else
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 fi
 
-# Let's set defalt data if not defined in board configuration above
+case $ARCH in
+	arm64)
+	[[ -z $KERNEL_COMPILER ]] && KERNEL_COMPILER="aarch64-linux-gnu-"
+	[[ -z $UBOOT_COMPILER ]] && UBOOT_COMPILER="aarch64-linux-gnu-"
+	[[ -z $INITRD_ARCH ]] && INITRD_ARCH=arm64
+	QEMU_BINARY="qemu-aarch64-static"
+	ARCHITECTURE=arm64
+	;;
 
-[[ -z $OFFSET ]] && OFFSET=1 # Bootloader space in MB (1 x 2048 = default)
-[[ -z $ARCH ]] && ARCH=armhf
-[[ -z $KERNEL_IMAGE_TYPE ]] && KERNEL_IMAGE_TYPE=zImage
-[[ -z $SERIALCON ]] && SERIALCON=ttyS0
-[[ -z $BOOTSIZE ]] && BOOTSIZE=0 # Mb size of boot partition
+	armhf)
+	[[ -z $KERNEL_COMPILER ]] && KERNEL_COMPILER="arm-linux-gnueabihf-"
+	[[ -z $UBOOT_COMPILER ]] && UBOOT_COMPILER="arm-linux-gnueabihf-"
+	[[ -z $INITRD_ARCH ]] && INITRD_ARCH=arm
+	QEMU_BINARY="qemu-arm-static"
+	ARCHITECTURE=arm
+	;;
+esac
 
 [[ $LINUXFAMILY == sun*i && $BRANCH != default && $LINUXFAMILY != sun8i ]] && LINUXCONFIG="linux-sunxi-${BRANCH}"
+[[ $LINUXFAMILY == udoo && $BRANCH == default ]] && LINUXCONFIG="linux-$BOARD-default"
 [[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
 
 # naming to distro
 if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
-
-case $ARCH in
-	arm64)
-	KERNEL_COMPILER="aarch64-linux-gnu-"
-	UBOOT_COMPILER="aarch64-linux-gnu-"
-	ARCHITECTURE=arm64
-	INITRD_ARCH=arm64
-	QEMU_BINARY="qemu-aarch64-static"
-	;;
-
-	armhf)
-	KERNEL_COMPILER="arm-linux-gnueabihf-"
-	UBOOT_COMPILER="arm-linux-gnueabihf-"
-	ARCHITECTURE=arm
-	INITRD_ARCH=arm
-	QEMU_BINARY="qemu-arm-static"
-	;;
-esac
 
 # temporary hacks/overrides
 case $LINUXFAMILY in
@@ -87,14 +85,6 @@ case $LINUXFAMILY in
 	# 2016.07 compilation fails due to GCC bug
 	# works on Linaro 5.3.1, fails on Ubuntu 5.3.1
 	UBOOT_NEEDS_GCC='< 5.3'
-	;;
-	pine64)
-	# fix for initramfs update script in board support package
-	[[ $BRANCH == default ]] && INITRD_ARCH=arm
-	;;
-	marvell)
-	# fix for u-boot needing arm soft float compiler
-	UBOOT_COMPILER="arm-linux-gnueabi-"
 	;;
 esac
 
@@ -112,15 +102,12 @@ PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools hddtemp iotop iozone3 stress sys
 	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan aptitude dnsutils f3 haveged hdparm rfkill \
 	vlan sysstat"
 
-PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-core xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray wicd thunar-volman galculator \
-	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu wifi-radar bluetooth"
+PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray thunar-volman galculator \
+	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu bluetooth \
+	network-manager network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common libgcr-base-3-1 libgcr-ui-3-1 p11-kit p11-kit-modules \
+	pasystray pavucontrol pulseaudio paman pavumeter pulseaudio-module-gconf pulseaudio-module-zeroconf pulseaudio-module-bluetooth blueman"
 
-# hardware acceleration support packages. remove when they are not needed for building packages in chroot
-if [[ $LINUXCONFIG == *sun* && $BRANCH == default ]]; then
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP xorg-dev xutils-dev x11proto-dri2-dev xutils-dev libdrm-dev libvdpau-dev"
-fi
-
-PACKAGE_LIST_EXCLUDE=""
+PACKAGE_LIST_EXCLUDE="xfce4-mixer"
 
 # Release specific packages
 case $RELEASE in
@@ -129,19 +116,17 @@ case $RELEASE in
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel icedove"
 	;;
 	jessie)
-	PACKAGE_LIST_RELEASE="less makedev kbd libpam-systemd iperf3 software-properties-common \
-		libnss-myhostname f2fs-tools"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel libreoffice-writer libreoffice-java-common icedove gvfs policykit-1 policykit-1-gnome eject"
+	PACKAGE_LIST_RELEASE="less makedev kbd libpam-systemd iperf3 software-properties-common libnss-myhostname f2fs-tools"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel libreoffice-writer icedove policykit-1 policykit-1-gnome eject"
 	;;
 	trusty)
 	PACKAGE_LIST_RELEASE="man-db wget nano software-properties-common iperf f2fs-tools acpid"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer libreoffice-java-common thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends"
-	PACKAGE_LIST_EXCLUDE="ureadahead plymouth"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme"
+	PACKAGE_LIST_EXCLUDE="$PACKAGE_LIST_EXCLUDE ureadahead plymouth"
 	;;
 	xenial)
-	PACKAGE_LIST_RELEASE="man-db wget nano libpam-systemd software-properties-common libnss-myhostname f2fs-tools iperf3"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme gvfs-backends \
-			policykit-1 xserver-xorg-video-fbdev"
+	PACKAGE_LIST_RELEASE="man-db wget nano libpam-systemd software-properties-common libnss-myhostname f2fs-tools iperf3 paprefs"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme policykit-1"
 	;;
 esac
 

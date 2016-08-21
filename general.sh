@@ -369,8 +369,15 @@ addtorepo()
 # parameter "remove" dumps all and creates new
 # function: cycle trough distributions
 	local distributions=("wheezy" "jessie" "trusty" "xenial")
+	
+	# workaround since we dont't build utils for those
+	mkdir -p ../output/debs/extra/wheezy/
+	mkdir -p ../output/debs/extra/trusty/	
+	ln -sf ../jessie/utils ../output/debs/extra/wheezy/utils
+	ln -sf ../jessie/utils ../output/debs/extra/trusty/utils
+	
 	for release in "${distributions[@]}"; do
-
+	
 		# let's drop from publish if exits
 		if [[ -n $(aptly publish list -config=config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			aptly publish drop -config=config/aptly.conf $release > /dev/null 2>&1
@@ -409,10 +416,19 @@ addtorepo()
 		else
 			display_alert "Not adding $release" "main" "wrn"
 		fi
+		
+		# adding main distribution packages
+		if find ${POT}${release} -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+			display_alert "Adding to repository $release" "main" "ext"
+			aptly repo add -force-replace=$replace -config=config/aptly.conf $release ${POT}${release}/*.deb
+		else
+			display_alert "Not adding $release" "main" "wrn"
+		fi		
+		
 		# adding utils
 		if find ${POT}extra/$release/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
-			aptly repo add -force-replace=$replace -config=config/aptly.conf "utils" ${POT}extra/$release/utils/*.deb
+			aptly repo add -config=config/aptly.conf "utils" ${POT}extra/$release/utils/*.deb
 		else
 			display_alert "Not adding $release" "utils" "wrn"
 		fi
@@ -436,6 +452,8 @@ addtorepo()
 	done
 	display_alert "List of local repos" "local" "info"
 	(aptly repo list -config=config/aptly.conf) | egrep packages
+	# serve
+	# aptly -config=config/aptly.conf -listen=":8189" serve
 }
 
 # prepare_host
@@ -483,7 +501,7 @@ prepare_host() {
 	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-tools gcc-aarch64-linux-gnu ncurses-term p7zip-full dos2unix dosfstools libc6-dev-armhf-cross libc6-dev-armel-cross\
-	libc6-dev-arm64-cross curl pdftk"
+	libc6-dev-arm64-cross curl pdftk gcc-arm-none-eabi"
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"

@@ -20,7 +20,7 @@ if [ "$-" != "${-#*i}" ]; then
 
 		# check for H3/legacy kernel to promote h3disp utility
 		HARDWARE=$(awk '/Hardware/ {print $3}' </proc/cpuinfo)
-		if [ "X${HARDWARE}" = "Xsun8i" ]; then
+		if [[ "X${HARDWARE}" = "Xsun8i" && $(bin2fex <"/boot/script.bin" 2>/dev/null | grep -w "hdmi_used = 1") ]]; then
 			setterm -default
 			echo -e "\nYour display settings are currently 720p (1280x720). To change this use the"
 			echo -e "h3disp utility. Do you want to change display settings now? [nY] \c"
