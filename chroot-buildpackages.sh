@@ -203,7 +203,7 @@ chroot_installpackages_local()
 	cat <<-EOF > $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian-temp.list
 	deb http://localhost:8189/ $RELEASE temp
 	EOF
-	chroot_installpackages_repo
+	chroot_installpackages
 	kill $aptly_pid
 } #############################################################################
 
@@ -222,7 +222,7 @@ chroot_installpackages()
 	done
 	cat <<-EOF > $CACHEDIR/sdcard/tmp/install.sh
 	#!/bin/bash
-	[[ $remote_only != yes ]] && apt-key add /tmp/buildpkg.key
+	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
 	apt-get -o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" \
 		-o Acquire::http::Proxy::localhost="DIRECT" -q update
 	# uncomment to debug
@@ -237,7 +237,7 @@ chroot_installpackages()
 		-o Acquire::http::Proxy::localhost="DIRECT" \
 		--show-progress -o DPKG::Progress-Fancy=1 install -y $install_list
 	apt-get clean
-	[[ $remote_only != yes ]] && apt-key del "925644A6"
+	[[ "$remote_only" != yes ]] && apt-key del "925644A6"
 	rm /etc/apt/sources.list.d/armbian-temp.list 2>/dev/null
 	rm /etc/apt/preferences.d/90-armbian-temp.pref 2>/dev/null
 	rm /tmp/buildpkg.key 2>/dev/null
