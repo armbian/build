@@ -25,9 +25,12 @@ create_chroot()
 	declare -A qemu_binary
 	qemu_binary['armhf']='qemu-arm-static'
 	qemu_binary['arm64']='qemu-aarch64-static'
-	display_alert "Creating build chroot" "$release" "info"
+	declare -A apt_mirror
+	apt_mirror['jessie']='httpredir.debian.org/debian'
+	apt_mirror['xenial']='ports.ubuntu.com'
+	display_alert "Creating build chroot" "$release $arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3"
-	debootstrap --variant=buildd --arch=$arch --foreign --include="$includes" $release $target_dir "http://localhost:3142/$APT_MIRROR"
+	debootstrap --variant=buildd --arch=$arch --foreign --include="$includes" $release $target_dir "http://localhost:3142/${apt_mirror[$release]}"
 	[[ $? -ne 0 || ! -f $target_dir/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
 	cp /usr/bin/${qemu_binary[$arch]} $target_dir/usr/bin/
 	[[ ! -f $target_dir/usr/share/keyrings/debian-archive-keyring.gpg ]] && \
@@ -55,7 +58,7 @@ create_chroot()
 		mkdir -p $target_dir/var/lock
 	fi
 	touch $target_dir/root/.debootstrap-complete
-	display_alert "Debootstrap complete" "$release" "info"
+	display_alert "Debootstrap complete" "$release $arch" "info"
 } #############################################################################
 
 # chroot_build_packages
@@ -200,7 +203,7 @@ chroot_installpackages_local()
 	cat <<-EOF > $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian-temp.list
 	deb http://localhost:8189/ $RELEASE temp
 	EOF
-	chroot_installpackages_repo
+	chroot_installpackages
 	kill $aptly_pid
 } #############################################################################
 
@@ -219,7 +222,7 @@ chroot_installpackages()
 	done
 	cat <<-EOF > $CACHEDIR/sdcard/tmp/install.sh
 	#!/bin/bash
-	[[ $remote_only != yes ]] && apt-key add /tmp/buildpkg.key
+	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
 	apt-get -o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" \
 		-o Acquire::http::Proxy::localhost="DIRECT" -q update
 	# uncomment to debug
@@ -234,7 +237,7 @@ chroot_installpackages()
 		-o Acquire::http::Proxy::localhost="DIRECT" \
 		--show-progress -o DPKG::Progress-Fancy=1 install -y $install_list
 	apt-get clean
-	[[ $remote_only != yes ]] && apt-key del "925644A6"
+	[[ "$remote_only" != yes ]] && apt-key del "925644A6"
 	rm /etc/apt/sources.list.d/armbian-temp.list 2>/dev/null
 	rm /etc/apt/preferences.d/90-armbian-temp.pref 2>/dev/null
 	rm /tmp/buildpkg.key 2>/dev/null
