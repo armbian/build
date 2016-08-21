@@ -25,7 +25,7 @@ compile_tools()
 
 	pack_to_deb()
 	{
-		mkdir -p $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/{DEBIAN,usr/bin,lib/udev/rules.d}
+		mkdir -p $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/{DEBIAN,usr/bin,lib/udev/rules.d,lib/systemd/system}
 
 		# set up control file
 		cat <<-END > $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/DEBIAN/control
@@ -42,11 +42,21 @@ compile_tools()
 		Description: Armbian tools, temper, Cubie bt utils
 		END
 
+		cat <<-END > $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/DEBIAN/postinst		
+		systemctl enable brcm40183-patch.service
+		systemctl start brcm40183-patch.service	
+		exit 0
+		END
+		
 		# temper
 		cp $tmpdir/temper/src/pcsensor $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/usr/bin/temper
 		# brcm
 		cp $tmpdir/brcm/{brcm_bt_reset,brcm_patchram_plus} $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/usr/bin
-
+		# brcm configs and service
+		install			$SRC/lib/scripts/brcm40183					$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default
+		install			$SRC/lib/scripts/brcm40183-patch.service	$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/lib/systemd/system
+		install -m 755	$SRC/lib/scripts/brcm40183-patch			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
+		
 		cd $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}
 		find . -type f ! -regex '.*.hg.*' ! -regex '.*?debian-binary.*' ! -regex '.*?DEBIAN.*' -printf '%P ' | xargs md5sum > DEBIAN/md5sums
 		cd $tmpdir

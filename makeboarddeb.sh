@@ -215,8 +215,8 @@ create_board_package()
 
 		# bluetooth device enabler - for cubietruck
 		# TODO: move to tools or sunxi-common.inc
-		install		$SRC/lib/scripts/brcm40183		$destination/etc/default
-		install -m 755	$SRC/lib/scripts/brcm40183-patch	$destination/etc/init.d
+		#install		$SRC/lib/scripts/brcm40183		$destination/etc/default
+		#install -m 755	$SRC/lib/scripts/brcm40183-patch	$destination/etc/init.d
 
 	fi
 
