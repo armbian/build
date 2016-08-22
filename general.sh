@@ -232,7 +232,7 @@ fetch_from_repo()
 	local local_hash=$(git rev-parse @ 2>/dev/null)
 	case $ref_type in
 		branch)
-		local remote_hash=$(git ls-remote -h $url "$ref_name" | cut -f1)
+		local remote_hash=$(git ls-remote -h $url "$ref_name" | head -1 | cut -f1)
 		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
 		;;
 
