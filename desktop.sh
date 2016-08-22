@@ -52,8 +52,7 @@ install_desktop ()
 		sed "s/managed=\(.*\)/managed=true/g" -i $CACHEDIR/sdcard/etc/NetworkManager/NetworkManager.conf
 		# Disable dns management withing NM
 		sed "s/\[main\]/\[main\]\ndns=none/g" -i $CACHEDIR/sdcard/etc/NetworkManager/NetworkManager.conf
-		echo "[keyfile]" >> $CACHEDIR/sdcard/etc/NetworkManager/NetworkManager.conf
-		echo "unmanaged-devices=interface-name:p2p0" $CACHEDIR/sdcard/etc/NetworkManager/NetworkManager.conf
+		printf '[keyfile]\nunmanaged-devices=interface-name:p2p0\n' >> $CACHEDIR/sdcard/etc/NetworkManager/NetworkManager.conf
 	fi
 
 	# Disable Pulseaudio timer scheduling which does not work with sndhdmi driver
