@@ -24449,3 +24449,667 @@ diff -uprNHd -x '*.orig' -x '*.rej' sun8i/scripts/mkcompile_h sun8i-rt/scripts/m
  UTS_VERSION="$UTS_VERSION $CONFIG_FLAGS $TIMESTAMP"
  
  # Truncate to maximum length
+--- sun8i/fs/timerfd.c	2016-08-22 22:52:24.564481603 +0200
++++ sun8i-rt/fs/timerfd.c	2016-08-22 20:15:39.076373470 +0200
+@@ -385,7 +385,7 @@ SYSCALL_DEFINE4(timerfd_settime, int, uf
+ 				break;
+ 		}
+ 		spin_unlock_irq(&ctx->wqh.lock);
+-		hrtimer_wait_for_timer(&ctx->tmr);
++		hrtimer_wait_for_timer(&ctx->t.tmr);
+ 	}
+ 
+ 	/*
+diff -uprNHd -x '*.orig' -x '*.rej' sun8i-test-old/arch/arm/common/gic.c sun8i-test/arch/arm/common/gic.c
+--- sun8i/arch/arm/common/gic.c	2016-08-22 23:01:38.000000000 +0200
++++ sun8i-rt/arch/arm/common/gic.c	2016-08-22 23:06:46.736491515 +0200
+@@ -36,6 +36,7 @@
+ #include <linux/of_irq.h>
+ #include <linux/irqdomain.h>
+ #include <linux/interrupt.h>
++#include <linux/irqpriority.h>
+ #include <linux/percpu.h>
+ #include <linux/slab.h>
+ #include <trace/events/arm-ipi.h>
+@@ -92,6 +93,19 @@ struct irq_chip gic_arch_extn = {
+ 	.irq_set_wake	= NULL,
+ };
+ 
++/*
++ * Map generic interrupt priority levels (irqpriority_t) to GIC_DIST_PRI
++ * register value. Value should be mapped using table index assignment:
++ * [priority level] = <vale for GIC_DIST_PRI> which allow us to be compatible
++ * in case of irqpriority_t (see include/linux/irqpriority.h) further
++ * modification.
++ */
++static unsigned int priority_map [IRQP_LEVELS_NR] = {
++	[IRQP_HIGH]	= 0x00000000,
++	[IRQP_DEFAULT]	= 0xa0a0a0a0,
++	[IRQP_LOW]	= 0xe0e0e0e0,
++};
++
+ #ifndef MAX_GIC_NR
+ #define MAX_GIC_NR	1
+ #endif
+@@ -424,12 +438,32 @@ static void gic_handle_cascade_irq(unsig
+ 	chained_irq_exit(chip, desc);
+ }
+ 
++int gic_set_priority(struct irq_data *data, irqpriority_t priority)
++{
++	unsigned int hw_irq = gic_irq(data);
++	u32 cur_priority;
++
++	if (hw_irq < 32)
++	{
++		printk("gic_set_priority: cant set irq %i to pri %i\r\n", hw_irq, priority_map[priority]);
++		return -EINVAL;
++	}
++	
++	raw_spin_lock(&irq_controller_lock);
++	cur_priority = readl_relaxed(gic_dist_base(data) + GIC_DIST_PRI + (hw_irq / 4) * 4);
++	cur_priority = priority_map[priority];
++	writel_relaxed(cur_priority, gic_dist_base(data) + GIC_DIST_PRI + (hw_irq / 4) * 4);
++	raw_spin_unlock(&irq_controller_lock);
++	return 0;
++}
++
+ static struct irq_chip gic_chip = {
+ 	.name			= "GIC",
+ 	.irq_mask		= gic_mask_irq,
+ 	.irq_unmask		= gic_unmask_irq,
+ 	.irq_eoi		= gic_eoi_irq,
+ 	.irq_set_type		= gic_set_type,
++	.irq_set_priority	= gic_set_priority,
+ 	.irq_retrigger		= gic_retrigger,
+ #ifdef CONFIG_SMP
+ 	.irq_set_affinity	= gic_set_affinity,
+diff -uprNHd -x '*.orig' -x '*.rej' sun8i-test-old/include/linux/interrupt.h sun8i-test/include/linux/interrupt.h
+--- sun8i-test-old/include/linux/interrupt.h	2016-08-22 23:01:38.000000000 +0200
++++ sun8i-test/include/linux/interrupt.h	2016-08-22 23:05:52.300490889 +0200
+@@ -75,6 +75,7 @@
+ #define IRQF_NO_THREAD		0x00010000
+ #define IRQF_EARLY_RESUME	0x00020000
+ #define IRQF_NO_SOFTIRQ_CALL	0x00040000
++#define IRQF_HIGH_PRIORITY	0x00080000
+ 
+ #define IRQF_TIMER		(__IRQF_TIMER | IRQF_NO_SUSPEND | IRQF_NO_THREAD)
+ 
+diff -uprNHd -x '*.orig' -x '*.rej' sun8i-test-old/include/linux/irq.h sun8i-test/include/linux/irq.h
+--- sun8i-test-old/include/linux/irq.h	2016-08-22 23:01:38.000000000 +0200
++++ sun8i-test/include/linux/irq.h	2016-08-22 23:05:52.316490889 +0200
+@@ -20,6 +20,7 @@
+ #include <linux/gfp.h>
+ #include <linux/irqreturn.h>
+ #include <linux/irqnr.h>
++#include <linux/irqpriority.h>
+ #include <linux/errno.h>
+ #include <linux/topology.h>
+ #include <linux/wait.h>
+@@ -324,6 +325,7 @@ struct irq_chip {
+ 	int		(*irq_retrigger)(struct irq_data *data);
+ 	int		(*irq_set_type)(struct irq_data *data, unsigned int flow_type);
+ 	int		(*irq_set_wake)(struct irq_data *data, unsigned int on);
++	int		(*irq_set_priority)(struct irq_data *data, irqpriority_t priority);
+ 
+ 	void		(*irq_bus_lock)(struct irq_data *data);
+ 	void		(*irq_bus_sync_unlock)(struct irq_data *data);
+diff -uprNHd -x '*.orig' -x '*.rej' sun8i-test-old/include/linux/irqpriority.h sun8i-test/include/linux/irqpriority.h
+--- sun8i-test-old/include/linux/irqpriority.h	1970-01-01 01:00:00.000000000 +0100
++++ sun8i-test/include/linux/irqpriority.h	2016-08-22 23:05:52.316490889 +0200
+@@ -0,0 +1,24 @@
++#ifndef _LINUX_IRQPRIORITY_H
++#define _LINUX_IRQPRIORITY_H
++
++/**
++ * enum irqpriority
++ * @IRQP_HIGH		address to low response latency interrupt e.g. error
++ * 			signaling
++ * @IRQP_DEFAULT	default priority and set for all interrupt sources
++ * 			during interrupt controller initialization
++ * @IRQP_LOW		interrupt which doesn't really care about response
++ * 			latency
++ * @...			place for priority extension
++ */
++enum irqpriority {
++	IRQP_HIGH = 0,
++	IRQP_DEFAULT,
++	IRQP_LOW,
++
++	IRQP_LEVELS_NR
++};
++
++typedef enum irqpriority irqpriority_t;
++
++#endif /* _LINUX_IRQPRIORITY_H */
+\ Kein Zeilenumbruch am Dateiende.
+diff -uprNHd -x '*.orig' -x '*.rej' sun8i-test-old/kernel/irq/chip.c sun8i-test/kernel/irq/chip.c
+--- sun8i-test-old/kernel/irq/chip.c	2016-08-22 23:01:38.000000000 +0200
++++ sun8i-test/kernel/irq/chip.c	2016-08-22 23:05:52.316490889 +0200
+@@ -14,6 +14,7 @@
+ #include <linux/msi.h>
+ #include <linux/module.h>
+ #include <linux/interrupt.h>
++#include <linux/irqpriority.h>
+ #include <linux/kernel_stat.h>
+ 
+ #include <trace/events/irq.h>
+@@ -254,6 +255,14 @@ void unmask_irq(struct irq_desc *desc)
+ 	}
+ }
+ 
++int irq_set_priority(struct irq_desc *desc, irqpriority_t priority)
++{
++	if (!desc->irq_data.chip->irq_set_priority)
++		return -EINVAL;
++
++	return desc->irq_data.chip->irq_set_priority(&desc->irq_data, priority);
++}
++
+ /*
+  *	handle_nested_irq - Handle a nested irq from a irq thread
+  *	@irq:	the interrupt number
+diff -uprNHd -x '*.orig' -x '*.rej' sun8i-test-old/kernel/irq/internals.h sun8i-test/kernel/irq/internals.h
+--- sun8i-test-old/kernel/irq/internals.h	2016-08-22 23:01:38.000000000 +0200
++++ sun8i-test/kernel/irq/internals.h	2016-08-22 23:05:52.316490889 +0200
+@@ -73,6 +73,7 @@ extern void irq_percpu_enable(struct irq
+ extern void irq_percpu_disable(struct irq_desc *desc, unsigned int cpu);
+ extern void mask_irq(struct irq_desc *desc);
+ extern void unmask_irq(struct irq_desc *desc);
++extern int irq_set_priority(struct irq_desc *desc, irqpriority_t priority);
+ 
+ #ifdef CONFIG_SPARSE_IRQ
+ extern void irq_lock_sparse(void);
+diff -uprNHd -x '*.orig' -x '*.rej' sun8i-test-old/kernel/irq/manage.c sun8i-test/kernel/irq/manage.c
+--- sun8i-test-old/kernel/irq/manage.c	2016-08-22 23:01:38.000000000 +0200
++++ sun8i-test/kernel/irq/manage.c	2016-08-22 23:05:52.316490889 +0200
+@@ -12,6 +12,7 @@
+ #include <linux/module.h>
+ #include <linux/random.h>
+ #include <linux/interrupt.h>
++#include <linux/irqpriority.h>
+ #include <linux/slab.h>
+ #include <linux/sched.h>
+ 
+@@ -1061,11 +1062,12 @@ __setup_irq(unsigned int irq, struct irq
+ 		 * the same type (level, edge, polarity). So both flag
+ 		 * fields must have IRQF_SHARED set and the bits which
+ 		 * set the trigger type must match. Also all must
+-		 * agree on ONESHOT.
++		 * agree on ONESHOT and IRQF_HIGH_PRIORITY.
+ 		 */
+ 		if (!((old->flags & new->flags) & IRQF_SHARED) ||
+ 		    ((old->flags ^ new->flags) & IRQF_TRIGGER_MASK) ||
+-		    ((old->flags ^ new->flags) & IRQF_ONESHOT)) {
+++		    ((old->flags ^ new->flags) & IRQF_ONESHOT) ||
+++		    ((old->flags ^ new->flags) & IRQF_HIGH_PRIORITY)) {
+ 			old_name = old->name;
+ 			goto mismatch;
+ 		}
+@@ -1150,6 +1152,13 @@ __setup_irq(unsigned int irq, struct irq
+ 		if (new->flags & IRQF_ONESHOT)
+ 			desc->istate |= IRQS_ONESHOT;
+ 
++		if (new->flags & IRQF_HIGH_PRIORITY) {
++			printk("%s: setting high priority\r\n", new->name);
++			ret = irq_set_priority(desc, IRQP_HIGH);
++			if (ret)
++				goto out_mask;
++		}
++
+ 		if (irq_settings_can_autoenable(desc))
+ 			irq_startup(desc, true);
+ 		else
+--- sun8i/drivers/cpufreq/cpufreq_interactive.c	2016-08-22 14:14:14.000000000 +0200
++++ sun8i-rt/drivers/cpufreq/cpufreq_interactive.c	2016-08-24 13:09:32.942066185 +0200
+@@ -38,17 +38,29 @@
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/cpufreq_interactive.h>
+ 
++#if defined(CONFIG_PREEMPT_RT_FULL)
++#define SPINLOCK_T					raw_spinlock_t
++#define SPIN_LOCK_IRQSAVE			raw_spin_lock_irqsave
++#define SPIN_UNLOCK_IRQRESTORE		raw_spin_unlock_irqrestore
++#define SPIN_LOCK_INIT				raw_spin_lock_init
++#else
++#define SPINLOCK_T					spinlock_t
++#define SPIN_LOCK_IRQSAVE			spin_lock_irqsave
++#define SPIN_UNLOCK_IRQRESTORE		spin_unlock_irqrestore
++#define SPIN_LOCK_INIT				spin_lock_init
++#endif
++
+ struct cpufreq_interactive_cpuinfo {
+ 	struct timer_list cpu_timer;
+ 	struct timer_list cpu_slack_timer;
+-	spinlock_t load_lock; /* protects the next 4 fields */
++	SPINLOCK_T load_lock; /* protects the next 4 fields */
+ 	u64 time_in_idle;
+ 	u64 time_in_idle_timestamp;
+ 	u64 cputime_speedadj;
+ 	u64 cputime_speedadj_timestamp;
+ 	struct cpufreq_policy *policy;
+ 	struct cpufreq_frequency_table *freq_table;
+-	spinlock_t target_freq_lock; /*protects target freq */
++	SPINLOCK_T target_freq_lock; /*protects target freq */
+ 	unsigned int target_freq;
+ 	unsigned int floor_freq;
+ 	unsigned int max_freq;
+@@ -63,7 +75,7 @@ static DEFINE_PER_CPU(struct cpufreq_int
+ /* realtime thread handles frequency scaling */
+ static struct task_struct *speedchange_task;
+ static cpumask_t speedchange_cpumask;
+-static spinlock_t speedchange_cpumask_lock;
++static SPINLOCK_T speedchange_cpumask_lock;
+ static struct mutex gov_lock;
+ 
+ /* Target load.  Lower values result in higher CPU speeds. */
+@@ -96,7 +108,7 @@ struct cpufreq_interactive_tunables {
+ #define DEFAULT_GO_HISPEED_LOAD 70
+ 	unsigned long go_hispeed_load;
+ 
+-	spinlock_t target_loads_lock;
++	SPINLOCK_T target_loads_lock;
+ 	unsigned int *target_loads;
+ 	int ntarget_loads;
+ 
+@@ -108,7 +120,7 @@ struct cpufreq_interactive_tunables {
+ 	unsigned long timer_rate;
+ 
+ 	/* Wait this long before raising speed above hispeed, by default a single timer interval. */
+-	spinlock_t above_hispeed_delay_lock;
++	SPINLOCK_T above_hispeed_delay_lock;
+ 	unsigned int *above_hispeed_delay;
+ 	int nabove_hispeed_delay;
+ 
+@@ -167,7 +179,7 @@ static void cpufreq_interactive_timer_re
+ 	unsigned long expires;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&pcpu->load_lock, flags);
++	SPIN_LOCK_IRQSAVE(&pcpu->load_lock, flags);
+ 	pcpu->time_in_idle =
+ 		get_cpu_idle_time(smp_processor_id(),
+ 				  &pcpu->time_in_idle_timestamp,
+@@ -183,7 +195,7 @@ static void cpufreq_interactive_timer_re
+ 		mod_timer_pinned(&pcpu->cpu_slack_timer, expires);
+ 	}
+ 
+-	spin_unlock_irqrestore(&pcpu->load_lock, flags);
++	SPIN_UNLOCK_IRQRESTORE(&pcpu->load_lock, flags);
+ }
+ 
+ /* The caller shall take enable_sem write semaphore to avoid any timer race.
+@@ -207,13 +219,13 @@ static void cpufreq_interactive_timer_st
+ 		add_timer_on(&pcpu->cpu_slack_timer, cpu);
+ 	}
+ 
+-	spin_lock_irqsave(&pcpu->load_lock, flags);
++	SPIN_LOCK_IRQSAVE(&pcpu->load_lock, flags);
+ 	pcpu->time_in_idle =
+ 		get_cpu_idle_time(cpu, &pcpu->time_in_idle_timestamp,
+ 				  tunables->io_is_busy);
+ 	pcpu->cputime_speedadj = 0;
+ 	pcpu->cputime_speedadj_timestamp = pcpu->time_in_idle_timestamp;
+-	spin_unlock_irqrestore(&pcpu->load_lock, flags);
++	SPIN_UNLOCK_IRQRESTORE(&pcpu->load_lock, flags);
+ }
+ 
+ static unsigned int freq_to_above_hispeed_delay(
+@@ -224,14 +236,14 @@ static unsigned int freq_to_above_hispee
+ 	unsigned int ret;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&tunables->above_hispeed_delay_lock, flags);
++	SPIN_LOCK_IRQSAVE(&tunables->above_hispeed_delay_lock, flags);
+ 
+ 	for (i = 0; i < tunables->nabove_hispeed_delay - 1 &&
+ 			freq >= tunables->above_hispeed_delay[i+1]; i += 2)
+ 		;
+ 
+ 	ret = tunables->above_hispeed_delay[i];
+-	spin_unlock_irqrestore(&tunables->above_hispeed_delay_lock, flags);
++	SPIN_UNLOCK_IRQRESTORE(&tunables->above_hispeed_delay_lock, flags);
+ 	return ret;
+ }
+ 
+@@ -242,14 +254,14 @@ static unsigned int freq_to_targetload(
+ 	unsigned int ret;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&tunables->target_loads_lock, flags);
++	SPIN_LOCK_IRQSAVE(&tunables->target_loads_lock, flags);
+ 
+ 	for (i = 0; i < tunables->ntarget_loads - 1 &&
+ 		    freq >= tunables->target_loads[i+1]; i += 2)
+ 		;
+ 
+ 	ret = tunables->target_loads[i];
+-	spin_unlock_irqrestore(&tunables->target_loads_lock, flags);
++	SPIN_UNLOCK_IRQRESTORE(&tunables->target_loads_lock, flags);
+ 	return ret;
+ }
+ 
+@@ -391,23 +403,23 @@ static void cpufreq_interactive_timer(un
+ 	if (!pcpu->governor_enabled)
+ 		goto exit;
+ 
+-	spin_lock_irqsave(&pcpu->load_lock, flags);
++	SPIN_LOCK_IRQSAVE(&pcpu->load_lock, flags);
+ 	now = update_load(data);
+ 	delta_time = (unsigned int)(now - pcpu->cputime_speedadj_timestamp);
+ 	cputime_speedadj = pcpu->cputime_speedadj;
+-	spin_unlock_irqrestore(&pcpu->load_lock, flags);
++	SPIN_UNLOCK_IRQRESTORE(&pcpu->load_lock, flags);
+ 
+ 	if (WARN_ON_ONCE(!delta_time))
+ 		goto rearm;
+ 
+-	spin_lock_irqsave(&pcpu->target_freq_lock, flags);
++	SPIN_LOCK_IRQSAVE(&pcpu->target_freq_lock, flags);
+ 	do_div(cputime_speedadj, delta_time);
+ 	loadadjfreq = (unsigned int)cputime_speedadj * 100;
+ 	cpu_load = loadadjfreq / pcpu->target_freq;
+ 	boosted = tunables->boost_val || now < tunables->boostpulse_endtime;
+ 
+     if (now < tunables->boosttop_endtime) {
+-		spin_unlock_irqrestore(&pcpu->target_freq_lock, flags);
++		SPIN_UNLOCK_IRQRESTORE(&pcpu->target_freq_lock, flags);
+         goto rearm;
+     }
+ 
+@@ -431,7 +443,7 @@ static void cpufreq_interactive_timer(un
+ 		trace_cpufreq_interactive_notyet(
+ 			data, cpu_load, pcpu->target_freq,
+ 			pcpu->policy->cur, new_freq);
+-		spin_unlock_irqrestore(&pcpu->target_freq_lock, flags);
++		SPIN_UNLOCK_IRQRESTORE(&pcpu->target_freq_lock, flags);
+ 		goto rearm;
+ 	}
+ 
+@@ -440,7 +452,7 @@ static void cpufreq_interactive_timer(un
+ 	if (cpufreq_frequency_table_target(pcpu->policy, pcpu->freq_table,
+ 					   new_freq, CPUFREQ_RELATION_L,
+ 					   &index)) {
+-		spin_unlock_irqrestore(&pcpu->target_freq_lock, flags);
++		SPIN_UNLOCK_IRQRESTORE(&pcpu->target_freq_lock, flags);
+ 		goto rearm;
+ 	}
+ 
+@@ -456,7 +468,7 @@ static void cpufreq_interactive_timer(un
+ 			trace_cpufreq_interactive_notyet(
+ 				data, cpu_load, pcpu->target_freq,
+ 				pcpu->policy->cur, new_freq);
+-			spin_unlock_irqrestore(&pcpu->target_freq_lock, flags);
++			SPIN_UNLOCK_IRQRESTORE(&pcpu->target_freq_lock, flags);
+ 			goto rearm;
+ 		}
+ 	}
+@@ -478,7 +490,7 @@ static void cpufreq_interactive_timer(un
+ 		trace_cpufreq_interactive_already(
+ 			data, cpu_load, pcpu->target_freq,
+ 			pcpu->policy->cur, new_freq);
+-		spin_unlock_irqrestore(&pcpu->target_freq_lock, flags);
++		SPIN_UNLOCK_IRQRESTORE(&pcpu->target_freq_lock, flags);
+ 		goto rearm_if_notmax;
+ 	}
+ 
+@@ -486,10 +498,10 @@ static void cpufreq_interactive_timer(un
+ 					 pcpu->policy->cur, new_freq);
+ 
+ 	pcpu->target_freq = new_freq;
+-	spin_unlock_irqrestore(&pcpu->target_freq_lock, flags);
+-	spin_lock_irqsave(&speedchange_cpumask_lock, flags);
++	SPIN_UNLOCK_IRQRESTORE(&pcpu->target_freq_lock, flags);
++	SPIN_LOCK_IRQSAVE(&speedchange_cpumask_lock, flags);
+ 	cpumask_set_cpu(data, &speedchange_cpumask);
+-	spin_unlock_irqrestore(&speedchange_cpumask_lock, flags);
++	SPIN_UNLOCK_IRQRESTORE(&speedchange_cpumask_lock, flags);
+ 	wake_up_process(speedchange_task);
+ 
+ rearm_if_notmax:
+@@ -574,23 +586,23 @@ static int cpufreq_interactive_speedchan
+ 	set_freezable();
+ 	while (1) {
+ 		set_current_state(TASK_INTERRUPTIBLE);
+-		spin_lock_irqsave(&speedchange_cpumask_lock, flags);
++		SPIN_LOCK_IRQSAVE(&speedchange_cpumask_lock, flags);
+ 
+ 		if (cpumask_empty(&speedchange_cpumask)) {
+-			spin_unlock_irqrestore(&speedchange_cpumask_lock,
++			SPIN_UNLOCK_IRQRESTORE(&speedchange_cpumask_lock,
+ 					       flags);
+ 			schedule();
+ 
+ 			if (kthread_should_stop())
+ 				break;
+ 
+-			spin_lock_irqsave(&speedchange_cpumask_lock, flags);
++			SPIN_LOCK_IRQSAVE(&speedchange_cpumask_lock, flags);
+ 		}
+ 
+ 		set_current_state(TASK_RUNNING);
+ 		tmp_mask = speedchange_cpumask;
+ 		cpumask_clear(&speedchange_cpumask);
+-		spin_unlock_irqrestore(&speedchange_cpumask_lock, flags);
++		SPIN_UNLOCK_IRQRESTORE(&speedchange_cpumask_lock, flags);
+ 
+         if (freezing(current)) {
+             try_to_freeze();
+@@ -639,13 +651,13 @@ static void cpufreq_interactive_boost(vo
+ 	struct cpufreq_interactive_cpuinfo *pcpu;
+ 	struct cpufreq_interactive_tunables *tunables;
+ 
+-	spin_lock_irqsave(&speedchange_cpumask_lock, flags[0]);
++	SPIN_LOCK_IRQSAVE(&speedchange_cpumask_lock, flags[0]);
+ 
+ 	for_each_online_cpu(i) {
+ 		pcpu = &per_cpu(cpuinfo, i);
+ 		tunables = pcpu->policy->governor_data;
+ 
+-		spin_lock_irqsave(&pcpu->target_freq_lock, flags[1]);
++		SPIN_LOCK_IRQSAVE(&pcpu->target_freq_lock, flags[1]);
+ 		if (pcpu->target_freq < tunables->hispeed_freq) {
+ 			pcpu->target_freq = tunables->hispeed_freq;
+ 			cpumask_set_cpu(i, &speedchange_cpumask);
+@@ -661,10 +673,10 @@ static void cpufreq_interactive_boost(vo
+ 
+ 		pcpu->floor_freq = tunables->hispeed_freq;
+ 		pcpu->floor_validate_time = ktime_to_us(ktime_get());
+-		spin_unlock_irqrestore(&pcpu->target_freq_lock, flags[1]);
++		SPIN_UNLOCK_IRQRESTORE(&pcpu->target_freq_lock, flags[1]);
+ 	}
+ 
+-	spin_unlock_irqrestore(&speedchange_cpumask_lock, flags[0]);
++	SPIN_UNLOCK_IRQRESTORE(&speedchange_cpumask_lock, flags[0]);
+ 
+ 	if (anyboost)
+ 		wake_up_process(speedchange_task);
+@@ -698,9 +710,9 @@ static int cpufreq_interactive_notifier(
+ 					continue;
+ 				}
+ 			}
+-			spin_lock_irqsave(&pjcpu->load_lock, flags);
++			SPIN_LOCK_IRQSAVE(&pjcpu->load_lock, flags);
+ 			update_load(cpu);
+-			spin_unlock_irqrestore(&pjcpu->load_lock, flags);
++			SPIN_UNLOCK_IRQRESTORE(&pjcpu->load_lock, flags);
+ 			if (cpu != freq->cpu)
+ 				up_read(&pjcpu->enable_sem);
+ 		}
+@@ -767,14 +779,14 @@ static ssize_t show_target_loads(
+ 	ssize_t ret = 0;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&tunables->target_loads_lock, flags);
++	SPIN_LOCK_IRQSAVE(&tunables->target_loads_lock, flags);
+ 
+ 	for (i = 0; i < tunables->ntarget_loads; i++)
+ 		ret += sprintf(buf + ret, "%u%s", tunables->target_loads[i],
+ 			       i & 0x1 ? ":" : " ");
+ 
+ 	sprintf(buf + ret - 1, "\n");
+-	spin_unlock_irqrestore(&tunables->target_loads_lock, flags);
++	SPIN_UNLOCK_IRQRESTORE(&tunables->target_loads_lock, flags);
+ 	return ret;
+ }
+ 
+@@ -790,12 +802,12 @@ static ssize_t store_target_loads(
+ 	if (IS_ERR(new_target_loads))
+ 		return PTR_RET(new_target_loads);
+ 
+-	spin_lock_irqsave(&tunables->target_loads_lock, flags);
++	SPIN_LOCK_IRQSAVE(&tunables->target_loads_lock, flags);
+ 	if (tunables->target_loads != default_target_loads)
+ 		kfree(tunables->target_loads);
+ 	tunables->target_loads = new_target_loads;
+ 	tunables->ntarget_loads = ntokens;
+-	spin_unlock_irqrestore(&tunables->target_loads_lock, flags);
++	SPIN_UNLOCK_IRQRESTORE(&tunables->target_loads_lock, flags);
+ 	return count;
+ }
+ 
+@@ -806,7 +818,7 @@ static ssize_t show_above_hispeed_delay(
+ 	ssize_t ret = 0;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&tunables->above_hispeed_delay_lock, flags);
++	SPIN_LOCK_IRQSAVE(&tunables->above_hispeed_delay_lock, flags);
+ 
+ 	for (i = 0; i < tunables->nabove_hispeed_delay; i++)
+ 		ret += sprintf(buf + ret, "%u%s",
+@@ -814,7 +826,7 @@ static ssize_t show_above_hispeed_delay(
+ 			       i & 0x1 ? ":" : " ");
+ 
+ 	sprintf(buf + ret - 1, "\n");
+-	spin_unlock_irqrestore(&tunables->above_hispeed_delay_lock, flags);
++	SPIN_UNLOCK_IRQRESTORE(&tunables->above_hispeed_delay_lock, flags);
+ 	return ret;
+ }
+ 
+@@ -830,12 +842,12 @@ static ssize_t store_above_hispeed_delay
+ 	if (IS_ERR(new_above_hispeed_delay))
+ 		return PTR_RET(new_above_hispeed_delay);
+ 
+-	spin_lock_irqsave(&tunables->above_hispeed_delay_lock, flags);
++	SPIN_LOCK_IRQSAVE(&tunables->above_hispeed_delay_lock, flags);
+ 	if (tunables->above_hispeed_delay != default_above_hispeed_delay)
+ 		kfree(tunables->above_hispeed_delay);
+ 	tunables->above_hispeed_delay = new_above_hispeed_delay;
+ 	tunables->nabove_hispeed_delay = ntokens;
+-	spin_unlock_irqrestore(&tunables->above_hispeed_delay_lock, flags);
++	SPIN_UNLOCK_IRQRESTORE(&tunables->above_hispeed_delay_lock, flags);
+ 	return count;
+ 
+ }
+@@ -1071,12 +1083,12 @@ static void cpufreq_interactive_boosttop
+     unsigned long flags[2];
+     struct cpufreq_interactive_cpuinfo *pcpu;
+ 
+-    spin_lock_irqsave(&speedchange_cpumask_lock, flags[0]);
++    SPIN_LOCK_IRQSAVE(&speedchange_cpumask_lock, flags[0]);
+ 
+     for_each_online_cpu(i) {
+         pcpu = &per_cpu(cpuinfo, i);
+ 
+-        spin_lock_irqsave(&pcpu->target_freq_lock, flags[1]);
++        SPIN_LOCK_IRQSAVE(&pcpu->target_freq_lock, flags[1]);
+         if (pcpu->target_freq < pcpu->policy->max) {
+             pcpu->target_freq = pcpu->policy->max;
+             cpumask_set_cpu(i, &speedchange_cpumask);
+@@ -1085,10 +1097,10 @@ static void cpufreq_interactive_boosttop
+ 
+         pcpu->floor_freq = pcpu->policy->max;
+         pcpu->floor_validate_time = ktime_to_us(ktime_get());
+-        spin_unlock_irqrestore(&pcpu->target_freq_lock, flags[1]);
++        SPIN_UNLOCK_IRQRESTORE(&pcpu->target_freq_lock, flags[1]);
+     }
+ 
+-    spin_unlock_irqrestore(&speedchange_cpumask_lock, flags[0]);
++    SPIN_UNLOCK_IRQRESTORE(&speedchange_cpumask_lock, flags[0]);
+ 
+     if (anytop)
+         wake_up_process(speedchange_task);
+@@ -1329,14 +1341,14 @@ static void cpufreq_interactive_input_ev
+     struct cpufreq_interactive_tunables *tunables;
+ 
+     if (type == EV_SYN && code == SYN_REPORT) {
+-        spin_lock_irqsave(&speedchange_cpumask_lock, flags[0]);
++        SPIN_LOCK_IRQSAVE(&speedchange_cpumask_lock, flags[0]);
+ 
+         for_each_cpu(i, &interactive_cpumask) {
+             pcpu = &per_cpu(cpuinfo, i);
+             tunables = pcpu->policy->governor_data;
+ 
+             if(tunables->input_dev_monitor) {
+-                spin_lock_irqsave(&pcpu->target_freq_lock, flags[1]);
++                SPIN_LOCK_IRQSAVE(&pcpu->target_freq_lock, flags[1]);
+                 if (pcpu->target_freq < tunables->input_event_freq) {
+                     pcpu->target_freq = tunables->input_event_freq;
+                     cpumask_set_cpu(i, &speedchange_cpumask);
+@@ -1345,11 +1357,11 @@ static void cpufreq_interactive_input_ev
+ 
+                 pcpu->floor_freq = tunables->input_event_freq;
+                 pcpu->floor_validate_time = ktime_to_us(ktime_get());
+-                spin_unlock_irqrestore(&pcpu->target_freq_lock, flags[1]);
++                SPIN_UNLOCK_IRQRESTORE(&pcpu->target_freq_lock, flags[1]);
+             }
+         }
+ 
+-        spin_unlock_irqrestore(&speedchange_cpumask_lock, flags[0]);
++        SPIN_UNLOCK_IRQRESTORE(&speedchange_cpumask_lock, flags[0]);
+ 
+         if (anyboost)
+             wake_up_process(speedchange_task);
+@@ -1483,8 +1495,8 @@ static int cpufreq_governor_interactive(
+ 		tunables->boosttop_duration_val = DEFAULT_MIN_SAMPLE_TIME;
+ 		tunables->timer_slack_val = DEFAULT_TIMER_SLACK;
+ 
+-		spin_lock_init(&tunables->target_loads_lock);
+-		spin_lock_init(&tunables->above_hispeed_delay_lock);
++		SPIN_LOCK_INIT(&tunables->target_loads_lock);
++		SPIN_LOCK_INIT(&tunables->above_hispeed_delay_lock);
+ 
+ 		policy->governor_data = tunables;
+ 		if (!have_governor_per_policy())
+@@ -1629,13 +1641,13 @@ static int cpufreq_governor_interactive(
+ 				continue;
+ 			}
+ 
+-			spin_lock_irqsave(&pcpu->target_freq_lock, flags);
++			SPIN_LOCK_IRQSAVE(&pcpu->target_freq_lock, flags);
+ 			if (policy->max < pcpu->target_freq)
+ 				pcpu->target_freq = policy->max;
+ 			else if (policy->min > pcpu->target_freq)
+ 				pcpu->target_freq = policy->min;
+ 
+-			spin_unlock_irqrestore(&pcpu->target_freq_lock, flags);
++			SPIN_UNLOCK_IRQRESTORE(&pcpu->target_freq_lock, flags);
+ 			up_read(&pcpu->enable_sem);
+ 
+ 			/* Reschedule timer only if policy->max is raised.
+@@ -1692,12 +1704,12 @@ static int __init cpufreq_interactive_in
+ 		pcpu->cpu_timer.data = i;
+ 		init_timer(&pcpu->cpu_slack_timer);
+ 		pcpu->cpu_slack_timer.function = cpufreq_interactive_nop_timer;
+-		spin_lock_init(&pcpu->load_lock);
+-		spin_lock_init(&pcpu->target_freq_lock);
++		SPIN_LOCK_INIT(&pcpu->load_lock);
++		SPIN_LOCK_INIT(&pcpu->target_freq_lock);
+ 		init_rwsem(&pcpu->enable_sem);
+ 	}
+ 
+-	spin_lock_init(&speedchange_cpumask_lock);
++	SPIN_LOCK_INIT(&speedchange_cpumask_lock);
+ 	mutex_init(&gov_lock);
+ 	speedchange_task =
+ 		kthread_create(cpufreq_interactive_speedchange_task, NULL,
+--- sun8i/drivers/crypto/sunxi/Kconfig	2016-08-22 14:14:14.000000000 +0200
++++ sun8i-rt/drivers/crypto/sunxi/Kconfig	2016-08-22 23:21:56.412501973 +0200
+@@ -1,6 +1,6 @@
+ config CRYPTO_SUNXI
+ 	tristate "SUNXI SS controller"
+-	depends on ARCH_SUNXI
++	depends on ARCH_SUNXI && HIGHMEM
+ 	help
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called caam.
