@@ -193,12 +193,18 @@ create_rootfs_cache()
 			eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "setupcon --save"'
 		fi
 
-		# stage: copy proper apt sources list
-		# TODO: Generate sources based on $APT_MIRROR
-		cp $SRC/lib/config/apt/sources.list.$RELEASE $CACHEDIR/sdcard/etc/apt/sources.list
+		# stage: create apt sources list
+		create_sources_list $RELEASE > $CACHEDIR/sdcard/etc/apt/sources.list
 
 		# stage: add armbian repository and install key
-		echo "deb http://apt.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian.list
+		case $RELEASE in
+		wheezy|trusty)
+			echo "deb http://apt.armbian.com $RELEASE main" > $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian.list
+		;;
+		jessie|xenial)
+			echo "deb http://apt.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian.list
+		;;
+		esac
 		cp $SRC/lib/bin/armbian.key $CACHEDIR/sdcard
 		eval 'chroot $CACHEDIR/sdcard /bin/bash -c "cat armbian.key | apt-key add -"' \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}

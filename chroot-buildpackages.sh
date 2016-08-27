@@ -38,7 +38,7 @@ create_chroot()
 		cp /usr/share/keyrings/debian-archive-keyring.gpg $target_dir/usr/share/keyrings/
 	chroot $target_dir /bin/bash -c "/debootstrap/debootstrap --second-stage"
 	[[ $? -ne 0 || ! -f $target_dir/bin/bash ]] && exit_with_error "Create chroot second stage failed"
-	cp $SRC/lib/config/apt/sources.list.$release $target_dir/etc/apt/sources.list
+	create_sources_list $release > $target_dir/etc/apt/sources.list
 	echo 'Acquire::http { Proxy "http://localhost:3142"; };' > $target_dir/etc/apt/apt.conf.d/02proxy
 	cat <<-EOF > $target_dir/etc/apt/apt.conf.d/71-no-recommends
 	APT::Install-Recommends "0";
@@ -77,7 +77,7 @@ chroot_build_packages()
 			[[ ! -f $target_dir/root/.debootstrap-complete ]] && exit_with_error "Creating chroot failed" "$release"
 
 			local t=$target_dir/root/.update-timestamp
-			if [[ ! -f $t || $(( ($(date +%s) - $(<$t)) / 86400 )) -gt 2 ]]; then
+			if [[ ! -f $t || $(( ($(date +%s) - $(<$t)) / 86400 )) -gt 7 ]]; then
 				display_alert "Upgrading packages" "$release $arch" "info"
 				systemd-nspawn -a -q -D $target_dir /bin/bash -c "apt-get -q update; apt-get -q -y upgrade; apt-get clean"
 				date +%s > $t

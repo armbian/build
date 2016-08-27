@@ -41,13 +41,6 @@ compile_tools()
 		Priority: optional
 		Description: Armbian tools, temper, Cubie bt utils
 		END
-
-		cat <<-END > $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/DEBIAN/postinst
-		update-rc.d brcm40183-patch defaults		
-		exit 0
-		END
-		
-		chmod 755 $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/DEBIAN/postinst
 		
 		# temper
 		cp $tmpdir/temper/src/pcsensor $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/usr/bin/temper
