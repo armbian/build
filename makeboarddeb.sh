@@ -33,11 +33,11 @@ create_board_package()
 	Installed-Size: 1
 	Section: kernel
 	Priority: optional
-	Depends: bash, python3-apt
+	Depends: bash
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Replaces: base-files
-	Recommends: fake-hwclock, initramfs-tools
+	Recommends: bsdutils, parted, python3-apt, util-linux, initramfs-tools
 	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
 	EOF
 
