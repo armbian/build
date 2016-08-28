@@ -668,8 +668,14 @@ download_toolchain()
 
 	display_alert "Verifying"
 	if grep -q 'BEGIN PGP SIGNATURE' ${filename}.asc; then
-		(gpg --list-keys 8F427EAF || gpg --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF) 2>&1 | tee -a $DEST/debug/output.log
-		gpg --verify --trust-model always -q ${filename}.asc 2>&1 | tee -a $DEST/debug/output.log
+		if [[ ! -d $DEST/.gpg ]]; then
+			mkdir -p $DEST/.gpg
+			chmod 700 $DEST/.gpg
+			touch $DEST/.gpg/gpg.conf
+			chmod 600 $DEST/.gpg/gpg.conf
+		fi
+		(gpg --homedir $DEST/.gpg --list-keys 8F427EAF || gpg --homedir $DEST/.gpg --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF) 2>&1 | tee -a $DEST/debug/output.log
+		gpg --homedir $DEST/.gpg --verify --trust-model always -q ${filename}.asc 2>&1 | tee -a $DEST/debug/output.log
 		[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true
 	else
 		md5sum -c --status ${filename}.asc && verified=true
