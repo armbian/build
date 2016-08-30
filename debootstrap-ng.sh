@@ -327,10 +327,9 @@ prepare_partitions()
 		fi
 	else
 		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE )) # MiB
-		# Hardcoded overhead +40% and +128MB for ext4 leaves ~15% free on root partition
-		# TODO: Verify and reduce overhead
+		# Hardcoded overhead +25% and +128MB for ext4 leaves ~20% free on root partition
 		# extra 128 MiB for emergency swap file
-		local sdsize=$(bc -l <<< "scale=0; ($imagesize * 1.4) / 1 + 128")
+		local sdsize=$(bc -l <<< "scale=0; ($imagesize * 1.25) / 1 + 128")
 	fi
 
 	# stage: create blank image
