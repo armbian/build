@@ -25,10 +25,7 @@ debootstrap_ng()
 {
 	display_alert "Starting build process for" "$BOARD $RELEASE" "info"
 
-	# default rootfs type is ext4
-	[[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4
-
-	[[ "ext4 f2fs btrfs nfs fel" != *"$ROOTFS_TYPE"* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
+	[[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
 
 	# Fixed image size is in 1M dd blocks (MiB)
 	# to get size of block device /dev/sdX execute as root:
@@ -44,8 +41,8 @@ debootstrap_ng()
 	trap unmount_on_exit INT TERM EXIT
 
 	# stage: clean and create directories
-	rm -rf $CACHEDIR/sdcard $CACHEDIR/mount
-	mkdir -p $CACHEDIR/sdcard $CACHEDIR/mount $DEST/images $CACHEDIR/rootfs
+	rm -rf $CACHEDIR/{sdcard,mount}
+	mkdir -p $CACHEDIR/{sdcard,mount,rootfs} $DEST/images
 
 	# stage: verify tmpfs configuration and mount
 	# default maximum size for tmpfs mount is 1/2 of available RAM
@@ -66,8 +63,8 @@ debootstrap_ng()
 	# stage: install kernel and u-boot packages
 	# install distribution and board specific applications
 
-	# mount deb storage to tmp
-	mount --bind $DEST/debs/ $CACHEDIR/sdcard/tmp
+	mkdir -p $CACHEDIR/sdcard/tmp/debs
+	mount --bind $DEST/debs/ $CACHEDIR/sdcard/tmp/debs
 
 	install_distribution_specific
 	install_common
@@ -86,7 +83,7 @@ debootstrap_ng()
 	fi
 
 	# cleanup for install_kernel and install_board_specific
-	umount $CACHEDIR/sdcard/tmp > /dev/null 2>&1
+	umount $CACHEDIR/sdcard/tmp/debs && rm -rf $CACHEDIR/sdcard/tmp/debs
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
@@ -157,7 +154,7 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Debootstrap base system first stage failed"
+		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $CACHEDIR/sdcard/debootstrap/debootstrap ]] && exit_with_error "Debootstrap base system first stage failed"
 
 		cp /usr/bin/$QEMU_BINARY $CACHEDIR/sdcard/usr/bin/
 
@@ -429,13 +426,9 @@ prepare_partitions()
 create_image()
 {
 	# stage: create file name
-	VER=${VER/-$LINUXFAMILY/}
-	VERSION=$VERSION" "$VER
-	VERSION=${VERSION// /_}
-	VERSION=${VERSION//$BRANCH/}
-	VERSION=${VERSION//__/_}
-	[[ $BUILD_DESKTOP == yes ]] && VERSION=${VERSION}_desktop
-	[[ $ROOTFS_TYPE == nfs ]] && VERSION=${VERSION}_nfsboot
+	local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${VER/-$LINUXFAMILY/}"
+	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
+	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files to image" "tmprootfs.raw" "info"
@@ -444,7 +437,7 @@ create_image()
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --xattrs --directory=$CACHEDIR/sdcard/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $CACHEDIR/sdcard/ | cut -f1) -N "rootfs.tgz" | pigz > $DEST/images/$VERSION-rootfs.tgz
+			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $CACHEDIR/sdcard/ | cut -f1) -N "rootfs.tgz" | pigz > $DEST/images/${version}-rootfs.tgz
 	fi
 
 	# stage: rsync /boot
@@ -464,7 +457,6 @@ create_image()
 	# stage: write u-boot
 	write_uboot $LOOP
 
-	# stage: copy armbian.txt TODO: Copy only if creating zip file?
 	cp $CACHEDIR/sdcard/etc/armbian.txt $CACHEDIR/
 
 	# unmount /boot first, rootfs second, image file last
@@ -473,31 +465,32 @@ create_image()
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $CACHEDIR/mount
 	losetup -d $LOOP
 
-	mv $CACHEDIR/tmprootfs.raw $CACHEDIR/$VERSION.raw
+	mv $CACHEDIR/tmprootfs.raw $CACHEDIR/${version}.raw
 	cd $CACHEDIR/
 
 	# stage: compressing or copying image file
 	if [[ $COMPRESS_OUTPUTIMAGE != yes ]]; then
-		display_alert "Copying image file" "$VERSION.raw" "info"
-		mv -f $CACHEDIR/$VERSION.raw $DEST/images/$VERSION.raw
-		display_alert "Done building" "$DEST/images/$VERSION.raw" "info"
+		mv -f $CACHEDIR/${version}.raw $DEST/images/${version}.raw
+		display_alert "Done building" "$DEST/images/${version}.raw" "info"
 	else
 		display_alert "Signing and compressing" "Please wait!" "info"
+		# stage: generate sha256sum
+		sha256sum -b ${version}.raw > sha256sum
 		# stage: sign with PGP
 		if [[ -n $GPG_PASS ]]; then
-			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes $VERSION.raw
+			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes ${version}.raw
 			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
 		fi
 		if [[ $SEVENZIP == yes ]]; then
-			FILENAME=$DEST/images/$VERSION.7z
-			7za a -t7z -bd -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $FILENAME $VERSION.raw* armbian.txt >/dev/null 2>&1
+			local filename=$DEST/images/${version}.7z
+			7za a -t7z -bd -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $filename ${version}.raw armbian.txt *.asc sha256sum >/dev/null 2>&1
 		else
-			FILENAME=$DEST/images/$VERSION.zip
-			zip -FSq $FILENAME $VERSION.raw* armbian.txt
+			local filename=$DEST/images/${version}.zip
+			zip -FSq $filename ${version}.raw armbian.txt *.asc sha256sum
 		fi
-		rm -f $VERSION.raw *.asc armbian.txt
-		FILESIZE=$(ls -l --b=M $FILENAME | cut -d " " -f5)
-		display_alert "Done building" "$FILENAME [$FILESIZE]" "info"
+		rm -f ${version}.raw *.asc armbian.txt sha256sum
+		local filesize=$(ls -l --b=M $filename | cut -d " " -f5)
+		display_alert "Done building" "$filename [$filesize]" "info"
 	fi
 } #############################################################################
 

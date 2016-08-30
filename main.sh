@@ -75,8 +75,6 @@ else
 	CCACHE=""
 fi
 
-if [[ $FORCE_CHECKOUT == yes ]]; then FORCE="-f"; else FORCE=""; fi
-
 # optimize build time with 100% CPU usage
 CPUS=$(grep -c 'processor' /proc/cpuinfo)
 if [[ $USEALLCORES != no ]]; then
@@ -85,7 +83,7 @@ else
 	CTHREADS="-j1"
 fi
 
-# Check and fix dependencies, directory structure and settings
+# Check and install dependencies, directory structure and settings
 prepare_host
 
 # if KERNEL_ONLY, BOARD, BRANCH or RELEASE are not set, display selection menu
@@ -140,7 +138,7 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	[[ -z $RELEASE ]] && exit_with_error "No release selected"
 fi
 
-if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
+if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP && "jessie xenial" == *$RELEASE* ]]; then
 	options=()
 	options+=("no" "Image with console interface")
 	options+=("yes" "Image with desktop environment")
@@ -151,25 +149,14 @@ fi
 
 source $SRC/lib/configuration.sh
 
-# The name of the job
-VERSION="Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH"
-
-echo `date +"%d.%m.%Y %H:%M:%S"` $VERSION >> $DEST/debug/output.log
 (cd $SRC/lib; echo "Build script version: $(git rev-parse @)") >> $DEST/debug/output.log
 
 display_alert "Starting Armbian build script" "@host" "info"
 
-# display what we do
-if [[ $KERNEL_ONLY == yes ]]; then
-	display_alert "Compiling kernel" "$BOARD" "info"
-else
-	display_alert "Building" "$VERSION" "info"
-fi
-
 # sync clock
 if [[ $SYNC_CLOCK != no ]]; then
 	display_alert "Syncing clock" "host" "info"
-	eval ntpdate -s ${NTP_SERVER:- time.ijs.si}
+	ntpdate -s ${NTP_SERVER:- time.ijs.si}
 fi
 start=`date +%s`
 
@@ -183,12 +170,12 @@ BOOTSOURCEDIR=$BOOTDIR/${BOOTBRANCH##*:}
 fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
 LINUXSOURCEDIR=$KERNELDIR/${KERNELBRANCH##*:}
 
-if [[ -n $MISC5 ]]; then fetch_from_github "$MISC5" "$MISC5_DIR"; fi
-if [[ -n $MISC6 ]]; then fetch_from_github "$MISC6" "$MISC6_DIR"; fi
+# TODO: move to armbian-tools or extras-buildpkgs
+fetch_from_repo "https://github.com/hglm/a10disp/" "sunxi-display-changer" "branch:master"
 
-# compile sunxi tools
+compile_sunxi_tools
+
 if [[ $LINUXFAMILY == sun*i ]]; then
-	compile_sunxi_tools
 	[[ $BRANCH != default && $LINUXFAMILY != sun8i ]] && LINUXFAMILY="sunxi"
 fi
 
@@ -212,8 +199,7 @@ if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 		find_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" "UBOOT_TOOLCHAIN"
 	fi
 	cd $SOURCES/$BOOTSOURCEDIR
-	grab_version "$SOURCES/$BOOTSOURCEDIR" "UBOOT_VER"
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTDIR-$BRANCH" "$BOARD" "$BOOTDIR-$BRANCH $UBOOT_VER"
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTDIR-$BRANCH" "$BOARD" "$BOOTDIR-$BRANCH"
 	compile_uboot
 fi
 
@@ -232,10 +218,13 @@ if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
 	fi
 
-	grab_version "$SOURCES/$LINUXSOURCEDIR" "KERNEL_VER"
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH $KERNEL_VER"
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH"
 	compile_kernel
 fi
+
+# extract kernel version from .deb package
+VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
+VER="${VER/-$LINUXFAMILY/}"
 
 [[ -n $RELEASE ]] && create_board_package
 
