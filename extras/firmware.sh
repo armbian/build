@@ -49,4 +49,4 @@ build_firmware()
 
 # install
 display_alert "Installing linux firmware" "$REVISION" "info"
-chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log
+chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log
