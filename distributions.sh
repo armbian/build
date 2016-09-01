@@ -27,6 +27,8 @@ install_common()
 	# before installing board support package
 	rm $CACHEDIR/sdcard/etc/network/interfaces
 
+	mkdir -p $CACHEDIR/sdcard/selinux
+
 	# console fix due to Debian bug
 	sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $CACHEDIR/sdcard/etc/default/console-setup
 
@@ -80,43 +82,39 @@ install_common()
 	ff02::2     ip6-allrouters
 	EOF
 
-	# extract kernel version
-	VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
-	VER="${VER/-$LINUXFAMILY/}"
-
 	# we need package names for dtb, uboot and headers
 	DTB_TMP="${CHOSEN_KERNEL/image/dtb}"
 	FW_TMP="${CHOSEN_KERNEL/image/firmware-image}"
 	HEADERS_TMP="${CHOSEN_KERNEL/image/headers}"
 
 	display_alert "Installing kernel" "$CHOSEN_KERNEL" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
 	display_alert "Installing u-boot" "$CHOSEN_UBOOT" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	chroot $CACHEDIR/sdcard /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
 	display_alert "Installing headers" "$HEADERS_TMP" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${HEADERS_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${HEADERS_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
 	# install firmware
-	#if [[ -f $CACHEDIR/sdcard/tmp/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
+	#if [[ -f $CACHEDIR/sdcard/tmp/debs/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
 	#	display_alert "Installing firmware" "$FW_TMP" "info"
-	#	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${FW_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	#	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${FW_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 	#fi
 
 	if [[ -f $CACHEDIR/sdcard/tmp/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
 		display_alert "Installing generic firmware" "armbian-firmware" "info"
-		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 	fi
 
 	if [[ -f $CACHEDIR/sdcard/tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb ]]; then
 		display_alert "Installing DTB" "$DTB_TMP" "info"
-		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${DTB_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 	fi
 
 	# install board support package
 	display_alert "Installing board support package" "$BOARD" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
 	# copy boot splash image
 	cp $SRC/lib/bin/armbian.bmp $CACHEDIR/sdcard/boot/boot.bmp
@@ -166,9 +164,6 @@ install_distribution_specific()
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
 
-		# fix selinux error
-		mkdir $CACHEDIR/sdcard/selinux
-
 		# add serial console
 		#cp $SRC/lib/config/ttyS0.conf $CACHEDIR/sdcard/etc/init/$SERIALCON.conf
 		#sed -e "s/ttyS0/$SERIALCON/g" -i $CACHEDIR/sdcard/etc/init/$SERIALCON.conf
@@ -209,9 +204,6 @@ install_distribution_specific()
 		# enable root login for latest ssh on trusty
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
 
-		# fix selinux error
-		mkdir $CACHEDIR/sdcard/selinux
-
 		# remove legal info from Ubuntu
 		[[ -f $CACHEDIR/sdcard/etc/legal ]] && rm $CACHEDIR/sdcard/etc/legal
 
@@ -229,9 +221,6 @@ install_distribution_specific()
 	xenial)
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' $CACHEDIR/sdcard/etc/ssh/sshd_config
-
-		# fix selinux error
-		mkdir $CACHEDIR/sdcard/selinux
 
 		# remove legal info from Ubuntu
 		[[ -f $CACHEDIR/sdcard/etc/legal ]] && rm $CACHEDIR/sdcard/etc/legal

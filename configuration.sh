@@ -10,19 +10,16 @@
 #
 
 # common options
-
 REVISION="5.17$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 MAINTAINER="Igor Pecovnik" # deb signature
 MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
-SDSIZE="4000" # SD image size in MB
 TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
-USEALLCORES="yes" # Use all CPU cores for compiling
+USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
-MISC5="https://github.com/hglm/a10disp/" # Display changer for Allwinner
-MISC5_DIR="sunxi-display-changer" # local directory
 HOST="$BOARD" # set hostname to the board
 CACHEDIR=$DEST/cache
+[[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 
 # used by multiple sources - reduce code duplication
 if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
@@ -89,23 +86,23 @@ case $LINUXFAMILY in
 esac
 
 # Essential packages
-PACKAGE_LIST="bash-completion bc bridge-utils build-essential cpufrequtils device-tree-compiler dosfstools figlet \
-	fbset fping git hostapd ifenslave-2.6 iw lirc fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl \
+PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler dosfstools figlet \
+	fbset fping ifenslave-2.6 iw lirc fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl \
 	dialog crda wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
-	unzip usbutils wireless-tools console-setup console-data console-common unicode-data openssh-server initramfs-tools ca-certificates"
+	unzip usbutils wireless-tools console-setup console-common unicode-data openssh-server initramfs-tools ca-certificates"
 
 # development related packages. remove when they are not needed for building packages in chroot
-PACKAGE_LIST="$PACKAGE_LIST automake cmake libwrap0-dev libssl-dev libtool pkg-config libusb-dev libusb-1.0-0-dev libnl-3-dev libnl-genl-3-dev"
+PACKAGE_LIST="$PACKAGE_LIST automake libwrap0-dev libssl-dev libusb-dev libusb-1.0-0-dev libnl-3-dev libnl-genl-3-dev"
 
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools hddtemp iotop iozone3 stress sysbench screen ntfs-3g vim pciutils evtest htop pv lsof \
 	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan aptitude dnsutils f3 haveged hdparm rfkill \
-	vlan sysstat bluez bluez-tools"
+	vlan sysstat bluez bluez-tools bash-completion hostapd git"
 
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray thunar-volman galculator \
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu bluetooth \
-	network-manager network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common libgcr-base-3-1 libgcr-ui-3-1 p11-kit p11-kit-modules \
-	pasystray pavucontrol pulseaudio paman pavumeter pulseaudio-module-gconf pulseaudio-module-zeroconf pulseaudio-module-bluetooth blueman"
+	network-manager network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common p11-kit pasystray pavucontrol pulseaudio \
+	paman pavumeter pulseaudio-module-gconf pulseaudio-module-zeroconf pulseaudio-module-bluetooth blueman libpam-gnome-keyring"
 
 PACKAGE_LIST_EXCLUDE="xfce4-mixer"
 
@@ -113,7 +110,6 @@ PACKAGE_LIST_EXCLUDE="xfce4-mixer"
 case $RELEASE in
 	wheezy)
 	PACKAGE_LIST_RELEASE="less makedev kbd acpid acpi-support-base iperf libudev1"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel icedove"
 	;;
 	jessie)
 	PACKAGE_LIST_RELEASE="less makedev kbd libpam-systemd iperf3 software-properties-common libnss-myhostname f2fs-tools"
@@ -121,7 +117,6 @@ case $RELEASE in
 	;;
 	trusty)
 	PACKAGE_LIST_RELEASE="man-db wget nano software-properties-common iperf f2fs-tools acpid"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer thunderbird firefox gnome-icon-theme-full tango-icon-theme"
 	PACKAGE_LIST_EXCLUDE="$PACKAGE_LIST_EXCLUDE ureadahead plymouth"
 	;;
 	xenial)

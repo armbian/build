@@ -87,4 +87,4 @@ if [[ ! -f $DEST/debs/armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb ]]; then
 fi
 
 display_alert "Installing" "armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb" "info"
-chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb" >> $DEST/debug/tools-build.log
+chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb" >> $DEST/debug/tools-build.log

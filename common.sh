@@ -30,13 +30,13 @@ compile_uboot()
 		exit_with_error "Error building u-boot: source directory does not exist" "$BOOTSOURCEDIR"
 	fi
 
-	# read uboot version to variable $VER
-	grab_version "$SOURCES/$BOOTSOURCEDIR" "VER"
+	# read uboot version
+	local version=$(grab_version "$SOURCES/$BOOTSOURCEDIR")
 
 	# create patch for manual source changes in debug mode
 	[[ $DEBUG_MODE == yes ]] && userpatch_create "u-boot"
 
-	display_alert "Compiling uboot" "$VER" "info"
+	display_alert "Compiling uboot" "$version" "info"
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
 	cd $SOURCES/$BOOTSOURCEDIR
 
@@ -88,7 +88,7 @@ compile_uboot()
 	Installed-Size: 1
 	Section: kernel
 	Priority: optional
-	Description: Uboot loader $VER
+	Description: Uboot loader $version
 	END
 
 	# copy files to build directory
@@ -99,12 +99,12 @@ compile_uboot()
 
 	cd $DEST/debs
 	display_alert "Building deb" "$uboot_name.deb" "info"
-	dpkg -b $uboot_name >> $DEST/debug/compilation.log 2>&1
+	eval 'dpkg -b $uboot_name 2>&1' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'}
 	rm -rf $uboot_name
 
-	FILESIZE=$(wc -c $DEST/debs/$uboot_name.deb | cut -f 1 -d ' ')
+	local filesize=$(wc -c $DEST/debs/$uboot_name.deb | cut -f 1 -d ' ')
 
-	if [[ $FILESIZE -lt 50000 ]]; then
+	if [[ $filesize -lt 50000 ]]; then
 		rm $DEST/debs/$uboot_name.deb
 		exit_with_error "Building u-boot failed, check configuration"
 	fi
@@ -135,13 +135,13 @@ compile_kernel()
 		exit_with_error "Error building kernel: source directory does not exist" "$LINUXSOURCEDIR"
 	fi
 
-	# read kernel version to variable $VER
-	grab_version "$SOURCES/$LINUXSOURCEDIR" "VER"
+	# read kernel version
+	local version=$(grab_version "$SOURCES/$LINUXSOURCEDIR")
 
 	# create patch for manual source changes in debug mode
 	[[ $DEBUG_MODE == yes ]] && userpatch_create "kernel"
 
-	display_alert "Compiling $BRANCH kernel" "$VER" "info"
+	display_alert "Compiling $BRANCH kernel" "$version" "info"
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
 	cd $SOURCES/$LINUXSOURCEDIR/
 
@@ -186,7 +186,7 @@ compile_kernel()
 
 	# different packaging for 4.3+
 	KERNEL_PACKING="deb-pkg"
-	IFS='.' read -a array <<< "$VER"
+	IFS='.' read -a array <<< "$version"
 	if (( "${array[0]}" == "4" )) && (( "${array[1]}" >= "3" )); then
 		KERNEL_PACKING="bindeb-pkg"
 	fi
@@ -335,35 +335,36 @@ install_external_applications()
 #--------------------------------------------------------------------------------------------------------------------------------
 # Install external applications example
 #--------------------------------------------------------------------------------------------------------------------------------
-display_alert "Installing extra applications and drivers" "" "info"
+	display_alert "Installing extra applications and drivers" "" "info"
 
-for plugin in $SRC/lib/extras/*.sh; do
-	source $plugin
-done
+	for plugin in $SRC/lib/extras/*.sh; do
+		source $plugin
+	done
 
-# MISC5 = sunxi display control
-if [[ -n $MISC5_DIR && $BRANCH != next && $LINUXSOURCEDIR == *sunxi* ]]; then
-	cd "$SOURCES/$MISC5_DIR"
-	cp "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" .
-	make clean >/dev/null
-	make ARCH=$ARCHITECTURE CC="${KERNEL_COMPILER}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
-	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
-fi
+	# sunxi display changer
+	if [[ $BRANCH != next && $LINUXSOURCEDIR == *sunxi* ]]; then
+		cd "$SOURCES/$MISC5_DIR"
+		cp "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" .
+		make clean >/dev/null
+		make ARCH=$ARCHITECTURE CC="${KERNEL_COMPILER}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
+		install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
+	fi
 
-# MISC5 = sunxi display control / compile it for sun8i just in case sun7i stuff gets ported to sun8i and we're able to use it
-if [[ -n $MISC5_DIR && $BRANCH != next && $LINUXSOURCEDIR == *sun8i* ]]; then
-	cd "$SOURCES/$MISC5_DIR"
-	wget -q "https://raw.githubusercontent.com/linux-sunxi/linux-sunxi/sunxi-3.4/include/video/sunxi_disp_ioctl.h"
-	make clean >/dev/null 2>&1
-	make ARCH=$ARCHITECTURE CC="${KERNEL_COMPILER}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
-	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
-fi
+	# sunxi display changer
+	# compile it for sun8i just in case sun7i stuff gets ported to sun8i and we're able to use it
+	#if [[ $BRANCH != next && $LINUXSOURCEDIR == *sun8i* ]]; then
+	#	cd "$SOURCES/$MISC5_DIR"
+	#	wget -q "https://raw.githubusercontent.com/linux-sunxi/linux-sunxi/sunxi-3.4/include/video/sunxi_disp_ioctl.h"
+	#	make clean >/dev/null 2>&1
+	#	make ARCH=$ARCHITECTURE CC="${KERNEL_COMPILER}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
+	#	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
+	#fi
 
-# h3disp for sun8i/3.4.x
-if [[ $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
-	install -m 755 "$SRC/lib/scripts/h3disp" "$CACHEDIR/sdcard/usr/local/bin"
-	install -m 755 "$SRC/lib/scripts/h3consumption" "$CACHEDIR/sdcard/usr/local/bin"
-fi
+	# h3disp for sun8i/3.4.x
+	if [[ $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
+		install -m 755 "$SRC/lib/scripts/h3disp" "$CACHEDIR/sdcard/usr/local/bin"
+		install -m 755 "$SRC/lib/scripts/h3consumption" "$CACHEDIR/sdcard/usr/local/bin"
+	fi
 }
 
 # write_uboot <loopdev>

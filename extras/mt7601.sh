@@ -12,7 +12,7 @@ install_mt7601()
 	local plugin_repo="https://github.com/igorpecovnik/mt7601"
 	local plugin_dir="mt7601"
 
-	fetch_from_github "$plugin_repo" "$plugin_dir" "old"
+	fetch_from_repo "$plugin_repo" "$plugin_dir" "branch:old"
 
 	cd $SOURCES/$plugin_dir
 

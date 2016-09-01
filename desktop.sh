@@ -13,12 +13,12 @@ install_desktop ()
 {
 	display_alert "Installing desktop" "XFCE" "info"
 
-	umount $CACHEDIR/sdcard/tmp >/dev/null 2>&1
-	mount --bind $SRC/lib/bin/ $CACHEDIR/sdcard/tmp
+	mkdir -p $CACHEDIR/sdcard/tmp/bin
+	mount --bind $SRC/lib/bin/ $CACHEDIR/sdcard/tmp/bin
 
 	# install default desktop settings
-	chroot $CACHEDIR/sdcard /bin/bash -c "tar xfz /tmp/$RELEASE-desktop.tgz -C /etc/skel/"
-	chroot $CACHEDIR/sdcard /bin/bash -c "tar xfz /tmp/$RELEASE-desktop.tgz -C /root/"
+	chroot $CACHEDIR/sdcard /bin/bash -c "tar xfz /tmp/bin/$RELEASE-desktop.tgz -C /etc/skel/"
+	chroot $CACHEDIR/sdcard /bin/bash -c "tar xfz /tmp/bin/$RELEASE-desktop.tgz -C /root/"
 
 	# install wallpapers
 	case $RELEASE in
@@ -41,11 +41,8 @@ install_desktop ()
 	esac
 
 	# Install custom icons and theme
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"
-	chroot $CACHEDIR/sdcard /bin/bash -c "unzip -qq /tmp/NumixHolo.zip -d /usr/share/themes"
-
-	# unmount bind mount
-	umount $CACHEDIR/sdcard/tmp >/dev/null 2>&1
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/bin/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"
+	chroot $CACHEDIR/sdcard /bin/bash -c "unzip -qq /tmp/bin/NumixHolo.zip -d /usr/share/themes"
 
 	# Enable network manager
 	if [[ -f ${CACHEDIR}/sdcard/etc/NetworkManager/NetworkManager.conf ]]; then
@@ -89,4 +86,6 @@ install_desktop ()
 		sed "s/sunxi_ve_mem_reserve=0 sunxi_g2d_mem_reserve=0 sunxi_no_mali_mem_reserve sunxi_fb_mem_reserve=16 //g" -i $CACHEDIR/sdcard/boot/boot.cmd
 		mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr >> /dev/null
 	fi
+
+	umount $CACHEDIR/sdcard/tmp/bin && rm -rf $CACHEDIR/sdcard/tmp/bin
 }

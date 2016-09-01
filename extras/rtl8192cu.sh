@@ -15,9 +15,9 @@ install_rtl8192cu()
 	# https://github.com/pvaret/rtl8192cu-fixes
 	local plugin_dir="rt8192cu"
 
-	fetch_from_github "$plugin_repo" "$plugin_dir"
+	fetch_from_repo "$plugin_repo" "$plugin_dir" "branch:master"
 	cd $SOURCES/$plugin_dir
-	#git checkout 0ea77e747df7d7e47e02638a2ee82ad3d1563199
+
 	make ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER clean >> $DEST/debug/compilation.log
 
 	# GCC5 compatibility patch

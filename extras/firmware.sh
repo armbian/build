@@ -14,7 +14,7 @@ build_firmware()
 	local plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
 	local plugin_dir="armbian-firmware"
 
-	#fetch_from_github "$plugin_repo" "$plugin_dir/lib/firmware"
+	#fetch_from_repo "$plugin_repo" "$plugin_dir/lib/firmware" "branch:master"
 	mkdir -p $SOURCES/$plugin_dir/lib/firmware
 	# overlay our firmware
 	cp -R $SRC/lib/bin/firmware-overlay/* $SOURCES/$plugin_dir/lib/firmware
@@ -31,6 +31,7 @@ build_firmware()
 	Architecture: $ARCH
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Installed-Size: 1
+	Replaces: linux-firmware
 	Section: kernel
 	Priority: optional
 	Description: Linux firmware
@@ -48,4 +49,4 @@ build_firmware()
 
 # install
 display_alert "Installing linux firmware" "$REVISION" "info"
-chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log
+chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log
