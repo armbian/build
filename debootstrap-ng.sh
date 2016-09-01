@@ -241,7 +241,7 @@ create_rootfs_cache()
 
 		# DEBUG: print free space
 		echo -e "\nFree space:"
-		df -h | grep "$CACHEDIR/" | tee -a $DEST/debug/debootstrap.log
+		eval df -h | grep "$CACHEDIR/" ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
 
 		# stage: remove downloaded packages
 		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get clean"
@@ -327,9 +327,9 @@ prepare_partitions()
 		fi
 	else
 		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE )) # MiB
-		# Hardcoded overhead +25% and +128MB for ext4 leaves ~20% free on root partition
+		# Hardcoded overhead +40% and +128MB for ext4 is needed for desktop images, for CLI it can be lower
 		# extra 128 MiB for emergency swap file
-		local sdsize=$(bc -l <<< "scale=0; ($imagesize * 1.25) / 1 + 128")
+		local sdsize=$(bc -l <<< "scale=0; ($imagesize * 1.4) / 1 + 128")
 	fi
 
 	# stage: create blank image
@@ -451,7 +451,7 @@ create_image()
 
 	# DEBUG: print free space
 	display_alert "Free space:" "SD card" "info"
-	df -h | grep "$CACHEDIR/" | tee -a $DEST/debug/debootstrap.log
+	eval df -h | grep "$CACHEDIR/" ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
 
 	# stage: write u-boot
 	write_uboot $LOOP

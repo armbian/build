@@ -99,12 +99,12 @@ compile_uboot()
 
 	cd $DEST/debs
 	display_alert "Building deb" "$uboot_name.deb" "info"
-	dpkg -b $uboot_name >> $DEST/debug/compilation.log 2>&1
+	eval 'dpkg -b $uboot_name 2>&1' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'}
 	rm -rf $uboot_name
 
-	FILESIZE=$(wc -c $DEST/debs/$uboot_name.deb | cut -f 1 -d ' ')
+	local filesize=$(wc -c $DEST/debs/$uboot_name.deb | cut -f 1 -d ' ')
 
-	if [[ $FILESIZE -lt 50000 ]]; then
+	if [[ $filesize -lt 50000 ]]; then
 		rm $DEST/debs/$uboot_name.deb
 		exit_with_error "Building u-boot failed, check configuration"
 	fi
