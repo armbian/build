@@ -102,7 +102,7 @@ PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools hddtemp iotop iozone3 stress sys
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage radiotray thunar-volman galculator \
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu bluetooth \
 	network-manager network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common p11-kit pasystray pavucontrol pulseaudio \
-	paman pavumeter pulseaudio-module-gconf pulseaudio-module-zeroconf pulseaudio-module-bluetooth blueman libpam-gnome-keyring"
+	paman pavumeter pulseaudio-module-gconf pulseaudio-module-zeroconf pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri"
 
 PACKAGE_LIST_EXCLUDE="xfce4-mixer"
 
