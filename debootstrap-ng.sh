@@ -254,7 +254,7 @@ create_rootfs_cache()
 		umount_chroot "$CACHEDIR/sdcard"
 
 		tar cp --xattrs --directory=$CACHEDIR/sdcard/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $CACHEDIR/sdcard/ | cut -f1) -N "$display_name" | pigz > $cache_fname
+			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $CACHEDIR/sdcard/ | cut -f1) -N "$display_name" | pigz --fast > $cache_fname
 	fi
 	mount_chroot "$CACHEDIR/sdcard"
 } #############################################################################
@@ -482,7 +482,7 @@ create_image()
 		fi
 		if [[ $SEVENZIP == yes ]]; then
 			local filename=$DEST/images/${version}.7z
-			7za a -t7z -bd -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $filename ${version}.raw armbian.txt *.asc sha256sum >/dev/null 2>&1
+			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.raw armbian.txt *.asc sha256sum >/dev/null 2>&1
 		else
 			local filename=$DEST/images/${version}.zip
 			zip -FSq $filename ${version}.raw armbian.txt *.asc sha256sum
