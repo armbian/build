@@ -77,9 +77,9 @@ debootstrap_ng()
 
 	if [[ $RELEASE == jessie || $RELEASE == xenial ]]; then
 		# install locally built packages
-		[[ $EXTERNAL_NEW == yes ]] && chroot_installpackages_local
+		[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
 		# install from apt.armbian.com
-		[[ $EXTERNAL_NEW == nobuild ]] && chroot_installpackages "yes"
+		[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes"
 	fi
 
 	# cleanup for install_kernel and install_board_specific
