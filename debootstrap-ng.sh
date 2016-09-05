@@ -241,7 +241,7 @@ create_rootfs_cache()
 
 		# DEBUG: print free space
 		echo -e "\nFree space:"
-		eval df -h | grep "$CACHEDIR/" ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
+		eval 'df -h | grep "$CACHEDIR/"' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
 
 		# stage: remove downloaded packages
 		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get clean"
@@ -451,7 +451,7 @@ create_image()
 
 	# DEBUG: print free space
 	display_alert "Free space:" "SD card" "info"
-	eval df -h | grep "$CACHEDIR/" ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
+	eval 'df -h | grep "$CACHEDIR/"' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
 
 	# stage: write u-boot
 	write_uboot $LOOP
