@@ -45,7 +45,8 @@ create_board_package()
 	cat <<-EOF > $destination/DEBIAN/preinst
 	#!/bin/sh
 	[ "\$1" = "upgrade" ] && touch /var/run/.reboot_required
-	[ -d "/boot/bin" ] && mv /boot/bin /boot/bin.old
+	[ -d "/boot/bin.old" ] && rm -rf /boot/bin.old
+	[ -d "/boot/bin" ] && mv -f /boot/bin /boot/bin.old
 	if [ -L "/etc/network/interfaces" ]; then
 		cp /etc/network/interfaces /etc/network/interfaces.tmp
 		rm /etc/network/interfaces
