@@ -88,10 +88,11 @@ chroot_build_packages()
 					package_prebuild_eval package_upstream_version needs_building plugin_target_dir package_component
 				source $plugin
 
-				# check build arch
-				[[ $package_arch != $arch && $package_arch != all ]] && continue
-				# build utils only once for Jessie target
-				[[ $package_component == utils && $release == xenial ]] && continue
+				# check build condition
+				if [[ $(type -t package_checkbuild) == function ]] && ! package_checkbuild; then
+					display_alert "Skipping building $package_name for $release $arch"
+					continue
+				fi
 
 				local plugin_target_dir=$DEST/debs/extra/$package_component/
 				mkdir -p $plugin_target_dir
