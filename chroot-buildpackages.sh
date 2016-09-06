@@ -85,7 +85,7 @@ chroot_build_packages()
 
 			for plugin in $SRC/lib/extras-buildpkgs/*.conf; do
 				unset package_name package_repo package_ref package_builddeps package_install_chroot package_install_target \
-					package_upstream_version needs_building plugin_target_dir package_component
+					package_upstream_version needs_building plugin_target_dir package_component package_builddeps_${release}
 				source $plugin
 
 				# check build condition
@@ -114,6 +114,9 @@ chroot_build_packages()
 					continue
 				fi
 				display_alert "Building packages" "$package_name $release $arch" "ext"
+
+				[[ -v package_builddeps_${release} && -n $package_builddeps_${release} ]] && \
+					package_builddeps="$package_builddeps $package_builddeps_${release}"
 
 				# create build script
 				cat <<-EOF > $target_dir/root/build.sh
