@@ -85,7 +85,7 @@ chroot_build_packages()
 
 			for plugin in $SRC/lib/extras-buildpkgs/*.conf; do
 				unset package_name package_repo package_ref package_builddeps package_install_chroot package_install_target \
-					package_prebuild_eval package_upstream_version needs_building plugin_target_dir package_component
+					package_upstream_version needs_building plugin_target_dir package_component
 				source $plugin
 
 				# check build condition
@@ -139,8 +139,6 @@ chroot_build_packages()
 				cd /root/build/$package_name
 				# copy overlay / "debianization" files
 				[[ -d "/root/overlay/$package_name/" ]] && rsync -aq /root/overlay/$package_name /root/build/
-				# execute additional commands before building
-				[[ -n "$package_prebuild_eval" ]] && eval "$package_prebuild_eval"
 				# set upstream version
 				[[ -n "$package_upstream_version" ]] && debchange --preserve --newversion "$package_upstream_version" "Import from upstream"
 				# set local version
