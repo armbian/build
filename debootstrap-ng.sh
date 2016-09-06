@@ -191,7 +191,7 @@ create_rootfs_cache()
 		fi
 
 		# stage: create apt sources list
-		create_sources_list $RELEASE > $CACHEDIR/sdcard/etc/apt/sources.list
+		create_sources_list "$RELEASE" "$CACHEDIR/sdcard/"
 
 		# stage: add armbian repository and install key
 		case $RELEASE in

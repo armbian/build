@@ -38,7 +38,7 @@ create_chroot()
 		cp /usr/share/keyrings/debian-archive-keyring.gpg $target_dir/usr/share/keyrings/
 	chroot $target_dir /bin/bash -c "/debootstrap/debootstrap --second-stage"
 	[[ $? -ne 0 || ! -f $target_dir/bin/bash ]] && exit_with_error "Create chroot second stage failed"
-	create_sources_list $release > $target_dir/etc/apt/sources.list
+	create_sources_list "$release" "$target_dir"
 	echo 'Acquire::http { Proxy "http://localhost:3142"; };' > $target_dir/etc/apt/apt.conf.d/02proxy
 	cat <<-EOF > $target_dir/etc/apt/apt.conf.d/71-no-recommends
 	APT::Install-Recommends "0";

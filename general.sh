@@ -104,16 +104,20 @@ get_package_list_hash()
 	echo $(printf '%s\n' $PACKAGE_LIST | sort -u | md5sum | cut -d' ' -f 1)
 }
 
-# create_sources_list <release>
+# create_sources_list <release> <basedir>
 #
 # <release>: wheezy|jessie|trusty|xenial
+# <basedir>: path to root directory
 #
 create_sources_list()
 {
 	local release=$1
+	local basedir=$2
+	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
+
 	case $release in
 	wheezy|jessie)
-	cat <<-EOF
+	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
 
@@ -126,10 +130,16 @@ create_sources_list()
 	deb http://security.debian.org/ ${release}/updates main contrib non-free
 	#deb-src http://security.debian.org/ ${release}/updates main contrib non-free
 	EOF
+
+	cat <<-EOF > $basedir/etc/apt/preferences.d/90-backports.pref
+	Package: *
+	Pin: release n=${release}-backports
+	Pin-Priority: 500
+	EOF
 	;;
 
 	trusty|xenial)
-	cat <<-EOF
+	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 
@@ -141,6 +151,12 @@ create_sources_list()
 
 	deb http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
+	EOF
+
+	cat <<-EOF > $basedir/etc/apt/preferences.d/90-backports.pref
+	Package: *
+	Pin: release a=${release}-backports
+	Pin-Priority: 500
 	EOF
 	;;
 	esac
