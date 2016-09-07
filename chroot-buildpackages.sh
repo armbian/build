@@ -112,6 +112,8 @@ chroot_build_packages()
 			[[ ! -f $target_dir/root/.debootstrap-complete ]] && create_chroot "$target_dir" "$release" "$arch"
 			[[ ! -f $target_dir/root/.debootstrap-complete ]] && exit_with_error "Creating chroot failed" "$release"
 
+			[[ -f /var/run/distcc/${release}-${arch}.pid ]] && kill $(</var/run/distcc/${release}-${arch}.pid) > /dev/null 2>&1
+
 			chroot_prepare_distccd $release $arch
 
 			DISTCC_CMDLIST=$DEST/buildpkg/distcc-wrappers/${release}-${arch}/cmdlist TMPDIR=/tmp/distcc distccd --daemon \
@@ -171,7 +173,6 @@ chroot_build_packages()
 				# uncomment for debug
 				#export CCACHE_RECACHE="true"
 				export DISTCC_HOSTS="$distcc_bindaddr"
-				export DISTCC_TCP_CORK="0"
 				export DEBFULLNAME="$MAINTAINER"
 				export DEBEMAIL="$MAINTAINERMAIL"
 				$(declare -f display_alert)
