@@ -211,7 +211,8 @@ check_toolchain()
 {
 	local target=$1
 	local expression=$2
-	eval local compiler=\$${target}_COMPILER
+	local compiler_type="${target}_COMPILER"
+	local compiler="${!compiler_type}"
 	# get major.minor gcc version
 	local gcc_ver=$(${compiler}gcc -dumpversion | grep -oE "^[[:digit:]].[[:digit:]]")
 	awk "BEGIN{exit ! ($gcc_ver $expression)}" && return 0
@@ -228,7 +229,8 @@ find_toolchain()
 	local expression=$2
 	local var_name=$3
 	local dist=10
-	eval local compiler=\$${target}_COMPILER
+	local compiler_type="${target}_COMPILER"
+	local compiler="${!compiler_type}"
 	local toolchain=""
 	# extract target major.minor version from expression
 	local target_ver=$(grep -oE "[[:digit:]].[[:digit:]]" <<< "$expression")
