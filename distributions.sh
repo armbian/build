@@ -16,6 +16,9 @@ install_common()
 {
 	display_alert "Applying common tweaks" "" "info"
 
+	# add dummy fstab entry to make mkinitramfs happy
+	echo "/dev/mmcblk0p1 / $ROOTFS_TYPE defaults 0 1" >> $CACHEDIR/sdcard/etc/fstab
+
 	# create modules file
 	if [[ $BRANCH == next || $BRANCH == dev ]]; then
 		tr ' ' '\n' <<< "$MODULES_NEXT" > $CACHEDIR/sdcard/etc/modules
