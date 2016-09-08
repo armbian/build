@@ -122,6 +122,7 @@ chroot_build_packages()
 
 			chroot_prepare_distccd $release $arch
 
+			# DISTCC_TCP_DEFER_ACCEPT=0
 			DISTCC_CMDLIST=$DEST/buildpkg/distcc-wrappers/${release}-${arch}/cmdlist TMPDIR=/tmp/distcc distccd --daemon \
 				--pid-file /var/run/distcc/${release}-${arch}.pid --listen $distcc_bindaddr --allow 127.0.0.0/24 \
 				--log-file /tmp/distcc-${release}-${arch}.log --user distccd
