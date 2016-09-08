@@ -31,7 +31,12 @@ create_chroot()
 	components['xenial']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release $arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc"
-	debootstrap --variant=buildd --components=${components[$release]} --arch=$arch --foreign --include="$includes" $release $target_dir "http://localhost:3142/${apt_mirror[$release]}"
+	if [[ $NO_APT_CACHER != yes ]]; then
+		local mirror_addr="http://localhost:3142/${apt_mirror[$release]}"
+	else
+		local mirror_addr="http://${apt_mirror[$release]}"
+	fi
+	debootstrap --variant=buildd --components=${components[$release]} --arch=$arch --foreign --include="$includes" $release $target_dir $mirror_addr
 	[[ $? -ne 0 || ! -f $target_dir/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
 	cp /usr/bin/${qemu_binary[$arch]} $target_dir/usr/bin/
 	[[ ! -f $target_dir/usr/share/keyrings/debian-archive-keyring.gpg ]] && \
@@ -40,7 +45,8 @@ create_chroot()
 	chroot $target_dir /bin/bash -c "/debootstrap/debootstrap --second-stage"
 	[[ $? -ne 0 || ! -f $target_dir/bin/bash ]] && exit_with_error "Create chroot second stage failed"
 	create_sources_list "$release" "$target_dir"
-	echo 'Acquire::http { Proxy "http://localhost:3142"; };' > $target_dir/etc/apt/apt.conf.d/02proxy
+	[[ $NO_APT_CACHER != yes ]] && \
+		echo 'Acquire::http { Proxy "http://localhost:3142"; };' > $target_dir/etc/apt/apt.conf.d/02proxy
 	cat <<-EOF > $target_dir/etc/apt/apt.conf.d/71-no-recommends
 	APT::Install-Recommends "0";
 	APT::Install-Suggests "0";
@@ -106,7 +112,7 @@ chroot_build_packages()
 		for arch in armhf arm64; do
 			display_alert "Starting package building process" "$release $arch" "info"
 
-			local target_dir=$DEST/buildpkg/${release}-${arch}-v2
+			local target_dir=$DEST/buildpkg/${release}-${arch}-v3
 			local distcc_bindaddr="127.0.0.2"
 
 			[[ ! -f $target_dir/root/.debootstrap-complete ]] && create_chroot "$target_dir" "$release" "$arch"
@@ -271,11 +277,12 @@ chroot_installpackages()
 		fi
 		unset package_install_target package_checkinstall
 	done
+	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\
+		\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
 	cat <<-EOF > $CACHEDIR/sdcard/tmp/install.sh
 	#!/bin/bash
 	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
-	apt-get -o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" \
-		-o Acquire::http::Proxy::localhost="DIRECT" -q update
+	apt-get $apt_extra -q update
 	# uncomment to debug
 	# /bin/bash
 	# TODO: check if package exists in case new config was added
@@ -284,9 +291,7 @@ chroot_installpackages()
 	#		if grep -qE "apt.armbian.com|localhost" <(apt-cache madison \$p); then
 	#		if apt-get -s -qq install \$p; then
 	#fi
-	apt-get -q -o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" \
-		-o Acquire::http::Proxy::localhost="DIRECT" \
-		--show-progress -o DPKG::Progress-Fancy=1 install -y $install_list
+	apt-get -q $apt_extra --show-progress -o DPKG::Progress-Fancy=1 install -y $install_list
 	apt-get clean
 	[[ "$remote_only" != yes ]] && apt-key del "925644A6"
 	rm /etc/apt/sources.list.d/armbian-temp.list 2>/dev/null
