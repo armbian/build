@@ -606,8 +606,8 @@ download_toolchain()
 			touch $DEST/.gpg/gpg.conf
 			chmod 600 $DEST/.gpg/gpg.conf
 		fi
-		(gpg --homedir $DEST/.gpg --list-keys 8F427EAF || gpg --homedir $DEST/.gpg --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF) 2>&1 | tee -a $DEST/debug/output.log
-		gpg --homedir $DEST/.gpg --verify --trust-model always -q ${filename}.asc 2>&1 | tee -a $DEST/debug/output.log
+		(gpg --homedir $DEST/.gpg --no-permission-warning --list-keys 8F427EAF || gpg --homedir $DEST/.gpg --no-permission-warning --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF) 2>&1 | tee -a $DEST/debug/output.log
+		gpg --homedir $DEST/.gpg --no-permission-warning --verify --trust-model always -q ${filename}.asc 2>&1 | tee -a $DEST/debug/output.log
 		[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true
 	else
 		md5sum -c --status ${filename}.asc && verified=true
