@@ -16,6 +16,9 @@ install_common()
 {
 	display_alert "Applying common tweaks" "" "info"
 
+	# add dummy fstab entry to make mkinitramfs happy
+	echo "/dev/mmcblk0p1 / $ROOTFS_TYPE defaults 0 1" >> $CACHEDIR/sdcard/etc/fstab
+
 	# create modules file
 	if [[ $BRANCH == next || $BRANCH == dev ]]; then
 		tr ' ' '\n' <<< "$MODULES_NEXT" > $CACHEDIR/sdcard/etc/modules
@@ -95,19 +98,19 @@ install_common()
 
 	display_alert "Installing headers" "$HEADERS_TMP" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${HEADERS_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
-
+	
 	# install firmware
 	#if [[ -f $CACHEDIR/sdcard/tmp/debs/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
 	#	display_alert "Installing firmware" "$FW_TMP" "info"
 	#	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${FW_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 	#fi
 
-	if [[ -f $CACHEDIR/sdcard/tmp/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
+	if [[ -f $CACHEDIR/sdcard/tmp/debs/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
 		display_alert "Installing generic firmware" "armbian-firmware" "info"
 		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 	fi
 
-	if [[ -f $CACHEDIR/sdcard/tmp/${DTB_TMP}_${REVISION}_${ARCH}.deb ]]; then
+	if [[ -f $CACHEDIR/sdcard/tmp/debs/${DTB_TMP}_${REVISION}_${ARCH}.deb ]]; then
 		display_alert "Installing DTB" "$DTB_TMP" "info"
 		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${DTB_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 	fi

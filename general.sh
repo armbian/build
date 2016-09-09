@@ -104,16 +104,20 @@ get_package_list_hash()
 	echo $(printf '%s\n' $PACKAGE_LIST | sort -u | md5sum | cut -d' ' -f 1)
 }
 
-# create_sources_list <release>
+# create_sources_list <release> <basedir>
 #
 # <release>: wheezy|jessie|trusty|xenial
+# <basedir>: path to root directory
 #
 create_sources_list()
 {
 	local release=$1
+	local basedir=$2
+	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
+
 	case $release in
 	wheezy|jessie)
-	cat <<-EOF
+	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
 
@@ -126,10 +130,16 @@ create_sources_list()
 	deb http://security.debian.org/ ${release}/updates main contrib non-free
 	#deb-src http://security.debian.org/ ${release}/updates main contrib non-free
 	EOF
+
+	cat <<-EOF > $basedir/etc/apt/preferences.d/90-backports.pref
+	Package: *
+	Pin: release n=${release}-backports
+	Pin-Priority: 100
+	EOF
 	;;
 
 	trusty|xenial)
-	cat <<-EOF
+	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 
@@ -141,6 +151,12 @@ create_sources_list()
 
 	deb http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
+	EOF
+
+	cat <<-EOF > $basedir/etc/apt/preferences.d/90-backports.pref
+	Package: *
+	Pin: release a=${release}-backports
+	Pin-Priority: 100
 	EOF
 	;;
 	esac
@@ -484,7 +500,9 @@ prepare_host() {
 	fi
 
 	if [[ $codename == xenial ]]; then
-		hostdeps="$hostdeps systemd-container udev libstdc++-arm-none-eabi-newlib"
+		hostdeps="$hostdeps systemd-container udev distcc libstdc++-arm-none-eabi-newlib gcc-4.9-arm-linux-gnueabihf \
+			gcc-4.9-aarch64-linux-gnu g++-4.9-arm-linux-gnueabihf g++-4.9-aarch64-linux-gnu g++-5-aarch64-linux-gnu \
+			g++-5-arm-linux-gnueabihf"
 		if systemd-detect-virt -q -c; then
 			display_alert "Running in container" "$(systemd-detect-virt)" "info"
 			# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
@@ -503,15 +521,6 @@ prepare_host() {
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
 	if [[ $NO_APT_CACHER != yes ]]; then hostdeps="$hostdeps apt-cacher-ng"; fi
 
-	# Deboostrap in trusty breaks due too old debootstrap. We are installing Xenial package
-	local debootstrap_version=$(dpkg-query -W -f='${Version}\n' debootstrap | cut -f1 -d'+')
-	local debootstrap_minimal="1.0.78"
-
-	if [[ "$debootstrap_version" < "$debootstrap_minimal" ]]; then 
-		display_alert "Upgrading" "debootstrap" "info"
-		dpkg -i $SRC/lib/bin/debootstrap_1.0.78+nmu1ubuntu1.1_all.deb
-	fi
-
 	local deps=()
 	local installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
 
@@ -524,6 +533,8 @@ prepare_host() {
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/output.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing ${#deps[@]} host dependencies..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+		# this is needed in case new compilers were installed
+		update-ccache-symlinks
 	fi
 
 	# install aptly separately
@@ -532,7 +543,6 @@ prepare_host() {
 	fi
 
 	# TODO: Check for failed installation process
-	# test exit code propagation for commands in parentheses
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
 	test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
@@ -596,8 +606,8 @@ download_toolchain()
 			touch $DEST/.gpg/gpg.conf
 			chmod 600 $DEST/.gpg/gpg.conf
 		fi
-		(gpg --homedir $DEST/.gpg --list-keys 8F427EAF || gpg --homedir $DEST/.gpg --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF) 2>&1 | tee -a $DEST/debug/output.log
-		gpg --homedir $DEST/.gpg --verify --trust-model always -q ${filename}.asc 2>&1 | tee -a $DEST/debug/output.log
+		(gpg --homedir $DEST/.gpg --no-permission-warning --list-keys 8F427EAF || gpg --homedir $DEST/.gpg --no-permission-warning --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF) 2>&1 | tee -a $DEST/debug/output.log
+		gpg --homedir $DEST/.gpg --no-permission-warning --verify --trust-model always -q ${filename}.asc 2>&1 | tee -a $DEST/debug/output.log
 		[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true
 	else
 		md5sum -c --status ${filename}.asc && verified=true

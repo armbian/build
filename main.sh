@@ -11,7 +11,11 @@
 #
 # Main program
 #
-#
+
+# destination
+DEST=$SRC/output
+# sources for compilation
+SOURCES=$SRC/sources
 
 TTY_X=$(($(stty size | awk '{print $2}')-6)) # determine terminal width
 TTY_Y=$(($(stty size | awk '{print $1}')-6)) # determine terminal height
@@ -229,7 +233,7 @@ VER="${VER/-$LINUXFAMILY/}"
 [[ -n $RELEASE ]] && create_board_package
 
 # chroot-buildpackages
-[[ $EXTERNAL_NEW == yes ]] && chroot_build_packages
+[[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
 
 if [[ $KERNEL_ONLY != yes ]]; then
 	debootstrap_ng

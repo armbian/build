@@ -25,6 +25,7 @@ DEST_LANG="en_US.UTF-8"			# sl_SI.UTF-8, en_US.UTF-8
 # advanced
 KERNEL_KEEP_CONFIG="no"			# do not overwrite kernel config before compilation
 EXTERNAL="yes"				# build and install extra applications and drivers
+EXTERNAL_NEW="prebuilt"			# compile and install or install prebuilt additional packages
 DEBUG_MODE="no"				# wait that you make changes to uboot and kernel source and creates patches
 FORCE_CHECKOUT="yes"			# ignore manual changes to source
 BUILD_ALL="no"				# cycle through available boards and make images or kernel/u-boot packages.
@@ -38,10 +39,6 @@ LIB_TAG=""				# empty for latest version,
 
 # source is where compile.sh is located
 SRC=$(pwd)
-# destination
-DEST=$SRC/output
-# sources for compilation
-SOURCES=$SRC/sources
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # To preserve proper libraries updating
@@ -95,4 +92,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=22
+# VERSION=23

@@ -77,9 +77,9 @@ debootstrap_ng()
 
 	if [[ $RELEASE == jessie || $RELEASE == xenial ]]; then
 		# install locally built packages
-		[[ $EXTERNAL_NEW == yes ]] && chroot_installpackages_local
+		[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
 		# install from apt.armbian.com
-		[[ $EXTERNAL_NEW == nobuild ]] && chroot_installpackages "yes"
+		[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes"
 	fi
 
 	# cleanup for install_kernel and install_board_specific
@@ -191,7 +191,7 @@ create_rootfs_cache()
 		fi
 
 		# stage: create apt sources list
-		create_sources_list $RELEASE > $CACHEDIR/sdcard/etc/apt/sources.list
+		create_sources_list "$RELEASE" "$CACHEDIR/sdcard/"
 
 		# stage: add armbian repository and install key
 		case $RELEASE in
@@ -241,7 +241,7 @@ create_rootfs_cache()
 
 		# DEBUG: print free space
 		echo -e "\nFree space:"
-		eval df -h | grep "$CACHEDIR/" ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
+		eval 'df -h | grep "$CACHEDIR/"' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
 
 		# stage: remove downloaded packages
 		chroot $CACHEDIR/sdcard /bin/bash -c "apt-get clean"
@@ -254,7 +254,7 @@ create_rootfs_cache()
 		umount_chroot "$CACHEDIR/sdcard"
 
 		tar cp --xattrs --directory=$CACHEDIR/sdcard/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $CACHEDIR/sdcard/ | cut -f1) -N "$display_name" | pigz > $cache_fname
+			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $CACHEDIR/sdcard/ | cut -f1) -N "$display_name" | pigz --fast > $cache_fname
 	fi
 	mount_chroot "$CACHEDIR/sdcard"
 } #############################################################################
@@ -451,7 +451,7 @@ create_image()
 
 	# DEBUG: print free space
 	display_alert "Free space:" "SD card" "info"
-	eval df -h | grep "$CACHEDIR/" ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
+	eval 'df -h | grep "$CACHEDIR/"' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
 
 	# stage: write u-boot
 	write_uboot $LOOP
@@ -482,7 +482,7 @@ create_image()
 		fi
 		if [[ $SEVENZIP == yes ]]; then
 			local filename=$DEST/images/${version}.7z
-			7za a -t7z -bd -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $filename ${version}.raw armbian.txt *.asc sha256sum >/dev/null 2>&1
+			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.raw armbian.txt *.asc sha256sum >/dev/null 2>&1
 		else
 			local filename=$DEST/images/${version}.zip
 			zip -FSq $filename ${version}.raw armbian.txt *.asc sha256sum
