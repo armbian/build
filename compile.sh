@@ -31,6 +31,12 @@ FORCE_CHECKOUT="yes"			# ignore manual changes to source
 BUILD_ALL="no"				# cycle through available boards and make images or kernel/u-boot packages.
 					# set KERNEL_ONLY to "yes" or "no" to build all packages/all images
 
+PRIVATE_CCACHE="no"			# Use separate ccache directory located in build tree ($DEST/ccache)
+					# Can be used to avoid problems with ownershipt on $HOME/.ccache. 
+					# Set to "yes" if you are using build script as non-root user with "sudo"
+					# note: to use a ramdisk for ccache, create first a symlink to $DEST/ccache
+                                        # Set to "no" check if $DEST/ccache exists and delete (directory/symlink)
+
 # build script version to use
 LIB_TAG=""				# empty for latest version,
 					# one of listed here: https://github.com/igorpecovnik/lib/tags for stable versions,
@@ -92,4 +98,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=23
+# VERSION=24

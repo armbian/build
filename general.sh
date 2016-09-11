@@ -551,6 +551,34 @@ prepare_host() {
 	# create directory structure
 	mkdir -p $SOURCES $DEST/debs/extra $DEST/debug $CACHEDIR/rootfs $SRC/userpatches/overlay $SRC/toolchains $SRC/userpatches/patch
 	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
+	
+	# create additional local ccache folder and set ccache env variables
+	local ccachedir=$DEST/ccache  
+	if [[ $PRIVATE_CCACHE == yes ]]; then 
+		# override default CCACHE storage $HOME/.ccache
+		# create the directory if needed  	
+		export CCACHE_DIR=$ccachedir
+		
+		if [ ! -e "$ccachedir" ]; then
+			mkdir -p $ccachedir
+			
+			cat <<-EOF > $ccachedir/ccache.conf
+			#max_size=5G
+			#compression=true
+			#compression_level=4
+			#cache_dir_levels=3
+			#compiler_check=mtime
+			#hash_dir=false
+			EOF
+		fi
+	else 
+		if [ -L "$ccachedir" ]; then # a symlink was setup to cache the files
+ 			rm -f $ccachedir
+ 		fi
+ 		if [ -d "$ccachedir" ]; then # it is a directory so wipe all files
+			rm -rf $ccachedir
+		fi		
+	fi
 
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 	if [[ $codename == xenial ]]; then
