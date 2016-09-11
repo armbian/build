@@ -141,7 +141,7 @@ chroot_build_packages()
 
 				# check build condition
 				if [[ $(type -t package_checkbuild) == function ]] && ! package_checkbuild; then
-					display_alert "Skipping building $package_name for $release $arch"
+					display_alert "Skipping building $package_name for" "$release $arch"
 					continue
 				fi
 
@@ -186,6 +186,7 @@ chroot_build_packages()
 				cd /root/build
 				if [[ -n "$package_builddeps" ]]; then
 					display_alert "Installing build dependencies"
+					# can be replaced with mk-build-deps
 					deps=()
 					installed=\$(dpkg-query -W -f '\${db:Status-Abbrev}|\${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print \$2}' | cut -d ':' -f 1)
 					for packet in $package_builddeps; do grep -q -x -e "\$packet" <<< "\$installed" || deps+=("\$packet"); done
