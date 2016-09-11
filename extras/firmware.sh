@@ -13,8 +13,9 @@ build_firmware()
 
 	local plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
 	local plugin_dir="armbian-firmware"
-
-	#fetch_from_repo "$plugin_repo" "$plugin_dir/lib/firmware" "branch:master"
+	if [[ $MAKE_FULL_FIRMWARE == yes ]]; then
+		fetch_from_repo "$plugin_repo" "$plugin_dir/lib/firmware" "branch:master"
+	fi
 	mkdir -p $SOURCES/$plugin_dir/lib/firmware
 	# overlay our firmware
 	cp -R $SRC/lib/bin/firmware-overlay/* $SOURCES/$plugin_dir/lib/firmware
