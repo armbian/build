@@ -18,7 +18,10 @@ setenv eth3addr 00:50:43:0d:19:18
 #
 setenv bootargs "selinux=0 cgroup_disable=memory scandelay root=/dev/mmcblk0p1 rw rootfstype=ext4 console=ttyS0,115200 loglevel=${verbosity} rootwait"
 ext2load mmc 0:1 ${fdtaddr} boot/dtb/armada-388-clearfog.dtb
+ext2load mmc 0:1 ${ramdiskaddr} boot/uInitrd
 ext2load mmc 0:1 ${loadaddr} boot/zImage
 bootz ${loadaddr} - ${fdtaddr}
+#ramdisk currently broken
+#bootz ${loadaddr} ${ramdiskaddr} ${fdtaddr} 
 # Recompile with:
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr 

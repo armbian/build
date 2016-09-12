@@ -34,7 +34,7 @@ MAINLINE_KERNEL_DIR='linux-vanilla'
 
 MAINLINE_UBOOT_SOURCE='git://git.denx.de/u-boot.git'
 #MAINLINE_UBOOT_BRANCH="v$(git ls-remote git://git.denx.de/u-boot.git | grep -v rc | grep -v '\^' | tail -1 | cut -d'v' -f 2)"
-MAINLINE_UBOOT_BRANCH='tag:v2016.07'
+MAINLINE_UBOOT_BRANCH='tag:v2016.09'
 MAINLINE_UBOOT_DIR='u-boot'
 
 # Let's set defalt data if not defined in board configuration above
@@ -149,7 +149,16 @@ PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 
 # debug
 cat <<-EOF >> $DEST/debug/output.log
+## BUILD SCRIPT ENVIRONMENT
+
+Version: $(cd $SRC/lib; git rev-parse @)
+
 ## BUILD CONFIGURATION
+
+Build target:
+Board: $BOARD
+Branch: $BRANCH
+
 Kernel configuration:
 Repository: $KERNELSOURCE
 Branch: $KERNELBRANCH

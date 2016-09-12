@@ -20,7 +20,9 @@ install_common()
 	echo "/dev/mmcblk0p1 / $ROOTFS_TYPE defaults 0 1" >> $CACHEDIR/sdcard/etc/fstab
 
 	# create modules file
-	if [[ $BRANCH == next || $BRANCH == dev ]]; then
+	if [[ $BRANCH == dev && -n $MODULES_DEV ]]; then
+		tr ' ' '\n' <<< "$MODULES_DEV" > $CACHEDIR/sdcard/etc/modules
+	elif [[ $BRANCH == next || $BRANCH == dev ]]; then
 		tr ' ' '\n' <<< "$MODULES_NEXT" > $CACHEDIR/sdcard/etc/modules
 	else
 		tr ' ' '\n' <<< "$MODULES" > $CACHEDIR/sdcard/etc/modules

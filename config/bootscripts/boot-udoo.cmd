@@ -11,8 +11,10 @@ then
 else
   setenv fdt_file imx6q-udoo-hdmi.dtb
 fi
+setenv ramdisk_addr 0x14800000
 ext2load mmc 0 ${fdt_addr} /boot/dtb/${fdt_file} || fatload mmc 0 ${fdt_addr} dtb/${fdt_file}
+ext2load mmc 0 ${ramdisk_addr} /boot/uInitrd || fatload mmc 0 ${ramdisk_addr} uInitrd || ext4load mmc 0 ${ramdisk_addr} uInitrd
 ext2load mmc 0 ${loadaddr} /boot/${image} || fatload mmc 0 ${loadaddr} ${image}
-bootz ${loadaddr} - ${fdt_addr}
+bootz ${loadaddr} ${ramdisk_addr} ${fdt_addr}
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr 
 
