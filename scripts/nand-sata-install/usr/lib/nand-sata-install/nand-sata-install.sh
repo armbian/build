@@ -49,7 +49,8 @@ create_armbian() {
 	# sata root part
 	satauuid=$(blkid -o export $2 | grep -w UUID)
 	
-	
+	# SD card boot part
+	sduuid=$(blkid -o export /dev/mmcblk1p1 | grep -w UUID)
 	
 	# calculate usage and see if it fits on destination
 	USAGE=$(df -BM | grep ^/dev | head -1 | awk '{print $3}' | tr -cd '[0-9]. \n')
@@ -133,7 +134,7 @@ EOF
 		mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr >/dev/null 2>&1 || (echo "Error"; exit 0)
 		mkdir -p /mnt/rootfs/media/mmc/boot
 		if ! grep -q "/boot" /mnt/rootfs/etc/fstab; then # in two partition setup
-			echo "$satauuid        /media/mmc   ext4    defaults        0       0" >> /mnt/rootfs/etc/fstab
+			echo "$sduuid        /media/mmc   ext4    defaults        0       0" >> /mnt/rootfs/etc/fstab
 			echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/rootfs/etc/fstab
 		fi
 		sed -i "s/data=writeback,//" /mnt/rootfs/etc/fstab
