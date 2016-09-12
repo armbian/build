@@ -50,7 +50,7 @@ create_armbian() {
 	satauuid=$(blkid -o export $2 | grep -w UUID)
 	
 	# SD card boot part
-	sduuid=$(blkid -o export /dev/mmcblk1p1 | grep -w UUID)
+	sduuid=$(blkid -o export /dev/mmcblk0p1 | grep -w UUID)
 	
 	# calculate usage and see if it fits on destination
 	USAGE=$(df -BM | grep ^/dev | head -1 | awk '{print $3}' | tr -cd '[0-9]. \n')
