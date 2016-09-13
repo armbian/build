@@ -497,7 +497,7 @@ sign_and_compress()
 		fi
 		if [[ $SEVENZIP == yes ]]; then
 			local filename=$DEST/images/${version}.7z
-			if [ ${BUILD_ALL} = TRUE ]; then
+			if [[ $BUILD_ALL == yes ]]; then
 				nice -n 19 7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.raw armbian.txt *.asc sha256sum >/dev/null 2>&1
 			else
 				7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.raw armbian.txt *.asc sha256sum >/dev/null 2>&1
@@ -507,7 +507,7 @@ sign_and_compress()
 			zip -FSq $filename ${version}.raw armbian.txt *.asc sha256sum
 		fi
 		rm -f ${version}.raw *.asc armbian.txt sha256sum
-		if [ ${BUILD_ALL} = TRUE ]; then
+		if [[ $BUILD_ALL == yes ]]; then
 			cd .. && rmdir "${TEMP_DIR}"
 		else
 			local filesize=$(ls -l --b=M $filename | cut -d " " -f5)
