@@ -153,8 +153,6 @@ fi
 
 source $SRC/lib/configuration.sh
 
-(cd $SRC/lib; echo "Build script version: $(git rev-parse @)") >> $DEST/debug/output.log
-
 display_alert "Starting Armbian build script" "@host" "info"
 
 # sync clock

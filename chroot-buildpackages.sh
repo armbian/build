@@ -25,8 +25,8 @@ create_chroot()
 	declare -A qemu_binary apt_mirror components
 	qemu_binary['armhf']='qemu-arm-static'
 	qemu_binary['arm64']='qemu-aarch64-static'
-	apt_mirror['jessie']='httpredir.debian.org/debian'
-	apt_mirror['xenial']='ports.ubuntu.com'
+	apt_mirror['jessie']="$DEBIAN_MIRROR"
+	apt_mirror['xenial']="$UBUNTU_MIRROR"
 	components['jessie']='main,contrib'
 	components['xenial']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release $arch" "info"
@@ -76,14 +76,14 @@ chroot_prepare_distccd()
 {
 	local release=$1
 	local arch=$2
-	local dest=$DEST/buildpkg/distcc-wrappers/${release}-${arch}
+	local dest=/tmp/distcc/${release}-${arch}
 	declare -A gcc_version gcc_type
 	gcc_version['jessie']='4.9'
 	gcc_version['xenial']='5'
 	gcc_type['armhf']='arm-linux-gnueabihf'
 	gcc_type['arm64']='aarch64-linux-gnu'
-	mkdir -p $dest
 	rm -f $dest/cmdlist
+	mkdir -p $dest
 	for compiler in gcc cpp g++; do
 		echo "$dest/$compiler" >> $dest/cmdlist
 		ln -sf /usr/bin/${gcc_type[$arch]}-${compiler}-${gcc_version[$release]} $dest/$compiler
@@ -96,12 +96,8 @@ chroot_prepare_distccd()
 	echo "$dest/c++" >> $dest/cmdlist
 	mkdir -p /var/run/distcc/
 	touch /var/run/distcc/${release}-${arch}.pid
-	touch /tmp/distcc-${release}-${arch}.log
-	mkdir -p /tmp/distcc
-	chown distccd /var/run/distcc/
-	chown distccd /var/run/distcc/${release}-${arch}.pid
-	chown distccd /tmp/distcc-${release}-${arch}.log
-	chown distccd /tmp/distcc
+	chown -R distccd /var/run/distcc/
+	chown -R distccd /tmp/distcc
 }
 
 # chroot_build_packages
@@ -123,9 +119,9 @@ chroot_build_packages()
 			chroot_prepare_distccd $release $arch
 
 			# DISTCC_TCP_DEFER_ACCEPT=0
-			DISTCC_CMDLIST=$DEST/buildpkg/distcc-wrappers/${release}-${arch}/cmdlist TMPDIR=/tmp/distcc distccd --daemon \
+			DISTCC_CMDLIST=/tmp/distcc/${release}-${arch}/cmdlist TMPDIR=/tmp/distcc distccd --daemon \
 				--pid-file /var/run/distcc/${release}-${arch}.pid --listen $distcc_bindaddr --allow 127.0.0.0/24 \
-				--log-file /tmp/distcc-${release}-${arch}.log --user distccd
+				--log-file /tmp/distcc/${release}-${arch}.log --user distccd
 
 			local t=$target_dir/root/.update-timestamp
 			if [[ ! -f $t || $(( ($(date +%s) - $(<$t)) / 86400 )) -gt 7 ]]; then
