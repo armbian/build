@@ -275,8 +275,7 @@ chroot_installpackages()
 		fi
 		unset package_install_target package_checkinstall
 	done
-	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\
-		\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
+	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
 	cat <<-EOF > $CACHEDIR/sdcard/tmp/install.sh
 	#!/bin/bash
 	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
