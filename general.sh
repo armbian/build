@@ -335,9 +335,9 @@ fingerprint_image()
 	Title:			Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH
 	Kernel:			Linux $VER
 	Build date:		$(date +'%d.%m.%Y')
-	Author:			Igor Pecovnik, www.igorpecovnik.com
+	Authors:		http://www.armbian.com/authors
 	Sources: 		http://github.com/igorpecovnik/lib
-	Support: 		http://www.armbian.com, http://forum.armbian.com/
+	Support: 		http://forum.armbian.com/
 	Changelog: 		http://www.armbian.com/logbook/
 	Documantation:		http://docs.armbian.com/
 	--------------------------------------------------------------------------------
