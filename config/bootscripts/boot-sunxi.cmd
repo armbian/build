@@ -5,7 +5,7 @@ else
 setenv verbosity 1
 fi
 
-# nonstandard monitor settings
+# nonstandard monitor settings for A10, A20 and A31 based boards
 # screen is initialized before this script -> saving to u-boot environment is mandatory 
 #setenv video-mode sunxi:1024x768-24@60,monitor=dvi,hpd=0,edid=0,overscan_x=1,overscan_y=2
 #saveenv
