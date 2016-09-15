@@ -408,7 +408,7 @@ addtorepo()
 		fi
 
 		# adding utils
-		if find ${POT}extra/$release/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		if find ${POT}extra/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
 			aptly repo add -config=config/aptly.conf "utils" ${POT}extra/utils/*.deb
 		else
@@ -416,7 +416,7 @@ addtorepo()
 		fi
 
 		# adding desktop
-		if find ${POT}extra/$release/desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		if find ${POT}extra/${release}-desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "desktop" "ext"
 			aptly repo add -force-replace=$replace -config=config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
 		else
