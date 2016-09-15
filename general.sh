@@ -355,8 +355,8 @@ addtorepo()
 
 	# workaround since we dont't build utils for those
 	mkdir -p ../output/debs/extra/{wheezy,trusty}
-	ln -sf ../jessie/utils ../output/debs/extra/wheezy/utils
-	ln -sf ../jessie/utils ../output/debs/extra/trusty/utils
+	ln -sf ../utils ../output/debs/extra/wheezy/utils
+	ln -sf ../utils ../output/debs/extra/trusty/utils
 
 	for release in "${distributions[@]}"; do
 
@@ -418,7 +418,7 @@ addtorepo()
 		# adding desktop
 		if find ${POT}extra/$release/desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "desktop" "ext"
-			aptly repo add -force-replace=$replace -config=config/aptly.conf "${release}-desktop" ${POT}extra/$release/desktop/*.deb
+			aptly repo add -force-replace=$replace -config=config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
 		else
 			display_alert "Not adding $release" "desktop" "wrn"
 		fi
