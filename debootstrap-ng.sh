@@ -498,7 +498,8 @@ sign_and_compress()
 		if [[ $SEVENZIP == yes ]]; then
 			local filename=$DEST/images/${version}.7z
 			if [[ $BUILD_ALL == yes ]]; then
-				nice -n 19 7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum >/dev/null 2>&1
+				nice -n 19 bash -c "7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum >/dev/null 2>&1 \
+				; [[ -n '$SEND_TO_SERVER' ]] && rsync -arP $filename -e 'ssh -p 22' $SEND_TO_SERVER"
 			else
 				7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum >/dev/null 2>&1
 			fi
