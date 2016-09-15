@@ -410,7 +410,7 @@ addtorepo()
 		# adding utils
 		if find ${POT}extra/$release/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
-			aptly repo add -config=config/aptly.conf "utils" ${POT}extra/$release/utils/*.deb
+			aptly repo add -config=config/aptly.conf "utils" ${POT}extra/utils/*.deb
 		else
 			display_alert "Not adding $release" "utils" "wrn"
 		fi
