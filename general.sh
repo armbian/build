@@ -353,11 +353,6 @@ addtorepo()
 # function: cycle trough distributions
 	local distributions=("wheezy" "jessie" "trusty" "xenial")
 
-	# workaround since we dont't build utils for those
-	mkdir -p ../output/debs/extra/{wheezy,trusty}
-	ln -sf ../utils ../output/debs/extra/wheezy/utils
-	ln -sf ../utils ../output/debs/extra/trusty/utils
-
 	for release in "${distributions[@]}"; do
 
 		# let's drop from publish if exits
