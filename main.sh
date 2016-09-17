@@ -50,7 +50,7 @@ date +"%d_%m_%Y-%H_%M_%S" > $DEST/debug/timestamp
 ver1=$(awk -F"=" '/^# VERSION/ {print $2}' <"$SRC/compile.sh")
 ver2=$(awk -F"=" '/^# VERSION/ {print $2}' <"$SRC/lib/compile.sh" 2>/dev/null) || ver2=0
 if [[ -z $ver1 || $ver1 -lt $ver2 ]]; then
-	display_alert "File $0 is outdated. Please overwrite is with an updated version from" "$SRC/lib" "wrn"
+	display_alert "File $0 is outdated. Please overwrite it with an updated version from" "$SRC/lib" "wrn"
 	echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
 	read
 fi
@@ -137,7 +137,7 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	options+=("jessie" "Debian 8 Jessie (stable)")
 	options+=("trusty" "Ubuntu Trusty 14.04.x LTS")
 	options+=("xenial" "Ubuntu Xenial 16.04.x LTS")
-	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select one of supported releases" $TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select one of the supported releases" $TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $RELEASE ]] && exit_with_error "No release selected"
 fi
@@ -152,8 +152,6 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP && "jessie xenial" == *$RELEASE* 
 fi
 
 source $SRC/lib/configuration.sh
-
-(cd $SRC/lib; echo "Build script version: $(git rev-parse @)") >> $DEST/debug/output.log
 
 display_alert "Starting Armbian build script" "@host" "info"
 
@@ -238,7 +236,7 @@ VER="${VER/-$LINUXFAMILY/}"
 if [[ $KERNEL_ONLY != yes ]]; then
 	debootstrap_ng
 else
-	display_alert "Kernel building done" "@host" "info"
+	display_alert "Kernel build done" "@host" "info"
 	display_alert "Target directory" "$DEST/debs/" "info"
 	display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
 fi

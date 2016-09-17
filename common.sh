@@ -34,7 +34,7 @@ compile_uboot()
 	local version=$(grab_version "$SOURCES/$BOOTSOURCEDIR")
 
 	# create patch for manual source changes in debug mode
-	[[ $DEBUG_MODE == yes ]] && userpatch_create "u-boot"
+	[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
 
 	display_alert "Compiling uboot" "$version" "info"
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
@@ -139,7 +139,7 @@ compile_kernel()
 	local version=$(grab_version "$SOURCES/$LINUXSOURCEDIR")
 
 	# create patch for manual source changes in debug mode
-	[[ $DEBUG_MODE == yes ]] && userpatch_create "kernel"
+	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
@@ -377,11 +377,11 @@ install_external_applications()
 write_uboot()
 {
 	local loop=$1
-	display_alert "Writing bootloader" "$loop" "info"
+	display_alert "Writing U-boot bootloader" "$loop" "info"
 	mkdir -p /tmp/u-boot/
 	dpkg -x ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb /tmp/u-boot/
 	write_uboot_platform "/tmp/u-boot/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}" "$loop"
-	[[ $? -ne 0 ]] && exit_with_error "U-boot failed to install" "@host"
+	[[ $? -ne 0 ]] && exit_with_error "U-boot bootloader failed to install" "@host"
 	rm -r /tmp/u-boot/
 	sync
 }

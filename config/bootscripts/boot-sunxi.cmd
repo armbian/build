@@ -4,6 +4,13 @@ setenv verbosity 7
 else
 setenv verbosity 1
 fi
+
+# nonstandard monitor settings for A10, A20 and A31 based boards
+# screen is initialized before this script -> saving to u-boot environment is mandatory 
+#setenv video-mode sunxi:1024x768-24@60,monitor=dvi,hpd=0,edid=0,overscan_x=1,overscan_y=2
+#saveenv
+# nonstandard monitor settings
+
 setenv bootargs "console=ttyS0,115200 console=tty1 root=/dev/mmcblk0p1 rootwait rootfstype=ext4 cgroup_enable=memory swapaccount=1 sunxi_ve_mem_reserve=0 sunxi_g2d_mem_reserve=0 sunxi_no_mali_mem_reserve sunxi_fb_mem_reserve=16 hdmi.audio=EDID:0 disp.screen0_output_mode=1920x1080p60 panic=10 consoleblank=0 enforcing=0 loglevel=${verbosity}"
 #--------------------------------------------------------------------------------------------------------------------------------
 # Boot loader script to boot with different boot methods for old and new kernel

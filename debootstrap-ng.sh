@@ -456,40 +456,64 @@ create_image()
 	# stage: write u-boot
 	write_uboot $LOOP
 
-	cp $CACHEDIR/sdcard/etc/armbian.txt $CACHEDIR/
-
 	# unmount /boot first, rootfs second, image file last
 	sync
 	[[ $BOOTSIZE != 0 ]] && umount -l $CACHEDIR/mount/boot
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $CACHEDIR/mount
 	losetup -d $LOOP
 
-	mv $CACHEDIR/tmprootfs.raw $CACHEDIR/${version}.raw
-	cd $CACHEDIR/
+	if [[ $BUILD_ALL == yes ]]; then
+		TEMP_DIR="$(mktemp -d $CACHEDIR/${version}.XXXXXX)"
+		cp $CACHEDIR/sdcard/etc/armbian.txt "${TEMP_DIR}/"
+		mv "$CACHEDIR/tmprootfs.raw" "${TEMP_DIR}/${version}.img"
+		cd "${TEMP_DIR}/"
+		sign_and_compress &
+	else
+		cp $CACHEDIR/sdcard/etc/armbian.txt $CACHEDIR/
+		mv $CACHEDIR/tmprootfs.raw $CACHEDIR/${version}.img
+		cd $CACHEDIR/
+		sign_and_compress
+	fi
+} #############################################################################
 
+# sign_and_compress
+#
+# signs and compresses the image
+#
+sign_and_compress()
+{
 	# stage: compressing or copying image file
 	if [[ $COMPRESS_OUTPUTIMAGE != yes ]]; then
-		mv -f $CACHEDIR/${version}.raw $DEST/images/${version}.raw
-		display_alert "Done building" "$DEST/images/${version}.raw" "info"
+		mv -f ${version}.img $DEST/images/${version}.img
+		display_alert "Done building" "$DEST/images/${version}.img" "info"
 	else
 		display_alert "Signing and compressing" "Please wait!" "info"
 		# stage: generate sha256sum
-		sha256sum -b ${version}.raw > sha256sum
+		sha256sum -b ${version}.img > sha256sum
 		# stage: sign with PGP
 		if [[ -n $GPG_PASS ]]; then
-			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes ${version}.raw
+			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes ${version}.img
 			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
 		fi
 		if [[ $SEVENZIP == yes ]]; then
 			local filename=$DEST/images/${version}.7z
-			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.raw armbian.txt *.asc sha256sum >/dev/null 2>&1
+			if [[ $BUILD_ALL == yes ]]; then
+				nice -n 19 bash -c "7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum >/dev/null 2>&1 \
+				; [[ -n '$SEND_TO_SERVER' ]] && rsync -arP $filename -e 'ssh -p 22' $SEND_TO_SERVER"
+			else
+				7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum >/dev/null 2>&1
+			fi
 		else
 			local filename=$DEST/images/${version}.zip
-			zip -FSq $filename ${version}.raw armbian.txt *.asc sha256sum
+			zip -FSq $filename ${version}.img armbian.txt *.asc sha256sum
 		fi
-		rm -f ${version}.raw *.asc armbian.txt sha256sum
-		local filesize=$(ls -l --b=M $filename | cut -d " " -f5)
-		display_alert "Done building" "$filename [$filesize]" "info"
+		rm -f ${version}.img *.asc armbian.txt sha256sum
+		if [[ $BUILD_ALL == yes ]]; then
+			cd .. && rmdir "${TEMP_DIR}"
+		else
+			local filesize=$(ls -l --b=M $filename | cut -d " " -f5)
+			display_alert "Done building" "$filename [$filesize]" "info"
+		fi
 	fi
 } #############################################################################
 

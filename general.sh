@@ -335,9 +335,9 @@ fingerprint_image()
 	Title:			Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH
 	Kernel:			Linux $VER
 	Build date:		$(date +'%d.%m.%Y')
-	Author:			Igor Pecovnik, www.igorpecovnik.com
+	Authors:		http://www.armbian.com/authors
 	Sources: 		http://github.com/igorpecovnik/lib
-	Support: 		http://www.armbian.com, http://forum.armbian.com/
+	Support: 		http://forum.armbian.com/
 	Changelog: 		http://www.armbian.com/logbook/
 	Documantation:		http://docs.armbian.com/
 	--------------------------------------------------------------------------------
@@ -352,11 +352,6 @@ addtorepo()
 # parameter "remove" dumps all and creates new
 # function: cycle trough distributions
 	local distributions=("wheezy" "jessie" "trusty" "xenial")
-
-	# workaround since we dont't build utils for those
-	mkdir -p ../output/debs/extra/{wheezy,trusty}
-	ln -sf ../jessie/utils ../output/debs/extra/wheezy/utils
-	ln -sf ../jessie/utils ../output/debs/extra/trusty/utils
 
 	for release in "${distributions[@]}"; do
 
@@ -408,17 +403,17 @@ addtorepo()
 		fi
 
 		# adding utils
-		if find ${POT}extra/$release/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		if find ${POT}extra/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
-			aptly repo add -config=config/aptly.conf "utils" ${POT}extra/$release/utils/*.deb
+			aptly repo add -config=config/aptly.conf "utils" ${POT}extra/utils/*.deb
 		else
 			display_alert "Not adding $release" "utils" "wrn"
 		fi
 
 		# adding desktop
-		if find ${POT}extra/$release/desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		if find ${POT}extra/${release}-desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "desktop" "ext"
-			aptly repo add -force-replace=$replace -config=config/aptly.conf "${release}-desktop" ${POT}extra/$release/desktop/*.deb
+			aptly repo add -force-replace=$replace -config=config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
 		else
 			display_alert "Not adding $release" "desktop" "wrn"
 		fi

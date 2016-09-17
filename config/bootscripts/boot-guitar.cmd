@@ -1,8 +1,9 @@
 # console=ttyS3 # serial
 setenv bootargs "earlyprintk clk_ignore_unused selinux=0 scandelay root=/dev/mmcblk0p2 rw console=tty1 rootfstype=ext4 loglevel=1 rootwait"
 setenv os_type linux
-fatload mmc 0:1 0x04000000 dtb/lemaker_guitar_bbb.dtb
-fatload mmc 0:1 0x7fc0 zImage
-bootz 0x7fc0 - 0x04000000
+fatload mmc 0:1 ${fdt_addr_r} dtb/lemaker_guitar_bbb.dtb
+fatload mmc 0:1 ${ramdisk_addr_r} uInitrd
+fatload mmc 0:1 ${kernel_addr_r} zImage
+bootz ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr 
  
