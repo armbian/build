@@ -37,7 +37,7 @@ MAINLINE_UBOOT_SOURCE='git://git.denx.de/u-boot.git'
 MAINLINE_UBOOT_BRANCH='tag:v2016.09'
 MAINLINE_UBOOT_DIR='u-boot'
 
-# Let's set defalt data if not defined in board configuration above
+# Let's set default data if not defined in board configuration above
 
 OFFSET=1 # Bootloader space in MB (1 x 2048 = default)
 ARCH=armhf
