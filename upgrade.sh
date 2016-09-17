@@ -24,9 +24,9 @@ title="Armbian universal installer 2015.11"
 display_warning()
 {
 read -r -d '' MOJTEXT << EOM
-1. Please do a backup even the script doesn't plan to ruin anything critical.
+1. Please do a backup even if the script doesn't plan to ruin anything critical.
 
-2. If you choose wrong board you might end up with not bootable system.
+2. If you choose the wrong board you might end up with a non-bootable system.
 
 3. We are going to remove current kernel package together with headers, firmware and board definitions.
 
@@ -189,7 +189,7 @@ A20 Lime2 A20 Micro A20 Bananapipro A20 Lamobo-R1 A20 Orangepi A20 Pcduino3nano 
 	BOARD=${BoardChoices,,}
 fi
 # exit the script on cancel
-if [ "$BOARD" == "" ]; then echo "ERROR: You have to choose one board"; exit; fi
+if [ "$BOARD" == "" ]; then echo "ERROR: You have to choose a board"; exit; fi
 
 
 if [ -z "$BRANCH" ]; then
@@ -206,7 +206,7 @@ if [ -z "$BRANCH" ]; then
 fi
 
 # exit the script on cancel
-if [ "$BRANCH" == "" ]; then echo "ERROR: You have to choose one branch"; exit; fi
+if [ "$BRANCH" == "" ]; then echo "ERROR: You have to choose a branch"; exit; fi
 
 
 if [[ $BRANCH == "vanilla" ]] ; then
@@ -251,7 +251,7 @@ remove_old ()
 #-----------------------------------------------------------------------------------------------------------------------
 {
 clear
-dialog --title "$title" --backtitle "$backtitle"  --infobox "\nRemoving conflicting packages ..." 5 41
+dialog --title "$title" --backtitle "$backtitle"  --infobox "\nRemoving conflicting packages..." 5 41
 aptitude remove ~nlinux-dtb --quiet=100 >> upgrade.log
 aptitude remove ~nlinux-u-boot --quiet=100 >> upgrade.log
 aptitude remove ~nlinux-image --quiet=100 >> upgrade.log
@@ -269,7 +269,7 @@ install_new ()
 IFS=" "
 apt-get $1 -y install $PACKETS 2>&1 | dialog --title "$title" --backtitle "$backtitle" --progressbox "$2" 20 80 
 if [ $? -ne 0 ]; then 
-dialog --title "$title" --backtitle "$backtitle"  --infobox "\nError downloadiing." 5 41
+dialog --title "$title" --backtitle "$backtitle"  --infobox "\nError during new packages download." 5 41
 exit 1; 
 fi
 }
@@ -283,7 +283,7 @@ fi
 # This tool must run under root
 #-----------------------------------------------------------------------------------------------------------------------
 if [[ ${EUID} -ne 0 ]]; then
-	echo "This tool must run as root. Exiting ..." 
+	echo "This tool must be run as root. Exiting..." 
 	exit 1
 fi
 
@@ -297,7 +297,7 @@ if [[ $(dpkg-query -W -f='${Status}' dialog 2>/dev/null | grep -c "ok installed"
 	  $(dpkg-query -W -f='${Status}' lsb-release 2>/dev/null | grep -c "ok installed") -eq 0 || \
 	  $(dpkg-query -W -f='${Status}' aptitude 2>/dev/null | grep -c "ok installed") -eq 0 \
 	]]; then
-echo "Downloading dependencies ... please wait"
+echo "Downloading dependencies... please wait"
 apt-get install -qq -y dialog u-boot-tools debconf-utils lsb-release aptitude fake-hwclock >/dev/null 2>&1
 fi 
 
@@ -321,5 +321,5 @@ dialog --title "$title" --backtitle "$backtitle"  --yes-label "Reboot" --no-labe
 --yesno "\nAll done." 7 60
 if [ $? -eq 0 ]; then reboot; fi
 
-echo "Visit: forum.armbian.com in case of troubles or just for fun ;)"
+echo "Visit: forum.armbian.com in case of trouble or just for fun ;)"
 echo ""

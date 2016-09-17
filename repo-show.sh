@@ -9,7 +9,7 @@
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
 
-# This scripts shows packages in local repository
+# This script shows packages in local repository
 
 # load functions
 source general.sh
