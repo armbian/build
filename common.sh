@@ -34,7 +34,7 @@ compile_uboot()
 	local version=$(grab_version "$SOURCES/$BOOTSOURCEDIR")
 
 	# create patch for manual source changes in debug mode
-	[[ $DEBUG_MODE == yes ]] && userpatch_create "u-boot"
+	[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
 
 	display_alert "Compiling uboot" "$version" "info"
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
@@ -139,7 +139,7 @@ compile_kernel()
 	local version=$(grab_version "$SOURCES/$LINUXSOURCEDIR")
 
 	# create patch for manual source changes in debug mode
-	[[ $DEBUG_MODE == yes ]] && userpatch_create "kernel"
+	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
