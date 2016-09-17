@@ -92,4 +92,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=23
+# VERSION=24
