@@ -33,7 +33,7 @@ if [ "$-" != "${-#*i}" ]; then
 		fi
 
 		# check whether desktop environment has to be considered
-		if [ -f /etc/init.d/nodm ] ; then 
+		if [ -f /etc/init.d/nodm ] ; then
 			sed -i "s/NODM_USER=\(.*\)/NODM_USER=${RealUserName}/" /etc/default/nodm
 			sed -i "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" /etc/default/nodm
 			if [[ -z $ConfigureDisplay || $ConfigureDisplay == n || $ConfigureDisplay == N ]]; then

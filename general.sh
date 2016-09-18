@@ -420,7 +420,7 @@ addtorepo()
 
 		# publish
 		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=config/aptly.conf -component=main,utils,${release}-desktop \
-			--distribution=$release repo $release utils ${release}-desktop 
+			--distribution=$release repo $release utils ${release}-desktop
 
 		if [[ $? -ne 0 ]]; then
 			display_alert "Publishing failed" "$release" "err"

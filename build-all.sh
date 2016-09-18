@@ -21,7 +21,7 @@ BRANCH_LIST=("default" "next" "dev")
 # add dependencies for converting .md to .pdf
 if [[ ! -f /etc/apt/sources.list.d/nodesource.list ]]; then
 	curl -sL https://deb.nodesource.com/setup_6.x | sudo -E bash -
-	apt-get install -y libfontconfig1 nodejs 
+	apt-get install -y libfontconfig1 nodejs
 	npm install -g markdown-pdf
 fi
 
@@ -114,9 +114,9 @@ for line in "${buildlist[@]}"; do
 	n=$[$n+1]
 	if [[ $from -le $n && ! -f "/run/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid" ]]; then
 		display_alert "Building $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
-		#touch "/run/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid" 
+		#touch "/run/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"
 		source $SRC/lib/main.sh
-		#rm "/run/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid" 
+		#rm "/run/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"
 	fi
 done
 
