@@ -15,7 +15,7 @@
 source general.sh
 
 DISTROS=("wheezy" "jessie" "trusty" "xenial")
- 
+
 showall()
 {
 	for release in "${DISTROS[@]}"; do

@@ -27,9 +27,9 @@ common_display_setup() {
 }
 
 case $mode in
-		480*) 
-			export X=720 
-			export Y=480 
+		480*)
+			export X=720
+			export Y=480
 			;;
 		576*)
 			export X=720
