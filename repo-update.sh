@@ -30,5 +30,4 @@ addtorepo
 cp bin/armbian.key ../output/repository/public
 cd ../output/repository/public
 
-# upload to server with rsync
 echo "done."

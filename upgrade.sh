@@ -74,7 +74,7 @@ bootz 0x48000000
 #-----------------------------------------------------------------------------------------------------------------------
 fi
 # Recompile with:
-# mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr 
+# mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
 EOT
 mkimage -C none -A arm -T script -d  /boot/boot.cmd  /boot/boot.scr >/dev/null 2>&1
 }
@@ -120,22 +120,22 @@ get_hardware_info ()
 
 # arhitecture
 ARCH=$(lscpu | grep Architecture  | awk '{print $2}')
-if [[ "$ARCH" != arm* ]]; then 
-	echo -e "[\e[0;31m error \x1B[0m] Architecture not supported"; exit; 
+if [[ "$ARCH" != arm* ]]; then
+	echo -e "[\e[0;31m error \x1B[0m] Architecture not supported"; exit;
 fi
 
 # CPU
 HARDWARE=$(cat /proc/cpuinfo | grep Hardware | awk '{print $3}')
-if [[ !( "$HARDWARE" == "sun7i" || "$HARDWARE" == "Allwinner" || "$HARDWARE" == "sun4i" ) ]]; then 
-	echo -e "[\e[0;31m error \x1B[0m] Unsupported hw"; exit; 
+if [[ !( "$HARDWARE" == "sun7i" || "$HARDWARE" == "Allwinner" || "$HARDWARE" == "sun4i" ) ]]; then
+	echo -e "[\e[0;31m error \x1B[0m] Unsupported hw"; exit;
 fi
 
 # boot partition
 bootdevice="/dev/mmcblk0p1";
 
 # if mmc is not present than boot can only be nand1
-if [[ "$(grep nand /proc/partitions)" != "" && "$(grep mmc /proc/partitions)" == "" ]]; then 
-bootdevice="/dev/nand1"; 
+if [[ "$(grep nand /proc/partitions)" != "" && "$(grep mmc /proc/partitions)" == "" ]]; then
+bootdevice="/dev/nand1";
 fi
 
 # root partition
@@ -157,7 +157,7 @@ mount_boot_device ()
 #-----------------------------------------------------------------------------------------------------------------------
 {
 if [[ "$bootdevice" == "/dev/mmcblk0p1" && "$rootdevice" != "/dev/mmcblk0p1" ]]; then
-	umount /boot /media/mmc 
+	umount /boot /media/mmc
 	mkdir -p /media/mmc/boot
 	mount /dev/mmcblk0p1 /media/mmc/
     if [ -d "/media/mmc/boot/" ]; then
@@ -196,8 +196,8 @@ if [ -z "$BRANCH" ]; then
 	IFS="'"
 	declare -a Options=("legacy'3.4.x - 3.14.x most supported'vanilla'4.x Vanilla from www.kernel.org");
 	# Exceptions
-	if [[ $BOARD == "cubox-i" || $BOARD == "udoo-neo" || "$bootdevice" == "/dev/nand1" ]]; then 
-		declare -a Options=("legacy'3.4.x - 3.14.x most supported"); 
+	if [[ $BOARD == "cubox-i" || $BOARD == "udoo-neo" || "$bootdevice" == "/dev/nand1" ]]; then
+		declare -a Options=("legacy'3.4.x - 3.14.x most supported");
 	fi
 	BoardOptions=($Options);
 	BoardCmd=(dialog --title "Choose a board:" --backtitle "$backtitle" --menu "\n$infos" 10 60 16)
@@ -213,7 +213,7 @@ if [[ $BRANCH == "vanilla" ]] ; then
 	ROOT_BRACH="-next"
 	else
 	ROOT_BRACH=""
-fi 
+fi
 
 case $BOARD in
 bananapipro | lamobo-r1 | orangepi | orangepimini)
@@ -236,15 +236,15 @@ if [[ $BRANCH == "vanilla" ]] ; then LINUXFAMILY="sunxi"; fi
 ;;
 esac
 
-if [[ $BOARD == "cubox-i" || $BOARD == udoo* || $BRANCH == "vanilla" ]]; 
-	then PACKETS="linux-dtb$ROOT_BRACH-$LINUXFAMILY"; 
+if [[ $BOARD == "cubox-i" || $BOARD == udoo* || $BRANCH == "vanilla" ]];
+	then PACKETS="linux-dtb$ROOT_BRACH-$LINUXFAMILY";
 fi
 
 PACKETS="linux-image$ROOT_BRACH-$LINUXFAMILY linux-firmware-image$ROOT_BRACH-$LINUXFAMILY \
 linux-u-boot-$BOARD$ROOT_BRACH linux-headers$ROOT_BRACH-$LINUXFAMILY linux-$RELEASE-root$ROOT_BRACH-$BOARD $PACKETS"
 }
 
- 
+
 remove_old ()
 #-----------------------------------------------------------------------------------------------------------------------
 # Delete previous kernel
@@ -267,10 +267,10 @@ install_new ()
 #-----------------------------------------------------------------------------------------------------------------------
 {
 IFS=" "
-apt-get $1 -y install $PACKETS 2>&1 | dialog --title "$title" --backtitle "$backtitle" --progressbox "$2" 20 80 
-if [ $? -ne 0 ]; then 
+apt-get $1 -y install $PACKETS 2>&1 | dialog --title "$title" --backtitle "$backtitle" --progressbox "$2" 20 80
+if [ $? -ne 0 ]; then
 dialog --title "$title" --backtitle "$backtitle"  --infobox "\nError during new packages download." 5 41
-exit 1; 
+exit 1;
 fi
 }
 
@@ -283,7 +283,7 @@ fi
 # This tool must run under root
 #-----------------------------------------------------------------------------------------------------------------------
 if [[ ${EUID} -ne 0 ]]; then
-	echo "This tool must be run as root. Exiting..." 
+	echo "This tool must be run as root. Exiting..."
 	exit 1
 fi
 
@@ -299,7 +299,7 @@ if [[ $(dpkg-query -W -f='${Status}' dialog 2>/dev/null | grep -c "ok installed"
 	]]; then
 echo "Downloading dependencies... please wait"
 apt-get install -qq -y dialog u-boot-tools debconf-utils lsb-release aptitude fake-hwclock >/dev/null 2>&1
-fi 
+fi
 
 display_warning
 install_repo

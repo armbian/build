@@ -1,7 +1,7 @@
 #!/bin/sh
 
 for x in $(cat /proc/cmdline); do
-	case ${x} in 
+	case ${x} in
 		m_bpp=*) export bpp=${x#*=} ;;
 		hdmimode=*) export mode=${x#*=} ;;
 	esac
