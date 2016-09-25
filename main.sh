@@ -75,6 +75,9 @@ if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
 if [[ $USE_CCACHE != no ]]; then
 	CCACHE=ccache
 	export PATH="/usr/lib/ccache:$PATH"
+	# private ccache directory to avoid permission issues when using build script with "sudo"
+	# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
+	[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$DEST/ccache
 else
 	CCACHE=""
 fi
