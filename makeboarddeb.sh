@@ -194,7 +194,7 @@ create_board_package()
 	cat <<-EOF > $destination/etc/apt/preferences.d/50-armbian.pref
 	Package: *
 	Pin: origin "apt.armbian.com"
-	Pin-Priority: 990
+	Pin-Priority: 550
 	EOF
 
 	# script to install to SATA
