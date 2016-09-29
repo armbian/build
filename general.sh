@@ -132,9 +132,9 @@ create_sources_list()
 	EOF
 
 	cat <<-EOF > $basedir/etc/apt/preferences.d/90-backports.pref
-	Package: *
-	Pin: release n=${release}-backports
-	Pin-Priority: 100
+	#Package: *
+	#Pin: release n=${release}-backports
+	#Pin-Priority: 100
 	EOF
 	;;
 
@@ -154,9 +154,9 @@ create_sources_list()
 	EOF
 
 	cat <<-EOF > $basedir/etc/apt/preferences.d/90-backports.pref
-	Package: *
-	Pin: release a=${release}-backports
-	Pin-Priority: 100
+	#Package: *
+	#Pin: release a=${release}-backports
+	#Pin-Priority: 100
 	EOF
 	;;
 	esac
