@@ -351,22 +351,6 @@ install_external_applications()
 		make ARCH=$ARCHITECTURE CC="${KERNEL_COMPILER}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
 		install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
 	fi
-
-	# sunxi display changer
-	# compile it for sun8i just in case sun7i stuff gets ported to sun8i and we're able to use it
-	#if [[ $BRANCH != next && $LINUXSOURCEDIR == *sun8i* ]]; then
-	#	cd "$SOURCES/sunxi-display-changer"
-	#	wget -q "https://raw.githubusercontent.com/linux-sunxi/linux-sunxi/sunxi-3.4/include/video/sunxi_disp_ioctl.h"
-	#	make clean >/dev/null 2>&1
-	#	make ARCH=$ARCHITECTURE CC="${KERNEL_COMPILER}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
-	#	install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
-	#fi
-
-	# h3disp for sun8i/3.4.x
-	if [[ $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
-		install -m 755 "$SRC/lib/scripts/h3disp" "$CACHEDIR/sdcard/usr/local/bin"
-		install -m 755 "$SRC/lib/scripts/h3consumption" "$CACHEDIR/sdcard/usr/local/bin"
-	fi
 }
 
 # write_uboot <loopdev>
