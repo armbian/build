@@ -63,13 +63,12 @@ create_board_package()
 	update-rc.d armhwinfo defaults >/dev/null 2>&1
 	update-rc.d -f motd remove >/dev/null 2>&1
 	[ ! -f "/etc/network/interfaces" ] && cp /etc/network/interfaces.default /etc/network/interfaces
-	[ -f "/root/.nand1-allwinner.tgz" ] && rm /root/.nand1-allwinner.tgz
-	[ -f "/root/nand-sata-install" ] && rm /root/nand-sata-install
+	rm -f /root/.nand1-allwinner.tgz /root/nand-sata-install
 	ln -sf /var/run/motd /etc/motd
 	[ -f "/etc/bash.bashrc.custom" ] && mv /etc/bash.bashrc.custom /etc/bash.bashrc.custom.old
-	[ -f "/etc/update-motd.d/00-header" ] && rm /etc/update-motd.d/00-header
-	[ -f "/etc/update-motd.d/10-help-text" ] && rm /etc/update-motd.d/10-help-text
+	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
+	rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
 	exit 0
 	EOF
 
@@ -116,13 +115,13 @@ create_board_package()
 	EOF
 
 	# temper binary for USB temp meter
-	mkdir -p $destination/usr/local/bin
+	mkdir -p $destination/usr/bin
 
 	# add USB OTG port mode switcher
-	install -m 755 $SRC/lib/scripts/sunxi-musb $destination/usr/local/bin
+	install -m 755 $SRC/lib/scripts/sunxi-musb $destination/usr/bin
 
 	# armbianmonitor (currently only to toggle boot verbosity and log upload)
-	install -m 755 $SRC/lib/scripts/armbianmonitor/armbianmonitor $destination/usr/local/bin
+	install -m 755 $SRC/lib/scripts/armbianmonitor/armbianmonitor $destination/usr/bin
 
 	# updating uInitrd image in update-initramfs trigger
 	mkdir -p $destination/etc/initramfs/post-update.d/
@@ -151,8 +150,18 @@ create_board_package()
 			exit 0
 		fi
 	fi
-	# delete old initrd images
-	find /boot -name "initrd.img*" ! -name "*\$version" -printf "Removing obsolete file %f\n" -delete
+	STATEDIR=/var/lib/initramfs-tools
+	version_list="\$(ls -1 "\${STATEDIR}" | linux-version sort --reverse)"
+	for v in \$version_list; do
+		if linux-version compare \$v ne \$version; then
+			# try to delete delete old initrd images via update-initramfs
+			update-initramfs -d -k \$v
+			# delete unused state files
+			find \$STATEDIR -type f ! -name "\$version" -printf "Removing obsolete file %f\n" -delete
+			# delete unused initrd images
+			find /boot -name "initrd.img*" ! -name "*\$version" -printf "Removing obsolete file %f\n" -delete
+		fi
+	done
 	EOF
 	chmod +x $destination/etc/kernel/preinst.d/initramfs-cleanup
 
@@ -194,7 +203,7 @@ create_board_package()
 	cat <<-EOF > $destination/etc/apt/preferences.d/50-armbian.pref
 	Package: *
 	Pin: origin "apt.armbian.com"
-	Pin-Priority: 990
+	Pin-Priority: 500
 	EOF
 
 	# script to install to SATA
@@ -212,14 +221,20 @@ create_board_package()
 	# setting window title for remote sessions
 	install -m 755 $SRC/lib/scripts/ssh-title.sh $destination/etc/profile.d/ssh-title.sh
 
+	# h3disp for sun8i/3.4.x
+	if [[ $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
+		install -m 755 $SRC/lib/scripts/h3disp $destination/usr/bin
+		install -m 755 $SRC/lib/scripts/h3consumption $destination/usr/bin
+	fi
+
 	if [[ $LINUXCONFIG == *sun* ]]; then
 		if [[ $BRANCH != next ]]; then
 			# add soc temperature app
 			local codename=$(lsb_release -sc)
 			if [[ -z $codename || "sid" == *"$codename"* ]]; then
-				arm-linux-gnueabihf-gcc-5 $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/local/bin/sunxi_tp_temp
+				arm-linux-gnueabihf-gcc-5 $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
 			else
-				arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/local/bin/sunxi_tp_temp
+				arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
 			fi
 		fi
 

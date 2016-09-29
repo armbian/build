@@ -176,8 +176,6 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 	BOOTSOURCEDIR=$BOOTDIR/${BOOTBRANCH##*:}
 	fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
 	LINUXSOURCEDIR=$KERNELDIR/${KERNELBRANCH##*:}
-	# TODO: move to armbian-tools or extras-buildpkgs
-	fetch_from_repo "https://github.com/hglm/a10disp/" "sunxi-display-changer" "branch:master"
 fi
 
 compile_sunxi_tools
