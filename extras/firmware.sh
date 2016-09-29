@@ -32,7 +32,7 @@ build_firmware()
 	Architecture: $ARCH
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Installed-Size: 1
-	Replaces: linux-firmware
+	Replaces: linux-firmware, firmware-brcm80211
 	Section: kernel
 	Priority: optional
 	Description: Linux firmware
