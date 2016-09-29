@@ -150,8 +150,18 @@ create_board_package()
 			exit 0
 		fi
 	fi
-	# delete old initrd images
-	find /boot -name "initrd.img*" ! -name "*\$version" -printf "Removing obsolete file %f\n" -delete
+	STATEDIR=/var/lib/initramfs-tools
+	version_list="\$(ls -1 "\${STATEDIR}" | linux-version sort --reverse)"
+	for v in \$version_list; do
+		if linux-version compare \$v ne \$version; then
+			# try to delete delete old initrd images via update-initramfs
+			update-initramfs -d -k \$v
+			# delete unused state files
+			find \$STATEDIR -type f ! -name "\$version" -printf "Removing obsolete file %f\n" -delete
+			# delete unused initrd images
+			find /boot -name "initrd.img*" ! -name "*\$version" -printf "Removing obsolete file %f\n" -delete
+		fi
+	done
 	EOF
 	chmod +x $destination/etc/kernel/preinst.d/initramfs-cleanup
 
