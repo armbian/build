@@ -88,6 +88,9 @@ compile_uboot()
 	Installed-Size: 1
 	Section: kernel
 	Priority: optional
+	Provides: armbian-u-boot
+	Replaces: armbian-u-boot
+	Conflicts: armbian-u-boot
 	Description: Uboot loader $version
 	END
 
