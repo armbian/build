@@ -342,15 +342,6 @@ install_external_applications()
 	for plugin in $SRC/lib/extras/*.sh; do
 		source $plugin
 	done
-
-	# sunxi display changer
-	if [[ $BRANCH != next && $LINUXSOURCEDIR == *sunxi* ]]; then
-		cd "$SOURCES/sunxi-display-changer"
-		cp "$SOURCES/$LINUXSOURCEDIR/include/video/sunxi_disp_ioctl.h" .
-		make clean >/dev/null
-		make ARCH=$ARCHITECTURE CC="${KERNEL_COMPILER}gcc" KSRC="$SOURCES/$LINUXSOURCEDIR/" >> $DEST/debug/compilation.log 2>&1
-		install -m 755 a10disp "$CACHEDIR/sdcard/usr/local/bin"
-	fi
 }
 
 # write_uboot <loopdev>
