@@ -51,10 +51,9 @@ compile_uboot()
 	touch .scmversion
 
 	# patch mainline uboot configuration to boot with old kernels
-	if [[ $BRANCH == default && $LINUXFAMILY == sun*i ]] ; then
-		if ! grep -q "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" .config ; then
-			echo -e "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y\nCONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> .config
-		fi
+	if [[ $BRANCH == default && $LINUXFAMILY == sun*i ]] && ! grep -q "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" .config ; then
+		echo -e "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y\nCONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> .config
+
 	fi
 
 	eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
@@ -269,8 +268,8 @@ find_toolchain()
 # $SRC/lib/patch/<dest>/<family>/<device>
 # $SRC/lib/patch/<dest>/<family>
 #
-advanced_patch () {
-
+advanced_patch()
+{
 	local dest=$1
 	local family=$2
 	local device=$3
@@ -313,8 +312,8 @@ advanced_patch () {
 # <file>: path to patch file
 # <description>: additional description text
 #
-process_patch_file() {
-
+process_patch_file()
+{
 	local patch=$1
 	local description=$2
 
