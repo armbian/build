@@ -108,7 +108,7 @@ chroot_build_packages()
 		for arch in armhf arm64; do
 			display_alert "Starting package building process" "$release $arch" "info"
 
-			local target_dir=$DEST/buildpkg/${release}-${arch}-v3
+			local target_dir=$DEST/buildpkg/${release}-${arch}-v4
 			local distcc_bindaddr="127.0.0.2"
 
 			[[ ! -f $target_dir/root/.debootstrap-complete ]] && create_chroot "$target_dir" "$release" "$arch"
@@ -253,7 +253,7 @@ chroot_installpackages_local()
 	cat <<-'EOF' > $CACHEDIR/sdcard/etc/apt/preferences.d/90-armbian-temp.pref
 	Package: *
 	Pin: origin "localhost"
-	Pin-Priority: 995
+	Pin-Priority: 550
 	EOF
 	cat <<-EOF > $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian-temp.list
 	deb http://localhost:8189/ $RELEASE temp

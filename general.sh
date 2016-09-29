@@ -132,9 +132,9 @@ create_sources_list()
 	EOF
 
 	cat <<-EOF > $basedir/etc/apt/preferences.d/90-backports.pref
-	Package: *
-	Pin: release n=${release}-backports
-	Pin-Priority: 100
+	#Package: *
+	#Pin: release n=${release}-backports
+	#Pin-Priority: 100
 	EOF
 	;;
 
@@ -154,9 +154,9 @@ create_sources_list()
 	EOF
 
 	cat <<-EOF > $basedir/etc/apt/preferences.d/90-backports.pref
-	Package: *
-	Pin: release a=${release}-backports
-	Pin-Priority: 100
+	#Package: *
+	#Pin: release a=${release}-backports
+	#Pin-Priority: 100
 	EOF
 	;;
 	esac
@@ -461,12 +461,6 @@ prepare_host() {
 		apt-get install -qq -y --no-install-recommends dialog >/dev/null 2>&1
 	fi
 
-	# wget is needed
-	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' wget 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "wget"
-		apt-get install -qq -y --no-install-recommends wget >/dev/null 2>&1
-	fi
-
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "lsb-release"
@@ -474,7 +468,7 @@ prepare_host() {
 	fi
 
 	# packages list for host
-	local hostdeps="ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate pigz \
+	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate pigz \
 	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-tools gcc-aarch64-linux-gnu ncurses-term p7zip-full dos2unix dosfstools libc6-dev-armhf-cross libc6-dev-armel-cross \
@@ -482,16 +476,11 @@ prepare_host() {
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
-	if [[ -z $codename || "trusty wily xenial" != *"$codename"* ]]; then
+	if [[ -z $codename || "trusty xenial" != *"$codename"* ]]; then
 		display_alert "Host system support was not tested" "${codename:-(unknown)}" "wrn"
+		display_alert "Please don't ask for support if anything doesn't work"
 		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
 		read
-	fi
-
-	if [[ $codename == trusty && ! -f /etc/apt/sources.list.d/aptly.list ]]; then
-		display_alert "Adding repository for trusty" "aptly" "info"
-		echo 'deb http://repo.aptly.info/ squeeze main' > /etc/apt/sources.list.d/aptly.list
-		apt-key adv --keyserver keys.gnupg.net --recv-keys 9E3E53F19C7DE460
 	fi
 
 	if [[ $codename == xenial ]]; then
@@ -537,8 +526,6 @@ prepare_host() {
 		apt-get install -qq -y --no-install-recommends aptly >/dev/null 2>&1
 	fi
 
-	# TODO: Check for failed installation process
-
 	# enable arm binary format so that the cross-architecture chroot environment will work
 	test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
 	test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
@@ -552,9 +539,7 @@ prepare_host() {
 		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/aarch64-linux-gnu/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu.tar.xz"
 		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabi/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi.tar.xz"
 		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabihf/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf.tar.xz"
-		#download_toolchain "https://releases.linaro.org/components/toolchain/binaries/5.3-2016.02/arm-linux-gnueabihf/gcc-linaro-5.3-2016.02-x86_64_arm-linux-gnueabihf.tar.xz"
 		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/5.2-2015.11-2/arm-linux-gnueabihf/gcc-linaro-5.2-2015.11-2-x86_64_arm-linux-gnueabihf.tar.xz"
-		#download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-eabi/gcc-linaro-4.9-2016.02-x86_64_arm-eabi.tar.xz"
 		download_toolchain "https://releases.linaro.org/14.04/components/toolchain/binaries/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
 		dpkg --add-architecture i386
 		apt-get install -qq -y --no-install-recommends lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 zlib1g:i386 >/dev/null 2>&1
