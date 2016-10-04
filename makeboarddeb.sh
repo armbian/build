@@ -92,7 +92,6 @@ create_board_package()
 
 	install -m 755 $SRC/lib/scripts/resize2fs $destination/etc/init.d
 	install -m 755 $SRC/lib/scripts/firstrun  $destination/etc/init.d
-	cp $SRC/lib/config/armbian_first_run.txt  $destination/boot/armbian_first_run.txt
 	install -m 755 $SRC/lib/scripts/armhwinfo $destination/etc/init.d
 
 	# configure MIN / MAX speed for cpufrequtils
