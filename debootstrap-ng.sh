@@ -23,7 +23,7 @@
 #
 debootstrap_ng()
 {
-	display_alert "Starting build process for" "$BOARD $RELEASE" "info"
+	display_alert "Starting rootfs and image building process for" "$BOARD $RELEASE" "info"
 
 	[[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
 

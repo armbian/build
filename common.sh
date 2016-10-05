@@ -89,7 +89,7 @@ compile_uboot()
 	Priority: optional
 	Provides: armbian-u-boot
 	Replaces: armbian-u-boot
-	Conflicts: armbian-u-boot
+	Conflicts: armbian-u-boot, u-boot-sunxi
 	Description: Uboot loader $version
 	END
 
