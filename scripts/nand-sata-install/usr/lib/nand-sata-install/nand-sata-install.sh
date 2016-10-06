@@ -9,8 +9,10 @@
 # Should work with: Cubietruck, Cubieboards, BananaPi, Olimex Lime+Lime2+Micro, Hummingboard, ...
 #
 
-
-
+# Import:
+# DIR: path to u-boot directory
+# write_uboot_platform: function to write u-boot to a block device
+[[ -f /usr/lib/u-boot/platform_install.sh ]] && source /usr/lib/u-boot/platform_install.sh
 
 # script configuration
 CWD="/usr/lib/nand-sata-install"
@@ -122,12 +124,12 @@ EOF
 		# fstab adj
 		sed -e 's,$root_partition,$emmcuuid,g' -i /mnt/rootfs/etc/fstab
 		
-		# determine u-boot and write it
-		name_of_ubootpackage=$(aptitude versions '~i linux-u-boot*'| head -1 | awk '{print $2}' | sed 's/linux-u-boot-//g' | cut -f1 -d"-")
-		version_of_ubootpkg=$(aptitude versions '~i linux-u-boot*'| tail -1 |  awk '{print $2}')
-		architecture=$(dpkg --print-architecture)
-		uboot="/usr/lib/linux-u-boot-"$name_of_ubootpackage"_"$version_of_ubootpkg"_"$architecture""/u-boot-sunxi-with-spl.bin
-		dd if=$uboot of=$emmccheck bs=1024 seek=8  >/dev/null 2>&1 || (echo "Error"; exit 0)
+		if [[ $(type -t write_uboot_platform) != function ]]; then
+			echo "Error: no u-boot package found, exiting"
+			exit -1
+		fi
+
+		write_uboot_platform $DIR $emmccheck
 		
 	elif [[ -f /boot/boot.cmd ]]; then
 		sed -e 's,root='"$root_partition"',root='"$satauuid"',g' -i /boot/boot.cmd	
