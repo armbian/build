@@ -26,7 +26,7 @@ if [ "$-" != "${-#*i}" ]; then
 			echo -e "h3disp utility. Do you want to change display settings now? [nY] \c"
 			read -n1 ConfigureDisplay
 			if [ "X${ConfigureDisplay}" != "Xn" -a "X${ConfigureDisplay}" != "XN" ]; then
-				echo -e "\n" ; /usr/local/bin/h3disp
+				echo -e "\n" ; h3disp
 			else
 				echo -e "\n"
 			fi

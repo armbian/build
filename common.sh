@@ -64,19 +64,23 @@ compile_uboot()
 
 	# create .deb package
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
-	mkdir -p $DEST/debs/$uboot_name/usr/lib/$uboot_name $DEST/debs/$uboot_name/DEBIAN
+	mkdir -p $DEST/debs/$uboot_name/usr/lib/{u-boot,$uboot_name} $DEST/debs/$uboot_name/DEBIAN
 
 	# set up postinstall script
 	cat <<-EOF > $DEST/debs/$uboot_name/DEBIAN/postinst
 	#!/bin/bash
+	source /usr/lib/u-boot/platform_install.sh
 	[[ \$DEVICE == /dev/null ]] && exit 0
 	[[ -z \$DEVICE ]] && DEVICE="/dev/mmcblk0"
-	DIR=/usr/lib/$uboot_name
-	$(declare -f write_uboot_platform)
 	write_uboot_platform \$DIR \$DEVICE
 	exit 0
 	EOF
 	chmod 755 $DEST/debs/$uboot_name/DEBIAN/postinst
+
+	cat <<-EOF > $DEST/debs/$uboot_name/usr/lib/u-boot/platform_install.sh
+	DIR=/usr/lib/$uboot_name
+	$(declare -f write_uboot_platform)
+	EOF
 
 	# set up control file
 	cat <<-END > $DEST/debs/$uboot_name/DEBIAN/control
@@ -89,7 +93,7 @@ compile_uboot()
 	Priority: optional
 	Provides: armbian-u-boot
 	Replaces: armbian-u-boot
-	Conflicts: armbian-u-boot
+	Conflicts: armbian-u-boot, u-boot-sunxi
 	Description: Uboot loader $version
 	END
 

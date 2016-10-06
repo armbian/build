@@ -6,10 +6,6 @@
 
 # Limitations
 
-* Compilation may take a long time (~6 hours)
-
-* Limited error checking, process is not aborted on single package building failure
-
 * Packages are built only for Jessie and Xenial target, installing on older distributions may be done manually if dependencies can be satisfied
 
 # TODO
@@ -17,8 +13,6 @@
 ### Process
 
 * Switch from qemu & distcc to multiarch cross-compiling if possible
-
-* Investigate segfault of glxinfo with libglshim1
 
 ### Package-specific:
 
