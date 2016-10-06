@@ -78,7 +78,6 @@ compile_uboot()
 	chmod 755 $DEST/debs/$uboot_name/DEBIAN/postinst
 
 	cat <<-EOF > $DEST/debs/$uboot_name/usr/lib/u-boot/platform_install.sh
-	[[ -z \$DEVICE ]] && exit -1
 	DIR=/usr/lib/$uboot_name
 	$(declare -f write_uboot_platform)
 	EOF
