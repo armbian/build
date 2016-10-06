@@ -227,8 +227,8 @@ create_board_package()
 		install -m 755 $SRC/lib/scripts/h3consumption $destination/usr/bin
 	fi
 
-	if [[ $LINUXCONFIG == *sun* ]]; then
-		if [[ $BRANCH != next ]]; then
+	if [[ $LINUXFAMILY == sun*i ]]; then
+		if [[ $BRANCH == default ]]; then
 			# add soc temperature app
 			local codename=$(lsb_release -sc)
 			if [[ -z $codename || "sid" == *"$codename"* ]]; then
@@ -243,6 +243,11 @@ create_board_package()
 		for i in $(ls -w1 $SRC/lib/config/fex/*.fex | xargs -n1 basename); do
 			fex2bin $SRC/lib/config/fex/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
 		done
+
+		# add mpv config
+		cp $SRC/lib/mpv_sunxi.conf $destination/usr/share/armbian/mpv_sunxi.conf
+		echo "export VDPAU_OSD=1" > $destination/etc/profile.d/90-vdpau.sh
+		chmod 755 $destination/etc/profile.d/90-vdpau.sh
 
 		# bluetooth device enabler - for cubietruck
 		# TODO: move to tools or sunxi-common.inc
