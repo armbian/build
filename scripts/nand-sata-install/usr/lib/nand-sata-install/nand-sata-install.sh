@@ -122,7 +122,7 @@ EOF
 		mkimage -C none -A arm -T script -d /mnt/bootfs/boot/boot.cmd /mnt/bootfs/boot/boot.scr	>/dev/null 2>&1 || (echo "Error"; exit 0)	
 		
 		# fstab adj
-		sed -e 's,$root_partition,$emmcuuid,g' -i /mnt/rootfs/etc/fstab
+		sed -e 's,'"$2"','"$emmcuuid"',g' -i /mnt/rootfs/etc/fstab		
 		
 		if [[ $(type -t write_uboot_platform) != function ]]; then
 			echo "Error: no u-boot package found, exiting"
