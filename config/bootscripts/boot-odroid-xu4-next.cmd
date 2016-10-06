@@ -21,4 +21,4 @@ load mmc ${mmcbootdev}:${mmcbootpart} ${ftdaddr} /boot/dtb/exynos5422-odroidxu4.
 bootz ${kerneladdr} ${initrdaddr} ${ftdaddr};
 
 # Generate boot.scr:
-# mkimage -c none -A arm -T script -d
+# mkimage -c none -A arm -T script -d boot.cmd boot.scr
