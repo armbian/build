@@ -236,6 +236,12 @@ create_board_package()
 			else
 				arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
 			fi
+
+			# add mpv config for vdpau_sunxi
+			mkdir -p $destination/etc/mpv/
+			cp $SRC/lib/config/mpv_sunxi.conf $destination/etc/mpv/mpv.conf
+			echo "export VDPAU_OSD=1" > $destination/etc/profile.d/90-vdpau.sh
+			chmod 755 $destination/etc/profile.d/90-vdpau.sh
 		fi
 
 		# convert and add fex files
@@ -243,17 +249,6 @@ create_board_package()
 		for i in $(ls -w1 $SRC/lib/config/fex/*.fex | xargs -n1 basename); do
 			fex2bin $SRC/lib/config/fex/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
 		done
-
-		# add mpv config
-		cp $SRC/lib/mpv_sunxi.conf $destination/usr/share/armbian/mpv_sunxi.conf
-		echo "export VDPAU_OSD=1" > $destination/etc/profile.d/90-vdpau.sh
-		chmod 755 $destination/etc/profile.d/90-vdpau.sh
-
-		# bluetooth device enabler - for cubietruck
-		# TODO: move to tools or sunxi-common.inc
-		#install		$SRC/lib/scripts/brcm40183		$destination/etc/default
-		#install -m 755	$SRC/lib/scripts/brcm40183-patch	$destination/etc/init.d
-
 	fi
 
 	# add some summary to the image
