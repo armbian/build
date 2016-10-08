@@ -9,11 +9,11 @@ case $BRANCH in
 	;;
 
 	next)
-	GOVERNOR=ondemand
+	GOVERNOR=schedutil
 	;;
 
 	dev)
-	GOVERNOR=ondemand
+	GOVERNOR=schedutil
 	;;
 esac
 
