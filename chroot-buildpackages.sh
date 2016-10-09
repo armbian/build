@@ -104,11 +104,12 @@ chroot_prepare_distccd()
 #
 chroot_build_packages()
 {
+	local failed=()
 	for release in jessie xenial; do
 		for arch in armhf arm64; do
 			display_alert "Starting package building process" "$release $arch" "info"
 
-			local target_dir=$DEST/buildpkg/${release}-${arch}-v4
+			local target_dir=$DEST/buildpkg/${release}-${arch}-v5
 			local distcc_bindaddr="127.0.0.2"
 
 			[[ ! -f $target_dir/root/.debootstrap-complete ]] && create_chroot "$target_dir" "$release" "$arch"
@@ -212,10 +213,11 @@ chroot_build_packages()
 					display_alert "Done building" "$package_name $release $arch" "ext"
 					ls *.deb 2>/dev/null
 					mv *.deb /root 2>/dev/null
+					exit 0
 				else
 					display_alert "Failed building" "$package_name $release $arch" "err"
+					exit 2
 				fi
-				exit 0
 				EOF
 
 				chmod +x $target_dir/root/build.sh
@@ -225,12 +227,19 @@ chroot_build_packages()
 				eval systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
 					--bind-ro $SRC/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 \
 					${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/buildpkg.log'}
+				[[ ${PIPESTATUS[0]} -eq 2 ]] && failed+=("$package_name:$release:$arch")
 				mv $target_dir/root/*.deb $plugin_target_dir 2>/dev/null
 			done
 			# cleanup for distcc
 			kill $(</var/run/distcc/${release}-${arch}.pid)
 		done
 	done
+	if [[ ${#failed[@]} -gt 0 ]]; then
+		display_alert "Following packages failed to build:" "" "wrn"
+		for p in ${failed[@]}; do
+			display_alert "$p"
+		done
+	fi
 } #############################################################################
 
 # chroot_installpackages_local

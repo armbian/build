@@ -23,7 +23,7 @@
 #
 debootstrap_ng()
 {
-	display_alert "Starting build process for" "$BOARD $RELEASE" "info"
+	display_alert "Starting rootfs and image building process for" "$BOARD $RELEASE" "info"
 
 	[[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
 
@@ -207,6 +207,9 @@ create_rootfs_cache()
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 		rm $CACHEDIR/sdcard/armbian.key
 
+		# add armhf arhitecture to arm64
+		[[ $ARCH == arm64 ]] && eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "dpkg --add-architecture armhf"'
+		
 		# stage: update packages list
 		display_alert "Updating package list" "$RELEASE" "info"
 		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -q -y $apt_extra update"' \
