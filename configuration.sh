@@ -28,8 +28,8 @@ else
 	MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 fi
 # allow upgrades for same major.minor versions
-ARMBIAN_MAINLINE_KERNEL_VERSION='4.7'
-MAINLINE_KERNEL_BRANCH=tag:v$(wget -qO- https://www.kernel.org/finger_banner | awk '{print $NF}' | grep -oE "^${ARMBIAN_MAINLINE_KERNEL_VERSION//./\\.}\.?[[:digit:]]*")
+ARMBIAN_MAINLINE_KERNEL_VERSION='4.8'
+MAINLINE_KERNEL_BRANCH=tag:v$(wget -qO- https://www.kernel.org/finger_banner | awk '{print $NF}' | grep -oE "^${ARMBIAN_MAINLINE_KERNEL_VERSION//./\\.}\.?[[:digit:]]*" | tail -1)
 MAINLINE_KERNEL_DIR='linux-vanilla'
 
 MAINLINE_UBOOT_SOURCE='git://git.denx.de/u-boot.git'
@@ -145,8 +145,11 @@ fi
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
+if [[ $ARCH == arm64 ]]; then
+	PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/iceweasel/iceweasel:armhf}"
+	PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/firefox/firefox:armhf}"
+fi
 [[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
-
 # debug
 cat <<-EOF >> $DEST/debug/output.log
 ## BUILD SCRIPT ENVIRONMENT

@@ -66,7 +66,10 @@ install_common()
 	# display welcome message at first root login
 	touch $CACHEDIR/sdcard/root/.not_logged_in_yet
 
-	[[ $(type -t install_boot_script) == function ]] && install_boot_script
+	# NOTE: this needs to be executed before family_tweaks
+	local bootscript_src=${BOOTSCRIPT%%:*}
+	local bootscript_dst=${BOOTSCRIPT##*:}
+	cp $SRC/lib/config/bootscripts/$bootscript_src $CACHEDIR/sdcard/boot/$bootscript_dst
 
 	# initial date for fake-hwclock
 	date -u '+%Y-%m-%d %H:%M:%S' > $CACHEDIR/sdcard/etc/fake-hwclock.data
@@ -100,7 +103,7 @@ install_common()
 
 	display_alert "Installing headers" "$HEADERS_TMP" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${HEADERS_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
-	
+
 	# install firmware
 	#if [[ -f $CACHEDIR/sdcard/tmp/debs/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
 	#	display_alert "Installing firmware" "$FW_TMP" "info"
@@ -135,6 +138,10 @@ install_common()
 
 	# enable verbose kernel messages on first boot
 	touch $CACHEDIR/sdcard/boot/.verbose
+
+	# copy "first run automated config, optional user configured"
+ 	cp $SRC/lib/config/armbian_first_run.txt $CACHEDIR/sdcard/boot/armbian_first_run.txt
+
 }
 
 install_distribution_specific()
