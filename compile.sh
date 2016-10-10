@@ -38,7 +38,7 @@ LIB_TAG=""				# empty for latest version,
 #--------------------------------------------------------------------------------------------------------------------------------
 
 # source is where compile.sh is located
-SRC=$(pwd)
+SRC="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # To preserve proper libraries updating
@@ -92,4 +92,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=24
+# VERSION=25
