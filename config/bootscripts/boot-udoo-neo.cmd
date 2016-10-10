@@ -1,4 +1,7 @@
-﻿# imx6sx-udoo-neo-basic.dtb
+﻿
+setenv rootdev "/dev/mmcblk0p1"
+
+# imx6sx-udoo-neo-basic.dtb
 # imx6sx-udoo-neo-basic-hdmi.dtb
 # imx6sx-udoo-neo-basic-hdmi-m4.dtb
 # imx6sx-udoo-neo-basicks.dtb
@@ -38,7 +41,7 @@ if test "${board}" = "Neo"; then echo "Booting Neo"; fi
 
 setenv fdt_file imx6sx-udoo-neo-full-m4.dtb
 
-setenv bootargs root=/dev/mmcblk0p1 rootfstype=ext4 rootwait console=ttymxc0,115200 rd.dm=0 rd.luks=0 rd.lvm=0 rw uart_from_osc loglevel=1
+setenv "bootargs root=${rootdev} rootfstype=ext4 rootwait console=ttymxc0,115200 rd.dm=0 rd.luks=0 rd.lvm=0 rw uart_from_osc loglevel=1 ${extraargs}"
 ext2load mmc ${mmcdev}:${mmcpart} 0x84000000 /boot/bin/m4startup.fw
 ext2load mmc ${mmcdev}:${mmcpart} ${loadaddr} /boot/${image}
 ext2load mmc ${mmcdev}:${mmcpart} ${fdt_addr} /boot/dtb/${fdt_file}

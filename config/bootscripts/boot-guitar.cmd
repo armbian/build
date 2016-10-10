@@ -1,5 +1,9 @@
+
+setenv rootdev "/dev/mmcblk0p2"
+
 # console=ttyS3 # serial
-setenv bootargs "earlyprintk clk_ignore_unused selinux=0 scandelay root=/dev/mmcblk0p2 rw console=tty1 rootfstype=ext4 loglevel=1 rootwait"
+
+setenv bootargs "earlyprintk clk_ignore_unused selinux=0 scandelay root=${rootdev} rw console=tty1 rootfstype=ext4 loglevel=1 rootwait ${extraargs}"
 setenv os_type linux
 fatload mmc 0:1 ${fdt_addr_r} dtb/lemaker_guitar_bbb.dtb
 fatload mmc 0:1 ${ramdisk_addr_r} uInitrd
