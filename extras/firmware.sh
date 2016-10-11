@@ -13,7 +13,7 @@ build_firmware()
 	
 	local plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
 	local plugin_dir="armbian-firmware${FULL}"
-	[[ -n "$SOURCES$plugin_dir" ]] && rm -rf $SOURCES/$plugin_dir
+	[[ -d "$SOURCES/$plugin_dir" && -n "$SOURCES$plugin_dir" ]] && rm -rf $SOURCES/$plugin_dir
 	
 	if [[ -n $FULL ]]; then
 		fetch_from_repo "$plugin_repo" "$plugin_dir/lib/firmware" "branch:master"
