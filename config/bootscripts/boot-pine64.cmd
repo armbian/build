@@ -36,6 +36,12 @@ else
 	fdt set /soc@01c00000/disp@01000000 screen0_output_mode ${fdt_disp_mode}
 	#fdt set /soc@01c00000/disp@01000000 screen1_output_mode ${fdt_disp_mode}
 
+	# DVI compatibility
+	if test ${disp_dvi_compat} = 1 || test ${disp_dvi_compat} = on; then
+		fdt set /soc@01c00000/hdmi@01ee0000 hdmi_hdcp_enable "<0x00000000>"
+		fdt set /soc@01c00000/hdmi@01ee0000 hdmi_cts_compatibility "<0x00000001>"
+	fi
+
 	booti ${kernel_addr} ${initrd_addr} ${fdt_addr}
 fi
 
