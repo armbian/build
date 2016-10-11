@@ -25,6 +25,7 @@ else
 	elif test ${disp_mode} = "1080i60"; then setenv fdt_disp_mode "<0x00000007>"
 	elif test ${disp_mode} = "1080p24"; then setenv fdt_disp_mode "<0x00000008>"
 	elif test ${disp_mode} = "1080p50"; then setenv fdt_disp_mode "<0x00000009>"
+	elif test ${disp_mode} = "1080p60"; then setenv fdt_disp_mode "<0x0000000a>"
 	elif test ${disp_mode} = "2160p30"; then setenv fdt_disp_mode "<0x0000001c>"
 	elif test ${disp_mode} = "2160p25"; then setenv fdt_disp_mode "<0x0000001d>"
 	elif test ${disp_mode} = "2160p24"; then setenv fdt_disp_mode "<0x0000001e>"
