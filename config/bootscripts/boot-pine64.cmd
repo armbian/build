@@ -12,6 +12,30 @@ else
 	ext4load mmc 0 ${fdt_addr} /boot/${pine64_model}.dtb || fatload mmc 0 ${fdt_addr} ${pine64_model}.dtb || ext4load mmc 0 ${fdt_addr} ${pine64_model}.dtb
 	ext4load mmc 0 ${initrd_addr} /boot/uInitrd || fatload mmc 0 ${initrd_addr} uInitrd || ext4load mmc 0 ${initrd_addr} uInitrd || setenv initrd_addr "-"
 	ext4load mmc 0 ${kernel_addr} /boot/Image || fatload mmc 0 ${kernel_addr} Image || ext4load mmc 0 ${kernel_addr} Image
+
+	# set display resolution from uEnv.txt or other environment file
+	# default to 720p60
+	if test ${disp_mode} = "480i"; then setenv fdt_disp_mode "<0x00000000>"
+	elif test ${disp_mode} = "576i"; then setenv fdt_disp_mode "<0x00000001>"
+	elif test ${disp_mode} = "480p"; then setenv fdt_disp_mode "<0x00000002>"
+	elif test ${disp_mode} = "576p"; then setenv fdt_disp_mode "<0x00000003>"
+	elif test ${disp_mode} = "720p50"; then setenv fdt_disp_mode "<0x00000004>"
+	elif test ${disp_mode} = "720p60"; then setenv fdt_disp_mode "<0x00000005>"
+	elif test ${disp_mode} = "1080i50"; then setenv fdt_disp_mode "<0x00000006>"
+	elif test ${disp_mode} = "1080i60"; then setenv fdt_disp_mode "<0x00000007>"
+	elif test ${disp_mode} = "1080p24"; then setenv fdt_disp_mode "<0x00000008>"
+	elif test ${disp_mode} = "1080p50"; then setenv fdt_disp_mode "<0x00000009>"
+	elif test ${disp_mode} = "2160p30"; then setenv fdt_disp_mode "<0x0000001c>"
+	elif test ${disp_mode} = "2160p25"; then setenv fdt_disp_mode "<0x0000001d>"
+	elif test ${disp_mode} = "2160p24"; then setenv fdt_disp_mode "<0x0000001e>"
+	else setenv fdt_disp_mode "<0x00000005>"
+	fi
+
+	fdt addr ${fdt_addr}
+	fdt resize
+	fdt set /soc@01c00000/disp@01000000 screen0_output_mode ${fdt_disp_mode}
+	#fdt set /soc@01c00000/disp@01000000 screen1_output_mode ${fdt_disp_mode}
+
 	booti ${kernel_addr} ${initrd_addr} ${fdt_addr}
 fi
 
