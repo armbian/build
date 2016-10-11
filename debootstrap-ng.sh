@@ -25,17 +25,7 @@ debootstrap_ng()
 {
 	display_alert "Starting rootfs and image building process for" "$BOARD $RELEASE" "info"
 
-	[[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
-
-	# Fixed image size is in 1M dd blocks (MiB)
-	# to get size of block device /dev/sdX execute as root:
-	# echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
-	[[ "btrfs f2fs" == *"$ROOTFS_TYPE"* && -z $FIXED_IMAGE_SIZE ]] && exit_with_error "Please define FIXED_IMAGE_SIZE"
-
 	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming $BOARD $BRANCH kernel supports $ROOTFS_TYPE" "" "wrn"
-
-	# small SD card with kernel, boot scritpt and .dtb/.bin files
-	[[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
 
 	# trap to unmount stuff in case of error/manual interruption
 	trap unmount_on_exit INT TERM EXIT
@@ -209,7 +199,7 @@ create_rootfs_cache()
 
 		# add armhf arhitecture to arm64
 		[[ $ARCH == arm64 ]] && eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "dpkg --add-architecture armhf"'
-		
+
 		# stage: update packages list
 		display_alert "Updating package list" "$RELEASE" "info"
 		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "apt-get -q -y $apt_extra update"' \
@@ -386,20 +376,29 @@ prepare_partitions()
 
 	# stage: mount partitions and create proper fstab
 	rm -f $CACHEDIR/sdcard/etc/fstab
+
+	if [[ $HAS_UUID_SUPPORT == yes ]]; then
+		local part1="UUID=$(blkid -s UUID -o value ${LOOP}p1)"
+		local part2="UUID=$(blkid -s UUID -o value ${LOOP}p2)"
+	else
+		local part1="/dev/mmcblk0p1"
+		local part2="/dev/mmcblk0p2"
+	fi
+
 	if [[ $BOOTSIZE == 0 ]]; then
 		mount ${LOOP}p1 $CACHEDIR/mount/
-		echo "/dev/mmcblk0p1 / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
+		echo "$part1 / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
 	else
 		if [[ $ROOTFS_TYPE != nfs ]]; then
 			mount ${LOOP}p2 $CACHEDIR/mount/
-			echo "/dev/mmcblk0p2 / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
+			echo "$part2 / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
 		else
 			echo "/dev/nfs / nfs defaults 0 0" >> $CACHEDIR/sdcard/etc/fstab
 		fi
 		# create /boot on rootfs after it is mounted
 		mkdir -p $CACHEDIR/mount/boot/
 		mount ${LOOP}p1 $CACHEDIR/mount/boot/
-		echo "/dev/mmcblk0p1 /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $CACHEDIR/sdcard/etc/fstab
+		echo "$part1 /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $CACHEDIR/sdcard/etc/fstab
 	fi
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $CACHEDIR/sdcard/etc/fstab
 
@@ -416,6 +415,8 @@ prepare_partitions()
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $CACHEDIR/sdcard/boot/boot.cmd
 		sed -i "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" $CACHEDIR/sdcard/boot/boot.cmd
 	fi
+
+	# recompile .cmd to .scr if needed
 	[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && \
 		mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr > /dev/null 2>&1
 
