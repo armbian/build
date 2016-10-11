@@ -36,7 +36,7 @@ create_board_package()
 	Depends: bash
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
-	Replaces: base-files
+	Replaces: base-files, mpv
 	Recommends: bsdutils, parted, python3-apt, util-linux, initramfs-tools, toilet
 	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
 	EOF
@@ -52,10 +52,22 @@ create_board_package()
 		rm /etc/network/interfaces
 		mv /etc/network/interfaces.tmp /etc/network/interfaces
 	fi
+	dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename \
+		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 	exit 0
 	EOF
 
 	chmod 755 $destination/DEBIAN/preinst
+
+	# postrm script
+	cat <<-EOF > $destination/DEBIAN/postrm
+	#!/bin/sh
+	[ remove = "\$1"] || [ abort-install = "\$1" ] dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename \
+		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
+	exit 0
+	EOF
+
+	chmod 755 $destination/DEBIAN/postrm
 
 	# set up post install script
 	cat <<-EOF > $destination/DEBIAN/postinst
