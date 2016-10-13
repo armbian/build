@@ -141,7 +141,6 @@ install_common()
 
 	# copy "first run automated config, optional user configured"
  	cp $SRC/lib/config/armbian_first_run.txt $CACHEDIR/sdcard/boot/armbian_first_run.txt
-
 }
 
 install_distribution_specific()
@@ -255,14 +254,11 @@ install_distribution_specific()
 		mkdir -p $CACHEDIR/sdcard/etc/udev/rules.d/
 		cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/sdcard/etc/udev/rules.d/
 
-		# disable ureadahead
-		# needs kernel tracing options that AFAIK are present only in mainline
+		# disable not working on unneeded services
+		# ureadahead needs kernel tracing options that AFAIK are present only in mainline
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask ureadahead.service >/dev/null 2>&1"
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
-		;;
-
-	*)
-		exit_with_error "Unknown OS release selected"
+		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
 		;;
 	esac
 }
