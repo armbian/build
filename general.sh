@@ -94,14 +94,14 @@ exit_with_error()
 	exit -1
 }
 
-# get_package_list_hash <package_list>
+# get_package_list_hash
 #
-# outputs md5hash for space-separated <package_list>
-# for rootfs cache
+# returns md5 hash for current package list and rootfs cache version
 
 get_package_list_hash()
 {
-	echo $(printf '%s\n' $PACKAGE_LIST | sort -u | md5sum | cut -d' ' -f 1)
+	( printf '%s\n' $PACKAGE_LIST | sort -u; printf '%s\n' $PACKAGE_LIST_EXCLUDE | sort -u; echo "$ROOTFSCACHE_VERSION" ) \
+		| md5sum | cut -d' ' -f 1
 }
 
 # create_sources_list <release> <basedir>
@@ -439,8 +439,8 @@ addtorepo()
 # * creates directory structure
 # * changes system settings
 #
-prepare_host() {
-
+prepare_host()
+{
 	display_alert "Preparing" "host" "info"
 
 	if [[ $(dpkg --print-architecture) == arm* ]]; then
@@ -494,10 +494,7 @@ prepare_host() {
 				display_alert "apt-cacher is disabled, set NO_APT_CACHER=no to override" "" "wrn"
 				NO_APT_CACHER=yes
 			fi
-			# create device nodes for loop devices
-			for i in {0..6}; do
-				mknod -m0660 /dev/loop$i b 7 $i > /dev/null 2>&1
-			done
+			CONTAINER_COMPAT=yes
 		fi
 	fi
 
