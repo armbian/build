@@ -71,6 +71,20 @@ install_common()
 	local bootscript_dst=${BOOTSCRIPT##*:}
 	cp $SRC/lib/config/bootscripts/$bootscript_src $CACHEDIR/sdcard/boot/$bootscript_dst
 
+	[[ -n $BOOTENV_FILE && -f $SRC/lib/config/bootenv/$BOOTENV_FILE ]] && \
+		cp $SRC/lib/config/bootenv/$BOOTENV_FILE $CACHEDIR/sdcard/boot/armbianEnv.txt
+
+	# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
+	# instead of copying sunxi-specific template
+	if [[ $ROOTFS_TYPE == nfs ]]; then
+		display_alert "Copying NFS boot script template"
+		if [[ -f $SRC/userpatches/nfs-boot.cmd ]]; then
+			cp $SRC/userpatches/nfs-boot.cmd $CACHEDIR/sdcard/boot/boot.cmd
+		else
+			cp $SRC/lib/scripts/nfs-boot.cmd.template $CACHEDIR/sdcard/boot/boot.cmd
+		fi
+	fi
+
 	# initial date for fake-hwclock
 	date -u '+%Y-%m-%d %H:%M:%S' > $CACHEDIR/sdcard/etc/fake-hwclock.data
 

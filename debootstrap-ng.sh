@@ -402,21 +402,12 @@ prepare_partitions()
 	fi
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $CACHEDIR/sdcard/etc/fstab
 
-	# stage: create boot script
-	if [[ $ROOTFS_TYPE == nfs ]]; then
-		# copy script provided by user if exists
-		if [[ -f $SRC/userpatches/nfs-boot.cmd ]]; then
-			display_alert "Using custom NFS boot script" "userpatches/nfs-boot.cmd" "info"
-			cp $SRC/userpatches/nfs-boot.cmd $CACHEDIR/sdcard/boot/boot.cmd
-		else
-			cp $SRC/lib/scripts/nfs-boot.cmd.template $CACHEDIR/sdcard/boot/boot.cmd
-		fi
-	elif [[ $BOOTSIZE != 0 && -f $CACHEDIR/sdcard/boot/boot.cmd ]]; then
+	if [[ $ROOTFS_TYPE != nfs && $BOOTSIZE != 0 && -f $CACHEDIR/sdcard/boot/boot.cmd ]]; then
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $CACHEDIR/sdcard/boot/boot.cmd
 		sed -i "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" $CACHEDIR/sdcard/boot/boot.cmd
 	fi
 
-	# recompile .cmd to .scr if needed
+	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && \
 		mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr > /dev/null 2>&1
 
