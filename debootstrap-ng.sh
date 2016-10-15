@@ -224,9 +224,6 @@ create_rootfs_cache()
 
 		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Upgrading base packages failed"
 
-		# new initctl and start-stop-daemon may be installed after upgrading base packages
-		install_dummy_initctl
-
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
 		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/sdcard /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
@@ -336,7 +333,7 @@ prepare_partitions()
 
 	# stage: determine partition configuration
 	if [[ $BOOTSIZE != 0 ]]; then
-		# fat32 /boot + ext4 root, deprecated
+		# fat32 /boot + ext4 or other root, deprecated
 		local bootfs=fat
 		local bootpart=1
 		local rootpart=2
@@ -377,6 +374,7 @@ prepare_partitions()
 	fi
 
 	# stage: mount image
+	# TODO: Needs mknod here in Docker?
 	LOOP=$(losetup -f)
 	[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device"
 
@@ -405,9 +403,7 @@ prepare_partitions()
 		mount ${LOOP}p${bootpart} $CACHEDIR/mount/boot/
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $CACHEDIR/sdcard/etc/fstab
 	fi
-	if [[ $ROOTFS_TYPE == nfs ]]; then
-		echo "/dev/nfs / nfs defaults 0 0" >> $CACHEDIR/sdcard/etc/fstab
-	fi
+	[[ $ROOTFS_TYPE == nfs ]] && echo "/dev/nfs / nfs defaults 0 0" >> $CACHEDIR/sdcard/etc/fstab
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $CACHEDIR/sdcard/etc/fstab
 
 	# stage: adjust boot script or boot environment
