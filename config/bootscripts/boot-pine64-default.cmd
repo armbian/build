@@ -12,7 +12,7 @@ setenv disp_mem_reserves "off"
 setenv disp_mode "720p60"
 setenv rootfstype "ext4"
 
-if load mmc 0 ${load_addr} /boot/armbianEnv.txt || load mmc 0 ${load_addr} armbianEnv.txt; then
+if ext4load mmc 0 ${load_addr} /boot/armbianEnv.txt || fatload mmc 0 ${load_addr} armbianEnv.txt || ext4load mmc 0 ${load_addr} armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
 
