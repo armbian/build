@@ -180,9 +180,7 @@ fi
 
 compile_sunxi_tools
 
-if [[ $LINUXFAMILY == sun*i ]]; then
-	[[ $BRANCH != default && $LINUXFAMILY != sun8i ]] && LINUXFAMILY="sunxi"
-fi
+if [[ $LINUXFAMILY == sun8i && $BRANCH == dev ]]; then LINUXFAMILY="sun8i"; else LINUXFAMILY="sunxi"; fi
 
 # define package names
 DEB_BRANCH=${BRANCH//default}

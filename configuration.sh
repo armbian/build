@@ -82,7 +82,7 @@ case $ARCH in
 	;;
 esac
 
-[[ $LINUXFAMILY == sun*i && $BRANCH != default && $LINUXFAMILY != sun8i ]] && LINUXCONFIG="linux-sunxi-${BRANCH}"
+[[ $LINUXFAMILY == sun*i && $BRANCH != default ]] && LINUXCONFIG="linux-sunxi-${BRANCH}"
 [[ $LINUXFAMILY == udoo && $BRANCH == default ]] && LINUXCONFIG="linux-$BOARD-default"
 [[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
 
