@@ -264,6 +264,12 @@ install_distribution_specific()
 		mkdir -p $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/
 		printf "[Service]\nTimeoutStopSec=10" > $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
 
+		# Fix for haveged service
+		cat <<-EOF > $CACHEDIR/sdcard/etc/systemd/system/haveged.service.d/10-no-new-privileges.conf
+		[Service]
+		NoNewPrivileges=false
+		EOF
+
 		# handle PMU power button
 		mkdir -p $CACHEDIR/sdcard/etc/udev/rules.d/
 		cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/sdcard/etc/udev/rules.d/
