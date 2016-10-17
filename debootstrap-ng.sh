@@ -12,7 +12,6 @@
 # create_rootfs_cache
 # prepare_partitions
 # create_image
-# install_dummy_initctl
 # mount_chroot
 # umount_chroot
 # unmount_on_exit
@@ -73,17 +72,18 @@ debootstrap_ng()
 	fi
 
 	# cleanup for install_kernel and install_board_specific
-	umount $CACHEDIR/sdcard/tmp/debs && rm -rf $CACHEDIR/sdcard/tmp/debs
+	umount $CACHEDIR/sdcard/tmp/debs
+	mountpoint -q $CACHEDIR/sdcard/tmp/debs || rm -rf $CACHEDIR/sdcard/tmp/debs
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
 	customize_image
 
 	# stage: cleanup
-	rm -f $CACHEDIR/sdcard/usr/sbin/policy-rc.d
-	rm -f $CACHEDIR/sdcard/usr/bin/$QEMU_BINARY
-	[[ -x $CACHEDIR/sdcard/sbin/initctl.REAL ]] && mv -f $CACHEDIR/sdcard/sbin/initctl.REAL $CACHEDIR/sdcard/sbin/initctl
-	[[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL ]] && mv -f $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL $CACHEDIR/sdcard/sbin/start-stop-daemon
+	rm -f $CACHEDIR/sdcard/sbin/initctl $CACHEDIR/sdcard/sbin/start-stop-daemon
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/initctl"
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon"
+	rm -f $CACHEDIR/sdcard/usr/sbin/policy-rc.d $CACHEDIR/sdcard/usr/bin/$QEMU_BINARY
 
 	umount_chroot "$CACHEDIR/sdcard"
 
@@ -115,7 +115,7 @@ debootstrap_ng()
 #
 create_rootfs_cache()
 {
-	local packages_hash=$(get_package_list_hash $PACKAGE_LIST)
+	local packages_hash=$(get_package_list_hash)
 	local cache_fname=$CACHEDIR/rootfs/${RELEASE}-ng-$ARCH.$packages_hash.tgz
 	local display_name=${RELEASE}-ng-$ARCH.${packages_hash:0:3}...${packages_hash:29}.tgz
 	if [[ -f $cache_fname ]]; then
@@ -163,8 +163,13 @@ create_rootfs_cache()
 
 		# policy-rc.d script prevents starting or reloading services during image creation
 		printf '#!/bin/sh\nexit 101' > $CACHEDIR/sdcard/usr/sbin/policy-rc.d
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg-divert --quiet --local --rename --add /sbin/initctl"
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg-divert --quiet --local --rename --add /sbin/start-stop-daemon"
+		printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"' > $CACHEDIR/sdcard/sbin/start-stop-daemon
+		printf '#!/bin/sh\necho "Warning: Fake initctl called, doing nothing"' > $CACHEDIR/sdcard/sbin/initctl
 		chmod 755 $CACHEDIR/sdcard/usr/sbin/policy-rc.d
-		install_dummy_initctl
+		chmod 755 $CACHEDIR/sdcard/sbin/initctl
+		chmod 755 $CACHEDIR/sdcard/sbin/start-stop-daemon
 
 		# stage: configure language and locales
 		display_alert "Configuring locales" "$DEST_LANG" "info"
@@ -218,9 +223,6 @@ create_rootfs_cache()
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Upgrading base packages failed"
-
-		# new initctl and start-stop-daemon may be installed after upgrading base packages
-		install_dummy_initctl
 
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
@@ -330,93 +332,96 @@ prepare_partitions()
 	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=$CACHEDIR/tmprootfs.raw
 
 	# stage: determine partition configuration
-	if [[ $ROOTFS_TYPE != ext4 && $BOOTSIZE == 0 ]]; then
-		local bootfs=ext4
-		BOOTSIZE=32 # MiB
-	elif [[ $BOOTSIZE != 0 ]]; then
+	if [[ $BOOTSIZE != 0 ]]; then
+		# fat32 /boot + ext4 or other root, deprecated
 		local bootfs=fat
+		local bootpart=1
+		local rootpart=2
+	elif [[ $ROOTFS_TYPE != ext4 && $ROOTFS_TYPE != nfs ]]; then
+		# ext4 /boot + non-ext4 root
+		BOOTSIZE=32 # MiB
+		local bootfs=ext4
+		local bootpart=1
+		local rootpart=2
+	elif [[ $ROOTFS_TYPE == nfs ]]; then
+		# ext4 /boot, no root
+		BOOTSIZE=32 # For cleanup processing only
+		local bootfs=ext4
+		local bootpart=1
+	else
+		# ext4 root
+		local rootpart=1
 	fi
 
 	# stage: calculate boot partition size
-	BOOTSTART=$(($OFFSET * 2048))
-	ROOTSTART=$(($BOOTSTART + ($BOOTSIZE * 2048)))
-	BOOTEND=$(($ROOTSTART - 1))
+	local bootstart=$(($OFFSET * 2048))
+	local rootstart=$(($bootstart + ($BOOTSIZE * 2048)))
+	local bootend=$(($rootstart - 1))
 
 	# stage: create partition table
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
 	parted -s $CACHEDIR/tmprootfs.raw -- mklabel msdos
 	if [[ $ROOTFS_TYPE == nfs ]]; then
-		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$bootfs]} ${BOOTSTART}s -1s
+		# single /boot partition
+		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s -1s
 	elif [[ $BOOTSIZE == 0 ]]; then
-		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${ROOTSTART}s -1s
+		# single root partition
+		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
 	else
-		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$bootfs]} ${BOOTSTART}s ${BOOTEND}s
-		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${ROOTSTART}s -1s
+		# /boot partition + root partition
+		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
+		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
 	fi
 
 	# stage: mount image
+	# TODO: Needs mknod here in Docker?
 	LOOP=$(losetup -f)
 	[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device"
 
 	# NOTE: losetup -P option is not available in Trusty
+	[[ $CONTAINER_COMPAT == yes ]] && mknod -m0660 $LOOP b 7 ${LOOP//\/dev\/loop} > /dev/null
+
 	losetup $LOOP $CACHEDIR/tmprootfs.raw
 	partprobe $LOOP
 
-	# stage: create fs
-	if [[ $BOOTSIZE == 0 ]]; then
-		eval mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${LOOP}p1 ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback ${LOOP}p1 > /dev/null
-	else
-		if [[ $ROOTFS_TYPE != nfs ]]; then
-			eval mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${LOOP}p2 ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-			[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback ${LOOP}p2 > /dev/null
-		fi
-		eval mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${LOOP}p1 ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-	fi
-
-	# stage: mount partitions and create proper fstab
+	# stage: create fs, mount partitions, create fstab
 	rm -f $CACHEDIR/sdcard/etc/fstab
-
-	if [[ $HAS_UUID_SUPPORT == yes ]]; then
-		local part1="UUID=$(blkid -s UUID -o value ${LOOP}p1)"
-		local part2="UUID=$(blkid -s UUID -o value ${LOOP}p2)"
-	else
-		local part1="/dev/mmcblk0p1"
-		local part2="/dev/mmcblk0p2"
+	if [[ -n $rootpart ]]; then
+		display_alert "Creating rootfs" "$ROOTFS_TYPE"
+		[[ $CONTAINER_COMPAT == yes ]] && mknod -m0660 $LOOPp${rootpart} b 259 ${rootpart} > /dev/null
+		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${LOOP}p${rootpart}
+		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback ${LOOP}p${rootpart} > /dev/null
+		mount ${LOOP}p${rootpart} $CACHEDIR/mount/
+		local rootfs="UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart})"
+		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
 	fi
-
-	if [[ $BOOTSIZE == 0 ]]; then
-		mount ${LOOP}p1 $CACHEDIR/mount/
-		echo "$part1 / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
-	else
-		if [[ $ROOTFS_TYPE != nfs ]]; then
-			mount ${LOOP}p2 $CACHEDIR/mount/
-			echo "$part2 / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/sdcard/etc/fstab
-		else
-			echo "/dev/nfs / nfs defaults 0 0" >> $CACHEDIR/sdcard/etc/fstab
-		fi
-		# create /boot on rootfs after it is mounted
+	if [[ -n $bootpart ]]; then
+		display_alert "Creating /boot" "$bootfs"
+		[[ $CONTAINER_COMPAT == yes ]] && mknod -m0660 $LOOPp${bootpart} b 259 ${bootpart} > /dev/null
+		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${LOOP}p${bootpart}
 		mkdir -p $CACHEDIR/mount/boot/
-		mount ${LOOP}p1 $CACHEDIR/mount/boot/
-		echo "$part1 /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $CACHEDIR/sdcard/etc/fstab
+		mount ${LOOP}p${bootpart} $CACHEDIR/mount/boot/
+		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $CACHEDIR/sdcard/etc/fstab
 	fi
+	[[ $ROOTFS_TYPE == nfs ]] && echo "/dev/nfs / nfs defaults 0 0" >> $CACHEDIR/sdcard/etc/fstab
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $CACHEDIR/sdcard/etc/fstab
 
-	# stage: create boot script
-	if [[ $ROOTFS_TYPE == nfs ]]; then
-		# copy script provided by user if exists
-		if [[ -f $SRC/userpatches/nfs-boot.cmd ]]; then
-			display_alert "Using custom NFS boot script" "userpatches/nfs-boot.cmd" "info"
-			cp $SRC/userpatches/nfs-boot.cmd $CACHEDIR/sdcard/boot/boot.cmd
-		else
-			cp $SRC/lib/scripts/nfs-boot.cmd.template $CACHEDIR/sdcard/boot/boot.cmd
+	# stage: adjust boot script or boot environment
+	if [[ -f $CACHEDIR/sdcard/boot/armbianEnv.txt ]]; then
+		if [[ $HAS_UUID_SUPPORT == yes ]]; then
+			echo "rootdev=$rootfs" >> $CACHEDIR/sdcard/boot/armbianEnv.txt
+		elif [[ $rootpart != 1 ]]; then
+			echo "rootdev=/dev/mmcblk0p${rootpart}" >> $CACHEDIR/sdcard/boot/armbianEnv.txt
 		fi
-	elif [[ $BOOTSIZE != 0 && -f $CACHEDIR/sdcard/boot/boot.cmd ]]; then
-		sed -i 's/mmcblk0p1/mmcblk0p2/' $CACHEDIR/sdcard/boot/boot.cmd
-		sed -i "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" $CACHEDIR/sdcard/boot/boot.cmd
+		echo "rootfstype=$ROOTFS_TYPE" >> $CACHEDIR/sdcard/boot/armbianEnv.txt
+	elif [[ $rootpart != 1 ]]; then
+		local bootscript_dst=${BOOTSCRIPT##*:}
+		sed -i 's/mmcblk0p1/mmcblk0p2/' $CACHEDIR/sdcard/boot/$bootscript_dst
+		sed -i -e "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" \
+			-e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $CACHEDIR/sdcard/boot/$bootscript_dst
 	fi
 
-	# recompile .cmd to .scr if needed
+	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && \
 		mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr > /dev/null 2>&1
 
@@ -519,24 +524,6 @@ sign_and_compress()
 			local filesize=$(ls -l --b=M $filename | cut -d " " -f5)
 			display_alert "Done building" "$filename [$filesize]" "info"
 		fi
-	fi
-} #############################################################################
-
-# install_dummy_initctl
-#
-# helper to reduce code duplication
-#
-install_dummy_initctl()
-{
-	if [[ -x $CACHEDIR/sdcard/sbin/start-stop-daemon ]] && ! cmp -s $CACHEDIR/sdcard/sbin/start-stop-daemon <(printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"'); then
-		mv $CACHEDIR/sdcard/sbin/start-stop-daemon $CACHEDIR/sdcard/sbin/start-stop-daemon.REAL
-		printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"' > $CACHEDIR/sdcard/sbin/start-stop-daemon
-		chmod 755 $CACHEDIR/sdcard/sbin/start-stop-daemon
-	fi
-	if [[ -x $CACHEDIR/sdcard/sbin/initctl ]] && ! cmp -s $CACHEDIR/sdcard/sbin/initctl <(printf '#!/bin/sh\necho "Warning: Fake initctl called, doing nothing"'); then
-		mv $CACHEDIR/sdcard/sbin/initctl $CACHEDIR/sdcard/sbin/initctl.REAL
-		printf '#!/bin/sh\necho "Warning: Fake initctl called, doing nothing"' $CACHEDIR/sdcard/sbin/initctl
-		chmod 755 $CACHEDIR/sdcard/sbin/initctl
 	fi
 } #############################################################################
 

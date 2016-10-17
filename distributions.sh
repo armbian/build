@@ -71,6 +71,20 @@ install_common()
 	local bootscript_dst=${BOOTSCRIPT##*:}
 	cp $SRC/lib/config/bootscripts/$bootscript_src $CACHEDIR/sdcard/boot/$bootscript_dst
 
+	[[ -n $BOOTENV_FILE && -f $SRC/lib/config/bootenv/$BOOTENV_FILE ]] && \
+		cp $SRC/lib/config/bootenv/$BOOTENV_FILE $CACHEDIR/sdcard/boot/armbianEnv.txt
+
+	# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
+	# instead of copying sunxi-specific template
+	if [[ $ROOTFS_TYPE == nfs ]]; then
+		display_alert "Copying NFS boot script template"
+		if [[ -f $SRC/userpatches/nfs-boot.cmd ]]; then
+			cp $SRC/userpatches/nfs-boot.cmd $CACHEDIR/sdcard/boot/boot.cmd
+		else
+			cp $SRC/lib/scripts/nfs-boot.cmd.template $CACHEDIR/sdcard/boot/boot.cmd
+		fi
+	fi
+
 	# initial date for fake-hwclock
 	date -u '+%Y-%m-%d %H:%M:%S' > $CACHEDIR/sdcard/etc/fake-hwclock.data
 
@@ -141,7 +155,6 @@ install_common()
 
 	# copy "first run automated config, optional user configured"
  	cp $SRC/lib/config/armbian_first_run.txt $CACHEDIR/sdcard/boot/armbian_first_run.txt
-
 }
 
 install_distribution_specific()
@@ -255,14 +268,11 @@ install_distribution_specific()
 		mkdir -p $CACHEDIR/sdcard/etc/udev/rules.d/
 		cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/sdcard/etc/udev/rules.d/
 
-		# disable ureadahead
-		# needs kernel tracing options that AFAIK are present only in mainline
+		# disable not working on unneeded services
+		# ureadahead needs kernel tracing options that AFAIK are present only in mainline
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask ureadahead.service >/dev/null 2>&1"
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
-		;;
-
-	*)
-		exit_with_error "Unknown OS release selected"
+		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
 		;;
 	esac
 }
