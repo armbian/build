@@ -82,7 +82,12 @@ case $ARCH in
 	;;
 esac
 
-if [[ $LINUXFAMILY == sun8i && $BRANCH == dev ]]; then LINUXCONFIG="linux-sun8i-${BRANCH}"; else LINUXCONFIG="linux-sunxi-${BRANCH}"; fi
+# Here we want to use linux-sunxi-next and linux-sunxi-dev configs for sun*i
+# except for sun8i-dev which is separate from sunxi-dev
+if [[ $LINUXFAMILY == sun*i && $BRANCH != default && ! ( $LINUXFAMILY == sun8i && $BRANCH == dev ) ]]; then
+	LINUXCONFIG="linux-sunxi-${BRANCH}"
+fi
+
 [[ $LINUXFAMILY == udoo && $BRANCH == default ]] && LINUXCONFIG="linux-$BOARD-default"
 [[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
 

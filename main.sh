@@ -180,7 +180,11 @@ fi
 
 compile_sunxi_tools
 
-if [[ $LINUXFAMILY == sun8i && $BRANCH == dev ]]; then LINUXFAMILY="sun8i"; else LINUXFAMILY="sunxi"; fi
+# Here we want to rename LINUXFAMILY from sun4i, sun5i, etc for next and dev branches
+# except for sun8i-dev which is separate from sunxi-dev
+if [[ $LINUXFAMILY == sun*i && $BRANCH != default ]]; then
+    [[ ! ( $LINUXFAMILY == sun8i && $BRANCH == dev ) ]] && LINUXFAMILY="sunxi"
+fi
 
 # define package names
 DEB_BRANCH=${BRANCH//default}
