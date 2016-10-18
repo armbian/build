@@ -265,6 +265,7 @@ install_distribution_specific()
 		printf "[Service]\nTimeoutStopSec=10" > $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
 
 		# Fix for haveged service
+		mkdir -p -m755 $CACHEDIR/sdcard/etc/systemd/system/haveged.service.d
 		cat <<-EOF > $CACHEDIR/sdcard/etc/systemd/system/haveged.service.d/10-no-new-privileges.conf
 		[Service]
 		NoNewPrivileges=false
