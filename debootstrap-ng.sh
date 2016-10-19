@@ -339,13 +339,13 @@ prepare_partitions()
 		local rootpart=2
 	elif [[ $ROOTFS_TYPE != ext4 && $ROOTFS_TYPE != nfs ]]; then
 		# ext4 /boot + non-ext4 root
-		BOOTSIZE=32 # MiB
+		BOOTSIZE=64 # MiB
 		local bootfs=ext4
 		local bootpart=1
 		local rootpart=2
 	elif [[ $ROOTFS_TYPE == nfs ]]; then
 		# ext4 /boot, no root
-		BOOTSIZE=32 # For cleanup processing only
+		BOOTSIZE=64 # For cleanup processing only
 		local bootfs=ext4
 		local bootpart=1
 	else
