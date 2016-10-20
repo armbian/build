@@ -53,8 +53,11 @@ compile_uboot()
 	# patch mainline uboot configuration to boot with old kernels
 	if [[ $BRANCH == default && $LINUXFAMILY == sun*i ]] && ! grep -q "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" .config ; then
 		echo -e "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y\nCONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> .config
-
 	fi
+	
+	# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
+	[[ ${BOOTDELAY} == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
+	[[ -n ${BOOTDELAY} ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
 
 	eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
 		'make $UBOOT_TARGET $CTHREADS CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
