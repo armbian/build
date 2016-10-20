@@ -6,6 +6,7 @@ BOOTSCRIPT="boot-sunxi.cmd:boot.cmd"
 BOOTENV_FILE='sunxi-default.txt'
 
 HAS_UUID_SUPPORT=yes
+BOOTDELAY=0
 
 case $BRANCH in
 	default)
