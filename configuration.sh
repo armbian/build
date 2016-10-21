@@ -19,7 +19,18 @@ USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 HOST="$BOARD" # set hostname to the board
 CACHEDIR=$DEST/cache
+ROOTFSCACHE_VERSION=2
+
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
+[[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
+
+# Fixed image size is in 1M dd blocks (MiB)
+# to get size of block device /dev/sdX execute as root:
+# echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
+[[ "btrfs f2fs" == *$ROOTFS_TYPE* && -z $FIXED_IMAGE_SIZE ]] && exit_with_error "Please define FIXED_IMAGE_SIZE"
+
+# small SD card with kernel, boot script and .dtb/.bin files
+[[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
 
 # used by multiple sources - reduce code duplication
 if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
@@ -43,7 +54,9 @@ OFFSET=1 # Bootloader space in MB (1 x 2048 = default)
 ARCH=armhf
 KERNEL_IMAGE_TYPE=zImage
 SERIALCON=ttyS0
-BOOTSIZE=0 # Mb size of boot partition
+
+# WARNING: This option is deprecated
+BOOTSIZE=0
 
 if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]]; then
 	source $SRC/lib/config/sources/$LINUXFAMILY.conf
@@ -69,7 +82,12 @@ case $ARCH in
 	;;
 esac
 
-[[ $LINUXFAMILY == sun*i && $BRANCH != default && $LINUXFAMILY != sun8i ]] && LINUXCONFIG="linux-sunxi-${BRANCH}"
+# Here we want to use linux-sunxi-next and linux-sunxi-dev configs for sun*i
+# except for sun8i-dev which is separate from sunxi-dev
+if [[ $LINUXFAMILY == sun*i && $BRANCH != default && ! ( $LINUXFAMILY == sun8i && $BRANCH == dev ) ]]; then
+	LINUXCONFIG="linux-sunxi-${BRANCH}"
+fi
+
 [[ $LINUXFAMILY == udoo && $BRANCH == default ]] && LINUXCONFIG="linux-$BOARD-default"
 [[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
 
@@ -89,7 +107,8 @@ esac
 PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler dosfstools figlet \
 	fbset fping ifenslave-2.6 iw lirc fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl \
 	dialog crda wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
-	unzip usbutils wireless-tools console-setup console-common unicode-data openssh-server initramfs-tools ca-certificates"
+	unzip usbutils wireless-tools console-setup console-common unicode-data openssh-server initramfs-tools \
+	ca-certificates network-manager"
 
 # development related packages. remove when they are not needed for building packages in chroot
 PACKAGE_LIST="$PACKAGE_LIST automake libwrap0-dev libssl-dev libusb-dev libusb-1.0-0-dev libnl-3-dev libnl-genl-3-dev"
@@ -101,7 +120,7 @@ PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools hddtemp iotop iozone3 stress sys
 
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage thunar-volman galculator \
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu bluetooth \
-	network-manager network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common p11-kit pasystray pavucontrol pulseaudio \
+	network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common p11-kit pasystray pavucontrol pulseaudio \
 	paman pavumeter pulseaudio-module-gconf pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri mpv"
 
 PACKAGE_LIST_EXCLUDE="xfce4-mixer"
