@@ -75,7 +75,7 @@ compile_uboot()
 	source /usr/lib/u-boot/platform_install.sh
 	[[ \$DEVICE == /dev/null ]] && exit 0
 	[[ -z \$DEVICE ]] && DEVICE="/dev/mmcblk0"
-	[[ $(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
+	[[ \$(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
 	write_uboot_platform \$DIR \$DEVICE
 	exit 0
 	EOF
