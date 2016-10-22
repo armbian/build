@@ -79,19 +79,21 @@ create_armbian()
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\n  Cleaning up ... few seconds." 5 40
 	rsync -avrltD  --delete --exclude-from=$EX_LIST / /mnt/rootfs >/dev/null 2>&1
 
-	# creating fstab - root partition
-	sed -e 's,'"$root_partition"','"$2"',g' -i /mnt/rootfs/etc/fstab
+	# creating fstab from scratch
+	rm -f /mnt/rootfs/etc/fstab
 
 	# creating fstab, kernel and boot script for NAND partition
 	if [[ $1 == *nand* ]]; then
 		REMOVESDTXT="and remove SD to boot from NAND"
-		sed -i '/boot/d' /mnt/rootfs/etc/fstab
+		#sed -i '/boot/d' /mnt/rootfs/etc/fstab
 		echo "$1 /boot vfat	defaults 0 0" >> /mnt/rootfs/etc/fstab
+		echo "$2 / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1" >> /mnt/rootfs/etc/fstab
 		dialog --title "$title" --backtitle "$backtitle" --infobox "\nConverting kernel ... few seconds." 5 60
 		mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d \
 			/boot/zImage /mnt/bootfs/uImage >/dev/null 2>&1
 		cp /boot/script.bin /mnt/bootfs/
 
+		# Note: Not using UUID based boot for NAND
 		cat <<-EOF > /mnt/bootfs/uEnv.txt
 		console=ttyS0,115200
 		root=$2 rootwait
@@ -118,11 +120,18 @@ create_armbian()
 		cp -R /boot/ /mnt/bootfs
 
 		# eMMC install
+		# old boot scripts
 		sed -e 's,root='"$root_partition"',root='"$emmcuuid"',g' -i /mnt/bootfs/boot/boot.cmd
-		mkimage -C none -A arm -T script -d /mnt/bootfs/boot/boot.cmd /mnt/bootfs/boot/boot.scr	>/dev/null 2>&1 || (echo "Error"; exit 0)	
+		# new boot scripts
+		if [[ -f /mnt/bootfs/boot/armbianEnv.txt ]]; then
+			sed -i "s/rootdev=.*/rootdev=$emmcuuid" /mnt/bootfs/boot/armbianEnv.txt
+		else
+			sed -i "s/setenv rootdev.*/setenv rootdev \"$emmcuuid\"" /mnt/bootfs/boot/boot.cmd
+		fi
+		mkimage -C none -A arm -T script -d /mnt/bootfs/boot/boot.cmd /mnt/bootfs/boot/boot.scr	>/dev/null 2>&1 || (echo "Error"; exit 0)
 
 		# fstab adj
-		sed -e 's,'"$2"','"$emmcuuid"',g' -i /mnt/rootfs/etc/fstab
+		echo "$emmcuuid / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1" > /mnt/rootfs/etc/fstab
 
 		if [[ $(type -t write_uboot_platform) != function ]]; then
 			echo "Error: no u-boot package found, exiting"
@@ -132,18 +141,33 @@ create_armbian()
 		write_uboot_platform $DIR $emmccheck
 
 	elif [[ -f /boot/boot.cmd ]]; then
+		# old boot scripts
 		sed -e 's,root='"$root_partition"',root='"$satauuid"',g' -i /boot/boot.cmd
+		# new boot scripts
+		if [[ -f /mnt/bootfs/boot/armbianEnv.txt ]]; then
+			sed -i "s/rootdev=.*/rootdev=$satauuid" /mnt/bootfs/boot/armbianEnv.txt
+		else
+			sed -i "s/setenv rootdev.*/setenv rootdev \"$satauuid\"" /mnt/bootfs/boot/boot.cmd
+		fi
 		mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr >/dev/null 2>&1 || (echo "Error"; exit 0)
 		mkdir -p /mnt/rootfs/media/mmc/boot
 		if ! grep -q "/boot" /mnt/rootfs/etc/fstab; then # in two partition setup
 			echo "$sduuid        /media/mmc   ext4    defaults        0       0" >> /mnt/rootfs/etc/fstab
 			echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/rootfs/etc/fstab
 		fi
-		sed -i "s/data=writeback,//" /mnt/rootfs/etc/fstab
+		echo "$satauuid / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1" >> /mnt/rootfs/etc/fstab
 	elif [[ -f /boot/boot.ini ]]; then
+		# old boot scripts
 		sed -e 's,root='"$root_partition"',root='"$satauuid"',g' -i /boot/boot.ini
-		sed -i "s/data=writeback,//" /mnt/rootfs/etc/fstab
+		# new boot scripts
+		if [[ -f /mnt/bootfs/boot/armbianEnv.txt ]]; then
+			sed -i "s/rootdev=.*/rootdev=$satauuid" /mnt/bootfs/boot/armbianEnv.txt
+		else
+			sed -i "s/setenv rootdev.*/setenv rootdev \"$satauuid\"" /mnt/bootfs/boot/boot.ini
+		fi
+		echo "$satauuid / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1" >> /mnt/rootfs/etc/fstab
 	fi
+	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $CACHEDIR/sdcard/etc/fstab
 	umountdevice "/dev/sda"
 } # create_armbian
 
