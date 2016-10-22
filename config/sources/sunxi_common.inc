@@ -29,3 +29,15 @@ write_uboot_platform()
 	dd if=/dev/zero of=$2 bs=1k count=1023 seek=1 status=noxfer > /dev/null 2>&1
 	dd if=$1/u-boot-sunxi-with-spl.bin of=$2 bs=1024 seek=8 status=noxfer > /dev/null 2>&1
 }
+
+setup_write_uboot_platform()
+{
+	for dev in $(lsblk -d -n -p -o NAME); do
+		if grep -q 'eGON.BT0' <(dd if=$dev bs=32 skip=256 count=1 status=none); then
+			# Assuming that only one device with SPL signature is present
+			echo "SPL signature found on $dev" >&2
+			DEVICE=$dev
+			break
+		fi
+	done
+}

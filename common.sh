@@ -75,14 +75,17 @@ compile_uboot()
 	source /usr/lib/u-boot/platform_install.sh
 	[[ \$DEVICE == /dev/null ]] && exit 0
 	[[ -z \$DEVICE ]] && DEVICE="/dev/mmcblk0"
+	[[ $(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
 	write_uboot_platform \$DIR \$DEVICE
 	exit 0
 	EOF
 	chmod 755 $DEST/debs/$uboot_name/DEBIAN/postinst
 
+	# declare -f on non-defined function does not do anything
 	cat <<-EOF > $DEST/debs/$uboot_name/usr/lib/u-boot/platform_install.sh
 	DIR=/usr/lib/$uboot_name
 	$(declare -f write_uboot_platform)
+	$(declare -f setup_write_uboot_platform)
 	EOF
 
 	# set up control file
