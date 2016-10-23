@@ -121,10 +121,11 @@ create_armbian()
 
 		# eMMC install
 		# old boot scripts
+		
 		sed -e 's,root='"$root_partition"',root='"$emmcuuid"',g' -i /mnt/bootfs/boot/boot.cmd
 		# new boot scripts
 		if [[ -f /mnt/bootfs/boot/armbianEnv.txt ]]; then
-			sed -i "s/rootdev=.*/rootdev=$emmcuuid" /mnt/bootfs/boot/armbianEnv.txt
+			sed -e 's/rootdev=.*/rootdev='"$emmcuuid"'/' -i  /mnt/bootfs/boot/armbianEnv.txt
 		else
 			sed -i "s/setenv rootdev.*/setenv rootdev \"$emmcuuid\"" /mnt/bootfs/boot/boot.cmd
 		fi
@@ -167,7 +168,7 @@ create_armbian()
 		fi
 		echo "$satauuid / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1" >> /mnt/rootfs/etc/fstab
 	fi
-	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $CACHEDIR/sdcard/etc/fstab
+	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> /mnt/rootfs/etc/fstab
 	umountdevice "/dev/sda"
 } # create_armbian
 
