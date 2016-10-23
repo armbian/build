@@ -152,10 +152,8 @@ create_armbian()
 		fi
 		mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr >/dev/null 2>&1 || (echo "Error"; exit 0)
 		mkdir -p /mnt/rootfs/media/mmc/boot
-		if ! grep -q "/boot" /mnt/rootfs/etc/fstab; then # in two partition setup
-			echo "$sduuid        /media/mmc   ext4    defaults        0       0" >> /mnt/rootfs/etc/fstab
-			echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/rootfs/etc/fstab
-		fi
+		echo "$sduuid        /media/mmc   ext4    defaults        0       0" >> /mnt/rootfs/etc/fstab
+		echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/rootfs/etc/fstab
 		echo "$satauuid / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1" >> /mnt/rootfs/etc/fstab
 	elif [[ -f /boot/boot.ini ]]; then
 		# old boot scripts
