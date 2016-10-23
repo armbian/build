@@ -125,9 +125,9 @@ create_armbian()
 		sed -e 's,root='"$root_partition"',root='"$emmcuuid"',g' -i /mnt/bootfs/boot/boot.cmd
 		# new boot scripts
 		if [[ -f /mnt/bootfs/boot/armbianEnv.txt ]]; then
-			sed -e 's/rootdev=.*/rootdev='"$emmcuuid"'/' -i  /mnt/bootfs/boot/armbianEnv.txt
+			sed -e 's,rootdev=.*,rootdev='"$emmcuuid"',g' -i /mnt/bootfs/boot/armbianEnv.txt			
 		else
-			sed -i "s/setenv rootdev.*/setenv rootdev \"$emmcuuid\"" /mnt/bootfs/boot/boot.cmd
+			sed -e 's,setenv rootdev.*,setenv rootdev '"$emmcuuid"',g' -i /mnt/bootfs/boot/boot.cmd			
 		fi
 		mkimage -C none -A arm -T script -d /mnt/bootfs/boot/boot.cmd /mnt/bootfs/boot/boot.scr	>/dev/null 2>&1 || (echo "Error"; exit 0)
 
@@ -146,9 +146,9 @@ create_armbian()
 		sed -e 's,root='"$root_partition"',root='"$satauuid"',g' -i /boot/boot.cmd
 		# new boot scripts
 		if [[ -f /boot/armbianEnv.txt ]]; then
-			sed -e 's/rootdev=.*/rootdev='"$satauuid"'/' -i  /boot/armbianEnv.txt			
+			sed -e 's,rootdev=.*,rootdev='"$satauuid"',g' -i  /boot/armbianEnv.txt
 		else
-			sed -i "s/setenv rootdev.*/setenv rootdev \"$satauuid\"" /boot/boot.cmd
+			sed -e 's,setenv rootdev.*,setenv rootdev '"$satauuid"',g' -i /boot/boot.cmd
 		fi
 		mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr >/dev/null 2>&1 || (echo "Error"; exit 0)
 		mkdir -p /mnt/rootfs/media/mmc/boot
@@ -156,13 +156,13 @@ create_armbian()
 		echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/rootfs/etc/fstab
 		echo "$satauuid / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1" >> /mnt/rootfs/etc/fstab
 	elif [[ -f /boot/boot.ini ]]; then
-		# old boot scripts
+		# old boot scripts		
 		sed -e 's,root='"$root_partition"',root='"$satauuid"',g' -i /boot/boot.ini
 		# new boot scripts
-		if [[ -f /mnt/bootfs/boot/armbianEnv.txt ]]; then
-			sed -i "s/rootdev=.*/rootdev=$satauuid" /mnt/bootfs/boot/armbianEnv.txt
+		if [[ -f /boot/armbianEnv.txt ]]; then
+			sed -e 's,rootdev=.*,rootdev='"$satauuid"',g' -i  /boot/armbianEnv.txt
 		else
-			sed -i "s/setenv rootdev.*/setenv rootdev \"$satauuid\"" /mnt/bootfs/boot/boot.ini
+			sed -e 's,setenv rootdev.*,setenv rootdev '"$satauuid"',g' -i /boot/boot.ini
 		fi
 		echo "$satauuid / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1" >> /mnt/rootfs/etc/fstab
 	fi
