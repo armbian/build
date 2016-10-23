@@ -145,10 +145,10 @@ create_armbian()
 		# old boot scripts
 		sed -e 's,root='"$root_partition"',root='"$satauuid"',g' -i /boot/boot.cmd
 		# new boot scripts
-		if [[ -f /mnt/bootfs/boot/armbianEnv.txt ]]; then
-			sed -i "s/rootdev=.*/rootdev=$satauuid" /mnt/bootfs/boot/armbianEnv.txt
+		if [[ -f /boot/armbianEnv.txt ]]; then
+			sed -e 's/rootdev=.*/rootdev='"$satauuid"'/' -i  /boot/armbianEnv.txt			
 		else
-			sed -i "s/setenv rootdev.*/setenv rootdev \"$satauuid\"" /mnt/bootfs/boot/boot.cmd
+			sed -i "s/setenv rootdev.*/setenv rootdev \"$satauuid\"" /boot/boot.cmd
 		fi
 		mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr >/dev/null 2>&1 || (echo "Error"; exit 0)
 		mkdir -p /mnt/rootfs/media/mmc/boot
