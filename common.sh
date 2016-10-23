@@ -77,6 +77,7 @@ compile_uboot()
 	[[ \$DEVICE == /dev/null ]] && exit 0
 	[[ -z \$DEVICE ]] && DEVICE="/dev/mmcblk0"
 	[[ \$(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
+	echo "Updating u-boot on device \$DEVICE" >&2
 	write_uboot_platform \$DIR \$DEVICE
 	exit 0
 	EOF

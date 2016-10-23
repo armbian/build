@@ -32,15 +32,23 @@ write_uboot_platform()
 
 setup_write_uboot_platform()
 {
-	# This may cause overwriting u-boot for android or other non-Armbian OS installed on eMMC
-	# so don't run this function by default
-	[[ ! -f /var/lib/armbian/allow_uboot_update ]] && return
-	for dev in $(lsblk -d -n -p -o NAME); do
-		if grep -q 'eGON.BT0' <(dd if=$dev bs=32 skip=256 count=1 status=none); then
-			# Assuming that only one device with SPL signature is present
-			echo "SPL signature found on $dev" >&2
-			DEVICE=$dev
-			break
-		fi
-	done
+	if grep -q "ubootpart" /proc/cmdline; then
+		local tmp=$(cat /proc/cmdline)
+		tmp="${tmp##*ubootpart=}"
+		tmp="${tmp%% *}"
+		[[ -n $tmp ]] && local part=$(findfs PARTUUID=$tmp 2>/dev/null)
+		[[ -n $part ]] && local dev=$(lsblk -n -o PKNAME $part 2>/dev/null)
+		[[ -n $dev ]] && DEVICE="/dev/$dev"
+	elif [[ -f /var/lib/armbian/force_search_uboot ]]; then
+		# This may cause overwriting u-boot for android or other non-Armbian OS installed on eMMC
+		# so don't run this function by default
+		for dev in $(lsblk -d -n -p -o NAME); do
+			if grep -q 'eGON.BT0' <(dd if=$dev bs=32 skip=256 count=1 status=none); then
+				# Assuming that only one device with SPL signature is present
+				echo "SPL signature found on $dev" >&2
+				DEVICE=$dev
+				break
+			fi
+		done
+	fi
 }
