@@ -164,9 +164,13 @@ create_armbian()
 		else
 			sed -e 's,setenv rootdev.*,setenv rootdev '"$satauuid"',g' -i /boot/boot.ini
 		fi
-		echo "$satauuid / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1" >> /mnt/rootfs/etc/fstab
-	fi
+		mkdir -p /mnt/rootfs/media/mmc/boot
+		echo "$sduuid        /media/mmc   ext4    defaults        0       0" >> /mnt/rootfs/etc/fstab
+		echo "/media/mmc/boot   /boot   none    bind        0       0" >> /mnt/rootfs/etc/fstab		
+		echo "$satauuid / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1" >> /mnt/rootfs/etc/fstab		
+	fi	
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> /mnt/rootfs/etc/fstab
+	cat /etc/fstab  | grep swap >> /mnt/rootfs/etc/fstab
 	umountdevice "/dev/sda"
 } # create_armbian
 
