@@ -205,9 +205,8 @@ if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 		# try to find suitable in $SRC/toolchains, exit if not found
 		find_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" "UBOOT_TOOLCHAIN"
 	fi
-	cd $SOURCES/$BOOTSOURCEDIR
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTDIR-$BRANCH" "$BOARD" "$BOOTDIR-$BRANCH"
-	compile_uboot
+
+	compile_uboot $(overlayfs_wrapper "wrap" "$SOURCES/$BOOTSOURCEDIR")
 fi
 
 # Compile kernel if packed .deb does not exist
@@ -217,17 +216,11 @@ if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 		# try to find suitable in $SRC/toolchains, exit if not found
 		find_toolchain "KERNEL" "$KERNEL_NEEDS_GCC" "KERNEL_TOOLCHAIN"
 	fi
-	cd $SOURCES/$LINUXSOURCEDIR
 
-	# this is a patch that Ubuntu Trusty compiler works
-	if [[ $(patch --dry-run -t -p1 < $SRC/lib/patch/kernel/compiler.patch | grep Reversed) != "" ]]; then
-		display_alert "Patching kernel for compiler support"
-		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
-	fi
-
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH"
-	compile_kernel
+	compile_kernel $(overlayfs_wrapper "wrap" "$SOURCES/$LINUXSOURCEDIR")
 fi
+
+overlayfs_wrapper "cleanup"
 
 # extract kernel version from .deb package
 VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')

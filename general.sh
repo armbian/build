@@ -91,6 +91,7 @@ exit_with_error()
 	display_alert "$_description" "$_highlight" "err"
 	display_alert "Process terminated" "" "info"
 	# TODO: execute run_after_build here?
+	overlayfs_wrapper "cleanup"
 	exit -1
 }
 

@@ -62,7 +62,7 @@ create_board_package()
 	# postrm script
 	cat <<-EOF > $destination/DEBIAN/postrm
 	#!/bin/sh
-	[ remove = "\$1"] || [ abort-install = "\$1" ] dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename \
+	[ remove = "\$1" ] || [ abort-install = "\$1" ] dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename \
 		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 	exit 0
 	EOF
