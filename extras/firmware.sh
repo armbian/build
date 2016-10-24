@@ -45,7 +45,7 @@ build_firmware()
 	mv armbian-firmware${FULL} armbian-firmware${FULL}_${REVISION}_${ARCH}
 	dpkg -b armbian-firmware${FULL}_${REVISION}_${ARCH} >> $DEST/debug/install.log 2>&1
 	mv armbian-firmware${FULL}_${REVISION}_${ARCH} armbian-firmware${FULL}
-	mv armbian-firmware${FULL}_${REVISION}_${ARCH}.deb $DEST/debs/ || exit_with_error "Failed moving firmware package"
+	mv armbian-firmware${FULL}_${REVISION}_${ARCH}.deb $DEST/debs/ || display_alert "Failed moving firmware package" "" "wrn"
 }
 
 FULL=""
