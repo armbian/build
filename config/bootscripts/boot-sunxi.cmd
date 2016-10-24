@@ -12,6 +12,10 @@ setenv disp_mem_reserves "off"
 setenv disp_mode "1920x1080p60"
 setenv rootfstype "ext4"
 
+# Print boot source
+itest.b *0x28 == 0x00 && echo "Booting from SD"
+itest.b *0x28 == 0x02 && echo "Booting from eMMC or secondary SD"
+
 if load mmc 0 ${load_addr} /boot/armbianEnv.txt || load mmc 0 ${load_addr} armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
