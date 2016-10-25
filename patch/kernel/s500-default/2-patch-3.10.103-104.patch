@@ -1,0 +1,478 @@
+diff --git a/Makefile b/Makefile
+index d3cb458b295a..f6a2cbd438a1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 3
+ PATCHLEVEL = 10
+-SUBLEVEL = 103
++SUBLEVEL = 104
+ EXTRAVERSION =
+ NAME = TOSSUG Baby Fish
+ 
+diff --git a/arch/mips/kvm/kvm_tlb.c b/arch/mips/kvm/kvm_tlb.c
+index 4bee4397dca8..8a47bd96cee3 100644
+--- a/arch/mips/kvm/kvm_tlb.c
++++ b/arch/mips/kvm/kvm_tlb.c
+@@ -182,7 +182,7 @@ static int kvm_mips_map_page(struct kvm *kvm, gfn_t gfn)
+         srcu_idx = srcu_read_lock(&kvm->srcu);
+ 	pfn = kvm_mips_gfn_to_pfn(kvm, gfn);
+ 
+-	if (kvm_mips_is_error_pfn(pfn)) {
++	if (is_error_noslot_pfn(pfn)) {
+ 		kvm_err("Couldn't get pfn for gfn %#" PRIx64 "!\n", gfn);
+ 		err = -EFAULT;
+ 		goto out;
+diff --git a/arch/powerpc/kernel/process.c b/arch/powerpc/kernel/process.c
+index a5e339806589..d55357ee9028 100644
+--- a/arch/powerpc/kernel/process.c
++++ b/arch/powerpc/kernel/process.c
+@@ -1088,16 +1088,6 @@ void start_thread(struct pt_regs *regs, unsigned long start, unsigned long sp)
+ 		current->thread.regs = regs - 1;
+ 	}
+ 
+-#ifdef CONFIG_PPC_TRANSACTIONAL_MEM
+-	/*
+-	 * Clear any transactional state, we're exec()ing. The cause is
+-	 * not important as there will never be a recheckpoint so it's not
+-	 * user visible.
+-	 */
+-	if (MSR_TM_SUSPENDED(mfmsr()))
+-		tm_reclaim_current(0);
+-#endif
+-
+ 	memset(regs->gpr, 0, sizeof(regs->gpr));
+ 	regs->ctr = 0;
+ 	regs->link = 0;
+diff --git a/drivers/acpi/sysfs.c b/drivers/acpi/sysfs.c
+index fcae5fa2e1b3..95b6371e1fe7 100644
+--- a/drivers/acpi/sysfs.c
++++ b/drivers/acpi/sysfs.c
+@@ -492,23 +492,22 @@ static void acpi_global_event_handler(u32 event_type, acpi_handle device,
+ static int get_status(u32 index, acpi_event_status *status,
+ 		      acpi_handle *handle)
+ {
+-	int result = 0;
++	int result;
+ 
+ 	if (index >= num_gpes + ACPI_NUM_FIXED_EVENTS)
+-		goto end;
++		return -EINVAL;
+ 
+ 	if (index < num_gpes) {
+ 		result = acpi_get_gpe_device(index, handle);
+ 		if (result) {
+ 			ACPI_EXCEPTION((AE_INFO, AE_NOT_FOUND,
+ 					"Invalid GPE 0x%x", index));
+-			goto end;
++			return result;
+ 		}
+ 		result = acpi_get_gpe_status(*handle, index, status);
+ 	} else if (index < (num_gpes + ACPI_NUM_FIXED_EVENTS))
+ 		result = acpi_get_event_status(index - num_gpes, status);
+ 
+-end:
+ 	return result;
+ }
+ 
+diff --git a/drivers/crypto/nx/nx.c b/drivers/crypto/nx/nx.c
+index bbdab6e5ccf0..fe689643a5ad 100644
+--- a/drivers/crypto/nx/nx.c
++++ b/drivers/crypto/nx/nx.c
+@@ -309,7 +309,7 @@ static void nx_of_update_msc(struct device   *dev,
+ 		     ((bytes_so_far + sizeof(struct msc_triplet)) <= lenp) &&
+ 		     i < msc->triplets;
+ 		     i++) {
+-			if (msc->fc > NX_MAX_FC || msc->mode > NX_MAX_MODE) {
++			if (msc->fc >= NX_MAX_FC || msc->mode >= NX_MAX_MODE) {
+ 				dev_err(dev, "unknown function code/mode "
+ 					"combo: %d/%d (ignored)\n", msc->fc,
+ 					msc->mode);
+diff --git a/drivers/net/xen-netback/common.h b/drivers/net/xen-netback/common.h
+index f2faa779e3fe..dd6b7c362813 100644
+--- a/drivers/net/xen-netback/common.h
++++ b/drivers/net/xen-netback/common.h
+@@ -66,6 +66,8 @@ struct xenvif {
+ 	/* The shared rings and indexes. */
+ 	struct xen_netif_tx_back_ring tx;
+ 	struct xen_netif_rx_back_ring rx;
++	atomic_t ring_refcnt;
++	wait_queue_head_t waiting_to_unmap;
+ 
+ 	/* Frontend feature information. */
+ 	u8 can_sg:1;
+@@ -120,6 +122,8 @@ void xenvif_free(struct xenvif *vif);
+ 
+ void xenvif_get(struct xenvif *vif);
+ void xenvif_put(struct xenvif *vif);
++void xenvif_get_rings(struct xenvif *vif);
++void xenvif_put_rings(struct xenvif *vif);
+ 
+ int xenvif_xenbus_init(void);
+ 
+diff --git a/drivers/net/xen-netback/interface.c b/drivers/net/xen-netback/interface.c
+index 540a796593a3..7e3817a55e77 100644
+--- a/drivers/net/xen-netback/interface.c
++++ b/drivers/net/xen-netback/interface.c
+@@ -44,12 +44,23 @@ void xenvif_get(struct xenvif *vif)
+ 	atomic_inc(&vif->refcnt);
+ }
+ 
++void xenvif_get_rings(struct xenvif *vif)
++{
++	atomic_inc(&vif->ring_refcnt);
++}
++
+ void xenvif_put(struct xenvif *vif)
+ {
+ 	if (atomic_dec_and_test(&vif->refcnt))
+ 		wake_up(&vif->waiting_to_free);
+ }
+ 
++void xenvif_put_rings(struct xenvif *vif)
++{
++	if (atomic_dec_and_test(&vif->ring_refcnt))
++		wake_up(&vif->waiting_to_unmap);
++}
++
+ int xenvif_schedulable(struct xenvif *vif)
+ {
+ 	return netif_running(vif->dev) && netif_carrier_ok(vif->dev);
+@@ -91,6 +102,7 @@ static int xenvif_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	/* Reserve ring slots for the worst-case number of fragments. */
+ 	vif->rx_req_cons_peek += xen_netbk_count_skb_slots(vif, skb);
+ 	xenvif_get(vif);
++	xenvif_get_rings(vif);
+ 
+ 	if (vif->can_queue && xen_netbk_must_stop_queue(vif))
+ 		netif_stop_queue(dev);
+@@ -271,6 +283,7 @@ struct xenvif *xenvif_alloc(struct device *parent, domid_t domid,
+ 	vif->dev = dev;
+ 	INIT_LIST_HEAD(&vif->schedule_list);
+ 	INIT_LIST_HEAD(&vif->notify_list);
++	init_waitqueue_head(&vif->waiting_to_unmap);
+ 
+ 	vif->credit_bytes = vif->remaining_credit = ~0UL;
+ 	vif->credit_usec  = 0UL;
+@@ -365,12 +378,12 @@ void xenvif_disconnect(struct xenvif *vif)
+ 	if (netif_carrier_ok(vif->dev))
+ 		xenvif_carrier_off(vif);
+ 
++	disable_irq(vif->irq);
++	xen_netbk_unmap_frontend_rings(vif);
+ 	if (vif->irq) {
+ 		unbind_from_irqhandler(vif->irq, vif);
+ 		vif->irq = 0;
+ 	}
+-
+-	xen_netbk_unmap_frontend_rings(vif);
+ }
+ 
+ void xenvif_free(struct xenvif *vif)
+diff --git a/drivers/net/xen-netback/netback.c b/drivers/net/xen-netback/netback.c
+index 70b830f6c4bf..1595f818b8c0 100644
+--- a/drivers/net/xen-netback/netback.c
++++ b/drivers/net/xen-netback/netback.c
+@@ -814,6 +814,7 @@ static void xen_netbk_rx_action(struct xen_netbk *netbk)
+ 			xenvif_put(vif);
+ 		npo.meta_cons += sco->meta_slots_used;
+ 		dev_kfree_skb(skb);
++		xenvif_put_rings(vif);
+ 	}
+ 
+ 	list_for_each_entry_safe(vif, tmp, &notify, notify_list) {
+@@ -1864,6 +1865,9 @@ static int xen_netbk_kthread(void *data)
+ 
+ void xen_netbk_unmap_frontend_rings(struct xenvif *vif)
+ {
++	atomic_dec(&vif->ring_refcnt);
++	wait_event(vif->waiting_to_unmap, atomic_read(&vif->ring_refcnt) == 0);
++
+ 	if (vif->tx.sring)
+ 		xenbus_unmap_ring_vfree(xenvif_to_xenbus_device(vif),
+ 					vif->tx.sring);
+@@ -1882,6 +1886,8 @@ int xen_netbk_map_frontend_rings(struct xenvif *vif,
+ 
+ 	int err = -ENOMEM;
+ 
++	atomic_set(&vif->ring_refcnt, 1);
++
+ 	err = xenbus_map_ring_valloc(xenvif_to_xenbus_device(vif),
+ 				     tx_ring_ref, &addr);
+ 	if (err)
+diff --git a/drivers/pci/pci-sysfs.c b/drivers/pci/pci-sysfs.c
+index 689f3c87ee5c..aee15ce8cfce 100644
+--- a/drivers/pci/pci-sysfs.c
++++ b/drivers/pci/pci-sysfs.c
+@@ -1308,10 +1308,10 @@ int __must_check pci_create_sysfs_dev_files (struct pci_dev *pdev)
+ 	if (!sysfs_initialized)
+ 		return -EACCES;
+ 
+-	if (pdev->cfg_size < PCI_CFG_SPACE_EXP_SIZE)
+-		retval = sysfs_create_bin_file(&pdev->dev.kobj, &pci_config_attr);
+-	else
++	if (pdev->cfg_size > PCI_CFG_SPACE_SIZE)
+ 		retval = sysfs_create_bin_file(&pdev->dev.kobj, &pcie_config_attr);
++	else
++		retval = sysfs_create_bin_file(&pdev->dev.kobj, &pci_config_attr);
+ 	if (retval)
+ 		goto err;
+ 
+@@ -1368,10 +1368,10 @@ err_rom_file:
+ err_resource_files:
+ 	pci_remove_resource_files(pdev);
+ err_config_file:
+-	if (pdev->cfg_size < PCI_CFG_SPACE_EXP_SIZE)
+-		sysfs_remove_bin_file(&pdev->dev.kobj, &pci_config_attr);
+-	else
++	if (pdev->cfg_size > PCI_CFG_SPACE_SIZE)
+ 		sysfs_remove_bin_file(&pdev->dev.kobj, &pcie_config_attr);
++	else
++		sysfs_remove_bin_file(&pdev->dev.kobj, &pci_config_attr);
+ err:
+ 	return retval;
+ }
+@@ -1405,10 +1405,10 @@ void pci_remove_sysfs_dev_files(struct pci_dev *pdev)
+ 
+ 	pci_remove_capabilities_sysfs(pdev);
+ 
+-	if (pdev->cfg_size < PCI_CFG_SPACE_EXP_SIZE)
+-		sysfs_remove_bin_file(&pdev->dev.kobj, &pci_config_attr);
+-	else
++	if (pdev->cfg_size > PCI_CFG_SPACE_SIZE)
+ 		sysfs_remove_bin_file(&pdev->dev.kobj, &pcie_config_attr);
++	else
++		sysfs_remove_bin_file(&pdev->dev.kobj, &pci_config_attr);
+ 
+ 	pci_remove_resource_files(pdev);
+ 
+diff --git a/drivers/pci/quirks.c b/drivers/pci/quirks.c
+index 390e4094e4d5..a6637158d078 100644
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -292,6 +292,18 @@ static void quirk_citrine(struct pci_dev *dev)
+ }
+ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_IBM,	PCI_DEVICE_ID_IBM_CITRINE,	quirk_citrine);
+ 
++/*
++ * This chip can cause bus lockups if config addresses above 0x600
++ * are read or written.
++ */
++static void quirk_nfp6000(struct pci_dev *dev)
++{
++	dev->cfg_size = 0x600;
++}
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_NETRONOME,	PCI_DEVICE_ID_NETRONOME_NFP4000,	quirk_nfp6000);
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_NETRONOME,	PCI_DEVICE_ID_NETRONOME_NFP6000,	quirk_nfp6000);
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_NETRONOME,	PCI_DEVICE_ID_NETRONOME_NFP6000_VF,	quirk_nfp6000);
++
+ /*  On IBM Crocodile ipr SAS adapters, expand BAR to system page size */
+ static void quirk_extend_bar_to_page(struct pci_dev *dev)
+ {
+diff --git a/drivers/scsi/aacraid/commctrl.c b/drivers/scsi/aacraid/commctrl.c
+index ee6caddd978c..d6fcadd7de2c 100644
+--- a/drivers/scsi/aacraid/commctrl.c
++++ b/drivers/scsi/aacraid/commctrl.c
+@@ -63,7 +63,7 @@ static int ioctl_send_fib(struct aac_dev * dev, void __user *arg)
+ 	struct fib *fibptr;
+ 	struct hw_fib * hw_fib = (struct hw_fib *)0;
+ 	dma_addr_t hw_fib_pa = (dma_addr_t)0LL;
+-	unsigned size;
++	unsigned int size, osize;
+ 	int retval;
+ 
+ 	if (dev->in_reset) {
+@@ -87,7 +87,8 @@ static int ioctl_send_fib(struct aac_dev * dev, void __user *arg)
+ 	 *	will not overrun the buffer when we copy the memory. Return
+ 	 *	an error if we would.
+ 	 */
+-	size = le16_to_cpu(kfib->header.Size) + sizeof(struct aac_fibhdr);
++	osize = size = le16_to_cpu(kfib->header.Size) +
++		sizeof(struct aac_fibhdr);
+ 	if (size < le16_to_cpu(kfib->header.SenderSize))
+ 		size = le16_to_cpu(kfib->header.SenderSize);
+ 	if (size > dev->max_fib_size) {
+@@ -118,6 +119,14 @@ static int ioctl_send_fib(struct aac_dev * dev, void __user *arg)
+ 		goto cleanup;
+ 	}
+ 
++	/* Sanity check the second copy */
++	if ((osize != le16_to_cpu(kfib->header.Size) +
++		sizeof(struct aac_fibhdr))
++		|| (size < le16_to_cpu(kfib->header.SenderSize))) {
++		retval = -EINVAL;
++		goto cleanup;
++	}
++
+ 	if (kfib->header.Command == cpu_to_le16(TakeABreakPt)) {
+ 		aac_adapter_interrupt(dev);
+ 		/*
+diff --git a/drivers/scsi/megaraid/megaraid_sas_base.c b/drivers/scsi/megaraid/megaraid_sas_base.c
+index e6dfa8108301..6ced6a398d60 100644
+--- a/drivers/scsi/megaraid/megaraid_sas_base.c
++++ b/drivers/scsi/megaraid/megaraid_sas_base.c
+@@ -3470,7 +3470,7 @@ static int megasas_init_fw(struct megasas_instance *instance)
+ 	/* Find first memory bar */
+ 	bar_list = pci_select_bars(instance->pdev, IORESOURCE_MEM);
+ 	instance->bar = find_first_bit(&bar_list, sizeof(unsigned long));
+-	if (pci_request_selected_regions(instance->pdev, instance->bar,
++	if (pci_request_selected_regions(instance->pdev, 1<<instance->bar,
+ 					 "megasas: LSI")) {
+ 		printk(KERN_DEBUG "megasas: IO memory region busy!\n");
+ 		return -EBUSY;
+@@ -3640,7 +3640,7 @@ fail_ready_state:
+ 	iounmap(instance->reg_set);
+ 
+       fail_ioremap:
+-	pci_release_selected_regions(instance->pdev, instance->bar);
++	pci_release_selected_regions(instance->pdev, 1<<instance->bar);
+ 
+ 	return -EINVAL;
+ }
+@@ -3661,7 +3661,7 @@ static void megasas_release_mfi(struct megasas_instance *instance)
+ 
+ 	iounmap(instance->reg_set);
+ 
+-	pci_release_selected_regions(instance->pdev, instance->bar);
++	pci_release_selected_regions(instance->pdev, 1<<instance->bar);
+ }
+ 
+ /**
+diff --git a/drivers/scsi/megaraid/megaraid_sas_fusion.c b/drivers/scsi/megaraid/megaraid_sas_fusion.c
+index a7d56687bfca..d478088ce5cf 100644
+--- a/drivers/scsi/megaraid/megaraid_sas_fusion.c
++++ b/drivers/scsi/megaraid/megaraid_sas_fusion.c
+@@ -2020,7 +2020,7 @@ megasas_release_fusion(struct megasas_instance *instance)
+ 
+ 	iounmap(instance->reg_set);
+ 
+-	pci_release_selected_regions(instance->pdev, instance->bar);
++	pci_release_selected_regions(instance->pdev, 1<<instance->bar);
+ }
+ 
+ /**
+diff --git a/drivers/staging/comedi/drivers/daqboard2000.c b/drivers/staging/comedi/drivers/daqboard2000.c
+index b87f95c3e17d..1465a26b15cf 100644
+--- a/drivers/staging/comedi/drivers/daqboard2000.c
++++ b/drivers/staging/comedi/drivers/daqboard2000.c
+@@ -678,7 +678,7 @@ static const void *daqboard2000_find_boardinfo(struct comedi_device *dev,
+ 	const struct daq200_boardtype *board;
+ 	int i;
+ 
+-	if (pcidev->subsystem_device != PCI_VENDOR_ID_IOTECH)
++	if (pcidev->subsystem_vendor != PCI_VENDOR_ID_IOTECH)
+ 		return NULL;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(boardtypes); i++) {
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index 53b0d70120a1..55590f4fe110 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -1715,6 +1715,7 @@ static inline struct page *follow_page(struct vm_area_struct *vma,
+ #define FOLL_HWPOISON	0x100	/* check page is hwpoisoned */
+ #define FOLL_NUMA	0x200	/* force NUMA hinting page fault */
+ #define FOLL_MIGRATION	0x400	/* wait for page to replace migration entry */
++#define FOLL_COW	0x4000	/* internal GUP flag */
+ 
+ typedef int (*pte_fn_t)(pte_t *pte, pgtable_t token, unsigned long addr,
+ 			void *data);
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 6c7bb35ad6d1..302182a2f99d 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -2472,6 +2472,13 @@
+ #define PCI_DEVICE_ID_KORENIX_JETCARDF2	0x1700
+ #define PCI_DEVICE_ID_KORENIX_JETCARDF3	0x17ff
+ 
++#define PCI_VENDOR_ID_NETRONOME		0x19ee
++#define PCI_DEVICE_ID_NETRONOME_NFP3200	0x3200
++#define PCI_DEVICE_ID_NETRONOME_NFP3240	0x3240
++#define PCI_DEVICE_ID_NETRONOME_NFP4000	0x4000
++#define PCI_DEVICE_ID_NETRONOME_NFP6000	0x6000
++#define PCI_DEVICE_ID_NETRONOME_NFP6000_VF	0x6003
++
+ #define PCI_VENDOR_ID_QMI		0x1a32
+ 
+ #define PCI_VENDOR_ID_AZWAVE		0x1a3b
+diff --git a/mm/memory.c b/mm/memory.c
+index 30bf9cce8c2b..2ca2ee113ea2 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -1462,6 +1462,16 @@ int zap_vma_ptes(struct vm_area_struct *vma, unsigned long address,
+ }
+ EXPORT_SYMBOL_GPL(zap_vma_ptes);
+ 
++/*
++ * FOLL_FORCE can write to even unwritable pte's, but only
++ * after we've gone through a COW cycle and they are dirty.
++ */
++static inline bool can_follow_write_pte(pte_t pte, unsigned int flags)
++{
++	return pte_write(pte) ||
++		((flags & FOLL_FORCE) && (flags & FOLL_COW) && pte_dirty(pte));
++}
++
+ /**
+  * follow_page_mask - look up a page descriptor from a user-virtual address
+  * @vma: vm_area_struct mapping @address
+@@ -1569,7 +1579,7 @@ split_fallthrough:
+ 	}
+ 	if ((flags & FOLL_NUMA) && pte_numa(pte))
+ 		goto no_page;
+-	if ((flags & FOLL_WRITE) && !pte_write(pte))
++	if ((flags & FOLL_WRITE) && !can_follow_write_pte(pte, flags))
+ 		goto unlock;
+ 
+ 	page = vm_normal_page(vma, address, pte);
+@@ -1877,7 +1887,7 @@ long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
+ 				 */
+ 				if ((ret & VM_FAULT_WRITE) &&
+ 				    !(vma->vm_flags & VM_WRITE))
+-					foll_flags &= ~FOLL_WRITE;
++					foll_flags |= FOLL_COW;
+ 
+ 				cond_resched();
+ 			}
+@@ -3834,8 +3844,18 @@ retry:
+ 	if (unlikely(pmd_none(*pmd)) &&
+ 	    unlikely(__pte_alloc(mm, vma, pmd, address)))
+ 		return VM_FAULT_OOM;
+-	/* if an huge pmd materialized from under us just retry later */
+-	if (unlikely(pmd_trans_huge(*pmd)))
++	/*
++	 * If a huge pmd materialized under us just retry later.  Use
++	 * pmd_trans_unstable() instead of pmd_trans_huge() to ensure the pmd
++	 * didn't become pmd_trans_huge under us and then back to pmd_none, as
++	 * a result of MADV_DONTNEED running immediately after a huge pmd fault
++	 * in a different thread of this mm, in turn leading to a misleading
++	 * pmd_trans_huge() retval.  All we have to ensure is that it is a
++	 * regular pmd that we can walk with pte_offset_map() and we can do that
++	 * through an atomic read in C, which is what pmd_trans_unstable()
++	 * provides.
++	 */
++	if (unlikely(pmd_trans_unstable(pmd)))
+ 		return 0;
+ 	/*
+ 	 * A regular pmd is established and it can't morph into a huge pmd
+diff --git a/security/yama/yama_lsm.c b/security/yama/yama_lsm.c
+index 13c88fbcf037..0038834b558e 100644
+--- a/security/yama/yama_lsm.c
++++ b/security/yama/yama_lsm.c
+@@ -292,7 +292,7 @@ int yama_ptrace_access_check(struct task_struct *child,
+ 		return rc;
+ 
+ 	/* require ptrace target be a child of ptracer on attach */
+-	if (mode == PTRACE_MODE_ATTACH) {
++	if (mode & PTRACE_MODE_ATTACH) {
+ 		switch (ptrace_scope) {
+ 		case YAMA_SCOPE_DISABLED:
+ 			/* No additional restrictions. */
+@@ -318,7 +318,7 @@ int yama_ptrace_access_check(struct task_struct *child,
+ 		}
+ 	}
+ 
+-	if (rc) {
++	if (rc && (mode & PTRACE_MODE_NOAUDIT) == 0) {
+ 		printk_ratelimited(KERN_NOTICE
+ 			"ptrace of pid %d was attempted by: %s (pid %d)\n",
+ 			child->pid, current->comm, current->pid);

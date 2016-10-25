@@ -41,6 +41,13 @@ set_io_scheduler() {
 } # set_io_scheduler
 
 prepare_board() {
+	# In case Wi-Fi devices are present and network-manager is installed prepare a simple
+	# mechanism to disable power management (needs a 'chmod 755' to be enabled):
+	ListOfWiFis=$(/sbin/iwconfig 2>&1 | egrep -v "lo|tunl|eth|bond" | grep -v "^ " | awk -F" " '{print $1}')
+	[[ -n $ListOfWiFis && -d /etc/NetworkManager/dispatcher.d && ! -f /etc/NetworkManager/dispatcher.d/99disable-power-management ]] && \
+		echo -e '#!/bin/bash\ncase "$2" in\n\tup) /sbin/iwconfig $1 power off || true ;;\n\tdown) /sbin/iwconfig $1 power on || true ;;\nesac' \
+		>/etc/NetworkManager/dispatcher.d/99disable-power-management && chmod 644 /etc/NetworkManager/dispatcher.d/99disable-power-management
+
 	# IRQ distribution based on $HARDWARE and/or $BOARD, probably some sort of user feedback (leds)
 	case ${HARDWARE} in
 		Freescale) # i.MX6 boards, send Ethernet to cpu1, MMC to cpu2/cpu3 (when available)
@@ -126,9 +133,11 @@ prepare_board() {
 					# Send 3rd USB port's IRQs to cpu3
 					echo 8 >/proc/irq/$(awk -F":" "/${USB3}/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
 					;;
-				"Orange Pi Lite")
-					# Send WiFi IRQs to cpu3
-					echo 8 >/proc/irq/$(awk -F":" "/${WiFi}/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+				"Orange Pi Lite"|"NanoPi Air"|"Lime A33")
+					# Send SDIO/mmc IRQs to cpu3
+					for i in $(awk -F':' '/sunxi-mmc/{print $1}' /proc/interrupts); do
+						echo 8 >/proc/irq/$i/smp_affinity
+					done
 					;;
 				"Beelink X2")
 					# Wifi module reload workaround / fix
@@ -167,7 +176,7 @@ log_hardware_info() {
 	echo -e "\n### dmesg:\n" >>${Log}
 	cat "${TMPFILE}" >>${Log}
 	echo -e "\n### lsusb:" >>${Log}
-	[ -f /boot/.verbose ] && USBVERBOSE="-v" || echo "" >>${Log}
+	[ -f /boot/.force-verbose ] && USBVERBOSE="-v" || echo "" >>${Log}
 	lsusb ${USBVERBOSE} 2>/dev/null >>${Log}
 	echo -e "\n### lscpu:\n" >>${Log}
 	lscpu >>${Log}
@@ -255,8 +264,8 @@ case $1 in
 		log_hardware_info
 
 		# crash detection, enable verbose logging and disable it at clean shutdown
-		echo "$(date "+%s") $HARDWARE $ARCH $KERNELID $MACHINE $BOARD_NAME $VERSION" >/boot/.verbose
-		sync
+		[[ -f /boot/armbianEnv.txt ]] && sed -i "s/^verbosity=.*/verbosity=7/" /boot/armbianEnv.txt && sync &
+		touch /boot/.verbose
 		;;
 	query)
 		# armbianmonitor mode -- only interested in hardware info
@@ -265,9 +274,9 @@ case $1 in
 		export HARDWARE ARCH KERNELID MACHINE BOARD_NAME VERSION
 		;;
 	*stop*)
-		# remove /boot/.verbose only if /boot/.force-verbose doesn't exist.
-		# If our users demand verbose messages they get them
-		if [ -f /boot/.verbose -a ! -f /boot/.force-verbose ]; then
+		# set verbosity=1 only if set to 7 and /boot/.force-verbose doesn't exist.
+		if [ ! -f /boot/.force-verbose ]; then
+			[[ -f /boot/armbianEnv.txt ]] && sed -i "s/^verbosity=.*/verbosity=1/" /boot/armbianEnv.txt && sync
 			rm /boot/.verbose
 		fi
 		case ${LINUXFAMILY} in
@@ -280,10 +289,12 @@ case $1 in
 		# symptoms is that board/PMIC don't shut down correctly and still power some
 		# peripherals or onboard leds. If you experience such problems, check the 
 		# modules you loaded and try a forced rmmod prior to issueing a shutdown. In 
-		# case this helps the  line below is a good place to solve the problem from 
+		# case this helps the lines below are a good place to solve the problem from 
 		# now on (as an example unloading the mass storage gadget module causing this
 		# problem at least on sun7i):
 		#
 		# rmmod -f g_mass_storage
+		# for module in $(cut -f1 -d' ' </proc/modules) ; do rmmod -f ${module} ; done
 		;;
 esac
+

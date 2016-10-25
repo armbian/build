@@ -63,7 +63,7 @@ install_desktop ()
 	# Compile Turbo Frame buffer for sunxi
 	if [[ $LINUXFAMILY == sun* && $BRANCH == default ]]; then
 
-		if [[ $RELEASE == jessie ]]; then
+		if [[ $RELEASE == jessie || $RELEASE == xenial ]]; then
 			# Disable compositing by default
 			sed 's/name="use_compositing" type="bool" value="true"/name="use_compositing" type="bool" value="false"/' -i $CACHEDIR/sdcard/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
 			sed 's/name="use_compositing" type="bool" value="true"/name="use_compositing" type="bool" value="false"/' -i $CACHEDIR/sdcard/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
@@ -83,8 +83,11 @@ install_desktop ()
 		EOF
 
 		# enable memory reservations
-		sed "s/sunxi_ve_mem_reserve=0 sunxi_g2d_mem_reserve=0 sunxi_fb_mem_reserve=16 //g" -i $CACHEDIR/sdcard/boot/boot.cmd
-		mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr >> /dev/null
+		if [[ -f $CACHEDIR/sdcard/boot/armbianEnv.txt ]]; then
+			echo "disp_mem_reserves=on" >> $CACHEDIR/sdcard/boot/armbianEnv.txt
+		else
+			sed "s/sunxi_ve_mem_reserve=0 sunxi_g2d_mem_reserve=0 sunxi_fb_mem_reserve=16 //g" -i $CACHEDIR/sdcard/boot/boot.cmd
+		fi
 	fi
 
 	umount $CACHEDIR/sdcard/tmp/bin && rm -rf $CACHEDIR/sdcard/tmp/bin

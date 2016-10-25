@@ -66,7 +66,24 @@ install_common()
 	# display welcome message at first root login
 	touch $CACHEDIR/sdcard/root/.not_logged_in_yet
 
-	[[ $(type -t install_boot_script) == function ]] && install_boot_script
+	# NOTE: this needs to be executed before family_tweaks
+	local bootscript_src=${BOOTSCRIPT%%:*}
+	local bootscript_dst=${BOOTSCRIPT##*:}
+	cp $SRC/lib/config/bootscripts/$bootscript_src $CACHEDIR/sdcard/boot/$bootscript_dst
+
+	[[ -n $BOOTENV_FILE && -f $SRC/lib/config/bootenv/$BOOTENV_FILE ]] && \
+		cp $SRC/lib/config/bootenv/$BOOTENV_FILE $CACHEDIR/sdcard/boot/armbianEnv.txt
+
+	# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
+	# instead of copying sunxi-specific template
+	if [[ $ROOTFS_TYPE == nfs ]]; then
+		display_alert "Copying NFS boot script template"
+		if [[ -f $SRC/userpatches/nfs-boot.cmd ]]; then
+			cp $SRC/userpatches/nfs-boot.cmd $CACHEDIR/sdcard/boot/boot.cmd
+		else
+			cp $SRC/lib/scripts/nfs-boot.cmd.template $CACHEDIR/sdcard/boot/boot.cmd
+		fi
+	fi
 
 	# initial date for fake-hwclock
 	date -u '+%Y-%m-%d %H:%M:%S' > $CACHEDIR/sdcard/etc/fake-hwclock.data
@@ -100,7 +117,7 @@ install_common()
 
 	display_alert "Installing headers" "$HEADERS_TMP" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${HEADERS_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
-	
+
 	# install firmware
 	#if [[ -f $CACHEDIR/sdcard/tmp/debs/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
 	#	display_alert "Installing firmware" "$FW_TMP" "info"
@@ -135,6 +152,9 @@ install_common()
 
 	# enable verbose kernel messages on first boot
 	touch $CACHEDIR/sdcard/boot/.verbose
+
+	# copy "first run automated config, optional user configured"
+ 	cp $SRC/lib/config/armbian_first_run.txt $CACHEDIR/sdcard/boot/armbian_first_run.txt
 }
 
 install_distribution_specific()
@@ -244,18 +264,22 @@ install_distribution_specific()
 		mkdir -p $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/
 		printf "[Service]\nTimeoutStopSec=10" > $CACHEDIR/sdcard/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
 
+		# Fix for haveged service
+		mkdir -p -m755 $CACHEDIR/sdcard/etc/systemd/system/haveged.service.d
+		cat <<-EOF > $CACHEDIR/sdcard/etc/systemd/system/haveged.service.d/10-no-new-privileges.conf
+		[Service]
+		NoNewPrivileges=false
+		EOF
+
 		# handle PMU power button
 		mkdir -p $CACHEDIR/sdcard/etc/udev/rules.d/
 		cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/sdcard/etc/udev/rules.d/
 
-		# disable ureadahead
-		# needs kernel tracing options that AFAIK are present only in mainline
+		# disable not working on unneeded services
+		# ureadahead needs kernel tracing options that AFAIK are present only in mainline
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask ureadahead.service >/dev/null 2>&1"
 		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
-		;;
-
-	*)
-		exit_with_error "Unknown OS release selected"
+		chroot $CACHEDIR/sdcard /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
 		;;
 	esac
 }
