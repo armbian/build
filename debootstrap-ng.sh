@@ -292,8 +292,6 @@ prepare_partitions()
 	else
 		mkopts[ext4]='-q -m 2'
 	fi
-	# LABEL= tag ext4 file system as 'rootfs' assuming bootfs would be 'fat' for dual partition
-	mkopts[ext4]=${mkopts[ext4]}' -L rootfs'
 
 	mkopts[fat]='-n BOOT'
 	# mkopts[f2fs] is empty
@@ -428,8 +426,6 @@ prepare_partitions()
 	[[ -f $CACHEDIR/sdcard/boot/boot.cmd ]] && \
 		mkimage -C none -A arm -T script -d $CACHEDIR/sdcard/boot/boot.cmd $CACHEDIR/sdcard/boot/boot.scr > /dev/null 2>&1
 
-	[[ $(type -t partitions_tweaks) == function ]] && partitions_tweaks
-	
 } #############################################################################
 
 # create_image
