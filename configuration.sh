@@ -97,9 +97,14 @@ if [[ $RELEASE == trusty || $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; e
 # temporary hacks/overrides
 case $LINUXFAMILY in
 	sun*i)
-	# 2016.07 compilation fails due to GCC bug
+	# 2016.07+ compilation fails due to GCC bug
 	# works on Linaro 5.3.1, fails on Ubuntu 5.3.1
 	UBOOT_NEEDS_GCC='< 5.3'
+	;;
+
+	# also affects XU4 next branch
+	odroidxu4)
+	[[ $BRANCH == next ]] && UBOOT_NEEDS_GCC='< 5.3'
 	;;
 esac
 
