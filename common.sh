@@ -450,18 +450,19 @@ overlayfs_wrapper()
 		local workdir=$(mktemp -d)
 		local mergeddir=$(mktemp -d)
 		mount -t overlay overlay -o lowerdir="$srcdir",upperdir="$tempdir",workdir="$workdir" "$mergeddir"
-		CLEANUP_DIRS="$CLEANUP_DIRS $tempdir"
-		UMOUNT_DIRS="$UMOUNT_DIRS $mergeddir"
+		# this is executed in a subshell, so use temp files to pass extra data outside
+		echo "$tempdir" >> /tmp/.overlayfs_wrapper_cleanup
+		echo "$mergeddir" >> /tmp/.overlayfs_wrapper_umount
 		echo "$mergeddir"
 		return
 	fi
 	if [[ $operation == cleanup ]]; then
-		for dir in $CLEANUP_DIRS; do
-			[[ $dir == /tmp/* ]] && rm -rf "$dir"
-		done
-		for dir in $UMOUNT_DIRS; do
+		for dir in $(</tmp/.overlayfs_wrapper_umount); do
 			[[ $dir == /tmp/* ]] && umount "$dir"
 		done
-		unset CLEANUP_DIRS UMOUNT_DIRS
+		for dir in $(</tmp/.overlayfs_wrapper_cleanup); do
+			[[ $dir == /tmp/* ]] && rm -rf "$dir"
+		done
+		rm -f /tmp/.overlayfs_wrapper_umount /tmp/.overlayfs_wrapper_cleanup
 	fi
 }
