@@ -525,8 +525,13 @@ prepare_host()
 	fi
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
-	test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-	test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+	if [[ -d /proc/sys/fs/binfmt_misc ]]; then
+		test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
+		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+	else
+		display_alert "Host system kernel does not support binfmt_misc, please enable it (modprobe binfmt_misc)" "" "err"
+		exit 1
+	fi
 
 	# create directory structure
 	mkdir -p $SOURCES $DEST/debs/extra $DEST/debug $CACHEDIR/rootfs $SRC/userpatches/overlay $SRC/toolchains $SRC/userpatches/patch
