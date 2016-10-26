@@ -64,6 +64,11 @@ else
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 fi
 
+if [[ -f $SRC/userpatches/sources/$LINUXFAMILY.conf ]]; then
+	display_alert "Adding user provided $LINUXFAMILY overrides"
+	source $SRC/userpatches/sources/$LINUXFAMILY.conf
+fi
+
 case $ARCH in
 	arm64)
 	[[ -z $KERNEL_COMPILER ]] && KERNEL_COMPILER="aarch64-linux-gnu-"
