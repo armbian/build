@@ -457,12 +457,16 @@ overlayfs_wrapper()
 		return
 	fi
 	if [[ $operation == cleanup ]]; then
-		for dir in $(</tmp/.overlayfs_wrapper_umount); do
-			[[ $dir == /tmp/* ]] && umount "$dir"
-		done
-		for dir in $(</tmp/.overlayfs_wrapper_cleanup); do
-			[[ $dir == /tmp/* ]] && rm -rf "$dir"
-		done
+		if [[ -f /tmp/.overlayfs_wrapper_umount ]]; then
+			for dir in $(</tmp/.overlayfs_wrapper_umount); do
+				[[ $dir == /tmp/* ]] && umount "$dir"
+			done
+		fi
+		if [[ -f /tmp/.overlayfs_wrapper_cleanup ]]; then
+			for dir in $(</tmp/.overlayfs_wrapper_cleanup); do
+				[[ $dir == /tmp/* ]] && rm -rf "$dir"
+			done
+		fi
 		rm -f /tmp/.overlayfs_wrapper_umount /tmp/.overlayfs_wrapper_cleanup
 	fi
 }
