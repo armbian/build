@@ -198,15 +198,17 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
 done
 
-# Compile u-boot if packed .deb does not exist
-if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-	# if requires specific toolchain, check if default is suitable
-	if [[ -n $UBOOT_NEEDS_GCC ]] && ! check_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" ; then
-		# try to find suitable in $SRC/toolchains, exit if not found
-		find_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" "UBOOT_TOOLCHAIN"
-	fi
+if [[ $KERNEL_ONLY != yes ]]; then
+	# Compile u-boot if packed .deb does not exist
+	if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+		# if requires specific toolchain, check if default is suitable
+		if [[ -n $UBOOT_NEEDS_GCC ]] && ! check_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" ; then
+			# try to find suitable in $SRC/toolchains, exit if not found
+			find_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" "UBOOT_TOOLCHAIN"
+		fi
 
-	compile_uboot $(overlayfs_wrapper "wrap" "$SOURCES/$BOOTSOURCEDIR")
+		compile_uboot $(overlayfs_wrapper "wrap" "$SOURCES/$BOOTSOURCEDIR")
+	fi
 fi
 
 # Compile kernel if packed .deb does not exist
