@@ -10,7 +10,7 @@
 #
 
 # common options
-REVISION="5.23$SUBREVISION" # all boards have same revision
+REVISION="5.24$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 MAINTAINER="Igor Pecovnik" # deb signature
 MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -62,6 +62,11 @@ if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]]; then
 	source $SRC/lib/config/sources/$LINUXFAMILY.conf
 else
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
+fi
+
+if [[ -f $SRC/userpatches/sources/$LINUXFAMILY.conf ]]; then
+	display_alert "Adding user provided $LINUXFAMILY overrides"
+	source $SRC/userpatches/sources/$LINUXFAMILY.conf
 fi
 
 case $ARCH in

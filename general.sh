@@ -525,6 +525,9 @@ prepare_host()
 	fi
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
+	if [[ $KERNEL_ONLY != yes && ! -d /proc/sys/fs/binfmt_misc ]]; then
+		modprobe -q binfmt_misc || exit_with_error "Kernel does not support binfmt_misc"
+	fi
 	test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
 	test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
 
