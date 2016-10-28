@@ -51,7 +51,7 @@ compile_tools()
 		install -m 755	$SRC/lib/scripts/brcm40183-patch			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
 		
 		# ap6212 BT
-		install -m 644 $SRC/lib/scripts/ap6212-bluetooth			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
+		install -m 755 $SRC/lib/scripts/ap6212-bluetooth			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
 		
 		cd $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}
 		find . -type f ! -regex '.*.hg.*' ! -regex '.*?debian-binary.*' ! -regex '.*?DEBIAN.*' -printf '%P ' | xargs md5sum > DEBIAN/md5sums
