@@ -11,8 +11,8 @@
 
 # Functions:
 # compile_uboot
-# compile_sunxi_tools
 # compile_kernel
+# compile_sunxi_tools
 # check_toolchain
 # find_toolchain
 # advanced_patch
@@ -20,25 +20,25 @@
 # install_external_applications
 # write_uboot
 # customize_image
+# userpatch_create
+# overlayfs_wrapper
 
 compile_uboot()
 {
-#---------------------------------------------------------------------------------------------------------------------------------
-# Compile uboot from sources
-#---------------------------------------------------------------------------------------------------------------------------------
-	if [[ ! -d $SOURCES/$BOOTSOURCEDIR ]]; then
-		exit_with_error "Error building u-boot: source directory does not exist" "$BOOTSOURCEDIR"
-	fi
+	local ubootdir="$1"
+
+	cd "$ubootdir"
+
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTDIR-$BRANCH" "$BOARD" "$BOOTDIR-$BRANCH"
+
+	# create patch for manual source changes
+	[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
 
 	# read uboot version
-	local version=$(grab_version "$SOURCES/$BOOTSOURCEDIR")
-
-	# create patch for manual source changes in debug mode
-	[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
+	local version=$(grab_version "$ubootdir")
 
 	display_alert "Compiling uboot" "$version" "info"
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
-	cd $SOURCES/$BOOTSOURCEDIR
 
 	eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
 		'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
@@ -47,14 +47,17 @@ compile_uboot()
 
 	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
 	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
-	[[ -f $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp ]] && cp $SRC/lib/bin/armbian-u-boot.bmp $SOURCES/$BOOTSOURCEDIR/tools/logos/udoo.bmp
+	[[ -f tools/logos/udoo.bmp ]] && cp $SRC/lib/bin/armbian-u-boot.bmp tools/logos/udoo.bmp
 	touch .scmversion
 
 	# patch mainline uboot configuration to boot with old kernels
 	if [[ $BRANCH == default && $LINUXFAMILY == sun*i ]] && ! grep -q "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" .config ; then
 		echo -e "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y\nCONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> .config
-
 	fi
+
+	# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
+	[[ $BOOTDELAY == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
+	[[ -n $BOOTDELAY ]] && sed -i "s/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=${BOOTDELAY}/" .config || [[ -f .config ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
 
 	eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
 		'make $UBOOT_TARGET $CTHREADS CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
@@ -72,14 +75,18 @@ compile_uboot()
 	source /usr/lib/u-boot/platform_install.sh
 	[[ \$DEVICE == /dev/null ]] && exit 0
 	[[ -z \$DEVICE ]] && DEVICE="/dev/mmcblk0"
+	[[ \$(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
+	echo "Updating u-boot on device \$DEVICE" >&2
 	write_uboot_platform \$DIR \$DEVICE
 	exit 0
 	EOF
 	chmod 755 $DEST/debs/$uboot_name/DEBIAN/postinst
 
+	# declare -f on non-defined function does not do anything
 	cat <<-EOF > $DEST/debs/$uboot_name/usr/lib/u-boot/platform_install.sh
 	DIR=/usr/lib/$uboot_name
 	$(declare -f write_uboot_platform)
+	$(declare -f setup_write_uboot_platform)
 	EOF
 
 	# set up control file
@@ -116,49 +123,37 @@ compile_uboot()
 	fi
 }
 
-compile_sunxi_tools()
-{
-	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools.git" "sunxi-tools" "branch:master"
-	# Compile and install only if git commit hash changed
-	cd $SOURCES/sunxi-tools
-	if [[ ! -f .commit_id || $(git rev-parse @ 2>/dev/null) != $(<.commit_id) ]]; then
-		display_alert "Compiling" "sunxi-tools" "info"
-		make -s clean >/dev/null
-		make -s tools >/dev/null
-		mkdir -p /usr/local/bin/
-		make install-tools >/dev/null 2>&1
-		git rev-parse @ 2>/dev/null > .commit_id
-	fi
-}
-
 compile_kernel()
 {
-#---------------------------------------------------------------------------------------------------------------------------------
-# Compile kernel
-#---------------------------------------------------------------------------------------------------------------------------------
+	local kerneldir="$1"
+	cd "$kerneldir"
 
-	if [[ ! -d $SOURCES/$LINUXSOURCEDIR ]]; then
-		exit_with_error "Error building kernel: source directory does not exist" "$LINUXSOURCEDIR"
+	# this is a patch that Ubuntu Trusty compiler works
+	# TODO: Check if still required
+	if [[ $(patch --dry-run -t -p1 < $SRC/lib/patch/kernel/compiler.patch | grep Reversed) != "" ]]; then
+		display_alert "Patching kernel for compiler support"
+		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
 	fi
 
-	# read kernel version
-	local version=$(grab_version "$SOURCES/$LINUXSOURCEDIR")
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH"
 
 	# create patch for manual source changes in debug mode
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
 
+	# read kernel version
+	local version=$(grab_version "$kerneldir")
+
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
-	cd $SOURCES/$LINUXSOURCEDIR/
 
 	# use proven config
-	if [[ $KERNEL_KEEP_CONFIG != yes || ! -f $SOURCES/$LINUXSOURCEDIR/.config ]]; then
+	if [[ $KERNEL_KEEP_CONFIG != yes || ! -f .config ]]; then
 		if [[ -f $SRC/userpatches/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
-			cp $SRC/userpatches/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config
+			cp $SRC/userpatches/$LINUXCONFIG.config .config
 		else
 			display_alert "Using kernel config file" "lib/config/kernel/$LINUXCONFIG.config" "info"
-			cp $SRC/lib/config/kernel/$LINUXCONFIG.config $SOURCES/$LINUXSOURCEDIR/.config
+			cp $SRC/lib/config/kernel/$LINUXCONFIG.config .config
 		fi
 	fi
 
@@ -207,6 +202,21 @@ compile_kernel()
 
 	cd ..
 	mv *.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
+}
+
+compile_sunxi_tools()
+{
+	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools.git" "sunxi-tools" "branch:master"
+	# Compile and install only if git commit hash changed
+	cd $SOURCES/sunxi-tools
+	if [[ ! -f .commit_id || $(git rev-parse @ 2>/dev/null) != $(<.commit_id) ]]; then
+		display_alert "Compiling" "sunxi-tools" "info"
+		make -s clean >/dev/null
+		make -s tools >/dev/null
+		mkdir -p /usr/local/bin/
+		make install-tools >/dev/null 2>&1
+		git rev-parse @ 2>/dev/null > .commit_id
+	fi
 }
 
 # check_toolchain <UBOOT|KERNEL> <expression>
@@ -395,8 +405,7 @@ userpatch_create()
 	local patch="$SRC/userpatches/patch/$1-$LINUXFAMILY-$BRANCH.patch"
 
 	# apply previous user debug mode created patches
-	[[ -f "$patch" && $1 == "u-boot" ]] && display_alert "Applying existing u-boot patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
-	[[ -f "$patch" && $1 == "kernel" ]] && display_alert "Applying existing kernel patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
+	[[ -f $patch ]] && display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
 
 	# prompt to alter source
 	display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
@@ -412,5 +421,52 @@ userpatch_create()
 		display_alert "No changes found, skipping patch creation" "" "wrn"
 	fi
 	git reset --soft HEAD~
-	for i in {3..1..1};do echo -n "$i." && sleep 1; done
+	for i in {3..1..1}; do echo -n "$i." && sleep 1; done
+}
+
+# overlayfs_wrapper <operation> <workdir>
+#
+# <operation>: wrap|cleanup
+# <workdir>: path to source directory
+# return value: new directory
+#
+# Assumptions/notes:
+# - Ubuntu Xenial host
+# - /tmp is mounted as tmpfs
+# - there is enough space on /tmp
+# - UB if running multiple compilation tasks in parallel
+# - should not be used with CREATE_PATCHES=yes
+#
+overlayfs_wrapper()
+{
+	if [[ $USE_OVERLAYFS != yes && -n $2 ]]; then
+		echo "$2"
+		return
+	fi
+	local operation="$1"
+	if [[ $operation == wrap ]]; then
+		local srcdir="$2"
+		local tempdir=$(mktemp -d)
+		local workdir=$(mktemp -d)
+		local mergeddir=$(mktemp -d)
+		mount -t overlay overlay -o lowerdir="$srcdir",upperdir="$tempdir",workdir="$workdir" "$mergeddir"
+		# this is executed in a subshell, so use temp files to pass extra data outside
+		echo "$tempdir" >> /tmp/.overlayfs_wrapper_cleanup
+		echo "$mergeddir" >> /tmp/.overlayfs_wrapper_umount
+		echo "$mergeddir"
+		return
+	fi
+	if [[ $operation == cleanup ]]; then
+		if [[ -f /tmp/.overlayfs_wrapper_umount ]]; then
+			for dir in $(</tmp/.overlayfs_wrapper_umount); do
+				[[ $dir == /tmp/* ]] && umount "$dir"
+			done
+		fi
+		if [[ -f /tmp/.overlayfs_wrapper_cleanup ]]; then
+			for dir in $(</tmp/.overlayfs_wrapper_cleanup); do
+				[[ $dir == /tmp/* ]] && rm -rf "$dir"
+			done
+		fi
+		rm -f /tmp/.overlayfs_wrapper_umount /tmp/.overlayfs_wrapper_cleanup
+	fi
 }

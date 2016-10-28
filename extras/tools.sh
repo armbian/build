@@ -67,14 +67,16 @@ compile_tools()
 		if [[ $? -ne 0 || ! -f $tmpdir/temper/src/pcsensor ]]; then
 			cd $CACHEDIR
 			rm -rf $tmpdir
-			exit_with_error "Error building" "temper"
+			display_alert "Error building" "temper" "wrn"
+			return
 		fi
 		display_alert "... compiling" "bluetooth utils" "info"
 		chroot $CACHEDIR/sdcard /bin/bash -c "cd /root/tools/brcm; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
 		if [[ $? -ne 0 || ! -f $tmpdir/brcm/brcm_bt_reset ]]; then
 			cd $CACHEDIR
 			rm -rf $tmpdir
-			exit_with_error "Error building" "BT utils"
+			display_alert "Error building" "BT utils" "wrn"
+			return
 		fi
 	}
 
