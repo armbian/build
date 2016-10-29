@@ -50,7 +50,8 @@ compile_tools()
 		install -m 644 $SRC/lib/scripts/brcm40183					$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default
 		install -m 755	$SRC/lib/scripts/brcm40183-patch			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
 		
-		# ap6212 BT
+		# ap6212 configs and service
+		install -m 644 $SRC/lib/scripts/ap6212						$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default
 		install -m 755 $SRC/lib/scripts/ap6212-bluetooth			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
 		
 		cd $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}
