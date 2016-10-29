@@ -142,7 +142,7 @@ case $RELEASE in
 	;;
 	jessie)
 	PACKAGE_LIST_RELEASE="less makedev kbd libpam-systemd iperf3 software-properties-common libnss-myhostname f2fs-tools"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel libreoffice-writer libreoffice-style-tango libreoffice-gtk libreoffice-gtk3icedove policykit-1 policykit-1-gnome eject"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1 policykit-1-gnome eject"
 	;;
 	trusty)
 	PACKAGE_LIST_RELEASE="man-db wget nano software-properties-common iperf f2fs-tools acpid"
