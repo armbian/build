@@ -11,6 +11,7 @@ setenv console "both"
 setenv disp_mem_reserves "off"
 setenv disp_mode "720p60"
 setenv rootfstype "ext4"
+setenv camera_type "none"
 
 if ext4load mmc 0 ${load_addr} /boot/armbianEnv.txt || fatload mmc 0 ${load_addr} armbianEnv.txt || ext4load mmc 0 ${load_addr} armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
@@ -57,6 +58,21 @@ fi
 
 if test "${disp_mem_reserves}" = "off"; then
 	# TODO: Remove reserved memory from DT or disable devices?
+fi
+
+# default, only set status
+if test "${camera_type}" = "s5k4ec"; then
+	fdt set /soc@01c00000/vfe@0/ status "okay"
+	fdt set /soc@01c00000/vfe@0/dev@0/ status "okay"
+fi
+
+# change name, i2c address and vdd voltage
+if test "${camera_type}" = "ov5640"; then
+	fdt set /soc@01c00000/vfe@0/dev@0/ csi0_dev0_mname "ov5640"
+	fdt set /soc@01c00000/vfe@0/dev@0/ csi0_dev0_twi_addr "<0x00000078>"
+	fdt set /soc@01c00000/vfe@0/dev@0/ csi0_dev0_iovdd_vol "<0x001b7740>"
+	fdt set /soc@01c00000/vfe@0/ status "okay"
+	fdt set /soc@01c00000/vfe@0/dev@0/ status "okay"
 fi
 
 booti ${kernel_addr} ${initrd_addr} ${fdt_addr}
