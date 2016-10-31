@@ -78,6 +78,7 @@ compile_uboot()
 	[[ \$(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
 	echo "Updating u-boot on device \$DEVICE" >&2
 	write_uboot_platform \$DIR \$DEVICE
+	sync
 	exit 0
 	EOF
 	chmod 755 $DEST/debs/$uboot_name/DEBIAN/postinst
