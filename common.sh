@@ -425,10 +425,11 @@ userpatch_create()
 	for i in {3..1..1}; do echo -n "$i." && sleep 1; done
 }
 
-# overlayfs_wrapper <operation> <workdir>
+# overlayfs_wrapper <operation> <workdir> <description>
 #
 # <operation>: wrap|cleanup
 # <workdir>: path to source directory
+# <description>: suffix for merged directory to help locating it in /tmp
 # return value: new directory
 #
 # Assumptions/notes:
@@ -447,9 +448,10 @@ overlayfs_wrapper()
 	local operation="$1"
 	if [[ $operation == wrap ]]; then
 		local srcdir="$2"
+		local description="$3"
 		local tempdir=$(mktemp -d)
 		local workdir=$(mktemp -d)
-		local mergeddir=$(mktemp -d)
+		local mergeddir=$(mktemp -d --suffix="_$description")
 		mount -t overlay overlay -o lowerdir="$srcdir",upperdir="$tempdir",workdir="$workdir" "$mergeddir"
 		# this is executed in a subshell, so use temp files to pass extra data outside
 		echo "$tempdir" >> /tmp/.overlayfs_wrapper_cleanup

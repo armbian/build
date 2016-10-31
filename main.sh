@@ -206,7 +206,7 @@ if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 		find_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" "UBOOT_TOOLCHAIN"
 	fi
 
-	compile_uboot $(overlayfs_wrapper "wrap" "$SOURCES/$BOOTSOURCEDIR")
+	compile_uboot $(overlayfs_wrapper "wrap" "$SOURCES/$BOOTSOURCEDIR" "u-boot_${LINUXFAMILY}_${BRANCH}")
 fi
 
 # Compile kernel if packed .deb does not exist
@@ -217,7 +217,7 @@ if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 		find_toolchain "KERNEL" "$KERNEL_NEEDS_GCC" "KERNEL_TOOLCHAIN"
 	fi
 
-	compile_kernel $(overlayfs_wrapper "wrap" "$SOURCES/$LINUXSOURCEDIR")
+	compile_kernel $(overlayfs_wrapper "wrap" "$SOURCES/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
 fi
 
 overlayfs_wrapper "cleanup"
