@@ -48,7 +48,7 @@ fi
 
 fdt addr ${fdt_addr}
 fdt resize
-f test ${pine64_lcd} = 1 || test ${pine64_lcd} = on; then
+if test ${pine64_lcd} = 1 || test ${pine64_lcd} = on; then
 	fdt set /soc@01c00000/disp@01000000 screen0_output_type "<0x00000001>"
 	fdt set /soc@01c00000/disp@01000000 screen0_output_mode "<0x00000004>"
 	fdt set /soc@01c00000/disp@01000000 screen1_output_mode ${fdt_disp_mode}
