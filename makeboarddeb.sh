@@ -25,6 +25,7 @@ create_board_package()
 	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
 	# Replaces: unattended-upgrades may be needed to replace /etc/apt/apt.conf.d/50unattended-upgrades
 	# (distributions provide good defaults, so this is not needed currently)
+	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
 	cat <<-EOF > $destination/DEBIAN/control
 	Package: linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
 	Version: $REVISION
@@ -33,7 +34,7 @@ create_board_package()
 	Installed-Size: 1
 	Section: kernel
 	Priority: optional
-	Depends: bash
+	Depends: bash, linux-base
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Replaces: base-files, mpv
