@@ -234,6 +234,14 @@ create_board_package()
 	# setting window title for remote sessions
 	install -m 755 $SRC/lib/scripts/ssh-title.sh $destination/etc/profile.d/ssh-title.sh
 
+	# install copy of boot script & environment file
+	mkdir -p $destination/usr/share/armbian/
+	local bootscript_src=${BOOTSCRIPT%%:*}
+	local bootscript_dst=${BOOTSCRIPT##*:}
+	cp $SRC/lib/config/bootscripts/$bootscript_src $destination/usr/share/armbian/$bootscript_dst
+	[[ -n $BOOTENV_FILE && -f $SRC/lib/config/bootenv/$BOOTENV_FILE ]] && \
+		cp $SRC/lib/config/bootenv/$BOOTENV_FILE $destination/usr/share/armbian/armbianEnv.txt
+
 	# h3disp for sun8i/3.4.x
 	if [[ $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
 		install -m 755 $SRC/lib/scripts/h3disp $destination/usr/bin
