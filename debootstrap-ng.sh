@@ -498,8 +498,8 @@ sign_and_compress()
 		display_alert "Done building" "$DEST/images/${version}.img" "info"
 	else
 		display_alert "Signing and compressing" "Please wait!" "info"
-		# stage: generate sha256sum
-		sha256sum -b ${version}.img > sha256sum
+		# stage: generate sha256sum.sha
+		sha256sum -b ${version}.img > sha256sum.sha
 		# stage: sign with PGP
 		if [[ -n $GPG_PASS ]]; then
 			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes ${version}.img
@@ -508,17 +508,17 @@ sign_and_compress()
 		if [[ $SEVENZIP == yes ]]; then
 			local filename=$DEST/images/${version}.7z
 			if [[ $BUILD_ALL == yes ]]; then
-				nice -n 19 bash -c "7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum >/dev/null 2>&1 \
+				nice -n 19 bash -c "7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1 \
 				; [[ -n '$SEND_TO_SERVER' ]] && rsync -arP $filename -e 'ssh -p 22' $SEND_TO_SERVER"
 			else
-				7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum >/dev/null 2>&1
+				7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
 				[[ -n $SEND_TO_SERVER ]] && rsync -arP $filename -e 'ssh -p 22' $SEND_TO_SERVER
 			fi
 		else
 			local filename=$DEST/images/${version}.zip
-			zip -FSq $filename ${version}.img armbian.txt *.asc sha256sum
+			zip -FSq $filename ${version}.img armbian.txt *.asc sha256sum.sha
 		fi
-		rm -f ${version}.img *.asc armbian.txt sha256sum
+		rm -f ${version}.img *.asc armbian.txt sha256sum.sha
 		if [[ $BUILD_ALL == yes ]]; then
 			cd .. && rmdir "${TEMP_DIR}"
 		else

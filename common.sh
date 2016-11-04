@@ -25,8 +25,11 @@
 
 compile_uboot()
 {
-	local ubootdir="$1"
-
+	if [[ $USE_OVERLAYFS == yes ]]; then
+		local ubootdir=$(overlayfs_wrapper "wrap" "$SOURCES/$BOOTSOURCEDIR" "u-boot_${LINUXFAMILY}_${BRANCH}")
+	else
+		local ubootdir="$SOURCES/$BOOTSOURCEDIR"
+	fi
 	cd "$ubootdir"
 
 	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTDIR-$BRANCH" "$BOARD" "$BOOTDIR-$BRANCH"
@@ -38,6 +41,11 @@ compile_uboot()
 	local version=$(grab_version "$ubootdir")
 
 	display_alert "Compiling uboot" "$version" "info"
+	# if requires specific toolchain, check if default is suitable
+	if [[ -n $UBOOT_NEEDS_GCC ]] && ! check_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" ; then
+		# try to find suitable in $SRC/toolchains, exit if not found
+		find_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" "UBOOT_TOOLCHAIN"
+	fi
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
 
 	eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
@@ -67,10 +75,11 @@ compile_uboot()
 
 	# create .deb package
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
-	mkdir -p $DEST/debs/$uboot_name/usr/lib/{u-boot,$uboot_name} $DEST/debs/$uboot_name/DEBIAN
+	rm -rf $uboot_name
+	mkdir -p $uboot_name/usr/lib/{u-boot,$uboot_name} $uboot_name/DEBIAN
 
 	# set up postinstall script
-	cat <<-EOF > $DEST/debs/$uboot_name/DEBIAN/postinst
+	cat <<-EOF > $uboot_name/DEBIAN/postinst
 	#!/bin/bash
 	source /usr/lib/u-boot/platform_install.sh
 	[[ \$DEVICE == /dev/null ]] && exit 0
@@ -81,17 +90,17 @@ compile_uboot()
 	sync
 	exit 0
 	EOF
-	chmod 755 $DEST/debs/$uboot_name/DEBIAN/postinst
+	chmod 755 $uboot_name/DEBIAN/postinst
 
 	# declare -f on non-defined function does not do anything
-	cat <<-EOF > $DEST/debs/$uboot_name/usr/lib/u-boot/platform_install.sh
+	cat <<-EOF > $uboot_name/usr/lib/u-boot/platform_install.sh
 	DIR=/usr/lib/$uboot_name
 	$(declare -f write_uboot_platform)
 	$(declare -f setup_write_uboot_platform)
 	EOF
 
 	# set up control file
-	cat <<-END > $DEST/debs/$uboot_name/DEBIAN/control
+	cat <<-END > $uboot_name/DEBIAN/control
 	Package: linux-u-boot-${BOARD}-${BRANCH}
 	Version: $REVISION
 	Architecture: $ARCH
@@ -108,25 +117,25 @@ compile_uboot()
 	# copy files to build directory
 	for f in $UBOOT_FILES; do
 		[[ ! -f $f ]] && exit_with_error "U-boot file not found" "$(basename $f)"
-		cp $f $DEST/debs/$uboot_name/usr/lib/$uboot_name
+		cp $f $uboot_name/usr/lib/$uboot_name
 	done
 
-	cd $DEST/debs
-	display_alert "Building deb" "$uboot_name.deb" "info"
+	display_alert "Building deb" "${uboot_name}.deb" "info"
 	eval 'dpkg -b $uboot_name 2>&1' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'}
 	rm -rf $uboot_name
 
-	local filesize=$(wc -c $DEST/debs/$uboot_name.deb | cut -f 1 -d ' ')
+	[[ ! -f ${uboot_name}.deb || $(stat -c '%s' "${uboot_name}.deb") -lt 5000 ]] && exit_with_error "Building u-boot failed"
 
-	if [[ $filesize -lt 50000 ]]; then
-		rm $DEST/debs/$uboot_name.deb
-		exit_with_error "Building u-boot failed, check configuration"
-	fi
+	mv ${uboot_name}.deb $DEST/debs/
 }
 
 compile_kernel()
 {
-	local kerneldir="$1"
+	if [[ $USE_OVERLAYFS == yes ]]; then
+		local kerneldir=$(overlayfs_wrapper "wrap" "$SOURCES/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
+	else
+		local kerneldir="$SOURCES/$LINUXSOURCEDIR"
+	fi
 	cd "$kerneldir"
 
 	# this is a patch that Ubuntu Trusty compiler works
@@ -145,6 +154,11 @@ compile_kernel()
 	local version=$(grab_version "$kerneldir")
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
+	# if requires specific toolchain, check if default is suitable
+	if [[ -n $KERNEL_NEEDS_GCC ]] && ! check_toolchain "$KERNEL" "$KERNEL_NEEDS_GCC" ; then
+		# try to find suitable in $SRC/toolchains, exit if not found
+		find_toolchain "KERNEL" "$KERNEL_NEEDS_GCC" "KERNEL_TOOLCHAIN"
+	fi
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
 
 	# use proven config
@@ -425,10 +439,11 @@ userpatch_create()
 	for i in {3..1..1}; do echo -n "$i." && sleep 1; done
 }
 
-# overlayfs_wrapper <operation> <workdir>
+# overlayfs_wrapper <operation> <workdir> <description>
 #
 # <operation>: wrap|cleanup
 # <workdir>: path to source directory
+# <description>: suffix for merged directory to help locating it in /tmp
 # return value: new directory
 #
 # Assumptions/notes:
@@ -440,16 +455,13 @@ userpatch_create()
 #
 overlayfs_wrapper()
 {
-	if [[ $USE_OVERLAYFS != yes && -n $2 ]]; then
-		echo "$2"
-		return
-	fi
 	local operation="$1"
 	if [[ $operation == wrap ]]; then
 		local srcdir="$2"
+		local description="$3"
 		local tempdir=$(mktemp -d)
 		local workdir=$(mktemp -d)
-		local mergeddir=$(mktemp -d)
+		local mergeddir=$(mktemp -d --suffix="_$description")
 		mount -t overlay overlay -o lowerdir="$srcdir",upperdir="$tempdir",workdir="$workdir" "$mergeddir"
 		# this is executed in a subshell, so use temp files to pass extra data outside
 		echo "$tempdir" >> /tmp/.overlayfs_wrapper_cleanup

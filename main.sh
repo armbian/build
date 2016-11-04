@@ -47,8 +47,8 @@ date +"%d_%m_%Y-%H_%M_%S" > $DEST/debug/timestamp
 (cd $DEST/debug && find . -name '*.tgz' -atime +7 -delete) > /dev/null
 
 # compile.sh version checking
-ver1=$(awk -F"=" '/^# VERSION/ {print $2}' <"$SRC/compile.sh")
-ver2=$(awk -F"=" '/^# VERSION/ {print $2}' <"$SRC/lib/compile.sh" 2>/dev/null) || ver2=0
+ver1=$(awk -F"=" '/^# VERSION/ {print $2}' <$SRC/compile.sh )
+ver2=$(awk -F"=" '/^# VERSION/ {print $2}' <$SRC/lib/compile.sh 2>/dev/null) || ver2=0
 if [[ -z $ver1 || $ver1 -lt $ver2 ]]; then
 	display_alert "File $0 is outdated. Please overwrite it with an updated version from" "$SRC/lib" "wrn"
 	echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
@@ -200,24 +200,12 @@ done
 
 # Compile u-boot if packed .deb does not exist
 if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-	# if requires specific toolchain, check if default is suitable
-	if [[ -n $UBOOT_NEEDS_GCC ]] && ! check_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" ; then
-		# try to find suitable in $SRC/toolchains, exit if not found
-		find_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" "UBOOT_TOOLCHAIN"
-	fi
-
-	compile_uboot $(overlayfs_wrapper "wrap" "$SOURCES/$BOOTSOURCEDIR")
+	compile_uboot
 fi
 
 # Compile kernel if packed .deb does not exist
 if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
-	# if requires specific toolchain, check if default is suitable
-	if [[ -n $KERNEL_NEEDS_GCC ]] && ! check_toolchain "$KERNEL" "$KERNEL_NEEDS_GCC" ; then
-		# try to find suitable in $SRC/toolchains, exit if not found
-		find_toolchain "KERNEL" "$KERNEL_NEEDS_GCC" "KERNEL_TOOLCHAIN"
-	fi
-
-	compile_kernel $(overlayfs_wrapper "wrap" "$SOURCES/$LINUXSOURCEDIR")
+	compile_kernel
 fi
 
 overlayfs_wrapper "cleanup"

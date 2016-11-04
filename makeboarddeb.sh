@@ -25,6 +25,7 @@ create_board_package()
 	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
 	# Replaces: unattended-upgrades may be needed to replace /etc/apt/apt.conf.d/50unattended-upgrades
 	# (distributions provide good defaults, so this is not needed currently)
+	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
 	cat <<-EOF > $destination/DEBIAN/control
 	Package: linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
 	Version: $REVISION
@@ -33,7 +34,7 @@ create_board_package()
 	Installed-Size: 1
 	Section: kernel
 	Priority: optional
-	Depends: bash
+	Depends: bash, linux-base
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Replaces: base-files, mpv
@@ -232,6 +233,14 @@ create_board_package()
 
 	# setting window title for remote sessions
 	install -m 755 $SRC/lib/scripts/ssh-title.sh $destination/etc/profile.d/ssh-title.sh
+
+	# install copy of boot script & environment file
+	mkdir -p $destination/usr/share/armbian/
+	local bootscript_src=${BOOTSCRIPT%%:*}
+	local bootscript_dst=${BOOTSCRIPT##*:}
+	cp $SRC/lib/config/bootscripts/$bootscript_src $destination/usr/share/armbian/$bootscript_dst
+	[[ -n $BOOTENV_FILE && -f $SRC/lib/config/bootenv/$BOOTENV_FILE ]] && \
+		cp $SRC/lib/config/bootenv/$BOOTENV_FILE $destination/usr/share/armbian/armbianEnv.txt
 
 	# h3disp for sun8i/3.4.x
 	if [[ $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
