@@ -459,8 +459,9 @@ overlayfs_wrapper()
 	if [[ $operation == wrap ]]; then
 		local srcdir="$2"
 		local description="$3"
-		local tempdir=$(mktemp -d)
-		local workdir=$(mktemp -d)
+		mkdir -p /tmp/overlay_components/
+		local tempdir=$(mktemp -d --tmpdir="/tmp/overlay_components/")
+		local workdir=$(mktemp -d --tmpdir="/tmp/overlay_components/")
 		local mergeddir=$(mktemp -d --suffix="_$description")
 		mount -t overlay overlay -o lowerdir="$srcdir",upperdir="$tempdir",workdir="$workdir" "$mergeddir"
 		# this is executed in a subshell, so use temp files to pass extra data outside
