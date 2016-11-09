@@ -29,7 +29,14 @@ setenv bootargs "${consoleargs} root=${rootdev} rootfstype=${rootfstype} rootwai
 
 load mmc ${mmcbootdev}:${mmcbootpart} ${kerneladdr} /boot/zImage || load mmc ${mmcbootdev}:${mmcbootpart} ${kerneladdr} zImage
 load mmc ${mmcbootdev}:${mmcbootpart} ${initrdaddr} /boot/uInitrd || load mmc ${mmcbootdev}:${mmcbootpart} ${initrdaddr} uInitrd
-load mmc ${mmcbootdev}:${mmcbootpart} ${ftdaddr} /boot/dtb/exynos5422-odroidxu4.dtb || load mmc ${mmcbootdev}:${mmcbootpart} ${ftdaddr} dtb/exynos5422-odroidxu4.dtb
+
+if load mmc 0 0x00000000 /boot/.next || load mmc 0 0x00000000 .next; then
+	setenv xuversion 4       
+else
+	setenv xuversion 3	        
+fi
+
+load mmc ${mmcbootdev}:${mmcbootpart} ${ftdaddr} /boot/dtb/exynos5422-odroidxu${xuversion}.dtb || load mmc ${mmcbootdev}:${mmcbootpart} ${ftdaddr} dtb/exynos5422-odroidxu${xuversion}.dtb
 
 bootz ${kerneladdr} ${initrdaddr} ${ftdaddr}
 
