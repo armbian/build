@@ -467,13 +467,14 @@ overlayfs_wrapper()
 		# this is executed in a subshell, so use temp files to pass extra data outside
 		echo "$tempdir" >> /tmp/.overlayfs_wrapper_cleanup
 		echo "$mergeddir" >> /tmp/.overlayfs_wrapper_umount
+		echo "$mergeddir" >> /tmp/.overlayfs_wrapper_cleanup
 		echo "$mergeddir"
 		return
 	fi
 	if [[ $operation == cleanup ]]; then
 		if [[ -f /tmp/.overlayfs_wrapper_umount ]]; then
 			for dir in $(</tmp/.overlayfs_wrapper_umount); do
-				[[ $dir == /tmp/* ]] && umount "$dir"
+				[[ $dir == /tmp/* ]] && umount -l "$dir" > /dev/null 2>&1
 			done
 		fi
 		if [[ -f /tmp/.overlayfs_wrapper_cleanup ]]; then
