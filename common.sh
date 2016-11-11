@@ -347,8 +347,7 @@ process_patch_file()
 	local description=$2
 
 	# detect and remove files which patch will create
-	LANGUAGE=english patch --batch --dry-run -p1 -N < $patch | grep create \
-		| awk '{print $NF}' | sed -n 's/,//p' | xargs -I % sh -c 'rm %'
+	lsdiff -s --strip=1 $patch | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
 
 	# main patch command
 	echo "Processing file $patch" >> $DEST/debug/patching.log
