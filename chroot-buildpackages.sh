@@ -182,12 +182,15 @@ chroot_build_packages()
 				$(declare -f display_alert)
 				cd /root/build
 				if [[ -n "$package_builddeps" ]]; then
-					display_alert "Installing build dependencies"
 					# can be replaced with mk-build-deps
 					deps=()
 					installed=\$(dpkg-query -W -f '\${db:Status-Abbrev}|\${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print \$2}' | cut -d ':' -f 1)
 					for packet in $package_builddeps; do grep -q -x -e "\$packet" <<< "\$installed" || deps+=("\$packet"); done
-					[[ \${#deps[@]} -gt 0 ]] && apt-get -y -q --no-install-recommends --show-progress -o DPKG::Progress-Fancy=1 install "\${deps[@]}"
+					if [[ \${#deps[@]} -gt 0 ]]; then
+						display_alert "Installing build dependencies"
+						apt-get -y -q update
+						apt-get -y -q --no-install-recommends --show-progress -o DPKG::Progress-Fancy=1 install "\${deps[@]}"
+					fi
 				fi
 				display_alert "Copying sources"
 				rsync -aq /root/sources/$package_name /root/build/
@@ -224,7 +227,7 @@ chroot_build_packages()
 
 				fetch_from_repo "$package_repo" "extra/$package_name" "$package_ref"
 
-				eval systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
+				eval systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp:mode=777 --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
 					--bind-ro $SRC/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 \
 					${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/buildpkg.log'}
 				[[ ${PIPESTATUS[0]} -eq 2 ]] && failed+=("$package_name:$release:$arch")
