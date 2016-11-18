@@ -458,10 +458,10 @@ overlayfs_wrapper()
 	if [[ $operation == wrap ]]; then
 		local srcdir="$2"
 		local description="$3"
-		mkdir -p /tmp/overlay_components/
+		mkdir -p /tmp/overlay_components/ /tmp/armbian_build/
 		local tempdir=$(mktemp -d --tmpdir="/tmp/overlay_components/")
 		local workdir=$(mktemp -d --tmpdir="/tmp/overlay_components/")
-		local mergeddir=$(mktemp -d --suffix="_$description")
+		local mergeddir=$(mktemp -d --suffix="_$description" --tmpdir="/tmp/armbian_build/")
 		mount -t overlay overlay -o lowerdir="$srcdir",upperdir="$tempdir",workdir="$workdir" "$mergeddir"
 		# this is executed in a subshell, so use temp files to pass extra data outside
 		echo "$tempdir" >> /tmp/.overlayfs_wrapper_cleanup
