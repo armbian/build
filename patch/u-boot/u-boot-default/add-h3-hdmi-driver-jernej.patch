@@ -1,8 +1,10 @@
-commit 8e81ba0e8e97eb7deeb4f1cd49886c8a7db1c780
+commit b973987576822640f35dbb805a048b1706dc8e6d
 Author: Jernej Skrabec <jernej.skrabec@siol.net>
 Date:   Tue Nov 8 01:04:32 2016 +0100
 
-    First fully working HDMI driver. Needs cleanup and testing
+    sunxi: video: Add video driver for H3 SoC
+    
+    Signed-off-by: Jernej Skrabec <jernej.skrabec@siol.net>
 
 diff --git a/arch/arm/include/asm/arch-sunxi/clock_sun6i.h b/arch/arm/include/asm/arch-sunxi/clock_sun6i.h
 index be9fcfd..a414f69 100644
@@ -528,21 +530,27 @@ index db34904..d05b745 100644
  obj-$(CONFIG_VIDEO_VESA) += vesa.o
 diff --git a/drivers/video/sun8i_display.c b/drivers/video/sun8i_display.c
 new file mode 100644
-index 0000000..48de695
+index 0000000..e596e4c
 --- /dev/null
 +++ b/drivers/video/sun8i_display.c
-@@ -0,0 +1,1112 @@
+@@ -0,0 +1,928 @@
 +/*
-+ * Display driver for sun8i Allwinner SoCs.
++ * Display driver for sunxi Allwinner SoCs with DE2.
 + * 
-+ * (C) Copyright 2016 Jernej Skrabec <jernej.skrabec@siol.net>
++ * Copyright (C) 2016 Jernej Skrabec <jernej.skrabec@siol.net>
 + *
-+ * Based on multiple works:
++ * Based on sunxi_display.c:
 + * (C) Copyright 2013-2014 Luc Verhaegen <libv@skynet.be>
 + * (C) Copyright 2014-2015 Hans de Goede <hdegoede@redhat.com>
++ * 
++ * Based on Linux DRM driver:
 + * Copyright (C) 2016 Jean-Francois Moine <moinejf@free.fr>
 + * Copyright (c) 2016 Allwinnertech Co., Ltd.
 + *
++ * Based on rk_hdmi.c:
++ * Copyright (c) 2015 Google, Inc
++ * Copyright 2014 Rockchip Inc.
++ * 
 + * SPDX-License-Identifier:	GPL-2.0+
 + */
 +
@@ -550,16 +558,9 @@ index 0000000..48de695
 +
 +#include <asm/arch/clock.h>
 +#include <asm/arch/display2.h>
-+#include <asm/arch/gpio.h>
-+#include <asm/arch/pwm.h>
 +#include <asm/global_data.h>
-+#include <asm/gpio.h>
 +#include <asm/io.h>
 +#include <errno.h>
-+#include <fdtdec.h>
-+#include <fdt_support.h>
-+#include <i2c.h>
-+#include <malloc.h>
 +#include <video_fb.h>
 +#include "videomodes.h"
 +
@@ -582,92 +583,55 @@ index 0000000..48de695
 +
 +#ifdef CONFIG_VIDEO_HDMI
 +
-+static void hdmi_read_lock(void)
-+{
-+	writel(0x45, SUNXI_HDMI_BASE + 0x10010);
-+	writel(0x45, SUNXI_HDMI_BASE + 0x10011);
-+	writel(0x52, SUNXI_HDMI_BASE + 0x10012);
-+	writel(0x54, SUNXI_HDMI_BASE + 0x10013);
-+}
-+
-+static void hdmi_read_unlock(void)
-+{
-+	writel(0x52, SUNXI_HDMI_BASE + 0x10010);
-+	writel(0x54, SUNXI_HDMI_BASE + 0x10011);
-+	writel(0x41, SUNXI_HDMI_BASE + 0x10012);
-+	writel(0x57, SUNXI_HDMI_BASE + 0x10013);
-+}
-+
-+/*
-+ * Wait up to 200ms for value to be set in given part of reg.
-+ */
-+static int await_completion(u32 *reg, u32 mask, u32 val, u32 usec)
-+{
-+	unsigned long tmo = timer_get_us() + usec;
-+
-+	while ((readl(reg) & mask) != val) {
-+		if (timer_get_us() > tmo)
-+			return -ETIME;
-+	}
-+	return 0;
-+}
-+
 +static void sun8i_hdmi_phy_init(void)
 +{
++	unsigned long tmo;
 +	u32 tmp;
 +
 +	writel(0, SUN8I_HDMI_PHY_CTRL_REG);
-+	writel(1 << 0, SUN8I_HDMI_PHY_CTRL_REG);
-+	
++	setbits_le32(SUN8I_HDMI_PHY_CTRL_REG, BIT(0));
 +	udelay(5);
-+	
-+	writel(readl(SUN8I_HDMI_PHY_CTRL_REG) | (1 << 16), SUN8I_HDMI_PHY_CTRL_REG);
-+	writel(readl(SUN8I_HDMI_PHY_CTRL_REG) | (1 << 1), SUN8I_HDMI_PHY_CTRL_REG);
-+
++	setbits_le32(SUN8I_HDMI_PHY_CTRL_REG, BIT(16));
++	setbits_le32(SUN8I_HDMI_PHY_CTRL_REG, BIT(1));
 +	udelay(10);
-+
-+	writel(readl(SUN8I_HDMI_PHY_CTRL_REG) | (1 << 2), SUN8I_HDMI_PHY_CTRL_REG);
-+
++	setbits_le32(SUN8I_HDMI_PHY_CTRL_REG, BIT(2));
 +	udelay(5);
-+
-+	writel(readl(SUN8I_HDMI_PHY_CTRL_REG) | (1 << 3), SUN8I_HDMI_PHY_CTRL_REG);
-+
++	setbits_le32(SUN8I_HDMI_PHY_CTRL_REG, BIT(3));
 +	udelay(40);
-+
-+	writel(readl(SUN8I_HDMI_PHY_CTRL_REG) | (1 << 19), SUN8I_HDMI_PHY_CTRL_REG);
-+
++	setbits_le32(SUN8I_HDMI_PHY_CTRL_REG, BIT(19));
 +	udelay(100);
++	setbits_le32(SUN8I_HDMI_PHY_CTRL_REG, BIT(18));
++	setbits_le32(SUN8I_HDMI_PHY_CTRL_REG, 7 << 4);
 +
-+	writel(readl(SUN8I_HDMI_PHY_CTRL_REG) | (1 << 18), SUN8I_HDMI_PHY_CTRL_REG);
-+	writel(readl(SUN8I_HDMI_PHY_CTRL_REG) | (7 << 4), SUN8I_HDMI_PHY_CTRL_REG);
++	/* Note that Allwinner code doesn't fail in case of timeout  */
++	tmo = timer_get_us() + 2000;
++	while ((readl(SUN8I_HDMI_PHY_STATUS_REG) & 0x80) == 0) {
++		if (timer_get_us() > tmo) {
++			printf("Warning: HDMI phy init timeout!\n");
++			break;
++		}
++	}
 +
-+	if (await_completion(SUN8I_HDMI_PHY_STATUS_REG, 0x80, 0x80, 2000))
-+		printf("Warning: HDMI phy init timeout!\n");
-+
-+	writel(readl(SUN8I_HDMI_PHY_CTRL_REG) | (15 << 8), SUN8I_HDMI_PHY_CTRL_REG);
-+	writel(readl(SUN8I_HDMI_PHY_CTRL_REG) | (1 << 7), SUN8I_HDMI_PHY_CTRL_REG);
++	setbits_le32(SUN8I_HDMI_PHY_CTRL_REG, 0xf << 8);
++	setbits_le32(SUN8I_HDMI_PHY_CTRL_REG, BIT(7));
 +
 +	writel(0x39dc5040, SUN8I_HDMI_PHY_PLL_REG);
 +	writel(0x80084343, SUN8I_HDMI_PHY_CLK_REG);
-+
 +	udelay(10000);
-+
 +	writel(1, SUN8I_HDMI_PHY_UNK3_REG);
-+	writel(readl(SUN8I_HDMI_PHY_PLL_REG) | (1 << 25), SUN8I_HDMI_PHY_PLL_REG);
-+
++	setbits_le32(SUN8I_HDMI_PHY_PLL_REG, BIT(25));
 +	udelay(100000);
-+
-+	tmp = readl(SUN8I_HDMI_PHY_STATUS_REG);
-+	writel(readl(SUN8I_HDMI_PHY_PLL_REG) | (3 << 30), SUN8I_HDMI_PHY_PLL_REG);
-+	writel(readl(SUN8I_HDMI_PHY_PLL_REG) | ((tmp & 0x1f800) >> 11),
-+	       SUN8I_HDMI_PHY_PLL_REG);
++	tmp = (readl(SUN8I_HDMI_PHY_STATUS_REG) & 0x1f800) >> 11;
++	setbits_le32(SUN8I_HDMI_PHY_PLL_REG, BIT(31) | BIT(30));
++	setbits_le32(SUN8I_HDMI_PHY_PLL_REG, tmp);
 +	writel(0x01FF0F7F, SUN8I_HDMI_PHY_CTRL_REG);
 +	writel(0x80639000, SUN8I_HDMI_PHY_UNK1_REG);
 +	writel(0x0F81C405, SUN8I_HDMI_PHY_UNK2_REG);
 +
-+	hdmi_read_lock();
++	/* enable read access to HDMI controller*/
++	writel(0x54524545, SUNXI_HDMI_BASE + 0x10010);
 +	
-+	writeb(0x00, SUNXI_HDMI_BASE+ 0x8080);
++	writeb(0x00, SUNXI_HDMI_BASE + 0x8080);
 +
 +	udelay(1);
 +
@@ -708,7 +672,7 @@ index 0000000..48de695
 +	unsigned long tmo = timer_get_us() + hpd_delay * 1000;
 +	int status = 0;
 +
-+	/* Set pll3 to 297MHz */
++	/* Set pll3 to 297 MHz */
 +	clock_set_pll3(297000000);
 +
 +	/* Set hdmi parent to pll3 */
@@ -726,16 +690,12 @@ index 0000000..48de695
 +
 +	sun8i_hdmi_phy_init();
 +
-+	hdmi_read_lock();
-+
 +	while (timer_get_us() < tmo) {
 +		if (readl(SUN8I_HDMI_PHY_STATUS_REG) & SUNXI_HDMI_HPD_DETECT) {
 +			status = 1;
 +			break;
 +		}
 +	}
-+
-+	hdmi_read_unlock();
 +
 +	return status;
 +}
@@ -834,21 +794,14 @@ index 0000000..48de695
 +	int i, r, ext_blocks = 0;
 +
 +	/* Reset i2c controller */
-+	hdmi_read_lock();
-+	
 +	writeb(0, SUN8I_HDMI_I2CM_SOFTRSTZ);
-+	if (await_completion(SUN8I_HDMI_I2CM_SOFTRSTZ,
-+		SUN8I_HMDI_DDC_CTRL_RESET, SUN8I_HMDI_DDC_CTRL_RESET, 500)) {
-+		printf("Error: DDC reset failed!\n");
-+		return -EIO;
-+	}
 +
-+	writel(0x05, SUN8I_HDMI_I2CM_DIV);
-+	writel(0x08, SUN8I_HDMI_I2CM_INT);
-+	writel(0xd8, SUN8I_HDMI_I2CM_SS_SCL_HCNT_0_ADDR);
-+	writel(0xfe, SUN8I_HDMI_I2CM_SS_SCL_LCNT_0_ADDR);
-+	writel(SUN8I_HMDI_DDC_ADDR_SLAVE_ADDR, SUN8I_HDMI_I2CM_SLAVE);
-+	writel(SUN8I_HMDI_DDC_ADDR_SEG_ADDR, SUN8I_HDMI_I2CM_SEGADDR);
++	writeb(0x05, SUN8I_HDMI_I2CM_DIV);
++	writeb(0x08, SUN8I_HDMI_I2CM_INT);
++	writeb(0xd8, SUN8I_HDMI_I2CM_SS_SCL_HCNT_0_ADDR);
++	writeb(0xfe, SUN8I_HDMI_I2CM_SS_SCL_LCNT_0_ADDR);
++	writeb(SUN8I_HMDI_DDC_ADDR_SLAVE_ADDR, SUN8I_HDMI_I2CM_SLAVE);
++	writeb(SUN8I_HMDI_DDC_ADDR_SEG_ADDR, SUN8I_HDMI_I2CM_SEGADDR);
 +
 +	r = sunxi_hdmi_edid_get_block(0, (u8 *)&edid1);
 +	if (r == 0) {
@@ -870,8 +823,6 @@ index 0000000..48de695
 +			}
 +		}
 +	}
-+
-+	hdmi_read_unlock();
 +
 +	if (r)
 +		return r;
@@ -955,7 +906,7 @@ index 0000000..48de695
 +	
 +	clrbits_le32(SUN8I_DE_SEL_REG, 1);
 +
-+	writel(DE_MUX_GLB_CTL_rt_en | DE_MUX_GLB_CTL_rtwb_port, &de_glb_regs->ctl);
++	writel(DE_MUX_GLB_CTL_rt_en, &de_glb_regs->ctl);
 +	writel(0, &de_glb_regs->status);
 +	writel(1, &de_glb_regs->dbuff);
 +	writel(size, &de_glb_regs->size);
@@ -1076,7 +1027,6 @@ index 0000000..48de695
 +
 +	/* Reset off */
 +	setbits_le32(&ccm->ahb_reset1_cfg, 1 << AHB_RESET_OFFSET_TCON0);
-+	setbits_le32(&ccm->ahb_reset1_cfg, 1 << AHB_RESET_OFFSET_TCON1);
 +
 +	/* Clock on */
 +	setbits_le32(&ccm->ahb_gate1, 1 << AHB_GATE_OFFSET_TCON0);
@@ -1088,7 +1038,7 @@ index 0000000..48de695
 +	writel(0, &lcdc->gint0); /* Disable all interrupts */
 +
 +	/* Set all io lines to tristate */
-+	//writel(0x0fffffff, &lcdc->io_tri);
++	writel(0x0fffffff, &lcdc->io_tri);
 +}
 +
 +static void sunxi_lcdc_enable(void)
@@ -1107,7 +1057,7 @@ index 0000000..48de695
 +	if (mode->vmode == FB_VMODE_INTERLACED)
 +		delay /= 2;
 +	if (tcon == 1)
-+		delay -= 5;
++		delay -= 2;
 +
 +	return (delay > 31) ? 31 : delay;
 +}
@@ -1119,11 +1069,6 @@ index 0000000..48de695
 +	struct sun8i_lcdc_reg * const lcdc =
 +		(struct sun8i_lcdc_reg *)SUNXI_LCD0_BASE;
 +	int bp, clk_delay, total, yres;
-+	//u32 val;
-+	
-+	sunxi_lcdc_pll_set(mode->pixclock_khz, clk_div);
-+	
-+	udelay(500);
 +
 +	setbits_le32(&lcdc->gctl, SUN8I_TCON_GCTL_TCON_En);
 +
@@ -1158,22 +1103,10 @@ index 0000000..48de695
 +	writel(SUNXI_LCDC_X(mode->hsync_len) | SUNXI_LCDC_Y(mode->vsync_len),
 +	       &lcdc->basic5);
 +
-+	//FIXME: are those needed?
-+	//writel(1 << 16 | 1, &lcdc->ps_sync);
-+
-+	/*val = SUN8I_TCON1_IO_POL_IO2_inv;
-+	if (mode->sync & FB_SYNC_HOR_HIGH_ACT)
-+		val |= SUN8I_TCON1_IO_POL_IO1_inv;
-+	if (mode->sync & FB_SYNC_VERT_HIGH_ACT)
-+		val |= SUN8I_TCON1_IO_POL_IO0_inv;
-+	writel(val, &lcdc->io_pol);*/
-+
 +	writel(0, &lcdc->ceu_ctl);
 +	writel(0, &lcdc->fill_ctl);
 +
-+	/* Set all io lines to tristate */
-+	writel(0x0fffffff, &lcdc->io_tri);
-+
++	sunxi_lcdc_pll_set(mode->pixclock_khz, clk_div);
 +}
 +#endif /* CONFIG_VIDEO_HDMI */
 +
@@ -1182,41 +1115,6 @@ index 0000000..48de695
 +static void sunxi_hdmi_setup_info_frames(const struct ctfb_res_modes *mode)
 +{
 +	u8 tmp;
-+
-+	// Vendor Specific Infoframe (VSI)
-+	// enable VSD auto scheduling
-+	writeb(0x08, SUNXI_HDMI_BASE + 0xB045);
-+	
-+	// HDMI OUI
-+	writeb(0x00, SUNXI_HDMI_BASE + 0x2045);
-+	writeb(0x0c, SUNXI_HDMI_BASE + 0x2044);
-+	writeb(0x03, SUNXI_HDMI_BASE + 0x6041);
-+	
-+	//writeb(SUNXI_HDMI_BASE + 0xA044, ((timings->vic & 0x100) == 0x100) ?
-+	//			0x20 : (((timings->vic & 0x80) == 0x80) ?
-+	//				0x40 : 0x00));
-+	//writeb(SUNXI_HDMI_BASE + 0xA045, ((timings->vic & 0x100) == 0x100) ? (timings->vic & 0x7f) : 0x00);
-+	writeb(0x00, SUNXI_HDMI_BASE + 0xA045);
-+	writeb(0x00, SUNXI_HDMI_BASE + 0xA044);
-+	writeb(0x00, SUNXI_HDMI_BASE + 0x2046);
-+	
-+	writeb(0x01, SUNXI_HDMI_BASE + 0x3046);
-+	writeb(0x11, SUNXI_HDMI_BASE + 0x3047);
-+	writeb(0x00, SUNXI_HDMI_BASE + 0x4044);
-+	writeb(0x00, SUNXI_HDMI_BASE + 0x0052);
-+	writeb(0x11, SUNXI_HDMI_BASE + 0x8051);
-+
-+	hdmi_read_lock();
-+
-+	tmp = readb(SUNXI_HDMI_BASE + 0x0040) | 0x08;
-+	writeb(tmp, SUNXI_HDMI_BASE + 0x0040);
-+
-+	hdmi_read_unlock();
-+
-+	//writeb(SUNXI_HDMI_BASE + 0x4045, video->is_yuv ? 0x02 : 0x00);
-+	// is this ok?
-+	//writeb(0x12, SUNXI_HDMI_BASE + 0x4045);
-+	writeb(0x00, SUNXI_HDMI_BASE + 0x4045);
 +
 +	if (mode->pixclock_khz <= 27000)
 +		tmp = 0x40; /* SD-modes, ITU601 colorspace */
@@ -1228,39 +1126,31 @@ index 0000000..48de695
 +	else
 +		tmp |= 0x28; /* 16 : 9 */
 +
++	setbits_8(SUNXI_HDMI_BASE + 0x0040, 0x08);
++	writeb(0x60, SUNXI_HDMI_BASE + 0x4045);
 +	writeb(tmp, SUNXI_HDMI_BASE + 0xC044);
-+
-+	//writeb(video->is_yuv ? 0x00 : 0x08, SUNXI_HDMI_BASE + 0xC045);
-+	// is this ok?
-+	//writeb(0x88, SUNXI_HDMI_BASE + 0xC045);
-+	writeb(0x08, SUNXI_HDMI_BASE + 0xC045);
-+
-+	//writeb(SUNXI_HDMI_BASE + 0x4046, timings->vic & 0x7f);
++	writeb(0x88, SUNXI_HDMI_BASE + 0xC045);
 +}
 +
 +static int hdmi_phy_set(u32 divider)
 +{
 +	u32 tmp;
 +
-+	writel(readl(SUN8I_HDMI_PHY_CTRL_REG)&(~0xf000), SUN8I_HDMI_PHY_CTRL_REG);
 +	switch(divider)
 +	{
 +		case 1:
-+			//if(hdmi_version == 0)
-+			//	writel(0x31dc5fc0, SUN8I_HDMI_PHY_PLL_REG);
-+			//else
-+				writel(0x30dc5fc0, SUN8I_HDMI_PHY_PLL_REG);
++			writel(0x30dc5fc0, SUN8I_HDMI_PHY_PLL_REG);
 +			writel(0x800863C0, SUN8I_HDMI_PHY_CLK_REG);
 +			mdelay(10);
 +			writel(0x00000001, SUN8I_HDMI_PHY_UNK3_REG);
-+			writel(readl(SUN8I_HDMI_PHY_PLL_REG)|0x02000000, SUN8I_HDMI_PHY_PLL_REG);
++			setbits_le32(SUN8I_HDMI_PHY_PLL_REG, BIT(25));
 +			mdelay(200);
-+			tmp = readl(SUN8I_HDMI_PHY_STATUS_REG);
-+			writel(readl(SUN8I_HDMI_PHY_PLL_REG)|0xC0000000, SUN8I_HDMI_PHY_PLL_REG);
-+			if(((tmp&0x1f800)>>11) < 0x3d)
-+				writel(readl(SUN8I_HDMI_PHY_PLL_REG)|(((tmp&0x1f800)>>11)+2), SUN8I_HDMI_PHY_PLL_REG);
++			tmp = (readl(SUN8I_HDMI_PHY_STATUS_REG) & 0x1f800) >> 11;
++			setbits_le32(SUN8I_HDMI_PHY_PLL_REG, BIT(31) | BIT(30));
++			if (tmp < 0x3d)
++				setbits_le32(SUN8I_HDMI_PHY_PLL_REG, tmp + 2);
 +			else
-+				writel(readl(SUN8I_HDMI_PHY_PLL_REG)|0x3f, SUN8I_HDMI_PHY_PLL_REG);
++				setbits_le32(SUN8I_HDMI_PHY_PLL_REG, 0x3f);
 +			mdelay(100);
 +			writel(0x01FFFF7F, SUN8I_HDMI_PHY_CTRL_REG);
 +			writel(0x8063b000, SUN8I_HDMI_PHY_UNK1_REG);
@@ -1271,11 +1161,11 @@ index 0000000..48de695
 +			writel(0x80084381, SUN8I_HDMI_PHY_CLK_REG);
 +			mdelay(10);
 +			writel(0x00000001, SUN8I_HDMI_PHY_UNK3_REG);
-+			writel(readl(SUN8I_HDMI_PHY_PLL_REG)|0x02000000, SUN8I_HDMI_PHY_PLL_REG);
++			setbits_le32(SUN8I_HDMI_PHY_PLL_REG, BIT(25));
 +			mdelay(100);
-+			tmp = readl(SUN8I_HDMI_PHY_STATUS_REG);
-+			writel(readl(SUN8I_HDMI_PHY_PLL_REG)|0xC0000000, SUN8I_HDMI_PHY_PLL_REG);
-+			writel(readl(SUN8I_HDMI_PHY_PLL_REG)|((tmp&0x1f800)>>11), SUN8I_HDMI_PHY_PLL_REG);
++			tmp = (readl(SUN8I_HDMI_PHY_STATUS_REG) & 0x1f800) >> 11;
++			setbits_le32(SUN8I_HDMI_PHY_PLL_REG, BIT(31) | BIT(30));
++			setbits_le32(SUN8I_HDMI_PHY_PLL_REG, tmp);
 +			writel(0x01FFFF7F, SUN8I_HDMI_PHY_CTRL_REG);
 +			writel(0x8063a800, SUN8I_HDMI_PHY_UNK1_REG);
 +			writel(0x0F81C485, SUN8I_HDMI_PHY_UNK2_REG);
@@ -1285,11 +1175,11 @@ index 0000000..48de695
 +			writel(0x80084343, SUN8I_HDMI_PHY_CLK_REG);
 +			mdelay(10);
 +			writel(0x00000001, SUN8I_HDMI_PHY_UNK3_REG);
-+			writel(readl(SUN8I_HDMI_PHY_PLL_REG)|0x02000000, SUN8I_HDMI_PHY_PLL_REG);
++			setbits_le32(SUN8I_HDMI_PHY_PLL_REG, BIT(25));
 +			mdelay(100);
-+			tmp = readl(SUN8I_HDMI_PHY_STATUS_REG);
-+			writel(readl(SUN8I_HDMI_PHY_PLL_REG)|0xC0000000, SUN8I_HDMI_PHY_PLL_REG);
-+			writel(readl(SUN8I_HDMI_PHY_PLL_REG)|((tmp&0x1f800)>>11), SUN8I_HDMI_PHY_PLL_REG);
++			tmp = (readl(SUN8I_HDMI_PHY_STATUS_REG) & 0x1f800) >> 11;
++			setbits_le32(SUN8I_HDMI_PHY_PLL_REG, BIT(31) | BIT(30));
++			setbits_le32(SUN8I_HDMI_PHY_PLL_REG, tmp);
 +			writel(0x01FFFF7F, SUN8I_HDMI_PHY_CTRL_REG);
 +			writel(0x8063b000, SUN8I_HDMI_PHY_UNK1_REG);
 +			writel(0x0F81C405, SUN8I_HDMI_PHY_UNK2_REG);
@@ -1299,11 +1189,11 @@ index 0000000..48de695
 +			writel(0x8008430a, SUN8I_HDMI_PHY_CLK_REG);
 +			mdelay(10);
 +			writel(0x00000001, SUN8I_HDMI_PHY_UNK3_REG);
-+			writel(readl(SUN8I_HDMI_PHY_PLL_REG)|0x02000000, SUN8I_HDMI_PHY_PLL_REG);
++			setbits_le32(SUN8I_HDMI_PHY_PLL_REG, BIT(25));
 +			mdelay(100);
-+			tmp = readl(SUN8I_HDMI_PHY_STATUS_REG);
-+			writel(readl(SUN8I_HDMI_PHY_PLL_REG)|0xC0000000, SUN8I_HDMI_PHY_PLL_REG);
-+			writel(readl(SUN8I_HDMI_PHY_PLL_REG)|((tmp&0x1f800)>>11), SUN8I_HDMI_PHY_PLL_REG);
++			tmp = (readl(SUN8I_HDMI_PHY_STATUS_REG) & 0x1f800) >> 11;
++			setbits_le32(SUN8I_HDMI_PHY_PLL_REG, BIT(31) | BIT(30));
++			setbits_le32(SUN8I_HDMI_PHY_PLL_REG, tmp);
 +			writel(0x01FFFF7F, SUN8I_HDMI_PHY_CTRL_REG);
 +			writel(0x8063b000, SUN8I_HDMI_PHY_UNK1_REG);
 +			writel(0x0F81C405, SUN8I_HDMI_PHY_UNK2_REG);
@@ -1319,59 +1209,12 @@ index 0000000..48de695
 +				int clk_div)
 +{
 +	u8 invidconf, v_blanking;
-+	u32 x_res, y_res, hfp, h_blanking, hsw;
-+	/*struct sunxi_ccm_reg * const ccm =
-+		(struct sunxi_ccm_reg *)SUNXI_CCM_BASE;
++	u32 h_blanking;
 +
-+	clrsetbits_le32(&ccm->hdmi_clk_cfg, CCM_HDMI_CTRL_M_MASK,
-+			CCM_HDMI_CTRL_M(clk_div));
-+
-+	udelay(500);*/
-+	printf("HDMI PHY divider: %d\n", clk_div);
-+
-+	if(clk_div == 0) {
++	if(hdmi_phy_set(clk_div) != 0) {
 +		printf("HDMI divider is invalid!\n");
 +		return;
 +	}
-+
-+	if(hdmi_phy_set(clk_div) != 0) {
-+		printf("Can't set HDMI phy!\n");
-+		return;
-+	}
-+
-+	hdmi_read_lock();
-+	
-+	writeb(0x00, SUNXI_HDMI_BASE + 0x8080);
-+
-+	udelay(1);
-+	writeb(0x00, SUNXI_HDMI_BASE + 0xF01F);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x8403);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x904C);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x904E);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0xD04C);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x8250);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x8A50);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x8272);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x40C0);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x86F0);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x0EE3);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x8EE2);
-+	writeb(0xf0, SUNXI_HDMI_BASE + 0xA049);
-+	writeb(0x1e, SUNXI_HDMI_BASE + 0xB045);
-+	writeb(0x00, SUNXI_HDMI_BASE + 0x00C1);
-+	writeb(0x03, SUNXI_HDMI_BASE + 0x00C1);
-+	writeb(0x00, SUNXI_HDMI_BASE + 0x00C0);
-+	writeb(0x10, SUNXI_HDMI_BASE + 0x40C1);
-+	writeb(0xfd, SUNXI_HDMI_BASE + 0x0081);
-+	writeb(0x00, SUNXI_HDMI_BASE + 0x0081);
-+	writeb(0xfd, SUNXI_HDMI_BASE + 0x0081);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x0010);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x0011);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x8010);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x8011);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x0013);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x8012);
-+	writeb(0xff, SUNXI_HDMI_BASE + 0x8013);
 +	
 +	invidconf = 0;
 +	if(mode->vmode & FB_VMODE_INTERLACED)
@@ -1381,58 +1224,39 @@ index 0000000..48de695
 +	if(mode->sync & FB_SYNC_VERT_HIGH_ACT)
 +		invidconf |= 0x40;
 +
-+	x_res = mode->xres; //timings->x_res << timings->pixel_repeat;
-+	y_res = mode->yres; //timings->y_res << timings->pixel_repeat;
-+	hfp = mode->right_margin; //timings->hor_front_porch << timings->pixel_repeat;
-+	hsw = mode->hsync_len; //timings->hor_sync_time << timings->pixel_repeat;
-+// 	h_blanking = (timings->hor_back_porch + timings->hor_front_porch +
-+// 		     timings->hor_sync_time) << timings->pixel_repeat;
 +	h_blanking = mode->left_margin + mode->right_margin + mode->hsync_len;
 +	v_blanking = mode->upper_margin + mode->lower_margin + mode->vsync_len;
 +
-+	printf("pixel_clk: %d\n", mode->pixclock_khz * 1000);
-+	printf("pixel_repeat: %s\n", mode->vmode & FB_VMODE_DOUBLE ? "true" : "false");
-+	printf("x_res: %d\n", x_res);
-+	printf("y_res: %d\n", y_res);
-+	//printf("hor_total_time: %d\n",);
-+	printf("hor_back_porch: %d\n", mode->left_margin);
-+	printf("hor_front_porch: %d\n", hfp);
-+	printf("hor_sync_time: %d\n", hsw);
-+	//printf("ver_total_time: %d\n",);
-+	printf("ver_back_porch: %d\n", mode->upper_margin);
-+	printf("ver_front_porch: %d\n", mode->lower_margin);
-+	printf("ver_sync_time: %d\n", mode->vsync_len);
-+	printf("hor_sync_polarity: %s\n", mode->sync & FB_SYNC_HOR_HIGH_ACT ? "true" : "false");
-+	printf("ver_sync_polarity: %s\n", mode->sync & FB_SYNC_VERT_HIGH_ACT ? "true" : "false");
-+	printf("b_interlace: %s\n", mode->vmode & FB_VMODE_INTERLACED ? "true" : "false");
-+
-+	writeb(0x01, SUNXI_HDMI_BASE + 0x0840);
-+	writeb(0x00, SUNXI_HDMI_BASE + 0x4845);
 +	writeb(invidconf | 0x10, SUNXI_HDMI_BASE + 0x0040);
 +	writeb(((invidconf < 96) ? 0x03 : 0x00), SUNXI_HDMI_BASE + 0x10001);
-+	writeb((u8)(x_res >> 8), SUNXI_HDMI_BASE + 0x8040);
-+	writeb((u8)(mode->vsync_len), SUNXI_HDMI_BASE + 0x4043);
-+	writeb((u8)(y_res >> 8), SUNXI_HDMI_BASE + 0x8042);
-+	writeb((u8)(h_blanking >> 8), SUNXI_HDMI_BASE + 0x0042);
-+	writeb((u8)(mode->lower_margin), SUNXI_HDMI_BASE + 0x4042);
-+	writeb((u8)(hfp >> 8), SUNXI_HDMI_BASE + 0x4041);
-+	writeb((u8)(hsw >> 8), SUNXI_HDMI_BASE + 0xC041);
-+	writeb((u8)(x_res & 0xff), SUNXI_HDMI_BASE + 0x0041);
-+	writeb((u8)(h_blanking & 0xff), SUNXI_HDMI_BASE + 0x8041);
-+	writeb((u8)(hfp & 0xff), SUNXI_HDMI_BASE + 0x4040);
-+	writeb((u8)(hsw & 0xff), SUNXI_HDMI_BASE + 0xC040);
-+	writeb((u8)(y_res & 0xff), SUNXI_HDMI_BASE + 0x0043);
++
++	writeb(mode->xres >> 8, SUNXI_HDMI_BASE + 0x8040);
++	writeb(mode->xres, SUNXI_HDMI_BASE + 0x0041);
++	writeb(mode->yres >> 8, SUNXI_HDMI_BASE + 0x8042);
++	writeb(mode->yres, SUNXI_HDMI_BASE + 0x0043);
++	writeb(mode->vsync_len, SUNXI_HDMI_BASE + 0x4043);
++	writeb(h_blanking >> 8, SUNXI_HDMI_BASE + 0x0042);
++	writeb(h_blanking, SUNXI_HDMI_BASE + 0x8041);
++	writeb(mode->lower_margin, SUNXI_HDMI_BASE + 0x4042);
++	writeb(mode->right_margin >> 8, SUNXI_HDMI_BASE + 0x4041);
++	writeb(mode->right_margin, SUNXI_HDMI_BASE + 0x4040);
++	writeb(mode->hsync_len >> 8, SUNXI_HDMI_BASE + 0xC041);
++	writeb(mode->hsync_len, SUNXI_HDMI_BASE + 0xC040);
 +	writeb(v_blanking, SUNXI_HDMI_BASE + 0x8043);
++
 +	writeb(0x0c, SUNXI_HDMI_BASE + 0x0045);
 +	writeb(0x20, SUNXI_HDMI_BASE + 0x8044);
 +	writeb(0x01, SUNXI_HDMI_BASE + 0x8045);
 +	writeb(0x0b, SUNXI_HDMI_BASE + 0x0046);
 +	writeb(0x16, SUNXI_HDMI_BASE + 0x0047);
 +	writeb(0x21, SUNXI_HDMI_BASE + 0x8046);
-+	writeb(mode->vmode & FB_VMODE_DOUBLE ? 0x21 : 0x10, SUNXI_HDMI_BASE + 0x3048);
-+	writeb(mode->vmode & FB_VMODE_DOUBLE ? 0x41 : 0x40, SUNXI_HDMI_BASE + 0x0401);
++
++	writeb(0x40, SUNXI_HDMI_BASE + 0x0401);
 +	writeb(0x07, SUNXI_HDMI_BASE + 0x8400);
++
++	// default value, written 0 by rk_hdmi
 +	writeb(0x00, SUNXI_HDMI_BASE + 0x8401);
++
 +	writeb(0x47, SUNXI_HDMI_BASE + 0x0402);
 +	writeb(0x01, SUNXI_HDMI_BASE + 0x0800);
 +	writeb(0x07, SUNXI_HDMI_BASE + 0x0801);
@@ -1448,14 +1272,11 @@ index 0000000..48de695
 +
 +	writeb(0x00, SUNXI_HDMI_BASE + 0x0082);
 +	writeb(0x00, SUNXI_HDMI_BASE + 0x0081);
-+
-+	writeb(0x00, SUNXI_HDMI_BASE + 0x0840);
 +}
 +
 +static void sunxi_hdmi_enable(void)
 +{
-+	udelay(100);
-+	writeb(readb(SUN8I_HDMI_PHY_CTRL_REG) | (15 << 12), SUN8I_HDMI_PHY_CTRL_REG);
++	setbits_le32(SUN8I_HDMI_PHY_CTRL_REG, 0xf << 12);
 +	printf("hdmi enabled\n");
 +}
 +
@@ -1484,9 +1305,6 @@ index 0000000..48de695
 +		sunxi_composer_enable();
 +		sunxi_lcdc_enable();
 +		sunxi_hdmi_enable();
-+// 		sunxi_composer_init();
-+// 		sunxi_composer_mode_set(mode, address);
-+// 		sunxi_composer_enable();
 +#endif
 +		break;
 +	}
