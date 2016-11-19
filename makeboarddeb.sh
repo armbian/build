@@ -140,7 +140,11 @@ create_board_package()
 	mkdir -p $destination/etc/initramfs/post-update.d/
 	cat <<-EOF > $destination/etc/initramfs/post-update.d/99-uboot
 	#!/bin/sh
-	mkimage -A $INITRD_ARCH -O linux -T ramdisk -C gzip -n uInitrd -d \$2 /boot/uInitrd > /dev/null
+	echo "update-initramfs: Converting to u-boot format"
+	tempname=u\`echo \$2 | cut -d'/' -f3\`
+	mkimage -A $INITRD_ARCH -O linux -T ramdisk -C gzip -n uInitrd -d \$2 /boot/\$tempname > /dev/null
+	ln -sf \$tempname /boot/uInitrd > /dev/null 2>&1 || mv /boot/\$tempname /boot/uInitrd
+	rm -f \$2
 	exit 0
 	EOF
 	chmod +x $destination/etc/initramfs/post-update.d/99-uboot
