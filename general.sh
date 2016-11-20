@@ -43,8 +43,12 @@ cleaning()
 		if [[ -d $DEST/debs ]]; then
 			display_alert "Cleaning output/debs for" "$BOARD $BRANCH" "info"
 			# easier than dealing with variable expansion and escaping dashes in file names
-			find $DEST/debs -name '*.deb' | grep -E "${CHOSEN_KERNEL/image/.*}|$CHOSEN_UBOOT" | xargs rm -f
-			[[ -n $RELEASE ]] && rm -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_*_${ARCH}.deb
+			find $DEST/debs -name "${CHOSEN_UBOOT}_*.deb" -delete
+			find $DEST/debs \( -name "${CHOSEN_KERNEL}_*.deb" -o \
+				-name "${CHOSEN_KERNEL/image/dtb}_*.deb" -o \
+				-name "${CHOSEN_KERNEL/image/headers}_*.deb" -o \
+				-name "${CHOSEN_KERNEL/image/firmware-image}_*.deb" \) -delete
+			[[ -n $RELEASE ]] && rm -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_*.deb
 		fi
 		;;
 
