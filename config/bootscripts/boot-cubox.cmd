@@ -12,8 +12,8 @@ setenv rootdev "/dev/mmcblk0p1"
 setenv load_addr "0x10800000"
 setenv ramdisk_addr 0x14800000
 setenv verbosity "1"
-setenv console "both"
-setenv disp_mode "1920x1080p60"
+setenv console "display"
+setenv disp_mode "1920x1080m60"
 
 if load mmc 0 ${load_addr} /boot/armbianEnv.txt || load mmc 0 ${load_addr} armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
@@ -22,7 +22,7 @@ fi
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
 if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "${consoleargs} console=ttymxc0,115200"; fi
 
-setenv bootargs "root=${rootdev} rootfstype=ext4 rootwait ${consoleargs} video=mxcfb0:dev=hdmi,${disp_mode},if=RGB24,bpp=32 rd.dm=0 rd.luks=0 rd.lvm=0 raid=noautodetect pci=nomsi consoleblank=0 vt.global_cursor_default=0 loglevel=${verbosity} ${extraargs}"
+setenv bootargs "root=${rootdev} rootfstype=ext4 rootwait ${consoleargs} video=mxcfb0:dev=hdmi,${disp_mode},if=RGB24,bpp=32 rd.dm=0 rd.luks=0 rd.lvm=0 raid=noautodetect pci=nomsi vt.global_cursor_default=0 loglevel=${verbosity} ${extraargs}"
 ext2load mmc 0 ${fdt_addr} /boot/dtb/${fdt_file} || fatload mmc 0 ${fdt_addr} /dtb/${fdt_file} || ext4load mmc 0 ${fdt_addr} /dtb/${fdt_file}
 ext2load mmc 0 ${ramdisk_addr} /boot/uInitrd || fatload mmc 0 ${ramdisk_addr} uInitrd || ext4load mmc 0 ${ramdisk_addr} uInitrd
 ext2load mmc 0 ${loadaddr} /boot/zImage || fatload mmc 0 ${loadaddr} zImage || ext4load mmc 0 ${loadaddr} zImage
