@@ -38,7 +38,7 @@ create_board_package()
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Replaces: base-files, mpv
-	Recommends: bsdutils, parted, python3-apt, util-linux, initramfs-tools, toilet
+	Recommends: bsdutils, parted, python3-apt, util-linux, initramfs-tools, toilet, wireless-tools
 	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
 	EOF
 
