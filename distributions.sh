@@ -39,7 +39,7 @@ install_common()
 
 	# remove default interfaces file if present
 	# before installing board support package
-	rm $CACHEDIR/sdcard/etc/network/interfaces
+	rm -f $CACHEDIR/sdcard/etc/network/interfaces
 
 	mkdir -p $CACHEDIR/sdcard/selinux
 
@@ -113,24 +113,19 @@ install_common()
 	ff02::2     ip6-allrouters
 	EOF
 
-	# we need package names for dtb, uboot and headers
-	DTB_TMP="${CHOSEN_KERNEL/image/dtb}"
-	FW_TMP="${CHOSEN_KERNEL/image/firmware-image}"
-	HEADERS_TMP="${CHOSEN_KERNEL/image/headers}"
-
 	display_alert "Installing kernel" "$CHOSEN_KERNEL" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
 	display_alert "Installing u-boot" "$CHOSEN_UBOOT" "info"
 	chroot $CACHEDIR/sdcard /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
-	display_alert "Installing headers" "$HEADERS_TMP" "info"
-	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${HEADERS_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	display_alert "Installing headers" "${CHOSEN_KERNEL/image/headers}" "info"
+	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
 	# install firmware
-	#if [[ -f $CACHEDIR/sdcard/tmp/debs/${FW_TMP}_${REVISION}_${ARCH}.deb ]]; then
-	#	display_alert "Installing firmware" "$FW_TMP" "info"
-	#	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${FW_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	#if [[ -f $CACHEDIR/sdcard/tmp/debs/${CHOSEN_KERNEL/image/firmware-image}_${REVISION}_${ARCH}.deb ]]; then
+	#	display_alert "Installing firmware" "${CHOSEN_KERNEL/image/firmware-image}" "info"
+	#	chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${CHOSEN_KERNEL/image/firmware-image}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 	#fi
 
 	if [[ -f $CACHEDIR/sdcard/tmp/debs/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
@@ -138,9 +133,9 @@ install_common()
 		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 	fi
 
-	if [[ -f $CACHEDIR/sdcard/tmp/debs/${DTB_TMP}_${REVISION}_${ARCH}.deb ]]; then
-		display_alert "Installing DTB" "$DTB_TMP" "info"
-		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${DTB_TMP}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	if [[ -f $CACHEDIR/sdcard/tmp/debs/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
+		display_alert "Installing DTB" "${CHOSEN_KERNEL/image/dtb}" "info"
+		chroot $CACHEDIR/sdcard /bin/bash -c "dpkg -i /tmp/debs/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 	fi
 
 	# install board support package
