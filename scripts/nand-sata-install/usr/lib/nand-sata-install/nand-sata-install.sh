@@ -238,12 +238,12 @@ formatemmc()
 		# Leave 1 percent unpartitioned
 		LASTSECTOR=$(( 32 * $(parted ${1} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", ( \$2 * 99 / 3200))}") -1 ))
 	fi
-
+	# Partition over 4096MG (4G) need to be in ext3, everything else ext4 fail mouting.
 	parted -s $1 -- mklabel msdos
-	parted -s $1 -- mkpart primary ext4 2048s ${LASTSECTOR}s
+	parted -s $1 -- mkpart primary ext3 2048s ${LASTSECTOR}s
 	partprobe $1
 	# create fs
-	mkfs.ext4 -qF $1"p1" >/dev/null 2>&1
+	mkfs.ext3 -qF $1"p1" >/dev/null 2>&1
 	emmcuuid=$(blkid -o export $1"p1" | grep -w UUID)
 } # formatemmc
 
