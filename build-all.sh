@@ -15,6 +15,11 @@ source $SRC/lib/general.sh
 # when we want to build from certain start
 from=0
 
+free_cpu=$(grep -c 'processor' /proc/cpuinfo)
+
+rm -rf /run/armbian
+mkdir -p /run/armbian
+
 RELEASE_LIST=("trusty" "xenial" "wheezy" "jessie")
 BRANCH_LIST=("default" "next" "dev")
 
@@ -109,15 +114,23 @@ for line in "${buildlist[@]}"; do
 		CPUMIN CPUMAX UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN PACKAGE_LIST_EXCLUDE KERNEL_IMAGE_TYPE \
 		write_uboot_platform family_tweaks setup_write_uboot_platform BOOTSCRIPT UBOOT_FILES LOCALVERSION UBOOT_COMPILER KERNEL_COMPILER \
 		UBOOT_TARGET MODULES MODULES_NEXT MODULES_DEV INITRD_ARCH HAS_UUID_SUPPORT BOOTENV_FILE BOOTDELAY MODULES_BLACKLIST MODULES_BLACKLIST_NEXT \
-		MODULES_BLACKLIST_DEV
+		MODULES_BLACKLIST_DEV sdcard mount buildtext
 
 	read BOARD BRANCH RELEASE BUILD_DESKTOP <<< $line
 	n=$[$n+1]
-	if [[ $from -le $n && ! -f "/run/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid" ]]; then
-		display_alert "Building $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
-		#touch "/run/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"
-		source $SRC/lib/main.sh
-		#rm "/run/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"
+	if [[ $from -le $n ]]; then
+		jobs=$(ls /run/armbian | wc -l)
+		if [[ $jobs -le $free_cpu ]]; then
+			buildtext="in the back"
+			source $SRC/lib/main.sh &
+		else
+			source $SRC/lib/main.sh
+		fi
+		display_alert "Building $buildtext $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"		
+		touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"
+		#
+		# fake load
+		sleep $[ ( $RANDOM % 3 )  + 1 ]s
 	fi
 done
 
