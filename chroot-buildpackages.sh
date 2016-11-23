@@ -261,13 +261,13 @@ chroot_installpackages_local()
 		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution=$RELEASE publish repo temp
 	aptly -config=$conf -listen=":8189" serve &
 	local aptly_pid=$!
-	cp $SRC/lib/extras-buildpkgs/buildpkg.key $CACHEDIR/sdcard/tmp/buildpkg.key
-	cat <<-'EOF' > $CACHEDIR/sdcard/etc/apt/preferences.d/90-armbian-temp.pref
+	cp $SRC/lib/extras-buildpkgs/buildpkg.key $CACHEDIR/$sdcard/tmp/buildpkg.key
+	cat <<-'EOF' > $CACHEDIR/$sdcard/etc/apt/preferences.d/90-armbian-temp.pref
 	Package: *
 	Pin: origin "localhost"
 	Pin-Priority: 550
 	EOF
-	cat <<-EOF > $CACHEDIR/sdcard/etc/apt/sources.list.d/armbian-temp.list
+	cat <<-EOF > $CACHEDIR/$sdcard/etc/apt/sources.list.d/armbian-temp.list
 	deb http://localhost:8189/ $RELEASE temp
 	EOF
 	chroot_installpackages
@@ -288,7 +288,7 @@ chroot_installpackages()
 		unset package_install_target package_checkinstall
 	done
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
-	cat <<-EOF > $CACHEDIR/sdcard/tmp/install.sh
+	cat <<-EOF > $CACHEDIR/$sdcard/tmp/install.sh
 	#!/bin/bash
 	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
 	apt-get $apt_extra -q update
@@ -308,6 +308,6 @@ chroot_installpackages()
 	rm /tmp/buildpkg.key 2>/dev/null
 	rm -- "\$0"
 	EOF
-	chmod +x $CACHEDIR/sdcard/tmp/install.sh
-	chroot $CACHEDIR/sdcard /bin/bash -c "/tmp/install.sh"
+	chmod +x $CACHEDIR/$sdcard/tmp/install.sh
+	chroot $CACHEDIR/$sdcard /bin/bash -c "/tmp/install.sh"
 } #############################################################################

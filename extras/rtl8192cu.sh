@@ -52,9 +52,9 @@ install_rtl8192cu()
 	# GCC5 compatibility patch end
 
 	make ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER KSRC=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/compilation.log
-	cp *.ko $CACHEDIR/sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
-	depmod -b $CACHEDIR/sdcard/ $VER-$LINUXFAMILY
-	#cp blacklist*.conf $CACHEDIR/sdcard/etc/modprobe.d/
+	cp *.ko $CACHEDIR/$sdcard/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
+	depmod -b $CACHEDIR/$sdcard/ $VER-$LINUXFAMILY
+	#cp blacklist*.conf $CACHEDIR/$sdcard/etc/modprobe.d/
 }
 
 if [[ $BRANCH == default && $ARCHITECTURE == arm ]]; then
