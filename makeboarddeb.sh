@@ -38,7 +38,7 @@ create_board_package()
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Replaces: base-files, mpv
-	Recommends: bsdutils, parted, python3-apt, util-linux, initramfs-tools, toilet
+	Recommends: bsdutils, parted, python3-apt, util-linux, initramfs-tools, toilet, wireless-tools
 	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
 	EOF
 
@@ -140,7 +140,10 @@ create_board_package()
 	mkdir -p $destination/etc/initramfs/post-update.d/
 	cat <<-EOF > $destination/etc/initramfs/post-update.d/99-uboot
 	#!/bin/sh
-	mkimage -A $INITRD_ARCH -O linux -T ramdisk -C gzip -n uInitrd -d \$2 /boot/uInitrd > /dev/null
+	echo "update-initramfs: Converting to u-boot format" >&2
+	tempname="/boot/uInitrd-\$1"
+	mkimage -A $INITRD_ARCH -O linux -T ramdisk -C gzip -n uInitrd -d \$2 \$tempname > /dev/null
+	ln -sf \$(basename \$tempname) /boot/uInitrd > /dev/null 2>&1 || mv \$tempname /boot/uInitrd
 	exit 0
 	EOF
 	chmod +x $destination/etc/initramfs/post-update.d/99-uboot
@@ -172,7 +175,7 @@ create_board_package()
 			# delete unused state files
 			find \$STATEDIR -type f ! -name "\$version" -printf "Removing obsolete file %f\n" -delete
 			# delete unused initrd images
-			find /boot -name "initrd.img*" ! -name "*\$version" -printf "Removing obsolete file %f\n" -delete
+			find /boot -name "initrd.img*" -o -name "uInitrd-*" ! -name "*\$version" -printf "Removing obsolete file %f\n" -delete
 		fi
 	done
 	EOF

@@ -39,11 +39,11 @@ install_usb_redirector()
 	sed -e 's/%DAEMONNAME_TAG%/usbsrvd/g' $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd1 > $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
 	chmod +x $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd
 	# copy to root
-	cp $SOURCES/usb-redirector-linux-arm-eabi/files/usb* $CACHEDIR/sdcard/usr/local/bin/
-	cp $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd/tusbd.ko $CACHEDIR/sdcard/usr/local/bin/
-	cp $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd $CACHEDIR/sdcard/etc/init.d/
+	cp $SOURCES/usb-redirector-linux-arm-eabi/files/usb* $CACHEDIR/$sdcard/usr/local/bin/
+	cp $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd/tusbd.ko $CACHEDIR/$sdcard/usr/local/bin/
+	cp $SOURCES/usb-redirector-linux-arm-eabi/files/rc.usbsrvd $CACHEDIR/$sdcard/etc/init.d/
 	# not started by default ----- update.rc rc.usbsrvd defaults
-	# chroot $CACHEDIR/sdcard /bin/bash -c "update-rc.d rc.usbsrvd defaults
+	# chroot $CACHEDIR/$sdcard /bin/bash -c "update-rc.d rc.usbsrvd defaults
 }
 
 display_alert "Installing additional application" "USB redirector" "info"

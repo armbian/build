@@ -43,8 +43,12 @@ cleaning()
 		if [[ -d $DEST/debs ]]; then
 			display_alert "Cleaning output/debs for" "$BOARD $BRANCH" "info"
 			# easier than dealing with variable expansion and escaping dashes in file names
-			find $DEST/debs -name '*.deb' | grep -E "${CHOSEN_KERNEL/image/.*}|$CHOSEN_UBOOT" | xargs rm -f
-			[[ -n $RELEASE ]] && rm -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_*_${ARCH}.deb
+			find $DEST/debs -name "${CHOSEN_UBOOT}_*.deb" -delete
+			find $DEST/debs \( -name "${CHOSEN_KERNEL}_*.deb" -o \
+				-name "${CHOSEN_KERNEL/image/dtb}_*.deb" -o \
+				-name "${CHOSEN_KERNEL/image/headers}_*.deb" -o \
+				-name "${CHOSEN_KERNEL/image/firmware-image}_*.deb" \) -delete
+			[[ -n $RELEASE ]] && rm -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_*.deb
 		fi
 		;;
 
@@ -541,7 +545,7 @@ prepare_host()
 		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabi/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi.tar.xz"
 		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabihf/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf.tar.xz"
 		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/5.2-2015.11-2/arm-linux-gnueabihf/gcc-linaro-5.2-2015.11-2-x86_64_arm-linux-gnueabihf.tar.xz"
-		download_toolchain "https://releases.linaro.org/14.04/components/toolchain/binaries/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+		download_toolchain "https://releases.linaro.org/archive/14.04/components/toolchain/binaries/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"		
 		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/6.1-2016.08/arm-linux-gnueabihf/gcc-linaro-6.1.1-2016.08-x86_64_arm-linux-gnueabihf.tar.xz"
 	fi
 

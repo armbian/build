@@ -58,6 +58,10 @@ SERIALCON=ttyS0
 # WARNING: This option is deprecated
 BOOTSIZE=0
 
+# set unique mounting directory
+sdcard="sdcard-${BRANCH}-${BOARD}-${RELEASE}"
+mount="mount-${BRANCH}-${BOARD}-${RELEASE}"
+
 if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]]; then
 	source $SRC/lib/config/sources/$LINUXFAMILY.conf
 else
@@ -125,7 +129,7 @@ PACKAGE_LIST="$PACKAGE_LIST automake libwrap0-dev libssl-dev libusb-dev libusb-1
 
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools hddtemp iotop iozone3 stress sysbench screen ntfs-3g vim pciutils evtest htop pv lsof \
-	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl w-scan aptitude dnsutils f3 haveged hdparm rfkill \
+	apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill \
 	vlan sysstat bluez bluez-tools bash-completion hostapd git ethtool network-manager"
 
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage thunar-volman galculator \
@@ -149,9 +153,9 @@ case $RELEASE in
 	PACKAGE_LIST_EXCLUDE="$PACKAGE_LIST_EXCLUDE ureadahead plymouth"
 	;;
 	xenial)
-	PACKAGE_LIST_RELEASE="man-db wget nano libpam-systemd software-properties-common libnss-myhostname f2fs-tools iperf3 paprefs"
+	PACKAGE_LIST_RELEASE="man-db wget nano libpam-systemd software-properties-common libnss-myhostname f2fs-tools iperf3"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP libreoffice-writer libreoffice-style-tango libreoffice-gtk thunderbird firefox gnome-icon-theme-full tango-icon-theme \
-		policykit-1 language-selector-gnome"
+		policykit-1 language-selector-gnome paprefs"
 	;;
 esac
 

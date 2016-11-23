@@ -1,0 +1,4509 @@
+diff --git a/Makefile b/Makefile
+index a513c045c8de..30924aabf1b4 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 33
++SUBLEVEL = 34
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/sparc/include/asm/mmu_64.h b/arch/sparc/include/asm/mmu_64.h
+index 70067ce184b1..f7de0dbc38af 100644
+--- a/arch/sparc/include/asm/mmu_64.h
++++ b/arch/sparc/include/asm/mmu_64.h
+@@ -92,7 +92,8 @@ struct tsb_config {
+ typedef struct {
+ 	spinlock_t		lock;
+ 	unsigned long		sparc64_ctx_val;
+-	unsigned long		huge_pte_count;
++	unsigned long		hugetlb_pte_count;
++	unsigned long		thp_pte_count;
+ 	struct tsb_config	tsb_block[MM_NUM_TSBS];
+ 	struct hv_tsb_descr	tsb_descr[MM_NUM_TSBS];
+ } mm_context_t;
+diff --git a/arch/sparc/include/asm/uaccess_64.h b/arch/sparc/include/asm/uaccess_64.h
+index ea6e9a20f3ff..f428512481f9 100644
+--- a/arch/sparc/include/asm/uaccess_64.h
++++ b/arch/sparc/include/asm/uaccess_64.h
+@@ -98,7 +98,6 @@ struct exception_table_entry {
+         unsigned int insn, fixup;
+ };
+ 
+-void __ret_efault(void);
+ void __retl_efault(void);
+ 
+ /* Uh, these should become the main single-value transfer routines..
+@@ -179,20 +178,6 @@ int __put_user_bad(void);
+ 	 __gu_ret;							     \
+ })
+ 
+-#define __get_user_nocheck_ret(data, addr, size, type, retval) ({	\
+-	register unsigned long __gu_val __asm__ ("l1");			\
+-	switch (size) {							\
+-	case 1: __get_user_asm_ret(__gu_val, ub, addr, retval); break;	\
+-	case 2: __get_user_asm_ret(__gu_val, uh, addr, retval); break;	\
+-	case 4: __get_user_asm_ret(__gu_val, uw, addr, retval); break;	\
+-	case 8: __get_user_asm_ret(__gu_val, x, addr, retval); break;	\
+-	default:							\
+-		if (__get_user_bad())					\
+-			return retval;					\
+-	}								\
+-	data = (__force type) __gu_val;					\
+-})
+-
+ #define __get_user_asm(x, size, addr, ret)				\
+ __asm__ __volatile__(							\
+ 		"/* Get user asm, inline. */\n"				\
+@@ -214,80 +199,35 @@ __asm__ __volatile__(							\
+ 	       : "=r" (ret), "=r" (x) : "r" (__m(addr)),		\
+ 		 "i" (-EFAULT))
+ 
+-#define __get_user_asm_ret(x, size, addr, retval)			\
+-if (__builtin_constant_p(retval) && retval == -EFAULT)			\
+-	__asm__ __volatile__(						\
+-		"/* Get user asm ret, inline. */\n"			\
+-	"1:\t"	"ld"#size "a [%1] %%asi, %0\n\n\t"			\
+-		".section __ex_table,\"a\"\n\t"				\
+-		".align	4\n\t"						\
+-		".word	1b,__ret_efault\n\n\t"				\
+-		".previous\n\t"						\
+-	       : "=r" (x) : "r" (__m(addr)));				\
+-else									\
+-	__asm__ __volatile__(						\
+-		"/* Get user asm ret, inline. */\n"			\
+-	"1:\t"	"ld"#size "a [%1] %%asi, %0\n\n\t"			\
+-		".section .fixup,#alloc,#execinstr\n\t"			\
+-		".align	4\n"						\
+-	"3:\n\t"							\
+-		"ret\n\t"						\
+-		" restore %%g0, %2, %%o0\n\n\t"				\
+-		".previous\n\t"						\
+-		".section __ex_table,\"a\"\n\t"				\
+-		".align	4\n\t"						\
+-		".word	1b, 3b\n\n\t"					\
+-		".previous\n\t"						\
+-	       : "=r" (x) : "r" (__m(addr)), "i" (retval))
+-
+ int __get_user_bad(void);
+ 
+ unsigned long __must_check ___copy_from_user(void *to,
+ 					     const void __user *from,
+ 					     unsigned long size);
+-unsigned long copy_from_user_fixup(void *to, const void __user *from,
+-				   unsigned long size);
+ static inline unsigned long __must_check
+ copy_from_user(void *to, const void __user *from, unsigned long size)
+ {
+-	unsigned long ret = ___copy_from_user(to, from, size);
+-
+-	if (unlikely(ret))
+-		ret = copy_from_user_fixup(to, from, size);
+-
+-	return ret;
++	return ___copy_from_user(to, from, size);
+ }
+ #define __copy_from_user copy_from_user
+ 
+ unsigned long __must_check ___copy_to_user(void __user *to,
+ 					   const void *from,
+ 					   unsigned long size);
+-unsigned long copy_to_user_fixup(void __user *to, const void *from,
+-				 unsigned long size);
+ static inline unsigned long __must_check
+ copy_to_user(void __user *to, const void *from, unsigned long size)
+ {
+-	unsigned long ret = ___copy_to_user(to, from, size);
+-
+-	if (unlikely(ret))
+-		ret = copy_to_user_fixup(to, from, size);
+-	return ret;
++	return ___copy_to_user(to, from, size);
+ }
+ #define __copy_to_user copy_to_user
+ 
+ unsigned long __must_check ___copy_in_user(void __user *to,
+ 					   const void __user *from,
+ 					   unsigned long size);
+-unsigned long copy_in_user_fixup(void __user *to, void __user *from,
+-				 unsigned long size);
+ static inline unsigned long __must_check
+ copy_in_user(void __user *to, void __user *from, unsigned long size)
+ {
+-	unsigned long ret = ___copy_in_user(to, from, size);
+-
+-	if (unlikely(ret))
+-		ret = copy_in_user_fixup(to, from, size);
+-	return ret;
++	return ___copy_in_user(to, from, size);
+ }
+ #define __copy_in_user copy_in_user
+ 
+diff --git a/arch/sparc/kernel/dtlb_prot.S b/arch/sparc/kernel/dtlb_prot.S
+index d668ca149e64..4087a62f96b0 100644
+--- a/arch/sparc/kernel/dtlb_prot.S
++++ b/arch/sparc/kernel/dtlb_prot.S
+@@ -25,13 +25,13 @@
+ 
+ /* PROT ** ICACHE line 2: More real fault processing */
+ 	ldxa		[%g4] ASI_DMMU, %g5		! Put tagaccess in %g5
++	srlx		%g5, PAGE_SHIFT, %g5
++	sllx		%g5, PAGE_SHIFT, %g5		! Clear context ID bits
+ 	bgu,pn		%xcc, winfix_trampoline		! Yes, perform winfixup
+ 	 mov		FAULT_CODE_DTLB | FAULT_CODE_WRITE, %g4
+ 	ba,pt		%xcc, sparc64_realfault_common	! Nope, normal fault
+ 	 nop
+ 	nop
+-	nop
+-	nop
+ 
+ /* PROT ** ICACHE line 3: Unused...	*/
+ 	nop
+diff --git a/arch/sparc/kernel/head_64.S b/arch/sparc/kernel/head_64.S
+index 51faf92ace00..7eeeb1d5a410 100644
+--- a/arch/sparc/kernel/head_64.S
++++ b/arch/sparc/kernel/head_64.S
+@@ -922,47 +922,11 @@ prom_tba:	.xword	0
+ tlb_type:	.word	0	/* Must NOT end up in BSS */
+ 	.section	".fixup",#alloc,#execinstr
+ 
+-	.globl	__ret_efault, __retl_efault, __ret_one, __retl_one
+-ENTRY(__ret_efault)
+-	ret
+-	 restore %g0, -EFAULT, %o0
+-ENDPROC(__ret_efault)
+-
+ ENTRY(__retl_efault)
+ 	retl
+ 	 mov	-EFAULT, %o0
+ ENDPROC(__retl_efault)
+ 
+-ENTRY(__retl_one)
+-	retl
+-	 mov	1, %o0
+-ENDPROC(__retl_one)
+-
+-ENTRY(__retl_one_fp)
+-	VISExitHalf
+-	retl
+-	 mov	1, %o0
+-ENDPROC(__retl_one_fp)
+-
+-ENTRY(__ret_one_asi)
+-	wr	%g0, ASI_AIUS, %asi
+-	ret
+-	 restore %g0, 1, %o0
+-ENDPROC(__ret_one_asi)
+-
+-ENTRY(__retl_one_asi)
+-	wr	%g0, ASI_AIUS, %asi
+-	retl
+-	 mov	1, %o0
+-ENDPROC(__retl_one_asi)
+-
+-ENTRY(__retl_one_asi_fp)
+-	wr	%g0, ASI_AIUS, %asi
+-	VISExitHalf
+-	retl
+-	 mov	1, %o0
+-ENDPROC(__retl_one_asi_fp)
+-
+ ENTRY(__retl_o1)
+ 	retl
+ 	 mov	%o1, %o0
+diff --git a/arch/sparc/kernel/jump_label.c b/arch/sparc/kernel/jump_label.c
+index 59bbeff55024..07933b9e9ce0 100644
+--- a/arch/sparc/kernel/jump_label.c
++++ b/arch/sparc/kernel/jump_label.c
+@@ -13,19 +13,30 @@
+ void arch_jump_label_transform(struct jump_entry *entry,
+ 			       enum jump_label_type type)
+ {
+-	u32 val;
+ 	u32 *insn = (u32 *) (unsigned long) entry->code;
++	u32 val;
+ 
+ 	if (type == JUMP_LABEL_JMP) {
+ 		s32 off = (s32)entry->target - (s32)entry->code;
++		bool use_v9_branch = false;
++
++		BUG_ON(off & 3);
+ 
+ #ifdef CONFIG_SPARC64
+-		/* ba,pt %xcc, . + (off << 2) */
+-		val = 0x10680000 | ((u32) off >> 2);
+-#else
+-		/* ba . + (off << 2) */
+-		val = 0x10800000 | ((u32) off >> 2);
++		if (off <= 0xfffff && off >= -0x100000)
++			use_v9_branch = true;
+ #endif
++		if (use_v9_branch) {
++			/* WDISP19 - target is . + immed << 2 */
++			/* ba,pt %xcc, . + off */
++			val = 0x10680000 | (((u32) off >> 2) & 0x7ffff);
++		} else {
++			/* WDISP22 - target is . + immed << 2 */
++			BUG_ON(off > 0x7fffff);
++			BUG_ON(off < -0x800000);
++			/* ba . + off */
++			val = 0x10800000 | (((u32) off >> 2) & 0x3fffff);
++		}
+ 	} else {
+ 		val = 0x01000000;
+ 	}
+diff --git a/arch/sparc/kernel/ktlb.S b/arch/sparc/kernel/ktlb.S
+index ef0d8e9e1210..f22bec0db645 100644
+--- a/arch/sparc/kernel/ktlb.S
++++ b/arch/sparc/kernel/ktlb.S
+@@ -20,6 +20,10 @@ kvmap_itlb:
+ 	mov		TLB_TAG_ACCESS, %g4
+ 	ldxa		[%g4] ASI_IMMU, %g4
+ 
++	/* The kernel executes in context zero, therefore we do not
++	 * need to clear the context ID bits out of %g4 here.
++	 */
++
+ 	/* sun4v_itlb_miss branches here with the missing virtual
+ 	 * address already loaded into %g4
+ 	 */
+@@ -128,6 +132,10 @@ kvmap_dtlb:
+ 	mov		TLB_TAG_ACCESS, %g4
+ 	ldxa		[%g4] ASI_DMMU, %g4
+ 
++	/* The kernel executes in context zero, therefore we do not
++	 * need to clear the context ID bits out of %g4 here.
++	 */
++
+ 	/* sun4v_dtlb_miss branches here with the missing virtual
+ 	 * address already loaded into %g4
+ 	 */
+@@ -251,6 +259,10 @@ kvmap_dtlb_longpath:
+ 	nop
+ 	.previous
+ 
++	/* The kernel executes in context zero, therefore we do not
++	 * need to clear the context ID bits out of %g5 here.
++	 */
++
+ 	be,pt	%xcc, sparc64_realfault_common
+ 	 mov	FAULT_CODE_DTLB, %g4
+ 	ba,pt	%xcc, winfix_trampoline
+diff --git a/arch/sparc/kernel/sparc_ksyms_64.c b/arch/sparc/kernel/sparc_ksyms_64.c
+index a92d5d2c46a3..51b25325a961 100644
+--- a/arch/sparc/kernel/sparc_ksyms_64.c
++++ b/arch/sparc/kernel/sparc_ksyms_64.c
+@@ -27,7 +27,6 @@ EXPORT_SYMBOL(__flushw_user);
+ EXPORT_SYMBOL_GPL(real_hard_smp_processor_id);
+ 
+ /* from head_64.S */
+-EXPORT_SYMBOL(__ret_efault);
+ EXPORT_SYMBOL(tlb_type);
+ EXPORT_SYMBOL(sun4v_chip_type);
+ EXPORT_SYMBOL(prom_root_node);
+diff --git a/arch/sparc/kernel/tsb.S b/arch/sparc/kernel/tsb.S
+index be98685c14c6..d568c8207af7 100644
+--- a/arch/sparc/kernel/tsb.S
++++ b/arch/sparc/kernel/tsb.S
+@@ -29,13 +29,17 @@
+ 	 */
+ tsb_miss_dtlb:
+ 	mov		TLB_TAG_ACCESS, %g4
++	ldxa		[%g4] ASI_DMMU, %g4
++	srlx		%g4, PAGE_SHIFT, %g4
+ 	ba,pt		%xcc, tsb_miss_page_table_walk
+-	 ldxa		[%g4] ASI_DMMU, %g4
++	 sllx		%g4, PAGE_SHIFT, %g4
+ 
+ tsb_miss_itlb:
+ 	mov		TLB_TAG_ACCESS, %g4
++	ldxa		[%g4] ASI_IMMU, %g4
++	srlx		%g4, PAGE_SHIFT, %g4
+ 	ba,pt		%xcc, tsb_miss_page_table_walk
+-	 ldxa		[%g4] ASI_IMMU, %g4
++	 sllx		%g4, PAGE_SHIFT, %g4
+ 
+ 	/* At this point we have:
+ 	 * %g1 --	PAGE_SIZE TSB entry address
+@@ -284,6 +288,10 @@ tsb_do_dtlb_fault:
+ 	nop
+ 	.previous
+ 
++	/* Clear context ID bits.  */
++	srlx		%g5, PAGE_SHIFT, %g5
++	sllx		%g5, PAGE_SHIFT, %g5
++
+ 	be,pt	%xcc, sparc64_realfault_common
+ 	 mov	FAULT_CODE_DTLB, %g4
+ 	ba,pt	%xcc, winfix_trampoline
+diff --git a/arch/sparc/lib/GENcopy_from_user.S b/arch/sparc/lib/GENcopy_from_user.S
+index b7d0bd6b1406..69a439fa2fc1 100644
+--- a/arch/sparc/lib/GENcopy_from_user.S
++++ b/arch/sparc/lib/GENcopy_from_user.S
+@@ -3,11 +3,11 @@
+  * Copyright (C) 2007 David S. Miller (davem@davemloft.net)
+  */
+ 
+-#define EX_LD(x)		\
++#define EX_LD(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one;	\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+diff --git a/arch/sparc/lib/GENcopy_to_user.S b/arch/sparc/lib/GENcopy_to_user.S
+index 780550e1afc7..9947427ce354 100644
+--- a/arch/sparc/lib/GENcopy_to_user.S
++++ b/arch/sparc/lib/GENcopy_to_user.S
+@@ -3,11 +3,11 @@
+  * Copyright (C) 2007 David S. Miller (davem@davemloft.net)
+  */
+ 
+-#define EX_ST(x)		\
++#define EX_ST(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one;	\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+diff --git a/arch/sparc/lib/GENmemcpy.S b/arch/sparc/lib/GENmemcpy.S
+index 89358ee94851..059ea24ad73d 100644
+--- a/arch/sparc/lib/GENmemcpy.S
++++ b/arch/sparc/lib/GENmemcpy.S
+@@ -4,21 +4,18 @@
+  */
+ 
+ #ifdef __KERNEL__
++#include <linux/linkage.h>
+ #define GLOBAL_SPARE	%g7
+ #else
+ #define GLOBAL_SPARE	%g5
+ #endif
+ 
+ #ifndef EX_LD
+-#define EX_LD(x)	x
++#define EX_LD(x,y)	x
+ #endif
+ 
+ #ifndef EX_ST
+-#define EX_ST(x)	x
+-#endif
+-
+-#ifndef EX_RETVAL
+-#define EX_RETVAL(x)	x
++#define EX_ST(x,y)	x
+ #endif
+ 
+ #ifndef LOAD
+@@ -45,6 +42,29 @@
+ 	.register	%g3,#scratch
+ 
+ 	.text
++
++#ifndef EX_RETVAL
++#define EX_RETVAL(x)	x
++ENTRY(GEN_retl_o4_1)
++	add	%o4, %o2, %o4
++	retl
++	 add	%o4, 1, %o0
++ENDPROC(GEN_retl_o4_1)
++ENTRY(GEN_retl_g1_8)
++	add	%g1, %o2, %g1
++	retl
++	 add	%g1, 8, %o0
++ENDPROC(GEN_retl_g1_8)
++ENTRY(GEN_retl_o2_4)
++	retl
++	 add	%o2, 4, %o0
++ENDPROC(GEN_retl_o2_4)
++ENTRY(GEN_retl_o2_1)
++	retl
++	 add	%o2, 1, %o0
++ENDPROC(GEN_retl_o2_1)
++#endif
++
+ 	.align		64
+ 
+ 	.globl	FUNC_NAME
+@@ -73,8 +93,8 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	sub		%g0, %o4, %o4
+ 	sub		%o2, %o4, %o2
+ 1:	subcc		%o4, 1, %o4
+-	EX_LD(LOAD(ldub, %o1, %g1))
+-	EX_ST(STORE(stb, %g1, %o0))
++	EX_LD(LOAD(ldub, %o1, %g1),GEN_retl_o4_1)
++	EX_ST(STORE(stb, %g1, %o0),GEN_retl_o4_1)
+ 	add		%o1, 1, %o1
+ 	bne,pt		%XCC, 1b
+ 	add		%o0, 1, %o0
+@@ -82,8 +102,8 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	andn		%o2, 0x7, %g1
+ 	sub		%o2, %g1, %o2
+ 1:	subcc		%g1, 0x8, %g1
+-	EX_LD(LOAD(ldx, %o1, %g2))
+-	EX_ST(STORE(stx, %g2, %o0))
++	EX_LD(LOAD(ldx, %o1, %g2),GEN_retl_g1_8)
++	EX_ST(STORE(stx, %g2, %o0),GEN_retl_g1_8)
+ 	add		%o1, 0x8, %o1
+ 	bne,pt		%XCC, 1b
+ 	 add		%o0, 0x8, %o0
+@@ -100,8 +120,8 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 1:
+ 	subcc		%o2, 4, %o2
+-	EX_LD(LOAD(lduw, %o1, %g1))
+-	EX_ST(STORE(stw, %g1, %o1 + %o3))
++	EX_LD(LOAD(lduw, %o1, %g1),GEN_retl_o2_4)
++	EX_ST(STORE(stw, %g1, %o1 + %o3),GEN_retl_o2_4)
+ 	bgu,pt		%XCC, 1b
+ 	 add		%o1, 4, %o1
+ 
+@@ -111,8 +131,8 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	.align		32
+ 90:
+ 	subcc		%o2, 1, %o2
+-	EX_LD(LOAD(ldub, %o1, %g1))
+-	EX_ST(STORE(stb, %g1, %o1 + %o3))
++	EX_LD(LOAD(ldub, %o1, %g1),GEN_retl_o2_1)
++	EX_ST(STORE(stb, %g1, %o1 + %o3),GEN_retl_o2_1)
+ 	bgu,pt		%XCC, 90b
+ 	 add		%o1, 1, %o1
+ 	retl
+diff --git a/arch/sparc/lib/Makefile b/arch/sparc/lib/Makefile
+index 3269b0234093..4f2384a4286a 100644
+--- a/arch/sparc/lib/Makefile
++++ b/arch/sparc/lib/Makefile
+@@ -38,7 +38,7 @@ lib-$(CONFIG_SPARC64) +=  NG4patch.o NG4copy_page.o NG4clear_page.o NG4memset.o
+ lib-$(CONFIG_SPARC64) += GENmemcpy.o GENcopy_from_user.o GENcopy_to_user.o
+ lib-$(CONFIG_SPARC64) += GENpatch.o GENpage.o GENbzero.o
+ 
+-lib-$(CONFIG_SPARC64) += copy_in_user.o user_fixup.o memmove.o
++lib-$(CONFIG_SPARC64) += copy_in_user.o memmove.o
+ lib-$(CONFIG_SPARC64) += mcount.o ipcsum.o xor.o hweight.o ffs.o
+ 
+ obj-$(CONFIG_SPARC64) += iomap.o
+diff --git a/arch/sparc/lib/NG2copy_from_user.S b/arch/sparc/lib/NG2copy_from_user.S
+index d5242b8c4f94..b79a6998d87c 100644
+--- a/arch/sparc/lib/NG2copy_from_user.S
++++ b/arch/sparc/lib/NG2copy_from_user.S
+@@ -3,19 +3,19 @@
+  * Copyright (C) 2007 David S. Miller (davem@davemloft.net)
+  */
+ 
+-#define EX_LD(x)		\
++#define EX_LD(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one_asi;\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+-#define EX_LD_FP(x)		\
++#define EX_LD_FP(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one_asi_fp;\
++	.word 98b, y##_fp;	\
+ 	.text;			\
+ 	.align 4;
+ 
+diff --git a/arch/sparc/lib/NG2copy_to_user.S b/arch/sparc/lib/NG2copy_to_user.S
+index 4e962d993b10..dcec55f254ab 100644
+--- a/arch/sparc/lib/NG2copy_to_user.S
++++ b/arch/sparc/lib/NG2copy_to_user.S
+@@ -3,19 +3,19 @@
+  * Copyright (C) 2007 David S. Miller (davem@davemloft.net)
+  */
+ 
+-#define EX_ST(x)		\
++#define EX_ST(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one_asi;\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+-#define EX_ST_FP(x)		\
++#define EX_ST_FP(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one_asi_fp;\
++	.word 98b, y##_fp;	\
+ 	.text;			\
+ 	.align 4;
+ 
+diff --git a/arch/sparc/lib/NG2memcpy.S b/arch/sparc/lib/NG2memcpy.S
+index d5f585df2f3f..c629dbd121b6 100644
+--- a/arch/sparc/lib/NG2memcpy.S
++++ b/arch/sparc/lib/NG2memcpy.S
+@@ -4,6 +4,7 @@
+  */
+ 
+ #ifdef __KERNEL__
++#include <linux/linkage.h>
+ #include <asm/visasm.h>
+ #include <asm/asi.h>
+ #define GLOBAL_SPARE	%g7
+@@ -32,21 +33,17 @@
+ #endif
+ 
+ #ifndef EX_LD
+-#define EX_LD(x)	x
++#define EX_LD(x,y)	x
+ #endif
+ #ifndef EX_LD_FP
+-#define EX_LD_FP(x)	x
++#define EX_LD_FP(x,y)	x
+ #endif
+ 
+ #ifndef EX_ST
+-#define EX_ST(x)	x
++#define EX_ST(x,y)	x
+ #endif
+ #ifndef EX_ST_FP
+-#define EX_ST_FP(x)	x
+-#endif
+-
+-#ifndef EX_RETVAL
+-#define EX_RETVAL(x)	x
++#define EX_ST_FP(x,y)	x
+ #endif
+ 
+ #ifndef LOAD
+@@ -140,45 +137,110 @@
+ 	fsrc2		%x6, %f12; \
+ 	fsrc2		%x7, %f14;
+ #define FREG_LOAD_1(base, x0) \
+-	EX_LD_FP(LOAD(ldd, base + 0x00, %x0))
++	EX_LD_FP(LOAD(ldd, base + 0x00, %x0), NG2_retl_o2_plus_g1)
+ #define FREG_LOAD_2(base, x0, x1) \
+-	EX_LD_FP(LOAD(ldd, base + 0x00, %x0)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x08, %x1));
++	EX_LD_FP(LOAD(ldd, base + 0x00, %x0), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x08, %x1), NG2_retl_o2_plus_g1);
+ #define FREG_LOAD_3(base, x0, x1, x2) \
+-	EX_LD_FP(LOAD(ldd, base + 0x00, %x0)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x08, %x1)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x10, %x2));
++	EX_LD_FP(LOAD(ldd, base + 0x00, %x0), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x08, %x1), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x10, %x2), NG2_retl_o2_plus_g1);
+ #define FREG_LOAD_4(base, x0, x1, x2, x3) \
+-	EX_LD_FP(LOAD(ldd, base + 0x00, %x0)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x08, %x1)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x10, %x2)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x18, %x3));
++	EX_LD_FP(LOAD(ldd, base + 0x00, %x0), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x08, %x1), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x10, %x2), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x18, %x3), NG2_retl_o2_plus_g1);
+ #define FREG_LOAD_5(base, x0, x1, x2, x3, x4) \
+-	EX_LD_FP(LOAD(ldd, base + 0x00, %x0)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x08, %x1)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x10, %x2)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x18, %x3)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x20, %x4));
++	EX_LD_FP(LOAD(ldd, base + 0x00, %x0), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x08, %x1), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x10, %x2), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x18, %x3), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x20, %x4), NG2_retl_o2_plus_g1);
+ #define FREG_LOAD_6(base, x0, x1, x2, x3, x4, x5) \
+-	EX_LD_FP(LOAD(ldd, base + 0x00, %x0)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x08, %x1)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x10, %x2)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x18, %x3)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x20, %x4)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x28, %x5));
++	EX_LD_FP(LOAD(ldd, base + 0x00, %x0), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x08, %x1), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x10, %x2), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x18, %x3), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x20, %x4), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x28, %x5), NG2_retl_o2_plus_g1);
+ #define FREG_LOAD_7(base, x0, x1, x2, x3, x4, x5, x6) \
+-	EX_LD_FP(LOAD(ldd, base + 0x00, %x0)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x08, %x1)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x10, %x2)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x18, %x3)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x20, %x4)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x28, %x5)); \
+-	EX_LD_FP(LOAD(ldd, base + 0x30, %x6));
++	EX_LD_FP(LOAD(ldd, base + 0x00, %x0), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x08, %x1), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x10, %x2), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x18, %x3), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x20, %x4), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x28, %x5), NG2_retl_o2_plus_g1); \
++	EX_LD_FP(LOAD(ldd, base + 0x30, %x6), NG2_retl_o2_plus_g1);
+ 
+ 	.register	%g2,#scratch
+ 	.register	%g3,#scratch
+ 
+ 	.text
++#ifndef EX_RETVAL
++#define EX_RETVAL(x)	x
++__restore_fp:
++	VISExitHalf
++__restore_asi:
++	retl
++	 wr	%g0, ASI_AIUS, %asi
++ENTRY(NG2_retl_o2)
++	ba,pt	%xcc, __restore_asi
++	 mov	%o2, %o0
++ENDPROC(NG2_retl_o2)
++ENTRY(NG2_retl_o2_plus_1)
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, 1, %o0
++ENDPROC(NG2_retl_o2_plus_1)
++ENTRY(NG2_retl_o2_plus_4)
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, 4, %o0
++ENDPROC(NG2_retl_o2_plus_4)
++ENTRY(NG2_retl_o2_plus_8)
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, 8, %o0
++ENDPROC(NG2_retl_o2_plus_8)
++ENTRY(NG2_retl_o2_plus_o4_plus_1)
++	add	%o4, 1, %o4
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG2_retl_o2_plus_o4_plus_1)
++ENTRY(NG2_retl_o2_plus_o4_plus_8)
++	add	%o4, 8, %o4
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG2_retl_o2_plus_o4_plus_8)
++ENTRY(NG2_retl_o2_plus_o4_plus_16)
++	add	%o4, 16, %o4
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG2_retl_o2_plus_o4_plus_16)
++ENTRY(NG2_retl_o2_plus_g1_fp)
++	ba,pt	%xcc, __restore_fp
++	 add	%o2, %g1, %o0
++ENDPROC(NG2_retl_o2_plus_g1_fp)
++ENTRY(NG2_retl_o2_plus_g1_plus_64_fp)
++	add	%g1, 64, %g1
++	ba,pt	%xcc, __restore_fp
++	 add	%o2, %g1, %o0
++ENDPROC(NG2_retl_o2_plus_g1_plus_64_fp)
++ENTRY(NG2_retl_o2_plus_g1_plus_1)
++	add	%g1, 1, %g1
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %g1, %o0
++ENDPROC(NG2_retl_o2_plus_g1_plus_1)
++ENTRY(NG2_retl_o2_and_7_plus_o4)
++	and	%o2, 7, %o2
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG2_retl_o2_and_7_plus_o4)
++ENTRY(NG2_retl_o2_and_7_plus_o4_plus_8)
++	and	%o2, 7, %o2
++	add	%o4, 8, %o4
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG2_retl_o2_and_7_plus_o4_plus_8)
++#endif
++
+ 	.align		64
+ 
+ 	.globl	FUNC_NAME
+@@ -230,8 +292,8 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	sub		%g0, %o4, %o4	! bytes to align dst
+ 	sub		%o2, %o4, %o2
+ 1:	subcc		%o4, 1, %o4
+-	EX_LD(LOAD(ldub, %o1, %g1))
+-	EX_ST(STORE(stb, %g1, %o0))
++	EX_LD(LOAD(ldub, %o1, %g1), NG2_retl_o2_plus_o4_plus_1)
++	EX_ST(STORE(stb, %g1, %o0), NG2_retl_o2_plus_o4_plus_1)
+ 	add		%o1, 1, %o1
+ 	bne,pt		%XCC, 1b
+ 	add		%o0, 1, %o0
+@@ -281,11 +343,11 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	 nop
+ 	/* fall through for 0 < low bits < 8 */
+ 110:	sub		%o4, 64, %g2
+-	EX_LD_FP(LOAD_BLK(%g2, %f0))
+-1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3))
+-	EX_LD_FP(LOAD_BLK(%o4, %f16))
++	EX_LD_FP(LOAD_BLK(%g2, %f0), NG2_retl_o2_plus_g1)
++1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3), NG2_retl_o2_plus_g1)
++	EX_LD_FP(LOAD_BLK(%o4, %f16), NG2_retl_o2_plus_g1)
+ 	FREG_FROB(f0, f2, f4, f6, f8, f10, f12, f14, f16)
+-	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3))
++	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3), NG2_retl_o2_plus_g1)
+ 	FREG_MOVE_8(f16, f18, f20, f22, f24, f26, f28, f30)
+ 	subcc		%g1, 64, %g1
+ 	add		%o4, 64, %o4
+@@ -296,10 +358,10 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 120:	sub		%o4, 56, %g2
+ 	FREG_LOAD_7(%g2, f0, f2, f4, f6, f8, f10, f12)
+-1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3))
+-	EX_LD_FP(LOAD_BLK(%o4, %f16))
++1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3), NG2_retl_o2_plus_g1)
++	EX_LD_FP(LOAD_BLK(%o4, %f16), NG2_retl_o2_plus_g1)
+ 	FREG_FROB(f0, f2, f4, f6, f8, f10, f12, f16, f18)
+-	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3))
++	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3), NG2_retl_o2_plus_g1)
+ 	FREG_MOVE_7(f18, f20, f22, f24, f26, f28, f30)
+ 	subcc		%g1, 64, %g1
+ 	add		%o4, 64, %o4
+@@ -310,10 +372,10 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 130:	sub		%o4, 48, %g2
+ 	FREG_LOAD_6(%g2, f0, f2, f4, f6, f8, f10)
+-1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3))
+-	EX_LD_FP(LOAD_BLK(%o4, %f16))
++1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3), NG2_retl_o2_plus_g1)
++	EX_LD_FP(LOAD_BLK(%o4, %f16), NG2_retl_o2_plus_g1)
+ 	FREG_FROB(f0, f2, f4, f6, f8, f10, f16, f18, f20)
+-	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3))
++	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3), NG2_retl_o2_plus_g1)
+ 	FREG_MOVE_6(f20, f22, f24, f26, f28, f30)
+ 	subcc		%g1, 64, %g1
+ 	add		%o4, 64, %o4
+@@ -324,10 +386,10 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 140:	sub		%o4, 40, %g2
+ 	FREG_LOAD_5(%g2, f0, f2, f4, f6, f8)
+-1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3))
+-	EX_LD_FP(LOAD_BLK(%o4, %f16))
++1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3), NG2_retl_o2_plus_g1)
++	EX_LD_FP(LOAD_BLK(%o4, %f16), NG2_retl_o2_plus_g1)
+ 	FREG_FROB(f0, f2, f4, f6, f8, f16, f18, f20, f22)
+-	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3))
++	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3), NG2_retl_o2_plus_g1)
+ 	FREG_MOVE_5(f22, f24, f26, f28, f30)
+ 	subcc		%g1, 64, %g1
+ 	add		%o4, 64, %o4
+@@ -338,10 +400,10 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 150:	sub		%o4, 32, %g2
+ 	FREG_LOAD_4(%g2, f0, f2, f4, f6)
+-1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3))
+-	EX_LD_FP(LOAD_BLK(%o4, %f16))
++1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3), NG2_retl_o2_plus_g1)
++	EX_LD_FP(LOAD_BLK(%o4, %f16), NG2_retl_o2_plus_g1)
+ 	FREG_FROB(f0, f2, f4, f6, f16, f18, f20, f22, f24)
+-	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3))
++	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3), NG2_retl_o2_plus_g1)
+ 	FREG_MOVE_4(f24, f26, f28, f30)
+ 	subcc		%g1, 64, %g1
+ 	add		%o4, 64, %o4
+@@ -352,10 +414,10 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 160:	sub		%o4, 24, %g2
+ 	FREG_LOAD_3(%g2, f0, f2, f4)
+-1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3))
+-	EX_LD_FP(LOAD_BLK(%o4, %f16))
++1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3), NG2_retl_o2_plus_g1)
++	EX_LD_FP(LOAD_BLK(%o4, %f16), NG2_retl_o2_plus_g1)
+ 	FREG_FROB(f0, f2, f4, f16, f18, f20, f22, f24, f26)
+-	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3))
++	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3), NG2_retl_o2_plus_g1)
+ 	FREG_MOVE_3(f26, f28, f30)
+ 	subcc		%g1, 64, %g1
+ 	add		%o4, 64, %o4
+@@ -366,10 +428,10 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 170:	sub		%o4, 16, %g2
+ 	FREG_LOAD_2(%g2, f0, f2)
+-1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3))
+-	EX_LD_FP(LOAD_BLK(%o4, %f16))
++1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3), NG2_retl_o2_plus_g1)
++	EX_LD_FP(LOAD_BLK(%o4, %f16), NG2_retl_o2_plus_g1)
+ 	FREG_FROB(f0, f2, f16, f18, f20, f22, f24, f26, f28)
+-	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3))
++	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3), NG2_retl_o2_plus_g1)
+ 	FREG_MOVE_2(f28, f30)
+ 	subcc		%g1, 64, %g1
+ 	add		%o4, 64, %o4
+@@ -380,10 +442,10 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 180:	sub		%o4, 8, %g2
+ 	FREG_LOAD_1(%g2, f0)
+-1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3))
+-	EX_LD_FP(LOAD_BLK(%o4, %f16))
++1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3), NG2_retl_o2_plus_g1)
++	EX_LD_FP(LOAD_BLK(%o4, %f16), NG2_retl_o2_plus_g1)
+ 	FREG_FROB(f0, f16, f18, f20, f22, f24, f26, f28, f30)
+-	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3))
++	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3), NG2_retl_o2_plus_g1)
+ 	FREG_MOVE_1(f30)
+ 	subcc		%g1, 64, %g1
+ 	add		%o4, 64, %o4
+@@ -393,10 +455,10 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	 nop
+ 
+ 190:
+-1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3))
++1:	EX_ST_FP(STORE_INIT(%g0, %o4 + %g3), NG2_retl_o2_plus_g1)
+ 	subcc		%g1, 64, %g1
+-	EX_LD_FP(LOAD_BLK(%o4, %f0))
+-	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3))
++	EX_LD_FP(LOAD_BLK(%o4, %f0), NG2_retl_o2_plus_g1_plus_64)
++	EX_ST_FP(STORE_BLK(%f0, %o4 + %g3), NG2_retl_o2_plus_g1_plus_64)
+ 	add		%o4, 64, %o4
+ 	bne,pt		%xcc, 1b
+ 	 LOAD(prefetch, %o4 + 64, #one_read)
+@@ -423,28 +485,28 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	andn		%o2, 0xf, %o4
+ 	and		%o2, 0xf, %o2
+ 1:	subcc		%o4, 0x10, %o4
+-	EX_LD(LOAD(ldx, %o1, %o5))
++	EX_LD(LOAD(ldx, %o1, %o5), NG2_retl_o2_plus_o4_plus_16)
+ 	add		%o1, 0x08, %o1
+-	EX_LD(LOAD(ldx, %o1, %g1))
++	EX_LD(LOAD(ldx, %o1, %g1), NG2_retl_o2_plus_o4_plus_16)
+ 	sub		%o1, 0x08, %o1
+-	EX_ST(STORE(stx, %o5, %o1 + GLOBAL_SPARE))
++	EX_ST(STORE(stx, %o5, %o1 + GLOBAL_SPARE), NG2_retl_o2_plus_o4_plus_16)
+ 	add		%o1, 0x8, %o1
+-	EX_ST(STORE(stx, %g1, %o1 + GLOBAL_SPARE))
++	EX_ST(STORE(stx, %g1, %o1 + GLOBAL_SPARE), NG2_retl_o2_plus_o4_plus_8)
+ 	bgu,pt		%XCC, 1b
+ 	 add		%o1, 0x8, %o1
+ 73:	andcc		%o2, 0x8, %g0
+ 	be,pt		%XCC, 1f
+ 	 nop
+ 	sub		%o2, 0x8, %o2
+-	EX_LD(LOAD(ldx, %o1, %o5))
+-	EX_ST(STORE(stx, %o5, %o1 + GLOBAL_SPARE))
++	EX_LD(LOAD(ldx, %o1, %o5), NG2_retl_o2_plus_8)
++	EX_ST(STORE(stx, %o5, %o1 + GLOBAL_SPARE), NG2_retl_o2_plus_8)
+ 	add		%o1, 0x8, %o1
+ 1:	andcc		%o2, 0x4, %g0
+ 	be,pt		%XCC, 1f
+ 	 nop
+ 	sub		%o2, 0x4, %o2
+-	EX_LD(LOAD(lduw, %o1, %o5))
+-	EX_ST(STORE(stw, %o5, %o1 + GLOBAL_SPARE))
++	EX_LD(LOAD(lduw, %o1, %o5), NG2_retl_o2_plus_4)
++	EX_ST(STORE(stw, %o5, %o1 + GLOBAL_SPARE), NG2_retl_o2_plus_4)
+ 	add		%o1, 0x4, %o1
+ 1:	cmp		%o2, 0
+ 	be,pt		%XCC, 85f
+@@ -460,8 +522,8 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	sub		%o2, %g1, %o2
+ 
+ 1:	subcc		%g1, 1, %g1
+-	EX_LD(LOAD(ldub, %o1, %o5))
+-	EX_ST(STORE(stb, %o5, %o1 + GLOBAL_SPARE))
++	EX_LD(LOAD(ldub, %o1, %o5), NG2_retl_o2_plus_g1_plus_1)
++	EX_ST(STORE(stb, %o5, %o1 + GLOBAL_SPARE), NG2_retl_o2_plus_g1_plus_1)
+ 	bgu,pt		%icc, 1b
+ 	 add		%o1, 1, %o1
+ 
+@@ -477,16 +539,16 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 8:	mov		64, GLOBAL_SPARE
+ 	andn		%o1, 0x7, %o1
+-	EX_LD(LOAD(ldx, %o1, %g2))
++	EX_LD(LOAD(ldx, %o1, %g2), NG2_retl_o2)
+ 	sub		GLOBAL_SPARE, %g1, GLOBAL_SPARE
+ 	andn		%o2, 0x7, %o4
+ 	sllx		%g2, %g1, %g2
+ 1:	add		%o1, 0x8, %o1
+-	EX_LD(LOAD(ldx, %o1, %g3))
++	EX_LD(LOAD(ldx, %o1, %g3), NG2_retl_o2_and_7_plus_o4)
+ 	subcc		%o4, 0x8, %o4
+ 	srlx		%g3, GLOBAL_SPARE, %o5
+ 	or		%o5, %g2, %o5
+-	EX_ST(STORE(stx, %o5, %o0))
++	EX_ST(STORE(stx, %o5, %o0), NG2_retl_o2_and_7_plus_o4_plus_8)
+ 	add		%o0, 0x8, %o0
+ 	bgu,pt		%icc, 1b
+ 	 sllx		%g3, %g1, %g2
+@@ -506,8 +568,8 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 1:
+ 	subcc		%o2, 4, %o2
+-	EX_LD(LOAD(lduw, %o1, %g1))
+-	EX_ST(STORE(stw, %g1, %o1 + GLOBAL_SPARE))
++	EX_LD(LOAD(lduw, %o1, %g1), NG2_retl_o2_plus_4)
++	EX_ST(STORE(stw, %g1, %o1 + GLOBAL_SPARE), NG2_retl_o2_plus_4)
+ 	bgu,pt		%XCC, 1b
+ 	 add		%o1, 4, %o1
+ 
+@@ -517,8 +579,8 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	.align		32
+ 90:
+ 	subcc		%o2, 1, %o2
+-	EX_LD(LOAD(ldub, %o1, %g1))
+-	EX_ST(STORE(stb, %g1, %o1 + GLOBAL_SPARE))
++	EX_LD(LOAD(ldub, %o1, %g1), NG2_retl_o2_plus_1)
++	EX_ST(STORE(stb, %g1, %o1 + GLOBAL_SPARE), NG2_retl_o2_plus_1)
+ 	bgu,pt		%XCC, 90b
+ 	 add		%o1, 1, %o1
+ 	retl
+diff --git a/arch/sparc/lib/NG4copy_from_user.S b/arch/sparc/lib/NG4copy_from_user.S
+index 2e8ee7ad07a9..16a286c1a528 100644
+--- a/arch/sparc/lib/NG4copy_from_user.S
++++ b/arch/sparc/lib/NG4copy_from_user.S
+@@ -3,19 +3,19 @@
+  * Copyright (C) 2012 David S. Miller (davem@davemloft.net)
+  */
+ 
+-#define EX_LD(x)		\
++#define EX_LD(x, y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one_asi;\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+-#define EX_LD_FP(x)		\
++#define EX_LD_FP(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one_asi_fp;\
++	.word 98b, y##_fp;	\
+ 	.text;			\
+ 	.align 4;
+ 
+diff --git a/arch/sparc/lib/NG4copy_to_user.S b/arch/sparc/lib/NG4copy_to_user.S
+index be0bf4590df8..6b0276ffc858 100644
+--- a/arch/sparc/lib/NG4copy_to_user.S
++++ b/arch/sparc/lib/NG4copy_to_user.S
+@@ -3,19 +3,19 @@
+  * Copyright (C) 2012 David S. Miller (davem@davemloft.net)
+  */
+ 
+-#define EX_ST(x)		\
++#define EX_ST(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one_asi;\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+-#define EX_ST_FP(x)		\
++#define EX_ST_FP(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one_asi_fp;\
++	.word 98b, y##_fp;	\
+ 	.text;			\
+ 	.align 4;
+ 
+diff --git a/arch/sparc/lib/NG4memcpy.S b/arch/sparc/lib/NG4memcpy.S
+index 8e13ee1f4454..75bb93b1437f 100644
+--- a/arch/sparc/lib/NG4memcpy.S
++++ b/arch/sparc/lib/NG4memcpy.S
+@@ -4,6 +4,7 @@
+  */
+ 
+ #ifdef __KERNEL__
++#include <linux/linkage.h>
+ #include <asm/visasm.h>
+ #include <asm/asi.h>
+ #define GLOBAL_SPARE	%g7
+@@ -46,22 +47,19 @@
+ #endif
+ 
+ #ifndef EX_LD
+-#define EX_LD(x)	x
++#define EX_LD(x,y)	x
+ #endif
+ #ifndef EX_LD_FP
+-#define EX_LD_FP(x)	x
++#define EX_LD_FP(x,y)	x
+ #endif
+ 
+ #ifndef EX_ST
+-#define EX_ST(x)	x
++#define EX_ST(x,y)	x
+ #endif
+ #ifndef EX_ST_FP
+-#define EX_ST_FP(x)	x
++#define EX_ST_FP(x,y)	x
+ #endif
+ 
+-#ifndef EX_RETVAL
+-#define EX_RETVAL(x)	x
+-#endif
+ 
+ #ifndef LOAD
+ #define LOAD(type,addr,dest)	type [addr], dest
+@@ -94,6 +92,158 @@
+ 	.register	%g3,#scratch
+ 
+ 	.text
++#ifndef EX_RETVAL
++#define EX_RETVAL(x)	x
++__restore_asi_fp:
++	VISExitHalf
++__restore_asi:
++	retl
++	 wr	%g0, ASI_AIUS, %asi
++
++ENTRY(NG4_retl_o2)
++	ba,pt	%xcc, __restore_asi
++	 mov	%o2, %o0
++ENDPROC(NG4_retl_o2)
++ENTRY(NG4_retl_o2_plus_1)
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, 1, %o0
++ENDPROC(NG4_retl_o2_plus_1)
++ENTRY(NG4_retl_o2_plus_4)
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, 4, %o0
++ENDPROC(NG4_retl_o2_plus_4)
++ENTRY(NG4_retl_o2_plus_o5)
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o5, %o0
++ENDPROC(NG4_retl_o2_plus_o5)
++ENTRY(NG4_retl_o2_plus_o5_plus_4)
++	add	%o5, 4, %o5
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o5, %o0
++ENDPROC(NG4_retl_o2_plus_o5_plus_4)
++ENTRY(NG4_retl_o2_plus_o5_plus_8)
++	add	%o5, 8, %o5
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o5, %o0
++ENDPROC(NG4_retl_o2_plus_o5_plus_8)
++ENTRY(NG4_retl_o2_plus_o5_plus_16)
++	add	%o5, 16, %o5
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o5, %o0
++ENDPROC(NG4_retl_o2_plus_o5_plus_16)
++ENTRY(NG4_retl_o2_plus_o5_plus_24)
++	add	%o5, 24, %o5
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o5, %o0
++ENDPROC(NG4_retl_o2_plus_o5_plus_24)
++ENTRY(NG4_retl_o2_plus_o5_plus_32)
++	add	%o5, 32, %o5
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o5, %o0
++ENDPROC(NG4_retl_o2_plus_o5_plus_32)
++ENTRY(NG4_retl_o2_plus_g1)
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %g1, %o0
++ENDPROC(NG4_retl_o2_plus_g1)
++ENTRY(NG4_retl_o2_plus_g1_plus_1)
++	add	%g1, 1, %g1
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %g1, %o0
++ENDPROC(NG4_retl_o2_plus_g1_plus_1)
++ENTRY(NG4_retl_o2_plus_g1_plus_8)
++	add	%g1, 8, %g1
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %g1, %o0
++ENDPROC(NG4_retl_o2_plus_g1_plus_8)
++ENTRY(NG4_retl_o2_plus_o4)
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4)
++ENTRY(NG4_retl_o2_plus_o4_plus_8)
++	add	%o4, 8, %o4
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_8)
++ENTRY(NG4_retl_o2_plus_o4_plus_16)
++	add	%o4, 16, %o4
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_16)
++ENTRY(NG4_retl_o2_plus_o4_plus_24)
++	add	%o4, 24, %o4
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_24)
++ENTRY(NG4_retl_o2_plus_o4_plus_32)
++	add	%o4, 32, %o4
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_32)
++ENTRY(NG4_retl_o2_plus_o4_plus_40)
++	add	%o4, 40, %o4
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_40)
++ENTRY(NG4_retl_o2_plus_o4_plus_48)
++	add	%o4, 48, %o4
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_48)
++ENTRY(NG4_retl_o2_plus_o4_plus_56)
++	add	%o4, 56, %o4
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_56)
++ENTRY(NG4_retl_o2_plus_o4_plus_64)
++	add	%o4, 64, %o4
++	ba,pt	%xcc, __restore_asi
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_64)
++ENTRY(NG4_retl_o2_plus_o4_fp)
++	ba,pt	%xcc, __restore_asi_fp
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_fp)
++ENTRY(NG4_retl_o2_plus_o4_plus_8_fp)
++	add	%o4, 8, %o4
++	ba,pt	%xcc, __restore_asi_fp
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_8_fp)
++ENTRY(NG4_retl_o2_plus_o4_plus_16_fp)
++	add	%o4, 16, %o4
++	ba,pt	%xcc, __restore_asi_fp
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_16_fp)
++ENTRY(NG4_retl_o2_plus_o4_plus_24_fp)
++	add	%o4, 24, %o4
++	ba,pt	%xcc, __restore_asi_fp
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_24_fp)
++ENTRY(NG4_retl_o2_plus_o4_plus_32_fp)
++	add	%o4, 32, %o4
++	ba,pt	%xcc, __restore_asi_fp
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_32_fp)
++ENTRY(NG4_retl_o2_plus_o4_plus_40_fp)
++	add	%o4, 40, %o4
++	ba,pt	%xcc, __restore_asi_fp
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_40_fp)
++ENTRY(NG4_retl_o2_plus_o4_plus_48_fp)
++	add	%o4, 48, %o4
++	ba,pt	%xcc, __restore_asi_fp
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_48_fp)
++ENTRY(NG4_retl_o2_plus_o4_plus_56_fp)
++	add	%o4, 56, %o4
++	ba,pt	%xcc, __restore_asi_fp
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_56_fp)
++ENTRY(NG4_retl_o2_plus_o4_plus_64_fp)
++	add	%o4, 64, %o4
++	ba,pt	%xcc, __restore_asi_fp
++	 add	%o2, %o4, %o0
++ENDPROC(NG4_retl_o2_plus_o4_plus_64_fp)
++#endif
+ 	.align		64
+ 
+ 	.globl	FUNC_NAME
+@@ -124,12 +274,13 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	brz,pt		%g1, 51f
+ 	 sub		%o2, %g1, %o2
+ 
+-1:	EX_LD(LOAD(ldub, %o1 + 0x00, %g2))
++
++1:	EX_LD(LOAD(ldub, %o1 + 0x00, %g2), NG4_retl_o2_plus_g1)
+ 	add		%o1, 1, %o1
+ 	subcc		%g1, 1, %g1
+ 	add		%o0, 1, %o0
+ 	bne,pt		%icc, 1b
+-	 EX_ST(STORE(stb, %g2, %o0 - 0x01))
++	 EX_ST(STORE(stb, %g2, %o0 - 0x01), NG4_retl_o2_plus_g1_plus_1)
+ 
+ 51:	LOAD(prefetch, %o1 + 0x040, #n_reads_strong)
+ 	LOAD(prefetch, %o1 + 0x080, #n_reads_strong)
+@@ -154,43 +305,43 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	brz,pt		%g1, .Llarge_aligned
+ 	 sub		%o2, %g1, %o2
+ 
+-1:	EX_LD(LOAD(ldx, %o1 + 0x00, %g2))
++1:	EX_LD(LOAD(ldx, %o1 + 0x00, %g2), NG4_retl_o2_plus_g1)
+ 	add		%o1, 8, %o1
+ 	subcc		%g1, 8, %g1
+ 	add		%o0, 8, %o0
+ 	bne,pt		%icc, 1b
+-	 EX_ST(STORE(stx, %g2, %o0 - 0x08))
++	 EX_ST(STORE(stx, %g2, %o0 - 0x08), NG4_retl_o2_plus_g1_plus_8)
+ 
+ .Llarge_aligned:
+ 	/* len >= 0x80 && src 8-byte aligned && dest 8-byte aligned */
+ 	andn		%o2, 0x3f, %o4
+ 	sub		%o2, %o4, %o2
+ 
+-1:	EX_LD(LOAD(ldx, %o1 + 0x00, %g1))
++1:	EX_LD(LOAD(ldx, %o1 + 0x00, %g1), NG4_retl_o2_plus_o4)
+ 	add		%o1, 0x40, %o1
+-	EX_LD(LOAD(ldx, %o1 - 0x38, %g2))
++	EX_LD(LOAD(ldx, %o1 - 0x38, %g2), NG4_retl_o2_plus_o4)
+ 	subcc		%o4, 0x40, %o4
+-	EX_LD(LOAD(ldx, %o1 - 0x30, %g3))
+-	EX_LD(LOAD(ldx, %o1 - 0x28, GLOBAL_SPARE))
+-	EX_LD(LOAD(ldx, %o1 - 0x20, %o5))
+-	EX_ST(STORE_INIT(%g1, %o0))
++	EX_LD(LOAD(ldx, %o1 - 0x30, %g3), NG4_retl_o2_plus_o4_plus_64)
++	EX_LD(LOAD(ldx, %o1 - 0x28, GLOBAL_SPARE), NG4_retl_o2_plus_o4_plus_64)
++	EX_LD(LOAD(ldx, %o1 - 0x20, %o5), NG4_retl_o2_plus_o4_plus_64)
++	EX_ST(STORE_INIT(%g1, %o0), NG4_retl_o2_plus_o4_plus_64)
+ 	add		%o0, 0x08, %o0
+-	EX_ST(STORE_INIT(%g2, %o0))
++	EX_ST(STORE_INIT(%g2, %o0), NG4_retl_o2_plus_o4_plus_56)
+ 	add		%o0, 0x08, %o0
+-	EX_LD(LOAD(ldx, %o1 - 0x18, %g2))
+-	EX_ST(STORE_INIT(%g3, %o0))
++	EX_LD(LOAD(ldx, %o1 - 0x18, %g2), NG4_retl_o2_plus_o4_plus_48)
++	EX_ST(STORE_INIT(%g3, %o0), NG4_retl_o2_plus_o4_plus_48)
+ 	add		%o0, 0x08, %o0
+-	EX_LD(LOAD(ldx, %o1 - 0x10, %g3))
+-	EX_ST(STORE_INIT(GLOBAL_SPARE, %o0))
++	EX_LD(LOAD(ldx, %o1 - 0x10, %g3), NG4_retl_o2_plus_o4_plus_40)
++	EX_ST(STORE_INIT(GLOBAL_SPARE, %o0), NG4_retl_o2_plus_o4_plus_40)
+ 	add		%o0, 0x08, %o0
+-	EX_LD(LOAD(ldx, %o1 - 0x08, GLOBAL_SPARE))
+-	EX_ST(STORE_INIT(%o5, %o0))
++	EX_LD(LOAD(ldx, %o1 - 0x08, GLOBAL_SPARE), NG4_retl_o2_plus_o4_plus_32)
++	EX_ST(STORE_INIT(%o5, %o0), NG4_retl_o2_plus_o4_plus_32)
+ 	add		%o0, 0x08, %o0
+-	EX_ST(STORE_INIT(%g2, %o0))
++	EX_ST(STORE_INIT(%g2, %o0), NG4_retl_o2_plus_o4_plus_24)
+ 	add		%o0, 0x08, %o0
+-	EX_ST(STORE_INIT(%g3, %o0))
++	EX_ST(STORE_INIT(%g3, %o0), NG4_retl_o2_plus_o4_plus_16)
+ 	add		%o0, 0x08, %o0
+-	EX_ST(STORE_INIT(GLOBAL_SPARE, %o0))
++	EX_ST(STORE_INIT(GLOBAL_SPARE, %o0), NG4_retl_o2_plus_o4_plus_8)
+ 	add		%o0, 0x08, %o0
+ 	bne,pt		%icc, 1b
+ 	 LOAD(prefetch, %o1 + 0x200, #n_reads_strong)
+@@ -216,17 +367,17 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	sub		%o2, %o4, %o2
+ 	alignaddr	%o1, %g0, %g1
+ 	add		%o1, %o4, %o1
+-	EX_LD_FP(LOAD(ldd, %g1 + 0x00, %f0))
+-1:	EX_LD_FP(LOAD(ldd, %g1 + 0x08, %f2))
++	EX_LD_FP(LOAD(ldd, %g1 + 0x00, %f0), NG4_retl_o2_plus_o4)
++1:	EX_LD_FP(LOAD(ldd, %g1 + 0x08, %f2), NG4_retl_o2_plus_o4)
+ 	subcc		%o4, 0x40, %o4
+-	EX_LD_FP(LOAD(ldd, %g1 + 0x10, %f4))
+-	EX_LD_FP(LOAD(ldd, %g1 + 0x18, %f6))
+-	EX_LD_FP(LOAD(ldd, %g1 + 0x20, %f8))
+-	EX_LD_FP(LOAD(ldd, %g1 + 0x28, %f10))
+-	EX_LD_FP(LOAD(ldd, %g1 + 0x30, %f12))
+-	EX_LD_FP(LOAD(ldd, %g1 + 0x38, %f14))
++	EX_LD_FP(LOAD(ldd, %g1 + 0x10, %f4), NG4_retl_o2_plus_o4_plus_64)
++	EX_LD_FP(LOAD(ldd, %g1 + 0x18, %f6), NG4_retl_o2_plus_o4_plus_64)
++	EX_LD_FP(LOAD(ldd, %g1 + 0x20, %f8), NG4_retl_o2_plus_o4_plus_64)
++	EX_LD_FP(LOAD(ldd, %g1 + 0x28, %f10), NG4_retl_o2_plus_o4_plus_64)
++	EX_LD_FP(LOAD(ldd, %g1 + 0x30, %f12), NG4_retl_o2_plus_o4_plus_64)
++	EX_LD_FP(LOAD(ldd, %g1 + 0x38, %f14), NG4_retl_o2_plus_o4_plus_64)
+ 	faligndata	%f0, %f2, %f16
+-	EX_LD_FP(LOAD(ldd, %g1 + 0x40, %f0))
++	EX_LD_FP(LOAD(ldd, %g1 + 0x40, %f0), NG4_retl_o2_plus_o4_plus_64)
+ 	faligndata	%f2, %f4, %f18
+ 	add		%g1, 0x40, %g1
+ 	faligndata	%f4, %f6, %f20
+@@ -235,14 +386,14 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	faligndata	%f10, %f12, %f26
+ 	faligndata	%f12, %f14, %f28
+ 	faligndata	%f14, %f0, %f30
+-	EX_ST_FP(STORE(std, %f16, %o0 + 0x00))
+-	EX_ST_FP(STORE(std, %f18, %o0 + 0x08))
+-	EX_ST_FP(STORE(std, %f20, %o0 + 0x10))
+-	EX_ST_FP(STORE(std, %f22, %o0 + 0x18))
+-	EX_ST_FP(STORE(std, %f24, %o0 + 0x20))
+-	EX_ST_FP(STORE(std, %f26, %o0 + 0x28))
+-	EX_ST_FP(STORE(std, %f28, %o0 + 0x30))
+-	EX_ST_FP(STORE(std, %f30, %o0 + 0x38))
++	EX_ST_FP(STORE(std, %f16, %o0 + 0x00), NG4_retl_o2_plus_o4_plus_64)
++	EX_ST_FP(STORE(std, %f18, %o0 + 0x08), NG4_retl_o2_plus_o4_plus_56)
++	EX_ST_FP(STORE(std, %f20, %o0 + 0x10), NG4_retl_o2_plus_o4_plus_48)
++	EX_ST_FP(STORE(std, %f22, %o0 + 0x18), NG4_retl_o2_plus_o4_plus_40)
++	EX_ST_FP(STORE(std, %f24, %o0 + 0x20), NG4_retl_o2_plus_o4_plus_32)
++	EX_ST_FP(STORE(std, %f26, %o0 + 0x28), NG4_retl_o2_plus_o4_plus_24)
++	EX_ST_FP(STORE(std, %f28, %o0 + 0x30), NG4_retl_o2_plus_o4_plus_16)
++	EX_ST_FP(STORE(std, %f30, %o0 + 0x38), NG4_retl_o2_plus_o4_plus_8)
+ 	add		%o0, 0x40, %o0
+ 	bne,pt		%icc, 1b
+ 	 LOAD(prefetch, %g1 + 0x200, #n_reads_strong)
+@@ -270,37 +421,38 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	andncc		%o2, 0x20 - 1, %o5
+ 	be,pn		%icc, 2f
+ 	 sub		%o2, %o5, %o2
+-1:	EX_LD(LOAD(ldx, %o1 + 0x00, %g1))
+-	EX_LD(LOAD(ldx, %o1 + 0x08, %g2))
+-	EX_LD(LOAD(ldx, %o1 + 0x10, GLOBAL_SPARE))
+-	EX_LD(LOAD(ldx, %o1 + 0x18, %o4))
++1:	EX_LD(LOAD(ldx, %o1 + 0x00, %g1), NG4_retl_o2_plus_o5)
++	EX_LD(LOAD(ldx, %o1 + 0x08, %g2), NG4_retl_o2_plus_o5)
++	EX_LD(LOAD(ldx, %o1 + 0x10, GLOBAL_SPARE), NG4_retl_o2_plus_o5)
++	EX_LD(LOAD(ldx, %o1 + 0x18, %o4), NG4_retl_o2_plus_o5)
+ 	add		%o1, 0x20, %o1
+ 	subcc		%o5, 0x20, %o5
+-	EX_ST(STORE(stx, %g1, %o0 + 0x00))
+-	EX_ST(STORE(stx, %g2, %o0 + 0x08))
+-	EX_ST(STORE(stx, GLOBAL_SPARE, %o0 + 0x10))
+-	EX_ST(STORE(stx, %o4, %o0 + 0x18))
++	EX_ST(STORE(stx, %g1, %o0 + 0x00), NG4_retl_o2_plus_o5_plus_32)
++	EX_ST(STORE(stx, %g2, %o0 + 0x08), NG4_retl_o2_plus_o5_plus_24)
++	EX_ST(STORE(stx, GLOBAL_SPARE, %o0 + 0x10), NG4_retl_o2_plus_o5_plus_24)
++	EX_ST(STORE(stx, %o4, %o0 + 0x18), NG4_retl_o2_plus_o5_plus_8)
+ 	bne,pt		%icc, 1b
+ 	 add		%o0, 0x20, %o0
+ 2:	andcc		%o2, 0x18, %o5
+ 	be,pt		%icc, 3f
+ 	 sub		%o2, %o5, %o2
+-1:	EX_LD(LOAD(ldx, %o1 + 0x00, %g1))
++
++1:	EX_LD(LOAD(ldx, %o1 + 0x00, %g1), NG4_retl_o2_plus_o5)
+ 	add		%o1, 0x08, %o1
+ 	add		%o0, 0x08, %o0
+ 	subcc		%o5, 0x08, %o5
+ 	bne,pt		%icc, 1b
+-	 EX_ST(STORE(stx, %g1, %o0 - 0x08))
++	 EX_ST(STORE(stx, %g1, %o0 - 0x08), NG4_retl_o2_plus_o5_plus_8)
+ 3:	brz,pt		%o2, .Lexit
+ 	 cmp		%o2, 0x04
+ 	bl,pn		%icc, .Ltiny
+ 	 nop
+-	EX_LD(LOAD(lduw, %o1 + 0x00, %g1))
++	EX_LD(LOAD(lduw, %o1 + 0x00, %g1), NG4_retl_o2)
+ 	add		%o1, 0x04, %o1
+ 	add		%o0, 0x04, %o0
+ 	subcc		%o2, 0x04, %o2
+ 	bne,pn		%icc, .Ltiny
+-	 EX_ST(STORE(stw, %g1, %o0 - 0x04))
++	 EX_ST(STORE(stw, %g1, %o0 - 0x04), NG4_retl_o2_plus_4)
+ 	ba,a,pt		%icc, .Lexit
+ .Lmedium_unaligned:
+ 	/* First get dest 8 byte aligned.  */
+@@ -309,12 +461,12 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	brz,pt		%g1, 2f
+ 	 sub		%o2, %g1, %o2
+ 
+-1:	EX_LD(LOAD(ldub, %o1 + 0x00, %g2))
++1:	EX_LD(LOAD(ldub, %o1 + 0x00, %g2), NG4_retl_o2_plus_g1)
+ 	add		%o1, 1, %o1
+ 	subcc		%g1, 1, %g1
+ 	add		%o0, 1, %o0
+ 	bne,pt		%icc, 1b
+-	 EX_ST(STORE(stb, %g2, %o0 - 0x01))
++	 EX_ST(STORE(stb, %g2, %o0 - 0x01), NG4_retl_o2_plus_g1_plus_1)
+ 2:
+ 	and		%o1, 0x7, %g1
+ 	brz,pn		%g1, .Lmedium_noprefetch
+@@ -322,16 +474,16 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	mov		64, %g2
+ 	sub		%g2, %g1, %g2
+ 	andn		%o1, 0x7, %o1
+-	EX_LD(LOAD(ldx, %o1 + 0x00, %o4))
++	EX_LD(LOAD(ldx, %o1 + 0x00, %o4), NG4_retl_o2)
+ 	sllx		%o4, %g1, %o4
+ 	andn		%o2, 0x08 - 1, %o5
+ 	sub		%o2, %o5, %o2
+-1:	EX_LD(LOAD(ldx, %o1 + 0x08, %g3))
++1:	EX_LD(LOAD(ldx, %o1 + 0x08, %g3), NG4_retl_o2_plus_o5)
+ 	add		%o1, 0x08, %o1
+ 	subcc		%o5, 0x08, %o5
+ 	srlx		%g3, %g2, GLOBAL_SPARE
+ 	or		GLOBAL_SPARE, %o4, GLOBAL_SPARE
+-	EX_ST(STORE(stx, GLOBAL_SPARE, %o0 + 0x00))
++	EX_ST(STORE(stx, GLOBAL_SPARE, %o0 + 0x00), NG4_retl_o2_plus_o5_plus_8)
+ 	add		%o0, 0x08, %o0
+ 	bne,pt		%icc, 1b
+ 	 sllx		%g3, %g1, %o4
+@@ -342,17 +494,17 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	ba,pt		%icc, .Lsmall_unaligned
+ 
+ .Ltiny:
+-	EX_LD(LOAD(ldub, %o1 + 0x00, %g1))
++	EX_LD(LOAD(ldub, %o1 + 0x00, %g1), NG4_retl_o2)
+ 	subcc		%o2, 1, %o2
+ 	be,pn		%icc, .Lexit
+-	 EX_ST(STORE(stb, %g1, %o0 + 0x00))
+-	EX_LD(LOAD(ldub, %o1 + 0x01, %g1))
++	 EX_ST(STORE(stb, %g1, %o0 + 0x00), NG4_retl_o2_plus_1)
++	EX_LD(LOAD(ldub, %o1 + 0x01, %g1), NG4_retl_o2)
+ 	subcc		%o2, 1, %o2
+ 	be,pn		%icc, .Lexit
+-	 EX_ST(STORE(stb, %g1, %o0 + 0x01))
+-	EX_LD(LOAD(ldub, %o1 + 0x02, %g1))
++	 EX_ST(STORE(stb, %g1, %o0 + 0x01), NG4_retl_o2_plus_1)
++	EX_LD(LOAD(ldub, %o1 + 0x02, %g1), NG4_retl_o2)
+ 	ba,pt		%icc, .Lexit
+-	 EX_ST(STORE(stb, %g1, %o0 + 0x02))
++	 EX_ST(STORE(stb, %g1, %o0 + 0x02), NG4_retl_o2)
+ 
+ .Lsmall:
+ 	andcc		%g2, 0x3, %g0
+@@ -360,22 +512,22 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	 andn		%o2, 0x4 - 1, %o5
+ 	sub		%o2, %o5, %o2
+ 1:
+-	EX_LD(LOAD(lduw, %o1 + 0x00, %g1))
++	EX_LD(LOAD(lduw, %o1 + 0x00, %g1), NG4_retl_o2_plus_o5)
+ 	add		%o1, 0x04, %o1
+ 	subcc		%o5, 0x04, %o5
+ 	add		%o0, 0x04, %o0
+ 	bne,pt		%icc, 1b
+-	 EX_ST(STORE(stw, %g1, %o0 - 0x04))
++	 EX_ST(STORE(stw, %g1, %o0 - 0x04), NG4_retl_o2_plus_o5_plus_4)
+ 	brz,pt		%o2, .Lexit
+ 	 nop
+ 	ba,a,pt		%icc, .Ltiny
+ 
+ .Lsmall_unaligned:
+-1:	EX_LD(LOAD(ldub, %o1 + 0x00, %g1))
++1:	EX_LD(LOAD(ldub, %o1 + 0x00, %g1), NG4_retl_o2)
+ 	add		%o1, 1, %o1
+ 	add		%o0, 1, %o0
+ 	subcc		%o2, 1, %o2
+ 	bne,pt		%icc, 1b
+-	 EX_ST(STORE(stb, %g1, %o0 - 0x01))
++	 EX_ST(STORE(stb, %g1, %o0 - 0x01), NG4_retl_o2_plus_1)
+ 	ba,a,pt		%icc, .Lexit
+ 	.size		FUNC_NAME, .-FUNC_NAME
+diff --git a/arch/sparc/lib/NGcopy_from_user.S b/arch/sparc/lib/NGcopy_from_user.S
+index 5d1e4d1ac21e..9cd42fcbc781 100644
+--- a/arch/sparc/lib/NGcopy_from_user.S
++++ b/arch/sparc/lib/NGcopy_from_user.S
+@@ -3,11 +3,11 @@
+  * Copyright (C) 2006, 2007 David S. Miller (davem@davemloft.net)
+  */
+ 
+-#define EX_LD(x)		\
++#define EX_LD(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __ret_one_asi;\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+diff --git a/arch/sparc/lib/NGcopy_to_user.S b/arch/sparc/lib/NGcopy_to_user.S
+index ff630dcb273c..5c358afd464e 100644
+--- a/arch/sparc/lib/NGcopy_to_user.S
++++ b/arch/sparc/lib/NGcopy_to_user.S
+@@ -3,11 +3,11 @@
+  * Copyright (C) 2006, 2007 David S. Miller (davem@davemloft.net)
+  */
+ 
+-#define EX_ST(x)		\
++#define EX_ST(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __ret_one_asi;\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+diff --git a/arch/sparc/lib/NGmemcpy.S b/arch/sparc/lib/NGmemcpy.S
+index 96a14caf6966..d88c4ed50a00 100644
+--- a/arch/sparc/lib/NGmemcpy.S
++++ b/arch/sparc/lib/NGmemcpy.S
+@@ -4,6 +4,7 @@
+  */
+ 
+ #ifdef __KERNEL__
++#include <linux/linkage.h>
+ #include <asm/asi.h>
+ #include <asm/thread_info.h>
+ #define GLOBAL_SPARE	%g7
+@@ -27,15 +28,11 @@
+ #endif
+ 
+ #ifndef EX_LD
+-#define EX_LD(x)	x
++#define EX_LD(x,y)	x
+ #endif
+ 
+ #ifndef EX_ST
+-#define EX_ST(x)	x
+-#endif
+-
+-#ifndef EX_RETVAL
+-#define EX_RETVAL(x)	x
++#define EX_ST(x,y)	x
+ #endif
+ 
+ #ifndef LOAD
+@@ -79,6 +76,92 @@
+ 	.register	%g3,#scratch
+ 
+ 	.text
++#ifndef EX_RETVAL
++#define EX_RETVAL(x)	x
++__restore_asi:
++	ret
++	wr	%g0, ASI_AIUS, %asi
++	 restore
++ENTRY(NG_ret_i2_plus_i4_plus_1)
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %i5, %i0
++ENDPROC(NG_ret_i2_plus_i4_plus_1)
++ENTRY(NG_ret_i2_plus_g1)
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %g1, %i0
++ENDPROC(NG_ret_i2_plus_g1)
++ENTRY(NG_ret_i2_plus_g1_minus_8)
++	sub	%g1, 8, %g1
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %g1, %i0
++ENDPROC(NG_ret_i2_plus_g1_minus_8)
++ENTRY(NG_ret_i2_plus_g1_minus_16)
++	sub	%g1, 16, %g1
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %g1, %i0
++ENDPROC(NG_ret_i2_plus_g1_minus_16)
++ENTRY(NG_ret_i2_plus_g1_minus_24)
++	sub	%g1, 24, %g1
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %g1, %i0
++ENDPROC(NG_ret_i2_plus_g1_minus_24)
++ENTRY(NG_ret_i2_plus_g1_minus_32)
++	sub	%g1, 32, %g1
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %g1, %i0
++ENDPROC(NG_ret_i2_plus_g1_minus_32)
++ENTRY(NG_ret_i2_plus_g1_minus_40)
++	sub	%g1, 40, %g1
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %g1, %i0
++ENDPROC(NG_ret_i2_plus_g1_minus_40)
++ENTRY(NG_ret_i2_plus_g1_minus_48)
++	sub	%g1, 48, %g1
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %g1, %i0
++ENDPROC(NG_ret_i2_plus_g1_minus_48)
++ENTRY(NG_ret_i2_plus_g1_minus_56)
++	sub	%g1, 56, %g1
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %g1, %i0
++ENDPROC(NG_ret_i2_plus_g1_minus_56)
++ENTRY(NG_ret_i2_plus_i4)
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %i4, %i0
++ENDPROC(NG_ret_i2_plus_i4)
++ENTRY(NG_ret_i2_plus_i4_minus_8)
++	sub	%i4, 8, %i4
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %i4, %i0
++ENDPROC(NG_ret_i2_plus_i4_minus_8)
++ENTRY(NG_ret_i2_plus_8)
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, 8, %i0
++ENDPROC(NG_ret_i2_plus_8)
++ENTRY(NG_ret_i2_plus_4)
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, 4, %i0
++ENDPROC(NG_ret_i2_plus_4)
++ENTRY(NG_ret_i2_plus_1)
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, 1, %i0
++ENDPROC(NG_ret_i2_plus_1)
++ENTRY(NG_ret_i2_plus_g1_plus_1)
++	add	%g1, 1, %g1
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %g1, %i0
++ENDPROC(NG_ret_i2_plus_g1_plus_1)
++ENTRY(NG_ret_i2)
++	ba,pt	%xcc, __restore_asi
++	 mov	%i2, %i0
++ENDPROC(NG_ret_i2)
++ENTRY(NG_ret_i2_and_7_plus_i4)
++	and	%i2, 7, %i2
++	ba,pt	%xcc, __restore_asi
++	 add	%i2, %i4, %i0
++ENDPROC(NG_ret_i2_and_7_plus_i4)
++#endif
++
+ 	.align		64
+ 
+ 	.globl	FUNC_NAME
+@@ -126,8 +209,8 @@ FUNC_NAME:	/* %i0=dst, %i1=src, %i2=len */
+ 	sub		%g0, %i4, %i4	! bytes to align dst
+ 	sub		%i2, %i4, %i2
+ 1:	subcc		%i4, 1, %i4
+-	EX_LD(LOAD(ldub, %i1, %g1))
+-	EX_ST(STORE(stb, %g1, %o0))
++	EX_LD(LOAD(ldub, %i1, %g1), NG_ret_i2_plus_i4_plus_1)
++	EX_ST(STORE(stb, %g1, %o0), NG_ret_i2_plus_i4_plus_1)
+ 	add		%i1, 1, %i1
+ 	bne,pt		%XCC, 1b
+ 	add		%o0, 1, %o0
+@@ -160,7 +243,7 @@ FUNC_NAME:	/* %i0=dst, %i1=src, %i2=len */
+ 	and		%i4, 0x7, GLOBAL_SPARE
+ 	sll		GLOBAL_SPARE, 3, GLOBAL_SPARE
+ 	mov		64, %i5
+-	EX_LD(LOAD_TWIN(%i1, %g2, %g3))
++	EX_LD(LOAD_TWIN(%i1, %g2, %g3), NG_ret_i2_plus_g1)
+ 	sub		%i5, GLOBAL_SPARE, %i5
+ 	mov		16, %o4
+ 	mov		32, %o5
+@@ -178,31 +261,31 @@ FUNC_NAME:	/* %i0=dst, %i1=src, %i2=len */
+ 	srlx		WORD3, PRE_SHIFT, TMP; \
+ 	or		WORD2, TMP, WORD2;
+ 
+-8:	EX_LD(LOAD_TWIN(%i1 + %o4, %o2, %o3))
++8:	EX_LD(LOAD_TWIN(%i1 + %o4, %o2, %o3), NG_ret_i2_plus_g1)
+ 	MIX_THREE_WORDS(%g2, %g3, %o2, %i5, GLOBAL_SPARE, %o1)
+ 	LOAD(prefetch, %i1 + %i3, #one_read)
+ 
+-	EX_ST(STORE_INIT(%g2, %o0 + 0x00))
+-	EX_ST(STORE_INIT(%g3, %o0 + 0x08))
++	EX_ST(STORE_INIT(%g2, %o0 + 0x00), NG_ret_i2_plus_g1)
++	EX_ST(STORE_INIT(%g3, %o0 + 0x08), NG_ret_i2_plus_g1_minus_8)
+ 
+-	EX_LD(LOAD_TWIN(%i1 + %o5, %g2, %g3))
++	EX_LD(LOAD_TWIN(%i1 + %o5, %g2, %g3), NG_ret_i2_plus_g1_minus_16)
+ 	MIX_THREE_WORDS(%o2, %o3, %g2, %i5, GLOBAL_SPARE, %o1)
+ 
+-	EX_ST(STORE_INIT(%o2, %o0 + 0x10))
+-	EX_ST(STORE_INIT(%o3, %o0 + 0x18))
++	EX_ST(STORE_INIT(%o2, %o0 + 0x10), NG_ret_i2_plus_g1_minus_16)
++	EX_ST(STORE_INIT(%o3, %o0 + 0x18), NG_ret_i2_plus_g1_minus_24)
+ 
+-	EX_LD(LOAD_TWIN(%i1 + %o7, %o2, %o3))
++	EX_LD(LOAD_TWIN(%i1 + %o7, %o2, %o3), NG_ret_i2_plus_g1_minus_32)
+ 	MIX_THREE_WORDS(%g2, %g3, %o2, %i5, GLOBAL_SPARE, %o1)
+ 
+-	EX_ST(STORE_INIT(%g2, %o0 + 0x20))
+-	EX_ST(STORE_INIT(%g3, %o0 + 0x28))
++	EX_ST(STORE_INIT(%g2, %o0 + 0x20), NG_ret_i2_plus_g1_minus_32)
++	EX_ST(STORE_INIT(%g3, %o0 + 0x28), NG_ret_i2_plus_g1_minus_40)
+ 
+-	EX_LD(LOAD_TWIN(%i1 + %i3, %g2, %g3))
++	EX_LD(LOAD_TWIN(%i1 + %i3, %g2, %g3), NG_ret_i2_plus_g1_minus_48)
+ 	add		%i1, 64, %i1
+ 	MIX_THREE_WORDS(%o2, %o3, %g2, %i5, GLOBAL_SPARE, %o1)
+ 
+-	EX_ST(STORE_INIT(%o2, %o0 + 0x30))
+-	EX_ST(STORE_INIT(%o3, %o0 + 0x38))
++	EX_ST(STORE_INIT(%o2, %o0 + 0x30), NG_ret_i2_plus_g1_minus_48)
++	EX_ST(STORE_INIT(%o3, %o0 + 0x38), NG_ret_i2_plus_g1_minus_56)
+ 
+ 	subcc		%g1, 64, %g1
+ 	bne,pt		%XCC, 8b
+@@ -211,31 +294,31 @@ FUNC_NAME:	/* %i0=dst, %i1=src, %i2=len */
+ 	ba,pt		%XCC, 60f
+ 	 add		%i1, %i4, %i1
+ 
+-9:	EX_LD(LOAD_TWIN(%i1 + %o4, %o2, %o3))
++9:	EX_LD(LOAD_TWIN(%i1 + %o4, %o2, %o3), NG_ret_i2_plus_g1)
+ 	MIX_THREE_WORDS(%g3, %o2, %o3, %i5, GLOBAL_SPARE, %o1)
+ 	LOAD(prefetch, %i1 + %i3, #one_read)
+ 
+-	EX_ST(STORE_INIT(%g3, %o0 + 0x00))
+-	EX_ST(STORE_INIT(%o2, %o0 + 0x08))
++	EX_ST(STORE_INIT(%g3, %o0 + 0x00), NG_ret_i2_plus_g1)
++	EX_ST(STORE_INIT(%o2, %o0 + 0x08), NG_ret_i2_plus_g1_minus_8)
+ 
+-	EX_LD(LOAD_TWIN(%i1 + %o5, %g2, %g3))
++	EX_LD(LOAD_TWIN(%i1 + %o5, %g2, %g3), NG_ret_i2_plus_g1_minus_16)
+ 	MIX_THREE_WORDS(%o3, %g2, %g3, %i5, GLOBAL_SPARE, %o1)
+ 
+-	EX_ST(STORE_INIT(%o3, %o0 + 0x10))
+-	EX_ST(STORE_INIT(%g2, %o0 + 0x18))
++	EX_ST(STORE_INIT(%o3, %o0 + 0x10), NG_ret_i2_plus_g1_minus_16)
++	EX_ST(STORE_INIT(%g2, %o0 + 0x18), NG_ret_i2_plus_g1_minus_24)
+ 
+-	EX_LD(LOAD_TWIN(%i1 + %o7, %o2, %o3))
++	EX_LD(LOAD_TWIN(%i1 + %o7, %o2, %o3), NG_ret_i2_plus_g1_minus_32)
+ 	MIX_THREE_WORDS(%g3, %o2, %o3, %i5, GLOBAL_SPARE, %o1)
+ 
+-	EX_ST(STORE_INIT(%g3, %o0 + 0x20))
+-	EX_ST(STORE_INIT(%o2, %o0 + 0x28))
++	EX_ST(STORE_INIT(%g3, %o0 + 0x20), NG_ret_i2_plus_g1_minus_32)
++	EX_ST(STORE_INIT(%o2, %o0 + 0x28), NG_ret_i2_plus_g1_minus_40)
+ 
+-	EX_LD(LOAD_TWIN(%i1 + %i3, %g2, %g3))
++	EX_LD(LOAD_TWIN(%i1 + %i3, %g2, %g3), NG_ret_i2_plus_g1_minus_48)
+ 	add		%i1, 64, %i1
+ 	MIX_THREE_WORDS(%o3, %g2, %g3, %i5, GLOBAL_SPARE, %o1)
+ 
+-	EX_ST(STORE_INIT(%o3, %o0 + 0x30))
+-	EX_ST(STORE_INIT(%g2, %o0 + 0x38))
++	EX_ST(STORE_INIT(%o3, %o0 + 0x30), NG_ret_i2_plus_g1_minus_48)
++	EX_ST(STORE_INIT(%g2, %o0 + 0x38), NG_ret_i2_plus_g1_minus_56)
+ 
+ 	subcc		%g1, 64, %g1
+ 	bne,pt		%XCC, 9b
+@@ -249,25 +332,25 @@ FUNC_NAME:	/* %i0=dst, %i1=src, %i2=len */
+ 	 * one twin load ahead, then add 8 back into source when
+ 	 * we finish the loop.
+ 	 */
+-	EX_LD(LOAD_TWIN(%i1, %o4, %o5))
++	EX_LD(LOAD_TWIN(%i1, %o4, %o5), NG_ret_i2_plus_g1)
+ 	mov	16, %o7
+ 	mov	32, %g2
+ 	mov	48, %g3
+ 	mov	64, %o1
+-1:	EX_LD(LOAD_TWIN(%i1 + %o7, %o2, %o3))
++1:	EX_LD(LOAD_TWIN(%i1 + %o7, %o2, %o3), NG_ret_i2_plus_g1)
+ 	LOAD(prefetch, %i1 + %o1, #one_read)
+-	EX_ST(STORE_INIT(%o5, %o0 + 0x00))	! initializes cache line
+-	EX_ST(STORE_INIT(%o2, %o0 + 0x08))
+-	EX_LD(LOAD_TWIN(%i1 + %g2, %o4, %o5))
+-	EX_ST(STORE_INIT(%o3, %o0 + 0x10))
+-	EX_ST(STORE_INIT(%o4, %o0 + 0x18))
+-	EX_LD(LOAD_TWIN(%i1 + %g3, %o2, %o3))
+-	EX_ST(STORE_INIT(%o5, %o0 + 0x20))
+-	EX_ST(STORE_INIT(%o2, %o0 + 0x28))
+-	EX_LD(LOAD_TWIN(%i1 + %o1, %o4, %o5))
++	EX_ST(STORE_INIT(%o5, %o0 + 0x00), NG_ret_i2_plus_g1)	! initializes cache line
++	EX_ST(STORE_INIT(%o2, %o0 + 0x08), NG_ret_i2_plus_g1_minus_8)
++	EX_LD(LOAD_TWIN(%i1 + %g2, %o4, %o5), NG_ret_i2_plus_g1_minus_16)
++	EX_ST(STORE_INIT(%o3, %o0 + 0x10), NG_ret_i2_plus_g1_minus_16)
++	EX_ST(STORE_INIT(%o4, %o0 + 0x18), NG_ret_i2_plus_g1_minus_24)
++	EX_LD(LOAD_TWIN(%i1 + %g3, %o2, %o3), NG_ret_i2_plus_g1_minus_32)
++	EX_ST(STORE_INIT(%o5, %o0 + 0x20), NG_ret_i2_plus_g1_minus_32)
++	EX_ST(STORE_INIT(%o2, %o0 + 0x28), NG_ret_i2_plus_g1_minus_40)
++	EX_LD(LOAD_TWIN(%i1 + %o1, %o4, %o5), NG_ret_i2_plus_g1_minus_48)
+ 	add		%i1, 64, %i1
+-	EX_ST(STORE_INIT(%o3, %o0 + 0x30))
+-	EX_ST(STORE_INIT(%o4, %o0 + 0x38))
++	EX_ST(STORE_INIT(%o3, %o0 + 0x30), NG_ret_i2_plus_g1_minus_48)
++	EX_ST(STORE_INIT(%o4, %o0 + 0x38), NG_ret_i2_plus_g1_minus_56)
+ 	subcc		%g1, 64, %g1
+ 	bne,pt		%XCC, 1b
+ 	 add		%o0, 64, %o0
+@@ -282,20 +365,20 @@ FUNC_NAME:	/* %i0=dst, %i1=src, %i2=len */
+ 	mov	32, %g2
+ 	mov	48, %g3
+ 	mov	64, %o1
+-1:	EX_LD(LOAD_TWIN(%i1 + %g0, %o4, %o5))
+-	EX_LD(LOAD_TWIN(%i1 + %o7, %o2, %o3))
++1:	EX_LD(LOAD_TWIN(%i1 + %g0, %o4, %o5), NG_ret_i2_plus_g1)
++	EX_LD(LOAD_TWIN(%i1 + %o7, %o2, %o3), NG_ret_i2_plus_g1)
+ 	LOAD(prefetch, %i1 + %o1, #one_read)
+-	EX_ST(STORE_INIT(%o4, %o0 + 0x00))	! initializes cache line
+-	EX_ST(STORE_INIT(%o5, %o0 + 0x08))
+-	EX_LD(LOAD_TWIN(%i1 + %g2, %o4, %o5))
+-	EX_ST(STORE_INIT(%o2, %o0 + 0x10))
+-	EX_ST(STORE_INIT(%o3, %o0 + 0x18))
+-	EX_LD(LOAD_TWIN(%i1 + %g3, %o2, %o3))
++	EX_ST(STORE_INIT(%o4, %o0 + 0x00), NG_ret_i2_plus_g1)	! initializes cache line
++	EX_ST(STORE_INIT(%o5, %o0 + 0x08), NG_ret_i2_plus_g1_minus_8)
++	EX_LD(LOAD_TWIN(%i1 + %g2, %o4, %o5), NG_ret_i2_plus_g1_minus_16)
++	EX_ST(STORE_INIT(%o2, %o0 + 0x10), NG_ret_i2_plus_g1_minus_16)
++	EX_ST(STORE_INIT(%o3, %o0 + 0x18), NG_ret_i2_plus_g1_minus_24)
++	EX_LD(LOAD_TWIN(%i1 + %g3, %o2, %o3), NG_ret_i2_plus_g1_minus_32)
+ 	add	%i1, 64, %i1
+-	EX_ST(STORE_INIT(%o4, %o0 + 0x20))
+-	EX_ST(STORE_INIT(%o5, %o0 + 0x28))
+-	EX_ST(STORE_INIT(%o2, %o0 + 0x30))
+-	EX_ST(STORE_INIT(%o3, %o0 + 0x38))
++	EX_ST(STORE_INIT(%o4, %o0 + 0x20), NG_ret_i2_plus_g1_minus_32)
++	EX_ST(STORE_INIT(%o5, %o0 + 0x28), NG_ret_i2_plus_g1_minus_40)
++	EX_ST(STORE_INIT(%o2, %o0 + 0x30), NG_ret_i2_plus_g1_minus_48)
++	EX_ST(STORE_INIT(%o3, %o0 + 0x38), NG_ret_i2_plus_g1_minus_56)
+ 	subcc	%g1, 64, %g1
+ 	bne,pt	%XCC, 1b
+ 	 add	%o0, 64, %o0
+@@ -321,28 +404,28 @@ FUNC_NAME:	/* %i0=dst, %i1=src, %i2=len */
+ 	andn		%i2, 0xf, %i4
+ 	and		%i2, 0xf, %i2
+ 1:	subcc		%i4, 0x10, %i4
+-	EX_LD(LOAD(ldx, %i1, %o4))
++	EX_LD(LOAD(ldx, %i1, %o4), NG_ret_i2_plus_i4)
+ 	add		%i1, 0x08, %i1
+-	EX_LD(LOAD(ldx, %i1, %g1))
++	EX_LD(LOAD(ldx, %i1, %g1), NG_ret_i2_plus_i4)
+ 	sub		%i1, 0x08, %i1
+-	EX_ST(STORE(stx, %o4, %i1 + %i3))
++	EX_ST(STORE(stx, %o4, %i1 + %i3), NG_ret_i2_plus_i4)
+ 	add		%i1, 0x8, %i1
+-	EX_ST(STORE(stx, %g1, %i1 + %i3))
++	EX_ST(STORE(stx, %g1, %i1 + %i3), NG_ret_i2_plus_i4_minus_8)
+ 	bgu,pt		%XCC, 1b
+ 	 add		%i1, 0x8, %i1
+ 73:	andcc		%i2, 0x8, %g0
+ 	be,pt		%XCC, 1f
+ 	 nop
+ 	sub		%i2, 0x8, %i2
+-	EX_LD(LOAD(ldx, %i1, %o4))
+-	EX_ST(STORE(stx, %o4, %i1 + %i3))
++	EX_LD(LOAD(ldx, %i1, %o4), NG_ret_i2_plus_8)
++	EX_ST(STORE(stx, %o4, %i1 + %i3), NG_ret_i2_plus_8)
+ 	add		%i1, 0x8, %i1
+ 1:	andcc		%i2, 0x4, %g0
+ 	be,pt		%XCC, 1f
+ 	 nop
+ 	sub		%i2, 0x4, %i2
+-	EX_LD(LOAD(lduw, %i1, %i5))
+-	EX_ST(STORE(stw, %i5, %i1 + %i3))
++	EX_LD(LOAD(lduw, %i1, %i5), NG_ret_i2_plus_4)
++	EX_ST(STORE(stw, %i5, %i1 + %i3), NG_ret_i2_plus_4)
+ 	add		%i1, 0x4, %i1
+ 1:	cmp		%i2, 0
+ 	be,pt		%XCC, 85f
+@@ -358,8 +441,8 @@ FUNC_NAME:	/* %i0=dst, %i1=src, %i2=len */
+ 	sub		%i2, %g1, %i2
+ 
+ 1:	subcc		%g1, 1, %g1
+-	EX_LD(LOAD(ldub, %i1, %i5))
+-	EX_ST(STORE(stb, %i5, %i1 + %i3))
++	EX_LD(LOAD(ldub, %i1, %i5), NG_ret_i2_plus_g1_plus_1)
++	EX_ST(STORE(stb, %i5, %i1 + %i3), NG_ret_i2_plus_g1_plus_1)
+ 	bgu,pt		%icc, 1b
+ 	 add		%i1, 1, %i1
+ 
+@@ -375,16 +458,16 @@ FUNC_NAME:	/* %i0=dst, %i1=src, %i2=len */
+ 
+ 8:	mov		64, %i3
+ 	andn		%i1, 0x7, %i1
+-	EX_LD(LOAD(ldx, %i1, %g2))
++	EX_LD(LOAD(ldx, %i1, %g2), NG_ret_i2)
+ 	sub		%i3, %g1, %i3
+ 	andn		%i2, 0x7, %i4
+ 	sllx		%g2, %g1, %g2
+ 1:	add		%i1, 0x8, %i1
+-	EX_LD(LOAD(ldx, %i1, %g3))
++	EX_LD(LOAD(ldx, %i1, %g3), NG_ret_i2_and_7_plus_i4)
+ 	subcc		%i4, 0x8, %i4
+ 	srlx		%g3, %i3, %i5
+ 	or		%i5, %g2, %i5
+-	EX_ST(STORE(stx, %i5, %o0))
++	EX_ST(STORE(stx, %i5, %o0), NG_ret_i2_and_7_plus_i4)
+ 	add		%o0, 0x8, %o0
+ 	bgu,pt		%icc, 1b
+ 	 sllx		%g3, %g1, %g2
+@@ -404,8 +487,8 @@ FUNC_NAME:	/* %i0=dst, %i1=src, %i2=len */
+ 
+ 1:
+ 	subcc		%i2, 4, %i2
+-	EX_LD(LOAD(lduw, %i1, %g1))
+-	EX_ST(STORE(stw, %g1, %i1 + %i3))
++	EX_LD(LOAD(lduw, %i1, %g1), NG_ret_i2_plus_4)
++	EX_ST(STORE(stw, %g1, %i1 + %i3), NG_ret_i2_plus_4)
+ 	bgu,pt		%XCC, 1b
+ 	 add		%i1, 4, %i1
+ 
+@@ -415,8 +498,8 @@ FUNC_NAME:	/* %i0=dst, %i1=src, %i2=len */
+ 	.align		32
+ 90:
+ 	subcc		%i2, 1, %i2
+-	EX_LD(LOAD(ldub, %i1, %g1))
+-	EX_ST(STORE(stb, %g1, %i1 + %i3))
++	EX_LD(LOAD(ldub, %i1, %g1), NG_ret_i2_plus_1)
++	EX_ST(STORE(stb, %g1, %i1 + %i3), NG_ret_i2_plus_1)
+ 	bgu,pt		%XCC, 90b
+ 	 add		%i1, 1, %i1
+ 	ret
+diff --git a/arch/sparc/lib/U1copy_from_user.S b/arch/sparc/lib/U1copy_from_user.S
+index ecc5692fa2b4..bb6ff73229e3 100644
+--- a/arch/sparc/lib/U1copy_from_user.S
++++ b/arch/sparc/lib/U1copy_from_user.S
+@@ -3,19 +3,19 @@
+  * Copyright (C) 1999, 2000, 2004 David S. Miller (davem@redhat.com)
+  */
+ 
+-#define EX_LD(x)		\
++#define EX_LD(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one;	\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+-#define EX_LD_FP(x)		\
++#define EX_LD_FP(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one_fp;\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+diff --git a/arch/sparc/lib/U1copy_to_user.S b/arch/sparc/lib/U1copy_to_user.S
+index 9eea392e44d4..ed92ce739558 100644
+--- a/arch/sparc/lib/U1copy_to_user.S
++++ b/arch/sparc/lib/U1copy_to_user.S
+@@ -3,19 +3,19 @@
+  * Copyright (C) 1999, 2000, 2004 David S. Miller (davem@redhat.com)
+  */
+ 
+-#define EX_ST(x)		\
++#define EX_ST(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one;	\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+-#define EX_ST_FP(x)		\
++#define EX_ST_FP(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one_fp;\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+diff --git a/arch/sparc/lib/U1memcpy.S b/arch/sparc/lib/U1memcpy.S
+index 3e6209ebb7d7..f30d2ab2c371 100644
+--- a/arch/sparc/lib/U1memcpy.S
++++ b/arch/sparc/lib/U1memcpy.S
+@@ -5,6 +5,7 @@
+  */
+ 
+ #ifdef __KERNEL__
++#include <linux/linkage.h>
+ #include <asm/visasm.h>
+ #include <asm/asi.h>
+ #define GLOBAL_SPARE	g7
+@@ -23,21 +24,17 @@
+ #endif
+ 
+ #ifndef EX_LD
+-#define EX_LD(x)	x
++#define EX_LD(x,y)	x
+ #endif
+ #ifndef EX_LD_FP
+-#define EX_LD_FP(x)	x
++#define EX_LD_FP(x,y)	x
+ #endif
+ 
+ #ifndef EX_ST
+-#define EX_ST(x)	x
++#define EX_ST(x,y)	x
+ #endif
+ #ifndef EX_ST_FP
+-#define EX_ST_FP(x)	x
+-#endif
+-
+-#ifndef EX_RETVAL
+-#define EX_RETVAL(x)	x
++#define EX_ST_FP(x,y)	x
+ #endif
+ 
+ #ifndef LOAD
+@@ -78,53 +75,169 @@
+ 	faligndata		%f7, %f8, %f60;			\
+ 	faligndata		%f8, %f9, %f62;
+ 
+-#define MAIN_LOOP_CHUNK(src, dest, fdest, fsrc, len, jmptgt)	\
+-	EX_LD_FP(LOAD_BLK(%src, %fdest));				\
+-	EX_ST_FP(STORE_BLK(%fsrc, %dest));				\
+-	add			%src, 0x40, %src;		\
+-	subcc			%len, 0x40, %len;		\
+-	be,pn			%xcc, jmptgt;			\
+-	 add			%dest, 0x40, %dest;		\
+-
+-#define LOOP_CHUNK1(src, dest, len, branch_dest)		\
+-	MAIN_LOOP_CHUNK(src, dest, f0,  f48, len, branch_dest)
+-#define LOOP_CHUNK2(src, dest, len, branch_dest)		\
+-	MAIN_LOOP_CHUNK(src, dest, f16, f48, len, branch_dest)
+-#define LOOP_CHUNK3(src, dest, len, branch_dest)		\
+-	MAIN_LOOP_CHUNK(src, dest, f32, f48, len, branch_dest)
++#define MAIN_LOOP_CHUNK(src, dest, fdest, fsrc, jmptgt)			\
++	EX_LD_FP(LOAD_BLK(%src, %fdest), U1_gs_80_fp);			\
++	EX_ST_FP(STORE_BLK(%fsrc, %dest), U1_gs_80_fp);			\
++	add			%src, 0x40, %src;			\
++	subcc			%GLOBAL_SPARE, 0x40, %GLOBAL_SPARE;	\
++	be,pn			%xcc, jmptgt;				\
++	 add			%dest, 0x40, %dest;			\
++
++#define LOOP_CHUNK1(src, dest, branch_dest)		\
++	MAIN_LOOP_CHUNK(src, dest, f0,  f48, branch_dest)
++#define LOOP_CHUNK2(src, dest, branch_dest)		\
++	MAIN_LOOP_CHUNK(src, dest, f16, f48, branch_dest)
++#define LOOP_CHUNK3(src, dest, branch_dest)		\
++	MAIN_LOOP_CHUNK(src, dest, f32, f48, branch_dest)
+ 
+ #define DO_SYNC			membar	#Sync;
+ #define STORE_SYNC(dest, fsrc)				\
+-	EX_ST_FP(STORE_BLK(%fsrc, %dest));			\
++	EX_ST_FP(STORE_BLK(%fsrc, %dest), U1_gs_80_fp);	\
+ 	add			%dest, 0x40, %dest;	\
+ 	DO_SYNC
+ 
+ #define STORE_JUMP(dest, fsrc, target)			\
+-	EX_ST_FP(STORE_BLK(%fsrc, %dest));			\
++	EX_ST_FP(STORE_BLK(%fsrc, %dest), U1_gs_40_fp);	\
+ 	add			%dest, 0x40, %dest;	\
+ 	ba,pt			%xcc, target;		\
+ 	 nop;
+ 
+-#define FINISH_VISCHUNK(dest, f0, f1, left)	\
+-	subcc			%left, 8, %left;\
+-	bl,pn			%xcc, 95f;	\
+-	 faligndata		%f0, %f1, %f48;	\
+-	EX_ST_FP(STORE(std, %f48, %dest));		\
++#define FINISH_VISCHUNK(dest, f0, f1)			\
++	subcc			%g3, 8, %g3;		\
++	bl,pn			%xcc, 95f;		\
++	 faligndata		%f0, %f1, %f48;		\
++	EX_ST_FP(STORE(std, %f48, %dest), U1_g3_8_fp);	\
+ 	add			%dest, 8, %dest;
+ 
+-#define UNEVEN_VISCHUNK_LAST(dest, f0, f1, left)	\
+-	subcc			%left, 8, %left;	\
+-	bl,pn			%xcc, 95f;		\
++#define UNEVEN_VISCHUNK_LAST(dest, f0, f1)	\
++	subcc			%g3, 8, %g3;	\
++	bl,pn			%xcc, 95f;	\
+ 	 fsrc2			%f0, %f1;
+ 
+-#define UNEVEN_VISCHUNK(dest, f0, f1, left)		\
+-	UNEVEN_VISCHUNK_LAST(dest, f0, f1, left)	\
++#define UNEVEN_VISCHUNK(dest, f0, f1)		\
++	UNEVEN_VISCHUNK_LAST(dest, f0, f1)	\
+ 	ba,a,pt			%xcc, 93f;
+ 
+ 	.register	%g2,#scratch
+ 	.register	%g3,#scratch
+ 
+ 	.text
++#ifndef EX_RETVAL
++#define EX_RETVAL(x)	x
++ENTRY(U1_g1_1_fp)
++	VISExitHalf
++	add		%g1, 1, %g1
++	add		%g1, %g2, %g1
++	retl
++	 add		%g1, %o2, %o0
++ENDPROC(U1_g1_1_fp)
++ENTRY(U1_g2_0_fp)
++	VISExitHalf
++	retl
++	 add		%g2, %o2, %o0
++ENDPROC(U1_g2_0_fp)
++ENTRY(U1_g2_8_fp)
++	VISExitHalf
++	add		%g2, 8, %g2
++	retl
++	 add		%g2, %o2, %o0
++ENDPROC(U1_g2_8_fp)
++ENTRY(U1_gs_0_fp)
++	VISExitHalf
++	add		%GLOBAL_SPARE, %g3, %o0
++	retl
++	 add		%o0, %o2, %o0
++ENDPROC(U1_gs_0_fp)
++ENTRY(U1_gs_80_fp)
++	VISExitHalf
++	add		%GLOBAL_SPARE, 0x80, %GLOBAL_SPARE
++	add		%GLOBAL_SPARE, %g3, %o0
++	retl
++	 add		%o0, %o2, %o0
++ENDPROC(U1_gs_80_fp)
++ENTRY(U1_gs_40_fp)
++	VISExitHalf
++	add		%GLOBAL_SPARE, 0x40, %GLOBAL_SPARE
++	add		%GLOBAL_SPARE, %g3, %o0
++	retl
++	 add		%o0, %o2, %o0
++ENDPROC(U1_gs_40_fp)
++ENTRY(U1_g3_0_fp)
++	VISExitHalf
++	retl
++	 add		%g3, %o2, %o0
++ENDPROC(U1_g3_0_fp)
++ENTRY(U1_g3_8_fp)
++	VISExitHalf
++	add		%g3, 8, %g3
++	retl
++	 add		%g3, %o2, %o0
++ENDPROC(U1_g3_8_fp)
++ENTRY(U1_o2_0_fp)
++	VISExitHalf
++	retl
++	 mov		%o2, %o0
++ENDPROC(U1_o2_0_fp)
++ENTRY(U1_o2_1_fp)
++	VISExitHalf
++	retl
++	 add		%o2, 1, %o0
++ENDPROC(U1_o2_1_fp)
++ENTRY(U1_gs_0)
++	VISExitHalf
++	retl
++	 add		%GLOBAL_SPARE, %o2, %o0
++ENDPROC(U1_gs_0)
++ENTRY(U1_gs_8)
++	VISExitHalf
++	add		%GLOBAL_SPARE, %o2, %GLOBAL_SPARE
++	retl
++	 add		%GLOBAL_SPARE, 0x8, %o0
++ENDPROC(U1_gs_8)
++ENTRY(U1_gs_10)
++	VISExitHalf
++	add		%GLOBAL_SPARE, %o2, %GLOBAL_SPARE
++	retl
++	 add		%GLOBAL_SPARE, 0x10, %o0
++ENDPROC(U1_gs_10)
++ENTRY(U1_o2_0)
++	retl
++	 mov		%o2, %o0
++ENDPROC(U1_o2_0)
++ENTRY(U1_o2_8)
++	retl
++	 add		%o2, 8, %o0
++ENDPROC(U1_o2_8)
++ENTRY(U1_o2_4)
++	retl
++	 add		%o2, 4, %o0
++ENDPROC(U1_o2_4)
++ENTRY(U1_o2_1)
++	retl
++	 add		%o2, 1, %o0
++ENDPROC(U1_o2_1)
++ENTRY(U1_g1_0)
++	retl
++	 add		%g1, %o2, %o0
++ENDPROC(U1_g1_0)
++ENTRY(U1_g1_1)
++	add		%g1, 1, %g1
++	retl
++	 add		%g1, %o2, %o0
++ENDPROC(U1_g1_1)
++ENTRY(U1_gs_0_o2_adj)
++	and		%o2, 7, %o2
++	retl
++	 add		%GLOBAL_SPARE, %o2, %o0
++ENDPROC(U1_gs_0_o2_adj)
++ENTRY(U1_gs_8_o2_adj)
++	and		%o2, 7, %o2
++	add		%GLOBAL_SPARE, 8, %GLOBAL_SPARE
++	retl
++	 add		%GLOBAL_SPARE, %o2, %o0
++ENDPROC(U1_gs_8_o2_adj)
++#endif
++
+ 	.align		64
+ 
+ 	.globl		FUNC_NAME
+@@ -166,8 +279,8 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	 and		%g2, 0x38, %g2
+ 
+ 1:	subcc		%g1, 0x1, %g1
+-	EX_LD_FP(LOAD(ldub, %o1 + 0x00, %o3))
+-	EX_ST_FP(STORE(stb, %o3, %o1 + %GLOBAL_SPARE))
++	EX_LD_FP(LOAD(ldub, %o1 + 0x00, %o3), U1_g1_1_fp)
++	EX_ST_FP(STORE(stb, %o3, %o1 + %GLOBAL_SPARE), U1_g1_1_fp)
+ 	bgu,pt		%XCC, 1b
+ 	 add		%o1, 0x1, %o1
+ 
+@@ -178,20 +291,20 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	be,pt		%icc, 3f
+ 	 alignaddr	%o1, %g0, %o1
+ 
+-	EX_LD_FP(LOAD(ldd, %o1, %f4))
+-1:	EX_LD_FP(LOAD(ldd, %o1 + 0x8, %f6))
++	EX_LD_FP(LOAD(ldd, %o1, %f4), U1_g2_0_fp)
++1:	EX_LD_FP(LOAD(ldd, %o1 + 0x8, %f6), U1_g2_0_fp)
+ 	add		%o1, 0x8, %o1
+ 	subcc		%g2, 0x8, %g2
+ 	faligndata	%f4, %f6, %f0
+-	EX_ST_FP(STORE(std, %f0, %o0))
++	EX_ST_FP(STORE(std, %f0, %o0), U1_g2_8_fp)
+ 	be,pn		%icc, 3f
+ 	 add		%o0, 0x8, %o0
+ 
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x8, %f4))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x8, %f4), U1_g2_0_fp)
+ 	add		%o1, 0x8, %o1
+ 	subcc		%g2, 0x8, %g2
+ 	faligndata	%f6, %f4, %f0
+-	EX_ST_FP(STORE(std, %f0, %o0))
++	EX_ST_FP(STORE(std, %f0, %o0), U1_g2_8_fp)
+ 	bne,pt		%icc, 1b
+ 	 add		%o0, 0x8, %o0
+ 
+@@ -214,13 +327,13 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	add		%g1, %GLOBAL_SPARE, %g1
+ 	subcc		%o2, %g3, %o2
+ 
+-	EX_LD_FP(LOAD_BLK(%o1, %f0))
++	EX_LD_FP(LOAD_BLK(%o1, %f0), U1_gs_0_fp)
+ 	add		%o1, 0x40, %o1
+ 	add		%g1, %g3, %g1
+-	EX_LD_FP(LOAD_BLK(%o1, %f16))
++	EX_LD_FP(LOAD_BLK(%o1, %f16), U1_gs_0_fp)
+ 	add		%o1, 0x40, %o1
+ 	sub		%GLOBAL_SPARE, 0x80, %GLOBAL_SPARE
+-	EX_LD_FP(LOAD_BLK(%o1, %f32))
++	EX_LD_FP(LOAD_BLK(%o1, %f32), U1_gs_80_fp)
+ 	add		%o1, 0x40, %o1
+ 
+ 	/* There are 8 instances of the unrolled loop,
+@@ -240,11 +353,11 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 
+ 	.align		64
+ 1:	FREG_FROB(f0, f2, f4, f6, f8, f10,f12,f14,f16)
+-	LOOP_CHUNK1(o1, o0, GLOBAL_SPARE, 1f)
++	LOOP_CHUNK1(o1, o0, 1f)
+ 	FREG_FROB(f16,f18,f20,f22,f24,f26,f28,f30,f32)
+-	LOOP_CHUNK2(o1, o0, GLOBAL_SPARE, 2f)
++	LOOP_CHUNK2(o1, o0, 2f)
+ 	FREG_FROB(f32,f34,f36,f38,f40,f42,f44,f46,f0)
+-	LOOP_CHUNK3(o1, o0, GLOBAL_SPARE, 3f)
++	LOOP_CHUNK3(o1, o0, 3f)
+ 	ba,pt		%xcc, 1b+4
+ 	 faligndata	%f0, %f2, %f48
+ 1:	FREG_FROB(f16,f18,f20,f22,f24,f26,f28,f30,f32)
+@@ -261,11 +374,11 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	STORE_JUMP(o0, f48, 56f)
+ 
+ 1:	FREG_FROB(f2, f4, f6, f8, f10,f12,f14,f16,f18)
+-	LOOP_CHUNK1(o1, o0, GLOBAL_SPARE, 1f)
++	LOOP_CHUNK1(o1, o0, 1f)
+ 	FREG_FROB(f18,f20,f22,f24,f26,f28,f30,f32,f34)
+-	LOOP_CHUNK2(o1, o0, GLOBAL_SPARE, 2f)
++	LOOP_CHUNK2(o1, o0, 2f)
+ 	FREG_FROB(f34,f36,f38,f40,f42,f44,f46,f0, f2)
+-	LOOP_CHUNK3(o1, o0, GLOBAL_SPARE, 3f)
++	LOOP_CHUNK3(o1, o0, 3f)
+ 	ba,pt		%xcc, 1b+4
+ 	 faligndata	%f2, %f4, %f48
+ 1:	FREG_FROB(f18,f20,f22,f24,f26,f28,f30,f32,f34)
+@@ -282,11 +395,11 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	STORE_JUMP(o0, f48, 57f)
+ 
+ 1:	FREG_FROB(f4, f6, f8, f10,f12,f14,f16,f18,f20)
+-	LOOP_CHUNK1(o1, o0, GLOBAL_SPARE, 1f)
++	LOOP_CHUNK1(o1, o0, 1f)
+ 	FREG_FROB(f20,f22,f24,f26,f28,f30,f32,f34,f36)
+-	LOOP_CHUNK2(o1, o0, GLOBAL_SPARE, 2f)
++	LOOP_CHUNK2(o1, o0, 2f)
+ 	FREG_FROB(f36,f38,f40,f42,f44,f46,f0, f2, f4)
+-	LOOP_CHUNK3(o1, o0, GLOBAL_SPARE, 3f)
++	LOOP_CHUNK3(o1, o0, 3f)
+ 	ba,pt		%xcc, 1b+4
+ 	 faligndata	%f4, %f6, %f48
+ 1:	FREG_FROB(f20,f22,f24,f26,f28,f30,f32,f34,f36)
+@@ -303,11 +416,11 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	STORE_JUMP(o0, f48, 58f)
+ 
+ 1:	FREG_FROB(f6, f8, f10,f12,f14,f16,f18,f20,f22)
+-	LOOP_CHUNK1(o1, o0, GLOBAL_SPARE, 1f)
++	LOOP_CHUNK1(o1, o0, 1f)
+ 	FREG_FROB(f22,f24,f26,f28,f30,f32,f34,f36,f38)
+-	LOOP_CHUNK2(o1, o0, GLOBAL_SPARE, 2f)
++	LOOP_CHUNK2(o1, o0, 2f)
+ 	FREG_FROB(f38,f40,f42,f44,f46,f0, f2, f4, f6) 
+-	LOOP_CHUNK3(o1, o0, GLOBAL_SPARE, 3f)
++	LOOP_CHUNK3(o1, o0, 3f)
+ 	ba,pt		%xcc, 1b+4
+ 	 faligndata	%f6, %f8, %f48
+ 1:	FREG_FROB(f22,f24,f26,f28,f30,f32,f34,f36,f38)
+@@ -324,11 +437,11 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	STORE_JUMP(o0, f48, 59f)
+ 
+ 1:	FREG_FROB(f8, f10,f12,f14,f16,f18,f20,f22,f24)
+-	LOOP_CHUNK1(o1, o0, GLOBAL_SPARE, 1f)
++	LOOP_CHUNK1(o1, o0, 1f)
+ 	FREG_FROB(f24,f26,f28,f30,f32,f34,f36,f38,f40)
+-	LOOP_CHUNK2(o1, o0, GLOBAL_SPARE, 2f)
++	LOOP_CHUNK2(o1, o0, 2f)
+ 	FREG_FROB(f40,f42,f44,f46,f0, f2, f4, f6, f8)
+-	LOOP_CHUNK3(o1, o0, GLOBAL_SPARE, 3f)
++	LOOP_CHUNK3(o1, o0, 3f)
+ 	ba,pt		%xcc, 1b+4
+ 	 faligndata	%f8, %f10, %f48
+ 1:	FREG_FROB(f24,f26,f28,f30,f32,f34,f36,f38,f40)
+@@ -345,11 +458,11 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	STORE_JUMP(o0, f48, 60f)
+ 
+ 1:	FREG_FROB(f10,f12,f14,f16,f18,f20,f22,f24,f26)
+-	LOOP_CHUNK1(o1, o0, GLOBAL_SPARE, 1f)
++	LOOP_CHUNK1(o1, o0, 1f)
+ 	FREG_FROB(f26,f28,f30,f32,f34,f36,f38,f40,f42)
+-	LOOP_CHUNK2(o1, o0, GLOBAL_SPARE, 2f)
++	LOOP_CHUNK2(o1, o0, 2f)
+ 	FREG_FROB(f42,f44,f46,f0, f2, f4, f6, f8, f10)
+-	LOOP_CHUNK3(o1, o0, GLOBAL_SPARE, 3f)
++	LOOP_CHUNK3(o1, o0, 3f)
+ 	ba,pt		%xcc, 1b+4
+ 	 faligndata	%f10, %f12, %f48
+ 1:	FREG_FROB(f26,f28,f30,f32,f34,f36,f38,f40,f42)
+@@ -366,11 +479,11 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	STORE_JUMP(o0, f48, 61f)
+ 
+ 1:	FREG_FROB(f12,f14,f16,f18,f20,f22,f24,f26,f28)
+-	LOOP_CHUNK1(o1, o0, GLOBAL_SPARE, 1f)
++	LOOP_CHUNK1(o1, o0, 1f)
+ 	FREG_FROB(f28,f30,f32,f34,f36,f38,f40,f42,f44)
+-	LOOP_CHUNK2(o1, o0, GLOBAL_SPARE, 2f)
++	LOOP_CHUNK2(o1, o0, 2f)
+ 	FREG_FROB(f44,f46,f0, f2, f4, f6, f8, f10,f12)
+-	LOOP_CHUNK3(o1, o0, GLOBAL_SPARE, 3f)
++	LOOP_CHUNK3(o1, o0, 3f)
+ 	ba,pt		%xcc, 1b+4
+ 	 faligndata	%f12, %f14, %f48
+ 1:	FREG_FROB(f28,f30,f32,f34,f36,f38,f40,f42,f44)
+@@ -387,11 +500,11 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	STORE_JUMP(o0, f48, 62f)
+ 
+ 1:	FREG_FROB(f14,f16,f18,f20,f22,f24,f26,f28,f30)
+-	LOOP_CHUNK1(o1, o0, GLOBAL_SPARE, 1f)
++	LOOP_CHUNK1(o1, o0, 1f)
+ 	FREG_FROB(f30,f32,f34,f36,f38,f40,f42,f44,f46)
+-	LOOP_CHUNK2(o1, o0, GLOBAL_SPARE, 2f)
++	LOOP_CHUNK2(o1, o0, 2f)
+ 	FREG_FROB(f46,f0, f2, f4, f6, f8, f10,f12,f14)
+-	LOOP_CHUNK3(o1, o0, GLOBAL_SPARE, 3f)
++	LOOP_CHUNK3(o1, o0, 3f)
+ 	ba,pt		%xcc, 1b+4
+ 	 faligndata	%f14, %f16, %f48
+ 1:	FREG_FROB(f30,f32,f34,f36,f38,f40,f42,f44,f46)
+@@ -407,53 +520,53 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	FREG_FROB(f30,f32,f34,f36,f38,f40,f42,f44,f46)
+ 	STORE_JUMP(o0, f48, 63f)
+ 
+-40:	FINISH_VISCHUNK(o0, f0,  f2,  g3)
+-41:	FINISH_VISCHUNK(o0, f2,  f4,  g3)
+-42:	FINISH_VISCHUNK(o0, f4,  f6,  g3)
+-43:	FINISH_VISCHUNK(o0, f6,  f8,  g3)
+-44:	FINISH_VISCHUNK(o0, f8,  f10, g3)
+-45:	FINISH_VISCHUNK(o0, f10, f12, g3)
+-46:	FINISH_VISCHUNK(o0, f12, f14, g3)
+-47:	UNEVEN_VISCHUNK(o0, f14, f0,  g3)
+-48:	FINISH_VISCHUNK(o0, f16, f18, g3)
+-49:	FINISH_VISCHUNK(o0, f18, f20, g3)
+-50:	FINISH_VISCHUNK(o0, f20, f22, g3)
+-51:	FINISH_VISCHUNK(o0, f22, f24, g3)
+-52:	FINISH_VISCHUNK(o0, f24, f26, g3)
+-53:	FINISH_VISCHUNK(o0, f26, f28, g3)
+-54:	FINISH_VISCHUNK(o0, f28, f30, g3)
+-55:	UNEVEN_VISCHUNK(o0, f30, f0,  g3)
+-56:	FINISH_VISCHUNK(o0, f32, f34, g3)
+-57:	FINISH_VISCHUNK(o0, f34, f36, g3)
+-58:	FINISH_VISCHUNK(o0, f36, f38, g3)
+-59:	FINISH_VISCHUNK(o0, f38, f40, g3)
+-60:	FINISH_VISCHUNK(o0, f40, f42, g3)
+-61:	FINISH_VISCHUNK(o0, f42, f44, g3)
+-62:	FINISH_VISCHUNK(o0, f44, f46, g3)
+-63:	UNEVEN_VISCHUNK_LAST(o0, f46, f0,  g3)
+-
+-93:	EX_LD_FP(LOAD(ldd, %o1, %f2))
++40:	FINISH_VISCHUNK(o0, f0,  f2)
++41:	FINISH_VISCHUNK(o0, f2,  f4)
++42:	FINISH_VISCHUNK(o0, f4,  f6)
++43:	FINISH_VISCHUNK(o0, f6,  f8)
++44:	FINISH_VISCHUNK(o0, f8,  f10)
++45:	FINISH_VISCHUNK(o0, f10, f12)
++46:	FINISH_VISCHUNK(o0, f12, f14)
++47:	UNEVEN_VISCHUNK(o0, f14, f0)
++48:	FINISH_VISCHUNK(o0, f16, f18)
++49:	FINISH_VISCHUNK(o0, f18, f20)
++50:	FINISH_VISCHUNK(o0, f20, f22)
++51:	FINISH_VISCHUNK(o0, f22, f24)
++52:	FINISH_VISCHUNK(o0, f24, f26)
++53:	FINISH_VISCHUNK(o0, f26, f28)
++54:	FINISH_VISCHUNK(o0, f28, f30)
++55:	UNEVEN_VISCHUNK(o0, f30, f0)
++56:	FINISH_VISCHUNK(o0, f32, f34)
++57:	FINISH_VISCHUNK(o0, f34, f36)
++58:	FINISH_VISCHUNK(o0, f36, f38)
++59:	FINISH_VISCHUNK(o0, f38, f40)
++60:	FINISH_VISCHUNK(o0, f40, f42)
++61:	FINISH_VISCHUNK(o0, f42, f44)
++62:	FINISH_VISCHUNK(o0, f44, f46)
++63:	UNEVEN_VISCHUNK_LAST(o0, f46, f0)
++
++93:	EX_LD_FP(LOAD(ldd, %o1, %f2), U1_g3_0_fp)
+ 	add		%o1, 8, %o1
+ 	subcc		%g3, 8, %g3
+ 	faligndata	%f0, %f2, %f8
+-	EX_ST_FP(STORE(std, %f8, %o0))
++	EX_ST_FP(STORE(std, %f8, %o0), U1_g3_8_fp)
+ 	bl,pn		%xcc, 95f
+ 	 add		%o0, 8, %o0
+-	EX_LD_FP(LOAD(ldd, %o1, %f0))
++	EX_LD_FP(LOAD(ldd, %o1, %f0), U1_g3_0_fp)
+ 	add		%o1, 8, %o1
+ 	subcc		%g3, 8, %g3
+ 	faligndata	%f2, %f0, %f8
+-	EX_ST_FP(STORE(std, %f8, %o0))
++	EX_ST_FP(STORE(std, %f8, %o0), U1_g3_8_fp)
+ 	bge,pt		%xcc, 93b
+ 	 add		%o0, 8, %o0
+ 
+ 95:	brz,pt		%o2, 2f
+ 	 mov		%g1, %o1
+ 
+-1:	EX_LD_FP(LOAD(ldub, %o1, %o3))
++1:	EX_LD_FP(LOAD(ldub, %o1, %o3), U1_o2_0_fp)
+ 	add		%o1, 1, %o1
+ 	subcc		%o2, 1, %o2
+-	EX_ST_FP(STORE(stb, %o3, %o0))
++	EX_ST_FP(STORE(stb, %o3, %o0), U1_o2_1_fp)
+ 	bne,pt		%xcc, 1b
+ 	 add		%o0, 1, %o0
+ 
+@@ -469,27 +582,27 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 
+ 72:	andn		%o2, 0xf, %GLOBAL_SPARE
+ 	and		%o2, 0xf, %o2
+-1:	EX_LD(LOAD(ldx, %o1 + 0x00, %o5))
+-	EX_LD(LOAD(ldx, %o1 + 0x08, %g1))
++1:	EX_LD(LOAD(ldx, %o1 + 0x00, %o5), U1_gs_0)
++	EX_LD(LOAD(ldx, %o1 + 0x08, %g1), U1_gs_0)
+ 	subcc		%GLOBAL_SPARE, 0x10, %GLOBAL_SPARE
+-	EX_ST(STORE(stx, %o5, %o1 + %o3))
++	EX_ST(STORE(stx, %o5, %o1 + %o3), U1_gs_10)
+ 	add		%o1, 0x8, %o1
+-	EX_ST(STORE(stx, %g1, %o1 + %o3))
++	EX_ST(STORE(stx, %g1, %o1 + %o3), U1_gs_8)
+ 	bgu,pt		%XCC, 1b
+ 	 add		%o1, 0x8, %o1
+ 73:	andcc		%o2, 0x8, %g0
+ 	be,pt		%XCC, 1f
+ 	 nop
+-	EX_LD(LOAD(ldx, %o1, %o5))
++	EX_LD(LOAD(ldx, %o1, %o5), U1_o2_0)
+ 	sub		%o2, 0x8, %o2
+-	EX_ST(STORE(stx, %o5, %o1 + %o3))
++	EX_ST(STORE(stx, %o5, %o1 + %o3), U1_o2_8)
+ 	add		%o1, 0x8, %o1
+ 1:	andcc		%o2, 0x4, %g0
+ 	be,pt		%XCC, 1f
+ 	 nop
+-	EX_LD(LOAD(lduw, %o1, %o5))
++	EX_LD(LOAD(lduw, %o1, %o5), U1_o2_0)
+ 	sub		%o2, 0x4, %o2
+-	EX_ST(STORE(stw, %o5, %o1 + %o3))
++	EX_ST(STORE(stw, %o5, %o1 + %o3), U1_o2_4)
+ 	add		%o1, 0x4, %o1
+ 1:	cmp		%o2, 0
+ 	be,pt		%XCC, 85f
+@@ -503,9 +616,9 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	 sub		%g0, %g1, %g1
+ 	sub		%o2, %g1, %o2
+ 
+-1:	EX_LD(LOAD(ldub, %o1, %o5))
++1:	EX_LD(LOAD(ldub, %o1, %o5), U1_g1_0)
+ 	subcc		%g1, 1, %g1
+-	EX_ST(STORE(stb, %o5, %o1 + %o3))
++	EX_ST(STORE(stb, %o5, %o1 + %o3), U1_g1_1)
+ 	bgu,pt		%icc, 1b
+ 	 add		%o1, 1, %o1
+ 
+@@ -521,16 +634,16 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 
+ 8:	mov		64, %o3
+ 	andn		%o1, 0x7, %o1
+-	EX_LD(LOAD(ldx, %o1, %g2))
++	EX_LD(LOAD(ldx, %o1, %g2), U1_o2_0)
+ 	sub		%o3, %g1, %o3
+ 	andn		%o2, 0x7, %GLOBAL_SPARE
+ 	sllx		%g2, %g1, %g2
+-1:	EX_LD(LOAD(ldx, %o1 + 0x8, %g3))
++1:	EX_LD(LOAD(ldx, %o1 + 0x8, %g3), U1_gs_0_o2_adj)
+ 	subcc		%GLOBAL_SPARE, 0x8, %GLOBAL_SPARE
+ 	add		%o1, 0x8, %o1
+ 	srlx		%g3, %o3, %o5
+ 	or		%o5, %g2, %o5
+-	EX_ST(STORE(stx, %o5, %o0))
++	EX_ST(STORE(stx, %o5, %o0), U1_gs_8_o2_adj)
+ 	add		%o0, 0x8, %o0
+ 	bgu,pt		%icc, 1b
+ 	 sllx		%g3, %g1, %g2
+@@ -548,9 +661,9 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	bne,pn		%XCC, 90f
+ 	 sub		%o0, %o1, %o3
+ 
+-1:	EX_LD(LOAD(lduw, %o1, %g1))
++1:	EX_LD(LOAD(lduw, %o1, %g1), U1_o2_0)
+ 	subcc		%o2, 4, %o2
+-	EX_ST(STORE(stw, %g1, %o1 + %o3))
++	EX_ST(STORE(stw, %g1, %o1 + %o3), U1_o2_4)
+ 	bgu,pt		%XCC, 1b
+ 	 add		%o1, 4, %o1
+ 
+@@ -558,9 +671,9 @@ FUNC_NAME:		/* %o0=dst, %o1=src, %o2=len */
+ 	 mov		EX_RETVAL(%o4), %o0
+ 
+ 	.align		32
+-90:	EX_LD(LOAD(ldub, %o1, %g1))
++90:	EX_LD(LOAD(ldub, %o1, %g1), U1_o2_0)
+ 	subcc		%o2, 1, %o2
+-	EX_ST(STORE(stb, %g1, %o1 + %o3))
++	EX_ST(STORE(stb, %g1, %o1 + %o3), U1_o2_1)
+ 	bgu,pt		%XCC, 90b
+ 	 add		%o1, 1, %o1
+ 	retl
+diff --git a/arch/sparc/lib/U3copy_from_user.S b/arch/sparc/lib/U3copy_from_user.S
+index 88ad73d86fe4..db73010a1af8 100644
+--- a/arch/sparc/lib/U3copy_from_user.S
++++ b/arch/sparc/lib/U3copy_from_user.S
+@@ -3,19 +3,19 @@
+  * Copyright (C) 1999, 2000, 2004 David S. Miller (davem@redhat.com)
+  */
+ 
+-#define EX_LD(x)		\
++#define EX_LD(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one;	\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+-#define EX_LD_FP(x)		\
++#define EX_LD_FP(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one_fp;\
++	.word 98b, y##_fp;	\
+ 	.text;			\
+ 	.align 4;
+ 
+diff --git a/arch/sparc/lib/U3copy_to_user.S b/arch/sparc/lib/U3copy_to_user.S
+index 845139d75537..c4ee858e352a 100644
+--- a/arch/sparc/lib/U3copy_to_user.S
++++ b/arch/sparc/lib/U3copy_to_user.S
+@@ -3,19 +3,19 @@
+  * Copyright (C) 1999, 2000, 2004 David S. Miller (davem@redhat.com)
+  */
+ 
+-#define EX_ST(x)		\
++#define EX_ST(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one;	\
++	.word 98b, y;		\
+ 	.text;			\
+ 	.align 4;
+ 
+-#define EX_ST_FP(x)		\
++#define EX_ST_FP(x,y)		\
+ 98:	x;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one_fp;\
++	.word 98b, y##_fp;	\
+ 	.text;			\
+ 	.align 4;
+ 
+diff --git a/arch/sparc/lib/U3memcpy.S b/arch/sparc/lib/U3memcpy.S
+index 491ee69e4995..54f98706b03b 100644
+--- a/arch/sparc/lib/U3memcpy.S
++++ b/arch/sparc/lib/U3memcpy.S
+@@ -4,6 +4,7 @@
+  */
+ 
+ #ifdef __KERNEL__
++#include <linux/linkage.h>
+ #include <asm/visasm.h>
+ #include <asm/asi.h>
+ #define GLOBAL_SPARE	%g7
+@@ -22,21 +23,17 @@
+ #endif
+ 
+ #ifndef EX_LD
+-#define EX_LD(x)	x
++#define EX_LD(x,y)	x
+ #endif
+ #ifndef EX_LD_FP
+-#define EX_LD_FP(x)	x
++#define EX_LD_FP(x,y)	x
+ #endif
+ 
+ #ifndef EX_ST
+-#define EX_ST(x)	x
++#define EX_ST(x,y)	x
+ #endif
+ #ifndef EX_ST_FP
+-#define EX_ST_FP(x)	x
+-#endif
+-
+-#ifndef EX_RETVAL
+-#define EX_RETVAL(x)	x
++#define EX_ST_FP(x,y)	x
+ #endif
+ 
+ #ifndef LOAD
+@@ -77,6 +74,87 @@
+ 	 */
+ 
+ 	.text
++#ifndef EX_RETVAL
++#define EX_RETVAL(x)	x
++__restore_fp:
++	VISExitHalf
++	retl
++	 nop
++ENTRY(U3_retl_o2_plus_g2_plus_g1_plus_1_fp)
++	add	%g1, 1, %g1
++	add	%g2, %g1, %g2
++	ba,pt	%xcc, __restore_fp
++	 add	%o2, %g2, %o0
++ENDPROC(U3_retl_o2_plus_g2_plus_g1_plus_1_fp)
++ENTRY(U3_retl_o2_plus_g2_fp)
++	ba,pt	%xcc, __restore_fp
++	 add	%o2, %g2, %o0
++ENDPROC(U3_retl_o2_plus_g2_fp)
++ENTRY(U3_retl_o2_plus_g2_plus_8_fp)
++	add	%g2, 8, %g2
++	ba,pt	%xcc, __restore_fp
++	 add	%o2, %g2, %o0
++ENDPROC(U3_retl_o2_plus_g2_plus_8_fp)
++ENTRY(U3_retl_o2)
++	retl
++	 mov	%o2, %o0
++ENDPROC(U3_retl_o2)
++ENTRY(U3_retl_o2_plus_1)
++	retl
++	 add	%o2, 1, %o0
++ENDPROC(U3_retl_o2_plus_1)
++ENTRY(U3_retl_o2_plus_4)
++	retl
++	 add	%o2, 4, %o0
++ENDPROC(U3_retl_o2_plus_4)
++ENTRY(U3_retl_o2_plus_8)
++	retl
++	 add	%o2, 8, %o0
++ENDPROC(U3_retl_o2_plus_8)
++ENTRY(U3_retl_o2_plus_g1_plus_1)
++	add	%g1, 1, %g1
++	retl
++	 add	%o2, %g1, %o0
++ENDPROC(U3_retl_o2_plus_g1_plus_1)
++ENTRY(U3_retl_o2_fp)
++	ba,pt	%xcc, __restore_fp
++	 mov	%o2, %o0
++ENDPROC(U3_retl_o2_fp)
++ENTRY(U3_retl_o2_plus_o3_sll_6_plus_0x80_fp)
++	sll	%o3, 6, %o3
++	add	%o3, 0x80, %o3
++	ba,pt	%xcc, __restore_fp
++	 add	%o2, %o3, %o0
++ENDPROC(U3_retl_o2_plus_o3_sll_6_plus_0x80_fp)
++ENTRY(U3_retl_o2_plus_o3_sll_6_plus_0x40_fp)
++	sll	%o3, 6, %o3
++	add	%o3, 0x40, %o3
++	ba,pt	%xcc, __restore_fp
++	 add	%o2, %o3, %o0
++ENDPROC(U3_retl_o2_plus_o3_sll_6_plus_0x40_fp)
++ENTRY(U3_retl_o2_plus_GS_plus_0x10)
++	add	GLOBAL_SPARE, 0x10, GLOBAL_SPARE
++	retl
++	 add	%o2, GLOBAL_SPARE, %o0
++ENDPROC(U3_retl_o2_plus_GS_plus_0x10)
++ENTRY(U3_retl_o2_plus_GS_plus_0x08)
++	add	GLOBAL_SPARE, 0x08, GLOBAL_SPARE
++	retl
++	 add	%o2, GLOBAL_SPARE, %o0
++ENDPROC(U3_retl_o2_plus_GS_plus_0x08)
++ENTRY(U3_retl_o2_and_7_plus_GS)
++	and	%o2, 7, %o2
++	retl
++	 add	%o2, GLOBAL_SPARE, %o2
++ENDPROC(U3_retl_o2_and_7_plus_GS)
++ENTRY(U3_retl_o2_and_7_plus_GS_plus_8)
++	add	GLOBAL_SPARE, 8, GLOBAL_SPARE
++	and	%o2, 7, %o2
++	retl
++	 add	%o2, GLOBAL_SPARE, %o2
++ENDPROC(U3_retl_o2_and_7_plus_GS_plus_8)
++#endif
++
+ 	.align		64
+ 
+ 	/* The cheetah's flexible spine, oversized liver, enlarged heart,
+@@ -126,8 +204,8 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	 and		%g2, 0x38, %g2
+ 
+ 1:	subcc		%g1, 0x1, %g1
+-	EX_LD_FP(LOAD(ldub, %o1 + 0x00, %o3))
+-	EX_ST_FP(STORE(stb, %o3, %o1 + GLOBAL_SPARE))
++	EX_LD_FP(LOAD(ldub, %o1 + 0x00, %o3), U3_retl_o2_plus_g2_plus_g1_plus_1)
++	EX_ST_FP(STORE(stb, %o3, %o1 + GLOBAL_SPARE), U3_retl_o2_plus_g2_plus_g1_plus_1)
+ 	bgu,pt		%XCC, 1b
+ 	 add		%o1, 0x1, %o1
+ 
+@@ -138,20 +216,20 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	be,pt		%icc, 3f
+ 	 alignaddr	%o1, %g0, %o1
+ 
+-	EX_LD_FP(LOAD(ldd, %o1, %f4))
+-1:	EX_LD_FP(LOAD(ldd, %o1 + 0x8, %f6))
++	EX_LD_FP(LOAD(ldd, %o1, %f4), U3_retl_o2_plus_g2)
++1:	EX_LD_FP(LOAD(ldd, %o1 + 0x8, %f6), U3_retl_o2_plus_g2)
+ 	add		%o1, 0x8, %o1
+ 	subcc		%g2, 0x8, %g2
+ 	faligndata	%f4, %f6, %f0
+-	EX_ST_FP(STORE(std, %f0, %o0))
++	EX_ST_FP(STORE(std, %f0, %o0), U3_retl_o2_plus_g2_plus_8)
+ 	be,pn		%icc, 3f
+ 	 add		%o0, 0x8, %o0
+ 
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x8, %f4))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x8, %f4), U3_retl_o2_plus_g2)
+ 	add		%o1, 0x8, %o1
+ 	subcc		%g2, 0x8, %g2
+ 	faligndata	%f6, %f4, %f2
+-	EX_ST_FP(STORE(std, %f2, %o0))
++	EX_ST_FP(STORE(std, %f2, %o0), U3_retl_o2_plus_g2_plus_8)
+ 	bne,pt		%icc, 1b
+ 	 add		%o0, 0x8, %o0
+ 
+@@ -161,25 +239,25 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	LOAD(prefetch, %o1 + 0x080, #one_read)
+ 	LOAD(prefetch, %o1 + 0x0c0, #one_read)
+ 	LOAD(prefetch, %o1 + 0x100, #one_read)
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x000, %f0))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x000, %f0), U3_retl_o2)
+ 	LOAD(prefetch, %o1 + 0x140, #one_read)
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x008, %f2))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x008, %f2), U3_retl_o2)
+ 	LOAD(prefetch, %o1 + 0x180, #one_read)
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x010, %f4))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x010, %f4), U3_retl_o2)
+ 	LOAD(prefetch, %o1 + 0x1c0, #one_read)
+ 	faligndata	%f0, %f2, %f16
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x018, %f6))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x018, %f6), U3_retl_o2)
+ 	faligndata	%f2, %f4, %f18
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x020, %f8))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x020, %f8), U3_retl_o2)
+ 	faligndata	%f4, %f6, %f20
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x028, %f10))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x028, %f10), U3_retl_o2)
+ 	faligndata	%f6, %f8, %f22
+ 
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x030, %f12))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x030, %f12), U3_retl_o2)
+ 	faligndata	%f8, %f10, %f24
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x038, %f14))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x038, %f14), U3_retl_o2)
+ 	faligndata	%f10, %f12, %f26
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x040, %f0))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x040, %f0), U3_retl_o2)
+ 
+ 	subcc		GLOBAL_SPARE, 0x80, GLOBAL_SPARE
+ 	add		%o1, 0x40, %o1
+@@ -190,26 +268,26 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 	.align		64
+ 1:
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x008, %f2))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x008, %f2), U3_retl_o2_plus_o3_sll_6_plus_0x80)
+ 	faligndata	%f12, %f14, %f28
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x010, %f4))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x010, %f4), U3_retl_o2_plus_o3_sll_6_plus_0x80)
+ 	faligndata	%f14, %f0, %f30
+-	EX_ST_FP(STORE_BLK(%f16, %o0))
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x018, %f6))
++	EX_ST_FP(STORE_BLK(%f16, %o0), U3_retl_o2_plus_o3_sll_6_plus_0x80)
++	EX_LD_FP(LOAD(ldd, %o1 + 0x018, %f6), U3_retl_o2_plus_o3_sll_6_plus_0x40)
+ 	faligndata	%f0, %f2, %f16
+ 	add		%o0, 0x40, %o0
+ 
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x020, %f8))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x020, %f8), U3_retl_o2_plus_o3_sll_6_plus_0x40)
+ 	faligndata	%f2, %f4, %f18
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x028, %f10))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x028, %f10), U3_retl_o2_plus_o3_sll_6_plus_0x40)
+ 	faligndata	%f4, %f6, %f20
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x030, %f12))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x030, %f12), U3_retl_o2_plus_o3_sll_6_plus_0x40)
+ 	subcc		%o3, 0x01, %o3
+ 	faligndata	%f6, %f8, %f22
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x038, %f14))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x038, %f14), U3_retl_o2_plus_o3_sll_6_plus_0x80)
+ 
+ 	faligndata	%f8, %f10, %f24
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x040, %f0))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x040, %f0), U3_retl_o2_plus_o3_sll_6_plus_0x80)
+ 	LOAD(prefetch, %o1 + 0x1c0, #one_read)
+ 	faligndata	%f10, %f12, %f26
+ 	bg,pt		%XCC, 1b
+@@ -217,29 +295,29 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 	/* Finally we copy the last full 64-byte block. */
+ 2:
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x008, %f2))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x008, %f2), U3_retl_o2_plus_o3_sll_6_plus_0x80)
+ 	faligndata	%f12, %f14, %f28
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x010, %f4))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x010, %f4), U3_retl_o2_plus_o3_sll_6_plus_0x80)
+ 	faligndata	%f14, %f0, %f30
+-	EX_ST_FP(STORE_BLK(%f16, %o0))
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x018, %f6))
++	EX_ST_FP(STORE_BLK(%f16, %o0), U3_retl_o2_plus_o3_sll_6_plus_0x80)
++	EX_LD_FP(LOAD(ldd, %o1 + 0x018, %f6), U3_retl_o2_plus_o3_sll_6_plus_0x40)
+ 	faligndata	%f0, %f2, %f16
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x020, %f8))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x020, %f8), U3_retl_o2_plus_o3_sll_6_plus_0x40)
+ 	faligndata	%f2, %f4, %f18
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x028, %f10))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x028, %f10), U3_retl_o2_plus_o3_sll_6_plus_0x40)
+ 	faligndata	%f4, %f6, %f20
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x030, %f12))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x030, %f12), U3_retl_o2_plus_o3_sll_6_plus_0x40)
+ 	faligndata	%f6, %f8, %f22
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x038, %f14))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x038, %f14), U3_retl_o2_plus_o3_sll_6_plus_0x40)
+ 	faligndata	%f8, %f10, %f24
+ 	cmp		%g1, 0
+ 	be,pt		%XCC, 1f
+ 	 add		%o0, 0x40, %o0
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x040, %f0))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x040, %f0), U3_retl_o2_plus_o3_sll_6_plus_0x40)
+ 1:	faligndata	%f10, %f12, %f26
+ 	faligndata	%f12, %f14, %f28
+ 	faligndata	%f14, %f0, %f30
+-	EX_ST_FP(STORE_BLK(%f16, %o0))
++	EX_ST_FP(STORE_BLK(%f16, %o0), U3_retl_o2_plus_o3_sll_6_plus_0x40)
+ 	add		%o0, 0x40, %o0
+ 	add		%o1, 0x40, %o1
+ 	membar		#Sync
+@@ -259,20 +337,20 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 	sub		%o2, %g2, %o2
+ 	be,a,pt		%XCC, 1f
+-	 EX_LD_FP(LOAD(ldd, %o1 + 0x00, %f0))
++	 EX_LD_FP(LOAD(ldd, %o1 + 0x00, %f0), U3_retl_o2_plus_g2)
+ 
+-1:	EX_LD_FP(LOAD(ldd, %o1 + 0x08, %f2))
++1:	EX_LD_FP(LOAD(ldd, %o1 + 0x08, %f2), U3_retl_o2_plus_g2)
+ 	add		%o1, 0x8, %o1
+ 	subcc		%g2, 0x8, %g2
+ 	faligndata	%f0, %f2, %f8
+-	EX_ST_FP(STORE(std, %f8, %o0))
++	EX_ST_FP(STORE(std, %f8, %o0), U3_retl_o2_plus_g2_plus_8)
+ 	be,pn		%XCC, 2f
+ 	 add		%o0, 0x8, %o0
+-	EX_LD_FP(LOAD(ldd, %o1 + 0x08, %f0))
++	EX_LD_FP(LOAD(ldd, %o1 + 0x08, %f0), U3_retl_o2_plus_g2)
+ 	add		%o1, 0x8, %o1
+ 	subcc		%g2, 0x8, %g2
+ 	faligndata	%f2, %f0, %f8
+-	EX_ST_FP(STORE(std, %f8, %o0))
++	EX_ST_FP(STORE(std, %f8, %o0), U3_retl_o2_plus_g2_plus_8)
+ 	bne,pn		%XCC, 1b
+ 	 add		%o0, 0x8, %o0
+ 
+@@ -292,30 +370,33 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	 andcc		%o2, 0x8, %g0
+ 	be,pt		%icc, 1f
+ 	 nop
+-	EX_LD(LOAD(ldx, %o1, %o5))
+-	EX_ST(STORE(stx, %o5, %o1 + %o3))
++	EX_LD(LOAD(ldx, %o1, %o5), U3_retl_o2)
++	EX_ST(STORE(stx, %o5, %o1 + %o3), U3_retl_o2)
+ 	add		%o1, 0x8, %o1
++	sub		%o2, 8, %o2
+ 
+ 1:	andcc		%o2, 0x4, %g0
+ 	be,pt		%icc, 1f
+ 	 nop
+-	EX_LD(LOAD(lduw, %o1, %o5))
+-	EX_ST(STORE(stw, %o5, %o1 + %o3))
++	EX_LD(LOAD(lduw, %o1, %o5), U3_retl_o2)
++	EX_ST(STORE(stw, %o5, %o1 + %o3), U3_retl_o2)
+ 	add		%o1, 0x4, %o1
++	sub		%o2, 4, %o2
+ 
+ 1:	andcc		%o2, 0x2, %g0
+ 	be,pt		%icc, 1f
+ 	 nop
+-	EX_LD(LOAD(lduh, %o1, %o5))
+-	EX_ST(STORE(sth, %o5, %o1 + %o3))
++	EX_LD(LOAD(lduh, %o1, %o5), U3_retl_o2)
++	EX_ST(STORE(sth, %o5, %o1 + %o3), U3_retl_o2)
+ 	add		%o1, 0x2, %o1
++	sub		%o2, 2, %o2
+ 
+ 1:	andcc		%o2, 0x1, %g0
+ 	be,pt		%icc, 85f
+ 	 nop
+-	EX_LD(LOAD(ldub, %o1, %o5))
++	EX_LD(LOAD(ldub, %o1, %o5), U3_retl_o2)
+ 	ba,pt		%xcc, 85f
+-	 EX_ST(STORE(stb, %o5, %o1 + %o3))
++	 EX_ST(STORE(stb, %o5, %o1 + %o3), U3_retl_o2)
+ 
+ 	.align		64
+ 70: /* 16 < len <= 64 */
+@@ -326,26 +407,26 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	andn		%o2, 0xf, GLOBAL_SPARE
+ 	and		%o2, 0xf, %o2
+ 1:	subcc		GLOBAL_SPARE, 0x10, GLOBAL_SPARE
+-	EX_LD(LOAD(ldx, %o1 + 0x00, %o5))
+-	EX_LD(LOAD(ldx, %o1 + 0x08, %g1))
+-	EX_ST(STORE(stx, %o5, %o1 + %o3))
++	EX_LD(LOAD(ldx, %o1 + 0x00, %o5), U3_retl_o2_plus_GS_plus_0x10)
++	EX_LD(LOAD(ldx, %o1 + 0x08, %g1), U3_retl_o2_plus_GS_plus_0x10)
++	EX_ST(STORE(stx, %o5, %o1 + %o3), U3_retl_o2_plus_GS_plus_0x10)
+ 	add		%o1, 0x8, %o1
+-	EX_ST(STORE(stx, %g1, %o1 + %o3))
++	EX_ST(STORE(stx, %g1, %o1 + %o3), U3_retl_o2_plus_GS_plus_0x08)
+ 	bgu,pt		%XCC, 1b
+ 	 add		%o1, 0x8, %o1
+ 73:	andcc		%o2, 0x8, %g0
+ 	be,pt		%XCC, 1f
+ 	 nop
+ 	sub		%o2, 0x8, %o2
+-	EX_LD(LOAD(ldx, %o1, %o5))
+-	EX_ST(STORE(stx, %o5, %o1 + %o3))
++	EX_LD(LOAD(ldx, %o1, %o5), U3_retl_o2_plus_8)
++	EX_ST(STORE(stx, %o5, %o1 + %o3), U3_retl_o2_plus_8)
+ 	add		%o1, 0x8, %o1
+ 1:	andcc		%o2, 0x4, %g0
+ 	be,pt		%XCC, 1f
+ 	 nop
+ 	sub		%o2, 0x4, %o2
+-	EX_LD(LOAD(lduw, %o1, %o5))
+-	EX_ST(STORE(stw, %o5, %o1 + %o3))
++	EX_LD(LOAD(lduw, %o1, %o5), U3_retl_o2_plus_4)
++	EX_ST(STORE(stw, %o5, %o1 + %o3), U3_retl_o2_plus_4)
+ 	add		%o1, 0x4, %o1
+ 1:	cmp		%o2, 0
+ 	be,pt		%XCC, 85f
+@@ -361,8 +442,8 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	sub		%o2, %g1, %o2
+ 
+ 1:	subcc		%g1, 1, %g1
+-	EX_LD(LOAD(ldub, %o1, %o5))
+-	EX_ST(STORE(stb, %o5, %o1 + %o3))
++	EX_LD(LOAD(ldub, %o1, %o5), U3_retl_o2_plus_g1_plus_1)
++	EX_ST(STORE(stb, %o5, %o1 + %o3), U3_retl_o2_plus_g1_plus_1)
+ 	bgu,pt		%icc, 1b
+ 	 add		%o1, 1, %o1
+ 
+@@ -378,16 +459,16 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 8:	mov		64, %o3
+ 	andn		%o1, 0x7, %o1
+-	EX_LD(LOAD(ldx, %o1, %g2))
++	EX_LD(LOAD(ldx, %o1, %g2), U3_retl_o2)
+ 	sub		%o3, %g1, %o3
+ 	andn		%o2, 0x7, GLOBAL_SPARE
+ 	sllx		%g2, %g1, %g2
+-1:	EX_LD(LOAD(ldx, %o1 + 0x8, %g3))
++1:	EX_LD(LOAD(ldx, %o1 + 0x8, %g3), U3_retl_o2_and_7_plus_GS)
+ 	subcc		GLOBAL_SPARE, 0x8, GLOBAL_SPARE
+ 	add		%o1, 0x8, %o1
+ 	srlx		%g3, %o3, %o5
+ 	or		%o5, %g2, %o5
+-	EX_ST(STORE(stx, %o5, %o0))
++	EX_ST(STORE(stx, %o5, %o0), U3_retl_o2_and_7_plus_GS_plus_8)
+ 	add		%o0, 0x8, %o0
+ 	bgu,pt		%icc, 1b
+ 	 sllx		%g3, %g1, %g2
+@@ -407,8 +488,8 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 1:
+ 	subcc		%o2, 4, %o2
+-	EX_LD(LOAD(lduw, %o1, %g1))
+-	EX_ST(STORE(stw, %g1, %o1 + %o3))
++	EX_LD(LOAD(lduw, %o1, %g1), U3_retl_o2_plus_4)
++	EX_ST(STORE(stw, %g1, %o1 + %o3), U3_retl_o2_plus_4)
+ 	bgu,pt		%XCC, 1b
+ 	 add		%o1, 4, %o1
+ 
+@@ -418,8 +499,8 @@ FUNC_NAME:	/* %o0=dst, %o1=src, %o2=len */
+ 	.align		32
+ 90:
+ 	subcc		%o2, 1, %o2
+-	EX_LD(LOAD(ldub, %o1, %g1))
+-	EX_ST(STORE(stb, %g1, %o1 + %o3))
++	EX_LD(LOAD(ldub, %o1, %g1), U3_retl_o2_plus_1)
++	EX_ST(STORE(stb, %g1, %o1 + %o3), U3_retl_o2_plus_1)
+ 	bgu,pt		%XCC, 90b
+ 	 add		%o1, 1, %o1
+ 	retl
+diff --git a/arch/sparc/lib/copy_in_user.S b/arch/sparc/lib/copy_in_user.S
+index 302c0e60dc2c..4c89b486fa0d 100644
+--- a/arch/sparc/lib/copy_in_user.S
++++ b/arch/sparc/lib/copy_in_user.S
+@@ -8,18 +8,33 @@
+ 
+ #define XCC xcc
+ 
+-#define EX(x,y)			\
++#define EX(x,y,z)		\
+ 98:	x,y;			\
+ 	.section __ex_table,"a";\
+ 	.align 4;		\
+-	.word 98b, __retl_one;	\
++	.word 98b, z;		\
+ 	.text;			\
+ 	.align 4;
+ 
++#define EX_O4(x,y) EX(x,y,__retl_o4_plus_8)
++#define EX_O2_4(x,y) EX(x,y,__retl_o2_plus_4)
++#define EX_O2_1(x,y) EX(x,y,__retl_o2_plus_1)
++
+ 	.register	%g2,#scratch
+ 	.register	%g3,#scratch
+ 
+ 	.text
++__retl_o4_plus_8:
++	add	%o4, %o2, %o4
++	retl
++	 add	%o4, 8, %o0
++__retl_o2_plus_4:
++	retl
++	 add	%o2, 4, %o0
++__retl_o2_plus_1:
++	retl
++	 add	%o2, 1, %o0
++
+ 	.align	32
+ 
+ 	/* Don't try to get too fancy here, just nice and
+@@ -44,8 +59,8 @@ ENTRY(___copy_in_user)	/* %o0=dst, %o1=src, %o2=len */
+ 	andn		%o2, 0x7, %o4
+ 	and		%o2, 0x7, %o2
+ 1:	subcc		%o4, 0x8, %o4
+-	EX(ldxa [%o1] %asi, %o5)
+-	EX(stxa %o5, [%o0] %asi)
++	EX_O4(ldxa [%o1] %asi, %o5)
++	EX_O4(stxa %o5, [%o0] %asi)
+ 	add		%o1, 0x8, %o1
+ 	bgu,pt		%XCC, 1b
+ 	 add		%o0, 0x8, %o0
+@@ -53,8 +68,8 @@ ENTRY(___copy_in_user)	/* %o0=dst, %o1=src, %o2=len */
+ 	be,pt		%XCC, 1f
+ 	 nop
+ 	sub		%o2, 0x4, %o2
+-	EX(lduwa [%o1] %asi, %o5)
+-	EX(stwa %o5, [%o0] %asi)
++	EX_O2_4(lduwa [%o1] %asi, %o5)
++	EX_O2_4(stwa %o5, [%o0] %asi)
+ 	add		%o1, 0x4, %o1
+ 	add		%o0, 0x4, %o0
+ 1:	cmp		%o2, 0
+@@ -70,8 +85,8 @@ ENTRY(___copy_in_user)	/* %o0=dst, %o1=src, %o2=len */
+ 
+ 82:
+ 	subcc		%o2, 4, %o2
+-	EX(lduwa [%o1] %asi, %g1)
+-	EX(stwa %g1, [%o0] %asi)
++	EX_O2_4(lduwa [%o1] %asi, %g1)
++	EX_O2_4(stwa %g1, [%o0] %asi)
+ 	add		%o1, 4, %o1
+ 	bgu,pt		%XCC, 82b
+ 	 add		%o0, 4, %o0
+@@ -82,8 +97,8 @@ ENTRY(___copy_in_user)	/* %o0=dst, %o1=src, %o2=len */
+ 	.align	32
+ 90:
+ 	subcc		%o2, 1, %o2
+-	EX(lduba [%o1] %asi, %g1)
+-	EX(stba %g1, [%o0] %asi)
++	EX_O2_1(lduba [%o1] %asi, %g1)
++	EX_O2_1(stba %g1, [%o0] %asi)
+ 	add		%o1, 1, %o1
+ 	bgu,pt		%XCC, 90b
+ 	 add		%o0, 1, %o0
+diff --git a/arch/sparc/lib/user_fixup.c b/arch/sparc/lib/user_fixup.c
+deleted file mode 100644
+index ac96ae236709..000000000000
+--- a/arch/sparc/lib/user_fixup.c
++++ /dev/null
+@@ -1,71 +0,0 @@
+-/* user_fixup.c: Fix up user copy faults.
+- *
+- * Copyright (C) 2004 David S. Miller <davem@redhat.com>
+- */
+-
+-#include <linux/compiler.h>
+-#include <linux/kernel.h>
+-#include <linux/string.h>
+-#include <linux/errno.h>
+-#include <linux/module.h>
+-
+-#include <asm/uaccess.h>
+-
+-/* Calculating the exact fault address when using
+- * block loads and stores can be very complicated.
+- *
+- * Instead of trying to be clever and handling all
+- * of the cases, just fix things up simply here.
+- */
+-
+-static unsigned long compute_size(unsigned long start, unsigned long size, unsigned long *offset)
+-{
+-	unsigned long fault_addr = current_thread_info()->fault_address;
+-	unsigned long end = start + size;
+-
+-	if (fault_addr < start || fault_addr >= end) {
+-		*offset = 0;
+-	} else {
+-		*offset = fault_addr - start;
+-		size = end - fault_addr;
+-	}
+-	return size;
+-}
+-
+-unsigned long copy_from_user_fixup(void *to, const void __user *from, unsigned long size)
+-{
+-	unsigned long offset;
+-
+-	size = compute_size((unsigned long) from, size, &offset);
+-	if (likely(size))
+-		memset(to + offset, 0, size);
+-
+-	return size;
+-}
+-EXPORT_SYMBOL(copy_from_user_fixup);
+-
+-unsigned long copy_to_user_fixup(void __user *to, const void *from, unsigned long size)
+-{
+-	unsigned long offset;
+-
+-	return compute_size((unsigned long) to, size, &offset);
+-}
+-EXPORT_SYMBOL(copy_to_user_fixup);
+-
+-unsigned long copy_in_user_fixup(void __user *to, void __user *from, unsigned long size)
+-{
+-	unsigned long fault_addr = current_thread_info()->fault_address;
+-	unsigned long start = (unsigned long) to;
+-	unsigned long end = start + size;
+-
+-	if (fault_addr >= start && fault_addr < end)
+-		return end - fault_addr;
+-
+-	start = (unsigned long) from;
+-	end = start + size;
+-	if (fault_addr >= start && fault_addr < end)
+-		return end - fault_addr;
+-
+-	return size;
+-}
+-EXPORT_SYMBOL(copy_in_user_fixup);
+diff --git a/arch/sparc/mm/fault_64.c b/arch/sparc/mm/fault_64.c
+index dbabe5713a15..e15f33715103 100644
+--- a/arch/sparc/mm/fault_64.c
++++ b/arch/sparc/mm/fault_64.c
+@@ -479,14 +479,14 @@ good_area:
+ 	up_read(&mm->mmap_sem);
+ 
+ 	mm_rss = get_mm_rss(mm);
+-#if defined(CONFIG_HUGETLB_PAGE) || defined(CONFIG_TRANSPARENT_HUGEPAGE)
+-	mm_rss -= (mm->context.huge_pte_count * (HPAGE_SIZE / PAGE_SIZE));
++#if defined(CONFIG_TRANSPARENT_HUGEPAGE)
++	mm_rss -= (mm->context.thp_pte_count * (HPAGE_SIZE / PAGE_SIZE));
+ #endif
+ 	if (unlikely(mm_rss >
+ 		     mm->context.tsb_block[MM_TSB_BASE].tsb_rss_limit))
+ 		tsb_grow(mm, MM_TSB_BASE, mm_rss);
+ #if defined(CONFIG_HUGETLB_PAGE) || defined(CONFIG_TRANSPARENT_HUGEPAGE)
+-	mm_rss = mm->context.huge_pte_count;
++	mm_rss = mm->context.hugetlb_pte_count + mm->context.thp_pte_count;
+ 	if (unlikely(mm_rss >
+ 		     mm->context.tsb_block[MM_TSB_HUGE].tsb_rss_limit)) {
+ 		if (mm->context.tsb_block[MM_TSB_HUGE].tsb)
+diff --git a/arch/sparc/mm/hugetlbpage.c b/arch/sparc/mm/hugetlbpage.c
+index 364d093f46c6..da1142401bf4 100644
+--- a/arch/sparc/mm/hugetlbpage.c
++++ b/arch/sparc/mm/hugetlbpage.c
+@@ -180,7 +180,7 @@ void set_huge_pte_at(struct mm_struct *mm, unsigned long addr,
+ 	unsigned long nptes;
+ 
+ 	if (!pte_present(*ptep) && pte_present(entry))
+-		mm->context.huge_pte_count++;
++		mm->context.hugetlb_pte_count++;
+ 
+ 	addr &= HPAGE_MASK;
+ 
+@@ -212,7 +212,7 @@ pte_t huge_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
+ 
+ 	entry = *ptep;
+ 	if (pte_present(entry))
+-		mm->context.huge_pte_count--;
++		mm->context.hugetlb_pte_count--;
+ 
+ 	addr &= HPAGE_MASK;
+ 	nptes = 1 << HUGETLB_PAGE_ORDER;
+diff --git a/arch/sparc/mm/init_64.c b/arch/sparc/mm/init_64.c
+index 3c4b8975fa76..a5331c336b2a 100644
+--- a/arch/sparc/mm/init_64.c
++++ b/arch/sparc/mm/init_64.c
+@@ -346,7 +346,8 @@ void update_mmu_cache(struct vm_area_struct *vma, unsigned long address, pte_t *
+ 	spin_lock_irqsave(&mm->context.lock, flags);
+ 
+ #if defined(CONFIG_HUGETLB_PAGE) || defined(CONFIG_TRANSPARENT_HUGEPAGE)
+-	if (mm->context.huge_pte_count && is_hugetlb_pte(pte))
++	if ((mm->context.hugetlb_pte_count || mm->context.thp_pte_count) &&
++	    is_hugetlb_pte(pte))
+ 		__update_mmu_tsb_insert(mm, MM_TSB_HUGE, REAL_HPAGE_SHIFT,
+ 					address, pte_val(pte));
+ 	else
+diff --git a/arch/sparc/mm/tlb.c b/arch/sparc/mm/tlb.c
+index f81cd9736700..3659d37b4d81 100644
+--- a/arch/sparc/mm/tlb.c
++++ b/arch/sparc/mm/tlb.c
+@@ -175,9 +175,9 @@ void set_pmd_at(struct mm_struct *mm, unsigned long addr,
+ 
+ 	if ((pmd_val(pmd) ^ pmd_val(orig)) & _PAGE_PMD_HUGE) {
+ 		if (pmd_val(pmd) & _PAGE_PMD_HUGE)
+-			mm->context.huge_pte_count++;
++			mm->context.thp_pte_count++;
+ 		else
+-			mm->context.huge_pte_count--;
++			mm->context.thp_pte_count--;
+ 
+ 		/* Do not try to allocate the TSB hash table if we
+ 		 * don't have one already.  We have various locks held
+diff --git a/arch/sparc/mm/tsb.c b/arch/sparc/mm/tsb.c
+index a0604a493a36..9cdeca0fa955 100644
+--- a/arch/sparc/mm/tsb.c
++++ b/arch/sparc/mm/tsb.c
+@@ -27,6 +27,20 @@ static inline int tag_compare(unsigned long tag, unsigned long vaddr)
+ 	return (tag == (vaddr >> 22));
+ }
+ 
++static void flush_tsb_kernel_range_scan(unsigned long start, unsigned long end)
++{
++	unsigned long idx;
++
++	for (idx = 0; idx < KERNEL_TSB_NENTRIES; idx++) {
++		struct tsb *ent = &swapper_tsb[idx];
++		unsigned long match = idx << 13;
++
++		match |= (ent->tag << 22);
++		if (match >= start && match < end)
++			ent->tag = (1UL << TSB_TAG_INVALID_BIT);
++	}
++}
++
+ /* TSB flushes need only occur on the processor initiating the address
+  * space modification, not on each cpu the address space has run on.
+  * Only the TLB flush needs that treatment.
+@@ -36,6 +50,9 @@ void flush_tsb_kernel_range(unsigned long start, unsigned long end)
+ {
+ 	unsigned long v;
+ 
++	if ((end - start) >> PAGE_SHIFT >= 2 * KERNEL_TSB_NENTRIES)
++		return flush_tsb_kernel_range_scan(start, end);
++
+ 	for (v = start; v < end; v += PAGE_SIZE) {
+ 		unsigned long hash = tsb_hash(v, PAGE_SHIFT,
+ 					      KERNEL_TSB_NENTRIES);
+@@ -470,7 +487,7 @@ retry_tsb_alloc:
+ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
+ {
+ #if defined(CONFIG_HUGETLB_PAGE) || defined(CONFIG_TRANSPARENT_HUGEPAGE)
+-	unsigned long huge_pte_count;
++	unsigned long total_huge_pte_count;
+ #endif
+ 	unsigned int i;
+ 
+@@ -479,12 +496,14 @@ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
+ 	mm->context.sparc64_ctx_val = 0UL;
+ 
+ #if defined(CONFIG_HUGETLB_PAGE) || defined(CONFIG_TRANSPARENT_HUGEPAGE)
+-	/* We reset it to zero because the fork() page copying
++	/* We reset them to zero because the fork() page copying
+ 	 * will re-increment the counters as the parent PTEs are
+ 	 * copied into the child address space.
+ 	 */
+-	huge_pte_count = mm->context.huge_pte_count;
+-	mm->context.huge_pte_count = 0;
++	total_huge_pte_count = mm->context.hugetlb_pte_count +
++			 mm->context.thp_pte_count;
++	mm->context.hugetlb_pte_count = 0;
++	mm->context.thp_pte_count = 0;
+ #endif
+ 
+ 	/* copy_mm() copies over the parent's mm_struct before calling
+@@ -500,8 +519,8 @@ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
+ 	tsb_grow(mm, MM_TSB_BASE, get_mm_rss(mm));
+ 
+ #if defined(CONFIG_HUGETLB_PAGE) || defined(CONFIG_TRANSPARENT_HUGEPAGE)
+-	if (unlikely(huge_pte_count))
+-		tsb_grow(mm, MM_TSB_HUGE, huge_pte_count);
++	if (unlikely(total_huge_pte_count))
++		tsb_grow(mm, MM_TSB_HUGE, total_huge_pte_count);
+ #endif
+ 
+ 	if (unlikely(!mm->context.tsb_block[MM_TSB_BASE].tsb))
+diff --git a/arch/sparc/mm/ultra.S b/arch/sparc/mm/ultra.S
+index b4f4733abc6e..5d2fd6cd3189 100644
+--- a/arch/sparc/mm/ultra.S
++++ b/arch/sparc/mm/ultra.S
+@@ -30,7 +30,7 @@
+ 	.text
+ 	.align		32
+ 	.globl		__flush_tlb_mm
+-__flush_tlb_mm:		/* 18 insns */
++__flush_tlb_mm:		/* 19 insns */
+ 	/* %o0=(ctx & TAG_CONTEXT_BITS), %o1=SECONDARY_CONTEXT */
+ 	ldxa		[%o1] ASI_DMMU, %g2
+ 	cmp		%g2, %o0
+@@ -81,7 +81,7 @@ __flush_tlb_page:	/* 22 insns */
+ 
+ 	.align		32
+ 	.globl		__flush_tlb_pending
+-__flush_tlb_pending:	/* 26 insns */
++__flush_tlb_pending:	/* 27 insns */
+ 	/* %o0 = context, %o1 = nr, %o2 = vaddrs[] */
+ 	rdpr		%pstate, %g7
+ 	sllx		%o1, 3, %o1
+@@ -113,12 +113,14 @@ __flush_tlb_pending:	/* 26 insns */
+ 
+ 	.align		32
+ 	.globl		__flush_tlb_kernel_range
+-__flush_tlb_kernel_range:	/* 16 insns */
++__flush_tlb_kernel_range:	/* 31 insns */
+ 	/* %o0=start, %o1=end */
+ 	cmp		%o0, %o1
+ 	be,pn		%xcc, 2f
++	 sub		%o1, %o0, %o3
++	srlx		%o3, 18, %o4
++	brnz,pn		%o4, __spitfire_flush_tlb_kernel_range_slow
+ 	 sethi		%hi(PAGE_SIZE), %o4
+-	sub		%o1, %o0, %o3
+ 	sub		%o3, %o4, %o3
+ 	or		%o0, 0x20, %o0		! Nucleus
+ 1:	stxa		%g0, [%o0 + %o3] ASI_DMMU_DEMAP
+@@ -131,6 +133,41 @@ __flush_tlb_kernel_range:	/* 16 insns */
+ 	retl
+ 	 nop
+ 	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++
++__spitfire_flush_tlb_kernel_range_slow:
++	mov		63 * 8, %o4
++1:	ldxa		[%o4] ASI_ITLB_DATA_ACCESS, %o3
++	andcc		%o3, 0x40, %g0			/* _PAGE_L_4U */
++	bne,pn		%xcc, 2f
++	 mov		TLB_TAG_ACCESS, %o3
++	stxa		%g0, [%o3] ASI_IMMU
++	stxa		%g0, [%o4] ASI_ITLB_DATA_ACCESS
++	membar		#Sync
++2:	ldxa		[%o4] ASI_DTLB_DATA_ACCESS, %o3
++	andcc		%o3, 0x40, %g0
++	bne,pn		%xcc, 2f
++	 mov		TLB_TAG_ACCESS, %o3
++	stxa		%g0, [%o3] ASI_DMMU
++	stxa		%g0, [%o4] ASI_DTLB_DATA_ACCESS
++	membar		#Sync
++2:	sub		%o4, 8, %o4
++	brgez,pt	%o4, 1b
++	 nop
++	retl
++	 nop
+ 
+ __spitfire_flush_tlb_mm_slow:
+ 	rdpr		%pstate, %g1
+@@ -285,6 +322,40 @@ __cheetah_flush_tlb_pending:	/* 27 insns */
+ 	retl
+ 	 wrpr		%g7, 0x0, %pstate
+ 
++__cheetah_flush_tlb_kernel_range:	/* 31 insns */
++	/* %o0=start, %o1=end */
++	cmp		%o0, %o1
++	be,pn		%xcc, 2f
++	 sub		%o1, %o0, %o3
++	srlx		%o3, 18, %o4
++	brnz,pn		%o4, 3f
++	 sethi		%hi(PAGE_SIZE), %o4
++	sub		%o3, %o4, %o3
++	or		%o0, 0x20, %o0		! Nucleus
++1:	stxa		%g0, [%o0 + %o3] ASI_DMMU_DEMAP
++	stxa		%g0, [%o0 + %o3] ASI_IMMU_DEMAP
++	membar		#Sync
++	brnz,pt		%o3, 1b
++	 sub		%o3, %o4, %o3
++2:	sethi		%hi(KERNBASE), %o3
++	flush		%o3
++	retl
++	 nop
++3:	mov		0x80, %o4
++	stxa		%g0, [%o4] ASI_DMMU_DEMAP
++	membar		#Sync
++	stxa		%g0, [%o4] ASI_IMMU_DEMAP
++	membar		#Sync
++	retl
++	 nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++
+ #ifdef DCACHE_ALIASING_POSSIBLE
+ __cheetah_flush_dcache_page: /* 11 insns */
+ 	sethi		%hi(PAGE_OFFSET), %g1
+@@ -309,19 +380,28 @@ __hypervisor_tlb_tl0_error:
+ 	ret
+ 	 restore
+ 
+-__hypervisor_flush_tlb_mm: /* 10 insns */
++__hypervisor_flush_tlb_mm: /* 19 insns */
+ 	mov		%o0, %o2	/* ARG2: mmu context */
+ 	mov		0, %o0		/* ARG0: CPU lists unimplemented */
+ 	mov		0, %o1		/* ARG1: CPU lists unimplemented */
+ 	mov		HV_MMU_ALL, %o3	/* ARG3: flags */
+ 	mov		HV_FAST_MMU_DEMAP_CTX, %o5
+ 	ta		HV_FAST_TRAP
+-	brnz,pn		%o0, __hypervisor_tlb_tl0_error
++	brnz,pn		%o0, 1f
+ 	 mov		HV_FAST_MMU_DEMAP_CTX, %o1
+ 	retl
+ 	 nop
++1:	sethi		%hi(__hypervisor_tlb_tl0_error), %o5
++	jmpl		%o5 + %lo(__hypervisor_tlb_tl0_error), %g0
++	 nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
+ 
+-__hypervisor_flush_tlb_page: /* 11 insns */
++__hypervisor_flush_tlb_page: /* 22 insns */
+ 	/* %o0 = context, %o1 = vaddr */
+ 	mov		%o0, %g2
+ 	mov		%o1, %o0              /* ARG0: vaddr + IMMU-bit */
+@@ -330,12 +410,23 @@ __hypervisor_flush_tlb_page: /* 11 insns */
+ 	srlx		%o0, PAGE_SHIFT, %o0
+ 	sllx		%o0, PAGE_SHIFT, %o0
+ 	ta		HV_MMU_UNMAP_ADDR_TRAP
+-	brnz,pn		%o0, __hypervisor_tlb_tl0_error
++	brnz,pn		%o0, 1f
+ 	 mov		HV_MMU_UNMAP_ADDR_TRAP, %o1
+ 	retl
+ 	 nop
++1:	sethi		%hi(__hypervisor_tlb_tl0_error), %o2
++	jmpl		%o2 + %lo(__hypervisor_tlb_tl0_error), %g0
++	 nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
+ 
+-__hypervisor_flush_tlb_pending: /* 16 insns */
++__hypervisor_flush_tlb_pending: /* 27 insns */
+ 	/* %o0 = context, %o1 = nr, %o2 = vaddrs[] */
+ 	sllx		%o1, 3, %g1
+ 	mov		%o2, %g2
+@@ -347,31 +438,57 @@ __hypervisor_flush_tlb_pending: /* 16 insns */
+ 	srlx		%o0, PAGE_SHIFT, %o0
+ 	sllx		%o0, PAGE_SHIFT, %o0
+ 	ta		HV_MMU_UNMAP_ADDR_TRAP
+-	brnz,pn		%o0, __hypervisor_tlb_tl0_error
++	brnz,pn		%o0, 1f
+ 	 mov		HV_MMU_UNMAP_ADDR_TRAP, %o1
+ 	brnz,pt		%g1, 1b
+ 	 nop
+ 	retl
+ 	 nop
++1:	sethi		%hi(__hypervisor_tlb_tl0_error), %o2
++	jmpl		%o2 + %lo(__hypervisor_tlb_tl0_error), %g0
++	 nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
+ 
+-__hypervisor_flush_tlb_kernel_range: /* 16 insns */
++__hypervisor_flush_tlb_kernel_range: /* 31 insns */
+ 	/* %o0=start, %o1=end */
+ 	cmp		%o0, %o1
+ 	be,pn		%xcc, 2f
+-	 sethi		%hi(PAGE_SIZE), %g3
+-	mov		%o0, %g1
+-	sub		%o1, %g1, %g2
++	 sub		%o1, %o0, %g2
++	srlx		%g2, 18, %g3
++	brnz,pn		%g3, 4f
++	 mov		%o0, %g1
++	sethi		%hi(PAGE_SIZE), %g3
+ 	sub		%g2, %g3, %g2
+ 1:	add		%g1, %g2, %o0	/* ARG0: virtual address */
+ 	mov		0, %o1		/* ARG1: mmu context */
+ 	mov		HV_MMU_ALL, %o2	/* ARG2: flags */
+ 	ta		HV_MMU_UNMAP_ADDR_TRAP
+-	brnz,pn		%o0, __hypervisor_tlb_tl0_error
++	brnz,pn		%o0, 3f
+ 	 mov		HV_MMU_UNMAP_ADDR_TRAP, %o1
+ 	brnz,pt		%g2, 1b
+ 	 sub		%g2, %g3, %g2
+ 2:	retl
+ 	 nop
++3:	sethi		%hi(__hypervisor_tlb_tl0_error), %o2
++	jmpl		%o2 + %lo(__hypervisor_tlb_tl0_error), %g0
++	 nop
++4:	mov		0, %o0		/* ARG0: CPU lists unimplemented */
++	mov		0, %o1		/* ARG1: CPU lists unimplemented */
++	mov		0, %o2		/* ARG2: mmu context == nucleus */
++	mov		HV_MMU_ALL, %o3	/* ARG3: flags */
++	mov		HV_FAST_MMU_DEMAP_CTX, %o5
++	ta		HV_FAST_TRAP
++	brnz,pn		%o0, 3b
++	 mov		HV_FAST_MMU_DEMAP_CTX, %o1
++	retl
++	 nop
+ 
+ #ifdef DCACHE_ALIASING_POSSIBLE
+ 	/* XXX Niagara and friends have an 8K cache, so no aliasing is
+@@ -394,43 +511,6 @@ tlb_patch_one:
+ 	retl
+ 	 nop
+ 
+-	.globl		cheetah_patch_cachetlbops
+-cheetah_patch_cachetlbops:
+-	save		%sp, -128, %sp
+-
+-	sethi		%hi(__flush_tlb_mm), %o0
+-	or		%o0, %lo(__flush_tlb_mm), %o0
+-	sethi		%hi(__cheetah_flush_tlb_mm), %o1
+-	or		%o1, %lo(__cheetah_flush_tlb_mm), %o1
+-	call		tlb_patch_one
+-	 mov		19, %o2
+-
+-	sethi		%hi(__flush_tlb_page), %o0
+-	or		%o0, %lo(__flush_tlb_page), %o0
+-	sethi		%hi(__cheetah_flush_tlb_page), %o1
+-	or		%o1, %lo(__cheetah_flush_tlb_page), %o1
+-	call		tlb_patch_one
+-	 mov		22, %o2
+-
+-	sethi		%hi(__flush_tlb_pending), %o0
+-	or		%o0, %lo(__flush_tlb_pending), %o0
+-	sethi		%hi(__cheetah_flush_tlb_pending), %o1
+-	or		%o1, %lo(__cheetah_flush_tlb_pending), %o1
+-	call		tlb_patch_one
+-	 mov		27, %o2
+-
+-#ifdef DCACHE_ALIASING_POSSIBLE
+-	sethi		%hi(__flush_dcache_page), %o0
+-	or		%o0, %lo(__flush_dcache_page), %o0
+-	sethi		%hi(__cheetah_flush_dcache_page), %o1
+-	or		%o1, %lo(__cheetah_flush_dcache_page), %o1
+-	call		tlb_patch_one
+-	 mov		11, %o2
+-#endif /* DCACHE_ALIASING_POSSIBLE */
+-
+-	ret
+-	 restore
+-
+ #ifdef CONFIG_SMP
+ 	/* These are all called by the slaves of a cross call, at
+ 	 * trap level 1, with interrupts fully disabled.
+@@ -447,7 +527,7 @@ cheetah_patch_cachetlbops:
+ 	 */
+ 	.align		32
+ 	.globl		xcall_flush_tlb_mm
+-xcall_flush_tlb_mm:	/* 21 insns */
++xcall_flush_tlb_mm:	/* 24 insns */
+ 	mov		PRIMARY_CONTEXT, %g2
+ 	ldxa		[%g2] ASI_DMMU, %g3
+ 	srlx		%g3, CTX_PGSZ1_NUC_SHIFT, %g4
+@@ -469,9 +549,12 @@ xcall_flush_tlb_mm:	/* 21 insns */
+ 	nop
+ 	nop
+ 	nop
++	nop
++	nop
++	nop
+ 
+ 	.globl		xcall_flush_tlb_page
+-xcall_flush_tlb_page:	/* 17 insns */
++xcall_flush_tlb_page:	/* 20 insns */
+ 	/* %g5=context, %g1=vaddr */
+ 	mov		PRIMARY_CONTEXT, %g4
+ 	ldxa		[%g4] ASI_DMMU, %g2
+@@ -490,15 +573,20 @@ xcall_flush_tlb_page:	/* 17 insns */
+ 	retry
+ 	nop
+ 	nop
++	nop
++	nop
++	nop
+ 
+ 	.globl		xcall_flush_tlb_kernel_range
+-xcall_flush_tlb_kernel_range:	/* 25 insns */
++xcall_flush_tlb_kernel_range:	/* 44 insns */
+ 	sethi		%hi(PAGE_SIZE - 1), %g2
+ 	or		%g2, %lo(PAGE_SIZE - 1), %g2
+ 	andn		%g1, %g2, %g1
+ 	andn		%g7, %g2, %g7
+ 	sub		%g7, %g1, %g3
+-	add		%g2, 1, %g2
++	srlx		%g3, 18, %g2
++	brnz,pn		%g2, 2f
++	 add		%g2, 1, %g2
+ 	sub		%g3, %g2, %g3
+ 	or		%g1, 0x20, %g1		! Nucleus
+ 1:	stxa		%g0, [%g1 + %g3] ASI_DMMU_DEMAP
+@@ -507,8 +595,25 @@ xcall_flush_tlb_kernel_range:	/* 25 insns */
+ 	brnz,pt		%g3, 1b
+ 	 sub		%g3, %g2, %g3
+ 	retry
+-	nop
+-	nop
++2:	mov		63 * 8, %g1
++1:	ldxa		[%g1] ASI_ITLB_DATA_ACCESS, %g2
++	andcc		%g2, 0x40, %g0			/* _PAGE_L_4U */
++	bne,pn		%xcc, 2f
++	 mov		TLB_TAG_ACCESS, %g2
++	stxa		%g0, [%g2] ASI_IMMU
++	stxa		%g0, [%g1] ASI_ITLB_DATA_ACCESS
++	membar		#Sync
++2:	ldxa		[%g1] ASI_DTLB_DATA_ACCESS, %g2
++	andcc		%g2, 0x40, %g0
++	bne,pn		%xcc, 2f
++	 mov		TLB_TAG_ACCESS, %g2
++	stxa		%g0, [%g2] ASI_DMMU
++	stxa		%g0, [%g1] ASI_DTLB_DATA_ACCESS
++	membar		#Sync
++2:	sub		%g1, 8, %g1
++	brgez,pt	%g1, 1b
++	 nop
++	retry
+ 	nop
+ 	nop
+ 	nop
+@@ -637,6 +742,52 @@ xcall_fetch_glob_pmu_n4:
+ 
+ 	retry
+ 
++__cheetah_xcall_flush_tlb_kernel_range:	/* 44 insns */
++	sethi		%hi(PAGE_SIZE - 1), %g2
++	or		%g2, %lo(PAGE_SIZE - 1), %g2
++	andn		%g1, %g2, %g1
++	andn		%g7, %g2, %g7
++	sub		%g7, %g1, %g3
++	srlx		%g3, 18, %g2
++	brnz,pn		%g2, 2f
++	 add		%g2, 1, %g2
++	sub		%g3, %g2, %g3
++	or		%g1, 0x20, %g1		! Nucleus
++1:	stxa		%g0, [%g1 + %g3] ASI_DMMU_DEMAP
++	stxa		%g0, [%g1 + %g3] ASI_IMMU_DEMAP
++	membar		#Sync
++	brnz,pt		%g3, 1b
++	 sub		%g3, %g2, %g3
++	retry
++2:	mov		0x80, %g2
++	stxa		%g0, [%g2] ASI_DMMU_DEMAP
++	membar		#Sync
++	stxa		%g0, [%g2] ASI_IMMU_DEMAP
++	membar		#Sync
++	retry
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++	nop
++
+ #ifdef DCACHE_ALIASING_POSSIBLE
+ 	.align		32
+ 	.globl		xcall_flush_dcache_page_cheetah
+@@ -700,7 +851,7 @@ __hypervisor_tlb_xcall_error:
+ 	ba,a,pt	%xcc, rtrap
+ 
+ 	.globl		__hypervisor_xcall_flush_tlb_mm
+-__hypervisor_xcall_flush_tlb_mm: /* 21 insns */
++__hypervisor_xcall_flush_tlb_mm: /* 24 insns */
+ 	/* %g5=ctx, g1,g2,g3,g4,g7=scratch, %g6=unusable */
+ 	mov		%o0, %g2
+ 	mov		%o1, %g3
+@@ -714,7 +865,7 @@ __hypervisor_xcall_flush_tlb_mm: /* 21 insns */
+ 	mov		HV_FAST_MMU_DEMAP_CTX, %o5
+ 	ta		HV_FAST_TRAP
+ 	mov		HV_FAST_MMU_DEMAP_CTX, %g6
+-	brnz,pn		%o0, __hypervisor_tlb_xcall_error
++	brnz,pn		%o0, 1f
+ 	 mov		%o0, %g5
+ 	mov		%g2, %o0
+ 	mov		%g3, %o1
+@@ -723,9 +874,12 @@ __hypervisor_xcall_flush_tlb_mm: /* 21 insns */
+ 	mov		%g7, %o5
+ 	membar		#Sync
+ 	retry
++1:	sethi		%hi(__hypervisor_tlb_xcall_error), %g4
++	jmpl		%g4 + %lo(__hypervisor_tlb_xcall_error), %g0
++	 nop
+ 
+ 	.globl		__hypervisor_xcall_flush_tlb_page
+-__hypervisor_xcall_flush_tlb_page: /* 17 insns */
++__hypervisor_xcall_flush_tlb_page: /* 20 insns */
+ 	/* %g5=ctx, %g1=vaddr */
+ 	mov		%o0, %g2
+ 	mov		%o1, %g3
+@@ -737,42 +891,64 @@ __hypervisor_xcall_flush_tlb_page: /* 17 insns */
+ 	sllx		%o0, PAGE_SHIFT, %o0
+ 	ta		HV_MMU_UNMAP_ADDR_TRAP
+ 	mov		HV_MMU_UNMAP_ADDR_TRAP, %g6
+-	brnz,a,pn	%o0, __hypervisor_tlb_xcall_error
++	brnz,a,pn	%o0, 1f
+ 	 mov		%o0, %g5
+ 	mov		%g2, %o0
+ 	mov		%g3, %o1
+ 	mov		%g4, %o2
+ 	membar		#Sync
+ 	retry
++1:	sethi		%hi(__hypervisor_tlb_xcall_error), %g4
++	jmpl		%g4 + %lo(__hypervisor_tlb_xcall_error), %g0
++	 nop
+ 
+ 	.globl		__hypervisor_xcall_flush_tlb_kernel_range
+-__hypervisor_xcall_flush_tlb_kernel_range: /* 25 insns */
++__hypervisor_xcall_flush_tlb_kernel_range: /* 44 insns */
+ 	/* %g1=start, %g7=end, g2,g3,g4,g5,g6=scratch */
+ 	sethi		%hi(PAGE_SIZE - 1), %g2
+ 	or		%g2, %lo(PAGE_SIZE - 1), %g2
+ 	andn		%g1, %g2, %g1
+ 	andn		%g7, %g2, %g7
+ 	sub		%g7, %g1, %g3
++	srlx		%g3, 18, %g7
+ 	add		%g2, 1, %g2
+ 	sub		%g3, %g2, %g3
+ 	mov		%o0, %g2
+ 	mov		%o1, %g4
+-	mov		%o2, %g7
++	brnz,pn		%g7, 2f
++	 mov		%o2, %g7
+ 1:	add		%g1, %g3, %o0	/* ARG0: virtual address */
+ 	mov		0, %o1		/* ARG1: mmu context */
+ 	mov		HV_MMU_ALL, %o2	/* ARG2: flags */
+ 	ta		HV_MMU_UNMAP_ADDR_TRAP
+ 	mov		HV_MMU_UNMAP_ADDR_TRAP, %g6
+-	brnz,pn		%o0, __hypervisor_tlb_xcall_error
++	brnz,pn		%o0, 1f
+ 	 mov		%o0, %g5
+ 	sethi		%hi(PAGE_SIZE), %o2
+ 	brnz,pt		%g3, 1b
+ 	 sub		%g3, %o2, %g3
+-	mov		%g2, %o0
++5:	mov		%g2, %o0
+ 	mov		%g4, %o1
+ 	mov		%g7, %o2
+ 	membar		#Sync
+ 	retry
++1:	sethi		%hi(__hypervisor_tlb_xcall_error), %g4
++	jmpl		%g4 + %lo(__hypervisor_tlb_xcall_error), %g0
++	 nop
++2:	mov		%o3, %g1
++	mov		%o5, %g3
++	mov		0, %o0		/* ARG0: CPU lists unimplemented */
++	mov		0, %o1		/* ARG1: CPU lists unimplemented */
++	mov		0, %o2		/* ARG2: mmu context == nucleus */
++	mov		HV_MMU_ALL, %o3	/* ARG3: flags */
++	mov		HV_FAST_MMU_DEMAP_CTX, %o5
++	ta		HV_FAST_TRAP
++	mov		%g1, %o3
++	brz,pt		%o0, 5b
++	 mov		%g3, %o5
++	mov		HV_FAST_MMU_DEMAP_CTX, %g6
++	ba,pt		%xcc, 1b
++	 clr		%g5
+ 
+ 	/* These just get rescheduled to PIL vectors. */
+ 	.globl		xcall_call_function
+@@ -809,6 +985,58 @@ xcall_kgdb_capture:
+ 
+ #endif /* CONFIG_SMP */
+ 
++	.globl		cheetah_patch_cachetlbops
++cheetah_patch_cachetlbops:
++	save		%sp, -128, %sp
++
++	sethi		%hi(__flush_tlb_mm), %o0
++	or		%o0, %lo(__flush_tlb_mm), %o0
++	sethi		%hi(__cheetah_flush_tlb_mm), %o1
++	or		%o1, %lo(__cheetah_flush_tlb_mm), %o1
++	call		tlb_patch_one
++	 mov		19, %o2
++
++	sethi		%hi(__flush_tlb_page), %o0
++	or		%o0, %lo(__flush_tlb_page), %o0
++	sethi		%hi(__cheetah_flush_tlb_page), %o1
++	or		%o1, %lo(__cheetah_flush_tlb_page), %o1
++	call		tlb_patch_one
++	 mov		22, %o2
++
++	sethi		%hi(__flush_tlb_pending), %o0
++	or		%o0, %lo(__flush_tlb_pending), %o0
++	sethi		%hi(__cheetah_flush_tlb_pending), %o1
++	or		%o1, %lo(__cheetah_flush_tlb_pending), %o1
++	call		tlb_patch_one
++	 mov		27, %o2
++
++	sethi		%hi(__flush_tlb_kernel_range), %o0
++	or		%o0, %lo(__flush_tlb_kernel_range), %o0
++	sethi		%hi(__cheetah_flush_tlb_kernel_range), %o1
++	or		%o1, %lo(__cheetah_flush_tlb_kernel_range), %o1
++	call		tlb_patch_one
++	 mov		31, %o2
++
++#ifdef DCACHE_ALIASING_POSSIBLE
++	sethi		%hi(__flush_dcache_page), %o0
++	or		%o0, %lo(__flush_dcache_page), %o0
++	sethi		%hi(__cheetah_flush_dcache_page), %o1
++	or		%o1, %lo(__cheetah_flush_dcache_page), %o1
++	call		tlb_patch_one
++	 mov		11, %o2
++#endif /* DCACHE_ALIASING_POSSIBLE */
++
++#ifdef CONFIG_SMP
++	sethi		%hi(xcall_flush_tlb_kernel_range), %o0
++	or		%o0, %lo(xcall_flush_tlb_kernel_range), %o0
++	sethi		%hi(__cheetah_xcall_flush_tlb_kernel_range), %o1
++	or		%o1, %lo(__cheetah_xcall_flush_tlb_kernel_range), %o1
++	call		tlb_patch_one
++	 mov		44, %o2
++#endif /* CONFIG_SMP */
++
++	ret
++	 restore
+ 
+ 	.globl		hypervisor_patch_cachetlbops
+ hypervisor_patch_cachetlbops:
+@@ -819,28 +1047,28 @@ hypervisor_patch_cachetlbops:
+ 	sethi		%hi(__hypervisor_flush_tlb_mm), %o1
+ 	or		%o1, %lo(__hypervisor_flush_tlb_mm), %o1
+ 	call		tlb_patch_one
+-	 mov		10, %o2
++	 mov		19, %o2
+ 
+ 	sethi		%hi(__flush_tlb_page), %o0
+ 	or		%o0, %lo(__flush_tlb_page), %o0
+ 	sethi		%hi(__hypervisor_flush_tlb_page), %o1
+ 	or		%o1, %lo(__hypervisor_flush_tlb_page), %o1
+ 	call		tlb_patch_one
+-	 mov		11, %o2
++	 mov		22, %o2
+ 
+ 	sethi		%hi(__flush_tlb_pending), %o0
+ 	or		%o0, %lo(__flush_tlb_pending), %o0
+ 	sethi		%hi(__hypervisor_flush_tlb_pending), %o1
+ 	or		%o1, %lo(__hypervisor_flush_tlb_pending), %o1
+ 	call		tlb_patch_one
+-	 mov		16, %o2
++	 mov		27, %o2
+ 
+ 	sethi		%hi(__flush_tlb_kernel_range), %o0
+ 	or		%o0, %lo(__flush_tlb_kernel_range), %o0
+ 	sethi		%hi(__hypervisor_flush_tlb_kernel_range), %o1
+ 	or		%o1, %lo(__hypervisor_flush_tlb_kernel_range), %o1
+ 	call		tlb_patch_one
+-	 mov		16, %o2
++	 mov		31, %o2
+ 
+ #ifdef DCACHE_ALIASING_POSSIBLE
+ 	sethi		%hi(__flush_dcache_page), %o0
+@@ -857,21 +1085,21 @@ hypervisor_patch_cachetlbops:
+ 	sethi		%hi(__hypervisor_xcall_flush_tlb_mm), %o1
+ 	or		%o1, %lo(__hypervisor_xcall_flush_tlb_mm), %o1
+ 	call		tlb_patch_one
+-	 mov		21, %o2
++	 mov		24, %o2
+ 
+ 	sethi		%hi(xcall_flush_tlb_page), %o0
+ 	or		%o0, %lo(xcall_flush_tlb_page), %o0
+ 	sethi		%hi(__hypervisor_xcall_flush_tlb_page), %o1
+ 	or		%o1, %lo(__hypervisor_xcall_flush_tlb_page), %o1
+ 	call		tlb_patch_one
+-	 mov		17, %o2
++	 mov		20, %o2
+ 
+ 	sethi		%hi(xcall_flush_tlb_kernel_range), %o0
+ 	or		%o0, %lo(xcall_flush_tlb_kernel_range), %o0
+ 	sethi		%hi(__hypervisor_xcall_flush_tlb_kernel_range), %o1
+ 	or		%o1, %lo(__hypervisor_xcall_flush_tlb_kernel_range), %o1
+ 	call		tlb_patch_one
+-	 mov		25, %o2
++	 mov		44, %o2
+ #endif /* CONFIG_SMP */
+ 
+ 	ret
+diff --git a/drivers/net/ethernet/broadcom/bgmac.c b/drivers/net/ethernet/broadcom/bgmac.c
+index c32f5d32f811..b56c9c581359 100644
+--- a/drivers/net/ethernet/broadcom/bgmac.c
++++ b/drivers/net/ethernet/broadcom/bgmac.c
+@@ -314,6 +314,10 @@ static void bgmac_dma_rx_enable(struct bgmac *bgmac,
+ 	u32 ctl;
+ 
+ 	ctl = bgmac_read(bgmac, ring->mmio_base + BGMAC_DMA_RX_CTL);
++
++	/* preserve ONLY bits 16-17 from current hardware value */
++	ctl &= BGMAC_DMA_RX_ADDREXT_MASK;
++
+ 	if (bgmac->core->id.rev >= 4) {
+ 		ctl &= ~BGMAC_DMA_RX_BL_MASK;
+ 		ctl |= BGMAC_DMA_RX_BL_128 << BGMAC_DMA_RX_BL_SHIFT;
+@@ -324,7 +328,6 @@ static void bgmac_dma_rx_enable(struct bgmac *bgmac,
+ 		ctl &= ~BGMAC_DMA_RX_PT_MASK;
+ 		ctl |= BGMAC_DMA_RX_PT_1 << BGMAC_DMA_RX_PT_SHIFT;
+ 	}
+-	ctl &= BGMAC_DMA_RX_ADDREXT_MASK;
+ 	ctl |= BGMAC_DMA_RX_ENABLE;
+ 	ctl |= BGMAC_DMA_RX_PARITY_DISABLE;
+ 	ctl |= BGMAC_DMA_RX_OVERFLOW_CONT;
+diff --git a/drivers/tty/serial/sunhv.c b/drivers/tty/serial/sunhv.c
+index ca0d3802f2af..4e603d060e80 100644
+--- a/drivers/tty/serial/sunhv.c
++++ b/drivers/tty/serial/sunhv.c
+@@ -490,12 +490,6 @@ static void sunhv_console_write_bychar(struct console *con, const char *s, unsig
+ 		locked = spin_trylock_irqsave(&port->lock, flags);
+ 	else
+ 		spin_lock_irqsave(&port->lock, flags);
+-	if (port->sysrq) {
+-		locked = 0;
+-	} else if (oops_in_progress) {
+-		locked = spin_trylock(&port->lock);
+-	} else
+-		spin_lock(&port->lock);
+ 
+ 	for (i = 0; i < n; i++) {
+ 		if (*s == '\n')
+diff --git a/drivers/tty/tty_ldisc.c b/drivers/tty/tty_ldisc.c
+index 629e3c865072..9bee25cfa0be 100644
+--- a/drivers/tty/tty_ldisc.c
++++ b/drivers/tty/tty_ldisc.c
+@@ -417,6 +417,10 @@ EXPORT_SYMBOL_GPL(tty_ldisc_flush);
+  *	they are not on hot paths so a little discipline won't do
+  *	any harm.
+  *
++ *	The line discipline-related tty_struct fields are reset to
++ *	prevent the ldisc driver from re-using stale information for
++ *	the new ldisc instance.
++ *
+  *	Locking: takes termios_rwsem
+  */
+ 
+@@ -425,6 +429,9 @@ static void tty_set_termios_ldisc(struct tty_struct *tty, int num)
+ 	down_write(&tty->termios_rwsem);
+ 	tty->termios.c_line = num;
+ 	up_write(&tty->termios_rwsem);
++
++	tty->disc_data = NULL;
++	tty->receive_room = 0;
+ }
+ 
+ /**
+diff --git a/include/linux/filter.h b/include/linux/filter.h
+index 5110d4211866..ccb98b459c59 100644
+--- a/include/linux/filter.h
++++ b/include/linux/filter.h
+@@ -421,7 +421,11 @@ static inline void bpf_prog_unlock_ro(struct bpf_prog *fp)
+ }
+ #endif /* CONFIG_DEBUG_SET_MODULE_RONX */
+ 
+-int sk_filter(struct sock *sk, struct sk_buff *skb);
++int sk_filter_trim_cap(struct sock *sk, struct sk_buff *skb, unsigned int cap);
++static inline int sk_filter(struct sock *sk, struct sk_buff *skb)
++{
++	return sk_filter_trim_cap(sk, skb, 1);
++}
+ 
+ int bpf_prog_select_runtime(struct bpf_prog *fp);
+ void bpf_prog_free(struct bpf_prog *fp);
+diff --git a/include/net/ip6_tunnel.h b/include/net/ip6_tunnel.h
+index ff788b665277..9c2c044153f6 100644
+--- a/include/net/ip6_tunnel.h
++++ b/include/net/ip6_tunnel.h
+@@ -86,6 +86,7 @@ static inline void ip6tunnel_xmit(struct sock *sk, struct sk_buff *skb,
+ 	struct net_device_stats *stats = &dev->stats;
+ 	int pkt_len, err;
+ 
++	memset(skb->cb, 0, sizeof(struct inet6_skb_parm));
+ 	pkt_len = skb->len - skb_inner_network_offset(skb);
+ 	err = ip6_local_out(dev_net(skb_dst(skb)->dev), sk, skb);
+ 
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 9c3ab544d3a8..e9d7a8ef9a6d 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -1156,6 +1156,7 @@ static inline void tcp_prequeue_init(struct tcp_sock *tp)
+ }
+ 
+ bool tcp_prequeue(struct sock *sk, struct sk_buff *skb);
++int tcp_filter(struct sock *sk, struct sk_buff *skb);
+ 
+ #undef STATE_TRACE
+ 
+diff --git a/net/core/dev.c b/net/core/dev.c
+index b3fa4b86ab4c..9ca749c81b6c 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -2462,7 +2462,7 @@ int skb_checksum_help(struct sk_buff *skb)
+ 			goto out;
+ 	}
+ 
+-	*(__sum16 *)(skb->data + offset) = csum_fold(csum);
++	*(__sum16 *)(skb->data + offset) = csum_fold(csum) ?: CSUM_MANGLED_0;
+ out_set_summed:
+ 	skb->ip_summed = CHECKSUM_NONE;
+ out:
+diff --git a/net/core/filter.c b/net/core/filter.c
+index 75e9b2b2336d..e94355452166 100644
+--- a/net/core/filter.c
++++ b/net/core/filter.c
+@@ -52,9 +52,10 @@
+ #include <net/dst.h>
+ 
+ /**
+- *	sk_filter - run a packet through a socket filter
++ *	sk_filter_trim_cap - run a packet through a socket filter
+  *	@sk: sock associated with &sk_buff
+  *	@skb: buffer to filter
++ *	@cap: limit on how short the eBPF program may trim the packet
+  *
+  * Run the eBPF program and then cut skb->data to correct size returned by
+  * the program. If pkt_len is 0 we toss packet. If skb->len is smaller
+@@ -63,7 +64,7 @@
+  * be accepted or -EPERM if the packet should be tossed.
+  *
+  */
+-int sk_filter(struct sock *sk, struct sk_buff *skb)
++int sk_filter_trim_cap(struct sock *sk, struct sk_buff *skb, unsigned int cap)
+ {
+ 	int err;
+ 	struct sk_filter *filter;
+@@ -84,14 +85,13 @@ int sk_filter(struct sock *sk, struct sk_buff *skb)
+ 	filter = rcu_dereference(sk->sk_filter);
+ 	if (filter) {
+ 		unsigned int pkt_len = bpf_prog_run_save_cb(filter->prog, skb);
+-
+-		err = pkt_len ? pskb_trim(skb, pkt_len) : -EPERM;
++		err = pkt_len ? pskb_trim(skb, max(cap, pkt_len)) : -EPERM;
+ 	}
+ 	rcu_read_unlock();
+ 
+ 	return err;
+ }
+-EXPORT_SYMBOL(sk_filter);
++EXPORT_SYMBOL(sk_filter_trim_cap);
+ 
+ static u64 __skb_get_pay_offset(u64 ctx, u64 a, u64 x, u64 r4, u64 r5)
+ {
+diff --git a/net/core/flow_dissector.c b/net/core/flow_dissector.c
+index 4ab6ead3d8ee..9aba9e93c0a2 100644
+--- a/net/core/flow_dissector.c
++++ b/net/core/flow_dissector.c
+@@ -131,7 +131,7 @@ bool __skb_flow_dissect(const struct sk_buff *skb,
+ 	struct flow_dissector_key_tags *key_tags;
+ 	struct flow_dissector_key_keyid *key_keyid;
+ 	u8 ip_proto = 0;
+-	bool ret = false;
++	bool ret;
+ 
+ 	if (!data) {
+ 		data = skb->data;
+@@ -492,12 +492,17 @@ ip_proto_again:
+ out_good:
+ 	ret = true;
+ 
+-out_bad:
++	key_control->thoff = (u16)nhoff;
++out:
+ 	key_basic->n_proto = proto;
+ 	key_basic->ip_proto = ip_proto;
+-	key_control->thoff = (u16)nhoff;
+ 
+ 	return ret;
++
++out_bad:
++	ret = false;
++	key_control->thoff = min_t(u16, nhoff, skb ? skb->len : hlen);
++	goto out;
+ }
+ EXPORT_SYMBOL(__skb_flow_dissect);
+ 
+diff --git a/net/core/sock.c b/net/core/sock.c
+index 0d91f7dca751..88f017854509 100644
+--- a/net/core/sock.c
++++ b/net/core/sock.c
+@@ -1562,6 +1562,7 @@ struct sock *sk_clone_lock(const struct sock *sk, const gfp_t priority)
+ 		}
+ 
+ 		newsk->sk_err	   = 0;
++		newsk->sk_err_soft = 0;
+ 		newsk->sk_priority = 0;
+ 		newsk->sk_incoming_cpu = raw_smp_processor_id();
+ 		atomic64_set(&newsk->sk_cookie, 0);
+diff --git a/net/dccp/ipv4.c b/net/dccp/ipv4.c
+index 8be8f27bfacc..861e1fa25d5e 100644
+--- a/net/dccp/ipv4.c
++++ b/net/dccp/ipv4.c
+@@ -235,7 +235,7 @@ static void dccp_v4_err(struct sk_buff *skb, u32 info)
+ {
+ 	const struct iphdr *iph = (struct iphdr *)skb->data;
+ 	const u8 offset = iph->ihl << 2;
+-	const struct dccp_hdr *dh = (struct dccp_hdr *)(skb->data + offset);
++	const struct dccp_hdr *dh;
+ 	struct dccp_sock *dp;
+ 	struct inet_sock *inet;
+ 	const int type = icmp_hdr(skb)->type;
+@@ -245,11 +245,13 @@ static void dccp_v4_err(struct sk_buff *skb, u32 info)
+ 	int err;
+ 	struct net *net = dev_net(skb->dev);
+ 
+-	if (skb->len < offset + sizeof(*dh) ||
+-	    skb->len < offset + __dccp_basic_hdr_len(dh)) {
+-		ICMP_INC_STATS_BH(net, ICMP_MIB_INERRORS);
+-		return;
+-	}
++	/* Only need dccph_dport & dccph_sport which are the first
++	 * 4 bytes in dccp header.
++	 * Our caller (icmp_socket_deliver()) already pulled 8 bytes for us.
++	 */
++	BUILD_BUG_ON(offsetofend(struct dccp_hdr, dccph_sport) > 8);
++	BUILD_BUG_ON(offsetofend(struct dccp_hdr, dccph_dport) > 8);
++	dh = (struct dccp_hdr *)(skb->data + offset);
+ 
+ 	sk = __inet_lookup_established(net, &dccp_hashinfo,
+ 				       iph->daddr, dh->dccph_dport,
+diff --git a/net/dccp/ipv6.c b/net/dccp/ipv6.c
+index b8608b71a66d..27c4e81efa24 100644
+--- a/net/dccp/ipv6.c
++++ b/net/dccp/ipv6.c
+@@ -70,7 +70,7 @@ static void dccp_v6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
+ 			u8 type, u8 code, int offset, __be32 info)
+ {
+ 	const struct ipv6hdr *hdr = (const struct ipv6hdr *)skb->data;
+-	const struct dccp_hdr *dh = (struct dccp_hdr *)(skb->data + offset);
++	const struct dccp_hdr *dh;
+ 	struct dccp_sock *dp;
+ 	struct ipv6_pinfo *np;
+ 	struct sock *sk;
+@@ -78,12 +78,13 @@ static void dccp_v6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
+ 	__u64 seq;
+ 	struct net *net = dev_net(skb->dev);
+ 
+-	if (skb->len < offset + sizeof(*dh) ||
+-	    skb->len < offset + __dccp_basic_hdr_len(dh)) {
+-		ICMP6_INC_STATS_BH(net, __in6_dev_get(skb->dev),
+-				   ICMP6_MIB_INERRORS);
+-		return;
+-	}
++	/* Only need dccph_dport & dccph_sport which are the first
++	 * 4 bytes in dccp header.
++	 * Our caller (icmpv6_notify()) already pulled 8 bytes for us.
++	 */
++	BUILD_BUG_ON(offsetofend(struct dccp_hdr, dccph_sport) > 8);
++	BUILD_BUG_ON(offsetofend(struct dccp_hdr, dccph_dport) > 8);
++	dh = (struct dccp_hdr *)(skb->data + offset);
+ 
+ 	sk = __inet6_lookup_established(net, &dccp_hashinfo,
+ 					&hdr->daddr, dh->dccph_dport,
+@@ -947,6 +948,7 @@ static const struct inet_connection_sock_af_ops dccp_ipv6_mapped = {
+ 	.getsockopt	   = ipv6_getsockopt,
+ 	.addr2sockaddr	   = inet6_csk_addr2sockaddr,
+ 	.sockaddr_len	   = sizeof(struct sockaddr_in6),
++	.bind_conflict	   = inet6_csk_bind_conflict,
+ #ifdef CONFIG_COMPAT
+ 	.compat_setsockopt = compat_ipv6_setsockopt,
+ 	.compat_getsockopt = compat_ipv6_getsockopt,
+diff --git a/net/dccp/proto.c b/net/dccp/proto.c
+index 41e65804ddf5..9fe25bf63296 100644
+--- a/net/dccp/proto.c
++++ b/net/dccp/proto.c
+@@ -1009,6 +1009,10 @@ void dccp_close(struct sock *sk, long timeout)
+ 		__kfree_skb(skb);
+ 	}
+ 
++	/* If socket has been already reset kill it. */
++	if (sk->sk_state == DCCP_CLOSED)
++		goto adjudge_to_death;
++
+ 	if (data_was_unread) {
+ 		/* Unread data was tossed, send an appropriate Reset Code */
+ 		DCCP_WARN("ABORT with %u bytes unread\n", data_was_unread);
+diff --git a/net/ipv4/fib_trie.c b/net/ipv4/fib_trie.c
+index e5a3ff210fec..7c52afb98c42 100644
+--- a/net/ipv4/fib_trie.c
++++ b/net/ipv4/fib_trie.c
+@@ -2456,22 +2456,19 @@ static struct key_vector *fib_route_get_idx(struct fib_route_iter *iter,
+ 	struct key_vector *l, **tp = &iter->tnode;
+ 	t_key key;
+ 
+-	/* use cache location of next-to-find key */
++	/* use cached location of previously found key */
+ 	if (iter->pos > 0 && pos >= iter->pos) {
+-		pos -= iter->pos;
+ 		key = iter->key;
+ 	} else {
+-		iter->pos = 0;
++		iter->pos = 1;
+ 		key = 0;
+ 	}
+ 
+-	while ((l = leaf_walk_rcu(tp, key)) != NULL) {
++	pos -= iter->pos;
++
++	while ((l = leaf_walk_rcu(tp, key)) && (pos-- > 0)) {
+ 		key = l->key + 1;
+ 		iter->pos++;
+-
+-		if (--pos <= 0)
+-			break;
+-
+ 		l = NULL;
+ 
+ 		/* handle unlikely case of a key wrap */
+@@ -2480,7 +2477,7 @@ static struct key_vector *fib_route_get_idx(struct fib_route_iter *iter,
+ 	}
+ 
+ 	if (l)
+-		iter->key = key;	/* remember it */
++		iter->key = l->key;	/* remember it */
+ 	else
+ 		iter->pos = 0;		/* forget it */
+ 
+@@ -2508,7 +2505,7 @@ static void *fib_route_seq_start(struct seq_file *seq, loff_t *pos)
+ 		return fib_route_get_idx(iter, *pos);
+ 
+ 	iter->pos = 0;
+-	iter->key = 0;
++	iter->key = KEY_MAX;
+ 
+ 	return SEQ_START_TOKEN;
+ }
+@@ -2517,7 +2514,7 @@ static void *fib_route_seq_next(struct seq_file *seq, void *v, loff_t *pos)
+ {
+ 	struct fib_route_iter *iter = seq->private;
+ 	struct key_vector *l = NULL;
+-	t_key key = iter->key;
++	t_key key = iter->key + 1;
+ 
+ 	++*pos;
+ 
+@@ -2526,7 +2523,7 @@ static void *fib_route_seq_next(struct seq_file *seq, void *v, loff_t *pos)
+ 		l = leaf_walk_rcu(&iter->tnode, key);
+ 
+ 	if (l) {
+-		iter->key = l->key + 1;
++		iter->key = l->key;
+ 		iter->pos++;
+ 	} else {
+ 		iter->pos = 0;
+diff --git a/net/ipv4/route.c b/net/ipv4/route.c
+index 8533a75a9328..7ceb8a574a50 100644
+--- a/net/ipv4/route.c
++++ b/net/ipv4/route.c
+@@ -747,7 +747,9 @@ static void __ip_do_redirect(struct rtable *rt, struct sk_buff *skb, struct flow
+ 			goto reject_redirect;
+ 	}
+ 
+-	n = ipv4_neigh_lookup(&rt->dst, NULL, &new_gw);
++	n = __ipv4_neigh_lookup(rt->dst.dev, new_gw);
++	if (!n)
++		n = neigh_create(&arp_tbl, &new_gw, rt->dst.dev);
+ 	if (!IS_ERR(n)) {
+ 		if (!(n->nud_state & NUD_VALID)) {
+ 			neigh_event_send(n, NULL);
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index 036a76ba2ac2..69daa81736f6 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -1212,7 +1212,7 @@ new_segment:
+ 
+ 			if (!skb_can_coalesce(skb, i, pfrag->page,
+ 					      pfrag->offset)) {
+-				if (i == sysctl_max_skb_frags || !sg) {
++				if (i >= sysctl_max_skb_frags || !sg) {
+ 					tcp_mark_push(tp, skb);
+ 					goto new_segment;
+ 				}
+diff --git a/net/ipv4/tcp_dctcp.c b/net/ipv4/tcp_dctcp.c
+index 7e538f71f5fb..55d7da1d2ce9 100644
+--- a/net/ipv4/tcp_dctcp.c
++++ b/net/ipv4/tcp_dctcp.c
+@@ -56,6 +56,7 @@ struct dctcp {
+ 	u32 next_seq;
+ 	u32 ce_state;
+ 	u32 delayed_ack_reserved;
++	u32 loss_cwnd;
+ };
+ 
+ static unsigned int dctcp_shift_g __read_mostly = 4; /* g = 1/2^4 */
+@@ -96,6 +97,7 @@ static void dctcp_init(struct sock *sk)
+ 		ca->dctcp_alpha = min(dctcp_alpha_on_init, DCTCP_MAX_ALPHA);
+ 
+ 		ca->delayed_ack_reserved = 0;
++		ca->loss_cwnd = 0;
+ 		ca->ce_state = 0;
+ 
+ 		dctcp_reset(tp, ca);
+@@ -111,9 +113,10 @@ static void dctcp_init(struct sock *sk)
+ 
+ static u32 dctcp_ssthresh(struct sock *sk)
+ {
+-	const struct dctcp *ca = inet_csk_ca(sk);
++	struct dctcp *ca = inet_csk_ca(sk);
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 
++	ca->loss_cwnd = tp->snd_cwnd;
+ 	return max(tp->snd_cwnd - ((tp->snd_cwnd * ca->dctcp_alpha) >> 11U), 2U);
+ }
+ 
+@@ -308,12 +311,20 @@ static size_t dctcp_get_info(struct sock *sk, u32 ext, int *attr,
+ 	return 0;
+ }
+ 
++static u32 dctcp_cwnd_undo(struct sock *sk)
++{
++	const struct dctcp *ca = inet_csk_ca(sk);
++
++	return max(tcp_sk(sk)->snd_cwnd, ca->loss_cwnd);
++}
++
+ static struct tcp_congestion_ops dctcp __read_mostly = {
+ 	.init		= dctcp_init,
+ 	.in_ack_event   = dctcp_update_alpha,
+ 	.cwnd_event	= dctcp_cwnd_event,
+ 	.ssthresh	= dctcp_ssthresh,
+ 	.cong_avoid	= tcp_reno_cong_avoid,
++	.undo_cwnd	= dctcp_cwnd_undo,
+ 	.set_state	= dctcp_state,
+ 	.get_info	= dctcp_get_info,
+ 	.flags		= TCP_CONG_NEEDS_ECN,
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index b5853cac3269..b58a38eea059 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -1533,6 +1533,21 @@ bool tcp_prequeue(struct sock *sk, struct sk_buff *skb)
+ }
+ EXPORT_SYMBOL(tcp_prequeue);
+ 
++int tcp_filter(struct sock *sk, struct sk_buff *skb)
++{
++	struct tcphdr *th = (struct tcphdr *)skb->data;
++	unsigned int eaten = skb->len;
++	int err;
++
++	err = sk_filter_trim_cap(sk, skb, th->doff * 4);
++	if (!err) {
++		eaten -= skb->len;
++		TCP_SKB_CB(skb)->end_seq -= eaten;
++	}
++	return err;
++}
++EXPORT_SYMBOL(tcp_filter);
++
+ /*
+  *	From tcp_input.c
+  */
+@@ -1638,8 +1653,10 @@ process:
+ 
+ 	nf_reset(skb);
+ 
+-	if (sk_filter(sk, skb))
++	if (tcp_filter(sk, skb))
+ 		goto discard_and_relse;
++	th = (const struct tcphdr *)skb->data;
++	iph = ip_hdr(skb);
+ 
+ 	skb->dev = NULL;
+ 
+diff --git a/net/ipv6/tcp_ipv6.c b/net/ipv6/tcp_ipv6.c
+index fbd521fdae53..5f581616bf6a 100644
+--- a/net/ipv6/tcp_ipv6.c
++++ b/net/ipv6/tcp_ipv6.c
+@@ -1214,7 +1214,7 @@ static int tcp_v6_do_rcv(struct sock *sk, struct sk_buff *skb)
+ 	if (skb->protocol == htons(ETH_P_IP))
+ 		return tcp_v4_do_rcv(sk, skb);
+ 
+-	if (sk_filter(sk, skb))
++	if (tcp_filter(sk, skb))
+ 		goto discard;
+ 
+ 	/*
+@@ -1438,8 +1438,10 @@ process:
+ 	if (tcp_v6_inbound_md5_hash(sk, skb))
+ 		goto discard_and_relse;
+ 
+-	if (sk_filter(sk, skb))
++	if (tcp_filter(sk, skb))
+ 		goto discard_and_relse;
++	th = (const struct tcphdr *)skb->data;
++	hdr = ipv6_hdr(skb);
+ 
+ 	skb->dev = NULL;
+ 
+diff --git a/net/sctp/socket.c b/net/sctp/socket.c
+index 402817be3873..b5fd4ab56156 100644
+--- a/net/sctp/socket.c
++++ b/net/sctp/socket.c
+@@ -1212,9 +1212,12 @@ static int __sctp_connect(struct sock *sk,
+ 
+ 	timeo = sock_sndtimeo(sk, f_flags & O_NONBLOCK);
+ 
+-	err = sctp_wait_for_connect(asoc, &timeo);
+-	if ((err == 0 || err == -EINPROGRESS) && assoc_id)
++	if (assoc_id)
+ 		*assoc_id = asoc->assoc_id;
++	err = sctp_wait_for_connect(asoc, &timeo);
++	/* Note: the asoc may be freed after the return of
++	 * sctp_wait_for_connect.
++	 */
+ 
+ 	/* Don't free association on exit. */
+ 	asoc = NULL;
+diff --git a/net/socket.c b/net/socket.c
+index 263b334ec5e4..0090225eeb1e 100644
+--- a/net/socket.c
++++ b/net/socket.c
+@@ -2041,6 +2041,8 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
+ 		if (err)
+ 			break;
+ 		++datagrams;
++		if (msg_data_left(&msg_sys))
++			break;
+ 	}
+ 
+ 	fput_light(sock->file, fput_needed);
