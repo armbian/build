@@ -16,6 +16,9 @@ source $SRC/lib/general.sh
 from=0
 
 free_cpu=$(grep -c 'processor' /proc/cpuinfo)
+free_cpu=$(($free_cpu + $free_cpu/2))
+
+echo $free_cpu
 
 rm -rf /run/armbian
 mkdir -p /run/armbian
@@ -118,12 +121,13 @@ for line in "${buildlist[@]}"; do
 
 	read BOARD BRANCH RELEASE BUILD_DESKTOP <<< $line
 	n=$[$n+1]
+	
 	if [[ $from -le $n ]]; then
 		jobs=$(ls /run/armbian | wc -l)
 		if [[ $jobs -le $free_cpu ]]; then
 			buildtext="in the back"
-			source $SRC/lib/main.sh &
-		else
+			source $SRC/lib/main.sh >/dev/null & 2>&1 
+		else			
 			source $SRC/lib/main.sh
 		fi
 		display_alert "Building $buildtext $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"		
