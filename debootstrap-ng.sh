@@ -329,7 +329,7 @@ prepare_partitions()
 
 	# stage: create blank image
 	display_alert "Creating blank image for rootfs" "$sdsize MiB" "info"
-	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=$CACHEDIR/tmprootfs.raw
+	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=$CACHEDIR/${sdcard}.raw
 
 	# stage: determine partition configuration
 	if [[ $BOOTSIZE != 0 ]]; then
@@ -360,17 +360,17 @@ prepare_partitions()
 
 	# stage: create partition table
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
-	parted -s $CACHEDIR/tmprootfs.raw -- mklabel msdos
+	parted -s $CACHEDIR/${sdcard}.raw -- mklabel msdos
 	if [[ $ROOTFS_TYPE == nfs ]]; then
 		# single /boot partition
-		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s -1s
+		parted -s $CACHEDIR/${sdcard}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s -1s
 	elif [[ $BOOTSIZE == 0 ]]; then
 		# single root partition
-		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
+		parted -s $CACHEDIR/${sdcard}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
 	else
 		# /boot partition + root partition
-		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
-		parted -s $CACHEDIR/tmprootfs.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
+		parted -s $CACHEDIR/${sdcard}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
+		parted -s $CACHEDIR/${sdcard}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
 	fi
 
 	# stage: mount image
@@ -381,7 +381,7 @@ prepare_partitions()
 	# NOTE: losetup -P option is not available in Trusty
 	[[ $CONTAINER_COMPAT == yes ]] && mknod -m0660 $LOOP b 7 ${LOOP//\/dev\/loop} > /dev/null
 
-	losetup $LOOP $CACHEDIR/tmprootfs.raw
+	losetup $LOOP $CACHEDIR/${sdcard}.raw
 	partprobe $LOOP
 
 	# stage: create fs, mount partitions, create fstab
@@ -440,7 +440,7 @@ create_image()
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
-		display_alert "Copying files to image" "tmprootfs.raw" "info"
+		display_alert "Copying files to image" "${sdcard}.raw" "info"
 		rsync -aHWXh --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
 			--exclude="/sys/*" --info=progress2,stats1 $CACHEDIR/$sdcard/ $CACHEDIR/$mount/
 	else
@@ -450,7 +450,7 @@ create_image()
 	fi
 
 	# stage: rsync /boot
-	display_alert "Copying files to /boot partition" "tmprootfs.raw" "info"
+	display_alert "Copying files to /boot partition" "${sdcard}.raw" "info"
 	if [[ $(findmnt --target $CACHEDIR/$mount/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
 		rsync -rLtWh --info=progress2,stats1 $CACHEDIR/$sdcard/boot $CACHEDIR/$mount
@@ -475,12 +475,12 @@ create_image()
 	if [[ $BUILD_ALL == yes ]]; then
 		TEMP_DIR="$(mktemp -d $CACHEDIR/${version}.XXXXXX)"
 		cp $CACHEDIR/$sdcard/etc/armbian.txt "${TEMP_DIR}/"
-		mv "$CACHEDIR/tmprootfs.raw" "${TEMP_DIR}/${version}.img"
+		mv "$CACHEDIR/${sdcard}.raw" "${TEMP_DIR}/${version}.img"
 		cd "${TEMP_DIR}/"
 		sign_and_compress &
 	else
 		cp $CACHEDIR/$sdcard/etc/armbian.txt $CACHEDIR/
-		mv $CACHEDIR/tmprootfs.raw $CACHEDIR/${version}.img
+		mv $CACHEDIR/${sdcard}.raw $CACHEDIR/${version}.img
 		cd $CACHEDIR/
 		sign_and_compress
 	fi

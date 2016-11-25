@@ -18,7 +18,11 @@ from=0
 free_cpu=$(grep -c 'processor' /proc/cpuinfo)
 free_cpu=$(($free_cpu + $free_cpu/2))
 
-echo $free_cpu
+echo $MULTITHREAD
+free_cpu=1001
+[[ $MULTITHREAD != yes ]] && free_cpu=0
+
+
 
 rm -rf /run/armbian
 mkdir -p /run/armbian
@@ -121,20 +125,21 @@ for line in "${buildlist[@]}"; do
 
 	read BOARD BRANCH RELEASE BUILD_DESKTOP <<< $line
 	n=$[$n+1]
-	
+
 	if [[ $from -le $n ]]; then
+
+		touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"		
 		jobs=$(ls /run/armbian | wc -l)
-		if [[ $jobs -le $free_cpu ]]; then
-			buildtext="in the back"
+		if [[ $jobs -lt $free_cpu ]]; then
+			display_alert "Building in the back $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
 			source $SRC/lib/main.sh >/dev/null & 2>&1 
-		else			
+		else
+			display_alert "Building $buildtext $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
 			source $SRC/lib/main.sh
 		fi
-		display_alert "Building $buildtext $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"		
-		touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"
 		#
 		# fake load
-		sleep $[ ( $RANDOM % 3 )  + 1 ]s
+		#sleep $[ ( $RANDOM % 3 )  + 1 ]s
 	fi
 done
 
