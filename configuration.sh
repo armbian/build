@@ -63,8 +63,8 @@ SERIALCON=ttyS0
 BOOTSIZE=0
 
 # set unique mounting directory
-sdcard="sdcard-${BRANCH}-${BOARD}-${RELEASE}"
-mount="mount-${BRANCH}-${BOARD}-${RELEASE}"
+SDCARD="sdcard-${BRANCH}-${BOARD}-${RELEASE}"
+MOUNT="mount-${BRANCH}-${BOARD}-${RELEASE}"
 
 if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]]; then
 	source $SRC/lib/config/sources/$LINUXFAMILY.conf

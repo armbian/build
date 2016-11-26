@@ -397,19 +397,19 @@ customize_image()
 {
 	# for users that need to prepare files at host
 	[[ -f $SRC/userpatches/customize-image-host.sh ]] && source $SRC/userpatches/customize-image-host.sh
-	cp $SRC/userpatches/customize-image.sh $CACHEDIR/$sdcard/tmp/customize-image.sh
-	chmod +x $CACHEDIR/$sdcard/tmp/customize-image.sh
-	mkdir -p $CACHEDIR/$sdcard/tmp/overlay
+	cp $SRC/userpatches/customize-image.sh $CACHEDIR/$SDCARD/tmp/customize-image.sh
+	chmod +x $CACHEDIR/$SDCARD/tmp/customize-image.sh
+	mkdir -p $CACHEDIR/$SDCARD/tmp/overlay
 	if [[ $(lsb_release -sc) == xenial ]]; then
 		# util-linux >= 2.27 required
-		mount -o bind,ro $SRC/userpatches/overlay $CACHEDIR/$sdcard/tmp/overlay
+		mount -o bind,ro $SRC/userpatches/overlay $CACHEDIR/$SDCARD/tmp/overlay
 	else
-		mount -o bind $SRC/userpatches/overlay $CACHEDIR/$sdcard/tmp/overlay
+		mount -o bind $SRC/userpatches/overlay $CACHEDIR/$SDCARD/tmp/overlay
 	fi
 	display_alert "Calling image customization script" "customize-image.sh" "info"
-	chroot $CACHEDIR/$sdcard /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
-	umount $CACHEDIR/$sdcard/tmp/overlay
-	mountpoint -q $CACHEDIR/$sdcard/tmp/overlay || rm -r $CACHEDIR/$sdcard/tmp/overlay
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
+	umount $CACHEDIR/$SDCARD/tmp/overlay
+	mountpoint -q $CACHEDIR/$SDCARD/tmp/overlay || rm -r $CACHEDIR/$SDCARD/tmp/overlay
 }
 
 userpatch_create()
