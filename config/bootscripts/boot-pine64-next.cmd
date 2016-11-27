@@ -11,7 +11,7 @@ setenv rootfstype "ext4"
 
 # temp fix: increase cpufreq and bus clock / speeds things up with vanilla images
 mw.l 0x1c2005c 1
-mw.l 0x1c20000 0x80001110
+mw.l 0x1c20000 0x80001010
 
 if load mmc 0 ${load_addr} /boot/armbianEnv.txt || load mmc 0 ${load_addr} armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
