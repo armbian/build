@@ -567,6 +567,6 @@ unmount_on_exit()
 	losetup -d $LOOP >/dev/null 2>&1
 	umount -l $CACHEDIR/$SDCARD/tmp/debs >/dev/null 2>&1
 	umount -l $CACHEDIR/$SDCARD/tmp/bin >/dev/null 2>&1
-	rm -rf $CACHEDIR/$SDCARD
+	rm -rf --one-file-system $CACHEDIR/$SDCARD
 	exit_with_error "debootstrap-ng was interrupted"
 } #############################################################################
