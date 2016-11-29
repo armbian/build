@@ -48,7 +48,7 @@ fi
 
 fdt addr ${fdt_addr}
 fdt resize
-if test ${pine64_lcd} = 1 || test ${pine64_lcd} = on; then
+if test "${pine64_lcd}" = "1" || test "${pine64_lcd}" = "on"; then
 	fdt set /soc@01c00000/disp@01000000 screen0_output_type "<0x00000001>"
 	fdt set /soc@01c00000/disp@01000000 screen0_output_mode "<0x00000004>"
 	fdt set /soc@01c00000/disp@01000000 screen1_output_mode ${fdt_disp_mode}
@@ -66,7 +66,7 @@ else
 fi
 
 # DVI compatibility
-if test ${disp_dvi_compat} = 1 || test ${disp_dvi_compat} = on; then
+if test "${disp_dvi_compat}" = "1" || test "${disp_dvi_compat}" = "on"; then
 	fdt set /soc@01c00000/hdmi@01ee0000 hdmi_hdcp_enable "<0x00000000>"
 	fdt set /soc@01c00000/hdmi@01ee0000 hdmi_cts_compatibility "<0x00000001>"
 fi
@@ -88,6 +88,14 @@ if test "${camera_type}" = "ov5640"; then
 	fdt set /soc@01c00000/vfe@0/dev@0/ csi0_dev0_iovdd_vol "<0x001b7740>"
 	fdt set /soc@01c00000/vfe@0/ status "okay"
 	fdt set /soc@01c00000/vfe@0/dev@0/ status "okay"
+fi
+
+# GMAC TX/RX delay processing
+if test -n "${gmac-tx-delay}"; then
+	fdt set /soc@01c00000/eth@01c30000/ tx-delay "<0x${gmac-tx-delay}>"
+fi
+if test -n "${gmac-rx-delay}"; then
+	fdt set /soc@01c00000/eth@01c30000/ rx-delay "<0x${gmac-rx-delay}>"
 fi
 
 booti ${kernel_addr} ${initrd_addr} ${fdt_addr}
