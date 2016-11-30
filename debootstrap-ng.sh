@@ -329,7 +329,7 @@ prepare_partitions()
 
 	# stage: create blank image
 	display_alert "Creating blank image for rootfs" "$sdsize MiB" "info"
-	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=$CACHEDIR/${sdcard}.raw
+	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=$CACHEDIR/${SDCARD}.raw
 
 	# stage: determine partition configuration
 	if [[ $BOOTSIZE != 0 ]]; then
@@ -360,17 +360,17 @@ prepare_partitions()
 
 	# stage: create partition table
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
-	parted -s $CACHEDIR/${sdcard}.raw -- mklabel msdos
+	parted -s $CACHEDIR/${SDCARD}.raw -- mklabel msdos
 	if [[ $ROOTFS_TYPE == nfs ]]; then
 		# single /boot partition
-		parted -s $CACHEDIR/${sdcard}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s -1s
+		parted -s $CACHEDIR/${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s -1s
 	elif [[ $BOOTSIZE == 0 ]]; then
 		# single root partition
-		parted -s $CACHEDIR/${sdcard}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
+		parted -s $CACHEDIR/${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
 	else
 		# /boot partition + root partition
-		parted -s $CACHEDIR/${sdcard}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
-		parted -s $CACHEDIR/${sdcard}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
+		parted -s $CACHEDIR/${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
+		parted -s $CACHEDIR/${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
 	fi
 
 	# stage: mount image
@@ -379,16 +379,16 @@ prepare_partitions()
 	[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device"
 
 	# NOTE: losetup -P option is not available in Trusty
-	[[ $CONTAINER_COMPAT == yes ]] && mknod -m0660 $LOOP b 7 ${LOOP//\/dev\/loop} > /dev/null
+	[[ $CONTAINER_COMPAT == yes && ! -e $LOOP ]] && mknod -m0660 $LOOP b 7 ${LOOP//\/dev\/loop} > /dev/null
 
-	losetup $LOOP $CACHEDIR/${sdcard}.raw
+	losetup $LOOP $CACHEDIR/${SDCARD}.raw
 	partprobe $LOOP
 
 	# stage: create fs, mount partitions, create fstab
 	rm -f $CACHEDIR/$SDCARD/etc/fstab
 	if [[ -n $rootpart ]]; then
 		display_alert "Creating rootfs" "$ROOTFS_TYPE"
-		[[ $CONTAINER_COMPAT == yes ]] && mknod -m0660 $LOOPp${rootpart} b 259 ${rootpart} > /dev/null
+		[[ $CONTAINER_COMPAT == yes ]] && mknod -m0660 ${LOOP}p${rootpart} b 259 $rootpart > /dev/null
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${LOOP}p${rootpart}
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback ${LOOP}p${rootpart} > /dev/null
 		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=zlib"
@@ -398,7 +398,7 @@ prepare_partitions()
 	fi
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs"
-		[[ $CONTAINER_COMPAT == yes ]] && mknod -m0660 $LOOPp${bootpart} b 259 ${bootpart} > /dev/null
+		[[ $CONTAINER_COMPAT == yes ]] && mknod -m0660 ${LOOP}p${bootpart} b 259 $bootpart > /dev/null
 		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${LOOP}p${bootpart}
 		mkdir -p $CACHEDIR/$MOUNT/boot/
 		mount ${LOOP}p${bootpart} $CACHEDIR/$MOUNT/boot/
@@ -440,7 +440,7 @@ create_image()
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
-		display_alert "Copying files to image" "${sdcard}.raw" "info"
+		display_alert "Copying files to image" "${SDCARD}.raw" "info"
 		rsync -aHWXh --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
 			--exclude="/sys/*" --info=progress2,stats1 $CACHEDIR/$SDCARD/ $CACHEDIR/$MOUNT/
 	else
@@ -450,7 +450,7 @@ create_image()
 	fi
 
 	# stage: rsync /boot
-	display_alert "Copying files to /boot partition" "${sdcard}.raw" "info"
+	display_alert "Copying files to /boot partition" "${SDCARD}.raw" "info"
 	if [[ $(findmnt --target $CACHEDIR/$MOUNT/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
 		rsync -rLtWh --info=progress2,stats1 $CACHEDIR/$SDCARD/boot $CACHEDIR/$MOUNT
@@ -475,12 +475,12 @@ create_image()
 	if [[ $BUILD_ALL == yes ]]; then
 		TEMP_DIR="$(mktemp -d $CACHEDIR/${version}.XXXXXX)"
 		cp $CACHEDIR/$SDCARD/etc/armbian.txt "${TEMP_DIR}/"
-		mv "$CACHEDIR/${sdcard}.raw" "${TEMP_DIR}/${version}.img"
+		mv "$CACHEDIR/${SDCARD}.raw" "${TEMP_DIR}/${version}.img"
 		cd "${TEMP_DIR}/"
 		sign_and_compress &
 	else
 		cp $CACHEDIR/$SDCARD/etc/armbian.txt $CACHEDIR/
-		mv $CACHEDIR/${sdcard}.raw $CACHEDIR/${version}.img
+		mv $CACHEDIR/${SDCARD}.raw $CACHEDIR/${version}.img
 		cd $CACHEDIR/
 		sign_and_compress
 	fi
@@ -566,7 +566,6 @@ unmount_on_exit()
 	umount -l $CACHEDIR/$MOUNT >/dev/null 2>&1
 	losetup -d $LOOP >/dev/null 2>&1
 	umount -l $CACHEDIR/$SDCARD/tmp/debs >/dev/null 2>&1
-	umount -l $CACHEDIR/$SDCARD/tmp/bin >/dev/null 2>&1
 	rm -rf --one-file-system $CACHEDIR/$SDCARD
 	exit_with_error "debootstrap-ng was interrupted"
 } #############################################################################
