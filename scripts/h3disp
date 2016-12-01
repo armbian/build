@@ -220,7 +220,7 @@ Main() {
 	fi
 	
 	echo -e "Now trying to patch script.bin with your settings. \c"
-	PatchScriptBin ${HDMIMode} ${DVIUsed} ${pll_video}
+	PatchScriptBin "${HDMIMode}" "${DVIUsed:-FALSE}" "${pll_video}"
 	echo "Successfully finished. Please reboot for changes to take effect"
 	
 	# Let's see whether we have to collect debug output
@@ -324,11 +324,26 @@ ShowVideoModes() {
 	echo -e "    '${BOLD}${0##*/}${NC} ${LGREEN}-m 720i${NC}' (1280x720@30Hz HDMI)\n"
 } # ShowVideoModes
 
+## Usage: FexChange <fexfile> <section> <key> <value> 
+## Either changes the value of a given key or adds the key=value to the section
+FexChange() {
+	# Search in file ($1) in section ($2) for key ($3)
+	found=$(sed -n -e "/^\[$2\]/,/^\[/{/^$3\s*=/p}" "$1")
+  
+	if [ -n "$found" ]; then
+		# Replace in file ($1) in section ($2) key ($3) with value ($4)
+		sed -i -e "/^\[$2\]/,/^\[/{s/^\($3\s*=\s*\).*/\1$4/}" "$1"
+	else
+		# Append in file ($1) in section ($2) key ($3) with value ($4)
+		sed -i -e "/^\[$2\]/,/^\[/{/^\[/i$3 = $4\n" -e "}" "$1"
+	fi
+}
+
 PatchScriptBin() {	
 	# This function will be called with 3 arguments:
 	# $1 HDMI mode to set
 	# $2 wether HDMI-to-DVI converter should be used or not (has to be TRUE)
-  # $3 pll_video value
+	# $3 pll_video value
 	
 	# check whether we've the necessary tools available
 	Fex2Bin="$(which fex2bin)"
@@ -355,31 +370,34 @@ PatchScriptBin() {
 	MyTmpFile="$(mktemp /tmp/${0##*/}.XXXXXX)"
 
 	# convert script.bin to temporary fex file	
-	local filter="^screen0_output"
-	if [ -v ColourRange ]; then
-		filter="^screen0_out"; fi
-	bin2fex <"${ScriptBin}" 2>/dev/null | grep -v ${filter} \
-		| grep -v "^screen1_output" | grep -v "hdcp_enable" \
-		| grep -v "hdmi_cts_compatibility" >"${MyTmpFile}"
+	bin2fex <"${ScriptBin}" 2>/dev/null >"${MyTmpFile}"
 	if [ $? -ne 0 ]; then
 		echo -e "Aborted\nCould not convert script.bin to fex. Exiting" >&2
 		logger "Could not convert script.bin to fex"
 		exit 1
 	fi
+
 	# create backup to be able to recover from failed conversion
 	cp -p "${ScriptBin}" "${Path2ScriptBin}/script.bin.bak"
 
-	sed -i "/\[disp_init\]/a screen0_output_type = 3\nscreen0_output_mode = $1\nscreen1_output_type = 3\nscreen1_output_mode = $1" "${MyTmpFile}"
-  
-	sed -i "/\[clock\]/a pll_video = $3" "${MyTmpFile}"
+	# add or replace ini values
+	FexChange "${MyTmpFile}" "disp_init" "screen0_output_type" "3"
+	FexChange "${MyTmpFile}" "disp_init" "screen0_output_mode" "$1"
+	FexChange "${MyTmpFile}" "disp_init" "screen1_output_type" "3"
+	FexChange "${MyTmpFile}" "disp_init" "screen1_output_mode" "$1"
+	FexChange "${MyTmpFile}" "clock" "pll_video" "$3"
 
 	if [ -v ColourRange ]; then
-		sed -i "/\[disp_init\]/a screen0_out_color_range = ${ColourRange}" "${MyTmpFile}"
+		FexChange "${MyTmpFile}" "disp_init" "screen0_out_color_range" "${ColourRange}"
 	fi
 	
 	if [ "X$2" = "XTRUE" ]; then
 		# add entries necessary for HDMI-to-DVI adapters	
-		sed -i '/\[hdmi_para\]/a hdcp_enable = 0\nhdmi_cts_compatibility = 1' "${MyTmpFile}"
+		FexChange "${MyTmpFile}" "hdmi_para" "hdcp_enable" "0"
+		FexChange "${MyTmpFile}" "hdmi_para" "hdmi_cts_compatibility" "1"
+	else
+		FexChange "${MyTmpFile}" "hdmi_para" "hdcp_enable" "1"
+		FexChange "${MyTmpFile}" "hdmi_para" "hdmi_cts_compatibility" "0"
 	fi
 	
 	# convert temporary fex file back to script.bin
