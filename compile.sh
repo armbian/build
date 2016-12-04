@@ -12,33 +12,31 @@
 
 # Read build script documentation http://www.armbian.com/using-armbian-tools/
 # for detailed explanation of these options and for additional options not listed here
-
-KERNEL_ONLY=""				# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
-KERNEL_CONFIGURE="no"			# change provided kernel configuration
-CLEAN_LEVEL="make,debs"			# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
-					# "debs" = delete packages in "./output/debs" for current branch and family,
-					# "alldebs" - delete all packages in "./output/debs", "images" = delete "./output/images",
-					# "cache" = delete "./output/cache", "sources" = delete "./sources"
-
-DEST_LANG="en_US.UTF-8"			# sl_SI.UTF-8, en_US.UTF-8
+[[ -z ${KERNEL_ONLY+x} ]] && KERNEL_ONLY=""		# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
+[[ -z ${KERNEL_CONFIGURE+x} ]] && KERNEL_CONFIGURE="no"	# change provided kernel configuration
+[[ -z ${CLEAN_LEVEL+x} ]] &&  CLEAN_LEVEL="make,debs"	# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
+							# "debs" = delete packages in "./output/debs" for current branch and family,
+							# "alldebs" - delete all packages in "./output/debs", "images" = delete "./output/images",
+							# "cache" = delete "./output/cache", "sources" = delete "./sources"
+[[ -z ${DEST_LANG+x} ]]	&& DEST_LANG="en_US.UTF-8"	# sl_SI.UTF-8, en_US.UTF-8
 
 # advanced
-KERNEL_KEEP_CONFIG="no"			# do not overwrite kernel config before compilation
-EXTERNAL="yes"				# build and install extra applications and drivers
-EXTERNAL_NEW="prebuilt"			# compile and install or install prebuilt additional packages
-CREATE_PATCHES="no"				# wait that you make changes to uboot and kernel source and creates patches
-FORCE_CHECKOUT="yes"			# ignore manual changes to source
-BUILD_ALL="no"				# cycle through available boards and make images or kernel/u-boot packages.
-					# set KERNEL_ONLY to "yes" or "no" to build all packages/all images
+[[ -z ${KERNEL_KEEP_CONFIG+x} ]] && KERNEL_KEEP_CONFIG="no"	# do not overwrite kernel config before compilation
+[[ -z ${EXTERNAL+x} ]] && EXTERNAL="yes"			# build and install extra applications and drivers
+[[ -z ${EXTERNAL_NEW+x} ]] && EXTERNAL_NEW="prebuilt"		# compile and install or install prebuilt additional packages
+[[ -z ${CREATE_PATCHES+x} ]] && CREATE_PATCHES="no"		# wait that you make changes to uboot and kernel source and creates patches
+[[ -z ${FORCE_CHECKOUT+x} ]] && FORCE_CHECKOUT="yes"		# ignore manual changes to source
+[[ -z ${BUILD_ALL+x} ]] &&  BUILD_ALL="no"			# cycle through available boards and make images or kernel/u-boot packages.
+								# set KERNEL_ONLY to "yes" or "no" to build all packages/all images
 
 # build script version to use
-LIB_TAG=""				# empty for latest version,
-					# one of listed here: https://github.com/igorpecovnik/lib/tags for stable versions,
-					# or commit hash
+[[ -z ${LIB_TAG+x} ]] && LIB_TAG=""				# empty for latest version,
+								# one of listed here: https://github.com/igorpecovnik/lib/tags for stable versions,
+								# or commit hash
 #--------------------------------------------------------------------------------------------------------------------------------
 
 # source is where compile.sh is located
-SRC=$(pwd)
+SRC="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # To preserve proper libraries updating
@@ -92,4 +90,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=24
+# VERSION=26
