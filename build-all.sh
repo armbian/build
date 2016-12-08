@@ -22,8 +22,6 @@ echo $MULTITHREAD
 free_cpu=1001
 [[ $MULTITHREAD != yes ]] && free_cpu=0
 
-
-
 rm -rf /run/armbian
 mkdir -p /run/armbian
 
@@ -132,7 +130,7 @@ for line in "${buildlist[@]}"; do
 		jobs=$(ls /run/armbian | wc -l)
 		if [[ $jobs -lt $free_cpu ]]; then
 			display_alert "Building in the back $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
-			source $SRC/lib/main.sh >/dev/null & 2>&1 
+			source $SRC/lib/main.sh >/dev/null & 2>&1
 		else
 			display_alert "Building $buildtext $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
 			source $SRC/lib/main.sh

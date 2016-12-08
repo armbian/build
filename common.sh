@@ -25,6 +25,11 @@
 
 compile_uboot()
 {
+	if [[ $CLEAN_LEVEL == *make* ]]; then
+		display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
+		(cd $SOURCES/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
+	fi
+
 	if [[ $USE_OVERLAYFS == yes ]]; then
 		local ubootdir=$(overlayfs_wrapper "wrap" "$SOURCES/$BOOTSOURCEDIR" "u-boot_${LINUXFAMILY}_${BRANCH}")
 	else
@@ -131,6 +136,11 @@ compile_uboot()
 
 compile_kernel()
 {
+	if [[ $CLEAN_LEVEL == *make* ]]; then
+		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"
+		(cd $SOURCES/$LINUXSOURCEDIR; make ARCH=$ARCHITECTURE clean >/dev/null 2>&1)
+	fi
+
 	if [[ $USE_OVERLAYFS == yes ]]; then
 		local kerneldir=$(overlayfs_wrapper "wrap" "$SOURCES/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
 	else
