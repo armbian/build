@@ -37,7 +37,7 @@ compile_uboot()
 	fi
 	cd "$ubootdir"
 
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
 
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
@@ -155,7 +155,7 @@ compile_kernel()
 		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
 	fi
 
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "$LINUXFAMILY-$BRANCH"
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "" "$LINUXFAMILY-$BRANCH"
 
 	# create patch for manual source changes in debug mode
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
@@ -295,38 +295,49 @@ find_toolchain()
 	eval $"$var_name"="$toolchain"
 }
 
-# advanced_patch <dest> <family> <device> <description>
+# advanced_patch <dest> <family> <board> <target> <description>
 #
 # parameters:
 # <dest>: u-boot, kernel
 # <family>: u-boot: u-boot, u-boot-neo; kernel: sun4i-default, sunxi-next, ...
-# <device>: cubieboard, cubieboard2, cubietruck, ...
+# <board>: cubieboard, cubieboard2, cubietruck, ...
+# <target>: optional subdirectory
 # <description>: additional description text
 #
 # priority:
-# $SRC/userpatches/<dest>/<family>/<device>
+# $SRC/userpatches/<dest>/<family>/target_<target>
+# $SRC/userpatches/<dest>/<family>/board_<board>
 # $SRC/userpatches/<dest>/<family>
-# $SRC/lib/patch/<dest>/<family>/<device>
+# $SRC/lib/patch/<dest>/<family>/target_<target>
+# $SRC/lib/patch/<dest>/<family>/board_<board>
 # $SRC/lib/patch/<dest>/<family>
 #
 advanced_patch()
 {
 	local dest=$1
 	local family=$2
-	local device=$3
-	local description=$4
+	local board=$3
+	local target=$4
+	local description=$5
 
 	display_alert "Started patching process for" "$dest $description" "info"
 	display_alert "Looking for user patches in" "userpatches/$dest/$family" "info"
 
 	local names=()
-	local dirs=("$SRC/userpatches/$dest/$family/$device" "$SRC/userpatches/$dest/$family" "$SRC/lib/patch/$dest/$family/$device" "$SRC/lib/patch/$dest/$family")
+	local dirs=(
+		"$SRC/userpatches/$dest/$family/target_${target}:[\e[33mu\e[0m][\e[34mt\e[0m]"
+		"$SRC/userpatches/$dest/$family/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
+		"$SRC/userpatches/$dest/$family:[\e[33mu\e[0m][\e[32mc\e[0m]"
+		"$SRC/lib/patch/$dest/$family/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]"
+		"$SRC/lib/patch/$dest/$family/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"
+		"$SRC/lib/patch/$dest/$family:[\e[32ml\e[0m][\e[32mc\e[0m]"
+		)
 
 	# required for "for" command
 	shopt -s nullglob dotglob
 	# get patch file names
 	for dir in "${dirs[@]}"; do
-		for patch in $dir/*.patch; do
+		for patch in ${dir%%:*}/*.patch; do
 			names+=($(basename $patch))
 		done
 	done
@@ -335,11 +346,11 @@ advanced_patch()
 	# apply patches
 	for name in "${names_s[@]}"; do
 		for dir in "${dirs[@]}"; do
-			if [[ -f $dir/$name ]]; then
-				if [[ -s $dir/$name ]]; then
-					process_patch_file "$dir/$name" "$description"
+			if [[ -f ${dir%%:*}/$name ]]; then
+				if [[ -s ${dir%%:*}/$name ]]; then
+					process_patch_file "${dir%%:*}/$name" "${dir##*:}"
 				else
-					display_alert "... $name" "skipped" "info"
+					display_alert "... ${dir##*:} $name" "skipped"
 				fi
 				break # next name
 			fi
@@ -351,27 +362,26 @@ advanced_patch()
 #
 # parameters:
 # <file>: path to patch file
-# <description>: additional description text
+# <status>: additional status text
 #
 process_patch_file()
 {
 	local patch=$1
-	local description=$2
+	local status=$2
 
 	# detect and remove files which patch will create
 	lsdiff -s --strip=1 $patch | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
 
-	# main patch command
 	echo "Processing file $patch" >> $DEST/debug/patching.log
 	patch --batch --silent -p1 -N < $patch >> $DEST/debug/patching.log 2>&1
+	echo >> $DEST/debug/patching.log
 
 	if [[ $? -ne 0 ]]; then
-		display_alert "... $(basename $patch)" "failed" "wrn";
+		display_alert "... $status $(basename $patch)" "failed" "wrn"
 		[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
 	else
-		display_alert "... $(basename $patch)" "succeeded" "info"
+		display_alert "... $status $(basename $patch)" "succeeded" "info"
 	fi
-	echo >> $DEST/debug/patching.log
 }
 
 install_external_applications()
