@@ -5,7 +5,7 @@ BOOTSCRIPT="boot-sunxi.cmd:boot.cmd"
 BOOTENV_FILE='sunxi-default.txt'
 BOOTPATCHDIR="u-boot-sunxi"
 
-UBOOT_TARGET_MAP=' ; ; u-boot-sunxi-with-spl.bin'
+UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
 
 HAS_UUID_SUPPORT=yes
 BOOTDELAY=0
