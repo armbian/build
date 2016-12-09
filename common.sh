@@ -25,6 +25,7 @@
 
 compile_uboot()
 {
+	# not optimal, but extra cleaning before overlayfs_wrapper should keep sources directory clean
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
 		(cd $SOURCES/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
@@ -37,11 +38,6 @@ compile_uboot()
 	fi
 	cd "$ubootdir"
 
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
-
-	# create patch for manual source changes
-	[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
-
 	# read uboot version
 	local version=$(grab_version "$ubootdir")
 
@@ -53,35 +49,66 @@ compile_uboot()
 	fi
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
 
-	eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
-		'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
-		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-
-	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
-	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
-	[[ -f tools/logos/udoo.bmp ]] && cp $SRC/lib/bin/armbian-u-boot.bmp tools/logos/udoo.bmp
-	touch .scmversion
-
-	# patch mainline uboot configuration to boot with old kernels
-	if [[ $BRANCH == default && $LINUXFAMILY == sun*i ]] && ! grep -q "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" .config ; then
-		echo -e "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y\nCONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> .config
-	fi
-
-	# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
-	[[ $BOOTDELAY == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
-	[[ -n $BOOTDELAY ]] && sed -i "s/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=${BOOTDELAY}/" .config || [[ -f .config ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
-
-	eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
-		'make $UBOOT_TARGET $CTHREADS CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
-		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
-		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-
-	# create .deb package
+	# create directory structure for the .deb package
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
 	rm -rf $uboot_name
 	mkdir -p $uboot_name/usr/lib/{u-boot,$uboot_name} $uboot_name/DEBIAN
+
+	# process compilation for one or multiple targets
+	while read -r target; do
+		local target_make=$(cut -d';' -f1 <<< $target)
+		local target_patchdir=$(cut -d';' -f2 <<< $target)
+		local target_files=$(cut -d';' -f3 <<< $target)
+
+		if [[ $CLEAN_LEVEL == *make* ]]; then
+			display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
+			(cd $SOURCES/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
+		fi
+
+		[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "$target_patchdir" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
+
+		# create patch for manual source changes
+		[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
+
+		eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
+			'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
+		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
+		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/lib/bin/armbian-u-boot.bmp tools/logos/udoo.bmp
+		touch .scmversion
+
+		# patch mainline uboot configuration to boot with old sunxi kernels
+		if [[ $BRANCH == default && $LINUXFAMILY == sun*i ]] && ! grep -q "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" .config ; then
+			echo -e "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y\nCONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> .config
+		fi
+
+		# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
+		[[ $BOOTDELAY == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
+		[[ -n $BOOTDELAY ]] && sed -i "s/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=${BOOTDELAY}/" .config || [[ -f .config ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
+
+		eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
+			'make $target_make $CTHREADS CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "U-boot compilation failed"
+
+		# copy files to build directory
+		for f in $target_files; do
+			local f_src=$(cut -d':' -f1 <<< $f)
+			if [[ $f == *:* ]]; then
+				local f_dst=$(cut -d':' -f2 <<< $f)
+			else
+				local f_dst=$f_src # unsetting will work too
+			fi
+			[[ ! -f $f_src ]] && exit_with_error "U-boot file not found" "$(basename $f_src)"
+			cp $f_src $uboot_name/usr/lib/$uboot_name/$f_dst
+		done
+	done <<< "$UBOOT_TARGET_MAP"
 
 	# set up postinstall script
 	cat <<-EOF > $uboot_name/DEBIAN/postinst
@@ -119,17 +146,11 @@ compile_uboot()
 	Description: Uboot loader $version
 	END
 
-	# copy files to build directory
-	for f in $UBOOT_FILES; do
-		[[ ! -f $f ]] && exit_with_error "U-boot file not found" "$(basename $f)"
-		cp $f $uboot_name/usr/lib/$uboot_name
-	done
-
 	display_alert "Building deb" "${uboot_name}.deb" "info"
 	eval 'dpkg -b $uboot_name 2>&1' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'}
 	rm -rf $uboot_name
 
-	[[ ! -f ${uboot_name}.deb || $(stat -c '%s' "${uboot_name}.deb") -lt 5000 ]] && exit_with_error "Building u-boot failed"
+	[[ ! -f ${uboot_name}.deb || $(stat -c '%s' "${uboot_name}.deb") -lt 5000 ]] && exit_with_error "Building u-boot package failed"
 
 	mv ${uboot_name}.deb $DEST/debs/
 }
