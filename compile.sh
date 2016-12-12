@@ -31,6 +31,9 @@ FORCE_CHECKOUT="yes"			# ignore manual changes to source
 BUILD_ALL="no"				# cycle through available boards and make images or kernel/u-boot packages.
 					# set KERNEL_ONLY to "yes" or "no" to build all packages/all images
 
+BETA=""				# set yes to add subrevision with tomorrow's date. For internal use. 
+MULTITHREAD=""		# build n images at once. For internal use.
+					
 # build script version to use
 LIB_TAG=""				# empty for latest version,
 					# one of listed here: https://github.com/igorpecovnik/lib/tags for stable versions,
@@ -80,6 +83,9 @@ fi
 # source additional configuration file
 [[ -n $1 && -f $SRC/config-$1.conf ]] && source $SRC/config-$1.conf
 
+# daily beta build contains date in subrevision
+if [[ $BETA == yes ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
+
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
 	source $SRC/lib/build-all.sh
 else
@@ -92,4 +98,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=24
+# VERSION=25

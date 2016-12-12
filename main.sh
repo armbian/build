@@ -230,4 +230,3 @@ fi
 end=`date +%s`
 runtime=$(((end-start)/60))
 display_alert "Runtime" "$runtime min" "info"
-rm -f "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"

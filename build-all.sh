@@ -15,13 +15,6 @@ source $SRC/lib/general.sh
 # when we want to build from certain start
 from=0
 
-free_cpu=$(grep -c 'processor' /proc/cpuinfo)
-free_cpu=$(($free_cpu + $free_cpu/2))
-
-echo $MULTITHREAD
-free_cpu=1001
-[[ $MULTITHREAD != yes ]] && free_cpu=0
-
 rm -rf /run/armbian
 mkdir -p /run/armbian
 
@@ -37,10 +30,13 @@ fi
 
 create_images_list()
 {
+	#
+	# if parameter is true, than we build beta list
+	#
 	for board in $SRC/lib/config/boards/*.conf; do
 		BOARD=$(basename $board | cut -d'.' -f1)
 		source $SRC/lib/config/boards/$BOARD.conf
-		if [[ -n $CLI_TARGET ]]; then
+		if [[ -n $CLI_TARGET && -z $1 ]]; then
 
 			# RELEASES : BRANCHES
 			CLI_TARGET=($(tr ':' ' ' <<< "$CLI_TARGET"))
@@ -57,7 +53,7 @@ create_images_list()
 				done
 			done
 		fi
-		if [[ -n $DESKTOP_TARGET ]]; then
+		if [[ -n $DESKTOP_TARGET && -z $1 ]]; then
 
 			# RELEASES : BRANCHES
 			DESKTOP_TARGET=($(tr ':' ' ' <<< "$DESKTOP_TARGET"))
@@ -75,7 +71,43 @@ create_images_list()
 			done
 
 		fi
-		unset CLI_TARGET CLI_BRANCH DESKTOP_TARGET DESKTOP_BRANCH KERNEL_TARGET
+		if [[ -n $CLI_BETA_TARGET && -n $1 ]]; then
+
+			# RELEASES : BRANCHES
+			CLI_BETA_TARGET=($(tr ':' ' ' <<< "$CLI_BETA_TARGET"))
+
+			build_settings_target=($(tr ',' ' ' <<< "${CLI_BETA_TARGET[0]}"))
+			build_settings_branch=($(tr ',' ' ' <<< "${CLI_BETA_TARGET[1]}"))
+
+			[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
+			[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
+
+			for release in ${build_settings_target[@]}; do
+				for kernel in ${build_settings_branch[@]}; do
+					buildlist+=("$BOARD $kernel $release no")
+				done
+			done
+
+		fi		
+		if [[ -n $DESKTOP_BETA_TARGET && -n $1 ]]; then
+
+			# RELEASES : BRANCHES
+			DESKTOP_BETA_TARGET=($(tr ':' ' ' <<< "$DESKTOP_BETA_TARGET"))
+
+			build_settings_target=($(tr ',' ' ' <<< "${DESKTOP_BETA_TARGET[0]}"))
+			build_settings_branch=($(tr ',' ' ' <<< "${DESKTOP_BETA_TARGET[1]}"))
+
+			[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
+			[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
+
+			for release in ${build_settings_target[@]}; do
+				for kernel in ${build_settings_branch[@]}; do
+					buildlist+=("$BOARD $kernel $release no")
+				done
+			done
+
+		fi		
+		unset CLI_TARGET CLI_BRANCH DESKTOP_TARGET DESKTOP_BRANCH KERNEL_TARGET CLI_BETA_TARGET DESKTOP_BETA_TARGET
 	done
 }
 
@@ -99,7 +131,7 @@ if [[ $KERNEL_ONLY == yes ]]; then
 	create_kernels_list
 	printf "%-3s %-20s %-10s %-10s %-10s\n" \#   BOARD BRANCH
 else
-	create_images_list
+	create_images_list $BETA
 	printf "%-3s %-20s %-10s %-10s %-10s\n" \#   BOARD BRANCH RELEASE DESKTOP
 fi
 
@@ -126,18 +158,15 @@ for line in "${buildlist[@]}"; do
 
 	if [[ $from -le $n ]]; then
 
-		touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"
 		jobs=$(ls /run/armbian | wc -l)
-		if [[ $jobs -lt $free_cpu ]]; then
+		if [[ $jobs -lt $MULTITHREAD ]]; then
 			display_alert "Building in the back $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
-			source $SRC/lib/main.sh >/dev/null & 2>&1
+			(touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"; source $SRC/lib/main.sh; rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid";) &
 		else
 			display_alert "Building $buildtext $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
-			source $SRC/lib/main.sh
+			(touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"; source $SRC/lib/main.sh; rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid";)
 		fi
-		#
-		# fake load
-		#sleep $[ ( $RANDOM % 3 )  + 1 ]s
+
 	fi
 done
 
