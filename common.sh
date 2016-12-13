@@ -106,7 +106,7 @@ compile_uboot()
 			if [[ $f == *:* ]]; then
 				local f_dst=$(cut -d':' -f2 <<< $f)
 			else
-				local f_dst=$f_src # unsetting will work too
+				local f_dst=$(basename $f_src)
 			fi
 			[[ ! -f $f_src ]] && exit_with_error "U-boot file not found" "$(basename $f_src)"
 			cp $f_src $uboot_name/usr/lib/$uboot_name/$f_dst
