@@ -374,14 +374,22 @@ prepare_partitions()
 	fi
 
 	# stage: mount image
-	# TODO: Needs mknod here in Docker?
+	# lock access to loop devices
+	exec {FD}>/var/lock/armbian-debootstrap-losetup
+	flock --verbose -x $FD | tee -a $DEST/debug/output.log
+
 	LOOP=$(losetup -f)
 	[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device"
 
 	# NOTE: losetup -P option is not available in Trusty
 	[[ $CONTAINER_COMPAT == yes && ! -e $LOOP ]] && mknod -m0660 $LOOP b 7 ${LOOP//\/dev\/loop} > /dev/null
 
+	# TODO: Needs mknod here in Docker?
 	losetup $LOOP $CACHEDIR/${SDCARD}.raw
+
+	# loop device was grabbed here, unlock
+	flock -u $FD
+
 	partprobe $LOOP
 
 	# stage: create fs, mount partitions, create fstab

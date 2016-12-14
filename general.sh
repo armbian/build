@@ -91,6 +91,10 @@ exit_with_error()
 	display_alert "Process terminated" "" "info"
 	# TODO: execute run_after_build here?
 	overlayfs_wrapper "cleanup"
+	# unlock loop device access in case of starvation
+	exec {FD}>/var/lock/armbian-debootstrap-losetup
+	losetup -u $FD
+
 	exit -1
 }
 
