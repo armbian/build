@@ -93,7 +93,7 @@ exit_with_error()
 	overlayfs_wrapper "cleanup"
 	# unlock loop device access in case of starvation
 	exec {FD}>/var/lock/armbian-debootstrap-losetup
-	losetup -u $FD
+	flock -u $FD
 
 	exit -1
 }
