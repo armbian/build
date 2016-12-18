@@ -41,8 +41,8 @@ install_desktop ()
 	esac
 
 	# set default wallpaper
-	sed -i 's/\(backgrounds\/xfce\/*\)[^ ]*/\1armbian06-1430-very-dark-3840x2160.jpg\"\/>/' /etc/skel/.config/xfce4/xconf/xfce-perchannel-xml/xfce4-desktop.xml
-	sed -i 's/\(backgrounds\/xfce\/*\)[^ ]*/\1armbian06-1430-very-dark-3840x2160.jpg\"\/>/' /root/.config/xfce4/xconf/xfce-perchannel-xml/xfce4-desktop.xml
+	sed -i 's/\(backgrounds\/xfce\/*\)[^ ]*/\1armbian06-1430-very-dark-3840x2160.jpg\"\/>/' $CACHEDIR/$SDCARD/etc/skel/.config/xfce4/xconf/xfce-perchannel-xml/xfce4-desktop.xml
+	sed -i 's/\(backgrounds\/xfce\/*\)[^ ]*/\1armbian06-1430-very-dark-3840x2160.jpg\"\/>/' $CACHEDIR/$SDCARD/root/.config/xfce4/xconf/xfce-perchannel-xml/xfce4-desktop.xml
 	
 	# Install custom icons and theme
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/bin/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"
