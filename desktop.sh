@@ -24,22 +24,26 @@ install_desktop ()
 	case $RELEASE in
 		wheezy)
 		d=$CACHEDIR/$SDCARD/usr/share/xfce4/backdrops/
-		test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"
+		test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/wallpapers/armbian*.jpg "$d"
 		;;
 
 		jessie|xenial)
 		d=$CACHEDIR/$SDCARD/usr/share/backgrounds/xfce/
-		test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"
+		test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/wallpapers/armbian*.jpg "$d"
 		mkdir -p $CACHEDIR/$SDCARD/etc/polkit-1/localauthority/50-local.d
 		cp $SRC/lib/config/polkit-jessie/*.pkla $CACHEDIR/$SDCARD/etc/polkit-1/localauthority/50-local.d/
 		;;
 
 		trusty)
 		d=$CACHEDIR/$SDCARD/usr/share/backgrounds/xfce/
-		test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/armbian*.jpg "$d"
+		test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/wallpapers/armbian*.jpg "$d"
 		;;
 	esac
 
+	# set default wallpaper
+	sed -i 's/\(backgrounds\/xfce\/*\)[^ ]*/\1armbian06-1430-very-dark-3840x2160.jpg\"\/>/' /etc/skel/.config/xfce4/xconf/xfce-perchannel-xml/xfce4-desktop.xml
+	sed -i 's/\(backgrounds\/xfce\/*\)[^ ]*/\1armbian06-1430-very-dark-3840x2160.jpg\"\/>/' /root/.config/xfce4/xconf/xfce-perchannel-xml/xfce4-desktop.xml
+	
 	# Install custom icons and theme
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/bin/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "unzip -qq /tmp/bin/NumixHolo.zip -d /usr/share/themes"
