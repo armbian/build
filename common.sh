@@ -41,13 +41,20 @@ compile_uboot()
 	# read uboot version
 	local version=$(grab_version "$ubootdir")
 
-	display_alert "Compiling uboot" "$version" "info"
-	# if requires specific toolchain, check if default is suitable
-	if [[ -n $UBOOT_NEEDS_GCC ]] && ! check_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" ; then
-		# try to find suitable in $SRC/toolchains, exit if not found
-		find_toolchain "UBOOT" "$UBOOT_NEEDS_GCC" "UBOOT_TOOLCHAIN"
+	display_alert "Compiling u-boot" "$version" "info"
+
+	local toolchain=""
+	if [[ -n $UBOOT_ALT_GCC ]] && ! check_toolchain "$UBOOT_COMPILER" "$UBOOT_ALT_GCC"; then
+		# try to find alternative toolchain
+		toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_ALT_GCC")
 	fi
-	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
+	if [[ -z $toolchain && -n $UBOOT_NEEDS_GCC ]] && ! check_toolchain "$UBOOT_COMPILER" "$UBOOT_NEEDS_GCC"; then
+		# try to find required toolchain if alt was not found
+		toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_NEEDS_GCC")
+		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${compiler}gcc $expression"
+	fi
+
+	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${toolchain:+env PATH=$toolchain:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
 
 	# create directory structure for the .deb package
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
@@ -73,7 +80,7 @@ compile_uboot()
 		# create patch for manual source changes
 		[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
 
-		eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
+		eval CCACHE_BASEDIR="$(pwd)" ${toolchain:+env PATH=$toolchain:$PATH} \
 			'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -92,7 +99,7 @@ compile_uboot()
 		[[ $BOOTDELAY == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
 		[[ -n $BOOTDELAY ]] && sed -i "s/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=${BOOTDELAY}/" .config || [[ -f .config ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
 
-		eval CCACHE_BASEDIR="$(pwd)" ${UBOOT_TOOLCHAIN:+env PATH=$UBOOT_TOOLCHAIN:$PATH} \
+		eval CCACHE_BASEDIR="$(pwd)" ${toolchain:+env PATH=$toolchain:$PATH} \
 			'make $target_make $CTHREADS CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
@@ -188,12 +195,19 @@ compile_kernel()
 	local version=$(grab_version "$kerneldir")
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
-	# if requires specific toolchain, check if default is suitable
-	if [[ -n $KERNEL_NEEDS_GCC ]] && ! check_toolchain "$KERNEL" "$KERNEL_NEEDS_GCC" ; then
-		# try to find suitable in $SRC/toolchains, exit if not found
-		find_toolchain "KERNEL" "$KERNEL_NEEDS_GCC" "KERNEL_TOOLCHAIN"
+
+	local toolchain=""
+	if [[ -n $KERNEL_ALT_GCC ]] && ! check_toolchain "$KERNEL_COMPILER" "$KERNEL_ALT_GCC"; then
+		# try to find alternative toolchain
+		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_ALT_GCC")
 	fi
-	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
+	if [[ -z $toolchain && -n $KERNEL_NEEDS_GCC ]] && ! check_toolchain "$KERNEL_COMPILER" "$KERNEL_NEEDS_GCC"; then
+		# try to find required toolchain if alt was not found
+		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_NEEDS_GCC")
+		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $expression"
+	fi
+
+	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${toolchain:+env PATH=$toolchain:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
 
 	# use proven config
 	if [[ $KERNEL_KEEP_CONFIG != yes || ! -f .config ]]; then
@@ -215,18 +229,18 @@ compile_kernel()
 
 	if [[ $KERNEL_CONFIGURE != yes ]]; then
 		if [[ $BRANCH == default ]]; then
-			eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" silentoldconfig'
+			make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" silentoldconfig
 		else
-			eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" olddefconfig'
+			make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" olddefconfig
 		fi
 	else
-		eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" oldconfig'
-		eval ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} 'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" menuconfig'
+		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" oldconfig
+		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" menuconfig
 		# store kernel config in easily reachable place
 		cp .config $DEST/kernel.config
 	fi
 
-	eval CCACHE_BASEDIR="$(pwd)" ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} \
+	eval CCACHE_BASEDIR="$(pwd)" ${toolchain:+env PATH=$toolchain:$PATH} \
 		'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" $KERNEL_IMAGE_TYPE modules dtbs 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \
@@ -244,7 +258,7 @@ compile_kernel()
 	fi
 
 	# produce deb packages: image, headers, firmware, dtb
-	eval CCACHE_BASEDIR="$(pwd)" ${KERNEL_TOOLCHAIN:+env PATH=$KERNEL_TOOLCHAIN:$PATH} \
+	eval CCACHE_BASEDIR="$(pwd)" ${toolchain:+env PATH=$toolchain:$PATH} \
 		'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY \
 		KBUILD_DEBARCH=$ARCH ARCH=$ARCHITECTURE DEBFULLNAME="$MAINTAINER" DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
@@ -276,28 +290,23 @@ compile_sunxi_tools()
 # <expression>: "< x.y"; "> x.y"; "== x.y"
 check_toolchain()
 {
-	local target=$1
+	local compiler=$1
 	local expression=$2
-	local compiler_type="${target}_COMPILER"
-	local compiler="${!compiler_type}"
 	# get major.minor gcc version
 	local gcc_ver=$(${compiler}gcc -dumpversion | grep -oE "^[[:digit:]].[[:digit:]]")
 	awk "BEGIN{exit ! ($gcc_ver $expression)}" && return 0
 	return 1
 }
 
-# find_toolchain <UBOOT|KERNEL> <expression> <var_name>
+# find_toolchain <compiler_prefix> <expression>
 #
-# writes path to toolchain that satisfies <expression> to <var_name>
+# returns path to toolchain that satisfies <expression>
 #
 find_toolchain()
 {
-	local target=$1
+	local compiler=$1
 	local expression=$2
-	local var_name=$3
 	local dist=10
-	local compiler_type="${target}_COMPILER"
-	local compiler="${!compiler_type}"
 	local toolchain=""
 	# extract target major.minor version from expression
 	local target_ver=$(grep -oE "[[:digit:]].[[:digit:]]" <<< "$expression")
@@ -307,16 +316,15 @@ find_toolchain()
 		# get toolchain major.minor version
 		local gcc_ver=$(${dir}bin/${compiler}gcc -dumpversion | grep -oE "^[[:digit:]].[[:digit:]]")
 		# check if toolchain version satisfies requirement
-		awk "BEGIN{exit ! ($gcc_ver $expression)}" || continue
+		awk "BEGIN{exit ! ($gcc_ver $expression)}" >/dev/null || continue
 		# check if found version is the closest to target
 		local d=$(awk '{x = $1 - $2}{printf "%.1f\n", (x > 0) ? x : -x}' <<< "$target_ver $gcc_ver")
-		if awk "BEGIN{exit ! ($d < $dist)}" ; then
+		if awk "BEGIN{exit ! ($d < $dist)}" >/dev/null ; then
 			dist=$d
 			toolchain=${dir}bin
 		fi
 	done
-	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${compiler}gcc $expression"
-	eval $"$var_name"="$toolchain"
+	echo "$toolchain"
 }
 
 # advanced_patch <dest> <family> <board> <target> <description>
