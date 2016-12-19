@@ -470,7 +470,7 @@ userpatch_create()
 	# prompt to alter source
 	display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
 	display_alert "Press <Enter> after you are done" "waiting" "wrn"
-	read
+	read </dev/tty
 	tput cuu1
 	git add .
 	# create patch out of changes
