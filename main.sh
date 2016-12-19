@@ -94,27 +94,34 @@ fi
 prepare_host
 
 # if KERNEL_ONLY, BOARD, BRANCH or RELEASE are not set, display selection menu
+
+# add extra button if we have wip conf files
+if [[ ! -z `ls $SRC/lib/config/boards/*.wip 2> /dev/null` ]]; then EXTRAFIELD="--extra-button --extra-label WIP"; fi
+
 if [[ -z $KERNEL_ONLY ]]; then
 	options+=("yes" "Kernel and u-boot packages")
 	options+=("no" "OS image for installation to SD card")
-	KERNEL_ONLY=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select what to build" \
+	KERNEL_ONLY=$(dialog ${EXTRAFIELD} --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select what to build" \
 		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+	if [ $? == 3 ]; then PATTERN="*.wip"; else PATTERN="*.conf"; fi
 	unset options
 	[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected"
 fi
 
 if [[ -z $BOARD ]]; then
 	options=()
-	for board in $SRC/lib/config/boards/*.conf; do
+	
+	for board in $SRC/lib/config/boards/$PATTERN; do
 		options+=("$(basename $board | cut -d'.' -f1)" "$(head -1 $board | cut -d'#' -f2)")
 	done
+	
 	BOARD=$(dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar --menu "Select the target board" \
 		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BOARD ]] && exit_with_error "No board selected"
 fi
 
-source $SRC/lib/config/boards/$BOARD.conf
+source $SRC/lib/config/boards/$BOARD.conf 2> /dev/null || source $SRC/lib/config/boards/$BOARD.wip
 
 [[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
 
