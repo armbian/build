@@ -98,7 +98,7 @@ prepare_host
 if [[ -z $KERNEL_ONLY ]]; then
 	options+=("yes" "Kernel and u-boot packages")
 	options+=("no" "OS image for installation to SD card")
-	KERNEL_ONLY=$(dialog $EXTRAFIELD --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select what to build" \
+	KERNEL_ONLY=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select what to build" \
 		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected"
