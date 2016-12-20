@@ -14,7 +14,7 @@ Vagrant.configure(2) do |config|
     #######################################################################
 
     # Default images are not big enough to build Armbian.
-    config.disksize.size = "20GB"
+    config.disksize.size = "40GB"
 
     # So we don't have to download the code a 2nd time.
     config.vm.synced_folder ".", "/home/ubuntu/lib"
