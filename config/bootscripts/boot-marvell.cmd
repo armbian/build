@@ -7,23 +7,21 @@
 setenv rootdev "/dev/mmcblk0p1"
 setenv rootfstype "ext4"
 setenv verbosity "1"
-setenv board_model "pro"
 setenv emmc_fix "off"
 setenv ethaddr "00:50:43:84:fb:2f"
 setenv eth1addr "00:50:43:25:fb:84"
 setenv eth2addr "00:50:43:84:25:2f"
 setenv eth3addr "00:50:43:0d:19:18"
 
+# fdtfile should come from compile-time u-boot patches
+if test -z "${fdtfile}"; then
+	setenv fdtfile "armada-388-clearfog.dtb"
+fi
+
 test -z "${boot_interface}" && setenv boot_interface "mmc"
 
 if ext4load ${boot_interface} 0:1 ${loadaddr} /boot/armbianEnv.txt || ext4load ${boot_interface} 0:1 ${loadaddr} armbianEnv.txt; then
 	env import -t ${loadaddr} ${filesize}
-fi
-
-if test "${board_model}" = "base"; then
-	setenv fdtfile "armada-388-clearfog-base.dtb"
-else
-	setenv fdtfile "armada-388-clearfog.dtb"
 fi
 
 setenv bootargs "console=ttyS0,115200 root=${rootdev} rootwait rootfstype=${rootfstype} ubootdev=${boot_interface} selinux=0 cgroup_disable=memory scandelay loglevel=${verbosity} ${extraargs}"
@@ -40,6 +38,7 @@ if test "${emmc_fix}" = "on"; then
 	fdt addr ${fdt_addr}
 	fdt resize
 	fdt rm /soc/internal-regs/sdhci@d8000/ cd-gpios
+	fdt set /soc/internal-regs/sdhci@d8000/ non-removable
 fi
 
 bootz ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr}
