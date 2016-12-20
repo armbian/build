@@ -107,22 +107,25 @@ fi
 EXT='conf'
 if [[ -z $BOARD ]]; then
 	WIP_STATE='supported'
-	[[ -n $(find $SRC/lib/config/boards/ -name '*.wip' -print -quit) ]] && DIALOG_EXTRA='--extra-button --extra-label Supported/WIP'
+	WIP_BUTTON='WIP'
+	[[ -n $(find $SRC/lib/config/boards/ -name '*.wip' -print -quit) ]] && DIALOG_EXTRA="--extra-button"
 	while true; do
 		options=()
 		for board in $SRC/lib/config/boards/*.${EXT}; do
 			options+=("$(basename $board | cut -d'.' -f1)" "$(head -1 $board | cut -d'#' -f2)")
 		done
-		BOARD=$(dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar $DIALOG_EXTRA \
+		BOARD=$(dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar --extra-label "Show $WIP_BUTTON" $DIALOG_EXTRA \
 			--menu "Select the target board\nDisplaying $WIP_STATE boards" $TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 		STATUS=$?
 		if [[ $STATUS == 3 ]]; then
 			if [[ $WIP_STATE == supported ]]; then
 				WIP_STATE='work-in-progress'
 				EXT='wip'
+				WIP_BUTTON='supported'
 			else
 				WIP_STATE='supported'
 				EXT='conf'
+				WIP_BUTTON='WIP'
 			fi
 			continue
 		elif [[ $STATUS == 0 ]]; then
@@ -133,7 +136,12 @@ if [[ -z $BOARD ]]; then
 	done
 fi
 
-source $SRC/lib/config/boards/${BOARD}.${EXT}
+if [[ -f $SRC/lib/config/boards/${BOARD}.${EXT} ]]; then
+	source $SRC/lib/config/boards/${BOARD}.${EXT}
+elif [[ -f $SRC/lib/config/boards/${BOARD}.wip ]]; then
+	# when launching build for WIP board from command line
+	source $SRC/lib/config/boards/${BOARD}.wip
+fi
 
 [[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
 
