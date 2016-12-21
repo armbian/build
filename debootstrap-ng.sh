@@ -399,7 +399,7 @@ prepare_partitions()
 		[[ $CONTAINER_COMPAT == yes ]] && mknod -m0660 ${LOOP}p${rootpart} b 259 $rootpart > /dev/null
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${LOOP}p${rootpart}
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback ${LOOP}p${rootpart} > /dev/null
-		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=zlib"
+		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress-force=zlib"
 		mount ${fscreateopt} ${LOOP}p${rootpart} $CACHEDIR/$MOUNT/
 		local rootfs="UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart})"
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $CACHEDIR/$SDCARD/etc/fstab
