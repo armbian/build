@@ -44,7 +44,7 @@ create_armbian()
 	sync &&	mkdir -p /mnt/bootfs /mnt/rootfs
 	if [[ $eMMCFilesystemChoosen == "btrfs" ]]; then	
 		[[ -n $1 ]] && mount ${1::-1}"1" /mnt/bootfs
-		[[ -n $2 ]] && mount $2 /mnt/rootfs
+		[[ -n $2 ]] && mount -o compress=zlib $2 /mnt/rootfs
 	else
 		[[ -n $2 ]] && mount $2 /mnt/rootfs
 		[[ -n $1 ]] && mount $1 /mnt/bootfs
