@@ -47,7 +47,7 @@ mkopts[btrfs]='-qf'
 mountopts[ext2]='defaults,noatime,nodiratime,commit=600,errors=remount-ro	0	1'
 mountopts[ext3]='defaults,noatime,nodiratime,commit=600,errors=remount-ro	0	1'
 mountopts[ext4]='defaults,noatime,nodiratime,commit=600,errors=remount-ro	0	1'
-mountopts[btrfs]='defaults,noatime,nodiratime,compress=zlib			0	2'
+mountopts[btrfs]='defaults,noatime,nodiratime,compress=lzo			0	2'
 
 # Create boot and root file system $1 = boot, $2 = root (Example: create_armbian "/dev/nand1" "/dev/sda3")
 create_armbian()
@@ -56,7 +56,7 @@ create_armbian()
 	sync &&	mkdir -p /mnt/bootfs /mnt/rootfs
 	if [[ $eMMCFilesystemChoosen == "btrfs" && $FilesystemChoosen == "btrfs" ]]; then	
 		[[ -n $1 ]] && mount ${1::-1}"1" /mnt/bootfs
-		[[ -n $2 ]] && mount -o compress=zlib $2 /mnt/rootfs
+		[[ -n $2 ]] && mount -o compress-force=zlib $2 /mnt/rootfs
 	elif [[ $eMMCFilesystemChoosen == "btrfs" && $FilesystemChoosen != "btrfs" ]]; then	
 		[[ -n $1 ]] && mount ${1::-1}"1" /mnt/bootfs
 		[[ -n $2 ]] && mount $2 /mnt/rootfs	
