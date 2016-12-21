@@ -7,6 +7,8 @@ BOOTPATCHDIR="u-boot-sunxi"
 
 UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
 
+UBOOT_ALT_GCC='> 6.1'
+
 HAS_UUID_SUPPORT=yes
 BOOTDELAY=0
 
@@ -16,11 +18,19 @@ case $BRANCH in
 	;;
 
 	next)
+	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+	KERNELBRANCH=$MAINLINE_KERNEL_BRANCH
+	KERNELDIR=$MAINLINE_KERNEL_DIR
+
 	GOVERNOR=schedutil
+
+	KERNEL_ALT_GCC='> 6.1'
 	;;
 
 	dev)
 	GOVERNOR=schedutil
+
+	KERNEL_ALT_GCC='> 6.1'
 	;;
 esac
 
