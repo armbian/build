@@ -1,0 +1,2 @@
+ARCH=arm64
+KERNEL_IMAGE_TYPE=Image
