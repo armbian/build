@@ -1,3 +1,5 @@
+Please use the "Preview" tab above to view this message
+
 Please make sure that:
 
  - any changes to kernel configuration files were made by Kconfig menu (build script option `KERNEL_CONFIGURE=yes`) and not by editing configuration files by hand,
