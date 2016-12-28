@@ -1,0 +1,7 @@
+Please make sure that:
+
+ - any changes to kernel configuration files were made by Kconfig menu (build script option `KERNEL_CONFIGURE=yes`) and not by editing configuration files by hand,
+ - patch file names don't contain spaces and have less than 40 characters (not counting the `.patch` extension),
+ - changes are properly described - what was done exactly and why.
+
+Thanks for contributing! Please remove the text above before opening a pull request.
