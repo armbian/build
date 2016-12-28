@@ -1,18 +1,17 @@
 # Armbian
 
-Ubuntu/Debian images for ARM based single-board computers
+Ubuntu and Debian images for ARM based single-board computers
 http://www.armbian.com
 
 ## How to build my own image or kernel?
 
-**Preparation**
+Supported build environments:
 
-- x86/x64 machine running any OS; 4G ram, SSD, quad core (recommended),
-- [VirtualBox](https://www.virtualbox.org/wiki/Downloads) or similar virtualization software **(highly recommended with a minimum of 20GB hard disk space for the virtual disk image)**,
-- alternatively - [Docker](https://github.com/igorpecovnik/lib/pull/255#issuecomment-205045273), [systemd-nspawn](https://www.freedesktop.org/software/systemd/man/systemd-nspawn.html) or other containerization software. Using Xenial build host inside containers is **highly recommended**,
-- compilation environment is **highly recommended** to be [Ubuntu Xenial 16.04 x64](http://archive.ubuntu.com/ubuntu/dists/xenial-updates/main/installer-amd64/current/images/netboot/mini.iso) (other releases are **not officially supported** but [Ubuntu Trusty 14.04 x64](http://archive.ubuntu.com/ubuntu/dists/trusty-updates/main/installer-amd64/current/images/netboot/mini.iso) might still work),
-- installed basic system, OpenSSH and Samba (optional),
-- superuser rights (configured `sudo` or root shell).
+- [Ubuntu Xenial 16.04 x64](http://archive.ubuntu.com/ubuntu/dists/xenial-updates/main/installer-amd64/current/images/netboot/mini.iso) guest inside a [VirtualBox](https://www.virtualbox.org/wiki/Downloads) or other virtualization software (**20GB disk space** or more and **2GB RAM** or more is recommended for the virtual disk image),
+- [Ubuntu Xenial 16.04 x64](http://archive.ubuntu.com/ubuntu/dists/xenial-updates/main/installer-amd64/current/images/netboot/mini.iso) inside a [Docker](https://github.com/igorpecovnik/lib/pull/255#issuecomment-205045273), [systemd-nspawn](https://www.freedesktop.org/software/systemd/man/systemd-nspawn.html) or other container environment. Building full OS images inside containers may not work, so this option is mostly for the kernel compilation,
+- [Ubuntu Xenial 16.04 x64](http://archive.ubuntu.com/ubuntu/dists/xenial-updates/main/installer-amd64/current/images/netboot/mini.iso) running natively on a dedicated PC or a server,
+- [Ubuntu Trusty 14.04 x64](http://archive.ubuntu.com/ubuntu/dists/trusty-updates/main/installer-amd64/current/images/netboot/mini.iso) may still be used for the kernel compilation but it is not recommended,
+- superuser rights (configured `sudo` or root access).
 
 **Execution**
 	
@@ -21,15 +20,21 @@ http://www.armbian.com
 	cp lib/compile.sh .
 	./compile.sh
 	
-This will download all necessary sources, execute compilation and/or build a bootable image. Most of things will be cached so next run will be extremely faster!
+You will be prompted with a selection menu for a build option, a board name, a kernel branch and an OS release. Please check the documentation for [advanced options](https://docs.armbian.com/Developer-Guide_Build-Options/) and [additional customization](https://docs.armbian.com/Developer-Guide_User-Configurations/).
 
-## How to change kernel configuration?
+Build process uses caching for the compilation and the debootstrap process, so consecutive runs with similar settings will be much faster.
+
+## How to change a kernel configuration?
 
 Edit `compile.sh` and set
-
+	
 	KERNEL_CONFIGURE="yes"
+	
+or pass this option as a command line parameter like
 
-to display kernel configuration menu prior to compilation
+    ./compile.sh KERNEL_CONFIGURE=yes
+
+to display the kernel configuration menu during the compilation process
 
 More info:
 
