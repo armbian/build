@@ -247,6 +247,17 @@ install_distribution_specific()
 		rm $CACHEDIR/$SDCARD/etc/init/plymouth*
 		;;
 
+		mkdir -p $CACHEDIR/$SDCARD/etc/NetworkManager/dispatcher.d/
+		cat <<-'EOF' > $CACHEDIR/$SDCARD/etc/NetworkManager/dispatcher.d/99disable-power-management
+		#!/bin/sh
+		case "$2" in
+			up) /sbin/iwconfig $1 power off || true ;;
+			down) /sbin/iwconfig $1 power on || true ;;
+		esac
+		EOF
+		chmod 755 $CACHEDIR/$SDCARD/etc/NetworkManager/dispatcher.d/99disable-power-management
+		;;
+
 	xenial)
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' $CACHEDIR/$SDCARD/etc/ssh/sshd_config
