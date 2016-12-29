@@ -211,6 +211,16 @@ install_distribution_specific()
 		# handle PMU power button
 		mkdir -p $CACHEDIR/$SDCARD/etc/udev/rules.d/
 		cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/$SDCARD/etc/udev/rules.d/
+
+		mkdir -p $CACHEDIR/$SDCARD/etc/NetworkManager/dispatcher.d/
+		cat <<-'EOF' > $CACHEDIR/$SDCARD/etc/NetworkManager/dispatcher.d/99disable-power-management
+		#!/bin/sh
+		case "$2" in
+			up) /sbin/iwconfig $1 power off || true ;;
+			down) /sbin/iwconfig $1 power on || true ;;
+		esac
+		EOF
+		chmod 755 $CACHEDIR/$SDCARD/etc/NetworkManager/dispatcher.d/99disable-power-management
 		;;
 
 	trusty)
@@ -245,17 +255,6 @@ install_distribution_specific()
 		#chroot $CACHEDIR/$SDCARD /bin/bash -c "apt-get remove --auto-remove ureadahead"
 		rm $CACHEDIR/$SDCARD/etc/init/ureadahead*
 		rm $CACHEDIR/$SDCARD/etc/init/plymouth*
-		;;
-
-		mkdir -p $CACHEDIR/$SDCARD/etc/NetworkManager/dispatcher.d/
-		cat <<-'EOF' > $CACHEDIR/$SDCARD/etc/NetworkManager/dispatcher.d/99disable-power-management
-		#!/bin/sh
-		case "$2" in
-			up) /sbin/iwconfig $1 power off || true ;;
-			down) /sbin/iwconfig $1 power on || true ;;
-		esac
-		EOF
-		chmod 755 $CACHEDIR/$SDCARD/etc/NetworkManager/dispatcher.d/99disable-power-management
 		;;
 
 	xenial)
