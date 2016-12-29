@@ -284,6 +284,13 @@ install_distribution_specific()
 		chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload mask ureadahead.service >/dev/null 2>&1"
 		chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
 		chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
+
+		# properly disable powersaving wireless mode for NetworkManager
+		mkdir -p $CACHEDIR/$SDCARD/etc/NetworkManager/conf.d/
+		cat <<-EOF > $CACHEDIR/$SDCARD/etc/NetworkManager/conf.d/zz-override-wifi-powersave-off.conf
+		[connection]
+		wifi.powersave = 2
+		EOF
 		;;
 	esac
 }
