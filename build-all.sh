@@ -46,7 +46,7 @@ pack_upload ()
 local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${VER/-$LINUXFAMILY/}"
 local linkname="${DISTRIBUTION}_${RELEASE^}_${BRANCH^}"
 [[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop && linkname=${linkname}_desktop
-if [[ $BETA == yes ]]; then 
+if [[ $BETA == yes ]]; then
 	linkname=${linkname}_Nightly.7z
 	local subdir=nightly
 	local rsync="--delete"
@@ -76,7 +76,7 @@ rm -r $CACHEDIR/$DESTIMG" &
 
 build_main ()
 {
-touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid"; 
+touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid";
 source $SRC/lib/main.sh;
 [[ $KERNEL_ONLY != yes ]] && pack_upload
 rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid"
@@ -161,7 +161,7 @@ create_images_list()
 				done
 			done
 
-		fi		
+		fi
 		unset CLI_TARGET CLI_BRANCH DESKTOP_TARGET DESKTOP_BRANCH KERNEL_TARGET CLI_BETA_TARGET DESKTOP_BETA_TARGET
 	done
 }
