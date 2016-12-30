@@ -217,7 +217,7 @@ for line in "${buildlist[@]}"; do
 		if [[ $jobs -lt $MULTITHREAD ]]; then
 			display_alert "Building in the back $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
 			(build_main) &
-			sleep $(( ( RANDOM % 30 )  + 1 ))
+			[[ $KERNEL_ONLY != yes ]] && sleep $(( ( RANDOM % 10 )  + 1 ))
 		else
 			display_alert "Building $buildtext $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
 			build_main
