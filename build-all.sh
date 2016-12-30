@@ -40,6 +40,49 @@ if [[ ! -f /etc/apt/sources.list.d/nodesource.list ]]; then
 	npm install -g markdown-pdf
 fi
 
+pack_upload ()
+{
+# comp
+local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${VER/-$LINUXFAMILY/}"
+local linkname="${DISTRIBUTION}_${RELEASE^}_${BRANCH^}"
+[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop && linkname=${linkname}_desktop
+if [[ $BETA == yes ]]; then 
+	linkname=${linkname}_Nightly.7z
+	local subdir=nightly
+	local rsync="--delete"
+	else
+	linkname=${linkname}.7z
+	local subdir=stable
+	local rsync=""
+fi
+local filename=$CACHEDIR/$DESTIMG/${version}.7z
+display_alert "Signing and compressing" "Please wait!" "info"
+# stage: generate sha256sum.sha
+cd $CACHEDIR/$DESTIMG
+sha256sum -b ${version}.img > sha256sum.sha
+# stage: sign with PGP
+if [[ -n $GPG_PASS ]]; then
+	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes ${version}.img
+	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
+fi
+# pack and upload under new process in any case
+nice -n 19 bash -c "
+7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1 ; \
+while ! rsync -arP $rsync $filename -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir};do sleep 5;done; \
+ssh ${SEND_TO_SERVER} \"cd /var/www/dl.armbian.com/${BOARD}; ln -fs ${subdir}/${version}.7z $linkname\"; rm ${version}.img; \
+rm -r $CACHEDIR/$DESTIMG" &
+}
+
+
+build_main ()
+{
+touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid"; 
+source $SRC/lib/main.sh;
+[[ $KERNEL_ONLY != yes ]] && pack_upload
+rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid"
+}
+
+
 create_images_list()
 {
 	#
@@ -114,11 +157,11 @@ create_images_list()
 
 			for release in ${build_settings_target[@]}; do
 				for kernel in ${build_settings_branch[@]}; do
-					buildlist+=("$BOARD $kernel $release no")
+					buildlist+=("$BOARD $kernel $release yes")
 				done
 			done
 
-		fi
+		fi		
 		unset CLI_TARGET CLI_BRANCH DESKTOP_TARGET DESKTOP_BRANCH KERNEL_TARGET CLI_BETA_TARGET DESKTOP_BETA_TARGET
 	done
 }
@@ -173,10 +216,11 @@ for line in "${buildlist[@]}"; do
 		jobs=$(ls /run/armbian | wc -l)
 		if [[ $jobs -lt $MULTITHREAD ]]; then
 			display_alert "Building in the back $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
-			(touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"; source $SRC/lib/main.sh; rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid";) &
+			(build_main) &
+			sleep $(( ( RANDOM % 30 )  + 1 ))
 		else
 			display_alert "Building $buildtext $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
-			(touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid"; source $SRC/lib/main.sh; rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_$BUILD_DESKTOP.pid";)
+			build_main
 		fi
 
 	fi

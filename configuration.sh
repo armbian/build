@@ -65,6 +65,7 @@ BOOTSIZE=0
 # set unique mounting directory
 SDCARD="sdcard-${BRANCH}-${BOARD}-${RELEASE}"
 MOUNT="mount-${BRANCH}-${BOARD}-${RELEASE}"
+DESTIMG="image-${BRANCH}-${BOARD}-${RELEASE}"
 
 if [[ -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]]; then
 	source $SRC/lib/config/sources/$LINUXFAMILY.conf
