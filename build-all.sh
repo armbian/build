@@ -153,8 +153,7 @@ create_images_list()
 			done
 
 		fi
-		# create upload structure
-		mkdir -p $SRC/output/cache/uploadstructure/${BOARD}/{archive,nightly}
+
 		unset CLI_TARGET CLI_BRANCH DESKTOP_TARGET DESKTOP_BRANCH KERNEL_TARGET CLI_BETA_TARGET DESKTOP_BETA_TARGET
 	done
 }
