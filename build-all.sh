@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
+# Copyright (c) Authors: http://www.armbian.com/authors
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
@@ -29,47 +29,38 @@ from=0
 
 rm -rf /run/armbian
 mkdir -p /run/armbian
-
 RELEASE_LIST=("trusty" "xenial" "wheezy" "jessie")
 BRANCH_LIST=("default" "next" "dev")
 
-# add dependencies for converting .md to .pdf
-if [[ ! -f /etc/apt/sources.list.d/nodesource.list ]]; then
-	curl -sL https://deb.nodesource.com/setup_6.x | sudo -E bash -
-	apt-get install -y libfontconfig1 nodejs
-	npm install -g markdown-pdf
-fi
 
 pack_upload ()
 {
-# comp
-local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${VER/-$LINUXFAMILY/}"
-local linkname="${DISTRIBUTION}_${RELEASE^}_${BRANCH^}"
-[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop && linkname=${linkname}_desktop
-if [[ $BETA == yes ]]; then
-	linkname=${linkname}_Nightly.7z
-	local subdir=nightly
-	local rsync="--delete"
-	else
-	linkname=${linkname}.7z
-	local subdir=stable
-	local rsync=""
-fi
-local filename=$CACHEDIR/$DESTIMG/${version}.7z
+# pack into .7z and upload to server
+
+# stage: init
 display_alert "Signing and compressing" "Please wait!" "info"
+local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${VER/-$LINUXFAMILY/}"
+local subdir="archive"
+[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
+[[ $BETA == yes ]] && local subdir=nightly
+local filename=$CACHEDIR/$DESTIMG/${version}.7z
+
 # stage: generate sha256sum.sha
 cd $CACHEDIR/$DESTIMG
 sha256sum -b ${version}.img > sha256sum.sha
+
 # stage: sign with PGP
 if [[ -n $GPG_PASS ]]; then
 	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes ${version}.img
 	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
 fi
-# pack and upload under new process in any case
-nice -n 19 bash -c "
+
+# pack and move file to server under new process
+nice -n 19 bash -c "\
 7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1 ; \
-while ! rsync -arP $rsync $filename -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir};do sleep 5;done; \
-ssh ${SEND_TO_SERVER} \"cd /var/www/dl.armbian.com/${BOARD}; ln -fs ${subdir}/${version}.7z $linkname\"; rm ${version}.img; \
+find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; \
+while ! rsync -arP $CACHEDIR/$DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir};do sleep 5;done; \
+ssh ${SEND_TO_SERVER} \"cd /var/www/dl.armbian.com/${BOARD}; ln -fs ${subdir}/${version}.7z $linkname\"; \
 rm -r $CACHEDIR/$DESTIMG" &
 }
 
@@ -162,6 +153,8 @@ create_images_list()
 			done
 
 		fi
+		# create upload structure
+		mkdir -p $SRC/output/cache/uploadstructure/${BOARD}/{archive,nightly}
 		unset CLI_TARGET CLI_BRANCH DESKTOP_TARGET DESKTOP_BRANCH KERNEL_TARGET CLI_BETA_TARGET DESKTOP_BETA_TARGET
 	done
 }
