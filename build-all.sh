@@ -55,6 +55,9 @@ if [[ -n $GPG_PASS ]]; then
 	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
 fi
 
+# create remote directory structure
+ssh ${SEND_TO_SERVER} "mkdir -p /var/www/dl.armbian.com/${BOARD}/{archive,nightly};";
+
 # pack and move file to server under new process
 nice -n 19 bash -c "\
 7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1 ; \
