@@ -10,14 +10,14 @@
 build_firmware()
 {
 	display_alert "Merging and packaging linux firmware" "@host" "info"
-	
+
 	local plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
 	local plugin_dir="armbian-firmware${FULL}"
 	[[ -d "$SOURCES/$plugin_dir" && -n "$SOURCES$plugin_dir" ]] && rm -rf $SOURCES/$plugin_dir
-	
+
 	if [[ -n $FULL ]]; then
 		fetch_from_repo "$plugin_repo" "$plugin_dir/lib/firmware" "branch:master"
-	fi	
+	fi
 	mkdir -p $SOURCES/$plugin_dir/lib/firmware
 	# overlay our firmware
 	cp -R $SRC/lib/bin/firmware-overlay/* $SOURCES/$plugin_dir/lib/firmware
@@ -34,7 +34,7 @@ build_firmware()
 	Architecture: $ARCH
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Installed-Size: 1
-	Replaces: linux-firmware, firmware-brcm80211, armbian-firmware${REPLACE}
+	Replaces: linux-firmware, firmware-brcm80211, firmware-realtek, armbian-firmware${REPLACE}
 	Section: kernel
 	Priority: optional
 	Description: Linux firmware${FULL}
