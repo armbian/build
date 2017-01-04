@@ -477,13 +477,13 @@ create_image()
 	# unmount /boot first, rootfs second, image file last
 	sync
 	[[ $BOOTSIZE != 0 ]] && umount -l $CACHEDIR/$MOUNT/boot
-	[[ $ROOTFS_TYPE != nfs ]] && umount -l $CACHEDIR/$MOUNT	
+	[[ $ROOTFS_TYPE != nfs ]] && umount -l $CACHEDIR/$MOUNT
 	losetup -d $LOOP
 	rm -rf --one-file-system $CACHEDIR/$DESTIMG $CACHEDIR/$MOUNT
 	mkdir -p $CACHEDIR/$DESTIMG
 	cp $CACHEDIR/$SDCARD/etc/armbian.txt $CACHEDIR/$DESTIMG
 	mv $CACHEDIR/${SDCARD}.raw $CACHEDIR/$DESTIMG/${version}.img
-	[[ $BUILD_ALL != yes ]] && cp $CACHEDIR/$DESTIMG/${version}.img $DEST/images/${version}.img	
+	[[ $BUILD_ALL != yes ]] && cp $CACHEDIR/$DESTIMG/${version}.img $DEST/images/${version}.img
 	display_alert "Done building" "$DEST/images/${version}.img" "info"
 
 } #############################################################################

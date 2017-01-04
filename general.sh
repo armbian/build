@@ -134,12 +134,6 @@ create_sources_list()
 	deb http://security.debian.org/ ${release}/updates main contrib non-free
 	#deb-src http://security.debian.org/ ${release}/updates main contrib non-free
 	EOF
-
-	cat <<-EOF > $basedir/etc/apt/preferences.d/90-backports.pref
-	#Package: *
-	#Pin: release n=${release}-backports
-	#Pin-Priority: 100
-	EOF
 	;;
 
 	trusty|xenial)
@@ -155,12 +149,6 @@ create_sources_list()
 
 	deb http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
-	EOF
-
-	cat <<-EOF > $basedir/etc/apt/preferences.d/90-backports.pref
-	#Package: *
-	#Pin: release a=${release}-backports
-	#Pin-Priority: 100
 	EOF
 	;;
 	esac
