@@ -196,6 +196,14 @@ fetch_from_repo()
 	mkdir -p $SOURCES/$workdir
 	cd $SOURCES/$workdir
 
+	# check if existing remote URL for the repo or branch does not match current one
+	if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null) == true && \
+				$(git rev-parse --show-toplevel) == $(pwd) && \
+				$(git remote get-url origin) != $url ]]; then
+		display_alert "Remote URL does not match, removing existing local copy"
+		rm -rf .git *
+	fi
+
 	if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null) != true || \
 				$(git rev-parse --show-toplevel) != $(pwd) ]]; then
 		display_alert "Creating local copy"
