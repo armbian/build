@@ -156,6 +156,10 @@ compile_uboot()
 	Description: Uboot loader $version
 	END
 
+	# copy config file to the package
+	# useful for FEL boot with overlayfs_wrapper
+	[[ -f .config && -n $BOOTCONFIG ]] && cp .config $uboot_name/usr/lib/u-boot/$BOOTCONFIG
+
 	display_alert "Building deb" "${uboot_name}.deb" "info"
 	eval 'dpkg -b $uboot_name 2>&1' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'}
 	rm -rf $uboot_name

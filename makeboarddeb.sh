@@ -125,6 +125,7 @@ create_board_package()
 	LINUXFAMILY=$LINUXFAMILY
 	BRANCH=$BRANCH
 	ARCH=$ARCHITECTURE
+	IMAGE_TYPE=$IMAGE_TYPE
 	EOF
 
 	# temper binary for USB temp meter

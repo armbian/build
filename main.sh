@@ -65,6 +65,12 @@ for i in "$@"; do
 	fi
 done
 
+if [[ $BETA == yes ]]; then
+	IMAGE_TYPE=nightly
+else
+	IMAGE_TYPE=stable
+fi
+
 if [[ $PROGRESS_DISPLAY == none ]]; then
 	OUTPUT_VERYSILENT=yes
 elif [[ $PROGRESS_DISPLAY != plain ]]; then

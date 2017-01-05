@@ -159,6 +159,9 @@ install_common()
 
 	# copy "first run automated config, optional user configured"
  	cp $SRC/lib/config/armbian_first_run.txt $CACHEDIR/$SDCARD/boot/armbian_first_run.txt
+
+	# switch to beta repository at this stage if building nightly images
+	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
 }
 
 install_distribution_specific()

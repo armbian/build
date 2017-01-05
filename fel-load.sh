@@ -58,11 +58,7 @@ fel_load()
 				local dtb_file=boot/script.bin
 			fi
 		else
-			if [[ -f $SOURCES/$BOOTSOURCEDIR/.config ]]; then
-				local dtb_file=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/.config | cut -d '"' -f2).dtb
-			else
-				local dtb_file=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $SOURCES/$BOOTSOURCEDIR/configs/$BOOTCONFIG | cut -d '"' -f2).dtb
-			fi
+			local dtb_file=boot/dtb/$(grep CONFIG_DEFAULT_DEVICE_TREE $FEL_ROOTFS/usr/lib/u-boot/$BOOTCONFIG | cut -d '"' -f2).dtb
 		fi
 	fi
 	[[ $(type -t fel_pre_load) == function ]] && fel_pre_load

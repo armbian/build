@@ -23,7 +23,7 @@ if test "${console}" = "serial" || test "${console}" = "both"; then setenv conso
 
 setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} no_console_suspend earlycon=uart,mmio32,0x01c28000 mac_addr=${ethaddr} panic=10 consoleblank=0 enforcing=0 loglevel=${verbosity} ${extraargs} ${extraboardargs}"
 
-ext4load mmc 0 ${fdt_addr} /boot/${pine64_model}.dtb || fatload mmc 0 ${fdt_addr} ${pine64_model}.dtb || ext4load mmc 0 ${fdt_addr} ${pine64_model}.dtb
+ext4load mmc 0 ${fdt_addr} /boot/dtb/sun50iw1p1-${pine64_model}.dtb || fatload mmc 0 ${fdt_addr} dtb/sun50iw1p1-${pine64_model}.dtb || ext4load mmc 0 ${fdt_addr} dtb/sun50iw1p1-${pine64_model}.dtb
 ext4load mmc 0 ${initrd_addr} /boot/uInitrd || fatload mmc 0 ${initrd_addr} uInitrd || ext4load mmc 0 ${initrd_addr} uInitrd
 ext4load mmc 0 ${kernel_addr} /boot/Image || fatload mmc 0 ${kernel_addr} Image || ext4load mmc 0 ${kernel_addr} Image
 
