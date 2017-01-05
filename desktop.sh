@@ -43,10 +43,16 @@ install_desktop ()
 	# set default wallpaper
 	sed -i 's/\(backgrounds\/xfce\/*\)[^ ]*/\1armbian06-1430-very-dark-3840x2160.jpg\"\/>/' $CACHEDIR/$SDCARD/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
 	sed -i 's/\(backgrounds\/xfce\/*\)[^ ]*/\1armbian06-1430-very-dark-3840x2160.jpg\"\/>/' $CACHEDIR/$SDCARD/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
-	
+
 	# Install custom icons and theme
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/bin/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "unzip -qq /tmp/bin/NumixHolo.zip -d /usr/share/themes"
+
+	# Install appgrid on xenial
+	if [[ $RELEASE == xenial ]]; then
+		chroot $CACHEDIR/$SDCARD /bin/bash -c "add-apt-repository -y ppa:appgrid/stable"
+		chroot $CACHEDIR/$SDCARD /bin/bash -c "apt-get update && apt-get install appgrid"
+	fi
 
 	# Enable network manager
 	if [[ -f ${CACHEDIR}/$SDCARD/etc/NetworkManager/NetworkManager.conf ]]; then
