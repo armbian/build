@@ -51,7 +51,7 @@ install_desktop ()
 	# Install appgrid on xenial
 	if [[ $RELEASE == xenial ]]; then
 		chroot $CACHEDIR/$SDCARD /bin/bash -c "add-apt-repository -y ppa:appgrid/stable"
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "apt-get update && apt-get install appgrid"
+		chroot $CACHEDIR/$SDCARD /bin/bash -c "apt-get update && apt-get install -qq -y --no-install-recommends appgrid"
 	fi
 
 	# Enable network manager
