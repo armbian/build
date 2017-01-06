@@ -48,12 +48,6 @@ install_desktop ()
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/bin/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "unzip -qq /tmp/bin/NumixHolo.zip -d /usr/share/themes"
 
-	# Install appgrid on xenial
-	if [[ $RELEASE == xenial ]]; then
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "add-apt-repository -y ppa:appgrid/stable"
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "apt-get update && apt-get install -qq -y --no-install-recommends appgrid"
-	fi
-
 	# Enable network manager
 	if [[ -f ${CACHEDIR}/$SDCARD/etc/NetworkManager/NetworkManager.conf ]]; then
 		sed "s/managed=\(.*\)/managed=true/g" -i $CACHEDIR/$SDCARD/etc/NetworkManager/NetworkManager.conf
