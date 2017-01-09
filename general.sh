@@ -197,9 +197,11 @@ fetch_from_repo()
 	cd $SOURCES/$workdir
 
 	# check if existing remote URL for the repo or branch does not match current one
-	if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null) == true && \
+	# may not be supported by older git versions
+	local current_url=$(git remote get-url origin 2>/dev/null)
+	if [[ -n $current_url && $(git rev-parse --is-inside-work-tree 2>/dev/null) == true && \
 				$(git rev-parse --show-toplevel) == $(pwd) && \
-				$(git remote get-url origin) != $url ]]; then
+				$current_url != $url ]]; then
 		display_alert "Remote URL does not match, removing existing local copy"
 		rm -rf .git *
 	fi
