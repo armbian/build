@@ -110,7 +110,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: wheezy|jessie|trusty|xenial
+# <release>: jessie|xenial
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -120,7 +120,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	wheezy|jessie)
+	jessie)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -136,7 +136,7 @@ create_sources_list()
 	EOF
 	;;
 
-	trusty|xenial)
+	xenial)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -353,7 +353,7 @@ addtorepo()
 # add all deb files to repository
 # parameter "remove" dumps all and creates new
 # function: cycle trough distributions
-	local distributions=("wheezy" "jessie" "trusty" "xenial")
+	local distributions=("jessie" "xenial")
 
 	for release in "${distributions[@]}"; do
 

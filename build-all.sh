@@ -29,7 +29,7 @@ from=0
 
 rm -rf /run/armbian
 mkdir -p /run/armbian
-RELEASE_LIST=("trusty" "xenial" "wheezy" "jessie")
+RELEASE_LIST=("xenial" "jessie")
 BRANCH_LIST=("default" "next" "dev")
 
 

@@ -134,8 +134,8 @@ create_rootfs_cache()
 			local apt_mirror="http://$APT_MIRROR"
 		fi
 
-		# fancy progress bars (except for Wheezy target)
-		[[ -z $OUTPUT_DIALOG && $RELEASE != wheezy ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
+		# fancy progress bars
+		[[ -z $OUTPUT_DIALOG ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
 
 		display_alert "Installing base system" "Stage 1/2" "info"
 		eval 'debootstrap --include=locales ${PACKAGE_LIST_EXCLUDE:+ --exclude=${PACKAGE_LIST_EXCLUDE// /,}} \
@@ -189,14 +189,8 @@ create_rootfs_cache()
 		create_sources_list "$RELEASE" "$CACHEDIR/$SDCARD/"
 
 		# stage: add armbian repository and install key
-		case $RELEASE in
-		wheezy|trusty)
-			echo "deb http://apt.armbian.com $RELEASE main" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
-		;;
-		jessie|xenial)
-			echo "deb http://apt.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
-		;;
-		esac
+		echo "deb http://apt.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
+
 		cp $SRC/lib/bin/armbian.key $CACHEDIR/$SDCARD
 		eval 'chroot $CACHEDIR/$SDCARD /bin/bash -c "cat armbian.key | apt-key add -"' \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
