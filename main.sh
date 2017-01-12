@@ -180,7 +180,7 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	[[ -z $RELEASE ]] && exit_with_error "No release selected"
 fi
 
-if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP && "jessie xenial" == *$RELEASE* ]]; then
+if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	options=()
 	options+=("no" "Image with console interface (server)")
 	options+=("yes" "Image with desktop environment")

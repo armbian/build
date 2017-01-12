@@ -64,12 +64,10 @@ debootstrap_ng()
 	# install desktop files
 	[[ $BUILD_DESKTOP == yes ]] && install_desktop
 
-	if [[ $RELEASE == jessie || $RELEASE == xenial ]]; then
-		# install locally built packages
-		[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
-		# install from apt.armbian.com
-		[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes"
-	fi
+	# install locally built packages
+	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
+	# install from apt.armbian.com
+	[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes"
 
 	# cleanup for install_kernel and install_board_specific
 	umount $CACHEDIR/$SDCARD/tmp/debs
