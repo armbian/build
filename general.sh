@@ -110,7 +110,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: wheezy|jessie|trusty|xenial
+# <release>: jessie|xenial
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -120,7 +120,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	wheezy|jessie)
+	jessie)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -136,7 +136,7 @@ create_sources_list()
 	EOF
 	;;
 
-	trusty|xenial)
+	xenial)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -353,7 +353,7 @@ addtorepo()
 # add all deb files to repository
 # parameter "remove" dumps all and creates new
 # function: cycle trough distributions
-	local distributions=("wheezy" "jessie" "trusty" "xenial")
+	local distributions=("jessie" "xenial")
 
 	for release in "${distributions[@]}"; do
 
@@ -474,7 +474,7 @@ prepare_host()
 	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-tools gcc-aarch64-linux-gnu ncurses-term p7zip-full dos2unix dosfstools libc6-dev-armhf-cross libc6-dev-armel-cross \
-	libc6-dev-arm64-cross curl gcc-arm-none-eabi libnewlib-arm-none-eabi patchutils"
+	libc6-dev-arm64-cross curl gcc-arm-none-eabi libnewlib-arm-none-eabi patchutils python"
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"

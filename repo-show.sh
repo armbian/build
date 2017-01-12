@@ -14,7 +14,7 @@
 # load functions
 source general.sh
 
-DISTROS=("wheezy" "jessie" "trusty" "xenial")
+DISTROS=("jessie" "xenial")
 
 showall()
 {

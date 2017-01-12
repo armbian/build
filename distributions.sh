@@ -55,16 +55,6 @@ install_common()
 	# force change root password at first login
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "chage -d 0 root"
 
-	# tmpfs configuration
-	# Takes effect only in Wheezy and Trusty
-	if [[ -f $CACHEDIR/$SDCARD/etc/default/tmpfs ]]; then
-		sed -e 's/#RAMTMP=no/RAMTMP=yes/g' -i $CACHEDIR/$SDCARD/etc/default/tmpfs
-		sed -e 's/#RUN_SIZE=10%/RUN_SIZE=128M/g' -i $CACHEDIR/$SDCARD/etc/default/tmpfs
-		sed -e 's/#LOCK_SIZE=/LOCK_SIZE=/g' -i $CACHEDIR/$SDCARD/etc/default/tmpfs
-		sed -e 's/#SHM_SIZE=/SHM_SIZE=128M/g' -i $CACHEDIR/$SDCARD/etc/default/tmpfs
-		sed -e 's/#TMP_SIZE=/TMP_SIZE=1G/g' -i $CACHEDIR/$SDCARD/etc/default/tmpfs
-	fi
-
 	# add custom bashrc loading
 	cat <<-EOF >> $CACHEDIR/$SDCARD/etc/bash.bashrc
 	if [[ -f /etc/bash.bashrc.custom ]]; then
@@ -170,28 +160,6 @@ install_distribution_specific()
 
 	case $RELEASE in
 
-	wheezy)
-		# add serial console
-		echo T0:2345:respawn:/sbin/getty -L $SERIALCON 115200 vt100 >> $CACHEDIR/$SDCARD/etc/inittab
-
-		# don't clear screen on boot console
-		sed -e 's/getty 38400 tty1/getty --noclear 38400 tty1/g' -i $CACHEDIR/$SDCARD/etc/inittab
-
-		# disable some getties
-		sed -e 's/5:23:respawn/#5:23:respawn/g' -i $CACHEDIR/$SDCARD/etc/inittab
-		sed -e 's/6:23:respawn/#6:23:respawn/g' -i $CACHEDIR/$SDCARD/etc/inittab
-
-		# install ramlog
-		cp $SRC/lib/bin/ramlog_2.0.0_all.deb $CACHEDIR/$SDCARD/tmp
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/ramlog_2.0.0_all.deb >/dev/null 2>&1"
-		# enabled back at first run. To remove errors
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "service ramlog disable >/dev/null 2>&1"
-		rm $CACHEDIR/$SDCARD/tmp/ramlog_2.0.0_all.deb
-		sed -e 's/TMPFS_RAMFS_SIZE=/TMPFS_RAMFS_SIZE=512m/g' -i $CACHEDIR/$SDCARD/etc/default/ramlog
-		sed -e 's/$remote_fs $time/$remote_fs $time ramlog/g' -i $CACHEDIR/$SDCARD/etc/init.d/rsyslog
-		sed -e 's/umountnfs $time/umountnfs $time ramlog/g' -i $CACHEDIR/$SDCARD/etc/init.d/rsyslog
-		;;
-
 	jessie)
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $CACHEDIR/$SDCARD/etc/ssh/sshd_config
@@ -224,40 +192,6 @@ install_distribution_specific()
 		esac
 		EOF
 		chmod 755 $CACHEDIR/$SDCARD/etc/NetworkManager/dispatcher.d/99disable-power-management
-		;;
-
-	trusty)
-		# add serial console
-		cat <<-EOF > $CACHEDIR/$SDCARD/etc/init/$SERIALCON.conf
-		start on stopped rc RUNLEVEL=[2345]
-		stop on runlevel [!2345]
-
-		respawn
-		exec /sbin/getty --noclear 115200 $SERIALCON
-		EOF
-
-		# don't clear screen tty1
-		sed -e s,"exec /sbin/getty","exec /sbin/getty --noclear",g -i $CACHEDIR/$SDCARD/etc/init/tty1.conf
-
-		# disable some getties
-		rm -f $CACHEDIR/$SDCARD/etc/init/tty5.conf
-		rm -f $CACHEDIR/$SDCARD/etc/init/tty6.conf
-
-		# enable root login for latest ssh on trusty
-		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $CACHEDIR/$SDCARD/etc/ssh/sshd_config
-
-		# remove legal info from Ubuntu
-		[[ -f $CACHEDIR/$SDCARD/etc/legal ]] && rm $CACHEDIR/$SDCARD/etc/legal
-
-		# that my custom motd works well
-		if [[ -d $CACHEDIR/$SDCARD/etc/update-motd.d ]]; then
-			mv $CACHEDIR/$SDCARD/etc/update-motd.d $CACHEDIR/$SDCARD/etc/update-motd.d-backup
-		fi
-
-		# remove what's anyway not working
-		#chroot $CACHEDIR/$SDCARD /bin/bash -c "apt-get remove --auto-remove ureadahead"
-		rm $CACHEDIR/$SDCARD/etc/init/ureadahead*
-		rm $CACHEDIR/$SDCARD/etc/init/plymouth*
 		;;
 
 	xenial)

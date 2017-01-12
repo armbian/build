@@ -11,7 +11,7 @@
 
 # This script recreates deb repository from files in directory POT
 #
-# each file is added three times! wheezy-jessie-trusty
+# each file is added 2 times! jessie-xenial
 #
 # We are using this only for kernel, firmware, root changes, headers
 

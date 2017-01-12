@@ -170,13 +170,9 @@ else
 	[[ $KERNEL_TARGET != *$BRANCH* ]] && exit_with_error "Kernel branch not defined for this board" "$BRANCH"
 fi
 
-# wheezy and trusty targets are obsolete, but still accessible via command line arguments
-# or custom configuration files
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	options=()
-	#options+=("wheezy" "Debian 7 Wheezy")
 	options+=("jessie" "Debian 8 Jessie")
-	#options+=("trusty" "Ubuntu Trusty 14.04 LTS")
 	options+=("xenial" "Ubuntu Xenial 16.04 LTS")
 	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select the target OS release" \
 		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
@@ -184,7 +180,7 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	[[ -z $RELEASE ]] && exit_with_error "No release selected"
 fi
 
-if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP && "jessie xenial" == *$RELEASE* ]]; then
+if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	options=()
 	options+=("no" "Image with console interface (server)")
 	options+=("yes" "Image with desktop environment")
