@@ -11,21 +11,25 @@ Vagrant.configure(2) do |config|
     #
     #   $ vagrant plugin install vagrant-disksize
     #
-    #######################################################################
-
     # Default images are not big enough to build Armbian.
     config.disksize.size = "40GB"
+
+    #######################################################################
+    # We could sync more folders (that *seems* like the best way to go),
+    # but in many cases builds fail because hardlinks are not supported.
+    # So, a more failproof approach is to just use a larger disk.
+    #
+    # Following the directory structure outlined here:
+    # https://docs.armbian.com/Developer-Guide_Build-Process/#directory-structure
 
     # So we don't have to download the code a 2nd time.
     config.vm.synced_folder ".", "/home/ubuntu/lib"
 
-    #######################################################################
-    # We could sync more folders (that seems like the best way to go),
-    # but in many cases builds fail because hardlinks are not supported.
-    # So, a more failproof approach is to just use a larger disk.
-
     # Share folders with the host to make it easy to get our images out.
-    config.vm.synced_folder "./output", "/home/ubuntu/output", create: true
+    config.vm.synced_folder "../output", "/home/ubuntu/output", create: true
+
+    # Bring over your customizations.
+    config.vm.synced_folder "../userpatches", "/home/ubuntu/userpatches", create: true
 
     config.vm.provider "virtualbox" do |vb|
         vb.name = "Armbian Builder"
