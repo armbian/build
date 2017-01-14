@@ -1,7 +1,7 @@
 # Armbian
 
 Ubuntu and Debian images for ARM based single-board computers
-http://www.armbian.com
+https://www.armbian.com
 
 ## How to build my own image or kernel?
 
@@ -34,13 +34,17 @@ Edit `compile.sh` and set
 
 or pass this option as a command line parameter like
 
-    ./compile.sh KERNEL_CONFIGURE=yes
+	./compile.sh KERNEL_CONFIGURE=yes
 
 to display the kernel configuration menu during the compilation process
 
-More info:
+## Reporting issues
 
-- [Documentation](http://www.armbian.com/using-armbian-tools/)
-- [Prebuilt images](http://www.armbian.com/download/)
-- [Support forums](http://forum.armbian.com/ "Armbian support forum")
+Please read [this](https://github.com/igorpecovnik/lib/blob/master/.github/ISSUE_TEMPLATE.md) notice first before opening an issue.
+
+## More info:
+
+- [Documentation](https://docs.armbian.com/Developer-Guide_Build-Preparation/)
+- [Prebuilt images](https://www.armbian.com/download/)
+- [Support forums](https://forum.armbian.com/ "Armbian support forum")
 - [Project at Github](https://github.com/igorpecovnik/lib)

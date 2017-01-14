@@ -1,4 +1,4 @@
-Please use the "Preview" tab above to view this message
+Please use the "Preview" tab above to view this message if you are seeing this in the new issue text box.
 
 Please use this issue tracker only for the build script related bugs and enhancements, such as:
 

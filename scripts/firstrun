@@ -7,19 +7,21 @@
 # Should-Start:      armhwinfo
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
-# Short-Description: PLEASE DO NOT INTERRUPT THE FIRST BOOT
+# Short-Description: Armbian first run tasks
 # Description:       Something needs to be done when is
 #                    starting at first time.
-#                    regenerate ssh host key
 ### END INIT INFO
-#
-# Create this file to speed up boot process
-#
 
 # Immediately exit if not called by init system
-if [ "X$1" != "Xstart" ]; then
-	exit 1
+if [[ $1 != start ]]; then
+	echo "Usage: $0 start" >&2
+	exit 0
 fi
+
+. /etc/armbian-release
+. /etc/os-release
+. /lib/init/vars.sh
+. /lib/lsb/init-functions
 
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Log=/var/log/armhwinfo.log
@@ -41,9 +43,9 @@ echo -e "### [firstrun] Recreated SSH keys (entropy: \${entropy_before} \${entro
 MEMTOTAL=$(( $(awk -F" " '/^MemTotal/ {print $2}' </proc/meminfo) / 1024 ))
 FREESIZE=\$(df -hm / | awk '/\// {print \$(NF-2)}')
 SWAPFILE=/var/swap
-if [[ ! -f "\$SWAPFILE" && "\$FREESIZE" -gt "132" ]]; then
+if [[ ! -f \$SWAPFILE && \$FREESIZE -gt 132 ]]; then
 fallocate -l 128M \$SWAPFILE >/dev/null 2>&1
-if [ $? -eq 1 ]; then dd if=/dev/zero of=\$SWAPFILE bs=1M count=128 status=noxfer >/dev/null 2>&1; fi
+if [[ \$? -ne 0 ]]; then dd if=/dev/zero of=\$SWAPFILE bs=1M count=128 status=noxfer >/dev/null 2>&1; fi
 chown root:root \$SWAPFILE
 chmod 0600 \$SWAPFILE
 mkswap \$SWAPFILE >/dev/null 2>&1
@@ -52,22 +54,8 @@ if ! grep -q swap /etc/fstab; then echo "\$SWAPFILE					none		swap	sw								0	0
 if ! grep -q swap /etc/sysctl.conf; then echo "vm.swappiness=0" >> /etc/sysctl.conf; fi
 echo -e "\n### [firstrun] Created 128MB emergency swap as \$SWAPFILE" >>${Log}
 fi
-# RAMLOG
-if [[ "$(apt-cache policy ramlog | grep Installed)" != "" ]]; then
-	service ramlog enable
-	# if we have 1G ram reduce RAMLOG size 
-	if [[ "\$MEMTOTAL" -lt "1100" ]]; then
-		if [ -f "/etc/default/ramlog" ]; then					
-			sed -e 's/TMPFS_RAMFS_SIZE=512m/TMPFS_RAMFS_SIZE=256m/g' -i /etc/default/ramlog
-		fi
-	elif [[ "\$MEMTOTAL" -lt "600" ]]; then
-		if [ -f "/etc/default/ramlog" ]; then					
-			sed -e 's/TMPFS_RAMFS_SIZE=512m/TMPFS_RAMFS_SIZE=192m/g' -i /etc/default/ramlog
-		fi
-	fi
-fi
-while [ -f /tmp/firstrun_running ]; do sleep 1; done
-if [ -f "/var/run/reboot" ]; then
+while [[ -f /tmp/firstrun_running ]]; do sleep 1; done
+if [[ -f /var/run/reboot ]]; then
 	wall -n "Performing automatic reboot in 5 seconds"
 	sleep 5
 	reboot
@@ -77,138 +65,74 @@ sync &
 EOT
 chmod +x /tmp/create_swap.sh
 
-collect_information() {
-	# get some info about the board
-	source /etc/armbian-release
-	DISTRIBUTION=$(lsb_release -cs)
-	
-	# enable BT on cubietruck
-	[[ "$BOARD" == "cubietruck" ]] && update-rc.d brcm40183-patch defaults
-
-	# enable BT on Banana M2+, NanoPi Air or NanoPi M1 Plus
-	[[ "$BOARD" == "bananapim2plus" || "$BOARD" == "nanopiair" || "$BOARD" == "nanopim1plus" ]] \
-		&& update-rc.d ap6212-bluetooth defaults
-	
-	# enable BT on Solidrun boards
-	[[ "$BOARD" == "Cubox i2eX/i4" ]] && update-rc.d brcm4330-patch defaults && /etc/init.d/brcm4330-patch start
-	
-	case ${DISTRIBUTION} in
-		wheezy)
-			root_device=$(mountpoint -d /)
-			for file in /dev/* ; do
-				CURRENT_DEVICE=$(printf "%d:%d" $(stat --printf="0x%t 0x%T" $file))
-				if [ $CURRENT_DEVICE = $root_device ]; then
-					root_partition=$file
-					break;
-				fi
-			done
-			rootfstype=$(blkid -s TYPE -o value $root_partition)
-			;;
-		*)
-			ROOTFS=$(findmnt / | awk -F" " '/\/dev\// {print $2"\t"$3}')
-			set ${ROOTFS}
-			root_partition=$1
-			rootfstype=$2
-			;;
-	esac
-} # collect_information
-
-adjust_sunxi_settings() {
-	# set some mac address for BT
-	[[ "$(lsmod | grep dhd)" != "" ]] && \
-		(MACADDR=$(printf '43:29:B1:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]) ; \
-		sed -i "s/^MAC_ADDR=.*/MAC_ADDR=${MACADDR}/" /etc/default/brcm40183 ;\
-		sed -i "s/^MAC_ADDR=.*/MAC_ADDR=${MACADDR}/" /etc/default/ap6212 \
-		echo -e "\n### [firstrun] Use MAC address ${MACADDR} for Bluetooth from now" >>${Log})
-	
-	case ${BOARD_NAME} in
-		"NanoPi Air"|"Orange Pi Lite"|"NanoPi M1 Plus")
-			# change serial port for BT on NanoPi Air and NanoPi M1 Plus
-			sed -i "s/^PORT=.*/PORT=ttyS3/" /etc/default/ap6212
-			# relink /etc/network/interfaces on OPi Lite and NanoPi Air
-			cd /etc/network/ && ln -sf interfaces.network-manager interfaces
-			;;
-		"Orange Pi Zero")
-			# set OPi Zero WiFi address permanently based on a random address using Allwinner's MAC prefix
-			MACADDR=$(printf 'DC:44:6D:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256])
-	                echo "options xradio_wlan macaddr=${MACADDR}" >/etc/modprobe.d/xradio_wlan.conf
-	                echo -e "\n### [firstrun] Use MAC address ${MACADDR} for Wi-Fi from now" >>${Log}
-			cd /etc/network/ && ln -sf interfaces.network-manager interfaces
-			(modprobe -r xradio_wlan && sleep 1 && modprobe xradio_wlan) &
-			;;
-	esac
-
-	# trigger red or blue LED as user feedback
-	echo heartbeat >/sys/class/leds/*red*/trigger 2>/dev/null || echo heartbeat >/sys/class/leds/*blue*/trigger 2>/dev/null	
-} # adjust_sunxi_settings
-
 do_expand_rootfs() {
-	# get device node for boot media	
-	DEVICE=$(findmnt / | awk -F" " '/\/dev\// {print $2}' |  sed -e 's/p.*//')
-	if [ "${DEVICE}" = "/dev/" ]; then return ; fi
-	QUOTED_DEVICE=$(echo "${DEVICE}" | sed 's:/:\\\/:g')
-	
+	local rootpart=$(findmnt -n -o SOURCE /) # i.e. /dev/mmcblk0p1
+	local rootdevice=$(lsblk -n -o PKNAME $rootpart) # i.e. mmcblk0
+	local rootdevicepath="/dev/$rootdevice" # i.e. /dev/mmcblk0
 	# get count of partitions and their boundaries
-	PARTITIONS=$(( $(grep -c ${DEVICE##*/}p /proc/partitions) ))
-	PARTSTART=$(parted ${DEVICE} unit s print -sm | tail -1 | cut -d: -f2 | sed 's/s//') # start of first partition
-	PARTEND=$(parted ${DEVICE} unit s print -sm | head -3 | tail -1 | cut -d: -f3 | sed 's/s//') # end of first partition
-	STARTFROM=$(( ${PARTEND} + 1 ))
-	[[ ${PARTITIONS} == 1 ]] && STARTFROM=${PARTSTART}
-	
+	local partitions=$(( $(grep -c $rootdevice /proc/partitions) - 1 ))
+	local partstart=$(parted $rootdevicepath unit s print -sm | tail -1 | cut -d: -f2 | sed 's/s//') # start of first partition
+	local partend=$(parted $rootdevicepath unit s print -sm | head -3 | tail -1 | cut -d: -f3 | sed 's/s//') # end of first partition
+	local startfrom=$(( $partend + 1 ))
+	[[ $partitions == 1 ]] && startfrom=$partstart
+	echo "rootpart: $rootpart" >> $Log
+	echo "rootdevice: $rootdevice" >> $Log
+	echo "rootdevicepath: $rootdevicepath" >> $Log
+	echo "partitions: $partitions" >> $Log
+
 	# check whether a resizing rule is defined. We will take this value if it's not too low. In
 	# this case the value will be ignored and resizing to the whole card size happens.
-	if [ -f "/root/.rootfs_resize" ]; then
+	if [[ -f /root/.rootfs_resize ]]; then
 		read RESIZE_VALUE <"/root/.rootfs_resize"
-		ResizeLog="Resize rule ${RESIZE_VALUE} defined for ${root_partition}"
-		case ${RESIZE_VALUE} in
+		ResizeLog="Resize rule $RESIZE_VALUE defined for root partition"
+		case $RESIZE_VALUE in
 			*%)
 				# percentage value, we try to use 16MiB to align partitions since this is
 				# the erase block size of more recent SD cards (512 byte sectors, so we use 32
 				# as divider and substract 1)
-				PERCENTAGE=$(echo ${RESIZE_VALUE} | tr -c -d '[:digit:]')
-				LASTSECTOR=$(( 32 * $(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", ( \$2 * ${PERCENTAGE} / 3200))}") -1 ))
-				if [ ${LASTSECTOR} -lt ${PARTEND} ]; then unset LASTSECTOR ; fi
+				local percentage=$(echo $RESIZE_VALUE | tr -c -d '[:digit:]')
+				local lastsector=$(( 32 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * $percentage / 3200))}") - 1 ))
+				[[ $lastsector -lt $partend ]] && unset lastsector
 				;;
 			*s)
 				# sector value, we use it directly
-				LASTSECTOR=$(echo ${RESIZE_VALUE} | tr -c -d '[:digit:]')
-				if [ ${LASTSECTOR} -lt ${PARTEND} ]; then unset LASTSECTOR ; fi
+				local lastsector=$(echo $RESIZE_VALUE | tr -c -d '[:digit:]')
+				[[ $lastsector -lt $partend ]] && unset lastsector
 				;;
 		esac
 	else
 		# Unattended mode. We run a q&d benchmark to be able to identify cards way too slow easily
-		cd /root
-		echo -e "\n### quick iozone test:$(iozone -e -I -a -s 1M -r 4k -i 0 -i 1 -i 2 | grep '^            1024' | sed 's/            1024      //')" >>/var/log/armhwinfo.log
+		echo -e "\n### quick iozone test:$(cd /root; iozone -e -I -a -s 1M -r 4k -i 0 -i 1 -i 2 | grep '^            1024' | sed 's/            1024      //')" >> $Log
 
 		# check device capacity. If 4GB or below do not use whole card but leave a 5% spare area
 		# to help older cards with wear leveling and garbage collection. In case this reduced card
 		# capacity is less than the actual image capacity this is a clear sign that someone wants
 		# to use Armbian on a card of inappropriate size so he gets what he deserves (at least he
 		# should know what he's doing)
-		CAPACITY=$(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", \$2 / ( 1024 / \$4 ))}")
-		if [ ${CAPACITY} -lt 4000000 ]; then
-			SPAREAREA=$(( ${CAPACITY} / 20000 ))
-			LASTSECTOR=$(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {print \$2 - (${SPAREAREA} * 1024 * ( 1024 / \$4 ))}")
-			if [ ${LASTSECTOR} -lt ${PARTEND} ]; then
-				unset LASTSECTOR
+		local capacity=$(( $(lsblk -n -b -d -o SIZE $rootdevicepath) / 1024 / 1024 / 1024 )) # GiB
+		if [[ $capacity -lt 5 ]]; then # 4 GiB or less
+			local sparearea=200
+			local lastsector=$(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{print \$2 - ($sparearea * 1024 * ( 1024 / \$4 ))}")
+			if [[ $lastsector -lt $partend ]]; then
+				unset lastsector
 			else
-				ResizeLog="4GB media so leaving 200MB spare area on ${root_partition}"
+				ResizeLog="4GB media so leaving 200MB spare area"
 			fi
-		elif [ ${CAPACITY} -lt 8000000 ]; then
+		elif [[ $CAPACITY -lt 9 ]]; then # 8 GiB or less
 			# Leave 2 percent unpartitioned
-			LASTSECTOR=$(( 32 * $(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", ( \$2 * 98 / 3200))}") -1 ))
-			if [ ${LASTSECTOR} -lt ${PARTEND} ]; then
-				unset LASTSECTOR
+			local lastsector=$(( 32 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * 98 / 3200))}") -1 ))
+			if [[ $lastsector -lt $partend ]]; then
+				unset lastsector
 			else
-				ResizeLog="8GB media so leaving 2 percent spare area on ${root_partition}"
+				ResizeLog="8GB media so leaving 2 percent spare area"
 			fi
 		else
 			# Leave 1 percent unpartitioned
-            LASTSECTOR=$(( 32 * $(parted ${DEVICE} unit s print -sm | awk -F":" "/^${QUOTED_DEVICE}/ {printf (\"%0d\", ( \$2 * 99 / 3200))}") -1 ))
-			if [ ${LASTSECTOR} -lt ${PARTEND} ]; then
-				unset LASTSECTOR
+			local lastsector=$(( 32 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * 99 / 3200))}") -1 ))
+			if [[ $lastsector -lt $partend ]]; then
+				unset lastsector
 			else
-				ResizeLog="Leaving 1 percent spare area on ${root_partition}"
+				ResizeLog="Leaving 1 percent spare area"
 			fi
 		fi
 	fi
@@ -217,47 +141,37 @@ do_expand_rootfs() {
 	echo -e "\n### [firstrun] ${ResizeLog}. Start resizing Partition now:\n" >>${Log}
 	cat /proc/partitions >>${Log}
 	echo -e "\nExecuting fdisk, fsck and partprobe:" >>${Log}
-	UtilLinuxVersion=$(echo q | fdisk ${DEVICE} | awk -F"util-linux " '/ fdisk / {print $2}')
-	if [ "X${PARTITIONS}" = "X1" ]; then
+	UtilLinuxVersion=$(echo q | fdisk $rootdevicepath | awk -F"util-linux " '/ fdisk / {print $2}')
+	if [[ $partitions == 1 ]]; then
 		case ${UtilLinuxVersion} in
 			2.27.1*)
 				# if dealing with fdisk from util-linux 2.27.1 we need a workaround for just 1 partition
 				# https://github.com/igorpecovnik/lib/issues/353#issuecomment-224728506
-				((echo d; echo n; echo p; echo ; echo $STARTFROM; echo ${LASTSECTOR} ; echo w;) | fdisk ${DEVICE}) >>${Log} 2>&1 || true
+				((echo d; echo n; echo p; echo ; echo $startfrom; echo $lastsector ; echo w;) | fdisk $rootdevicepath) >>${Log} 2>&1 || true
 				;;
 			*)
-				((echo d; echo $PARTITIONS; echo n; echo p; echo ; echo $STARTFROM; echo ${LASTSECTOR} ; echo w;) | fdisk ${DEVICE}) >>${Log} 2>&1 || true
+				((echo d; echo $partitions; echo n; echo p; echo ; echo $startfrom; echo $lastsector ; echo w;) | fdisk $rootdevicepath) >>${Log} 2>&1 || true
 				;;
 		esac
 	else
-		((echo d; echo $PARTITIONS; echo n; echo p; echo ; echo $STARTFROM; echo ${LASTSECTOR} ; echo w;) | fdisk ${DEVICE}) >>${Log} 2>&1 || true
+		((echo d; echo $partitions; echo n; echo p; echo ; echo $startfrom; echo $lastsector ; echo w;) | fdisk $rootdevicepath) >>${Log} 2>&1 || true
 	fi
-	s=0	
-	fsck -f $root_partition >>${Log} 2>&1 || true
-	partprobe ${DEVICE} >>${Log} 2>&1 || s=$?
+	s=0
+	fsck $root_partition >>${Log} 2>&1 || true
+	partprobe $rootdevicepath >>${Log} 2>&1 || s=$?
 	echo -e "\nNew partition table:\n" >>${Log}
 	cat /proc/partitions >>${Log}
-	echo -e "\nNow executing resize2fs to enlarge ${root_partition} to the maximum:\n" >>${Log}
-	resize2fs $root_partition >>${Log} 2>&1 || true
-	
-	# force reboot if first run is issued on eMMC (bug on C2)
-	[[ $(find /sys -name oemid | grep emmc) ]] && s=1	
-	
+	echo -e "\nNow executing resize2fs to enlarge rootfs to the maximum:\n" >>${Log}
+	resize2fs $rootpart >>${Log} 2>&1 || true
+
 	# check whether reboot is necessary for resize2fs to take effect
-	FREESIZE=$(df -hm / | awk '/\// {print $(NF-2)}')
-	if [[ "$DISTRIBUTION" == "wheezy" || "$s" != "0" || "$FREESIZE" -lt "152" ]]; then
+	local freesize=$(df -hm / | awk '/\// {print $(NF-2)}')
+	if [[ $s != 0 || $freesize -lt 152 ]]; then
 		touch /var/run/reboot
 		update-rc.d resize2fs defaults >/dev/null 2>&1
 		echo -e "\n### [firstrun] Automated reboot needed to let /etc/init.d/resize2fs do the job" >>${Log}
 	fi
-	return 0
 } # do_expand_rootfs
-
-check_prerequisits() {
-	for needed_tool in fdisk parted partprobe resize2fs ; do
-		which ${needed_tool} >/dev/null 2>&1 || exit 1
-	done
-} # check_prerequisits
 
 do_firstrun_automated_user_configuration()
 {
@@ -406,10 +320,15 @@ do_firstrun_automated_user_configuration()
 main() {
 	touch /tmp/firstrun_running
 
-	check_prerequisits
-	collect_information
+	# tweaks
+	# enable BT on cubietruck
+	[[ "$BOARD" == "cubietruck" ]] && update-rc.d brcm40183-patch defaults
+	# enable BT on Banana M2+, NanoPi Air or NanoPi M1 Plus
+	[[ "$BOARD" == "bananapim2plus" || "$BOARD" == "nanopiair" || "$BOARD" == "nanopim1plus" ]] && update-rc.d ap6212-bluetooth defaults
+	# enable BT on Solidrun i.MX boards
+	[[ "$BOARD" == "Cubox i2eX/i4" ]] && update-rc.d brcm4330-patch defaults && /etc/init.d/brcm4330-patch start
 
-	if [[ "$rootfstype" == "ext4" && ! -f "/root/.no_rootfs_resize" ]]; then
+	if [[ $(findmnt -n -o FSTYPE /) == ext4 && ! -f /root/.no_rootfs_resize ]]; then
 		do_expand_rootfs
 	fi
 
@@ -417,20 +336,39 @@ main() {
 
 	/tmp/create_swap.sh &
 
-	# old distros can't handle allow-hotplug
-	if [[ "$DISTRIBUTION" == "wheezy" || "$DISTRIBUTION" == "trusty" ]]; then
-		sed -i "s/allow-hotplug eth/auto eth/" /etc/network/interfaces
-		sed -i "s/allow-hotplug wlan/auto wlan/" /etc/network/interfaces
-	fi
-
 	# some hardware workarounds
-	case ${LINUXFAMILY} in
+	case $LINUXFAMILY in
 		sun7i|sun8i)
-			adjust_sunxi_settings
+			# set some mac address for BT
+			[[ -n $(lsmod | grep dhd) ]] && \
+				(MACADDR=$(printf '43:29:B1:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]) ; \
+				sed -i "s/^MAC_ADDR=.*/MAC_ADDR=${MACADDR}/" /etc/default/brcm40183 ;\
+				sed -i "s/^MAC_ADDR=.*/MAC_ADDR=${MACADDR}/" /etc/default/ap6212 \
+				echo -e "\n### [firstrun] Use MAC address ${MACADDR} for Bluetooth from now" >>${Log})
+
+			case $BOARD_NAME in
+				"NanoPi Air"|"Orange Pi Lite"|"NanoPi M1 Plus")
+					# change serial port for BT on NanoPi Air and NanoPi M1 Plus
+					sed -i "s/^PORT=.*/PORT=ttyS3/" /etc/default/ap6212
+					# relink /etc/network/interfaces on OPi Lite and NanoPi Air
+					cd /etc/network/ && ln -sf interfaces.network-manager interfaces
+					;;
+				"Orange Pi Zero")
+					# set OPi Zero WiFi address permanently based on a random address using Allwinner's MAC prefix
+					MACADDR=$(printf 'DC:44:6D:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256])
+			                echo "options xradio_wlan macaddr=${MACADDR}" >/etc/modprobe.d/xradio_wlan.conf
+			                echo -e "\n### [firstrun] Use MAC address ${MACADDR} for Wi-Fi from now" >>${Log}
+					cd /etc/network/ && ln -sf interfaces.network-manager interfaces
+					(modprobe -r xradio_wlan && sleep 1 && modprobe xradio_wlan) &
+					;;
+			esac
+
+			# trigger red or blue LED as user feedback
+			echo heartbeat >/sys/class/leds/*red*/trigger 2>/dev/null || echo heartbeat >/sys/class/leds/*blue*/trigger 2>/dev/null
 			;;
 		pine64)
-			if [ -z "$(grep ethaddr /boot/uEnv.txt)" ] && [ -f "/sys/class/net/eth0/address" ]; then
-				echo "ethaddr=$(cat /sys/class/net/eth0/address)" >> /boot/uEnv.txt
+			if [[ -z $(grep ethaddr /boot/armbianEnv.txt) && -f /sys/class/net/eth0/address ]]; then
+				echo "ethaddr=$(cat /sys/class/net/eth0/address)" >> /boot/armbianEnv.txt
 			fi
 			;;
 	esac
