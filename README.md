@@ -38,7 +38,11 @@ or pass this option as a command line parameter like
 
 to display the kernel configuration menu during the compilation process
 
-More info:
+## Reporting issues
+
+Please read [this](https://github.com/igorpecovnik/lib/blob/master/.github/ISSUE_TEMPLATE.md) notice first before opening an issue.
+
+## More info:
 
 - [Documentation](https://docs.armbian.com/Developer-Guide_Build-Preparation/)
 - [Prebuilt images](https://www.armbian.com/download/)

@@ -1,4 +1,4 @@
-Please use the "Preview" tab above to view this message
+Please use the "Preview" tab above to view this message if you are seeing this in the new pull request text box.
 
 Please make sure that:
 
