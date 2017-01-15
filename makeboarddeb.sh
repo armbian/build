@@ -103,9 +103,7 @@ create_board_package()
 	mkdir -p $destination/etc/init.d
 	mkdir -p $destination/etc/default
 
-	install -m 755 $SRC/lib/scripts/resize2fs $destination/etc/init.d
-	install -m 755 $SRC/lib/scripts/firstrun  $destination/etc/init.d
-	install -m 755 $SRC/lib/scripts/armhwinfo $destination/etc/init.d
+	install -m 755 $SRC/lib/scripts/armhwinfo $destination/etc/init.d/
 
 	# configure MIN / MAX speed for cpufrequtils
 	mkdir -p $destination/etc/default

@@ -27,42 +27,35 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Log=/var/log/armhwinfo.log
 
 # create helper script to set swap settings
-cat > /tmp/create_swap.sh <<EOT
-#!/bin/bash
-# 
-# create swap and adds it into fstab
-#
-# update console info
-setupcon --save
-# SSH Keys creation
-rm -f /etc/ssh/ssh_host*
-read entropy_before </proc/sys/kernel/random/entropy_avail
-dpkg-reconfigure openssh-server >/dev/null 2>&1
-read entropy_after </proc/sys/kernel/random/entropy_avail
-echo -e "### [firstrun] Recreated SSH keys (entropy: \${entropy_before} \${entropy_after})" >>${Log}
-MEMTOTAL=$(( $(awk -F" " '/^MemTotal/ {print $2}' </proc/meminfo) / 1024 ))
-FREESIZE=\$(df -hm / | awk '/\// {print \$(NF-2)}')
-SWAPFILE=/var/swap
-if [[ ! -f \$SWAPFILE && \$FREESIZE -gt 132 ]]; then
-fallocate -l 128M \$SWAPFILE >/dev/null 2>&1
-if [[ \$? -ne 0 ]]; then dd if=/dev/zero of=\$SWAPFILE bs=1M count=128 status=noxfer >/dev/null 2>&1; fi
-chown root:root \$SWAPFILE
-chmod 0600 \$SWAPFILE
-mkswap \$SWAPFILE >/dev/null 2>&1
-swapon \$SWAPFILE >/dev/null 2>&1
-if ! grep -q swap /etc/fstab; then echo "\$SWAPFILE					none		swap	sw								0	0" >> /etc/fstab; fi
-if ! grep -q swap /etc/sysctl.conf; then echo "vm.swappiness=0" >> /etc/sysctl.conf; fi
-echo -e "\n### [firstrun] Created 128MB emergency swap as \$SWAPFILE" >>${Log}
-fi
-while [[ -f /tmp/firstrun_running ]]; do sleep 1; done
-if [[ -f /var/run/reboot ]]; then
-	wall -n "Performing automatic reboot in 5 seconds"
-	sleep 5
-	reboot
-fi
-rm -f /tmp/create_swap.sh
-sync &
-EOT
+cat <<-'EOF' > /tmp/create_swap.sh
+	#!/bin/bash
+	Log=/var/log/armhwinfo.log
+	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+	# update console info
+	setupcon --save
+	# SSH Keys creation
+	rm -f /etc/ssh/ssh_host*
+	read entropy_before </proc/sys/kernel/random/entropy_avail
+	dpkg-reconfigure openssh-server >/dev/null 2>&1
+	read entropy_after </proc/sys/kernel/random/entropy_avail
+	echo -e "### [firstrun] Recreated SSH keys (entropy: ${entropy_before} ${entropy_after})" >>${Log}
+	MEMTOTAL=$(( $(awk -F" " '/^MemTotal/ {print $2}' </proc/meminfo) / 1024 ))
+	FREESIZE=$(df -hm / | awk '/\// {print $(NF-2)}')
+	SWAPFILE=/var/swap
+	if [[ ! -f $SWAPFILE && $FREESIZE -gt 132 ]]; then
+		fallocate -l 128M $SWAPFILE || dd if=/dev/zero of=$SWAPFILE bs=1M count=128 status=noxfer
+		chown root:root $SWAPFILE
+		chmod 0600 $SWAPFILE
+		mkswap $SWAPFILE >/dev/null
+		swapon $SWAPFILE >/dev/null
+		grep -q swap /etc/fstab || echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
+		grep -q swap /etc/sysctl.conf || echo "vm.swappiness=0" >> /etc/sysctl.conf
+		echo -e "\n### [firstrun] Created 128MB emergency swap as $SWAPFILE" >>${Log}
+	fi
+	while [[ -f /tmp/firstrun_running ]]; do sleep 1; done
+	rm -f /tmp/create_swap.sh
+	sync &
+	EOF
 chmod +x /tmp/create_swap.sh
 
 do_expand_rootfs() {
@@ -320,6 +313,10 @@ do_firstrun_automated_user_configuration()
 main() {
 	touch /tmp/firstrun_running
 
+	if [[ $(findmnt -n -o FSTYPE /) == ext4 && ! -f /root/.no_rootfs_resize ]]; then
+		do_expand_rootfs
+	fi
+
 	# tweaks
 	# enable BT on cubietruck
 	[[ "$BOARD" == "cubietruck" ]] && update-rc.d brcm40183-patch defaults
@@ -327,10 +324,6 @@ main() {
 	[[ "$BOARD" == "bananapim2plus" || "$BOARD" == "nanopiair" || "$BOARD" == "nanopim1plus" ]] && update-rc.d ap6212-bluetooth defaults
 	# enable BT on Solidrun i.MX boards
 	[[ "$BOARD" == "Cubox i2eX/i4" ]] && update-rc.d brcm4330-patch defaults && /etc/init.d/brcm4330-patch start
-
-	if [[ $(findmnt -n -o FSTYPE /) == ext4 && ! -f /root/.no_rootfs_resize ]]; then
-		do_expand_rootfs
-	fi
 
 	do_firstrun_automated_user_configuration &
 
