@@ -141,9 +141,6 @@ install_common()
 	# enable firstrun script
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "update-rc.d firstrun defaults >/dev/null 2>&1"
 
-	# remove .old on new image
-	rm -rf $CACHEDIR/$SDCARD/boot/dtb.old
-
 	# enable verbose kernel messages on first boot
 	touch $CACHEDIR/$SDCARD/boot/.verbose
 
@@ -152,6 +149,39 @@ install_common()
 
 	# switch to beta repository at this stage if building nightly images
 	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
+
+	# log2ram - systemd compatible ramlog alternative
+	mkdir -p $CACHEDIR/$SDCARD/usr/local/sbin/ $CACHEDIR/$SDCARD/usr/local/share/log2ram/
+	cp $SRC/lib/scripts/log2ram/LICENSE.log2ram $CACHEDIR/$SDCARD/usr/local/share/log2ram/LICENSE
+	cp $SRC/lib/scripts/log2ram/log2ram.service $CACHEDIR/$SDCARD/etc/systemd/system/log2ram.service
+	install -m 755 $SRC/lib/scripts/log2ram/log2ram $CACHEDIR/$SDCARD/usr/local/sbin/
+	install -m 755 $SRC/lib/scripts/log2ram/log2ram.hourly $CACHEDIR/$SDCARD/etc/cron.hourly/log2ram
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable log2ram.service 2>/dev/null"
+	cat <<-EOF > $CACHEDIR/$SDCARD/etc/default/log2ram
+	# configuration values for the log2ram service
+	ENABLED=true
+	SIZE=50M
+	USE_RSYNC=false
+	EOF
+
+	# enable getty on serial console
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service 2>/dev/null"
+
+	# don't clear screen tty1
+	mkdir -p "$CACHEDIR/$SDCARD/etc/systemd/system/getty@tty1.service.d/"
+	printf "[Service]\nTTYVTDisallocate=no" > "$CACHEDIR/$SDCARD/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
+
+	# reduce modules unload timeout
+	mkdir -p $CACHEDIR/$SDCARD/etc/systemd/system/systemd-modules-load.service.d/
+	printf "[Service]\nTimeoutStopSec=10" > $CACHEDIR/$SDCARD/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
+
+	# handle PMU power button
+	mkdir -p $CACHEDIR/$SDCARD/etc/udev/rules.d/
+	cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/$SDCARD/etc/udev/rules.d/
+
+	# Fix for PuTTY/KiTTY & ncurses-based dialogs (i.e. alsamixer) over serial
+	# may break other terminals like screen
+	#printf "[Service]\nEnvironment=TERM=xterm-256color" > /etc/systemd/system/serial-getty@.service.d/10-term.conf
 }
 
 install_distribution_specific()
@@ -163,25 +193,6 @@ install_distribution_specific()
 	jessie)
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $CACHEDIR/$SDCARD/etc/ssh/sshd_config
-
-		# add serial console
-		#cp $SRC/lib/config/ttyS0.conf $CACHEDIR/$SDCARD/etc/init/$SERIALCON.conf
-		#sed -e "s/ttyS0/$SERIALCON/g" -i $CACHEDIR/$SDCARD/etc/init/$SERIALCON.conf
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
-		mkdir -p "$CACHEDIR/$SDCARD/etc/systemd/system/serial-getty@$SERIALCON.service.d"
-		printf "[Service]\nExecStart=\nExecStart=-/sbin/agetty -L 115200 %%I $TERM" > "$CACHEDIR/$SDCARD/etc/systemd/system/serial-getty@$SERIALCON.service.d/10-rate.conf"
-
-		# don't clear screen tty1
-		mkdir -p "$CACHEDIR/$SDCARD/etc/systemd/system/getty@tty1.service.d/"
-		printf "[Service]\nTTYVTDisallocate=no" > "$CACHEDIR/$SDCARD/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
-
-		# seting timeout
-		mkdir -p $CACHEDIR/$SDCARD/etc/systemd/system/systemd-modules-load.service.d/
-		printf "[Service]\nTimeoutStopSec=10" > $CACHEDIR/$SDCARD/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
-
-		# handle PMU power button
-		mkdir -p $CACHEDIR/$SDCARD/etc/udev/rules.d/
-		cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/$SDCARD/etc/udev/rules.d/
 
 		mkdir -p $CACHEDIR/$SDCARD/etc/NetworkManager/dispatcher.d/
 		cat <<-'EOF' > $CACHEDIR/$SDCARD/etc/NetworkManager/dispatcher.d/99disable-power-management
@@ -201,30 +212,12 @@ install_distribution_specific()
 		# remove legal info from Ubuntu
 		[[ -f $CACHEDIR/$SDCARD/etc/legal ]] && rm $CACHEDIR/$SDCARD/etc/legal
 
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
-
-		# Fix for PuTTY/KiTTY & ncurses-based dialogs (i.e. alsamixer) over serial
-		# may break other terminals like screen
-		#printf "[Service]\nEnvironment=TERM=xterm-256color" > /etc/systemd/system/serial-getty@.service.d/10-term.conf
-
-		# don't clear screen tty1
-		mkdir -p "$CACHEDIR/$SDCARD/etc/systemd/system/getty@tty1.service.d/"
-		printf "[Service]\nTTYVTDisallocate=no" > "$CACHEDIR/$SDCARD/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
-
-		# seting timeout
-		mkdir -p $CACHEDIR/$SDCARD/etc/systemd/system/systemd-modules-load.service.d/
-		printf "[Service]\nTimeoutStopSec=10" > $CACHEDIR/$SDCARD/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
-
 		# Fix for haveged service
 		mkdir -p -m755 $CACHEDIR/$SDCARD/etc/systemd/system/haveged.service.d
 		cat <<-EOF > $CACHEDIR/$SDCARD/etc/systemd/system/haveged.service.d/10-no-new-privileges.conf
 		[Service]
 		NoNewPrivileges=false
 		EOF
-
-		# handle PMU power button
-		mkdir -p $CACHEDIR/$SDCARD/etc/udev/rules.d/
-		cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/$SDCARD/etc/udev/rules.d/
 
 		# disable not working on unneeded services
 		# ureadahead needs kernel tracing options that AFAIK are present only in mainline
