@@ -475,7 +475,10 @@ create_image()
 	mkdir -p $CACHEDIR/$DESTIMG
 	cp $CACHEDIR/$SDCARD/etc/armbian.txt $CACHEDIR/$DESTIMG
 	mv $CACHEDIR/${SDCARD}.raw $CACHEDIR/$DESTIMG/${version}.img
-	[[ $BUILD_ALL != yes ]] && cp $CACHEDIR/$DESTIMG/${version}.img $DEST/images/${version}.img
+	if [[ $BUILD_ALL != yes ]]; then
+		mv $CACHEDIR/$DESTIMG/${version}.img $DEST/images/${version}.img
+		rm -rf $CACHEDIR/$DESTIMG
+	fi
 	display_alert "Done building" "$DEST/images/${version}.img" "info"
 
 } #############################################################################

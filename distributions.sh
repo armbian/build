@@ -143,7 +143,7 @@ install_common()
 	install -m 644 $SRC/lib/scripts/firstrun.service $CACHEDIR/$SDCARD/etc/systemd/system/
 
 	# enable firstrun script
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service 2>/dev/null"
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service >/dev/null 2>&1"
 
 	# enable verbose kernel messages on first boot
 	touch $CACHEDIR/$SDCARD/boot/.verbose
@@ -160,7 +160,7 @@ install_common()
 	cp $SRC/lib/scripts/log2ram/log2ram.service $CACHEDIR/$SDCARD/etc/systemd/system/log2ram.service
 	install -m 755 $SRC/lib/scripts/log2ram/log2ram $CACHEDIR/$SDCARD/usr/local/sbin/
 	install -m 755 $SRC/lib/scripts/log2ram/log2ram.hourly $CACHEDIR/$SDCARD/etc/cron.hourly/log2ram
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable log2ram.service 2>/dev/null"
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable log2ram.service >/dev/null 2>&1"
 	cat <<-EOF > $CACHEDIR/$SDCARD/etc/default/log2ram
 	# configuration values for the log2ram service
 	ENABLED=true
@@ -169,7 +169,7 @@ install_common()
 	EOF
 
 	# enable getty on serial console
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service 2>/dev/null"
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
 
 	# don't clear screen tty1
 	mkdir -p "$CACHEDIR/$SDCARD/etc/systemd/system/getty@tty1.service.d/"
@@ -191,9 +191,7 @@ install_common()
 install_distribution_specific()
 {
 	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
-
 	case $RELEASE in
-
 	jessie)
 		# enable root login for latest ssh on jessie
 		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $CACHEDIR/$SDCARD/etc/ssh/sshd_config
@@ -225,9 +223,7 @@ install_distribution_specific()
 
 		# disable not working on unneeded services
 		# ureadahead needs kernel tracing options that AFAIK are present only in mainline
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload mask ureadahead.service >/dev/null 2>&1"
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
+		chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload mask ondemand.service ureadahead.service setserial.service etc-setserial.service >/dev/null 2>&1"
 
 		# properly disable powersaving wireless mode for NetworkManager
 		mkdir -p $CACHEDIR/$SDCARD/etc/NetworkManager/conf.d/
