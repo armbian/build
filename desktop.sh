@@ -16,6 +16,9 @@ install_desktop ()
 	mkdir -p $CACHEDIR/$SDCARD/tmp/bin
 	mount --bind $SRC/lib/bin/ $CACHEDIR/$SDCARD/tmp/bin
 
+	# install optimized firefox configuration
+	cp $SRC/lib/config/firefox.conf $CACHEDIR/$SDCARD/usr/lib/firefox/browser/defaults/preferences/syspref.js
+
 	# install default desktop settings
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "tar xfz /tmp/bin/$RELEASE-desktop.tgz -C /etc/skel/"
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "tar xfz /tmp/bin/$RELEASE-desktop.tgz -C /root/"
