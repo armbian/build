@@ -140,10 +140,11 @@ install_common()
 
 	install -m 755 $SRC/lib/scripts/resize2fs $CACHEDIR/$SDCARD/etc/init.d/
 	install -m 755 $SRC/lib/scripts/firstrun  $CACHEDIR/$SDCARD/etc/init.d/
+	install -m 644 $SRC/lib/scripts/resize2fs.service $CACHEDIR/$SDCARD/etc/systemd/system/
 	install -m 644 $SRC/lib/scripts/firstrun.service $CACHEDIR/$SDCARD/etc/systemd/system/
 
 	# enable firstrun script
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service >/dev/null 2>&1"
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service >/dev/null 2>&1"
 
 	# enable verbose kernel messages on first boot
 	touch $CACHEDIR/$SDCARD/boot/.verbose
