@@ -16,9 +16,10 @@ install_desktop ()
 	mkdir -p $CACHEDIR/$SDCARD/tmp/bin
 	mount --bind $SRC/lib/bin/ $CACHEDIR/$SDCARD/tmp/bin
 
-	# install optimized firefox configuration
-	cp $SRC/lib/config/firefox.conf $CACHEDIR/$SDCARD/etc/firefox/syspref.js
-
+	if [[ $RELEASE == xenial ]]; then
+		# install optimized firefox configuration
+		cp $SRC/lib/config/firefox.conf $CACHEDIR/$SDCARD/etc/firefox/syspref.js
+	fi
 	# install dedicated startup icons
 	cp $SRC/lib/bin/icons/${RELEASE}.png $CACHEDIR/$SDCARD/usr/share/pixmaps
 
@@ -31,10 +32,6 @@ install_desktop ()
 	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/wallpapers/armbian*.jpg "$d"
 	mkdir -p $CACHEDIR/$SDCARD/etc/polkit-1/localauthority/50-local.d
 	cp $SRC/lib/config/polkit-jessie/*.pkla $CACHEDIR/$SDCARD/etc/polkit-1/localauthority/50-local.d/
-
-	# set default wallpaper
-	sed -i 's/\(backgrounds\/xfce\/*\)[^ ]*/\1armbian06-1430-very-dark-3840x2160.jpg\"\/>/' $CACHEDIR/$SDCARD/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
-	sed -i 's/\(backgrounds\/xfce\/*\)[^ ]*/\1armbian06-1430-very-dark-3840x2160.jpg\"\/>/' $CACHEDIR/$SDCARD/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
 
 	# Install custom icons and theme
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/bin/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"

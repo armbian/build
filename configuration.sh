@@ -141,7 +141,7 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu bluetooth \
 	network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common p11-kit pasystray pavucontrol pulseaudio \
 	paman pavumeter pulseaudio-module-gconf pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri mpv \
-	libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1 mate-utils ubuntu-mate-welcome mate-settings-daemon"
+	libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1"
 
 PACKAGE_LIST_EXCLUDE="xfce4-mixer"
 
@@ -153,7 +153,7 @@ case $RELEASE in
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget nano"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird firefox gnome-icon-theme-full tango-icon-theme language-selector-gnome paprefs"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird firefox gnome-icon-theme-full tango-icon-theme language-selector-gnome paprefs mate-utils ubuntu-mate-welcome mate-settings-daemon"
 	;;
 esac
 
