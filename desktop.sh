@@ -19,6 +19,9 @@ install_desktop ()
 	# install optimized firefox configuration
 	cp $SRC/lib/config/firefox.conf $CACHEDIR/$SDCARD/etc/firefox/syspref.js
 
+	# install dedicated startup icons
+	cp $SRC/lib/bin/icons/${RELEASE}.png $CACHEDIR/$SDCARD/usr/share/pixmaps
+
 	# install default desktop settings
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "tar xfz /tmp/bin/$RELEASE-desktop.tgz -C /etc/skel/"
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "tar xfz /tmp/bin/$RELEASE-desktop.tgz -C /root/"
