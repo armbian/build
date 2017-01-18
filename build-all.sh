@@ -39,7 +39,7 @@ pack_upload ()
 
 # stage: init
 display_alert "Signing and compressing" "Please wait!" "info"
-local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${VER/-$LINUXFAMILY/}"
+local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
 local subdir="archive"
 [[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
 [[ $BETA == yes ]] && local subdir=nightly
