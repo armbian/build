@@ -206,7 +206,7 @@ for line in "${buildlist[@]}"; do
 	n=$[$n+1]
 	[[ -z $RELEASE ]] && RELEASE=$FORCEDRELEASE;
 	if [[ $from -le $n ]]; then
-
+		[[ -z $BUILD_DESKTOP ]] && BUILD_DESKTOP="no"
 		jobs=$(ls /run/armbian | wc -l)
 		if [[ $jobs -lt $MULTITHREAD ]]; then
 			display_alert "Building in the back $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
