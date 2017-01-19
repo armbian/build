@@ -20,6 +20,8 @@ fi
 
 test -z "${boot_interface}" && setenv boot_interface "mmc"
 
+echo "Boot script loaded from ${boot_interface}"
+
 if ext4load ${boot_interface} 0:1 ${loadaddr} /boot/armbianEnv.txt || ext4load ${boot_interface} 0:1 ${loadaddr} armbianEnv.txt; then
 	env import -t ${loadaddr} ${filesize}
 fi
@@ -35,6 +37,7 @@ setenv initrd_high 0xffffffff
 
 # eMMC fix
 if test "${emmc_fix}" = "on"; then
+	echo "Applying eMMC compatibility fix to the DT"
 	fdt addr ${fdt_addr}
 	fdt resize
 	fdt rm /soc/internal-regs/sdhci@d8000/ cd-gpios
