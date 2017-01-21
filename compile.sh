@@ -15,10 +15,11 @@
 
 KERNEL_ONLY=""				# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
 KERNEL_CONFIGURE="no"			# change provided kernel configuration
-CLEAN_LEVEL="make,debs"			# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
+CLEAN_LEVEL="make,debs,oldcache"	# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
 					# "debs" = delete packages in "./output/debs" for current branch and family,
-					# "alldebs" - delete all packages in "./output/debs", "images" = delete "./output/images",
+					# "alldebs" = delete all packages in "./output/debs", "images" = delete "./output/images",
 					# "cache" = delete "./output/cache", "sources" = delete "./sources"
+					# "oldcache" = remove old cached rootfs except for the newest 6 files
 
 DEST_LANG="en_US.UTF-8"			# sl_SI.UTF-8, en_US.UTF-8
 

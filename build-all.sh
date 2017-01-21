@@ -32,7 +32,6 @@ mkdir -p /run/armbian
 RELEASE_LIST=("xenial" "jessie")
 BRANCH_LIST=("default" "next" "dev")
 
-
 pack_upload ()
 {
 # pack into .7z and upload to server
@@ -65,7 +64,6 @@ find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; \
 while ! rsync -arP $CACHEDIR/$DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir};do sleep 5;done; \
 rm -r $CACHEDIR/$DESTIMG" &
 }
-
 
 build_main ()
 {

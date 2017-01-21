@@ -59,7 +59,7 @@ cleaning()
 		;;
 
 		cache) # delete output/cache
-		[[ -d $CACHEDIR ]] && display_alert "Cleaning" "output/cache" "info" && find $CACHEDIR/ -type f -delete
+		[[ -d $CACHEDIR ]] && display_alert "Cleaning" "output/cache/rootfs (all)" "info" && find $CACHEDIR/rootfs/ -type f -delete
 		;;
 
 		images) # delete output/images
@@ -68,6 +68,13 @@ cleaning()
 
 		sources) # delete output/sources and output/buildpkg
 		[[ -d $SOURCES ]] && display_alert "Cleaning" "sources" "info" && rm -rf $SOURCES/* $DEST/buildpkg/*
+		;;
+
+		oldcache)
+		if [[ -d $CACHEDIR/rootfs/ && $(ls -1 $CACHEDIR/rootfs/ | wc -l) -gt 6 ]]; then
+			display_alert "Cleaning" "output/cache/rootfs (old)" "info"
+			(cd $CACHEDIR/rootfs/; ls -t | sed -e "1,6d" | xargs -d '\n' rm -f)
+		fi
 		;;
 	esac
 }

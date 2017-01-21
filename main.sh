@@ -49,7 +49,7 @@ date +"%d_%m_%Y-%H_%M_%S" > $DEST/debug/timestamp
 # compile.sh version checking
 ver1=$(awk -F"=" '/^# VERSION/ {print $2}' <$SRC/compile.sh )
 ver2=$(awk -F"=" '/^# VERSION/ {print $2}' <$SRC/lib/compile.sh 2>/dev/null) || ver2=0
-if [[ -z $ver1 || $ver1 -lt $ver2 ]]; then
+if [[ $BETA != yes && ( -z $ver1 || $ver1 -lt $ver2 ) ]]; then
 	display_alert "File $0 is outdated. Please overwrite it with an updated version from" "$SRC/lib" "wrn"
 	echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
 	read
