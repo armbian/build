@@ -231,6 +231,9 @@ create_armbian()
 		echo "$sduuid	/media/mmcboot	ext4    ${mountopts[ext4]}" >> /mnt/rootfs/etc/fstab
 		echo "/media/mmcboot/boot   				/boot		none	bind								0       0" >> /mnt/rootfs/etc/fstab
 		echo "$satauuid	/		$FilesystemChoosen	${mountopts[$FilesystemChoosen]}" >> /mnt/rootfs/etc/fstab
+		# recreate swap file
+		dd if=/dev/zero of=/mnt/rootfs/var/swap bs=1M count=128
+		mkswap /mnt/rootfs/var/swap
 	fi
 
 	umountdevice "/dev/sda"
