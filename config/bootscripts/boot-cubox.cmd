@@ -17,9 +17,9 @@ setenv load_addr "0x10800000"
 setenv ramdisk_addr "0x14800000"
 
 # next/dev kernels have another DT file name
-if ext2load mmc 0 0x00000000 /boot/.next || ext2load mmc 0 0x00000000 .next; then
-	setenv fdt_file "imx6q-cubox-i.dtb"
-fi
+#if ext2load mmc 0 0x00000000 /boot/.next || ext2load mmc 0 0x00000000 .next; then
+#	setenv fdt_file "imx6q-cubox-i.dtb"
+#fi
 
 if ext2load mmc 0 ${load_addr} /boot/armbianEnv.txt || ext2load mmc 0 ${load_addr} armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
