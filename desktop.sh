@@ -24,8 +24,8 @@ install_desktop ()
 	cp $SRC/lib/bin/icons/${RELEASE}.png $CACHEDIR/$SDCARD/usr/share/pixmaps
 
 	# install default desktop settings
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "tar xfz /tmp/bin/$RELEASE-desktop.tgz -C /etc/skel/"
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "tar xfz /tmp/bin/$RELEASE-desktop.tgz -C /root/"
+	cp -R $SRC/lib/config/desktop/. $CACHEDIR/$SDCARD/etc/skel
+	cp -R $SRC/lib/config/desktop/. $CACHEDIR/$SDCARD/root
 
 	# install wallpapers
 	d=$CACHEDIR/$SDCARD/usr/share/backgrounds/xfce/
