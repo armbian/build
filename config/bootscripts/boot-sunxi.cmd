@@ -34,8 +34,8 @@ setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs
 
 if test "${disp_mem_reserves}" = "off"; then setenv bootargs "${bootargs} sunxi_ve_mem_reserve=0 sunxi_g2d_mem_reserve=0 sunxi_fb_mem_reserve=16"; fi
 
-load ${devtype} 0:1 ${ramdisk_addr_r} /boot/uInitrd || load ${devtype} 0:1 ${ramdisk_addr_r} uInitrd
-load ${devtype} 0:1 ${kernel_addr_r} /boot/zImage || load ${devtype} 0:1 ${kernel_addr_r} zImage
+load ${devtype} 0 ${ramdisk_addr_r} /boot/uInitrd || load ${devtype} 0 ${ramdisk_addr_r} uInitrd
+load ${devtype} 0 ${kernel_addr_r} /boot/zImage || load ${devtype} 0 ${kernel_addr_r} zImage
 
 if load ${devtype} 0 0x00000000 /boot/.next || load ${devtype} 0 0x00000000 .next; then
 	load ${devtype} 0 ${fdt_addr_r} /boot/dtb/${fdtfile} || load ${devtype} 0 ${fdt_addr_r} /dtb/${fdtfile}

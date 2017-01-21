@@ -13,7 +13,9 @@ setenv rootfstype "ext4"
 mw.l 0x1c2005c 1
 mw.l 0x1c20000 0x80001010
 
-if load mmc 0 ${load_addr} /boot/armbianEnv.txt || load mmc 0 ${load_addr} armbianEnv.txt; then
+echo "Boot script loaded from ${devtype}"
+
+if load ${devtype} 0 ${load_addr} /boot/armbianEnv.txt || load ${devtype} 0 ${load_addr} armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
 
@@ -21,9 +23,9 @@ fi
 setenv consoleargs "console=ttyS0,115200"
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} panic=10 consoleblank=0 enforcing=0 loglevel=${verbosity} ${extraargs} ${extraboardargs}"
-load mmc 0 ${fdt_addr_r} /boot/dtb/allwinner/${fdtfile} || load mmc 0 ${fdt_addr_r} /dtb/allwinner/${fdtfile}
-load mmc 0 ${ramdisk_addr_r} /boot/uInitrd || load mmc 0 ${ramdisk_addr_r} uInitrd
-load mmc 0 ${kernel_addr_r} /boot/Image || load mmc 0 ${kernel_addr_r} Image
+load ${devtype} 0 ${fdt_addr_r} /boot/dtb/allwinner/${fdtfile} || load ${devtype} 0 ${fdt_addr_r} /dtb/allwinner/${fdtfile}
+load ${devtype} 0 ${ramdisk_addr_r} /boot/uInitrd || load ${devtype} 0 ${ramdisk_addr_r} uInitrd
+load ${devtype} 0 ${kernel_addr_r} /boot/Image || load ${devtype} 0 ${kernel_addr_r} Image
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
 # Recompile with:
