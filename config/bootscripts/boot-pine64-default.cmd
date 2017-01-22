@@ -14,7 +14,7 @@ setenv rootfstype "ext4"
 setenv camera_type "none"
 setenv pine64_lcd "off"
 
-if ext4load mmc 0 ${load_addr} /boot/armbianEnv.txt || fatload mmc 0 ${load_addr} armbianEnv.txt || ext4load mmc 0 ${load_addr} armbianEnv.txt; then
+if ext4load mmc ${boot_part} ${load_addr} /boot/armbianEnv.txt || fatload mmc ${boot_part} ${load_addr} armbianEnv.txt || ext4load mmc ${boot_part} ${load_addr} armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
 
@@ -23,9 +23,9 @@ if test "${console}" = "serial" || test "${console}" = "both"; then setenv conso
 
 setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} no_console_suspend earlycon=uart,mmio32,0x01c28000 mac_addr=${ethaddr} panic=10 consoleblank=0 enforcing=0 loglevel=${verbosity} ${extraargs} ${extraboardargs}"
 
-ext4load mmc 0 ${fdt_addr} /boot/dtb/sun50iw1p1-${pine64_model}.dtb || fatload mmc 0 ${fdt_addr} dtb/sun50iw1p1-${pine64_model}.dtb || ext4load mmc 0 ${fdt_addr} dtb/sun50iw1p1-${pine64_model}.dtb
-ext4load mmc 0 ${initrd_addr} /boot/uInitrd || fatload mmc 0 ${initrd_addr} uInitrd || ext4load mmc 0 ${initrd_addr} uInitrd
-ext4load mmc 0 ${kernel_addr} /boot/Image || fatload mmc 0 ${kernel_addr} Image || ext4load mmc 0 ${kernel_addr} Image
+ext4load mmc ${boot_part} ${fdt_addr} /boot/dtb/sun50iw1p1-${pine64_model}.dtb || fatload mmc ${boot_part} ${fdt_addr} dtb/sun50iw1p1-${pine64_model}.dtb || ext4load mmc ${boot_part} ${fdt_addr} dtb/sun50iw1p1-${pine64_model}.dtb
+ext4load mmc ${boot_part} ${initrd_addr} /boot/uInitrd || fatload mmc ${boot_part} ${initrd_addr} uInitrd || ext4load mmc ${boot_part} ${initrd_addr} uInitrd
+ext4load mmc ${boot_part} ${kernel_addr} /boot/Image || fatload mmc ${boot_part} ${kernel_addr} Image || ext4load mmc ${boot_part} ${kernel_addr} Image
 
 # set display resolution from uEnv.txt or other environment file
 # default to 720p60
