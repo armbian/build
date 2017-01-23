@@ -9,14 +9,21 @@ setenv rootdev "/dev/mmcblk0p1"
 setenv verbosity "1"
 setenv rootfstype "ext4"
 
-# temp fix: increase cpufreq and bus clock / speeds things up with vanilla images
-mw.l 0x1c2005c 1
-mw.l 0x1c20000 0x80001010
+# Print boot source
+itest.b *0x28 == 0x00 && echo "U-boot loaded from SD"
+itest.b *0x28 == 0x02 && echo "U-boot loaded from eMMC or secondary SD"
+itest.b *0x28 == 0x03 && echo "U-boot loaded from SPI"
 
 echo "Boot script loaded from ${devtype}"
 
 if load ${devtype} 0 ${load_addr} /boot/armbianEnv.txt || load ${devtype} 0 ${load_addr} armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
+fi
+
+# temp fix: increase cpufreq and bus clock / speeds things up with vanilla images
+if test "${cpufreq_hack}" = "on"; then
+	mw.l 0x1c2005c 1
+	mw.l 0x1c20000 0x80001010
 fi
 
 # No display driver yet
