@@ -446,7 +446,7 @@ create_image()
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --xattrs --directory=$CACHEDIR/$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $CACHEDIR/$SDCARD/ | cut -f1) -N "rootfs.tgz" | pigz > $DEST/images/${version}-rootfs.tgz
+			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $CACHEDIR/$SDCARD/ | cut -f1) -N "rootfs.tgz" | gzip -c > $DEST/images/${version}-rootfs.tgz
 	fi
 
 	# stage: rsync /boot
