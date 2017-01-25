@@ -274,6 +274,14 @@ create_board_package()
 		echo "export VDPAU_OSD=1" > $destination/etc/profile.d/90-vdpau.sh
 		chmod 755 $destination/etc/profile.d/90-vdpau.sh
 	fi
+	if [[ ( $LINUXFAMILY == sun50iw2 || $LINUXFAMILY == sun8i ) && $BRANCH == dev ]]; then
+		# add mpv config for x11 output - slow, but it works compared to no config at all
+		mkdir -p $destination/etc/mpv/
+		cat <<-EOF > $destination/etc/mpv/mpv.conf
+		# HW acceleration is not supported on this platform yet
+		vo=x11
+		EOF
+	fi
 
 	# add some summary to the image
 	fingerprint_image "$destination/etc/armbian.txt"
