@@ -11,7 +11,6 @@ case $BRANCH in
 	BOOTPATCHDIR='u-boot-sun50i-dev'
 
 	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
-	BOOTENV_FILE='sun50i-next.txt'
 	LINUXCONFIG='linux-sun50i-dev'
 	;;
 esac

@@ -8,6 +8,7 @@ setenv load_addr "0x44000000"
 setenv rootdev "/dev/mmcblk0p1"
 setenv verbosity "1"
 setenv rootfstype "ext4"
+setenv console "both"
 
 # Print boot source
 itest.b *0x28 == 0x00 && echo "U-boot loaded from SD"
@@ -27,7 +28,8 @@ if test "${cpufreq_hack}" = "on"; then
 fi
 
 # No display driver yet
-setenv consoleargs "console=ttyS0,115200"
+if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
+if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "${consoleargs} console=ttyS0,115200"; fi
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} panic=10 consoleblank=0 enforcing=0 loglevel=${verbosity} ${extraargs} ${extraboardargs}"
 load ${devtype} 0 ${fdt_addr_r} /boot/dtb/allwinner/${fdtfile} || load ${devtype} 0 ${fdt_addr_r} /dtb/allwinner/${fdtfile}
