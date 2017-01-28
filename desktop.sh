@@ -59,19 +59,6 @@ install_desktop ()
 		sed 's/name="use_compositing" type="bool" value="true"/name="use_compositing" type="bool" value="false"/' -i $CACHEDIR/$SDCARD/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
 		sed 's/name="use_compositing" type="bool" value="true"/name="use_compositing" type="bool" value="false"/' -i $CACHEDIR/$SDCARD/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
 
-		# Set default audio-output to HDMI for desktop-images
-		cat <<-EOF >> $CACHEDIR/$SDCARD/etc/asound.conf
-		pcm.!default {
-		    type hw
-		    card 1
-		}
-
-		ctl.!default {
-		    type hw
-		    card 1
-		}
-		EOF
-
 		# enable memory reservations
 		if [[ -f $CACHEDIR/$SDCARD/boot/armbianEnv.txt ]]; then
 			echo "disp_mem_reserves=on" >> $CACHEDIR/$SDCARD/boot/armbianEnv.txt
