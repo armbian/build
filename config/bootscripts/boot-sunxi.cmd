@@ -39,6 +39,14 @@ load ${devtype} 0 ${kernel_addr_r} /boot/zImage || load ${devtype} 0 ${kernel_ad
 
 if load ${devtype} 0 0x00000000 /boot/.next || load ${devtype} 0 0x00000000 .next; then
 	load ${devtype} 0 ${fdt_addr_r} /boot/dtb/${fdtfile} || load ${devtype} 0 ${fdt_addr_r} /dtb/${fdtfile}
+	fdt addr ${fdt_addr_r}
+	fdt resize
+	for overlay_file in ${overlays}; do
+		if load ${devtype} 0 ${load_addr} dtb/overlays/${overlay_file}.dtbo || load ${devtype} 0 ${load_addr} boot/dtb/overlays/${overlay_file}.dtbo; then
+			echo "Applying DT overlay ${overlay_file}.dtbo"
+			fdt apply ${load_addr}
+		fi
+	done
 	bootz ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 else
 	load ${devtype} 0 ${fdt_addr_r} /boot/script.bin || load ${devtype} 0 ${fdt_addr_r} script.bin

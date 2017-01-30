@@ -33,6 +33,14 @@ if test "${console}" = "serial" || test "${console}" = "both"; then setenv conso
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} panic=10 consoleblank=0 enforcing=0 loglevel=${verbosity} ${extraargs} ${extraboardargs}"
 load ${devtype} 0 ${fdt_addr_r} /boot/dtb/allwinner/${fdtfile} || load ${devtype} 0 ${fdt_addr_r} /dtb/allwinner/${fdtfile}
+fdt addr ${fdt_addr_r}
+fdt resize
+for overlay_file in ${overlays}; do
+	if load ${devtype} 0 ${load_addr} dtb/allwinner/overlays/${overlay_file}.dtbo || load ${devtype} 0 ${load_addr} boot/dtb/allwinner/overlays/${overlay_file}.dtbo; then
+		echo "Applying DT overlay ${overlay_file}.dtbo"
+		fdt apply ${load_addr}
+	fi
+done
 load ${devtype} 0 ${ramdisk_addr_r} /boot/uInitrd || load ${devtype} 0 ${ramdisk_addr_r} uInitrd
 load ${devtype} 0 ${kernel_addr_r} /boot/Image || load ${devtype} 0 ${kernel_addr_r} Image
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
