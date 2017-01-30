@@ -42,7 +42,7 @@ if load ${devtype} 0 0x00000000 /boot/.next || load ${devtype} 0 0x00000000 .nex
 	fdt addr ${fdt_addr_r}
 	fdt resize
 	for overlay_file in ${overlays}; do
-		if load ${devtype} 0 ${load_addr} dtb/overlays/${overlay_file}.dtbo || load ${devtype} 0 ${load_addr} boot/dtb/overlays/${overlay_file}.dtbo; then
+		if load ${devtype} 0 ${load_addr} boot/dtb/overlay/${overlay_file}.dtbo || load ${devtype} 0 ${load_addr} dtb/overlay/${overlay_file}.dtbo; then
 			echo "Applying DT overlay ${overlay_file}.dtbo"
 			fdt apply ${load_addr}
 		fi
