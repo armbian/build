@@ -241,7 +241,7 @@ compile_kernel()
 		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" oldconfig
 		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" menuconfig
 		# store kernel config in easily reachable place
-		cp .config $DEST/kernel.config
+		cp .config $DEST/$LINUXCONFIG.config
 	fi
 
 	eval CCACHE_BASEDIR="$(pwd)" ${toolchain:+env PATH=$toolchain:$PATH} \

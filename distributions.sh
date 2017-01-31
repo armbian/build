@@ -186,7 +186,7 @@ install_common()
 
 	# Fix for PuTTY/KiTTY & ncurses-based dialogs (i.e. alsamixer) over serial
 	# may break other terminals like screen
-	#printf "[Service]\nEnvironment=TERM=xterm-256color" > /etc/systemd/system/serial-getty@.service.d/10-term.conf
+	#printf "[Service]\nEnvironment=TERM=xterm-256color" > $CACHEDIR/$SDCARD/etc/systemd/system/serial-getty@.service.d/10-term.conf
 }
 
 install_distribution_specific()
