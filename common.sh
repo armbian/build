@@ -75,7 +75,7 @@ compile_uboot()
 			(cd $SOURCES/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
 		fi
 
-		[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "$target_patchdir" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
+		[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
 
 		# create patch for manual source changes
 		[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
@@ -190,7 +190,7 @@ compile_kernel()
 		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
 	fi
 
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "" "$LINUXFAMILY-$BRANCH"
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
 
 	# create patch for manual source changes in debug mode
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
@@ -331,7 +331,7 @@ find_toolchain()
 	echo "$toolchain"
 }
 
-# advanced_patch <dest> <family> <board> <target> <description>
+# advanced_patch <dest> <family> <board> <target> <branch> <description>
 #
 # parameters:
 # <dest>: u-boot, kernel
@@ -343,9 +343,11 @@ find_toolchain()
 # priority:
 # $SRC/userpatches/<dest>/<family>/target_<target>
 # $SRC/userpatches/<dest>/<family>/board_<board>
+# $SRC/userpatches/<dest>/<family>/branch_<branch>
 # $SRC/userpatches/<dest>/<family>
 # $SRC/lib/patch/<dest>/<family>/target_<target>
 # $SRC/lib/patch/<dest>/<family>/board_<board>
+# $SRC/lib/patch/<dest>/<family>/branch_<branch>
 # $SRC/lib/patch/<dest>/<family>
 #
 advanced_patch()
@@ -354,7 +356,8 @@ advanced_patch()
 	local family=$2
 	local board=$3
 	local target=$4
-	local description=$5
+	local branch=$5
+	local description=$6
 
 	display_alert "Started patching process for" "$dest $description" "info"
 	display_alert "Looking for user patches in" "userpatches/$dest/$family" "info"
@@ -363,9 +366,11 @@ advanced_patch()
 	local dirs=(
 		"$SRC/userpatches/$dest/$family/target_${target}:[\e[33mu\e[0m][\e[34mt\e[0m]"
 		"$SRC/userpatches/$dest/$family/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
+		"$SRC/userpatches/$dest/$family/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
 		"$SRC/userpatches/$dest/$family:[\e[33mu\e[0m][\e[32mc\e[0m]"
 		"$SRC/lib/patch/$dest/$family/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]"
 		"$SRC/lib/patch/$dest/$family/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"
+		"$SRC/lib/patch/$dest/$family/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]"
 		"$SRC/lib/patch/$dest/$family:[\e[32ml\e[0m][\e[32mc\e[0m]"
 		)
 
