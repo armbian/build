@@ -1,0 +1,156 @@
+diff --git a/drivers/spi/spi-sun6i.c b/drivers/spi/spi-sun6i.c
+index e311483..ec73598 100644
+--- a/drivers/spi/spi-sun6i.c
++++ b/drivers/spi/spi-sun6i.c
+@@ -46,6 +46,8 @@
+ #define SUN6I_TFR_CTL_XCH			BIT(31)
+ 
+ #define SUN6I_INT_CTL_REG		0x10
++#define SUN6I_INT_CTL_RF_FUL			BIT(2)
++#define SUN6I_INT_CTL_TF_EMP			BIT(5)
+ #define SUN6I_INT_CTL_RF_OVF			BIT(8)
+ #define SUN6I_INT_CTL_TC			BIT(12)
+ 
+@@ -68,11 +70,13 @@
+ #define SUN6I_CLK_CTL_CDR1(div)			(((div) & SUN6I_CLK_CTL_CDR1_MASK) << 8)
+ #define SUN6I_CLK_CTL_DRS			BIT(12)
+ 
++#define SUN6I_MAX_XFER_SIZE                    0xffffff
++
+ #define SUN6I_BURST_CNT_REG		0x30
+-#define SUN6I_BURST_CNT(cnt)			((cnt) & 0xffffff)
++#define SUN6I_BURST_CNT(cnt)			((cnt) & SUN6I_MAX_XFER_SIZE)
+ 
+ #define SUN6I_XMIT_CNT_REG		0x34
+-#define SUN6I_XMIT_CNT(cnt)			((cnt) & 0xffffff)
++#define SUN6I_XMIT_CNT(cnt)			((cnt) & SUN6I_MAX_XFER_SIZE)
+ 
+ #define SUN6I_BURST_CTL_CNT_REG		0x38
+ #define SUN6I_BURST_CTL_CNT_STC(cnt)		((cnt) & 0xffffff)
+@@ -105,6 +109,31 @@ static inline void sun6i_spi_write(struct sun6i_spi *sspi, u32 reg, u32 value)
+ 	writel(value, sspi->base_addr + reg);
+ }
+ 
++static inline u32 sun6i_spi_get_tx_fifo_count(struct sun6i_spi *sspi)
++{
++	u32 reg = sun6i_spi_read(sspi, SUN6I_FIFO_STA_REG);
++
++	reg >>= SUN6I_FIFO_STA_TF_CNT_BITS;
++
++	return reg & SUN6I_FIFO_STA_TF_CNT_MASK;
++}
++
++static inline void sun6i_spi_enable_interrupt(struct sun6i_spi *sspi, u32 mask)
++{
++	u32 reg = sun6i_spi_read(sspi, SUN6I_INT_CTL_REG);
++
++	reg |= mask;
++	sun6i_spi_write(sspi, SUN6I_INT_CTL_REG, reg);
++}
++
++static inline void sun6i_spi_disable_interrupt(struct sun6i_spi *sspi, u32 mask)
++{
++	u32 reg = sun6i_spi_read(sspi, SUN6I_INT_CTL_REG);
++
++	reg &= ~mask;
++	sun6i_spi_write(sspi, SUN6I_INT_CTL_REG, reg);
++}
++
+ static inline void sun6i_spi_drain_fifo(struct sun6i_spi *sspi, int len)
+ {
+ 	u32 reg, cnt;
+@@ -127,10 +156,13 @@ static inline void sun6i_spi_drain_fifo(struct sun6i_spi *sspi, int len)
+ 
+ static inline void sun6i_spi_fill_fifo(struct sun6i_spi *sspi, int len)
+ {
++	u32 cnt;
+ 	u8 byte;
+ 
+-	if (len > sspi->len)
+-		len = sspi->len;
++	/* See how much data we can fit */
++	cnt = sspi->fifo_depth - sun6i_spi_get_tx_fifo_count(sspi);
++
++	len = min3(len, (int)cnt, sspi->len);
+ 
+ 	while (len--) {
+ 		byte = sspi->tx_buf ? *sspi->tx_buf++ : 0;
+@@ -158,9 +190,7 @@ static void sun6i_spi_set_cs(struct spi_device *spi, bool enable)
+ 
+ static size_t sun6i_spi_max_transfer_size(struct spi_device *spi)
+ {
+-	struct sun6i_spi *sspi = spi_master_get_devdata(spi->master);
+-
+-	return sspi->fifo_depth - 1;
++	return SUN6I_MAX_XFER_SIZE - 1;
+ }
+ 
+ static int sun6i_spi_transfer_one(struct spi_master *master,
+@@ -174,8 +204,7 @@ static int sun6i_spi_transfer_one(struct spi_master *master,
+ 	int ret = 0;
+ 	u32 reg;
+ 
+-	/* We don't support transfer larger than the FIFO */
+-	if (tfr->len > sspi->fifo_depth)
++	if (tfr->len > SUN6I_MAX_XFER_SIZE)
+ 		return -EINVAL;
+ 
+ 	reinit_completion(&sspi->done);
+@@ -273,7 +302,13 @@ static int sun6i_spi_transfer_one(struct spi_master *master,
+ 	sun6i_spi_fill_fifo(sspi, sspi->fifo_depth);
+ 
+ 	/* Enable the interrupts */
+-	sun6i_spi_write(sspi, SUN6I_INT_CTL_REG, SUN6I_INT_CTL_TC);
++	/* Only enable Tx FIFO interrupt if we really need it */
++	if (tx_len > sspi->fifo_depth)
++		sun6i_spi_write(sspi, SUN6I_INT_CTL_REG,
++			SUN6I_INT_CTL_TC | SUN6I_INT_CTL_RF_FUL | SUN6I_INT_CTL_TF_EMP);
++	else
++		sun6i_spi_write(sspi, SUN6I_INT_CTL_REG,
++			SUN6I_INT_CTL_TC | SUN6I_INT_CTL_RF_FUL);
+ 
+ 	/* Start the transfer */
+ 	reg = sun6i_spi_read(sspi, SUN6I_TFR_CTL_REG);
+@@ -293,8 +328,6 @@ static int sun6i_spi_transfer_one(struct spi_master *master,
+ 		goto out;
+ 	}
+ 
+-	sun6i_spi_drain_fifo(sspi, sspi->fifo_depth);
+-
+ out:
+ 	sun6i_spi_write(sspi, SUN6I_INT_CTL_REG, 0);
+ 
+@@ -309,10 +342,33 @@ static irqreturn_t sun6i_spi_handler(int irq, void *dev_id)
+ 	/* Transfer complete */
+ 	if (status & SUN6I_INT_CTL_TC) {
+ 		sun6i_spi_write(sspi, SUN6I_INT_STA_REG, SUN6I_INT_CTL_TC);
++		sun6i_spi_drain_fifo(sspi, sspi->fifo_depth);
+ 		complete(&sspi->done);
+ 		return IRQ_HANDLED;
+ 	}
+ 
++	/* Receive FIFO Full */
++	if (status & SUN6I_INT_CTL_RF_FUL) {
++		sun6i_spi_drain_fifo(sspi, sspi->fifo_depth);
++		/* Only clear the interrupt _after_ draining the FIFO */
++		sun6i_spi_write(sspi, SUN6I_INT_STA_REG, SUN6I_INT_CTL_RF_FUL);
++		return IRQ_HANDLED;
++	}
++
++	/* Transmit FIFO Empty */
++	if (status & SUN6I_INT_CTL_TF_EMP) {
++		sun6i_spi_fill_fifo(sspi, sspi->fifo_depth);
++
++		if (!sspi->len)
++			/* nothing left to transmit */
++			sun6i_spi_disable_interrupt(sspi, SUN6I_INT_CTL_TF_EMP);
++
++		/* Only clear the interrupt _after_ re-seeding the FIFO */
++		sun6i_spi_write(sspi, SUN6I_INT_STA_REG, SUN6I_INT_CTL_TF_EMP);
++
++		return IRQ_HANDLED;
++	}
++
+ 	return IRQ_NONE;
+ }
+ 
