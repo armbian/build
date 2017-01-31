@@ -153,8 +153,8 @@ case $RELEASE in
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget nano"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird firefox gnome-icon-theme-full tango-icon-theme language-selector-gnome paprefs mate-utils \
-		ubuntu-mate-welcome mate-settings-daemon numix-gtk-theme"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird firefox gnome-icon-theme-full tango-icon-theme language-selector-gnome paprefs numix-gtk-theme"
+	[[ $ARCH == armhf ]] && PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mate-utils ubuntu-mate-welcome mate-settings-daemon"
 	;;
 esac
 
