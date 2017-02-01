@@ -1,0 +1,838 @@
+diff --git a/Makefile b/Makefile
+index a3dfc73da722..2dd5cb2fe182 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 45
++SUBLEVEL = 46
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/arc/include/asm/delay.h b/arch/arc/include/asm/delay.h
+index a36e8601114d..d5da2115d78a 100644
+--- a/arch/arc/include/asm/delay.h
++++ b/arch/arc/include/asm/delay.h
+@@ -26,7 +26,9 @@ static inline void __delay(unsigned long loops)
+ 	"	lp  1f			\n"
+ 	"	nop			\n"
+ 	"1:				\n"
+-	: : "r"(loops));
++	:
++        : "r"(loops)
++        : "lp_count");
+ }
+ 
+ extern void __bad_udelay(void);
+diff --git a/arch/arc/kernel/unaligned.c b/arch/arc/kernel/unaligned.c
+index abd961f3e763..91ebe382147f 100644
+--- a/arch/arc/kernel/unaligned.c
++++ b/arch/arc/kernel/unaligned.c
+@@ -241,8 +241,9 @@ int misaligned_fixup(unsigned long address, struct pt_regs *regs,
+ 	if (state.fault)
+ 		goto fault;
+ 
++	/* clear any remanants of delay slot */
+ 	if (delay_mode(regs)) {
+-		regs->ret = regs->bta;
++		regs->ret = regs->bta ~1U;
+ 		regs->status32 &= ~STATUS_DE_MASK;
+ 	} else {
+ 		regs->ret += state.instr_len;
+diff --git a/arch/parisc/include/asm/bitops.h b/arch/parisc/include/asm/bitops.h
+index 3f9406d9b9d6..da87943328a5 100644
+--- a/arch/parisc/include/asm/bitops.h
++++ b/arch/parisc/include/asm/bitops.h
+@@ -6,7 +6,7 @@
+ #endif
+ 
+ #include <linux/compiler.h>
+-#include <asm/types.h>		/* for BITS_PER_LONG/SHIFT_PER_LONG */
++#include <asm/types.h>
+ #include <asm/byteorder.h>
+ #include <asm/barrier.h>
+ #include <linux/atomic.h>
+@@ -17,6 +17,12 @@
+  * to include/asm-i386/bitops.h or kerneldoc
+  */
+ 
++#if __BITS_PER_LONG == 64
++#define SHIFT_PER_LONG 6
++#else
++#define SHIFT_PER_LONG 5
++#endif
++
+ #define CHOP_SHIFTCOUNT(x) (((unsigned long) (x)) & (BITS_PER_LONG - 1))
+ 
+ 
+diff --git a/arch/parisc/include/uapi/asm/bitsperlong.h b/arch/parisc/include/uapi/asm/bitsperlong.h
+index e0a23c7bdd43..07fa7e50bdc0 100644
+--- a/arch/parisc/include/uapi/asm/bitsperlong.h
++++ b/arch/parisc/include/uapi/asm/bitsperlong.h
+@@ -3,10 +3,8 @@
+ 
+ #if defined(__LP64__)
+ #define __BITS_PER_LONG 64
+-#define SHIFT_PER_LONG 6
+ #else
+ #define __BITS_PER_LONG 32
+-#define SHIFT_PER_LONG 5
+ #endif
+ 
+ #include <asm-generic/bitsperlong.h>
+diff --git a/arch/parisc/include/uapi/asm/swab.h b/arch/parisc/include/uapi/asm/swab.h
+index e78403b129ef..928e1bbac98f 100644
+--- a/arch/parisc/include/uapi/asm/swab.h
++++ b/arch/parisc/include/uapi/asm/swab.h
+@@ -1,6 +1,7 @@
+ #ifndef _PARISC_SWAB_H
+ #define _PARISC_SWAB_H
+ 
++#include <asm/bitsperlong.h>
+ #include <linux/types.h>
+ #include <linux/compiler.h>
+ 
+@@ -38,7 +39,7 @@ static inline __attribute_const__ __u32 __arch_swab32(__u32 x)
+ }
+ #define __arch_swab32 __arch_swab32
+ 
+-#if BITS_PER_LONG > 32
++#if __BITS_PER_LONG > 32
+ /*
+ ** From "PA-RISC 2.0 Architecture", HP Professional Books.
+ ** See Appendix I page 8 , "Endian Byte Swapping".
+@@ -61,6 +62,6 @@ static inline __attribute_const__ __u64 __arch_swab64(__u64 x)
+ 	return x;
+ }
+ #define __arch_swab64 __arch_swab64
+-#endif /* BITS_PER_LONG > 32 */
++#endif /* __BITS_PER_LONG > 32 */
+ 
+ #endif /* _PARISC_SWAB_H */
+diff --git a/arch/s390/kernel/ptrace.c b/arch/s390/kernel/ptrace.c
+index 01c37b36caf9..02bd587b610b 100644
+--- a/arch/s390/kernel/ptrace.c
++++ b/arch/s390/kernel/ptrace.c
+@@ -963,6 +963,11 @@ static int s390_fpregs_set(struct task_struct *target,
+ 	if (target == current)
+ 		save_fpu_regs();
+ 
++	if (MACHINE_HAS_VX)
++		convert_vx_to_fp(fprs, target->thread.fpu.vxrs);
++	else
++		memcpy(&fprs, target->thread.fpu.fprs, sizeof(fprs));
++
+ 	/* If setting FPC, must validate it first. */
+ 	if (count > 0 && pos < offsetof(s390_fp_regs, fprs)) {
+ 		u32 ufpc[2] = { target->thread.fpu.fpc, 0 };
+@@ -1067,6 +1072,9 @@ static int s390_vxrs_low_set(struct task_struct *target,
+ 	if (target == current)
+ 		save_fpu_regs();
+ 
++	for (i = 0; i < __NUM_VXRS_LOW; i++)
++		vxrs[i] = *((__u64 *)(target->thread.fpu.vxrs + i) + 1);
++
+ 	rc = user_regset_copyin(&pos, &count, &kbuf, &ubuf, vxrs, 0, -1);
+ 	if (rc == 0)
+ 		for (i = 0; i < __NUM_VXRS_LOW; i++)
+diff --git a/arch/tile/kernel/ptrace.c b/arch/tile/kernel/ptrace.c
+index bdc126faf741..6239aa155f6d 100644
+--- a/arch/tile/kernel/ptrace.c
++++ b/arch/tile/kernel/ptrace.c
+@@ -111,7 +111,7 @@ static int tile_gpr_set(struct task_struct *target,
+ 			  const void *kbuf, const void __user *ubuf)
+ {
+ 	int ret;
+-	struct pt_regs regs;
++	struct pt_regs regs = *task_pt_regs(target);
+ 
+ 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &regs, 0,
+ 				 sizeof(regs));
+diff --git a/drivers/gpu/drm/drm_modes.c b/drivers/gpu/drm/drm_modes.c
+index 39e30abddf08..71a10f08522e 100644
+--- a/drivers/gpu/drm/drm_modes.c
++++ b/drivers/gpu/drm/drm_modes.c
+@@ -1401,6 +1401,13 @@ drm_mode_create_from_cmdline_mode(struct drm_device *dev,
+ 		return NULL;
+ 
+ 	mode->type |= DRM_MODE_TYPE_USERDEF;
++	/* fix up 1368x768: GFT/CVT can't express 1366 width due to alignment */
++	if (cmd->xres == 1366 && mode->hdisplay == 1368) {
++		mode->hdisplay = 1366;
++		mode->hsync_start--;
++		mode->hsync_end--;
++		drm_mode_set_name(mode);
++	}
+ 	drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V);
+ 	return mode;
+ }
+diff --git a/drivers/gpu/drm/i915/intel_crt.c b/drivers/gpu/drm/i915/intel_crt.c
+index 97d1ed20418b..63fea6a2869c 100644
+--- a/drivers/gpu/drm/i915/intel_crt.c
++++ b/drivers/gpu/drm/i915/intel_crt.c
+@@ -445,6 +445,7 @@ static bool intel_crt_detect_ddc(struct drm_connector *connector)
+ 	struct drm_i915_private *dev_priv = crt->base.base.dev->dev_private;
+ 	struct edid *edid;
+ 	struct i2c_adapter *i2c;
++	bool ret = false;
+ 
+ 	BUG_ON(crt->base.type != INTEL_OUTPUT_ANALOG);
+ 
+@@ -461,17 +462,17 @@ static bool intel_crt_detect_ddc(struct drm_connector *connector)
+ 		 */
+ 		if (!is_digital) {
+ 			DRM_DEBUG_KMS("CRT detected via DDC:0x50 [EDID]\n");
+-			return true;
++			ret = true;
++		} else {
++			DRM_DEBUG_KMS("CRT not detected via DDC:0x50 [EDID reports a digital panel]\n");
+ 		}
+-
+-		DRM_DEBUG_KMS("CRT not detected via DDC:0x50 [EDID reports a digital panel]\n");
+ 	} else {
+ 		DRM_DEBUG_KMS("CRT not detected via DDC:0x50 [no valid EDID found]\n");
+ 	}
+ 
+ 	kfree(edid);
+ 
+-	return false;
++	return ret;
+ }
+ 
+ static enum drm_connector_status
+diff --git a/drivers/infiniband/core/cma.c b/drivers/infiniband/core/cma.c
+index 17a15c56028c..c9dcad6a53bf 100644
+--- a/drivers/infiniband/core/cma.c
++++ b/drivers/infiniband/core/cma.c
+@@ -2578,7 +2578,8 @@ static int cma_bind_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
+ 	if (!src_addr || !src_addr->sa_family) {
+ 		src_addr = (struct sockaddr *) &id->route.addr.src_addr;
+ 		src_addr->sa_family = dst_addr->sa_family;
+-		if (dst_addr->sa_family == AF_INET6) {
++		if (IS_ENABLED(CONFIG_IPV6) &&
++		    dst_addr->sa_family == AF_INET6) {
+ 			struct sockaddr_in6 *src_addr6 = (struct sockaddr_in6 *) src_addr;
+ 			struct sockaddr_in6 *dst_addr6 = (struct sockaddr_in6 *) dst_addr;
+ 			src_addr6->sin6_scope_id = dst_addr6->sin6_scope_id;
+diff --git a/drivers/infiniband/core/umem.c b/drivers/infiniband/core/umem.c
+index 04f3c0db9126..0ae337bec4f2 100644
+--- a/drivers/infiniband/core/umem.c
++++ b/drivers/infiniband/core/umem.c
+@@ -134,6 +134,7 @@ struct ib_umem *ib_umem_get(struct ib_ucontext *context, unsigned long addr,
+ 		 IB_ACCESS_REMOTE_ATOMIC | IB_ACCESS_MW_BIND));
+ 
+ 	if (access & IB_ACCESS_ON_DEMAND) {
++		put_pid(umem->pid);
+ 		ret = ib_umem_odp_get(context, umem);
+ 		if (ret) {
+ 			kfree(umem);
+@@ -149,6 +150,7 @@ struct ib_umem *ib_umem_get(struct ib_ucontext *context, unsigned long addr,
+ 
+ 	page_list = (struct page **) __get_free_page(GFP_KERNEL);
+ 	if (!page_list) {
++		put_pid(umem->pid);
+ 		kfree(umem);
+ 		return ERR_PTR(-ENOMEM);
+ 	}
+diff --git a/drivers/infiniband/ulp/ipoib/ipoib.h b/drivers/infiniband/ulp/ipoib/ipoib.h
+index 69a151ae8261..07cfcc326863 100644
+--- a/drivers/infiniband/ulp/ipoib/ipoib.h
++++ b/drivers/infiniband/ulp/ipoib/ipoib.h
+@@ -63,6 +63,8 @@ enum ipoib_flush_level {
+ 
+ enum {
+ 	IPOIB_ENCAP_LEN		  = 4,
++	IPOIB_PSEUDO_LEN	  = 20,
++	IPOIB_HARD_LEN		  = IPOIB_ENCAP_LEN + IPOIB_PSEUDO_LEN,
+ 
+ 	IPOIB_UD_HEAD_SIZE	  = IB_GRH_BYTES + IPOIB_ENCAP_LEN,
+ 	IPOIB_UD_RX_SG		  = 2, /* max buffer needed for 4K mtu */
+@@ -131,15 +133,21 @@ struct ipoib_header {
+ 	u16	reserved;
+ };
+ 
+-struct ipoib_cb {
+-	struct qdisc_skb_cb	qdisc_cb;
+-	u8			hwaddr[INFINIBAND_ALEN];
++struct ipoib_pseudo_header {
++	u8	hwaddr[INFINIBAND_ALEN];
+ };
+ 
+-static inline struct ipoib_cb *ipoib_skb_cb(const struct sk_buff *skb)
++static inline void skb_add_pseudo_hdr(struct sk_buff *skb)
+ {
+-	BUILD_BUG_ON(sizeof(skb->cb) < sizeof(struct ipoib_cb));
+-	return (struct ipoib_cb *)skb->cb;
++	char *data = skb_push(skb, IPOIB_PSEUDO_LEN);
++
++	/*
++	 * only the ipoib header is present now, make room for a dummy
++	 * pseudo header and set skb field accordingly
++	 */
++	memset(data, 0, IPOIB_PSEUDO_LEN);
++	skb_reset_mac_header(skb);
++	skb_pull(skb, IPOIB_HARD_LEN);
+ }
+ 
+ /* Used for all multicast joins (broadcast, IPv4 mcast and IPv6 mcast) */
+diff --git a/drivers/infiniband/ulp/ipoib/ipoib_cm.c b/drivers/infiniband/ulp/ipoib/ipoib_cm.c
+index de5e2b01ab05..3ba7de5f9379 100644
+--- a/drivers/infiniband/ulp/ipoib/ipoib_cm.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_cm.c
+@@ -63,6 +63,8 @@ MODULE_PARM_DESC(cm_data_debug_level,
+ #define IPOIB_CM_RX_DELAY       (3 * 256 * HZ)
+ #define IPOIB_CM_RX_UPDATE_MASK (0x3)
+ 
++#define IPOIB_CM_RX_RESERVE     (ALIGN(IPOIB_HARD_LEN, 16) - IPOIB_ENCAP_LEN)
++
+ static struct ib_qp_attr ipoib_cm_err_attr = {
+ 	.qp_state = IB_QPS_ERR
+ };
+@@ -147,15 +149,15 @@ static struct sk_buff *ipoib_cm_alloc_rx_skb(struct net_device *dev,
+ 	struct sk_buff *skb;
+ 	int i;
+ 
+-	skb = dev_alloc_skb(IPOIB_CM_HEAD_SIZE + 12);
++	skb = dev_alloc_skb(ALIGN(IPOIB_CM_HEAD_SIZE + IPOIB_PSEUDO_LEN, 16));
+ 	if (unlikely(!skb))
+ 		return NULL;
+ 
+ 	/*
+-	 * IPoIB adds a 4 byte header. So we need 12 more bytes to align the
++	 * IPoIB adds a IPOIB_ENCAP_LEN byte header, this will align the
+ 	 * IP header to a multiple of 16.
+ 	 */
+-	skb_reserve(skb, 12);
++	skb_reserve(skb, IPOIB_CM_RX_RESERVE);
+ 
+ 	mapping[0] = ib_dma_map_single(priv->ca, skb->data, IPOIB_CM_HEAD_SIZE,
+ 				       DMA_FROM_DEVICE);
+@@ -624,9 +626,9 @@ void ipoib_cm_handle_rx_wc(struct net_device *dev, struct ib_wc *wc)
+ 	if (wc->byte_len < IPOIB_CM_COPYBREAK) {
+ 		int dlen = wc->byte_len;
+ 
+-		small_skb = dev_alloc_skb(dlen + 12);
++		small_skb = dev_alloc_skb(dlen + IPOIB_CM_RX_RESERVE);
+ 		if (small_skb) {
+-			skb_reserve(small_skb, 12);
++			skb_reserve(small_skb, IPOIB_CM_RX_RESERVE);
+ 			ib_dma_sync_single_for_cpu(priv->ca, rx_ring[wr_id].mapping[0],
+ 						   dlen, DMA_FROM_DEVICE);
+ 			skb_copy_from_linear_data(skb, small_skb->data, dlen);
+@@ -663,8 +665,7 @@ void ipoib_cm_handle_rx_wc(struct net_device *dev, struct ib_wc *wc)
+ 
+ copied:
+ 	skb->protocol = ((struct ipoib_header *) skb->data)->proto;
+-	skb_reset_mac_header(skb);
+-	skb_pull(skb, IPOIB_ENCAP_LEN);
++	skb_add_pseudo_hdr(skb);
+ 
+ 	++dev->stats.rx_packets;
+ 	dev->stats.rx_bytes += skb->len;
+diff --git a/drivers/infiniband/ulp/ipoib/ipoib_ib.c b/drivers/infiniband/ulp/ipoib/ipoib_ib.c
+index 85de078fb0ce..8f8c3af9f4e8 100644
+--- a/drivers/infiniband/ulp/ipoib/ipoib_ib.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_ib.c
+@@ -130,16 +130,15 @@ static struct sk_buff *ipoib_alloc_rx_skb(struct net_device *dev, int id)
+ 
+ 	buf_size = IPOIB_UD_BUF_SIZE(priv->max_ib_mtu);
+ 
+-	skb = dev_alloc_skb(buf_size + IPOIB_ENCAP_LEN);
++	skb = dev_alloc_skb(buf_size + IPOIB_HARD_LEN);
+ 	if (unlikely(!skb))
+ 		return NULL;
+ 
+ 	/*
+-	 * IB will leave a 40 byte gap for a GRH and IPoIB adds a 4 byte
+-	 * header.  So we need 4 more bytes to get to 48 and align the
+-	 * IP header to a multiple of 16.
++	 * the IP header will be at IPOIP_HARD_LEN + IB_GRH_BYTES, that is
++	 * 64 bytes aligned
+ 	 */
+-	skb_reserve(skb, 4);
++	skb_reserve(skb, sizeof(struct ipoib_pseudo_header));
+ 
+ 	mapping = priv->rx_ring[id].mapping;
+ 	mapping[0] = ib_dma_map_single(priv->ca, skb->data, buf_size,
+@@ -242,8 +241,7 @@ static void ipoib_ib_handle_rx_wc(struct net_device *dev, struct ib_wc *wc)
+ 	skb_pull(skb, IB_GRH_BYTES);
+ 
+ 	skb->protocol = ((struct ipoib_header *) skb->data)->proto;
+-	skb_reset_mac_header(skb);
+-	skb_pull(skb, IPOIB_ENCAP_LEN);
++	skb_add_pseudo_hdr(skb);
+ 
+ 	++dev->stats.rx_packets;
+ 	dev->stats.rx_bytes += skb->len;
+diff --git a/drivers/infiniband/ulp/ipoib/ipoib_main.c b/drivers/infiniband/ulp/ipoib/ipoib_main.c
+index 5f7681b975d0..8a4d10452d61 100644
+--- a/drivers/infiniband/ulp/ipoib/ipoib_main.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_main.c
+@@ -850,9 +850,12 @@ static void neigh_add_path(struct sk_buff *skb, u8 *daddr,
+ 				ipoib_neigh_free(neigh);
+ 				goto err_drop;
+ 			}
+-			if (skb_queue_len(&neigh->queue) < IPOIB_MAX_PATH_REC_QUEUE)
++			if (skb_queue_len(&neigh->queue) <
++			    IPOIB_MAX_PATH_REC_QUEUE) {
++				/* put pseudoheader back on for next time */
++				skb_push(skb, IPOIB_PSEUDO_LEN);
+ 				__skb_queue_tail(&neigh->queue, skb);
+-			else {
++			} else {
+ 				ipoib_warn(priv, "queue length limit %d. Packet drop.\n",
+ 					   skb_queue_len(&neigh->queue));
+ 				goto err_drop;
+@@ -889,7 +892,7 @@ err_drop:
+ }
+ 
+ static void unicast_arp_send(struct sk_buff *skb, struct net_device *dev,
+-			     struct ipoib_cb *cb)
++			     struct ipoib_pseudo_header *phdr)
+ {
+ 	struct ipoib_dev_priv *priv = netdev_priv(dev);
+ 	struct ipoib_path *path;
+@@ -897,16 +900,18 @@ static void unicast_arp_send(struct sk_buff *skb, struct net_device *dev,
+ 
+ 	spin_lock_irqsave(&priv->lock, flags);
+ 
+-	path = __path_find(dev, cb->hwaddr + 4);
++	path = __path_find(dev, phdr->hwaddr + 4);
+ 	if (!path || !path->valid) {
+ 		int new_path = 0;
+ 
+ 		if (!path) {
+-			path = path_rec_create(dev, cb->hwaddr + 4);
++			path = path_rec_create(dev, phdr->hwaddr + 4);
+ 			new_path = 1;
+ 		}
+ 		if (path) {
+ 			if (skb_queue_len(&path->queue) < IPOIB_MAX_PATH_REC_QUEUE) {
++				/* put pseudoheader back on for next time */
++				skb_push(skb, IPOIB_PSEUDO_LEN);
+ 				__skb_queue_tail(&path->queue, skb);
+ 			} else {
+ 				++dev->stats.tx_dropped;
+@@ -934,10 +939,12 @@ static void unicast_arp_send(struct sk_buff *skb, struct net_device *dev,
+ 			  be16_to_cpu(path->pathrec.dlid));
+ 
+ 		spin_unlock_irqrestore(&priv->lock, flags);
+-		ipoib_send(dev, skb, path->ah, IPOIB_QPN(cb->hwaddr));
++		ipoib_send(dev, skb, path->ah, IPOIB_QPN(phdr->hwaddr));
+ 		return;
+ 	} else if ((path->query || !path_rec_start(dev, path)) &&
+ 		   skb_queue_len(&path->queue) < IPOIB_MAX_PATH_REC_QUEUE) {
++		/* put pseudoheader back on for next time */
++		skb_push(skb, IPOIB_PSEUDO_LEN);
+ 		__skb_queue_tail(&path->queue, skb);
+ 	} else {
+ 		++dev->stats.tx_dropped;
+@@ -951,13 +958,15 @@ static int ipoib_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ {
+ 	struct ipoib_dev_priv *priv = netdev_priv(dev);
+ 	struct ipoib_neigh *neigh;
+-	struct ipoib_cb *cb = ipoib_skb_cb(skb);
++	struct ipoib_pseudo_header *phdr;
+ 	struct ipoib_header *header;
+ 	unsigned long flags;
+ 
++	phdr = (struct ipoib_pseudo_header *) skb->data;
++	skb_pull(skb, sizeof(*phdr));
+ 	header = (struct ipoib_header *) skb->data;
+ 
+-	if (unlikely(cb->hwaddr[4] == 0xff)) {
++	if (unlikely(phdr->hwaddr[4] == 0xff)) {
+ 		/* multicast, arrange "if" according to probability */
+ 		if ((header->proto != htons(ETH_P_IP)) &&
+ 		    (header->proto != htons(ETH_P_IPV6)) &&
+@@ -970,13 +979,13 @@ static int ipoib_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 			return NETDEV_TX_OK;
+ 		}
+ 		/* Add in the P_Key for multicast*/
+-		cb->hwaddr[8] = (priv->pkey >> 8) & 0xff;
+-		cb->hwaddr[9] = priv->pkey & 0xff;
++		phdr->hwaddr[8] = (priv->pkey >> 8) & 0xff;
++		phdr->hwaddr[9] = priv->pkey & 0xff;
+ 
+-		neigh = ipoib_neigh_get(dev, cb->hwaddr);
++		neigh = ipoib_neigh_get(dev, phdr->hwaddr);
+ 		if (likely(neigh))
+ 			goto send_using_neigh;
+-		ipoib_mcast_send(dev, cb->hwaddr, skb);
++		ipoib_mcast_send(dev, phdr->hwaddr, skb);
+ 		return NETDEV_TX_OK;
+ 	}
+ 
+@@ -985,16 +994,16 @@ static int ipoib_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	case htons(ETH_P_IP):
+ 	case htons(ETH_P_IPV6):
+ 	case htons(ETH_P_TIPC):
+-		neigh = ipoib_neigh_get(dev, cb->hwaddr);
++		neigh = ipoib_neigh_get(dev, phdr->hwaddr);
+ 		if (unlikely(!neigh)) {
+-			neigh_add_path(skb, cb->hwaddr, dev);
++			neigh_add_path(skb, phdr->hwaddr, dev);
+ 			return NETDEV_TX_OK;
+ 		}
+ 		break;
+ 	case htons(ETH_P_ARP):
+ 	case htons(ETH_P_RARP):
+ 		/* for unicast ARP and RARP should always perform path find */
+-		unicast_arp_send(skb, dev, cb);
++		unicast_arp_send(skb, dev, phdr);
+ 		return NETDEV_TX_OK;
+ 	default:
+ 		/* ethertype not supported by IPoIB */
+@@ -1011,11 +1020,13 @@ send_using_neigh:
+ 			goto unref;
+ 		}
+ 	} else if (neigh->ah) {
+-		ipoib_send(dev, skb, neigh->ah, IPOIB_QPN(cb->hwaddr));
++		ipoib_send(dev, skb, neigh->ah, IPOIB_QPN(phdr->hwaddr));
+ 		goto unref;
+ 	}
+ 
+ 	if (skb_queue_len(&neigh->queue) < IPOIB_MAX_PATH_REC_QUEUE) {
++		/* put pseudoheader back on for next time */
++		skb_push(skb, sizeof(*phdr));
+ 		spin_lock_irqsave(&priv->lock, flags);
+ 		__skb_queue_tail(&neigh->queue, skb);
+ 		spin_unlock_irqrestore(&priv->lock, flags);
+@@ -1047,8 +1058,8 @@ static int ipoib_hard_header(struct sk_buff *skb,
+ 			     unsigned short type,
+ 			     const void *daddr, const void *saddr, unsigned len)
+ {
++	struct ipoib_pseudo_header *phdr;
+ 	struct ipoib_header *header;
+-	struct ipoib_cb *cb = ipoib_skb_cb(skb);
+ 
+ 	header = (struct ipoib_header *) skb_push(skb, sizeof *header);
+ 
+@@ -1057,12 +1068,13 @@ static int ipoib_hard_header(struct sk_buff *skb,
+ 
+ 	/*
+ 	 * we don't rely on dst_entry structure,  always stuff the
+-	 * destination address into skb->cb so we can figure out where
++	 * destination address into skb hard header so we can figure out where
+ 	 * to send the packet later.
+ 	 */
+-	memcpy(cb->hwaddr, daddr, INFINIBAND_ALEN);
++	phdr = (struct ipoib_pseudo_header *) skb_push(skb, sizeof(*phdr));
++	memcpy(phdr->hwaddr, daddr, INFINIBAND_ALEN);
+ 
+-	return sizeof *header;
++	return IPOIB_HARD_LEN;
+ }
+ 
+ static void ipoib_set_mcast_list(struct net_device *dev)
+@@ -1638,7 +1650,7 @@ void ipoib_setup(struct net_device *dev)
+ 
+ 	dev->flags		|= IFF_BROADCAST | IFF_MULTICAST;
+ 
+-	dev->hard_header_len	 = IPOIB_ENCAP_LEN;
++	dev->hard_header_len	 = IPOIB_HARD_LEN;
+ 	dev->addr_len		 = INFINIBAND_ALEN;
+ 	dev->type		 = ARPHRD_INFINIBAND;
+ 	dev->tx_queue_len	 = ipoib_sendq_size * 2;
+diff --git a/drivers/infiniband/ulp/ipoib/ipoib_multicast.c b/drivers/infiniband/ulp/ipoib/ipoib_multicast.c
+index 8ec99bdea76b..5580ab0b5781 100644
+--- a/drivers/infiniband/ulp/ipoib/ipoib_multicast.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_multicast.c
+@@ -756,9 +756,11 @@ void ipoib_mcast_send(struct net_device *dev, u8 *daddr, struct sk_buff *skb)
+ 			__ipoib_mcast_add(dev, mcast);
+ 			list_add_tail(&mcast->list, &priv->multicast_list);
+ 		}
+-		if (skb_queue_len(&mcast->pkt_queue) < IPOIB_MAX_MCAST_QUEUE)
++		if (skb_queue_len(&mcast->pkt_queue) < IPOIB_MAX_MCAST_QUEUE) {
++			/* put pseudoheader back on for next time */
++			skb_push(skb, sizeof(struct ipoib_pseudo_header));
+ 			skb_queue_tail(&mcast->pkt_queue, skb);
+-		else {
++		} else {
+ 			++dev->stats.tx_dropped;
+ 			dev_kfree_skb_any(skb);
+ 		}
+diff --git a/drivers/isdn/hardware/eicon/message.c b/drivers/isdn/hardware/eicon/message.c
+index d7c286656a25..7b4ddf0a39ec 100644
+--- a/drivers/isdn/hardware/eicon/message.c
++++ b/drivers/isdn/hardware/eicon/message.c
+@@ -11304,7 +11304,8 @@ static void mixer_notify_update(PLCI *plci, byte others)
+ 				((CAPI_MSG *) msg)->header.ncci = 0;
+ 				((CAPI_MSG *) msg)->info.facility_req.Selector = SELECTOR_LINE_INTERCONNECT;
+ 				((CAPI_MSG *) msg)->info.facility_req.structs[0] = 3;
+-				PUT_WORD(&(((CAPI_MSG *) msg)->info.facility_req.structs[1]), LI_REQ_SILENT_UPDATE);
++				((CAPI_MSG *) msg)->info.facility_req.structs[1] = LI_REQ_SILENT_UPDATE & 0xff;
++				((CAPI_MSG *) msg)->info.facility_req.structs[2] = LI_REQ_SILENT_UPDATE >> 8;
+ 				((CAPI_MSG *) msg)->info.facility_req.structs[3] = 0;
+ 				w = api_put(notify_plci->appl, (CAPI_MSG *) msg);
+ 				if (w != _QUEUE_FULL)
+diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
+index 521bbf1b29bc..670240c0ece8 100644
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -607,6 +607,7 @@ config VIDEO_S5K6A3
+ config VIDEO_S5K4ECGX
+         tristate "Samsung S5K4ECGX sensor support"
+         depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
++	select CRC32
+         ---help---
+           This is a V4L2 sensor-level driver for Samsung S5K4ECGX 5M
+           camera sensor with an embedded SoC image signal processor.
+diff --git a/drivers/net/can/c_can/c_can_pci.c b/drivers/net/can/c_can/c_can_pci.c
+index 7be393c96b1a..cf7c18947189 100644
+--- a/drivers/net/can/c_can/c_can_pci.c
++++ b/drivers/net/can/c_can/c_can_pci.c
+@@ -161,6 +161,7 @@ static int c_can_pci_probe(struct pci_dev *pdev,
+ 
+ 	dev->irq = pdev->irq;
+ 	priv->base = addr;
++	priv->device = &pdev->dev;
+ 
+ 	if (!c_can_pci_data->freq) {
+ 		dev_err(&pdev->dev, "no clock frequency defined\n");
+diff --git a/drivers/net/can/ti_hecc.c b/drivers/net/can/ti_hecc.c
+index 680d1ff07a55..6749b1829469 100644
+--- a/drivers/net/can/ti_hecc.c
++++ b/drivers/net/can/ti_hecc.c
+@@ -948,7 +948,12 @@ static int ti_hecc_probe(struct platform_device *pdev)
+ 	netif_napi_add(ndev, &priv->napi, ti_hecc_rx_poll,
+ 		HECC_DEF_NAPI_WEIGHT);
+ 
+-	clk_enable(priv->clk);
++	err = clk_prepare_enable(priv->clk);
++	if (err) {
++		dev_err(&pdev->dev, "clk_prepare_enable() failed\n");
++		goto probe_exit_clk;
++	}
++
+ 	err = register_candev(ndev);
+ 	if (err) {
+ 		dev_err(&pdev->dev, "register_candev() failed\n");
+@@ -981,7 +986,7 @@ static int ti_hecc_remove(struct platform_device *pdev)
+ 	struct ti_hecc_priv *priv = netdev_priv(ndev);
+ 
+ 	unregister_candev(ndev);
+-	clk_disable(priv->clk);
++	clk_disable_unprepare(priv->clk);
+ 	clk_put(priv->clk);
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	iounmap(priv->base);
+@@ -1006,7 +1011,7 @@ static int ti_hecc_suspend(struct platform_device *pdev, pm_message_t state)
+ 	hecc_set_bit(priv, HECC_CANMC, HECC_CANMC_PDR);
+ 	priv->can.state = CAN_STATE_SLEEPING;
+ 
+-	clk_disable(priv->clk);
++	clk_disable_unprepare(priv->clk);
+ 
+ 	return 0;
+ }
+@@ -1015,8 +1020,11 @@ static int ti_hecc_resume(struct platform_device *pdev)
+ {
+ 	struct net_device *dev = platform_get_drvdata(pdev);
+ 	struct ti_hecc_priv *priv = netdev_priv(dev);
++	int err;
+ 
+-	clk_enable(priv->clk);
++	err = clk_prepare_enable(priv->clk);
++	if (err)
++		return err;
+ 
+ 	hecc_clear_bit(priv, HECC_CANMC, HECC_CANMC_PDR);
+ 	priv->can.state = CAN_STATE_ERROR_ACTIVE;
+diff --git a/drivers/pinctrl/intel/pinctrl-broxton.c b/drivers/pinctrl/intel/pinctrl-broxton.c
+index 5979d38c46b2..7329500943a3 100644
+--- a/drivers/pinctrl/intel/pinctrl-broxton.c
++++ b/drivers/pinctrl/intel/pinctrl-broxton.c
+@@ -19,7 +19,7 @@
+ 
+ #define BXT_PAD_OWN	0x020
+ #define BXT_HOSTSW_OWN	0x080
+-#define BXT_PADCFGLOCK	0x090
++#define BXT_PADCFGLOCK	0x060
+ #define BXT_GPI_IE	0x110
+ 
+ #define BXT_COMMUNITY(s, e)				\
+diff --git a/drivers/platform/x86/intel_mid_powerbtn.c b/drivers/platform/x86/intel_mid_powerbtn.c
+index 1fc0de870ff8..361770568ad0 100644
+--- a/drivers/platform/x86/intel_mid_powerbtn.c
++++ b/drivers/platform/x86/intel_mid_powerbtn.c
+@@ -77,7 +77,7 @@ static int mfld_pb_probe(struct platform_device *pdev)
+ 
+ 	input_set_capability(input, EV_KEY, KEY_POWER);
+ 
+-	error = request_threaded_irq(irq, NULL, mfld_pb_isr, 0,
++	error = request_threaded_irq(irq, NULL, mfld_pb_isr, IRQF_ONESHOT,
+ 				     DRIVER_NAME, input);
+ 	if (error) {
+ 		dev_err(&pdev->dev, "Unable to request irq %d for mfld power"
+diff --git a/drivers/video/fbdev/core/fbcmap.c b/drivers/video/fbdev/core/fbcmap.c
+index f89245b8ba8e..68a113594808 100644
+--- a/drivers/video/fbdev/core/fbcmap.c
++++ b/drivers/video/fbdev/core/fbcmap.c
+@@ -163,17 +163,18 @@ void fb_dealloc_cmap(struct fb_cmap *cmap)
+ 
+ int fb_copy_cmap(const struct fb_cmap *from, struct fb_cmap *to)
+ {
+-	int tooff = 0, fromoff = 0;
+-	int size;
++	unsigned int tooff = 0, fromoff = 0;
++	size_t size;
+ 
+ 	if (to->start > from->start)
+ 		fromoff = to->start - from->start;
+ 	else
+ 		tooff = from->start - to->start;
+-	size = to->len - tooff;
+-	if (size > (int) (from->len - fromoff))
+-		size = from->len - fromoff;
+-	if (size <= 0)
++	if (fromoff >= from->len || tooff >= to->len)
++		return -EINVAL;
++
++	size = min_t(size_t, to->len - tooff, from->len - fromoff);
++	if (size == 0)
+ 		return -EINVAL;
+ 	size *= sizeof(u16);
+ 
+@@ -187,17 +188,18 @@ int fb_copy_cmap(const struct fb_cmap *from, struct fb_cmap *to)
+ 
+ int fb_cmap_to_user(const struct fb_cmap *from, struct fb_cmap_user *to)
+ {
+-	int tooff = 0, fromoff = 0;
+-	int size;
++	unsigned int tooff = 0, fromoff = 0;
++	size_t size;
+ 
+ 	if (to->start > from->start)
+ 		fromoff = to->start - from->start;
+ 	else
+ 		tooff = from->start - to->start;
+-	size = to->len - tooff;
+-	if (size > (int) (from->len - fromoff))
+-		size = from->len - fromoff;
+-	if (size <= 0)
++	if (fromoff >= from->len || tooff >= to->len)
++		return -EINVAL;
++
++	size = min_t(size_t, to->len - tooff, from->len - fromoff);
++	if (size == 0)
+ 		return -EINVAL;
+ 	size *= sizeof(u16);
+ 
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index 3c69299c01ab..9a524e763c3e 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -2422,7 +2422,8 @@ static inline void nfs4_exclusive_attrset(struct nfs4_opendata *opendata,
+ 		sattr->ia_valid |= ATTR_MTIME;
+ 
+ 	/* Except MODE, it seems harmless of setting twice. */
+-	if ((attrset[1] & FATTR4_WORD1_MODE))
++	if (opendata->o_arg.createmode != NFS4_CREATE_EXCLUSIVE &&
++		attrset[1] & FATTR4_WORD1_MODE)
+ 		sattr->ia_valid &= ~ATTR_MODE;
+ 
+ 	if (attrset[2] & FATTR4_WORD2_SECURITY_LABEL)
+diff --git a/include/linux/nfs4.h b/include/linux/nfs4.h
+index e7e78537aea2..63a817631f06 100644
+--- a/include/linux/nfs4.h
++++ b/include/linux/nfs4.h
+@@ -266,7 +266,7 @@ enum nfsstat4 {
+ 
+ static inline bool seqid_mutating_err(u32 err)
+ {
+-	/* rfc 3530 section 8.1.5: */
++	/* See RFC 7530, section 9.1.7 */
+ 	switch (err) {
+ 	case NFS4ERR_STALE_CLIENTID:
+ 	case NFS4ERR_STALE_STATEID:
+@@ -275,6 +275,7 @@ static inline bool seqid_mutating_err(u32 err)
+ 	case NFS4ERR_BADXDR:
+ 	case NFS4ERR_RESOURCE:
+ 	case NFS4ERR_NOFILEHANDLE:
++	case NFS4ERR_MOVED:
+ 		return false;
+ 	};
+ 	return true;
+diff --git a/include/linux/sunrpc/clnt.h b/include/linux/sunrpc/clnt.h
+index 9b6027c51736..316a5525b730 100644
+--- a/include/linux/sunrpc/clnt.h
++++ b/include/linux/sunrpc/clnt.h
+@@ -180,5 +180,6 @@ const char	*rpc_peeraddr2str(struct rpc_clnt *, enum rpc_display_format_t);
+ int		rpc_localaddr(struct rpc_clnt *, struct sockaddr *, size_t);
+ 
+ const char *rpc_proc_name(const struct rpc_task *task);
++void rpc_cleanup_clids(void);
+ #endif /* __KERNEL__ */
+ #endif /* _LINUX_SUNRPC_CLNT_H */
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index 999e025bf68e..2f0d157258a2 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -2414,6 +2414,7 @@ static int __do_proc_doulongvec_minmax(void *data, struct ctl_table *table, int
+ 				break;
+ 			if (neg)
+ 				continue;
++			val = convmul * val / convdiv;
+ 			if ((min && val < *min) || (max && val > *max))
+ 				continue;
+ 			*i = val;
+diff --git a/mm/memcontrol.c b/mm/memcontrol.c
+index 5d9c8a3136bc..43eefe9d834c 100644
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -4496,9 +4496,9 @@ static int mem_cgroup_do_precharge(unsigned long count)
+ 		return ret;
+ 	}
+ 
+-	/* Try charges one by one with reclaim */
++	/* Try charges one by one with reclaim, but do not retry */
+ 	while (count--) {
+-		ret = try_charge(mc.to, GFP_KERNEL & ~__GFP_NORETRY, 1);
++		ret = try_charge(mc.to, GFP_KERNEL | __GFP_NORETRY, 1);
+ 		if (ret)
+ 			return ret;
+ 		mc.precharge++;
+diff --git a/mm/mempolicy.c b/mm/mempolicy.c
+index 87a177917cb2..a4217fe60dff 100644
+--- a/mm/mempolicy.c
++++ b/mm/mempolicy.c
+@@ -2006,8 +2006,8 @@ retry_cpuset:
+ 
+ 	nmask = policy_nodemask(gfp, pol);
+ 	zl = policy_zonelist(gfp, pol, node);
+-	mpol_cond_put(pol);
+ 	page = __alloc_pages_nodemask(gfp, order, zl, nmask);
++	mpol_cond_put(pol);
+ out:
+ 	if (unlikely(!page && read_mems_allowed_retry(cpuset_mems_cookie)))
+ 		goto retry_cpuset;
+diff --git a/net/sunrpc/clnt.c b/net/sunrpc/clnt.c
+index 7a93922457ff..f28aeb2cfd32 100644
+--- a/net/sunrpc/clnt.c
++++ b/net/sunrpc/clnt.c
+@@ -337,6 +337,11 @@ out:
+ 
+ static DEFINE_IDA(rpc_clids);
+ 
++void rpc_cleanup_clids(void)
++{
++	ida_destroy(&rpc_clids);
++}
++
+ static int rpc_alloc_clid(struct rpc_clnt *clnt)
+ {
+ 	int clid;
+diff --git a/net/sunrpc/sunrpc_syms.c b/net/sunrpc/sunrpc_syms.c
+index ee5d3d253102..3142f38d1104 100644
+--- a/net/sunrpc/sunrpc_syms.c
++++ b/net/sunrpc/sunrpc_syms.c
+@@ -119,6 +119,7 @@ out:
+ static void __exit
+ cleanup_sunrpc(void)
+ {
++	rpc_cleanup_clids();
+ 	rpcauth_remove_module();
+ 	cleanup_socket_xprt();
+ 	svc_cleanup_xprt_sock();
