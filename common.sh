@@ -468,7 +468,7 @@ customize_image()
 		mount -o bind $SRC/userpatches/overlay $CACHEDIR/$SDCARD/tmp/overlay
 	fi
 	display_alert "Calling image customization script" "customize-image.sh" "info"
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "/tmp/customize-image.sh $RELEASE $FAMILY $BOARD $BUILD_DESKTOP"
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
 	umount $CACHEDIR/$SDCARD/tmp/overlay
 	mountpoint -q $CACHEDIR/$SDCARD/tmp/overlay || rm -r $CACHEDIR/$SDCARD/tmp/overlay
 }
