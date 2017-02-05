@@ -233,5 +233,8 @@ install_distribution_specific()
 		wifi.powersave = 2
 		EOF
 		;;
+
+	stretch)
+	;;
 	esac
 }

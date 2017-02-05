@@ -117,7 +117,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: jessie|xenial
+# <release>: jessie|stretch|xenial
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -127,7 +127,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	jessie)
+	jessie|stretch)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
