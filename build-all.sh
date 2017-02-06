@@ -25,7 +25,8 @@ done
 FORCEDRELEASE=$RELEASE
 
 # when we want to build from certain start
-from=0
+#from=147
+#stop=148
 
 rm -rf /run/armbian
 mkdir -p /run/armbian
@@ -216,6 +217,7 @@ for line in "${buildlist[@]}"; do
 		fi
 
 	fi
+	if [[ -n $stop && $n -ge $stop ]]; then exit; fi
 done
 
 buildall_end=`date +%s`
