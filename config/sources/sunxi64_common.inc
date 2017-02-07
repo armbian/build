@@ -9,6 +9,7 @@ case $BRANCH in
 	BOOTDIR='u-boot-sun50i'
 	BOOTBRANCH='branch:master'
 	BOOTPATCHDIR='u-boot-sun50i-dev'
+	UBOOT_TARGET_MAP="$BOARD;;u-boot-sunxi-with-spl.bin"
 
 	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 	LINUXCONFIG='linux-sun50i-dev'
