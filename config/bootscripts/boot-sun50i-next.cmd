@@ -41,6 +41,11 @@ for overlay_file in ${overlays}; do
 		fdt apply ${load_addr}
 	fi
 done
+if test "${mmc0-broken-cd}" = "on"; then
+	fdt rm /soc/mmc@1c0f000/ cd-gpios
+	fdt rm /soc/mmc@1c0f000/ cd-inverted
+	fdt set /soc/mmc@1c0f000/ broken-cd
+fi
 load ${devtype} 0 ${ramdisk_addr_r} /boot/uInitrd || load ${devtype} 0 ${ramdisk_addr_r} uInitrd
 load ${devtype} 0 ${kernel_addr_r} /boot/Image || load ${devtype} 0 ${kernel_addr_r} Image
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
