@@ -368,7 +368,7 @@ prepare_partitions()
 	# stage: mount image
 	# lock access to loop devices
 	exec {FD}>/var/lock/armbian-debootstrap-losetup
-	flock --verbose -x $FD | tee -a $DEST/debug/output.log
+	flock -x $FD
 
 	LOOP=$(losetup -f)
 	[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device"
