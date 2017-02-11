@@ -3,8 +3,9 @@
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
 
-# default values
 setenv load_addr "0x44000000"
+setenv overlay_error "false"
+# default values
 setenv rootdev "/dev/mmcblk0p1"
 setenv verbosity "1"
 setenv console "both"
@@ -44,9 +45,13 @@ if load ${devtype} 0 0x00000000 /boot/.next || load ${devtype} 0 0x00000000 .nex
 	for overlay_file in ${overlays}; do
 		if load ${devtype} 0 ${load_addr} boot/dtb/overlay/${overlay_file}.dtbo || load ${devtype} 0 ${load_addr} dtb/overlay/${overlay_file}.dtbo; then
 			echo "Applying DT overlay ${overlay_file}.dtbo"
-			fdt apply ${load_addr}
+			fdt apply ${load_addr} || setenv overlay_error "true"
 		fi
 	done
+	if test "${overlay_error}" = "true"; then
+		echo "Error applying DT overlays, restoring original DT"
+		load ${devtype} 0 ${fdt_addr_r} /boot/dtb/${fdtfile} || load ${devtype} 0 ${fdt_addr_r} /dtb/${fdtfile}
+	fi
 	bootz ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 else
 	load ${devtype} 0 ${fdt_addr_r} /boot/script.bin || load ${devtype} 0 ${fdt_addr_r} script.bin
