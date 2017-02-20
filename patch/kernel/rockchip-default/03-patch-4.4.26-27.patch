@@ -1,0 +1,995 @@
+diff --git a/Makefile b/Makefile
+index a127b9ef9ebc..b6ee4ce561f8 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 26
++SUBLEVEL = 27
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index 1f9093e901da..3ad307ee6029 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -3003,7 +3003,6 @@ static struct request *cfq_check_fifo(struct cfq_queue *cfqq)
+ 	if (time_before(jiffies, rq->fifo_time))
+ 		rq = NULL;
+ 
+-	cfq_log_cfqq(cfqq->cfqd, cfqq, "fifo=%p", rq);
+ 	return rq;
+ }
+ 
+@@ -3377,6 +3376,9 @@ static bool cfq_may_dispatch(struct cfq_data *cfqd, struct cfq_queue *cfqq)
+ {
+ 	unsigned int max_dispatch;
+ 
++	if (cfq_cfqq_must_dispatch(cfqq))
++		return true;
++
+ 	/*
+ 	 * Drain async requests before we start sync IO
+ 	 */
+@@ -3468,15 +3470,20 @@ static bool cfq_dispatch_request(struct cfq_data *cfqd, struct cfq_queue *cfqq)
+ 
+ 	BUG_ON(RB_EMPTY_ROOT(&cfqq->sort_list));
+ 
++	rq = cfq_check_fifo(cfqq);
++	if (rq)
++		cfq_mark_cfqq_must_dispatch(cfqq);
++
+ 	if (!cfq_may_dispatch(cfqd, cfqq))
+ 		return false;
+ 
+ 	/*
+ 	 * follow expired path, else get first next available
+ 	 */
+-	rq = cfq_check_fifo(cfqq);
+ 	if (!rq)
+ 		rq = cfqq->next_rq;
++	else
++		cfq_log_cfqq(cfqq->cfqd, cfqq, "fifo=%p", rq);
+ 
+ 	/*
+ 	 * insert request into driver dispatch list
+@@ -3944,7 +3951,7 @@ cfq_should_preempt(struct cfq_data *cfqd, struct cfq_queue *new_cfqq,
+ 	 * if the new request is sync, but the currently running queue is
+ 	 * not, let the sync request have priority.
+ 	 */
+-	if (rq_is_sync(rq) && !cfq_cfqq_sync(cfqq))
++	if (rq_is_sync(rq) && !cfq_cfqq_sync(cfqq) && !cfq_cfqq_must_dispatch(cfqq))
+ 		return true;
+ 
+ 	if (new_cfqq->cfqg != cfqq->cfqg)
+diff --git a/crypto/async_tx/async_pq.c b/crypto/async_tx/async_pq.c
+index c0748bbd4c08..84f8d4d8b6bc 100644
+--- a/crypto/async_tx/async_pq.c
++++ b/crypto/async_tx/async_pq.c
+@@ -368,8 +368,6 @@ async_syndrome_val(struct page **blocks, unsigned int offset, int disks,
+ 
+ 		dma_set_unmap(tx, unmap);
+ 		async_tx_submit(chan, tx, submit);
+-
+-		return tx;
+ 	} else {
+ 		struct page *p_src = P(blocks, disks);
+ 		struct page *q_src = Q(blocks, disks);
+@@ -424,9 +422,11 @@ async_syndrome_val(struct page **blocks, unsigned int offset, int disks,
+ 		submit->cb_param = cb_param_orig;
+ 		submit->flags = flags_orig;
+ 		async_tx_sync_epilog(submit);
+-
+-		return NULL;
++		tx = NULL;
+ 	}
++	dmaengine_unmap_put(unmap);
++
++	return tx;
+ }
+ EXPORT_SYMBOL_GPL(async_syndrome_val);
+ 
+diff --git a/crypto/ghash-generic.c b/crypto/ghash-generic.c
+index bac70995e064..12ad3e3a84e3 100644
+--- a/crypto/ghash-generic.c
++++ b/crypto/ghash-generic.c
+@@ -14,24 +14,13 @@
+ 
+ #include <crypto/algapi.h>
+ #include <crypto/gf128mul.h>
++#include <crypto/ghash.h>
+ #include <crypto/internal/hash.h>
+ #include <linux/crypto.h>
+ #include <linux/init.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ 
+-#define GHASH_BLOCK_SIZE	16
+-#define GHASH_DIGEST_SIZE	16
+-
+-struct ghash_ctx {
+-	struct gf128mul_4k *gf128;
+-};
+-
+-struct ghash_desc_ctx {
+-	u8 buffer[GHASH_BLOCK_SIZE];
+-	u32 bytes;
+-};
+-
+ static int ghash_init(struct shash_desc *desc)
+ {
+ 	struct ghash_desc_ctx *dctx = shash_desc_ctx(desc);
+diff --git a/drivers/base/dma-mapping.c b/drivers/base/dma-mapping.c
+index d95c5971c225..a00f7b79202b 100644
+--- a/drivers/base/dma-mapping.c
++++ b/drivers/base/dma-mapping.c
+@@ -335,7 +335,7 @@ void dma_common_free_remap(void *cpu_addr, size_t size, unsigned long vm_flags)
+ 		return;
+ 	}
+ 
+-	unmap_kernel_range((unsigned long)cpu_addr, size);
++	unmap_kernel_range((unsigned long)cpu_addr, PAGE_ALIGN(size));
+ 	vunmap(cpu_addr);
+ }
+ #endif
+diff --git a/drivers/crypto/vmx/ghash.c b/drivers/crypto/vmx/ghash.c
+index 2183a2e77641..9cb3a0b715e2 100644
+--- a/drivers/crypto/vmx/ghash.c
++++ b/drivers/crypto/vmx/ghash.c
+@@ -26,16 +26,13 @@
+ #include <linux/hardirq.h>
+ #include <asm/switch_to.h>
+ #include <crypto/aes.h>
++#include <crypto/ghash.h>
+ #include <crypto/scatterwalk.h>
+ #include <crypto/internal/hash.h>
+ #include <crypto/b128ops.h>
+ 
+ #define IN_INTERRUPT in_interrupt()
+ 
+-#define GHASH_BLOCK_SIZE (16)
+-#define GHASH_DIGEST_SIZE (16)
+-#define GHASH_KEY_LEN (16)
+-
+ void gcm_init_p8(u128 htable[16], const u64 Xi[2]);
+ void gcm_gmult_p8(u64 Xi[2], const u128 htable[16]);
+ void gcm_ghash_p8(u64 Xi[2], const u128 htable[16],
+@@ -55,16 +52,11 @@ struct p8_ghash_desc_ctx {
+ 
+ static int p8_ghash_init_tfm(struct crypto_tfm *tfm)
+ {
+-	const char *alg;
++	const char *alg = "ghash-generic";
+ 	struct crypto_shash *fallback;
+ 	struct crypto_shash *shash_tfm = __crypto_shash_cast(tfm);
+ 	struct p8_ghash_ctx *ctx = crypto_tfm_ctx(tfm);
+ 
+-	if (!(alg = crypto_tfm_alg_name(tfm))) {
+-		printk(KERN_ERR "Failed to get algorithm name.\n");
+-		return -ENOENT;
+-	}
+-
+ 	fallback = crypto_alloc_shash(alg, 0, CRYPTO_ALG_NEED_FALLBACK);
+ 	if (IS_ERR(fallback)) {
+ 		printk(KERN_ERR
+@@ -78,10 +70,18 @@ static int p8_ghash_init_tfm(struct crypto_tfm *tfm)
+ 	crypto_shash_set_flags(fallback,
+ 			       crypto_shash_get_flags((struct crypto_shash
+ 						       *) tfm));
+-	ctx->fallback = fallback;
+ 
+-	shash_tfm->descsize = sizeof(struct p8_ghash_desc_ctx)
+-	    + crypto_shash_descsize(fallback);
++	/* Check if the descsize defined in the algorithm is still enough. */
++	if (shash_tfm->descsize < sizeof(struct p8_ghash_desc_ctx)
++	    + crypto_shash_descsize(fallback)) {
++		printk(KERN_ERR
++		       "Desc size of the fallback implementation (%s) does not match the expected value: %lu vs %u\n",
++		       alg,
++		       shash_tfm->descsize - sizeof(struct p8_ghash_desc_ctx),
++		       crypto_shash_descsize(fallback));
++		return -EINVAL;
++	}
++	ctx->fallback = fallback;
+ 
+ 	return 0;
+ }
+@@ -113,7 +113,7 @@ static int p8_ghash_setkey(struct crypto_shash *tfm, const u8 *key,
+ {
+ 	struct p8_ghash_ctx *ctx = crypto_tfm_ctx(crypto_shash_tfm(tfm));
+ 
+-	if (keylen != GHASH_KEY_LEN)
++	if (keylen != GHASH_BLOCK_SIZE)
+ 		return -EINVAL;
+ 
+ 	preempt_disable();
+@@ -215,7 +215,8 @@ struct shash_alg p8_ghash_alg = {
+ 	.update = p8_ghash_update,
+ 	.final = p8_ghash_final,
+ 	.setkey = p8_ghash_setkey,
+-	.descsize = sizeof(struct p8_ghash_desc_ctx),
++	.descsize = sizeof(struct p8_ghash_desc_ctx)
++		+ sizeof(struct ghash_desc_ctx),
+ 	.base = {
+ 		 .cra_name = "ghash",
+ 		 .cra_driver_name = "p8_ghash",
+diff --git a/drivers/net/ethernet/intel/i40e/i40e_main.c b/drivers/net/ethernet/intel/i40e/i40e_main.c
+index 2215bebe208e..979cc024bca7 100644
+--- a/drivers/net/ethernet/intel/i40e/i40e_main.c
++++ b/drivers/net/ethernet/intel/i40e/i40e_main.c
+@@ -10853,6 +10853,12 @@ static pci_ers_result_t i40e_pci_error_detected(struct pci_dev *pdev,
+ 
+ 	dev_info(&pdev->dev, "%s: error %d\n", __func__, error);
+ 
++	if (!pf) {
++		dev_info(&pdev->dev,
++			 "Cannot recover - error happened during device probe\n");
++		return PCI_ERS_RESULT_DISCONNECT;
++	}
++
+ 	/* shutdown all operations */
+ 	if (!test_bit(__I40E_SUSPENDED, &pf->state)) {
+ 		rtnl_lock();
+diff --git a/drivers/net/wireless/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/brcm80211/brcmfmac/cfg80211.c
+index deb5f78dcacc..71493d2af912 100644
+--- a/drivers/net/wireless/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/brcm80211/brcmfmac/cfg80211.c
+@@ -2408,7 +2408,7 @@ static void brcmf_fill_bss_param(struct brcmf_if *ifp, struct station_info *si)
+ 				     WL_BSS_INFO_MAX);
+ 	if (err) {
+ 		brcmf_err("Failed to get bss info (%d)\n", err);
+-		return;
++		goto out_kfree;
+ 	}
+ 	si->filled |= BIT(NL80211_STA_INFO_BSS_PARAM);
+ 	si->bss_param.beacon_interval = le16_to_cpu(buf->bss_le.beacon_period);
+@@ -2420,6 +2420,9 @@ static void brcmf_fill_bss_param(struct brcmf_if *ifp, struct station_info *si)
+ 		si->bss_param.flags |= BSS_PARAM_FLAGS_SHORT_PREAMBLE;
+ 	if (capability & WLAN_CAPABILITY_SHORT_SLOT_TIME)
+ 		si->bss_param.flags |= BSS_PARAM_FLAGS_SHORT_SLOT_TIME;
++
++out_kfree:
++	kfree(buf);
+ }
+ 
+ static s32
+diff --git a/drivers/scsi/arcmsr/arcmsr_hba.c b/drivers/scsi/arcmsr/arcmsr_hba.c
+index 41f9a00e4f74..8db9f3a5844d 100644
+--- a/drivers/scsi/arcmsr/arcmsr_hba.c
++++ b/drivers/scsi/arcmsr/arcmsr_hba.c
+@@ -2297,15 +2297,23 @@ static int arcmsr_iop_message_xfer(struct AdapterControlBlock *acb,
+ 	}
+ 	case ARCMSR_MESSAGE_WRITE_WQBUFFER: {
+ 		unsigned char *ver_addr;
+-		int32_t user_len, cnt2end;
++		uint32_t user_len;
++		int32_t cnt2end;
+ 		uint8_t *pQbuffer, *ptmpuserbuffer;
++
++		user_len = pcmdmessagefld->cmdmessage.Length;
++		if (user_len > ARCMSR_API_DATA_BUFLEN) {
++			retvalue = ARCMSR_MESSAGE_FAIL;
++			goto message_out;
++		}
++
+ 		ver_addr = kmalloc(ARCMSR_API_DATA_BUFLEN, GFP_ATOMIC);
+ 		if (!ver_addr) {
+ 			retvalue = ARCMSR_MESSAGE_FAIL;
+ 			goto message_out;
+ 		}
+ 		ptmpuserbuffer = ver_addr;
+-		user_len = pcmdmessagefld->cmdmessage.Length;
++
+ 		memcpy(ptmpuserbuffer,
+ 			pcmdmessagefld->messagedatabuffer, user_len);
+ 		spin_lock_irqsave(&acb->wqbuffer_lock, flags);
+diff --git a/drivers/scsi/ibmvscsi/ibmvfc.c b/drivers/scsi/ibmvscsi/ibmvfc.c
+index 6aa317c303e2..1f9f9e5af207 100644
+--- a/drivers/scsi/ibmvscsi/ibmvfc.c
++++ b/drivers/scsi/ibmvscsi/ibmvfc.c
+@@ -717,7 +717,6 @@ static int ibmvfc_reset_crq(struct ibmvfc_host *vhost)
+ 	spin_lock_irqsave(vhost->host->host_lock, flags);
+ 	vhost->state = IBMVFC_NO_CRQ;
+ 	vhost->logged_in = 0;
+-	ibmvfc_set_host_action(vhost, IBMVFC_HOST_ACTION_NONE);
+ 
+ 	/* Clean out the queue */
+ 	memset(crq->msgs, 0, PAGE_SIZE);
+diff --git a/drivers/tty/serial/8250/8250_dw.c b/drivers/tty/serial/8250/8250_dw.c
+index a5d319e4aae6..8435c3f204c1 100644
+--- a/drivers/tty/serial/8250/8250_dw.c
++++ b/drivers/tty/serial/8250/8250_dw.c
+@@ -440,7 +440,7 @@ static int dw8250_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	data->pclk = devm_clk_get(&pdev->dev, "apb_pclk");
+-	if (IS_ERR(data->clk) && PTR_ERR(data->clk) == -EPROBE_DEFER) {
++	if (IS_ERR(data->pclk) && PTR_ERR(data->pclk) == -EPROBE_DEFER) {
+ 		err = -EPROBE_DEFER;
+ 		goto err_clk;
+ 	}
+diff --git a/fs/attr.c b/fs/attr.c
+index 6530ced19697..d62f674a605f 100644
+--- a/fs/attr.c
++++ b/fs/attr.c
+@@ -202,6 +202,21 @@ int notify_change(struct dentry * dentry, struct iattr * attr, struct inode **de
+ 			return -EPERM;
+ 	}
+ 
++	/*
++	 * If utimes(2) and friends are called with times == NULL (or both
++	 * times are UTIME_NOW), then we need to check for write permission
++	 */
++	if (ia_valid & ATTR_TOUCH) {
++		if (IS_IMMUTABLE(inode))
++			return -EPERM;
++
++		if (!inode_owner_or_capable(inode)) {
++			error = inode_permission(inode, MAY_WRITE);
++			if (error)
++				return error;
++		}
++	}
++
+ 	if ((ia_valid & ATTR_MODE)) {
+ 		umode_t amode = attr->ia_mode;
+ 		/* Flag setting protected by i_mutex */
+diff --git a/fs/btrfs/compression.c b/fs/btrfs/compression.c
+index c473c42d7d6c..bae05c5c75ba 100644
+--- a/fs/btrfs/compression.c
++++ b/fs/btrfs/compression.c
+@@ -694,7 +694,7 @@ int btrfs_submit_compressed_read(struct inode *inode, struct bio *bio,
+ 			ret = btrfs_map_bio(root, READ, comp_bio,
+ 					    mirror_num, 0);
+ 			if (ret) {
+-				bio->bi_error = ret;
++				comp_bio->bi_error = ret;
+ 				bio_endio(comp_bio);
+ 			}
+ 
+@@ -723,7 +723,7 @@ int btrfs_submit_compressed_read(struct inode *inode, struct bio *bio,
+ 
+ 	ret = btrfs_map_bio(root, READ, comp_bio, mirror_num, 0);
+ 	if (ret) {
+-		bio->bi_error = ret;
++		comp_bio->bi_error = ret;
+ 		bio_endio(comp_bio);
+ 	}
+ 
+diff --git a/fs/dlm/lowcomms.c b/fs/dlm/lowcomms.c
+index 3a37bd3f9637..9d7a4a714907 100644
+--- a/fs/dlm/lowcomms.c
++++ b/fs/dlm/lowcomms.c
+@@ -1607,16 +1607,12 @@ void dlm_lowcomms_stop(void)
+ 	mutex_lock(&connections_lock);
+ 	dlm_allow_conn = 0;
+ 	foreach_conn(stop_conn);
++	clean_writequeues();
++	foreach_conn(free_conn);
+ 	mutex_unlock(&connections_lock);
+ 
+ 	work_stop();
+ 
+-	mutex_lock(&connections_lock);
+-	clean_writequeues();
+-
+-	foreach_conn(free_conn);
+-
+-	mutex_unlock(&connections_lock);
+ 	kmem_cache_destroy(con_cache);
+ }
+ 
+diff --git a/fs/ext4/extents.c b/fs/ext4/extents.c
+index 8eac7d586997..9da42ace762a 100644
+--- a/fs/ext4/extents.c
++++ b/fs/ext4/extents.c
+@@ -5738,6 +5738,9 @@ int ext4_insert_range(struct inode *inode, loff_t offset, loff_t len)
+ 			up_write(&EXT4_I(inode)->i_data_sem);
+ 			goto out_stop;
+ 		}
++	} else {
++		ext4_ext_drop_refs(path);
++		kfree(path);
+ 	}
+ 
+ 	ret = ext4_es_remove_extent(inode, offset_lblk,
+diff --git a/fs/ext4/inode.c b/fs/ext4/inode.c
+index 28702932a908..c71d2941a45b 100644
+--- a/fs/ext4/inode.c
++++ b/fs/ext4/inode.c
+@@ -3645,7 +3645,7 @@ int ext4_update_disksize_before_punch(struct inode *inode, loff_t offset,
+ }
+ 
+ /*
+- * ext4_punch_hole: punches a hole in a file by releaseing the blocks
++ * ext4_punch_hole: punches a hole in a file by releasing the blocks
+  * associated with the given offset and length
+  *
+  * @inode:  File inode
+@@ -3674,7 +3674,7 @@ int ext4_punch_hole(struct inode *inode, loff_t offset, loff_t length)
+ 	 * Write out all dirty pages to avoid race conditions
+ 	 * Then release them.
+ 	 */
+-	if (mapping->nrpages && mapping_tagged(mapping, PAGECACHE_TAG_DIRTY)) {
++	if (mapping_tagged(mapping, PAGECACHE_TAG_DIRTY)) {
+ 		ret = filemap_write_and_wait_range(mapping, offset,
+ 						   offset + length - 1);
+ 		if (ret)
+@@ -4549,14 +4549,14 @@ static int ext4_do_update_inode(handle_t *handle,
+  * Fix up interoperability with old kernels. Otherwise, old inodes get
+  * re-used with the upper 16 bits of the uid/gid intact
+  */
+-		if (!ei->i_dtime) {
++		if (ei->i_dtime && list_empty(&ei->i_orphan)) {
++			raw_inode->i_uid_high = 0;
++			raw_inode->i_gid_high = 0;
++		} else {
+ 			raw_inode->i_uid_high =
+ 				cpu_to_le16(high_16_bits(i_uid));
+ 			raw_inode->i_gid_high =
+ 				cpu_to_le16(high_16_bits(i_gid));
+-		} else {
+-			raw_inode->i_uid_high = 0;
+-			raw_inode->i_gid_high = 0;
+ 		}
+ 	} else {
+ 		raw_inode->i_uid_low = cpu_to_le16(fs_high2lowuid(i_uid));
+diff --git a/fs/ext4/move_extent.c b/fs/ext4/move_extent.c
+index 796ff0eafd3c..7861d801b048 100644
+--- a/fs/ext4/move_extent.c
++++ b/fs/ext4/move_extent.c
+@@ -598,6 +598,13 @@ ext4_move_extents(struct file *o_filp, struct file *d_filp, __u64 orig_blk,
+ 		return -EOPNOTSUPP;
+ 	}
+ 
++	if (ext4_encrypted_inode(orig_inode) ||
++	    ext4_encrypted_inode(donor_inode)) {
++		ext4_msg(orig_inode->i_sb, KERN_ERR,
++			 "Online defrag not supported for encrypted files");
++		return -EOPNOTSUPP;
++	}
++
+ 	/* Protect orig and donor inodes against a truncate */
+ 	lock_two_nondirectories(orig_inode, donor_inode);
+ 
+diff --git a/fs/ext4/namei.c b/fs/ext4/namei.c
+index 38eb0c8e43b9..573b4cbb0cb9 100644
+--- a/fs/ext4/namei.c
++++ b/fs/ext4/namei.c
+@@ -2017,33 +2017,31 @@ static int make_indexed_dir(handle_t *handle, struct ext4_filename *fname,
+ 	frame->entries = entries;
+ 	frame->at = entries;
+ 	frame->bh = bh;
+-	bh = bh2;
+ 
+ 	retval = ext4_handle_dirty_dx_node(handle, dir, frame->bh);
+ 	if (retval)
+ 		goto out_frames;	
+-	retval = ext4_handle_dirty_dirent_node(handle, dir, bh);
++	retval = ext4_handle_dirty_dirent_node(handle, dir, bh2);
+ 	if (retval)
+ 		goto out_frames;	
+ 
+-	de = do_split(handle,dir, &bh, frame, &fname->hinfo);
++	de = do_split(handle,dir, &bh2, frame, &fname->hinfo);
+ 	if (IS_ERR(de)) {
+ 		retval = PTR_ERR(de);
+ 		goto out_frames;
+ 	}
+-	dx_release(frames);
+ 
+-	retval = add_dirent_to_buf(handle, fname, dir, inode, de, bh);
+-	brelse(bh);
+-	return retval;
++	retval = add_dirent_to_buf(handle, fname, dir, inode, de, bh2);
+ out_frames:
+ 	/*
+ 	 * Even if the block split failed, we have to properly write
+ 	 * out all the changes we did so far. Otherwise we can end up
+ 	 * with corrupted filesystem.
+ 	 */
+-	ext4_mark_inode_dirty(handle, dir);
++	if (retval)
++		ext4_mark_inode_dirty(handle, dir);
+ 	dx_release(frames);
++	brelse(bh2);
+ 	return retval;
+ }
+ 
+diff --git a/fs/fuse/dir.c b/fs/fuse/dir.c
+index 5e2e08712d3b..4b5f2c4e69c8 100644
+--- a/fs/fuse/dir.c
++++ b/fs/fuse/dir.c
+@@ -1697,14 +1697,46 @@ error:
+ static int fuse_setattr(struct dentry *entry, struct iattr *attr)
+ {
+ 	struct inode *inode = d_inode(entry);
++	struct file *file = (attr->ia_valid & ATTR_FILE) ? attr->ia_file : NULL;
++	int ret;
+ 
+ 	if (!fuse_allow_current_process(get_fuse_conn(inode)))
+ 		return -EACCES;
+ 
+-	if (attr->ia_valid & ATTR_FILE)
+-		return fuse_do_setattr(inode, attr, attr->ia_file);
+-	else
+-		return fuse_do_setattr(inode, attr, NULL);
++	if (attr->ia_valid & (ATTR_KILL_SUID | ATTR_KILL_SGID)) {
++		int kill;
++
++		attr->ia_valid &= ~(ATTR_KILL_SUID | ATTR_KILL_SGID |
++				    ATTR_MODE);
++		/*
++		 * ia_mode calculation may have used stale i_mode.  Refresh and
++		 * recalculate.
++		 */
++		ret = fuse_do_getattr(inode, NULL, file);
++		if (ret)
++			return ret;
++
++		attr->ia_mode = inode->i_mode;
++		kill = should_remove_suid(entry);
++		if (kill & ATTR_KILL_SUID) {
++			attr->ia_valid |= ATTR_MODE;
++			attr->ia_mode &= ~S_ISUID;
++		}
++		if (kill & ATTR_KILL_SGID) {
++			attr->ia_valid |= ATTR_MODE;
++			attr->ia_mode &= ~S_ISGID;
++		}
++	}
++	if (!attr->ia_valid)
++		return 0;
++
++	ret = fuse_do_setattr(inode, attr, file);
++	if (!ret) {
++		/* Directory mode changed, may need to revalidate access */
++		if (d_is_dir(entry) && (attr->ia_valid & ATTR_MODE))
++			fuse_invalidate_entry_cache(entry);
++	}
++	return ret;
+ }
+ 
+ static int fuse_getattr(struct vfsmount *mnt, struct dentry *entry,
+@@ -1797,6 +1829,23 @@ static ssize_t fuse_getxattr(struct dentry *entry, const char *name,
+ 	return ret;
+ }
+ 
++static int fuse_verify_xattr_list(char *list, size_t size)
++{
++	size_t origsize = size;
++
++	while (size) {
++		size_t thislen = strnlen(list, size);
++
++		if (!thislen || thislen == size)
++			return -EIO;
++
++		size -= thislen + 1;
++		list += thislen + 1;
++	}
++
++	return origsize;
++}
++
+ static ssize_t fuse_listxattr(struct dentry *entry, char *list, size_t size)
+ {
+ 	struct inode *inode = d_inode(entry);
+@@ -1832,6 +1881,8 @@ static ssize_t fuse_listxattr(struct dentry *entry, char *list, size_t size)
+ 	ret = fuse_simple_request(fc, &args);
+ 	if (!ret && !size)
+ 		ret = outarg.size;
++	if (ret > 0 && size)
++		ret = fuse_verify_xattr_list(list, ret);
+ 	if (ret == -ENOSYS) {
+ 		fc->no_listxattr = 1;
+ 		ret = -EOPNOTSUPP;
+diff --git a/fs/reiserfs/file.c b/fs/reiserfs/file.c
+index 96a1bcf33db4..8f5ccdf81c25 100644
+--- a/fs/reiserfs/file.c
++++ b/fs/reiserfs/file.c
+@@ -260,10 +260,10 @@ const struct file_operations reiserfs_file_operations = {
+ 
+ const struct inode_operations reiserfs_file_inode_operations = {
+ 	.setattr = reiserfs_setattr,
+-	.setxattr = reiserfs_setxattr,
+-	.getxattr = reiserfs_getxattr,
++	.setxattr = generic_setxattr,
++	.getxattr = generic_getxattr,
+ 	.listxattr = reiserfs_listxattr,
+-	.removexattr = reiserfs_removexattr,
++	.removexattr = generic_removexattr,
+ 	.permission = reiserfs_permission,
+ 	.get_acl = reiserfs_get_acl,
+ 	.set_acl = reiserfs_set_acl,
+diff --git a/fs/reiserfs/namei.c b/fs/reiserfs/namei.c
+index 47f96988fdd4..3ebc70167e41 100644
+--- a/fs/reiserfs/namei.c
++++ b/fs/reiserfs/namei.c
+@@ -1649,10 +1649,10 @@ const struct inode_operations reiserfs_dir_inode_operations = {
+ 	.mknod = reiserfs_mknod,
+ 	.rename = reiserfs_rename,
+ 	.setattr = reiserfs_setattr,
+-	.setxattr = reiserfs_setxattr,
+-	.getxattr = reiserfs_getxattr,
++	.setxattr = generic_setxattr,
++	.getxattr = generic_getxattr,
+ 	.listxattr = reiserfs_listxattr,
+-	.removexattr = reiserfs_removexattr,
++	.removexattr = generic_removexattr,
+ 	.permission = reiserfs_permission,
+ 	.get_acl = reiserfs_get_acl,
+ 	.set_acl = reiserfs_set_acl,
+@@ -1667,10 +1667,10 @@ const struct inode_operations reiserfs_symlink_inode_operations = {
+ 	.follow_link = page_follow_link_light,
+ 	.put_link = page_put_link,
+ 	.setattr = reiserfs_setattr,
+-	.setxattr = reiserfs_setxattr,
+-	.getxattr = reiserfs_getxattr,
++	.setxattr = generic_setxattr,
++	.getxattr = generic_getxattr,
+ 	.listxattr = reiserfs_listxattr,
+-	.removexattr = reiserfs_removexattr,
++	.removexattr = generic_removexattr,
+ 	.permission = reiserfs_permission,
+ };
+ 
+@@ -1679,10 +1679,10 @@ const struct inode_operations reiserfs_symlink_inode_operations = {
+  */
+ const struct inode_operations reiserfs_special_inode_operations = {
+ 	.setattr = reiserfs_setattr,
+-	.setxattr = reiserfs_setxattr,
+-	.getxattr = reiserfs_getxattr,
++	.setxattr = generic_setxattr,
++	.getxattr = generic_getxattr,
+ 	.listxattr = reiserfs_listxattr,
+-	.removexattr = reiserfs_removexattr,
++	.removexattr = generic_removexattr,
+ 	.permission = reiserfs_permission,
+ 	.get_acl = reiserfs_get_acl,
+ 	.set_acl = reiserfs_set_acl,
+diff --git a/fs/reiserfs/super.c b/fs/reiserfs/super.c
+index 4a62fe8cc3bf..f9f3be50081a 100644
+--- a/fs/reiserfs/super.c
++++ b/fs/reiserfs/super.c
+@@ -190,7 +190,15 @@ static int remove_save_link_only(struct super_block *s,
+ static int reiserfs_quota_on_mount(struct super_block *, int);
+ #endif
+ 
+-/* look for uncompleted unlinks and truncates and complete them */
++/*
++ * Look for uncompleted unlinks and truncates and complete them
++ *
++ * Called with superblock write locked.  If quotas are enabled, we have to
++ * release/retake lest we call dquot_quota_on_mount(), proceed to
++ * schedule_on_each_cpu() in invalidate_bdev() and deadlock waiting for the per
++ * cpu worklets to complete flush_async_commits() that in turn wait for the
++ * superblock write lock.
++ */
+ static int finish_unfinished(struct super_block *s)
+ {
+ 	INITIALIZE_PATH(path);
+@@ -237,7 +245,9 @@ static int finish_unfinished(struct super_block *s)
+ 				quota_enabled[i] = 0;
+ 				continue;
+ 			}
++			reiserfs_write_unlock(s);
+ 			ret = reiserfs_quota_on_mount(s, i);
++			reiserfs_write_lock(s);
+ 			if (ret < 0)
+ 				reiserfs_warning(s, "reiserfs-2500",
+ 						 "cannot turn on journaled "
+diff --git a/fs/reiserfs/xattr.c b/fs/reiserfs/xattr.c
+index 66b26fdfff8d..a8dbc93e45eb 100644
+--- a/fs/reiserfs/xattr.c
++++ b/fs/reiserfs/xattr.c
+@@ -763,60 +763,6 @@ find_xattr_handler_prefix(const struct xattr_handler **handlers,
+ 	return xah;
+ }
+ 
+-
+-/*
+- * Inode operation getxattr()
+- */
+-ssize_t
+-reiserfs_getxattr(struct dentry * dentry, const char *name, void *buffer,
+-		  size_t size)
+-{
+-	const struct xattr_handler *handler;
+-
+-	handler = find_xattr_handler_prefix(dentry->d_sb->s_xattr, name);
+-
+-	if (!handler || get_inode_sd_version(d_inode(dentry)) == STAT_DATA_V1)
+-		return -EOPNOTSUPP;
+-
+-	return handler->get(handler, dentry, name, buffer, size);
+-}
+-
+-/*
+- * Inode operation setxattr()
+- *
+- * d_inode(dentry)->i_mutex down
+- */
+-int
+-reiserfs_setxattr(struct dentry *dentry, const char *name, const void *value,
+-		  size_t size, int flags)
+-{
+-	const struct xattr_handler *handler;
+-
+-	handler = find_xattr_handler_prefix(dentry->d_sb->s_xattr, name);
+-
+-	if (!handler || get_inode_sd_version(d_inode(dentry)) == STAT_DATA_V1)
+-		return -EOPNOTSUPP;
+-
+-	return handler->set(handler, dentry, name, value, size, flags);
+-}
+-
+-/*
+- * Inode operation removexattr()
+- *
+- * d_inode(dentry)->i_mutex down
+- */
+-int reiserfs_removexattr(struct dentry *dentry, const char *name)
+-{
+-	const struct xattr_handler *handler;
+-
+-	handler = find_xattr_handler_prefix(dentry->d_sb->s_xattr, name);
+-
+-	if (!handler || get_inode_sd_version(d_inode(dentry)) == STAT_DATA_V1)
+-		return -EOPNOTSUPP;
+-
+-	return handler->set(handler, dentry, name, NULL, 0, XATTR_REPLACE);
+-}
+-
+ struct listxattr_buf {
+ 	struct dir_context ctx;
+ 	size_t size;
+diff --git a/fs/reiserfs/xattr.h b/fs/reiserfs/xattr.h
+index 15dde6262c00..613ff5aef94e 100644
+--- a/fs/reiserfs/xattr.h
++++ b/fs/reiserfs/xattr.h
+@@ -2,6 +2,7 @@
+ #include <linux/init.h>
+ #include <linux/list.h>
+ #include <linux/rwsem.h>
++#include <linux/xattr.h>
+ 
+ struct inode;
+ struct dentry;
+@@ -18,12 +19,7 @@ int reiserfs_permission(struct inode *inode, int mask);
+ 
+ #ifdef CONFIG_REISERFS_FS_XATTR
+ #define has_xattr_dir(inode) (REISERFS_I(inode)->i_flags & i_has_xattr_dir)
+-ssize_t reiserfs_getxattr(struct dentry *dentry, const char *name,
+-			  void *buffer, size_t size);
+-int reiserfs_setxattr(struct dentry *dentry, const char *name,
+-		      const void *value, size_t size, int flags);
+ ssize_t reiserfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
+-int reiserfs_removexattr(struct dentry *dentry, const char *name);
+ 
+ int reiserfs_xattr_get(struct inode *, const char *, void *, size_t);
+ int reiserfs_xattr_set(struct inode *, const char *, const void *, size_t, int);
+@@ -92,10 +88,7 @@ static inline void reiserfs_init_xattr_rwsem(struct inode *inode)
+ 
+ #else
+ 
+-#define reiserfs_getxattr NULL
+-#define reiserfs_setxattr NULL
+ #define reiserfs_listxattr NULL
+-#define reiserfs_removexattr NULL
+ 
+ static inline void reiserfs_init_xattr_rwsem(struct inode *inode)
+ {
+diff --git a/fs/reiserfs/xattr_security.c b/fs/reiserfs/xattr_security.c
+index ac659af431ae..60de069225ba 100644
+--- a/fs/reiserfs/xattr_security.c
++++ b/fs/reiserfs/xattr_security.c
+@@ -12,26 +12,24 @@ static int
+ security_get(const struct xattr_handler *handler, struct dentry *dentry,
+ 	     const char *name, void *buffer, size_t size)
+ {
+-	if (strlen(name) < sizeof(XATTR_SECURITY_PREFIX))
+-		return -EINVAL;
+-
+ 	if (IS_PRIVATE(d_inode(dentry)))
+ 		return -EPERM;
+ 
+-	return reiserfs_xattr_get(d_inode(dentry), name, buffer, size);
++	return reiserfs_xattr_get(d_inode(dentry),
++				  xattr_full_name(handler, name),
++				  buffer, size);
+ }
+ 
+ static int
+ security_set(const struct xattr_handler *handler, struct dentry *dentry,
+ 	     const char *name, const void *buffer, size_t size, int flags)
+ {
+-	if (strlen(name) < sizeof(XATTR_SECURITY_PREFIX))
+-		return -EINVAL;
+-
+ 	if (IS_PRIVATE(d_inode(dentry)))
+ 		return -EPERM;
+ 
+-	return reiserfs_xattr_set(d_inode(dentry), name, buffer, size, flags);
++	return reiserfs_xattr_set(d_inode(dentry),
++				  xattr_full_name(handler, name),
++				  buffer, size, flags);
+ }
+ 
+ static size_t security_list(const struct xattr_handler *handler,
+diff --git a/fs/reiserfs/xattr_trusted.c b/fs/reiserfs/xattr_trusted.c
+index a338adf1b8b4..ebba1ebf28ad 100644
+--- a/fs/reiserfs/xattr_trusted.c
++++ b/fs/reiserfs/xattr_trusted.c
+@@ -11,26 +11,24 @@ static int
+ trusted_get(const struct xattr_handler *handler, struct dentry *dentry,
+ 	    const char *name, void *buffer, size_t size)
+ {
+-	if (strlen(name) < sizeof(XATTR_TRUSTED_PREFIX))
+-		return -EINVAL;
+-
+ 	if (!capable(CAP_SYS_ADMIN) || IS_PRIVATE(d_inode(dentry)))
+ 		return -EPERM;
+ 
+-	return reiserfs_xattr_get(d_inode(dentry), name, buffer, size);
++	return reiserfs_xattr_get(d_inode(dentry),
++				  xattr_full_name(handler, name),
++				  buffer, size);
+ }
+ 
+ static int
+ trusted_set(const struct xattr_handler *handler, struct dentry *dentry,
+ 	    const char *name, const void *buffer, size_t size, int flags)
+ {
+-	if (strlen(name) < sizeof(XATTR_TRUSTED_PREFIX))
+-		return -EINVAL;
+-
+ 	if (!capable(CAP_SYS_ADMIN) || IS_PRIVATE(d_inode(dentry)))
+ 		return -EPERM;
+ 
+-	return reiserfs_xattr_set(d_inode(dentry), name, buffer, size, flags);
++	return reiserfs_xattr_set(d_inode(dentry),
++				  xattr_full_name(handler, name),
++				  buffer, size, flags);
+ }
+ 
+ static size_t trusted_list(const struct xattr_handler *handler,
+diff --git a/fs/reiserfs/xattr_user.c b/fs/reiserfs/xattr_user.c
+index 39c9667191c5..6ac8a8c8bd9c 100644
+--- a/fs/reiserfs/xattr_user.c
++++ b/fs/reiserfs/xattr_user.c
+@@ -10,24 +10,22 @@ static int
+ user_get(const struct xattr_handler *handler, struct dentry *dentry,
+ 	 const char *name, void *buffer, size_t size)
+ {
+-
+-	if (strlen(name) < sizeof(XATTR_USER_PREFIX))
+-		return -EINVAL;
+ 	if (!reiserfs_xattrs_user(dentry->d_sb))
+ 		return -EOPNOTSUPP;
+-	return reiserfs_xattr_get(d_inode(dentry), name, buffer, size);
++	return reiserfs_xattr_get(d_inode(dentry),
++				  xattr_full_name(handler, name),
++				  buffer, size);
+ }
+ 
+ static int
+ user_set(const struct xattr_handler *handler, struct dentry *dentry,
+ 	 const char *name, const void *buffer, size_t size, int flags)
+ {
+-	if (strlen(name) < sizeof(XATTR_USER_PREFIX))
+-		return -EINVAL;
+-
+ 	if (!reiserfs_xattrs_user(dentry->d_sb))
+ 		return -EOPNOTSUPP;
+-	return reiserfs_xattr_set(d_inode(dentry), name, buffer, size, flags);
++	return reiserfs_xattr_set(d_inode(dentry),
++				  xattr_full_name(handler, name),
++				  buffer, size, flags);
+ }
+ 
+ static size_t user_list(const struct xattr_handler *handler,
+diff --git a/fs/utimes.c b/fs/utimes.c
+index aa138d64560a..cb771c30d102 100644
+--- a/fs/utimes.c
++++ b/fs/utimes.c
+@@ -87,20 +87,7 @@ static int utimes_common(struct path *path, struct timespec *times)
+ 		 */
+ 		newattrs.ia_valid |= ATTR_TIMES_SET;
+ 	} else {
+-		/*
+-		 * If times is NULL (or both times are UTIME_NOW),
+-		 * then we need to check permissions, because
+-		 * inode_change_ok() won't do it.
+-		 */
+-		error = -EACCES;
+-                if (IS_IMMUTABLE(inode))
+-			goto mnt_drop_write_and_out;
+-
+-		if (!inode_owner_or_capable(inode)) {
+-			error = inode_permission(inode, MAY_WRITE);
+-			if (error)
+-				goto mnt_drop_write_and_out;
+-		}
++		newattrs.ia_valid |= ATTR_TOUCH;
+ 	}
+ retry_deleg:
+ 	mutex_lock(&inode->i_mutex);
+@@ -112,7 +99,6 @@ retry_deleg:
+ 			goto retry_deleg;
+ 	}
+ 
+-mnt_drop_write_and_out:
+ 	mnt_drop_write(path->mnt);
+ out:
+ 	return error;
+diff --git a/include/crypto/ghash.h b/include/crypto/ghash.h
+new file mode 100644
+index 000000000000..2a61c9bbab8f
+--- /dev/null
++++ b/include/crypto/ghash.h
+@@ -0,0 +1,23 @@
++/*
++ * Common values for GHASH algorithms
++ */
++
++#ifndef __CRYPTO_GHASH_H__
++#define __CRYPTO_GHASH_H__
++
++#include <linux/types.h>
++#include <crypto/gf128mul.h>
++
++#define GHASH_BLOCK_SIZE	16
++#define GHASH_DIGEST_SIZE	16
++
++struct ghash_ctx {
++	struct gf128mul_4k *gf128;
++};
++
++struct ghash_desc_ctx {
++	u8 buffer[GHASH_BLOCK_SIZE];
++	u32 bytes;
++};
++
++#endif
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index 0166582c4d78..e1a123760dbf 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -226,6 +226,7 @@ typedef void (dax_iodone_t)(struct buffer_head *bh_map, int uptodate);
+ #define ATTR_KILL_PRIV	(1 << 14)
+ #define ATTR_OPEN	(1 << 15) /* Truncating from open(O_TRUNC) */
+ #define ATTR_TIMES_SET	(1 << 16)
++#define ATTR_TOUCH	(1 << 17)
+ 
+ /*
+  * Whiteout is represented by a char device.  The following constants define the
+diff --git a/sound/soc/intel/atom/sst/sst_pvt.c b/sound/soc/intel/atom/sst/sst_pvt.c
+index adb32fefd693..b1e6b8f34a6a 100644
+--- a/sound/soc/intel/atom/sst/sst_pvt.c
++++ b/sound/soc/intel/atom/sst/sst_pvt.c
+@@ -279,17 +279,15 @@ int sst_prepare_and_post_msg(struct intel_sst_drv *sst,
+ 
+ 	if (response) {
+ 		ret = sst_wait_timeout(sst, block);
+-		if (ret < 0) {
++		if (ret < 0)
+ 			goto out;
+-		} else if(block->data) {
+-			if (!data)
+-				goto out;
+-			*data = kzalloc(block->size, GFP_KERNEL);
+-			if (!(*data)) {
++
++		if (data && block->data) {
++			*data = kmemdup(block->data, block->size, GFP_KERNEL);
++			if (!*data) {
+ 				ret = -ENOMEM;
+ 				goto out;
+-			} else
+-				memcpy(data, (void *) block->data, block->size);
++			}
+ 		}
+ 	}
+ out:
