@@ -9,13 +9,16 @@ setenv ramdisk_addr_r "0x21000000"
 setenv console "ttyS2,115200n8"
 setenv verbosity "1"
 
-if load ${devtype} 0 ${ramdisk_addr_r} /boot/armbianEnv.txt || load ${devtype} 0 ${ramdisk_addr_r} armbianEnv.txt; then
+itest.b ${devnum} == 0 && echo "U-boot loaded from SD"
+itest.b ${devnum} == 1 && echo "U-boot loaded from eMMC"
+
+if load ${devtype} ${devnum}:1 ${ramdisk_addr_r} /boot/armbianEnv.txt || load ${devtype} ${devnum}:1 ${ramdisk_addr_r} armbianEnv.txt; then
 	env import -t ${ramdisk_addr_r} ${filesize}
 fi
 
 setenv bootargs "consoleblank=0 selinux=0 scandelay root=${rootdev} rw console=${console} rootfstype=ext4 loglevel=${verbosity} rootwait ${extraargs}"
-ext4load mmc 0:1 ${fdt_addr_r} /boot/dtb/${fdt_file} || fatload mmc 0:1 ${fdt_addr_r} dtb/${fdt_file} || ext4load mmc 0:1 ${fdt_addr_r} dtb/${fdt_file}
-ext4load mmc 0:1 ${ramdisk_addr_r} /boot/uInitrd || fatload mmc 0:1 ${ramdisk_addr_r} uInitrd || ext4load mmc 0:1 ${ramdisk_addr_r} uInitrd
-ext4load mmc 0:1 ${kernel_addr_r} /boot/zImage || fatload mmc 0:1 ${kernel_addr_r} zImage || ext4load mmc 0:1 ${kernel_addr_r} zImage
+ext4load ${devtype} ${devnum}:1 ${fdt_addr_r} /boot/dtb/${fdt_file} || fatload ${devtype} ${devnum}:1 ${fdt_addr_r} dtb/${fdt_file} || ext4load ${devtype} ${devnum}:1 ${fdt_addr_r} dtb/${fdt_file}
+ext4load ${devtype} ${devnum}:1 ${ramdisk_addr_r} /boot/uInitrd || fatload ${devtype} ${devnum}:1 ${ramdisk_addr_r} uInitrd || ext4load ${devtype} ${devnum}:1 ${ramdisk_addr_r} uInitrd
+ext4load ${devtype} ${devnum}:1 ${kernel_addr_r} /boot/zImage || fatload ${devtype} ${devnum}:1 ${kernel_addr_r} zImage || ext4load ${devtype} ${devnum}:1 ${kernel_addr_r} zImage
 bootz ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
