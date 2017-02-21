@@ -19,7 +19,7 @@ USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 HOST="$BOARD" # set hostname to the board
 CACHEDIR=$DEST/cache
-ROOTFSCACHE_VERSION=2
+ROOTFSCACHE_VERSION=3
 
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 [[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"

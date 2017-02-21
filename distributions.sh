@@ -11,6 +11,7 @@
 # Functions:
 # install_common
 # install_distribution_specific
+# post_debootstrap_tweaks
 
 install_common()
 {
@@ -88,10 +89,6 @@ install_common()
 	date -u '+%Y-%m-%d %H:%M:%S' > $CACHEDIR/$SDCARD/etc/fake-hwclock.data
 
 	echo $HOST > $CACHEDIR/$SDCARD/etc/hostname
-
-	# this is needed for ubuntu
-	rm $CACHEDIR/$SDCARD/etc/resolv.conf
-	echo "nameserver 8.8.8.8" >> $CACHEDIR/$SDCARD/etc/resolv.conf
 
 	# set hostname in hosts file
 	cat <<-EOF > $CACHEDIR/$SDCARD/etc/hosts
@@ -187,6 +184,10 @@ install_common()
 	# Fix for PuTTY/KiTTY & ncurses-based dialogs (i.e. alsamixer) over serial
 	# may break other terminals like screen
 	#printf "[Service]\nEnvironment=TERM=xterm-256color" > $CACHEDIR/$SDCARD/etc/systemd/system/serial-getty@.service.d/10-term.conf
+
+	# to prevent creating swap file on NFS (needs specific kernel options)
+	# and f2fs/btrfs (not recommended or needs specific kernel options)
+	[[ $ROOTFS_TYPE != ext4 ]] && touch $CACHEDIR/$SDCARD/var/swap
 }
 
 install_distribution_specific()
@@ -237,4 +238,16 @@ install_distribution_specific()
 	stretch)
 	;;
 	esac
+}
+
+post_debootstrap_tweaks()
+{
+	# remove service start blockers and QEMU binary
+	rm -f $CACHEDIR/$SDCARD/sbin/initctl $CACHEDIR/$SDCARD/sbin/start-stop-daemon
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/initctl"
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon"
+	rm -f $CACHEDIR/$SDCARD/usr/sbin/policy-rc.d $CACHEDIR/$SDCARD/usr/bin/$QEMU_BINARY
+
+	# reenable resolvconf managed resolv.conf
+	ln -sf /run/resolvconf/resolv.conf $CACHEDIR/$SDCARD/etc/resolv.conf
 }

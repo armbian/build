@@ -77,17 +77,9 @@ debootstrap_ng()
 	# NOTE: installing too many packages may fill tmpfs mount
 	customize_image
 
-	# stage: cleanup
-	rm -f $CACHEDIR/$SDCARD/sbin/initctl $CACHEDIR/$SDCARD/sbin/start-stop-daemon
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/initctl"
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon"
-	rm -f $CACHEDIR/$SDCARD/usr/sbin/policy-rc.d $CACHEDIR/$SDCARD/usr/bin/$QEMU_BINARY
-
+	# clean up / prepare for making the image
 	umount_chroot "$CACHEDIR/$SDCARD"
-
-	# to prevent creating swap file on NFS (needs specific kernel options)
-	# and f2fs/btrfs (not recommended or needs specific kernel options)
-	[[ $ROOTFS_TYPE != ext4 ]] && touch $CACHEDIR/$SDCARD/var/swap
+	post_debootstrap_tweaks
 
 	if [[ $ROOTFS_TYPE == fel ]]; then
 		FEL_ROOTFS=$CACHEDIR/$SDCARD/
@@ -232,6 +224,10 @@ create_rootfs_cache()
 
 		# stage: remove downloaded packages
 		chroot $CACHEDIR/$SDCARD /bin/bash -c "apt-get clean"
+
+		# this is needed for the build process later since resolvconf generated file in /run is not saved
+		rm $CACHEDIR/$SDCARD/etc/resolv.conf
+		echo 'nameserver 8.8.8.8' >> $CACHEDIR/$SDCARD/etc/resolv.conf
 
 		# stage: make rootfs cache archive
 		display_alert "Ending debootstrap process and preparing cache" "$RELEASE" "info"
