@@ -90,11 +90,6 @@ compile_uboot()
 		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/lib/bin/armbian-u-boot.bmp tools/logos/udoo.bmp
 		touch .scmversion
 
-		# patch mainline uboot configuration to boot with old sunxi kernels
-		if [[ $BRANCH == default && $LINUXFAMILY == sun*i ]] && ! grep -q "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y" .config ; then
-			echo -e "CONFIG_ARMV7_BOOT_SEC_DEFAULT=y\nCONFIG_OLD_SUNXI_KERNEL_COMPAT=y" >> .config
-		fi
-
 		# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
 		[[ $BOOTDELAY == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
 		[[ -n $BOOTDELAY ]] && sed -i "s/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=${BOOTDELAY}/" .config || [[ -f .config ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
