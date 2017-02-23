@@ -280,6 +280,7 @@ chroot_installpackages()
 {
 	local remote_only=$1
 	local install_list=""
+	display_alert "Installing additional packages" "EXTERNAL_NEW"
 	for plugin in $SRC/lib/extras-buildpkgs/*.conf; do
 		source $plugin
 		if [[ $(type -t package_checkinstall) == function ]] && package_checkinstall; then
