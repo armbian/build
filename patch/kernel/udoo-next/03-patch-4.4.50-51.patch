@@ -1,0 +1,368 @@
+diff --git a/Makefile b/Makefile
+index 10993715abb8..117357188f01 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 50
++SUBLEVEL = 51
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/arm/lib/getuser.S b/arch/arm/lib/getuser.S
+index 8ecfd15c3a02..df73914e81c8 100644
+--- a/arch/arm/lib/getuser.S
++++ b/arch/arm/lib/getuser.S
+@@ -67,7 +67,7 @@ ENTRY(__get_user_4)
+ ENDPROC(__get_user_4)
+ 
+ ENTRY(__get_user_8)
+-	check_uaccess r0, 8, r1, r2, __get_user_bad
++	check_uaccess r0, 8, r1, r2, __get_user_bad8
+ #ifdef CONFIG_THUMB2_KERNEL
+ 5: TUSER(ldr)	r2, [r0]
+ 6: TUSER(ldr)	r3, [r0, #4]
+diff --git a/drivers/gpu/drm/drm_dp_mst_topology.c b/drivers/gpu/drm/drm_dp_mst_topology.c
+index 7cb2815e815e..a3b96d691ac9 100644
+--- a/drivers/gpu/drm/drm_dp_mst_topology.c
++++ b/drivers/gpu/drm/drm_dp_mst_topology.c
+@@ -1812,7 +1812,7 @@ int drm_dp_update_payload_part1(struct drm_dp_mst_topology_mgr *mgr)
+ 				mgr->payloads[i].num_slots = req_payload.num_slots;
+ 			} else if (mgr->payloads[i].num_slots) {
+ 				mgr->payloads[i].num_slots = 0;
+-				drm_dp_destroy_payload_step1(mgr, port, port->vcpi.vcpi, &mgr->payloads[i]);
++				drm_dp_destroy_payload_step1(mgr, port, mgr->payloads[i].vcpi, &mgr->payloads[i]);
+ 				req_payload.payload_state = mgr->payloads[i].payload_state;
+ 				mgr->payloads[i].start_slot = 0;
+ 			}
+diff --git a/drivers/gpu/drm/radeon/radeon_cursor.c b/drivers/gpu/drm/radeon/radeon_cursor.c
+index 04cec0da5d1e..8901228b5d5d 100644
+--- a/drivers/gpu/drm/radeon/radeon_cursor.c
++++ b/drivers/gpu/drm/radeon/radeon_cursor.c
+@@ -205,8 +205,8 @@ static int radeon_cursor_move_locked(struct drm_crtc *crtc, int x, int y)
+ 	}
+ 
+ 	if (x <= (crtc->x - w) || y <= (crtc->y - radeon_crtc->cursor_height) ||
+-	    x >= (crtc->x + crtc->mode.crtc_hdisplay) ||
+-	    y >= (crtc->y + crtc->mode.crtc_vdisplay))
++	    x >= (crtc->x + crtc->mode.hdisplay) ||
++	    y >= (crtc->y + crtc->mode.vdisplay))
+ 		goto out_of_bounds;
+ 
+ 	x += xorigin;
+diff --git a/drivers/input/mouse/elan_i2c_core.c b/drivers/input/mouse/elan_i2c_core.c
+index d15b33813021..ed1935f300a7 100644
+--- a/drivers/input/mouse/elan_i2c_core.c
++++ b/drivers/input/mouse/elan_i2c_core.c
+@@ -1232,6 +1232,7 @@ static const struct acpi_device_id elan_acpi_id[] = {
+ 	{ "ELAN0000", 0 },
+ 	{ "ELAN0100", 0 },
+ 	{ "ELAN0600", 0 },
++	{ "ELAN0605", 0 },
+ 	{ "ELAN1000", 0 },
+ 	{ }
+ };
+diff --git a/drivers/md/bcache/bcache.h b/drivers/md/bcache/bcache.h
+index 6b420a55c745..c3ea03c9a1a8 100644
+--- a/drivers/md/bcache/bcache.h
++++ b/drivers/md/bcache/bcache.h
+@@ -425,7 +425,7 @@ struct cache {
+ 	 * until a gc finishes - otherwise we could pointlessly burn a ton of
+ 	 * cpu
+ 	 */
+-	unsigned		invalidate_needs_gc:1;
++	unsigned		invalidate_needs_gc;
+ 
+ 	bool			discard; /* Get rid of? */
+ 
+@@ -593,8 +593,8 @@ struct cache_set {
+ 
+ 	/* Counts how many sectors bio_insert has added to the cache */
+ 	atomic_t		sectors_to_gc;
++	wait_queue_head_t	gc_wait;
+ 
+-	wait_queue_head_t	moving_gc_wait;
+ 	struct keybuf		moving_gc_keys;
+ 	/* Number of moving GC bios in flight */
+ 	struct semaphore	moving_in_flight;
+diff --git a/drivers/md/bcache/btree.c b/drivers/md/bcache/btree.c
+index 22b9e34ceb75..5b815e64c1c9 100644
+--- a/drivers/md/bcache/btree.c
++++ b/drivers/md/bcache/btree.c
+@@ -1762,33 +1762,34 @@ static void bch_btree_gc(struct cache_set *c)
+ 	bch_moving_gc(c);
+ }
+ 
+-static int bch_gc_thread(void *arg)
++static bool gc_should_run(struct cache_set *c)
+ {
+-	struct cache_set *c = arg;
+ 	struct cache *ca;
+ 	unsigned i;
+ 
+-	while (1) {
+-again:
+-		bch_btree_gc(c);
++	for_each_cache(ca, c, i)
++		if (ca->invalidate_needs_gc)
++			return true;
+ 
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		if (kthread_should_stop())
+-			break;
++	if (atomic_read(&c->sectors_to_gc) < 0)
++		return true;
+ 
+-		mutex_lock(&c->bucket_lock);
++	return false;
++}
+ 
+-		for_each_cache(ca, c, i)
+-			if (ca->invalidate_needs_gc) {
+-				mutex_unlock(&c->bucket_lock);
+-				set_current_state(TASK_RUNNING);
+-				goto again;
+-			}
++static int bch_gc_thread(void *arg)
++{
++	struct cache_set *c = arg;
+ 
+-		mutex_unlock(&c->bucket_lock);
++	while (1) {
++		wait_event_interruptible(c->gc_wait,
++			   kthread_should_stop() || gc_should_run(c));
+ 
+-		try_to_freeze();
+-		schedule();
++		if (kthread_should_stop())
++			break;
++
++		set_gc_sectors(c);
++		bch_btree_gc(c);
+ 	}
+ 
+ 	return 0;
+@@ -1796,11 +1797,10 @@ again:
+ 
+ int bch_gc_thread_start(struct cache_set *c)
+ {
+-	c->gc_thread = kthread_create(bch_gc_thread, c, "bcache_gc");
++	c->gc_thread = kthread_run(bch_gc_thread, c, "bcache_gc");
+ 	if (IS_ERR(c->gc_thread))
+ 		return PTR_ERR(c->gc_thread);
+ 
+-	set_task_state(c->gc_thread, TASK_INTERRUPTIBLE);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/md/bcache/btree.h b/drivers/md/bcache/btree.h
+index 5c391fa01bed..9b80417cd547 100644
+--- a/drivers/md/bcache/btree.h
++++ b/drivers/md/bcache/btree.h
+@@ -260,8 +260,7 @@ void bch_initial_mark_key(struct cache_set *, int, struct bkey *);
+ 
+ static inline void wake_up_gc(struct cache_set *c)
+ {
+-	if (c->gc_thread)
+-		wake_up_process(c->gc_thread);
++	wake_up(&c->gc_wait);
+ }
+ 
+ #define MAP_DONE	0
+diff --git a/drivers/md/bcache/request.c b/drivers/md/bcache/request.c
+index 25fa8445bb24..2410df1c2a05 100644
+--- a/drivers/md/bcache/request.c
++++ b/drivers/md/bcache/request.c
+@@ -196,10 +196,8 @@ static void bch_data_insert_start(struct closure *cl)
+ 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
+ 	struct bio *bio = op->bio, *n;
+ 
+-	if (atomic_sub_return(bio_sectors(bio), &op->c->sectors_to_gc) < 0) {
+-		set_gc_sectors(op->c);
++	if (atomic_sub_return(bio_sectors(bio), &op->c->sectors_to_gc) < 0)
+ 		wake_up_gc(op->c);
+-	}
+ 
+ 	if (op->bypass)
+ 		return bch_data_invalidate(cl);
+diff --git a/drivers/md/bcache/super.c b/drivers/md/bcache/super.c
+index 3d5c0ba13181..7b5880b8874c 100644
+--- a/drivers/md/bcache/super.c
++++ b/drivers/md/bcache/super.c
+@@ -1489,6 +1489,7 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
+ 	mutex_init(&c->bucket_lock);
+ 	init_waitqueue_head(&c->btree_cache_wait);
+ 	init_waitqueue_head(&c->bucket_wait);
++	init_waitqueue_head(&c->gc_wait);
+ 	sema_init(&c->uuid_write_mutex, 1);
+ 
+ 	spin_lock_init(&c->btree_gc_time.lock);
+@@ -1547,6 +1548,7 @@ static void run_cache_set(struct cache_set *c)
+ 
+ 	for_each_cache(ca, c, i)
+ 		c->nbuckets += ca->sb.nbuckets;
++	set_gc_sectors(c);
+ 
+ 	if (CACHE_SYNC(&c->sb)) {
+ 		LIST_HEAD(journal);
+diff --git a/drivers/media/usb/siano/smsusb.c b/drivers/media/usb/siano/smsusb.c
+index c945e4c2fbd4..ec30a004f319 100644
+--- a/drivers/media/usb/siano/smsusb.c
++++ b/drivers/media/usb/siano/smsusb.c
+@@ -200,22 +200,30 @@ static int smsusb_start_streaming(struct smsusb_device_t *dev)
+ static int smsusb_sendrequest(void *context, void *buffer, size_t size)
+ {
+ 	struct smsusb_device_t *dev = (struct smsusb_device_t *) context;
+-	struct sms_msg_hdr *phdr = (struct sms_msg_hdr *) buffer;
+-	int dummy;
++	struct sms_msg_hdr *phdr;
++	int dummy, ret;
+ 
+ 	if (dev->state != SMSUSB_ACTIVE) {
+ 		pr_debug("Device not active yet\n");
+ 		return -ENOENT;
+ 	}
+ 
++	phdr = kmalloc(size, GFP_KERNEL);
++	if (!phdr)
++		return -ENOMEM;
++	memcpy(phdr, buffer, size);
++
+ 	pr_debug("sending %s(%d) size: %d\n",
+ 		  smscore_translate_msg(phdr->msg_type), phdr->msg_type,
+ 		  phdr->msg_length);
+ 
+ 	smsendian_handle_tx_message((struct sms_msg_data *) phdr);
+-	smsendian_handle_message_header((struct sms_msg_hdr *)buffer);
+-	return usb_bulk_msg(dev->udev, usb_sndbulkpipe(dev->udev, 2),
+-			    buffer, size, &dummy, 1000);
++	smsendian_handle_message_header((struct sms_msg_hdr *)phdr);
++	ret = usb_bulk_msg(dev->udev, usb_sndbulkpipe(dev->udev, 2),
++			    phdr, size, &dummy, 1000);
++
++	kfree(phdr);
++	return ret;
+ }
+ 
+ static char *smsusb1_fw_lkup[] = {
+diff --git a/drivers/mmc/core/mmc.c b/drivers/mmc/core/mmc.c
+index 78187699467a..79a0c26e1419 100644
+--- a/drivers/mmc/core/mmc.c
++++ b/drivers/mmc/core/mmc.c
+@@ -1581,10 +1581,10 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
+ 		err = mmc_select_hs400(card);
+ 		if (err)
+ 			goto free_card;
+-	} else if (mmc_card_hs(card)) {
++	} else {
+ 		/* Select the desired bus width optionally */
+ 		err = mmc_select_bus_width(card);
+-		if (!IS_ERR_VALUE(err)) {
++		if (!IS_ERR_VALUE(err) && mmc_card_hs(card)) {
+ 			err = mmc_select_hs_ddr(card);
+ 			if (err)
+ 				goto free_card;
+diff --git a/drivers/ntb/ntb_transport.c b/drivers/ntb/ntb_transport.c
+index 60654d524858..ecc6fb9ca92f 100644
+--- a/drivers/ntb/ntb_transport.c
++++ b/drivers/ntb/ntb_transport.c
+@@ -1623,7 +1623,7 @@ ntb_transport_create_queue(void *data, struct device *client_dev,
+ 
+ 	node = dev_to_node(&ndev->dev);
+ 
+-	free_queue = ffs(nt->qp_bitmap);
++	free_queue = ffs(nt->qp_bitmap_free);
+ 	if (!free_queue)
+ 		goto err;
+ 
+@@ -2082,9 +2082,8 @@ module_init(ntb_transport_init);
+ 
+ static void __exit ntb_transport_exit(void)
+ {
+-	debugfs_remove_recursive(nt_debugfs_dir);
+-
+ 	ntb_unregister_client(&ntb_transport_client);
+ 	bus_unregister(&ntb_transport_bus);
++	debugfs_remove_recursive(nt_debugfs_dir);
+ }
+ module_exit(ntb_transport_exit);
+diff --git a/drivers/scsi/scsi_lib.c b/drivers/scsi/scsi_lib.c
+index cf5b99e1f12b..8558e3886960 100644
+--- a/drivers/scsi/scsi_lib.c
++++ b/drivers/scsi/scsi_lib.c
+@@ -1120,7 +1120,8 @@ int scsi_init_io(struct scsi_cmnd *cmd)
+ 	bool is_mq = (rq->mq_ctx != NULL);
+ 	int error;
+ 
+-	BUG_ON(!rq->nr_phys_segments);
++	if (WARN_ON_ONCE(!rq->nr_phys_segments))
++		return -EINVAL;
+ 
+ 	error = scsi_init_sgtable(rq, &cmd->sdb);
+ 	if (error)
+diff --git a/drivers/scsi/sg.c b/drivers/scsi/sg.c
+index a1c29b0afb22..dedcff9cabb5 100644
+--- a/drivers/scsi/sg.c
++++ b/drivers/scsi/sg.c
+@@ -1763,6 +1763,10 @@ sg_start_req(Sg_request *srp, unsigned char *cmd)
+ 			return res;
+ 
+ 		iov_iter_truncate(&i, hp->dxfer_len);
++		if (!iov_iter_count(&i)) {
++			kfree(iov);
++			return -EINVAL;
++		}
+ 
+ 		res = blk_rq_map_user_iov(q, rq, md, &i, GFP_ATOMIC);
+ 		kfree(iov);
+diff --git a/fs/fuse/dev.c b/fs/fuse/dev.c
+index 9096d44eb221..d0cf1f010fbe 100644
+--- a/fs/fuse/dev.c
++++ b/fs/fuse/dev.c
+@@ -418,6 +418,10 @@ static void request_end(struct fuse_conn *fc, struct fuse_req *req)
+ static void queue_interrupt(struct fuse_iqueue *fiq, struct fuse_req *req)
+ {
+ 	spin_lock(&fiq->waitq.lock);
++	if (test_bit(FR_FINISHED, &req->flags)) {
++		spin_unlock(&fiq->waitq.lock);
++		return;
++	}
+ 	if (list_empty(&req->intr_entry)) {
+ 		list_add_tail(&req->intr_entry, &fiq->interrupts);
+ 		wake_up_locked(&fiq->waitq);
+diff --git a/fs/splice.c b/fs/splice.c
+index 0f77e9682857..8398974e1538 100644
+--- a/fs/splice.c
++++ b/fs/splice.c
+@@ -211,6 +211,7 @@ ssize_t splice_to_pipe(struct pipe_inode_info *pipe,
+ 			buf->len = spd->partial[page_nr].len;
+ 			buf->private = spd->partial[page_nr].private;
+ 			buf->ops = spd->ops;
++			buf->flags = 0;
+ 			if (spd->flags & SPLICE_F_GIFT)
+ 				buf->flags |= PIPE_BUF_FLAG_GIFT;
+ 
+diff --git a/kernel/futex.c b/kernel/futex.c
+index 9d8163afd87c..9d251dc3ec40 100644
+--- a/kernel/futex.c
++++ b/kernel/futex.c
+@@ -3199,4 +3199,4 @@ static int __init futex_init(void)
+ 
+ 	return 0;
+ }
+-__initcall(futex_init);
++core_initcall(futex_init);
+diff --git a/kernel/printk/printk.c b/kernel/printk/printk.c
+index c048e34b177f..0b5613554769 100644
+--- a/kernel/printk/printk.c
++++ b/kernel/printk/printk.c
+@@ -1436,7 +1436,7 @@ static void call_console_drivers(int level,
+ {
+ 	struct console *con;
+ 
+-	trace_console(text, len);
++	trace_console_rcuidle(text, len);
+ 
+ 	if (level >= console_loglevel && !ignore_loglevel)
+ 		return;
