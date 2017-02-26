@@ -44,7 +44,13 @@ if load ${devtype} 0 0x00000000 /boot/.next || load ${devtype} 0 0x00000000 .nex
 	fdt resize
 	for overlay_file in ${overlays}; do
 		if load ${devtype} 0 ${load_addr} boot/dtb/overlay/${overlay_file}.dtbo || load ${devtype} 0 ${load_addr} dtb/overlay/${overlay_file}.dtbo; then
-			echo "Applying DT overlay ${overlay_file}.dtbo"
+			echo "Applying kernel provided DT overlay ${overlay_file}.dtbo"
+			fdt apply ${load_addr} || setenv overlay_error "true"
+		fi
+	done
+	for overlay_file in ${user_overlays}; do
+		if load ${devtype} 0 ${load_addr} boot/overlay-user/${overlay_file}.dtbo || load ${devtype} 0 ${load_addr} overlay-user/${overlay_file}.dtbo; then
+			echo "Applying user provided DT overlay ${overlay_file}.dtbo"
 			fdt apply ${load_addr} || setenv overlay_error "true"
 		fi
 	done
