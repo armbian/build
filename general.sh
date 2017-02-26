@@ -544,15 +544,34 @@ prepare_host()
 	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
 
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
-	if [[ $codename == xenial ]]; then
-		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/aarch64-linux-gnu/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu.tar.xz"
-		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabi/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi.tar.xz"
-		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabihf/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf.tar.xz"
-		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/5.2-2015.11-2/arm-linux-gnueabihf/gcc-linaro-5.2-2015.11-2-x86_64_arm-linux-gnueabihf.tar.xz"
-		download_toolchain "https://releases.linaro.org/archive/14.04/components/toolchain/binaries/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/6.2-2016.11/arm-linux-gnueabihf/gcc-linaro-6.2.1-2016.11-x86_64_arm-linux-gnueabihf.tar.xz"
-		download_toolchain "https://releases.linaro.org/components/toolchain/binaries/6.2-2016.11/aarch64-linux-gnu/gcc-linaro-6.2.1-2016.11-x86_64_aarch64-linux-gnu.tar.xz"
-	fi
+	local toolchains=(
+		"https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/aarch64-linux-gnu/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabi/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi.tar.xz"
+		"https://releases.linaro.org/components/toolchain/binaries/4.9-2016.02/arm-linux-gnueabihf/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://releases.linaro.org/components/toolchain/binaries/5.2-2015.11-2/arm-linux-gnueabihf/gcc-linaro-5.2-2015.11-2-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://releases.linaro.org/archive/14.04/components/toolchain/binaries/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+		"https://releases.linaro.org/components/toolchain/binaries/6.3-2017.02/arm-linux-gnueabihf/gcc-linaro-6.3.1-2017.02-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://releases.linaro.org/components/toolchain/binaries/6.3-2017.02/aarch64-linux-gnu/gcc-linaro-6.3.1-2017.02-x86_64_aarch64-linux-gnu.tar.xz"
+		)
+
+	for toolchain in ${toolchains[@]}; do
+		download_toolchain "$toolchain"
+	done
+
+	rm -rf $SRC/toolchains/*.tar.xz $SRC/toolchains/*.tar.xz.asc
+	local existing_dirs=( $(ls -1 $SRC/toolchains) )
+	for dir in ${existing_dirs[@]}; do
+		local found=no
+		for toolchain in ${toolchains[@]}; do
+			local filename=${toolchain##*/}
+			local dirname=${filename//.tar.xz}
+			[[ $dir == $dirname ]] && found=yes
+		done
+		if [[ $found == no ]]; then
+			display_alert "Removing obsolete toolchain" "$dir"
+			rm -rf $SRC/toolchains/$dir
+		fi
+	done
 
 	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/lib/scripts/customize-image.sh.template $SRC/userpatches/customize-image.sh
 
@@ -586,7 +605,7 @@ download_toolchain()
 
 	cd $SRC/toolchains/
 
-	display_alert "Downloading toolchain" "$dirname" "info"
+	display_alert "Downloading" "$dirname"
 	curl -Lf --progress-bar $url -o $filename
 	curl -Lf --progress-bar ${url}.asc -o ${filename}.asc
 
