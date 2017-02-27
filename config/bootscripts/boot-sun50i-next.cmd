@@ -34,7 +34,7 @@ if test "${console}" = "serial" || test "${console}" = "both"; then setenv conso
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} panic=10 consoleblank=0 loglevel=${verbosity} ${extraargs} ${extraboardargs}"
 
-if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"
+if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"; fi
 
 load ${devtype} 0 ${fdt_addr_r} /boot/dtb/allwinner/${fdtfile} || load ${devtype} 0 ${fdt_addr_r} /dtb/allwinner/${fdtfile}
 fdt addr ${fdt_addr_r}
