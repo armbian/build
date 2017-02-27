@@ -21,7 +21,7 @@ fi
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
 if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "${consoleargs} console=ttyS0,115200n8"; fi
 
-setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} no_console_suspend earlycon=uart,mmio32,0x01c28000 mac_addr=${ethaddr} panic=10 consoleblank=0 enforcing=0 loglevel=${verbosity} ${extraargs} ${extraboardargs}"
+setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} no_console_suspend earlycon=uart,mmio32,0x01c28000 mac_addr=${ethaddr} panic=10 consoleblank=0 loglevel=${verbosity} ${extraargs} ${extraboardargs}"
 
 ext4load mmc ${boot_part} ${fdt_addr} /boot/dtb/sun50iw1p1-${pine64_model}.dtb || fatload mmc ${boot_part} ${fdt_addr} dtb/sun50iw1p1-${pine64_model}.dtb || ext4load mmc ${boot_part} ${fdt_addr} dtb/sun50iw1p1-${pine64_model}.dtb
 ext4load mmc ${boot_part} ${initrd_addr} /boot/uInitrd || fatload mmc ${boot_part} ${initrd_addr} uInitrd || ext4load mmc ${boot_part} ${initrd_addr} uInitrd

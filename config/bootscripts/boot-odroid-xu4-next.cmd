@@ -21,7 +21,7 @@ fi
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
 if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "${consoleargs} console=ttySAC2,115200n8"; fi
 
-setenv bootargs "${consoleargs} root=${rootdev} rootfstype=${rootfstype} rootwait earlyprintk panic=10 consoleblank=0 enforcing=0 loglevel=${verbosity} ${extraargs}"
+setenv bootargs "${consoleargs} root=${rootdev} rootfstype=${rootfstype} rootwait earlyprintk panic=10 consoleblank=0 loglevel=${verbosity} ${extraargs}"
 
 # Environment variables to be defined before load (in includes files uboot/.../exy*.h):
 # platform dependent: boardname, fdtfile
