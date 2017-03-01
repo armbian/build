@@ -30,11 +30,13 @@ title="NAND, eMMC, SATA and USB Armbian installer v""$VERSION"
 if cat /proc/cpuinfo | grep -q 'sun4i'; then DEVICE_TYPE="a10"; else DEVICE_TYPE="a20"; fi
 BOOTLOADER="${CWD}/${DEVICE_TYPE}/bootloader"
 
+#recognize_root
+root_partition=$(cat /proc/cmdline | sed -e 's/^.*root=//' -e 's/ .*$//')
+root_partition_device=$(blkid |  tr -d '":' | grep $( cat /proc/cmdline | sed -e 's/^.*root=//' -e 's/ .*$//') |  awk '{print $1}'| rev | cut -c3- | rev)
+
 # find targets: NAND, EMMC, SATA
-nandcheck=$(ls -l /dev/ | grep -w 'nand' | awk '{print $NF}');
-[[ -n $nandcheck ]] && nandcheck="/dev/$nandcheck"
-emmccheck=$(ls -l /dev/ | grep -w 'mmcblk[1-9]' | awk '{print $NF}');
-[[ -n $emmccheck ]] && emmccheck="/dev/$emmccheck"
+nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
+emmccheck=$(ls -d -1 /dev/mmcblk* | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
 satacheck=$(cat /proc/partitions | grep  'sd' | awk '{print $NF}')
 
 # define makefs and mount options
@@ -423,8 +425,6 @@ main()
 		exit 1
 	fi
 
-	#recognize_root
-	root_partition=$(cat /proc/cmdline | sed -e 's/^.*root=//' -e 's/ .*$//')
 	IFS="'"
 	options=()
 	if [[ -n $emmccheck ]]; then
