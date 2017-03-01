@@ -287,8 +287,8 @@ formatnand()
 	else
 		(echo y;) | sunxi-nand-part -f a10 /dev/nand 65536 'bootloader 65536' 'linux 0' >> $logfile 2>&1
 	fi
-	# The option -qF does not exist on mkfs.vfat
-	mkfs.vfat -F /dev/nand1 >> $logfile 2>&1
+
+	mkfs.vfat /dev/nand1 >> $logfile 2>&1
 	mkfs.ext4 -qF /dev/nand2 >> $logfile 2>&1
 }
 
