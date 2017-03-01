@@ -52,7 +52,7 @@ MAINLINE_UBOOT_BRANCH='tag:v2017.01'
 MAINLINE_UBOOT_DIR='u-boot'
 
 # Let's set default data if not defined in board configuration above
-OFFSET=1 # Bootloader space in MB (1 x 2048 = default)
+[[ -z $OFFSET ]] && OFFSET=1 # Bootloader space in MB (1 x 2048 = default)
 ARCH=armhf
 KERNEL_IMAGE_TYPE=zImage
 SERIALCON=ttyS0
