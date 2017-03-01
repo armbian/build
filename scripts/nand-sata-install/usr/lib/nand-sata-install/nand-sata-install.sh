@@ -74,7 +74,7 @@ create_armbian()
 
 	# SD card boot part
 	# UUID=xxx...
-	sduuid=$(blkid -o export /dev/mmcblk0p1 | grep -w UUID)
+	sduuid=$(blkid -o export /dev/mmcblk*p1 | grep -w UUID | grep -v "$root_partition_device")
 
 	# calculate usage and see if it fits on destination
 	USAGE=$(df -BM | grep ^/dev | head -1 | awk '{print $3}' | tr -cd '[0-9]. \n')
@@ -222,13 +222,17 @@ create_armbian()
 		[[ -f /boot/boot.ini ]] && sed -e 's,root='"$root_partition"',root='"$satauuid"',g' -i /boot/boot.ini
 		# new boot scripts
 		if [[ -f /boot/armbianEnv.txt ]]; then
-			sed -e 's,rootdev=.*,rootdev='"$satauuid"',g' -i  /boot/armbianEnv.txt
-			sed -e 's,rootfstype=.*,rootfstype='$choosen_fs',g' -i /boot/armbianEnv.txt
+			sed -e 's,rootdev=.*,rootdev='"$satauuid"',g' -i /boot/armbianEnv.txt
+			grep -q '^rootdev' /boot/armbianEnv.txt || echo "rootdev=$satauuid" >> /boot/armbianEnv.txt
+			sed -e 's,rootfstype=.*,rootfstype='$FilesystemChoosen',g' -i /boot/armbianEnv.txt
+			grep -q '^rootfstype' /boot/armbianEnv.txt || echo "rootfstype=$FilesystemChoosen" >> /boot/armbianEnv.txt
 		else
 			sed -e 's,setenv rootdev.*,setenv rootdev '"$satauuid"',g' -i /boot/boot.cmd
 			sed -e 's,setenv rootdev.*,setenv rootdev '"$satauuid"',g' -i /boot/boot.ini
+			sed -e 's,setenv rootfstype=.*,setenv rootfstype='$FilesystemChoosen',g' -i /boot/boot.cmd
+			sed -e 's,setenv rootfstype=.*,setenv rootfstype='$FilesystemChoosen',g' -i /boot/boot.ini
 		fi
-		mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr >/dev/null 2>&1 || (echo "Error"; exit 0)
+		[[ -f /boot/boot.cmd ]] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr >/dev/null 2>&1 || (echo "Error"; exit 0)
 		mkdir -p /mnt/rootfs/media/mmc/boot
 		echo "$sduuid	/media/mmcboot	ext4    ${mountopts[ext4]}" >> /mnt/rootfs/etc/fstab
 		echo "/media/mmcboot/boot   				/boot		none	bind								0       0" >> /mnt/rootfs/etc/fstab
