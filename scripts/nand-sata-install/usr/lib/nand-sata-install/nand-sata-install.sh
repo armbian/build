@@ -229,8 +229,8 @@ create_armbian()
 		else
 			sed -e 's,setenv rootdev.*,setenv rootdev '"$satauuid"',g' -i /boot/boot.cmd
 			sed -e 's,setenv rootdev.*,setenv rootdev '"$satauuid"',g' -i /boot/boot.ini
-			sed -e 's,setenv rootfstype=.*,setenv rootfstype='$FilesystemChoosen',g' -i /boot/boot.cmd
-			sed -e 's,setenv rootfstype=.*,setenv rootfstype='$FilesystemChoosen',g' -i /boot/boot.ini
+			sed -e 's,setenv rootfstype.*,setenv rootfstype='$FilesystemChoosen',g' -i /boot/boot.cmd
+			sed -e 's,setenv rootfstype.*,setenv rootfstype='$FilesystemChoosen',g' -i /boot/boot.ini
 		fi
 		[[ -f /boot/boot.cmd ]] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr >/dev/null 2>&1 || (echo "Error"; exit 0)
 		mkdir -p /mnt/rootfs/media/mmc/boot
