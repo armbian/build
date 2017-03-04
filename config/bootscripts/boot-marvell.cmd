@@ -26,7 +26,7 @@ if ext4load ${boot_interface} 0:1 ${loadaddr} /boot/armbianEnv.txt || ext4load $
 	env import -t ${loadaddr} ${filesize}
 fi
 
-setenv bootargs "console=ttyS0,115200 root=${rootdev} rootwait rootfstype=${rootfstype} ubootdev=${boot_interface} selinux=0 cgroup_disable=memory scandelay loglevel=${verbosity} ${extraargs}"
+setenv bootargs "console=ttyS0,115200 root=${rootdev} rootwait rootfstype=${rootfstype} ubootdev=${boot_interface} cgroup_disable=memory scandelay loglevel=${verbosity} ${extraargs}"
 
 ext4load ${boot_interface} 0:1 ${fdt_addr} boot/dtb/${fdtfile} || ext4load ${boot_interface} 0:1 ${fdt_addr} dtb/${fdtfile}
 ext4load ${boot_interface} 0:1 ${ramdisk_addr_r} boot/uInitrd || ext4load ${boot_interface} 0:1 ${ramdisk_addr_r} uInitrd
