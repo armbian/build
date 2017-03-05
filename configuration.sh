@@ -121,7 +121,7 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 	iw fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl linux-base dialog crda \
 	wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
 	usbutils wireless-tools console-setup console-common unicode-data openssh-server initramfs-tools \
-	ca-certificates"
+	ca-certificates apt-transport-https"
 
 # development related packages. remove when they are not needed for building packages in chroot
 PACKAGE_LIST="$PACKAGE_LIST automake libwrap0-dev libssl-dev libusb-dev libusb-1.0-0-dev libnl-3-dev libnl-genl-3-dev"
@@ -156,6 +156,7 @@ esac
 
 DEBIAN_MIRROR='httpredir.debian.org/debian'
 UBUNTU_MIRROR='ports.ubuntu.com/'
+UBUNTU_MIRROR='www.lane-fu.com/linuxmirror/ubuntu-ports/'
 
 # For user override
 if [[ -f $SRC/userpatches/lib.config ]]; then
