@@ -85,6 +85,9 @@ install_common()
 		fi
 	fi
 
+	[[ -n $OVERLAY_PREFIX && -f $CACHEDIR/$SDCARD/boot/armbianEnv.txt ]] && \
+		echo "overlay_prefix=$OVERLAY_PREFIX" >> $CACHEDIR/$SDCARD/boot/armbianEnv.txt
+
 	# initial date for fake-hwclock
 	date -u '+%Y-%m-%d %H:%M:%S' > $CACHEDIR/$SDCARD/etc/fake-hwclock.data
 
