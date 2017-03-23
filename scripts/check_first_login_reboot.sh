@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/bin/sh
+
 # only do this for interactive shells
 if [ "$-" != "${-#*i}" ]; then
     if [ -f "/var/run/.reboot_required" ]; then
