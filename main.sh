@@ -248,8 +248,7 @@ VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Des
 VER="${VER/-$LINUXFAMILY/}"
 
 # create board support package
-# TODO: check and remove last part of the condition (! -d)
-[[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb && ! -d $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH} ]] && create_board_package
+[[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
 
 # build additional packages
 [[ $EXTERNAL_NEW == compile ]] && chroot_build_packages

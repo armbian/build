@@ -19,7 +19,7 @@ create_board_package()
 	display_alert "Creating board support package" "$BOARD $BRANCH" "info"
 
 	local destination=$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
-
+	rm -rf $destination
 	mkdir -p $destination/DEBIAN
 
 	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
@@ -34,11 +34,11 @@ create_board_package()
 	Installed-Size: 1
 	Section: kernel
 	Priority: optional
-	Depends: bash, linux-base
+	Depends: bash, linux-base, u-boot-tools, initramfs-tools
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Replaces: base-files, mpv
-	Recommends: bsdutils, parted, python3-apt, util-linux, initramfs-tools, toilet, wireless-tools
+	Recommends: bsdutils, parted, python3-apt, util-linux, toilet, wireless-tools
 	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
 	EOF
 
@@ -82,6 +82,7 @@ create_board_package()
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
 	rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
+	ln -sf /usr/lib/armbian/apt-updates /etc/cron.daily/apt-updates
 	exit 0
 	EOF
 
@@ -221,7 +222,7 @@ create_board_package()
 	EOF
 
 	# script to install to SATA
-	mkdir -p $destination/usr/sbin/
+	mkdir -p $destination/usr/sbin/ $destination/usr/lib/armbian/
 	cp -R $SRC/lib/scripts/nand-sata-install/usr $destination/
 	chmod +x $destination/usr/lib/nand-sata-install/nand-sata-install.sh
 	ln -s ../lib/nand-sata-install/nand-sata-install.sh $destination/usr/sbin/nand-sata-install
@@ -231,6 +232,8 @@ create_board_package()
 	install -m 755 $SRC/lib/scripts/update-motd.d/* $destination/etc/update-motd.d/
 	install -m 755 $SRC/lib/scripts/check_first_login_reboot.sh 	$destination/etc/profile.d
 	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d
+
+	install -m 755 $SRC/lib/scripts/apt-updates $destination/usr/lib/armbian/apt-updates
 
 	# setting window title for remote sessions
 	install -m 755 $SRC/lib/scripts/ssh-title.sh $destination/etc/profile.d/ssh-title.sh
@@ -274,7 +277,7 @@ create_board_package()
 		echo "export VDPAU_OSD=1" > $destination/etc/profile.d/90-vdpau.sh
 		chmod 755 $destination/etc/profile.d/90-vdpau.sh
 	fi
-	if [[ ( $LINUXFAMILY == sun50iw2 || $LINUXFAMILY == sun8i ) && $BRANCH == dev ]]; then
+	if [[ ( $LINUXFAMILY == sun50iw2 || $LINUXFAMILY == sun8i || $LINUXFAMILY == pine64 ) && $BRANCH == dev ]]; then
 		# add mpv config for x11 output - slow, but it works compared to no config at all
 		mkdir -p $destination/etc/mpv/
 		cat <<-EOF > $destination/etc/mpv/mpv.conf
