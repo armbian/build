@@ -83,6 +83,7 @@ create_board_package()
 	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
 	rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
 	ln -sf /usr/lib/armbian/apt-updates /etc/cron.daily/apt-updates
+	[ ! -f /etc/default/armbian-motd ] && cp /usr/lib/armbian/armbian-motd.default /etc/default/armbian-motd
 	exit 0
 	EOF
 
@@ -234,6 +235,13 @@ create_board_package()
 	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d
 
 	install -m 755 $SRC/lib/scripts/apt-updates $destination/usr/lib/armbian/apt-updates
+
+	cat <<-EOF > $destination/usr/lib/armbian/armbian-motd.default
+	# add space-separated list of MOTD script names (without number) to exclude them from MOTD
+	# Example:
+	# MOTD_DISABLE="header tips updates"
+	MOTD_DISABLE=""
+	EOF
 
 	# setting window title for remote sessions
 	install -m 755 $SRC/lib/scripts/ssh-title.sh $destination/etc/profile.d/ssh-title.sh
