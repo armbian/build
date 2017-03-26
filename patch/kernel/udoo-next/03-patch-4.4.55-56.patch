@@ -1,0 +1,2116 @@
+diff --git a/Documentation/networking/netlink_mmap.txt b/Documentation/networking/netlink_mmap.txt
+deleted file mode 100644
+index 54f10478e8e3..000000000000
+--- a/Documentation/networking/netlink_mmap.txt
++++ /dev/null
+@@ -1,332 +0,0 @@
+-This file documents how to use memory mapped I/O with netlink.
+-
+-Author: Patrick McHardy <kaber@trash.net>
+-
+-Overview
+---------
+-
+-Memory mapped netlink I/O can be used to increase throughput and decrease
+-overhead of unicast receive and transmit operations. Some netlink subsystems
+-require high throughput, these are mainly the netfilter subsystems
+-nfnetlink_queue and nfnetlink_log, but it can also help speed up large
+-dump operations of f.i. the routing database.
+-
+-Memory mapped netlink I/O used two circular ring buffers for RX and TX which
+-are mapped into the processes address space.
+-
+-The RX ring is used by the kernel to directly construct netlink messages into
+-user-space memory without copying them as done with regular socket I/O,
+-additionally as long as the ring contains messages no recvmsg() or poll()
+-syscalls have to be issued by user-space to get more message.
+-
+-The TX ring is used to process messages directly from user-space memory, the
+-kernel processes all messages contained in the ring using a single sendmsg()
+-call.
+-
+-Usage overview
+---------------
+-
+-In order to use memory mapped netlink I/O, user-space needs three main changes:
+-
+-- ring setup
+-- conversion of the RX path to get messages from the ring instead of recvmsg()
+-- conversion of the TX path to construct messages into the ring
+-
+-Ring setup is done using setsockopt() to provide the ring parameters to the
+-kernel, then a call to mmap() to map the ring into the processes address space:
+-
+-- setsockopt(fd, SOL_NETLINK, NETLINK_RX_RING, &params, sizeof(params));
+-- setsockopt(fd, SOL_NETLINK, NETLINK_TX_RING, &params, sizeof(params));
+-- ring = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
+-
+-Usage of either ring is optional, but even if only the RX ring is used the
+-mapping still needs to be writable in order to update the frame status after
+-processing.
+-
+-Conversion of the reception path involves calling poll() on the file
+-descriptor, once the socket is readable the frames from the ring are
+-processed in order until no more messages are available, as indicated by
+-a status word in the frame header.
+-
+-On kernel side, in order to make use of memory mapped I/O on receive, the
+-originating netlink subsystem needs to support memory mapped I/O, otherwise
+-it will use an allocated socket buffer as usual and the contents will be
+- copied to the ring on transmission, nullifying most of the performance gains.
+-Dumps of kernel databases automatically support memory mapped I/O.
+-
+-Conversion of the transmit path involves changing message construction to
+-use memory from the TX ring instead of (usually) a buffer declared on the
+-stack and setting up the frame header appropriately. Optionally poll() can
+-be used to wait for free frames in the TX ring.
+-
+-Structured and definitions for using memory mapped I/O are contained in
+-<linux/netlink.h>.
+-
+-RX and TX rings
+-----------------
+-
+-Each ring contains a number of continuous memory blocks, containing frames of
+-fixed size dependent on the parameters used for ring setup.
+-
+-Ring:	[ block 0 ]
+-		[ frame 0 ]
+-		[ frame 1 ]
+-	[ block 1 ]
+-		[ frame 2 ]
+-		[ frame 3 ]
+-	...
+-	[ block n ]
+-		[ frame 2 * n ]
+-		[ frame 2 * n + 1 ]
+-
+-The blocks are only visible to the kernel, from the point of view of user-space
+-the ring just contains the frames in a continuous memory zone.
+-
+-The ring parameters used for setting up the ring are defined as follows:
+-
+-struct nl_mmap_req {
+-	unsigned int	nm_block_size;
+-	unsigned int	nm_block_nr;
+-	unsigned int	nm_frame_size;
+-	unsigned int	nm_frame_nr;
+-};
+-
+-Frames are grouped into blocks, where each block is a continuous region of memory
+-and holds nm_block_size / nm_frame_size frames. The total number of frames in
+-the ring is nm_frame_nr. The following invariants hold:
+-
+-- frames_per_block = nm_block_size / nm_frame_size
+-
+-- nm_frame_nr = frames_per_block * nm_block_nr
+-
+-Some parameters are constrained, specifically:
+-
+-- nm_block_size must be a multiple of the architectures memory page size.
+-  The getpagesize() function can be used to get the page size.
+-
+-- nm_frame_size must be equal or larger to NL_MMAP_HDRLEN, IOW a frame must be
+-  able to hold at least the frame header
+-
+-- nm_frame_size must be smaller or equal to nm_block_size
+-
+-- nm_frame_size must be a multiple of NL_MMAP_MSG_ALIGNMENT
+-
+-- nm_frame_nr must equal the actual number of frames as specified above.
+-
+-When the kernel can't allocate physically continuous memory for a ring block,
+-it will fall back to use physically discontinuous memory. This might affect
+-performance negatively, in order to avoid this the nm_frame_size parameter
+-should be chosen to be as small as possible for the required frame size and
+-the number of blocks should be increased instead.
+-
+-Ring frames
+-------------
+-
+-Each frames contain a frame header, consisting of a synchronization word and some
+-meta-data, and the message itself.
+-
+-Frame:	[ header message ]
+-
+-The frame header is defined as follows:
+-
+-struct nl_mmap_hdr {
+-	unsigned int	nm_status;
+-	unsigned int	nm_len;
+-	__u32		nm_group;
+-	/* credentials */
+-	__u32		nm_pid;
+-	__u32		nm_uid;
+-	__u32		nm_gid;
+-};
+-
+-- nm_status is used for synchronizing processing between the kernel and user-
+-  space and specifies ownership of the frame as well as the operation to perform
+-
+-- nm_len contains the length of the message contained in the data area
+-
+-- nm_group specified the destination multicast group of message
+-
+-- nm_pid, nm_uid and nm_gid contain the netlink pid, UID and GID of the sending
+-  process. These values correspond to the data available using SOCK_PASSCRED in
+-  the SCM_CREDENTIALS cmsg.
+-
+-The possible values in the status word are:
+-
+-- NL_MMAP_STATUS_UNUSED:
+-	RX ring:	frame belongs to the kernel and contains no message
+-			for user-space. Approriate action is to invoke poll()
+-			to wait for new messages.
+-
+-	TX ring:	frame belongs to user-space and can be used for
+-			message construction.
+-
+-- NL_MMAP_STATUS_RESERVED:
+-	RX ring only:	frame is currently used by the kernel for message
+-			construction and contains no valid message yet.
+-			Appropriate action is to invoke poll() to wait for
+-			new messages.
+-
+-- NL_MMAP_STATUS_VALID:
+-	RX ring:	frame contains a valid message. Approriate action is
+-			to process the message and release the frame back to
+-			the kernel by setting the status to
+-			NL_MMAP_STATUS_UNUSED or queue the frame by setting the
+-			status to NL_MMAP_STATUS_SKIP.
+-
+-	TX ring:	the frame contains a valid message from user-space to
+-			be processed by the kernel. After completing processing
+-			the kernel will release the frame back to user-space by
+-			setting the status to NL_MMAP_STATUS_UNUSED.
+-
+-- NL_MMAP_STATUS_COPY:
+-	RX ring only:	a message is ready to be processed but could not be
+-			stored in the ring, either because it exceeded the
+-			frame size or because the originating subsystem does
+-			not support memory mapped I/O. Appropriate action is
+-			to invoke recvmsg() to receive the message and release
+-			the frame back to the kernel by setting the status to
+-			NL_MMAP_STATUS_UNUSED.
+-
+-- NL_MMAP_STATUS_SKIP:
+-	RX ring only:	user-space queued the message for later processing, but
+-			processed some messages following it in the ring. The
+-			kernel should skip this frame when looking for unused
+-			frames.
+-
+-The data area of a frame begins at a offset of NL_MMAP_HDRLEN relative to the
+-frame header.
+-
+-TX limitations
+---------------
+-
+-As of Jan 2015 the message is always copied from the ring frame to an
+-allocated buffer due to unresolved security concerns.
+-See commit 4682a0358639b29cf ("netlink: Always copy on mmap TX.").
+-
+-Example
+--------
+-
+-Ring setup:
+-
+-	unsigned int block_size = 16 * getpagesize();
+-	struct nl_mmap_req req = {
+-		.nm_block_size		= block_size,
+-		.nm_block_nr		= 64,
+-		.nm_frame_size		= 16384,
+-		.nm_frame_nr		= 64 * block_size / 16384,
+-	};
+-	unsigned int ring_size;
+-	void *rx_ring, *tx_ring;
+-
+-	/* Configure ring parameters */
+-	if (setsockopt(fd, SOL_NETLINK, NETLINK_RX_RING, &req, sizeof(req)) < 0)
+-		exit(1);
+-	if (setsockopt(fd, SOL_NETLINK, NETLINK_TX_RING, &req, sizeof(req)) < 0)
+-		exit(1)
+-
+-	/* Calculate size of each individual ring */
+-	ring_size = req.nm_block_nr * req.nm_block_size;
+-
+-	/* Map RX/TX rings. The TX ring is located after the RX ring */
+-	rx_ring = mmap(NULL, 2 * ring_size, PROT_READ | PROT_WRITE,
+-		       MAP_SHARED, fd, 0);
+-	if ((long)rx_ring == -1L)
+-		exit(1);
+-	tx_ring = rx_ring + ring_size:
+-
+-Message reception:
+-
+-This example assumes some ring parameters of the ring setup are available.
+-
+-	unsigned int frame_offset = 0;
+-	struct nl_mmap_hdr *hdr;
+-	struct nlmsghdr *nlh;
+-	unsigned char buf[16384];
+-	ssize_t len;
+-
+-	while (1) {
+-		struct pollfd pfds[1];
+-
+-		pfds[0].fd	= fd;
+-		pfds[0].events	= POLLIN | POLLERR;
+-		pfds[0].revents	= 0;
+-
+-		if (poll(pfds, 1, -1) < 0 && errno != -EINTR)
+-			exit(1);
+-
+-		/* Check for errors. Error handling omitted */
+-		if (pfds[0].revents & POLLERR)
+-			<handle error>
+-
+-		/* If no new messages, poll again */
+-		if (!(pfds[0].revents & POLLIN))
+-			continue;
+-
+-		/* Process all frames */
+-		while (1) {
+-			/* Get next frame header */
+-			hdr = rx_ring + frame_offset;
+-
+-			if (hdr->nm_status == NL_MMAP_STATUS_VALID) {
+-				/* Regular memory mapped frame */
+-				nlh = (void *)hdr + NL_MMAP_HDRLEN;
+-				len = hdr->nm_len;
+-
+-				/* Release empty message immediately. May happen
+-				 * on error during message construction.
+-				 */
+-				if (len == 0)
+-					goto release;
+-			} else if (hdr->nm_status == NL_MMAP_STATUS_COPY) {
+-				/* Frame queued to socket receive queue */
+-				len = recv(fd, buf, sizeof(buf), MSG_DONTWAIT);
+-				if (len <= 0)
+-					break;
+-				nlh = buf;
+-			} else
+-				/* No more messages to process, continue polling */
+-				break;
+-
+-			process_msg(nlh);
+-release:
+-			/* Release frame back to the kernel */
+-			hdr->nm_status = NL_MMAP_STATUS_UNUSED;
+-
+-			/* Advance frame offset to next frame */
+-			frame_offset = (frame_offset + frame_size) % ring_size;
+-		}
+-	}
+-
+-Message transmission:
+-
+-This example assumes some ring parameters of the ring setup are available.
+-A single message is constructed and transmitted, to send multiple messages
+-at once they would be constructed in consecutive frames before a final call
+-to sendto().
+-
+-	unsigned int frame_offset = 0;
+-	struct nl_mmap_hdr *hdr;
+-	struct nlmsghdr *nlh;
+-	struct sockaddr_nl addr = {
+-		.nl_family	= AF_NETLINK,
+-	};
+-
+-	hdr = tx_ring + frame_offset;
+-	if (hdr->nm_status != NL_MMAP_STATUS_UNUSED)
+-		/* No frame available. Use poll() to avoid. */
+-		exit(1);
+-
+-	nlh = (void *)hdr + NL_MMAP_HDRLEN;
+-
+-	/* Build message */
+-	build_message(nlh);
+-
+-	/* Fill frame header: length and status need to be set */
+-	hdr->nm_len	= nlh->nlmsg_len;
+-	hdr->nm_status	= NL_MMAP_STATUS_VALID;
+-
+-	if (sendto(fd, NULL, 0, 0, &addr, sizeof(addr)) < 0)
+-		exit(1);
+-
+-	/* Advance frame offset to next frame */
+-	frame_offset = (frame_offset + frame_size) % ring_size;
+diff --git a/Makefile b/Makefile
+index d9cc21df444d..cf9303a5d621 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 55
++SUBLEVEL = 56
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/x86/kernel/cpu/perf_event.c b/arch/x86/kernel/cpu/perf_event.c
+index 1a8256dd6729..5b2f2306fbcc 100644
+--- a/arch/x86/kernel/cpu/perf_event.c
++++ b/arch/x86/kernel/cpu/perf_event.c
+@@ -1996,8 +1996,8 @@ static int x86_pmu_event_init(struct perf_event *event)
+ 
+ static void refresh_pce(void *ignored)
+ {
+-	if (current->mm)
+-		load_mm_cr4(current->mm);
++	if (current->active_mm)
++		load_mm_cr4(current->active_mm);
+ }
+ 
+ static void x86_pmu_event_mapped(struct perf_event *event)
+diff --git a/arch/x86/kernel/head64.c b/arch/x86/kernel/head64.c
+index f129a9af6357..b6b0077da1af 100644
+--- a/arch/x86/kernel/head64.c
++++ b/arch/x86/kernel/head64.c
+@@ -4,6 +4,7 @@
+  *  Copyright (C) 2000 Andrea Arcangeli <andrea@suse.de> SuSE
+  */
+ 
++#define DISABLE_BRANCH_PROFILING
+ #include <linux/init.h>
+ #include <linux/linkage.h>
+ #include <linux/types.h>
+diff --git a/arch/x86/mm/kasan_init_64.c b/arch/x86/mm/kasan_init_64.c
+index d470cf219a2d..4e5ac46adc9d 100644
+--- a/arch/x86/mm/kasan_init_64.c
++++ b/arch/x86/mm/kasan_init_64.c
+@@ -1,3 +1,4 @@
++#define DISABLE_BRANCH_PROFILING
+ #define pr_fmt(fmt) "kasan: " fmt
+ #include <linux/bootmem.h>
+ #include <linux/kasan.h>
+diff --git a/drivers/net/vrf.c b/drivers/net/vrf.c
+index d6b619667f1a..349aecbc210a 100644
+--- a/drivers/net/vrf.c
++++ b/drivers/net/vrf.c
+@@ -345,6 +345,7 @@ static netdev_tx_t is_ip_tx_frame(struct sk_buff *skb, struct net_device *dev)
+ 
+ static netdev_tx_t vrf_xmit(struct sk_buff *skb, struct net_device *dev)
+ {
++	int len = skb->len;
+ 	netdev_tx_t ret = is_ip_tx_frame(skb, dev);
+ 
+ 	if (likely(ret == NET_XMIT_SUCCESS || ret == NET_XMIT_CN)) {
+@@ -352,7 +353,7 @@ static netdev_tx_t vrf_xmit(struct sk_buff *skb, struct net_device *dev)
+ 
+ 		u64_stats_update_begin(&dstats->syncp);
+ 		dstats->tx_pkts++;
+-		dstats->tx_bytes += skb->len;
++		dstats->tx_bytes += len;
+ 		u64_stats_update_end(&dstats->syncp);
+ 	} else {
+ 		this_cpu_inc(dev->dstats->tx_drps);
+diff --git a/drivers/net/vxlan.c b/drivers/net/vxlan.c
+index 6fa8e165878e..590750ab6564 100644
+--- a/drivers/net/vxlan.c
++++ b/drivers/net/vxlan.c
+@@ -2600,7 +2600,7 @@ static int vxlan_validate(struct nlattr *tb[], struct nlattr *data[])
+ 
+ 	if (data[IFLA_VXLAN_ID]) {
+ 		__u32 id = nla_get_u32(data[IFLA_VXLAN_ID]);
+-		if (id >= VXLAN_VID_MASK)
++		if (id >= VXLAN_N_VID)
+ 			return -ERANGE;
+ 	}
+ 
+diff --git a/fs/ext4/crypto_policy.c b/fs/ext4/crypto_policy.c
+index 8a9feb341f31..dd561f916f0b 100644
+--- a/fs/ext4/crypto_policy.c
++++ b/fs/ext4/crypto_policy.c
+@@ -156,6 +156,12 @@ int ext4_is_child_context_consistent_with_parent(struct inode *parent,
+ 		WARN_ON(1);	/* Should never happen */
+ 		return 0;
+ 	}
++
++	/* No restrictions on file types which are never encrypted */
++	if (!S_ISREG(child->i_mode) && !S_ISDIR(child->i_mode) &&
++	    !S_ISLNK(child->i_mode))
++		return 1;
++
+ 	/* no restrictions if the parent directory is not encrypted */
+ 	if (!ext4_encrypted_inode(parent))
+ 		return 1;
+diff --git a/fs/ext4/ioctl.c b/fs/ext4/ioctl.c
+index 1fb12f9c97a6..789e2d6724a9 100644
+--- a/fs/ext4/ioctl.c
++++ b/fs/ext4/ioctl.c
+@@ -633,8 +633,12 @@ resizefs_out:
+ 		if (err)
+ 			goto encryption_policy_out;
+ 
++		mutex_lock(&inode->i_mutex);
++
+ 		err = ext4_process_policy(&policy, inode);
+ 
++		mutex_unlock(&inode->i_mutex);
++
+ 		mnt_drop_write_file(filp);
+ encryption_policy_out:
+ 		return err;
+diff --git a/fs/f2fs/crypto_policy.c b/fs/f2fs/crypto_policy.c
+index e504f548b64e..5bbd1989d5e6 100644
+--- a/fs/f2fs/crypto_policy.c
++++ b/fs/f2fs/crypto_policy.c
+@@ -149,6 +149,11 @@ int f2fs_is_child_context_consistent_with_parent(struct inode *parent,
+ 		BUG_ON(1);
+ 	}
+ 
++	/* No restrictions on file types which are never encrypted */
++	if (!S_ISREG(child->i_mode) && !S_ISDIR(child->i_mode) &&
++	    !S_ISLNK(child->i_mode))
++		return 1;
++
+ 	/* no restrictions if the parent directory is not encrypted */
+ 	if (!f2fs_encrypted_inode(parent))
+ 		return 1;
+diff --git a/fs/f2fs/file.c b/fs/f2fs/file.c
+index a197215ad52b..4b449d263333 100644
+--- a/fs/f2fs/file.c
++++ b/fs/f2fs/file.c
+@@ -1535,12 +1535,19 @@ static int f2fs_ioc_set_encryption_policy(struct file *filp, unsigned long arg)
+ #ifdef CONFIG_F2FS_FS_ENCRYPTION
+ 	struct f2fs_encryption_policy policy;
+ 	struct inode *inode = file_inode(filp);
++	int err;
+ 
+ 	if (copy_from_user(&policy, (struct f2fs_encryption_policy __user *)arg,
+ 				sizeof(policy)))
+ 		return -EFAULT;
+ 
+-	return f2fs_process_policy(&policy, inode);
++	mutex_lock(&inode->i_mutex);
++
++	err = f2fs_process_policy(&policy, inode);
++
++	mutex_unlock(&inode->i_mutex);
++
++	return err;
+ #else
+ 	return -EOPNOTSUPP;
+ #endif
+diff --git a/include/linux/dccp.h b/include/linux/dccp.h
+index 61d042bbbf60..68449293c4b6 100644
+--- a/include/linux/dccp.h
++++ b/include/linux/dccp.h
+@@ -163,6 +163,7 @@ struct dccp_request_sock {
+ 	__u64			 dreq_isr;
+ 	__u64			 dreq_gsr;
+ 	__be32			 dreq_service;
++	spinlock_t		 dreq_lock;
+ 	struct list_head	 dreq_featneg;
+ 	__u32			 dreq_timestamp_echo;
+ 	__u32			 dreq_timestamp_time;
+diff --git a/include/uapi/linux/netlink.h b/include/uapi/linux/netlink.h
+index f095155d8749..0dba4e4ed2be 100644
+--- a/include/uapi/linux/netlink.h
++++ b/include/uapi/linux/netlink.h
+@@ -107,8 +107,10 @@ struct nlmsgerr {
+ #define NETLINK_PKTINFO			3
+ #define NETLINK_BROADCAST_ERROR		4
+ #define NETLINK_NO_ENOBUFS		5
++#ifndef __KERNEL__
+ #define NETLINK_RX_RING			6
+ #define NETLINK_TX_RING			7
++#endif
+ #define NETLINK_LISTEN_ALL_NSID		8
+ #define NETLINK_LIST_MEMBERSHIPS	9
+ #define NETLINK_CAP_ACK			10
+@@ -134,6 +136,7 @@ struct nl_mmap_hdr {
+ 	__u32		nm_gid;
+ };
+ 
++#ifndef __KERNEL__
+ enum nl_mmap_status {
+ 	NL_MMAP_STATUS_UNUSED,
+ 	NL_MMAP_STATUS_RESERVED,
+@@ -145,6 +148,7 @@ enum nl_mmap_status {
+ #define NL_MMAP_MSG_ALIGNMENT		NLMSG_ALIGNTO
+ #define NL_MMAP_MSG_ALIGN(sz)		__ALIGN_KERNEL(sz, NL_MMAP_MSG_ALIGNMENT)
+ #define NL_MMAP_HDRLEN			NL_MMAP_MSG_ALIGN(sizeof(struct nl_mmap_hdr))
++#endif
+ 
+ #define NET_MAJOR 36		/* Major 36 is reserved for networking 						*/
+ 
+diff --git a/include/uapi/linux/netlink_diag.h b/include/uapi/linux/netlink_diag.h
+index f2159d30d1f5..d79399394b46 100644
+--- a/include/uapi/linux/netlink_diag.h
++++ b/include/uapi/linux/netlink_diag.h
+@@ -48,6 +48,8 @@ enum {
+ 
+ #define NDIAG_SHOW_MEMINFO	0x00000001 /* show memory info of a socket */
+ #define NDIAG_SHOW_GROUPS	0x00000002 /* show groups of a netlink socket */
++#ifndef __KERNEL__
+ #define NDIAG_SHOW_RING_CFG	0x00000004 /* show ring configuration */
++#endif
+ 
+ #endif
+diff --git a/include/uapi/linux/packet_diag.h b/include/uapi/linux/packet_diag.h
+index d08c63f3dd6f..0c5d5dd61b6a 100644
+--- a/include/uapi/linux/packet_diag.h
++++ b/include/uapi/linux/packet_diag.h
+@@ -64,7 +64,7 @@ struct packet_diag_mclist {
+ 	__u32	pdmc_count;
+ 	__u16	pdmc_type;
+ 	__u16	pdmc_alen;
+-	__u8	pdmc_addr[MAX_ADDR_LEN];
++	__u8	pdmc_addr[32]; /* MAX_ADDR_LEN */
+ };
+ 
+ struct packet_diag_ring {
+diff --git a/kernel/futex.c b/kernel/futex.c
+index 9d251dc3ec40..3057dabf726f 100644
+--- a/kernel/futex.c
++++ b/kernel/futex.c
+@@ -2690,7 +2690,6 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
+ {
+ 	struct hrtimer_sleeper timeout, *to = NULL;
+ 	struct rt_mutex_waiter rt_waiter;
+-	struct rt_mutex *pi_mutex = NULL;
+ 	struct futex_hash_bucket *hb;
+ 	union futex_key key2 = FUTEX_KEY_INIT;
+ 	struct futex_q q = futex_q_init;
+@@ -2774,6 +2773,8 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
+ 		if (q.pi_state && (q.pi_state->owner != current)) {
+ 			spin_lock(q.lock_ptr);
+ 			ret = fixup_pi_state_owner(uaddr2, &q, current);
++			if (ret && rt_mutex_owner(&q.pi_state->pi_mutex) == current)
++				rt_mutex_unlock(&q.pi_state->pi_mutex);
+ 			/*
+ 			 * Drop the reference to the pi state which
+ 			 * the requeue_pi() code acquired for us.
+@@ -2782,6 +2783,8 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
+ 			spin_unlock(q.lock_ptr);
+ 		}
+ 	} else {
++		struct rt_mutex *pi_mutex;
++
+ 		/*
+ 		 * We have been woken up by futex_unlock_pi(), a timeout, or a
+ 		 * signal.  futex_unlock_pi() will not destroy the lock_ptr nor
+@@ -2805,18 +2808,19 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
+ 		if (res)
+ 			ret = (res < 0) ? res : 0;
+ 
++		/*
++		 * If fixup_pi_state_owner() faulted and was unable to handle
++		 * the fault, unlock the rt_mutex and return the fault to
++		 * userspace.
++		 */
++		if (ret && rt_mutex_owner(pi_mutex) == current)
++			rt_mutex_unlock(pi_mutex);
++
+ 		/* Unqueue and drop the lock. */
+ 		unqueue_me_pi(&q);
+ 	}
+ 
+-	/*
+-	 * If fixup_pi_state_owner() faulted and was unable to handle the
+-	 * fault, unlock the rt_mutex and return the fault to userspace.
+-	 */
+-	if (ret == -EFAULT) {
+-		if (pi_mutex && rt_mutex_owner(pi_mutex) == current)
+-			rt_mutex_unlock(pi_mutex);
+-	} else if (ret == -EINTR) {
++	if (ret == -EINTR) {
+ 		/*
+ 		 * We've already been requeued, but cannot restart by calling
+ 		 * futex_lock_pi() directly. We could restart this syscall, but
+diff --git a/net/bridge/br_input.c b/net/bridge/br_input.c
+index f7fba74108a9..e24754a0e052 100644
+--- a/net/bridge/br_input.c
++++ b/net/bridge/br_input.c
+@@ -29,6 +29,7 @@ EXPORT_SYMBOL(br_should_route_hook);
+ static int
+ br_netif_receive_skb(struct net *net, struct sock *sk, struct sk_buff *skb)
+ {
++	br_drop_fake_rtable(skb);
+ 	return netif_receive_skb(skb);
+ }
+ 
+diff --git a/net/bridge/br_netfilter_hooks.c b/net/bridge/br_netfilter_hooks.c
+index 7ddbe7ec81d6..97fc19f001bf 100644
+--- a/net/bridge/br_netfilter_hooks.c
++++ b/net/bridge/br_netfilter_hooks.c
+@@ -516,21 +516,6 @@ static unsigned int br_nf_pre_routing(void *priv,
+ }
+ 
+ 
+-/* PF_BRIDGE/LOCAL_IN ************************************************/
+-/* The packet is locally destined, which requires a real
+- * dst_entry, so detach the fake one.  On the way up, the
+- * packet would pass through PRE_ROUTING again (which already
+- * took place when the packet entered the bridge), but we
+- * register an IPv4 PRE_ROUTING 'sabotage' hook that will
+- * prevent this from happening. */
+-static unsigned int br_nf_local_in(void *priv,
+-				   struct sk_buff *skb,
+-				   const struct nf_hook_state *state)
+-{
+-	br_drop_fake_rtable(skb);
+-	return NF_ACCEPT;
+-}
+-
+ /* PF_BRIDGE/FORWARD *************************************************/
+ static int br_nf_forward_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
+ {
+@@ -901,12 +886,6 @@ static struct nf_hook_ops br_nf_ops[] __read_mostly = {
+ 		.priority = NF_BR_PRI_BRNF,
+ 	},
+ 	{
+-		.hook = br_nf_local_in,
+-		.pf = NFPROTO_BRIDGE,
+-		.hooknum = NF_BR_LOCAL_IN,
+-		.priority = NF_BR_PRI_BRNF,
+-	},
+-	{
+ 		.hook = br_nf_forward_ip,
+ 		.pf = NFPROTO_BRIDGE,
+ 		.hooknum = NF_BR_FORWARD,
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 08215a85c742..48399d8ce614 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -1677,27 +1677,54 @@ EXPORT_SYMBOL_GPL(net_dec_ingress_queue);
+ static struct static_key netstamp_needed __read_mostly;
+ #ifdef HAVE_JUMP_LABEL
+ static atomic_t netstamp_needed_deferred;
++static atomic_t netstamp_wanted;
+ static void netstamp_clear(struct work_struct *work)
+ {
+ 	int deferred = atomic_xchg(&netstamp_needed_deferred, 0);
++	int wanted;
+ 
+-	while (deferred--)
+-		static_key_slow_dec(&netstamp_needed);
++	wanted = atomic_add_return(deferred, &netstamp_wanted);
++	if (wanted > 0)
++		static_key_enable(&netstamp_needed);
++	else
++		static_key_disable(&netstamp_needed);
+ }
+ static DECLARE_WORK(netstamp_work, netstamp_clear);
+ #endif
+ 
+ void net_enable_timestamp(void)
+ {
++#ifdef HAVE_JUMP_LABEL
++	int wanted;
++
++	while (1) {
++		wanted = atomic_read(&netstamp_wanted);
++		if (wanted <= 0)
++			break;
++		if (atomic_cmpxchg(&netstamp_wanted, wanted, wanted + 1) == wanted)
++			return;
++	}
++	atomic_inc(&netstamp_needed_deferred);
++	schedule_work(&netstamp_work);
++#else
+ 	static_key_slow_inc(&netstamp_needed);
++#endif
+ }
+ EXPORT_SYMBOL(net_enable_timestamp);
+ 
+ void net_disable_timestamp(void)
+ {
+ #ifdef HAVE_JUMP_LABEL
+-	/* net_disable_timestamp() can be called from non process context */
+-	atomic_inc(&netstamp_needed_deferred);
++	int wanted;
++
++	while (1) {
++		wanted = atomic_read(&netstamp_wanted);
++		if (wanted <= 1)
++			break;
++		if (atomic_cmpxchg(&netstamp_wanted, wanted, wanted - 1) == wanted)
++			return;
++	}
++	atomic_dec(&netstamp_needed_deferred);
+ 	schedule_work(&netstamp_work);
+ #else
+ 	static_key_slow_dec(&netstamp_needed);
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 4968b5ddea69..73dfd7729bc9 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -3678,13 +3678,14 @@ void skb_complete_tx_timestamp(struct sk_buff *skb,
+ 	if (!skb_may_tx_timestamp(sk, false))
+ 		return;
+ 
+-	/* take a reference to prevent skb_orphan() from freeing the socket */
+-	sock_hold(sk);
+-
+-	*skb_hwtstamps(skb) = *hwtstamps;
+-	__skb_complete_tx_timestamp(skb, sk, SCM_TSTAMP_SND);
+-
+-	sock_put(sk);
++	/* Take a reference to prevent skb_orphan() from freeing the socket,
++	 * but only if the socket refcount is not zero.
++	 */
++	if (likely(atomic_inc_not_zero(&sk->sk_refcnt))) {
++		*skb_hwtstamps(skb) = *hwtstamps;
++		__skb_complete_tx_timestamp(skb, sk, SCM_TSTAMP_SND);
++		sock_put(sk);
++	}
+ }
+ EXPORT_SYMBOL_GPL(skb_complete_tx_timestamp);
+ 
+@@ -3735,7 +3736,7 @@ void skb_complete_wifi_ack(struct sk_buff *skb, bool acked)
+ {
+ 	struct sock *sk = skb->sk;
+ 	struct sock_exterr_skb *serr;
+-	int err;
++	int err = 1;
+ 
+ 	skb->wifi_acked_valid = 1;
+ 	skb->wifi_acked = acked;
+@@ -3745,14 +3746,15 @@ void skb_complete_wifi_ack(struct sk_buff *skb, bool acked)
+ 	serr->ee.ee_errno = ENOMSG;
+ 	serr->ee.ee_origin = SO_EE_ORIGIN_TXSTATUS;
+ 
+-	/* take a reference to prevent skb_orphan() from freeing the socket */
+-	sock_hold(sk);
+-
+-	err = sock_queue_err_skb(sk, skb);
++	/* Take a reference to prevent skb_orphan() from freeing the socket,
++	 * but only if the socket refcount is not zero.
++	 */
++	if (likely(atomic_inc_not_zero(&sk->sk_refcnt))) {
++		err = sock_queue_err_skb(sk, skb);
++		sock_put(sk);
++	}
+ 	if (err)
+ 		kfree_skb(skb);
+-
+-	sock_put(sk);
+ }
+ EXPORT_SYMBOL_GPL(skb_complete_wifi_ack);
+ 
+diff --git a/net/dccp/ccids/ccid2.c b/net/dccp/ccids/ccid2.c
+index f053198e730c..5e3a7302f774 100644
+--- a/net/dccp/ccids/ccid2.c
++++ b/net/dccp/ccids/ccid2.c
+@@ -749,6 +749,7 @@ static void ccid2_hc_tx_exit(struct sock *sk)
+ 	for (i = 0; i < hc->tx_seqbufc; i++)
+ 		kfree(hc->tx_seqbuf[i]);
+ 	hc->tx_seqbufc = 0;
++	dccp_ackvec_parsed_cleanup(&hc->tx_av_chunks);
+ }
+ 
+ static void ccid2_hc_rx_packet_recv(struct sock *sk, struct sk_buff *skb)
+diff --git a/net/dccp/ipv4.c b/net/dccp/ipv4.c
+index 0759f5b9180e..6467bf392e1b 100644
+--- a/net/dccp/ipv4.c
++++ b/net/dccp/ipv4.c
+@@ -289,7 +289,8 @@ static void dccp_v4_err(struct sk_buff *skb, u32 info)
+ 
+ 	switch (type) {
+ 	case ICMP_REDIRECT:
+-		dccp_do_redirect(skb, sk);
++		if (!sock_owned_by_user(sk))
++			dccp_do_redirect(skb, sk);
+ 		goto out;
+ 	case ICMP_SOURCE_QUENCH:
+ 		/* Just silently ignore these. */
+diff --git a/net/dccp/ipv6.c b/net/dccp/ipv6.c
+index 27c4e81efa24..8113ad58fcb4 100644
+--- a/net/dccp/ipv6.c
++++ b/net/dccp/ipv6.c
+@@ -122,10 +122,12 @@ static void dccp_v6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
+ 	np = inet6_sk(sk);
+ 
+ 	if (type == NDISC_REDIRECT) {
+-		struct dst_entry *dst = __sk_dst_check(sk, np->dst_cookie);
++		if (!sock_owned_by_user(sk)) {
++			struct dst_entry *dst = __sk_dst_check(sk, np->dst_cookie);
+ 
+-		if (dst)
+-			dst->ops->redirect(dst, sk, skb);
++			if (dst)
++				dst->ops->redirect(dst, sk, skb);
++		}
+ 		goto out;
+ 	}
+ 
+diff --git a/net/dccp/minisocks.c b/net/dccp/minisocks.c
+index 1994f8af646b..68eed344b471 100644
+--- a/net/dccp/minisocks.c
++++ b/net/dccp/minisocks.c
+@@ -122,6 +122,7 @@ struct sock *dccp_create_openreq_child(const struct sock *sk,
+ 			/* It is still raw copy of parent, so invalidate
+ 			 * destructor and make plain sk_free() */
+ 			newsk->sk_destruct = NULL;
++			bh_unlock_sock(newsk);
+ 			sk_free(newsk);
+ 			return NULL;
+ 		}
+@@ -145,6 +146,13 @@ struct sock *dccp_check_req(struct sock *sk, struct sk_buff *skb,
+ 	struct dccp_request_sock *dreq = dccp_rsk(req);
+ 	bool own_req;
+ 
++	/* TCP/DCCP listeners became lockless.
++	 * DCCP stores complex state in its request_sock, so we need
++	 * a protection for them, now this code runs without being protected
++	 * by the parent (listener) lock.
++	 */
++	spin_lock_bh(&dreq->dreq_lock);
++
+ 	/* Check for retransmitted REQUEST */
+ 	if (dccp_hdr(skb)->dccph_type == DCCP_PKT_REQUEST) {
+ 
+@@ -159,7 +167,7 @@ struct sock *dccp_check_req(struct sock *sk, struct sk_buff *skb,
+ 			inet_rtx_syn_ack(sk, req);
+ 		}
+ 		/* Network Duplicate, discard packet */
+-		return NULL;
++		goto out;
+ 	}
+ 
+ 	DCCP_SKB_CB(skb)->dccpd_reset_code = DCCP_RESET_CODE_PACKET_ERROR;
+@@ -185,20 +193,20 @@ struct sock *dccp_check_req(struct sock *sk, struct sk_buff *skb,
+ 
+ 	child = inet_csk(sk)->icsk_af_ops->syn_recv_sock(sk, skb, req, NULL,
+ 							 req, &own_req);
+-	if (!child)
+-		goto listen_overflow;
+-
+-	return inet_csk_complete_hashdance(sk, child, req, own_req);
++	if (child) {
++		child = inet_csk_complete_hashdance(sk, child, req, own_req);
++		goto out;
++	}
+ 
+-listen_overflow:
+-	dccp_pr_debug("listen_overflow!\n");
+ 	DCCP_SKB_CB(skb)->dccpd_reset_code = DCCP_RESET_CODE_TOO_BUSY;
+ drop:
+ 	if (dccp_hdr(skb)->dccph_type != DCCP_PKT_RESET)
+ 		req->rsk_ops->send_reset(sk, skb);
+ 
+ 	inet_csk_reqsk_queue_drop(sk, req);
+-	return NULL;
++out:
++	spin_unlock_bh(&dreq->dreq_lock);
++	return child;
+ }
+ 
+ EXPORT_SYMBOL_GPL(dccp_check_req);
+@@ -249,6 +257,7 @@ int dccp_reqsk_init(struct request_sock *req,
+ {
+ 	struct dccp_request_sock *dreq = dccp_rsk(req);
+ 
++	spin_lock_init(&dreq->dreq_lock);
+ 	inet_rsk(req)->ir_rmt_port = dccp_hdr(skb)->dccph_sport;
+ 	inet_rsk(req)->ir_num	   = ntohs(dccp_hdr(skb)->dccph_dport);
+ 	inet_rsk(req)->acked	   = 0;
+diff --git a/net/ipv4/route.c b/net/ipv4/route.c
+index ef2f527a119b..da4d68d78590 100644
+--- a/net/ipv4/route.c
++++ b/net/ipv4/route.c
+@@ -1958,6 +1958,7 @@ int ip_route_input_noref(struct sk_buff *skb, __be32 daddr, __be32 saddr,
+ {
+ 	int res;
+ 
++	tos &= IPTOS_RT_MASK;
+ 	rcu_read_lock();
+ 
+ 	/* Multicast recognition logic is moved from route cache to here.
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index b58a38eea059..198fc2314c82 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -271,10 +271,13 @@ EXPORT_SYMBOL(tcp_v4_connect);
+  */
+ void tcp_v4_mtu_reduced(struct sock *sk)
+ {
+-	struct dst_entry *dst;
+ 	struct inet_sock *inet = inet_sk(sk);
+-	u32 mtu = tcp_sk(sk)->mtu_info;
++	struct dst_entry *dst;
++	u32 mtu;
+ 
++	if ((1 << sk->sk_state) & (TCPF_LISTEN | TCPF_CLOSE))
++		return;
++	mtu = tcp_sk(sk)->mtu_info;
+ 	dst = inet_csk_update_pmtu(sk, mtu);
+ 	if (!dst)
+ 		return;
+@@ -420,7 +423,8 @@ void tcp_v4_err(struct sk_buff *icmp_skb, u32 info)
+ 
+ 	switch (type) {
+ 	case ICMP_REDIRECT:
+-		do_redirect(icmp_skb, sk);
++		if (!sock_owned_by_user(sk))
++			do_redirect(icmp_skb, sk);
+ 		goto out;
+ 	case ICMP_SOURCE_QUENCH:
+ 		/* Just silently ignore these. */
+diff --git a/net/ipv4/tcp_timer.c b/net/ipv4/tcp_timer.c
+index 193ba1fa8a9a..ebb34d0c5e80 100644
+--- a/net/ipv4/tcp_timer.c
++++ b/net/ipv4/tcp_timer.c
+@@ -223,7 +223,8 @@ void tcp_delack_timer_handler(struct sock *sk)
+ 
+ 	sk_mem_reclaim_partial(sk);
+ 
+-	if (sk->sk_state == TCP_CLOSE || !(icsk->icsk_ack.pending & ICSK_ACK_TIMER))
++	if (((1 << sk->sk_state) & (TCPF_CLOSE | TCPF_LISTEN)) ||
++	    !(icsk->icsk_ack.pending & ICSK_ACK_TIMER))
+ 		goto out;
+ 
+ 	if (time_after(icsk->icsk_ack.timeout, jiffies)) {
+@@ -504,7 +505,8 @@ void tcp_write_timer_handler(struct sock *sk)
+ 	struct inet_connection_sock *icsk = inet_csk(sk);
+ 	int event;
+ 
+-	if (sk->sk_state == TCP_CLOSE || !icsk->icsk_pending)
++	if (((1 << sk->sk_state) & (TCPF_CLOSE | TCPF_LISTEN)) ||
++	    !icsk->icsk_pending)
+ 		goto out;
+ 
+ 	if (time_after(icsk->icsk_timeout, jiffies)) {
+diff --git a/net/ipv6/ip6_fib.c b/net/ipv6/ip6_fib.c
+index 34cf46d74554..85bf86458706 100644
+--- a/net/ipv6/ip6_fib.c
++++ b/net/ipv6/ip6_fib.c
+@@ -903,6 +903,8 @@ add:
+ 			ins = &rt->dst.rt6_next;
+ 			iter = *ins;
+ 			while (iter) {
++				if (iter->rt6i_metric > rt->rt6i_metric)
++					break;
+ 				if (rt6_qualify_for_ecmp(iter)) {
+ 					*ins = iter->dst.rt6_next;
+ 					fib6_purge_rt(iter, fn, info->nl_net);
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index 58900c21e4e4..8004532fa882 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -742,13 +742,14 @@ slow_path:
+ 	 *	Fragment the datagram.
+ 	 */
+ 
+-	*prevhdr = NEXTHDR_FRAGMENT;
+ 	troom = rt->dst.dev->needed_tailroom;
+ 
+ 	/*
+ 	 *	Keep copying data until we run out.
+ 	 */
+ 	while (left > 0)	{
++		u8 *fragnexthdr_offset;
++
+ 		len = left;
+ 		/* IF: it doesn't fit, use 'mtu' - the data space left */
+ 		if (len > mtu)
+@@ -793,6 +794,10 @@ slow_path:
+ 		 */
+ 		skb_copy_from_linear_data(skb, skb_network_header(frag), hlen);
+ 
++		fragnexthdr_offset = skb_network_header(frag);
++		fragnexthdr_offset += prevhdr - skb_network_header(skb);
++		*fragnexthdr_offset = NEXTHDR_FRAGMENT;
++
+ 		/*
+ 		 *	Build fragment header.
+ 		 */
+diff --git a/net/ipv6/ip6_vti.c b/net/ipv6/ip6_vti.c
+index 0a8610b33d79..bdcc4d9cedd3 100644
+--- a/net/ipv6/ip6_vti.c
++++ b/net/ipv6/ip6_vti.c
+@@ -680,6 +680,10 @@ vti6_parm_to_user(struct ip6_tnl_parm2 *u, const struct __ip6_tnl_parm *p)
+ 	u->link = p->link;
+ 	u->i_key = p->i_key;
+ 	u->o_key = p->o_key;
++	if (u->i_key)
++		u->i_flags |= GRE_KEY;
++	if (u->o_key)
++		u->o_flags |= GRE_KEY;
+ 	u->proto = p->proto;
+ 
+ 	memcpy(u->name, p->name, sizeof(u->name));
+diff --git a/net/ipv6/tcp_ipv6.c b/net/ipv6/tcp_ipv6.c
+index 76a8c8057a23..1a63c4deef26 100644
+--- a/net/ipv6/tcp_ipv6.c
++++ b/net/ipv6/tcp_ipv6.c
+@@ -376,10 +376,12 @@ static void tcp_v6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
+ 	np = inet6_sk(sk);
+ 
+ 	if (type == NDISC_REDIRECT) {
+-		struct dst_entry *dst = __sk_dst_check(sk, np->dst_cookie);
++		if (!sock_owned_by_user(sk)) {
++			struct dst_entry *dst = __sk_dst_check(sk, np->dst_cookie);
+ 
+-		if (dst)
+-			dst->ops->redirect(dst, sk, skb);
++			if (dst)
++				dst->ops->redirect(dst, sk, skb);
++		}
+ 		goto out;
+ 	}
+ 
+diff --git a/net/l2tp/l2tp_ip.c b/net/l2tp/l2tp_ip.c
+index 445b7cd0826a..48ab93842322 100644
+--- a/net/l2tp/l2tp_ip.c
++++ b/net/l2tp/l2tp_ip.c
+@@ -383,7 +383,7 @@ static int l2tp_ip_backlog_recv(struct sock *sk, struct sk_buff *skb)
+ drop:
+ 	IP_INC_STATS(sock_net(sk), IPSTATS_MIB_INDISCARDS);
+ 	kfree_skb(skb);
+-	return -1;
++	return 0;
+ }
+ 
+ /* Userspace will call sendmsg() on the tunnel socket to send L2TP
+diff --git a/net/mpls/af_mpls.c b/net/mpls/af_mpls.c
+index 881bc2072809..52cfc4478511 100644
+--- a/net/mpls/af_mpls.c
++++ b/net/mpls/af_mpls.c
+@@ -1567,6 +1567,7 @@ static void mpls_net_exit(struct net *net)
+ 	for (index = 0; index < platform_labels; index++) {
+ 		struct mpls_route *rt = rtnl_dereference(platform_label[index]);
+ 		RCU_INIT_POINTER(platform_label[index], NULL);
++		mpls_notify_route(net, index, rt, NULL, NULL);
+ 		mpls_rt_free(rt);
+ 	}
+ 	rtnl_unlock();
+diff --git a/net/netlink/Kconfig b/net/netlink/Kconfig
+index 2c5e95e9bfbd..5d6e8c05b3d4 100644
+--- a/net/netlink/Kconfig
++++ b/net/netlink/Kconfig
+@@ -2,15 +2,6 @@
+ # Netlink Sockets
+ #
+ 
+-config NETLINK_MMAP
+-	bool "NETLINK: mmaped IO"
+-	---help---
+-	  This option enables support for memory mapped netlink IO. This
+-	  reduces overhead by avoiding copying data between kernel- and
+-	  userspace.
+-
+-	  If unsure, say N.
+-
+ config NETLINK_DIAG
+ 	tristate "NETLINK: socket monitoring interface"
+ 	default n
+diff --git a/net/netlink/af_netlink.c b/net/netlink/af_netlink.c
+index 360700a2f46c..8e33019d8e7b 100644
+--- a/net/netlink/af_netlink.c
++++ b/net/netlink/af_netlink.c
+@@ -225,7 +225,7 @@ static int __netlink_deliver_tap_skb(struct sk_buff *skb,
+ 
+ 	dev_hold(dev);
+ 
+-	if (netlink_skb_is_mmaped(skb) || is_vmalloc_addr(skb->head))
++	if (is_vmalloc_addr(skb->head))
+ 		nskb = netlink_to_full_skb(skb, GFP_ATOMIC);
+ 	else
+ 		nskb = skb_clone(skb, GFP_ATOMIC);
+@@ -300,610 +300,8 @@ static void netlink_rcv_wake(struct sock *sk)
+ 		wake_up_interruptible(&nlk->wait);
+ }
+ 
+-#ifdef CONFIG_NETLINK_MMAP
+-static bool netlink_rx_is_mmaped(struct sock *sk)
+-{
+-	return nlk_sk(sk)->rx_ring.pg_vec != NULL;
+-}
+-
+-static bool netlink_tx_is_mmaped(struct sock *sk)
+-{
+-	return nlk_sk(sk)->tx_ring.pg_vec != NULL;
+-}
+-
+-static __pure struct page *pgvec_to_page(const void *addr)
+-{
+-	if (is_vmalloc_addr(addr))
+-		return vmalloc_to_page(addr);
+-	else
+-		return virt_to_page(addr);
+-}
+-
+-static void free_pg_vec(void **pg_vec, unsigned int order, unsigned int len)
+-{
+-	unsigned int i;
+-
+-	for (i = 0; i < len; i++) {
+-		if (pg_vec[i] != NULL) {
+-			if (is_vmalloc_addr(pg_vec[i]))
+-				vfree(pg_vec[i]);
+-			else
+-				free_pages((unsigned long)pg_vec[i], order);
+-		}
+-	}
+-	kfree(pg_vec);
+-}
+-
+-static void *alloc_one_pg_vec_page(unsigned long order)
+-{
+-	void *buffer;
+-	gfp_t gfp_flags = GFP_KERNEL | __GFP_COMP | __GFP_ZERO |
+-			  __GFP_NOWARN | __GFP_NORETRY;
+-
+-	buffer = (void *)__get_free_pages(gfp_flags, order);
+-	if (buffer != NULL)
+-		return buffer;
+-
+-	buffer = vzalloc((1 << order) * PAGE_SIZE);
+-	if (buffer != NULL)
+-		return buffer;
+-
+-	gfp_flags &= ~__GFP_NORETRY;
+-	return (void *)__get_free_pages(gfp_flags, order);
+-}
+-
+-static void **alloc_pg_vec(struct netlink_sock *nlk,
+-			   struct nl_mmap_req *req, unsigned int order)
+-{
+-	unsigned int block_nr = req->nm_block_nr;
+-	unsigned int i;
+-	void **pg_vec;
+-
+-	pg_vec = kcalloc(block_nr, sizeof(void *), GFP_KERNEL);
+-	if (pg_vec == NULL)
+-		return NULL;
+-
+-	for (i = 0; i < block_nr; i++) {
+-		pg_vec[i] = alloc_one_pg_vec_page(order);
+-		if (pg_vec[i] == NULL)
+-			goto err1;
+-	}
+-
+-	return pg_vec;
+-err1:
+-	free_pg_vec(pg_vec, order, block_nr);
+-	return NULL;
+-}
+-
+-
+-static void
+-__netlink_set_ring(struct sock *sk, struct nl_mmap_req *req, bool tx_ring, void **pg_vec,
+-		   unsigned int order)
+-{
+-	struct netlink_sock *nlk = nlk_sk(sk);
+-	struct sk_buff_head *queue;
+-	struct netlink_ring *ring;
+-
+-	queue = tx_ring ? &sk->sk_write_queue : &sk->sk_receive_queue;
+-	ring  = tx_ring ? &nlk->tx_ring : &nlk->rx_ring;
+-
+-	spin_lock_bh(&queue->lock);
+-
+-	ring->frame_max		= req->nm_frame_nr - 1;
+-	ring->head		= 0;
+-	ring->frame_size	= req->nm_frame_size;
+-	ring->pg_vec_pages	= req->nm_block_size / PAGE_SIZE;
+-
+-	swap(ring->pg_vec_len, req->nm_block_nr);
+-	swap(ring->pg_vec_order, order);
+-	swap(ring->pg_vec, pg_vec);
+-
+-	__skb_queue_purge(queue);
+-	spin_unlock_bh(&queue->lock);
+-
+-	WARN_ON(atomic_read(&nlk->mapped));
+-
+-	if (pg_vec)
+-		free_pg_vec(pg_vec, order, req->nm_block_nr);
+-}
+-
+-static int netlink_set_ring(struct sock *sk, struct nl_mmap_req *req,
+-			    bool tx_ring)
+-{
+-	struct netlink_sock *nlk = nlk_sk(sk);
+-	struct netlink_ring *ring;
+-	void **pg_vec = NULL;
+-	unsigned int order = 0;
+-
+-	ring  = tx_ring ? &nlk->tx_ring : &nlk->rx_ring;
+-
+-	if (atomic_read(&nlk->mapped))
+-		return -EBUSY;
+-	if (atomic_read(&ring->pending))
+-		return -EBUSY;
+-
+-	if (req->nm_block_nr) {
+-		if (ring->pg_vec != NULL)
+-			return -EBUSY;
+-
+-		if ((int)req->nm_block_size <= 0)
+-			return -EINVAL;
+-		if (!PAGE_ALIGNED(req->nm_block_size))
+-			return -EINVAL;
+-		if (req->nm_frame_size < NL_MMAP_HDRLEN)
+-			return -EINVAL;
+-		if (!IS_ALIGNED(req->nm_frame_size, NL_MMAP_MSG_ALIGNMENT))
+-			return -EINVAL;
+-
+-		ring->frames_per_block = req->nm_block_size /
+-					 req->nm_frame_size;
+-		if (ring->frames_per_block == 0)
+-			return -EINVAL;
+-		if (ring->frames_per_block * req->nm_block_nr !=
+-		    req->nm_frame_nr)
+-			return -EINVAL;
+-
+-		order = get_order(req->nm_block_size);
+-		pg_vec = alloc_pg_vec(nlk, req, order);
+-		if (pg_vec == NULL)
+-			return -ENOMEM;
+-	} else {
+-		if (req->nm_frame_nr)
+-			return -EINVAL;
+-	}
+-
+-	mutex_lock(&nlk->pg_vec_lock);
+-	if (atomic_read(&nlk->mapped) == 0) {
+-		__netlink_set_ring(sk, req, tx_ring, pg_vec, order);
+-		mutex_unlock(&nlk->pg_vec_lock);
+-		return 0;
+-	}
+-
+-	mutex_unlock(&nlk->pg_vec_lock);
+-
+-	if (pg_vec)
+-		free_pg_vec(pg_vec, order, req->nm_block_nr);
+-
+-	return -EBUSY;
+-}
+-
+-static void netlink_mm_open(struct vm_area_struct *vma)
+-{
+-	struct file *file = vma->vm_file;
+-	struct socket *sock = file->private_data;
+-	struct sock *sk = sock->sk;
+-
+-	if (sk)
+-		atomic_inc(&nlk_sk(sk)->mapped);
+-}
+-
+-static void netlink_mm_close(struct vm_area_struct *vma)
+-{
+-	struct file *file = vma->vm_file;
+-	struct socket *sock = file->private_data;
+-	struct sock *sk = sock->sk;
+-
+-	if (sk)
+-		atomic_dec(&nlk_sk(sk)->mapped);
+-}
+-
+-static const struct vm_operations_struct netlink_mmap_ops = {
+-	.open	= netlink_mm_open,
+-	.close	= netlink_mm_close,
+-};
+-
+-static int netlink_mmap(struct file *file, struct socket *sock,
+-			struct vm_area_struct *vma)
+-{
+-	struct sock *sk = sock->sk;
+-	struct netlink_sock *nlk = nlk_sk(sk);
+-	struct netlink_ring *ring;
+-	unsigned long start, size, expected;
+-	unsigned int i;
+-	int err = -EINVAL;
+-
+-	if (vma->vm_pgoff)
+-		return -EINVAL;
+-
+-	mutex_lock(&nlk->pg_vec_lock);
+-
+-	expected = 0;
+-	for (ring = &nlk->rx_ring; ring <= &nlk->tx_ring; ring++) {
+-		if (ring->pg_vec == NULL)
+-			continue;
+-		expected += ring->pg_vec_len * ring->pg_vec_pages * PAGE_SIZE;
+-	}
+-
+-	if (expected == 0)
+-		goto out;
+-
+-	size = vma->vm_end - vma->vm_start;
+-	if (size != expected)
+-		goto out;
+-
+-	start = vma->vm_start;
+-	for (ring = &nlk->rx_ring; ring <= &nlk->tx_ring; ring++) {
+-		if (ring->pg_vec == NULL)
+-			continue;
+-
+-		for (i = 0; i < ring->pg_vec_len; i++) {
+-			struct page *page;
+-			void *kaddr = ring->pg_vec[i];
+-			unsigned int pg_num;
+-
+-			for (pg_num = 0; pg_num < ring->pg_vec_pages; pg_num++) {
+-				page = pgvec_to_page(kaddr);
+-				err = vm_insert_page(vma, start, page);
+-				if (err < 0)
+-					goto out;
+-				start += PAGE_SIZE;
+-				kaddr += PAGE_SIZE;
+-			}
+-		}
+-	}
+-
+-	atomic_inc(&nlk->mapped);
+-	vma->vm_ops = &netlink_mmap_ops;
+-	err = 0;
+-out:
+-	mutex_unlock(&nlk->pg_vec_lock);
+-	return err;
+-}
+-
+-static void netlink_frame_flush_dcache(const struct nl_mmap_hdr *hdr, unsigned int nm_len)
+-{
+-#if ARCH_IMPLEMENTS_FLUSH_DCACHE_PAGE == 1
+-	struct page *p_start, *p_end;
+-
+-	/* First page is flushed through netlink_{get,set}_status */
+-	p_start = pgvec_to_page(hdr + PAGE_SIZE);
+-	p_end   = pgvec_to_page((void *)hdr + NL_MMAP_HDRLEN + nm_len - 1);
+-	while (p_start <= p_end) {
+-		flush_dcache_page(p_start);
+-		p_start++;
+-	}
+-#endif
+-}
+-
+-static enum nl_mmap_status netlink_get_status(const struct nl_mmap_hdr *hdr)
+-{
+-	smp_rmb();
+-	flush_dcache_page(pgvec_to_page(hdr));
+-	return hdr->nm_status;
+-}
+-
+-static void netlink_set_status(struct nl_mmap_hdr *hdr,
+-			       enum nl_mmap_status status)
+-{
+-	smp_mb();
+-	hdr->nm_status = status;
+-	flush_dcache_page(pgvec_to_page(hdr));
+-}
+-
+-static struct nl_mmap_hdr *
+-__netlink_lookup_frame(const struct netlink_ring *ring, unsigned int pos)
+-{
+-	unsigned int pg_vec_pos, frame_off;
+-
+-	pg_vec_pos = pos / ring->frames_per_block;
+-	frame_off  = pos % ring->frames_per_block;
+-
+-	return ring->pg_vec[pg_vec_pos] + (frame_off * ring->frame_size);
+-}
+-
+-static struct nl_mmap_hdr *
+-netlink_lookup_frame(const struct netlink_ring *ring, unsigned int pos,
+-		     enum nl_mmap_status status)
+-{
+-	struct nl_mmap_hdr *hdr;
+-
+-	hdr = __netlink_lookup_frame(ring, pos);
+-	if (netlink_get_status(hdr) != status)
+-		return NULL;
+-
+-	return hdr;
+-}
+-
+-static struct nl_mmap_hdr *
+-netlink_current_frame(const struct netlink_ring *ring,
+-		      enum nl_mmap_status status)
+-{
+-	return netlink_lookup_frame(ring, ring->head, status);
+-}
+-
+-static void netlink_increment_head(struct netlink_ring *ring)
+-{
+-	ring->head = ring->head != ring->frame_max ? ring->head + 1 : 0;
+-}
+-
+-static void netlink_forward_ring(struct netlink_ring *ring)
+-{
+-	unsigned int head = ring->head;
+-	const struct nl_mmap_hdr *hdr;
+-
+-	do {
+-		hdr = __netlink_lookup_frame(ring, ring->head);
+-		if (hdr->nm_status == NL_MMAP_STATUS_UNUSED)
+-			break;
+-		if (hdr->nm_status != NL_MMAP_STATUS_SKIP)
+-			break;
+-		netlink_increment_head(ring);
+-	} while (ring->head != head);
+-}
+-
+-static bool netlink_has_valid_frame(struct netlink_ring *ring)
+-{
+-	unsigned int head = ring->head, pos = head;
+-	const struct nl_mmap_hdr *hdr;
+-
+-	do {
+-		hdr = __netlink_lookup_frame(ring, pos);
+-		if (hdr->nm_status == NL_MMAP_STATUS_VALID)
+-			return true;
+-		pos = pos != 0 ? pos - 1 : ring->frame_max;
+-	} while (pos != head);
+-
+-	return false;
+-}
+-
+-static bool netlink_dump_space(struct netlink_sock *nlk)
+-{
+-	struct netlink_ring *ring = &nlk->rx_ring;
+-	struct nl_mmap_hdr *hdr;
+-	unsigned int n;
+-
+-	hdr = netlink_current_frame(ring, NL_MMAP_STATUS_UNUSED);
+-	if (hdr == NULL)
+-		return false;
+-
+-	n = ring->head + ring->frame_max / 2;
+-	if (n > ring->frame_max)
+-		n -= ring->frame_max;
+-
+-	hdr = __netlink_lookup_frame(ring, n);
+-
+-	return hdr->nm_status == NL_MMAP_STATUS_UNUSED;
+-}
+-
+-static unsigned int netlink_poll(struct file *file, struct socket *sock,
+-				 poll_table *wait)
+-{
+-	struct sock *sk = sock->sk;
+-	struct netlink_sock *nlk = nlk_sk(sk);
+-	unsigned int mask;
+-	int err;
+-
+-	if (nlk->rx_ring.pg_vec != NULL) {
+-		/* Memory mapped sockets don't call recvmsg(), so flow control
+-		 * for dumps is performed here. A dump is allowed to continue
+-		 * if at least half the ring is unused.
+-		 */
+-		while (nlk->cb_running && netlink_dump_space(nlk)) {
+-			err = netlink_dump(sk);
+-			if (err < 0) {
+-				sk->sk_err = -err;
+-				sk->sk_error_report(sk);
+-				break;
+-			}
+-		}
+-		netlink_rcv_wake(sk);
+-	}
+-
+-	mask = datagram_poll(file, sock, wait);
+-
+-	/* We could already have received frames in the normal receive
+-	 * queue, that will show up as NL_MMAP_STATUS_COPY in the ring,
+-	 * so if mask contains pollin/etc already, there's no point
+-	 * walking the ring.
+-	 */
+-	if ((mask & (POLLIN | POLLRDNORM)) != (POLLIN | POLLRDNORM)) {
+-		spin_lock_bh(&sk->sk_receive_queue.lock);
+-		if (nlk->rx_ring.pg_vec) {
+-			if (netlink_has_valid_frame(&nlk->rx_ring))
+-				mask |= POLLIN | POLLRDNORM;
+-		}
+-		spin_unlock_bh(&sk->sk_receive_queue.lock);
+-	}
+-
+-	spin_lock_bh(&sk->sk_write_queue.lock);
+-	if (nlk->tx_ring.pg_vec) {
+-		if (netlink_current_frame(&nlk->tx_ring, NL_MMAP_STATUS_UNUSED))
+-			mask |= POLLOUT | POLLWRNORM;
+-	}
+-	spin_unlock_bh(&sk->sk_write_queue.lock);
+-
+-	return mask;
+-}
+-
+-static struct nl_mmap_hdr *netlink_mmap_hdr(struct sk_buff *skb)
+-{
+-	return (struct nl_mmap_hdr *)(skb->head - NL_MMAP_HDRLEN);
+-}
+-
+-static void netlink_ring_setup_skb(struct sk_buff *skb, struct sock *sk,
+-				   struct netlink_ring *ring,
+-				   struct nl_mmap_hdr *hdr)
+-{
+-	unsigned int size;
+-	void *data;
+-
+-	size = ring->frame_size - NL_MMAP_HDRLEN;
+-	data = (void *)hdr + NL_MMAP_HDRLEN;
+-
+-	skb->head	= data;
+-	skb->data	= data;
+-	skb_reset_tail_pointer(skb);
+-	skb->end	= skb->tail + size;
+-	skb->len	= 0;
+-
+-	skb->destructor	= netlink_skb_destructor;
+-	NETLINK_CB(skb).flags |= NETLINK_SKB_MMAPED;
+-	NETLINK_CB(skb).sk = sk;
+-}
+-
+-static int netlink_mmap_sendmsg(struct sock *sk, struct msghdr *msg,
+-				u32 dst_portid, u32 dst_group,
+-				struct scm_cookie *scm)
+-{
+-	struct netlink_sock *nlk = nlk_sk(sk);
+-	struct netlink_ring *ring;
+-	struct nl_mmap_hdr *hdr;
+-	struct sk_buff *skb;
+-	unsigned int maxlen;
+-	int err = 0, len = 0;
+-
+-	mutex_lock(&nlk->pg_vec_lock);
+-
+-	ring   = &nlk->tx_ring;
+-	maxlen = ring->frame_size - NL_MMAP_HDRLEN;
+-
+-	do {
+-		unsigned int nm_len;
+-
+-		hdr = netlink_current_frame(ring, NL_MMAP_STATUS_VALID);
+-		if (hdr == NULL) {
+-			if (!(msg->msg_flags & MSG_DONTWAIT) &&
+-			    atomic_read(&nlk->tx_ring.pending))
+-				schedule();
+-			continue;
+-		}
+-
+-		nm_len = ACCESS_ONCE(hdr->nm_len);
+-		if (nm_len > maxlen) {
+-			err = -EINVAL;
+-			goto out;
+-		}
+-
+-		netlink_frame_flush_dcache(hdr, nm_len);
+-
+-		skb = alloc_skb(nm_len, GFP_KERNEL);
+-		if (skb == NULL) {
+-			err = -ENOBUFS;
+-			goto out;
+-		}
+-		__skb_put(skb, nm_len);
+-		memcpy(skb->data, (void *)hdr + NL_MMAP_HDRLEN, nm_len);
+-		netlink_set_status(hdr, NL_MMAP_STATUS_UNUSED);
+-
+-		netlink_increment_head(ring);
+-
+-		NETLINK_CB(skb).portid	  = nlk->portid;
+-		NETLINK_CB(skb).dst_group = dst_group;
+-		NETLINK_CB(skb).creds	  = scm->creds;
+-
+-		err = security_netlink_send(sk, skb);
+-		if (err) {
+-			kfree_skb(skb);
+-			goto out;
+-		}
+-
+-		if (unlikely(dst_group)) {
+-			atomic_inc(&skb->users);
+-			netlink_broadcast(sk, skb, dst_portid, dst_group,
+-					  GFP_KERNEL);
+-		}
+-		err = netlink_unicast(sk, skb, dst_portid,
+-				      msg->msg_flags & MSG_DONTWAIT);
+-		if (err < 0)
+-			goto out;
+-		len += err;
+-
+-	} while (hdr != NULL ||
+-		 (!(msg->msg_flags & MSG_DONTWAIT) &&
+-		  atomic_read(&nlk->tx_ring.pending)));
+-
+-	if (len > 0)
+-		err = len;
+-out:
+-	mutex_unlock(&nlk->pg_vec_lock);
+-	return err;
+-}
+-
+-static void netlink_queue_mmaped_skb(struct sock *sk, struct sk_buff *skb)
+-{
+-	struct nl_mmap_hdr *hdr;
+-
+-	hdr = netlink_mmap_hdr(skb);
+-	hdr->nm_len	= skb->len;
+-	hdr->nm_group	= NETLINK_CB(skb).dst_group;
+-	hdr->nm_pid	= NETLINK_CB(skb).creds.pid;
+-	hdr->nm_uid	= from_kuid(sk_user_ns(sk), NETLINK_CB(skb).creds.uid);
+-	hdr->nm_gid	= from_kgid(sk_user_ns(sk), NETLINK_CB(skb).creds.gid);
+-	netlink_frame_flush_dcache(hdr, hdr->nm_len);
+-	netlink_set_status(hdr, NL_MMAP_STATUS_VALID);
+-
+-	NETLINK_CB(skb).flags |= NETLINK_SKB_DELIVERED;
+-	kfree_skb(skb);
+-}
+-
+-static void netlink_ring_set_copied(struct sock *sk, struct sk_buff *skb)
+-{
+-	struct netlink_sock *nlk = nlk_sk(sk);
+-	struct netlink_ring *ring = &nlk->rx_ring;
+-	struct nl_mmap_hdr *hdr;
+-
+-	spin_lock_bh(&sk->sk_receive_queue.lock);
+-	hdr = netlink_current_frame(ring, NL_MMAP_STATUS_UNUSED);
+-	if (hdr == NULL) {
+-		spin_unlock_bh(&sk->sk_receive_queue.lock);
+-		kfree_skb(skb);
+-		netlink_overrun(sk);
+-		return;
+-	}
+-	netlink_increment_head(ring);
+-	__skb_queue_tail(&sk->sk_receive_queue, skb);
+-	spin_unlock_bh(&sk->sk_receive_queue.lock);
+-
+-	hdr->nm_len	= skb->len;
+-	hdr->nm_group	= NETLINK_CB(skb).dst_group;
+-	hdr->nm_pid	= NETLINK_CB(skb).creds.pid;
+-	hdr->nm_uid	= from_kuid(sk_user_ns(sk), NETLINK_CB(skb).creds.uid);
+-	hdr->nm_gid	= from_kgid(sk_user_ns(sk), NETLINK_CB(skb).creds.gid);
+-	netlink_set_status(hdr, NL_MMAP_STATUS_COPY);
+-}
+-
+-#else /* CONFIG_NETLINK_MMAP */
+-#define netlink_rx_is_mmaped(sk)	false
+-#define netlink_tx_is_mmaped(sk)	false
+-#define netlink_mmap			sock_no_mmap
+-#define netlink_poll			datagram_poll
+-#define netlink_mmap_sendmsg(sk, msg, dst_portid, dst_group, scm)	0
+-#endif /* CONFIG_NETLINK_MMAP */
+-
+ static void netlink_skb_destructor(struct sk_buff *skb)
+ {
+-#ifdef CONFIG_NETLINK_MMAP
+-	struct nl_mmap_hdr *hdr;
+-	struct netlink_ring *ring;
+-	struct sock *sk;
+-
+-	/* If a packet from the kernel to userspace was freed because of an
+-	 * error without being delivered to userspace, the kernel must reset
+-	 * the status. In the direction userspace to kernel, the status is
+-	 * always reset here after the packet was processed and freed.
+-	 */
+-	if (netlink_skb_is_mmaped(skb)) {
+-		hdr = netlink_mmap_hdr(skb);
+-		sk = NETLINK_CB(skb).sk;
+-
+-		if (NETLINK_CB(skb).flags & NETLINK_SKB_TX) {
+-			netlink_set_status(hdr, NL_MMAP_STATUS_UNUSED);
+-			ring = &nlk_sk(sk)->tx_ring;
+-		} else {
+-			if (!(NETLINK_CB(skb).flags & NETLINK_SKB_DELIVERED)) {
+-				hdr->nm_len = 0;
+-				netlink_set_status(hdr, NL_MMAP_STATUS_VALID);
+-			}
+-			ring = &nlk_sk(sk)->rx_ring;
+-		}
+-
+-		WARN_ON(atomic_read(&ring->pending) == 0);
+-		atomic_dec(&ring->pending);
+-		sock_put(sk);
+-
+-		skb->head = NULL;
+-	}
+-#endif
+ 	if (is_vmalloc_addr(skb->head)) {
+ 		if (!skb->cloned ||
+ 		    !atomic_dec_return(&(skb_shinfo(skb)->dataref)))
+@@ -936,18 +334,6 @@ static void netlink_sock_destruct(struct sock *sk)
+ 	}
+ 
+ 	skb_queue_purge(&sk->sk_receive_queue);
+-#ifdef CONFIG_NETLINK_MMAP
+-	if (1) {
+-		struct nl_mmap_req req;
+-
+-		memset(&req, 0, sizeof(req));
+-		if (nlk->rx_ring.pg_vec)
+-			__netlink_set_ring(sk, &req, false, NULL, 0);
+-		memset(&req, 0, sizeof(req));
+-		if (nlk->tx_ring.pg_vec)
+-			__netlink_set_ring(sk, &req, true, NULL, 0);
+-	}
+-#endif /* CONFIG_NETLINK_MMAP */
+ 
+ 	if (!sock_flag(sk, SOCK_DEAD)) {
+ 		printk(KERN_ERR "Freeing alive netlink socket %p\n", sk);
+@@ -1201,9 +587,6 @@ static int __netlink_create(struct net *net, struct socket *sock,
+ 		mutex_init(nlk->cb_mutex);
+ 	}
+ 	init_waitqueue_head(&nlk->wait);
+-#ifdef CONFIG_NETLINK_MMAP
+-	mutex_init(&nlk->pg_vec_lock);
+-#endif
+ 
+ 	sk->sk_destruct = netlink_sock_destruct;
+ 	sk->sk_protocol = protocol;
+@@ -1745,8 +1128,7 @@ int netlink_attachskb(struct sock *sk, struct sk_buff *skb,
+ 	nlk = nlk_sk(sk);
+ 
+ 	if ((atomic_read(&sk->sk_rmem_alloc) > sk->sk_rcvbuf ||
+-	     test_bit(NETLINK_S_CONGESTED, &nlk->state)) &&
+-	    !netlink_skb_is_mmaped(skb)) {
++	     test_bit(NETLINK_S_CONGESTED, &nlk->state))) {
+ 		DECLARE_WAITQUEUE(wait, current);
+ 		if (!*timeo) {
+ 			if (!ssk || netlink_is_kernel(ssk))
+@@ -1784,14 +1166,7 @@ static int __netlink_sendskb(struct sock *sk, struct sk_buff *skb)
+ 
+ 	netlink_deliver_tap(skb);
+ 
+-#ifdef CONFIG_NETLINK_MMAP
+-	if (netlink_skb_is_mmaped(skb))
+-		netlink_queue_mmaped_skb(sk, skb);
+-	else if (netlink_rx_is_mmaped(sk))
+-		netlink_ring_set_copied(sk, skb);
+-	else
+-#endif /* CONFIG_NETLINK_MMAP */
+-		skb_queue_tail(&sk->sk_receive_queue, skb);
++	skb_queue_tail(&sk->sk_receive_queue, skb);
+ 	sk->sk_data_ready(sk);
+ 	return len;
+ }
+@@ -1815,9 +1190,6 @@ static struct sk_buff *netlink_trim(struct sk_buff *skb, gfp_t allocation)
+ 	int delta;
+ 
+ 	WARN_ON(skb->sk != NULL);
+-	if (netlink_skb_is_mmaped(skb))
+-		return skb;
+-
+ 	delta = skb->end - skb->tail;
+ 	if (is_vmalloc_addr(skb->head) || delta * 2 < skb->truesize)
+ 		return skb;
+@@ -1897,71 +1269,6 @@ struct sk_buff *__netlink_alloc_skb(struct sock *ssk, unsigned int size,
+ 				    unsigned int ldiff, u32 dst_portid,
+ 				    gfp_t gfp_mask)
+ {
+-#ifdef CONFIG_NETLINK_MMAP
+-	unsigned int maxlen, linear_size;
+-	struct sock *sk = NULL;
+-	struct sk_buff *skb;
+-	struct netlink_ring *ring;
+-	struct nl_mmap_hdr *hdr;
+-
+-	sk = netlink_getsockbyportid(ssk, dst_portid);
+-	if (IS_ERR(sk))
+-		goto out;
+-
+-	ring = &nlk_sk(sk)->rx_ring;
+-	/* fast-path without atomic ops for common case: non-mmaped receiver */
+-	if (ring->pg_vec == NULL)
+-		goto out_put;
+-
+-	/* We need to account the full linear size needed as a ring
+-	 * slot cannot have non-linear parts.
+-	 */
+-	linear_size = size + ldiff;
+-	if (ring->frame_size - NL_MMAP_HDRLEN < linear_size)
+-		goto out_put;
+-
+-	skb = alloc_skb_head(gfp_mask);
+-	if (skb == NULL)
+-		goto err1;
+-
+-	spin_lock_bh(&sk->sk_receive_queue.lock);
+-	/* check again under lock */
+-	if (ring->pg_vec == NULL)
+-		goto out_free;
+-
+-	/* check again under lock */
+-	maxlen = ring->frame_size - NL_MMAP_HDRLEN;
+-	if (maxlen < linear_size)
+-		goto out_free;
+-
+-	netlink_forward_ring(ring);
+-	hdr = netlink_current_frame(ring, NL_MMAP_STATUS_UNUSED);
+-	if (hdr == NULL)
+-		goto err2;
+-
+-	netlink_ring_setup_skb(skb, sk, ring, hdr);
+-	netlink_set_status(hdr, NL_MMAP_STATUS_RESERVED);
+-	atomic_inc(&ring->pending);
+-	netlink_increment_head(ring);
+-
+-	spin_unlock_bh(&sk->sk_receive_queue.lock);
+-	return skb;
+-
+-err2:
+-	kfree_skb(skb);
+-	spin_unlock_bh(&sk->sk_receive_queue.lock);
+-	netlink_overrun(sk);
+-err1:
+-	sock_put(sk);
+-	return NULL;
+-
+-out_free:
+-	kfree_skb(skb);
+-	spin_unlock_bh(&sk->sk_receive_queue.lock);
+-out_put:
+-	sock_put(sk);
+-out:
+-#endif
+ 	return alloc_skb(size, gfp_mask);
+ }
+ EXPORT_SYMBOL_GPL(__netlink_alloc_skb);
+@@ -2242,8 +1549,7 @@ static int netlink_setsockopt(struct socket *sock, int level, int optname,
+ 	if (level != SOL_NETLINK)
+ 		return -ENOPROTOOPT;
+ 
+-	if (optname != NETLINK_RX_RING && optname != NETLINK_TX_RING &&
+-	    optlen >= sizeof(int) &&
++	if (optlen >= sizeof(int) &&
+ 	    get_user(val, (unsigned int __user *)optval))
+ 		return -EFAULT;
+ 
+@@ -2296,25 +1602,6 @@ static int netlink_setsockopt(struct socket *sock, int level, int optname,
+ 		}
+ 		err = 0;
+ 		break;
+-#ifdef CONFIG_NETLINK_MMAP
+-	case NETLINK_RX_RING:
+-	case NETLINK_TX_RING: {
+-		struct nl_mmap_req req;
+-
+-		/* Rings might consume more memory than queue limits, require
+-		 * CAP_NET_ADMIN.
+-		 */
+-		if (!capable(CAP_NET_ADMIN))
+-			return -EPERM;
+-		if (optlen < sizeof(req))
+-			return -EINVAL;
+-		if (copy_from_user(&req, optval, sizeof(req)))
+-			return -EFAULT;
+-		err = netlink_set_ring(sk, &req,
+-				       optname == NETLINK_TX_RING);
+-		break;
+-	}
+-#endif /* CONFIG_NETLINK_MMAP */
+ 	case NETLINK_LISTEN_ALL_NSID:
+ 		if (!ns_capable(sock_net(sk)->user_ns, CAP_NET_BROADCAST))
+ 			return -EPERM;
+@@ -2484,18 +1771,6 @@ static int netlink_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
+ 		smp_rmb();
+ 	}
+ 
+-	/* It's a really convoluted way for userland to ask for mmaped
+-	 * sendmsg(), but that's what we've got...
+-	 */
+-	if (netlink_tx_is_mmaped(sk) &&
+-	    iter_is_iovec(&msg->msg_iter) &&
+-	    msg->msg_iter.nr_segs == 1 &&
+-	    msg->msg_iter.iov->iov_base == NULL) {
+-		err = netlink_mmap_sendmsg(sk, msg, dst_portid, dst_group,
+-					   &scm);
+-		goto out;
+-	}
+-
+ 	err = -EMSGSIZE;
+ 	if (len > sk->sk_sndbuf - 32)
+ 		goto out;
+@@ -2812,8 +2087,7 @@ static int netlink_dump(struct sock *sk)
+ 		goto errout_skb;
+ 	}
+ 
+-	if (!netlink_rx_is_mmaped(sk) &&
+-	    atomic_read(&sk->sk_rmem_alloc) >= sk->sk_rcvbuf)
++	if (atomic_read(&sk->sk_rmem_alloc) >= sk->sk_rcvbuf)
+ 		goto errout_skb;
+ 
+ 	/* NLMSG_GOODSIZE is small to avoid high order allocations being
+@@ -2902,16 +2176,7 @@ int __netlink_dump_start(struct sock *ssk, struct sk_buff *skb,
+ 	struct netlink_sock *nlk;
+ 	int ret;
+ 
+-	/* Memory mapped dump requests need to be copied to avoid looping
+-	 * on the pending state in netlink_mmap_sendmsg() while the CB hold
+-	 * a reference to the skb.
+-	 */
+-	if (netlink_skb_is_mmaped(skb)) {
+-		skb = skb_copy(skb, GFP_KERNEL);
+-		if (skb == NULL)
+-			return -ENOBUFS;
+-	} else
+-		atomic_inc(&skb->users);
++	atomic_inc(&skb->users);
+ 
+ 	sk = netlink_lookup(sock_net(ssk), ssk->sk_protocol, NETLINK_CB(skb).portid);
+ 	if (sk == NULL) {
+@@ -3255,7 +2520,7 @@ static const struct proto_ops netlink_ops = {
+ 	.socketpair =	sock_no_socketpair,
+ 	.accept =	sock_no_accept,
+ 	.getname =	netlink_getname,
+-	.poll =		netlink_poll,
++	.poll =		datagram_poll,
+ 	.ioctl =	sock_no_ioctl,
+ 	.listen =	sock_no_listen,
+ 	.shutdown =	sock_no_shutdown,
+@@ -3263,7 +2528,7 @@ static const struct proto_ops netlink_ops = {
+ 	.getsockopt =	netlink_getsockopt,
+ 	.sendmsg =	netlink_sendmsg,
+ 	.recvmsg =	netlink_recvmsg,
+-	.mmap =		netlink_mmap,
++	.mmap =		sock_no_mmap,
+ 	.sendpage =	sock_no_sendpage,
+ };
+ 
+diff --git a/net/netlink/af_netlink.h b/net/netlink/af_netlink.h
+index df32cb92d9fc..ea4600aea6b0 100644
+--- a/net/netlink/af_netlink.h
++++ b/net/netlink/af_netlink.h
+@@ -45,12 +45,6 @@ struct netlink_sock {
+ 	int			(*netlink_bind)(struct net *net, int group);
+ 	void			(*netlink_unbind)(struct net *net, int group);
+ 	struct module		*module;
+-#ifdef CONFIG_NETLINK_MMAP
+-	struct mutex		pg_vec_lock;
+-	struct netlink_ring	rx_ring;
+-	struct netlink_ring	tx_ring;
+-	atomic_t		mapped;
+-#endif /* CONFIG_NETLINK_MMAP */
+ 
+ 	struct rhash_head	node;
+ 	struct rcu_head		rcu;
+@@ -62,15 +56,6 @@ static inline struct netlink_sock *nlk_sk(struct sock *sk)
+ 	return container_of(sk, struct netlink_sock, sk);
+ }
+ 
+-static inline bool netlink_skb_is_mmaped(const struct sk_buff *skb)
+-{
+-#ifdef CONFIG_NETLINK_MMAP
+-	return NETLINK_CB(skb).flags & NETLINK_SKB_MMAPED;
+-#else
+-	return false;
+-#endif /* CONFIG_NETLINK_MMAP */
+-}
+-
+ struct netlink_table {
+ 	struct rhashtable	hash;
+ 	struct hlist_head	mc_list;
+diff --git a/net/netlink/diag.c b/net/netlink/diag.c
+index 3ee63a3cff30..8dd836a8dd60 100644
+--- a/net/netlink/diag.c
++++ b/net/netlink/diag.c
+@@ -8,41 +8,6 @@
+ 
+ #include "af_netlink.h"
+ 
+-#ifdef CONFIG_NETLINK_MMAP
+-static int sk_diag_put_ring(struct netlink_ring *ring, int nl_type,
+-			    struct sk_buff *nlskb)
+-{
+-	struct netlink_diag_ring ndr;
+-
+-	ndr.ndr_block_size = ring->pg_vec_pages << PAGE_SHIFT;
+-	ndr.ndr_block_nr   = ring->pg_vec_len;
+-	ndr.ndr_frame_size = ring->frame_size;
+-	ndr.ndr_frame_nr   = ring->frame_max + 1;
+-
+-	return nla_put(nlskb, nl_type, sizeof(ndr), &ndr);
+-}
+-
+-static int sk_diag_put_rings_cfg(struct sock *sk, struct sk_buff *nlskb)
+-{
+-	struct netlink_sock *nlk = nlk_sk(sk);
+-	int ret;
+-
+-	mutex_lock(&nlk->pg_vec_lock);
+-	ret = sk_diag_put_ring(&nlk->rx_ring, NETLINK_DIAG_RX_RING, nlskb);
+-	if (!ret)
+-		ret = sk_diag_put_ring(&nlk->tx_ring, NETLINK_DIAG_TX_RING,
+-				       nlskb);
+-	mutex_unlock(&nlk->pg_vec_lock);
+-
+-	return ret;
+-}
+-#else
+-static int sk_diag_put_rings_cfg(struct sock *sk, struct sk_buff *nlskb)
+-{
+-	return 0;
+-}
+-#endif
+-
+ static int sk_diag_dump_groups(struct sock *sk, struct sk_buff *nlskb)
+ {
+ 	struct netlink_sock *nlk = nlk_sk(sk);
+@@ -87,10 +52,6 @@ static int sk_diag_fill(struct sock *sk, struct sk_buff *skb,
+ 	    sock_diag_put_meminfo(sk, skb, NETLINK_DIAG_MEMINFO))
+ 		goto out_nlmsg_trim;
+ 
+-	if ((req->ndiag_show & NDIAG_SHOW_RING_CFG) &&
+-	    sk_diag_put_rings_cfg(sk, skb))
+-		goto out_nlmsg_trim;
+-
+ 	nlmsg_end(skb, nlh);
+ 	return 0;
+ 
+diff --git a/net/packet/af_packet.c b/net/packet/af_packet.c
+index d805cd577a60..3975ac809934 100644
+--- a/net/packet/af_packet.c
++++ b/net/packet/af_packet.c
+@@ -3021,7 +3021,7 @@ static int packet_bind_spkt(struct socket *sock, struct sockaddr *uaddr,
+ 			    int addr_len)
+ {
+ 	struct sock *sk = sock->sk;
+-	char name[15];
++	char name[sizeof(uaddr->sa_data) + 1];
+ 
+ 	/*
+ 	 *	Check legality
+@@ -3029,7 +3029,11 @@ static int packet_bind_spkt(struct socket *sock, struct sockaddr *uaddr,
+ 
+ 	if (addr_len != sizeof(struct sockaddr))
+ 		return -EINVAL;
+-	strlcpy(name, uaddr->sa_data, sizeof(name));
++	/* uaddr->sa_data comes from the userspace, it's not guaranteed to be
++	 * zero-terminated.
++	 */
++	memcpy(name, uaddr->sa_data, sizeof(uaddr->sa_data));
++	name[sizeof(uaddr->sa_data)] = 0;
+ 
+ 	return packet_do_bind(sk, name, 0, pkt_sk(sk)->num);
+ }
+diff --git a/net/sched/act_api.c b/net/sched/act_api.c
+index 06e7c4a37245..694a06f1e0d5 100644
+--- a/net/sched/act_api.c
++++ b/net/sched/act_api.c
+@@ -820,10 +820,8 @@ static int tca_action_flush(struct net *net, struct nlattr *nla,
+ 		goto out_module_put;
+ 
+ 	err = a.ops->walk(skb, &dcb, RTM_DELACTION, &a);
+-	if (err < 0)
++	if (err <= 0)
+ 		goto out_module_put;
+-	if (err == 0)
+-		goto noflush_out;
+ 
+ 	nla_nest_end(skb, nest);
+ 
+@@ -840,7 +838,6 @@ static int tca_action_flush(struct net *net, struct nlattr *nla,
+ out_module_put:
+ 	module_put(a.ops->owner);
+ err_out:
+-noflush_out:
+ 	kfree_skb(skb);
+ 	return err;
+ }
+diff --git a/net/sched/act_connmark.c b/net/sched/act_connmark.c
+index bb41699c6c49..7ecb14f3db54 100644
+--- a/net/sched/act_connmark.c
++++ b/net/sched/act_connmark.c
+@@ -109,6 +109,9 @@ static int tcf_connmark_init(struct net *net, struct nlattr *nla,
+ 	if (ret < 0)
+ 		return ret;
+ 
++	if (!tb[TCA_CONNMARK_PARMS])
++		return -EINVAL;
++
+ 	parm = nla_data(tb[TCA_CONNMARK_PARMS]);
+ 
+ 	if (!tcf_hash_check(parm->index, a, bind)) {
