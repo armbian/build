@@ -132,8 +132,9 @@ install_common()
 	display_alert "Installing board support package" "$BOARD" "info"
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
-	# copy boot splash image
-	cp $SRC/lib/bin/armbian.bmp $CACHEDIR/$SDCARD/boot/boot.bmp
+	# copy boot splash images
+	cp $SRC/lib/bin/splash/armbian-u-boot.bmp $CACHEDIR/$SDCARD/boot/boot.bmp
+	cp $SRC/lib/bin/splash/armbian-desktop.png $CACHEDIR/$SDCARD/boot/boot-desktop.png
 
 	# execute $LINUXFAMILY-specific tweaks from $BOARD.conf
 	[[ $(type -t family_tweaks) == function ]] && family_tweaks
@@ -168,6 +169,11 @@ install_common()
 	SIZE=50M
 	USE_RSYNC=false
 	EOF
+
+	# disable low-level kernel messages for non betas
+	if [[ $BETA != "" ]]; then
+		sed -i "s/^#kernel.printk*/kernel.printk/" $CACHEDIR/$SDCARD/etc/sysctl.conf
+	fi
 
 	# enable getty on serial console
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"

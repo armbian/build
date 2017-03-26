@@ -87,7 +87,7 @@ compile_uboot()
 
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
-		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/lib/bin/armbian-u-boot.bmp tools/logos/udoo.bmp
+		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/lib/bin/splash/udoo.bmp tools/logos/udoo.bmp
 		touch .scmversion
 
 		# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0

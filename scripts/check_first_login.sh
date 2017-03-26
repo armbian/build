@@ -60,6 +60,8 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 	fi
 	# check whether desktop environment has to be considered
 	if [ -f "/etc/init.d/nodm" ] && [ -n "$RealName" ] ; then
+		# enable splash
+		# [[ -f /etc/systemd/system/desktop-splash.service ]] && systemctl --no-reload enable desktop-splash.service >/dev/null 2>&1 && service desktop-splash restart
 		sed -i "s/NODM_USER=\(.*\)/NODM_USER=${RealUserName}/" /etc/default/nodm
 		sed -i "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" /etc/default/nodm
 		if [ -z "$ConfigureDisplay" ] || [ "$ConfigureDisplay" = "n" ] || [ "$ConfigureDisplay" = "N" ]; then
