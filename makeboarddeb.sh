@@ -82,7 +82,6 @@ create_board_package()
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
 	rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
-	ln -sf /usr/lib/armbian/apt-updates /etc/cron.daily/apt-updates
 	[ ! -f /etc/default/armbian-motd ] && cp /usr/lib/armbian/armbian-motd.default /etc/default/armbian-motd
 	exit 0
 	EOF
@@ -241,6 +240,12 @@ create_board_package()
 	# Example:
 	# MOTD_DISABLE="header tips updates"
 	MOTD_DISABLE=""
+	EOF
+
+	mkdir -p $destination/etc/cron.d/
+	cat <<-EOF > $destination/etc/cron.d/armbian-updates
+	@reboot root /usr/lib/armbian/apt-updates
+	@daily root /usr/lib/armbian/apt-updates
 	EOF
 
 	# setting window title for remote sessions
