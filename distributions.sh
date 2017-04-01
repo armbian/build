@@ -190,6 +190,8 @@ install_common()
 	mkdir -p $CACHEDIR/$SDCARD/etc/udev/rules.d/
 	cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/$SDCARD/etc/udev/rules.d/
 
+	[[ $LINUXFAMILY == sun*i ]] && mkdir -p $CACHEDIR/$SDCARD/boot/overlay-user
+
 	# Fix for PuTTY/KiTTY & ncurses-based dialogs (i.e. alsamixer) over serial
 	# may break other terminals like screen
 	#printf "[Service]\nEnvironment=TERM=xterm-256color" > $CACHEDIR/$SDCARD/etc/systemd/system/serial-getty@.service.d/10-term.conf

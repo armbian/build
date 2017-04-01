@@ -266,6 +266,7 @@ create_board_package()
 	fi
 
 	if [[ $LINUXFAMILY == sun*i ]]; then
+		install -m 755 $SRC/lib/scripts/armbian-add-overlay $destination/usr/bin
 		if [[ $BRANCH == default ]]; then
 			# add soc temperature app
 			local codename=$(lsb_release -sc)
