@@ -100,14 +100,17 @@ create_board_package()
 	activate update-initramfs
 	EOF
 
-	# scripts for autoresize at first boot
-	mkdir -p $destination/etc/init.d
-	mkdir -p $destination/etc/default
+	# create directory structure
+	mkdir -p $destination/etc/{init.d,default,update-motd.d,profile.d,network,cron.d}
+	mkdir -p $destination/usr/{bin,sbin} $destination/usr/lib/armbian/ $destination/usr/share/armbian/
+	mkdir -p $destination/etc/initramfs/post-update.d/
+	mkdir -p $destination/etc/kernel/preinst.d/
+	mkdir -p $destination/etc/apt/apt.conf.d/ $destination/etc/apt/preferences.d/
+	mkdir -p $destination/etc/X11/xorg.conf.d/
 
 	install -m 755 $SRC/lib/scripts/armhwinfo $destination/etc/init.d/
 
 	# configure MIN / MAX speed for cpufrequtils
-	mkdir -p $destination/etc/default
 	cat <<-EOF > $destination/etc/default/cpufrequtils
 	ENABLE=true
 	MIN_SPEED=$CPUMIN
@@ -127,9 +130,6 @@ create_board_package()
 	IMAGE_TYPE=$IMAGE_TYPE
 	EOF
 
-	# temper binary for USB temp meter
-	mkdir -p $destination/usr/bin
-
 	# add USB OTG port mode switcher
 	install -m 755 $SRC/lib/scripts/sunxi-musb $destination/usr/bin
 
@@ -137,7 +137,6 @@ create_board_package()
 	install -m 755 $SRC/lib/scripts/armbianmonitor/armbianmonitor $destination/usr/bin
 
 	# updating uInitrd image in update-initramfs trigger
-	mkdir -p $destination/etc/initramfs/post-update.d/
 	cat <<-EOF > $destination/etc/initramfs/post-update.d/99-uboot
 	#!/bin/sh
 	echo "update-initramfs: Converting to u-boot format" >&2
@@ -149,7 +148,6 @@ create_board_package()
 	chmod +x $destination/etc/initramfs/post-update.d/99-uboot
 
 	# removing old initrd.img on upgrade
-	mkdir -p $destination/etc/kernel/preinst.d/
 	cat <<-EOF > $destination/etc/kernel/preinst.d/initramfs-cleanup
 	#!/bin/sh
 	version="\$1"
@@ -182,19 +180,16 @@ create_board_package()
 	chmod +x $destination/etc/kernel/preinst.d/initramfs-cleanup
 
 	# network interfaces configuration
-	mkdir -p $destination/etc/network/
 	cp $SRC/lib/config/network/interfaces.* $destination/etc/network/
 	[[ $RELEASE = xenial ]] && sed -i 's/#no-auto-down/no-auto-down/g' $destination/etc/network/interfaces.default
 
 	# apt configuration
-	mkdir -p $destination/etc/apt/apt.conf.d/
 	cat <<-EOF > $destination/etc/apt/apt.conf.d/71-no-recommends
 	APT::Install-Recommends "0";
 	APT::Install-Suggests "0";
 	EOF
 
 	# xorg configuration
-	mkdir -p $destination/etc/X11/xorg.conf.d/
 	cat <<-EOF > $destination/etc/X11/xorg.conf.d/01-armbian-defaults.conf
 	Section "Monitor"
 		Identifier		"Monitor0"
@@ -214,7 +209,6 @@ create_board_package()
 	# pin priority for armbian repo
 	# reference: man apt_preferences
 	# this allows providing own versions of hostapd, libdri2 and sunxi-tools
-	mkdir -p $destination/etc/apt/preferences.d/
 	cat <<-EOF > $destination/etc/apt/preferences.d/50-armbian.pref
 	Package: *
 	Pin: origin "apt.armbian.com"
@@ -222,13 +216,11 @@ create_board_package()
 	EOF
 
 	# script to install to SATA
-	mkdir -p $destination/usr/sbin/ $destination/usr/lib/armbian/
 	cp -R $SRC/lib/scripts/nand-sata-install/usr $destination/
 	chmod +x $destination/usr/lib/nand-sata-install/nand-sata-install.sh
 	ln -s ../lib/nand-sata-install/nand-sata-install.sh $destination/usr/sbin/nand-sata-install
 
 	# install custom motd with reboot and upgrade checking
-	mkdir -p $destination/root $destination/tmp $destination/etc/update-motd.d/ $destination/etc/profile.d
 	install -m 755 $SRC/lib/scripts/update-motd.d/* $destination/etc/update-motd.d/
 	install -m 755 $SRC/lib/scripts/check_first_login_reboot.sh 	$destination/etc/profile.d
 	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d
@@ -242,7 +234,6 @@ create_board_package()
 	MOTD_DISABLE=""
 	EOF
 
-	mkdir -p $destination/etc/cron.d/
 	cat <<-EOF > $destination/etc/cron.d/armbian-updates
 	@reboot root /usr/lib/armbian/apt-updates
 	@daily root /usr/lib/armbian/apt-updates
@@ -252,7 +243,6 @@ create_board_package()
 	install -m 755 $SRC/lib/scripts/ssh-title.sh $destination/etc/profile.d/ssh-title.sh
 
 	# install copy of boot script & environment file
-	mkdir -p $destination/usr/share/armbian/
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
 	cp $SRC/lib/config/bootscripts/$bootscript_src $destination/usr/share/armbian/$bootscript_dst
@@ -266,7 +256,7 @@ create_board_package()
 	fi
 
 	if [[ $LINUXFAMILY == sun*i ]]; then
-		install -m 755 $SRC/lib/scripts/armbian-add-overlay $destination/usr/bin
+		install -m 755 $SRC/lib/scripts/armbian-add-overlay $destination/usr/sbin
 		if [[ $BRANCH == default ]]; then
 			# add soc temperature app
 			local codename=$(lsb_release -sc)
