@@ -220,6 +220,15 @@ create_board_package()
 	chmod +x $destination/usr/lib/nand-sata-install/nand-sata-install.sh
 	ln -s ../lib/nand-sata-install/nand-sata-install.sh $destination/usr/sbin/nand-sata-install
 
+	# configuration script
+	if [[ -d $SRC/sources/Debian-micro-home-server ]]; then
+	git --work-tree=$SRC/sources/Debian-micro-home-server --git-dir=$SRC/sources/Debian-micro-home-server/.git pull
+	else
+	git clone https://github.com/igorpecovnik/Debian-micro-home-server $SRC/sources/Debian-micro-home-server
+	fi
+	install -m 755 $SRC/sources/Debian-micro-home-server/debian-config $destination/usr/bin/armbian-config
+	install -m 755 $SRC/sources/Debian-micro-home-server/softy $destination/usr/bin/softy
+
 	# install custom motd with reboot and upgrade checking
 	install -m 755 $SRC/lib/scripts/update-motd.d/* $destination/etc/update-motd.d/
 	install -m 755 $SRC/lib/scripts/check_first_login_reboot.sh 	$destination/etc/profile.d
