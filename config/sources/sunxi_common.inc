@@ -22,13 +22,13 @@ case $BRANCH in
 	KERNELBRANCH=$MAINLINE_KERNEL_BRANCH
 	KERNELDIR=$MAINLINE_KERNEL_DIR
 
-	GOVERNOR=schedutil
+	GOVERNOR=ondemand
 
 	KERNEL_ALT_GCC='> 6.1'
 	;;
 
 	dev)
-	GOVERNOR=schedutil
+	GOVERNOR=ondemand
 
 	KERNEL_ALT_GCC='> 6.1'
 	;;
