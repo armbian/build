@@ -47,7 +47,8 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 	done
 	trap - INT TERM EXIT
 	# check for H3/legacy kernel to promote h3disp utility
-	if [ "$LINUXFAMILY" = "sun8i" ] && [ "$BRANCH" = "default" ] && [ -n $(bin2fex </boot/script.bin 2>/dev/null | grep -w "hdmi_used = 1") ]; then
+	tmp=$(bin2fex </boot/script.bin 2>/dev/null | grep -w "hdmi_used = 1")
+	if [ "$LINUXFAMILY" = "sun8i" ] && [ "$BRANCH" = "default" ] && [ -n "$tmp" ]; then
 		setterm -default
 		echo -e "\nYour display settings are currently 720p (1280x720). To change this use the"
 		echo -e "h3disp utility. Do you want to change display settings now? [nY] \c"
