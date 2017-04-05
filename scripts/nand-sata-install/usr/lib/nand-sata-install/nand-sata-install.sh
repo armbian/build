@@ -445,8 +445,9 @@ main()
 	[[ ( -n $nandcheck || -n $emmccheck ) && -n $satacheck ]] && options=(${options[@]} 2 'Boot from '$ichip' - system on SATA or USB')
 	[[ -n $satacheck ]] && options=(${options[@]} 3 'Boot from SD   - system on SATA or USB')
 
-	[[ ${#options[@]} -eq 0 || "$root_partition" == "$emmcuuid" || "$root_partition" == "/dev/nand2" ]] && dialog --title "$title" --backtitle "$backtitle"  --colors --infobox "\n\Z1There are no targets. Please check your drives.\Zn" 5 60 && exit 1
-
+	[[ ${#options[@]} -eq 0 || "$root_partition" == "$emmcuuid" || "$root_partition" == "/dev/nand2" ]] && \
+	dialog --title "$title" --backtitle "$backtitle"  --colors --no-collapse --msgbox "\n\Z1There are no targets. Please check your drives.\Zn" 7 54
+	[[ $? -ne 0 ]] && exit 1
 	cmd=(dialog --title "Choose an option:" --backtitle "$backtitle" --menu "\nCurrent root: $root_partition \n \n" 12 60 7)
 	choices=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
 	[[ $? -ne 0 ]] && exit 1
