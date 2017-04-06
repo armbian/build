@@ -233,7 +233,6 @@ create_board_package()
 	install -m 755 $SRC/lib/scripts/update-motd.d/* $destination/etc/update-motd.d/
 	install -m 755 $SRC/lib/scripts/check_first_login_reboot.sh 	$destination/etc/profile.d
 	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d
-	install -m 755 $SRC/lib/scripts/check_load_configurator.sh		$destination/etc/profile.d
 
 	install -m 755 $SRC/lib/scripts/apt-updates $destination/usr/lib/armbian/apt-updates
 
