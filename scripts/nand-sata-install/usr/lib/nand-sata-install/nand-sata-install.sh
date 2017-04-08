@@ -18,13 +18,12 @@
 CWD="/usr/lib/nand-sata-install"
 EX_LIST="${CWD}/exclude.txt"
 nanddevice="/dev/nand"
-logfile="/tmp/nand-sata-install.log"
-rm -f $logfile
+logfile="/var/log/nand-sata-install.log"
 
 # read in board info
 [[ -f /etc/armbian-release ]] && source /etc/armbian-release
 backtitle="Armbian for $BOARD_NAME install script, http://www.armbian.com"
-title="NAND, eMMC, SATA and USB Armbian installer v""$VERSION"
+title="NAND, eMMC, SATA and USB Armbian installer v${VERSION}"
 
 # exception
 if cat /proc/cpuinfo | grep -q 'sun4i'; then DEVICE_TYPE="a10"; else DEVICE_TYPE="a20"; fi
@@ -92,13 +91,21 @@ create_armbian()
 	fi
 
 	# write stuff to log
-	echo "SD uuid: $sduuid" >> $logfile
+	[ -f $logfile ] && echo -e "\n\n\n" >> $logfile
+	LANG=C echo -e "$(date): Start ${0##*/}. Files open for write:" >> $logfile
+	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' >> $logfile
+	echo -e "\nSD uuid: $sduuid" >> $logfile
 	echo "Satauid: $satauuid" >> $logfile
 	echo "Emmcuuid: $emmcuuid $eMMCFilesystemChoosen" >> $logfile
 	echo "Boot: \$1 $1 $eMMCFilesystemChoosen" >> $logfile
 	echo "Root: \$2 $2 $FilesystemChoosen" >> $logfile
 	echo "Usage: $USAGE" >> $logfile
 	echo "Dest: $DEST" >> $logfile
+
+	# stop running services
+	StopRunningServices "nfs-|smbd|nmbd|ftpd|netatalk|monit|cron|webmin|rrdcached" >> $logfile
+	StopRunningServices "log2ram|postgres|mariadb|mysql|postfix|mail|nginx|apache|snmpd" >> $logfile
+	echo -e "\n" >> $logfile
 
 	# count files is needed for progress bar
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\n  Counting files ... few seconds." 5 40
@@ -112,8 +119,6 @@ create_armbian()
 	# run rsync again to silently catch outstanding changes between / and /mnt/rootfs/
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\n  Cleaning up ... few seconds." 5 40
 	rsync -avrltD  --delete --exclude-from=$EX_LIST / /mnt/rootfs >/dev/null 2>&1
-
-
 
 	# creating fstab from scratch
 	rm -f /mnt/rootfs/etc/fstab
@@ -406,6 +411,15 @@ ShowWarning()
 	[[ $? -ne 0 ]] && exit 1
 }
 
+# try to stop running services
+StopRunningServices()
+{
+	systemctl --state=running | awk -F" " '/.service/ {print $1}' | sort -r | \
+		egrep -e "$1" | while read ; do
+		echo -e "\nStopping ${REPLY} \c"
+		systemctl stop ${REPLY} 2>&1
+	done
+}
 
 main()
 {
@@ -497,6 +511,9 @@ main()
 				;;
 		esac
 	done
+
+	LANG=C echo -e "\n$(date): Finished. Files open for write:" >> $logfile
+	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' >> $logfile
 
 	dialog --title "$title" --backtitle "$backtitle"  --yes-label "$command" --no-label "Exit" --yesno "\nAll done. $command $REMOVESDTXT" 7 60
 	[[ $? -eq 0 ]] && "$(echo ${command,,} | sed 's/ //')"
