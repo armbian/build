@@ -35,7 +35,7 @@ root_partition=$(cat /proc/cmdline | sed -e 's/^.*root=//' -e 's/ .*$//')
 root_partition_device=$(blkid |  tr -d '":' | grep $( cat /proc/cmdline | sed -e 's/^.*root=//' -e 's/ .*$//') |  awk '{print $1}'| rev | cut -c3- | rev)
 
 # find targets: NAND, EMMC, SATA
-nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
+[[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
 emmccheck=$(ls -d -1 /dev/mmcblk* | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
 satacheck=$(cat /proc/partitions | grep  'sd' | awk '{print $NF}')
 
@@ -447,7 +447,6 @@ main()
 
 	[[ ${#options[@]} -eq 0 || "$root_partition" == "$emmcuuid" || "$root_partition" == "/dev/nand2" ]] && \
 	dialog --title "$title" --backtitle "$backtitle"  --colors --no-collapse --msgbox "\n\Z1There are no targets. Please check your drives.\Zn" 7 54
-	[[ $? -ne 0 ]] && exit 1
 	cmd=(dialog --title "Choose an option:" --backtitle "$backtitle" --menu "\nCurrent root: $root_partition \n \n" 12 60 7)
 	choices=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
 	[[ $? -ne 0 ]] && exit 1
