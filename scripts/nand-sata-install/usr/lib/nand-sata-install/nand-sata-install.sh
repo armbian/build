@@ -103,7 +103,7 @@ create_armbian()
 	echo "Dest: $DEST" >> $logfile
 
 	# stop running services
-	StopRunningServices "nfs-|smbd|nmbd|ftpd|netatalk|monit|cron|webmin|rrdcached" >> $logfile
+	StopRunningServices "nfs-|smbd|nmbd|winbind|ftpd|netatalk|monit|cron|webmin|rrdcached" >> $logfile
 	StopRunningServices "log2ram|postgres|mariadb|mysql|postfix|mail|nginx|apache|snmpd" >> $logfile
 	echo -e "\n" >> $logfile
 
