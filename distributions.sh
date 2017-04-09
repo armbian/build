@@ -31,11 +31,11 @@ install_common()
 
 	# create blacklist files
 	if [[ $BRANCH == dev && -n $MODULES_BLACKLIST_DEV ]]; then
-		tr ' ' '\n' <<< "$MODULES_BLACKLIST_DEV" | sed -e 's/^/blacklist /' > $CACHEDIR/$SDCARD/etc/modprobe.d/${BOARD}.conf
+		tr ' ' '\n' <<< "$MODULES_BLACKLIST_DEV" | sed -e 's/^/blacklist /' > $CACHEDIR/$SDCARD/etc/modprobe.d/blacklist-${BOARD}.conf
 	elif [[ ($BRANCH == next || $BRANCH == dev) && -n $MODULES_BLACKLIST_NEXT ]]; then
-		tr ' ' '\n' <<< "$MODULES_BLACKLIST_NEXT" | sed -e 's/^/blacklist /' > $CACHEDIR/$SDCARD/etc/modprobe.d/${BOARD}.conf
+		tr ' ' '\n' <<< "$MODULES_BLACKLIST_NEXT" | sed -e 's/^/blacklist /' > $CACHEDIR/$SDCARD/etc/modprobe.d/blacklist-${BOARD}.conf
 	elif [[ $BRANCH == default && -n $MODULES_BLACKLIST ]]; then
-		tr ' ' '\n' <<< "$MODULES_BLACKLIST" | sed -e 's/^/blacklist /' > $CACHEDIR/$SDCARD/etc/modprobe.d/${BOARD}.conf
+		tr ' ' '\n' <<< "$MODULES_BLACKLIST" | sed -e 's/^/blacklist /' > $CACHEDIR/$SDCARD/etc/modprobe.d/blacklist-${BOARD}.conf
 	fi
 
 	# remove default interfaces file if present
@@ -55,13 +55,6 @@ install_common()
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
 	# force change root password at first login
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "chage -d 0 root"
-
-	# add custom bashrc loading
-	cat <<-EOF >> $CACHEDIR/$SDCARD/etc/bash.bashrc
-	if [[ -f /etc/bash.bashrc.custom ]]; then
-	    . /etc/bash.bashrc.custom
-	fi
-	EOF
 
 	# display welcome message at first root login
 	touch $CACHEDIR/$SDCARD/root/.not_logged_in_yet
@@ -146,9 +139,6 @@ install_common()
 
 	# enable firstrun script
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service >/dev/null 2>&1"
-
-	# enable verbose kernel messages on first boot
-	touch $CACHEDIR/$SDCARD/boot/.verbose
 
 	# copy "first run automated config, optional user configured"
  	cp $SRC/lib/config/armbian_first_run.txt $CACHEDIR/$SDCARD/boot/armbian_first_run.txt
