@@ -17,7 +17,7 @@ MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
 TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
-HOST="$BOARD" # set hostname to the board
+HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
 CACHEDIR=$DEST/cache
 ROOTFSCACHE_VERSION=3
 
