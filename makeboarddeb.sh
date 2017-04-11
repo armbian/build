@@ -53,6 +53,8 @@ create_board_package()
 		rm /etc/network/interfaces
 		mv /etc/network/interfaces.tmp /etc/network/interfaces
 	fi
+	# make a backup sice we are unconditionally overwriting this on update
+	cp /etc/default/cpufrequtils /etc/default/cpufrequtils.dpkg-old
 	dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename \
 		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 	exit 0
@@ -65,6 +67,7 @@ create_board_package()
 	#!/bin/sh
 	[ remove = "\$1" ] || [ abort-install = "\$1" ] && dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename \
 		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
+	systemctl disable log2ram.service armhwinfo.service >/dev/null 2>&1
 	exit 0
 	EOF
 
@@ -73,16 +76,18 @@ create_board_package()
 	# set up post install script
 	cat <<-EOF > $destination/DEBIAN/postinst
 	#!/bin/sh
-	update-rc.d armhwinfo defaults >/dev/null 2>&1
-	update-rc.d -f motd remove >/dev/null 2>&1
 	[ ! -f "/etc/network/interfaces" ] && cp /etc/network/interfaces.default /etc/network/interfaces
-	rm -f /root/.nand1-allwinner.tgz /root/nand-sata-install
 	ln -sf /var/run/motd /etc/motd
-	[ -f "/etc/bash.bashrc.custom" ] && mv /etc/bash.bashrc.custom /etc/bash.bashrc.custom.old
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
 	rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
 	[ ! -f /etc/default/armbian-motd ] && cp /usr/lib/armbian/armbian-motd.default /etc/default/armbian-motd
+	if [ ! -f "/etc/default/log2ram" ]; then
+		cp /etc/default/log2ram.dpkg-dist /etc/default/log2ram
+	fi
+	if [ -f "/etc/systemd/system/log2ram.service" ]; then
+		mv /etc/systemd/system/log2ram.service /etc/systemd/system/log2ram-service.dpkg-old
+	fi
 	exit 0
 	EOF
 
@@ -91,7 +96,6 @@ create_board_package()
 	# won't recreate files if they were removed by user
 	# TODO: Add proper handling for updated conffiles
 	#cat <<-EOF > $destination/DEBIAN/conffiles
-	#/boot/.verbose
 	#EOF
 
 	# trigger uInitrd creation after installation, to apply
@@ -101,12 +105,13 @@ create_board_package()
 	EOF
 
 	# create directory structure
-	mkdir -p $destination/etc/{init.d,default,update-motd.d,profile.d,network,cron.d}
-	mkdir -p $destination/usr/{bin,sbin} $destination/usr/lib/armbian/ $destination/usr/share/armbian/
+	mkdir -p $destination/etc/{init.d,default,update-motd.d,profile.d,network,cron.d,cron.daily}
+	mkdir -p $destination/usr/{bin,sbin} $destination/usr/lib/armbian/ $destination/usr/share/armbian/ $destination/usr/share/log2ram/
 	mkdir -p $destination/etc/initramfs/post-update.d/
 	mkdir -p $destination/etc/kernel/preinst.d/
 	mkdir -p $destination/etc/apt/apt.conf.d/ $destination/etc/apt/preferences.d/
 	mkdir -p $destination/etc/X11/xorg.conf.d/
+	mkdir -p $destination/lib/systemd/system/
 
 	install -m 755 $SRC/lib/scripts/armhwinfo $destination/etc/init.d/
 
@@ -221,18 +226,19 @@ create_board_package()
 	ln -s ../lib/nand-sata-install/nand-sata-install.sh $destination/usr/sbin/nand-sata-install
 
 	# configuration script
+	# TODO: better git update logic
 	if [[ -d $SRC/sources/Debian-micro-home-server ]]; then
-	git --work-tree=$SRC/sources/Debian-micro-home-server --git-dir=$SRC/sources/Debian-micro-home-server/.git pull
+		git --work-tree=$SRC/sources/Debian-micro-home-server --git-dir=$SRC/sources/Debian-micro-home-server/.git pull
 	else
-	git clone https://github.com/igorpecovnik/Debian-micro-home-server $SRC/sources/Debian-micro-home-server
+		git clone https://github.com/igorpecovnik/Debian-micro-home-server $SRC/sources/Debian-micro-home-server
 	fi
 	install -m 755 $SRC/sources/Debian-micro-home-server/debian-config $destination/usr/bin/armbian-config
 	install -m 755 $SRC/sources/Debian-micro-home-server/softy $destination/usr/bin/softy
 
 	# install custom motd with reboot and upgrade checking
 	install -m 755 $SRC/lib/scripts/update-motd.d/* $destination/etc/update-motd.d/
-	install -m 755 $SRC/lib/scripts/check_first_login_reboot.sh 	$destination/etc/profile.d
-	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d
+	cp $SRC/lib/scripts/check_first_login_reboot.sh $destination/etc/profile.d
+	cp $SRC/lib/scripts/check_first_login.sh $destination/etc/profile.d
 
 	install -m 755 $SRC/lib/scripts/apt-updates $destination/usr/lib/armbian/apt-updates
 
@@ -263,6 +269,13 @@ create_board_package()
 		install -m 755 $SRC/lib/scripts/h3disp $destination/usr/bin
 		install -m 755 $SRC/lib/scripts/h3consumption $destination/usr/bin
 	fi
+
+	# log2ram - systemd compatible ramlog alternative
+	cp $SRC/lib/scripts/log2ram/LICENSE.log2ram $destination/usr/share/log2ram/LICENSE
+	cp $SRC/lib/scripts/log2ram/log2ram.service $destination/lib/systemd/system/log2ram.service
+	install -m 755 $SRC/lib/scripts/log2ram/log2ram $destination/usr/sbin/log2ram
+	install -m 755 $SRC/lib/scripts/log2ram/log2ram.hourly $destination/etc/cron.daily/log2ram
+	cp $SRC/lib/scripts/log2ram/log2ram.default $destination/etc/default/log2ram.dpkg-dist
 
 	if [[ $LINUXFAMILY == sun*i ]]; then
 		install -m 755 $SRC/lib/scripts/armbian-add-overlay $destination/usr/sbin

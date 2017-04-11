@@ -137,28 +137,14 @@ install_common()
 	install -m 644 $SRC/lib/scripts/resize2fs.service $CACHEDIR/$SDCARD/etc/systemd/system/
 	install -m 644 $SRC/lib/scripts/firstrun.service $CACHEDIR/$SDCARD/etc/systemd/system/
 
-	# enable firstrun script
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service >/dev/null 2>&1"
+	# enable additional services
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service >/dev/null 2>&1"
 
 	# copy "first run automated config, optional user configured"
  	cp $SRC/lib/config/armbian_first_run.txt $CACHEDIR/$SDCARD/boot/armbian_first_run.txt
 
 	# switch to beta repository at this stage if building nightly images
 	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
-
-	# log2ram - systemd compatible ramlog alternative
-	mkdir -p $CACHEDIR/$SDCARD/usr/local/sbin/ $CACHEDIR/$SDCARD/usr/local/share/log2ram/
-	cp $SRC/lib/scripts/log2ram/LICENSE.log2ram $CACHEDIR/$SDCARD/usr/local/share/log2ram/LICENSE
-	cp $SRC/lib/scripts/log2ram/log2ram.service $CACHEDIR/$SDCARD/etc/systemd/system/log2ram.service
-	install -m 755 $SRC/lib/scripts/log2ram/log2ram $CACHEDIR/$SDCARD/usr/local/sbin/
-	install -m 755 $SRC/lib/scripts/log2ram/log2ram.hourly $CACHEDIR/$SDCARD/etc/cron.hourly/log2ram
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable log2ram.service >/dev/null 2>&1"
-	cat <<-EOF > $CACHEDIR/$SDCARD/etc/default/log2ram
-	# configuration values for the log2ram service
-	ENABLED=true
-	SIZE=50M
-	USE_RSYNC=false
-	EOF
 
 	# disable low-level kernel messages for non betas
 	if [[ $BETA != "" ]]; then
