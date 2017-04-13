@@ -270,6 +270,13 @@ create_board_package()
 		install -m 755 $SRC/lib/scripts/h3consumption $destination/usr/bin
 	fi
 
+	# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
+	if [[ -n $UBOOT_FW_ENV ]]; then
+		UBOOT_FW_ENV=($(tr ',' ' ' <<< "$UBOOT_FW_ENV"))
+		echo "# Device to access      offset           env size" > $destination/etc/fw_env.config
+		echo "/dev/mmcblk	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> $destination/etc/fw_env.config
+	fi
+
 	# log2ram - systemd compatible ramlog alternative
 	cp $SRC/lib/scripts/log2ram/LICENSE.log2ram $destination/usr/share/log2ram/LICENSE
 	cp $SRC/lib/scripts/log2ram/log2ram.service $destination/lib/systemd/system/log2ram.service
