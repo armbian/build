@@ -155,8 +155,8 @@ case $RELEASE in
 esac
 
 DEBIAN_MIRROR='httpredir.debian.org/debian'
-UBUNTU_MIRROR='ports.ubuntu.com/'
-UBUNTU_MIRROR='www.lane-fu.com/linuxmirror/ubuntu-ports/'
+#UBUNTU_MIRROR='ports.ubuntu.com/'
+UBUNTU_MIRROR='mirror.angrybear2.local/linuxmirror/ubuntu-ports/'
 
 # For user override
 if [[ -f $SRC/userpatches/lib.config ]]; then
