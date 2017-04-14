@@ -232,6 +232,8 @@ create_board_package()
 	else
 		git clone https://github.com/igorpecovnik/Debian-micro-home-server $SRC/sources/Debian-micro-home-server
 	fi
+	cp $SRC/sources/Debian-micro-home-server/scripts/smb.conf $destination/usr/bin/
+	install -m 755 $SRC/sources/Debian-micro-home-server/scripts/tv_grab_file $destination/usr/bin/tv_grab_file
 	install -m 755 $SRC/sources/Debian-micro-home-server/debian-config $destination/usr/bin/armbian-config
 	install -m 755 $SRC/sources/Debian-micro-home-server/softy $destination/usr/bin/softy
 
