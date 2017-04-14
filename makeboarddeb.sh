@@ -276,7 +276,7 @@ create_board_package()
 	if [[ -n $UBOOT_FW_ENV ]]; then
 		UBOOT_FW_ENV=($(tr ',' ' ' <<< "$UBOOT_FW_ENV"))
 		echo "# Device to access      offset           env size" > $destination/etc/fw_env.config
-		echo "/dev/mmcblk	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> $destination/etc/fw_env.config
+		echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> $destination/etc/fw_env.config
 	fi
 
 	# log2ram - systemd compatible ramlog alternative
