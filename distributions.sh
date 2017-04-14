@@ -147,7 +147,7 @@ install_common()
 	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
 
 	# disable low-level kernel messages for non betas
-	if [[ $BETA != "" ]]; then
+	if [[ -z $BETA ]]; then
 		sed -i "s/^#kernel.printk*/kernel.printk/" $CACHEDIR/$SDCARD/etc/sysctl.conf
 	fi
 
