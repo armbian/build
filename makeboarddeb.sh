@@ -53,7 +53,7 @@ create_board_package()
 		rm /etc/network/interfaces
 		mv /etc/network/interfaces.tmp /etc/network/interfaces
 	fi
-	# make a backup sice we are unconditionally overwriting this on update
+	# make a backup since we are unconditionally overwriting this on update
 	cp /etc/default/cpufrequtils /etc/default/cpufrequtils.dpkg-old
 	dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename \
 		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
