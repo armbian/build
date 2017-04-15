@@ -106,6 +106,7 @@ create_armbian()
 	StopRunningServices "nfs-|smbd|nmbd|winbind|ftpd|netatalk|monit|cron|webmin|rrdcached" >> $logfile
 	StopRunningServices "log2ram|postgres|mariadb|mysql|postfix|mail|nginx|apache|snmpd" >> $logfile
 	echo -e "\n" >> $logfile
+	logfile="/mnt/rootfs/var/log/nand-sata-install.log"
 
 	# count files is needed for progress bar
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\n  Counting files ... few seconds." 5 40
@@ -425,14 +426,14 @@ main()
 {
 	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-	# if mounted
-	umount /mnt/rootfs >> $logfile 2>&1
-	umount /mnt/bootfs >> $logfile 2>&1
+	# umount temporary mountpoints if mounted
+	grep -q /mnt/rootfs /etc/mtab && umount -frv /mnt/rootfs >> $logfile 2>&1
+	grep -q /mnt/bootfs /etc/mtab && umount -frv /mnt/bootfs >> $logfile 2>&1
 
 	# This tool must run under root
 
 	if [[ $EUID -ne 0 ]]; then
-		echo "This tool must run as root. Exiting ..."
+		echo "This tool must run as root. Exiting ..." >&2
 		exit 1
 	fi
 
