@@ -26,6 +26,8 @@ if test -e ${devtype} 0 ${prefix}armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
 
+if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
+
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
 if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "${consoleargs} console=ttyS0,115200"; fi
 

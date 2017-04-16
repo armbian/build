@@ -17,7 +17,7 @@ MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
 TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
-HOST="$BOARD" # set hostname to the board
+HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
 CACHEDIR=$DEST/cache
 ROOTFSCACHE_VERSION=3
 
@@ -136,7 +136,7 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu bluetooth \
 	network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common p11-kit pasystray pavucontrol pulseaudio \
 	paman pavumeter pulseaudio-module-gconf pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri mpv \
-	libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1"
+	libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1 fbi"
 
 # Release specific packages
 case $RELEASE in

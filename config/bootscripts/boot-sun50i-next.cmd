@@ -40,7 +40,7 @@ load ${devtype} 0 ${fdt_addr_r} /boot/dtb/allwinner/${fdtfile} || load ${devtype
 fdt addr ${fdt_addr_r}
 fdt resize
 for overlay_file in ${overlays}; do
-	if load ${devtype} 0 ${load_addr} boot/dtb/allwinner/overlays/${overlay_file}.dtbo || load ${devtype} 0 ${load_addr} dtb/allwinner/overlays/${overlay_file}.dtbo; then
+	if load ${devtype} 0 ${load_addr} boot/dtb/allwinner/overlays/${overlay_prefix}-${overlay_file}.dtbo || load ${devtype} 0 ${load_addr} dtb/allwinner/overlays/${overlay_prefix}-${overlay_file}.dtbo; then
 		echo "Applying DT overlay ${overlay_file}.dtbo"
 		fdt apply ${load_addr}
 	fi

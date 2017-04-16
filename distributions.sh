@@ -31,11 +31,11 @@ install_common()
 
 	# create blacklist files
 	if [[ $BRANCH == dev && -n $MODULES_BLACKLIST_DEV ]]; then
-		tr ' ' '\n' <<< "$MODULES_BLACKLIST_DEV" | sed -e 's/^/blacklist /' > $CACHEDIR/$SDCARD/etc/modprobe.d/${BOARD}.conf
+		tr ' ' '\n' <<< "$MODULES_BLACKLIST_DEV" | sed -e 's/^/blacklist /' > $CACHEDIR/$SDCARD/etc/modprobe.d/blacklist-${BOARD}.conf
 	elif [[ ($BRANCH == next || $BRANCH == dev) && -n $MODULES_BLACKLIST_NEXT ]]; then
-		tr ' ' '\n' <<< "$MODULES_BLACKLIST_NEXT" | sed -e 's/^/blacklist /' > $CACHEDIR/$SDCARD/etc/modprobe.d/${BOARD}.conf
+		tr ' ' '\n' <<< "$MODULES_BLACKLIST_NEXT" | sed -e 's/^/blacklist /' > $CACHEDIR/$SDCARD/etc/modprobe.d/blacklist-${BOARD}.conf
 	elif [[ $BRANCH == default && -n $MODULES_BLACKLIST ]]; then
-		tr ' ' '\n' <<< "$MODULES_BLACKLIST" | sed -e 's/^/blacklist /' > $CACHEDIR/$SDCARD/etc/modprobe.d/${BOARD}.conf
+		tr ' ' '\n' <<< "$MODULES_BLACKLIST" | sed -e 's/^/blacklist /' > $CACHEDIR/$SDCARD/etc/modprobe.d/blacklist-${BOARD}.conf
 	fi
 
 	# remove default interfaces file if present
@@ -55,13 +55,6 @@ install_common()
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
 	# force change root password at first login
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "chage -d 0 root"
-
-	# add custom bashrc loading
-	cat <<-EOF >> $CACHEDIR/$SDCARD/etc/bash.bashrc
-	if [[ -f /etc/bash.bashrc.custom ]]; then
-	    . /etc/bash.bashrc.custom
-	fi
-	EOF
 
 	# display welcome message at first root login
 	touch $CACHEDIR/$SDCARD/root/.not_logged_in_yet
@@ -132,8 +125,9 @@ install_common()
 	display_alert "Installing board support package" "$BOARD" "info"
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
-	# copy boot splash image
-	cp $SRC/lib/bin/armbian.bmp $CACHEDIR/$SDCARD/boot/boot.bmp
+	# copy boot splash images
+	cp $SRC/lib/bin/splash/armbian-u-boot.bmp $CACHEDIR/$SDCARD/boot/boot.bmp
+	cp $SRC/lib/bin/splash/armbian-desktop.png $CACHEDIR/$SDCARD/boot/boot-desktop.png
 
 	# execute $LINUXFAMILY-specific tweaks from $BOARD.conf
 	[[ $(type -t family_tweaks) == function ]] && family_tweaks
@@ -143,11 +137,8 @@ install_common()
 	install -m 644 $SRC/lib/scripts/resize2fs.service $CACHEDIR/$SDCARD/etc/systemd/system/
 	install -m 644 $SRC/lib/scripts/firstrun.service $CACHEDIR/$SDCARD/etc/systemd/system/
 
-	# enable firstrun script
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service >/dev/null 2>&1"
-
-	# enable verbose kernel messages on first boot
-	touch $CACHEDIR/$SDCARD/boot/.verbose
+	# enable additional services
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service >/dev/null 2>&1"
 
 	# copy "first run automated config, optional user configured"
  	cp $SRC/lib/config/armbian_first_run.txt $CACHEDIR/$SDCARD/boot/armbian_first_run.txt
@@ -155,19 +146,10 @@ install_common()
 	# switch to beta repository at this stage if building nightly images
 	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
 
-	# log2ram - systemd compatible ramlog alternative
-	mkdir -p $CACHEDIR/$SDCARD/usr/local/sbin/ $CACHEDIR/$SDCARD/usr/local/share/log2ram/
-	cp $SRC/lib/scripts/log2ram/LICENSE.log2ram $CACHEDIR/$SDCARD/usr/local/share/log2ram/LICENSE
-	cp $SRC/lib/scripts/log2ram/log2ram.service $CACHEDIR/$SDCARD/etc/systemd/system/log2ram.service
-	install -m 755 $SRC/lib/scripts/log2ram/log2ram $CACHEDIR/$SDCARD/usr/local/sbin/
-	install -m 755 $SRC/lib/scripts/log2ram/log2ram.hourly $CACHEDIR/$SDCARD/etc/cron.hourly/log2ram
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable log2ram.service >/dev/null 2>&1"
-	cat <<-EOF > $CACHEDIR/$SDCARD/etc/default/log2ram
-	# configuration values for the log2ram service
-	ENABLED=true
-	SIZE=50M
-	USE_RSYNC=false
-	EOF
+	# disable low-level kernel messages for non betas
+	if [[ -z $BETA ]]; then
+		sed -i "s/^#kernel.printk*/kernel.printk/" $CACHEDIR/$SDCARD/etc/sysctl.conf
+	fi
 
 	# enable getty on serial console
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
@@ -184,9 +166,12 @@ install_common()
 	mkdir -p $CACHEDIR/$SDCARD/etc/udev/rules.d/
 	cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/$SDCARD/etc/udev/rules.d/
 
+	[[ $LINUXFAMILY == sun*i ]] && mkdir -p $CACHEDIR/$SDCARD/boot/overlay-user
+
 	# Fix for PuTTY/KiTTY & ncurses-based dialogs (i.e. alsamixer) over serial
 	# may break other terminals like screen
-	#printf "[Service]\nEnvironment=TERM=xterm-256color" > $CACHEDIR/$SDCARD/etc/systemd/system/serial-getty@.service.d/10-term.conf
+	mkdir -p $CACHEDIR/$SDCARD/etc/systemd/system/serial-getty@.service.d/
+	printf "[Service]\nEnvironment=TERM=linux" > $CACHEDIR/$SDCARD/etc/systemd/system/serial-getty@.service.d/10-term.conf
 
 	# to prevent creating swap file on NFS (needs specific kernel options)
 	# and f2fs/btrfs (not recommended or needs specific kernel options)

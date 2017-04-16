@@ -3,13 +3,19 @@
 #    30-sysinfo - generate the system information
 #    Copyright (c) 2015 Igor Pecovnik
 
+THIS_SCRIPT="sysinfo"
+MOTD_DISABLE=""
+
+[[ -f /etc/default/armbian-motd ]] && . /etc/default/armbian-motd
+
+for f in $MOTD_DISABLE; do
+	[[ $f == $THIS_SCRIPT ]] && exit 0
+done
 
 # define which hard drive you want to monitor
 storage=/dev/sda1
 
-
 # don't edit below here
-
 
 function displaytime {
 	# we need dedicated function
@@ -29,24 +35,18 @@ function displaytime {
 	printf "\x1B[92m%s\x1B[0m\t\t" "$time"
 }
 
-
-
-
 function display() {
 	# $1=name $2=value $3=red_limit $4=minimal_show_limit $5=unit $6=after $7=acs/desc{
 	# battery red color is opposite, lower number
 	if [[ "$1" == "Battery" ]]; then local great="<"; else local great=">"; fi
 	if [[ -n "$2" && "$2" > "0" && (( "${2%.*}" -ge "$4" )) ]]; then
 	printf "%-14s%s" "$1:"
-		if (( $(echo "$2 $great $3" | bc -l) )); then echo -ne "\e[0;91m $2"; else echo -ne "\e[0;92m $2"; fi
+		if awk "BEGIN{exit ! ($2 $great $3)}"; then echo -ne "\e[0;91m $2"; else echo -ne "\e[0;92m $2"; fi
 		printf "%-1s%s\x1B[0m" "$5"
 		printf "%-11s%s\t" "$6"
 		return 1
 	fi
 }
-
-
-
 
 # Battery info for Allwinner
 # kernel 4.4+
@@ -68,8 +68,6 @@ if [[ -e "$axp_dir" ]]; then
         fi
 fi
 
-
-
 # legacy kernel
 axp_dir="/sys/class/power_supply"
 if [[ -e "$axp_dir" && -e "$axp_dir/battery" ]]; then
@@ -81,17 +79,17 @@ fi
 
 load=$(cat /proc/loadavg | awk '{print $1}')
 # workaround that it works on old and new
-free -w &> /dev/null
+LANG=en_US.UTF-8 free -w &> /dev/null
 if [[ $? -ne 0 ]]; then
-	memory_usage=$(free | awk '/Mem/ {printf("%.0f",(($2-($4+$6+$7))/$2) * 100)}')
+	memory_usage=$(LANG=en_US.UTF-8 free | awk '/Mem/ {printf("%.0f",(($2-($4+$6+$7))/$2) * 100)}')
 else
-	memory_usage=$(free -w | awk '/Mem/ {printf("%.0f",(($2-($4+$6+$7))/$2) * 100)}')
+	memory_usage=$(LANG=en_US.UTF-8 free -w | awk '/Mem/ {printf("%.0f",(($2-($4+$6+$7))/$2) * 100)}')
 fi
-memory_total=$(free -m |  awk '/Mem/ {print $(2)}')
+memory_total=$(LANG=en_US.UTF-8 free -m |  awk '/Mem/ {print $(2)}')
 users=$(users | wc -w)
-swap_usage=$(free -m | ( awk '/Swap/ { printf("%3.0f", $3/$2*100) }' 2>/dev/null || echo 0 ) | sed 's/ //g')
+swap_usage=$(LANG=en_US.UTF-8 free -m | ( awk '/Swap/ { printf("%3.0f", $3/$2*100) }' 2>/dev/null || echo 0 ) | sed 's/ //g')
 swap_usage=${swap_usage//[!0-9]/} # to remove alfanumeric if swap not used
-swap_total=$(free -m |  awk '/Swap/ {print $(2)}')
+swap_total=$(LANG=en_US.UTF-8 free -m |  awk '/Swap/ {print $(2)}')
 ip_address=$(hostname -I | tr " " "\n" | grep -E "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$" | tail -n2 | tr "\n" " ")
 ip_address=$(echo $ip_address | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | sed 's/ /,/g')
 root_usage=$(df -h / | awk '/\// {print $(NF-1)}' | sed 's/%//g')
@@ -102,41 +100,40 @@ if [ -e "$storage" ]; then
 	[[ "$storage" == */sd* ]] && hdd_temp=$(hddtemp -u C -nq $storage)
 fi
 
-# read temperature from different locations
-mkdir -p -m775 /etc/armbianmonitor/datasources/
+# read temperature from different locations and create a symlink to a unique location
+[ -d /etc/armbianmonitor/datasources ] || mkdir -p -m775 /etc/armbianmonitor/datasources
 
-# from axp via i2c for some old sunxi
-if [ -d "/sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034/" ]; then
-	board_temp=$(awk '{printf("%d",$1/1000)}' </sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034/temp1_input)
-	ln -fs /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034/temp1_input /etc/armbianmonitor/datasources/soctemp
-fi
+# deal with the exceptions first: legacy Allwinner variants (if SoC is not available take PMU)
+for tempsource in /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034 /sys/devices/platform/a20-tp-hwmon ; do
+	if [ -d ${tempsource} ]; then
+		board_temp=$(awk '{printf("%d",$1/1000)}' ${tempsource}/temp1_input)
+		ln -fs ${tempsource}/temp1_input /etc/armbianmonitor/datasources/soctemp
+	fi
+done
 
-# if we are reading from A20
-if [ -d "/sys/devices/platform/a20-tp-hwmon/" ]; then
-	board_temp=$(awk '{printf("%d",$1/1000)}' </sys/devices/platform/a20-tp-hwmon/temp1_input)
-	ln -fs /sys/devices/platform/a20-tp-hwmon/temp1_input /etc/armbianmonitor/datasources/soctemp
-fi
+# S500 and RK3288 legacy kernels
+for tempsource in /sys/devices/virtual/thermal/thermal_zone1 /sys/class/thermal/thermal_zone2 ; do
+	if [ -d ${tempsource} ]; then
+		board_temp=$(awk '{printf("%d",$1/1000)}' ${tempsource}/temp)
+		ln -fs ${tempsource}/temp /etc/armbianmonitor/datasources/soctemp
+	fi
+done
 
 # where it should be
-if [[ -d "/sys/devices/virtual/thermal/thermal_zone0/" && $(cat /sys/devices/virtual/thermal/thermal_zone0/type) == "cpu_thermal" ]]; then
-	board_temp=$(awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp)
+if [[ -d "/sys/devices/virtual/thermal/thermal_zone0/" ]]; then
 	ln -fs /sys/devices/virtual/thermal/thermal_zone0/temp /etc/armbianmonitor/datasources/soctemp
-fi
-
-# lemaker guitar / roseapple pi
-source /etc/armbian-release
-if [[ -d "/sys/devices/virtual/thermal/thermal_zone1/" && ${LINUXFAMILY} == "s500" ]]; then
-	board_temp=$(awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone1/temp)
-	ln -fs /sys/devices/virtual/thermal/thermal_zone1/temp /etc/armbianmonitor/datasources/soctemp
-fi
-
-# Rockchip RK3288 miqi
-if [[ -d "/sys/class/thermal/thermal_zone2" ]]; then
-        board_temp=$(awk '{printf("%d",$1/1000)}' </sys/class/thermal/thermal_zone2/temp)
-        ln -fs /sys/class/thermal/thermal_zone2/temp /etc/armbianmonitor/datasources/soctemp
+	case $(cat /sys/devices/virtual/thermal/thermal_zone0/type) in
+		cpu_thermal|armada_thermal) # mainline or Armada LTS kernel
+			board_temp=$(awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp)
+			;;
+		soc_thermal) # pine64 legacy
+			read board_temp </sys/devices/virtual/thermal/thermal_zone0/temp
+			;;
+	esac
 fi
 
 # H3 based boards, legacy kernel
+source /etc/armbian-release
 if [[ -d "/sys/class/thermal/thermal_zone1" && ${LINUXFAMILY} == "sun8i" ]]; then
 	read board_temp </sys/class/thermal/thermal_zone1/temp
 	ln -fs /sys/devices/virtual/thermal/thermal_zone1/temp /etc/armbianmonitor/datasources/soctemp
@@ -147,7 +144,7 @@ if [[ -n $(which temper) && $(dpkg --print-architecture) == armhf ]]; then
    amb_temp=$(temper -c)
    if echo $amb_temp | egrep -qv "Couldn't find the USB device"; then
 	  amb_temp=$(echo $amb_temp | awk '{print $NF}' |  sed 's/C//g')
-	  amb_temp=$(echo "scale=1;${amb_temp}/1" | bc)
+	  amb_temp=$(echo "scale=1;${amb_temp}/1" | grep -oE "\-?[[:digit:]]+.[[:digit:]]")
   else
       amb_temp=""
   fi

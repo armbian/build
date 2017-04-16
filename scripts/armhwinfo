@@ -21,6 +21,7 @@ collect_information() {
 	ARCH=$(lscpu | awk '/Architecture/ {print $2}')
 	HARDWARE=$(awk '/Hardware/ {print $3}' </proc/cpuinfo)
 	[ "X${HARDWARE}" = "XAllwinner" ] && HARDWARE=$(awk '/Hardware/ {print $4}' </proc/cpuinfo)
+	[ "X${HARDWARE}" = "XSAMSUNG" ] && HARDWARE=$(awk '/Hardware/ {print $4}' </proc/cpuinfo)
 	KERNELID=$(uname -r)
 
 } # collect_information
@@ -41,6 +42,14 @@ set_io_scheduler() {
 } # set_io_scheduler
 
 prepare_board() {
+	# prevent logrotate from compressing rotated logs when /var/log lives on compressed fs
+	CheckDevice=$(for i in /var/log /var / ; do findmnt -n -o SOURCE $i && break ; done)
+	[ -n "${CheckDevice}" ] && grep "^${CheckDevice}" /etc/mtab | grep -q compress && \
+	for ConfigFile in /etc/logrotate.d/* ; do
+		sed -i -e "s/^\s\+compress/\t# compress/" \
+		-e "s/^\s\+delaycompress/\t# delaycompress/" "${ConfigFile}"
+	done
+
 	# IRQ distribution based on $HARDWARE and/or $BOARD, probably some sort of user feedback (leds)
 	case ${HARDWARE} in
 		Freescale) # i.MX6 boards, send Ethernet to cpu1, MMC to cpu2/cpu3 (when available)
@@ -69,7 +78,7 @@ prepare_board() {
 			done
 			echo 3 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
 			;;
-		ODROID-XU3) # ODROID XU4
+		ODROID-XU3|EXYNOS) # ODROID XU3/XU4
 			echo 2 >/proc/irq/$(awk -F":" "/usb2/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
 			echo 4 >/proc/irq/$(awk -F":" "/usb3/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
 			echo 8 >/proc/irq/$(awk -F":" "/usb5/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
@@ -78,6 +87,9 @@ prepare_board() {
 			for i in $(awk -F':' '/11800000.mali/{print $1}' /proc/interrupts); do
 				echo 64 >/proc/irq/$i/smp_affinity
 			done
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			echo 32768 >/proc/sys/net/core/rps_sock_flow_entries
+			echo 32768 >/sys/class/net/eth0/queues/rx-0/rps_flow_cnt
 			;;
 		sun4i|sun5i) # only one core, nothing to improve
 			:
@@ -126,7 +138,7 @@ prepare_board() {
 					# Send 3rd USB port's IRQs to cpu3
 					echo 8 >/proc/irq/$(awk -F":" "/${USB3}/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
 					;;
-				"Orange Pi Lite"|"NanoPi Air"|"Lime A33"|"Orange Pi Zero Plus 2")
+				"Orange Pi Lite"|"NanoPi Air"|"Lime A33"|"Orange Pi Zero Plus 2"*)
 					# Send SDIO/mmc IRQs to cpu3
 					for i in $(awk -F':' '/sunxi-mmc/{print $1}' /proc/interrupts); do
 						echo 8 >/proc/irq/$i/smp_affinity
@@ -151,6 +163,8 @@ prepare_board() {
 			echo 2 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
 			echo 4 >/proc/irq/$(awk -F":" "/usb2/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
 			echo 8 >/proc/irq/$(awk -F":" "/sunxi-mmc/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -n1)/smp_affinity
+			echo 8 >/proc/irq/$(awk -F":" "/eth/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -n1)/smp_affinity
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
 			;;
 	esac
 } # prepare_board
@@ -168,6 +182,10 @@ log_hardware_info() {
 	fi
 	echo -e "\n### dmesg:\n" >>${Log}
 	cat "${TMPFILE}" >>${Log}
+	echo -e "\n### armbian-release:\n" >>${Log}
+	cat /etc/armbian-release >>${Log}
+	echo -e "\n### boot environment:\n" >>${Log}
+	cat /boot/armbianEnv.txt >>${Log} 2>/dev/null || grep -v "^#" /boot/boot.ini | sed '/^\s*$/d' >>${Log}
 	echo -e "\n### lsusb:" >>${Log}
 	[ -f /boot/.force-verbose ] && USBVERBOSE="-v" || echo "" >>${Log}
 	lsusb ${USBVERBOSE} 2>/dev/null >>${Log}
@@ -275,7 +293,7 @@ case $1 in
 		# much modules as possible to minimize such situations:
 		/sbin/modprobe -r $(cut -f1 -d' ' </proc/modules)
 		# shutdown logging
-		echo -e "\n### shutdown:\n\n$(dmesg | tail -n 100)" >>/var/log/armhwinfo.log
+		echo -e "\n### shutdown:\n\n$(iostat -p zram0)\n\n$(vmstat -w)\n\n$(free -h)\n\n$(dmesg | tail -n 100)" >>/var/log/armhwinfo.log
 		sync
 		;;
 esac

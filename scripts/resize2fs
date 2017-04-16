@@ -23,11 +23,12 @@ do_expand_partition()
 	local rootdevice=$(lsblk -n -o PKNAME $rootpart) # i.e. mmcblk0
 	local rootdevicepath="/dev/$rootdevice" # i.e. /dev/mmcblk0
 	# get count of partitions and their boundaries
-	local partitions=$(parted $rootdevicepath print -sm | tee -a $Log | tail -1 | awk -F ':' '{print $1}')
+	local partitions=$(parted $rootdevicepath print -sm | tail -1 | awk -F ':' '{print $1}')
 	local partstart=$(parted $rootdevicepath unit s print -sm | tail -1 | cut -d: -f2 | sed 's/s//') # start of first partition
 	local partend=$(parted $rootdevicepath unit s print -sm | head -3 | tail -1 | cut -d: -f3 | sed 's/s//') # end of first partition
 	local startfrom=$(( $partend + 1 ))
 	[[ $partitions == 1 ]] && startfrom=$partstart
+	local capacity=$(( $(lsblk -n -b -d -o SIZE $rootdevicepath) / 1024 / 1024 / 1024 )) # GiB
 
 	# check whether a resizing rule is defined. We will take this value if it's not too low. In
 	# this case the value will be ignored and resizing to the whole card size happens.
@@ -49,13 +50,19 @@ do_expand_partition()
 				[[ $lastsector -lt $partend ]] && unset lastsector
 				;;
 		esac
+		# if SD card is larger than 4GB then create another partition behind first one(s)
+		if [[ $capacity -ge 5 ]]; then
+			local secondpartition=$(( 32 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * 99 / 3200))}") -1 ))
+			if [[ $secondpartition -lt $partend ]]; then
+				unset secondpartition
+			fi
+		fi
 	else
 		# check device capacity. If 4GB or below do not use whole card but leave a 5% spare area
 		# to help older cards with wear leveling and garbage collection. In case this reduced card
 		# capacity is less than the actual image capacity this is a clear sign that someone wants
 		# to use Armbian on a card of inappropriate size so he gets what he deserves (at least he
 		# should know what he's doing)
-		local capacity=$(( $(lsblk -n -b -d -o SIZE $rootdevicepath) / 1024 / 1024 / 1024 )) # GiB
 		if [[ $capacity -lt 5 ]]; then # 4 GiB or less
 			local lastsector=$(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{print \$2 - (200 * 1024 * ( 1024 / \$4 ))}")
 			if [[ $lastsector -lt $partend ]]; then
@@ -95,11 +102,13 @@ do_expand_partition()
 	else
 		((echo d; echo $partitions; echo n; echo p; echo ; echo $startfrom; echo $lastsector ; echo w;) | fdisk $rootdevicepath) >>${Log} 2>&1
 	fi
+	[[ -n $secondpartition ]] && \
+		((echo n; echo p; echo ; echo $(( $lastsector + 1 )); echo $secondpartition ; echo w;) | fdisk $rootdevicepath) >>${Log} 2>&1
 	local s=0
 	partprobe $rootdevicepath >>${Log} 2>&1 || s=$?
 	echo -e "\nNew partition table:\n" >>${Log}
 	cat /proc/partitions >>${Log}
-	echo -e "\nNow executing resize2fs to enlarge rootfs to the maximum:\n" >>${Log}
+	echo -e "\nNow executing resize2fs to enlarge rootfs to the limits:\n" >>${Log}
 	resize2fs $rootpart >>${Log} 2>&1
 
 	# check whether reboot is necessary for resize2fs to take effect

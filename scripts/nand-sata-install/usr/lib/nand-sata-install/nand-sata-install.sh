@@ -18,13 +18,12 @@
 CWD="/usr/lib/nand-sata-install"
 EX_LIST="${CWD}/exclude.txt"
 nanddevice="/dev/nand"
-logfile="/tmp/nand-sata-install.log"
-rm -f $logfile
+logfile="/var/log/nand-sata-install.log"
 
 # read in board info
 [[ -f /etc/armbian-release ]] && source /etc/armbian-release
 backtitle="Armbian for $BOARD_NAME install script, http://www.armbian.com"
-title="NAND, eMMC, SATA and USB Armbian installer v""$VERSION"
+title="NAND, eMMC, SATA and USB Armbian installer v${VERSION}"
 
 # exception
 if cat /proc/cpuinfo | grep -q 'sun4i'; then DEVICE_TYPE="a10"; else DEVICE_TYPE="a20"; fi
@@ -35,7 +34,7 @@ root_partition=$(cat /proc/cmdline | sed -e 's/^.*root=//' -e 's/ .*$//')
 root_partition_device=$(blkid |  tr -d '":' | grep $( cat /proc/cmdline | sed -e 's/^.*root=//' -e 's/ .*$//') |  awk '{print $1}'| rev | cut -c3- | rev)
 
 # find targets: NAND, EMMC, SATA
-nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
+[[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
 emmccheck=$(ls -d -1 /dev/mmcblk* | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
 satacheck=$(cat /proc/partitions | grep  'sd' | awk '{print $NF}')
 
@@ -92,13 +91,21 @@ create_armbian()
 	fi
 
 	# write stuff to log
-	echo "SD uuid: $sduuid" >> $logfile
+	[ -f $logfile ] && echo -e "\n\n\n" >> $logfile
+	LANG=C echo -e "$(date): Start ${0##*/}. Files open for write:" >> $logfile
+	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' >> $logfile
+	echo -e "\nSD uuid: $sduuid" >> $logfile
 	echo "Satauid: $satauuid" >> $logfile
 	echo "Emmcuuid: $emmcuuid $eMMCFilesystemChoosen" >> $logfile
 	echo "Boot: \$1 $1 $eMMCFilesystemChoosen" >> $logfile
 	echo "Root: \$2 $2 $FilesystemChoosen" >> $logfile
 	echo "Usage: $USAGE" >> $logfile
 	echo "Dest: $DEST" >> $logfile
+
+	# stop running services
+	StopRunningServices "nfs-|smbd|nmbd|winbind|ftpd|netatalk|monit|cron|webmin|rrdcached" >> $logfile
+	StopRunningServices "log2ram|postgres|mariadb|mysql|postfix|mail|nginx|apache|snmpd" >> $logfile
+	echo -e "\n" >> $logfile
 
 	# count files is needed for progress bar
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\n  Counting files ... few seconds." 5 40
@@ -112,8 +119,6 @@ create_armbian()
 	# run rsync again to silently catch outstanding changes between / and /mnt/rootfs/
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\n  Cleaning up ... few seconds." 5 40
 	rsync -avrltD  --delete --exclude-from=$EX_LIST / /mnt/rootfs >/dev/null 2>&1
-
-
 
 	# creating fstab from scratch
 	rm -f /mnt/rootfs/etc/fstab
@@ -406,6 +411,15 @@ ShowWarning()
 	[[ $? -ne 0 ]] && exit 1
 }
 
+# try to stop running services
+StopRunningServices()
+{
+	systemctl --state=running | awk -F" " '/.service/ {print $1}' | sort -r | \
+		egrep -e "$1" | while read ; do
+		echo -e "\nStopping ${REPLY} \c"
+		systemctl stop ${REPLY} 2>&1
+	done
+}
 
 main()
 {
@@ -445,8 +459,8 @@ main()
 	[[ ( -n $nandcheck || -n $emmccheck ) && -n $satacheck ]] && options=(${options[@]} 2 'Boot from '$ichip' - system on SATA or USB')
 	[[ -n $satacheck ]] && options=(${options[@]} 3 'Boot from SD   - system on SATA or USB')
 
-	[[ ${#options[@]} -eq 0 || "$root_partition" == "$emmcuuid" || "$root_partition" == "/dev/nand2" ]] && dialog --title "$title" --backtitle "$backtitle"  --colors --infobox "\n\Z1There are no targets. Please check your drives.\Zn" 5 60 && exit 1
-
+	[[ ${#options[@]} -eq 0 || "$root_partition" == "$emmcuuid" || "$root_partition" == "/dev/nand2" ]] && \
+	dialog --title "$title" --backtitle "$backtitle"  --colors --no-collapse --msgbox "\n\Z1There are no targets. Please check your drives.\Zn" 7 54
 	cmd=(dialog --title "Choose an option:" --backtitle "$backtitle" --menu "\nCurrent root: $root_partition \n \n" 12 60 7)
 	choices=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
 	[[ $? -ne 0 ]] && exit 1
@@ -497,6 +511,9 @@ main()
 				;;
 		esac
 	done
+
+	LANG=C echo -e "\n$(date): Finished. Files open for write:" >> $logfile
+	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' >> $logfile
 
 	dialog --title "$title" --backtitle "$backtitle"  --yes-label "$command" --no-label "Exit" --yesno "\nAll done. $command $REMOVESDTXT" 7 60
 	[[ $? -eq 0 ]] && "$(echo ${command,,} | sed 's/ //')"

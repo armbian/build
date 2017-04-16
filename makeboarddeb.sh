@@ -19,7 +19,7 @@ create_board_package()
 	display_alert "Creating board support package" "$BOARD $BRANCH" "info"
 
 	local destination=$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
-
+	rm -rf $destination
 	mkdir -p $destination/DEBIAN
 
 	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
@@ -34,11 +34,11 @@ create_board_package()
 	Installed-Size: 1
 	Section: kernel
 	Priority: optional
-	Depends: bash, linux-base
+	Depends: bash, linux-base, u-boot-tools, initramfs-tools
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Replaces: base-files, mpv
-	Recommends: bsdutils, parted, python3-apt, util-linux, initramfs-tools, toilet, wireless-tools
+	Recommends: bsdutils, parted, python3-apt, util-linux, toilet, wireless-tools
 	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
 	EOF
 
@@ -53,6 +53,8 @@ create_board_package()
 		rm /etc/network/interfaces
 		mv /etc/network/interfaces.tmp /etc/network/interfaces
 	fi
+	# make a backup since we are unconditionally overwriting this on update
+	cp /etc/default/cpufrequtils /etc/default/cpufrequtils.dpkg-old
 	dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename \
 		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 	exit 0
@@ -65,6 +67,7 @@ create_board_package()
 	#!/bin/sh
 	[ remove = "\$1" ] || [ abort-install = "\$1" ] && dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename \
 		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
+	systemctl disable log2ram.service armhwinfo.service >/dev/null 2>&1
 	exit 0
 	EOF
 
@@ -73,15 +76,18 @@ create_board_package()
 	# set up post install script
 	cat <<-EOF > $destination/DEBIAN/postinst
 	#!/bin/sh
-	update-rc.d armhwinfo defaults >/dev/null 2>&1
-	update-rc.d -f motd remove >/dev/null 2>&1
 	[ ! -f "/etc/network/interfaces" ] && cp /etc/network/interfaces.default /etc/network/interfaces
-	rm -f /root/.nand1-allwinner.tgz /root/nand-sata-install
 	ln -sf /var/run/motd /etc/motd
-	[ -f "/etc/bash.bashrc.custom" ] && mv /etc/bash.bashrc.custom /etc/bash.bashrc.custom.old
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
 	rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
+	[ ! -f /etc/default/armbian-motd ] && cp /usr/lib/armbian/armbian-motd.default /etc/default/armbian-motd
+	if [ ! -f "/etc/default/log2ram" ]; then
+		cp /etc/default/log2ram.dpkg-dist /etc/default/log2ram
+	fi
+	if [ -f "/etc/systemd/system/log2ram.service" ]; then
+		mv /etc/systemd/system/log2ram.service /etc/systemd/system/log2ram-service.dpkg-old
+	fi
 	exit 0
 	EOF
 
@@ -90,7 +96,6 @@ create_board_package()
 	# won't recreate files if they were removed by user
 	# TODO: Add proper handling for updated conffiles
 	#cat <<-EOF > $destination/DEBIAN/conffiles
-	#/boot/.verbose
 	#EOF
 
 	# trigger uInitrd creation after installation, to apply
@@ -99,14 +104,18 @@ create_board_package()
 	activate update-initramfs
 	EOF
 
-	# scripts for autoresize at first boot
-	mkdir -p $destination/etc/init.d
-	mkdir -p $destination/etc/default
+	# create directory structure
+	mkdir -p $destination/etc/{init.d,default,update-motd.d,profile.d,network,cron.d,cron.daily}
+	mkdir -p $destination/usr/{bin,sbin} $destination/usr/lib/armbian/ $destination/usr/share/armbian/ $destination/usr/share/log2ram/
+	mkdir -p $destination/etc/initramfs/post-update.d/
+	mkdir -p $destination/etc/kernel/preinst.d/
+	mkdir -p $destination/etc/apt/apt.conf.d/ $destination/etc/apt/preferences.d/
+	mkdir -p $destination/etc/X11/xorg.conf.d/
+	mkdir -p $destination/lib/systemd/system/
 
 	install -m 755 $SRC/lib/scripts/armhwinfo $destination/etc/init.d/
 
 	# configure MIN / MAX speed for cpufrequtils
-	mkdir -p $destination/etc/default
 	cat <<-EOF > $destination/etc/default/cpufrequtils
 	ENABLE=true
 	MIN_SPEED=$CPUMIN
@@ -126,9 +135,6 @@ create_board_package()
 	IMAGE_TYPE=$IMAGE_TYPE
 	EOF
 
-	# temper binary for USB temp meter
-	mkdir -p $destination/usr/bin
-
 	# add USB OTG port mode switcher
 	install -m 755 $SRC/lib/scripts/sunxi-musb $destination/usr/bin
 
@@ -136,7 +142,6 @@ create_board_package()
 	install -m 755 $SRC/lib/scripts/armbianmonitor/armbianmonitor $destination/usr/bin
 
 	# updating uInitrd image in update-initramfs trigger
-	mkdir -p $destination/etc/initramfs/post-update.d/
 	cat <<-EOF > $destination/etc/initramfs/post-update.d/99-uboot
 	#!/bin/sh
 	echo "update-initramfs: Converting to u-boot format" >&2
@@ -148,7 +153,6 @@ create_board_package()
 	chmod +x $destination/etc/initramfs/post-update.d/99-uboot
 
 	# removing old initrd.img on upgrade
-	mkdir -p $destination/etc/kernel/preinst.d/
 	cat <<-EOF > $destination/etc/kernel/preinst.d/initramfs-cleanup
 	#!/bin/sh
 	version="\$1"
@@ -181,19 +185,16 @@ create_board_package()
 	chmod +x $destination/etc/kernel/preinst.d/initramfs-cleanup
 
 	# network interfaces configuration
-	mkdir -p $destination/etc/network/
 	cp $SRC/lib/config/network/interfaces.* $destination/etc/network/
 	[[ $RELEASE = xenial ]] && sed -i 's/#no-auto-down/no-auto-down/g' $destination/etc/network/interfaces.default
 
 	# apt configuration
-	mkdir -p $destination/etc/apt/apt.conf.d/
 	cat <<-EOF > $destination/etc/apt/apt.conf.d/71-no-recommends
 	APT::Install-Recommends "0";
 	APT::Install-Suggests "0";
 	EOF
 
 	# xorg configuration
-	mkdir -p $destination/etc/X11/xorg.conf.d/
 	cat <<-EOF > $destination/etc/X11/xorg.conf.d/01-armbian-defaults.conf
 	Section "Monitor"
 		Identifier		"Monitor0"
@@ -213,7 +214,6 @@ create_board_package()
 	# pin priority for armbian repo
 	# reference: man apt_preferences
 	# this allows providing own versions of hostapd, libdri2 and sunxi-tools
-	mkdir -p $destination/etc/apt/preferences.d/
 	cat <<-EOF > $destination/etc/apt/preferences.d/50-armbian.pref
 	Package: *
 	Pin: origin "apt.armbian.com"
@@ -221,22 +221,45 @@ create_board_package()
 	EOF
 
 	# script to install to SATA
-	mkdir -p $destination/usr/sbin/
 	cp -R $SRC/lib/scripts/nand-sata-install/usr $destination/
 	chmod +x $destination/usr/lib/nand-sata-install/nand-sata-install.sh
 	ln -s ../lib/nand-sata-install/nand-sata-install.sh $destination/usr/sbin/nand-sata-install
 
+	# configuration script
+	# TODO: better git update logic
+	if [[ -d $SRC/sources/Debian-micro-home-server ]]; then
+		git --work-tree=$SRC/sources/Debian-micro-home-server --git-dir=$SRC/sources/Debian-micro-home-server/.git pull
+	else
+		git clone https://github.com/igorpecovnik/Debian-micro-home-server $SRC/sources/Debian-micro-home-server
+	fi
+
+	install -m 755 $SRC/sources/Debian-micro-home-server/scripts/tv_grab_file $destination/usr/bin/tv_grab_file
+	install -m 755 $SRC/sources/Debian-micro-home-server/debian-config $destination/usr/bin/armbian-config
+	install -m 755 $SRC/sources/Debian-micro-home-server/softy $destination/usr/bin/softy
+
 	# install custom motd with reboot and upgrade checking
-	mkdir -p $destination/root $destination/tmp $destination/etc/update-motd.d/ $destination/etc/profile.d
 	install -m 755 $SRC/lib/scripts/update-motd.d/* $destination/etc/update-motd.d/
-	install -m 755 $SRC/lib/scripts/check_first_login_reboot.sh 	$destination/etc/profile.d
-	install -m 755 $SRC/lib/scripts/check_first_login.sh 			$destination/etc/profile.d
+	cp $SRC/lib/scripts/check_first_login_reboot.sh $destination/etc/profile.d
+	cp $SRC/lib/scripts/check_first_login.sh $destination/etc/profile.d
+
+	install -m 755 $SRC/lib/scripts/apt-updates $destination/usr/lib/armbian/apt-updates
+
+	cat <<-EOF > $destination/usr/lib/armbian/armbian-motd.default
+	# add space-separated list of MOTD script names (without number) to exclude them from MOTD
+	# Example:
+	# MOTD_DISABLE="header tips updates"
+	MOTD_DISABLE=""
+	EOF
+
+	cat <<-EOF > $destination/etc/cron.d/armbian-updates
+	@reboot root /usr/lib/armbian/apt-updates
+	@daily root /usr/lib/armbian/apt-updates
+	EOF
 
 	# setting window title for remote sessions
 	install -m 755 $SRC/lib/scripts/ssh-title.sh $destination/etc/profile.d/ssh-title.sh
 
 	# install copy of boot script & environment file
-	mkdir -p $destination/usr/share/armbian/
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
 	cp $SRC/lib/config/bootscripts/$bootscript_src $destination/usr/share/armbian/$bootscript_dst
@@ -249,7 +272,22 @@ create_board_package()
 		install -m 755 $SRC/lib/scripts/h3consumption $destination/usr/bin
 	fi
 
+	# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
+	if [[ -n $UBOOT_FW_ENV ]]; then
+		UBOOT_FW_ENV=($(tr ',' ' ' <<< "$UBOOT_FW_ENV"))
+		echo "# Device to access      offset           env size" > $destination/etc/fw_env.config
+		echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> $destination/etc/fw_env.config
+	fi
+
+	# log2ram - systemd compatible ramlog alternative
+	cp $SRC/lib/scripts/log2ram/LICENSE.log2ram $destination/usr/share/log2ram/LICENSE
+	cp $SRC/lib/scripts/log2ram/log2ram.service $destination/lib/systemd/system/log2ram.service
+	install -m 755 $SRC/lib/scripts/log2ram/log2ram $destination/usr/sbin/log2ram
+	install -m 755 $SRC/lib/scripts/log2ram/log2ram.hourly $destination/etc/cron.daily/log2ram
+	cp $SRC/lib/scripts/log2ram/log2ram.default $destination/etc/default/log2ram.dpkg-dist
+
 	if [[ $LINUXFAMILY == sun*i ]]; then
+		install -m 755 $SRC/lib/scripts/armbian-add-overlay $destination/usr/sbin
 		if [[ $BRANCH == default ]]; then
 			# add soc temperature app
 			local codename=$(lsb_release -sc)
@@ -274,7 +312,7 @@ create_board_package()
 		echo "export VDPAU_OSD=1" > $destination/etc/profile.d/90-vdpau.sh
 		chmod 755 $destination/etc/profile.d/90-vdpau.sh
 	fi
-	if [[ ( $LINUXFAMILY == sun50iw2 || $LINUXFAMILY == sun8i ) && $BRANCH == dev ]]; then
+	if [[ ( $LINUXFAMILY == sun50iw2 || $LINUXFAMILY == sun8i || $LINUXFAMILY == pine64 ) && $BRANCH == dev ]]; then
 		# add mpv config for x11 output - slow, but it works compared to no config at all
 		mkdir -p $destination/etc/mpv/
 		cat <<-EOF > $destination/etc/mpv/mpv.conf

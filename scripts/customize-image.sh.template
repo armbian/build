@@ -13,14 +13,142 @@ LINUXFAMILY=$2
 BOARD=$3
 BUILD_DESKTOP=$4
 
-case $RELEASE in
-	jessie)
-	# your code here
-	;;
-	xenial)
-	# your code here
-	;;
-	stretch)
-	# your code here
-	;;
-esac
+Main() {
+	case $RELEASE in
+		jessie)
+			# your code here
+			# InstallOpenMediaVault # uncomment to get an OMV 3 image
+			;;
+		xenial)
+			# your code here
+			;;
+		stretch)
+			# your code here
+		;;
+	esac
+} # Main
+
+InstallOpenMediaVault() {
+	# use this routine to create a Debian Jessie based fully functional 
+	# OpenMediaVault 3 OS image. Use of mainline kernel highly recommended!
+	# After exchanging userpatches/customize-image.sh or at least uncommenting
+	# InstallOpenMediaVault line above you would then run this for a NEO 2
+	# for example: ./compile.sh RELEASE=jessie BRANCH=dev BOARD=nanopineo2
+	#
+	# Please note that this variant changes Armbian default security 
+	# policies since you end up with root password 'openmediavault' which
+	# you have to change yourself later.
+	#
+	# This routine is based on idea/code courtesy Benny Stark. For fixes,
+	# discussion and feature requests please refer to
+	# https://forum.armbian.com/index.php?/topic/2644-openmediavault-3x-customize-imagesh/
+
+	echo root:openmediavault | chpasswd
+	rm /root/.not_logged_in_yet
+	cp -p /etc/default/cpufrequtils /etc/default/cpufrequtils.bak
+	locale-gen "en_US.UTF-8"
+	locale-gen "C"
+	export LANG=C LC_ALL="en_US.UTF-8"
+
+	#Add OMV source.list and Update System
+	cat > /etc/apt/sources.list.d/openmediavault.list <<- EOF
+	# deb http://packages.openmediavault.org/public erasmus main
+	deb https://openmediavault.github.io/packages/ erasmus main
+	## Uncomment the following line to add software from the proposed repository.
+	# deb http://packages.openmediavault.org/public erasmus-proposed main
+	deb https://openmediavault.github.io/packages/ erasmus-proposed main
+	
+	## This software is not part of OpenMediaVault, but is offered by third-party
+	## developers as a service to OpenMediaVault users.
+	# deb http://packages.openmediavault.org/public erasmus partner
+	EOF
+
+	# Add OMV and OMV Plugin developer keys
+	debconf-apt-progress -- apt-get update
+	apt-get --yes --force-yes --allow-unauthenticated install openmediavault-keyring
+	apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 7AA630A1EDEE7D73
+
+	# install debconf-utils, postfix and OMV
+	debconf-set-selections <<< "postfix postfix/mailname string openmediavault"
+	debconf-set-selections <<< "postfix postfix/main_mailer_type string 'No configuration'"
+	apt-get --yes --force-yes --allow-unauthenticated  --fix-missing --no-install-recommends \
+		-o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install \
+		debconf-utils postfix
+	# move newaliases temporarely out of the way (see Ubuntu bug 1531299)
+	cp -p /usr/bin/newaliases /usr/bin/newaliases.bak && ln -sf /bin/true /usr/bin/newaliases
+	# set hostname
+	read HOSTNAME </etc/hostname
+	sed -i -e "s/^::1         localhost.*/::1         ${HOSTNAME} localhost ip6-localhost ip6-loopback/" \
+		-e "s/^127.0.0.1   localhost.*/127.0.0.1   ${HOSTNAME} localhost/" /etc/hosts
+	sed -i -e "s/^mydestination =.*/mydestination = ${HOSTNAME}, localhost.localdomain, localhost/" \
+		-e "s/^myhostname =.*/myhostname = ${HOSTNAME}/" /etc/postfix/main.cf
+	export DEBIAN_FRONTEND=noninteractive
+	apt-get --yes --force-yes --allow-unauthenticated  --fix-missing --no-install-recommends \
+		-o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install \
+		openmediavault
+
+	# install OMV extras, enable folder2ram, tweak some settings
+	FILE=$(mktemp)
+	wget http://omv-extras.org/openmediavault-omvextrasorg_latest_all3.deb -qO $FILE && dpkg -i $FILE && rm $FILE
+	/usr/sbin/omv-update
+	# Netatalk performance fix
+	mkdir -p /var/lib/netatalk/CNID
+	# use folder2ram instead of log2ram with OMV
+	apt-get -y install openmediavault-flashmemory
+	sed -i -e '/<flashmemory>/,/<\/flashmemory>/ s/<enable>0/<enable>1/' \
+		-e '/<ssh>/,/<\/ssh>/ s/<enable>0/<enable>1/' /etc/openmediavault/config.xml
+	sed -i '/^EOF$/itmpfs\t\t/var/lib/netatalk/CNID' /usr/share/openmediavault/mkconf/flashmemory
+	/usr/sbin/omv-mkconf flashmemory
+	systemctl disable log2ram
+	/sbin/folder2ram -enablesystemd
+	sed -i 's|-j /var/lib/rrdcached/journal/ ||' /etc/init.d/rrdcached
+
+	#FIX TFTPD ipv4
+	[ -f /etc/default/tftpd-hpa ] && sed -i 's/--secure/--secure --ipv4/' /etc/default/tftpd-hpa
+
+	# rootfs resize to 4GB max and adding omv-initsystem to firstrun -- q&d but shouldn't matter
+	echo 7773696s >/root/.rootfs_resize
+	sed -i '/systemctl\ disable\ firstrun/i \
+	mv /usr/bin/newaliases.bak /usr/bin/newaliases \
+	export DEBIAN_FRONTEND=noninteractive \
+	apt-get install -f || exit 0 \
+	/usr/sbin/omv-initsystem \
+	mv /etc/default/cpufrequtils.bak /etc/default/cpufrequtils \
+	. /etc/default/cpufrequtils \
+	echo -e "OMV_CPUFREQUTILS_GOVERNOR=${GOVERNOR}" >>/etc/default/openmediavault \
+	echo -e "OMV_CPUFREQUTILS_MINSPEED=${MIN_SPEED}" >>/etc/default/openmediavault \
+	echo -e "OMV_CPUFREQUTILS_MAXSPEED=${MAX_SPEED}" >>/etc/default/openmediavault \
+	lsusb | grep -q "0bda:8153" || sed -i "/r8152/d" /etc/modules \
+	lsusb | egrep -q "0b95:1790|0b95:178a|0df6:0072" || sed -i "/ax88179_178a/d" /etc/modules' /etc/init.d/firstrun
+	sed -i '/systemctl\ disable\ firstrun/a \
+	sync && sleep 30 && reboot' /etc/init.d/firstrun
+
+	# add USB3 Gigabit Ethernet and NAS Dock support
+	echo -e "r8152\nax88179_178a" >>/etc/modules
+	egrep -q "air|neo|zero" <<<${BOARD} && echo "overlays=usbhost0 usbhost2 usbhost3" >>/boot/armbianEnv.txt
+
+	# some performance tuning
+	grep -q ondemand /etc/default/cpufrequtils && sed -i '/^exit\ 0/i \
+	echo ondemand >/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor \
+	sleep 0.1 \
+	cd /sys/devices/system/cpu \
+	for i in cpufreq/ondemand cpu0/cpufreq/ondemand cpu4/cpufreq/ondemand ; do \
+	if [ -d $i ]; then \
+	echo 1 >${i}/io_is_busy \
+	echo 25 >${i}/up_threshold \
+	echo 10 >${i}/sampling_down_factor \
+	fi \
+	done \
+	' /etc/rc.local
+	[ "${BOARD}" = "odroidxu4" ] && XU4_HMP_Fix='; taskset -c -p 4-7 $i '
+	echo "* * * * * root for i in \`pgrep \"ftpd|nfsiod|smbd|afpd|cnid\"\` ; do ionice -c1 -p \$i ${XU4_HMP_Fix}; done >/dev/null 2>&1" \
+		>/etc/cron.d/make_nas_processes_faster
+	chmod 600 /etc/cron.d/make_nas_processes_faster
+
+	# add SATA port multiplier hint if appropriate
+	[ "${LINUXFAMILY}" = "sunxi" ] && \
+		echo -e "#\n# If you want to use a SATA PM add \"ahci_sunxi.enable_pmp=1\" to bootargs above" \
+		>>/boot/boot.cmd
+} # InstallOpenMediaVault
+
+Main "$@"

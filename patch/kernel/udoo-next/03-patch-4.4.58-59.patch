@@ -1,0 +1,548 @@
+diff --git a/Makefile b/Makefile
+index 3efe2ea99e2d..083724c6ca4d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 58
++SUBLEVEL = 59
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/c6x/kernel/ptrace.c b/arch/c6x/kernel/ptrace.c
+index 3c494e84444d..a511ac16a8e3 100644
+--- a/arch/c6x/kernel/ptrace.c
++++ b/arch/c6x/kernel/ptrace.c
+@@ -69,46 +69,6 @@ static int gpr_get(struct task_struct *target,
+ 				   0, sizeof(*regs));
+ }
+ 
+-static int gpr_set(struct task_struct *target,
+-		   const struct user_regset *regset,
+-		   unsigned int pos, unsigned int count,
+-		   const void *kbuf, const void __user *ubuf)
+-{
+-	int ret;
+-	struct pt_regs *regs = task_pt_regs(target);
+-
+-	/* Don't copyin TSR or CSR */
+-	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
+-				 &regs,
+-				 0, PT_TSR * sizeof(long));
+-	if (ret)
+-		return ret;
+-
+-	ret = user_regset_copyin_ignore(&pos, &count, &kbuf, &ubuf,
+-					PT_TSR * sizeof(long),
+-					(PT_TSR + 1) * sizeof(long));
+-	if (ret)
+-		return ret;
+-
+-	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
+-				 &regs,
+-				 (PT_TSR + 1) * sizeof(long),
+-				 PT_CSR * sizeof(long));
+-	if (ret)
+-		return ret;
+-
+-	ret = user_regset_copyin_ignore(&pos, &count, &kbuf, &ubuf,
+-					PT_CSR * sizeof(long),
+-					(PT_CSR + 1) * sizeof(long));
+-	if (ret)
+-		return ret;
+-
+-	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
+-				 &regs,
+-				 (PT_CSR + 1) * sizeof(long), -1);
+-	return ret;
+-}
+-
+ enum c6x_regset {
+ 	REGSET_GPR,
+ };
+@@ -120,7 +80,6 @@ static const struct user_regset c6x_regsets[] = {
+ 		.size = sizeof(u32),
+ 		.align = sizeof(u32),
+ 		.get = gpr_get,
+-		.set = gpr_set
+ 	},
+ };
+ 
+diff --git a/arch/h8300/kernel/ptrace.c b/arch/h8300/kernel/ptrace.c
+index 92075544a19a..0dc1c8f622bc 100644
+--- a/arch/h8300/kernel/ptrace.c
++++ b/arch/h8300/kernel/ptrace.c
+@@ -95,7 +95,8 @@ static int regs_get(struct task_struct *target,
+ 	long *reg = (long *)&regs;
+ 
+ 	/* build user regs in buffer */
+-	for (r = 0; r < ARRAY_SIZE(register_offset); r++)
++	BUILD_BUG_ON(sizeof(regs) % sizeof(long) != 0);
++	for (r = 0; r < sizeof(regs) / sizeof(long); r++)
+ 		*reg++ = h8300_get_reg(target, r);
+ 
+ 	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
+@@ -113,7 +114,8 @@ static int regs_set(struct task_struct *target,
+ 	long *reg;
+ 
+ 	/* build user regs in buffer */
+-	for (reg = (long *)&regs, r = 0; r < ARRAY_SIZE(register_offset); r++)
++	BUILD_BUG_ON(sizeof(regs) % sizeof(long) != 0);
++	for (reg = (long *)&regs, r = 0; r < sizeof(regs) / sizeof(long); r++)
+ 		*reg++ = h8300_get_reg(target, r);
+ 
+ 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
+@@ -122,7 +124,7 @@ static int regs_set(struct task_struct *target,
+ 		return ret;
+ 
+ 	/* write back to pt_regs */
+-	for (reg = (long *)&regs, r = 0; r < ARRAY_SIZE(register_offset); r++)
++	for (reg = (long *)&regs, r = 0; r < sizeof(regs) / sizeof(long); r++)
+ 		h8300_put_reg(target, r, *reg++);
+ 	return 0;
+ }
+diff --git a/arch/metag/kernel/ptrace.c b/arch/metag/kernel/ptrace.c
+index 7563628822bd..5e2dc7defd2c 100644
+--- a/arch/metag/kernel/ptrace.c
++++ b/arch/metag/kernel/ptrace.c
+@@ -24,6 +24,16 @@
+  * user_regset definitions.
+  */
+ 
++static unsigned long user_txstatus(const struct pt_regs *regs)
++{
++	unsigned long data = (unsigned long)regs->ctx.Flags;
++
++	if (regs->ctx.SaveMask & TBICTX_CBUF_BIT)
++		data |= USER_GP_REGS_STATUS_CATCH_BIT;
++
++	return data;
++}
++
+ int metag_gp_regs_copyout(const struct pt_regs *regs,
+ 			  unsigned int pos, unsigned int count,
+ 			  void *kbuf, void __user *ubuf)
+@@ -62,9 +72,7 @@ int metag_gp_regs_copyout(const struct pt_regs *regs,
+ 	if (ret)
+ 		goto out;
+ 	/* TXSTATUS */
+-	data = (unsigned long)regs->ctx.Flags;
+-	if (regs->ctx.SaveMask & TBICTX_CBUF_BIT)
+-		data |= USER_GP_REGS_STATUS_CATCH_BIT;
++	data = user_txstatus(regs);
+ 	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf,
+ 				  &data, 4*25, 4*26);
+ 	if (ret)
+@@ -119,6 +127,7 @@ int metag_gp_regs_copyin(struct pt_regs *regs,
+ 	if (ret)
+ 		goto out;
+ 	/* TXSTATUS */
++	data = user_txstatus(regs);
+ 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
+ 				 &data, 4*25, 4*26);
+ 	if (ret)
+@@ -244,6 +253,8 @@ int metag_rp_state_copyin(struct pt_regs *regs,
+ 	unsigned long long *ptr;
+ 	int ret, i;
+ 
++	if (count < 4*13)
++		return -EINVAL;
+ 	/* Read the entire pipeline before making any changes */
+ 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
+ 				 &rp, 0, 4*13);
+@@ -303,7 +314,7 @@ static int metag_tls_set(struct task_struct *target,
+ 			const void *kbuf, const void __user *ubuf)
+ {
+ 	int ret;
+-	void __user *tls;
++	void __user *tls = target->thread.tls_ptr;
+ 
+ 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &tls, 0, -1);
+ 	if (ret)
+diff --git a/arch/mips/kernel/ptrace.c b/arch/mips/kernel/ptrace.c
+index 74d581569778..c95bf18260f8 100644
+--- a/arch/mips/kernel/ptrace.c
++++ b/arch/mips/kernel/ptrace.c
+@@ -485,7 +485,8 @@ static int fpr_set(struct task_struct *target,
+ 					  &target->thread.fpu,
+ 					  0, sizeof(elf_fpregset_t));
+ 
+-	for (i = 0; i < NUM_FPU_REGS; i++) {
++	BUILD_BUG_ON(sizeof(fpr_val) != sizeof(elf_fpreg_t));
++	for (i = 0; i < NUM_FPU_REGS && count >= sizeof(elf_fpreg_t); i++) {
+ 		err = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
+ 					 &fpr_val, i * sizeof(elf_fpreg_t),
+ 					 (i + 1) * sizeof(elf_fpreg_t));
+diff --git a/arch/sparc/kernel/ptrace_64.c b/arch/sparc/kernel/ptrace_64.c
+index 9ddc4928a089..c1566170964f 100644
+--- a/arch/sparc/kernel/ptrace_64.c
++++ b/arch/sparc/kernel/ptrace_64.c
+@@ -311,7 +311,7 @@ static int genregs64_set(struct task_struct *target,
+ 	}
+ 
+ 	if (!ret) {
+-		unsigned long y;
++		unsigned long y = regs->y;
+ 
+ 		ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
+ 					 &y,
+diff --git a/drivers/pinctrl/qcom/pinctrl-msm.c b/drivers/pinctrl/qcom/pinctrl-msm.c
+index 146264a41ec8..9736f9be5447 100644
+--- a/drivers/pinctrl/qcom/pinctrl-msm.c
++++ b/drivers/pinctrl/qcom/pinctrl-msm.c
+@@ -597,10 +597,6 @@ static void msm_gpio_irq_unmask(struct irq_data *d)
+ 
+ 	spin_lock_irqsave(&pctrl->lock, flags);
+ 
+-	val = readl(pctrl->regs + g->intr_status_reg);
+-	val &= ~BIT(g->intr_status_bit);
+-	writel(val, pctrl->regs + g->intr_status_reg);
+-
+ 	val = readl(pctrl->regs + g->intr_cfg_reg);
+ 	val |= BIT(g->intr_enable_bit);
+ 	writel(val, pctrl->regs + g->intr_cfg_reg);
+diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
+index 56f7e2521202..01d15dca940e 100644
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -416,6 +416,8 @@ static int init_vqs(struct virtio_balloon *vb)
+ 		 * Prime this virtqueue with one buffer so the hypervisor can
+ 		 * use it to signal us later (it can't be broken yet!).
+ 		 */
++		update_balloon_stats(vb);
++
+ 		sg_init_one(&sg, vb->stats, sizeof vb->stats);
+ 		if (virtqueue_add_outbuf(vb->stats_vq, &sg, 1, vb, GFP_KERNEL)
+ 		    < 0)
+diff --git a/fs/ext4/crypto_key.c b/fs/ext4/crypto_key.c
+index 9a16d1e75a49..505f8afde57c 100644
+--- a/fs/ext4/crypto_key.c
++++ b/fs/ext4/crypto_key.c
+@@ -88,8 +88,6 @@ void ext4_free_crypt_info(struct ext4_crypt_info *ci)
+ 	if (!ci)
+ 		return;
+ 
+-	if (ci->ci_keyring_key)
+-		key_put(ci->ci_keyring_key);
+ 	crypto_free_ablkcipher(ci->ci_ctfm);
+ 	kmem_cache_free(ext4_crypt_info_cachep, ci);
+ }
+@@ -111,7 +109,7 @@ void ext4_free_encryption_info(struct inode *inode,
+ 	ext4_free_crypt_info(ci);
+ }
+ 
+-int _ext4_get_encryption_info(struct inode *inode)
++int ext4_get_encryption_info(struct inode *inode)
+ {
+ 	struct ext4_inode_info *ei = EXT4_I(inode);
+ 	struct ext4_crypt_info *crypt_info;
+@@ -128,22 +126,15 @@ int _ext4_get_encryption_info(struct inode *inode)
+ 	char mode;
+ 	int res;
+ 
++	if (ei->i_crypt_info)
++		return 0;
++
+ 	if (!ext4_read_workqueue) {
+ 		res = ext4_init_crypto();
+ 		if (res)
+ 			return res;
+ 	}
+ 
+-retry:
+-	crypt_info = ACCESS_ONCE(ei->i_crypt_info);
+-	if (crypt_info) {
+-		if (!crypt_info->ci_keyring_key ||
+-		    key_validate(crypt_info->ci_keyring_key) == 0)
+-			return 0;
+-		ext4_free_encryption_info(inode, crypt_info);
+-		goto retry;
+-	}
+-
+ 	res = ext4_xattr_get(inode, EXT4_XATTR_INDEX_ENCRYPTION,
+ 				 EXT4_XATTR_NAME_ENCRYPTION_CONTEXT,
+ 				 &ctx, sizeof(ctx));
+@@ -166,7 +157,6 @@ retry:
+ 	crypt_info->ci_data_mode = ctx.contents_encryption_mode;
+ 	crypt_info->ci_filename_mode = ctx.filenames_encryption_mode;
+ 	crypt_info->ci_ctfm = NULL;
+-	crypt_info->ci_keyring_key = NULL;
+ 	memcpy(crypt_info->ci_master_key, ctx.master_key_descriptor,
+ 	       sizeof(crypt_info->ci_master_key));
+ 	if (S_ISREG(inode->i_mode))
+@@ -206,7 +196,6 @@ retry:
+ 		keyring_key = NULL;
+ 		goto out;
+ 	}
+-	crypt_info->ci_keyring_key = keyring_key;
+ 	if (keyring_key->type != &key_type_logon) {
+ 		printk_once(KERN_WARNING
+ 			    "ext4: key type must be logon\n");
+@@ -253,16 +242,13 @@ got_key:
+ 				       ext4_encryption_key_size(mode));
+ 	if (res)
+ 		goto out;
+-	memzero_explicit(raw_key, sizeof(raw_key));
+-	if (cmpxchg(&ei->i_crypt_info, NULL, crypt_info) != NULL) {
+-		ext4_free_crypt_info(crypt_info);
+-		goto retry;
+-	}
+-	return 0;
+ 
++	if (cmpxchg(&ei->i_crypt_info, NULL, crypt_info) == NULL)
++		crypt_info = NULL;
+ out:
+ 	if (res == -ENOKEY)
+ 		res = 0;
++	key_put(keyring_key);
+ 	ext4_free_crypt_info(crypt_info);
+ 	memzero_explicit(raw_key, sizeof(raw_key));
+ 	return res;
+diff --git a/fs/ext4/ext4.h b/fs/ext4/ext4.h
+index cd5914495ad7..362d59b24f1d 100644
+--- a/fs/ext4/ext4.h
++++ b/fs/ext4/ext4.h
+@@ -2330,23 +2330,11 @@ static inline void ext4_fname_free_filename(struct ext4_filename *fname) { }
+ /* crypto_key.c */
+ void ext4_free_crypt_info(struct ext4_crypt_info *ci);
+ void ext4_free_encryption_info(struct inode *inode, struct ext4_crypt_info *ci);
+-int _ext4_get_encryption_info(struct inode *inode);
+ 
+ #ifdef CONFIG_EXT4_FS_ENCRYPTION
+ int ext4_has_encryption_key(struct inode *inode);
+ 
+-static inline int ext4_get_encryption_info(struct inode *inode)
+-{
+-	struct ext4_crypt_info *ci = EXT4_I(inode)->i_crypt_info;
+-
+-	if (!ci ||
+-	    (ci->ci_keyring_key &&
+-	     (ci->ci_keyring_key->flags & ((1 << KEY_FLAG_INVALIDATED) |
+-					   (1 << KEY_FLAG_REVOKED) |
+-					   (1 << KEY_FLAG_DEAD)))))
+-		return _ext4_get_encryption_info(inode);
+-	return 0;
+-}
++int ext4_get_encryption_info(struct inode *inode);
+ 
+ static inline struct ext4_crypt_info *ext4_encryption_info(struct inode *inode)
+ {
+diff --git a/fs/ext4/ext4_crypto.h b/fs/ext4/ext4_crypto.h
+index ac7d4e813796..1b17b05b9f4d 100644
+--- a/fs/ext4/ext4_crypto.h
++++ b/fs/ext4/ext4_crypto.h
+@@ -78,7 +78,6 @@ struct ext4_crypt_info {
+ 	char		ci_filename_mode;
+ 	char		ci_flags;
+ 	struct crypto_ablkcipher *ci_ctfm;
+-	struct key	*ci_keyring_key;
+ 	char		ci_master_key[EXT4_KEY_DESCRIPTOR_SIZE];
+ };
+ 
+diff --git a/fs/f2fs/crypto_key.c b/fs/f2fs/crypto_key.c
+index 5de2d866a25c..18595d7a0efc 100644
+--- a/fs/f2fs/crypto_key.c
++++ b/fs/f2fs/crypto_key.c
+@@ -92,7 +92,6 @@ static void f2fs_free_crypt_info(struct f2fs_crypt_info *ci)
+ 	if (!ci)
+ 		return;
+ 
+-	key_put(ci->ci_keyring_key);
+ 	crypto_free_ablkcipher(ci->ci_ctfm);
+ 	kmem_cache_free(f2fs_crypt_info_cachep, ci);
+ }
+@@ -113,7 +112,7 @@ void f2fs_free_encryption_info(struct inode *inode, struct f2fs_crypt_info *ci)
+ 	f2fs_free_crypt_info(ci);
+ }
+ 
+-int _f2fs_get_encryption_info(struct inode *inode)
++int f2fs_get_encryption_info(struct inode *inode)
+ {
+ 	struct f2fs_inode_info *fi = F2FS_I(inode);
+ 	struct f2fs_crypt_info *crypt_info;
+@@ -129,18 +128,12 @@ int _f2fs_get_encryption_info(struct inode *inode)
+ 	char mode;
+ 	int res;
+ 
++	if (fi->i_crypt_info)
++		return 0;
++
+ 	res = f2fs_crypto_initialize();
+ 	if (res)
+ 		return res;
+-retry:
+-	crypt_info = ACCESS_ONCE(fi->i_crypt_info);
+-	if (crypt_info) {
+-		if (!crypt_info->ci_keyring_key ||
+-				key_validate(crypt_info->ci_keyring_key) == 0)
+-			return 0;
+-		f2fs_free_encryption_info(inode, crypt_info);
+-		goto retry;
+-	}
+ 
+ 	res = f2fs_getxattr(inode, F2FS_XATTR_INDEX_ENCRYPTION,
+ 				F2FS_XATTR_NAME_ENCRYPTION_CONTEXT,
+@@ -159,7 +152,6 @@ retry:
+ 	crypt_info->ci_data_mode = ctx.contents_encryption_mode;
+ 	crypt_info->ci_filename_mode = ctx.filenames_encryption_mode;
+ 	crypt_info->ci_ctfm = NULL;
+-	crypt_info->ci_keyring_key = NULL;
+ 	memcpy(crypt_info->ci_master_key, ctx.master_key_descriptor,
+ 				sizeof(crypt_info->ci_master_key));
+ 	if (S_ISREG(inode->i_mode))
+@@ -197,7 +189,6 @@ retry:
+ 		keyring_key = NULL;
+ 		goto out;
+ 	}
+-	crypt_info->ci_keyring_key = keyring_key;
+ 	BUG_ON(keyring_key->type != &key_type_logon);
+ 	ukp = user_key_payload(keyring_key);
+ 	if (ukp->datalen != sizeof(struct f2fs_encryption_key)) {
+@@ -230,17 +221,12 @@ retry:
+ 	if (res)
+ 		goto out;
+ 
+-	memzero_explicit(raw_key, sizeof(raw_key));
+-	if (cmpxchg(&fi->i_crypt_info, NULL, crypt_info) != NULL) {
+-		f2fs_free_crypt_info(crypt_info);
+-		goto retry;
+-	}
+-	return 0;
+-
++	if (cmpxchg(&fi->i_crypt_info, NULL, crypt_info) == NULL)
++		crypt_info = NULL;
+ out:
+ 	if (res == -ENOKEY && !S_ISREG(inode->i_mode))
+ 		res = 0;
+-
++	key_put(keyring_key);
+ 	f2fs_free_crypt_info(crypt_info);
+ 	memzero_explicit(raw_key, sizeof(raw_key));
+ 	return res;
+diff --git a/fs/f2fs/f2fs.h b/fs/f2fs/f2fs.h
+index 9db5500d63d9..b1aeca83f4be 100644
+--- a/fs/f2fs/f2fs.h
++++ b/fs/f2fs/f2fs.h
+@@ -2149,7 +2149,6 @@ void f2fs_end_io_crypto_work(struct f2fs_crypto_ctx *, struct bio *);
+ 
+ /* crypto_key.c */
+ void f2fs_free_encryption_info(struct inode *, struct f2fs_crypt_info *);
+-int _f2fs_get_encryption_info(struct inode *inode);
+ 
+ /* crypto_fname.c */
+ bool f2fs_valid_filenames_enc_mode(uint32_t);
+@@ -2170,18 +2169,7 @@ void f2fs_exit_crypto(void);
+ 
+ int f2fs_has_encryption_key(struct inode *);
+ 
+-static inline int f2fs_get_encryption_info(struct inode *inode)
+-{
+-	struct f2fs_crypt_info *ci = F2FS_I(inode)->i_crypt_info;
+-
+-	if (!ci ||
+-		(ci->ci_keyring_key &&
+-		 (ci->ci_keyring_key->flags & ((1 << KEY_FLAG_INVALIDATED) |
+-					       (1 << KEY_FLAG_REVOKED) |
+-					       (1 << KEY_FLAG_DEAD)))))
+-		return _f2fs_get_encryption_info(inode);
+-	return 0;
+-}
++int f2fs_get_encryption_info(struct inode *inode);
+ 
+ void f2fs_fname_crypto_free_buffer(struct f2fs_str *);
+ int f2fs_fname_setup_filename(struct inode *, const struct qstr *,
+diff --git a/fs/f2fs/f2fs_crypto.h b/fs/f2fs/f2fs_crypto.h
+index c2c1c2b63b25..f113f1a1e8c1 100644
+--- a/fs/f2fs/f2fs_crypto.h
++++ b/fs/f2fs/f2fs_crypto.h
+@@ -79,7 +79,6 @@ struct f2fs_crypt_info {
+ 	char		ci_filename_mode;
+ 	char		ci_flags;
+ 	struct crypto_ablkcipher *ci_ctfm;
+-	struct key	*ci_keyring_key;
+ 	char		ci_master_key[F2FS_KEY_DESCRIPTOR_SIZE];
+ };
+ 
+diff --git a/kernel/sched/deadline.c b/kernel/sched/deadline.c
+index 8b0a15e285f9..e984f059e5fc 100644
+--- a/kernel/sched/deadline.c
++++ b/kernel/sched/deadline.c
+@@ -1771,12 +1771,11 @@ static void switched_to_dl(struct rq *rq, struct task_struct *p)
+ #ifdef CONFIG_SMP
+ 		if (p->nr_cpus_allowed > 1 && rq->dl.overloaded)
+ 			queue_push_tasks(rq);
+-#else
++#endif
+ 		if (dl_task(rq->curr))
+ 			check_preempt_curr_dl(rq, p, 0);
+ 		else
+ 			resched_curr(rq);
+-#endif
+ 	}
+ }
+ 
+diff --git a/kernel/sched/rt.c b/kernel/sched/rt.c
+index 8ec86abe0ea1..78ae5c1d9412 100644
+--- a/kernel/sched/rt.c
++++ b/kernel/sched/rt.c
+@@ -2136,10 +2136,9 @@ static void switched_to_rt(struct rq *rq, struct task_struct *p)
+ #ifdef CONFIG_SMP
+ 		if (p->nr_cpus_allowed > 1 && rq->rt.overloaded)
+ 			queue_push_tasks(rq);
+-#else
++#endif /* CONFIG_SMP */
+ 		if (p->prio < rq->curr->prio)
+ 			resched_curr(rq);
+-#endif /* CONFIG_SMP */
+ 	}
+ }
+ 
+diff --git a/net/xfrm/xfrm_policy.c b/net/xfrm/xfrm_policy.c
+index b5e665b3cfb0..36a50ef9295d 100644
+--- a/net/xfrm/xfrm_policy.c
++++ b/net/xfrm/xfrm_policy.c
+@@ -3030,6 +3030,11 @@ static int __net_init xfrm_net_init(struct net *net)
+ {
+ 	int rv;
+ 
++	/* Initialize the per-net locks here */
++	spin_lock_init(&net->xfrm.xfrm_state_lock);
++	rwlock_init(&net->xfrm.xfrm_policy_lock);
++	mutex_init(&net->xfrm.xfrm_cfg_mutex);
++
+ 	rv = xfrm_statistics_init(net);
+ 	if (rv < 0)
+ 		goto out_statistics;
+@@ -3046,11 +3051,6 @@ static int __net_init xfrm_net_init(struct net *net)
+ 	if (rv < 0)
+ 		goto out;
+ 
+-	/* Initialize the per-net locks here */
+-	spin_lock_init(&net->xfrm.xfrm_state_lock);
+-	rwlock_init(&net->xfrm.xfrm_policy_lock);
+-	mutex_init(&net->xfrm.xfrm_cfg_mutex);
+-
+ 	return 0;
+ 
+ out:
+diff --git a/net/xfrm/xfrm_user.c b/net/xfrm/xfrm_user.c
+index 805681a7d356..7a5a64e70b4d 100644
+--- a/net/xfrm/xfrm_user.c
++++ b/net/xfrm/xfrm_user.c
+@@ -412,7 +412,14 @@ static inline int xfrm_replay_verify_len(struct xfrm_replay_state_esn *replay_es
+ 	up = nla_data(rp);
+ 	ulen = xfrm_replay_state_esn_len(up);
+ 
+-	if (nla_len(rp) < ulen || xfrm_replay_state_esn_len(replay_esn) != ulen)
++	/* Check the overall length and the internal bitmap length to avoid
++	 * potential overflow. */
++	if (nla_len(rp) < ulen ||
++	    xfrm_replay_state_esn_len(replay_esn) != ulen ||
++	    replay_esn->bmp_len != up->bmp_len)
++		return -EINVAL;
++
++	if (up->replay_window > up->bmp_len * sizeof(__u32) * 8)
+ 		return -EINVAL;
+ 
+ 	return 0;
