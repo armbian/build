@@ -33,50 +33,21 @@ function display() {
 } # display
 
 function getboardtemp() {
-	# read temperature from different locations and create a symlink to a unique location
-	[ -d /etc/armbianmonitor/datasources ] || mkdir -p -m775 /etc/armbianmonitor/datasources
-
-	# where it should be
-	if [[ -d "/sys/devices/virtual/thermal/thermal_zone0/" ]]; then
-		ln -fs /sys/devices/virtual/thermal/thermal_zone0/temp /etc/armbianmonitor/datasources/soctemp
-		read TempType </sys/devices/virtual/thermal/thermal_zone0/type
-		case ${TempType} in
-			cpu_thermal) # mainline kernel
-				awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp
-				return
-				;;
-			armada_thermal) # Marvell Armada, reduce reported temp by 30 degress for whatever reasons
-				echo -n $(( $(awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp) - 30 ))
-				return
-				;;
-			soc_thermal) # pine64 legacy
-				cat /sys/devices/virtual/thermal/thermal_zone0/temp
-				return
-				;;
-		esac
-	elif [[ -d "/sys/class/thermal/thermal_zone1" ]]; then
-		# sun8i legacy kernel
-		cat /sys/class/thermal/thermal_zone1/temp
-		ln -fs /sys/devices/virtual/thermal/thermal_zone1/temp /etc/armbianmonitor/datasources/soctemp
-		return
+	if [ -f /etc/armbianmonitor/datasources/soctemp ]; then
+		read raw_temp </etc/armbianmonitor/datasources/soctemp
+		if [ ${raw_temp} -le 200 ]; then
+			# Allwinner legacy kernels output degree C
+			board_temp=${raw_temp}
+		else
+			# Marvell gets special treatment for whatever reasons
+			grep -qi Marvell /proc/cpuinfo && \
+				board_temp=$(( $(awk '{printf("%d",$1/1000)}' <<<${raw_temp}) - 30 )) || \
+				board_temp=$(awk '{printf("%d",$1/1000)}' <<<${raw_temp})
+		fi
+	elif [ -f /etc/armbianmonitor/datasources/pmictemp ]; then
+		# fallback to PMIC temperature
+		board_temp=$(awk '{printf("%d",$1/1000)}' </etc/armbianmonitor/datasources/pmictemp)
 	fi
-
-	# S500 and RK3288 legacy kernels
-	for tempsource in /sys/devices/virtual/thermal/thermal_zone1 /sys/class/thermal/thermal_zone2 ; do
-		if [ -d ${tempsource} ]; then
-			awk '{printf("%d",$1/1000)}' ${tempsource}/temp
-			ln -fs ${tempsource}/temp /etc/armbianmonitor/datasources/soctemp
-			return
-		fi
-	done
-	
-	# deal with the exceptions first: legacy Allwinner variants (if SoC is not available take PMU)
-	for tempsource in /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034 /sys/devices/platform/a20-tp-hwmon ; do
-		if [ -d ${tempsource} ]; then
-			awk '{printf("%d",$1/1000)}' ${tempsource}/temp1_input
-			ln -fs ${tempsource}/temp1_input /etc/armbianmonitor/datasources/soctemp
-		fi
-	done
 } # getboardtemp
 
 function batteryinfo() {
@@ -145,7 +116,7 @@ amb_temp=$(ambienttemp &)
 ip_address=$(get_ip_addresses &)
 batteryinfo
 storage_info
-board_temp=$(getboardtemp)
+getboardtemp
 critical_load=$(( 1 + $(grep -c processor /proc/cpuinfo) / 2 ))
 
 # get uptime, logged in users and load in one take
@@ -190,3 +161,4 @@ display "storage/" "$storage_usage" "90" "1" "%" " of $storage_total"
 display "Battery" "$battery_percent" "20" "1" "%" "$status_battery_text"
 echo ""
 echo ""
+
