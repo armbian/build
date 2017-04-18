@@ -35,6 +35,40 @@ function display() {
 function getboardtemp() {
 	# read temperature from different locations and create a symlink to a unique location
 	[ -d /etc/armbianmonitor/datasources ] || mkdir -p -m775 /etc/armbianmonitor/datasources
+
+	# where it should be
+	if [[ -d "/sys/devices/virtual/thermal/thermal_zone0/" ]]; then
+		ln -fs /sys/devices/virtual/thermal/thermal_zone0/temp /etc/armbianmonitor/datasources/soctemp
+		read TempType </sys/devices/virtual/thermal/thermal_zone0/type
+		case ${TempType} in
+			cpu_thermal) # mainline kernel
+				awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp
+				return
+				;;
+			armada_thermal) # Marvell Armada, reduce reported temp by 30 degress for whatever reasons
+				echo -n $(( $(awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp) - 30 ))
+				return
+				;;
+			soc_thermal) # pine64 legacy
+				cat /sys/devices/virtual/thermal/thermal_zone0/temp
+				return
+				;;
+		esac
+	elif [[ -d "/sys/class/thermal/thermal_zone1" ]]; then
+		# sun8i legacy kernel
+		cat /sys/class/thermal/thermal_zone1/temp
+		ln -fs /sys/devices/virtual/thermal/thermal_zone1/temp /etc/armbianmonitor/datasources/soctemp
+		return
+	fi
+
+	# S500 and RK3288 legacy kernels
+	for tempsource in /sys/devices/virtual/thermal/thermal_zone1 /sys/class/thermal/thermal_zone2 ; do
+		if [ -d ${tempsource} ]; then
+			awk '{printf("%d",$1/1000)}' ${tempsource}/temp
+			ln -fs ${tempsource}/temp /etc/armbianmonitor/datasources/soctemp
+			return
+		fi
+	done
 	
 	# deal with the exceptions first: legacy Allwinner variants (if SoC is not available take PMU)
 	for tempsource in /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034 /sys/devices/platform/a20-tp-hwmon ; do
@@ -43,36 +77,6 @@ function getboardtemp() {
 			ln -fs ${tempsource}/temp1_input /etc/armbianmonitor/datasources/soctemp
 		fi
 	done
-	
-	# S500 and RK3288 legacy kernels
-	for tempsource in /sys/devices/virtual/thermal/thermal_zone1 /sys/class/thermal/thermal_zone2 ; do
-		if [ -d ${tempsource} ]; then
-			awk '{printf("%d",$1/1000)}' ${tempsource}/temp
-			ln -fs ${tempsource}/temp /etc/armbianmonitor/datasources/soctemp
-			return # important since sun8i below
-		fi
-	done
-	
-	# where it should be
-	if [[ -d "/sys/devices/virtual/thermal/thermal_zone0/" ]]; then
-		ln -fs /sys/devices/virtual/thermal/thermal_zone0/temp /etc/armbianmonitor/datasources/soctemp
-		read TempType </sys/devices/virtual/thermal/thermal_zone0/type
-		case ${TempType} in
-			cpu_thermal) # mainline kernel
-				awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp
-				;;
-			armada_thermal) # Marvell Armada, reduce reported temp by 30 degress for whatever reasons
-				echo -n $(( $(awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp) - 30 ))
-				;;
-			soc_thermal) # pine64 legacy
-				cat /sys/devices/virtual/thermal/thermal_zone0/temp
-				;;
-		esac
-	elif [[ -d "/sys/class/thermal/thermal_zone1" ]]; then
-		# sun8i legacy kernel
-		cat /sys/class/thermal/thermal_zone1/temp
-		ln -fs /sys/devices/virtual/thermal/thermal_zone1/temp /etc/armbianmonitor/datasources/soctemp
-	fi
 } # getboardtemp
 
 function batteryinfo() {
@@ -138,10 +142,11 @@ function storage_info() {
 # query various systems and send some stuff to the background for overall faster execution.
 # Works only with ambienttemp and batteryinfo since A20 is slow enough :)
 amb_temp=$(ambienttemp &)
-batteryinfo &
+ip_address=$(get_ip_addresses &)
+batteryinfo
 storage_info
-ip_address=$(get_ip_addresses)
 board_temp=$(getboardtemp)
+critical_load=$(( 1 + $(grep -c processor /proc/cpuinfo) / 2 ))
 
 # get uptime, logged in users and load in one take
 UptimeString=$(uptime | tr -d ',')
@@ -166,11 +171,11 @@ swap_usage=$( (awk '/Swap/ { printf("%3.0f", $3/$2*100) }' <<<${swap_info} 2>/de
 swap_total=$(awk '{print $(2)}' <<<${swap_info})
 
 # display info
-display "System load" "${load%% *}" "1" "0" "" ""
+display "System load" "${load%% *}" "${critical_load}" "0" "" "${load#* }"
 printf "Up time:       \x1B[92m%s\x1B[0m\t\t" "$time"
 display "Local users" "${users##* }" "3" "2" ""
 echo "" # fixed newline
-display "Memory usage" "$memory_usage" "70" "0" " %" " of $memory_total""Mb"
+display "Memory usage" "$memory_usage" "70" "0" " %" " of ${memory_total}MB"
 display "Swap usage" "$swap_usage" "10" "0" " %" " of $swap_total""Mb"
 printf "IP:            "
 printf "\x1B[92m%s\x1B[0m" "$ip_address"
