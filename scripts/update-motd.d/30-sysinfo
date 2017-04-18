@@ -39,7 +39,7 @@ function getboardtemp() {
 	# deal with the exceptions first: legacy Allwinner variants (if SoC is not available take PMU)
 	for tempsource in /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034 /sys/devices/platform/a20-tp-hwmon ; do
 		if [ -d ${tempsource} ]; then
-			board_temp=$(awk '{printf("%d",$1/1000)}' ${tempsource}/temp1_input)
+			awk '{printf("%d",$1/1000)}' ${tempsource}/temp1_input
 			ln -fs ${tempsource}/temp1_input /etc/armbianmonitor/datasources/soctemp
 		fi
 	done
@@ -47,7 +47,7 @@ function getboardtemp() {
 	# S500 and RK3288 legacy kernels
 	for tempsource in /sys/devices/virtual/thermal/thermal_zone1 /sys/class/thermal/thermal_zone2 ; do
 		if [ -d ${tempsource} ]; then
-			board_temp=$(awk '{printf("%d",$1/1000)}' ${tempsource}/temp)
+			awk '{printf("%d",$1/1000)}' ${tempsource}/temp
 			ln -fs ${tempsource}/temp /etc/armbianmonitor/datasources/soctemp
 			return # important since sun8i below
 		fi
@@ -59,18 +59,18 @@ function getboardtemp() {
 		read TempType </sys/devices/virtual/thermal/thermal_zone0/type
 		case ${TempType} in
 			cpu_thermal) # mainline kernel
-				board_temp=$(awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp)
+				awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp
 				;;
 			armada_thermal) # Marvell Armada, reduce reported temp by 30 degress for whatever reasons
-				board_temp=$(( $(awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp) - 30 ))
+				echo -n $(( $(awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp) - 30 ))
 				;;
 			soc_thermal) # pine64 legacy
-				read board_temp </sys/devices/virtual/thermal/thermal_zone0/temp
+				cat /sys/devices/virtual/thermal/thermal_zone0/temp
 				;;
 		esac
 	elif [[ -d "/sys/class/thermal/thermal_zone1" ]]; then
 		# sun8i legacy kernel
-		read board_temp </sys/class/thermal/thermal_zone1/temp
+		cat /sys/class/thermal/thermal_zone1/temp
 		ln -fs /sys/devices/virtual/thermal/thermal_zone1/temp /etc/armbianmonitor/datasources/soctemp
 	fi
 } # getboardtemp
@@ -107,18 +107,41 @@ function ambienttemp() {
 	amb_temp=$(temper -c 2>/dev/null)
 	case ${amb_temp} in
 		*"find the USB device"*)
-			amb_temp=""
+			echo ""
 			;;
 		*)
 			amb_temp=$(awk '{print $NF}' <<<$amb_temp |  sed 's/C//g')
-			amb_temp=$(echo "scale=1;${amb_temp}/1" | grep -oE "\-?[[:digit:]]+.[[:digit:]]")
+			echo -n "scale=1;${amb_temp}/1" | grep -oE "\-?[[:digit:]]+.[[:digit:]]"
 	esac
 } # ambienttemp
 
-# query thermal sensors and battery info if available
-ambienttemp
-batteryinfo
-getboardtemp
+function get_ip_addresses() {
+	# return up to 2 IPv4 address(es) comma separated
+	hostname -I | tr " " "\n" | \
+		grep -E "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$" | \
+		tail -n2 | sed ':a;N;$!ba;s/\n/,/g'
+} # get_ip_addresses
+
+function storage_info() {
+	# storage info
+	RootInfo=$(df -h /)
+	root_usage=$(awk '/\// {print $(NF-1)}' <<<${RootInfo} | sed 's/%//g')
+	root_total=$(awk '/\// {print $(NF-4)}' <<<${RootInfo})
+	StorageInfo=$(df -h $storage | grep $storage)
+	if [ -n "${StorageInfo}" ]; then
+		storage_usage=$(awk '/\// {print $(NF-1)}' <<<${StorageInfo} | sed 's/%//g')
+		storage_total=$(awk '/\// {print $(NF-4)}' <<<${StorageInfo})
+		[[ "$storage" == */sd* ]] && hdd_temp=$(hddtemp -u C -nq $storage)
+	fi
+} # storage_info
+
+# query various systems and send some stuff to the background for overall faster execution.
+# Works only with ambienttemp and batteryinfo since A20 is slow enough :)
+amb_temp=$(ambienttemp &)
+batteryinfo &
+storage_info
+ip_address=$(get_ip_addresses)
+board_temp=$(getboardtemp)
 
 # get uptime, logged in users and load in one take
 UptimeString=$(uptime | tr -d ',')
@@ -142,23 +165,9 @@ swap_info=$(LANG=en_US.UTF-8 free -m | grep "^Swap")
 swap_usage=$( (awk '/Swap/ { printf("%3.0f", $3/$2*100) }' <<<${swap_info} 2>/dev/null || echo 0) | tr -c -d '[:digit:]')
 swap_total=$(awk '{print $(2)}' <<<${swap_info})
 
-# Up to 2 IPv4 address(es) comma separated
-ip_address=$(hostname -I | tr " " "\n" | grep -E "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$" | tail -n2 | sed ':a;N;$!ba;s/\n/,/g')
-
-# storage info
-RootInfo=$(df -h /)
-root_usage=$(awk '/\// {print $(NF-1)}' <<<${RootInfo} | sed 's/%//g')
-root_total=$(awk '/\// {print $(NF-4)}' <<<${RootInfo})
-StorageInfo=$(df -h $storage | grep $storage)
-if [ -n "${StorageInfo}" ]; then
-	storage_usage=$(awk '/\// {print $(NF-1)}' <<<${StorageInfo} | sed 's/%//g')
-	storage_total=$(awk '/\// {print $(NF-4)}' <<<${StorageInfo})
-	[[ "$storage" == */sd* ]] && hdd_temp=$(hddtemp -u C -nq $storage)
-fi
-
+# display info
 display "System load" "${load%% *}" "1" "0" "" ""
-printf "Up time:       "
-printf "\x1B[92m%s\x1B[0m\t\t" "$time"
+printf "Up time:       \x1B[92m%s\x1B[0m\t\t" "$time"
 display "Local users" "${users##* }" "3" "2" ""
 echo "" # fixed newline
 display "Memory usage" "$memory_usage" "70" "0" " %" " of $memory_total""Mb"
