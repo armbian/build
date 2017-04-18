@@ -1,7 +1,9 @@
 #!/bin/bash
 #
 #    30-sysinfo - generate the system information
-#    Copyright (c) 2015 Igor Pecovnik
+#    Copyright (c) 2015-2017 Igor Pecovnik
+
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 THIS_SCRIPT="sysinfo"
 MOTD_DISABLE=""
@@ -17,24 +19,6 @@ storage=/dev/sda1
 
 # don't edit below here
 
-function displaytime {
-	# we need dedicated function
-	local T=$(cat /proc/uptime | awk '{print $1}' | sed 's/[.].*//')
-	local D=$((T/60/60/24))
-	local H=$((T/60/60%24))
-	local M=$((T/60%60))
-	local S=$((T%60))
-	local time=$S
-	time=$S" sec"
-	(( $M > 0 )) && time=$M" min"
-	(( $H > 0 )) && time=$H" hour"
-	(( $H > 1 )) && time=$H" hours"
-	(( $D > 0 )) && time=$D" day"
-	(( $D > 1 )) && time=$D" days"
-	printf "Up time:       "
-	printf "\x1B[92m%s\x1B[0m\t\t" "$time"
-}
-
 function display() {
 	# $1=name $2=value $3=red_limit $4=minimal_show_limit $5=unit $6=after $7=acs/desc{
 	# battery red color is opposite, lower number
@@ -46,113 +30,136 @@ function display() {
 		printf "%-11s%s\t" "$6"
 		return 1
 	fi
-}
+} # display
 
-# Battery info for Allwinner
-# kernel 4.4+
-axp_dir="/sys/power/axp_pmu"
-if [[ -e "$axp_dir" ]]; then
-        status_battery_connected=$(cat $axp_dir/battery/connected)
-        if [[ "$status_battery_connected" == "1" ]]; then
-                status_battery_charging=$(cat $axp_dir/charger/charging)
-                status_ac_connect=$(cat $axp_dir/ac/connected)
-                battery_percent=$(cat $axp_dir/battery/capacity)
-                # dispay charging / percentage
-				if [[ "$status_ac_connect" == "1" && "$battery_percent" -lt "100" ]]; then
-					status_battery_text=" charging"
-                elif [[ "$status_ac_connect" == "1" && "$battery_percent" -eq "100" ]]; then
-					status_battery_text=" charged"
-                else
-					status_battery_text=" discharging"
-                fi
-        fi
-fi
-
-# legacy kernel
-axp_dir="/sys/class/power_supply"
-if [[ -e "$axp_dir" && -e "$axp_dir/battery" ]]; then
-	if [[ (("$(cat $axp_dir/battery/voltage_now)" -gt "5" )) ]]; then
-		status_battery_text=" "$(cat $axp_dir/battery/status | awk '{print tolower($0)}')
-		battery_percent=$(cat $axp_dir/battery/capacity)
+function getboardtemp() {
+	# read temperature from different locations and create a symlink to a unique location
+	[ -d /etc/armbianmonitor/datasources ] || mkdir -p -m775 /etc/armbianmonitor/datasources
+	
+	# deal with the exceptions first: legacy Allwinner variants (if SoC is not available take PMU)
+	for tempsource in /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034 /sys/devices/platform/a20-tp-hwmon ; do
+		if [ -d ${tempsource} ]; then
+			board_temp=$(awk '{printf("%d",$1/1000)}' ${tempsource}/temp1_input)
+			ln -fs ${tempsource}/temp1_input /etc/armbianmonitor/datasources/soctemp
+		fi
+	done
+	
+	# S500 and RK3288 legacy kernels
+	for tempsource in /sys/devices/virtual/thermal/thermal_zone1 /sys/class/thermal/thermal_zone2 ; do
+		if [ -d ${tempsource} ]; then
+			board_temp=$(awk '{printf("%d",$1/1000)}' ${tempsource}/temp)
+			ln -fs ${tempsource}/temp /etc/armbianmonitor/datasources/soctemp
+			return # important since sun8i below
+		fi
+	done
+	
+	# where it should be
+	if [[ -d "/sys/devices/virtual/thermal/thermal_zone0/" ]]; then
+		ln -fs /sys/devices/virtual/thermal/thermal_zone0/temp /etc/armbianmonitor/datasources/soctemp
+		read TempType </sys/devices/virtual/thermal/thermal_zone0/type
+		case ${TempType} in
+			cpu_thermal) # mainline kernel
+				board_temp=$(awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp)
+				;;
+			armada_thermal) # Marvell Armada, reduce reported temp by 30 degress for whatever reasons
+				board_temp=$(( $(awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp) - 30 ))
+				;;
+			soc_thermal) # pine64 legacy
+				read board_temp </sys/devices/virtual/thermal/thermal_zone0/temp
+				;;
+		esac
+	elif [[ -d "/sys/class/thermal/thermal_zone1" ]]; then
+		# sun8i legacy kernel
+		read board_temp </sys/class/thermal/thermal_zone1/temp
+		ln -fs /sys/devices/virtual/thermal/thermal_zone1/temp /etc/armbianmonitor/datasources/soctemp
 	fi
-fi
+} # getboardtemp
 
-load=$(cat /proc/loadavg | awk '{print $1}')
-# workaround that it works on old and new
-LANG=en_US.UTF-8 free -w &> /dev/null
-if [[ $? -ne 0 ]]; then
-	memory_usage=$(LANG=en_US.UTF-8 free | awk '/Mem/ {printf("%.0f",(($2-($4+$6+$7))/$2) * 100)}')
-else
-	memory_usage=$(LANG=en_US.UTF-8 free -w | awk '/Mem/ {printf("%.0f",(($2-($4+$6+$7))/$2) * 100)}')
-fi
-memory_total=$(LANG=en_US.UTF-8 free -m |  awk '/Mem/ {print $(2)}')
-users=$(users | wc -w)
-swap_usage=$(LANG=en_US.UTF-8 free -m | ( awk '/Swap/ { printf("%3.0f", $3/$2*100) }' 2>/dev/null || echo 0 ) | sed 's/ //g')
-swap_usage=${swap_usage//[!0-9]/} # to remove alfanumeric if swap not used
-swap_total=$(LANG=en_US.UTF-8 free -m |  awk '/Swap/ {print $(2)}')
-ip_address=$(hostname -I | tr " " "\n" | grep -E "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$" | tail -n2 | tr "\n" " ")
-ip_address=$(echo $ip_address | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | sed 's/ /,/g')
-root_usage=$(df -h / | awk '/\// {print $(NF-1)}' | sed 's/%//g')
-root_total=$(df -h / | awk '/\// {print $(NF-4)}')
-if [ -e "$storage" ]; then
-	storage_usage=$(df -h $storage | grep $storage | awk '/\// {print $(NF-1)}' | sed 's/%//g')
-	storage_total=$(df -h $storage | grep $storage | awk '/\// {print $(NF-4)}')
+function batteryinfo() {
+	# Battery info for Allwinner
+	mainline_dir="/sys/power/axp_pmu"
+	legacy_dir="/sys/class/power_supply"
+	if [[ -e "$mainline_dir" ]]; then
+	        read status_battery_connected < $mainline_dir/battery/connected
+	        if [[ "$status_battery_connected" == "1" ]]; then
+	                read status_battery_charging < $mainline_dir/charger/charging
+	                read status_ac_connect < $mainline_dir/ac/connected
+	                read battery_percent< $mainline_dir/battery/capacity
+	                # dispay charging / percentage
+					if [[ "$status_ac_connect" == "1" && "$battery_percent" -lt "100" ]]; then
+						status_battery_text=" charging"
+	                elif [[ "$status_ac_connect" == "1" && "$battery_percent" -eq "100" ]]; then
+						status_battery_text=" charged"
+	                else
+						status_battery_text=" discharging"
+	                fi
+	        fi
+	elif [[ -e "$legacy_dir/battery" ]]; then
+		if [[ (("$(read < $legacy_dir/battery/voltage_now)" -gt "5" )) ]]; then
+			status_battery_text=" "$(awk '{print tolower($0)}' < $legacy_dir/battery/status)
+			read battery_percent <$legacy_dir/battery/capacity
+		fi
+	fi
+} # batteryinfo
+
+function ambienttemp() {
+	# read ambient temperature from USB device if available
+	amb_temp=$(temper -c 2>/dev/null)
+	case ${amb_temp} in
+		*"find the USB device"*)
+			amb_temp=""
+			;;
+		*)
+			amb_temp=$(awk '{print $NF}' <<<$amb_temp |  sed 's/C//g')
+			amb_temp=$(echo "scale=1;${amb_temp}/1" | grep -oE "\-?[[:digit:]]+.[[:digit:]]")
+	esac
+} # ambienttemp
+
+# query thermal sensors and battery info if available
+ambienttemp
+batteryinfo
+getboardtemp
+
+# get uptime, logged in users and load in one take
+UptimeString=$(uptime | tr -d ',')
+time=$(awk -F" " '{print $3" "$4}' <<<"${UptimeString}")
+load="$(awk -F"average: " '{print $2}'<<<"${UptimeString}")"
+users="$(awk -F" user" '{print $1}'<<<"${UptimeString}")"
+case ${time} in
+	1:*) # 1-2 hours
+		time=$(awk -F" " '{print $3" hour"}' <<<"${UptimeString}")
+		;;
+	*:*) # 2-24 hours
+		time=$(awk -F" " '{print $3" hours"}' <<<"${UptimeString}")
+		;;
+esac
+
+# memory and swap
+mem_info=$(LANG=en_US.UTF-8 free -w 2>/dev/null | grep "^Mem" || LANG=en_US.UTF-8 free | grep "^Mem")
+memory_usage=$(awk '{printf("%.0f",(($2-($4+$6+$7))/$2) * 100)}' <<<${mem_info})
+memory_total=$(awk '{printf("%d",$2/1024)}' <<<${mem_info})
+swap_info=$(LANG=en_US.UTF-8 free -m | grep "^Swap")
+swap_usage=$( (awk '/Swap/ { printf("%3.0f", $3/$2*100) }' <<<${swap_info} 2>/dev/null || echo 0) | tr -c -d '[:digit:]')
+swap_total=$(awk '{print $(2)}' <<<${swap_info})
+
+# Up to 2 IPv4 address(es) comma separated
+ip_address=$(hostname -I | tr " " "\n" | grep -E "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$" | tail -n2 | sed ':a;N;$!ba;s/\n/,/g')
+
+# storage info
+RootInfo=$(df -h /)
+root_usage=$(awk '/\// {print $(NF-1)}' <<<${RootInfo} | sed 's/%//g')
+root_total=$(awk '/\// {print $(NF-4)}' <<<${RootInfo})
+StorageInfo=$(df -h $storage | grep $storage)
+if [ -n "${StorageInfo}" ]; then
+	storage_usage=$(awk '/\// {print $(NF-1)}' <<<${StorageInfo} | sed 's/%//g')
+	storage_total=$(awk '/\// {print $(NF-4)}' <<<${StorageInfo})
 	[[ "$storage" == */sd* ]] && hdd_temp=$(hddtemp -u C -nq $storage)
 fi
 
-# read temperature from different locations and create a symlink to a unique location
-[ -d /etc/armbianmonitor/datasources ] || mkdir -p -m775 /etc/armbianmonitor/datasources
-
-# deal with the exceptions first: legacy Allwinner variants (if SoC is not available take PMU)
-for tempsource in /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034 /sys/devices/platform/a20-tp-hwmon ; do
-	if [ -d ${tempsource} ]; then
-		board_temp=$(awk '{printf("%d",$1/1000)}' ${tempsource}/temp1_input)
-		ln -fs ${tempsource}/temp1_input /etc/armbianmonitor/datasources/soctemp
-	fi
-done
-
-# S500 and RK3288 legacy kernels
-for tempsource in /sys/devices/virtual/thermal/thermal_zone1 /sys/class/thermal/thermal_zone2 ; do
-	if [ -d ${tempsource} ]; then
-		board_temp=$(awk '{printf("%d",$1/1000)}' ${tempsource}/temp)
-		ln -fs ${tempsource}/temp /etc/armbianmonitor/datasources/soctemp
-	fi
-done
-
-# where it should be
-if [[ -d "/sys/devices/virtual/thermal/thermal_zone0/" ]]; then
-	ln -fs /sys/devices/virtual/thermal/thermal_zone0/temp /etc/armbianmonitor/datasources/soctemp
-	case $(cat /sys/devices/virtual/thermal/thermal_zone0/type) in
-		cpu_thermal|armada_thermal) # mainline or Armada LTS kernel
-			board_temp=$(awk '{printf("%d",$1/1000)}' </sys/devices/virtual/thermal/thermal_zone0/temp)
-			;;
-		soc_thermal) # pine64 legacy
-			read board_temp </sys/devices/virtual/thermal/thermal_zone0/temp
-			;;
-	esac
-fi
-
-# H3 based boards, legacy kernel
-source /etc/armbian-release
-if [[ -d "/sys/class/thermal/thermal_zone1" && ${LINUXFAMILY} == "sun8i" ]]; then
-	read board_temp </sys/class/thermal/thermal_zone1/temp
-	ln -fs /sys/devices/virtual/thermal/thermal_zone1/temp /etc/armbianmonitor/datasources/soctemp
-fi
-
-# read ambient temperature from USB device
-if [[ -n $(which temper) && $(dpkg --print-architecture) == armhf ]]; then
-   amb_temp=$(temper -c)
-   if echo $amb_temp | egrep -qv "Couldn't find the USB device"; then
-	  amb_temp=$(echo $amb_temp | awk '{print $NF}' |  sed 's/C//g')
-	  amb_temp=$(echo "scale=1;${amb_temp}/1" | grep -oE "\-?[[:digit:]]+.[[:digit:]]")
-  else
-      amb_temp=""
-  fi
-fi
-
-display "System load" "$load" "1" "0" "" ""
-displaytime
-display "Local users" "$users" "3" "2" ""
+display "System load" "${load%% *}" "1" "0" "" ""
+printf "Up time:       "
+printf "\x1B[92m%s\x1B[0m\t\t" "$time"
+display "Local users" "${users##* }" "3" "2" ""
 echo "" # fixed newline
 display "Memory usage" "$memory_usage" "70" "0" " %" " of $memory_total""Mb"
 display "Swap usage" "$swap_usage" "10" "0" " %" " of $swap_total""Mb"
@@ -160,8 +167,6 @@ printf "IP:            "
 printf "\x1B[92m%s\x1B[0m" "$ip_address"
 echo "" # fixed newline
 a=0;b=0;c=0
-# adjustment for marvell armada. Readings were done on heatsink
-[[ "$(cat /proc/cpuinfo | grep Marvell)" != "" && $board_temp -gt "60" ]] && board_temp=$(($board_temp-30))
 display "CPU temp" "$board_temp" "45" "0" "°C" "" ; a=$?
 display "HDD temp" "$hdd_temp" "45" "0" "°C" "" ; b=$?
 display "Ambient temp" "$amb_temp" "40" "0" "°C" "" ; c=$?
