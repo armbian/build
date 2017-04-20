@@ -104,7 +104,7 @@ create_armbian()
 
 	# stop running services
 	StopRunningServices "nfs-|smbd|nmbd|winbind|ftpd|netatalk|monit|cron|webmin|rrdcached" >> $logfile
-	StopRunningServices "log2ram|postgres|mariadb|mysql|postfix|mail|nginx|apache|snmpd" >> $logfile
+	StopRunningServices "log2ram|folder2ram|postgres|mariadb|mysql|postfix|mail|nginx|apache|snmpd" >> $logfile
 	echo -e "\n" >> $logfile
 	logfile="/mnt/rootfs/var/log/nand-sata-install.log"
 
