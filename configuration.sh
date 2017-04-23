@@ -57,8 +57,8 @@ ARCH=armhf
 KERNEL_IMAGE_TYPE=zImage
 SERIALCON=ttyS0
 
-# WARNING: This option is deprecated
-BOOTSIZE=0
+# single ext4 partition is the default and preferred configuration
+BOOTFS_TYPE=''
 
 # set unique mounting directory
 SDCARD="sdcard-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
@@ -191,6 +191,7 @@ Version: $(cd $SRC/lib; git rev-parse @)
 Build target:
 Board: $BOARD
 Branch: $BRANCH
+Desktop: $BUILD_DESKTOP
 
 Kernel configuration:
 Repository: $KERNELSOURCE
@@ -200,8 +201,13 @@ Config file: $LINUXCONFIG
 U-boot configuration:
 Repository: $BOOTSOURCE
 Branch: $BOOTBRANCH
+Config file: $BOOTCONFIG
+
+Partitioning configuration:
+Root partition type: $ROOTFS_TYPE
+Boot partition type: ${BOOTFS_TYPE:-(none)}
+User provided boot partition size: ${BOOTSIZE:-0}
 Offset: $OFFSET
-Size: $BOOTSIZE
 
 CPU configuration:
 $CPUMIN - $CPUMAX with $GOVERNOR
