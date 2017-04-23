@@ -471,13 +471,16 @@ create_image()
 	losetup -d $LOOP
 	rm -rf --one-file-system $CACHEDIR/$DESTIMG $CACHEDIR/$MOUNT
 	mkdir -p $CACHEDIR/$DESTIMG
-	cp $CACHEDIR/$SDCARD/etc/armbian.txt $CACHEDIR/$DESTIMG
-	mv $CACHEDIR/${SDCARD}.raw $CACHEDIR/$DESTIMG/${version}.img
+	# calculate CRC32 for OS image verification with Etcher
+	crc32checksum=$(crc32 $CACHEDIR/${SDCARD}.raw)
+	cp $CACHEDIR/$SDCARD/etc/armbian.txt $CACHEDIR/$DESTIMG/
+	mv $CACHEDIR/${SDCARD}.raw $CACHEDIR/$DESTIMG/${version}_${crc32checksum}.img
 	if [[ $BUILD_ALL != yes ]]; then
-		mv $CACHEDIR/$DESTIMG/${version}.img $DEST/images/${version}.img
+		mv $CACHEDIR/$DESTIMG/${version}_${crc32checksum}.img $DEST/images/
 		rm -rf $CACHEDIR/$DESTIMG
 	fi
-	display_alert "Done building" "$DEST/images/${version}.img" "info"
+	
+	display_alert "Done building" "$DEST/images/${version}_${crc32checksum}.img" "info"
 
 } #############################################################################
 
