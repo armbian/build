@@ -253,12 +253,8 @@ prepare_partitions()
 	display_alert "Preparing image file for rootfs" "$BOARD $RELEASE" "info"
 
 	# possible partition combinations
-	# ext4 root only (BOOTSIZE == 0 && ROOTFS_TYPE == ext4)
-	# ext4 boot + non-ext4 local root (BOOTSIZE == 0; ROOTFS_TYPE != ext4 or nfs)
-	# fat32 boot + ext4 root (BOOTSIZE > 0 && ROOTFS_TYPE == ext4)
-	# fat32 boot + non-ext4 local root (BOOTSIZE > 0; ROOTFS_TYPE != ext4 or nfs)
-	# ext4 boot + NFS root (BOOTSIZE == 0; ROOTFS_TYPE == nfs)
-	# fat32 boot + NFS root (BOOTSIZE > 0; ROOTFS_TYPE == nfs)
+	# /boot: none, ext4, ext2, fat (BOOTFS_TYPE)
+	# root: ext4, btrfs, f2fs, nfs (ROOTFS_TYPE)
 
 	# declare makes local variables by default if used inside a function
 	# NOTE: mountopts string should always start with comma if not empty
@@ -268,6 +264,7 @@ prepare_partitions()
 	declare -A parttype mkopts mkfs mountopts
 
 	parttype[ext4]=ext4
+	parttype[ext2]=ext2
 	parttype[fat]=fat16
 	parttype[f2fs]=ext4 # not a copy-paste error
 	parttype[btrfs]=btrfs
@@ -282,21 +279,48 @@ prepare_partitions()
 	fi
 
 	mkopts[fat]='-n BOOT'
+	mkopts[ext2]='-q'
 	# mkopts[f2fs] is empty
 	# mkopts[btrfs] is empty
 	# mkopts[nfs] is empty
 
 	mkfs[ext4]=ext4
+	mkfs[ext2]=ext2
 	mkfs[fat]=vfat
 	mkfs[f2fs]=f2fs
 	mkfs[btrfs]=btrfs
 	# mkfs[nfs] is empty
 
 	mountopts[ext4]=',commit=600,errors=remount-ro'
+	# mountopts[ext2] is empty
 	# mountopts[fat] is empty
 	# mountopts[f2fs] is empty
 	# mountopts[btrfs] is empty
 	# mountopts[nfs] is empty
+
+	# stage: determine partition configuration
+	if [[ -n $BOOTFS_TYPE ]]; then
+		# 2 partition setup with forced /boot type
+		local bootfs=$BOOTFS_TYPE
+		local bootpart=1
+		local rootpart=2
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB
+	elif [[ $ROOTFS_TYPE != ext4 && $ROOTFS_TYPE != nfs ]]; then
+		# 2 partition setup for non-ext4 local root
+		local bootfs=ext4
+		local bootpart=1
+		local rootpart=2
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB
+	elif [[ $ROOTFS_TYPE == nfs ]]; then
+		# single partition ext4 /boot, no root
+		local bootfs=ext4
+		local bootpart=1
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB, For cleanup processing only
+	else
+		# single partition ext4 root
+		local rootpart=1
+		BOOTSIZE=0
+	fi
 
 	# stage: calculate rootfs size
 	local rootfs_size=$(du -sm $CACHEDIR/$SDCARD/ | cut -f1) # MiB
@@ -318,28 +342,6 @@ prepare_partitions()
 	# stage: create blank image
 	display_alert "Creating blank image for rootfs" "$sdsize MiB" "info"
 	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=$CACHEDIR/${SDCARD}.raw
-
-	# stage: determine partition configuration
-	if [[ $BOOTSIZE != 0 ]]; then
-		# fat32 /boot + ext4 or other root, deprecated
-		local bootfs=fat
-		local bootpart=1
-		local rootpart=2
-	elif [[ $ROOTFS_TYPE != ext4 && $ROOTFS_TYPE != nfs ]]; then
-		# ext4 /boot + non-ext4 root
-		BOOTSIZE=64 # MiB
-		local bootfs=ext4
-		local bootpart=1
-		local rootpart=2
-	elif [[ $ROOTFS_TYPE == nfs ]]; then
-		# ext4 /boot, no root
-		BOOTSIZE=64 # For cleanup processing only
-		local bootfs=ext4
-		local bootpart=1
-	else
-		# ext4 root
-		local rootpart=1
-	fi
 
 	# stage: calculate boot partition size
 	local bootstart=$(($OFFSET * 2048))

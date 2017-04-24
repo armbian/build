@@ -23,7 +23,6 @@ collect_information() {
 	[ "X${HARDWARE}" = "XAllwinner" ] && HARDWARE=$(awk '/Hardware/ {print $4}' </proc/cpuinfo)
 	[ "X${HARDWARE}" = "XSAMSUNG" ] && HARDWARE=$(awk '/Hardware/ {print $4}' </proc/cpuinfo)
 	KERNELID=$(uname -r)
-
 } # collect_information
 
 set_io_scheduler() {
@@ -45,30 +44,34 @@ prepare_temp_monitoring() {
 	# still an ugly hack but better do it just once at startup instead of every login
 	[ -d /etc/armbianmonitor/datasources ] || mkdir -p -m775 /etc/armbianmonitor/datasources
 
-	# AXP209 PMIC check
+	# PMIC check
 	if [[ -f /sys/power/axp_pmu/pmu/temp ]]; then
 		ln -fs /sys/power/axp_pmu/pmu/temp /etc/armbianmonitor/datasources/pmictemp
 	elif [[ -f /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034//temp1_input ]]; then
 		ln -fs /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034/temp1_input \
 			/etc/armbianmonitor/datasources/pmictemp
+	elif [[ -f /sys/devices/b0170000.i2c/i2c-0/0-0065/atc2603c-hwmon.0/ic_temperature ]]; then
+		ln -fs /sys/devices/b0170000.i2c/i2c-0/0-0065/atc2603c-hwmon.0/ic_temperature \
+			/etc/armbianmonitor/datasources/pmictemp
 	fi
 
-	# SoC temp: check standard location first
-	if [[ -d "/sys/devices/virtual/thermal/thermal_zone0" ]]; then
-		# mainline kernel, Armada 38x, sun50i legacy
-		ln -fs /sys/devices/virtual/thermal/thermal_zone0/temp /etc/armbianmonitor/datasources/soctemp
-	elif [[ -d "/sys/class/thermal/thermal_zone1" ]]; then
-		# sun8i legacy
-		ln -fs /sys/class/thermal/thermal_zone1/temp /etc/armbianmonitor/datasources/soctemp
-	elif [[ -d "/sys/devices/virtual/thermal/thermal_zone1" ]]; then
-		# S500
-		ln -fs /sys/devices/virtual/thermal/thermal_zone1/temp /etc/armbianmonitor/datasources/soctemp
-	elif [[ -d "/sys/class/thermal/thermal_zone2" ]]; then
-		# RK3288 legacy
-		ln -fs /sys/class/thermal/thermal_zone2/temp /etc/armbianmonitor/datasources/soctemp
-	elif [[ -d "/sys/devices/platform/a20-tp-hwmon" ]]; then
+	# SoC temp: check sun7i legacy exception first, then standard path(s)
+	if [[ -d "/sys/devices/platform/a20-tp-hwmon" ]]; then
 		# sun7i legacy
 		ln -fs /sys/devices/platform/a20-tp-hwmon/temp1_input /etc/armbianmonitor/datasources/soctemp
+	else
+		case ${LINUXFAMILY} in
+			s500|rockchip)
+				# S500 legacy -- thermal_zone0 is battery
+				# RK3288 legacy -- thermal_zone2 is gpu_thermal
+				# TODO: deal correctly with RK3288 mainline (probably based on $KERNELID)
+				ln -fs /sys/devices/virtual/thermal/thermal_zone1/temp /etc/armbianmonitor/datasources/soctemp
+				;;
+			*)
+				# mainline kernel, Armada 38x, sun50i/sun8i legacy
+				ln -fs /sys/devices/virtual/thermal/thermal_zone0/temp /etc/armbianmonitor/datasources/soctemp
+				;;
+		esac
 	fi
 } # prepare_temp_monitoring
 
@@ -87,6 +90,7 @@ prepare_board() {
 			echo 2 >/proc/irq/$(awk -F":" "/mmc0/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -1)/smp_affinity 2>/dev/null
 			echo 4 >/proc/irq/$(awk -F":" "/mmc1/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -1)/smp_affinity 2>/dev/null
 			echo 8 >/proc/irq/$(awk -F":" "/ethernet/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -1)/smp_affinity 2>/dev/null
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
 			;;
 		gs705a) # Roseapple Pi/LeMaker Guitar: send USB IRQs to cpu1/cpu2, DMA0 to cpu2 and Ethernet + SD card to cpu3
 			echo 2 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
@@ -101,13 +105,21 @@ prepare_board() {
 				echo 2 >/proc/irq/$i/smp_affinity
 			done
 			;;
+		ODROIDC) # ODROID-C0/C1/C1+
+			echo 1 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			for i in $(awk -F':' '/Mali_/{print $1}' /proc/interrupts); do echo 1 >/proc/irq/${i}/smp_affinity_list; done
+			echo 2 >/proc/irq/$(awk -F":" "/usb2/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 3 >/proc/irq/$(awk -F":" "/eth0/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			;;
 		ODROID-C2) # send eth0 to cpu3, mmc/usb2 to cpu2 and usb1 to cpu1
 			# Basics: http://forum.odroid.com/viewtopic.php?f=115&t=8121#p65777
-			echo 3 >/proc/irq/$(awk -F":" "/eth0/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
 			for i in $(awk -F':' '/sd_emmc|usb2/{print $1}' /proc/interrupts); do
-				echo 2 >/proc/irq/$i/smp_affinity_list
+				echo 1 >/proc/irq/$i/smp_affinity_list
 			done
-			echo 1 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 2 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 3 >/proc/irq/$(awk -F":" "/eth0/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
 			;;
 		ODROID-XU3|EXYNOS) # ODROID XU3/XU4
 			echo 2 >/proc/irq/$(awk -F":" "/usb2/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
@@ -126,13 +138,14 @@ prepare_board() {
 			:
 			;;
 		sun6i) # Banana Pi M2: process eth0 on cpu3, SDIO on cpu2, USB on cpu1
-			echo 8 >/proc/irq/$(awk -F":" '/eth0/ {print $1}' </proc/interrupts | sed 's/\ //g')/smp_affinity
-			for i in $(awk -F':' '/sunxi-mmc/{print $1}' /proc/interrupts); do
-				echo 4 >/proc/irq/$i/smp_affinity
-			done
 			for i in $(awk -F':' '/hcd:usb/{print $1}' /proc/interrupts); do
 				echo 2 >/proc/irq/$i/smp_affinity
 			done
+			for i in $(awk -F':' '/sunxi-mmc/{print $1}' /proc/interrupts); do
+				echo 4 >/proc/irq/$i/smp_affinity
+			done
+			echo 8 >/proc/irq/$(awk -F":" '/eth0/ {print $1}' </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
 			;;
 		sun7i) # try to redistribute eth0 irq to dedicated core
 			echo 2 >/proc/irq/$(awk -F":" '/eth0/ {print $1}' </proc/interrupts | sed 's/\ //g')/smp_affinity 2>/dev/null
@@ -164,8 +177,9 @@ prepare_board() {
 				"Orange Pi+"|"Orange Pi+ 2"|"Orange Pi+ 2E"|"Banana Pi M2+"|"NanoPi M1 Plus")
 					# Send GBit Ethernet IRQs to cpu3
 					echo 8 >/proc/irq/$(awk -F":" "/${GbE}/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+					echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
 					;;
-				"NanoPi M1"|"Orange Pi PC Plus"|"Orange Pi PC +"|"Orange Pi PC"|"NanoPi Neo")
+				"NanoPi M1"|"Orange Pi PC Plus"|"Orange Pi PC +"|"Orange Pi PC"|"NanoPi Neo"|"Orange Pi Zero")
 					# Send 3rd USB port's IRQs to cpu3
 					echo 8 >/proc/irq/$(awk -F":" "/${USB3}/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
 					;;
@@ -189,13 +203,20 @@ prepare_board() {
 					;;
 			esac
 			;;
-		sun50iw1p1) # A64/H64 based boards like Pine64
+		sun50i*) # A64/H64/H5 based boards like Pine64, OPi PC 2, NanoPi NEO 2
 			# Send IRQs for the lower real USB port (usb2) to cpu2 and for the upper (OTG/usb1) to cpu1
 			echo 2 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
 			echo 4 >/proc/irq/$(awk -F":" "/usb2/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
 			echo 8 >/proc/irq/$(awk -F":" "/sunxi-mmc/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -n1)/smp_affinity
 			echo 8 >/proc/irq/$(awk -F":" "/eth/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -n1)/smp_affinity
 			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			;;
+		*)
+			case ${BOARD} in
+				espressobin) # try to redistribute eth0 irq to dedicated core
+					echo 2 >/proc/irq/$(awk -F":" '/eth0/ {print $1}' </proc/interrupts | sed 's/\ //g')/smp_affinity 2>/dev/null
+					;;
+			esac
 			;;
 	esac
 } # prepare_board
@@ -329,4 +350,3 @@ case $1 in
 		sync
 		;;
 esac
-

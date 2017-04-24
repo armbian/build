@@ -57,8 +57,8 @@ ARCH=armhf
 KERNEL_IMAGE_TYPE=zImage
 SERIALCON=ttyS0
 
-# WARNING: This option is deprecated
-BOOTSIZE=0
+# single ext4 partition is the default and preferred configuration
+BOOTFS_TYPE=''
 
 # set unique mounting directory
 SDCARD="sdcard-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
@@ -130,7 +130,7 @@ PACKAGE_LIST="$PACKAGE_LIST automake libwrap0-dev libssl-dev libusb-dev libusb-1
 PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools dosfstools hddtemp iotop iozone3 stress sysbench screen ntfs-3g vim pciutils \
 	evtest htop pv lsof apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl aptitude dnsutils f3 haveged \
 	hdparm rfkill vlan sysstat bluez bluez-tools bash-completion hostapd git ethtool network-manager unzip ifenslave lirc \
-	libpam-systemd iperf3 software-properties-common libnss-myhostname f2fs-tools"
+	libpam-systemd iperf3 software-properties-common libnss-myhostname f2fs-tools avahi-autoipd"
 
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage thunar-volman galculator \
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu bluetooth \
@@ -191,6 +191,7 @@ Version: $(cd $SRC/lib; git rev-parse @)
 Build target:
 Board: $BOARD
 Branch: $BRANCH
+Desktop: $BUILD_DESKTOP
 
 Kernel configuration:
 Repository: $KERNELSOURCE
@@ -200,8 +201,13 @@ Config file: $LINUXCONFIG
 U-boot configuration:
 Repository: $BOOTSOURCE
 Branch: $BOOTBRANCH
+Config file: $BOOTCONFIG
+
+Partitioning configuration:
+Root partition type: $ROOTFS_TYPE
+Boot partition type: ${BOOTFS_TYPE:-(none)}
+User provided boot partition size: ${BOOTSIZE:-0}
 Offset: $OFFSET
-Size: $BOOTSIZE
 
 CPU configuration:
 $CPUMIN - $CPUMAX with $GOVERNOR
