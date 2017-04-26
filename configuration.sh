@@ -58,7 +58,7 @@ KERNEL_IMAGE_TYPE=zImage
 SERIALCON=ttyS0
 
 # single ext4 partition is the default and preferred configuration
-BOOTFS_TYPE=''
+#BOOTFS_TYPE=''
 
 # set unique mounting directory
 SDCARD="sdcard-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
