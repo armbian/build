@@ -398,7 +398,7 @@ addtorepo()
 		# adding main
 		if find $POT -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "main" "ext"
-			aptly repo add -force-replace=$replace -remove-files -config=config/aptly.conf $release $POT/*.deb
+			aptly repo add -force-replace=$replace -config=config/aptly.conf $release $POT/*.deb
 		else
 			display_alert "Not adding $release" "main" "wrn"
 		fi
@@ -406,7 +406,7 @@ addtorepo()
 		# adding main distribution packages
 		if find ${POT}${release} -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "main" "ext"
-			aptly repo add -force-replace=$replace -remove-files -config=config/aptly.conf $release ${POT}${release}/*.deb
+			aptly repo add -force-replace=$replace -config=config/aptly.conf $release ${POT}${release}/*.deb
 		else
 			display_alert "Not adding $release" "main" "wrn"
 		fi
@@ -414,7 +414,7 @@ addtorepo()
 		# adding utils
 		if find ${POT}extra/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
-			aptly repo add -config=config/aptly.conf -remove-files "utils" ${POT}extra/utils/*.deb
+			aptly repo add -config=config/aptly.conf "utils" ${POT}extra/utils/*.deb
 		else
 			display_alert "Not adding $release" "utils" "wrn"
 		fi
@@ -422,7 +422,7 @@ addtorepo()
 		# adding desktop
 		if find ${POT}extra/${release}-desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "desktop" "ext"
-			aptly repo add -force-replace=$replace -remove-files -config=config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
+			aptly repo add -force-replace=$replace -config=config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
 		else
 			display_alert "Not adding $release" "desktop" "wrn"
 		fi
