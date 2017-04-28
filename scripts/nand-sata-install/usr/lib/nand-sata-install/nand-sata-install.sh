@@ -43,7 +43,7 @@ declare -A mkopts mountopts
 mkopts[ext2]='-qF'
 mkopts[ext3]='-qF'
 mkopts[ext4]='-qF'
-mkopts[btrfs]='-qf'
+mkopts[btrfs]='-f'
 
 mountopts[ext2]='defaults,noatime,nodiratime,commit=600,errors=remount-ro	0	1'
 mountopts[ext3]='defaults,noatime,nodiratime,commit=600,errors=remount-ro	0	1'
@@ -60,7 +60,7 @@ create_armbian()
 		[[ -n $2 ]] && mount -o compress-force=zlib $2 /mnt/rootfs
 	elif [[ $eMMCFilesystemChoosen == "btrfs" && $FilesystemChoosen != "btrfs" ]]; then
 		[[ -n $1 ]] && mount ${1::-1}"1" /mnt/bootfs
-		[[ -n $2 ]] && mount $2 /mnt/rootfs
+		[[ -n $2 ]] && mount -o compress-force=zlib $2 /mnt/rootfs
 	else
 		[[ -n $2 ]] && mount $2 /mnt/rootfs
 		[[ -n $1 ]] && mount $1 /mnt/bootfs
