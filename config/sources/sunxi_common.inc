@@ -7,7 +7,7 @@ BOOTPATCHDIR="u-boot-sunxi"
 
 UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
 
-UBOOT_ALT_GCC='> 6.1'
+UBOOT_USE_GCC='> 6.0'
 UBOOT_FW_ENV='0x88000,0x20000' # /etc/fw_env.config offset and env size
 
 HAS_UUID_SUPPORT=yes
@@ -25,13 +25,13 @@ case $BRANCH in
 
 	GOVERNOR=ondemand
 
-	KERNEL_ALT_GCC='> 6.1'
+	KERNEL_USE_GCC='> 6.0'
 	;;
 
 	dev)
 	GOVERNOR=ondemand
 
-	KERNEL_ALT_GCC='> 6.1'
+	KERNEL_USE_GCC='> 6.0'
 	;;
 esac
 
