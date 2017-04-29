@@ -5,7 +5,6 @@
 
 # default values
 setenv verbosity "1"
-setenv init_modem "yes"
 
 if test "${boot_device}" = "mmc"; then
 
@@ -21,14 +20,15 @@ if test "${boot_device}" = "mmc"; then
 	ext2load mmc 0:1 ${initrd_addr} uInitrd
 	ext2load mmc 0:1 ${kernel_addr} zImage
 	ext2load mmc 0:1 ${modem_addr} modem.bin
+	ext2load mmc 0:1 ${factorydata_addr} factorydata.img
 else
 	echo "NAND boot is not implemented yet"
 fi
 
-if test "${init_modem}" = "yes"; then
-	mdcom_loadm ${modem_addr}
-	mdcom_check 1
-fi
+# modem init is mandatory according to u-boot sources
+mdcom_cal_loadm ${factorydata_addr}
+mdcom_loadm ${modem_addr}
+mdcom_check 1
 
 bootz ${kernel_addr} ${initrd_addr}
 
