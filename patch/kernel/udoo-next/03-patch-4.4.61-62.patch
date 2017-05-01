@@ -1,0 +1,839 @@
+diff --git a/Makefile b/Makefile
+index ef5045b8201d..0309acc34472 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 61
++SUBLEVEL = 62
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/mips/Kconfig b/arch/mips/Kconfig
+index 75bfca69e418..d5cfa937d622 100644
+--- a/arch/mips/Kconfig
++++ b/arch/mips/Kconfig
+@@ -9,6 +9,7 @@ config MIPS
+ 	select HAVE_CONTEXT_TRACKING
+ 	select HAVE_GENERIC_DMA_COHERENT
+ 	select HAVE_IDE
++	select HAVE_IRQ_EXIT_ON_IRQ_STACK
+ 	select HAVE_OPROFILE
+ 	select HAVE_PERF_EVENTS
+ 	select PERF_USE_VMALLOC
+diff --git a/arch/mips/include/asm/irq.h b/arch/mips/include/asm/irq.h
+index 15e0fecbc300..ebb9efb02502 100644
+--- a/arch/mips/include/asm/irq.h
++++ b/arch/mips/include/asm/irq.h
+@@ -17,6 +17,18 @@
+ 
+ #include <irq.h>
+ 
++#define IRQ_STACK_SIZE			THREAD_SIZE
++
++extern void *irq_stack[NR_CPUS];
++
++static inline bool on_irq_stack(int cpu, unsigned long sp)
++{
++	unsigned long low = (unsigned long)irq_stack[cpu];
++	unsigned long high = low + IRQ_STACK_SIZE;
++
++	return (low <= sp && sp <= high);
++}
++
+ #ifdef CONFIG_I8259
+ static inline int irq_canonicalize(int irq)
+ {
+diff --git a/arch/mips/include/asm/stackframe.h b/arch/mips/include/asm/stackframe.h
+index a71da576883c..5347f130f536 100644
+--- a/arch/mips/include/asm/stackframe.h
++++ b/arch/mips/include/asm/stackframe.h
+@@ -216,12 +216,19 @@
+ 		LONG_S	$25, PT_R25(sp)
+ 		LONG_S	$28, PT_R28(sp)
+ 		LONG_S	$31, PT_R31(sp)
++
++		/* Set thread_info if we're coming from user mode */
++		mfc0	k0, CP0_STATUS
++		sll	k0, 3		/* extract cu0 bit */
++		bltz	k0, 9f
++
+ 		ori	$28, sp, _THREAD_MASK
+ 		xori	$28, _THREAD_MASK
+ #ifdef CONFIG_CPU_CAVIUM_OCTEON
+ 		.set    mips64
+ 		pref    0, 0($28)       /* Prefetch the current pointer */
+ #endif
++9:
+ 		.set	pop
+ 		.endm
+ 
+diff --git a/arch/mips/kernel/asm-offsets.c b/arch/mips/kernel/asm-offsets.c
+index 154e2039ea5e..ec053ce7bb38 100644
+--- a/arch/mips/kernel/asm-offsets.c
++++ b/arch/mips/kernel/asm-offsets.c
+@@ -101,6 +101,7 @@ void output_thread_info_defines(void)
+ 	OFFSET(TI_REGS, thread_info, regs);
+ 	DEFINE(_THREAD_SIZE, THREAD_SIZE);
+ 	DEFINE(_THREAD_MASK, THREAD_MASK);
++	DEFINE(_IRQ_STACK_SIZE, IRQ_STACK_SIZE);
+ 	BLANK();
+ }
+ 
+diff --git a/arch/mips/kernel/genex.S b/arch/mips/kernel/genex.S
+index baa7b6fc0a60..619e30e2c4f0 100644
+--- a/arch/mips/kernel/genex.S
++++ b/arch/mips/kernel/genex.S
+@@ -188,9 +188,44 @@ NESTED(handle_int, PT_SIZE, sp)
+ 
+ 	LONG_L	s0, TI_REGS($28)
+ 	LONG_S	sp, TI_REGS($28)
+-	PTR_LA	ra, ret_from_irq
+-	PTR_LA  v0, plat_irq_dispatch
+-	jr	v0
++
++	/*
++	 * SAVE_ALL ensures we are using a valid kernel stack for the thread.
++	 * Check if we are already using the IRQ stack.
++	 */
++	move	s1, sp # Preserve the sp
++
++	/* Get IRQ stack for this CPU */
++	ASM_CPUID_MFC0	k0, ASM_SMP_CPUID_REG
++#if defined(CONFIG_32BIT) || defined(KBUILD_64BIT_SYM32)
++	lui	k1, %hi(irq_stack)
++#else
++	lui	k1, %highest(irq_stack)
++	daddiu	k1, %higher(irq_stack)
++	dsll	k1, 16
++	daddiu	k1, %hi(irq_stack)
++	dsll	k1, 16
++#endif
++	LONG_SRL	k0, SMP_CPUID_PTRSHIFT
++	LONG_ADDU	k1, k0
++	LONG_L	t0, %lo(irq_stack)(k1)
++
++	# Check if already on IRQ stack
++	PTR_LI	t1, ~(_THREAD_SIZE-1)
++	and	t1, t1, sp
++	beq	t0, t1, 2f
++
++	/* Switch to IRQ stack */
++	li	t1, _IRQ_STACK_SIZE
++	PTR_ADD sp, t0, t1
++
++2:
++	jal	plat_irq_dispatch
++
++	/* Restore sp */
++	move	sp, s1
++
++	j	ret_from_irq
+ #ifdef CONFIG_CPU_MICROMIPS
+ 	nop
+ #endif
+@@ -263,8 +298,44 @@ NESTED(except_vec_vi_handler, 0, sp)
+ 
+ 	LONG_L	s0, TI_REGS($28)
+ 	LONG_S	sp, TI_REGS($28)
+-	PTR_LA	ra, ret_from_irq
+-	jr	v0
++
++	/*
++	 * SAVE_ALL ensures we are using a valid kernel stack for the thread.
++	 * Check if we are already using the IRQ stack.
++	 */
++	move	s1, sp # Preserve the sp
++
++	/* Get IRQ stack for this CPU */
++	ASM_CPUID_MFC0	k0, ASM_SMP_CPUID_REG
++#if defined(CONFIG_32BIT) || defined(KBUILD_64BIT_SYM32)
++	lui	k1, %hi(irq_stack)
++#else
++	lui	k1, %highest(irq_stack)
++	daddiu	k1, %higher(irq_stack)
++	dsll	k1, 16
++	daddiu	k1, %hi(irq_stack)
++	dsll	k1, 16
++#endif
++	LONG_SRL	k0, SMP_CPUID_PTRSHIFT
++	LONG_ADDU	k1, k0
++	LONG_L	t0, %lo(irq_stack)(k1)
++
++	# Check if already on IRQ stack
++	PTR_LI	t1, ~(_THREAD_SIZE-1)
++	and	t1, t1, sp
++	beq	t0, t1, 2f
++
++	/* Switch to IRQ stack */
++	li	t1, _IRQ_STACK_SIZE
++	PTR_ADD sp, t0, t1
++
++2:
++	jalr	v0
++
++	/* Restore sp */
++	move	sp, s1
++
++	j	ret_from_irq
+ 	END(except_vec_vi_handler)
+ 
+ /*
+diff --git a/arch/mips/kernel/irq.c b/arch/mips/kernel/irq.c
+index 8eb5af805964..dc1180a8bfa1 100644
+--- a/arch/mips/kernel/irq.c
++++ b/arch/mips/kernel/irq.c
+@@ -25,6 +25,8 @@
+ #include <linux/atomic.h>
+ #include <asm/uaccess.h>
+ 
++void *irq_stack[NR_CPUS];
++
+ /*
+  * 'what should we do if we get a hw irq event on an illegal vector'.
+  * each architecture has to answer this themselves.
+@@ -55,6 +57,15 @@ void __init init_IRQ(void)
+ 		irq_set_noprobe(i);
+ 
+ 	arch_init_irq();
++
++	for_each_possible_cpu(i) {
++		int irq_pages = IRQ_STACK_SIZE / PAGE_SIZE;
++		void *s = (void *)__get_free_pages(GFP_KERNEL, irq_pages);
++
++		irq_stack[i] = s;
++		pr_debug("CPU%d IRQ stack at 0x%p - 0x%p\n", i,
++			irq_stack[i], irq_stack[i] + IRQ_STACK_SIZE);
++	}
+ }
+ 
+ #ifdef CONFIG_DEBUG_STACKOVERFLOW
+diff --git a/arch/mips/kernel/process.c b/arch/mips/kernel/process.c
+index fc537d1b649d..8c26ecac930d 100644
+--- a/arch/mips/kernel/process.c
++++ b/arch/mips/kernel/process.c
+@@ -32,6 +32,7 @@
+ #include <asm/cpu.h>
+ #include <asm/dsp.h>
+ #include <asm/fpu.h>
++#include <asm/irq.h>
+ #include <asm/msa.h>
+ #include <asm/pgtable.h>
+ #include <asm/mipsregs.h>
+@@ -552,7 +553,19 @@ EXPORT_SYMBOL(unwind_stack_by_address);
+ unsigned long unwind_stack(struct task_struct *task, unsigned long *sp,
+ 			   unsigned long pc, unsigned long *ra)
+ {
+-	unsigned long stack_page = (unsigned long)task_stack_page(task);
++	unsigned long stack_page = 0;
++	int cpu;
++
++	for_each_possible_cpu(cpu) {
++		if (on_irq_stack(cpu, *sp)) {
++			stack_page = (unsigned long)irq_stack[cpu];
++			break;
++		}
++	}
++
++	if (!stack_page)
++		stack_page = (unsigned long)task_stack_page(task);
++
+ 	return unwind_stack_by_address(stack_page, sp, pc, ra);
+ }
+ #endif
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index d8d63c38bf29..0d1af3e44efb 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -1470,7 +1470,7 @@ static struct blk_mq_tags *blk_mq_init_rq_map(struct blk_mq_tag_set *set,
+ 	INIT_LIST_HEAD(&tags->page_list);
+ 
+ 	tags->rqs = kzalloc_node(set->queue_depth * sizeof(struct request *),
+-				 GFP_KERNEL | __GFP_NOWARN | __GFP_NORETRY,
++				 GFP_NOIO | __GFP_NOWARN | __GFP_NORETRY,
+ 				 set->numa_node);
+ 	if (!tags->rqs) {
+ 		blk_mq_free_tags(tags);
+@@ -1496,7 +1496,7 @@ static struct blk_mq_tags *blk_mq_init_rq_map(struct blk_mq_tag_set *set,
+ 
+ 		do {
+ 			page = alloc_pages_node(set->numa_node,
+-				GFP_KERNEL | __GFP_NOWARN | __GFP_NORETRY | __GFP_ZERO,
++				GFP_NOIO | __GFP_NOWARN | __GFP_NORETRY | __GFP_ZERO,
+ 				this_order);
+ 			if (page)
+ 				break;
+@@ -1517,7 +1517,7 @@ static struct blk_mq_tags *blk_mq_init_rq_map(struct blk_mq_tag_set *set,
+ 		 * Allow kmemleak to scan these pages as they contain pointers
+ 		 * to additional allocations like via ops->init_request().
+ 		 */
+-		kmemleak_alloc(p, order_to_size(this_order), 1, GFP_KERNEL);
++		kmemleak_alloc(p, order_to_size(this_order), 1, GFP_NOIO);
+ 		entries_per_page = order_to_size(this_order) / rq_size;
+ 		to_do = min(entries_per_page, set->queue_depth - i);
+ 		left -= to_do * rq_size;
+diff --git a/drivers/crypto/caam/ctrl.c b/drivers/crypto/caam/ctrl.c
+index 69d4a1326fee..53e61459c69f 100644
+--- a/drivers/crypto/caam/ctrl.c
++++ b/drivers/crypto/caam/ctrl.c
+@@ -278,7 +278,8 @@ static int deinstantiate_rng(struct device *ctrldev, int state_handle_mask)
+ 			/* Try to run it through DECO0 */
+ 			ret = run_descriptor_deco0(ctrldev, desc, &status);
+ 
+-			if (ret || status) {
++			if (ret ||
++			    (status && status != JRSTA_SSRC_JUMP_HALT_CC)) {
+ 				dev_err(ctrldev,
+ 					"Failed to deinstantiate RNG4 SH%d\n",
+ 					sh_idx);
+diff --git a/drivers/gpu/drm/i915/i915_drv.h b/drivers/gpu/drm/i915/i915_drv.h
+index fb9f647bb5cd..5044f2257e89 100644
+--- a/drivers/gpu/drm/i915/i915_drv.h
++++ b/drivers/gpu/drm/i915/i915_drv.h
+@@ -1159,7 +1159,7 @@ struct intel_gen6_power_mgmt {
+ 	struct intel_rps_client semaphores, mmioflips;
+ 
+ 	/* manual wa residency calculations */
+-	struct intel_rps_ei up_ei, down_ei;
++	struct intel_rps_ei ei;
+ 
+ 	/*
+ 	 * Protects RPS/RC6 register access and PCU communication.
+diff --git a/drivers/gpu/drm/i915/i915_irq.c b/drivers/gpu/drm/i915/i915_irq.c
+index 0f42a2782afc..b7b0a38acd67 100644
+--- a/drivers/gpu/drm/i915/i915_irq.c
++++ b/drivers/gpu/drm/i915/i915_irq.c
+@@ -994,68 +994,51 @@ static void vlv_c0_read(struct drm_i915_private *dev_priv,
+ 	ei->media_c0 = I915_READ(VLV_MEDIA_C0_COUNT);
+ }
+ 
+-static bool vlv_c0_above(struct drm_i915_private *dev_priv,
+-			 const struct intel_rps_ei *old,
+-			 const struct intel_rps_ei *now,
+-			 int threshold)
+-{
+-	u64 time, c0;
+-	unsigned int mul = 100;
+-
+-	if (old->cz_clock == 0)
+-		return false;
+-
+-	if (I915_READ(VLV_COUNTER_CONTROL) & VLV_COUNT_RANGE_HIGH)
+-		mul <<= 8;
+-
+-	time = now->cz_clock - old->cz_clock;
+-	time *= threshold * dev_priv->czclk_freq;
+-
+-	/* Workload can be split between render + media, e.g. SwapBuffers
+-	 * being blitted in X after being rendered in mesa. To account for
+-	 * this we need to combine both engines into our activity counter.
+-	 */
+-	c0 = now->render_c0 - old->render_c0;
+-	c0 += now->media_c0 - old->media_c0;
+-	c0 *= mul * VLV_CZ_CLOCK_TO_MILLI_SEC;
+-
+-	return c0 >= time;
+-}
+-
+ void gen6_rps_reset_ei(struct drm_i915_private *dev_priv)
+ {
+-	vlv_c0_read(dev_priv, &dev_priv->rps.down_ei);
+-	dev_priv->rps.up_ei = dev_priv->rps.down_ei;
++	memset(&dev_priv->rps.ei, 0, sizeof(dev_priv->rps.ei));
+ }
+ 
+ static u32 vlv_wa_c0_ei(struct drm_i915_private *dev_priv, u32 pm_iir)
+ {
++	const struct intel_rps_ei *prev = &dev_priv->rps.ei;
+ 	struct intel_rps_ei now;
+ 	u32 events = 0;
+ 
+-	if ((pm_iir & (GEN6_PM_RP_DOWN_EI_EXPIRED | GEN6_PM_RP_UP_EI_EXPIRED)) == 0)
++	if ((pm_iir & GEN6_PM_RP_UP_EI_EXPIRED) == 0)
+ 		return 0;
+ 
+ 	vlv_c0_read(dev_priv, &now);
+ 	if (now.cz_clock == 0)
+ 		return 0;
+ 
+-	if (pm_iir & GEN6_PM_RP_DOWN_EI_EXPIRED) {
+-		if (!vlv_c0_above(dev_priv,
+-				  &dev_priv->rps.down_ei, &now,
+-				  dev_priv->rps.down_threshold))
+-			events |= GEN6_PM_RP_DOWN_THRESHOLD;
+-		dev_priv->rps.down_ei = now;
+-	}
++	if (prev->cz_clock) {
++		u64 time, c0;
++		unsigned int mul;
+ 
+-	if (pm_iir & GEN6_PM_RP_UP_EI_EXPIRED) {
+-		if (vlv_c0_above(dev_priv,
+-				 &dev_priv->rps.up_ei, &now,
+-				 dev_priv->rps.up_threshold))
+-			events |= GEN6_PM_RP_UP_THRESHOLD;
+-		dev_priv->rps.up_ei = now;
++		mul = VLV_CZ_CLOCK_TO_MILLI_SEC * 100; /* scale to threshold% */
++		if (I915_READ(VLV_COUNTER_CONTROL) & VLV_COUNT_RANGE_HIGH)
++			mul <<= 8;
++
++		time = now.cz_clock - prev->cz_clock;
++		time *= dev_priv->czclk_freq;
++
++		/* Workload can be split between render + media,
++		 * e.g. SwapBuffers being blitted in X after being rendered in
++		 * mesa. To account for this we need to combine both engines
++		 * into our activity counter.
++		 */
++		c0 = now.render_c0 - prev->render_c0;
++		c0 += now.media_c0 - prev->media_c0;
++		c0 *= mul;
++
++		if (c0 > time * dev_priv->rps.up_threshold)
++			events = GEN6_PM_RP_UP_THRESHOLD;
++		else if (c0 < time * dev_priv->rps.down_threshold)
++			events = GEN6_PM_RP_DOWN_THRESHOLD;
+ 	}
+ 
++	dev_priv->rps.ei = now;
+ 	return events;
+ }
+ 
+@@ -4390,7 +4373,7 @@ void intel_irq_init(struct drm_i915_private *dev_priv)
+ 	/* Let's track the enabled rps events */
+ 	if (IS_VALLEYVIEW(dev_priv) && !IS_CHERRYVIEW(dev_priv))
+ 		/* WaGsvRC0ResidencyMethod:vlv */
+-		dev_priv->pm_rps_events = GEN6_PM_RP_DOWN_EI_EXPIRED | GEN6_PM_RP_UP_EI_EXPIRED;
++		dev_priv->pm_rps_events = GEN6_PM_RP_UP_EI_EXPIRED;
+ 	else
+ 		dev_priv->pm_rps_events = GEN6_PM_RPS_EVENTS;
+ 
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index e7c18519274a..fd4690ed93c0 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -4376,6 +4376,12 @@ static void gen6_set_rps_thresholds(struct drm_i915_private *dev_priv, u8 val)
+ 		break;
+ 	}
+ 
++	/* When byt can survive without system hang with dynamic
++	 * sw freq adjustments, this restriction can be lifted.
++	 */
++	if (IS_VALLEYVIEW(dev_priv))
++		goto skip_hw_write;
++
+ 	I915_WRITE(GEN6_RP_UP_EI,
+ 		GT_INTERVAL_FROM_US(dev_priv, ei_up));
+ 	I915_WRITE(GEN6_RP_UP_THRESHOLD,
+@@ -4394,6 +4400,7 @@ static void gen6_set_rps_thresholds(struct drm_i915_private *dev_priv, u8 val)
+ 		    GEN6_RP_UP_BUSY_AVG |
+ 		    GEN6_RP_DOWN_IDLE_AVG);
+ 
++skip_hw_write:
+ 	dev_priv->rps.power = new_power;
+ 	dev_priv->rps.up_threshold = threshold_up;
+ 	dev_priv->rps.down_threshold = threshold_down;
+@@ -4404,8 +4411,9 @@ static u32 gen6_rps_pm_mask(struct drm_i915_private *dev_priv, u8 val)
+ {
+ 	u32 mask = 0;
+ 
++	/* We use UP_EI_EXPIRED interupts for both up/down in manual mode */
+ 	if (val > dev_priv->rps.min_freq_softlimit)
+-		mask |= GEN6_PM_RP_DOWN_EI_EXPIRED | GEN6_PM_RP_DOWN_THRESHOLD | GEN6_PM_RP_DOWN_TIMEOUT;
++		mask |= GEN6_PM_RP_UP_EI_EXPIRED | GEN6_PM_RP_DOWN_THRESHOLD | GEN6_PM_RP_DOWN_TIMEOUT;
+ 	if (val < dev_priv->rps.max_freq_softlimit)
+ 		mask |= GEN6_PM_RP_UP_EI_EXPIRED | GEN6_PM_RP_UP_THRESHOLD;
+ 
+@@ -4509,7 +4517,7 @@ void gen6_rps_busy(struct drm_i915_private *dev_priv)
+ {
+ 	mutex_lock(&dev_priv->rps.hw_lock);
+ 	if (dev_priv->rps.enabled) {
+-		if (dev_priv->pm_rps_events & (GEN6_PM_RP_DOWN_EI_EXPIRED | GEN6_PM_RP_UP_EI_EXPIRED))
++		if (dev_priv->pm_rps_events & GEN6_PM_RP_UP_EI_EXPIRED)
+ 			gen6_rps_reset_ei(dev_priv);
+ 		I915_WRITE(GEN6_PMINTRMSK,
+ 			   gen6_rps_pm_mask(dev_priv, dev_priv->rps.cur_freq));
+diff --git a/drivers/mtd/bcm47xxpart.c b/drivers/mtd/bcm47xxpart.c
+index c0720c1ee4c9..5abab8800891 100644
+--- a/drivers/mtd/bcm47xxpart.c
++++ b/drivers/mtd/bcm47xxpart.c
+@@ -225,12 +225,10 @@ static int bcm47xxpart_parse(struct mtd_info *master,
+ 
+ 			last_trx_part = curr_part - 1;
+ 
+-			/*
+-			 * We have whole TRX scanned, skip to the next part. Use
+-			 * roundown (not roundup), as the loop will increase
+-			 * offset in next step.
+-			 */
+-			offset = rounddown(offset + trx->length, blocksize);
++			/* Jump to the end of TRX */
++			offset = roundup(offset + trx->length, blocksize);
++			/* Next loop iteration will increase the offset */
++			offset -= blocksize;
+ 			continue;
+ 		}
+ 
+diff --git a/drivers/net/ethernet/ibm/ibmveth.c b/drivers/net/ethernet/ibm/ibmveth.c
+index 7af870a3c549..855c43d8f7e0 100644
+--- a/drivers/net/ethernet/ibm/ibmveth.c
++++ b/drivers/net/ethernet/ibm/ibmveth.c
+@@ -58,7 +58,7 @@ static struct kobj_type ktype_veth_pool;
+ 
+ static const char ibmveth_driver_name[] = "ibmveth";
+ static const char ibmveth_driver_string[] = "IBM Power Virtual Ethernet Driver";
+-#define ibmveth_driver_version "1.05"
++#define ibmveth_driver_version "1.06"
+ 
+ MODULE_AUTHOR("Santiago Leon <santil@linux.vnet.ibm.com>");
+ MODULE_DESCRIPTION("IBM Power Virtual Ethernet Driver");
+@@ -137,6 +137,11 @@ static inline int ibmveth_rxq_frame_offset(struct ibmveth_adapter *adapter)
+ 	return ibmveth_rxq_flags(adapter) & IBMVETH_RXQ_OFF_MASK;
+ }
+ 
++static inline int ibmveth_rxq_large_packet(struct ibmveth_adapter *adapter)
++{
++	return ibmveth_rxq_flags(adapter) & IBMVETH_RXQ_LRG_PKT;
++}
++
+ static inline int ibmveth_rxq_frame_length(struct ibmveth_adapter *adapter)
+ {
+ 	return be32_to_cpu(adapter->rx_queue.queue_addr[adapter->rx_queue.index].length);
+@@ -1172,6 +1177,45 @@ map_failed:
+ 	goto retry_bounce;
+ }
+ 
++static void ibmveth_rx_mss_helper(struct sk_buff *skb, u16 mss, int lrg_pkt)
++{
++	int offset = 0;
++
++	/* only TCP packets will be aggregated */
++	if (skb->protocol == htons(ETH_P_IP)) {
++		struct iphdr *iph = (struct iphdr *)skb->data;
++
++		if (iph->protocol == IPPROTO_TCP) {
++			offset = iph->ihl * 4;
++			skb_shinfo(skb)->gso_type = SKB_GSO_TCPV4;
++		} else {
++			return;
++		}
++	} else if (skb->protocol == htons(ETH_P_IPV6)) {
++		struct ipv6hdr *iph6 = (struct ipv6hdr *)skb->data;
++
++		if (iph6->nexthdr == IPPROTO_TCP) {
++			offset = sizeof(struct ipv6hdr);
++			skb_shinfo(skb)->gso_type = SKB_GSO_TCPV6;
++		} else {
++			return;
++		}
++	} else {
++		return;
++	}
++	/* if mss is not set through Large Packet bit/mss in rx buffer,
++	 * expect that the mss will be written to the tcp header checksum.
++	 */
++	if (lrg_pkt) {
++		skb_shinfo(skb)->gso_size = mss;
++	} else if (offset) {
++		struct tcphdr *tcph = (struct tcphdr *)(skb->data + offset);
++
++		skb_shinfo(skb)->gso_size = ntohs(tcph->check);
++		tcph->check = 0;
++	}
++}
++
+ static int ibmveth_poll(struct napi_struct *napi, int budget)
+ {
+ 	struct ibmveth_adapter *adapter =
+@@ -1180,6 +1224,7 @@ static int ibmveth_poll(struct napi_struct *napi, int budget)
+ 	int frames_processed = 0;
+ 	unsigned long lpar_rc;
+ 	struct iphdr *iph;
++	u16 mss = 0;
+ 
+ restart_poll:
+ 	while (frames_processed < budget) {
+@@ -1197,9 +1242,21 @@ restart_poll:
+ 			int length = ibmveth_rxq_frame_length(adapter);
+ 			int offset = ibmveth_rxq_frame_offset(adapter);
+ 			int csum_good = ibmveth_rxq_csum_good(adapter);
++			int lrg_pkt = ibmveth_rxq_large_packet(adapter);
+ 
+ 			skb = ibmveth_rxq_get_buffer(adapter);
+ 
++			/* if the large packet bit is set in the rx queue
++			 * descriptor, the mss will be written by PHYP eight
++			 * bytes from the start of the rx buffer, which is
++			 * skb->data at this stage
++			 */
++			if (lrg_pkt) {
++				__be64 *rxmss = (__be64 *)(skb->data + 8);
++
++				mss = (u16)be64_to_cpu(*rxmss);
++			}
++
+ 			new_skb = NULL;
+ 			if (length < rx_copybreak)
+ 				new_skb = netdev_alloc_skb(netdev, length);
+@@ -1233,11 +1290,15 @@ restart_poll:
+ 					if (iph->check == 0xffff) {
+ 						iph->check = 0;
+ 						iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
+-						adapter->rx_large_packets++;
+ 					}
+ 				}
+ 			}
+ 
++			if (length > netdev->mtu + ETH_HLEN) {
++				ibmveth_rx_mss_helper(skb, mss, lrg_pkt);
++				adapter->rx_large_packets++;
++			}
++
+ 			napi_gro_receive(napi, skb);	/* send it up */
+ 
+ 			netdev->stats.rx_packets++;
+diff --git a/drivers/net/ethernet/ibm/ibmveth.h b/drivers/net/ethernet/ibm/ibmveth.h
+index 4eade67fe30c..7acda04d034e 100644
+--- a/drivers/net/ethernet/ibm/ibmveth.h
++++ b/drivers/net/ethernet/ibm/ibmveth.h
+@@ -209,6 +209,7 @@ struct ibmveth_rx_q_entry {
+ #define IBMVETH_RXQ_TOGGLE		0x80000000
+ #define IBMVETH_RXQ_TOGGLE_SHIFT	31
+ #define IBMVETH_RXQ_VALID		0x40000000
++#define IBMVETH_RXQ_LRG_PKT		0x04000000
+ #define IBMVETH_RXQ_NO_CSUM		0x02000000
+ #define IBMVETH_RXQ_CSUM_GOOD		0x01000000
+ #define IBMVETH_RXQ_OFF_MASK		0x0000FFFF
+diff --git a/drivers/net/ethernet/mellanox/mlx4/cq.c b/drivers/net/ethernet/mellanox/mlx4/cq.c
+index 3348e646db70..6eba58044456 100644
+--- a/drivers/net/ethernet/mellanox/mlx4/cq.c
++++ b/drivers/net/ethernet/mellanox/mlx4/cq.c
+@@ -101,13 +101,19 @@ void mlx4_cq_completion(struct mlx4_dev *dev, u32 cqn)
+ {
+ 	struct mlx4_cq *cq;
+ 
++	rcu_read_lock();
+ 	cq = radix_tree_lookup(&mlx4_priv(dev)->cq_table.tree,
+ 			       cqn & (dev->caps.num_cqs - 1));
++	rcu_read_unlock();
++
+ 	if (!cq) {
+ 		mlx4_dbg(dev, "Completion event for bogus CQ %08x\n", cqn);
+ 		return;
+ 	}
+ 
++	/* Acessing the CQ outside of rcu_read_lock is safe, because
++	 * the CQ is freed only after interrupt handling is completed.
++	 */
+ 	++cq->arm_sn;
+ 
+ 	cq->comp(cq);
+@@ -118,23 +124,19 @@ void mlx4_cq_event(struct mlx4_dev *dev, u32 cqn, int event_type)
+ 	struct mlx4_cq_table *cq_table = &mlx4_priv(dev)->cq_table;
+ 	struct mlx4_cq *cq;
+ 
+-	spin_lock(&cq_table->lock);
+-
++	rcu_read_lock();
+ 	cq = radix_tree_lookup(&cq_table->tree, cqn & (dev->caps.num_cqs - 1));
+-	if (cq)
+-		atomic_inc(&cq->refcount);
+-
+-	spin_unlock(&cq_table->lock);
++	rcu_read_unlock();
+ 
+ 	if (!cq) {
+-		mlx4_warn(dev, "Async event for bogus CQ %08x\n", cqn);
++		mlx4_dbg(dev, "Async event for bogus CQ %08x\n", cqn);
+ 		return;
+ 	}
+ 
++	/* Acessing the CQ outside of rcu_read_lock is safe, because
++	 * the CQ is freed only after interrupt handling is completed.
++	 */
+ 	cq->event(cq, event_type);
+-
+-	if (atomic_dec_and_test(&cq->refcount))
+-		complete(&cq->free);
+ }
+ 
+ static int mlx4_SW2HW_CQ(struct mlx4_dev *dev, struct mlx4_cmd_mailbox *mailbox,
+@@ -301,9 +303,9 @@ int mlx4_cq_alloc(struct mlx4_dev *dev, int nent,
+ 	if (err)
+ 		return err;
+ 
+-	spin_lock_irq(&cq_table->lock);
++	spin_lock(&cq_table->lock);
+ 	err = radix_tree_insert(&cq_table->tree, cq->cqn, cq);
+-	spin_unlock_irq(&cq_table->lock);
++	spin_unlock(&cq_table->lock);
+ 	if (err)
+ 		goto err_icm;
+ 
+@@ -347,9 +349,9 @@ int mlx4_cq_alloc(struct mlx4_dev *dev, int nent,
+ 	return 0;
+ 
+ err_radix:
+-	spin_lock_irq(&cq_table->lock);
++	spin_lock(&cq_table->lock);
+ 	radix_tree_delete(&cq_table->tree, cq->cqn);
+-	spin_unlock_irq(&cq_table->lock);
++	spin_unlock(&cq_table->lock);
+ 
+ err_icm:
+ 	mlx4_cq_free_icm(dev, cq->cqn);
+@@ -368,15 +370,15 @@ void mlx4_cq_free(struct mlx4_dev *dev, struct mlx4_cq *cq)
+ 	if (err)
+ 		mlx4_warn(dev, "HW2SW_CQ failed (%d) for CQN %06x\n", err, cq->cqn);
+ 
++	spin_lock(&cq_table->lock);
++	radix_tree_delete(&cq_table->tree, cq->cqn);
++	spin_unlock(&cq_table->lock);
++
+ 	synchronize_irq(priv->eq_table.eq[MLX4_CQ_TO_EQ_VECTOR(cq->vector)].irq);
+ 	if (priv->eq_table.eq[MLX4_CQ_TO_EQ_VECTOR(cq->vector)].irq !=
+ 	    priv->eq_table.eq[MLX4_EQ_ASYNC].irq)
+ 		synchronize_irq(priv->eq_table.eq[MLX4_EQ_ASYNC].irq);
+ 
+-	spin_lock_irq(&cq_table->lock);
+-	radix_tree_delete(&cq_table->tree, cq->cqn);
+-	spin_unlock_irq(&cq_table->lock);
+-
+ 	if (atomic_dec_and_test(&cq->refcount))
+ 		complete(&cq->free);
+ 	wait_for_completion(&cq->free);
+diff --git a/drivers/net/ethernet/mellanox/mlx4/en_rx.c b/drivers/net/ethernet/mellanox/mlx4/en_rx.c
+index 28a4b34310b2..82bf1b539d87 100644
+--- a/drivers/net/ethernet/mellanox/mlx4/en_rx.c
++++ b/drivers/net/ethernet/mellanox/mlx4/en_rx.c
+@@ -439,8 +439,14 @@ int mlx4_en_activate_rx_rings(struct mlx4_en_priv *priv)
+ 		ring->cqn = priv->rx_cq[ring_ind]->mcq.cqn;
+ 
+ 		ring->stride = stride;
+-		if (ring->stride <= TXBB_SIZE)
++		if (ring->stride <= TXBB_SIZE) {
++			/* Stamp first unused send wqe */
++			__be32 *ptr = (__be32 *)ring->buf;
++			__be32 stamp = cpu_to_be32(1 << STAMP_SHIFT);
++			*ptr = stamp;
++			/* Move pointer to start of rx section */
+ 			ring->buf += TXBB_SIZE;
++		}
+ 
+ 		ring->log_stride = ffs(ring->stride) - 1;
+ 		ring->buf_size = ring->size * ring->stride;
+diff --git a/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c b/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c
+index d314d96dcb1c..d1fc7fa87b05 100644
+--- a/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c
++++ b/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c
+@@ -2955,6 +2955,9 @@ int mlx4_RST2INIT_QP_wrapper(struct mlx4_dev *dev, int slave,
+ 		put_res(dev, slave, srqn, RES_SRQ);
+ 		qp->srq = srq;
+ 	}
++
++	/* Save param3 for dynamic changes from VST back to VGT */
++	qp->param3 = qpc->param3;
+ 	put_res(dev, slave, rcqn, RES_CQ);
+ 	put_res(dev, slave, mtt_base, RES_MTT);
+ 	res_end_move(dev, slave, RES_QP, qpn);
+@@ -3747,7 +3750,6 @@ int mlx4_INIT2RTR_QP_wrapper(struct mlx4_dev *dev, int slave,
+ 	int qpn = vhcr->in_modifier & 0x7fffff;
+ 	struct res_qp *qp;
+ 	u8 orig_sched_queue;
+-	__be32	orig_param3 = qpc->param3;
+ 	u8 orig_vlan_control = qpc->pri_path.vlan_control;
+ 	u8 orig_fvl_rx = qpc->pri_path.fvl_rx;
+ 	u8 orig_pri_path_fl = qpc->pri_path.fl;
+@@ -3789,7 +3791,6 @@ out:
+ 	 */
+ 	if (!err) {
+ 		qp->sched_queue = orig_sched_queue;
+-		qp->param3	= orig_param3;
+ 		qp->vlan_control = orig_vlan_control;
+ 		qp->fvl_rx	=  orig_fvl_rx;
+ 		qp->pri_path_fl = orig_pri_path_fl;
+diff --git a/drivers/usb/core/hub.c b/drivers/usb/core/hub.c
+index 9e62c93af96e..7c2d87befb51 100644
+--- a/drivers/usb/core/hub.c
++++ b/drivers/usb/core/hub.c
+@@ -2602,8 +2602,15 @@ static int hub_port_wait_reset(struct usb_hub *hub, int port1,
+ 		if (ret < 0)
+ 			return ret;
+ 
+-		/* The port state is unknown until the reset completes. */
+-		if (!(portstatus & USB_PORT_STAT_RESET))
++		/*
++		 * The port state is unknown until the reset completes.
++		 *
++		 * On top of that, some chips may require additional time
++		 * to re-establish a connection after the reset is complete,
++		 * so also wait for the connection to be re-established.
++		 */
++		if (!(portstatus & USB_PORT_STAT_RESET) &&
++		    (portstatus & USB_PORT_STAT_CONNECTION))
+ 			break;
+ 
+ 		/* switch to the long delay after two short delay failures */
+diff --git a/drivers/usb/dwc3/gadget.c b/drivers/usb/dwc3/gadget.c
+index 210ff64857e1..ec7a50f98f57 100644
+--- a/drivers/usb/dwc3/gadget.c
++++ b/drivers/usb/dwc3/gadget.c
+@@ -235,6 +235,7 @@ void dwc3_gadget_giveback(struct dwc3_ep *dep, struct dwc3_request *req,
+ 		int status)
+ {
+ 	struct dwc3			*dwc = dep->dwc;
++	unsigned int			unmap_after_complete = false;
+ 	int				i;
+ 
+ 	if (req->queued) {
+@@ -259,11 +260,19 @@ void dwc3_gadget_giveback(struct dwc3_ep *dep, struct dwc3_request *req,
+ 	if (req->request.status == -EINPROGRESS)
+ 		req->request.status = status;
+ 
+-	if (dwc->ep0_bounced && dep->number <= 1)
++	/*
++	 * NOTICE we don't want to unmap before calling ->complete() if we're
++	 * dealing with a bounced ep0 request. If we unmap it here, we would end
++	 * up overwritting the contents of req->buf and this could confuse the
++	 * gadget driver.
++	 */
++	if (dwc->ep0_bounced && dep->number <= 1) {
+ 		dwc->ep0_bounced = false;
+-
+-	usb_gadget_unmap_request(&dwc->gadget, &req->request,
+-			req->direction);
++		unmap_after_complete = true;
++	} else {
++		usb_gadget_unmap_request(&dwc->gadget,
++				&req->request, req->direction);
++	}
+ 
+ 	dev_dbg(dwc->dev, "request %p from %s completed %d/%d ===> %d\n",
+ 			req, dep->name, req->request.actual,
+@@ -273,6 +282,10 @@ void dwc3_gadget_giveback(struct dwc3_ep *dep, struct dwc3_request *req,
+ 	spin_unlock(&dwc->lock);
+ 	usb_gadget_giveback_request(&dep->endpoint, &req->request);
+ 	spin_lock(&dwc->lock);
++
++	if (unmap_after_complete)
++		usb_gadget_unmap_request(&dwc->gadget,
++				&req->request, req->direction);
+ }
+ 
+ int dwc3_send_gadget_generic_command(struct dwc3 *dwc, unsigned cmd, u32 param)
+diff --git a/net/packet/af_packet.c b/net/packet/af_packet.c
+index 3975ac809934..d76800108ddb 100644
+--- a/net/packet/af_packet.c
++++ b/net/packet/af_packet.c
+@@ -4138,8 +4138,8 @@ static int packet_set_ring(struct sock *sk, union tpacket_req_u *req_u,
+ 		if (unlikely(!PAGE_ALIGNED(req->tp_block_size)))
+ 			goto out;
+ 		if (po->tp_version >= TPACKET_V3 &&
+-		    (int)(req->tp_block_size -
+-			  BLK_PLUS_PRIV(req_u->req3.tp_sizeof_priv)) <= 0)
++		    req->tp_block_size <=
++			  BLK_PLUS_PRIV((u64)req_u->req3.tp_sizeof_priv))
+ 			goto out;
+ 		if (unlikely(req->tp_frame_size < po->tp_hdrlen +
+ 					po->tp_reserve))
