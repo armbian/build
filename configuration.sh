@@ -93,12 +93,9 @@ case $ARCH in
 	;;
 esac
 
-# Here we want to use linux-sunxi-next and linux-sunxi-dev configs for sun*i
-# except for sun8i-dev which is separate from sunxi-dev
-[[ $LINUXFAMILY == sun*i && $BRANCH != default && ! ( $LINUXFAMILY == sun8i && $BRANCH == dev ) ]] && \
-	LINUXCONFIG="linux-sunxi-${BRANCH}"
-
 [[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
+
+[[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY"
 
 if [[ $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
