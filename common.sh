@@ -449,7 +449,7 @@ userpatch_create()
 	git add .
 	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
 
-	local patch="$SRC/userpatches/patch/$1-$LINUXFAMILY-$BRANCH.patch"
+	local patch="$SRC/userpatches/CREATE_PATCHES/$1-$LINUXFAMILY-$BRANCH.patch"
 
 	# apply previous user debug mode created patches
 	[[ -f $patch ]] && display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
