@@ -13,7 +13,6 @@
 # compile_uboot
 # compile_kernel
 # compile_sunxi_tools
-# check_toolchain
 # find_toolchain
 # advanced_patch
 # process_patch_file
@@ -44,14 +43,9 @@ compile_uboot()
 	display_alert "Compiling u-boot" "$version" "info"
 
 	local toolchain=""
-	if [[ -n $UBOOT_ALT_GCC ]] && ! check_toolchain "$UBOOT_COMPILER" "$UBOOT_ALT_GCC"; then
-		# try to find alternative toolchain
-		toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_ALT_GCC")
-	fi
-	if [[ -z $toolchain && -n $UBOOT_NEEDS_GCC ]] && ! check_toolchain "$UBOOT_COMPILER" "$UBOOT_NEEDS_GCC"; then
-		# try to find required toolchain if alt was not found
-		toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_NEEDS_GCC")
-		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER}gcc $UBOOT_NEEDS_GCC"
+	if [[ -n $UBOOT_USE_GCC ]]; then
+		toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")
+		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER}gcc $UBOOT_USE_GCC"
 	fi
 
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval ${toolchain:+env PATH=$toolchain:$PATH} ${UBOOT_COMPILER}gcc -dumpversion)" "info"
@@ -185,7 +179,7 @@ compile_kernel()
 		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
 	fi
 
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$LINUXFAMILY-$BRANCH" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
 
 	# create patch for manual source changes in debug mode
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
@@ -196,14 +190,9 @@ compile_kernel()
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
 	local toolchain=""
-	if [[ -n $KERNEL_ALT_GCC ]] && ! check_toolchain "$KERNEL_COMPILER" "$KERNEL_ALT_GCC"; then
-		# try to find alternative toolchain
-		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_ALT_GCC")
-	fi
-	if [[ -z $toolchain && -n $KERNEL_NEEDS_GCC ]] && ! check_toolchain "$KERNEL_COMPILER" "$KERNEL_NEEDS_GCC"; then
-		# try to find required toolchain if alt was not found
-		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_NEEDS_GCC")
-		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_NEEDS_GCC"
+	if [[ -n $KERNEL_USE_GCC ]]; then
+		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
+		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
 	fi
 
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${toolchain:+env PATH=$toolchain:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
@@ -281,20 +270,6 @@ compile_sunxi_tools()
 		make install-tools >/dev/null 2>&1
 		git rev-parse @ 2>/dev/null > .commit_id
 	fi
-}
-
-# check_toolchain <UBOOT|KERNEL> <expression>
-#
-# checks if system default toolchain version satisfies <expression>
-# <expression>: "< x.y"; "> x.y"; "== x.y"
-check_toolchain()
-{
-	local compiler=$1
-	local expression=$2
-	# get major.minor gcc version
-	local gcc_ver=$(${compiler}gcc -dumpversion | grep -oE "^[[:digit:]].[[:digit:]]")
-	awk "BEGIN{exit ! ($gcc_ver $expression)}" && return 0
-	return 1
 }
 
 # find_toolchain <compiler_prefix> <expression>
@@ -474,7 +449,7 @@ userpatch_create()
 	git add .
 	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
 
-	local patch="$SRC/userpatches/patch/$1-$LINUXFAMILY-$BRANCH.patch"
+	local patch="$SRC/userpatches/CREATE_PATCHES/$1-$LINUXFAMILY-$BRANCH.patch"
 
 	# apply previous user debug mode created patches
 	[[ -f $patch ]] && display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch

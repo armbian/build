@@ -15,7 +15,7 @@ case $BRANCH in
 	KERNELSOURCE='https://github.com/Icenowy/linux/'
 	KERNELBRANCH='branch:sunxi64-next-20170216'
 	KERNELDIR='linux-sun50i-dev'
-	KERNEL_ALT_GCC='> 6.1'
+	KERNEL_USE_GCC='> 6.1'
 	LINUXCONFIG='linux-sun50i-dev'
 	;;
 esac

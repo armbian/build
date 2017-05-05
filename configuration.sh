@@ -93,28 +93,12 @@ case $ARCH in
 	;;
 esac
 
-# Here we want to use linux-sunxi-next and linux-sunxi-dev configs for sun*i
-# except for sun8i-dev which is separate from sunxi-dev
-[[ $LINUXFAMILY == sun*i && $BRANCH != default && ! ( $LINUXFAMILY == sun8i && $BRANCH == dev ) ]] && \
-	LINUXCONFIG="linux-sunxi-${BRANCH}"
-
 [[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
 
+[[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY"
+[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
+
 if [[ $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
-
-# temporary hacks/overrides
-case $LINUXFAMILY in
-	sun*i)
-	# 2016.07+ compilation fails due to GCC bug
-	# works on Linaro 5.3.1, fails on Ubuntu 5.3.1
-	UBOOT_NEEDS_GCC='< 5.3'
-	;;
-
-	# also affects XU4 next branch
-	odroidxu4)
-	[[ $BRANCH == next ]] && UBOOT_NEEDS_GCC='< 5.3'
-	;;
-esac
 
 # Essential packages
 PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler figlet fbset fping \

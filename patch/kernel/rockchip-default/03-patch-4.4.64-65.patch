@@ -1,0 +1,920 @@
+diff --git a/Documentation/sysctl/fs.txt b/Documentation/sysctl/fs.txt
+index 302b5ed616a6..35e17f748ca7 100644
+--- a/Documentation/sysctl/fs.txt
++++ b/Documentation/sysctl/fs.txt
+@@ -265,6 +265,13 @@ aio-nr can grow to.
+
+ ==============================================================
+
++mount-max:
++
++This denotes the maximum number of mounts that may exist
++in a mount namespace.
++
++==============================================================
++
+
+ 2. /proc/sys/fs/binfmt_misc
+ ----------------------------------------------------------
+diff --git a/Makefile b/Makefile
+index 17708f5dc169..ddaef04f528a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 64
++SUBLEVEL = 65
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+
+diff --git a/drivers/media/tuners/tuner-xc2028.c b/drivers/media/tuners/tuner-xc2028.c
+index 4e941f00b600..082ff5608455 100644
+--- a/drivers/media/tuners/tuner-xc2028.c
++++ b/drivers/media/tuners/tuner-xc2028.c
+@@ -1403,11 +1403,12 @@ static int xc2028_set_config(struct dvb_frontend *fe, void *priv_cfg)
+ 	 * in order to avoid troubles during device release.
+ 	 */
+ 	kfree(priv->ctrl.fname);
++	priv->ctrl.fname = NULL;
+ 	memcpy(&priv->ctrl, p, sizeof(priv->ctrl));
+ 	if (p->fname) {
+ 		priv->ctrl.fname = kstrdup(p->fname, GFP_KERNEL);
+ 		if (priv->ctrl.fname == NULL)
+-			rc = -ENOMEM;
++			return -ENOMEM;
+ 	}
+
+ 	/*
+diff --git a/drivers/net/wireless/hostap/hostap_hw.c b/drivers/net/wireless/hostap/hostap_hw.c
+index 6df3ee561d52..515aa3f993f3 100644
+--- a/drivers/net/wireless/hostap/hostap_hw.c
++++ b/drivers/net/wireless/hostap/hostap_hw.c
+@@ -836,25 +836,30 @@ static int hfa384x_get_rid(struct net_device *dev, u16 rid, void *buf, int len,
+ 	spin_lock_bh(&local->baplock);
+
+ 	res = hfa384x_setup_bap(dev, BAP0, rid, 0);
+-	if (!res)
+-		res = hfa384x_from_bap(dev, BAP0, &rec, sizeof(rec));
++	if (res)
++		goto unlock;
++
++	res = hfa384x_from_bap(dev, BAP0, &rec, sizeof(rec));
++	if (res)
++		goto unlock;
+
+ 	if (le16_to_cpu(rec.len) == 0) {
+ 		/* RID not available */
+ 		res = -ENODATA;
++		goto unlock;
+ 	}
+
+ 	rlen = (le16_to_cpu(rec.len) - 1) * 2;
+-	if (!res && exact_len && rlen != len) {
++	if (exact_len && rlen != len) {
+ 		printk(KERN_DEBUG "%s: hfa384x_get_rid - RID len mismatch: "
+ 		       "rid=0x%04x, len=%d (expected %d)\n",
+ 		       dev->name, rid, rlen, len);
+ 		res = -ENODATA;
+ 	}
+
+-	if (!res)
+-		res = hfa384x_from_bap(dev, BAP0, buf, len);
++	res = hfa384x_from_bap(dev, BAP0, buf, len);
+
++unlock:
+ 	spin_unlock_bh(&local->baplock);
+ 	mutex_unlock(&local->rid_bap_mtx);
+
+diff --git a/drivers/tty/nozomi.c b/drivers/tty/nozomi.c
+index 80f9de907563..5cc80b80c82b 100644
+--- a/drivers/tty/nozomi.c
++++ b/drivers/tty/nozomi.c
+@@ -823,7 +823,7 @@ static int receive_data(enum port_type index, struct nozomi *dc)
+ 	struct tty_struct *tty = tty_port_tty_get(&port->port);
+ 	int i, ret;
+
+-	read_mem32((u32 *) &size, addr, 4);
++	size = __le32_to_cpu(readl(addr));
+ 	/*  DBG1( "%d bytes port: %d", size, index); */
+
+ 	if (tty && test_bit(TTY_THROTTLED, &tty->flags)) {
+diff --git a/drivers/vfio/pci/vfio_pci.c b/drivers/vfio/pci/vfio_pci.c
+index 9982cb176ce8..830e2fd47642 100644
+--- a/drivers/vfio/pci/vfio_pci.c
++++ b/drivers/vfio/pci/vfio_pci.c
+@@ -562,8 +562,9 @@ static long vfio_pci_ioctl(void *device_data,
+
+ 	} else if (cmd == VFIO_DEVICE_SET_IRQS) {
+ 		struct vfio_irq_set hdr;
++		size_t size;
+ 		u8 *data = NULL;
+-		int ret = 0;
++		int max, ret = 0;
+
+ 		minsz = offsetofend(struct vfio_irq_set, count);
+
+@@ -571,23 +572,31 @@ static long vfio_pci_ioctl(void *device_data,
+ 			return -EFAULT;
+
+ 		if (hdr.argsz < minsz || hdr.index >= VFIO_PCI_NUM_IRQS ||
++		    hdr.count >= (U32_MAX - hdr.start) ||
+ 		    hdr.flags & ~(VFIO_IRQ_SET_DATA_TYPE_MASK |
+ 				  VFIO_IRQ_SET_ACTION_TYPE_MASK))
+ 			return -EINVAL;
+
+-		if (!(hdr.flags & VFIO_IRQ_SET_DATA_NONE)) {
+-			size_t size;
+-			int max = vfio_pci_get_irq_count(vdev, hdr.index);
++		max = vfio_pci_get_irq_count(vdev, hdr.index);
++		if (hdr.start >= max || hdr.start + hdr.count > max)
++			return -EINVAL;
+
+-			if (hdr.flags & VFIO_IRQ_SET_DATA_BOOL)
+-				size = sizeof(uint8_t);
+-			else if (hdr.flags & VFIO_IRQ_SET_DATA_EVENTFD)
+-				size = sizeof(int32_t);
+-			else
+-				return -EINVAL;
++		switch (hdr.flags & VFIO_IRQ_SET_DATA_TYPE_MASK) {
++		case VFIO_IRQ_SET_DATA_NONE:
++			size = 0;
++			break;
++		case VFIO_IRQ_SET_DATA_BOOL:
++			size = sizeof(uint8_t);
++			break;
++		case VFIO_IRQ_SET_DATA_EVENTFD:
++			size = sizeof(int32_t);
++			break;
++		default:
++			return -EINVAL;
++		}
+
+-			if (hdr.argsz - minsz < hdr.count * size ||
+-			    hdr.start >= max || hdr.start + hdr.count > max)
++		if (size) {
++			if (hdr.argsz - minsz < hdr.count * size)
+ 				return -EINVAL;
+
+ 			data = memdup_user((void __user *)(arg + minsz),
+diff --git a/drivers/vfio/pci/vfio_pci_intrs.c b/drivers/vfio/pci/vfio_pci_intrs.c
+index 20e9a86d2dcf..5c8f767b6368 100644
+--- a/drivers/vfio/pci/vfio_pci_intrs.c
++++ b/drivers/vfio/pci/vfio_pci_intrs.c
+@@ -255,7 +255,7 @@ static int vfio_msi_enable(struct vfio_pci_device *vdev, int nvec, bool msix)
+ 	if (!is_irq_none(vdev))
+ 		return -EINVAL;
+
+-	vdev->ctx = kzalloc(nvec * sizeof(struct vfio_pci_irq_ctx), GFP_KERNEL);
++	vdev->ctx = kcalloc(nvec, sizeof(struct vfio_pci_irq_ctx), GFP_KERNEL);
+ 	if (!vdev->ctx)
+ 		return -ENOMEM;
+
+diff --git a/fs/gfs2/dir.c b/fs/gfs2/dir.c
+index ad8a5b757cc7..a443c6e54412 100644
+--- a/fs/gfs2/dir.c
++++ b/fs/gfs2/dir.c
+@@ -760,7 +760,7 @@ static int get_first_leaf(struct gfs2_inode *dip, u32 index,
+ 	int error;
+
+ 	error = get_leaf_nr(dip, index, &leaf_no);
+-	if (!error)
++	if (!IS_ERR_VALUE(error))
+ 		error = get_leaf(dip, leaf_no, bh_out);
+
+ 	return error;
+@@ -976,7 +976,7 @@ static int dir_split_leaf(struct inode *inode, const struct qstr *name)
+
+ 	index = name->hash >> (32 - dip->i_depth);
+ 	error = get_leaf_nr(dip, index, &leaf_no);
+-	if (error)
++	if (IS_ERR_VALUE(error))
+ 		return error;
+
+ 	/*  Get the old leaf block  */
+diff --git a/fs/mount.h b/fs/mount.h
+index 3dc7dea5a357..13a4ebbbaa74 100644
+--- a/fs/mount.h
++++ b/fs/mount.h
+@@ -13,6 +13,8 @@ struct mnt_namespace {
+ 	u64			seq;	/* Sequence number to prevent loops */
+ 	wait_queue_head_t poll;
+ 	u64 event;
++	unsigned int		mounts; /* # of mounts in the namespace */
++	unsigned int		pending_mounts;
+ };
+
+ struct mnt_pcp {
+diff --git a/fs/namespace.c b/fs/namespace.c
+index 7df3d406d3e0..f26d18d69712 100644
+--- a/fs/namespace.c
++++ b/fs/namespace.c
+@@ -27,6 +27,9 @@
+ #include "pnode.h"
+ #include "internal.h"
+
++/* Maximum number of mounts in a mount namespace */
++unsigned int sysctl_mount_max __read_mostly = 100000;
++
+ static unsigned int m_hash_mask __read_mostly;
+ static unsigned int m_hash_shift __read_mostly;
+ static unsigned int mp_hash_mask __read_mostly;
+@@ -925,6 +928,9 @@ static void commit_tree(struct mount *mnt)
+
+ 	list_splice(&head, n->list.prev);
+
++	n->mounts += n->pending_mounts;
++	n->pending_mounts = 0;
++
+ 	__attach_mnt(mnt, parent);
+ 	touch_mnt_namespace(n);
+ }
+@@ -1445,11 +1451,16 @@ static void umount_tree(struct mount *mnt, enum umount_tree_flags how)
+ 		propagate_umount(&tmp_list);
+
+ 	while (!list_empty(&tmp_list)) {
++		struct mnt_namespace *ns;
+ 		bool disconnect;
+ 		p = list_first_entry(&tmp_list, struct mount, mnt_list);
+ 		list_del_init(&p->mnt_expire);
+ 		list_del_init(&p->mnt_list);
+-		__touch_mnt_namespace(p->mnt_ns);
++		ns = p->mnt_ns;
++		if (ns) {
++			ns->mounts--;
++			__touch_mnt_namespace(ns);
++		}
+ 		p->mnt_ns = NULL;
+ 		if (how & UMOUNT_SYNC)
+ 			p->mnt.mnt_flags |= MNT_SYNC_UMOUNT;
+@@ -1850,6 +1861,28 @@ static int invent_group_ids(struct mount *mnt, bool recurse)
+ 	return 0;
+ }
+
++int count_mounts(struct mnt_namespace *ns, struct mount *mnt)
++{
++	unsigned int max = READ_ONCE(sysctl_mount_max);
++	unsigned int mounts = 0, old, pending, sum;
++	struct mount *p;
++
++	for (p = mnt; p; p = next_mnt(p, mnt))
++		mounts++;
++
++	old = ns->mounts;
++	pending = ns->pending_mounts;
++	sum = old + pending;
++	if ((old > sum) ||
++	    (pending > sum) ||
++	    (max < sum) ||
++	    (mounts > (max - sum)))
++		return -ENOSPC;
++
++	ns->pending_mounts = pending + mounts;
++	return 0;
++}
++
+ /*
+  *  @source_mnt : mount tree to be attached
+  *  @nd         : place the mount tree @source_mnt is attached
+@@ -1919,6 +1952,7 @@ static int attach_recursive_mnt(struct mount *source_mnt,
+ 			struct path *parent_path)
+ {
+ 	HLIST_HEAD(tree_list);
++	struct mnt_namespace *ns = dest_mnt->mnt_ns;
+ 	struct mountpoint *smp;
+ 	struct mount *child, *p;
+ 	struct hlist_node *n;
+@@ -1931,6 +1965,13 @@ static int attach_recursive_mnt(struct mount *source_mnt,
+ 	if (IS_ERR(smp))
+ 		return PTR_ERR(smp);
+
++	/* Is there space to add these mounts to the mount namespace? */
++	if (!parent_path) {
++		err = count_mounts(ns, source_mnt);
++		if (err)
++			goto out;
++	}
++
+ 	if (IS_MNT_SHARED(dest_mnt)) {
+ 		err = invent_group_ids(source_mnt, true);
+ 		if (err)
+@@ -1970,11 +2011,14 @@ static int attach_recursive_mnt(struct mount *source_mnt,
+  out_cleanup_ids:
+ 	while (!hlist_empty(&tree_list)) {
+ 		child = hlist_entry(tree_list.first, struct mount, mnt_hash);
++		child->mnt_parent->mnt_ns->pending_mounts = 0;
+ 		umount_tree(child, UMOUNT_SYNC);
+ 	}
+ 	unlock_mount_hash();
+ 	cleanup_group_ids(source_mnt, NULL);
+  out:
++	ns->pending_mounts = 0;
++
+ 	read_seqlock_excl(&mount_lock);
+ 	put_mountpoint(smp);
+ 	read_sequnlock_excl(&mount_lock);
+@@ -2804,6 +2848,8 @@ static struct mnt_namespace *alloc_mnt_ns(struct user_namespace *user_ns)
+ 	init_waitqueue_head(&new_ns->poll);
+ 	new_ns->event = 0;
+ 	new_ns->user_ns = get_user_ns(user_ns);
++	new_ns->mounts = 0;
++	new_ns->pending_mounts = 0;
+ 	return new_ns;
+ }
+
+@@ -2853,6 +2899,7 @@ struct mnt_namespace *copy_mnt_ns(unsigned long flags, struct mnt_namespace *ns,
+ 	q = new;
+ 	while (p) {
+ 		q->mnt_ns = new_ns;
++		new_ns->mounts++;
+ 		if (new_fs) {
+ 			if (&p->mnt == new_fs->root.mnt) {
+ 				new_fs->root.mnt = mntget(&q->mnt);
+@@ -2891,6 +2938,7 @@ static struct mnt_namespace *create_mnt_ns(struct vfsmount *m)
+ 		struct mount *mnt = real_mount(m);
+ 		mnt->mnt_ns = new_ns;
+ 		new_ns->root = mnt;
++		new_ns->mounts++;
+ 		list_add(&mnt->mnt_list, &new_ns->list);
+ 	} else {
+ 		mntput(m);
+diff --git a/fs/pnode.c b/fs/pnode.c
+index b9f2af59b9a6..b394ca5307ec 100644
+--- a/fs/pnode.c
++++ b/fs/pnode.c
+@@ -259,7 +259,7 @@ static int propagate_one(struct mount *m)
+ 		read_sequnlock_excl(&mount_lock);
+ 	}
+ 	hlist_add_head(&child->mnt_hash, list);
+-	return 0;
++	return count_mounts(m->mnt_ns, child);
+ }
+
+ /*
+diff --git a/fs/pnode.h b/fs/pnode.h
+index 623f01772bec..dc87e65becd2 100644
+--- a/fs/pnode.h
++++ b/fs/pnode.h
+@@ -54,4 +54,5 @@ void mnt_change_mountpoint(struct mount *parent, struct mountpoint *mp,
+ struct mount *copy_tree(struct mount *, struct dentry *, int);
+ bool is_path_reachable(struct mount *, struct dentry *,
+ 			 const struct path *root);
++int count_mounts(struct mnt_namespace *ns, struct mount *mnt);
+ #endif /* _LINUX_PNODE_H */
+diff --git a/include/linux/mount.h b/include/linux/mount.h
+index f822c3c11377..dc6cd800cd5d 100644
+--- a/include/linux/mount.h
++++ b/include/linux/mount.h
+@@ -95,4 +95,6 @@ extern void mark_mounts_for_expiry(struct list_head *mounts);
+
+ extern dev_t name_to_dev_t(const char *name);
+
++extern unsigned int sysctl_mount_max;
++
+ #endif /* _LINUX_MOUNT_H */
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index e4b5494f05f8..784ab8fe8714 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -8250,6 +8250,37 @@ static int perf_event_set_clock(struct perf_event *event, clockid_t clk_id)
+ 	return 0;
+ }
+
++/*
++ * Variation on perf_event_ctx_lock_nested(), except we take two context
++ * mutexes.
++ */
++static struct perf_event_context *
++__perf_event_ctx_lock_double(struct perf_event *group_leader,
++			     struct perf_event_context *ctx)
++{
++	struct perf_event_context *gctx;
++
++again:
++	rcu_read_lock();
++	gctx = READ_ONCE(group_leader->ctx);
++	if (!atomic_inc_not_zero(&gctx->refcount)) {
++		rcu_read_unlock();
++		goto again;
++	}
++	rcu_read_unlock();
++
++	mutex_lock_double(&gctx->mutex, &ctx->mutex);
++
++	if (group_leader->ctx != gctx) {
++		mutex_unlock(&ctx->mutex);
++		mutex_unlock(&gctx->mutex);
++		put_ctx(gctx);
++		goto again;
++	}
++
++	return gctx;
++}
++
+ /**
+  * sys_perf_event_open - open a performance event, associate it to a task/cpu
+  *
+@@ -8486,8 +8517,26 @@ SYSCALL_DEFINE5(perf_event_open,
+ 	}
+
+ 	if (move_group) {
+-		gctx = group_leader->ctx;
+-		mutex_lock_double(&gctx->mutex, &ctx->mutex);
++		gctx = __perf_event_ctx_lock_double(group_leader, ctx);
++
++		/*
++		 * Check if we raced against another sys_perf_event_open() call
++		 * moving the software group underneath us.
++		 */
++		if (!(group_leader->group_flags & PERF_GROUP_SOFTWARE)) {
++			/*
++			 * If someone moved the group out from under us, check
++			 * if this new event wound up on the same ctx, if so
++			 * its the regular !move_group case, otherwise fail.
++			 */
++			if (gctx != ctx) {
++				err = -EINVAL;
++				goto err_locked;
++			} else {
++				perf_event_ctx_unlock(group_leader, gctx);
++				move_group = 0;
++			}
++		}
+ 	} else {
+ 		mutex_lock(&ctx->mutex);
+ 	}
+@@ -8582,7 +8631,7 @@ SYSCALL_DEFINE5(perf_event_open,
+ 	perf_unpin_context(ctx);
+
+ 	if (move_group)
+-		mutex_unlock(&gctx->mutex);
++		perf_event_ctx_unlock(group_leader, gctx);
+ 	mutex_unlock(&ctx->mutex);
+
+ 	if (task) {
+@@ -8610,7 +8659,7 @@ SYSCALL_DEFINE5(perf_event_open,
+
+ err_locked:
+ 	if (move_group)
+-		mutex_unlock(&gctx->mutex);
++		perf_event_ctx_unlock(group_leader, gctx);
+ 	mutex_unlock(&ctx->mutex);
+ /* err_file: */
+ 	fput(event_file);
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index 2f0d157258a2..300d64162aff 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -65,6 +65,7 @@
+ #include <linux/sched/sysctl.h>
+ #include <linux/kexec.h>
+ #include <linux/bpf.h>
++#include <linux/mount.h>
+
+ #include <asm/uaccess.h>
+ #include <asm/processor.h>
+@@ -1749,6 +1750,14 @@ static struct ctl_table fs_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_doulongvec_minmax,
+ 	},
++	{
++		.procname	= "mount-max",
++		.data		= &sysctl_mount_max,
++		.maxlen		= sizeof(unsigned int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= &one,
++	},
+ 	{ }
+ };
+
+diff --git a/net/ipv4/ping.c b/net/ipv4/ping.c
+index 3a00512addbc..37a3b05d175c 100644
+--- a/net/ipv4/ping.c
++++ b/net/ipv4/ping.c
+@@ -154,17 +154,18 @@ void ping_hash(struct sock *sk)
+ void ping_unhash(struct sock *sk)
+ {
+ 	struct inet_sock *isk = inet_sk(sk);
++
+ 	pr_debug("ping_unhash(isk=%p,isk->num=%u)\n", isk, isk->inet_num);
++	write_lock_bh(&ping_table.lock);
+ 	if (sk_hashed(sk)) {
+-		write_lock_bh(&ping_table.lock);
+ 		hlist_nulls_del(&sk->sk_nulls_node);
+ 		sk_nulls_node_init(&sk->sk_nulls_node);
+ 		sock_put(sk);
+ 		isk->inet_num = 0;
+ 		isk->inet_sport = 0;
+ 		sock_prot_inuse_add(sock_net(sk), sk->sk_prot, -1);
+-		write_unlock_bh(&ping_table.lock);
+ 	}
++	write_unlock_bh(&ping_table.lock);
+ }
+ EXPORT_SYMBOL_GPL(ping_unhash);
+
+diff --git a/net/netfilter/nfnetlink.c b/net/netfilter/nfnetlink.c
+index 77afe913d03d..9adedba78eea 100644
+--- a/net/netfilter/nfnetlink.c
++++ b/net/netfilter/nfnetlink.c
+@@ -326,10 +326,12 @@ replay:
+ 		nlh = nlmsg_hdr(skb);
+ 		err = 0;
+
+-		if (nlmsg_len(nlh) < sizeof(struct nfgenmsg) ||
+-		    skb->len < nlh->nlmsg_len) {
+-			err = -EINVAL;
+-			goto ack;
++		if (nlh->nlmsg_len < NLMSG_HDRLEN ||
++		    skb->len < nlh->nlmsg_len ||
++		    nlmsg_len(nlh) < sizeof(struct nfgenmsg)) {
++			nfnl_err_reset(&err_list);
++			status |= NFNL_BATCH_FAILURE;
++			goto done;
+ 		}
+
+ 		/* Only requests are handled by the kernel */
+diff --git a/net/tipc/bearer.c b/net/tipc/bearer.c
+index 648f2a67f314..cb1381513c82 100644
+--- a/net/tipc/bearer.c
++++ b/net/tipc/bearer.c
+@@ -381,6 +381,10 @@ int tipc_enable_l2_media(struct net *net, struct tipc_bearer *b,
+ 	dev = dev_get_by_name(net, driver_name);
+ 	if (!dev)
+ 		return -ENODEV;
++	if (tipc_mtu_bad(dev, 0)) {
++		dev_put(dev);
++		return -EINVAL;
++	}
+
+ 	/* Associate TIPC bearer with L2 bearer */
+ 	rcu_assign_pointer(b->media_ptr, dev);
+@@ -570,14 +574,19 @@ static int tipc_l2_device_event(struct notifier_block *nb, unsigned long evt,
+ 	if (!b_ptr)
+ 		return NOTIFY_DONE;
+
+-	b_ptr->mtu = dev->mtu;
+-
+ 	switch (evt) {
+ 	case NETDEV_CHANGE:
+ 		if (netif_carrier_ok(dev))
+ 			break;
+ 	case NETDEV_GOING_DOWN:
++		tipc_reset_bearer(net, b_ptr);
++		break;
+ 	case NETDEV_CHANGEMTU:
++		if (tipc_mtu_bad(dev, 0)) {
++			bearer_disable(net, b_ptr);
++			break;
++		}
++		b_ptr->mtu = dev->mtu;
+ 		tipc_reset_bearer(net, b_ptr);
+ 		break;
+ 	case NETDEV_CHANGEADDR:
+diff --git a/net/tipc/bearer.h b/net/tipc/bearer.h
+index 552185bc4773..5f11e18b1fa1 100644
+--- a/net/tipc/bearer.h
++++ b/net/tipc/bearer.h
+@@ -39,6 +39,7 @@
+
+ #include "netlink.h"
+ #include "core.h"
++#include "msg.h"
+ #include <net/genetlink.h>
+
+ #define MAX_MEDIA	3
+@@ -61,6 +62,9 @@
+ #define TIPC_MEDIA_TYPE_IB	2
+ #define TIPC_MEDIA_TYPE_UDP	3
+
++/* minimum bearer MTU */
++#define TIPC_MIN_BEARER_MTU	(MAX_H_SIZE + INT_H_SIZE)
++
+ /**
+  * struct tipc_node_map - set of node identifiers
+  * @count: # of nodes in set
+@@ -226,4 +230,13 @@ void tipc_bearer_xmit(struct net *net, u32 bearer_id,
+ void tipc_bearer_bc_xmit(struct net *net, u32 bearer_id,
+ 			 struct sk_buff_head *xmitq);
+
++/* check if device MTU is too low for tipc headers */
++static inline bool tipc_mtu_bad(struct net_device *dev, unsigned int reserve)
++{
++	if (dev->mtu >= TIPC_MIN_BEARER_MTU + reserve)
++		return false;
++	netdev_warn(dev, "MTU too low for tipc bearer\n");
++	return true;
++}
++
+ #endif	/* _TIPC_BEARER_H */
+diff --git a/net/tipc/core.c b/net/tipc/core.c
+index 03a842870c52..e2bdb07a49a2 100644
+--- a/net/tipc/core.c
++++ b/net/tipc/core.c
+@@ -69,6 +69,7 @@ static int __net_init tipc_init_net(struct net *net)
+ 	if (err)
+ 		goto out_nametbl;
+
++	INIT_LIST_HEAD(&tn->dist_queue);
+ 	err = tipc_topsrv_start(net);
+ 	if (err)
+ 		goto out_subscr;
+diff --git a/net/tipc/core.h b/net/tipc/core.h
+index 18e95a8020cd..fe3b89e9cde4 100644
+--- a/net/tipc/core.h
++++ b/net/tipc/core.h
+@@ -103,6 +103,9 @@ struct tipc_net {
+ 	spinlock_t nametbl_lock;
+ 	struct name_table *nametbl;
+
++	/* Name dist queue */
++	struct list_head dist_queue;
++
+ 	/* Topology subscription server */
+ 	struct tipc_server *topsrv;
+ 	atomic_t subscription_count;
+diff --git a/net/tipc/name_distr.c b/net/tipc/name_distr.c
+index f51c8bdbea1c..c4c151bc000c 100644
+--- a/net/tipc/name_distr.c
++++ b/net/tipc/name_distr.c
+@@ -40,11 +40,6 @@
+
+ int sysctl_tipc_named_timeout __read_mostly = 2000;
+
+-/**
+- * struct tipc_dist_queue - queue holding deferred name table updates
+- */
+-static struct list_head tipc_dist_queue = LIST_HEAD_INIT(tipc_dist_queue);
+-
+ struct distr_queue_item {
+ 	struct distr_item i;
+ 	u32 dtype;
+@@ -67,6 +62,8 @@ static void publ_to_item(struct distr_item *i, struct publication *p)
+
+ /**
+  * named_prepare_buf - allocate & initialize a publication message
++ *
++ * The buffer returned is of size INT_H_SIZE + payload size
+  */
+ static struct sk_buff *named_prepare_buf(struct net *net, u32 type, u32 size,
+ 					 u32 dest)
+@@ -171,9 +168,9 @@ static void named_distribute(struct net *net, struct sk_buff_head *list,
+ 	struct publication *publ;
+ 	struct sk_buff *skb = NULL;
+ 	struct distr_item *item = NULL;
+-	uint msg_dsz = (tipc_node_get_mtu(net, dnode, 0) / ITEM_SIZE) *
+-			ITEM_SIZE;
+-	uint msg_rem = msg_dsz;
++	u32 msg_dsz = ((tipc_node_get_mtu(net, dnode, 0) - INT_H_SIZE) /
++			ITEM_SIZE) * ITEM_SIZE;
++	u32 msg_rem = msg_dsz;
+
+ 	list_for_each_entry(publ, pls, local_list) {
+ 		/* Prepare next buffer: */
+@@ -340,9 +337,11 @@ static bool tipc_update_nametbl(struct net *net, struct distr_item *i,
+  * tipc_named_add_backlog - add a failed name table update to the backlog
+  *
+  */
+-static void tipc_named_add_backlog(struct distr_item *i, u32 type, u32 node)
++static void tipc_named_add_backlog(struct net *net, struct distr_item *i,
++				   u32 type, u32 node)
+ {
+ 	struct distr_queue_item *e;
++	struct tipc_net *tn = net_generic(net, tipc_net_id);
+ 	unsigned long now = get_jiffies_64();
+
+ 	e = kzalloc(sizeof(*e), GFP_ATOMIC);
+@@ -352,7 +351,7 @@ static void tipc_named_add_backlog(struct distr_item *i, u32 type, u32 node)
+ 	e->node = node;
+ 	e->expires = now + msecs_to_jiffies(sysctl_tipc_named_timeout);
+ 	memcpy(e, i, sizeof(*i));
+-	list_add_tail(&e->next, &tipc_dist_queue);
++	list_add_tail(&e->next, &tn->dist_queue);
+ }
+
+ /**
+@@ -362,10 +361,11 @@ static void tipc_named_add_backlog(struct distr_item *i, u32 type, u32 node)
+ void tipc_named_process_backlog(struct net *net)
+ {
+ 	struct distr_queue_item *e, *tmp;
++	struct tipc_net *tn = net_generic(net, tipc_net_id);
+ 	char addr[16];
+ 	unsigned long now = get_jiffies_64();
+
+-	list_for_each_entry_safe(e, tmp, &tipc_dist_queue, next) {
++	list_for_each_entry_safe(e, tmp, &tn->dist_queue, next) {
+ 		if (time_after(e->expires, now)) {
+ 			if (!tipc_update_nametbl(net, &e->i, e->node, e->dtype))
+ 				continue;
+@@ -405,7 +405,7 @@ void tipc_named_rcv(struct net *net, struct sk_buff_head *inputq)
+ 		node = msg_orignode(msg);
+ 		while (count--) {
+ 			if (!tipc_update_nametbl(net, item, node, mtype))
+-				tipc_named_add_backlog(item, mtype, node);
++				tipc_named_add_backlog(net, item, mtype, node);
+ 			item++;
+ 		}
+ 		kfree_skb(skb);
+diff --git a/net/tipc/node.c b/net/tipc/node.c
+index d468aad6163e..2df0b98d4a32 100644
+--- a/net/tipc/node.c
++++ b/net/tipc/node.c
+@@ -728,7 +728,7 @@ static void tipc_node_fsm_evt(struct tipc_node *n, int evt)
+ 			state = SELF_UP_PEER_UP;
+ 			break;
+ 		case SELF_LOST_CONTACT_EVT:
+-			state = SELF_DOWN_PEER_LEAVING;
++			state = SELF_DOWN_PEER_DOWN;
+ 			break;
+ 		case SELF_ESTABL_CONTACT_EVT:
+ 		case PEER_LOST_CONTACT_EVT:
+@@ -747,7 +747,7 @@ static void tipc_node_fsm_evt(struct tipc_node *n, int evt)
+ 			state = SELF_UP_PEER_UP;
+ 			break;
+ 		case PEER_LOST_CONTACT_EVT:
+-			state = SELF_LEAVING_PEER_DOWN;
++			state = SELF_DOWN_PEER_DOWN;
+ 			break;
+ 		case SELF_LOST_CONTACT_EVT:
+ 		case PEER_ESTABL_CONTACT_EVT:
+diff --git a/net/tipc/socket.c b/net/tipc/socket.c
+index b26b7a127773..65171f8e8c45 100644
+--- a/net/tipc/socket.c
++++ b/net/tipc/socket.c
+@@ -777,9 +777,11 @@ void tipc_sk_mcast_rcv(struct net *net, struct sk_buff_head *arrvq,
+  * @tsk: receiving socket
+  * @skb: pointer to message buffer.
+  */
+-static void tipc_sk_proto_rcv(struct tipc_sock *tsk, struct sk_buff *skb)
++static void tipc_sk_proto_rcv(struct tipc_sock *tsk, struct sk_buff *skb,
++			      struct sk_buff_head *xmitq)
+ {
+ 	struct sock *sk = &tsk->sk;
++	u32 onode = tsk_own_node(tsk);
+ 	struct tipc_msg *hdr = buf_msg(skb);
+ 	int mtyp = msg_type(hdr);
+ 	int conn_cong;
+@@ -792,7 +794,8 @@ static void tipc_sk_proto_rcv(struct tipc_sock *tsk, struct sk_buff *skb)
+
+ 	if (mtyp == CONN_PROBE) {
+ 		msg_set_type(hdr, CONN_PROBE_REPLY);
+-		tipc_sk_respond(sk, skb, TIPC_OK);
++		if (tipc_msg_reverse(onode, &skb, TIPC_OK))
++			__skb_queue_tail(xmitq, skb);
+ 		return;
+ 	} else if (mtyp == CONN_ACK) {
+ 		conn_cong = tsk_conn_cong(tsk);
+@@ -1647,7 +1650,8 @@ static unsigned int rcvbuf_limit(struct sock *sk, struct sk_buff *buf)
+  *
+  * Returns true if message was added to socket receive queue, otherwise false
+  */
+-static bool filter_rcv(struct sock *sk, struct sk_buff *skb)
++static bool filter_rcv(struct sock *sk, struct sk_buff *skb,
++		       struct sk_buff_head *xmitq)
+ {
+ 	struct socket *sock = sk->sk_socket;
+ 	struct tipc_sock *tsk = tipc_sk(sk);
+@@ -1657,7 +1661,7 @@ static bool filter_rcv(struct sock *sk, struct sk_buff *skb)
+ 	int usr = msg_user(hdr);
+
+ 	if (unlikely(msg_user(hdr) == CONN_MANAGER)) {
+-		tipc_sk_proto_rcv(tsk, skb);
++		tipc_sk_proto_rcv(tsk, skb, xmitq);
+ 		return false;
+ 	}
+
+@@ -1700,7 +1704,8 @@ static bool filter_rcv(struct sock *sk, struct sk_buff *skb)
+ 	return true;
+
+ reject:
+-	tipc_sk_respond(sk, skb, err);
++	if (tipc_msg_reverse(tsk_own_node(tsk), &skb, err))
++		__skb_queue_tail(xmitq, skb);
+ 	return false;
+ }
+
+@@ -1716,9 +1721,24 @@ reject:
+ static int tipc_backlog_rcv(struct sock *sk, struct sk_buff *skb)
+ {
+ 	unsigned int truesize = skb->truesize;
++	struct sk_buff_head xmitq;
++	u32 dnode, selector;
+
+-	if (likely(filter_rcv(sk, skb)))
++	__skb_queue_head_init(&xmitq);
++
++	if (likely(filter_rcv(sk, skb, &xmitq))) {
+ 		atomic_add(truesize, &tipc_sk(sk)->dupl_rcvcnt);
++		return 0;
++	}
++
++	if (skb_queue_empty(&xmitq))
++		return 0;
++
++	/* Send response/rejected message */
++	skb = __skb_dequeue(&xmitq);
++	dnode = msg_destnode(buf_msg(skb));
++	selector = msg_origport(buf_msg(skb));
++	tipc_node_xmit_skb(sock_net(sk), skb, dnode, selector);
+ 	return 0;
+ }
+
+@@ -1732,12 +1752,13 @@ static int tipc_backlog_rcv(struct sock *sk, struct sk_buff *skb)
+  * Caller must hold socket lock
+  */
+ static void tipc_sk_enqueue(struct sk_buff_head *inputq, struct sock *sk,
+-			    u32 dport)
++			    u32 dport, struct sk_buff_head *xmitq)
+ {
++	unsigned long time_limit = jiffies + 2;
++	struct sk_buff *skb;
+ 	unsigned int lim;
+ 	atomic_t *dcnt;
+-	struct sk_buff *skb;
+-	unsigned long time_limit = jiffies + 2;
++	u32 onode;
+
+ 	while (skb_queue_len(inputq)) {
+ 		if (unlikely(time_after_eq(jiffies, time_limit)))
+@@ -1749,20 +1770,22 @@ static void tipc_sk_enqueue(struct sk_buff_head *inputq, struct sock *sk,
+
+ 		/* Add message directly to receive queue if possible */
+ 		if (!sock_owned_by_user(sk)) {
+-			filter_rcv(sk, skb);
++			filter_rcv(sk, skb, xmitq);
+ 			continue;
+ 		}
+
+ 		/* Try backlog, compensating for double-counted bytes */
+ 		dcnt = &tipc_sk(sk)->dupl_rcvcnt;
+-		if (sk->sk_backlog.len)
++		if (!sk->sk_backlog.len)
+ 			atomic_set(dcnt, 0);
+ 		lim = rcvbuf_limit(sk, skb) + atomic_read(dcnt);
+ 		if (likely(!sk_add_backlog(sk, skb, lim)))
+ 			continue;
+
+ 		/* Overload => reject message back to sender */
+-		tipc_sk_respond(sk, skb, TIPC_ERR_OVERLOAD);
++		onode = tipc_own_addr(sock_net(sk));
++		if (tipc_msg_reverse(onode, &skb, TIPC_ERR_OVERLOAD))
++			__skb_queue_tail(xmitq, skb);
+ 		break;
+ 	}
+ }
+@@ -1775,12 +1798,14 @@ static void tipc_sk_enqueue(struct sk_buff_head *inputq, struct sock *sk,
+  */
+ void tipc_sk_rcv(struct net *net, struct sk_buff_head *inputq)
+ {
++	struct sk_buff_head xmitq;
+ 	u32 dnode, dport = 0;
+ 	int err;
+ 	struct tipc_sock *tsk;
+ 	struct sock *sk;
+ 	struct sk_buff *skb;
+
++	__skb_queue_head_init(&xmitq);
+ 	while (skb_queue_len(inputq)) {
+ 		dport = tipc_skb_peek_port(inputq, dport);
+ 		tsk = tipc_sk_lookup(net, dport);
+@@ -1788,9 +1813,14 @@ void tipc_sk_rcv(struct net *net, struct sk_buff_head *inputq)
+ 		if (likely(tsk)) {
+ 			sk = &tsk->sk;
+ 			if (likely(spin_trylock_bh(&sk->sk_lock.slock))) {
+-				tipc_sk_enqueue(inputq, sk, dport);
++				tipc_sk_enqueue(inputq, sk, dport, &xmitq);
+ 				spin_unlock_bh(&sk->sk_lock.slock);
+ 			}
++			/* Send pending response/rejected messages, if any */
++			while ((skb = __skb_dequeue(&xmitq))) {
++				dnode = msg_destnode(buf_msg(skb));
++				tipc_node_xmit_skb(net, skb, dnode, dport);
++			}
+ 			sock_put(sk);
+ 			continue;
+ 		}
+diff --git a/net/tipc/udp_media.c b/net/tipc/udp_media.c
+index 6af78c6276b4..78d6b78de29d 100644
+--- a/net/tipc/udp_media.c
++++ b/net/tipc/udp_media.c
+@@ -52,7 +52,7 @@
+ /* IANA assigned UDP port */
+ #define UDP_PORT_DEFAULT	6118
+
+-#define UDP_MIN_HEADROOM        28
++#define UDP_MIN_HEADROOM        48
+
+ static const struct nla_policy tipc_nl_udp_policy[TIPC_NLA_UDP_MAX + 1] = {
+ 	[TIPC_NLA_UDP_UNSPEC]	= {.type = NLA_UNSPEC},
+@@ -376,6 +376,11 @@ static int tipc_udp_enable(struct net *net, struct tipc_bearer *b,
+ 		udp_conf.local_ip.s_addr = htonl(INADDR_ANY);
+ 		udp_conf.use_udp_checksums = false;
+ 		ub->ifindex = dev->ifindex;
++		if (tipc_mtu_bad(dev, sizeof(struct iphdr) +
++				      sizeof(struct udphdr))) {
++			err = -EINVAL;
++			goto err;
++		}
+ 		b->mtu = dev->mtu - sizeof(struct iphdr)
+ 			- sizeof(struct udphdr);
+ #if IS_ENABLED(CONFIG_IPV6)

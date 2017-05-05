@@ -1,0 +1,201 @@
+diff --git a/u-boot/arch/arm/include/asm/arch-sunxi/dram_sun8i_h3.h b/u-boot/arch/arm/include/asm/arch-sunxi/dram_sun8i_h3.h
+index 25d07d9..44c9883 100644
+--- a/u-boot/arch/arm/include/asm/arch-sunxi/dram_sun8i_h3.h
++++ b/u-boot/arch/arm/include/asm/arch-sunxi/dram_sun8i_h3.h
+@@ -44,10 +44,7 @@ struct sunxi_mctl_com_reg {
+ #define MCTL_CR_1T		(0x1 << 19)
+ #define MCTL_CR_2T		(0x0 << 19)
+ 
+-#define MCTL_CR_LPDDR3		(0x7 << 16)
+-#define MCTL_CR_LPDDR2		(0x6 << 16)
+-#define MCTL_CR_DDR3		(0x3 << 16)
+-#define MCTL_CR_DDR2		(0x2 << 16)
++#define MCTL_CR_DRAM_TYPE(x)		((x) << 16)
+ 
+ #define MCTL_CR_SEQUENTIAL	(0x1 << 15)
+ #define MCTL_CR_INTERLEAVED	(0x0 << 15)
+@@ -188,7 +185,21 @@ struct sunxi_mctl_ctl_reg {
+ #define DXBDLR_DQS	9		/* DQS BDLR index */
+ #define DXBDLR_DQSN	10		/* DQSN BDLR index */
+ 
++/* DRAM control (sunxi_mctl_ctl_reg) register constants */
++#define MCTL_MR0			0x1c70 /* CL=11, WR=12 */
++#define MCTL_MR1			0x40
++#define MCTL_MR2			0x18 /* CWL=8 */
++#define MCTL_MR3			0x0
++
++#define MCTL_LPDDR3_MR0			0x0
++#define MCTL_LPDDR3_MR1			0xc3	/* twr=8, bl=8 */
++#define MCTL_LPDDR3_MR2			0xa	/* RL=12, CWL=6 */
++#define MCTL_LPDDR3_MR3			0x0
++
+ #define DXBDLR_WRITE_DELAY(x)	((x) << 8)
+ #define DXBDLR_READ_DELAY(x)	((x) << 0)
+ 
++#define DRAM_TYPE_DDR3		3
++#define DRAM_TYPE_LPDDR3	7
++
+ #endif /* _SUNXI_DRAM_SUN8I_H3_H */
+diff --git a/u-boot/arch/arm/mach-sunxi/dram_sun8i_h3.c b/u-boot/arch/arm/mach-sunxi/dram_sun8i_h3.c
+index 6f0ed5d..6261322 100644
+--- a/u-boot/arch/arm/mach-sunxi/dram_sun8i_h3.c
++++ b/u-boot/arch/arm/mach-sunxi/dram_sun8i_h3.c
+@@ -26,6 +26,7 @@ struct dram_para {
+ 	u8 bus_width;
+ 	u8 dual_rank;
+ 	u8 row_bits;
++	u8 dram_type;
+ 	const u8 dx_read_delays[NR_OF_BYTE_LANES][LINES_PER_BYTE_LANE];
+ 	const u8 dx_write_delays[NR_OF_BYTE_LANES][LINES_PER_BYTE_LANE];
+ 	const u8 ac_delays[31];
+@@ -257,11 +258,43 @@ static void mctl_set_timing_params(uint16_t socid, struct dram_para *para)
+ 	u8 twr2rd	= tcwl + 2 + twtr;	/* WL + BL / 2 + tWTR */
+ 	u8 trd2wr	= tcl + 2 + 1 - tcwl;	/* RL + BL / 2 + 2 - WL */
+ 
+-	/* set mode register */
+-	writel(0x1c70, &mctl_ctl->mr[0]);	/* CL=11, WR=12 */
+-	writel(0x40, &mctl_ctl->mr[1]);
+-	writel(0x18, &mctl_ctl->mr[2]);		/* CWL=8 */
+-	writel(0x0, &mctl_ctl->mr[3]);
++	/* Set mode register */
++	if (para->dram_type == DRAM_TYPE_DDR3) {
++		writel(MCTL_MR0, &mctl_ctl->mr[0]);
++		writel(MCTL_MR1, &mctl_ctl->mr[1]);
++		writel(MCTL_MR2, &mctl_ctl->mr[2]);
++		writel(MCTL_MR3, &mctl_ctl->mr[3]);
++	} else if (para->dram_type == DRAM_TYPE_LPDDR3) {
++		writel(MCTL_LPDDR3_MR0, &mctl_ctl->mr[0]);
++		writel(MCTL_LPDDR3_MR1, &mctl_ctl->mr[1]);
++		writel(MCTL_LPDDR3_MR2, &mctl_ctl->mr[2]);
++		writel(MCTL_LPDDR3_MR3, &mctl_ctl->mr[3]);
++
++		/* timing parameters for LPDDR3, copied from dram_sun8i_a83t.c */
++		tfaw = max(ns_to_t(50), 4);
++		trrd = max(ns_to_t(10), 2);
++		trcd = max(ns_to_t(24), 2);
++		trc = ns_to_t(70);
++		txp = max(ns_to_t(8), 2);
++		twtr = max(ns_to_t(8), 2);
++		trtp = max(ns_to_t(8), 2);
++		trp = max(ns_to_t(27), 2);
++		tras = ns_to_t(42);
++		trefi = ns_to_t(3900) / 32;
++		trfc = ns_to_t(210);
++		tmrw		= 5;
++		tmrd		= 5;
++		tckesr		= 5;
++		tcwl		= 3;	/* CWL 8 */
++		t_rdata_en	= 5;
++		tdinit0	= (200 * CONFIG_DRAM_CLK) + 1;		/* 200us */
++		tdinit1	= (100 * CONFIG_DRAM_CLK) / 1000 + 1;	/* 100ns */
++		tdinit2	= (11 * CONFIG_DRAM_CLK) + 1;	/* 200us */
++		tdinit3	= (1 * CONFIG_DRAM_CLK) + 1;	/* 1us */
++		twtp	= tcwl + 4 + twr + 1;	/* CWL + BL/2 + tWR */
++		twr2rd	= tcwl + 4 + 1 + twtr;	/* WL + BL / 2 + tWTR */
++		trd2wr	= tcl + 4 + 5 - tcwl + 1; /* RL + BL / 2 + 2 - WL */
++	}
+ 
+ 	/* set DRAM timing */
+ 	writel(DRAMTMG0_TWTP(twtp) | DRAMTMG0_TFAW(tfaw) |
+@@ -383,7 +416,7 @@ static void mctl_set_cr(struct dram_para *para)
+ 	struct sunxi_mctl_com_reg * const mctl_com =
+ 			(struct sunxi_mctl_com_reg *)SUNXI_DRAM_COM_BASE;
+ 
+-	writel(MCTL_CR_BL8 | MCTL_CR_2T | MCTL_CR_DDR3 | MCTL_CR_INTERLEAVED |
++	writel(MCTL_CR_BL8 | MCTL_CR_2T | MCTL_CR_DRAM_TYPE(para->dram_type) | MCTL_CR_INTERLEAVED |
+ 	       MCTL_CR_EIGHT_BANKS | MCTL_CR_BUS_WIDTH(para->bus_width) |
+ 	       (para->dual_rank ? MCTL_CR_DUAL_RANK : MCTL_CR_SINGLE_RANK) |
+ 	       MCTL_CR_PAGE_SIZE(para->page_size) |
+@@ -628,6 +661,22 @@ static void mctl_auto_detect_dram_size(struct dram_para *para)
+ 	   3,  4,  0,  3,  4,  1,  4,  0,			\
+ 	   1,  1,  0,  1, 13,  5,  4      }
+ 
++/* FIXME: Last byte of each row of write delays
++ * doesn't match memory dump values from boot0 on Pine64+
++ * so copying the second to last byte instead?
++ */
++
++#define SUN50I_A64_LPDDR3_DX_READ_DELAYS		\
++	{{ 16, 16, 16, 16, 17, 16, 16, 17, 16,  6,  5 },	\
++	 { 17, 17, 17, 17, 17, 17, 17, 17, 17,  6,  5 },	\
++	 { 16, 17, 17, 16, 16, 16, 16, 16, 16,  5,  5 },	\
++	 { 17, 17, 17, 17, 17, 17, 17, 17, 17,  6,  5 }}
++#define SUN50I_A64_LPDDR3_DX_WRITE_DELAYS		\
++	{{  6,  6,  6,  6,  6,  6,  6,  6,  6, 16, 16 },	\
++	 {  6,  6,  6,  6,  7,  7,  7,  7,  6, 18, 18 },	\
++	 {  1,  0,  1,  1,  1,  1,  1,  1,  0, 11, 11 },	\
++	 {  1,  0,  0,  1,  1,  1,  1,  1,  0, 14, 14 }}
++
+ #define SUN8I_H5_DX_READ_DELAYS					\
+ 	{{ 14, 15, 17, 17, 17, 17, 17, 18, 17,  3,  3 },	\
+ 	 { 21, 21, 12, 22, 21, 21, 21, 21, 21,  3,  3 },	\
+@@ -652,18 +697,31 @@ unsigned long sunxi_dram_init(void)
+ 			(struct sunxi_mctl_ctl_reg *)SUNXI_DRAM_CTL0_BASE;
+ 
+ 	struct dram_para para = {
+-		.dual_rank = 0,
++		.dual_rank = 1,
+ 		.bus_width = 32,
+ 		.row_bits = 15,
+ 		.page_size = 4096,
+ 
++#if defined(CONFIG_MACH_SUN50I)
++#if (CONFIG_DRAM_TYPE == 3) || (CONFIG_DRAM_TYPE == 7)
++		.dram_type = CONFIG_DRAM_TYPE,
++#else
++#error Unsupported DRAM type, Please set DRAM type (3:DDR3, 7:LPDDR3)
++#endif
++#endif
++
+ #if defined(CONFIG_MACH_SUN8I_H3_32)
+ 		.dx_read_delays  = SUN8I_H3_DX_READ_DELAYS,
+ 		.dx_write_delays = SUN8I_H3_DX_WRITE_DELAYS,
+ 		.ac_delays	 = SUN8I_H3_AC_DELAYS,
+ #elif defined(CONFIG_MACH_SUN50I)
++	#if (CONFIG_DRAM_TYPE == 7)
++		.dx_read_delays  = SUN50I_A64_LPDDR3_DX_READ_DELAYS,
++		.dx_write_delays = SUN50I_A64_LPDDR3_DX_WRITE_DELAYS,
++	#else
+ 		.dx_read_delays  = SUN50I_A64_DX_READ_DELAYS,
+ 		.dx_write_delays = SUN50I_A64_DX_WRITE_DELAYS,
++	#endif
+ 		.ac_delays	 = SUN50I_A64_AC_DELAYS,
+ #elif defined(CONFIG_MACH_SUN50I_H5)
+ 		.dx_read_delays  = SUN8I_H5_DX_READ_DELAYS,
+diff --git a/u-boot/board/sunxi/Kconfig b/u-boot/board/sunxi/Kconfig
+index 42adff1..71d65ac 100644
+--- a/u-boot/board/sunxi/Kconfig
++++ b/u-boot/board/sunxi/Kconfig
+@@ -202,7 +202,7 @@ config ARM_BOOT_HOOK_RMR
+ 
+ config DRAM_TYPE
+ 	int "sunxi dram type"
+-	depends on MACH_SUN8I_A83T
++	depends on MACH_SUN8I_A83T || MACH_SUN8I_H3 || MACH_SUN50I
+ 	default 3
+ 	---help---
+ 	Set the dram type, 3: DDR3, 7: LPDDR3
+diff --git a/u-boot/configs/sun50i_spl32_lpddr3_defconfig b/u-boot/configs/sun50i_spl32_lpddr3_defconfig
+new file mode 100644
+index 0000000..8425489
+--- /dev/null
++++ b/u-boot/configs/sun50i_spl32_lpddr3_defconfig
+@@ -0,0 +1,17 @@
++CONFIG_ARM=y
++CONFIG_DRAM_TYPE=7
++CONFIG_ARCH_SUNXI=y
++CONFIG_MACH_SUN50I_32=y
++CONFIG_SPL=y
++CONFIG_FIT=y
++CONFIG_DEFAULT_DEVICE_TREE="sun50i-a64-pine64-plus"
++CONFIG_MMC0_CD_PIN=""
++CONFIG_DRAM_CLK=552
++CONFIG_SPL_LOAD_FIT=y
++CONFIG_SPL_OF_LIBFDT=y
++CONFIG_SPL_SPI_SUNXI=y
++CONFIG_SPL_SPI_FLASH_SUPPORT=y
++CONFIG_SPL_SPI_SUPPORT=y
++# CONFIG_CMD_IMLS is not set
++# CONFIG_CMD_FLASH is not set
++# CONFIG_CMD_FPGA is not set
++CONFIG_MMC_SUNXI_SLOT_EXTRA=2
