@@ -8,18 +8,9 @@ setenv kerneladdr "0x40800000"
 setenv initrdaddr "0x42000000"
 setenv ftdaddr "0x44000000"
 
-# default values (configurable)
-
-setenv rootdev "/dev/mmcblk1p1"
+setenv rootdev "UUID=df47abba-9211-4523-a425-e91b83896221"
 setenv rootfstype "ext4"
 setenv console "both"
-
-if load mmc ${mmcbootdev}:${mmcbootpart} ${load_addr} /boot/armbianEnv.txt || load mmc ${mmcbootdev}:${mmcbootpart} ${load_addr} armbianEnv.txt; then
-        env import -t ${load_addr} ${filesize}
-fi
-
-if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
-if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "${consoleargs} console=ttySAC2,115200n8"; fi
 
 setenv bootargs "${consoleargs} root=${rootdev} rootfstype=${rootfstype} rootwait panic=10 consoleblank=0 loglevel=${verbosity} ${extraargs}"
 
@@ -27,11 +18,11 @@ setenv bootargs "${consoleargs} root=${rootdev} rootfstype=${rootfstype} rootwai
 # platform dependent: boardname, fdtfile
 # system dependent: mmcbootdev, mmcbootpart
 
-load mmc ${mmcbootdev}:${mmcbootpart} ${kerneladdr} /boot/zImage || load mmc ${mmcbootdev}:${mmcbootpart} ${kerneladdr} zImage
-load mmc ${mmcbootdev}:${mmcbootpart} ${initrdaddr} /boot/uInitrd || load mmc ${mmcbootdev}:${mmcbootpart} ${initrdaddr} uInitrd
-load mmc ${mmcbootdev}:${mmcbootpart} ${ftdaddr} /boot/dtb/exynos5422-odroidxu4.dtb || load mmc ${mmcbootdev}:${mmcbootpart} ${ftdaddr} dtb/exynos5422-odroidxu4.dtb
+ext2load mmc 0:1 0x40800000 /boot/zImage
+ext2load mmc 0:1 0x42000000 /boot/uInitrd
+ext2load mmc 0:1 0x44000000 /boot/dtb/exynos5422-odroidxu4.dtb
 
-bootz ${kerneladdr} ${initrdaddr} ${ftdaddr}
+bootz 0x40800000 0x42000000 0x44000000
 
 # Generate boot.scr:
 # mkimage -c none -A arm -T script -d boot.cmd boot.scr
