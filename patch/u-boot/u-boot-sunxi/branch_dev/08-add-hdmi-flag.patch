@@ -1,0 +1,131 @@
+From 1941407799b06b09bcf1af0935bc5027c7fb857d Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@siol.net>
+Date: Fri, 28 Apr 2017 21:35:55 +0200
+Subject: [PATCH] edid: Add HDMI flag to timing info
+
+Some DVI monitors don't show anything in HDMI mode since audio stream
+confuses them. To solve this situation, this commit adds HDMI flag in
+timing data and sets it accordingly during edid parsing.
+
+First existence of extension block is checked. If it exists and it is
+CEA861 extension, then data blocks are checked for presence of HDMI
+vendor specific data block. If it is present, HDMI flag is set.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@siol.net>
+---
+ common/edid.c    | 42 ++++++++++++++++++++++++++++++++++++++++++
+ include/edid.h   | 14 ++++++++++++++
+ include/fdtdec.h |  1 +
+ 3 files changed, 57 insertions(+)
+
+diff --git a/common/edid.c b/common/edid.c
+index ab7069f..19410aa 100644
+--- a/common/edid.c
++++ b/common/edid.c
+@@ -136,6 +136,39 @@ static void decode_timing(u8 *buf, struct display_timing *timing)
+ 	      va + vbl, vborder);
+ }
+ 
++/**
++ * Check if HDMI vendor specific data block is present in CEA block
++ * @param info	CEA extension block
++ * @return true if block is found
++ */
++static bool cea_is_hdmi_vsdb_present(struct edid_cea861_info *info)
++{
++	u8 end, i = 0;
++
++	/* check for end of data block */
++	end = info->dtd_offset;
++	if (end == 0)
++		end = 127;
++	if (end < 4 || end > 127)
++		return false;
++	end -= 4;
++
++	while (i < end) {
++		/* Look for vendor specific data block of appropriate size */
++		if ((EDID_CEA861_DB_TYPE(*info, i) == EDID_CEA861_DB_VENDOR) &&
++		    (EDID_CEA861_DB_LEN(*info, i) >= 5)) {
++			u8 *db = &info->data[i + 1];
++			u32 oui = db[0] | (db[1] << 8) | (db[2] << 16);
++
++			if (oui == HDMI_IEEE_OUI)
++				return true;
++		}
++		i += EDID_CEA861_DB_LEN(*info, i) + 1;
++	}
++
++	return false;
++}
++
+ int edid_get_timing(u8 *buf, int buf_size, struct display_timing *timing,
+ 		    int *panel_bits_per_colourp)
+ {
+@@ -181,6 +214,15 @@ int edid_get_timing(u8 *buf, int buf_size, struct display_timing *timing,
+ 			((edid->video_input_definition & 0x70) >> 3) + 4;
+ 	}
+ 
++	timing->hdmi_monitor = false;
++	if (edid->extension_flag && (buf_size >= EDID_EXT_SIZE)) {
++		struct edid_cea861_info *info =
++			(struct edid_cea861_info *)(buf + sizeof(*edid));
++
++		if (info->extension_tag == EDID_CEA861_EXTENSION_TAG)
++			timing->hdmi_monitor = cea_is_hdmi_vsdb_present(info);
++	}
++
+ 	return 0;
+ }
+ 
+diff --git a/include/edid.h b/include/edid.h
+index 8b022fa..a9f2f3d 100644
+--- a/include/edid.h
++++ b/include/edid.h
+@@ -19,6 +19,9 @@
+ #define EDID_SIZE	128
+ #define EDID_EXT_SIZE	256
+ 
++/* OUI of HDMI vendor specific data block */
++#define HDMI_IEEE_OUI 0x000c03
++
+ #define GET_BIT(_x, _pos) \
+ 	(((_x) >> (_pos)) & 1)
+ #define GET_BITS(_x, _pos_msb, _pos_lsb) \
+@@ -234,6 +237,13 @@ struct edid1_info {
+ 	unsigned char checksum;
+ } __attribute__ ((__packed__));
+ 
++enum edid_cea861_db_types {
++	EDID_CEA861_DB_AUDIO = 0x01,
++	EDID_CEA861_DB_VIDEO = 0x02,
++	EDID_CEA861_DB_VENDOR = 0x03,
++	EDID_CEA861_DB_SPEAKER = 0x04,
++};
++
+ struct edid_cea861_info {
+ 	unsigned char extension_tag;
+ #define EDID_CEA861_EXTENSION_TAG	0x02
+@@ -251,6 +261,10 @@ struct edid_cea861_info {
+ #define EDID_CEA861_DTD_COUNT(_x) \
+ 	GET_BITS(((_x).dtd_count), 3, 0)
+ 	unsigned char data[124];
++#define EDID_CEA861_DB_TYPE(_x, offset) \
++	GET_BITS((_x).data[offset], 7, 5)
++#define EDID_CEA861_DB_LEN(_x, offset) \
++	GET_BITS((_x).data[offset], 4, 0)
+ } __attribute__ ((__packed__));
+ 
+ /**
+diff --git a/include/fdtdec.h b/include/fdtdec.h
+index 2134701..340766d 100644
+--- a/include/fdtdec.h
++++ b/include/fdtdec.h
+@@ -967,6 +967,7 @@ struct display_timing {
+ 	struct timing_entry vsync_len;		/* ver. sync len */
+ 
+ 	enum display_flags flags;		/* display flags */
++	bool hdmi_monitor;			/* is hdmi monitor? */
+ };
+ 
+ /**
