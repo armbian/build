@@ -1,0 +1,896 @@
+From 56009451d843e8ccaff3408d172fe13af23e2756 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@siol.net>
+Date: Mon, 27 Mar 2017 19:22:32 +0200
+Subject: [PATCH] sunxi: video: Add A64/H3/H5 HDMI driver
+
+This commit adds support for HDMI output.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@siol.net>
+Reviewed-by: Simon Glass <sjg@chromium.org>
+Acked-by: Maxime Ripard <maxime.ripard@free-electrons.com>
+Signed-off-by: Maxime Ripard <maxime.ripard@free-electrons.com>
+---
+ arch/arm/include/asm/arch-sunxi/cpu_sun4i.h |    8 +
+ arch/arm/include/asm/arch-sunxi/display2.h  |  124 +++++++++
+ board/sunxi/Kconfig                         |   10 +
+ drivers/video/sunxi/Makefile                |    1 +
+ drivers/video/sunxi/sunxi_de2.c             |  258 ++++++++++++++++++
+ drivers/video/sunxi/sunxi_dw_hdmi.c         |  389 +++++++++++++++++++++++++++
+ include/configs/sunxi-common.h              |    5 +
+ 7 files changed, 795 insertions(+)
+ create mode 100644 arch/arm/include/asm/arch-sunxi/display2.h
+ create mode 100644 drivers/video/sunxi/sunxi_de2.c
+ create mode 100644 drivers/video/sunxi/sunxi_dw_hdmi.c
+
+diff --git a/arch/arm/include/asm/arch-sunxi/cpu_sun4i.h b/arch/arm/include/asm/arch-sunxi/cpu_sun4i.h
+index 88c3f13..6aa5e91 100644
+--- a/arch/arm/include/asm/arch-sunxi/cpu_sun4i.h
++++ b/arch/arm/include/asm/arch-sunxi/cpu_sun4i.h
+@@ -18,6 +18,8 @@
+ #define SUNXI_SRAM_D_BASE		0x00010000	/* 4 kiB */
+ #define SUNXI_SRAM_B_BASE		0x00020000	/* 64 kiB (secure) */
+ 
++#define SUNXI_DE2_BASE			0x01000000
++
+ #ifdef CONFIG_MACH_SUN8I_A83T
+ #define SUNXI_CPUCFG_BASE		0x01700000
+ #endif
+@@ -46,7 +48,9 @@
+ #define SUNXI_USB1_BASE			0x01c14000
+ #endif
+ #define SUNXI_SS_BASE			0x01c15000
++#if !defined(CONFIG_MACH_SUNXI_H3_H5) && !defined(CONFIG_MACH_SUN50I)
+ #define SUNXI_HDMI_BASE			0x01c16000
++#endif
+ #define SUNXI_SPI2_BASE			0x01c17000
+ #define SUNXI_SATA_BASE			0x01c18000
+ #ifdef CONFIG_SUNXI_GEN_SUN4I
+@@ -164,6 +168,10 @@ defined(CONFIG_MACH_SUN50I)
+ #define SUNXI_MP_BASE			0x01e80000
+ #define SUNXI_AVG_BASE			0x01ea0000
+ 
++#if defined(CONFIG_MACH_SUNXI_H3_H5) || defined(CONFIG_MACH_SUN50I)
++#define SUNXI_HDMI_BASE			0x01ee0000
++#endif
++
+ #define SUNXI_RTC_BASE			0x01f00000
+ #define SUNXI_PRCM_BASE			0x01f01400
+ 
+diff --git a/arch/arm/include/asm/arch-sunxi/display2.h b/arch/arm/include/asm/arch-sunxi/display2.h
+new file mode 100644
+index 0000000..b5875f9
+--- /dev/null
++++ b/arch/arm/include/asm/arch-sunxi/display2.h
+@@ -0,0 +1,124 @@
++/*
++ * Sunxi platform display controller register and constant defines
++ *
++ * (C) Copyright 2017 Jernej Skrabec <jernej.skrabec@siol.net>
++ *
++ * Based on out of tree Linux DRM driver defines:
++ * Copyright (C) 2016 Jean-Francois Moine <moinejf@free.fr>
++ * Copyright (c) 2016 Allwinnertech Co., Ltd.
++*
++ * SPDX-License-Identifier:	GPL-2.0+
++ */
++
++#ifndef _SUNXI_DISPLAY2_H
++#define _SUNXI_DISPLAY2_H
++
++/* internal clock settings */
++struct de_clk {
++	u32 gate_cfg;
++	u32 bus_cfg;
++	u32 rst_cfg;
++	u32 div_cfg;
++	u32 sel_cfg;
++};
++
++/* global control */
++struct de_glb {
++	u32 ctl;
++	u32 status;
++	u32 dbuff;
++	u32 size;
++};
++
++/* alpha blending */
++struct de_bld {
++	u32 fcolor_ctl;
++	struct {
++		u32 fcolor;
++		u32 insize;
++		u32 offset;
++		u32 dum;
++	} attr[4];
++	u32 dum0[15];
++	u32 route;
++	u32 premultiply;
++	u32 bkcolor;
++	u32 output_size;
++	u32 bld_mode[4];
++	u32 dum1[4];
++	u32 ck_ctl;
++	u32 ck_cfg;
++	u32 dum2[2];
++	u32 ck_max[4];
++	u32 dum3[4];
++	u32 ck_min[4];
++	u32 dum4[3];
++	u32 out_ctl;
++};
++
++/* VI channel */
++struct de_vi {
++	struct {
++		u32 attr;
++		u32 size;
++		u32 coord;
++		u32 pitch[3];
++		u32 top_laddr[3];
++		u32 bot_laddr[3];
++	} cfg[4];
++	u32 fcolor[4];
++	u32 top_haddr[3];
++	u32 bot_haddr[3];
++	u32 ovl_size[2];
++	u32 hori[2];
++	u32 vert[2];
++};
++
++struct de_ui {
++	struct {
++		u32 attr;
++		u32 size;
++		u32 coord;
++		u32 pitch;
++		u32 top_laddr;
++		u32 bot_laddr;
++		u32 fcolor;
++		u32 dum;
++	} cfg[4];
++	u32 top_haddr;
++	u32 bot_haddr;
++	u32 ovl_size;
++};
++
++/*
++ * DE register constants.
++ */
++#define SUNXI_DE2_MUX0_BASE			(SUNXI_DE2_BASE + 0x100000)
++#define SUNXI_DE2_MUX1_BASE			(SUNXI_DE2_BASE + 0x200000)
++
++#define SUNXI_DE2_MUX_GLB_REGS			0x00000
++#define SUNXI_DE2_MUX_BLD_REGS			0x01000
++#define SUNXI_DE2_MUX_CHAN_REGS			0x02000
++#define SUNXI_DE2_MUX_CHAN_SZ			0x1000
++#define SUNXI_DE2_MUX_VSU_REGS			0x20000
++#define SUNXI_DE2_MUX_GSU1_REGS			0x30000
++#define SUNXI_DE2_MUX_GSU2_REGS			0x40000
++#define SUNXI_DE2_MUX_GSU3_REGS			0x50000
++#define SUNXI_DE2_MUX_FCE_REGS			0xa0000
++#define SUNXI_DE2_MUX_BWS_REGS			0xa2000
++#define SUNXI_DE2_MUX_LTI_REGS			0xa4000
++#define SUNXI_DE2_MUX_PEAK_REGS			0xa6000
++#define SUNXI_DE2_MUX_ASE_REGS			0xa8000
++#define SUNXI_DE2_MUX_FCC_REGS			0xaa000
++#define SUNXI_DE2_MUX_DCSC_REGS			0xb0000
++
++#define SUNXI_DE2_FORMAT_XRGB_8888		4
++#define SUNXI_DE2_FORMAT_RGB_565		10
++
++#define SUNXI_DE2_MUX_GLB_CTL_EN		(1 << 0)
++#define SUNXI_DE2_UI_CFG_ATTR_EN		(1 << 0)
++#define SUNXI_DE2_UI_CFG_ATTR_FMT(f)		((f & 0xf) << 8)
++
++#define SUNXI_DE2_WH(w, h)			(((h - 1) << 16) | (w - 1))
++
++#endif /* _SUNXI_DISPLAY2_H */
+diff --git a/board/sunxi/Kconfig b/board/sunxi/Kconfig
+index 903cd48..ac3be30 100644
+--- a/board/sunxi/Kconfig
++++ b/board/sunxi/Kconfig
+@@ -708,6 +708,16 @@ config SUNXI_DE2
+ 	bool
+ 	default n
+ 
++config VIDEO_DE2
++	bool "Display Engine 2 video driver"
++	depends on SUNXI_DE2
++	select DM_VIDEO
++	select DISPLAY
++	default y
++	---help---
++	Say y here if you want to build DE2 video driver which is present on
++	newer SoCs. Currently only HDMI output is supported.
++
+ 
+ choice
+ 	prompt "LCD panel support"
+diff --git a/drivers/video/sunxi/Makefile b/drivers/video/sunxi/Makefile
+index dfc9b47..b8afd89 100644
+--- a/drivers/video/sunxi/Makefile
++++ b/drivers/video/sunxi/Makefile
+@@ -6,3 +6,4 @@
+ #
+ 
+ obj-$(CONFIG_VIDEO_SUNXI) += sunxi_display.o lcdc.o ../videomodes.o
++obj-$(CONFIG_VIDEO_DE2) += sunxi_de2.o sunxi_dw_hdmi.o lcdc.o ../dw_hdmi.o
+diff --git a/drivers/video/sunxi/sunxi_de2.c b/drivers/video/sunxi/sunxi_de2.c
+new file mode 100644
+index 0000000..9a32c3a
+--- /dev/null
++++ b/drivers/video/sunxi/sunxi_de2.c
+@@ -0,0 +1,258 @@
++/*
++ * Allwinner DE2 display driver
++ *
++ * (C) Copyright 2017 Jernej Skrabec <jernej.skrabec@siol.net>
++ *
++ * SPDX-License-Identifier:	GPL-2.0+
++ */
++
++#include <common.h>
++#include <display.h>
++#include <dm.h>
++#include <edid.h>
++#include <video.h>
++#include <asm/global_data.h>
++#include <asm/io.h>
++#include <asm/arch/clock.h>
++#include <asm/arch/display2.h>
++#include <dm/device-internal.h>
++#include <dm/uclass-internal.h>
++
++DECLARE_GLOBAL_DATA_PTR;
++
++enum {
++	/* Maximum LCD size we support */
++	LCD_MAX_WIDTH		= 3840,
++	LCD_MAX_HEIGHT		= 2160,
++	LCD_MAX_LOG2_BPP	= VIDEO_BPP32,
++};
++
++static void sunxi_de2_composer_init(void)
++{
++	struct sunxi_ccm_reg * const ccm =
++		(struct sunxi_ccm_reg *)SUNXI_CCM_BASE;
++
++#ifdef CONFIG_MACH_SUN50I
++	u32 reg_value;
++
++	/* set SRAM for video use (A64 only) */
++	reg_value = readl(SUNXI_SRAMC_BASE + 0x04);
++	reg_value &= ~(0x01 << 24);
++	writel(reg_value, SUNXI_SRAMC_BASE + 0x04);
++#endif
++
++	clock_set_pll10(432000000);
++
++	/* Set DE parent to pll10 */
++	clrsetbits_le32(&ccm->de_clk_cfg, CCM_DE2_CTRL_PLL_MASK,
++			CCM_DE2_CTRL_PLL10);
++
++	/* Set ahb gating to pass */
++	setbits_le32(&ccm->ahb_reset1_cfg, 1 << AHB_RESET_OFFSET_DE);
++	setbits_le32(&ccm->ahb_gate1, 1 << AHB_GATE_OFFSET_DE);
++
++	/* Clock on */
++	setbits_le32(&ccm->de_clk_cfg, CCM_DE2_CTRL_GATE);
++}
++
++static void sunxi_de2_mode_set(int mux, const struct display_timing *mode,
++			       int bpp, ulong address)
++{
++	ulong de_mux_base = (mux == 0) ?
++			    SUNXI_DE2_MUX0_BASE : SUNXI_DE2_MUX1_BASE;
++	struct de_clk * const de_clk_regs =
++		(struct de_clk *)(SUNXI_DE2_BASE);
++	struct de_glb * const de_glb_regs =
++		(struct de_glb *)(de_mux_base +
++				  SUNXI_DE2_MUX_GLB_REGS);
++	struct de_bld * const de_bld_regs =
++		(struct de_bld *)(de_mux_base +
++				  SUNXI_DE2_MUX_BLD_REGS);
++	struct de_ui * const de_ui_regs =
++		(struct de_ui *)(de_mux_base +
++				 SUNXI_DE2_MUX_CHAN_REGS +
++				 SUNXI_DE2_MUX_CHAN_SZ * 1);
++	u32 size = SUNXI_DE2_WH(mode->hactive.typ, mode->vactive.typ);
++	int channel;
++	u32 format;
++
++	/* enable clock */
++#ifdef CONFIG_MACH_SUN8I_H3
++	setbits_le32(&de_clk_regs->rst_cfg, (mux == 0) ? 1 : 4);
++#else
++	setbits_le32(&de_clk_regs->rst_cfg, BIT(mux));
++#endif
++	setbits_le32(&de_clk_regs->gate_cfg, BIT(mux));
++	setbits_le32(&de_clk_regs->bus_cfg, BIT(mux));
++
++	clrbits_le32(&de_clk_regs->sel_cfg, 1);
++
++	writel(SUNXI_DE2_MUX_GLB_CTL_EN, &de_glb_regs->ctl);
++	writel(0, &de_glb_regs->status);
++	writel(1, &de_glb_regs->dbuff);
++	writel(size, &de_glb_regs->size);
++
++	for (channel = 0; channel < 4; channel++) {
++		void *ch = (void *)(de_mux_base + SUNXI_DE2_MUX_CHAN_REGS +
++				    SUNXI_DE2_MUX_CHAN_SZ * channel);
++		memset(ch, 0, (channel == 0) ?
++			sizeof(struct de_vi) : sizeof(struct de_ui));
++	}
++	memset(de_bld_regs, 0, sizeof(struct de_bld));
++
++	writel(0x00000101, &de_bld_regs->fcolor_ctl);
++
++	writel(1, &de_bld_regs->route);
++
++	writel(0, &de_bld_regs->premultiply);
++	writel(0xff000000, &de_bld_regs->bkcolor);
++
++	writel(0x03010301, &de_bld_regs->bld_mode[0]);
++
++	writel(size, &de_bld_regs->output_size);
++	writel(mode->flags & DISPLAY_FLAGS_INTERLACED ? 2 : 0,
++	       &de_bld_regs->out_ctl);
++	writel(0, &de_bld_regs->ck_ctl);
++
++	writel(0xff000000, &de_bld_regs->attr[0].fcolor);
++	writel(size, &de_bld_regs->attr[0].insize);
++
++	/* Disable all other units */
++	writel(0, de_mux_base + SUNXI_DE2_MUX_VSU_REGS);
++	writel(0, de_mux_base + SUNXI_DE2_MUX_GSU1_REGS);
++	writel(0, de_mux_base + SUNXI_DE2_MUX_GSU2_REGS);
++	writel(0, de_mux_base + SUNXI_DE2_MUX_GSU3_REGS);
++	writel(0, de_mux_base + SUNXI_DE2_MUX_FCE_REGS);
++	writel(0, de_mux_base + SUNXI_DE2_MUX_BWS_REGS);
++	writel(0, de_mux_base + SUNXI_DE2_MUX_LTI_REGS);
++	writel(0, de_mux_base + SUNXI_DE2_MUX_PEAK_REGS);
++	writel(0, de_mux_base + SUNXI_DE2_MUX_ASE_REGS);
++	writel(0, de_mux_base + SUNXI_DE2_MUX_FCC_REGS);
++	writel(0, de_mux_base + SUNXI_DE2_MUX_DCSC_REGS);
++
++	switch (bpp) {
++	case 16:
++		format = SUNXI_DE2_UI_CFG_ATTR_FMT(SUNXI_DE2_FORMAT_RGB_565);
++		break;
++	case 32:
++	default:
++		format = SUNXI_DE2_UI_CFG_ATTR_FMT(SUNXI_DE2_FORMAT_XRGB_8888);
++		break;
++	}
++
++	writel(SUNXI_DE2_UI_CFG_ATTR_EN | format, &de_ui_regs->cfg[0].attr);
++	writel(size, &de_ui_regs->cfg[0].size);
++	writel(0, &de_ui_regs->cfg[0].coord);
++	writel((bpp / 8) * mode->hactive.typ, &de_ui_regs->cfg[0].pitch);
++	writel(address, &de_ui_regs->cfg[0].top_laddr);
++	writel(size, &de_ui_regs->ovl_size);
++
++	/* apply settings */
++	writel(1, &de_glb_regs->dbuff);
++}
++
++static int sunxi_de2_init(struct udevice *dev, ulong fbbase,
++			  enum video_log2_bpp l2bpp,
++			  struct udevice *disp, int mux)
++{
++	struct video_priv *uc_priv = dev_get_uclass_priv(dev);
++	struct display_timing timing;
++	struct display_plat *disp_uc_plat;
++	int ret;
++
++	disp_uc_plat = dev_get_uclass_platdata(disp);
++	debug("Using device '%s', disp_uc_priv=%p\n", disp->name, disp_uc_plat);
++	if (display_in_use(disp)) {
++		debug("   - device in use\n");
++		return -EBUSY;
++	}
++
++	disp_uc_plat->source_id = mux;
++
++	ret = device_probe(disp);
++	if (ret) {
++		debug("%s: device '%s' display won't probe (ret=%d)\n",
++		      __func__, dev->name, ret);
++		return ret;
++	}
++
++	ret = display_read_timing(disp, &timing);
++	if (ret) {
++		debug("%s: Failed to read timings\n", __func__);
++		return ret;
++	}
++
++	sunxi_de2_composer_init();
++	sunxi_de2_mode_set(mux, &timing, 1 << l2bpp, fbbase);
++
++	ret = display_enable(disp, 1 << l2bpp, &timing);
++	if (ret) {
++		debug("%s: Failed to enable display\n", __func__);
++		return ret;
++	}
++
++	uc_priv->xsize = timing.hactive.typ;
++	uc_priv->ysize = timing.vactive.typ;
++	uc_priv->bpix = l2bpp;
++	debug("fb=%lx, size=%d %d\n", fbbase, uc_priv->xsize, uc_priv->ysize);
++
++	return 0;
++}
++
++static int sunxi_de2_probe(struct udevice *dev)
++{
++	struct video_uc_platdata *plat = dev_get_uclass_platdata(dev);
++	struct udevice *disp;
++	int ret;
++	int mux;
++
++	/* Before relocation we don't need to do anything */
++	if (!(gd->flags & GD_FLG_RELOC))
++		return 0;
++
++	ret = uclass_find_device_by_name(UCLASS_DISPLAY,
++					 "sunxi_dw_hdmi", &disp);
++	if (ret) {
++		debug("%s: hdmi display not found (ret=%d)\n", __func__, ret);
++		return ret;
++	}
++
++	if (IS_ENABLED(CONFIG_MACH_SUNXI_H3_H5))
++		mux = 0;
++	else
++		mux = 1;
++
++	ret = sunxi_de2_init(dev, plat->base, VIDEO_BPP32, disp, mux);
++	if (ret)
++		return ret;
++
++	video_set_flush_dcache(dev, 1);
++
++	return 0;
++}
++
++static int sunxi_de2_bind(struct udevice *dev)
++{
++	struct video_uc_platdata *plat = dev_get_uclass_platdata(dev);
++
++	plat->size = LCD_MAX_WIDTH * LCD_MAX_HEIGHT *
++		(1 << LCD_MAX_LOG2_BPP) / 8;
++
++	return 0;
++}
++
++static const struct video_ops sunxi_de2_ops = {
++};
++
++U_BOOT_DRIVER(sunxi_de2) = {
++	.name	= "sunxi_de2",
++	.id	= UCLASS_VIDEO,
++	.ops	= &sunxi_de2_ops,
++	.bind	= sunxi_de2_bind,
++	.probe	= sunxi_de2_probe,
++	.flags	= DM_FLAG_PRE_RELOC,
++};
++
++U_BOOT_DEVICE(sunxi_de2) = {
++	.name = "sunxi_de2"
++};
+diff --git a/drivers/video/sunxi/sunxi_dw_hdmi.c b/drivers/video/sunxi/sunxi_dw_hdmi.c
+new file mode 100644
+index 0000000..33920a2
+--- /dev/null
++++ b/drivers/video/sunxi/sunxi_dw_hdmi.c
+@@ -0,0 +1,389 @@
++/*
++ * Allwinner DW HDMI bridge
++ *
++ * (C) Copyright 2017 Jernej Skrabec <jernej.skrabec@siol.net>
++ *
++ * SPDX-License-Identifier:	GPL-2.0+
++ */
++
++#include <common.h>
++#include <display.h>
++#include <dm.h>
++#include <dw_hdmi.h>
++#include <edid.h>
++#include <asm/io.h>
++#include <asm/arch/clock.h>
++#include <asm/arch/lcdc.h>
++
++struct sunxi_dw_hdmi_priv {
++	struct dw_hdmi hdmi;
++	int mux;
++};
++
++struct sunxi_hdmi_phy {
++	u32 pol;
++	u32 res1[3];
++	u32 read_en;
++	u32 unscramble;
++	u32 res2[2];
++	u32 ctrl;
++	u32 unk1;
++	u32 unk2;
++	u32 pll;
++	u32 clk;
++	u32 unk3;
++	u32 status;
++};
++
++#define HDMI_PHY_OFFS 0x10000
++
++static int sunxi_dw_hdmi_get_divider(uint clock)
++{
++	/*
++	 * Due to missing documentaion of HDMI PHY, we know correct
++	 * settings only for following four PHY dividers. Select one
++	 * based on clock speed.
++	 */
++	if (clock <= 27000000)
++		return 11;
++	else if (clock <= 74250000)
++		return 4;
++	else if (clock <= 148500000)
++		return 2;
++	else
++		return 1;
++}
++
++static void sunxi_dw_hdmi_phy_init(void)
++{
++	struct sunxi_hdmi_phy * const phy =
++		(struct sunxi_hdmi_phy *)(SUNXI_HDMI_BASE + HDMI_PHY_OFFS);
++	unsigned long tmo;
++	u32 tmp;
++
++	/*
++	 * HDMI PHY settings are taken as-is from Allwinner BSP code.
++	 * There is no documentation.
++	 */
++	writel(0, &phy->ctrl);
++	setbits_le32(&phy->ctrl, BIT(0));
++	udelay(5);
++	setbits_le32(&phy->ctrl, BIT(16));
++	setbits_le32(&phy->ctrl, BIT(1));
++	udelay(10);
++	setbits_le32(&phy->ctrl, BIT(2));
++	udelay(5);
++	setbits_le32(&phy->ctrl, BIT(3));
++	udelay(40);
++	setbits_le32(&phy->ctrl, BIT(19));
++	udelay(100);
++	setbits_le32(&phy->ctrl, BIT(18));
++	setbits_le32(&phy->ctrl, 7 << 4);
++
++	/* Note that Allwinner code doesn't fail in case of timeout */
++	tmo = timer_get_us() + 2000;
++	while ((readl(&phy->status) & 0x80) == 0) {
++		if (timer_get_us() > tmo) {
++			printf("Warning: HDMI PHY init timeout!\n");
++			break;
++		}
++	}
++
++	setbits_le32(&phy->ctrl, 0xf << 8);
++	setbits_le32(&phy->ctrl, BIT(7));
++
++	writel(0x39dc5040, &phy->pll);
++	writel(0x80084343, &phy->clk);
++	udelay(10000);
++	writel(1, &phy->unk3);
++	setbits_le32(&phy->pll, BIT(25));
++	udelay(100000);
++	tmp = (readl(&phy->status) & 0x1f800) >> 11;
++	setbits_le32(&phy->pll, BIT(31) | BIT(30));
++	setbits_le32(&phy->pll, tmp);
++	writel(0x01FF0F7F, &phy->ctrl);
++	writel(0x80639000, &phy->unk1);
++	writel(0x0F81C405, &phy->unk2);
++
++	/* enable read access to HDMI controller */
++	writel(0x54524545, &phy->read_en);
++	/* descramble register offsets */
++	writel(0x42494E47, &phy->unscramble);
++}
++
++static int sunxi_dw_hdmi_get_plug_in_status(void)
++{
++	struct sunxi_hdmi_phy * const phy =
++		(struct sunxi_hdmi_phy *)(SUNXI_HDMI_BASE + HDMI_PHY_OFFS);
++
++	return !!(readl(&phy->status) & (1 << 19));
++}
++
++static int sunxi_dw_hdmi_wait_for_hpd(void)
++{
++	ulong start;
++
++	start = get_timer(0);
++	do {
++		if (sunxi_dw_hdmi_get_plug_in_status())
++			return 0;
++		udelay(100);
++	} while (get_timer(start) < 300);
++
++	return -1;
++}
++
++static void sunxi_dw_hdmi_phy_set(uint clock)
++{
++	struct sunxi_hdmi_phy * const phy =
++		(struct sunxi_hdmi_phy *)(SUNXI_HDMI_BASE + HDMI_PHY_OFFS);
++	int div = sunxi_dw_hdmi_get_divider(clock);
++	u32 tmp;
++
++	/*
++	 * Unfortunately, we don't know much about those magic
++	 * numbers. They are taken from Allwinner BSP driver.
++	 */
++	switch (div) {
++	case 1:
++		writel(0x30dc5fc0, &phy->pll);
++		writel(0x800863C0, &phy->clk);
++		mdelay(10);
++		writel(0x00000001, &phy->unk3);
++		setbits_le32(&phy->pll, BIT(25));
++		mdelay(200);
++		tmp = (readl(&phy->status) & 0x1f800) >> 11;
++		setbits_le32(&phy->pll, BIT(31) | BIT(30));
++		if (tmp < 0x3d)
++			setbits_le32(&phy->pll, tmp + 2);
++		else
++			setbits_le32(&phy->pll, 0x3f);
++		mdelay(100);
++		writel(0x01FFFF7F, &phy->ctrl);
++		writel(0x8063b000, &phy->unk1);
++		writel(0x0F8246B5, &phy->unk2);
++		break;
++	case 2:
++		writel(0x39dc5040, &phy->pll);
++		writel(0x80084381, &phy->clk);
++		mdelay(10);
++		writel(0x00000001, &phy->unk3);
++		setbits_le32(&phy->pll, BIT(25));
++		mdelay(100);
++		tmp = (readl(&phy->status) & 0x1f800) >> 11;
++		setbits_le32(&phy->pll, BIT(31) | BIT(30));
++		setbits_le32(&phy->pll, tmp);
++		writel(0x01FFFF7F, &phy->ctrl);
++		writel(0x8063a800, &phy->unk1);
++		writel(0x0F81C485, &phy->unk2);
++		break;
++	case 4:
++		writel(0x39dc5040, &phy->pll);
++		writel(0x80084343, &phy->clk);
++		mdelay(10);
++		writel(0x00000001, &phy->unk3);
++		setbits_le32(&phy->pll, BIT(25));
++		mdelay(100);
++		tmp = (readl(&phy->status) & 0x1f800) >> 11;
++		setbits_le32(&phy->pll, BIT(31) | BIT(30));
++		setbits_le32(&phy->pll, tmp);
++		writel(0x01FFFF7F, &phy->ctrl);
++		writel(0x8063b000, &phy->unk1);
++		writel(0x0F81C405, &phy->unk2);
++		break;
++	case 11:
++		writel(0x39dc5040, &phy->pll);
++		writel(0x8008430a, &phy->clk);
++		mdelay(10);
++		writel(0x00000001, &phy->unk3);
++		setbits_le32(&phy->pll, BIT(25));
++		mdelay(100);
++		tmp = (readl(&phy->status) & 0x1f800) >> 11;
++		setbits_le32(&phy->pll, BIT(31) | BIT(30));
++		setbits_le32(&phy->pll, tmp);
++		writel(0x01FFFF7F, &phy->ctrl);
++		writel(0x8063b000, &phy->unk1);
++		writel(0x0F81C405, &phy->unk2);
++		break;
++	}
++}
++
++static void sunxi_dw_hdmi_pll_set(uint clk_khz)
++{
++	int value, n, m, div = 0, diff;
++	int best_n = 0, best_m = 0, best_diff = 0x0FFFFFFF;
++
++	div = sunxi_dw_hdmi_get_divider(clk_khz * 1000);
++
++	/*
++	 * Find the lowest divider resulting in a matching clock. If there
++	 * is no match, pick the closest lower clock, as monitors tend to
++	 * not sync to higher frequencies.
++	 */
++	for (m = 1; m <= 16; m++) {
++		n = (m * div * clk_khz) / 24000;
++
++		if ((n >= 1) && (n <= 128)) {
++			value = (24000 * n) / m / div;
++			diff = clk_khz - value;
++			if (diff < best_diff) {
++				best_diff = diff;
++				best_m = m;
++				best_n = n;
++			}
++		}
++	}
++
++	clock_set_pll3_factors(best_m, best_n);
++	debug("dotclock: %dkHz = %dkHz: (24MHz * %d) / %d / %d\n",
++	      clk_khz, (clock_get_pll3() / 1000) / div,
++	      best_n, best_m, div);
++}
++
++static void sunxi_dw_hdmi_lcdc_init(int mux, const struct display_timing *edid,
++				    int bpp)
++{
++	struct sunxi_ccm_reg * const ccm =
++		(struct sunxi_ccm_reg *)SUNXI_CCM_BASE;
++	int div = sunxi_dw_hdmi_get_divider(edid->pixelclock.typ);
++	struct sunxi_lcdc_reg *lcdc;
++
++	if (mux == 0) {
++		lcdc = (struct sunxi_lcdc_reg *)SUNXI_LCD0_BASE;
++
++		/* Reset off */
++		setbits_le32(&ccm->ahb_reset1_cfg, 1 << AHB_RESET_OFFSET_LCD0);
++
++		/* Clock on */
++		setbits_le32(&ccm->ahb_gate1, 1 << AHB_GATE_OFFSET_LCD0);
++		writel(CCM_LCD0_CTRL_GATE | CCM_LCD0_CTRL_M(div),
++		       &ccm->lcd0_clk_cfg);
++	} else {
++		lcdc = (struct sunxi_lcdc_reg *)SUNXI_LCD1_BASE;
++
++		/* Reset off */
++		setbits_le32(&ccm->ahb_reset1_cfg, 1 << AHB_RESET_OFFSET_LCD1);
++
++		/* Clock on */
++		setbits_le32(&ccm->ahb_gate1, 1 << AHB_GATE_OFFSET_LCD1);
++		writel(CCM_LCD1_CTRL_GATE | CCM_LCD1_CTRL_M(div),
++		       &ccm->lcd1_clk_cfg);
++	}
++
++	lcdc_init(lcdc);
++	lcdc_tcon1_mode_set(lcdc, edid, false, false);
++	lcdc_enable(lcdc, bpp);
++}
++
++static int sunxi_dw_hdmi_phy_cfg(struct dw_hdmi *hdmi, uint mpixelclock)
++{
++	sunxi_dw_hdmi_pll_set(mpixelclock/1000);
++	sunxi_dw_hdmi_phy_set(mpixelclock);
++
++	return 0;
++}
++
++static int sunxi_dw_hdmi_read_edid(struct udevice *dev, u8 *buf, int buf_size)
++{
++	struct sunxi_dw_hdmi_priv *priv = dev_get_priv(dev);
++
++	return dw_hdmi_read_edid(&priv->hdmi, buf, buf_size);
++}
++
++static int sunxi_dw_hdmi_enable(struct udevice *dev, int panel_bpp,
++				const struct display_timing *edid)
++{
++	struct sunxi_hdmi_phy * const phy =
++		(struct sunxi_hdmi_phy *)(SUNXI_HDMI_BASE + HDMI_PHY_OFFS);
++	struct sunxi_dw_hdmi_priv *priv = dev_get_priv(dev);
++	int ret;
++
++	ret = dw_hdmi_enable(&priv->hdmi, edid);
++	if (ret)
++		return ret;
++
++	sunxi_dw_hdmi_lcdc_init(priv->mux, edid, panel_bpp);
++
++	/*
++	 * Condition in original code is a bit weird. This is attempt
++	 * to make it more reasonable and it works. It could be that
++	 * bits and conditions are related and should be separated.
++	 */
++	if (!((edid->flags & DISPLAY_FLAGS_HSYNC_HIGH) &&
++	      (edid->flags & DISPLAY_FLAGS_VSYNC_HIGH))) {
++		setbits_le32(&phy->pol, 0x300);
++	}
++
++	setbits_le32(&phy->ctrl, 0xf << 12);
++
++	/*
++	 * This is last hdmi access before boot, so scramble addresses
++	 * again or othwerwise BSP driver won't work. Dummy read is
++	 * needed or otherwise last write doesn't get written correctly.
++	 */
++	(void)readb(SUNXI_HDMI_BASE);
++	writel(0, &phy->unscramble);
++
++	return 0;
++}
++
++static int sunxi_dw_hdmi_probe(struct udevice *dev)
++{
++	struct display_plat *uc_plat = dev_get_uclass_platdata(dev);
++	struct sunxi_dw_hdmi_priv *priv = dev_get_priv(dev);
++	struct sunxi_ccm_reg * const ccm =
++		(struct sunxi_ccm_reg *)SUNXI_CCM_BASE;
++	int ret;
++
++	/* Set pll3 to 297 MHz */
++	clock_set_pll3(297000000);
++
++	/* Set hdmi parent to pll3 */
++	clrsetbits_le32(&ccm->hdmi_clk_cfg, CCM_HDMI_CTRL_PLL_MASK,
++			CCM_HDMI_CTRL_PLL3);
++
++	/* Set ahb gating to pass */
++	setbits_le32(&ccm->ahb_reset1_cfg, 1 << AHB_RESET_OFFSET_HDMI);
++	setbits_le32(&ccm->ahb_reset1_cfg, 1 << AHB_RESET_OFFSET_HDMI2);
++	setbits_le32(&ccm->ahb_gate1, 1 << AHB_GATE_OFFSET_HDMI);
++	setbits_le32(&ccm->hdmi_slow_clk_cfg, CCM_HDMI_SLOW_CTRL_DDC_GATE);
++
++	/* Clock on */
++	setbits_le32(&ccm->hdmi_clk_cfg, CCM_HDMI_CTRL_GATE);
++
++	sunxi_dw_hdmi_phy_init();
++
++	ret = sunxi_dw_hdmi_wait_for_hpd();
++	if (ret < 0) {
++		debug("hdmi can not get hpd signal\n");
++		return -1;
++	}
++
++	priv->hdmi.ioaddr = SUNXI_HDMI_BASE;
++	priv->hdmi.i2c_clk_high = 0xd8;
++	priv->hdmi.i2c_clk_low = 0xfe;
++	priv->hdmi.reg_io_width = 1;
++	priv->hdmi.phy_set = sunxi_dw_hdmi_phy_cfg;
++	priv->mux = uc_plat->source_id;
++
++	dw_hdmi_init(&priv->hdmi);
++
++	return 0;
++}
++
++static const struct dm_display_ops sunxi_dw_hdmi_ops = {
++	.read_edid = sunxi_dw_hdmi_read_edid,
++	.enable = sunxi_dw_hdmi_enable,
++};
++
++U_BOOT_DRIVER(sunxi_dw_hdmi) = {
++	.name	= "sunxi_dw_hdmi",
++	.id	= UCLASS_DISPLAY,
++	.ops	= &sunxi_dw_hdmi_ops,
++	.probe	= sunxi_dw_hdmi_probe,
++	.priv_auto_alloc_size = sizeof(struct sunxi_dw_hdmi_priv),
++};
++
++U_BOOT_DEVICE(sunxi_dw_hdmi) = {
++	.name = "sunxi_dw_hdmi"
++};
+diff --git a/include/configs/sunxi-common.h b/include/configs/sunxi-common.h
+index b794e42..997a92c 100644
+--- a/include/configs/sunxi-common.h
++++ b/include/configs/sunxi-common.h
+@@ -475,6 +475,11 @@ extern int soft_i2c_gpio_scl;
+ #define CONSOLE_STDOUT_SETTINGS \
+ 	"stdout=serial,vga\0" \
+ 	"stderr=serial,vga\0"
++#elif CONFIG_DM_VIDEO
++#define CONFIG_SYS_WHITE_ON_BLACK
++#define CONSOLE_STDOUT_SETTINGS \
++	"stdout=serial,vidconsole\0" \
++	"stderr=serial,vidconsole\0"
+ #else
+ #define CONSOLE_STDOUT_SETTINGS \
+ 	"stdout=serial\0" \
+-- 
+1.7.10.4
+
