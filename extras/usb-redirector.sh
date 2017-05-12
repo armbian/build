@@ -30,6 +30,8 @@ install_usb_redirector()
 	cd $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd
 	# patch to work with newer kernels
 	sed -e "s/f_dentry/f_path.dentry/g" -i usbdcdev.c
+	# Remove inlining for now, as function body must have been defined in utils.h:
+	sed -e 's/inline int/int/g' -i utils.h utils.c
 	if [[ $ARCH == *64* ]]; then ARCHITECTURE=arm64; else ARCHITECTURE=arm; fi
 	make -j1 ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" KERNELDIR=$SOURCES/$LINUXSOURCEDIR/ $EXTRA_BUILD_FLAGS >> $DEST/debug/install.log 2>&1
 	# configure USB redirector
