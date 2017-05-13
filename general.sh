@@ -6,7 +6,7 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
+# This file is a part of tool chain https://github.com/armbian/build
 #
 
 # Functions:
@@ -345,12 +345,12 @@ fingerprint_image()
 	Kernel:			Linux $VER
 	Build date:		$(date +'%d.%m.%Y')
 	Authors:		http://www.armbian.com/authors
-	Sources: 		http://github.com/igorpecovnik/lib
+	Sources: 		http://github.com/armbian/build
 	Support: 		http://forum.armbian.com/
 	Changelog: 		http://www.armbian.com/logbook/
 	Documantation:		http://docs.armbian.com/
 	--------------------------------------------------------------------------------
-	$(cat $SRC/lib/LICENSE)
+	$(cat $SRC/build/LICENSE)
 	--------------------------------------------------------------------------------
 	EOF
 }
@@ -541,7 +541,7 @@ prepare_host()
 
 	# create directory structure
 	mkdir -p $SOURCES $DEST/debs/extra $DEST/debug $CACHEDIR/rootfs $SRC/userpatches/{overlay,CREATE_PATCHES} $SRC/toolchains
-	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
+	find $SRC/build/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
 
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 	local toolchains=(
@@ -572,7 +572,7 @@ prepare_host()
 		fi
 	done
 
-	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/lib/scripts/customize-image.sh.template $SRC/userpatches/customize-image.sh
+	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/build/scripts/customize-image.sh.template $SRC/userpatches/customize-image.sh
 
 	if [[ ! -f $SRC/userpatches/README ]]; then
 		rm $SRC/userpatches/readme.txt
@@ -605,8 +605,8 @@ download_toolchain()
 	cd $SRC/toolchains/
 
 	display_alert "Downloading" "$dirname"
-	curl -Lf --progress-bar $url -o $filename
-	curl -Lf --progress-bar ${url}.asc -o ${filename}.asc
+	curl -C - -Lf --progress-bar $url -o $filename
+	curl -C - -Lf --progress-bar ${url}.asc -o ${filename}.asc
 
 	local verified=false
 

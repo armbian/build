@@ -4,7 +4,7 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
+# This file is a part of tool chain https://github.com/armbian/build
 #
 
 # Functions:
@@ -84,7 +84,7 @@ debootstrap_ng()
 	if [[ $ROOTFS_TYPE == fel ]]; then
 		FEL_ROOTFS=$CACHEDIR/$SDCARD/
 		display_alert "Starting FEL boot" "$BOARD" "info"
-		source $SRC/lib/fel-load.sh
+		source $SRC/build/fel-load.sh
 	else
 		prepare_partitions
 		create_image
@@ -181,7 +181,7 @@ create_rootfs_cache()
 		# stage: add armbian repository and install key
 		echo "deb http://apt.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
 
-		cp $SRC/lib/bin/armbian.key $CACHEDIR/$SDCARD
+		cp $SRC/build/bin/armbian.key $CACHEDIR/$SDCARD
 		eval 'chroot $CACHEDIR/$SDCARD /bin/bash -c "cat armbian.key | apt-key add -"' \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 		rm $CACHEDIR/$SDCARD/armbian.key

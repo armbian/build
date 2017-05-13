@@ -6,11 +6,11 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
+# This file is a part of tool chain https://github.com/armbian/build
 #
 
 # Include here to make "display_alert" and "prepare_host" available
-source $SRC/lib/general.sh
+source $SRC/build/general.sh
 
 # Script parameters handling
 for i in "$@"; do
@@ -69,7 +69,7 @@ rm -r $CACHEDIR/$DESTIMG" &
 build_main ()
 {
 touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid";
-source $SRC/lib/main.sh;
+source $SRC/build/main.sh;
 [[ $KERNEL_ONLY != yes ]] && pack_upload
 rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid"
 }
@@ -80,9 +80,9 @@ create_images_list()
 	#
 	# if parameter is true, than we build beta list
 	#
-	for board in $SRC/lib/config/boards/*.conf; do
+	for board in $SRC/build/config/boards/*.conf; do
 		BOARD=$(basename $board | cut -d'.' -f1)
-		source $SRC/lib/config/boards/$BOARD.conf
+		source $SRC/build/config/boards/$BOARD.conf
 		if [[ -n $CLI_TARGET && -z $1 ]]; then
 
 			# RELEASES : BRANCHES
@@ -161,9 +161,9 @@ create_images_list()
 
 create_kernels_list()
 {
-	for board in $SRC/lib/config/boards/*.conf; do
+	for board in $SRC/build/config/boards/*.conf; do
 		BOARD=$(basename $board | cut -d'.' -f1)
-		source $SRC/lib/config/boards/$BOARD.conf
+		source $SRC/build/config/boards/$BOARD.conf
 		if [[ -n $KERNEL_TARGET ]]; then
 			for kernel in $(tr ',' ' ' <<< $KERNEL_TARGET); do
 				buildlist+=("$BOARD $kernel")

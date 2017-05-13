@@ -17,7 +17,7 @@ First, you'll need to [install Vagrant](https://www.vagrantup.com/downloads.html
 Now we'll need to [install git](https://git-scm.com/downloads) and clone the Armbian repo. While this might seem obvious, we rely on it being there when we use Vagrant to bring up our guest-build box.
 
 	# Clone the project.
-	git clone --depth 1 https://github.com/igorpecovnik/lib.git lib
+	git clone --depth 1 https://github.com/armbian/build.git build
 
 	# Make the Vagrant box available. This might take a while but only needs to be done once.
 	vagrant box add ubuntu/xenial64
@@ -34,7 +34,7 @@ Before we bring up the box, take note of the [directory structure]( https://docs
 Let's bring the box up. This might take a minute or two depending on your bandwidth and hardware.
 
 	# We have to be in the same directory as the Vagrant file.
-	cd lib
+	cd build
 
 	# And now we simply let vagrant create our box and bring it up. 
 	vagrant up
@@ -50,7 +50,7 @@ The following steps are all run on the *guest* Vagrant created for us.
 Once it's finally up and you're logged in, it works much like any of the other install methods (NOTE: again, these commands are run on the *guest* box).
 
 	# Copy the compile script out of the lib directory to your new home directory.
-	cp lib/compile.sh .
+	cp build/compile.sh .
 
 	# Let's get building!
 	sudo ./compile.sh
