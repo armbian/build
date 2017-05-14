@@ -21,7 +21,10 @@ install_desktop ()
 
 	if [[ $RELEASE == xenial ]]; then
 		# install optimized firefox configuration
-		cp $SRC/lib/config/firefox.conf $CACHEDIR/$SDCARD/etc/firefox/syspref.js
+		# cp $SRC/lib/config/firefox.conf $CACHEDIR/$SDCARD/etc/firefox/syspref.js
+
+		# install optimized chromium configuration
+		cp $SRC/lib/config/chromium.conf $CACHEDIR/$SDCARD/etc/chromium-browser/default
 	fi
 	# install dedicated startup icons
 	cp $SRC/lib/bin/icons/${RELEASE}.png $CACHEDIR/$SDCARD/usr/share/pixmaps
