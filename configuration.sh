@@ -116,7 +116,7 @@ PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools dosfstools hddtemp iotop iozone3
 	hdparm rfkill vlan sysstat bluez bluez-tools bash-completion hostapd git ethtool network-manager unzip ifenslave lirc \
 	libpam-systemd iperf3 software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping"
 
-PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage thunar-volman galculator \
+PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit nodm x11-xserver-utils xfce4 lxtask xterm mirage thunar-volman galculator hexchat \
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu bluetooth \
 	network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common p11-kit pasystray pavucontrol pulseaudio \
 	paman pavumeter pulseaudio-module-gconf pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri mpv \
@@ -130,7 +130,7 @@ case $RELEASE in
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget nano linux-firmware"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird firefox gnome-icon-theme-full tango-icon-theme language-selector-gnome paprefs numix-gtk-theme"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium-browser gnome-icon-theme-full tango-icon-theme language-selector-gnome paprefs numix-gtk-theme"
 	[[ $ARCH == armhf ]] && PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mate-utils ubuntu-mate-welcome mate-settings-daemon"
 	;;
 	stretch)
@@ -160,7 +160,6 @@ fi
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 if [[ $ARCH == arm64 ]]; then
 	PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/iceweasel/iceweasel:armhf}"
-	PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/firefox/firefox:armhf}"
 	PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/thunderbird/thunderbird:armhf}"
 fi
 [[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
