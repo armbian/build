@@ -6,7 +6,7 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
+# This file is a part of tool chain https://github.com/armbian/build
 #
 #
 # Main program
@@ -30,13 +30,13 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 [[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8"
 
 # Load libraries
-source $SRC/lib/debootstrap-ng.sh 			# System specific install
-source $SRC/lib/distributions.sh 			# System specific install
-source $SRC/lib/desktop.sh 				# Desktop specific install
-source $SRC/lib/common.sh 				# Functions
-source $SRC/lib/makeboarddeb.sh 			# Create board support package
-source $SRC/lib/general.sh				# General functions
-source $SRC/lib/chroot-buildpackages.sh			# Building packages in chroot
+source $SRC/build/debootstrap-ng.sh 			# System specific install
+source $SRC/build/distributions.sh 			# System specific install
+source $SRC/build/desktop.sh 				# Desktop specific install
+source $SRC/build/common.sh 				# Functions
+source $SRC/build/makeboarddeb.sh 			# Create board support package
+source $SRC/build/general.sh				# General functions
+source $SRC/build/chroot-buildpackages.sh			# Building packages in chroot
 
 # compress and remove old logs
 mkdir -p $DEST/debug
@@ -48,9 +48,9 @@ date +"%d_%m_%Y-%H_%M_%S" > $DEST/debug/timestamp
 
 # compile.sh version checking
 ver1=$(awk -F"=" '/^# VERSION/ {print $2}' <$SRC/compile.sh )
-ver2=$(awk -F"=" '/^# VERSION/ {print $2}' <$SRC/lib/compile.sh 2>/dev/null) || ver2=0
+ver2=$(awk -F"=" '/^# VERSION/ {print $2}' <$SRC/build/compile.sh 2>/dev/null) || ver2=0
 if [[ $BETA != yes && ( -z $ver1 || $ver1 -lt $ver2 ) ]]; then
-	display_alert "File $0 is outdated. Please overwrite it with an updated version from" "$SRC/lib" "wrn"
+	display_alert "File $0 is outdated. Please overwrite it with an updated version from" "$SRC/build" "wrn"
 	echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
 	read
 fi
@@ -114,10 +114,10 @@ EXT='conf'
 if [[ -z $BOARD ]]; then
 	WIP_STATE='supported'
 	WIP_BUTTON='WIP'
-	[[ -n $(find $SRC/lib/config/boards/ -name '*.wip' -print -quit) ]] && DIALOG_EXTRA="--extra-button"
+	[[ -n $(find $SRC/build/config/boards/ -name '*.wip' -print -quit) ]] && DIALOG_EXTRA="--extra-button"
 	while true; do
 		options=()
-		for board in $SRC/lib/config/boards/*.${EXT}; do
+		for board in $SRC/build/config/boards/*.${EXT}; do
 			options+=("$(basename $board | cut -d'.' -f1)" "$(head -1 $board | cut -d'#' -f2)")
 		done
 		BOARD=$(dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar --extra-label "Show $WIP_BUTTON" $DIALOG_EXTRA \
@@ -142,11 +142,11 @@ if [[ -z $BOARD ]]; then
 	done
 fi
 
-if [[ -f $SRC/lib/config/boards/${BOARD}.${EXT} ]]; then
-	source $SRC/lib/config/boards/${BOARD}.${EXT}
-elif [[ -f $SRC/lib/config/boards/${BOARD}.wip ]]; then
+if [[ -f $SRC/build/config/boards/${BOARD}.${EXT} ]]; then
+	source $SRC/build/config/boards/${BOARD}.${EXT}
+elif [[ -f $SRC/build/config/boards/${BOARD}.wip ]]; then
 	# when launching build for WIP board from command line
-	source $SRC/lib/config/boards/${BOARD}.wip
+	source $SRC/build/config/boards/${BOARD}.wip
 fi
 
 [[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
@@ -190,7 +190,7 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
 fi
 
-source $SRC/lib/configuration.sh
+source $SRC/build/configuration.sh
 
 # sync clock
 if [[ $SYNC_CLOCK != no ]]; then

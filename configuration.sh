@@ -6,7 +6,7 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
+# This file is a part of tool chain https://github.com/armbian/build
 #
 
 # common options
@@ -65,10 +65,10 @@ SDCARD="sdcard-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
 MOUNT="mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
 DESTIMG="image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
 
-[[ ! -f $SRC/lib/config/sources/$LINUXFAMILY.conf ]] && \
+[[ ! -f $SRC/build/config/sources/$LINUXFAMILY.conf ]] && \
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 
-source $SRC/lib/config/sources/$LINUXFAMILY.conf
+source $SRC/build/config/sources/$LINUXFAMILY.conf
 
 if [[ -f $SRC/userpatches/sources/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
@@ -169,7 +169,7 @@ fi
 cat <<-EOF >> $DEST/debug/output.log
 ## BUILD SCRIPT ENVIRONMENT
 
-Version: $(cd $SRC/lib; git rev-parse @)
+Version: $(cd $SRC/build; git rev-parse @)
 
 ## BUILD CONFIGURATION
 

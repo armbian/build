@@ -6,7 +6,7 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
+# This file is a part of tool chain https://github.com/armbian/build
 #
 
 # FEL_ROOTFS should be set to path to debootstrapped root filesystem
@@ -28,7 +28,7 @@ fel_prepare_target()
 		display_alert "Using custom boot script" "userpatches/fel-boot.cmd" "info"
 		cp $SRC/userpatches/fel-boot.cmd $FEL_ROOTFS/boot/boot.cmd
 	else
-		cp $SRC/lib/scripts/fel-boot.cmd.template $FEL_ROOTFS/boot/boot.cmd
+		cp $SRC/build/scripts/fel-boot.cmd.template $FEL_ROOTFS/boot/boot.cmd
 	fi
 	if [[ -z $FEL_LOCAL_IP ]]; then
 		FEL_LOCAL_IP=$(ifconfig $FEL_NET_IFNAME | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p')

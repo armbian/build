@@ -6,7 +6,7 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
+# This file is a part of tool chain https://github.com/armbian/build
 #
 
 install_desktop ()
@@ -14,27 +14,27 @@ install_desktop ()
 	display_alert "Installing desktop" "XFCE" "info"
 
 	mkdir -p $CACHEDIR/$SDCARD/tmp/bin
-	mount --bind $SRC/lib/bin/ $CACHEDIR/$SDCARD/tmp/bin
+	mount --bind $SRC/build/bin/ $CACHEDIR/$SDCARD/tmp/bin
 
 	# add loading desktop splash service
-	cp $SRC/lib/scripts/desktop-splash/desktop-splash.service $CACHEDIR/$SDCARD/etc/systemd/system/desktop-splash.service
+	cp $SRC/build/scripts/desktop-splash/desktop-splash.service $CACHEDIR/$SDCARD/etc/systemd/system/desktop-splash.service
 
 	if [[ $RELEASE == xenial ]]; then
 		# install optimized firefox configuration
-		cp $SRC/lib/config/firefox.conf $CACHEDIR/$SDCARD/etc/firefox/syspref.js
+		cp $SRC/build/config/firefox.conf $CACHEDIR/$SDCARD/etc/firefox/syspref.js
 	fi
 	# install dedicated startup icons
-	cp $SRC/lib/bin/icons/${RELEASE}.png $CACHEDIR/$SDCARD/usr/share/pixmaps
+	cp $SRC/build/bin/icons/${RELEASE}.png $CACHEDIR/$SDCARD/usr/share/pixmaps
 
 	# install default desktop settings
-	cp -R $SRC/lib/config/desktop/. $CACHEDIR/$SDCARD/etc/skel
-	cp -R $SRC/lib/config/desktop/. $CACHEDIR/$SDCARD/root
+	cp -R $SRC/build/config/desktop/. $CACHEDIR/$SDCARD/etc/skel
+	cp -R $SRC/build/config/desktop/. $CACHEDIR/$SDCARD/root
 
 	# install wallpapers
 	d=$CACHEDIR/$SDCARD/usr/share/backgrounds/xfce/
-	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/wallpapers/armbian*.jpg "$d"
+	test -d "$d" || mkdir -p "$d" && cp $SRC/build/bin/wallpapers/armbian*.jpg "$d"
 	mkdir -p $CACHEDIR/$SDCARD/etc/polkit-1/localauthority/50-local.d
-	cp $SRC/lib/config/polkit-jessie/*.pkla $CACHEDIR/$SDCARD/etc/polkit-1/localauthority/50-local.d/
+	cp $SRC/build/config/polkit-jessie/*.pkla $CACHEDIR/$SDCARD/etc/polkit-1/localauthority/50-local.d/
 
 	# Install custom icons and theme
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/bin/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"

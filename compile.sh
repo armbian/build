@@ -6,7 +6,7 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
+# This file is a part of tool chain https://github.com/armbian/bulid
 #
 #--------------------------------------------------------------------------------------------------------------------------------
 
@@ -37,7 +37,7 @@ MULTITHREAD=""				# build n images at once. For internal use.
 
 # build script version to use
 LIB_TAG=""				# empty for latest version,
-					# one of listed here: https://github.com/igorpecovnik/lib/tags for stable versions,
+					# one of listed here: https://github.com/armbian/build/tags for stable versions,
 					# or commit hash
 #--------------------------------------------------------------------------------------------------------------------------------
 
@@ -64,10 +64,10 @@ fi
 [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' git 2>/dev/null) != *ii* ]] && \
 	apt-get -qq -y --no-install-recommends install git
 
-if [[ ! -d $SRC/lib ]]; then
-	git clone https://github.com/igorpecovnik/lib
+if [[ ! -d $SRC/build ]]; then
+	git clone https://github.com/armbian/build
 fi
-cd $SRC/lib
+cd $SRC/build
 if [[ ! -f $SRC/.ignore_changes ]]; then
 	echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
 	git pull
@@ -88,9 +88,9 @@ fi
 if [[ $BETA == yes ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
 
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
-	source $SRC/lib/build-all.sh
+	source $SRC/build/build-all.sh
 else
-	source $SRC/lib/main.sh
+	source $SRC/build/main.sh
 fi
 
 # hook for function to run after build, i.e. to change owner of $SRC

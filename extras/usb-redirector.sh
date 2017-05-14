@@ -4,7 +4,7 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
+# This file is a part of tool chain https://github.com/armbian/build
 #
 
 # USB redirector tools http://www.incentivespro.com
@@ -22,7 +22,7 @@ install_usb_redirector()
 			EXTRA_BUILD_FLAGS=""
 		fi
 	else
-		cp $SRC/lib/bin/usb-redirector-old.tgz usb-redirector-linux-arm-eabi.tar.gz
+		cp $SRC/build/bin/usb-redirector-old.tgz usb-redirector-linux-arm-eabi.tar.gz
 	fi
 	
 	tar xfz usb-redirector-linux-arm-eabi.tar.gz

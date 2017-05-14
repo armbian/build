@@ -4,7 +4,7 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
+# This file is a part of tool chain https://github.com/armbian/build
 #
 
 build_firmware()
@@ -20,7 +20,7 @@ build_firmware()
 	fi
 	mkdir -p $SOURCES/$plugin_dir/lib/firmware
 	# overlay our firmware
-	cp -R $SRC/lib/bin/firmware-overlay/* $SOURCES/$plugin_dir/lib/firmware
+	cp -R $SRC/build/bin/firmware-overlay/* $SOURCES/$plugin_dir/lib/firmware
 
 	# cleanup what's not needed for sure
 	rm -rf $SOURCES/$plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}

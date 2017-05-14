@@ -6,7 +6,7 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
+# This file is a part of tool chain https://github.com/armbian/build
 #
 # Functions:
 # install_common
@@ -62,10 +62,10 @@ install_common()
 	# NOTE: this needs to be executed before family_tweaks
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
-	cp $SRC/lib/config/bootscripts/$bootscript_src $CACHEDIR/$SDCARD/boot/$bootscript_dst
+	cp $SRC/build/config/bootscripts/$bootscript_src $CACHEDIR/$SDCARD/boot/$bootscript_dst
 
-	[[ -n $BOOTENV_FILE && -f $SRC/lib/config/bootenv/$BOOTENV_FILE ]] && \
-		cp $SRC/lib/config/bootenv/$BOOTENV_FILE $CACHEDIR/$SDCARD/boot/armbianEnv.txt
+	[[ -n $BOOTENV_FILE && -f $SRC/build/config/bootenv/$BOOTENV_FILE ]] && \
+		cp $SRC/build/config/bootenv/$BOOTENV_FILE $CACHEDIR/$SDCARD/boot/armbianEnv.txt
 
 	# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
 	# instead of copying sunxi-specific template
@@ -74,7 +74,7 @@ install_common()
 		if [[ -f $SRC/userpatches/nfs-boot.cmd ]]; then
 			cp $SRC/userpatches/nfs-boot.cmd $CACHEDIR/$SDCARD/boot/boot.cmd
 		else
-			cp $SRC/lib/scripts/nfs-boot.cmd.template $CACHEDIR/$SDCARD/boot/boot.cmd
+			cp $SRC/build/scripts/nfs-boot.cmd.template $CACHEDIR/$SDCARD/boot/boot.cmd
 		fi
 	fi
 
@@ -126,22 +126,22 @@ install_common()
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
 	# copy boot splash images
-	cp $SRC/lib/bin/splash/armbian-u-boot.bmp $CACHEDIR/$SDCARD/boot/boot.bmp
-	cp $SRC/lib/bin/splash/armbian-desktop.png $CACHEDIR/$SDCARD/boot/boot-desktop.png
+	cp $SRC/build/bin/splash/armbian-u-boot.bmp $CACHEDIR/$SDCARD/boot/boot.bmp
+	cp $SRC/build/bin/splash/armbian-desktop.png $CACHEDIR/$SDCARD/boot/boot-desktop.png
 
 	# execute $LINUXFAMILY-specific tweaks from $BOARD.conf
 	[[ $(type -t family_tweaks) == function ]] && family_tweaks
 
-	install -m 755 $SRC/lib/scripts/resize2fs $CACHEDIR/$SDCARD/etc/init.d/
-	install -m 755 $SRC/lib/scripts/firstrun  $CACHEDIR/$SDCARD/etc/init.d/
-	install -m 644 $SRC/lib/scripts/resize2fs.service $CACHEDIR/$SDCARD/etc/systemd/system/
-	install -m 644 $SRC/lib/scripts/firstrun.service $CACHEDIR/$SDCARD/etc/systemd/system/
+	install -m 755 $SRC/build/scripts/resize2fs $CACHEDIR/$SDCARD/etc/init.d/
+	install -m 755 $SRC/build/scripts/firstrun  $CACHEDIR/$SDCARD/etc/init.d/
+	install -m 644 $SRC/build/scripts/resize2fs.service $CACHEDIR/$SDCARD/etc/systemd/system/
+	install -m 644 $SRC/build/scripts/firstrun.service $CACHEDIR/$SDCARD/etc/systemd/system/
 
 	# enable additional services
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service >/dev/null 2>&1"
 
 	# copy "first run automated config, optional user configured"
- 	cp $SRC/lib/config/armbian_first_run.txt $CACHEDIR/$SDCARD/boot/armbian_first_run.txt
+ 	cp $SRC/build/config/armbian_first_run.txt $CACHEDIR/$SDCARD/boot/armbian_first_run.txt
 
 	# switch to beta repository at this stage if building nightly images
 	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
@@ -164,7 +164,7 @@ install_common()
 
 	# handle PMU power button
 	mkdir -p $CACHEDIR/$SDCARD/etc/udev/rules.d/
-	cp $SRC/lib/config/71-axp-power-button.rules $CACHEDIR/$SDCARD/etc/udev/rules.d/
+	cp $SRC/build/config/71-axp-power-button.rules $CACHEDIR/$SDCARD/etc/udev/rules.d/
 
 	[[ $LINUXFAMILY == sun*i ]] && mkdir -p $CACHEDIR/$SDCARD/boot/overlay-user
 
