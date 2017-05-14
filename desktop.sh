@@ -25,6 +25,7 @@ install_desktop ()
 
 		# install optimized chromium configuration
 		cp $SRC/lib/config/chromium.conf $CACHEDIR/$SDCARD/etc/chromium-browser/default
+		echo "export XDG_CACHE_HOME=\"/var/log/.cache\"" > $CACHEDIR/$SDCARD/etc/chromium-browser/customizations/10-cachedir
 	fi
 	# install dedicated startup icons
 	cp $SRC/lib/bin/icons/${RELEASE}.png $CACHEDIR/$SDCARD/usr/share/pixmaps
