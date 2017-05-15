@@ -67,7 +67,7 @@ create_board_package()
 	#!/bin/sh
 	[ remove = "\$1" ] || [ abort-install = "\$1" ] && dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename \
 		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
-	systemctl disable log2ram.service armhwinfo.service >/dev/null 2>&1
+	systemctl disable log2ram.service xdgcache2ram.service armhwinfo.service >/dev/null 2>&1
 	exit 0
 	EOF
 
@@ -87,6 +87,12 @@ create_board_package()
 	fi
 	if [ -f "/etc/systemd/system/log2ram.service" ]; then
 		mv /etc/systemd/system/log2ram.service /etc/systemd/system/log2ram-service.dpkg-old
+	fi
+	if [ ! -f "/etc/default/xdgcache2ram" ]; then
+		cp /etc/default/xdgcache2ram.dpkg-dist /etc/default/xdgcache2ram
+	fi
+	if [ -f "/etc/systemd/system/xdgcache2ram.service" ]; then
+		mv /etc/systemd/system/xdgcache2ram.service /etc/systemd/system/xdgcache2ram-service.dpkg-old
 	fi
 	exit 0
 	EOF
@@ -285,6 +291,11 @@ create_board_package()
 	install -m 755 $SRC/lib/scripts/log2ram/log2ram $destination/usr/sbin/log2ram
 	install -m 755 $SRC/lib/scripts/log2ram/log2ram.hourly $destination/etc/cron.daily/log2ram
 	cp $SRC/lib/scripts/log2ram/log2ram.default $destination/etc/default/log2ram.dpkg-dist
+
+	# xdgcache2ram - persistent xdgcache based on log2ram
+	cp $SRC/lib/scripts/log2ram/xdgcache2ram.service $destination/lib/systemd/system/xdgcache2ram.service
+	ln -s /usr/sbin/log2ram $destination/usr/sbin/xdgcache2ram
+	cp $SRC/lib/scripts/log2ram/xdgcache2ram.default $destination/etc/default/xdgcache2ram.dpkg-dist
 
 	if [[ $LINUXFAMILY == sun*i ]]; then
 		install -m 755 $SRC/lib/scripts/armbian-add-overlay $destination/usr/sbin

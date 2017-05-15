@@ -69,7 +69,7 @@ if test -e ${devtype} 0 "${prefix}.next"; then
 			source ${load_addr}
 		fi
 		if test -e ${devtype} 0 ${prefix}fixup.scr; then
-			load ${devtype} 0 ${load_addr} fixup.scr
+			load ${devtype} 0 ${load_addr} ${prefix}fixup.scr
 			echo "Applying user provided fixup script (fixup.scr)"
 			source ${load_addr}
 		fi
