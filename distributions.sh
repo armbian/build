@@ -138,7 +138,7 @@ install_common()
 	install -m 644 $SRC/lib/scripts/firstrun.service $CACHEDIR/$SDCARD/etc/systemd/system/
 
 	# enable additional services
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service xdgcache2ram.service >/dev/null 2>&1"
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service >/dev/null 2>&1"
 
 	# copy "first run automated config, optional user configured"
  	cp $SRC/lib/config/armbian_first_run.txt $CACHEDIR/$SDCARD/boot/armbian_first_run.txt
