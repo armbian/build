@@ -10,6 +10,26 @@ check_abort()
 	exit 0
 }
 
+add_profile_sync_settings()
+{
+	config_file="$(psd 2>&1 | tr ' ' '\n' | grep 'psd.conf')"
+	if [ -f "${config_file}" ]; then
+		# test for overlayfs
+		sed -i 's/#USE_OVERLAYFS=.*/USE_OVERLAYFS="yes"/' "${config_file}"
+		case $(psd p 2>/dev/null | grep Overlayfs) in
+			*active*)
+				echo -e "\nConfigured profile sync daemon with overlayfs."
+				;;
+			*)
+				echo -e "\nConfigured profile sync daemon."
+				sed -i 's/USE_OVERLAYFS="yes"/#USE_OVERLAYFS="no"/' "${config_file}"
+				;;
+		esac
+	fi
+	systemctl --user enable psd.service
+	systemctl --user start psd.service
+}
+
 add_user()
 {
 	read -t 0 temp
@@ -30,6 +50,13 @@ add_user()
 	echo -e "\nDear ${RealName}, your account ${RealUserName} has been created and is sudo enabled."
 	echo -e "Please use this account for your daily work from now on.\n"
 	rm -f /root/.not_logged_in_yet
+	# set up profile sync daemon on desktop systems
+	which psd >/dev/null 2>&1
+	if [ $? -eq 0 ]; then
+		echo -e "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >>/etc/sudoers
+		export -f add_profile_sync_settings
+		su ${RealUserName} -c "bash -c add_profile_sync_settings" >/dev/null 2>&1
+	fi
 }
 
 if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*i}" ]; then
