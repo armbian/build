@@ -420,6 +420,12 @@ prepare_partitions()
 			-e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $CACHEDIR/$SDCARD/boot/$bootscript_dst
 	fi
 
+	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
+	if [[ -f $CACHEDIR/$SDCARD/boot/boot.ini ]]; then
+		[[ $HAS_UUID_SUPPORT == yes ]] && sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $CACHEDIR/$SDCARD/boot/boot.ini
+		[[ -f $CACHEDIR/$SDCARD/boot/armbianEnv.txt ]] && rm $CACHEDIR/$SDCARD/boot/armbianEnv.txt
+	fi
+
 	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $CACHEDIR/$SDCARD/boot/boot.cmd ]] && \
 		mkimage -C none -A arm -T script -d $CACHEDIR/$SDCARD/boot/boot.cmd $CACHEDIR/$SDCARD/boot/boot.scr > /dev/null 2>&1
