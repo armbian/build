@@ -39,7 +39,7 @@ if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgro
 
 load ${devtype} 0 ${fdt_addr_r} ${prefix}dtb/allwinner/${fdtfile}
 fdt addr ${fdt_addr_r}
-fdt resize
+fdt resize 65536
 for overlay_file in ${overlays}; do
 	if load ${devtype} 0 ${load_addr} ${prefix}dtb/allwinner/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
 		echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
