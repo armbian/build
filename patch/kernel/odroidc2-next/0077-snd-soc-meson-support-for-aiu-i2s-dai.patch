@@ -1,0 +1,480 @@
+From e5e1644671e95c258a854506bf1937a1f5e1dbe1 Mon Sep 17 00:00:00 2001
+From: Jerome Brunet <jbrunet@baylibre.com>
+Date: Sun, 12 Feb 2017 00:53:08 +0100
+Subject: [PATCH 77/93] snd: soc: meson: support for aiu i2s dai
+
+Initial support for meson aiu i2s dai
+TO BE COMPLETED...
+
+Signed-off-by: Jerome Brunet <jbrunet@baylibre.com>
+---
+ sound/soc/meson/Kconfig       |   8 +
+ sound/soc/meson/Makefile      |   1 +
+ sound/soc/meson/aiu-i2s-dai.c | 428 ++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 437 insertions(+)
+ create mode 100644 sound/soc/meson/aiu-i2s-dai.c
+
+diff --git a/sound/soc/meson/Kconfig b/sound/soc/meson/Kconfig
+index f2504c6..796eff0 100644
+--- a/sound/soc/meson/Kconfig
++++ b/sound/soc/meson/Kconfig
+@@ -1,6 +1,14 @@
+ menu "Amlogic SoC Audio Support"
+ 	depends on ARCH_MESON || COMPILE_TEST
+ 
++config SND_MESON_AIU_I2S_DAI
++	tristate "Meson I2S Output DAI Support"
++	select MFD_SYSCON
++	select SND_MESON_AIU_COMMON
++	help
++	  This adds ASoC driver the Amlogic Meson i2s DAI
++	  If unsure select "N".
++
+ config SND_MESON_AIU_I2S_DMA
+ 	tristate "Meson I2S Output DMA Support"
+ 	select MFD_SYSCON
+diff --git a/sound/soc/meson/Makefile b/sound/soc/meson/Makefile
+index b237894..0fea1c1 100644
+--- a/sound/soc/meson/Makefile
++++ b/sound/soc/meson/Makefile
+@@ -1,2 +1,3 @@
+ obj-$(CONFIG_SND_MESON_AIU_COMMON) += aiu-common.o
++obj-$(CONFIG_SND_MESON_AIU_I2S_DAI) += aiu-i2s-dai.o
+ obj-$(CONFIG_SND_MESON_AIU_I2S_DMA) += aiu-i2s-dma.o
+diff --git a/sound/soc/meson/aiu-i2s-dai.c b/sound/soc/meson/aiu-i2s-dai.c
+new file mode 100644
+index 0000000..6756848
+--- /dev/null
++++ b/sound/soc/meson/aiu-i2s-dai.c
+@@ -0,0 +1,428 @@
++/*
++ * Copyright (C) 2017 BayLibre, SAS
++ * Author: Jerome Brunet <jbrunet@baylibre.com>
++ * Copyright (C) 2017 Amlogic, Inc. All rights reserved.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <linux/clk.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/soc-dai.h>
++
++#include "aiu.h"
++#include "aiu-regs.h"
++
++#define DRV_NAME "meson-aiu-i2s-dai"
++
++struct aiu_i2s_dai {
++	struct regmap *regmap;
++	struct clk *amclk;
++	struct clk *aoclk;
++	struct clk *mixer_if;
++	bool bclks_idle;
++};
++
++#define AIU_CLK_CTRL_I2S_DIV_EN			BIT(0)
++#define AIU_CLK_CTRL_I2S_DIV_MASK		GENMASK(3, 2)
++#define AIU_CLK_CTRL_AOCLK_POLARITY_MASK	BIT(6)
++#define AIU_CLK_CTRL_AOCLK_POLARITY_NORMAL	(0 << 6)
++#define AIU_CLK_CTRL_AOCLK_POLARITY_INVERTED	(1 << 6)
++#define AIU_CLK_CTRL_ALRCLK_POLARITY_MASK	BIT(7)
++#define AIU_CLK_CTRL_ALRCLK_POLARITY_NORMAL	(0 << 7)
++#define AIU_CLK_CTRL_ALRCLK_POLARITY_INVERTED	(1 << 7)
++#define AIU_CLK_CTRL_ALRCLK_SKEW_MASK		GENMASK(9, 8)
++#define AIU_CLK_CTRL_ALRCLK_LEFT_J		(0 << 8)
++#define AIU_CLK_CTRL_ALRCLK_I2S			(1 << 8)
++#define AIU_CLK_CTRL_ALRCLK_RIGHT_J		(2 << 8)
++#define AIU_CLK_CTRL_MORE_I2S_DIV_MASK		GENMASK(5, 0)
++#define AIU_CLK_CTRL_MORE_I2S_DIV(div)		((div - 1) << 0)
++#define AIU_CODEC_DAC_LRCLK_CTRL_DIV_MASK	GENMASK(11, 0)
++#define AIU_CODEC_DAC_LRCLK_CTRL_DIV(div)	((div - 1) << 0)
++#define AIU_I2S_DAC_CFG_PAYLOAD_SIZE_MASK	GENMASK(1, 0)
++#define AIU_I2S_DAC_CFG_AOCLK_32		(0 << 0)
++#define AIU_I2S_DAC_CFG_AOCLK_48		(2 << 0)
++#define AIU_I2S_DAC_CFG_AOCLK_64		(3 << 0)
++#define AIU_I2S_MISC_HOLD_EN			BIT(2)
++#define AIU_I2S_MISC_FORCE_LR			BIT(4)
++
++static void __hold(struct aiu_i2s_dai *priv, bool enable)
++{
++	regmap_update_bits(priv->regmap, AIU_I2S_MISC,
++			   AIU_I2S_MISC_HOLD_EN,
++			   enable ? AIU_I2S_MISC_HOLD_EN : 0);
++}
++
++static void __playback_start(struct aiu_i2s_dai *priv)
++{
++	regmap_update_bits(priv->regmap, AIU_CLK_CTRL,
++			   AIU_CLK_CTRL_I2S_DIV_EN,
++			   AIU_CLK_CTRL_I2S_DIV_EN);
++	__hold(priv, false);
++}
++
++static void __playback_stop(struct aiu_i2s_dai *priv, bool clk_force)
++{
++	__hold(priv, true);
++	/* Disable the bit clks if necessary */
++	if (clk_force || !priv->bclks_idle)
++		regmap_update_bits(priv->regmap, AIU_CLK_CTRL,
++				   AIU_CLK_CTRL_I2S_DIV_EN,
++				   0);
++
++}
++
++static int aiu_i2s_dai_trigger(struct snd_pcm_substream *substream, int cmd,
++			       struct snd_soc_dai *dai)
++{
++	struct aiu_i2s_dai *priv = snd_soc_dai_get_drvdata(dai);
++	bool clk_force_stop = false;
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		__playback_start(priv);
++		return 0;
++
++	case SNDRV_PCM_TRIGGER_STOP:
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++		clk_force_stop = true;
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++		__playback_stop(priv, clk_force_stop);
++		return 0;
++
++	default:
++		return -EINVAL;
++	}
++}
++
++static int __get_lrclk_div(unsigned int os, unsigned int width)
++{
++	if (((os % 48) == 0) && (width == 24))
++		return 48;
++	else if (((os % 64) == 0) && (width == 24))
++		return 64;
++	else if (((os % 32) == 0) && (width == 16))
++		return 32;
++
++	return -EINVAL;
++}
++
++/*
++ * FIXME: Most of this stuff should be done using CCF when the support of
++ * regmap based clocks is added
++ */
++static int __bclks_set_rate(struct aiu_i2s_dai *priv, unsigned int srate,
++			    unsigned int width)
++{
++	int div_lrclk, div_bclk;
++	unsigned int os;
++	u32 val;
++
++	/* Get the oversampling factor */
++	os = DIV_ROUND_CLOSEST(clk_get_rate(priv->amclk), srate);
++
++	/* Get the divider between bclk and lrclk */
++	div_lrclk = __get_lrclk_div(os, width);
++
++	switch (div_lrclk) {
++	case 32:
++		val = AIU_I2S_DAC_CFG_AOCLK_32;
++		break;
++	case 48:
++		val = AIU_I2S_DAC_CFG_AOCLK_48;
++		break;
++	case 64:
++		val = AIU_I2S_DAC_CFG_AOCLK_64;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	/* Set the divider between lrclk and bclk */
++	regmap_update_bits(priv->regmap, AIU_I2S_DAC_CFG,
++			   AIU_I2S_DAC_CFG_PAYLOAD_SIZE_MASK,
++			   val);
++
++	regmap_update_bits(priv->regmap, AIU_CODEC_DAC_LRCLK_CTRL,
++			   AIU_CODEC_DAC_LRCLK_CTRL_DIV_MASK,
++			   AIU_CODEC_DAC_LRCLK_CTRL_DIV(div_lrclk));
++
++	/* Set the divider between blclk and amclk */
++	div_bclk = os / div_lrclk;
++
++	/* Use CLK_MORE for the i2s divider */
++	regmap_update_bits(priv->regmap, AIU_CLK_CTRL,
++			   AIU_CLK_CTRL_I2S_DIV_MASK,
++			   0);
++
++	regmap_update_bits(priv->regmap, AIU_CLK_CTRL_MORE,
++			   AIU_CLK_CTRL_MORE_I2S_DIV_MASK,
++			   AIU_CLK_CTRL_MORE_I2S_DIV(div_bclk));
++
++	return 0;
++}
++
++static int aiu_i2s_dai_hw_params(struct snd_pcm_substream *substream,
++				 struct snd_pcm_hw_params *params,
++				 struct snd_soc_dai *dai)
++{
++	struct aiu_i2s_dai *priv = snd_soc_dai_get_drvdata(dai);
++	int ret;
++
++	ret = __bclks_set_rate(priv, params_rate(params), params_width(params));
++	if (ret) {
++		dev_err(dai->dev, "Unable set to the i2s clock rates\n");
++		return ret;
++	}
++
++	return 0;
++}
++
++static int aiu_i2s_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
++{
++	struct aiu_i2s_dai *priv = snd_soc_dai_get_drvdata(dai);
++	u32 val;
++
++	if ((fmt & SND_SOC_DAIFMT_MASTER_MASK) != SND_SOC_DAIFMT_CBS_CFS)
++		return -EINVAL;
++
++	/* DAI output mode */
++	switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
++	case SND_SOC_DAIFMT_I2S:
++		val = AIU_CLK_CTRL_ALRCLK_I2S;
++		break;
++	case SND_SOC_DAIFMT_LEFT_J: /* !TBC! */
++		val = AIU_CLK_CTRL_ALRCLK_LEFT_J;
++	 	break;
++	case SND_SOC_DAIFMT_RIGHT_J: /* !TBC! */
++		val = AIU_CLK_CTRL_ALRCLK_RIGHT_J;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	regmap_update_bits(priv->regmap, AIU_CLK_CTRL,
++			   AIU_CLK_CTRL_ALRCLK_SKEW_MASK,
++			   val);
++
++	/* DAI clock polarity */
++	switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
++	case SND_SOC_DAIFMT_IB_IF:
++		/* Invert both clocks */
++		val = AIU_CLK_CTRL_ALRCLK_POLARITY_INVERTED |
++			AIU_CLK_CTRL_AOCLK_POLARITY_INVERTED;
++		break;
++	case SND_SOC_DAIFMT_IB_NF:
++		/* Invert bit clock */
++		val = AIU_CLK_CTRL_ALRCLK_POLARITY_NORMAL |
++			AIU_CLK_CTRL_AOCLK_POLARITY_INVERTED;
++		break;
++	case SND_SOC_DAIFMT_NB_IF:
++		/* Invert frame clock */
++		val = AIU_CLK_CTRL_ALRCLK_POLARITY_INVERTED |
++			AIU_CLK_CTRL_AOCLK_POLARITY_NORMAL;
++		break;
++	case SND_SOC_DAIFMT_NB_NF:
++		/* Normal clocks */
++		val = AIU_CLK_CTRL_ALRCLK_POLARITY_NORMAL |
++			AIU_CLK_CTRL_AOCLK_POLARITY_NORMAL;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	regmap_update_bits(priv->regmap, AIU_CLK_CTRL,
++			   AIU_CLK_CTRL_ALRCLK_POLARITY_MASK |
++			   AIU_CLK_CTRL_AOCLK_POLARITY_MASK,
++			   val);
++
++	switch (fmt & SND_SOC_DAIFMT_CLOCK_MASK) {
++	case SND_SOC_DAIFMT_CONT:
++		priv->bclks_idle = true;
++		break;
++	case SND_SOC_DAIFMT_GATED:
++		priv->bclks_idle = false;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int aiu_i2s_dai_set_sysclk(struct snd_soc_dai *dai, int clk_id,
++				  unsigned int freq, int dir)
++{
++	struct aiu_i2s_dai *priv = snd_soc_dai_get_drvdata(dai);
++	int ret;
++
++	if (WARN_ON(clk_id != 0))
++		return -EINVAL;
++
++	if (dir == SND_SOC_CLOCK_IN)
++		return 0;
++
++	ret = clk_set_rate(priv->amclk, freq);
++	if (ret) {
++		dev_err(dai->dev, "Failed to set sysclk to %uHz", freq);
++		return ret;
++	}
++
++	dev_dbg(dai->dev, "sysclk set to %luHz\n", clk_get_rate(priv->amclk));
++
++	return 0;
++}
++
++static int aiu_i2s_dai_startup(struct snd_pcm_substream *substream,
++			     struct snd_soc_dai *dai)
++{
++	struct aiu_i2s_dai *priv = snd_soc_dai_get_drvdata(dai);
++	int ret;
++
++	/* Make sure nothing gets out of the DAI yet*/
++	__hold(priv, true);
++
++	/* I2S encoder needs the mixer interface gate */
++	ret = clk_prepare_enable(priv->mixer_if);
++	if (ret)
++		goto err_mixer_if;
++
++	/* Enable the i2s master clock */
++	ret = clk_prepare_enable(priv->amclk);
++	if (ret)
++		goto err_amclk;
++
++	/* Enable the bits clock gate */
++	ret = clk_prepare_enable(priv->aoclk);
++	if (ret)
++		goto err_aoclk;
++
++	return 0;
++
++err_aoclk:
++	clk_disable_unprepare(priv->amclk);
++err_amclk:
++	clk_disable_unprepare(priv->mixer_if);
++err_mixer_if:
++	return ret;
++}
++
++static void aiu_i2s_dai_shutdown(struct snd_pcm_substream *substream,
++				 struct snd_soc_dai *dai)
++{
++	struct aiu_i2s_dai *priv = snd_soc_dai_get_drvdata(dai);
++
++	clk_disable_unprepare(priv->aoclk);
++	clk_disable_unprepare(priv->amclk);
++	clk_disable_unprepare(priv->mixer_if);
++}
++
++static const struct snd_soc_dai_ops aiu_i2s_dai_ops = {
++	.startup    = aiu_i2s_dai_startup,
++	.shutdown   = aiu_i2s_dai_shutdown,
++	.trigger    = aiu_i2s_dai_trigger,
++	.hw_params  = aiu_i2s_dai_hw_params,
++	.set_fmt    = aiu_i2s_dai_set_fmt,
++	.set_sysclk = aiu_i2s_dai_set_sysclk,
++};
++
++static struct snd_soc_dai_driver aiu_i2s_dai = {
++	.playback = {
++		.stream_name = "Playback",
++		.channels_min = 2,
++		.channels_max = 8,
++		.rates = SNDRV_PCM_RATE_8000_192000,
++		.formats = (SNDRV_PCM_FMTBIT_S16_LE |
++			    SNDRV_PCM_FMTBIT_S24_LE )
++	},
++	.ops = &aiu_i2s_dai_ops,
++};
++
++static const struct snd_soc_component_driver aiu_i2s_dai_component = {
++	.name	= DRV_NAME,
++};
++
++static int aiu_i2s_dai_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct aiu_i2s_dai *priv;
++	int ret;
++
++	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
++	if(!priv)
++		return -ENOMEM;
++	platform_set_drvdata(pdev, priv);
++
++	ret = aiu_common_register(pdev);
++	if (ret)
++		return ret;
++
++	priv->regmap = syscon_node_to_regmap(dev->parent->of_node);
++	if (IS_ERR(priv->regmap)) {
++		dev_err(dev, "failed to get our regmap\n");
++		return PTR_ERR(priv->regmap);
++	}
++
++	priv->mixer_if = devm_clk_get(dev, "mixer_if");
++	if (IS_ERR(priv->mixer_if)) {
++		if(PTR_ERR(priv->mixer_if) != -EPROBE_DEFER)
++			dev_err(dev, "failed to get mixer interface gate\n");
++		return PTR_ERR(priv->mixer_if);
++	}
++
++	priv->aoclk = devm_clk_get(dev, "aoclk");
++	if (IS_ERR(priv->aoclk)) {
++		if(PTR_ERR(priv->aoclk) != -EPROBE_DEFER)
++			dev_err(dev, "failed to get bit clocks gate\n");
++		return PTR_ERR(priv->aoclk);
++	}
++
++	priv->amclk = devm_clk_get(dev, "amclk");
++	if (IS_ERR(priv->amclk)) {
++		if(PTR_ERR(priv->amclk) != -EPROBE_DEFER)
++			dev_err(dev, "failed to get the i2s master clock\n");
++		return PTR_ERR(priv->amclk);
++	}
++
++	return devm_snd_soc_register_component(dev, &aiu_i2s_dai_component,
++					       &aiu_i2s_dai, 1);
++}
++
++static const struct of_device_id aiu_i2s_dai_match[] = {
++	{ .compatible = "amlogic,meson-aiu-i2s-dai", },
++	{}
++};
++MODULE_DEVICE_TABLE(of, aiu_i2s_dai_match);
++
++static struct platform_driver aiu_i2s_dai_pdrv = {
++	.probe = aiu_i2s_dai_probe,
++	.driver = {
++		.name = DRV_NAME,
++		.of_match_table = aiu_i2s_dai_match,
++	},
++};
++module_platform_driver(aiu_i2s_dai_pdrv);
++
++MODULE_DESCRIPTION("Meson AIU i2s DAI ASoC Driver");
++MODULE_AUTHOR("Jerome Brunet <jbrunet@baylibre.com>");
++MODULE_LICENSE("GPL v2");
+-- 
+1.9.1
+

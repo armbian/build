@@ -1,0 +1,167 @@
+From 1de2e27b041a944da876ec10a530991d82dfd991 Mon Sep 17 00:00:00 2001
+From: Laurent Pinchart <laurent.pinchart+renesas@ideasonboard.com>
+Date: Tue, 17 Jan 2017 10:28:57 +0200
+Subject: [PATCH 17/93] drm: bridge: dw-hdmi: Move IRQ and IO resource
+ allocation to common code
+
+There's no need to duplicate identical code in multiple drivers (two at
+the moment, one more to come soon). Move it to the dw-hdmi core where it
+can be shared. If resource allocation ever becomes device-specific later
+we'll always have the option of splitting it out again.
+
+While it at pass the platform device to the bind function to avoid
+having to cast struct device to struct platform_device.
+
+Signed-off-by: Laurent Pinchart <laurent.pinchart+renesas@ideasonboard.com>
+Reviewed-by: Jose Abreu <joabreu@synopsys.com>
+Signed-off-by: Archit Taneja <architt@codeaurora.org>
+Link: http://patchwork.freedesktop.org/patch/msgid/20170117082910.27023-8-laurent.pinchart+renesas@ideasonboard.com
+---
+ drivers/gpu/drm/bridge/dw-hdmi.c            | 13 ++++++++++---
+ drivers/gpu/drm/imx/dw_hdmi-imx.c           | 12 +-----------
+ drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c | 12 +-----------
+ include/drm/bridge/dw_hdmi.h                |  3 +--
+ 4 files changed, 13 insertions(+), 27 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/dw-hdmi.c b/drivers/gpu/drm/bridge/dw-hdmi.c
+index 488dc1a..563cbec 100644
+--- a/drivers/gpu/drm/bridge/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/dw-hdmi.c
+@@ -1843,14 +1843,16 @@ static int dw_hdmi_register(struct drm_encoder *encoder, struct dw_hdmi *hdmi)
+ 	return 0;
+ }
+ 
+-int dw_hdmi_bind(struct device *dev, struct drm_encoder *encoder,
+-		 struct resource *iores, int irq,
++int dw_hdmi_bind(struct platform_device *pdev, struct drm_encoder *encoder,
+ 		 const struct dw_hdmi_plat_data *plat_data)
+ {
++	struct device *dev = &pdev->dev;
+ 	struct device_node *np = dev->of_node;
+ 	struct platform_device_info pdevinfo;
+ 	struct device_node *ddc_node;
+ 	struct dw_hdmi *hdmi;
++	struct resource *iores;
++	int irq;
+ 	int ret;
+ 	u32 val = 1;
+ 	u8 config0;
+@@ -1903,6 +1905,7 @@ int dw_hdmi_bind(struct device *dev, struct drm_encoder *encoder,
+ 		dev_dbg(hdmi->dev, "no ddc property found\n");
+ 	}
+ 
++	iores = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	hdmi->regs = devm_ioremap_resource(dev, iores);
+ 	if (IS_ERR(hdmi->regs)) {
+ 		ret = PTR_ERR(hdmi->regs);
+@@ -1945,6 +1948,10 @@ int dw_hdmi_bind(struct device *dev, struct drm_encoder *encoder,
+ 
+ 	initialize_hdmi_ih_mutes(hdmi);
+ 
++	irq = platform_get_irq(pdev, 0);
++	if (irq < 0)
++		goto err_iahb;
++
+ 	ret = devm_request_threaded_irq(dev, irq, dw_hdmi_hardirq,
+ 					dw_hdmi_irq, IRQF_SHARED,
+ 					dev_name(dev), hdmi);
+@@ -2025,7 +2032,7 @@ int dw_hdmi_bind(struct device *dev, struct drm_encoder *encoder,
+ 	if (hdmi->i2c)
+ 		dw_hdmi_i2c_init(hdmi);
+ 
+-	dev_set_drvdata(dev, hdmi);
++	platform_set_drvdata(pdev, hdmi);
+ 
+ 	return 0;
+ 
+diff --git a/drivers/gpu/drm/imx/dw_hdmi-imx.c b/drivers/gpu/drm/imx/dw_hdmi-imx.c
+index f796658..f645275 100644
+--- a/drivers/gpu/drm/imx/dw_hdmi-imx.c
++++ b/drivers/gpu/drm/imx/dw_hdmi-imx.c
+@@ -207,8 +207,6 @@ static int dw_hdmi_imx_bind(struct device *dev, struct device *master,
+ 	struct drm_device *drm = data;
+ 	struct drm_encoder *encoder;
+ 	struct imx_hdmi *hdmi;
+-	struct resource *iores;
+-	int irq;
+ 	int ret;
+ 
+ 	if (!pdev->dev.of_node)
+@@ -223,14 +221,6 @@ static int dw_hdmi_imx_bind(struct device *dev, struct device *master,
+ 	hdmi->dev = &pdev->dev;
+ 	encoder = &hdmi->encoder;
+ 
+-	irq = platform_get_irq(pdev, 0);
+-	if (irq < 0)
+-		return irq;
+-
+-	iores = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+-	if (!iores)
+-		return -ENXIO;
+-
+ 	encoder->possible_crtcs = drm_of_find_possible_crtcs(drm, dev->of_node);
+ 	/*
+ 	 * If we failed to find the CRTC(s) which this encoder is
+@@ -249,7 +239,7 @@ static int dw_hdmi_imx_bind(struct device *dev, struct device *master,
+ 	drm_encoder_init(drm, encoder, &dw_hdmi_imx_encoder_funcs,
+ 			 DRM_MODE_ENCODER_TMDS, NULL);
+ 
+-	ret = dw_hdmi_bind(dev, encoder, iores, irq, plat_data);
++	ret = dw_hdmi_bind(pdev, encoder, plat_data);
+ 
+ 	/*
+ 	 * If dw_hdmi_bind() fails we'll never call dw_hdmi_unbind(),
+diff --git a/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c b/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
+index e8fb5c5..a6d4a02 100644
+--- a/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
+@@ -257,8 +257,6 @@ static int dw_hdmi_rockchip_bind(struct device *dev, struct device *master,
+ 	struct drm_device *drm = data;
+ 	struct drm_encoder *encoder;
+ 	struct rockchip_hdmi *hdmi;
+-	struct resource *iores;
+-	int irq;
+ 	int ret;
+ 
+ 	if (!pdev->dev.of_node)
+@@ -273,14 +271,6 @@ static int dw_hdmi_rockchip_bind(struct device *dev, struct device *master,
+ 	hdmi->dev = &pdev->dev;
+ 	encoder = &hdmi->encoder;
+ 
+-	irq = platform_get_irq(pdev, 0);
+-	if (irq < 0)
+-		return irq;
+-
+-	iores = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+-	if (!iores)
+-		return -ENXIO;
+-
+ 	encoder->possible_crtcs = drm_of_find_possible_crtcs(drm, dev->of_node);
+ 	/*
+ 	 * If we failed to find the CRTC(s) which this encoder is
+@@ -301,7 +291,7 @@ static int dw_hdmi_rockchip_bind(struct device *dev, struct device *master,
+ 	drm_encoder_init(drm, encoder, &dw_hdmi_rockchip_encoder_funcs,
+ 			 DRM_MODE_ENCODER_TMDS, NULL);
+ 
+-	ret = dw_hdmi_bind(dev, encoder, iores, irq, plat_data);
++	ret = dw_hdmi_bind(pdev, encoder, plat_data);
+ 
+ 	/*
+ 	 * If dw_hdmi_bind() fails we'll never call dw_hdmi_unbind(),
+diff --git a/include/drm/bridge/dw_hdmi.h b/include/drm/bridge/dw_hdmi.h
+index 11edda6..94ff6ed 100644
+--- a/include/drm/bridge/dw_hdmi.h
++++ b/include/drm/bridge/dw_hdmi.h
+@@ -57,8 +57,7 @@ struct dw_hdmi_plat_data {
+ };
+ 
+ void dw_hdmi_unbind(struct device *dev);
+-int dw_hdmi_bind(struct device *dev, struct drm_encoder *encoder,
+-		 struct resource *iores, int irq,
++int dw_hdmi_bind(struct platform_device *pdev, struct drm_encoder *encoder,
+ 		 const struct dw_hdmi_plat_data *plat_data);
+ 
+ void dw_hdmi_set_sample_rate(struct dw_hdmi *hdmi, unsigned int rate);
+-- 
+1.9.1
+

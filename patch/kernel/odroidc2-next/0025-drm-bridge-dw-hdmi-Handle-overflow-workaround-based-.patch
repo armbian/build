@@ -1,0 +1,123 @@
+From 3b3c8dc7038a16dfeb29388d6b5afbef869ebc2d Mon Sep 17 00:00:00 2001
+From: Laurent Pinchart <laurent.pinchart+renesas@ideasonboard.com>
+Date: Tue, 17 Jan 2017 10:29:05 +0200
+Subject: [PATCH 25/93] drm: bridge: dw-hdmi: Handle overflow workaround based
+ on device version
+
+Use the device version queried at runtime instead of the device type
+provided through platform data to handle the overflow workaround. This
+will make support of other SoCs integrating the same HDMI TX controller
+version easier.
+
+Among the supported platforms only i.MX6DL and i.MX6Q have been
+identified as needing the workaround. Disabling it on Rockchip RK3288
+(which integrates a v2.00a controller) didn't produce any error or
+artifact.
+
+Signed-off-by: Laurent Pinchart <laurent.pinchart+renesas@ideasonboard.com>
+Reviewed-by: Jose Abreu <joabreu@synopsys.com>
+Signed-off-by: Archit Taneja <architt@codeaurora.org>
+Link: http://patchwork.freedesktop.org/patch/msgid/20170117082910.27023-16-laurent.pinchart+renesas@ideasonboard.com
+---
+ drivers/gpu/drm/bridge/dw-hdmi.c | 46 ++++++++++++++++++++++++++++------------
+ 1 file changed, 33 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/dw-hdmi.c b/drivers/gpu/drm/bridge/dw-hdmi.c
+index 730a7558..f4faa14 100644
+--- a/drivers/gpu/drm/bridge/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/dw-hdmi.c
+@@ -117,8 +117,10 @@ struct dw_hdmi {
+ 	struct drm_connector connector;
+ 	struct drm_bridge bridge;
+ 
+-	struct platform_device *audio;
+ 	enum dw_hdmi_devtype dev_type;
++	unsigned int version;
++
++	struct platform_device *audio;
+ 	struct device *dev;
+ 	struct clk *isfr_clk;
+ 	struct clk *iahb_clk;
+@@ -1323,19 +1325,38 @@ static void hdmi_enable_audio_clk(struct dw_hdmi *hdmi)
+ /* Workaround to clear the overflow condition */
+ static void dw_hdmi_clear_overflow(struct dw_hdmi *hdmi)
+ {
+-	int count;
++	unsigned int count;
++	unsigned int i;
+ 	u8 val;
+ 
+-	/* TMDS software reset */
+-	hdmi_writeb(hdmi, (u8)~HDMI_MC_SWRSTZ_TMDSSWRST_REQ, HDMI_MC_SWRSTZ);
++	/*
++	 * Under some circumstances the Frame Composer arithmetic unit can miss
++	 * an FC register write due to being busy processing the previous one.
++	 * The issue can be worked around by issuing a TMDS software reset and
++	 * then write one of the FC registers several times.
++	 *
++	 * The number of iterations matters and depends on the HDMI TX revision
++	 * (and possibly on the platform). So far only i.MX6Q (v1.30a) and
++	 * i.MX6DL (v1.31a) have been identified as needing the workaround, with
++	 * 4 and 1 iterations respectively.
++	 */
+ 
+-	val = hdmi_readb(hdmi, HDMI_FC_INVIDCONF);
+-	if (hdmi->dev_type == IMX6DL_HDMI) {
+-		hdmi_writeb(hdmi, val, HDMI_FC_INVIDCONF);
++	switch (hdmi->version) {
++	case 0x130a:
++		count = 4;
++		break;
++	case 0x131a:
++		count = 1;
++		break;
++	default:
+ 		return;
+ 	}
+ 
+-	for (count = 0; count < 4; count++)
++	/* TMDS software reset */
++	hdmi_writeb(hdmi, (u8)~HDMI_MC_SWRSTZ_TMDSSWRST_REQ, HDMI_MC_SWRSTZ);
++
++	val = hdmi_readb(hdmi, HDMI_FC_INVIDCONF);
++	for (i = 0; i < count; i++)
+ 		hdmi_writeb(hdmi, val, HDMI_FC_INVIDCONF);
+ }
+ 
+@@ -1832,7 +1853,6 @@ static irqreturn_t dw_hdmi_irq(int irq, void *dev_id)
+ 	int irq;
+ 	int ret;
+ 	u32 val = 1;
+-	u16 version;
+ 	u8 prod_id0;
+ 	u8 prod_id1;
+ 	u8 config0;
+@@ -1917,21 +1937,21 @@ static irqreturn_t dw_hdmi_irq(int irq, void *dev_id)
+ 	}
+ 
+ 	/* Product and revision IDs */
+-	version = (hdmi_readb(hdmi, HDMI_DESIGN_ID) << 8)
+-		| (hdmi_readb(hdmi, HDMI_REVISION_ID) << 0);
++	hdmi->version = (hdmi_readb(hdmi, HDMI_DESIGN_ID) << 8)
++		      | (hdmi_readb(hdmi, HDMI_REVISION_ID) << 0);
+ 	prod_id0 = hdmi_readb(hdmi, HDMI_PRODUCT_ID0);
+ 	prod_id1 = hdmi_readb(hdmi, HDMI_PRODUCT_ID1);
+ 
+ 	if (prod_id0 != HDMI_PRODUCT_ID0_HDMI_TX ||
+ 	    (prod_id1 & ~HDMI_PRODUCT_ID1_HDCP) != HDMI_PRODUCT_ID1_HDMI_TX) {
+ 		dev_err(dev, "Unsupported HDMI controller (%04x:%02x:%02x)\n",
+-			version, prod_id0, prod_id1);
++			hdmi->version, prod_id0, prod_id1);
+ 		ret = -ENODEV;
+ 		goto err_iahb;
+ 	}
+ 
+ 	dev_info(dev, "Detected HDMI TX controller v%x.%03x %s HDCP\n",
+-		 version >> 12, version & 0xfff,
++		 hdmi->version >> 12, hdmi->version & 0xfff,
+ 		 prod_id1 & HDMI_PRODUCT_ID1_HDCP ? "with" : "without");
+ 
+ 	initialize_hdmi_ih_mutes(hdmi);
+-- 
+1.9.1
+
