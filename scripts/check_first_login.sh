@@ -12,11 +12,11 @@ check_abort()
 
 add_profile_sync_settings()
 {
-	config_file="$(psd 2>&1 | tr ' ' '\n' | grep 'psd.conf')"
+	/usr/bin/psd >/dev/null 2>&1 && config_file="${HOME}/.config/psd/psd.conf"
 	if [ -f "${config_file}" ]; then
 		# test for overlayfs
 		sed -i 's/#USE_OVERLAYFS=.*/USE_OVERLAYFS="yes"/' "${config_file}"
-		case $(psd p 2>/dev/null | grep Overlayfs) in
+		case $(/usr/bin/psd p 2>/dev/null | grep Overlayfs) in
 			*active*)
 				echo -e "\nConfigured profile sync daemon with overlayfs."
 				;;
@@ -55,7 +55,7 @@ add_user()
 	if [ $? -eq 0 ]; then
 		echo -e "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >>/etc/sudoers
 		export -f add_profile_sync_settings
-		su ${RealUserName} -c "bash -c add_profile_sync_settings" >/dev/null 2>&1
+		su ${RealUserName} -c "bash -c add_profile_sync_settings" 2>/dev/null
 	fi
 }
 
