@@ -108,6 +108,9 @@ case $mode in
 			;;
 esac
 
+# force 16bpp for 4k
+[ "$Y" = "2160" ] && bpp=16
+
 common_display_setup
 
 # Console unblack
