@@ -486,10 +486,7 @@ prepare_host()
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
 	if [[ -z $codename || "trusty xenial" != *"$codename"* ]]; then
-		display_alert "Host system support was not tested" "${codename:-(unknown)}" "wrn"
-		display_alert "Please don't ask for support if anything doesn't work"
-		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
-		read
+		exit_with_error "It seems you ignore documentation and run an unsupported build system: ${codename:-(unknown)}"
 	fi
 
 	if [[ $codename == xenial ]]; then
