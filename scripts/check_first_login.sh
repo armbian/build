@@ -63,8 +63,12 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 	if [ "$IMAGE_TYPE" != "nightly" ]; then
 		echo -e "\n\e[0;31mThank you for choosing Armbian! Support: \e[1m\e[39mwww.armbian.com\x1B[0m\n"
 	else
-		echo -e "\nYou are using Armbian nightly build."
-		echo -e "\nIt is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT\x1B[0m.\n"
+		echo -e "\nYou are using an Armbian nightly build meant only for developers to provide"
+		echo -e "constructive feedback to improve build system, OS settings or user experience."
+		echo -e "If this does not apply to you, \e[0;31mSTOP NOW!\x1B[0m. Especially don't use this image for"
+		echo -e "daily work since things might not work as expected or at all and may break"
+		echo -e "anytime with next update. \e[0;31mYOU HAVE BEEN WARNED!\x1B[0m"
+		echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
 	fi
 	echo "Creating a new user account. Press <Ctrl-C> to abort"
 	[ -f "/etc/init.d/nodm" ] && echo "Desktop environment will not be enabled if you abort the new user creation"
@@ -92,12 +96,25 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 		# [[ -f /etc/systemd/system/desktop-splash.service ]] && systemctl --no-reload enable desktop-splash.service >/dev/null 2>&1 && service desktop-splash restart
 		sed -i "s/NODM_USER=\(.*\)/NODM_USER=${RealUserName}/" /etc/default/nodm
 		sed -i "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" /etc/default/nodm
-		if [ -z "$ConfigureDisplay" ] || [ "$ConfigureDisplay" = "n" ] || [ "$ConfigureDisplay" = "N" ]; then
+		if [[ -f /var/run/resize2fs-reboot ]]; then
+			# Let the user reboot now otherwise start desktop environment
+			printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"
+			printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
+		elif [ -z "$ConfigureDisplay" ] || [ "$ConfigureDisplay" = "n" ] || [ "$ConfigureDisplay" = "N" ]; then
 			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
 			sleep 3
 			service nodm stop
 			sleep 1
 			service nodm start
 		fi
+	else
+		# Display reboot recommendation if necessary
+		if [[ -f /var/run/resize2fs-reboot ]]; then
+			printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"
+			printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
+		fi
 	fi
 fi
+
+# enable motd stuff from now on
+chmod 755 /etc/update-motd.d/*
