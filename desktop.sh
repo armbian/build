@@ -32,6 +32,11 @@ install_desktop ()
 	cp -R $SRC/lib/config/desktop/. $CACHEDIR/$SDCARD/etc/skel
 	cp -R $SRC/lib/config/desktop/. $CACHEDIR/$SDCARD/root
 
+	# remove power manager from panel for all except pinebook
+	if [[ $BOARD != pinebook* ]]; then
+		sed -i '/xfce4-power-manager/d' $CACHEDIR/$SDCARD/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
+		sed -i '/xfce4-power-manager/d' $CACHEDIR/$SDCARD/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
+	fi
 	# install wallpapers
 	d=$CACHEDIR/$SDCARD/usr/share/backgrounds/xfce/
 	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/wallpapers/armbian*.jpg "$d"
