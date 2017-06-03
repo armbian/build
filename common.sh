@@ -197,8 +197,11 @@ compile_kernel()
 
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${toolchain:+env PATH=$toolchain:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
 
-	# use proven config
-	if [[ $KERNEL_KEEP_CONFIG != yes || ! -f .config ]]; then
+	# copy kernel config
+	if [[ $KERNEL_KEEP_CONFIG == yes && -f $DEST/$LINUXCONFIG.config ]]; then
+		display_alert "Using previous kernel config" "$DEST/$LINUXCONFIG.config" "info"
+		cp $DEST/$LINUXCONFIG.config .config
+	else
 		if [[ -f $SRC/userpatches/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
 			cp $SRC/userpatches/$LINUXCONFIG.config .config
@@ -225,6 +228,7 @@ compile_kernel()
 		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" oldconfig
 		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" menuconfig
 		# store kernel config in easily reachable place
+		display_alert "Exporting new kernel config" "$DEST/$LINUXCONFIG.config" "info"
 		cp .config $DEST/$LINUXCONFIG.config
 	fi
 
