@@ -88,6 +88,9 @@ create_board_package()
 	if [ -f "/etc/systemd/system/log2ram.service" ]; then
 		mv /etc/systemd/system/log2ram.service /etc/systemd/system/log2ram-service.dpkg-old
 	fi
+	if [ -f "/lib/systemd/system/pinebook-enable-sound.service" ]; then
+		systemctl enable pinebook-enable-sound.service
+	fi
 	exit 0
 	EOF
 
@@ -320,6 +323,11 @@ create_board_package()
 		# HW acceleration is not supported on this platform yet
 		vo=x11
 		EOF
+	fi
+
+	#TODO: move to sources.conf
+	if [[ $BOARD == pinebook-a64 ]]; then
+		cp $SRC/lib/scripts/pinebook-enable-sound.service $destination/lib/systemd/system/
 	fi
 
 	# add some summary to the image
