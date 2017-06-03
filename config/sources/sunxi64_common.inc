@@ -20,3 +20,24 @@ case $BRANCH in
 	KERNELPATCHDIR='sun50i-dev'
 	;;
 esac
+
+setup_write_uboot_platform()
+{
+	if grep -q "ubootpart" /proc/cmdline; then
+		# mainline
+		local tmp=$(cat /proc/cmdline)
+		tmp="${tmp##*ubootpart=}"
+		tmp="${tmp%% *}"
+		[[ -n $tmp ]] && local part=$(findfs PARTUUID=$tmp 2>/dev/null)
+		[[ -n $part ]] && local dev=$(lsblk -n -o PKNAME $part 2>/dev/null)
+		[[ -n $dev ]] && DEVICE="/dev/$dev"
+	else
+		# legacy
+		local tmp=$(cat /proc/cmdline)
+		tmp="${tmp##*root=}"
+		tmp="${tmp%% *}"
+		[[ -n $tmp ]] && local part=$(findfs $tmp 2>/dev/null)
+		[[ -n $part ]] && local dev=$(lsblk -n -o PKNAME $part 2>/dev/null)
+		[[ -n $dev ]] && DEVICE="/dev/$dev"
+	fi
+}
