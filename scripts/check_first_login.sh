@@ -116,6 +116,3 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 		fi
 	fi
 fi
-
-# enable motd stuff from now on
-chmod 755 /etc/update-motd.d/*

@@ -241,7 +241,7 @@ create_board_package()
 	install -m 755 $SRC/sources/Debian-micro-home-server/softy $destination/usr/bin/softy
 
 	# install custom motd with reboot and upgrade checking
-	install -m 644 $SRC/lib/scripts/update-motd.d/* $destination/etc/update-motd.d/
+	install -m 755 $SRC/lib/scripts/update-motd.d/* $destination/etc/update-motd.d/
 	cp $SRC/lib/scripts/check_first_login_reboot.sh $destination/etc/profile.d
 	cp $SRC/lib/scripts/check_first_login.sh $destination/etc/profile.d
 
