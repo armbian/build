@@ -176,6 +176,10 @@ install_common()
 	# to prevent creating swap file on NFS (needs specific kernel options)
 	# and f2fs/btrfs (not recommended or needs specific kernel options)
 	[[ $ROOTFS_TYPE != ext4 ]] && touch $CACHEDIR/$SDCARD/var/swap
+
+	# install initial asound.state if defined
+	mkdir -p $CACHEDIR/$SDCARD/var/lib/alsa/
+	[[ -n $ASOUND_STATE ]] && cp $SRC/lib/config/$ASOUND_STATE $CACHEDIR/$SDCARD/var/lib/alsa/asound.state
 }
 
 install_distribution_specific()
