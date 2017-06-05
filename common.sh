@@ -435,12 +435,8 @@ customize_image()
 	cp $SRC/userpatches/customize-image.sh $CACHEDIR/$SDCARD/tmp/customize-image.sh
 	chmod +x $CACHEDIR/$SDCARD/tmp/customize-image.sh
 	mkdir -p $CACHEDIR/$SDCARD/tmp/overlay
-	if [[ $(lsb_release -sc) == xenial ]]; then
-		# util-linux >= 2.27 required
-		mount -o bind,ro $SRC/userpatches/overlay $CACHEDIR/$SDCARD/tmp/overlay
-	else
-		mount -o bind $SRC/userpatches/overlay $CACHEDIR/$SDCARD/tmp/overlay
-	fi
+	# util-linux >= 2.27 required
+	mount -o bind,ro $SRC/userpatches/overlay $CACHEDIR/$SDCARD/tmp/overlay
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
 	umount $CACHEDIR/$SDCARD/tmp/overlay

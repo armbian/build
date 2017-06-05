@@ -292,15 +292,7 @@ create_board_package()
 	if [[ $LINUXFAMILY == sun*i* ]]; then
 		install -m 755 $SRC/lib/scripts/armbian-add-overlay $destination/usr/sbin
 		if [[ $BRANCH == default ]]; then
-			# add soc temperature app
-			local codename=$(lsb_release -sc)
-			if [[ -z $codename || "sid" == *"$codename"* ]]; then
-				arm-linux-gnueabihf-gcc-5 $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
-			else
-				arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
-			fi
-		fi
-		if [[ $BRANCH == default ]]; then
+			arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
 			# convert and add fex files
 			mkdir -p $destination/boot/bin
 			for i in $(ls -w1 $SRC/lib/config/fex/*.fex | xargs -n1 basename); do

@@ -270,14 +270,8 @@ prepare_partitions()
 	parttype[btrfs]=btrfs
 	# parttype[nfs] is empty
 
-	# metadata_csum is supported since e2fsprogs 1.43
-	local codename=$(lsb_release -sc)
-	if [[ $codename == sid || $codename == stretch ]]; then
-		mkopts[ext4]='-O ^64bit,^metadata_csum,uninit_bg -q -m 2'
-	else
-		mkopts[ext4]='-q -m 2'
-	fi
-
+	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
+	mkopts[ext4]='-q -m 2'
 	mkopts[fat]='-n BOOT'
 	mkopts[ext2]='-q'
 	# mkopts[f2fs] is empty
