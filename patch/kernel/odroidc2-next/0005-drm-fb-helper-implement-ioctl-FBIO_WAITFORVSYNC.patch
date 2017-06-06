@@ -1,0 +1,135 @@
+From c48872078789c6911e47e1c74d2024407c4daa8d Mon Sep 17 00:00:00 2001
+From: Stefan Christ <s.christ@phytec.de>
+Date: Wed, 15 Feb 2017 17:19:09 +0100
+Subject: [PATCH 05/93] drm/fb-helper: implement ioctl FBIO_WAITFORVSYNC
+
+Implement legacy framebuffer ioctl FBIO_WAITFORVSYNC in the generic
+framebuffer emulation driver. Legacy framebuffer users like non kms/drm
+based OpenGL(ES)/EGL implementations may require the ioctl to
+synchronize drawing or buffer flip for double buffering. It is tested on
+the i.MX6.
+
+Code is based on
+    https://github.com/Xilinx/linux-xlnx/blob/master/drivers/gpu/drm/xilinx/xilinx_drm_fb.c#L196
+
+Signed-off-by: Stefan Christ <s.christ@phytec.de>
+Signed-off-by: Maxime Ripard <maxime.ripard@free-electrons.com>
+---
+ drivers/gpu/drm/drm_fb_helper.c | 63 +++++++++++++++++++++++++++++++++++++++++
+ include/drm/drm_fb_helper.h     | 12 +++++++-
+ 2 files changed, 74 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/drm_fb_helper.c b/drivers/gpu/drm/drm_fb_helper.c
+index c6de87a..15ee964 100644
+--- a/drivers/gpu/drm/drm_fb_helper.c
++++ b/drivers/gpu/drm/drm_fb_helper.c
+@@ -1240,6 +1240,69 @@ int drm_fb_helper_setcmap(struct fb_cmap *cmap, struct fb_info *info)
+ EXPORT_SYMBOL(drm_fb_helper_setcmap);
+ 
+ /**
++ * drm_fb_helper_ioctl - legacy ioctl implementation
++ * @info: fbdev registered by the helper
++ * @cmd: ioctl command
++ * @arg: ioctl argument
++ *
++ * A helper to implement the standard fbdev ioctl. Only
++ * FBIO_WAITFORVSYNC is implemented for now.
++ */
++int drm_fb_helper_ioctl(struct fb_info *info, unsigned int cmd,
++			unsigned long arg)
++{
++	struct drm_fb_helper *fb_helper = info->par;
++	struct drm_device *dev = fb_helper->dev;
++	struct drm_mode_set *mode_set;
++	struct drm_crtc *crtc;
++	u32 karg;
++	int ret = 0;
++
++	mutex_lock(&dev->mode_config.mutex);
++	if (!drm_fb_helper_is_bound(fb_helper)) {
++		ret = -EBUSY;
++		goto unlock;
++	}
++
++	switch (cmd) {
++	case FBIO_WAITFORVSYNC:
++		if (get_user(karg, (__u32 __user *)arg)) {
++			ret = -EFAULT;
++			goto unlock;
++		}
++
++		if (karg >= fb_helper->crtc_count) {
++			ret = -EINVAL;
++			goto unlock;
++		}
++
++		mode_set = &fb_helper->crtc_info[karg].mode_set;
++		crtc = mode_set->crtc;
++
++		/*
++		 * Only wait for a vblank event if the CRTC is
++		 * enabled, otherwise just don't do anythintg,
++		 * not even report an error.
++		 */
++		ret = drm_crtc_vblank_get(crtc);
++		if (!ret) {
++			drm_crtc_wait_one_vblank(crtc);
++			drm_crtc_vblank_put(crtc);
++		}
++
++		ret = 0;
++		goto unlock;
++	default:
++		ret = -ENOTTY;
++	}
++
++unlock:
++	mutex_unlock(&dev->mode_config.mutex);
++	return ret;
++}
++EXPORT_SYMBOL(drm_fb_helper_ioctl);
++
++/**
+  * drm_fb_helper_check_var - implementation for ->fb_check_var
+  * @var: screeninfo to check
+  * @info: fbdev registered by the helper
+diff --git a/include/drm/drm_fb_helper.h b/include/drm/drm_fb_helper.h
+index 975deed..2891888 100644
+--- a/include/drm/drm_fb_helper.h
++++ b/include/drm/drm_fb_helper.h
+@@ -230,7 +230,8 @@ struct drm_fb_helper {
+ 	.fb_blank	= drm_fb_helper_blank, \
+ 	.fb_pan_display	= drm_fb_helper_pan_display, \
+ 	.fb_debug_enter = drm_fb_helper_debug_enter, \
+-	.fb_debug_leave = drm_fb_helper_debug_leave
++	.fb_debug_leave = drm_fb_helper_debug_leave, \
++	.fb_ioctl	= drm_fb_helper_ioctl
+ 
+ #ifdef CONFIG_DRM_FBDEV_EMULATION
+ void drm_fb_helper_prepare(struct drm_device *dev, struct drm_fb_helper *helper,
+@@ -286,6 +287,9 @@ void drm_fb_helper_set_suspend_unlocked(struct drm_fb_helper *fb_helper,
+ 
+ int drm_fb_helper_setcmap(struct fb_cmap *cmap, struct fb_info *info);
+ 
++int drm_fb_helper_ioctl(struct fb_info *info, unsigned int cmd,
++			unsigned long arg);
++
+ int drm_fb_helper_hotplug_event(struct drm_fb_helper *fb_helper);
+ int drm_fb_helper_initial_config(struct drm_fb_helper *fb_helper, int bpp_sel);
+ int drm_fb_helper_single_add_all_connectors(struct drm_fb_helper *fb_helper);
+@@ -377,6 +381,12 @@ static inline int drm_fb_helper_setcmap(struct fb_cmap *cmap,
+ 	return 0;
+ }
+ 
++static inline int drm_fb_helper_ioctl(struct fb_info *info, unsigned int cmd,
++				      unsigned long arg)
++{
++	return 0;
++}
++
+ static inline void drm_fb_helper_unlink_fbi(struct drm_fb_helper *fb_helper)
+ {
+ }
+-- 
+1.9.1
+

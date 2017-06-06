@@ -67,7 +67,7 @@ create_board_package()
 	#!/bin/sh
 	[ remove = "\$1" ] || [ abort-install = "\$1" ] && dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename \
 		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
-	systemctl disable log2ram.service xdgcache2ram.service armhwinfo.service >/dev/null 2>&1
+	systemctl disable log2ram.service armhwinfo.service >/dev/null 2>&1
 	exit 0
 	EOF
 
@@ -88,11 +88,8 @@ create_board_package()
 	if [ -f "/etc/systemd/system/log2ram.service" ]; then
 		mv /etc/systemd/system/log2ram.service /etc/systemd/system/log2ram-service.dpkg-old
 	fi
-	if [ ! -f "/etc/default/xdgcache2ram" ]; then
-		cp /etc/default/xdgcache2ram.dpkg-dist /etc/default/xdgcache2ram
-	fi
-	if [ -f "/etc/systemd/system/xdgcache2ram.service" ]; then
-		mv /etc/systemd/system/xdgcache2ram.service /etc/systemd/system/xdgcache2ram-service.dpkg-old
+	if [ -f "/lib/systemd/system/pinebook-enable-sound.service" ]; then
+		systemctl enable pinebook-enable-sound.service
 	fi
 	exit 0
 	EOF
@@ -141,8 +138,8 @@ create_board_package()
 	IMAGE_TYPE=$IMAGE_TYPE
 	EOF
 
-	# add USB OTG port mode switcher
-	install -m 755 $SRC/lib/scripts/sunxi-musb $destination/usr/bin
+	# add USB OTG port mode switcher (obsolete - will be handled with DT overlays)
+	# install -m 755 $SRC/lib/scripts/sunxi-musb $destination/usr/bin
 
 	# armbianmonitor (currently only to toggle boot verbosity and log upload)
 	install -m 755 $SRC/lib/scripts/armbianmonitor/armbianmonitor $destination/usr/bin
@@ -292,28 +289,16 @@ create_board_package()
 	install -m 755 $SRC/lib/scripts/log2ram/log2ram.hourly $destination/etc/cron.daily/log2ram
 	cp $SRC/lib/scripts/log2ram/log2ram.default $destination/etc/default/log2ram.dpkg-dist
 
-	# xdgcache2ram - persistent xdgcache based on log2ram
-	cp $SRC/lib/scripts/log2ram/xdgcache2ram.service $destination/lib/systemd/system/xdgcache2ram.service
-	ln -s /usr/sbin/log2ram $destination/usr/sbin/xdgcache2ram
-	cp $SRC/lib/scripts/log2ram/xdgcache2ram.default $destination/etc/default/xdgcache2ram.dpkg-dist
-
-	if [[ $LINUXFAMILY == sun*i ]]; then
+	if [[ $LINUXFAMILY == sun*i* ]]; then
 		install -m 755 $SRC/lib/scripts/armbian-add-overlay $destination/usr/sbin
 		if [[ $BRANCH == default ]]; then
-			# add soc temperature app
-			local codename=$(lsb_release -sc)
-			if [[ -z $codename || "sid" == *"$codename"* ]]; then
-				arm-linux-gnueabihf-gcc-5 $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
-			else
-				arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
-			fi
+			arm-linux-gnueabihf-gcc $SRC/lib/scripts/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
+			# convert and add fex files
+			mkdir -p $destination/boot/bin
+			for i in $(ls -w1 $SRC/lib/config/fex/*.fex | xargs -n1 basename); do
+				fex2bin $SRC/lib/config/fex/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
+			done
 		fi
-
-		# convert and add fex files
-		mkdir -p $destination/boot/bin
-		for i in $(ls -w1 $SRC/lib/config/fex/*.fex | xargs -n1 basename); do
-			fex2bin $SRC/lib/config/fex/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
-		done
 	fi
 
 	if [[ ( $LINUXFAMILY == sun*i || $LINUXFAMILY == pine64 ) && $BRANCH == default ]]; then
@@ -323,13 +308,18 @@ create_board_package()
 		echo "export VDPAU_OSD=1" > $destination/etc/profile.d/90-vdpau.sh
 		chmod 755 $destination/etc/profile.d/90-vdpau.sh
 	fi
-	if [[ ( $LINUXFAMILY == sun50iw2 || $LINUXFAMILY == sun8i || $LINUXFAMILY == pine64 ) && $BRANCH == dev ]]; then
+	if [[ ( $LINUXFAMILY == sun50i* || $LINUXFAMILY == sun8i ) && $BRANCH == dev ]]; then
 		# add mpv config for x11 output - slow, but it works compared to no config at all
 		mkdir -p $destination/etc/mpv/
 		cat <<-EOF > $destination/etc/mpv/mpv.conf
 		# HW acceleration is not supported on this platform yet
 		vo=x11
 		EOF
+	fi
+
+	#TODO: move to sources.conf
+	if [[ $BOARD == pinebook-a64 ]]; then
+		cp $SRC/lib/scripts/pinebook-enable-sound.service $destination/lib/systemd/system/
 	fi
 
 	# add some summary to the image

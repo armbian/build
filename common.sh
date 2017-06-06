@@ -197,8 +197,11 @@ compile_kernel()
 
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval ${toolchain:+env PATH=$toolchain:$PATH} ${KERNEL_COMPILER}gcc -dumpversion)" "info"
 
-	# use proven config
-	if [[ $KERNEL_KEEP_CONFIG != yes || ! -f .config ]]; then
+	# copy kernel config
+	if [[ $KERNEL_KEEP_CONFIG == yes && -f $DEST/$LINUXCONFIG.config ]]; then
+		display_alert "Using previous kernel config" "$DEST/$LINUXCONFIG.config" "info"
+		cp $DEST/$LINUXCONFIG.config .config
+	else
 		if [[ -f $SRC/userpatches/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
 			cp $SRC/userpatches/$LINUXCONFIG.config .config
@@ -225,6 +228,7 @@ compile_kernel()
 		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" oldconfig
 		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" menuconfig
 		# store kernel config in easily reachable place
+		display_alert "Exporting new kernel config" "$DEST/$LINUXCONFIG.config" "info"
 		cp .config $DEST/$LINUXCONFIG.config
 	fi
 
@@ -431,12 +435,8 @@ customize_image()
 	cp $SRC/userpatches/customize-image.sh $CACHEDIR/$SDCARD/tmp/customize-image.sh
 	chmod +x $CACHEDIR/$SDCARD/tmp/customize-image.sh
 	mkdir -p $CACHEDIR/$SDCARD/tmp/overlay
-	if [[ $(lsb_release -sc) == xenial ]]; then
-		# util-linux >= 2.27 required
-		mount -o bind,ro $SRC/userpatches/overlay $CACHEDIR/$SDCARD/tmp/overlay
-	else
-		mount -o bind $SRC/userpatches/overlay $CACHEDIR/$SDCARD/tmp/overlay
-	fi
+	# util-linux >= 2.27 required
+	mount -o bind,ro $SRC/userpatches/overlay $CACHEDIR/$SDCARD/tmp/overlay
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
 	umount $CACHEDIR/$SDCARD/tmp/overlay

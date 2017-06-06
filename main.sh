@@ -114,7 +114,7 @@ EXT='conf'
 if [[ -z $BOARD ]]; then
 	WIP_STATE='supported'
 	WIP_BUTTON='WIP'
-	[[ -n $(find $SRC/lib/config/boards/ -name '*.wip' -print -quit) ]] && DIALOG_EXTRA="--extra-button"
+	[[ -n $(find $SRC/lib/config/boards/ -name '*.wip' -print -quit) && $EXPERT = "yes" ]] && DIALOG_EXTRA="--extra-button"
 	while true; do
 		options=()
 		for board in $SRC/lib/config/boards/*.${EXT}; do

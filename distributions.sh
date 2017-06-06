@@ -138,7 +138,7 @@ install_common()
 	install -m 644 $SRC/lib/scripts/firstrun.service $CACHEDIR/$SDCARD/etc/systemd/system/
 
 	# enable additional services
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service xdgcache2ram.service >/dev/null 2>&1"
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service >/dev/null 2>&1"
 
 	# copy "first run automated config, optional user configured"
  	cp $SRC/lib/config/armbian_first_run.txt $CACHEDIR/$SDCARD/boot/armbian_first_run.txt
@@ -176,6 +176,10 @@ install_common()
 	# to prevent creating swap file on NFS (needs specific kernel options)
 	# and f2fs/btrfs (not recommended or needs specific kernel options)
 	[[ $ROOTFS_TYPE != ext4 ]] && touch $CACHEDIR/$SDCARD/var/swap
+
+	# install initial asound.state if defined
+	mkdir -p $CACHEDIR/$SDCARD/var/lib/alsa/
+	[[ -n $ASOUND_STATE ]] && cp $SRC/lib/config/$ASOUND_STATE $CACHEDIR/$SDCARD/var/lib/alsa/asound.state
 }
 
 install_distribution_specific()

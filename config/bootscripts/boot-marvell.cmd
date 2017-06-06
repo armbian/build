@@ -22,15 +22,15 @@ test -z "${boot_interface}" && setenv boot_interface "mmc"
 
 echo "Boot script loaded from ${boot_interface}"
 
-if ext4load ${boot_interface} 0:1 ${loadaddr} /boot/armbianEnv.txt || ext4load ${boot_interface} 0:1 ${loadaddr} armbianEnv.txt; then
+if load ${boot_interface} 0:1 ${loadaddr} ${prefix}armbianEnv.txt; then
 	env import -t ${loadaddr} ${filesize}
 fi
 
-setenv bootargs "console=ttyS0,115200 root=${rootdev} rootwait rootfstype=${rootfstype} ubootdev=${boot_interface} cgroup_disable=memory scandelay loglevel=${verbosity} ${extraargs}"
+setenv bootargs "console=ttyS0,115200 root=${rootdev} rootwait rootfstype=${rootfstype} ubootdev=${boot_interface} scandelay loglevel=${verbosity} ${extraargs}"
 
-ext4load ${boot_interface} 0:1 ${fdt_addr} boot/dtb/${fdtfile} || ext4load ${boot_interface} 0:1 ${fdt_addr} dtb/${fdtfile}
-ext4load ${boot_interface} 0:1 ${ramdisk_addr_r} boot/uInitrd || ext4load ${boot_interface} 0:1 ${ramdisk_addr_r} uInitrd
-ext4load ${boot_interface} 0:1 ${kernel_addr_r} boot/zImage || ext4load ${boot_interface} 0:1 ${kernel_addr_r} zImage
+load ${boot_interface} 0:1 ${fdt_addr} ${prefix}dtb/${fdtfile}
+load ${boot_interface} 0:1 ${ramdisk_addr_r} ${prefix}uInitrd
+load ${boot_interface} 0:1 ${kernel_addr_r} ${prefix}zImage
 
 setenv fdt_high 0xffffffff
 setenv initrd_high 0xffffffff
