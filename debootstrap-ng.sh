@@ -492,6 +492,9 @@ create_image()
 	fi
 	display_alert "Done building" "$DEST/images/${version}.img" "info"
 
+	# call custom post build hook
+	[[ $(type -t post_build_image) == function ]] && post_build_image "$DEST/images/${version}.img"
+
 } #############################################################################
 
 # mount_chroot <target>
