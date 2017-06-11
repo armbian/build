@@ -9,13 +9,14 @@ case $BRANCH in
 	BOOTDIR='u-boot-sun50i'
 	BOOTBRANCH='branch:master'
 	BOOTPATCHDIR='u-boot-sun50i-dev'
+	UBOOT_USE_GCC='> 7.0'
 	UBOOT_TARGET_MAP="$BOARD;;u-boot-sunxi-with-spl.bin"
 	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 
 	KERNELSOURCE='https://github.com/Icenowy/linux/'
 	KERNELBRANCH='branch:sunxi64-4.11.y'
 	KERNELDIR='linux-sun50i-dev'
-	KERNEL_USE_GCC='> 6.1'
+	KERNEL_USE_GCC='> 7.0'
 	LINUXCONFIG='linux-sun50i-dev'
 	KERNELPATCHDIR='sun50i-dev'
 	;;
