@@ -10,7 +10,7 @@
 #
 
 # common options
-REVISION="5.30$SUBREVISION" # all boards have same revision
+REVISION="5.31$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 MAINTAINER="Igor Pecovnik" # deb signature
 MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
