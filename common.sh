@@ -131,7 +131,7 @@ compile_uboot()
 	EOF
 
 	# set up control file
-	cat <<-END > $uboot_name/DEBIAN/control
+	cat <<-EOF > $uboot_name/DEBIAN/control
 	Package: linux-u-boot-${BOARD}-${BRANCH}
 	Version: $REVISION
 	Architecture: $ARCH
@@ -143,11 +143,15 @@ compile_uboot()
 	Replaces: armbian-u-boot
 	Conflicts: armbian-u-boot, u-boot-sunxi
 	Description: Uboot loader $version
-	END
+	EOF
 
 	# copy config file to the package
 	# useful for FEL boot with overlayfs_wrapper
 	[[ -f .config && -n $BOOTCONFIG ]] && cp .config $uboot_name/usr/lib/u-boot/$BOOTCONFIG
+	# copy license files from typical locations
+	[[ -f COPYING ]] && cp COPYING $uboot_name/usr/lib/u-boot/LICENSE
+	[[ -f Licenses/README ]] && cp Licenses/README $uboot_name/usr/lib/u-boot/LICENSE
+	[[ -f arm-trusted-firmware/license.md ]] && cp arm-trusted-firmware/license.md $uboot_name/usr/lib/u-boot/LICENSE.atf
 
 	display_alert "Building deb" "${uboot_name}.deb" "info"
 	eval 'dpkg -b $uboot_name 2>&1' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'}
@@ -217,12 +221,14 @@ compile_kernel()
 	export LOCALVERSION="-$LINUXFAMILY"
 
 	sed -i 's/EXTRAVERSION = .*/EXTRAVERSION =/' Makefile
+	rm -f localversion
 
 	if [[ $KERNEL_CONFIGURE != yes ]]; then
 		if [[ $BRANCH == default ]]; then
-			make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" silentoldconfig
+			make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" silentoldconfig
 		else
-			make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" olddefconfig
+			# TODO: check if required
+			make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" olddefconfig
 		fi
 	else
 		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" oldconfig
@@ -230,6 +236,11 @@ compile_kernel()
 		# store kernel config in easily reachable place
 		display_alert "Exporting new kernel config" "$DEST/$LINUXCONFIG.config" "info"
 		cp .config $DEST/$LINUXCONFIG.config
+		# export defconfig too if requested
+		if [[ $KERNEL_EXPORT_DEFCONFIG == yes ]]; then
+			make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" savedefconfig > /dev/null 2>&1
+			[[ -f defconfig ]] && cp defconfig $DEST/$LINUXCONFIG.defconfig
+		fi
 	fi
 
 	eval CCACHE_BASEDIR="$(pwd)" ${toolchain:+env PATH=$toolchain:$PATH} \
@@ -243,15 +254,15 @@ compile_kernel()
 	fi
 
 	# different packaging for 4.3+
-	KERNEL_PACKING="deb-pkg"
-	IFS='.' read -a array <<< "$version"
-	if (( "${array[0]}" == "4" )) && (( "${array[1]}" >= "3" )); then
-		KERNEL_PACKING="bindeb-pkg"
+	if linux-version compare $version ge 4.3; then
+		local kernel_packing="bindeb-pkg"
+	else
+		local kernel_packing="deb-pkg"
 	fi
 
 	# produce deb packages: image, headers, firmware, dtb
 	eval CCACHE_BASEDIR="$(pwd)" ${toolchain:+env PATH=$toolchain:$PATH} \
-		'make -j1 $KERNEL_PACKING KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY \
+		'make -j1 $kernel_packing KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY \
 		KBUILD_DEBARCH=$ARCH ARCH=$ARCHITECTURE DEBFULLNAME="$MAINTAINER" DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
