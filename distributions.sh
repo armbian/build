@@ -125,6 +125,14 @@ install_common()
 	display_alert "Installing board support package" "$BOARD" "info"
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
+	# freeze armbian packages
+	if [[ $BSPFREEZE == "yes" ]]; then
+		display_alert "Freeze armbian packages" "$BOARD" "info"
+		if [[ "$BRANCH" != "default" ]]; then MINIBRANCH="-"$BRANCH; fi
+		chroot $CACHEDIR/$SDCARD /bin/bash -c "apt-mark hold ${CHOSEN_KERNEL} ${CHOSEN_KERNEL/image/headers} \
+		linux-u-boot-${BOARD}-${BRANCH} linux-dtb${MINIBRANCH}-${LINUXFAMILY}" >> $DEST/debug/install.log 2>&1
+	fi
+
 	# copy boot splash images
 	cp $SRC/lib/bin/splash/armbian-u-boot.bmp $CACHEDIR/$SDCARD/boot/boot.bmp
 	cp $SRC/lib/bin/splash/armbian-desktop.png $CACHEDIR/$SDCARD/boot/boot-desktop.png
