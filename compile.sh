@@ -34,7 +34,7 @@ BUILD_ALL="no"				# cycle through available boards and make images or kernel/u-b
 
 BETA=""					# set yes to add subrevision with tomorrow's date. For internal use.
 MULTITHREAD=""				# build n images at once. For internal use.
-BSPFREEZE=""				# freeze armbian packages (u-boot, kernel, dtb, bsp)
+BSPFREEZE=""				# freeze armbian packages (u-boot, kernel, dtb)
 
 # build script version to use
 LIB_TAG=""				# empty for latest version,
