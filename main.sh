@@ -179,7 +179,7 @@ if [[ -z $BRANCH ]]; then
 	options=()
 	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy (3.4.x - 4.4.x)")
 	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)   (4.x)")
-	[[ $KERNEL_TARGET == *dev* ]] && options+=("dev"         "Development version      (4.x)")
+	[[ $KERNEL_TARGET == *dev* && EXPERT=yes ]] && options+=("dev"         "Development version      (4.x)")
 	# do not display selection dialog if only one kernel branch is available
 	if [[ "${#options[@]}" == 2 ]]; then
 		BRANCH="${options[0]}"
