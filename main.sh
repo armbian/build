@@ -67,8 +67,10 @@ done
 
 if [[ $BETA == yes ]]; then
 	IMAGE_TYPE=nightly
-else
+elif [[ $BETA == no && BUILD_ALL == yes && -n GPG_PASS ]]; then
 	IMAGE_TYPE=stable
+else
+	IMAGE_TYPE=user-built
 fi
 
 if [[ $PROGRESS_DISPLAY == none ]]; then
@@ -110,28 +112,47 @@ if [[ -z $KERNEL_ONLY ]]; then
 	[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected"
 fi
 
-EXT='conf'
 if [[ -z $BOARD ]]; then
 	WIP_STATE='supported'
-	WIP_BUTTON='WIP'
-	[[ -n $(find $SRC/lib/config/boards/ -name '*.wip' -print -quit) && $EXPERT = "yes" ]] && DIALOG_EXTRA="--extra-button"
+	WIP_BUTTON='WIP/EOS'
+	[[ $EXPERT = "yes" ]] && DIALOG_EXTRA="--extra-button"
+	temp_rc=$(mktemp)
 	while true; do
 		options=()
-		for board in $SRC/lib/config/boards/*.${EXT}; do
-			options+=("$(basename $board | cut -d'.' -f1)" "$(head -1 $board | cut -d'#' -f2)")
-		done
-		BOARD=$(dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar --extra-label "Show $WIP_BUTTON" $DIALOG_EXTRA \
+		if [[ $WIP_STATE == supported ]]; then
+			for board in $SRC/lib/config/boards/*.conf; do
+				options+=("$(basename $board | cut -d'.' -f1)" "$(head -1 $board | cut -d'#' -f2)")
+			done
+		else
+			for board in $SRC/lib/config/boards/*.wip; do
+				options+=("$(basename $board | cut -d'.' -f1)" "(WIP) $(head -1 $board | cut -d'#' -f2)")
+			done
+			for board in $SRC/lib/config/boards/*.eos; do
+				options+=("$(basename $board | cut -d'.' -f1)" "(EOS) $(head -1 $board | cut -d'#' -f2)")
+			done
+		fi
+		if [[ $WIP_STATE != supported ]]; then
+			cat <<-'EOF' > $temp_rc
+			dialog_color = (RED,WHITE,OFF)
+			screen_color = (WHITE,RED,ON)
+			item_color = (RED,WHITE,ON)
+			item_selected_color = (WHITE,RED,ON)
+			tag_selected_color = (WHITE,RED,ON)
+			tag_key_selected_color = (WHITE,RED,ON)
+			EOF
+		else
+			echo > $temp_rc
+		fi
+		BOARD=$(DIALOGRC=$temp_rc dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar --extra-label "Show $WIP_BUTTON" $DIALOG_EXTRA \
 			--menu "Select the target board\nDisplaying $WIP_STATE boards" $TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 		STATUS=$?
 		if [[ $STATUS == 3 ]]; then
 			if [[ $WIP_STATE == supported ]]; then
-				WIP_STATE='work-in-progress'
-				EXT='wip'
+				WIP_STATE='Work-In-Progress and End-Of-Support'
 				WIP_BUTTON='supported'
 			else
 				WIP_STATE='supported'
-				EXT='conf'
-				WIP_BUTTON='WIP'
+				WIP_BUTTON='WIP/EOS'
 			fi
 			continue
 		elif [[ $STATUS == 0 ]]; then
@@ -142,12 +163,15 @@ if [[ -z $BOARD ]]; then
 	done
 fi
 
-if [[ -f $SRC/lib/config/boards/${BOARD}.${EXT} ]]; then
-	source $SRC/lib/config/boards/${BOARD}.${EXT}
+if [[ -f $SRC/lib/config/boards/${BOARD}.conf ]]; then
+	BOARD_TYPE='conf'
 elif [[ -f $SRC/lib/config/boards/${BOARD}.wip ]]; then
-	# when launching build for WIP board from command line
-	source $SRC/lib/config/boards/${BOARD}.wip
+	BOARD_TYPE='wip'
+elif [[ -f $SRC/lib/config/boards/${BOARD}.eos ]]; then
+	BOARD_TYPE='eos'
 fi
+
+source $SRC/lib/config/boards/${BOARD}.${BOARD_TYPE}
 
 [[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
 
@@ -173,6 +197,7 @@ fi
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	options=()
 	options+=("jessie" "Debian 8 Jessie")
+	[[ $EXPERT == yes ]] && options+=("stretch" "Debian 9 Stretch")
 	options+=("xenial" "Ubuntu Xenial 16.04 LTS")
 	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select the target OS release" \
 		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")

@@ -136,6 +136,7 @@ create_board_package()
 	BRANCH=$BRANCH
 	ARCH=$ARCHITECTURE
 	IMAGE_TYPE=$IMAGE_TYPE
+	BOARD_TYPE=$BOARD_TYPE
 	EOF
 
 	# add USB OTG port mode switcher (obsolete - will be handled with DT overlays)
