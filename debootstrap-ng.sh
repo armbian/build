@@ -329,8 +329,8 @@ prepare_partitions()
 	else
 		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE )) # MiB
 		# Hardcoded overhead +40% and +128MB for ext4 is needed for desktop images, for CLI it can be lower
-		# extra 128 MiB for emergency swap file
-		local sdsize=$(bc -l <<< "scale=0; ($imagesize * 1.4) / 1 + 128")
+		# also add extra 128 MiB for the emergency swap file creation and align the size up to 4MiB
+		local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.4) / 1 + 128) / 4 + 1) * 4")
 	fi
 
 	# stage: create blank image
@@ -438,7 +438,7 @@ create_image()
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
-		display_alert "Copying files to image" "${SDCARD}.raw" "info"
+		display_alert "Copying files to root directory" "${SDCARD}.raw" "info"
 		rsync -aHWXh --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
 			--exclude="/sys/*" --info=progress2,stats1 $CACHEDIR/$SDCARD/ $CACHEDIR/$MOUNT/
 	else
@@ -448,7 +448,7 @@ create_image()
 	fi
 
 	# stage: rsync /boot
-	display_alert "Copying files to /boot partition" "${SDCARD}.raw" "info"
+	display_alert "Copying files to /boot directory" "${SDCARD}.raw" "info"
 	if [[ $(findmnt --target $CACHEDIR/$MOUNT/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
 		rsync -rLtWh --info=progress2,stats1 $CACHEDIR/$SDCARD/boot $CACHEDIR/$MOUNT
