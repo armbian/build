@@ -67,7 +67,7 @@ done
 
 if [[ $BETA == yes ]]; then
 	IMAGE_TYPE=nightly
-elif [[ $BETA == no && BUILD_ALL == yes && -n GPG_PASS ]]; then
+elif [[ $BETA == no && $BUILD_ALL == yes && -n $GPG_PASS ]]; then
 	IMAGE_TYPE=stable
 else
 	IMAGE_TYPE=user-built
