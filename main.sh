@@ -67,7 +67,7 @@ done
 
 if [[ $BETA == yes ]]; then
 	IMAGE_TYPE=nightly
-elif [[ $BETA == no && BUILD_ALL == yes && -n GPG_PASS ]]; then
+elif [[ $BETA == no && $BUILD_ALL == yes && -n $GPG_PASS ]]; then
 	IMAGE_TYPE=stable
 else
 	IMAGE_TYPE=user-built
@@ -79,6 +79,8 @@ elif [[ $PROGRESS_DISPLAY != plain ]]; then
 	OUTPUT_DIALOG=yes
 fi
 if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
+
+SHOW_WARNING=yes
 
 if [[ $USE_CCACHE != no ]]; then
 	CCACHE=ccache
@@ -125,17 +127,17 @@ if [[ -z $BOARD ]]; then
 			done
 		else
 			for board in $SRC/lib/config/boards/*.wip; do
-				options+=("$(basename $board | cut -d'.' -f1)" "(WIP) $(head -1 $board | cut -d'#' -f2)")
+				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(WIP)\Zn $(head -1 $board | cut -d'#' -f2)")
 			done
 			for board in $SRC/lib/config/boards/*.eos; do
-				options+=("$(basename $board | cut -d'.' -f1)" "(EOS) $(head -1 $board | cut -d'#' -f2)")
+				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(EOS)\Zn $(head -1 $board | cut -d'#' -f2)")
 			done
 		fi
 		if [[ $WIP_STATE != supported ]]; then
 			cat <<-'EOF' > $temp_rc
 			dialog_color = (RED,WHITE,OFF)
 			screen_color = (WHITE,RED,ON)
-			item_color = (RED,WHITE,ON)
+			tag_color = (RED,WHITE,ON)
 			item_selected_color = (WHITE,RED,ON)
 			tag_selected_color = (WHITE,RED,ON)
 			tag_key_selected_color = (WHITE,RED,ON)
@@ -143,11 +145,13 @@ if [[ -z $BOARD ]]; then
 		else
 			echo > $temp_rc
 		fi
-		BOARD=$(DIALOGRC=$temp_rc dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar --extra-label "Show $WIP_BUTTON" $DIALOG_EXTRA \
-			--menu "Select the target board\nDisplaying $WIP_STATE boards" $TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+		BOARD=$(DIALOGRC=$temp_rc dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar --colors \
+			--extra-label "Show $WIP_BUTTON" $DIALOG_EXTRA --menu "Select the target board\nDisplaying $WIP_STATE boards" \
+			$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 		STATUS=$?
 		if [[ $STATUS == 3 ]]; then
 			if [[ $WIP_STATE == supported ]]; then
+				[[ $SHOW_WARNING == yes ]] && show_developer_warning
 				WIP_STATE='Work-In-Progress and End-Of-Support'
 				WIP_BUTTON='supported'
 			else
@@ -179,17 +183,18 @@ if [[ -z $BRANCH ]]; then
 	options=()
 	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy (3.4.x - 4.4.x)")
 	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)   (4.x)")
-	[[ $KERNEL_TARGET == *dev* && EXPERT=yes ]] && options+=("dev"         "Development version      (4.x)")
+	[[ $KERNEL_TARGET == *dev* && $EXPERT=yes ]] && options+=("dev"         "\Z1Development version      (4.x)\Zn")
 	# do not display selection dialog if only one kernel branch is available
 	if [[ "${#options[@]}" == 2 ]]; then
 		BRANCH="${options[0]}"
 	else
-		BRANCH=$(dialog --stdout --title "Choose a kernel" --backtitle "$backtitle" \
+		BRANCH=$(dialog --stdout --title "Choose a kernel" --backtitle "$backtitle" --colors \
 			--menu "Select the target kernel branch\nExact kernel versions depend on selected board" \
 			$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 	fi
 	unset options
 	[[ -z $BRANCH ]] && exit_with_error "No kernel branch selected"
+	[[ $BRANCH == dev && $SHOW_WARNING == yes ]] && show_developer_warning
 else
 	[[ $KERNEL_TARGET != *$BRANCH* ]] && exit_with_error "Kernel branch not defined for this board" "$BRANCH"
 fi
