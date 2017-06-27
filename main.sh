@@ -117,6 +117,7 @@ fi
 if [[ -z $BOARD ]]; then
 	WIP_STATE=supported
 	WIP_BUTTON='CSC/WIP/EOS'
+	STATE_DESCRIPTION=' - Officially supported boards'
 	[[ $EXPERT = "yes" ]] && DIALOG_EXTRA="--extra-button"
 	temp_rc=$(mktemp)
 	while true; do
