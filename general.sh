@@ -645,8 +645,10 @@ show_developer_warning()
 	\Z1WITHOUT ANY RESPONSIBILITIES\Zn from the Armbian team:
 
 	- You are using these configurations \Z1AT YOUR OWN RISK\Zn
-	- Issues related to the dev kernel, WIP and EOS boards \Z1will be closed without a discussion\Zn
-	- Forum threads and posts related to dev kernel, WIP and EOS boards \Z1may be moved and ignored\Zn
+	- Bug reports related to the dev kernel, CSC, WIP and EOS boards
+	\Z1will be closed without a discussion\Zn
+	- Forum posts related to dev kernel, CSC, WIP and EOS boards
+	should be created in the \Z2\"Community forums\"\Zn section
 	"
 	DIALOGRC=$temp_rc dialog --title "Expert mode warning" --backtitle "$backtitle" --colors --defaultno --no-label "I do not agree" \
 		--yes-label "I understand and agree" --yesno "$warn_text" $TTY_Y $TTY_X
