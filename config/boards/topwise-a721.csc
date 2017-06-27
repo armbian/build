@@ -1,4 +1,4 @@
-# A10 single core 512MB Board used in many Chinese Tablets (LY-F1)
+# A10 512MB generic Chinese Tablet (LY-F1)
 BOARD_NAME="Topwise-A721"
 LINUXFAMILY="sun4i"
 BOOTCONFIG="Linksprite_pcDuino_defconfig"
@@ -8,10 +8,3 @@ MODULES_NEXT="bonding"
 KERNEL_TARGET="default"
 CLI_TARGET="jessie:next"
 DESKTOP_TARGET="xenial:default"
-#
-RECOMMENDED="Ubuntu_xenial_default_desktop:90,Debian_jessie_next:90"
-#
-BOARDRATING=""
-CHIP="http://docs.armbian.com/Hardware_Allwinner-A10/"
-HARDWARE="https://linux-sunxi.org/LinkSprite_pcDuino_V2"
-FORUMS="http://forum.armbian.com/index.php/forum/7-allwinner-a10a20/"

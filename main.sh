@@ -115,8 +115,8 @@ if [[ -z $KERNEL_ONLY ]]; then
 fi
 
 if [[ -z $BOARD ]]; then
-	WIP_STATE='supported'
-	WIP_BUTTON='WIP/EOS'
+	WIP_STATE=supported
+	WIP_BUTTON='CSC/WIP/EOS'
 	[[ $EXPERT = "yes" ]] && DIALOG_EXTRA="--extra-button"
 	temp_rc=$(mktemp)
 	while true; do
@@ -126,6 +126,9 @@ if [[ -z $BOARD ]]; then
 				options+=("$(basename $board | cut -d'.' -f1)" "$(head -1 $board | cut -d'#' -f2)")
 			done
 		else
+			for board in $SRC/lib/config/boards/*.csc; do
+				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(CSC)\Zn $(head -1 $board | cut -d'#' -f2)")
+			done
 			for board in $SRC/lib/config/boards/*.wip; do
 				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(WIP)\Zn $(head -1 $board | cut -d'#' -f2)")
 			done
@@ -146,17 +149,19 @@ if [[ -z $BOARD ]]; then
 			echo > $temp_rc
 		fi
 		BOARD=$(DIALOGRC=$temp_rc dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar --colors \
-			--extra-label "Show $WIP_BUTTON" $DIALOG_EXTRA --menu "Select the target board\nDisplaying $WIP_STATE boards" \
+			--extra-label "Show $WIP_BUTTON" $DIALOG_EXTRA --menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" \
 			$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 		STATUS=$?
 		if [[ $STATUS == 3 ]]; then
 			if [[ $WIP_STATE == supported ]]; then
 				[[ $SHOW_WARNING == yes ]] && show_developer_warning
-				WIP_STATE='Work-In-Progress and End-Of-Support'
+				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress\n - \Z1(EOS)\Zn - End Of Support'
+				WIP_STATE=unsupported
 				WIP_BUTTON='supported'
 			else
-				WIP_STATE='supported'
-				WIP_BUTTON='WIP/EOS'
+				STATE_DESCRIPTION=' - Officially supported boards'
+				WIP_STATE=supported
+				WIP_BUTTON='CSC/WIP/EOS'
 			fi
 			continue
 		elif [[ $STATUS == 0 ]]; then
@@ -169,6 +174,8 @@ fi
 
 if [[ -f $SRC/lib/config/boards/${BOARD}.conf ]]; then
 	BOARD_TYPE='conf'
+elif [[ -f $SRC/lib/config/boards/${BOARD}.csc ]]; then
+	BOARD_TYPE='csc'
 elif [[ -f $SRC/lib/config/boards/${BOARD}.wip ]]; then
 	BOARD_TYPE='wip'
 elif [[ -f $SRC/lib/config/boards/${BOARD}.eos ]]; then
