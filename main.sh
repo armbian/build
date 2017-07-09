@@ -75,7 +75,7 @@ fi
 
 if [[ $PROGRESS_DISPLAY == none ]]; then
 	OUTPUT_VERYSILENT=yes
-elif [[ $PROGRESS_DISPLAY != plain ]]; then
+elif [[ $PROGRESS_DISPLAY == dialog ]]; then
 	OUTPUT_DIALOG=yes
 fi
 if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
@@ -103,22 +103,33 @@ fi
 # Check and install dependencies, directory structure and settings
 prepare_host
 
-# if KERNEL_ONLY, BOARD, BRANCH or RELEASE are not set, display selection menu
+# if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
 if [[ -z $KERNEL_ONLY ]]; then
-	options+=("yes" "Kernel and u-boot packages")
-	options+=("no" "OS image for installation to SD card")
+	options+=("yes" "U-boot and kernel packages")
+	options+=("no" "Full OS image for flashing")
 	KERNEL_ONLY=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select what to build" \
 		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected"
+
+fi
+
+if [[ -z $KERNEL_CONFIGURE ]]; then
+	options+=("no" "Do not change the kernel configuration")
+	options+=("yes" "Show a kernel configuration menu before compilation")
+	KERNEL_CONFIGURE=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select the kernel configuration" \
+		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+	unset options
+	[[ -z $KERNEL_CONFIGURE ]] && exit_with_error "No option selected"
+
 fi
 
 if [[ -z $BOARD ]]; then
 	WIP_STATE=supported
 	WIP_BUTTON='CSC/WIP/EOS'
 	STATE_DESCRIPTION=' - Officially supported boards'
-	[[ $EXPERT = "yes" ]] && DIALOG_EXTRA="--extra-button"
+	[[ $EXPERT = yes ]] && DIALOG_EXTRA="--extra-button"
 	temp_rc=$(mktemp)
 	while true; do
 		options=()

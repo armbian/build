@@ -14,7 +14,7 @@
 # for detailed explanation of these options and for additional options not listed here
 
 KERNEL_ONLY=""				# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
-KERNEL_CONFIGURE="no"			# change provided kernel configuration
+KERNEL_CONFIGURE=""			# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
 CLEAN_LEVEL="make,debs,oldcache"	# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
 					# "debs" = delete packages in "./output/debs" for current branch and family,
 					# "alldebs" = delete all packages in "./output/debs", "images" = delete "./output/images",
@@ -28,12 +28,9 @@ KERNEL_KEEP_CONFIG="no"			# do not overwrite kernel config before compilation
 EXTERNAL="yes"				# build and install extra applications and drivers
 EXTERNAL_NEW="prebuilt"			# compile and install or install prebuilt additional packages
 CREATE_PATCHES="no"			# wait that you make changes to uboot and kernel source and creates patches
-FORCE_CHECKOUT="yes"			# ignore manual changes to source
 BUILD_ALL="no"				# cycle through available boards and make images or kernel/u-boot packages.
 					# set KERNEL_ONLY to "yes" or "no" to build all packages/all images
 
-BETA=""					# set yes to add subrevision with tomorrow's date. For internal use.
-MULTITHREAD=""				# build n images at once. For internal use.
 BSPFREEZE=""				# freeze armbian packages (u-boot, kernel, dtb)
 
 # build script version to use
@@ -85,9 +82,6 @@ fi
 # source additional configuration file
 [[ -n $1 && -f $SRC/config-$1.conf ]] && source $SRC/config-$1.conf
 
-# daily beta build contains date in subrevision
-if [[ $BETA == yes ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
-
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
 	source $SRC/lib/build-all.sh
 else
@@ -100,4 +94,4 @@ fi
 
 # If you are committing new version of this file, increment VERSION
 # Only integers are supported
-# VERSION=26
+# VERSION=27
