@@ -25,18 +25,6 @@ You will be prompted with a selection menu for a build option, a board name, a k
 
 Build process uses caching for the compilation and the debootstrap process, so consecutive runs with similar settings will be much faster.
 
-## How to change a kernel configuration?
-
-Edit `compile.sh` and set
-
-	KERNEL_CONFIGURE="yes"
-
-or pass this option as a command line parameter like
-
-	./compile.sh KERNEL_CONFIGURE=yes
-
-to display the kernel configuration menu during the compilation process
-
 ## Reporting issues
 
 Please read [this](https://github.com/igorpecovnik/lib/blob/master/.github/ISSUE_TEMPLATE.md) notice first before opening an issue.
