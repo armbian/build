@@ -35,45 +35,43 @@ BRANCH_LIST=("default" "next" "dev")
 
 pack_upload ()
 {
-# pack into .7z and upload to server
+	# pack into .7z and upload to server
+	# stage: init
+	display_alert "Signing and compressing" "Please wait!" "info"
+	local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
+	local subdir="archive"
+	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
+	[[ $BETA == yes ]] && local subdir=nightly
+	local filename=$CACHEDIR/$DESTIMG/${version}.7z
 
-# stage: init
-display_alert "Signing and compressing" "Please wait!" "info"
-local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
-local subdir="archive"
-[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
-[[ $BETA == yes ]] && local subdir=nightly
-local filename=$CACHEDIR/$DESTIMG/${version}.7z
+	# stage: generate sha256sum.sha
+	cd $CACHEDIR/$DESTIMG
+	sha256sum -b ${version}.img > sha256sum.sha
 
-# stage: generate sha256sum.sha
-cd $CACHEDIR/$DESTIMG
-sha256sum -b ${version}.img > sha256sum.sha
+	# stage: sign with PGP
+	if [[ -n $GPG_PASS ]]; then
+		echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes ${version}.img
+		echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
+	fi
 
-# stage: sign with PGP
-if [[ -n $GPG_PASS ]]; then
-	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes ${version}.img
-	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
-fi
+	# create remote directory structure
+	ssh ${SEND_TO_SERVER} "mkdir -p /var/www/dl.armbian.com/${BOARD}/{archive,nightly};";
 
-# create remote directory structure
-ssh ${SEND_TO_SERVER} "mkdir -p /var/www/dl.armbian.com/${BOARD}/{archive,nightly};";
-
-# pack and move file to server under new process
-nice -n 19 bash -c "\
-7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1 ; \
-find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; \
-while ! rsync -arP $CACHEDIR/$DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir};do sleep 5;done; \
-rm -r $CACHEDIR/$DESTIMG" &
+	# pack and move file to server under new process
+	nice -n 19 bash -c "\
+	7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1 ; \
+	find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; \
+	while ! rsync -arP $CACHEDIR/$DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir};do sleep 5;done; \
+	rm -r $CACHEDIR/$DESTIMG" &
 }
 
 build_main ()
 {
-touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid";
-source $SRC/lib/main.sh;
-[[ $KERNEL_ONLY != yes ]] && pack_upload
-rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid"
+	touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid";
+	source $SRC/lib/main.sh;
+	[[ $KERNEL_ONLY != yes ]] && pack_upload
+	rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid"
 }
-
 
 create_images_list()
 {
