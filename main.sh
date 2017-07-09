@@ -29,6 +29,8 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 # default console if not set
 [[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8"
 
+[[ -z $FORCE_CHECKOUT ]] && FORCE_CHECKOUT=yes
+
 # Load libraries
 source $SRC/lib/debootstrap-ng.sh 			# System specific install
 source $SRC/lib/distributions.sh 			# System specific install
