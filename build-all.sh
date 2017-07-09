@@ -161,9 +161,12 @@ create_images_list()
 
 create_kernels_list()
 {
-	for board in $SRC/lib/config/boards/*.conf; do
+	for board in $SRC/lib/config/boards/*.{conf,wip}; do
 		BOARD=$(basename $board | cut -d'.' -f1)
-		source $SRC/lib/config/boards/$BOARD.conf
+		local file="${SRC}/lib/config/boards/${BOARD}"
+		if [[ -f $file".conf" ]]; then source $file".conf"; fi
+		if [[ -f $file".wip"  ]]; then source $file".wip"; fi
+
 		if [[ -n $KERNEL_TARGET ]]; then
 			for kernel in $(tr ',' ' ' <<< $KERNEL_TARGET); do
 				buildlist+=("$BOARD $kernel")
