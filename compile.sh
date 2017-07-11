@@ -8,48 +8,30 @@
 #
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
-#--------------------------------------------------------------------------------------------------------------------------------
-
-# Read build script documentation http://www.armbian.com/using-armbian-tools/
-# for detailed explanation of these options and for additional options not listed here
-
-KERNEL_ONLY=""				# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
-KERNEL_CONFIGURE=""			# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
-CLEAN_LEVEL="make,debs,oldcache"	# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
-					# "debs" = delete packages in "./output/debs" for current branch and family,
-					# "alldebs" = delete all packages in "./output/debs", "images" = delete "./output/images",
-					# "cache" = delete "./output/cache", "sources" = delete "./sources"
-					# "oldcache" = remove old cached rootfs except for the newest 6 files
-
-DEST_LANG="en_US.UTF-8"			# sl_SI.UTF-8, en_US.UTF-8
-
-# advanced
-KERNEL_KEEP_CONFIG="no"			# do not overwrite kernel config before compilation
-EXTERNAL="yes"				# build and install extra applications and drivers
-EXTERNAL_NEW="prebuilt"			# compile and install or install prebuilt additional packages
-CREATE_PATCHES="no"			# wait that you make changes to uboot and kernel source and creates patches
-BUILD_ALL="no"				# cycle through available boards and make images or kernel/u-boot packages.
-					# set KERNEL_ONLY to "yes" or "no" to build all packages/all images
-
-BSPFREEZE=""				# freeze armbian packages (u-boot, kernel, dtb)
-
-# build script version to use
-LIB_TAG=""				# empty for latest version,
-					# one of listed here: https://github.com/igorpecovnik/lib/tags for stable versions,
-					# or commit hash
-#--------------------------------------------------------------------------------------------------------------------------------
 
 SRC=$(dirname $(realpath ${BASH_SOURCE}))
 # fallback for Trusty
 [[ -z $SRC ]] && SRC=$(pwd)
 cd $SRC
 
-if [[ -f $SRC/lib/general.sh ]]; then
+if [[ -f $SRC/lib/general.sh && -L $SRC/main.sh ]]; then
 	source $SRC/lib/general.sh
 else
 	echo "Error: missing build directory structure"
 	echo "Please clone the full repository https://github.com/armbian/build/"
 	exit -1
+fi
+
+# copy default config from the template
+[[ ! -f $SRC/config-default.conf ]] && cp $SRC/config/templates/config-example.conf $SRC/config-default.conf
+
+# source build configuration file
+if [[ -n $1 && -f $SRC/config-$1.conf ]]; then
+	display_alert "Using config file" "config-$1.conf" "info"
+	source $SRC/config-$1.conf
+else
+	display_alert "Using config file" "config-default.conf" "info"
+	source $SRC/config-default.conf
 fi
 
 if [[ $EUID != 0 ]]; then
@@ -70,9 +52,6 @@ if [[ ! -f $SRC/.ignore_changes ]]; then
 		git checkout ${LIB_TAG:- master}
 	fi
 fi
-
-# source additional configuration file
-[[ -n $1 && -f $SRC/config-$1.conf ]] && source $SRC/config-$1.conf
 
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
 	source $SRC/lib/build-all.sh

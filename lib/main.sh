@@ -12,6 +12,11 @@
 # Main program
 #
 
+if [[ $(basename $0) == main.sh ]]; then
+	echo "Please use compile.sh to start the build process"
+	exit -1
+fi
+
 # destination
 DEST=$SRC/output
 
