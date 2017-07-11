@@ -20,7 +20,7 @@ showall()
 {
 	for release in "${DISTROS[@]}"; do
 		display_alert "Displaying repository contents for" "$release" "ext"
-		aptly repo show -with-packages -config=config/aptly.conf $release | tail -n +7
+		aptly repo show -with-packages -config=../config/aptly.conf $release | tail -n +7
 	done
 }
 

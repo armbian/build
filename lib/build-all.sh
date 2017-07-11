@@ -78,9 +78,9 @@ create_images_list()
 	#
 	# if parameter is true, than we build beta list
 	#
-	for board in $SRC/lib/config/boards/*.conf; do
+	for board in $SRC/config/boards/*.conf; do
 		BOARD=$(basename $board | cut -d'.' -f1)
-		source $SRC/lib/config/boards/$BOARD.conf
+		source $SRC/config/boards/$BOARD.conf
 		if [[ -n $CLI_TARGET && -z $1 ]]; then
 
 			# RELEASES : BRANCHES
@@ -159,11 +159,11 @@ create_images_list()
 
 create_kernels_list()
 {
-	local naming="$SRC/lib/config/boards/*.conf";
-        if [[ "$EXPERT" == "yes" ]]; then naming=$naming" $SRC/lib/config/boards/*.wip"; fi
-        for board in $naming; do
+	local naming="$SRC/config/boards/*.conf";
+        if [[ "$EXPERT" == "yes" ]]; then naming=$naming" $SRC/config/boards/*.wip"; fi
+	for board in $naming; do
 		BOARD=$(basename $board | cut -d'.' -f1)
-		local file="${SRC}/lib/config/boards/${BOARD}"
+		local file="${SRC}/config/boards/${BOARD}"
 		if [[ -f $file".conf" ]]; then source $file".conf"; fi
 		if [[ -f $file".wip"  ]]; then source $file".wip"; fi
 

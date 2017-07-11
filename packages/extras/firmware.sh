@@ -20,7 +20,7 @@ build_firmware()
 	fi
 	mkdir -p $SOURCES/$plugin_dir/lib/firmware
 	# overlay our firmware
-	cp -R $SRC/lib/packages/extras/firmware/* $SOURCES/$plugin_dir/lib/firmware
+	cp -R $SRC/packages/extras/firmware/* $SOURCES/$plugin_dir/lib/firmware
 
 	# cleanup what's not needed for sure
 	rm -rf $SOURCES/$plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}

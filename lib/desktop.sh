@@ -14,27 +14,27 @@ install_desktop ()
 	display_alert "Installing desktop" "XFCE" "info"
 
 	# add loading desktop splash service
-	cp $SRC/lib/packages/blobs/desktop/desktop-splash/desktop-splash.service $CACHEDIR/$SDCARD/etc/systemd/system/desktop-splash.service
+	cp $SRC/packages/blobs/desktop/desktop-splash/desktop-splash.service $CACHEDIR/$SDCARD/etc/systemd/system/desktop-splash.service
 
 	if [[ $RELEASE == xenial ]]; then
 		# install optimized firefox configuration
-		# cp $SRC/lib/config/firefox.conf $CACHEDIR/$SDCARD/etc/firefox/syspref.js
+		# cp $SRC/config/firefox.conf $CACHEDIR/$SDCARD/etc/firefox/syspref.js
 		# install optimized chromium configuration
-		cp $SRC/lib/config/chromium.conf $CACHEDIR/$SDCARD/etc/chromium-browser/default
+		cp $SRC/config/chromium.conf $CACHEDIR/$SDCARD/etc/chromium-browser/default
 	fi
 	# install dedicated startup icons
-	cp $SRC/lib/packages/blobs/desktop/icons/${RELEASE}.png $CACHEDIR/$SDCARD/usr/share/pixmaps
+	cp $SRC/packages/blobs/desktop/icons/${RELEASE}.png $CACHEDIR/$SDCARD/usr/share/pixmaps
 
 	# install default desktop settings
-	cp -R $SRC/lib/packages/blobs/desktop/skel/. $CACHEDIR/$SDCARD/etc/skel
-	cp -R $SRC/lib/packages/blobs/desktop/skel/. $CACHEDIR/$SDCARD/root
+	cp -R $SRC/packages/blobs/desktop/skel/. $CACHEDIR/$SDCARD/etc/skel
+	cp -R $SRC/packages/blobs/desktop/skel/. $CACHEDIR/$SDCARD/root
 
 	# install wallpapers
 	mkdir -p $CACHEDIR/$SDCARD/usr/share/backgrounds/xfce/
-	cp $SRC/lib/packages/blobs/desktop/wallpapers/armbian*.jpg $CACHEDIR/$SDCARD/usr/share/backgrounds/xfce/
+	cp $SRC/packages/blobs/desktop/wallpapers/armbian*.jpg $CACHEDIR/$SDCARD/usr/share/backgrounds/xfce/
 
 	# Install custom icons and theme
-	cp $SRC/lib/packages/blobs/desktop/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb $CACHEDIR/$SDCARD/tmp/
+	cp $SRC/packages/blobs/desktop/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb $CACHEDIR/$SDCARD/tmp/
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"
 	rm -f $CACHEDIR/$SDCARD/tmp/*.deb
 

@@ -350,7 +350,7 @@ fingerprint_image()
 	Changelog: 		http://www.armbian.com/logbook/
 	Documantation:		http://docs.armbian.com/
 	--------------------------------------------------------------------------------
-	$(cat $SRC/lib/LICENSE)
+	$(cat $SRC/LICENSE)
 	--------------------------------------------------------------------------------
 	EOF
 }
@@ -539,8 +539,8 @@ prepare_host()
 	fi
 
 	# create directory structure
-	mkdir -p $SOURCES $DEST/debs/extra $DEST/debug $CACHEDIR/rootfs $SRC/userpatches/{overlay,CREATE_PATCHES} $SRC/toolchains
-	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
+	mkdir -p $SOURCES $DEST/debs/extra $DEST/debug $CACHEDIR/rootfs $SRC/userpatches/{overlay,CREATE_PATCHES} $SRC/cache/toolchains
+	find $SRC/patch -type d ! -name . | sed "s%/patch%/userpatches%" | xargs mkdir -p
 
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 	local toolchains=(
@@ -558,8 +558,8 @@ prepare_host()
 		download_toolchain "$toolchain"
 	done
 
-	rm -rf $SRC/toolchains/*.tar.xz $SRC/toolchains/*.tar.xz.asc
-	local existing_dirs=( $(ls -1 $SRC/toolchains) )
+	rm -rf $SRC/cache/toolchains/*.tar.xz $SRC/cache/toolchains/*.tar.xz.asc
+	local existing_dirs=( $(ls -1 $SRC/cache/toolchains) )
 	for dir in ${existing_dirs[@]}; do
 		local found=no
 		for toolchain in ${toolchains[@]}; do
@@ -569,11 +569,11 @@ prepare_host()
 		done
 		if [[ $found == no ]]; then
 			display_alert "Removing obsolete toolchain" "$dir"
-			rm -rf $SRC/toolchains/$dir
+			rm -rf $SRC/cache/toolchains/$dir
 		fi
 	done
 
-	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/lib/config/templates/customize-image.sh.template $SRC/userpatches/customize-image.sh
+	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/config/templates/customize-image.sh.template $SRC/userpatches/customize-image.sh
 
 	if [[ ! -f $SRC/userpatches/README ]]; then
 		rm -f $SRC/userpatches/readme.txt
@@ -599,11 +599,11 @@ download_toolchain()
 	local filename=${url##*/}
 	local dirname=${filename//.tar.xz}
 
-	if [[ -f $SRC/toolchains/$dirname/.download-complete ]]; then
+	if [[ -f $SRC/cache/toolchains/$dirname/.download-complete ]]; then
 		return
 	fi
 
-	cd $SRC/toolchains/
+	cd $SRC/cache/toolchains/
 
 	display_alert "Downloading" "$dirname"
 	curl -Lf --progress-bar $url -o $filename
@@ -613,21 +613,21 @@ download_toolchain()
 
 	display_alert "Verifying"
 	if grep -q 'BEGIN PGP SIGNATURE' ${filename}.asc; then
-		if [[ ! -d $DEST/.gpg ]]; then
-			mkdir -p $DEST/.gpg
-			chmod 700 $DEST/.gpg
-			touch $DEST/.gpg/gpg.conf
-			chmod 600 $DEST/.gpg/gpg.conf
+		if [[ ! -d $SRC/cache/.gpg ]]; then
+			mkdir -p $SRC/cache/.gpg
+			chmod 700 $SRC/cache/.gpg
+			touch $SRC/cache/.gpg/gpg.conf
+			chmod 600 $SRC/cache/.gpg/gpg.conf
 		fi
-		(gpg --homedir $DEST/.gpg --no-permission-warning --list-keys 8F427EAF || gpg --homedir $DEST/.gpg --no-permission-warning --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF) 2>&1 | tee -a $DEST/debug/output.log
-		gpg --homedir $DEST/.gpg --no-permission-warning --verify --trust-model always -q ${filename}.asc 2>&1 | tee -a $DEST/debug/output.log
+		(gpg --homedir $SRC/cache/.gpg --no-permission-warning --list-keys 8F427EAF || gpg --homedir $SRC/cache/.gpg --no-permission-warning --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF) 2>&1 | tee -a $DEST/debug/output.log
+		gpg --homedir $SRC/cache/.gpg --no-permission-warning --verify --trust-model always -q ${filename}.asc 2>&1 | tee -a $DEST/debug/output.log
 		[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true
 	else
 		md5sum -c --status ${filename}.asc && verified=true
 	fi
 	if [[ $verified == true ]]; then
 		display_alert "Extracting"
-		tar --overwrite -xf $filename && touch $SRC/toolchains/$dirname/.download-complete
+		tar --overwrite -xf $filename && touch $SRC/cache/toolchains/$dirname/.download-complete
 		display_alert "Download complete" "" "info"
 	else
 		display_alert "Verification failed" "" "wrn"

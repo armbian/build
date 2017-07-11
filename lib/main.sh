@@ -15,7 +15,7 @@
 # destination
 DEST=$SRC/output
 # sources for compilation
-SOURCES=$SRC/sources
+SOURCES=$SRC/cache/sources
 
 TTY_X=$(($(stty size | awk '{print $2}')-6)) # determine terminal width
 TTY_Y=$(($(stty size | awk '{print $1}')-6)) # determine terminal height
@@ -47,15 +47,6 @@ rm -f $DEST/debug/*.log > /dev/null 2>&1
 date +"%d_%m_%Y-%H_%M_%S" > $DEST/debug/timestamp
 # delete compressed logs older than 7 days
 (cd $DEST/debug && find . -name '*.tgz' -atime +7 -delete) > /dev/null
-
-# compile.sh version checking
-ver1=$(awk -F"=" '/^# VERSION/ {print $2}' <$SRC/compile.sh )
-ver2=$(awk -F"=" '/^# VERSION/ {print $2}' <$SRC/lib/compile.sh 2>/dev/null) || ver2=0
-if [[ $BETA != yes && ( -z $ver1 || $ver1 -lt $ver2 ) ]]; then
-	display_alert "File $0 is outdated. Please overwrite it with an updated version from" "$SRC/lib" "wrn"
-	echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
-	read
-fi
 
 # Script parameters handling
 for i in "$@"; do
@@ -136,17 +127,17 @@ if [[ -z $BOARD ]]; then
 	while true; do
 		options=()
 		if [[ $WIP_STATE == supported ]]; then
-			for board in $SRC/lib/config/boards/*.conf; do
+			for board in $SRC/config/boards/*.conf; do
 				options+=("$(basename $board | cut -d'.' -f1)" "$(head -1 $board | cut -d'#' -f2)")
 			done
 		else
-			for board in $SRC/lib/config/boards/*.csc; do
+			for board in $SRC/config/boards/*.csc; do
 				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(CSC)\Zn $(head -1 $board | cut -d'#' -f2)")
 			done
-			for board in $SRC/lib/config/boards/*.wip; do
+			for board in $SRC/config/boards/*.wip; do
 				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(WIP)\Zn $(head -1 $board | cut -d'#' -f2)")
 			done
-			for board in $SRC/lib/config/boards/*.eos; do
+			for board in $SRC/config/boards/*.eos; do
 				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(EOS)\Zn $(head -1 $board | cut -d'#' -f2)")
 			done
 		fi
@@ -186,17 +177,17 @@ if [[ -z $BOARD ]]; then
 	done
 fi
 
-if [[ -f $SRC/lib/config/boards/${BOARD}.conf ]]; then
+if [[ -f $SRC/config/boards/${BOARD}.conf ]]; then
 	BOARD_TYPE='conf'
-elif [[ -f $SRC/lib/config/boards/${BOARD}.csc ]]; then
+elif [[ -f $SRC/config/boards/${BOARD}.csc ]]; then
 	BOARD_TYPE='csc'
-elif [[ -f $SRC/lib/config/boards/${BOARD}.wip ]]; then
+elif [[ -f $SRC/config/boards/${BOARD}.wip ]]; then
 	BOARD_TYPE='wip'
-elif [[ -f $SRC/lib/config/boards/${BOARD}.eos ]]; then
+elif [[ -f $SRC/config/boards/${BOARD}.eos ]]; then
 	BOARD_TYPE='eos'
 fi
 
-source $SRC/lib/config/boards/${BOARD}.${BOARD_TYPE}
+source $SRC/config/boards/${BOARD}.${BOARD_TYPE}
 
 [[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
 

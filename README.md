@@ -17,8 +17,8 @@ Supported build environments:
 **Execution**
 
 	apt-get -y install git
-	git clone https://github.com/igorpecovnik/lib --depth 1
-	cp lib/compile.sh .
+	git clone https://github.com/armbian/build
+	cd build
 	./compile.sh
 
 You will be prompted with a selection menu for a build option, a board name, a kernel branch and an OS release. Please check the documentation for [advanced options](https://docs.armbian.com/Developer-Guide_Build-Options/) and [additional customization](https://docs.armbian.com/Developer-Guide_User-Configurations/).

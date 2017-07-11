@@ -181,7 +181,7 @@ create_rootfs_cache()
 		# stage: add armbian repository and install key
 		echo "deb http://apt.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
 
-		cp $SRC/lib/config/armbian.key $CACHEDIR/$SDCARD
+		cp $SRC/config/armbian.key $CACHEDIR/$SDCARD
 		eval 'chroot $CACHEDIR/$SDCARD /bin/bash -c "cat armbian.key | apt-key add -"' \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 		rm $CACHEDIR/$SDCARD/armbian.key

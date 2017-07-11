@@ -62,10 +62,10 @@ install_common()
 	# NOTE: this needs to be executed before family_tweaks
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
-	cp $SRC/lib/config/bootscripts/$bootscript_src $CACHEDIR/$SDCARD/boot/$bootscript_dst
+	cp $SRC/config/bootscripts/$bootscript_src $CACHEDIR/$SDCARD/boot/$bootscript_dst
 
-	[[ -n $BOOTENV_FILE && -f $SRC/lib/config/bootenv/$BOOTENV_FILE ]] && \
-		cp $SRC/lib/config/bootenv/$BOOTENV_FILE $CACHEDIR/$SDCARD/boot/armbianEnv.txt
+	[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
+		cp $SRC/config/bootenv/$BOOTENV_FILE $CACHEDIR/$SDCARD/boot/armbianEnv.txt
 
 	# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
 	# instead of copying sunxi-specific template
@@ -74,7 +74,7 @@ install_common()
 		if [[ -f $SRC/userpatches/nfs-boot.cmd ]]; then
 			cp $SRC/userpatches/nfs-boot.cmd $CACHEDIR/$SDCARD/boot/boot.cmd
 		else
-			cp $SRC/lib/config/templates/nfs-boot.cmd.template $CACHEDIR/$SDCARD/boot/boot.cmd
+			cp $SRC/config/templates/nfs-boot.cmd.template $CACHEDIR/$SDCARD/boot/boot.cmd
 		fi
 	fi
 
@@ -134,8 +134,8 @@ install_common()
 	fi
 
 	# copy boot splash images
-	cp $SRC/lib/packages/blobs/splash/armbian-u-boot.bmp $CACHEDIR/$SDCARD/boot/boot.bmp
-	cp $SRC/lib/packages/blobs/splash/armbian-desktop.png $CACHEDIR/$SDCARD/boot/boot-desktop.png
+	cp $SRC/packages/blobs/splash/armbian-u-boot.bmp $CACHEDIR/$SDCARD/boot/boot.bmp
+	cp $SRC/packages/blobs/splash/armbian-desktop.png $CACHEDIR/$SDCARD/boot/boot-desktop.png
 
 	# execute $LINUXFAMILY-specific tweaks
 	[[ $(type -t family_tweaks) == function ]] && family_tweaks
@@ -144,7 +144,7 @@ install_common()
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service >/dev/null 2>&1"
 
 	# copy "first run automated config, optional user configured"
- 	cp $SRC/lib/config/armbian_first_run.txt $CACHEDIR/$SDCARD/boot/armbian_first_run.txt
+ 	cp $SRC/config/armbian_first_run.txt $CACHEDIR/$SDCARD/boot/armbian_first_run.txt
 
 	# switch to beta repository at this stage if building nightly images
 	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
@@ -166,7 +166,7 @@ install_common()
 
 	# install initial asound.state if defined
 	mkdir -p $CACHEDIR/$SDCARD/var/lib/alsa/
-	[[ -n $ASOUND_STATE ]] && cp $SRC/lib/config/$ASOUND_STATE $CACHEDIR/$SDCARD/var/lib/alsa/asound.state
+	[[ -n $ASOUND_STATE ]] && cp $SRC/config/$ASOUND_STATE $CACHEDIR/$SDCARD/var/lib/alsa/asound.state
 
 	# save initial armbian-release state
 	cp $CACHEDIR/$SDCARD/etc/armbian-release $CACHEDIR/$SDCARD/etc/armbian-image-release

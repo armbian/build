@@ -22,9 +22,9 @@ install_usb_redirector()
 			EXTRA_BUILD_FLAGS=""
 		fi
 	else
-		cp $SRC/lib/packages/extras/usb-redirector/usb-redirector-old.tgz usb-redirector-linux-arm-eabi.tar.gz
+		cp $SRC/packages/extras/usb-redirector/usb-redirector-old.tgz usb-redirector-linux-arm-eabi.tar.gz
 	fi
-	
+
 	tar xfz usb-redirector-linux-arm-eabi.tar.gz
 	rm usb-redirector-linux-arm-eabi.tar.gz
 	cd $SOURCES/usb-redirector-linux-arm-eabi/files/modules/src/tusbd

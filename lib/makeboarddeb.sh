@@ -101,7 +101,7 @@ create_board_package()
 	#EOF
 
 	# copy common files from a premade directory structure
-	rsync -a $SRC/lib/packages/bsp/common/* $destination/
+	rsync -a $SRC/packages/bsp/common/* $destination/
 
 	# trigger uInitrd creation after installation, to apply
 	# /etc/initramfs/post-update.d/99-uboot
@@ -135,21 +135,22 @@ create_board_package()
 	[[ $RELEASE == xenial || $RELEASE == stretch ]] && sed -i 's/#no-auto-down/no-auto-down/g' $destination/etc/network/interfaces.default
 
 	# armbian-config
-	install -m 755 $SRC/sources/armbian-config/scripts/tv_grab_file $destination/usr/bin/tv_grab_file
-	install -m 755 $SRC/sources/armbian-config/debian-config $destination/usr/bin/armbian-config
-	install -m 755 $SRC/sources/armbian-config/softy $destination/usr/bin/softy
+	install -m 755 $SRC/cache/sources/armbian-config/scripts/tv_grab_file $destination/usr/bin/tv_grab_file
+	install -m 755 $SRC/cache/sources/armbian-config/debian-config $destination/usr/bin/armbian-config
+	install -m 755 $SRC/cache/sources/armbian-config/softy $destination/usr/bin/softy
 
 	# install copy of boot script & environment file
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
+
 	mkdir -p $destination/usr/share/armbian/
-	cp $SRC/lib/config/bootscripts/$bootscript_src $destination/usr/share/armbian/$bootscript_dst
-	[[ -n $BOOTENV_FILE && -f $SRC/lib/config/bootenv/$BOOTENV_FILE ]] && \
-		cp $SRC/lib/config/bootenv/$BOOTENV_FILE $destination/usr/share/armbian/armbianEnv.txt
+	cp $SRC/config/bootscripts/$bootscript_src $destination/usr/share/armbian/$bootscript_dst
+	[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
+		cp $SRC/config/bootenv/$BOOTENV_FILE $destination/usr/share/armbian/armbianEnv.txt
 
 	# h3disp for sun8i/3.4.x
 	if [[ $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
-		install -m 755 $SRC/lib/packages/bsp/{h3disp,h3consumption} $destination/usr/bin
+		install -m 755 $SRC/packages/bsp/{h3disp,h3consumption} $destination/usr/bin
 	fi
 
 	# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
@@ -160,13 +161,13 @@ create_board_package()
 	fi
 
 	if [[ $LINUXFAMILY == sun*i* ]]; then
-		install -m 755 $SRC/lib/packages/bsp/armbian-add-overlay $destination/usr/sbin
+		install -m 755 $SRC/packages/bsp/armbian-add-overlay $destination/usr/sbin
 		if [[ $BRANCH == default ]]; then
-			arm-linux-gnueabihf-gcc $SRC/lib/packages/bsp/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
+			arm-linux-gnueabihf-gcc $SRC/packages/bsp/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
 			# convert and add fex files
 			mkdir -p $destination/boot/bin
-			for i in $(ls -w1 $SRC/lib/config/fex/*.fex | xargs -n1 basename); do
-				fex2bin $SRC/lib/config/fex/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
+			for i in $(ls -w1 $SRC/config/fex/*.fex | xargs -n1 basename); do
+				fex2bin $SRC/config/fex/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
 			done
 		fi
 	fi
@@ -174,14 +175,14 @@ create_board_package()
 	if [[ ( $LINUXFAMILY == sun*i || $LINUXFAMILY == pine64 ) && $BRANCH == default ]]; then
 		# add mpv config for vdpau_sunxi
 		mkdir -p $destination/etc/mpv/
-		cp $SRC/lib/packages/bsp/mpv/mpv_sunxi.conf $destination/etc/mpv/mpv.conf
+		cp $SRC/packages/bsp/mpv/mpv_sunxi.conf $destination/etc/mpv/mpv.conf
 		echo "export VDPAU_OSD=1" > $destination/etc/profile.d/90-vdpau.sh
 		chmod 755 $destination/etc/profile.d/90-vdpau.sh
 	fi
 	if [[ ( $LINUXFAMILY == sun50i* || $LINUXFAMILY == sun8i ) && $BRANCH == dev ]]; then
 		# add mpv config for x11 output - slow, but it works compared to no config at all
 		mkdir -p $destination/etc/mpv/
-		cp $SRC/lib/packages/bsp/mpv/mpv_mainline.conf $destination/etc/mpv/mpv.conf
+		cp $SRC/packages/bsp/mpv/mpv_mainline.conf $destination/etc/mpv/mpv.conf
 	fi
 
 	# execute $LINUXFAMILY-specific tweaks

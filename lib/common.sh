@@ -81,7 +81,7 @@ compile_uboot()
 
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
-		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/lib/packages/blobs/splash/udoo.bmp tools/logos/udoo.bmp
+		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/packages/blobs/splash/udoo.bmp tools/logos/udoo.bmp
 		touch .scmversion
 
 		# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
@@ -178,9 +178,9 @@ compile_kernel()
 
 	# this is a patch that Ubuntu Trusty compiler works
 	# TODO: Check if still required
-	if [[ $(patch --dry-run -t -p1 < $SRC/lib/patch/kernel/compiler.patch | grep Reversed) != "" ]]; then
+	if [[ $(patch --dry-run -t -p1 < $SRC/patch/kernel/compiler.patch | grep Reversed) != "" ]]; then
 		display_alert "Patching kernel for compiler support"
-		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
+		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
 	fi
 
 	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
@@ -211,12 +211,12 @@ compile_kernel()
 			cp $SRC/userpatches/$LINUXCONFIG.config .config
 		else
 			display_alert "Using kernel config file" "lib/config/kernel/$LINUXCONFIG.config" "info"
-			cp $SRC/lib/config/kernel/$LINUXCONFIG.config .config
+			cp $SRC/config/kernel/$LINUXCONFIG.config .config
 		fi
 	fi
 
 	# hack for deb builder. To pack what's missing in headers pack.
-	cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
+	cp $SRC/patch/misc/headers-debian-byteshift.patch /tmp
 
 	export LOCALVERSION="-$LINUXFAMILY"
 
@@ -299,7 +299,7 @@ find_toolchain()
 	local toolchain=""
 	# extract target major.minor version from expression
 	local target_ver=$(grep -oE "[[:digit:]].[[:digit:]]" <<< "$expression")
-	for dir in $SRC/toolchains/*/; do
+	for dir in $SRC/cache/toolchains/*/; do
 		# check if is a toolchain for current $ARCH
 		[[ ! -f ${dir}bin/${compiler}gcc ]] && continue
 		# get toolchain major.minor version
@@ -330,10 +330,10 @@ find_toolchain()
 # $SRC/userpatches/<dest>/<family>/board_<board>
 # $SRC/userpatches/<dest>/<family>/branch_<branch>
 # $SRC/userpatches/<dest>/<family>
-# $SRC/lib/patch/<dest>/<family>/target_<target>
-# $SRC/lib/patch/<dest>/<family>/board_<board>
-# $SRC/lib/patch/<dest>/<family>/branch_<branch>
-# $SRC/lib/patch/<dest>/<family>
+# $SRC/patch/<dest>/<family>/target_<target>
+# $SRC/patch/<dest>/<family>/board_<board>
+# $SRC/patch/<dest>/<family>/branch_<branch>
+# $SRC/patch/<dest>/<family>
 #
 advanced_patch()
 {
@@ -353,10 +353,10 @@ advanced_patch()
 		"$SRC/userpatches/$dest/$family/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
 		"$SRC/userpatches/$dest/$family/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
 		"$SRC/userpatches/$dest/$family:[\e[33mu\e[0m][\e[32mc\e[0m]"
-		"$SRC/lib/patch/$dest/$family/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]"
-		"$SRC/lib/patch/$dest/$family/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"
-		"$SRC/lib/patch/$dest/$family/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]"
-		"$SRC/lib/patch/$dest/$family:[\e[32ml\e[0m][\e[32mc\e[0m]"
+		"$SRC/patch/$dest/$family/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]"
+		"$SRC/patch/$dest/$family/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"
+		"$SRC/patch/$dest/$family/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]"
+		"$SRC/patch/$dest/$family:[\e[32ml\e[0m][\e[32mc\e[0m]"
 		)
 
 	# required for "for" command
@@ -417,7 +417,7 @@ install_external_applications()
 #--------------------------------------------------------------------------------------------------------------------------------
 	display_alert "Installing extra applications and drivers" "" "info"
 
-	for plugin in $SRC/lib/packages/extras/*.sh; do
+	for plugin in $SRC/packages/extras/*.sh; do
 		source $plugin
 	done
 }

@@ -47,12 +47,12 @@ compile_tools()
 		# brcm
 		cp $tmpdir/brcm/{brcm_bt_reset,brcm_patchram_plus} $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/usr/bin
 		# brcm configs and service
-		install -m 644 $SRC/lib/packages/extras/tools/brcm40183					$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default
-		install -m 755	$SRC/lib/packages/extras/tools/brcm40183-patch			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
+		install -m 644 $SRC/packages/extras/tools/brcm40183					$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default
+		install -m 755	$SRC/packages/extras/tools/brcm40183-patch			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
 		
 		# ap6212 configs and service
-		install -m 644 $SRC/lib/packages/extras/tools/ap6212						$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default
-		install -m 755 $SRC/lib/packages/extras/tools/ap6212-bluetooth			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
+		install -m 644 $SRC/packages/extras/tools/ap6212						$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default
+		install -m 755 $SRC/packages/extras/tools/ap6212-bluetooth			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
 		
 		cd $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}
 		find . -type f ! -regex '.*.hg.*' ! -regex '.*?debian-binary.*' ! -regex '.*?DEBIAN.*' -printf '%P ' | xargs md5sum > DEBIAN/md5sums

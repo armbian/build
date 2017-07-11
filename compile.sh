@@ -39,33 +39,25 @@ LIB_TAG=""				# empty for latest version,
 					# or commit hash
 #--------------------------------------------------------------------------------------------------------------------------------
 
-# source is where compile.sh is located
-SRC=$(pwd)
+SRC=$(dirname $(realpath ${BASH_SOURCE}))
+# fallback for Trusty
+[[ -z $SRC ]] && SRC=$(pwd)
+cd $SRC
 
-#--------------------------------------------------------------------------------------------------------------------------------
-# To preserve proper libraries updating
-#--------------------------------------------------------------------------------------------------------------------------------
-if [[ -f $SRC/main.sh && -d $SRC/bin ]]; then
-	echo -e "[\e[0;31m error \x1B[0m] Copy this file one level up, alter and run again."
+if [[ -f $SRC/lib/general.sh ]]; then
+	source $SRC/lib/general.sh
+else
+	echo "Error: missing build directory structure"
+	echo "Please clone the full repository https://github.com/armbian/build/"
 	exit -1
 fi
 
 if [[ $EUID != 0 ]]; then
-	echo -e "[\e[0;35m warn \x1B[0m] This script requires root privileges"
-	sudo "$0" "$@"
+	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
+	sudo "$SRC/compile.sh" "$@"
 	exit $?
 fi
 
-#--------------------------------------------------------------------------------------------------------------------------------
-# Get updates of the main build libraries
-#--------------------------------------------------------------------------------------------------------------------------------
-[[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' git 2>/dev/null) != *ii* ]] && \
-	apt-get -qq -y --no-install-recommends install git
-
-if [[ ! -d $SRC/lib ]]; then
-	git clone https://github.com/igorpecovnik/lib
-fi
-cd $SRC/lib
 if [[ ! -f $SRC/.ignore_changes ]]; then
 	echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
 	git pull
@@ -91,7 +83,3 @@ fi
 # hook for function to run after build, i.e. to change owner of $SRC
 # NOTE: this will run only if there were no errors during build process
 [[ $(type -t run_after_build) == function ]] && run_after_build || true
-
-# If you are committing new version of this file, increment VERSION
-# Only integers are supported
-# VERSION=27
