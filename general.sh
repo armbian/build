@@ -481,7 +481,8 @@ prepare_host()
 	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-tools gcc-aarch64-linux-gnu ncurses-term p7zip-full dos2unix dosfstools libc6-dev-armhf-cross libc6-dev-armel-cross \
-	libc6-dev-arm64-cross curl gcc-arm-none-eabi libnewlib-arm-none-eabi patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev"
+	libc6-dev-arm64-cross curl gcc-arm-none-eabi libnewlib-arm-none-eabi patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev \
+	locales ncurses-base"
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
@@ -531,9 +532,8 @@ prepare_host()
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
 	if [[ $KERNEL_ONLY != yes ]]; then
-		if [[ ! -d /proc/sys/fs/binfmt_misc ]]; then
-			modprobe -q binfmt_misc || exit_with_error "Kernel does not support binfmt_misc"
-		fi
+		modprobe -q binfmt_misc
+		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
 		test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
 		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
 	fi
@@ -576,7 +576,7 @@ prepare_host()
 	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/lib/scripts/customize-image.sh.template $SRC/userpatches/customize-image.sh
 
 	if [[ ! -f $SRC/userpatches/README ]]; then
-		rm $SRC/userpatches/readme.txt
+		rm -f $SRC/userpatches/readme.txt
 		echo 'Please read documentation about customizing build configuration' > $SRC/userpatches/README
 		echo 'http://www.armbian.com/using-armbian-tools/' >> $SRC/userpatches/README
 	fi
