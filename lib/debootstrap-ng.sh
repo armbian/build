@@ -365,10 +365,17 @@ prepare_partitions()
 	LOOP=$(losetup -f)
 	[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device"
 
-	# NOTE: losetup -P option is not available in Trusty
-	[[ $CONTAINER_COMPAT == yes && ! -e $LOOP ]] && mknod -m0660 $LOOP b 7 ${LOOP//\/dev\/loop} > /dev/null
+	# check config-docker.conf for details on this hack
+	if [[ ! -b $LOOP ]]; then
+		if [[ $CONTAINER_COMPAT == yes && -b /tmp/$LOOP ]]; then
+			display_alert "Creating device node" "$LOOP"
+			mknod -m0660 $LOOP b 7 0x$(stat -c '%T' /tmp/$LOOP)
+		else
+			exit_with_error "Device node $LOOP does not exist"
+		fi
+	fi
 
-	# TODO: Needs mknod here in Docker?
+	# NOTE: losetup -P option is not available in Trusty
 	losetup $LOOP ${SDCARD}.raw
 
 	# loop device was grabbed here, unlock
@@ -380,7 +387,14 @@ prepare_partitions()
 	rm -f $SDCARD/etc/fstab
 	if [[ -n $rootpart ]]; then
 		display_alert "Creating rootfs" "$ROOTFS_TYPE"
-		[[ $CONTAINER_COMPAT == yes ]] && mknod -m0660 ${LOOP}p${rootpart} b 259 $rootpart > /dev/null
+		if [[ ! -b ${LOOP}p${rootpart} ]]; then
+			if [[ $CONTAINER_COMPAT == yes && -b /tmp/${LOOP}p${rootpart} ]]; then
+				display_alert "Creating device node" "${LOOP}p${rootpart}"
+				mknod -m0660 ${LOOP}p${rootpart} b 259 0x$(stat -c '%T' /tmp/${LOOP}p${rootpart})
+			else
+				exit_with_error "Device node ${LOOP}p${rootpart} does not exist"
+			fi
+		fi
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${LOOP}p${rootpart}
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback ${LOOP}p${rootpart} > /dev/null
 		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress-force=zlib"
@@ -390,7 +404,14 @@ prepare_partitions()
 	fi
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs"
-		[[ $CONTAINER_COMPAT == yes ]] && mknod -m0660 ${LOOP}p${bootpart} b 259 $bootpart > /dev/null
+		if [[ ! -b ${LOOP}p${bootpart} ]]; then
+			if [[ $CONTAINER_COMPAT == yes && -b /tmp/${LOOP}p${bootpart} ]]; then
+				display_alert "Creating device node" "${LOOP}p${bootpart}"
+				mknod -m0660 ${LOOP}p${bootpart} b 259 0x$(stat -c '%T' /tmp/${LOOP}p${bootpart})
+			else
+				exit_with_error "Device node ${LOOP}p${bootpart} does not exist"
+			fi
+		fi
 		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${LOOP}p${bootpart}
 		mkdir -p $MOUNT/boot/
 		mount ${LOOP}p${bootpart} $MOUNT/boot/

@@ -477,6 +477,7 @@ prepare_host()
 	fi
 
 	# packages list for host
+	# NOTE: please sync any changes here with the Dockerfile
 	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
 	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
@@ -499,10 +500,16 @@ prepare_host()
 			display_alert "Running in container" "$(systemd-detect-virt)" "info"
 			# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
 			if [[ $NO_APT_CACHER != no ]]; then
-				display_alert "apt-cacher is disabled, set NO_APT_CACHER=no to override" "" "wrn"
+				display_alert "apt-cacher is disabled in containers, set NO_APT_CACHER=no to override" "" "wrn"
 				NO_APT_CACHER=yes
 			fi
 			CONTAINER_COMPAT=yes
+			# trying to use nested containers is not a good idea, so don't permit EXTERNAL_NEW=compile
+			if [[ $EXTERNAL_NEW == compile ]]; then
+				display_alert "EXTERNAL_NEW=compile is not available when running in container, setting to prebuilt" "" "wrn"
+				EXTERNAL_NEW=prebuilt
+			fi
+			SYNC_CLOCK=no
 		fi
 	fi
 
