@@ -14,8 +14,6 @@
 
 # destination
 DEST=$SRC/output
-# sources for compilation
-SOURCES=$SRC/cache/sources
 
 TTY_X=$(($(stty size | awk '{print $2}')-6)) # determine terminal width
 TTY_Y=$(($(stty size | awk '{print $1}')-6)) # determine terminal height

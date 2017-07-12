@@ -16,7 +16,7 @@ install_rtl8192cu()
 	local plugin_dir="rt8192cu"
 
 	fetch_from_repo "$plugin_repo" "$plugin_dir" "branch:master"
-	cd $SOURCES/$plugin_dir
+	cd $SRC/cache/sources/$plugin_dir
 
 	make ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER clean >> $DEST/debug/compilation.log
 
@@ -51,7 +51,7 @@ install_rtl8192cu()
 	EOF
 	# GCC5 compatibility patch end
 
-	make ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER KSRC=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/compilation.log
+	make ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER KSRC=$SRC/cache/sources/$LINUXSOURCEDIR/ >> $DEST/debug/compilation.log
 	cp *.ko $CACHEDIR/$SDCARD/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
 	depmod -b $CACHEDIR/$SDCARD/ $VER-$LINUXFAMILY
 	#cp blacklist*.conf $CACHEDIR/$SDCARD/etc/modprobe.d/

@@ -14,7 +14,7 @@ install_mt7601()
 
 	fetch_from_repo "$plugin_repo" "$plugin_dir" "branch:old"
 
-	cd $SOURCES/$plugin_dir
+	cd $SRC/cache/sources/$plugin_dir
 
 	# DKMS support patch
 	rm src/dkms.conf
@@ -64,7 +64,7 @@ install_mt7601()
 
 	cd src
 	make -s ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" clean >> $DEST/debug/compilation.log 2>&1
-	make -s -j4 ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" LINUX_SRC=$SOURCES/$LINUXSOURCEDIR/ >> $DEST/debug/compilation.log 2>&1
+	make -s -j4 ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" LINUX_SRC=$SRC/cache/sources/$LINUXSOURCEDIR/ >> $DEST/debug/compilation.log 2>&1
 	cp os/linux/*.ko $CACHEDIR/$SDCARD/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
 	mkdir -p $CACHEDIR/$SDCARD/etc/Wireless/RT2870STA
 	cp RT2870STA.dat $CACHEDIR/$SDCARD/etc/Wireless/RT2870STA/

@@ -13,18 +13,18 @@ build_firmware()
 
 	local plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
 	local plugin_dir="armbian-firmware${FULL}"
-	[[ -d "$SOURCES/$plugin_dir" && -n "$SOURCES$plugin_dir" ]] && rm -rf $SOURCES/$plugin_dir
+	[[ -d $SRC/cache/sources/$plugin_dir ]] && rm -rf $SRC/cache/sources/$plugin_dir
 
 	if [[ -n $FULL ]]; then
 		fetch_from_repo "$plugin_repo" "$plugin_dir/lib/firmware" "branch:master"
 	fi
-	mkdir -p $SOURCES/$plugin_dir/lib/firmware
+	mkdir -p $SRC/cache/sources/$plugin_dir/lib/firmware
 	# overlay our firmware
-	cp -R $SRC/packages/extras/firmware/* $SOURCES/$plugin_dir/lib/firmware
+	cp -R $SRC/packages/extras/firmware/* $SRC/cache/sources/$plugin_dir/lib/firmware
 
 	# cleanup what's not needed for sure
-	rm -rf $SOURCES/$plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
-	cd $SOURCES/$plugin_dir
+	rm -rf $SRC/cache/sources/$plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
+	cd $SRC/cache/sources/$plugin_dir
 
 	# set up control file
 	mkdir -p DEBIAN
@@ -40,7 +40,7 @@ build_firmware()
 	Description: Linux firmware${FULL}
 	END
 
-	cd $SOURCES
+	cd $SRC/cache/sources
 	# pack
 	mv armbian-firmware${FULL} armbian-firmware${FULL}_${REVISION}_${ARCH}
 	dpkg -b armbian-firmware${FULL}_${REVISION}_${ARCH} >> $DEST/debug/install.log 2>&1

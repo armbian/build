@@ -67,7 +67,7 @@ cleaning()
 		;;
 
 		sources) # delete output/sources and output/buildpkg
-		[[ -d $SOURCES ]] && display_alert "Cleaning" "sources" "info" && rm -rf $SOURCES/* $DEST/buildpkg/*
+		[[ -d $SRC/cache/sources ]] && display_alert "Cleaning" "sources" "info" && rm -rf $SRC/cache/sources/* $DEST/buildpkg/*
 		;;
 
 		oldcache)
@@ -200,8 +200,8 @@ fetch_from_repo()
 	else
 		local workdir=$dir
 	fi
-	mkdir -p $SOURCES/$workdir
-	cd $SOURCES/$workdir
+	mkdir -p $SRC/cache/sources/$workdir
+	cd $SRC/cache/sources/$workdir
 
 	# check if existing remote URL for the repo or branch does not match current one
 	# may not be supported by older git versions
@@ -270,7 +270,7 @@ fetch_from_repo()
 		display_alert "Updating submodules" "" "ext"
 		# FML: http://stackoverflow.com/a/17692710
 		for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
-			cd $SOURCES/$workdir
+			cd $SRC/cache/sources/$workdir
 			local surl=$(git config -f .gitmodules --get "submodule.$i.url")
 			local sref=$(git config -f .gitmodules --get "submodule.$i.branch")
 			if [[ -n $sref ]]; then
@@ -539,7 +539,7 @@ prepare_host()
 	fi
 
 	# create directory structure
-	mkdir -p $SOURCES $DEST/debs/extra $DEST/debug $CACHEDIR/rootfs $SRC/userpatches/{overlay,CREATE_PATCHES} $SRC/cache/toolchains
+	mkdir -p $DEST/debs/extra $DEST/debug $SRC/userpatches/{overlay,CREATE_PATCHES} $SRC/cache/{sources,toolchains,rootfs}
 	find $SRC/patch -type d ! -name . | sed "s%/patch%/userpatches%" | xargs mkdir -p
 
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources

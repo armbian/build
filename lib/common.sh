@@ -27,13 +27,13 @@ compile_uboot()
 	# not optimal, but extra cleaning before overlayfs_wrapper should keep sources directory clean
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
-		(cd $SOURCES/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
+		(cd $SRC/cache/sources/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
 	fi
 
 	if [[ $USE_OVERLAYFS == yes ]]; then
-		local ubootdir=$(overlayfs_wrapper "wrap" "$SOURCES/$BOOTSOURCEDIR" "u-boot_${LINUXFAMILY}_${BRANCH}")
+		local ubootdir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$BOOTSOURCEDIR" "u-boot_${LINUXFAMILY}_${BRANCH}")
 	else
-		local ubootdir="$SOURCES/$BOOTSOURCEDIR"
+		local ubootdir="$SRC/cache/sources/$BOOTSOURCEDIR"
 	fi
 	cd "$ubootdir"
 
@@ -66,7 +66,7 @@ compile_uboot()
 
 		if [[ $CLEAN_LEVEL == *make* ]]; then
 			display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
-			(cd $SOURCES/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
+			(cd $SRC/cache/sources/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
 		fi
 
 		[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
@@ -166,13 +166,13 @@ compile_kernel()
 {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"
-		(cd $SOURCES/$LINUXSOURCEDIR; make ARCH=$ARCHITECTURE clean >/dev/null 2>&1)
+		(cd $SRC/cache/sources/$LINUXSOURCEDIR; make ARCH=$ARCHITECTURE clean >/dev/null 2>&1)
 	fi
 
 	if [[ $USE_OVERLAYFS == yes ]]; then
-		local kerneldir=$(overlayfs_wrapper "wrap" "$SOURCES/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
+		local kerneldir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
 	else
-		local kerneldir="$SOURCES/$LINUXSOURCEDIR"
+		local kerneldir="$SRC/cache/sources/$LINUXSOURCEDIR"
 	fi
 	cd "$kerneldir"
 
@@ -276,7 +276,7 @@ compile_sunxi_tools()
 {
 	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools.git" "sunxi-tools" "branch:master"
 	# Compile and install only if git commit hash changed
-	cd $SOURCES/sunxi-tools
+	cd $SRC/cache/sources/sunxi-tools
 	if [[ ! -f .commit_id || $(git rev-parse @ 2>/dev/null) != $(<.commit_id) ]]; then
 		display_alert "Compiling" "sunxi-tools" "info"
 		make -s clean >/dev/null
