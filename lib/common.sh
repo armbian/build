@@ -52,8 +52,8 @@ compile_uboot()
 
 	# create directory structure for the .deb package
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
-	rm -rf $uboot_name
-	mkdir -p $uboot_name/usr/lib/{u-boot,$uboot_name} $uboot_name/DEBIAN
+	rm -rf $SRC/.tmp/$uboot_name
+	mkdir -p $SRC/.tmp/$uboot_name/usr/lib/{u-boot,$uboot_name} $SRC/.tmp/$uboot_name/DEBIAN
 
 	# process compilation for one or multiple targets
 	while read -r target; do
@@ -105,12 +105,12 @@ compile_uboot()
 				local f_dst=$(basename $f_src)
 			fi
 			[[ ! -f $f_src ]] && exit_with_error "U-boot file not found" "$(basename $f_src)"
-			cp $f_src $uboot_name/usr/lib/$uboot_name/$f_dst
+			cp $f_src $SRC/.tmp/$uboot_name/usr/lib/$uboot_name/$f_dst
 		done
 	done <<< "$UBOOT_TARGET_MAP"
 
 	# set up postinstall script
-	cat <<-EOF > $uboot_name/DEBIAN/postinst
+	cat <<-EOF > $SRC/.tmp/$uboot_name/DEBIAN/postinst
 	#!/bin/bash
 	source /usr/lib/u-boot/platform_install.sh
 	[[ \$DEVICE == /dev/null ]] && exit 0
@@ -121,17 +121,17 @@ compile_uboot()
 	sync
 	exit 0
 	EOF
-	chmod 755 $uboot_name/DEBIAN/postinst
+	chmod 755 $SRC/.tmp/$uboot_name/DEBIAN/postinst
 
 	# declare -f on non-defined function does not do anything
-	cat <<-EOF > $uboot_name/usr/lib/u-boot/platform_install.sh
+	cat <<-EOF > $SRC/.tmp/$uboot_name/usr/lib/u-boot/platform_install.sh
 	DIR=/usr/lib/$uboot_name
 	$(declare -f write_uboot_platform)
 	$(declare -f setup_write_uboot_platform)
 	EOF
 
 	# set up control file
-	cat <<-EOF > $uboot_name/DEBIAN/control
+	cat <<-EOF > $SRC/.tmp/$uboot_name/DEBIAN/control
 	Package: linux-u-boot-${BOARD}-${BRANCH}
 	Version: $REVISION
 	Architecture: $ARCH
@@ -147,19 +147,19 @@ compile_uboot()
 
 	# copy config file to the package
 	# useful for FEL boot with overlayfs_wrapper
-	[[ -f .config && -n $BOOTCONFIG ]] && cp .config $uboot_name/usr/lib/u-boot/$BOOTCONFIG
+	[[ -f .config && -n $BOOTCONFIG ]] && cp .config $SRC/.tmp/$uboot_name/usr/lib/u-boot/$BOOTCONFIG
 	# copy license files from typical locations
-	[[ -f COPYING ]] && cp COPYING $uboot_name/usr/lib/u-boot/LICENSE
-	[[ -f Licenses/README ]] && cp Licenses/README $uboot_name/usr/lib/u-boot/LICENSE
-	[[ -f arm-trusted-firmware/license.md ]] && cp arm-trusted-firmware/license.md $uboot_name/usr/lib/u-boot/LICENSE.atf
+	[[ -f COPYING ]] && cp COPYING $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE
+	[[ -f Licenses/README ]] && cp Licenses/README $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE
+	[[ -f arm-trusted-firmware/license.md ]] && cp arm-trusted-firmware/license.md $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE.atf
 
 	display_alert "Building deb" "${uboot_name}.deb" "info"
-	eval 'dpkg -b $uboot_name 2>&1' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'}
-	rm -rf $uboot_name
+	(cd $SRC/.tmp/; eval 'dpkg -b $uboot_name 2>&1' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'})
+	rm -rf $SRC/.tmp/$uboot_name
 
-	[[ ! -f ${uboot_name}.deb || $(stat -c '%s' "${uboot_name}.deb") -lt 5000 ]] && exit_with_error "Building u-boot package failed"
+	[[ ! -f $SRC/.tmp/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
-	mv ${uboot_name}.deb $DEST/debs/
+	mv $SRC/.tmp/${uboot_name}.deb $DEST/debs/
 }
 
 compile_kernel()
@@ -443,15 +443,15 @@ customize_image()
 {
 	# for users that need to prepare files at host
 	[[ -f $SRC/userpatches/customize-image-host.sh ]] && source $SRC/userpatches/customize-image-host.sh
-	cp $SRC/userpatches/customize-image.sh $CACHEDIR/$SDCARD/tmp/customize-image.sh
-	chmod +x $CACHEDIR/$SDCARD/tmp/customize-image.sh
-	mkdir -p $CACHEDIR/$SDCARD/tmp/overlay
+	cp $SRC/userpatches/customize-image.sh $SDCARD/tmp/customize-image.sh
+	chmod +x $SDCARD/tmp/customize-image.sh
+	mkdir -p $SDCARD/tmp/overlay
 	# util-linux >= 2.27 required
-	mount -o bind,ro $SRC/userpatches/overlay $CACHEDIR/$SDCARD/tmp/overlay
+	mount -o bind,ro $SRC/userpatches/overlay $SDCARD/tmp/overlay
 	display_alert "Calling image customization script" "customize-image.sh" "info"
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
-	umount $CACHEDIR/$SDCARD/tmp/overlay
-	mountpoint -q $CACHEDIR/$SDCARD/tmp/overlay || rm -r $CACHEDIR/$SDCARD/tmp/overlay
+	chroot $SDCARD /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
+	umount $SDCARD/tmp/overlay
+	mountpoint -q $SDCARD/tmp/overlay || rm -r $SDCARD/tmp/overlay
 }
 
 userpatch_create()

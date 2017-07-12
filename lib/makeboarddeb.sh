@@ -18,7 +18,7 @@ create_board_package()
 {
 	display_alert "Creating board support package" "$BOARD $BRANCH" "info"
 
-	local destination=$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
+	local destination=$SRC/.tmp/${RELEASE}/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
 	rm -rf $destination
 	mkdir -p $destination/DEBIAN
 
@@ -193,9 +193,9 @@ create_board_package()
 
 	# create board DEB file
 	display_alert "Building package" "$CHOSEN_ROOTFS" "info"
-	cd $DEST/debs/$RELEASE/
-	dpkg -b ${CHOSEN_ROOTFS}_${REVISION}_${ARCH} >/dev/null
-
+	(cd $SRC/.tmp/${RELEASE}; dpkg -b $(basename $destination))
+	mkdir -p $DEST/debs/$RELEASE/
+	mv ${destination}.deb $DEST/debs/$RELEASE/
 	# cleanup
-	rm -rf ${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
+	rm -rf $destination
 }

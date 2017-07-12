@@ -57,4 +57,4 @@ REPLACE=""
 
 # install basic firmware by default
 display_alert "Installing linux firmware" "$REVISION" "info"
-chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/debs/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log
+chroot $SDCARD /bin/bash -c "dpkg -i /tmp/debs/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log

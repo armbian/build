@@ -65,14 +65,14 @@ install_mt7601()
 	cd src
 	make -s ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" clean >> $DEST/debug/compilation.log 2>&1
 	make -s -j4 ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" LINUX_SRC=$SRC/cache/sources/$LINUXSOURCEDIR/ >> $DEST/debug/compilation.log 2>&1
-	cp os/linux/*.ko $CACHEDIR/$SDCARD/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
-	mkdir -p $CACHEDIR/$SDCARD/etc/Wireless/RT2870STA
-	cp RT2870STA.dat $CACHEDIR/$SDCARD/etc/Wireless/RT2870STA/
-	depmod -b $CACHEDIR/$SDCARD/ $VER-$LINUXFAMILY
+	cp os/linux/*.ko $SDCARD/lib/modules/$VER-$LINUXFAMILY/kernel/net/wireless/
+	mkdir -p $SDCARD/etc/Wireless/RT2870STA
+	cp RT2870STA.dat $SDCARD/etc/Wireless/RT2870STA/
+	depmod -b $SDCARD/ $VER-$LINUXFAMILY
 	make -s clean >/dev/null
 	cd ..
-	mkdir -p $CACHEDIR/$SDCARD/usr/src/
-	cp -R src $CACHEDIR/$SDCARD/usr/src/mt7601-3.0.0.4
+	mkdir -p $SDCARD/usr/src/
+	cp -R src $SDCARD/usr/src/mt7601-3.0.0.4
 	# TODO: Set the module to build automatically via dkms in the future here
 }
 

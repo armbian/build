@@ -539,7 +539,7 @@ prepare_host()
 	fi
 
 	# create directory structure
-	mkdir -p $DEST/debs/extra $DEST/debug $SRC/userpatches/{overlay,CREATE_PATCHES} $SRC/cache/{sources,toolchains,rootfs}
+	mkdir -p $DEST/debs/extra $DEST/debug $SRC/userpatches/{overlay,CREATE_PATCHES} $SRC/cache/{sources,toolchains,rootfs} $SRC/.tmp
 	find $SRC/patch -type d ! -name . | sed "s%/patch%/userpatches%" | xargs mkdir -p
 
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources

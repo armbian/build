@@ -11,7 +11,7 @@
 
 compile_tools()
 {
-	local tmpdir=$CACHEDIR/$SDCARD/root/tools
+	local tmpdir=$SDCARD/root/tools
 
 	display_alert "Building deb" "armbian-tools" "info"
 
@@ -66,8 +66,8 @@ compile_tools()
 	compiling()
 	{
 		display_alert "... compiling" "temper" "info"
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "cd /root/tools/temper/src; make clean" >> $DEST/debug/tools-build.log 2>&1
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "cd /root/tools/temper/src; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
+		chroot $SDCARD /bin/bash -c "cd /root/tools/temper/src; make clean" >> $DEST/debug/tools-build.log 2>&1
+		chroot $SDCARD /bin/bash -c "cd /root/tools/temper/src; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
 		if [[ $? -ne 0 || ! -f $tmpdir/temper/src/pcsensor ]]; then
 			cd $CACHEDIR
 			rm -rf $tmpdir
@@ -75,7 +75,7 @@ compile_tools()
 			return
 		fi
 		display_alert "... compiling" "bluetooth utils" "info"
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "cd /root/tools/brcm; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
+		chroot $SDCARD /bin/bash -c "cd /root/tools/brcm; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
 		if [[ $? -ne 0 || ! -f $tmpdir/brcm/brcm_bt_reset ]]; then
 			cd $CACHEDIR
 			rm -rf $tmpdir
@@ -93,4 +93,4 @@ if [[ ! -f $DEST/debs/armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb ]]; then
 fi
 
 display_alert "Installing" "armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb" "info"
-chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/debs/armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb" >> $DEST/debug/tools-build.log
+chroot $SDCARD /bin/bash -c "dpkg -i /tmp/debs/armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb" >> $DEST/debug/tools-build.log

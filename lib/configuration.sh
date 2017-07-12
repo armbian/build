@@ -62,8 +62,8 @@ SERIALCON=ttyS0
 #BOOTFS_TYPE=''
 
 # set unique mounting directory
-SDCARD="sdcard-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
-MOUNT="mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
+SDCARD="$SRC/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
+MOUNT="$SRC/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
 DESTIMG="image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
 
 [[ ! -f $SRC/config/sources/$LINUXFAMILY.conf ]] && \
