@@ -235,11 +235,11 @@ compile_kernel()
 		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" menuconfig
 		# store kernel config in easily reachable place
 		display_alert "Exporting new kernel config" "$DEST/$LINUXCONFIG.config" "info"
-		cp .config $DEST/$LINUXCONFIG.config
+		cp .config $DEST/config/$LINUXCONFIG.config
 		# export defconfig too if requested
 		if [[ $KERNEL_EXPORT_DEFCONFIG == yes ]]; then
 			make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" savedefconfig > /dev/null 2>&1
-			[[ -f defconfig ]] && cp defconfig $DEST/$LINUXCONFIG.defconfig
+			[[ -f defconfig ]] && cp defconfig $DEST/config/$LINUXCONFIG.defconfig
 		fi
 	fi
 
@@ -460,7 +460,7 @@ userpatch_create()
 	git add .
 	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
 
-	local patch="$SRC/userpatches/CREATE_PATCHES/$1-$LINUXFAMILY-$BRANCH.patch"
+	local patch="$DEST/patch/$1-$LINUXFAMILY-$BRANCH.patch"
 
 	# apply previous user debug mode created patches
 	[[ -f $patch ]] && display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
