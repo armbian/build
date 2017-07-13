@@ -44,7 +44,7 @@ debootstrap_ng()
 		local use_tmpfs=yes
 	fi
 
-	[[ $use_tmpfs == yes ]] && mount -t tmpfs -o size=${tmpfs_max_size}M tmpfs $CACHEDIR/$SDCARD
+	[[ $use_tmpfs == yes ]] && mount -t tmpfs -o size=${phymem}M tmpfs $CACHEDIR/$SDCARD
 
 	# stage: prepare basic rootfs: unpack cache or create from scratch
 	create_rootfs_cache
