@@ -59,7 +59,7 @@ compile_tools()
 		cd $tmpdir
 		dpkg -b armbian-tools-${RELEASE}_${REVISION}_${ARCH} >/dev/null
 		mv $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb $DEST/debs
-		cd $CACHEDIR
+		cd $SRC/cache
 		rm -rf $tmpdir
 	}
 
@@ -69,7 +69,7 @@ compile_tools()
 		chroot $SDCARD /bin/bash -c "cd /root/tools/temper/src; make clean" >> $DEST/debug/tools-build.log 2>&1
 		chroot $SDCARD /bin/bash -c "cd /root/tools/temper/src; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
 		if [[ $? -ne 0 || ! -f $tmpdir/temper/src/pcsensor ]]; then
-			cd $CACHEDIR
+			cd $SRC/cache
 			rm -rf $tmpdir
 			display_alert "Error building" "temper" "wrn"
 			return
@@ -77,7 +77,7 @@ compile_tools()
 		display_alert "... compiling" "bluetooth utils" "info"
 		chroot $SDCARD /bin/bash -c "cd /root/tools/brcm; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
 		if [[ $? -ne 0 || ! -f $tmpdir/brcm/brcm_bt_reset ]]; then
-			cd $CACHEDIR
+			cd $SRC/cache
 			rm -rf $tmpdir
 			display_alert "Error building" "BT utils" "wrn"
 			return

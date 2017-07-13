@@ -31,7 +31,7 @@ debootstrap_ng()
 
 	# stage: clean and create directories
 	rm -rf $SDCARD $MOUNT
-	mkdir -p $SDCARD $MOUNT $DEST/images
+	mkdir -p $SDCARD $MOUNT $DEST/images $SRC/cache/rootfs
 
 	# stage: verify tmpfs configuration and mount
 	# default maximum size for tmpfs mount is 1/2 of available RAM
@@ -106,7 +106,7 @@ debootstrap_ng()
 create_rootfs_cache()
 {
 	local packages_hash=$(get_package_list_hash)
-	local cache_fname=$CACHEDIR/rootfs/${RELEASE}-ng-$ARCH.$packages_hash.tar.lz4
+	local cache_fname=$SRC/cache/rootfs/${RELEASE}-ng-$ARCH.$packages_hash.tar.lz4
 	local display_name=${RELEASE}-ng-$ARCH.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
 	if [[ -f $cache_fname ]]; then
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
@@ -220,7 +220,7 @@ create_rootfs_cache()
 
 		# DEBUG: print free space
 		echo -e "\nFree space:"
-		eval 'df -h | grep "$CACHEDIR/"' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
+		eval 'df -h' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
 
 		# stage: remove downloaded packages
 		chroot $SDCARD /bin/bash -c "apt-get clean"
@@ -335,7 +335,7 @@ prepare_partitions()
 
 	# stage: create blank image
 	display_alert "Creating blank image for rootfs" "$sdsize MiB" "info"
-	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=$CACHEDIR/${SDCARD}.raw
+	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=${SDCARD}.raw
 
 	# stage: calculate boot partition size
 	local bootstart=$(($OFFSET * 2048))
@@ -344,17 +344,17 @@ prepare_partitions()
 
 	# stage: create partition table
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
-	parted -s $CACHEDIR/${SDCARD}.raw -- mklabel msdos
+	parted -s ${SDCARD}.raw -- mklabel msdos
 	if [[ $ROOTFS_TYPE == nfs ]]; then
 		# single /boot partition
-		parted -s $CACHEDIR/${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s -1s
+		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s -1s
 	elif [[ $BOOTSIZE == 0 ]]; then
 		# single root partition
-		parted -s $CACHEDIR/${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
+		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
 	else
 		# /boot partition + root partition
-		parted -s $CACHEDIR/${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
-		parted -s $CACHEDIR/${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
+		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
+		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s -1s
 	fi
 
 	# stage: mount image
@@ -369,7 +369,7 @@ prepare_partitions()
 	[[ $CONTAINER_COMPAT == yes && ! -e $LOOP ]] && mknod -m0660 $LOOP b 7 ${LOOP//\/dev\/loop} > /dev/null
 
 	# TODO: Needs mknod here in Docker?
-	losetup $LOOP $CACHEDIR/${SDCARD}.raw
+	losetup $LOOP ${SDCARD}.raw
 
 	# loop device was grabbed here, unlock
 	flock -u $FD
@@ -438,7 +438,7 @@ create_image()
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
-		display_alert "Copying files to root directory" "${SDCARD}.raw" "info"
+		display_alert "Copying files to root directory"
 		rsync -aHWXh --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
 			--exclude="/sys/*" --info=progress2,stats1 $SDCARD/ $MOUNT/
 	else
@@ -448,7 +448,7 @@ create_image()
 	fi
 
 	# stage: rsync /boot
-	display_alert "Copying files to /boot directory" "${SDCARD}.raw" "info"
+	display_alert "Copying files to /boot directory"
 	if [[ $(findmnt --target $MOUNT/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
 		rsync -rLtWh --info=progress2,stats1 $SDCARD/boot $MOUNT
@@ -459,7 +459,7 @@ create_image()
 
 	# DEBUG: print free space
 	display_alert "Free space:" "SD card" "info"
-	eval 'df -h | grep "$CACHEDIR/"' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
+	eval 'df -h' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
 
 	# stage: write u-boot
 	write_uboot $LOOP
@@ -469,14 +469,14 @@ create_image()
 	[[ $BOOTSIZE != 0 ]] && umount -l $MOUNT/boot
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
 	losetup -d $LOOP
-	rm -rf --one-file-system $CACHEDIR/$DESTIMG $MOUNT
-	mkdir -p $CACHEDIR/$DESTIMG
-	cp $SDCARD/etc/armbian.txt $CACHEDIR/$DESTIMG
-	mv $CACHEDIR/${SDCARD}.raw $CACHEDIR/$DESTIMG/${version}.img
+	rm -rf --one-file-system $DESTIMG $MOUNT
+	mkdir -p $DESTIMG
+	cp $SDCARD/etc/armbian.txt $DESTIMG
+	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
 	if [[ $COMPRESS_OUTPUTIMAGE == yes && $BUILD_ALL != yes ]]; then
 		# compress image
-		cd $CACHEDIR/$DESTIMG
+		cd $DESTIMG
         	sha256sum -b ${version}.img > sha256sum.sha
 	        if [[ -n $GPG_PASS ]]; then
         	        echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes ${version}.img
@@ -487,8 +487,8 @@ create_image()
 	fi
 	#
 	if [[ $BUILD_ALL != yes ]]; then
-		mv $CACHEDIR/$DESTIMG/${version}.img $DEST/images/${version}.img
-		rm -rf $CACHEDIR/$DESTIMG
+		mv $DESTIMG/${version}.img $DEST/images/${version}.img
+		rm -rf $DESTIMG
 	fi
 	display_alert "Done building" "$DEST/images/${version}.img" "info"
 

@@ -20,7 +20,6 @@ TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined h
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
-CACHEDIR=$SRC/cache
 ROOTFSCACHE_VERSION=3
 
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
@@ -64,7 +63,7 @@ SERIALCON=ttyS0
 # set unique mounting directory
 SDCARD="$SRC/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
 MOUNT="$SRC/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
-DESTIMG="image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
+DESTIMG="$SRC/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
 
 [[ ! -f $SRC/config/sources/$LINUXFAMILY.conf ]] && \
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
