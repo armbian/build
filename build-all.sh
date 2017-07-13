@@ -159,7 +159,9 @@ create_images_list()
 
 create_kernels_list()
 {
-	for board in $SRC/lib/config/boards/*.{conf,wip}; do
+	local naming="$SRC/lib/config/boards/*.conf";
+        if [[ "$EXPERT" == "yes" ]]; then naming=$naming" $SRC/lib/config/boards/*.wip"; fi
+        for board in $naming; do
 		BOARD=$(basename $board | cut -d'.' -f1)
 		local file="${SRC}/lib/config/boards/${BOARD}"
 		if [[ -f $file".conf" ]]; then source $file".conf"; fi
