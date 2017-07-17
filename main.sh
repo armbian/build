@@ -260,6 +260,7 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 	BOOTSOURCEDIR=$BOOTDIR/${BOOTBRANCH##*:}
 	fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
 	LINUXSOURCEDIR=$KERNELDIR/${KERNELBRANCH##*:}
+	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:dev"
 fi
 
 compile_sunxi_tools
