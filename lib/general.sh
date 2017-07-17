@@ -477,7 +477,7 @@ prepare_host()
 	fi
 
 	# packages list for host
-	# NOTE: please sync any changes here with the Dockerfile
+	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
 	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
 	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
