@@ -131,7 +131,7 @@ chroot_build_packages()
 				date +%s > $t
 			fi
 
-			for plugin in $SRC/lib/extras-buildpkgs/*.conf; do
+			for plugin in $SRC/lib/packages/extras-buildpkgs/*.conf; do
 				unset package_name package_repo package_ref package_builddeps package_install_chroot package_install_target \
 					package_upstream_version needs_building plugin_target_dir package_component package_builddeps_${release}
 				source $plugin
@@ -227,7 +227,7 @@ chroot_build_packages()
 
 				fetch_from_repo "$package_repo" "extra/$package_name" "$package_ref"
 
-				eval systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp:mode=777 --bind-ro $SRC/lib/extras-buildpkgs/:/root/overlay \
+				eval systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp:mode=777 --bind-ro $SRC/lib/packages/extras-buildpkgs/:/root/overlay \
 					--bind-ro $SRC/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 \
 					${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/buildpkg.log'}
 				[[ ${PIPESTATUS[0]} -eq 2 ]] && failed+=("$package_name:$release:$arch")
@@ -257,11 +257,11 @@ chroot_installpackages_local()
 	aptly -config=$conf repo add temp $DEST/debs/extra/${RELEASE}-desktop/
 	aptly -config=$conf repo add temp $DEST/debs/extra/utils/
 	# -gpg-key="925644A6"
-	aptly -keyring="$SRC/lib/extras-buildpkgs/buildpkg-public.gpg" -secret-keyring="$SRC/lib/extras-buildpkgs/buildpkg.gpg" -batch=true -config=$conf \
+	aptly -keyring="$SRC/lib/packages/extras-buildpkgs/buildpkg-public.gpg" -secret-keyring="$SRC/lib/packages/extras-buildpkgs/buildpkg.gpg" -batch=true -config=$conf \
 		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution=$RELEASE publish repo temp
 	aptly -config=$conf -listen=":8189" serve &
 	local aptly_pid=$!
-	cp $SRC/lib/extras-buildpkgs/buildpkg.key $CACHEDIR/$SDCARD/tmp/buildpkg.key
+	cp $SRC/lib/packages/extras-buildpkgs/buildpkg.key $CACHEDIR/$SDCARD/tmp/buildpkg.key
 	cat <<-'EOF' > $CACHEDIR/$SDCARD/etc/apt/preferences.d/90-armbian-temp.pref
 	Package: *
 	Pin: origin "localhost"
@@ -281,7 +281,7 @@ chroot_installpackages()
 	local remote_only=$1
 	local install_list=""
 	display_alert "Installing additional packages" "EXTERNAL_NEW"
-	for plugin in $SRC/lib/extras-buildpkgs/*.conf; do
+	for plugin in $SRC/lib/packages/extras-buildpkgs/*.conf; do
 		source $plugin
 		if [[ $(type -t package_checkinstall) == function ]] && package_checkinstall; then
 			install_list="$install_list $package_install_target"

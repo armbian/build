@@ -417,7 +417,7 @@ install_external_applications()
 #--------------------------------------------------------------------------------------------------------------------------------
 	display_alert "Installing extra applications and drivers" "" "info"
 
-	for plugin in $SRC/lib/extras/*.sh; do
+	for plugin in $SRC/lib/packages/extras/*.sh; do
 		source $plugin
 	done
 }
