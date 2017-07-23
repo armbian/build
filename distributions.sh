@@ -137,7 +137,7 @@ install_common()
 	cp $SRC/lib/bin/splash/armbian-u-boot.bmp $CACHEDIR/$SDCARD/boot/boot.bmp
 	cp $SRC/lib/bin/splash/armbian-desktop.png $CACHEDIR/$SDCARD/boot/boot-desktop.png
 
-	# execute $LINUXFAMILY-specific tweaks from $BOARD.conf
+	# execute $LINUXFAMILY-specific tweaks
 	[[ $(type -t family_tweaks) == function ]] && family_tweaks
 
 	install -m 755 $SRC/lib/scripts/resize2fs $CACHEDIR/$SDCARD/etc/init.d/

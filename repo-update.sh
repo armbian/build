@@ -27,7 +27,7 @@ source general.sh
 addtorepo
 
 # add a key to repo
-cp bin/armbian.key ../output/repository/public
+cp config/armbian.key ../output/repository/public
 cd ../output/repository/public
 
 echo "done."

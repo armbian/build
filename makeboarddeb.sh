@@ -88,9 +88,6 @@ create_board_package()
 	if [ -f "/etc/systemd/system/log2ram.service" ]; then
 		mv /etc/systemd/system/log2ram.service /etc/systemd/system/log2ram-service.dpkg-old
 	fi
-	if [ -f "/lib/systemd/system/pinebook-enable-sound.service" ]; then
-		systemctl enable pinebook-enable-sound.service
-	fi
 	exit 0
 	EOF
 
@@ -242,10 +239,8 @@ create_board_package()
 		cp $SRC/lib/packages/bsp/mpv/mpv_mainline.conf $destination/etc/mpv/mpv.conf
 	fi
 
-	#TODO: move to sources.conf and to a subdirectory in packages/bsp
-	if [[ $BOARD == pinebook-a64 ]]; then
-		cp $SRC/lib/packages/bsp/pinebook-enable-sound.service $destination/lib/systemd/system/
-	fi
+	# execute $LINUXFAMILY-specific tweaks
+	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp
 
 	# add some summary to the image
 	fingerprint_image "$destination/etc/armbian.txt"
