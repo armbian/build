@@ -573,7 +573,7 @@ prepare_host()
 		fi
 	done
 
-	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/lib/scripts/customize-image.sh.template $SRC/userpatches/customize-image.sh
+	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/lib/config/templates/customize-image.sh.template $SRC/userpatches/customize-image.sh
 
 	if [[ ! -f $SRC/userpatches/README ]]; then
 		rm -f $SRC/userpatches/readme.txt

@@ -74,7 +74,7 @@ install_common()
 		if [[ -f $SRC/userpatches/nfs-boot.cmd ]]; then
 			cp $SRC/userpatches/nfs-boot.cmd $CACHEDIR/$SDCARD/boot/boot.cmd
 		else
-			cp $SRC/lib/scripts/nfs-boot.cmd.template $CACHEDIR/$SDCARD/boot/boot.cmd
+			cp $SRC/lib/config/templates/nfs-boot.cmd.template $CACHEDIR/$SDCARD/boot/boot.cmd
 		fi
 	fi
 
@@ -134,16 +134,11 @@ install_common()
 	fi
 
 	# copy boot splash images
-	cp $SRC/lib/bin/splash/armbian-u-boot.bmp $CACHEDIR/$SDCARD/boot/boot.bmp
-	cp $SRC/lib/bin/splash/armbian-desktop.png $CACHEDIR/$SDCARD/boot/boot-desktop.png
+	cp $SRC/lib/packages/blobs/splash/armbian-u-boot.bmp $CACHEDIR/$SDCARD/boot/boot.bmp
+	cp $SRC/lib/packages/blobs/splash/armbian-desktop.png $CACHEDIR/$SDCARD/boot/boot-desktop.png
 
 	# execute $LINUXFAMILY-specific tweaks
 	[[ $(type -t family_tweaks) == function ]] && family_tweaks
-
-	install -m 755 $SRC/lib/scripts/resize2fs $CACHEDIR/$SDCARD/etc/init.d/
-	install -m 755 $SRC/lib/scripts/firstrun  $CACHEDIR/$SDCARD/etc/init.d/
-	install -m 644 $SRC/lib/scripts/resize2fs.service $CACHEDIR/$SDCARD/etc/systemd/system/
-	install -m 644 $SRC/lib/scripts/firstrun.service $CACHEDIR/$SDCARD/etc/systemd/system/
 
 	# enable additional services
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service >/dev/null 2>&1"
@@ -155,6 +150,7 @@ install_common()
 	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $CACHEDIR/$SDCARD/etc/apt/sources.list.d/armbian.list
 
 	# disable low-level kernel messages for non betas
+	# TODO: enable only for desktop builds?
 	if [[ -z $BETA ]]; then
 		sed -i "s/^#kernel.printk*/kernel.printk/" $CACHEDIR/$SDCARD/etc/sysctl.conf
 	fi
@@ -162,20 +158,7 @@ install_common()
 	# enable getty on serial console
 	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
 
-	# don't clear screen tty1
-	mkdir -p "$CACHEDIR/$SDCARD/etc/systemd/system/getty@tty1.service.d/"
-	printf "[Service]\nTTYVTDisallocate=no" > "$CACHEDIR/$SDCARD/etc/systemd/system/getty@tty1.service.d/10-noclear.conf"
-
-	# reduce modules unload timeout
-	mkdir -p $CACHEDIR/$SDCARD/etc/systemd/system/systemd-modules-load.service.d/
-	printf "[Service]\nTimeoutStopSec=10" > $CACHEDIR/$SDCARD/etc/systemd/system/systemd-modules-load.service.d/10-timeout.conf
-
 	[[ $LINUXFAMILY == sun*i ]] && mkdir -p $CACHEDIR/$SDCARD/boot/overlay-user
-
-	# Fix for PuTTY/KiTTY & ncurses-based dialogs (i.e. alsamixer) over serial
-	# may break other terminals like screen
-	mkdir -p $CACHEDIR/$SDCARD/etc/systemd/system/serial-getty@.service.d/
-	printf "[Service]\nEnvironment=TERM=linux" > $CACHEDIR/$SDCARD/etc/systemd/system/serial-getty@.service.d/10-term.conf
 
 	# to prevent creating swap file on NFS (needs specific kernel options)
 	# and f2fs/btrfs (not recommended or needs specific kernel options)
@@ -216,6 +199,7 @@ install_distribution_specific()
 		[[ -f $CACHEDIR/$SDCARD/etc/legal ]] && rm $CACHEDIR/$SDCARD/etc/legal
 
 		# Fix for haveged service
+		# required only on pre-4.x kernels
 		mkdir -p -m755 $CACHEDIR/$SDCARD/etc/systemd/system/haveged.service.d
 		cat <<-EOF > $CACHEDIR/$SDCARD/etc/systemd/system/haveged.service.d/10-no-new-privileges.conf
 		[Service]

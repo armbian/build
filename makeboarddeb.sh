@@ -81,7 +81,9 @@ create_board_package()
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
 	rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
-	[ ! -f /etc/default/armbian-motd ] && cp /usr/lib/armbian/armbian-motd.default /etc/default/armbian-motd
+	if [ ! -f "/etc/default/armbian-motd" ]; then
+		cp /etc/default/armbian-motd.dpkg-dist /etc/default/armbian-motd
+	fi
 	if [ ! -f "/etc/default/log2ram" ]; then
 		cp /etc/default/log2ram.dpkg-dist /etc/default/log2ram
 	fi
@@ -98,23 +100,14 @@ create_board_package()
 	#cat <<-EOF > $destination/DEBIAN/conffiles
 	#EOF
 
+	# copy common files from a premade directory structure
+	rsync -a $SRC/lib/packages/bsp/common/* $destination/
+
 	# trigger uInitrd creation after installation, to apply
 	# /etc/initramfs/post-update.d/99-uboot
 	cat <<-EOF > $destination/DEBIAN/triggers
 	activate update-initramfs
 	EOF
-
-	# create directory structure
-	mkdir -p $destination/etc/{init.d,default,update-motd.d,profile.d,network,cron.d,cron.daily}
-	mkdir -p $destination/usr/{bin,sbin} $destination/usr/lib/armbian/ $destination/usr/lib/nand-sata-install/ $destination/usr/share/armbian/ $destination/usr/share/log2ram/
-	mkdir -p $destination/etc/initramfs/post-update.d/
-	mkdir -p $destination/etc/kernel/preinst.d/
-	mkdir -p $destination/etc/apt/apt.conf.d/
-	mkdir -p $destination/etc/X11/xorg.conf.d/
-	mkdir -p $destination/lib/systemd/system/ $destination/lib/udev/rules.d/
-	mkdir -p $destination/var/lib/polkit-1/localauthority/
-
-	install -m 755 $SRC/lib/packages/bsp/armhwinfo $destination/etc/init.d/
 
 	# configure MIN / MAX speed for cpufrequtils
 	cat <<-EOF > $destination/etc/default/cpufrequtils
@@ -138,62 +131,21 @@ create_board_package()
 	INITRD_ARCH=$INITRD_ARCH
 	EOF
 
-	# armbianmonitor (currently only to toggle boot verbosity and log upload)
-	install -m 755 $SRC/lib/packages/bsp/armbianmonitor/armbianmonitor $destination/usr/bin
-
-	# updating uInitrd image in update-initramfs trigger
-	install -m 755 $SRC/lib/packages/bsp/99-uboot $destination/etc/initramfs/post-update.d/99-uboot
-
-	# removing old initrd.img on upgrade
-	# this will be obsolete after kernel packages rework
-	install -m 755 $SRC/lib/packages/bsp/initramfs-cleanup $destination/etc/kernel/preinst.d/initramfs-cleanup
-
-	# network interfaces configuration
-	cp $SRC/lib/packages/bsp/network/interfaces.* $destination/etc/network/
 	# this is required for NFS boot to prevent deconfiguring the network on shutdown
 	[[ $RELEASE == xenial || $RELEASE == stretch ]] && sed -i 's/#no-auto-down/no-auto-down/g' $destination/etc/network/interfaces.default
 
-	# apt configuration
-	cp $SRC/lib/packages/bsp/apt/71-no-recommends $destination/etc/apt/apt.conf.d/71-no-recommends
-
-	# configure the system for unattended upgrades
-	cp $SRC/lib/packages/bsp/apt/02periodic $destination/etc/apt/apt.conf.d/02periodic
-
-	# xorg configuration
-	cp $SRC/lib/packages/bsp/xorg/01-armbian-defaults.conf $destination/etc/X11/xorg.conf.d/01-armbian-defaults.conf
-
-	# script to install to SATA
-	cp -R $SRC/lib/packages/bsp/nand-sata-install/lib/* $destination/usr/lib/nand-sata-install/
-	install -m 755 $SRC/lib/packages/bsp/nand-sata-install/nand-sata-install $destination/usr/sbin/nand-sata-install
-
+	# armbian-config
 	install -m 755 $SRC/sources/armbian-config/scripts/tv_grab_file $destination/usr/bin/tv_grab_file
 	install -m 755 $SRC/sources/armbian-config/debian-config $destination/usr/bin/armbian-config
 	install -m 755 $SRC/sources/armbian-config/softy $destination/usr/bin/softy
 
-	# install custom motd with reboot and upgrade checking
-	install -m 755 $SRC/lib/packages/bsp/motd/* $destination/etc/update-motd.d/
-
-	install -m 755 $SRC/lib/packages/bsp/apt/apt-updates $destination/usr/lib/armbian/apt-updates
-	cp $SRC/lib/packages/bsp/apt/armbian-updates $destination/etc/cron.d/armbian-updates
-
-	# install bash profile scripts
-	cp $SRC/lib/packages/bsp/profile/* $destination/etc/profile.d/
-
-	# install various udev rules
-	cp $SRC/lib/packages/bsp/udev/*.rules $destination/lib/udev/rules.d/
-
-	cp $SRC/lib/packages/bsp/armbian-motd.default $destination/usr/lib/armbian/armbian-motd.default
-
 	# install copy of boot script & environment file
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
+	mkdir -p $destination/usr/share/armbian/
 	cp $SRC/lib/config/bootscripts/$bootscript_src $destination/usr/share/armbian/$bootscript_dst
 	[[ -n $BOOTENV_FILE && -f $SRC/lib/config/bootenv/$BOOTENV_FILE ]] && \
 		cp $SRC/lib/config/bootenv/$BOOTENV_FILE $destination/usr/share/armbian/armbianEnv.txt
-
-	# install policykit files used on desktop images to alllow unprivileged users to shutdown/reboot,
-	# change brightness, configure network, etc.
-	cp $SRC/lib/packages/bsp/policykit/*.pkla $destination/var/lib/polkit-1/localauthority/
 
 	# h3disp for sun8i/3.4.x
 	if [[ $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
@@ -206,13 +158,6 @@ create_board_package()
 		echo "# Device to access      offset           env size" > $destination/etc/fw_env.config
 		echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> $destination/etc/fw_env.config
 	fi
-
-	# log2ram - systemd compatible ramlog alternative
-	cp $SRC/lib/packages/bsp/log2ram/LICENSE.log2ram $destination/usr/share/log2ram/LICENSE
-	cp $SRC/lib/packages/bsp/log2ram/log2ram.service $destination/lib/systemd/system/log2ram.service
-	install -m 755 $SRC/lib/packages/bsp/log2ram/log2ram $destination/usr/sbin/log2ram
-	install -m 755 $SRC/lib/packages/bsp/log2ram/log2ram.hourly $destination/etc/cron.daily/log2ram
-	cp $SRC/lib/packages/bsp/log2ram/log2ram.default $destination/etc/default/log2ram.dpkg-dist
 
 	if [[ $LINUXFAMILY == sun*i* ]]; then
 		install -m 755 $SRC/lib/packages/bsp/armbian-add-overlay $destination/usr/sbin
