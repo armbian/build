@@ -13,11 +13,8 @@ install_desktop ()
 {
 	display_alert "Installing desktop" "XFCE" "info"
 
-	mkdir -p $CACHEDIR/$SDCARD/tmp/bin
-	mount --bind $SRC/lib/bin/ $CACHEDIR/$SDCARD/tmp/bin
-
 	# add loading desktop splash service
-	cp $SRC/lib/scripts/desktop-splash/desktop-splash.service $CACHEDIR/$SDCARD/etc/systemd/system/desktop-splash.service
+	cp $SRC/lib/packages/blobs/desktop/desktop-splash/desktop-splash.service $CACHEDIR/$SDCARD/etc/systemd/system/desktop-splash.service
 
 	if [[ $RELEASE == xenial ]]; then
 		# install optimized firefox configuration
@@ -26,21 +23,23 @@ install_desktop ()
 		cp $SRC/lib/config/chromium.conf $CACHEDIR/$SDCARD/etc/chromium-browser/default
 	fi
 	# install dedicated startup icons
-	cp $SRC/lib/bin/icons/${RELEASE}.png $CACHEDIR/$SDCARD/usr/share/pixmaps
+	cp $SRC/lib/packages/blobs/desktop/icons/${RELEASE}.png $CACHEDIR/$SDCARD/usr/share/pixmaps
 
 	# install default desktop settings
-	cp -R $SRC/lib/config/desktop/. $CACHEDIR/$SDCARD/etc/skel
-	cp -R $SRC/lib/config/desktop/. $CACHEDIR/$SDCARD/root
+	cp -R $SRC/lib/packages/blobs/desktop/skel/. $CACHEDIR/$SDCARD/etc/skel
+	cp -R $SRC/lib/packages/blobs/desktop/skel/. $CACHEDIR/$SDCARD/root
 
 	# install wallpapers
-	d=$CACHEDIR/$SDCARD/usr/share/backgrounds/xfce/
-	test -d "$d" || mkdir -p "$d" && cp $SRC/lib/bin/wallpapers/armbian*.jpg "$d"
+	mkdir -p $CACHEDIR/$SDCARD/usr/share/backgrounds/xfce/
+	cp $SRC/lib/packages/blobs/desktop/wallpapers/armbian*.jpg $CACHEDIR/$SDCARD/usr/share/backgrounds/xfce/
 
 	# Install custom icons and theme
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/bin/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"
+	cp $SRC/lib/packages/blobs/desktop/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb $CACHEDIR/$SDCARD/tmp/
+	chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"
+	rm -f $CACHEDIR/$SDCARD/tmp/*.deb
 
 	# Enable network manager
-	if [[ -f ${CACHEDIR}/$SDCARD/etc/NetworkManager/NetworkManager.conf ]]; then
+	if [[ -f $CACHEDIR/$SDCARD/etc/NetworkManager/NetworkManager.conf ]]; then
 		sed "s/managed=\(.*\)/managed=true/g" -i $CACHEDIR/$SDCARD/etc/NetworkManager/NetworkManager.conf
 		# Disable dns management withing NM
 		sed "s/\[main\]/\[main\]\ndns=none/g" -i $CACHEDIR/$SDCARD/etc/NetworkManager/NetworkManager.conf
@@ -48,7 +47,7 @@ install_desktop ()
 	fi
 
 	# Disable Pulseaudio timer scheduling which does not work with sndhdmi driver
-	if [[ -f ${CACHEDIR}/$SDCARD/etc/pulse/default.pa ]]; then
+	if [[ -f $CACHEDIR/$SDCARD/etc/pulse/default.pa ]]; then
 		sed "s/load-module module-udev-detect$/& tsched=0/g" -i  $CACHEDIR/$SDCARD/etc/pulse/default.pa
 	fi
 
@@ -63,6 +62,4 @@ install_desktop ()
 		# enable memory reservations
 		echo "disp_mem_reserves=on" >> $CACHEDIR/$SDCARD/boot/armbianEnv.txt
 	fi
-
-	umount $CACHEDIR/$SDCARD/tmp/bin && rm -rf $CACHEDIR/$SDCARD/tmp/bin
 }
