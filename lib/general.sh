@@ -547,6 +547,12 @@ prepare_host()
 
 	# create directory structure
 	mkdir -p $DEST/debs/extra $DEST/{config,debug,patch} $SRC/userpatches/overlay $SRC/cache/{sources,toolchains,rootfs} $SRC/.tmp
+	if [[ -n $SUDO_USER ]]; then
+		chgrp --quiet sudo cache output userpatches
+		# SGID bit on cache/sources breaks kernel dpkg packaging
+		chmod --quiet g+w,g+s output userpatches
+	fi
+	
 	find $SRC/patch -type d ! -name . | sed "s%/patch%/userpatches%" | xargs mkdir -p
 
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources

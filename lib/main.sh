@@ -17,6 +17,10 @@ if [[ $(basename $0) == main.sh ]]; then
 	exit -1
 fi
 
+# default umask for root is 022 so parent directories won't be group writeable without this
+# this is used instead of making the chmod in prepare_host() recursive
+umask 002
+
 # destination
 DEST=$SRC/output
 
