@@ -41,7 +41,7 @@ else
 fi
 
 MAINLINE_KERNEL_BRANCH='branch:linux-4.12.y'
-MAINLINE_KERNEL_DIR='linux-vanilla'
+MAINLINE_KERNEL_DIR='linux-mainline'
 
 if [[ $USE_GITHUB_UBOOT_MIRROR == yes ]]; then
 	MAINLINE_UBOOT_SOURCE='https://github.com/RobertCNelson/u-boot'
