@@ -42,7 +42,7 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 source $SRC/lib/debootstrap-ng.sh 			# System specific install
 source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/desktop.sh 				# Desktop specific install
-source $SRC/lib/common.sh 				# Functions
+source $SRC/lib/compilation.sh 				# Patching and compilation of kernel, uboot, ATF
 source $SRC/lib/makeboarddeb.sh 			# Create board support package
 source $SRC/lib/general.sh				# General functions
 source $SRC/lib/chroot-buildpackages.sh			# Building packages in chroot
