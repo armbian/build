@@ -14,7 +14,6 @@
 # create_sources_list
 # fetch_from_repo
 # display_alert
-# grab_version
 # fingerprint_image
 # addtorepo
 # prepare_host
@@ -40,6 +39,7 @@ cleaning()
 			find $DEST/debs \( -name "${CHOSEN_KERNEL}_*.deb" -o \
 				-name "${CHOSEN_KERNEL/image/dtb}_*.deb" -o \
 				-name "${CHOSEN_KERNEL/image/headers}_*.deb" -o \
+				-name "${CHOSEN_KERNEL/image/source}_*.deb" -o \
 				-name "${CHOSEN_KERNEL/image/firmware-image}_*.deb" \) -delete
 			[[ -n $RELEASE ]] && rm -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_*.deb
 		fi
@@ -315,22 +315,6 @@ display_alert()
 	esac
 }
 
-#---------------------------------------------------------------------------------------------------------------------------------
-# grab_version <path>
-#
-# <path>: Extract kernel or uboot version from $path/Makefile
-#---------------------------------------------------------------------------------------------------------------------------------
-grab_version()
-{
-	local ver=""
-	for component in VERSION PATCHLEVEL SUBLEVEL EXTRAVERSION; do
-		tmp=$(cat $1/Makefile | grep $component | head -1 | awk '{print $(NF)}' | cut -d '=' -f 2)"#"
-		[[ $tmp != "#" ]] && ver="$ver$tmp"
-	done
-	ver=${ver//#/.}; ver=${ver%.}; ver=${ver//.-/-}
-	echo $ver
-}
-
 fingerprint_image()
 {
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -481,7 +465,7 @@ prepare_host()
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-tools gcc-aarch64-linux-gnu ncurses-term p7zip-full dos2unix dosfstools libc6-dev-armhf-cross libc6-dev-armel-cross \
 	libc6-dev-arm64-cross curl gcc-arm-none-eabi libnewlib-arm-none-eabi patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev \
-	locales ncurses-base"
+	locales ncurses-base pixz"
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"

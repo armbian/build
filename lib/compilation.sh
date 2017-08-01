@@ -11,6 +11,7 @@
 # compile_uboot
 # compile_kernel
 # compile_sunxi_tools
+# grab_version
 # find_toolchain
 # advanced_patch
 # process_patch_file
@@ -183,11 +184,25 @@ compile_kernel()
 
 	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
 
-	# create patch for manual source changes in debug mode
-	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
+	if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
+		sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
+	fi
+	rm -f localversion
 
 	# read kernel version
 	local version=$(grab_version "$kerneldir")
+
+	# create linux-source package - with already patched sources
+	local sources_pkg_dir=$SRC/.tmp/linux-source-${BRANCH}-${LINUXFAMILY}_${REVISION}_all
+	rm -rf ${sources_pkg_dir}
+	mkdir -p $sources_pkg_dir/usr/src/ $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY} $sources_pkg_dir/DEBIAN
+
+	display_alert "Compressing sources for the linux-source package"
+	tar cp --directory="$kerneldir" --exclude='./.git/' . | pixz -4 > $sources_pkg_dir/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz
+	cp COPYING $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE
+
+	# create patch for manual source changes in debug mode
+	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
@@ -216,11 +231,6 @@ compile_kernel()
 	# hack for deb builder. To pack what's missing in headers pack.
 	cp $SRC/patch/misc/headers-debian-byteshift.patch /tmp
 
-	export LOCALVERSION="-$LINUXFAMILY"
-
-	sed -i 's/EXTRAVERSION = .*/EXTRAVERSION =/' Makefile
-	rm -f localversion
-
 	if [[ $KERNEL_CONFIGURE != yes ]]; then
 		if [[ $BRANCH == default ]]; then
 			make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" silentoldconfig
@@ -241,8 +251,11 @@ compile_kernel()
 		fi
 	fi
 
+	xz < .config > $sources_pkg_dir/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz
+
 	eval CCACHE_BASEDIR="$(pwd)" ${toolchain:+env PATH=$toolchain:$PATH} \
-		'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" $KERNEL_IMAGE_TYPE modules dtbs 2>&1' \
+		'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" LOCALVERSION="-$LINUXFAMILY" \
+		$KERNEL_IMAGE_TYPE modules dtbs 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -258,13 +271,32 @@ compile_kernel()
 		local kernel_packing="deb-pkg"
 	fi
 
+	display_alert "Creating packages"
+
 	# produce deb packages: image, headers, firmware, dtb
 	eval CCACHE_BASEDIR="$(pwd)" ${toolchain:+env PATH=$toolchain:$PATH} \
-		'make -j1 $kernel_packing KDEB_PKGVERSION=$REVISION LOCALVERSION="-"$LINUXFAMILY \
+		'make -j1 $kernel_packing KDEB_PKGVERSION=$REVISION LOCALVERSION="-${LINUXFAMILY}" \
 		KBUILD_DEBARCH=$ARCH ARCH=$ARCHITECTURE DEBFULLNAME="$MAINTAINER" DEBEMAIL="$MAINTAINERMAIL" CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+	cat <<-EOF > $sources_pkg_dir/DEBIAN/control
+	Package: linux-source-${version}-${LINUXFAMILY}
+	Version: ${version}-${LINUXFAMILY}+${REVISION}
+	Architecture: all
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Section: kernel
+	Priority: optional
+	Depends: binutils, coreutils
+	Provides: linux-source
+	Recommends: gcc, make
+	Description: This package provides the source code for the Linux kernel $version
+	EOF
+
+	dpkg-deb -z0 -b $sources_pkg_dir ${sources_pkg_dir}.deb
+	mv ${sources_pkg_dir}.deb $DEST/debs/
+	rm -rf $sources_pkg_dir
 
 	cd ..
 	mv *.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
@@ -283,6 +315,16 @@ compile_sunxi_tools()
 		make install-tools >/dev/null 2>&1
 		git rev-parse @ 2>/dev/null > .commit_id
 	fi
+}
+
+grab_version()
+{
+	local ver=()
+	ver[0]=$(grep "^VERSION" $1/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
+	ver[1]=$(grep "^PATCHLEVEL" $1/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
+	ver[2]=$(grep "^SUBLEVEL" $1/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
+	ver[3]=$(grep "^EXTRAVERSION" $1/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^-rc[[:digit:]]+')
+	echo "${ver[0]:-0}${ver[1]:+.${ver[1]}}${ver[2]:+.${ver[2]}}${ver[3]}"
 }
 
 # find_toolchain <compiler_prefix> <expression>
