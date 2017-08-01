@@ -1,13 +1,11 @@
-#!/bin/bash
-#
 # Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-#
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
-#
+
+# This file is a part of the Armbian build script
+# https://github.com/armbian/build/
 
 # Functions:
 # cleaning
@@ -344,11 +342,11 @@ fingerprint_image()
 	Title:			Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH
 	Kernel:			Linux $VER
 	Build date:		$(date +'%d.%m.%Y')
-	Authors:		http://www.armbian.com/authors
-	Sources: 		http://github.com/igorpecovnik/lib
-	Support: 		http://forum.armbian.com/
-	Changelog: 		http://www.armbian.com/logbook/
-	Documantation:		http://docs.armbian.com/
+	Authors:		https://www.armbian.com/authors
+	Sources: 		https://github.com/armbian/
+	Support: 		https://forum.armbian.com/
+	Changelog: 		https://www.armbian.com/logbook/
+	Documantation:		https://docs.armbian.com/
 	--------------------------------------------------------------------------------
 	$(cat $SRC/LICENSE)
 	--------------------------------------------------------------------------------

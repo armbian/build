@@ -6,8 +6,8 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 #
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
-#
+# This file is a part of the Armbian build script
+# https://github.com/armbian/build/
 
 SRC=$(dirname $(realpath ${BASH_SOURCE}))
 # fallback for Trusty

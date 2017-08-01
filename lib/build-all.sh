@@ -1,13 +1,11 @@
-#!/bin/bash
-#
 # Copyright (c) Authors: http://www.armbian.com/authors
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-#
-# This file is a part of tool chain https://github.com/igorpecovnik/lib
-#
+
+# This file is a part of the Armbian build script
+# https://github.com/armbian/build/
 
 # Include here to make "display_alert" and "prepare_host" available
 source $SRC/lib/general.sh
