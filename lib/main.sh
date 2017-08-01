@@ -303,6 +303,10 @@ else
 	display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
 fi
 
+# hook for function to run after build, i.e. to change owner of $SRC
+# NOTE: this will run only if there were no errors during build process
+[[ $(type -t run_after_build) == function ]] && run_after_build || true
+
 end=`date +%s`
 runtime=$(((end-start)/60))
 display_alert "Runtime" "$runtime min" "info"

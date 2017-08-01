@@ -58,7 +58,3 @@ if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
 else
 	source $SRC/lib/main.sh
 fi
-
-# hook for function to run after build, i.e. to change owner of $SRC
-# NOTE: this will run only if there were no errors during build process
-[[ $(type -t run_after_build) == function ]] && run_after_build || true
