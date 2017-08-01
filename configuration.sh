@@ -106,7 +106,7 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 	iw fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl linux-base dialog crda \
 	wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
 	usbutils wireless-tools console-setup console-common unicode-data openssh-server initramfs-tools \
-	ca-certificates resolvconf"
+	ca-certificates"
 
 # development related packages. remove when they are not needed for building packages in chroot
 PACKAGE_LIST="$PACKAGE_LIST automake libwrap0-dev libssl-dev libusb-dev libusb-1.0-0-dev libnl-3-dev libnl-genl-3-dev"
@@ -126,7 +126,7 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 # Release specific packages
 case $RELEASE in
 	jessie)
-	PACKAGE_LIST_RELEASE="less kbd"
+	PACKAGE_LIST_RELEASE="less kbd resolvconf"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel policykit-1-gnome eject"
 	;;
 	xenial)

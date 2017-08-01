@@ -196,6 +196,14 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Updating package lists..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
+		# stage: checking for package dependency problems
+		display_alert "Checking for package dependency problems" "$RELEASE" "info"
+		eval 'LC_ALL=C LANG=C chroot $CACHEDIR/$SDCARD /bin/bash -c "apt-get -q -y -f install"' \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Checking for package dependency problems..." $TTY_Y $TTY_X'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+
 		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Updating package lists failed"
 
 		# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
