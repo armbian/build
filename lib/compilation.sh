@@ -27,13 +27,13 @@ compile_uboot()
 	# not optimal, but extra cleaning before overlayfs_wrapper should keep sources directory clean
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
-		(cd $SOURCES/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
+		(cd $SRC/cache/sources/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
 	fi
 
 	if [[ $USE_OVERLAYFS == yes ]]; then
-		local ubootdir=$(overlayfs_wrapper "wrap" "$SOURCES/$BOOTSOURCEDIR" "u-boot_${LINUXFAMILY}_${BRANCH}")
+		local ubootdir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$BOOTSOURCEDIR" "u-boot_${LINUXFAMILY}_${BRANCH}")
 	else
-		local ubootdir="$SOURCES/$BOOTSOURCEDIR"
+		local ubootdir="$SRC/cache/sources/$BOOTSOURCEDIR"
 	fi
 	cd "$ubootdir"
 
@@ -52,8 +52,8 @@ compile_uboot()
 
 	# create directory structure for the .deb package
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
-	rm -rf $uboot_name
-	mkdir -p $uboot_name/usr/lib/{u-boot,$uboot_name} $uboot_name/DEBIAN
+	rm -rf $SRC/.tmp/$uboot_name
+	mkdir -p $SRC/.tmp/$uboot_name/usr/lib/{u-boot,$uboot_name} $SRC/.tmp/$uboot_name/DEBIAN
 
 	# process compilation for one or multiple targets
 	while read -r target; do
@@ -66,7 +66,7 @@ compile_uboot()
 
 		if [[ $CLEAN_LEVEL == *make* ]]; then
 			display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
-			(cd $SOURCES/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
+			(cd $SRC/cache/sources/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
 		fi
 
 		[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
@@ -81,7 +81,7 @@ compile_uboot()
 
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
-		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/lib/packages/blobs/splash/udoo.bmp tools/logos/udoo.bmp
+		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/packages/blobs/splash/udoo.bmp tools/logos/udoo.bmp
 		touch .scmversion
 
 		# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
@@ -105,12 +105,12 @@ compile_uboot()
 				local f_dst=$(basename $f_src)
 			fi
 			[[ ! -f $f_src ]] && exit_with_error "U-boot file not found" "$(basename $f_src)"
-			cp $f_src $uboot_name/usr/lib/$uboot_name/$f_dst
+			cp $f_src $SRC/.tmp/$uboot_name/usr/lib/$uboot_name/$f_dst
 		done
 	done <<< "$UBOOT_TARGET_MAP"
 
 	# set up postinstall script
-	cat <<-EOF > $uboot_name/DEBIAN/postinst
+	cat <<-EOF > $SRC/.tmp/$uboot_name/DEBIAN/postinst
 	#!/bin/bash
 	source /usr/lib/u-boot/platform_install.sh
 	[[ \$DEVICE == /dev/null ]] && exit 0
@@ -121,17 +121,17 @@ compile_uboot()
 	sync
 	exit 0
 	EOF
-	chmod 755 $uboot_name/DEBIAN/postinst
+	chmod 755 $SRC/.tmp/$uboot_name/DEBIAN/postinst
 
 	# declare -f on non-defined function does not do anything
-	cat <<-EOF > $uboot_name/usr/lib/u-boot/platform_install.sh
+	cat <<-EOF > $SRC/.tmp/$uboot_name/usr/lib/u-boot/platform_install.sh
 	DIR=/usr/lib/$uboot_name
 	$(declare -f write_uboot_platform)
 	$(declare -f setup_write_uboot_platform)
 	EOF
 
 	# set up control file
-	cat <<-EOF > $uboot_name/DEBIAN/control
+	cat <<-EOF > $SRC/.tmp/$uboot_name/DEBIAN/control
 	Package: linux-u-boot-${BOARD}-${BRANCH}
 	Version: $REVISION
 	Architecture: $ARCH
@@ -147,40 +147,40 @@ compile_uboot()
 
 	# copy config file to the package
 	# useful for FEL boot with overlayfs_wrapper
-	[[ -f .config && -n $BOOTCONFIG ]] && cp .config $uboot_name/usr/lib/u-boot/$BOOTCONFIG
+	[[ -f .config && -n $BOOTCONFIG ]] && cp .config $SRC/.tmp/$uboot_name/usr/lib/u-boot/$BOOTCONFIG
 	# copy license files from typical locations
-	[[ -f COPYING ]] && cp COPYING $uboot_name/usr/lib/u-boot/LICENSE
-	[[ -f Licenses/README ]] && cp Licenses/README $uboot_name/usr/lib/u-boot/LICENSE
-	[[ -f arm-trusted-firmware/license.md ]] && cp arm-trusted-firmware/license.md $uboot_name/usr/lib/u-boot/LICENSE.atf
+	[[ -f COPYING ]] && cp COPYING $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE
+	[[ -f Licenses/README ]] && cp Licenses/README $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE
+	[[ -f arm-trusted-firmware/license.md ]] && cp arm-trusted-firmware/license.md $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE.atf
 
 	display_alert "Building deb" "${uboot_name}.deb" "info"
-	eval 'dpkg -b $uboot_name 2>&1' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'}
-	rm -rf $uboot_name
+	(cd $SRC/.tmp/; eval 'dpkg -b $uboot_name 2>&1' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'})
+	rm -rf $SRC/.tmp/$uboot_name
 
-	[[ ! -f ${uboot_name}.deb || $(stat -c '%s' "${uboot_name}.deb") -lt 5000 ]] && exit_with_error "Building u-boot package failed"
+	[[ ! -f $SRC/.tmp/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
-	mv ${uboot_name}.deb $DEST/debs/
+	mv $SRC/.tmp/${uboot_name}.deb $DEST/debs/
 }
 
 compile_kernel()
 {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"
-		(cd $SOURCES/$LINUXSOURCEDIR; make ARCH=$ARCHITECTURE clean >/dev/null 2>&1)
+		(cd $SRC/cache/sources/$LINUXSOURCEDIR; make ARCH=$ARCHITECTURE clean >/dev/null 2>&1)
 	fi
 
 	if [[ $USE_OVERLAYFS == yes ]]; then
-		local kerneldir=$(overlayfs_wrapper "wrap" "$SOURCES/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
+		local kerneldir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
 	else
-		local kerneldir="$SOURCES/$LINUXSOURCEDIR"
+		local kerneldir="$SRC/cache/sources/$LINUXSOURCEDIR"
 	fi
 	cd "$kerneldir"
 
 	# this is a patch that Ubuntu Trusty compiler works
 	# TODO: Check if still required
-	if [[ $(patch --dry-run -t -p1 < $SRC/lib/patch/kernel/compiler.patch | grep Reversed) != "" ]]; then
+	if [[ $(patch --dry-run -t -p1 < $SRC/patch/kernel/compiler.patch | grep Reversed) != "" ]]; then
 		display_alert "Patching kernel for compiler support"
-		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/lib/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
+		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
 	fi
 
 	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
@@ -211,12 +211,12 @@ compile_kernel()
 			cp $SRC/userpatches/$LINUXCONFIG.config .config
 		else
 			display_alert "Using kernel config file" "lib/config/kernel/$LINUXCONFIG.config" "info"
-			cp $SRC/lib/config/kernel/$LINUXCONFIG.config .config
+			cp $SRC/config/kernel/$LINUXCONFIG.config .config
 		fi
 	fi
 
 	# hack for deb builder. To pack what's missing in headers pack.
-	cp $SRC/lib/patch/misc/headers-debian-byteshift.patch /tmp
+	cp $SRC/patch/misc/headers-debian-byteshift.patch /tmp
 
 	export LOCALVERSION="-$LINUXFAMILY"
 
@@ -235,11 +235,11 @@ compile_kernel()
 		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" menuconfig
 		# store kernel config in easily reachable place
 		display_alert "Exporting new kernel config" "$DEST/$LINUXCONFIG.config" "info"
-		cp .config $DEST/$LINUXCONFIG.config
+		cp .config $DEST/config/$LINUXCONFIG.config
 		# export defconfig too if requested
 		if [[ $KERNEL_EXPORT_DEFCONFIG == yes ]]; then
 			make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" savedefconfig > /dev/null 2>&1
-			[[ -f defconfig ]] && cp defconfig $DEST/$LINUXCONFIG.defconfig
+			[[ -f defconfig ]] && cp defconfig $DEST/config/$LINUXCONFIG.defconfig
 		fi
 	fi
 
@@ -276,7 +276,7 @@ compile_sunxi_tools()
 {
 	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools.git" "sunxi-tools" "branch:master"
 	# Compile and install only if git commit hash changed
-	cd $SOURCES/sunxi-tools
+	cd $SRC/cache/sources/sunxi-tools
 	if [[ ! -f .commit_id || $(git rev-parse @ 2>/dev/null) != $(<.commit_id) ]]; then
 		display_alert "Compiling" "sunxi-tools" "info"
 		make -s clean >/dev/null
@@ -299,7 +299,7 @@ find_toolchain()
 	local toolchain=""
 	# extract target major.minor version from expression
 	local target_ver=$(grep -oE "[[:digit:]].[[:digit:]]" <<< "$expression")
-	for dir in $SRC/toolchains/*/; do
+	for dir in $SRC/cache/toolchains/*/; do
 		# check if is a toolchain for current $ARCH
 		[[ ! -f ${dir}bin/${compiler}gcc ]] && continue
 		# get toolchain major.minor version
@@ -330,10 +330,10 @@ find_toolchain()
 # $SRC/userpatches/<dest>/<family>/board_<board>
 # $SRC/userpatches/<dest>/<family>/branch_<branch>
 # $SRC/userpatches/<dest>/<family>
-# $SRC/lib/patch/<dest>/<family>/target_<target>
-# $SRC/lib/patch/<dest>/<family>/board_<board>
-# $SRC/lib/patch/<dest>/<family>/branch_<branch>
-# $SRC/lib/patch/<dest>/<family>
+# $SRC/patch/<dest>/<family>/target_<target>
+# $SRC/patch/<dest>/<family>/board_<board>
+# $SRC/patch/<dest>/<family>/branch_<branch>
+# $SRC/patch/<dest>/<family>
 #
 advanced_patch()
 {
@@ -353,10 +353,10 @@ advanced_patch()
 		"$SRC/userpatches/$dest/$family/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
 		"$SRC/userpatches/$dest/$family/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
 		"$SRC/userpatches/$dest/$family:[\e[33mu\e[0m][\e[32mc\e[0m]"
-		"$SRC/lib/patch/$dest/$family/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]"
-		"$SRC/lib/patch/$dest/$family/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"
-		"$SRC/lib/patch/$dest/$family/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]"
-		"$SRC/lib/patch/$dest/$family:[\e[32ml\e[0m][\e[32mc\e[0m]"
+		"$SRC/patch/$dest/$family/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]"
+		"$SRC/patch/$dest/$family/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"
+		"$SRC/patch/$dest/$family/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]"
+		"$SRC/patch/$dest/$family:[\e[32ml\e[0m][\e[32mc\e[0m]"
 		)
 
 	# required for "for" command
@@ -417,7 +417,7 @@ install_external_applications()
 #--------------------------------------------------------------------------------------------------------------------------------
 	display_alert "Installing extra applications and drivers" "" "info"
 
-	for plugin in $SRC/lib/packages/extras/*.sh; do
+	for plugin in $SRC/packages/extras/*.sh; do
 		source $plugin
 	done
 }
@@ -443,15 +443,15 @@ customize_image()
 {
 	# for users that need to prepare files at host
 	[[ -f $SRC/userpatches/customize-image-host.sh ]] && source $SRC/userpatches/customize-image-host.sh
-	cp $SRC/userpatches/customize-image.sh $CACHEDIR/$SDCARD/tmp/customize-image.sh
-	chmod +x $CACHEDIR/$SDCARD/tmp/customize-image.sh
-	mkdir -p $CACHEDIR/$SDCARD/tmp/overlay
+	cp $SRC/userpatches/customize-image.sh $SDCARD/tmp/customize-image.sh
+	chmod +x $SDCARD/tmp/customize-image.sh
+	mkdir -p $SDCARD/tmp/overlay
 	# util-linux >= 2.27 required
-	mount -o bind,ro $SRC/userpatches/overlay $CACHEDIR/$SDCARD/tmp/overlay
+	mount -o bind,ro $SRC/userpatches/overlay $SDCARD/tmp/overlay
 	display_alert "Calling image customization script" "customize-image.sh" "info"
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
-	umount $CACHEDIR/$SDCARD/tmp/overlay
-	mountpoint -q $CACHEDIR/$SDCARD/tmp/overlay || rm -r $CACHEDIR/$SDCARD/tmp/overlay
+	chroot $SDCARD /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
+	umount $SDCARD/tmp/overlay
+	mountpoint -q $SDCARD/tmp/overlay || rm -r $SDCARD/tmp/overlay
 }
 
 userpatch_create()
@@ -460,7 +460,7 @@ userpatch_create()
 	git add .
 	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
 
-	local patch="$SRC/userpatches/CREATE_PATCHES/$1-$LINUXFAMILY-$BRANCH.patch"
+	local patch="$DEST/patch/$1-$LINUXFAMILY-$BRANCH.patch"
 
 	# apply previous user debug mode created patches
 	[[ -f $patch ]] && display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch

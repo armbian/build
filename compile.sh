@@ -8,64 +8,38 @@
 #
 # This file is a part of tool chain https://github.com/igorpecovnik/lib
 #
-#--------------------------------------------------------------------------------------------------------------------------------
 
-# Read build script documentation http://www.armbian.com/using-armbian-tools/
-# for detailed explanation of these options and for additional options not listed here
+SRC=$(dirname $(realpath ${BASH_SOURCE}))
+# fallback for Trusty
+[[ -z $SRC ]] && SRC=$(pwd)
+cd $SRC
 
-KERNEL_ONLY=""				# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
-KERNEL_CONFIGURE=""			# leave empty to select each time, set to "yes" or "no" to skip dialog prompt
-CLEAN_LEVEL="make,debs,oldcache"	# comma-separated list of clean targets: "make" = make clean for selected kernel and u-boot,
-					# "debs" = delete packages in "./output/debs" for current branch and family,
-					# "alldebs" = delete all packages in "./output/debs", "images" = delete "./output/images",
-					# "cache" = delete "./output/cache", "sources" = delete "./sources"
-					# "oldcache" = remove old cached rootfs except for the newest 6 files
-
-DEST_LANG="en_US.UTF-8"			# sl_SI.UTF-8, en_US.UTF-8
-
-# advanced
-KERNEL_KEEP_CONFIG="no"			# do not overwrite kernel config before compilation
-EXTERNAL="yes"				# build and install extra applications and drivers
-EXTERNAL_NEW="prebuilt"			# compile and install or install prebuilt additional packages
-CREATE_PATCHES="no"			# wait that you make changes to uboot and kernel source and creates patches
-BUILD_ALL="no"				# cycle through available boards and make images or kernel/u-boot packages.
-					# set KERNEL_ONLY to "yes" or "no" to build all packages/all images
-
-BSPFREEZE=""				# freeze armbian packages (u-boot, kernel, dtb)
-
-# build script version to use
-LIB_TAG=""				# empty for latest version,
-					# one of listed here: https://github.com/igorpecovnik/lib/tags for stable versions,
-					# or commit hash
-#--------------------------------------------------------------------------------------------------------------------------------
-
-# source is where compile.sh is located
-SRC=$(pwd)
-
-#--------------------------------------------------------------------------------------------------------------------------------
-# To preserve proper libraries updating
-#--------------------------------------------------------------------------------------------------------------------------------
-if [[ -f $SRC/main.sh && -d $SRC/bin ]]; then
-	echo -e "[\e[0;31m error \x1B[0m] Copy this file one level up, alter and run again."
+if [[ -f $SRC/lib/general.sh && -L $SRC/main.sh ]]; then
+	source $SRC/lib/general.sh
+else
+	echo "Error: missing build directory structure"
+	echo "Please clone the full repository https://github.com/armbian/build/"
 	exit -1
 fi
 
+# copy default config from the template
+[[ ! -f $SRC/config-default.conf ]] && cp $SRC/config/templates/config-example.conf $SRC/config-default.conf
+
+# source build configuration file
+if [[ -n $1 && -f $SRC/config-$1.conf ]]; then
+	display_alert "Using config file" "config-$1.conf" "info"
+	source $SRC/config-$1.conf
+else
+	display_alert "Using config file" "config-default.conf" "info"
+	source $SRC/config-default.conf
+fi
+
 if [[ $EUID != 0 ]]; then
-	echo -e "[\e[0;35m warn \x1B[0m] This script requires root privileges"
-	sudo "$0" "$@"
+	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
+	sudo "$SRC/compile.sh" "$@"
 	exit $?
 fi
 
-#--------------------------------------------------------------------------------------------------------------------------------
-# Get updates of the main build libraries
-#--------------------------------------------------------------------------------------------------------------------------------
-[[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' git 2>/dev/null) != *ii* ]] && \
-	apt-get -qq -y --no-install-recommends install git
-
-if [[ ! -d $SRC/lib ]]; then
-	git clone https://github.com/igorpecovnik/lib
-fi
-cd $SRC/lib
 if [[ ! -f $SRC/.ignore_changes ]]; then
 	echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
 	git pull
@@ -79,9 +53,6 @@ if [[ ! -f $SRC/.ignore_changes ]]; then
 	fi
 fi
 
-# source additional configuration file
-[[ -n $1 && -f $SRC/config-$1.conf ]] && source $SRC/config-$1.conf
-
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
 	source $SRC/lib/build-all.sh
 else
@@ -91,7 +62,3 @@ fi
 # hook for function to run after build, i.e. to change owner of $SRC
 # NOTE: this will run only if there were no errors during build process
 [[ $(type -t run_after_build) == function ]] && run_after_build || true
-
-# If you are committing new version of this file, increment VERSION
-# Only integers are supported
-# VERSION=27

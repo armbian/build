@@ -59,7 +59,7 @@ cleaning()
 		;;
 
 		cache) # delete output/cache
-		[[ -d $CACHEDIR ]] && display_alert "Cleaning" "output/cache/rootfs (all)" "info" && find $CACHEDIR/rootfs/ -type f -delete
+		[[ -d $SRC/cache/rootfs ]] && display_alert "Cleaning" "rootfs cache (all)" "info" && find $SRC/cache/rootfs -type f -delete
 		;;
 
 		images) # delete output/images
@@ -67,13 +67,13 @@ cleaning()
 		;;
 
 		sources) # delete output/sources and output/buildpkg
-		[[ -d $SOURCES ]] && display_alert "Cleaning" "sources" "info" && rm -rf $SOURCES/* $DEST/buildpkg/*
+		[[ -d $SRC/cache/sources ]] && display_alert "Cleaning" "sources" "info" && rm -rf $SRC/cache/sources/* $DEST/buildpkg/*
 		;;
 
 		oldcache)
-		if [[ -d $CACHEDIR/rootfs/ && $(ls -1 $CACHEDIR/rootfs/ | wc -l) -gt 6 ]]; then
-			display_alert "Cleaning" "output/cache/rootfs (old)" "info"
-			(cd $CACHEDIR/rootfs/; ls -t | sed -e "1,6d" | xargs -d '\n' rm -f)
+		if [[ -d $SRC/cache/rootfs && $(ls -1 $SRC/cache/rootfs | wc -l) -gt 6 ]]; then
+			display_alert "Cleaning" "rootfs cache (old)" "info"
+			(cd $SRC/cache/rootfs; ls -t | sed -e "1,6d" | xargs -d '\n' rm -f)
 		fi
 		;;
 	esac
@@ -200,8 +200,8 @@ fetch_from_repo()
 	else
 		local workdir=$dir
 	fi
-	mkdir -p $SOURCES/$workdir
-	cd $SOURCES/$workdir
+	mkdir -p $SRC/cache/sources/$workdir
+	cd $SRC/cache/sources/$workdir
 
 	# check if existing remote URL for the repo or branch does not match current one
 	# may not be supported by older git versions
@@ -270,7 +270,7 @@ fetch_from_repo()
 		display_alert "Updating submodules" "" "ext"
 		# FML: http://stackoverflow.com/a/17692710
 		for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
-			cd $SOURCES/$workdir
+			cd $SRC/cache/sources/$workdir
 			local surl=$(git config -f .gitmodules --get "submodule.$i.url")
 			local sref=$(git config -f .gitmodules --get "submodule.$i.branch")
 			if [[ -n $sref ]]; then
@@ -350,7 +350,7 @@ fingerprint_image()
 	Changelog: 		http://www.armbian.com/logbook/
 	Documantation:		http://docs.armbian.com/
 	--------------------------------------------------------------------------------
-	$(cat $SRC/lib/LICENSE)
+	$(cat $SRC/LICENSE)
 	--------------------------------------------------------------------------------
 	EOF
 }
@@ -477,6 +477,7 @@ prepare_host()
 	fi
 
 	# packages list for host
+	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
 	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
 	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev ntpdate \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
@@ -499,10 +500,16 @@ prepare_host()
 			display_alert "Running in container" "$(systemd-detect-virt)" "info"
 			# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
 			if [[ $NO_APT_CACHER != no ]]; then
-				display_alert "apt-cacher is disabled, set NO_APT_CACHER=no to override" "" "wrn"
+				display_alert "apt-cacher is disabled in containers, set NO_APT_CACHER=no to override" "" "wrn"
 				NO_APT_CACHER=yes
 			fi
 			CONTAINER_COMPAT=yes
+			# trying to use nested containers is not a good idea, so don't permit EXTERNAL_NEW=compile
+			if [[ $EXTERNAL_NEW == compile ]]; then
+				display_alert "EXTERNAL_NEW=compile is not available when running in container, setting to prebuilt" "" "wrn"
+				EXTERNAL_NEW=prebuilt
+			fi
+			SYNC_CLOCK=no
 		fi
 	fi
 
@@ -539,8 +546,14 @@ prepare_host()
 	fi
 
 	# create directory structure
-	mkdir -p $SOURCES $DEST/debs/extra $DEST/debug $CACHEDIR/rootfs $SRC/userpatches/{overlay,CREATE_PATCHES} $SRC/toolchains
-	find $SRC/lib/patch -type d ! -name . | sed "s%lib/patch%userpatches%" | xargs mkdir -p
+	mkdir -p $DEST/debs/extra $DEST/{config,debug,patch} $SRC/userpatches/overlay $SRC/cache/{sources,toolchains,rootfs} $SRC/.tmp
+	if [[ -n $SUDO_USER ]]; then
+		chgrp --quiet sudo cache output userpatches
+		# SGID bit on cache/sources breaks kernel dpkg packaging
+		chmod --quiet g+w,g+s output userpatches
+	fi
+	
+	find $SRC/patch -type d ! -name . | sed "s%/patch%/userpatches%" | xargs mkdir -p
 
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 	local toolchains=(
@@ -558,8 +571,8 @@ prepare_host()
 		download_toolchain "$toolchain"
 	done
 
-	rm -rf $SRC/toolchains/*.tar.xz $SRC/toolchains/*.tar.xz.asc
-	local existing_dirs=( $(ls -1 $SRC/toolchains) )
+	rm -rf $SRC/cache/toolchains/*.tar.xz $SRC/cache/toolchains/*.tar.xz.asc
+	local existing_dirs=( $(ls -1 $SRC/cache/toolchains) )
 	for dir in ${existing_dirs[@]}; do
 		local found=no
 		for toolchain in ${toolchains[@]}; do
@@ -569,11 +582,11 @@ prepare_host()
 		done
 		if [[ $found == no ]]; then
 			display_alert "Removing obsolete toolchain" "$dir"
-			rm -rf $SRC/toolchains/$dir
+			rm -rf $SRC/cache/toolchains/$dir
 		fi
 	done
 
-	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/lib/config/templates/customize-image.sh.template $SRC/userpatches/customize-image.sh
+	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/config/templates/customize-image.sh.template $SRC/userpatches/customize-image.sh
 
 	if [[ ! -f $SRC/userpatches/README ]]; then
 		rm -f $SRC/userpatches/readme.txt
@@ -599,11 +612,11 @@ download_toolchain()
 	local filename=${url##*/}
 	local dirname=${filename//.tar.xz}
 
-	if [[ -f $SRC/toolchains/$dirname/.download-complete ]]; then
+	if [[ -f $SRC/cache/toolchains/$dirname/.download-complete ]]; then
 		return
 	fi
 
-	cd $SRC/toolchains/
+	cd $SRC/cache/toolchains/
 
 	display_alert "Downloading" "$dirname"
 	curl -Lf --progress-bar $url -o $filename
@@ -613,21 +626,21 @@ download_toolchain()
 
 	display_alert "Verifying"
 	if grep -q 'BEGIN PGP SIGNATURE' ${filename}.asc; then
-		if [[ ! -d $DEST/.gpg ]]; then
-			mkdir -p $DEST/.gpg
-			chmod 700 $DEST/.gpg
-			touch $DEST/.gpg/gpg.conf
-			chmod 600 $DEST/.gpg/gpg.conf
+		if [[ ! -d $SRC/cache/.gpg ]]; then
+			mkdir -p $SRC/cache/.gpg
+			chmod 700 $SRC/cache/.gpg
+			touch $SRC/cache/.gpg/gpg.conf
+			chmod 600 $SRC/cache/.gpg/gpg.conf
 		fi
-		(gpg --homedir $DEST/.gpg --no-permission-warning --list-keys 8F427EAF || gpg --homedir $DEST/.gpg --no-permission-warning --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF) 2>&1 | tee -a $DEST/debug/output.log
-		gpg --homedir $DEST/.gpg --no-permission-warning --verify --trust-model always -q ${filename}.asc 2>&1 | tee -a $DEST/debug/output.log
+		(gpg --homedir $SRC/cache/.gpg --no-permission-warning --list-keys 8F427EAF || gpg --homedir $SRC/cache/.gpg --no-permission-warning --keyserver keyserver.ubuntu.com --recv-keys 8F427EAF) 2>&1 | tee -a $DEST/debug/output.log
+		gpg --homedir $SRC/cache/.gpg --no-permission-warning --verify --trust-model always -q ${filename}.asc 2>&1 | tee -a $DEST/debug/output.log
 		[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true
 	else
 		md5sum -c --status ${filename}.asc && verified=true
 	fi
 	if [[ $verified == true ]]; then
 		display_alert "Extracting"
-		tar --overwrite -xf $filename && touch $SRC/toolchains/$dirname/.download-complete
+		tar --overwrite -xf $filename && touch $SRC/cache/toolchains/$dirname/.download-complete
 		display_alert "Download complete" "" "info"
 	else
 		display_alert "Verification failed" "" "wrn"

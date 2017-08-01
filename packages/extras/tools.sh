@@ -11,7 +11,7 @@
 
 compile_tools()
 {
-	local tmpdir=$CACHEDIR/$SDCARD/root/tools
+	local tmpdir=$SDCARD/root/tools
 
 	display_alert "Building deb" "armbian-tools" "info"
 
@@ -47,37 +47,37 @@ compile_tools()
 		# brcm
 		cp $tmpdir/brcm/{brcm_bt_reset,brcm_patchram_plus} $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/usr/bin
 		# brcm configs and service
-		install -m 644 $SRC/lib/packages/extras/tools/brcm40183					$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default
-		install -m 755	$SRC/lib/packages/extras/tools/brcm40183-patch			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
+		install -m 644 $SRC/packages/extras/tools/brcm40183					$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default
+		install -m 755	$SRC/packages/extras/tools/brcm40183-patch			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
 		
 		# ap6212 configs and service
-		install -m 644 $SRC/lib/packages/extras/tools/ap6212						$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default
-		install -m 755 $SRC/lib/packages/extras/tools/ap6212-bluetooth			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
+		install -m 644 $SRC/packages/extras/tools/ap6212						$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/default
+		install -m 755 $SRC/packages/extras/tools/ap6212-bluetooth			$tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}/etc/init.d
 		
 		cd $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}
 		find . -type f ! -regex '.*.hg.*' ! -regex '.*?debian-binary.*' ! -regex '.*?DEBIAN.*' -printf '%P ' | xargs md5sum > DEBIAN/md5sums
 		cd $tmpdir
 		dpkg -b armbian-tools-${RELEASE}_${REVISION}_${ARCH} >/dev/null
 		mv $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb $DEST/debs
-		cd $CACHEDIR
+		cd $SRC/cache
 		rm -rf $tmpdir
 	}
 
 	compiling()
 	{
 		display_alert "... compiling" "temper" "info"
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "cd /root/tools/temper/src; make clean" >> $DEST/debug/tools-build.log 2>&1
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "cd /root/tools/temper/src; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
+		chroot $SDCARD /bin/bash -c "cd /root/tools/temper/src; make clean" >> $DEST/debug/tools-build.log 2>&1
+		chroot $SDCARD /bin/bash -c "cd /root/tools/temper/src; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
 		if [[ $? -ne 0 || ! -f $tmpdir/temper/src/pcsensor ]]; then
-			cd $CACHEDIR
+			cd $SRC/cache
 			rm -rf $tmpdir
 			display_alert "Error building" "temper" "wrn"
 			return
 		fi
 		display_alert "... compiling" "bluetooth utils" "info"
-		chroot $CACHEDIR/$SDCARD /bin/bash -c "cd /root/tools/brcm; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
+		chroot $SDCARD /bin/bash -c "cd /root/tools/brcm; make $CTHREADS" >> $DEST/debug/tools-build.log 2>&1
 		if [[ $? -ne 0 || ! -f $tmpdir/brcm/brcm_bt_reset ]]; then
-			cd $CACHEDIR
+			cd $SRC/cache
 			rm -rf $tmpdir
 			display_alert "Error building" "BT utils" "wrn"
 			return
@@ -93,4 +93,4 @@ if [[ ! -f $DEST/debs/armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb ]]; then
 fi
 
 display_alert "Installing" "armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb" "info"
-chroot $CACHEDIR/$SDCARD /bin/bash -c "dpkg -i /tmp/debs/armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb" >> $DEST/debug/tools-build.log
+chroot $SDCARD /bin/bash -c "dpkg -i /tmp/debs/armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb" >> $DEST/debug/tools-build.log
