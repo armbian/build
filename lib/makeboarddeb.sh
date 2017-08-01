@@ -183,6 +183,28 @@ create_board_package()
 		cp $SRC/packages/bsp/mpv/mpv_mainline.conf $destination/etc/mpv/mpv.conf
 	fi
 
+	case $RELEASE in
+	jessie)
+		mkdir -p $destination/etc/NetworkManager/dispatcher.d/
+		install -m 755 $SRC/packages/bsp/99disable-power-management $destination/etc/NetworkManager/dispatcher.d/
+	;;
+	xenial)
+		mkdir -p $destination/etc/NetworkManager/conf.d/
+		cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/etc/NetworkManager/conf.d/
+		if [[ $BRANCH == default ]]; then
+			# this is required only for old kernels
+			# not needed for Stretch since there will be no Stretch images with kernels < 4.4
+			mkdir -p $destination/lib/systemd/system/haveged.service.d/
+			cp $SRC/packages/bsp/10-no-new-privileges.conf $destination/lib/systemd/system/haveged.service.d/
+		fi
+	;;
+
+	stretch)
+		mkdir -p $destination/etc/NetworkManager/conf.d/
+		cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/etc/NetworkManager/conf.d/
+	;;
+	esac
+
 	# execute $LINUXFAMILY-specific tweaks
 	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp
 

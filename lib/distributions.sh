@@ -169,6 +169,9 @@ install_common()
 
 	# save initial armbian-release state
 	cp $SDCARD/etc/armbian-release $SDCARD/etc/armbian-image-release
+
+	# premit root login via SSH for the first boot
+	sed -i 's/PermitRootLogin .*/PermitRootLogin yes/' $SDCARD/etc/ssh/sshd_config
 }
 
 install_distribution_specific()
@@ -176,49 +179,19 @@ install_distribution_specific()
 	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 	case $RELEASE in
 	jessie)
-		# enable root login for latest ssh on jessie
-		sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' $SDCARD/etc/ssh/sshd_config
-
-		mkdir -p $SDCARD/etc/NetworkManager/dispatcher.d/
-		cat <<-'EOF' > $SDCARD/etc/NetworkManager/dispatcher.d/99disable-power-management
-		#!/bin/sh
-		case "$2" in
-			up) /sbin/iwconfig $1 power off || true ;;
-			down) /sbin/iwconfig $1 power on || true ;;
-		esac
-		EOF
-		chmod 755 $SDCARD/etc/NetworkManager/dispatcher.d/99disable-power-management
 		;;
 
 	xenial)
-		# enable root login for latest ssh on jessie
-		sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' $SDCARD/etc/ssh/sshd_config
-
 		# remove legal info from Ubuntu
 		[[ -f $SDCARD/etc/legal ]] && rm $SDCARD/etc/legal
-
-		# Fix for haveged service
-		# required only on pre-4.x kernels
-		mkdir -p -m755 $SDCARD/etc/systemd/system/haveged.service.d
-		cat <<-EOF > $SDCARD/etc/systemd/system/haveged.service.d/10-no-new-privileges.conf
-		[Service]
-		NoNewPrivileges=false
-		EOF
 
 		# disable not working on unneeded services
 		# ureadahead needs kernel tracing options that AFAIK are present only in mainline
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload mask ondemand.service ureadahead.service setserial.service etc-setserial.service >/dev/null 2>&1"
-
-		# properly disable powersaving wireless mode for NetworkManager
-		mkdir -p $SDCARD/etc/NetworkManager/conf.d/
-		cat <<-EOF > $SDCARD/etc/NetworkManager/conf.d/zz-override-wifi-powersave-off.conf
-		[connection]
-		wifi.powersave = 2
-		EOF
 		;;
 
 	stretch)
-	;;
+		;;
 	esac
 }
 
