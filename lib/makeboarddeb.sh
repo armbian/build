@@ -35,7 +35,7 @@ create_board_package()
 	Depends: bash, linux-base, u-boot-tools, initramfs-tools
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
-	Replaces: base-files, mpv
+	Replaces: base-files, mpv, armbian-tools-$RELEASE
 	Recommends: bsdutils, parted, python3-apt, util-linux, toilet, wireless-tools
 	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
 	EOF
