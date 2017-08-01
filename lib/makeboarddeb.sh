@@ -213,7 +213,7 @@ create_board_package()
 
 	# create board DEB file
 	display_alert "Building package" "$CHOSEN_ROOTFS" "info"
-	(cd $SRC/.tmp/${RELEASE}; dpkg -b $(basename $destination))
+	dpkg-deb -b $destination ${destination}.deb
 	mkdir -p $DEST/debs/$RELEASE/
 	mv ${destination}.deb $DEST/debs/$RELEASE/
 	# cleanup
