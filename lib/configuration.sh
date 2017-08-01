@@ -28,6 +28,8 @@ ROOTFSCACHE_VERSION=3
 # echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
 [[ "btrfs f2fs" == *$ROOTFS_TYPE* && -z $FIXED_IMAGE_SIZE ]] && exit_with_error "Please define FIXED_IMAGE_SIZE"
 
+[[ $RELEASE == stretch && CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
+
 # small SD card with kernel, boot script and .dtb/.bin files
 [[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
 

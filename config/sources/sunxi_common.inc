@@ -20,6 +20,7 @@ BOOTDELAY=0
 case $BRANCH in
 	default)
 	GOVERNOR=interactive
+	CAN_BUILD_STRETCH=no
 	;;
 
 	next)

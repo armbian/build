@@ -4,6 +4,10 @@ HAS_UUID_SUPPORT=yes
 OFFSET=2
 
 case $BRANCH in
+	default)
+	CAN_BUILD_STRETCH=no
+	;;
+
 	dev)
 	BOOTSOURCE='https://github.com/zador-blood-stained/u-boot-sun50i.git'
 	BOOTDIR='u-boot-sun50i'
