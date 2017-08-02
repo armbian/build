@@ -134,7 +134,7 @@ case $RELEASE in
 	[[ $ARCH == armhf ]] && PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mate-utils ubuntu-mate-welcome mate-settings-daemon"
 	;;
 	stretch)
-	PACKAGE_LIST_RELEASE="man-db less kbd net-tools"
+	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd"
 	;;
 esac
 

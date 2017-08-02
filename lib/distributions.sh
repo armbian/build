@@ -191,6 +191,8 @@ install_distribution_specific()
 		;;
 
 	stretch)
+		# remove doubled uname from motd
+		[[ -f $SDCARD/etc/update-motd.d/10-uname ]] && rm $SDCARD/etc/update-motd.d/10-uname
 		;;
 	esac
 }
