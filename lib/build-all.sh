@@ -28,7 +28,7 @@ FORCEDRELEASE=$RELEASE
 
 rm -rf /run/armbian
 mkdir -p /run/armbian
-RELEASE_LIST=("xenial" "jessie")
+RELEASE_LIST=("xenial" "jessie" "stretch")
 BRANCH_LIST=("default" "next" "dev")
 
 pack_upload ()

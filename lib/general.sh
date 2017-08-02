@@ -342,7 +342,7 @@ addtorepo()
 # add all deb files to repository
 # parameter "remove" dumps all and creates new
 # function: cycle trough distributions
-	local distributions=("jessie" "xenial")
+	local distributions=("jessie" "xenial" "stretch")
 
 	for release in "${distributions[@]}"; do
 
@@ -534,7 +534,7 @@ prepare_host()
 		# SGID bit on cache/sources breaks kernel dpkg packaging
 		chmod --quiet g+w,g+s output userpatches
 	fi
-	
+
 	find $SRC/patch -type d ! -name . | sed "s%/patch%/userpatches%" | xargs mkdir -p
 
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
