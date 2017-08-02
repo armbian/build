@@ -53,6 +53,9 @@ if [[ ! -f $SRC/.ignore_changes ]]; then
 	fi
 fi
 
+# daily beta build contains date in subrevision
+if [[ $BETA == yes ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
+
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
 	source $SRC/lib/build-all.sh
 else
