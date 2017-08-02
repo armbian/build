@@ -171,7 +171,7 @@ install_common()
 	cp $SDCARD/etc/armbian-release $SDCARD/etc/armbian-image-release
 
 	# premit root login via SSH for the first boot
-	sed -i 's/\(#\|\)PermitRootLogin .*/PermitRootLogin yes/' $SDCARD/etc/ssh/sshd_config
+	sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' $SDCARD/etc/ssh/sshd_config
 }
 
 install_distribution_specific()
