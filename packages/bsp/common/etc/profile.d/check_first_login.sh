@@ -12,7 +12,7 @@ check_abort()
 
 add_profile_sync_settings()
 {
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "/usr/bin/psd >/dev/null 2>&1"
+	/usr/bin/psd >/dev/null 2>&1
 	config_file="${HOME}/.config/psd/psd.conf"
 	if [ -f "${config_file}" ]; then
 		# test for overlayfs
@@ -27,8 +27,8 @@ add_profile_sync_settings()
 				;;
 		esac
 	fi
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --user enable psd.service >/dev/null 2>&1"
-	chroot $CACHEDIR/$SDCARD /bin/bash -c "systemctl --user start psd.service >/dev/null 2>&1"
+	systemctl --user enable psd.service >/dev/null 2>&1
+	systemctl --user start psd.service >/dev/null 2>&1
 }
 
 add_user()
