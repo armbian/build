@@ -506,6 +506,12 @@ prepare_host()
 		if ! grep -q -x -e "$packet" <<< "$installed"; then deps+=("$packet"); fi
 	done
 
+	# sync clock
+	if [[ $SYNC_CLOCK != no ]]; then
+		display_alert "Syncing clock" "host" "info"
+		ntpdate -s ${NTP_SERVER:- time.ijs.si}
+	fi
+
 	if [[ ${#deps[@]} -gt 0 ]]; then
 		eval '( apt-get -q update; apt-get -q -y --no-install-recommends install "${deps[@]}" )' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/output.log'} \

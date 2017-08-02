@@ -240,11 +240,6 @@ fi
 
 source $SRC/lib/configuration.sh
 
-# sync clock
-if [[ $SYNC_CLOCK != no ]]; then
-	display_alert "Syncing clock" "host" "info"
-	ntpdate -s ${NTP_SERVER:- time.ijs.si}
-fi
 start=`date +%s`
 
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"

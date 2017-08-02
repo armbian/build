@@ -14,7 +14,7 @@ apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y dist-upgrade && \
 	curl gcc-arm-none-eabi libnewlib-arm-none-eabi patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev \
 	systemd-container udev distcc libstdc++-arm-none-eabi-newlib gcc-4.9-arm-linux-gnueabihf gcc-4.9-aarch64-linux-gnu \
 	g++-4.9-arm-linux-gnueabihf g++-4.9-aarch64-linux-gnu g++-5-aarch64-linux-gnu g++-5-arm-linux-gnueabihf lib32stdc++6 \
-	libc6-i386 lib32ncurses5 lib32tinfo5 locales ncurses-base zlib1g:i386 aptly
+	libc6-i386 lib32ncurses5 lib32tinfo5 locales ncurses-base zlib1g:i386 aptly pixz
 locale-gen en_US.UTF-8
 git clone https://github.com/armbian/build /home/ubuntu/armbian
 ln -sf /vagrant/output /home/ubuntu/armbian/output
