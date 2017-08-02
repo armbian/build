@@ -9,7 +9,7 @@
 
 # common options
 # daily beta build contains date in subrevision
-[[ $BETA == yes ]] && SUBREVISION="."$(date --date="tomorrow" +"%y%m%d")
+if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
 REVISION="5.32$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 MAINTAINER="Igor Pecovnik" # deb signature
