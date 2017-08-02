@@ -86,7 +86,7 @@ if [[ $USE_CCACHE != no ]]; then
 	export PATH="/usr/lib/ccache:$PATH"
 	# private ccache directory to avoid permission issues when using build script with "sudo"
 	# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
-	[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$DEST/ccache
+	[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache
 else
 	CCACHE=""
 fi
