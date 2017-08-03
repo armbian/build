@@ -307,7 +307,7 @@ compile_sunxi_tools()
 	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools.git" "sunxi-tools" "branch:master"
 	# Compile and install only if git commit hash changed
 	cd $SRC/cache/sources/sunxi-tools
-	# need to check if /usr/loca/bin/sunxi-fexc to detect new Docker containers with old cached sources
+	# need to check if /usr/local/bin/sunxi-fexc to detect new Docker containers with old cached sources
 	if [[ ! -f .commit_id || $(git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/sunxi-fexc ]]; then
 		display_alert "Compiling" "sunxi-tools" "info"
 		make -s clean >/dev/null
