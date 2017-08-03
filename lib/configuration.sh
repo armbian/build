@@ -19,6 +19,7 @@ USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
 ROOTFSCACHE_VERSION=3
+[[ -z $DISPLAY_MANAGER ]] && DISPLAY_MANAGER=nodm
 
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 [[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
@@ -121,6 +122,20 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common p11-kit pasystray pavucontrol pulseaudio \
 	paman pavumeter pulseaudio-module-gconf pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri mpv \
 	libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1 fbi profile-sync-daemon expect rcconf"
+
+case $DISPLAY_MANAGER in
+	nodm)
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP nodm"
+	;;
+
+	lightdm)
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP lightdm-gtk-greeter lightdm"
+	;;
+
+	*)
+	exit_with_error "Unsupported display manager selected" "$DISPLAY_MANAGER"
+	;;
+esac
 
 # Release specific packages
 case $RELEASE in
