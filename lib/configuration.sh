@@ -106,7 +106,7 @@ if [[ $RELEASE == xenial ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debi
 PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler figlet fbset fping \
 	iw fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl linux-base dialog crda \
 	wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
-	usbutils wireless-tools console-setup console-common unicode-data openssh-server initramfs-tools \
+	usbutils wireless-tools console-setup unicode-data openssh-server initramfs-tools \
 	ca-certificates resolvconf"
 
 # development related packages. remove when they are not needed for building packages in chroot
