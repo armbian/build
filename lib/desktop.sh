@@ -49,8 +49,17 @@ install_desktop ()
 		sed "s/load-module module-udev-detect$/& tsched=0/g" -i  $SDCARD/etc/pulse/default.pa
 	fi
 
+	# Choose display manager
+	if [[ $DISPLAY_MANAGER == yes ]]; then	chroot $SDCARD /bin/bash -c "apt-get install -qq -y --no-install-recommends lightdm-gtk-greeter lightdm"; \
+	else chroot $SDCARD /bin/bash -c "apt-get install -qq -y --no-install-recommends nodm"; fi
+
 	# Disable desktop mode autostart for now to enforce creation of normal user account
-	sed "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=false/g" -i $SDCARD/etc/default/nodm
+	[[ -f $SDCARD/etc/default/nodm ]] && sed "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=false/g" -i $SDCARD/etc/default/nodm
+	[[ -d $SDCARD/etc/lightdm ]] && chroot $SDCARD /bin/bash -c "systemctl disable lightdm.service >/dev/null 2>&1"
+
+	# install logo for login screen
+	cp $SRC/packages/blobs/desktop/icons/armbian.png $SDCARD/usr/share/pixmaps
+	cp -R $SRC/packages/blobs/desktop/lightdm $SDCARD/etc
 
 	# Compile Turbo Frame buffer for sunxi
 	if [[ $LINUXFAMILY == sun* && $BRANCH == default ]]; then

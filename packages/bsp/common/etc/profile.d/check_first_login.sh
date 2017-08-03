@@ -72,7 +72,7 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 		echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
 	fi
 	echo "Creating a new user account. Press <Ctrl-C> to abort"
-	[ -f "/etc/init.d/nodm" ] && echo "Desktop environment will not be enabled if you abort the new user creation"
+	[ -f "/etc/init.d/nodm" ] || [ -d "/etc/lightdm" ] && echo "Desktop environment will not be enabled if you abort the new user creation"
 	trap check_abort INT
 	while [ -f "/root/.not_logged_in_yet" ]; do
 		add_user
@@ -107,6 +107,19 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 			service nodm stop
 			sleep 1
 			service nodm start
+		fi
+	elif [ -d "/etc/lightdm" ] && [ -n "$RealName" ] ; then
+			systemctl enable lightdm.service 2>/dev/null
+		if [[ -f /var/run/resize2fs-reboot ]]; then
+			# Let the user reboot now otherwise start desktop environment
+			printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"
+			printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
+		elif [ -z "$ConfigureDisplay" ] || [ "$ConfigureDisplay" = "n" ] || [ "$ConfigureDisplay" = "N" ]; then
+			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
+			sleep 1
+			service lightdm start 2>/dev/null
+			# logout if logged at console
+			[[ -n $(who -la | grep root | grep tty1) ]] && exit 1
 		fi
 	else
 		# Display reboot recommendation if necessary
