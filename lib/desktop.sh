@@ -50,7 +50,7 @@ install_desktop ()
 	fi
 
 	# Choose display manager
-	if [[ $DISPLAY_MANAGER == yes ]]; then	chroot $SDCARD /bin/bash -c "apt-get install -qq -y --no-install-recommends lightdm-gtk-greeter lightdm"; \
+	if [[ $DISPLAY_MANAGER == lightdm ]]; then	chroot $SDCARD /bin/bash -c "apt-get install -qq -y --no-install-recommends lightdm-gtk-greeter lightdm"; \
 	else chroot $SDCARD /bin/bash -c "apt-get install -qq -y --no-install-recommends nodm"; fi
 
 	# Disable desktop mode autostart for now to enforce creation of normal user account
