@@ -81,6 +81,7 @@ case $ARCH in
 	arm64)
 	[[ -z $KERNEL_COMPILER ]] && KERNEL_COMPILER="aarch64-linux-gnu-"
 	[[ -z $UBOOT_COMPILER ]] && UBOOT_COMPILER="aarch64-linux-gnu-"
+	ATF_COMPILER="aarch64-linux-gnu-"
 	[[ -z $INITRD_ARCH ]] && INITRD_ARCH=arm64
 	QEMU_BINARY="qemu-aarch64-static"
 	ARCHITECTURE=arm64

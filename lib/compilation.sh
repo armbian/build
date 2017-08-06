@@ -8,6 +8,7 @@
 # https://github.com/armbian/build/
 
 # Functions:
+# compile_atf
 # compile_uboot
 # compile_kernel
 # compile_sunxi_tools
@@ -20,6 +21,66 @@
 # customize_image
 # userpatch_create
 # overlayfs_wrapper
+
+compile_atf()
+{
+	if [[ $CLEAN_LEVEL == *make* ]]; then
+		display_alert "Cleaning" "$ATFSOURCEDIR" "info"
+		(cd $SRC/cache/sources/$ATFSOURCEDIR; make clean > /dev/null 2>&1)
+	fi
+
+	if [[ $USE_OVERLAYFS == yes ]]; then
+		local atfdir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$ATFSOURCEDIR" "atf_${LINUXFAMILY}_${BRANCH}")
+	else
+		local atfdir="$SRC/cache/sources/$ATFSOURCEDIR"
+	fi
+	cd "$atfdir"
+
+	display_alert "Compiling ATF" "" "info"
+
+	local toolchain=""
+	if [[ -n $ATF_USE_GCC ]]; then
+		toolchain=$(find_toolchain "$ATF_COMPILER" "$ATF_USE_GCC")
+		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${ATF_COMPILER}gcc $ATF_USE_GCC"
+	fi
+
+	display_alert "Compiler version" "${ATF_COMPILER}gcc $(eval ${toolchain:+env PATH=$toolchain:$PATH} ${ATF_COMPILER}gcc -dumpversion)" "info"
+
+	local target_make=$(cut -d';' -f1 <<< $ATF_TARGET_MAP)
+	local target_patchdir=$(cut -d';' -f2 <<< $ATF_TARGET_MAP)
+	local target_files=$(cut -d';' -f3 <<< $ATF_TARGET_MAP)
+
+	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "atf" "atf-${LINUXFAMILY}" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
+
+	# create patch for manual source changes
+	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
+
+	eval CCACHE_BASEDIR="$(pwd)" ${toolchain:+env PATH=$toolchain:$PATH} \
+		'make $target_make $CTHREADS CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>&1 \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling ATF..." $TTY_Y $TTY_X'} \
+		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+	[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "ATF compilation failed"
+
+	local atftempdir=$SRC/.tmp/atf-${LINUXFAMILY}-${BOARD}-${BRANCH}
+	mkdir -p $atftempdir
+
+	# copy files to temp directory
+	for f in $target_files; do
+		local f_src=$(cut -d':' -f1 <<< $f)
+		if [[ $f == *:* ]]; then
+			local f_dst=$(cut -d':' -f2 <<< $f)
+		else
+			local f_dst=$(basename $f_src)
+		fi
+		[[ ! -f $f_src ]] && exit_with_error "ATF file not found" "$(basename $f_src)"
+		cp $f_src $atftempdir/$f_dst
+	done
+
+	# copy license file to pack it to u-boot package later
+	[[ -f license.md ]] && cp license.md $atftempdir/
+}
 
 compile_uboot()
 {
@@ -72,6 +133,11 @@ compile_uboot()
 
 		# create patch for manual source changes
 		[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
+
+		if [[ -n $ATFSOURCE ]]; then
+			local atftempdir=$SRC/.tmp/atf-${LINUXFAMILY}-${BOARD}-${BRANCH}
+			cp -Rv $atftempdir/*.bin .
+		fi
 
 		eval CCACHE_BASEDIR="$(pwd)" ${toolchain:+env PATH=$toolchain:$PATH} \
 			'make $CTHREADS $BOOTCONFIG CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>&1 \
@@ -150,11 +216,12 @@ compile_uboot()
 	# copy license files from typical locations
 	[[ -f COPYING ]] && cp COPYING $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE
 	[[ -f Licenses/README ]] && cp Licenses/README $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE
-	[[ -f arm-trusted-firmware/license.md ]] && cp arm-trusted-firmware/license.md $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE.atf
+	[[ -n $atftempdir && -f $atftempdir/license.md ]] && cp $atftempdir/license.md $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE.atf
 
 	display_alert "Building deb" "${uboot_name}.deb" "info"
 	(cd $SRC/.tmp/; eval 'dpkg -b $uboot_name 2>&1' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'})
 	rm -rf $SRC/.tmp/$uboot_name
+	[[ -n $$atftempdir ]] && rm -rf $atftempdir
 
 	[[ ! -f $SRC/.tmp/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
@@ -304,7 +371,6 @@ compile_kernel()
 
 compile_sunxi_tools()
 {
-	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools.git" "sunxi-tools" "branch:master"
 	# Compile and install only if git commit hash changed
 	cd $SRC/cache/sources/sunxi-tools
 	# need to check if /usr/local/bin/sunxi-fexc to detect new Docker containers with old cached sources
@@ -360,7 +426,7 @@ find_toolchain()
 # advanced_patch <dest> <family> <board> <target> <branch> <description>
 #
 # parameters:
-# <dest>: u-boot, kernel
+# <dest>: u-boot, kernel, atf
 # <family>: u-boot: u-boot, u-boot-neo; kernel: sun4i-default, sunxi-next, ...
 # <board>: cubieboard, cubieboard2, cubietruck, ...
 # <target>: optional subdirectory
