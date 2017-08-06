@@ -51,7 +51,7 @@ mkdir -p $DEST/debug
 rm -f $DEST/debug/*.log > /dev/null 2>&1
 date +"%d_%m_%Y-%H_%M_%S" > $DEST/debug/timestamp
 # delete compressed logs older than 7 days
-(cd $DEST/debug && find . -name '*.tgz' -atime +7 -delete) > /dev/null
+(cd $DEST/debug && find . -name '*.tgz' -mtime +7 -delete) > /dev/null
 
 # Script parameters handling
 for i in "$@"; do

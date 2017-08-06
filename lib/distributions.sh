@@ -127,11 +127,10 @@ install_common()
 	chroot $SDCARD /bin/bash -c "dpkg -i /tmp/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
 	# freeze armbian packages
-	if [[ $BSPFREEZE == "yes" ]]; then
-		display_alert "Freeze armbian packages" "$BOARD" "info"
-		if [[ "$BRANCH" != "default" ]]; then MINIBRANCH="-"$BRANCH; fi
+	if [[ $BSPFREEZE == yes ]]; then
+		display_alert "Freezing Armbian packages" "$BOARD" "info"
 		chroot $SDCARD /bin/bash -c "apt-mark hold ${CHOSEN_KERNEL} ${CHOSEN_KERNEL/image/headers} \
-		linux-u-boot-${BOARD}-${BRANCH} linux-dtb${MINIBRANCH}-${LINUXFAMILY}" >> $DEST/debug/install.log 2>&1
+			linux-u-boot-${BOARD}-${BRANCH} ${CHOSEN_KERNEL/image/dtb}" >> $DEST/debug/install.log 2>&1
 	fi
 
 	# copy boot splash images
