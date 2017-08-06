@@ -101,8 +101,10 @@ install_common()
 	display_alert "Installing u-boot" "$CHOSEN_UBOOT" "info"
 	chroot $SDCARD /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
 
-	display_alert "Installing headers" "${CHOSEN_KERNEL/image/headers}" "info"
-	chroot $SDCARD /bin/bash -c "dpkg -i /tmp/debs/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	if [[ $INSTALL_HEADERS == "yes" ]]; then
+		display_alert "Installing headers" "${CHOSEN_KERNEL/image/headers}" "info"
+		chroot $SDCARD /bin/bash -c "dpkg -i /tmp/debs/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	fi
 
 	# install firmware
 	#if [[ -f $SDCARD/tmp/debs/${CHOSEN_KERNEL/image/firmware-image}_${REVISION}_${ARCH}.deb ]]; then
