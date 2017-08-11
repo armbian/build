@@ -6,4 +6,4 @@ ${bloader} ${initrd_start} /boot/uInitrd
 
 if test -e mmc 0:1 boot/.next; then ${bloader} ${dtb_mem_addr} boot/dtb/amlogic/meson-gxl-s905x-libretech-cc.dtb; fi
 if test -e mmc 0:1 boot/.next; then ${bloader} 0x01080000 boot/uImage; fi
-if test -e mmc 0:1 boot/.next; then bootm 0x01080000 ${initrd_start} ${dtb_loadaddr}; else booti ${loadaddr} ${initrd_start} ${dtb_loadaddr}; fi
+if test -e mmc 0:1 boot/.next; then bootm 0x01080000 ${initrd_start} ${dtb_mem_addr}; else booti ${loadaddr} ${initrd_start} ${dtb_mem_addr}; fi
