@@ -1,4 +1,6 @@
-setenv bootargs "root=/dev/mmcblk0p1 ${consoleargs} hdmimode=${hdmimode} hdmitx=cecf logo=osd1,loaded,${fb_addr},${hdmimode} initrd=${initrd_start},${initrd_size}"
+if test -e mmc 0:1 boot/.next; then setenv condev "console=ttyAML0,115200n8"; else setenv condev "console=ttyS0,115200n8 console=tty0"; fi
+
+setenv bootargs "root=/dev/mmcblk0p1 ${condev} hdmimode=${hdmimode} hdmitx=cecf logo=osd1,loaded,${fb_addr},${hdmimode} initrd=${initrd_start},${initrd_size}"
 ${bloader} ${loadaddr} /boot/zImage
 ${bloader} ${dtb_mem_addr} /boot/dtb/gxl_p212_2g.dtb
 fdt addr ${dtb_mem_addr}
