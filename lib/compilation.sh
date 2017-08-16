@@ -12,6 +12,7 @@
 # compile_uboot
 # compile_kernel
 # compile_sunxi_tools
+# install_rkbin_tools
 # grab_version
 # find_toolchain
 # advanced_patch
@@ -62,6 +63,8 @@ compile_atf()
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 	[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "ATF compilation failed"
+
+	[[ $(type -t atf_custom_postprocess) == function ]] && atf_custom_postprocess
 
 	local atftempdir=$SRC/.tmp/atf-${LINUXFAMILY}-${BOARD}-${BRANCH}
 	mkdir -p $atftempdir
@@ -160,6 +163,8 @@ compile_uboot()
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "U-boot compilation failed"
+
+		[[ $(type -t uboot_custom_postprocess) == function ]] && uboot_custom_postprocess
 
 		# copy files to build directory
 		for f in $target_files; do
@@ -380,6 +385,20 @@ compile_sunxi_tools()
 		make -s tools >/dev/null
 		mkdir -p /usr/local/bin/
 		make install-tools >/dev/null 2>&1
+		git rev-parse @ 2>/dev/null > .commit_id
+	fi
+}
+
+install_rkbin_tools()
+{
+	# install only if git commit hash changed
+	cd $SRC/cache/sources/rkbin-tools
+	# need to check if /usr/local/bin/sunxi-fexc to detect new Docker containers with old cached sources
+	if [[ ! -f .commit_id || $(git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/loaderimage ]]; then
+		display_alert "Installing" "rkbin-tools" "info"
+		mkdir -p /usr/local/bin/
+		install -m 755 tools/loaderimage /usr/local/bin/
+		install -m 755 tools/trust_merger /usr/local/bin/
 		git rev-parse @ 2>/dev/null > .commit_id
 	fi
 }

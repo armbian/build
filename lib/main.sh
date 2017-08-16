@@ -258,9 +258,11 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 	fi
 	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
 	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:dev"
+	fetch_from_repo "https://github.com/rockchip-linux/rkbin" "rkbin-tools" "branch:master"
 fi
 
 compile_sunxi_tools
+install_rkbin_tools
 
 # define package names
 DEB_BRANCH=${BRANCH//default}
