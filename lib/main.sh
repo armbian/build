@@ -137,11 +137,11 @@ if [[ -z $BOARD ]]; then
 				options+=("$(basename $board | cut -d'.' -f1)" "$(head -1 $board | cut -d'#' -f2)")
 			done
 		else
-			for board in $SRC/config/boards/*.csc; do
-				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(CSC)\Zn $(head -1 $board | cut -d'#' -f2)")
-			done
 			for board in $SRC/config/boards/*.wip; do
 				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(WIP)\Zn $(head -1 $board | cut -d'#' -f2)")
+			done
+			for board in $SRC/config/boards/*.csc; do
+				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(CSC)\Zn $(head -1 $board | cut -d'#' -f2)")
 			done
 			for board in $SRC/config/boards/*.eos; do
 				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(EOS)\Zn $(head -1 $board | cut -d'#' -f2)")
