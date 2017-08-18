@@ -127,6 +127,7 @@ create_board_package()
 	IMAGE_TYPE=$IMAGE_TYPE
 	BOARD_TYPE=$BOARD_TYPE
 	INITRD_ARCH=$INITRD_ARCH
+	KERNEL_IMAGE_TYPE=$KERNEL_IMAGE_TYPE
 	EOF
 
 	# this is required for NFS boot to prevent deconfiguring the network on shutdown
