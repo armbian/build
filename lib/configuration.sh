@@ -131,7 +131,7 @@ case $DISPLAY_MANAGER in
 	;;
 
 	lightdm)
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP lightdm-gtk-greeter lightdm"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP lightdm lightdm-gtk-greeter"
 	;;
 
 	*)

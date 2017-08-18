@@ -35,8 +35,8 @@ create_board_package()
 	Depends: bash, linux-base, u-boot-tools, initramfs-tools
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
-	Replaces: base-files, mpv, armbian-tools-$RELEASE
-	Recommends: bsdutils, parted, python3-apt, util-linux, toilet, wireless-tools
+	Replaces: base-files, mpv, lightdm-gtk-greeter, armbian-tools-$RELEASE
+	Recommends: bsdutils, parted, python3-apt, util-linux, toilet
 	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
 	EOF
 
@@ -52,7 +52,7 @@ create_board_package()
 		mv /etc/network/interfaces.tmp /etc/network/interfaces
 	fi
 	# make a backup since we are unconditionally overwriting this on update
-	cp /etc/default/cpufrequtils /etc/default/cpufrequtils.dpkg-old
+	[ -f "/etc/default/cpufrequtils" ] && cp /etc/default/cpufrequtils /etc/default/cpufrequtils.dpkg-old
 	dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename \
 		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 	exit 0

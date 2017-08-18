@@ -55,7 +55,6 @@ install_desktop ()
 
 	# install logo for login screen
 	cp $SRC/packages/blobs/desktop/icons/armbian.png $SDCARD/usr/share/pixmaps
-	cp -R $SRC/packages/blobs/desktop/lightdm $SDCARD/etc
 
 	# Compile Turbo Frame buffer for sunxi
 	if [[ $LINUXFAMILY == sun* && $BRANCH == default ]]; then
