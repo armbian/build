@@ -78,21 +78,20 @@ chroot_prepare_distccd()
 	local dest=/tmp/distcc/${release}-${arch}
 	declare -A gcc_version gcc_type
 	gcc_version['jessie']='4.9'
-	gcc_version['xenial']='5'
-	gcc_type['armhf']='arm-linux-gnueabihf'
-	gcc_type['arm64']='aarch64-linux-gnu'
+	gcc_version['xenial']='5.4'
+	gcc_type['armhf']='arm-linux-gnueabihf-'
+	gcc_type['arm64']='aarch64-linux-gnu-'
 	rm -f $dest/cmdlist
 	mkdir -p $dest
-	for compiler in gcc cpp g++; do
-		echo "$dest/$compiler" >> $dest/cmdlist
-		ln -sf /usr/bin/${gcc_type[$arch]}-${compiler}-${gcc_version[$release]} $dest/$compiler
-		echo "$dest/${gcc_type[$arch]}-${compiler}" >> $dest/cmdlist
-		ln -sf /usr/bin/${gcc_type[$arch]}-${compiler}-${gcc_version[$release]} $dest/${gcc_type[$arch]}-${compiler}
-	done
-	ln -sf /usr/bin/${gcc_type[$arch]}-gcc-${gcc_version[$release]} $dest/cc
+	local toolchain_path=$(find_toolchain "${gcc_type[$arch]}" "== ${gcc_version[$release]}")
+	ln -sfv ${toolchain_path}/${gcc_type[$arch]}gcc $dest/cc
 	echo "$dest/cc" >> $dest/cmdlist
-	ln -sf /usr/bin/${gcc_type[$arch]}-g++-${gcc_version[$release]} $dest/c++
-	echo "$dest/c++" >> $dest/cmdlist
+	for compiler in gcc cpp g++ c++; do
+		echo "$dest/$compiler" >> $dest/cmdlist
+		echo "$dest/${gcc_type[$arch]}${compiler}" >> $dest/cmdlist
+		ln -sfv ${toolchain_path}/${gcc_type[$arch]}${compiler} $dest/$compiler
+		ln -sfv ${toolchain_path}/${gcc_type[$arch]}${compiler} $dest/${gcc_type[$arch]}${compiler}
+	done
 	mkdir -p /var/run/distcc/
 	touch /var/run/distcc/${release}-${arch}.pid
 	chown -R distccd /var/run/distcc/
