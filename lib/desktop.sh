@@ -21,7 +21,7 @@ install_desktop ()
 		cp $SRC/config/chromium.conf $SDCARD/etc/chromium-browser/default
 	fi
 	# install dedicated startup icons
-	cp $SRC/packages/blobs/desktop/icons/${RELEASE}.png $SDCARD/usr/share/pixmaps
+	cp $SRC/packages/blobs/desktop/icons/${DISTRIBUTION}.png $SDCARD/usr/share/pixmaps
 
 	# install default desktop settings
 	cp -R $SRC/packages/blobs/desktop/skel/. $SDCARD/etc/skel
