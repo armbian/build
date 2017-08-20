@@ -186,9 +186,13 @@ compile_uboot()
 	[[ \$DEVICE == /dev/null ]] && exit 0
 	[[ -z \$DEVICE ]] && DEVICE="/dev/mmcblk0"
 	[[ \$(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
-	echo "Updating u-boot on device \$DEVICE" >&2
-	write_uboot_platform \$DIR \$DEVICE
-	sync
+	if [[ -b \$DEVICE ]]; then
+		echo "Updating u-boot on \$DEVICE" >&2
+		write_uboot_platform \$DIR \$DEVICE
+		sync
+	else
+		echo "Device \$DEVICE does not exist, skipping" >&2
+	fi
 	exit 0
 	EOF
 	chmod 755 $SRC/.tmp/$uboot_name/DEBIAN/postinst
