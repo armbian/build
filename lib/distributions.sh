@@ -18,6 +18,8 @@ install_common()
 
 	# add dummy fstab entry to make mkinitramfs happy
 	echo "/dev/mmcblk0p1 / $ROOTFS_TYPE defaults 0 1" >> $SDCARD/etc/fstab
+	# required for initramfs-tools-core on Stretch since it ignores the / fstab entry
+	echo "/dev/mmcblk0p2 /usr $ROOTFS_TYPE defaults 0 2" >> $SDCARD/etc/fstab
 
 	# create modules file
 	if [[ $BRANCH == dev && -n $MODULES_DEV ]]; then
