@@ -474,9 +474,8 @@ prepare_host()
 	fi
 
 	if [[ $codename == xenial ]]; then
-		hostdeps="$hostdeps systemd-container udev distcc gcc-4.9-arm-linux-gnueabihf \
-			g++-4.9-arm-linux-gnueabihf \
-			g++-5-arm-linux-gnueabihf lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 aptly"
+		hostdeps="$hostdeps systemd-container udev distcc \
+			lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 aptly"
 		grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
 		if systemd-detect-virt -q -c; then
 			display_alert "Running in container" "$(systemd-detect-virt)" "info"
