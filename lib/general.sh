@@ -534,12 +534,16 @@ prepare_host()
 	fi
 
 	# create directory structure
-	mkdir -p $DEST/debs/extra $DEST/{config,debug,patch} $SRC/userpatches/overlay $SRC/cache/{sources,toolchains,rootfs} $SRC/.tmp
+	mkdir -p $SRC/{cache,output,userpatches}
 	if [[ -n $SUDO_USER ]]; then
 		chgrp --quiet sudo cache output userpatches
 		# SGID bit on cache/sources breaks kernel dpkg packaging
 		chmod --quiet g+w,g+s output userpatches
+		# fix existing permissions
+		find $SRC/output $SRC/userpatches -type d ! -group sudo -exec chgrp --quiet sudo {} \;
+		find $SRC/output $SRC/userpatches -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 	fi
+	mkdir -p $DEST/debs/extra $DEST/{config,debug,patch} $SRC/userpatches/overlay $SRC/cache/{sources,toolchains,rootfs} $SRC/.tmp
 
 	find $SRC/patch -type d ! -name . | sed "s%/patch%/userpatches%" | xargs mkdir -p
 
