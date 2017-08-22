@@ -91,14 +91,6 @@ else
 	CCACHE=""
 fi
 
-# optimize build time with 100% CPU usage
-CPUS=$(grep -c 'processor' /proc/cpuinfo)
-if [[ $USEALLCORES != no ]]; then
-	CTHREADS="-j$(($CPUS + $CPUS/2))"
-else
-	CTHREADS="-j1"
-fi
-
 # Check and install dependencies, directory structure and settings
 prepare_host
 
@@ -239,6 +231,14 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 fi
 
 source $SRC/lib/configuration.sh
+
+# optimize build time with 100% CPU usage
+CPUS=$(grep -c 'processor' /proc/cpuinfo)
+if [[ $USEALLCORES != no ]]; then
+	CTHREADS="-j$(($CPUS + $CPUS/2))"
+else
+	CTHREADS="-j1"
+fi
 
 start=`date +%s`
 
