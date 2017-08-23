@@ -1,0 +1,208 @@
+From 426631883e372b3e95c94a148923396a11afc3ca Mon Sep 17 00:00:00 2001
+From: Andre Przywara <andre.przywara@arm.com>
+Date: Mon, 8 Aug 2016 23:45:41 +0100
+Subject: [PATCH] sunxi: SCPI: add clock handler framework
+
+SCPI features an interface to control and query clocks with a variable
+frequency.
+Implement the SCPI protocol part of that interface and provide a
+framework to easily add any specific clock desired.
+
+Signed-off-by: Andre Przywara <andre.przywara@arm.com>
+---
+ plat/sun50iw1p1/sunxi_clocks.c  | 78 +++++++++++++++++++++++++++++++++++++++++
+ plat/sun50iw1p1/sunxi_private.h |  8 +++++
+ plat/sun50iw1p1/sunxi_scpi.c    | 59 ++++++++++++++++++++++++++++++-
+ 3 files changed, 144 insertions(+), 1 deletion(-)
+
+diff --git a/plat/sun50iw1p1/sunxi_clocks.c b/plat/sun50iw1p1/sunxi_clocks.c
+index ff02bfa14..1c5ec2975 100644
+--- a/plat/sun50iw1p1/sunxi_clocks.c
++++ b/plat/sun50iw1p1/sunxi_clocks.c
+@@ -105,3 +105,81 @@ int sunxi_setup_clocks(uint16_t socid)
+ 
+ 	return 0;
+ }
++
++struct scpi_clock {
++	uint32_t min_freq;
++	uint32_t max_freq;
++	uint32_t (*getter)(uint32_t);
++	uint32_t (*setter)(uint32_t, uint32_t);
++	uint32_t reg_addr;
++	const char *name;
++	uint16_t clockid;
++};
++
++struct scpi_clock sunxi_clocks[] = {
++};
++
++#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
++
++static struct scpi_clock *get_sunxi_clock(int clocknr)
++{
++	if (clocknr < 0 || clocknr >= ARRAY_SIZE(sunxi_clocks))
++		return NULL;
++
++	return &sunxi_clocks[clocknr];
++}
++
++uint32_t sunxi_clock_get_min_rate(int clocknr)
++{
++	struct scpi_clock *clk = get_sunxi_clock(clocknr);
++
++	if (!clk)
++		return ~0;
++
++	return clk->min_freq;
++}
++
++uint32_t sunxi_clock_get_max_rate(int clocknr)
++{
++	struct scpi_clock *clk = get_sunxi_clock(clocknr);
++
++	if (!clk)
++		return ~0;
++
++	return clk->max_freq;
++}
++
++const char* sunxi_clock_get_name(int clocknr)
++{
++	struct scpi_clock *clk = get_sunxi_clock(clocknr);
++
++	if (!clk)
++		return NULL;
++
++	return clk->name;
++}
++
++uint32_t sunxi_clock_get_rate(int clocknr)
++{
++	struct scpi_clock *clk = get_sunxi_clock(clocknr);
++
++	if (!clk)
++		return ~0;
++
++	return clk->getter(clk->reg_addr);
++}
++
++int sunxi_clock_set_rate(int clocknr, uint32_t freq)
++{
++	struct scpi_clock *clk = get_sunxi_clock(clocknr);
++
++	if (!clk)
++		return ~0;
++
++	return clk->setter(clk->reg_addr, freq);
++}
++
++int sunxi_clock_nr_clocks(void)
++{
++	return ARRAY_SIZE(sunxi_clocks);
++}
+diff --git a/plat/sun50iw1p1/sunxi_private.h b/plat/sun50iw1p1/sunxi_private.h
+index b07e56e79..08aeb94da 100644
+--- a/plat/sun50iw1p1/sunxi_private.h
++++ b/plat/sun50iw1p1/sunxi_private.h
+@@ -78,6 +78,14 @@ int sunxi_setup_clocks(uint16_t socid);
+ /* Declarations for sunxi_scpi.c */
+ uint32_t sunxi_trigger_scpi(uint32_t x1, uint32_t x2, uint32_t x3, uint32_t x4);
+ 
++/* Declarations for sunxi_clocks.c */
++int sunxi_clock_nr_clocks(void);
++uint32_t sunxi_clock_get_min_rate(int clocknr);
++uint32_t sunxi_clock_get_max_rate(int clocknr);
++const char* sunxi_clock_get_name(int clocknr);
++uint32_t sunxi_clock_get_rate(int clocknr);
++int sunxi_clock_set_rate(int clocknr, uint32_t freq);
++
+ /* Gets the SPSR for BL33 entry */
+ uint32_t sunxi_get_spsr_for_bl33_entry(int aarch);
+ 
+diff --git a/plat/sun50iw1p1/sunxi_scpi.c b/plat/sun50iw1p1/sunxi_scpi.c
+index b13dfa7d5..3ca287ed2 100644
+--- a/plat/sun50iw1p1/sunxi_scpi.c
++++ b/plat/sun50iw1p1/sunxi_scpi.c
+@@ -53,16 +53,42 @@
+ #define SCPI_E_BUSY	12
+ 
+ #define SCP_CMD_CAPABILITY	0x02
++#define SCP_CMD_CLOCKS_CAPS	0x0d
++#define SCP_CMD_CLOCK_GET_INFO	0x0e
++#define SCP_CMD_CLOCK_SET_RATE	0x0f
++#define SCP_CMD_CLOCK_GET_RATE	0x10
+ 
+ #define SCP_CMDS_IMPLEMENTED						  \
+-	0
++	GENMASK(SCP_CMD_CLOCK_GET_RATE, SCP_CMD_CLOCKS_CAPS)
+ 
+ /* end of SRAM A1 */
+ #define SUNXI_SCPI_SHMEM_BASE   0x17e00
+ 
++static int write_clock_info(uintptr_t payload, int clocknr)
++{
++	const char *name, *s;
++	int i;
++
++	name = sunxi_clock_get_name(clocknr);
++	if (!name)
++		return -SCPI_E_PARAM;
++
++	mmio_write_32(payload + 0x0, (clocknr & 0xffff) | (0x03 << 16));
++	mmio_write_32(payload + 0x4, sunxi_clock_get_min_rate(clocknr));
++	mmio_write_32(payload + 0x8, sunxi_clock_get_max_rate(clocknr));
++	for (i = 0, s = name; s[i] != 0; i++)
++		mmio_write_8(payload + 12 + i, s[i]);
++	mmio_write_8(payload + 12 + i, 0);
++
++	return 12 + i;
++}
++
+ static uint32_t scpi_handle_cmd(int cmd, uint8_t *payload_size,
+ 				uintptr_t payload_in, uintptr_t payload_out)
+ {
++	uint32_t par1 = mmio_read_32(payload_in);
++	uint32_t ret;
++
+ 	switch (cmd) {
+ 	case SCP_CMD_CAPABILITY:
+ 		mmio_write_32(payload_out + 0x00, (1U << 16) | (2U << 0));
+@@ -84,6 +110,37 @@ static uint32_t scpi_handle_cmd(int cmd, uint8_t *payload_size,
+ 		mmio_write_32(payload_out + 0x18, 0x0);
+ 		*payload_size = 0x1c;
+ 		return SCPI_OK;
++	case SCP_CMD_CLOCKS_CAPS:
++		/* number of implemented clocks */
++		mmio_write_32(payload_out, sunxi_clock_nr_clocks());
++		*payload_size = 0x4;
++		return SCPI_OK;
++	case SCP_CMD_CLOCK_GET_INFO:
++		ret = write_clock_info(payload_out, par1 & 0xffff);
++		if (ret < 0) {
++			*payload_size = 0;
++			return SCPI_E_PARAM;
++		}
++
++		*payload_size = ret;
++		return SCPI_OK;
++	case SCP_CMD_CLOCK_SET_RATE: {
++		uint32_t freq = mmio_read_32(payload_in + 4);
++
++		ret = sunxi_clock_set_rate(par1 & 0xffff, freq);
++		if (ret < 0)
++			return SCPI_E_RANGE;
++		*payload_size = 0;
++		return SCPI_OK;
++	}
++	case SCP_CMD_CLOCK_GET_RATE:
++		ret = sunxi_clock_get_rate(par1 & 0xffff);
++		if (ret == ~0)
++			return SCPI_E_RANGE;
++
++		mmio_write_32(payload_out, ret);
++		*payload_size = 4;
++		return 0;
+ 	}
+ 
+ 	return SCPI_E_SUPPORT;

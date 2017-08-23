@@ -1,0 +1,317 @@
+From 96fcf67c30ca4526641e08e16ba0992cd15e05c0 Mon Sep 17 00:00:00 2001
+From: Andre Przywara <andre.przywara@arm.com>
+Date: Fri, 23 Sep 2016 01:30:18 +0100
+Subject: [PATCH] sunxi: SCPI: add temperature sensor readout
+
+The SCPI interface provides abstracted access to sensors, to monitor
+voltage, current, power and temperature.
+Introduce the required code to read and decode Allwinner's CPU and GPU
+temperature sensors and export them via the SCPI interface.
+
+Signed-off-by: Andre Przywara <andre.przywara@arm.com>
+---
+ plat/sun50iw1p1/bl31_sunxi_setup.c |   4 +-
+ plat/sun50iw1p1/platform.mk        |   2 +
+ plat/sun50iw1p1/sunxi_private.h    |  10 ++++
+ plat/sun50iw1p1/sunxi_scpi.c       |  46 +++++++++++++-
+ plat/sun50iw1p1/sunxi_sensors.c    |  40 +++++++++++++
+ plat/sun50iw1p1/sunxi_temp.c       | 119 +++++++++++++++++++++++++++++++++++++
+ 6 files changed, 219 insertions(+), 2 deletions(-)
+ create mode 100644 plat/sun50iw1p1/sunxi_sensors.c
+ create mode 100644 plat/sun50iw1p1/sunxi_temp.c
+
+diff --git a/plat/sun50iw1p1/bl31_sunxi_setup.c b/plat/sun50iw1p1/bl31_sunxi_setup.c
+index 4c480e545..503f4006d 100644
+--- a/plat/sun50iw1p1/bl31_sunxi_setup.c
++++ b/plat/sun50iw1p1/bl31_sunxi_setup.c
+@@ -248,9 +248,11 @@ void bl31_platform_setup(void)
+ 
+ 	sunxi_power_setup(socid);
+ 
++	sunxi_ths_setup();
++
+ 	sunxi_setup_clocks(socid);
+ 
+-	NOTICE("SCPI: installed handler, implementation level: 111000\n");
++	NOTICE("SCPI: installed handler, implementation level: 111010\n");
+ }
+ 
+ /*******************************************************************************
+diff --git a/plat/sun50iw1p1/platform.mk b/plat/sun50iw1p1/platform.mk
+index f56e79355..b1b0ac298 100644
+--- a/plat/sun50iw1p1/platform.mk
++++ b/plat/sun50iw1p1/platform.mk
+@@ -54,5 +54,7 @@ BL31_SOURCES		+=	drivers/arm/gic/arm_gic.c		\
+ 				plat/sun50iw1p1/sunxi_scpi.c		\
+ 				plat/sun50iw1p1/sunxi_rsb.c		\
+ 				plat/sun50iw1p1/sunxi_dvfs.c		\
++				plat/sun50iw1p1/sunxi_sensors.c		\
++				plat/sun50iw1p1/sunxi_temp.c		\
+ 				plat/sun50iw1p1/aarch64/sunxi_common.c
+ 
+diff --git a/plat/sun50iw1p1/sunxi_private.h b/plat/sun50iw1p1/sunxi_private.h
+index b98400107..d2ab0e6c2 100644
+--- a/plat/sun50iw1p1/sunxi_private.h
++++ b/plat/sun50iw1p1/sunxi_private.h
+@@ -104,6 +104,16 @@ int sunxi_dvfs_set_index(int index);
+ int sunxi_dvfs_get_index(void);
+ int sunxi_dvfs_get_nr_opp(void);
+ 
++/* Declarations for sunxi_sensors.c */
++int sunxi_setup_sensors(void);
++const char* sunxi_sensor_get_name(int sensornr);
++uint32_t sunxi_sensor_get_value(int sensornr);
++int sunxi_sensors_nr_sensors(void);
++
++/* Declarations for sunxi_temp.c */
++int sunxi_ths_setup(void);
++int sunxi_ths_read_temp(int sensornr);
++
+ /* Gets the SPSR for BL33 entry */
+ uint32_t sunxi_get_spsr_for_bl33_entry(int aarch);
+ 
+diff --git a/plat/sun50iw1p1/sunxi_scpi.c b/plat/sun50iw1p1/sunxi_scpi.c
+index 50aabeb27..4d0d71e97 100644
+--- a/plat/sun50iw1p1/sunxi_scpi.c
++++ b/plat/sun50iw1p1/sunxi_scpi.c
+@@ -62,10 +62,14 @@
+ #define SCP_CMD_CLOCK_GET_INFO	0x0e
+ #define SCP_CMD_CLOCK_SET_RATE	0x0f
+ #define SCP_CMD_CLOCK_GET_RATE	0x10
++#define SCP_CMD_SENSORS_CAPS	0x15
++#define SCP_CMD_SENSORS_INFO	0x16
++#define SCP_CMD_SENSORS_VALUE	0x17
+ 
+ #define SCP_CMDS_IMPLEMENTED						  \
+ 	GENMASK(SCP_CMD_DVFS_GET_INDEX, SCP_CMD_DVFS_CAPABILITY)	| \
+-	GENMASK(SCP_CMD_CLOCK_GET_RATE, SCP_CMD_CLOCKS_CAPS)
++	GENMASK(SCP_CMD_CLOCK_GET_RATE, SCP_CMD_CLOCKS_CAPS)		| \
++	GENMASK(SCP_CMD_SENSORS_VALUE, SCP_CMD_SENSORS_CAPS)
+ 
+ /* end of SRAM A1 */
+ #define SUNXI_SCPI_SHMEM_BASE   0x17e00
+@@ -89,6 +93,25 @@ static int write_clock_info(uintptr_t payload, int clocknr)
+ 	return 12 + i;
+ }
+ 
++static int write_sensor_info(uintptr_t payload, int sensornr)
++{
++	const char *name, *s;
++	int i;
++
++	name = sunxi_sensor_get_name(sensornr);
++	if (!name)
++		return -SCPI_E_PARAM;
++
++	/* no triggers, always temperature sensor (for now) */
++	mmio_write_32(payload + 0x0, (sensornr & 0xffff));
++
++	for (i = 0, s = name; s[i] != 0; i++)
++		mmio_write_8(payload + 4 + i, s[i]);
++	mmio_write_8(payload + 4 + i, 0);
++
++	return 4 + i;
++}
++
+ static uint32_t scpi_handle_cmd(int cmd, uint8_t *payload_size,
+ 				uintptr_t payload_in, uintptr_t payload_out)
+ {
+@@ -176,6 +199,27 @@ static uint32_t scpi_handle_cmd(int cmd, uint8_t *payload_size,
+ 		mmio_write_32(payload_out, sunxi_dvfs_get_index());
+ 		*payload_size = 0x1;
+ 		return SCPI_OK;
++	case SCP_CMD_SENSORS_CAPS:
++		/* number of implemented sensors */
++		mmio_write_32(payload_out, sunxi_sensors_nr_sensors());
++		*payload_size = 0x2;
++		return SCPI_OK;
++	case SCP_CMD_SENSORS_INFO:
++		ret = write_sensor_info(payload_out, par1 & 0xffff);
++		if (ret < 0) {
++			*payload_size = 0;
++			return SCPI_E_PARAM;
++		}
++		*payload_size = ret;
++		return SCPI_OK;
++	case SCP_CMD_SENSORS_VALUE:
++		ret = sunxi_sensor_get_value(par1 & 0xffff);
++		if (ret == ~0)
++			return SCPI_E_RANGE;
++		mmio_write_32(payload_out, ret);
++		mmio_write_32(payload_out + 4, 0);
++		*payload_size = 8;
++		return 0;
+ 	}
+ 
+ 	return SCPI_E_SUPPORT;
+diff --git a/plat/sun50iw1p1/sunxi_sensors.c b/plat/sun50iw1p1/sunxi_sensors.c
+new file mode 100644
+index 000000000..ee8f216b6
+--- /dev/null
++++ b/plat/sun50iw1p1/sunxi_sensors.c
+@@ -0,0 +1,40 @@
++#include <debug.h>
++#include <plat_config.h>
++#include <mmio.h>
++#include <sys/errno.h>
++
++#include "sunxi_def.h"
++#include "sunxi_private.h"
++
++int sunxi_setup_sensors(void)
++{
++	return 0;
++}
++
++const char* sunxi_sensor_get_name(int sensornr)
++{
++	switch(sensornr) {
++	case 0: return "cpu_temp";
++	case 1: return "gpu_temp0";
++	case 2: return "gpu_temp1";
++	}
++
++	return NULL;
++}
++
++uint32_t sunxi_sensor_get_value(int sensornr)
++{
++	switch(sensornr) {
++	case 0:
++	case 1:
++	case 2:
++		return sunxi_ths_read_temp(sensornr);
++	}
++
++	return ~0;
++}
++
++int sunxi_sensors_nr_sensors(void)
++{
++	return 3;
++}
+diff --git a/plat/sun50iw1p1/sunxi_temp.c b/plat/sun50iw1p1/sunxi_temp.c
+new file mode 100644
+index 000000000..8c777a34f
+--- /dev/null
++++ b/plat/sun50iw1p1/sunxi_temp.c
+@@ -0,0 +1,119 @@
++/*
++ * Copyright (c) 2016, ARM Limited and Contributors. All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * Redistributions of source code must retain the above copyright notice, this
++ * list of conditions and the following disclaimer.
++ *
++ * Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * Neither the name of ARM nor the names of its contributors may be used
++ * to endorse or promote products derived from this software without specific
++ * prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include <debug.h>
++#include <plat_config.h>
++#include <mmio.h>
++#include <assert.h>
++#include <bl_common.h>
++#include <context.h>
++#include <context_mgmt.h>
++#include <interrupt_mgmt.h>
++#include <runtime_svc.h>
++#include <sys/errno.h>
++
++#include "sunxi_def.h"
++#include "sunxi_private.h"
++
++#define CCU_BASE	0x1c20000ULL
++#define BUS_CLK_GATING_REG2	0x068
++#define THS_CLK_REG		0x074
++#define BUS_SOFT_RST_REG3	0x2d0
++#define THS_BASE	0x1c25000ULL
++
++#define BIT(n) (1U << (n))
++
++/* temperature = ( MINUPA - reg * MULPA) / DIVPA */
++#define MULPA	25000
++#define DIVPA	214
++#define MINUPA	2170
++static int sun50_th_reg_to_temp(uint32_t reg_data)
++{
++	return ((MINUPA - (int)reg_data) * MULPA) / DIVPA;
++}
++
++/* Initialize the temperature sensor */
++static int init_ths(void)
++{
++	uint32_t reg;
++
++	/* de-assert reset of THS */
++	reg = mmio_read_32(CCU_BASE + BUS_SOFT_RST_REG3);
++	mmio_write_32(CCU_BASE + BUS_SOFT_RST_REG3, reg | BIT(8));
++
++	/* enable THS clock at 4 MHz */
++	reg = mmio_read_32(CCU_BASE + THS_CLK_REG) & ~0x3;
++	mmio_write_32(CCU_BASE + THS_CLK_REG, reg | 0x3 | BIT(31));
++
++	/* un-gate THS clock */
++	reg = mmio_read_32(CCU_BASE + BUS_CLK_GATING_REG2);
++	mmio_write_32(CCU_BASE + BUS_CLK_GATING_REG2, reg | BIT(8));
++
++	/* start calibration */
++	mmio_write_32(THS_BASE + 0x04, BIT(17));
++	/* set aquire times */
++	mmio_write_32(THS_BASE + 0x00, 0x190);
++	mmio_write_32(THS_BASE + 0x40, 0x190 << 16);
++	/* enable filter, average over 8 values */
++	mmio_write_32(THS_BASE + 0x70, 0x06);
++	/* enable sensors 0-2 (CPU & GPUs) measurement */
++	reg = mmio_read_32(THS_BASE + 0x40);
++	mmio_write_32(THS_BASE + 0x40, reg | BIT(0) | BIT(1) | BIT(2));
++
++	return 0;
++}
++
++/* Setup the temperature sensor */
++int sunxi_ths_setup(void)
++{
++	int ret;
++
++	NOTICE("Configuring thermal sensors\n");
++
++	ret = init_ths();
++	if (ret) {
++		ERROR("THS: cannot initialize temperature sensor\n");
++		return -1;
++	}
++
++	return ret;
++}
++
++int sunxi_ths_read_temp(int sensor)
++{
++	int reg;
++
++	if (sensor < 0 || sensor > 2)
++		return ~0;
++
++	reg = mmio_read_32(THS_BASE + 0x80 + (4 * sensor));
++
++	return sun50_th_reg_to_temp(reg & 0xfff);
++}

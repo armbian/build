@@ -1,0 +1,195 @@
+From e2b4f43ae7c138f3502e3df4e3928827a169592b Mon Sep 17 00:00:00 2001
+From: Andre Przywara <andre.przywara@arm.com>
+Date: Sat, 10 Dec 2016 12:22:49 +0000
+Subject: [PATCH] sunxi: SCPI: add DVFS functionality
+
+DVFS (dynamic voltage and frequency scaling) allows an OS to set certain
+CPU operating points described by a pair of frequency and required voltage.
+Using the recently introduced wrappers for the CPU voltage and the PLL
+frequency implement the required SCPI boilerplate to export those
+operating points and allow an OS to choose from a provided list.
+The actual frequency/voltage data used here is taken from Allwinner's BSP
+code, which seems to provide stable and sensible values.
+
+Signed-off-by: Andre Przywara <andre.przywara@arm.com>
+---
+ plat/sun50iw1p1/bl31_sunxi_setup.c |  2 +-
+ plat/sun50iw1p1/platform.mk        |  1 +
+ plat/sun50iw1p1/sunxi_dvfs.c       | 65 ++++++++++++++++++++++++++++++++++++++
+ plat/sun50iw1p1/sunxi_private.h    |  7 ++++
+ plat/sun50iw1p1/sunxi_scpi.c       | 35 ++++++++++++++++++++
+ 5 files changed, 109 insertions(+), 1 deletion(-)
+ create mode 100644 plat/sun50iw1p1/sunxi_dvfs.c
+
+diff --git a/plat/sun50iw1p1/bl31_sunxi_setup.c b/plat/sun50iw1p1/bl31_sunxi_setup.c
+index 7c1109f4e..4c480e545 100644
+--- a/plat/sun50iw1p1/bl31_sunxi_setup.c
++++ b/plat/sun50iw1p1/bl31_sunxi_setup.c
+@@ -250,7 +250,7 @@ void bl31_platform_setup(void)
+ 
+ 	sunxi_setup_clocks(socid);
+ 
+-	NOTICE("SCPI: installed handler, implementation level: 101000\n");
++	NOTICE("SCPI: installed handler, implementation level: 111000\n");
+ }
+ 
+ /*******************************************************************************
+diff --git a/plat/sun50iw1p1/platform.mk b/plat/sun50iw1p1/platform.mk
+index 95cff562f..f56e79355 100644
+--- a/plat/sun50iw1p1/platform.mk
++++ b/plat/sun50iw1p1/platform.mk
+@@ -53,5 +53,6 @@ BL31_SOURCES		+=	drivers/arm/gic/arm_gic.c		\
+ 				plat/sun50iw1p1/sunxi_sip_svc.c		\
+ 				plat/sun50iw1p1/sunxi_scpi.c		\
+ 				plat/sun50iw1p1/sunxi_rsb.c		\
++				plat/sun50iw1p1/sunxi_dvfs.c		\
+ 				plat/sun50iw1p1/aarch64/sunxi_common.c
+ 
+diff --git a/plat/sun50iw1p1/sunxi_dvfs.c b/plat/sun50iw1p1/sunxi_dvfs.c
+new file mode 100644
+index 000000000..16049e968
+--- /dev/null
++++ b/plat/sun50iw1p1/sunxi_dvfs.c
+@@ -0,0 +1,65 @@
++#include <debug.h>
++#include <plat_config.h>
++#include <mmio.h>
++#include <sys/errno.h>
++
++#include "sunxi_def.h"
++#include "sunxi_private.h"
++
++struct op_points
++{
++	uint32_t freq;
++	uint32_t voltage;
++} sunxi_op_points[] = {
++	{ 408, 1000}, { 648, 1040}, { 816, 1080}, { 912, 1120}, { 960, 1160},
++	{1008, 1200}, {1056, 1240}, {1104, 1260}, {1152, 1300}
++};
++
++#define NR_OPP (sizeof(sunxi_op_points) / sizeof(sunxi_op_points[0]))
++
++int current_opp_index = 2;
++int current_opp_limit = NR_OPP;
++
++uint32_t sunxi_dvfs_get_get_opp_voltage(int oppnr)
++{
++	if (oppnr < 0 || oppnr >= NR_OPP)
++		return ~0;
++
++	return sunxi_op_points[oppnr].voltage;
++}
++
++uint32_t sunxi_dvfs_get_get_opp_frequency(int oppnr)
++{
++	if (oppnr < 0 || oppnr >= NR_OPP)
++		return ~0;
++
++	return sunxi_op_points[oppnr].freq * 1000000;
++}
++
++int sunxi_dvfs_set_index(int index)
++{
++	if (index < 0 || index >= NR_OPP)
++		return -1;
++
++	if (index < current_opp_index) {
++		sunxi_clock_set_cpu_clock(sunxi_op_points[index].freq, 1);
++		sunxi_power_set_cpu_voltage(sunxi_op_points[index].voltage);
++	} else {
++		sunxi_power_set_cpu_voltage(sunxi_op_points[index].voltage);
++		sunxi_clock_set_cpu_clock(sunxi_op_points[index].freq, 1);
++	}
++
++	current_opp_index = index;
++
++	return 0;
++}
++
++int sunxi_dvfs_get_index(void)
++{
++	return current_opp_index;
++}
++
++int sunxi_dvfs_get_nr_opp(void)
++{
++	return NR_OPP;
++}
+diff --git a/plat/sun50iw1p1/sunxi_private.h b/plat/sun50iw1p1/sunxi_private.h
+index 07a329598..b98400107 100644
+--- a/plat/sun50iw1p1/sunxi_private.h
++++ b/plat/sun50iw1p1/sunxi_private.h
+@@ -97,6 +97,13 @@ int sunxi_rsb_write(uint8_t address, uint8_t value);
+ void sunxi_rsb_wait(const char *desc);
+ int sunxi_rsb_configure(uint16_t hw_addr, uint8_t rt_addr);
+ 
++/* Declarations for sunxi_dvfs.c */
++uint32_t sunxi_dvfs_get_get_opp_voltage(int oppnr);
++uint32_t sunxi_dvfs_get_get_opp_frequency(int oppnr);
++int sunxi_dvfs_set_index(int index);
++int sunxi_dvfs_get_index(void);
++int sunxi_dvfs_get_nr_opp(void);
++
+ /* Gets the SPSR for BL33 entry */
+ uint32_t sunxi_get_spsr_for_bl33_entry(int aarch);
+ 
+diff --git a/plat/sun50iw1p1/sunxi_scpi.c b/plat/sun50iw1p1/sunxi_scpi.c
+index 3ca287ed2..50aabeb27 100644
+--- a/plat/sun50iw1p1/sunxi_scpi.c
++++ b/plat/sun50iw1p1/sunxi_scpi.c
+@@ -53,12 +53,18 @@
+ #define SCPI_E_BUSY	12
+ 
+ #define SCP_CMD_CAPABILITY	0x02
++#define SCP_CMD_DVFS_CAPABILITY	0x08
++#define SCP_CMD_DVFS_GET_INFO	0x09
++#define SCP_CMD_DVFS_SET_INDEX	0x0a
++#define SCP_CMD_DVFS_GET_INDEX	0x0b
++#define SCP_CMD_DVFS_GET_STAT	0x0c
+ #define SCP_CMD_CLOCKS_CAPS	0x0d
+ #define SCP_CMD_CLOCK_GET_INFO	0x0e
+ #define SCP_CMD_CLOCK_SET_RATE	0x0f
+ #define SCP_CMD_CLOCK_GET_RATE	0x10
+ 
+ #define SCP_CMDS_IMPLEMENTED						  \
++	GENMASK(SCP_CMD_DVFS_GET_INDEX, SCP_CMD_DVFS_CAPABILITY)	| \
+ 	GENMASK(SCP_CMD_CLOCK_GET_RATE, SCP_CMD_CLOCKS_CAPS)
+ 
+ /* end of SRAM A1 */
+@@ -141,6 +147,35 @@ static uint32_t scpi_handle_cmd(int cmd, uint8_t *payload_size,
+ 		mmio_write_32(payload_out, ret);
+ 		*payload_size = 4;
+ 		return 0;
++	case SCP_CMD_DVFS_CAPABILITY:
++		/* number of implemented voltage domains: only one */
++		mmio_write_32(payload_out, 1);
++		*payload_size = 0x1;
++		return SCPI_OK;
++	case SCP_CMD_DVFS_GET_INFO: {
++		int i, nr_opp = sunxi_dvfs_get_nr_opp();
++
++		mmio_write_32(payload_out, nr_opp << 8);
++		for (i = 0; i < nr_opp; i++) {
++			mmio_write_32(payload_out + 4 + 2 * i * 4,
++				      sunxi_dvfs_get_get_opp_frequency(i));
++			mmio_write_32(payload_out + 4 + 2 * i * 4 + 4,
++				      sunxi_dvfs_get_get_opp_voltage(i));
++		}
++		*payload_size = 4 + 2 * nr_opp * 4;
++		return SCPI_OK;
++	}
++	case SCP_CMD_DVFS_SET_INDEX:
++		if ((par1 & 0xff) != 0)
++			return SCPI_E_PARAM;
++
++		if (sunxi_dvfs_set_index((par1 >> 8) & 0xff))
++			return SCPI_E_RANGE;
++		return SCPI_OK;
++	case SCP_CMD_DVFS_GET_INDEX:
++		mmio_write_32(payload_out, sunxi_dvfs_get_index());
++		*payload_size = 0x1;
++		return SCPI_OK;
+ 	}
+ 
+ 	return SCPI_E_SUPPORT;
