@@ -21,8 +21,8 @@ itest.b *0x28 == 0x03 && echo "U-boot loaded from SPI"
 
 echo "Boot script loaded from ${devtype}"
 
-if test -e ${devtype} 0 ${prefix}armbianEnv.txt; then
-	load ${devtype} 0 ${load_addr} ${prefix}armbianEnv.txt
+if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
+	load ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt
 	env import -t ${load_addr} ${filesize}
 fi
 
@@ -40,36 +40,36 @@ setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs
 if test "${disp_mem_reserves}" = "off"; then setenv bootargs "${bootargs} sunxi_ve_mem_reserve=0 sunxi_g2d_mem_reserve=0 sunxi_fb_mem_reserve=16"; fi
 if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"; fi
 
-load ${devtype} 0 ${ramdisk_addr_r} ${prefix}uInitrd
-load ${devtype} 0 ${kernel_addr_r} ${prefix}zImage
+load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
+load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}zImage
 
-if test -e ${devtype} 0 "${prefix}.next"; then
+if test -e ${devtype} ${devnum} "${prefix}.next"; then
 	echo "Found mainline kernel configuration"
-	load ${devtype} 0 ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 	fdt addr ${fdt_addr_r}
 	fdt resize 65536
 	for overlay_file in ${overlays}; do
-		if load ${devtype} 0 ${load_addr} ${prefix}dtb/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
+		if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
 			echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
 			fdt apply ${load_addr} || setenv overlay_error "true"
 		fi
 	done
 	for overlay_file in ${user_overlays}; do
-		if load ${devtype} 0 ${load_addr} ${prefix}overlay-user/${overlay_file}.dtbo; then
+		if load ${devtype} ${devnum} ${load_addr} ${prefix}overlay-user/${overlay_file}.dtbo; then
 			echo "Applying user provided DT overlay ${overlay_file}.dtbo"
 			fdt apply ${load_addr} || setenv overlay_error "true"
 		fi
 	done
 	if test "${overlay_error}" = "true"; then
 		echo "Error applying DT overlays, restoring original DT"
-		load ${devtype} 0 ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+		load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 	else
-		if load ${devtype} 0 ${load_addr} ${prefix}dtb/overlay/${overlay_prefix}-fixup.scr; then
+		if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix}-fixup.scr; then
 			echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
 			source ${load_addr}
 		fi
-		if test -e ${devtype} 0 ${prefix}fixup.scr; then
-			load ${devtype} 0 ${load_addr} ${prefix}fixup.scr
+		if test -e ${devtype} ${devnum} ${prefix}fixup.scr; then
+			load ${devtype} ${devnum} ${load_addr} ${prefix}fixup.scr
 			echo "Applying user provided fixup script (fixup.scr)"
 			source ${load_addr}
 		fi
@@ -77,7 +77,7 @@ if test -e ${devtype} 0 "${prefix}.next"; then
 	bootz ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 else
 	echo "Found legacy kernel configuration"
-	load ${devtype} 0 ${fdt_addr_r} ${prefix}script.bin
+	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}script.bin
 	bootz ${kernel_addr_r} ${ramdisk_addr_r}
 fi
 

@@ -8,6 +8,9 @@ case $BRANCH in
 	CAN_BUILD_STRETCH=no
 	;;
 
+	next)
+	;;
+
 	dev)
 	ATFSOURCE='https://github.com/apritzel/arm-trusted-firmware'
 	ATFDIR='arm-trusted-firmware-sunxi-mainline'
@@ -15,12 +18,13 @@ case $BRANCH in
 	ATF_USE_GCC='> 6.0'
 	ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
 
-	BOOTSOURCE='https://github.com/zador-blood-stained/u-boot-sun50i.git'
-	BOOTDIR='u-boot-sun50i'
+	BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
+	BOOTDIR=$MAINLINE_UBOOT_DIR
+	#BOOTBRANCH=$MAINLINE_UBOOT_BRANCH
 	BOOTBRANCH='branch:master'
 	BOOTPATCHDIR='u-boot-sun50i-dev'
 	UBOOT_USE_GCC='> 7.0'
-	UBOOT_TARGET_MAP="$BOARD;;u-boot-sunxi-with-spl.bin"
+	UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
 	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 
 	KERNELSOURCE='https://github.com/Icenowy/linux/'
@@ -31,6 +35,15 @@ case $BRANCH in
 	KERNELPATCHDIR='sun50i-dev'
 	;;
 esac
+
+write_uboot_platform()
+{
+	# default
+	[[ -f $1/u-boot-with-dtb.bin ]] && dd if=$1/u-boot-with-dtb.bin of=$2 bs=1k seek=8 conv=fsync > /dev/null 2>&1 || true
+	# mainline
+	[[ -f $1/sunxi-spl.bin ]] && dd if=$1/sunxi-spl.bin of=$2 bs=8k seek=1 conv=fsync > /dev/null 2>&1
+	[[ -f $1/u-boot.itb ]] && dd if=$1/u-boot.itb of=$2 bs=8k seek=5 conv=fsync > /dev/null 2>&1 || true
+}
 
 setup_write_uboot_platform()
 {
