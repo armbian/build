@@ -1,5 +1,5 @@
 diff --git a/scripts/package/builddeb b/scripts/package/builddeb
-index 3c575cd0..af5abebc 100755
+index aad67000..b4f574e7 100755
 --- a/scripts/package/builddeb
 +++ b/scripts/package/builddeb
 @@ -29,6 +29,28 @@ create_package() {
@@ -20,14 +20,14 @@ index 3c575cd0..af5abebc 100755
 +		echo "exit 0" >> $pdir/DEBIAN/postinst
 +		chmod 775 $pdir/DEBIAN/postinst
 +	fi
-+	
++
 +	# Create postinstall script for headers
 +	if [[ "$1" == *headers* ]]; then
 +		echo "cd /usr/src/linux-headers-$version; echo \"Compiling headers - please wait ...\"; make -s scripts >/dev/null 2>&1" >> $pdir/DEBIAN/postinst
 +		echo "exit 0" >> $pdir/DEBIAN/postinst
 +		chmod 775 $pdir/DEBIAN/postinst
 +	fi
-+	
++
  	# Create the package
  	dpkg-gencontrol $forcearch -Vkernel:debarch="${debarch}" -p$pname -P"$pdir"
  	dpkg --build "$pdir" ..
@@ -49,17 +49,7 @@ index 3c575cd0..af5abebc 100755
  dbg_packagename=$packagename-dbg
  debarch=
  forcearch=
-@@ -119,6 +143,9 @@ um)
- parisc|mips|powerpc)
- 	installed_image_path="boot/vmlinux-$version"
- 	;;
-+arm64)
-+	installed_image_path="boot/Image-$version"
-+	;;
- *)
- 	installed_image_path="boot/vmlinuz-$version"
- esac
-@@ -126,7 +153,9 @@ esac
+@@ -126,7 +150,9 @@ esac
  BUILD_DEBUG="$(grep -s '^CONFIG_DEBUG_INFO=y' $KCONFIG_CONFIG || true)"
  
  # Setup the directory structure
@@ -70,21 +60,7 @@ index 3c575cd0..af5abebc 100755
  mkdir -m 755 -p "$tmpdir/DEBIAN"
  mkdir -p "$tmpdir/lib" "$tmpdir/boot"
  mkdir -p "$fwdir/lib/firmware/$version/"
-@@ -143,12 +172,7 @@ else
- 	cp System.map "$tmpdir/boot/System.map-$version"
- 	cp $KCONFIG_CONFIG "$tmpdir/boot/config-$version"
- fi
--# Not all arches include the boot path in KBUILD_IMAGE
--if [ -e $KBUILD_IMAGE ]; then
--	cp $KBUILD_IMAGE "$tmpdir/$installed_image_path"
--else
--	cp arch/$ARCH/boot/$KBUILD_IMAGE "$tmpdir/$installed_image_path"
--fi
-+cp arch/$ARCH/boot/Image "$tmpdir/$installed_image_path"
- 
- if grep -q "^CONFIG_OF=y" $KCONFIG_CONFIG ; then
- 	# Only some architectures with OF support have this target
-@@ -185,6 +209,11 @@ if grep -q '^CONFIG_MODULES=y' $KCONFIG_CONFIG ; then
+@@ -180,6 +206,11 @@ if grep -q '^CONFIG_MODULES=y' $KCONFIG_CONFIG ; then
  	fi
  fi
  
@@ -96,19 +72,7 @@ index 3c575cd0..af5abebc 100755
  if [ "$ARCH" != "um" ]; then
  	$MAKE headers_check KBUILD_SRC=
  	$MAKE headers_install KBUILD_SRC= INSTALL_HDR_PATH="$libc_headers_dir/usr"
-@@ -209,9 +238,11 @@ for script in postinst postrm preinst prerm ; do
- set -e
- 
- # Pass maintainer script parameters to hook scripts
-+
- export DEB_MAINT_PARAMS="\$*"
- 
- # Tell initramfs builder whether it's wanted
-+
- export INITRD=$want_initrd
- 
- test -d $debhookdir/$script.d && run-parts --arg="$version" --arg="/$installed_image_path" $debhookdir/$script.d
-@@ -220,6 +251,17 @@ EOF
+@@ -215,6 +246,55 @@ EOF
  	chmod 755 "$tmpdir/DEBIAN/$script"
  done
  
@@ -118,41 +82,77 @@ index 3c575cd0..af5abebc 100755
 +sed -e "s/set -e//g" -i $tmpdir/DEBIAN/postinst
 +sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/postinst
 +cat >> $tmpdir/DEBIAN/postinst <<EOT 
++if [ "\$(grep nand /proc/partitions)" != "" ] && [ "\$(grep mmc /proc/partitions)" = "" ]; then
++mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /$installed_image_path /boot/uImage  > /dev/null 2>&1
++cp /boot/uImage /tmp/uImage
++sync
++mountpoint -q /boot || mount /boot
++cp /tmp/uImage /boot/uImage
++rm -f /$installed_image_path
++else
 +ln -sf $(basename $installed_image_path) /boot/Image > /dev/null 2>&1 || mv /$installed_image_path /boot/Image
++fi
 +touch /boot/.next
 +exit 0
 +EOT
++##
++## FAT install workaround
++##
++sed -e "s/set -e//g" -i $tmpdir/DEBIAN/preinst
++sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/preinst
++cat >> $tmpdir/DEBIAN/preinst <<EOT 
++# exit if we are running chroot
++if [ "\$(stat -c %d:%i /)" != "\$(stat -c %d:%i /proc/1/root/.)" ]; then exit 0; fi
++
++check_and_unmount (){
++boot_device=\$(mountpoint -d /boot)
++
++for file in /dev/* ; do
++	CURRENT_DEVICE=\$(printf "%d:%d" \$(stat --printf="0x%t 0x%T" \$file))
++	if [[ "\$CURRENT_DEVICE" = "\$boot_device" ]]; then
++		boot_partition=\$file
++		break;
++	fi
++done
++
++bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
++if [ "\$bootfstype" = "vfat" ]; then 
++umount /boot; 
++rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/Image /boot/uImage
++fi
++}
++mountpoint -q /boot && check_and_unmount
++EOT
++echo "exit 0" >> $tmpdir/DEBIAN/preinst 
 +
  # Try to determine maintainer and email values
  if [ -n "$DEBEMAIL" ]; then
         email=$DEBEMAIL
-@@ -337,16 +379,24 @@ if grep -q '^CONFIG_GCC_PLUGINS=y' $KCONFIG_CONFIG ; then
+@@ -318,6 +398,7 @@ fi
+ # Build kernel header package
+ (cd $srctree; find . -name Makefile\* -o -name Kconfig\* -o -name \*.pl) > "$objtree/debian/hdrsrcfiles"
+ (cd $srctree; find arch/*/include include scripts -type f) >> "$objtree/debian/hdrsrcfiles"
++(cd $srctree; find security/*/include -type f) >> "$objtree/debian/hdrsrcfiles"
+ (cd $srctree; find arch/$SRCARCH -name module.lds -o -name Kbuild.platforms -o -name Platform) >> "$objtree/debian/hdrsrcfiles"
+ (cd $srctree; find $(find arch/$SRCARCH -name include -o -name scripts -type d) -type f) >> "$objtree/debian/hdrsrcfiles"
+ if grep -q '^CONFIG_STACK_VALIDATION=y' $KCONFIG_CONFIG ; then
+@@ -329,12 +410,15 @@ if grep -q '^CONFIG_GCC_PLUGINS=y' $KCONFIG_CONFIG ; then
  fi
  destdir=$kernel_headers_dir/usr/src/linux-headers-$version
  mkdir -p "$destdir"
-+######################## headers patch
-+ZACNI=$(pwd)
-+cd $destdir
-+patch -p1 < /tmp/headers-debian-byteshift.patch
-+cd $ZACNI
-+######################## headers patch
++(cd $destdir; patch -p1 < /tmp/headers-debian-byteshift.patch)
  (cd $srctree; tar -c -f - -T -) < "$objtree/debian/hdrsrcfiles" | (cd $destdir; tar -xf -)
  (cd $objtree; tar -c -f - -T -) < "$objtree/debian/hdrobjfiles" | (cd $destdir; tar -xf -)
  (cd $objtree; cp $KCONFIG_CONFIG $destdir/.config) # copy .config manually to be where it's expected to be
  ln -sf "/usr/src/linux-headers-$version" "$kernel_headers_dir/lib/modules/$version/build"
  rm -f "$objtree/debian/hdrsrcfiles" "$objtree/debian/hdrobjfiles"
  
-+(cd "$destdir"; make M=scripts clean)
++(cd $destdir; make M=scripts clean)
 +
  cat <<EOF >> debian/control
  
  Package: $kernel_headers_packagename
--Provides: linux-headers, linux-headers-2.6
-+Provides: linux-headers
- Architecture: any
- Description: Linux kernel headers for $KERNELRELEASE on \${kernel:debarch}
-  This package provides kernel header files for $KERNELRELEASE on \${kernel:debarch}
-@@ -372,6 +422,16 @@ fi
+@@ -363,6 +447,16 @@ fi
  
  cat <<EOF >> debian/control
  
@@ -169,7 +169,7 @@ index 3c575cd0..af5abebc 100755
  Package: $libc_headers_packagename
  Section: devel
  Provides: linux-kernel-headers
-@@ -383,7 +443,7 @@ EOF
+@@ -374,7 +468,7 @@ EOF
  
  if [ "$ARCH" != "um" ]; then
  	create_package "$kernel_headers_packagename" "$kernel_headers_dir"
