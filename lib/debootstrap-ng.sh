@@ -334,7 +334,7 @@ prepare_partitions()
 			btrfs)
 				# Used for server images, currently no swap functionality, so disk space
 				# requirements are rather low since rootfs gets filled with compress-force=zlib
-				local sdsize=$(bc -l <<< "scale=0; (($imagesize * 0.9) / 4 + 1) * 4")
+				local sdsize=$(bc -l <<< "scale=0; (($imagesize * 0.8) / 4 + 1) * 4")
 				;;
 			*)
 				# Hardcoded overhead +40% and +128MB for ext4 is needed for desktop images,
