@@ -29,7 +29,10 @@ ParseOptions() {
 			for release in "${DISTROS[@]}"; do
 				display_alert "Displaying repository contents for" "$release" "ext"
 				aptly repo show -with-packages -config=../config/aptly.conf $release | tail -n +7
+				aptly repo show -with-packages -config=../config/aptly.conf ${release}-desktop | tail -n +7
 			done
+			display_alert "Displaying repository contents for" "common utils" "ext"
+			aptly repo show -with-packages -config=../config/aptly.conf utils | tail -n +7
 			echo "done."
 			exit 0
 			;;
@@ -42,6 +45,14 @@ ParseOptions() {
 			echo "done."
 			exit 0
 			;;
+		purge)
+			for release in "${DISTROS[@]}"; do
+				repo-remove-old-packages "$release" "armhf" "5"
+				repo-remove-old-packages "$release" "arm64" "5"
+				aptly -config=../config/aptly.conf -passphrase=$GPG_PASS publish update $release
+			done
+			exit 0
+			;;
 		*)
 			DisplayUsage
 			exit 0
@@ -49,8 +60,36 @@ ParseOptions() {
 	esac
 } # ParseOptions
 
+# Removes old packages in the received repo
+#
+# $1: Repository
+# $2: Architecture
+# $3: Amount of packages to keep
+repo-remove-old-packages() {
+    local repo=$1
+    local arch=$2
+    local keep=$3
+
+    for pkg in $(aptly repo search -config=../config/aptly.conf $repo "Architecture ($arch)" | grep -v "ERROR: no results" | sort -rV); do
+        local pkg_name=$(echo $pkg | cut -d_ -f1)
+        if [ "$pkg_name" != "$cur_pkg" ]; then
+            local count=0
+            local deleted=""
+            local cur_pkg="$pkg_name"
+        fi
+        test -n "$deleted" && continue
+        let count+=1
+        if [ $count -gt $keep ]; then
+            pkg_version=$(echo $pkg | cut -d_ -f2)
+            aptly repo remove -config=../config/aptly.conf $repo "Name ($pkg_name), Version (<= $pkg_version)"
+            deleted='yes'
+        fi
+    done
+}
+
 DisplayUsage() {
-	echo -e "Usage: repository show | update\n"
+	echo -e "Usage: repository show | update | purge\n"
+	echo -e "Purge removes all but last 5 versions\n"
 } # DisplayUsage
 
 ParseOptions "$@"
