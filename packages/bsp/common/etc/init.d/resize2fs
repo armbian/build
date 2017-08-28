@@ -119,35 +119,50 @@ do_expand_partition()
 	fi
 }
 
-do_expand_filesystem()
+do_expand_ext4()
 {
-	local rootpart=$(findmnt -n -o SOURCE /) # i.e. /dev/mmcblk0p1
+	echo -e "\n### [resize2fs] Start resizing ext4 partition $1 now\n" >> ${Log}
+	resize2fs ${rootpart} >> ${Log} 2>&1
+}
 
-	echo -e "\n### [resize2fs] Start resizing partition now\n" >> ${Log}
-	resize2fs $rootpart >> ${Log} 2>&1
+do_expand_btrfs()
+{
+	echo -e "\n### [btrfs resize] Start resizing btrfs partition $1 now\n" >> ${Log}
+	btrfs filesystem resize max / >> ${Log} 2>&1
 }
 
 case "$1" in
 	start)
-	# skip resizing if rootfs is not ext4 or if explicitly disabled
-	if [[ $(findmnt -n -o FSTYPE /) != ext4 || -f /root/.no_rootfs_resize ]]; then
-		systemctl disable resize2fs
+		# skip resizing if rootfs is neither ext4 not btrfs or if explicitly disabled
+		if [[ -f /root/.no_rootfs_resize ]]; then
+			systemctl disable resize2fs
+			exit 0
+		fi
+
+		rootfstype=$(findmnt -n -o FSTYPE /)
+		rootpart=$(findmnt -n -o SOURCE /) # i.e. /dev/mmcblk0p1
+		case ${rootfstype} in
+			ext4)
+				# first stage - resize the rootfs partition
+				[[ ! -f /var/lib/armbian/resize_second_stage ]] && do_expand_partition
+				# second stage - resize the filesystem
+				[[ ! -f /var/run/resize2fs-reboot ]] && do_expand_ext4 ${rootpart}
+				;;
+			btrfs)
+				# first stage - resize the rootfs partition
+				[[ ! -f /var/lib/armbian/resize_second_stage ]] && do_expand_partition
+				# second stage - resize the filesystem
+				do_expand_btrfs ${rootpart} && systemctl disable resize2fs
+				;;
+		esac
+
+		# disable itself
+		[[ ! -f /var/run/resize2fs-reboot ]] && systemctl disable resize2fs
 		exit 0
-	fi
-
-	# first stage - resize the partition
-	[[ ! -f /var/lib/armbian/resize_second_stage ]] && do_expand_partition
-
-	# second stage - resize the filesystem
-	[[ ! -f /var/run/resize2fs-reboot ]] && do_expand_filesystem
-
-	# disable itself
-	[[ ! -f /var/run/resize2fs-reboot ]] && systemctl disable resize2fs
-	exit 0
-	;;
+		;;
 
 	*)
-	echo "Usage: $0 start"
-	exit 0
+		echo "Usage: $0 start"
+		exit 0
 	;;
 esac

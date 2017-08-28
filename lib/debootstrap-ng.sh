@@ -291,7 +291,7 @@ prepare_partitions()
 	# mountopts[ext2] is empty
 	# mountopts[fat] is empty
 	# mountopts[f2fs] is empty
-	# mountopts[btrfs] is empty
+	mountopts[btrfs]=',commit=600,compress=lzo'
 	# mountopts[nfs] is empty
 
 	# stage: determine partition configuration
@@ -330,9 +330,19 @@ prepare_partitions()
 		fi
 	else
 		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE )) # MiB
-		# Hardcoded overhead +40% and +128MB for ext4 is needed for desktop images, for CLI it can be lower
-		# also add extra 128 MiB for the emergency swap file creation and align the size up to 4MiB
-		local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.4) / 1 + 128) / 4 + 1) * 4")
+		case $ROOTFS_TYPE in
+			btrfs)
+				# Used for server images, currently no swap functionality, so disk space
+				# requirements are rather low since rootfs gets filled with compress-force=zlib
+				local sdsize=$(bc -l <<< "scale=0; (($imagesize * 0.9) / 4 + 1) * 4")
+				;;
+			*)
+				# Hardcoded overhead +40% and +128MB for ext4 is needed for desktop images,
+				# for CLI it could be lower. Also add extra 128 MiB for the emergency swap
+				# file creation and align the size up to 4MiB
+				local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.4) / 1 + 128) / 4 + 1) * 4")
+				;;
+		esac
 	fi
 
 	# stage: create blank image
