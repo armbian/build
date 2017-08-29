@@ -76,9 +76,16 @@ create_images_list()
 	#
 	# if parameter is true, than we build beta list
 	#
-	for board in $SRC/config/boards/*.conf; do
+local naming="$SRC/config/boards/*.conf";
+        if [[ "$EXPERT" == "yes" ]]; then naming=$naming" $SRC/config/boards/*.wip"; fi
+	for board in $naming; do
 		BOARD=$(basename $board | cut -d'.' -f1)
-		source $SRC/config/boards/$BOARD.conf
+		local file="${SRC}/config/boards/${BOARD}"
+		if [[ -f $file".conf" ]]; then source $file".conf"; fi
+		if [[ -f $file".wip"  ]]; then source $file".wip"; fi
+
+
+
 		if [[ -n $CLI_TARGET && -z $1 ]]; then
 
 			# RELEASES : BRANCHES
