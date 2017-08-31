@@ -62,8 +62,11 @@ add_user()
 
 if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*i}" ]; then
 	# detect desktop
-	if [ $(dpkg-query -W -f='${db:Status-Abbrev}\n' nodm 2>/dev/null) != "*ii*" ]; then DESKTOPDETECT="nodm"; fi
-	if [ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lightdm 2>/dev/null) != "*ii*" ]; then DESKTOPDETECT="lightdm"; fi
+	desktop_nodm=$(dpkg-query -W -f='${db:Status-Abbrev}\n' nodm 2>/dev/null)
+	desktop_lightdm=$(dpkg-query -W -f='${db:Status-Abbrev}\n' lightdm 2>/dev/null)
+
+	if [ -n "$desktop_nodm" ]; then DESKTOPDETECT="nodm"; fi
+	if [ -n "$desktop_lightdm" ]; then DESKTOPDETECT="lightdm"; fi
 
 	if [ "$IMAGE_TYPE" != "nightly" ]; then
 		echo -e "\n\e[0;31mThank you for choosing Armbian! Support: \e[1m\e[39mwww.armbian.com\x1B[0m\n"
