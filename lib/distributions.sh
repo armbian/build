@@ -162,7 +162,7 @@ install_common()
 
 	# install initial asound.state if defined
 	mkdir -p $SDCARD/var/lib/alsa/
-	[[ -n $ASOUND_STATE ]] && cp $SRC/config/$ASOUND_STATE $SDCARD/var/lib/alsa/asound.state
+	[[ -n $ASOUND_STATE ]] && cp $SRC/packages/blobs/asound.state/$ASOUND_STATE $SDCARD/var/lib/alsa/asound.state
 
 	# save initial armbian-release state
 	cp $SDCARD/etc/armbian-release $SDCARD/etc/armbian-image-release
