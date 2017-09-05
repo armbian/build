@@ -26,7 +26,7 @@ if load ${boot_interface} 0:1 ${loadaddr} ${prefix}armbianEnv.txt; then
 	env import -t ${loadaddr} ${filesize}
 fi
 
-setenv bootargs "console=ttyS0,115200 root=${rootdev} rootwait rootfstype=${rootfstype} ubootdev=${boot_interface} scandelay loglevel=${verbosity} ${extraargs}"
+setenv bootargs "console=ttyS0,115200 root=${rootdev} rootwait rootfstype=${rootfstype} ubootdev=${boot_interface} scandelay loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 
 load ${boot_interface} 0:1 ${fdt_addr} ${prefix}dtb/${fdtfile}
 load ${boot_interface} 0:1 ${ramdisk_addr_r} ${prefix}uInitrd

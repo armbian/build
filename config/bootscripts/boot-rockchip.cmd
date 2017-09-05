@@ -16,7 +16,7 @@ if load ${devtype} ${devnum}:1 ${ramdisk_addr_r} /boot/armbianEnv.txt || load ${
 	env import -t ${ramdisk_addr_r} ${filesize}
 fi
 
-setenv bootargs "consoleblank=0 scandelay root=${rootdev} rw console=${console} rootfstype=ext4 loglevel=${verbosity} rootwait ${extraargs}"
+setenv bootargs "consoleblank=0 scandelay root=${rootdev} rw console=${console} rootfstype=ext4 loglevel=${verbosity} rootwait usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 ext4load ${devtype} ${devnum}:1 ${fdt_addr_r} /boot/dtb/${fdt_file} || fatload ${devtype} ${devnum}:1 ${fdt_addr_r} dtb/${fdt_file} || ext4load ${devtype} ${devnum}:1 ${fdt_addr_r} dtb/${fdt_file}
 ext4load ${devtype} ${devnum}:1 ${ramdisk_addr_r} /boot/uInitrd || fatload ${devtype} ${devnum}:1 ${ramdisk_addr_r} uInitrd || ext4load ${devtype} ${devnum}:1 ${ramdisk_addr_r} uInitrd
 ext4load ${devtype} ${devnum}:1 ${kernel_addr_r} /boot/zImage || fatload ${devtype} ${devnum}:1 ${kernel_addr_r} zImage || ext4load ${devtype} ${devnum}:1 ${kernel_addr_r} zImage
