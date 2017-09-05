@@ -274,7 +274,8 @@ compile_kernel()
 	mkdir -p $sources_pkg_dir/usr/src/ $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY} $sources_pkg_dir/DEBIAN
 
 	display_alert "Compressing sources for the linux-source package"
-	tar cp --directory="$kerneldir" --exclude='./.git/' . | pixz -4 > $sources_pkg_dir/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz
+	tar cp --directory="$kerneldir" --exclude='./.git/' . | pv -p -b -r -s $(du -sb "$kerneldir" --exclude=='./.git/' | cut -f1) \
+		| pixz -4 > $sources_pkg_dir/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz
 	cp COPYING $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE
 
 	# create patch for manual source changes in debug mode
