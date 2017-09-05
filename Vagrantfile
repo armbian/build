@@ -39,8 +39,8 @@ Vagrant.configure(2) do |config|
     config.vm.provider "virtualbox" do |vb|
         vb.name = "Armbian Builder"
 
-        # comment this to disable the VirtualBox GUI
-        vb.gui = true
+        # Uncomment this to enable the VirtualBox GUI
+        #vb.gui = true
 
         # Tweak these to fit your needs.
         #vb.memory = "8192"
