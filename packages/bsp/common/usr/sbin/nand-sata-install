@@ -26,17 +26,18 @@ backtitle="Armbian for $BOARD_NAME install script, http://www.armbian.com"
 title="NAND, eMMC, SATA and USB Armbian installer v${VERSION}"
 
 # exception
-if cat /proc/cpuinfo | grep -q 'sun4i'; then DEVICE_TYPE="a10"; else DEVICE_TYPE="a20"; fi
+if grep -q 'sun4i' /proc/cpuinfo; then DEVICE_TYPE="a10"; else DEVICE_TYPE="a20"; fi
 BOOTLOADER="${CWD}/${DEVICE_TYPE}/bootloader"
 
 #recognize_root
-root_partition=$(cat /proc/cmdline | sed -e 's/^.*root=//' -e 's/ .*$//')
-root_partition_device=$(blkid |  tr -d '":' | grep $( cat /proc/cmdline | sed -e 's/^.*root=//' -e 's/ .*$//') |  awk '{print $1}'| rev | cut -c3- | rev)
+root_uuid=$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
+root_partition=$(blkid | tr -d '":' | grep ${root_uuid} | awk '{print $1}')
+root_partition_device="${root_partition::-2}"
 
 # find targets: NAND, EMMC, SATA
 [[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
 emmccheck=$(ls -d -1 /dev/mmcblk* | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
-satacheck=$(cat /proc/partitions | grep  'sd' | awk '{print $NF}')
+satacheck=$(grep 'sd' /proc/partitions | awk '{print $NF}')
 
 # define makefs and mount options
 declare -A mkopts mountopts
@@ -54,18 +55,11 @@ mountopts[btrfs]='defaults,noatime,nodiratime,commit=600,compress=lzo			0	2'
 create_armbian()
 {
 	# create mount points, mount and clean
-	sync &&	mkdir -p /mnt/bootfs /mnt/rootfs
-	if [[ $eMMCFilesystemChoosen == "btrfs" && $FilesystemChoosen == "btrfs" ]]; then
-		[[ -n $1 ]] && mount ${1::-1}"1" /mnt/bootfs
-		[[ -n $2 ]] && mount -o compress-force=zlib $2 /mnt/rootfs
-	elif [[ $eMMCFilesystemChoosen == "btrfs" && $FilesystemChoosen != "btrfs" ]]; then
-		[[ -n $1 ]] && mount ${1::-1}"1" /mnt/bootfs
-		[[ -n $2 ]] && mount -o compress-force=zlib $2 /mnt/rootfs
-	else
-		[[ -n $2 ]] && mount $2 /mnt/rootfs
-		[[ -n $1 ]] && mount $1 /mnt/bootfs
-	fi
-	rm -rf /mnt/bootfs/* /mnt/rootfs/*
+	TempDir=$(mktemp -d /mnt/${0##*/}.XXXXXX || exit 1)
+	sync &&	mkdir -p ${TempDir}/bootfs ${TempDir}/rootfs
+	[[ -n $1 ]] && mount ${1::-1}"1" ${TempDir}/bootfs
+	[[ -n $2 ]] && ( mount -o compress-force=zlib $2 ${TempDir}/rootfs || mount $2 ${TempDir}/rootfs )
+	rm -rf ${TempDir}/bootfs/* ${TempDir}/rootfs/*
 
 	# sata root part
 	# UUID=xxx...
@@ -77,73 +71,78 @@ create_armbian()
 
 	# calculate usage and see if it fits on destination
 	USAGE=$(df -BM | grep ^/dev | head -1 | awk '{print $3}' | tr -cd '[0-9]. \n')
-	DEST=$(df -BM | grep ^/dev | grep /mnt/rootfs | awk '{print $4}' | tr -cd '[0-9]. \n')
+	DEST=$(df -BM | grep ^/dev | grep ${TempDir}/rootfs | awk '{print $4}' | tr -cd '[0-9]. \n')
 	if [[ $USAGE -gt $DEST ]]; then
-		dialog --title "$title" --backtitle "$backtitle"  --colors --infobox\
-		"\n\Z1Partition too small.\Zn Needed: $USAGE Mb Avaliable: $DEST Mb" 5 60
+		dialog --title "$title" --backtitle "$backtitle" --colors --infobox\
+		"\n\Z1Partition too small.\Zn Needed: $USAGE MB Avaliable: $DEST MB" 5 60
 		umountdevice "$1"; umountdevice "$2"
 		exit 1
 	fi
 
 	if [[ $1 == *nand* ]]; then
 		# creating nand boot. Copy precompiled uboot
-		rsync -aqc $BOOTLOADER/* /mnt/bootfs
+		rsync -aqc $BOOTLOADER/* ${TempDir}/bootfs
 	fi
 
 	# write stuff to log
-	[ -f $logfile ] && echo -e "\n\n\n" >> $logfile
-	LANG=C echo -e "$(date): Start ${0##*/}. Files open for write:" >> $logfile
-	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' >> $logfile
-	echo -e "\nSD uuid: $sduuid" >> $logfile
-	echo "Satauid: $satauuid" >> $logfile
-	echo "Emmcuuid: $emmcuuid $eMMCFilesystemChoosen" >> $logfile
+	echo -e "\nOld UUID:  ${root_uuid}" >> $logfile
+	echo "SD UUID:   $sduuid" >> $logfile
+	echo "SATA UUID: $satauuid" >> $logfile
+	echo "eMMC UUID: $emmcuuid $eMMCFilesystemChoosen" >> $logfile
 	echo "Boot: \$1 $1 $eMMCFilesystemChoosen" >> $logfile
 	echo "Root: \$2 $2 $FilesystemChoosen" >> $logfile
 	echo "Usage: $USAGE" >> $logfile
-	echo "Dest: $DEST" >> $logfile
+	echo -e "Dest: $DEST\n\n/etc/fstab:" >> $logfile
+	cat /etc/fstab >> $logfile
+	echo -e "\n/etc/mtab:" >> $logfile
+	grep '^/dev/' /etc/mtab | egrep -v "log2ram|folder2ram" | sort >> $logfile
 
 	# stop running services
+	echo -e "\nFiles currently open for writing:" >> $logfile
+	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' | grep -v "^COMMAND" >> $logfile
+	echo -e "\nTrying to stop running services to minimize open files:\c" >> $logfile
 	StopRunningServices "nfs-|smbd|nmbd|winbind|ftpd|netatalk|monit|cron|webmin|rrdcached" >> $logfile
 	StopRunningServices "log2ram|folder2ram|postgres|mariadb|mysql|postfix|mail|nginx|apache|snmpd" >> $logfile
-	echo -e "\n" >> $logfile
+	pkill dhclient 2>/dev/null
+	LANG=C echo -e "\n\nAgain checking for open files:" >> $logfile
+	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' | grep -v "^COMMAND" >> $logfile
 
 	# count files is needed for progress bar
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\n  Counting files ... few seconds." 5 40
-	TODO=$(rsync -ahvrltDn --delete --stats --exclude-from=$EX_LIST / /mnt/rootfs | grep "Number of files:"|awk '{print $4}' | tr -d '.,')
+	TODO=$(rsync -ahvrltDn --delete --stats --exclude-from=$EX_LIST / ${TempDir}/rootfs | grep "Number of files:"|awk '{print $4}' | tr -d '.,')
 
 	# creating rootfs
-	rsync -avrltD  --delete --exclude-from=$EX_LIST / /mnt/rootfs | nl | awk '{ printf "%.0f\n", 100*$1/"'"$TODO"'" }' \
-	| dialog --backtitle "$backtitle"  --title "$title" --gauge "\n\n  Creating rootfs on $2 ($USAGE Mb). \n\n \
+	rsync -avrltD --delete --exclude-from=$EX_LIST / ${TempDir}/rootfs | nl | awk '{ printf "%.0f\n", 100*$1/"'"$TODO"'" }' \
+	| dialog --backtitle "$backtitle" --title "$title" --gauge "\n\n  Creating rootfs on $2 ($USAGE MB). \n\n \
 	This will take around $((USAGE/60)) minutes to finish. Please wait!\n\n" 11 80
 
-	# run rsync again to silently catch outstanding changes between / and /mnt/rootfs/
+	# run rsync again to silently catch outstanding changes between / and ${TempDir}/rootfs/
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\n  Cleaning up ... few seconds." 5 40
-	rsync -avrltD  --delete --exclude-from=$EX_LIST / /mnt/rootfs >/dev/null 2>&1
+	rsync -avrltD --delete --exclude-from=$EX_LIST / ${TempDir}/rootfs >/dev/null 2>&1
 
 	# creating fstab from scratch
-	rm -f /mnt/rootfs/etc/fstab
-	mkdir -p /mnt/rootfs/etc /mnt/rootfs/media/mmcboot /mnt/rootfs/media/mmcroot
+	rm -f ${TempDir}/rootfs/etc/fstab
+	mkdir -p ${TempDir}/rootfs/etc ${TempDir}/rootfs/media/mmcboot ${TempDir}/rootfs/media/mmcroot
 
 	# Restore TMP and swap
-	echo "# <file system>					<mount point>	<type>	<options>							<dump>	<pass>" > /mnt/rootfs/etc/fstab
-	echo "tmpfs						/tmp		tmpfs	defaults,nosuid							0	0" >> /mnt/rootfs/etc/fstab
-	cat /etc/fstab  | grep swap >> /mnt/rootfs/etc/fstab
+	echo "# <file system>					<mount point>	<type>	<options>							<dump>	<pass>" > ${TempDir}/rootfs/etc/fstab
+	echo "tmpfs						/tmp		tmpfs	defaults,nosuid							0	0" >> ${TempDir}/rootfs/etc/fstab
+	grep swap /etc/fstab >> ${TempDir}/rootfs/etc/fstab
 
 	# creating fstab, kernel and boot script for NAND partition
 	#
 	if [[ $1 == *nand* ]]; then
-		echo "Install to NAND" >> $logfile
+		echo -e "\nInstall to NAND" >> $logfile
 		REMOVESDTXT="and remove SD to boot from NAND"
-		#sed -i '/boot/d' /mnt/rootfs/etc/fstab
-		echo "$1 /boot vfat	defaults 0 0" >> /mnt/rootfs/etc/fstab
-		echo "$2 / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1" >> /mnt/rootfs/etc/fstab
+		echo "$1 /boot vfat	defaults 0 0" >> ${TempDir}/rootfs/etc/fstab
+		echo "$2 / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1" >> ${TempDir}/rootfs/etc/fstab
 		dialog --title "$title" --backtitle "$backtitle" --infobox "\nConverting kernel ... few seconds." 5 60
 		mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d \
-			/boot/zImage /mnt/bootfs/uImage >/dev/null 2>&1
-		cp /boot/script.bin /mnt/bootfs/
+			/boot/zImage ${TempDir}/bootfs/uImage >/dev/null 2>&1
+		cp /boot/script.bin ${TempDir}/bootfs/
 
 		# Note: Not using UUID based boot for NAND
-		cat <<-EOF > /mnt/bootfs/uEnv.txt
+		cat <<-EOF > ${TempDir}/bootfs/uEnv.txt
 		console=ttyS0,115200
 		root=$2 rootwait
 		extraargs="console=tty1 hdmi.audio=EDID:0 disp.screen0_output_mode=EDID:0 consoleblank=0 loglevel=1"
@@ -151,12 +150,12 @@ create_armbian()
 
 		sync
 
-		[[ $DEVICE_TYPE = a20 ]] && echo "machid=10bb" >> /mnt/bootfs/uEnv.txt
+		[[ $DEVICE_TYPE = a20 ]] && echo "machid=10bb" >> ${TempDir}/bootfs/uEnv.txt
 		# ugly hack becouse we don't have sources for A10 nand uboot
 		if [[ $ID == Cubieboard || $BOARD_NAME == Cubieboard || $ID == "Lime A10" || $BOARD_NAME == "Lime A10" ]]; then
-			cp /mnt/bootfs/uEnv.txt /mnt/rootfs/boot/uEnv.txt
-			cp /mnt/bootfs/script.bin /mnt/rootfs/boot/script.bin
-			cp /mnt/bootfs/uImage /mnt/rootfs/boot/uImage
+			cp ${TempDir}/bootfs/uEnv.txt ${TempDir}/rootfs/boot/uEnv.txt
+			cp ${TempDir}/bootfs/script.bin ${TempDir}/rootfs/boot/script.bin
+			cp ${TempDir}/bootfs/uImage ${TempDir}/rootfs/boot/uImage
 		fi
 		umountdevice "/dev/nand"
 		tune2fs -o journal_data_writeback /dev/nand2 >/dev/null 2>&1
@@ -165,52 +164,52 @@ create_armbian()
 	fi
 
 
-	# Boot from eMMC, root = eMMMC or SATA / USB
+	# Boot from eMMC, root = eMMC or SATA / USB
 	#
 	if [[ $2 == ${emmccheck}p* || $1 == ${emmccheck}p* ]]; then
 
 		if [[ $2 == ${SDA_ROOT_PART} ]]; then
 			local targetuuid=$satauuid
 			local choosen_fs=$FilesystemChoosen
-			echo "Boot on eMMC, root on USB/SATA" >> $logfile
+			echo -e "\nBoot on eMMC, root on USB/SATA" >> $logfile
 			if [[ $eMMCFilesystemChoosen == "btrfs" ]]; then
-				echo "$emmcuuid	/media/mmcroot  $eMMCFilesystemChoosen	${mountopts[$eMMCFilesystemChoosen]}" >> /mnt/rootfs/etc/fstab
+				echo "$emmcuuid	/media/mmcroot  $eMMCFilesystemChoosen	${mountopts[$eMMCFilesystemChoosen]}" >> ${TempDir}/rootfs/etc/fstab
 			fi
 		else
 			local targetuuid=$emmcuuid
 			local choosen_fs=$eMMCFilesystemChoosen
-			echo "Full install to eMMC" >> $logfile
+			echo -e "\nFull install to eMMC" >> $logfile
 		fi
 
 		# fix that we can have one exlude file
-		cp -R /boot /mnt/bootfs
+		cp -R /boot ${TempDir}/bootfs
 		# old boot scripts
-		sed -e 's,root='"$root_partition"',root='"$targetuuid"',g' -i /mnt/bootfs/boot/boot.cmd
+		sed -e 's,root='"$root_uuid"',root='"$targetuuid"',g' -i ${TempDir}/bootfs/boot/boot.cmd
 		# new boot scripts
-		if [[ -f /mnt/bootfs/boot/armbianEnv.txt ]]; then
-			sed -e 's,rootdev=.*,rootdev='"$targetuuid"',g' -i /mnt/bootfs/boot/armbianEnv.txt
+		if [[ -f ${TempDir}/bootfs/boot/armbianEnv.txt ]]; then
+			sed -e 's,rootdev=.*,rootdev='"$targetuuid"',g' -i ${TempDir}/bootfs/boot/armbianEnv.txt
 		else
-			sed -e 's,setenv rootdev.*,setenv rootdev '"$targetuuid"',g' -i /mnt/bootfs/boot/boot.cmd
-			[[ -f /mnt/bootfs/boot/boot.ini ]] && sed -e 's,^setenv rootdev.*$,setenv rootdev "'"$targetuuid"'",' -i /mnt/bootfs/boot/boot.ini
-			[[ -f /mnt/rootfs/boot/boot.ini ]] && sed -e 's,^setenv rootdev.*$,setenv rootdev "'"$targetuuid"'",' -i /mnt/rootfs/boot/boot.ini
+			sed -e 's,setenv rootdev.*,setenv rootdev '"$targetuuid"',g' -i ${TempDir}/bootfs/boot/boot.cmd
+			[[ -f ${TempDir}/bootfs/boot/boot.ini ]] && sed -e 's,^setenv rootdev.*$,setenv rootdev "'"$targetuuid"'",' -i ${TempDir}/bootfs/boot/boot.ini
+			[[ -f ${TempDir}/rootfs/boot/boot.ini ]] && sed -e 's,^setenv rootdev.*$,setenv rootdev "'"$targetuuid"'",' -i ${TempDir}/rootfs/boot/boot.ini
 		fi
-		mkimage -C none -A arm -T script -d /mnt/bootfs/boot/boot.cmd /mnt/bootfs/boot/boot.scr	>/dev/null 2>&1 || (echo "Error"; exit 0)
+		mkimage -C none -A arm -T script -d ${TempDir}/bootfs/boot/boot.cmd ${TempDir}/bootfs/boot/boot.scr	>/dev/null 2>&1 || (echo "Error"; exit 0)
 
 		# fstab adj
 		if [[ "$1" != "$2" ]]; then
-			echo "$emmcbootuuid	/media/mmcboot	ext4    ${mountopts[ext4]}" >> /mnt/rootfs/etc/fstab
-			echo "/media/mmcboot/boot   				/boot		none	bind								0       0" >> /mnt/rootfs/etc/fstab
+			echo "$emmcbootuuid	/media/mmcboot	ext4    ${mountopts[ext4]}" >> ${TempDir}/rootfs/etc/fstab
+			echo "/media/mmcboot/boot   				/boot		none	bind								0       0" >> ${TempDir}/rootfs/etc/fstab
 		fi
 
 
 		if [[ $eMMCFilesystemChoosen == "btrfs" ]]; then
-			echo "$targetuuid	/		$choosen_fs	${mountopts[$choosen_fs]}" >> /mnt/rootfs/etc/fstab
+			echo "$targetuuid	/		$choosen_fs	${mountopts[$choosen_fs]}" >> ${TempDir}/rootfs/etc/fstab
 			# swap file not supported under btrfs, we made a partition
-			sed -e 's,/var/swap.*,'$emmcswapuuid' 	none		swap	sw								0	0,g' -i /mnt/rootfs/etc/fstab
-			sed -e 's,rootfstype=.*,rootfstype='$eMMCFilesystemChoosen',g' -i /mnt/bootfs/boot/armbianEnv.txt
+			sed -e 's,/var/swap.*,'$emmcswapuuid' 	none		swap	sw								0	0,g' -i ${TempDir}/rootfs/etc/fstab
+			sed -e 's,rootfstype=.*,rootfstype='$eMMCFilesystemChoosen',g' -i ${TempDir}/bootfs/boot/armbianEnv.txt
 		else
-			sed -e 's,rootfstype=.*,rootfstype='$choosen_fs',g' -i /mnt/bootfs/boot/armbianEnv.txt
-			echo "$targetuuid	/		$choosen_fs	${mountopts[$choosen_fs]}" >> /mnt/rootfs/etc/fstab
+			sed -e 's,rootfstype=.*,rootfstype='$choosen_fs',g' -i ${TempDir}/bootfs/boot/armbianEnv.txt
+			echo "$targetuuid	/		$choosen_fs	${mountopts[$choosen_fs]}" >> ${TempDir}/rootfs/etc/fstab
 		fi
 
 		if [[ $(type -t write_uboot_platform) != function ]]; then
@@ -224,8 +223,8 @@ create_armbian()
 	# Boot from SD card, root = SATA / USB
 	#
 	if [[ $2 == ${SDA_ROOT_PART} && -z $1 ]]; then
-		echo "Install to USB/SATA boot from SD" >> $logfile
-		[[ -f /boot/boot.cmd ]] && sed -e 's,root='"$root_partition"',root='"$satauuid"',g' -i /boot/boot.cmd
+		echo -e "\nInstall to USB/SATA, boot from SD" >> $logfile
+		[[ -f /boot/boot.cmd ]] && sed -e 's,root='"$root_uuid"',root='"$satauuid"',g' -i /boot/boot.cmd
 		[[ -f /boot/boot.ini ]] && sed -e 's,^setenv rootdev.*$,setenv rootdev "'"$satauuid"'",' -i /boot/boot.ini
 		# new boot scripts
 		if [[ -f /boot/armbianEnv.txt ]]; then
@@ -240,18 +239,18 @@ create_armbian()
 			sed -e 's,setenv rootfstype.*,setenv rootfstype='$FilesystemChoosen',g' -i /boot/boot.ini
 		fi
 		[[ -f /boot/boot.cmd ]] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr >/dev/null 2>&1 || (echo "Error"; exit 0)
-		mkdir -p /mnt/rootfs/media/mmc/boot
-		echo "$sduuid	/media/mmcboot	ext4    ${mountopts[ext4]}" >> /mnt/rootfs/etc/fstab
-		echo "/media/mmcboot/boot   				/boot		none	bind								0       0" >> /mnt/rootfs/etc/fstab
-		echo "$satauuid	/		$FilesystemChoosen	${mountopts[$FilesystemChoosen]}" >> /mnt/rootfs/etc/fstab
+		mkdir -p ${TempDir}/rootfs/media/mmc/boot
+		echo "$sduuid	/media/mmcboot	ext4    ${mountopts[ext4]}" >> ${TempDir}/rootfs/etc/fstab
+		echo "/media/mmcboot/boot   				/boot		none	bind								0       0" >> ${TempDir}/rootfs/etc/fstab
+		echo "$satauuid	/		$FilesystemChoosen	${mountopts[$FilesystemChoosen]}" >> ${TempDir}/rootfs/etc/fstab
 		# recreate swap file
-		dd if=/dev/zero of=/mnt/rootfs/var/swap bs=1M count=128
-		mkswap /mnt/rootfs/var/swap
+		fallocate -l 128M ${TempDir}/rootfs/var/swap || dd if=/dev/zero of=${TempDir}/rootfs/var/swap bs=1M count=128 status=noxfer
+		mkswap ${TempDir}/rootfs/var/swap
 	fi
 
-	LANG=C echo -e "\n$(date): Finished. Files open for write:" >> $logfile
-	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' >> $logfile
-	cat $logfile >/mnt/rootfs${logfile}
+	LANG=C echo -e "\n$(date): Finished" >> $logfile
+	cat $logfile >${TempDir}/rootfs${logfile}
+	sync
 
 	umountdevice "/dev/sda"
 } # create_armbian
@@ -277,7 +276,7 @@ umountdevice()
 formatnand()
 {
 	[[ ! -e /dev/nand ]] && echo "NAND error" && exit 0
-	dialog --title "$title" --backtitle "$backtitle"  --infobox "\nFormating ... up to one minute." 5 40
+	dialog --title "$title" --backtitle "$backtitle" --infobox "\nFormating ... up to one minute." 5 40
 	if [[ $DEVICE_TYPE = a20 ]]; then
 		(echo y;) | sunxi-nand-part -f a20 /dev/nand 65536 'bootloader 65536' 'linux 0' >> $logfile 2>&1
 	else
@@ -295,7 +294,7 @@ formatemmc()
 {
 	# choose and create fs
 	IFS=" "
-	BTRFS=$(cat /proc/filesystems | grep -o  btrfs)
+	BTRFS=$(grep -o btrfs /proc/filesystems)
 	FilesystemTargets="1 ext4 2 ext3 3 ext2"
 	[[ -n $BTRFS && `uname -r | grep '^4.' ` ]] && FilesystemTargets=$FilesystemTargets" 4 $BTRFS"
 	FilesystemOptions=($FilesystemTargets)
@@ -322,7 +321,7 @@ formatemmc()
 	fi
 
 	parted -s $1 -- mklabel msdos
-	dialog --title "$title" --backtitle "$backtitle"  --infobox "\nFormating $1 to $eMMCFilesystemChoosen ... please wait." 5 60
+	dialog --title "$title" --backtitle "$backtitle" --infobox "\nFormating $1 to $eMMCFilesystemChoosen ... please wait." 5 60
 	# we can't boot from btrfs
 	if [[ $eMMCFilesystemChoosen == "btrfs" ]]; then
 		parted -s $1 -- mkpart primary $eMMCFilesystemChoosen 2048s 126975s
@@ -354,7 +353,7 @@ formatsata()
 {
 	# choose and create fs
 	IFS=" "
-	BTRFS=$(cat /proc/filesystems | grep -o  btrfs)
+	BTRFS=$(grep -o btrfs /proc/filesystems)
 	FilesystemTargets="1 ext4 2 ext3 3 ext2"
 	[[ -n $BTRFS && `uname -r | grep '^4.' ` ]] && FilesystemTargets=$FilesystemTargets" 4 $BTRFS"
 	FilesystemOptions=($FilesystemTargets)
@@ -365,7 +364,7 @@ formatsata()
 	[[ $? -ne 0 ]] && exit 1
 	FilesystemChoosen=${FilesystemOptions[(2*$FilesystemChoices)-1]}
 
-	dialog --title "$title" --backtitle "$backtitle"  --infobox "\nFormating $1 to $FilesystemChoosen ... please wait." 5 60
+	dialog --title "$title" --backtitle "$backtitle" --infobox "\nFormating $1 to $FilesystemChoosen ... please wait." 5 60
 	mkfs.${FilesystemChoosen} ${mkopts[$FilesystemChoosen]} $1 >> $logfile 2>&1
 }
 
@@ -376,7 +375,7 @@ checksatatarget()
 	IFS=" "
 	SataTargets=$(awk '/sd/ {print "/dev/"$4}' </proc/partitions | grep -E '[0-9]{1,4}' | nl | xargs echo -n)
 	if [[ -z $SataTargets ]]; then
-		dialog --title "$title" --backtitle "$backtitle"  --colors --msgbox \
+		dialog --title "$title" --backtitle "$backtitle" --colors --msgbox \
 		"\n\Z1There are no avaliable partitions. Please create them.\Zn" 7 60
 		fdisk /dev/$satacheck
 	fi
@@ -412,12 +411,7 @@ main()
 {
 	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-	# umount temporary mountpoints if mounted
-	grep -q /mnt/rootfs /etc/mtab && umount -frv /mnt/rootfs >> $logfile 2>&1
-	grep -q /mnt/bootfs /etc/mtab && umount -frv /mnt/bootfs >> $logfile 2>&1
-
 	# This tool must run under root
-
 	if [[ $EUID -ne 0 ]]; then
 		echo "This tool must run as root. Exiting ..." >&2
 		exit 1
@@ -430,10 +424,13 @@ main()
 			:
 			;;
 		*)
-			dialog --title "$title" --backtitle "$backtitle"  --colors --infobox "\n\Z1This tool must run from SD-card!\Zn" 5 42
+			dialog --title "$title" --backtitle "$backtitle" --colors --infobox "\n\Z1This tool must run from SD-card!\Zn" 5 42
 			exit 1
 			;;
 	esac
+
+	[ -f $logfile ] && echo -e "\n\n\n" >> $logfile
+	LANG=C echo -e "$(date): Start ${0##*/}.\n" >> $logfile
 
 	IFS="'"
 	options=()
@@ -452,9 +449,9 @@ main()
 	[[ -n $satacheck ]] && options+=(3 "Boot from SD   - system on SATA or USB")
 	[[ ( $LINUXFAMILY == odroidxu4 || $LINUXFAMILY == mvebu* ) && ( -b /dev/mmcblk0boot0 || -b /dev/mmcblk1boot0 ) ]] && options+=(4 "Update the bootloader on a special eMMC partition")
 	[[ $(type -t write_uboot_platform_mtd) == function && -b /dev/mtd0 && -f /usr/sbin/flashcp ]] && options+=(5 "Install the bootloader to SPI Flash")
-	[[ ${#options[@]} -eq 0 || "$root_partition" == "$emmcuuid" || "$root_partition" == "/dev/nand2" ]] && \
-	dialog --title "$title" --backtitle "$backtitle"  --colors --no-collapse --msgbox "\n\Z1There are no targets. Please check your drives.\Zn" 7 54
-	cmd=(dialog --title "Choose an option:" --backtitle "$backtitle" --menu "\nCurrent root: $root_partition \n \n" 14 60 7)
+	[[ ${#options[@]} -eq 0 || "$root_uuid" == "$emmcuuid" || "$root_uuid" == "/dev/nand2" ]] && \
+	dialog --title "$title" --backtitle "$backtitle" --colors --no-collapse --msgbox "\n\Z1There are no targets. Please check your drives.\Zn" 7 54
+	cmd=(dialog --title "Choose an option:" --backtitle "$backtitle" --menu "\nCurrent root: $root_uuid \n \n" 14 60 7)
 	choices=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
 	[[ $? -ne 0 ]] && exit 1
 
@@ -473,8 +470,8 @@ main()
 					formatnand
 				fi
 				create_armbian "$dest_boot" "$dest_root"
-				umount /mnt/rootfs
-				umount /mnt/bootfs
+				umount ${TempDir}/rootfs
+				umount ${TempDir}/bootfs
 				;;
 			2)
 				title="$ichip boot / SATA root install"
@@ -491,8 +488,8 @@ main()
 				umountdevice "${SDA_ROOT_PART//[0-9]*/}"
 				formatsata "$SDA_ROOT_PART"
 				create_armbian "$dest_boot" "$SDA_ROOT_PART"
-				umount /mnt/rootfs
-				umount /mnt/bootfs
+				umount ${TempDir}/rootfs
+				umount ${TempDir}/bootfs
 				;;
 			3)
 				title="SD boot / SATA root install"
@@ -522,7 +519,7 @@ main()
 		esac
 	done
 
-	dialog --title "$title" --backtitle "$backtitle"  --yes-label "$command" --no-label "Exit" --yesno "\nAll done. $command $REMOVESDTXT" 7 60
+	dialog --title "$title" --backtitle "$backtitle" --yes-label "$command" --no-label "Exit" --yesno "\nAll done. $command $REMOVESDTXT" 7 60
 	[[ $? -eq 0 ]] && "$(echo ${command,,} | sed 's/ //')"
 } # main
 
