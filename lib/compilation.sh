@@ -17,9 +17,6 @@
 # find_toolchain
 # advanced_patch
 # process_patch_file
-# install_external_applications
-# write_uboot
-# customize_image
 # userpatch_create
 # overlayfs_wrapper
 
@@ -542,50 +539,6 @@ process_patch_file()
 		display_alert "... $status $(basename $patch)" "succeeded" "info"
 	fi
 	echo >> $DEST/debug/patching.log
-}
-
-install_external_applications()
-{
-#--------------------------------------------------------------------------------------------------------------------------------
-# Install external applications example
-#--------------------------------------------------------------------------------------------------------------------------------
-	display_alert "Installing extra applications and drivers" "" "info"
-
-	for plugin in $SRC/packages/extras/*.sh; do
-		source $plugin
-	done
-}
-
-# write_uboot <loopdev>
-#
-# writes u-boot to loop device
-# Parameters:
-# loopdev: loop device with mounted rootfs image
-write_uboot()
-{
-	local loop=$1
-	display_alert "Writing U-boot bootloader" "$loop" "info"
-	mkdir -p /tmp/u-boot/
-	dpkg -x ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb /tmp/u-boot/
-	write_uboot_platform "/tmp/u-boot/usr/lib/${CHOSEN_UBOOT}_${REVISION}_${ARCH}" "$loop"
-	[[ $? -ne 0 ]] && exit_with_error "U-boot bootloader failed to install" "@host"
-	rm -r /tmp/u-boot/
-	sync
-}
-
-customize_image()
-{
-	# for users that need to prepare files at host
-	[[ -f $SRC/userpatches/customize-image-host.sh ]] && source $SRC/userpatches/customize-image-host.sh
-	cp $SRC/userpatches/customize-image.sh $SDCARD/tmp/customize-image.sh
-	chmod +x $SDCARD/tmp/customize-image.sh
-	mkdir -p $SDCARD/tmp/overlay
-	# util-linux >= 2.27 required
-	mount -o bind,ro $SRC/userpatches/overlay $SDCARD/tmp/overlay
-	display_alert "Calling image customization script" "customize-image.sh" "info"
-	chroot $SDCARD /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
-	umount $SDCARD/tmp/overlay
-	mountpoint -q $SDCARD/tmp/overlay || rm -r $SDCARD/tmp/overlay
 }
 
 userpatch_create()

@@ -38,6 +38,7 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 
 # Load libraries
 source $SRC/lib/debootstrap-ng.sh 			# System specific install
+source $SRC/lib/image-helpers.sh			# helpers for OS image building
 source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/desktop.sh 				# Desktop specific install
 source $SRC/lib/compilation.sh 				# Patching and compilation of kernel, uboot, ATF
