@@ -48,9 +48,6 @@ debootstrap_ng()
 	# stage: install kernel and u-boot packages
 	# install distribution and board specific applications
 
-	mkdir -p $SDCARD/tmp/debs
-	mount --bind $DEST/debs/ $SDCARD/tmp/debs
-
 	install_distribution_specific
 	install_common
 
@@ -64,10 +61,6 @@ debootstrap_ng()
 	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
 	# install from apt.armbian.com
 	[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes"
-
-	# cleanup for install_kernel and install_board_specific
-	umount $SDCARD/tmp/debs
-	mountpoint -q $SDCARD/tmp/debs || rm -rf $SDCARD/tmp/debs
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
