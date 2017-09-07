@@ -15,6 +15,7 @@
 # install_external_applications
 # write_uboot
 # customize_image
+# install_deb_chroot
 
 
 # mount_chroot <target>
@@ -115,3 +116,13 @@ customize_image()
 	umount $SDCARD/tmp/overlay
 	mountpoint -q $SDCARD/tmp/overlay || rm -r $SDCARD/tmp/overlay
 } #############################################################################
+
+install_deb_chroot()
+{
+	local package=$1
+	local name=$(basename $package)
+	cp $package $SDCARD/root/$name
+	display_alert "Installing" "$name"
+	chroot $SDCARD /bin/bash -c "dpkg -i /root/$name" >> $DEST/debug/install.log 2>&1
+	rm -f $SDCARD/root/$name
+}

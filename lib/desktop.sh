@@ -34,9 +34,7 @@ install_desktop ()
 	cp $SRC/packages/blobs/desktop/wallpapers/armbian*.jpg $SDCARD/usr/share/backgrounds/xfce/
 
 	# Install custom icons and theme
-	cp $SRC/packages/blobs/desktop/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb $SDCARD/tmp/
-	chroot $SDCARD /bin/bash -c "dpkg -i /tmp/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb >/dev/null 2>&1"
-	rm -f $SDCARD/tmp/*.deb
+	install_deb_chroot "$SRC/packages/blobs/desktop/vibrancy-colors_2.4-trusty-Noobslab.com_all.deb"
 
 	# Enable network manager
 	if [[ -f $SDCARD/etc/NetworkManager/NetworkManager.conf ]]; then

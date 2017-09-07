@@ -97,30 +97,25 @@ install_common()
 	ff02::2     ip6-allrouters
 	EOF
 
-	display_alert "Installing kernel" "$CHOSEN_KERNEL" "info"
-	chroot $SDCARD /bin/bash -c "dpkg -i /tmp/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	install_deb_chroot "$DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
 
 	display_alert "Installing u-boot" "$CHOSEN_UBOOT" "info"
-	chroot $SDCARD /bin/bash -c "DEVICE=/dev/null dpkg -i /tmp/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	install_deb_chroot "$DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
 
 	if [[ $INSTALL_HEADERS == yes ]]; then
-		display_alert "Installing headers" "${CHOSEN_KERNEL/image/headers}" "info"
-		chroot $SDCARD /bin/bash -c "dpkg -i /tmp/debs/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+		install_deb_chroot "$DEST/debs/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
 	fi
 
-	if [[ -f $SDCARD/tmp/debs/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
-		display_alert "Installing generic firmware" "armbian-firmware" "info"
-		chroot $SDCARD /bin/bash -c "dpkg -i /tmp/debs/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	if [[ -f $DEST/debs/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
+		install_deb_chroot "$DEST/debs/armbian-firmware_${REVISION}_${ARCH}.deb"
 	fi
 
-	if [[ -f $SDCARD/tmp/debs/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
-		display_alert "Installing DTB" "${CHOSEN_KERNEL/image/dtb}" "info"
-		chroot $SDCARD /bin/bash -c "dpkg -i /tmp/debs/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	if [[ -f $DEST/debs/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
+		install_deb_chroot "$DEST/debs/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb"
 	fi
 
 	# install board support package
-	display_alert "Installing board support package" "$BOARD" "info"
-	chroot $SDCARD /bin/bash -c "dpkg -i /tmp/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log 2>&1
+	install_deb_chroot "$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb"
 
 	# freeze armbian packages
 	if [[ $BSPFREEZE == yes ]]; then

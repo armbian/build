@@ -56,5 +56,4 @@ REPLACE=""
 [[ ! -f $DEST/debs/armbian-firmware${FULL}_${REVISION}_${ARCH}.deb ]] && build_firmware
 
 # install basic firmware by default
-display_alert "Installing linux firmware" "$REVISION" "info"
-chroot $SDCARD /bin/bash -c "dpkg -i /tmp/debs/armbian-firmware_${REVISION}_${ARCH}.deb" >> $DEST/debug/install.log
+install_deb_chroot "$DEST/debs/armbian-firmware_${REVISION}_${ARCH}.deb"
