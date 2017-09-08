@@ -185,6 +185,11 @@ if [[ $ARCH == arm64 ]]; then
 fi
 [[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
 
+# remove any packages defined in PACKAGE_LIST_RM in lib.config
+if [[ -n $PACKAGE_LIST_RM ]]; then
+	PACKAGE_LIST=$(sed -r "s/\b($(tr ' ' '|' <<< $PACKAGE_LIST_RM))\b//g" <<< $PACKAGE_LIST)
+fi
+
 # debug
 cat <<-EOF >> $DEST/debug/output.log
 ## BUILD SCRIPT ENVIRONMENT
