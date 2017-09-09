@@ -47,7 +47,7 @@ InstallOpenMediaVault() {
 
 	echo root:openmediavault | chpasswd
 	rm /root/.not_logged_in_yet
-	cp -p /etc/default/cpufrequtils /etc/default/cpufrequtils.bak
+	. /etc/default/cpufrequtils
 	export LANG=C LC_ALL="en_US.UTF-8"
 
 	case ${RELEASE} in
@@ -77,6 +77,7 @@ InstallOpenMediaVault() {
 		add-apt-repository -y ppa:kyle1117/ppa
 		sed -i 's/jessie/xenial/' /etc/apt/sources.list.d/kyle1117-ppa-jessie.list
 	fi
+	mount --bind /dev/null /proc/mdstat
 	apt-get update
 	apt-get --yes --force-yes --allow-unauthenticated install openmediavault-keyring
 	apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 7AA630A1EDEE7D73
@@ -119,12 +120,16 @@ InstallOpenMediaVault() {
 	xmlstarlet ed -L -u "/config/system/time/ntp/enable" -v "1" /etc/openmediavault/config.xml
 	xmlstarlet ed -L -u "/config/system/time/timezone" -v "UTC" /etc/openmediavault/config.xml
 	xmlstarlet ed -L -u "/config/system/network/dns/hostname" -v "${HOSTNAME}" /etc/openmediavault/config.xml
-	for i in netatalk samba flashmemory ssh ntp timezone ; do
+	xmlstarlet ed -L -u "/config/system/monitoring/perfstats/enable" -v "0" /etc/openmediavault/config.xml
+	echo -e "OMV_CPUFREQUTILS_GOVERNOR=${GOVERNOR}" >>/etc/default/openmediavault
+	echo -e "OMV_CPUFREQUTILS_MINSPEED=${MIN_SPEED}" >>/etc/default/openmediavault
+	echo -e "OMV_CPUFREQUTILS_MAXSPEED=${MAX_SPEED}" >>/etc/default/openmediavault
+	for i in netatalk samba flashmemory ssh ntp timezone interfaces cpufrequtils monit collectd rrdcached ; do
 		/usr/sbin/omv-mkconf $i
 	done
 	systemctl disable log2ram
 	rm /etc/cron.daily/log2ram
-	/sbin/folder2ram -enablesystemd
+	/sbin/folder2ram -enablesystemd || true
 	sed -i 's|-j /var/lib/rrdcached/journal/ ||' /etc/init.d/rrdcached
 
 	#FIX TFTPD ipv4
@@ -142,20 +147,19 @@ InstallOpenMediaVault() {
 	read TZ </etc/timezone \
 	/usr/sbin/omv-initsystem \
 	xmlstarlet ed -L -u "/config/system/time/timezone" -v "${TZ}" /etc/openmediavault/config.xml \
-	mv /etc/default/cpufrequtils.bak /etc/default/cpufrequtils \
-	. /etc/default/cpufrequtils \
-	echo -e "OMV_CPUFREQUTILS_GOVERNOR=${GOVERNOR}" >>/etc/default/openmediavault \
-	echo -e "OMV_CPUFREQUTILS_MINSPEED=${MIN_SPEED}" >>/etc/default/openmediavault \
-	echo -e "OMV_CPUFREQUTILS_MAXSPEED=${MAX_SPEED}" >>/etc/default/openmediavault \
-	/usr/sbin/omv-rpc -u admin "perfstats" "set" \x27{"enable":false}\x27 \
-	/usr/sbin/omv-rpc -u admin "config" "applyChanges" \x27{ "modules": ["monit","rrdcached","collectd"],"force": true }\x27 \
 	/usr/sbin/omv-mkconf timezone \
-	/usr/sbin/omv-mkconf monit \
-	/usr/sbin/omv-mkconf rrdcached \
-	/usr/sbin/omv-mkconf collectd \
 	lsusb | egrep -q "0b95:1790|0b95:178a|0df6:0072" || sed -i "/ax88179_178a/d" /etc/modules' /etc/init.d/firstrun
 	sed -i '/systemctl\ disable\ firstrun/a \
-	sync && sleep 30 && reboot' /etc/init.d/firstrun
+	sleep 30 \
+	# set static network configuration based on DHCP settings \
+	dnsnameservers="$(awk -F" " \x27/^nameserver/ {print $2}\x27 /etc/resolv.conf)" \
+	dnssearch="$(awk -F" " \x27/^search/ {print $2}\x27 /etc/resolv.conf)" \
+	netmask="$(/sbin/ifconfig eth0 | awk -F":" \x27/inet addr:/ {print $4}\x27)" \
+	gateway="$(/sbin/ip route | awk -F" " \x27/^default via/ {print $3}\x27)" \
+	address="$(/bin/hostname -I | grep -v \x27127.0.0.1\x27)" \
+	xmlstarlet ed -L -s /config/system/network/interfaces -t elem -n interface -s /config/system/network/interfaces/interface -t elem -n uuid -v 4fa8fd59-e5be-40f6-a76d-be6a73ed1407 -s /config/system/network/interfaces/interface -t elem -n type -v ethernet -s /config/system/network/interfaces/interface -t elem -n devicename -v eth0 -s /config/system/network/interfaces/interface -t elem -n method -v static -s /config/system/network/interfaces/interface -t elem -n address -v "${address}" -s /config/system/network/interfaces/interface -t elem -n netmask -v "${netmask}" -s /config/system/network/interfaces/interface -t elem -n gateway -v "${gateway}" -s /config/system/network/interfaces/interface -t elem -n dnsnameservers -v "${dnsnameservers}" -s /config/system/network/interfaces/interface -t elem -n dnssearch -v "${dnssearch}" -s /config/system/network/interfaces/interface -t elem -n method6 -v manual /etc/openmediavault/config.xml \
+	/usr/sbin/omv-mkconf interfaces \
+	sync && reboot' /etc/init.d/firstrun
 
 	# add USB3 Gigabit Ethernet and NAS Dock support
 	echo -e "r8152\nax88179_178a" >>/etc/modules
@@ -201,6 +205,8 @@ InstallOpenMediaVault() {
 	echo ':msg, contains, "action " ~' >>/etc/rsyslog.d/omv-armbian.conf
 	echo ':msg, contains, "netsnmp_assert" ~' >>/etc/rsyslog.d/omv-armbian.conf
 	echo ':msg, contains, "Failed to initiate sched scan" ~' >>/etc/rsyslog.d/omv-armbian.conf
+
+	umount /proc/mdstat
 } # InstallOpenMediaVault
 
 Main "$@"
