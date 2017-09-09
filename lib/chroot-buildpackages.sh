@@ -225,7 +225,7 @@ chroot_build_packages()
 
 				fetch_from_repo "$package_repo" "extra/$package_name" "$package_ref"
 
-				eval systemd-nspawn -a -q -D $target_dir --tmpfs=/root/build --tmpfs=/tmp:mode=777 --bind-ro $SRC/packages/extras-buildpkgs/:/root/overlay \
+				eval systemd-nspawn -a -q --capability=CAP_MKNOD -D $target_dir --tmpfs=/root/build --tmpfs=/tmp:mode=777 --bind-ro $SRC/packages/extras-buildpkgs/:/root/overlay \
 					--bind-ro $SRC/cache/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 \
 					${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/buildpkg.log'}
 				[[ ${PIPESTATUS[0]} -eq 2 ]] && failed+=("$package_name:$release:$arch")
