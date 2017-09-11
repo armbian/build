@@ -61,6 +61,7 @@ install_desktop ()
 	fi
 	# copy skel to sudo user
 	if [ -n "$SUDO_USER" ]; then cp -R /etc/skel /home/$SUDO_USER; fi
+	# TODO: change ownership/fix permissions
 	exit 0
 	EOF
 	chmod 755 $destination/DEBIAN/postinst
@@ -96,7 +97,7 @@ install_desktop ()
 
 	# create board DEB file
 	display_alert "Building Armbian desktop package" "$CHOSEN_ROOTFS" "info"
-	dpkg-deb -b $destination ${destination}.deb
+	fakeroot dpkg-deb -b $destination ${destination}.deb
 	mkdir -p $DEST/debs/
 	mv ${destination}.deb $DEST/debs/
 	# cleanup

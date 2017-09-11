@@ -55,7 +55,7 @@ compile_tools()
 		cd $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}
 		find . -type f ! -regex '.*.hg.*' ! -regex '.*?debian-binary.*' ! -regex '.*?DEBIAN.*' -printf '%P ' | xargs md5sum > DEBIAN/md5sums
 		cd $tmpdir
-		dpkg -b armbian-tools-${RELEASE}_${REVISION}_${ARCH} >/dev/null
+		fakeroot dpkg -b armbian-tools-${RELEASE}_${REVISION}_${ARCH} >/dev/null
 		mv $tmpdir/armbian-tools-${RELEASE}_${REVISION}_${ARCH}.deb $DEST/debs
 		cd $SRC/cache
 		rm -rf $tmpdir
