@@ -16,6 +16,10 @@
 SRC=$(dirname $(realpath ${BASH_SOURCE}))
 # fallback for Trusty
 [[ -z $SRC ]] && SRC=$(pwd)
+
+# check for whitespace in $SRC and exit for safety reasons
+grep -q "[[:space:]]" <<<"${SRC}" && (echo "The path \"${SRC}\" contains whitespace. Not supported" >&2 ; exit 1)
+
 cd $SRC
 
 if [[ -f $SRC/lib/general.sh && -L $SRC/main.sh ]]; then
