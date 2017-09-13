@@ -8,7 +8,7 @@ if test -e mmc 0:1 boot/.next;
 
 if test -e mmc 0:1 boot/.next; 
 	then setenv bootargs "root=${rootdev} rootwait rootflags=data=writeback rw rootfstype=ext4 ${condev} no_console_suspend consoleblank=0 fsck.repair=yes loglevel=5 net.ifnames=0";
-	else setenv bootargs "root=${rootdev} rootwait rootflags=data=writeback rw rootfstype=ext4 ${condev} no_console_suspend consoleblank=0 cvbsmode=576cvbs hdmimode=1080p60hz cvbsdrv=0 m_bpp=16 loglevel=5 net.ifnames=0"; fi
+	else setenv bootargs "root=${rootdev} rootwait rootflags=data=writeback rw rootfstype=ext4 ${condev} no_console_suspend consoleblank=0 cvbsmode=576cvbs hdmimode=1080p60hz cvbsdrv=0 m_bpp=24 loglevel=5 net.ifnames=0"; fi
 
 ${bloader} ${initrd_start} /boot/uInitrd
 
