@@ -4,12 +4,9 @@
 Vagrant.require_version ">= 1.5"
 
 $provisioning_script = <<SCRIPT
-# use remote git version instead of sharing a copy from host to preserve proper file permissions
-# and prevent permission related issues for the temp directory
-git clone https://github.com/armbian/build /home/ubuntu/armbian
-mkdir -p /vagrant/output /vagrant/userpatches
-ln -sf /vagrant/output /home/ubuntu/armbian/output
-ln -sf /vagrant/userpatches /home/ubuntu/armbian/userpatches
+mkdir -p /vagrant/output /vagrant/userpatches /home/ubuntu/cache /home/ubuntu/.tmp
+ln -sf /home/ubuntu/cache /vagrant/cache
+ln -sf /home/ubuntu/.tmp /vagrant/.tmp
 SCRIPT
 
 Vagrant.configure(2) do |config|
