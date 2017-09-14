@@ -9,6 +9,26 @@ case $BRANCH in
 	;;
 
 	next)
+	ATFSOURCE='https://github.com/apritzel/arm-trusted-firmware'
+	ATFDIR='arm-trusted-firmware-sunxi-mainline'
+	ATFBRANCH='branch:allwinner-stable'
+	ATF_USE_GCC='> 6.0'
+	ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
+
+	BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
+	BOOTDIR=$MAINLINE_UBOOT_DIR
+	BOOTBRANCH=$MAINLINE_UBOOT_BRANCH
+	BOOTPATCHDIR='u-boot-sun50i-dev'
+	UBOOT_USE_GCC='> 7.0'
+	UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
+	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
+
+	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+	KERNELBRANCH=$MAINLINE_KERNEL_BRANCH
+	KERNELDIR='linux-sun50i-dev'
+	KERNEL_USE_GCC='> 7.0'
+	LINUXCONFIG='linux-sun50i-dev'
+	KERNELPATCHDIR='sunxi-next'
 	;;
 
 	dev)
