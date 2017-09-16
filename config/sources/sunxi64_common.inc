@@ -2,6 +2,11 @@ ARCH=arm64
 KERNEL_IMAGE_TYPE=Image
 HAS_UUID_SUPPORT=yes
 OFFSET=2
+BOOTDELAY=0
+
+# Here we want to rename LINUXFAMILY from sun50iw1, sun50iw2, etc for next and dev branches
+# since this doesn't affect any stable images don't add any backwards compatibility hacks
+[[ $BRANCH != default ]] && LINUXFAMILY=sunxi64
 
 case $BRANCH in
 	default)
@@ -25,9 +30,8 @@ case $BRANCH in
 
 	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 	KERNELBRANCH=$MAINLINE_KERNEL_BRANCH
-	KERNELDIR='linux-sun50i-dev'
+	KERNELDIR=$MAINLINE_KERNEL_DIR
 	KERNEL_USE_GCC='> 7.0'
-	LINUXCONFIG='linux-sun50i-dev'
 	KERNELPATCHDIR='sunxi-next'
 	;;
 
@@ -50,8 +54,6 @@ case $BRANCH in
 	KERNELBRANCH='branch:sunxi64-4.13.y'
 	KERNELDIR='linux-sun50i-dev'
 	KERNEL_USE_GCC='> 7.0'
-	LINUXCONFIG='linux-sun50i-dev'
-	KERNELPATCHDIR='sun50i-dev'
 	;;
 esac
 
