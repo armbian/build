@@ -1,0 +1,1154 @@
+diff --git a/Makefile b/Makefile
+index f6838187b568..788d90a0051b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 87
++SUBLEVEL = 88
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/arm/mm/fault.c b/arch/arm/mm/fault.c
+index c095455d496e..0d20cd594017 100644
+--- a/arch/arm/mm/fault.c
++++ b/arch/arm/mm/fault.c
+@@ -314,8 +314,11 @@ retry:
+ 	 * signal first. We do not need to release the mmap_sem because
+ 	 * it would already be released in __lock_page_or_retry in
+ 	 * mm/filemap.c. */
+-	if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(current))
++	if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(current)) {
++		if (!user_mode(regs))
++			goto no_context;
+ 		return 0;
++	}
+ 
+ 	/*
+ 	 * Major/minor page fault accounting is only done on the
+diff --git a/drivers/ata/pata_amd.c b/drivers/ata/pata_amd.c
+index 8d4d959a821c..8706533db57b 100644
+--- a/drivers/ata/pata_amd.c
++++ b/drivers/ata/pata_amd.c
+@@ -616,6 +616,7 @@ static const struct pci_device_id amd[] = {
+ 	{ PCI_VDEVICE(NVIDIA,	PCI_DEVICE_ID_NVIDIA_NFORCE_MCP73_IDE),	8 },
+ 	{ PCI_VDEVICE(NVIDIA,	PCI_DEVICE_ID_NVIDIA_NFORCE_MCP77_IDE),	8 },
+ 	{ PCI_VDEVICE(AMD,	PCI_DEVICE_ID_AMD_CS5536_IDE),		9 },
++	{ PCI_VDEVICE(AMD,	PCI_DEVICE_ID_AMD_CS5536_DEV_IDE),	9 },
+ 
+ 	{ },
+ };
+diff --git a/drivers/ata/pata_cs5536.c b/drivers/ata/pata_cs5536.c
+index 6c15a554efbe..dc1255294628 100644
+--- a/drivers/ata/pata_cs5536.c
++++ b/drivers/ata/pata_cs5536.c
+@@ -289,6 +289,7 @@ static int cs5536_init_one(struct pci_dev *dev, const struct pci_device_id *id)
+ 
+ static const struct pci_device_id cs5536[] = {
+ 	{ PCI_VDEVICE(AMD,	PCI_DEVICE_ID_AMD_CS5536_IDE), },
++	{ PCI_VDEVICE(AMD,	PCI_DEVICE_ID_AMD_CS5536_DEV_IDE), },
+ 	{ },
+ };
+ 
+diff --git a/drivers/base/bus.c b/drivers/base/bus.c
+index 500592486e88..0346e46e2871 100644
+--- a/drivers/base/bus.c
++++ b/drivers/base/bus.c
+@@ -737,7 +737,7 @@ int bus_add_driver(struct device_driver *drv)
+ 
+ out_unregister:
+ 	kobject_put(&priv->kobj);
+-	kfree(drv->p);
++	/* drv->p is freed in driver_release()  */
+ 	drv->p = NULL;
+ out_put_bus:
+ 	bus_put(bus);
+diff --git a/drivers/bluetooth/btusb.c b/drivers/bluetooth/btusb.c
+index cd6b141b9825..7bb8055bd10c 100644
+--- a/drivers/bluetooth/btusb.c
++++ b/drivers/bluetooth/btusb.c
+@@ -333,6 +333,7 @@ static const struct usb_device_id blacklist_table[] = {
+ 	{ USB_DEVICE(0x13d3, 0x3410), .driver_info = BTUSB_REALTEK },
+ 	{ USB_DEVICE(0x13d3, 0x3416), .driver_info = BTUSB_REALTEK },
+ 	{ USB_DEVICE(0x13d3, 0x3459), .driver_info = BTUSB_REALTEK },
++	{ USB_DEVICE(0x13d3, 0x3494), .driver_info = BTUSB_REALTEK },
+ 
+ 	/* Additional Realtek 8821AE Bluetooth devices */
+ 	{ USB_DEVICE(0x0b05, 0x17dc), .driver_info = BTUSB_REALTEK },
+diff --git a/drivers/gpu/drm/i2c/adv7511.c b/drivers/gpu/drm/i2c/adv7511.c
+index 00416f23b5cb..dba5c0ea0827 100644
+--- a/drivers/gpu/drm/i2c/adv7511.c
++++ b/drivers/gpu/drm/i2c/adv7511.c
+@@ -36,7 +36,10 @@ struct adv7511 {
+ 	bool edid_read;
+ 
+ 	wait_queue_head_t wq;
++	struct work_struct hpd_work;
++
+ 	struct drm_encoder *encoder;
++	struct drm_connector connector;
+ 
+ 	bool embedded_sync;
+ 	enum adv7511_sync_polarity vsync_polarity;
+@@ -48,6 +51,10 @@ struct adv7511 {
+ 	struct gpio_desc *gpio_pd;
+ };
+ 
++static const int edid_i2c_addr = 0x7e;
++static const int packet_i2c_addr = 0x70;
++static const int cec_i2c_addr = 0x78;
++
+ static struct adv7511 *encoder_to_adv7511(struct drm_encoder *encoder)
+ {
+ 	return to_encoder_slave(encoder)->slave_priv;
+@@ -362,12 +369,19 @@ static void adv7511_power_on(struct adv7511 *adv7511)
+ {
+ 	adv7511->current_edid_segment = -1;
+ 
+-	regmap_write(adv7511->regmap, ADV7511_REG_INT(0),
+-		     ADV7511_INT0_EDID_READY);
+-	regmap_write(adv7511->regmap, ADV7511_REG_INT(1),
+-		     ADV7511_INT1_DDC_ERROR);
+ 	regmap_update_bits(adv7511->regmap, ADV7511_REG_POWER,
+ 			   ADV7511_POWER_POWER_DOWN, 0);
++	if (adv7511->i2c_main->irq) {
++		/*
++		 * Documentation says the INT_ENABLE registers are reset in
++		 * POWER_DOWN mode. My 7511w preserved the bits, however.
++		 * Still, let's be safe and stick to the documentation.
++		 */
++		regmap_write(adv7511->regmap, ADV7511_REG_INT_ENABLE(0),
++			     ADV7511_INT0_EDID_READY);
++		regmap_write(adv7511->regmap, ADV7511_REG_INT_ENABLE(1),
++			     ADV7511_INT1_DDC_ERROR);
++	}
+ 
+ 	/*
+ 	 * Per spec it is allowed to pulse the HDP signal to indicate that the
+@@ -422,7 +436,27 @@ static bool adv7511_hpd(struct adv7511 *adv7511)
+ 	return false;
+ }
+ 
+-static int adv7511_irq_process(struct adv7511 *adv7511)
++static void adv7511_hpd_work(struct work_struct *work)
++{
++	struct adv7511 *adv7511 = container_of(work, struct adv7511, hpd_work);
++	enum drm_connector_status status;
++	unsigned int val;
++	int ret;
++	ret = regmap_read(adv7511->regmap, ADV7511_REG_STATUS, &val);
++	if (ret < 0)
++		status = connector_status_disconnected;
++	else if (val & ADV7511_STATUS_HPD)
++		status = connector_status_connected;
++	else
++		status = connector_status_disconnected;
++
++	if (adv7511->connector.status != status) {
++		adv7511->connector.status = status;
++		drm_kms_helper_hotplug_event(adv7511->connector.dev);
++	}
++}
++
++static int adv7511_irq_process(struct adv7511 *adv7511, bool process_hpd)
+ {
+ 	unsigned int irq0, irq1;
+ 	int ret;
+@@ -438,8 +472,8 @@ static int adv7511_irq_process(struct adv7511 *adv7511)
+ 	regmap_write(adv7511->regmap, ADV7511_REG_INT(0), irq0);
+ 	regmap_write(adv7511->regmap, ADV7511_REG_INT(1), irq1);
+ 
+-	if (irq0 & ADV7511_INT0_HDP && adv7511->encoder)
+-		drm_helper_hpd_irq_event(adv7511->encoder->dev);
++	if (process_hpd && irq0 & ADV7511_INT0_HDP && adv7511->encoder)
++		schedule_work(&adv7511->hpd_work);
+ 
+ 	if (irq0 & ADV7511_INT0_EDID_READY || irq1 & ADV7511_INT1_DDC_ERROR) {
+ 		adv7511->edid_read = true;
+@@ -456,7 +490,7 @@ static irqreturn_t adv7511_irq_handler(int irq, void *devid)
+ 	struct adv7511 *adv7511 = devid;
+ 	int ret;
+ 
+-	ret = adv7511_irq_process(adv7511);
++	ret = adv7511_irq_process(adv7511, true);
+ 	return ret < 0 ? IRQ_NONE : IRQ_HANDLED;
+ }
+ 
+@@ -473,7 +507,7 @@ static int adv7511_wait_for_edid(struct adv7511 *adv7511, int timeout)
+ 				adv7511->edid_read, msecs_to_jiffies(timeout));
+ 	} else {
+ 		for (; timeout > 0; timeout -= 25) {
+-			ret = adv7511_irq_process(adv7511);
++			ret = adv7511_irq_process(adv7511, false);
+ 			if (ret < 0)
+ 				break;
+ 
+@@ -567,13 +601,18 @@ static int adv7511_get_modes(struct drm_encoder *encoder,
+ 
+ 	/* Reading the EDID only works if the device is powered */
+ 	if (!adv7511->powered) {
+-		regmap_write(adv7511->regmap, ADV7511_REG_INT(0),
+-			     ADV7511_INT0_EDID_READY);
+-		regmap_write(adv7511->regmap, ADV7511_REG_INT(1),
+-			     ADV7511_INT1_DDC_ERROR);
+ 		regmap_update_bits(adv7511->regmap, ADV7511_REG_POWER,
+ 				   ADV7511_POWER_POWER_DOWN, 0);
++		if (adv7511->i2c_main->irq) {
++			regmap_write(adv7511->regmap, ADV7511_REG_INT_ENABLE(0),
++				     ADV7511_INT0_EDID_READY);
++			regmap_write(adv7511->regmap, ADV7511_REG_INT_ENABLE(1),
++				     ADV7511_INT1_DDC_ERROR);
++		}
+ 		adv7511->current_edid_segment = -1;
++		/* Reset the EDID_I2C_ADDR register as it might be cleared */
++		regmap_write(adv7511->regmap, ADV7511_REG_EDID_I2C_ADDR,
++				edid_i2c_addr);
+ 	}
+ 
+ 	edid = drm_do_get_edid(connector, adv7511_get_edid_block, adv7511);
+@@ -849,10 +888,6 @@ static int adv7511_parse_dt(struct device_node *np,
+ 	return 0;
+ }
+ 
+-static const int edid_i2c_addr = 0x7e;
+-static const int packet_i2c_addr = 0x70;
+-static const int cec_i2c_addr = 0x78;
+-
+ static int adv7511_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
+ {
+ 	struct adv7511_link_config link_config;
+@@ -913,6 +948,8 @@ static int adv7511_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
+ 	if (!adv7511->i2c_edid)
+ 		return -ENOMEM;
+ 
++	INIT_WORK(&adv7511->hpd_work, adv7511_hpd_work);
++
+ 	if (i2c->irq) {
+ 		init_waitqueue_head(&adv7511->wq);
+ 
+diff --git a/drivers/gpu/drm/nouveau/nvkm/subdev/pci/base.c b/drivers/gpu/drm/nouveau/nvkm/subdev/pci/base.c
+index d671dcfaff3c..4896474da320 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/pci/base.c
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/pci/base.c
+@@ -180,6 +180,10 @@ nvkm_pci_new_(const struct nvkm_pci_func *func, struct nvkm_device *device,
+ 		}
+ 	}
+ 
++#ifdef __BIG_ENDIAN
++	pci->msi = false;
++#endif
++
+ 	pci->msi = nvkm_boolopt(device->cfgopt, "NvMSI", pci->msi);
+ 	if (pci->msi && func->msi_rearm) {
+ 		pci->msi = pci_enable_msi(pci->pdev) == 0;
+diff --git a/drivers/hwtracing/intel_th/pci.c b/drivers/hwtracing/intel_th/pci.c
+index d57a2f75dccf..32c6a40a408f 100644
+--- a/drivers/hwtracing/intel_th/pci.c
++++ b/drivers/hwtracing/intel_th/pci.c
+@@ -72,6 +72,16 @@ static const struct pci_device_id intel_th_pci_id_table[] = {
+ 		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0xa2a6),
+ 		.driver_data = (kernel_ulong_t)0,
+ 	},
++	{
++		/* Cannon Lake H */
++		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0xa326),
++		.driver_data = (kernel_ulong_t)0,
++	},
++	{
++		/* Cannon Lake LP */
++		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x9da6),
++		.driver_data = (kernel_ulong_t)0,
++	},
+ 	{ 0 },
+ };
+ 
+diff --git a/drivers/input/mouse/trackpoint.c b/drivers/input/mouse/trackpoint.c
+index ce6ff9b301bb..7e2dc5e56632 100644
+--- a/drivers/input/mouse/trackpoint.c
++++ b/drivers/input/mouse/trackpoint.c
+@@ -381,8 +381,8 @@ int trackpoint_detect(struct psmouse *psmouse, bool set_properties)
+ 		return 0;
+ 
+ 	if (trackpoint_read(&psmouse->ps2dev, TP_EXT_BTN, &button_info)) {
+-		psmouse_warn(psmouse, "failed to get extended button data\n");
+-		button_info = 0;
++		psmouse_warn(psmouse, "failed to get extended button data, assuming 3 buttons\n");
++		button_info = 0x33;
+ 	}
+ 
+ 	psmouse->private = kzalloc(sizeof(struct trackpoint_data), GFP_KERNEL);
+diff --git a/drivers/net/wireless/ath/ath10k/core.c b/drivers/net/wireless/ath/ath10k/core.c
+index 531de256d58d..05de75360fa4 100644
+--- a/drivers/net/wireless/ath/ath10k/core.c
++++ b/drivers/net/wireless/ath/ath10k/core.c
+@@ -1607,6 +1607,12 @@ int ath10k_core_start(struct ath10k *ar, enum ath10k_firmware_mode mode)
+ 		goto err_wmi_detach;
+ 	}
+ 
++	/* If firmware indicates Full Rx Reorder support it must be used in a
++	 * slightly different manner. Let HTT code know.
++	 */
++	ar->htt.rx_ring.in_ord_rx = !!(test_bit(WMI_SERVICE_RX_FULL_REORDER,
++						ar->wmi.svc_map));
++
+ 	status = ath10k_htt_rx_alloc(&ar->htt);
+ 	if (status) {
+ 		ath10k_err(ar, "failed to alloc htt rx: %d\n", status);
+@@ -1669,12 +1675,6 @@ int ath10k_core_start(struct ath10k *ar, enum ath10k_firmware_mode mode)
+ 		goto err_hif_stop;
+ 	}
+ 
+-	/* If firmware indicates Full Rx Reorder support it must be used in a
+-	 * slightly different manner. Let HTT code know.
+-	 */
+-	ar->htt.rx_ring.in_ord_rx = !!(test_bit(WMI_SERVICE_RX_FULL_REORDER,
+-						ar->wmi.svc_map));
+-
+ 	status = ath10k_htt_rx_ring_refill(ar);
+ 	if (status) {
+ 		ath10k_err(ar, "failed to refill htt rx ring: %d\n", status);
+diff --git a/drivers/net/wireless/mwifiex/cfg80211.c b/drivers/net/wireless/mwifiex/cfg80211.c
+index c3331d6201c3..9a8982f581c5 100644
+--- a/drivers/net/wireless/mwifiex/cfg80211.c
++++ b/drivers/net/wireless/mwifiex/cfg80211.c
+@@ -3740,7 +3740,7 @@ int mwifiex_init_channel_scan_gap(struct mwifiex_adapter *adapter)
+ 	if (adapter->config_bands & BAND_A)
+ 		n_channels_a = mwifiex_band_5ghz.n_channels;
+ 
+-	adapter->num_in_chan_stats = max_t(u32, n_channels_bg, n_channels_a);
++	adapter->num_in_chan_stats = n_channels_bg + n_channels_a;
+ 	adapter->chan_stats = vmalloc(sizeof(*adapter->chan_stats) *
+ 				      adapter->num_in_chan_stats);
+ 
+diff --git a/drivers/net/wireless/mwifiex/scan.c b/drivers/net/wireless/mwifiex/scan.c
+index c20017ced566..fb98f42cb5e7 100644
+--- a/drivers/net/wireless/mwifiex/scan.c
++++ b/drivers/net/wireless/mwifiex/scan.c
+@@ -2170,6 +2170,12 @@ mwifiex_update_chan_statistics(struct mwifiex_private *priv,
+ 					      sizeof(struct mwifiex_chan_stats);
+ 
+ 	for (i = 0 ; i < num_chan; i++) {
++		if (adapter->survey_idx >= adapter->num_in_chan_stats) {
++			mwifiex_dbg(adapter, WARN,
++				    "FW reported too many channel results (max %d)\n",
++				    adapter->num_in_chan_stats);
++			return;
++		}
+ 		chan_stats.chan_num = fw_chan_stats->chan_num;
+ 		chan_stats.bandcfg = fw_chan_stats->bandcfg;
+ 		chan_stats.flags = fw_chan_stats->flags;
+diff --git a/drivers/net/wireless/realtek/rtlwifi/pci.c b/drivers/net/wireless/realtek/rtlwifi/pci.c
+index a52230377e2c..c48b7e8ee0d6 100644
+--- a/drivers/net/wireless/realtek/rtlwifi/pci.c
++++ b/drivers/net/wireless/realtek/rtlwifi/pci.c
+@@ -2269,7 +2269,7 @@ int rtl_pci_probe(struct pci_dev *pdev,
+ 	/* find adapter */
+ 	if (!_rtl_pci_find_adapter(pdev, hw)) {
+ 		err = -ENODEV;
+-		goto fail3;
++		goto fail2;
+ 	}
+ 
+ 	/* Init IO handler */
+@@ -2339,10 +2339,10 @@ fail3:
+ 	pci_set_drvdata(pdev, NULL);
+ 	rtl_deinit_core(hw);
+ 
++fail2:
+ 	if (rtlpriv->io.pci_mem_start != 0)
+ 		pci_iounmap(pdev, (void __iomem *)rtlpriv->io.pci_mem_start);
+ 
+-fail2:
+ 	pci_release_regions(pdev);
+ 	complete(&rtlpriv->firmware_loading_complete);
+ 
+diff --git a/drivers/scsi/sg.c b/drivers/scsi/sg.c
+index 8a9e139e2853..71325972e503 100644
+--- a/drivers/scsi/sg.c
++++ b/drivers/scsi/sg.c
+@@ -1254,6 +1254,7 @@ sg_mmap(struct file *filp, struct vm_area_struct *vma)
+ 	unsigned long req_sz, len, sa;
+ 	Sg_scatter_hold *rsv_schp;
+ 	int k, length;
++	int ret = 0;
+ 
+ 	if ((!filp) || (!vma) || (!(sfp = (Sg_fd *) filp->private_data)))
+ 		return -ENXIO;
+@@ -1264,8 +1265,11 @@ sg_mmap(struct file *filp, struct vm_area_struct *vma)
+ 	if (vma->vm_pgoff)
+ 		return -EINVAL;	/* want no offset */
+ 	rsv_schp = &sfp->reserve;
+-	if (req_sz > rsv_schp->bufflen)
+-		return -ENOMEM;	/* cannot map more than reserved buffer */
++	mutex_lock(&sfp->f_mutex);
++	if (req_sz > rsv_schp->bufflen) {
++		ret = -ENOMEM;	/* cannot map more than reserved buffer */
++		goto out;
++	}
+ 
+ 	sa = vma->vm_start;
+ 	length = 1 << (PAGE_SHIFT + rsv_schp->page_order);
+@@ -1279,7 +1283,9 @@ sg_mmap(struct file *filp, struct vm_area_struct *vma)
+ 	vma->vm_flags |= VM_IO | VM_DONTEXPAND | VM_DONTDUMP;
+ 	vma->vm_private_data = sfp;
+ 	vma->vm_ops = &sg_mmap_vm_ops;
+-	return 0;
++out:
++	mutex_unlock(&sfp->f_mutex);
++	return ret;
+ }
+ 
+ static void
+@@ -1751,9 +1757,12 @@ sg_start_req(Sg_request *srp, unsigned char *cmd)
+ 		    !sfp->res_in_use) {
+ 			sfp->res_in_use = 1;
+ 			sg_link_reserve(sfp, srp, dxfer_len);
+-		} else if ((hp->flags & SG_FLAG_MMAP_IO) && sfp->res_in_use) {
++		} else if (hp->flags & SG_FLAG_MMAP_IO) {
++			res = -EBUSY; /* sfp->res_in_use == 1 */
++			if (dxfer_len > rsv_schp->bufflen)
++				res = -ENOMEM;
+ 			mutex_unlock(&sfp->f_mutex);
+-			return -EBUSY;
++			return res;
+ 		} else {
+ 			res = sg_build_indirect(req_schp, sfp, dxfer_len);
+ 			if (res) {
+diff --git a/drivers/staging/rts5208/rtsx_scsi.c b/drivers/staging/rts5208/rtsx_scsi.c
+index 60871f3022b1..12a3893b98fd 100644
+--- a/drivers/staging/rts5208/rtsx_scsi.c
++++ b/drivers/staging/rts5208/rtsx_scsi.c
+@@ -414,7 +414,7 @@ void set_sense_data(struct rtsx_chip *chip, unsigned int lun, u8 err_code,
+ 	sense->ascq = ascq;
+ 	if (sns_key_info0 != 0) {
+ 		sense->sns_key_info[0] = SKSV | sns_key_info0;
+-		sense->sns_key_info[1] = (sns_key_info1 & 0xf0) >> 8;
++		sense->sns_key_info[1] = (sns_key_info1 & 0xf0) >> 4;
+ 		sense->sns_key_info[2] = sns_key_info1 & 0x0f;
+ 	}
+ }
+diff --git a/drivers/usb/core/devio.c b/drivers/usb/core/devio.c
+index 54d2d6b604c0..873ba02d59e6 100644
+--- a/drivers/usb/core/devio.c
++++ b/drivers/usb/core/devio.c
+@@ -519,6 +519,8 @@ static void async_completed(struct urb *urb)
+ 	if (as->status < 0 && as->bulk_addr && as->status != -ECONNRESET &&
+ 			as->status != -ENOENT)
+ 		cancel_bulk_urbs(ps, as->bulk_addr);
++
++	wake_up(&ps->wait);
+ 	spin_unlock(&ps->lock);
+ 
+ 	if (signr) {
+@@ -526,8 +528,6 @@ static void async_completed(struct urb *urb)
+ 		put_pid(pid);
+ 		put_cred(cred);
+ 	}
+-
+-	wake_up(&ps->wait);
+ }
+ 
+ static void destroy_async(struct usb_dev_state *ps, struct list_head *list)
+diff --git a/drivers/usb/core/quirks.c b/drivers/usb/core/quirks.c
+index 574da2b4529c..82806e311202 100644
+--- a/drivers/usb/core/quirks.c
++++ b/drivers/usb/core/quirks.c
+@@ -57,8 +57,9 @@ static const struct usb_device_id usb_quirk_list[] = {
+ 	/* Microsoft LifeCam-VX700 v2.0 */
+ 	{ USB_DEVICE(0x045e, 0x0770), .driver_info = USB_QUIRK_RESET_RESUME },
+ 
+-	/* Logitech HD Pro Webcams C920 and C930e */
++	/* Logitech HD Pro Webcams C920, C920-C and C930e */
+ 	{ USB_DEVICE(0x046d, 0x082d), .driver_info = USB_QUIRK_DELAY_INIT },
++	{ USB_DEVICE(0x046d, 0x0841), .driver_info = USB_QUIRK_DELAY_INIT },
+ 	{ USB_DEVICE(0x046d, 0x0843), .driver_info = USB_QUIRK_DELAY_INIT },
+ 
+ 	/* Logitech ConferenceCam CC3000e */
+@@ -217,6 +218,9 @@ static const struct usb_device_id usb_quirk_list[] = {
+ 	{ USB_DEVICE(0x1a0a, 0x0200), .driver_info =
+ 			USB_QUIRK_LINEAR_UFRAME_INTR_BINTERVAL },
+ 
++	/* Corsair Strafe RGB */
++	{ USB_DEVICE(0x1b1c, 0x1b20), .driver_info = USB_QUIRK_DELAY_INIT },
++
+ 	/* Acer C120 LED Projector */
+ 	{ USB_DEVICE(0x1de1, 0xc102), .driver_info = USB_QUIRK_NO_LPM },
+ 
+diff --git a/drivers/usb/host/pci-quirks.c b/drivers/usb/host/pci-quirks.c
+index 03b9a372636f..1fc6f478a02c 100644
+--- a/drivers/usb/host/pci-quirks.c
++++ b/drivers/usb/host/pci-quirks.c
+@@ -133,29 +133,30 @@ static int amd_chipset_sb_type_init(struct amd_chipset_info *pinfo)
+ 			pinfo->sb_type.gen = AMD_CHIPSET_SB700;
+ 		else if (rev >= 0x40 && rev <= 0x4f)
+ 			pinfo->sb_type.gen = AMD_CHIPSET_SB800;
+-	}
+-	pinfo->smbus_dev = pci_get_device(PCI_VENDOR_ID_AMD,
+-					  0x145c, NULL);
+-	if (pinfo->smbus_dev) {
+-		pinfo->sb_type.gen = AMD_CHIPSET_TAISHAN;
+ 	} else {
+ 		pinfo->smbus_dev = pci_get_device(PCI_VENDOR_ID_AMD,
+ 				PCI_DEVICE_ID_AMD_HUDSON2_SMBUS, NULL);
+ 
+-		if (!pinfo->smbus_dev) {
+-			pinfo->sb_type.gen = NOT_AMD_CHIPSET;
+-			return 0;
++		if (pinfo->smbus_dev) {
++			rev = pinfo->smbus_dev->revision;
++			if (rev >= 0x11 && rev <= 0x14)
++				pinfo->sb_type.gen = AMD_CHIPSET_HUDSON2;
++			else if (rev >= 0x15 && rev <= 0x18)
++				pinfo->sb_type.gen = AMD_CHIPSET_BOLTON;
++			else if (rev >= 0x39 && rev <= 0x3a)
++				pinfo->sb_type.gen = AMD_CHIPSET_YANGTZE;
++		} else {
++			pinfo->smbus_dev = pci_get_device(PCI_VENDOR_ID_AMD,
++							  0x145c, NULL);
++			if (pinfo->smbus_dev) {
++				rev = pinfo->smbus_dev->revision;
++				pinfo->sb_type.gen = AMD_CHIPSET_TAISHAN;
++			} else {
++				pinfo->sb_type.gen = NOT_AMD_CHIPSET;
++				return 0;
++			}
+ 		}
+-
+-		rev = pinfo->smbus_dev->revision;
+-		if (rev >= 0x11 && rev <= 0x14)
+-			pinfo->sb_type.gen = AMD_CHIPSET_HUDSON2;
+-		else if (rev >= 0x15 && rev <= 0x18)
+-			pinfo->sb_type.gen = AMD_CHIPSET_BOLTON;
+-		else if (rev >= 0x39 && rev <= 0x3a)
+-			pinfo->sb_type.gen = AMD_CHIPSET_YANGTZE;
+ 	}
+-
+ 	pinfo->sb_type.rev = rev;
+ 	return 1;
+ }
+diff --git a/drivers/usb/serial/option.c b/drivers/usb/serial/option.c
+index fe123153b1a5..2a9944326210 100644
+--- a/drivers/usb/serial/option.c
++++ b/drivers/usb/serial/option.c
+@@ -2023,6 +2023,7 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(0x2001, 0x7d03, 0xff, 0x02, 0x01) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(0x2001, 0x7d03, 0xff, 0x00, 0x00) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(0x2001, 0x7d04, 0xff) },			/* D-Link DWM-158 */
++	{ USB_DEVICE_INTERFACE_CLASS(0x2001, 0x7d0e, 0xff) },			/* D-Link DWM-157 C1 */
+ 	{ USB_DEVICE_INTERFACE_CLASS(0x2001, 0x7e19, 0xff),			/* D-Link DWM-221 B1 */
+ 	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
+ 	{ USB_DEVICE_INTERFACE_CLASS(0x2001, 0x7e35, 0xff),			/* D-Link DWM-222 */
+diff --git a/fs/btrfs/super.c b/fs/btrfs/super.c
+index 5d34a062ca4f..3bd2233737ac 100644
+--- a/fs/btrfs/super.c
++++ b/fs/btrfs/super.c
+@@ -1727,6 +1727,8 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
+ 			goto restore;
+ 		}
+ 
++		btrfs_qgroup_rescan_resume(fs_info);
++
+ 		if (!fs_info->uuid_root) {
+ 			btrfs_info(fs_info, "creating UUID tree");
+ 			ret = btrfs_create_uuid_tree(fs_info);
+diff --git a/fs/dlm/user.c b/fs/dlm/user.c
+index 173b3873a4f4..e40c440a4555 100644
+--- a/fs/dlm/user.c
++++ b/fs/dlm/user.c
+@@ -355,6 +355,10 @@ static int dlm_device_register(struct dlm_ls *ls, char *name)
+ 	error = misc_register(&ls->ls_device);
+ 	if (error) {
+ 		kfree(ls->ls_device.name);
++		/* this has to be set to NULL
++		 * to avoid a double-free in dlm_device_deregister
++		 */
++		ls->ls_device.name = NULL;
+ 	}
+ fail:
+ 	return error;
+diff --git a/fs/nfs/internal.h b/fs/nfs/internal.h
+index 9dea85f7f918..578350fd96e1 100644
+--- a/fs/nfs/internal.h
++++ b/fs/nfs/internal.h
+@@ -243,7 +243,6 @@ int nfs_iocounter_wait(struct nfs_io_counter *c);
+ extern const struct nfs_pageio_ops nfs_pgio_rw_ops;
+ struct nfs_pgio_header *nfs_pgio_header_alloc(const struct nfs_rw_ops *);
+ void nfs_pgio_header_free(struct nfs_pgio_header *);
+-void nfs_pgio_data_destroy(struct nfs_pgio_header *);
+ int nfs_generic_pgio(struct nfs_pageio_descriptor *, struct nfs_pgio_header *);
+ int nfs_initiate_pgio(struct rpc_clnt *clnt, struct nfs_pgio_header *hdr,
+ 		      struct rpc_cred *cred, const struct nfs_rpc_ops *rpc_ops,
+diff --git a/fs/nfs/pagelist.c b/fs/nfs/pagelist.c
+index 452a011ba0d8..8ebfdd00044b 100644
+--- a/fs/nfs/pagelist.c
++++ b/fs/nfs/pagelist.c
+@@ -528,16 +528,6 @@ struct nfs_pgio_header *nfs_pgio_header_alloc(const struct nfs_rw_ops *ops)
+ }
+ EXPORT_SYMBOL_GPL(nfs_pgio_header_alloc);
+ 
+-/*
+- * nfs_pgio_header_free - Free a read or write header
+- * @hdr: The header to free
+- */
+-void nfs_pgio_header_free(struct nfs_pgio_header *hdr)
+-{
+-	hdr->rw_ops->rw_free_header(hdr);
+-}
+-EXPORT_SYMBOL_GPL(nfs_pgio_header_free);
+-
+ /**
+  * nfs_pgio_data_destroy - make @hdr suitable for reuse
+  *
+@@ -546,14 +536,24 @@ EXPORT_SYMBOL_GPL(nfs_pgio_header_free);
+  *
+  * @hdr: A header that has had nfs_generic_pgio called
+  */
+-void nfs_pgio_data_destroy(struct nfs_pgio_header *hdr)
++static void nfs_pgio_data_destroy(struct nfs_pgio_header *hdr)
+ {
+ 	if (hdr->args.context)
+ 		put_nfs_open_context(hdr->args.context);
+ 	if (hdr->page_array.pagevec != hdr->page_array.page_array)
+ 		kfree(hdr->page_array.pagevec);
+ }
+-EXPORT_SYMBOL_GPL(nfs_pgio_data_destroy);
++
++/*
++ * nfs_pgio_header_free - Free a read or write header
++ * @hdr: The header to free
++ */
++void nfs_pgio_header_free(struct nfs_pgio_header *hdr)
++{
++	nfs_pgio_data_destroy(hdr);
++	hdr->rw_ops->rw_free_header(hdr);
++}
++EXPORT_SYMBOL_GPL(nfs_pgio_header_free);
+ 
+ /**
+  * nfs_pgio_rpcsetup - Set up arguments for a pageio call
+@@ -671,7 +671,6 @@ static int nfs_pgio_error(struct nfs_pageio_descriptor *desc,
+ 	u32 midx;
+ 
+ 	set_bit(NFS_IOHDR_REDO, &hdr->flags);
+-	nfs_pgio_data_destroy(hdr);
+ 	hdr->completion_ops->completion(hdr);
+ 	/* TODO: Make sure it's right to clean up all mirrors here
+ 	 *       and not just hdr->pgio_mirror_idx */
+@@ -689,7 +688,6 @@ static int nfs_pgio_error(struct nfs_pageio_descriptor *desc,
+ static void nfs_pgio_release(void *calldata)
+ {
+ 	struct nfs_pgio_header *hdr = calldata;
+-	nfs_pgio_data_destroy(hdr);
+ 	hdr->completion_ops->completion(hdr);
+ }
+ 
+diff --git a/fs/nfs/pnfs.c b/fs/nfs/pnfs.c
+index 3cae0726c1b1..7af7bedd7c02 100644
+--- a/fs/nfs/pnfs.c
++++ b/fs/nfs/pnfs.c
+@@ -1943,7 +1943,6 @@ pnfs_write_through_mds(struct nfs_pageio_descriptor *desc,
+ 		nfs_pageio_reset_write_mds(desc);
+ 		mirror->pg_recoalesce = 1;
+ 	}
+-	nfs_pgio_data_destroy(hdr);
+ 	hdr->release(hdr);
+ }
+ 
+@@ -2059,7 +2058,6 @@ pnfs_read_through_mds(struct nfs_pageio_descriptor *desc,
+ 		nfs_pageio_reset_read_mds(desc);
+ 		mirror->pg_recoalesce = 1;
+ 	}
+-	nfs_pgio_data_destroy(hdr);
+ 	hdr->release(hdr);
+ }
+ 
+diff --git a/fs/xfs/xfs_linux.h b/fs/xfs/xfs_linux.h
+index ec0e239a0fa9..201aae0b2662 100644
+--- a/fs/xfs/xfs_linux.h
++++ b/fs/xfs/xfs_linux.h
+@@ -369,7 +369,14 @@ static inline __uint64_t howmany_64(__uint64_t x, __uint32_t y)
+ #endif /* DEBUG */
+ 
+ #ifdef CONFIG_XFS_RT
+-#define XFS_IS_REALTIME_INODE(ip) ((ip)->i_d.di_flags & XFS_DIFLAG_REALTIME)
++
++/*
++ * make sure we ignore the inode flag if the filesystem doesn't have a
++ * configured realtime device.
++ */
++#define XFS_IS_REALTIME_INODE(ip)			\
++	(((ip)->i_d.di_flags & XFS_DIFLAG_REALTIME) &&	\
++	 (ip)->i_mount->m_rtdev_targp)
+ #else
+ #define XFS_IS_REALTIME_INODE(ip) (0)
+ #endif
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 37f05cb1dfd6..1af616138d1d 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -573,6 +573,7 @@
+ #define PCI_DEVICE_ID_AMD_CS5536_EHC    0x2095
+ #define PCI_DEVICE_ID_AMD_CS5536_UDC    0x2096
+ #define PCI_DEVICE_ID_AMD_CS5536_UOC    0x2097
++#define PCI_DEVICE_ID_AMD_CS5536_DEV_IDE    0x2092
+ #define PCI_DEVICE_ID_AMD_CS5536_IDE    0x209A
+ #define PCI_DEVICE_ID_AMD_LX_VIDEO  0x2081
+ #define PCI_DEVICE_ID_AMD_LX_AES    0x2082
+diff --git a/include/linux/workqueue.h b/include/linux/workqueue.h
+index 262d5c95dfc8..217abe56e711 100644
+--- a/include/linux/workqueue.h
++++ b/include/linux/workqueue.h
+@@ -311,7 +311,7 @@ enum {
+ 
+ 	__WQ_DRAINING		= 1 << 16, /* internal: workqueue is draining */
+ 	__WQ_ORDERED		= 1 << 17, /* internal: workqueue is ordered */
+-	__WQ_ORDERED_EXPLICIT	= 1 << 18, /* internal: alloc_ordered_workqueue() */
++	__WQ_ORDERED_EXPLICIT	= 1 << 19, /* internal: alloc_ordered_workqueue() */
+ 
+ 	WQ_MAX_ACTIVE		= 512,	  /* I like 512, better ideas? */
+ 	WQ_MAX_UNBOUND_PER_CPU	= 4,	  /* 4 * #cpus for unbound wq */
+diff --git a/kernel/locking/locktorture.c b/kernel/locking/locktorture.c
+index 8ef1919d63b2..d580b7d6ee6d 100644
+--- a/kernel/locking/locktorture.c
++++ b/kernel/locking/locktorture.c
+@@ -776,6 +776,8 @@ static void lock_torture_cleanup(void)
+ 	else
+ 		lock_torture_print_module_parms(cxt.cur_ops,
+ 						"End of test: SUCCESS");
++	kfree(cxt.lwsa);
++	kfree(cxt.lrsa);
+ 	torture_cleanup_end();
+ }
+ 
+@@ -917,6 +919,8 @@ static int __init lock_torture_init(void)
+ 				       GFP_KERNEL);
+ 		if (reader_tasks == NULL) {
+ 			VERBOSE_TOROUT_ERRSTRING("reader_tasks: Out of memory");
++			kfree(writer_tasks);
++			writer_tasks = NULL;
+ 			firsterr = -ENOMEM;
+ 			goto unwind;
+ 		}
+diff --git a/net/bluetooth/l2cap_core.c b/net/bluetooth/l2cap_core.c
+index 66e8b6ee19a5..357bcd34cf1f 100644
+--- a/net/bluetooth/l2cap_core.c
++++ b/net/bluetooth/l2cap_core.c
+@@ -57,7 +57,7 @@ static struct sk_buff *l2cap_build_cmd(struct l2cap_conn *conn,
+ 				       u8 code, u8 ident, u16 dlen, void *data);
+ static void l2cap_send_cmd(struct l2cap_conn *conn, u8 ident, u8 code, u16 len,
+ 			   void *data);
+-static int l2cap_build_conf_req(struct l2cap_chan *chan, void *data);
++static int l2cap_build_conf_req(struct l2cap_chan *chan, void *data, size_t data_size);
+ static void l2cap_send_disconn_req(struct l2cap_chan *chan, int err);
+ 
+ static void l2cap_tx(struct l2cap_chan *chan, struct l2cap_ctrl *control,
+@@ -1462,7 +1462,7 @@ static void l2cap_conn_start(struct l2cap_conn *conn)
+ 
+ 			set_bit(CONF_REQ_SENT, &chan->conf_state);
+ 			l2cap_send_cmd(conn, l2cap_get_ident(conn), L2CAP_CONF_REQ,
+-				       l2cap_build_conf_req(chan, buf), buf);
++				       l2cap_build_conf_req(chan, buf, sizeof(buf)), buf);
+ 			chan->num_conf_req++;
+ 		}
+ 
+@@ -2966,12 +2966,15 @@ static inline int l2cap_get_conf_opt(void **ptr, int *type, int *olen,
+ 	return len;
+ }
+ 
+-static void l2cap_add_conf_opt(void **ptr, u8 type, u8 len, unsigned long val)
++static void l2cap_add_conf_opt(void **ptr, u8 type, u8 len, unsigned long val, size_t size)
+ {
+ 	struct l2cap_conf_opt *opt = *ptr;
+ 
+ 	BT_DBG("type 0x%2.2x len %u val 0x%lx", type, len, val);
+ 
++	if (size < L2CAP_CONF_OPT_SIZE + len)
++		return;
++
+ 	opt->type = type;
+ 	opt->len  = len;
+ 
+@@ -2996,7 +2999,7 @@ static void l2cap_add_conf_opt(void **ptr, u8 type, u8 len, unsigned long val)
+ 	*ptr += L2CAP_CONF_OPT_SIZE + len;
+ }
+ 
+-static void l2cap_add_opt_efs(void **ptr, struct l2cap_chan *chan)
++static void l2cap_add_opt_efs(void **ptr, struct l2cap_chan *chan, size_t size)
+ {
+ 	struct l2cap_conf_efs efs;
+ 
+@@ -3024,7 +3027,7 @@ static void l2cap_add_opt_efs(void **ptr, struct l2cap_chan *chan)
+ 	}
+ 
+ 	l2cap_add_conf_opt(ptr, L2CAP_CONF_EFS, sizeof(efs),
+-			   (unsigned long) &efs);
++			   (unsigned long) &efs, size);
+ }
+ 
+ static void l2cap_ack_timeout(struct work_struct *work)
+@@ -3170,11 +3173,12 @@ static inline void l2cap_txwin_setup(struct l2cap_chan *chan)
+ 	chan->ack_win = chan->tx_win;
+ }
+ 
+-static int l2cap_build_conf_req(struct l2cap_chan *chan, void *data)
++static int l2cap_build_conf_req(struct l2cap_chan *chan, void *data, size_t data_size)
+ {
+ 	struct l2cap_conf_req *req = data;
+ 	struct l2cap_conf_rfc rfc = { .mode = chan->mode };
+ 	void *ptr = req->data;
++	void *endptr = data + data_size;
+ 	u16 size;
+ 
+ 	BT_DBG("chan %p", chan);
+@@ -3199,7 +3203,7 @@ static int l2cap_build_conf_req(struct l2cap_chan *chan, void *data)
+ 
+ done:
+ 	if (chan->imtu != L2CAP_DEFAULT_MTU)
+-		l2cap_add_conf_opt(&ptr, L2CAP_CONF_MTU, 2, chan->imtu);
++		l2cap_add_conf_opt(&ptr, L2CAP_CONF_MTU, 2, chan->imtu, endptr - ptr);
+ 
+ 	switch (chan->mode) {
+ 	case L2CAP_MODE_BASIC:
+@@ -3218,7 +3222,7 @@ done:
+ 		rfc.max_pdu_size    = 0;
+ 
+ 		l2cap_add_conf_opt(&ptr, L2CAP_CONF_RFC, sizeof(rfc),
+-				   (unsigned long) &rfc);
++				   (unsigned long) &rfc, endptr - ptr);
+ 		break;
+ 
+ 	case L2CAP_MODE_ERTM:
+@@ -3238,21 +3242,21 @@ done:
+ 				       L2CAP_DEFAULT_TX_WINDOW);
+ 
+ 		l2cap_add_conf_opt(&ptr, L2CAP_CONF_RFC, sizeof(rfc),
+-				   (unsigned long) &rfc);
++				   (unsigned long) &rfc, endptr - ptr);
+ 
+ 		if (test_bit(FLAG_EFS_ENABLE, &chan->flags))
+-			l2cap_add_opt_efs(&ptr, chan);
++			l2cap_add_opt_efs(&ptr, chan, endptr - ptr);
+ 
+ 		if (test_bit(FLAG_EXT_CTRL, &chan->flags))
+ 			l2cap_add_conf_opt(&ptr, L2CAP_CONF_EWS, 2,
+-					   chan->tx_win);
++					   chan->tx_win, endptr - ptr);
+ 
+ 		if (chan->conn->feat_mask & L2CAP_FEAT_FCS)
+ 			if (chan->fcs == L2CAP_FCS_NONE ||
+ 			    test_bit(CONF_RECV_NO_FCS, &chan->conf_state)) {
+ 				chan->fcs = L2CAP_FCS_NONE;
+ 				l2cap_add_conf_opt(&ptr, L2CAP_CONF_FCS, 1,
+-						   chan->fcs);
++						   chan->fcs, endptr - ptr);
+ 			}
+ 		break;
+ 
+@@ -3270,17 +3274,17 @@ done:
+ 		rfc.max_pdu_size = cpu_to_le16(size);
+ 
+ 		l2cap_add_conf_opt(&ptr, L2CAP_CONF_RFC, sizeof(rfc),
+-				   (unsigned long) &rfc);
++				   (unsigned long) &rfc, endptr - ptr);
+ 
+ 		if (test_bit(FLAG_EFS_ENABLE, &chan->flags))
+-			l2cap_add_opt_efs(&ptr, chan);
++			l2cap_add_opt_efs(&ptr, chan, endptr - ptr);
+ 
+ 		if (chan->conn->feat_mask & L2CAP_FEAT_FCS)
+ 			if (chan->fcs == L2CAP_FCS_NONE ||
+ 			    test_bit(CONF_RECV_NO_FCS, &chan->conf_state)) {
+ 				chan->fcs = L2CAP_FCS_NONE;
+ 				l2cap_add_conf_opt(&ptr, L2CAP_CONF_FCS, 1,
+-						   chan->fcs);
++						   chan->fcs, endptr - ptr);
+ 			}
+ 		break;
+ 	}
+@@ -3291,10 +3295,11 @@ done:
+ 	return ptr - data;
+ }
+ 
+-static int l2cap_parse_conf_req(struct l2cap_chan *chan, void *data)
++static int l2cap_parse_conf_req(struct l2cap_chan *chan, void *data, size_t data_size)
+ {
+ 	struct l2cap_conf_rsp *rsp = data;
+ 	void *ptr = rsp->data;
++	void *endptr = data + data_size;
+ 	void *req = chan->conf_req;
+ 	int len = chan->conf_len;
+ 	int type, hint, olen;
+@@ -3396,7 +3401,7 @@ done:
+ 			return -ECONNREFUSED;
+ 
+ 		l2cap_add_conf_opt(&ptr, L2CAP_CONF_RFC, sizeof(rfc),
+-				   (unsigned long) &rfc);
++				   (unsigned long) &rfc, endptr - ptr);
+ 	}
+ 
+ 	if (result == L2CAP_CONF_SUCCESS) {
+@@ -3409,7 +3414,7 @@ done:
+ 			chan->omtu = mtu;
+ 			set_bit(CONF_MTU_DONE, &chan->conf_state);
+ 		}
+-		l2cap_add_conf_opt(&ptr, L2CAP_CONF_MTU, 2, chan->omtu);
++		l2cap_add_conf_opt(&ptr, L2CAP_CONF_MTU, 2, chan->omtu, endptr - ptr);
+ 
+ 		if (remote_efs) {
+ 			if (chan->local_stype != L2CAP_SERV_NOTRAFIC &&
+@@ -3423,7 +3428,7 @@ done:
+ 
+ 				l2cap_add_conf_opt(&ptr, L2CAP_CONF_EFS,
+ 						   sizeof(efs),
+-						   (unsigned long) &efs);
++						   (unsigned long) &efs, endptr - ptr);
+ 			} else {
+ 				/* Send PENDING Conf Rsp */
+ 				result = L2CAP_CONF_PENDING;
+@@ -3456,7 +3461,7 @@ done:
+ 			set_bit(CONF_MODE_DONE, &chan->conf_state);
+ 
+ 			l2cap_add_conf_opt(&ptr, L2CAP_CONF_RFC,
+-					   sizeof(rfc), (unsigned long) &rfc);
++					   sizeof(rfc), (unsigned long) &rfc, endptr - ptr);
+ 
+ 			if (test_bit(FLAG_EFS_ENABLE, &chan->flags)) {
+ 				chan->remote_id = efs.id;
+@@ -3470,7 +3475,7 @@ done:
+ 					le32_to_cpu(efs.sdu_itime);
+ 				l2cap_add_conf_opt(&ptr, L2CAP_CONF_EFS,
+ 						   sizeof(efs),
+-						   (unsigned long) &efs);
++						   (unsigned long) &efs, endptr - ptr);
+ 			}
+ 			break;
+ 
+@@ -3484,7 +3489,7 @@ done:
+ 			set_bit(CONF_MODE_DONE, &chan->conf_state);
+ 
+ 			l2cap_add_conf_opt(&ptr, L2CAP_CONF_RFC, sizeof(rfc),
+-					   (unsigned long) &rfc);
++					   (unsigned long) &rfc, endptr - ptr);
+ 
+ 			break;
+ 
+@@ -3506,10 +3511,11 @@ done:
+ }
+ 
+ static int l2cap_parse_conf_rsp(struct l2cap_chan *chan, void *rsp, int len,
+-				void *data, u16 *result)
++				void *data, size_t size, u16 *result)
+ {
+ 	struct l2cap_conf_req *req = data;
+ 	void *ptr = req->data;
++	void *endptr = data + size;
+ 	int type, olen;
+ 	unsigned long val;
+ 	struct l2cap_conf_rfc rfc = { .mode = L2CAP_MODE_BASIC };
+@@ -3527,13 +3533,13 @@ static int l2cap_parse_conf_rsp(struct l2cap_chan *chan, void *rsp, int len,
+ 				chan->imtu = L2CAP_DEFAULT_MIN_MTU;
+ 			} else
+ 				chan->imtu = val;
+-			l2cap_add_conf_opt(&ptr, L2CAP_CONF_MTU, 2, chan->imtu);
++			l2cap_add_conf_opt(&ptr, L2CAP_CONF_MTU, 2, chan->imtu, endptr - ptr);
+ 			break;
+ 
+ 		case L2CAP_CONF_FLUSH_TO:
+ 			chan->flush_to = val;
+ 			l2cap_add_conf_opt(&ptr, L2CAP_CONF_FLUSH_TO,
+-					   2, chan->flush_to);
++					   2, chan->flush_to, endptr - ptr);
+ 			break;
+ 
+ 		case L2CAP_CONF_RFC:
+@@ -3547,13 +3553,13 @@ static int l2cap_parse_conf_rsp(struct l2cap_chan *chan, void *rsp, int len,
+ 			chan->fcs = 0;
+ 
+ 			l2cap_add_conf_opt(&ptr, L2CAP_CONF_RFC,
+-					   sizeof(rfc), (unsigned long) &rfc);
++					   sizeof(rfc), (unsigned long) &rfc, endptr - ptr);
+ 			break;
+ 
+ 		case L2CAP_CONF_EWS:
+ 			chan->ack_win = min_t(u16, val, chan->ack_win);
+ 			l2cap_add_conf_opt(&ptr, L2CAP_CONF_EWS, 2,
+-					   chan->tx_win);
++					   chan->tx_win, endptr - ptr);
+ 			break;
+ 
+ 		case L2CAP_CONF_EFS:
+@@ -3566,7 +3572,7 @@ static int l2cap_parse_conf_rsp(struct l2cap_chan *chan, void *rsp, int len,
+ 				return -ECONNREFUSED;
+ 
+ 			l2cap_add_conf_opt(&ptr, L2CAP_CONF_EFS, sizeof(efs),
+-					   (unsigned long) &efs);
++					   (unsigned long) &efs, endptr - ptr);
+ 			break;
+ 
+ 		case L2CAP_CONF_FCS:
+@@ -3671,7 +3677,7 @@ void __l2cap_connect_rsp_defer(struct l2cap_chan *chan)
+ 		return;
+ 
+ 	l2cap_send_cmd(conn, l2cap_get_ident(conn), L2CAP_CONF_REQ,
+-		       l2cap_build_conf_req(chan, buf), buf);
++		       l2cap_build_conf_req(chan, buf, sizeof(buf)), buf);
+ 	chan->num_conf_req++;
+ }
+ 
+@@ -3879,7 +3885,7 @@ sendresp:
+ 		u8 buf[128];
+ 		set_bit(CONF_REQ_SENT, &chan->conf_state);
+ 		l2cap_send_cmd(conn, l2cap_get_ident(conn), L2CAP_CONF_REQ,
+-			       l2cap_build_conf_req(chan, buf), buf);
++			       l2cap_build_conf_req(chan, buf, sizeof(buf)), buf);
+ 		chan->num_conf_req++;
+ 	}
+ 
+@@ -3957,7 +3963,7 @@ static int l2cap_connect_create_rsp(struct l2cap_conn *conn,
+ 			break;
+ 
+ 		l2cap_send_cmd(conn, l2cap_get_ident(conn), L2CAP_CONF_REQ,
+-			       l2cap_build_conf_req(chan, req), req);
++			       l2cap_build_conf_req(chan, req, sizeof(req)), req);
+ 		chan->num_conf_req++;
+ 		break;
+ 
+@@ -4069,7 +4075,7 @@ static inline int l2cap_config_req(struct l2cap_conn *conn,
+ 	}
+ 
+ 	/* Complete config. */
+-	len = l2cap_parse_conf_req(chan, rsp);
++	len = l2cap_parse_conf_req(chan, rsp, sizeof(rsp));
+ 	if (len < 0) {
+ 		l2cap_send_disconn_req(chan, ECONNRESET);
+ 		goto unlock;
+@@ -4103,7 +4109,7 @@ static inline int l2cap_config_req(struct l2cap_conn *conn,
+ 	if (!test_and_set_bit(CONF_REQ_SENT, &chan->conf_state)) {
+ 		u8 buf[64];
+ 		l2cap_send_cmd(conn, l2cap_get_ident(conn), L2CAP_CONF_REQ,
+-			       l2cap_build_conf_req(chan, buf), buf);
++			       l2cap_build_conf_req(chan, buf, sizeof(buf)), buf);
+ 		chan->num_conf_req++;
+ 	}
+ 
+@@ -4163,7 +4169,7 @@ static inline int l2cap_config_rsp(struct l2cap_conn *conn,
+ 			char buf[64];
+ 
+ 			len = l2cap_parse_conf_rsp(chan, rsp->data, len,
+-						   buf, &result);
++						   buf, sizeof(buf), &result);
+ 			if (len < 0) {
+ 				l2cap_send_disconn_req(chan, ECONNRESET);
+ 				goto done;
+@@ -4193,7 +4199,7 @@ static inline int l2cap_config_rsp(struct l2cap_conn *conn,
+ 			/* throw out any old stored conf requests */
+ 			result = L2CAP_CONF_SUCCESS;
+ 			len = l2cap_parse_conf_rsp(chan, rsp->data, len,
+-						   req, &result);
++						   req, sizeof(req), &result);
+ 			if (len < 0) {
+ 				l2cap_send_disconn_req(chan, ECONNRESET);
+ 				goto done;
+@@ -4770,7 +4776,7 @@ static void l2cap_do_create(struct l2cap_chan *chan, int result,
+ 			set_bit(CONF_REQ_SENT, &chan->conf_state);
+ 			l2cap_send_cmd(chan->conn, l2cap_get_ident(chan->conn),
+ 				       L2CAP_CONF_REQ,
+-				       l2cap_build_conf_req(chan, buf), buf);
++				       l2cap_build_conf_req(chan, buf, sizeof(buf)), buf);
+ 			chan->num_conf_req++;
+ 		}
+ 	}
+@@ -7442,7 +7448,7 @@ static void l2cap_security_cfm(struct hci_conn *hcon, u8 status, u8 encrypt)
+ 				set_bit(CONF_REQ_SENT, &chan->conf_state);
+ 				l2cap_send_cmd(conn, l2cap_get_ident(conn),
+ 					       L2CAP_CONF_REQ,
+-					       l2cap_build_conf_req(chan, buf),
++					       l2cap_build_conf_req(chan, buf, sizeof(buf)),
+ 					       buf);
+ 				chan->num_conf_req++;
+ 			}
+diff --git a/sound/isa/msnd/msnd_midi.c b/sound/isa/msnd/msnd_midi.c
+index ffc67fd80c23..58e59cd3c95c 100644
+--- a/sound/isa/msnd/msnd_midi.c
++++ b/sound/isa/msnd/msnd_midi.c
+@@ -120,24 +120,24 @@ void snd_msndmidi_input_read(void *mpuv)
+ 	unsigned long flags;
+ 	struct snd_msndmidi *mpu = mpuv;
+ 	void *pwMIDQData = mpu->dev->mappedbase + MIDQ_DATA_BUFF;
++	u16 head, tail, size;
+ 
+ 	spin_lock_irqsave(&mpu->input_lock, flags);
+-	while (readw(mpu->dev->MIDQ + JQS_wTail) !=
+-	       readw(mpu->dev->MIDQ + JQS_wHead)) {
+-		u16 wTmp, val;
+-		val = readw(pwMIDQData + 2 * readw(mpu->dev->MIDQ + JQS_wHead));
+-
+-			if (test_bit(MSNDMIDI_MODE_BIT_INPUT_TRIGGER,
+-				     &mpu->mode))
+-				snd_rawmidi_receive(mpu->substream_input,
+-						    (unsigned char *)&val, 1);
+-
+-		wTmp = readw(mpu->dev->MIDQ + JQS_wHead) + 1;
+-		if (wTmp > readw(mpu->dev->MIDQ + JQS_wSize))
+-			writew(0,  mpu->dev->MIDQ + JQS_wHead);
+-		else
+-			writew(wTmp,  mpu->dev->MIDQ + JQS_wHead);
++	head = readw(mpu->dev->MIDQ + JQS_wHead);
++	tail = readw(mpu->dev->MIDQ + JQS_wTail);
++	size = readw(mpu->dev->MIDQ + JQS_wSize);
++	if (head > size || tail > size)
++		goto out;
++	while (head != tail) {
++		unsigned char val = readw(pwMIDQData + 2 * head);
++
++		if (test_bit(MSNDMIDI_MODE_BIT_INPUT_TRIGGER, &mpu->mode))
++			snd_rawmidi_receive(mpu->substream_input, &val, 1);
++		if (++head > size)
++			head = 0;
++		writew(head, mpu->dev->MIDQ + JQS_wHead);
+ 	}
++ out:
+ 	spin_unlock_irqrestore(&mpu->input_lock, flags);
+ }
+ EXPORT_SYMBOL(snd_msndmidi_input_read);
+diff --git a/sound/isa/msnd/msnd_pinnacle.c b/sound/isa/msnd/msnd_pinnacle.c
+index 4c072666115d..a31ea6c22d19 100644
+--- a/sound/isa/msnd/msnd_pinnacle.c
++++ b/sound/isa/msnd/msnd_pinnacle.c
+@@ -170,23 +170,24 @@ static irqreturn_t snd_msnd_interrupt(int irq, void *dev_id)
+ {
+ 	struct snd_msnd *chip = dev_id;
+ 	void *pwDSPQData = chip->mappedbase + DSPQ_DATA_BUFF;
++	u16 head, tail, size;
+ 
+ 	/* Send ack to DSP */
+ 	/* inb(chip->io + HP_RXL); */
+ 
+ 	/* Evaluate queued DSP messages */
+-	while (readw(chip->DSPQ + JQS_wTail) != readw(chip->DSPQ + JQS_wHead)) {
+-		u16 wTmp;
+-
+-		snd_msnd_eval_dsp_msg(chip,
+-			readw(pwDSPQData + 2 * readw(chip->DSPQ + JQS_wHead)));
+-
+-		wTmp = readw(chip->DSPQ + JQS_wHead) + 1;
+-		if (wTmp > readw(chip->DSPQ + JQS_wSize))
+-			writew(0, chip->DSPQ + JQS_wHead);
+-		else
+-			writew(wTmp, chip->DSPQ + JQS_wHead);
++	head = readw(chip->DSPQ + JQS_wHead);
++	tail = readw(chip->DSPQ + JQS_wTail);
++	size = readw(chip->DSPQ + JQS_wSize);
++	if (head > size || tail > size)
++		goto out;
++	while (head != tail) {
++		snd_msnd_eval_dsp_msg(chip, readw(pwDSPQData + 2 * head));
++		if (++head > size)
++			head = 0;
++		writew(head, chip->DSPQ + JQS_wHead);
+ 	}
++ out:
+ 	/* Send ack to DSP */
+ 	inb(chip->io + HP_RXL);
+ 	return IRQ_HANDLED;
