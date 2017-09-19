@@ -3,7 +3,7 @@ if test -e mmc 0:1 boot/.next;
 	else setenv condev "console=ttyS0,115200n8 earlyprintk=aml-uart,0xc81004c0"; fi
 
 if test -e mmc 0:1 boot/.next; 
-	then setenv rootdev "/dev/mmcblk1p1"; 
+	then setenv rootdev "/dev/mmcblk0p1"; 
 	else setenv rootdev "/dev/mmcblk0p1"; fi
 
 if test -e mmc 0:1 boot/.next; 
