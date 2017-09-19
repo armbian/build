@@ -315,7 +315,7 @@ compile_kernel()
 		fi
 	else
 		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" oldconfig
-		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" menuconfig
+		make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" ${KERNEL_MENUCONFIG:-menuconfig}
 		# store kernel config in easily reachable place
 		display_alert "Exporting new kernel config" "$DEST/$LINUXCONFIG.config" "info"
 		cp .config $DEST/config/$LINUXCONFIG.config
