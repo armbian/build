@@ -23,7 +23,7 @@ case $BRANCH in
 	BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 	BOOTDIR=$MAINLINE_UBOOT_DIR
 	BOOTBRANCH=$MAINLINE_UBOOT_BRANCH
-	BOOTPATCHDIR='u-boot-sun50i-dev'
+	BOOTPATCHDIR='u-boot-sunxi'
 	UBOOT_USE_GCC='> 7.0'
 	UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
 	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
@@ -45,7 +45,7 @@ case $BRANCH in
 	BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 	BOOTDIR=$MAINLINE_UBOOT_DIR
 	BOOTBRANCH=$MAINLINE_UBOOT_BRANCH
-	BOOTPATCHDIR='u-boot-sun50i-dev'
+	BOOTPATCHDIR='u-boot-sunxi'
 	UBOOT_USE_GCC='> 7.0'
 	UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
 	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
