@@ -25,8 +25,10 @@ create_chroot()
 	qemu_binary['armhf']='qemu-arm-static'
 	qemu_binary['arm64']='qemu-aarch64-static'
 	apt_mirror['jessie']="$DEBIAN_MIRROR"
+	apt_mirror['stretch']="$DEBIAN_MIRROR"
 	apt_mirror['xenial']="$UBUNTU_MIRROR"
 	components['jessie']='main,contrib'
+	components['stretch']='main,contrib'
 	components['xenial']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release $arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc"
@@ -78,6 +80,7 @@ chroot_prepare_distccd()
 	local dest=/tmp/distcc/${release}-${arch}
 	declare -A gcc_version gcc_type
 	gcc_version['jessie']='4.9'
+	gcc_version['stretch']='6.4'
 	gcc_version['xenial']='5.4'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
 	gcc_type['arm64']='aarch64-linux-gnu-'
@@ -102,6 +105,7 @@ chroot_prepare_distccd()
 #
 chroot_build_packages()
 {
+	local built_ok=()
 	local failed=()
 	for release in jessie xenial; do
 		for arch in armhf arm64; do
@@ -228,15 +232,25 @@ chroot_build_packages()
 				eval systemd-nspawn -a -q --capability=CAP_MKNOD -D $target_dir --tmpfs=/root/build --tmpfs=/tmp:mode=777 --bind-ro $SRC/packages/extras-buildpkgs/:/root/overlay \
 					--bind-ro $SRC/cache/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 \
 					${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/buildpkg.log'}
-				[[ ${PIPESTATUS[0]} -eq 2 ]] && failed+=("$package_name:$release:$arch")
+				if [[ ${PIPESTATUS[0]} -eq 2 ]]; then
+					failed+=("$package_name:$release/$arch")
+				else
+					built_ok+=("$package_name:$release/$arch")
+				fi
 				mv $target_dir/root/*.deb $plugin_target_dir 2>/dev/null
 			done
 			# cleanup for distcc
 			kill $(</var/run/distcc/${release}-${arch}.pid)
 		done
 	done
+	if [[ ${#built_ok[@]} -gt 0 ]]; then
+		display_alert "Following packages were built without errors" "" "info"
+		for p in ${built_ok[@]}; do
+			display_alert "$p"
+		done
+	fi
 	if [[ ${#failed[@]} -gt 0 ]]; then
-		display_alert "Following packages failed to build:" "" "wrn"
+		display_alert "Following packages failed to build" "" "wrn"
 		for p in ${failed[@]}; do
 			display_alert "$p"
 		done
