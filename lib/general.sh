@@ -388,6 +388,9 @@ addtorepo()
 			display_alert "Not adding $release" "main" "wrn"
 		fi
 
+		local COMPONENTS=""
+
+
 		# adding main distribution packages
 		if find ${POT}${release} -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "main" "ext"
@@ -396,11 +399,11 @@ addtorepo()
 			display_alert "Not adding $release" "main" "wrn"
 		fi
 
-		# adding old utils and new jessie-utils for backwards compatibility with older images
-		if find ${POT}extra/jessie-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		# adding utils
+		if find ${POT}extra/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
 			aptly repo add -config=../config/aptly.conf "utils" ${POT}extra/utils/*.deb
-			aptly repo add -config=../config/aptly.conf "utils" ${POT}extra/jessie-utils/*.deb
+			COMPONENTS="utils"
 		else
 			display_alert "Not adding $release" "utils" "wrn"
 		fi
@@ -409,6 +412,7 @@ addtorepo()
 		if find ${POT}extra/${release}-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "${release}-utils" "ext"
 			aptly repo add -config=../config/aptly.conf "${release}-utils" ${POT}extra/${release}-utils/*.deb
+			COMPONENTS=$COMPONENTS",${release}-utils"
 		else
 			display_alert "Not adding $release" "${release}-utils" "wrn"
 		fi
@@ -417,13 +421,14 @@ addtorepo()
 		if find ${POT}extra/${release}-desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "desktop" "ext"
 			aptly repo add -force-replace=$replace -config=../config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
+			COMPONENTS=$COMPONENTS",${release}-desktop"
 		else
 			display_alert "Not adding $release" "desktop" "wrn"
 		fi
 
 		# publish
-		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=../config/aptly.conf -component=main,utils,${release}-desktop \
-			--distribution=$release repo $release utils ${release}-utils ${release}-desktop
+		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=../config/aptly.conf -component=main,${COMPONENTS} \
+			--distribution=$release repo $release ${COMPONENTS//,/ } 2>/dev/null
 
 		if [[ $? -ne 0 ]]; then
 			display_alert "Publishing failed" "$release" "err"
