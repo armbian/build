@@ -138,7 +138,7 @@ install_common()
  	cp $SRC/config/armbian_first_run.txt $SDCARD/boot/armbian_first_run.txt
 
 	# switch to beta repository at this stage if building nightly images
-	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
+	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
 
 	# disable low-level kernel messages for non betas
 	# TODO: enable only for desktop builds?

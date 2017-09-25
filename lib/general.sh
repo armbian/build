@@ -370,7 +370,10 @@ addtorepo()
 			aptly repo create -config=../config/aptly.conf -distribution=$release -component=main -comment="Armbian main repository" $release
 		fi
 		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep "^utils") ]]; then
-			aptly repo create -config=../config/aptly.conf -distribution=$release -component="utils" -comment="Armbian utilities" utils
+			aptly repo create -config=../config/aptly.conf -distribution=$release -component="utils" -comment="Armbian utilities (backwards compatibility)" utils
+		fi
+		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
+			aptly repo create -config=../config/aptly.conf -distribution=$release -component="${release}-utils" -comment="Armbian utilities" utils
 		fi
 		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
 			aptly repo create -config=../config/aptly.conf -distribution=$release -component="${release}-desktop" -comment="Armbian desktop" ${release}-desktop
@@ -393,12 +396,21 @@ addtorepo()
 			display_alert "Not adding $release" "main" "wrn"
 		fi
 
-		# adding utils
-		if find ${POT}extra/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		# adding old utils and new jessie-utils for backwards compatibility with older images
+		if find ${POT}extra/jessie-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
 			aptly repo add -config=../config/aptly.conf "utils" ${POT}extra/utils/*.deb
+			aptly repo add -config=../config/aptly.conf "utils" ${POT}extra/jessie-utils/*.deb
 		else
 			display_alert "Not adding $release" "utils" "wrn"
+		fi
+
+		# adding release-specific utils
+		if find ${POT}extra/${release}-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+			display_alert "Adding to repository $release" "${release}-utils" "ext"
+			aptly repo add -config=../config/aptly.conf "${release}-utils" ${POT}extra/${release}-utils/*.deb
+		else
+			display_alert "Not adding $release" "${release}-utils" "wrn"
 		fi
 
 		# adding desktop
@@ -411,7 +423,7 @@ addtorepo()
 
 		# publish
 		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=../config/aptly.conf -component=main,utils,${release}-desktop \
-			--distribution=$release repo $release utils ${release}-desktop
+			--distribution=$release repo $release utils ${release}-utils ${release}-desktop
 
 		if [[ $? -ne 0 ]]; then
 			display_alert "Publishing failed" "$release" "err"

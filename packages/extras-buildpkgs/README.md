@@ -6,7 +6,7 @@
 
 # Limitations
 
-* Packages are built only for Jessie and Xenial target, installing on older distributions may be done manually if dependencies can be satisfied
+* Packages are built only for Jessie, Xenial and Stretch targets, installing on older distributions may be done manually if dependencies can be satisfied
 
 # TODO
 

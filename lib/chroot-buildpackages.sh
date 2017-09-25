@@ -107,7 +107,7 @@ chroot_build_packages()
 {
 	local built_ok=()
 	local failed=()
-	for release in jessie xenial; do
+	for release in jessie xenial stretch; do
 		for arch in armhf arm64; do
 			display_alert "Starting package building process" "$release/$arch" "info"
 
@@ -268,7 +268,7 @@ chroot_installpackages_local()
 	aptly -config=$conf repo create temp
 	# NOTE: this works recursively
 	aptly -config=$conf repo add temp $DEST/debs/extra/${RELEASE}-desktop/
-	aptly -config=$conf repo add temp $DEST/debs/extra/utils/
+	aptly -config=$conf repo add temp $DEST/debs/extra/${RELEASE}-utils/
 	# -gpg-key="925644A6"
 	aptly -keyring="$SRC/packages/extras-buildpkgs/buildpkg-public.gpg" -secret-keyring="$SRC/packages/extras-buildpkgs/buildpkg.gpg" -batch=true -config=$conf \
 		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution=$RELEASE publish repo temp
