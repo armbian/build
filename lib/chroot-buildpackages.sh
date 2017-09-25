@@ -30,7 +30,7 @@ create_chroot()
 	components['jessie']='main,contrib'
 	components['stretch']='main,contrib'
 	components['xenial']='main,universe,multiverse'
-	display_alert "Creating build chroot" "$release $arch" "info"
+	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc"
 	if [[ $NO_APT_CACHER != yes ]]; then
 		local mirror_addr="http://localhost:3142/${apt_mirror[$release]}"
@@ -67,7 +67,7 @@ create_chroot()
 	fi
 	chroot $target_dir /bin/bash -c "/usr/sbin/update-ccache-symlinks"
 	touch $target_dir/root/.debootstrap-complete
-	display_alert "Debootstrap complete" "$release $arch" "info"
+	display_alert "Debootstrap complete" "$release/$arch" "info"
 } #############################################################################
 
 
@@ -80,7 +80,7 @@ chroot_prepare_distccd()
 	local dest=/tmp/distcc/${release}-${arch}
 	declare -A gcc_version gcc_type
 	gcc_version['jessie']='4.9'
-	gcc_version['stretch']='6.4'
+	gcc_version['stretch']='6.3'
 	gcc_version['xenial']='5.4'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
 	gcc_type['arm64']='aarch64-linux-gnu-'
@@ -109,13 +109,13 @@ chroot_build_packages()
 	local failed=()
 	for release in jessie xenial; do
 		for arch in armhf arm64; do
-			display_alert "Starting package building process" "$release $arch" "info"
+			display_alert "Starting package building process" "$release/$arch" "info"
 
 			local target_dir=$SRC/cache/buildpkg/${release}-${arch}-v5
 			local distcc_bindaddr="127.0.0.2"
 
 			[[ ! -f $target_dir/root/.debootstrap-complete ]] && create_chroot "$target_dir" "$release" "$arch"
-			[[ ! -f $target_dir/root/.debootstrap-complete ]] && exit_with_error "Creating chroot failed" "$release"
+			[[ ! -f $target_dir/root/.debootstrap-complete ]] && exit_with_error "Creating chroot failed" "$release/$arch"
 
 			[[ -f /var/run/distcc/${release}-${arch}.pid ]] && kill $(</var/run/distcc/${release}-${arch}.pid) > /dev/null 2>&1
 
@@ -128,7 +128,7 @@ chroot_build_packages()
 
 			local t=$target_dir/root/.update-timestamp
 			if [[ ! -f $t || $(( ($(date +%s) - $(<$t)) / 86400 )) -gt 7 ]]; then
-				display_alert "Upgrading packages" "$release $arch" "info"
+				display_alert "Upgrading packages" "$release/$arch" "info"
 				systemd-nspawn -a -q -D $target_dir /bin/bash -c "apt-get -q update; apt-get -q -y upgrade; apt-get clean"
 				date +%s > $t
 			fi
@@ -140,7 +140,7 @@ chroot_build_packages()
 
 				# check build condition
 				if [[ $(type -t package_checkbuild) == function ]] && ! package_checkbuild; then
-					display_alert "Skipping building $package_name for" "$release $arch"
+					display_alert "Skipping building $package_name for" "$release/$arch"
 					continue
 				fi
 
@@ -160,10 +160,10 @@ chroot_build_packages()
 					needs_building=yes
 				fi
 				if [[ $needs_building == no ]]; then
-					display_alert "Packages are up to date" "$package_name $release $arch" "info"
+					display_alert "Packages are up to date" "$package_name $release/$arch" "info"
 					continue
 				fi
-				display_alert "Building packages" "$package_name $release $arch" "ext"
+				display_alert "Building packages" "$package_name $release/$arch" "ext"
 				local dist_builddeps_name="package_builddeps_${release}"
 				[[ -v $dist_builddeps_name ]] && package_builddeps="$package_builddeps ${!dist_builddeps_name}"
 
@@ -173,11 +173,12 @@ chroot_build_packages()
 				export PATH="/usr/lib/ccache:\$PATH"
 				export HOME="/root"
 				export DEBIAN_FRONTEND="noninteractive"
-				export DEB_BUILD_OPTIONS="nocheck"
+				export DEB_BUILD_OPTIONS="nocheck noautodbgsym"
 				export CCACHE_TEMPDIR="/tmp"
 				export CCACHE_PREFIX="distcc"
 				# uncomment for debug
 				#export CCACHE_RECACHE="true"
+				#export CCACHE_DISABLE="true"
 				export DISTCC_HOSTS="$distcc_bindaddr"
 				export DEBFULLNAME="$MAINTAINER"
 				export DEBEMAIL="$MAINTAINERMAIL"
@@ -215,12 +216,12 @@ chroot_build_packages()
 							dpkg -i \${p}_*.deb
 						done
 					fi
-					display_alert "Done building" "$package_name $release $arch" "ext"
+					display_alert "Done building" "$package_name $release/$arch" "ext"
 					ls *.deb 2>/dev/null
 					mv *.deb /root 2>/dev/null
 					exit 0
 				else
-					display_alert "Failed building" "$package_name $release $arch" "err"
+					display_alert "Failed building" "$package_name $release/$arch" "err"
 					exit 2
 				fi
 				EOF
