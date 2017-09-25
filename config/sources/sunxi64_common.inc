@@ -17,7 +17,7 @@ case $BRANCH in
 	ATFSOURCE='https://github.com/apritzel/arm-trusted-firmware'
 	ATFDIR='arm-trusted-firmware-sunxi-mainline'
 	ATFBRANCH='branch:allwinner-stable'
-	ATF_USE_GCC='> 6.0'
+	ATF_USE_GCC='> 6.3'
 	ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
 
 	BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
@@ -39,7 +39,7 @@ case $BRANCH in
 	ATFSOURCE='https://github.com/apritzel/arm-trusted-firmware'
 	ATFDIR='arm-trusted-firmware-sunxi-mainline'
 	ATFBRANCH='branch:allwinner-stable'
-	ATF_USE_GCC='> 6.0'
+	ATF_USE_GCC='> 6.3'
 	ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
 
 	BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
