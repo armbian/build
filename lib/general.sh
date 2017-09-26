@@ -378,11 +378,11 @@ addtorepo()
 		fi
 		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
 			aptly repo create -config=../config/aptly.conf -distribution=$release -component="${release}-utils" \
-			-comment="Armbian utilities" ${release}-utils
+			-comment="Armbian ${release} utilities" ${release}-utils
 		fi
 		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
 			aptly repo create -config=../config/aptly.conf -distribution=$release -component="${release}-desktop" \
-			-comment="Armbian desktop" ${release}-desktop
+			-comment="Armbian ${release} desktop" ${release}-desktop
 		fi
 
 
@@ -408,7 +408,7 @@ addtorepo()
 		if find ${POT}extra/jessie-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
 			aptly repo add -config=../config/aptly.conf "utils" ${POT}extra/jessie-utils/*.deb
-			COMPONENTS="utils"
+			COMPONENTS="${COMPONENTS} utils"
 		else
 			display_alert "Not adding $release" "utils" "wrn"
 		fi
