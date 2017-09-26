@@ -350,7 +350,7 @@ addtorepo()
 		if [[ -n $(aptly publish list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			aptly publish drop -config=../config/aptly.conf $release > /dev/null 2>&1
 		fi
-		#aptly db cleanup -config=../config/aptly.conf
+
 
 		if [[ $1 == remove ]]; then
 		# remove repository
@@ -358,27 +358,33 @@ addtorepo()
 			aptly db cleanup -config=../config/aptly.conf > /dev/null 2>&1
 		fi
 
+
 		if [[ $1 == replace ]]; then
 			local replace=true
 		else
 			local replace=false
 		fi
 
+
 		# create local repository if not exist
 		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			display_alert "Creating section" "$release" "info"
-			aptly repo create -config=../config/aptly.conf -distribution=$release -component=main -comment="Armbian main repository" $release
+			aptly repo create -config=../config/aptly.conf -distribution=$release -component="main" \
+			-comment="Armbian main repository" ${release}
 		fi
 		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep "^utils") ]]; then
-			aptly repo create -config=../config/aptly.conf -distribution=$release -component="utils" -comment="Armbian utilities (backwards compatibility)" utils
+			aptly repo create -config=../config/aptly.conf -distribution=$release -component="utils" \
+			-comment="Armbian utilities (backwards compatibility)" utils
 		fi
 		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
-			aptly repo create -config=../config/aptly.conf -distribution=$release -component="${release}-utils" -comment="Armbian utilities" utils
+			aptly repo create -config=../config/aptly.conf -distribution=$release -component="${release}-utils" \
+			-comment="Armbian utilities" ${release}-utils
 		fi
 		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
-			aptly repo create -config=../config/aptly.conf -distribution=$release -component="${release}-desktop" -comment="Armbian desktop" ${release}-desktop
+			aptly repo create -config=../config/aptly.conf -distribution=$release -component="${release}-desktop" \
+			-comment="Armbian desktop" ${release}-desktop
 		fi
-		# create local repository if not exist
+
 
 		# adding main
 		if find $POT -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
@@ -388,21 +394,20 @@ addtorepo()
 			display_alert "Not adding $release" "main" "wrn"
 		fi
 
-		local COMPONENTS=""
-
+		local COMPONENTS="main"
 
 		# adding main distribution packages
 		if find ${POT}${release} -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
-			display_alert "Adding to repository $release" "main" "ext"
+			display_alert "Adding to repository $release" "root" "ext"
 			aptly repo add -force-replace=$replace -config=../config/aptly.conf $release ${POT}${release}/*.deb
 		else
-			display_alert "Not adding $release" "main" "wrn"
+			display_alert "Not adding $release" "root" "wrn"
 		fi
 
-		# adding utils
-		if find ${POT}extra/utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		# adding old utils and new jessie-utils for backwards compatibility with older images
+		if find ${POT}extra/jessie-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
-			aptly repo add -config=../config/aptly.conf "utils" ${POT}extra/utils/*.deb
+			aptly repo add -config=../config/aptly.conf "utils" ${POT}extra/jessie-utils/*.deb
 			COMPONENTS="utils"
 		else
 			display_alert "Not adding $release" "utils" "wrn"
@@ -412,7 +417,7 @@ addtorepo()
 		if find ${POT}extra/${release}-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "${release}-utils" "ext"
 			aptly repo add -config=../config/aptly.conf "${release}-utils" ${POT}extra/${release}-utils/*.deb
-			COMPONENTS=$COMPONENTS",${release}-utils"
+			COMPONENTS="${COMPONENTS} ${release}-utils"
 		else
 			display_alert "Not adding $release" "${release}-utils" "wrn"
 		fi
@@ -421,14 +426,14 @@ addtorepo()
 		if find ${POT}extra/${release}-desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "desktop" "ext"
 			aptly repo add -force-replace=$replace -config=../config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
-			COMPONENTS=$COMPONENTS",${release}-desktop"
+			COMPONENTS="${COMPONENTS} ${release}-desktop"
 		else
 			display_alert "Not adding $release" "desktop" "wrn"
 		fi
 
 		# publish
-		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=../config/aptly.conf -component=main,${COMPONENTS} \
-			--distribution=$release repo $release ${COMPONENTS//,/ } 2>/dev/null
+		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=../config/aptly.conf -component=${COMPONENTS// /,} \
+			--distribution=$release repo $release ${COMPONENTS//main/} 2>/dev/null
 
 		if [[ $? -ne 0 ]]; then
 			display_alert "Publishing failed" "$release" "err"
