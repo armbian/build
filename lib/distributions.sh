@@ -164,6 +164,14 @@ install_common()
 
 	# premit root login via SSH for the first boot
 	sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' $SDCARD/etc/ssh/sshd_config
+
+	if [[ -n $NM_IGNORE_DEVICES ]]; then
+		mkdir -p $SDCARD/etc/NetworkManager/conf.d/
+		cat <<-EOF > $SDCARD/etc/NetworkManager/conf.d/10-ignore-interfaces.conf
+		[keyfile]
+		unmanaged-devices=$NM_IGNORE_DEVICES
+		EOF
+	fi
 }
 
 install_distribution_specific()
