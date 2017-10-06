@@ -266,7 +266,7 @@ compile_kernel()
 	local version=$(grab_version "$kerneldir")
 
 	# create linux-source package - with already patched sources
-	local sources_pkg_dir=$SRC/.tmp/linux-source-${BRANCH}-${LINUXFAMILY}_${REVISION}_all
+	local sources_pkg_dir=$SRC/.tmp/${CHOSEN_KSRC}_${REVISION}_all
 	rm -rf ${sources_pkg_dir}
 	mkdir -p $sources_pkg_dir/usr/src/ $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY} $sources_pkg_dir/DEBIAN
 
