@@ -15,12 +15,13 @@ build_firmware()
 	local plugin_dir="armbian-firmware${FULL}"
 	[[ -d $SRC/cache/sources/$plugin_dir ]] && rm -rf $SRC/cache/sources/$plugin_dir
 
+	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware" "branch:master"
 	if [[ -n $FULL ]]; then
 		fetch_from_repo "$plugin_repo" "$plugin_dir/lib/firmware" "branch:master"
 	fi
 	mkdir -p $SRC/cache/sources/$plugin_dir/lib/firmware
 	# overlay our firmware
-	cp -R $SRC/packages/extras/firmware/* $SRC/cache/sources/$plugin_dir/lib/firmware
+	cp -R $SRC/cache/sources/armbian-firmware/* $SRC/cache/sources/$plugin_dir/lib/firmware
 
 	# cleanup what's not needed for sure
 	rm -rf $SRC/cache/sources/$plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
