@@ -357,14 +357,14 @@ compile_kernel()
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 	cat <<-EOF > $sources_pkg_dir/DEBIAN/control
-	Package: linux-source-${version}-${LINUXFAMILY}
-	Version: ${version}-${LINUXFAMILY}+${REVISION}
+	Package: linux-source-${version}-${BRANCH}-${LINUXFAMILY}
+	Version: ${version}-${BRANCH}-${LINUXFAMILY}+${REVISION}
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Section: kernel
 	Priority: optional
 	Depends: binutils, coreutils
-	Provides: linux-source
+	Provides: linux-source, linux-source-${version}-${LINUXFAMILY}
 	Recommends: gcc, make
 	Description: This package provides the source code for the Linux kernel $version
 	EOF
