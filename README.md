@@ -21,6 +21,8 @@ Supported build environments:
 	cd build
 	./compile.sh
 
+Make sure that full path to the build script does not contain spaces.
+
 You will be prompted with a selection menu for a build option, a board name, a kernel branch and an OS release. Please check the documentation for [advanced options](https://docs.armbian.com/Developer-Guide_Build-Options/) and [additional customization](https://docs.armbian.com/Developer-Guide_User-Configurations/).
 
 Build process uses caching for the compilation and the debootstrap process, so consecutive runs with similar settings will be much faster.
