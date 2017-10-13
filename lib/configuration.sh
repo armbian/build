@@ -19,6 +19,7 @@ USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
 ROOTFSCACHE_VERSION=3
+CHROOT_CACHE_VERSION=6
 [[ -z $DISPLAY_MANAGER ]] && DISPLAY_MANAGER=nodm
 ROOTFS_CACHE_MAX=8 # max number of rootfs cache, older ones will be cleaned up
 

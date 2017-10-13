@@ -87,7 +87,7 @@ chroot_prepare_distccd()
 	rm -f $dest/cmdlist
 	mkdir -p $dest
 	local toolchain_path=$(find_toolchain "${gcc_type[$arch]}" "== ${gcc_version[$release]}")
-	ln -sfv ${toolchain_path}/${gcc_type[$arch]}gcc $dest/cc
+	ln -sf ${toolchain_path}/${gcc_type[$arch]}gcc $dest/cc
 	echo "$dest/cc" >> $dest/cmdlist
 	for compiler in gcc cpp g++ c++; do
 		echo "$dest/$compiler" >> $dest/cmdlist
@@ -111,7 +111,7 @@ chroot_build_packages()
 		for arch in armhf arm64; do
 			display_alert "Starting package building process" "$release/$arch" "info"
 
-			local target_dir=$SRC/cache/buildpkg/${release}-${arch}-v5
+			local target_dir=$SRC/cache/buildpkg/${release}-${arch}-v${CHROOT_CACHE_VERSION}
 			local distcc_bindaddr="127.0.0.2"
 
 			[[ ! -f $target_dir/root/.debootstrap-complete ]] && create_chroot "$target_dir" "$release" "$arch"
@@ -175,7 +175,8 @@ chroot_build_packages()
 				export DEBIAN_FRONTEND="noninteractive"
 				export DEB_BUILD_OPTIONS="nocheck noautodbgsym"
 				export CCACHE_TEMPDIR="/tmp"
-				export CCACHE_PREFIX="distcc"
+				# distcc is disabled to prevent compilation issues due to different host and cross toolchain configurations
+				#export CCACHE_PREFIX="distcc"
 				# uncomment for debug
 				#export CCACHE_RECACHE="true"
 				#export CCACHE_DISABLE="true"
