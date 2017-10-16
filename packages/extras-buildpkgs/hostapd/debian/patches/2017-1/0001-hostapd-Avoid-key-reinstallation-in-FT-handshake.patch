@@ -1,0 +1,108 @@
+From c153b271f9f6446f52dae708f89f5b9a81fd9903 Mon Sep 17 00:00:00 2001
+From: Mathy Vanhoef <Mathy.Vanhoef@cs.kuleuven.be>
+Date: Fri, 14 Jul 2017 15:15:35 +0200
+Subject: [PATCH 01/12] hostapd: Avoid key reinstallation in FT handshake
+
+Do not reinstall TK to the driver during Reassociation Response frame
+processing if the first attempt of setting the TK succeeded. This avoids
+issues related to clearing the TX/RX PN that could result in reusing
+same PN values for transmitted frames (e.g., due to CCM nonce reuse and
+also hitting replay protection on the receiver) and accepting replayed
+frames on RX side.
+
+This issue was introduced by the commit
+0e84c25434e6a1f283c7b4e62e483729085b78d2 ('FT: Fix PTK configuration in
+authenticator') which allowed wpa_ft_install_ptk() to be called multiple
+times with the same PTK. While the second configuration attempt is
+needed with some drivers, it must be done only if the first attempt
+failed.
+
+Signed-off-by: Mathy Vanhoef <Mathy.Vanhoef@cs.kuleuven.be>
+---
+ src/ap/wpa_auth.c    |  8 ++++++++
+ src/ap/wpa_auth.h    |  1 +
+ src/ap/wpa_auth_ft.c | 10 ++++++++++
+ src/ap/wpa_auth_i.h  |  1 +
+ 4 files changed, 20 insertions(+)
+
+diff --git a/src/ap/wpa_auth.c b/src/ap/wpa_auth.c
+index 9c5f609..1b3390a 100644
+--- a/src/ap/wpa_auth.c
++++ b/src/ap/wpa_auth.c
+@@ -3169,6 +3169,14 @@ int wpa_auth_sta_wpa_version(struct wpa_state_machine *sm)
+ }
+ 
+ 
++int wpa_auth_sta_ft_tk_already_set(struct wpa_state_machine *sm)
++{
++	if (!sm || !wpa_key_mgmt_ft(sm->wpa_key_mgmt))
++		return 0;
++	return sm->tk_already_set;
++}
++
++
+ int wpa_auth_sta_clear_pmksa(struct wpa_state_machine *sm,
+ 			     struct rsn_pmksa_cache_entry *entry)
+ {
+diff --git a/src/ap/wpa_auth.h b/src/ap/wpa_auth.h
+index 2788e65..1aeee40 100644
+--- a/src/ap/wpa_auth.h
++++ b/src/ap/wpa_auth.h
+@@ -266,6 +266,7 @@ int wpa_auth_pairwise_set(struct wpa_state_machine *sm);
+ int wpa_auth_get_pairwise(struct wpa_state_machine *sm);
+ int wpa_auth_sta_key_mgmt(struct wpa_state_machine *sm);
+ int wpa_auth_sta_wpa_version(struct wpa_state_machine *sm);
++int wpa_auth_sta_ft_tk_already_set(struct wpa_state_machine *sm);
+ int wpa_auth_sta_clear_pmksa(struct wpa_state_machine *sm,
+ 			     struct rsn_pmksa_cache_entry *entry);
+ struct rsn_pmksa_cache_entry *
+diff --git a/src/ap/wpa_auth_ft.c b/src/ap/wpa_auth_ft.c
+index ef3249a..17e6039 100644
+--- a/src/ap/wpa_auth_ft.c
++++ b/src/ap/wpa_auth_ft.c
+@@ -779,6 +779,14 @@ void wpa_ft_install_ptk(struct wpa_state_machine *sm)
+ 		return;
+ 	}
+ 
++	if (sm->tk_already_set) {
++		/* Must avoid TK reconfiguration to prevent clearing of TX/RX
++		 * PN in the driver */
++		wpa_printf(MSG_DEBUG,
++			   "FT: Do not re-install same PTK to the driver");
++		return;
++	}
++
+ 	/* FIX: add STA entry to kernel/driver here? The set_key will fail
+ 	 * most likely without this.. At the moment, STA entry is added only
+ 	 * after association has been completed. This function will be called
+@@ -791,6 +799,7 @@ void wpa_ft_install_ptk(struct wpa_state_machine *sm)
+ 
+ 	/* FIX: MLME-SetProtection.Request(TA, Tx_Rx) */
+ 	sm->pairwise_set = TRUE;
++	sm->tk_already_set = TRUE;
+ }
+ 
+ 
+@@ -897,6 +906,7 @@ static int wpa_ft_process_auth_req(struct wpa_state_machine *sm,
+ 
+ 	sm->pairwise = pairwise;
+ 	sm->PTK_valid = TRUE;
++	sm->tk_already_set = FALSE;
+ 	wpa_ft_install_ptk(sm);
+ 
+ 	buflen = 2 + sizeof(struct rsn_mdie) + 2 + sizeof(struct rsn_ftie) +
+diff --git a/src/ap/wpa_auth_i.h b/src/ap/wpa_auth_i.h
+index 7b2cd3e..0f3d504 100644
+--- a/src/ap/wpa_auth_i.h
++++ b/src/ap/wpa_auth_i.h
+@@ -64,6 +64,7 @@ struct wpa_state_machine {
+ 	struct wpa_ptk PTK;
+ 	Boolean PTK_valid;
+ 	Boolean pairwise_set;
++	Boolean tk_already_set;
+ 	int keycount;
+ 	Boolean Pair;
+ 	struct wpa_key_replay_counter {
+-- 
+2.7.4
+
