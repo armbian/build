@@ -12,7 +12,7 @@ KERNEL_TARGET="dev"
 CLI_TARGET="xenial:dev"
 DESKTOP_TARGET="xenial:dev"
 #
-RECOMMENDED="Ubuntu_xenial_dev_nightly:66,Ubuntu_xenial_dev_desktop_nightly:66"
+RECOMMENDED="Ubuntu_xenial_dev:66,Ubuntu_xenial_dev_desktop:66"
 #
 BOARDRATING=""
 CHIP=""
