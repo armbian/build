@@ -32,7 +32,7 @@ build_firmware()
 	cat <<-END > DEBIAN/control
 	Package: armbian-firmware${FULL}
 	Version: $REVISION
-	Architecture: $ARCH
+	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Installed-Size: 1
 	Replaces: linux-firmware, firmware-brcm80211, firmware-realtek, armbian-firmware${REPLACE}
@@ -43,18 +43,18 @@ build_firmware()
 
 	cd $SRC/cache/sources
 	# pack
-	mv armbian-firmware${FULL} armbian-firmware${FULL}_${REVISION}_${ARCH}
-	fakeroot dpkg -b armbian-firmware${FULL}_${REVISION}_${ARCH} >> $DEST/debug/install.log 2>&1
-	mv armbian-firmware${FULL}_${REVISION}_${ARCH} armbian-firmware${FULL}
-	mv armbian-firmware${FULL}_${REVISION}_${ARCH}.deb $DEST/debs/ || display_alert "Failed moving firmware package" "" "wrn"
+	mv armbian-firmware${FULL} armbian-firmware${FULL}_${REVISION}_all
+	fakeroot dpkg -b armbian-firmware${FULL}_${REVISION}_all >> $DEST/debug/install.log 2>&1
+	mv armbian-firmware${FULL}_${REVISION}_all armbian-firmware${FULL}
+	mv armbian-firmware${FULL}_${REVISION}_all.deb $DEST/debs/ || display_alert "Failed moving firmware package" "" "wrn"
 }
 
 FULL=""
 REPLACE="-full"
-[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_${ARCH}.deb ]] && build_firmware
+[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_all.deb ]] && build_firmware
 FULL="-full"
 REPLACE=""
-[[ ! -f $DEST/debs/armbian-firmware${FULL}_${REVISION}_${ARCH}.deb ]] && build_firmware
+[[ ! -f $DEST/debs/armbian-firmware${FULL}_${REVISION}_all.deb ]] && build_firmware
 
 # install basic firmware by default
-install_deb_chroot "$DEST/debs/armbian-firmware_${REVISION}_${ARCH}.deb"
+install_deb_chroot "$DEST/debs/armbian-firmware_${REVISION}_all.deb"
