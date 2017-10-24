@@ -76,7 +76,7 @@ install_mt7601()
 	# TODO: Set the module to build automatically via dkms in the future here
 }
 
-if [[ $BRANCH == default ]]; then
+if [[ $BRANCH == default && $INSTALL_HEADERS == yes ]]; then
 	display_alert "Installing additional driver" "MT7601U" "info"
 	install_mt7601
 fi
