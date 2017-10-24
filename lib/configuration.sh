@@ -42,8 +42,6 @@ if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
 else
 	MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
 fi
-
-MAINLINE_KERNEL_BRANCH='branch:linux-4.13.y'
 MAINLINE_KERNEL_DIR='linux-mainline'
 
 if [[ $USE_GITHUB_UBOOT_MIRROR == yes ]]; then
