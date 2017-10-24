@@ -11,7 +11,7 @@ UBOOT_USE_GCC='> 7.0'
 UBOOT_FW_ENV='0x88000,0x20000' # /etc/fw_env.config offset and env size
 
 HAS_UUID_SUPPORT=yes
-BOOTDELAY=0
+BOOTDELAY=1
 
 # Here we want to rename LINUXFAMILY from sun4i, sun5i, etc for next and dev branches
 # except for sun8i-dev which is separate from sunxi-dev

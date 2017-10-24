@@ -2,7 +2,7 @@ ARCH=arm64
 KERNEL_IMAGE_TYPE=Image
 HAS_UUID_SUPPORT=yes
 OFFSET=2
-BOOTDELAY=0
+BOOTDELAY=1
 
 # Here we want to rename LINUXFAMILY from sun50iw1, sun50iw2, etc for next and dev branches
 # since this doesn't affect any stable images don't add any backwards compatibility hacks
