@@ -194,8 +194,8 @@ create_board_package()
 		install -m 755 $SRC/packages/bsp/99disable-power-management $destination/etc/NetworkManager/dispatcher.d/
 	;;
 	xenial)
-		mkdir -p $destination/etc/NetworkManager/conf.d/
-		cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/etc/NetworkManager/conf.d/
+		mkdir -p $destination/usr/lib/NetworkManager/conf.d/
+		cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/usr/lib/NetworkManager/conf.d/
 		if [[ $BRANCH == default ]]; then
 			# this is required only for old kernels
 			# not needed for Stretch since there will be no Stretch images with kernels < 4.4
@@ -205,9 +205,9 @@ create_board_package()
 	;;
 
 	stretch)
-		mkdir -p $destination/etc/NetworkManager/conf.d/
-		cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/etc/NetworkManager/conf.d/
-		cp $SRC/packages/bsp/10-override-random-mac.conf $destination/etc/NetworkManager/conf.d/
+		mkdir -p $destination/usr/lib/NetworkManager/conf.d/
+		cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/usr/lib/NetworkManager/conf.d/
+		cp $SRC/packages/bsp/10-override-random-mac.conf $destination/usr/lib/NetworkManager/conf.d/
 	;;
 	esac
 
