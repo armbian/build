@@ -71,9 +71,15 @@ DESTIMG="$SRC/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
 
 source $SRC/config/sources/$LINUXFAMILY.conf
 
-if [[ -f $SRC/userpatches/sources/$LINUXFAMILY.conf ]]; then
+if [[ -n $LINUXFAMILY_ORIGINAL ]]; then
+	LINUXFAMILY_CONF=$SRC/userpatches/sources/$LINUXFAMILY_ORIGINAL.conf
+else
+	LINUXFAMILY_CONF=$SRC/userpatches/sources/$LINUXFAMILY.conf
+fi
+
+if [[ -f $LINUXFAMILY_CONF ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
-	source $SRC/userpatches/sources/$LINUXFAMILY.conf
+	source $LINUXFAMILY_CONF
 fi
 
 case $ARCH in
