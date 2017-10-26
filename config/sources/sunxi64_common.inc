@@ -56,6 +56,14 @@ case $BRANCH in
 	;;
 esac
 
+family_tweaks()
+{
+	# execute specific tweaks function if present
+	[[ $(type -t family_tweaks_s) == function ]] && family_tweaks_s
+
+	[[ $BRANCH != default ]] && cp $SRC/packages/blobs/splash/armbian-u-boot-24.bmp $SDCARD/boot/boot.bmp
+}
+
 write_uboot_platform()
 {
 	# default
