@@ -374,6 +374,8 @@ compile_kernel()
 	rm -rf $sources_pkg_dir
 
 	cd ..
+	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
+	rm -f linux-firmware-image-*.deb
 	mv *.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
 }
 
