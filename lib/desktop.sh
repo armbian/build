@@ -16,7 +16,7 @@ install_desktop ()
 
 	if [[ $RELEASE == xenial ]]; then
 		# install optimized firefox configuration
-		# cp $SRC/config/firefox.conf $SDCARD/etc/firefox/syspref.js
+		# cp $SRC/packages/blobs/desktop/firefox.conf $SDCARD/etc/firefox/syspref.js
 		# install optimized chromium configuration
 		cp $SRC/config/chromium.conf $SDCARD/etc/chromium-browser/default
 	fi
