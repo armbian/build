@@ -40,6 +40,14 @@ case $BRANCH in
 	;;
 esac
 
+family_tweaks()
+{
+	# execute specific tweaks function if present
+	[[ $(type -t family_tweaks_s) == function ]] && family_tweaks_s
+
+	cp $SRC/packages/blobs/splash/armbian-u-boot-24.bmp $SDCARD/boot/boot.bmp
+}
+
 write_uboot_platform()
 {
 	dd if=/dev/zero of=$2 bs=1k count=1023 seek=1 status=noxfer > /dev/null 2>&1

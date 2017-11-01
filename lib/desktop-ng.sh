@@ -72,7 +72,7 @@ install_desktop ()
 
 	# install optimized chromium configuration
 	mkdir -p $destination/etc/chromium-browser
-	cp $SRC/config/chromium.conf $destination/etc/chromium-browser/armbian
+	cp $SRC/packages/blobs/desktop/chromium.conf $destination/etc/chromium-browser/armbian
 
 	# install default desktop settings
 	mkdir -p $destination/etc/skel $destination/root

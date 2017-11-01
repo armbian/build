@@ -270,11 +270,13 @@ compile_kernel()
 	rm -rf ${sources_pkg_dir}
 	mkdir -p $sources_pkg_dir/usr/src/ $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY} $sources_pkg_dir/DEBIAN
 
-	display_alert "Compressing sources for the linux-source package"
-	tar cp --directory="$kerneldir" --exclude='./.git/' --owner=root . \
-		 | pv -p -b -r -s $(du -sb "$kerneldir" --exclude=='./.git/' | cut -f1) \
-		| pixz -4 > $sources_pkg_dir/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz
-	cp COPYING $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE
+	if [[ $BUILD_KSRC != no ]]; then
+		display_alert "Compressing sources for the linux-source package"
+		tar cp --directory="$kerneldir" --exclude='./.git/' --owner=root . \
+			 | pv -p -b -r -s $(du -sb "$kerneldir" --exclude=='./.git/' | cut -f1) \
+			| pixz -4 > $sources_pkg_dir/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz
+		cp COPYING $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE
+	fi
 
 	# create patch for manual source changes in debug mode
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
@@ -369,11 +371,15 @@ compile_kernel()
 	Description: This package provides the source code for the Linux kernel $version
 	EOF
 
-	fakeroot dpkg-deb -z0 -b $sources_pkg_dir ${sources_pkg_dir}.deb
-	mv ${sources_pkg_dir}.deb $DEST/debs/
+	if [[ $BUILD_KSRC != no ]]; then
+		fakeroot dpkg-deb -z0 -b $sources_pkg_dir ${sources_pkg_dir}.deb
+		mv ${sources_pkg_dir}.deb $DEST/debs/
+	fi
 	rm -rf $sources_pkg_dir
 
 	cd ..
+	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
+	rm -f linux-firmware-image-*.deb
 	mv *.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
 }
 
