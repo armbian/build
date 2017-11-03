@@ -1,0 +1,809 @@
+diff --git a/Documentation/devicetree/bindings/display/bridge/ti,ths8135.txt b/Documentation/devicetree/bindings/display/bridge/ti,ths8135.txt
+deleted file mode 100644
+index 6ec1a880ac18..000000000000
+--- a/Documentation/devicetree/bindings/display/bridge/ti,ths8135.txt
++++ /dev/null
+@@ -1,46 +0,0 @@
+-THS8135 Video DAC
+------------------
+-
+-This is the binding for Texas Instruments THS8135 Video DAC bridge.
+-
+-Required properties:
+-
+-- compatible: Must be "ti,ths8135"
+-
+-Required nodes:
+-
+-This device has two video ports. Their connections are modelled using the OF
+-graph bindings specified in Documentation/devicetree/bindings/graph.txt.
+-
+-- Video port 0 for RGB input
+-- Video port 1 for VGA output
+-
+-Example
+--------
+-
+-vga-bridge {
+-	compatible = "ti,ths8135";
+-	#address-cells = <1>;
+-	#size-cells = <0>;
+-
+-	ports {
+-		#address-cells = <1>;
+-		#size-cells = <0>;
+-
+-		port@0 {
+-			reg = <0>;
+-
+-			vga_bridge_in: endpoint {
+-				remote-endpoint = <&lcdc_out_vga>;
+-			};
+-		};
+-
+-		port@1 {
+-			reg = <1>;
+-
+-			vga_bridge_out: endpoint {
+-				remote-endpoint = <&vga_con_in>;
+-			};
+-		};
+-	};
+-};
+diff --git a/Makefile b/Makefile
+index 57e1ea2a189a..12dfe1dcbaca 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 95
++SUBLEVEL = 96
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/x86/kernel/cpu/microcode/intel.c b/arch/x86/kernel/cpu/microcode/intel.c
+index ac8975a65280..abf581ade8d2 100644
+--- a/arch/x86/kernel/cpu/microcode/intel.c
++++ b/arch/x86/kernel/cpu/microcode/intel.c
+@@ -990,6 +990,18 @@ static int get_ucode_fw(void *to, const void *from, size_t n)
+ 	return 0;
+ }
+ 
++static bool is_blacklisted(unsigned int cpu)
++{
++	struct cpuinfo_x86 *c = &cpu_data(cpu);
++
++	if (c->x86 == 6 && c->x86_model == 79) {
++		pr_err_once("late loading on model 79 is disabled.\n");
++		return true;
++	}
++
++	return false;
++}
++
+ static enum ucode_state request_microcode_fw(int cpu, struct device *device,
+ 					     bool refresh_fw)
+ {
+@@ -998,6 +1010,9 @@ static enum ucode_state request_microcode_fw(int cpu, struct device *device,
+ 	const struct firmware *firmware;
+ 	enum ucode_state ret;
+ 
++	if (is_blacklisted(cpu))
++		return UCODE_NFOUND;
++
+ 	sprintf(name, "intel-ucode/%02x-%02x-%02x",
+ 		c->x86, c->x86_model, c->x86_mask);
+ 
+@@ -1022,6 +1037,9 @@ static int get_ucode_user(void *to, const void *from, size_t n)
+ static enum ucode_state
+ request_microcode_user(int cpu, const void __user *buf, size_t size)
+ {
++	if (is_blacklisted(cpu))
++		return UCODE_NFOUND;
++
+ 	return generic_load_microcode(cpu, (void *)buf, size, &get_ucode_user);
+ }
+ 
+diff --git a/drivers/input/mouse/elan_i2c_core.c b/drivers/input/mouse/elan_i2c_core.c
+index 681dce15fbc8..b8c50d883b2c 100644
+--- a/drivers/input/mouse/elan_i2c_core.c
++++ b/drivers/input/mouse/elan_i2c_core.c
+@@ -1240,6 +1240,7 @@ static const struct acpi_device_id elan_acpi_id[] = {
+ 	{ "ELAN0605", 0 },
+ 	{ "ELAN0609", 0 },
+ 	{ "ELAN060B", 0 },
++	{ "ELAN0611", 0 },
+ 	{ "ELAN1000", 0 },
+ 	{ }
+ };
+diff --git a/drivers/input/tablet/gtco.c b/drivers/input/tablet/gtco.c
+index 7c18249d6c8e..8b68a210277b 100644
+--- a/drivers/input/tablet/gtco.c
++++ b/drivers/input/tablet/gtco.c
+@@ -231,13 +231,17 @@ static void parse_hid_report_descriptor(struct gtco *device, char * report,
+ 
+ 	/* Walk  this report and pull out the info we need */
+ 	while (i < length) {
+-		prefix = report[i];
+-
+-		/* Skip over prefix */
+-		i++;
++		prefix = report[i++];
+ 
+ 		/* Determine data size and save the data in the proper variable */
+-		size = PREF_SIZE(prefix);
++		size = (1U << PREF_SIZE(prefix)) >> 1;
++		if (i + size > length) {
++			dev_err(ddev,
++				"Not enough data (need %d, have %d)\n",
++				i + size, length);
++			break;
++		}
++
+ 		switch (size) {
+ 		case 1:
+ 			data = report[i];
+@@ -245,8 +249,7 @@ static void parse_hid_report_descriptor(struct gtco *device, char * report,
+ 		case 2:
+ 			data16 = get_unaligned_le16(&report[i]);
+ 			break;
+-		case 3:
+-			size = 4;
++		case 4:
+ 			data32 = get_unaligned_le32(&report[i]);
+ 			break;
+ 		}
+diff --git a/drivers/net/can/sun4i_can.c b/drivers/net/can/sun4i_can.c
+index 68ef0a4cd821..b0c80859f746 100644
+--- a/drivers/net/can/sun4i_can.c
++++ b/drivers/net/can/sun4i_can.c
+@@ -342,7 +342,7 @@ static int sun4i_can_start(struct net_device *dev)
+ 
+ 	/* enter the selected mode */
+ 	mod_reg_val = readl(priv->base + SUN4I_REG_MSEL_ADDR);
+-	if (priv->can.ctrlmode & CAN_CTRLMODE_PRESUME_ACK)
++	if (priv->can.ctrlmode & CAN_CTRLMODE_LOOPBACK)
+ 		mod_reg_val |= SUN4I_MSEL_LOOPBACK_MODE;
+ 	else if (priv->can.ctrlmode & CAN_CTRLMODE_LISTENONLY)
+ 		mod_reg_val |= SUN4I_MSEL_LISTEN_ONLY_MODE;
+@@ -811,7 +811,6 @@ static int sun4ican_probe(struct platform_device *pdev)
+ 	priv->can.ctrlmode_supported = CAN_CTRLMODE_BERR_REPORTING |
+ 				       CAN_CTRLMODE_LISTENONLY |
+ 				       CAN_CTRLMODE_LOOPBACK |
+-				       CAN_CTRLMODE_PRESUME_ACK |
+ 				       CAN_CTRLMODE_3_SAMPLES;
+ 	priv->base = addr;
+ 	priv->clk = clk;
+diff --git a/drivers/net/can/usb/kvaser_usb.c b/drivers/net/can/usb/kvaser_usb.c
+index 022bfa13ebfa..c2e2821a3346 100644
+--- a/drivers/net/can/usb/kvaser_usb.c
++++ b/drivers/net/can/usb/kvaser_usb.c
+@@ -134,6 +134,7 @@ static inline bool kvaser_is_usbcan(const struct usb_device_id *id)
+ #define CMD_RESET_ERROR_COUNTER		49
+ #define CMD_TX_ACKNOWLEDGE		50
+ #define CMD_CAN_ERROR_EVENT		51
++#define CMD_FLUSH_QUEUE_REPLY		68
+ 
+ #define CMD_LEAF_USB_THROTTLE		77
+ #define CMD_LEAF_LOG_MESSAGE		106
+@@ -1297,6 +1298,11 @@ static void kvaser_usb_handle_message(const struct kvaser_usb *dev,
+ 			goto warn;
+ 		break;
+ 
++	case CMD_FLUSH_QUEUE_REPLY:
++		if (dev->family != KVASER_LEAF)
++			goto warn;
++		break;
++
+ 	default:
+ warn:		dev_warn(dev->udev->dev.parent,
+ 			 "Unhandled message (%d)\n", msg->id);
+@@ -1607,7 +1613,8 @@ static int kvaser_usb_close(struct net_device *netdev)
+ 	if (err)
+ 		netdev_warn(netdev, "Cannot flush queue, error %d\n", err);
+ 
+-	if (kvaser_usb_send_simple_msg(dev, CMD_RESET_CHIP, priv->channel))
++	err = kvaser_usb_send_simple_msg(dev, CMD_RESET_CHIP, priv->channel);
++	if (err)
+ 		netdev_warn(netdev, "Cannot reset card, error %d\n", err);
+ 
+ 	err = kvaser_usb_stop_chip(priv);
+diff --git a/drivers/regulator/fan53555.c b/drivers/regulator/fan53555.c
+index 4940e8287df6..c3107358b3fb 100644
+--- a/drivers/regulator/fan53555.c
++++ b/drivers/regulator/fan53555.c
+@@ -434,7 +434,10 @@ static const struct i2c_device_id fan53555_id[] = {
+ 		.name = "fan53555",
+ 		.driver_data = FAN53555_VENDOR_FAIRCHILD
+ 	}, {
+-		.name = "syr82x",
++		.name = "syr827",
++		.driver_data = FAN53555_VENDOR_SILERGY
++	}, {
++		.name = "syr828",
+ 		.driver_data = FAN53555_VENDOR_SILERGY
+ 	},
+ 	{ },
+diff --git a/drivers/s390/scsi/zfcp_aux.c b/drivers/s390/scsi/zfcp_aux.c
+index c00ac4650dce..38c8e308d4c8 100644
+--- a/drivers/s390/scsi/zfcp_aux.c
++++ b/drivers/s390/scsi/zfcp_aux.c
+@@ -358,6 +358,8 @@ struct zfcp_adapter *zfcp_adapter_enqueue(struct ccw_device *ccw_device)
+ 
+ 	adapter->next_port_scan = jiffies;
+ 
++	adapter->erp_action.adapter = adapter;
++
+ 	if (zfcp_qdio_setup(adapter))
+ 		goto failed;
+ 
+@@ -514,6 +516,9 @@ struct zfcp_port *zfcp_port_enqueue(struct zfcp_adapter *adapter, u64 wwpn,
+ 	port->dev.groups = zfcp_port_attr_groups;
+ 	port->dev.release = zfcp_port_release;
+ 
++	port->erp_action.adapter = adapter;
++	port->erp_action.port = port;
++
+ 	if (dev_set_name(&port->dev, "0x%016llx", (unsigned long long)wwpn)) {
+ 		kfree(port);
+ 		goto err_out;
+diff --git a/drivers/s390/scsi/zfcp_erp.c b/drivers/s390/scsi/zfcp_erp.c
+index 7ccfce559034..3b23d6754598 100644
+--- a/drivers/s390/scsi/zfcp_erp.c
++++ b/drivers/s390/scsi/zfcp_erp.c
+@@ -193,9 +193,8 @@ static struct zfcp_erp_action *zfcp_erp_setup_act(int need, u32 act_status,
+ 		atomic_or(ZFCP_STATUS_COMMON_ERP_INUSE,
+ 				&zfcp_sdev->status);
+ 		erp_action = &zfcp_sdev->erp_action;
+-		memset(erp_action, 0, sizeof(struct zfcp_erp_action));
+-		erp_action->port = port;
+-		erp_action->sdev = sdev;
++		WARN_ON_ONCE(erp_action->port != port);
++		WARN_ON_ONCE(erp_action->sdev != sdev);
+ 		if (!(atomic_read(&zfcp_sdev->status) &
+ 		      ZFCP_STATUS_COMMON_RUNNING))
+ 			act_status |= ZFCP_STATUS_ERP_CLOSE_ONLY;
+@@ -208,8 +207,8 @@ static struct zfcp_erp_action *zfcp_erp_setup_act(int need, u32 act_status,
+ 		zfcp_erp_action_dismiss_port(port);
+ 		atomic_or(ZFCP_STATUS_COMMON_ERP_INUSE, &port->status);
+ 		erp_action = &port->erp_action;
+-		memset(erp_action, 0, sizeof(struct zfcp_erp_action));
+-		erp_action->port = port;
++		WARN_ON_ONCE(erp_action->port != port);
++		WARN_ON_ONCE(erp_action->sdev != NULL);
+ 		if (!(atomic_read(&port->status) & ZFCP_STATUS_COMMON_RUNNING))
+ 			act_status |= ZFCP_STATUS_ERP_CLOSE_ONLY;
+ 		break;
+@@ -219,7 +218,8 @@ static struct zfcp_erp_action *zfcp_erp_setup_act(int need, u32 act_status,
+ 		zfcp_erp_action_dismiss_adapter(adapter);
+ 		atomic_or(ZFCP_STATUS_COMMON_ERP_INUSE, &adapter->status);
+ 		erp_action = &adapter->erp_action;
+-		memset(erp_action, 0, sizeof(struct zfcp_erp_action));
++		WARN_ON_ONCE(erp_action->port != NULL);
++		WARN_ON_ONCE(erp_action->sdev != NULL);
+ 		if (!(atomic_read(&adapter->status) &
+ 		      ZFCP_STATUS_COMMON_RUNNING))
+ 			act_status |= ZFCP_STATUS_ERP_CLOSE_ONLY;
+@@ -229,7 +229,11 @@ static struct zfcp_erp_action *zfcp_erp_setup_act(int need, u32 act_status,
+ 		return NULL;
+ 	}
+ 
+-	erp_action->adapter = adapter;
++	WARN_ON_ONCE(erp_action->adapter != adapter);
++	memset(&erp_action->list, 0, sizeof(erp_action->list));
++	memset(&erp_action->timer, 0, sizeof(erp_action->timer));
++	erp_action->step = ZFCP_ERP_STEP_UNINITIALIZED;
++	erp_action->fsf_req_id = 0;
+ 	erp_action->action = need;
+ 	erp_action->status = act_status;
+ 
+diff --git a/drivers/s390/scsi/zfcp_scsi.c b/drivers/s390/scsi/zfcp_scsi.c
+index 9bd9b9a29dfc..a9b8104b982e 100644
+--- a/drivers/s390/scsi/zfcp_scsi.c
++++ b/drivers/s390/scsi/zfcp_scsi.c
+@@ -115,10 +115,15 @@ static int zfcp_scsi_slave_alloc(struct scsi_device *sdev)
+ 	struct zfcp_unit *unit;
+ 	int npiv = adapter->connection_features & FSF_FEATURE_NPIV_MODE;
+ 
++	zfcp_sdev->erp_action.adapter = adapter;
++	zfcp_sdev->erp_action.sdev = sdev;
++
+ 	port = zfcp_get_port_by_wwpn(adapter, rport->port_name);
+ 	if (!port)
+ 		return -ENXIO;
+ 
++	zfcp_sdev->erp_action.port = port;
++
+ 	unit = zfcp_unit_find(port, zfcp_scsi_dev_lun(sdev));
+ 	if (unit)
+ 		put_device(&unit->dev);
+diff --git a/drivers/scsi/sg.c b/drivers/scsi/sg.c
+index 39e8b5dc23fa..38f77e127349 100644
+--- a/drivers/scsi/sg.c
++++ b/drivers/scsi/sg.c
+@@ -848,7 +848,7 @@ sg_fill_request_table(Sg_fd *sfp, sg_req_info_t *rinfo)
+ 
+ 	val = 0;
+ 	list_for_each_entry(srp, &sfp->rq_list, entry) {
+-		if (val > SG_MAX_QUEUE)
++		if (val >= SG_MAX_QUEUE)
+ 			break;
+ 		rinfo[val].req_state = srp->done + 1;
+ 		rinfo[val].problem =
+diff --git a/drivers/usb/host/xhci-hub.c b/drivers/usb/host/xhci-hub.c
+index a8a2d5005e6e..9df00101bfe1 100644
+--- a/drivers/usb/host/xhci-hub.c
++++ b/drivers/usb/host/xhci-hub.c
+@@ -394,15 +394,25 @@ static int xhci_stop_device(struct xhci_hcd *xhci, int slot_id, int suspend)
+ 						     GFP_NOWAIT);
+ 			if (!command) {
+ 				spin_unlock_irqrestore(&xhci->lock, flags);
+-				xhci_free_command(xhci, cmd);
+-				return -ENOMEM;
++				ret = -ENOMEM;
++				goto cmd_cleanup;
++			}
+ 
++			ret = xhci_queue_stop_endpoint(xhci, command, slot_id,
++						       i, suspend);
++			if (ret) {
++				spin_unlock_irqrestore(&xhci->lock, flags);
++				xhci_free_command(xhci, command);
++				goto cmd_cleanup;
+ 			}
+-			xhci_queue_stop_endpoint(xhci, command, slot_id, i,
+-						 suspend);
+ 		}
+ 	}
+-	xhci_queue_stop_endpoint(xhci, cmd, slot_id, 0, suspend);
++	ret = xhci_queue_stop_endpoint(xhci, cmd, slot_id, 0, suspend);
++	if (ret) {
++		spin_unlock_irqrestore(&xhci->lock, flags);
++		goto cmd_cleanup;
++	}
++
+ 	xhci_ring_cmd_db(xhci);
+ 	spin_unlock_irqrestore(&xhci->lock, flags);
+ 
+@@ -413,6 +423,8 @@ static int xhci_stop_device(struct xhci_hcd *xhci, int slot_id, int suspend)
+ 		xhci_warn(xhci, "Timeout while waiting for stop endpoint command\n");
+ 		ret = -ETIME;
+ 	}
++
++cmd_cleanup:
+ 	xhci_free_command(xhci, cmd);
+ 	return ret;
+ }
+diff --git a/drivers/xen/gntdev.c b/drivers/xen/gntdev.c
+index 308600adf6e0..a4d749665c9f 100644
+--- a/drivers/xen/gntdev.c
++++ b/drivers/xen/gntdev.c
+@@ -827,6 +827,7 @@ static int gntdev_mmap(struct file *flip, struct vm_area_struct *vma)
+ 	mutex_unlock(&priv->lock);
+ 
+ 	if (use_ptemod) {
++		map->pages_vm_start = vma->vm_start;
+ 		err = apply_to_page_range(vma->vm_mm, vma->vm_start,
+ 					  vma->vm_end - vma->vm_start,
+ 					  find_grant_ptes, map);
+@@ -864,7 +865,6 @@ static int gntdev_mmap(struct file *flip, struct vm_area_struct *vma)
+ 					    set_grant_ptes_as_special, NULL);
+ 		}
+ #endif
+-		map->pages_vm_start = vma->vm_start;
+ 	}
+ 
+ 	return 0;
+diff --git a/fs/ceph/caps.c b/fs/ceph/caps.c
+index c69e1253b47b..0e3de1bb6500 100644
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -1850,6 +1850,7 @@ static int try_flush_caps(struct inode *inode, u64 *ptid)
+ retry:
+ 	spin_lock(&ci->i_ceph_lock);
+ 	if (ci->i_ceph_flags & CEPH_I_NOFLUSH) {
++		spin_unlock(&ci->i_ceph_lock);
+ 		dout("try_flush_caps skipping %p I_NOFLUSH set\n", inode);
+ 		goto out;
+ 	}
+@@ -1867,8 +1868,10 @@ retry:
+ 			mutex_lock(&session->s_mutex);
+ 			goto retry;
+ 		}
+-		if (cap->session->s_state < CEPH_MDS_SESSION_OPEN)
++		if (cap->session->s_state < CEPH_MDS_SESSION_OPEN) {
++			spin_unlock(&ci->i_ceph_lock);
+ 			goto out;
++		}
+ 
+ 		flushing = __mark_caps_flushing(inode, session, &flush_tid,
+ 						&oldest_flush_tid);
+diff --git a/fs/ecryptfs/ecryptfs_kernel.h b/fs/ecryptfs/ecryptfs_kernel.h
+index 7b39260c7bba..eae9cdb8af46 100644
+--- a/fs/ecryptfs/ecryptfs_kernel.h
++++ b/fs/ecryptfs/ecryptfs_kernel.h
+@@ -84,11 +84,16 @@ struct ecryptfs_page_crypt_context {
+ static inline struct ecryptfs_auth_tok *
+ ecryptfs_get_encrypted_key_payload_data(struct key *key)
+ {
+-	if (key->type == &key_type_encrypted)
+-		return (struct ecryptfs_auth_tok *)
+-			(&((struct encrypted_key_payload *)key->payload.data[0])->payload_data);
+-	else
++	struct encrypted_key_payload *payload;
++
++	if (key->type != &key_type_encrypted)
+ 		return NULL;
++
++	payload = key->payload.data[0];
++	if (!payload)
++		return ERR_PTR(-EKEYREVOKED);
++
++	return (struct ecryptfs_auth_tok *)payload->payload_data;
+ }
+ 
+ static inline struct key *ecryptfs_get_encrypted_key(char *sig)
+@@ -114,12 +119,17 @@ static inline struct ecryptfs_auth_tok *
+ ecryptfs_get_key_payload_data(struct key *key)
+ {
+ 	struct ecryptfs_auth_tok *auth_tok;
++	const struct user_key_payload *ukp;
+ 
+ 	auth_tok = ecryptfs_get_encrypted_key_payload_data(key);
+-	if (!auth_tok)
+-		return (struct ecryptfs_auth_tok *)user_key_payload(key)->data;
+-	else
++	if (auth_tok)
+ 		return auth_tok;
++
++	ukp = user_key_payload(key);
++	if (!ukp)
++		return ERR_PTR(-EKEYREVOKED);
++
++	return (struct ecryptfs_auth_tok *)ukp->data;
+ }
+ 
+ #define ECRYPTFS_MAX_KEYSET_SIZE 1024
+diff --git a/fs/ecryptfs/keystore.c b/fs/ecryptfs/keystore.c
+index 6bd67e2011f0..20632ee51ae5 100644
+--- a/fs/ecryptfs/keystore.c
++++ b/fs/ecryptfs/keystore.c
+@@ -458,7 +458,8 @@ out:
+  * @auth_tok_key: key containing the authentication token
+  * @auth_tok: authentication token
+  *
+- * Returns zero on valid auth tok; -EINVAL otherwise
++ * Returns zero on valid auth tok; -EINVAL if the payload is invalid; or
++ * -EKEYREVOKED if the key was revoked before we acquired its semaphore.
+  */
+ static int
+ ecryptfs_verify_auth_tok_from_key(struct key *auth_tok_key,
+@@ -467,6 +468,12 @@ ecryptfs_verify_auth_tok_from_key(struct key *auth_tok_key,
+ 	int rc = 0;
+ 
+ 	(*auth_tok) = ecryptfs_get_key_payload_data(auth_tok_key);
++	if (IS_ERR(*auth_tok)) {
++		rc = PTR_ERR(*auth_tok);
++		*auth_tok = NULL;
++		goto out;
++	}
++
+ 	if (ecryptfs_verify_version((*auth_tok)->version)) {
+ 		printk(KERN_ERR "Data structure version mismatch. Userspace "
+ 		       "tools must match eCryptfs kernel module with major "
+diff --git a/fs/fuse/dir.c b/fs/fuse/dir.c
+index 4b5f2c4e69c8..5068dbf80ff8 100644
+--- a/fs/fuse/dir.c
++++ b/fs/fuse/dir.c
+@@ -1295,7 +1295,8 @@ static int parse_dirplusfile(char *buf, size_t nbytes, struct file *file,
+ 			*/
+ 			over = !dir_emit(ctx, dirent->name, dirent->namelen,
+ 				       dirent->ino, dirent->type);
+-			ctx->pos = dirent->off;
++			if (!over)
++				ctx->pos = dirent->off;
+ 		}
+ 
+ 		buf += reclen;
+diff --git a/include/uapi/linux/spi/spidev.h b/include/uapi/linux/spi/spidev.h
+index dd5f21e75805..856de39d0b89 100644
+--- a/include/uapi/linux/spi/spidev.h
++++ b/include/uapi/linux/spi/spidev.h
+@@ -23,6 +23,7 @@
+ #define SPIDEV_H
+ 
+ #include <linux/types.h>
++#include <linux/ioctl.h>
+ 
+ /* User space versions of kernel symbols for SPI clocking modes,
+  * matching <linux/spi/spi.h>
+diff --git a/kernel/workqueue.c b/kernel/workqueue.c
+index 23231237f2e2..95cc76785a12 100644
+--- a/kernel/workqueue.c
++++ b/kernel/workqueue.c
+@@ -68,6 +68,7 @@ enum {
+ 	 * attach_mutex to avoid changing binding state while
+ 	 * worker_attach_to_pool() is in progress.
+ 	 */
++	POOL_MANAGER_ACTIVE	= 1 << 0,	/* being managed */
+ 	POOL_DISASSOCIATED	= 1 << 2,	/* cpu can't serve workers */
+ 
+ 	/* worker flags */
+@@ -163,7 +164,6 @@ struct worker_pool {
+ 						/* L: hash of busy workers */
+ 
+ 	/* see manage_workers() for details on the two manager mutexes */
+-	struct mutex		manager_arb;	/* manager arbitration */
+ 	struct worker		*manager;	/* L: purely informational */
+ 	struct mutex		attach_mutex;	/* attach/detach exclusion */
+ 	struct list_head	workers;	/* A: attached workers */
+@@ -295,6 +295,7 @@ static struct workqueue_attrs *wq_update_unbound_numa_attrs_buf;
+ 
+ static DEFINE_MUTEX(wq_pool_mutex);	/* protects pools and workqueues list */
+ static DEFINE_SPINLOCK(wq_mayday_lock);	/* protects wq->maydays list */
++static DECLARE_WAIT_QUEUE_HEAD(wq_manager_wait); /* wait for manager to go away */
+ 
+ static LIST_HEAD(workqueues);		/* PR: list of all workqueues */
+ static bool workqueue_freezing;		/* PL: have wqs started freezing? */
+@@ -808,7 +809,7 @@ static bool need_to_create_worker(struct worker_pool *pool)
+ /* Do we have too many workers and should some go away? */
+ static bool too_many_workers(struct worker_pool *pool)
+ {
+-	bool managing = mutex_is_locked(&pool->manager_arb);
++	bool managing = pool->flags & POOL_MANAGER_ACTIVE;
+ 	int nr_idle = pool->nr_idle + managing; /* manager is considered idle */
+ 	int nr_busy = pool->nr_workers - nr_idle;
+ 
+@@ -1952,24 +1953,17 @@ static bool manage_workers(struct worker *worker)
+ {
+ 	struct worker_pool *pool = worker->pool;
+ 
+-	/*
+-	 * Anyone who successfully grabs manager_arb wins the arbitration
+-	 * and becomes the manager.  mutex_trylock() on pool->manager_arb
+-	 * failure while holding pool->lock reliably indicates that someone
+-	 * else is managing the pool and the worker which failed trylock
+-	 * can proceed to executing work items.  This means that anyone
+-	 * grabbing manager_arb is responsible for actually performing
+-	 * manager duties.  If manager_arb is grabbed and released without
+-	 * actual management, the pool may stall indefinitely.
+-	 */
+-	if (!mutex_trylock(&pool->manager_arb))
++	if (pool->flags & POOL_MANAGER_ACTIVE)
+ 		return false;
++
++	pool->flags |= POOL_MANAGER_ACTIVE;
+ 	pool->manager = worker;
+ 
+ 	maybe_create_worker(pool);
+ 
+ 	pool->manager = NULL;
+-	mutex_unlock(&pool->manager_arb);
++	pool->flags &= ~POOL_MANAGER_ACTIVE;
++	wake_up(&wq_manager_wait);
+ 	return true;
+ }
+ 
+@@ -3119,7 +3113,6 @@ static int init_worker_pool(struct worker_pool *pool)
+ 	setup_timer(&pool->mayday_timer, pool_mayday_timeout,
+ 		    (unsigned long)pool);
+ 
+-	mutex_init(&pool->manager_arb);
+ 	mutex_init(&pool->attach_mutex);
+ 	INIT_LIST_HEAD(&pool->workers);
+ 
+@@ -3189,13 +3182,15 @@ static void put_unbound_pool(struct worker_pool *pool)
+ 	hash_del(&pool->hash_node);
+ 
+ 	/*
+-	 * Become the manager and destroy all workers.  Grabbing
+-	 * manager_arb prevents @pool's workers from blocking on
+-	 * attach_mutex.
++	 * Become the manager and destroy all workers.  This prevents
++	 * @pool's workers from blocking on attach_mutex.  We're the last
++	 * manager and @pool gets freed with the flag set.
+ 	 */
+-	mutex_lock(&pool->manager_arb);
+-
+ 	spin_lock_irq(&pool->lock);
++	wait_event_lock_irq(wq_manager_wait,
++			    !(pool->flags & POOL_MANAGER_ACTIVE), pool->lock);
++	pool->flags |= POOL_MANAGER_ACTIVE;
++
+ 	while ((worker = first_idle_worker(pool)))
+ 		destroy_worker(worker);
+ 	WARN_ON(pool->nr_workers || pool->nr_idle);
+@@ -3209,8 +3204,6 @@ static void put_unbound_pool(struct worker_pool *pool)
+ 	if (pool->detach_completion)
+ 		wait_for_completion(pool->detach_completion);
+ 
+-	mutex_unlock(&pool->manager_arb);
+-
+ 	/* shut down the timers */
+ 	del_timer_sync(&pool->idle_timer);
+ 	del_timer_sync(&pool->mayday_timer);
+diff --git a/lib/assoc_array.c b/lib/assoc_array.c
+index 59fd7c0b119c..5cd093589c5a 100644
+--- a/lib/assoc_array.c
++++ b/lib/assoc_array.c
+@@ -598,21 +598,31 @@ static bool assoc_array_insert_into_terminal_node(struct assoc_array_edit *edit,
+ 		if ((edit->segment_cache[ASSOC_ARRAY_FAN_OUT] ^ base_seg) == 0)
+ 			goto all_leaves_cluster_together;
+ 
+-		/* Otherwise we can just insert a new node ahead of the old
+-		 * one.
++		/* Otherwise all the old leaves cluster in the same slot, but
++		 * the new leaf wants to go into a different slot - so we
++		 * create a new node (n0) to hold the new leaf and a pointer to
++		 * a new node (n1) holding all the old leaves.
++		 *
++		 * This can be done by falling through to the node splitting
++		 * path.
+ 		 */
+-		goto present_leaves_cluster_but_not_new_leaf;
++		pr_devel("present leaves cluster but not new leaf\n");
+ 	}
+ 
+ split_node:
+ 	pr_devel("split node\n");
+ 
+-	/* We need to split the current node; we know that the node doesn't
+-	 * simply contain a full set of leaves that cluster together (it
+-	 * contains meta pointers and/or non-clustering leaves).
++	/* We need to split the current node.  The node must contain anything
++	 * from a single leaf (in the one leaf case, this leaf will cluster
++	 * with the new leaf) and the rest meta-pointers, to all leaves, some
++	 * of which may cluster.
++	 *
++	 * It won't contain the case in which all the current leaves plus the
++	 * new leaves want to cluster in the same slot.
+ 	 *
+ 	 * We need to expel at least two leaves out of a set consisting of the
+-	 * leaves in the node and the new leaf.
++	 * leaves in the node and the new leaf.  The current meta pointers can
++	 * just be copied as they shouldn't cluster with any of the leaves.
+ 	 *
+ 	 * We need a new node (n0) to replace the current one and a new node to
+ 	 * take the expelled nodes (n1).
+@@ -717,33 +727,6 @@ found_slot_for_multiple_occupancy:
+ 	pr_devel("<--%s() = ok [split node]\n", __func__);
+ 	return true;
+ 
+-present_leaves_cluster_but_not_new_leaf:
+-	/* All the old leaves cluster in the same slot, but the new leaf wants
+-	 * to go into a different slot, so we create a new node to hold the new
+-	 * leaf and a pointer to a new node holding all the old leaves.
+-	 */
+-	pr_devel("present leaves cluster but not new leaf\n");
+-
+-	new_n0->back_pointer = node->back_pointer;
+-	new_n0->parent_slot = node->parent_slot;
+-	new_n0->nr_leaves_on_branch = node->nr_leaves_on_branch;
+-	new_n1->back_pointer = assoc_array_node_to_ptr(new_n0);
+-	new_n1->parent_slot = edit->segment_cache[0];
+-	new_n1->nr_leaves_on_branch = node->nr_leaves_on_branch;
+-	edit->adjust_count_on = new_n0;
+-
+-	for (i = 0; i < ASSOC_ARRAY_FAN_OUT; i++)
+-		new_n1->slots[i] = node->slots[i];
+-
+-	new_n0->slots[edit->segment_cache[0]] = assoc_array_node_to_ptr(new_n0);
+-	edit->leaf_p = &new_n0->slots[edit->segment_cache[ASSOC_ARRAY_FAN_OUT]];
+-
+-	edit->set[0].ptr = &assoc_array_ptr_to_node(node->back_pointer)->slots[node->parent_slot];
+-	edit->set[0].to = assoc_array_node_to_ptr(new_n0);
+-	edit->excised_meta[0] = assoc_array_node_to_ptr(node);
+-	pr_devel("<--%s() = ok [insert node before]\n", __func__);
+-	return true;
+-
+ all_leaves_cluster_together:
+ 	/* All the leaves, new and old, want to cluster together in this node
+ 	 * in the same slot, so we have to replace this node with a shortcut to
+diff --git a/sound/pci/hda/patch_realtek.c b/sound/pci/hda/patch_realtek.c
+index 5cab24f52825..a83688f8672e 100644
+--- a/sound/pci/hda/patch_realtek.c
++++ b/sound/pci/hda/patch_realtek.c
+@@ -329,6 +329,7 @@ static void alc_fill_eapd_coef(struct hda_codec *codec)
+ 		break;
+ 	case 0x10ec0225:
+ 	case 0x10ec0233:
++	case 0x10ec0236:
+ 	case 0x10ec0255:
+ 	case 0x10ec0256:
+ 	case 0x10ec0282:
+@@ -909,6 +910,7 @@ static struct alc_codec_rename_pci_table rename_pci_tbl[] = {
+ 	{ 0x10ec0275, 0x1028, 0, "ALC3260" },
+ 	{ 0x10ec0899, 0x1028, 0, "ALC3861" },
+ 	{ 0x10ec0298, 0x1028, 0, "ALC3266" },
++	{ 0x10ec0236, 0x1028, 0, "ALC3204" },
+ 	{ 0x10ec0256, 0x1028, 0, "ALC3246" },
+ 	{ 0x10ec0225, 0x1028, 0, "ALC3253" },
+ 	{ 0x10ec0295, 0x1028, 0, "ALC3254" },
+@@ -3694,6 +3696,7 @@ static void alc_headset_mode_unplugged(struct hda_codec *codec)
+ 		alc_process_coef_fw(codec, coef0255_1);
+ 		alc_process_coef_fw(codec, coef0255);
+ 		break;
++	case 0x10ec0236:
+ 	case 0x10ec0256:
+ 		alc_process_coef_fw(codec, coef0256);
+ 		alc_process_coef_fw(codec, coef0255);
+@@ -3774,6 +3777,7 @@ static void alc_headset_mode_mic_in(struct hda_codec *codec, hda_nid_t hp_pin,
+ 
+ 
+ 	switch (codec->core.vendor_id) {
++	case 0x10ec0236:
+ 	case 0x10ec0255:
+ 	case 0x10ec0256:
+ 		alc_write_coef_idx(codec, 0x45, 0xc489);
+@@ -3879,6 +3883,7 @@ static void alc_headset_mode_default(struct hda_codec *codec)
+ 	case 0x10ec0295:
+ 		alc_process_coef_fw(codec, coef0225);
+ 		break;
++	case 0x10ec0236:
+ 	case 0x10ec0255:
+ 	case 0x10ec0256:
+ 		alc_process_coef_fw(codec, coef0255);
+@@ -3962,6 +3967,7 @@ static void alc_headset_mode_ctia(struct hda_codec *codec)
+ 	case 0x10ec0255:
+ 		alc_process_coef_fw(codec, coef0255);
+ 		break;
++	case 0x10ec0236:
+ 	case 0x10ec0256:
+ 		alc_process_coef_fw(codec, coef0256);
+ 		break;
+@@ -4052,6 +4058,7 @@ static void alc_headset_mode_omtp(struct hda_codec *codec)
+ 	case 0x10ec0255:
+ 		alc_process_coef_fw(codec, coef0255);
+ 		break;
++	case 0x10ec0236:
+ 	case 0x10ec0256:
+ 		alc_process_coef_fw(codec, coef0256);
+ 		break;
+@@ -4119,6 +4126,7 @@ static void alc_determine_headset_type(struct hda_codec *codec)
+ 	};
+ 
+ 	switch (codec->core.vendor_id) {
++	case 0x10ec0236:
+ 	case 0x10ec0255:
+ 	case 0x10ec0256:
+ 		alc_process_coef_fw(codec, coef0255);
+@@ -4320,6 +4328,7 @@ static void alc255_set_default_jack_type(struct hda_codec *codec)
+ 	case 0x10ec0255:
+ 		alc_process_coef_fw(codec, alc255fw);
+ 		break;
++	case 0x10ec0236:
+ 	case 0x10ec0256:
+ 		alc_process_coef_fw(codec, alc256fw);
+ 		break;
+@@ -5834,6 +5843,14 @@ static const struct snd_hda_pin_quirk alc269_pin_fixup_tbl[] = {
+ 		ALC225_STANDARD_PINS,
+ 		{0x12, 0xb7a60130},
+ 		{0x1b, 0x90170110}),
++	SND_HDA_PIN_QUIRK(0x10ec0236, 0x1028, "Dell", ALC255_FIXUP_DELL1_MIC_NO_PRESENCE,
++		{0x12, 0x90a60140},
++		{0x14, 0x90170110},
++		{0x21, 0x02211020}),
++	SND_HDA_PIN_QUIRK(0x10ec0236, 0x1028, "Dell", ALC255_FIXUP_DELL1_MIC_NO_PRESENCE,
++		{0x12, 0x90a60140},
++		{0x14, 0x90170150},
++		{0x21, 0x02211020}),
+ 	SND_HDA_PIN_QUIRK(0x10ec0255, 0x1028, "Dell", ALC255_FIXUP_DELL2_MIC_NO_PRESENCE,
+ 		{0x14, 0x90170110},
+ 		{0x21, 0x02211020}),
+@@ -6208,6 +6225,7 @@ static int patch_alc269(struct hda_codec *codec)
+ 	case 0x10ec0255:
+ 		spec->codec_variant = ALC269_TYPE_ALC255;
+ 		break;
++	case 0x10ec0236:
+ 	case 0x10ec0256:
+ 		spec->codec_variant = ALC269_TYPE_ALC256;
+ 		spec->gen.mixer_nid = 0; /* ALC256 does not have any loopback mixer path */
+@@ -7147,6 +7165,7 @@ static const struct hda_device_id snd_hda_id_realtek[] = {
+ 	HDA_CODEC_ENTRY(0x10ec0233, "ALC233", patch_alc269),
+ 	HDA_CODEC_ENTRY(0x10ec0234, "ALC234", patch_alc269),
+ 	HDA_CODEC_ENTRY(0x10ec0235, "ALC233", patch_alc269),
++	HDA_CODEC_ENTRY(0x10ec0236, "ALC236", patch_alc269),
+ 	HDA_CODEC_ENTRY(0x10ec0255, "ALC255", patch_alc269),
+ 	HDA_CODEC_ENTRY(0x10ec0256, "ALC256", patch_alc269),
+ 	HDA_CODEC_ENTRY(0x10ec0260, "ALC260", patch_alc260),
