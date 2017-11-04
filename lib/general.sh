@@ -489,6 +489,13 @@ prepare_host()
 		exit_with_error "It seems you ignore documentation and run an unsupported build system: ${codename:-(unknown)}"
 	fi
 
+	if [[ $codename == trusty ]]; then
+		display_alert "Note: Ubuntu Trusty environment support will be removed before the end of 2017" "" "wrn"
+		display_alert "Please upgrade your compilation environment to Ubuntu Xenial" "" "wrn"
+		display_alert "Press <Enter> to continue"
+		read
+	fi
+
 	if [[ $codename == xenial ]]; then
 		hostdeps="$hostdeps systemd-container udev distcc \
 			lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 aptly"
