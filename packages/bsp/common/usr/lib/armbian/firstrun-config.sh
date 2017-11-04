@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# TODO: convert this to use nmcli, improve network interfaces names handling (wl*, en*)
+# or drop support for this and remove all related files
+
 do_firstrun_automated_user_configuration()
 {
 	#-----------------------------------------------------------------------------
