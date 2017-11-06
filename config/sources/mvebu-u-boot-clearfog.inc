@@ -11,5 +11,7 @@ case $BRANCH in
 
 	UBOOT_USE_GCC='== 4.9'
 	UBOOT_COMPILER='arm-linux-gnueabi-'
+
+	BOOTPATCHDIR='u-boot-mvebu'
 	;;
 esac
