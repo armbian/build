@@ -250,12 +250,9 @@ start=`date +%s`
 if [[ $IGNORE_UPDATES != yes ]]; then
 	display_alert "Downloading sources" "" "info"
 	fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
-	BOOTSOURCEDIR=$BOOTDIR/${BOOTBRANCH##*:}
 	fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
-	LINUXSOURCEDIR=$KERNELDIR/${KERNELBRANCH##*:}
 	if [[ -n $ATFSOURCE ]]; then
 		fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
-		ATFSOURCEDIR=$ATFDIR/${ATFBRANCH##*:}
 	fi
 	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
 	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:dev"
@@ -266,6 +263,10 @@ fi
 
 compile_sunxi_tools
 install_rkbin_tools
+
+BOOTSOURCEDIR=$BOOTDIR/${BOOTBRANCH##*:}
+LINUXSOURCEDIR=$KERNELDIR/${KERNELBRANCH##*:}
+[[ -n $ATFSOURCE ]] && ATFSOURCEDIR=$ATFDIR/${ATFBRANCH##*:}
 
 # define package names
 DEB_BRANCH=${BRANCH//default}
