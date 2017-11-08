@@ -18,7 +18,7 @@ install_desktop ()
 		# install optimized firefox configuration
 		# cp $SRC/packages/blobs/desktop/firefox.conf $SDCARD/etc/firefox/syspref.js
 		# install optimized chromium configuration
-		cp $SRC/config/chromium.conf $SDCARD/etc/chromium-browser/default
+		cp $SRC/packages/blobs/desktop/chromium.conf $SDCARD/etc/chromium-browser/default
 	fi
 
 	# install default desktop settings
@@ -34,7 +34,14 @@ install_desktop ()
 	cp $SRC/packages/blobs/desktop/wallpapers/armbian*.jpg $SDCARD/usr/share/backgrounds/xfce/
 
 	# Install custom icons and theme
-	install_deb_chroot "$SRC/packages/blobs/desktop/vibrancy-colors_2.7~xenial~Noobslab.com_all.deb"
+	cp $SRC/packages/blobs/desktop/numix-icon-theme_0.3+922~201711061547~ubuntu16.04.1_all.deb $SDCARD/root/
+	chroot $SDCARD /bin/bash -c "dpkg -x /root/numix-icon-theme_0.3+922~201711061547~ubuntu16.04.1_all.deb /" >> $DEST/debug/install.log 2>&1
+	chroot $SDCARD /bin/bash -c "gtk-update-icon-cache /usr/share/icons/Numix" >> $DEST/debug/install.log 2>&1
+	chroot $SDCARD /bin/bash -c "gtk-update-icon-cache /usr/share/icons/Numix-Light" >> $DEST/debug/install.log 2>&1
+
+	# Adjust menu
+	sed -i '0,/xfce4-about.desktop/s//armbian-donate.desktop/' $SDCARD/etc/xdg/menus/xfce-applications.menu
+	sed -i '/armbian-donate.desktop/a \\t<Filename>armbian-support.desktop</Filename>/' $SDCARD/etc/xdg/menus/xfce-applications.menu
 
 	# Enable network manager
 	if [[ -f $SDCARD/etc/NetworkManager/NetworkManager.conf ]]; then
