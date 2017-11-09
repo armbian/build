@@ -38,6 +38,7 @@ install_desktop ()
 	chroot $SDCARD /bin/bash -c "dpkg -x /root/numix-icon-theme_0.3+922~201711061547~ubuntu16.04.1_all.deb /" >> $DEST/debug/install.log 2>&1
 	chroot $SDCARD /bin/bash -c "gtk-update-icon-cache /usr/share/icons/Numix" >> $DEST/debug/install.log 2>&1
 	chroot $SDCARD /bin/bash -c "gtk-update-icon-cache /usr/share/icons/Numix-Light" >> $DEST/debug/install.log 2>&1
+	rm $SDCARD/root/numix-icon-theme_0.3+922~201711061547~ubuntu16.04.1_all.deb
 
 	# Adjust menu
 	sed -i '0,/xfce4-about.desktop/s//armbian-donate.desktop/' $SDCARD/etc/xdg/menus/xfce-applications.menu
