@@ -9,47 +9,37 @@
 
 compile_armbian-config()
 {
-	local tmpdir=$SDCARD/root/config
+	local tmpdir=$SRC/.tmp/armbian-config_${REVISION}_all/
 
 	display_alert "Building deb" "armbian-config" "info"
 
-	display_alert "... downloading sources" "config" "info"
-	git clone -q https://github.com/armbian/config $tmpdir/config >> $DEST/debug/armbian-config.log 2>&1
+	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:dev"
 
-	pack_to_deb()
-	{
-		mkdir -p $tmpdir/armbian-config_${REVISION}_all/{DEBIAN,/usr/bin/}
+	mkdir -p $tmpdir/{DEBIAN,/usr/bin/}
 
-		# set up control file
-		cat <<-END > $tmpdir/armbian-config_${REVISION}_all/DEBIAN/control
-		Package: armbian-config
-		Version: $REVISION
-		Architecture: all
-		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Installed-Size: 1
-		Provides: armbian-config
-		Conflicts: armbian-config
-		Depends: bc, expect, rcconf, dialog, network-manager
-		Section: utils
-		Priority: optional
-		Description: Armbian configuration utility
-		END
+	# set up control file
+	cat <<-END > $tmpdir/DEBIAN/control
+	Package: armbian-config
+	Version: $REVISION
+	Architecture: all
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Replaces: armbian-bsp
+	Depends: bc, expect, rcconf, dialog, network-manager
+	Section: utils
+	Priority: optional
+	Description: Armbian configuration utility
+	END
 
+	install -m 755 $SRC/cache/sources/armbian-config/scripts/tv_grab_file $tmpdir/usr/bin/tv_grab_file
+	install -m 755 $SRC/cache/sources/armbian-config/debian-config $tmpdir/usr/bin/armbian-config
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-jobs $tmpdir/usr/bin/armbian-config-jobs
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-submenu $tmpdir/usr/bin/armbian-config-submenu
+	install -m 755 $SRC/cache/sources/armbian-config/softy $tmpdir/usr/bin/softy
 
-		install -m 755	$tmpdir/config/debian-config $tmpdir/armbian-config_${REVISION}_all/usr/bin/armbian-config
-		install -m 644	$tmpdir/config/debian-config-jobs $tmpdir/armbian-config_${REVISION}_all/usr/bin/armbian-config-jobs
-		install -m 644	$tmpdir/config/debian-config-submenu $tmpdir/armbian-config_${REVISION}_all/usr/bin/armbian-config-submenu
-
-		cd $tmpdir/armbian-config_${REVISION}_all
-		find . -type f ! -regex '.*.hg.*' ! -regex '.*?debian-binary.*' ! -regex '.*?DEBIAN.*' -printf '%P ' | xargs md5sum > DEBIAN/md5sums
-		cd $tmpdir
-		fakeroot dpkg -b armbian-config_${REVISION}_all >/dev/null
-		mv $tmpdir/armbian-config_${REVISION}_all.deb $DEST/debs
-		cd $SRC/cache
-		rm -rf $tmpdir
-	}
-
-	pack_to_deb
+	cd $tmpdir
+	fakeroot dpkg -b ${tmpdir} ${tmpdir}.deb
+	mv ${tmpdir}.deb $DEST/debs
+	rm -rf $tmpdir
 }
 
 if [[ ! -f $DEST/debs/armbian-config_${REVISION}_all.deb ]]; then
