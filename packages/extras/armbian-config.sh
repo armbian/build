@@ -36,7 +36,6 @@ compile_armbian-config()
 	install -m 644 $SRC/cache/sources/armbian-config/debian-config-submenu $tmpdir/usr/bin/armbian-config-submenu
 	install -m 755 $SRC/cache/sources/armbian-config/softy $tmpdir/usr/bin/softy
 
-	cd $tmpdir
 	fakeroot dpkg -b ${tmpdir} ${tmpdir}.deb
 	mv ${tmpdir}.deb $DEST/debs
 	rm -rf $tmpdir
