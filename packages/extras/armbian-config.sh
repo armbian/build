@@ -9,7 +9,7 @@
 
 compile_armbian-config()
 {
-	local tmpdir=$SRC/.tmp/armbian-config_${REVISION}_all/
+	local tmpdir=$SRC/.tmp/armbian-config_${REVISION}_all
 
 	display_alert "Building deb" "armbian-config" "info"
 
@@ -36,8 +36,9 @@ compile_armbian-config()
 	install -m 644 $SRC/cache/sources/armbian-config/debian-config-submenu $tmpdir/usr/bin/armbian-config-submenu
 	install -m 755 $SRC/cache/sources/armbian-config/softy $tmpdir/usr/bin/softy
 
-	fakeroot dpkg -b ${tmpdir} ${tmpdir}.deb
+	fakeroot dpkg -b ${tmpdir} >/dev/null
 	mv ${tmpdir}.deb $DEST/debs
+	read
 	rm -rf $tmpdir
 }
 
