@@ -38,7 +38,6 @@ compile_armbian-config()
 
 	fakeroot dpkg -b ${tmpdir} >/dev/null
 	mv ${tmpdir}.deb $DEST/debs
-	read
 	rm -rf $tmpdir
 }
 
