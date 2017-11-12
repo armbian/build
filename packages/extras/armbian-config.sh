@@ -15,7 +15,7 @@ compile_armbian-config()
 
 	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:dev"
 
-	mkdir -p $tmpdir/{DEBIAN,/usr/bin/}
+	mkdir -p $tmpdir/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
 
 	# set up control file
 	cat <<-END > $tmpdir/DEBIAN/control
@@ -24,17 +24,21 @@ compile_armbian-config()
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Replaces: armbian-bsp
-	Depends: bc, expect, rcconf, dialog, network-manager
+	Depends: bash, bc, expect, rcconf, dialog
+	Recommends: network-manager, armbian-bsp
 	Section: utils
 	Priority: optional
 	Description: Armbian configuration utility
 	END
 
 	install -m 755 $SRC/cache/sources/armbian-config/scripts/tv_grab_file $tmpdir/usr/bin/tv_grab_file
-	install -m 755 $SRC/cache/sources/armbian-config/debian-config $tmpdir/usr/bin/armbian-config
-	install -m 644 $SRC/cache/sources/armbian-config/debian-config-jobs $tmpdir/usr/bin/armbian-config-jobs
-	install -m 644 $SRC/cache/sources/armbian-config/debian-config-submenu $tmpdir/usr/bin/armbian-config-submenu
-	install -m 755 $SRC/cache/sources/armbian-config/softy $tmpdir/usr/bin/softy
+	install -m 755 $SRC/cache/sources/armbian-config/debian-config $tmpdir/usr/sbin/armbian-config
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-jobs $tmpdir/usr/lib/armbian-config/jobs.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-submenu $tmpdir/usr/lib/armbian-config/submenu.sh
+	install -m 755 $SRC/cache/sources/armbian-config/softy $tmpdir/usr/sbin/softy
+	# fallback to replace armbian-config in BSP
+	ln -sf /usr/sbin/armbian-config $tmpdir/usr/bin/armbian-config
+	ln -sf /usr/sbin/softy $tmpdir/usr/bin/softy
 
 	fakeroot dpkg -b ${tmpdir} >/dev/null
 	mv ${tmpdir}.deb $DEST/debs

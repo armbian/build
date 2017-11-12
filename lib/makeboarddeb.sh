@@ -136,13 +136,6 @@ create_board_package()
 	# this is required for NFS boot to prevent deconfiguring the network on shutdown
 	[[ $RELEASE == xenial || $RELEASE == stretch ]] && sed -i 's/#no-auto-down/no-auto-down/g' $destination/etc/network/interfaces.default
 
-	# armbian-config
-	#install -m 755 $SRC/cache/sources/armbian-config/scripts/tv_grab_file $destination/usr/bin/tv_grab_file
-	#install -m 755 $SRC/cache/sources/armbian-config/debian-config $destination/usr/bin/armbian-config
-	#install -m 755 $SRC/cache/sources/armbian-config/debian-config-jobs $destination/usr/bin/armbian-config-jobs
-	#install -m 755 $SRC/cache/sources/armbian-config/debian-config-submenu $destination/usr/bin/armbian-config-submenu
-	#install -m 755 $SRC/cache/sources/armbian-config/softy $destination/usr/bin/softy
-
 	# install copy of boot script & environment file
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
