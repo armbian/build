@@ -231,7 +231,7 @@ prepare_board() {
 						echo 8 >/proc/irq/$i/smp_affinity
 					done
 					;;
-				"Beelink X2")
+				"Beelink X2"|"Orange Pi R1")
 					# Wifi module reload workaround / fix
 					[[ -n $(lsmod | grep 8189es) ]] && rmmod 8189es && modprobe 8189es
 					# Send SDIO to cpu1, USB to cpu2, Ethernet to cpu3
@@ -362,6 +362,31 @@ add_usb_storage_quirks() {
 	echo "usbstoragequirks=${USBQUIRKS}" >>/boot/armbianEnv.txt
 } # add_usb_storage_quirks
 
+activate_zram() {
+	# Do not interfere with already present config-zram package
+	dpkg -l | grep -q 'zram-config' && return
+
+	# Load zram module with n instances (one per CPU core, 4 are the maximum)
+	cpu_cores=$(grep -c '^processor' /proc/cpuinfo | sed 's/^0$/1/')
+	[[ ${cpu_cores} -gt 4 ]] && zram_devices=4 || zram_devices=${cpu_cores}
+	module_args="$(modinfo zram | awk -F" " '/num_devices/ {print $2}' | cut -f1 -d:)"
+	[[ -n ${module_args} ]] && modprobe zram ${module_args}=${zram_devices} || return
+
+	# Use half of the real memory by default --> 1/${ram_divisor}
+	ram_divisor=2
+	mem_info=$(LC_ALL=C free -w 2>/dev/null | grep "^Mem" || LC_ALL=C free | grep "^Mem")
+	memory_total=$(awk '{printf("%d",$2*1024)}' <<<${mem_info})
+	mem_per_zram_device=$(( ${memory_total} / ${zram_devices} / ${ram_divisor} ))
+
+	for (( i=0; i<zram_devices; i++ )); do
+		echo -n ${mem_per_zram_device} > /sys/block/zram${i}/disksize
+		[[ -f /sys/block/zram${i}/comp_algorithm ]] && echo lz4 >/sys/block/zram${i}/comp_algorithm 2>/dev/null
+		mkswap /dev/zram${i}
+		swapon -p 5 /dev/zram${i}
+	done
+	echo -e "\n### Activated ${zram_devices} zram swap devices with ${mem_per_zram_device} MB each\n" >>${Log}
+} # activate_zram
+
 case $1 in
 	*start*)
 		# set optimal disk scheduler settings
@@ -376,6 +401,7 @@ case $1 in
 		# hardware preparation
 		prepare_board &
 		prepare_temp_monitoring &
+		# activate_zram &
 
 		# display message, log hardware id to file, write log
 		echo -e "[\e[0;32m ok \x1B[0m] Starting ARM hardware info: ${BOARD_NAME} (${VERSION})"

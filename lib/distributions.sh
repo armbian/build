@@ -82,6 +82,9 @@ install_common()
 	[[ -n $OVERLAY_PREFIX && -f $SDCARD/boot/armbianEnv.txt ]] && \
 		echo "overlay_prefix=$OVERLAY_PREFIX" >> $SDCARD/boot/armbianEnv.txt
 
+	[[ -n $DEFAULT_OVERLAYS && -f $SDCARD/boot/armbianEnv.txt ]] && \
+		echo "overlays=${DEFAULT_OVERLAYS//,/ }" >> $SDCARD/boot/armbianEnv.txt
+
 	# initial date for fake-hwclock
 	date -u '+%Y-%m-%d %H:%M:%S' > $SDCARD/etc/fake-hwclock.data
 
@@ -136,13 +139,18 @@ install_common()
 	[[ $(type -t family_tweaks) == function ]] && family_tweaks
 
 	# enable additional services
-	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service >/dev/null 2>&1"
+	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service firstrun-config.service >/dev/null 2>&1"
 
 	# copy "first run automated config, optional user configured"
- 	cp $SRC/config/armbian_first_run.txt $SDCARD/boot/armbian_first_run.txt
+ 	cp $SRC/packages/bsp/armbian_first_run.txt.template $SDCARD/boot/armbian_first_run.txt.template
 
 	# switch to beta repository at this stage if building nightly images
 	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
+
+	# Cosmetic fix [FAILED] Failed to start Set console font and keymap at first boot
+	[[ -f $SDCARD/etc/console-setup/cached_setup_font.sh ]] && sed -i "s/^printf '.*/printf '\\\033\%\%G'/g" $SDCARD/etc/console-setup/cached_setup_font.sh
+	[[ -f $SDCARD/etc/console-setup/cached_setup_terminal.sh ]] && sed -i "s/^printf '.*/printf '\\\033\%\%G'/g" $SDCARD/etc/console-setup/cached_setup_terminal.sh
+	[[ -f $SDCARD/etc/console-setup/cached_setup_keyboard.sh ]] && sed -i "s/-u/-x'/g" $SDCARD/etc/console-setup/cached_setup_keyboard.sh
 
 	# disable low-level kernel messages for non betas
 	# TODO: enable only for desktop builds?
