@@ -468,16 +468,10 @@ prepare_host()
 		display_alert "Running this tool on non-x64 build host in not supported officially" "" "wrn"
 	fi
 
-	# dialog may be used to display progress
-	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "dialog"
-		apt-get install -qq -y --no-install-recommends dialog >/dev/null 2>&1
-	fi
-
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "lsb-release"
-		apt-get install -qq -y --no-install-recommends lsb-release >/dev/null 2>&1
+		apt -q update && apt install -q -y --no-install-recommends lsb-release
 	fi
 
 	# packages list for host
@@ -487,12 +481,19 @@ prepare_host()
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-tools ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross \
 	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev \
-	locales ncurses-base pixz"
+	locales ncurses-base pixz dialog"
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
 	if [[ -z $codename || "trusty xenial" != *"$codename"* ]]; then
 		exit_with_error "It seems you ignore documentation and run an unsupported build system: ${codename:-(unknown)}"
+	fi
+
+	if [[ $codename == trusty ]]; then
+		display_alert "Note: Ubuntu Trusty environment support will be removed before the end of 2017" "" "wrn"
+		display_alert "Please upgrade your compilation environment to Ubuntu Xenial" "" "wrn"
+		display_alert "Press <Enter> to continue"
+		read
 	fi
 
 	if [[ $codename == xenial ]]; then
@@ -532,8 +533,6 @@ prepare_host()
 		display_alert "Updating from external repository" "aptly" "info"
 		wget -qO - https://www.aptly.info/pubkey.txt | apt-key add - >/dev/null 2>&1
 		echo "deb http://repo.aptly.info/ squeeze main" > /etc/apt/sources.list.d/aptly.list
-		apt-get -qq update
-		apt-get install aptly
 	fi
 
 	# sync clock
@@ -543,16 +542,14 @@ prepare_host()
 	fi
 
 	if [[ ${#deps[@]} -gt 0 ]]; then
-		eval '( apt-get -q update; apt-get -q -y --no-install-recommends install "${deps[@]}" )' \
-			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/output.log'} \
-			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing ${#deps[@]} host dependencies..." $TTY_Y $TTY_X'} \
-			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-		# this is needed in case new compilers were installed
+		display_alert "Installing build dependencies"
+		apt -q update
+		apt -q -y --no-install-recommends install "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
 		update-ccache-symlinks
 	fi
 
 	if [[ $codename == xenial && $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
-		apt-get install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
+		apt install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
 	fi
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
