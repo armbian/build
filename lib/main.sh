@@ -80,7 +80,6 @@ fi
 if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
 
 SHOW_WARNING=yes
-CAN_BUILD_STRETCH=yes
 
 if [[ $USE_CCACHE != no ]]; then
 	CCACHE=ccache
@@ -213,7 +212,7 @@ fi
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	options=()
 	options+=("jessie" "Debian 8 Jessie")
-	[[ $CAN_BUILD_STRETCH == yes ]] && options+=("stretch" "Debian 9 Stretch")
+	options+=("stretch" "Debian 9 Stretch")
 	options+=("xenial" "Ubuntu Xenial 16.04 LTS")
 	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select the target OS release" \
 		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
