@@ -21,7 +21,7 @@ HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
 ROOTFSCACHE_VERSION=3
 CHROOT_CACHE_VERSION=6
 [[ -z $DISPLAY_MANAGER ]] && DISPLAY_MANAGER=nodm
-ROOTFS_CACHE_MAX=8 # max number of rootfs cache, older ones will be cleaned up
+ROOTFS_CACHE_MAX=16 # max number of rootfs cache, older ones will be cleaned up
 
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 [[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
@@ -30,8 +30,6 @@ ROOTFS_CACHE_MAX=8 # max number of rootfs cache, older ones will be cleaned up
 # to get size of block device /dev/sdX execute as root:
 # echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
 [[ "f2fs" == *$ROOTFS_TYPE* && -z $FIXED_IMAGE_SIZE ]] && exit_with_error "Please define FIXED_IMAGE_SIZE"
-
-[[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
 
 # small SD card with kernel, boot script and .dtb/.bin files
 [[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
@@ -57,6 +55,7 @@ MAINLINE_UBOOT_DIR='u-boot'
 ARCH=armhf
 KERNEL_IMAGE_TYPE=zImage
 SERIALCON=ttyS0
+CAN_BUILD_STRETCH=yes
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
@@ -75,6 +74,8 @@ if [[ -f $SRC/userpatches/sources/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
 	source $SRC/userpatches/sources/$LINUXFAMILY.conf
 fi
+
+[[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
 
 case $ARCH in
 	arm64)

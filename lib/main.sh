@@ -80,7 +80,6 @@ fi
 if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
 
 SHOW_WARNING=yes
-CAN_BUILD_STRETCH=yes
 
 if [[ $USE_CCACHE != no ]]; then
 	CCACHE=ccache
@@ -213,7 +212,7 @@ fi
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	options=()
 	options+=("jessie" "Debian 8 Jessie")
-	[[ $CAN_BUILD_STRETCH == yes ]] && options+=("stretch" "Debian 9 Stretch")
+	options+=("stretch" "Debian 9 Stretch")
 	options+=("xenial" "Ubuntu Xenial 16.04 LTS")
 	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select the target OS release" \
 		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
@@ -255,7 +254,6 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 		fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
 	fi
 	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
-	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:dev"
 	fetch_from_repo "https://github.com/rockchip-linux/rkbin" "rkbin-tools" "branch:master"
 	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-17.10"
 	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"

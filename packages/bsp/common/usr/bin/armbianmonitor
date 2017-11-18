@@ -120,7 +120,7 @@ Main() {
 } # Main
 
 ParseOptions() {
-	while getopts 'hHbBuUrRmMd:Dc:C:pPv' c ; do
+	while getopts 'hHbBuUrRmMnNd:Dc:C:pPv' c ; do
 	case ${c} in
 		H)
 			# display full help test
@@ -135,13 +135,19 @@ ParseOptions() {
 			;;
 		m|M)
 			# monitoring mode
-			echo -e "Stop monitoring using [ctrl]-[c]"
+			interval=$2
 			MonitorMode ${OPTARG}
+			exit 0
+			;;
+		n|N)
+			# network monitoring mode
+			rf1=$2
+			NetworkMonitorMode ${OPTARG}
 			exit 0
 			;;
 		u|U)
 			# Upload /var/log/armhwinfo.log to be of help in support forum.
-			fping sprunge.us | grep -q alive || \
+			fping sprunge.us 2>/dev/null | grep -q alive || \
 				(echo "Network/firewall problem detected. Please fix this or upload /var/log/armhwinfo.log manually." >&2 ; exit 1)
 			which curl >/dev/null 2>&1 || apt-get -f -qq -y install curl
 			echo -e "/var/log/armhwinfo.log has been uploaded to \c"
@@ -156,7 +162,7 @@ ParseOptions() {
 			;;
 		r|R)
 			# Installs RPi-Monitor and patches config on sun8i
-			fping armbian.com | grep -q alive || \
+			fping armbian.com 2>/dev/null | grep -q alive || \
 				(echo "Network/firewall problem detected. Please fix this prior to installing RPi-Monitor." >&2 ; exit 1)
 			InstallRPiMonitor
 			case $(awk '/Hardware/ {print $3$4}' </proc/cpuinfo) in
@@ -176,7 +182,7 @@ ParseOptions() {
 		p|P)
 			# Installs cpuminer on 32-bit platforms
 			dpkg --print-architecture | grep -q armhf || (echo -e "Functionality currently not supported on 64-bit platforms. Exiting\n" >&2 ; exit 1)
-			fping armbian.com | grep -q alive || \
+			fping armbian.com 2>/dev/null | grep -q alive || \
 				(echo "Network/firewall problem detected. Please fix this prior to installing cpuminer." >&2 ; exit 1)
 			cd /usr/local/src/
 			wget http://downloads.sourceforge.net/project/cpuminer/pooler-cpuminer-2.4.5.tar.gz
@@ -190,12 +196,12 @@ ParseOptions() {
 			exit 0
 			;;
 		d)
-			# monitor writes to disk
+			# monitors write activity to disk
 			MonitorIO "${OPTARG}"
 			exit 0
 			;;
 		D)
-			fping sprunge.us | grep -q alive || \
+			fping sprunge.us 2>/dev/null | grep -q alive || \
 				(echo "Network/firewall problem detected. Please fix this prior to installing RPi-Monitor." >&2 ; exit 1)
 			DebugOutput="$(mktemp /tmp/${0##*/}.XXXXXX)"
 			trap "rm \"${DebugOutput}\" ; exit 0" 0 1 2 3 15
@@ -237,7 +243,10 @@ DisplayUsage() {
 	echo -e " armbianmonitor ${BOLD}-c /path/to/test${NC} performs disk health/performance tests"
 	echo -e " armbianmonitor ${BOLD}-d${NC} monitors writes to \$device"
 	echo -e " armbianmonitor ${BOLD}-D${NC} tries to upload debug disk info to improve armbianmonitor"
-	echo -e " armbianmonitor ${BOLD}-m${NC} provides simple CLI monitoring"
+	echo -e " armbianmonitor ${BOLD}-m${NC} provides simple CLI monitoring - scrolling output"
+	echo -e " armbianmonitor ${BOLD}-M${NC} provides simple CLI monitoring - fixed-line output"
+	echo -e " armbianmonitor ${BOLD}-n${NC} provides simple CLI network monitoring - scrolling output"
+	echo -e " armbianmonitor ${BOLD}-N${NC} provides simple CLI network monitoring - fixed-line output"
 	echo -e " armbianmonitor ${BOLD}-p${NC} tries to install cpuminer for performance measurements"
 	echo -e " armbianmonitor ${BOLD}-r${NC} tries to install RPi-Monitor"
 	echo -e " armbianmonitor ${BOLD}-u${NC} tries to upload armhwinfo.log for support purposes"
@@ -267,6 +276,9 @@ MonitorMode() {
 	LastIrqStat=0
 	LastSoftIrqStat=0
 	LastCpuStatCheck=0
+	LastTotal=0
+
+	SleepInterval=${interval:-5}
 
 	Sensors="/etc/armbianmonitor/datasources/"
 	if [ -f /sys/devices/system/cpu/cpu4/cpufreq/cpuinfo_cur_freq ]; then
@@ -284,27 +296,37 @@ MonitorMode() {
 	DCIN=$(CheckDCINVoltage)
 	[ -f "${DCIN}" ] && DisplayHeader="${DisplayHeader}   DC-IN" || DCIN='n/a'
 	[ -f /sys/devices/virtual/thermal/cooling_device0/cur_state ] && DisplayHeader="${DisplayHeader}  C.St."
-	echo -e "${DisplayHeader}\c"
+	echo -e "Stop monitoring using [ctrl]-[c]"
+	[ $(echo "${SleepInterval} * 10" | bc | cut -d. -f1) -le 15 2>/dev/null ] \
+		&& echo "Warning: High update frequency (${SleepInterval} sec) might change system behaviour!"
+	echo -e "${DisplayHeader}"
 	Counter=0
 	while true ; do
-		let Counter++
-		if [ ${Counter} -eq 15 ]; then
-			echo -e "\n${DisplayHeader}\c"
-			Counter=0
+		if [ "$c" == "m" ]; then
+			let Counter++
+			if [ ${Counter} -eq 15 ]; then
+				echo -e "\n${DisplayHeader}\c"
+				Counter=0
+			fi
+		else
+			printf "\x1b[1A"
 		fi
 		LoadAvg=$(cut -f1 -d" " </proc/loadavg)
 		case ${CPUs} in
 			biglittle)
 				BigFreq=$(awk '{printf ("%0.0f",$1/1000); }' </sys/devices/system/cpu/cpu4/cpufreq/cpuinfo_cur_freq) 2>/dev/null
 				LittleFreq=$(awk '{printf ("%0.0f",$1/1000); }' </sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq) 2>/dev/null
-				echo -e "\n$(date "+%H:%M:%S"): $(printf "%4s" ${BigFreq})/$(printf "%4s" ${LittleFreq})MHz $(printf "%5s" ${LoadAvg}) $(ProcessStats)\c"
+				ProcessStats
+				echo -e "\n$(date "+%H:%M:%S"): $(printf "%4s" ${BigFreq})/$(printf "%4s" ${LittleFreq})MHz $(printf "%5s" ${LoadAvg}) ${procStats}\c"
 				;;
 			normal)
 				CpuFreq=$(awk '{printf ("%0.0f",$1/1000); }' </sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq) 2>/dev/null
-				echo -e "\n$(date "+%H:%M:%S"): $(printf "%4s" ${CpuFreq})MHz $(printf "%5s" ${LoadAvg}) $(ProcessStats)\c"
+				ProcessStats
+				echo -e "\n$(date "+%H:%M:%S"): $(printf "%4s" ${CpuFreq})MHz $(printf "%5s" ${LoadAvg}) ${procStats}\c"
 				;;
 			notavailable)
-				echo -e "\n$(date "+%H:%M:%S"):   ---     $(printf "%5s" ${LoadAvg}) $(ProcessStats)\c"
+				ProcessStats
+				echo -e "\n$(date "+%H:%M:%S"):   ---     $(printf "%5s" ${LoadAvg}) ${procStats}\c"
 				;;
 		esac
 		if [ "X${SocTemp}" != "Xn/a" ]; then
@@ -314,12 +336,17 @@ MonitorMode() {
 			fi
 			echo -e " $(printf "%4s" ${SocTemp})°C\c"
 		fi
-		[ "X${PMICTemp}" != "Xn/a" ] && \
-			(PMICTemp=$(awk '{printf ("%0.1f",$1/1000); }' <"${Sensors}/pmictemp") ; echo -e " $(printf "%4s" ${PMICTemp})°C\c")
+		if [ "X${PMICTemp}" != "Xn/a" ]; then
+			read PMICTemp <"${Sensors}/pmictemp"
+			if [ ${PMICTemp} -ge 1000 ]; then
+				PMICTemp=$(awk '{printf ("%0.1f",$1/1000); }' <<<${PMICTemp})
+			fi
+			echo -e " $(printf "%4s" ${PMICTemp})°C\c"
+		fi
 		[ "X${DCIN}" != "Xn/a" ] && \
-			(DCINvoltage=$(awk '{printf ("%0.2f",$1/1000000); }' <"${DCIN}") ; echo -e "  $(printf "%4s" ${DCINvoltage})V\c")
+			(DCINvoltage=$(awk '{printf ("%0.2f",$1/1000000); }' <"${DCIN}") ; echo -e "  $(printf "%5s" ${DCINvoltage})V\c")
 		[ -f /sys/devices/virtual/thermal/cooling_device0/cur_state ] && printf "  %d/%d" $(cat /sys/devices/virtual/thermal/cooling_device0/cur_state) $(cat /sys/devices/virtual/thermal/cooling_device0/max_state)
-		sleep ${1:-5}
+		sleep ${SleepInterval}
 	done
 } # MonitorMode
 
@@ -349,30 +376,37 @@ ProcessStats() {
 		IOWaitLoad=$5
 		IrqCombinedLoad=$6		
 	else
-		set $(awk -F" " '/^cpu / {print $2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$7"\t"$8}' </proc/stat)
-		UserStat=$1
-		NiceStat=$2
-		SystemStat=$3
-		IdleStat=$4
-		IOWaitStat=$5
-		IrqStat=$6
-		SoftIrqStat=$7
-		
+                procStatLine=(`sed -n 's/^cpu\s//p' /proc/stat`)
+                UserStat=${procStatLine[0]}
+                NiceStat=${procStatLine[1]}
+                SystemStat=${procStatLine[2]}
+                IdleStat=${procStatLine[3]}
+                IOWaitStat=${procStatLine[4]}
+                IrqStat=${procStatLine[5]}
+                SoftIrqStat=${procStatLine[6]}
+
+                Total=0
+                for eachstat in ${procStatLine[@]}; do
+                        Total=$(( ${Total} + ${eachstat} ))
+                done
+
 		UserDiff=$(( ${UserStat} - ${LastUserStat} ))
 		NiceDiff=$(( ${NiceStat} - ${LastNiceStat} ))
 		SystemDiff=$(( ${SystemStat} - ${LastSystemStat} ))
-		IdleDiff=$(( ${IdleStat} - ${LastIdleStat} ))
 		IOWaitDiff=$(( ${IOWaitStat} - ${LastIOWaitStat} ))
 		IrqDiff=$(( ${IrqStat} - ${LastIrqStat} ))
 		SoftIrqDiff=$(( ${SoftIrqStat} - ${LastSoftIrqStat} ))
 		
-		Total=$(( ${UserDiff} + ${NiceDiff} + ${SystemDiff} + ${IdleDiff} + ${IOWaitDiff} + ${IrqDiff} + ${SoftIrqDiff} ))
-		CPULoad=$(( ( ${Total} - ${IdleDiff} ) * 100 / ${Total} ))
-		UserLoad=$(( ${UserDiff} *100 / ${Total} ))
-		SystemLoad=$(( ${SystemDiff} *100 / ${Total} ))
-		NiceLoad=$(( ${NiceDiff} *100 / ${Total} ))
-		IOWaitLoad=$(( ${IOWaitDiff} *100 / ${Total} ))
-		IrqCombinedLoad=$(( ( ${IrqDiff} + ${SoftIrqDiff} ) *100 / ${Total} ))
+		diffIdle=$(( ${IdleStat} - ${LastIdleStat} ))
+		diffTotal=$(( ${Total} - ${LastTotal} ))
+		diffX=$(( ${diffTotal} - ${diffIdle} ))
+		CPULoad=$(( ${diffX}* 100 / ${diffTotal} ))
+		UserLoad=$(( ${UserDiff}* 100 / ${diffTotal} ))
+		SystemLoad=$(( ${SystemDiff}* 100 / ${diffTotal} ))
+		NiceLoad=$(( ${NiceDiff}* 100 / ${diffTotal} ))
+		IOWaitLoad=$(( ${IOWaitDiff}* 100 / ${diffTotal} ))
+		IrqCombined=$(( ${IrqDiff} + ${SoftIrqDiff} ))
+		IrqCombinedLoad=$(( ${IrqCombined}* 100 / ${diffTotal} ))
 
 		LastUserStat=${UserStat}
 		LastNiceStat=${NiceStat}
@@ -381,9 +415,9 @@ ProcessStats() {
 		LastIOWaitStat=${IOWaitStat}
 		LastIrqStat=${IrqStat}
 		LastSoftIrqStat=${SoftIrqStat}
+		LastTotal=${Total}
 	fi
-	echo -e "$(printf "%3s" ${CPULoad})%$(printf "%4s" ${SystemLoad})%$(printf "%4s" ${UserLoad})%$(printf "%4s" ${NiceLoad})%$(printf "%4s" ${IOWaitLoad})%$(printf "%4s" ${IrqCombinedLoad})%"
-
+	procStats=$(echo -e "$(printf "%3s" ${CPULoad})%$(printf "%4s" ${SystemLoad})%$(printf "%4s" ${UserLoad})%$(printf "%4s" ${NiceLoad})%$(printf "%4s" ${IOWaitLoad})%$(printf "%4s" ${IrqCombinedLoad})%")
 } # ProcessStats
 
 MonitorIO() {
@@ -933,4 +967,107 @@ VerifyInstallation() {
 	fi
 } # VerifyInstallation
 
+NetworkMonitorMode() {
+	
+	# Allow armbianmonitor to return back to armbian-config
+	trap "exit 0" 0 1 2 3 15
+	timerStart
+	kickAllStatsDown
+	iface=$(route -n | egrep UG | egrep -o "[a-zA-Z0-9]*$")
+	
+	printf "\nruntime network statistics: $(uname -n)\n"
+	printf "[tap 'd' to display column headings]\n"
+	printf "[tap 'z' to reset counters]\n"
+	printf "[use <ctrl-c> to exit]\n"
+	printf "[bps: bits/s, Mbps: megabits/s, pps: packets/s, MB: megabytes]\n\n"
+	printf "%-11s %-66s          %-66s\n" $(echo -en "$iface rx.stats____________________________________________________________ tx.stats____________________________________________________________")
+	printf "%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s\n\n" $(echo -en "count bps Mbps Mbps pps pps MB bps Mbps Mbps pps pps MB")
+	
+	while true; do
+		nss=(`sed -n 's/'$iface':\s//p' /proc/net/dev`)
+		rxB=${nss[0]}
+		rxP=${nss[1]}
+		txB=${nss[8]}
+		txP=${nss[9]}
+		drxB=$(( ${rxB} - ${prxB} ))
+		drxb=$(( ${drxB}* 8 ))
+		drxmb=$(echo "scale=2;$drxb/1000000"|bc)
+		drxP=$(( ${rxP} - ${prxP}  ))
+		dtxB=$(( ${txB} - ${ptxB} ))
+		dtxb=$(( ${dtxB}* 8 ))
+		dtxmb=$(echo "scale=2;$dtxb/1000000"|bc)
+		dtxP=$(( ${txP} - ${ptxP} ))
+		if [ "$cnt" != "0" ]; then
+			if [ "$c" == "N" ]; then
+				printf "\x1b[1A"
+			fi
+			srxb=$(( ${srxb} + ${drxb} ))
+			stxb=$(( ${stxb} + ${dtxb} ))
+			srxB=$(( ${srxB} + ${drxB} ))
+			stxB=$(( ${stxB} + ${dtxB} ))
+			srxP=$(( ${srxP} + ${drxP} ))
+			stxP=$(( ${stxP} + ${dtxP} ))
+			srxMB=$(echo "scale=2;$srxB/1024^2"|bc)
+			stxMB=$(echo "scale=2;$stxB/1024^2"|bc)
+			arxb=$(echo "scale=2;$srxb/$cnt"|bc)
+			atxb=$(echo "scale=2;$stxb/$cnt"|bc)
+			arxmb=$(echo "scale=2;$arxb/1000000"|bc)
+			atxmb=$(echo "scale=2;$atxb/1000000"|bc)
+			arxP=$(echo "scale=0;$srxP/$cnt"|bc)
+			atxP=$(echo "scale=0;$stxP/$cnt"|bc)
+			printf "%-11s %-11s %-11s   %-11s %-11s   %-11s   %-11s %-11s %-11s   %-11s %-11s   %-11s   %-11s\n" $(echo -en "$cnt $drxb $drxmb $arxmb $drxP $arxP $srxMB $dtxb $dtxmb $atxmb $dtxP $atxP $stxMB")
+		fi
+		prxB="$rxB"
+		prxP="$rxP"
+		ptxB="$txB"
+		ptxP="$txP"
+		let cnt++
+		timerShut
+		read -n1 -s -t$procSecs zeroAll
+		timerStart
+		if [ "$zeroAll" == 'z' ]; then
+			kickAllStatsDown
+		fi
+		if [ "$zeroAll" == 'd' ]; then
+			scrollingHeader
+		fi
+	done
+}
+
+scrollingHeader() {
+	printf "%-11s %-66s          %-66s\n" $(echo -en "$iface rx.stats____________________________________________________________ tx.stats____________________________________________________________")
+	printf "%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s\n\n" $(echo -en "count bps Mbps Mbps pps pps MB bps Mbps Mbps pps pps MB")
+}
+
+timerStart() {
+	read st0 st1 < <(date +'%s %N')
+}
+timerShut() {
+	read sh0 sh1 < <(date +'%s %N')
+	jusquaQuand=$(echo "scale=2;($sh0-$st0)*1000000000+($sh1-$st1)"|bc)
+	procSecs=$(echo "scale=2;(1000000000-$jusquaQuand)/1000000000"|bc)
+	if [ "$rf1" == "debug" ]; then
+		printf "time controller adjustment: $procSecs\n"
+		if [ "$c" == "N" ]; then
+			printf "\x1b[1A"
+		fi
+	fi
+}
+kickAllStatsDown() {
+	prxB=0
+	prxP=0
+	ptxB=0
+	ptxP=0
+	srxb=0
+	stxb=0
+	srxB=0
+	stxB=0
+	srxMB=0
+	stxMB=0
+	srxP=0
+	stxP=0
+	cnt=0
+}
+
 Main "$@"
+

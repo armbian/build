@@ -1,0 +1,104 @@
+From 364d845b2fd8c083f32a95377f5b3cd3f0cf2323 Mon Sep 17 00:00:00 2001
+From: Victor Gu <xigu@marvell.com>
+Date: Mon, 27 Mar 2017 18:28:25 +0800
+Subject: [PATCH 09/11] fix: pci: aardvark: use isr1 interrupt in legacy irq
+ mode
+
+The Aardvark has two interrupts sets, first set is bit[23:16] of
+PCIe ISR 0 register(RD0074840h), second set is bit[11:8] of PCIe
+ISR 1 register(RD0074848h). Only one set should be used, while
+another set should be masked.
+The second set is more advanced, the Legacy INT_X status bit is
+asserted once Assert_INTX message is received, and de-asserted after
+Deassert_INTX message is received, which provides alternate way
+besides of the assert/deassert interrupt pairs in PCIe ISR 0 register.
+
+Change-Id: Idef2eb474a094754195a031ad580caa8a88f046d
+Signed-off-by: Victor Gu <xigu@marvell.com>
+Reviewed-on: http://vgitil04.il.marvell.com:8080/38024
+Tested-by: iSoC Platform CI <ykjenk@marvell.com>
+Reviewed-by: Evan Wang <xswang@marvell.com>
+---
+ drivers/pci/host/pci-aardvark.c | 29 ++++++++++++++++++-----------
+ 1 file changed, 18 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/pci/host/pci-aardvark.c b/drivers/pci/host/pci-aardvark.c
+index 072bc70e900c..10154dcf219b 100644
+--- a/drivers/pci/host/pci-aardvark.c
++++ b/drivers/pci/host/pci-aardvark.c
+@@ -103,7 +103,8 @@
+ #define PCIE_ISR1_MASK_REG			(CONTROL_BASE_ADDR + 0x4C)
+ #define     PCIE_ISR1_POWER_STATE_CHANGE	BIT(4)
+ #define     PCIE_ISR1_FLUSH			BIT(5)
+-#define     PCIE_ISR1_ALL_MASK			GENMASK(5, 4)
++#define     PCIE_ISR1_INTX_ASSERT(val)		BIT(8 + (val))
++#define     PCIE_ISR1_ALL_MASK			GENMASK(11, 4)
+ #define PCIE_MSI_ADDR_LOW_REG			(CONTROL_BASE_ADDR + 0x50)
+ #define PCIE_MSI_ADDR_HIGH_REG			(CONTROL_BASE_ADDR + 0x54)
+ #define PCIE_MSI_STATUS_REG			(CONTROL_BASE_ADDR + 0x58)
+@@ -612,9 +613,9 @@ static void advk_pcie_irq_mask(struct irq_data *d)
+ 	irq_hw_number_t hwirq = irqd_to_hwirq(d);
+ 	u32 mask;
+ 
+-	mask = advk_readl(pcie, PCIE_ISR0_MASK_REG);
+-	mask |= PCIE_ISR0_INTX_ASSERT(hwirq);
+-	advk_writel(pcie, mask, PCIE_ISR0_MASK_REG);
++	mask = advk_readl(pcie, PCIE_ISR1_MASK_REG);
++	mask |= PCIE_ISR1_INTX_ASSERT(hwirq);
++	advk_writel(pcie, mask, PCIE_ISR1_MASK_REG);
+ }
+ 
+ static void advk_pcie_irq_unmask(struct irq_data *d)
+@@ -623,9 +624,9 @@ static void advk_pcie_irq_unmask(struct irq_data *d)
+ 	irq_hw_number_t hwirq = irqd_to_hwirq(d);
+ 	u32 mask;
+ 
+-	mask = advk_readl(pcie, PCIE_ISR0_MASK_REG);
+-	mask &= ~PCIE_ISR0_INTX_ASSERT(hwirq);
+-	advk_writel(pcie, mask, PCIE_ISR0_MASK_REG);
++	mask = advk_readl(pcie, PCIE_ISR1_MASK_REG);
++	mask &= ~PCIE_ISR1_INTX_ASSERT(hwirq);
++	advk_writel(pcie, mask, PCIE_ISR1_MASK_REG);
+ }
+ 
+ static int advk_pcie_irq_map(struct irq_domain *h,
+@@ -769,14 +770,20 @@ static void advk_pcie_handle_msi(struct advk_pcie *pcie)
+ static void advk_pcie_handle_int(struct advk_pcie *pcie)
+ {
+ 	u32 val, mask, status;
++	u32 val2, mask2, status2;
+ 	int i, virq;
+ 
+ 	val = advk_readl(pcie, PCIE_ISR0_REG);
+ 	mask = advk_readl(pcie, PCIE_ISR0_MASK_REG);
+ 	status = val & ((~mask) & PCIE_ISR0_ALL_MASK);
+ 
+-	if (!status) {
++	val2 = advk_readl(pcie, PCIE_ISR1_REG);
++	mask2 = advk_readl(pcie, PCIE_ISR1_MASK_REG);
++	status2 = val2 & ((~mask2) & PCIE_ISR1_ALL_MASK);
++
++	if (!status && !status2) {
+ 		advk_writel(pcie, val, PCIE_ISR0_REG);
++		advk_writel(pcie, val2, PCIE_ISR1_REG);
+ 		return;
+ 	}
+ 
+@@ -795,11 +795,11 @@ static void advk_pcie_handle_int(struct advk_pcie *pcie)
+ 
+ 	/* Process legacy interrupts */
+ 	for (i = 0; i < PCI_NUM_INTX; i++) {
+-		if (!(status & PCIE_ISR0_INTX_ASSERT(i)))
++		if (!(status2 & PCIE_ISR1_INTX_ASSERT(i)))
+ 			continue;
+ 
+-		advk_writel(pcie, PCIE_ISR0_INTX_ASSERT(i),
+-			    PCIE_ISR0_REG);
++		advk_writel(pcie, PCIE_ISR1_INTX_ASSERT(i),
++			    PCIE_ISR1_REG); 
+ 
+ 		virq = irq_find_mapping(pcie->irq_domain, i);
+ 		generic_handle_irq(virq);
+-- 
+2.13.3
+
