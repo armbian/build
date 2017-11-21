@@ -56,6 +56,7 @@ add_user()
 	if [ $? -eq 0 ]; then
 		echo -e "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> /etc/sudoers
 		touch /home/${RealUserName}/.activate_psd
+		chown $RealUserName:$RealUserName /home/${RealUserName}/.activate_psd
 	fi
 }
 
