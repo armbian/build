@@ -54,9 +54,8 @@ add_user()
 	# set up profile sync daemon on desktop systems
 	which psd >/dev/null 2>&1
 	if [ $? -eq 0 ]; then
-		echo -e "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >>/etc/sudoers
-		export -f add_profile_sync_settings
-		su ${RealUserName} -c "bash -c add_profile_sync_settings" 2>/dev/null
+		echo -e "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> /etc/sudoers
+		touch /home/${RealUserName}/.activate_psd
 	fi
 }
 
