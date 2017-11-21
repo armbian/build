@@ -40,7 +40,7 @@ add_user()
 	[ -z "$RealUserName" ] && return
 	echo "Trying to add user $RealUserName"
 	adduser $RealUserName || return
-	for additionalgroup in sudo netdev audio video dialout plugdev bluetooth systemd-journal; do
+	for additionalgroup in sudo netdev audio video dialout plugdev bluetooth systemd-journal ssh; do
 		usermod -aG ${additionalgroup} ${RealUserName} 2>/dev/null
 	done
 	# fix for gksu in Xenial
