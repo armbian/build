@@ -8,7 +8,7 @@ MODULES_NEXT="bonding"
 KERNEL_TARGET="default,next,dev"
 CLI_TARGET="jessie,xenial:next"
 DESKTOP_TARGET="xenial:default,next"
-
+#
 CLI_BETA_TARGET=""
 DESKTOP_BETA_TARGET=""
 #
