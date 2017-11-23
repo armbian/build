@@ -52,6 +52,7 @@ pack_upload ()
 		echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
 	fi
 
+	if [[ -n "${SEND_TO_SERVER}" ]]; then
 	# create remote directory structure
 	ssh ${SEND_TO_SERVER} "mkdir -p /var/www/dl.armbian.com/${BOARD}/{archive,nightly};";
 
@@ -61,6 +62,13 @@ pack_upload ()
 	find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; \
 	while ! rsync -arP $DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir};do sleep 5;done; \
 	rm -r $DESTIMG" &
+	else
+	# pack and move file to debs subdirectory
+	nice -n 19 bash -c "\
+	7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1 ; \
+	find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; \
+	mv $filename $DEST/images ; rm -r $DESTIMG" &
+	fi
 }
 
 build_main ()
