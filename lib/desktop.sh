@@ -71,5 +71,6 @@ install_desktop ()
 
 		# enable memory reservations
 		echo "disp_mem_reserves=on" >> $SDCARD/boot/armbianEnv.txt
+		echo "extraargs=cma=96M" >> $SDCARD/boot/armbianEnv.txt
 	fi
 }
