@@ -456,16 +456,10 @@ prepare_host()
 {
 	display_alert "Preparing" "host" "info"
 
-	if [[ $(dpkg --print-architecture) == arm* ]]; then
+	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "http://www.armbian.com/using-armbian-tools/"
-		exit_with_error "Running this tool on board itself is not supported"
-	fi
-
-	if [[ $(dpkg --print-architecture) == i386 ]]; then
-		display_alert "Please read documentation to set up proper compilation environment"
-		display_alert "http://www.armbian.com/using-armbian-tools/"
-		display_alert "Running this tool on non-x64 build host in not supported officially" "" "wrn"
+		exit_with_error "Running this tool on non x86-x64 build host in not supported"
 	fi
 
 	# need lsb_release to decide what to install
