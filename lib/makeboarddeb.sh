@@ -176,8 +176,9 @@ create_board_package()
 		echo "export VDPAU_OSD=1" > $destination/etc/profile.d/90-vdpau.sh
 		chmod 755 $destination/etc/profile.d/90-vdpau.sh
 	fi
-	if [[ ( $LINUXFAMILY == sunxi64* || $LINUXFAMILY == sun8i ) && $BRANCH != default ]]; then
+	if [[ $LINUXFAMILY == sunxi* && $BRANCH != default ]]; then
 		# add mpv config for x11 output - slow, but it works compared to no config at all
+		# TODO: Test which output driver is better with DRM
 		mkdir -p $destination/etc/mpv/
 		cp $SRC/packages/bsp/mpv/mpv_mainline.conf $destination/etc/mpv/mpv.conf
 	fi

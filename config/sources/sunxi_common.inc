@@ -14,8 +14,7 @@ HAS_UUID_SUPPORT=yes
 BOOTDELAY=1
 
 # Here we want to rename LINUXFAMILY from sun4i, sun5i, etc for next and dev branches
-# except for sun8i-dev which is separate from sunxi-dev
-[[ $BRANCH != default && ! ( $LINUXFAMILY == sun8i && $BRANCH == dev ) ]] && LINUXFAMILY=sunxi
+[[ $BRANCH != default ]] && LINUXFAMILY=sunxi
 
 case $BRANCH in
 	default)
