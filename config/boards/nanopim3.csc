@@ -1,6 +1,6 @@
 # S5P6818 octa core 1Gb SoC
 BOARD_NAME="NanoPi M3"
-LINUXFAMILY="s5p6818"
+BOARDFAMILY="s5p6818"
 BOOTCONFIG="nanopim3_defconfig"
 #
 MODULES=""

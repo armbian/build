@@ -178,6 +178,7 @@ elif [[ -f $SRC/config/boards/${BOARD}.eos ]]; then
 fi
 
 source $SRC/config/boards/${BOARD}.${BOARD_TYPE}
+LINUXFAMILY="${BOARDFAMILY}"
 
 [[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
 

@@ -1,6 +1,6 @@
 # A83T octa core 2Gb SoC Wifi
 BOARD_NAME="Banana Pi M3"
-LINUXFAMILY="sun8i"
+BOARDFAMILY="sun8i"
 BOOTCONFIG="Sinovoip_BPI_M3_defconfig"
 MODULES=""
 MODULES_NEXT=""

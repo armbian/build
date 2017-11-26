@@ -1,6 +1,6 @@
 # R40 quad core 2Gb SoC Wifi eMMC
 BOARD_NAME="Banana Pi M2 Ultra"
-LINUXFAMILY="sun8i-r40"
+BOARDFAMILY="sun8i-r40"
 BOOTCONFIG="Bananapi_M2_Ultra_defconfig"
 MODULES=""
 MODULES_NEXT=""

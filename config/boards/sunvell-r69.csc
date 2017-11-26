@@ -1,6 +1,6 @@
 # H2+ quad core 1GB SoC WiFi eMMC
 BOARD_NAME="Sunvell R69"
-LINUXFAMILY="sun8i"
+BOARDFAMILY="sun8i"
 BOOTCONFIG="orangepi_zero_plus2_h3_defconfig"
 #
 MODULES="xradio_wlan xradio_wlan"

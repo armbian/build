@@ -1,6 +1,6 @@
 # A64 quad core 2GB SoC GBE WiFi eMMC
 BOARD_NAME="Banana Pi M64"
-LINUXFAMILY="sun50iw1"
+BOARDFAMILY="sun50iw1"
 BOOTCONFIG="bananapi_m64_defconfig"
 #
 MODULES=""
