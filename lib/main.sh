@@ -64,14 +64,6 @@ for i in "$@"; do
 	fi
 done
 
-if [[ $BETA == yes ]]; then
-	IMAGE_TYPE=nightly
-elif [[ $BETA == no && $BUILD_ALL == yes && -n $GPG_PASS ]]; then
-	IMAGE_TYPE=stable
-else
-	IMAGE_TYPE=user-built
-fi
-
 if [[ $PROGRESS_DISPLAY == none ]]; then
 	OUTPUT_VERYSILENT=yes
 elif [[ $PROGRESS_DISPLAY == dialog ]]; then
@@ -257,6 +249,14 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 	fetch_from_repo "https://github.com/rockchip-linux/rkbin" "rkbin-tools" "branch:master"
 	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-17.10"
 	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
+fi
+
+if [[ $BETA == yes ]]; then
+	IMAGE_TYPE=nightly
+elif [[ $BETA == no && $BUILD_ALL == yes && -n $GPG_PASS ]]; then
+	IMAGE_TYPE=stable
+else
+	IMAGE_TYPE=user-built
 fi
 
 compile_sunxi_tools
