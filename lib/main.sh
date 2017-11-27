@@ -112,7 +112,6 @@ if [[ -z $BOARD ]]; then
 	WIP_STATE=supported
 	WIP_BUTTON='CSC/WIP/EOS'
 	STATE_DESCRIPTION=' - Officially supported boards'
-	[[ $EXPERT = yes ]] && DIALOG_EXTRA="--extra-button"
 	temp_rc=$(mktemp)
 	while true; do
 		options=()
@@ -144,7 +143,7 @@ if [[ -z $BOARD ]]; then
 			echo > $temp_rc
 		fi
 		BOARD=$(DIALOGRC=$temp_rc dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar --colors \
-			--extra-label "Show $WIP_BUTTON" $DIALOG_EXTRA --menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" \
+			--extra-label "Show $WIP_BUTTON" --extra-button --menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" \
 			$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 		STATUS=$?
 		if [[ $STATUS == 3 ]]; then
