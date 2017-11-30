@@ -44,6 +44,11 @@ install_desktop ()
 	sed -i '0,/xfce4-about.desktop/s//armbian-donate.desktop/' $SDCARD/etc/xdg/menus/xfce-applications.menu
 	sed -i '/armbian-donate.desktop/a \\t<Filename>armbian-support.desktop</Filename>/' $SDCARD/etc/xdg/menus/xfce-applications.menu
 
+	# Hide few items
+	mv $SDCARD/usr/share/applications/display-im6.q16.desktop $SDCARD/usr/share/applications/display-im6.q16.desktop.hidden
+	mv $SDCARD/usr/share/applications/display-im6.desktop $SDCARD/usr/share/applications/display-im6.desktop.hidden
+	mv $SDCARD/usr/share/applications/vim.desktop $SDCARD/usr/share/applications/vim.desktop.hidden
+
 	# Enable network manager
 	if [[ -f $SDCARD/etc/NetworkManager/NetworkManager.conf ]]; then
 		sed "s/managed=\(.*\)/managed=true/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
