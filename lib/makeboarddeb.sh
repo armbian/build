@@ -112,6 +112,7 @@ create_board_package()
 
 	# configure MIN / MAX speed for cpufrequtils
 	cat <<-EOF > $destination/etc/default/cpufrequtils
+	# WARNING: this file will be replaced on board support package (linux-root-...) upgrade
 	ENABLE=true
 	MIN_SPEED=$CPUMIN
 	MAX_SPEED=$CPUMAX
