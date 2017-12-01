@@ -154,17 +154,6 @@ create_board_package()
 		echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> $destination/etc/fw_env.config
 	fi
 
-	if [[ $LINUXFAMILY == sun*i* ]]; then
-		if [[ $BRANCH == default ]]; then
-			arm-linux-gnueabihf-gcc $SRC/packages/bsp/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
-			# convert and add fex files
-			mkdir -p $destination/boot/bin
-			for i in $(ls -w1 $SRC/config/fex/*.fex | xargs -n1 basename); do
-				fex2bin $SRC/config/fex/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
-			done
-		fi
-	fi
-
 	if [[ ( $LINUXFAMILY == sun*i || $LINUXFAMILY == pine64 ) && $BRANCH == default ]]; then
 		# add mpv config for vdpau_sunxi
 		mkdir -p $destination/etc/mpv/
@@ -172,6 +161,7 @@ create_board_package()
 		echo "export VDPAU_OSD=1" > $destination/etc/profile.d/90-vdpau.sh
 		chmod 755 $destination/etc/profile.d/90-vdpau.sh
 	fi
+
 	if [[ $LINUXFAMILY == sunxi* && $BRANCH != default ]]; then
 		# add mpv config for x11 output - slow, but it works compared to no config at all
 		# TODO: Test which output driver is better with DRM
@@ -184,6 +174,7 @@ create_board_package()
 		mkdir -p $destination/etc/NetworkManager/dispatcher.d/
 		install -m 755 $SRC/packages/bsp/99disable-power-management $destination/etc/NetworkManager/dispatcher.d/
 	;;
+
 	xenial)
 		mkdir -p $destination/usr/lib/NetworkManager/conf.d/
 		cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/usr/lib/NetworkManager/conf.d/
