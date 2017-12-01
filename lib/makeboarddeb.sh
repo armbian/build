@@ -147,11 +147,6 @@ create_board_package()
 	[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
 		cp $SRC/config/bootenv/$BOOTENV_FILE $destination/usr/share/armbian/armbianEnv.txt
 
-	# h3disp for sun8i/3.4.x
-	if [[ $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
-		install -m 755 $SRC/packages/bsp/{h3disp,h3consumption} $destination/usr/bin
-	fi
-
 	# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
 	if [[ -n $UBOOT_FW_ENV ]]; then
 		UBOOT_FW_ENV=($(tr ',' ' ' <<< "$UBOOT_FW_ENV"))
