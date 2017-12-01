@@ -155,7 +155,6 @@ create_board_package()
 	fi
 
 	if [[ $LINUXFAMILY == sun*i* ]]; then
-		install -m 755 $SRC/packages/bsp/armbian-add-overlay $destination/usr/sbin
 		if [[ $BRANCH == default ]]; then
 			arm-linux-gnueabihf-gcc $SRC/packages/bsp/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
 			# convert and add fex files
