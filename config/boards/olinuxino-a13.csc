@@ -8,7 +8,7 @@ MODULES_NEXT="bonding"
 #
 KERNEL_TARGET="default,next,dev"
 CLI_TARGET="jessie,xenial:next"
-DESKTOP_TARGET=""xenial:default,next"
+DESKTOP_TARGET="xenial:default,next"
 #
 RECOMMENDED="Ubuntu_xenial_default_desktop:90,Debian_jessie_next:100"
 #
