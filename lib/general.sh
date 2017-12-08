@@ -476,7 +476,7 @@ addtorepo()
 	(aptly repo list -config=../config/aptly.conf) | egrep packages
 
 	# remove debs if no errors found
-	if [[ $errors -eq 0 && "$1" == "delete" ]]; then
+	if [[ $errors -eq 0 && "$2" == "delete" ]]; then
 		display_alert "Purging incoming debs" "all" "ext"
 		find ${POT} -name "*.deb" -type f -delete
 	else
