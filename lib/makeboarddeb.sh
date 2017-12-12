@@ -112,6 +112,7 @@ create_board_package()
 
 	# configure MIN / MAX speed for cpufrequtils
 	cat <<-EOF > $destination/etc/default/cpufrequtils
+	# WARNING: this file will be replaced on board support package (linux-root-...) upgrade
 	ENABLE=true
 	MIN_SPEED=$CPUMIN
 	MAX_SPEED=$CPUMAX
@@ -146,28 +147,11 @@ create_board_package()
 	[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
 		cp $SRC/config/bootenv/$BOOTENV_FILE $destination/usr/share/armbian/armbianEnv.txt
 
-	# h3disp for sun8i/3.4.x
-	if [[ $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
-		install -m 755 $SRC/packages/bsp/{h3disp,h3consumption} $destination/usr/bin
-	fi
-
 	# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
 	if [[ -n $UBOOT_FW_ENV ]]; then
 		UBOOT_FW_ENV=($(tr ',' ' ' <<< "$UBOOT_FW_ENV"))
 		echo "# Device to access      offset           env size" > $destination/etc/fw_env.config
 		echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> $destination/etc/fw_env.config
-	fi
-
-	if [[ $LINUXFAMILY == sun*i* ]]; then
-		install -m 755 $SRC/packages/bsp/armbian-add-overlay $destination/usr/sbin
-		if [[ $BRANCH == default ]]; then
-			arm-linux-gnueabihf-gcc $SRC/packages/bsp/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
-			# convert and add fex files
-			mkdir -p $destination/boot/bin
-			for i in $(ls -w1 $SRC/config/fex/*.fex | xargs -n1 basename); do
-				fex2bin $SRC/config/fex/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
-			done
-		fi
 	fi
 
 	if [[ ( $LINUXFAMILY == sun*i || $LINUXFAMILY == pine64 ) && $BRANCH == default ]]; then
@@ -177,6 +161,7 @@ create_board_package()
 		echo "export VDPAU_OSD=1" > $destination/etc/profile.d/90-vdpau.sh
 		chmod 755 $destination/etc/profile.d/90-vdpau.sh
 	fi
+
 	if [[ $LINUXFAMILY == sunxi* && $BRANCH != default ]]; then
 		# add mpv config for x11 output - slow, but it works compared to no config at all
 		# TODO: Test which output driver is better with DRM
@@ -189,6 +174,7 @@ create_board_package()
 		mkdir -p $destination/etc/NetworkManager/dispatcher.d/
 		install -m 755 $SRC/packages/bsp/99disable-power-management $destination/etc/NetworkManager/dispatcher.d/
 	;;
+
 	xenial)
 		mkdir -p $destination/usr/lib/NetworkManager/conf.d/
 		cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/usr/lib/NetworkManager/conf.d/

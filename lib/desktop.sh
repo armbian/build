@@ -38,11 +38,23 @@ install_desktop ()
 	chroot $SDCARD /bin/bash -c "dpkg -x /root/numix-icon-theme_0.3+922~201711061547~ubuntu16.04.1_all.deb /" >> $DEST/debug/install.log 2>&1
 	chroot $SDCARD /bin/bash -c "gtk-update-icon-cache /usr/share/icons/Numix" >> $DEST/debug/install.log 2>&1
 	chroot $SDCARD /bin/bash -c "gtk-update-icon-cache /usr/share/icons/Numix-Light" >> $DEST/debug/install.log 2>&1
+	chroot $SDCARD /bin/bash -c "dpkg -x /root/numix-icon-theme_0.3+922~201711061547~ubuntu16.04.1_all.deb /" >> $DEST/debug/install.log 2>&1
 	rm $SDCARD/root/numix-icon-theme_0.3+922~201711061547~ubuntu16.04.1_all.deb
+
+	# Install theme under Jessie since not exists in repository
+	if [[ "${RELEASE}" == "jessie" ]]; then
+		install_deb_chroot "$SRC/packages/blobs/desktop/numix-gtk-theme_2.6.7+670~201710270712~ubuntu17.10.1_all.deb"
+	fi
 
 	# Adjust menu
 	sed -i '0,/xfce4-about.desktop/s//armbian-donate.desktop/' $SDCARD/etc/xdg/menus/xfce-applications.menu
 	sed -i '/armbian-donate.desktop/a \\t<Filename>armbian-support.desktop</Filename>/' $SDCARD/etc/xdg/menus/xfce-applications.menu
+
+	# Hide few items
+	[[ -f $SDCARD/usr/share/applications/display-im6.q16.desktop ]] && mv $SDCARD/usr/share/applications/display-im6.q16.desktop $SDCARD/usr/share/applications/display-im6.q16.desktop.hidden
+	[[ -f $SDCARD/usr/share/applications/display-im6.desktop ]] && mv $SDCARD/usr/share/applications/display-im6.desktop $SDCARD/usr/share/applications/display-im6.desktop.hidden
+	[[ -f $SDCARD/usr/share/applications/vim.desktop ]] && mv $SDCARD/usr/share/applications/vim.desktop $SDCARD/usr/share/applications/vim.desktop.hidden
+	[[ -f $SDCARD/usr/share/applications/libreoffice-startcenter.desktop ]] && mv $SDCARD/usr/share/applications/libreoffice-startcenter.desktop $SDCARD/usr/share/applications/libreoffice-startcenter.desktop.hidden
 
 	# Enable network manager
 	if [[ -f $SDCARD/etc/NetworkManager/NetworkManager.conf ]]; then

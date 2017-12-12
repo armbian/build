@@ -341,30 +341,20 @@ addtorepo()
 {
 # add all deb files to repository
 # parameter "remove" dumps all and creates new
+# parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
+
 	local distributions=("jessie" "xenial" "stretch")
+	local errors=0
 
 	for release in "${distributions[@]}"; do
+
+		local forceoverwrite=""
 
 		# let's drop from publish if exits
 		if [[ -n $(aptly publish list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			aptly publish drop -config=../config/aptly.conf $release > /dev/null 2>&1
 		fi
-
-
-		if [[ $1 == remove ]]; then
-		# remove repository
-			aptly repo drop -config=../config/aptly.conf $release > /dev/null 2>&1
-			aptly db cleanup -config=../config/aptly.conf > /dev/null 2>&1
-		fi
-
-
-		if [[ $1 == replace ]]; then
-			local replace=true
-		else
-			local replace=false
-		fi
-
 
 		# create local repository if not exist
 		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
@@ -389,7 +379,13 @@ addtorepo()
 		# adding main
 		if find $POT -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "main" "ext"
-			aptly repo add -force-replace=$replace -config=../config/aptly.conf $release $POT/*.deb
+			aptly repo add -config=../config/aptly.conf $release ${POT}*.deb
+			if [[ $? -ne 0 ]]; then
+				# try again with
+				display_alert "Adding by force to repository $release" "main" "ext"
+				aptly repo add -force-replace=true -config=../config/aptly.conf $release ${POT}*.deb
+				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1)); fi
+			fi
 		else
 			display_alert "Not adding $release" "main" "wrn"
 		fi
@@ -399,7 +395,13 @@ addtorepo()
 		# adding main distribution packages
 		if find ${POT}${release} -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "root" "ext"
-			aptly repo add -force-replace=$replace -config=../config/aptly.conf $release ${POT}${release}/*.deb
+			aptly repo add -config=../config/aptly.conf $release ${POT}${release}/*.deb
+			if [[ $? -ne 0 ]]; then
+				# try again with
+				display_alert "Adding by force to repository $release" "root" "ext"
+				aptly repo add -force-replace=true -config=../config/aptly.conf $release ${POT}${release}/*.deb
+				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
+			fi
 		else
 			display_alert "Not adding $release" "root" "wrn"
 		fi
@@ -408,42 +410,79 @@ addtorepo()
 		if find ${POT}extra/jessie-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
 			aptly repo add -config=../config/aptly.conf "utils" ${POT}extra/jessie-utils/*.deb
-			COMPONENTS="${COMPONENTS} utils"
+			if [[ $? -ne 0 ]]; then
+				# try again with
+				display_alert "Adding by force to repository $release" "utils" "ext"
+				aptly repo add -force-replace=true -config=../config/aptly.conf "utils" ${POT}extra/jessie-utils/*.deb
+				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
+			fi
 		else
 			display_alert "Not adding $release" "utils" "wrn"
 		fi
+		COMPONENTS="${COMPONENTS} utils"
 
 		# adding release-specific utils
 		if find ${POT}extra/${release}-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "${release}-utils" "ext"
 			aptly repo add -config=../config/aptly.conf "${release}-utils" ${POT}extra/${release}-utils/*.deb
-			COMPONENTS="${COMPONENTS} ${release}-utils"
+			if [[ $? -ne 0 ]]; then
+				# try again with
+				display_alert "Adding by force to repository $release" "${release}-utils" "ext"
+				aptly repo add -force-replace=true -config=../config/aptly.conf "${release}-utils" ${POT}extra/${release}-utils/*.deb
+				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
+			fi
 		else
 			display_alert "Not adding $release" "${release}-utils" "wrn"
 		fi
+		COMPONENTS="${COMPONENTS} ${release}-utils"
 
 		# adding desktop
 		if find ${POT}extra/${release}-desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "desktop" "ext"
-			aptly repo add -force-replace=$replace -config=../config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
-			COMPONENTS="${COMPONENTS} ${release}-desktop"
+			aptly repo add -config=../config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
+			if [[ $? -ne 0 ]]; then
+				# try again with
+				display_alert "Adding by force to repository $release" "desktop" "ext"
+				aptly repo add -force-replace=true -config=../config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
+				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
+			fi
 		else
 			display_alert "Not adding $release" "desktop" "wrn"
 		fi
+		COMPONENTS="${COMPONENTS} ${release}-desktop"
 
-		# publish
-		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=../config/aptly.conf -component=${COMPONENTS// /,} \
-			--distribution=$release repo $release ${COMPONENTS//main/} 2>/dev/null
+		local mainnum=$(aptly repo show -with-packages -config=../config/aptly.conf $release | grep "Number of packages" | awk '{print $NF}')
+		local utilnum=$(aptly repo show -with-packages -config=../config/aptly.conf ${release}-desktop | grep "Number of packages" | awk '{print $NF}')
+		local desknum=$(aptly repo show -with-packages -config=../config/aptly.conf ${release}-utils | grep "Number of packages" | awk '{print $NF}')
 
-		if [[ $? -ne 0 ]]; then
-			display_alert "Publishing failed" "$release" "err"
-			exit 0
+		if [ $mainnum -gt 0 ] && [ $utilnum -gt 0 ] && [ $desknum -gt 0 ]; then
+			# publish
+			aptly publish $forceoverwrite -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=../config/aptly.conf -component=${COMPONENTS// /,} \
+				--distribution=$release repo $release ${COMPONENTS//main/}
+			if [[ $? -ne 0 ]]; then
+				display_alert "Publishing failed" "$release" "err"
+				errors=$((errors+1))
+				exit 0
+			fi
+		else
+			errors=$((errors+1))
+			local err_txt=": All components must be present: main, utils and desktop for first build"
 		fi
+
 	done
+
+	# display what we have
 	display_alert "List of local repos" "local" "info"
 	(aptly repo list -config=../config/aptly.conf) | egrep packages
-	# serve
-	# aptly -config=../config/aptly.conf -listen=":8189" serve
+
+	# remove debs if no errors found
+	if [[ $errors -eq 0 && "$2" == "delete" ]]; then
+		display_alert "Purging incoming debs" "all" "ext"
+		find ${POT} -name "*.deb" -type f -delete
+	else
+		display_alert "There were some problems $err_txt" "leaving incoming directory intact" "err"
+	fi
+
 }
 
 # prepare_host
@@ -656,7 +695,7 @@ download_toolchain()
 	fi
 	if [[ $verified == true ]]; then
 		display_alert "Extracting"
-		tar --overwrite -xf $filename && touch $SRC/cache/toolchains/$dirname/.download-complete
+		tar --no-same-owner --overwrite -xf $filename && touch $SRC/cache/toolchains/$dirname/.download-complete
 		display_alert "Download complete" "" "info"
 	else
 		display_alert "Verification failed" "" "wrn"
