@@ -145,7 +145,7 @@ esac
 case $RELEASE in
 	jessie)
 	PACKAGE_LIST_RELEASE="less kbd"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel policykit-1-gnome eject system-config-printer"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel thunderbird policykit-1-gnome eject system-config-printer"
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget nano linux-firmware zram-config"

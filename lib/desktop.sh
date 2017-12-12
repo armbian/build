@@ -14,10 +14,15 @@ install_desktop ()
 	# add loading desktop splash service
 	cp $SRC/packages/blobs/desktop/desktop-splash/desktop-splash.service $SDCARD/etc/systemd/system/desktop-splash.service
 
-	if [[ $RELEASE == xenial ]]; then
-		# install optimized firefox configuration
-		# cp $SRC/packages/blobs/desktop/firefox.conf $SDCARD/etc/firefox/syspref.js
-		# install optimized chromium configuration
+	# install optimized firefox configuration
+	if [[ -d $SDCARD/usr/lib/firefox-esr/ ]]; then
+		cp $SRC/packages/blobs/desktop/firefox.conf $SDCARD/usr/lib/firefox-esr/mozilla.cfg
+		echo 'pref("general.config.obscure_value", 0);' > 			$SDCARD/usr/lib/firefox-esr/defaults/pref/local-settings.js
+		echo 'pref("general.config.filename", "mozilla.cfg");' >> 	$SDCARD/usr/lib/firefox-esr/defaults/pref/local-settings.js
+	fi
+
+	# install optimized chromium configuration
+	if [[ -d $SDCARD/usr/lib/chromium-browser/ ]]; then
 		cp $SRC/packages/blobs/desktop/chromium.conf $SDCARD/etc/chromium-browser/default
 	fi
 
