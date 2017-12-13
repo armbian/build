@@ -48,7 +48,7 @@ compile_atf()
 	local target_patchdir=$(cut -d';' -f2 <<< $ATF_TARGET_MAP)
 	local target_files=$(cut -d';' -f3 <<< $ATF_TARGET_MAP)
 
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "atf" "atf-${LINUXFAMILY}" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
+	advanced_patch "atf" "atf-${LINUXFAMILY}" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
 
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
@@ -129,7 +129,7 @@ compile_uboot()
 			(cd $SRC/cache/sources/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
 		fi
 
-		[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
+		advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
 
 		# create patch for manual source changes
 		[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
@@ -252,10 +252,10 @@ compile_kernel()
 	# TODO: Check if still required
 	if [[ $(patch --dry-run -t -p1 < $SRC/patch/kernel/compiler.patch | grep Reversed) != "" ]]; then
 		display_alert "Patching kernel for compiler support"
-		[[ $FORCE_CHECKOUT == yes ]] && patch --batch --silent -t -p1 < $SRC/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
+		patch --batch --silent -t -p1 < $SRC/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
 	fi
 
-	[[ $FORCE_CHECKOUT == yes ]] && advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
+	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
 
 	if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
 		sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
