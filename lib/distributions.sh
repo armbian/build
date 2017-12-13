@@ -158,6 +158,11 @@ install_common()
 		sed -i "s/^#kernel.printk*/kernel.printk/" $SDCARD/etc/sysctl.conf
 	fi
 
+	# disable repeated messages due to xconsole not being installed.
+	[[ -f $SDCARD/etc/rsyslog.d/50-default.conf ]] && sed '/daemon\.\*\;mail.*/,/xconsole/ s/.*/#&/' -i $SDCARD/etc/rsyslog.d/50-default.conf
+	# disable deprecated parameter
+	sed '/.*$KLogPermitNonKernelFacility.*/,// s/.*/#&/' $SDCARD/etc/rsyslog.conf
+
 	# enable getty on serial console
 	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
 
