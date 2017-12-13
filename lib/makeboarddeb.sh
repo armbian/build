@@ -199,6 +199,10 @@ create_board_package()
 	# add some summary to the image
 	fingerprint_image "$destination/etc/armbian.txt"
 
+	# fixing permissions (basic), reference: dh_fixperms
+	find $destination -print0 2>/dev/null | xargs -0r chown --no-dereference 0:0
+	find $destination ! -type l -print0 2>/dev/null | xargs -0r chmod 'go=rX,u+rw,a-s'
+
 	# create board DEB file
 	display_alert "Building package" "$CHOSEN_ROOTFS" "info"
 	fakeroot dpkg-deb -b $destination ${destination}.deb
