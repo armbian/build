@@ -22,9 +22,8 @@ install_desktop ()
 	fi
 
 	# install optimized chromium configuration
-	if [[ -d $SDCARD/usr/lib/chromium-browser/ ]]; then
-		cp $SRC/packages/blobs/desktop/chromium.conf $SDCARD/etc/chromium-browser/default
-	fi
+	[[ -d $SDCARD/etc/chromium-browser ]] && cp $SRC/packages/blobs/desktop/chromium.conf $SDCARD/etc/chromium-browser/default
+	[[ -d $SDCARD/etc/chromium.d ]] && cp $SRC/packages/blobs/desktop/chromium.conf $SDCARD/etc/chromium.d/chromium.conf
 
 	# install default desktop settings
 	cp -R $SRC/packages/blobs/desktop/skel/. $SDCARD/etc/skel
