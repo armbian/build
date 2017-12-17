@@ -7,7 +7,7 @@ MODULES="xradio_wlan xradio_wlan"
 MODULES_NEXT="xradio_wlan"
 MODULES_BLACKLIST="dhd"
 CPUMIN=240000
-CPUMAX=1104000
+CPUMAX=1008000
 #
 KERNEL_TARGET="default next"
 CLI_TARGET="jessie,xenial:default"
