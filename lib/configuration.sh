@@ -144,7 +144,7 @@ esac
 # Release specific packages
 case $RELEASE in
 	jessie)
-	PACKAGE_LIST_RELEASE="less kbd"
+	PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel thunderbird policykit-1-gnome eject system-config-printer"
 	;;
 	xenial)
@@ -153,7 +153,7 @@ case $RELEASE in
 	[[ $ARCH == armhf ]] && PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mate-utils ubuntu-mate-welcome mate-settings-daemon"
 	;;
 	stretch)
-	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd"
+	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium tango-icon-theme paprefs numix-gtk-theme dbus-x11 system-config-printer-common system-config-printer"
 	;;
 esac
