@@ -154,7 +154,7 @@ case $RELEASE in
 	;;
 	stretch)
 	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium tango-icon-theme paprefs numix-gtk-theme dbus-x11 system-config-printer-common system-config-printer"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium paprefs numix-gtk-theme dbus-x11 system-config-printer-common system-config-printer"
 	;;
 esac
 
