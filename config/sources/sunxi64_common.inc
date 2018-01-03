@@ -50,7 +50,7 @@ case $BRANCH in
 	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 
 	KERNELSOURCE='https://github.com/Icenowy/linux/'
-	KERNELBRANCH='branch:sunxi64-4.13.y'
+	KERNELBRANCH='branch:sunxi64-4.14.y'
 	KERNELDIR='linux-sun50i-dev'
 	KERNEL_USE_GCC='> 7.0'
 	;;
