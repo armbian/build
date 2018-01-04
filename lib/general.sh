@@ -518,8 +518,17 @@ prepare_host()
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
+
+	# ARMBIAN_UNSUPPORTED_OVERRIDE overrides the check for a supported host system
+	# Keep in mind, this is NOT SUPPORTED at all. Not at all, don't ever ask about errors encountered with this enabled.
+	# Since you got here, i assume you are experienced enough to read error/warning messages and solve them yourself
 	if [[ -z $codename || "trusty xenial" != *"$codename"* ]]; then
-		exit_with_error "It seems you ignore documentation and run an unsupported build system: ${codename:-(unknown)}"
+
+		if [[ -z $ARMBIAN_UNSUPPORTED_OVERRIDE ]]; then
+			exit_with_error "It seems you ignore documentation and run an unsupported build system: ${codename:-(unknown)}"
+		else
+			display_alert "You are running on an unsupported system: ${codename:-(unknown)}. Do not report any errors, warnings or dragons encountered beyond this point."
+		fi
 	fi
 
 	if [[ $codename == trusty ]]; then
