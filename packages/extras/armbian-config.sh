@@ -24,7 +24,7 @@ compile_armbian-config()
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Replaces: armbian-bsp
-	Depends: bash, bc, expect, rcconf, dialog, debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text
+	Depends: bash, bc, expect, rcconf, dialog, unzip, build-essential, apt-transport-https, html2text
 	Recommends: network-manager, armbian-bsp
 	Section: utils
 	Priority: optional
