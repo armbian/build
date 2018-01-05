@@ -194,6 +194,9 @@ cat <<-EOF >> $DEST/debug/output.log
 ## BUILD SCRIPT ENVIRONMENT
 
 Version: $(cd $SRC; git rev-parse @)
+Host OS: $(lsb_release -sc)
+Host arch: $(dpkg --print-architecture)
+Dirty: $(git diff-index --quiet HEAD -- && echo No || echo Yes)
 
 ## BUILD CONFIGURATION
 
