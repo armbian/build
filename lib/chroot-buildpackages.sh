@@ -92,8 +92,8 @@ chroot_prepare_distccd()
 	for compiler in gcc cpp g++ c++; do
 		echo "$dest/$compiler" >> $dest/cmdlist
 		echo "$dest/${gcc_type[$arch]}${compiler}" >> $dest/cmdlist
-		ln -sfv ${toolchain_path}/${gcc_type[$arch]}${compiler} $dest/$compiler
-		ln -sfv ${toolchain_path}/${gcc_type[$arch]}${compiler} $dest/${gcc_type[$arch]}${compiler}
+		ln -sf ${toolchain_path}/${gcc_type[$arch]}${compiler} $dest/$compiler
+		ln -sf ${toolchain_path}/${gcc_type[$arch]}${compiler} $dest/${gcc_type[$arch]}${compiler}
 	done
 	mkdir -p /var/run/distcc/
 	touch /var/run/distcc/${release}-${arch}.pid

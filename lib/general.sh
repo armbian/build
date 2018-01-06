@@ -341,30 +341,20 @@ addtorepo()
 {
 # add all deb files to repository
 # parameter "remove" dumps all and creates new
+# parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
+
 	local distributions=("jessie" "xenial" "stretch")
+	local errors=0
 
 	for release in "${distributions[@]}"; do
+
+		local forceoverwrite=""
 
 		# let's drop from publish if exits
 		if [[ -n $(aptly publish list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			aptly publish drop -config=../config/aptly.conf $release > /dev/null 2>&1
 		fi
-
-
-		if [[ $1 == remove ]]; then
-		# remove repository
-			aptly repo drop -config=../config/aptly.conf $release > /dev/null 2>&1
-			aptly db cleanup -config=../config/aptly.conf > /dev/null 2>&1
-		fi
-
-
-		if [[ $1 == replace ]]; then
-			local replace=true
-		else
-			local replace=false
-		fi
-
 
 		# create local repository if not exist
 		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
@@ -389,7 +379,13 @@ addtorepo()
 		# adding main
 		if find $POT -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "main" "ext"
-			aptly repo add -force-replace=$replace -config=../config/aptly.conf $release $POT/*.deb
+			aptly repo add -config=../config/aptly.conf $release ${POT}*.deb
+			if [[ $? -ne 0 ]]; then
+				# try again with
+				display_alert "Adding by force to repository $release" "main" "ext"
+				aptly repo add -force-replace=true -config=../config/aptly.conf $release ${POT}*.deb
+				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1)); fi
+			fi
 		else
 			display_alert "Not adding $release" "main" "wrn"
 		fi
@@ -399,7 +395,13 @@ addtorepo()
 		# adding main distribution packages
 		if find ${POT}${release} -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "root" "ext"
-			aptly repo add -force-replace=$replace -config=../config/aptly.conf $release ${POT}${release}/*.deb
+			aptly repo add -config=../config/aptly.conf $release ${POT}${release}/*.deb
+			if [[ $? -ne 0 ]]; then
+				# try again with
+				display_alert "Adding by force to repository $release" "root" "ext"
+				aptly repo add -force-replace=true -config=../config/aptly.conf $release ${POT}${release}/*.deb
+				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
+			fi
 		else
 			display_alert "Not adding $release" "root" "wrn"
 		fi
@@ -408,42 +410,79 @@ addtorepo()
 		if find ${POT}extra/jessie-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
 			aptly repo add -config=../config/aptly.conf "utils" ${POT}extra/jessie-utils/*.deb
-			COMPONENTS="${COMPONENTS} utils"
+			if [[ $? -ne 0 ]]; then
+				# try again with
+				display_alert "Adding by force to repository $release" "utils" "ext"
+				aptly repo add -force-replace=true -config=../config/aptly.conf "utils" ${POT}extra/jessie-utils/*.deb
+				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
+			fi
 		else
 			display_alert "Not adding $release" "utils" "wrn"
 		fi
+		COMPONENTS="${COMPONENTS} utils"
 
 		# adding release-specific utils
 		if find ${POT}extra/${release}-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "${release}-utils" "ext"
 			aptly repo add -config=../config/aptly.conf "${release}-utils" ${POT}extra/${release}-utils/*.deb
-			COMPONENTS="${COMPONENTS} ${release}-utils"
+			if [[ $? -ne 0 ]]; then
+				# try again with
+				display_alert "Adding by force to repository $release" "${release}-utils" "ext"
+				aptly repo add -force-replace=true -config=../config/aptly.conf "${release}-utils" ${POT}extra/${release}-utils/*.deb
+				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
+			fi
 		else
 			display_alert "Not adding $release" "${release}-utils" "wrn"
 		fi
+		COMPONENTS="${COMPONENTS} ${release}-utils"
 
 		# adding desktop
 		if find ${POT}extra/${release}-desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "desktop" "ext"
-			aptly repo add -force-replace=$replace -config=../config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
-			COMPONENTS="${COMPONENTS} ${release}-desktop"
+			aptly repo add -config=../config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
+			if [[ $? -ne 0 ]]; then
+				# try again with
+				display_alert "Adding by force to repository $release" "desktop" "ext"
+				aptly repo add -force-replace=true -config=../config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
+				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
+			fi
 		else
 			display_alert "Not adding $release" "desktop" "wrn"
 		fi
+		COMPONENTS="${COMPONENTS} ${release}-desktop"
 
-		# publish
-		aptly publish -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=../config/aptly.conf -component=${COMPONENTS// /,} \
-			--distribution=$release repo $release ${COMPONENTS//main/} 2>/dev/null
+		local mainnum=$(aptly repo show -with-packages -config=../config/aptly.conf $release | grep "Number of packages" | awk '{print $NF}')
+		local utilnum=$(aptly repo show -with-packages -config=../config/aptly.conf ${release}-desktop | grep "Number of packages" | awk '{print $NF}')
+		local desknum=$(aptly repo show -with-packages -config=../config/aptly.conf ${release}-utils | grep "Number of packages" | awk '{print $NF}')
 
-		if [[ $? -ne 0 ]]; then
-			display_alert "Publishing failed" "$release" "err"
-			exit 0
+		if [ $mainnum -gt 0 ] && [ $utilnum -gt 0 ] && [ $desknum -gt 0 ]; then
+			# publish
+			aptly publish $forceoverwrite -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=../config/aptly.conf -component=${COMPONENTS// /,} \
+				--distribution=$release repo $release ${COMPONENTS//main/}
+			if [[ $? -ne 0 ]]; then
+				display_alert "Publishing failed" "$release" "err"
+				errors=$((errors+1))
+				exit 0
+			fi
+		else
+			errors=$((errors+1))
+			local err_txt=": All components must be present: main, utils and desktop for first build"
 		fi
+
 	done
+
+	# display what we have
 	display_alert "List of local repos" "local" "info"
 	(aptly repo list -config=../config/aptly.conf) | egrep packages
-	# serve
-	# aptly -config=../config/aptly.conf -listen=":8189" serve
+
+	# remove debs if no errors found
+	if [[ $errors -eq 0 && "$2" == "delete" ]]; then
+		display_alert "Purging incoming debs" "all" "ext"
+		find ${POT} -name "*.deb" -type f -delete
+	else
+		display_alert "There were some problems $err_txt" "leaving incoming directory intact" "err"
+	fi
+
 }
 
 # prepare_host
@@ -456,16 +495,10 @@ prepare_host()
 {
 	display_alert "Preparing" "host" "info"
 
-	if [[ $(dpkg --print-architecture) == arm* ]]; then
+	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "http://www.armbian.com/using-armbian-tools/"
-		exit_with_error "Running this tool on board itself is not supported"
-	fi
-
-	if [[ $(dpkg --print-architecture) == i386 ]]; then
-		display_alert "Please read documentation to set up proper compilation environment"
-		display_alert "http://www.armbian.com/using-armbian-tools/"
-		display_alert "Running this tool on non-x64 build host in not supported officially" "" "wrn"
+		exit_with_error "Running this tool on non x86-x64 build host in not supported"
 	fi
 
 	# need lsb_release to decide what to install
@@ -480,41 +513,39 @@ prepare_host()
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-tools ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross \
-	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev \
-	locales ncurses-base pixz dialog"
+	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev aptly \
+	locales ncurses-base pixz dialog systemd-container udev distcc lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5"
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
-	if [[ -z $codename || "trusty xenial" != *"$codename"* ]]; then
-		exit_with_error "It seems you ignore documentation and run an unsupported build system: ${codename:-(unknown)}"
-	fi
 
-	if [[ $codename == trusty ]]; then
-		display_alert "Note: Ubuntu Trusty environment support will be removed before the end of 2017" "" "wrn"
-		display_alert "Please upgrade your compilation environment to Ubuntu Xenial" "" "wrn"
-		display_alert "Press <Enter> to continue"
-		read
-	fi
-
-	if [[ $codename == xenial ]]; then
-		hostdeps="$hostdeps systemd-container udev distcc \
-			lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 aptly"
-		grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
-		if systemd-detect-virt -q -c; then
-			display_alert "Running in container" "$(systemd-detect-virt)" "info"
-			# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
-			if [[ $NO_APT_CACHER != no ]]; then
-				display_alert "apt-cacher is disabled in containers, set NO_APT_CACHER=no to override" "" "wrn"
-				NO_APT_CACHER=yes
-			fi
-			CONTAINER_COMPAT=yes
-			# trying to use nested containers is not a good idea, so don't permit EXTERNAL_NEW=compile
-			if [[ $EXTERNAL_NEW == compile ]]; then
-				display_alert "EXTERNAL_NEW=compile is not available when running in container, setting to prebuilt" "" "wrn"
-				EXTERNAL_NEW=prebuilt
-			fi
-			SYNC_CLOCK=no
+	# Ubuntu Xenial x86_64 is the only supported host OS release
+	# Using Docker/VirtualBox/Vagrant is the only supported way to run the build script on other Linux distributions
+	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
+	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
+	if [[ -z $codename || "xenial" != *"$codename"* ]]; then
+		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
+			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
+			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
+		else
+			exit_with_error "It seems you ignore documentation and run an unsupported build system: ${codename:-(unknown)}"
 		fi
+	fi
+	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
+	if systemd-detect-virt -q -c; then
+		display_alert "Running in container" "$(systemd-detect-virt)" "info"
+		# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
+		if [[ $NO_APT_CACHER != no ]]; then
+			display_alert "apt-cacher is disabled in containers, set NO_APT_CACHER=no to override" "" "wrn"
+			NO_APT_CACHER=yes
+		fi
+		CONTAINER_COMPAT=yes
+		# trying to use nested containers is not a good idea, so don't permit EXTERNAL_NEW=compile
+		if [[ $EXTERNAL_NEW == compile ]]; then
+			display_alert "EXTERNAL_NEW=compile is not available when running in container, setting to prebuilt" "" "wrn"
+			EXTERNAL_NEW=prebuilt
+		fi
+		SYNC_CLOCK=no
 	fi
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
@@ -548,7 +579,7 @@ prepare_host()
 		update-ccache-symlinks
 	fi
 
-	if [[ $codename == xenial && $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
+	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
 		apt install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
 	fi
 
@@ -580,15 +611,13 @@ prepare_host()
 		"https://dl.armbian.com/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu.tar.xz"
 		"https://dl.armbian.com/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz"
 		"https://dl.armbian.com/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-5.4.1-2017.05-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-5.4.1-2017.05-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-5.4.1-2017.05-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-6.3.1-2017.05-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-6.4.1-2017.08-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-6.4.1-2017.08-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-7.1.1-2017.08-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-7.1.1-2017.08-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabi.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
 		)
 
 	for toolchain in ${toolchains[@]}; do
@@ -618,7 +647,7 @@ prepare_host()
 		echo 'http://www.armbian.com/using-armbian-tools/' >> $SRC/userpatches/README
 	fi
 
-	# check free space (basic), doesn't work on Trusty
+	# check free space (basic)
 	local freespace=$(findmnt --target $SRC -n -o AVAIL -b 2>/dev/null) # in bytes
 	if [[ -n $freespace && $(( $freespace / 1073741824 )) -lt 10 ]]; then
 		display_alert "Low free space left" "$(( $freespace / 1073741824 )) GiB" "wrn"
@@ -664,7 +693,7 @@ download_toolchain()
 	fi
 	if [[ $verified == true ]]; then
 		display_alert "Extracting"
-		tar --overwrite -xf $filename && touch $SRC/cache/toolchains/$dirname/.download-complete
+		tar --no-same-owner --overwrite -xf $filename && touch $SRC/cache/toolchains/$dirname/.download-complete
 		display_alert "Download complete" "" "info"
 	else
 		display_alert "Verification failed" "" "wrn"

@@ -3,9 +3,6 @@
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
 
-# run board detection
-run autodetectfdt
-
 # default values
 setenv rootdev "/dev/mmcblk0p1"
 setenv verbosity "1"
@@ -13,14 +10,16 @@ setenv console "display"
 setenv rootfstype "ext4"
 setenv disp_mode "1920x1080m60"
 
+# next kernels have different u-boot without autodetection
+if ext2load mmc 0 0x00000000 /boot/.next || ext2load mmc 0 0x00000000 .next; then
+	setenv fdt_file "imx6q-cubox-i.dtb"
+else
+	run autodetectfdt
+fi
+
 # additional values
 setenv load_addr "0x10800000"
 setenv ramdisk_addr "0x14800000"
-
-# next/dev kernels have another DT file name
-#if ext2load mmc 0 0x00000000 /boot/.next || ext2load mmc 0 0x00000000 .next; then
-#	setenv fdt_file "imx6q-cubox-i.dtb"
-#fi
 
 if ext2load mmc 0 ${load_addr} /boot/armbianEnv.txt || ext2load mmc 0 ${load_addr} armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
