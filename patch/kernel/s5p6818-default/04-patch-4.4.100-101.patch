@@ -1,0 +1,661 @@
+diff --git a/Makefile b/Makefile
+index 91dd7832f499..0d7b050427ed 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 100
++SUBLEVEL = 101
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+
+diff --git a/drivers/char/ipmi/ipmi_msghandler.c b/drivers/char/ipmi/ipmi_msghandler.c
+index 25372dc381d4..5cb5e8ff0224 100644
+--- a/drivers/char/ipmi/ipmi_msghandler.c
++++ b/drivers/char/ipmi/ipmi_msghandler.c
+@@ -4029,7 +4029,8 @@ smi_from_recv_msg(ipmi_smi_t intf, struct ipmi_recv_msg *recv_msg,
+ }
+
+ static void check_msg_timeout(ipmi_smi_t intf, struct seq_table *ent,
+-			      struct list_head *timeouts, long timeout_period,
++			      struct list_head *timeouts,
++			      unsigned long timeout_period,
+ 			      int slot, unsigned long *flags,
+ 			      unsigned int *waiting_msgs)
+ {
+@@ -4042,8 +4043,8 @@ static void check_msg_timeout(ipmi_smi_t intf, struct seq_table *ent,
+ 	if (!ent->inuse)
+ 		return;
+
+-	ent->timeout -= timeout_period;
+-	if (ent->timeout > 0) {
++	if (timeout_period < ent->timeout) {
++		ent->timeout -= timeout_period;
+ 		(*waiting_msgs)++;
+ 		return;
+ 	}
+@@ -4109,7 +4110,8 @@ static void check_msg_timeout(ipmi_smi_t intf, struct seq_table *ent,
+ 	}
+ }
+
+-static unsigned int ipmi_timeout_handler(ipmi_smi_t intf, long timeout_period)
++static unsigned int ipmi_timeout_handler(ipmi_smi_t intf,
++					 unsigned long timeout_period)
+ {
+ 	struct list_head     timeouts;
+ 	struct ipmi_recv_msg *msg, *msg2;
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index 5dca77e0ffed..2cb34b0f3856 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -3166,7 +3166,7 @@ u32 bond_xmit_hash(struct bonding *bond, struct sk_buff *skb)
+ 	hash ^= (hash >> 16);
+ 	hash ^= (hash >> 8);
+
+-	return hash;
++	return hash >> 1;
+ }
+
+ /*-------------------------- Device entry points ----------------------------*/
+diff --git a/drivers/net/ethernet/fealnx.c b/drivers/net/ethernet/fealnx.c
+index b1b9ebafb354..a3b2e23921bf 100644
+--- a/drivers/net/ethernet/fealnx.c
++++ b/drivers/net/ethernet/fealnx.c
+@@ -257,8 +257,8 @@ enum rx_desc_status_bits {
+ 	RXFSD = 0x00000800,	/* first descriptor */
+ 	RXLSD = 0x00000400,	/* last descriptor */
+ 	ErrorSummary = 0x80,	/* error summary */
+-	RUNT = 0x40,		/* runt packet received */
+-	LONG = 0x20,		/* long packet received */
++	RUNTPKT = 0x40,		/* runt packet received */
++	LONGPKT = 0x20,		/* long packet received */
+ 	FAE = 0x10,		/* frame align error */
+ 	CRC = 0x08,		/* crc error */
+ 	RXER = 0x04,		/* receive error */
+@@ -1633,7 +1633,7 @@ static int netdev_rx(struct net_device *dev)
+ 					       dev->name, rx_status);
+
+ 				dev->stats.rx_errors++;	/* end of a packet. */
+-				if (rx_status & (LONG | RUNT))
++				if (rx_status & (LONGPKT | RUNTPKT))
+ 					dev->stats.rx_length_errors++;
+ 				if (rx_status & RXER)
+ 					dev->stats.rx_frame_errors++;
+diff --git a/drivers/nvme/host/pci.c b/drivers/nvme/host/pci.c
+index 669edbd47602..d6ceb8b91cd6 100644
+--- a/drivers/nvme/host/pci.c
++++ b/drivers/nvme/host/pci.c
+@@ -350,8 +350,8 @@ static void async_completion(struct nvme_queue *nvmeq, void *ctx,
+ 	struct async_cmd_info *cmdinfo = ctx;
+ 	cmdinfo->result = le32_to_cpup(&cqe->result);
+ 	cmdinfo->status = le16_to_cpup(&cqe->status) >> 1;
+-	queue_kthread_work(cmdinfo->worker, &cmdinfo->work);
+ 	blk_mq_free_request(cmdinfo->req);
++	queue_kthread_work(cmdinfo->worker, &cmdinfo->work);
+ }
+
+ static inline struct nvme_cmd_info *get_cmd_from_tag(struct nvme_queue *nvmeq,
+diff --git a/drivers/tty/serial/omap-serial.c b/drivers/tty/serial/omap-serial.c
+index de1c143b475f..21fc9b3a27cf 100644
+--- a/drivers/tty/serial/omap-serial.c
++++ b/drivers/tty/serial/omap-serial.c
+@@ -693,7 +693,7 @@ static void serial_omap_set_mctrl(struct uart_port *port, unsigned int mctrl)
+ 	if ((mctrl & TIOCM_RTS) && (port->status & UPSTAT_AUTORTS))
+ 		up->efr |= UART_EFR_RTS;
+ 	else
+-		up->efr &= UART_EFR_RTS;
++		up->efr &= ~UART_EFR_RTS;
+ 	serial_out(up, UART_EFR, up->efr);
+ 	serial_out(up, UART_LCR, lcr);
+
+diff --git a/fs/coda/upcall.c b/fs/coda/upcall.c
+index f6c6c8adbc01..7289f0a7670b 100644
+--- a/fs/coda/upcall.c
++++ b/fs/coda/upcall.c
+@@ -446,8 +446,7 @@ int venus_fsync(struct super_block *sb, struct CodaFid *fid)
+ 	UPARG(CODA_FSYNC);
+
+ 	inp->coda_fsync.VFid = *fid;
+-	error = coda_upcall(coda_vcp(sb), sizeof(union inputArgs),
+-			    &outsize, inp);
++	error = coda_upcall(coda_vcp(sb), insize, &outsize, inp);
+
+ 	CODA_FREE(inp, insize);
+ 	return error;
+diff --git a/fs/ocfs2/file.c b/fs/ocfs2/file.c
+index 1d738723a41a..501ecc4a1ac4 100644
+--- a/fs/ocfs2/file.c
++++ b/fs/ocfs2/file.c
+@@ -1166,6 +1166,13 @@ int ocfs2_setattr(struct dentry *dentry, struct iattr *attr)
+ 	}
+ 	size_change = S_ISREG(inode->i_mode) && attr->ia_valid & ATTR_SIZE;
+ 	if (size_change) {
++		/*
++		 * Here we should wait dio to finish before inode lock
++		 * to avoid a deadlock between ocfs2_setattr() and
++		 * ocfs2_dio_end_io_write()
++		 */
++		inode_dio_wait(inode);
++
+ 		status = ocfs2_rw_lock(inode, 1);
+ 		if (status < 0) {
+ 			mlog_errno(status);
+@@ -1186,8 +1193,6 @@ int ocfs2_setattr(struct dentry *dentry, struct iattr *attr)
+ 		if (status)
+ 			goto bail_unlock;
+
+-		inode_dio_wait(inode);
+-
+ 		if (i_size_read(inode) >= attr->ia_size) {
+ 			if (ocfs2_should_order_data(inode)) {
+ 				status = ocfs2_begin_ordered_truncate(inode,
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index 5b609a3ce3d7..ff88d6189411 100644
+--- a/include/linux/mmzone.h
++++ b/include/linux/mmzone.h
+@@ -688,7 +688,8 @@ typedef struct pglist_data {
+ 	 * is the first PFN that needs to be initialised.
+ 	 */
+ 	unsigned long first_deferred_pfn;
+-	unsigned long static_init_size;
++	/* Number of non-deferred pages */
++	unsigned long static_init_pgcnt;
+ #endif /* CONFIG_DEFERRED_STRUCT_PAGE_INIT */
+ } pg_data_t;
+
+diff --git a/include/linux/page_idle.h b/include/linux/page_idle.h
+index bf268fa92c5b..fec40271339f 100644
+--- a/include/linux/page_idle.h
++++ b/include/linux/page_idle.h
+@@ -46,33 +46,62 @@ extern struct page_ext_operations page_idle_ops;
+
+ static inline bool page_is_young(struct page *page)
+ {
+-	return test_bit(PAGE_EXT_YOUNG, &lookup_page_ext(page)->flags);
++	struct page_ext *page_ext = lookup_page_ext(page);
++
++	if (unlikely(!page_ext))
++		return false;
++
++	return test_bit(PAGE_EXT_YOUNG, &page_ext->flags);
+ }
+
+ static inline void set_page_young(struct page *page)
+ {
+-	set_bit(PAGE_EXT_YOUNG, &lookup_page_ext(page)->flags);
++	struct page_ext *page_ext = lookup_page_ext(page);
++
++	if (unlikely(!page_ext))
++		return;
++
++	set_bit(PAGE_EXT_YOUNG, &page_ext->flags);
+ }
+
+ static inline bool test_and_clear_page_young(struct page *page)
+ {
+-	return test_and_clear_bit(PAGE_EXT_YOUNG,
+-				  &lookup_page_ext(page)->flags);
++	struct page_ext *page_ext = lookup_page_ext(page);
++
++	if (unlikely(!page_ext))
++		return false;
++
++	return test_and_clear_bit(PAGE_EXT_YOUNG, &page_ext->flags);
+ }
+
+ static inline bool page_is_idle(struct page *page)
+ {
+-	return test_bit(PAGE_EXT_IDLE, &lookup_page_ext(page)->flags);
++	struct page_ext *page_ext = lookup_page_ext(page);
++
++	if (unlikely(!page_ext))
++		return false;
++
++	return test_bit(PAGE_EXT_IDLE, &page_ext->flags);
+ }
+
+ static inline void set_page_idle(struct page *page)
+ {
+-	set_bit(PAGE_EXT_IDLE, &lookup_page_ext(page)->flags);
++	struct page_ext *page_ext = lookup_page_ext(page);
++
++	if (unlikely(!page_ext))
++		return;
++
++	set_bit(PAGE_EXT_IDLE, &page_ext->flags);
+ }
+
+ static inline void clear_page_idle(struct page *page)
+ {
+-	clear_bit(PAGE_EXT_IDLE, &lookup_page_ext(page)->flags);
++	struct page_ext *page_ext = lookup_page_ext(page);
++
++	if (unlikely(!page_ext))
++		return;
++
++	clear_bit(PAGE_EXT_IDLE, &page_ext->flags);
+ }
+ #endif /* CONFIG_64BIT */
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index 3f61c647fc5c..b5421f6f155a 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -3400,6 +3400,13 @@ static inline void nf_reset_trace(struct sk_buff *skb)
+ #endif
+ }
+
++static inline void ipvs_reset(struct sk_buff *skb)
++{
++#if IS_ENABLED(CONFIG_IP_VS)
++	skb->ipvs_property = 0;
++#endif
++}
++
+ /* Note: This doesn't put any conntrack and bridge info in dst. */
+ static inline void __nf_copy(struct sk_buff *dst, const struct sk_buff *src,
+ 			     bool copy)
+diff --git a/mm/debug-pagealloc.c b/mm/debug-pagealloc.c
+index 5bf5906ce13b..fe1c61f7cf26 100644
+--- a/mm/debug-pagealloc.c
++++ b/mm/debug-pagealloc.c
+@@ -34,6 +34,8 @@ static inline void set_page_poison(struct page *page)
+ 	struct page_ext *page_ext;
+
+ 	page_ext = lookup_page_ext(page);
++	if (page_ext)
++		return;
+ 	__set_bit(PAGE_EXT_DEBUG_POISON, &page_ext->flags);
+ }
+
+@@ -42,6 +44,8 @@ static inline void clear_page_poison(struct page *page)
+ 	struct page_ext *page_ext;
+
+ 	page_ext = lookup_page_ext(page);
++	if (page_ext)
++		return;
+ 	__clear_bit(PAGE_EXT_DEBUG_POISON, &page_ext->flags);
+ }
+
+@@ -50,6 +54,8 @@ static inline bool page_poison(struct page *page)
+ 	struct page_ext *page_ext;
+
+ 	page_ext = lookup_page_ext(page);
++	if (page_ext)
++		return false;
+ 	return test_bit(PAGE_EXT_DEBUG_POISON, &page_ext->flags);
+ }
+
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 6b5421ae86c6..3c70f03d91ec 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -267,28 +267,37 @@ EXPORT_SYMBOL(nr_online_nodes);
+ int page_group_by_mobility_disabled __read_mostly;
+
+ #ifdef CONFIG_DEFERRED_STRUCT_PAGE_INIT
++
++/*
++ * Determine how many pages need to be initialized durig early boot
++ * (non-deferred initialization).
++ * The value of first_deferred_pfn will be set later, once non-deferred pages
++ * are initialized, but for now set it ULONG_MAX.
++ */
+ static inline void reset_deferred_meminit(pg_data_t *pgdat)
+ {
+-	unsigned long max_initialise;
+-	unsigned long reserved_lowmem;
++	phys_addr_t start_addr, end_addr;
++	unsigned long max_pgcnt;
++	unsigned long reserved;
+
+ 	/*
+ 	 * Initialise at least 2G of a node but also take into account that
+ 	 * two large system hashes that can take up 1GB for 0.25TB/node.
+ 	 */
+-	max_initialise = max(2UL << (30 - PAGE_SHIFT),
+-		(pgdat->node_spanned_pages >> 8));
++	max_pgcnt = max(2UL << (30 - PAGE_SHIFT),
++			(pgdat->node_spanned_pages >> 8));
+
+ 	/*
+ 	 * Compensate the all the memblock reservations (e.g. crash kernel)
+ 	 * from the initial estimation to make sure we will initialize enough
+ 	 * memory to boot.
+ 	 */
+-	reserved_lowmem = memblock_reserved_memory_within(pgdat->node_start_pfn,
+-			pgdat->node_start_pfn + max_initialise);
+-	max_initialise += reserved_lowmem;
++	start_addr = PFN_PHYS(pgdat->node_start_pfn);
++	end_addr = PFN_PHYS(pgdat->node_start_pfn + max_pgcnt);
++	reserved = memblock_reserved_memory_within(start_addr, end_addr);
++	max_pgcnt += PHYS_PFN(reserved);
+
+-	pgdat->static_init_size = min(max_initialise, pgdat->node_spanned_pages);
++	pgdat->static_init_pgcnt = min(max_pgcnt, pgdat->node_spanned_pages);
+ 	pgdat->first_deferred_pfn = ULONG_MAX;
+ }
+
+@@ -324,7 +333,7 @@ static inline bool update_defer_init(pg_data_t *pgdat,
+ 		return true;
+ 	/* Initialise at least 2G of the highest zone */
+ 	(*nr_initialised)++;
+-	if ((*nr_initialised > pgdat->static_init_size) &&
++	if ((*nr_initialised > pgdat->static_init_pgcnt) &&
+ 	    (pfn & (PAGES_PER_SECTION - 1)) == 0) {
+ 		pgdat->first_deferred_pfn = pfn;
+ 		return false;
+@@ -560,6 +569,9 @@ static inline void set_page_guard(struct zone *zone, struct page *page,
+ 		return;
+
+ 	page_ext = lookup_page_ext(page);
++	if (unlikely(!page_ext))
++		return;
++
+ 	__set_bit(PAGE_EXT_DEBUG_GUARD, &page_ext->flags);
+
+ 	INIT_LIST_HEAD(&page->lru);
+@@ -577,6 +589,9 @@ static inline void clear_page_guard(struct zone *zone, struct page *page,
+ 		return;
+
+ 	page_ext = lookup_page_ext(page);
++	if (unlikely(!page_ext))
++		return;
++
+ 	__clear_bit(PAGE_EXT_DEBUG_GUARD, &page_ext->flags);
+
+ 	set_page_private(page, 0);
+diff --git a/mm/page_ext.c b/mm/page_ext.c
+index 292ca7b8debd..4d1eac0d4fc5 100644
+--- a/mm/page_ext.c
++++ b/mm/page_ext.c
+@@ -106,7 +106,6 @@ struct page_ext *lookup_page_ext(struct page *page)
+ 	struct page_ext *base;
+
+ 	base = NODE_DATA(page_to_nid(page))->node_page_ext;
+-#ifdef CONFIG_DEBUG_VM
+ 	/*
+ 	 * The sanity checks the page allocator does upon freeing a
+ 	 * page can reach here before the page_ext arrays are
+@@ -115,7 +114,6 @@ struct page_ext *lookup_page_ext(struct page *page)
+ 	 */
+ 	if (unlikely(!base))
+ 		return NULL;
+-#endif
+ 	offset = pfn - round_down(node_start_pfn(page_to_nid(page)),
+ 					MAX_ORDER_NR_PAGES);
+ 	return base + offset;
+@@ -180,7 +178,6 @@ struct page_ext *lookup_page_ext(struct page *page)
+ {
+ 	unsigned long pfn = page_to_pfn(page);
+ 	struct mem_section *section = __pfn_to_section(pfn);
+-#ifdef CONFIG_DEBUG_VM
+ 	/*
+ 	 * The sanity checks the page allocator does upon freeing a
+ 	 * page can reach here before the page_ext arrays are
+@@ -189,7 +186,6 @@ struct page_ext *lookup_page_ext(struct page *page)
+ 	 */
+ 	if (!section->page_ext)
+ 		return NULL;
+-#endif
+ 	return section->page_ext + pfn;
+ }
+
+diff --git a/mm/page_owner.c b/mm/page_owner.c
+index 983c3a10fa07..dd6b9cebf981 100644
+--- a/mm/page_owner.c
++++ b/mm/page_owner.c
+@@ -53,6 +53,8 @@ void __reset_page_owner(struct page *page, unsigned int order)
+
+ 	for (i = 0; i < (1 << order); i++) {
+ 		page_ext = lookup_page_ext(page + i);
++		if (unlikely(!page_ext))
++			continue;
+ 		__clear_bit(PAGE_EXT_OWNER, &page_ext->flags);
+ 	}
+ }
+@@ -60,6 +62,7 @@ void __reset_page_owner(struct page *page, unsigned int order)
+ void __set_page_owner(struct page *page, unsigned int order, gfp_t gfp_mask)
+ {
+ 	struct page_ext *page_ext = lookup_page_ext(page);
++
+ 	struct stack_trace trace = {
+ 		.nr_entries = 0,
+ 		.max_entries = ARRAY_SIZE(page_ext->trace_entries),
+@@ -67,6 +70,9 @@ void __set_page_owner(struct page *page, unsigned int order, gfp_t gfp_mask)
+ 		.skip = 3,
+ 	};
+
++	if (unlikely(!page_ext))
++		return;
++
+ 	save_stack_trace(&trace);
+
+ 	page_ext->order = order;
+@@ -79,6 +85,12 @@ void __set_page_owner(struct page *page, unsigned int order, gfp_t gfp_mask)
+ gfp_t __get_page_owner_gfp(struct page *page)
+ {
+ 	struct page_ext *page_ext = lookup_page_ext(page);
++	if (unlikely(!page_ext))
++		/*
++		 * The caller just returns 0 if no valid gfp
++		 * So return 0 here too.
++		 */
++		return 0;
+
+ 	return page_ext->gfp_mask;
+ }
+@@ -194,6 +206,8 @@ read_page_owner(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+ 		}
+
+ 		page_ext = lookup_page_ext(page);
++		if (unlikely(!page_ext))
++			continue;
+
+ 		/*
+ 		 * Some pages could be missed by concurrent allocation or free,
+@@ -257,6 +271,8 @@ static void init_pages_in_zone(pg_data_t *pgdat, struct zone *zone)
+ 				continue;
+
+ 			page_ext = lookup_page_ext(page);
++			if (unlikely(!page_ext))
++				continue;
+
+ 			/* Maybe overraping zone */
+ 			if (test_bit(PAGE_EXT_OWNER, &page_ext->flags))
+diff --git a/mm/pagewalk.c b/mm/pagewalk.c
+index 29f2f8b853ae..c2cbd2620169 100644
+--- a/mm/pagewalk.c
++++ b/mm/pagewalk.c
+@@ -142,8 +142,12 @@ static int walk_hugetlb_range(unsigned long addr, unsigned long end,
+ 	do {
+ 		next = hugetlb_entry_end(h, addr, end);
+ 		pte = huge_pte_offset(walk->mm, addr & hmask);
+-		if (pte && walk->hugetlb_entry)
++
++		if (pte)
+ 			err = walk->hugetlb_entry(pte, hmask, addr, next, walk);
++		else if (walk->pte_hole)
++			err = walk->pte_hole(addr, next, walk);
++
+ 		if (err)
+ 			break;
+ 	} while (addr = next, addr != end);
+diff --git a/mm/vmstat.c b/mm/vmstat.c
+index c54fd2924f25..c344e3609c53 100644
+--- a/mm/vmstat.c
++++ b/mm/vmstat.c
+@@ -1091,6 +1091,8 @@ static void pagetypeinfo_showmixedcount_print(struct seq_file *m,
+ 				continue;
+
+ 			page_ext = lookup_page_ext(page);
++			if (unlikely(!page_ext))
++				continue;
+
+ 			if (!test_bit(PAGE_EXT_OWNER, &page_ext->flags))
+ 				continue;
+diff --git a/net/8021q/vlan.c b/net/8021q/vlan.c
+index 5e4199d5a388..01abb6431fd9 100644
+--- a/net/8021q/vlan.c
++++ b/net/8021q/vlan.c
+@@ -376,6 +376,9 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
+ 			dev->name);
+ 		vlan_vid_add(dev, htons(ETH_P_8021Q), 0);
+ 	}
++	if (event == NETDEV_DOWN &&
++	    (dev->features & NETIF_F_HW_VLAN_CTAG_FILTER))
++		vlan_vid_del(dev, htons(ETH_P_8021Q), 0);
+
+ 	vlan_info = rtnl_dereference(dev->vlan_info);
+ 	if (!vlan_info)
+@@ -423,9 +426,6 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
+ 		struct net_device *tmp;
+ 		LIST_HEAD(close_list);
+
+-		if (dev->features & NETIF_F_HW_VLAN_CTAG_FILTER)
+-			vlan_vid_del(dev, htons(ETH_P_8021Q), 0);
+-
+ 		/* Put all VLANs for this dev in the down state too.  */
+ 		vlan_group_for_each_dev(grp, i, vlandev) {
+ 			flgs = vlandev->flags;
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 73dfd7729bc9..d33609c2f276 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -4229,6 +4229,7 @@ void skb_scrub_packet(struct sk_buff *skb, bool xnet)
+ 	if (!xnet)
+ 		return;
+
++	ipvs_reset(skb);
+ 	skb_orphan(skb);
+ 	skb->mark = 0;
+ }
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 64c7ce847584..39c2919fe0d3 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -3018,13 +3018,8 @@ struct sk_buff *tcp_make_synack(const struct sock *sk, struct dst_entry *dst,
+ 	tcp_ecn_make_synack(req, th);
+ 	th->source = htons(ireq->ir_num);
+ 	th->dest = ireq->ir_rmt_port;
+-	/* Setting of flags are superfluous here for callers (and ECE is
+-	 * not even correctly set)
+-	 */
+-	tcp_init_nondata_skb(skb, tcp_rsk(req)->snt_isn,
+-			     TCPHDR_SYN | TCPHDR_ACK);
+-
+-	th->seq = htonl(TCP_SKB_CB(skb)->seq);
++	skb->ip_summed = CHECKSUM_PARTIAL;
++	th->seq = htonl(tcp_rsk(req)->snt_isn);
+ 	/* XXX data is queued and acked as is. No buffer/window check */
+ 	th->ack_seq = htonl(tcp_rsk(req)->rcv_nxt);
+
+diff --git a/net/netlink/af_netlink.c b/net/netlink/af_netlink.c
+index acfb16fdcd55..9ecdd61c6463 100644
+--- a/net/netlink/af_netlink.c
++++ b/net/netlink/af_netlink.c
+@@ -2077,7 +2077,7 @@ static int netlink_dump(struct sock *sk)
+ 	struct sk_buff *skb = NULL;
+ 	struct nlmsghdr *nlh;
+ 	struct module *module;
+-	int len, err = -ENOBUFS;
++	int err = -ENOBUFS;
+ 	int alloc_min_size;
+ 	int alloc_size;
+
+@@ -2125,9 +2125,11 @@ static int netlink_dump(struct sock *sk)
+ 	skb_reserve(skb, skb_tailroom(skb) - alloc_size);
+ 	netlink_skb_set_owner_r(skb, sk);
+
+-	len = cb->dump(skb, cb);
++	if (nlk->dump_done_errno > 0)
++		nlk->dump_done_errno = cb->dump(skb, cb);
+
+-	if (len > 0) {
++	if (nlk->dump_done_errno > 0 ||
++	    skb_tailroom(skb) < nlmsg_total_size(sizeof(nlk->dump_done_errno))) {
+ 		mutex_unlock(nlk->cb_mutex);
+
+ 		if (sk_filter(sk, skb))
+@@ -2137,13 +2139,15 @@ static int netlink_dump(struct sock *sk)
+ 		return 0;
+ 	}
+
+-	nlh = nlmsg_put_answer(skb, cb, NLMSG_DONE, sizeof(len), NLM_F_MULTI);
+-	if (!nlh)
++	nlh = nlmsg_put_answer(skb, cb, NLMSG_DONE,
++			       sizeof(nlk->dump_done_errno), NLM_F_MULTI);
++	if (WARN_ON(!nlh))
+ 		goto errout_skb;
+
+ 	nl_dump_check_consistent(cb, nlh);
+
+-	memcpy(nlmsg_data(nlh), &len, sizeof(len));
++	memcpy(nlmsg_data(nlh), &nlk->dump_done_errno,
++	       sizeof(nlk->dump_done_errno));
+
+ 	if (sk_filter(sk, skb))
+ 		kfree_skb(skb);
+@@ -2208,6 +2212,7 @@ int __netlink_dump_start(struct sock *ssk, struct sk_buff *skb,
+ 	cb->skb = skb;
+
+ 	nlk->cb_running = true;
++	nlk->dump_done_errno = INT_MAX;
+
+ 	mutex_unlock(nlk->cb_mutex);
+
+diff --git a/net/netlink/af_netlink.h b/net/netlink/af_netlink.h
+index ea4600aea6b0..d987696c0eb4 100644
+--- a/net/netlink/af_netlink.h
++++ b/net/netlink/af_netlink.h
+@@ -38,6 +38,7 @@ struct netlink_sock {
+ 	wait_queue_head_t	wait;
+ 	bool			bound;
+ 	bool			cb_running;
++	int			dump_done_errno;
+ 	struct netlink_callback	cb;
+ 	struct mutex		*cb_mutex;
+ 	struct mutex		cb_def_mutex;
+diff --git a/net/sctp/ipv6.c b/net/sctp/ipv6.c
+index e33e9bd4ed5a..8a61ccc37e12 100644
+--- a/net/sctp/ipv6.c
++++ b/net/sctp/ipv6.c
+@@ -806,6 +806,8 @@ static void sctp_inet6_skb_msgname(struct sk_buff *skb, char *msgname,
+ 		if (ipv6_addr_type(&addr->v6.sin6_addr) & IPV6_ADDR_LINKLOCAL) {
+ 			struct sctp_ulpevent *ev = sctp_skb2event(skb);
+ 			addr->v6.sin6_scope_id = ev->iif;
++		} else {
++			addr->v6.sin6_scope_id = 0;
+ 		}
+ 	}
+
+diff --git a/net/sctp/socket.c b/net/sctp/socket.c
+index 7f0f689b8d2b..272edd7748a0 100644
+--- a/net/sctp/socket.c
++++ b/net/sctp/socket.c
+@@ -4453,6 +4453,10 @@ int sctp_do_peeloff(struct sock *sk, sctp_assoc_t id, struct socket **sockp)
+ 	struct socket *sock;
+ 	int err = 0;
+
++	/* Do not peel off from one netns to another one. */
++	if (!net_eq(current->nsproxy->net_ns, sock_net(sk)))
++		return -EINVAL;
++
+ 	/* Do not peel off from one netns to another one. */
+ 	if (!net_eq(current->nsproxy->net_ns, sock_net(sk)))
+ 		return -EINVAL;
+diff --git a/security/integrity/ima/ima_appraise.c b/security/integrity/ima/ima_appraise.c
+index 9ce9d5003dcc..19014293f927 100644
+--- a/security/integrity/ima/ima_appraise.c
++++ b/security/integrity/ima/ima_appraise.c
+@@ -297,6 +297,9 @@ void ima_update_xattr(struct integrity_iint_cache *iint, struct file *file)
+ 	if (iint->flags & IMA_DIGSIG)
+ 		return;
+
++	if (iint->ima_file_status != INTEGRITY_PASS)
++		return;
++
+ 	rc = ima_collect_measurement(iint, file, NULL, NULL);
+ 	if (rc < 0)
+ 		return;

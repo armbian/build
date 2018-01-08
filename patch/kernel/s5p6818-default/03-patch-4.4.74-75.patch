@@ -1,0 +1,1018 @@
+diff --git a/Makefile b/Makefile
+index 1f75507acbf4..696d15d8ad5d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 74
++SUBLEVEL = 75
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/powerpc/kernel/kprobes.c b/arch/powerpc/kernel/kprobes.c
+index 7c053f281406..1138fec3dd65 100644
+--- a/arch/powerpc/kernel/kprobes.c
++++ b/arch/powerpc/kernel/kprobes.c
+@@ -514,6 +514,15 @@ int __kprobes setjmp_pre_handler(struct kprobe *p, struct pt_regs *regs)
+ #endif
+ #endif
+ 
++	/*
++	 * jprobes use jprobe_return() which skips the normal return
++	 * path of the function, and this messes up the accounting of the
++	 * function graph tracer.
++	 *
++	 * Pause function graph tracing while performing the jprobe function.
++	 */
++	pause_graph_tracing();
++
+ 	return 1;
+ }
+ 
+@@ -536,6 +545,8 @@ int __kprobes longjmp_break_handler(struct kprobe *p, struct pt_regs *regs)
+ 	 * saved regs...
+ 	 */
+ 	memcpy(regs, &kcb->jprobe_saved_regs, sizeof(struct pt_regs));
++	/* It's OK to start function graph tracing again */
++	unpause_graph_tracing();
+ 	preempt_enable_no_resched();
+ 	return 1;
+ }
+diff --git a/arch/powerpc/kvm/book3s_hv.c b/arch/powerpc/kvm/book3s_hv.c
+index 3c3a367b6e59..396dc44e783b 100644
+--- a/arch/powerpc/kvm/book3s_hv.c
++++ b/arch/powerpc/kvm/book3s_hv.c
+@@ -2693,6 +2693,27 @@ static int kvmppc_vcpu_run_hv(struct kvm_run *run, struct kvm_vcpu *vcpu)
+ 		return -EINVAL;
+ 	}
+ 
++	/*
++	 * Don't allow entry with a suspended transaction, because
++	 * the guest entry/exit code will lose it.
++	 * If the guest has TM enabled, save away their TM-related SPRs
++	 * (they will get restored by the TM unavailable interrupt).
++	 */
++#ifdef CONFIG_PPC_TRANSACTIONAL_MEM
++	if (cpu_has_feature(CPU_FTR_TM) && current->thread.regs &&
++	    (current->thread.regs->msr & MSR_TM)) {
++		if (MSR_TM_ACTIVE(current->thread.regs->msr)) {
++			run->exit_reason = KVM_EXIT_FAIL_ENTRY;
++			run->fail_entry.hardware_entry_failure_reason = 0;
++			return -EINVAL;
++		}
++		current->thread.tm_tfhar = mfspr(SPRN_TFHAR);
++		current->thread.tm_tfiar = mfspr(SPRN_TFIAR);
++		current->thread.tm_texasr = mfspr(SPRN_TEXASR);
++		current->thread.regs->msr &= ~MSR_TM;
++	}
++#endif
++
+ 	kvmppc_core_prepare_to_enter(vcpu);
+ 
+ 	/* No need to go into the guest when all we'll do is come back out */
+diff --git a/arch/powerpc/mm/slb_low.S b/arch/powerpc/mm/slb_low.S
+index 4c48b487698c..0b48ce40d351 100644
+--- a/arch/powerpc/mm/slb_low.S
++++ b/arch/powerpc/mm/slb_low.S
+@@ -179,6 +179,16 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
+ 	b	slb_finish_load
+ 
+ 8:	/* invalid EA */
++	/*
++	 * It's possible the bad EA is too large to fit in the SLB cache, which
++	 * would mean we'd fail to invalidate it on context switch. So mark the
++	 * SLB cache as full so we force a full flush. We also set cr7+eq to
++	 * mark the address as a kernel address, so slb_finish_load() skips
++	 * trying to insert it into the SLB cache.
++	 */
++	li	r9,SLB_CACHE_ENTRIES + 1
++	sth	r9,PACASLBCACHEPTR(r13)
++	crset	4*cr7+eq
+ 	li	r10,0			/* BAD_VSID */
+ 	li	r9,0			/* BAD_VSID */
+ 	li	r11,SLB_VSID_USER	/* flags don't much matter */
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_atombios.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_atombios.c
+index 51a9942cdb40..f4cae5357e40 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_atombios.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_atombios.c
+@@ -681,6 +681,10 @@ int amdgpu_atombios_get_clock_info(struct amdgpu_device *adev)
+ 			DRM_INFO("Changing default dispclk from %dMhz to 600Mhz\n",
+ 				 adev->clock.default_dispclk / 100);
+ 			adev->clock.default_dispclk = 60000;
++		} else if (adev->clock.default_dispclk <= 60000) {
++			DRM_INFO("Changing default dispclk from %dMhz to 625Mhz\n",
++				 adev->clock.default_dispclk / 100);
++			adev->clock.default_dispclk = 62500;
+ 		}
+ 		adev->clock.dp_extclk =
+ 			le16_to_cpu(firmware_info->info_21.usUniphyDPModeExtClkFreq);
+diff --git a/drivers/gpu/drm/amd/amdgpu/atombios_crtc.c b/drivers/gpu/drm/amd/amdgpu/atombios_crtc.c
+index 49aa35016653..247b088990dc 100644
+--- a/drivers/gpu/drm/amd/amdgpu/atombios_crtc.c
++++ b/drivers/gpu/drm/amd/amdgpu/atombios_crtc.c
+@@ -164,7 +164,7 @@ void amdgpu_atombios_crtc_powergate(struct drm_crtc *crtc, int state)
+ 	struct drm_device *dev = crtc->dev;
+ 	struct amdgpu_device *adev = dev->dev_private;
+ 	int index = GetIndexIntoMasterTable(COMMAND, EnableDispPowerGating);
+-	ENABLE_DISP_POWER_GATING_PARAMETERS_V2_1 args;
++	ENABLE_DISP_POWER_GATING_PS_ALLOCATION args;
+ 
+ 	memset(&args, 0, sizeof(args));
+ 
+@@ -177,7 +177,7 @@ void amdgpu_atombios_crtc_powergate(struct drm_crtc *crtc, int state)
+ void amdgpu_atombios_crtc_powergate_init(struct amdgpu_device *adev)
+ {
+ 	int index = GetIndexIntoMasterTable(COMMAND, EnableDispPowerGating);
+-	ENABLE_DISP_POWER_GATING_PARAMETERS_V2_1 args;
++	ENABLE_DISP_POWER_GATING_PS_ALLOCATION args;
+ 
+ 	memset(&args, 0, sizeof(args));
+ 
+diff --git a/drivers/gpu/drm/radeon/radeon_combios.c b/drivers/gpu/drm/radeon/radeon_combios.c
+index a9b01bcf7d0a..fcecaf5b5526 100644
+--- a/drivers/gpu/drm/radeon/radeon_combios.c
++++ b/drivers/gpu/drm/radeon/radeon_combios.c
+@@ -3394,6 +3394,13 @@ void radeon_combios_asic_init(struct drm_device *dev)
+ 	    rdev->pdev->subsystem_vendor == 0x103c &&
+ 	    rdev->pdev->subsystem_device == 0x280a)
+ 		return;
++	/* quirk for rs4xx Toshiba Sattellite L20-183 latop to make it resume
++	 * - it hangs on resume inside the dynclk 1 table.
++	 */
++	if (rdev->family == CHIP_RS400 &&
++	    rdev->pdev->subsystem_vendor == 0x1179 &&
++	    rdev->pdev->subsystem_device == 0xff31)
++	        return;
+ 
+ 	/* DYN CLK 1 */
+ 	table = combios_get_table_offset(dev, COMBIOS_DYN_CLK_1_TABLE);
+diff --git a/drivers/gpu/drm/radeon/radeon_device.c b/drivers/gpu/drm/radeon/radeon_device.c
+index 4aa2cbe4c85f..a77521695c9a 100644
+--- a/drivers/gpu/drm/radeon/radeon_device.c
++++ b/drivers/gpu/drm/radeon/radeon_device.c
+@@ -127,6 +127,10 @@ static struct radeon_px_quirk radeon_px_quirk_list[] = {
+ 	 * https://bugzilla.kernel.org/show_bug.cgi?id=51381
+ 	 */
+ 	{ PCI_VENDOR_ID_ATI, 0x6840, 0x1043, 0x2122, RADEON_PX_QUIRK_DISABLE_PX },
++	/* Asus K53TK laptop with AMD A6-3420M APU and Radeon 7670m GPU
++	 * https://bugs.freedesktop.org/show_bug.cgi?id=101491
++	 */
++	{ PCI_VENDOR_ID_ATI, 0x6741, 0x1043, 0x2122, RADEON_PX_QUIRK_DISABLE_PX },
+ 	/* macbook pro 8.2 */
+ 	{ PCI_VENDOR_ID_ATI, 0x6741, PCI_VENDOR_ID_APPLE, 0x00e2, RADEON_PX_QUIRK_LONG_WAKEUP },
+ 	{ 0, 0, 0, 0, 0 },
+diff --git a/drivers/hid/hid-ids.h b/drivers/hid/hid-ids.h
+index e37030624165..c7f8b70d15ee 100644
+--- a/drivers/hid/hid-ids.h
++++ b/drivers/hid/hid-ids.h
+@@ -285,6 +285,9 @@
+ #define USB_VENDOR_ID_DEALEXTREAME	0x10c5
+ #define USB_DEVICE_ID_DEALEXTREAME_RADIO_SI4701	0x819a
+ 
++#define USB_VENDOR_ID_DELL				0x413c
++#define USB_DEVICE_ID_DELL_PIXART_USB_OPTICAL_MOUSE	0x301a
++
+ #define USB_VENDOR_ID_DELORME		0x1163
+ #define USB_DEVICE_ID_DELORME_EARTHMATE	0x0100
+ #define USB_DEVICE_ID_DELORME_EM_LT20	0x0200
+diff --git a/drivers/hid/usbhid/hid-quirks.c b/drivers/hid/usbhid/hid-quirks.c
+index 6ca6ab00fa93..ce1543d69acb 100644
+--- a/drivers/hid/usbhid/hid-quirks.c
++++ b/drivers/hid/usbhid/hid-quirks.c
+@@ -72,6 +72,7 @@ static const struct hid_blacklist {
+ 	{ USB_VENDOR_ID_CH, USB_DEVICE_ID_CH_AXIS_295, HID_QUIRK_NOGET },
+ 	{ USB_VENDOR_ID_CHICONY, USB_DEVICE_ID_CHICONY_PIXART_USB_OPTICAL_MOUSE, HID_QUIRK_ALWAYS_POLL },
+ 	{ USB_VENDOR_ID_CREATIVELABS, USB_DEVICE_ID_CREATIVE_SB_OMNI_SURROUND_51, HID_QUIRK_NOGET },
++	{ USB_VENDOR_ID_DELL, USB_DEVICE_ID_DELL_PIXART_USB_OPTICAL_MOUSE, HID_QUIRK_ALWAYS_POLL },
+ 	{ USB_VENDOR_ID_DMI, USB_DEVICE_ID_DMI_ENC, HID_QUIRK_NOGET },
+ 	{ USB_VENDOR_ID_DRAGONRISE, USB_DEVICE_ID_DRAGONRISE_WIIU, HID_QUIRK_MULTI_INPUT },
+ 	{ USB_VENDOR_ID_ELAN, HID_ANY_ID, HID_QUIRK_ALWAYS_POLL },
+diff --git a/drivers/input/serio/i8042-x86ia64io.h b/drivers/input/serio/i8042-x86ia64io.h
+index e7b96f1ac2c5..5be14ad29d46 100644
+--- a/drivers/input/serio/i8042-x86ia64io.h
++++ b/drivers/input/serio/i8042-x86ia64io.h
+@@ -788,6 +788,13 @@ static const struct dmi_system_id __initconst i8042_dmi_notimeout_table[] = {
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "LIFEBOOK U574"),
+ 		},
+ 	},
++	{
++		/* Fujitsu UH554 laptop */
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "FUJITSU"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "LIFEBOOK UH544"),
++		},
++	},
+ 	{ }
+ };
+ 
+diff --git a/drivers/mtd/spi-nor/spi-nor.c b/drivers/mtd/spi-nor/spi-nor.c
+index 37e4135ab213..64d6f053c2a5 100644
+--- a/drivers/mtd/spi-nor/spi-nor.c
++++ b/drivers/mtd/spi-nor/spi-nor.c
+@@ -1057,6 +1057,13 @@ static int spansion_quad_enable(struct spi_nor *nor)
+ 		return -EINVAL;
+ 	}
+ 
++	ret = spi_nor_wait_till_ready(nor);
++	if (ret) {
++		dev_err(nor->dev,
++			"timeout while writing configuration register\n");
++		return ret;
++	}
++
+ 	/* read back and check it */
+ 	ret = read_cr(nor);
+ 	if (!(ret > 0 && (ret & CR_QUAD_EN_SPAN))) {
+diff --git a/drivers/net/phy/marvell.c b/drivers/net/phy/marvell.c
+index d2701c53ed68..ebec2dceff45 100644
+--- a/drivers/net/phy/marvell.c
++++ b/drivers/net/phy/marvell.c
+@@ -822,8 +822,6 @@ static int marvell_read_status(struct phy_device *phydev)
+ 		phydev->lp_advertising = mii_stat1000_to_ethtool_lpa_t(lpagb) |
+ 					 mii_lpa_to_ethtool_lpa_t(lpa);
+ 
+-		lpa &= adv;
+-
+ 		if (status & MII_M1011_PHY_STATUS_FULLDUPLEX)
+ 			phydev->duplex = DUPLEX_FULL;
+ 		else
+diff --git a/drivers/net/phy/mdio-bcm-iproc.c b/drivers/net/phy/mdio-bcm-iproc.c
+index c0b4e65267af..46fe1ae919a3 100644
+--- a/drivers/net/phy/mdio-bcm-iproc.c
++++ b/drivers/net/phy/mdio-bcm-iproc.c
+@@ -81,8 +81,6 @@ static int iproc_mdio_read(struct mii_bus *bus, int phy_id, int reg)
+ 	if (rc)
+ 		return rc;
+ 
+-	iproc_mdio_config_clk(priv->base);
+-
+ 	/* Prepare the read operation */
+ 	cmd = (MII_DATA_TA_VAL << MII_DATA_TA_SHIFT) |
+ 		(reg << MII_DATA_RA_SHIFT) |
+@@ -112,8 +110,6 @@ static int iproc_mdio_write(struct mii_bus *bus, int phy_id,
+ 	if (rc)
+ 		return rc;
+ 
+-	iproc_mdio_config_clk(priv->base);
+-
+ 	/* Prepare the write operation */
+ 	cmd = (MII_DATA_TA_VAL << MII_DATA_TA_SHIFT) |
+ 		(reg << MII_DATA_RA_SHIFT) |
+@@ -163,6 +159,8 @@ static int iproc_mdio_probe(struct platform_device *pdev)
+ 	bus->read = iproc_mdio_read;
+ 	bus->write = iproc_mdio_write;
+ 
++	iproc_mdio_config_clk(priv->base);
++
+ 	rc = of_mdiobus_register(bus, pdev->dev.of_node);
+ 	if (rc) {
+ 		dev_err(&pdev->dev, "MDIO bus registration failed\n");
+diff --git a/drivers/nvme/host/nvme.h b/drivers/nvme/host/nvme.h
+index 044253dca30a..b8a5a8e8f57d 100644
+--- a/drivers/nvme/host/nvme.h
++++ b/drivers/nvme/host/nvme.h
+@@ -27,6 +27,13 @@ enum {
+ 	NVME_NS_LIGHTNVM	= 1,
+ };
+ 
++/* The below value is the specific amount of delay needed before checking
++ * readiness in case of the PCI_DEVICE(0x1c58, 0x0003), which needs the
++ * NVME_QUIRK_DELAY_BEFORE_CHK_RDY quirk enabled. The value (in ms) was
++ * found empirically.
++ */
++#define NVME_QUIRK_DELAY_AMOUNT		2000
++
+ /*
+  * Represents an NVM Express device.  Each nvme_dev is a PCI function.
+  */
+diff --git a/drivers/nvme/host/pci.c b/drivers/nvme/host/pci.c
+index c851bc53831c..4c673d45f1bd 100644
+--- a/drivers/nvme/host/pci.c
++++ b/drivers/nvme/host/pci.c
+@@ -1633,10 +1633,15 @@ static int nvme_wait_ready(struct nvme_dev *dev, u64 cap, bool enabled)
+  */
+ static int nvme_disable_ctrl(struct nvme_dev *dev, u64 cap)
+ {
++	struct pci_dev *pdev = to_pci_dev(dev->dev);
++
+ 	dev->ctrl_config &= ~NVME_CC_SHN_MASK;
+ 	dev->ctrl_config &= ~NVME_CC_ENABLE;
+ 	writel(dev->ctrl_config, &dev->bar->cc);
+ 
++	if (pdev->vendor == 0x1c58 && pdev->device == 0x0003)
++		msleep(NVME_QUIRK_DELAY_AMOUNT);
++
+ 	return nvme_wait_ready(dev, cap, false);
+ }
+ 
+diff --git a/drivers/of/fdt.c b/drivers/of/fdt.c
+index 655f79db7899..58048dd5fcd0 100644
+--- a/drivers/of/fdt.c
++++ b/drivers/of/fdt.c
+@@ -632,9 +632,12 @@ int __init of_scan_flat_dt(int (*it)(unsigned long node,
+ 	const char *pathp;
+ 	int offset, rc = 0, depth = -1;
+ 
+-        for (offset = fdt_next_node(blob, -1, &depth);
+-             offset >= 0 && depth >= 0 && !rc;
+-             offset = fdt_next_node(blob, offset, &depth)) {
++	if (!blob)
++		return 0;
++
++	for (offset = fdt_next_node(blob, -1, &depth);
++	     offset >= 0 && depth >= 0 && !rc;
++	     offset = fdt_next_node(blob, offset, &depth)) {
+ 
+ 		pathp = fdt_get_name(blob, offset, NULL);
+ 		if (*pathp == '/')
+diff --git a/drivers/target/iscsi/iscsi_target.c b/drivers/target/iscsi/iscsi_target.c
+index 200d3de8bc1e..a180c000e246 100644
+--- a/drivers/target/iscsi/iscsi_target.c
++++ b/drivers/target/iscsi/iscsi_target.c
+@@ -1112,6 +1112,18 @@ iscsit_get_immediate_data(struct iscsi_cmd *cmd, struct iscsi_scsi_req *hdr,
+ 	 */
+ 	if (dump_payload)
+ 		goto after_immediate_data;
++	/*
++	 * Check for underflow case where both EDTL and immediate data payload
++	 * exceeds what is presented by CDB's TRANSFER LENGTH, and what has
++	 * already been set in target_cmd_size_check() as se_cmd->data_length.
++	 *
++	 * For this special case, fail the command and dump the immediate data
++	 * payload.
++	 */
++	if (cmd->first_burst_len > cmd->se_cmd.data_length) {
++		cmd->sense_reason = TCM_INVALID_CDB_FIELD;
++		goto after_immediate_data;
++	}
+ 
+ 	immed_ret = iscsit_handle_immediate_data(cmd, hdr,
+ 					cmd->first_burst_len);
+diff --git a/drivers/target/target_core_internal.h b/drivers/target/target_core_internal.h
+index 253a91bff943..272e6f755322 100644
+--- a/drivers/target/target_core_internal.h
++++ b/drivers/target/target_core_internal.h
+@@ -132,7 +132,7 @@ int	init_se_kmem_caches(void);
+ void	release_se_kmem_caches(void);
+ u32	scsi_get_new_index(scsi_index_t);
+ void	transport_subsystem_check_init(void);
+-void	transport_cmd_finish_abort(struct se_cmd *, int);
++int	transport_cmd_finish_abort(struct se_cmd *, int);
+ unsigned char *transport_dump_cmd_direction(struct se_cmd *);
+ void	transport_dump_dev_state(struct se_device *, char *, int *);
+ void	transport_dump_dev_info(struct se_device *, struct se_lun *,
+diff --git a/drivers/target/target_core_tmr.c b/drivers/target/target_core_tmr.c
+index 46b1991fbb50..c9be953496ec 100644
+--- a/drivers/target/target_core_tmr.c
++++ b/drivers/target/target_core_tmr.c
+@@ -75,7 +75,7 @@ void core_tmr_release_req(struct se_tmr_req *tmr)
+ 	kfree(tmr);
+ }
+ 
+-static void core_tmr_handle_tas_abort(struct se_cmd *cmd, int tas)
++static int core_tmr_handle_tas_abort(struct se_cmd *cmd, int tas)
+ {
+ 	unsigned long flags;
+ 	bool remove = true, send_tas;
+@@ -91,7 +91,7 @@ static void core_tmr_handle_tas_abort(struct se_cmd *cmd, int tas)
+ 		transport_send_task_abort(cmd);
+ 	}
+ 
+-	transport_cmd_finish_abort(cmd, remove);
++	return transport_cmd_finish_abort(cmd, remove);
+ }
+ 
+ static int target_check_cdb_and_preempt(struct list_head *list,
+@@ -185,8 +185,8 @@ void core_tmr_abort_task(
+ 		cancel_work_sync(&se_cmd->work);
+ 		transport_wait_for_tasks(se_cmd);
+ 
+-		transport_cmd_finish_abort(se_cmd, true);
+-		target_put_sess_cmd(se_cmd);
++		if (!transport_cmd_finish_abort(se_cmd, true))
++			target_put_sess_cmd(se_cmd);
+ 
+ 		printk("ABORT_TASK: Sending TMR_FUNCTION_COMPLETE for"
+ 				" ref_tag: %llu\n", ref_tag);
+@@ -286,8 +286,8 @@ static void core_tmr_drain_tmr_list(
+ 		cancel_work_sync(&cmd->work);
+ 		transport_wait_for_tasks(cmd);
+ 
+-		transport_cmd_finish_abort(cmd, 1);
+-		target_put_sess_cmd(cmd);
++		if (!transport_cmd_finish_abort(cmd, 1))
++			target_put_sess_cmd(cmd);
+ 	}
+ }
+ 
+@@ -385,8 +385,8 @@ static void core_tmr_drain_state_list(
+ 		cancel_work_sync(&cmd->work);
+ 		transport_wait_for_tasks(cmd);
+ 
+-		core_tmr_handle_tas_abort(cmd, tas);
+-		target_put_sess_cmd(cmd);
++		if (!core_tmr_handle_tas_abort(cmd, tas))
++			target_put_sess_cmd(cmd);
+ 	}
+ }
+ 
+diff --git a/drivers/target/target_core_transport.c b/drivers/target/target_core_transport.c
+index 60743bf27f37..37c77db6e737 100644
+--- a/drivers/target/target_core_transport.c
++++ b/drivers/target/target_core_transport.c
+@@ -639,9 +639,10 @@ static void transport_lun_remove_cmd(struct se_cmd *cmd)
+ 		percpu_ref_put(&lun->lun_ref);
+ }
+ 
+-void transport_cmd_finish_abort(struct se_cmd *cmd, int remove)
++int transport_cmd_finish_abort(struct se_cmd *cmd, int remove)
+ {
+ 	bool ack_kref = (cmd->se_cmd_flags & SCF_ACK_KREF);
++	int ret = 0;
+ 
+ 	if (cmd->se_cmd_flags & SCF_SE_LUN_CMD)
+ 		transport_lun_remove_cmd(cmd);
+@@ -653,9 +654,11 @@ void transport_cmd_finish_abort(struct se_cmd *cmd, int remove)
+ 		cmd->se_tfo->aborted_task(cmd);
+ 
+ 	if (transport_cmd_check_stop_to_fabric(cmd))
+-		return;
++		return 1;
+ 	if (remove && ack_kref)
+-		transport_put_cmd(cmd);
++		ret = transport_put_cmd(cmd);
++
++	return ret;
+ }
+ 
+ static void target_complete_failure_work(struct work_struct *work)
+diff --git a/drivers/usb/gadget/function/f_fs.c b/drivers/usb/gadget/function/f_fs.c
+index 9ad5145d3103..6d8f865a2fb7 100644
+--- a/drivers/usb/gadget/function/f_fs.c
++++ b/drivers/usb/gadget/function/f_fs.c
+@@ -1668,12 +1668,12 @@ static int ffs_func_eps_enable(struct ffs_function *func)
+ 		ep->ep->driver_data = ep;
+ 		ep->ep->desc = ds;
+ 
+-		comp_desc = (struct usb_ss_ep_comp_descriptor *)(ds +
+-				USB_DT_ENDPOINT_SIZE);
+-		ep->ep->maxburst = comp_desc->bMaxBurst + 1;
+-
+-		if (needs_comp_desc)
++		if (needs_comp_desc) {
++			comp_desc = (struct usb_ss_ep_comp_descriptor *)(ds +
++					USB_DT_ENDPOINT_SIZE);
++			ep->ep->maxburst = comp_desc->bMaxBurst + 1;
+ 			ep->ep->comp_desc = comp_desc;
++		}
+ 
+ 		ret = usb_ep_enable(ep->ep);
+ 		if (likely(!ret)) {
+diff --git a/drivers/usb/usbip/vhci_hcd.c b/drivers/usb/usbip/vhci_hcd.c
+index 7fbe19d5279e..81b2b9f808b5 100644
+--- a/drivers/usb/usbip/vhci_hcd.c
++++ b/drivers/usb/usbip/vhci_hcd.c
+@@ -215,14 +215,19 @@ done:
+ 
+ static inline void hub_descriptor(struct usb_hub_descriptor *desc)
+ {
++	int width;
++
+ 	memset(desc, 0, sizeof(*desc));
+ 	desc->bDescriptorType = USB_DT_HUB;
+-	desc->bDescLength = 9;
+ 	desc->wHubCharacteristics = cpu_to_le16(
+ 		HUB_CHAR_INDV_PORT_LPSM | HUB_CHAR_COMMON_OCPM);
++
+ 	desc->bNbrPorts = VHCI_NPORTS;
+-	desc->u.hs.DeviceRemovable[0] = 0xff;
+-	desc->u.hs.DeviceRemovable[1] = 0xff;
++	BUILD_BUG_ON(VHCI_NPORTS > USB_MAXCHILDREN);
++	width = desc->bNbrPorts / 8 + 1;
++	desc->bDescLength = USB_DT_HUB_NONVAR_SIZE + 2 * width;
++	memset(&desc->u.hs.DeviceRemovable[0], 0, width);
++	memset(&desc->u.hs.DeviceRemovable[width], 0xff, width);
+ }
+ 
+ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
+diff --git a/fs/autofs4/dev-ioctl.c b/fs/autofs4/dev-ioctl.c
+index ac7d921ed984..257425511d10 100644
+--- a/fs/autofs4/dev-ioctl.c
++++ b/fs/autofs4/dev-ioctl.c
+@@ -331,7 +331,7 @@ static int autofs_dev_ioctl_fail(struct file *fp,
+ 	int status;
+ 
+ 	token = (autofs_wqt_t) param->fail.token;
+-	status = param->fail.status ? param->fail.status : -ENOENT;
++	status = param->fail.status < 0 ? param->fail.status : -ENOENT;
+ 	return autofs4_wait_release(sbi, token, status);
+ }
+ 
+diff --git a/fs/cifs/smb1ops.c b/fs/cifs/smb1ops.c
+index 87b87e091e8e..efd72e1fae74 100644
+--- a/fs/cifs/smb1ops.c
++++ b/fs/cifs/smb1ops.c
+@@ -849,8 +849,13 @@ cifs_query_dir_first(const unsigned int xid, struct cifs_tcon *tcon,
+ 		     struct cifs_fid *fid, __u16 search_flags,
+ 		     struct cifs_search_info *srch_inf)
+ {
+-	return CIFSFindFirst(xid, tcon, path, cifs_sb,
+-			     &fid->netfid, search_flags, srch_inf, true);
++	int rc;
++
++	rc = CIFSFindFirst(xid, tcon, path, cifs_sb,
++			   &fid->netfid, search_flags, srch_inf, true);
++	if (rc)
++		cifs_dbg(FYI, "find first failed=%d\n", rc);
++	return rc;
+ }
+ 
+ static int
+diff --git a/fs/cifs/smb2ops.c b/fs/cifs/smb2ops.c
+index 087918c4612a..1d125d3d0d89 100644
+--- a/fs/cifs/smb2ops.c
++++ b/fs/cifs/smb2ops.c
+@@ -909,7 +909,7 @@ smb2_query_dir_first(const unsigned int xid, struct cifs_tcon *tcon,
+ 	rc = SMB2_open(xid, &oparms, utf16_path, &oplock, NULL, NULL);
+ 	kfree(utf16_path);
+ 	if (rc) {
+-		cifs_dbg(VFS, "open dir failed\n");
++		cifs_dbg(FYI, "open dir failed rc=%d\n", rc);
+ 		return rc;
+ 	}
+ 
+@@ -919,7 +919,7 @@ smb2_query_dir_first(const unsigned int xid, struct cifs_tcon *tcon,
+ 	rc = SMB2_query_directory(xid, tcon, fid->persistent_fid,
+ 				  fid->volatile_fid, 0, srch_inf);
+ 	if (rc) {
+-		cifs_dbg(VFS, "query directory failed\n");
++		cifs_dbg(FYI, "query directory failed rc=%d\n", rc);
+ 		SMB2_close(xid, tcon, fid->persistent_fid, fid->volatile_fid);
+ 	}
+ 	return rc;
+diff --git a/fs/exec.c b/fs/exec.c
+index 3a6de10d3891..02153068a694 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -206,8 +206,26 @@ static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
+ 
+ 	if (write) {
+ 		unsigned long size = bprm->vma->vm_end - bprm->vma->vm_start;
++		unsigned long ptr_size;
+ 		struct rlimit *rlim;
+ 
++		/*
++		 * Since the stack will hold pointers to the strings, we
++		 * must account for them as well.
++		 *
++		 * The size calculation is the entire vma while each arg page is
++		 * built, so each time we get here it's calculating how far it
++		 * is currently (rather than each call being just the newly
++		 * added size from the arg page).  As a result, we need to
++		 * always add the entire size of the pointers, so that on the
++		 * last call to get_arg_page() we'll actually have the entire
++		 * correct size.
++		 */
++		ptr_size = (bprm->argc + bprm->envc) * sizeof(void *);
++		if (ptr_size > ULONG_MAX - size)
++			goto fail;
++		size += ptr_size;
++
+ 		acct_arg_size(bprm, size / PAGE_SIZE);
+ 
+ 		/*
+@@ -225,13 +243,15 @@ static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
+ 		 *    to work from.
+ 		 */
+ 		rlim = current->signal->rlim;
+-		if (size > ACCESS_ONCE(rlim[RLIMIT_STACK].rlim_cur) / 4) {
+-			put_page(page);
+-			return NULL;
+-		}
++		if (size > READ_ONCE(rlim[RLIMIT_STACK].rlim_cur) / 4)
++			goto fail;
+ 	}
+ 
+ 	return page;
++
++fail:
++	put_page(page);
++	return NULL;
+ }
+ 
+ static void put_arg_page(struct page *page)
+diff --git a/include/linux/timekeeper_internal.h b/include/linux/timekeeper_internal.h
+index 25247220b4b7..f0f1793cfa49 100644
+--- a/include/linux/timekeeper_internal.h
++++ b/include/linux/timekeeper_internal.h
+@@ -29,7 +29,6 @@
+  */
+ struct tk_read_base {
+ 	struct clocksource	*clock;
+-	cycle_t			(*read)(struct clocksource *cs);
+ 	cycle_t			mask;
+ 	cycle_t			cycle_last;
+ 	u32			mult;
+diff --git a/kernel/signal.c b/kernel/signal.c
+index f3f1f7a972fd..b92a047ddc82 100644
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -503,7 +503,8 @@ int unhandled_signal(struct task_struct *tsk, int sig)
+ 	return !tsk->ptrace;
+ }
+ 
+-static void collect_signal(int sig, struct sigpending *list, siginfo_t *info)
++static void collect_signal(int sig, struct sigpending *list, siginfo_t *info,
++			   bool *resched_timer)
+ {
+ 	struct sigqueue *q, *first = NULL;
+ 
+@@ -525,6 +526,12 @@ static void collect_signal(int sig, struct sigpending *list, siginfo_t *info)
+ still_pending:
+ 		list_del_init(&first->list);
+ 		copy_siginfo(info, &first->info);
++
++		*resched_timer =
++			(first->flags & SIGQUEUE_PREALLOC) &&
++			(info->si_code == SI_TIMER) &&
++			(info->si_sys_private);
++
+ 		__sigqueue_free(first);
+ 	} else {
+ 		/*
+@@ -541,12 +548,12 @@ still_pending:
+ }
+ 
+ static int __dequeue_signal(struct sigpending *pending, sigset_t *mask,
+-			siginfo_t *info)
++			siginfo_t *info, bool *resched_timer)
+ {
+ 	int sig = next_signal(pending, mask);
+ 
+ 	if (sig)
+-		collect_signal(sig, pending, info);
++		collect_signal(sig, pending, info, resched_timer);
+ 	return sig;
+ }
+ 
+@@ -558,15 +565,16 @@ static int __dequeue_signal(struct sigpending *pending, sigset_t *mask,
+  */
+ int dequeue_signal(struct task_struct *tsk, sigset_t *mask, siginfo_t *info)
+ {
++	bool resched_timer = false;
+ 	int signr;
+ 
+ 	/* We only dequeue private signals from ourselves, we don't let
+ 	 * signalfd steal them
+ 	 */
+-	signr = __dequeue_signal(&tsk->pending, mask, info);
++	signr = __dequeue_signal(&tsk->pending, mask, info, &resched_timer);
+ 	if (!signr) {
+ 		signr = __dequeue_signal(&tsk->signal->shared_pending,
+-					 mask, info);
++					 mask, info, &resched_timer);
+ 		/*
+ 		 * itimer signal ?
+ 		 *
+@@ -611,7 +619,7 @@ int dequeue_signal(struct task_struct *tsk, sigset_t *mask, siginfo_t *info)
+ 		 */
+ 		current->jobctl |= JOBCTL_STOP_DEQUEUED;
+ 	}
+-	if ((info->si_code & __SI_MASK) == __SI_TIMER && info->si_sys_private) {
++	if (resched_timer) {
+ 		/*
+ 		 * Release the siglock to ensure proper locking order
+ 		 * of timer locks outside of siglocks.  Note, we leave
+diff --git a/kernel/time/timekeeping.c b/kernel/time/timekeeping.c
+index 738012d68117..6e4866834d26 100644
+--- a/kernel/time/timekeeping.c
++++ b/kernel/time/timekeeping.c
+@@ -116,6 +116,26 @@ static inline void tk_update_sleep_time(struct timekeeper *tk, ktime_t delta)
+ 	tk->offs_boot = ktime_add(tk->offs_boot, delta);
+ }
+ 
++/*
++ * tk_clock_read - atomic clocksource read() helper
++ *
++ * This helper is necessary to use in the read paths because, while the
++ * seqlock ensures we don't return a bad value while structures are updated,
++ * it doesn't protect from potential crashes. There is the possibility that
++ * the tkr's clocksource may change between the read reference, and the
++ * clock reference passed to the read function.  This can cause crashes if
++ * the wrong clocksource is passed to the wrong read function.
++ * This isn't necessary to use when holding the timekeeper_lock or doing
++ * a read of the fast-timekeeper tkrs (which is protected by its own locking
++ * and update logic).
++ */
++static inline u64 tk_clock_read(struct tk_read_base *tkr)
++{
++	struct clocksource *clock = READ_ONCE(tkr->clock);
++
++	return clock->read(clock);
++}
++
+ #ifdef CONFIG_DEBUG_TIMEKEEPING
+ #define WARNING_FREQ (HZ*300) /* 5 minute rate-limiting */
+ 
+@@ -173,7 +193,7 @@ static inline cycle_t timekeeping_get_delta(struct tk_read_base *tkr)
+ 	 */
+ 	do {
+ 		seq = read_seqcount_begin(&tk_core.seq);
+-		now = tkr->read(tkr->clock);
++		now = tk_clock_read(tkr);
+ 		last = tkr->cycle_last;
+ 		mask = tkr->mask;
+ 		max = tkr->clock->max_cycles;
+@@ -207,7 +227,7 @@ static inline cycle_t timekeeping_get_delta(struct tk_read_base *tkr)
+ 	cycle_t cycle_now, delta;
+ 
+ 	/* read clocksource */
+-	cycle_now = tkr->read(tkr->clock);
++	cycle_now = tk_clock_read(tkr);
+ 
+ 	/* calculate the delta since the last update_wall_time */
+ 	delta = clocksource_delta(cycle_now, tkr->cycle_last, tkr->mask);
+@@ -235,12 +255,10 @@ static void tk_setup_internals(struct timekeeper *tk, struct clocksource *clock)
+ 
+ 	old_clock = tk->tkr_mono.clock;
+ 	tk->tkr_mono.clock = clock;
+-	tk->tkr_mono.read = clock->read;
+ 	tk->tkr_mono.mask = clock->mask;
+-	tk->tkr_mono.cycle_last = tk->tkr_mono.read(clock);
++	tk->tkr_mono.cycle_last = tk_clock_read(&tk->tkr_mono);
+ 
+ 	tk->tkr_raw.clock = clock;
+-	tk->tkr_raw.read = clock->read;
+ 	tk->tkr_raw.mask = clock->mask;
+ 	tk->tkr_raw.cycle_last = tk->tkr_mono.cycle_last;
+ 
+@@ -404,7 +422,7 @@ static __always_inline u64 __ktime_get_fast_ns(struct tk_fast *tkf)
+ 
+ 		now += timekeeping_delta_to_ns(tkr,
+ 				clocksource_delta(
+-					tkr->read(tkr->clock),
++					tk_clock_read(tkr),
+ 					tkr->cycle_last,
+ 					tkr->mask));
+ 	} while (read_seqcount_retry(&tkf->seq, seq));
+@@ -432,6 +450,10 @@ static cycle_t dummy_clock_read(struct clocksource *cs)
+ 	return cycles_at_suspend;
+ }
+ 
++static struct clocksource dummy_clock = {
++	.read = dummy_clock_read,
++};
++
+ /**
+  * halt_fast_timekeeper - Prevent fast timekeeper from accessing clocksource.
+  * @tk: Timekeeper to snapshot.
+@@ -448,13 +470,13 @@ static void halt_fast_timekeeper(struct timekeeper *tk)
+ 	struct tk_read_base *tkr = &tk->tkr_mono;
+ 
+ 	memcpy(&tkr_dummy, tkr, sizeof(tkr_dummy));
+-	cycles_at_suspend = tkr->read(tkr->clock);
+-	tkr_dummy.read = dummy_clock_read;
++	cycles_at_suspend = tk_clock_read(tkr);
++	tkr_dummy.clock = &dummy_clock;
+ 	update_fast_timekeeper(&tkr_dummy, &tk_fast_mono);
+ 
+ 	tkr = &tk->tkr_raw;
+ 	memcpy(&tkr_dummy, tkr, sizeof(tkr_dummy));
+-	tkr_dummy.read = dummy_clock_read;
++	tkr_dummy.clock = &dummy_clock;
+ 	update_fast_timekeeper(&tkr_dummy, &tk_fast_raw);
+ }
+ 
+@@ -618,11 +640,10 @@ static void timekeeping_update(struct timekeeper *tk, unsigned int action)
+  */
+ static void timekeeping_forward_now(struct timekeeper *tk)
+ {
+-	struct clocksource *clock = tk->tkr_mono.clock;
+ 	cycle_t cycle_now, delta;
+ 	s64 nsec;
+ 
+-	cycle_now = tk->tkr_mono.read(clock);
++	cycle_now = tk_clock_read(&tk->tkr_mono);
+ 	delta = clocksource_delta(cycle_now, tk->tkr_mono.cycle_last, tk->tkr_mono.mask);
+ 	tk->tkr_mono.cycle_last = cycle_now;
+ 	tk->tkr_raw.cycle_last  = cycle_now;
+@@ -1405,7 +1426,7 @@ void timekeeping_resume(void)
+ 	 * The less preferred source will only be tried if there is no better
+ 	 * usable source. The rtc part is handled separately in rtc core code.
+ 	 */
+-	cycle_now = tk->tkr_mono.read(clock);
++	cycle_now = tk_clock_read(&tk->tkr_mono);
+ 	if ((clock->flags & CLOCK_SOURCE_SUSPEND_NONSTOP) &&
+ 		cycle_now > tk->tkr_mono.cycle_last) {
+ 		u64 num, max = ULLONG_MAX;
+@@ -1800,7 +1821,7 @@ void update_wall_time(void)
+ #ifdef CONFIG_ARCH_USES_GETTIMEOFFSET
+ 	offset = real_tk->cycle_interval;
+ #else
+-	offset = clocksource_delta(tk->tkr_mono.read(tk->tkr_mono.clock),
++	offset = clocksource_delta(tk_clock_read(&tk->tkr_mono),
+ 				   tk->tkr_mono.cycle_last, tk->tkr_mono.mask);
+ #endif
+ 
+diff --git a/lib/cmdline.c b/lib/cmdline.c
+index 8f13cf73c2ec..79069d7938ea 100644
+--- a/lib/cmdline.c
++++ b/lib/cmdline.c
+@@ -22,14 +22,14 @@
+  *	the values[M, M+1, ..., N] into the ints array in get_options.
+  */
+ 
+-static int get_range(char **str, int *pint)
++static int get_range(char **str, int *pint, int n)
+ {
+ 	int x, inc_counter, upper_range;
+ 
+ 	(*str)++;
+ 	upper_range = simple_strtol((*str), NULL, 0);
+ 	inc_counter = upper_range - *pint;
+-	for (x = *pint; x < upper_range; x++)
++	for (x = *pint; n && x < upper_range; x++, n--)
+ 		*pint++ = x;
+ 	return inc_counter;
+ }
+@@ -96,7 +96,7 @@ char *get_options(const char *str, int nints, int *ints)
+ 			break;
+ 		if (res == 3) {
+ 			int range_nums;
+-			range_nums = get_range((char **)&str, ints + i);
++			range_nums = get_range((char **)&str, ints + i, nints - i);
+ 			if (range_nums < 0)
+ 				break;
+ 			/*
+diff --git a/net/rxrpc/ar-key.c b/net/rxrpc/ar-key.c
+index da3cc09f683e..91d43ab3a961 100644
+--- a/net/rxrpc/ar-key.c
++++ b/net/rxrpc/ar-key.c
+@@ -215,7 +215,7 @@ static int rxrpc_krb5_decode_principal(struct krb5_principal *princ,
+ 				       unsigned int *_toklen)
+ {
+ 	const __be32 *xdr = *_xdr;
+-	unsigned int toklen = *_toklen, n_parts, loop, tmp;
++	unsigned int toklen = *_toklen, n_parts, loop, tmp, paddedlen;
+ 
+ 	/* there must be at least one name, and at least #names+1 length
+ 	 * words */
+@@ -245,16 +245,16 @@ static int rxrpc_krb5_decode_principal(struct krb5_principal *princ,
+ 		toklen -= 4;
+ 		if (tmp <= 0 || tmp > AFSTOKEN_STRING_MAX)
+ 			return -EINVAL;
+-		if (tmp > toklen)
++		paddedlen = (tmp + 3) & ~3;
++		if (paddedlen > toklen)
+ 			return -EINVAL;
+ 		princ->name_parts[loop] = kmalloc(tmp + 1, GFP_KERNEL);
+ 		if (!princ->name_parts[loop])
+ 			return -ENOMEM;
+ 		memcpy(princ->name_parts[loop], xdr, tmp);
+ 		princ->name_parts[loop][tmp] = 0;
+-		tmp = (tmp + 3) & ~3;
+-		toklen -= tmp;
+-		xdr += tmp >> 2;
++		toklen -= paddedlen;
++		xdr += paddedlen >> 2;
+ 	}
+ 
+ 	if (toklen < 4)
+@@ -263,16 +263,16 @@ static int rxrpc_krb5_decode_principal(struct krb5_principal *princ,
+ 	toklen -= 4;
+ 	if (tmp <= 0 || tmp > AFSTOKEN_K5_REALM_MAX)
+ 		return -EINVAL;
+-	if (tmp > toklen)
++	paddedlen = (tmp + 3) & ~3;
++	if (paddedlen > toklen)
+ 		return -EINVAL;
+ 	princ->realm = kmalloc(tmp + 1, GFP_KERNEL);
+ 	if (!princ->realm)
+ 		return -ENOMEM;
+ 	memcpy(princ->realm, xdr, tmp);
+ 	princ->realm[tmp] = 0;
+-	tmp = (tmp + 3) & ~3;
+-	toklen -= tmp;
+-	xdr += tmp >> 2;
++	toklen -= paddedlen;
++	xdr += paddedlen >> 2;
+ 
+ 	_debug("%s/...@%s", princ->name_parts[0], princ->realm);
+ 
+@@ -291,7 +291,7 @@ static int rxrpc_krb5_decode_tagged_data(struct krb5_tagged_data *td,
+ 					 unsigned int *_toklen)
+ {
+ 	const __be32 *xdr = *_xdr;
+-	unsigned int toklen = *_toklen, len;
++	unsigned int toklen = *_toklen, len, paddedlen;
+ 
+ 	/* there must be at least one tag and one length word */
+ 	if (toklen <= 8)
+@@ -305,15 +305,17 @@ static int rxrpc_krb5_decode_tagged_data(struct krb5_tagged_data *td,
+ 	toklen -= 8;
+ 	if (len > max_data_size)
+ 		return -EINVAL;
++	paddedlen = (len + 3) & ~3;
++	if (paddedlen > toklen)
++		return -EINVAL;
+ 	td->data_len = len;
+ 
+ 	if (len > 0) {
+ 		td->data = kmemdup(xdr, len, GFP_KERNEL);
+ 		if (!td->data)
+ 			return -ENOMEM;
+-		len = (len + 3) & ~3;
+-		toklen -= len;
+-		xdr += len >> 2;
++		toklen -= paddedlen;
++		xdr += paddedlen >> 2;
+ 	}
+ 
+ 	_debug("tag %x len %x", td->tag, td->data_len);
+@@ -385,7 +387,7 @@ static int rxrpc_krb5_decode_ticket(u8 **_ticket, u16 *_tktlen,
+ 				    const __be32 **_xdr, unsigned int *_toklen)
+ {
+ 	const __be32 *xdr = *_xdr;
+-	unsigned int toklen = *_toklen, len;
++	unsigned int toklen = *_toklen, len, paddedlen;
+ 
+ 	/* there must be at least one length word */
+ 	if (toklen <= 4)
+@@ -397,6 +399,9 @@ static int rxrpc_krb5_decode_ticket(u8 **_ticket, u16 *_tktlen,
+ 	toklen -= 4;
+ 	if (len > AFSTOKEN_K5_TIX_MAX)
+ 		return -EINVAL;
++	paddedlen = (len + 3) & ~3;
++	if (paddedlen > toklen)
++		return -EINVAL;
+ 	*_tktlen = len;
+ 
+ 	_debug("ticket len %u", len);
+@@ -405,9 +410,8 @@ static int rxrpc_krb5_decode_ticket(u8 **_ticket, u16 *_tktlen,
+ 		*_ticket = kmemdup(xdr, len, GFP_KERNEL);
+ 		if (!*_ticket)
+ 			return -ENOMEM;
+-		len = (len + 3) & ~3;
+-		toklen -= len;
+-		xdr += len >> 2;
++		toklen -= paddedlen;
++		xdr += paddedlen >> 2;
+ 	}
+ 
+ 	*_xdr = xdr;
+@@ -550,7 +554,7 @@ static int rxrpc_preparse_xdr(struct key_preparsed_payload *prep)
+ {
+ 	const __be32 *xdr = prep->data, *token;
+ 	const char *cp;
+-	unsigned int len, tmp, loop, ntoken, toklen, sec_ix;
++	unsigned int len, paddedlen, loop, ntoken, toklen, sec_ix;
+ 	size_t datalen = prep->datalen;
+ 	int ret;
+ 
+@@ -576,22 +580,21 @@ static int rxrpc_preparse_xdr(struct key_preparsed_payload *prep)
+ 	if (len < 1 || len > AFSTOKEN_CELL_MAX)
+ 		goto not_xdr;
+ 	datalen -= 4;
+-	tmp = (len + 3) & ~3;
+-	if (tmp > datalen)
++	paddedlen = (len + 3) & ~3;
++	if (paddedlen > datalen)
+ 		goto not_xdr;
+ 
+ 	cp = (const char *) xdr;
+ 	for (loop = 0; loop < len; loop++)
+ 		if (!isprint(cp[loop]))
+ 			goto not_xdr;
+-	if (len < tmp)
+-		for (; loop < tmp; loop++)
+-			if (cp[loop])
+-				goto not_xdr;
++	for (; loop < paddedlen; loop++)
++		if (cp[loop])
++			goto not_xdr;
+ 	_debug("cellname: [%u/%u] '%*.*s'",
+-	       len, tmp, len, len, (const char *) xdr);
+-	datalen -= tmp;
+-	xdr += tmp >> 2;
++	       len, paddedlen, len, len, (const char *) xdr);
++	datalen -= paddedlen;
++	xdr += paddedlen >> 2;
+ 
+ 	/* get the token count */
+ 	if (datalen < 12)
+@@ -612,10 +615,11 @@ static int rxrpc_preparse_xdr(struct key_preparsed_payload *prep)
+ 		sec_ix = ntohl(*xdr);
+ 		datalen -= 4;
+ 		_debug("token: [%x/%zx] %x", toklen, datalen, sec_ix);
+-		if (toklen < 20 || toklen > datalen)
++		paddedlen = (toklen + 3) & ~3;
++		if (toklen < 20 || toklen > datalen || paddedlen > datalen)
+ 			goto not_xdr;
+-		datalen -= (toklen + 3) & ~3;
+-		xdr += (toklen + 3) >> 2;
++		datalen -= paddedlen;
++		xdr += paddedlen >> 2;
+ 
+ 	} while (--loop > 0);
+ 

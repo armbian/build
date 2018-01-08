@@ -513,50 +513,39 @@ prepare_host()
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-tools ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross \
-	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev \
-	locales ncurses-base pixz dialog"
+	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev aptly \
+	locales ncurses-base pixz dialog systemd-container udev distcc lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5"
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
 
-	# ARMBIAN_UNSUPPORTED_OVERRIDE overrides the check for a supported host system
-	# Keep in mind, this is NOT SUPPORTED at all. Not at all, don't ever ask about errors encountered with this enabled.
-	# Since you got here, i assume you are experienced enough to read error/warning messages and solve them yourself
-	if [[ -z $codename || "trusty xenial" != *"$codename"* ]]; then
-
-		if [[ -z $ARMBIAN_UNSUPPORTED_OVERRIDE ]]; then
-			exit_with_error "It seems you ignore documentation and run an unsupported build system: ${codename:-(unknown)}"
+	# Ubuntu Xenial x86_64 is the only supported host OS release
+	# Using Docker/VirtualBox/Vagrant is the only supported way to run the build script on other Linux distributions
+	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
+	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
+	if [[ -z $codename || "xenial" != *"$codename"* ]]; then
+		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
+			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
+			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
 		else
-			display_alert "You are running on an unsupported system: ${codename:-(unknown)}. Do not report any errors, warnings or dragons encountered beyond this point."
+			exit_with_error "It seems you ignore documentation and run an unsupported build system: ${codename:-(unknown)}"
 		fi
 	fi
-
-	if [[ $codename == trusty ]]; then
-		display_alert "Note: Ubuntu Trusty environment support will be removed before the end of 2017" "" "wrn"
-		display_alert "Please upgrade your compilation environment to Ubuntu Xenial" "" "wrn"
-		display_alert "Press <Enter> to continue"
-		read
-	fi
-
-	if [[ $codename == xenial ]]; then
-		hostdeps="$hostdeps systemd-container udev distcc \
-			lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 aptly"
-		grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
-		if systemd-detect-virt -q -c; then
-			display_alert "Running in container" "$(systemd-detect-virt)" "info"
-			# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
-			if [[ $NO_APT_CACHER != no ]]; then
-				display_alert "apt-cacher is disabled in containers, set NO_APT_CACHER=no to override" "" "wrn"
-				NO_APT_CACHER=yes
-			fi
-			CONTAINER_COMPAT=yes
-			# trying to use nested containers is not a good idea, so don't permit EXTERNAL_NEW=compile
-			if [[ $EXTERNAL_NEW == compile ]]; then
-				display_alert "EXTERNAL_NEW=compile is not available when running in container, setting to prebuilt" "" "wrn"
-				EXTERNAL_NEW=prebuilt
-			fi
-			SYNC_CLOCK=no
+	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
+	if systemd-detect-virt -q -c; then
+		display_alert "Running in container" "$(systemd-detect-virt)" "info"
+		# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
+		if [[ $NO_APT_CACHER != no ]]; then
+			display_alert "apt-cacher is disabled in containers, set NO_APT_CACHER=no to override" "" "wrn"
+			NO_APT_CACHER=yes
 		fi
+		CONTAINER_COMPAT=yes
+		# trying to use nested containers is not a good idea, so don't permit EXTERNAL_NEW=compile
+		if [[ $EXTERNAL_NEW == compile ]]; then
+			display_alert "EXTERNAL_NEW=compile is not available when running in container, setting to prebuilt" "" "wrn"
+			EXTERNAL_NEW=prebuilt
+		fi
+		SYNC_CLOCK=no
 	fi
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
@@ -590,7 +579,7 @@ prepare_host()
 		update-ccache-symlinks
 	fi
 
-	if [[ $codename == xenial && $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
+	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
 		apt install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
 	fi
 
@@ -658,7 +647,7 @@ prepare_host()
 		echo 'http://www.armbian.com/using-armbian-tools/' >> $SRC/userpatches/README
 	fi
 
-	# check free space (basic), doesn't work on Trusty
+	# check free space (basic)
 	local freespace=$(findmnt --target $SRC -n -o AVAIL -b 2>/dev/null) # in bytes
 	if [[ -n $freespace && $(( $freespace / 1073741824 )) -lt 10 ]]; then
 		display_alert "Low free space left" "$(( $freespace / 1073741824 )) GiB" "wrn"
