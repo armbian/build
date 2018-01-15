@@ -531,6 +531,11 @@ prepare_host()
 			exit_with_error "It seems you ignore documentation and run an unsupported build system: ${codename:-(unknown)}"
 		fi
 	fi
+
+	if grep -qE "(Microsoft|WSL)" /proc/version; then
+		exit_with_error "Windows subsystem for Linux is not a supported build environment"
+	fi
+
 	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
 	if systemd-detect-virt -q -c; then
 		display_alert "Running in container" "$(systemd-detect-virt)" "info"
