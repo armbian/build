@@ -8,7 +8,7 @@ MODULES_DEV=""
 #
 KERNEL_TARGET="next,dev"
 CLI_TARGET="stretch,xenial:next"
-DESKTOP_TARGET="xenial:default,next"
+DESKTOP_TARGET="xenial:next"
 #
 CLI_BETA_TARGET=""
 DESKTOP_BETA_TARGET=""
