@@ -14,7 +14,7 @@ CLI_TARGET=""
 
 CLI_BETA_TARGET=""
 #
-RECOMMENDED=""
+RECOMMENDED="Ubuntu_xenial_next_nightly:75"
 #
 BOARDRATING=""
 CHIP="http://docs.armbian.com/Hardware_Allwinner-H3/"
