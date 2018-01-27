@@ -204,12 +204,16 @@ Version: $(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
 Host OS: $(lsb_release -sc)
 Host arch: $(dpkg --print-architecture)
 Host system: $(uname -a)
+Virtualization type: $(systemd-detect-virt)
 
 ## Build script directories
+Build directory is located on:
+$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T $SRC)
+
 Build directory permissions:
 $(getfacl -p $SRC)
 
-Temp directory premissions:
+Temp directory permissions:
 $(getfacl -p $SRC/.tmp)
 
 ## BUILD CONFIGURATION
