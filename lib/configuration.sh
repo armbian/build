@@ -197,10 +197,12 @@ fi
 cat <<-EOF >> $DEST/debug/output.log
 ## BUILD SCRIPT ENVIRONMENT
 
-Version: $(cd $SRC; git rev-parse @)
+Repository: $(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
+Version: $(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
+
 Host OS: $(lsb_release -sc)
 Host arch: $(dpkg --print-architecture)
-Dirty: $(git diff-index --quiet HEAD -- && echo No || echo Yes)
+Host system: $(uname -a)
 
 ## BUILD CONFIGURATION
 
