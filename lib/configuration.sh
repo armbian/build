@@ -195,6 +195,7 @@ fi
 
 # debug
 cat <<-EOF >> $DEST/debug/output.log
+
 ## BUILD SCRIPT ENVIRONMENT
 
 Repository: $(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
@@ -203,6 +204,13 @@ Version: $(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
 Host OS: $(lsb_release -sc)
 Host arch: $(dpkg --print-architecture)
 Host system: $(uname -a)
+
+## Build script directories
+Build directory permissions:
+$(getfacl -p $SRC)
+
+Temp directory premissions:
+$(getfacl -p $SRC/.tmp)
 
 ## BUILD CONFIGURATION
 
