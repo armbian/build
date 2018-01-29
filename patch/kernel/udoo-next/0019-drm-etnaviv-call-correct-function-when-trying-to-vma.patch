@@ -1,0 +1,124 @@
+From a0a5ab3e99b8e617221caabf074dcabd1659b9d8 Mon Sep 17 00:00:00 2001
+From: Lucas Stach <l.stach@pengutronix.de>
+Date: Mon, 25 Jan 2016 15:47:28 +0100
+Subject: [PATCH] drm/etnaviv: call correct function when trying to vmap a
+ DMABUF
+
+When trying to get the vmap address of an imported buffer, we must
+call into the appropriate helper function, to allow the exporter to
+establish the vmap, instead of trying to vmap the buffer on our own.
+
+Add an indirection through etnaviv_gem_ops to allow the correct
+implementation to be called.
+
+Signed-off-by: Lucas Stach <l.stach@pengutronix.de>
+---
+ drivers/gpu/drm/etnaviv/etnaviv_gem.c       | 36 ++++++++++++++++++++---------
+ drivers/gpu/drm/etnaviv/etnaviv_gem.h       |  1 +
+ drivers/gpu/drm/etnaviv/etnaviv_gem_prime.c |  8 +++++++
+ 3 files changed, 34 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/gpu/drm/etnaviv/etnaviv_gem.c b/drivers/gpu/drm/etnaviv/etnaviv_gem.c
+index 1da3d48..4b519e4 100644
+--- a/drivers/gpu/drm/etnaviv/etnaviv_gem.c
++++ b/drivers/gpu/drm/etnaviv/etnaviv_gem.c
+@@ -357,23 +357,35 @@ void *etnaviv_gem_vmap(struct drm_gem_object *obj)
+ {
+ 	struct etnaviv_gem_object *etnaviv_obj = to_etnaviv_bo(obj);
+ 
+-	mutex_lock(&etnaviv_obj->lock);
+-	if (!etnaviv_obj->vaddr) {
+-		struct page **pages = etnaviv_gem_get_pages(etnaviv_obj);
+-
+-		if (IS_ERR(pages)) {
+-			mutex_unlock(&etnaviv_obj->lock);
+-			return NULL;
+-		}
++	if (etnaviv_obj->vaddr)
++		return etnaviv_obj->vaddr;
+ 
+-		etnaviv_obj->vaddr = vmap(pages, obj->size >> PAGE_SHIFT,
+-				VM_MAP, pgprot_writecombine(PAGE_KERNEL));
+-	}
++	mutex_lock(&etnaviv_obj->lock);
++	/*
++	 * Need to check again, as we might have raced with another thread
++	 * while waiting for the mutex.
++	 */
++	if (!etnaviv_obj->vaddr)
++		etnaviv_obj->vaddr = etnaviv_obj->ops->vmap(etnaviv_obj);
+ 	mutex_unlock(&etnaviv_obj->lock);
+ 
+ 	return etnaviv_obj->vaddr;
+ }
+ 
++static void *etnaviv_gem_vmap_impl(struct etnaviv_gem_object *obj)
++{
++	struct page **pages;
++
++	lockdep_assert_held(&obj->lock);
++
++	pages = etnaviv_gem_get_pages(obj);
++	if (IS_ERR(pages))
++		return NULL;
++
++	return vmap(pages, obj->base.size >> PAGE_SHIFT,
++			VM_MAP, pgprot_writecombine(PAGE_KERNEL));
++}
++
+ static inline enum dma_data_direction etnaviv_op_to_dma_dir(u32 op)
+ {
+ 	if (op & ETNA_PREP_READ)
+@@ -524,6 +536,7 @@ static void etnaviv_gem_shmem_release(struct etnaviv_gem_object *etnaviv_obj)
+ static const struct etnaviv_gem_ops etnaviv_gem_shmem_ops = {
+ 	.get_pages = etnaviv_gem_shmem_get_pages,
+ 	.release = etnaviv_gem_shmem_release,
++	.vmap = etnaviv_gem_vmap_impl,
+ };
+ 
+ void etnaviv_gem_free_object(struct drm_gem_object *obj)
+@@ -868,6 +881,7 @@ static void etnaviv_gem_userptr_release(struct etnaviv_gem_object *etnaviv_obj)
+ static const struct etnaviv_gem_ops etnaviv_gem_userptr_ops = {
+ 	.get_pages = etnaviv_gem_userptr_get_pages,
+ 	.release = etnaviv_gem_userptr_release,
++	.vmap = etnaviv_gem_vmap_impl,
+ };
+ 
+ int etnaviv_gem_new_userptr(struct drm_device *dev, struct drm_file *file,
+diff --git a/drivers/gpu/drm/etnaviv/etnaviv_gem.h b/drivers/gpu/drm/etnaviv/etnaviv_gem.h
+index a300b4b..ab5df81 100644
+--- a/drivers/gpu/drm/etnaviv/etnaviv_gem.h
++++ b/drivers/gpu/drm/etnaviv/etnaviv_gem.h
+@@ -78,6 +78,7 @@ struct etnaviv_gem_object *to_etnaviv_bo(struct drm_gem_object *obj)
+ struct etnaviv_gem_ops {
+ 	int (*get_pages)(struct etnaviv_gem_object *);
+ 	void (*release)(struct etnaviv_gem_object *);
++	void *(*vmap)(struct etnaviv_gem_object *);
+ };
+ 
+ static inline bool is_active(struct etnaviv_gem_object *etnaviv_obj)
+diff --git a/drivers/gpu/drm/etnaviv/etnaviv_gem_prime.c b/drivers/gpu/drm/etnaviv/etnaviv_gem_prime.c
+index 9c054b6..4e67395 100644
+--- a/drivers/gpu/drm/etnaviv/etnaviv_gem_prime.c
++++ b/drivers/gpu/drm/etnaviv/etnaviv_gem_prime.c
+@@ -77,9 +77,17 @@ static void etnaviv_gem_prime_release(struct etnaviv_gem_object *etnaviv_obj)
+ 	drm_prime_gem_destroy(&etnaviv_obj->base, etnaviv_obj->sgt);
+ }
+ 
++static void *etnaviv_gem_prime_vmap_impl(struct etnaviv_gem_object *etnaviv_obj)
++{
++	lockdep_assert_held(&etnaviv_obj->lock);
++
++	return dma_buf_vmap(etnaviv_obj->base.import_attach->dmabuf);
++}
++
+ static const struct etnaviv_gem_ops etnaviv_gem_prime_ops = {
+ 	/* .get_pages should never be called */
+ 	.release = etnaviv_gem_prime_release,
++	.vmap = etnaviv_gem_prime_vmap_impl,
+ };
+ 
+ struct drm_gem_object *etnaviv_gem_prime_import_sg_table(struct drm_device *dev,
+-- 
+2.7.0.rc3
+
