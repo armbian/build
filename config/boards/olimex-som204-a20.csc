@@ -4,7 +4,7 @@ BOARDFAMILY="sun7i"
 BOOTCONFIG="A20-Olimex-SOM204-EVB-eMMC_defconfig"
 MODULES=""
 MODULES_NEXT=""
-MODULES_DEV="g_serial r8723bs"
+MODULES_DEV="g_serial r8723bs gpio-ir-tx"
 #
 KERNEL_TARGET="dev"
 CLI_TARGET="stretch"
