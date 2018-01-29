@@ -1,14 +1,14 @@
 # A20 dual core 1Gb SoC dual ethernet
 BOARD_NAME="SOM204-A20"
 BOARDFAMILY="sun7i"
-BOOTCONFIG="A20-OLinuXino-Lime2-eMMC_defconfig"
+BOOTCONFIG="A20-Olimex-SOM204-EVB-eMMC_defconfig"
 MODULES=""
 MODULES_NEXT=""
-MODULES_DEV=""
+MODULES_DEV="g_serial"
 #
-KERNEL_TARGET="next,dev"
-CLI_TARGET="stretch,xenial:next"
-DESKTOP_TARGET="xenial:next"
+KERNEL_TARGET="dev"
+CLI_TARGET="stretch"
+DESKTOP_TARGET=""
 #
 CLI_BETA_TARGET=""
 DESKTOP_BETA_TARGET=""
