@@ -63,8 +63,8 @@ install_desktop ()
 	# Enable network manager
 	if [[ -f $SDCARD/etc/NetworkManager/NetworkManager.conf ]]; then
 		sed "s/managed=\(.*\)/managed=true/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
-		# Disable dns management withing NM
-		sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
+		# Disable DNS management withing NM for !Stretch
+		[[ $RELEASE != stretch ]] && sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
 		printf '[keyfile]\nunmanaged-devices=interface-name:p2p0\n' >> $SDCARD/etc/NetworkManager/NetworkManager.conf
 	fi
 
