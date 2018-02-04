@@ -22,12 +22,12 @@ family_tweaks_s()
 	cp -R $SRC/packages/bsp/helios4/90-helios4-hwmon.rules $SDCARD/etc/udev/rules.d/
 	case $BRANCH in
 	default)
-		cp -R $SRC/packages/bsp/helios4/fancontrol_pwm-fan-LK4.4.conf $SDCARD/etc/fancontrol
+		cp -R $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-default.conf $SDCARD/etc/fancontrol
 		;;
 
 	next)
-		cp -R $SRC/packages/bsp/helios4/fancontrol_pwm-fan.conf $SDCARD/etc/fancontrol
-		patch $SDCARD/usr/sbin/fancontrol < $SRC/packages/bsp/helios4/fancontrol.patch
+		cp -R $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-next.conf $SDCARD/etc/fancontrol
+		#patch $SDCARD/usr/sbin/fancontrol < $SRC/packages/bsp/helios4/fancontrol.patch
 		;;
 	esac
 }
