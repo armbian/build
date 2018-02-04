@@ -1,0 +1,1016 @@
+diff --git a/Makefile b/Makefile
+index ec52973043f6..17708f5dc169 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 63
++SUBLEVEL = 64
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/arm/kvm/mmu.c b/arch/arm/kvm/mmu.c
+index f91ee2f27b41..01cf10556081 100644
+--- a/arch/arm/kvm/mmu.c
++++ b/arch/arm/kvm/mmu.c
+@@ -300,6 +300,14 @@ static void unmap_range(struct kvm *kvm, pgd_t *pgdp,
+ 		next = kvm_pgd_addr_end(addr, end);
+ 		if (!pgd_none(*pgd))
+ 			unmap_puds(kvm, pgd, addr, next);
++		/*
++		 * If we are dealing with a large range in
++		 * stage2 table, release the kvm->mmu_lock
++		 * to prevent starvation and lockup detector
++		 * warnings.
++		 */
++		if (kvm && (next != end))
++			cond_resched_lock(&kvm->mmu_lock);
+ 	} while (pgd++, addr = next, addr != end);
+ }
+ 
+@@ -738,6 +746,7 @@ int kvm_alloc_stage2_pgd(struct kvm *kvm)
+  */
+ static void unmap_stage2_range(struct kvm *kvm, phys_addr_t start, u64 size)
+ {
++	assert_spin_locked(&kvm->mmu_lock);
+ 	unmap_range(kvm, kvm->arch.pgd, start, size);
+ }
+ 
+@@ -824,7 +833,10 @@ void kvm_free_stage2_pgd(struct kvm *kvm)
+ 	if (kvm->arch.pgd == NULL)
+ 		return;
+ 
++	spin_lock(&kvm->mmu_lock);
+ 	unmap_stage2_range(kvm, 0, KVM_PHYS_SIZE);
++	spin_unlock(&kvm->mmu_lock);
++
+ 	kvm_free_hwpgd(kvm_get_hwpgd(kvm));
+ 	if (KVM_PREALLOC_LEVEL > 0)
+ 		kfree(kvm->arch.pgd);
+diff --git a/arch/powerpc/kernel/entry_64.S b/arch/powerpc/kernel/entry_64.S
+index edba294620db..f6fd0332c3a2 100644
+--- a/arch/powerpc/kernel/entry_64.S
++++ b/arch/powerpc/kernel/entry_64.S
+@@ -716,7 +716,7 @@ resume_kernel:
+ 
+ 	addi	r8,r1,INT_FRAME_SIZE	/* Get the kprobed function entry */
+ 
+-	lwz	r3,GPR1(r1)
++	ld	r3,GPR1(r1)
+ 	subi	r3,r3,INT_FRAME_SIZE	/* dst: Allocate a trampoline exception frame */
+ 	mr	r4,r1			/* src:  current exception frame */
+ 	mr	r1,r3			/* Reroute the trampoline frame to r1 */
+@@ -730,8 +730,8 @@ resume_kernel:
+ 	addi	r6,r6,8
+ 	bdnz	2b
+ 
+-	/* Do real store operation to complete stwu */
+-	lwz	r5,GPR1(r1)
++	/* Do real store operation to complete stdu */
++	ld	r5,GPR1(r1)
+ 	std	r8,0(r5)
+ 
+ 	/* Clear _TIF_EMULATE_STACK_STORE flag */
+diff --git a/arch/s390/include/asm/pgtable.h b/arch/s390/include/asm/pgtable.h
+index 024f85f947ae..e2c0e4eab037 100644
+--- a/arch/s390/include/asm/pgtable.h
++++ b/arch/s390/include/asm/pgtable.h
+@@ -829,6 +829,8 @@ static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
+ {
+ 	pgste_t pgste;
+ 
++	if (pte_present(entry))
++		pte_val(entry) &= ~_PAGE_UNUSED;
+ 	if (mm_has_pgste(mm)) {
+ 		pgste = pgste_get_lock(ptep);
+ 		pgste_val(pgste) &= ~_PGSTE_GPS_ZERO;
+diff --git a/arch/x86/include/asm/pmem.h b/arch/x86/include/asm/pmem.h
+index d8ce3ec816ab..bd8ce6bcdfc9 100644
+--- a/arch/x86/include/asm/pmem.h
++++ b/arch/x86/include/asm/pmem.h
+@@ -72,8 +72,8 @@ static inline void arch_wmb_pmem(void)
+  * @size:	number of bytes to write back
+  *
+  * Write back a cache range using the CLWB (cache line write back)
+- * instruction.  This function requires explicit ordering with an
+- * arch_wmb_pmem() call.  This API is internal to the x86 PMEM implementation.
++ * instruction. Note that @size is internally rounded up to be cache
++ * line size aligned.
+  */
+ static inline void __arch_wb_cache_pmem(void *vaddr, size_t size)
+ {
+@@ -87,15 +87,6 @@ static inline void __arch_wb_cache_pmem(void *vaddr, size_t size)
+ 		clwb(p);
+ }
+ 
+-/*
+- * copy_from_iter_nocache() on x86 only uses non-temporal stores for iovec
+- * iterators, so for other types (bvec & kvec) we must do a cache write-back.
+- */
+-static inline bool __iter_needs_pmem_wb(struct iov_iter *i)
+-{
+-	return iter_is_iovec(i) == false;
+-}
+-
+ /**
+  * arch_copy_from_iter_pmem - copy data from an iterator to PMEM
+  * @addr:	PMEM destination address
+@@ -114,8 +105,36 @@ static inline size_t arch_copy_from_iter_pmem(void __pmem *addr, size_t bytes,
+ 	/* TODO: skip the write-back by always using non-temporal stores */
+ 	len = copy_from_iter_nocache(vaddr, bytes, i);
+ 
+-	if (__iter_needs_pmem_wb(i))
+-		__arch_wb_cache_pmem(vaddr, bytes);
++	/*
++	 * In the iovec case on x86_64 copy_from_iter_nocache() uses
++	 * non-temporal stores for the bulk of the transfer, but we need
++	 * to manually flush if the transfer is unaligned. A cached
++	 * memory copy is used when destination or size is not naturally
++	 * aligned. That is:
++	 *   - Require 8-byte alignment when size is 8 bytes or larger.
++	 *   - Require 4-byte alignment when size is 4 bytes.
++	 *
++	 * In the non-iovec case the entire destination needs to be
++	 * flushed.
++	 */
++	if (iter_is_iovec(i)) {
++		unsigned long flushed, dest = (unsigned long) addr;
++
++		if (bytes < 8) {
++			if (!IS_ALIGNED(dest, 4) || (bytes != 4))
++				__arch_wb_cache_pmem(addr, 1);
++		} else {
++			if (!IS_ALIGNED(dest, 8)) {
++				dest = ALIGN(dest, boot_cpu_data.x86_clflush_size);
++				__arch_wb_cache_pmem(addr, 1);
++			}
++
++			flushed = dest - (unsigned long) addr;
++			if (bytes > flushed && !IS_ALIGNED(bytes - flushed, 8))
++				__arch_wb_cache_pmem(addr + bytes - 1, 1);
++		}
++	} else
++		__arch_wb_cache_pmem(addr, bytes);
+ 
+ 	return len;
+ }
+diff --git a/arch/x86/kernel/cpu/mcheck/mce_amd.c b/arch/x86/kernel/cpu/mcheck/mce_amd.c
+index e99b15077e94..62aca448726a 100644
+--- a/arch/x86/kernel/cpu/mcheck/mce_amd.c
++++ b/arch/x86/kernel/cpu/mcheck/mce_amd.c
+@@ -53,7 +53,7 @@ static const char * const th_names[] = {
+ 	"load_store",
+ 	"insn_fetch",
+ 	"combined_unit",
+-	"",
++	"decode_unit",
+ 	"northbridge",
+ 	"execution_unit",
+ };
+diff --git a/block/genhd.c b/block/genhd.c
+index a5bed6bc869d..3032453a89e6 100644
+--- a/block/genhd.c
++++ b/block/genhd.c
+@@ -664,7 +664,6 @@ void del_gendisk(struct gendisk *disk)
+ 
+ 	kobject_put(disk->part0.holder_dir);
+ 	kobject_put(disk->slave_dir);
+-	disk->driverfs_dev = NULL;
+ 	if (!sysfs_deprecated)
+ 		sysfs_remove_link(block_depr, dev_name(disk_to_dev(disk)));
+ 	pm_runtime_set_memalloc_noio(disk_to_dev(disk), false);
+diff --git a/drivers/acpi/power.c b/drivers/acpi/power.c
+index fcd4ce6f78d5..1c2b846c5776 100644
+--- a/drivers/acpi/power.c
++++ b/drivers/acpi/power.c
+@@ -200,6 +200,7 @@ static int acpi_power_get_list_state(struct list_head *list, int *state)
+ 		return -EINVAL;
+ 
+ 	/* The state of the list is 'on' IFF all resources are 'on'. */
++	cur_state = 0;
+ 	list_for_each_entry(entry, list, node) {
+ 		struct acpi_power_resource *resource = entry->resource;
+ 		acpi_handle handle = resource->device.handle;
+diff --git a/drivers/hv/channel.c b/drivers/hv/channel.c
+index 1ef37c727572..d037454fe7b8 100644
+--- a/drivers/hv/channel.c
++++ b/drivers/hv/channel.c
+@@ -73,7 +73,6 @@ int vmbus_open(struct vmbus_channel *newchannel, u32 send_ringbuffer_size,
+ 	void *in, *out;
+ 	unsigned long flags;
+ 	int ret, err = 0;
+-	unsigned long t;
+ 	struct page *page;
+ 
+ 	spin_lock_irqsave(&newchannel->lock, flags);
+@@ -183,11 +182,7 @@ int vmbus_open(struct vmbus_channel *newchannel, u32 send_ringbuffer_size,
+ 		goto error1;
+ 	}
+ 
+-	t = wait_for_completion_timeout(&open_info->waitevent, 5*HZ);
+-	if (t == 0) {
+-		err = -ETIMEDOUT;
+-		goto error1;
+-	}
++	wait_for_completion(&open_info->waitevent);
+ 
+ 	spin_lock_irqsave(&vmbus_connection.channelmsg_lock, flags);
+ 	list_del(&open_info->msglistentry);
+@@ -375,7 +370,7 @@ int vmbus_establish_gpadl(struct vmbus_channel *channel, void *kbuffer,
+ 	struct vmbus_channel_gpadl_header *gpadlmsg;
+ 	struct vmbus_channel_gpadl_body *gpadl_body;
+ 	struct vmbus_channel_msginfo *msginfo = NULL;
+-	struct vmbus_channel_msginfo *submsginfo;
++	struct vmbus_channel_msginfo *submsginfo, *tmp;
+ 	u32 msgcount;
+ 	struct list_head *curr;
+ 	u32 next_gpadl_handle;
+@@ -437,6 +432,13 @@ cleanup:
+ 	list_del(&msginfo->msglistentry);
+ 	spin_unlock_irqrestore(&vmbus_connection.channelmsg_lock, flags);
+ 
++	if (msgcount > 1) {
++		list_for_each_entry_safe(submsginfo, tmp, &msginfo->submsglist,
++			 msglistentry) {
++			kfree(submsginfo);
++		}
++	}
++
+ 	kfree(msginfo);
+ 	return ret;
+ }
+diff --git a/drivers/hv/connection.c b/drivers/hv/connection.c
+index 4fc2e8836e60..2bbc53025549 100644
+--- a/drivers/hv/connection.c
++++ b/drivers/hv/connection.c
+@@ -429,7 +429,7 @@ int vmbus_post_msg(void *buffer, size_t buflen)
+ 	union hv_connection_id conn_id;
+ 	int ret = 0;
+ 	int retries = 0;
+-	u32 msec = 1;
++	u32 usec = 1;
+ 
+ 	conn_id.asu32 = 0;
+ 	conn_id.u.id = VMBUS_MESSAGE_CONNECTION_ID;
+@@ -462,9 +462,9 @@ int vmbus_post_msg(void *buffer, size_t buflen)
+ 		}
+ 
+ 		retries++;
+-		msleep(msec);
+-		if (msec < 2048)
+-			msec *= 2;
++		udelay(usec);
++		if (usec < 2048)
++			usec *= 2;
+ 	}
+ 	return ret;
+ }
+diff --git a/drivers/hv/hv.c b/drivers/hv/hv.c
+index ddbf7e7e0d98..8ce1f2e22912 100644
+--- a/drivers/hv/hv.c
++++ b/drivers/hv/hv.c
+@@ -305,9 +305,10 @@ void hv_cleanup(bool crash)
+ 
+ 		hypercall_msr.as_uint64 = 0;
+ 		wrmsrl(HV_X64_MSR_REFERENCE_TSC, hypercall_msr.as_uint64);
+-		if (!crash)
++		if (!crash) {
+ 			vfree(hv_context.tsc_page);
+-		hv_context.tsc_page = NULL;
++			hv_context.tsc_page = NULL;
++		}
+ 	}
+ #endif
+ }
+diff --git a/drivers/hv/hv_balloon.c b/drivers/hv/hv_balloon.c
+index 43af91362be5..354da7f207b7 100644
+--- a/drivers/hv/hv_balloon.c
++++ b/drivers/hv/hv_balloon.c
+@@ -430,16 +430,27 @@ struct dm_info_msg {
+  * currently hot added. We hot add in multiples of 128M
+  * chunks; it is possible that we may not be able to bring
+  * online all the pages in the region. The range
+- * covered_end_pfn defines the pages that can
++ * covered_start_pfn:covered_end_pfn defines the pages that can
+  * be brough online.
+  */
+ 
+ struct hv_hotadd_state {
+ 	struct list_head list;
+ 	unsigned long start_pfn;
++	unsigned long covered_start_pfn;
+ 	unsigned long covered_end_pfn;
+ 	unsigned long ha_end_pfn;
+ 	unsigned long end_pfn;
++	/*
++	 * A list of gaps.
++	 */
++	struct list_head gap_list;
++};
++
++struct hv_hotadd_gap {
++	struct list_head list;
++	unsigned long start_pfn;
++	unsigned long end_pfn;
+ };
+ 
+ struct balloon_state {
+@@ -595,18 +606,46 @@ static struct notifier_block hv_memory_nb = {
+ 	.priority = 0
+ };
+ 
++/* Check if the particular page is backed and can be onlined and online it. */
++static void hv_page_online_one(struct hv_hotadd_state *has, struct page *pg)
++{
++	unsigned long cur_start_pgp;
++	unsigned long cur_end_pgp;
++	struct hv_hotadd_gap *gap;
++
++	cur_start_pgp = (unsigned long)pfn_to_page(has->covered_start_pfn);
++	cur_end_pgp = (unsigned long)pfn_to_page(has->covered_end_pfn);
++
++	/* The page is not backed. */
++	if (((unsigned long)pg < cur_start_pgp) ||
++	    ((unsigned long)pg >= cur_end_pgp))
++		return;
++
++	/* Check for gaps. */
++	list_for_each_entry(gap, &has->gap_list, list) {
++		cur_start_pgp = (unsigned long)
++			pfn_to_page(gap->start_pfn);
++		cur_end_pgp = (unsigned long)
++			pfn_to_page(gap->end_pfn);
++		if (((unsigned long)pg >= cur_start_pgp) &&
++		    ((unsigned long)pg < cur_end_pgp)) {
++			return;
++		}
++	}
+ 
+-static void hv_bring_pgs_online(unsigned long start_pfn, unsigned long size)
++	/* This frame is currently backed; online the page. */
++	__online_page_set_limits(pg);
++	__online_page_increment_counters(pg);
++	__online_page_free(pg);
++}
++
++static void hv_bring_pgs_online(struct hv_hotadd_state *has,
++				unsigned long start_pfn, unsigned long size)
+ {
+ 	int i;
+ 
+-	for (i = 0; i < size; i++) {
+-		struct page *pg;
+-		pg = pfn_to_page(start_pfn + i);
+-		__online_page_set_limits(pg);
+-		__online_page_increment_counters(pg);
+-		__online_page_free(pg);
+-	}
++	for (i = 0; i < size; i++)
++		hv_page_online_one(has, pfn_to_page(start_pfn + i));
+ }
+ 
+ static void hv_mem_hot_add(unsigned long start, unsigned long size,
+@@ -682,26 +721,25 @@ static void hv_online_page(struct page *pg)
+ 
+ 	list_for_each(cur, &dm_device.ha_region_list) {
+ 		has = list_entry(cur, struct hv_hotadd_state, list);
+-		cur_start_pgp = (unsigned long)pfn_to_page(has->start_pfn);
+-		cur_end_pgp = (unsigned long)pfn_to_page(has->covered_end_pfn);
++		cur_start_pgp = (unsigned long)
++			pfn_to_page(has->start_pfn);
++		cur_end_pgp = (unsigned long)pfn_to_page(has->end_pfn);
+ 
+-		if (((unsigned long)pg >= cur_start_pgp) &&
+-			((unsigned long)pg < cur_end_pgp)) {
+-			/*
+-			 * This frame is currently backed; online the
+-			 * page.
+-			 */
+-			__online_page_set_limits(pg);
+-			__online_page_increment_counters(pg);
+-			__online_page_free(pg);
+-		}
++		/* The page belongs to a different HAS. */
++		if (((unsigned long)pg < cur_start_pgp) ||
++		    ((unsigned long)pg >= cur_end_pgp))
++			continue;
++
++		hv_page_online_one(has, pg);
++		break;
+ 	}
+ }
+ 
+-static bool pfn_covered(unsigned long start_pfn, unsigned long pfn_cnt)
++static int pfn_covered(unsigned long start_pfn, unsigned long pfn_cnt)
+ {
+ 	struct list_head *cur;
+ 	struct hv_hotadd_state *has;
++	struct hv_hotadd_gap *gap;
+ 	unsigned long residual, new_inc;
+ 
+ 	if (list_empty(&dm_device.ha_region_list))
+@@ -716,6 +754,24 @@ static bool pfn_covered(unsigned long start_pfn, unsigned long pfn_cnt)
+ 		 */
+ 		if (start_pfn < has->start_pfn || start_pfn >= has->end_pfn)
+ 			continue;
++
++		/*
++		 * If the current start pfn is not where the covered_end
++		 * is, create a gap and update covered_end_pfn.
++		 */
++		if (has->covered_end_pfn != start_pfn) {
++			gap = kzalloc(sizeof(struct hv_hotadd_gap), GFP_ATOMIC);
++			if (!gap)
++				return -ENOMEM;
++
++			INIT_LIST_HEAD(&gap->list);
++			gap->start_pfn = has->covered_end_pfn;
++			gap->end_pfn = start_pfn;
++			list_add_tail(&gap->list, &has->gap_list);
++
++			has->covered_end_pfn = start_pfn;
++		}
++
+ 		/*
+ 		 * If the current hot add-request extends beyond
+ 		 * our current limit; extend it.
+@@ -732,19 +788,10 @@ static bool pfn_covered(unsigned long start_pfn, unsigned long pfn_cnt)
+ 			has->end_pfn += new_inc;
+ 		}
+ 
+-		/*
+-		 * If the current start pfn is not where the covered_end
+-		 * is, update it.
+-		 */
+-
+-		if (has->covered_end_pfn != start_pfn)
+-			has->covered_end_pfn = start_pfn;
+-
+-		return true;
+-
++		return 1;
+ 	}
+ 
+-	return false;
++	return 0;
+ }
+ 
+ static unsigned long handle_pg_range(unsigned long pg_start,
+@@ -783,6 +830,8 @@ static unsigned long handle_pg_range(unsigned long pg_start,
+ 			if (pgs_ol > pfn_cnt)
+ 				pgs_ol = pfn_cnt;
+ 
++			has->covered_end_pfn +=  pgs_ol;
++			pfn_cnt -= pgs_ol;
+ 			/*
+ 			 * Check if the corresponding memory block is already
+ 			 * online by checking its last previously backed page.
+@@ -791,10 +840,8 @@ static unsigned long handle_pg_range(unsigned long pg_start,
+ 			 */
+ 			if (start_pfn > has->start_pfn &&
+ 			    !PageReserved(pfn_to_page(start_pfn - 1)))
+-				hv_bring_pgs_online(start_pfn, pgs_ol);
++				hv_bring_pgs_online(has, start_pfn, pgs_ol);
+ 
+-			has->covered_end_pfn +=  pgs_ol;
+-			pfn_cnt -= pgs_ol;
+ 		}
+ 
+ 		if ((has->ha_end_pfn < has->end_pfn) && (pfn_cnt > 0)) {
+@@ -832,13 +879,19 @@ static unsigned long process_hot_add(unsigned long pg_start,
+ 					unsigned long rg_size)
+ {
+ 	struct hv_hotadd_state *ha_region = NULL;
++	int covered;
+ 
+ 	if (pfn_cnt == 0)
+ 		return 0;
+ 
+-	if (!dm_device.host_specified_ha_region)
+-		if (pfn_covered(pg_start, pfn_cnt))
++	if (!dm_device.host_specified_ha_region) {
++		covered = pfn_covered(pg_start, pfn_cnt);
++		if (covered < 0)
++			return 0;
++
++		if (covered)
+ 			goto do_pg_range;
++	}
+ 
+ 	/*
+ 	 * If the host has specified a hot-add range; deal with it first.
+@@ -850,10 +903,12 @@ static unsigned long process_hot_add(unsigned long pg_start,
+ 			return 0;
+ 
+ 		INIT_LIST_HEAD(&ha_region->list);
++		INIT_LIST_HEAD(&ha_region->gap_list);
+ 
+ 		list_add_tail(&ha_region->list, &dm_device.ha_region_list);
+ 		ha_region->start_pfn = rg_start;
+ 		ha_region->ha_end_pfn = rg_start;
++		ha_region->covered_start_pfn = pg_start;
+ 		ha_region->covered_end_pfn = pg_start;
+ 		ha_region->end_pfn = rg_start + rg_size;
+ 	}
+@@ -1581,6 +1636,7 @@ static int balloon_remove(struct hv_device *dev)
+ 	struct hv_dynmem_device *dm = hv_get_drvdata(dev);
+ 	struct list_head *cur, *tmp;
+ 	struct hv_hotadd_state *has;
++	struct hv_hotadd_gap *gap, *tmp_gap;
+ 
+ 	if (dm->num_pages_ballooned != 0)
+ 		pr_warn("Ballooned pages: %d\n", dm->num_pages_ballooned);
+@@ -1597,6 +1653,10 @@ static int balloon_remove(struct hv_device *dev)
+ #endif
+ 	list_for_each_safe(cur, tmp, &dm->ha_region_list) {
+ 		has = list_entry(cur, struct hv_hotadd_state, list);
++		list_for_each_entry_safe(gap, tmp_gap, &has->gap_list, list) {
++			list_del(&gap->list);
++			kfree(gap);
++		}
+ 		list_del(&has->list);
+ 		kfree(has);
+ 	}
+diff --git a/drivers/input/mouse/elantech.c b/drivers/input/mouse/elantech.c
+index 43482ae1e049..1a2b2620421e 100644
+--- a/drivers/input/mouse/elantech.c
++++ b/drivers/input/mouse/elantech.c
+@@ -1122,6 +1122,7 @@ static int elantech_get_resolution_v4(struct psmouse *psmouse,
+  * Asus UX32VD             0x361f02        00, 15, 0e      clickpad
+  * Avatar AVIU-145A2       0x361f00        ?               clickpad
+  * Fujitsu LIFEBOOK E544   0x470f00        d0, 12, 09      2 hw buttons
++ * Fujitsu LIFEBOOK E547   0x470f00        50, 12, 09      2 hw buttons
+  * Fujitsu LIFEBOOK E554   0x570f01        40, 14, 0c      2 hw buttons
+  * Fujitsu T725            0x470f01        05, 12, 09      2 hw buttons
+  * Fujitsu H730            0x570f00        c0, 14, 0c      3 hw buttons (**)
+@@ -1528,6 +1529,13 @@ static const struct dmi_system_id elantech_dmi_force_crc_enabled[] = {
+ 		},
+ 	},
+ 	{
++		/* Fujitsu LIFEBOOK E547 does not work with crc_enabled == 0 */
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "FUJITSU"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "LIFEBOOK E547"),
++		},
++	},
++	{
+ 		/* Fujitsu LIFEBOOK E554  does not work with crc_enabled == 0 */
+ 		.matches = {
+ 			DMI_MATCH(DMI_SYS_VENDOR, "FUJITSU"),
+diff --git a/drivers/mmc/host/sdhci-esdhc-imx.c b/drivers/mmc/host/sdhci-esdhc-imx.c
+index 1f1582f6cccb..8d838779fd1b 100644
+--- a/drivers/mmc/host/sdhci-esdhc-imx.c
++++ b/drivers/mmc/host/sdhci-esdhc-imx.c
+@@ -804,6 +804,7 @@ static int esdhc_change_pinstate(struct sdhci_host *host,
+ 
+ 	switch (uhs) {
+ 	case MMC_TIMING_UHS_SDR50:
++	case MMC_TIMING_UHS_DDR50:
+ 		pinctrl = imx_data->pins_100mhz;
+ 		break;
+ 	case MMC_TIMING_UHS_SDR104:
+diff --git a/drivers/mtd/ubi/upd.c b/drivers/mtd/ubi/upd.c
+index 0134ba32a057..39712560b4c1 100644
+--- a/drivers/mtd/ubi/upd.c
++++ b/drivers/mtd/ubi/upd.c
+@@ -148,11 +148,11 @@ int ubi_start_update(struct ubi_device *ubi, struct ubi_volume *vol,
+ 			return err;
+ 	}
+ 
+-	if (bytes == 0) {
+-		err = ubi_wl_flush(ubi, UBI_ALL, UBI_ALL);
+-		if (err)
+-			return err;
++	err = ubi_wl_flush(ubi, UBI_ALL, UBI_ALL);
++	if (err)
++		return err;
+ 
++	if (bytes == 0) {
+ 		err = clear_update_marker(ubi, vol, 0);
+ 		if (err)
+ 			return err;
+diff --git a/fs/cifs/cifsglob.h b/fs/cifs/cifsglob.h
+index b76883606e4b..94906aaa9b7c 100644
+--- a/fs/cifs/cifsglob.h
++++ b/fs/cifs/cifsglob.h
+@@ -906,7 +906,6 @@ struct cifs_tcon {
+ 	bool use_persistent:1; /* use persistent instead of durable handles */
+ #ifdef CONFIG_CIFS_SMB2
+ 	bool print:1;		/* set if connection to printer share */
+-	bool bad_network_name:1; /* set if ret status STATUS_BAD_NETWORK_NAME */
+ 	__le32 capabilities;
+ 	__u32 share_flags;
+ 	__u32 maximal_access;
+diff --git a/fs/cifs/smb1ops.c b/fs/cifs/smb1ops.c
+index fc537c29044e..87b87e091e8e 100644
+--- a/fs/cifs/smb1ops.c
++++ b/fs/cifs/smb1ops.c
+@@ -1015,6 +1015,15 @@ cifs_dir_needs_close(struct cifsFileInfo *cfile)
+ 	return !cfile->srch_inf.endOfSearch && !cfile->invalidHandle;
+ }
+ 
++static bool
++cifs_can_echo(struct TCP_Server_Info *server)
++{
++	if (server->tcpStatus == CifsGood)
++		return true;
++
++	return false;
++}
++
+ struct smb_version_operations smb1_operations = {
+ 	.send_cancel = send_nt_cancel,
+ 	.compare_fids = cifs_compare_fids,
+@@ -1049,6 +1058,7 @@ struct smb_version_operations smb1_operations = {
+ 	.get_dfs_refer = CIFSGetDFSRefer,
+ 	.qfs_tcon = cifs_qfs_tcon,
+ 	.is_path_accessible = cifs_is_path_accessible,
++	.can_echo = cifs_can_echo,
+ 	.query_path_info = cifs_query_path_info,
+ 	.query_file_info = cifs_query_file_info,
+ 	.get_srv_inum = cifs_get_srv_inum,
+diff --git a/fs/cifs/smb2pdu.c b/fs/cifs/smb2pdu.c
+index 6cb5c4b30e78..6cb2603f8a5c 100644
+--- a/fs/cifs/smb2pdu.c
++++ b/fs/cifs/smb2pdu.c
+@@ -932,9 +932,6 @@ SMB2_tcon(const unsigned int xid, struct cifs_ses *ses, const char *tree,
+ 	else
+ 		return -EIO;
+ 
+-	if (tcon && tcon->bad_network_name)
+-		return -ENOENT;
+-
+ 	if ((tcon && tcon->seal) &&
+ 	    ((ses->server->capabilities & SMB2_GLOBAL_CAP_ENCRYPTION) == 0)) {
+ 		cifs_dbg(VFS, "encryption requested but no server support");
+@@ -1036,8 +1033,6 @@ tcon_exit:
+ tcon_error_exit:
+ 	if (rsp->hdr.Status == STATUS_BAD_NETWORK_NAME) {
+ 		cifs_dbg(VFS, "BAD_NETWORK_NAME: %s\n", tree);
+-		if (tcon)
+-			tcon->bad_network_name = true;
+ 	}
+ 	goto tcon_exit;
+ }
+diff --git a/kernel/trace/ring_buffer.c b/kernel/trace/ring_buffer.c
+index 7d7f99b0db47..1275175b0946 100644
+--- a/kernel/trace/ring_buffer.c
++++ b/kernel/trace/ring_buffer.c
+@@ -3440,11 +3440,23 @@ EXPORT_SYMBOL_GPL(ring_buffer_iter_reset);
+ int ring_buffer_iter_empty(struct ring_buffer_iter *iter)
+ {
+ 	struct ring_buffer_per_cpu *cpu_buffer;
++	struct buffer_page *reader;
++	struct buffer_page *head_page;
++	struct buffer_page *commit_page;
++	unsigned commit;
+ 
+ 	cpu_buffer = iter->cpu_buffer;
+ 
+-	return iter->head_page == cpu_buffer->commit_page &&
+-		iter->head == rb_commit_index(cpu_buffer);
++	/* Remember, trace recording is off when iterator is in use */
++	reader = cpu_buffer->reader_page;
++	head_page = cpu_buffer->head_page;
++	commit_page = cpu_buffer->commit_page;
++	commit = rb_page_commit(commit_page);
++
++	return ((iter->head_page == commit_page && iter->head == commit) ||
++		(iter->head_page == reader && commit_page == head_page &&
++		 head_page->read == commit &&
++		 iter->head == rb_page_commit(cpu_buffer->reader_page)));
+ }
+ EXPORT_SYMBOL_GPL(ring_buffer_iter_empty);
+ 
+diff --git a/kernel/trace/trace.c b/kernel/trace/trace.c
+index 059233abcfcf..4c21c0b7dc91 100644
+--- a/kernel/trace/trace.c
++++ b/kernel/trace/trace.c
+@@ -6060,11 +6060,13 @@ ftrace_trace_snapshot_callback(struct ftrace_hash *hash,
+ 		return ret;
+ 
+  out_reg:
+-	ret = register_ftrace_function_probe(glob, ops, count);
++	ret = alloc_snapshot(&global_trace);
++	if (ret < 0)
++		goto out;
+ 
+-	if (ret >= 0)
+-		alloc_snapshot(&global_trace);
++	ret = register_ftrace_function_probe(glob, ops, count);
+ 
++ out:
+ 	return ret < 0 ? ret : 0;
+ }
+ 
+diff --git a/net/mac80211/rx.c b/net/mac80211/rx.c
+index 2b528389409f..9f0915f72702 100644
+--- a/net/mac80211/rx.c
++++ b/net/mac80211/rx.c
+@@ -3396,6 +3396,27 @@ static bool ieee80211_accept_frame(struct ieee80211_rx_data *rx)
+ 			    !ether_addr_equal(bssid, hdr->addr1))
+ 				return false;
+ 		}
++
++		/*
++		 * 802.11-2016 Table 9-26 says that for data frames, A1 must be
++		 * the BSSID - we've checked that already but may have accepted
++		 * the wildcard (ff:ff:ff:ff:ff:ff).
++		 *
++		 * It also says:
++		 *	The BSSID of the Data frame is determined as follows:
++		 *	a) If the STA is contained within an AP or is associated
++		 *	   with an AP, the BSSID is the address currently in use
++		 *	   by the STA contained in the AP.
++		 *
++		 * So we should not accept data frames with an address that's
++		 * multicast.
++		 *
++		 * Accepting it also opens a security problem because stations
++		 * could encrypt it with the GTK and inject traffic that way.
++		 */
++		if (ieee80211_is_data(hdr->frame_control) && multicast)
++			return false;
++
+ 		return true;
+ 	case NL80211_IFTYPE_WDS:
+ 		if (bssid || !ieee80211_is_data(hdr->frame_control))
+diff --git a/net/tipc/node.c b/net/tipc/node.c
+index 3926b561f873..d468aad6163e 100644
+--- a/net/tipc/node.c
++++ b/net/tipc/node.c
+@@ -102,9 +102,10 @@ static unsigned int tipc_hashfn(u32 addr)
+ 
+ static void tipc_node_kref_release(struct kref *kref)
+ {
+-	struct tipc_node *node = container_of(kref, struct tipc_node, kref);
++	struct tipc_node *n = container_of(kref, struct tipc_node, kref);
+ 
+-	tipc_node_delete(node);
++	kfree(n->bc_entry.link);
++	kfree_rcu(n, rcu);
+ }
+ 
+ void tipc_node_put(struct tipc_node *node)
+@@ -216,21 +217,20 @@ static void tipc_node_delete(struct tipc_node *node)
+ {
+ 	list_del_rcu(&node->list);
+ 	hlist_del_rcu(&node->hash);
+-	kfree(node->bc_entry.link);
+-	kfree_rcu(node, rcu);
++	tipc_node_put(node);
++
++	del_timer_sync(&node->timer);
++	tipc_node_put(node);
+ }
+ 
+ void tipc_node_stop(struct net *net)
+ {
+-	struct tipc_net *tn = net_generic(net, tipc_net_id);
++	struct tipc_net *tn = tipc_net(net);
+ 	struct tipc_node *node, *t_node;
+ 
+ 	spin_lock_bh(&tn->node_list_lock);
+-	list_for_each_entry_safe(node, t_node, &tn->node_list, list) {
+-		if (del_timer(&node->timer))
+-			tipc_node_put(node);
+-		tipc_node_put(node);
+-	}
++	list_for_each_entry_safe(node, t_node, &tn->node_list, list)
++		tipc_node_delete(node);
+ 	spin_unlock_bh(&tn->node_list_lock);
+ }
+ 
+@@ -313,9 +313,7 @@ static void tipc_node_timeout(unsigned long data)
+ 		if (rc & TIPC_LINK_DOWN_EVT)
+ 			tipc_node_link_down(n, bearer_id, false);
+ 	}
+-	if (!mod_timer(&n->timer, jiffies + n->keepalive_intv))
+-		tipc_node_get(n);
+-	tipc_node_put(n);
++	mod_timer(&n->timer, jiffies + n->keepalive_intv);
+ }
+ 
+ /**
+diff --git a/net/vmw_vsock/vmci_transport.c b/net/vmw_vsock/vmci_transport.c
+index 0a369bb440e7..662bdd20a748 100644
+--- a/net/vmw_vsock/vmci_transport.c
++++ b/net/vmw_vsock/vmci_transport.c
+@@ -842,7 +842,7 @@ static void vmci_transport_peer_detach_cb(u32 sub_id,
+ 	 * qp_handle.
+ 	 */
+ 	if (vmci_handle_is_invalid(e_payload->handle) ||
+-	    vmci_handle_is_equal(trans->qp_handle, e_payload->handle))
++	    !vmci_handle_is_equal(trans->qp_handle, e_payload->handle))
+ 		return;
+ 
+ 	/* We don't ask for delayed CBs when we subscribe to this event (we
+@@ -2154,7 +2154,7 @@ module_exit(vmci_transport_exit);
+ 
+ MODULE_AUTHOR("VMware, Inc.");
+ MODULE_DESCRIPTION("VMCI transport for Virtual Sockets");
+-MODULE_VERSION("1.0.2.0-k");
++MODULE_VERSION("1.0.3.0-k");
+ MODULE_LICENSE("GPL v2");
+ MODULE_ALIAS("vmware_vsock");
+ MODULE_ALIAS_NETPROTO(PF_VSOCK);
+diff --git a/security/keys/gc.c b/security/keys/gc.c
+index addf060399e0..9cb4fe4478a1 100644
+--- a/security/keys/gc.c
++++ b/security/keys/gc.c
+@@ -46,7 +46,7 @@ static unsigned long key_gc_flags;
+  * immediately unlinked.
+  */
+ struct key_type key_type_dead = {
+-	.name = "dead",
++	.name = ".dead",
+ };
+ 
+ /*
+diff --git a/security/keys/keyctl.c b/security/keys/keyctl.c
+index 1c3872aeed14..442e350c209d 100644
+--- a/security/keys/keyctl.c
++++ b/security/keys/keyctl.c
+@@ -271,7 +271,8 @@ error:
+  * Create and join an anonymous session keyring or join a named session
+  * keyring, creating it if necessary.  A named session keyring must have Search
+  * permission for it to be joined.  Session keyrings without this permit will
+- * be skipped over.
++ * be skipped over.  It is not permitted for userspace to create or join
++ * keyrings whose name begin with a dot.
+  *
+  * If successful, the ID of the joined session keyring will be returned.
+  */
+@@ -288,12 +289,16 @@ long keyctl_join_session_keyring(const char __user *_name)
+ 			ret = PTR_ERR(name);
+ 			goto error;
+ 		}
++
++		ret = -EPERM;
++		if (name[0] == '.')
++			goto error_name;
+ 	}
+ 
+ 	/* join the session */
+ 	ret = join_session_keyring(name);
++error_name:
+ 	kfree(name);
+-
+ error:
+ 	return ret;
+ }
+@@ -1223,8 +1228,8 @@ error:
+  * Read or set the default keyring in which request_key() will cache keys and
+  * return the old setting.
+  *
+- * If a process keyring is specified then this will be created if it doesn't
+- * yet exist.  The old setting will be returned if successful.
++ * If a thread or process keyring is specified then it will be created if it
++ * doesn't yet exist.  The old setting will be returned if successful.
+  */
+ long keyctl_set_reqkey_keyring(int reqkey_defl)
+ {
+@@ -1249,11 +1254,8 @@ long keyctl_set_reqkey_keyring(int reqkey_defl)
+ 
+ 	case KEY_REQKEY_DEFL_PROCESS_KEYRING:
+ 		ret = install_process_keyring_to_cred(new);
+-		if (ret < 0) {
+-			if (ret != -EEXIST)
+-				goto error;
+-			ret = 0;
+-		}
++		if (ret < 0)
++			goto error;
+ 		goto set;
+ 
+ 	case KEY_REQKEY_DEFL_DEFAULT:
+diff --git a/security/keys/process_keys.c b/security/keys/process_keys.c
+index e6d50172872f..4ed909142956 100644
+--- a/security/keys/process_keys.c
++++ b/security/keys/process_keys.c
+@@ -125,13 +125,18 @@ error:
+ }
+ 
+ /*
+- * Install a fresh thread keyring directly to new credentials.  This keyring is
+- * allowed to overrun the quota.
++ * Install a thread keyring to the given credentials struct if it didn't have
++ * one already.  This is allowed to overrun the quota.
++ *
++ * Return: 0 if a thread keyring is now present; -errno on failure.
+  */
+ int install_thread_keyring_to_cred(struct cred *new)
+ {
+ 	struct key *keyring;
+ 
++	if (new->thread_keyring)
++		return 0;
++
+ 	keyring = keyring_alloc("_tid", new->uid, new->gid, new,
+ 				KEY_POS_ALL | KEY_USR_VIEW,
+ 				KEY_ALLOC_QUOTA_OVERRUN, NULL);
+@@ -143,7 +148,9 @@ int install_thread_keyring_to_cred(struct cred *new)
+ }
+ 
+ /*
+- * Install a fresh thread keyring, discarding the old one.
++ * Install a thread keyring to the current task if it didn't have one already.
++ *
++ * Return: 0 if a thread keyring is now present; -errno on failure.
+  */
+ static int install_thread_keyring(void)
+ {
+@@ -154,8 +161,6 @@ static int install_thread_keyring(void)
+ 	if (!new)
+ 		return -ENOMEM;
+ 
+-	BUG_ON(new->thread_keyring);
+-
+ 	ret = install_thread_keyring_to_cred(new);
+ 	if (ret < 0) {
+ 		abort_creds(new);
+@@ -166,17 +171,17 @@ static int install_thread_keyring(void)
+ }
+ 
+ /*
+- * Install a process keyring directly to a credentials struct.
++ * Install a process keyring to the given credentials struct if it didn't have
++ * one already.  This is allowed to overrun the quota.
+  *
+- * Returns -EEXIST if there was already a process keyring, 0 if one installed,
+- * and other value on any other error
++ * Return: 0 if a process keyring is now present; -errno on failure.
+  */
+ int install_process_keyring_to_cred(struct cred *new)
+ {
+ 	struct key *keyring;
+ 
+ 	if (new->process_keyring)
+-		return -EEXIST;
++		return 0;
+ 
+ 	keyring = keyring_alloc("_pid", new->uid, new->gid, new,
+ 				KEY_POS_ALL | KEY_USR_VIEW,
+@@ -189,11 +194,9 @@ int install_process_keyring_to_cred(struct cred *new)
+ }
+ 
+ /*
+- * Make sure a process keyring is installed for the current process.  The
+- * existing process keyring is not replaced.
++ * Install a process keyring to the current task if it didn't have one already.
+  *
+- * Returns 0 if there is a process keyring by the end of this function, some
+- * error otherwise.
++ * Return: 0 if a process keyring is now present; -errno on failure.
+  */
+ static int install_process_keyring(void)
+ {
+@@ -207,14 +210,18 @@ static int install_process_keyring(void)
+ 	ret = install_process_keyring_to_cred(new);
+ 	if (ret < 0) {
+ 		abort_creds(new);
+-		return ret != -EEXIST ? ret : 0;
++		return ret;
+ 	}
+ 
+ 	return commit_creds(new);
+ }
+ 
+ /*
+- * Install a session keyring directly to a credentials struct.
++ * Install the given keyring as the session keyring of the given credentials
++ * struct, replacing the existing one if any.  If the given keyring is NULL,
++ * then install a new anonymous session keyring.
++ *
++ * Return: 0 on success; -errno on failure.
+  */
+ int install_session_keyring_to_cred(struct cred *cred, struct key *keyring)
+ {
+@@ -249,8 +256,11 @@ int install_session_keyring_to_cred(struct cred *cred, struct key *keyring)
+ }
+ 
+ /*
+- * Install a session keyring, discarding the old one.  If a keyring is not
+- * supplied, an empty one is invented.
++ * Install the given keyring as the session keyring of the current task,
++ * replacing the existing one if any.  If the given keyring is NULL, then
++ * install a new anonymous session keyring.
++ *
++ * Return: 0 on success; -errno on failure.
+  */
+ static int install_session_keyring(struct key *keyring)
+ {
+diff --git a/tools/hv/hv_kvp_daemon.c b/tools/hv/hv_kvp_daemon.c
+index 0d9f48ec42bb..bc7adb84e679 100644
+--- a/tools/hv/hv_kvp_daemon.c
++++ b/tools/hv/hv_kvp_daemon.c
+@@ -1433,7 +1433,7 @@ int main(int argc, char *argv[])
+ 	openlog("KVP", 0, LOG_USER);
+ 	syslog(LOG_INFO, "KVP starting; pid is:%d", getpid());
+ 
+-	kvp_fd = open("/dev/vmbus/hv_kvp", O_RDWR);
++	kvp_fd = open("/dev/vmbus/hv_kvp", O_RDWR | O_CLOEXEC);
+ 
+ 	if (kvp_fd < 0) {
+ 		syslog(LOG_ERR, "open /dev/vmbus/hv_kvp failed; error: %d %s",

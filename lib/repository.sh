@@ -45,7 +45,7 @@ ParseOptions() {
 		update)
 			# display full help test
 			# run repository update
-			addtorepo "$@" "delete"
+			addtorepo "$@" ""
 			# add a key to repo
 			cp ../config/armbian.key ../output/repository/public
 			exit 0

@@ -1,0 +1,817 @@
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index c360f80c3473..ca64ca566099 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -1255,6 +1255,10 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 			When zero, profiling data is discarded and associated
+ 			debugfs files are removed at module unload time.
+ 
++	goldfish	[X86] Enable the goldfish android emulator platform.
++			Don't use this when you are not running on the
++			android emulator
++
+ 	gpt		[EFI] Forces disk with valid GPT signature but
+ 			invalid Protective MBR to be treated as GPT. If the
+ 			primary GPT is corrupted, it enables the backup/alternate
+diff --git a/Makefile b/Makefile
+index 117357188f01..671e183bd507 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 51
++SUBLEVEL = 52
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index bb620df05d0d..64f60a48def1 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -4867,6 +4867,12 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
+ 	if (vmx_xsaves_supported())
+ 		vmcs_write64(XSS_EXIT_BITMAP, VMX_XSS_EXIT_BITMAP);
+ 
++	if (enable_pml) {
++		ASSERT(vmx->pml_pg);
++		vmcs_write64(PML_ADDRESS, page_to_phys(vmx->pml_pg));
++		vmcs_write16(GUEST_PML_INDEX, PML_ENTITY_NUM - 1);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -7839,22 +7845,6 @@ static void vmx_get_exit_info(struct kvm_vcpu *vcpu, u64 *info1, u64 *info2)
+ 	*info2 = vmcs_read32(VM_EXIT_INTR_INFO);
+ }
+ 
+-static int vmx_create_pml_buffer(struct vcpu_vmx *vmx)
+-{
+-	struct page *pml_pg;
+-
+-	pml_pg = alloc_page(GFP_KERNEL | __GFP_ZERO);
+-	if (!pml_pg)
+-		return -ENOMEM;
+-
+-	vmx->pml_pg = pml_pg;
+-
+-	vmcs_write64(PML_ADDRESS, page_to_phys(vmx->pml_pg));
+-	vmcs_write16(GUEST_PML_INDEX, PML_ENTITY_NUM - 1);
+-
+-	return 0;
+-}
+-
+ static void vmx_destroy_pml_buffer(struct vcpu_vmx *vmx)
+ {
+ 	if (vmx->pml_pg) {
+@@ -8789,14 +8779,26 @@ static struct kvm_vcpu *vmx_create_vcpu(struct kvm *kvm, unsigned int id)
+ 	if (err)
+ 		goto free_vcpu;
+ 
++	err = -ENOMEM;
++
++	/*
++	 * If PML is turned on, failure on enabling PML just results in failure
++	 * of creating the vcpu, therefore we can simplify PML logic (by
++	 * avoiding dealing with cases, such as enabling PML partially on vcpus
++	 * for the guest, etc.
++	 */
++	if (enable_pml) {
++		vmx->pml_pg = alloc_page(GFP_KERNEL | __GFP_ZERO);
++		if (!vmx->pml_pg)
++			goto uninit_vcpu;
++	}
++
+ 	vmx->guest_msrs = kmalloc(PAGE_SIZE, GFP_KERNEL);
+ 	BUILD_BUG_ON(ARRAY_SIZE(vmx_msr_index) * sizeof(vmx->guest_msrs[0])
+ 		     > PAGE_SIZE);
+ 
+-	err = -ENOMEM;
+-	if (!vmx->guest_msrs) {
+-		goto uninit_vcpu;
+-	}
++	if (!vmx->guest_msrs)
++		goto free_pml;
+ 
+ 	vmx->loaded_vmcs = &vmx->vmcs01;
+ 	vmx->loaded_vmcs->vmcs = alloc_vmcs();
+@@ -8840,18 +8842,6 @@ static struct kvm_vcpu *vmx_create_vcpu(struct kvm *kvm, unsigned int id)
+ 	vmx->nested.current_vmptr = -1ull;
+ 	vmx->nested.current_vmcs12 = NULL;
+ 
+-	/*
+-	 * If PML is turned on, failure on enabling PML just results in failure
+-	 * of creating the vcpu, therefore we can simplify PML logic (by
+-	 * avoiding dealing with cases, such as enabling PML partially on vcpus
+-	 * for the guest, etc.
+-	 */
+-	if (enable_pml) {
+-		err = vmx_create_pml_buffer(vmx);
+-		if (err)
+-			goto free_vmcs;
+-	}
+-
+ 	return &vmx->vcpu;
+ 
+ free_vmcs:
+@@ -8859,6 +8849,8 @@ free_vmcs:
+ 	free_loaded_vmcs(vmx->loaded_vmcs);
+ free_msrs:
+ 	kfree(vmx->guest_msrs);
++free_pml:
++	vmx_destroy_pml_buffer(vmx);
+ uninit_vcpu:
+ 	kvm_vcpu_uninit(&vmx->vcpu);
+ free_vcpu:
+diff --git a/arch/x86/platform/goldfish/goldfish.c b/arch/x86/platform/goldfish/goldfish.c
+index 1693107a518e..0d17c0aafeb1 100644
+--- a/arch/x86/platform/goldfish/goldfish.c
++++ b/arch/x86/platform/goldfish/goldfish.c
+@@ -42,10 +42,22 @@ static struct resource goldfish_pdev_bus_resources[] = {
+ 	}
+ };
+ 
++static bool goldfish_enable __initdata;
++
++static int __init goldfish_setup(char *str)
++{
++	goldfish_enable = true;
++	return 0;
++}
++__setup("goldfish", goldfish_setup);
++
+ static int __init goldfish_init(void)
+ {
++	if (!goldfish_enable)
++		return -ENODEV;
++
+ 	platform_device_register_simple("goldfish_pdev_bus", -1,
+-						goldfish_pdev_bus_resources, 2);
++					goldfish_pdev_bus_resources, 2);
+ 	return 0;
+ }
+ device_initcall(goldfish_init);
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index 6cfc6b200366..d8d63c38bf29 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -1259,12 +1259,9 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
+ 
+ 	blk_queue_split(q, &bio, q->bio_split);
+ 
+-	if (!is_flush_fua && !blk_queue_nomerges(q)) {
+-		if (blk_attempt_plug_merge(q, bio, &request_count,
+-					   &same_queue_rq))
+-			return BLK_QC_T_NONE;
+-	} else
+-		request_count = blk_plug_queued_count(q);
++	if (!is_flush_fua && !blk_queue_nomerges(q) &&
++	    blk_attempt_plug_merge(q, bio, &request_count, &same_queue_rq))
++		return BLK_QC_T_NONE;
+ 
+ 	rq = blk_mq_map_request(q, bio, &data);
+ 	if (unlikely(!rq))
+@@ -1355,9 +1352,11 @@ static blk_qc_t blk_sq_make_request(struct request_queue *q, struct bio *bio)
+ 
+ 	blk_queue_split(q, &bio, q->bio_split);
+ 
+-	if (!is_flush_fua && !blk_queue_nomerges(q) &&
+-	    blk_attempt_plug_merge(q, bio, &request_count, NULL))
+-		return BLK_QC_T_NONE;
++	if (!is_flush_fua && !blk_queue_nomerges(q)) {
++		if (blk_attempt_plug_merge(q, bio, &request_count, NULL))
++			return BLK_QC_T_NONE;
++	} else
++		request_count = blk_plug_queued_count(q);
+ 
+ 	rq = blk_mq_map_request(q, bio, &data);
+ 	if (unlikely(!rq))
+diff --git a/drivers/net/wireless/realtek/rtlwifi/usb.c b/drivers/net/wireless/realtek/rtlwifi/usb.c
+index aac1ed3f7bb4..ad8390d2997b 100644
+--- a/drivers/net/wireless/realtek/rtlwifi/usb.c
++++ b/drivers/net/wireless/realtek/rtlwifi/usb.c
+@@ -834,12 +834,30 @@ static void rtl_usb_stop(struct ieee80211_hw *hw)
+ 	struct rtl_priv *rtlpriv = rtl_priv(hw);
+ 	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
+ 	struct rtl_usb *rtlusb = rtl_usbdev(rtl_usbpriv(hw));
++	struct urb *urb;
+ 
+ 	/* should after adapter start and interrupt enable. */
+ 	set_hal_stop(rtlhal);
+ 	cancel_work_sync(&rtlpriv->works.fill_h2c_cmd);
+ 	/* Enable software */
+ 	SET_USB_STOP(rtlusb);
++
++	/* free pre-allocated URBs from rtl_usb_start() */
++	usb_kill_anchored_urbs(&rtlusb->rx_submitted);
++
++	tasklet_kill(&rtlusb->rx_work_tasklet);
++	cancel_work_sync(&rtlpriv->works.lps_change_work);
++
++	flush_workqueue(rtlpriv->works.rtl_wq);
++
++	skb_queue_purge(&rtlusb->rx_queue);
++
++	while ((urb = usb_get_from_anchor(&rtlusb->rx_cleanup_urbs))) {
++		usb_free_coherent(urb->dev, urb->transfer_buffer_length,
++				urb->transfer_buffer, urb->transfer_dma);
++		usb_free_urb(urb);
++	}
++
+ 	rtlpriv->cfg->ops->hw_disable(hw);
+ }
+ 
+@@ -1073,6 +1091,7 @@ int rtl_usb_probe(struct usb_interface *intf,
+ 		return -ENOMEM;
+ 	}
+ 	rtlpriv = hw->priv;
++	rtlpriv->hw = hw;
+ 	rtlpriv->usb_data = kzalloc(RTL_USB_MAX_RX_COUNT * sizeof(u32),
+ 				    GFP_KERNEL);
+ 	if (!rtlpriv->usb_data)
+diff --git a/drivers/platform/goldfish/pdev_bus.c b/drivers/platform/goldfish/pdev_bus.c
+index 1f52462f4cdd..dd9ea463c2a4 100644
+--- a/drivers/platform/goldfish/pdev_bus.c
++++ b/drivers/platform/goldfish/pdev_bus.c
+@@ -157,23 +157,26 @@ static int goldfish_new_pdev(void)
+ static irqreturn_t goldfish_pdev_bus_interrupt(int irq, void *dev_id)
+ {
+ 	irqreturn_t ret = IRQ_NONE;
++
+ 	while (1) {
+ 		u32 op = readl(pdev_bus_base + PDEV_BUS_OP);
+-		switch (op) {
+-		case PDEV_BUS_OP_DONE:
+-			return IRQ_NONE;
+ 
++		switch (op) {
+ 		case PDEV_BUS_OP_REMOVE_DEV:
+ 			goldfish_pdev_remove();
++			ret = IRQ_HANDLED;
+ 			break;
+ 
+ 		case PDEV_BUS_OP_ADD_DEV:
+ 			goldfish_new_pdev();
++			ret = IRQ_HANDLED;
+ 			break;
++
++		case PDEV_BUS_OP_DONE:
++		default:
++			return ret;
+ 		}
+-		ret = IRQ_HANDLED;
+ 	}
+-	return ret;
+ }
+ 
+ static int goldfish_pdev_bus_probe(struct platform_device *pdev)
+diff --git a/drivers/rtc/interface.c b/drivers/rtc/interface.c
+index 5836751b8203..9bb934ed2a7a 100644
+--- a/drivers/rtc/interface.c
++++ b/drivers/rtc/interface.c
+@@ -748,9 +748,23 @@ EXPORT_SYMBOL_GPL(rtc_irq_set_freq);
+  */
+ static int rtc_timer_enqueue(struct rtc_device *rtc, struct rtc_timer *timer)
+ {
++	struct timerqueue_node *next = timerqueue_getnext(&rtc->timerqueue);
++	struct rtc_time tm;
++	ktime_t now;
++
+ 	timer->enabled = 1;
++	__rtc_read_time(rtc, &tm);
++	now = rtc_tm_to_ktime(tm);
++
++	/* Skip over expired timers */
++	while (next) {
++		if (next->expires.tv64 >= now.tv64)
++			break;
++		next = timerqueue_iterate_next(next);
++	}
++
+ 	timerqueue_add(&rtc->timerqueue, &timer->node);
+-	if (&timer->node == timerqueue_getnext(&rtc->timerqueue)) {
++	if (!next) {
+ 		struct rtc_wkalrm alarm;
+ 		int err;
+ 		alarm.time = rtc_ktime_to_tm(timer->node.expires);
+diff --git a/drivers/tty/serial/msm_serial.c b/drivers/tty/serial/msm_serial.c
+index e1de4944e0ce..8c4707d5778e 100644
+--- a/drivers/tty/serial/msm_serial.c
++++ b/drivers/tty/serial/msm_serial.c
+@@ -1615,6 +1615,7 @@ static const struct of_device_id msm_match_table[] = {
+ 	{ .compatible = "qcom,msm-uartdm" },
+ 	{}
+ };
++MODULE_DEVICE_TABLE(of, msm_match_table);
+ 
+ static struct platform_driver msm_platform_driver = {
+ 	.remove = msm_serial_remove,
+diff --git a/drivers/usb/chipidea/ci_hdrc_imx.c b/drivers/usb/chipidea/ci_hdrc_imx.c
+index 5a048b7b92e8..2949289bb3c5 100644
+--- a/drivers/usb/chipidea/ci_hdrc_imx.c
++++ b/drivers/usb/chipidea/ci_hdrc_imx.c
+@@ -244,7 +244,6 @@ static int ci_hdrc_imx_probe(struct platform_device *pdev)
+ 	struct ci_hdrc_platform_data pdata = {
+ 		.name		= dev_name(&pdev->dev),
+ 		.capoffset	= DEF_CAPOFFSET,
+-		.flags		= CI_HDRC_SET_NON_ZERO_TTHA,
+ 	};
+ 	int ret;
+ 	const struct of_device_id *of_id;
+diff --git a/drivers/usb/serial/ark3116.c b/drivers/usb/serial/ark3116.c
+index 1532cde8a437..7812052dc700 100644
+--- a/drivers/usb/serial/ark3116.c
++++ b/drivers/usb/serial/ark3116.c
+@@ -99,10 +99,17 @@ static int ark3116_read_reg(struct usb_serial *serial,
+ 				 usb_rcvctrlpipe(serial->dev, 0),
+ 				 0xfe, 0xc0, 0, reg,
+ 				 buf, 1, ARK_TIMEOUT);
+-	if (result < 0)
++	if (result < 1) {
++		dev_err(&serial->interface->dev,
++				"failed to read register %u: %d\n",
++				reg, result);
++		if (result >= 0)
++			result = -EIO;
++
+ 		return result;
+-	else
+-		return buf[0];
++	}
++
++	return buf[0];
+ }
+ 
+ static inline int calc_divisor(int bps)
+diff --git a/drivers/usb/serial/cp210x.c b/drivers/usb/serial/cp210x.c
+index fe7452f0f38a..33cec50978b8 100644
+--- a/drivers/usb/serial/cp210x.c
++++ b/drivers/usb/serial/cp210x.c
+@@ -171,6 +171,8 @@ static const struct usb_device_id id_table[] = {
+ 	{ USB_DEVICE(0x1901, 0x0190) }, /* GE B850 CP2105 Recorder interface */
+ 	{ USB_DEVICE(0x1901, 0x0193) }, /* GE B650 CP2104 PMC interface */
+ 	{ USB_DEVICE(0x1901, 0x0194) },	/* GE Healthcare Remote Alarm Box */
++	{ USB_DEVICE(0x1901, 0x0195) },	/* GE B850/B650/B450 CP2104 DP UART interface */
++	{ USB_DEVICE(0x1901, 0x0196) },	/* GE B850 CP2105 DP UART interface */
+ 	{ USB_DEVICE(0x19CF, 0x3000) }, /* Parrot NMEA GPS Flight Recorder */
+ 	{ USB_DEVICE(0x1ADB, 0x0001) }, /* Schweitzer Engineering C662 Cable */
+ 	{ USB_DEVICE(0x1B1C, 0x1C00) }, /* Corsair USB Dongle */
+diff --git a/drivers/usb/serial/ftdi_sio.c b/drivers/usb/serial/ftdi_sio.c
+index d3d6ec455151..19a98116c2ab 100644
+--- a/drivers/usb/serial/ftdi_sio.c
++++ b/drivers/usb/serial/ftdi_sio.c
+@@ -1807,8 +1807,6 @@ static int ftdi_sio_port_probe(struct usb_serial_port *port)
+ 
+ 	mutex_init(&priv->cfg_lock);
+ 
+-	priv->flags = ASYNC_LOW_LATENCY;
+-
+ 	if (quirk && quirk->port_probe)
+ 		quirk->port_probe(priv);
+ 
+@@ -2072,6 +2070,20 @@ static int ftdi_process_packet(struct usb_serial_port *port,
+ 		priv->prev_status = status;
+ 	}
+ 
++	/* save if the transmitter is empty or not */
++	if (packet[1] & FTDI_RS_TEMT)
++		priv->transmit_empty = 1;
++	else
++		priv->transmit_empty = 0;
++
++	len -= 2;
++	if (!len)
++		return 0;	/* status only */
++
++	/*
++	 * Break and error status must only be processed for packets with
++	 * data payload to avoid over-reporting.
++	 */
+ 	flag = TTY_NORMAL;
+ 	if (packet[1] & FTDI_RS_ERR_MASK) {
+ 		/* Break takes precedence over parity, which takes precedence
+@@ -2094,15 +2106,6 @@ static int ftdi_process_packet(struct usb_serial_port *port,
+ 		}
+ 	}
+ 
+-	/* save if the transmitter is empty or not */
+-	if (packet[1] & FTDI_RS_TEMT)
+-		priv->transmit_empty = 1;
+-	else
+-		priv->transmit_empty = 0;
+-
+-	len -= 2;
+-	if (!len)
+-		return 0;	/* status only */
+ 	port->icount.rx += len;
+ 	ch = packet + 2;
+ 
+@@ -2433,8 +2436,12 @@ static int ftdi_get_modem_status(struct usb_serial_port *port,
+ 			FTDI_SIO_GET_MODEM_STATUS_REQUEST_TYPE,
+ 			0, priv->interface,
+ 			buf, len, WDR_TIMEOUT);
+-	if (ret < 0) {
++
++	/* NOTE: We allow short responses and handle that below. */
++	if (ret < 1) {
+ 		dev_err(&port->dev, "failed to get modem status: %d\n", ret);
++		if (ret >= 0)
++			ret = -EIO;
+ 		ret = usb_translate_errors(ret);
+ 		goto out;
+ 	}
+diff --git a/drivers/usb/serial/mos7840.c b/drivers/usb/serial/mos7840.c
+index 97ea52b5cfd4..d17685cc00c9 100644
+--- a/drivers/usb/serial/mos7840.c
++++ b/drivers/usb/serial/mos7840.c
+@@ -1024,6 +1024,7 @@ static int mos7840_open(struct tty_struct *tty, struct usb_serial_port *port)
+ 	 * (can't set it up in mos7840_startup as the structures *
+ 	 * were not set up at that time.)                        */
+ 	if (port0->open_ports == 1) {
++		/* FIXME: Buffer never NULL, so URB is not submitted. */
+ 		if (serial->port[0]->interrupt_in_buffer == NULL) {
+ 			/* set up interrupt urb */
+ 			usb_fill_int_urb(serial->port[0]->interrupt_in_urb,
+@@ -2119,7 +2120,8 @@ static int mos7840_calc_num_ports(struct usb_serial *serial)
+ static int mos7840_attach(struct usb_serial *serial)
+ {
+ 	if (serial->num_bulk_in < serial->num_ports ||
+-			serial->num_bulk_out < serial->num_ports) {
++			serial->num_bulk_out < serial->num_ports ||
++			serial->num_interrupt_in < 1) {
+ 		dev_err(&serial->interface->dev, "missing endpoints\n");
+ 		return -ENODEV;
+ 	}
+diff --git a/drivers/usb/serial/opticon.c b/drivers/usb/serial/opticon.c
+index 4b7bfb394a32..64bf258e7e00 100644
+--- a/drivers/usb/serial/opticon.c
++++ b/drivers/usb/serial/opticon.c
+@@ -142,7 +142,7 @@ static int opticon_open(struct tty_struct *tty, struct usb_serial_port *port)
+ 	usb_clear_halt(port->serial->dev, port->read_urb->pipe);
+ 
+ 	res = usb_serial_generic_open(tty, port);
+-	if (!res)
++	if (res)
+ 		return res;
+ 
+ 	/* Request CTS line state, sometimes during opening the current
+diff --git a/drivers/usb/serial/spcp8x5.c b/drivers/usb/serial/spcp8x5.c
+index 475e6c31b266..ddfd787c461c 100644
+--- a/drivers/usb/serial/spcp8x5.c
++++ b/drivers/usb/serial/spcp8x5.c
+@@ -232,11 +232,17 @@ static int spcp8x5_get_msr(struct usb_serial_port *port, u8 *status)
+ 	ret = usb_control_msg(dev, usb_rcvctrlpipe(dev, 0),
+ 			      GET_UART_STATUS, GET_UART_STATUS_TYPE,
+ 			      0, GET_UART_STATUS_MSR, buf, 1, 100);
+-	if (ret < 0)
++	if (ret < 1) {
+ 		dev_err(&port->dev, "failed to get modem status: %d\n", ret);
++		if (ret >= 0)
++			ret = -EIO;
++		goto out;
++	}
+ 
+ 	dev_dbg(&port->dev, "0xc0:0x22:0:6  %d - 0x02%x\n", ret, *buf);
+ 	*status = *buf;
++	ret = 0;
++out:
+ 	kfree(buf);
+ 
+ 	return ret;
+diff --git a/mm/backing-dev.c b/mm/backing-dev.c
+index 9ef80bf441b3..a988d4ef39da 100644
+--- a/mm/backing-dev.c
++++ b/mm/backing-dev.c
+@@ -757,15 +757,20 @@ static int cgwb_bdi_init(struct backing_dev_info *bdi)
+ 	if (!bdi->wb_congested)
+ 		return -ENOMEM;
+ 
++	atomic_set(&bdi->wb_congested->refcnt, 1);
++
+ 	err = wb_init(&bdi->wb, bdi, 1, GFP_KERNEL);
+ 	if (err) {
+-		kfree(bdi->wb_congested);
++		wb_congested_put(bdi->wb_congested);
+ 		return err;
+ 	}
+ 	return 0;
+ }
+ 
+-static void cgwb_bdi_destroy(struct backing_dev_info *bdi) { }
++static void cgwb_bdi_destroy(struct backing_dev_info *bdi)
++{
++	wb_congested_put(bdi->wb_congested);
++}
+ 
+ #endif	/* CONFIG_CGROUP_WRITEBACK */
+ 
+diff --git a/net/dccp/input.c b/net/dccp/input.c
+index 3bd14e885396..dbe2573f6ba1 100644
+--- a/net/dccp/input.c
++++ b/net/dccp/input.c
+@@ -606,7 +606,8 @@ int dccp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
+ 			if (inet_csk(sk)->icsk_af_ops->conn_request(sk,
+ 								    skb) < 0)
+ 				return 1;
+-			goto discard;
++			consume_skb(skb);
++			return 0;
+ 		}
+ 		if (dh->dccph_type == DCCP_PKT_RESET)
+ 			goto discard;
+diff --git a/net/ipv4/ip_sockglue.c b/net/ipv4/ip_sockglue.c
+index bc14c5bb124b..f300d1cbfa91 100644
+--- a/net/ipv4/ip_sockglue.c
++++ b/net/ipv4/ip_sockglue.c
+@@ -105,10 +105,10 @@ static void ip_cmsg_recv_checksum(struct msghdr *msg, struct sk_buff *skb,
+ 	if (skb->ip_summed != CHECKSUM_COMPLETE)
+ 		return;
+ 
+-	if (offset != 0)
+-		csum = csum_sub(csum,
+-				csum_partial(skb->data + tlen,
+-					     offset, 0));
++	if (offset != 0) {
++		int tend_off = skb_transport_offset(skb) + tlen;
++		csum = csum_sub(csum, skb_checksum(skb, tend_off, offset, 0));
++	}
+ 
+ 	put_cmsg(msg, SOL_IP, IP_CHECKSUM, sizeof(__wsum), &csum);
+ }
+diff --git a/net/irda/irqueue.c b/net/irda/irqueue.c
+index acbe61c7e683..160dc89335e2 100644
+--- a/net/irda/irqueue.c
++++ b/net/irda/irqueue.c
+@@ -383,9 +383,6 @@ EXPORT_SYMBOL(hashbin_new);
+  *    for deallocating this structure if it's complex. If not the user can
+  *    just supply kfree, which should take care of the job.
+  */
+-#ifdef CONFIG_LOCKDEP
+-static int hashbin_lock_depth = 0;
+-#endif
+ int hashbin_delete( hashbin_t* hashbin, FREE_FUNC free_func)
+ {
+ 	irda_queue_t* queue;
+@@ -396,22 +393,27 @@ int hashbin_delete( hashbin_t* hashbin, FREE_FUNC free_func)
+ 	IRDA_ASSERT(hashbin->magic == HB_MAGIC, return -1;);
+ 
+ 	/* Synchronize */
+-	if ( hashbin->hb_type & HB_LOCK ) {
+-		spin_lock_irqsave_nested(&hashbin->hb_spinlock, flags,
+-					 hashbin_lock_depth++);
+-	}
++	if (hashbin->hb_type & HB_LOCK)
++		spin_lock_irqsave(&hashbin->hb_spinlock, flags);
+ 
+ 	/*
+ 	 *  Free the entries in the hashbin, TODO: use hashbin_clear when
+ 	 *  it has been shown to work
+ 	 */
+ 	for (i = 0; i < HASHBIN_SIZE; i ++ ) {
+-		queue = dequeue_first((irda_queue_t**) &hashbin->hb_queue[i]);
+-		while (queue ) {
+-			if (free_func)
+-				(*free_func)(queue);
+-			queue = dequeue_first(
+-				(irda_queue_t**) &hashbin->hb_queue[i]);
++		while (1) {
++			queue = dequeue_first((irda_queue_t**) &hashbin->hb_queue[i]);
++
++			if (!queue)
++				break;
++
++			if (free_func) {
++				if (hashbin->hb_type & HB_LOCK)
++					spin_unlock_irqrestore(&hashbin->hb_spinlock, flags);
++				free_func(queue);
++				if (hashbin->hb_type & HB_LOCK)
++					spin_lock_irqsave(&hashbin->hb_spinlock, flags);
++			}
+ 		}
+ 	}
+ 
+@@ -420,12 +422,8 @@ int hashbin_delete( hashbin_t* hashbin, FREE_FUNC free_func)
+ 	hashbin->magic = ~HB_MAGIC;
+ 
+ 	/* Release lock */
+-	if ( hashbin->hb_type & HB_LOCK) {
++	if (hashbin->hb_type & HB_LOCK)
+ 		spin_unlock_irqrestore(&hashbin->hb_spinlock, flags);
+-#ifdef CONFIG_LOCKDEP
+-		hashbin_lock_depth--;
+-#endif
+-	}
+ 
+ 	/*
+ 	 *  Free the hashbin structure
+diff --git a/net/llc/llc_conn.c b/net/llc/llc_conn.c
+index 3e821daf9dd4..8bc5a1bd2d45 100644
+--- a/net/llc/llc_conn.c
++++ b/net/llc/llc_conn.c
+@@ -821,7 +821,10 @@ void llc_conn_handler(struct llc_sap *sap, struct sk_buff *skb)
+ 		 * another trick required to cope with how the PROCOM state
+ 		 * machine works. -acme
+ 		 */
++		skb_orphan(skb);
++		sock_hold(sk);
+ 		skb->sk = sk;
++		skb->destructor = sock_efree;
+ 	}
+ 	if (!sock_owned_by_user(sk))
+ 		llc_conn_rcv(sk, skb);
+diff --git a/net/llc/llc_sap.c b/net/llc/llc_sap.c
+index d0e1e804ebd7..5404d0d195cc 100644
+--- a/net/llc/llc_sap.c
++++ b/net/llc/llc_sap.c
+@@ -290,7 +290,10 @@ static void llc_sap_rcv(struct llc_sap *sap, struct sk_buff *skb,
+ 
+ 	ev->type   = LLC_SAP_EV_TYPE_PDU;
+ 	ev->reason = 0;
++	skb_orphan(skb);
++	sock_hold(sk);
+ 	skb->sk = sk;
++	skb->destructor = sock_efree;
+ 	llc_sap_state_process(sap, skb);
+ }
+ 
+diff --git a/net/packet/af_packet.c b/net/packet/af_packet.c
+index f2d28ed74a0a..d805cd577a60 100644
+--- a/net/packet/af_packet.c
++++ b/net/packet/af_packet.c
+@@ -1497,6 +1497,8 @@ static void __fanout_link(struct sock *sk, struct packet_sock *po)
+ 	f->arr[f->num_members] = sk;
+ 	smp_wmb();
+ 	f->num_members++;
++	if (f->num_members == 1)
++		dev_add_pack(&f->prot_hook);
+ 	spin_unlock(&f->lock);
+ }
+ 
+@@ -1513,6 +1515,8 @@ static void __fanout_unlink(struct sock *sk, struct packet_sock *po)
+ 	BUG_ON(i >= f->num_members);
+ 	f->arr[i] = f->arr[f->num_members - 1];
+ 	f->num_members--;
++	if (f->num_members == 0)
++		__dev_remove_pack(&f->prot_hook);
+ 	spin_unlock(&f->lock);
+ }
+ 
+@@ -1623,6 +1627,7 @@ static void fanout_release_data(struct packet_fanout *f)
+ 
+ static int fanout_add(struct sock *sk, u16 id, u16 type_flags)
+ {
++	struct packet_rollover *rollover = NULL;
+ 	struct packet_sock *po = pkt_sk(sk);
+ 	struct packet_fanout *f, *match;
+ 	u8 type = type_flags & 0xff;
+@@ -1645,23 +1650,28 @@ static int fanout_add(struct sock *sk, u16 id, u16 type_flags)
+ 		return -EINVAL;
+ 	}
+ 
++	mutex_lock(&fanout_mutex);
++
++	err = -EINVAL;
+ 	if (!po->running)
+-		return -EINVAL;
++		goto out;
+ 
++	err = -EALREADY;
+ 	if (po->fanout)
+-		return -EALREADY;
++		goto out;
+ 
+ 	if (type == PACKET_FANOUT_ROLLOVER ||
+ 	    (type_flags & PACKET_FANOUT_FLAG_ROLLOVER)) {
+-		po->rollover = kzalloc(sizeof(*po->rollover), GFP_KERNEL);
+-		if (!po->rollover)
+-			return -ENOMEM;
+-		atomic_long_set(&po->rollover->num, 0);
+-		atomic_long_set(&po->rollover->num_huge, 0);
+-		atomic_long_set(&po->rollover->num_failed, 0);
++		err = -ENOMEM;
++		rollover = kzalloc(sizeof(*rollover), GFP_KERNEL);
++		if (!rollover)
++			goto out;
++		atomic_long_set(&rollover->num, 0);
++		atomic_long_set(&rollover->num_huge, 0);
++		atomic_long_set(&rollover->num_failed, 0);
++		po->rollover = rollover;
+ 	}
+ 
+-	mutex_lock(&fanout_mutex);
+ 	match = NULL;
+ 	list_for_each_entry(f, &fanout_list, list) {
+ 		if (f->id == id &&
+@@ -1691,7 +1701,6 @@ static int fanout_add(struct sock *sk, u16 id, u16 type_flags)
+ 		match->prot_hook.func = packet_rcv_fanout;
+ 		match->prot_hook.af_packet_priv = match;
+ 		match->prot_hook.id_match = match_fanout_group;
+-		dev_add_pack(&match->prot_hook);
+ 		list_add(&match->list, &fanout_list);
+ 	}
+ 	err = -EINVAL;
+@@ -1708,36 +1717,40 @@ static int fanout_add(struct sock *sk, u16 id, u16 type_flags)
+ 		}
+ 	}
+ out:
+-	mutex_unlock(&fanout_mutex);
+-	if (err) {
+-		kfree(po->rollover);
++	if (err && rollover) {
++		kfree(rollover);
+ 		po->rollover = NULL;
+ 	}
++	mutex_unlock(&fanout_mutex);
+ 	return err;
+ }
+ 
+-static void fanout_release(struct sock *sk)
++/* If pkt_sk(sk)->fanout->sk_ref is zero, this function removes
++ * pkt_sk(sk)->fanout from fanout_list and returns pkt_sk(sk)->fanout.
++ * It is the responsibility of the caller to call fanout_release_data() and
++ * free the returned packet_fanout (after synchronize_net())
++ */
++static struct packet_fanout *fanout_release(struct sock *sk)
+ {
+ 	struct packet_sock *po = pkt_sk(sk);
+ 	struct packet_fanout *f;
+ 
++	mutex_lock(&fanout_mutex);
+ 	f = po->fanout;
+-	if (!f)
+-		return;
++	if (f) {
++		po->fanout = NULL;
+ 
+-	mutex_lock(&fanout_mutex);
+-	po->fanout = NULL;
++		if (atomic_dec_and_test(&f->sk_ref))
++			list_del(&f->list);
++		else
++			f = NULL;
+ 
+-	if (atomic_dec_and_test(&f->sk_ref)) {
+-		list_del(&f->list);
+-		dev_remove_pack(&f->prot_hook);
+-		fanout_release_data(f);
+-		kfree(f);
++		if (po->rollover)
++			kfree_rcu(po->rollover, rcu);
+ 	}
+ 	mutex_unlock(&fanout_mutex);
+ 
+-	if (po->rollover)
+-		kfree_rcu(po->rollover, rcu);
++	return f;
+ }
+ 
+ static bool packet_extra_vlan_len_allowed(const struct net_device *dev,
+@@ -2846,6 +2859,7 @@ static int packet_release(struct socket *sock)
+ {
+ 	struct sock *sk = sock->sk;
+ 	struct packet_sock *po;
++	struct packet_fanout *f;
+ 	struct net *net;
+ 	union tpacket_req_u req_u;
+ 
+@@ -2885,9 +2899,14 @@ static int packet_release(struct socket *sock)
+ 		packet_set_ring(sk, &req_u, 1, 1);
+ 	}
+ 
+-	fanout_release(sk);
++	f = fanout_release(sk);
+ 
+ 	synchronize_net();
++
++	if (f) {
++		fanout_release_data(f);
++		kfree(f);
++	}
+ 	/*
+ 	 *	Now the socket is dead. No more input will appear.
+ 	 */
+@@ -3861,7 +3880,6 @@ static int packet_notifier(struct notifier_block *this,
+ 				}
+ 				if (msg == NETDEV_UNREGISTER) {
+ 					packet_cached_dev_reset(po);
+-					fanout_release(sk);
+ 					po->ifindex = -1;
+ 					if (po->prot_hook.dev)
+ 						dev_put(po->prot_hook.dev);
+diff --git a/net/socket.c b/net/socket.c
+index 0090225eeb1e..fbfa9d2492cf 100644
+--- a/net/socket.c
++++ b/net/socket.c
+@@ -2185,8 +2185,10 @@ int __sys_recvmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
+ 		return err;
+ 
+ 	err = sock_error(sock->sk);
+-	if (err)
++	if (err) {
++		datagrams = err;
+ 		goto out_put;
++	}
+ 
+ 	entry = mmsg;
+ 	compat_entry = (struct compat_mmsghdr __user *)mmsg;

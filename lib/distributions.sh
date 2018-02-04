@@ -16,6 +16,9 @@ install_common()
 {
 	display_alert "Applying common tweaks" "" "info"
 
+	# define ARCH within global environment variables
+	[[ -f $SDCARD/etc/environment ]] && echo "ARCH=${ARCH//hf}" >> $SDCARD/etc/environment
+
 	# add dummy fstab entry to make mkinitramfs happy
 	echo "/dev/mmcblk0p1 / $ROOTFS_TYPE defaults 0 1" >> $SDCARD/etc/fstab
 	# required for initramfs-tools-core on Stretch since it ignores the / fstab entry

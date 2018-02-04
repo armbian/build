@@ -476,9 +476,11 @@ addtorepo()
 	(aptly repo list -config=../config/aptly.conf) | egrep packages
 
 	# remove debs if no errors found
-	if [[ $errors -eq 0 && "$2" == "delete" ]]; then
-		display_alert "Purging incoming debs" "all" "ext"
-		find ${POT} -name "*.deb" -type f -delete
+	if [[ $errors -eq 0 ]]; then
+		if [[ "$2" == "delete" ]]; then
+			display_alert "Purging incoming debs" "all" "ext"
+			find ${POT} -name "*.deb" -type f -delete
+		fi
 	else
 		display_alert "There were some problems $err_txt" "leaving incoming directory intact" "err"
 	fi
@@ -513,7 +515,7 @@ prepare_host()
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-tools ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross \
-	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev aptly \
+	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev aptly acl \
 	locales ncurses-base pixz dialog systemd-container udev distcc lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5"
 
 	local codename=$(lsb_release -sc)
@@ -531,6 +533,11 @@ prepare_host()
 			exit_with_error "It seems you ignore documentation and run an unsupported build system: ${codename:-(unknown)}"
 		fi
 	fi
+
+	if grep -qE "(Microsoft|WSL)" /proc/version; then
+		exit_with_error "Windows subsystem for Linux is not a supported build environment"
+	fi
+
 	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
 	if systemd-detect-virt -q -c; then
 		display_alert "Running in container" "$(systemd-detect-virt)" "info"
