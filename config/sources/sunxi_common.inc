@@ -1,6 +1,6 @@
 BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 BOOTDIR=$MAINLINE_UBOOT_DIR
-BOOTBRANCH=$MAINLINE_UBOOT_BRANCH
+BOOTBRANCH='tag:v2017.11'
 BOOTSCRIPT="boot-sunxi.cmd:boot.cmd"
 BOOTENV_FILE='sunxi-default.txt'
 BOOTPATCHDIR='u-boot-sunxi'
@@ -14,8 +14,7 @@ HAS_UUID_SUPPORT=yes
 BOOTDELAY=1
 
 # Here we want to rename LINUXFAMILY from sun4i, sun5i, etc for next and dev branches
-# except for sun8i-dev which is separate from sunxi-dev
-[[ $BRANCH != default && ! ( $LINUXFAMILY == sun8i && $BRANCH == dev ) ]] && LINUXFAMILY=sunxi
+[[ $BRANCH != default ]] && LINUXFAMILY=sunxi
 
 case $BRANCH in
 	default)
@@ -25,7 +24,7 @@ case $BRANCH in
 
 	next)
 	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-	KERNELBRANCH='branch:linux-4.13.y'
+	KERNELBRANCH='branch:linux-4.14.y'
 	KERNELDIR=$MAINLINE_KERNEL_DIR
 
 	GOVERNOR=ondemand
@@ -46,6 +45,21 @@ family_tweaks()
 	[[ $(type -t family_tweaks_s) == function ]] && family_tweaks_s
 
 	cp $SRC/packages/blobs/splash/armbian-u-boot-24.bmp $SDCARD/boot/boot.bmp
+}
+
+family_tweaks_bsp()
+{
+	# execute specific tweaks function if present
+	[[ $(type -t family_tweaks_bsp_s) == function ]] && family_tweaks_bsp_s
+
+	if [[ $BRANCH == default ]]; then
+		arm-linux-gnueabihf-gcc $SRC/packages/bsp/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
+		# convert and add fex files
+		mkdir -p $destination/boot/bin
+		for i in $(ls -w1 $SRC/config/fex/*.fex | xargs -n1 basename); do
+			fex2bin $SRC/config/fex/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
+		done
+	fi
 }
 
 write_uboot_platform()

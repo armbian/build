@@ -14,12 +14,16 @@ install_desktop ()
 	# add loading desktop splash service
 	cp $SRC/packages/blobs/desktop/desktop-splash/desktop-splash.service $SDCARD/etc/systemd/system/desktop-splash.service
 
-	if [[ $RELEASE == xenial ]]; then
-		# install optimized firefox configuration
-		# cp $SRC/packages/blobs/desktop/firefox.conf $SDCARD/etc/firefox/syspref.js
-		# install optimized chromium configuration
-		cp $SRC/packages/blobs/desktop/chromium.conf $SDCARD/etc/chromium-browser/default
+	# install optimized firefox configuration
+	if [[ -d $SDCARD/usr/lib/firefox-esr/ ]]; then
+		cp $SRC/packages/blobs/desktop/firefox.conf $SDCARD/usr/lib/firefox-esr/mozilla.cfg
+		echo 'pref("general.config.obscure_value", 0);' > 			$SDCARD/usr/lib/firefox-esr/defaults/pref/local-settings.js
+		echo 'pref("general.config.filename", "mozilla.cfg");' >> 	$SDCARD/usr/lib/firefox-esr/defaults/pref/local-settings.js
 	fi
+
+	# install optimized chromium configuration
+	[[ -d $SDCARD/etc/chromium-browser ]] && cp $SRC/packages/blobs/desktop/chromium.conf $SDCARD/etc/chromium-browser/default
+	[[ -d $SDCARD/etc/chromium.d ]] && cp $SRC/packages/blobs/desktop/chromium.conf $SDCARD/etc/chromium.d/chromium.conf
 
 	# install default desktop settings
 	cp -R $SRC/packages/blobs/desktop/skel/. $SDCARD/etc/skel
@@ -38,17 +42,29 @@ install_desktop ()
 	chroot $SDCARD /bin/bash -c "dpkg -x /root/numix-icon-theme_0.3+922~201711061547~ubuntu16.04.1_all.deb /" >> $DEST/debug/install.log 2>&1
 	chroot $SDCARD /bin/bash -c "gtk-update-icon-cache /usr/share/icons/Numix" >> $DEST/debug/install.log 2>&1
 	chroot $SDCARD /bin/bash -c "gtk-update-icon-cache /usr/share/icons/Numix-Light" >> $DEST/debug/install.log 2>&1
+	chroot $SDCARD /bin/bash -c "dpkg -x /root/numix-icon-theme_0.3+922~201711061547~ubuntu16.04.1_all.deb /" >> $DEST/debug/install.log 2>&1
 	rm $SDCARD/root/numix-icon-theme_0.3+922~201711061547~ubuntu16.04.1_all.deb
+
+	# Install theme under Jessie since not exists in repository
+	if [[ "${RELEASE}" == "jessie" ]]; then
+		install_deb_chroot "$SRC/packages/blobs/desktop/numix-gtk-theme_2.6.7+670~201710270712~ubuntu17.10.1_all.deb"
+	fi
 
 	# Adjust menu
 	sed -i '0,/xfce4-about.desktop/s//armbian-donate.desktop/' $SDCARD/etc/xdg/menus/xfce-applications.menu
 	sed -i '/armbian-donate.desktop/a \\t<Filename>armbian-support.desktop</Filename>/' $SDCARD/etc/xdg/menus/xfce-applications.menu
 
+	# Hide few items
+	[[ -f $SDCARD/usr/share/applications/display-im6.q16.desktop ]] && mv $SDCARD/usr/share/applications/display-im6.q16.desktop $SDCARD/usr/share/applications/display-im6.q16.desktop.hidden
+	[[ -f $SDCARD/usr/share/applications/display-im6.desktop ]] && mv $SDCARD/usr/share/applications/display-im6.desktop $SDCARD/usr/share/applications/display-im6.desktop.hidden
+	[[ -f $SDCARD/usr/share/applications/vim.desktop ]] && mv $SDCARD/usr/share/applications/vim.desktop $SDCARD/usr/share/applications/vim.desktop.hidden
+	[[ -f $SDCARD/usr/share/applications/libreoffice-startcenter.desktop ]] && mv $SDCARD/usr/share/applications/libreoffice-startcenter.desktop $SDCARD/usr/share/applications/libreoffice-startcenter.desktop.hidden
+
 	# Enable network manager
 	if [[ -f $SDCARD/etc/NetworkManager/NetworkManager.conf ]]; then
 		sed "s/managed=\(.*\)/managed=true/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
-		# Disable dns management withing NM
-		sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
+		# Disable DNS management withing NM for !Stretch
+		[[ $RELEASE != stretch ]] && sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
 		printf '[keyfile]\nunmanaged-devices=interface-name:p2p0\n' >> $SDCARD/etc/NetworkManager/NetworkManager.conf
 	fi
 
@@ -71,5 +87,6 @@ install_desktop ()
 
 		# enable memory reservations
 		echo "disp_mem_reserves=on" >> $SDCARD/boot/armbianEnv.txt
+		echo "extraargs=cma=96M" >> $SDCARD/boot/armbianEnv.txt
 	fi
 }

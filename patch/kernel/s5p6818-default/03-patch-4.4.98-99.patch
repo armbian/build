@@ -1,0 +1,1260 @@
+diff --git a/Makefile b/Makefile
+index 5d62e23347f9..0b5d9e20eee2 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 98
++SUBLEVEL = 99
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/powerpc/Kconfig b/arch/powerpc/Kconfig
+index db49e0d796b1..dfb1ee8c3e06 100644
+--- a/arch/powerpc/Kconfig
++++ b/arch/powerpc/Kconfig
+@@ -1082,11 +1082,6 @@ source "arch/powerpc/Kconfig.debug"
+ 
+ source "security/Kconfig"
+ 
+-config KEYS_COMPAT
+-	bool
+-	depends on COMPAT && KEYS
+-	default y
+-
+ source "crypto/Kconfig"
+ 
+ config PPC_LIB_RHEAP
+diff --git a/arch/s390/Kconfig b/arch/s390/Kconfig
+index 3a55f493c7da..5ad7b721b769 100644
+--- a/arch/s390/Kconfig
++++ b/arch/s390/Kconfig
+@@ -346,9 +346,6 @@ config COMPAT
+ config SYSVIPC_COMPAT
+ 	def_bool y if COMPAT && SYSVIPC
+ 
+-config KEYS_COMPAT
+-	def_bool y if COMPAT && KEYS
+-
+ config SMP
+ 	def_bool y
+ 	prompt "Symmetric multi-processing support"
+diff --git a/arch/sparc/Kconfig b/arch/sparc/Kconfig
+index eb9487470141..94f4ac21761b 100644
+--- a/arch/sparc/Kconfig
++++ b/arch/sparc/Kconfig
+@@ -549,9 +549,6 @@ config SYSVIPC_COMPAT
+ 	depends on COMPAT && SYSVIPC
+ 	default y
+ 
+-config KEYS_COMPAT
+-	def_bool y if COMPAT && KEYS
+-
+ endmenu
+ 
+ source "net/Kconfig"
+diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
+index 436639a31624..7e40905f6d4c 100644
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
+@@ -2641,10 +2641,6 @@ config COMPAT_FOR_U64_ALIGNMENT
+ config SYSVIPC_COMPAT
+ 	def_bool y
+ 	depends on SYSVIPC
+-
+-config KEYS_COMPAT
+-	def_bool y
+-	depends on KEYS
+ endif
+ 
+ endmenu
+diff --git a/drivers/input/misc/ims-pcu.c b/drivers/input/misc/ims-pcu.c
+index f4e8fbec6a94..b5304e264881 100644
+--- a/drivers/input/misc/ims-pcu.c
++++ b/drivers/input/misc/ims-pcu.c
+@@ -1635,13 +1635,25 @@ ims_pcu_get_cdc_union_desc(struct usb_interface *intf)
+ 		return NULL;
+ 	}
+ 
+-	while (buflen > 0) {
++	while (buflen >= sizeof(*union_desc)) {
+ 		union_desc = (struct usb_cdc_union_desc *)buf;
+ 
++		if (union_desc->bLength > buflen) {
++			dev_err(&intf->dev, "Too large descriptor\n");
++			return NULL;
++		}
++
+ 		if (union_desc->bDescriptorType == USB_DT_CS_INTERFACE &&
+ 		    union_desc->bDescriptorSubType == USB_CDC_UNION_TYPE) {
+ 			dev_dbg(&intf->dev, "Found union header\n");
+-			return union_desc;
++
++			if (union_desc->bLength >= sizeof(*union_desc))
++				return union_desc;
++
++			dev_err(&intf->dev,
++				"Union descriptor to short (%d vs %zd\n)",
++				union_desc->bLength, sizeof(*union_desc));
++			return NULL;
+ 		}
+ 
+ 		buflen -= union_desc->bLength;
+diff --git a/drivers/net/macvtap.c b/drivers/net/macvtap.c
+index 79de9608ac48..ed96fdefd8e5 100644
+--- a/drivers/net/macvtap.c
++++ b/drivers/net/macvtap.c
+@@ -1117,6 +1117,8 @@ static long macvtap_ioctl(struct file *file, unsigned int cmd,
+ 	case TUNSETSNDBUF:
+ 		if (get_user(s, sp))
+ 			return -EFAULT;
++		if (s <= 0)
++			return -EINVAL;
+ 
+ 		q->sk.sk_sndbuf = s;
+ 		return 0;
+diff --git a/drivers/net/ppp/ppp_generic.c b/drivers/net/ppp/ppp_generic.c
+index e5bb870b5461..dc454138d600 100644
+--- a/drivers/net/ppp/ppp_generic.c
++++ b/drivers/net/ppp/ppp_generic.c
+@@ -1110,7 +1110,17 @@ ppp_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats64)
+ static struct lock_class_key ppp_tx_busylock;
+ static int ppp_dev_init(struct net_device *dev)
+ {
++	struct ppp *ppp;
++
+ 	dev->qdisc_tx_busylock = &ppp_tx_busylock;
++
++	ppp = netdev_priv(dev);
++	/* Let the netdevice take a reference on the ppp file. This ensures
++	 * that ppp_destroy_interface() won't run before the device gets
++	 * unregistered.
++	 */
++	atomic_inc(&ppp->file.refcnt);
++
+ 	return 0;
+ }
+ 
+@@ -1133,6 +1143,15 @@ static void ppp_dev_uninit(struct net_device *dev)
+ 	wake_up_interruptible(&ppp->file.rwait);
+ }
+ 
++static void ppp_dev_priv_destructor(struct net_device *dev)
++{
++	struct ppp *ppp;
++
++	ppp = netdev_priv(dev);
++	if (atomic_dec_and_test(&ppp->file.refcnt))
++		ppp_destroy_interface(ppp);
++}
++
+ static const struct net_device_ops ppp_netdev_ops = {
+ 	.ndo_init	 = ppp_dev_init,
+ 	.ndo_uninit      = ppp_dev_uninit,
+@@ -1150,6 +1169,7 @@ static void ppp_setup(struct net_device *dev)
+ 	dev->tx_queue_len = 3;
+ 	dev->type = ARPHRD_PPP;
+ 	dev->flags = IFF_POINTOPOINT | IFF_NOARP | IFF_MULTICAST;
++	dev->destructor = ppp_dev_priv_destructor;
+ 	netif_keep_dst(dev);
+ }
+ 
+diff --git a/drivers/net/tun.c b/drivers/net/tun.c
+index cd191f82d816..50bfded6d7ef 100644
+--- a/drivers/net/tun.c
++++ b/drivers/net/tun.c
+@@ -1684,6 +1684,9 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
+ 
+ 		if (!dev)
+ 			return -ENOMEM;
++		err = dev_get_valid_name(net, dev, name);
++		if (err < 0)
++			goto err_free_dev;
+ 
+ 		dev_net_set(dev, net);
+ 		dev->rtnl_link_ops = &tun_link_ops;
+@@ -2065,6 +2068,10 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
+ 			ret = -EFAULT;
+ 			break;
+ 		}
++		if (sndbuf <= 0) {
++			ret = -EINVAL;
++			break;
++		}
+ 
+ 		tun->sndbuf = sndbuf;
+ 		tun_set_sndbuf(tun);
+diff --git a/drivers/net/wireless/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/brcm80211/brcmfmac/cfg80211.c
+index 5fecae0ba52e..83e5aa6a9f28 100644
+--- a/drivers/net/wireless/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/brcm80211/brcmfmac/cfg80211.c
+@@ -4295,9 +4295,6 @@ static int brcmf_cfg80211_stop_ap(struct wiphy *wiphy, struct net_device *ndev)
+ 		err = brcmf_fil_cmd_int_set(ifp, BRCMF_C_SET_AP, 0);
+ 		if (err < 0)
+ 			brcmf_err("setting AP mode failed %d\n", err);
+-		err = brcmf_fil_cmd_int_set(ifp, BRCMF_C_SET_INFRA, 0);
+-		if (err < 0)
+-			brcmf_err("setting INFRA mode failed %d\n", err);
+ 		if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_MBSS))
+ 			brcmf_fil_iovar_int_set(ifp, "mbss", 0);
+ 		err = brcmf_fil_cmd_int_set(ifp, BRCMF_C_SET_REGULATORY,
+diff --git a/drivers/staging/panel/panel.c b/drivers/staging/panel/panel.c
+index 70b8f4fabfad..e658e11e1829 100644
+--- a/drivers/staging/panel/panel.c
++++ b/drivers/staging/panel/panel.c
+@@ -1431,17 +1431,25 @@ static ssize_t lcd_write(struct file *file,
+ 
+ static int lcd_open(struct inode *inode, struct file *file)
+ {
++	int ret;
++
++	ret = -EBUSY;
+ 	if (!atomic_dec_and_test(&lcd_available))
+-		return -EBUSY;	/* open only once at a time */
++		goto fail; /* open only once at a time */
+ 
++	ret = -EPERM;
+ 	if (file->f_mode & FMODE_READ)	/* device is write-only */
+-		return -EPERM;
++		goto fail;
+ 
+ 	if (lcd.must_clear) {
+ 		lcd_clear_display();
+ 		lcd.must_clear = false;
+ 	}
+ 	return nonseekable_open(inode, file);
++
++ fail:
++	atomic_inc(&lcd_available);
++	return ret;
+ }
+ 
+ static int lcd_release(struct inode *inode, struct file *file)
+@@ -1704,14 +1712,21 @@ static ssize_t keypad_read(struct file *file,
+ 
+ static int keypad_open(struct inode *inode, struct file *file)
+ {
++	int ret;
++
++	ret = -EBUSY;
+ 	if (!atomic_dec_and_test(&keypad_available))
+-		return -EBUSY;	/* open only once at a time */
++		goto fail;	/* open only once at a time */
+ 
++	ret = -EPERM;
+ 	if (file->f_mode & FMODE_WRITE)	/* device is read-only */
+-		return -EPERM;
++		goto fail;
+ 
+ 	keypad_buflen = 0;	/* flush the buffer on opening */
+ 	return 0;
++ fail:
++	atomic_inc(&keypad_available);
++	return ret;
+ }
+ 
+ static int keypad_release(struct inode *inode, struct file *file)
+diff --git a/drivers/target/iscsi/iscsi_target.c b/drivers/target/iscsi/iscsi_target.c
+index 1ff1c83e2df5..fd493412b172 100644
+--- a/drivers/target/iscsi/iscsi_target.c
++++ b/drivers/target/iscsi/iscsi_target.c
+@@ -1759,7 +1759,7 @@ iscsit_handle_task_mgt_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
+ 	struct iscsi_tm *hdr;
+ 	int out_of_order_cmdsn = 0, ret;
+ 	bool sess_ref = false;
+-	u8 function;
++	u8 function, tcm_function = TMR_UNKNOWN;
+ 
+ 	hdr			= (struct iscsi_tm *) buf;
+ 	hdr->flags &= ~ISCSI_FLAG_CMD_FINAL;
+@@ -1805,10 +1805,6 @@ iscsit_handle_task_mgt_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
+ 	 * LIO-Target $FABRIC_MOD
+ 	 */
+ 	if (function != ISCSI_TM_FUNC_TASK_REASSIGN) {
+-
+-		u8 tcm_function;
+-		int ret;
+-
+ 		transport_init_se_cmd(&cmd->se_cmd, &iscsi_ops,
+ 				      conn->sess->se_sess, 0, DMA_NONE,
+ 				      TCM_SIMPLE_TAG, cmd->sense_buffer + 2);
+@@ -1844,15 +1840,14 @@ iscsit_handle_task_mgt_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
+ 			return iscsit_add_reject_cmd(cmd,
+ 				ISCSI_REASON_BOOKMARK_NO_RESOURCES, buf);
+ 		}
+-
+-		ret = core_tmr_alloc_req(&cmd->se_cmd, cmd->tmr_req,
+-					 tcm_function, GFP_KERNEL);
+-		if (ret < 0)
+-			return iscsit_add_reject_cmd(cmd,
++	}
++	ret = core_tmr_alloc_req(&cmd->se_cmd, cmd->tmr_req, tcm_function,
++				 GFP_KERNEL);
++	if (ret < 0)
++		return iscsit_add_reject_cmd(cmd,
+ 				ISCSI_REASON_BOOKMARK_NO_RESOURCES, buf);
+ 
+-		cmd->tmr_req->se_tmr_req = cmd->se_cmd.se_tmr_req;
+-	}
++	cmd->tmr_req->se_tmr_req = cmd->se_cmd.se_tmr_req;
+ 
+ 	cmd->iscsi_opcode	= ISCSI_OP_SCSI_TMFUNC;
+ 	cmd->i_state		= ISTATE_SEND_TASKMGTRSP;
+diff --git a/drivers/target/target_core_tpg.c b/drivers/target/target_core_tpg.c
+index f69f4902dc07..ee16a45f1607 100644
+--- a/drivers/target/target_core_tpg.c
++++ b/drivers/target/target_core_tpg.c
+@@ -350,7 +350,7 @@ void core_tpg_del_initiator_node_acl(struct se_node_acl *acl)
+ 	if (acl->dynamic_node_acl) {
+ 		acl->dynamic_node_acl = 0;
+ 	}
+-	list_del(&acl->acl_list);
++	list_del_init(&acl->acl_list);
+ 	tpg->num_node_acls--;
+ 	mutex_unlock(&tpg->acl_node_mutex);
+ 
+@@ -572,7 +572,7 @@ int core_tpg_deregister(struct se_portal_group *se_tpg)
+ 	 * in transport_deregister_session().
+ 	 */
+ 	list_for_each_entry_safe(nacl, nacl_tmp, &node_list, acl_list) {
+-		list_del(&nacl->acl_list);
++		list_del_init(&nacl->acl_list);
+ 		se_tpg->num_node_acls--;
+ 
+ 		core_tpg_wait_for_nacl_pr_ref(nacl);
+diff --git a/drivers/target/target_core_transport.c b/drivers/target/target_core_transport.c
+index f71bedea973a..a42054edd427 100644
+--- a/drivers/target/target_core_transport.c
++++ b/drivers/target/target_core_transport.c
+@@ -431,7 +431,7 @@ static void target_complete_nacl(struct kref *kref)
+ 	}
+ 
+ 	mutex_lock(&se_tpg->acl_node_mutex);
+-	list_del(&nacl->acl_list);
++	list_del_init(&nacl->acl_list);
+ 	mutex_unlock(&se_tpg->acl_node_mutex);
+ 
+ 	core_tpg_wait_for_nacl_pr_ref(nacl);
+@@ -503,7 +503,7 @@ void transport_free_session(struct se_session *se_sess)
+ 			spin_unlock_irqrestore(&se_nacl->nacl_sess_lock, flags);
+ 
+ 			if (se_nacl->dynamic_stop)
+-				list_del(&se_nacl->acl_list);
++				list_del_init(&se_nacl->acl_list);
+ 		}
+ 		mutex_unlock(&se_tpg->acl_node_mutex);
+ 
+diff --git a/drivers/usb/misc/usbtest.c b/drivers/usb/misc/usbtest.c
+index 2e947dc94e32..bc92a498ec03 100644
+--- a/drivers/usb/misc/usbtest.c
++++ b/drivers/usb/misc/usbtest.c
+@@ -185,12 +185,13 @@ found:
+ 			return tmp;
+ 	}
+ 
+-	if (in) {
++	if (in)
+ 		dev->in_pipe = usb_rcvbulkpipe(udev,
+ 			in->desc.bEndpointAddress & USB_ENDPOINT_NUMBER_MASK);
++	if (out)
+ 		dev->out_pipe = usb_sndbulkpipe(udev,
+ 			out->desc.bEndpointAddress & USB_ENDPOINT_NUMBER_MASK);
+-	}
++
+ 	if (iso_in) {
+ 		dev->iso_in = &iso_in->desc;
+ 		dev->in_iso_pipe = usb_rcvisocpipe(udev,
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index 4035bbe40971..fc54049e8286 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -3469,6 +3469,9 @@ struct net_device *alloc_netdev_mqs(int sizeof_priv, const char *name,
+ 				    unsigned char name_assign_type,
+ 				    void (*setup)(struct net_device *),
+ 				    unsigned int txqs, unsigned int rxqs);
++int dev_get_valid_name(struct net *net, struct net_device *dev,
++		       const char *name);
++
+ #define alloc_netdev(sizeof_priv, name, name_assign_type, setup) \
+ 	alloc_netdev_mqs(sizeof_priv, name, name_assign_type, setup, 1, 1)
+ 
+diff --git a/include/net/inet_sock.h b/include/net/inet_sock.h
+index 625bdf95d673..95aa999f31d7 100644
+--- a/include/net/inet_sock.h
++++ b/include/net/inet_sock.h
+@@ -95,7 +95,7 @@ struct inet_request_sock {
+ 	kmemcheck_bitfield_end(flags);
+ 	u32                     ir_mark;
+ 	union {
+-		struct ip_options_rcu	*opt;
++		struct ip_options_rcu __rcu	*ireq_opt;
+ 		struct sk_buff		*pktopts;
+ 	};
+ };
+@@ -113,6 +113,12 @@ static inline u32 inet_request_mark(const struct sock *sk, struct sk_buff *skb)
+ 	return sk->sk_mark;
+ }
+ 
++static inline struct ip_options_rcu *ireq_opt_deref(const struct inet_request_sock *ireq)
++{
++	return rcu_dereference_check(ireq->ireq_opt,
++				     atomic_read(&ireq->req.rsk_refcnt) > 0);
++}
++
+ struct inet_cork {
+ 	unsigned int		flags;
+ 	__be32			addr;
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index e9d7a8ef9a6d..cecb0e0eff06 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -1612,12 +1612,12 @@ static inline void tcp_highest_sack_reset(struct sock *sk)
+ 	tcp_sk(sk)->highest_sack = tcp_write_queue_head(sk);
+ }
+ 
+-/* Called when old skb is about to be deleted (to be combined with new skb) */
+-static inline void tcp_highest_sack_combine(struct sock *sk,
++/* Called when old skb is about to be deleted and replaced by new skb */
++static inline void tcp_highest_sack_replace(struct sock *sk,
+ 					    struct sk_buff *old,
+ 					    struct sk_buff *new)
+ {
+-	if (tcp_sk(sk)->sacked_out && (old == tcp_sk(sk)->highest_sack))
++	if (old == tcp_highest_sack(sk))
+ 		tcp_sk(sk)->highest_sack = new;
+ }
+ 
+diff --git a/include/target/target_core_base.h b/include/target/target_core_base.h
+index 1adf8739980c..8555321306fb 100644
+--- a/include/target/target_core_base.h
++++ b/include/target/target_core_base.h
+@@ -199,6 +199,7 @@ enum tcm_tmreq_table {
+ 	TMR_LUN_RESET		= 5,
+ 	TMR_TARGET_WARM_RESET	= 6,
+ 	TMR_TARGET_COLD_RESET	= 7,
++	TMR_UNKNOWN		= 0xff,
+ };
+ 
+ /* fabric independent task management response values */
+diff --git a/net/core/dev.c b/net/core/dev.c
+index dac52fa60f25..630704d8d6a2 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -1111,9 +1111,8 @@ static int dev_alloc_name_ns(struct net *net,
+ 	return ret;
+ }
+ 
+-static int dev_get_valid_name(struct net *net,
+-			      struct net_device *dev,
+-			      const char *name)
++int dev_get_valid_name(struct net *net, struct net_device *dev,
++		       const char *name)
+ {
+ 	BUG_ON(!net);
+ 
+@@ -1129,6 +1128,7 @@ static int dev_get_valid_name(struct net *net,
+ 
+ 	return 0;
+ }
++EXPORT_SYMBOL(dev_get_valid_name);
+ 
+ /**
+  *	dev_change_name - change name of a device
+diff --git a/net/dccp/ipv4.c b/net/dccp/ipv4.c
+index e217f17997a4..6eb2bbf9873b 100644
+--- a/net/dccp/ipv4.c
++++ b/net/dccp/ipv4.c
+@@ -414,8 +414,7 @@ struct sock *dccp_v4_request_recv_sock(const struct sock *sk,
+ 	sk_daddr_set(newsk, ireq->ir_rmt_addr);
+ 	sk_rcv_saddr_set(newsk, ireq->ir_loc_addr);
+ 	newinet->inet_saddr	= ireq->ir_loc_addr;
+-	newinet->inet_opt	= ireq->opt;
+-	ireq->opt	   = NULL;
++	RCU_INIT_POINTER(newinet->inet_opt, rcu_dereference(ireq->ireq_opt));
+ 	newinet->mc_index  = inet_iif(skb);
+ 	newinet->mc_ttl	   = ip_hdr(skb)->ttl;
+ 	newinet->inet_id   = jiffies;
+@@ -430,7 +429,10 @@ struct sock *dccp_v4_request_recv_sock(const struct sock *sk,
+ 	if (__inet_inherit_port(sk, newsk) < 0)
+ 		goto put_and_exit;
+ 	*own_req = inet_ehash_nolisten(newsk, req_to_sk(req_unhash));
+-
++	if (*own_req)
++		ireq->ireq_opt = NULL;
++	else
++		newinet->inet_opt = NULL;
+ 	return newsk;
+ 
+ exit_overflow:
+@@ -441,6 +443,7 @@ exit:
+ 	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENDROPS);
+ 	return NULL;
+ put_and_exit:
++	newinet->inet_opt = NULL;
+ 	inet_csk_prepare_forced_close(newsk);
+ 	dccp_done(newsk);
+ 	goto exit;
+@@ -492,7 +495,7 @@ static int dccp_v4_send_response(const struct sock *sk, struct request_sock *req
+ 							      ireq->ir_rmt_addr);
+ 		err = ip_build_and_send_pkt(skb, sk, ireq->ir_loc_addr,
+ 					    ireq->ir_rmt_addr,
+-					    ireq->opt);
++					    ireq_opt_deref(ireq));
+ 		err = net_xmit_eval(err);
+ 	}
+ 
+@@ -546,7 +549,7 @@ out:
+ static void dccp_v4_reqsk_destructor(struct request_sock *req)
+ {
+ 	dccp_feat_list_purge(&dccp_rsk(req)->dreq_featneg);
+-	kfree(inet_rsk(req)->opt);
++	kfree(rcu_dereference_protected(inet_rsk(req)->ireq_opt, 1));
+ }
+ 
+ void dccp_syn_ack_timeout(const struct request_sock *req)
+diff --git a/net/ipv4/cipso_ipv4.c b/net/ipv4/cipso_ipv4.c
+index 6cc3e1d602fb..5f3b81941a6f 100644
+--- a/net/ipv4/cipso_ipv4.c
++++ b/net/ipv4/cipso_ipv4.c
+@@ -2012,7 +2012,7 @@ int cipso_v4_req_setattr(struct request_sock *req,
+ 	buf = NULL;
+ 
+ 	req_inet = inet_rsk(req);
+-	opt = xchg(&req_inet->opt, opt);
++	opt = xchg((__force struct ip_options_rcu **)&req_inet->ireq_opt, opt);
+ 	if (opt)
+ 		kfree_rcu(opt, rcu);
+ 
+@@ -2034,11 +2034,13 @@ req_setattr_failure:
+  * values on failure.
+  *
+  */
+-static int cipso_v4_delopt(struct ip_options_rcu **opt_ptr)
++static int cipso_v4_delopt(struct ip_options_rcu __rcu **opt_ptr)
+ {
++	struct ip_options_rcu *opt = rcu_dereference_protected(*opt_ptr, 1);
+ 	int hdr_delta = 0;
+-	struct ip_options_rcu *opt = *opt_ptr;
+ 
++	if (!opt || opt->opt.cipso == 0)
++		return 0;
+ 	if (opt->opt.srr || opt->opt.rr || opt->opt.ts || opt->opt.router_alert) {
+ 		u8 cipso_len;
+ 		u8 cipso_off;
+@@ -2100,14 +2102,10 @@ static int cipso_v4_delopt(struct ip_options_rcu **opt_ptr)
+  */
+ void cipso_v4_sock_delattr(struct sock *sk)
+ {
+-	int hdr_delta;
+-	struct ip_options_rcu *opt;
+ 	struct inet_sock *sk_inet;
++	int hdr_delta;
+ 
+ 	sk_inet = inet_sk(sk);
+-	opt = rcu_dereference_protected(sk_inet->inet_opt, 1);
+-	if (!opt || opt->opt.cipso == 0)
+-		return;
+ 
+ 	hdr_delta = cipso_v4_delopt(&sk_inet->inet_opt);
+ 	if (sk_inet->is_icsk && hdr_delta > 0) {
+@@ -2127,15 +2125,7 @@ void cipso_v4_sock_delattr(struct sock *sk)
+  */
+ void cipso_v4_req_delattr(struct request_sock *req)
+ {
+-	struct ip_options_rcu *opt;
+-	struct inet_request_sock *req_inet;
+-
+-	req_inet = inet_rsk(req);
+-	opt = req_inet->opt;
+-	if (!opt || opt->opt.cipso == 0)
+-		return;
+-
+-	cipso_v4_delopt(&req_inet->opt);
++	cipso_v4_delopt(&inet_rsk(req)->ireq_opt);
+ }
+ 
+ /**
+diff --git a/net/ipv4/inet_connection_sock.c b/net/ipv4/inet_connection_sock.c
+index 45fa2aaa3d3f..01acb94c4963 100644
+--- a/net/ipv4/inet_connection_sock.c
++++ b/net/ipv4/inet_connection_sock.c
+@@ -412,9 +412,11 @@ struct dst_entry *inet_csk_route_req(const struct sock *sk,
+ {
+ 	const struct inet_request_sock *ireq = inet_rsk(req);
+ 	struct net *net = read_pnet(&ireq->ireq_net);
+-	struct ip_options_rcu *opt = ireq->opt;
++	struct ip_options_rcu *opt;
+ 	struct rtable *rt;
+ 
++	opt = ireq_opt_deref(ireq);
++
+ 	flowi4_init_output(fl4, ireq->ir_iif, ireq->ir_mark,
+ 			   RT_CONN_FLAGS(sk), RT_SCOPE_UNIVERSE,
+ 			   sk->sk_protocol, inet_sk_flowi_flags(sk),
+@@ -448,10 +450,9 @@ struct dst_entry *inet_csk_route_child_sock(const struct sock *sk,
+ 	struct flowi4 *fl4;
+ 	struct rtable *rt;
+ 
++	opt = rcu_dereference(ireq->ireq_opt);
+ 	fl4 = &newinet->cork.fl.u.ip4;
+ 
+-	rcu_read_lock();
+-	opt = rcu_dereference(newinet->inet_opt);
+ 	flowi4_init_output(fl4, ireq->ir_iif, ireq->ir_mark,
+ 			   RT_CONN_FLAGS(sk), RT_SCOPE_UNIVERSE,
+ 			   sk->sk_protocol, inet_sk_flowi_flags(sk),
+@@ -464,13 +465,11 @@ struct dst_entry *inet_csk_route_child_sock(const struct sock *sk,
+ 		goto no_route;
+ 	if (opt && opt->opt.is_strictroute && rt->rt_uses_gateway)
+ 		goto route_err;
+-	rcu_read_unlock();
+ 	return &rt->dst;
+ 
+ route_err:
+ 	ip_rt_put(rt);
+ no_route:
+-	rcu_read_unlock();
+ 	IP_INC_STATS_BH(net, IPSTATS_MIB_OUTNOROUTES);
+ 	return NULL;
+ }
+diff --git a/net/ipv4/ipip.c b/net/ipv4/ipip.c
+index a09fb0dec725..486b283a6cd1 100644
+--- a/net/ipv4/ipip.c
++++ b/net/ipv4/ipip.c
+@@ -129,42 +129,68 @@ static struct rtnl_link_ops ipip_link_ops __read_mostly;
+ static int ipip_err(struct sk_buff *skb, u32 info)
+ {
+ 
+-/* All the routers (except for Linux) return only
+-   8 bytes of packet payload. It means, that precise relaying of
+-   ICMP in the real Internet is absolutely infeasible.
+- */
++	/* All the routers (except for Linux) return only
++	   8 bytes of packet payload. It means, that precise relaying of
++	   ICMP in the real Internet is absolutely infeasible.
++	 */
+ 	struct net *net = dev_net(skb->dev);
+ 	struct ip_tunnel_net *itn = net_generic(net, ipip_net_id);
+ 	const struct iphdr *iph = (const struct iphdr *)skb->data;
+-	struct ip_tunnel *t;
+-	int err;
+ 	const int type = icmp_hdr(skb)->type;
+ 	const int code = icmp_hdr(skb)->code;
++	struct ip_tunnel *t;
++	int err = 0;
++
++	switch (type) {
++	case ICMP_DEST_UNREACH:
++		switch (code) {
++		case ICMP_SR_FAILED:
++			/* Impossible event. */
++			goto out;
++		default:
++			/* All others are translated to HOST_UNREACH.
++			 * rfc2003 contains "deep thoughts" about NET_UNREACH,
++			 * I believe they are just ether pollution. --ANK
++			 */
++			break;
++		}
++		break;
++
++	case ICMP_TIME_EXCEEDED:
++		if (code != ICMP_EXC_TTL)
++			goto out;
++		break;
++
++	case ICMP_REDIRECT:
++		break;
++
++	default:
++		goto out;
++	}
+ 
+-	err = -ENOENT;
+ 	t = ip_tunnel_lookup(itn, skb->dev->ifindex, TUNNEL_NO_KEY,
+ 			     iph->daddr, iph->saddr, 0);
+-	if (!t)
++	if (!t) {
++		err = -ENOENT;
+ 		goto out;
++	}
+ 
+ 	if (type == ICMP_DEST_UNREACH && code == ICMP_FRAG_NEEDED) {
+-		ipv4_update_pmtu(skb, dev_net(skb->dev), info,
+-				 t->parms.link, 0, IPPROTO_IPIP, 0);
+-		err = 0;
++		ipv4_update_pmtu(skb, net, info, t->parms.link, 0,
++				 iph->protocol, 0);
+ 		goto out;
+ 	}
+ 
+ 	if (type == ICMP_REDIRECT) {
+-		ipv4_redirect(skb, dev_net(skb->dev), t->parms.link, 0,
+-			      IPPROTO_IPIP, 0);
+-		err = 0;
++		ipv4_redirect(skb, net, t->parms.link, 0, iph->protocol, 0);
+ 		goto out;
+ 	}
+ 
+-	if (t->parms.iph.daddr == 0)
++	if (t->parms.iph.daddr == 0) {
++		err = -ENOENT;
+ 		goto out;
++	}
+ 
+-	err = 0;
+ 	if (t->parms.iph.ttl == 0 && type == ICMP_TIME_EXCEEDED)
+ 		goto out;
+ 
+diff --git a/net/ipv4/syncookies.c b/net/ipv4/syncookies.c
+index 731b91409625..c22a74374a9c 100644
+--- a/net/ipv4/syncookies.c
++++ b/net/ipv4/syncookies.c
+@@ -357,7 +357,7 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb)
+ 	/* We throwed the options of the initial SYN away, so we hope
+ 	 * the ACK carries the same options again (see RFC1122 4.2.3.8)
+ 	 */
+-	ireq->opt = tcp_v4_save_options(skb);
++	RCU_INIT_POINTER(ireq->ireq_opt, tcp_v4_save_options(skb));
+ 
+ 	if (security_inet_conn_request(sk, skb, req)) {
+ 		reqsk_free(req);
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index c4bbf704ff9c..9e8d70160d20 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -6105,7 +6105,7 @@ struct request_sock *inet_reqsk_alloc(const struct request_sock_ops *ops,
+ 		struct inet_request_sock *ireq = inet_rsk(req);
+ 
+ 		kmemcheck_annotate_bitfield(ireq, flags);
+-		ireq->opt = NULL;
++		ireq->ireq_opt = NULL;
+ 		atomic64_set(&ireq->ir_cookie, 0);
+ 		ireq->ireq_state = TCP_NEW_SYN_RECV;
+ 		write_pnet(&ireq->ireq_net, sock_net(sk_listener));
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 198fc2314c82..a5d790c13ef5 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -856,7 +856,7 @@ static int tcp_v4_send_synack(const struct sock *sk, struct dst_entry *dst,
+ 
+ 		err = ip_build_and_send_pkt(skb, sk, ireq->ir_loc_addr,
+ 					    ireq->ir_rmt_addr,
+-					    ireq->opt);
++					    ireq_opt_deref(ireq));
+ 		err = net_xmit_eval(err);
+ 	}
+ 
+@@ -868,7 +868,7 @@ static int tcp_v4_send_synack(const struct sock *sk, struct dst_entry *dst,
+  */
+ static void tcp_v4_reqsk_destructor(struct request_sock *req)
+ {
+-	kfree(inet_rsk(req)->opt);
++	kfree(rcu_dereference_protected(inet_rsk(req)->ireq_opt, 1));
+ }
+ 
+ 
+@@ -1197,7 +1197,7 @@ static void tcp_v4_init_req(struct request_sock *req,
+ 	sk_rcv_saddr_set(req_to_sk(req), ip_hdr(skb)->daddr);
+ 	sk_daddr_set(req_to_sk(req), ip_hdr(skb)->saddr);
+ 	ireq->no_srccheck = inet_sk(sk_listener)->transparent;
+-	ireq->opt = tcp_v4_save_options(skb);
++	RCU_INIT_POINTER(ireq->ireq_opt, tcp_v4_save_options(skb));
+ }
+ 
+ static struct dst_entry *tcp_v4_route_req(const struct sock *sk,
+@@ -1292,10 +1292,9 @@ struct sock *tcp_v4_syn_recv_sock(const struct sock *sk, struct sk_buff *skb,
+ 	ireq		      = inet_rsk(req);
+ 	sk_daddr_set(newsk, ireq->ir_rmt_addr);
+ 	sk_rcv_saddr_set(newsk, ireq->ir_loc_addr);
+-	newinet->inet_saddr	      = ireq->ir_loc_addr;
+-	inet_opt	      = ireq->opt;
+-	rcu_assign_pointer(newinet->inet_opt, inet_opt);
+-	ireq->opt	      = NULL;
++	newinet->inet_saddr   = ireq->ir_loc_addr;
++	inet_opt	      = rcu_dereference(ireq->ireq_opt);
++	RCU_INIT_POINTER(newinet->inet_opt, inet_opt);
+ 	newinet->mc_index     = inet_iif(skb);
+ 	newinet->mc_ttl	      = ip_hdr(skb)->ttl;
+ 	newinet->rcv_tos      = ip_hdr(skb)->tos;
+@@ -1343,9 +1342,12 @@ struct sock *tcp_v4_syn_recv_sock(const struct sock *sk, struct sk_buff *skb,
+ 	if (__inet_inherit_port(sk, newsk) < 0)
+ 		goto put_and_exit;
+ 	*own_req = inet_ehash_nolisten(newsk, req_to_sk(req_unhash));
+-	if (*own_req)
++	if (likely(*own_req)) {
+ 		tcp_move_syn(newtp, req);
+-
++		ireq->ireq_opt = NULL;
++	} else {
++		newinet->inet_opt = NULL;
++	}
+ 	return newsk;
+ 
+ exit_overflow:
+@@ -1356,6 +1358,7 @@ exit:
+ 	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENDROPS);
+ 	return NULL;
+ put_and_exit:
++	newinet->inet_opt = NULL;
+ 	inet_csk_prepare_forced_close(newsk);
+ 	tcp_done(newsk);
+ 	goto exit;
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 850d1b5bfd81..64c7ce847584 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -1951,6 +1951,7 @@ static int tcp_mtu_probe(struct sock *sk)
+ 	nskb->ip_summed = skb->ip_summed;
+ 
+ 	tcp_insert_write_queue_before(nskb, skb, sk);
++	tcp_highest_sack_replace(sk, skb, nskb);
+ 
+ 	len = 0;
+ 	tcp_for_write_queue_from_safe(skb, next, sk) {
+@@ -2464,7 +2465,7 @@ static void tcp_collapse_retrans(struct sock *sk, struct sk_buff *skb)
+ 
+ 	BUG_ON(tcp_skb_pcount(skb) != 1 || tcp_skb_pcount(next_skb) != 1);
+ 
+-	tcp_highest_sack_combine(sk, next_skb, skb);
++	tcp_highest_sack_replace(sk, next_skb, skb);
+ 
+ 	tcp_unlink_write_queue(next_skb, sk);
+ 
+diff --git a/net/ipv6/ip6_flowlabel.c b/net/ipv6/ip6_flowlabel.c
+index dc2db4f7b182..f3a0a9c0f61e 100644
+--- a/net/ipv6/ip6_flowlabel.c
++++ b/net/ipv6/ip6_flowlabel.c
+@@ -315,6 +315,7 @@ struct ipv6_txoptions *fl6_merge_options(struct ipv6_txoptions *opt_space,
+ 	}
+ 	opt_space->dst1opt = fopt->dst1opt;
+ 	opt_space->opt_flen = fopt->opt_flen;
++	opt_space->tot_len = fopt->tot_len;
+ 	return opt_space;
+ }
+ EXPORT_SYMBOL_GPL(fl6_merge_options);
+diff --git a/net/ipv6/ip6_gre.c b/net/ipv6/ip6_gre.c
+index eab117033b8a..c878cbf65485 100644
+--- a/net/ipv6/ip6_gre.c
++++ b/net/ipv6/ip6_gre.c
+@@ -409,13 +409,16 @@ static void ip6gre_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
+ 	case ICMPV6_DEST_UNREACH:
+ 		net_dbg_ratelimited("%s: Path to destination invalid or inactive!\n",
+ 				    t->parms.name);
+-		break;
++		if (code != ICMPV6_PORT_UNREACH)
++			break;
++		return;
+ 	case ICMPV6_TIME_EXCEED:
+ 		if (code == ICMPV6_EXC_HOPLIMIT) {
+ 			net_dbg_ratelimited("%s: Too small hop limit or routing loop in tunnel!\n",
+ 					    t->parms.name);
++			break;
+ 		}
+-		break;
++		return;
+ 	case ICMPV6_PARAMPROB:
+ 		teli = 0;
+ 		if (code == ICMPV6_HDR_FIELD)
+@@ -431,13 +434,13 @@ static void ip6gre_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
+ 			net_dbg_ratelimited("%s: Recipient unable to parse tunneled packet!\n",
+ 					    t->parms.name);
+ 		}
+-		break;
++		return;
+ 	case ICMPV6_PKT_TOOBIG:
+ 		mtu = be32_to_cpu(info) - offset;
+ 		if (mtu < IPV6_MIN_MTU)
+ 			mtu = IPV6_MIN_MTU;
+ 		t->dev->mtu = mtu;
+-		break;
++		return;
+ 	}
+ 
+ 	if (time_before(jiffies, t->err_time + IP6TUNNEL_ERR_TIMEO))
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index e22339fad10b..71624cf26832 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -1201,11 +1201,11 @@ static int ip6_setup_cork(struct sock *sk, struct inet_cork_full *cork,
+ 		if (WARN_ON(v6_cork->opt))
+ 			return -EINVAL;
+ 
+-		v6_cork->opt = kzalloc(opt->tot_len, sk->sk_allocation);
++		v6_cork->opt = kzalloc(sizeof(*opt), sk->sk_allocation);
+ 		if (unlikely(!v6_cork->opt))
+ 			return -ENOBUFS;
+ 
+-		v6_cork->opt->tot_len = opt->tot_len;
++		v6_cork->opt->tot_len = sizeof(*opt);
+ 		v6_cork->opt->opt_flen = opt->opt_flen;
+ 		v6_cork->opt->opt_nflen = opt->opt_nflen;
+ 
+diff --git a/net/l2tp/l2tp_ppp.c b/net/l2tp/l2tp_ppp.c
+index 8ab9c5d74416..67f2e72723b2 100644
+--- a/net/l2tp/l2tp_ppp.c
++++ b/net/l2tp/l2tp_ppp.c
+@@ -1015,6 +1015,9 @@ static int pppol2tp_session_ioctl(struct l2tp_session *session,
+ 		 session->name, cmd, arg);
+ 
+ 	sk = ps->sock;
++	if (!sk)
++		return -EBADR;
++
+ 	sock_hold(sk);
+ 
+ 	switch (cmd) {
+diff --git a/net/mac80211/key.c b/net/mac80211/key.c
+index 44388d6a1d8e..4a72c0d1e56f 100644
+--- a/net/mac80211/key.c
++++ b/net/mac80211/key.c
+@@ -4,6 +4,7 @@
+  * Copyright 2006-2007	Jiri Benc <jbenc@suse.cz>
+  * Copyright 2007-2008	Johannes Berg <johannes@sipsolutions.net>
+  * Copyright 2013-2014  Intel Mobile Communications GmbH
++ * Copyright 2017	Intel Deutschland GmbH
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License version 2 as
+@@ -18,6 +19,7 @@
+ #include <linux/slab.h>
+ #include <linux/export.h>
+ #include <net/mac80211.h>
++#include <crypto/algapi.h>
+ #include <asm/unaligned.h>
+ #include "ieee80211_i.h"
+ #include "driver-ops.h"
+@@ -606,6 +608,39 @@ void ieee80211_key_free_unused(struct ieee80211_key *key)
+ 	ieee80211_key_free_common(key);
+ }
+ 
++static bool ieee80211_key_identical(struct ieee80211_sub_if_data *sdata,
++				    struct ieee80211_key *old,
++				    struct ieee80211_key *new)
++{
++	u8 tkip_old[WLAN_KEY_LEN_TKIP], tkip_new[WLAN_KEY_LEN_TKIP];
++	u8 *tk_old, *tk_new;
++
++	if (!old || new->conf.keylen != old->conf.keylen)
++		return false;
++
++	tk_old = old->conf.key;
++	tk_new = new->conf.key;
++
++	/*
++	 * In station mode, don't compare the TX MIC key, as it's never used
++	 * and offloaded rekeying may not care to send it to the host. This
++	 * is the case in iwlwifi, for example.
++	 */
++	if (sdata->vif.type == NL80211_IFTYPE_STATION &&
++	    new->conf.cipher == WLAN_CIPHER_SUITE_TKIP &&
++	    new->conf.keylen == WLAN_KEY_LEN_TKIP &&
++	    !(new->conf.flags & IEEE80211_KEY_FLAG_PAIRWISE)) {
++		memcpy(tkip_old, tk_old, WLAN_KEY_LEN_TKIP);
++		memcpy(tkip_new, tk_new, WLAN_KEY_LEN_TKIP);
++		memset(tkip_old + NL80211_TKIP_DATA_OFFSET_TX_MIC_KEY, 0, 8);
++		memset(tkip_new + NL80211_TKIP_DATA_OFFSET_TX_MIC_KEY, 0, 8);
++		tk_old = tkip_old;
++		tk_new = tkip_new;
++	}
++
++	return !crypto_memneq(tk_old, tk_new, new->conf.keylen);
++}
++
+ int ieee80211_key_link(struct ieee80211_key *key,
+ 		       struct ieee80211_sub_if_data *sdata,
+ 		       struct sta_info *sta)
+@@ -617,9 +652,6 @@ int ieee80211_key_link(struct ieee80211_key *key,
+ 
+ 	pairwise = key->conf.flags & IEEE80211_KEY_FLAG_PAIRWISE;
+ 	idx = key->conf.keyidx;
+-	key->local = sdata->local;
+-	key->sdata = sdata;
+-	key->sta = sta;
+ 
+ 	mutex_lock(&sdata->local->key_mtx);
+ 
+@@ -630,6 +662,20 @@ int ieee80211_key_link(struct ieee80211_key *key,
+ 	else
+ 		old_key = key_mtx_dereference(sdata->local, sdata->keys[idx]);
+ 
++	/*
++	 * Silently accept key re-installation without really installing the
++	 * new version of the key to avoid nonce reuse or replay issues.
++	 */
++	if (ieee80211_key_identical(sdata, old_key, key)) {
++		ieee80211_key_free_unused(key);
++		ret = 0;
++		goto out;
++	}
++
++	key->local = sdata->local;
++	key->sdata = sdata;
++	key->sta = sta;
++
+ 	increment_tailroom_need_count(sdata);
+ 
+ 	ieee80211_key_replace(sdata, sta, pairwise, old_key, key);
+@@ -645,6 +691,7 @@ int ieee80211_key_link(struct ieee80211_key *key,
+ 		ret = 0;
+ 	}
+ 
++ out:
+ 	mutex_unlock(&sdata->local->key_mtx);
+ 
+ 	return ret;
+diff --git a/net/packet/af_packet.c b/net/packet/af_packet.c
+index 241f69039a72..1584f89c456a 100644
+--- a/net/packet/af_packet.c
++++ b/net/packet/af_packet.c
+@@ -1724,7 +1724,7 @@ static int fanout_add(struct sock *sk, u16 id, u16 type_flags)
+ 
+ out:
+ 	if (err && rollover) {
+-		kfree(rollover);
++		kfree_rcu(rollover, rcu);
+ 		po->rollover = NULL;
+ 	}
+ 	mutex_unlock(&fanout_mutex);
+@@ -1751,8 +1751,10 @@ static struct packet_fanout *fanout_release(struct sock *sk)
+ 		else
+ 			f = NULL;
+ 
+-		if (po->rollover)
++		if (po->rollover) {
+ 			kfree_rcu(po->rollover, rcu);
++			po->rollover = NULL;
++		}
+ 	}
+ 	mutex_unlock(&fanout_mutex);
+ 
+@@ -3769,6 +3771,7 @@ static int packet_getsockopt(struct socket *sock, int level, int optname,
+ 	void *data = &val;
+ 	union tpacket_stats_u st;
+ 	struct tpacket_rollover_stats rstats;
++	struct packet_rollover *rollover;
+ 
+ 	if (level != SOL_PACKET)
+ 		return -ENOPROTOOPT;
+@@ -3847,13 +3850,18 @@ static int packet_getsockopt(struct socket *sock, int level, int optname,
+ 		       0);
+ 		break;
+ 	case PACKET_ROLLOVER_STATS:
+-		if (!po->rollover)
++		rcu_read_lock();
++		rollover = rcu_dereference(po->rollover);
++		if (rollover) {
++			rstats.tp_all = atomic_long_read(&rollover->num);
++			rstats.tp_huge = atomic_long_read(&rollover->num_huge);
++			rstats.tp_failed = atomic_long_read(&rollover->num_failed);
++			data = &rstats;
++			lv = sizeof(rstats);
++		}
++		rcu_read_unlock();
++		if (!rollover)
+ 			return -EINVAL;
+-		rstats.tp_all = atomic_long_read(&po->rollover->num);
+-		rstats.tp_huge = atomic_long_read(&po->rollover->num_huge);
+-		rstats.tp_failed = atomic_long_read(&po->rollover->num_failed);
+-		data = &rstats;
+-		lv = sizeof(rstats);
+ 		break;
+ 	case PACKET_TX_HAS_OFF:
+ 		val = po->tp_tx_has_off;
+diff --git a/net/sctp/input.c b/net/sctp/input.c
+index 2d7859c03fd2..71c2ef84c5b0 100644
+--- a/net/sctp/input.c
++++ b/net/sctp/input.c
+@@ -420,7 +420,7 @@ void sctp_icmp_redirect(struct sock *sk, struct sctp_transport *t,
+ {
+ 	struct dst_entry *dst;
+ 
+-	if (!t)
++	if (sock_owned_by_user(sk) || !t)
+ 		return;
+ 	dst = sctp_transport_dst_check(t);
+ 	if (dst)
+diff --git a/net/sctp/socket.c b/net/sctp/socket.c
+index 3ebf3b652d60..73eec73ff733 100644
+--- a/net/sctp/socket.c
++++ b/net/sctp/socket.c
+@@ -168,6 +168,36 @@ static inline void sctp_set_owner_w(struct sctp_chunk *chunk)
+ 	sk_mem_charge(sk, chunk->skb->truesize);
+ }
+ 
++static void sctp_clear_owner_w(struct sctp_chunk *chunk)
++{
++	skb_orphan(chunk->skb);
++}
++
++static void sctp_for_each_tx_datachunk(struct sctp_association *asoc,
++				       void (*cb)(struct sctp_chunk *))
++
++{
++	struct sctp_outq *q = &asoc->outqueue;
++	struct sctp_transport *t;
++	struct sctp_chunk *chunk;
++
++	list_for_each_entry(t, &asoc->peer.transport_addr_list, transports)
++		list_for_each_entry(chunk, &t->transmitted, transmitted_list)
++			cb(chunk);
++
++	list_for_each_entry(chunk, &q->retransmit, list)
++		cb(chunk);
++
++	list_for_each_entry(chunk, &q->sacked, list)
++		cb(chunk);
++
++	list_for_each_entry(chunk, &q->abandoned, list)
++		cb(chunk);
++
++	list_for_each_entry(chunk, &q->out_chunk_list, list)
++		cb(chunk);
++}
++
+ /* Verify that this is a valid address. */
+ static inline int sctp_verify_addr(struct sock *sk, union sctp_addr *addr,
+ 				   int len)
+@@ -7362,7 +7392,9 @@ static void sctp_sock_migrate(struct sock *oldsk, struct sock *newsk,
+ 	 * paths won't try to lock it and then oldsk.
+ 	 */
+ 	lock_sock_nested(newsk, SINGLE_DEPTH_NESTING);
++	sctp_for_each_tx_datachunk(assoc, sctp_clear_owner_w);
+ 	sctp_assoc_migrate(assoc, newsk);
++	sctp_for_each_tx_datachunk(assoc, sctp_set_owner_w);
+ 
+ 	/* If the association on the newsk is already closed before accept()
+ 	 * is called, set RCV_SHUTDOWN flag.
+diff --git a/net/tipc/link.c b/net/tipc/link.c
+index 72268eac4ec7..736fffb28ab6 100644
+--- a/net/tipc/link.c
++++ b/net/tipc/link.c
+@@ -1084,25 +1084,6 @@ drop:
+ 	return rc;
+ }
+ 
+-/*
+- * Send protocol message to the other endpoint.
+- */
+-void tipc_link_proto_xmit(struct tipc_link *l, u32 msg_typ, int probe_msg,
+-			  u32 gap, u32 tolerance, u32 priority)
+-{
+-	struct sk_buff *skb = NULL;
+-	struct sk_buff_head xmitq;
+-
+-	__skb_queue_head_init(&xmitq);
+-	tipc_link_build_proto_msg(l, msg_typ, probe_msg, gap,
+-				  tolerance, priority, &xmitq);
+-	skb = __skb_dequeue(&xmitq);
+-	if (!skb)
+-		return;
+-	tipc_bearer_xmit_skb(l->net, l->bearer_id, skb, l->media_addr);
+-	l->rcv_unacked = 0;
+-}
+-
+ static void tipc_link_build_proto_msg(struct tipc_link *l, int mtyp, bool probe,
+ 				      u16 rcvgap, int tolerance, int priority,
+ 				      struct sk_buff_head *xmitq)
+@@ -1636,9 +1617,12 @@ int tipc_nl_link_set(struct sk_buff *skb, struct genl_info *info)
+ 	char *name;
+ 	struct tipc_link *link;
+ 	struct tipc_node *node;
++	struct sk_buff_head xmitq;
+ 	struct nlattr *attrs[TIPC_NLA_LINK_MAX + 1];
+ 	struct net *net = sock_net(skb->sk);
+ 
++	__skb_queue_head_init(&xmitq);
++
+ 	if (!info->attrs[TIPC_NLA_LINK])
+ 		return -EINVAL;
+ 
+@@ -1683,14 +1667,14 @@ int tipc_nl_link_set(struct sk_buff *skb, struct genl_info *info)
+ 
+ 			tol = nla_get_u32(props[TIPC_NLA_PROP_TOL]);
+ 			link->tolerance = tol;
+-			tipc_link_proto_xmit(link, STATE_MSG, 0, 0, tol, 0);
++			tipc_link_build_proto_msg(link, STATE_MSG, 0, 0, tol, 0, &xmitq);
+ 		}
+ 		if (props[TIPC_NLA_PROP_PRIO]) {
+ 			u32 prio;
+ 
+ 			prio = nla_get_u32(props[TIPC_NLA_PROP_PRIO]);
+ 			link->priority = prio;
+-			tipc_link_proto_xmit(link, STATE_MSG, 0, 0, 0, prio);
++			tipc_link_build_proto_msg(link, STATE_MSG, 0, 0, 0, prio, &xmitq);
+ 		}
+ 		if (props[TIPC_NLA_PROP_WIN]) {
+ 			u32 win;
+@@ -1702,7 +1686,7 @@ int tipc_nl_link_set(struct sk_buff *skb, struct genl_info *info)
+ 
+ out:
+ 	tipc_node_unlock(node);
+-
++	tipc_bearer_xmit(net, bearer_id, &xmitq, &node->links[bearer_id].maddr);
+ 	return res;
+ }
+ 
+diff --git a/net/tipc/link.h b/net/tipc/link.h
+index 66d859b66c84..2a0d58671e88 100644
+--- a/net/tipc/link.h
++++ b/net/tipc/link.h
+@@ -153,7 +153,6 @@ struct tipc_stats {
+ struct tipc_link {
+ 	u32 addr;
+ 	char name[TIPC_MAX_LINK_NAME];
+-	struct tipc_media_addr *media_addr;
+ 	struct net *net;
+ 
+ 	/* Management and link supervision data */
+diff --git a/net/unix/diag.c b/net/unix/diag.c
+index 4d9679701a6d..384c84e83462 100644
+--- a/net/unix/diag.c
++++ b/net/unix/diag.c
+@@ -257,6 +257,8 @@ static int unix_diag_get_exact(struct sk_buff *in_skb,
+ 	err = -ENOENT;
+ 	if (sk == NULL)
+ 		goto out_nosk;
++	if (!net_eq(sock_net(sk), net))
++		goto out;
+ 
+ 	err = sock_diag_check_cookie(sk, req->udiag_cookie);
+ 	if (err)
+diff --git a/security/keys/Kconfig b/security/keys/Kconfig
+index 72483b8f1be5..1edb37eea81d 100644
+--- a/security/keys/Kconfig
++++ b/security/keys/Kconfig
+@@ -20,6 +20,10 @@ config KEYS
+ 
+ 	  If you are unsure as to whether this is required, answer N.
+ 
++config KEYS_COMPAT
++	def_bool y
++	depends on COMPAT && KEYS
++
+ config PERSISTENT_KEYRINGS
+ 	bool "Enable register of persistent per-UID keyrings"
+ 	depends on KEYS
+diff --git a/sound/core/seq/seq_device.c b/sound/core/seq/seq_device.c
+index c4acf17e9f5e..e40a2cba5002 100644
+--- a/sound/core/seq/seq_device.c
++++ b/sound/core/seq/seq_device.c
+@@ -148,8 +148,10 @@ void snd_seq_device_load_drivers(void)
+ 	flush_work(&autoload_work);
+ }
+ EXPORT_SYMBOL(snd_seq_device_load_drivers);
++#define cancel_autoload_drivers()	cancel_work_sync(&autoload_work)
+ #else
+ #define queue_autoload_drivers() /* NOP */
++#define cancel_autoload_drivers() /* NOP */
+ #endif
+ 
+ /*
+@@ -159,6 +161,7 @@ static int snd_seq_device_dev_free(struct snd_device *device)
+ {
+ 	struct snd_seq_device *dev = device->device_data;
+ 
++	cancel_autoload_drivers();
+ 	put_device(&dev->dev);
+ 	return 0;
+ }

@@ -28,6 +28,12 @@ setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs
 fdt get value dt_name / dt-name
 if test "${dt_name}" = "sun50iw1p1-pine64so"; then
 	setenv pine64_model "pine64so"
+elif test "${dt_name}" = "sun50iw1p1-orangepiwin"; then
+	setenv pine64_model "orangepiwin"
+elif test "${dt_name}" = "sun50iw1p1-bananapim64"; then
+	setenv pine64_model "bananapim64"
+elif test "${dt_name}" = "sun50iw1p1-olinuxino-a64"; then
+	setenv pine64_model "olinuxino-a64"
 fi
 
 load mmc ${boot_part} ${fdt_addr} ${prefix}dtb/sun50iw1p1-${pine64_model}.dtb

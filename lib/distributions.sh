@@ -16,6 +16,9 @@ install_common()
 {
 	display_alert "Applying common tweaks" "" "info"
 
+	# define ARCH within global environment variables
+	[[ -f $SDCARD/etc/environment ]] && echo "ARCH=${ARCH//hf}" >> $SDCARD/etc/environment
+
 	# add dummy fstab entry to make mkinitramfs happy
 	echo "/dev/mmcblk0p1 / $ROOTFS_TYPE defaults 0 1" >> $SDCARD/etc/fstab
 	# required for initramfs-tools-core on Stretch since it ignores the / fstab entry
@@ -157,6 +160,11 @@ install_common()
 	if [[ -z $BETA ]]; then
 		sed -i "s/^#kernel.printk*/kernel.printk/" $SDCARD/etc/sysctl.conf
 	fi
+
+	# disable repeated messages due to xconsole not being installed.
+	[[ -f $SDCARD/etc/rsyslog.d/50-default.conf ]] && sed '/daemon\.\*\;mail.*/,/xconsole/ s/.*/#&/' -i $SDCARD/etc/rsyslog.d/50-default.conf
+	# disable deprecated parameter
+	sed '/.*$KLogPermitNonKernelFacility.*/,// s/.*/#&/' -i $SDCARD/etc/rsyslog.conf
 
 	# enable getty on serial console
 	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"

@@ -1,6 +1,6 @@
 # RDA8810 Wi-Fi BT 2G headless
 BOARD_NAME="Orange Pi 2G-IOT"
-LINUXFAMILY="rda8810"
+BOARDFAMILY="rda8810"
 BOOTCONFIG="rda8810_config"
 MODULES="rdawfmac"
 CLI_TARGET=""

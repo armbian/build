@@ -24,6 +24,12 @@ DISTROS=("jessie" "xenial" "stretch")
 
 ParseOptions() {
 	case $@ in
+		serve)
+			# display repository content
+			display_alert "Serving content" "common utils" "ext"
+			aptly serve -listen=:8080 -config=../config/aptly.conf
+			exit 0
+			;;
 		show)
 			# display repository content
 			for release in "${DISTROS[@]}"; do
@@ -39,10 +45,9 @@ ParseOptions() {
 		update)
 			# display full help test
 			# run repository update
-			addtorepo
+			addtorepo "$@" ""
 			# add a key to repo
 			cp ../config/armbian.key ../output/repository/public
-			echo "done."
 			exit 0
 			;;
 		purge)
@@ -88,8 +93,11 @@ repo-remove-old-packages() {
 }
 
 DisplayUsage() {
-	echo -e "Usage: repository show | update | purge\n"
-	echo -e "Purge removes all but last 5 versions\n"
+	echo -e "Usage: repository show | serve | create | update | purge\n"
+	echo -e "\n show   = display repository content"
+	echo -e "\n serve  = publish your repositories on current server over HTTP"
+	echo -e "\n update = updating repository"
+	echo -e "\n purge  = removes all but last 5 versions\n\n"
 } # DisplayUsage
 
 ParseOptions "$@"

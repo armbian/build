@@ -21,14 +21,14 @@ case $BRANCH in
 
 	BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 	BOOTDIR=$MAINLINE_UBOOT_DIR
-	BOOTBRANCH=$MAINLINE_UBOOT_BRANCH
+	BOOTBRANCH='tag:v2017.11'
 	BOOTPATCHDIR='u-boot-sunxi'
 	UBOOT_USE_GCC='> 7.0'
 	UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
 	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 
 	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-	KERNELBRANCH='branch:linux-4.13.y'
+	KERNELBRANCH='branch:linux-4.14.y'
 	KERNELDIR=$MAINLINE_KERNEL_DIR
 	KERNEL_USE_GCC='> 7.0'
 	KERNELPATCHDIR='sunxi-next'
@@ -43,14 +43,14 @@ case $BRANCH in
 
 	BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 	BOOTDIR=$MAINLINE_UBOOT_DIR
-	BOOTBRANCH=$MAINLINE_UBOOT_BRANCH
+	BOOTBRANCH='tag:v2017.11'
 	BOOTPATCHDIR='u-boot-sunxi'
 	UBOOT_USE_GCC='> 7.0'
 	UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
 	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 
 	KERNELSOURCE='https://github.com/Icenowy/linux/'
-	KERNELBRANCH='branch:sunxi64-4.13.y'
+	KERNELBRANCH='branch:sunxi64-4.14.y'
 	KERNELDIR='linux-sun50i-dev'
 	KERNEL_USE_GCC='> 7.0'
 	;;

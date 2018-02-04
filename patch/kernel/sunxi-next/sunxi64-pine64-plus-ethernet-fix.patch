@@ -1,0 +1,141 @@
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
+index fffd6d5..2af680c 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
+@@ -723,6 +723,9 @@ static int sun8i_dwmac_set_syscon(struct stmmac_priv *priv)
+ 		/* default */
+ 		break;
+ 	case PHY_INTERFACE_MODE_RGMII:
++	case PHY_INTERFACE_MODE_RGMII_ID:
++	case PHY_INTERFACE_MODE_RGMII_RXID:
++	case PHY_INTERFACE_MODE_RGMII_TXID:
+ 		reg |= SYSCON_EPIT | SYSCON_ETCS_INT_GMII;
+ 		break;
+ 	case PHY_INTERFACE_MODE_RMII:
+diff --git a/drivers/net/phy/realtek.c b/drivers/net/phy/realtek.c
+index 9cbe645..d820d00 100644
+--- a/drivers/net/phy/realtek.c
++++ b/drivers/net/phy/realtek.c
+@@ -22,11 +22,13 @@
+ #define RTL821x_INER		0x12
+ #define RTL821x_INER_INIT	0x6400
+ #define RTL821x_INSR		0x13
++
++#define RTL8211_PAGE_SELECT	0x1f
++
+ #define RTL8211E_INER_LINK_STATUS 0x400
+ 
+ #define RTL8211F_INER_LINK_STATUS 0x0010
+ #define RTL8211F_INSR		0x1d
+-#define RTL8211F_PAGE_SELECT	0x1f
+ #define RTL8211F_TX_DELAY	0x100
+ 
+ MODULE_DESCRIPTION("Realtek PHY driver");
+@@ -46,10 +48,10 @@ static int rtl8211f_ack_interrupt(struct phy_device *phydev)
+ {
+ 	int err;
+ 
+-	phy_write(phydev, RTL8211F_PAGE_SELECT, 0xa43);
++	phy_write(phydev, RTL8211_PAGE_SELECT, 0xa43);
+ 	err = phy_read(phydev, RTL8211F_INSR);
+ 	/* restore to default page 0 */
+-	phy_write(phydev, RTL8211F_PAGE_SELECT, 0x0);
++	phy_write(phydev, RTL8211_PAGE_SELECT, 0x0);
+ 
+ 	return (err < 0) ? err : 0;
+ }
+@@ -102,7 +104,7 @@ static int rtl8211f_config_init(struct phy_device *phydev)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	phy_write(phydev, RTL8211F_PAGE_SELECT, 0xd08);
++	phy_write(phydev, RTL8211_PAGE_SELECT, 0xd08);
+ 	reg = phy_read(phydev, 0x11);
+ 
+ 	/* enable TX-delay for rgmii-id and rgmii-txid, otherwise disable it */
+@@ -114,7 +116,7 @@ static int rtl8211f_config_init(struct phy_device *phydev)
+ 
+ 	phy_write(phydev, 0x11, reg);
+ 	/* restore to default page 0 */
+-	phy_write(phydev, RTL8211F_PAGE_SELECT, 0x0);
++	phy_write(phydev, RTL8211_PAGE_SELECT, 0x0);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/net/phy/realtek.c b/drivers/net/phy/realtek.c
+index d820d00..bb368a5 100644
+--- a/drivers/net/phy/realtek.c
++++ b/drivers/net/phy/realtek.c
+@@ -13,6 +13,7 @@
+  * option) any later version.
+  *
+  */
++#include <linux/of.h>
+ #include <linux/phy.h>
+ #include <linux/module.h>
+ 
+@@ -26,6 +27,8 @@
+ #define RTL8211_PAGE_SELECT	0x1f
+ 
+ #define RTL8211E_INER_LINK_STATUS 0x400
++#define RTL8211E_EXT_PAGE_SELECT 0x1e
++#define RTL8211E_EXT_PAGE	0x7
+ 
+ #define RTL8211F_INER_LINK_STATUS 0x0010
+ #define RTL8211F_INSR		0x1d
+@@ -121,6 +124,34 @@ static int rtl8211f_config_init(struct phy_device *phydev)
+ 	return 0;
+ }
+ 
++static int rtl8211e_config_init(struct phy_device *phydev)
++{
++	struct device *dev = &phydev->mdio.dev;
++	struct device_node *of_node = dev->of_node;
++	int ret;
++
++	ret = genphy_config_init(phydev);
++	if (ret < 0)
++		return ret;
++
++	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_TXID) {
++		/*
++		 * Disable the RX internal delay here.
++		 *
++		 * All the magic numbers are not documented on RTL8211E
++		 * datasheet. They're said to be from Realtek by Pine64.
++		 */
++		phy_write(phydev, RTL8211_PAGE_SELECT, RTL8211E_EXT_PAGE);
++		phy_write(phydev, RTL8211E_EXT_PAGE_SELECT, 0xa4);
++		phy_write(phydev, 0x1c, 0xb591);
++
++		/* Restore to default page 0 */
++		phy_write(phydev, RTL8211_PAGE_SELECT, 0);
++	}
++
++	return 0;
++}
++
+ static struct phy_driver realtek_drvs[] = {
+ 	{
+ 		.phy_id         = 0x00008201,
+@@ -159,6 +190,7 @@ static int rtl8211f_config_init(struct phy_device *phydev)
+ 		.features	= PHY_GBIT_FEATURES,
+ 		.flags		= PHY_HAS_INTERRUPT,
+ 		.config_aneg	= &genphy_config_aneg,
++		.config_init	= rtl8211e_config_init,
+ 		.read_status	= &genphy_read_status,
+ 		.ack_interrupt	= &rtl821x_ack_interrupt,
+ 		.config_intr	= &rtl8211e_config_intr,
+diff --git a/arch/arm64/boot/dts/allwinner/sun50i-a64-pine64-plus.dts b/arch/arm64/boot/dts/allwinner/sun50i-a64-pine64-plus.dts
+index 24f1aac..ed71542 100644
+--- a/arch/arm64/boot/dts/allwinner/sun50i-a64-pine64-plus.dts
++++ b/arch/arm64/boot/dts/allwinner/sun50i-a64-pine64-plus.dts
+@@ -52,7 +52,7 @@
+ &emac {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&rgmii_pins>;
+-	phy-mode = "rgmii";
++	phy-mode = "rgmii-txid";
+ 	phy-handle = <&ext_rgmii_phy>;
+ 	status = "okay";
+ };
