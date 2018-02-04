@@ -27,7 +27,6 @@ family_tweaks_s()
 
 	next)
 		cp -R $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-next.conf $SDCARD/etc/fancontrol
-		#patch $SDCARD/usr/sbin/fancontrol < $SRC/packages/bsp/helios4/fancontrol.patch
 		;;
 	esac
 }
