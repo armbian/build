@@ -19,9 +19,10 @@ esac
 family_tweaks_s()
 {
 	chroot $SDCARD /bin/bash -c "apt-get -y -qq install fancontrol >/dev/null 2>&1"
+	cp -R $SRC/packages/bsp/helios4/90-helios4-hwmon.rules $SDCARD/etc/udev/rules.d/
 	case $BRANCH in
 	default)
-		cp -R $SRC/packages/bsp/helios4/fancontrol_gpio-fan.conf $SDCARD/etc/fancontrol
+		cp -R $SRC/packages/bsp/helios4/fancontrol_pwm-fan-LK4.4.conf $SDCARD/etc/fancontrol
 		;;
 
 	next)
