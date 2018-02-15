@@ -196,7 +196,7 @@ if [[ -z $BRANCH ]]; then
 	fi
 	unset options
 	[[ -z $BRANCH ]] && exit_with_error "No kernel branch selected"
-	[[ $BRANCH == dev && $SHOW_WARNING == yes ]] && show_developer_warning
+	[[ $BOARD_TYPE == 'conf' && $BRANCH == dev && $SHOW_WARNING == yes ]] && show_developer_warning
 else
 	[[ $KERNEL_TARGET != *$BRANCH* ]] && exit_with_error "Kernel branch not defined for this board" "$BRANCH"
 fi
