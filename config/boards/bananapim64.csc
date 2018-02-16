@@ -16,7 +16,7 @@ DESKTOP_TARGET=""
 CLI_BETA_TARGET=""
 DESKTOP_BETA_TARGET=""
 #
-RECOMMENDED="Ubuntu_xenial_dev_nightly:33"
+RECOMMENDED="Debian_stretch_next_desktop_nightly:75,Debian_stretch_next_nightly:75"
 #
 BOARDRATING=""
 CHIP="https://docs.armbian.com/Hardware_Allwinner-H5-A64/"
