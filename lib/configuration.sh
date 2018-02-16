@@ -10,7 +10,7 @@
 # common options
 # daily beta build contains date in subrevision
 if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
-REVISION="5.38$SUBREVISION" # all boards have same revision
+REVISION="5.41$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 MAINTAINER="Igor Pecovnik" # deb signature
 MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -75,6 +75,7 @@ if [[ -f $SRC/userpatches/sources/$LINUXFAMILY.conf ]]; then
 fi
 
 [[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
+[[ $RELEASE == bionic && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Ubuntu Bionic images with selected kernel is not supported"
 
 [[ -n $ATFSOURCE && -z $ATF_USE_GCC ]] && exit_with_error "Error in configuration: ATF_USE_GCC is unset"
 [[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
@@ -195,12 +196,26 @@ fi
 
 # debug
 cat <<-EOF >> $DEST/debug/output.log
+
 ## BUILD SCRIPT ENVIRONMENT
 
-Version: $(cd $SRC; git rev-parse @)
+Repository: $(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
+Version: $(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
+
 Host OS: $(lsb_release -sc)
 Host arch: $(dpkg --print-architecture)
-Dirty: $(git diff-index --quiet HEAD -- && echo No || echo Yes)
+Host system: $(uname -a)
+Virtualization type: $(systemd-detect-virt)
+
+## Build script directories
+Build directory is located on:
+$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T $SRC)
+
+Build directory permissions:
+$(getfacl -p $SRC)
+
+Temp directory permissions:
+$(getfacl -p $SRC/.tmp)
 
 ## BUILD CONFIGURATION
 

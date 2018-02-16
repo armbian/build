@@ -35,10 +35,11 @@ root_uuid=$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
 root_partition=$(blkid | tr -d '":' | grep ${root_uuid} | awk '{print $1}')
 root_partition_device="${root_partition::-2}"
 
-# find targets: NAND, EMMC, SATA
+# find targets: NAND, EMMC, SATA, SPI
 [[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
 emmccheck=$(ls -d -1 /dev/mmcblk* | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
 satacheck=$(grep 'sd' /proc/partitions | awk '{print $NF}')
+spicheck=$(grep 'mtd' /proc/partitions | awk '{print $NF}')
 
 # define makefs and mount options
 declare -A mkopts mountopts
@@ -63,7 +64,7 @@ create_armbian()
 		[[ -n $2 ]] && ( mount -o compress-force=zlib $2 ${TempDir}/rootfs || mount $2 ${TempDir}/rootfs )
 	else
 		[[ -n $2 ]] && ( mount -o compress-force=zlib $2 ${TempDir}/rootfs || mount $2 ${TempDir}/rootfs )
-		[[ -n $1 ]] && mount $1 ${TempDir}/bootfs
+		[[ -n $1 && $1 != "spi" ]] && mount $1 ${TempDir}/bootfs
 	fi
 	rm -rf ${TempDir}/bootfs/* ${TempDir}/rootfs/*
 
@@ -116,13 +117,13 @@ create_armbian()
 	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' | grep -v "^COMMAND" >> $logfile
 
 	# count files is needed for progress bar
-	dialog --title "$title" --backtitle "$backtitle" --infobox "\n  Counting files ... few seconds." 5 60
+	dialog --title " $title " --backtitle "$backtitle" --infobox "\n  Counting files ... few seconds." 5 60
 	TODO=$(rsync -ahvrltDn --delete --stats --exclude-from=$EX_LIST / ${TempDir}/rootfs | grep "Number of files:"|awk '{print $4}' | tr -d '.,')
 	echo -e "\nCopying ${TODO} files to $2. \c" >> $logfile
 
 	# creating rootfs
 	rsync -avrltD --delete --exclude-from=$EX_LIST / ${TempDir}/rootfs | nl | awk '{ printf "%.0f\n", 100*$1/"'"$TODO"'" }' \
-	| dialog --backtitle "$backtitle" --title "$title" --gauge "\n\n  Transferring rootfs to $2 ($USAGE MB). \n\n \
+	| dialog --backtitle "$backtitle" --title " $title " --gauge "\n\n  Transferring rootfs to $2 ($USAGE MB). \n\n \
 	This will take approximately $(( $((USAGE/300)) * 5 )) minutes to finish. Please wait!\n\n" 11 80
 
 	# run rsync again to silently catch outstanding changes between / and ${TempDir}/rootfs/
@@ -265,6 +266,13 @@ create_armbian()
 			fallocate -l 128M ${TempDir}/rootfs/var/swap || dd if=/dev/zero of=${TempDir}/rootfs/var/swap bs=1M count=128 status=noxfer
 			mkswap ${TempDir}/rootfs/var/swap
 		fi
+	fi
+
+	# Boot from SPI, root = SATA / USB
+	#
+	if [[ $1 == *spi* ]]; then
+		sed -e 's,rootdev=.*,rootdev='"$satauuid"',g' -i ${TempDir}/rootfs/boot/armbianEnv.txt
+		echo "$satauuid	/		$FilesystemChoosen	${mountopts[$FilesystemChoosen]}" >> ${TempDir}/rootfs/etc/fstab
 	fi
 
 	# recreate OMV mounts at destination if needed
@@ -429,7 +437,7 @@ formatsata()
 		*)
 			BTRFS=$(grep -o btrfs /proc/filesystems)
 			FilesystemTargets="1 ext4 2 ext3 3 ext2"
-			[[ -n $BTRFS && `uname -r | grep '^4.' ` ]] && FilesystemTargets=$FilesystemTargets" 4 $BTRFS"
+			[[ -n $BTRFS && `uname -r | grep '^4.' ` && $choice != 6 ]] && FilesystemTargets=$FilesystemTargets" 4 $BTRFS"
 			;;
 	esac
 	FilesystemOptions=($FilesystemTargets)
@@ -500,7 +508,7 @@ main()
 			:
 			;;
 		*)
-			dialog --title "$title" --backtitle "$backtitle" --colors --infobox "\n\Z1This tool must run from SD-card!\Zn" 5 42
+			dialog --title "$title" --backtitle "$backtitle" --colors --infobox "\n\Z1This tool must run from SD-card! \Zn" 5 37
 			exit 1
 			;;
 	esac
@@ -520,11 +528,13 @@ main()
 		dest_root="/dev/nand2"
 	fi
 
+
 	[[ -n $nandcheck || -n $emmccheck ]] && options+=(1 "Boot from $ichip - system on $ichip")
 	[[ ( -n $nandcheck || -n $emmccheck ) && -n $satacheck ]] && options+=(2 "Boot from $ichip - system on SATA or USB")
 	[[ -n $satacheck ]] && options+=(3 "Boot from SD   - system on SATA or USB")
 	[[ ( $LINUXFAMILY == odroidxu4 || $LINUXFAMILY == mvebu* ) && ( -b /dev/mmcblk0boot0 || -b /dev/mmcblk1boot0 ) ]] && options+=(4 "Update the bootloader on a special eMMC partition")
 	[[ $(type -t write_uboot_platform_mtd) == function && -b /dev/mtd0 && -f /usr/sbin/flashcp ]] && options+=(5 "Install the bootloader to SPI Flash")
+	[[ -n $spicheck ]] && options+=(6 "Boot from SPI  - system on SATA or USB")
 	[[ ${#options[@]} -eq 0 || "$root_uuid" == "$emmcuuid" || "$root_uuid" == "/dev/nand2" ]] && \
 	dialog --title "$title" --backtitle "$backtitle" --colors --no-collapse --msgbox "\n\Z1There are no targets. Please check your drives.\Zn" 7 54
 	cmd=(dialog --title "Choose an option:" --backtitle "$backtitle" --menu "\nCurrent root: $root_uuid \n \n" 14 60 7)
@@ -591,6 +601,17 @@ main()
 				write_uboot_platform_mtd $DIR /dev/mtd0
 				echo "Done"
 				return
+				;;
+			6)
+				# Espressobin has flash boot by default
+				title="SPI flash boot | USB/SATA root install"
+				command="Power off"
+				# we need to copy boot
+				sed -i '/boot/d' $EX_LIST
+				checksatatarget
+				ShowWarning "This script will erase your device $SDA_ROOT_PART. Continue?"
+				formatsata "$SDA_ROOT_PART"
+				create_armbian "spi" "$SDA_ROOT_PART"
 				;;
 		esac
 	done
