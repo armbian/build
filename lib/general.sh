@@ -516,7 +516,8 @@ prepare_host()
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-tools ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross \
 	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev aptly acl \
-	locales ncurses-base pixz dialog systemd-container udev distcc lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5"
+	locales ncurses-base pixz dialog systemd-container udev distcc lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
+	bison libbison-dev flex libfl-dev"
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
