@@ -118,7 +118,7 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 	ca-certificates resolvconf expect rcconf iptables"
 
 # development related packages. remove when they are not needed for building packages in chroot
-PACKAGE_LIST="$PACKAGE_LIST automake libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev"
+PACKAGE_LIST="$PACKAGE_LIST automake bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev"
 
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools dosfstools hddtemp iotop iozone3 stress sysbench screen ntfs-3g vim pciutils \
