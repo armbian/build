@@ -327,7 +327,11 @@ prepare_partitions()
 				# Hardcoded overhead +40% and +128MB for ext4 is needed for desktop images,
 				# for CLI it could be lower. Also add extra 128 MiB for the emergency swap
 				# file creation and align the size up to 4MiB
-				local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.4) / 1 + 128) / 4 + 1) * 4")
+				if [[ $BUILD_DESKTOP == yes ]]; then
+					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.4) / 1 + 128) / 4 + 1) * 4")
+				else
+					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.2) / 1 + 128) / 4 + 1) * 4")
+				fi
 				;;
 		esac
 	fi
