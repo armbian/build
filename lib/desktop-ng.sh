@@ -147,68 +147,6 @@ Description: Your full name (eg. John Doe)
 	db_stop
 	exit 0
 	EOF
-
-
-	# set up pre install script
-	cat <<-EOF > $destination/DEBIAN/postinst.1
-	#!/bin/bash
-	# Disable Pulseaudio timer scheduling which does not work with sndhdmi driver
-	if [ -f /etc/pulse/default.pa ]; then sed "s/load-module module-udev-detect$/& tsched=0/g" -i /etc/pulse/default.pa; fi
-
-	# Enable network manager
-	if [[ -f /etc/NetworkManager/NetworkManager.conf ]]; then
-		sed "s/managed=\(.*\)/managed=true/g" -i /etc/NetworkManager/NetworkManager.conf
-		# Disable dns management withing NM
-		sed "s/\[main\]/\[main\]\ndns=none/g" -i /etc/NetworkManager/NetworkManager.conf
-		printf '[keyfile]\nunmanaged-devices=interface-name:p2p0\n' >> /etc/NetworkManager/NetworkManager.conf
-	fi
-
-	# adding or choosing a user
-	function add_user {
-        read -t 0 temp
-        echo -e "\nPlease provide a username (eg. your forename): \c"
-        read -e username
-        RealUserName="\$(echo "\$username" | tr '[:upper:]' '[:lower:]' | tr -d -c '[:alnum:]')"
-		if [ -z "\$(getent passwd \$RealUserName)" ]; then
-                echo "Trying to add user \$RealUserName"
-                adduser \$RealUserName
-                exitstatus=\$?
-        else
-                echo "Using existing user \$RealUserName"
-                exitstatus=0
-        fi
-	}
-
-	while [[ "\$exitstatus" != "0" ]]; do
-		add_user
-	done
-
-	# add user to groups
-	for additionalgroup in sudo netdev audio video dialout plugdev bluetooth systemd-journal ssh; do
-		usermod -aG \${additionalgroup} \${RealUserName} 2>/dev/null
-	done
-
-	# fix for gksu in Xenial
-	touch /home/\$RealUserName/.Xauthority
-	chown \$RealUserName:\$RealUserName /home/\$RealUserName/.Xauthority
-
-	# set up profile sync daemon on desktop systems
-	which psd >/dev/null 2>&1
-	if [ \$? -eq 0 ]; then
-		echo -e "\${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> /etc/sudoers
-		touch /home/\${RealUserName}/.activate_psd
-		chown \$RealUserName:\$RealUserName /home/\${RealUserName}/.activate_psd
-	fi
-
-	sed -i "s/NODM_USER=\(.*\)/NODM_USER=\${RealUserName}/" /etc/default/nodm
-	sed -i "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" /etc/default/nodm
-	echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
-	sleep 3
-	service nodm stop
-	sleep 1
-	service nodm start
-	exit 0
-	EOF
 	chmod 755 $destination/DEBIAN/postinst
 
 	# add loading desktop splash service
