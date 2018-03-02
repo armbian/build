@@ -176,8 +176,8 @@ create_rootfs_cache()
 		rm $SDCARD/armbian.key
 
 		# compressing packages list to gain some space
-		echo "Acquire::GzipIndexes "true"; Acquire::CompressionTypes::Order:: "gz";" > $SDCARD/etc/apt/aot.conf.d/02compress-indexes
-		echo "Acquire::Languages "none";" > $SDCARD/etc/apt/aot.conf.d/no-languages
+		echo "Acquire::GzipIndexes "true"; Acquire::CompressionTypes::Order:: "gz";" > $SDCARD/etc/apt/apt.conf.d/02compress-indexes
+		echo "Acquire::Languages "none";" > $SDCARD/etc/apt/apt.conf.d/no-languages
 
 		# add armhf arhitecture to arm64
 		[[ $ARCH == arm64 ]] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "dpkg --add-architecture armhf"'
