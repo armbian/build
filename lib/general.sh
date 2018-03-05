@@ -37,11 +37,13 @@ cleaning()
 			# easier than dealing with variable expansion and escaping dashes in file names
 			find $DEST/debs -name "${CHOSEN_UBOOT}_*.deb" -delete
 			find $DEST/debs \( -name "${CHOSEN_KERNEL}_*.deb" -o \
+				-name "armbian-*.deb" -o \
 				-name "${CHOSEN_KERNEL/image/dtb}_*.deb" -o \
 				-name "${CHOSEN_KERNEL/image/headers}_*.deb" -o \
 				-name "${CHOSEN_KERNEL/image/source}_*.deb" -o \
 				-name "${CHOSEN_KERNEL/image/firmware-image}_*.deb" \) -delete
 			[[ -n $RELEASE ]] && rm -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_*.deb
+			[[ -n $RELEASE ]] && rm -f $DEST/debs/$RELEASE/armbian-desktop-${RELEASE}_*.deb
 		fi
 		;;
 
