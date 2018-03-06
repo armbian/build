@@ -12,13 +12,13 @@ create_desktop_package ()
 	# cleanup package list
 	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP// /,}; PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP//[[:space:]]/}
 
-	local destination=$SRC/.tmp/armbian-desktop_${REVISION}_all
+	local destination=$SRC/.tmp/armbian-desktop-${RELEASE}_${REVISION}_all
 	rm -rf $destination
 	mkdir -p $destination/DEBIAN
 
 	# set up control file
 	cat <<-EOF > $destination/DEBIAN/control
-	Package: armbian-desktop
+	Package: armbian-desktop-${RELEASE}
 	Version: $REVISION
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
@@ -26,7 +26,7 @@ create_desktop_package ()
 	Section: xorg
 	Priority: optional
 	Depends: ${PACKAGE_LIST_DESKTOP//[:space:]+/,}
-	Provides: armbian-desktop
+	Provides: armbian-desktop-${RELEASE}
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
 
@@ -130,7 +130,7 @@ Description: Your full name (eg. John Doe)
 
 		# Adjust menu
 		sed -i '0,/xfce4-about.desktop/s//armbian-donate.desktop/' /etc/xdg/menus/xfce-applications.menu
-		sed -i '/armbian-donate.desktop/a \\\t<Filename>armbian-support.desktop</Filename>/' /etc/xdg/menus/xfce-applications.menu
+		sed -i '/armbian-donate.desktop/a \t<Filename>armbian-support.desktop</Filename>/' /etc/xdg/menus/xfce-applications.menu
 
 		# Hide few items
 		if [ -f $SDCARD/usr/share/applications/display-im6.q16.desktop ]; then mv /usr/share/applications/display-im6.q16.desktop /usr/share/applications/display-im6.q16.desktop.hidden; fi
@@ -195,7 +195,7 @@ Description: Your full name (eg. John Doe)
 	cp $SRC/packages/blobs/desktop/wallpapers/armbian*.jpg $destination/usr/share/backgrounds/xfce/
 
 	# create board DEB file
-	display_alert "Building desktop package" "armbian-desktop_${REVISION}_all" "info"
+	display_alert "Building desktop package" "armbian-desktop-${RELEASE}_${REVISION}_all" "info"
 	fakeroot dpkg-deb -b $destination ${destination}.deb >/dev/null
 	mkdir -p ${DEST}/debs/${RELEASE}
 	mv ${destination}.deb $DEST/debs/${RELEASE}
