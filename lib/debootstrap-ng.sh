@@ -54,11 +54,9 @@ debootstrap_ng()
 	# install additional applications
 	[[ $EXTERNAL == yes ]] && install_external_applications
 
-	# install desktop files
-	[[ $BUILD_DESKTOP == yes ]] && install_desktop
-
 	# install locally built packages
 	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
+
 	# install from apt.armbian.com
 	[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes"
 

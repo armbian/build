@@ -41,7 +41,6 @@ source $SRC/lib/debootstrap-ng.sh 			# System specific install
 source $SRC/lib/image-helpers.sh			# helpers for OS image building
 source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/desktop.sh 				# Desktop specific install
-source $SRC/lib/desktop-ng.sh 				# Desktop package creation
 source $SRC/lib/compilation.sh 				# Patching and compilation of kernel, uboot, ATF
 source $SRC/lib/makeboarddeb.sh 			# Create board support package
 source $SRC/lib/general.sh				# General functions

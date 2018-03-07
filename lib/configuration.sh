@@ -115,30 +115,33 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 	iw fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl linux-base dialog crda \
 	wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
 	usbutils wireless-tools console-setup unicode-data openssh-server initramfs-tools \
-	ca-certificates resolvconf expect rcconf iptables"
-
-# development related packages. remove when they are not needed for building packages in chroot
-PACKAGE_LIST="$PACKAGE_LIST automake bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev"
+	ca-certificates resolvconf expect rcconf iptables libpam-google-authenticator automake \
+	bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev"
 
 # Non-essential packages
-PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools dosfstools hddtemp iotop iozone3 stress sysbench screen ntfs-3g vim pciutils \
-	evtest htop pv lsof apt-transport-https libfuse2 libdigest-sha-perl libproc-processtable-perl aptitude dnsutils f3 haveged \
-	hdparm rfkill vlan sysstat bash-completion hostapd git ethtool network-manager unzip ifenslave command-not-found \
-	libpam-systemd iperf3 software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping armbian-firmware"
+PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools dosfstools hddtemp iotop iozone3 stress sysbench screen \
+	ntfs-3g vim pciutils evtest htop pv lsof apt-transport-https libfuse2 libdigest-sha-perl \
+	libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan sysstat bash-completion \
+	hostapd git ethtool network-manager unzip ifenslave command-not-found libpam-systemd iperf3 \
+	software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping armbian-firmware"
 
-PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit x11-xserver-utils xfce4 lxtask xfce4-terminal mirage thunar-volman galculator hexchat \
-	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter libgnome2-perl gksu \
-	network-manager-gnome network-manager-openvpn-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 libgcr-3-common p11-kit pasystray pavucontrol pulseaudio \
-	paman pavumeter pulseaudio-module-gconf bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri mpv \
-	libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1 fbi profile-sync-daemon cups-pk-helper cups mesa-utils mesa-utils-extra gnome-orca numix-icon-theme numix-gtk-theme"
+# Desktop packages
+PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit \
+	x11-xserver-utils xfce4 lxtask xfce4-terminal mirage thunar-volman galculator hexchat \
+	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter \
+	libgnome2-perl gksu network-manager-gnome network-manager-openvpn-gnome xfce4-notifyd gnome-keyring gcr \
+	libgck-1-0 libgcr-3-common p11-kit pasystray pavucontrol pulseaudio paman pavumeter pulseaudio-module-gconf \
+	bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri mpv \
+	libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1 fbi profile-sync-daemon cups-pk-helper \
+	cups mesa-utils mesa-utils-extra gnome-orca numix-icon-theme numix-gtk-theme"
 
 case $DISPLAY_MANAGER in
 	nodm)
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP nodm"
+	PACKAGE_LIST_DISPLAY_MANAGER="nodm"
 	;;
 
 	lightdm)
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP lightdm lightdm-gtk-greeter"
+	PACKAGE_LIST_DISPLAY_MANAGER="lightdm lightdm-gtk-greeter"
 	;;
 
 	*)
@@ -154,12 +157,14 @@ case $RELEASE in
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget nano zram-config"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium-browser language-selector-gnome paprefs numix-gtk-theme system-config-printer-common system-config-printer-gnome"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium-browser language-selector-gnome paprefs numix-gtk-theme \
+	system-config-printer-common system-config-printer-gnome"
 	[[ $ARCH == armhf ]] && PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mate-utils ubuntu-mate-welcome mate-settings-daemon"
 	;;
 	stretch)
 	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium paprefs numix-gtk-theme dbus-x11 system-config-printer-common system-config-printer"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium paprefs numix-gtk-theme dbus-x11 \
+	system-config-printer-common system-config-printer"
 	;;
 esac
 

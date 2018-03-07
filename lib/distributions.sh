@@ -103,10 +103,15 @@ install_common()
 	ff02::2     ip6-allrouters
 	EOF
 
+	# install kernel and u-boot packages
 	install_deb_chroot "$DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
-
-	display_alert "Installing u-boot" "$CHOSEN_UBOOT" "info"
 	install_deb_chroot "$DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
+
+	if [[ $BUILD_DESKTOP == yes ]]; then
+		install_deb_chroot "$DEST/debs/$RELEASE/armbian-desktop-${RELEASE}_${REVISION}_all.deb"
+		# install display manager
+		desktop_postinstall
+	fi
 
 	if [[ $INSTALL_HEADERS == yes ]]; then
 		install_deb_chroot "$DEST/debs/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
@@ -142,10 +147,7 @@ install_common()
 	[[ $(type -t family_tweaks) == function ]] && family_tweaks
 
 	# enable additional services
-	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service firstrun-config.service >/dev/null 2>&1"
-
-	# copy "first run automated config, optional user configured"
- 	cp $SRC/packages/bsp/armbian_first_run.txt.template $SDCARD/boot/armbian_first_run.txt.template
+	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable firstrun.service resize2fs.service armhwinfo.service log2ram.service >/dev/null 2>&1"
 
 	# switch to beta repository at this stage if building nightly images
 	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
@@ -182,9 +184,18 @@ install_common()
 	# save initial armbian-release state
 	cp $SDCARD/etc/armbian-release $SDCARD/etc/armbian-image-release
 
+	# DNS fix. package resolvconf is not available everywhere
+	if [ -d /etc/resolvconf/resolv.conf.d ]; then
+		echo 'nameserver 8.8.8.8' > $SDCARD/etc/resolvconf/resolv.conf.d/head
+	fi
+
 	# premit root login via SSH for the first boot
 	sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' $SDCARD/etc/ssh/sshd_config
 
+	# configure network manager
+	sed "s/managed=\(.*\)/managed=true/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
+	# disable DNS management withing NM for !Stretch
+	[[ $RELEASE != stretch ]] && sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
 	if [[ -n $NM_IGNORE_DEVICES ]]; then
 		mkdir -p $SDCARD/etc/NetworkManager/conf.d/
 		cat <<-EOF > $SDCARD/etc/NetworkManager/conf.d/10-ignore-interfaces.conf

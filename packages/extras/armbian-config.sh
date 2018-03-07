@@ -13,7 +13,7 @@ compile_armbian-config()
 
 	display_alert "Building deb" "armbian-config" "info"
 
-	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:dev"
+	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:development"
 
 	mkdir -p $tmpdir/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
 
