@@ -426,6 +426,9 @@ prepare_partitions()
 		[[ $HAS_UUID_SUPPORT == yes ]] && sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
 		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
 	fi
+	
+	# transfer serialcon to u-boot-environment for later use in boot.cmd (at the moment only used for rk3328)
+	echo "serialcon=$SERIALCON" >> $SDCARD/boot/armbianEnv.txt
 
 	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $SDCARD/boot/boot.cmd ]] && \
