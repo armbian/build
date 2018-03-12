@@ -143,7 +143,7 @@ create_sources_list()
 	EOF
 	;;
 
-	xenial)
+	xenial|bionic)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -346,7 +346,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("jessie" "xenial" "stretch")
+	local distributions=("jessie" "xenial" "stretch" "bionic")
 	local errors=0
 
 	for release in "${distributions[@]}"; do

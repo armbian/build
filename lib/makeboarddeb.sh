@@ -136,7 +136,7 @@ create_board_package()
 	EOF
 
 	# this is required for NFS boot to prevent deconfiguring the network on shutdown
-	[[ $RELEASE == xenial || $RELEASE == stretch ]] && sed -i 's/#no-auto-down/no-auto-down/g' $destination/etc/network/interfaces.default
+	[[ $RELEASE == xenial || $RELEASE == stretch || $RELEASE == bionic ]] && sed -i 's/#no-auto-down/no-auto-down/g' $destination/etc/network/interfaces.default
 
 	# install copy of boot script & environment file
 	local bootscript_src=${BOOTSCRIPT%%:*}
@@ -191,6 +191,13 @@ create_board_package()
 		cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/usr/lib/NetworkManager/conf.d/
 		cp $SRC/packages/bsp/10-override-random-mac.conf $destination/usr/lib/NetworkManager/conf.d/
 	;;
+
+	bionic)
+		mkdir -p $destination/usr/lib/NetworkManager/conf.d/
+		cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/usr/lib/NetworkManager/conf.d/
+		cp $SRC/packages/bsp/10-override-random-mac.conf $destination/usr/lib/NetworkManager/conf.d/
+	;;
+
 	esac
 
 	# execute $LINUXFAMILY-specific tweaks

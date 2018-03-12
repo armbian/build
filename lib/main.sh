@@ -185,7 +185,7 @@ if [[ -z $BRANCH ]]; then
 	options=()
 	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy (3.4.x - 4.4.x)")
 	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)   (4.x)")
-	[[ $KERNEL_TARGET == *dev* && $EXPERT=yes ]] && options+=("dev"         "\Z1Development version      (4.x)\Zn")
+	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev"         "\Z1Development version      (4.x)\Zn")
 	# do not display selection dialog if only one kernel branch is available
 	if [[ "${#options[@]}" == 2 ]]; then
 		BRANCH="${options[0]}"
@@ -206,6 +206,7 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	options+=("jessie" "Debian 8 Jessie")
 	options+=("stretch" "Debian 9 Stretch")
 	options+=("xenial" "Ubuntu Xenial 16.04 LTS")
+	[[ $EXPERT = yes ]] && options+=("bionic" "Ubuntu Bionic 18.04 LTS")
 	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select the target OS release" \
 		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 	unset options
