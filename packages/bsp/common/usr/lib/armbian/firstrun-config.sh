@@ -74,19 +74,25 @@ do_firstrun_automated_user_configuration()
 			for ((i=0; i<=9; i++))
 			do
 				if (( $(cat "$fp_ifconfig_tmp" | grep -ci -m1 "eth$i") )); then
-					eth_index=$i
+					eth_index=eth${i}
 					break
 				fi
 			done
+
+			# Predictable Network Interface Names
+			[[ -z $eth_index ]] && eth_index=$(cat "$fp_ifconfig_tmp" | grep -m1 "en" | cut -f1 -d":" | head -1)
 
 			# find wlan[0-9]
 			for ((i=0; i<=9; i++))
 			do
 				if (( $(cat "$fp_ifconfig_tmp" | grep -ci -m1 "wlan$i") )); then
-					wlan_index=$i
+					wlan_index=wlan${i}
 					break
 				fi
 			done
+
+			# Predictable Network Interface Names
+			[[ -z $wlan_index ]] && wlan_index=$(cat "$fp_ifconfig_tmp" | grep -m1 "wl" | cut -f1 -d":" | head -1)
 
 			rm "$fp_ifconfig_tmp"
 
@@ -95,30 +101,32 @@ do_firstrun_automated_user_configuration()
 				local FIXED_IP_SETTINGS="ipv4.method manual ipv4.address ${FR_net_static_ip}/${FR_net_static_mask} ipv4.dns ${FR_net_static_dns} ipv4.gateway ${FR_net_static_gateway}"
 			fi
 
-			# delete all current connections
-			LC_ALL=C nmcli -t -f UUID,DEVICE connection show | awk '{print $1}' | cut -f1 -d":" | xargs nmcli connection delete
+			if [[ -n $eth_index || -n $wlan_index ]]; then
+				# delete all current connections
+				LC_ALL=C nmcli -t -f UUID,DEVICE connection show | awk '{print $1}' | cut -f1 -d":" | xargs nmcli connection delete
 
-			# - Wifi enable
-			if [[ $FR_net_wifi_enabled == 1 ]]; then
+				# - Wifi enable
+				if [[ $FR_net_wifi_enabled == 1 ]]; then
 
-				#Set wifi country code
-				iw reg set "$FR_net_wifi_countrycode"
+					#Set wifi country code
+					iw reg set "$FR_net_wifi_countrycode"
 
-				nmcli con add con-name "Armbian wireless" type wifi ifname wlan${wlan_index} ssid "$FR_net_wifi_ssid" -- wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$FR_net_wifi_key" ${FIXED_IP_SETTINGS}
-				nmcli con up "Armbian wireless"
+					nmcli con add con-name "Armbian wireless" type wifi ifname ${wlan_index} ssid "$FR_net_wifi_ssid" -- wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$FR_net_wifi_key" ${FIXED_IP_SETTINGS}
+					nmcli con up "Armbian wireless"
 
-				#Enable Wlan, disable Eth
-				FR_net_ethernet_enabled=0
+					#Enable Wlan, disable Eth
+					FR_net_ethernet_enabled=0
 
-			# - Ethernet enable
-			elif [[ $FR_net_ethernet_enabled == 1 ]]; then
+				# - Ethernet enable
+				elif [[ $FR_net_ethernet_enabled == 1 ]]; then
 
-				nmcli con add con-name "Armbian ethernet" type ethernet ifname eth$eth_index ${FIXED_IP_SETTINGS}
-				nmcli con up "Armbian ethernet"
+					nmcli con add con-name "Armbian ethernet" type ethernet ifname ${eth_index} -- ${FIXED_IP_SETTINGS}
+					nmcli con up "Armbian ethernet"
 
-				#Enable Eth, disable Wlan
-				FR_net_wifi_enabled=0
+					#Enable Eth, disable Wlan
+					FR_net_wifi_enabled=0
 
+				fi
 			fi
 		fi
 	fi
