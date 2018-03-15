@@ -68,7 +68,7 @@ do_firstrun_automated_user_configuration()
 		if [[ $FR_net_change_defaults == 1 ]]; then
 			# - Get 1st index of available wlan and eth adapters
 			local fp_ifconfig_tmp='/tmp/.ifconfig'
-			ifconfig -a > "$fp_ifconfig_tmp" #export to file, should be quicker in loop than calling ifconfig each time.
+			ifconfig -a | sed 's/[ \t].*//;/^\(lo\|\|bond0\|sit0\|ip6tnl0\)$/d' > "$fp_ifconfig_tmp" #export to file, should be quicker in loop than calling ifconfig each time.
 
 			# find eth[0-9]
 			for ((i=0; i<=9; i++))
