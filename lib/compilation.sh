@@ -283,9 +283,9 @@ compile_kernel()
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval env PATH=$toolchain:$PATH ${KERNEL_COMPILER}gcc -dumpversion)" "info"
 
 	# copy kernel config
-	if [[ $KERNEL_KEEP_CONFIG == yes && -f $DEST/$LINUXCONFIG.config ]]; then
-		display_alert "Using previous kernel config" "$DEST/$LINUXCONFIG.config" "info"
-		cp $DEST/$LINUXCONFIG.config .config
+	if [[ $KERNEL_KEEP_CONFIG == yes && -f $DEST/config/$LINUXCONFIG.config ]]; then
+		display_alert "Using previous kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
+		cp $DEST/config/$LINUXCONFIG.config .config
 	else
 		if [[ -f $SRC/userpatches/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
