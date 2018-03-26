@@ -108,7 +108,7 @@ install_common()
 	install_deb_chroot "$DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
 
 	if [[ $BUILD_DESKTOP == yes ]]; then
-		install_deb_chroot "$DEST/debs/$RELEASE/armbian-desktop-${RELEASE}_${REVISION}_all.deb"
+		install_deb_chroot "$DEST/debs/$RELEASE/armbian-${RELEASE}-desktop_${REVISION}_all.deb"
 		# install display manager
 		desktop_postinstall
 	fi

@@ -12,13 +12,13 @@ create_desktop_package ()
 	# cleanup package list
 	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP// /,}; PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP//[[:space:]]/}
 
-	local destination=$SRC/.tmp/${RELEASE}/${BOARD}/armbian-desktop-${RELEASE}_${REVISION}_all
+	local destination=$SRC/.tmp/${RELEASE}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
 	rm -rf $destination
 	mkdir -p $destination/DEBIAN
 
 	# set up control file
 	cat <<-EOF > $destination/DEBIAN/control
-	Package: armbian-desktop-${RELEASE}
+	Package: ${CHOSEN_DESKTOP}
 	Version: $REVISION
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
@@ -26,7 +26,7 @@ create_desktop_package ()
 	Section: xorg
 	Priority: optional
 	Depends: ${PACKAGE_LIST_DESKTOP//[:space:]+/,}
-	Provides: armbian-desktop-${RELEASE}
+	Provides: ${CHOSEN_DESKTOP}
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
 
@@ -86,7 +86,7 @@ create_desktop_package ()
 	cp $SRC/packages/blobs/desktop/wallpapers/armbian*.jpg $destination/usr/share/backgrounds/xfce/
 
 	# create board DEB file
-	display_alert "Building desktop package" "armbian-desktop-${RELEASE}_${REVISION}_all" "info"
+	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
 	fakeroot dpkg-deb -b $destination ${destination}.deb >/dev/null
 	mkdir -p ${DEST}/debs/${RELEASE}
 	mv ${destination}.deb $DEST/debs/${RELEASE}
