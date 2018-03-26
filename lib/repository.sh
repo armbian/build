@@ -54,7 +54,10 @@ ParseOptions() {
 			for release in "${DISTROS[@]}"; do
 				repo-remove-old-packages "$release" "armhf" "5"
 				repo-remove-old-packages "$release" "arm64" "5"
+				repo-remove-old-packages "$release" "all" "5"
 				aptly -config=../config/aptly.conf -passphrase=$GPG_PASS publish update $release
+				# example to remove all packages from bionic that contain source in the name
+				# aptly repo remove -config=../config/aptly.conf bionic 'Name (% *-source*)'
 			done
 			exit 0
 			;;
