@@ -20,7 +20,8 @@ POT="../output/debs/"
 # load functions
 source general.sh
 
-DISTROS=("jessie" "xenial" "stretch" "bionic")
+#DISTROS=("jessie" "xenial" "stretch" "bionic")
+DISTROS=("jessie" "xenial" "stretch" )
 
 ParseOptions() {
 	case $@ in
