@@ -21,7 +21,7 @@ Main() {
         jessie)
             ;;
         stretch)
-            InstallYunohostStretch()
+            InstallYunohostStretch
             ;;
     esac
 } # Main
@@ -32,17 +32,17 @@ InstallYunohostStretch()
     # stuff + we don't want the user to manually create a user)
     cp /tmp/overlay/check_first_login.sh /etc/profile.d/check_first_login.sh
 
-    # Avahi needs to do some stuff which conflicts with the "change the root
-    # password asap" so we disable it....
+    # Avahi and mysql/mariadb needs to do some stuff which conflicts with the
+    # "change the root password asap" so we disable it temporarily....
     chage -d 99999999 root
-    apt-get install avahi-daemon --assume-yes
-    chage -d 0 root
 
     # Go to tmp and run the install script
     cd /tmp/
     wget -O install_yunohost https://install.yunohost.org/stretch
     chmod +x /tmp/install_yunohost
     ./install_yunohost -a
+
+    chage -d 0 root
 
     # FIXME !!! Should clean stuff here (c.f. clean_image in script)
     apt clean
