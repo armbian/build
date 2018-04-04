@@ -49,9 +49,9 @@ case $BRANCH in
 	UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
 	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 
-	KERNELSOURCE='https://github.com/Icenowy/linux/'
-	KERNELBRANCH='branch:sunxi64-4.14.y'
-	KERNELDIR='linux-sun50i-dev'
+	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+	KERNELBRANCH='branch:linux-4.16.y'
+	KERNELDIR=$MAINLINE_KERNEL_DIR
 	KERNEL_USE_GCC='> 7.0'
 	;;
 esac

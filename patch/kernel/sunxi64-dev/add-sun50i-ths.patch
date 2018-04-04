@@ -5,7 +5,7 @@ index 137f577d..b0b231da 100644
 @@ -22,6 +22,7 @@
   * shutdown for not being used.
   */
- 
+
 +#include <linux/clk.h>
  #include <linux/completion.h>
  #include <linux/interrupt.h>
@@ -17,11 +17,11 @@ index 137f577d..b0b231da 100644
 +#include <linux/reset.h>
  #include <linux/thermal.h>
  #include <linux/delay.h>
- 
+
 @@ -49,46 +51,22 @@ static unsigned int sun6i_gpadc_chan_select(unsigned int chan)
  	return SUN6I_GPADC_CTRL1_ADC_CHAN_SELECT(chan);
  }
- 
+
 +struct sun4i_gpadc_iio;
 +
  struct gpadc_data {
@@ -72,7 +72,7 @@ index 137f577d..b0b231da 100644
 +	bool		has_bus_rst;
 +	bool		has_mod_clk;
  };
- 
+
  struct sun4i_gpadc_iio {
 @@ -103,6 +81,9 @@ struct sun4i_gpadc_iio {
  	atomic_t			ignore_temp_data_irq;
@@ -87,16 +87,16 @@ index 137f577d..b0b231da 100644
 @@ -277,7 +258,7 @@ static int sun4i_gpadc_temp_read(struct iio_dev *indio_dev, int *val)
  	if (info->no_irq) {
  		pm_runtime_get_sync(indio_dev->dev.parent);
- 
+
 -		regmap_read(info->regmap, SUN4I_GPADC_TEMP_DATA, val);
 +		regmap_read(info->regmap, info->data->temp_data, val);
- 
+
  		pm_runtime_mark_last_busy(indio_dev->dev.parent);
  		pm_runtime_put_autosuspend(indio_dev->dev.parent);
 @@ -306,6 +287,15 @@ static int sun4i_gpadc_temp_scale(struct iio_dev *indio_dev, int *val)
  	return 0;
  }
- 
+
 +static int sun4i_gpadc_temp_divider(struct iio_dev *indio_dev, int *val)
 +{
 +	struct sun4i_gpadc_iio *info = iio_priv(indio_dev);
@@ -112,7 +112,7 @@ index 137f577d..b0b231da 100644
 @@ -383,10 +373,8 @@ static irqreturn_t sun4i_gpadc_fifo_data_irq_handler(int irq, void *dev_id)
  	return IRQ_HANDLED;
  }
- 
+
 -static int sun4i_gpadc_runtime_suspend(struct device *dev)
 +static int sun4i_gpadc_sample_end(struct sun4i_gpadc_iio *info)
  {
@@ -124,7 +124,7 @@ index 137f577d..b0b231da 100644
 @@ -395,10 +383,23 @@ static int sun4i_gpadc_runtime_suspend(struct device *dev)
  	return 0;
  }
- 
+
 -static int sun4i_gpadc_runtime_resume(struct device *dev)
 +static int sun8i_h3_gpadc_sample_end(struct sun4i_gpadc_iio *info)
 +{
@@ -137,7 +137,7 @@ index 137f577d..b0b231da 100644
 +static int sun4i_gpadc_runtime_suspend(struct device *dev)
  {
  	struct sun4i_gpadc_iio *info = iio_priv(dev_get_drvdata(dev));
- 
+
 +	return info->data->sample_end(info);
 +}
 +
@@ -149,7 +149,7 @@ index 137f577d..b0b231da 100644
 @@ -416,18 +417,52 @@ static int sun4i_gpadc_runtime_resume(struct device *dev)
  	return 0;
  }
- 
+
 +static int sun8i_h3_gpadc_sample_start(struct sun4i_gpadc_iio *info)
 +{
 +	regmap_write(info->regmap, SUN8I_H3_GPADC_CTRL2,
@@ -188,23 +188,23 @@ index 137f577d..b0b231da 100644
  	struct sun4i_gpadc_iio *info = data;
 -	int val, scale, offset;
 +	int val, scale, offset, divider;
- 
+
  	if (sun4i_gpadc_temp_read(info->indio_dev, &val))
  		return -ETIMEDOUT;
- 
+
  	sun4i_gpadc_temp_scale(info->indio_dev, &scale);
  	sun4i_gpadc_temp_offset(info->indio_dev, &offset);
 +	sun4i_gpadc_temp_divider(info->indio_dev, &divider);
- 
+
 -	*temp = (val + offset) * scale;
 +	*temp = ((val + offset) * scale) / divider;
- 
+
  	return 0;
  }
 @@ -490,11 +525,116 @@ static int sun4i_irq_init(struct platform_device *pdev, const char *name,
  	return 0;
  }
- 
+
 +static const struct gpadc_data sun4i_gpadc_data = {
 +	.temp_offset = -1932,
 +	.temp_scale = 133,
@@ -317,11 +317,11 @@ index 137f577d..b0b231da 100644
 +	},
  	{ /* sentinel */ }
  };
- 
-@@ -529,17 +669,75 @@ static int sun4i_gpadc_probe_dt(struct platform_device *pdev,
- 		return ret;
- 	}
- 
+
+@@ -785,6 +785,47 @@ static int sun4i_gpadc_probe(struct platform_device *pdev)
+ 	pm_runtime_set_suspended(&pdev->dev);
+ 	pm_runtime_enable(&pdev->dev);
+
 +	if (info->data->has_bus_rst) {
 +		info->reset = devm_reset_control_get(&pdev->dev, NULL);
 +		if (IS_ERR(info->reset)) {
@@ -363,23 +363,21 @@ index 137f577d..b0b231da 100644
 +			goto disable_bus_clk;
 +	}
 +
- 	if (!IS_ENABLED(CONFIG_THERMAL_OF))
- 		return 0;
- 
- 	info->sensor_device = &pdev->dev;
- 	info->tzd = thermal_zone_of_sensor_register(info->sensor_device, 0,
- 						    info, &sun4i_ts_tz_ops);
--	if (IS_ERR(info->tzd))
-+	if (IS_ERR(info->tzd)) {
- 		dev_err(&pdev->dev, "could not register thermal sensor: %ld\n",
- 			PTR_ERR(info->tzd));
-+		ret = PTR_ERR(info->tzd);
-+		goto disable_mod_clk;
-+	}
- 
--	return PTR_ERR_OR_ZERO(info->tzd);
-+	return 0;
-+
+ 	if (IS_ENABLED(CONFIG_THERMAL_OF)) {
+ 		info->tzd = thermal_zone_of_sensor_register(info->sensor_device,
+ 							    0, info,
+@@ -798,6 +839,7 @@ static int sun4i_gpadc_probe(struct platform_device *pdev)
+ 				"could not register thermal sensor: %ld\n",
+ 				PTR_ERR(info->tzd));
+ 			return PTR_ERR(info->tzd);
++			goto disable_mod_clk;
+ 		}
+ 	}
+
+@@ -809,6 +851,20 @@ static int sun4i_gpadc_probe(struct platform_device *pdev)
+
+ 	return 0;
+
 +disable_mod_clk:
 +	if (info->data->has_mod_clk)
 +		clk_disable_unprepare(info->mod_clk);
@@ -393,13 +391,15 @@ index 137f577d..b0b231da 100644
 +		reset_control_assert(info->reset);
 +
 +	return ret;
- }
- 
- static int sun4i_gpadc_probe_mfd(struct platform_device *pdev,
++
+ err_map:
+ 	if (!info->no_irq && IS_ENABLED(CONFIG_THERMAL_OF))
+ 		iio_map_array_unregister(indio_dev);
+
 @@ -698,6 +896,15 @@ static int sun4i_gpadc_remove(struct platform_device *pdev)
  	if (!info->no_irq)
  		iio_map_array_unregister(indio_dev);
- 
+
 +	if (info->data->has_mod_clk)
 +		clk_disable_unprepare(info->mod_clk);
 +
@@ -411,7 +411,7 @@ index 137f577d..b0b231da 100644
 +
  	return 0;
  }
- 
+
 diff --git a/include/linux/mfd/sun4i-gpadc.h b/include/linux/mfd/sun4i-gpadc.h
 index 139872c2..f794a298 100644
 --- a/include/linux/mfd/sun4i-gpadc.h
@@ -419,7 +419,7 @@ index 139872c2..f794a298 100644
 @@ -38,9 +38,12 @@
  #define SUN6I_GPADC_CTRL1_ADC_CHAN_SELECT(x)		(GENMASK(3, 0) & BIT(x))
  #define SUN6I_GPADC_CTRL1_ADC_CHAN_MASK			GENMASK(3, 0)
- 
+
 -/* TP_CTRL1 bits for sun8i SoCs */
 -#define SUN8I_GPADC_CTRL1_CHOP_TEMP_EN			BIT(8)
 -#define SUN8I_GPADC_CTRL1_GPADC_CALI_EN			BIT(7)
@@ -429,13 +429,13 @@ index 139872c2..f794a298 100644
 +
 +/* TP_CTRL1 bits for SoCs after H3 */
 +#define SUN8I_H3_GPADC_CTRL1_GPADC_CALI_EN		BIT(17)
- 
+
  #define SUN4I_GPADC_CTRL2				0x08
- 
+
 @@ -49,7 +52,17 @@
  #define SUN4I_GPADC_CTRL2_PRE_MEA_EN			BIT(24)
  #define SUN4I_GPADC_CTRL2_PRE_MEA_THRE_CNT(x)		(GENMASK(23, 0) & (x))
- 
+
 +#define SUN8I_H3_GPADC_CTRL2				0x40
 +
 +#define SUN8I_H3_GPADC_CTRL2_TEMP_SENSE_EN		BIT(0)
@@ -447,13 +447,13 @@ index 139872c2..f794a298 100644
 + * but the register's definition is the same as the old CTRL3 register.
 + */
 +#define SUN8I_H3_GPADC_CTRL3				0x70
- 
+
  #define SUN4I_GPADC_CTRL3_FILTER_EN			BIT(2)
  #define SUN4I_GPADC_CTRL3_FILTER_TYPE(x)		(GENMASK(1, 0) & (x))
 @@ -71,6 +84,13 @@
  #define SUN4I_GPADC_INT_FIFOC_TP_UP_IRQ_EN		BIT(1)
  #define SUN4I_GPADC_INT_FIFOC_TP_DOWN_IRQ_EN		BIT(0)
- 
+
 +#define SUN8I_H3_GPADC_INTC				0x44
 +
 +#define SUN8I_H3_GPADC_INTC_TEMP_PERIOD(x)		((GENMASK(19, 0) & (x)) << 12)
@@ -462,12 +462,12 @@ index 139872c2..f794a298 100644
 +#define SUN8I_H3_GPADC_INTC_TEMP_ALARM			BIT(0)
 +
  #define SUN4I_GPADC_INT_FIFOS				0x14
- 
+
  #define SUN4I_GPADC_INT_FIFOS_TEMP_DATA_PENDING		BIT(18)
 @@ -80,9 +100,16 @@
  #define SUN4I_GPADC_INT_FIFOS_TP_UP_PENDING		BIT(1)
  #define SUN4I_GPADC_INT_FIFOS_TP_DOWN_PENDING		BIT(0)
- 
+
 +#define SUN8I_H3_GPADC_INTS				0x44
 +
 +#define SUN8I_H3_GPADC_INTS_TEMP_DATA			BIT(8)
@@ -478,6 +478,6 @@ index 139872c2..f794a298 100644
  #define SUN4I_GPADC_TEMP_DATA				0x20
  #define SUN4I_GPADC_DATA				0x24
 +#define SUN8I_H3_GPADC_TEMP_DATA			0x80
- 
+
  #define SUN4I_GPADC_IRQ_FIFO_DATA			0
  #define SUN4I_GPADC_IRQ_TEMP_DATA			1
