@@ -53,6 +53,7 @@ case $BRANCH in
 	KERNELBRANCH='branch:linux-4.16.y'
 	KERNELDIR=$MAINLINE_KERNEL_DIR
 	KERNEL_USE_GCC='> 7.0'
+	KERNELPATCHDIR='sunxi-dev'
 	;;
 esac
 
