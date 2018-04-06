@@ -33,6 +33,9 @@ case $BRANCH in
 	;;
 
 	dev)
+	BOOTBRANCH='tag:v2018.03'
+	BOOTPATCHDIR='u-boot-sunxi-dev'
+
 	GOVERNOR=ondemand
 	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 	KERNELBRANCH='branch:linux-4.16.y'
