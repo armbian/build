@@ -35,6 +35,7 @@ compile_armbian-config()
 	install -m 755 $SRC/cache/sources/armbian-config/debian-config $tmpdir/usr/sbin/armbian-config
 	install -m 644 $SRC/cache/sources/armbian-config/debian-config-jobs $tmpdir/usr/lib/armbian-config/jobs.sh
 	install -m 644 $SRC/cache/sources/armbian-config/debian-config-submenu $tmpdir/usr/lib/armbian-config/submenu.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-functions $tmpdir/usr/lib/armbian-config/functions.sh
 	install -m 755 $SRC/cache/sources/armbian-config/softy $tmpdir/usr/sbin/softy
 	# fallback to replace armbian-config in BSP
 	ln -sf /usr/sbin/armbian-config $tmpdir/usr/bin/armbian-config
