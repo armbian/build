@@ -168,7 +168,7 @@ case $RELEASE in
 	;;
 	bionic)
 	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium-bsu paprefs numix-gtk-theme dbus-x11 \
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP xserver-xorg-input-all thunderbird chromium-bsu paprefs numix-gtk-theme dbus-x11 \
 	system-config-printer-common system-config-printer"
 	;;
 esac
