@@ -589,7 +589,7 @@ prepare_host()
 		echo "Pin: release n=bionic" >> /etc/apt/preferences.d/bionic.pref
 		echo "Pin-Priority: -10" >> /etc/apt/preferences.d/bionic.pref
 		apt -q update
-		apt -t bionic -y --no-install-recommends install qemu-user-static debootstrap
+		apt -t bionic -y --no-install-recommends install qemu-user-static debootstrap binfmt-support sudo
 	fi
 
 	if [[ ${#deps[@]} -gt 0 ]]; then
