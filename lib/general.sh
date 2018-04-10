@@ -505,6 +505,12 @@ prepare_host()
 		exit_with_error "Running this tool on non x86-x64 build host in not supported"
 	fi
 
+	# exit if package manager is running in the back
+	fuser -s /var/lib/dpkg/lock
+	if [[ $? = 0 ]]; then
+		exit_with_error "Package manager is running in the background. Please try later."
+	fi
+
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "lsb-release"
@@ -576,10 +582,14 @@ prepare_host()
 		echo "deb http://repo.aptly.info/ squeeze main" > /etc/apt/sources.list.d/aptly.list
 	fi
 
-	# sync clock
-	if [[ $SYNC_CLOCK != no ]]; then
-		display_alert "Syncing clock" "host" "info"
-		ntpdate -s ${NTP_SERVER:- time.ijs.si}
+	# add bionic repository and install more recent qemu and debootstrap
+	if [[ ! -f /etc/apt/sources.list.d/bionic.list && $codename == "xenial" ]]; then
+		echo "deb http://us.archive.ubuntu.com/ubuntu/ bionic main restricted universe" > /etc/apt/sources.list.d/bionic.list
+		echo "Package: *" > /etc/apt/preferences.d/bionic.pref
+		echo "Pin: release n=bionic" >> /etc/apt/preferences.d/bionic.pref
+		echo "Pin-Priority: -10" >> /etc/apt/preferences.d/bionic.pref
+		apt -q update
+		apt -t bionic -y --no-install-recommends install qemu-user-static debootstrap
 	fi
 
 	if [[ ${#deps[@]} -gt 0 ]]; then
@@ -587,6 +597,12 @@ prepare_host()
 		apt -q update
 		apt -q -y --no-install-recommends install "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
 		update-ccache-symlinks
+	fi
+
+	# sync clock
+	if [[ $SYNC_CLOCK != no ]]; then
+		display_alert "Syncing clock" "host" "info"
+		ntpdate -s ${NTP_SERVER:- time.ijs.si}
 	fi
 
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
