@@ -191,6 +191,12 @@ fi
 
 [[ -n $APT_PROXY_ADDR ]] && display_alert "Using custom apt-cacher-ng address" "$APT_PROXY_ADDR" "info"
 
+# temporally
+if [[ $RELEASE == bionic ]]; then 
+PACKAGE_LIST_ADDITIONAL="${PACKAGE_LIST_ADDITIONAL/armbian-firmware/}"
+PACKAGE_LIST="${PACKAGE_LIST/rcconf/}"
+fi
+
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 #if [[ $ARCH == arm64 ]]; then
