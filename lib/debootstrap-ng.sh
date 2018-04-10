@@ -173,6 +173,11 @@ create_rootfs_cache()
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 		rm $SDCARD/armbian.key
 
+		# bionic key add
+		if [[ $RELEASE == bionic ]]; then
+		eval 'chroot $SDCARD /bin/bash -c "apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 93D6889F9F0E78D5"' \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+		fi
 		# compressing packages list to gain some space
 		echo "Acquire::GzipIndexes "true"; Acquire::CompressionTypes::Order:: "gz";" > $SDCARD/etc/apt/apt.conf.d/02compress-indexes
 		echo "Acquire::Languages "none";" > $SDCARD/etc/apt/apt.conf.d/no-languages
