@@ -589,12 +589,14 @@ prepare_host()
 		echo "Pin: release n=bionic" >> /etc/apt/preferences.d/bionic.pref
 		echo "Pin-Priority: -10" >> /etc/apt/preferences.d/bionic.pref
 		apt -q update
-		apt -t bionic -y --no-install-recommends install qemu-user-static debootstrap binfmt-support sudo
+		apt upgrade
+		apt -t bionic -y --no-install-recommends install qemu-user-static debootstrap
 	fi
 
 	if [[ ${#deps[@]} -gt 0 ]]; then
 		display_alert "Installing build dependencies"
 		apt -q update
+		apt upgrade
 		apt -q -y --no-install-recommends install "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
 		update-ccache-symlinks
 	fi
