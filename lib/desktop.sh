@@ -36,6 +36,11 @@ create_desktop_package ()
 		# overwrite stock chromium and firefox configuration
 		if [ -d /etc/chromium-browser/ ]; then ln -sf /etc/armbian/chromium.conf /etc/chromium-browser/default; fi
 		if [ -d /etc/chromium.d/ ]; then ln -sf /etc/armbian/chromium.conf /etc/chromium.d/chromium.conf; fi
+		cp -R /etc/armbian/chromium /usr/share
+		# overwrite stock lightdm greeter configuration
+		if [ -d /etc/armbian/lightdm ]; then cp -R /etc/armbian/lightdm /etc/; fi
+
+
 		if [ -d /usr/lib/firefox-esr/ ]; then
 			ln -sf /etc/armbian/firefox.conf /usr/lib/firefox-esr/mozilla.cfg
 			echo 'pref("general.config.obscure_value", 0);' > /usr/lib/firefox-esr/defaults/pref/local-settings.js
@@ -64,10 +69,14 @@ create_desktop_package ()
 	mkdir -p $destination/etc/systemd/system/
 	cp $SRC/packages/blobs/desktop/desktop-splash/desktop-splash.service $destination/etc/systemd/system/desktop-splash.service
 
-	# install optimized chromium configuration
+	# install optimized browser configurations
 	mkdir -p $destination/etc/armbian
 	cp $SRC/packages/blobs/desktop/chromium.conf $destination/etc/armbian
 	cp $SRC/packages/blobs/desktop/firefox.conf  $destination/etc/armbian
+	cp -R $SRC/packages/blobs/desktop/chromium $destination/etc/armbian
+
+	# install lightdm greeter
+	cp -R $SRC/packages/blobs/desktop/lightdm $destination/etc/armbian
 
 	# install default desktop settings
 	mkdir -p $destination/etc/skel

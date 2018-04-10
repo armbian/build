@@ -128,9 +128,9 @@ PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools dosfstools hddtemp iotop iozone3
 # Desktop packages
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit \
 	x11-xserver-utils xfce4 lxtask xfce4-terminal mirage thunar-volman galculator hexchat \
-	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin gcj-jre-headless xfce4-screenshooter \
+	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin xfce4-screenshooter \
 	libgnome2-perl gksu network-manager-gnome network-manager-openvpn-gnome xfce4-notifyd gnome-keyring gcr \
-	libgck-1-0 libgcr-3-common p11-kit pasystray pavucontrol pulseaudio paman pavumeter pulseaudio-module-gconf \
+	libgck-1-0 p11-kit pasystray pavucontrol pulseaudio pavumeter pulseaudio-module-gconf \
 	bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri mpv \
 	libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1 fbi profile-sync-daemon cups-pk-helper \
 	cups mesa-utils mesa-utils-extra gnome-orca numix-icon-theme numix-gtk-theme"
@@ -153,22 +153,22 @@ esac
 case $RELEASE in
 	jessie)
 	PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mozo pluma iceweasel thunderbird policykit-1-gnome eject system-config-printer"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless mozo pluma iceweasel thunderbird policykit-1-gnome eject system-config-printer"
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget nano zram-config"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium-browser language-selector-gnome paprefs numix-gtk-theme \
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless thunderbird chromium-browser language-selector-gnome paprefs numix-gtk-theme \
 	system-config-printer-common system-config-printer-gnome"
 	[[ $ARCH == armhf ]] && PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mate-utils ubuntu-mate-welcome mate-settings-daemon"
 	;;
 	stretch)
 	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium paprefs numix-gtk-theme dbus-x11 \
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless thunderbird chromium paprefs numix-gtk-theme dbus-x11 \
 	system-config-printer-common system-config-printer"
 	;;
 	bionic)
-	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium paprefs numix-gtk-theme dbus-x11 \
+	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP thunderbird chromium-bsu paprefs numix-gtk-theme dbus-x11 \
 	system-config-printer-common system-config-printer"
 	;;
 esac
@@ -192,7 +192,7 @@ fi
 [[ -n $APT_PROXY_ADDR ]] && display_alert "Using custom apt-cacher-ng address" "$APT_PROXY_ADDR" "info"
 
 # temporally
-if [[ $RELEASE == bionic ]]; then 
+if [[ $RELEASE == bionic ]]; then
 PACKAGE_LIST_ADDITIONAL="${PACKAGE_LIST_ADDITIONAL/armbian-firmware/}"
 PACKAGE_LIST="${PACKAGE_LIST/rcconf/}"
 fi
