@@ -582,6 +582,14 @@ prepare_host()
 		echo "deb http://repo.aptly.info/ squeeze main" > /etc/apt/sources.list.d/aptly.list
 	fi
 
+	if [[ ${#deps[@]} -gt 0 ]]; then
+		display_alert "Installing build dependencies"
+		apt -q update
+		apt -y upgrade
+		apt -q -y --no-install-recommends install "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
+		update-ccache-symlinks
+	fi
+
 	# add bionic repository and install more recent qemu and debootstrap
 	if [[ ! -f /etc/apt/sources.list.d/bionic.list && $codename == "xenial" ]]; then
 		echo "deb http://us.archive.ubuntu.com/ubuntu/ bionic main restricted universe" > /etc/apt/sources.list.d/bionic.list
@@ -589,16 +597,8 @@ prepare_host()
 		echo "Pin: release n=bionic" >> /etc/apt/preferences.d/bionic.pref
 		echo "Pin-Priority: -10" >> /etc/apt/preferences.d/bionic.pref
 		apt -q update
-		apt upgrade
-		apt -t bionic -y --no-install-recommends install qemu-user-static debootstrap
-	fi
-
-	if [[ ${#deps[@]} -gt 0 ]]; then
-		display_alert "Installing build dependencies"
-		apt -q update
-		apt upgrade
-		apt -q -y --no-install-recommends install "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
-		update-ccache-symlinks
+		apt -y upgrade
+		apt -t bionic -y --no-install-recommends install qemu-user-static debootstrap binfmt-support
 	fi
 
 	# sync clock
