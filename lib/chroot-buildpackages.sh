@@ -309,6 +309,7 @@ chroot_installpackages()
 	cat <<-EOF > $SDCARD/tmp/install.sh
 	#!/bin/bash
 	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
+	apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 93D6889F9F0E78D5
 	apt-get $apt_extra -q update
 	# uncomment to debug
 	# /bin/bash
