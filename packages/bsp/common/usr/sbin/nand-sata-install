@@ -47,11 +47,13 @@ mkopts[ext2]='-qF'
 mkopts[ext3]='-qF'
 mkopts[ext4]='-qF'
 mkopts[btrfs]='-f'
+mkopts[f2fs]=''
 
 mountopts[ext2]='defaults,noatime,nodiratime,commit=600,errors=remount-ro,x-gvfs-hide	0	1'
 mountopts[ext3]='defaults,noatime,nodiratime,commit=600,errors=remount-ro,x-gvfs-hide	0	1'
 mountopts[ext4]='defaults,noatime,nodiratime,commit=600,errors=remount-ro,x-gvfs-hide	0	1'
 mountopts[btrfs]='defaults,noatime,nodiratime,commit=600,compress=lzo,x-gvfs-hide			0	2'
+mountopts[f2fs]='defaults,noatime,nodiratime,x-gvfs-hide	0	2'
 
 # Create boot and root file system $1 = boot, $2 = root (Example: create_armbian "/dev/nand1" "/dev/sda3")
 create_armbian()
@@ -59,7 +61,7 @@ create_armbian()
 	# create mount points, mount and clean
 	TempDir=$(mktemp -d /mnt/${0##*/}.XXXXXX || exit 1)
 	sync &&	mkdir -p ${TempDir}/bootfs ${TempDir}/rootfs
-	if [[ $eMMCFilesystemChoosen == "btrfs" ]]; then
+	if [[ $eMMCFilesystemChoosen =~ ^(btrfs|f2fs)$ ]]; then
 		[[ -n $1 ]] && mount ${1::-1}"1" ${TempDir}/bootfs
 		[[ -n $2 ]] && ( mount -o compress-force=zlib $2 ${TempDir}/rootfs || mount $2 ${TempDir}/rootfs )
 	else
@@ -190,7 +192,7 @@ create_armbian()
 			local targetuuid=$satauuid
 			local choosen_fs=$FilesystemChoosen
 			echo "Finalizing: boot from eMMC, rootfs on USB/SATA." >> $logfile
-			if [[ $eMMCFilesystemChoosen == "btrfs" ]]; then
+			if [[ $eMMCFilesystemChoosen =~ ^(btrfs|f2fs)$ ]]; then
 				echo "$emmcuuid	/media/mmcroot  $eMMCFilesystemChoosen	${mountopts[$eMMCFilesystemChoosen]}" >> ${TempDir}/rootfs/etc/fstab
 			fi
 		else
@@ -220,7 +222,7 @@ create_armbian()
 		fi
 
 
-		if [[ $eMMCFilesystemChoosen == "btrfs" ]]; then
+		if [[ $eMMCFilesystemChoosen =~ ^(btrfs|f2fs)$ ]]; then
 			echo "$targetuuid	/		$choosen_fs	${mountopts[$choosen_fs]}" >> ${TempDir}/rootfs/etc/fstab
 			# swap file not supported under btrfs but we might have made a partition
 			[[ -n ${emmcswapuuid} ]] && sed -e 's,/var/swap.*,'$emmcswapuuid' 	none		swap	sw								0	0,g' -i ${TempDir}/rootfs/etc/fstab
@@ -355,8 +357,8 @@ formatemmc()
 	# choose and create fs
 	IFS=" "
 	BTRFS=$(grep -o btrfs /proc/filesystems)
-	FilesystemTargets="1 ext4 2 ext3 3 ext2"
-	[[ -n $BTRFS && `uname -r | grep '^4.' ` ]] && FilesystemTargets=$FilesystemTargets" 4 $BTRFS"
+	FilesystemTargets="1 ext4 2 ext3 3 ext2 4 f2fs"
+	[[ -n $BTRFS && `uname -r | grep '^4.' ` ]] && FilesystemTargets=$FilesystemTargets" 5 $BTRFS"
 	FilesystemOptions=($FilesystemTargets)
 
 	FilesystemCmd=(dialog --title "Select filesystem type for eMMC $1" --backtitle "$backtitle" --menu "\n$infos" 10 60 16)
@@ -382,30 +384,34 @@ formatemmc()
 
 	parted -s $1 -- mklabel msdos
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\nFormating $1 to $eMMCFilesystemChoosen ... please wait." 5 60
-	# we can't boot from btrfs
-	if [[ $eMMCFilesystemChoosen == "btrfs" ]]; then
+	# we can't boot from btrfs or f2fs
+	if [[ $eMMCFilesystemChoosen =~ ^(btrfs|f2fs)$ ]]; then
+		local partedFsType="${eMMCFilesystemChoosen}"
+		if [[ $eMMCFilesystemChoosen == "f2fs" ]]; then
+			partedFsType=''
+		fi
 		# check whether swap is currently defined and a new swap partition is needed
 		grep -q swap /etc/fstab
 		case $? in
 			0)
-				parted -s $1 -- mkpart primary $eMMCFilesystemChoosen 8192s 139263s
-				parted -s $1 -- mkpart primary $eMMCFilesystemChoosen 139264s 401407s
-				parted -s $1 -- mkpart primary $eMMCFilesystemChoosen 401408s ${LASTSECTOR}s
+				parted -s $1 -- mkpart primary $partedFsType 8192s 139263s
+				parted -s $1 -- mkpart primary $partedFsType 139264s 401407s
+				parted -s $1 -- mkpart primary $partedFsType 401408s ${LASTSECTOR}s
 				partprobe $1
 				mkfs.ext4 ${mkopts[ext4]} $1"p1" >> $logfile 2>&1
 				mkswap $1"p2" >> $logfile 2>&1
-				mkfs.btrfs $1"p3" ${mkopts[$eMMCFilesystemChoosen]} >> $logfile 2>&1
+				mkfs.${eMMCFilesystemChoosen} $1"p3" ${mkopts[$eMMCFilesystemChoosen]} >> $logfile 2>&1
 				emmcbootuuid=$(blkid -o export $1"p1" | grep -w UUID)
 				emmcswapuuid=$(blkid -o export $1"p2" | grep -w UUID)
 				emmcuuid=$(blkid -o export $1"p3" | grep -w UUID)
 				dest_root=$emmccheck"p3"
 				;;
 			*)
-				parted -s $1 -- mkpart primary $eMMCFilesystemChoosen 8192s 139263s
-				parted -s $1 -- mkpart primary $eMMCFilesystemChoosen 139264s ${LASTSECTOR}s
+				parted -s $1 -- mkpart primary $partedFsType 8192s 139263s
+				parted -s $1 -- mkpart primary $partedFsType 139264s ${LASTSECTOR}s
 				partprobe $1
 				mkfs.ext4 ${mkopts[ext4]} $1"p1" >> $logfile 2>&1
-				mkfs.btrfs $1"p2" ${mkopts[$eMMCFilesystemChoosen]} >> $logfile 2>&1
+				mkfs.${eMMCFilesystemChoosen} $1"p2" ${mkopts[$eMMCFilesystemChoosen]} >> $logfile 2>&1
 				emmcbootuuid=$(blkid -o export $1"p1" | grep -w UUID)
 				emmcuuid=$(blkid -o export $1"p2" | grep -w UUID)
 				dest_root=$emmccheck"p2"
