@@ -175,6 +175,10 @@ create_rootfs_cache()
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 		rm $SDCARD/armbian.key
 
+		# compressing packages list to gain some space
+		echo "Acquire::GzipIndexes "true"; Acquire::CompressionTypes::Order:: "gz";" > $SDCARD/etc/apt/apt.conf.d/02compress-indexes
+		echo "Acquire::Languages "none";" > $SDCARD/etc/apt/apt.conf.d/no-languages
+
 		# add armhf arhitecture to arm64
 		[[ $ARCH == arm64 ]] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "dpkg --add-architecture armhf"'
 
@@ -327,7 +331,11 @@ prepare_partitions()
 				# Hardcoded overhead +40% and +128MB for ext4 is needed for desktop images,
 				# for CLI it could be lower. Also add extra 128 MiB for the emergency swap
 				# file creation and align the size up to 4MiB
-				local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.4) / 1 + 128) / 4 + 1) * 4")
+				if [[ $BUILD_DESKTOP == yes ]]; then
+					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.4) / 1 + 128) / 4 + 1) * 4")
+				else
+					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.2) / 1 + 128) / 4 + 1) * 4")
+				fi
 				;;
 		esac
 	fi

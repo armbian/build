@@ -17,7 +17,7 @@ if test -e ${boot_interface} 0 /boot/armbianEnv.txt; then
 	env import -t ${loadaddr} ${filesize}
 fi
 
-setenv bootargs "$console root=${rootdev} rootfstype=${rootfstype} rootwait loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
+setenv bootargs "$console root=${rootdev} rootfstype=${rootfstype} rootwait loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} mtdparts=spi0.0:1536k(uboot),64k(uboot-environment),-(reserved) ${extraargs}"
 
 setenv fdt_name_a boot/dtb/marvell/armada-3720-community.dtb
 setenv fdt_name_b boot/dtb/marvell/armada-3720-espressobin.dtb
