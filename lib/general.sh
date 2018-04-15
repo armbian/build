@@ -506,10 +506,15 @@ prepare_host()
 	fi
 
 	# exit if package manager is running in the back
-	fuser -s /var/lib/dpkg/lock
-	if [[ $? = 0 ]]; then
-		exit_with_error "Package manager is running in the background. Please try later."
-	fi
+	while true; do
+		fuser -s /var/lib/dpkg/lock
+		if [[ $? = 0 ]]; then
+				display_alert "Package manager is running in the background." "retrying in 30 sec" "wrn"
+				sleep 30
+			else
+				break
+		fi
+	done
 
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
