@@ -10,6 +10,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y dist-upgrade && 
 	systemd-container udev distcc g++-5-arm-linux-gnueabihf lib32stdc++6 \
 	libc6-i386 lib32ncurses5 lib32tinfo5 locales ncurses-base zlib1g:i386 aptly pixz
 RUN locale-gen en_US.UTF-8
+RUN mkdir -p /root/armbian/cache
 ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8' TERM=screen
 WORKDIR /root/armbian
 COPY . /root/armbian
