@@ -119,17 +119,17 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 	bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev"
 
 # Non-essential packages
-PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools dosfstools hddtemp iotop iozone3 stress sysbench screen \
+PACKAGE_LIST_ADDITIONAL="armbian-firmware alsa-utils btrfs-tools dosfstools hddtemp iotop iozone3 stress sysbench screen \
 	ntfs-3g vim pciutils evtest htop pv lsof apt-transport-https libfuse2 libdigest-sha-perl \
 	libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan sysstat bash-completion \
 	hostapd git ethtool network-manager unzip ifenslave command-not-found libpam-systemd iperf3 \
-	software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping armbian-firmware"
+	software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping"
 
 # Desktop packages
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit \
 	x11-xserver-utils xfce4 lxtask xfce4-terminal mirage thunar-volman galculator hexchat \
 	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin xfce4-screenshooter \
-	libgnome2-perl gksu network-manager-gnome network-manager-openvpn-gnome xfce4-notifyd gnome-keyring gcr \
+	libgnome2-perl network-manager-gnome network-manager-openvpn-gnome xfce4-notifyd gnome-keyring gcr \
 	libgck-1-0 p11-kit pasystray pavucontrol pulseaudio pavumeter pulseaudio-module-gconf \
 	bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri mpv \
 	libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1 fbi profile-sync-daemon cups-pk-helper \
@@ -153,17 +153,17 @@ esac
 case $RELEASE in
 	jessie)
 	PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless mozo pluma iceweasel thunderbird policykit-1-gnome eject system-config-printer"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP gksu paman libgcr-3-common gcj-jre-headless mozo pluma iceweasel thunderbird policykit-1-gnome eject system-config-printer"
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget nano zram-config"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless thunderbird chromium-browser language-selector-gnome paprefs numix-gtk-theme \
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP gksu paman libgcr-3-common gcj-jre-headless thunderbird chromium-browser language-selector-gnome paprefs numix-gtk-theme \
 	system-config-printer-common system-config-printer-gnome"
 	[[ $ARCH == armhf ]] && PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mate-utils ubuntu-mate-welcome mate-settings-daemon"
 	;;
 	stretch)
 	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless thunderbird chromium paprefs numix-gtk-theme dbus-x11 \
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP gksu paman libgcr-3-common gcj-jre-headless thunderbird chromium paprefs numix-gtk-theme dbus-x11 \
 	system-config-printer-common system-config-printer"
 	;;
 	bionic)
@@ -193,8 +193,9 @@ fi
 
 # temporally
 if [[ $RELEASE == bionic ]]; then
-PACKAGE_LIST_ADDITIONAL="${PACKAGE_LIST_ADDITIONAL/armbian-firmware/}"
-PACKAGE_LIST="${PACKAGE_LIST/rcconf/}"
+PACKAGE_LIST_ADDITIONAL="${PACKAGE_LIST_ADDITIONAL/armbian-firmware /}"
+PACKAGE_LIST="${PACKAGE_LIST/rcconf /}"
+PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/numix-icon-theme /}"
 fi
 
 # Build final package list after possible override
