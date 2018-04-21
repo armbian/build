@@ -115,7 +115,7 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 	iw fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl linux-base dialog crda \
 	wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
 	usbutils wireless-tools console-setup unicode-data openssh-server initramfs-tools \
-	ca-certificates resolvconf expect rcconf iptables libpam-google-authenticator automake \
+	ca-certificates resolvconf expect iptables libpam-google-authenticator automake \
 	bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev"
 
 # Non-essential packages
@@ -133,7 +133,7 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	libgck-1-0 p11-kit pasystray pavucontrol pulseaudio pavumeter pulseaudio-module-gconf \
 	bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri mpv \
 	libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1 fbi profile-sync-daemon cups-pk-helper \
-	cups mesa-utils mesa-utils-extra gnome-orca numix-icon-theme numix-gtk-theme"
+	cups mesa-utils mesa-utils-extra gnome-orca numix-gtk-theme thunderbird"
 
 case $DISPLAY_MANAGER in
 	nodm)
@@ -153,23 +153,23 @@ esac
 case $RELEASE in
 	jessie)
 	PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP gksu paman libgcr-3-common gcj-jre-headless mozo pluma iceweasel thunderbird policykit-1-gnome eject system-config-printer"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless mozo pluma \
+	iceweasel policykit-1-gnome eject system-config-printer numix-icon-theme"
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget nano zram-config"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP gksu paman libgcr-3-common gcj-jre-headless thunderbird chromium-browser language-selector-gnome paprefs numix-gtk-theme \
-	system-config-printer-common system-config-printer-gnome"
-	[[ $ARCH == armhf ]] && PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP mate-utils ubuntu-mate-welcome mate-settings-daemon"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless chromium-browser \
+	language-selector-gnome paprefs numix-icon-theme system-config-printer-common system-config-printer-gnome"
 	;;
 	stretch)
 	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP gksu paman libgcr-3-common gcj-jre-headless thunderbird chromium paprefs numix-gtk-theme dbus-x11 \
-	system-config-printer-common system-config-printer"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless chromium paprefs \
+	numix-icon-theme dbus-x11 system-config-printer-common system-config-printer"
 	;;
 	bionic)
-	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP xserver-xorg-input-all thunderbird chromium-bsu paprefs numix-gtk-theme dbus-x11 \
-	system-config-printer-common system-config-printer"
+	PACKAGE_LIST_RELEASE="man-db zram-config less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
+	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP xserver-xorg-input-all chromium-browser language-selector-gnome \
+	paprefs dbus-x11 system-config-printer-common system-config-printer"
 	;;
 esac
 
@@ -194,8 +194,6 @@ fi
 # temporally
 if [[ $RELEASE == bionic ]]; then
 PACKAGE_LIST_ADDITIONAL="${PACKAGE_LIST_ADDITIONAL/armbian-firmware /}"
-PACKAGE_LIST="${PACKAGE_LIST/rcconf /}"
-PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/numix-icon-theme /}"
 fi
 
 # Build final package list after possible override
