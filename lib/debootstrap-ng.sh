@@ -115,7 +115,7 @@ create_rootfs_cache()
 		[[ -z $OUTPUT_DIALOG ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
 
 		display_alert "Installing base system" "Stage 1/2" "info"
-		eval 'debootstrap --include=locales ${PACKAGE_LIST_EXCLUDE:+ --exclude=${PACKAGE_LIST_EXCLUDE// /,}} \
+		eval 'debootstrap --include=locales,gnupg,ifupdown ${PACKAGE_LIST_EXCLUDE:+ --exclude=${PACKAGE_LIST_EXCLUDE// /,}} \
 			--arch=$ARCH --foreign $RELEASE $SDCARD/ $apt_mirror' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
@@ -201,7 +201,7 @@ create_rootfs_cache()
 
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
-		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "ulimit -n 65536;DEBIAN_FRONTEND=noninteractive apt-get -y -q \
 			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_LIST"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." $TTY_Y $TTY_X'} \
@@ -215,6 +215,10 @@ create_rootfs_cache()
 
 		# stage: remove downloaded packages
 		chroot $SDCARD /bin/bash -c "apt-get clean"
+
+		# raise max open files, default 1024 is too low and responsible for breaking file rich packages, iconpacks for example
+		echo 'root hard  nofile       65536' >> $SDCARD/etc/security/limits.conf
+		echo 'root soft  nofile       65536' >> $SDCARD/etc/security/limits.conf
 
 		# this is needed for the build process later since resolvconf generated file in /run is not saved
 		rm $SDCARD/etc/resolv.conf

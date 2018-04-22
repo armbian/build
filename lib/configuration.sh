@@ -133,7 +133,7 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	libgck-1-0 p11-kit pasystray pavucontrol pulseaudio pavumeter pulseaudio-module-gconf \
 	bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri mpv \
 	libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1 fbi profile-sync-daemon cups-pk-helper \
-	cups mesa-utils mesa-utils-extra gnome-orca numix-gtk-theme thunderbird"
+	cups mesa-utils mesa-utils-extra gnome-orca numix-icon-theme numix-gtk-theme thunderbird"
 
 case $DISPLAY_MANAGER in
 	nodm)
@@ -154,17 +154,17 @@ case $RELEASE in
 	jessie)
 	PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless mozo pluma \
-	iceweasel policykit-1-gnome eject system-config-printer numix-icon-theme"
+	iceweasel policykit-1-gnome eject system-config-printer"
 	;;
 	xenial)
 	PACKAGE_LIST_RELEASE="man-db wget nano zram-config"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless chromium-browser \
-	language-selector-gnome paprefs numix-icon-theme system-config-printer-common system-config-printer-gnome"
+	language-selector-gnome paprefs system-config-printer-common system-config-printer-gnome"
 	;;
 	stretch)
 	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
 	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless chromium paprefs \
-	numix-icon-theme dbus-x11 system-config-printer-common system-config-printer"
+	dbus-x11 system-config-printer-common system-config-printer"
 	;;
 	bionic)
 	PACKAGE_LIST_RELEASE="man-db zram-config less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
