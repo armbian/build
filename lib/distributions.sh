@@ -249,6 +249,9 @@ install_distribution_specific()
 	bionic)
 		# remove doubled uname from motd
 		[[ -f $SDCARD/etc/update-motd.d/10-uname ]] && rm $SDCARD/etc/update-motd.d/10-uname
+
+		# remove motd news from motd.ubuntu.com
+		[[ -f $SDCARD/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" /etc/default/motd-news
 		# rc.local is not existing in bionic but we might need it
 		cat <<-EOF > $SDCARD/etc/rc.local
 		#!/bin/sh -e
