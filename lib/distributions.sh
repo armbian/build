@@ -48,6 +48,9 @@ install_common()
 
 	mkdir -p $SDCARD/selinux
 
+	# remove Ubuntu's legal text
+	[[ -f $SDCARD/etc/legal ]] && rm $SDCARD/etc/legal
+
 	# console fix due to Debian bug
 	sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $SDCARD/etc/default/console-setup
 
