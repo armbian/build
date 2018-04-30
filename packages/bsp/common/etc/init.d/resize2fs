@@ -20,8 +20,23 @@ Log=/var/log/armhwinfo.log
 
 do_expand_partition()
 {
-	local rootpart=$(findmnt -n -o SOURCE /) # i.e. /dev/mmcblk0p1
-	local rootdevice=$(lsblk -n -o PKNAME $rootpart) # i.e. mmcblk0
+	local rootsource=$(findmnt -n -o SOURCE /) # i.e. /dev/mmcblk0p1 or /dev/mapper/cryptroot
+	
+	# check for device type
+	local roottype=$(lsblk -n -o TYPE $rootsource) # crypt, part or disk
+	case ${roottype} in
+		crypt)
+			IS_CRYPTDEVICE=true
+			local cryptname=$(lsblk -n -o NAME /dev/mapper/cryptroot)
+			local parent_uuid=$(cat /etc/crypttab | awk '{if($1=="cryptroot"){print $2}}' | sed 's/UUID=//')
+			local rootpart=$(blkid -U $parent_uuid)
+			;;
+		part)
+			local rootpart=$rootsource # i.e. /dev/mmcblk0p1
+			;;
+	esac
+	
+	local rootdevice=$(lsblk -n -o PKNAME $rootpart | head -1) # i.e. mmcblk0
 	local rootdevicepath="/dev/$rootdevice" # i.e. /dev/mmcblk0
 	# get count of partitions and their boundaries
 	local partitions=$(parted $rootdevicepath print -sm | tail -1 | awk -F ':' '{print $1}')
@@ -91,7 +106,7 @@ do_expand_partition()
 	fi
 
 	# Start resizing
-	echo -e "\n### [resize2fs] ${ResizeLog}. Start resizing partition $rootpart now:\n" >>${Log}
+	echo -e "\n### [resize2fs] ${ResizeLog}. Start resizing partition $rootsource now:\n" >>${Log}
 	cat /proc/partitions >>${Log}
 	echo -e "\nExecuting fdisk, fsck and partprobe:" >>${Log}
 	local fdisk_version=$(fdisk --version | awk '{print $NF}' | grep -oE "^[[:digit:]]\.[[:digit:]]+")
@@ -109,10 +124,16 @@ do_expand_partition()
 	partprobe $rootdevicepath >>${Log} 2>&1 || s=$?
 	echo -e "New partition table:\n" >>${Log}
 	cat /proc/partitions >>${Log}
-	echo -e "\nNow trying to resize $1 filesystem on $rootpart to the limits:\n" >>${Log}
+	echo -e "\nNow trying to resize $1 filesystem on $rootsource to the limits:\n" >>${Log}
+	
+	# if crypt-device, resize LUKS container first
+	if [[ $IS_CRYPTDEVICE ]]; then
+		do_resize_crypt $cryptname
+	fi
+	
 	case $1 in
 		ext4)
-			resize2fs $rootpart >>${Log} 2>&1
+			resize2fs $rootsource >>${Log} 2>&1
 			# check whether reboot is necessary for resize2fs to take effect
 			local freesize=$(( $(findmnt --target / -n -o AVAIL -b) / 1048576 )) # MiB
 			if [[ $s != 0 || $freesize -lt 512 ]]; then
@@ -124,6 +145,12 @@ do_expand_partition()
 			btrfs filesystem resize max / >> ${Log} 2>&1
 			;;
 	esac
+}
+
+do_resize_crypt()
+{
+	echo -e "\n### [resize2fs] Start resizing LUKS container now\n" >> ${Log}
+	cryptsetup resize $1
 }
 
 do_expand_ext4()

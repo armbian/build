@@ -117,6 +117,14 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 	usbutils wireless-tools console-setup unicode-data openssh-server initramfs-tools \
 	ca-certificates resolvconf expect iptables libpam-google-authenticator automake \
 	bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev"
+	
+# rootfs encryption related packages
+if [[ ${CRYPTROOT_ENABLE^^} == YES ]]; then
+	PACKAGE_LIST="$PACKAGE_LIST cryptsetup"
+	if [[ ${CRYPTROOT_SSH_UNLOCK^^} == YES ]]; then
+		PACKAGE_LIST="$PACKAGE_LIST dropbear-initramfs"
+	fi
+fi
 
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="armbian-firmware alsa-utils btrfs-tools dosfstools hddtemp iotop iozone3 stress sysbench screen \
