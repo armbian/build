@@ -24,8 +24,10 @@ compile_armbian-config()
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Replaces: armbian-bsp
-	Depends: bash, bc, expect, dialog, unzip, build-essential, apt-transport-https, libpam-google-authenticator
-	Recommends: network-manager, armbian-bsp
+	Depends: bash, iperf3, qrencode, psmisc, curl, bc, expect, dialog, network-manager, sunxi-tools, iptables, resolvconf, \
+	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common, \
+	libpam-google-authenticator, qrencode
+	Recommends: armbian-bsp
 	Section: utils
 	Priority: optional
 	Description: Armbian configuration utility
