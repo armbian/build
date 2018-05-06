@@ -11,6 +11,7 @@ create_desktop_package ()
 {
 	# cleanup package list
 	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP// /,}; PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP//[[:space:]]/}
+	PACKAGE_LIST_DESKTOP_RECOMMENDS=${PACKAGE_LIST_DESKTOP_RECOMMENDS// /,}; PACKAGE_LIST_DESKTOP_RECOMMENDS=${PACKAGE_LIST_DESKTOP_RECOMMENDS//[[:space:]]/}
 
 	local destination=$SRC/.tmp/${RELEASE}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
 	rm -rf $destination
@@ -26,6 +27,7 @@ create_desktop_package ()
 	Section: xorg
 	Priority: optional
 	Depends: ${PACKAGE_LIST_DESKTOP//[:space:]+/,}
+	Recommends: ${PACKAGE_LIST_DESKTOP_RECOMMENDS//[:space:]+/,}
 	Provides: ${CHOSEN_DESKTOP}
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF

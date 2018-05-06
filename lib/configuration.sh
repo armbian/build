@@ -102,21 +102,21 @@ esac
 
 BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -n ${!BOOTCONFIG_VAR_NAME} ]] && BOOTCONFIG=${!BOOTCONFIG_VAR_NAME}
-
 [[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
-
 [[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
 if [[ $RELEASE == xenial || $RELEASE == bionic ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
+
 
 # Essential packages
 PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler figlet fbset fping \
 	iw fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl linux-base dialog crda \
 	wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
 	usbutils wireless-tools console-setup unicode-data openssh-server initramfs-tools \
-	ca-certificates resolvconf expect iptables libpam-google-authenticator automake \
+	ca-certificates resolvconf expect iptables automake \
 	bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev"
+
 
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="armbian-firmware alsa-utils btrfs-tools dosfstools iotop iozone3 stress sysbench screen \
@@ -125,53 +125,65 @@ PACKAGE_LIST_ADDITIONAL="armbian-firmware alsa-utils btrfs-tools dosfstools ioto
 	hostapd git ethtool network-manager unzip ifenslave command-not-found libpam-systemd iperf3 \
 	software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode"
 
-# Desktop packages
+
+# Dependent desktop packages
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit \
-	x11-xserver-utils xfce4 lxtask xfce4-terminal mirage thunar-volman galculator hexchat \
-	gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf libgtk2.0-bin xfce4-screenshooter \
-	libgnome2-perl network-manager-gnome network-manager-openvpn-gnome xfce4-notifyd gnome-keyring gcr \
-	libgck-1-0 p11-kit pasystray pavucontrol pulseaudio pavumeter pulseaudio-module-gconf \
-	bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring libgl1-mesa-dri mpv \
-	libreoffice-writer libreoffice-style-tango libreoffice-gtk policykit-1 fbi profile-sync-daemon cups-pk-helper \
-	cups mesa-utils mesa-utils-extra gnome-orca numix-gtk-theme thunderbird geany atril xarchiver leafpad"
+	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
+	libgtk2.0-bin libgnome2-perl network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
+	pulseaudio pavumeter pulseaudio-module-gconf bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
+	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme"
+
+
+# Recommended desktop packages
+PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi cups-pk-helper \
+	cups geany atril xarchiver leafpad"
+
 
 case $DISPLAY_MANAGER in
 	nodm)
-	PACKAGE_LIST_DISPLAY_MANAGER="nodm"
+		PACKAGE_LIST_DISPLAY_MANAGER="nodm"
 	;;
 
 	lightdm)
-	PACKAGE_LIST_DISPLAY_MANAGER="lightdm lightdm-gtk-greeter"
+		PACKAGE_LIST_DISPLAY_MANAGER="lightdm lightdm-gtk-greeter"
 	;;
 
 	*)
-	exit_with_error "Unsupported display manager selected" "$DISPLAY_MANAGER"
+		exit_with_error "Unsupported display manager selected" "$DISPLAY_MANAGER"
 	;;
 esac
 
+
+
 # Release specific packages
 case $RELEASE in
+
 	jessie)
-	PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless mozo pluma \
-	iceweasel policykit-1-gnome eject system-config-printer numix-icon-theme"
+		PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr"
+		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless policykit-1-gnome eject numix-icon-theme"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" iceweasel pluma system-config-printer"
 	;;
+
 	xenial)
-	PACKAGE_LIST_RELEASE="man-db wget nano zram-config"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless chromium-browser \
-	language-selector-gnome paprefs system-config-printer-common system-config-printer-gnome numix-icon-theme"
+		PACKAGE_LIST_RELEASE="man-db wget nano zram-config"
+		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common system-config-printer-gnome"
 	;;
+
 	stretch)
-	PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP paman libgcr-3-common gcj-jre-headless chromium paprefs \
-	dbus-x11 system-config-printer-common system-config-printer"
+		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
+		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer"
 	;;
+
 	bionic)
-	PACKAGE_LIST_RELEASE="man-db zram-config less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
-	PACKAGE_LIST_DESKTOP="$PACKAGE_LIST_DESKTOP xserver-xorg-input-all chromium-browser language-selector-gnome \
-	paprefs dbus-x11 system-config-printer-common system-config-printer"
+		PACKAGE_LIST_RELEASE="man-db zram-config less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
+		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer language-selector-gnome"
 	;;
+
 esac
+
 
 DEBIAN_MIRROR='httpredir.debian.org/debian'
 UBUNTU_MIRROR='ports.ubuntu.com/'
@@ -202,7 +214,7 @@ PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 	#PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/iceweasel/iceweasel:armhf}"
 	#PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/thunderbird/thunderbird:armhf}"
 #fi
-[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
+[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP $PACKAGE_LIST_DESKTOP_RECOMMENDS"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
 if [[ -n $PACKAGE_LIST_RM ]]; then
