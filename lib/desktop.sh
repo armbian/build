@@ -50,8 +50,9 @@ create_desktop_package ()
 		fi
 
 		# Adjust menu
-		sed -i '0,/xfce4-about.desktop/s//armbian-donate.desktop/' /etc/xdg/menus/xfce-applications.menu
-		sed -i '/armbian-donate.desktop/a \t<Filename>armbian-support.desktop</Filename>/' /etc/xdg/menus/xfce-applications.menu
+		sed -i -n '/<Menuname>Settings<\/Menuname>/{p;:a;N;/<Filename>xfce4-session-logout.desktop<\/Filename>/!ba;s/.*\n/\
+		\t<Separator\/>\n\t<Merge type="all"\/>\n        <Separator\/>\n        <Filename>armbian-donate.desktop<\/Filename>\
+		\n        <Filename>armbian-support.desktop<\/Filename>\n/};p' /etc/xdg/menus/xfce-applications.menu
 
 		# Hide few items
 		if [ -f /usr/share/applications/display-im6.q16.desktop ]; then mv /usr/share/applications/display-im6.q16.desktop /usr/share/applications/display-im6.q16.desktop.hidden; fi
