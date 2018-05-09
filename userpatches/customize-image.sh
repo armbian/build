@@ -31,6 +31,7 @@ InstallYunohostStretch()
     # Override the first login script with our own (we don't care about desktop
     # stuff + we don't want the user to manually create a user)
     cp /tmp/overlay/check_first_login.sh /etc/profile.d/check_first_login.sh
+    cp /tmp/overlay/check_yunohost_is_installed.sh /etc/profile.d/check_yunohost_is_installed.sh
     cp /tmp/overlay/armbian-motd /etc/default/armbian-motd
 
     # Avahi and mysql/mariadb needs to do some stuff which conflicts with the
