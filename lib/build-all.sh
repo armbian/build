@@ -84,15 +84,20 @@ create_images_list()
 	#
 	# if parameter is true, than we build beta list
 	#
-local naming="$SRC/config/boards/*.conf";
+	local naming="$SRC/config/boards/*.conf";
         if [[ "$EXPERT" == "yes" ]]; then naming=$naming" $SRC/config/boards/*.wip"; fi
+
 	for board in $naming; do
 		BOARD=$(basename $board | cut -d'.' -f1)
 		local file="${SRC}/config/boards/${BOARD}"
 		if [[ -f $file".conf" ]]; then source $file".conf"; fi
 		if [[ -f $file".wip"  ]]; then source $file".wip"; fi
 
-
+		# beta targets are the same as stable. To build the same set beta set as future stable.
+		if [[ "$MERGETARGETS" == "yes" ]]; then
+			CLI_BETA_TARGET=$CLI_TARGET
+			DESKTOP_BETA_TARGET=$DESKTOP_TARGET
+		fi
 
 		if [[ -n $CLI_TARGET && -z $1 ]]; then
 
