@@ -388,7 +388,7 @@ activate_zram() {
 	cpu_cores=$(grep -c '^processor' /proc/cpuinfo | sed 's/^0$/1/')
 	[[ ${cpu_cores} -gt 4 ]] && zram_devices=4 || zram_devices=${cpu_cores}
 	module_args="$(modinfo zram | awk -F" " '/num_devices/ {print $2}' | cut -f1 -d:)"
-	[[ -n ${module_args} ]] && modprobe zram ${module_args}=${zram_devices} || return
+	[[ -n ${module_args} ]] && modprobe zram ${module_args}=$(( ${zram_devices} + 1 )) || return
 
 	# Use half of the real memory by default --> 1/${ram_divisor}
 	ram_divisor=2
@@ -396,13 +396,22 @@ activate_zram() {
 	memory_total=$(awk '{printf("%d",$2*1024)}' <<<${mem_info})
 	mem_per_zram_device=$(( ${memory_total} / ${zram_devices} / ${ram_divisor} ))
 
-	for (( i=0; i<zram_devices; i++ )); do
+	for (( i=1; i<zram_devices; i++ )); do
 		echo -n ${mem_per_zram_device} > /sys/block/zram${i}/disksize
 		[[ -f /sys/block/zram${i}/comp_algorithm ]] && echo lz4 >/sys/block/zram${i}/comp_algorithm 2>/dev/null
 		mkswap /dev/zram${i}
 		swapon -p 5 /dev/zram${i}
 	done
 	echo -e "\n### Activated ${zram_devices} zram swap devices with ${mem_per_zram_device} MB each\n" >>${Log}
+	
+	# dedicate 20 MB (uncompressed) /dev/zram0 device for log2ram and choose most efficient
+	# compression scheme available -- https://patchwork.kernel.org/patch/9918897/
+	echo -n 20971520 > /sys/block/zram0/disksize
+	for algo in lz4 quicklz zlib brotli zstd ; do
+		echo ${algo} >/sys/block/zram0/comp_algorithm 2>/dev/null
+	done
+	read algo </sys/block/zram0/comp_algorithm
+	echo -e "### Activated log2ram partition with ${algo} compression\n" >>${Log}
 } # activate_zram
 
 case $1 in
