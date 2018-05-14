@@ -465,8 +465,6 @@ prepare_partitions()
 			fi
 		fi
 		echo "rootfstype=$ROOTFS_TYPE" >> $SDCARD/boot/armbianEnv.txt
-		display_alert "Showing contents of:" "$SDCARD/boot/armbianEnv.txt" "ext"
-		cat $SDCARD/boot/armbianEnv.txt | sed 's/^/         /'
 	elif [[ $rootpart != 1 ]]; then
 		local bootscript_dst=${BOOTSCRIPT##*:}
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $SDCARD/boot/$bootscript_dst
@@ -487,8 +485,6 @@ prepare_partitions()
 				sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
 			fi
 		fi
-		display_alert "Showing contents of:" "$SDCARD/boot/boot.ini" "ext"
-		cat $SDCARD/boot/boot.ini | sed 's/^/         /'
 		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt && display_alert "Deleted" "$SDCARD/boot/armbianEnv.txt" "ext"
 	fi
 
