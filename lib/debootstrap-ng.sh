@@ -399,21 +399,12 @@ prepare_partitions()
 			# name of the mapper device
 			ROOT_MAPPER="cryptroot"
 			
-			# what passphrase to use for encryption?
-			if [[ -z $CRYPTROOT_PASSPHRASE ]]; then
-				local defaultpp="abcd"
-				display_alert "USING THE DEFAULT PASSPHRASE EVERYBODY KNOWS!" "$defaultpp" "wrn"
-				display_alert "THIS IS VERY INSECURE AND SHOULD NOT BE USED FOR PRODUCTION BUILDS!" "" "wrn"
-				display_alert "CHANGE PASSPHRASE AFTER BUILD USING: " "cryptsetup luksChangeKey" "wrn"
-				CRYPTROOT_PASSPHRASE=$defaultpp
-			fi
-			
 			# luksFormat the rootdevice
 			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $rootdevice -
 			display_alert "SECURITY ALERT:" "" "wrn"
 			display_alert "THE RESULTING IMAGE CONTAINS THE LUKS VOLUME KEY ONLY FOR CONVENIENCE!" "" "wrn"
 			display_alert "IF BUILDING FOR YOURSELF ONLY, THIS MIGHT BE OK, BUT " "" "wrn"
-			display_alert "IF REDISTRIBUTING THE IMAGE TO OTHER USERS, INSTRUCT THEM TO REENCRYPT THE ROOTFS WITH THEIR OWN (NEW) VOLUME KEY BEFORE FLASHING USING:" "cryptsetup-reencrypt" "wrn"
+			display_alert "IF REDISTRIBUTING THE IMAGE TO OTHER USERS, INSTRUCT THEM TO REENCRYPT THE ROOTFS WITH THEIR OWN (NEW) VOLUME KEY AND THEIR OWN (NEW) PASSPHRASE BEFORE FLASHING USING:" "cryptsetup-reencrypt & cryptsetup luksChangeKey" "wrn"
 			
 			# luksOpen the rootdevice
 			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
