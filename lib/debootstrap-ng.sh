@@ -505,11 +505,11 @@ prepare_partitions()
 		cp $SDCARD/etc/dropbear-initramfs/id_ecdsa $DEST/images/boot_ssh_id_ecdsa
 		display_alert "SSH private key has been copied to:" "$DEST/images/boot_ssh_id_ecdsa" "info"
 
-		# Set the port of the real sshd deamon in the rootfs to a different one if configured
+		# Set the port of the dropbear ssh deamon in the initramfs to a different one if configured
 		# this avoids the typical 'host key changed warning' - `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!` 
-		if [[ ! -z $CRYPTROOT_SSH_PORT ]]; then
-			sed -i 's/^#Port 22.*/Port '$CRYPTROOT_SSH_PORT'/' $SDCARD/etc/ssh/sshd_config
-			display_alert "Changed SSH port of root file system to:" "$CRYPTROOT_SSH_PORT" "info"
+		if [[ ! -z $CRYPTROOT_SSH_UNLOCK_PORT ]]; then
+			sed -i 's/^#DROPBEAR_OPTIONS=/DROPBEAR_OPTIONS="-p '$CRYPTROOT_SSH_UNLOCK_PORT'"/' $SDCARD/etc/dropbear-initramfs/config
+			display_alert "Changed SSH port of boot system to:" "$CRYPTROOT_SSH_UNLOCK_PORT" "info"
 		fi
 	fi
 	
