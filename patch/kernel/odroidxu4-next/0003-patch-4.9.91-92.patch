@@ -1,0 +1,895 @@
+diff --git a/Makefile b/Makefile
+index db3d37e18723..3ab3b8203bf6 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 91
++SUBLEVEL = 92
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/drivers/net/ethernet/arc/emac_rockchip.c b/drivers/net/ethernet/arc/emac_rockchip.c
+index c6163874e4e7..c770ca37c9b2 100644
+--- a/drivers/net/ethernet/arc/emac_rockchip.c
++++ b/drivers/net/ethernet/arc/emac_rockchip.c
+@@ -169,8 +169,10 @@ static int emac_rockchip_probe(struct platform_device *pdev)
+ 	/* Optional regulator for PHY */
+ 	priv->regulator = devm_regulator_get_optional(dev, "phy");
+ 	if (IS_ERR(priv->regulator)) {
+-		if (PTR_ERR(priv->regulator) == -EPROBE_DEFER)
+-			return -EPROBE_DEFER;
++		if (PTR_ERR(priv->regulator) == -EPROBE_DEFER) {
++			err = -EPROBE_DEFER;
++			goto out_clk_disable;
++		}
+ 		dev_err(dev, "no regulator found\n");
+ 		priv->regulator = NULL;
+ 	}
+diff --git a/drivers/net/ethernet/broadcom/bcmsysport.c b/drivers/net/ethernet/broadcom/bcmsysport.c
+index 744ed6ddaf37..91fbba58d033 100644
+--- a/drivers/net/ethernet/broadcom/bcmsysport.c
++++ b/drivers/net/ethernet/broadcom/bcmsysport.c
+@@ -707,37 +707,33 @@ static unsigned int __bcm_sysport_tx_reclaim(struct bcm_sysport_priv *priv,
+ 					     struct bcm_sysport_tx_ring *ring)
+ {
+ 	struct net_device *ndev = priv->netdev;
+-	unsigned int c_index, last_c_index, last_tx_cn, num_tx_cbs;
+ 	unsigned int pkts_compl = 0, bytes_compl = 0;
++	unsigned int txbds_processed = 0;
+ 	struct bcm_sysport_cb *cb;
++	unsigned int txbds_ready;
++	unsigned int c_index;
+ 	u32 hw_ind;
+ 
+ 	/* Compute how many descriptors have been processed since last call */
+ 	hw_ind = tdma_readl(priv, TDMA_DESC_RING_PROD_CONS_INDEX(ring->index));
+ 	c_index = (hw_ind >> RING_CONS_INDEX_SHIFT) & RING_CONS_INDEX_MASK;
+-	ring->p_index = (hw_ind & RING_PROD_INDEX_MASK);
+-
+-	last_c_index = ring->c_index;
+-	num_tx_cbs = ring->size;
+-
+-	c_index &= (num_tx_cbs - 1);
+-
+-	if (c_index >= last_c_index)
+-		last_tx_cn = c_index - last_c_index;
+-	else
+-		last_tx_cn = num_tx_cbs - last_c_index + c_index;
++	txbds_ready = (c_index - ring->c_index) & RING_CONS_INDEX_MASK;
+ 
+ 	netif_dbg(priv, tx_done, ndev,
+-		  "ring=%d c_index=%d last_tx_cn=%d last_c_index=%d\n",
+-		  ring->index, c_index, last_tx_cn, last_c_index);
++		  "ring=%d old_c_index=%u c_index=%u txbds_ready=%u\n",
++		  ring->index, ring->c_index, c_index, txbds_ready);
+ 
+-	while (last_tx_cn-- > 0) {
+-		cb = ring->cbs + last_c_index;
++	while (txbds_processed < txbds_ready) {
++		cb = &ring->cbs[ring->clean_index];
+ 		bcm_sysport_tx_reclaim_one(priv, cb, &bytes_compl, &pkts_compl);
+ 
+ 		ring->desc_count++;
+-		last_c_index++;
+-		last_c_index &= (num_tx_cbs - 1);
++		txbds_processed++;
++
++		if (likely(ring->clean_index < ring->size - 1))
++			ring->clean_index++;
++		else
++			ring->clean_index = 0;
+ 	}
+ 
+ 	ring->c_index = c_index;
+@@ -1207,6 +1203,7 @@ static int bcm_sysport_init_tx_ring(struct bcm_sysport_priv *priv,
+ 	netif_tx_napi_add(priv->netdev, &ring->napi, bcm_sysport_tx_poll, 64);
+ 	ring->index = index;
+ 	ring->size = size;
++	ring->clean_index = 0;
+ 	ring->alloc_size = ring->size;
+ 	ring->desc_cpu = p;
+ 	ring->desc_count = ring->size;
+diff --git a/drivers/net/ethernet/broadcom/bcmsysport.h b/drivers/net/ethernet/broadcom/bcmsysport.h
+index 1c82e3da69a7..07b0aaa98de0 100644
+--- a/drivers/net/ethernet/broadcom/bcmsysport.h
++++ b/drivers/net/ethernet/broadcom/bcmsysport.h
+@@ -638,7 +638,7 @@ struct bcm_sysport_tx_ring {
+ 	unsigned int	desc_count;	/* Number of descriptors */
+ 	unsigned int	curr_desc;	/* Current descriptor */
+ 	unsigned int	c_index;	/* Last consumer index */
+-	unsigned int	p_index;	/* Current producer index */
++	unsigned int	clean_index;	/* Current clean index */
+ 	struct bcm_sysport_cb *cbs;	/* Transmit control blocks */
+ 	struct dma_desc	*desc_cpu;	/* CPU view of the descriptor */
+ 	struct bcm_sysport_priv *priv;	/* private context backpointer */
+diff --git a/drivers/net/ethernet/freescale/fec_main.c b/drivers/net/ethernet/freescale/fec_main.c
+index dd6e07c748f5..05e5b38e4891 100644
+--- a/drivers/net/ethernet/freescale/fec_main.c
++++ b/drivers/net/ethernet/freescale/fec_main.c
+@@ -3533,6 +3533,8 @@ fec_drv_remove(struct platform_device *pdev)
+ 	fec_enet_mii_remove(fep);
+ 	if (fep->reg_phy)
+ 		regulator_disable(fep->reg_phy);
++	pm_runtime_put(&pdev->dev);
++	pm_runtime_disable(&pdev->dev);
+ 	if (of_phy_is_fixed_link(np))
+ 		of_phy_deregister_fixed_link(np);
+ 	of_node_put(fep->phy_node);
+diff --git a/drivers/net/ethernet/hisilicon/hns/hns_enet.c b/drivers/net/ethernet/hisilicon/hns/hns_enet.c
+index a79e0a1100aa..111e1aab7d83 100644
+--- a/drivers/net/ethernet/hisilicon/hns/hns_enet.c
++++ b/drivers/net/ethernet/hisilicon/hns/hns_enet.c
+@@ -299,9 +299,9 @@ static void fill_tso_desc(struct hnae_ring *ring, void *priv,
+ 			     mtu);
+ }
+ 
+-int hns_nic_net_xmit_hw(struct net_device *ndev,
+-			struct sk_buff *skb,
+-			struct hns_nic_ring_data *ring_data)
++netdev_tx_t hns_nic_net_xmit_hw(struct net_device *ndev,
++				struct sk_buff *skb,
++				struct hns_nic_ring_data *ring_data)
+ {
+ 	struct hns_nic_priv *priv = netdev_priv(ndev);
+ 	struct hnae_ring *ring = ring_data->ring;
+@@ -360,6 +360,10 @@ int hns_nic_net_xmit_hw(struct net_device *ndev,
+ 	dev_queue = netdev_get_tx_queue(ndev, skb->queue_mapping);
+ 	netdev_tx_sent_queue(dev_queue, skb->len);
+ 
++	netif_trans_update(ndev);
++	ndev->stats.tx_bytes += skb->len;
++	ndev->stats.tx_packets++;
++
+ 	wmb(); /* commit all data before submit */
+ 	assert(skb->queue_mapping < priv->ae_handle->q_num);
+ 	hnae_queue_xmit(priv->ae_handle->qs[skb->queue_mapping], buf_num);
+@@ -1408,17 +1412,11 @@ static netdev_tx_t hns_nic_net_xmit(struct sk_buff *skb,
+ 				    struct net_device *ndev)
+ {
+ 	struct hns_nic_priv *priv = netdev_priv(ndev);
+-	int ret;
+ 
+ 	assert(skb->queue_mapping < ndev->ae_handle->q_num);
+-	ret = hns_nic_net_xmit_hw(ndev, skb,
+-				  &tx_ring_data(priv, skb->queue_mapping));
+-	if (ret == NETDEV_TX_OK) {
+-		netif_trans_update(ndev);
+-		ndev->stats.tx_bytes += skb->len;
+-		ndev->stats.tx_packets++;
+-	}
+-	return (netdev_tx_t)ret;
++
++	return hns_nic_net_xmit_hw(ndev, skb,
++				   &tx_ring_data(priv, skb->queue_mapping));
+ }
+ 
+ static int hns_nic_change_mtu(struct net_device *ndev, int new_mtu)
+diff --git a/drivers/net/ethernet/hisilicon/hns/hns_enet.h b/drivers/net/ethernet/hisilicon/hns/hns_enet.h
+index 5b412de350aa..7bc6a6ecd666 100644
+--- a/drivers/net/ethernet/hisilicon/hns/hns_enet.h
++++ b/drivers/net/ethernet/hisilicon/hns/hns_enet.h
+@@ -91,8 +91,8 @@ void hns_ethtool_set_ops(struct net_device *ndev);
+ void hns_nic_net_reset(struct net_device *ndev);
+ void hns_nic_net_reinit(struct net_device *netdev);
+ int hns_nic_init_phy(struct net_device *ndev, struct hnae_handle *h);
+-int hns_nic_net_xmit_hw(struct net_device *ndev,
+-			struct sk_buff *skb,
+-			struct hns_nic_ring_data *ring_data);
++netdev_tx_t hns_nic_net_xmit_hw(struct net_device *ndev,
++				struct sk_buff *skb,
++				struct hns_nic_ring_data *ring_data);
+ 
+ #endif	/**__HNS_ENET_H */
+diff --git a/drivers/net/ethernet/ti/cpsw.c b/drivers/net/ethernet/ti/cpsw.c
+index 3f1971d485f3..2bd1282735b0 100644
+--- a/drivers/net/ethernet/ti/cpsw.c
++++ b/drivers/net/ethernet/ti/cpsw.c
+@@ -901,7 +901,8 @@ static void _cpsw_adjust_link(struct cpsw_slave *slave,
+ 		/* set speed_in input in case RMII mode is used in 100Mbps */
+ 		if (phy->speed == 100)
+ 			mac_control |= BIT(15);
+-		else if (phy->speed == 10)
++		/* in band mode only works in 10Mbps RGMII mode */
++		else if ((phy->speed == 10) && phy_interface_is_rgmii(phy))
+ 			mac_control |= BIT(18); /* In Band mode */
+ 
+ 		if (priv->rx_pause)
+diff --git a/drivers/net/ppp/ppp_generic.c b/drivers/net/ppp/ppp_generic.c
+index 114457921890..1e4969d90f1a 100644
+--- a/drivers/net/ppp/ppp_generic.c
++++ b/drivers/net/ppp/ppp_generic.c
+@@ -255,7 +255,7 @@ struct ppp_net {
+ /* Prototypes. */
+ static int ppp_unattached_ioctl(struct net *net, struct ppp_file *pf,
+ 			struct file *file, unsigned int cmd, unsigned long arg);
+-static void ppp_xmit_process(struct ppp *ppp);
++static void ppp_xmit_process(struct ppp *ppp, struct sk_buff *skb);
+ static void ppp_send_frame(struct ppp *ppp, struct sk_buff *skb);
+ static void ppp_push(struct ppp *ppp);
+ static void ppp_channel_push(struct channel *pch);
+@@ -511,13 +511,12 @@ static ssize_t ppp_write(struct file *file, const char __user *buf,
+ 		goto out;
+ 	}
+ 
+-	skb_queue_tail(&pf->xq, skb);
+-
+ 	switch (pf->kind) {
+ 	case INTERFACE:
+-		ppp_xmit_process(PF_TO_PPP(pf));
++		ppp_xmit_process(PF_TO_PPP(pf), skb);
+ 		break;
+ 	case CHANNEL:
++		skb_queue_tail(&pf->xq, skb);
+ 		ppp_channel_push(PF_TO_CHANNEL(pf));
+ 		break;
+ 	}
+@@ -1261,8 +1260,8 @@ ppp_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	put_unaligned_be16(proto, pp);
+ 
+ 	skb_scrub_packet(skb, !net_eq(ppp->ppp_net, dev_net(dev)));
+-	skb_queue_tail(&ppp->file.xq, skb);
+-	ppp_xmit_process(ppp);
++	ppp_xmit_process(ppp, skb);
++
+ 	return NETDEV_TX_OK;
+ 
+  outf:
+@@ -1416,13 +1415,14 @@ static void ppp_setup(struct net_device *dev)
+  */
+ 
+ /* Called to do any work queued up on the transmit side that can now be done */
+-static void __ppp_xmit_process(struct ppp *ppp)
++static void __ppp_xmit_process(struct ppp *ppp, struct sk_buff *skb)
+ {
+-	struct sk_buff *skb;
+-
+ 	ppp_xmit_lock(ppp);
+ 	if (!ppp->closing) {
+ 		ppp_push(ppp);
++
++		if (skb)
++			skb_queue_tail(&ppp->file.xq, skb);
+ 		while (!ppp->xmit_pending &&
+ 		       (skb = skb_dequeue(&ppp->file.xq)))
+ 			ppp_send_frame(ppp, skb);
+@@ -1436,7 +1436,7 @@ static void __ppp_xmit_process(struct ppp *ppp)
+ 	ppp_xmit_unlock(ppp);
+ }
+ 
+-static void ppp_xmit_process(struct ppp *ppp)
++static void ppp_xmit_process(struct ppp *ppp, struct sk_buff *skb)
+ {
+ 	local_bh_disable();
+ 
+@@ -1444,7 +1444,7 @@ static void ppp_xmit_process(struct ppp *ppp)
+ 		goto err;
+ 
+ 	(*this_cpu_ptr(ppp->xmit_recursion))++;
+-	__ppp_xmit_process(ppp);
++	__ppp_xmit_process(ppp, skb);
+ 	(*this_cpu_ptr(ppp->xmit_recursion))--;
+ 
+ 	local_bh_enable();
+@@ -1454,6 +1454,8 @@ static void ppp_xmit_process(struct ppp *ppp)
+ err:
+ 	local_bh_enable();
+ 
++	kfree_skb(skb);
++
+ 	if (net_ratelimit())
+ 		netdev_err(ppp->dev, "recursion detected\n");
+ }
+@@ -1938,7 +1940,7 @@ static void __ppp_channel_push(struct channel *pch)
+ 	if (skb_queue_empty(&pch->file.xq)) {
+ 		ppp = pch->ppp;
+ 		if (ppp)
+-			__ppp_xmit_process(ppp);
++			__ppp_xmit_process(ppp, NULL);
+ 	}
+ }
+ 
+diff --git a/drivers/net/team/team.c b/drivers/net/team/team.c
+index 26681707fc7a..a0a9c9d39f01 100644
+--- a/drivers/net/team/team.c
++++ b/drivers/net/team/team.c
+@@ -2403,7 +2403,7 @@ static int team_nl_send_options_get(struct team *team, u32 portid, u32 seq,
+ 	if (!nlh) {
+ 		err = __send_and_alloc_skb(&skb, team, portid, send_func);
+ 		if (err)
+-			goto errout;
++			return err;
+ 		goto send_done;
+ 	}
+ 
+@@ -2688,7 +2688,7 @@ static int team_nl_send_port_list_get(struct team *team, u32 portid, u32 seq,
+ 	if (!nlh) {
+ 		err = __send_and_alloc_skb(&skb, team, portid, send_func);
+ 		if (err)
+-			goto errout;
++			return err;
+ 		goto send_done;
+ 	}
+ 
+diff --git a/drivers/s390/net/qeth_core_main.c b/drivers/s390/net/qeth_core_main.c
+index cc28dda322b5..283416aefa56 100644
+--- a/drivers/s390/net/qeth_core_main.c
++++ b/drivers/s390/net/qeth_core_main.c
+@@ -522,8 +522,7 @@ static inline int qeth_is_cq(struct qeth_card *card, unsigned int queue)
+ 	    queue == card->qdio.no_in_queues - 1;
+ }
+ 
+-
+-static int qeth_issue_next_read(struct qeth_card *card)
++static int __qeth_issue_next_read(struct qeth_card *card)
+ {
+ 	int rc;
+ 	struct qeth_cmd_buffer *iob;
+@@ -554,6 +553,17 @@ static int qeth_issue_next_read(struct qeth_card *card)
+ 	return rc;
+ }
+ 
++static int qeth_issue_next_read(struct qeth_card *card)
++{
++	int ret;
++
++	spin_lock_irq(get_ccwdev_lock(CARD_RDEV(card)));
++	ret = __qeth_issue_next_read(card);
++	spin_unlock_irq(get_ccwdev_lock(CARD_RDEV(card)));
++
++	return ret;
++}
++
+ static struct qeth_reply *qeth_alloc_reply(struct qeth_card *card)
+ {
+ 	struct qeth_reply *reply;
+@@ -957,7 +967,7 @@ void qeth_clear_thread_running_bit(struct qeth_card *card, unsigned long thread)
+ 	spin_lock_irqsave(&card->thread_mask_lock, flags);
+ 	card->thread_running_mask &= ~thread;
+ 	spin_unlock_irqrestore(&card->thread_mask_lock, flags);
+-	wake_up(&card->wait_q);
++	wake_up_all(&card->wait_q);
+ }
+ EXPORT_SYMBOL_GPL(qeth_clear_thread_running_bit);
+ 
+@@ -1161,6 +1171,7 @@ static void qeth_irq(struct ccw_device *cdev, unsigned long intparm,
+ 		}
+ 		rc = qeth_get_problem(cdev, irb);
+ 		if (rc) {
++			card->read_or_write_problem = 1;
+ 			qeth_clear_ipacmd_list(card);
+ 			qeth_schedule_recovery(card);
+ 			goto out;
+@@ -1179,7 +1190,7 @@ static void qeth_irq(struct ccw_device *cdev, unsigned long intparm,
+ 		return;
+ 	if (channel == &card->read &&
+ 	    channel->state == CH_STATE_UP)
+-		qeth_issue_next_read(card);
++		__qeth_issue_next_read(card);
+ 
+ 	iob = channel->iob;
+ 	index = channel->buf_no;
+@@ -4989,8 +5000,6 @@ static void qeth_core_free_card(struct qeth_card *card)
+ 	QETH_DBF_HEX(SETUP, 2, &card, sizeof(void *));
+ 	qeth_clean_channel(&card->read);
+ 	qeth_clean_channel(&card->write);
+-	if (card->dev)
+-		free_netdev(card->dev);
+ 	qeth_free_qdio_buffers(card);
+ 	unregister_service_level(&card->qeth_service_level);
+ 	kfree(card);
+diff --git a/drivers/s390/net/qeth_l2_main.c b/drivers/s390/net/qeth_l2_main.c
+index 5082dfeacb95..e94e9579914e 100644
+--- a/drivers/s390/net/qeth_l2_main.c
++++ b/drivers/s390/net/qeth_l2_main.c
+@@ -1057,8 +1057,8 @@ static void qeth_l2_remove_device(struct ccwgroup_device *cgdev)
+ 		qeth_l2_set_offline(cgdev);
+ 
+ 	if (card->dev) {
+-		netif_napi_del(&card->napi);
+ 		unregister_netdev(card->dev);
++		free_netdev(card->dev);
+ 		card->dev = NULL;
+ 	}
+ 	return;
+diff --git a/drivers/s390/net/qeth_l3_main.c b/drivers/s390/net/qeth_l3_main.c
+index a668e6b71a29..4ca161bdc696 100644
+--- a/drivers/s390/net/qeth_l3_main.c
++++ b/drivers/s390/net/qeth_l3_main.c
+@@ -3192,8 +3192,8 @@ static void qeth_l3_remove_device(struct ccwgroup_device *cgdev)
+ 		qeth_l3_set_offline(cgdev);
+ 
+ 	if (card->dev) {
+-		netif_napi_del(&card->napi);
+ 		unregister_netdev(card->dev);
++		free_netdev(card->dev);
+ 		card->dev = NULL;
+ 	}
+ 
+diff --git a/drivers/scsi/sg.c b/drivers/scsi/sg.c
+index 7592ac8514d2..f61b37109e5c 100644
+--- a/drivers/scsi/sg.c
++++ b/drivers/scsi/sg.c
+@@ -2064,11 +2064,12 @@ sg_get_rq_mark(Sg_fd * sfp, int pack_id)
+ 		if ((1 == resp->done) && (!resp->sg_io_owned) &&
+ 		    ((-1 == pack_id) || (resp->header.pack_id == pack_id))) {
+ 			resp->done = 2;	/* guard against other readers */
+-			break;
++			write_unlock_irqrestore(&sfp->rq_list_lock, iflags);
++			return resp;
+ 		}
+ 	}
+ 	write_unlock_irqrestore(&sfp->rq_list_lock, iflags);
+-	return resp;
++	return NULL;
+ }
+ 
+ /* always adds to end of list */
+diff --git a/drivers/soc/fsl/qbman/qman.c b/drivers/soc/fsl/qbman/qman.c
+index 119054bc922b..2caacd9d2526 100644
+--- a/drivers/soc/fsl/qbman/qman.c
++++ b/drivers/soc/fsl/qbman/qman.c
+@@ -2429,39 +2429,21 @@ struct cgr_comp {
+ 	struct completion completion;
+ };
+ 
+-static int qman_delete_cgr_thread(void *p)
++static void qman_delete_cgr_smp_call(void *p)
+ {
+-	struct cgr_comp *cgr_comp = (struct cgr_comp *)p;
+-	int ret;
+-
+-	ret = qman_delete_cgr(cgr_comp->cgr);
+-	complete(&cgr_comp->completion);
+-
+-	return ret;
++	qman_delete_cgr((struct qman_cgr *)p);
+ }
+ 
+ void qman_delete_cgr_safe(struct qman_cgr *cgr)
+ {
+-	struct task_struct *thread;
+-	struct cgr_comp cgr_comp;
+-
+ 	preempt_disable();
+ 	if (qman_cgr_cpus[cgr->cgrid] != smp_processor_id()) {
+-		init_completion(&cgr_comp.completion);
+-		cgr_comp.cgr = cgr;
+-		thread = kthread_create(qman_delete_cgr_thread, &cgr_comp,
+-					"cgr_del");
+-
+-		if (IS_ERR(thread))
+-			goto out;
+-
+-		kthread_bind(thread, qman_cgr_cpus[cgr->cgrid]);
+-		wake_up_process(thread);
+-		wait_for_completion(&cgr_comp.completion);
++		smp_call_function_single(qman_cgr_cpus[cgr->cgrid],
++					 qman_delete_cgr_smp_call, cgr, true);
+ 		preempt_enable();
+ 		return;
+ 	}
+-out:
++
+ 	qman_delete_cgr(cgr);
+ 	preempt_enable();
+ }
+diff --git a/include/linux/cgroup-defs.h b/include/linux/cgroup-defs.h
+index 6fb1c34cf805..1619a3213af5 100644
+--- a/include/linux/cgroup-defs.h
++++ b/include/linux/cgroup-defs.h
+@@ -609,13 +609,13 @@ struct sock_cgroup_data {
+  * updaters and return part of the previous pointer as the prioidx or
+  * classid.  Such races are short-lived and the result isn't critical.
+  */
+-static inline u16 sock_cgroup_prioidx(struct sock_cgroup_data *skcd)
++static inline u16 sock_cgroup_prioidx(const struct sock_cgroup_data *skcd)
+ {
+ 	/* fallback to 1 which is always the ID of the root cgroup */
+ 	return (skcd->is_data & 1) ? skcd->prioidx : 1;
+ }
+ 
+-static inline u32 sock_cgroup_classid(struct sock_cgroup_data *skcd)
++static inline u32 sock_cgroup_classid(const struct sock_cgroup_data *skcd)
+ {
+ 	/* fallback to 0 which is the unconfigured default classid */
+ 	return (skcd->is_data & 1) ? skcd->classid : 0;
+diff --git a/include/linux/rhashtable.h b/include/linux/rhashtable.h
+index 5c132d3188be..85d1ffc90285 100644
+--- a/include/linux/rhashtable.h
++++ b/include/linux/rhashtable.h
+@@ -706,8 +706,10 @@ static inline void *__rhashtable_insert_fast(
+ 		if (!key ||
+ 		    (params.obj_cmpfn ?
+ 		     params.obj_cmpfn(&arg, rht_obj(ht, head)) :
+-		     rhashtable_compare(&arg, rht_obj(ht, head))))
++		     rhashtable_compare(&arg, rht_obj(ht, head)))) {
++			pprev = &head->next;
+ 			continue;
++		}
+ 
+ 		data = rht_obj(ht, head);
+ 
+diff --git a/include/net/sch_generic.h b/include/net/sch_generic.h
+index f18fc1a0321f..538f3c4458b0 100644
+--- a/include/net/sch_generic.h
++++ b/include/net/sch_generic.h
+@@ -675,6 +675,16 @@ static inline void __qdisc_drop(struct sk_buff *skb, struct sk_buff **to_free)
+ 	*to_free = skb;
+ }
+ 
++static inline void __qdisc_drop_all(struct sk_buff *skb,
++				    struct sk_buff **to_free)
++{
++	if (skb->prev)
++		skb->prev->next = *to_free;
++	else
++		skb->next = *to_free;
++	*to_free = skb;
++}
++
+ static inline unsigned int __qdisc_queue_drop_head(struct Qdisc *sch,
+ 						   struct qdisc_skb_head *qh,
+ 						   struct sk_buff **to_free)
+@@ -795,6 +805,15 @@ static inline int qdisc_drop(struct sk_buff *skb, struct Qdisc *sch,
+ 	return NET_XMIT_DROP;
+ }
+ 
++static inline int qdisc_drop_all(struct sk_buff *skb, struct Qdisc *sch,
++				 struct sk_buff **to_free)
++{
++	__qdisc_drop_all(skb, to_free);
++	qdisc_qstats_drop(sch);
++
++	return NET_XMIT_DROP;
++}
++
+ /* Length to Time (L2T) lookup in a qdisc_rate_table, to determine how
+    long it will take to send a packet given its size.
+  */
+diff --git a/kernel/irq/manage.c b/kernel/irq/manage.c
+index ed18aa4dceab..ea41820ab12e 100644
+--- a/kernel/irq/manage.c
++++ b/kernel/irq/manage.c
+@@ -1210,10 +1210,8 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
+ 		 * set the trigger type must match. Also all must
+ 		 * agree on ONESHOT.
+ 		 */
+-		unsigned int oldtype = irqd_get_trigger_type(&desc->irq_data);
+-
+ 		if (!((old->flags & new->flags) & IRQF_SHARED) ||
+-		    (oldtype != (new->flags & IRQF_TRIGGER_MASK)) ||
++		    ((old->flags ^ new->flags) & IRQF_TRIGGER_MASK) ||
+ 		    ((old->flags ^ new->flags) & IRQF_ONESHOT))
+ 			goto mismatch;
+ 
+diff --git a/lib/rhashtable.c b/lib/rhashtable.c
+index 32d0ad058380..895961c53385 100644
+--- a/lib/rhashtable.c
++++ b/lib/rhashtable.c
+@@ -448,8 +448,10 @@ static void *rhashtable_lookup_one(struct rhashtable *ht,
+ 		if (!key ||
+ 		    (ht->p.obj_cmpfn ?
+ 		     ht->p.obj_cmpfn(&arg, rht_obj(ht, head)) :
+-		     rhashtable_compare(&arg, rht_obj(ht, head))))
++		     rhashtable_compare(&arg, rht_obj(ht, head)))) {
++			pprev = &head->next;
+ 			continue;
++		}
+ 
+ 		if (!ht->rhlist)
+ 			return rht_obj(ht, head);
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 272f84ad16e0..07d2c93c9636 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -3179,15 +3179,23 @@ static inline int __dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
+ #if IS_ENABLED(CONFIG_CGROUP_NET_PRIO)
+ static void skb_update_prio(struct sk_buff *skb)
+ {
+-	struct netprio_map *map = rcu_dereference_bh(skb->dev->priomap);
++	const struct netprio_map *map;
++	const struct sock *sk;
++	unsigned int prioidx;
+ 
+-	if (!skb->priority && skb->sk && map) {
+-		unsigned int prioidx =
+-			sock_cgroup_prioidx(&skb->sk->sk_cgrp_data);
++	if (skb->priority)
++		return;
++	map = rcu_dereference_bh(skb->dev->priomap);
++	if (!map)
++		return;
++	sk = skb_to_full_sk(skb);
++	if (!sk)
++		return;
+ 
+-		if (prioidx < map->priomap_len)
+-			skb->priority = map->priomap[prioidx];
+-	}
++	prioidx = sock_cgroup_prioidx(&sk->sk_cgrp_data);
++
++	if (prioidx < map->priomap_len)
++		skb->priority = map->priomap[prioidx];
+ }
+ #else
+ #define skb_update_prio(skb)
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index a64515583bc1..c5ac9f48f058 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -3717,7 +3717,7 @@ int sock_queue_err_skb(struct sock *sk, struct sk_buff *skb)
+ 
+ 	skb_queue_tail(&sk->sk_error_queue, skb);
+ 	if (!sock_flag(sk, SOCK_DEAD))
+-		sk->sk_data_ready(sk);
++		sk->sk_error_report(sk);
+ 	return 0;
+ }
+ EXPORT_SYMBOL(sock_queue_err_skb);
+diff --git a/net/dccp/proto.c b/net/dccp/proto.c
+index 9d43c1f40274..ff3b058cf58c 100644
+--- a/net/dccp/proto.c
++++ b/net/dccp/proto.c
+@@ -789,6 +789,11 @@ int dccp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
+ 	if (skb == NULL)
+ 		goto out_release;
+ 
++	if (sk->sk_state == DCCP_CLOSED) {
++		rc = -ENOTCONN;
++		goto out_discard;
++	}
++
+ 	skb_reserve(skb, sk->sk_prot->max_header);
+ 	rc = memcpy_from_msg(skb_put(skb, len), msg, len);
+ 	if (rc != 0)
+diff --git a/net/ieee802154/6lowpan/core.c b/net/ieee802154/6lowpan/core.c
+index d7efbf0dad20..83af5339e582 100644
+--- a/net/ieee802154/6lowpan/core.c
++++ b/net/ieee802154/6lowpan/core.c
+@@ -204,9 +204,13 @@ static inline void lowpan_netlink_fini(void)
+ static int lowpan_device_event(struct notifier_block *unused,
+ 			       unsigned long event, void *ptr)
+ {
+-	struct net_device *wdev = netdev_notifier_info_to_dev(ptr);
++	struct net_device *ndev = netdev_notifier_info_to_dev(ptr);
++	struct wpan_dev *wpan_dev;
+ 
+-	if (wdev->type != ARPHRD_IEEE802154)
++	if (ndev->type != ARPHRD_IEEE802154)
++		return NOTIFY_DONE;
++	wpan_dev = ndev->ieee802154_ptr;
++	if (!wpan_dev)
+ 		return NOTIFY_DONE;
+ 
+ 	switch (event) {
+@@ -215,8 +219,8 @@ static int lowpan_device_event(struct notifier_block *unused,
+ 		 * also delete possible lowpan interfaces which belongs
+ 		 * to the wpan interface.
+ 		 */
+-		if (wdev->ieee802154_ptr->lowpan_dev)
+-			lowpan_dellink(wdev->ieee802154_ptr->lowpan_dev, NULL);
++		if (wpan_dev->lowpan_dev)
++			lowpan_dellink(wpan_dev->lowpan_dev, NULL);
+ 		break;
+ 	default:
+ 		return NOTIFY_DONE;
+diff --git a/net/ipv4/inet_fragment.c b/net/ipv4/inet_fragment.c
+index 631c0d0d7cf8..8effac0f2219 100644
+--- a/net/ipv4/inet_fragment.c
++++ b/net/ipv4/inet_fragment.c
+@@ -119,6 +119,9 @@ static void inet_frag_secret_rebuild(struct inet_frags *f)
+ 
+ static bool inet_fragq_should_evict(const struct inet_frag_queue *q)
+ {
++	if (!hlist_unhashed(&q->list_evictor))
++		return false;
++
+ 	return q->net->low_thresh == 0 ||
+ 	       frag_mem_limit(q->net) >= q->net->low_thresh;
+ }
+diff --git a/net/ipv4/ip_sockglue.c b/net/ipv4/ip_sockglue.c
+index fd1e6b8562e0..5ddd64995e73 100644
+--- a/net/ipv4/ip_sockglue.c
++++ b/net/ipv4/ip_sockglue.c
+@@ -242,7 +242,8 @@ int ip_cmsg_send(struct sock *sk, struct msghdr *msg, struct ipcm_cookie *ipc,
+ 			src_info = (struct in6_pktinfo *)CMSG_DATA(cmsg);
+ 			if (!ipv6_addr_v4mapped(&src_info->ipi6_addr))
+ 				return -EINVAL;
+-			ipc->oif = src_info->ipi6_ifindex;
++			if (src_info->ipi6_ifindex)
++				ipc->oif = src_info->ipi6_ifindex;
+ 			ipc->addr = src_info->ipi6_addr.s6_addr32[3];
+ 			continue;
+ 		}
+@@ -272,7 +273,8 @@ int ip_cmsg_send(struct sock *sk, struct msghdr *msg, struct ipcm_cookie *ipc,
+ 			if (cmsg->cmsg_len != CMSG_LEN(sizeof(struct in_pktinfo)))
+ 				return -EINVAL;
+ 			info = (struct in_pktinfo *)CMSG_DATA(cmsg);
+-			ipc->oif = info->ipi_ifindex;
++			if (info->ipi_ifindex)
++				ipc->oif = info->ipi_ifindex;
+ 			ipc->addr = info->ipi_spec_dst.s_addr;
+ 			break;
+ 		}
+diff --git a/net/ipv6/ndisc.c b/net/ipv6/ndisc.c
+index 41c22cb33424..3fe80e104b58 100644
+--- a/net/ipv6/ndisc.c
++++ b/net/ipv6/ndisc.c
+@@ -1516,7 +1516,8 @@ static void ndisc_fill_redirect_hdr_option(struct sk_buff *skb,
+ 	*(opt++) = (rd_len >> 3);
+ 	opt += 6;
+ 
+-	memcpy(opt, ipv6_hdr(orig_skb), rd_len - 8);
++	skb_copy_bits(orig_skb, skb_network_offset(orig_skb), opt,
++		      rd_len - 8);
+ }
+ 
+ void ndisc_send_redirect(struct sk_buff *skb, const struct in6_addr *target)
+diff --git a/net/iucv/af_iucv.c b/net/iucv/af_iucv.c
+index 91cbbf1c3f82..c2dfc32eb9f2 100644
+--- a/net/iucv/af_iucv.c
++++ b/net/iucv/af_iucv.c
+@@ -2418,9 +2418,11 @@ static int afiucv_iucv_init(void)
+ 	af_iucv_dev->driver = &af_iucv_driver;
+ 	err = device_register(af_iucv_dev);
+ 	if (err)
+-		goto out_driver;
++		goto out_iucv_dev;
+ 	return 0;
+ 
++out_iucv_dev:
++	put_device(af_iucv_dev);
+ out_driver:
+ 	driver_unregister(&af_iucv_driver);
+ out_iucv:
+diff --git a/net/kcm/kcmsock.c b/net/kcm/kcmsock.c
+index 179cd9b1b1f4..63e6d08388ab 100644
+--- a/net/kcm/kcmsock.c
++++ b/net/kcm/kcmsock.c
+@@ -1375,24 +1375,32 @@ static int kcm_attach(struct socket *sock, struct socket *csock,
+ 	struct list_head *head;
+ 	int index = 0;
+ 	struct strp_callbacks cb;
+-	int err;
++	int err = 0;
+ 
+ 	csk = csock->sk;
+ 	if (!csk)
+ 		return -EINVAL;
+ 
++	lock_sock(csk);
++
+ 	/* Only allow TCP sockets to be attached for now */
+ 	if ((csk->sk_family != AF_INET && csk->sk_family != AF_INET6) ||
+-	    csk->sk_protocol != IPPROTO_TCP)
+-		return -EOPNOTSUPP;
++	    csk->sk_protocol != IPPROTO_TCP) {
++		err = -EOPNOTSUPP;
++		goto out;
++	}
+ 
+ 	/* Don't allow listeners or closed sockets */
+-	if (csk->sk_state == TCP_LISTEN || csk->sk_state == TCP_CLOSE)
+-		return -EOPNOTSUPP;
++	if (csk->sk_state == TCP_LISTEN || csk->sk_state == TCP_CLOSE) {
++		err = -EOPNOTSUPP;
++		goto out;
++	}
+ 
+ 	psock = kmem_cache_zalloc(kcm_psockp, GFP_KERNEL);
+-	if (!psock)
+-		return -ENOMEM;
++	if (!psock) {
++		err = -ENOMEM;
++		goto out;
++	}
+ 
+ 	psock->mux = mux;
+ 	psock->sk = csk;
+@@ -1406,7 +1414,7 @@ static int kcm_attach(struct socket *sock, struct socket *csock,
+ 	err = strp_init(&psock->strp, csk, &cb);
+ 	if (err) {
+ 		kmem_cache_free(kcm_psockp, psock);
+-		return err;
++		goto out;
+ 	}
+ 
+ 	write_lock_bh(&csk->sk_callback_lock);
+@@ -1418,7 +1426,8 @@ static int kcm_attach(struct socket *sock, struct socket *csock,
+ 		write_unlock_bh(&csk->sk_callback_lock);
+ 		strp_done(&psock->strp);
+ 		kmem_cache_free(kcm_psockp, psock);
+-		return -EALREADY;
++		err = -EALREADY;
++		goto out;
+ 	}
+ 
+ 	psock->save_data_ready = csk->sk_data_ready;
+@@ -1454,7 +1463,10 @@ static int kcm_attach(struct socket *sock, struct socket *csock,
+ 	/* Schedule RX work in case there are already bytes queued */
+ 	strp_check_rcv(&psock->strp);
+ 
+-	return 0;
++out:
++	release_sock(csk);
++
++	return err;
+ }
+ 
+ static int kcm_attach_ioctl(struct socket *sock, struct kcm_attach *info)
+@@ -1506,6 +1518,7 @@ static void kcm_unattach(struct kcm_psock *psock)
+ 
+ 	if (WARN_ON(psock->rx_kcm)) {
+ 		write_unlock_bh(&csk->sk_callback_lock);
++		release_sock(csk);
+ 		return;
+ 	}
+ 
+diff --git a/net/l2tp/l2tp_core.c b/net/l2tp/l2tp_core.c
+index cfc4dd8997e5..ead98e8e0b1f 100644
+--- a/net/l2tp/l2tp_core.c
++++ b/net/l2tp/l2tp_core.c
+@@ -1612,9 +1612,14 @@ int l2tp_tunnel_create(struct net *net, int fd, int version, u32 tunnel_id, u32
+ 		encap = cfg->encap;
+ 
+ 	/* Quick sanity checks */
++	err = -EPROTONOSUPPORT;
++	if (sk->sk_type != SOCK_DGRAM) {
++		pr_debug("tunl %hu: fd %d wrong socket type\n",
++			 tunnel_id, fd);
++		goto err;
++	}
+ 	switch (encap) {
+ 	case L2TP_ENCAPTYPE_UDP:
+-		err = -EPROTONOSUPPORT;
+ 		if (sk->sk_protocol != IPPROTO_UDP) {
+ 			pr_err("tunl %hu: fd %d wrong protocol, got %d, expected %d\n",
+ 			       tunnel_id, fd, sk->sk_protocol, IPPROTO_UDP);
+@@ -1622,7 +1627,6 @@ int l2tp_tunnel_create(struct net *net, int fd, int version, u32 tunnel_id, u32
+ 		}
+ 		break;
+ 	case L2TP_ENCAPTYPE_IP:
+-		err = -EPROTONOSUPPORT;
+ 		if (sk->sk_protocol != IPPROTO_L2TP) {
+ 			pr_err("tunl %hu: fd %d wrong protocol, got %d, expected %d\n",
+ 			       tunnel_id, fd, sk->sk_protocol, IPPROTO_L2TP);
+diff --git a/net/netlink/genetlink.c b/net/netlink/genetlink.c
+index 11702016c900..9192a6143523 100644
+--- a/net/netlink/genetlink.c
++++ b/net/netlink/genetlink.c
+@@ -1128,7 +1128,7 @@ static int genlmsg_mcast(struct sk_buff *skb, u32 portid, unsigned long group,
+ 	if (!err)
+ 		delivered = true;
+ 	else if (err != -ESRCH)
+-		goto error;
++		return err;
+ 	return delivered ? 0 : -ESRCH;
+  error:
+ 	kfree_skb(skb);
+diff --git a/net/sched/act_tunnel_key.c b/net/sched/act_tunnel_key.c
+index af47bdf2f483..b6e3abe505ac 100644
+--- a/net/sched/act_tunnel_key.c
++++ b/net/sched/act_tunnel_key.c
+@@ -141,6 +141,7 @@ static int tunnel_key_init(struct net *net, struct nlattr *nla,
+ 		metadata->u.tun_info.mode |= IP_TUNNEL_INFO_TX;
+ 		break;
+ 	default:
++		ret = -EINVAL;
+ 		goto err_out;
+ 	}
+ 
+diff --git a/net/sched/sch_netem.c b/net/sched/sch_netem.c
+index c73d58872cf8..e899d9eb76cb 100644
+--- a/net/sched/sch_netem.c
++++ b/net/sched/sch_netem.c
+@@ -513,7 +513,7 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch,
+ 	}
+ 
+ 	if (unlikely(sch->q.qlen >= sch->limit))
+-		return qdisc_drop(skb, sch, to_free);
++		return qdisc_drop_all(skb, sch, to_free);
+ 
+ 	qdisc_qstats_backlog_inc(sch, skb);
+ 
