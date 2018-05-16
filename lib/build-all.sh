@@ -7,19 +7,6 @@
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
-# Include here to make "display_alert" and "prepare_host" available
-source $SRC/lib/general.sh
-
-# Script parameters handling
-for i in "$@"; do
-	if [[ $i == *=* ]]; then
-		parameter=${i%%=*}
-		value=${i##*=}
-		display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
-		eval $parameter=$value
-	fi
-done
-
 FORCEDRELEASE=$RELEASE
 
 # when we want to build from certain start
