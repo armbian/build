@@ -485,8 +485,8 @@ create_image()
 		cd $DESTIMG
         	sha256sum -b ${version}.img > sha256sum.sha
 	        if [[ -n $GPG_PASS ]]; then
-        	        echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes ${version}.img
-                	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes sha256sum.sha
+        	        echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
+                	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes sha256sum.sha
 	        fi
 			display_alert "Compressing" "$DEST/images/${version}.img" "info"
 	        7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
