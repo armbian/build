@@ -58,17 +58,20 @@ for i in "$@"; do
 	fi
 done
 
+# .ignore_changes won't try to update from upstream
+# .accept_changes will silently accept local modifications
 if [[ ! -f $SRC/.ignore_changes ]]; then
 	echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
 	git pull
-	CHANGED_FILES=$(git diff --name-only)
-	if [[ -n $CHANGED_FILES ]]; then
-		echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
-		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
-		read
-	else
-		git checkout ${LIB_TAG:- master}
+	if [[ ! -f $SRC/.accept_changes ]]; then
+		CHANGED_FILES=$(git diff --name-only)
+		if [[ -n $CHANGED_FILES ]]; then
+			echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
+			echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
+			read
+		fi
 	fi
+    git checkout ${LIB_TAG:- master}
 fi
 
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
