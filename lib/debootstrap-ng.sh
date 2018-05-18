@@ -95,7 +95,7 @@ create_rootfs_cache()
 	local packages_hash=$(get_package_list_hash)
 	local cache_fname=$SRC/cache/rootfs/${RELEASE}-ng-$ARCH.$packages_hash.tar.lz4
 	local display_name=${RELEASE}-ng-$ARCH.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
-	if [[ -f $cache_fname ]]; then
+	if [[ -f $cache_fname && "$ROOT_FS_CREATE_ONLY" != "force" ]]; then
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
 		pv -p -b -r -c -N "$display_name" "$cache_fname" | lz4 -dc | tar xp --xattrs -C $SDCARD/
@@ -230,6 +230,16 @@ create_rootfs_cache()
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -c > $cache_fname
 	fi
+
+	# used for internal purposes. Faster rootfs cache rebuilding
+    if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
+		[[ $use_tmpfs = yes ]] && umount $SDCARD
+		rm -rf $SDCARD
+		# remove exit trap
+		trap - INT TERM EXIT
+        exit
+	fi
+
 	mount_chroot "$SDCARD"
 } #############################################################################
 
