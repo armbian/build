@@ -354,26 +354,26 @@ addtorepo()
 		local forceoverwrite=""
 
 		# let's drop from publish if exits
-		if [[ -n $(aptly publish list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
-			aptly publish drop -config=../config/aptly.conf $release > /dev/null 2>&1
+		if [[ -n $(aptly publish list -config=${SCRIPTPATH}config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
+			aptly publish drop -config=${SCRIPTPATH}config/aptly.conf $release > /dev/null 2>&1
 		fi
 
 		# create local repository if not exist
-		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
+		if [[ -z $(aptly repo list -config=${SCRIPTPATH}config/aptly.conf -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			display_alert "Creating section" "$release" "info"
-			aptly repo create -config=../config/aptly.conf -distribution=$release -component="main" \
+			aptly repo create -config=${SCRIPTPATH}config/aptly.conf -distribution=$release -component="main" \
 			-comment="Armbian main repository" ${release}
 		fi
-		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep "^utils") ]]; then
-			aptly repo create -config=../config/aptly.conf -distribution=$release -component="utils" \
+		if [[ -z $(aptly repo list -config=${SCRIPTPATH}config/aptly.conf -raw | awk '{print $(NF)}' | grep "^utils") ]]; then
+			aptly repo create -config=${SCRIPTPATH}config/aptly.conf -distribution=$release -component="utils" \
 			-comment="Armbian utilities (backwards compatibility)" utils
 		fi
-		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
-			aptly repo create -config=../config/aptly.conf -distribution=$release -component="${release}-utils" \
+		if [[ -z $(aptly repo list -config=${SCRIPTPATH}config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
+			aptly repo create -config=${SCRIPTPATH}config/aptly.conf -distribution=$release -component="${release}-utils" \
 			-comment="Armbian ${release} utilities" ${release}-utils
 		fi
-		if [[ -z $(aptly repo list -config=../config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
-			aptly repo create -config=../config/aptly.conf -distribution=$release -component="${release}-desktop" \
+		if [[ -z $(aptly repo list -config=${SCRIPTPATH}config/aptly.conf -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
+			aptly repo create -config=${SCRIPTPATH}config/aptly.conf -distribution=$release -component="${release}-desktop" \
 			-comment="Armbian ${release} desktop" ${release}-desktop
 		fi
 
@@ -381,11 +381,11 @@ addtorepo()
 		# adding main
 		if find $POT -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "main" "ext"
-			aptly repo add -config=../config/aptly.conf $release ${POT}*.deb
+			aptly repo add -config=${SCRIPTPATH}config/aptly.conf $release ${POT}*.deb
 			if [[ $? -ne 0 ]]; then
 				# try again with
 				display_alert "Adding by force to repository $release" "main" "ext"
-				aptly repo add -force-replace=true -config=../config/aptly.conf $release ${POT}*.deb
+				aptly repo add -force-replace=true -config=${SCRIPTPATH}config/aptly.conf $release ${POT}*.deb
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1)); fi
 			fi
 		else
@@ -397,11 +397,11 @@ addtorepo()
 		# adding main distribution packages
 		if find ${POT}${release} -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "root" "ext"
-			aptly repo add -config=../config/aptly.conf $release ${POT}${release}/*.deb
+			aptly repo add -config=${SCRIPTPATH}config/aptly.conf $release ${POT}${release}/*.deb
 			if [[ $? -ne 0 ]]; then
 				# try again with
 				display_alert "Adding by force to repository $release" "root" "ext"
-				aptly repo add -force-replace=true -config=../config/aptly.conf $release ${POT}${release}/*.deb
+				aptly repo add -force-replace=true -config=${SCRIPTPATH}config/aptly.conf $release ${POT}${release}/*.deb
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
 			fi
 		else
@@ -411,11 +411,11 @@ addtorepo()
 		# adding old utils and new jessie-utils for backwards compatibility with older images
 		if find ${POT}extra/jessie-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "utils" "ext"
-			aptly repo add -config=../config/aptly.conf "utils" ${POT}extra/jessie-utils/*.deb
+			aptly repo add -config=${SCRIPTPATH}config/aptly.conf "utils" ${POT}extra/jessie-utils/*.deb
 			if [[ $? -ne 0 ]]; then
 				# try again with
 				display_alert "Adding by force to repository $release" "utils" "ext"
-				aptly repo add -force-replace=true -config=../config/aptly.conf "utils" ${POT}extra/jessie-utils/*.deb
+				aptly repo add -force-replace=true -config=${SCRIPTPATH}config/aptly.conf "utils" ${POT}extra/jessie-utils/*.deb
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
 			fi
 		else
@@ -426,11 +426,11 @@ addtorepo()
 		# adding release-specific utils
 		if find ${POT}extra/${release}-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "${release}-utils" "ext"
-			aptly repo add -config=../config/aptly.conf "${release}-utils" ${POT}extra/${release}-utils/*.deb
+			aptly repo add -config=${SCRIPTPATH}config/aptly.conf "${release}-utils" ${POT}extra/${release}-utils/*.deb
 			if [[ $? -ne 0 ]]; then
 				# try again with
 				display_alert "Adding by force to repository $release" "${release}-utils" "ext"
-				aptly repo add -force-replace=true -config=../config/aptly.conf "${release}-utils" ${POT}extra/${release}-utils/*.deb
+				aptly repo add -force-replace=true -config=${SCRIPTPATH}config/aptly.conf "${release}-utils" ${POT}extra/${release}-utils/*.deb
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
 			fi
 		else
@@ -441,11 +441,11 @@ addtorepo()
 		# adding desktop
 		if find ${POT}extra/${release}-desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
 			display_alert "Adding to repository $release" "desktop" "ext"
-			aptly repo add -config=../config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
+			aptly repo add -config=${SCRIPTPATH}config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
 			if [[ $? -ne 0 ]]; then
 				# try again with
 				display_alert "Adding by force to repository $release" "desktop" "ext"
-				aptly repo add -force-replace=true -config=../config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
+				aptly repo add -force-replace=true -config=${SCRIPTPATH}config/aptly.conf "${release}-desktop" ${POT}extra/${release}-desktop/*.deb
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
 			fi
 		else
@@ -453,13 +453,13 @@ addtorepo()
 		fi
 		COMPONENTS="${COMPONENTS} ${release}-desktop"
 
-		local mainnum=$(aptly repo show -with-packages -config=../config/aptly.conf $release | grep "Number of packages" | awk '{print $NF}')
-		local utilnum=$(aptly repo show -with-packages -config=../config/aptly.conf ${release}-desktop | grep "Number of packages" | awk '{print $NF}')
-		local desknum=$(aptly repo show -with-packages -config=../config/aptly.conf ${release}-utils | grep "Number of packages" | awk '{print $NF}')
+		local mainnum=$(aptly repo show -with-packages -config=${SCRIPTPATH}config/aptly.conf $release | grep "Number of packages" | awk '{print $NF}')
+		local utilnum=$(aptly repo show -with-packages -config=${SCRIPTPATH}config/aptly.conf ${release}-desktop | grep "Number of packages" | awk '{print $NF}')
+		local desknum=$(aptly repo show -with-packages -config=${SCRIPTPATH}config/aptly.conf ${release}-utils | grep "Number of packages" | awk '{print $NF}')
 
 		if [ $mainnum -gt 0 ] && [ $utilnum -gt 0 ] && [ $desknum -gt 0 ]; then
 			# publish
-			aptly publish $forceoverwrite -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=../config/aptly.conf -component=${COMPONENTS// /,} \
+			aptly publish $forceoverwrite -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=${SCRIPTPATH}config/aptly.conf -component=${COMPONENTS// /,} \
 				--distribution=$release repo $release ${COMPONENTS//main/}
 			if [[ $? -ne 0 ]]; then
 				display_alert "Publishing failed" "$release" "err"
@@ -475,7 +475,7 @@ addtorepo()
 
 	# display what we have
 	display_alert "List of local repos" "local" "info"
-	(aptly repo list -config=../config/aptly.conf) | egrep packages
+	(aptly repo list -config=${SCRIPTPATH}config/aptly.conf) | egrep packages
 
 	# remove debs if no errors found
 	if [[ $errors -eq 0 ]]; then
