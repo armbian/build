@@ -595,6 +595,12 @@ prepare_host()
 		update-ccache-symlinks
 	fi
 
+	# Temorally broken in Bionic, reverting to prvious version
+	# https://github.com/aptly-dev/aptly/issues/740
+	if [[ $(dpkg -s aptly | grep '^Version:' | sed 's/Version: //') != "1.2.0" && "$codename" == "bionic" ]]; then
+		apt -qq -y --allow-downgrades install aptly=1.2.0
+	fi
+
 	# add bionic repository and install more recent qemu and debootstrap
 	if [[ ! -f /etc/apt/sources.list.d/bionic.list && $codename == "xenial" ]]; then
 		echo "deb http://us.archive.ubuntu.com/ubuntu/ bionic main restricted universe" > /etc/apt/sources.list.d/bionic.list
