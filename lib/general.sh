@@ -459,7 +459,7 @@ addtorepo()
 
 		if [ $mainnum -gt 0 ] && [ $utilnum -gt 0 ] && [ $desknum -gt 0 ]; then
 			# publish
-			aptly publish $forceoverwrite -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=${SCRIPTPATH}config/aptly.conf -component=${COMPONENTS// /,} \
+			aptly publish $forceoverwrite -passphrase=$GPG_PASS -gpg-provider=internal -origin=Armbian -label=Armbian -config=${SCRIPTPATH}config/aptly.conf -component=${COMPONENTS// /,} \
 				--distribution=$release repo $release ${COMPONENTS//main/}
 			if [[ $? -ne 0 ]]; then
 				display_alert "Publishing failed" "$release" "err"
