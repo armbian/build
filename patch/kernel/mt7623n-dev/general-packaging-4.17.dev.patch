@@ -1,5 +1,5 @@
 diff --git a/scripts/package/builddeb b/scripts/package/builddeb
-index 0bc87473..cf26d2c7 100755
+index 90c9a8a..3c79b90 100755
 --- a/scripts/package/builddeb
 +++ b/scripts/package/builddeb
 @@ -29,6 +29,27 @@ create_package() {
@@ -13,7 +13,7 @@ index 0bc87473..cf26d2c7 100755
 +		echo "if [ -d /boot/dtb ]; then mv /boot/dtb /boot/dtb.old; fi" >> $pdir/DEBIAN/preinst
 +		echo "exit 0" >> $pdir/DEBIAN/preinst
 +		chmod 775 $pdir/DEBIAN/preinst
-+		#
++
 +		echo "if [ -d /boot/dtb-$version.old ]; then rm -rf /boot/dtb-$version.old; fi" >> $pdir/DEBIAN/postinst
 +		echo "ln -sf dtb-$version /boot/dtb > /dev/null 2>&1 || mv /boot/dtb-$version /boot/dtb" >> $pdir/DEBIAN/postinst
 +		echo "exit 0" >> $pdir/DEBIAN/postinst
@@ -28,28 +28,9 @@ index 0bc87473..cf26d2c7 100755
 +	fi
 +
  	# Create the package
- 	dpkg-gencontrol $forcearch -Vkernel:debarch="${debarch}" -p$pname -P"$pdir"
+ 	dpkg-gencontrol -p$pname -P"$pdir"
  	dpkg --build "$pdir" ..
-@@ -52,7 +73,9 @@ set_debarch() {
- 	mips*)
- 		debarch=mips$(grep -q CPU_LITTLE_ENDIAN=y $KCONFIG_CONFIG && echo el || true) ;;
- 	aarch64|arm64)
--		debarch=arm64 ;;
-+		debarch=arm64
-+		image_name=Image
-+		;;
- 	arm*)
- 		if grep -q CONFIG_AEABI=y $KCONFIG_CONFIG; then
- 		    if grep -q CONFIG_VFP=y $KCONFIG_CONFIG; then
-@@ -63,6 +86,7 @@ set_debarch() {
- 		else
- 		    debarch=arm
- 		fi
-+		image_name=zImage
- 		;;
- 	*)
- 		debarch=$(dpkg --print-architecture)
-@@ -95,12 +119,15 @@ tmpdir="$objtree/debian/tmp"
+@@ -39,9 +60,11 @@ tmpdir="$objtree/debian/tmp"
  kernel_headers_dir="$objtree/debian/hdrtmp"
  libc_headers_dir="$objtree/debian/headertmp"
  dbg_dir="$objtree/debian/dbgtmp"
@@ -57,18 +38,30 @@ index 0bc87473..cf26d2c7 100755
 -kernel_headers_packagename=linux-headers-$version
 -libc_headers_packagename=linux-libc-dev
 +dtb_dir="$objtree/debian/dtbtmp"
-+packagename=linux-image-next"$LOCALVERSION"
-+kernel_headers_packagename=linux-headers-next"$LOCALVERSION"
-+dtb_packagename=linux-dtb-next"$LOCALVERSION"
-+libc_headers_packagename=linux-libc-dev-next"$LOCALVERSION"
++packagename=linux-image-dev"$LOCALVERSION"
++kernel_headers_packagename=linux-headers-dev"$LOCALVERSION"
++dtb_packagename=linux-dtb-dev"$LOCALVERSION"
++libc_headers_packagename=linux-libc-dev-dev"$LOCALVERSION"
  dbg_packagename=$packagename-dbg
- debarch=
- forcearch=
-+image_name=
- set_debarch
  
  if [ "$ARCH" = "um" ] ; then
-@@ -124,7 +151,9 @@ esac
+@@ -52,6 +75,15 @@ fi
+ # XXX: have each arch Makefile export a variable of the canonical image install
+ # path instead
+ case $ARCH in
++aarch64|arm64)
++	image_name=Image
++	installed_image_path="boot/vmlinuz-$version"
++
++	;;
++arm*)
++	image_name=zImage
++	installed_image_path="boot/vmlinuz-$version"
++	;;
+ um)
+ 	installed_image_path="usr/bin/linux-$version"
+ 	;;
+@@ -65,7 +97,9 @@ esac
  BUILD_DEBUG="$(grep -s '^CONFIG_DEBUG_INFO=y' $KCONFIG_CONFIG || true)"
  
  # Setup the directory structure
@@ -79,7 +72,7 @@ index 0bc87473..cf26d2c7 100755
  mkdir -m 755 -p "$tmpdir/DEBIAN"
  mkdir -p "$tmpdir/lib" "$tmpdir/boot"
  mkdir -p "$kernel_headers_dir/lib/modules/$version/"
-@@ -177,6 +206,11 @@ if grep -q '^CONFIG_MODULES=y' $KCONFIG_CONFIG ; then
+@@ -118,6 +152,11 @@ if grep -q '^CONFIG_MODULES=y' $KCONFIG_CONFIG ; then
  	fi
  fi
  
@@ -91,7 +84,16 @@ index 0bc87473..cf26d2c7 100755
  if [ "$ARCH" != "um" ]; then
  	$MAKE headers_check KBUILD_SRC=
  	$MAKE headers_install KBUILD_SRC= INSTALL_HDR_PATH="$libc_headers_dir/usr"
-@@ -212,6 +246,55 @@ EOF
+@@ -137,7 +176,7 @@ fi
+ for script in postinst postrm preinst prerm ; do
+ 	mkdir -p "$tmpdir$debhookdir/$script.d"
+ 	cat <<EOF > "$tmpdir/DEBIAN/$script"
+-#!/bin/sh
++#!/bin/bash
+ 
+ set -e
+ 
+@@ -153,9 +192,60 @@ EOF
  	chmod 755 "$tmpdir/DEBIAN/$script"
  done
  
@@ -102,18 +104,19 @@ index 0bc87473..cf26d2c7 100755
 +sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/postinst
 +cat >> $tmpdir/DEBIAN/postinst <<EOT
 +if [ "\$(grep nand /proc/partitions)" != "" ] && [ "\$(grep mmc /proc/partitions)" = "" ]; then
-+mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /$installed_image_path /boot/uImage  > /dev/null 2>&1
-+cp /boot/uImage /tmp/uImage
-+sync
-+mountpoint -q /boot || mount /boot
-+cp /tmp/uImage /boot/uImage
-+rm -f /$installed_image_path
++	mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /$installed_image_path /boot/uImage  > /dev/null 2>&1
++	cp /boot/uImage /tmp/uImage
++	sync
++	mountpoint -q /boot || mount /boot
++	cp /tmp/uImage /boot/uImage
++	rm -f /$installed_image_path
 +else
-+ln -sf $(basename $installed_image_path) /boot/$image_name || mv /$installed_image_path /boot/$image_name
++	ln -sf $(basename $installed_image_path) /boot/$image_name || mv /$installed_image_path /boot/$image_name
 +fi
 +touch /boot/.next
 +exit 0
 +EOT
++
 +##
 +## FAT install workaround
 +##
@@ -124,38 +127,34 @@ index 0bc87473..cf26d2c7 100755
 +if [ "\$(stat -c %d:%i /)" != "\$(stat -c %d:%i /proc/1/root/.)" ]; then exit 0; fi
 +
 +check_and_unmount (){
-+boot_device=\$(mountpoint -d /boot)
++	boot_device=\$(mountpoint -d /boot)
 +
-+for file in /dev/* ; do
-+	CURRENT_DEVICE=\$(printf "%d:%d" \$(stat --printf="0x%t 0x%T" \$file))
-+	if [[ "\$CURRENT_DEVICE" = "\$boot_device" ]]; then
-+		boot_partition=\$file
-+		break;
++	for file in /dev/* ; do
++		CURRENT_DEVICE=\$(printf "%d:%d" \$(stat --printf="0x%t 0x%T" \$file))
++		if [[ "\$CURRENT_DEVICE" = "\$boot_device" ]]; then
++			boot_partition=\$file
++			break
++		fi
++	done
++
++	bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
++	if [ "\$bootfstype" = "vfat" ]; then
++		umount /boot
++		rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
 +	fi
-+done
-+
-+bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
-+if [ "\$bootfstype" = "vfat" ]; then
-+umount /boot
-+rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
-+fi
 +}
 +mountpoint -q /boot && check_and_unmount
 +EOT
 +echo "exit 0" >> $tmpdir/DEBIAN/preinst
 +
- # Try to determine maintainer and email values
- if [ -n "$DEBEMAIL" ]; then
-        email=$DEBEMAIL
-@@ -314,6 +397,7 @@ fi
  # Build kernel header package
  (cd $srctree; find . -name Makefile\* -o -name Kconfig\* -o -name \*.pl) > "$objtree/debian/hdrsrcfiles"
- (cd $srctree; find arch/*/include include scripts -type f) >> "$objtree/debian/hdrsrcfiles"
+ (cd $srctree; find arch/*/include include scripts -type f -o -type l) >> "$objtree/debian/hdrsrcfiles"
 +(cd $srctree; find security/*/include -type f) >> "$objtree/debian/hdrsrcfiles"
  (cd $srctree; find arch/$SRCARCH -name module.lds -o -name Kbuild.platforms -o -name Platform) >> "$objtree/debian/hdrsrcfiles"
  (cd $srctree; find $(find arch/$SRCARCH -name include -o -name scripts -type d) -type f) >> "$objtree/debian/hdrsrcfiles"
  if grep -q '^CONFIG_STACK_VALIDATION=y' $KCONFIG_CONFIG ; then
-@@ -325,12 +409,15 @@ if grep -q '^CONFIG_GCC_PLUGINS=y' $KCONFIG_CONFIG ; then
+@@ -167,15 +257,19 @@ if grep -q '^CONFIG_GCC_PLUGINS=y' $KCONFIG_CONFIG ; then
  fi
  destdir=$kernel_headers_dir/usr/src/linux-headers-$version
  mkdir -p "$destdir"
@@ -168,32 +167,55 @@ index 0bc87473..cf26d2c7 100755
  
 +(cd $destdir; make M=scripts clean)
 +
- cat <<EOF >> debian/control
- 
- Package: $kernel_headers_packagename
-@@ -343,6 +430,16 @@ EOF
- 
- cat <<EOF >> debian/control
- 
-+Package: $dtb_packagename
-+Architecture: any
-+Description: Linux DTB, version $version
-+ This package contains device blobs from the Linux kernel, version $version.
-+EOF
-+
-+create_package "$dtb_packagename" "$dtb_dir"
-+
-+cat <<EOF >> debian/control
-+
- Package: $libc_headers_packagename
- Section: devel
- Provides: linux-kernel-headers
-@@ -354,7 +451,7 @@ EOF
- 
  if [ "$ARCH" != "um" ]; then
  	create_package "$kernel_headers_packagename" "$kernel_headers_dir"
 -	create_package "$libc_headers_packagename" "$libc_headers_dir"
-+#	create_package "$libc_headers_packagename" "$libc_headers_dir"
++	# create_package "$libc_headers_packagename" "$libc_headers_dir"
++	create_package "$dtb_packagename" "$dtb_dir"
  fi
  
  create_package "$packagename" "$tmpdir"
+diff --git a/scripts/package/mkdebian b/scripts/package/mkdebian
+index 6adb3a1..00e12eb 100755
+--- a/scripts/package/mkdebian
++++ b/scripts/package/mkdebian
+@@ -61,10 +61,12 @@ else
+ 	packageversion=$version-$revision
+ fi
+ sourcename=$KDEB_SOURCENAME
+-packagename=linux-image-$version
+-kernel_headers_packagename=linux-headers-$version
++packagename=linux-image-dev$LOCALVERSION
++kernel_headers_packagename=linux-headers-dev$LOCALVERSION
++dtb_packagename=linux-dtb-dev$LOCALVERSION
+ dbg_packagename=$packagename-dbg
+ debarch=
++image_name=
+ set_debarch
+ 
+ if [ "$ARCH" = "um" ] ; then
+@@ -168,6 +170,11 @@ Architecture: $debarch
+ Description: Linux kernel debugging symbols for $version
+  This package will come in handy if you need to debug the kernel. It provides
+  all the necessary debug symbols for the kernel and its modules.
++
++Package: $dtb_packagename
++Architecture: $debarch
++Description: Linux DTB, version $version
++ This package contains device blobs from the Linux kernel, version $version
+ EOF
+ 
+ cat <<EOF > debian/rules
+diff --git a/arch/arm64/Makefile b/arch/arm64/Makefile
+index f839ecd9..cd276162 100644
+--- a/arch/arm64/Makefile
++++ b/arch/arm64/Makefile
+@@ -103,7 +103,7 @@ core-$(CONFIG_EFI_STUB) += $(objtree)/drivers/firmware/efi/libstub/lib.a
+ 
+ # Default target when executing plain make
+ boot		:= arch/arm64/boot
+-KBUILD_IMAGE	:= $(boot)/Image.gz
++KBUILD_IMAGE	:= $(boot)/Image
+ KBUILD_DTBS	:= dtbs
+ 
+ all:	Image.gz $(KBUILD_DTBS)

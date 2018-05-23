@@ -2,17 +2,11 @@
 #
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
-setenv rootdev "/dev/mmcblk0p1"
-setenv ramdisk_addr_r "0x86000000"
-setenv kernel_addr_r "0x84000000"
-setenv console "ttyS0,115200n1"
+
 setenv verbosity "1"
-setenv devtype "mmc"
-setenv devnum "1"
-
-setenv bootargs "consoleblank=0 root=${rootdev} rw console=${console} rootfstype=ext4 loglevel=${verbosity} rootwait audit 0 coherent_pool 4M ${extraargs}"
-ext4load ${devtype} ${devnum}:1 ${ramdisk_addr_r} /boot/uInitrd || fatload ${devtype} ${devnum}:1 ${ramdisk_addr_r} uInitrd || ext4load ${devtype} ${devnum}:1 ${ramdisk_addr_r} uInitrd
-ext4load ${devtype} ${devnum}:1 ${kernel_addr_r} /boot/zImage-dtb || fatload ${devtype} ${devnum}:1 ${kernel_addr_r} zImage-dtb || ext4load ${devtype} ${devnum}:1 ${kernel_addr_r} zImage-dtb
-bootz ${kernel_addr_r} ${ramdisk_addr_r}
-
+setenv bootargs "console=ttyS0,115200n1 root=/dev/mmcblk0p1 rw rootfstype=ext4 rootwait coherent_pool=4M audit=0 {verbosity} ${extraargs}"
+ext4load mmc 1:1 0x86000000 /boot/uInitrd
+ext4load mmc 1:1 0x84000000 /boot/zImage-dtb
+bootz 0x84000000 0x86000000
+# Recompile with:
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
