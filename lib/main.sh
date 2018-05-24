@@ -237,7 +237,7 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 		fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
 	fi
 	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
-	fetch_from_repo "https://github.com/rockchip-linux/rkbin" "rkbin-tools" "branch:master"
+	fetch_from_repo "https://github.com/ayufan-rock64/rkbin" "rkbin-tools" "branch:master"
 	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-17.10"
 	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
 fi
