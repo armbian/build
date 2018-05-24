@@ -33,8 +33,13 @@ case $BRANCH in
 	;;
 
 	dev)
-	GOVERNOR=ondemand
+	BOOTBRANCH='tag:v2018.03'
+	BOOTPATCHDIR='u-boot-sunxi-dev'
 
+	GOVERNOR=ondemand
+	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+	KERNELBRANCH='branch:master'
+	KERNELDIR=$MAINLINE_KERNEL_DIR
 	KERNEL_USE_GCC='> 7.0'
 	;;
 esac
