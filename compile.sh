@@ -48,6 +48,16 @@ if [[ $EUID != 0 ]]; then
 	exit $?
 fi
 
+# Script parameters handling
+for i in "$@"; do
+	if [[ $i == *=* ]]; then
+		parameter=${i%%=*}
+		value=${i##*=}
+		display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
+		eval $parameter=$value
+	fi
+done
+
 if [[ ! -f $SRC/.ignore_changes ]]; then
 	echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
 	git pull
