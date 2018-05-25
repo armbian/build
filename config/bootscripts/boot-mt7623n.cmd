@@ -2,11 +2,14 @@
 #
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
-
+setenv root "/dev/mmcblk0p1"
+setenv rootfs "ext4"
 setenv verbosity "1"
-setenv bootargs "console=ttyS0,115200n1 root=/dev/mmcblk0p1 rw rootfstype=ext4 rootwait coherent_pool=4M audit=0 {verbosity} ${extraargs}"
-ext4load mmc 1:1 0x86000000 /boot/uInitrd
-ext4load mmc 1:1 0x84000000 /boot/zImage-dtb
-bootz 0x84000000 0x86000000
+setenv bootargs initcall_debug console=ttyS0,115200n1 root=${root} rw rootfstype=${rootfs} rootwait audit=0 loglevel=${verbosity}
+ext4load mmc ${mmcnum}:${mmcpart} ${fdtaddr} ${mmcfdtfile}
+ext4load mmc ${mmcnum}:${mmcpart} ${rdaddr} ${mmcinitrdfile}
+ext4load mmc ${mmcnum}:${mmcpart} ${kernel_addr_r} ${mmckernfile}
+echo "Booting ${mmckernfile} ${mmcinitrdfile} ${mmcfdtfile} from: mmc ${mmcnum}:${mmcpart} using bootargs=${bootargs}"
+bootz ${kernel_addr_r} ${rdaddr} ${fdtaddr}
 # Recompile with:
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
