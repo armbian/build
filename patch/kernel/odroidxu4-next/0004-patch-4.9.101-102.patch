@@ -1,0 +1,3655 @@
+diff --git a/Documentation/ABI/testing/sysfs-devices-system-cpu b/Documentation/ABI/testing/sysfs-devices-system-cpu
+index dfd56ec7a850..6d75a9c00e8a 100644
+--- a/Documentation/ABI/testing/sysfs-devices-system-cpu
++++ b/Documentation/ABI/testing/sysfs-devices-system-cpu
+@@ -355,6 +355,7 @@ What:		/sys/devices/system/cpu/vulnerabilities
+ 		/sys/devices/system/cpu/vulnerabilities/meltdown
+ 		/sys/devices/system/cpu/vulnerabilities/spectre_v1
+ 		/sys/devices/system/cpu/vulnerabilities/spectre_v2
++		/sys/devices/system/cpu/vulnerabilities/spec_store_bypass
+ Date:		January 2018
+ Contact:	Linux kernel mailing list <linux-kernel@vger.kernel.org>
+ Description:	Information about CPU vulnerabilities
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 5f9e51436a99..52240a63132e 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -2699,6 +2699,9 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 			allow data leaks with this option, which is equivalent
+ 			to spectre_v2=off.
+ 
++	nospec_store_bypass_disable
++			[HW] Disable all mitigations for the Speculative Store Bypass vulnerability
++
+ 	noxsave		[BUGS=X86] Disables x86 extended register state save
+ 			and restore using xsave. The kernel will fallback to
+ 			enabling legacy floating-point and sse state.
+@@ -3973,6 +3976,48 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 			Not specifying this option is equivalent to
+ 			spectre_v2=auto.
+ 
++	spec_store_bypass_disable=
++			[HW] Control Speculative Store Bypass (SSB) Disable mitigation
++			(Speculative Store Bypass vulnerability)
++
++			Certain CPUs are vulnerable to an exploit against a
++			a common industry wide performance optimization known
++			as "Speculative Store Bypass" in which recent stores
++			to the same memory location may not be observed by
++			later loads during speculative execution. The idea
++			is that such stores are unlikely and that they can
++			be detected prior to instruction retirement at the
++			end of a particular speculation execution window.
++
++			In vulnerable processors, the speculatively forwarded
++			store can be used in a cache side channel attack, for
++			example to read memory to which the attacker does not
++			directly have access (e.g. inside sandboxed code).
++
++			This parameter controls whether the Speculative Store
++			Bypass optimization is used.
++
++			on      - Unconditionally disable Speculative Store Bypass
++			off     - Unconditionally enable Speculative Store Bypass
++			auto    - Kernel detects whether the CPU model contains an
++				  implementation of Speculative Store Bypass and
++				  picks the most appropriate mitigation. If the
++				  CPU is not vulnerable, "off" is selected. If the
++				  CPU is vulnerable the default mitigation is
++				  architecture and Kconfig dependent. See below.
++			prctl   - Control Speculative Store Bypass per thread
++				  via prctl. Speculative Store Bypass is enabled
++				  for a process by default. The state of the control
++				  is inherited on fork.
++			seccomp - Same as "prctl" above, but all seccomp threads
++				  will disable SSB unless they explicitly opt out.
++
++			Not specifying this option is equivalent to
++			spec_store_bypass_disable=auto.
++
++			Default mitigations:
++			X86:	If CONFIG_SECCOMP=y "seccomp", otherwise "prctl"
++
+ 	spia_io_base=	[HW,MTD]
+ 	spia_fio_base=
+ 	spia_pedr=
+diff --git a/Documentation/spec_ctrl.txt b/Documentation/spec_ctrl.txt
+new file mode 100644
+index 000000000000..32f3d55c54b7
+--- /dev/null
++++ b/Documentation/spec_ctrl.txt
+@@ -0,0 +1,94 @@
++===================
++Speculation Control
++===================
++
++Quite some CPUs have speculation-related misfeatures which are in
++fact vulnerabilities causing data leaks in various forms even across
++privilege domains.
++
++The kernel provides mitigation for such vulnerabilities in various
++forms. Some of these mitigations are compile-time configurable and some
++can be supplied on the kernel command line.
++
++There is also a class of mitigations which are very expensive, but they can
++be restricted to a certain set of processes or tasks in controlled
++environments. The mechanism to control these mitigations is via
++:manpage:`prctl(2)`.
++
++There are two prctl options which are related to this:
++
++ * PR_GET_SPECULATION_CTRL
++
++ * PR_SET_SPECULATION_CTRL
++
++PR_GET_SPECULATION_CTRL
++-----------------------
++
++PR_GET_SPECULATION_CTRL returns the state of the speculation misfeature
++which is selected with arg2 of prctl(2). The return value uses bits 0-3 with
++the following meaning:
++
++==== ===================== ===================================================
++Bit  Define                Description
++==== ===================== ===================================================
++0    PR_SPEC_PRCTL         Mitigation can be controlled per task by
++                           PR_SET_SPECULATION_CTRL.
++1    PR_SPEC_ENABLE        The speculation feature is enabled, mitigation is
++                           disabled.
++2    PR_SPEC_DISABLE       The speculation feature is disabled, mitigation is
++                           enabled.
++3    PR_SPEC_FORCE_DISABLE Same as PR_SPEC_DISABLE, but cannot be undone. A
++                           subsequent prctl(..., PR_SPEC_ENABLE) will fail.
++==== ===================== ===================================================
++
++If all bits are 0 the CPU is not affected by the speculation misfeature.
++
++If PR_SPEC_PRCTL is set, then the per-task control of the mitigation is
++available. If not set, prctl(PR_SET_SPECULATION_CTRL) for the speculation
++misfeature will fail.
++
++PR_SET_SPECULATION_CTRL
++-----------------------
++
++PR_SET_SPECULATION_CTRL allows to control the speculation misfeature, which
++is selected by arg2 of :manpage:`prctl(2)` per task. arg3 is used to hand
++in the control value, i.e. either PR_SPEC_ENABLE or PR_SPEC_DISABLE or
++PR_SPEC_FORCE_DISABLE.
++
++Common error codes
++------------------
++======= =================================================================
++Value   Meaning
++======= =================================================================
++EINVAL  The prctl is not implemented by the architecture or unused
++        prctl(2) arguments are not 0.
++
++ENODEV  arg2 is selecting a not supported speculation misfeature.
++======= =================================================================
++
++PR_SET_SPECULATION_CTRL error codes
++-----------------------------------
++======= =================================================================
++Value   Meaning
++======= =================================================================
++0       Success
++
++ERANGE  arg3 is incorrect, i.e. it's neither PR_SPEC_ENABLE nor
++        PR_SPEC_DISABLE nor PR_SPEC_FORCE_DISABLE.
++
++ENXIO   Control of the selected speculation misfeature is not possible.
++        See PR_GET_SPECULATION_CTRL.
++
++EPERM   Speculation was disabled with PR_SPEC_FORCE_DISABLE and caller
++        tried to enable it again.
++======= =================================================================
++
++Speculation misfeature controls
++-------------------------------
++- PR_SPEC_STORE_BYPASS: Speculative Store Bypass
++
++  Invocations:
++   * prctl(PR_GET_SPECULATION_CTRL, PR_SPEC_STORE_BYPASS, 0, 0, 0);
++   * prctl(PR_SET_SPECULATION_CTRL, PR_SPEC_STORE_BYPASS, PR_SPEC_ENABLE, 0, 0);
++   * prctl(PR_SET_SPECULATION_CTRL, PR_SPEC_STORE_BYPASS, PR_SPEC_DISABLE, 0, 0);
++   * prctl(PR_SET_SPECULATION_CTRL, PR_SPEC_STORE_BYPASS, PR_SPEC_FORCE_DISABLE, 0, 0);
+diff --git a/Makefile b/Makefile
+index 7d7bda23db8f..d84c39c290f7 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 101
++SUBLEVEL = 102
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/arch/arm/include/asm/assembler.h b/arch/arm/include/asm/assembler.h
+index 12f99fd2e3b2..3aed4492c9a7 100644
+--- a/arch/arm/include/asm/assembler.h
++++ b/arch/arm/include/asm/assembler.h
+@@ -534,4 +534,14 @@ THUMB(	orr	\reg , \reg , #PSR_T_BIT	)
+ #endif
+ 	.endm
+ 
++#ifdef CONFIG_KPROBES
++#define _ASM_NOKPROBE(entry)				\
++	.pushsection "_kprobe_blacklist", "aw" ;	\
++	.balign 4 ;					\
++	.long entry;					\
++	.popsection
++#else
++#define _ASM_NOKPROBE(entry)
++#endif
++
+ #endif /* __ASM_ASSEMBLER_H__ */
+diff --git a/arch/arm/include/asm/kvm_mmu.h b/arch/arm/include/asm/kvm_mmu.h
+index d10e36235438..7f66b1b3aca1 100644
+--- a/arch/arm/include/asm/kvm_mmu.h
++++ b/arch/arm/include/asm/kvm_mmu.h
+@@ -223,6 +223,22 @@ static inline unsigned int kvm_get_vmid_bits(void)
+ 	return 8;
+ }
+ 
++/*
++ * We are not in the kvm->srcu critical section most of the time, so we take
++ * the SRCU read lock here. Since we copy the data from the user page, we
++ * can immediately drop the lock again.
++ */
++static inline int kvm_read_guest_lock(struct kvm *kvm,
++				      gpa_t gpa, void *data, unsigned long len)
++{
++	int srcu_idx = srcu_read_lock(&kvm->srcu);
++	int ret = kvm_read_guest(kvm, gpa, data, len);
++
++	srcu_read_unlock(&kvm->srcu, srcu_idx);
++
++	return ret;
++}
++
+ static inline void *kvm_get_hyp_vector(void)
+ {
+ 	return kvm_ksym_ref(__kvm_hyp_vector);
+diff --git a/arch/arm/kernel/traps.c b/arch/arm/kernel/traps.c
+index 1b304897aa12..aa316a7562b1 100644
+--- a/arch/arm/kernel/traps.c
++++ b/arch/arm/kernel/traps.c
+@@ -19,6 +19,7 @@
+ #include <linux/uaccess.h>
+ #include <linux/hardirq.h>
+ #include <linux/kdebug.h>
++#include <linux/kprobes.h>
+ #include <linux/module.h>
+ #include <linux/kexec.h>
+ #include <linux/bug.h>
+@@ -415,7 +416,8 @@ void unregister_undef_hook(struct undef_hook *hook)
+ 	raw_spin_unlock_irqrestore(&undef_lock, flags);
+ }
+ 
+-static int call_undef_hook(struct pt_regs *regs, unsigned int instr)
++static nokprobe_inline
++int call_undef_hook(struct pt_regs *regs, unsigned int instr)
+ {
+ 	struct undef_hook *hook;
+ 	unsigned long flags;
+@@ -488,6 +490,7 @@ asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
+ 
+ 	arm_notify_die("Oops - undefined instruction", regs, &info, 0, 6);
+ }
++NOKPROBE_SYMBOL(do_undefinstr)
+ 
+ /*
+  * Handle FIQ similarly to NMI on x86 systems.
+diff --git a/arch/arm/lib/getuser.S b/arch/arm/lib/getuser.S
+index df73914e81c8..746e7801dcdf 100644
+--- a/arch/arm/lib/getuser.S
++++ b/arch/arm/lib/getuser.S
+@@ -38,6 +38,7 @@ ENTRY(__get_user_1)
+ 	mov	r0, #0
+ 	ret	lr
+ ENDPROC(__get_user_1)
++_ASM_NOKPROBE(__get_user_1)
+ 
+ ENTRY(__get_user_2)
+ 	check_uaccess r0, 2, r1, r2, __get_user_bad
+@@ -58,6 +59,7 @@ rb	.req	r0
+ 	mov	r0, #0
+ 	ret	lr
+ ENDPROC(__get_user_2)
++_ASM_NOKPROBE(__get_user_2)
+ 
+ ENTRY(__get_user_4)
+ 	check_uaccess r0, 4, r1, r2, __get_user_bad
+@@ -65,6 +67,7 @@ ENTRY(__get_user_4)
+ 	mov	r0, #0
+ 	ret	lr
+ ENDPROC(__get_user_4)
++_ASM_NOKPROBE(__get_user_4)
+ 
+ ENTRY(__get_user_8)
+ 	check_uaccess r0, 8, r1, r2, __get_user_bad8
+@@ -78,6 +81,7 @@ ENTRY(__get_user_8)
+ 	mov	r0, #0
+ 	ret	lr
+ ENDPROC(__get_user_8)
++_ASM_NOKPROBE(__get_user_8)
+ 
+ #ifdef __ARMEB__
+ ENTRY(__get_user_32t_8)
+@@ -91,6 +95,7 @@ ENTRY(__get_user_32t_8)
+ 	mov	r0, #0
+ 	ret	lr
+ ENDPROC(__get_user_32t_8)
++_ASM_NOKPROBE(__get_user_32t_8)
+ 
+ ENTRY(__get_user_64t_1)
+ 	check_uaccess r0, 1, r1, r2, __get_user_bad8
+@@ -98,6 +103,7 @@ ENTRY(__get_user_64t_1)
+ 	mov	r0, #0
+ 	ret	lr
+ ENDPROC(__get_user_64t_1)
++_ASM_NOKPROBE(__get_user_64t_1)
+ 
+ ENTRY(__get_user_64t_2)
+ 	check_uaccess r0, 2, r1, r2, __get_user_bad8
+@@ -114,6 +120,7 @@ rb	.req	r0
+ 	mov	r0, #0
+ 	ret	lr
+ ENDPROC(__get_user_64t_2)
++_ASM_NOKPROBE(__get_user_64t_2)
+ 
+ ENTRY(__get_user_64t_4)
+ 	check_uaccess r0, 4, r1, r2, __get_user_bad8
+@@ -121,6 +128,7 @@ ENTRY(__get_user_64t_4)
+ 	mov	r0, #0
+ 	ret	lr
+ ENDPROC(__get_user_64t_4)
++_ASM_NOKPROBE(__get_user_64t_4)
+ #endif
+ 
+ __get_user_bad8:
+@@ -131,6 +139,8 @@ __get_user_bad:
+ 	ret	lr
+ ENDPROC(__get_user_bad)
+ ENDPROC(__get_user_bad8)
++_ASM_NOKPROBE(__get_user_bad)
++_ASM_NOKPROBE(__get_user_bad8)
+ 
+ .pushsection __ex_table, "a"
+ 	.long	1b, __get_user_bad
+diff --git a/arch/arm/probes/kprobes/opt-arm.c b/arch/arm/probes/kprobes/opt-arm.c
+index bcdecc25461b..b2aa9b32bff2 100644
+--- a/arch/arm/probes/kprobes/opt-arm.c
++++ b/arch/arm/probes/kprobes/opt-arm.c
+@@ -165,13 +165,14 @@ optimized_callback(struct optimized_kprobe *op, struct pt_regs *regs)
+ {
+ 	unsigned long flags;
+ 	struct kprobe *p = &op->kp;
+-	struct kprobe_ctlblk *kcb = get_kprobe_ctlblk();
++	struct kprobe_ctlblk *kcb;
+ 
+ 	/* Save skipped registers */
+ 	regs->ARM_pc = (unsigned long)op->kp.addr;
+ 	regs->ARM_ORIG_r0 = ~0UL;
+ 
+ 	local_irq_save(flags);
++	kcb = get_kprobe_ctlblk();
+ 
+ 	if (kprobe_running()) {
+ 		kprobes_inc_nmissed_count(&op->kp);
+@@ -191,6 +192,7 @@ optimized_callback(struct optimized_kprobe *op, struct pt_regs *regs)
+ 
+ 	local_irq_restore(flags);
+ }
++NOKPROBE_SYMBOL(optimized_callback)
+ 
+ int arch_prepare_optimized_kprobe(struct optimized_kprobe *op, struct kprobe *orig)
+ {
+diff --git a/arch/arm64/include/asm/kvm_mmu.h b/arch/arm64/include/asm/kvm_mmu.h
+index 80bf33715ecb..eac73a640ea7 100644
+--- a/arch/arm64/include/asm/kvm_mmu.h
++++ b/arch/arm64/include/asm/kvm_mmu.h
+@@ -313,6 +313,22 @@ static inline unsigned int kvm_get_vmid_bits(void)
+ 	return (cpuid_feature_extract_unsigned_field(reg, ID_AA64MMFR1_VMIDBITS_SHIFT) == 2) ? 16 : 8;
+ }
+ 
++/*
++ * We are not in the kvm->srcu critical section most of the time, so we take
++ * the SRCU read lock here. Since we copy the data from the user page, we
++ * can immediately drop the lock again.
++ */
++static inline int kvm_read_guest_lock(struct kvm *kvm,
++				      gpa_t gpa, void *data, unsigned long len)
++{
++	int srcu_idx = srcu_read_lock(&kvm->srcu);
++	int ret = kvm_read_guest(kvm, gpa, data, len);
++
++	srcu_read_unlock(&kvm->srcu, srcu_idx);
++
++	return ret;
++}
++
+ #ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
+ #include <asm/mmu.h>
+ 
+diff --git a/arch/powerpc/kernel/setup-common.c b/arch/powerpc/kernel/setup-common.c
+index f516ac508ae3..bf0f712ac0e0 100644
+--- a/arch/powerpc/kernel/setup-common.c
++++ b/arch/powerpc/kernel/setup-common.c
+@@ -228,14 +228,6 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ 	unsigned short maj;
+ 	unsigned short min;
+ 
+-	/* We only show online cpus: disable preempt (overzealous, I
+-	 * knew) to prevent cpu going down. */
+-	preempt_disable();
+-	if (!cpu_online(cpu_id)) {
+-		preempt_enable();
+-		return 0;
+-	}
+-
+ #ifdef CONFIG_SMP
+ 	pvr = per_cpu(cpu_pvr, cpu_id);
+ #else
+@@ -340,9 +332,6 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ #ifdef CONFIG_SMP
+ 	seq_printf(m, "\n");
+ #endif
+-
+-	preempt_enable();
+-
+ 	/* If this is the last cpu, print the summary */
+ 	if (cpumask_next(cpu_id, cpu_online_mask) >= nr_cpu_ids)
+ 		show_cpuinfo_summary(m);
+diff --git a/arch/powerpc/platforms/powernv/opal-nvram.c b/arch/powerpc/platforms/powernv/opal-nvram.c
+index 1bceb95f422d..5584247f5029 100644
+--- a/arch/powerpc/platforms/powernv/opal-nvram.c
++++ b/arch/powerpc/platforms/powernv/opal-nvram.c
+@@ -44,6 +44,10 @@ static ssize_t opal_nvram_read(char *buf, size_t count, loff_t *index)
+ 	return count;
+ }
+ 
++/*
++ * This can be called in the panic path with interrupts off, so use
++ * mdelay in that case.
++ */
+ static ssize_t opal_nvram_write(char *buf, size_t count, loff_t *index)
+ {
+ 	s64 rc = OPAL_BUSY;
+@@ -58,10 +62,16 @@ static ssize_t opal_nvram_write(char *buf, size_t count, loff_t *index)
+ 	while (rc == OPAL_BUSY || rc == OPAL_BUSY_EVENT) {
+ 		rc = opal_write_nvram(__pa(buf), count, off);
+ 		if (rc == OPAL_BUSY_EVENT) {
+-			msleep(OPAL_BUSY_DELAY_MS);
++			if (in_interrupt() || irqs_disabled())
++				mdelay(OPAL_BUSY_DELAY_MS);
++			else
++				msleep(OPAL_BUSY_DELAY_MS);
+ 			opal_poll_events(NULL);
+ 		} else if (rc == OPAL_BUSY) {
+-			msleep(OPAL_BUSY_DELAY_MS);
++			if (in_interrupt() || irqs_disabled())
++				mdelay(OPAL_BUSY_DELAY_MS);
++			else
++				msleep(OPAL_BUSY_DELAY_MS);
+ 		}
+ 	}
+ 
+diff --git a/arch/s390/kernel/irq.c b/arch/s390/kernel/irq.c
+index 285d6561076d..7ff976737bb1 100644
+--- a/arch/s390/kernel/irq.c
++++ b/arch/s390/kernel/irq.c
+@@ -173,10 +173,9 @@ void do_softirq_own_stack(void)
+ 		new -= STACK_FRAME_OVERHEAD;
+ 		((struct stack_frame *) new)->back_chain = old;
+ 		asm volatile("   la    15,0(%0)\n"
+-			     "   basr  14,%2\n"
++			     "   brasl 14,__do_softirq\n"
+ 			     "   la    15,0(%1)\n"
+-			     : : "a" (new), "a" (old),
+-			         "a" (__do_softirq)
++			     : : "a" (new), "a" (old)
+ 			     : "0", "1", "2", "3", "4", "5", "14",
+ 			       "cc", "memory" );
+ 	} else {
+diff --git a/arch/s390/kernel/perf_cpum_sf.c b/arch/s390/kernel/perf_cpum_sf.c
+index fcc634c1479a..96e4fcad57bf 100644
+--- a/arch/s390/kernel/perf_cpum_sf.c
++++ b/arch/s390/kernel/perf_cpum_sf.c
+@@ -739,6 +739,10 @@ static int __hw_perf_event_init(struct perf_event *event)
+ 	 */
+ 	rate = 0;
+ 	if (attr->freq) {
++		if (!attr->sample_freq) {
++			err = -EINVAL;
++			goto out;
++		}
+ 		rate = freq_to_sample_rate(&si, attr->sample_freq);
+ 		rate = hw_limit_rate(&si, rate);
+ 		attr->freq = 0;
+diff --git a/arch/x86/boot/compressed/eboot.c b/arch/x86/boot/compressed/eboot.c
+index cc69e37548db..c0ad1bb27fa2 100644
+--- a/arch/x86/boot/compressed/eboot.c
++++ b/arch/x86/boot/compressed/eboot.c
+@@ -330,7 +330,8 @@ __setup_efi_pci32(efi_pci_io_protocol_32 *pci, struct pci_setup_rom **__rom)
+ 	if (status != EFI_SUCCESS)
+ 		goto free_struct;
+ 
+-	memcpy(rom->romdata, pci->romimage, pci->romsize);
++	memcpy(rom->romdata, (void *)(unsigned long)pci->romimage,
++	       pci->romsize);
+ 	return status;
+ 
+ free_struct:
+@@ -436,7 +437,8 @@ __setup_efi_pci64(efi_pci_io_protocol_64 *pci, struct pci_setup_rom **__rom)
+ 	if (status != EFI_SUCCESS)
+ 		goto free_struct;
+ 
+-	memcpy(rom->romdata, pci->romimage, pci->romsize);
++	memcpy(rom->romdata, (void *)(unsigned long)pci->romimage,
++	       pci->romsize);
+ 	return status;
+ 
+ free_struct:
+diff --git a/arch/x86/include/asm/cpufeatures.h b/arch/x86/include/asm/cpufeatures.h
+index a2485311164b..c278f276c9b3 100644
+--- a/arch/x86/include/asm/cpufeatures.h
++++ b/arch/x86/include/asm/cpufeatures.h
+@@ -197,6 +197,9 @@
+ #define X86_FEATURE_RETPOLINE	( 7*32+12) /* "" Generic Retpoline mitigation for Spectre variant 2 */
+ #define X86_FEATURE_RETPOLINE_AMD ( 7*32+13) /* "" AMD Retpoline mitigation for Spectre variant 2 */
+ 
++#define X86_FEATURE_MSR_SPEC_CTRL ( 7*32+16) /* "" MSR SPEC_CTRL is implemented */
++#define X86_FEATURE_SSBD	( 7*32+17) /* Speculative Store Bypass Disable */
++
+ #define X86_FEATURE_RSB_CTXSW	( 7*32+19) /* "" Fill RSB on context switches */
+ 
+ /* Because the ALTERNATIVE scheme is for members of the X86_FEATURE club... */
+@@ -204,6 +207,13 @@
+ 
+ #define X86_FEATURE_USE_IBPB	( 7*32+21) /* "" Indirect Branch Prediction Barrier enabled */
+ #define X86_FEATURE_USE_IBRS_FW	( 7*32+22) /* "" Use IBRS during runtime firmware calls */
++#define X86_FEATURE_SPEC_STORE_BYPASS_DISABLE ( 7*32+23) /* "" Disable Speculative Store Bypass. */
++#define X86_FEATURE_LS_CFG_SSBD	( 7*32+24) /* "" AMD SSBD implementation */
++#define X86_FEATURE_IBRS	( 7*32+25) /* Indirect Branch Restricted Speculation */
++#define X86_FEATURE_IBPB	( 7*32+26) /* Indirect Branch Prediction Barrier */
++#define X86_FEATURE_STIBP	( 7*32+27) /* Single Thread Indirect Branch Predictors */
++#define X86_FEATURE_ZEN		( 7*32+28) /* "" CPU is AMD family 0x17 (Zen) */
++
+ 
+ /* Virtualization flags: Linux defined, word 8 */
+ #define X86_FEATURE_TPR_SHADOW  ( 8*32+ 0) /* Intel TPR Shadow */
+@@ -261,9 +271,10 @@
+ /* AMD-defined CPU features, CPUID level 0x80000008 (ebx), word 13 */
+ #define X86_FEATURE_CLZERO	(13*32+0) /* CLZERO instruction */
+ #define X86_FEATURE_IRPERF	(13*32+1) /* Instructions Retired Count */
+-#define X86_FEATURE_IBPB	(13*32+12) /* Indirect Branch Prediction Barrier */
+-#define X86_FEATURE_IBRS	(13*32+14) /* Indirect Branch Restricted Speculation */
+-#define X86_FEATURE_STIBP	(13*32+15) /* Single Thread Indirect Branch Predictors */
++#define X86_FEATURE_AMD_IBPB	(13*32+12) /* Indirect Branch Prediction Barrier */
++#define X86_FEATURE_AMD_IBRS	(13*32+14) /* Indirect Branch Restricted Speculation */
++#define X86_FEATURE_AMD_STIBP	(13*32+15) /* Single Thread Indirect Branch Predictors */
++#define X86_FEATURE_VIRT_SSBD	(13*32+25) /* Virtualized Speculative Store Bypass Disable */
+ 
+ /* Thermal and Power Management Leaf, CPUID level 0x00000006 (eax), word 14 */
+ #define X86_FEATURE_DTHERM	(14*32+ 0) /* Digital Thermal Sensor */
+@@ -299,6 +310,7 @@
+ #define X86_FEATURE_SUCCOR	(17*32+1) /* Uncorrectable error containment and recovery */
+ #define X86_FEATURE_SMCA	(17*32+3) /* Scalable MCA */
+ 
++
+ /* Intel-defined CPU features, CPUID level 0x00000007:0 (EDX), word 18 */
+ #define X86_FEATURE_AVX512_4VNNIW	(18*32+ 2) /* AVX-512 Neural Network Instructions */
+ #define X86_FEATURE_AVX512_4FMAPS	(18*32+ 3) /* AVX-512 Multiply Accumulation Single precision */
+@@ -306,6 +318,7 @@
+ #define X86_FEATURE_SPEC_CTRL		(18*32+26) /* "" Speculation Control (IBRS + IBPB) */
+ #define X86_FEATURE_INTEL_STIBP		(18*32+27) /* "" Single Thread Indirect Branch Predictors */
+ #define X86_FEATURE_ARCH_CAPABILITIES	(18*32+29) /* IA32_ARCH_CAPABILITIES MSR (Intel) */
++#define X86_FEATURE_SPEC_CTRL_SSBD	(18*32+31) /* "" Speculative Store Bypass Disable */
+ 
+ /*
+  * BUG word(s)
+@@ -335,5 +348,6 @@
+ #define X86_BUG_CPU_MELTDOWN	X86_BUG(14) /* CPU is affected by meltdown attack and needs kernel page table isolation */
+ #define X86_BUG_SPECTRE_V1	X86_BUG(15) /* CPU is affected by Spectre variant 1 attack with conditional branches */
+ #define X86_BUG_SPECTRE_V2	X86_BUG(16) /* CPU is affected by Spectre variant 2 attack with indirect branches */
++#define X86_BUG_SPEC_STORE_BYPASS X86_BUG(17) /* CPU is affected by speculative store bypass attack */
+ 
+ #endif /* _ASM_X86_CPUFEATURES_H */
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index 20cfeeb681c6..7598a6c26f76 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -864,7 +864,7 @@ struct kvm_x86_ops {
+ 	int (*hardware_setup)(void);               /* __init */
+ 	void (*hardware_unsetup)(void);            /* __exit */
+ 	bool (*cpu_has_accelerated_tpr)(void);
+-	bool (*cpu_has_high_real_mode_segbase)(void);
++	bool (*has_emulated_msr)(int index);
+ 	void (*cpuid_update)(struct kvm_vcpu *vcpu);
+ 
+ 	int (*vm_init)(struct kvm *kvm);
+diff --git a/arch/x86/include/asm/mmu_context.h b/arch/x86/include/asm/mmu_context.h
+index 5a295bb97103..733650874b30 100644
+--- a/arch/x86/include/asm/mmu_context.h
++++ b/arch/x86/include/asm/mmu_context.h
+@@ -113,7 +113,7 @@ static inline int init_new_context(struct task_struct *tsk,
+ 
+ 	#ifdef CONFIG_X86_INTEL_MEMORY_PROTECTION_KEYS
+ 	if (cpu_feature_enabled(X86_FEATURE_OSPKE)) {
+-		/* pkey 0 is the default and always allocated */
++		/* pkey 0 is the default and allocated implicitly */
+ 		mm->context.pkey_allocation_map = 0x1;
+ 		/* -1 means unallocated or invalid */
+ 		mm->context.execute_only_pkey = -1;
+diff --git a/arch/x86/include/asm/msr-index.h b/arch/x86/include/asm/msr-index.h
+index c768bc1550a1..1ec13e253174 100644
+--- a/arch/x86/include/asm/msr-index.h
++++ b/arch/x86/include/asm/msr-index.h
+@@ -40,6 +40,8 @@
+ #define MSR_IA32_SPEC_CTRL		0x00000048 /* Speculation Control */
+ #define SPEC_CTRL_IBRS			(1 << 0)   /* Indirect Branch Restricted Speculation */
+ #define SPEC_CTRL_STIBP			(1 << 1)   /* Single Thread Indirect Branch Predictors */
++#define SPEC_CTRL_SSBD_SHIFT		2	   /* Speculative Store Bypass Disable bit */
++#define SPEC_CTRL_SSBD			(1 << SPEC_CTRL_SSBD_SHIFT)   /* Speculative Store Bypass Disable */
+ 
+ #define MSR_IA32_PRED_CMD		0x00000049 /* Prediction Command */
+ #define PRED_CMD_IBPB			(1 << 0)   /* Indirect Branch Prediction Barrier */
+@@ -61,6 +63,11 @@
+ #define MSR_IA32_ARCH_CAPABILITIES	0x0000010a
+ #define ARCH_CAP_RDCL_NO		(1 << 0)   /* Not susceptible to Meltdown */
+ #define ARCH_CAP_IBRS_ALL		(1 << 1)   /* Enhanced IBRS support */
++#define ARCH_CAP_SSB_NO			(1 << 4)   /*
++						    * Not susceptible to Speculative Store Bypass
++						    * attack, so no Speculative Store Bypass
++						    * control required.
++						    */
+ 
+ #define MSR_IA32_BBL_CR_CTL		0x00000119
+ #define MSR_IA32_BBL_CR_CTL3		0x0000011e
+@@ -135,6 +142,7 @@
+ 
+ /* DEBUGCTLMSR bits (others vary by model): */
+ #define DEBUGCTLMSR_LBR			(1UL <<  0) /* last branch recording */
++#define DEBUGCTLMSR_BTF_SHIFT		1
+ #define DEBUGCTLMSR_BTF			(1UL <<  1) /* single-step on branches */
+ #define DEBUGCTLMSR_TR			(1UL <<  6)
+ #define DEBUGCTLMSR_BTS			(1UL <<  7)
+@@ -315,6 +323,8 @@
+ #define MSR_AMD64_IBSOPDATA4		0xc001103d
+ #define MSR_AMD64_IBS_REG_COUNT_MAX	8 /* includes MSR_AMD64_IBSBRTARGET */
+ 
++#define MSR_AMD64_VIRT_SPEC_CTRL	0xc001011f
++
+ /* Fam 17h MSRs */
+ #define MSR_F17H_IRPERF			0xc00000e9
+ 
+diff --git a/arch/x86/include/asm/nospec-branch.h b/arch/x86/include/asm/nospec-branch.h
+index f928ad9b143f..8b38df98548e 100644
+--- a/arch/x86/include/asm/nospec-branch.h
++++ b/arch/x86/include/asm/nospec-branch.h
+@@ -217,6 +217,14 @@ enum spectre_v2_mitigation {
+ 	SPECTRE_V2_IBRS,
+ };
+ 
++/* The Speculative Store Bypass disable variants */
++enum ssb_mitigation {
++	SPEC_STORE_BYPASS_NONE,
++	SPEC_STORE_BYPASS_DISABLE,
++	SPEC_STORE_BYPASS_PRCTL,
++	SPEC_STORE_BYPASS_SECCOMP,
++};
++
+ extern char __indirect_thunk_start[];
+ extern char __indirect_thunk_end[];
+ 
+@@ -241,22 +249,27 @@ static inline void vmexit_fill_RSB(void)
+ #endif
+ }
+ 
+-#define alternative_msr_write(_msr, _val, _feature)		\
+-	asm volatile(ALTERNATIVE("",				\
+-				 "movl %[msr], %%ecx\n\t"	\
+-				 "movl %[val], %%eax\n\t"	\
+-				 "movl $0, %%edx\n\t"		\
+-				 "wrmsr",			\
+-				 _feature)			\
+-		     : : [msr] "i" (_msr), [val] "i" (_val)	\
+-		     : "eax", "ecx", "edx", "memory")
++static __always_inline
++void alternative_msr_write(unsigned int msr, u64 val, unsigned int feature)
++{
++	asm volatile(ALTERNATIVE("", "wrmsr", %c[feature])
++		: : "c" (msr),
++		    "a" ((u32)val),
++		    "d" ((u32)(val >> 32)),
++		    [feature] "i" (feature)
++		: "memory");
++}
+ 
+ static inline void indirect_branch_prediction_barrier(void)
+ {
+-	alternative_msr_write(MSR_IA32_PRED_CMD, PRED_CMD_IBPB,
+-			      X86_FEATURE_USE_IBPB);
++	u64 val = PRED_CMD_IBPB;
++
++	alternative_msr_write(MSR_IA32_PRED_CMD, val, X86_FEATURE_USE_IBPB);
+ }
+ 
++/* The Intel SPEC CTRL MSR base value cache */
++extern u64 x86_spec_ctrl_base;
++
+ /*
+  * With retpoline, we must use IBRS to restrict branch prediction
+  * before calling into firmware.
+@@ -265,14 +278,18 @@ static inline void indirect_branch_prediction_barrier(void)
+  */
+ #define firmware_restrict_branch_speculation_start()			\
+ do {									\
++	u64 val = x86_spec_ctrl_base | SPEC_CTRL_IBRS;			\
++									\
+ 	preempt_disable();						\
+-	alternative_msr_write(MSR_IA32_SPEC_CTRL, SPEC_CTRL_IBRS,	\
++	alternative_msr_write(MSR_IA32_SPEC_CTRL, val,			\
+ 			      X86_FEATURE_USE_IBRS_FW);			\
+ } while (0)
+ 
+ #define firmware_restrict_branch_speculation_end()			\
+ do {									\
+-	alternative_msr_write(MSR_IA32_SPEC_CTRL, 0,			\
++	u64 val = x86_spec_ctrl_base;					\
++									\
++	alternative_msr_write(MSR_IA32_SPEC_CTRL, val,			\
+ 			      X86_FEATURE_USE_IBRS_FW);			\
+ 	preempt_enable();						\
+ } while (0)
+diff --git a/arch/x86/include/asm/pkeys.h b/arch/x86/include/asm/pkeys.h
+index b3b09b98896d..c50d6dcf4a22 100644
+--- a/arch/x86/include/asm/pkeys.h
++++ b/arch/x86/include/asm/pkeys.h
+@@ -1,6 +1,8 @@
+ #ifndef _ASM_X86_PKEYS_H
+ #define _ASM_X86_PKEYS_H
+ 
++#define ARCH_DEFAULT_PKEY	0
++
+ #define arch_max_pkey() (boot_cpu_has(X86_FEATURE_OSPKE) ? 16 : 1)
+ 
+ extern int arch_set_user_pkey_access(struct task_struct *tsk, int pkey,
+@@ -14,7 +16,7 @@ extern int __execute_only_pkey(struct mm_struct *mm);
+ static inline int execute_only_pkey(struct mm_struct *mm)
+ {
+ 	if (!boot_cpu_has(X86_FEATURE_OSPKE))
+-		return 0;
++		return ARCH_DEFAULT_PKEY;
+ 
+ 	return __execute_only_pkey(mm);
+ }
+@@ -48,13 +50,21 @@ bool mm_pkey_is_allocated(struct mm_struct *mm, int pkey)
+ {
+ 	/*
+ 	 * "Allocated" pkeys are those that have been returned
+-	 * from pkey_alloc().  pkey 0 is special, and never
+-	 * returned from pkey_alloc().
++	 * from pkey_alloc() or pkey 0 which is allocated
++	 * implicitly when the mm is created.
+ 	 */
+-	if (pkey <= 0)
++	if (pkey < 0)
+ 		return false;
+ 	if (pkey >= arch_max_pkey())
+ 		return false;
++	/*
++	 * The exec-only pkey is set in the allocation map, but
++	 * is not available to any of the user interfaces like
++	 * mprotect_pkey().
++	 */
++	if (pkey == mm->context.execute_only_pkey)
++		return false;
++
+ 	return mm_pkey_allocation_map(mm) & (1U << pkey);
+ }
+ 
+diff --git a/arch/x86/include/asm/spec-ctrl.h b/arch/x86/include/asm/spec-ctrl.h
+new file mode 100644
+index 000000000000..ae7c2c5cd7f0
+--- /dev/null
++++ b/arch/x86/include/asm/spec-ctrl.h
+@@ -0,0 +1,80 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _ASM_X86_SPECCTRL_H_
++#define _ASM_X86_SPECCTRL_H_
++
++#include <linux/thread_info.h>
++#include <asm/nospec-branch.h>
++
++/*
++ * On VMENTER we must preserve whatever view of the SPEC_CTRL MSR
++ * the guest has, while on VMEXIT we restore the host view. This
++ * would be easier if SPEC_CTRL were architecturally maskable or
++ * shadowable for guests but this is not (currently) the case.
++ * Takes the guest view of SPEC_CTRL MSR as a parameter and also
++ * the guest's version of VIRT_SPEC_CTRL, if emulated.
++ */
++extern void x86_virt_spec_ctrl(u64 guest_spec_ctrl, u64 guest_virt_spec_ctrl, bool guest);
++
++/**
++ * x86_spec_ctrl_set_guest - Set speculation control registers for the guest
++ * @guest_spec_ctrl:		The guest content of MSR_SPEC_CTRL
++ * @guest_virt_spec_ctrl:	The guest controlled bits of MSR_VIRT_SPEC_CTRL
++ *				(may get translated to MSR_AMD64_LS_CFG bits)
++ *
++ * Avoids writing to the MSR if the content/bits are the same
++ */
++static inline
++void x86_spec_ctrl_set_guest(u64 guest_spec_ctrl, u64 guest_virt_spec_ctrl)
++{
++	x86_virt_spec_ctrl(guest_spec_ctrl, guest_virt_spec_ctrl, true);
++}
++
++/**
++ * x86_spec_ctrl_restore_host - Restore host speculation control registers
++ * @guest_spec_ctrl:		The guest content of MSR_SPEC_CTRL
++ * @guest_virt_spec_ctrl:	The guest controlled bits of MSR_VIRT_SPEC_CTRL
++ *				(may get translated to MSR_AMD64_LS_CFG bits)
++ *
++ * Avoids writing to the MSR if the content/bits are the same
++ */
++static inline
++void x86_spec_ctrl_restore_host(u64 guest_spec_ctrl, u64 guest_virt_spec_ctrl)
++{
++	x86_virt_spec_ctrl(guest_spec_ctrl, guest_virt_spec_ctrl, false);
++}
++
++/* AMD specific Speculative Store Bypass MSR data */
++extern u64 x86_amd_ls_cfg_base;
++extern u64 x86_amd_ls_cfg_ssbd_mask;
++
++static inline u64 ssbd_tif_to_spec_ctrl(u64 tifn)
++{
++	BUILD_BUG_ON(TIF_SSBD < SPEC_CTRL_SSBD_SHIFT);
++	return (tifn & _TIF_SSBD) >> (TIF_SSBD - SPEC_CTRL_SSBD_SHIFT);
++}
++
++static inline unsigned long ssbd_spec_ctrl_to_tif(u64 spec_ctrl)
++{
++	BUILD_BUG_ON(TIF_SSBD < SPEC_CTRL_SSBD_SHIFT);
++	return (spec_ctrl & SPEC_CTRL_SSBD) << (TIF_SSBD - SPEC_CTRL_SSBD_SHIFT);
++}
++
++static inline u64 ssbd_tif_to_amd_ls_cfg(u64 tifn)
++{
++	return (tifn & _TIF_SSBD) ? x86_amd_ls_cfg_ssbd_mask : 0ULL;
++}
++
++#ifdef CONFIG_SMP
++extern void speculative_store_bypass_ht_init(void);
++#else
++static inline void speculative_store_bypass_ht_init(void) { }
++#endif
++
++extern void speculative_store_bypass_update(unsigned long tif);
++
++static inline void speculative_store_bypass_update_current(void)
++{
++	speculative_store_bypass_update(current_thread_info()->flags);
++}
++
++#endif
+diff --git a/arch/x86/include/asm/thread_info.h b/arch/x86/include/asm/thread_info.h
+index 89978b9c667a..2d8788a59b4d 100644
+--- a/arch/x86/include/asm/thread_info.h
++++ b/arch/x86/include/asm/thread_info.h
+@@ -83,6 +83,7 @@ struct thread_info {
+ #define TIF_SIGPENDING		2	/* signal pending */
+ #define TIF_NEED_RESCHED	3	/* rescheduling necessary */
+ #define TIF_SINGLESTEP		4	/* reenable singlestep on user return*/
++#define TIF_SSBD		5	/* Reduced data speculation */
+ #define TIF_SYSCALL_EMU		6	/* syscall emulation active */
+ #define TIF_SYSCALL_AUDIT	7	/* syscall auditing active */
+ #define TIF_SECCOMP		8	/* secure computing */
+@@ -104,8 +105,9 @@ struct thread_info {
+ #define _TIF_SYSCALL_TRACE	(1 << TIF_SYSCALL_TRACE)
+ #define _TIF_NOTIFY_RESUME	(1 << TIF_NOTIFY_RESUME)
+ #define _TIF_SIGPENDING		(1 << TIF_SIGPENDING)
+-#define _TIF_SINGLESTEP		(1 << TIF_SINGLESTEP)
+ #define _TIF_NEED_RESCHED	(1 << TIF_NEED_RESCHED)
++#define _TIF_SINGLESTEP		(1 << TIF_SINGLESTEP)
++#define _TIF_SSBD		(1 << TIF_SSBD)
+ #define _TIF_SYSCALL_EMU	(1 << TIF_SYSCALL_EMU)
+ #define _TIF_SYSCALL_AUDIT	(1 << TIF_SYSCALL_AUDIT)
+ #define _TIF_SECCOMP		(1 << TIF_SECCOMP)
+@@ -139,7 +141,7 @@ struct thread_info {
+ 
+ /* flags to check in __switch_to() */
+ #define _TIF_WORK_CTXSW							\
+-	(_TIF_IO_BITMAP|_TIF_NOTSC|_TIF_BLOCKSTEP)
++	(_TIF_IO_BITMAP|_TIF_NOTSC|_TIF_BLOCKSTEP|_TIF_SSBD)
+ 
+ #define _TIF_WORK_CTXSW_PREV (_TIF_WORK_CTXSW|_TIF_USER_RETURN_NOTIFY)
+ #define _TIF_WORK_CTXSW_NEXT (_TIF_WORK_CTXSW)
+diff --git a/arch/x86/include/asm/tlbflush.h b/arch/x86/include/asm/tlbflush.h
+index 99185a064978..686a58d793e5 100644
+--- a/arch/x86/include/asm/tlbflush.h
++++ b/arch/x86/include/asm/tlbflush.h
+@@ -111,6 +111,16 @@ static inline void cr4_clear_bits(unsigned long mask)
+ 	}
+ }
+ 
++static inline void cr4_toggle_bits(unsigned long mask)
++{
++	unsigned long cr4;
++
++	cr4 = this_cpu_read(cpu_tlbstate.cr4);
++	cr4 ^= mask;
++	this_cpu_write(cpu_tlbstate.cr4, cr4);
++	__write_cr4(cr4);
++}
++
+ /* Read the CR4 shadow. */
+ static inline unsigned long cr4_read_shadow(void)
+ {
+diff --git a/arch/x86/kernel/cpu/amd.c b/arch/x86/kernel/cpu/amd.c
+index c375bc672f82..4c2be99fa0fb 100644
+--- a/arch/x86/kernel/cpu/amd.c
++++ b/arch/x86/kernel/cpu/amd.c
+@@ -9,6 +9,7 @@
+ #include <asm/processor.h>
+ #include <asm/apic.h>
+ #include <asm/cpu.h>
++#include <asm/spec-ctrl.h>
+ #include <asm/smp.h>
+ #include <asm/pci-direct.h>
+ #include <asm/delay.h>
+@@ -542,6 +543,26 @@ static void bsp_init_amd(struct cpuinfo_x86 *c)
+ 		rdmsrl(MSR_FAM10H_NODE_ID, value);
+ 		nodes_per_socket = ((value >> 3) & 7) + 1;
+ 	}
++
++	if (c->x86 >= 0x15 && c->x86 <= 0x17) {
++		unsigned int bit;
++
++		switch (c->x86) {
++		case 0x15: bit = 54; break;
++		case 0x16: bit = 33; break;
++		case 0x17: bit = 10; break;
++		default: return;
++		}
++		/*
++		 * Try to cache the base value so further operations can
++		 * avoid RMW. If that faults, do not enable SSBD.
++		 */
++		if (!rdmsrl_safe(MSR_AMD64_LS_CFG, &x86_amd_ls_cfg_base)) {
++			setup_force_cpu_cap(X86_FEATURE_LS_CFG_SSBD);
++			setup_force_cpu_cap(X86_FEATURE_SSBD);
++			x86_amd_ls_cfg_ssbd_mask = 1ULL << bit;
++		}
++	}
+ }
+ 
+ static void early_init_amd(struct cpuinfo_x86 *c)
+@@ -728,6 +749,17 @@ static void init_amd_bd(struct cpuinfo_x86 *c)
+ 	}
+ }
+ 
++static void init_amd_zn(struct cpuinfo_x86 *c)
++{
++	set_cpu_cap(c, X86_FEATURE_ZEN);
++	/*
++	 * Fix erratum 1076: CPB feature bit not being set in CPUID. It affects
++	 * all up to and including B1.
++	 */
++	if (c->x86_model <= 1 && c->x86_stepping <= 1)
++		set_cpu_cap(c, X86_FEATURE_CPB);
++}
++
+ static void init_amd(struct cpuinfo_x86 *c)
+ {
+ 	u32 dummy;
+@@ -758,6 +790,7 @@ static void init_amd(struct cpuinfo_x86 *c)
+ 	case 0x10: init_amd_gh(c); break;
+ 	case 0x12: init_amd_ln(c); break;
+ 	case 0x15: init_amd_bd(c); break;
++	case 0x17: init_amd_zn(c); break;
+ 	}
+ 
+ 	/* Enable workaround for FXSAVE leak */
+@@ -824,8 +857,9 @@ static void init_amd(struct cpuinfo_x86 *c)
+ 		if (cpu_has(c, X86_FEATURE_3DNOW) || cpu_has(c, X86_FEATURE_LM))
+ 			set_cpu_cap(c, X86_FEATURE_3DNOWPREFETCH);
+ 
+-	/* AMD CPUs don't reset SS attributes on SYSRET */
+-	set_cpu_bug(c, X86_BUG_SYSRET_SS_ATTRS);
++	/* AMD CPUs don't reset SS attributes on SYSRET, Xen does. */
++	if (!cpu_has(c, X86_FEATURE_XENPV))
++		set_cpu_bug(c, X86_BUG_SYSRET_SS_ATTRS);
+ }
+ 
+ #ifdef CONFIG_X86_32
+diff --git a/arch/x86/kernel/cpu/bugs.c b/arch/x86/kernel/cpu/bugs.c
+index b8b0b6e78371..86af9b1b049d 100644
+--- a/arch/x86/kernel/cpu/bugs.c
++++ b/arch/x86/kernel/cpu/bugs.c
+@@ -11,8 +11,10 @@
+ #include <linux/utsname.h>
+ #include <linux/cpu.h>
+ #include <linux/module.h>
++#include <linux/nospec.h>
++#include <linux/prctl.h>
+ 
+-#include <asm/nospec-branch.h>
++#include <asm/spec-ctrl.h>
+ #include <asm/cmdline.h>
+ #include <asm/bugs.h>
+ #include <asm/processor.h>
+@@ -26,6 +28,27 @@
+ #include <asm/intel-family.h>
+ 
+ static void __init spectre_v2_select_mitigation(void);
++static void __init ssb_select_mitigation(void);
++
++/*
++ * Our boot-time value of the SPEC_CTRL MSR. We read it once so that any
++ * writes to SPEC_CTRL contain whatever reserved bits have been set.
++ */
++u64 __ro_after_init x86_spec_ctrl_base;
++EXPORT_SYMBOL_GPL(x86_spec_ctrl_base);
++
++/*
++ * The vendor and possibly platform specific bits which can be modified in
++ * x86_spec_ctrl_base.
++ */
++static u64 __ro_after_init x86_spec_ctrl_mask = SPEC_CTRL_IBRS;
++
++/*
++ * AMD specific MSR info for Speculative Store Bypass control.
++ * x86_amd_ls_cfg_ssbd_mask is initialized in identify_boot_cpu().
++ */
++u64 __ro_after_init x86_amd_ls_cfg_base;
++u64 __ro_after_init x86_amd_ls_cfg_ssbd_mask;
+ 
+ void __init check_bugs(void)
+ {
+@@ -36,9 +59,27 @@ void __init check_bugs(void)
+ 		print_cpu_info(&boot_cpu_data);
+ 	}
+ 
++	/*
++	 * Read the SPEC_CTRL MSR to account for reserved bits which may
++	 * have unknown values. AMD64_LS_CFG MSR is cached in the early AMD
++	 * init code as it is not enumerated and depends on the family.
++	 */
++	if (boot_cpu_has(X86_FEATURE_MSR_SPEC_CTRL))
++		rdmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
++
++	/* Allow STIBP in MSR_SPEC_CTRL if supported */
++	if (boot_cpu_has(X86_FEATURE_STIBP))
++		x86_spec_ctrl_mask |= SPEC_CTRL_STIBP;
++
+ 	/* Select the proper spectre mitigation before patching alternatives */
+ 	spectre_v2_select_mitigation();
+ 
++	/*
++	 * Select proper mitigation for any exposure to the Speculative Store
++	 * Bypass vulnerability.
++	 */
++	ssb_select_mitigation();
++
+ #ifdef CONFIG_X86_32
+ 	/*
+ 	 * Check whether we are able to run this kernel safely on SMP.
+@@ -92,7 +133,76 @@ static const char *spectre_v2_strings[] = {
+ #undef pr_fmt
+ #define pr_fmt(fmt)     "Spectre V2 : " fmt
+ 
+-static enum spectre_v2_mitigation spectre_v2_enabled = SPECTRE_V2_NONE;
++static enum spectre_v2_mitigation spectre_v2_enabled __ro_after_init =
++	SPECTRE_V2_NONE;
++
++void
++x86_virt_spec_ctrl(u64 guest_spec_ctrl, u64 guest_virt_spec_ctrl, bool setguest)
++{
++	u64 msrval, guestval, hostval = x86_spec_ctrl_base;
++	struct thread_info *ti = current_thread_info();
++
++	/* Is MSR_SPEC_CTRL implemented ? */
++	if (static_cpu_has(X86_FEATURE_MSR_SPEC_CTRL)) {
++		/*
++		 * Restrict guest_spec_ctrl to supported values. Clear the
++		 * modifiable bits in the host base value and or the
++		 * modifiable bits from the guest value.
++		 */
++		guestval = hostval & ~x86_spec_ctrl_mask;
++		guestval |= guest_spec_ctrl & x86_spec_ctrl_mask;
++
++		/* SSBD controlled in MSR_SPEC_CTRL */
++		if (static_cpu_has(X86_FEATURE_SPEC_CTRL_SSBD))
++			hostval |= ssbd_tif_to_spec_ctrl(ti->flags);
++
++		if (hostval != guestval) {
++			msrval = setguest ? guestval : hostval;
++			wrmsrl(MSR_IA32_SPEC_CTRL, msrval);
++		}
++	}
++
++	/*
++	 * If SSBD is not handled in MSR_SPEC_CTRL on AMD, update
++	 * MSR_AMD64_L2_CFG or MSR_VIRT_SPEC_CTRL if supported.
++	 */
++	if (!static_cpu_has(X86_FEATURE_LS_CFG_SSBD) &&
++	    !static_cpu_has(X86_FEATURE_VIRT_SSBD))
++		return;
++
++	/*
++	 * If the host has SSBD mitigation enabled, force it in the host's
++	 * virtual MSR value. If its not permanently enabled, evaluate
++	 * current's TIF_SSBD thread flag.
++	 */
++	if (static_cpu_has(X86_FEATURE_SPEC_STORE_BYPASS_DISABLE))
++		hostval = SPEC_CTRL_SSBD;
++	else
++		hostval = ssbd_tif_to_spec_ctrl(ti->flags);
++
++	/* Sanitize the guest value */
++	guestval = guest_virt_spec_ctrl & SPEC_CTRL_SSBD;
++
++	if (hostval != guestval) {
++		unsigned long tif;
++
++		tif = setguest ? ssbd_spec_ctrl_to_tif(guestval) :
++				 ssbd_spec_ctrl_to_tif(hostval);
++
++		speculative_store_bypass_update(tif);
++	}
++}
++EXPORT_SYMBOL_GPL(x86_virt_spec_ctrl);
++
++static void x86_amd_ssb_disable(void)
++{
++	u64 msrval = x86_amd_ls_cfg_base | x86_amd_ls_cfg_ssbd_mask;
++
++	if (boot_cpu_has(X86_FEATURE_VIRT_SSBD))
++		wrmsrl(MSR_AMD64_VIRT_SPEC_CTRL, SPEC_CTRL_SSBD);
++	else if (boot_cpu_has(X86_FEATURE_LS_CFG_SSBD))
++		wrmsrl(MSR_AMD64_LS_CFG, msrval);
++}
+ 
+ #ifdef RETPOLINE
+ static bool spectre_v2_bad_module;
+@@ -311,32 +421,289 @@ static void __init spectre_v2_select_mitigation(void)
+ }
+ 
+ #undef pr_fmt
++#define pr_fmt(fmt)	"Speculative Store Bypass: " fmt
++
++static enum ssb_mitigation ssb_mode __ro_after_init = SPEC_STORE_BYPASS_NONE;
++
++/* The kernel command line selection */
++enum ssb_mitigation_cmd {
++	SPEC_STORE_BYPASS_CMD_NONE,
++	SPEC_STORE_BYPASS_CMD_AUTO,
++	SPEC_STORE_BYPASS_CMD_ON,
++	SPEC_STORE_BYPASS_CMD_PRCTL,
++	SPEC_STORE_BYPASS_CMD_SECCOMP,
++};
++
++static const char *ssb_strings[] = {
++	[SPEC_STORE_BYPASS_NONE]	= "Vulnerable",
++	[SPEC_STORE_BYPASS_DISABLE]	= "Mitigation: Speculative Store Bypass disabled",
++	[SPEC_STORE_BYPASS_PRCTL]	= "Mitigation: Speculative Store Bypass disabled via prctl",
++	[SPEC_STORE_BYPASS_SECCOMP]	= "Mitigation: Speculative Store Bypass disabled via prctl and seccomp",
++};
++
++static const struct {
++	const char *option;
++	enum ssb_mitigation_cmd cmd;
++} ssb_mitigation_options[] = {
++	{ "auto",	SPEC_STORE_BYPASS_CMD_AUTO },    /* Platform decides */
++	{ "on",		SPEC_STORE_BYPASS_CMD_ON },      /* Disable Speculative Store Bypass */
++	{ "off",	SPEC_STORE_BYPASS_CMD_NONE },    /* Don't touch Speculative Store Bypass */
++	{ "prctl",	SPEC_STORE_BYPASS_CMD_PRCTL },   /* Disable Speculative Store Bypass via prctl */
++	{ "seccomp",	SPEC_STORE_BYPASS_CMD_SECCOMP }, /* Disable Speculative Store Bypass via prctl and seccomp */
++};
++
++static enum ssb_mitigation_cmd __init ssb_parse_cmdline(void)
++{
++	enum ssb_mitigation_cmd cmd = SPEC_STORE_BYPASS_CMD_AUTO;
++	char arg[20];
++	int ret, i;
++
++	if (cmdline_find_option_bool(boot_command_line, "nospec_store_bypass_disable")) {
++		return SPEC_STORE_BYPASS_CMD_NONE;
++	} else {
++		ret = cmdline_find_option(boot_command_line, "spec_store_bypass_disable",
++					  arg, sizeof(arg));
++		if (ret < 0)
++			return SPEC_STORE_BYPASS_CMD_AUTO;
++
++		for (i = 0; i < ARRAY_SIZE(ssb_mitigation_options); i++) {
++			if (!match_option(arg, ret, ssb_mitigation_options[i].option))
++				continue;
++
++			cmd = ssb_mitigation_options[i].cmd;
++			break;
++		}
++
++		if (i >= ARRAY_SIZE(ssb_mitigation_options)) {
++			pr_err("unknown option (%s). Switching to AUTO select\n", arg);
++			return SPEC_STORE_BYPASS_CMD_AUTO;
++		}
++	}
++
++	return cmd;
++}
++
++static enum ssb_mitigation __init __ssb_select_mitigation(void)
++{
++	enum ssb_mitigation mode = SPEC_STORE_BYPASS_NONE;
++	enum ssb_mitigation_cmd cmd;
++
++	if (!boot_cpu_has(X86_FEATURE_SSBD))
++		return mode;
++
++	cmd = ssb_parse_cmdline();
++	if (!boot_cpu_has_bug(X86_BUG_SPEC_STORE_BYPASS) &&
++	    (cmd == SPEC_STORE_BYPASS_CMD_NONE ||
++	     cmd == SPEC_STORE_BYPASS_CMD_AUTO))
++		return mode;
++
++	switch (cmd) {
++	case SPEC_STORE_BYPASS_CMD_AUTO:
++	case SPEC_STORE_BYPASS_CMD_SECCOMP:
++		/*
++		 * Choose prctl+seccomp as the default mode if seccomp is
++		 * enabled.
++		 */
++		if (IS_ENABLED(CONFIG_SECCOMP))
++			mode = SPEC_STORE_BYPASS_SECCOMP;
++		else
++			mode = SPEC_STORE_BYPASS_PRCTL;
++		break;
++	case SPEC_STORE_BYPASS_CMD_ON:
++		mode = SPEC_STORE_BYPASS_DISABLE;
++		break;
++	case SPEC_STORE_BYPASS_CMD_PRCTL:
++		mode = SPEC_STORE_BYPASS_PRCTL;
++		break;
++	case SPEC_STORE_BYPASS_CMD_NONE:
++		break;
++	}
++
++	/*
++	 * We have three CPU feature flags that are in play here:
++	 *  - X86_BUG_SPEC_STORE_BYPASS - CPU is susceptible.
++	 *  - X86_FEATURE_SSBD - CPU is able to turn off speculative store bypass
++	 *  - X86_FEATURE_SPEC_STORE_BYPASS_DISABLE - engage the mitigation
++	 */
++	if (mode == SPEC_STORE_BYPASS_DISABLE) {
++		setup_force_cpu_cap(X86_FEATURE_SPEC_STORE_BYPASS_DISABLE);
++		/*
++		 * Intel uses the SPEC CTRL MSR Bit(2) for this, while AMD uses
++		 * a completely different MSR and bit dependent on family.
++		 */
++		switch (boot_cpu_data.x86_vendor) {
++		case X86_VENDOR_INTEL:
++			x86_spec_ctrl_base |= SPEC_CTRL_SSBD;
++			x86_spec_ctrl_mask |= SPEC_CTRL_SSBD;
++			wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
++			break;
++		case X86_VENDOR_AMD:
++			x86_amd_ssb_disable();
++			break;
++		}
++	}
++
++	return mode;
++}
++
++static void ssb_select_mitigation(void)
++{
++	ssb_mode = __ssb_select_mitigation();
++
++	if (boot_cpu_has_bug(X86_BUG_SPEC_STORE_BYPASS))
++		pr_info("%s\n", ssb_strings[ssb_mode]);
++}
++
++#undef pr_fmt
++#define pr_fmt(fmt)     "Speculation prctl: " fmt
++
++static int ssb_prctl_set(struct task_struct *task, unsigned long ctrl)
++{
++	bool update;
++
++	if (ssb_mode != SPEC_STORE_BYPASS_PRCTL &&
++	    ssb_mode != SPEC_STORE_BYPASS_SECCOMP)
++		return -ENXIO;
++
++	switch (ctrl) {
++	case PR_SPEC_ENABLE:
++		/* If speculation is force disabled, enable is not allowed */
++		if (task_spec_ssb_force_disable(task))
++			return -EPERM;
++		task_clear_spec_ssb_disable(task);
++		update = test_and_clear_tsk_thread_flag(task, TIF_SSBD);
++		break;
++	case PR_SPEC_DISABLE:
++		task_set_spec_ssb_disable(task);
++		update = !test_and_set_tsk_thread_flag(task, TIF_SSBD);
++		break;
++	case PR_SPEC_FORCE_DISABLE:
++		task_set_spec_ssb_disable(task);
++		task_set_spec_ssb_force_disable(task);
++		update = !test_and_set_tsk_thread_flag(task, TIF_SSBD);
++		break;
++	default:
++		return -ERANGE;
++	}
++
++	/*
++	 * If being set on non-current task, delay setting the CPU
++	 * mitigation until it is next scheduled.
++	 */
++	if (task == current && update)
++		speculative_store_bypass_update_current();
++
++	return 0;
++}
++
++int arch_prctl_spec_ctrl_set(struct task_struct *task, unsigned long which,
++			     unsigned long ctrl)
++{
++	switch (which) {
++	case PR_SPEC_STORE_BYPASS:
++		return ssb_prctl_set(task, ctrl);
++	default:
++		return -ENODEV;
++	}
++}
++
++#ifdef CONFIG_SECCOMP
++void arch_seccomp_spec_mitigate(struct task_struct *task)
++{
++	if (ssb_mode == SPEC_STORE_BYPASS_SECCOMP)
++		ssb_prctl_set(task, PR_SPEC_FORCE_DISABLE);
++}
++#endif
++
++static int ssb_prctl_get(struct task_struct *task)
++{
++	switch (ssb_mode) {
++	case SPEC_STORE_BYPASS_DISABLE:
++		return PR_SPEC_DISABLE;
++	case SPEC_STORE_BYPASS_SECCOMP:
++	case SPEC_STORE_BYPASS_PRCTL:
++		if (task_spec_ssb_force_disable(task))
++			return PR_SPEC_PRCTL | PR_SPEC_FORCE_DISABLE;
++		if (task_spec_ssb_disable(task))
++			return PR_SPEC_PRCTL | PR_SPEC_DISABLE;
++		return PR_SPEC_PRCTL | PR_SPEC_ENABLE;
++	default:
++		if (boot_cpu_has_bug(X86_BUG_SPEC_STORE_BYPASS))
++			return PR_SPEC_ENABLE;
++		return PR_SPEC_NOT_AFFECTED;
++	}
++}
++
++int arch_prctl_spec_ctrl_get(struct task_struct *task, unsigned long which)
++{
++	switch (which) {
++	case PR_SPEC_STORE_BYPASS:
++		return ssb_prctl_get(task);
++	default:
++		return -ENODEV;
++	}
++}
++
++void x86_spec_ctrl_setup_ap(void)
++{
++	if (boot_cpu_has(X86_FEATURE_MSR_SPEC_CTRL))
++		wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
++
++	if (ssb_mode == SPEC_STORE_BYPASS_DISABLE)
++		x86_amd_ssb_disable();
++}
+ 
+ #ifdef CONFIG_SYSFS
+-ssize_t cpu_show_meltdown(struct device *dev, struct device_attribute *attr, char *buf)
++
++static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr,
++			       char *buf, unsigned int bug)
+ {
+-	if (!boot_cpu_has_bug(X86_BUG_CPU_MELTDOWN))
++	if (!boot_cpu_has_bug(bug))
+ 		return sprintf(buf, "Not affected\n");
+-	if (boot_cpu_has(X86_FEATURE_KAISER))
+-		return sprintf(buf, "Mitigation: PTI\n");
++
++	switch (bug) {
++	case X86_BUG_CPU_MELTDOWN:
++		if (boot_cpu_has(X86_FEATURE_KAISER))
++			return sprintf(buf, "Mitigation: PTI\n");
++
++		break;
++
++	case X86_BUG_SPECTRE_V1:
++		return sprintf(buf, "Mitigation: __user pointer sanitization\n");
++
++	case X86_BUG_SPECTRE_V2:
++		return sprintf(buf, "%s%s%s%s\n", spectre_v2_strings[spectre_v2_enabled],
++			       boot_cpu_has(X86_FEATURE_USE_IBPB) ? ", IBPB" : "",
++			       boot_cpu_has(X86_FEATURE_USE_IBRS_FW) ? ", IBRS_FW" : "",
++			       spectre_v2_module_string());
++
++	case X86_BUG_SPEC_STORE_BYPASS:
++		return sprintf(buf, "%s\n", ssb_strings[ssb_mode]);
++
++	default:
++		break;
++	}
++
+ 	return sprintf(buf, "Vulnerable\n");
+ }
+ 
++ssize_t cpu_show_meltdown(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	return cpu_show_common(dev, attr, buf, X86_BUG_CPU_MELTDOWN);
++}
++
+ ssize_t cpu_show_spectre_v1(struct device *dev, struct device_attribute *attr, char *buf)
+ {
+-	if (!boot_cpu_has_bug(X86_BUG_SPECTRE_V1))
+-		return sprintf(buf, "Not affected\n");
+-	return sprintf(buf, "Mitigation: __user pointer sanitization\n");
++	return cpu_show_common(dev, attr, buf, X86_BUG_SPECTRE_V1);
+ }
+ 
+ ssize_t cpu_show_spectre_v2(struct device *dev, struct device_attribute *attr, char *buf)
+ {
+-	if (!boot_cpu_has_bug(X86_BUG_SPECTRE_V2))
+-		return sprintf(buf, "Not affected\n");
++	return cpu_show_common(dev, attr, buf, X86_BUG_SPECTRE_V2);
++}
+ 
+-	return sprintf(buf, "%s%s%s%s\n", spectre_v2_strings[spectre_v2_enabled],
+-		       boot_cpu_has(X86_FEATURE_USE_IBPB) ? ", IBPB" : "",
+-		       boot_cpu_has(X86_FEATURE_USE_IBRS_FW) ? ", IBRS_FW" : "",
+-		       spectre_v2_module_string());
++ssize_t cpu_show_spec_store_bypass(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	return cpu_show_common(dev, attr, buf, X86_BUG_SPEC_STORE_BYPASS);
+ }
+ #endif
+diff --git a/arch/x86/kernel/cpu/common.c b/arch/x86/kernel/cpu/common.c
+index 301bbd1f2373..b0fd028b2eee 100644
+--- a/arch/x86/kernel/cpu/common.c
++++ b/arch/x86/kernel/cpu/common.c
+@@ -725,17 +725,32 @@ static void init_speculation_control(struct cpuinfo_x86 *c)
+ 	 * and they also have a different bit for STIBP support. Also,
+ 	 * a hypervisor might have set the individual AMD bits even on
+ 	 * Intel CPUs, for finer-grained selection of what's available.
+-	 *
+-	 * We use the AMD bits in 0x8000_0008 EBX as the generic hardware
+-	 * features, which are visible in /proc/cpuinfo and used by the
+-	 * kernel. So set those accordingly from the Intel bits.
+ 	 */
+ 	if (cpu_has(c, X86_FEATURE_SPEC_CTRL)) {
+ 		set_cpu_cap(c, X86_FEATURE_IBRS);
+ 		set_cpu_cap(c, X86_FEATURE_IBPB);
++		set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
+ 	}
++
+ 	if (cpu_has(c, X86_FEATURE_INTEL_STIBP))
+ 		set_cpu_cap(c, X86_FEATURE_STIBP);
++
++	if (cpu_has(c, X86_FEATURE_SPEC_CTRL_SSBD) ||
++	    cpu_has(c, X86_FEATURE_VIRT_SSBD))
++		set_cpu_cap(c, X86_FEATURE_SSBD);
++
++	if (cpu_has(c, X86_FEATURE_AMD_IBRS)) {
++		set_cpu_cap(c, X86_FEATURE_IBRS);
++		set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
++	}
++
++	if (cpu_has(c, X86_FEATURE_AMD_IBPB))
++		set_cpu_cap(c, X86_FEATURE_IBPB);
++
++	if (cpu_has(c, X86_FEATURE_AMD_STIBP)) {
++		set_cpu_cap(c, X86_FEATURE_STIBP);
++		set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
++	}
+ }
+ 
+ void get_cpu_cap(struct cpuinfo_x86 *c)
+@@ -879,21 +894,55 @@ static const __initconst struct x86_cpu_id cpu_no_meltdown[] = {
+ 	{}
+ };
+ 
+-static bool __init cpu_vulnerable_to_meltdown(struct cpuinfo_x86 *c)
++static const __initconst struct x86_cpu_id cpu_no_spec_store_bypass[] = {
++	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_PINEVIEW	},
++	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_LINCROFT	},
++	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_PENWELL		},
++	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_CLOVERVIEW	},
++	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_CEDARVIEW	},
++	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT1	},
++	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_AIRMONT		},
++	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT2	},
++	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_MERRIFIELD	},
++	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_CORE_YONAH		},
++	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNL		},
++	{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNM		},
++	{ X86_VENDOR_CENTAUR,	5,					},
++	{ X86_VENDOR_INTEL,	5,					},
++	{ X86_VENDOR_NSC,	5,					},
++	{ X86_VENDOR_AMD,	0x12,					},
++	{ X86_VENDOR_AMD,	0x11,					},
++	{ X86_VENDOR_AMD,	0x10,					},
++	{ X86_VENDOR_AMD,	0xf,					},
++	{ X86_VENDOR_ANY,	4,					},
++	{}
++};
++
++static void __init cpu_set_bug_bits(struct cpuinfo_x86 *c)
+ {
+ 	u64 ia32_cap = 0;
+ 
+-	if (x86_match_cpu(cpu_no_meltdown))
+-		return false;
+-
+ 	if (cpu_has(c, X86_FEATURE_ARCH_CAPABILITIES))
+ 		rdmsrl(MSR_IA32_ARCH_CAPABILITIES, ia32_cap);
+ 
++	if (!x86_match_cpu(cpu_no_spec_store_bypass) &&
++	   !(ia32_cap & ARCH_CAP_SSB_NO))
++		setup_force_cpu_bug(X86_BUG_SPEC_STORE_BYPASS);
++
++	if (x86_match_cpu(cpu_no_speculation))
++		return;
++
++	setup_force_cpu_bug(X86_BUG_SPECTRE_V1);
++	setup_force_cpu_bug(X86_BUG_SPECTRE_V2);
++
++	if (x86_match_cpu(cpu_no_meltdown))
++		return;
++
+ 	/* Rogue Data Cache Load? No! */
+ 	if (ia32_cap & ARCH_CAP_RDCL_NO)
+-		return false;
++		return;
+ 
+-	return true;
++	setup_force_cpu_bug(X86_BUG_CPU_MELTDOWN);
+ }
+ 
+ /*
+@@ -942,12 +991,7 @@ static void __init early_identify_cpu(struct cpuinfo_x86 *c)
+ 
+ 	setup_force_cpu_cap(X86_FEATURE_ALWAYS);
+ 
+-	if (!x86_match_cpu(cpu_no_speculation)) {
+-		if (cpu_vulnerable_to_meltdown(c))
+-			setup_force_cpu_bug(X86_BUG_CPU_MELTDOWN);
+-		setup_force_cpu_bug(X86_BUG_SPECTRE_V1);
+-		setup_force_cpu_bug(X86_BUG_SPECTRE_V2);
+-	}
++	cpu_set_bug_bits(c);
+ 
+ 	fpu__init_system(c);
+ 
+@@ -1315,6 +1359,7 @@ void identify_secondary_cpu(struct cpuinfo_x86 *c)
+ #endif
+ 	mtrr_ap_init();
+ 	validate_apic_and_package_id(c);
++	x86_spec_ctrl_setup_ap();
+ }
+ 
+ struct msr_range {
+diff --git a/arch/x86/kernel/cpu/cpu.h b/arch/x86/kernel/cpu/cpu.h
+index 2584265d4745..3b19d82f7932 100644
+--- a/arch/x86/kernel/cpu/cpu.h
++++ b/arch/x86/kernel/cpu/cpu.h
+@@ -46,4 +46,7 @@ extern const struct cpu_dev *const __x86_cpu_dev_start[],
+ 
+ extern void get_cpu_cap(struct cpuinfo_x86 *c);
+ extern void cpu_detect_cache_sizes(struct cpuinfo_x86 *c);
++
++extern void x86_spec_ctrl_setup_ap(void);
++
+ #endif /* ARCH_X86_CPU_H */
+diff --git a/arch/x86/kernel/cpu/intel.c b/arch/x86/kernel/cpu/intel.c
+index 8fb1d6522f8e..93781e3f05b2 100644
+--- a/arch/x86/kernel/cpu/intel.c
++++ b/arch/x86/kernel/cpu/intel.c
+@@ -153,7 +153,10 @@ static void early_init_intel(struct cpuinfo_x86 *c)
+ 		setup_clear_cpu_cap(X86_FEATURE_IBPB);
+ 		setup_clear_cpu_cap(X86_FEATURE_STIBP);
+ 		setup_clear_cpu_cap(X86_FEATURE_SPEC_CTRL);
++		setup_clear_cpu_cap(X86_FEATURE_MSR_SPEC_CTRL);
+ 		setup_clear_cpu_cap(X86_FEATURE_INTEL_STIBP);
++		setup_clear_cpu_cap(X86_FEATURE_SSBD);
++		setup_clear_cpu_cap(X86_FEATURE_SPEC_CTRL_SSBD);
+ 	}
+ 
+ 	/*
+diff --git a/arch/x86/kernel/process.c b/arch/x86/kernel/process.c
+index a55b32007785..00a9047539d7 100644
+--- a/arch/x86/kernel/process.c
++++ b/arch/x86/kernel/process.c
+@@ -33,6 +33,7 @@
+ #include <asm/mce.h>
+ #include <asm/vm86.h>
+ #include <asm/switch_to.h>
++#include <asm/spec-ctrl.h>
+ 
+ /*
+  * per-CPU TSS segments. Threads are completely 'soft' on Linux,
+@@ -134,11 +135,6 @@ void flush_thread(void)
+ 	fpu__clear(&tsk->thread.fpu);
+ }
+ 
+-static void hard_disable_TSC(void)
+-{
+-	cr4_set_bits(X86_CR4_TSD);
+-}
+-
+ void disable_TSC(void)
+ {
+ 	preempt_disable();
+@@ -147,15 +143,10 @@ void disable_TSC(void)
+ 		 * Must flip the CPU state synchronously with
+ 		 * TIF_NOTSC in the current running context.
+ 		 */
+-		hard_disable_TSC();
++		cr4_set_bits(X86_CR4_TSD);
+ 	preempt_enable();
+ }
+ 
+-static void hard_enable_TSC(void)
+-{
+-	cr4_clear_bits(X86_CR4_TSD);
+-}
+-
+ static void enable_TSC(void)
+ {
+ 	preempt_disable();
+@@ -164,7 +155,7 @@ static void enable_TSC(void)
+ 		 * Must flip the CPU state synchronously with
+ 		 * TIF_NOTSC in the current running context.
+ 		 */
+-		hard_enable_TSC();
++		cr4_clear_bits(X86_CR4_TSD);
+ 	preempt_enable();
+ }
+ 
+@@ -192,48 +183,199 @@ int set_tsc_mode(unsigned int val)
+ 	return 0;
+ }
+ 
+-void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
+-		      struct tss_struct *tss)
++static inline void switch_to_bitmap(struct tss_struct *tss,
++				    struct thread_struct *prev,
++				    struct thread_struct *next,
++				    unsigned long tifp, unsigned long tifn)
+ {
+-	struct thread_struct *prev, *next;
+-
+-	prev = &prev_p->thread;
+-	next = &next_p->thread;
+-
+-	if (test_tsk_thread_flag(prev_p, TIF_BLOCKSTEP) ^
+-	    test_tsk_thread_flag(next_p, TIF_BLOCKSTEP)) {
+-		unsigned long debugctl = get_debugctlmsr();
+-
+-		debugctl &= ~DEBUGCTLMSR_BTF;
+-		if (test_tsk_thread_flag(next_p, TIF_BLOCKSTEP))
+-			debugctl |= DEBUGCTLMSR_BTF;
+-
+-		update_debugctlmsr(debugctl);
+-	}
+-
+-	if (test_tsk_thread_flag(prev_p, TIF_NOTSC) ^
+-	    test_tsk_thread_flag(next_p, TIF_NOTSC)) {
+-		/* prev and next are different */
+-		if (test_tsk_thread_flag(next_p, TIF_NOTSC))
+-			hard_disable_TSC();
+-		else
+-			hard_enable_TSC();
+-	}
+-
+-	if (test_tsk_thread_flag(next_p, TIF_IO_BITMAP)) {
++	if (tifn & _TIF_IO_BITMAP) {
+ 		/*
+ 		 * Copy the relevant range of the IO bitmap.
+ 		 * Normally this is 128 bytes or less:
+ 		 */
+ 		memcpy(tss->io_bitmap, next->io_bitmap_ptr,
+ 		       max(prev->io_bitmap_max, next->io_bitmap_max));
+-	} else if (test_tsk_thread_flag(prev_p, TIF_IO_BITMAP)) {
++	} else if (tifp & _TIF_IO_BITMAP) {
+ 		/*
+ 		 * Clear any possible leftover bits:
+ 		 */
+ 		memset(tss->io_bitmap, 0xff, prev->io_bitmap_max);
+ 	}
++}
++
++#ifdef CONFIG_SMP
++
++struct ssb_state {
++	struct ssb_state	*shared_state;
++	raw_spinlock_t		lock;
++	unsigned int		disable_state;
++	unsigned long		local_state;
++};
++
++#define LSTATE_SSB	0
++
++static DEFINE_PER_CPU(struct ssb_state, ssb_state);
++
++void speculative_store_bypass_ht_init(void)
++{
++	struct ssb_state *st = this_cpu_ptr(&ssb_state);
++	unsigned int this_cpu = smp_processor_id();
++	unsigned int cpu;
++
++	st->local_state = 0;
++
++	/*
++	 * Shared state setup happens once on the first bringup
++	 * of the CPU. It's not destroyed on CPU hotunplug.
++	 */
++	if (st->shared_state)
++		return;
++
++	raw_spin_lock_init(&st->lock);
++
++	/*
++	 * Go over HT siblings and check whether one of them has set up the
++	 * shared state pointer already.
++	 */
++	for_each_cpu(cpu, topology_sibling_cpumask(this_cpu)) {
++		if (cpu == this_cpu)
++			continue;
++
++		if (!per_cpu(ssb_state, cpu).shared_state)
++			continue;
++
++		/* Link it to the state of the sibling: */
++		st->shared_state = per_cpu(ssb_state, cpu).shared_state;
++		return;
++	}
++
++	/*
++	 * First HT sibling to come up on the core.  Link shared state of
++	 * the first HT sibling to itself. The siblings on the same core
++	 * which come up later will see the shared state pointer and link
++	 * themself to the state of this CPU.
++	 */
++	st->shared_state = st;
++}
++
++/*
++ * Logic is: First HT sibling enables SSBD for both siblings in the core
++ * and last sibling to disable it, disables it for the whole core. This how
++ * MSR_SPEC_CTRL works in "hardware":
++ *
++ *  CORE_SPEC_CTRL = THREAD0_SPEC_CTRL | THREAD1_SPEC_CTRL
++ */
++static __always_inline void amd_set_core_ssb_state(unsigned long tifn)
++{
++	struct ssb_state *st = this_cpu_ptr(&ssb_state);
++	u64 msr = x86_amd_ls_cfg_base;
++
++	if (!static_cpu_has(X86_FEATURE_ZEN)) {
++		msr |= ssbd_tif_to_amd_ls_cfg(tifn);
++		wrmsrl(MSR_AMD64_LS_CFG, msr);
++		return;
++	}
++
++	if (tifn & _TIF_SSBD) {
++		/*
++		 * Since this can race with prctl(), block reentry on the
++		 * same CPU.
++		 */
++		if (__test_and_set_bit(LSTATE_SSB, &st->local_state))
++			return;
++
++		msr |= x86_amd_ls_cfg_ssbd_mask;
++
++		raw_spin_lock(&st->shared_state->lock);
++		/* First sibling enables SSBD: */
++		if (!st->shared_state->disable_state)
++			wrmsrl(MSR_AMD64_LS_CFG, msr);
++		st->shared_state->disable_state++;
++		raw_spin_unlock(&st->shared_state->lock);
++	} else {
++		if (!__test_and_clear_bit(LSTATE_SSB, &st->local_state))
++			return;
++
++		raw_spin_lock(&st->shared_state->lock);
++		st->shared_state->disable_state--;
++		if (!st->shared_state->disable_state)
++			wrmsrl(MSR_AMD64_LS_CFG, msr);
++		raw_spin_unlock(&st->shared_state->lock);
++	}
++}
++#else
++static __always_inline void amd_set_core_ssb_state(unsigned long tifn)
++{
++	u64 msr = x86_amd_ls_cfg_base | ssbd_tif_to_amd_ls_cfg(tifn);
++
++	wrmsrl(MSR_AMD64_LS_CFG, msr);
++}
++#endif
++
++static __always_inline void amd_set_ssb_virt_state(unsigned long tifn)
++{
++	/*
++	 * SSBD has the same definition in SPEC_CTRL and VIRT_SPEC_CTRL,
++	 * so ssbd_tif_to_spec_ctrl() just works.
++	 */
++	wrmsrl(MSR_AMD64_VIRT_SPEC_CTRL, ssbd_tif_to_spec_ctrl(tifn));
++}
++
++static __always_inline void intel_set_ssb_state(unsigned long tifn)
++{
++	u64 msr = x86_spec_ctrl_base | ssbd_tif_to_spec_ctrl(tifn);
++
++	wrmsrl(MSR_IA32_SPEC_CTRL, msr);
++}
++
++static __always_inline void __speculative_store_bypass_update(unsigned long tifn)
++{
++	if (static_cpu_has(X86_FEATURE_VIRT_SSBD))
++		amd_set_ssb_virt_state(tifn);
++	else if (static_cpu_has(X86_FEATURE_LS_CFG_SSBD))
++		amd_set_core_ssb_state(tifn);
++	else
++		intel_set_ssb_state(tifn);
++}
++
++void speculative_store_bypass_update(unsigned long tif)
++{
++	preempt_disable();
++	__speculative_store_bypass_update(tif);
++	preempt_enable();
++}
++
++void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
++		      struct tss_struct *tss)
++{
++	struct thread_struct *prev, *next;
++	unsigned long tifp, tifn;
++
++	prev = &prev_p->thread;
++	next = &next_p->thread;
++
++	tifn = READ_ONCE(task_thread_info(next_p)->flags);
++	tifp = READ_ONCE(task_thread_info(prev_p)->flags);
++	switch_to_bitmap(tss, prev, next, tifp, tifn);
++
+ 	propagate_user_return_notify(prev_p, next_p);
++
++	if ((tifp & _TIF_BLOCKSTEP || tifn & _TIF_BLOCKSTEP) &&
++	    arch_has_block_step()) {
++		unsigned long debugctl, msk;
++
++		rdmsrl(MSR_IA32_DEBUGCTLMSR, debugctl);
++		debugctl &= ~DEBUGCTLMSR_BTF;
++		msk = tifn & _TIF_BLOCKSTEP;
++		debugctl |= (msk >> TIF_BLOCKSTEP) << DEBUGCTLMSR_BTF_SHIFT;
++		wrmsrl(MSR_IA32_DEBUGCTLMSR, debugctl);
++	}
++
++	if ((tifp ^ tifn) & _TIF_NOTSC)
++		cr4_toggle_bits(X86_CR4_TSD);
++
++	if ((tifp ^ tifn) & _TIF_SSBD)
++		__speculative_store_bypass_update(tifn);
+ }
+ 
+ /*
+diff --git a/arch/x86/kernel/smpboot.c b/arch/x86/kernel/smpboot.c
+index 83929cc47a4b..cb945146b7c8 100644
+--- a/arch/x86/kernel/smpboot.c
++++ b/arch/x86/kernel/smpboot.c
+@@ -75,6 +75,7 @@
+ #include <asm/i8259.h>
+ #include <asm/realmode.h>
+ #include <asm/misc.h>
++#include <asm/spec-ctrl.h>
+ 
+ /* Number of siblings per CPU package */
+ int smp_num_siblings = 1;
+@@ -229,6 +230,8 @@ static void notrace start_secondary(void *unused)
+ 	 */
+ 	check_tsc_sync_target();
+ 
++	speculative_store_bypass_ht_init();
++
+ 	/*
+ 	 * Lock vector_lock and initialize the vectors on this cpu
+ 	 * before setting the cpu online. We must set it online with
+@@ -1325,6 +1328,8 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
+ 	set_mtrr_aps_delayed_init();
+ 
+ 	smp_quirk_init_udelay();
++
++	speculative_store_bypass_ht_init();
+ }
+ 
+ void arch_enable_nonboot_cpus_begin(void)
+diff --git a/arch/x86/kvm/cpuid.c b/arch/x86/kvm/cpuid.c
+index 93f924de06cf..a69f18d4676c 100644
+--- a/arch/x86/kvm/cpuid.c
++++ b/arch/x86/kvm/cpuid.c
+@@ -357,7 +357,7 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
+ 
+ 	/* cpuid 0x80000008.ebx */
+ 	const u32 kvm_cpuid_8000_0008_ebx_x86_features =
+-		F(IBPB) | F(IBRS);
++		F(AMD_IBPB) | F(AMD_IBRS) | F(VIRT_SSBD);
+ 
+ 	/* cpuid 0xC0000001.edx */
+ 	const u32 kvm_cpuid_C000_0001_edx_x86_features =
+@@ -382,7 +382,7 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
+ 
+ 	/* cpuid 7.0.edx*/
+ 	const u32 kvm_cpuid_7_0_edx_x86_features =
+-		F(SPEC_CTRL) | F(ARCH_CAPABILITIES);
++		F(SPEC_CTRL) | F(SSBD) | F(ARCH_CAPABILITIES);
+ 
+ 	/* all calls to cpuid_count() should be made on the same cpu */
+ 	get_cpu();
+@@ -618,13 +618,20 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
+ 			g_phys_as = phys_as;
+ 		entry->eax = g_phys_as | (virt_as << 8);
+ 		entry->edx = 0;
+-		/* IBRS and IBPB aren't necessarily present in hardware cpuid */
+-		if (boot_cpu_has(X86_FEATURE_IBPB))
+-			entry->ebx |= F(IBPB);
+-		if (boot_cpu_has(X86_FEATURE_IBRS))
+-			entry->ebx |= F(IBRS);
++		/*
++		 * IBRS, IBPB and VIRT_SSBD aren't necessarily present in
++		 * hardware cpuid
++		 */
++		if (boot_cpu_has(X86_FEATURE_AMD_IBPB))
++			entry->ebx |= F(AMD_IBPB);
++		if (boot_cpu_has(X86_FEATURE_AMD_IBRS))
++			entry->ebx |= F(AMD_IBRS);
++		if (boot_cpu_has(X86_FEATURE_VIRT_SSBD))
++			entry->ebx |= F(VIRT_SSBD);
+ 		entry->ebx &= kvm_cpuid_8000_0008_ebx_x86_features;
+ 		cpuid_mask(&entry->ebx, CPUID_8000_0008_EBX);
++		if (boot_cpu_has(X86_FEATURE_LS_CFG_SSBD))
++			entry->ebx |= F(VIRT_SSBD);
+ 		break;
+ 	}
+ 	case 0x80000019:
+diff --git a/arch/x86/kvm/cpuid.h b/arch/x86/kvm/cpuid.h
+index d1beb7156704..c38369781239 100644
+--- a/arch/x86/kvm/cpuid.h
++++ b/arch/x86/kvm/cpuid.h
+@@ -165,21 +165,21 @@ static inline bool guest_cpuid_has_ibpb(struct kvm_vcpu *vcpu)
+ 	struct kvm_cpuid_entry2 *best;
+ 
+ 	best = kvm_find_cpuid_entry(vcpu, 0x80000008, 0);
+-	if (best && (best->ebx & bit(X86_FEATURE_IBPB)))
++	if (best && (best->ebx & bit(X86_FEATURE_AMD_IBPB)))
+ 		return true;
+ 	best = kvm_find_cpuid_entry(vcpu, 7, 0);
+ 	return best && (best->edx & bit(X86_FEATURE_SPEC_CTRL));
+ }
+ 
+-static inline bool guest_cpuid_has_ibrs(struct kvm_vcpu *vcpu)
++static inline bool guest_cpuid_has_spec_ctrl(struct kvm_vcpu *vcpu)
+ {
+ 	struct kvm_cpuid_entry2 *best;
+ 
+ 	best = kvm_find_cpuid_entry(vcpu, 0x80000008, 0);
+-	if (best && (best->ebx & bit(X86_FEATURE_IBRS)))
++	if (best && (best->ebx & bit(X86_FEATURE_AMD_IBRS)))
+ 		return true;
+ 	best = kvm_find_cpuid_entry(vcpu, 7, 0);
+-	return best && (best->edx & bit(X86_FEATURE_SPEC_CTRL));
++	return best && (best->edx & (bit(X86_FEATURE_SPEC_CTRL) | bit(X86_FEATURE_SSBD)));
+ }
+ 
+ static inline bool guest_cpuid_has_arch_capabilities(struct kvm_vcpu *vcpu)
+@@ -190,6 +190,15 @@ static inline bool guest_cpuid_has_arch_capabilities(struct kvm_vcpu *vcpu)
+ 	return best && (best->edx & bit(X86_FEATURE_ARCH_CAPABILITIES));
+ }
+ 
++static inline bool guest_cpuid_has_virt_ssbd(struct kvm_vcpu *vcpu)
++{
++	struct kvm_cpuid_entry2 *best;
++
++	best = kvm_find_cpuid_entry(vcpu, 0x80000008, 0);
++	return best && (best->ebx & bit(X86_FEATURE_VIRT_SSBD));
++}
++
++
+ 
+ /*
+  * NRIPS is provided through cpuidfn 0x8000000a.edx bit 3
+diff --git a/arch/x86/kvm/svm.c b/arch/x86/kvm/svm.c
+index aaa93b4b0380..a27f9e442ffc 100644
+--- a/arch/x86/kvm/svm.c
++++ b/arch/x86/kvm/svm.c
+@@ -45,7 +45,7 @@
+ #include <asm/kvm_para.h>
+ #include <asm/irq_remapping.h>
+ #include <asm/microcode.h>
+-#include <asm/nospec-branch.h>
++#include <asm/spec-ctrl.h>
+ 
+ #include <asm/virtext.h>
+ #include "trace.h"
+@@ -185,6 +185,12 @@ struct vcpu_svm {
+ 	} host;
+ 
+ 	u64 spec_ctrl;
++	/*
++	 * Contains guest-controlled bits of VIRT_SPEC_CTRL, which will be
++	 * translated into the appropriate L2_CFG bits on the host to
++	 * perform speculative control.
++	 */
++	u64 virt_spec_ctrl;
+ 
+ 	u32 *msrpm;
+ 
+@@ -1561,6 +1567,7 @@ static void svm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
+ 	u32 eax = 1;
+ 
+ 	svm->spec_ctrl = 0;
++	svm->virt_spec_ctrl = 0;
+ 
+ 	if (!init_event) {
+ 		svm->vcpu.arch.apic_base = APIC_DEFAULT_PHYS_BASE |
+@@ -3545,11 +3552,18 @@ static int svm_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
+ 		break;
+ 	case MSR_IA32_SPEC_CTRL:
+ 		if (!msr_info->host_initiated &&
+-		    !guest_cpuid_has_ibrs(vcpu))
++		    !guest_cpuid_has_spec_ctrl(vcpu))
+ 			return 1;
+ 
+ 		msr_info->data = svm->spec_ctrl;
+ 		break;
++	case MSR_AMD64_VIRT_SPEC_CTRL:
++		if (!msr_info->host_initiated &&
++		    !guest_cpuid_has_virt_ssbd(vcpu))
++			return 1;
++
++		msr_info->data = svm->virt_spec_ctrl;
++		break;
+ 	case MSR_IA32_UCODE_REV:
+ 		msr_info->data = 0x01000065;
+ 		break;
+@@ -3643,7 +3657,7 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr)
+ 		break;
+ 	case MSR_IA32_SPEC_CTRL:
+ 		if (!msr->host_initiated &&
+-		    !guest_cpuid_has_ibrs(vcpu))
++		    !guest_cpuid_has_spec_ctrl(vcpu))
+ 			return 1;
+ 
+ 		/* The STIBP bit doesn't fault even if it's not advertised */
+@@ -3684,6 +3698,16 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr)
+ 			break;
+ 		set_msr_interception(svm->msrpm, MSR_IA32_PRED_CMD, 0, 1);
+ 		break;
++	case MSR_AMD64_VIRT_SPEC_CTRL:
++		if (!msr->host_initiated &&
++		    !guest_cpuid_has_virt_ssbd(vcpu))
++			return 1;
++
++		if (data & ~SPEC_CTRL_SSBD)
++			return 1;
++
++		svm->virt_spec_ctrl = data;
++		break;
+ 	case MSR_STAR:
+ 		svm->vmcb->save.star = data;
+ 		break;
+@@ -4917,8 +4941,7 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
+ 	 * is no need to worry about the conditional branch over the wrmsr
+ 	 * being speculatively taken.
+ 	 */
+-	if (svm->spec_ctrl)
+-		native_wrmsrl(MSR_IA32_SPEC_CTRL, svm->spec_ctrl);
++	x86_spec_ctrl_set_guest(svm->spec_ctrl, svm->virt_spec_ctrl);
+ 
+ 	asm volatile (
+ 		"push %%" _ASM_BP "; \n\t"
+@@ -5012,6 +5035,18 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
+ #endif
+ 		);
+ 
++	/* Eliminate branch target predictions from guest mode */
++	vmexit_fill_RSB();
++
++#ifdef CONFIG_X86_64
++	wrmsrl(MSR_GS_BASE, svm->host.gs_base);
++#else
++	loadsegment(fs, svm->host.fs);
++#ifndef CONFIG_X86_32_LAZY_GS
++	loadsegment(gs, svm->host.gs);
++#endif
++#endif
++
+ 	/*
+ 	 * We do not use IBRS in the kernel. If this vCPU has used the
+ 	 * SPEC_CTRL MSR it may have left it on; save the value and
+@@ -5030,20 +5065,7 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
+ 	if (unlikely(!msr_write_intercepted(vcpu, MSR_IA32_SPEC_CTRL)))
+ 		svm->spec_ctrl = native_read_msr(MSR_IA32_SPEC_CTRL);
+ 
+-	if (svm->spec_ctrl)
+-		native_wrmsrl(MSR_IA32_SPEC_CTRL, 0);
+-
+-	/* Eliminate branch target predictions from guest mode */
+-	vmexit_fill_RSB();
+-
+-#ifdef CONFIG_X86_64
+-	wrmsrl(MSR_GS_BASE, svm->host.gs_base);
+-#else
+-	loadsegment(fs, svm->host.fs);
+-#ifndef CONFIG_X86_32_LAZY_GS
+-	loadsegment(gs, svm->host.gs);
+-#endif
+-#endif
++	x86_spec_ctrl_restore_host(svm->spec_ctrl, svm->virt_spec_ctrl);
+ 
+ 	reload_tss(vcpu);
+ 
+@@ -5145,7 +5167,7 @@ static bool svm_cpu_has_accelerated_tpr(void)
+ 	return false;
+ }
+ 
+-static bool svm_has_high_real_mode_segbase(void)
++static bool svm_has_emulated_msr(int index)
+ {
+ 	return true;
+ }
+@@ -5462,7 +5484,7 @@ static struct kvm_x86_ops svm_x86_ops __ro_after_init = {
+ 	.hardware_enable = svm_hardware_enable,
+ 	.hardware_disable = svm_hardware_disable,
+ 	.cpu_has_accelerated_tpr = svm_cpu_has_accelerated_tpr,
+-	.cpu_has_high_real_mode_segbase = svm_has_high_real_mode_segbase,
++	.has_emulated_msr = svm_has_emulated_msr,
+ 
+ 	.vcpu_create = svm_create_vcpu,
+ 	.vcpu_free = svm_free_vcpu,
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index b978aeccda78..d92523afb425 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -50,7 +50,7 @@
+ #include <asm/apic.h>
+ #include <asm/irq_remapping.h>
+ #include <asm/microcode.h>
+-#include <asm/nospec-branch.h>
++#include <asm/spec-ctrl.h>
+ 
+ #include "trace.h"
+ #include "pmu.h"
+@@ -3020,7 +3020,7 @@ static int vmx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
+ 		break;
+ 	case MSR_IA32_SPEC_CTRL:
+ 		if (!msr_info->host_initiated &&
+-		    !guest_cpuid_has_ibrs(vcpu))
++		    !guest_cpuid_has_spec_ctrl(vcpu))
+ 			return 1;
+ 
+ 		msr_info->data = to_vmx(vcpu)->spec_ctrl;
+@@ -3137,11 +3137,11 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
+ 		break;
+ 	case MSR_IA32_SPEC_CTRL:
+ 		if (!msr_info->host_initiated &&
+-		    !guest_cpuid_has_ibrs(vcpu))
++		    !guest_cpuid_has_spec_ctrl(vcpu))
+ 			return 1;
+ 
+ 		/* The STIBP bit doesn't fault even if it's not advertised */
+-		if (data & ~(SPEC_CTRL_IBRS | SPEC_CTRL_STIBP))
++		if (data & ~(SPEC_CTRL_IBRS | SPEC_CTRL_STIBP | SPEC_CTRL_SSBD))
+ 			return 1;
+ 
+ 		vmx->spec_ctrl = data;
+@@ -8691,9 +8691,21 @@ static void vmx_handle_external_intr(struct kvm_vcpu *vcpu)
+ 	}
+ }
+ 
+-static bool vmx_has_high_real_mode_segbase(void)
++static bool vmx_has_emulated_msr(int index)
+ {
+-	return enable_unrestricted_guest || emulate_invalid_guest_state;
++	switch (index) {
++	case MSR_IA32_SMBASE:
++		/*
++		 * We cannot do SMM unless we can run the guest in big
++		 * real mode.
++		 */
++		return enable_unrestricted_guest || emulate_invalid_guest_state;
++	case MSR_AMD64_VIRT_SPEC_CTRL:
++		/* This is AMD only.  */
++		return false;
++	default:
++		return true;
++	}
+ }
+ 
+ static bool vmx_mpx_supported(void)
+@@ -8916,10 +8928,10 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
+ 	 * is no need to worry about the conditional branch over the wrmsr
+ 	 * being speculatively taken.
+ 	 */
+-	if (vmx->spec_ctrl)
+-		native_wrmsrl(MSR_IA32_SPEC_CTRL, vmx->spec_ctrl);
++	x86_spec_ctrl_set_guest(vmx->spec_ctrl, 0);
+ 
+ 	vmx->__launched = vmx->loaded_vmcs->launched;
++
+ 	asm(
+ 		/* Store host registers */
+ 		"push %%" _ASM_DX "; push %%" _ASM_BP ";"
+@@ -9055,8 +9067,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
+ 	if (unlikely(!msr_write_intercepted(vcpu, MSR_IA32_SPEC_CTRL)))
+ 		vmx->spec_ctrl = native_read_msr(MSR_IA32_SPEC_CTRL);
+ 
+-	if (vmx->spec_ctrl)
+-		native_wrmsrl(MSR_IA32_SPEC_CTRL, 0);
++	x86_spec_ctrl_restore_host(vmx->spec_ctrl, 0);
+ 
+ 	/* Eliminate branch target predictions from guest mode */
+ 	vmexit_fill_RSB();
+@@ -11347,7 +11358,7 @@ static struct kvm_x86_ops vmx_x86_ops __ro_after_init = {
+ 	.hardware_enable = hardware_enable,
+ 	.hardware_disable = hardware_disable,
+ 	.cpu_has_accelerated_tpr = report_flexpriority,
+-	.cpu_has_high_real_mode_segbase = vmx_has_high_real_mode_segbase,
++	.has_emulated_msr = vmx_has_emulated_msr,
+ 
+ 	.vcpu_create = vmx_create_vcpu,
+ 	.vcpu_free = vmx_free_vcpu,
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 3aaaf305420d..a0cb85f30c94 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -1002,6 +1002,7 @@ static u32 emulated_msrs[] = {
+ 	MSR_IA32_MCG_CTL,
+ 	MSR_IA32_MCG_EXT_CTL,
+ 	MSR_IA32_SMBASE,
++	MSR_AMD64_VIRT_SPEC_CTRL,
+ };
+ 
+ static unsigned num_emulated_msrs;
+@@ -2664,7 +2665,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
+ 		 * fringe case that is not enabled except via specific settings
+ 		 * of the module parameters.
+ 		 */
+-		r = kvm_x86_ops->cpu_has_high_real_mode_segbase();
++		r = kvm_x86_ops->has_emulated_msr(MSR_IA32_SMBASE);
+ 		break;
+ 	case KVM_CAP_COALESCED_MMIO:
+ 		r = KVM_COALESCED_MMIO_PAGE_OFFSET;
+@@ -4226,14 +4227,8 @@ static void kvm_init_msr_list(void)
+ 	num_msrs_to_save = j;
+ 
+ 	for (i = j = 0; i < ARRAY_SIZE(emulated_msrs); i++) {
+-		switch (emulated_msrs[i]) {
+-		case MSR_IA32_SMBASE:
+-			if (!kvm_x86_ops->cpu_has_high_real_mode_segbase())
+-				continue;
+-			break;
+-		default:
+-			break;
+-		}
++		if (!kvm_x86_ops->has_emulated_msr(emulated_msrs[i]))
++			continue;
+ 
+ 		if (j < i)
+ 			emulated_msrs[j] = emulated_msrs[i];
+diff --git a/arch/x86/mm/pkeys.c b/arch/x86/mm/pkeys.c
+index f88ce0e5efd9..0bbec041c003 100644
+--- a/arch/x86/mm/pkeys.c
++++ b/arch/x86/mm/pkeys.c
+@@ -95,26 +95,27 @@ int __arch_override_mprotect_pkey(struct vm_area_struct *vma, int prot, int pkey
+ 	 */
+ 	if (pkey != -1)
+ 		return pkey;
+-	/*
+-	 * Look for a protection-key-drive execute-only mapping
+-	 * which is now being given permissions that are not
+-	 * execute-only.  Move it back to the default pkey.
+-	 */
+-	if (vma_is_pkey_exec_only(vma) &&
+-	    (prot & (PROT_READ|PROT_WRITE))) {
+-		return 0;
+-	}
++
+ 	/*
+ 	 * The mapping is execute-only.  Go try to get the
+ 	 * execute-only protection key.  If we fail to do that,
+ 	 * fall through as if we do not have execute-only
+-	 * support.
++	 * support in this mm.
+ 	 */
+ 	if (prot == PROT_EXEC) {
+ 		pkey = execute_only_pkey(vma->vm_mm);
+ 		if (pkey > 0)
+ 			return pkey;
++	} else if (vma_is_pkey_exec_only(vma)) {
++		/*
++		 * Protections are *not* PROT_EXEC, but the mapping
++		 * is using the exec-only pkey.  This mapping was
++		 * PROT_EXEC and will no longer be.  Move back to
++		 * the default pkey.
++		 */
++		return ARCH_DEFAULT_PKEY;
+ 	}
++
+ 	/*
+ 	 * This is a vanilla, non-pkey mprotect (or we failed to
+ 	 * setup execute-only), inherit the pkey from the VMA we
+diff --git a/arch/x86/xen/enlighten.c b/arch/x86/xen/enlighten.c
+index 2bea87cc0ff2..081437b5f381 100644
+--- a/arch/x86/xen/enlighten.c
++++ b/arch/x86/xen/enlighten.c
+@@ -1977,10 +1977,8 @@ EXPORT_SYMBOL_GPL(xen_hvm_need_lapic);
+ 
+ static void xen_set_cpu_features(struct cpuinfo_x86 *c)
+ {
+-	if (xen_pv_domain()) {
+-		clear_cpu_bug(c, X86_BUG_SYSRET_SS_ATTRS);
++	if (xen_pv_domain())
+ 		set_cpu_cap(c, X86_FEATURE_XENPV);
+-	}
+ }
+ 
+ static void xen_pin_vcpu(int cpu)
+diff --git a/arch/x86/xen/mmu.c b/arch/x86/xen/mmu.c
+index 418f1b8576cf..c92f75f7ae33 100644
+--- a/arch/x86/xen/mmu.c
++++ b/arch/x86/xen/mmu.c
+@@ -1317,8 +1317,6 @@ void xen_flush_tlb_all(void)
+ 	struct mmuext_op *op;
+ 	struct multicall_space mcs;
+ 
+-	trace_xen_mmu_flush_tlb_all(0);
+-
+ 	preempt_disable();
+ 
+ 	mcs = xen_mc_entry(sizeof(*op));
+@@ -1336,8 +1334,6 @@ static void xen_flush_tlb(void)
+ 	struct mmuext_op *op;
+ 	struct multicall_space mcs;
+ 
+-	trace_xen_mmu_flush_tlb(0);
+-
+ 	preempt_disable();
+ 
+ 	mcs = xen_mc_entry(sizeof(*op));
+diff --git a/drivers/base/cpu.c b/drivers/base/cpu.c
+index 56b6c8508a89..cbb1cc6bbdb4 100644
+--- a/drivers/base/cpu.c
++++ b/drivers/base/cpu.c
+@@ -519,14 +519,22 @@ ssize_t __weak cpu_show_spectre_v2(struct device *dev,
+ 	return sprintf(buf, "Not affected\n");
+ }
+ 
++ssize_t __weak cpu_show_spec_store_bypass(struct device *dev,
++					  struct device_attribute *attr, char *buf)
++{
++	return sprintf(buf, "Not affected\n");
++}
++
+ static DEVICE_ATTR(meltdown, 0444, cpu_show_meltdown, NULL);
+ static DEVICE_ATTR(spectre_v1, 0444, cpu_show_spectre_v1, NULL);
+ static DEVICE_ATTR(spectre_v2, 0444, cpu_show_spectre_v2, NULL);
++static DEVICE_ATTR(spec_store_bypass, 0444, cpu_show_spec_store_bypass, NULL);
+ 
+ static struct attribute *cpu_root_vulnerabilities_attrs[] = {
+ 	&dev_attr_meltdown.attr,
+ 	&dev_attr_spectre_v1.attr,
+ 	&dev_attr_spectre_v2.attr,
++	&dev_attr_spec_store_bypass.attr,
+ 	NULL
+ };
+ 
+diff --git a/drivers/i2c/busses/i2c-designware-core.c b/drivers/i2c/busses/i2c-designware-core.c
+index 340e037b3224..884c1ec61ac9 100644
+--- a/drivers/i2c/busses/i2c-designware-core.c
++++ b/drivers/i2c/busses/i2c-designware-core.c
+@@ -507,7 +507,10 @@ static void i2c_dw_xfer_init(struct dw_i2c_dev *dev)
+ 	i2c_dw_disable_int(dev);
+ 
+ 	/* Enable the adapter */
+-	__i2c_dw_enable_and_wait(dev, true);
++	__i2c_dw_enable(dev, true);
++
++	/* Dummy read to avoid the register getting stuck on Bay Trail */
++	dw_readl(dev, DW_IC_ENABLE_STATUS);
+ 
+ 	/* Clear and enable interrupts */
+ 	dw_readl(dev, DW_IC_CLR_INTR);
+diff --git a/drivers/s390/cio/qdio_setup.c b/drivers/s390/cio/qdio_setup.c
+index 48b3866a9ded..35286907c636 100644
+--- a/drivers/s390/cio/qdio_setup.c
++++ b/drivers/s390/cio/qdio_setup.c
+@@ -140,7 +140,7 @@ static int __qdio_allocate_qs(struct qdio_q **irq_ptr_qs, int nr_queues)
+ 	int i;
+ 
+ 	for (i = 0; i < nr_queues; i++) {
+-		q = kmem_cache_alloc(qdio_q_cache, GFP_KERNEL);
++		q = kmem_cache_zalloc(qdio_q_cache, GFP_KERNEL);
+ 		if (!q)
+ 			return -ENOMEM;
+ 
+@@ -456,7 +456,6 @@ int qdio_setup_irq(struct qdio_initialize *init_data)
+ {
+ 	struct ciw *ciw;
+ 	struct qdio_irq *irq_ptr = init_data->cdev->private->qdio_data;
+-	int rc;
+ 
+ 	memset(&irq_ptr->qib, 0, sizeof(irq_ptr->qib));
+ 	memset(&irq_ptr->siga_flag, 0, sizeof(irq_ptr->siga_flag));
+@@ -493,16 +492,14 @@ int qdio_setup_irq(struct qdio_initialize *init_data)
+ 	ciw = ccw_device_get_ciw(init_data->cdev, CIW_TYPE_EQUEUE);
+ 	if (!ciw) {
+ 		DBF_ERROR("%4x NO EQ", irq_ptr->schid.sch_no);
+-		rc = -EINVAL;
+-		goto out_err;
++		return -EINVAL;
+ 	}
+ 	irq_ptr->equeue = *ciw;
+ 
+ 	ciw = ccw_device_get_ciw(init_data->cdev, CIW_TYPE_AQUEUE);
+ 	if (!ciw) {
+ 		DBF_ERROR("%4x NO AQ", irq_ptr->schid.sch_no);
+-		rc = -EINVAL;
+-		goto out_err;
++		return -EINVAL;
+ 	}
+ 	irq_ptr->aqueue = *ciw;
+ 
+@@ -510,9 +507,6 @@ int qdio_setup_irq(struct qdio_initialize *init_data)
+ 	irq_ptr->orig_handler = init_data->cdev->handler;
+ 	init_data->cdev->handler = qdio_int_handler;
+ 	return 0;
+-out_err:
+-	qdio_release_memory(irq_ptr);
+-	return rc;
+ }
+ 
+ void qdio_print_subchannel_info(struct qdio_irq *irq_ptr,
+diff --git a/drivers/spi/spi-bcm-qspi.c b/drivers/spi/spi-bcm-qspi.c
+index 7d629b4e1ecc..adc3f56d4773 100644
+--- a/drivers/spi/spi-bcm-qspi.c
++++ b/drivers/spi/spi-bcm-qspi.c
+@@ -514,7 +514,7 @@ static int bcm_qspi_bspi_set_mode(struct bcm_qspi *qspi,
+ 
+ static void bcm_qspi_enable_bspi(struct bcm_qspi *qspi)
+ {
+-	if (!has_bspi(qspi) || (qspi->bspi_enabled))
++	if (!has_bspi(qspi))
+ 		return;
+ 
+ 	qspi->bspi_enabled = 1;
+@@ -529,7 +529,7 @@ static void bcm_qspi_enable_bspi(struct bcm_qspi *qspi)
+ 
+ static void bcm_qspi_disable_bspi(struct bcm_qspi *qspi)
+ {
+-	if (!has_bspi(qspi) || (!qspi->bspi_enabled))
++	if (!has_bspi(qspi))
+ 		return;
+ 
+ 	qspi->bspi_enabled = 0;
+@@ -543,16 +543,19 @@ static void bcm_qspi_disable_bspi(struct bcm_qspi *qspi)
+ 
+ static void bcm_qspi_chip_select(struct bcm_qspi *qspi, int cs)
+ {
+-	u32 data = 0;
++	u32 rd = 0;
++	u32 wr = 0;
+ 
+-	if (qspi->curr_cs == cs)
+-		return;
+ 	if (qspi->base[CHIP_SELECT]) {
+-		data = bcm_qspi_read(qspi, CHIP_SELECT, 0);
+-		data = (data & ~0xff) | (1 << cs);
+-		bcm_qspi_write(qspi, CHIP_SELECT, 0, data);
++		rd = bcm_qspi_read(qspi, CHIP_SELECT, 0);
++		wr = (rd & ~0xff) | (1 << cs);
++		if (rd == wr)
++			return;
++		bcm_qspi_write(qspi, CHIP_SELECT, 0, wr);
+ 		usleep_range(10, 20);
+ 	}
++
++	dev_dbg(&qspi->pdev->dev, "using cs:%d\n", cs);
+ 	qspi->curr_cs = cs;
+ }
+ 
+@@ -770,8 +773,13 @@ static int write_to_hw(struct bcm_qspi *qspi, struct spi_device *spi)
+ 			dev_dbg(&qspi->pdev->dev, "WR %04x\n", val);
+ 		}
+ 		mspi_cdram = MSPI_CDRAM_CONT_BIT;
+-		mspi_cdram |= (~(1 << spi->chip_select) &
+-			       MSPI_CDRAM_PCS);
++
++		if (has_bspi(qspi))
++			mspi_cdram &= ~1;
++		else
++			mspi_cdram |= (~(1 << spi->chip_select) &
++				       MSPI_CDRAM_PCS);
++
+ 		mspi_cdram |= ((tp.trans->bits_per_word <= 8) ? 0 :
+ 				MSPI_CDRAM_BITSE_BIT);
+ 
+diff --git a/drivers/spi/spi-pxa2xx.h b/drivers/spi/spi-pxa2xx.h
+index ce31b8199bb3..b8e004d1467b 100644
+--- a/drivers/spi/spi-pxa2xx.h
++++ b/drivers/spi/spi-pxa2xx.h
+@@ -38,7 +38,7 @@ struct driver_data {
+ 
+ 	/* SSP register addresses */
+ 	void __iomem *ioaddr;
+-	u32 ssdr_physical;
++	phys_addr_t ssdr_physical;
+ 
+ 	/* SSP masks*/
+ 	u32 dma_cr1;
+diff --git a/drivers/usb/usbip/stub.h b/drivers/usb/usbip/stub.h
+index 910f027773aa..84c0599b45b7 100644
+--- a/drivers/usb/usbip/stub.h
++++ b/drivers/usb/usbip/stub.h
+@@ -87,6 +87,7 @@ struct bus_id_priv {
+ 	struct stub_device *sdev;
+ 	struct usb_device *udev;
+ 	char shutdown_busid;
++	spinlock_t busid_lock;
+ };
+ 
+ /* stub_priv is allocated from stub_priv_cache */
+@@ -97,6 +98,7 @@ extern struct usb_device_driver stub_driver;
+ 
+ /* stub_main.c */
+ struct bus_id_priv *get_busid_priv(const char *busid);
++void put_busid_priv(struct bus_id_priv *bid);
+ int del_match_busid(char *busid);
+ void stub_device_cleanup_urbs(struct stub_device *sdev);
+ 
+diff --git a/drivers/usb/usbip/stub_dev.c b/drivers/usb/usbip/stub_dev.c
+index 3550224f4d69..8e629b6a6f3f 100644
+--- a/drivers/usb/usbip/stub_dev.c
++++ b/drivers/usb/usbip/stub_dev.c
+@@ -314,9 +314,9 @@ static int stub_probe(struct usb_device *udev)
+ 	struct stub_device *sdev = NULL;
+ 	const char *udev_busid = dev_name(&udev->dev);
+ 	struct bus_id_priv *busid_priv;
+-	int rc;
++	int rc = 0;
+ 
+-	dev_dbg(&udev->dev, "Enter\n");
++	dev_dbg(&udev->dev, "Enter probe\n");
+ 
+ 	/* check we should claim or not by busid_table */
+ 	busid_priv = get_busid_priv(udev_busid);
+@@ -331,13 +331,15 @@ static int stub_probe(struct usb_device *udev)
+ 		 * other matched drivers by the driver core.
+ 		 * See driver_probe_device() in driver/base/dd.c
+ 		 */
+-		return -ENODEV;
++		rc = -ENODEV;
++		goto call_put_busid_priv;
+ 	}
+ 
+ 	if (udev->descriptor.bDeviceClass == USB_CLASS_HUB) {
+ 		dev_dbg(&udev->dev, "%s is a usb hub device... skip!\n",
+ 			 udev_busid);
+-		return -ENODEV;
++		rc = -ENODEV;
++		goto call_put_busid_priv;
+ 	}
+ 
+ 	if (!strcmp(udev->bus->bus_name, "vhci_hcd")) {
+@@ -345,13 +347,16 @@ static int stub_probe(struct usb_device *udev)
+ 			"%s is attached on vhci_hcd... skip!\n",
+ 			udev_busid);
+ 
+-		return -ENODEV;
++		rc = -ENODEV;
++		goto call_put_busid_priv;
+ 	}
+ 
+ 	/* ok, this is my device */
+ 	sdev = stub_device_alloc(udev);
+-	if (!sdev)
+-		return -ENOMEM;
++	if (!sdev) {
++		rc = -ENOMEM;
++		goto call_put_busid_priv;
++	}
+ 
+ 	dev_info(&udev->dev,
+ 		"usbip-host: register new device (bus %u dev %u)\n",
+@@ -383,7 +388,9 @@ static int stub_probe(struct usb_device *udev)
+ 	}
+ 	busid_priv->status = STUB_BUSID_ALLOC;
+ 
+-	return 0;
++	rc = 0;
++	goto call_put_busid_priv;
++
+ err_files:
+ 	usb_hub_release_port(udev->parent, udev->portnum,
+ 			     (struct usb_dev_state *) udev);
+@@ -393,6 +400,9 @@ static int stub_probe(struct usb_device *udev)
+ 
+ 	busid_priv->sdev = NULL;
+ 	stub_device_free(sdev);
++
++call_put_busid_priv:
++	put_busid_priv(busid_priv);
+ 	return rc;
+ }
+ 
+@@ -418,7 +428,7 @@ static void stub_disconnect(struct usb_device *udev)
+ 	struct bus_id_priv *busid_priv;
+ 	int rc;
+ 
+-	dev_dbg(&udev->dev, "Enter\n");
++	dev_dbg(&udev->dev, "Enter disconnect\n");
+ 
+ 	busid_priv = get_busid_priv(udev_busid);
+ 	if (!busid_priv) {
+@@ -431,7 +441,7 @@ static void stub_disconnect(struct usb_device *udev)
+ 	/* get stub_device */
+ 	if (!sdev) {
+ 		dev_err(&udev->dev, "could not get device");
+-		return;
++		goto call_put_busid_priv;
+ 	}
+ 
+ 	dev_set_drvdata(&udev->dev, NULL);
+@@ -446,12 +456,12 @@ static void stub_disconnect(struct usb_device *udev)
+ 				  (struct usb_dev_state *) udev);
+ 	if (rc) {
+ 		dev_dbg(&udev->dev, "unable to release port\n");
+-		return;
++		goto call_put_busid_priv;
+ 	}
+ 
+ 	/* If usb reset is called from event handler */
+ 	if (usbip_in_eh(current))
+-		return;
++		goto call_put_busid_priv;
+ 
+ 	/* shutdown the current connection */
+ 	shutdown_busid(busid_priv);
+@@ -462,12 +472,11 @@ static void stub_disconnect(struct usb_device *udev)
+ 	busid_priv->sdev = NULL;
+ 	stub_device_free(sdev);
+ 
+-	if (busid_priv->status == STUB_BUSID_ALLOC) {
++	if (busid_priv->status == STUB_BUSID_ALLOC)
+ 		busid_priv->status = STUB_BUSID_ADDED;
+-	} else {
+-		busid_priv->status = STUB_BUSID_OTHER;
+-		del_match_busid((char *)udev_busid);
+-	}
++
++call_put_busid_priv:
++	put_busid_priv(busid_priv);
+ }
+ 
+ #ifdef CONFIG_PM
+diff --git a/drivers/usb/usbip/stub_main.c b/drivers/usb/usbip/stub_main.c
+index f761e02e75c9..fa90496ca7a8 100644
+--- a/drivers/usb/usbip/stub_main.c
++++ b/drivers/usb/usbip/stub_main.c
+@@ -28,6 +28,7 @@
+ #define DRIVER_DESC "USB/IP Host Driver"
+ 
+ struct kmem_cache *stub_priv_cache;
++
+ /*
+  * busid_tables defines matching busids that usbip can grab. A user can change
+  * dynamically what device is locally used and what device is exported to a
+@@ -39,6 +40,8 @@ static spinlock_t busid_table_lock;
+ 
+ static void init_busid_table(void)
+ {
++	int i;
++
+ 	/*
+ 	 * This also sets the bus_table[i].status to
+ 	 * STUB_BUSID_OTHER, which is 0.
+@@ -46,6 +49,9 @@ static void init_busid_table(void)
+ 	memset(busid_table, 0, sizeof(busid_table));
+ 
+ 	spin_lock_init(&busid_table_lock);
++
++	for (i = 0; i < MAX_BUSID; i++)
++		spin_lock_init(&busid_table[i].busid_lock);
+ }
+ 
+ /*
+@@ -57,15 +63,20 @@ static int get_busid_idx(const char *busid)
+ 	int i;
+ 	int idx = -1;
+ 
+-	for (i = 0; i < MAX_BUSID; i++)
++	for (i = 0; i < MAX_BUSID; i++) {
++		spin_lock(&busid_table[i].busid_lock);
+ 		if (busid_table[i].name[0])
+ 			if (!strncmp(busid_table[i].name, busid, BUSID_SIZE)) {
+ 				idx = i;
++				spin_unlock(&busid_table[i].busid_lock);
+ 				break;
+ 			}
++		spin_unlock(&busid_table[i].busid_lock);
++	}
+ 	return idx;
+ }
+ 
++/* Returns holding busid_lock. Should call put_busid_priv() to unlock */
+ struct bus_id_priv *get_busid_priv(const char *busid)
+ {
+ 	int idx;
+@@ -73,13 +84,22 @@ struct bus_id_priv *get_busid_priv(const char *busid)
+ 
+ 	spin_lock(&busid_table_lock);
+ 	idx = get_busid_idx(busid);
+-	if (idx >= 0)
++	if (idx >= 0) {
+ 		bid = &(busid_table[idx]);
++		/* get busid_lock before returning */
++		spin_lock(&bid->busid_lock);
++	}
+ 	spin_unlock(&busid_table_lock);
+ 
+ 	return bid;
+ }
+ 
++void put_busid_priv(struct bus_id_priv *bid)
++{
++	if (bid)
++		spin_unlock(&bid->busid_lock);
++}
++
+ static int add_match_busid(char *busid)
+ {
+ 	int i;
+@@ -92,15 +112,19 @@ static int add_match_busid(char *busid)
+ 		goto out;
+ 	}
+ 
+-	for (i = 0; i < MAX_BUSID; i++)
++	for (i = 0; i < MAX_BUSID; i++) {
++		spin_lock(&busid_table[i].busid_lock);
+ 		if (!busid_table[i].name[0]) {
+ 			strlcpy(busid_table[i].name, busid, BUSID_SIZE);
+ 			if ((busid_table[i].status != STUB_BUSID_ALLOC) &&
+ 			    (busid_table[i].status != STUB_BUSID_REMOV))
+ 				busid_table[i].status = STUB_BUSID_ADDED;
+ 			ret = 0;
++			spin_unlock(&busid_table[i].busid_lock);
+ 			break;
+ 		}
++		spin_unlock(&busid_table[i].busid_lock);
++	}
+ 
+ out:
+ 	spin_unlock(&busid_table_lock);
+@@ -121,6 +145,8 @@ int del_match_busid(char *busid)
+ 	/* found */
+ 	ret = 0;
+ 
++	spin_lock(&busid_table[idx].busid_lock);
++
+ 	if (busid_table[idx].status == STUB_BUSID_OTHER)
+ 		memset(busid_table[idx].name, 0, BUSID_SIZE);
+ 
+@@ -128,6 +154,7 @@ int del_match_busid(char *busid)
+ 	    (busid_table[idx].status != STUB_BUSID_ADDED))
+ 		busid_table[idx].status = STUB_BUSID_REMOV;
+ 
++	spin_unlock(&busid_table[idx].busid_lock);
+ out:
+ 	spin_unlock(&busid_table_lock);
+ 
+@@ -140,9 +167,12 @@ static ssize_t show_match_busid(struct device_driver *drv, char *buf)
+ 	char *out = buf;
+ 
+ 	spin_lock(&busid_table_lock);
+-	for (i = 0; i < MAX_BUSID; i++)
++	for (i = 0; i < MAX_BUSID; i++) {
++		spin_lock(&busid_table[i].busid_lock);
+ 		if (busid_table[i].name[0])
+ 			out += sprintf(out, "%s ", busid_table[i].name);
++		spin_unlock(&busid_table[i].busid_lock);
++	}
+ 	spin_unlock(&busid_table_lock);
+ 	out += sprintf(out, "\n");
+ 
+@@ -184,6 +214,51 @@ static ssize_t store_match_busid(struct device_driver *dev, const char *buf,
+ static DRIVER_ATTR(match_busid, S_IRUSR | S_IWUSR, show_match_busid,
+ 		   store_match_busid);
+ 
++static int do_rebind(char *busid, struct bus_id_priv *busid_priv)
++{
++	int ret;
++
++	/* device_attach() callers should hold parent lock for USB */
++	if (busid_priv->udev->dev.parent)
++		device_lock(busid_priv->udev->dev.parent);
++	ret = device_attach(&busid_priv->udev->dev);
++	if (busid_priv->udev->dev.parent)
++		device_unlock(busid_priv->udev->dev.parent);
++	if (ret < 0) {
++		dev_err(&busid_priv->udev->dev, "rebind failed\n");
++		return ret;
++	}
++	return 0;
++}
++
++static void stub_device_rebind(void)
++{
++#if IS_MODULE(CONFIG_USBIP_HOST)
++	struct bus_id_priv *busid_priv;
++	int i;
++
++	/* update status to STUB_BUSID_OTHER so probe ignores the device */
++	spin_lock(&busid_table_lock);
++	for (i = 0; i < MAX_BUSID; i++) {
++		if (busid_table[i].name[0] &&
++		    busid_table[i].shutdown_busid) {
++			busid_priv = &(busid_table[i]);
++			busid_priv->status = STUB_BUSID_OTHER;
++		}
++	}
++	spin_unlock(&busid_table_lock);
++
++	/* now run rebind - no need to hold locks. driver files are removed */
++	for (i = 0; i < MAX_BUSID; i++) {
++		if (busid_table[i].name[0] &&
++		    busid_table[i].shutdown_busid) {
++			busid_priv = &(busid_table[i]);
++			do_rebind(busid_table[i].name, busid_priv);
++		}
++	}
++#endif
++}
++
+ static ssize_t rebind_store(struct device_driver *dev, const char *buf,
+ 				 size_t count)
+ {
+@@ -201,16 +276,17 @@ static ssize_t rebind_store(struct device_driver *dev, const char *buf,
+ 	if (!bid)
+ 		return -ENODEV;
+ 
+-	/* device_attach() callers should hold parent lock for USB */
+-	if (bid->udev->dev.parent)
+-		device_lock(bid->udev->dev.parent);
+-	ret = device_attach(&bid->udev->dev);
+-	if (bid->udev->dev.parent)
+-		device_unlock(bid->udev->dev.parent);
+-	if (ret < 0) {
+-		dev_err(&bid->udev->dev, "rebind failed\n");
++	/* mark the device for deletion so probe ignores it during rescan */
++	bid->status = STUB_BUSID_OTHER;
++	/* release the busid lock */
++	put_busid_priv(bid);
++
++	ret = do_rebind((char *) buf, bid);
++	if (ret < 0)
+ 		return ret;
+-	}
++
++	/* delete device from busid_table */
++	del_match_busid((char *) buf);
+ 
+ 	return count;
+ }
+@@ -333,6 +409,9 @@ static void __exit usbip_host_exit(void)
+ 	 */
+ 	usb_deregister_device_driver(&stub_driver);
+ 
++	/* initiate scan to attach devices */
++	stub_device_rebind();
++
+ 	kmem_cache_destroy(stub_priv_cache);
+ }
+ 
+diff --git a/fs/btrfs/ctree.c b/fs/btrfs/ctree.c
+index f6ba165d3f81..409b12392474 100644
+--- a/fs/btrfs/ctree.c
++++ b/fs/btrfs/ctree.c
+@@ -2486,10 +2486,8 @@ read_block_for_search(struct btrfs_trans_handle *trans,
+ 	if (p->reada != READA_NONE)
+ 		reada_for_search(root, p, level, slot, key->objectid);
+ 
+-	btrfs_release_path(p);
+-
+ 	ret = -EAGAIN;
+-	tmp = read_tree_block(root, blocknr, 0);
++	tmp = read_tree_block(root, blocknr, gen);
+ 	if (!IS_ERR(tmp)) {
+ 		/*
+ 		 * If the read above didn't mark this buffer up to date,
+@@ -2503,6 +2501,8 @@ read_block_for_search(struct btrfs_trans_handle *trans,
+ 	} else {
+ 		ret = PTR_ERR(tmp);
+ 	}
++
++	btrfs_release_path(p);
+ 	return ret;
+ }
+ 
+diff --git a/fs/btrfs/tree-log.c b/fs/btrfs/tree-log.c
+index 52401732cddc..c65350e5119c 100644
+--- a/fs/btrfs/tree-log.c
++++ b/fs/btrfs/tree-log.c
+@@ -4614,6 +4614,7 @@ static int btrfs_log_inode(struct btrfs_trans_handle *trans,
+ 	struct extent_map_tree *em_tree = &BTRFS_I(inode)->extent_tree;
+ 	u64 logged_isize = 0;
+ 	bool need_log_inode_item = true;
++	bool xattrs_logged = false;
+ 
+ 	path = btrfs_alloc_path();
+ 	if (!path)
+@@ -4918,6 +4919,7 @@ static int btrfs_log_inode(struct btrfs_trans_handle *trans,
+ 	err = btrfs_log_all_xattrs(trans, root, inode, path, dst_path);
+ 	if (err)
+ 		goto out_unlock;
++	xattrs_logged = true;
+ 	if (max_key.type >= BTRFS_EXTENT_DATA_KEY && !fast_search) {
+ 		btrfs_release_path(path);
+ 		btrfs_release_path(dst_path);
+@@ -4930,6 +4932,11 @@ static int btrfs_log_inode(struct btrfs_trans_handle *trans,
+ 	btrfs_release_path(dst_path);
+ 	if (need_log_inode_item) {
+ 		err = log_inode_item(trans, log, dst_path, inode);
++		if (!err && !xattrs_logged) {
++			err = btrfs_log_all_xattrs(trans, root, inode, path,
++						   dst_path);
++			btrfs_release_path(path);
++		}
+ 		if (err)
+ 			goto out_unlock;
+ 	}
+diff --git a/fs/btrfs/volumes.c b/fs/btrfs/volumes.c
+index 4730ba2cc049..c2495cde26f6 100644
+--- a/fs/btrfs/volumes.c
++++ b/fs/btrfs/volumes.c
+@@ -3966,6 +3966,15 @@ int btrfs_resume_balance_async(struct btrfs_fs_info *fs_info)
+ 		return 0;
+ 	}
+ 
++	/*
++	 * A ro->rw remount sequence should continue with the paused balance
++	 * regardless of who pauses it, system or the user as of now, so set
++	 * the resume flag.
++	 */
++	spin_lock(&fs_info->balance_lock);
++	fs_info->balance_ctl->flags |= BTRFS_BALANCE_RESUME;
++	spin_unlock(&fs_info->balance_lock);
++
+ 	tsk = kthread_run(balance_kthread, fs_info, "btrfs-balance");
+ 	return PTR_ERR_OR_ZERO(tsk);
+ }
+diff --git a/fs/proc/array.c b/fs/proc/array.c
+index 794b52a6c20d..94f83e74db24 100644
+--- a/fs/proc/array.c
++++ b/fs/proc/array.c
+@@ -80,6 +80,7 @@
+ #include <linux/delayacct.h>
+ #include <linux/seq_file.h>
+ #include <linux/pid_namespace.h>
++#include <linux/prctl.h>
+ #include <linux/ptrace.h>
+ #include <linux/tracehook.h>
+ #include <linux/string_helpers.h>
+@@ -345,8 +346,32 @@ static inline void task_seccomp(struct seq_file *m, struct task_struct *p)
+ {
+ #ifdef CONFIG_SECCOMP
+ 	seq_put_decimal_ull(m, "Seccomp:\t", p->seccomp.mode);
+-	seq_putc(m, '\n');
+ #endif
++	seq_printf(m, "\nSpeculation_Store_Bypass:\t");
++	switch (arch_prctl_spec_ctrl_get(p, PR_SPEC_STORE_BYPASS)) {
++	case -EINVAL:
++		seq_printf(m, "unknown");
++		break;
++	case PR_SPEC_NOT_AFFECTED:
++		seq_printf(m, "not vulnerable");
++		break;
++	case PR_SPEC_PRCTL | PR_SPEC_FORCE_DISABLE:
++		seq_printf(m, "thread force mitigated");
++		break;
++	case PR_SPEC_PRCTL | PR_SPEC_DISABLE:
++		seq_printf(m, "thread mitigated");
++		break;
++	case PR_SPEC_PRCTL | PR_SPEC_ENABLE:
++		seq_printf(m, "thread vulnerable");
++		break;
++	case PR_SPEC_DISABLE:
++		seq_printf(m, "globally mitigated");
++		break;
++	default:
++		seq_printf(m, "vulnerable");
++		break;
++	}
++	seq_putc(m, '\n');
+ }
+ 
+ static inline void task_context_switch_counts(struct seq_file *m,
+diff --git a/include/linux/cpu.h b/include/linux/cpu.h
+index 2f475ad89a0d..917829b27350 100644
+--- a/include/linux/cpu.h
++++ b/include/linux/cpu.h
+@@ -50,6 +50,8 @@ extern ssize_t cpu_show_spectre_v1(struct device *dev,
+ 				   struct device_attribute *attr, char *buf);
+ extern ssize_t cpu_show_spectre_v2(struct device *dev,
+ 				   struct device_attribute *attr, char *buf);
++extern ssize_t cpu_show_spec_store_bypass(struct device *dev,
++					  struct device_attribute *attr, char *buf);
+ 
+ extern __printf(4, 5)
+ struct device *cpu_device_create(struct device *parent, void *drvdata,
+diff --git a/include/linux/efi.h b/include/linux/efi.h
+index cba7177cbec7..80b1b8faf503 100644
+--- a/include/linux/efi.h
++++ b/include/linux/efi.h
+@@ -380,8 +380,8 @@ typedef struct {
+ 	u32 attributes;
+ 	u32 get_bar_attributes;
+ 	u32 set_bar_attributes;
+-	uint64_t romsize;
+-	void *romimage;
++	u64 romsize;
++	u32 romimage;
+ } efi_pci_io_protocol_32;
+ 
+ typedef struct {
+@@ -400,8 +400,8 @@ typedef struct {
+ 	u64 attributes;
+ 	u64 get_bar_attributes;
+ 	u64 set_bar_attributes;
+-	uint64_t romsize;
+-	void *romimage;
++	u64 romsize;
++	u64 romimage;
+ } efi_pci_io_protocol_64;
+ 
+ typedef struct {
+diff --git a/include/linux/nospec.h b/include/linux/nospec.h
+index e791ebc65c9c..0c5ef54fd416 100644
+--- a/include/linux/nospec.h
++++ b/include/linux/nospec.h
+@@ -7,6 +7,8 @@
+ #define _LINUX_NOSPEC_H
+ #include <asm/barrier.h>
+ 
++struct task_struct;
++
+ /**
+  * array_index_mask_nospec() - generate a ~0 mask when index < size, 0 otherwise
+  * @index: array element index
+@@ -55,4 +57,12 @@ static inline unsigned long array_index_mask_nospec(unsigned long index,
+ 									\
+ 	(typeof(_i)) (_i & _mask);					\
+ })
++
++/* Speculation control prctl */
++int arch_prctl_spec_ctrl_get(struct task_struct *task, unsigned long which);
++int arch_prctl_spec_ctrl_set(struct task_struct *task, unsigned long which,
++			     unsigned long ctrl);
++/* Speculation control for seccomp enforced mitigation */
++void arch_seccomp_spec_mitigate(struct task_struct *task);
++
+ #endif /* _LINUX_NOSPEC_H */
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index c549c8c9245c..5ebef8c86c26 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -2354,6 +2354,8 @@ static inline void memalloc_noio_restore(unsigned int flags)
+ #define PFA_SPREAD_PAGE  1      /* Spread page cache over cpuset */
+ #define PFA_SPREAD_SLAB  2      /* Spread some slab caches over cpuset */
+ #define PFA_LMK_WAITING  3      /* Lowmemorykiller is waiting */
++#define PFA_SPEC_SSB_DISABLE		4	/* Speculative Store Bypass disabled */
++#define PFA_SPEC_SSB_FORCE_DISABLE	5	/* Speculative Store Bypass force disabled*/
+ 
+ 
+ #define TASK_PFA_TEST(name, func)					\
+@@ -2380,6 +2382,13 @@ TASK_PFA_CLEAR(SPREAD_SLAB, spread_slab)
+ TASK_PFA_TEST(LMK_WAITING, lmk_waiting)
+ TASK_PFA_SET(LMK_WAITING, lmk_waiting)
+ 
++TASK_PFA_TEST(SPEC_SSB_DISABLE, spec_ssb_disable)
++TASK_PFA_SET(SPEC_SSB_DISABLE, spec_ssb_disable)
++TASK_PFA_CLEAR(SPEC_SSB_DISABLE, spec_ssb_disable)
++
++TASK_PFA_TEST(SPEC_SSB_FORCE_DISABLE, spec_ssb_force_disable)
++TASK_PFA_SET(SPEC_SSB_FORCE_DISABLE, spec_ssb_force_disable)
++
+ /*
+  * task->jobctl flags
+  */
+diff --git a/include/linux/seccomp.h b/include/linux/seccomp.h
+index ecc296c137cd..50c460a956f1 100644
+--- a/include/linux/seccomp.h
++++ b/include/linux/seccomp.h
+@@ -3,7 +3,8 @@
+ 
+ #include <uapi/linux/seccomp.h>
+ 
+-#define SECCOMP_FILTER_FLAG_MASK	(SECCOMP_FILTER_FLAG_TSYNC)
++#define SECCOMP_FILTER_FLAG_MASK	(SECCOMP_FILTER_FLAG_TSYNC	| \
++					 SECCOMP_FILTER_FLAG_SPEC_ALLOW)
+ 
+ #ifdef CONFIG_SECCOMP
+ 
+diff --git a/include/linux/signal.h b/include/linux/signal.h
+index b63f63eaa39c..5308304993be 100644
+--- a/include/linux/signal.h
++++ b/include/linux/signal.h
+@@ -97,6 +97,23 @@ static inline int sigisemptyset(sigset_t *set)
+ 	}
+ }
+ 
++static inline int sigequalsets(const sigset_t *set1, const sigset_t *set2)
++{
++	switch (_NSIG_WORDS) {
++	case 4:
++		return	(set1->sig[3] == set2->sig[3]) &&
++			(set1->sig[2] == set2->sig[2]) &&
++			(set1->sig[1] == set2->sig[1]) &&
++			(set1->sig[0] == set2->sig[0]);
++	case 2:
++		return	(set1->sig[1] == set2->sig[1]) &&
++			(set1->sig[0] == set2->sig[0]);
++	case 1:
++		return	set1->sig[0] == set2->sig[0];
++	}
++	return 0;
++}
++
+ #define sigmask(sig)	(1UL << ((sig) - 1))
+ 
+ #ifndef __HAVE_ARCH_SIG_SETOPS
+diff --git a/include/trace/events/xen.h b/include/trace/events/xen.h
+index bce990f5a35d..d6be935caa50 100644
+--- a/include/trace/events/xen.h
++++ b/include/trace/events/xen.h
+@@ -377,22 +377,6 @@ DECLARE_EVENT_CLASS(xen_mmu_pgd,
+ DEFINE_XEN_MMU_PGD_EVENT(xen_mmu_pgd_pin);
+ DEFINE_XEN_MMU_PGD_EVENT(xen_mmu_pgd_unpin);
+ 
+-TRACE_EVENT(xen_mmu_flush_tlb_all,
+-	    TP_PROTO(int x),
+-	    TP_ARGS(x),
+-	    TP_STRUCT__entry(__array(char, x, 0)),
+-	    TP_fast_assign((void)x),
+-	    TP_printk("%s", "")
+-	);
+-
+-TRACE_EVENT(xen_mmu_flush_tlb,
+-	    TP_PROTO(int x),
+-	    TP_ARGS(x),
+-	    TP_STRUCT__entry(__array(char, x, 0)),
+-	    TP_fast_assign((void)x),
+-	    TP_printk("%s", "")
+-	);
+-
+ TRACE_EVENT(xen_mmu_flush_tlb_single,
+ 	    TP_PROTO(unsigned long addr),
+ 	    TP_ARGS(addr),
+diff --git a/include/uapi/linux/prctl.h b/include/uapi/linux/prctl.h
+index a8d0759a9e40..64776b72e1eb 100644
+--- a/include/uapi/linux/prctl.h
++++ b/include/uapi/linux/prctl.h
+@@ -197,4 +197,16 @@ struct prctl_mm_map {
+ # define PR_CAP_AMBIENT_LOWER		3
+ # define PR_CAP_AMBIENT_CLEAR_ALL	4
+ 
++/* Per task speculation control */
++#define PR_GET_SPECULATION_CTRL		52
++#define PR_SET_SPECULATION_CTRL		53
++/* Speculation control variants */
++# define PR_SPEC_STORE_BYPASS		0
++/* Return and control values for PR_SET/GET_SPECULATION_CTRL */
++# define PR_SPEC_NOT_AFFECTED		0
++# define PR_SPEC_PRCTL			(1UL << 0)
++# define PR_SPEC_ENABLE			(1UL << 1)
++# define PR_SPEC_DISABLE		(1UL << 2)
++# define PR_SPEC_FORCE_DISABLE		(1UL << 3)
++
+ #endif /* _LINUX_PRCTL_H */
+diff --git a/include/uapi/linux/seccomp.h b/include/uapi/linux/seccomp.h
+index 0f238a43ff1e..e4acb615792b 100644
+--- a/include/uapi/linux/seccomp.h
++++ b/include/uapi/linux/seccomp.h
+@@ -15,7 +15,9 @@
+ #define SECCOMP_SET_MODE_FILTER	1
+ 
+ /* Valid flags for SECCOMP_SET_MODE_FILTER */
+-#define SECCOMP_FILTER_FLAG_TSYNC	1
++#define SECCOMP_FILTER_FLAG_TSYNC	(1UL << 0)
++/* In v4.14+ SECCOMP_FILTER_FLAG_LOG is (1UL << 1) */
++#define SECCOMP_FILTER_FLAG_SPEC_ALLOW	(1UL << 2)
+ 
+ /*
+  * All BPF programs must return a 32-bit value.
+diff --git a/kernel/seccomp.c b/kernel/seccomp.c
+index af182a6df25b..3975856d476c 100644
+--- a/kernel/seccomp.c
++++ b/kernel/seccomp.c
+@@ -16,6 +16,8 @@
+ #include <linux/atomic.h>
+ #include <linux/audit.h>
+ #include <linux/compat.h>
++#include <linux/nospec.h>
++#include <linux/prctl.h>
+ #include <linux/sched.h>
+ #include <linux/seccomp.h>
+ #include <linux/slab.h>
+@@ -214,8 +216,11 @@ static inline bool seccomp_may_assign_mode(unsigned long seccomp_mode)
+ 	return true;
+ }
+ 
++void __weak arch_seccomp_spec_mitigate(struct task_struct *task) { }
++
+ static inline void seccomp_assign_mode(struct task_struct *task,
+-				       unsigned long seccomp_mode)
++				       unsigned long seccomp_mode,
++				       unsigned long flags)
+ {
+ 	assert_spin_locked(&task->sighand->siglock);
+ 
+@@ -225,6 +230,9 @@ static inline void seccomp_assign_mode(struct task_struct *task,
+ 	 * filter) is set.
+ 	 */
+ 	smp_mb__before_atomic();
++	/* Assume default seccomp processes want spec flaw mitigation. */
++	if ((flags & SECCOMP_FILTER_FLAG_SPEC_ALLOW) == 0)
++		arch_seccomp_spec_mitigate(task);
+ 	set_tsk_thread_flag(task, TIF_SECCOMP);
+ }
+ 
+@@ -292,7 +300,7 @@ static inline pid_t seccomp_can_sync_threads(void)
+  * without dropping the locks.
+  *
+  */
+-static inline void seccomp_sync_threads(void)
++static inline void seccomp_sync_threads(unsigned long flags)
+ {
+ 	struct task_struct *thread, *caller;
+ 
+@@ -333,7 +341,8 @@ static inline void seccomp_sync_threads(void)
+ 		 * allow one thread to transition the other.
+ 		 */
+ 		if (thread->seccomp.mode == SECCOMP_MODE_DISABLED)
+-			seccomp_assign_mode(thread, SECCOMP_MODE_FILTER);
++			seccomp_assign_mode(thread, SECCOMP_MODE_FILTER,
++					    flags);
+ 	}
+ }
+ 
+@@ -452,7 +461,7 @@ static long seccomp_attach_filter(unsigned int flags,
+ 
+ 	/* Now that the new filter is in place, synchronize to all threads. */
+ 	if (flags & SECCOMP_FILTER_FLAG_TSYNC)
+-		seccomp_sync_threads();
++		seccomp_sync_threads(flags);
+ 
+ 	return 0;
+ }
+@@ -712,7 +721,7 @@ static long seccomp_set_mode_strict(void)
+ #ifdef TIF_NOTSC
+ 	disable_TSC();
+ #endif
+-	seccomp_assign_mode(current, seccomp_mode);
++	seccomp_assign_mode(current, seccomp_mode, 0);
+ 	ret = 0;
+ 
+ out:
+@@ -770,7 +779,7 @@ static long seccomp_set_mode_filter(unsigned int flags,
+ 	/* Do not free the successfully attached filter. */
+ 	prepared = NULL;
+ 
+-	seccomp_assign_mode(current, seccomp_mode);
++	seccomp_assign_mode(current, seccomp_mode, flags);
+ out:
+ 	spin_unlock_irq(&current->sighand->siglock);
+ 	if (flags & SECCOMP_FILTER_FLAG_TSYNC)
+diff --git a/kernel/signal.c b/kernel/signal.c
+index 7ebe236a5364..17428fec19b0 100644
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -2495,6 +2495,13 @@ void __set_current_blocked(const sigset_t *newset)
+ {
+ 	struct task_struct *tsk = current;
+ 
++	/*
++	 * In case the signal mask hasn't changed, there is nothing we need
++	 * to do. The current->blocked shouldn't be modified by other task.
++	 */
++	if (sigequalsets(&tsk->blocked, newset))
++		return;
++
+ 	spin_lock_irq(&tsk->sighand->siglock);
+ 	__set_task_blocked(tsk, newset);
+ 	spin_unlock_irq(&tsk->sighand->siglock);
+diff --git a/kernel/sys.c b/kernel/sys.c
+index 89d5be418157..143cd63f1d47 100644
+--- a/kernel/sys.c
++++ b/kernel/sys.c
+@@ -53,6 +53,8 @@
+ #include <linux/uidgid.h>
+ #include <linux/cred.h>
+ 
++#include <linux/nospec.h>
++
+ #include <linux/kmsg_dump.h>
+ /* Move somewhere else to avoid recompiling? */
+ #include <generated/utsrelease.h>
+@@ -2072,6 +2074,17 @@ static int prctl_get_tid_address(struct task_struct *me, int __user **tid_addr)
+ }
+ #endif
+ 
++int __weak arch_prctl_spec_ctrl_get(struct task_struct *t, unsigned long which)
++{
++	return -EINVAL;
++}
++
++int __weak arch_prctl_spec_ctrl_set(struct task_struct *t, unsigned long which,
++				    unsigned long ctrl)
++{
++	return -EINVAL;
++}
++
+ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
+ 		unsigned long, arg4, unsigned long, arg5)
+ {
+@@ -2270,6 +2283,16 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
+ 	case PR_GET_FP_MODE:
+ 		error = GET_FP_MODE(me);
+ 		break;
++	case PR_GET_SPECULATION_CTRL:
++		if (arg3 || arg4 || arg5)
++			return -EINVAL;
++		error = arch_prctl_spec_ctrl_get(me, arg2);
++		break;
++	case PR_SET_SPECULATION_CTRL:
++		if (arg4 || arg5)
++			return -EINVAL;
++		error = arch_prctl_spec_ctrl_set(me, arg2, arg3);
++		break;
+ 	default:
+ 		error = -EINVAL;
+ 		break;
+diff --git a/kernel/time/tick-broadcast.c b/kernel/time/tick-broadcast.c
+index d2a20e83ebae..22d7454b387b 100644
+--- a/kernel/time/tick-broadcast.c
++++ b/kernel/time/tick-broadcast.c
+@@ -610,6 +610,14 @@ static void tick_handle_oneshot_broadcast(struct clock_event_device *dev)
+ 	now = ktime_get();
+ 	/* Find all expired events */
+ 	for_each_cpu(cpu, tick_broadcast_oneshot_mask) {
++		/*
++		 * Required for !SMP because for_each_cpu() reports
++		 * unconditionally CPU0 as set on UP kernels.
++		 */
++		if (!IS_ENABLED(CONFIG_SMP) &&
++		    cpumask_empty(tick_broadcast_oneshot_mask))
++			break;
++
+ 		td = &per_cpu(tick_cpu_device, cpu);
+ 		if (td->evtdev->next_event.tv64 <= now.tv64) {
+ 			cpumask_set_cpu(cpu, tmpmask);
+diff --git a/mm/Kconfig b/mm/Kconfig
+index 86e3e0e74d20..ea074a9d4958 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -666,6 +666,7 @@ config DEFERRED_STRUCT_PAGE_INIT
+ 	depends on ARCH_SUPPORTS_DEFERRED_STRUCT_PAGE_INIT
+ 	depends on NO_BOOTMEM && MEMORY_HOTPLUG
+ 	depends on !FLATMEM
++	depends on !NEED_PER_CPU_KM
+ 	help
+ 	  Ordinarily all struct pages are initialised during early boot in a
+ 	  single thread. On very large machines this can take a considerable
+diff --git a/net/netfilter/nf_tables_api.c b/net/netfilter/nf_tables_api.c
+index fa3ef25441e5..762f31fb5b67 100644
+--- a/net/netfilter/nf_tables_api.c
++++ b/net/netfilter/nf_tables_api.c
+@@ -2200,41 +2200,46 @@ static int nf_tables_newrule(struct net *net, struct sock *nlsk,
+ 	}
+ 
+ 	if (nlh->nlmsg_flags & NLM_F_REPLACE) {
+-		if (nft_is_active_next(net, old_rule)) {
+-			trans = nft_trans_rule_add(&ctx, NFT_MSG_DELRULE,
+-						   old_rule);
+-			if (trans == NULL) {
+-				err = -ENOMEM;
+-				goto err2;
+-			}
+-			nft_deactivate_next(net, old_rule);
+-			chain->use--;
+-			list_add_tail_rcu(&rule->list, &old_rule->list);
+-		} else {
++		if (!nft_is_active_next(net, old_rule)) {
+ 			err = -ENOENT;
+ 			goto err2;
+ 		}
+-	} else if (nlh->nlmsg_flags & NLM_F_APPEND)
+-		if (old_rule)
+-			list_add_rcu(&rule->list, &old_rule->list);
+-		else
+-			list_add_tail_rcu(&rule->list, &chain->rules);
+-	else {
+-		if (old_rule)
+-			list_add_tail_rcu(&rule->list, &old_rule->list);
+-		else
+-			list_add_rcu(&rule->list, &chain->rules);
+-	}
++		trans = nft_trans_rule_add(&ctx, NFT_MSG_DELRULE,
++					   old_rule);
++		if (trans == NULL) {
++			err = -ENOMEM;
++			goto err2;
++		}
++		nft_deactivate_next(net, old_rule);
++		chain->use--;
+ 
+-	if (nft_trans_rule_add(&ctx, NFT_MSG_NEWRULE, rule) == NULL) {
+-		err = -ENOMEM;
+-		goto err3;
++		if (nft_trans_rule_add(&ctx, NFT_MSG_NEWRULE, rule) == NULL) {
++			err = -ENOMEM;
++			goto err2;
++		}
++
++		list_add_tail_rcu(&rule->list, &old_rule->list);
++	} else {
++		if (nft_trans_rule_add(&ctx, NFT_MSG_NEWRULE, rule) == NULL) {
++			err = -ENOMEM;
++			goto err2;
++		}
++
++		if (nlh->nlmsg_flags & NLM_F_APPEND) {
++			if (old_rule)
++				list_add_rcu(&rule->list, &old_rule->list);
++			else
++				list_add_tail_rcu(&rule->list, &chain->rules);
++		 } else {
++			if (old_rule)
++				list_add_tail_rcu(&rule->list, &old_rule->list);
++			else
++				list_add_rcu(&rule->list, &chain->rules);
++		}
+ 	}
+ 	chain->use++;
+ 	return 0;
+ 
+-err3:
+-	list_del_rcu(&rule->list);
+ err2:
+ 	nf_tables_rule_destroy(&ctx, rule);
+ err1:
+diff --git a/sound/core/control_compat.c b/sound/core/control_compat.c
+index 1fa70766ffab..84ee29c3b1a0 100644
+--- a/sound/core/control_compat.c
++++ b/sound/core/control_compat.c
+@@ -400,8 +400,7 @@ static int snd_ctl_elem_add_compat(struct snd_ctl_file *file,
+ 	if (copy_from_user(&data->id, &data32->id, sizeof(data->id)) ||
+ 	    copy_from_user(&data->type, &data32->type, 3 * sizeof(u32)))
+ 		goto error;
+-	if (get_user(data->owner, &data32->owner) ||
+-	    get_user(data->type, &data32->type))
++	if (get_user(data->owner, &data32->owner))
+ 		goto error;
+ 	switch (data->type) {
+ 	case SNDRV_CTL_ELEM_TYPE_BOOLEAN:
+diff --git a/sound/pci/hda/hda_intel.c b/sound/pci/hda/hda_intel.c
+index 7d3f88d90eec..4e9112001306 100644
+--- a/sound/pci/hda/hda_intel.c
++++ b/sound/pci/hda/hda_intel.c
+@@ -2061,6 +2061,8 @@ static struct snd_pci_quirk power_save_blacklist[] = {
+ 	SND_PCI_QUIRK(0x1849, 0x0c0c, "Asrock B85M-ITX", 0),
+ 	/* https://bugzilla.redhat.com/show_bug.cgi?id=1525104 */
+ 	SND_PCI_QUIRK(0x1043, 0x8733, "Asus Prime X370-Pro", 0),
++	/* https://bugzilla.redhat.com/show_bug.cgi?id=1572975 */
++	SND_PCI_QUIRK(0x17aa, 0x36a7, "Lenovo C50 All in one", 0),
+ 	/* https://bugzilla.kernel.org/show_bug.cgi?id=198611 */
+ 	SND_PCI_QUIRK(0x17aa, 0x2227, "Lenovo X1 Carbon 3rd Gen", 0),
+ 	{}
+diff --git a/sound/usb/mixer.c b/sound/usb/mixer.c
+index dedf8eb4570e..db8404e31fae 100644
+--- a/sound/usb/mixer.c
++++ b/sound/usb/mixer.c
+@@ -905,6 +905,14 @@ static void volume_control_quirks(struct usb_mixer_elem_info *cval,
+ 		}
+ 		break;
+ 
++	case USB_ID(0x0d8c, 0x0103):
++		if (!strcmp(kctl->id.name, "PCM Playback Volume")) {
++			usb_audio_info(chip,
++				 "set volume quirk for CM102-A+/102S+\n");
++			cval->min = -256;
++		}
++		break;
++
+ 	case USB_ID(0x0471, 0x0101):
+ 	case USB_ID(0x0471, 0x0104):
+ 	case USB_ID(0x0471, 0x0105):
+diff --git a/tools/testing/selftests/seccomp/seccomp_bpf.c b/tools/testing/selftests/seccomp/seccomp_bpf.c
+index f68998149351..d5be7b5ff899 100644
+--- a/tools/testing/selftests/seccomp/seccomp_bpf.c
++++ b/tools/testing/selftests/seccomp/seccomp_bpf.c
+@@ -1692,7 +1692,11 @@ TEST_F_SIGNAL(TRACE_syscall, kill_after_ptrace, SIGSYS)
+ #endif
+ 
+ #ifndef SECCOMP_FILTER_FLAG_TSYNC
+-#define SECCOMP_FILTER_FLAG_TSYNC 1
++#define SECCOMP_FILTER_FLAG_TSYNC (1UL << 0)
++#endif
++
++#ifndef SECCOMP_FILTER_FLAG_SPEC_ALLOW
++#define SECCOMP_FILTER_FLAG_SPEC_ALLOW (1UL << 2)
+ #endif
+ 
+ #ifndef seccomp
+@@ -1791,6 +1795,78 @@ TEST(seccomp_syscall_mode_lock)
+ 	}
+ }
+ 
++/*
++ * Test detection of known and unknown filter flags. Userspace needs to be able
++ * to check if a filter flag is supported by the current kernel and a good way
++ * of doing that is by attempting to enter filter mode, with the flag bit in
++ * question set, and a NULL pointer for the _args_ parameter. EFAULT indicates
++ * that the flag is valid and EINVAL indicates that the flag is invalid.
++ */
++TEST(detect_seccomp_filter_flags)
++{
++	unsigned int flags[] = { SECCOMP_FILTER_FLAG_TSYNC,
++				 SECCOMP_FILTER_FLAG_SPEC_ALLOW };
++	unsigned int flag, all_flags;
++	int i;
++	long ret;
++
++	/* Test detection of known-good filter flags */
++	for (i = 0, all_flags = 0; i < ARRAY_SIZE(flags); i++) {
++		int bits = 0;
++
++		flag = flags[i];
++		/* Make sure the flag is a single bit! */
++		while (flag) {
++			if (flag & 0x1)
++				bits ++;
++			flag >>= 1;
++		}
++		ASSERT_EQ(1, bits);
++		flag = flags[i];
++
++		ret = seccomp(SECCOMP_SET_MODE_FILTER, flag, NULL);
++		ASSERT_NE(ENOSYS, errno) {
++			TH_LOG("Kernel does not support seccomp syscall!");
++		}
++		EXPECT_EQ(-1, ret);
++		EXPECT_EQ(EFAULT, errno) {
++			TH_LOG("Failed to detect that a known-good filter flag (0x%X) is supported!",
++			       flag);
++		}
++
++		all_flags |= flag;
++	}
++
++	/* Test detection of all known-good filter flags */
++	ret = seccomp(SECCOMP_SET_MODE_FILTER, all_flags, NULL);
++	EXPECT_EQ(-1, ret);
++	EXPECT_EQ(EFAULT, errno) {
++		TH_LOG("Failed to detect that all known-good filter flags (0x%X) are supported!",
++		       all_flags);
++	}
++
++	/* Test detection of an unknown filter flag */
++	flag = -1;
++	ret = seccomp(SECCOMP_SET_MODE_FILTER, flag, NULL);
++	EXPECT_EQ(-1, ret);
++	EXPECT_EQ(EINVAL, errno) {
++		TH_LOG("Failed to detect that an unknown filter flag (0x%X) is unsupported!",
++		       flag);
++	}
++
++	/*
++	 * Test detection of an unknown filter flag that may simply need to be
++	 * added to this test
++	 */
++	flag = flags[ARRAY_SIZE(flags) - 1] << 1;
++	ret = seccomp(SECCOMP_SET_MODE_FILTER, flag, NULL);
++	EXPECT_EQ(-1, ret);
++	EXPECT_EQ(EINVAL, errno) {
++		TH_LOG("Failed to detect that an unknown filter flag (0x%X) is unsupported! Does a new flag need to be added to this test?",
++		       flag);
++	}
++}
++
+ TEST(TSYNC_first)
+ {
+ 	struct sock_filter filter[] = {
+diff --git a/virt/kvm/arm/vgic/vgic-its.c b/virt/kvm/arm/vgic/vgic-its.c
+index 31f562507915..1ebbf233de9a 100644
+--- a/virt/kvm/arm/vgic/vgic-its.c
++++ b/virt/kvm/arm/vgic/vgic-its.c
+@@ -208,8 +208,8 @@ static int update_lpi_config(struct kvm *kvm, struct vgic_irq *irq,
+ 	u8 prop;
+ 	int ret;
+ 
+-	ret = kvm_read_guest(kvm, propbase + irq->intid - GIC_LPI_OFFSET,
+-			     &prop, 1);
++	ret = kvm_read_guest_lock(kvm, propbase + irq->intid - GIC_LPI_OFFSET,
++				  &prop, 1);
+ 
+ 	if (ret)
+ 		return ret;
+@@ -339,8 +339,9 @@ static int its_sync_lpi_pending_table(struct kvm_vcpu *vcpu)
+ 		 * this very same byte in the last iteration. Reuse that.
+ 		 */
+ 		if (byte_offset != last_byte_offset) {
+-			ret = kvm_read_guest(vcpu->kvm, pendbase + byte_offset,
+-					     &pendmask, 1);
++			ret = kvm_read_guest_lock(vcpu->kvm,
++						  pendbase + byte_offset,
++						  &pendmask, 1);
+ 			if (ret) {
+ 				kfree(intids);
+ 				return ret;
+@@ -628,7 +629,7 @@ static bool vgic_its_check_id(struct vgic_its *its, u64 baser, int id)
+ 		return false;
+ 
+ 	/* Each 1st level entry is represented by a 64-bit value. */
+-	if (kvm_read_guest(its->dev->kvm,
++	if (kvm_read_guest_lock(its->dev->kvm,
+ 			   BASER_ADDRESS(baser) + index * sizeof(indirect_ptr),
+ 			   &indirect_ptr, sizeof(indirect_ptr)))
+ 		return false;
+@@ -1152,8 +1153,8 @@ static void vgic_its_process_commands(struct kvm *kvm, struct vgic_its *its)
+ 	cbaser = CBASER_ADDRESS(its->cbaser);
+ 
+ 	while (its->cwriter != its->creadr) {
+-		int ret = kvm_read_guest(kvm, cbaser + its->creadr,
+-					 cmd_buf, ITS_CMD_SIZE);
++		int ret = kvm_read_guest_lock(kvm, cbaser + its->creadr,
++					      cmd_buf, ITS_CMD_SIZE);
+ 		/*
+ 		 * If kvm_read_guest() fails, this could be due to the guest
+ 		 * programming a bogus value in CBASER or something else going

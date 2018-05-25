@@ -1,0 +1,6394 @@
+diff --git a/Makefile b/Makefile
+index 02188cf8e9af..1aeec9df709d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 94
++SUBLEVEL = 95
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/arch/arm/include/asm/kvm_host.h b/arch/arm/include/asm/kvm_host.h
+index d5423ab15ed5..9fe1043e72d2 100644
+--- a/arch/arm/include/asm/kvm_host.h
++++ b/arch/arm/include/asm/kvm_host.h
+@@ -318,4 +318,10 @@ static inline int kvm_arm_vcpu_arch_has_attr(struct kvm_vcpu *vcpu,
+ 	return -ENXIO;
+ }
+ 
++static inline bool kvm_arm_harden_branch_predictor(void)
++{
++	/* No way to detect it yet, pretend it is not there. */
++	return false;
++}
++
+ #endif /* __ARM_KVM_HOST_H__ */
+diff --git a/arch/arm/include/asm/kvm_mmu.h b/arch/arm/include/asm/kvm_mmu.h
+index a58bbaa3ec60..d10e36235438 100644
+--- a/arch/arm/include/asm/kvm_mmu.h
++++ b/arch/arm/include/asm/kvm_mmu.h
+@@ -223,6 +223,16 @@ static inline unsigned int kvm_get_vmid_bits(void)
+ 	return 8;
+ }
+ 
++static inline void *kvm_get_hyp_vector(void)
++{
++	return kvm_ksym_ref(__kvm_hyp_vector);
++}
++
++static inline int kvm_map_vectors(void)
++{
++	return 0;
++}
++
+ #endif	/* !__ASSEMBLY__ */
+ 
+ #endif /* __ARM_KVM_MMU_H__ */
+diff --git a/arch/arm/include/asm/kvm_psci.h b/arch/arm/include/asm/kvm_psci.h
+deleted file mode 100644
+index 6bda945d31fa..000000000000
+--- a/arch/arm/include/asm/kvm_psci.h
++++ /dev/null
+@@ -1,27 +0,0 @@
+-/*
+- * Copyright (C) 2012 - ARM Ltd
+- * Author: Marc Zyngier <marc.zyngier@arm.com>
+- *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License version 2 as
+- * published by the Free Software Foundation.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#ifndef __ARM_KVM_PSCI_H__
+-#define __ARM_KVM_PSCI_H__
+-
+-#define KVM_ARM_PSCI_0_1	1
+-#define KVM_ARM_PSCI_0_2	2
+-
+-int kvm_psci_version(struct kvm_vcpu *vcpu);
+-int kvm_psci_call(struct kvm_vcpu *vcpu);
+-
+-#endif /* __ARM_KVM_PSCI_H__ */
+diff --git a/arch/arm/kvm/arm.c b/arch/arm/kvm/arm.c
+index c38bfbeec306..ef6595c7d697 100644
+--- a/arch/arm/kvm/arm.c
++++ b/arch/arm/kvm/arm.c
+@@ -29,6 +29,7 @@
+ #include <linux/kvm.h>
+ #include <trace/events/kvm.h>
+ #include <kvm/arm_pmu.h>
++#include <kvm/arm_psci.h>
+ 
+ #define CREATE_TRACE_POINTS
+ #include "trace.h"
+@@ -44,7 +45,6 @@
+ #include <asm/kvm_mmu.h>
+ #include <asm/kvm_emulate.h>
+ #include <asm/kvm_coproc.h>
+-#include <asm/kvm_psci.h>
+ #include <asm/sections.h>
+ 
+ #ifdef REQUIRES_VIRT
+@@ -1088,7 +1088,7 @@ static void cpu_init_hyp_mode(void *dummy)
+ 	pgd_ptr = kvm_mmu_get_httbr();
+ 	stack_page = __this_cpu_read(kvm_arm_hyp_stack_page);
+ 	hyp_stack_ptr = stack_page + PAGE_SIZE;
+-	vector_ptr = (unsigned long)kvm_ksym_ref(__kvm_hyp_vector);
++	vector_ptr = (unsigned long)kvm_get_hyp_vector();
+ 
+ 	__cpu_init_hyp_mode(pgd_ptr, hyp_stack_ptr, vector_ptr);
+ 	__cpu_init_stage2();
+@@ -1345,6 +1345,13 @@ static int init_hyp_mode(void)
+ 		goto out_err;
+ 	}
+ 
++
++	err = kvm_map_vectors();
++	if (err) {
++		kvm_err("Cannot map vectors\n");
++		goto out_err;
++	}
++
+ 	/*
+ 	 * Map the Hyp stack pages
+ 	 */
+diff --git a/arch/arm/kvm/handle_exit.c b/arch/arm/kvm/handle_exit.c
+index 4e57ebca6e69..de1aedce2a8b 100644
+--- a/arch/arm/kvm/handle_exit.c
++++ b/arch/arm/kvm/handle_exit.c
+@@ -21,7 +21,7 @@
+ #include <asm/kvm_emulate.h>
+ #include <asm/kvm_coproc.h>
+ #include <asm/kvm_mmu.h>
+-#include <asm/kvm_psci.h>
++#include <kvm/arm_psci.h>
+ #include <trace/events/kvm.h>
+ 
+ #include "trace.h"
+@@ -36,7 +36,7 @@ static int handle_hvc(struct kvm_vcpu *vcpu, struct kvm_run *run)
+ 		      kvm_vcpu_hvc_get_imm(vcpu));
+ 	vcpu->stat.hvc_exit_stat++;
+ 
+-	ret = kvm_psci_call(vcpu);
++	ret = kvm_hvc_call_handler(vcpu);
+ 	if (ret < 0) {
+ 		vcpu_set_reg(vcpu, 0, ~0UL);
+ 		return 1;
+diff --git a/arch/arm/kvm/psci.c b/arch/arm/kvm/psci.c
+index a08d7a93aebb..3d962257c166 100644
+--- a/arch/arm/kvm/psci.c
++++ b/arch/arm/kvm/psci.c
+@@ -15,16 +15,16 @@
+  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++#include <linux/arm-smccc.h>
+ #include <linux/preempt.h>
+ #include <linux/kvm_host.h>
+ #include <linux/wait.h>
+ 
+ #include <asm/cputype.h>
+ #include <asm/kvm_emulate.h>
+-#include <asm/kvm_psci.h>
+ #include <asm/kvm_host.h>
+ 
+-#include <uapi/linux/psci.h>
++#include <kvm/arm_psci.h>
+ 
+ /*
+  * This is an implementation of the Power State Coordination Interface
+@@ -33,6 +33,38 @@
+ 
+ #define AFFINITY_MASK(level)	~((0x1UL << ((level) * MPIDR_LEVEL_BITS)) - 1)
+ 
++static u32 smccc_get_function(struct kvm_vcpu *vcpu)
++{
++	return vcpu_get_reg(vcpu, 0);
++}
++
++static unsigned long smccc_get_arg1(struct kvm_vcpu *vcpu)
++{
++	return vcpu_get_reg(vcpu, 1);
++}
++
++static unsigned long smccc_get_arg2(struct kvm_vcpu *vcpu)
++{
++	return vcpu_get_reg(vcpu, 2);
++}
++
++static unsigned long smccc_get_arg3(struct kvm_vcpu *vcpu)
++{
++	return vcpu_get_reg(vcpu, 3);
++}
++
++static void smccc_set_retval(struct kvm_vcpu *vcpu,
++			     unsigned long a0,
++			     unsigned long a1,
++			     unsigned long a2,
++			     unsigned long a3)
++{
++	vcpu_set_reg(vcpu, 0, a0);
++	vcpu_set_reg(vcpu, 1, a1);
++	vcpu_set_reg(vcpu, 2, a2);
++	vcpu_set_reg(vcpu, 3, a3);
++}
++
+ static unsigned long psci_affinity_mask(unsigned long affinity_level)
+ {
+ 	if (affinity_level <= 3)
+@@ -75,7 +107,7 @@ static unsigned long kvm_psci_vcpu_on(struct kvm_vcpu *source_vcpu)
+ 	unsigned long context_id;
+ 	phys_addr_t target_pc;
+ 
+-	cpu_id = vcpu_get_reg(source_vcpu, 1) & MPIDR_HWID_BITMASK;
++	cpu_id = smccc_get_arg1(source_vcpu) & MPIDR_HWID_BITMASK;
+ 	if (vcpu_mode_is_32bit(source_vcpu))
+ 		cpu_id &= ~((u32) 0);
+ 
+@@ -88,14 +120,14 @@ static unsigned long kvm_psci_vcpu_on(struct kvm_vcpu *source_vcpu)
+ 	if (!vcpu)
+ 		return PSCI_RET_INVALID_PARAMS;
+ 	if (!vcpu->arch.power_off) {
+-		if (kvm_psci_version(source_vcpu) != KVM_ARM_PSCI_0_1)
++		if (kvm_psci_version(source_vcpu, kvm) != KVM_ARM_PSCI_0_1)
+ 			return PSCI_RET_ALREADY_ON;
+ 		else
+ 			return PSCI_RET_INVALID_PARAMS;
+ 	}
+ 
+-	target_pc = vcpu_get_reg(source_vcpu, 2);
+-	context_id = vcpu_get_reg(source_vcpu, 3);
++	target_pc = smccc_get_arg2(source_vcpu);
++	context_id = smccc_get_arg3(source_vcpu);
+ 
+ 	kvm_reset_vcpu(vcpu);
+ 
+@@ -114,7 +146,7 @@ static unsigned long kvm_psci_vcpu_on(struct kvm_vcpu *source_vcpu)
+ 	 * NOTE: We always update r0 (or x0) because for PSCI v0.1
+ 	 * the general puspose registers are undefined upon CPU_ON.
+ 	 */
+-	vcpu_set_reg(vcpu, 0, context_id);
++	smccc_set_retval(vcpu, context_id, 0, 0, 0);
+ 	vcpu->arch.power_off = false;
+ 	smp_mb();		/* Make sure the above is visible */
+ 
+@@ -134,8 +166,8 @@ static unsigned long kvm_psci_vcpu_affinity_info(struct kvm_vcpu *vcpu)
+ 	struct kvm *kvm = vcpu->kvm;
+ 	struct kvm_vcpu *tmp;
+ 
+-	target_affinity = vcpu_get_reg(vcpu, 1);
+-	lowest_affinity_level = vcpu_get_reg(vcpu, 2);
++	target_affinity = smccc_get_arg1(vcpu);
++	lowest_affinity_level = smccc_get_arg2(vcpu);
+ 
+ 	/* Determine target affinity mask */
+ 	target_affinity_mask = psci_affinity_mask(lowest_affinity_level);
+@@ -198,18 +230,10 @@ static void kvm_psci_system_reset(struct kvm_vcpu *vcpu)
+ 	kvm_prepare_system_event(vcpu, KVM_SYSTEM_EVENT_RESET);
+ }
+ 
+-int kvm_psci_version(struct kvm_vcpu *vcpu)
+-{
+-	if (test_bit(KVM_ARM_VCPU_PSCI_0_2, vcpu->arch.features))
+-		return KVM_ARM_PSCI_0_2;
+-
+-	return KVM_ARM_PSCI_0_1;
+-}
+-
+ static int kvm_psci_0_2_call(struct kvm_vcpu *vcpu)
+ {
+ 	struct kvm *kvm = vcpu->kvm;
+-	unsigned long psci_fn = vcpu_get_reg(vcpu, 0) & ~((u32) 0);
++	unsigned long psci_fn = smccc_get_function(vcpu);
+ 	unsigned long val;
+ 	int ret = 1;
+ 
+@@ -219,7 +243,7 @@ static int kvm_psci_0_2_call(struct kvm_vcpu *vcpu)
+ 		 * Bits[31:16] = Major Version = 0
+ 		 * Bits[15:0] = Minor Version = 2
+ 		 */
+-		val = 2;
++		val = KVM_ARM_PSCI_0_2;
+ 		break;
+ 	case PSCI_0_2_FN_CPU_SUSPEND:
+ 	case PSCI_0_2_FN64_CPU_SUSPEND:
+@@ -276,14 +300,56 @@ static int kvm_psci_0_2_call(struct kvm_vcpu *vcpu)
+ 		break;
+ 	}
+ 
+-	vcpu_set_reg(vcpu, 0, val);
++	smccc_set_retval(vcpu, val, 0, 0, 0);
++	return ret;
++}
++
++static int kvm_psci_1_0_call(struct kvm_vcpu *vcpu)
++{
++	u32 psci_fn = smccc_get_function(vcpu);
++	u32 feature;
++	unsigned long val;
++	int ret = 1;
++
++	switch(psci_fn) {
++	case PSCI_0_2_FN_PSCI_VERSION:
++		val = KVM_ARM_PSCI_1_0;
++		break;
++	case PSCI_1_0_FN_PSCI_FEATURES:
++		feature = smccc_get_arg1(vcpu);
++		switch(feature) {
++		case PSCI_0_2_FN_PSCI_VERSION:
++		case PSCI_0_2_FN_CPU_SUSPEND:
++		case PSCI_0_2_FN64_CPU_SUSPEND:
++		case PSCI_0_2_FN_CPU_OFF:
++		case PSCI_0_2_FN_CPU_ON:
++		case PSCI_0_2_FN64_CPU_ON:
++		case PSCI_0_2_FN_AFFINITY_INFO:
++		case PSCI_0_2_FN64_AFFINITY_INFO:
++		case PSCI_0_2_FN_MIGRATE_INFO_TYPE:
++		case PSCI_0_2_FN_SYSTEM_OFF:
++		case PSCI_0_2_FN_SYSTEM_RESET:
++		case PSCI_1_0_FN_PSCI_FEATURES:
++		case ARM_SMCCC_VERSION_FUNC_ID:
++			val = 0;
++			break;
++		default:
++			val = PSCI_RET_NOT_SUPPORTED;
++			break;
++		}
++		break;
++	default:
++		return kvm_psci_0_2_call(vcpu);
++	}
++
++	smccc_set_retval(vcpu, val, 0, 0, 0);
+ 	return ret;
+ }
+ 
+ static int kvm_psci_0_1_call(struct kvm_vcpu *vcpu)
+ {
+ 	struct kvm *kvm = vcpu->kvm;
+-	unsigned long psci_fn = vcpu_get_reg(vcpu, 0) & ~((u32) 0);
++	unsigned long psci_fn = smccc_get_function(vcpu);
+ 	unsigned long val;
+ 
+ 	switch (psci_fn) {
+@@ -301,7 +367,7 @@ static int kvm_psci_0_1_call(struct kvm_vcpu *vcpu)
+ 		break;
+ 	}
+ 
+-	vcpu_set_reg(vcpu, 0, val);
++	smccc_set_retval(vcpu, val, 0, 0, 0);
+ 	return 1;
+ }
+ 
+@@ -319,9 +385,11 @@ static int kvm_psci_0_1_call(struct kvm_vcpu *vcpu)
+  * Errors:
+  * -EINVAL: Unrecognized PSCI function
+  */
+-int kvm_psci_call(struct kvm_vcpu *vcpu)
++static int kvm_psci_call(struct kvm_vcpu *vcpu)
+ {
+-	switch (kvm_psci_version(vcpu)) {
++	switch (kvm_psci_version(vcpu, vcpu->kvm)) {
++	case KVM_ARM_PSCI_1_0:
++		return kvm_psci_1_0_call(vcpu);
+ 	case KVM_ARM_PSCI_0_2:
+ 		return kvm_psci_0_2_call(vcpu);
+ 	case KVM_ARM_PSCI_0_1:
+@@ -330,3 +398,30 @@ int kvm_psci_call(struct kvm_vcpu *vcpu)
+ 		return -EINVAL;
+ 	};
+ }
++
++int kvm_hvc_call_handler(struct kvm_vcpu *vcpu)
++{
++	u32 func_id = smccc_get_function(vcpu);
++	u32 val = PSCI_RET_NOT_SUPPORTED;
++	u32 feature;
++
++	switch (func_id) {
++	case ARM_SMCCC_VERSION_FUNC_ID:
++		val = ARM_SMCCC_VERSION_1_1;
++		break;
++	case ARM_SMCCC_ARCH_FEATURES_FUNC_ID:
++		feature = smccc_get_arg1(vcpu);
++		switch(feature) {
++		case ARM_SMCCC_ARCH_WORKAROUND_1:
++			if (kvm_arm_harden_branch_predictor())
++				val = 0;
++			break;
++		}
++		break;
++	default:
++		return kvm_psci_call(vcpu);
++	}
++
++	smccc_set_retval(vcpu, val, 0, 0, 0);
++	return 1;
++}
+diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
+index c8471cf46cbb..90e58bbbd858 100644
+--- a/arch/arm64/Kconfig
++++ b/arch/arm64/Kconfig
+@@ -745,6 +745,23 @@ config UNMAP_KERNEL_AT_EL0
+ 
+ 	  If unsure, say Y.
+ 
++config HARDEN_BRANCH_PREDICTOR
++	bool "Harden the branch predictor against aliasing attacks" if EXPERT
++	default y
++	help
++	  Speculation attacks against some high-performance processors rely on
++	  being able to manipulate the branch predictor for a victim context by
++	  executing aliasing branches in the attacker context.  Such attacks
++	  can be partially mitigated against by clearing internal branch
++	  predictor state and limiting the prediction logic in some situations.
++
++	  This config option will take CPU-specific actions to harden the
++	  branch predictor against aliasing attacks and may rely on specific
++	  instruction sequences or control bits being set by the system
++	  firmware.
++
++	  If unsure, say Y.
++
+ menuconfig ARMV8_DEPRECATED
+ 	bool "Emulate deprecated/obsolete ARMv8 instructions"
+ 	depends on COMPAT
+diff --git a/arch/arm64/crypto/sha256-core.S b/arch/arm64/crypto/sha256-core.S
+new file mode 100644
+index 000000000000..3ce82cc860bc
+--- /dev/null
++++ b/arch/arm64/crypto/sha256-core.S
+@@ -0,0 +1,2061 @@
++// Copyright 2014-2016 The OpenSSL Project Authors. All Rights Reserved.
++//
++// Licensed under the OpenSSL license (the "License").  You may not use
++// this file except in compliance with the License.  You can obtain a copy
++// in the file LICENSE in the source distribution or at
++// https://www.openssl.org/source/license.html
++
++// ====================================================================
++// Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
++// project. The module is, however, dual licensed under OpenSSL and
++// CRYPTOGAMS licenses depending on where you obtain it. For further
++// details see http://www.openssl.org/~appro/cryptogams/.
++//
++// Permission to use under GPLv2 terms is granted.
++// ====================================================================
++//
++// SHA256/512 for ARMv8.
++//
++// Performance in cycles per processed byte and improvement coefficient
++// over code generated with "default" compiler:
++//
++//		SHA256-hw	SHA256(*)	SHA512
++// Apple A7	1.97		10.5 (+33%)	6.73 (-1%(**))
++// Cortex-A53	2.38		15.5 (+115%)	10.0 (+150%(***))
++// Cortex-A57	2.31		11.6 (+86%)	7.51 (+260%(***))
++// Denver	2.01		10.5 (+26%)	6.70 (+8%)
++// X-Gene			20.0 (+100%)	12.8 (+300%(***))
++// Mongoose	2.36		13.0 (+50%)	8.36 (+33%)
++//
++// (*)	Software SHA256 results are of lesser relevance, presented
++//	mostly for informational purposes.
++// (**)	The result is a trade-off: it's possible to improve it by
++//	10% (or by 1 cycle per round), but at the cost of 20% loss
++//	on Cortex-A53 (or by 4 cycles per round).
++// (***)	Super-impressive coefficients over gcc-generated code are
++//	indication of some compiler "pathology", most notably code
++//	generated with -mgeneral-regs-only is significanty faster
++//	and the gap is only 40-90%.
++//
++// October 2016.
++//
++// Originally it was reckoned that it makes no sense to implement NEON
++// version of SHA256 for 64-bit processors. This is because performance
++// improvement on most wide-spread Cortex-A5x processors was observed
++// to be marginal, same on Cortex-A53 and ~10% on A57. But then it was
++// observed that 32-bit NEON SHA256 performs significantly better than
++// 64-bit scalar version on *some* of the more recent processors. As
++// result 64-bit NEON version of SHA256 was added to provide best
++// all-round performance. For example it executes ~30% faster on X-Gene
++// and Mongoose. [For reference, NEON version of SHA512 is bound to
++// deliver much less improvement, likely *negative* on Cortex-A5x.
++// Which is why NEON support is limited to SHA256.]
++
++#ifndef	__KERNEL__
++# include "arm_arch.h"
++#endif
++
++.text
++
++.extern	OPENSSL_armcap_P
++.globl	sha256_block_data_order
++.type	sha256_block_data_order,%function
++.align	6
++sha256_block_data_order:
++#ifndef	__KERNEL__
++# ifdef	__ILP32__
++	ldrsw	x16,.LOPENSSL_armcap_P
++# else
++	ldr	x16,.LOPENSSL_armcap_P
++# endif
++	adr	x17,.LOPENSSL_armcap_P
++	add	x16,x16,x17
++	ldr	w16,[x16]
++	tst	w16,#ARMV8_SHA256
++	b.ne	.Lv8_entry
++	tst	w16,#ARMV7_NEON
++	b.ne	.Lneon_entry
++#endif
++	stp	x29,x30,[sp,#-128]!
++	add	x29,sp,#0
++
++	stp	x19,x20,[sp,#16]
++	stp	x21,x22,[sp,#32]
++	stp	x23,x24,[sp,#48]
++	stp	x25,x26,[sp,#64]
++	stp	x27,x28,[sp,#80]
++	sub	sp,sp,#4*4
++
++	ldp	w20,w21,[x0]				// load context
++	ldp	w22,w23,[x0,#2*4]
++	ldp	w24,w25,[x0,#4*4]
++	add	x2,x1,x2,lsl#6	// end of input
++	ldp	w26,w27,[x0,#6*4]
++	adr	x30,.LK256
++	stp	x0,x2,[x29,#96]
++
++.Loop:
++	ldp	w3,w4,[x1],#2*4
++	ldr	w19,[x30],#4			// *K++
++	eor	w28,w21,w22				// magic seed
++	str	x1,[x29,#112]
++#ifndef	__AARCH64EB__
++	rev	w3,w3			// 0
++#endif
++	ror	w16,w24,#6
++	add	w27,w27,w19			// h+=K[i]
++	eor	w6,w24,w24,ror#14
++	and	w17,w25,w24
++	bic	w19,w26,w24
++	add	w27,w27,w3			// h+=X[i]
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w20,w21			// a^b, b^c in next round
++	eor	w16,w16,w6,ror#11	// Sigma1(e)
++	ror	w6,w20,#2
++	add	w27,w27,w17			// h+=Ch(e,f,g)
++	eor	w17,w20,w20,ror#9
++	add	w27,w27,w16			// h+=Sigma1(e)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	add	w23,w23,w27			// d+=h
++	eor	w28,w28,w21			// Maj(a,b,c)
++	eor	w17,w6,w17,ror#13	// Sigma0(a)
++	add	w27,w27,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	//add	w27,w27,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w4,w4			// 1
++#endif
++	ldp	w5,w6,[x1],#2*4
++	add	w27,w27,w17			// h+=Sigma0(a)
++	ror	w16,w23,#6
++	add	w26,w26,w28			// h+=K[i]
++	eor	w7,w23,w23,ror#14
++	and	w17,w24,w23
++	bic	w28,w25,w23
++	add	w26,w26,w4			// h+=X[i]
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w27,w20			// a^b, b^c in next round
++	eor	w16,w16,w7,ror#11	// Sigma1(e)
++	ror	w7,w27,#2
++	add	w26,w26,w17			// h+=Ch(e,f,g)
++	eor	w17,w27,w27,ror#9
++	add	w26,w26,w16			// h+=Sigma1(e)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	add	w22,w22,w26			// d+=h
++	eor	w19,w19,w20			// Maj(a,b,c)
++	eor	w17,w7,w17,ror#13	// Sigma0(a)
++	add	w26,w26,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	//add	w26,w26,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w5,w5			// 2
++#endif
++	add	w26,w26,w17			// h+=Sigma0(a)
++	ror	w16,w22,#6
++	add	w25,w25,w19			// h+=K[i]
++	eor	w8,w22,w22,ror#14
++	and	w17,w23,w22
++	bic	w19,w24,w22
++	add	w25,w25,w5			// h+=X[i]
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w26,w27			// a^b, b^c in next round
++	eor	w16,w16,w8,ror#11	// Sigma1(e)
++	ror	w8,w26,#2
++	add	w25,w25,w17			// h+=Ch(e,f,g)
++	eor	w17,w26,w26,ror#9
++	add	w25,w25,w16			// h+=Sigma1(e)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	add	w21,w21,w25			// d+=h
++	eor	w28,w28,w27			// Maj(a,b,c)
++	eor	w17,w8,w17,ror#13	// Sigma0(a)
++	add	w25,w25,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	//add	w25,w25,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w6,w6			// 3
++#endif
++	ldp	w7,w8,[x1],#2*4
++	add	w25,w25,w17			// h+=Sigma0(a)
++	ror	w16,w21,#6
++	add	w24,w24,w28			// h+=K[i]
++	eor	w9,w21,w21,ror#14
++	and	w17,w22,w21
++	bic	w28,w23,w21
++	add	w24,w24,w6			// h+=X[i]
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w25,w26			// a^b, b^c in next round
++	eor	w16,w16,w9,ror#11	// Sigma1(e)
++	ror	w9,w25,#2
++	add	w24,w24,w17			// h+=Ch(e,f,g)
++	eor	w17,w25,w25,ror#9
++	add	w24,w24,w16			// h+=Sigma1(e)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	add	w20,w20,w24			// d+=h
++	eor	w19,w19,w26			// Maj(a,b,c)
++	eor	w17,w9,w17,ror#13	// Sigma0(a)
++	add	w24,w24,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	//add	w24,w24,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w7,w7			// 4
++#endif
++	add	w24,w24,w17			// h+=Sigma0(a)
++	ror	w16,w20,#6
++	add	w23,w23,w19			// h+=K[i]
++	eor	w10,w20,w20,ror#14
++	and	w17,w21,w20
++	bic	w19,w22,w20
++	add	w23,w23,w7			// h+=X[i]
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w24,w25			// a^b, b^c in next round
++	eor	w16,w16,w10,ror#11	// Sigma1(e)
++	ror	w10,w24,#2
++	add	w23,w23,w17			// h+=Ch(e,f,g)
++	eor	w17,w24,w24,ror#9
++	add	w23,w23,w16			// h+=Sigma1(e)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	add	w27,w27,w23			// d+=h
++	eor	w28,w28,w25			// Maj(a,b,c)
++	eor	w17,w10,w17,ror#13	// Sigma0(a)
++	add	w23,w23,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	//add	w23,w23,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w8,w8			// 5
++#endif
++	ldp	w9,w10,[x1],#2*4
++	add	w23,w23,w17			// h+=Sigma0(a)
++	ror	w16,w27,#6
++	add	w22,w22,w28			// h+=K[i]
++	eor	w11,w27,w27,ror#14
++	and	w17,w20,w27
++	bic	w28,w21,w27
++	add	w22,w22,w8			// h+=X[i]
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w23,w24			// a^b, b^c in next round
++	eor	w16,w16,w11,ror#11	// Sigma1(e)
++	ror	w11,w23,#2
++	add	w22,w22,w17			// h+=Ch(e,f,g)
++	eor	w17,w23,w23,ror#9
++	add	w22,w22,w16			// h+=Sigma1(e)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	add	w26,w26,w22			// d+=h
++	eor	w19,w19,w24			// Maj(a,b,c)
++	eor	w17,w11,w17,ror#13	// Sigma0(a)
++	add	w22,w22,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	//add	w22,w22,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w9,w9			// 6
++#endif
++	add	w22,w22,w17			// h+=Sigma0(a)
++	ror	w16,w26,#6
++	add	w21,w21,w19			// h+=K[i]
++	eor	w12,w26,w26,ror#14
++	and	w17,w27,w26
++	bic	w19,w20,w26
++	add	w21,w21,w9			// h+=X[i]
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w22,w23			// a^b, b^c in next round
++	eor	w16,w16,w12,ror#11	// Sigma1(e)
++	ror	w12,w22,#2
++	add	w21,w21,w17			// h+=Ch(e,f,g)
++	eor	w17,w22,w22,ror#9
++	add	w21,w21,w16			// h+=Sigma1(e)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	add	w25,w25,w21			// d+=h
++	eor	w28,w28,w23			// Maj(a,b,c)
++	eor	w17,w12,w17,ror#13	// Sigma0(a)
++	add	w21,w21,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	//add	w21,w21,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w10,w10			// 7
++#endif
++	ldp	w11,w12,[x1],#2*4
++	add	w21,w21,w17			// h+=Sigma0(a)
++	ror	w16,w25,#6
++	add	w20,w20,w28			// h+=K[i]
++	eor	w13,w25,w25,ror#14
++	and	w17,w26,w25
++	bic	w28,w27,w25
++	add	w20,w20,w10			// h+=X[i]
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w21,w22			// a^b, b^c in next round
++	eor	w16,w16,w13,ror#11	// Sigma1(e)
++	ror	w13,w21,#2
++	add	w20,w20,w17			// h+=Ch(e,f,g)
++	eor	w17,w21,w21,ror#9
++	add	w20,w20,w16			// h+=Sigma1(e)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	add	w24,w24,w20			// d+=h
++	eor	w19,w19,w22			// Maj(a,b,c)
++	eor	w17,w13,w17,ror#13	// Sigma0(a)
++	add	w20,w20,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	//add	w20,w20,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w11,w11			// 8
++#endif
++	add	w20,w20,w17			// h+=Sigma0(a)
++	ror	w16,w24,#6
++	add	w27,w27,w19			// h+=K[i]
++	eor	w14,w24,w24,ror#14
++	and	w17,w25,w24
++	bic	w19,w26,w24
++	add	w27,w27,w11			// h+=X[i]
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w20,w21			// a^b, b^c in next round
++	eor	w16,w16,w14,ror#11	// Sigma1(e)
++	ror	w14,w20,#2
++	add	w27,w27,w17			// h+=Ch(e,f,g)
++	eor	w17,w20,w20,ror#9
++	add	w27,w27,w16			// h+=Sigma1(e)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	add	w23,w23,w27			// d+=h
++	eor	w28,w28,w21			// Maj(a,b,c)
++	eor	w17,w14,w17,ror#13	// Sigma0(a)
++	add	w27,w27,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	//add	w27,w27,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w12,w12			// 9
++#endif
++	ldp	w13,w14,[x1],#2*4
++	add	w27,w27,w17			// h+=Sigma0(a)
++	ror	w16,w23,#6
++	add	w26,w26,w28			// h+=K[i]
++	eor	w15,w23,w23,ror#14
++	and	w17,w24,w23
++	bic	w28,w25,w23
++	add	w26,w26,w12			// h+=X[i]
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w27,w20			// a^b, b^c in next round
++	eor	w16,w16,w15,ror#11	// Sigma1(e)
++	ror	w15,w27,#2
++	add	w26,w26,w17			// h+=Ch(e,f,g)
++	eor	w17,w27,w27,ror#9
++	add	w26,w26,w16			// h+=Sigma1(e)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	add	w22,w22,w26			// d+=h
++	eor	w19,w19,w20			// Maj(a,b,c)
++	eor	w17,w15,w17,ror#13	// Sigma0(a)
++	add	w26,w26,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	//add	w26,w26,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w13,w13			// 10
++#endif
++	add	w26,w26,w17			// h+=Sigma0(a)
++	ror	w16,w22,#6
++	add	w25,w25,w19			// h+=K[i]
++	eor	w0,w22,w22,ror#14
++	and	w17,w23,w22
++	bic	w19,w24,w22
++	add	w25,w25,w13			// h+=X[i]
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w26,w27			// a^b, b^c in next round
++	eor	w16,w16,w0,ror#11	// Sigma1(e)
++	ror	w0,w26,#2
++	add	w25,w25,w17			// h+=Ch(e,f,g)
++	eor	w17,w26,w26,ror#9
++	add	w25,w25,w16			// h+=Sigma1(e)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	add	w21,w21,w25			// d+=h
++	eor	w28,w28,w27			// Maj(a,b,c)
++	eor	w17,w0,w17,ror#13	// Sigma0(a)
++	add	w25,w25,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	//add	w25,w25,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w14,w14			// 11
++#endif
++	ldp	w15,w0,[x1],#2*4
++	add	w25,w25,w17			// h+=Sigma0(a)
++	str	w6,[sp,#12]
++	ror	w16,w21,#6
++	add	w24,w24,w28			// h+=K[i]
++	eor	w6,w21,w21,ror#14
++	and	w17,w22,w21
++	bic	w28,w23,w21
++	add	w24,w24,w14			// h+=X[i]
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w25,w26			// a^b, b^c in next round
++	eor	w16,w16,w6,ror#11	// Sigma1(e)
++	ror	w6,w25,#2
++	add	w24,w24,w17			// h+=Ch(e,f,g)
++	eor	w17,w25,w25,ror#9
++	add	w24,w24,w16			// h+=Sigma1(e)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	add	w20,w20,w24			// d+=h
++	eor	w19,w19,w26			// Maj(a,b,c)
++	eor	w17,w6,w17,ror#13	// Sigma0(a)
++	add	w24,w24,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	//add	w24,w24,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w15,w15			// 12
++#endif
++	add	w24,w24,w17			// h+=Sigma0(a)
++	str	w7,[sp,#0]
++	ror	w16,w20,#6
++	add	w23,w23,w19			// h+=K[i]
++	eor	w7,w20,w20,ror#14
++	and	w17,w21,w20
++	bic	w19,w22,w20
++	add	w23,w23,w15			// h+=X[i]
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w24,w25			// a^b, b^c in next round
++	eor	w16,w16,w7,ror#11	// Sigma1(e)
++	ror	w7,w24,#2
++	add	w23,w23,w17			// h+=Ch(e,f,g)
++	eor	w17,w24,w24,ror#9
++	add	w23,w23,w16			// h+=Sigma1(e)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	add	w27,w27,w23			// d+=h
++	eor	w28,w28,w25			// Maj(a,b,c)
++	eor	w17,w7,w17,ror#13	// Sigma0(a)
++	add	w23,w23,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	//add	w23,w23,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w0,w0			// 13
++#endif
++	ldp	w1,w2,[x1]
++	add	w23,w23,w17			// h+=Sigma0(a)
++	str	w8,[sp,#4]
++	ror	w16,w27,#6
++	add	w22,w22,w28			// h+=K[i]
++	eor	w8,w27,w27,ror#14
++	and	w17,w20,w27
++	bic	w28,w21,w27
++	add	w22,w22,w0			// h+=X[i]
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w23,w24			// a^b, b^c in next round
++	eor	w16,w16,w8,ror#11	// Sigma1(e)
++	ror	w8,w23,#2
++	add	w22,w22,w17			// h+=Ch(e,f,g)
++	eor	w17,w23,w23,ror#9
++	add	w22,w22,w16			// h+=Sigma1(e)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	add	w26,w26,w22			// d+=h
++	eor	w19,w19,w24			// Maj(a,b,c)
++	eor	w17,w8,w17,ror#13	// Sigma0(a)
++	add	w22,w22,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	//add	w22,w22,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w1,w1			// 14
++#endif
++	ldr	w6,[sp,#12]
++	add	w22,w22,w17			// h+=Sigma0(a)
++	str	w9,[sp,#8]
++	ror	w16,w26,#6
++	add	w21,w21,w19			// h+=K[i]
++	eor	w9,w26,w26,ror#14
++	and	w17,w27,w26
++	bic	w19,w20,w26
++	add	w21,w21,w1			// h+=X[i]
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w22,w23			// a^b, b^c in next round
++	eor	w16,w16,w9,ror#11	// Sigma1(e)
++	ror	w9,w22,#2
++	add	w21,w21,w17			// h+=Ch(e,f,g)
++	eor	w17,w22,w22,ror#9
++	add	w21,w21,w16			// h+=Sigma1(e)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	add	w25,w25,w21			// d+=h
++	eor	w28,w28,w23			// Maj(a,b,c)
++	eor	w17,w9,w17,ror#13	// Sigma0(a)
++	add	w21,w21,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	//add	w21,w21,w17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	w2,w2			// 15
++#endif
++	ldr	w7,[sp,#0]
++	add	w21,w21,w17			// h+=Sigma0(a)
++	str	w10,[sp,#12]
++	ror	w16,w25,#6
++	add	w20,w20,w28			// h+=K[i]
++	ror	w9,w4,#7
++	and	w17,w26,w25
++	ror	w8,w1,#17
++	bic	w28,w27,w25
++	ror	w10,w21,#2
++	add	w20,w20,w2			// h+=X[i]
++	eor	w16,w16,w25,ror#11
++	eor	w9,w9,w4,ror#18
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w21,w22			// a^b, b^c in next round
++	eor	w16,w16,w25,ror#25	// Sigma1(e)
++	eor	w10,w10,w21,ror#13
++	add	w20,w20,w17			// h+=Ch(e,f,g)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	eor	w8,w8,w1,ror#19
++	eor	w9,w9,w4,lsr#3	// sigma0(X[i+1])
++	add	w20,w20,w16			// h+=Sigma1(e)
++	eor	w19,w19,w22			// Maj(a,b,c)
++	eor	w17,w10,w21,ror#22	// Sigma0(a)
++	eor	w8,w8,w1,lsr#10	// sigma1(X[i+14])
++	add	w3,w3,w12
++	add	w24,w24,w20			// d+=h
++	add	w20,w20,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	add	w3,w3,w9
++	add	w20,w20,w17			// h+=Sigma0(a)
++	add	w3,w3,w8
++.Loop_16_xx:
++	ldr	w8,[sp,#4]
++	str	w11,[sp,#0]
++	ror	w16,w24,#6
++	add	w27,w27,w19			// h+=K[i]
++	ror	w10,w5,#7
++	and	w17,w25,w24
++	ror	w9,w2,#17
++	bic	w19,w26,w24
++	ror	w11,w20,#2
++	add	w27,w27,w3			// h+=X[i]
++	eor	w16,w16,w24,ror#11
++	eor	w10,w10,w5,ror#18
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w20,w21			// a^b, b^c in next round
++	eor	w16,w16,w24,ror#25	// Sigma1(e)
++	eor	w11,w11,w20,ror#13
++	add	w27,w27,w17			// h+=Ch(e,f,g)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	eor	w9,w9,w2,ror#19
++	eor	w10,w10,w5,lsr#3	// sigma0(X[i+1])
++	add	w27,w27,w16			// h+=Sigma1(e)
++	eor	w28,w28,w21			// Maj(a,b,c)
++	eor	w17,w11,w20,ror#22	// Sigma0(a)
++	eor	w9,w9,w2,lsr#10	// sigma1(X[i+14])
++	add	w4,w4,w13
++	add	w23,w23,w27			// d+=h
++	add	w27,w27,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	add	w4,w4,w10
++	add	w27,w27,w17			// h+=Sigma0(a)
++	add	w4,w4,w9
++	ldr	w9,[sp,#8]
++	str	w12,[sp,#4]
++	ror	w16,w23,#6
++	add	w26,w26,w28			// h+=K[i]
++	ror	w11,w6,#7
++	and	w17,w24,w23
++	ror	w10,w3,#17
++	bic	w28,w25,w23
++	ror	w12,w27,#2
++	add	w26,w26,w4			// h+=X[i]
++	eor	w16,w16,w23,ror#11
++	eor	w11,w11,w6,ror#18
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w27,w20			// a^b, b^c in next round
++	eor	w16,w16,w23,ror#25	// Sigma1(e)
++	eor	w12,w12,w27,ror#13
++	add	w26,w26,w17			// h+=Ch(e,f,g)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	eor	w10,w10,w3,ror#19
++	eor	w11,w11,w6,lsr#3	// sigma0(X[i+1])
++	add	w26,w26,w16			// h+=Sigma1(e)
++	eor	w19,w19,w20			// Maj(a,b,c)
++	eor	w17,w12,w27,ror#22	// Sigma0(a)
++	eor	w10,w10,w3,lsr#10	// sigma1(X[i+14])
++	add	w5,w5,w14
++	add	w22,w22,w26			// d+=h
++	add	w26,w26,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	add	w5,w5,w11
++	add	w26,w26,w17			// h+=Sigma0(a)
++	add	w5,w5,w10
++	ldr	w10,[sp,#12]
++	str	w13,[sp,#8]
++	ror	w16,w22,#6
++	add	w25,w25,w19			// h+=K[i]
++	ror	w12,w7,#7
++	and	w17,w23,w22
++	ror	w11,w4,#17
++	bic	w19,w24,w22
++	ror	w13,w26,#2
++	add	w25,w25,w5			// h+=X[i]
++	eor	w16,w16,w22,ror#11
++	eor	w12,w12,w7,ror#18
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w26,w27			// a^b, b^c in next round
++	eor	w16,w16,w22,ror#25	// Sigma1(e)
++	eor	w13,w13,w26,ror#13
++	add	w25,w25,w17			// h+=Ch(e,f,g)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	eor	w11,w11,w4,ror#19
++	eor	w12,w12,w7,lsr#3	// sigma0(X[i+1])
++	add	w25,w25,w16			// h+=Sigma1(e)
++	eor	w28,w28,w27			// Maj(a,b,c)
++	eor	w17,w13,w26,ror#22	// Sigma0(a)
++	eor	w11,w11,w4,lsr#10	// sigma1(X[i+14])
++	add	w6,w6,w15
++	add	w21,w21,w25			// d+=h
++	add	w25,w25,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	add	w6,w6,w12
++	add	w25,w25,w17			// h+=Sigma0(a)
++	add	w6,w6,w11
++	ldr	w11,[sp,#0]
++	str	w14,[sp,#12]
++	ror	w16,w21,#6
++	add	w24,w24,w28			// h+=K[i]
++	ror	w13,w8,#7
++	and	w17,w22,w21
++	ror	w12,w5,#17
++	bic	w28,w23,w21
++	ror	w14,w25,#2
++	add	w24,w24,w6			// h+=X[i]
++	eor	w16,w16,w21,ror#11
++	eor	w13,w13,w8,ror#18
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w25,w26			// a^b, b^c in next round
++	eor	w16,w16,w21,ror#25	// Sigma1(e)
++	eor	w14,w14,w25,ror#13
++	add	w24,w24,w17			// h+=Ch(e,f,g)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	eor	w12,w12,w5,ror#19
++	eor	w13,w13,w8,lsr#3	// sigma0(X[i+1])
++	add	w24,w24,w16			// h+=Sigma1(e)
++	eor	w19,w19,w26			// Maj(a,b,c)
++	eor	w17,w14,w25,ror#22	// Sigma0(a)
++	eor	w12,w12,w5,lsr#10	// sigma1(X[i+14])
++	add	w7,w7,w0
++	add	w20,w20,w24			// d+=h
++	add	w24,w24,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	add	w7,w7,w13
++	add	w24,w24,w17			// h+=Sigma0(a)
++	add	w7,w7,w12
++	ldr	w12,[sp,#4]
++	str	w15,[sp,#0]
++	ror	w16,w20,#6
++	add	w23,w23,w19			// h+=K[i]
++	ror	w14,w9,#7
++	and	w17,w21,w20
++	ror	w13,w6,#17
++	bic	w19,w22,w20
++	ror	w15,w24,#2
++	add	w23,w23,w7			// h+=X[i]
++	eor	w16,w16,w20,ror#11
++	eor	w14,w14,w9,ror#18
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w24,w25			// a^b, b^c in next round
++	eor	w16,w16,w20,ror#25	// Sigma1(e)
++	eor	w15,w15,w24,ror#13
++	add	w23,w23,w17			// h+=Ch(e,f,g)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	eor	w13,w13,w6,ror#19
++	eor	w14,w14,w9,lsr#3	// sigma0(X[i+1])
++	add	w23,w23,w16			// h+=Sigma1(e)
++	eor	w28,w28,w25			// Maj(a,b,c)
++	eor	w17,w15,w24,ror#22	// Sigma0(a)
++	eor	w13,w13,w6,lsr#10	// sigma1(X[i+14])
++	add	w8,w8,w1
++	add	w27,w27,w23			// d+=h
++	add	w23,w23,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	add	w8,w8,w14
++	add	w23,w23,w17			// h+=Sigma0(a)
++	add	w8,w8,w13
++	ldr	w13,[sp,#8]
++	str	w0,[sp,#4]
++	ror	w16,w27,#6
++	add	w22,w22,w28			// h+=K[i]
++	ror	w15,w10,#7
++	and	w17,w20,w27
++	ror	w14,w7,#17
++	bic	w28,w21,w27
++	ror	w0,w23,#2
++	add	w22,w22,w8			// h+=X[i]
++	eor	w16,w16,w27,ror#11
++	eor	w15,w15,w10,ror#18
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w23,w24			// a^b, b^c in next round
++	eor	w16,w16,w27,ror#25	// Sigma1(e)
++	eor	w0,w0,w23,ror#13
++	add	w22,w22,w17			// h+=Ch(e,f,g)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	eor	w14,w14,w7,ror#19
++	eor	w15,w15,w10,lsr#3	// sigma0(X[i+1])
++	add	w22,w22,w16			// h+=Sigma1(e)
++	eor	w19,w19,w24			// Maj(a,b,c)
++	eor	w17,w0,w23,ror#22	// Sigma0(a)
++	eor	w14,w14,w7,lsr#10	// sigma1(X[i+14])
++	add	w9,w9,w2
++	add	w26,w26,w22			// d+=h
++	add	w22,w22,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	add	w9,w9,w15
++	add	w22,w22,w17			// h+=Sigma0(a)
++	add	w9,w9,w14
++	ldr	w14,[sp,#12]
++	str	w1,[sp,#8]
++	ror	w16,w26,#6
++	add	w21,w21,w19			// h+=K[i]
++	ror	w0,w11,#7
++	and	w17,w27,w26
++	ror	w15,w8,#17
++	bic	w19,w20,w26
++	ror	w1,w22,#2
++	add	w21,w21,w9			// h+=X[i]
++	eor	w16,w16,w26,ror#11
++	eor	w0,w0,w11,ror#18
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w22,w23			// a^b, b^c in next round
++	eor	w16,w16,w26,ror#25	// Sigma1(e)
++	eor	w1,w1,w22,ror#13
++	add	w21,w21,w17			// h+=Ch(e,f,g)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	eor	w15,w15,w8,ror#19
++	eor	w0,w0,w11,lsr#3	// sigma0(X[i+1])
++	add	w21,w21,w16			// h+=Sigma1(e)
++	eor	w28,w28,w23			// Maj(a,b,c)
++	eor	w17,w1,w22,ror#22	// Sigma0(a)
++	eor	w15,w15,w8,lsr#10	// sigma1(X[i+14])
++	add	w10,w10,w3
++	add	w25,w25,w21			// d+=h
++	add	w21,w21,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	add	w10,w10,w0
++	add	w21,w21,w17			// h+=Sigma0(a)
++	add	w10,w10,w15
++	ldr	w15,[sp,#0]
++	str	w2,[sp,#12]
++	ror	w16,w25,#6
++	add	w20,w20,w28			// h+=K[i]
++	ror	w1,w12,#7
++	and	w17,w26,w25
++	ror	w0,w9,#17
++	bic	w28,w27,w25
++	ror	w2,w21,#2
++	add	w20,w20,w10			// h+=X[i]
++	eor	w16,w16,w25,ror#11
++	eor	w1,w1,w12,ror#18
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w21,w22			// a^b, b^c in next round
++	eor	w16,w16,w25,ror#25	// Sigma1(e)
++	eor	w2,w2,w21,ror#13
++	add	w20,w20,w17			// h+=Ch(e,f,g)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	eor	w0,w0,w9,ror#19
++	eor	w1,w1,w12,lsr#3	// sigma0(X[i+1])
++	add	w20,w20,w16			// h+=Sigma1(e)
++	eor	w19,w19,w22			// Maj(a,b,c)
++	eor	w17,w2,w21,ror#22	// Sigma0(a)
++	eor	w0,w0,w9,lsr#10	// sigma1(X[i+14])
++	add	w11,w11,w4
++	add	w24,w24,w20			// d+=h
++	add	w20,w20,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	add	w11,w11,w1
++	add	w20,w20,w17			// h+=Sigma0(a)
++	add	w11,w11,w0
++	ldr	w0,[sp,#4]
++	str	w3,[sp,#0]
++	ror	w16,w24,#6
++	add	w27,w27,w19			// h+=K[i]
++	ror	w2,w13,#7
++	and	w17,w25,w24
++	ror	w1,w10,#17
++	bic	w19,w26,w24
++	ror	w3,w20,#2
++	add	w27,w27,w11			// h+=X[i]
++	eor	w16,w16,w24,ror#11
++	eor	w2,w2,w13,ror#18
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w20,w21			// a^b, b^c in next round
++	eor	w16,w16,w24,ror#25	// Sigma1(e)
++	eor	w3,w3,w20,ror#13
++	add	w27,w27,w17			// h+=Ch(e,f,g)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	eor	w1,w1,w10,ror#19
++	eor	w2,w2,w13,lsr#3	// sigma0(X[i+1])
++	add	w27,w27,w16			// h+=Sigma1(e)
++	eor	w28,w28,w21			// Maj(a,b,c)
++	eor	w17,w3,w20,ror#22	// Sigma0(a)
++	eor	w1,w1,w10,lsr#10	// sigma1(X[i+14])
++	add	w12,w12,w5
++	add	w23,w23,w27			// d+=h
++	add	w27,w27,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	add	w12,w12,w2
++	add	w27,w27,w17			// h+=Sigma0(a)
++	add	w12,w12,w1
++	ldr	w1,[sp,#8]
++	str	w4,[sp,#4]
++	ror	w16,w23,#6
++	add	w26,w26,w28			// h+=K[i]
++	ror	w3,w14,#7
++	and	w17,w24,w23
++	ror	w2,w11,#17
++	bic	w28,w25,w23
++	ror	w4,w27,#2
++	add	w26,w26,w12			// h+=X[i]
++	eor	w16,w16,w23,ror#11
++	eor	w3,w3,w14,ror#18
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w27,w20			// a^b, b^c in next round
++	eor	w16,w16,w23,ror#25	// Sigma1(e)
++	eor	w4,w4,w27,ror#13
++	add	w26,w26,w17			// h+=Ch(e,f,g)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	eor	w2,w2,w11,ror#19
++	eor	w3,w3,w14,lsr#3	// sigma0(X[i+1])
++	add	w26,w26,w16			// h+=Sigma1(e)
++	eor	w19,w19,w20			// Maj(a,b,c)
++	eor	w17,w4,w27,ror#22	// Sigma0(a)
++	eor	w2,w2,w11,lsr#10	// sigma1(X[i+14])
++	add	w13,w13,w6
++	add	w22,w22,w26			// d+=h
++	add	w26,w26,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	add	w13,w13,w3
++	add	w26,w26,w17			// h+=Sigma0(a)
++	add	w13,w13,w2
++	ldr	w2,[sp,#12]
++	str	w5,[sp,#8]
++	ror	w16,w22,#6
++	add	w25,w25,w19			// h+=K[i]
++	ror	w4,w15,#7
++	and	w17,w23,w22
++	ror	w3,w12,#17
++	bic	w19,w24,w22
++	ror	w5,w26,#2
++	add	w25,w25,w13			// h+=X[i]
++	eor	w16,w16,w22,ror#11
++	eor	w4,w4,w15,ror#18
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w26,w27			// a^b, b^c in next round
++	eor	w16,w16,w22,ror#25	// Sigma1(e)
++	eor	w5,w5,w26,ror#13
++	add	w25,w25,w17			// h+=Ch(e,f,g)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	eor	w3,w3,w12,ror#19
++	eor	w4,w4,w15,lsr#3	// sigma0(X[i+1])
++	add	w25,w25,w16			// h+=Sigma1(e)
++	eor	w28,w28,w27			// Maj(a,b,c)
++	eor	w17,w5,w26,ror#22	// Sigma0(a)
++	eor	w3,w3,w12,lsr#10	// sigma1(X[i+14])
++	add	w14,w14,w7
++	add	w21,w21,w25			// d+=h
++	add	w25,w25,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	add	w14,w14,w4
++	add	w25,w25,w17			// h+=Sigma0(a)
++	add	w14,w14,w3
++	ldr	w3,[sp,#0]
++	str	w6,[sp,#12]
++	ror	w16,w21,#6
++	add	w24,w24,w28			// h+=K[i]
++	ror	w5,w0,#7
++	and	w17,w22,w21
++	ror	w4,w13,#17
++	bic	w28,w23,w21
++	ror	w6,w25,#2
++	add	w24,w24,w14			// h+=X[i]
++	eor	w16,w16,w21,ror#11
++	eor	w5,w5,w0,ror#18
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w25,w26			// a^b, b^c in next round
++	eor	w16,w16,w21,ror#25	// Sigma1(e)
++	eor	w6,w6,w25,ror#13
++	add	w24,w24,w17			// h+=Ch(e,f,g)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	eor	w4,w4,w13,ror#19
++	eor	w5,w5,w0,lsr#3	// sigma0(X[i+1])
++	add	w24,w24,w16			// h+=Sigma1(e)
++	eor	w19,w19,w26			// Maj(a,b,c)
++	eor	w17,w6,w25,ror#22	// Sigma0(a)
++	eor	w4,w4,w13,lsr#10	// sigma1(X[i+14])
++	add	w15,w15,w8
++	add	w20,w20,w24			// d+=h
++	add	w24,w24,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	add	w15,w15,w5
++	add	w24,w24,w17			// h+=Sigma0(a)
++	add	w15,w15,w4
++	ldr	w4,[sp,#4]
++	str	w7,[sp,#0]
++	ror	w16,w20,#6
++	add	w23,w23,w19			// h+=K[i]
++	ror	w6,w1,#7
++	and	w17,w21,w20
++	ror	w5,w14,#17
++	bic	w19,w22,w20
++	ror	w7,w24,#2
++	add	w23,w23,w15			// h+=X[i]
++	eor	w16,w16,w20,ror#11
++	eor	w6,w6,w1,ror#18
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w24,w25			// a^b, b^c in next round
++	eor	w16,w16,w20,ror#25	// Sigma1(e)
++	eor	w7,w7,w24,ror#13
++	add	w23,w23,w17			// h+=Ch(e,f,g)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	eor	w5,w5,w14,ror#19
++	eor	w6,w6,w1,lsr#3	// sigma0(X[i+1])
++	add	w23,w23,w16			// h+=Sigma1(e)
++	eor	w28,w28,w25			// Maj(a,b,c)
++	eor	w17,w7,w24,ror#22	// Sigma0(a)
++	eor	w5,w5,w14,lsr#10	// sigma1(X[i+14])
++	add	w0,w0,w9
++	add	w27,w27,w23			// d+=h
++	add	w23,w23,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	add	w0,w0,w6
++	add	w23,w23,w17			// h+=Sigma0(a)
++	add	w0,w0,w5
++	ldr	w5,[sp,#8]
++	str	w8,[sp,#4]
++	ror	w16,w27,#6
++	add	w22,w22,w28			// h+=K[i]
++	ror	w7,w2,#7
++	and	w17,w20,w27
++	ror	w6,w15,#17
++	bic	w28,w21,w27
++	ror	w8,w23,#2
++	add	w22,w22,w0			// h+=X[i]
++	eor	w16,w16,w27,ror#11
++	eor	w7,w7,w2,ror#18
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w23,w24			// a^b, b^c in next round
++	eor	w16,w16,w27,ror#25	// Sigma1(e)
++	eor	w8,w8,w23,ror#13
++	add	w22,w22,w17			// h+=Ch(e,f,g)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	eor	w6,w6,w15,ror#19
++	eor	w7,w7,w2,lsr#3	// sigma0(X[i+1])
++	add	w22,w22,w16			// h+=Sigma1(e)
++	eor	w19,w19,w24			// Maj(a,b,c)
++	eor	w17,w8,w23,ror#22	// Sigma0(a)
++	eor	w6,w6,w15,lsr#10	// sigma1(X[i+14])
++	add	w1,w1,w10
++	add	w26,w26,w22			// d+=h
++	add	w22,w22,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	add	w1,w1,w7
++	add	w22,w22,w17			// h+=Sigma0(a)
++	add	w1,w1,w6
++	ldr	w6,[sp,#12]
++	str	w9,[sp,#8]
++	ror	w16,w26,#6
++	add	w21,w21,w19			// h+=K[i]
++	ror	w8,w3,#7
++	and	w17,w27,w26
++	ror	w7,w0,#17
++	bic	w19,w20,w26
++	ror	w9,w22,#2
++	add	w21,w21,w1			// h+=X[i]
++	eor	w16,w16,w26,ror#11
++	eor	w8,w8,w3,ror#18
++	orr	w17,w17,w19			// Ch(e,f,g)
++	eor	w19,w22,w23			// a^b, b^c in next round
++	eor	w16,w16,w26,ror#25	// Sigma1(e)
++	eor	w9,w9,w22,ror#13
++	add	w21,w21,w17			// h+=Ch(e,f,g)
++	and	w28,w28,w19			// (b^c)&=(a^b)
++	eor	w7,w7,w0,ror#19
++	eor	w8,w8,w3,lsr#3	// sigma0(X[i+1])
++	add	w21,w21,w16			// h+=Sigma1(e)
++	eor	w28,w28,w23			// Maj(a,b,c)
++	eor	w17,w9,w22,ror#22	// Sigma0(a)
++	eor	w7,w7,w0,lsr#10	// sigma1(X[i+14])
++	add	w2,w2,w11
++	add	w25,w25,w21			// d+=h
++	add	w21,w21,w28			// h+=Maj(a,b,c)
++	ldr	w28,[x30],#4		// *K++, w19 in next round
++	add	w2,w2,w8
++	add	w21,w21,w17			// h+=Sigma0(a)
++	add	w2,w2,w7
++	ldr	w7,[sp,#0]
++	str	w10,[sp,#12]
++	ror	w16,w25,#6
++	add	w20,w20,w28			// h+=K[i]
++	ror	w9,w4,#7
++	and	w17,w26,w25
++	ror	w8,w1,#17
++	bic	w28,w27,w25
++	ror	w10,w21,#2
++	add	w20,w20,w2			// h+=X[i]
++	eor	w16,w16,w25,ror#11
++	eor	w9,w9,w4,ror#18
++	orr	w17,w17,w28			// Ch(e,f,g)
++	eor	w28,w21,w22			// a^b, b^c in next round
++	eor	w16,w16,w25,ror#25	// Sigma1(e)
++	eor	w10,w10,w21,ror#13
++	add	w20,w20,w17			// h+=Ch(e,f,g)
++	and	w19,w19,w28			// (b^c)&=(a^b)
++	eor	w8,w8,w1,ror#19
++	eor	w9,w9,w4,lsr#3	// sigma0(X[i+1])
++	add	w20,w20,w16			// h+=Sigma1(e)
++	eor	w19,w19,w22			// Maj(a,b,c)
++	eor	w17,w10,w21,ror#22	// Sigma0(a)
++	eor	w8,w8,w1,lsr#10	// sigma1(X[i+14])
++	add	w3,w3,w12
++	add	w24,w24,w20			// d+=h
++	add	w20,w20,w19			// h+=Maj(a,b,c)
++	ldr	w19,[x30],#4		// *K++, w28 in next round
++	add	w3,w3,w9
++	add	w20,w20,w17			// h+=Sigma0(a)
++	add	w3,w3,w8
++	cbnz	w19,.Loop_16_xx
++
++	ldp	x0,x2,[x29,#96]
++	ldr	x1,[x29,#112]
++	sub	x30,x30,#260		// rewind
++
++	ldp	w3,w4,[x0]
++	ldp	w5,w6,[x0,#2*4]
++	add	x1,x1,#14*4			// advance input pointer
++	ldp	w7,w8,[x0,#4*4]
++	add	w20,w20,w3
++	ldp	w9,w10,[x0,#6*4]
++	add	w21,w21,w4
++	add	w22,w22,w5
++	add	w23,w23,w6
++	stp	w20,w21,[x0]
++	add	w24,w24,w7
++	add	w25,w25,w8
++	stp	w22,w23,[x0,#2*4]
++	add	w26,w26,w9
++	add	w27,w27,w10
++	cmp	x1,x2
++	stp	w24,w25,[x0,#4*4]
++	stp	w26,w27,[x0,#6*4]
++	b.ne	.Loop
++
++	ldp	x19,x20,[x29,#16]
++	add	sp,sp,#4*4
++	ldp	x21,x22,[x29,#32]
++	ldp	x23,x24,[x29,#48]
++	ldp	x25,x26,[x29,#64]
++	ldp	x27,x28,[x29,#80]
++	ldp	x29,x30,[sp],#128
++	ret
++.size	sha256_block_data_order,.-sha256_block_data_order
++
++.align	6
++.type	.LK256,%object
++.LK256:
++	.long	0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5
++	.long	0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5
++	.long	0xd807aa98,0x12835b01,0x243185be,0x550c7dc3
++	.long	0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174
++	.long	0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc
++	.long	0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da
++	.long	0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7
++	.long	0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967
++	.long	0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13
++	.long	0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85
++	.long	0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3
++	.long	0xd192e819,0xd6990624,0xf40e3585,0x106aa070
++	.long	0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5
++	.long	0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3
++	.long	0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208
++	.long	0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
++	.long	0	//terminator
++.size	.LK256,.-.LK256
++#ifndef	__KERNEL__
++.align	3
++.LOPENSSL_armcap_P:
++# ifdef	__ILP32__
++	.long	OPENSSL_armcap_P-.
++# else
++	.quad	OPENSSL_armcap_P-.
++# endif
++#endif
++.asciz	"SHA256 block transform for ARMv8, CRYPTOGAMS by <appro@openssl.org>"
++.align	2
++#ifndef	__KERNEL__
++.type	sha256_block_armv8,%function
++.align	6
++sha256_block_armv8:
++.Lv8_entry:
++	stp		x29,x30,[sp,#-16]!
++	add		x29,sp,#0
++
++	ld1		{v0.4s,v1.4s},[x0]
++	adr		x3,.LK256
++
++.Loop_hw:
++	ld1		{v4.16b-v7.16b},[x1],#64
++	sub		x2,x2,#1
++	ld1		{v16.4s},[x3],#16
++	rev32		v4.16b,v4.16b
++	rev32		v5.16b,v5.16b
++	rev32		v6.16b,v6.16b
++	rev32		v7.16b,v7.16b
++	orr		v18.16b,v0.16b,v0.16b		// offload
++	orr		v19.16b,v1.16b,v1.16b
++	ld1		{v17.4s},[x3],#16
++	add		v16.4s,v16.4s,v4.4s
++	.inst	0x5e2828a4	//sha256su0 v4.16b,v5.16b
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e104020	//sha256h v0.16b,v1.16b,v16.4s
++	.inst	0x5e105041	//sha256h2 v1.16b,v2.16b,v16.4s
++	.inst	0x5e0760c4	//sha256su1 v4.16b,v6.16b,v7.16b
++	ld1		{v16.4s},[x3],#16
++	add		v17.4s,v17.4s,v5.4s
++	.inst	0x5e2828c5	//sha256su0 v5.16b,v6.16b
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e114020	//sha256h v0.16b,v1.16b,v17.4s
++	.inst	0x5e115041	//sha256h2 v1.16b,v2.16b,v17.4s
++	.inst	0x5e0460e5	//sha256su1 v5.16b,v7.16b,v4.16b
++	ld1		{v17.4s},[x3],#16
++	add		v16.4s,v16.4s,v6.4s
++	.inst	0x5e2828e6	//sha256su0 v6.16b,v7.16b
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e104020	//sha256h v0.16b,v1.16b,v16.4s
++	.inst	0x5e105041	//sha256h2 v1.16b,v2.16b,v16.4s
++	.inst	0x5e056086	//sha256su1 v6.16b,v4.16b,v5.16b
++	ld1		{v16.4s},[x3],#16
++	add		v17.4s,v17.4s,v7.4s
++	.inst	0x5e282887	//sha256su0 v7.16b,v4.16b
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e114020	//sha256h v0.16b,v1.16b,v17.4s
++	.inst	0x5e115041	//sha256h2 v1.16b,v2.16b,v17.4s
++	.inst	0x5e0660a7	//sha256su1 v7.16b,v5.16b,v6.16b
++	ld1		{v17.4s},[x3],#16
++	add		v16.4s,v16.4s,v4.4s
++	.inst	0x5e2828a4	//sha256su0 v4.16b,v5.16b
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e104020	//sha256h v0.16b,v1.16b,v16.4s
++	.inst	0x5e105041	//sha256h2 v1.16b,v2.16b,v16.4s
++	.inst	0x5e0760c4	//sha256su1 v4.16b,v6.16b,v7.16b
++	ld1		{v16.4s},[x3],#16
++	add		v17.4s,v17.4s,v5.4s
++	.inst	0x5e2828c5	//sha256su0 v5.16b,v6.16b
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e114020	//sha256h v0.16b,v1.16b,v17.4s
++	.inst	0x5e115041	//sha256h2 v1.16b,v2.16b,v17.4s
++	.inst	0x5e0460e5	//sha256su1 v5.16b,v7.16b,v4.16b
++	ld1		{v17.4s},[x3],#16
++	add		v16.4s,v16.4s,v6.4s
++	.inst	0x5e2828e6	//sha256su0 v6.16b,v7.16b
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e104020	//sha256h v0.16b,v1.16b,v16.4s
++	.inst	0x5e105041	//sha256h2 v1.16b,v2.16b,v16.4s
++	.inst	0x5e056086	//sha256su1 v6.16b,v4.16b,v5.16b
++	ld1		{v16.4s},[x3],#16
++	add		v17.4s,v17.4s,v7.4s
++	.inst	0x5e282887	//sha256su0 v7.16b,v4.16b
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e114020	//sha256h v0.16b,v1.16b,v17.4s
++	.inst	0x5e115041	//sha256h2 v1.16b,v2.16b,v17.4s
++	.inst	0x5e0660a7	//sha256su1 v7.16b,v5.16b,v6.16b
++	ld1		{v17.4s},[x3],#16
++	add		v16.4s,v16.4s,v4.4s
++	.inst	0x5e2828a4	//sha256su0 v4.16b,v5.16b
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e104020	//sha256h v0.16b,v1.16b,v16.4s
++	.inst	0x5e105041	//sha256h2 v1.16b,v2.16b,v16.4s
++	.inst	0x5e0760c4	//sha256su1 v4.16b,v6.16b,v7.16b
++	ld1		{v16.4s},[x3],#16
++	add		v17.4s,v17.4s,v5.4s
++	.inst	0x5e2828c5	//sha256su0 v5.16b,v6.16b
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e114020	//sha256h v0.16b,v1.16b,v17.4s
++	.inst	0x5e115041	//sha256h2 v1.16b,v2.16b,v17.4s
++	.inst	0x5e0460e5	//sha256su1 v5.16b,v7.16b,v4.16b
++	ld1		{v17.4s},[x3],#16
++	add		v16.4s,v16.4s,v6.4s
++	.inst	0x5e2828e6	//sha256su0 v6.16b,v7.16b
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e104020	//sha256h v0.16b,v1.16b,v16.4s
++	.inst	0x5e105041	//sha256h2 v1.16b,v2.16b,v16.4s
++	.inst	0x5e056086	//sha256su1 v6.16b,v4.16b,v5.16b
++	ld1		{v16.4s},[x3],#16
++	add		v17.4s,v17.4s,v7.4s
++	.inst	0x5e282887	//sha256su0 v7.16b,v4.16b
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e114020	//sha256h v0.16b,v1.16b,v17.4s
++	.inst	0x5e115041	//sha256h2 v1.16b,v2.16b,v17.4s
++	.inst	0x5e0660a7	//sha256su1 v7.16b,v5.16b,v6.16b
++	ld1		{v17.4s},[x3],#16
++	add		v16.4s,v16.4s,v4.4s
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e104020	//sha256h v0.16b,v1.16b,v16.4s
++	.inst	0x5e105041	//sha256h2 v1.16b,v2.16b,v16.4s
++
++	ld1		{v16.4s},[x3],#16
++	add		v17.4s,v17.4s,v5.4s
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e114020	//sha256h v0.16b,v1.16b,v17.4s
++	.inst	0x5e115041	//sha256h2 v1.16b,v2.16b,v17.4s
++
++	ld1		{v17.4s},[x3]
++	add		v16.4s,v16.4s,v6.4s
++	sub		x3,x3,#64*4-16	// rewind
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e104020	//sha256h v0.16b,v1.16b,v16.4s
++	.inst	0x5e105041	//sha256h2 v1.16b,v2.16b,v16.4s
++
++	add		v17.4s,v17.4s,v7.4s
++	orr		v2.16b,v0.16b,v0.16b
++	.inst	0x5e114020	//sha256h v0.16b,v1.16b,v17.4s
++	.inst	0x5e115041	//sha256h2 v1.16b,v2.16b,v17.4s
++
++	add		v0.4s,v0.4s,v18.4s
++	add		v1.4s,v1.4s,v19.4s
++
++	cbnz		x2,.Loop_hw
++
++	st1		{v0.4s,v1.4s},[x0]
++
++	ldr		x29,[sp],#16
++	ret
++.size	sha256_block_armv8,.-sha256_block_armv8
++#endif
++#ifdef	__KERNEL__
++.globl	sha256_block_neon
++#endif
++.type	sha256_block_neon,%function
++.align	4
++sha256_block_neon:
++.Lneon_entry:
++	stp	x29, x30, [sp, #-16]!
++	mov	x29, sp
++	sub	sp,sp,#16*4
++
++	adr	x16,.LK256
++	add	x2,x1,x2,lsl#6	// len to point at the end of inp
++
++	ld1	{v0.16b},[x1], #16
++	ld1	{v1.16b},[x1], #16
++	ld1	{v2.16b},[x1], #16
++	ld1	{v3.16b},[x1], #16
++	ld1	{v4.4s},[x16], #16
++	ld1	{v5.4s},[x16], #16
++	ld1	{v6.4s},[x16], #16
++	ld1	{v7.4s},[x16], #16
++	rev32	v0.16b,v0.16b		// yes, even on
++	rev32	v1.16b,v1.16b		// big-endian
++	rev32	v2.16b,v2.16b
++	rev32	v3.16b,v3.16b
++	mov	x17,sp
++	add	v4.4s,v4.4s,v0.4s
++	add	v5.4s,v5.4s,v1.4s
++	add	v6.4s,v6.4s,v2.4s
++	st1	{v4.4s-v5.4s},[x17], #32
++	add	v7.4s,v7.4s,v3.4s
++	st1	{v6.4s-v7.4s},[x17]
++	sub	x17,x17,#32
++
++	ldp	w3,w4,[x0]
++	ldp	w5,w6,[x0,#8]
++	ldp	w7,w8,[x0,#16]
++	ldp	w9,w10,[x0,#24]
++	ldr	w12,[sp,#0]
++	mov	w13,wzr
++	eor	w14,w4,w5
++	mov	w15,wzr
++	b	.L_00_48
++
++.align	4
++.L_00_48:
++	ext	v4.16b,v0.16b,v1.16b,#4
++	add	w10,w10,w12
++	add	w3,w3,w15
++	and	w12,w8,w7
++	bic	w15,w9,w7
++	ext	v7.16b,v2.16b,v3.16b,#4
++	eor	w11,w7,w7,ror#5
++	add	w3,w3,w13
++	mov	d19,v3.d[1]
++	orr	w12,w12,w15
++	eor	w11,w11,w7,ror#19
++	ushr	v6.4s,v4.4s,#7
++	eor	w15,w3,w3,ror#11
++	ushr	v5.4s,v4.4s,#3
++	add	w10,w10,w12
++	add	v0.4s,v0.4s,v7.4s
++	ror	w11,w11,#6
++	sli	v6.4s,v4.4s,#25
++	eor	w13,w3,w4
++	eor	w15,w15,w3,ror#20
++	ushr	v7.4s,v4.4s,#18
++	add	w10,w10,w11
++	ldr	w12,[sp,#4]
++	and	w14,w14,w13
++	eor	v5.16b,v5.16b,v6.16b
++	ror	w15,w15,#2
++	add	w6,w6,w10
++	sli	v7.4s,v4.4s,#14
++	eor	w14,w14,w4
++	ushr	v16.4s,v19.4s,#17
++	add	w9,w9,w12
++	add	w10,w10,w15
++	and	w12,w7,w6
++	eor	v5.16b,v5.16b,v7.16b
++	bic	w15,w8,w6
++	eor	w11,w6,w6,ror#5
++	sli	v16.4s,v19.4s,#15
++	add	w10,w10,w14
++	orr	w12,w12,w15
++	ushr	v17.4s,v19.4s,#10
++	eor	w11,w11,w6,ror#19
++	eor	w15,w10,w10,ror#11
++	ushr	v7.4s,v19.4s,#19
++	add	w9,w9,w12
++	ror	w11,w11,#6
++	add	v0.4s,v0.4s,v5.4s
++	eor	w14,w10,w3
++	eor	w15,w15,w10,ror#20
++	sli	v7.4s,v19.4s,#13
++	add	w9,w9,w11
++	ldr	w12,[sp,#8]
++	and	w13,w13,w14
++	eor	v17.16b,v17.16b,v16.16b
++	ror	w15,w15,#2
++	add	w5,w5,w9
++	eor	w13,w13,w3
++	eor	v17.16b,v17.16b,v7.16b
++	add	w8,w8,w12
++	add	w9,w9,w15
++	and	w12,w6,w5
++	add	v0.4s,v0.4s,v17.4s
++	bic	w15,w7,w5
++	eor	w11,w5,w5,ror#5
++	add	w9,w9,w13
++	ushr	v18.4s,v0.4s,#17
++	orr	w12,w12,w15
++	ushr	v19.4s,v0.4s,#10
++	eor	w11,w11,w5,ror#19
++	eor	w15,w9,w9,ror#11
++	sli	v18.4s,v0.4s,#15
++	add	w8,w8,w12
++	ushr	v17.4s,v0.4s,#19
++	ror	w11,w11,#6
++	eor	w13,w9,w10
++	eor	v19.16b,v19.16b,v18.16b
++	eor	w15,w15,w9,ror#20
++	add	w8,w8,w11
++	sli	v17.4s,v0.4s,#13
++	ldr	w12,[sp,#12]
++	and	w14,w14,w13
++	ror	w15,w15,#2
++	ld1	{v4.4s},[x16], #16
++	add	w4,w4,w8
++	eor	v19.16b,v19.16b,v17.16b
++	eor	w14,w14,w10
++	eor	v17.16b,v17.16b,v17.16b
++	add	w7,w7,w12
++	add	w8,w8,w15
++	and	w12,w5,w4
++	mov	v17.d[1],v19.d[0]
++	bic	w15,w6,w4
++	eor	w11,w4,w4,ror#5
++	add	w8,w8,w14
++	add	v0.4s,v0.4s,v17.4s
++	orr	w12,w12,w15
++	eor	w11,w11,w4,ror#19
++	eor	w15,w8,w8,ror#11
++	add	v4.4s,v4.4s,v0.4s
++	add	w7,w7,w12
++	ror	w11,w11,#6
++	eor	w14,w8,w9
++	eor	w15,w15,w8,ror#20
++	add	w7,w7,w11
++	ldr	w12,[sp,#16]
++	and	w13,w13,w14
++	ror	w15,w15,#2
++	add	w3,w3,w7
++	eor	w13,w13,w9
++	st1	{v4.4s},[x17], #16
++	ext	v4.16b,v1.16b,v2.16b,#4
++	add	w6,w6,w12
++	add	w7,w7,w15
++	and	w12,w4,w3
++	bic	w15,w5,w3
++	ext	v7.16b,v3.16b,v0.16b,#4
++	eor	w11,w3,w3,ror#5
++	add	w7,w7,w13
++	mov	d19,v0.d[1]
++	orr	w12,w12,w15
++	eor	w11,w11,w3,ror#19
++	ushr	v6.4s,v4.4s,#7
++	eor	w15,w7,w7,ror#11
++	ushr	v5.4s,v4.4s,#3
++	add	w6,w6,w12
++	add	v1.4s,v1.4s,v7.4s
++	ror	w11,w11,#6
++	sli	v6.4s,v4.4s,#25
++	eor	w13,w7,w8
++	eor	w15,w15,w7,ror#20
++	ushr	v7.4s,v4.4s,#18
++	add	w6,w6,w11
++	ldr	w12,[sp,#20]
++	and	w14,w14,w13
++	eor	v5.16b,v5.16b,v6.16b
++	ror	w15,w15,#2
++	add	w10,w10,w6
++	sli	v7.4s,v4.4s,#14
++	eor	w14,w14,w8
++	ushr	v16.4s,v19.4s,#17
++	add	w5,w5,w12
++	add	w6,w6,w15
++	and	w12,w3,w10
++	eor	v5.16b,v5.16b,v7.16b
++	bic	w15,w4,w10
++	eor	w11,w10,w10,ror#5
++	sli	v16.4s,v19.4s,#15
++	add	w6,w6,w14
++	orr	w12,w12,w15
++	ushr	v17.4s,v19.4s,#10
++	eor	w11,w11,w10,ror#19
++	eor	w15,w6,w6,ror#11
++	ushr	v7.4s,v19.4s,#19
++	add	w5,w5,w12
++	ror	w11,w11,#6
++	add	v1.4s,v1.4s,v5.4s
++	eor	w14,w6,w7
++	eor	w15,w15,w6,ror#20
++	sli	v7.4s,v19.4s,#13
++	add	w5,w5,w11
++	ldr	w12,[sp,#24]
++	and	w13,w13,w14
++	eor	v17.16b,v17.16b,v16.16b
++	ror	w15,w15,#2
++	add	w9,w9,w5
++	eor	w13,w13,w7
++	eor	v17.16b,v17.16b,v7.16b
++	add	w4,w4,w12
++	add	w5,w5,w15
++	and	w12,w10,w9
++	add	v1.4s,v1.4s,v17.4s
++	bic	w15,w3,w9
++	eor	w11,w9,w9,ror#5
++	add	w5,w5,w13
++	ushr	v18.4s,v1.4s,#17
++	orr	w12,w12,w15
++	ushr	v19.4s,v1.4s,#10
++	eor	w11,w11,w9,ror#19
++	eor	w15,w5,w5,ror#11
++	sli	v18.4s,v1.4s,#15
++	add	w4,w4,w12
++	ushr	v17.4s,v1.4s,#19
++	ror	w11,w11,#6
++	eor	w13,w5,w6
++	eor	v19.16b,v19.16b,v18.16b
++	eor	w15,w15,w5,ror#20
++	add	w4,w4,w11
++	sli	v17.4s,v1.4s,#13
++	ldr	w12,[sp,#28]
++	and	w14,w14,w13
++	ror	w15,w15,#2
++	ld1	{v4.4s},[x16], #16
++	add	w8,w8,w4
++	eor	v19.16b,v19.16b,v17.16b
++	eor	w14,w14,w6
++	eor	v17.16b,v17.16b,v17.16b
++	add	w3,w3,w12
++	add	w4,w4,w15
++	and	w12,w9,w8
++	mov	v17.d[1],v19.d[0]
++	bic	w15,w10,w8
++	eor	w11,w8,w8,ror#5
++	add	w4,w4,w14
++	add	v1.4s,v1.4s,v17.4s
++	orr	w12,w12,w15
++	eor	w11,w11,w8,ror#19
++	eor	w15,w4,w4,ror#11
++	add	v4.4s,v4.4s,v1.4s
++	add	w3,w3,w12
++	ror	w11,w11,#6
++	eor	w14,w4,w5
++	eor	w15,w15,w4,ror#20
++	add	w3,w3,w11
++	ldr	w12,[sp,#32]
++	and	w13,w13,w14
++	ror	w15,w15,#2
++	add	w7,w7,w3
++	eor	w13,w13,w5
++	st1	{v4.4s},[x17], #16
++	ext	v4.16b,v2.16b,v3.16b,#4
++	add	w10,w10,w12
++	add	w3,w3,w15
++	and	w12,w8,w7
++	bic	w15,w9,w7
++	ext	v7.16b,v0.16b,v1.16b,#4
++	eor	w11,w7,w7,ror#5
++	add	w3,w3,w13
++	mov	d19,v1.d[1]
++	orr	w12,w12,w15
++	eor	w11,w11,w7,ror#19
++	ushr	v6.4s,v4.4s,#7
++	eor	w15,w3,w3,ror#11
++	ushr	v5.4s,v4.4s,#3
++	add	w10,w10,w12
++	add	v2.4s,v2.4s,v7.4s
++	ror	w11,w11,#6
++	sli	v6.4s,v4.4s,#25
++	eor	w13,w3,w4
++	eor	w15,w15,w3,ror#20
++	ushr	v7.4s,v4.4s,#18
++	add	w10,w10,w11
++	ldr	w12,[sp,#36]
++	and	w14,w14,w13
++	eor	v5.16b,v5.16b,v6.16b
++	ror	w15,w15,#2
++	add	w6,w6,w10
++	sli	v7.4s,v4.4s,#14
++	eor	w14,w14,w4
++	ushr	v16.4s,v19.4s,#17
++	add	w9,w9,w12
++	add	w10,w10,w15
++	and	w12,w7,w6
++	eor	v5.16b,v5.16b,v7.16b
++	bic	w15,w8,w6
++	eor	w11,w6,w6,ror#5
++	sli	v16.4s,v19.4s,#15
++	add	w10,w10,w14
++	orr	w12,w12,w15
++	ushr	v17.4s,v19.4s,#10
++	eor	w11,w11,w6,ror#19
++	eor	w15,w10,w10,ror#11
++	ushr	v7.4s,v19.4s,#19
++	add	w9,w9,w12
++	ror	w11,w11,#6
++	add	v2.4s,v2.4s,v5.4s
++	eor	w14,w10,w3
++	eor	w15,w15,w10,ror#20
++	sli	v7.4s,v19.4s,#13
++	add	w9,w9,w11
++	ldr	w12,[sp,#40]
++	and	w13,w13,w14
++	eor	v17.16b,v17.16b,v16.16b
++	ror	w15,w15,#2
++	add	w5,w5,w9
++	eor	w13,w13,w3
++	eor	v17.16b,v17.16b,v7.16b
++	add	w8,w8,w12
++	add	w9,w9,w15
++	and	w12,w6,w5
++	add	v2.4s,v2.4s,v17.4s
++	bic	w15,w7,w5
++	eor	w11,w5,w5,ror#5
++	add	w9,w9,w13
++	ushr	v18.4s,v2.4s,#17
++	orr	w12,w12,w15
++	ushr	v19.4s,v2.4s,#10
++	eor	w11,w11,w5,ror#19
++	eor	w15,w9,w9,ror#11
++	sli	v18.4s,v2.4s,#15
++	add	w8,w8,w12
++	ushr	v17.4s,v2.4s,#19
++	ror	w11,w11,#6
++	eor	w13,w9,w10
++	eor	v19.16b,v19.16b,v18.16b
++	eor	w15,w15,w9,ror#20
++	add	w8,w8,w11
++	sli	v17.4s,v2.4s,#13
++	ldr	w12,[sp,#44]
++	and	w14,w14,w13
++	ror	w15,w15,#2
++	ld1	{v4.4s},[x16], #16
++	add	w4,w4,w8
++	eor	v19.16b,v19.16b,v17.16b
++	eor	w14,w14,w10
++	eor	v17.16b,v17.16b,v17.16b
++	add	w7,w7,w12
++	add	w8,w8,w15
++	and	w12,w5,w4
++	mov	v17.d[1],v19.d[0]
++	bic	w15,w6,w4
++	eor	w11,w4,w4,ror#5
++	add	w8,w8,w14
++	add	v2.4s,v2.4s,v17.4s
++	orr	w12,w12,w15
++	eor	w11,w11,w4,ror#19
++	eor	w15,w8,w8,ror#11
++	add	v4.4s,v4.4s,v2.4s
++	add	w7,w7,w12
++	ror	w11,w11,#6
++	eor	w14,w8,w9
++	eor	w15,w15,w8,ror#20
++	add	w7,w7,w11
++	ldr	w12,[sp,#48]
++	and	w13,w13,w14
++	ror	w15,w15,#2
++	add	w3,w3,w7
++	eor	w13,w13,w9
++	st1	{v4.4s},[x17], #16
++	ext	v4.16b,v3.16b,v0.16b,#4
++	add	w6,w6,w12
++	add	w7,w7,w15
++	and	w12,w4,w3
++	bic	w15,w5,w3
++	ext	v7.16b,v1.16b,v2.16b,#4
++	eor	w11,w3,w3,ror#5
++	add	w7,w7,w13
++	mov	d19,v2.d[1]
++	orr	w12,w12,w15
++	eor	w11,w11,w3,ror#19
++	ushr	v6.4s,v4.4s,#7
++	eor	w15,w7,w7,ror#11
++	ushr	v5.4s,v4.4s,#3
++	add	w6,w6,w12
++	add	v3.4s,v3.4s,v7.4s
++	ror	w11,w11,#6
++	sli	v6.4s,v4.4s,#25
++	eor	w13,w7,w8
++	eor	w15,w15,w7,ror#20
++	ushr	v7.4s,v4.4s,#18
++	add	w6,w6,w11
++	ldr	w12,[sp,#52]
++	and	w14,w14,w13
++	eor	v5.16b,v5.16b,v6.16b
++	ror	w15,w15,#2
++	add	w10,w10,w6
++	sli	v7.4s,v4.4s,#14
++	eor	w14,w14,w8
++	ushr	v16.4s,v19.4s,#17
++	add	w5,w5,w12
++	add	w6,w6,w15
++	and	w12,w3,w10
++	eor	v5.16b,v5.16b,v7.16b
++	bic	w15,w4,w10
++	eor	w11,w10,w10,ror#5
++	sli	v16.4s,v19.4s,#15
++	add	w6,w6,w14
++	orr	w12,w12,w15
++	ushr	v17.4s,v19.4s,#10
++	eor	w11,w11,w10,ror#19
++	eor	w15,w6,w6,ror#11
++	ushr	v7.4s,v19.4s,#19
++	add	w5,w5,w12
++	ror	w11,w11,#6
++	add	v3.4s,v3.4s,v5.4s
++	eor	w14,w6,w7
++	eor	w15,w15,w6,ror#20
++	sli	v7.4s,v19.4s,#13
++	add	w5,w5,w11
++	ldr	w12,[sp,#56]
++	and	w13,w13,w14
++	eor	v17.16b,v17.16b,v16.16b
++	ror	w15,w15,#2
++	add	w9,w9,w5
++	eor	w13,w13,w7
++	eor	v17.16b,v17.16b,v7.16b
++	add	w4,w4,w12
++	add	w5,w5,w15
++	and	w12,w10,w9
++	add	v3.4s,v3.4s,v17.4s
++	bic	w15,w3,w9
++	eor	w11,w9,w9,ror#5
++	add	w5,w5,w13
++	ushr	v18.4s,v3.4s,#17
++	orr	w12,w12,w15
++	ushr	v19.4s,v3.4s,#10
++	eor	w11,w11,w9,ror#19
++	eor	w15,w5,w5,ror#11
++	sli	v18.4s,v3.4s,#15
++	add	w4,w4,w12
++	ushr	v17.4s,v3.4s,#19
++	ror	w11,w11,#6
++	eor	w13,w5,w6
++	eor	v19.16b,v19.16b,v18.16b
++	eor	w15,w15,w5,ror#20
++	add	w4,w4,w11
++	sli	v17.4s,v3.4s,#13
++	ldr	w12,[sp,#60]
++	and	w14,w14,w13
++	ror	w15,w15,#2
++	ld1	{v4.4s},[x16], #16
++	add	w8,w8,w4
++	eor	v19.16b,v19.16b,v17.16b
++	eor	w14,w14,w6
++	eor	v17.16b,v17.16b,v17.16b
++	add	w3,w3,w12
++	add	w4,w4,w15
++	and	w12,w9,w8
++	mov	v17.d[1],v19.d[0]
++	bic	w15,w10,w8
++	eor	w11,w8,w8,ror#5
++	add	w4,w4,w14
++	add	v3.4s,v3.4s,v17.4s
++	orr	w12,w12,w15
++	eor	w11,w11,w8,ror#19
++	eor	w15,w4,w4,ror#11
++	add	v4.4s,v4.4s,v3.4s
++	add	w3,w3,w12
++	ror	w11,w11,#6
++	eor	w14,w4,w5
++	eor	w15,w15,w4,ror#20
++	add	w3,w3,w11
++	ldr	w12,[x16]
++	and	w13,w13,w14
++	ror	w15,w15,#2
++	add	w7,w7,w3
++	eor	w13,w13,w5
++	st1	{v4.4s},[x17], #16
++	cmp	w12,#0				// check for K256 terminator
++	ldr	w12,[sp,#0]
++	sub	x17,x17,#64
++	bne	.L_00_48
++
++	sub	x16,x16,#256		// rewind x16
++	cmp	x1,x2
++	mov	x17, #64
++	csel	x17, x17, xzr, eq
++	sub	x1,x1,x17			// avoid SEGV
++	mov	x17,sp
++	add	w10,w10,w12
++	add	w3,w3,w15
++	and	w12,w8,w7
++	ld1	{v0.16b},[x1],#16
++	bic	w15,w9,w7
++	eor	w11,w7,w7,ror#5
++	ld1	{v4.4s},[x16],#16
++	add	w3,w3,w13
++	orr	w12,w12,w15
++	eor	w11,w11,w7,ror#19
++	eor	w15,w3,w3,ror#11
++	rev32	v0.16b,v0.16b
++	add	w10,w10,w12
++	ror	w11,w11,#6
++	eor	w13,w3,w4
++	eor	w15,w15,w3,ror#20
++	add	v4.4s,v4.4s,v0.4s
++	add	w10,w10,w11
++	ldr	w12,[sp,#4]
++	and	w14,w14,w13
++	ror	w15,w15,#2
++	add	w6,w6,w10
++	eor	w14,w14,w4
++	add	w9,w9,w12
++	add	w10,w10,w15
++	and	w12,w7,w6
++	bic	w15,w8,w6
++	eor	w11,w6,w6,ror#5
++	add	w10,w10,w14
++	orr	w12,w12,w15
++	eor	w11,w11,w6,ror#19
++	eor	w15,w10,w10,ror#11
++	add	w9,w9,w12
++	ror	w11,w11,#6
++	eor	w14,w10,w3
++	eor	w15,w15,w10,ror#20
++	add	w9,w9,w11
++	ldr	w12,[sp,#8]
++	and	w13,w13,w14
++	ror	w15,w15,#2
++	add	w5,w5,w9
++	eor	w13,w13,w3
++	add	w8,w8,w12
++	add	w9,w9,w15
++	and	w12,w6,w5
++	bic	w15,w7,w5
++	eor	w11,w5,w5,ror#5
++	add	w9,w9,w13
++	orr	w12,w12,w15
++	eor	w11,w11,w5,ror#19
++	eor	w15,w9,w9,ror#11
++	add	w8,w8,w12
++	ror	w11,w11,#6
++	eor	w13,w9,w10
++	eor	w15,w15,w9,ror#20
++	add	w8,w8,w11
++	ldr	w12,[sp,#12]
++	and	w14,w14,w13
++	ror	w15,w15,#2
++	add	w4,w4,w8
++	eor	w14,w14,w10
++	add	w7,w7,w12
++	add	w8,w8,w15
++	and	w12,w5,w4
++	bic	w15,w6,w4
++	eor	w11,w4,w4,ror#5
++	add	w8,w8,w14
++	orr	w12,w12,w15
++	eor	w11,w11,w4,ror#19
++	eor	w15,w8,w8,ror#11
++	add	w7,w7,w12
++	ror	w11,w11,#6
++	eor	w14,w8,w9
++	eor	w15,w15,w8,ror#20
++	add	w7,w7,w11
++	ldr	w12,[sp,#16]
++	and	w13,w13,w14
++	ror	w15,w15,#2
++	add	w3,w3,w7
++	eor	w13,w13,w9
++	st1	{v4.4s},[x17], #16
++	add	w6,w6,w12
++	add	w7,w7,w15
++	and	w12,w4,w3
++	ld1	{v1.16b},[x1],#16
++	bic	w15,w5,w3
++	eor	w11,w3,w3,ror#5
++	ld1	{v4.4s},[x16],#16
++	add	w7,w7,w13
++	orr	w12,w12,w15
++	eor	w11,w11,w3,ror#19
++	eor	w15,w7,w7,ror#11
++	rev32	v1.16b,v1.16b
++	add	w6,w6,w12
++	ror	w11,w11,#6
++	eor	w13,w7,w8
++	eor	w15,w15,w7,ror#20
++	add	v4.4s,v4.4s,v1.4s
++	add	w6,w6,w11
++	ldr	w12,[sp,#20]
++	and	w14,w14,w13
++	ror	w15,w15,#2
++	add	w10,w10,w6
++	eor	w14,w14,w8
++	add	w5,w5,w12
++	add	w6,w6,w15
++	and	w12,w3,w10
++	bic	w15,w4,w10
++	eor	w11,w10,w10,ror#5
++	add	w6,w6,w14
++	orr	w12,w12,w15
++	eor	w11,w11,w10,ror#19
++	eor	w15,w6,w6,ror#11
++	add	w5,w5,w12
++	ror	w11,w11,#6
++	eor	w14,w6,w7
++	eor	w15,w15,w6,ror#20
++	add	w5,w5,w11
++	ldr	w12,[sp,#24]
++	and	w13,w13,w14
++	ror	w15,w15,#2
++	add	w9,w9,w5
++	eor	w13,w13,w7
++	add	w4,w4,w12
++	add	w5,w5,w15
++	and	w12,w10,w9
++	bic	w15,w3,w9
++	eor	w11,w9,w9,ror#5
++	add	w5,w5,w13
++	orr	w12,w12,w15
++	eor	w11,w11,w9,ror#19
++	eor	w15,w5,w5,ror#11
++	add	w4,w4,w12
++	ror	w11,w11,#6
++	eor	w13,w5,w6
++	eor	w15,w15,w5,ror#20
++	add	w4,w4,w11
++	ldr	w12,[sp,#28]
++	and	w14,w14,w13
++	ror	w15,w15,#2
++	add	w8,w8,w4
++	eor	w14,w14,w6
++	add	w3,w3,w12
++	add	w4,w4,w15
++	and	w12,w9,w8
++	bic	w15,w10,w8
++	eor	w11,w8,w8,ror#5
++	add	w4,w4,w14
++	orr	w12,w12,w15
++	eor	w11,w11,w8,ror#19
++	eor	w15,w4,w4,ror#11
++	add	w3,w3,w12
++	ror	w11,w11,#6
++	eor	w14,w4,w5
++	eor	w15,w15,w4,ror#20
++	add	w3,w3,w11
++	ldr	w12,[sp,#32]
++	and	w13,w13,w14
++	ror	w15,w15,#2
++	add	w7,w7,w3
++	eor	w13,w13,w5
++	st1	{v4.4s},[x17], #16
++	add	w10,w10,w12
++	add	w3,w3,w15
++	and	w12,w8,w7
++	ld1	{v2.16b},[x1],#16
++	bic	w15,w9,w7
++	eor	w11,w7,w7,ror#5
++	ld1	{v4.4s},[x16],#16
++	add	w3,w3,w13
++	orr	w12,w12,w15
++	eor	w11,w11,w7,ror#19
++	eor	w15,w3,w3,ror#11
++	rev32	v2.16b,v2.16b
++	add	w10,w10,w12
++	ror	w11,w11,#6
++	eor	w13,w3,w4
++	eor	w15,w15,w3,ror#20
++	add	v4.4s,v4.4s,v2.4s
++	add	w10,w10,w11
++	ldr	w12,[sp,#36]
++	and	w14,w14,w13
++	ror	w15,w15,#2
++	add	w6,w6,w10
++	eor	w14,w14,w4
++	add	w9,w9,w12
++	add	w10,w10,w15
++	and	w12,w7,w6
++	bic	w15,w8,w6
++	eor	w11,w6,w6,ror#5
++	add	w10,w10,w14
++	orr	w12,w12,w15
++	eor	w11,w11,w6,ror#19
++	eor	w15,w10,w10,ror#11
++	add	w9,w9,w12
++	ror	w11,w11,#6
++	eor	w14,w10,w3
++	eor	w15,w15,w10,ror#20
++	add	w9,w9,w11
++	ldr	w12,[sp,#40]
++	and	w13,w13,w14
++	ror	w15,w15,#2
++	add	w5,w5,w9
++	eor	w13,w13,w3
++	add	w8,w8,w12
++	add	w9,w9,w15
++	and	w12,w6,w5
++	bic	w15,w7,w5
++	eor	w11,w5,w5,ror#5
++	add	w9,w9,w13
++	orr	w12,w12,w15
++	eor	w11,w11,w5,ror#19
++	eor	w15,w9,w9,ror#11
++	add	w8,w8,w12
++	ror	w11,w11,#6
++	eor	w13,w9,w10
++	eor	w15,w15,w9,ror#20
++	add	w8,w8,w11
++	ldr	w12,[sp,#44]
++	and	w14,w14,w13
++	ror	w15,w15,#2
++	add	w4,w4,w8
++	eor	w14,w14,w10
++	add	w7,w7,w12
++	add	w8,w8,w15
++	and	w12,w5,w4
++	bic	w15,w6,w4
++	eor	w11,w4,w4,ror#5
++	add	w8,w8,w14
++	orr	w12,w12,w15
++	eor	w11,w11,w4,ror#19
++	eor	w15,w8,w8,ror#11
++	add	w7,w7,w12
++	ror	w11,w11,#6
++	eor	w14,w8,w9
++	eor	w15,w15,w8,ror#20
++	add	w7,w7,w11
++	ldr	w12,[sp,#48]
++	and	w13,w13,w14
++	ror	w15,w15,#2
++	add	w3,w3,w7
++	eor	w13,w13,w9
++	st1	{v4.4s},[x17], #16
++	add	w6,w6,w12
++	add	w7,w7,w15
++	and	w12,w4,w3
++	ld1	{v3.16b},[x1],#16
++	bic	w15,w5,w3
++	eor	w11,w3,w3,ror#5
++	ld1	{v4.4s},[x16],#16
++	add	w7,w7,w13
++	orr	w12,w12,w15
++	eor	w11,w11,w3,ror#19
++	eor	w15,w7,w7,ror#11
++	rev32	v3.16b,v3.16b
++	add	w6,w6,w12
++	ror	w11,w11,#6
++	eor	w13,w7,w8
++	eor	w15,w15,w7,ror#20
++	add	v4.4s,v4.4s,v3.4s
++	add	w6,w6,w11
++	ldr	w12,[sp,#52]
++	and	w14,w14,w13
++	ror	w15,w15,#2
++	add	w10,w10,w6
++	eor	w14,w14,w8
++	add	w5,w5,w12
++	add	w6,w6,w15
++	and	w12,w3,w10
++	bic	w15,w4,w10
++	eor	w11,w10,w10,ror#5
++	add	w6,w6,w14
++	orr	w12,w12,w15
++	eor	w11,w11,w10,ror#19
++	eor	w15,w6,w6,ror#11
++	add	w5,w5,w12
++	ror	w11,w11,#6
++	eor	w14,w6,w7
++	eor	w15,w15,w6,ror#20
++	add	w5,w5,w11
++	ldr	w12,[sp,#56]
++	and	w13,w13,w14
++	ror	w15,w15,#2
++	add	w9,w9,w5
++	eor	w13,w13,w7
++	add	w4,w4,w12
++	add	w5,w5,w15
++	and	w12,w10,w9
++	bic	w15,w3,w9
++	eor	w11,w9,w9,ror#5
++	add	w5,w5,w13
++	orr	w12,w12,w15
++	eor	w11,w11,w9,ror#19
++	eor	w15,w5,w5,ror#11
++	add	w4,w4,w12
++	ror	w11,w11,#6
++	eor	w13,w5,w6
++	eor	w15,w15,w5,ror#20
++	add	w4,w4,w11
++	ldr	w12,[sp,#60]
++	and	w14,w14,w13
++	ror	w15,w15,#2
++	add	w8,w8,w4
++	eor	w14,w14,w6
++	add	w3,w3,w12
++	add	w4,w4,w15
++	and	w12,w9,w8
++	bic	w15,w10,w8
++	eor	w11,w8,w8,ror#5
++	add	w4,w4,w14
++	orr	w12,w12,w15
++	eor	w11,w11,w8,ror#19
++	eor	w15,w4,w4,ror#11
++	add	w3,w3,w12
++	ror	w11,w11,#6
++	eor	w14,w4,w5
++	eor	w15,w15,w4,ror#20
++	add	w3,w3,w11
++	and	w13,w13,w14
++	ror	w15,w15,#2
++	add	w7,w7,w3
++	eor	w13,w13,w5
++	st1	{v4.4s},[x17], #16
++	add	w3,w3,w15			// h+=Sigma0(a) from the past
++	ldp	w11,w12,[x0,#0]
++	add	w3,w3,w13			// h+=Maj(a,b,c) from the past
++	ldp	w13,w14,[x0,#8]
++	add	w3,w3,w11			// accumulate
++	add	w4,w4,w12
++	ldp	w11,w12,[x0,#16]
++	add	w5,w5,w13
++	add	w6,w6,w14
++	ldp	w13,w14,[x0,#24]
++	add	w7,w7,w11
++	add	w8,w8,w12
++	 ldr	w12,[sp,#0]
++	stp	w3,w4,[x0,#0]
++	add	w9,w9,w13
++	 mov	w13,wzr
++	stp	w5,w6,[x0,#8]
++	add	w10,w10,w14
++	stp	w7,w8,[x0,#16]
++	 eor	w14,w4,w5
++	stp	w9,w10,[x0,#24]
++	 mov	w15,wzr
++	 mov	x17,sp
++	b.ne	.L_00_48
++
++	ldr	x29,[x29]
++	add	sp,sp,#16*4+16
++	ret
++.size	sha256_block_neon,.-sha256_block_neon
++#ifndef	__KERNEL__
++.comm	OPENSSL_armcap_P,4,4
++#endif
+diff --git a/arch/arm64/crypto/sha512-core.S b/arch/arm64/crypto/sha512-core.S
+new file mode 100644
+index 000000000000..bd0f59f06c9d
+--- /dev/null
++++ b/arch/arm64/crypto/sha512-core.S
+@@ -0,0 +1,1085 @@
++// Copyright 2014-2016 The OpenSSL Project Authors. All Rights Reserved.
++//
++// Licensed under the OpenSSL license (the "License").  You may not use
++// this file except in compliance with the License.  You can obtain a copy
++// in the file LICENSE in the source distribution or at
++// https://www.openssl.org/source/license.html
++
++// ====================================================================
++// Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
++// project. The module is, however, dual licensed under OpenSSL and
++// CRYPTOGAMS licenses depending on where you obtain it. For further
++// details see http://www.openssl.org/~appro/cryptogams/.
++//
++// Permission to use under GPLv2 terms is granted.
++// ====================================================================
++//
++// SHA256/512 for ARMv8.
++//
++// Performance in cycles per processed byte and improvement coefficient
++// over code generated with "default" compiler:
++//
++//		SHA256-hw	SHA256(*)	SHA512
++// Apple A7	1.97		10.5 (+33%)	6.73 (-1%(**))
++// Cortex-A53	2.38		15.5 (+115%)	10.0 (+150%(***))
++// Cortex-A57	2.31		11.6 (+86%)	7.51 (+260%(***))
++// Denver	2.01		10.5 (+26%)	6.70 (+8%)
++// X-Gene			20.0 (+100%)	12.8 (+300%(***))
++// Mongoose	2.36		13.0 (+50%)	8.36 (+33%)
++//
++// (*)	Software SHA256 results are of lesser relevance, presented
++//	mostly for informational purposes.
++// (**)	The result is a trade-off: it's possible to improve it by
++//	10% (or by 1 cycle per round), but at the cost of 20% loss
++//	on Cortex-A53 (or by 4 cycles per round).
++// (***)	Super-impressive coefficients over gcc-generated code are
++//	indication of some compiler "pathology", most notably code
++//	generated with -mgeneral-regs-only is significanty faster
++//	and the gap is only 40-90%.
++//
++// October 2016.
++//
++// Originally it was reckoned that it makes no sense to implement NEON
++// version of SHA256 for 64-bit processors. This is because performance
++// improvement on most wide-spread Cortex-A5x processors was observed
++// to be marginal, same on Cortex-A53 and ~10% on A57. But then it was
++// observed that 32-bit NEON SHA256 performs significantly better than
++// 64-bit scalar version on *some* of the more recent processors. As
++// result 64-bit NEON version of SHA256 was added to provide best
++// all-round performance. For example it executes ~30% faster on X-Gene
++// and Mongoose. [For reference, NEON version of SHA512 is bound to
++// deliver much less improvement, likely *negative* on Cortex-A5x.
++// Which is why NEON support is limited to SHA256.]
++
++#ifndef	__KERNEL__
++# include "arm_arch.h"
++#endif
++
++.text
++
++.extern	OPENSSL_armcap_P
++.globl	sha512_block_data_order
++.type	sha512_block_data_order,%function
++.align	6
++sha512_block_data_order:
++	stp	x29,x30,[sp,#-128]!
++	add	x29,sp,#0
++
++	stp	x19,x20,[sp,#16]
++	stp	x21,x22,[sp,#32]
++	stp	x23,x24,[sp,#48]
++	stp	x25,x26,[sp,#64]
++	stp	x27,x28,[sp,#80]
++	sub	sp,sp,#4*8
++
++	ldp	x20,x21,[x0]				// load context
++	ldp	x22,x23,[x0,#2*8]
++	ldp	x24,x25,[x0,#4*8]
++	add	x2,x1,x2,lsl#7	// end of input
++	ldp	x26,x27,[x0,#6*8]
++	adr	x30,.LK512
++	stp	x0,x2,[x29,#96]
++
++.Loop:
++	ldp	x3,x4,[x1],#2*8
++	ldr	x19,[x30],#8			// *K++
++	eor	x28,x21,x22				// magic seed
++	str	x1,[x29,#112]
++#ifndef	__AARCH64EB__
++	rev	x3,x3			// 0
++#endif
++	ror	x16,x24,#14
++	add	x27,x27,x19			// h+=K[i]
++	eor	x6,x24,x24,ror#23
++	and	x17,x25,x24
++	bic	x19,x26,x24
++	add	x27,x27,x3			// h+=X[i]
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x20,x21			// a^b, b^c in next round
++	eor	x16,x16,x6,ror#18	// Sigma1(e)
++	ror	x6,x20,#28
++	add	x27,x27,x17			// h+=Ch(e,f,g)
++	eor	x17,x20,x20,ror#5
++	add	x27,x27,x16			// h+=Sigma1(e)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	add	x23,x23,x27			// d+=h
++	eor	x28,x28,x21			// Maj(a,b,c)
++	eor	x17,x6,x17,ror#34	// Sigma0(a)
++	add	x27,x27,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	//add	x27,x27,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x4,x4			// 1
++#endif
++	ldp	x5,x6,[x1],#2*8
++	add	x27,x27,x17			// h+=Sigma0(a)
++	ror	x16,x23,#14
++	add	x26,x26,x28			// h+=K[i]
++	eor	x7,x23,x23,ror#23
++	and	x17,x24,x23
++	bic	x28,x25,x23
++	add	x26,x26,x4			// h+=X[i]
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x27,x20			// a^b, b^c in next round
++	eor	x16,x16,x7,ror#18	// Sigma1(e)
++	ror	x7,x27,#28
++	add	x26,x26,x17			// h+=Ch(e,f,g)
++	eor	x17,x27,x27,ror#5
++	add	x26,x26,x16			// h+=Sigma1(e)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	add	x22,x22,x26			// d+=h
++	eor	x19,x19,x20			// Maj(a,b,c)
++	eor	x17,x7,x17,ror#34	// Sigma0(a)
++	add	x26,x26,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	//add	x26,x26,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x5,x5			// 2
++#endif
++	add	x26,x26,x17			// h+=Sigma0(a)
++	ror	x16,x22,#14
++	add	x25,x25,x19			// h+=K[i]
++	eor	x8,x22,x22,ror#23
++	and	x17,x23,x22
++	bic	x19,x24,x22
++	add	x25,x25,x5			// h+=X[i]
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x26,x27			// a^b, b^c in next round
++	eor	x16,x16,x8,ror#18	// Sigma1(e)
++	ror	x8,x26,#28
++	add	x25,x25,x17			// h+=Ch(e,f,g)
++	eor	x17,x26,x26,ror#5
++	add	x25,x25,x16			// h+=Sigma1(e)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	add	x21,x21,x25			// d+=h
++	eor	x28,x28,x27			// Maj(a,b,c)
++	eor	x17,x8,x17,ror#34	// Sigma0(a)
++	add	x25,x25,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	//add	x25,x25,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x6,x6			// 3
++#endif
++	ldp	x7,x8,[x1],#2*8
++	add	x25,x25,x17			// h+=Sigma0(a)
++	ror	x16,x21,#14
++	add	x24,x24,x28			// h+=K[i]
++	eor	x9,x21,x21,ror#23
++	and	x17,x22,x21
++	bic	x28,x23,x21
++	add	x24,x24,x6			// h+=X[i]
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x25,x26			// a^b, b^c in next round
++	eor	x16,x16,x9,ror#18	// Sigma1(e)
++	ror	x9,x25,#28
++	add	x24,x24,x17			// h+=Ch(e,f,g)
++	eor	x17,x25,x25,ror#5
++	add	x24,x24,x16			// h+=Sigma1(e)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	add	x20,x20,x24			// d+=h
++	eor	x19,x19,x26			// Maj(a,b,c)
++	eor	x17,x9,x17,ror#34	// Sigma0(a)
++	add	x24,x24,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	//add	x24,x24,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x7,x7			// 4
++#endif
++	add	x24,x24,x17			// h+=Sigma0(a)
++	ror	x16,x20,#14
++	add	x23,x23,x19			// h+=K[i]
++	eor	x10,x20,x20,ror#23
++	and	x17,x21,x20
++	bic	x19,x22,x20
++	add	x23,x23,x7			// h+=X[i]
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x24,x25			// a^b, b^c in next round
++	eor	x16,x16,x10,ror#18	// Sigma1(e)
++	ror	x10,x24,#28
++	add	x23,x23,x17			// h+=Ch(e,f,g)
++	eor	x17,x24,x24,ror#5
++	add	x23,x23,x16			// h+=Sigma1(e)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	add	x27,x27,x23			// d+=h
++	eor	x28,x28,x25			// Maj(a,b,c)
++	eor	x17,x10,x17,ror#34	// Sigma0(a)
++	add	x23,x23,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	//add	x23,x23,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x8,x8			// 5
++#endif
++	ldp	x9,x10,[x1],#2*8
++	add	x23,x23,x17			// h+=Sigma0(a)
++	ror	x16,x27,#14
++	add	x22,x22,x28			// h+=K[i]
++	eor	x11,x27,x27,ror#23
++	and	x17,x20,x27
++	bic	x28,x21,x27
++	add	x22,x22,x8			// h+=X[i]
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x23,x24			// a^b, b^c in next round
++	eor	x16,x16,x11,ror#18	// Sigma1(e)
++	ror	x11,x23,#28
++	add	x22,x22,x17			// h+=Ch(e,f,g)
++	eor	x17,x23,x23,ror#5
++	add	x22,x22,x16			// h+=Sigma1(e)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	add	x26,x26,x22			// d+=h
++	eor	x19,x19,x24			// Maj(a,b,c)
++	eor	x17,x11,x17,ror#34	// Sigma0(a)
++	add	x22,x22,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	//add	x22,x22,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x9,x9			// 6
++#endif
++	add	x22,x22,x17			// h+=Sigma0(a)
++	ror	x16,x26,#14
++	add	x21,x21,x19			// h+=K[i]
++	eor	x12,x26,x26,ror#23
++	and	x17,x27,x26
++	bic	x19,x20,x26
++	add	x21,x21,x9			// h+=X[i]
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x22,x23			// a^b, b^c in next round
++	eor	x16,x16,x12,ror#18	// Sigma1(e)
++	ror	x12,x22,#28
++	add	x21,x21,x17			// h+=Ch(e,f,g)
++	eor	x17,x22,x22,ror#5
++	add	x21,x21,x16			// h+=Sigma1(e)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	add	x25,x25,x21			// d+=h
++	eor	x28,x28,x23			// Maj(a,b,c)
++	eor	x17,x12,x17,ror#34	// Sigma0(a)
++	add	x21,x21,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	//add	x21,x21,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x10,x10			// 7
++#endif
++	ldp	x11,x12,[x1],#2*8
++	add	x21,x21,x17			// h+=Sigma0(a)
++	ror	x16,x25,#14
++	add	x20,x20,x28			// h+=K[i]
++	eor	x13,x25,x25,ror#23
++	and	x17,x26,x25
++	bic	x28,x27,x25
++	add	x20,x20,x10			// h+=X[i]
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x21,x22			// a^b, b^c in next round
++	eor	x16,x16,x13,ror#18	// Sigma1(e)
++	ror	x13,x21,#28
++	add	x20,x20,x17			// h+=Ch(e,f,g)
++	eor	x17,x21,x21,ror#5
++	add	x20,x20,x16			// h+=Sigma1(e)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	add	x24,x24,x20			// d+=h
++	eor	x19,x19,x22			// Maj(a,b,c)
++	eor	x17,x13,x17,ror#34	// Sigma0(a)
++	add	x20,x20,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	//add	x20,x20,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x11,x11			// 8
++#endif
++	add	x20,x20,x17			// h+=Sigma0(a)
++	ror	x16,x24,#14
++	add	x27,x27,x19			// h+=K[i]
++	eor	x14,x24,x24,ror#23
++	and	x17,x25,x24
++	bic	x19,x26,x24
++	add	x27,x27,x11			// h+=X[i]
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x20,x21			// a^b, b^c in next round
++	eor	x16,x16,x14,ror#18	// Sigma1(e)
++	ror	x14,x20,#28
++	add	x27,x27,x17			// h+=Ch(e,f,g)
++	eor	x17,x20,x20,ror#5
++	add	x27,x27,x16			// h+=Sigma1(e)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	add	x23,x23,x27			// d+=h
++	eor	x28,x28,x21			// Maj(a,b,c)
++	eor	x17,x14,x17,ror#34	// Sigma0(a)
++	add	x27,x27,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	//add	x27,x27,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x12,x12			// 9
++#endif
++	ldp	x13,x14,[x1],#2*8
++	add	x27,x27,x17			// h+=Sigma0(a)
++	ror	x16,x23,#14
++	add	x26,x26,x28			// h+=K[i]
++	eor	x15,x23,x23,ror#23
++	and	x17,x24,x23
++	bic	x28,x25,x23
++	add	x26,x26,x12			// h+=X[i]
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x27,x20			// a^b, b^c in next round
++	eor	x16,x16,x15,ror#18	// Sigma1(e)
++	ror	x15,x27,#28
++	add	x26,x26,x17			// h+=Ch(e,f,g)
++	eor	x17,x27,x27,ror#5
++	add	x26,x26,x16			// h+=Sigma1(e)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	add	x22,x22,x26			// d+=h
++	eor	x19,x19,x20			// Maj(a,b,c)
++	eor	x17,x15,x17,ror#34	// Sigma0(a)
++	add	x26,x26,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	//add	x26,x26,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x13,x13			// 10
++#endif
++	add	x26,x26,x17			// h+=Sigma0(a)
++	ror	x16,x22,#14
++	add	x25,x25,x19			// h+=K[i]
++	eor	x0,x22,x22,ror#23
++	and	x17,x23,x22
++	bic	x19,x24,x22
++	add	x25,x25,x13			// h+=X[i]
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x26,x27			// a^b, b^c in next round
++	eor	x16,x16,x0,ror#18	// Sigma1(e)
++	ror	x0,x26,#28
++	add	x25,x25,x17			// h+=Ch(e,f,g)
++	eor	x17,x26,x26,ror#5
++	add	x25,x25,x16			// h+=Sigma1(e)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	add	x21,x21,x25			// d+=h
++	eor	x28,x28,x27			// Maj(a,b,c)
++	eor	x17,x0,x17,ror#34	// Sigma0(a)
++	add	x25,x25,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	//add	x25,x25,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x14,x14			// 11
++#endif
++	ldp	x15,x0,[x1],#2*8
++	add	x25,x25,x17			// h+=Sigma0(a)
++	str	x6,[sp,#24]
++	ror	x16,x21,#14
++	add	x24,x24,x28			// h+=K[i]
++	eor	x6,x21,x21,ror#23
++	and	x17,x22,x21
++	bic	x28,x23,x21
++	add	x24,x24,x14			// h+=X[i]
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x25,x26			// a^b, b^c in next round
++	eor	x16,x16,x6,ror#18	// Sigma1(e)
++	ror	x6,x25,#28
++	add	x24,x24,x17			// h+=Ch(e,f,g)
++	eor	x17,x25,x25,ror#5
++	add	x24,x24,x16			// h+=Sigma1(e)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	add	x20,x20,x24			// d+=h
++	eor	x19,x19,x26			// Maj(a,b,c)
++	eor	x17,x6,x17,ror#34	// Sigma0(a)
++	add	x24,x24,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	//add	x24,x24,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x15,x15			// 12
++#endif
++	add	x24,x24,x17			// h+=Sigma0(a)
++	str	x7,[sp,#0]
++	ror	x16,x20,#14
++	add	x23,x23,x19			// h+=K[i]
++	eor	x7,x20,x20,ror#23
++	and	x17,x21,x20
++	bic	x19,x22,x20
++	add	x23,x23,x15			// h+=X[i]
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x24,x25			// a^b, b^c in next round
++	eor	x16,x16,x7,ror#18	// Sigma1(e)
++	ror	x7,x24,#28
++	add	x23,x23,x17			// h+=Ch(e,f,g)
++	eor	x17,x24,x24,ror#5
++	add	x23,x23,x16			// h+=Sigma1(e)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	add	x27,x27,x23			// d+=h
++	eor	x28,x28,x25			// Maj(a,b,c)
++	eor	x17,x7,x17,ror#34	// Sigma0(a)
++	add	x23,x23,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	//add	x23,x23,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x0,x0			// 13
++#endif
++	ldp	x1,x2,[x1]
++	add	x23,x23,x17			// h+=Sigma0(a)
++	str	x8,[sp,#8]
++	ror	x16,x27,#14
++	add	x22,x22,x28			// h+=K[i]
++	eor	x8,x27,x27,ror#23
++	and	x17,x20,x27
++	bic	x28,x21,x27
++	add	x22,x22,x0			// h+=X[i]
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x23,x24			// a^b, b^c in next round
++	eor	x16,x16,x8,ror#18	// Sigma1(e)
++	ror	x8,x23,#28
++	add	x22,x22,x17			// h+=Ch(e,f,g)
++	eor	x17,x23,x23,ror#5
++	add	x22,x22,x16			// h+=Sigma1(e)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	add	x26,x26,x22			// d+=h
++	eor	x19,x19,x24			// Maj(a,b,c)
++	eor	x17,x8,x17,ror#34	// Sigma0(a)
++	add	x22,x22,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	//add	x22,x22,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x1,x1			// 14
++#endif
++	ldr	x6,[sp,#24]
++	add	x22,x22,x17			// h+=Sigma0(a)
++	str	x9,[sp,#16]
++	ror	x16,x26,#14
++	add	x21,x21,x19			// h+=K[i]
++	eor	x9,x26,x26,ror#23
++	and	x17,x27,x26
++	bic	x19,x20,x26
++	add	x21,x21,x1			// h+=X[i]
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x22,x23			// a^b, b^c in next round
++	eor	x16,x16,x9,ror#18	// Sigma1(e)
++	ror	x9,x22,#28
++	add	x21,x21,x17			// h+=Ch(e,f,g)
++	eor	x17,x22,x22,ror#5
++	add	x21,x21,x16			// h+=Sigma1(e)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	add	x25,x25,x21			// d+=h
++	eor	x28,x28,x23			// Maj(a,b,c)
++	eor	x17,x9,x17,ror#34	// Sigma0(a)
++	add	x21,x21,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	//add	x21,x21,x17			// h+=Sigma0(a)
++#ifndef	__AARCH64EB__
++	rev	x2,x2			// 15
++#endif
++	ldr	x7,[sp,#0]
++	add	x21,x21,x17			// h+=Sigma0(a)
++	str	x10,[sp,#24]
++	ror	x16,x25,#14
++	add	x20,x20,x28			// h+=K[i]
++	ror	x9,x4,#1
++	and	x17,x26,x25
++	ror	x8,x1,#19
++	bic	x28,x27,x25
++	ror	x10,x21,#28
++	add	x20,x20,x2			// h+=X[i]
++	eor	x16,x16,x25,ror#18
++	eor	x9,x9,x4,ror#8
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x21,x22			// a^b, b^c in next round
++	eor	x16,x16,x25,ror#41	// Sigma1(e)
++	eor	x10,x10,x21,ror#34
++	add	x20,x20,x17			// h+=Ch(e,f,g)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	eor	x8,x8,x1,ror#61
++	eor	x9,x9,x4,lsr#7	// sigma0(X[i+1])
++	add	x20,x20,x16			// h+=Sigma1(e)
++	eor	x19,x19,x22			// Maj(a,b,c)
++	eor	x17,x10,x21,ror#39	// Sigma0(a)
++	eor	x8,x8,x1,lsr#6	// sigma1(X[i+14])
++	add	x3,x3,x12
++	add	x24,x24,x20			// d+=h
++	add	x20,x20,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	add	x3,x3,x9
++	add	x20,x20,x17			// h+=Sigma0(a)
++	add	x3,x3,x8
++.Loop_16_xx:
++	ldr	x8,[sp,#8]
++	str	x11,[sp,#0]
++	ror	x16,x24,#14
++	add	x27,x27,x19			// h+=K[i]
++	ror	x10,x5,#1
++	and	x17,x25,x24
++	ror	x9,x2,#19
++	bic	x19,x26,x24
++	ror	x11,x20,#28
++	add	x27,x27,x3			// h+=X[i]
++	eor	x16,x16,x24,ror#18
++	eor	x10,x10,x5,ror#8
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x20,x21			// a^b, b^c in next round
++	eor	x16,x16,x24,ror#41	// Sigma1(e)
++	eor	x11,x11,x20,ror#34
++	add	x27,x27,x17			// h+=Ch(e,f,g)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	eor	x9,x9,x2,ror#61
++	eor	x10,x10,x5,lsr#7	// sigma0(X[i+1])
++	add	x27,x27,x16			// h+=Sigma1(e)
++	eor	x28,x28,x21			// Maj(a,b,c)
++	eor	x17,x11,x20,ror#39	// Sigma0(a)
++	eor	x9,x9,x2,lsr#6	// sigma1(X[i+14])
++	add	x4,x4,x13
++	add	x23,x23,x27			// d+=h
++	add	x27,x27,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	add	x4,x4,x10
++	add	x27,x27,x17			// h+=Sigma0(a)
++	add	x4,x4,x9
++	ldr	x9,[sp,#16]
++	str	x12,[sp,#8]
++	ror	x16,x23,#14
++	add	x26,x26,x28			// h+=K[i]
++	ror	x11,x6,#1
++	and	x17,x24,x23
++	ror	x10,x3,#19
++	bic	x28,x25,x23
++	ror	x12,x27,#28
++	add	x26,x26,x4			// h+=X[i]
++	eor	x16,x16,x23,ror#18
++	eor	x11,x11,x6,ror#8
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x27,x20			// a^b, b^c in next round
++	eor	x16,x16,x23,ror#41	// Sigma1(e)
++	eor	x12,x12,x27,ror#34
++	add	x26,x26,x17			// h+=Ch(e,f,g)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	eor	x10,x10,x3,ror#61
++	eor	x11,x11,x6,lsr#7	// sigma0(X[i+1])
++	add	x26,x26,x16			// h+=Sigma1(e)
++	eor	x19,x19,x20			// Maj(a,b,c)
++	eor	x17,x12,x27,ror#39	// Sigma0(a)
++	eor	x10,x10,x3,lsr#6	// sigma1(X[i+14])
++	add	x5,x5,x14
++	add	x22,x22,x26			// d+=h
++	add	x26,x26,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	add	x5,x5,x11
++	add	x26,x26,x17			// h+=Sigma0(a)
++	add	x5,x5,x10
++	ldr	x10,[sp,#24]
++	str	x13,[sp,#16]
++	ror	x16,x22,#14
++	add	x25,x25,x19			// h+=K[i]
++	ror	x12,x7,#1
++	and	x17,x23,x22
++	ror	x11,x4,#19
++	bic	x19,x24,x22
++	ror	x13,x26,#28
++	add	x25,x25,x5			// h+=X[i]
++	eor	x16,x16,x22,ror#18
++	eor	x12,x12,x7,ror#8
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x26,x27			// a^b, b^c in next round
++	eor	x16,x16,x22,ror#41	// Sigma1(e)
++	eor	x13,x13,x26,ror#34
++	add	x25,x25,x17			// h+=Ch(e,f,g)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	eor	x11,x11,x4,ror#61
++	eor	x12,x12,x7,lsr#7	// sigma0(X[i+1])
++	add	x25,x25,x16			// h+=Sigma1(e)
++	eor	x28,x28,x27			// Maj(a,b,c)
++	eor	x17,x13,x26,ror#39	// Sigma0(a)
++	eor	x11,x11,x4,lsr#6	// sigma1(X[i+14])
++	add	x6,x6,x15
++	add	x21,x21,x25			// d+=h
++	add	x25,x25,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	add	x6,x6,x12
++	add	x25,x25,x17			// h+=Sigma0(a)
++	add	x6,x6,x11
++	ldr	x11,[sp,#0]
++	str	x14,[sp,#24]
++	ror	x16,x21,#14
++	add	x24,x24,x28			// h+=K[i]
++	ror	x13,x8,#1
++	and	x17,x22,x21
++	ror	x12,x5,#19
++	bic	x28,x23,x21
++	ror	x14,x25,#28
++	add	x24,x24,x6			// h+=X[i]
++	eor	x16,x16,x21,ror#18
++	eor	x13,x13,x8,ror#8
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x25,x26			// a^b, b^c in next round
++	eor	x16,x16,x21,ror#41	// Sigma1(e)
++	eor	x14,x14,x25,ror#34
++	add	x24,x24,x17			// h+=Ch(e,f,g)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	eor	x12,x12,x5,ror#61
++	eor	x13,x13,x8,lsr#7	// sigma0(X[i+1])
++	add	x24,x24,x16			// h+=Sigma1(e)
++	eor	x19,x19,x26			// Maj(a,b,c)
++	eor	x17,x14,x25,ror#39	// Sigma0(a)
++	eor	x12,x12,x5,lsr#6	// sigma1(X[i+14])
++	add	x7,x7,x0
++	add	x20,x20,x24			// d+=h
++	add	x24,x24,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	add	x7,x7,x13
++	add	x24,x24,x17			// h+=Sigma0(a)
++	add	x7,x7,x12
++	ldr	x12,[sp,#8]
++	str	x15,[sp,#0]
++	ror	x16,x20,#14
++	add	x23,x23,x19			// h+=K[i]
++	ror	x14,x9,#1
++	and	x17,x21,x20
++	ror	x13,x6,#19
++	bic	x19,x22,x20
++	ror	x15,x24,#28
++	add	x23,x23,x7			// h+=X[i]
++	eor	x16,x16,x20,ror#18
++	eor	x14,x14,x9,ror#8
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x24,x25			// a^b, b^c in next round
++	eor	x16,x16,x20,ror#41	// Sigma1(e)
++	eor	x15,x15,x24,ror#34
++	add	x23,x23,x17			// h+=Ch(e,f,g)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	eor	x13,x13,x6,ror#61
++	eor	x14,x14,x9,lsr#7	// sigma0(X[i+1])
++	add	x23,x23,x16			// h+=Sigma1(e)
++	eor	x28,x28,x25			// Maj(a,b,c)
++	eor	x17,x15,x24,ror#39	// Sigma0(a)
++	eor	x13,x13,x6,lsr#6	// sigma1(X[i+14])
++	add	x8,x8,x1
++	add	x27,x27,x23			// d+=h
++	add	x23,x23,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	add	x8,x8,x14
++	add	x23,x23,x17			// h+=Sigma0(a)
++	add	x8,x8,x13
++	ldr	x13,[sp,#16]
++	str	x0,[sp,#8]
++	ror	x16,x27,#14
++	add	x22,x22,x28			// h+=K[i]
++	ror	x15,x10,#1
++	and	x17,x20,x27
++	ror	x14,x7,#19
++	bic	x28,x21,x27
++	ror	x0,x23,#28
++	add	x22,x22,x8			// h+=X[i]
++	eor	x16,x16,x27,ror#18
++	eor	x15,x15,x10,ror#8
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x23,x24			// a^b, b^c in next round
++	eor	x16,x16,x27,ror#41	// Sigma1(e)
++	eor	x0,x0,x23,ror#34
++	add	x22,x22,x17			// h+=Ch(e,f,g)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	eor	x14,x14,x7,ror#61
++	eor	x15,x15,x10,lsr#7	// sigma0(X[i+1])
++	add	x22,x22,x16			// h+=Sigma1(e)
++	eor	x19,x19,x24			// Maj(a,b,c)
++	eor	x17,x0,x23,ror#39	// Sigma0(a)
++	eor	x14,x14,x7,lsr#6	// sigma1(X[i+14])
++	add	x9,x9,x2
++	add	x26,x26,x22			// d+=h
++	add	x22,x22,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	add	x9,x9,x15
++	add	x22,x22,x17			// h+=Sigma0(a)
++	add	x9,x9,x14
++	ldr	x14,[sp,#24]
++	str	x1,[sp,#16]
++	ror	x16,x26,#14
++	add	x21,x21,x19			// h+=K[i]
++	ror	x0,x11,#1
++	and	x17,x27,x26
++	ror	x15,x8,#19
++	bic	x19,x20,x26
++	ror	x1,x22,#28
++	add	x21,x21,x9			// h+=X[i]
++	eor	x16,x16,x26,ror#18
++	eor	x0,x0,x11,ror#8
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x22,x23			// a^b, b^c in next round
++	eor	x16,x16,x26,ror#41	// Sigma1(e)
++	eor	x1,x1,x22,ror#34
++	add	x21,x21,x17			// h+=Ch(e,f,g)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	eor	x15,x15,x8,ror#61
++	eor	x0,x0,x11,lsr#7	// sigma0(X[i+1])
++	add	x21,x21,x16			// h+=Sigma1(e)
++	eor	x28,x28,x23			// Maj(a,b,c)
++	eor	x17,x1,x22,ror#39	// Sigma0(a)
++	eor	x15,x15,x8,lsr#6	// sigma1(X[i+14])
++	add	x10,x10,x3
++	add	x25,x25,x21			// d+=h
++	add	x21,x21,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	add	x10,x10,x0
++	add	x21,x21,x17			// h+=Sigma0(a)
++	add	x10,x10,x15
++	ldr	x15,[sp,#0]
++	str	x2,[sp,#24]
++	ror	x16,x25,#14
++	add	x20,x20,x28			// h+=K[i]
++	ror	x1,x12,#1
++	and	x17,x26,x25
++	ror	x0,x9,#19
++	bic	x28,x27,x25
++	ror	x2,x21,#28
++	add	x20,x20,x10			// h+=X[i]
++	eor	x16,x16,x25,ror#18
++	eor	x1,x1,x12,ror#8
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x21,x22			// a^b, b^c in next round
++	eor	x16,x16,x25,ror#41	// Sigma1(e)
++	eor	x2,x2,x21,ror#34
++	add	x20,x20,x17			// h+=Ch(e,f,g)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	eor	x0,x0,x9,ror#61
++	eor	x1,x1,x12,lsr#7	// sigma0(X[i+1])
++	add	x20,x20,x16			// h+=Sigma1(e)
++	eor	x19,x19,x22			// Maj(a,b,c)
++	eor	x17,x2,x21,ror#39	// Sigma0(a)
++	eor	x0,x0,x9,lsr#6	// sigma1(X[i+14])
++	add	x11,x11,x4
++	add	x24,x24,x20			// d+=h
++	add	x20,x20,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	add	x11,x11,x1
++	add	x20,x20,x17			// h+=Sigma0(a)
++	add	x11,x11,x0
++	ldr	x0,[sp,#8]
++	str	x3,[sp,#0]
++	ror	x16,x24,#14
++	add	x27,x27,x19			// h+=K[i]
++	ror	x2,x13,#1
++	and	x17,x25,x24
++	ror	x1,x10,#19
++	bic	x19,x26,x24
++	ror	x3,x20,#28
++	add	x27,x27,x11			// h+=X[i]
++	eor	x16,x16,x24,ror#18
++	eor	x2,x2,x13,ror#8
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x20,x21			// a^b, b^c in next round
++	eor	x16,x16,x24,ror#41	// Sigma1(e)
++	eor	x3,x3,x20,ror#34
++	add	x27,x27,x17			// h+=Ch(e,f,g)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	eor	x1,x1,x10,ror#61
++	eor	x2,x2,x13,lsr#7	// sigma0(X[i+1])
++	add	x27,x27,x16			// h+=Sigma1(e)
++	eor	x28,x28,x21			// Maj(a,b,c)
++	eor	x17,x3,x20,ror#39	// Sigma0(a)
++	eor	x1,x1,x10,lsr#6	// sigma1(X[i+14])
++	add	x12,x12,x5
++	add	x23,x23,x27			// d+=h
++	add	x27,x27,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	add	x12,x12,x2
++	add	x27,x27,x17			// h+=Sigma0(a)
++	add	x12,x12,x1
++	ldr	x1,[sp,#16]
++	str	x4,[sp,#8]
++	ror	x16,x23,#14
++	add	x26,x26,x28			// h+=K[i]
++	ror	x3,x14,#1
++	and	x17,x24,x23
++	ror	x2,x11,#19
++	bic	x28,x25,x23
++	ror	x4,x27,#28
++	add	x26,x26,x12			// h+=X[i]
++	eor	x16,x16,x23,ror#18
++	eor	x3,x3,x14,ror#8
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x27,x20			// a^b, b^c in next round
++	eor	x16,x16,x23,ror#41	// Sigma1(e)
++	eor	x4,x4,x27,ror#34
++	add	x26,x26,x17			// h+=Ch(e,f,g)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	eor	x2,x2,x11,ror#61
++	eor	x3,x3,x14,lsr#7	// sigma0(X[i+1])
++	add	x26,x26,x16			// h+=Sigma1(e)
++	eor	x19,x19,x20			// Maj(a,b,c)
++	eor	x17,x4,x27,ror#39	// Sigma0(a)
++	eor	x2,x2,x11,lsr#6	// sigma1(X[i+14])
++	add	x13,x13,x6
++	add	x22,x22,x26			// d+=h
++	add	x26,x26,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	add	x13,x13,x3
++	add	x26,x26,x17			// h+=Sigma0(a)
++	add	x13,x13,x2
++	ldr	x2,[sp,#24]
++	str	x5,[sp,#16]
++	ror	x16,x22,#14
++	add	x25,x25,x19			// h+=K[i]
++	ror	x4,x15,#1
++	and	x17,x23,x22
++	ror	x3,x12,#19
++	bic	x19,x24,x22
++	ror	x5,x26,#28
++	add	x25,x25,x13			// h+=X[i]
++	eor	x16,x16,x22,ror#18
++	eor	x4,x4,x15,ror#8
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x26,x27			// a^b, b^c in next round
++	eor	x16,x16,x22,ror#41	// Sigma1(e)
++	eor	x5,x5,x26,ror#34
++	add	x25,x25,x17			// h+=Ch(e,f,g)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	eor	x3,x3,x12,ror#61
++	eor	x4,x4,x15,lsr#7	// sigma0(X[i+1])
++	add	x25,x25,x16			// h+=Sigma1(e)
++	eor	x28,x28,x27			// Maj(a,b,c)
++	eor	x17,x5,x26,ror#39	// Sigma0(a)
++	eor	x3,x3,x12,lsr#6	// sigma1(X[i+14])
++	add	x14,x14,x7
++	add	x21,x21,x25			// d+=h
++	add	x25,x25,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	add	x14,x14,x4
++	add	x25,x25,x17			// h+=Sigma0(a)
++	add	x14,x14,x3
++	ldr	x3,[sp,#0]
++	str	x6,[sp,#24]
++	ror	x16,x21,#14
++	add	x24,x24,x28			// h+=K[i]
++	ror	x5,x0,#1
++	and	x17,x22,x21
++	ror	x4,x13,#19
++	bic	x28,x23,x21
++	ror	x6,x25,#28
++	add	x24,x24,x14			// h+=X[i]
++	eor	x16,x16,x21,ror#18
++	eor	x5,x5,x0,ror#8
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x25,x26			// a^b, b^c in next round
++	eor	x16,x16,x21,ror#41	// Sigma1(e)
++	eor	x6,x6,x25,ror#34
++	add	x24,x24,x17			// h+=Ch(e,f,g)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	eor	x4,x4,x13,ror#61
++	eor	x5,x5,x0,lsr#7	// sigma0(X[i+1])
++	add	x24,x24,x16			// h+=Sigma1(e)
++	eor	x19,x19,x26			// Maj(a,b,c)
++	eor	x17,x6,x25,ror#39	// Sigma0(a)
++	eor	x4,x4,x13,lsr#6	// sigma1(X[i+14])
++	add	x15,x15,x8
++	add	x20,x20,x24			// d+=h
++	add	x24,x24,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	add	x15,x15,x5
++	add	x24,x24,x17			// h+=Sigma0(a)
++	add	x15,x15,x4
++	ldr	x4,[sp,#8]
++	str	x7,[sp,#0]
++	ror	x16,x20,#14
++	add	x23,x23,x19			// h+=K[i]
++	ror	x6,x1,#1
++	and	x17,x21,x20
++	ror	x5,x14,#19
++	bic	x19,x22,x20
++	ror	x7,x24,#28
++	add	x23,x23,x15			// h+=X[i]
++	eor	x16,x16,x20,ror#18
++	eor	x6,x6,x1,ror#8
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x24,x25			// a^b, b^c in next round
++	eor	x16,x16,x20,ror#41	// Sigma1(e)
++	eor	x7,x7,x24,ror#34
++	add	x23,x23,x17			// h+=Ch(e,f,g)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	eor	x5,x5,x14,ror#61
++	eor	x6,x6,x1,lsr#7	// sigma0(X[i+1])
++	add	x23,x23,x16			// h+=Sigma1(e)
++	eor	x28,x28,x25			// Maj(a,b,c)
++	eor	x17,x7,x24,ror#39	// Sigma0(a)
++	eor	x5,x5,x14,lsr#6	// sigma1(X[i+14])
++	add	x0,x0,x9
++	add	x27,x27,x23			// d+=h
++	add	x23,x23,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	add	x0,x0,x6
++	add	x23,x23,x17			// h+=Sigma0(a)
++	add	x0,x0,x5
++	ldr	x5,[sp,#16]
++	str	x8,[sp,#8]
++	ror	x16,x27,#14
++	add	x22,x22,x28			// h+=K[i]
++	ror	x7,x2,#1
++	and	x17,x20,x27
++	ror	x6,x15,#19
++	bic	x28,x21,x27
++	ror	x8,x23,#28
++	add	x22,x22,x0			// h+=X[i]
++	eor	x16,x16,x27,ror#18
++	eor	x7,x7,x2,ror#8
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x23,x24			// a^b, b^c in next round
++	eor	x16,x16,x27,ror#41	// Sigma1(e)
++	eor	x8,x8,x23,ror#34
++	add	x22,x22,x17			// h+=Ch(e,f,g)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	eor	x6,x6,x15,ror#61
++	eor	x7,x7,x2,lsr#7	// sigma0(X[i+1])
++	add	x22,x22,x16			// h+=Sigma1(e)
++	eor	x19,x19,x24			// Maj(a,b,c)
++	eor	x17,x8,x23,ror#39	// Sigma0(a)
++	eor	x6,x6,x15,lsr#6	// sigma1(X[i+14])
++	add	x1,x1,x10
++	add	x26,x26,x22			// d+=h
++	add	x22,x22,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	add	x1,x1,x7
++	add	x22,x22,x17			// h+=Sigma0(a)
++	add	x1,x1,x6
++	ldr	x6,[sp,#24]
++	str	x9,[sp,#16]
++	ror	x16,x26,#14
++	add	x21,x21,x19			// h+=K[i]
++	ror	x8,x3,#1
++	and	x17,x27,x26
++	ror	x7,x0,#19
++	bic	x19,x20,x26
++	ror	x9,x22,#28
++	add	x21,x21,x1			// h+=X[i]
++	eor	x16,x16,x26,ror#18
++	eor	x8,x8,x3,ror#8
++	orr	x17,x17,x19			// Ch(e,f,g)
++	eor	x19,x22,x23			// a^b, b^c in next round
++	eor	x16,x16,x26,ror#41	// Sigma1(e)
++	eor	x9,x9,x22,ror#34
++	add	x21,x21,x17			// h+=Ch(e,f,g)
++	and	x28,x28,x19			// (b^c)&=(a^b)
++	eor	x7,x7,x0,ror#61
++	eor	x8,x8,x3,lsr#7	// sigma0(X[i+1])
++	add	x21,x21,x16			// h+=Sigma1(e)
++	eor	x28,x28,x23			// Maj(a,b,c)
++	eor	x17,x9,x22,ror#39	// Sigma0(a)
++	eor	x7,x7,x0,lsr#6	// sigma1(X[i+14])
++	add	x2,x2,x11
++	add	x25,x25,x21			// d+=h
++	add	x21,x21,x28			// h+=Maj(a,b,c)
++	ldr	x28,[x30],#8		// *K++, x19 in next round
++	add	x2,x2,x8
++	add	x21,x21,x17			// h+=Sigma0(a)
++	add	x2,x2,x7
++	ldr	x7,[sp,#0]
++	str	x10,[sp,#24]
++	ror	x16,x25,#14
++	add	x20,x20,x28			// h+=K[i]
++	ror	x9,x4,#1
++	and	x17,x26,x25
++	ror	x8,x1,#19
++	bic	x28,x27,x25
++	ror	x10,x21,#28
++	add	x20,x20,x2			// h+=X[i]
++	eor	x16,x16,x25,ror#18
++	eor	x9,x9,x4,ror#8
++	orr	x17,x17,x28			// Ch(e,f,g)
++	eor	x28,x21,x22			// a^b, b^c in next round
++	eor	x16,x16,x25,ror#41	// Sigma1(e)
++	eor	x10,x10,x21,ror#34
++	add	x20,x20,x17			// h+=Ch(e,f,g)
++	and	x19,x19,x28			// (b^c)&=(a^b)
++	eor	x8,x8,x1,ror#61
++	eor	x9,x9,x4,lsr#7	// sigma0(X[i+1])
++	add	x20,x20,x16			// h+=Sigma1(e)
++	eor	x19,x19,x22			// Maj(a,b,c)
++	eor	x17,x10,x21,ror#39	// Sigma0(a)
++	eor	x8,x8,x1,lsr#6	// sigma1(X[i+14])
++	add	x3,x3,x12
++	add	x24,x24,x20			// d+=h
++	add	x20,x20,x19			// h+=Maj(a,b,c)
++	ldr	x19,[x30],#8		// *K++, x28 in next round
++	add	x3,x3,x9
++	add	x20,x20,x17			// h+=Sigma0(a)
++	add	x3,x3,x8
++	cbnz	x19,.Loop_16_xx
++
++	ldp	x0,x2,[x29,#96]
++	ldr	x1,[x29,#112]
++	sub	x30,x30,#648		// rewind
++
++	ldp	x3,x4,[x0]
++	ldp	x5,x6,[x0,#2*8]
++	add	x1,x1,#14*8			// advance input pointer
++	ldp	x7,x8,[x0,#4*8]
++	add	x20,x20,x3
++	ldp	x9,x10,[x0,#6*8]
++	add	x21,x21,x4
++	add	x22,x22,x5
++	add	x23,x23,x6
++	stp	x20,x21,[x0]
++	add	x24,x24,x7
++	add	x25,x25,x8
++	stp	x22,x23,[x0,#2*8]
++	add	x26,x26,x9
++	add	x27,x27,x10
++	cmp	x1,x2
++	stp	x24,x25,[x0,#4*8]
++	stp	x26,x27,[x0,#6*8]
++	b.ne	.Loop
++
++	ldp	x19,x20,[x29,#16]
++	add	sp,sp,#4*8
++	ldp	x21,x22,[x29,#32]
++	ldp	x23,x24,[x29,#48]
++	ldp	x25,x26,[x29,#64]
++	ldp	x27,x28,[x29,#80]
++	ldp	x29,x30,[sp],#128
++	ret
++.size	sha512_block_data_order,.-sha512_block_data_order
++
++.align	6
++.type	.LK512,%object
++.LK512:
++	.quad	0x428a2f98d728ae22,0x7137449123ef65cd
++	.quad	0xb5c0fbcfec4d3b2f,0xe9b5dba58189dbbc
++	.quad	0x3956c25bf348b538,0x59f111f1b605d019
++	.quad	0x923f82a4af194f9b,0xab1c5ed5da6d8118
++	.quad	0xd807aa98a3030242,0x12835b0145706fbe
++	.quad	0x243185be4ee4b28c,0x550c7dc3d5ffb4e2
++	.quad	0x72be5d74f27b896f,0x80deb1fe3b1696b1
++	.quad	0x9bdc06a725c71235,0xc19bf174cf692694
++	.quad	0xe49b69c19ef14ad2,0xefbe4786384f25e3
++	.quad	0x0fc19dc68b8cd5b5,0x240ca1cc77ac9c65
++	.quad	0x2de92c6f592b0275,0x4a7484aa6ea6e483
++	.quad	0x5cb0a9dcbd41fbd4,0x76f988da831153b5
++	.quad	0x983e5152ee66dfab,0xa831c66d2db43210
++	.quad	0xb00327c898fb213f,0xbf597fc7beef0ee4
++	.quad	0xc6e00bf33da88fc2,0xd5a79147930aa725
++	.quad	0x06ca6351e003826f,0x142929670a0e6e70
++	.quad	0x27b70a8546d22ffc,0x2e1b21385c26c926
++	.quad	0x4d2c6dfc5ac42aed,0x53380d139d95b3df
++	.quad	0x650a73548baf63de,0x766a0abb3c77b2a8
++	.quad	0x81c2c92e47edaee6,0x92722c851482353b
++	.quad	0xa2bfe8a14cf10364,0xa81a664bbc423001
++	.quad	0xc24b8b70d0f89791,0xc76c51a30654be30
++	.quad	0xd192e819d6ef5218,0xd69906245565a910
++	.quad	0xf40e35855771202a,0x106aa07032bbd1b8
++	.quad	0x19a4c116b8d2d0c8,0x1e376c085141ab53
++	.quad	0x2748774cdf8eeb99,0x34b0bcb5e19b48a8
++	.quad	0x391c0cb3c5c95a63,0x4ed8aa4ae3418acb
++	.quad	0x5b9cca4f7763e373,0x682e6ff3d6b2b8a3
++	.quad	0x748f82ee5defb2fc,0x78a5636f43172f60
++	.quad	0x84c87814a1f0ab72,0x8cc702081a6439ec
++	.quad	0x90befffa23631e28,0xa4506cebde82bde9
++	.quad	0xbef9a3f7b2c67915,0xc67178f2e372532b
++	.quad	0xca273eceea26619c,0xd186b8c721c0c207
++	.quad	0xeada7dd6cde0eb1e,0xf57d4f7fee6ed178
++	.quad	0x06f067aa72176fba,0x0a637dc5a2c898a6
++	.quad	0x113f9804bef90dae,0x1b710b35131c471b
++	.quad	0x28db77f523047d84,0x32caab7b40c72493
++	.quad	0x3c9ebe0a15c9bebc,0x431d67c49c100d4c
++	.quad	0x4cc5d4becb3e42b6,0x597f299cfc657e2a
++	.quad	0x5fcb6fab3ad6faec,0x6c44198c4a475817
++	.quad	0	// terminator
++.size	.LK512,.-.LK512
++#ifndef	__KERNEL__
++.align	3
++.LOPENSSL_armcap_P:
++# ifdef	__ILP32__
++	.long	OPENSSL_armcap_P-.
++# else
++	.quad	OPENSSL_armcap_P-.
++# endif
++#endif
++.asciz	"SHA512 block transform for ARMv8, CRYPTOGAMS by <appro@openssl.org>"
++.align	2
++#ifndef	__KERNEL__
++.comm	OPENSSL_armcap_P,4,4
++#endif
+diff --git a/arch/arm64/include/asm/assembler.h b/arch/arm64/include/asm/assembler.h
+index 7193bf97b8da..e60375ce0dd2 100644
+--- a/arch/arm64/include/asm/assembler.h
++++ b/arch/arm64/include/asm/assembler.h
+@@ -86,6 +86,24 @@
+ 	dmb	\opt
+ 	.endm
+ 
++/*
++ * Value prediction barrier
++ */
++	.macro	csdb
++	hint	#20
++	.endm
++
++/*
++ * Sanitise a 64-bit bounded index wrt speculation, returning zero if out
++ * of bounds.
++ */
++	.macro	mask_nospec64, idx, limit, tmp
++	sub	\tmp, \idx, \limit
++	bic	\tmp, \tmp, \idx
++	and	\idx, \idx, \tmp, asr #63
++	csdb
++	.endm
++
+ /*
+  * NOP sequence
+  */
+@@ -416,4 +434,5 @@ alternative_endif
+ 	.macro	pte_to_phys, phys, pte
+ 	and	\phys, \pte, #(((1 << (48 - PAGE_SHIFT)) - 1) << PAGE_SHIFT)
+ 	.endm
++
+ #endif	/* __ASM_ASSEMBLER_H */
+diff --git a/arch/arm64/include/asm/barrier.h b/arch/arm64/include/asm/barrier.h
+index 0fe7e43b7fbc..0b0755c961ac 100644
+--- a/arch/arm64/include/asm/barrier.h
++++ b/arch/arm64/include/asm/barrier.h
+@@ -31,6 +31,8 @@
+ #define dmb(opt)	asm volatile("dmb " #opt : : : "memory")
+ #define dsb(opt)	asm volatile("dsb " #opt : : : "memory")
+ 
++#define csdb()		asm volatile("hint #20" : : : "memory")
++
+ #define mb()		dsb(sy)
+ #define rmb()		dsb(ld)
+ #define wmb()		dsb(st)
+@@ -38,6 +40,27 @@
+ #define dma_rmb()	dmb(oshld)
+ #define dma_wmb()	dmb(oshst)
+ 
++/*
++ * Generate a mask for array_index__nospec() that is ~0UL when 0 <= idx < sz
++ * and 0 otherwise.
++ */
++#define array_index_mask_nospec array_index_mask_nospec
++static inline unsigned long array_index_mask_nospec(unsigned long idx,
++						    unsigned long sz)
++{
++	unsigned long mask;
++
++	asm volatile(
++	"	cmp	%1, %2\n"
++	"	sbc	%0, xzr, xzr\n"
++	: "=r" (mask)
++	: "r" (idx), "Ir" (sz)
++	: "cc");
++
++	csdb();
++	return mask;
++}
++
+ #define __smp_mb()	dmb(ish)
+ #define __smp_rmb()	dmb(ishld)
+ #define __smp_wmb()	dmb(ishst)
+diff --git a/arch/arm64/include/asm/cpucaps.h b/arch/arm64/include/asm/cpucaps.h
+index 7ddf233f05bd..ce67bf6a0886 100644
+--- a/arch/arm64/include/asm/cpucaps.h
++++ b/arch/arm64/include/asm/cpucaps.h
+@@ -35,7 +35,8 @@
+ #define ARM64_HYP_OFFSET_LOW			14
+ #define ARM64_MISMATCHED_CACHE_LINE_SIZE	15
+ #define ARM64_UNMAP_KERNEL_AT_EL0		16
++#define ARM64_HARDEN_BRANCH_PREDICTOR		17
+ 
+-#define ARM64_NCAPS				17
++#define ARM64_NCAPS				18
+ 
+ #endif /* __ASM_CPUCAPS_H */
+diff --git a/arch/arm64/include/asm/cputype.h b/arch/arm64/include/asm/cputype.h
+index 1d47930c30dc..9ee3038a6b98 100644
+--- a/arch/arm64/include/asm/cputype.h
++++ b/arch/arm64/include/asm/cputype.h
+@@ -75,7 +75,10 @@
+ #define ARM_CPU_PART_AEM_V8		0xD0F
+ #define ARM_CPU_PART_FOUNDATION		0xD00
+ #define ARM_CPU_PART_CORTEX_A57		0xD07
++#define ARM_CPU_PART_CORTEX_A72		0xD08
+ #define ARM_CPU_PART_CORTEX_A53		0xD03
++#define ARM_CPU_PART_CORTEX_A73		0xD09
++#define ARM_CPU_PART_CORTEX_A75		0xD0A
+ 
+ #define APM_CPU_PART_POTENZA		0x000
+ 
+@@ -87,6 +90,9 @@
+ 
+ #define MIDR_CORTEX_A53 MIDR_CPU_MODEL(ARM_CPU_IMP_ARM, ARM_CPU_PART_CORTEX_A53)
+ #define MIDR_CORTEX_A57 MIDR_CPU_MODEL(ARM_CPU_IMP_ARM, ARM_CPU_PART_CORTEX_A57)
++#define MIDR_CORTEX_A72 MIDR_CPU_MODEL(ARM_CPU_IMP_ARM, ARM_CPU_PART_CORTEX_A72)
++#define MIDR_CORTEX_A73 MIDR_CPU_MODEL(ARM_CPU_IMP_ARM, ARM_CPU_PART_CORTEX_A73)
++#define MIDR_CORTEX_A75 MIDR_CPU_MODEL(ARM_CPU_IMP_ARM, ARM_CPU_PART_CORTEX_A75)
+ #define MIDR_THUNDERX	MIDR_CPU_MODEL(ARM_CPU_IMP_CAVIUM, CAVIUM_CPU_PART_THUNDERX)
+ #define MIDR_THUNDERX_81XX MIDR_CPU_MODEL(ARM_CPU_IMP_CAVIUM, CAVIUM_CPU_PART_THUNDERX_81XX)
+ #define MIDR_CAVIUM_THUNDERX2 MIDR_CPU_MODEL(ARM_CPU_IMP_CAVIUM, CAVIUM_CPU_PART_THUNDERX2)
+diff --git a/arch/arm64/include/asm/futex.h b/arch/arm64/include/asm/futex.h
+index 20dcb196b240..4e5f36a804b4 100644
+--- a/arch/arm64/include/asm/futex.h
++++ b/arch/arm64/include/asm/futex.h
+@@ -51,13 +51,14 @@
+ 	: "memory")
+ 
+ static inline int
+-futex_atomic_op_inuser(unsigned int encoded_op, u32 __user *uaddr)
++futex_atomic_op_inuser(unsigned int encoded_op, u32 __user *_uaddr)
+ {
+ 	int op = (encoded_op >> 28) & 7;
+ 	int cmp = (encoded_op >> 24) & 15;
+ 	int oparg = (int)(encoded_op << 8) >> 20;
+ 	int cmparg = (int)(encoded_op << 20) >> 20;
+ 	int oldval = 0, ret, tmp;
++	u32 __user *uaddr = __uaccess_mask_ptr(_uaddr);
+ 
+ 	if (encoded_op & (FUTEX_OP_OPARG_SHIFT << 28))
+ 		oparg = 1U << (oparg & 0x1f);
+@@ -109,15 +110,17 @@ futex_atomic_op_inuser(unsigned int encoded_op, u32 __user *uaddr)
+ }
+ 
+ static inline int
+-futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
++futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *_uaddr,
+ 			      u32 oldval, u32 newval)
+ {
+ 	int ret = 0;
+ 	u32 val, tmp;
++	u32 __user *uaddr;
+ 
+-	if (!access_ok(VERIFY_WRITE, uaddr, sizeof(u32)))
++	if (!access_ok(VERIFY_WRITE, _uaddr, sizeof(u32)))
+ 		return -EFAULT;
+ 
++	uaddr = __uaccess_mask_ptr(_uaddr);
+ 	asm volatile("// futex_atomic_cmpxchg_inatomic\n"
+ ALTERNATIVE("nop", SET_PSTATE_PAN(0), ARM64_HAS_PAN, CONFIG_ARM64_PAN)
+ "	prfm	pstl1strm, %2\n"
+diff --git a/arch/arm64/include/asm/kvm_host.h b/arch/arm64/include/asm/kvm_host.h
+index e5050388e062..37d56e85036e 100644
+--- a/arch/arm64/include/asm/kvm_host.h
++++ b/arch/arm64/include/asm/kvm_host.h
+@@ -393,4 +393,9 @@ static inline void __cpu_init_stage2(void)
+ 		  "PARange is %d bits, unsupported configuration!", parange);
+ }
+ 
++static inline bool kvm_arm_harden_branch_predictor(void)
++{
++	return cpus_have_cap(ARM64_HARDEN_BRANCH_PREDICTOR);
++}
++
+ #endif /* __ARM64_KVM_HOST_H__ */
+diff --git a/arch/arm64/include/asm/kvm_mmu.h b/arch/arm64/include/asm/kvm_mmu.h
+index 6d22017ebbad..80bf33715ecb 100644
+--- a/arch/arm64/include/asm/kvm_mmu.h
++++ b/arch/arm64/include/asm/kvm_mmu.h
+@@ -313,5 +313,43 @@ static inline unsigned int kvm_get_vmid_bits(void)
+ 	return (cpuid_feature_extract_unsigned_field(reg, ID_AA64MMFR1_VMIDBITS_SHIFT) == 2) ? 16 : 8;
+ }
+ 
++#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
++#include <asm/mmu.h>
++
++static inline void *kvm_get_hyp_vector(void)
++{
++	struct bp_hardening_data *data = arm64_get_bp_hardening_data();
++	void *vect = kvm_ksym_ref(__kvm_hyp_vector);
++
++	if (data->fn) {
++		vect = __bp_harden_hyp_vecs_start +
++		       data->hyp_vectors_slot * SZ_2K;
++
++		if (!cpus_have_cap(ARM64_HAS_VIRT_HOST_EXTN))
++			vect = lm_alias(vect);
++	}
++
++	return vect;
++}
++
++static inline int kvm_map_vectors(void)
++{
++	return create_hyp_mappings(kvm_ksym_ref(__bp_harden_hyp_vecs_start),
++				   kvm_ksym_ref(__bp_harden_hyp_vecs_end),
++				   PAGE_HYP_EXEC);
++}
++
++#else
++static inline void *kvm_get_hyp_vector(void)
++{
++	return kvm_ksym_ref(__kvm_hyp_vector);
++}
++
++static inline int kvm_map_vectors(void)
++{
++	return 0;
++}
++#endif
++
+ #endif /* __ASSEMBLY__ */
+ #endif /* __ARM64_KVM_MMU_H__ */
+diff --git a/arch/arm64/include/asm/kvm_psci.h b/arch/arm64/include/asm/kvm_psci.h
+deleted file mode 100644
+index bc39e557c56c..000000000000
+--- a/arch/arm64/include/asm/kvm_psci.h
++++ /dev/null
+@@ -1,27 +0,0 @@
+-/*
+- * Copyright (C) 2012,2013 - ARM Ltd
+- * Author: Marc Zyngier <marc.zyngier@arm.com>
+- *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License version 2 as
+- * published by the Free Software Foundation.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#ifndef __ARM64_KVM_PSCI_H__
+-#define __ARM64_KVM_PSCI_H__
+-
+-#define KVM_ARM_PSCI_0_1	1
+-#define KVM_ARM_PSCI_0_2	2
+-
+-int kvm_psci_version(struct kvm_vcpu *vcpu);
+-int kvm_psci_call(struct kvm_vcpu *vcpu);
+-
+-#endif /* __ARM64_KVM_PSCI_H__ */
+diff --git a/arch/arm64/include/asm/memory.h b/arch/arm64/include/asm/memory.h
+index 5e3faba689e0..ba917be5565a 100644
+--- a/arch/arm64/include/asm/memory.h
++++ b/arch/arm64/include/asm/memory.h
+@@ -60,8 +60,6 @@
+  * KIMAGE_VADDR - the virtual address of the start of the kernel image
+  * VA_BITS - the maximum number of bits for virtual addresses.
+  * VA_START - the first kernel virtual address.
+- * TASK_SIZE - the maximum size of a user space task.
+- * TASK_UNMAPPED_BASE - the lower boundary of the mmap VM area.
+  */
+ #define VA_BITS			(CONFIG_ARM64_VA_BITS)
+ #define VA_START		(UL(0xffffffffffffffff) - \
+@@ -76,19 +74,6 @@
+ #define PCI_IO_END		(VMEMMAP_START - SZ_2M)
+ #define PCI_IO_START		(PCI_IO_END - PCI_IO_SIZE)
+ #define FIXADDR_TOP		(PCI_IO_START - SZ_2M)
+-#define TASK_SIZE_64		(UL(1) << VA_BITS)
+-
+-#ifdef CONFIG_COMPAT
+-#define TASK_SIZE_32		UL(0x100000000)
+-#define TASK_SIZE		(test_thread_flag(TIF_32BIT) ? \
+-				TASK_SIZE_32 : TASK_SIZE_64)
+-#define TASK_SIZE_OF(tsk)	(test_tsk_thread_flag(tsk, TIF_32BIT) ? \
+-				TASK_SIZE_32 : TASK_SIZE_64)
+-#else
+-#define TASK_SIZE		TASK_SIZE_64
+-#endif /* CONFIG_COMPAT */
+-
+-#define TASK_UNMAPPED_BASE	(PAGE_ALIGN(TASK_SIZE / 4))
+ 
+ #define KERNEL_START      _text
+ #define KERNEL_END        _end
+diff --git a/arch/arm64/include/asm/mmu.h b/arch/arm64/include/asm/mmu.h
+index a813edf28737..d51158a61892 100644
+--- a/arch/arm64/include/asm/mmu.h
++++ b/arch/arm64/include/asm/mmu.h
+@@ -20,6 +20,8 @@
+ 
+ #ifndef __ASSEMBLY__
+ 
++#include <linux/percpu.h>
++
+ typedef struct {
+ 	atomic64_t	id;
+ 	void		*vdso;
+@@ -38,6 +40,43 @@ static inline bool arm64_kernel_unmapped_at_el0(void)
+ 	       cpus_have_cap(ARM64_UNMAP_KERNEL_AT_EL0);
+ }
+ 
++typedef void (*bp_hardening_cb_t)(void);
++
++struct bp_hardening_data {
++	int			hyp_vectors_slot;
++	bp_hardening_cb_t	fn;
++};
++
++#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
++extern char __bp_harden_hyp_vecs_start[], __bp_harden_hyp_vecs_end[];
++
++DECLARE_PER_CPU_READ_MOSTLY(struct bp_hardening_data, bp_hardening_data);
++
++static inline struct bp_hardening_data *arm64_get_bp_hardening_data(void)
++{
++	return this_cpu_ptr(&bp_hardening_data);
++}
++
++static inline void arm64_apply_bp_hardening(void)
++{
++	struct bp_hardening_data *d;
++
++	if (!cpus_have_cap(ARM64_HARDEN_BRANCH_PREDICTOR))
++		return;
++
++	d = arm64_get_bp_hardening_data();
++	if (d->fn)
++		d->fn();
++}
++#else
++static inline struct bp_hardening_data *arm64_get_bp_hardening_data(void)
++{
++	return NULL;
++}
++
++static inline void arm64_apply_bp_hardening(void)	{ }
++#endif	/* CONFIG_HARDEN_BRANCH_PREDICTOR */
++
+ extern void paging_init(void);
+ extern void bootmem_init(void);
+ extern void __iomem *early_io_map(phys_addr_t phys, unsigned long virt);
+diff --git a/arch/arm64/include/asm/processor.h b/arch/arm64/include/asm/processor.h
+index 60e34824e18c..5917147af0c4 100644
+--- a/arch/arm64/include/asm/processor.h
++++ b/arch/arm64/include/asm/processor.h
+@@ -19,6 +19,13 @@
+ #ifndef __ASM_PROCESSOR_H
+ #define __ASM_PROCESSOR_H
+ 
++#define TASK_SIZE_64		(UL(1) << VA_BITS)
++
++#define KERNEL_DS	UL(-1)
++#define USER_DS		(TASK_SIZE_64 - 1)
++
++#ifndef __ASSEMBLY__
++
+ /*
+  * Default implementation of macro that returns current
+  * instruction pointer ("program counter").
+@@ -37,6 +44,22 @@
+ #include <asm/ptrace.h>
+ #include <asm/types.h>
+ 
++/*
++ * TASK_SIZE - the maximum size of a user space task.
++ * TASK_UNMAPPED_BASE - the lower boundary of the mmap VM area.
++ */
++#ifdef CONFIG_COMPAT
++#define TASK_SIZE_32		UL(0x100000000)
++#define TASK_SIZE		(test_thread_flag(TIF_32BIT) ? \
++				TASK_SIZE_32 : TASK_SIZE_64)
++#define TASK_SIZE_OF(tsk)	(test_tsk_thread_flag(tsk, TIF_32BIT) ? \
++				TASK_SIZE_32 : TASK_SIZE_64)
++#else
++#define TASK_SIZE		TASK_SIZE_64
++#endif /* CONFIG_COMPAT */
++
++#define TASK_UNMAPPED_BASE	(PAGE_ALIGN(TASK_SIZE / 4))
++
+ #define STACK_TOP_MAX		TASK_SIZE_64
+ #ifdef CONFIG_COMPAT
+ #define AARCH32_VECTORS_BASE	0xffff0000
+@@ -192,4 +215,5 @@ int cpu_enable_pan(void *__unused);
+ int cpu_enable_uao(void *__unused);
+ int cpu_enable_cache_maint_trap(void *__unused);
+ 
++#endif /* __ASSEMBLY__ */
+ #endif /* __ASM_PROCESSOR_H */
+diff --git a/arch/arm64/include/asm/sysreg.h b/arch/arm64/include/asm/sysreg.h
+index 7cb7f7cdcfbc..88bbe364b6ae 100644
+--- a/arch/arm64/include/asm/sysreg.h
++++ b/arch/arm64/include/asm/sysreg.h
+@@ -118,6 +118,8 @@
+ 
+ /* id_aa64pfr0 */
+ #define ID_AA64PFR0_CSV3_SHIFT		60
++#define ID_AA64PFR0_CSV2_SHIFT		56
++#define ID_AA64PFR0_SVE_SHIFT		32
+ #define ID_AA64PFR0_GIC_SHIFT		24
+ #define ID_AA64PFR0_ASIMD_SHIFT		20
+ #define ID_AA64PFR0_FP_SHIFT		16
+diff --git a/arch/arm64/include/asm/uaccess.h b/arch/arm64/include/asm/uaccess.h
+index 811cf16a65f9..1d047d6c421b 100644
+--- a/arch/arm64/include/asm/uaccess.h
++++ b/arch/arm64/include/asm/uaccess.h
+@@ -28,6 +28,7 @@
+ 
+ #include <asm/alternative.h>
+ #include <asm/cpufeature.h>
++#include <asm/processor.h>
+ #include <asm/ptrace.h>
+ #include <asm/sysreg.h>
+ #include <asm/errno.h>
+@@ -59,16 +60,20 @@ struct exception_table_entry
+ 
+ extern int fixup_exception(struct pt_regs *regs);
+ 
+-#define KERNEL_DS	(-1UL)
+ #define get_ds()	(KERNEL_DS)
+-
+-#define USER_DS		TASK_SIZE_64
+ #define get_fs()	(current_thread_info()->addr_limit)
+ 
+ static inline void set_fs(mm_segment_t fs)
+ {
+ 	current_thread_info()->addr_limit = fs;
+ 
++	/*
++	 * Prevent a mispredicted conditional call to set_fs from forwarding
++	 * the wrong address limit to access_ok under speculation.
++	 */
++	dsb(nsh);
++	isb();
++
+ 	/*
+ 	 * Enable/disable UAO so that copy_to_user() etc can access
+ 	 * kernel memory with the unprivileged instructions.
+@@ -87,22 +92,32 @@ static inline void set_fs(mm_segment_t fs)
+  * Returns 1 if the range is valid, 0 otherwise.
+  *
+  * This is equivalent to the following test:
+- * (u65)addr + (u65)size <= current->addr_limit
+- *
+- * This needs 65-bit arithmetic.
++ * (u65)addr + (u65)size <= (u65)current->addr_limit + 1
+  */
+-#define __range_ok(addr, size)						\
+-({									\
+-	unsigned long __addr = (unsigned long __force)(addr);		\
+-	unsigned long flag, roksum;					\
+-	__chk_user_ptr(addr);						\
+-	asm("adds %1, %1, %3; ccmp %1, %4, #2, cc; cset %0, ls"		\
+-		: "=&r" (flag), "=&r" (roksum)				\
+-		: "1" (__addr), "Ir" (size),				\
+-		  "r" (current_thread_info()->addr_limit)		\
+-		: "cc");						\
+-	flag;								\
+-})
++static inline unsigned long __range_ok(unsigned long addr, unsigned long size)
++{
++	unsigned long limit = current_thread_info()->addr_limit;
++
++	__chk_user_ptr(addr);
++	asm volatile(
++	// A + B <= C + 1 for all A,B,C, in four easy steps:
++	// 1: X = A + B; X' = X % 2^64
++	"	adds	%0, %0, %2\n"
++	// 2: Set C = 0 if X > 2^64, to guarantee X' > C in step 4
++	"	csel	%1, xzr, %1, hi\n"
++	// 3: Set X' = ~0 if X >= 2^64. For X == 2^64, this decrements X'
++	//    to compensate for the carry flag being set in step 4. For
++	//    X > 2^64, X' merely has to remain nonzero, which it does.
++	"	csinv	%0, %0, xzr, cc\n"
++	// 4: For X < 2^64, this gives us X' - C - 1 <= 0, where the -1
++	//    comes from the carry in being clear. Otherwise, we are
++	//    testing X' - C == 0, subject to the previous adjustments.
++	"	sbcs	xzr, %0, %1\n"
++	"	cset	%0, ls\n"
++	: "+r" (addr), "+r" (limit) : "Ir" (size) : "cc");
++
++	return addr;
++}
+ 
+ /*
+  * When dealing with data aborts, watchpoints, or instruction traps we may end
+@@ -111,7 +126,7 @@ static inline void set_fs(mm_segment_t fs)
+  */
+ #define untagged_addr(addr)		sign_extend64(addr, 55)
+ 
+-#define access_ok(type, addr, size)	__range_ok(addr, size)
++#define access_ok(type, addr, size)	__range_ok((unsigned long)(addr), size)
+ #define user_addr_max			get_fs
+ 
+ #define _ASM_EXTABLE(from, to)						\
+@@ -120,6 +135,26 @@ static inline void set_fs(mm_segment_t fs)
+ 	"	.long		(" #from " - .), (" #to " - .)\n"	\
+ 	"	.popsection\n"
+ 
++/*
++ * Sanitise a uaccess pointer such that it becomes NULL if above the
++ * current addr_limit.
++ */
++#define uaccess_mask_ptr(ptr) (__typeof__(ptr))__uaccess_mask_ptr(ptr)
++static inline void __user *__uaccess_mask_ptr(const void __user *ptr)
++{
++	void __user *safe_ptr;
++
++	asm volatile(
++	"	bics	xzr, %1, %2\n"
++	"	csel	%0, %1, xzr, eq\n"
++	: "=&r" (safe_ptr)
++	: "r" (ptr), "r" (current_thread_info()->addr_limit)
++	: "cc");
++
++	csdb();
++	return safe_ptr;
++}
++
+ /*
+  * The "__xxx" versions of the user access functions do not verify the address
+  * space - it must have been done previously with a separate "access_ok()"
+@@ -174,30 +209,35 @@ do {									\
+ 			CONFIG_ARM64_PAN));				\
+ } while (0)
+ 
+-#define __get_user(x, ptr)						\
++#define __get_user_check(x, ptr, err)					\
+ ({									\
+-	int __gu_err = 0;						\
+-	__get_user_err((x), (ptr), __gu_err);				\
+-	__gu_err;							\
++	__typeof__(*(ptr)) __user *__p = (ptr);				\
++	might_fault();							\
++	if (access_ok(VERIFY_READ, __p, sizeof(*__p))) {		\
++		__p = uaccess_mask_ptr(__p);				\
++		__get_user_err((x), __p, (err));			\
++	} else {							\
++		(x) = 0; (err) = -EFAULT;				\
++	}								\
+ })
+ 
+ #define __get_user_error(x, ptr, err)					\
+ ({									\
+-	__get_user_err((x), (ptr), (err));				\
++	__get_user_check((x), (ptr), (err));				\
+ 	(void)0;							\
+ })
+ 
+-#define __get_user_unaligned __get_user
+-
+-#define get_user(x, ptr)						\
++#define __get_user(x, ptr)						\
+ ({									\
+-	__typeof__(*(ptr)) __user *__p = (ptr);				\
+-	might_fault();							\
+-	access_ok(VERIFY_READ, __p, sizeof(*__p)) ?			\
+-		__get_user((x), __p) :					\
+-		((x) = 0, -EFAULT);					\
++	int __gu_err = 0;						\
++	__get_user_check((x), (ptr), __gu_err);				\
++	__gu_err;							\
+ })
+ 
++#define __get_user_unaligned __get_user
++
++#define get_user	__get_user
++
+ #define __put_user_asm(instr, alt_instr, reg, x, addr, err, feature)	\
+ 	asm volatile(							\
+ 	"1:"ALTERNATIVE(instr "     " reg "1, [%2]\n",			\
+@@ -242,47 +282,51 @@ do {									\
+ 			CONFIG_ARM64_PAN));				\
+ } while (0)
+ 
+-#define __put_user(x, ptr)						\
++#define __put_user_check(x, ptr, err)					\
+ ({									\
+-	int __pu_err = 0;						\
+-	__put_user_err((x), (ptr), __pu_err);				\
+-	__pu_err;							\
++	__typeof__(*(ptr)) __user *__p = (ptr);				\
++	might_fault();							\
++	if (access_ok(VERIFY_WRITE, __p, sizeof(*__p))) {		\
++		__p = uaccess_mask_ptr(__p);				\
++		__put_user_err((x), __p, (err));			\
++	} else	{							\
++		(err) = -EFAULT;					\
++	}								\
+ })
+ 
+ #define __put_user_error(x, ptr, err)					\
+ ({									\
+-	__put_user_err((x), (ptr), (err));				\
++	__put_user_check((x), (ptr), (err));				\
+ 	(void)0;							\
+ })
+ 
+-#define __put_user_unaligned __put_user
+-
+-#define put_user(x, ptr)						\
++#define __put_user(x, ptr)						\
+ ({									\
+-	__typeof__(*(ptr)) __user *__p = (ptr);				\
+-	might_fault();							\
+-	access_ok(VERIFY_WRITE, __p, sizeof(*__p)) ?			\
+-		__put_user((x), __p) :					\
+-		-EFAULT;						\
++	int __pu_err = 0;						\
++	__put_user_check((x), (ptr), __pu_err);				\
++	__pu_err;							\
+ })
+ 
++#define __put_user_unaligned __put_user
++
++#define put_user	__put_user
++
+ extern unsigned long __must_check __arch_copy_from_user(void *to, const void __user *from, unsigned long n);
+ extern unsigned long __must_check __arch_copy_to_user(void __user *to, const void *from, unsigned long n);
+-extern unsigned long __must_check __copy_in_user(void __user *to, const void __user *from, unsigned long n);
+-extern unsigned long __must_check __clear_user(void __user *addr, unsigned long n);
++extern unsigned long __must_check __arch_copy_in_user(void __user *to, const void __user *from, unsigned long n);
+ 
+ static inline unsigned long __must_check __copy_from_user(void *to, const void __user *from, unsigned long n)
+ {
+ 	kasan_check_write(to, n);
+ 	check_object_size(to, n, false);
+-	return __arch_copy_from_user(to, from, n);
++	return __arch_copy_from_user(to, __uaccess_mask_ptr(from), n);
+ }
+ 
+ static inline unsigned long __must_check __copy_to_user(void __user *to, const void *from, unsigned long n)
+ {
+ 	kasan_check_read(from, n);
+ 	check_object_size(from, n, true);
+-	return __arch_copy_to_user(to, from, n);
++	return __arch_copy_to_user(__uaccess_mask_ptr(to), from, n);
+ }
+ 
+ static inline unsigned long __must_check copy_from_user(void *to, const void __user *from, unsigned long n)
+@@ -310,22 +354,25 @@ static inline unsigned long __must_check copy_to_user(void __user *to, const voi
+ 	return n;
+ }
+ 
+-static inline unsigned long __must_check copy_in_user(void __user *to, const void __user *from, unsigned long n)
++static inline unsigned long __must_check __copy_in_user(void __user *to, const void __user *from, unsigned long n)
+ {
+ 	if (access_ok(VERIFY_READ, from, n) && access_ok(VERIFY_WRITE, to, n))
+-		n = __copy_in_user(to, from, n);
++		n = __arch_copy_in_user(__uaccess_mask_ptr(to), __uaccess_mask_ptr(from), n);
+ 	return n;
+ }
++#define copy_in_user __copy_in_user
+ 
+ #define __copy_to_user_inatomic __copy_to_user
+ #define __copy_from_user_inatomic __copy_from_user
+ 
+-static inline unsigned long __must_check clear_user(void __user *to, unsigned long n)
++extern unsigned long __must_check __arch_clear_user(void __user *to, unsigned long n);
++static inline unsigned long __must_check __clear_user(void __user *to, unsigned long n)
+ {
+ 	if (access_ok(VERIFY_WRITE, to, n))
+-		n = __clear_user(to, n);
++		n = __arch_clear_user(__uaccess_mask_ptr(to), n);
+ 	return n;
+ }
++#define clear_user	__clear_user
+ 
+ extern long strncpy_from_user(char *dest, const char __user *src, long count);
+ 
+diff --git a/arch/arm64/kernel/Makefile b/arch/arm64/kernel/Makefile
+index 7d66bbaafc0c..74b8fd860714 100644
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -51,6 +51,10 @@ arm64-obj-$(CONFIG_HIBERNATION)		+= hibernate.o hibernate-asm.o
+ arm64-obj-$(CONFIG_KEXEC)		+= machine_kexec.o relocate_kernel.o	\
+ 					   cpu-reset.o
+ 
++ifeq ($(CONFIG_KVM),y)
++arm64-obj-$(CONFIG_HARDEN_BRANCH_PREDICTOR)	+= bpi.o
++endif
++
+ obj-y					+= $(arm64-obj-y) vdso/ probes/
+ obj-m					+= $(arm64-obj-m)
+ head-y					:= head.o
+diff --git a/arch/arm64/kernel/arm64ksyms.c b/arch/arm64/kernel/arm64ksyms.c
+index e9c4dc9e0ada..66be504edb6c 100644
+--- a/arch/arm64/kernel/arm64ksyms.c
++++ b/arch/arm64/kernel/arm64ksyms.c
+@@ -37,8 +37,8 @@ EXPORT_SYMBOL(clear_page);
+ 	/* user mem (segment) */
+ EXPORT_SYMBOL(__arch_copy_from_user);
+ EXPORT_SYMBOL(__arch_copy_to_user);
+-EXPORT_SYMBOL(__clear_user);
+-EXPORT_SYMBOL(__copy_in_user);
++EXPORT_SYMBOL(__arch_clear_user);
++EXPORT_SYMBOL(__arch_copy_in_user);
+ 
+ 	/* physical memory */
+ EXPORT_SYMBOL(memstart_addr);
+diff --git a/arch/arm64/kernel/bpi.S b/arch/arm64/kernel/bpi.S
+new file mode 100644
+index 000000000000..dc4eb154e33b
+--- /dev/null
++++ b/arch/arm64/kernel/bpi.S
+@@ -0,0 +1,75 @@
++/*
++ * Contains CPU specific branch predictor invalidation sequences
++ *
++ * Copyright (C) 2018 ARM Ltd.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <linux/linkage.h>
++#include <linux/arm-smccc.h>
++
++.macro ventry target
++	.rept 31
++	nop
++	.endr
++	b	\target
++.endm
++
++.macro vectors target
++	ventry \target + 0x000
++	ventry \target + 0x080
++	ventry \target + 0x100
++	ventry \target + 0x180
++
++	ventry \target + 0x200
++	ventry \target + 0x280
++	ventry \target + 0x300
++	ventry \target + 0x380
++
++	ventry \target + 0x400
++	ventry \target + 0x480
++	ventry \target + 0x500
++	ventry \target + 0x580
++
++	ventry \target + 0x600
++	ventry \target + 0x680
++	ventry \target + 0x700
++	ventry \target + 0x780
++.endm
++
++	.align	11
++ENTRY(__bp_harden_hyp_vecs_start)
++	.rept 4
++	vectors __kvm_hyp_vector
++	.endr
++ENTRY(__bp_harden_hyp_vecs_end)
++
++.macro smccc_workaround_1 inst
++	sub	sp, sp, #(8 * 4)
++	stp	x2, x3, [sp, #(8 * 0)]
++	stp	x0, x1, [sp, #(8 * 2)]
++	mov	w0, #ARM_SMCCC_ARCH_WORKAROUND_1
++	\inst	#0
++	ldp	x2, x3, [sp, #(8 * 0)]
++	ldp	x0, x1, [sp, #(8 * 2)]
++	add	sp, sp, #(8 * 4)
++.endm
++
++ENTRY(__smccc_workaround_1_smc_start)
++	smccc_workaround_1	smc
++ENTRY(__smccc_workaround_1_smc_end)
++
++ENTRY(__smccc_workaround_1_hvc_start)
++	smccc_workaround_1	hvc
++ENTRY(__smccc_workaround_1_hvc_end)
+diff --git a/arch/arm64/kernel/cpu_errata.c b/arch/arm64/kernel/cpu_errata.c
+index b75e917aac46..74107134cc30 100644
+--- a/arch/arm64/kernel/cpu_errata.c
++++ b/arch/arm64/kernel/cpu_errata.c
+@@ -46,6 +46,147 @@ static int cpu_enable_trap_ctr_access(void *__unused)
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
++#include <asm/mmu_context.h>
++#include <asm/cacheflush.h>
++
++DEFINE_PER_CPU_READ_MOSTLY(struct bp_hardening_data, bp_hardening_data);
++
++#ifdef CONFIG_KVM
++extern char __smccc_workaround_1_smc_start[];
++extern char __smccc_workaround_1_smc_end[];
++extern char __smccc_workaround_1_hvc_start[];
++extern char __smccc_workaround_1_hvc_end[];
++
++static void __copy_hyp_vect_bpi(int slot, const char *hyp_vecs_start,
++				const char *hyp_vecs_end)
++{
++	void *dst = __bp_harden_hyp_vecs_start + slot * SZ_2K;
++	int i;
++
++	for (i = 0; i < SZ_2K; i += 0x80)
++		memcpy(dst + i, hyp_vecs_start, hyp_vecs_end - hyp_vecs_start);
++
++	flush_icache_range((uintptr_t)dst, (uintptr_t)dst + SZ_2K);
++}
++
++static void __install_bp_hardening_cb(bp_hardening_cb_t fn,
++				      const char *hyp_vecs_start,
++				      const char *hyp_vecs_end)
++{
++	static int last_slot = -1;
++	static DEFINE_SPINLOCK(bp_lock);
++	int cpu, slot = -1;
++
++	spin_lock(&bp_lock);
++	for_each_possible_cpu(cpu) {
++		if (per_cpu(bp_hardening_data.fn, cpu) == fn) {
++			slot = per_cpu(bp_hardening_data.hyp_vectors_slot, cpu);
++			break;
++		}
++	}
++
++	if (slot == -1) {
++		last_slot++;
++		BUG_ON(((__bp_harden_hyp_vecs_end - __bp_harden_hyp_vecs_start)
++			/ SZ_2K) <= last_slot);
++		slot = last_slot;
++		__copy_hyp_vect_bpi(slot, hyp_vecs_start, hyp_vecs_end);
++	}
++
++	__this_cpu_write(bp_hardening_data.hyp_vectors_slot, slot);
++	__this_cpu_write(bp_hardening_data.fn, fn);
++	spin_unlock(&bp_lock);
++}
++#else
++#define __smccc_workaround_1_smc_start		NULL
++#define __smccc_workaround_1_smc_end		NULL
++#define __smccc_workaround_1_hvc_start		NULL
++#define __smccc_workaround_1_hvc_end		NULL
++
++static void __install_bp_hardening_cb(bp_hardening_cb_t fn,
++				      const char *hyp_vecs_start,
++				      const char *hyp_vecs_end)
++{
++	__this_cpu_write(bp_hardening_data.fn, fn);
++}
++#endif	/* CONFIG_KVM */
++
++static void  install_bp_hardening_cb(const struct arm64_cpu_capabilities *entry,
++				     bp_hardening_cb_t fn,
++				     const char *hyp_vecs_start,
++				     const char *hyp_vecs_end)
++{
++	u64 pfr0;
++
++	if (!entry->matches(entry, SCOPE_LOCAL_CPU))
++		return;
++
++	pfr0 = read_cpuid(ID_AA64PFR0_EL1);
++	if (cpuid_feature_extract_unsigned_field(pfr0, ID_AA64PFR0_CSV2_SHIFT))
++		return;
++
++	__install_bp_hardening_cb(fn, hyp_vecs_start, hyp_vecs_end);
++}
++
++#include <uapi/linux/psci.h>
++#include <linux/arm-smccc.h>
++#include <linux/psci.h>
++
++static void call_smc_arch_workaround_1(void)
++{
++	arm_smccc_1_1_smc(ARM_SMCCC_ARCH_WORKAROUND_1, NULL);
++}
++
++static void call_hvc_arch_workaround_1(void)
++{
++	arm_smccc_1_1_hvc(ARM_SMCCC_ARCH_WORKAROUND_1, NULL);
++}
++
++static int enable_smccc_arch_workaround_1(void *data)
++{
++	const struct arm64_cpu_capabilities *entry = data;
++	bp_hardening_cb_t cb;
++	void *smccc_start, *smccc_end;
++	struct arm_smccc_res res;
++
++	if (!entry->matches(entry, SCOPE_LOCAL_CPU))
++		return 0;
++
++	if (psci_ops.smccc_version == SMCCC_VERSION_1_0)
++		return 0;
++
++	switch (psci_ops.conduit) {
++	case PSCI_CONDUIT_HVC:
++		arm_smccc_1_1_hvc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
++				  ARM_SMCCC_ARCH_WORKAROUND_1, &res);
++		if (res.a0)
++			return 0;
++		cb = call_hvc_arch_workaround_1;
++		smccc_start = __smccc_workaround_1_hvc_start;
++		smccc_end = __smccc_workaround_1_hvc_end;
++		break;
++
++	case PSCI_CONDUIT_SMC:
++		arm_smccc_1_1_smc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
++				  ARM_SMCCC_ARCH_WORKAROUND_1, &res);
++		if (res.a0)
++			return 0;
++		cb = call_smc_arch_workaround_1;
++		smccc_start = __smccc_workaround_1_smc_start;
++		smccc_end = __smccc_workaround_1_smc_end;
++		break;
++
++	default:
++		return 0;
++	}
++
++	install_bp_hardening_cb(entry, cb, smccc_start, smccc_end);
++
++	return 0;
++}
++#endif	/* CONFIG_HARDEN_BRANCH_PREDICTOR */
++
+ #define MIDR_RANGE(model, min, max) \
+ 	.def_scope = SCOPE_LOCAL_CPU, \
+ 	.matches = is_affected_midr_range, \
+@@ -53,6 +194,13 @@ static int cpu_enable_trap_ctr_access(void *__unused)
+ 	.midr_range_min = min, \
+ 	.midr_range_max = max
+ 
++#define MIDR_ALL_VERSIONS(model) \
++	.def_scope = SCOPE_LOCAL_CPU, \
++	.matches = is_affected_midr_range, \
++	.midr_model = model, \
++	.midr_range_min = 0, \
++	.midr_range_max = (MIDR_VARIANT_MASK | MIDR_REVISION_MASK)
++
+ const struct arm64_cpu_capabilities arm64_errata[] = {
+ #if	defined(CONFIG_ARM64_ERRATUM_826319) || \
+ 	defined(CONFIG_ARM64_ERRATUM_827319) || \
+@@ -130,6 +278,38 @@ const struct arm64_cpu_capabilities arm64_errata[] = {
+ 		.def_scope = SCOPE_LOCAL_CPU,
+ 		.enable = cpu_enable_trap_ctr_access,
+ 	},
++#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
++	{
++		.capability = ARM64_HARDEN_BRANCH_PREDICTOR,
++		MIDR_ALL_VERSIONS(MIDR_CORTEX_A57),
++		.enable = enable_smccc_arch_workaround_1,
++	},
++	{
++		.capability = ARM64_HARDEN_BRANCH_PREDICTOR,
++		MIDR_ALL_VERSIONS(MIDR_CORTEX_A72),
++		.enable = enable_smccc_arch_workaround_1,
++	},
++	{
++		.capability = ARM64_HARDEN_BRANCH_PREDICTOR,
++		MIDR_ALL_VERSIONS(MIDR_CORTEX_A73),
++		.enable = enable_smccc_arch_workaround_1,
++	},
++	{
++		.capability = ARM64_HARDEN_BRANCH_PREDICTOR,
++		MIDR_ALL_VERSIONS(MIDR_CORTEX_A75),
++		.enable = enable_smccc_arch_workaround_1,
++	},
++	{
++		.capability = ARM64_HARDEN_BRANCH_PREDICTOR,
++		MIDR_ALL_VERSIONS(MIDR_BRCM_VULCAN),
++		.enable = enable_smccc_arch_workaround_1,
++	},
++	{
++		.capability = ARM64_HARDEN_BRANCH_PREDICTOR,
++		MIDR_ALL_VERSIONS(MIDR_CAVIUM_THUNDERX2),
++		.enable = enable_smccc_arch_workaround_1,
++	},
++#endif
+ 	{
+ 	}
+ };
+@@ -143,15 +323,18 @@ void verify_local_cpu_errata_workarounds(void)
+ {
+ 	const struct arm64_cpu_capabilities *caps = arm64_errata;
+ 
+-	for (; caps->matches; caps++)
+-		if (!cpus_have_cap(caps->capability) &&
+-			caps->matches(caps, SCOPE_LOCAL_CPU)) {
++	for (; caps->matches; caps++) {
++		if (cpus_have_cap(caps->capability)) {
++			if (caps->enable)
++				caps->enable((void *)caps);
++		} else if (caps->matches(caps, SCOPE_LOCAL_CPU)) {
+ 			pr_crit("CPU%d: Requires work around for %s, not detected"
+ 					" at boot time\n",
+ 				smp_processor_id(),
+ 				caps->desc ? : "an erratum");
+ 			cpu_die_early();
+ 		}
++	}
+ }
+ 
+ void update_cpu_errata_workarounds(void)
+diff --git a/arch/arm64/kernel/cpufeature.c b/arch/arm64/kernel/cpufeature.c
+index 5056fc597ae9..a0ee01202503 100644
+--- a/arch/arm64/kernel/cpufeature.c
++++ b/arch/arm64/kernel/cpufeature.c
+@@ -94,7 +94,8 @@ static const struct arm64_ftr_bits ftr_id_aa64isar0[] = {
+ 
+ static const struct arm64_ftr_bits ftr_id_aa64pfr0[] = {
+ 	ARM64_FTR_BITS(FTR_NONSTRICT, FTR_LOWER_SAFE, ID_AA64PFR0_CSV3_SHIFT, 4, 0),
+-	ARM64_FTR_BITS(FTR_STRICT, FTR_EXACT, 32, 28, 0),
++	ARM64_FTR_BITS(FTR_NONSTRICT, FTR_LOWER_SAFE, ID_AA64PFR0_CSV2_SHIFT, 4, 0),
++	ARM64_FTR_BITS(FTR_STRICT, FTR_EXACT, 32, 24, 0),
+ 	ARM64_FTR_BITS(FTR_STRICT, FTR_EXACT, 28, 4, 0),
+ 	ARM64_FTR_BITS(FTR_STRICT, FTR_EXACT, ID_AA64PFR0_GIC_SHIFT, 4, 0),
+ 	S_ARM64_FTR_BITS(FTR_STRICT, FTR_LOWER_SAFE, ID_AA64PFR0_ASIMD_SHIFT, 4, ID_AA64PFR0_ASIMD_NI),
+@@ -1024,9 +1025,8 @@ static bool __this_cpu_has_cap(const struct arm64_cpu_capabilities *cap_array,
+ 	if (WARN_ON(preemptible()))
+ 		return false;
+ 
+-	for (caps = cap_array; caps->desc; caps++)
++	for (caps = cap_array; caps->matches; caps++)
+ 		if (caps->capability == cap &&
+-		    caps->matches &&
+ 		    caps->matches(caps, SCOPE_LOCAL_CPU))
+ 			return true;
+ 	return false;
+@@ -1059,7 +1059,7 @@ void __init enable_cpu_capabilities(const struct arm64_cpu_capabilities *caps)
+ 			 * uses an IPI, giving us a PSTATE that disappears when
+ 			 * we return.
+ 			 */
+-			stop_machine(caps->enable, NULL, cpu_online_mask);
++			stop_machine(caps->enable, (void *)caps, cpu_online_mask);
+ }
+ 
+ /*
+@@ -1116,7 +1116,7 @@ verify_local_cpu_features(const struct arm64_cpu_capabilities *caps_list)
+ 			cpu_die_early();
+ 		}
+ 		if (caps->enable)
+-			caps->enable(NULL);
++			caps->enable((void *)caps);
+ 	}
+ }
+ 
+diff --git a/arch/arm64/kernel/entry.S b/arch/arm64/kernel/entry.S
+index 8d1600b18562..b79e302d2a3e 100644
+--- a/arch/arm64/kernel/entry.S
++++ b/arch/arm64/kernel/entry.S
+@@ -30,6 +30,7 @@
+ #include <asm/irq.h>
+ #include <asm/memory.h>
+ #include <asm/mmu.h>
++#include <asm/processor.h>
+ #include <asm/thread_info.h>
+ #include <asm/asm-uaccess.h>
+ #include <asm/unistd.h>
+@@ -125,10 +126,10 @@ alternative_else_nop_endif
+ 	.else
+ 	add	x21, sp, #S_FRAME_SIZE
+ 	get_thread_info tsk
+-	/* Save the task's original addr_limit and set USER_DS (TASK_SIZE_64) */
++	/* Save the task's original addr_limit and set USER_DS */
+ 	ldr	x20, [tsk, #TI_ADDR_LIMIT]
+ 	str	x20, [sp, #S_ORIG_ADDR_LIMIT]
+-	mov	x20, #TASK_SIZE_64
++	mov	x20, #USER_DS
+ 	str	x20, [tsk, #TI_ADDR_LIMIT]
+ 	/* No need to reset PSTATE.UAO, hardware's already set it to 0 for us */
+ 	.endif /* \el == 0 */
+@@ -588,13 +589,15 @@ el0_ia:
+ 	 * Instruction abort handling
+ 	 */
+ 	mrs	x26, far_el1
+-	// enable interrupts before calling the main handler
+-	enable_dbg_and_irq
++	msr     daifclr, #(8 | 4 | 1)
++#ifdef CONFIG_TRACE_IRQFLAGS
++	bl	trace_hardirqs_off
++#endif
+ 	ct_user_exit
+ 	mov	x0, x26
+ 	mov	x1, x25
+ 	mov	x2, sp
+-	bl	do_mem_abort
++	bl	do_el0_ia_bp_hardening
+ 	b	ret_to_user
+ el0_fpsimd_acc:
+ 	/*
+@@ -621,8 +624,10 @@ el0_sp_pc:
+ 	 * Stack or PC alignment exception handling
+ 	 */
+ 	mrs	x26, far_el1
+-	// enable interrupts before calling the main handler
+-	enable_dbg_and_irq
++	enable_dbg
++#ifdef CONFIG_TRACE_IRQFLAGS
++	bl	trace_hardirqs_off
++#endif
+ 	ct_user_exit
+ 	mov	x0, x26
+ 	mov	x1, x25
+@@ -681,6 +686,11 @@ el0_irq_naked:
+ #endif
+ 
+ 	ct_user_exit
++#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
++	tbz	x22, #55, 1f
++	bl	do_el0_irq_bp_hardening
++1:
++#endif
+ 	irq_handler
+ 
+ #ifdef CONFIG_TRACE_IRQFLAGS
+@@ -794,6 +804,7 @@ el0_svc_naked:					// compat entry point
+ 	b.ne	__sys_trace
+ 	cmp     scno, sc_nr                     // check upper syscall limit
+ 	b.hs	ni_sys
++	mask_nospec64 scno, sc_nr, x19	// enforce bounds for syscall number
+ 	ldr	x16, [stbl, scno, lsl #3]	// address in the syscall table
+ 	blr	x16				// call sys_* routine
+ 	b	ret_fast_syscall
+diff --git a/arch/arm64/kvm/handle_exit.c b/arch/arm64/kvm/handle_exit.c
+index 2e6e9e99977b..efe43c5f2dc1 100644
+--- a/arch/arm64/kvm/handle_exit.c
++++ b/arch/arm64/kvm/handle_exit.c
+@@ -22,12 +22,15 @@
+ #include <linux/kvm.h>
+ #include <linux/kvm_host.h>
+ 
++#include <kvm/arm_psci.h>
++
+ #include <asm/esr.h>
+ #include <asm/kvm_asm.h>
+ #include <asm/kvm_coproc.h>
+ #include <asm/kvm_emulate.h>
+ #include <asm/kvm_mmu.h>
+-#include <asm/kvm_psci.h>
++#include <asm/debug-monitors.h>
++#include <asm/traps.h>
+ 
+ #define CREATE_TRACE_POINTS
+ #include "trace.h"
+@@ -42,7 +45,7 @@ static int handle_hvc(struct kvm_vcpu *vcpu, struct kvm_run *run)
+ 			    kvm_vcpu_hvc_get_imm(vcpu));
+ 	vcpu->stat.hvc_exit_stat++;
+ 
+-	ret = kvm_psci_call(vcpu);
++	ret = kvm_hvc_call_handler(vcpu);
+ 	if (ret < 0) {
+ 		vcpu_set_reg(vcpu, 0, ~0UL);
+ 		return 1;
+@@ -53,7 +56,16 @@ static int handle_hvc(struct kvm_vcpu *vcpu, struct kvm_run *run)
+ 
+ static int handle_smc(struct kvm_vcpu *vcpu, struct kvm_run *run)
+ {
++	/*
++	 * "If an SMC instruction executed at Non-secure EL1 is
++	 * trapped to EL2 because HCR_EL2.TSC is 1, the exception is a
++	 * Trap exception, not a Secure Monitor Call exception [...]"
++	 *
++	 * We need to advance the PC after the trap, as it would
++	 * otherwise return to the same address...
++	 */
+ 	vcpu_set_reg(vcpu, 0, ~0UL);
++	kvm_skip_instr(vcpu, kvm_vcpu_trap_il_is32bit(vcpu));
+ 	return 1;
+ }
+ 
+diff --git a/arch/arm64/kvm/hyp/hyp-entry.S b/arch/arm64/kvm/hyp/hyp-entry.S
+index 4e92399f7105..4e9d50c3e658 100644
+--- a/arch/arm64/kvm/hyp/hyp-entry.S
++++ b/arch/arm64/kvm/hyp/hyp-entry.S
+@@ -15,6 +15,7 @@
+  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++#include <linux/arm-smccc.h>
+ #include <linux/linkage.h>
+ 
+ #include <asm/alternative.h>
+@@ -79,10 +80,11 @@ alternative_endif
+ 	lsr	x0, x1, #ESR_ELx_EC_SHIFT
+ 
+ 	cmp	x0, #ESR_ELx_EC_HVC64
++	ccmp	x0, #ESR_ELx_EC_HVC32, #4, ne
+ 	b.ne	el1_trap
+ 
+-	mrs	x1, vttbr_el2		// If vttbr is valid, the 64bit guest
+-	cbnz	x1, el1_trap		// called HVC
++	mrs	x1, vttbr_el2		// If vttbr is valid, the guest
++	cbnz	x1, el1_hvc_guest	// called HVC
+ 
+ 	/* Here, we're pretty sure the host called HVC. */
+ 	ldp	x0, x1, [sp], #16
+@@ -101,6 +103,20 @@ alternative_endif
+ 
+ 2:	eret
+ 
++el1_hvc_guest:
++	/*
++	 * Fastest possible path for ARM_SMCCC_ARCH_WORKAROUND_1.
++	 * The workaround has already been applied on the host,
++	 * so let's quickly get back to the guest. We don't bother
++	 * restoring x1, as it can be clobbered anyway.
++	 */
++	ldr	x1, [sp]				// Guest's x0
++	eor	w1, w1, #ARM_SMCCC_ARCH_WORKAROUND_1
++	cbnz	w1, el1_trap
++	mov	x0, x1
++	add	sp, sp, #16
++	eret
++
+ el1_trap:
+ 	/*
+ 	 * x0: ESR_EC
+diff --git a/arch/arm64/kvm/hyp/switch.c b/arch/arm64/kvm/hyp/switch.c
+index 9174ba917d65..c49d09387192 100644
+--- a/arch/arm64/kvm/hyp/switch.c
++++ b/arch/arm64/kvm/hyp/switch.c
+@@ -17,6 +17,9 @@
+ 
+ #include <linux/types.h>
+ #include <linux/jump_label.h>
++#include <uapi/linux/psci.h>
++
++#include <kvm/arm_psci.h>
+ 
+ #include <asm/kvm_asm.h>
+ #include <asm/kvm_emulate.h>
+@@ -50,7 +53,7 @@ static void __hyp_text __activate_traps_vhe(void)
+ 	val &= ~CPACR_EL1_FPEN;
+ 	write_sysreg(val, cpacr_el1);
+ 
+-	write_sysreg(__kvm_hyp_vector, vbar_el1);
++	write_sysreg(kvm_get_hyp_vector(), vbar_el1);
+ }
+ 
+ static void __hyp_text __activate_traps_nvhe(void)
+diff --git a/arch/arm64/lib/clear_user.S b/arch/arm64/lib/clear_user.S
+index 5d1cad3ce6d6..efbf610eaf4e 100644
+--- a/arch/arm64/lib/clear_user.S
++++ b/arch/arm64/lib/clear_user.S
+@@ -24,7 +24,7 @@
+ 
+ 	.text
+ 
+-/* Prototype: int __clear_user(void *addr, size_t sz)
++/* Prototype: int __arch_clear_user(void *addr, size_t sz)
+  * Purpose  : clear some user memory
+  * Params   : addr - user memory address to clear
+  *          : sz   - number of bytes to clear
+@@ -32,7 +32,7 @@
+  *
+  * Alignment fixed up by hardware.
+  */
+-ENTRY(__clear_user)
++ENTRY(__arch_clear_user)
+ ALTERNATIVE("nop", __stringify(SET_PSTATE_PAN(0)), ARM64_ALT_PAN_NOT_UAO, \
+ 	    CONFIG_ARM64_PAN)
+ 	mov	x2, x1			// save the size for fixup return
+@@ -57,7 +57,7 @@ uao_user_alternative 9f, strb, sttrb, wzr, x0, 0
+ ALTERNATIVE("nop", __stringify(SET_PSTATE_PAN(1)), ARM64_ALT_PAN_NOT_UAO, \
+ 	    CONFIG_ARM64_PAN)
+ 	ret
+-ENDPROC(__clear_user)
++ENDPROC(__arch_clear_user)
+ 
+ 	.section .fixup,"ax"
+ 	.align	2
+diff --git a/arch/arm64/lib/copy_in_user.S b/arch/arm64/lib/copy_in_user.S
+index f7292dd08c84..841bf8f7fab7 100644
+--- a/arch/arm64/lib/copy_in_user.S
++++ b/arch/arm64/lib/copy_in_user.S
+@@ -67,7 +67,7 @@
+ 	.endm
+ 
+ end	.req	x5
+-ENTRY(__copy_in_user)
++ENTRY(__arch_copy_in_user)
+ ALTERNATIVE("nop", __stringify(SET_PSTATE_PAN(0)), ARM64_ALT_PAN_NOT_UAO, \
+ 	    CONFIG_ARM64_PAN)
+ 	add	end, x0, x2
+@@ -76,7 +76,7 @@ ALTERNATIVE("nop", __stringify(SET_PSTATE_PAN(1)), ARM64_ALT_PAN_NOT_UAO, \
+ 	    CONFIG_ARM64_PAN)
+ 	mov	x0, #0
+ 	ret
+-ENDPROC(__copy_in_user)
++ENDPROC(__arch_copy_in_user)
+ 
+ 	.section .fixup,"ax"
+ 	.align	2
+diff --git a/arch/arm64/mm/context.c b/arch/arm64/mm/context.c
+index f00f5eeb556f..62d976e843fc 100644
+--- a/arch/arm64/mm/context.c
++++ b/arch/arm64/mm/context.c
+@@ -230,9 +230,21 @@ void check_and_switch_context(struct mm_struct *mm, unsigned int cpu)
+ 	raw_spin_unlock_irqrestore(&cpu_asid_lock, flags);
+ 
+ switch_mm_fastpath:
++
++	arm64_apply_bp_hardening();
++
+ 	cpu_switch_mm(mm->pgd, mm);
+ }
+ 
++/* Errata workaround post TTBRx_EL1 update. */
++asmlinkage void post_ttbr_update_workaround(void)
++{
++	asm(ALTERNATIVE("nop; nop; nop",
++			"ic iallu; dsb nsh; isb",
++			ARM64_WORKAROUND_CAVIUM_27456,
++			CONFIG_CAVIUM_ERRATUM_27456));
++}
++
+ static int asids_init(void)
+ {
+ 	asid_bits = get_cpu_asid_bits();
+diff --git a/arch/arm64/mm/fault.c b/arch/arm64/mm/fault.c
+index 403fe9e57135..ad49ae8f3967 100644
+--- a/arch/arm64/mm/fault.c
++++ b/arch/arm64/mm/fault.c
+@@ -332,7 +332,7 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
+ 		mm_flags |= FAULT_FLAG_WRITE;
+ 	}
+ 
+-	if (is_permission_fault(esr) && (addr < USER_DS)) {
++	if (is_permission_fault(esr) && (addr < TASK_SIZE)) {
+ 		/* regs->orig_addr_limit may be 0 if we entered from EL0 */
+ 		if (regs->orig_addr_limit == KERNEL_DS)
+ 			die("Accessing user space memory with fs=KERNEL_DS", regs, esr);
+@@ -590,6 +590,29 @@ asmlinkage void __exception do_mem_abort(unsigned long addr, unsigned int esr,
+ 	arm64_notify_die("", regs, &info, esr);
+ }
+ 
++asmlinkage void __exception do_el0_irq_bp_hardening(void)
++{
++	/* PC has already been checked in entry.S */
++	arm64_apply_bp_hardening();
++}
++
++asmlinkage void __exception do_el0_ia_bp_hardening(unsigned long addr,
++						   unsigned int esr,
++						   struct pt_regs *regs)
++{
++	/*
++	 * We've taken an instruction abort from userspace and not yet
++	 * re-enabled IRQs. If the address is a kernel address, apply
++	 * BP hardening prior to enabling IRQs and pre-emption.
++	 */
++	if (addr > TASK_SIZE)
++		arm64_apply_bp_hardening();
++
++	local_irq_enable();
++	do_mem_abort(addr, esr, regs);
++}
++
++
+ /*
+  * Handle stack alignment exceptions.
+  */
+@@ -600,6 +623,12 @@ asmlinkage void __exception do_sp_pc_abort(unsigned long addr,
+ 	struct siginfo info;
+ 	struct task_struct *tsk = current;
+ 
++	if (user_mode(regs)) {
++		if (instruction_pointer(regs) > TASK_SIZE)
++			arm64_apply_bp_hardening();
++		local_irq_enable();
++	}
++
+ 	if (show_unhandled_signals && unhandled_signal(tsk, SIGBUS))
+ 		pr_info_ratelimited("%s[%d]: %s exception: pc=%p sp=%p\n",
+ 				    tsk->comm, task_pid_nr(tsk),
+@@ -659,6 +688,9 @@ asmlinkage int __exception do_debug_exception(unsigned long addr,
+ 	if (interrupts_enabled(regs))
+ 		trace_hardirqs_off();
+ 
++	if (user_mode(regs) && instruction_pointer(regs) > TASK_SIZE)
++		arm64_apply_bp_hardening();
++
+ 	if (!inf->fn(addr, esr, regs)) {
+ 		rv = 1;
+ 	} else {
+diff --git a/arch/arm64/mm/proc.S b/arch/arm64/mm/proc.S
+index c07d9cc057e6..619da1cbd32b 100644
+--- a/arch/arm64/mm/proc.S
++++ b/arch/arm64/mm/proc.S
+@@ -139,12 +139,7 @@ ENTRY(cpu_do_switch_mm)
+ 	isb
+ 	msr	ttbr0_el1, x0			// now update TTBR0
+ 	isb
+-alternative_if ARM64_WORKAROUND_CAVIUM_27456
+-	ic	iallu
+-	dsb	nsh
+-	isb
+-alternative_else_nop_endif
+-	ret
++	b	post_ttbr_update_workaround	// Back to C code...
+ ENDPROC(cpu_do_switch_mm)
+ 
+ 	.pushsection ".idmap.text", "awx"
+diff --git a/arch/parisc/kernel/drivers.c b/arch/parisc/kernel/drivers.c
+index 700e2d2da096..2e68ca1fe0db 100644
+--- a/arch/parisc/kernel/drivers.c
++++ b/arch/parisc/kernel/drivers.c
+@@ -648,6 +648,10 @@ static int match_pci_device(struct device *dev, int index,
+ 					(modpath->mod == PCI_FUNC(devfn)));
+ 	}
+ 
++	/* index might be out of bounds for bc[] */
++	if (index >= 6)
++		return 0;
++
+ 	id = PCI_SLOT(pdev->devfn) | (PCI_FUNC(pdev->devfn) << 5);
+ 	return (modpath->bc[index] == id);
+ }
+diff --git a/arch/s390/kernel/ipl.c b/arch/s390/kernel/ipl.c
+index 295bfb7124bc..39127b691b78 100644
+--- a/arch/s390/kernel/ipl.c
++++ b/arch/s390/kernel/ipl.c
+@@ -798,6 +798,7 @@ static ssize_t reipl_generic_loadparm_store(struct ipl_parameter_block *ipb,
+ 	/* copy and convert to ebcdic */
+ 	memcpy(ipb->hdr.loadparm, buf, lp_len);
+ 	ASCEBC(ipb->hdr.loadparm, LOADPARM_LEN);
++	ipb->hdr.flags |= DIAG308_FLAGS_LP_VALID;
+ 	return len;
+ }
+ 
+diff --git a/drivers/acpi/nfit/core.c b/drivers/acpi/nfit/core.c
+index b1815b20a99c..37032545c58e 100644
+--- a/drivers/acpi/nfit/core.c
++++ b/drivers/acpi/nfit/core.c
+@@ -2547,15 +2547,21 @@ static void acpi_nfit_scrub(struct work_struct *work)
+ static int acpi_nfit_register_regions(struct acpi_nfit_desc *acpi_desc)
+ {
+ 	struct nfit_spa *nfit_spa;
+-	int rc;
+ 
+-	list_for_each_entry(nfit_spa, &acpi_desc->spas, list)
+-		if (nfit_spa_type(nfit_spa->spa) == NFIT_SPA_DCR) {
+-			/* BLK regions don't need to wait for ars results */
+-			rc = acpi_nfit_register_region(acpi_desc, nfit_spa);
+-			if (rc)
+-				return rc;
+-		}
++	list_for_each_entry(nfit_spa, &acpi_desc->spas, list) {
++		int rc, type = nfit_spa_type(nfit_spa->spa);
++
++		/* PMEM and VMEM will be registered by the ARS workqueue */
++		if (type == NFIT_SPA_PM || type == NFIT_SPA_VOLATILE)
++			continue;
++		/* BLK apertures belong to BLK region registration below */
++		if (type == NFIT_SPA_BDW)
++			continue;
++		/* BLK regions don't need to wait for ARS results */
++		rc = acpi_nfit_register_region(acpi_desc, nfit_spa);
++		if (rc)
++			return rc;
++	}
+ 
+ 	queue_work(nfit_wq, &acpi_desc->work);
+ 	return 0;
+diff --git a/drivers/block/loop.c b/drivers/block/loop.c
+index dc318b9100c2..ff1c4d7aa025 100644
+--- a/drivers/block/loop.c
++++ b/drivers/block/loop.c
+@@ -1110,11 +1110,15 @@ loop_set_status(struct loop_device *lo, const struct loop_info64 *info)
+ 	if (info->lo_encrypt_type) {
+ 		unsigned int type = info->lo_encrypt_type;
+ 
+-		if (type >= MAX_LO_CRYPT)
+-			return -EINVAL;
++		if (type >= MAX_LO_CRYPT) {
++			err = -EINVAL;
++			goto exit;
++		}
+ 		xfer = xfer_funcs[type];
+-		if (xfer == NULL)
+-			return -EINVAL;
++		if (xfer == NULL) {
++			err = -EINVAL;
++			goto exit;
++		}
+ 	} else
+ 		xfer = NULL;
+ 
+diff --git a/drivers/firmware/psci.c b/drivers/firmware/psci.c
+index 8263429e21b8..79a48c37fb35 100644
+--- a/drivers/firmware/psci.c
++++ b/drivers/firmware/psci.c
+@@ -59,7 +59,10 @@ bool psci_tos_resident_on(int cpu)
+ 	return cpu == resident_cpu;
+ }
+ 
+-struct psci_operations psci_ops;
++struct psci_operations psci_ops = {
++	.conduit = PSCI_CONDUIT_NONE,
++	.smccc_version = SMCCC_VERSION_1_0,
++};
+ 
+ typedef unsigned long (psci_fn)(unsigned long, unsigned long,
+ 				unsigned long, unsigned long);
+@@ -210,6 +213,22 @@ static unsigned long psci_migrate_info_up_cpu(void)
+ 			      0, 0, 0);
+ }
+ 
++static void set_conduit(enum psci_conduit conduit)
++{
++	switch (conduit) {
++	case PSCI_CONDUIT_HVC:
++		invoke_psci_fn = __invoke_psci_fn_hvc;
++		break;
++	case PSCI_CONDUIT_SMC:
++		invoke_psci_fn = __invoke_psci_fn_smc;
++		break;
++	default:
++		WARN(1, "Unexpected PSCI conduit %d\n", conduit);
++	}
++
++	psci_ops.conduit = conduit;
++}
++
+ static int get_set_conduit_method(struct device_node *np)
+ {
+ 	const char *method;
+@@ -222,9 +241,9 @@ static int get_set_conduit_method(struct device_node *np)
+ 	}
+ 
+ 	if (!strcmp("hvc", method)) {
+-		invoke_psci_fn = __invoke_psci_fn_hvc;
++		set_conduit(PSCI_CONDUIT_HVC);
+ 	} else if (!strcmp("smc", method)) {
+-		invoke_psci_fn = __invoke_psci_fn_smc;
++		set_conduit(PSCI_CONDUIT_SMC);
+ 	} else {
+ 		pr_warn("invalid \"method\" property: %s\n", method);
+ 		return -EINVAL;
+@@ -493,9 +512,36 @@ static void __init psci_init_migrate(void)
+ 	pr_info("Trusted OS resident on physical CPU 0x%lx\n", cpuid);
+ }
+ 
++static void __init psci_init_smccc(void)
++{
++	u32 ver = ARM_SMCCC_VERSION_1_0;
++	int feature;
++
++	feature = psci_features(ARM_SMCCC_VERSION_FUNC_ID);
++
++	if (feature != PSCI_RET_NOT_SUPPORTED) {
++		u32 ret;
++		ret = invoke_psci_fn(ARM_SMCCC_VERSION_FUNC_ID, 0, 0, 0);
++		if (ret == ARM_SMCCC_VERSION_1_1) {
++			psci_ops.smccc_version = SMCCC_VERSION_1_1;
++			ver = ret;
++		}
++	}
++
++	/*
++	 * Conveniently, the SMCCC and PSCI versions are encoded the
++	 * same way. No, this isn't accidental.
++	 */
++	pr_info("SMC Calling Convention v%d.%d\n",
++		PSCI_VERSION_MAJOR(ver), PSCI_VERSION_MINOR(ver));
++
++}
++
+ static void __init psci_0_2_set_functions(void)
+ {
+ 	pr_info("Using standard PSCI v0.2 function IDs\n");
++	psci_ops.get_version = psci_get_version;
++
+ 	psci_function_id[PSCI_FN_CPU_SUSPEND] =
+ 					PSCI_FN_NATIVE(0_2, CPU_SUSPEND);
+ 	psci_ops.cpu_suspend = psci_cpu_suspend;
+@@ -539,6 +585,7 @@ static int __init psci_probe(void)
+ 	psci_init_migrate();
+ 
+ 	if (PSCI_VERSION_MAJOR(ver) >= 1) {
++		psci_init_smccc();
+ 		psci_init_cpu_suspend();
+ 		psci_init_system_suspend();
+ 	}
+@@ -652,9 +699,9 @@ int __init psci_acpi_init(void)
+ 	pr_info("probing for conduit method from ACPI.\n");
+ 
+ 	if (acpi_psci_use_hvc())
+-		invoke_psci_fn = __invoke_psci_fn_hvc;
++		set_conduit(PSCI_CONDUIT_HVC);
+ 	else
+-		invoke_psci_fn = __invoke_psci_fn_smc;
++		set_conduit(PSCI_CONDUIT_SMC);
+ 
+ 	return psci_probe();
+ }
+diff --git a/drivers/gpu/drm/radeon/radeon_object.c b/drivers/gpu/drm/radeon/radeon_object.c
+index 41b72ce6613f..83e1345db9e2 100644
+--- a/drivers/gpu/drm/radeon/radeon_object.c
++++ b/drivers/gpu/drm/radeon/radeon_object.c
+@@ -238,9 +238,10 @@ int radeon_bo_create(struct radeon_device *rdev,
+ 	 * may be slow
+ 	 * See https://bugs.freedesktop.org/show_bug.cgi?id=88758
+ 	 */
+-
++#ifndef CONFIG_COMPILE_TEST
+ #warning Please enable CONFIG_MTRR and CONFIG_X86_PAT for better performance \
+ 	 thanks to write-combining
++#endif
+ 
+ 	if (bo->flags & RADEON_GEM_GTT_WC)
+ 		DRM_INFO_ONCE("Please enable CONFIG_MTRR and CONFIG_X86_PAT for "
+diff --git a/drivers/hv/channel_mgmt.c b/drivers/hv/channel_mgmt.c
+index d8bc4b910192..9360cdce740e 100644
+--- a/drivers/hv/channel_mgmt.c
++++ b/drivers/hv/channel_mgmt.c
+@@ -70,7 +70,7 @@ static const struct vmbus_device vmbus_devs[] = {
+ 	/* PCIE */
+ 	{ .dev_type = HV_PCIE,
+ 	  HV_PCIE_GUID,
+-	  .perf_device = true,
++	  .perf_device = false,
+ 	},
+ 
+ 	/* Synthetic Frame Buffer */
+diff --git a/drivers/hwmon/ina2xx.c b/drivers/hwmon/ina2xx.c
+index a629f7c130f0..ac63e562071f 100644
+--- a/drivers/hwmon/ina2xx.c
++++ b/drivers/hwmon/ina2xx.c
+@@ -447,6 +447,7 @@ static int ina2xx_probe(struct i2c_client *client,
+ 
+ 	/* set the device type */
+ 	data->config = &ina2xx_config[id->driver_data];
++	mutex_init(&data->config_lock);
+ 
+ 	if (of_property_read_u32(dev->of_node, "shunt-resistor", &val) < 0) {
+ 		struct ina2xx_platform_data *pdata = dev_get_platdata(dev);
+@@ -473,8 +474,6 @@ static int ina2xx_probe(struct i2c_client *client,
+ 		return -ENODEV;
+ 	}
+ 
+-	mutex_init(&data->config_lock);
+-
+ 	data->groups[group++] = &ina2xx_group;
+ 	if (id->driver_data == ina226)
+ 		data->groups[group++] = &ina226_group;
+diff --git a/drivers/media/v4l2-core/v4l2-compat-ioctl32.c b/drivers/media/v4l2-core/v4l2-compat-ioctl32.c
+index 48a39222fdf9..a9fc64557c53 100644
+--- a/drivers/media/v4l2-core/v4l2-compat-ioctl32.c
++++ b/drivers/media/v4l2-core/v4l2-compat-ioctl32.c
+@@ -101,7 +101,7 @@ static int get_v4l2_window32(struct v4l2_window __user *kp,
+ static int put_v4l2_window32(struct v4l2_window __user *kp,
+ 			     struct v4l2_window32 __user *up)
+ {
+-	struct v4l2_clip __user *kclips = kp->clips;
++	struct v4l2_clip __user *kclips;
+ 	struct v4l2_clip32 __user *uclips;
+ 	compat_caddr_t p;
+ 	u32 clipcount;
+@@ -116,6 +116,8 @@ static int put_v4l2_window32(struct v4l2_window __user *kp,
+ 	if (!clipcount)
+ 		return 0;
+ 
++	if (get_user(kclips, &kp->clips))
++		return -EFAULT;
+ 	if (get_user(p, &up->clips))
+ 		return -EFAULT;
+ 	uclips = compat_ptr(p);
+diff --git a/drivers/net/phy/micrel.c b/drivers/net/phy/micrel.c
+index 4da73e2c37cf..2032a6de026b 100644
+--- a/drivers/net/phy/micrel.c
++++ b/drivers/net/phy/micrel.c
+@@ -268,12 +268,23 @@ static int kszphy_nand_tree_disable(struct phy_device *phydev)
+ 	return ret;
+ }
+ 
+-/* Some config bits need to be set again on resume, handle them here. */
+-static int kszphy_config_reset(struct phy_device *phydev)
++static int kszphy_config_init(struct phy_device *phydev)
+ {
+ 	struct kszphy_priv *priv = phydev->priv;
++	const struct kszphy_type *type;
+ 	int ret;
+ 
++	if (!priv)
++		return 0;
++
++	type = priv->type;
++
++	if (type->has_broadcast_disable)
++		kszphy_broadcast_disable(phydev);
++
++	if (type->has_nand_tree_disable)
++		kszphy_nand_tree_disable(phydev);
++
+ 	if (priv->rmii_ref_clk_sel) {
+ 		ret = kszphy_rmii_clk_sel(phydev, priv->rmii_ref_clk_sel_val);
+ 		if (ret) {
+@@ -284,7 +295,7 @@ static int kszphy_config_reset(struct phy_device *phydev)
+ 	}
+ 
+ 	if (priv->led_mode >= 0)
+-		kszphy_setup_led(phydev, priv->type->led_mode_reg, priv->led_mode);
++		kszphy_setup_led(phydev, type->led_mode_reg, priv->led_mode);
+ 
+ 	if (phy_interrupt_is_valid(phydev)) {
+ 		int ctl = phy_read(phydev, MII_BMCR);
+@@ -300,25 +311,6 @@ static int kszphy_config_reset(struct phy_device *phydev)
+ 	return 0;
+ }
+ 
+-static int kszphy_config_init(struct phy_device *phydev)
+-{
+-	struct kszphy_priv *priv = phydev->priv;
+-	const struct kszphy_type *type;
+-
+-	if (!priv)
+-		return 0;
+-
+-	type = priv->type;
+-
+-	if (type->has_broadcast_disable)
+-		kszphy_broadcast_disable(phydev);
+-
+-	if (type->has_nand_tree_disable)
+-		kszphy_nand_tree_disable(phydev);
+-
+-	return kszphy_config_reset(phydev);
+-}
+-
+ static int ksz8041_config_init(struct phy_device *phydev)
+ {
+ 	struct device_node *of_node = phydev->mdio.dev.of_node;
+@@ -723,14 +715,8 @@ static int kszphy_suspend(struct phy_device *phydev)
+ 
+ static int kszphy_resume(struct phy_device *phydev)
+ {
+-	int ret;
+-
+ 	genphy_resume(phydev);
+ 
+-	ret = kszphy_config_reset(phydev);
+-	if (ret)
+-		return ret;
+-
+ 	/* Enable PHY Interrupts */
+ 	if (phy_interrupt_is_valid(phydev)) {
+ 		phydev->interrupts = PHY_INTERRUPT_ENABLED;
+diff --git a/drivers/net/slip/slhc.c b/drivers/net/slip/slhc.c
+index 27ed25252aac..cfd81eb1b532 100644
+--- a/drivers/net/slip/slhc.c
++++ b/drivers/net/slip/slhc.c
+@@ -509,6 +509,10 @@ slhc_uncompress(struct slcompress *comp, unsigned char *icp, int isize)
+ 		if(x < 0 || x > comp->rslot_limit)
+ 			goto bad;
+ 
++		/* Check if the cstate is initialized */
++		if (!comp->rstate[x].initialized)
++			goto bad;
++
+ 		comp->flags &=~ SLF_TOSS;
+ 		comp->recv_current = x;
+ 	} else {
+@@ -673,6 +677,7 @@ slhc_remember(struct slcompress *comp, unsigned char *icp, int isize)
+ 	if (cs->cs_tcp.doff > 5)
+ 	  memcpy(cs->cs_tcpopt, icp + ihl*4 + sizeof(struct tcphdr), (cs->cs_tcp.doff - 5) * 4);
+ 	cs->cs_hsize = ihl*2 + cs->cs_tcp.doff*2;
++	cs->initialized = true;
+ 	/* Put headers back on packet
+ 	 * Neither header checksum is recalculated
+ 	 */
+diff --git a/drivers/net/usb/cdc_ether.c b/drivers/net/usb/cdc_ether.c
+index 1fca0024f294..4fb468666b19 100644
+--- a/drivers/net/usb/cdc_ether.c
++++ b/drivers/net/usb/cdc_ether.c
+@@ -773,6 +773,12 @@ static const struct usb_device_id	products[] = {
+ 				      USB_CDC_SUBCLASS_ETHERNET,
+ 				      USB_CDC_PROTO_NONE),
+ 	.driver_info = (unsigned long)&wwan_info,
++}, {
++	/* Cinterion AHS3 modem by GEMALTO */
++	USB_DEVICE_AND_INTERFACE_INFO(0x1e2d, 0x0055, USB_CLASS_COMM,
++				      USB_CDC_SUBCLASS_ETHERNET,
++				      USB_CDC_PROTO_NONE),
++	.driver_info = (unsigned long)&wwan_info,
+ }, {
+ 	/* Telit modules */
+ 	USB_VENDOR_AND_INTERFACE_INFO(0x1bc7, USB_CLASS_COMM,
+diff --git a/drivers/net/usb/lan78xx.c b/drivers/net/usb/lan78xx.c
+index c53385a0052f..f5a96678494b 100644
+--- a/drivers/net/usb/lan78xx.c
++++ b/drivers/net/usb/lan78xx.c
+@@ -873,7 +873,8 @@ static int lan78xx_read_otp(struct lan78xx_net *dev, u32 offset,
+ 			offset += 0x100;
+ 		else
+ 			ret = -EINVAL;
+-		ret = lan78xx_read_raw_otp(dev, offset, length, data);
++		if (!ret)
++			ret = lan78xx_read_raw_otp(dev, offset, length, data);
+ 	}
+ 
+ 	return ret;
+diff --git a/drivers/net/wireless/realtek/rtl818x/rtl8187/dev.c b/drivers/net/wireless/realtek/rtl818x/rtl8187/dev.c
+index 231f84db9ab0..6113624ccec3 100644
+--- a/drivers/net/wireless/realtek/rtl818x/rtl8187/dev.c
++++ b/drivers/net/wireless/realtek/rtl818x/rtl8187/dev.c
+@@ -1454,6 +1454,7 @@ static int rtl8187_probe(struct usb_interface *intf,
+ 		goto err_free_dev;
+ 	}
+ 	mutex_init(&priv->io_mutex);
++	mutex_init(&priv->conf_mutex);
+ 
+ 	SET_IEEE80211_DEV(dev, &intf->dev);
+ 	usb_set_intfdata(intf, dev);
+@@ -1627,7 +1628,6 @@ static int rtl8187_probe(struct usb_interface *intf,
+ 		printk(KERN_ERR "rtl8187: Cannot register device\n");
+ 		goto err_free_dmabuf;
+ 	}
+-	mutex_init(&priv->conf_mutex);
+ 	skb_queue_head_init(&priv->b_tx_status.queue);
+ 
+ 	wiphy_info(dev->wiphy, "hwaddr %pM, %s V%d + %s, rfkill mask %d\n",
+diff --git a/drivers/s390/cio/qdio_main.c b/drivers/s390/cio/qdio_main.c
+index 71bf9bded485..66e9bb053629 100644
+--- a/drivers/s390/cio/qdio_main.c
++++ b/drivers/s390/cio/qdio_main.c
+@@ -126,7 +126,7 @@ static inline int qdio_check_ccq(struct qdio_q *q, unsigned int ccq)
+ static int qdio_do_eqbs(struct qdio_q *q, unsigned char *state,
+ 			int start, int count, int auto_ack)
+ {
+-	int rc, tmp_count = count, tmp_start = start, nr = q->nr, retried = 0;
++	int rc, tmp_count = count, tmp_start = start, nr = q->nr;
+ 	unsigned int ccq = 0;
+ 
+ 	qperf_inc(q, eqbs);
+@@ -149,14 +149,7 @@ static int qdio_do_eqbs(struct qdio_q *q, unsigned char *state,
+ 		qperf_inc(q, eqbs_partial);
+ 		DBF_DEV_EVENT(DBF_WARN, q->irq_ptr, "EQBS part:%02x",
+ 			tmp_count);
+-		/*
+-		 * Retry once, if that fails bail out and process the
+-		 * extracted buffers before trying again.
+-		 */
+-		if (!retried++)
+-			goto again;
+-		else
+-			return count - tmp_count;
++		return count - tmp_count;
+ 	}
+ 
+ 	DBF_ERROR("%4x EQBS ERROR", SCH_NO(q));
+@@ -212,7 +205,10 @@ static int qdio_do_sqbs(struct qdio_q *q, unsigned char state, int start,
+ 	return 0;
+ }
+ 
+-/* returns number of examined buffers and their common state in *state */
++/*
++ * Returns number of examined buffers and their common state in *state.
++ * Requested number of buffers-to-examine must be > 0.
++ */
+ static inline int get_buf_states(struct qdio_q *q, unsigned int bufnr,
+ 				 unsigned char *state, unsigned int count,
+ 				 int auto_ack, int merge_pending)
+@@ -223,17 +219,23 @@ static inline int get_buf_states(struct qdio_q *q, unsigned int bufnr,
+ 	if (is_qebsm(q))
+ 		return qdio_do_eqbs(q, state, bufnr, count, auto_ack);
+ 
+-	for (i = 0; i < count; i++) {
+-		if (!__state) {
+-			__state = q->slsb.val[bufnr];
+-			if (merge_pending && __state == SLSB_P_OUTPUT_PENDING)
+-				__state = SLSB_P_OUTPUT_EMPTY;
+-		} else if (merge_pending) {
+-			if ((q->slsb.val[bufnr] & __state) != __state)
+-				break;
+-		} else if (q->slsb.val[bufnr] != __state)
+-			break;
++	/* get initial state: */
++	__state = q->slsb.val[bufnr];
++	if (merge_pending && __state == SLSB_P_OUTPUT_PENDING)
++		__state = SLSB_P_OUTPUT_EMPTY;
++
++	for (i = 1; i < count; i++) {
+ 		bufnr = next_buf(bufnr);
++
++		/* merge PENDING into EMPTY: */
++		if (merge_pending &&
++		    q->slsb.val[bufnr] == SLSB_P_OUTPUT_PENDING &&
++		    __state == SLSB_P_OUTPUT_EMPTY)
++			continue;
++
++		/* stop if next state differs from initial state: */
++		if (q->slsb.val[bufnr] != __state)
++			break;
+ 	}
+ 	*state = __state;
+ 	return i;
+diff --git a/drivers/vhost/vhost.c b/drivers/vhost/vhost.c
+index e2c37aeed45a..fce49ebc575d 100644
+--- a/drivers/vhost/vhost.c
++++ b/drivers/vhost/vhost.c
+@@ -1175,10 +1175,12 @@ static int vq_log_access_ok(struct vhost_virtqueue *vq,
+ /* Caller should have vq mutex and device mutex */
+ int vhost_vq_access_ok(struct vhost_virtqueue *vq)
+ {
+-	int ret = vq_log_access_ok(vq, vq->log_base);
++	if (!vq_log_access_ok(vq, vq->log_base))
++		return 0;
+ 
+-	if (ret || vq->iotlb)
+-		return ret;
++	/* Access validation occurs at prefetch time with IOTLB */
++	if (vq->iotlb)
++		return 1;
+ 
+ 	return vq_access_ok(vq, vq->num, vq->desc, vq->avail, vq->used);
+ }
+diff --git a/fs/namei.c b/fs/namei.c
+index 891670e0956b..85ac38b99065 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -221,9 +221,10 @@ getname_kernel(const char * filename)
+ 	if (len <= EMBEDDED_NAME_MAX) {
+ 		result->name = (char *)result->iname;
+ 	} else if (len <= PATH_MAX) {
++		const size_t size = offsetof(struct filename, iname[1]);
+ 		struct filename *tmp;
+ 
+-		tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
++		tmp = kmalloc(size, GFP_KERNEL);
+ 		if (unlikely(!tmp)) {
+ 			__putname(result);
+ 			return ERR_PTR(-ENOMEM);
+diff --git a/include/kvm/arm_psci.h b/include/kvm/arm_psci.h
+new file mode 100644
+index 000000000000..e518e4e3dfb5
+--- /dev/null
++++ b/include/kvm/arm_psci.h
+@@ -0,0 +1,51 @@
++/*
++ * Copyright (C) 2012,2013 - ARM Ltd
++ * Author: Marc Zyngier <marc.zyngier@arm.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef __KVM_ARM_PSCI_H__
++#define __KVM_ARM_PSCI_H__
++
++#include <linux/kvm_host.h>
++#include <uapi/linux/psci.h>
++
++#define KVM_ARM_PSCI_0_1	PSCI_VERSION(0, 1)
++#define KVM_ARM_PSCI_0_2	PSCI_VERSION(0, 2)
++#define KVM_ARM_PSCI_1_0	PSCI_VERSION(1, 0)
++
++#define KVM_ARM_PSCI_LATEST	KVM_ARM_PSCI_1_0
++
++/*
++ * We need the KVM pointer independently from the vcpu as we can call
++ * this from HYP, and need to apply kern_hyp_va on it...
++ */
++static inline int kvm_psci_version(struct kvm_vcpu *vcpu, struct kvm *kvm)
++{
++	/*
++	 * Our PSCI implementation stays the same across versions from
++	 * v0.2 onward, only adding the few mandatory functions (such
++	 * as FEATURES with 1.0) that are required by newer
++	 * revisions. It is thus safe to return the latest.
++	 */
++	if (test_bit(KVM_ARM_VCPU_PSCI_0_2, vcpu->arch.features))
++		return KVM_ARM_PSCI_LATEST;
++
++	return KVM_ARM_PSCI_0_1;
++}
++
++
++int kvm_hvc_call_handler(struct kvm_vcpu *vcpu);
++
++#endif /* __KVM_ARM_PSCI_H__ */
+diff --git a/include/linux/arm-smccc.h b/include/linux/arm-smccc.h
+index 4c5bca38c653..a031897fca76 100644
+--- a/include/linux/arm-smccc.h
++++ b/include/linux/arm-smccc.h
+@@ -14,14 +14,16 @@
+ #ifndef __LINUX_ARM_SMCCC_H
+ #define __LINUX_ARM_SMCCC_H
+ 
++#include <uapi/linux/const.h>
++
+ /*
+  * This file provides common defines for ARM SMC Calling Convention as
+  * specified in
+  * http://infocenter.arm.com/help/topic/com.arm.doc.den0028a/index.html
+  */
+ 
+-#define ARM_SMCCC_STD_CALL		0
+-#define ARM_SMCCC_FAST_CALL		1
++#define ARM_SMCCC_STD_CALL	        _AC(0,U)
++#define ARM_SMCCC_FAST_CALL	        _AC(1,U)
+ #define ARM_SMCCC_TYPE_SHIFT		31
+ 
+ #define ARM_SMCCC_SMC_32		0
+@@ -60,6 +62,24 @@
+ #define ARM_SMCCC_QUIRK_NONE		0
+ #define ARM_SMCCC_QUIRK_QCOM_A6		1 /* Save/restore register a6 */
+ 
++#define ARM_SMCCC_VERSION_1_0		0x10000
++#define ARM_SMCCC_VERSION_1_1		0x10001
++
++#define ARM_SMCCC_VERSION_FUNC_ID					\
++	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
++			   ARM_SMCCC_SMC_32,				\
++			   0, 0)
++
++#define ARM_SMCCC_ARCH_FEATURES_FUNC_ID					\
++	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
++			   ARM_SMCCC_SMC_32,				\
++			   0, 1)
++
++#define ARM_SMCCC_ARCH_WORKAROUND_1					\
++	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
++			   ARM_SMCCC_SMC_32,				\
++			   0, 0x8000)
++
+ #ifndef __ASSEMBLY__
+ 
+ #include <linux/linkage.h>
+@@ -130,5 +150,146 @@ asmlinkage void __arm_smccc_hvc(unsigned long a0, unsigned long a1,
+ 
+ #define arm_smccc_hvc_quirk(...) __arm_smccc_hvc(__VA_ARGS__)
+ 
++/* SMCCC v1.1 implementation madness follows */
++#ifdef CONFIG_ARM64
++
++#define SMCCC_SMC_INST	"smc	#0"
++#define SMCCC_HVC_INST	"hvc	#0"
++
++#elif defined(CONFIG_ARM)
++#include <asm/opcodes-sec.h>
++#include <asm/opcodes-virt.h>
++
++#define SMCCC_SMC_INST	__SMC(0)
++#define SMCCC_HVC_INST	__HVC(0)
++
++#endif
++
++#define ___count_args(_0, _1, _2, _3, _4, _5, _6, _7, _8, x, ...) x
++
++#define __count_args(...)						\
++	___count_args(__VA_ARGS__, 7, 6, 5, 4, 3, 2, 1, 0)
++
++#define __constraint_write_0						\
++	"+r" (r0), "=&r" (r1), "=&r" (r2), "=&r" (r3)
++#define __constraint_write_1						\
++	"+r" (r0), "+r" (r1), "=&r" (r2), "=&r" (r3)
++#define __constraint_write_2						\
++	"+r" (r0), "+r" (r1), "+r" (r2), "=&r" (r3)
++#define __constraint_write_3						\
++	"+r" (r0), "+r" (r1), "+r" (r2), "+r" (r3)
++#define __constraint_write_4	__constraint_write_3
++#define __constraint_write_5	__constraint_write_4
++#define __constraint_write_6	__constraint_write_5
++#define __constraint_write_7	__constraint_write_6
++
++#define __constraint_read_0
++#define __constraint_read_1
++#define __constraint_read_2
++#define __constraint_read_3
++#define __constraint_read_4	"r" (r4)
++#define __constraint_read_5	__constraint_read_4, "r" (r5)
++#define __constraint_read_6	__constraint_read_5, "r" (r6)
++#define __constraint_read_7	__constraint_read_6, "r" (r7)
++
++#define __declare_arg_0(a0, res)					\
++	struct arm_smccc_res   *___res = res;				\
++	register u32           r0 asm("r0") = a0;			\
++	register unsigned long r1 asm("r1");				\
++	register unsigned long r2 asm("r2");				\
++	register unsigned long r3 asm("r3")
++
++#define __declare_arg_1(a0, a1, res)					\
++	struct arm_smccc_res   *___res = res;				\
++	register u32           r0 asm("r0") = a0;			\
++	register typeof(a1)    r1 asm("r1") = a1;			\
++	register unsigned long r2 asm("r2");				\
++	register unsigned long r3 asm("r3")
++
++#define __declare_arg_2(a0, a1, a2, res)				\
++	struct arm_smccc_res   *___res = res;				\
++	register u32           r0 asm("r0") = a0;			\
++	register typeof(a1)    r1 asm("r1") = a1;			\
++	register typeof(a2)    r2 asm("r2") = a2;			\
++	register unsigned long r3 asm("r3")
++
++#define __declare_arg_3(a0, a1, a2, a3, res)				\
++	struct arm_smccc_res   *___res = res;				\
++	register u32           r0 asm("r0") = a0;			\
++	register typeof(a1)    r1 asm("r1") = a1;			\
++	register typeof(a2)    r2 asm("r2") = a2;			\
++	register typeof(a3)    r3 asm("r3") = a3
++
++#define __declare_arg_4(a0, a1, a2, a3, a4, res)			\
++	__declare_arg_3(a0, a1, a2, a3, res);				\
++	register typeof(a4) r4 asm("r4") = a4
++
++#define __declare_arg_5(a0, a1, a2, a3, a4, a5, res)			\
++	__declare_arg_4(a0, a1, a2, a3, a4, res);			\
++	register typeof(a5) r5 asm("r5") = a5
++
++#define __declare_arg_6(a0, a1, a2, a3, a4, a5, a6, res)		\
++	__declare_arg_5(a0, a1, a2, a3, a4, a5, res);			\
++	register typeof(a6) r6 asm("r6") = a6
++
++#define __declare_arg_7(a0, a1, a2, a3, a4, a5, a6, a7, res)		\
++	__declare_arg_6(a0, a1, a2, a3, a4, a5, a6, res);		\
++	register typeof(a7) r7 asm("r7") = a7
++
++#define ___declare_args(count, ...) __declare_arg_ ## count(__VA_ARGS__)
++#define __declare_args(count, ...)  ___declare_args(count, __VA_ARGS__)
++
++#define ___constraints(count)						\
++	: __constraint_write_ ## count					\
++	: __constraint_read_ ## count					\
++	: "memory"
++#define __constraints(count)	___constraints(count)
++
++/*
++ * We have an output list that is not necessarily used, and GCC feels
++ * entitled to optimise the whole sequence away. "volatile" is what
++ * makes it stick.
++ */
++#define __arm_smccc_1_1(inst, ...)					\
++	do {								\
++		__declare_args(__count_args(__VA_ARGS__), __VA_ARGS__);	\
++		asm volatile(inst "\n"					\
++			     __constraints(__count_args(__VA_ARGS__)));	\
++		if (___res)						\
++			*___res = (typeof(*___res)){r0, r1, r2, r3};	\
++	} while (0)
++
++/*
++ * arm_smccc_1_1_smc() - make an SMCCC v1.1 compliant SMC call
++ *
++ * This is a variadic macro taking one to eight source arguments, and
++ * an optional return structure.
++ *
++ * @a0-a7: arguments passed in registers 0 to 7
++ * @res: result values from registers 0 to 3
++ *
++ * This macro is used to make SMC calls following SMC Calling Convention v1.1.
++ * The content of the supplied param are copied to registers 0 to 7 prior
++ * to the SMC instruction. The return values are updated with the content
++ * from register 0 to 3 on return from the SMC instruction if not NULL.
++ */
++#define arm_smccc_1_1_smc(...)	__arm_smccc_1_1(SMCCC_SMC_INST, __VA_ARGS__)
++
++/*
++ * arm_smccc_1_1_hvc() - make an SMCCC v1.1 compliant HVC call
++ *
++ * This is a variadic macro taking one to eight source arguments, and
++ * an optional return structure.
++ *
++ * @a0-a7: arguments passed in registers 0 to 7
++ * @res: result values from registers 0 to 3
++ *
++ * This macro is used to make HVC calls following SMC Calling Convention v1.1.
++ * The content of the supplied param are copied to registers 0 to 7 prior
++ * to the HVC instruction. The return values are updated with the content
++ * from register 0 to 3 on return from the HVC instruction if not NULL.
++ */
++#define arm_smccc_1_1_hvc(...)	__arm_smccc_1_1(SMCCC_HVC_INST, __VA_ARGS__)
++
+ #endif /*__ASSEMBLY__*/
+ #endif /*__LINUX_ARM_SMCCC_H*/
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index 8e506783631b..4a07ff4f38e1 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -76,6 +76,10 @@ extern int mmap_rnd_compat_bits __read_mostly;
+ #define page_to_virt(x)	__va(PFN_PHYS(page_to_pfn(x)))
+ #endif
+ 
++#ifndef lm_alias
++#define lm_alias(x)	__va(__pa_symbol(x))
++#endif
++
+ /*
+  * To prevent common memory management code establishing
+  * a zero page mapping on a read fault.
+diff --git a/include/linux/psci.h b/include/linux/psci.h
+index bdea1cb5e1db..347077cf19c6 100644
+--- a/include/linux/psci.h
++++ b/include/linux/psci.h
+@@ -25,7 +25,19 @@ bool psci_tos_resident_on(int cpu);
+ int psci_cpu_init_idle(unsigned int cpu);
+ int psci_cpu_suspend_enter(unsigned long index);
+ 
++enum psci_conduit {
++	PSCI_CONDUIT_NONE,
++	PSCI_CONDUIT_SMC,
++	PSCI_CONDUIT_HVC,
++};
++
++enum smccc_version {
++	SMCCC_VERSION_1_0,
++	SMCCC_VERSION_1_1,
++};
++
+ struct psci_operations {
++	u32 (*get_version)(void);
+ 	int (*cpu_suspend)(u32 state, unsigned long entry_point);
+ 	int (*cpu_off)(u32 state);
+ 	int (*cpu_on)(unsigned long cpuid, unsigned long entry_point);
+@@ -33,6 +45,8 @@ struct psci_operations {
+ 	int (*affinity_info)(unsigned long target_affinity,
+ 			unsigned long lowest_affinity_level);
+ 	int (*migrate_info_type)(void);
++	enum psci_conduit conduit;
++	enum smccc_version smccc_version;
+ };
+ 
+ extern struct psci_operations psci_ops;
+diff --git a/include/net/bluetooth/hci_core.h b/include/net/bluetooth/hci_core.h
+index 554671c81f4a..4931787193c3 100644
+--- a/include/net/bluetooth/hci_core.h
++++ b/include/net/bluetooth/hci_core.h
+@@ -893,7 +893,7 @@ struct hci_conn *hci_connect_le_scan(struct hci_dev *hdev, bdaddr_t *dst,
+ 				     u16 conn_timeout);
+ struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
+ 				u8 dst_type, u8 sec_level, u16 conn_timeout,
+-				u8 role);
++				u8 role, bdaddr_t *direct_rpa);
+ struct hci_conn *hci_connect_acl(struct hci_dev *hdev, bdaddr_t *dst,
+ 				 u8 sec_level, u8 auth_type);
+ struct hci_conn *hci_connect_sco(struct hci_dev *hdev, int type, bdaddr_t *dst,
+diff --git a/include/net/slhc_vj.h b/include/net/slhc_vj.h
+index 8716d5942b65..8fcf8908a694 100644
+--- a/include/net/slhc_vj.h
++++ b/include/net/slhc_vj.h
+@@ -127,6 +127,7 @@ typedef __u32 int32;
+  */
+ struct cstate {
+ 	byte_t	cs_this;	/* connection id number (xmit) */
++	bool	initialized;	/* true if initialized */
+ 	struct cstate *next;	/* next in ring (xmit) */
+ 	struct iphdr cs_ip;	/* ip/tcp hdr from most recent packet */
+ 	struct tcphdr cs_tcp;
+diff --git a/include/uapi/linux/psci.h b/include/uapi/linux/psci.h
+index 3d7a0fc021a7..39930ca998cd 100644
+--- a/include/uapi/linux/psci.h
++++ b/include/uapi/linux/psci.h
+@@ -87,6 +87,9 @@
+ 		(((ver) & PSCI_VERSION_MAJOR_MASK) >> PSCI_VERSION_MAJOR_SHIFT)
+ #define PSCI_VERSION_MINOR(ver)			\
+ 		((ver) & PSCI_VERSION_MINOR_MASK)
++#define PSCI_VERSION(maj, min)						\
++	((((maj) << PSCI_VERSION_MAJOR_SHIFT) & PSCI_VERSION_MAJOR_MASK) | \
++	 ((min) & PSCI_VERSION_MINOR_MASK))
+ 
+ /* PSCI features decoding (>=1.0) */
+ #define PSCI_1_0_FEATURES_CPU_SUSPEND_PF_SHIFT	1
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index c4100c38a467..74710fad35d5 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -4091,6 +4091,9 @@ static void _free_event(struct perf_event *event)
+ 	if (event->ctx)
+ 		put_ctx(event->ctx);
+ 
++	if (event->hw.target)
++		put_task_struct(event->hw.target);
++
+ 	exclusive_event_destroy(event);
+ 	module_put(event->pmu->module);
+ 
+@@ -9214,6 +9217,7 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
+ 		 * and we cannot use the ctx information because we need the
+ 		 * pmu before we get a ctx.
+ 		 */
++		get_task_struct(task);
+ 		event->hw.target = task;
+ 	}
+ 
+@@ -9331,6 +9335,8 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
+ 		perf_detach_cgroup(event);
+ 	if (event->ns)
+ 		put_pid_ns(event->ns);
++	if (event->hw.target)
++		put_task_struct(event->hw.target);
+ 	kfree(event);
+ 
+ 	return ERR_PTR(err);
+diff --git a/net/bluetooth/hci_conn.c b/net/bluetooth/hci_conn.c
+index dc59eae54717..cc061495f653 100644
+--- a/net/bluetooth/hci_conn.c
++++ b/net/bluetooth/hci_conn.c
+@@ -749,18 +749,31 @@ static bool conn_use_rpa(struct hci_conn *conn)
+ }
+ 
+ static void hci_req_add_le_create_conn(struct hci_request *req,
+-				       struct hci_conn *conn)
++				       struct hci_conn *conn,
++				       bdaddr_t *direct_rpa)
+ {
+ 	struct hci_cp_le_create_conn cp;
+ 	struct hci_dev *hdev = conn->hdev;
+ 	u8 own_addr_type;
+ 
+-	/* Update random address, but set require_privacy to false so
+-	 * that we never connect with an non-resolvable address.
++	/* If direct address was provided we use it instead of current
++	 * address.
+ 	 */
+-	if (hci_update_random_address(req, false, conn_use_rpa(conn),
+-				      &own_addr_type))
+-		return;
++	if (direct_rpa) {
++		if (bacmp(&req->hdev->random_addr, direct_rpa))
++			hci_req_add(req, HCI_OP_LE_SET_RANDOM_ADDR, 6,
++								direct_rpa);
++
++		/* direct address is always RPA */
++		own_addr_type = ADDR_LE_DEV_RANDOM;
++	} else {
++		/* Update random address, but set require_privacy to false so
++		 * that we never connect with an non-resolvable address.
++		 */
++		if (hci_update_random_address(req, false, conn_use_rpa(conn),
++					      &own_addr_type))
++			return;
++	}
+ 
+ 	memset(&cp, 0, sizeof(cp));
+ 
+@@ -825,7 +838,7 @@ static void hci_req_directed_advertising(struct hci_request *req,
+ 
+ struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
+ 				u8 dst_type, u8 sec_level, u16 conn_timeout,
+-				u8 role)
++				u8 role, bdaddr_t *direct_rpa)
+ {
+ 	struct hci_conn_params *params;
+ 	struct hci_conn *conn;
+@@ -940,7 +953,7 @@ struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
+ 		hci_dev_set_flag(hdev, HCI_LE_SCAN_INTERRUPTED);
+ 	}
+ 
+-	hci_req_add_le_create_conn(&req, conn);
++	hci_req_add_le_create_conn(&req, conn, direct_rpa);
+ 
+ create_conn:
+ 	err = hci_req_run(&req, create_le_conn_complete);
+diff --git a/net/bluetooth/hci_event.c b/net/bluetooth/hci_event.c
+index e17aacbc5630..d2f9eb169ba8 100644
+--- a/net/bluetooth/hci_event.c
++++ b/net/bluetooth/hci_event.c
+@@ -4646,7 +4646,8 @@ static void hci_le_conn_update_complete_evt(struct hci_dev *hdev,
+ /* This function requires the caller holds hdev->lock */
+ static struct hci_conn *check_pending_le_conn(struct hci_dev *hdev,
+ 					      bdaddr_t *addr,
+-					      u8 addr_type, u8 adv_type)
++					      u8 addr_type, u8 adv_type,
++					      bdaddr_t *direct_rpa)
+ {
+ 	struct hci_conn *conn;
+ 	struct hci_conn_params *params;
+@@ -4697,7 +4698,8 @@ static struct hci_conn *check_pending_le_conn(struct hci_dev *hdev,
+ 	}
+ 
+ 	conn = hci_connect_le(hdev, addr, addr_type, BT_SECURITY_LOW,
+-			      HCI_LE_AUTOCONN_TIMEOUT, HCI_ROLE_MASTER);
++			      HCI_LE_AUTOCONN_TIMEOUT, HCI_ROLE_MASTER,
++			      direct_rpa);
+ 	if (!IS_ERR(conn)) {
+ 		/* If HCI_AUTO_CONN_EXPLICIT is set, conn is already owned
+ 		 * by higher layer that tried to connect, if no then
+@@ -4807,8 +4809,13 @@ static void process_adv_report(struct hci_dev *hdev, u8 type, bdaddr_t *bdaddr,
+ 		bdaddr_type = irk->addr_type;
+ 	}
+ 
+-	/* Check if we have been requested to connect to this device */
+-	conn = check_pending_le_conn(hdev, bdaddr, bdaddr_type, type);
++	/* Check if we have been requested to connect to this device.
++	 *
++	 * direct_addr is set only for directed advertising reports (it is NULL
++	 * for advertising reports) and is already verified to be RPA above.
++	 */
++	conn = check_pending_le_conn(hdev, bdaddr, bdaddr_type, type,
++								direct_addr);
+ 	if (conn && type == LE_ADV_IND) {
+ 		/* Store report for later inclusion by
+ 		 * mgmt_device_connected
+diff --git a/net/bluetooth/l2cap_core.c b/net/bluetooth/l2cap_core.c
+index 2bbca23a9d05..1fc23cb4a3e0 100644
+--- a/net/bluetooth/l2cap_core.c
++++ b/net/bluetooth/l2cap_core.c
+@@ -7148,7 +7148,7 @@ int l2cap_chan_connect(struct l2cap_chan *chan, __le16 psm, u16 cid,
+ 			hcon = hci_connect_le(hdev, dst, dst_type,
+ 					      chan->sec_level,
+ 					      HCI_LE_CONN_TIMEOUT,
+-					      HCI_ROLE_SLAVE);
++					      HCI_ROLE_SLAVE, NULL);
+ 		else
+ 			hcon = hci_connect_le_scan(hdev, dst, dst_type,
+ 						   chan->sec_level,
+diff --git a/net/rds/send.c b/net/rds/send.c
+index ef53d164e146..50241d30e16d 100644
+--- a/net/rds/send.c
++++ b/net/rds/send.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2006 Oracle.  All rights reserved.
++ * Copyright (c) 2006, 2018 Oracle and/or its affiliates. All rights reserved.
+  *
+  * This software is available to you under a choice of one of two
+  * licenses.  You may choose to be licensed under the terms of the GNU
+@@ -983,10 +983,15 @@ static int rds_send_mprds_hash(struct rds_sock *rs, struct rds_connection *conn)
+ 	if (conn->c_npaths == 0 && hash != 0) {
+ 		rds_send_ping(conn);
+ 
+-		if (conn->c_npaths == 0) {
+-			wait_event_interruptible(conn->c_hs_waitq,
+-						 (conn->c_npaths != 0));
+-		}
++		/* The underlying connection is not up yet.  Need to wait
++		 * until it is up to be sure that the non-zero c_path can be
++		 * used.  But if we are interrupted, we have to use the zero
++		 * c_path in case the connection ends up being non-MP capable.
++		 */
++		if (conn->c_npaths == 0)
++			if (wait_event_interruptible(conn->c_hs_waitq,
++						     conn->c_npaths != 0))
++				hash = 0;
+ 		if (conn->c_npaths == 1)
+ 			hash = 0;
+ 	}
+diff --git a/net/sunrpc/auth_gss/gss_krb5_crypto.c b/net/sunrpc/auth_gss/gss_krb5_crypto.c
+index 79aec90259cd..4afd4149a632 100644
+--- a/net/sunrpc/auth_gss/gss_krb5_crypto.c
++++ b/net/sunrpc/auth_gss/gss_krb5_crypto.c
+@@ -237,9 +237,6 @@ make_checksum_hmac_md5(struct krb5_ctx *kctx, char *header, int hdrlen,
+ 
+ 	ahash_request_set_callback(req, CRYPTO_TFM_REQ_MAY_SLEEP, NULL, NULL);
+ 
+-	err = crypto_ahash_init(req);
+-	if (err)
+-		goto out;
+ 	err = crypto_ahash_setkey(hmac_md5, cksumkey, kctx->gk5e->keylength);
+ 	if (err)
+ 		goto out;
+diff --git a/tools/perf/tests/code-reading.c b/tools/perf/tests/code-reading.c
+index 150334064071..ff5bc6363a79 100644
+--- a/tools/perf/tests/code-reading.c
++++ b/tools/perf/tests/code-reading.c
+@@ -224,8 +224,6 @@ static int read_object_code(u64 addr, size_t len, u8 cpumode,
+ 	unsigned char buf2[BUFSZ];
+ 	size_t ret_len;
+ 	u64 objdump_addr;
+-	const char *objdump_name;
+-	char decomp_name[KMOD_DECOMP_LEN];
+ 	int ret;
+ 
+ 	pr_debug("Reading object code for memory address: %#"PRIx64"\n", addr);
+@@ -286,25 +284,9 @@ static int read_object_code(u64 addr, size_t len, u8 cpumode,
+ 		state->done[state->done_cnt++] = al.map->start;
+ 	}
+ 
+-	objdump_name = al.map->dso->long_name;
+-	if (dso__needs_decompress(al.map->dso)) {
+-		if (dso__decompress_kmodule_path(al.map->dso, objdump_name,
+-						 decomp_name,
+-						 sizeof(decomp_name)) < 0) {
+-			pr_debug("decompression failed\n");
+-			return -1;
+-		}
+-
+-		objdump_name = decomp_name;
+-	}
+-
+ 	/* Read the object code using objdump */
+ 	objdump_addr = map__rip_2objdump(al.map, al.addr);
+-	ret = read_via_objdump(objdump_name, objdump_addr, buf2, len);
+-
+-	if (dso__needs_decompress(al.map->dso))
+-		unlink(objdump_name);
+-
++	ret = read_via_objdump(al.map->dso->long_name, objdump_addr, buf2, len);
+ 	if (ret > 0) {
+ 		/*
+ 		 * The kernel maps are inaccurate - assume objdump is right in
+diff --git a/tools/perf/util/intel-pt-decoder/intel-pt-decoder.c b/tools/perf/util/intel-pt-decoder/intel-pt-decoder.c
+index 7e27207d0f45..cac39532c057 100644
+--- a/tools/perf/util/intel-pt-decoder/intel-pt-decoder.c
++++ b/tools/perf/util/intel-pt-decoder/intel-pt-decoder.c
+@@ -1300,6 +1300,7 @@ static int intel_pt_overflow(struct intel_pt_decoder *decoder)
+ 	intel_pt_clear_tx_flags(decoder);
+ 	decoder->have_tma = false;
+ 	decoder->cbr = 0;
++	decoder->timestamp_insn_cnt = 0;
+ 	decoder->pkt_state = INTEL_PT_STATE_ERR_RESYNC;
+ 	decoder->overflow = true;
+ 	return -EOVERFLOW;
+@@ -1522,6 +1523,7 @@ static int intel_pt_walk_fup_tip(struct intel_pt_decoder *decoder)
+ 		case INTEL_PT_PSBEND:
+ 			intel_pt_log("ERROR: Missing TIP after FUP\n");
+ 			decoder->pkt_state = INTEL_PT_STATE_ERR3;
++			decoder->pkt_step = 0;
+ 			return -ENOENT;
+ 
+ 		case INTEL_PT_OVF:
+@@ -2182,14 +2184,6 @@ const struct intel_pt_state *intel_pt_decode(struct intel_pt_decoder *decoder)
+ 	return &decoder->state;
+ }
+ 
+-static bool intel_pt_at_psb(unsigned char *buf, size_t len)
+-{
+-	if (len < INTEL_PT_PSB_LEN)
+-		return false;
+-	return memmem(buf, INTEL_PT_PSB_LEN, INTEL_PT_PSB_STR,
+-		      INTEL_PT_PSB_LEN);
+-}
+-
+ /**
+  * intel_pt_next_psb - move buffer pointer to the start of the next PSB packet.
+  * @buf: pointer to buffer pointer
+@@ -2278,6 +2272,7 @@ static unsigned char *intel_pt_last_psb(unsigned char *buf, size_t len)
+  * @buf: buffer
+  * @len: size of buffer
+  * @tsc: TSC value returned
++ * @rem: returns remaining size when TSC is found
+  *
+  * Find a TSC packet in @buf and return the TSC value.  This function assumes
+  * that @buf starts at a PSB and that PSB+ will contain TSC and so stops if a
+@@ -2285,7 +2280,8 @@ static unsigned char *intel_pt_last_psb(unsigned char *buf, size_t len)
+  *
+  * Return: %true if TSC is found, false otherwise.
+  */
+-static bool intel_pt_next_tsc(unsigned char *buf, size_t len, uint64_t *tsc)
++static bool intel_pt_next_tsc(unsigned char *buf, size_t len, uint64_t *tsc,
++			      size_t *rem)
+ {
+ 	struct intel_pt_pkt packet;
+ 	int ret;
+@@ -2296,6 +2292,7 @@ static bool intel_pt_next_tsc(unsigned char *buf, size_t len, uint64_t *tsc)
+ 			return false;
+ 		if (packet.type == INTEL_PT_TSC) {
+ 			*tsc = packet.payload;
++			*rem = len;
+ 			return true;
+ 		}
+ 		if (packet.type == INTEL_PT_PSBEND)
+@@ -2346,6 +2343,8 @@ static int intel_pt_tsc_cmp(uint64_t tsc1, uint64_t tsc2)
+  * @len_a: size of first buffer
+  * @buf_b: second buffer
+  * @len_b: size of second buffer
++ * @consecutive: returns true if there is data in buf_b that is consecutive
++ *               to buf_a
+  *
+  * If the trace contains TSC we can look at the last TSC of @buf_a and the
+  * first TSC of @buf_b in order to determine if the buffers overlap, and then
+@@ -2358,33 +2357,41 @@ static int intel_pt_tsc_cmp(uint64_t tsc1, uint64_t tsc2)
+ static unsigned char *intel_pt_find_overlap_tsc(unsigned char *buf_a,
+ 						size_t len_a,
+ 						unsigned char *buf_b,
+-						size_t len_b)
++						size_t len_b, bool *consecutive)
+ {
+ 	uint64_t tsc_a, tsc_b;
+ 	unsigned char *p;
+-	size_t len;
++	size_t len, rem_a, rem_b;
+ 
+ 	p = intel_pt_last_psb(buf_a, len_a);
+ 	if (!p)
+ 		return buf_b; /* No PSB in buf_a => no overlap */
+ 
+ 	len = len_a - (p - buf_a);
+-	if (!intel_pt_next_tsc(p, len, &tsc_a)) {
++	if (!intel_pt_next_tsc(p, len, &tsc_a, &rem_a)) {
+ 		/* The last PSB+ in buf_a is incomplete, so go back one more */
+ 		len_a -= len;
+ 		p = intel_pt_last_psb(buf_a, len_a);
+ 		if (!p)
+ 			return buf_b; /* No full PSB+ => assume no overlap */
+ 		len = len_a - (p - buf_a);
+-		if (!intel_pt_next_tsc(p, len, &tsc_a))
++		if (!intel_pt_next_tsc(p, len, &tsc_a, &rem_a))
+ 			return buf_b; /* No TSC in buf_a => assume no overlap */
+ 	}
+ 
+ 	while (1) {
+ 		/* Ignore PSB+ with no TSC */
+-		if (intel_pt_next_tsc(buf_b, len_b, &tsc_b) &&
+-		    intel_pt_tsc_cmp(tsc_a, tsc_b) < 0)
+-			return buf_b; /* tsc_a < tsc_b => no overlap */
++		if (intel_pt_next_tsc(buf_b, len_b, &tsc_b, &rem_b)) {
++			int cmp = intel_pt_tsc_cmp(tsc_a, tsc_b);
++
++			/* Same TSC, so buffers are consecutive */
++			if (!cmp && rem_b >= rem_a) {
++				*consecutive = true;
++				return buf_b + len_b - (rem_b - rem_a);
++			}
++			if (cmp < 0)
++				return buf_b; /* tsc_a < tsc_b => no overlap */
++		}
+ 
+ 		if (!intel_pt_step_psb(&buf_b, &len_b))
+ 			return buf_b + len_b; /* No PSB in buf_b => no data */
+@@ -2398,6 +2405,8 @@ static unsigned char *intel_pt_find_overlap_tsc(unsigned char *buf_a,
+  * @buf_b: second buffer
+  * @len_b: size of second buffer
+  * @have_tsc: can use TSC packets to detect overlap
++ * @consecutive: returns true if there is data in buf_b that is consecutive
++ *               to buf_a
+  *
+  * When trace samples or snapshots are recorded there is the possibility that
+  * the data overlaps.  Note that, for the purposes of decoding, data is only
+@@ -2408,7 +2417,7 @@ static unsigned char *intel_pt_find_overlap_tsc(unsigned char *buf_a,
+  */
+ unsigned char *intel_pt_find_overlap(unsigned char *buf_a, size_t len_a,
+ 				     unsigned char *buf_b, size_t len_b,
+-				     bool have_tsc)
++				     bool have_tsc, bool *consecutive)
+ {
+ 	unsigned char *found;
+ 
+@@ -2420,7 +2429,8 @@ unsigned char *intel_pt_find_overlap(unsigned char *buf_a, size_t len_a,
+ 		return buf_b; /* No overlap */
+ 
+ 	if (have_tsc) {
+-		found = intel_pt_find_overlap_tsc(buf_a, len_a, buf_b, len_b);
++		found = intel_pt_find_overlap_tsc(buf_a, len_a, buf_b, len_b,
++						  consecutive);
+ 		if (found)
+ 			return found;
+ 	}
+@@ -2435,28 +2445,16 @@ unsigned char *intel_pt_find_overlap(unsigned char *buf_a, size_t len_a,
+ 	}
+ 
+ 	/* Now len_b >= len_a */
+-	if (len_b > len_a) {
+-		/* The leftover buffer 'b' must start at a PSB */
+-		while (!intel_pt_at_psb(buf_b + len_a, len_b - len_a)) {
+-			if (!intel_pt_step_psb(&buf_a, &len_a))
+-				return buf_b; /* No overlap */
+-		}
+-	}
+-
+ 	while (1) {
+ 		/* Potential overlap so check the bytes */
+ 		found = memmem(buf_a, len_a, buf_b, len_a);
+-		if (found)
++		if (found) {
++			*consecutive = true;
+ 			return buf_b + len_a;
++		}
+ 
+ 		/* Try again at next PSB in buffer 'a' */
+ 		if (!intel_pt_step_psb(&buf_a, &len_a))
+ 			return buf_b; /* No overlap */
+-
+-		/* The leftover buffer 'b' must start at a PSB */
+-		while (!intel_pt_at_psb(buf_b + len_a, len_b - len_a)) {
+-			if (!intel_pt_step_psb(&buf_a, &len_a))
+-				return buf_b; /* No overlap */
+-		}
+ 	}
+ }
+diff --git a/tools/perf/util/intel-pt-decoder/intel-pt-decoder.h b/tools/perf/util/intel-pt-decoder/intel-pt-decoder.h
+index 89399985fa4d..9ae4df1dcedc 100644
+--- a/tools/perf/util/intel-pt-decoder/intel-pt-decoder.h
++++ b/tools/perf/util/intel-pt-decoder/intel-pt-decoder.h
+@@ -103,7 +103,7 @@ const struct intel_pt_state *intel_pt_decode(struct intel_pt_decoder *decoder);
+ 
+ unsigned char *intel_pt_find_overlap(unsigned char *buf_a, size_t len_a,
+ 				     unsigned char *buf_b, size_t len_b,
+-				     bool have_tsc);
++				     bool have_tsc, bool *consecutive);
+ 
+ int intel_pt__strerror(int code, char *buf, size_t buflen);
+ 
+diff --git a/tools/perf/util/intel-pt.c b/tools/perf/util/intel-pt.c
+index dc041d4368c8..b1161d725ce9 100644
+--- a/tools/perf/util/intel-pt.c
++++ b/tools/perf/util/intel-pt.c
+@@ -131,6 +131,7 @@ struct intel_pt_queue {
+ 	bool stop;
+ 	bool step_through_buffers;
+ 	bool use_buffer_pid_tid;
++	bool sync_switch;
+ 	pid_t pid, tid;
+ 	int cpu;
+ 	int switch_state;
+@@ -194,14 +195,17 @@ static void intel_pt_dump_event(struct intel_pt *pt, unsigned char *buf,
+ static int intel_pt_do_fix_overlap(struct intel_pt *pt, struct auxtrace_buffer *a,
+ 				   struct auxtrace_buffer *b)
+ {
++	bool consecutive = false;
+ 	void *start;
+ 
+ 	start = intel_pt_find_overlap(a->data, a->size, b->data, b->size,
+-				      pt->have_tsc);
++				      pt->have_tsc, &consecutive);
+ 	if (!start)
+ 		return -EINVAL;
+ 	b->use_size = b->data + b->size - start;
+ 	b->use_data = start;
++	if (b->use_size && consecutive)
++		b->consecutive = true;
+ 	return 0;
+ }
+ 
+@@ -928,10 +932,12 @@ static int intel_pt_setup_queue(struct intel_pt *pt,
+ 			if (pt->timeless_decoding || !pt->have_sched_switch)
+ 				ptq->use_buffer_pid_tid = true;
+ 		}
++
++		ptq->sync_switch = pt->sync_switch;
+ 	}
+ 
+ 	if (!ptq->on_heap &&
+-	    (!pt->sync_switch ||
++	    (!ptq->sync_switch ||
+ 	     ptq->switch_state != INTEL_PT_SS_EXPECTING_SWITCH_EVENT)) {
+ 		const struct intel_pt_state *state;
+ 		int ret;
+@@ -1333,7 +1339,7 @@ static int intel_pt_sample(struct intel_pt_queue *ptq)
+ 	if (pt->synth_opts.last_branch)
+ 		intel_pt_update_last_branch_rb(ptq);
+ 
+-	if (!pt->sync_switch)
++	if (!ptq->sync_switch)
+ 		return 0;
+ 
+ 	if (intel_pt_is_switch_ip(ptq, state->to_ip)) {
+@@ -1414,6 +1420,21 @@ static u64 intel_pt_switch_ip(struct intel_pt *pt, u64 *ptss_ip)
+ 	return switch_ip;
+ }
+ 
++static void intel_pt_enable_sync_switch(struct intel_pt *pt)
++{
++	unsigned int i;
++
++	pt->sync_switch = true;
++
++	for (i = 0; i < pt->queues.nr_queues; i++) {
++		struct auxtrace_queue *queue = &pt->queues.queue_array[i];
++		struct intel_pt_queue *ptq = queue->priv;
++
++		if (ptq)
++			ptq->sync_switch = true;
++	}
++}
++
+ static int intel_pt_run_decoder(struct intel_pt_queue *ptq, u64 *timestamp)
+ {
+ 	const struct intel_pt_state *state = ptq->state;
+@@ -1430,7 +1451,7 @@ static int intel_pt_run_decoder(struct intel_pt_queue *ptq, u64 *timestamp)
+ 			if (pt->switch_ip) {
+ 				intel_pt_log("switch_ip: %"PRIx64" ptss_ip: %"PRIx64"\n",
+ 					     pt->switch_ip, pt->ptss_ip);
+-				pt->sync_switch = true;
++				intel_pt_enable_sync_switch(pt);
+ 			}
+ 		}
+ 	}
+@@ -1446,9 +1467,9 @@ static int intel_pt_run_decoder(struct intel_pt_queue *ptq, u64 *timestamp)
+ 		if (state->err) {
+ 			if (state->err == INTEL_PT_ERR_NODATA)
+ 				return 1;
+-			if (pt->sync_switch &&
++			if (ptq->sync_switch &&
+ 			    state->from_ip >= pt->kernel_start) {
+-				pt->sync_switch = false;
++				ptq->sync_switch = false;
+ 				intel_pt_next_tid(pt, ptq);
+ 			}
+ 			if (pt->synth_opts.errors) {
+@@ -1474,7 +1495,7 @@ static int intel_pt_run_decoder(struct intel_pt_queue *ptq, u64 *timestamp)
+ 				     state->timestamp, state->est_timestamp);
+ 			ptq->timestamp = state->est_timestamp;
+ 		/* Use estimated TSC in unknown switch state */
+-		} else if (pt->sync_switch &&
++		} else if (ptq->sync_switch &&
+ 			   ptq->switch_state == INTEL_PT_SS_UNKNOWN &&
+ 			   intel_pt_is_switch_ip(ptq, state->to_ip) &&
+ 			   ptq->next_tid == -1) {
+@@ -1621,7 +1642,7 @@ static int intel_pt_sync_switch(struct intel_pt *pt, int cpu, pid_t tid,
+ 		return 1;
+ 
+ 	ptq = intel_pt_cpu_to_ptq(pt, cpu);
+-	if (!ptq)
++	if (!ptq || !ptq->sync_switch)
+ 		return 1;
+ 
+ 	switch (ptq->switch_state) {
