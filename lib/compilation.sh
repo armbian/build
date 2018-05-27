@@ -39,6 +39,9 @@ compile_atf()
 	local toolchain=$(find_toolchain "$ATF_COMPILER" "$ATF_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${ATF_COMPILER}gcc $ATF_USE_GCC"
 
+	local toolchain_extra=$(find_toolchain "arm-linux-gnueabi-" "> 5.0")
+	[[ -z $toolchain_extra ]] && exit_with_error "Could not find required toolchain" "arm-linux-gnueabi- > 5.0"
+
 	display_alert "Compiler version" "${ATF_COMPILER}gcc $(eval env PATH=$toolchain:$PATH ${ATF_COMPILER}gcc -dumpversion)" "info"
 
 	local target_make=$(cut -d';' -f1 <<< $ATF_TARGET_MAP)
@@ -50,7 +53,7 @@ compile_atf()
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
 
-	eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
+	eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$toolchain_extra:$PATH \
 		'make $target_make $CTHREADS CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>&1 \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling ATF..." $TTY_Y $TTY_X'} \
@@ -138,8 +141,17 @@ compile_uboot()
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
+		# armbian specifics u-boot settings
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
+		if [[ $BOOTBRANCH == 'tag:v2018.03' ]]; then
+			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_EXT4.*/CONFIG_ENV_IS_IN_EXT4=y/g' .config
+			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_MMC.*/# CONFIG_ENV_IS_IN_MMC is not set/g' .config
+			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_NOWHERE.*/# CONFIG_ENV_IS_NOWHERE is not set/g' .config | echo "# CONFIG_ENV_IS_NOWHERE is not set" >> .config
+			[[ -f .config ]] && echo 'CONFIG_ENV_EXT4_INTERFACE="mmc"' >> .config
+			[[ -f .config ]] && echo 'CONFIG_ENV_EXT4_DEVICE_AND_PART="0:auto"' >> .config
+			[[ -f .config ]] && echo 'CONFIG_ENV_EXT4_FILE="/boot/boot.env"' >> .config
+		fi
 		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/packages/blobs/splash/udoo.bmp tools/logos/udoo.bmp
 		touch .scmversion
 
@@ -294,6 +306,12 @@ compile_kernel()
 			display_alert "Using kernel config file" "lib/config/kernel/$LINUXCONFIG.config" "info"
 			cp $SRC/config/kernel/$LINUXCONFIG.config .config
 		fi
+	fi
+
+	# hack for OdroidXU4. Copy firmare files
+	if [[ $BOARD == odroidxu4 ]]; then
+		mkdir -p $SRC/cache/sources/$LINUXSOURCEDIR/firmware/edid
+		cp $SRC/packages/blobs/odroidxu4/*.bin $SRC/cache/sources/$LINUXSOURCEDIR/firmware/edid
 	fi
 
 	# hack for deb builder. To pack what's missing in headers pack.

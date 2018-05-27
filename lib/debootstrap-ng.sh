@@ -54,11 +54,9 @@ debootstrap_ng()
 	# install additional applications
 	[[ $EXTERNAL == yes ]] && install_external_applications
 
-	# install desktop files
-	[[ $BUILD_DESKTOP == yes ]] && install_desktop
-
 	# install locally built packages
 	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
+
 	# install from apt.armbian.com
 	[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes"
 
@@ -97,7 +95,7 @@ create_rootfs_cache()
 	local packages_hash=$(get_package_list_hash)
 	local cache_fname=$SRC/cache/rootfs/${RELEASE}-ng-$ARCH.$packages_hash.tar.lz4
 	local display_name=${RELEASE}-ng-$ARCH.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
-	if [[ -f $cache_fname ]]; then
+	if [[ -f $cache_fname && "$ROOT_FS_CREATE_ONLY" != "force" ]]; then
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
 		pv -p -b -r -c -N "$display_name" "$cache_fname" | lz4 -dc | tar xp --xattrs -C $SDCARD/
@@ -117,7 +115,7 @@ create_rootfs_cache()
 		[[ -z $OUTPUT_DIALOG ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
 
 		display_alert "Installing base system" "Stage 1/2" "info"
-		eval 'debootstrap --include=locales ${PACKAGE_LIST_EXCLUDE:+ --exclude=${PACKAGE_LIST_EXCLUDE// /,}} \
+		eval 'debootstrap --include=locales,gnupg,ifupdown ${PACKAGE_LIST_EXCLUDE:+ --exclude=${PACKAGE_LIST_EXCLUDE// /,}} \
 			--arch=$ARCH --foreign $RELEASE $SDCARD/ $apt_mirror' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
@@ -203,7 +201,7 @@ create_rootfs_cache()
 
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
-		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -y -q \
 			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_LIST"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." $TTY_Y $TTY_X'} \
@@ -232,6 +230,16 @@ create_rootfs_cache()
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -c > $cache_fname
 	fi
+
+	# used for internal purposes. Faster rootfs cache rebuilding
+    if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
+		[[ $use_tmpfs = yes ]] && umount $SDCARD
+		rm -rf $SDCARD
+		# remove exit trap
+		trap - INT TERM EXIT
+        exit
+	fi
+
 	mount_chroot "$SDCARD"
 } #############################################################################
 
@@ -385,13 +393,14 @@ prepare_partitions()
 	# stage: create fs, mount partitions, create fstab
 	rm -f $SDCARD/etc/fstab
 	if [[ -n $rootpart ]]; then
+		local rootdevice="${LOOP}p${rootpart}"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE"
-		check_loop_device "${LOOP}p${rootpart}"
-		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${LOOP}p${rootpart}
-		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback ${LOOP}p${rootpart} > /dev/null
+		check_loop_device "$rootdevice"
+		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice
+		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
 		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress-force=zlib"
-		mount ${fscreateopt} ${LOOP}p${rootpart} $MOUNT/
-		local rootfs="UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart})"
+		mount ${fscreateopt} $rootdevice $MOUNT/
+		local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $bootpart ]]; then
@@ -486,8 +495,8 @@ create_image()
 		cd $DESTIMG
         	sha256sum -b ${version}.img > sha256sum.sha
 	        if [[ -n $GPG_PASS ]]; then
-        	        echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes ${version}.img
-                	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
+        	        echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
+                	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes sha256sum.sha
 	        fi
 			display_alert "Compressing" "$DEST/images/${version}.img" "info"
 	        7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1

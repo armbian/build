@@ -122,6 +122,6 @@ install_deb_chroot()
 	local name=$(basename $package)
 	cp $package $SDCARD/root/$name
 	display_alert "Installing" "$name"
-	chroot $SDCARD /bin/bash -c "dpkg -i /root/$name" >> $DEST/debug/install.log 2>&1
+	chroot $SDCARD /bin/bash -c "dpkg -i /root/$name; apt-get -y -f install" >> $DEST/debug/install.log 2>&1
 	rm -f $SDCARD/root/$name
 }

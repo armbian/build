@@ -13,7 +13,7 @@ compile_armbian-config()
 
 	display_alert "Building deb" "armbian-config" "info"
 
-	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
+	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:development"
 
 	mkdir -p $tmpdir/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
 
@@ -24,8 +24,10 @@ compile_armbian-config()
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Replaces: armbian-bsp
-	Depends: bash, bc, expect, rcconf, dialog, unzip, build-essential, apt-transport-https
-	Recommends: network-manager, armbian-bsp
+	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, sunxi-tools, iptables, resolvconf, \
+	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common
+	Recommends: armbian-bsp
+	Suggests: libpam-google-authenticator, qrencode, network-manager
 	Section: utils
 	Priority: optional
 	Description: Armbian configuration utility
@@ -35,6 +37,8 @@ compile_armbian-config()
 	install -m 755 $SRC/cache/sources/armbian-config/debian-config $tmpdir/usr/sbin/armbian-config
 	install -m 644 $SRC/cache/sources/armbian-config/debian-config-jobs $tmpdir/usr/lib/armbian-config/jobs.sh
 	install -m 644 $SRC/cache/sources/armbian-config/debian-config-submenu $tmpdir/usr/lib/armbian-config/submenu.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-functions $tmpdir/usr/lib/armbian-config/functions.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-functions-network $tmpdir/usr/lib/armbian-config/functions-network.sh
 	install -m 755 $SRC/cache/sources/armbian-config/softy $tmpdir/usr/sbin/softy
 	# fallback to replace armbian-config in BSP
 	ln -sf /usr/sbin/armbian-config $tmpdir/usr/bin/armbian-config
