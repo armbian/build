@@ -3,6 +3,28 @@
 # TODO: convert this to use nmcli, improve network interfaces names handling (wl*, en*)
 # or drop support for this and remove all related files
 
+# Function calculates number of bit in a netmask
+#
+mask2cidr() {
+    nbits=0
+    IFS=.
+    for dec in $1 ; do
+        case $dec in
+            255) let nbits+=8;;
+            254) let nbits+=7;;
+            252) let nbits+=6;;
+            248) let nbits+=5;;
+            240) let nbits+=4;;
+            224) let nbits+=3;;
+            192) let nbits+=2;;
+            128) let nbits+=1;;
+            0);;
+            *) echo "Error: $dec is not recognised"; exit 1
+        esac
+    done
+    echo "$nbits"
+}
+
 do_firstrun_automated_user_configuration()
 {
 	#-----------------------------------------------------------------------------
@@ -27,6 +49,10 @@ do_firstrun_automated_user_configuration()
 		# Load vars directly from file
 		source "$fp_config"
 
+		# Obtain backward configuration compatibility
+		FR_net_static_dns=${FR_net_static_dns// /,}
+		FR_net_static_mask=$(mask2cidr $FR_net_static_mask)
+
 		#-----------------------------------------------------------------------------
 		# - Remove configuration file
 		if [[ $FR_general_delete_this_file_after_completion == 1 ]]; then
@@ -42,102 +68,65 @@ do_firstrun_automated_user_configuration()
 		if [[ $FR_net_change_defaults == 1 ]]; then
 			# - Get 1st index of available wlan and eth adapters
 			local fp_ifconfig_tmp='/tmp/.ifconfig'
-			ifconfig -a > "$fp_ifconfig_tmp" #export to file, should be quicker in loop than calling ifconfig each time.
+			ifconfig -a | sed 's/[ \t].*//;/^\(lo\|\|bond0\|sit0\|ip6tnl0\)$/d' > "$fp_ifconfig_tmp" #export to file, should be quicker in loop than calling ifconfig each time.
 
 			# find eth[0-9]
 			for ((i=0; i<=9; i++))
 			do
 				if (( $(cat "$fp_ifconfig_tmp" | grep -ci -m1 "eth$i") )); then
-					eth_index=$i
+					eth_index=eth${i}
 					break
 				fi
 			done
+
+			# Predictable Network Interface Names
+			[[ -z $eth_index ]] && eth_index=$(cat "$fp_ifconfig_tmp" | grep -m1 "en" | cut -f1 -d":" | head -1)
 
 			# find wlan[0-9]
 			for ((i=0; i<=9; i++))
 			do
 				if (( $(cat "$fp_ifconfig_tmp" | grep -ci -m1 "wlan$i") )); then
-					wlan_index=$i
+					wlan_index=wlan${i}
 					break
 				fi
 			done
 
+			# Predictable Network Interface Names
+			[[ -z $wlan_index ]] && wlan_index=$(cat "$fp_ifconfig_tmp" | grep -m1 "wl" | cut -f1 -d":" | head -1)
+
 			rm "$fp_ifconfig_tmp"
 
-			# - Kill dhclient
-			killall -w dhclient
-
-			# - Drop Connections
-			ifdown eth$eth_index --force
-			ifdown wlan$wlan_index --force
-
-			# - Wifi enable
-			if [[ $FR_net_wifi_enabled == 1 ]]; then
-
-				#Enable Wlan, disable Eth
-				FR_net_ethernet_enabled=0
-				sed -i "/allow-hotplug wlan$wlan_index/c\allow-hotplug wlan$wlan_index" /etc/network/interfaces
-				sed -i "/allow-hotplug eth$eth_index/c\#allow-hotplug eth$eth_index" /etc/network/interfaces
-
-				#Set SSid (covers both WEP and WPA)
-				sed -i "/wireless-essid /c\   wireless-essid $FR_net_wifi_ssid" /etc/network/interfaces
-				sed -i "/wpa-ssid /c\   wpa-ssid $FR_net_wifi_ssid" /etc/network/interfaces
-
-				#Set Key (covers both WEP and WPA)
-				sed -i "/wireless-key /c\   wireless-key $FR_net_wifi_key" /etc/network/interfaces
-				sed -i "/wpa-psk /c\   wpa-psk $FR_net_wifi_key" /etc/network/interfaces
-
-				#Set wifi country code
-				iw reg set "$FR_net_wifi_countrycode"
-
-				#Disable powersaving for known chips that suffer from powersaving features causing connection dropouts.
-				#	This is espically true for the 8192cu and 8188eu.
-				#FOURDEE: This may be better located as default in ARMbian during build (eg: common), as currently, not active until after a reboot.
-				# - Realtek | all use the same option, so create array.
-				local realtek_array=(
-					"8192cu"
-					"8188eu"
-				)
-
-				for ((i=0; i<${#realtek_array[@]}; i++))
-				do
-					echo -e "options ${realtek_array[$i]} rtw_power_mgnt=0" > /etc/modprobe.d/realtek_"${realtek_array[$i]}".conf
-				done
-
-				unset realtek_array
-
-			# - Ethernet enable
-			elif [[ $FR_net_ethernet_enabled == 1 ]]; then
-
-				#Enable Eth, disable Wlan
-				FR_net_wifi_enabled=0
-				sed -i "/allow-hotplug eth$eth_index/c\allow-hotplug eth$eth_index" /etc/network/interfaces
-				#sed -i "/allow-hotplug wlan$wlan_index/c\#allow-hotplug wlan$wlan_index" /etc/network/interfaces
-
-			fi
-
-			# - Static IP enable
+			# for static IP we only append settings
 			if [[ $FR_net_use_static == 1 ]]; then
-				if [[ $FR_net_wifi_enabled == 1 ]]; then
-					sed -i "/iface wlan$wlan_index inet/c\iface wlan$wlan_index inet static" /etc/network/interfaces
-				elif [[ $FR_net_ethernet_enabled == 1 ]]; then
-					sed -i "/iface eth$eth_index inet/c\iface eth$eth_index inet static" /etc/network/interfaces
-				fi
-
-				#This will change both eth and wlan entries, however, as only 1 adapater is enabled by this feature, should be fine.
-				sed -i "/^#address/c\address $FR_net_static_ip" /etc/network/interfaces
-				sed -i "/^#netmask/c\netmask $FR_net_static_mask" /etc/network/interfaces
-				sed -i "/^#gateway/c\gateway $FR_net_static_gateway" /etc/network/interfaces
-				sed -i "/^#dns-nameservers/c\dns-nameservers $FR_net_static_dns" /etc/network/interfaces
+				local FIXED_IP_SETTINGS="ipv4.method manual ipv4.address ${FR_net_static_ip}/${FR_net_static_mask} ipv4.dns ${FR_net_static_dns} ipv4.gateway ${FR_net_static_gateway}"
 			fi
 
-			#This service should be executed before network is started, so don't restart anything
+			if [[ -n $eth_index || -n $wlan_index ]]; then
+				# delete all current connections
+				LC_ALL=C nmcli -t -f UUID,DEVICE connection show | awk '{print $1}' | cut -f1 -d":" | xargs nmcli connection delete
 
-			# - Manually bring up adapters (just incase)
-			if [[ $FR_net_wifi_enabled == 1 ]]; then
-				ifup wlan$wlan_index
-			elif [[ $FR_net_ethernet_enabled == 1 ]]; then
-				ifup eth$eth_index
+				# - Wifi enable
+				if [[ $FR_net_wifi_enabled == 1 ]]; then
+
+					#Set wifi country code
+					iw reg set "$FR_net_wifi_countrycode"
+
+					nmcli con add con-name "Armbian wireless" type wifi ifname ${wlan_index} ssid "$FR_net_wifi_ssid" -- wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$FR_net_wifi_key" ${FIXED_IP_SETTINGS}
+					nmcli con up "Armbian wireless"
+
+					#Enable Wlan, disable Eth
+					FR_net_ethernet_enabled=0
+
+				# - Ethernet enable
+				elif [[ $FR_net_ethernet_enabled == 1 ]]; then
+
+					nmcli con add con-name "Armbian ethernet" type ethernet ifname ${eth_index} -- ${FIXED_IP_SETTINGS}
+					nmcli con up "Armbian ethernet"
+
+					#Enable Eth, disable Wlan
+					FR_net_wifi_enabled=0
+
+				fi
 			fi
 		fi
 	fi
