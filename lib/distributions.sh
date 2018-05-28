@@ -192,7 +192,7 @@ install_common()
 
 	# DNS fix. package resolvconf is not available everywhere
 	if [ -d /etc/resolvconf/resolv.conf.d ]; then
-		echo 'nameserver 8.8.8.8' > $SDCARD/etc/resolvconf/resolv.conf.d/head
+		echo 'nameserver 1.1.1.1' > $SDCARD/etc/resolvconf/resolv.conf.d/head
 	fi
 
 	# premit root login via SSH for the first boot
