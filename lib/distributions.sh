@@ -212,6 +212,19 @@ install_common()
 		unmanaged-devices=$NM_IGNORE_DEVICES
 		EOF
 	fi
+
+	# Set the port of the dropbear ssh deamon in the initramfs to a different one if configured
+	# this avoids the typical 'host key changed warning' - `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!`
+	[[ -f $SDCARD/etc/dropbear-initramfs/config ]] && sed -i 's/^#DROPBEAR_OPTIONS=/DROPBEAR_OPTIONS="-p '$CRYPTROOT_SSH_PORT'"/' $SDCARD/etc/dropbear-initramfs/config
+	if [[ $CRYPTROOT_ENABLE == yes ]]; then
+		if [[ -f $SRC/userpatches/dropbear_authorized_keys ]]; then
+			# TODO: check for supported key types in Dropbear
+			mkdir -p $SDCARD/etc/dropbear-initramfs/
+			cp $SRC/userpatches/dropbear_authorized_keys $SDCARD/etc/dropbear-initramfs/authorized_keys
+		else
+			display_alert "Authorized keys file not found in userpatches, cryptsetup SSH unlock will be disabled" "" "wrn"
+		fi
+	fi
 }
 
 install_distribution_specific()

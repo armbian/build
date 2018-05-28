@@ -312,6 +312,12 @@ prepare_partitions()
 		local bootfs=ext4
 		local bootpart=1
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB, For cleanup processing only
+	elif [[ $CRYPTROOT_ENABLE == yes ]]; then
+		# 2 partition setup for encrypted /root and non-encrypted /boot
+		local bootfs=ext4
+		local bootpart=1
+		local rootpart=2
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB
 	else
 		# single partition ext4 root
 		local rootpart=1
@@ -395,13 +401,29 @@ prepare_partitions()
 	rm -f $SDCARD/etc/fstab
 	if [[ -n $rootpart ]]; then
 		local rootdevice="${LOOP}p${rootpart}"
-		display_alert "Creating rootfs" "$ROOTFS_TYPE"
+
+		if [[ $CRYPTROOT_ENABLE == yes ]]; then
+			display_alert "Encrypting partition with LUKS" "" "ext"
+			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $rootdevice -
+			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
+			# TODO: pass /dev/mapper to Docker
+			rootdevice=/dev/mapper/$ROOT_MAPPER # used by `mkfs` and `mount` commands
+		fi
+
 		check_loop_device "$rootdevice"
+		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
 		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress-force=zlib"
 		mount ${fscreateopt} $rootdevice $MOUNT/
-		local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
+		# create fstab (and crypttab) entry
+		if [[ $CRYPTROOT_ENABLE == yes ]]; then
+			# map the LUKS container partition via its UUID to be the 'cryptroot' device
+			echo "$ROOT_MAPPER UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}) none luks" >> $SDCARD/etc/crypttab
+			local rootfs=$rootdevice # used in fstab
+		else
+			local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
+		fi
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $bootpart ]]; then
@@ -417,7 +439,11 @@ prepare_partitions()
 
 	# stage: adjust boot script or boot environment
 	if [[ -f $SDCARD/boot/armbianEnv.txt ]]; then
-		echo "rootdev=$rootfs" >> $SDCARD/boot/armbianEnv.txt
+		if [[ $CRYPTROOT_ENABLE == yes ]]; then
+			echo "rootdev=$rootdevice cryptdevice=UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}):$ROOT_MAPPER" >> $SDCARD/boot/armbianEnv.txt
+		else
+			echo "rootdev=$rootfs" >> $SDCARD/boot/armbianEnv.txt
+		fi
 		echo "rootfstype=$ROOTFS_TYPE" >> $SDCARD/boot/armbianEnv.txt
 	elif [[ $rootpart != 1 ]]; then
 		local bootscript_dst=${BOOTSCRIPT##*:}
@@ -428,8 +454,12 @@ prepare_partitions()
 
 	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
 	if [[ -f $SDCARD/boot/boot.ini ]]; then
-		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/boot.ini
-		sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
+		if [[ $CRYPTROOT_ENABLE == yes ]]; then
+			local rootpart="UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart})"
+			sed -i 's/^setenv rootdev .*/setenv rootdev "\/dev\/mapper\/'$ROOT_MAPPER' cryptdevice='UUID="$(blkid -s UUID -o value ${LOOP}p${rootpart})"':'$ROOT_MAPPER'"/' $SDCARD/boot/boot.ini
+		else
+			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
+		fi
 		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
 	fi
 
@@ -481,6 +511,8 @@ create_image()
 	sync
 	[[ $BOOTSIZE != 0 ]] && umount -l $MOUNT/boot
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
+	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
+
 	losetup -d $LOOP
 	rm -rf --one-file-system $DESTIMG $MOUNT
 	mkdir -p $DESTIMG
