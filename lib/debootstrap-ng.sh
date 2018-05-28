@@ -300,6 +300,12 @@ prepare_partitions()
 		local bootpart=1
 		local rootpart=2
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB
+	elif [[ ${CRYPTROOT_ENABLE^^} == YES ]]; then
+		# 2 partition setup for encrypted /root and non-encrypted /boot
+		local bootfs=ext4
+		local bootpart=1
+		local rootpart=2
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB
 	elif [[ $ROOTFS_TYPE != ext4 && $ROOTFS_TYPE != nfs ]]; then
 		# 2 partition setup for non-ext4 local root
 		local bootfs=ext4
@@ -394,13 +400,48 @@ prepare_partitions()
 	rm -f $SDCARD/etc/fstab
 	if [[ -n $rootpart ]]; then
 		local rootdevice="${LOOP}p${rootpart}"
-		display_alert "Creating rootfs" "$ROOTFS_TYPE"
 		check_loop_device "$rootdevice"
+		
+		# prepare rootdevice when LUKS encryption is used
+		if [[ ${CRYPTROOT_ENABLE^^} ==  YES ]]; then
+			display_alert "Encrypting partition with LUKS" "" "ext"
+			
+			# name of the mapper device
+			ROOT_MAPPER="cryptroot"
+			
+			# luksFormat the rootdevice
+			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $rootdevice -
+			display_alert "SECURITY ALERT:" "" "wrn"
+			display_alert "THE RESULTING IMAGE CONTAINS THE LUKS VOLUME KEY ONLY FOR CONVENIENCE!" "" "wrn"
+			display_alert "IF BUILDING FOR YOURSELF ONLY, THIS MIGHT BE OK, BUT " "" "wrn"
+			display_alert "IF REDISTRIBUTING THE IMAGE TO OTHER USERS, INSTRUCT THEM TO REENCRYPT THE ROOTFS WITH THEIR OWN (NEW) VOLUME KEY AND THEIR OWN (NEW) PASSPHRASE BEFORE FLASHING USING:" "cryptsetup-reencrypt & cryptsetup luksChangeKey" "wrn"
+			
+			# luksOpen the rootdevice
+			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
+			
+			# set rootdevice and rootfs both to the same value, so the proceeding code that existed before the encryption addition 
+			# doesn't need to be refactored too much
+			rootdevice=/dev/mapper/$ROOT_MAPPER # used by `mkfs` and `mount` commands
+		fi
+		
+		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice
+		# `mkfs` (previous line) generated a UUID for the device (partition), therefore 
+		# `blkid -s UUID -o value $rootdevice` commands only work after this line. not earlier!
+		
+		# mount root device
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
 		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress-force=zlib"
 		mount ${fscreateopt} $rootdevice $MOUNT/
-		local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
+		
+		# create fstab (and crypttab) entry
+		if [[ ${CRYPTROOT_ENABLE^^} ==  YES ]]; then
+			# map the LUKS container partition via its UUID to be the 'cryptroot' device
+			echo "$ROOT_MAPPER UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}) none luks" >> $SDCARD/etc/crypttab
+			local rootfs=$rootdevice # used in fstab
+		else
+			local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
+		fi
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $bootpart ]]; then
@@ -417,9 +458,21 @@ prepare_partitions()
 	# stage: adjust boot script or boot environment
 	if [[ -f $SDCARD/boot/armbianEnv.txt ]]; then
 		if [[ $HAS_UUID_SUPPORT == yes ]]; then
-			echo "rootdev=$rootfs" >> $SDCARD/boot/armbianEnv.txt
+			if [[ ${CRYPTROOT_ENABLE^^} ==  YES ]]; then
+				display_alert "/boot/armbianEnv.txt exists." "Adding rootdev using UUID for encrypted root." "info"
+				echo "rootdev=$rootdevice cryptdevice=UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}):$ROOT_MAPPER" >> $SDCARD/boot/armbianEnv.txt
+			else
+				display_alert "/boot/armbianEnv.txt exists." "Adding rootdev using UUID." "info"
+				echo "rootdev=$rootfs" >> $SDCARD/boot/armbianEnv.txt
+			fi
 		elif [[ $rootpart != 1 ]]; then
-			echo "rootdev=/dev/mmcblk0p${rootpart}" >> $SDCARD/boot/armbianEnv.txt
+			if [[ ${CRYPTROOT_ENABLE^^} ==  YES ]]; then
+				display_alert "armbianEnv.txt exists." "Adding rootdev using device path for encrypted root." "info"
+				echo "rootdev=$rootdevice cryptdevice=/dev/mmcblk0p${rootpart}:$ROOT_MAPPER" >> $SDCARD/boot/armbianEnv.txt
+			else
+				display_alert "/boot/armbianEnv.txt exists." "Adding rootdev using device path." "info"
+				echo "rootdev=/dev/mmcblk0p${rootpart}" >> $SDCARD/boot/armbianEnv.txt
+			fi
 		fi
 		echo "rootfstype=$ROOTFS_TYPE" >> $SDCARD/boot/armbianEnv.txt
 	elif [[ $rootpart != 1 ]]; then
@@ -432,13 +485,51 @@ prepare_partitions()
 	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
 	if [[ -f $SDCARD/boot/boot.ini ]]; then
 		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/boot.ini
-		[[ $HAS_UUID_SUPPORT == yes ]] && sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
-		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
+		if [[ $HAS_UUID_SUPPORT == yes ]]; then
+			if [[ ${CRYPTROOT_ENABLE^^} ==  YES ]]; then
+				local rootpart="UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart})"
+				display_alert "/boot/boot.ini exists." "Adding rootdev using $rootpart for encrypted root." "info"
+				sed -i 's/^setenv rootdev .*/setenv rootdev "\/dev\/mapper\/'$ROOT_MAPPER' cryptdevice='$rootpart':'$ROOT_MAPPER'"/' $SDCARD/boot/boot.ini
+			else
+				display_alert "/boot/boot.ini exists." "Adding rootdev using UUID." "info"
+				sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
+			fi
+		fi
+		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt && display_alert "Deleted" "$SDCARD/boot/armbianEnv.txt" "ext"
 	fi
 
 	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $SDCARD/boot/boot.cmd ]] && \
 		mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/boot.scr > /dev/null 2>&1
+	
+	# generate a default ssh key for login on dropbear in initramfs
+	# this key should be changed by the user on first login
+	if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then
+		ssh-keygen -t ecdsa -f $SDCARD/etc/dropbear-initramfs/id_ecdsa -N ''
+		
+		# copy dropbear ssh key to image output dir for convenience
+		cp $SDCARD/etc/dropbear-initramfs/id_ecdsa $DEST/images/boot_ssh_id_ecdsa
+		display_alert "SSH private key has been copied to:" "$DEST/images/boot_ssh_id_ecdsa" "info"
+
+		# Set the port of the dropbear ssh deamon in the initramfs to a different one if configured
+		# this avoids the typical 'host key changed warning' - `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!` 
+		if [[ ! -z $CRYPTROOT_SSH_UNLOCK_PORT ]]; then
+			sed -i 's/^#DROPBEAR_OPTIONS=/DROPBEAR_OPTIONS="-p '$CRYPTROOT_SSH_UNLOCK_PORT'"/' $SDCARD/etc/dropbear-initramfs/config
+			display_alert "Changed SSH port of boot system to:" "$CRYPTROOT_SSH_UNLOCK_PORT" "info"
+		fi
+	fi
+	
+	# update initramfs so cryptsetup, dropbear and the ssh pulic key are included
+	if [[ $CRYPTROOT_ENABLE == yes ]]; then
+		display_alert "Update initramfs image..." "" "ext"
+		cp /usr/bin/$QEMU_BINARY $SDCARD/usr/bin/
+		mount_chroot "$SDCARD/"
+		chroot $SDCARD /bin/bash -c "update-initramfs -uv -k ${VER}-${LINUXFAMILY}"
+		display_alert "Checking crypt support in $SDCARD/boot/initrd.img-${VER}-${LINUXFAMILY}" "lsinitramfs /boot/initrd.img-${VER}-${LINUXFAMILY} | grep crypt" ""
+		chroot $SDCARD/ /bin/bash -c "lsinitramfs /boot/initrd.img-${VER}-${LINUXFAMILY} | grep crypt | sed 's/^/         /'"
+		umount_chroot "$SDCARD/"
+		rm $SDCARD/usr/bin/$QEMU_BINARY
+	fi
 
 } #############################################################################
 
@@ -484,6 +575,10 @@ create_image()
 	sync
 	[[ $BOOTSIZE != 0 ]] && umount -l $MOUNT/boot
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
+	if [[ ${CRYPTROOT_ENABLE^^} ==  YES ]]; then
+		# close LUKS device
+		cryptsetup luksClose $ROOT_MAPPER
+	fi
 	losetup -d $LOOP
 	rm -rf --one-file-system $DESTIMG $MOUNT
 	mkdir -p $DESTIMG
