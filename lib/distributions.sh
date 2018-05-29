@@ -282,7 +282,7 @@ install_distribution_specific()
 		  renderer: NetworkManager
 		EOF
 		# DNS fix
-		sed -i "s/#DNS=.*/DNS=8.8.8.8/g" $SDCARD/etc/systemd/resolved.conf
+		sed -i "s/#DNS=.*/DNS=1.1.1.1/g" $SDCARD/etc/systemd/resolved.conf
 		;;
 	esac
 }
