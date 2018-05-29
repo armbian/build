@@ -251,6 +251,8 @@ install_distribution_specific()
 		exit 0
 		EOF
 		chmod +x $SDCARD/etc/rc.local
+		# DNS fix
+		sed -i "s/#DNS=.*/DNS=1.1.1.1/g" $SDCARD/etc/systemd/resolved.conf
 		;;
 	bionic)
 		# remove doubled uname from motd
