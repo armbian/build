@@ -6,7 +6,7 @@
 setenv rootdev "/dev/mmcblk0p1"
 setenv fdt_file "rk3288-miqi.dtb"
 setenv ramdisk_addr_r "0x21000000"
-setenv console "ttyS2,115200n8"
+setenv console "ttyS2,115200n8 console=tty1"
 setenv verbosity "1"
 
 itest.b ${devnum} == 0 && echo "U-boot loaded from SD"
