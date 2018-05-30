@@ -2,10 +2,10 @@
 #
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
-setenv root "/dev/mmcblk0p1"
+setenv root "/dev/mmcblk1p1"
 setenv rootfs "ext4"
 setenv verbosity "1"
-setenv bootargs initcall_debug console=ttyS0,115200n1 root=${root} rw rootfstype=${rootfs} rootwait audit=0 loglevel=${verbosity}
+setenv bootargs initcall_debug console=ttyS2,115200n1 root=${root} rw rootfstype=${rootfs} rootwait audit=0 loglevel=${verbosity}
 ext4load mmc ${mmcnum}:${mmcpart} ${fdtaddr} ${mmcfdtfile}
 ext4load mmc ${mmcnum}:${mmcpart} ${rdaddr} ${mmcinitrdfile}
 ext4load mmc ${mmcnum}:${mmcpart} ${kernel_addr_r} ${mmckernfile}
