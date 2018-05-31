@@ -192,7 +192,7 @@ install_common()
 
 	# DNS fix. package resolvconf is not available everywhere
 	if [ -d /etc/resolvconf/resolv.conf.d ]; then
-		echo 'nameserver 8.8.8.8' > $SDCARD/etc/resolvconf/resolv.conf.d/head
+		echo 'nameserver 1.1.1.1' > $SDCARD/etc/resolvconf/resolv.conf.d/head
 	fi
 
 	# premit root login via SSH for the first boot
@@ -204,7 +204,7 @@ install_common()
 	# configure network manager
 	sed "s/managed=\(.*\)/managed=true/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
 	# disable DNS management withing NM for !Stretch
-	[[ $RELEASE != stretch ]] && sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
+	[[ $RELEASE != stretch || $RELEASE != bionic ]] && sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
 	if [[ -n $NM_IGNORE_DEVICES ]]; then
 		mkdir -p $SDCARD/etc/NetworkManager/conf.d/
 		cat <<-EOF > $SDCARD/etc/NetworkManager/conf.d/10-ignore-interfaces.conf
@@ -251,6 +251,8 @@ install_distribution_specific()
 		exit 0
 		EOF
 		chmod +x $SDCARD/etc/rc.local
+		# DNS fix
+		sed -i "s/#DNS=.*/DNS=1.1.1.1/g" $SDCARD/etc/systemd/resolved.conf
 		;;
 	bionic)
 		# remove doubled uname from motd
@@ -281,6 +283,8 @@ install_distribution_specific()
 		  version: 2
 		  renderer: NetworkManager
 		EOF
+		# DNS fix
+		sed -i "s/#DNS=.*/DNS=1.1.1.1/g" $SDCARD/etc/systemd/resolved.conf
 		;;
 	esac
 }
