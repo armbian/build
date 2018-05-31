@@ -272,7 +272,8 @@ prepare_partitions()
 	# parttype[nfs] is empty
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	mkopts[ext4]='-q -m 2'
+	# TODO: Disable metadata_csum only for older releases (jessie)?
+	mkopts[ext4]='-q -m 2 -O ^64bit,^metadata_csum'
 	mkopts[fat]='-n BOOT'
 	mkopts[ext2]='-q'
 	# mkopts[f2fs] is empty
@@ -493,13 +494,13 @@ create_image()
 	if [[ $COMPRESS_OUTPUTIMAGE == yes && $BUILD_ALL != yes ]]; then
 		# compress image
 		cd $DESTIMG
-        	sha256sum -b ${version}.img > sha256sum.sha
-	        if [[ -n $GPG_PASS ]]; then
-        	        echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
-                	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes sha256sum.sha
-	        fi
+		sha256sum -b ${version}.img > sha256sum.sha
+		if [[ -n $GPG_PASS ]]; then
+			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
+			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes sha256sum.sha
+		fi
 			display_alert "Compressing" "$DEST/images/${version}.img" "info"
-	        7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
+		7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
 	fi
 	#
 	if [[ $BUILD_ALL != yes ]]; then
