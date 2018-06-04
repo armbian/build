@@ -204,7 +204,7 @@ install_common()
 	# configure network manager
 	sed "s/managed=\(.*\)/managed=true/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
 	# disable DNS management withing NM for !Stretch
-	[[ $RELEASE != stretch || $RELEASE != jessie || $RELEASE != bionic ]] && sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
+	#[[ $RELEASE != stretch || $RELEASE != jessie || $RELEASE != bionic ]] && sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
 	if [[ -n $NM_IGNORE_DEVICES ]]; then
 		mkdir -p $SDCARD/etc/NetworkManager/conf.d/
 		cat <<-EOF > $SDCARD/etc/NetworkManager/conf.d/10-ignore-interfaces.conf
