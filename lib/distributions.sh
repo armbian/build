@@ -295,6 +295,11 @@ post_debootstrap_tweaks()
 	rm -f $SDCARD/sbin/initctl $SDCARD/sbin/start-stop-daemon
 	chroot $SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/initctl"
 	chroot $SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon"
+
+	chroot $SDCARD /bin/bash -c 'echo "resolvconf resolvconf/linkify-resolvconf boolean true" | debconf-set-selections'
+	mkdir -p $SDCARD/var/lib/resolvconf/linkified
+	:> $SDCARD/var/lib/resolvconf/linkified
+
 	rm -f $SDCARD/usr/sbin/policy-rc.d $SDCARD/usr/bin/$QEMU_BINARY
 
 	# reenable resolvconf managed resolv.conf
