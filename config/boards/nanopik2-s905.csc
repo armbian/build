@@ -1,7 +1,7 @@
 # S905 K2 quad core
 BOARD_NAME="Nanopi K2"
 BOARDFAMILY="meson64"
-BOOTCONFIG="odroid-c2_defconfig"
+BOOTCONFIG="nanopi-k2_defconfig"
 #
 MODULES=""
 MODULES_NEXT=""
