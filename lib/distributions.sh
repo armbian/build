@@ -297,7 +297,7 @@ post_debootstrap_tweaks()
 	chroot $SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon"
 
 	chroot $SDCARD /bin/bash -c 'echo "resolvconf resolvconf/linkify-resolvconf boolean true" | debconf-set-selections'
-	mkdir -p $SDCARD/var/lib/resolvconf/linkified
+	mkdir -p $SDCARD/var/lib/resolvconf/
 	:> $SDCARD/var/lib/resolvconf/linkified
 
 	rm -f $SDCARD/usr/sbin/policy-rc.d $SDCARD/usr/bin/$QEMU_BINARY
