@@ -10,7 +10,7 @@ KERNEL_TARGET="default,next,dev"
 CLI_TARGET="xenial:next"
 CLI_BETA_TARGET=""
 DESKTOP_TARGET="xenial:next"
-DESKTOP_BETA_TARGET=""
+DESKTOP_BETA_TARGET="bionic:next"
 #
 RECOMMENDED="Ubuntu_xenial_next:75,Ubuntu_xenial_next_desktop:75"
 #
