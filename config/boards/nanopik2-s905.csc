@@ -1,7 +1,7 @@
 # S905 K2 quad core
 BOARD_NAME="Nanopi K2"
 BOARDFAMILY="meson64"
-BOOTCONFIG="odroid-c2_defconfig"
+BOOTCONFIG="nanopi-k2_defconfig"
 #
 MODULES=""
 MODULES_NEXT=""
@@ -10,7 +10,7 @@ KERNEL_TARGET="default,next,dev"
 CLI_TARGET="xenial:next"
 CLI_BETA_TARGET=""
 DESKTOP_TARGET="xenial:next"
-DESKTOP_BETA_TARGET=""
+DESKTOP_BETA_TARGET="bionic:next"
 #
 RECOMMENDED="Ubuntu_xenial_next:75,Ubuntu_xenial_next_desktop:75"
 #
