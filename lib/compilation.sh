@@ -303,7 +303,7 @@ compile_kernel()
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
 			cp $SRC/userpatches/$LINUXCONFIG.config .config
 		else
-			display_alert "Using kernel config file" "lib/config/kernel/$LINUXCONFIG.config" "info"
+			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
 			cp $SRC/config/kernel/$LINUXCONFIG.config .config
 		fi
 	fi
