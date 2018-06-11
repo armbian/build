@@ -180,6 +180,9 @@ create_rootfs_cache()
 		# add armhf arhitecture to arm64
 		[[ $ARCH == arm64 ]] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "dpkg --add-architecture armhf"'
 
+		# this should fix resolvconf installation failure in some cases
+		chroot $SDCARD /bin/bash -c 'echo "resolvconf resolvconf/linkify-resolvconf boolean false" | debconf-set-selections'
+
 		# stage: update packages list
 		display_alert "Updating package list" "$RELEASE" "info"
 		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "apt-get -q -y $apt_extra update"' \
@@ -272,7 +275,12 @@ prepare_partitions()
 	# parttype[nfs] is empty
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	mkopts[ext4]='-q -m 2'
+	# TODO: Disable metadata_csum only for older releases (jessie)?
+	if [[ $(lsb_release -sc) == bionic ]]; then
+		mkopts[ext4]='-q -m 2 -O ^64bit,^metadata_csum'
+	elif [[ $(lsb_release -sc) == xenial ]]; then
+		mkopts[ext4]='-q -m 2'
+	fi
 	mkopts[fat]='-n BOOT'
 	mkopts[ext2]='-q'
 	# mkopts[f2fs] is empty
@@ -416,11 +424,7 @@ prepare_partitions()
 
 	# stage: adjust boot script or boot environment
 	if [[ -f $SDCARD/boot/armbianEnv.txt ]]; then
-		if [[ $HAS_UUID_SUPPORT == yes ]]; then
-			echo "rootdev=$rootfs" >> $SDCARD/boot/armbianEnv.txt
-		elif [[ $rootpart != 1 ]]; then
-			echo "rootdev=/dev/mmcblk0p${rootpart}" >> $SDCARD/boot/armbianEnv.txt
-		fi
+		echo "rootdev=$rootfs" >> $SDCARD/boot/armbianEnv.txt
 		echo "rootfstype=$ROOTFS_TYPE" >> $SDCARD/boot/armbianEnv.txt
 	elif [[ $rootpart != 1 ]]; then
 		local bootscript_dst=${BOOTSCRIPT##*:}
@@ -432,7 +436,7 @@ prepare_partitions()
 	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
 	if [[ -f $SDCARD/boot/boot.ini ]]; then
 		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/boot.ini
-		[[ $HAS_UUID_SUPPORT == yes ]] && sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
+		sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
 		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
 	fi
 
@@ -493,13 +497,13 @@ create_image()
 	if [[ $COMPRESS_OUTPUTIMAGE == yes && $BUILD_ALL != yes ]]; then
 		# compress image
 		cd $DESTIMG
-        	sha256sum -b ${version}.img > sha256sum.sha
-	        if [[ -n $GPG_PASS ]]; then
-        	        echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
-                	echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes sha256sum.sha
-	        fi
+		sha256sum -b ${version}.img > sha256sum.sha
+		if [[ -n $GPG_PASS ]]; then
+			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
+			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes sha256sum.sha
+		fi
 			display_alert "Compressing" "$DEST/images/${version}.img" "info"
-	        7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
+		7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
 	fi
 	#
 	if [[ $BUILD_ALL != yes ]]; then

@@ -204,7 +204,7 @@ install_common()
 	# configure network manager
 	sed "s/managed=\(.*\)/managed=true/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
 	# disable DNS management withing NM for !Stretch
-	[[ $RELEASE != stretch || $RELEASE != bionic ]] && sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
+	#[[ $RELEASE != stretch || $RELEASE != jessie || $RELEASE != bionic ]] && sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
 	if [[ -n $NM_IGNORE_DEVICES ]]; then
 		mkdir -p $SDCARD/etc/NetworkManager/conf.d/
 		cat <<-EOF > $SDCARD/etc/NetworkManager/conf.d/10-ignore-interfaces.conf
@@ -295,6 +295,11 @@ post_debootstrap_tweaks()
 	rm -f $SDCARD/sbin/initctl $SDCARD/sbin/start-stop-daemon
 	chroot $SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/initctl"
 	chroot $SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon"
+
+	chroot $SDCARD /bin/bash -c 'echo "resolvconf resolvconf/linkify-resolvconf boolean true" | debconf-set-selections'
+	mkdir -p $SDCARD/var/lib/resolvconf/
+	:> $SDCARD/var/lib/resolvconf/linkified
+
 	rm -f $SDCARD/usr/sbin/policy-rc.d $SDCARD/usr/bin/$QEMU_BINARY
 
 	# reenable resolvconf managed resolv.conf

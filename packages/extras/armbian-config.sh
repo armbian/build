@@ -53,4 +53,6 @@ if [[ ! -f $DEST/debs/armbian-config_${REVISION}_all.deb ]]; then
 	compile_armbian-config
 fi
 
+# installing additional dependencies here so they are installed only with armbian-config
+chroot $SDCARD /bin/bash -c "apt install -q -y iperf3 debconf-utils html2text dirmngr expect"
 install_deb_chroot "$DEST/debs/armbian-config_${REVISION}_all.deb"
