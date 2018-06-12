@@ -52,6 +52,24 @@ create_board_package()
 		rm /etc/network/interfaces
 		mv /etc/network/interfaces.tmp /etc/network/interfaces
 	fi
+	# disable deprecated services
+	systemctl disable armhwinfo.service log2ram.service >/dev/null 2>&1
+	[ -f "/etc/apt/apt.conf.d/02compress-indexes" ] && rm /etc/apt/apt.conf.d/02compress-indexes
+	[ -f "/etc/apt/apt.conf.d/02periodic" ] && rm /etc/apt/apt.conf.d/02periodic
+	[ -f "/etc/apt/apt.conf.d/no-languages" ] && rm /etc/apt/apt.conf.d/no-languages
+	[ -f "/etc/cron.daily/log2ram" ] && rm /etc/cron.daily/log2ram
+	[ -f "/etc/default/log2ram.dpkg-dist" ] && rm /etc/default/log2ram.dpkg-dist
+	[ -f "/etc/init.d/armhwinfo" ] && rm /etc/init.d/armhwinfo
+	[ -f "/etc/init.d/firstrun" ] && rm /etc/init.d/firstrun
+	[ -f "/etc/init.d/resize2fs" ] && rm /etc/init.d/resize2fs
+	[ -f "/lib/systemd/system/firstrun-config.service" ] && rm /lib/systemd/system/firstrun-config.service
+	[ -f "/lib/systemd/system/firstrun.service" ] && rm /lib/systemd/system/firstrun.service
+	[ -f "/lib/systemd/system/log2ram.service" ] && rm /lib/systemd/system/log2ram.service
+	[ -f "/lib/systemd/system/resize2fs.service" ] && rm /lib/systemd/system/resize2fs.service
+	[ -f "/usr/lib/armbian/apt-updates" ] && rm /usr/lib/armbian/apt-updates
+	[ -f "/usr/lib/armbian/firstrun-config.sh" ] && rm /usr/lib/armbian/firstrun-config.sh
+	[ -f "/usr/sbin/log2ram" ] && rm /usr/sbin/log2ram
+	[ -f "/usr/share/log2ram/LICENSE" ] && rm -r /usr/share/log2ram
 	# make a backup since we are unconditionally overwriting this on update
 	[ -f "/etc/default/cpufrequtils" ] && cp /etc/default/cpufrequtils /etc/default/cpufrequtils.dpkg-old
 	dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename \
@@ -67,7 +85,7 @@ create_board_package()
 	if [ remove = "\$1" ] || [ abort-install = "\$1" ]; then
 		dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename \
 			--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
-		systemctl disable log2ram.service armhwinfo.service >/dev/null 2>&1
+		systemctl disable armbian-optimize-hardware.service armbian-ram-logging.service armbian-resize-filesystem.service armbian-setup-hardware.service >/dev/null 2>&1
 	fi
 	exit 0
 	EOF
@@ -85,12 +103,14 @@ create_board_package()
 	if [ ! -f "/etc/default/armbian-motd" ]; then
 		cp /etc/default/armbian-motd.dpkg-dist /etc/default/armbian-motd
 	fi
-	if [ ! -f "/etc/default/log2ram" ]; then
-		cp /etc/default/log2ram.dpkg-dist /etc/default/log2ram
+	if [ ! -f "/etc/default/armbian-ram-logging" ]; then
+		cp /etc/default/armbian-ram-logging.dpkg-dist /etc/default/armbian-ram-logging
 	fi
 	if [ -f "/etc/systemd/system/log2ram.service" ]; then
-		mv /etc/systemd/system/log2ram.service /etc/systemd/system/log2ram-service.dpkg-old
+		mv /etc/systemd/system/log2ram.service /etc/systemd/system/log2ram.dpkg-old
 	fi
+
+	systemctl --no-reload enable armbian-firstrun.service armbian-firstrun-config.service armbian-optimize-hardware.service armbian-ram-logging.service armbian-resize-filesystem.service armbian-setup-hardware.service >/dev/null 2>&1
 	exit 0
 	EOF
 
