@@ -54,6 +54,19 @@ create_board_package()
 	fi
 	# disable deprecated services
 	systemctl disable armhwinfo.service log2ram.service >/dev/null 2>&1
+
+	[ -f "/etc/profile.d/activate_psd_user.sh" ] && rm activate_psd_user.sh
+	[ -f "/etc/profile.d/check_first_login.sh" ] && rm check_first_login.sh
+	[ -f "/etc/profile.d/check_first_login_reboot.sh" ] && rm check_first_login_reboot.sh
+	[ -f "/etc/profile.d/ssh-title.sh" ] && rm ssh-title.sh
+	#
+	[ -f "/etc/update-motd.d/10-header" ] && rm /etc/update-motd.d/10-header
+	[ -f "/etc/update-motd.d/30-sysinfo" ] && rm /etc/update-motd.d/30-sysinfo
+	[ -f "/etc/update-motd.d/35-tips" ] && rm /etc/update-motd.d/35-tips
+	[ -f "/etc/update-motd.d/40-updates" ] && rm /etc/update-motd.d/40-updates
+	[ -f "/etc/update-motd.d/98-autoreboot-warn" ] && rm /etc/update-motd.d/98-autoreboot-warn
+	[ -f "/etc/update-motd.d/99-point-to-faq" ] && rm /etc/update-motd.d/99-point-to-faq
+	#
 	[ -f "/etc/apt/apt.conf.d/02compress-indexes" ] && rm /etc/apt/apt.conf.d/02compress-indexes
 	[ -f "/etc/apt/apt.conf.d/02periodic" ] && rm /etc/apt/apt.conf.d/02periodic
 	[ -f "/etc/apt/apt.conf.d/no-languages" ] && rm /etc/apt/apt.conf.d/no-languages
