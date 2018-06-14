@@ -39,8 +39,12 @@ compile_atf()
 	local toolchain=$(find_toolchain "$ATF_COMPILER" "$ATF_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${ATF_COMPILER}gcc $ATF_USE_GCC"
 
-	local toolchain_extra=$(find_toolchain "arm-linux-gnueabi-" "> 5.0")
-	[[ -z $toolchain_extra ]] && exit_with_error "Could not find required toolchain" "arm-linux-gnueabi- > 5.0"
+	if [[ -n $ATF_TOOLCHAIN2 ]]; then
+		local toolchain2_type=$(cut -d':' -f1 <<< $ATF_TOOLCHAIN2)
+		local toolchain2_ver=$(cut -d':' -f2 <<< $ATF_TOOLCHAIN2)
+		local toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
+		[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
+	fi
 
 	display_alert "Compiler version" "${ATF_COMPILER}gcc $(eval env PATH=$toolchain:$PATH ${ATF_COMPILER}gcc -dumpversion)" "info"
 
@@ -53,7 +57,7 @@ compile_atf()
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
 
-	eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$toolchain_extra:$PATH \
+	eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$toolchain2:$PATH \
 		'make $target_make $CTHREADS CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>&1 \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling ATF..." $TTY_Y $TTY_X'} \
