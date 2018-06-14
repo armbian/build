@@ -54,7 +54,7 @@ create_board_package()
 	fi
 	# disable deprecated services
 	systemctl disable armhwinfo.service log2ram.service >/dev/null 2>&1
-
+	#
 	[ -f "/etc/profile.d/activate_psd_user.sh" ] && rm activate_psd_user.sh
 	[ -f "/etc/profile.d/check_first_login.sh" ] && rm check_first_login.sh
 	[ -f "/etc/profile.d/check_first_login_reboot.sh" ] && rm check_first_login_reboot.sh
@@ -66,6 +66,10 @@ create_board_package()
 	[ -f "/etc/update-motd.d/40-updates" ] && rm /etc/update-motd.d/40-updates
 	[ -f "/etc/update-motd.d/98-autoreboot-warn" ] && rm /etc/update-motd.d/98-autoreboot-warn
 	[ -f "/etc/update-motd.d/99-point-to-faq" ] && rm /etc/update-motd.d/99-point-to-faq
+	# Remove Ubuntu junk
+	[ -f "/etc/update-motd.d/50-motd-news" ] && rm /etc/update-motd.d/50-motd-news
+	[ -f "/etc/update-motd.d/80-esm" ] && rm /etc/update-motd.d/80-esm
+	[ -f "/etc/update-motd.d/80-livepatch" ] && rm /etc/update-motd.d/80-livepatch
 	#
 	[ -f "/etc/apt/apt.conf.d/02compress-indexes" ] && rm /etc/apt/apt.conf.d/02compress-indexes
 	[ -f "/etc/apt/apt.conf.d/02periodic" ] && rm /etc/apt/apt.conf.d/02periodic
