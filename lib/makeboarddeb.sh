@@ -55,10 +55,10 @@ create_board_package()
 	# disable deprecated services
 	systemctl disable armhwinfo.service log2ram.service >/dev/null 2>&1
 	#
-	[ -f "/etc/profile.d/activate_psd_user.sh" ] && rm activate_psd_user.sh
-	[ -f "/etc/profile.d/check_first_login.sh" ] && rm check_first_login.sh
-	[ -f "/etc/profile.d/check_first_login_reboot.sh" ] && rm check_first_login_reboot.sh
-	[ -f "/etc/profile.d/ssh-title.sh" ] && rm ssh-title.sh
+	[ -f "/etc/profile.d/activate_psd_user.sh" ] && rm /etc/profile.d/activate_psd_user.sh
+	[ -f "/etc/profile.d/check_first_login.sh" ] && rm /etc/profile.d/check_first_login.sh
+	[ -f "/etc/profile.d/check_first_login_reboot.sh" ] && rm /etc/profile.d/check_first_login_reboot.sh
+	[ -f "/etc/profile.d/ssh-title.sh" ] && rm /etc/profile.d/ssh-title.sh
 	#
 	[ -f "/etc/update-motd.d/10-header" ] && rm /etc/update-motd.d/10-header
 	[ -f "/etc/update-motd.d/30-sysinfo" ] && rm /etc/update-motd.d/30-sysinfo
