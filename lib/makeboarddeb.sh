@@ -70,6 +70,8 @@ create_board_package()
 	[ -f "/etc/update-motd.d/50-motd-news" ] && rm /etc/update-motd.d/50-motd-news
 	[ -f "/etc/update-motd.d/80-esm" ] && rm /etc/update-motd.d/80-esm
 	[ -f "/etc/update-motd.d/80-livepatch" ] && rm /etc/update-motd.d/80-livepatch
+	# Remove distro unattended-upgrades config
+	[ -f "/etc/apt/apt.conf.d/50unattended-upgrades" ] && rm /etc/apt/apt.conf.d/50unattended-upgrades
 	#
 	[ -f "/etc/apt/apt.conf.d/02compress-indexes" ] && rm /etc/apt/apt.conf.d/02compress-indexes
 	[ -f "/etc/apt/apt.conf.d/02periodic" ] && rm /etc/apt/apt.conf.d/02periodic
@@ -102,7 +104,7 @@ create_board_package()
 	if [ remove = "\$1" ] || [ abort-install = "\$1" ]; then
 		dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename \
 			--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
-		systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-ram-logging.service >/dev/null 2>&1
+		systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-ramlog.service >/dev/null 2>&1
 	fi
 	exit 0
 	EOF
@@ -118,16 +120,16 @@ create_board_package()
 	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
 	rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
 	if [ ! -f "/etc/default/armbian-motd" ]; then
-		cp /etc/default/armbian-motd.dpkg-dist /etc/default/armbian-motd
+		mv /etc/default/armbian-motd.dpkg-dist /etc/default/armbian-motd
 	fi
-	if [ ! -f "/etc/default/armbian-ram-logging" ]; then
-		cp /etc/default/armbian-ram-logging.dpkg-dist /etc/default/armbian-ram-logging
+	if [ ! -f "/etc/default/armbian-ramlog" ]; then
+		mv /etc/default/armbian-ramlog.dpkg-dist /etc/default/armbian-ramlog
 	fi
-	if [ -f "/etc/systemd/system/log2ram.service" ]; then
-		mv /etc/systemd/system/log2ram.service /etc/systemd/system/log2ram.dpkg-old
+	if [ ! -f "/etc/default/armbian-zram-config" ]; then
+		mv /etc/default/armbian-zram-config.dpkg-dist /etc/default/armbian-zram-config
 	fi
 
-	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-ram-logging.service >/dev/null 2>&1
+	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-ramlog.service >/dev/null 2>&1
 	exit 0
 	EOF
 

@@ -150,7 +150,7 @@ install_common()
 	[[ $(type -t family_tweaks) == function ]] && family_tweaks
 
 	# enable additional services
-	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable armbian-firstrun.service armbian-firstrun-config.service armbian-zram-config.service armbian-hardware-optimize.service armbian-ram-logging.service armbian-resize-filesystem.service armbian-hardware-monitor.service >/dev/null 2>&1"
+	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable armbian-firstrun.service armbian-firstrun-config.service armbian-zram-config.service armbian-hardware-optimize.service armbian-ramlog.service armbian-resize-filesystem.service armbian-hardware-monitor.service >/dev/null 2>&1"
 
 	# copy "first run automated config, optional user configured"
  	cp $SRC/packages/bsp/armbian_first_run.txt.template $SDCARD/boot/armbian_first_run.txt.template
@@ -219,6 +219,13 @@ install_distribution_specific()
 	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 	case $RELEASE in
 	jessie)
+		if [[ -z $NM_IGNORE_DEVICES ]]; then
+			echo "# Network Manager under Jessie doesn't work properly. Workaround" >> $SDCARD/etc/network/interfaces.d/eth0.conf
+			echo "auto eth0" >> $SDCARD/etc/network/interfaces.d/eth0.conf
+			echo "iface eth0 inet dhcp"  >> $SDCARD/etc/network/interfaces.d/eth0.conf
+			echo "[keyfile]" >> $SDCARD/etc/NetworkManager/NetworkManager.conf
+			echo "unmanaged-devices=interface-name:eth0" >> $SDCARD/etc/NetworkManager/NetworkManager.conf
+		fi
 		;;
 
 	xenial)
