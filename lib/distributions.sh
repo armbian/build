@@ -51,6 +51,13 @@ install_common()
 	# remove Ubuntu's legal text
 	[[ -f $SDCARD/etc/legal ]] && rm $SDCARD/etc/legal
 
+	# Prevent loading paralel printer port drivers which we don't need here.Suppress boot error if kernel modules are absent
+	if [[ -f $SDCARD/etc/modules-load.d/cups-filters.conf ]]; then
+		sed "s/^lp/#lp/" -i $SDCARD/etc/modules-load.d/cups-filters.conf
+		sed "s/^ppdev/#ppdev/" -i $SDCARD/etc/modules-load.d/cups-filters.conf
+		sed "s/^parport_pc/#parport_pc/" -i $SDCARD/etc/modules-load.d/cups-filters.conf
+	fi
+
 	# console fix due to Debian bug
 	sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i $SDCARD/etc/default/console-setup
 
@@ -222,7 +229,7 @@ install_distribution_specific()
 		if [[ -z $NM_IGNORE_DEVICES ]]; then
 			echo "# Network Manager under Jessie doesn't work properly. Workaround" >> $SDCARD/etc/network/interfaces.d/eth0.conf
 			echo "auto eth0" >> $SDCARD/etc/network/interfaces.d/eth0.conf
-			echo "iface eth0 inet dhcp"  >> $SDCARD/etc/network/interfaces.d/eth0.conf
+			echo "iface eth0 inet dhcp" >> $SDCARD/etc/network/interfaces.d/eth0.conf
 			echo "[keyfile]" >> $SDCARD/etc/NetworkManager/NetworkManager.conf
 			echo "unmanaged-devices=interface-name:eth0" >> $SDCARD/etc/NetworkManager/NetworkManager.conf
 		fi
