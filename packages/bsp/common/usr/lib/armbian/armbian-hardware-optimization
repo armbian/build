@@ -1,30 +1,25 @@
 #!/bin/bash
-### BEGIN INIT INFO
-# Provides:          armhwinfo
-# Required-Start:
-# Required-Stop:     glibc
-# Default-Start:     2 3 4 5
-# Default-Stop:      0 1 6
-# Short-Description: Armbian gathering hardware information
-### END INIT INFO
+#
+# Copyright (c) Authors: http://www.armbian.com/authors
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
 
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-my_name="${0##*/}"
+# Functions:
+#
+# set_io_scheduler
+# prepare_board
+# add_usb_storage_quirks
+
 
 # Read in basic OS image information
 . /etc/armbian-release
-
-collect_information() {
-	ifconfig | grep -q eth0 || (ifconfig eth0 up ; sleep 2)
-	TMPFILE=$(mktemp /tmp/${0##*/}.XXXXXX)
-	trap "sleep 1 ; rm \"${TMPFILE}\" ; exit 0" 0 1 2 3 15
-	CPU_ARCH=$(lscpu | awk '/Architecture/ {print $2}')
-	DISTRO_ARCH=$(dpkg --print-architecture)
-	KERNELID=$(uname -r)
-	dmesg >"${TMPFILE}"
-} # collect_information
+# and script configuration
+. /usr/lib/armbian/armbian-common
 
 set_io_scheduler() {
+
 	for i in $( lsblk -idn -o NAME | grep -v zram ); do
 		read ROTATE </sys/block/$i/queue/rotational
 		case ${ROTATE} in
@@ -38,42 +33,14 @@ set_io_scheduler() {
 				;;
 		esac
 	done
+
 } # set_io_scheduler
 
-prepare_temp_monitoring() {
-	# still an ugly hack but better do it just once at startup instead of every login
-	[ -d /etc/armbianmonitor/datasources ] || mkdir -p -m775 /etc/armbianmonitor/datasources
 
-	# PMIC check
-	if [[ -f /sys/power/axp_pmu/pmu/temp ]]; then
-		ln -fs /sys/power/axp_pmu/pmu/temp /etc/armbianmonitor/datasources/pmictemp
-	elif [[ -f /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034//temp1_input ]]; then
-		ln -fs /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034/temp1_input \
-			/etc/armbianmonitor/datasources/pmictemp
-	elif [[ -f /sys/devices/b0170000.i2c/i2c-0/0-0065/atc2603c-hwmon.0/ic_temperature ]]; then
-		ln -fs /sys/devices/b0170000.i2c/i2c-0/0-0065/atc2603c-hwmon.0/ic_temperature \
-			/etc/armbianmonitor/datasources/pmictemp
-	elif [[ -f /sys/class/axppower/ic_temp ]]; then
-		ln -fs /sys/class/axppower/ic_temp /etc/armbianmonitor/datasources/pmictemp
-	fi
 
-	# SoC temp: check sun7i legacy exception first, then standard path(s)
-	if [[ -d "/sys/devices/platform/a20-tp-hwmon" ]]; then
-		# sun7i legacy
-		ln -fs /sys/devices/platform/a20-tp-hwmon/temp1_input /etc/armbianmonitor/datasources/soctemp
-	elif [[ -f /sys/class/hwmon/hwmon0/temp1_input ]]; then
-		# usual convention with modern kernels
-		ln -fs /sys/class/hwmon/hwmon0/temp1_input /etc/armbianmonitor/datasources/soctemp
-	else
-		# all other boards/kernels use the same sysfs node except of Actions Semi S500:
-		[[ ${BOARDFAMILY} == s500 ]] && THERMAL_ZONE="thermal_zone1" || THERMAL_ZONE="thermal_zone0"
-		ln -fs /sys/devices/virtual/thermal/${THERMAL_ZONE}/temp /etc/armbianmonitor/datasources/soctemp
-	fi
-	# remove the soctemp node on platforms where kernel support is not yet ready for thermal readouts
-	cat /etc/armbianmonitor/datasources/soctemp >/dev/null 2>&1 || rm /etc/armbianmonitor/datasources/soctemp
-} # prepare_temp_monitoring
 
 prepare_board() {
+
 	# prevent logrotate from compressing rotated logs when /var/log lives on compressed fs
 	CheckDevice=$(for i in /var/log /var / ; do findmnt -n -o SOURCE $i && break ; done)
 	[ -n "${CheckDevice}" ] && grep "^${CheckDevice}" /etc/mtab | grep -q compress && \
@@ -81,6 +48,13 @@ prepare_board() {
 		sed -i -e "s/^\s\+compress/\t# compress/" \
 		-e "s/^\s\+delaycompress/\t# delaycompress/" "${ConfigFile}"
 	done
+
+	# remove compression from general config
+	sed -i 's/^compress/#compress/' /etc/logrotate.conf
+
+	# fix permissions in all logrotate configs
+	find /etc/logrotate.d/. -type f | xargs grep -H -c 'su root' | grep 0$ | cut -d':' -f1 | \
+	xargs -L1 sed -i '/{/ i su root syslog' 2> /dev/null
 
 	# tweak ondemand cpufreq governor settings to increase cpufreq with IO load
 	grep -q ondemand /etc/default/cpufrequtils
@@ -262,100 +236,14 @@ prepare_board() {
 	esac
 } # prepare_board
 
-log_hardware_info() {
-	Log=/var/log/armhwinfo.log
-	[ -f "/etc/logrotate.d/${0##*/}" ] || \
-		echo -e "${Log} {\n  rotate 12\n  weekly\n  compress\n  missingok\n  notifempty\n}" \
-		> "/etc/logrotate.d/${0##*/}" ; chmod 644 "/etc/logrotate.d/${0##*/}"
-	if [ -f ${Log} ]; then
-		echo -e "\n\n\n$(date) | ${BOARD_NAME} | ${VERSION} | ${DISTRO_ARCH} | ${CPU_ARCH} | ${KERNELID}" >>${Log}
-	else
-		echo "$(date) | ${BOARD_NAME} | ${VERSION} | ${DISTRO_ARCH} | ${CPU_ARCH} | ${KERNELID}" >>${Log}
-		chmod 644 ${Log}
-	fi
-	echo -e "\n### dmesg:\n" >>${Log}
-	cat "${TMPFILE}" >>${Log}
-	echo -e "\n### armbian-release:\n" >>${Log}
-	cat /etc/armbian-release >>${Log}
-	echo -e "\n### boot environment:\n" >>${Log}
-	cat /boot/armbianEnv.txt >>${Log} 2>/dev/null || grep -v "^#" /boot/boot.ini | sed '/^\s*$/d' >>${Log}
-	echo -e "\n### lsusb:\n" >>${Log}
-	lsusb 2>/dev/null >>${Log}
-	echo -e "\n### lscpu:\n" >>${Log}
-	lscpu >>${Log}
-	echo -e "\n### cpuinfo:\n" >>${Log}
-	cat /proc/cpuinfo >>${Log}
-	echo -e "\n### meminfo:\n" >>${Log}
-	cat /proc/meminfo >>${Log}
-	if [ -x /sbin/ip ]; then
-		echo -e "\n### ip addr:\n" >>${Log}
-		/sbin/ip r s >>${Log} ; /sbin/ip a >>${Log}
-		echo " " >>${Log}
-	else
-		echo -e "\n### ifconfig:\n" >>${Log}
-		ifconfig >>${Log}
-	fi
-	echo -e "### partitions:\n" >>${Log}
-	egrep -v " ram| zram" /proc/partitions >>${Log}
-	echo -e "\n### df:\n" >>${Log}
-	df -h | egrep '^udev|^tmpfs|^/dev/|log2ram|folder2ram' >>${Log}
-	which zpool >/dev/null 2>&1 && echo -e "\n### zpools:\n\n$(zpool list)\n\n### zfs datasets:\n\n$(zfs list)" >>${Log}
-	echo -e "\n### lsblk:\n" >>${Log}
-	lsblk -o NAME,FSTYPE,SIZE,MOUNTPOINT,UUID | grep -v "^zram" >>${Log}
-	echo -e "\n### mtab:\n" >>${Log}
-	egrep '^/dev/|\ zfs\ ' /etc/mtab | egrep -v "log2ram|folder2ram" | sort >>${Log}
-	[[ -e /boot/script.bin ]] && echo -e "\n### /boot/script.bin --> $(readlink /boot/script.bin)" >>${Log}
-	get_flash_information >>${Log}
-	(echo -e "\n### Boot system health:\n" >>${Log} ; armbianmonitor -s | egrep "^Time|^[0-9]" >>${Log}) &
-} # log_hardware_info
-
-get_flash_information() {
-	# http://www.bunniestudios.com/blog/?page_id=1022
-	find /sys -name oemid | while read Device ; do
-		DeviceNode="${Device%/*}"
-		DeviceName="${DeviceNode##*/}"
-		echo -e "\n### ${DeviceName} info:\n"
-		find "${DeviceNode}" -maxdepth 1 -type f | while read ; do
-			NodeName="${REPLY##*/}"
-			echo -e "$(printf "%20s" ${NodeName}): $(cat "${DeviceNode}/${NodeName}" | tr '\n' " ")"
-		done
-	done
-} # get_flash_information
-
-show_motd_warning() {
-cat > /etc/update-motd.d/90-warning <<EOT
-#!/bin/bash
-echo -e "\e[0;91mAttention:\x1B[0m $1\n"
-rm "\$0"
-EOT
-chmod +x /etc/update-motd.d/90-warning
-} # show_motd_warning
-
-check_sd_card_speed() {
-	# function that checks on 3rd boot whether firstrun script made a quick benchmark
-	# and displays a motd warning when _random_ I/O is below some tresholds.
-	if [ -f /var/log/armhwinfo.log ]; then
-		RebootCount=$(grep -c '^### df:' /var/log/armhwinfo.log)
-		if [ ${RebootCount} -eq 2 ]; then
-			# check whether iozone data has been collected
-			IozoneResults="$(awk -F" " '/^### quick iozone test/ {print $10"\t"$11}' </var/log/armhwinfo.log)"
-			if [ "X${IozoneResults}" != "X" ]; then
-				set ${IozoneResults}
-				Readspeed=$1
-				Writespeed=$2
-				if [ ${Readspeed} -lt 800 -o ${Writespeed} -lt 400 ]; then
-					show_motd_warning "Your SD card seems to be very slow. Please check performance using armbianmonitor -c"
-				fi
-			fi
-		fi
-	fi
-} # check_sd_card_speed
-
 add_usb_storage_quirks() {
+
 	# check for /boot/armbianEnv.txt existence
 	[ -f /boot/armbianEnv.txt ] || return
 
 	# preserve old contents if existent
+	TMPFILE=$(mktemp /tmp/${0##*/}.XXXXXX)
+	trap "sleep 1 ; rm \"${TMPFILE}\" ; exit 0" 0 1 2 3 15
 	awk -F"=" '/^usbstoragequirks/ {print $2}' </boot/armbianEnv.txt | tr -d -c '[:graph:]' >${TMPFILE}
 
 	# UAS blacklist Norelsys NS1068X and NS1066X since broken. Can be removed once
@@ -378,87 +266,18 @@ add_usb_storage_quirks() {
 	if [ -f /sys/module/usb_storage/parameters/quirks ]; then
 		echo ${USBQUIRKS} >/sys/module/usb_storage/parameters/quirks
 	fi
+
 } # add_usb_storage_quirks
-
-activate_zram() {
-	# Do not interfere with already present config-zram package
-	dpkg -l | grep -q 'zram-config' && return
-
-	# Load zram module with n instances (one per CPU core, 4 are the maximum)
-	cpu_cores=$(grep -c '^processor' /proc/cpuinfo | sed 's/^0$/1/')
-	[[ ${cpu_cores} -gt 4 ]] && zram_devices=4 || zram_devices=${cpu_cores}
-	module_args="$(modinfo zram | awk -F" " '/num_devices/ {print $2}' | cut -f1 -d:)"
-	[[ -n ${module_args} ]] && modprobe zram ${module_args}=$(( ${zram_devices} + 1 )) || return
-
-	# Use half of the real memory by default --> 1/${ram_divisor}
-	ram_divisor=2
-	mem_info=$(LC_ALL=C free -w 2>/dev/null | grep "^Mem" || LC_ALL=C free | grep "^Mem")
-	memory_total=$(awk '{printf("%d",$2*1024)}' <<<${mem_info})
-	mem_per_zram_device=$(( ${memory_total} / ${zram_devices} / ${ram_divisor} ))
-
-	for (( i=1; i<=zram_devices; i++ )); do
-		[[ -f /sys/block/zram${i}/comp_algorithm ]] && echo lz4 >/sys/block/zram${i}/comp_algorithm 2>/dev/null
-		echo -n ${mem_per_zram_device} > /sys/block/zram${i}/disksize
-		mkswap /dev/zram${i}
-		swapon -p 5 /dev/zram${i}
-	done
-	echo -e "\n### Activated ${zram_devices} zram swap devices with ${mem_per_zram_device} MB each\n" >>${Log}
-	
-	# Dedicate 300 MB (uncompressed) /dev/zram0 device for log2ram and choose most efficient
-	# compression scheme available -- https://patchwork.kernel.org/patch/9918897/
-	for algo in lz4 quicklz zlib brotli zstd ; do
-		echo ${algo} >/sys/block/zram0/comp_algorithm 2>/dev/null
-	done
-	echo -n 314572800 > /sys/block/zram0/disksize
-	mkfs.btrfs -s 1024 -L log2ram /dev/zram0
-	read algo </sys/block/zram0/comp_algorithm
-	echo -e "### Activated log2ram partition with ${algo} compression\n" >>${Log}
-} # activate_zram
 
 case $1 in
 	*start*)
 		# set optimal disk scheduler settings
 		set_io_scheduler &
 
-		# check sd card speed once on 3rd boot too warn for too slow media
-		check_sd_card_speed &
-
-		# get hardware information and rely on contents of /etc/armbian-release
-		collect_information
-
 		# hardware preparation
 		prepare_board &
-		prepare_temp_monitoring &
-		# activate_zram &
 
-		# display message, log hardware id to file, write log
-		echo -e "[\e[0;32m ok \x1B[0m] Starting ARM hardware info: ${BOARD_NAME} (${VERSION})"
-		echo $BOARD_NAME >/var/run/machine.id # we should leave this, maybe users depend on it
-		if [ $? -ne 0 ]; then
-			# most probably readonly fs. We'll try to warn the user.
-			show_motd_warning "It seems the rootfs is readonly at the moment. Please check your SD card for errors"
-		fi
-
-		# check whether auto detection override exists and if true use this for machine.id
-		[ -f /root/.machine.id ] && cat /root/.machine.id >/var/run/machine.id
-		log_hardware_info
-		add_usb_storage_quirks
-		;;
-	*stop*)
-		case ${BOARDFAMILY} in
-			sun?i)
-			# redefine green led to blink until shutdown, try to switch OTG port to host
-			(echo heartbeat >/sys/class/leds/*green*/trigger) 2>/dev/null
-			echo 0 > /sys/bus/platform/devices/sunxi_usb_udc/otg_role 2>/dev/null
-			;;
-		esac
-		# some kernel modules are known to crash the kernel on shutdown (an example
-		# is the mass storage gadget module at least on sun7i). We try to unload as
-		# much modules as possible to minimize such situations:
-		/sbin/modprobe -r $(cut -f1 -d' ' </proc/modules)
-		# shutdown logging
-		echo -e "\n### shutdown:\n\n$(iostat -p zram0)\n\n$(vmstat -w)\n\n$(free -h)\n\n$(dmesg | tail -n 100)" >>/var/log/armhwinfo.log
-		logger -i -t ${my_name} "Sane shutdown"
-		sync
+		# add usb quirks
+		add_usb_storage_quirks &
 		;;
 esac

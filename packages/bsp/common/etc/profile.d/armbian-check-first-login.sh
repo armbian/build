@@ -1,4 +1,10 @@
 #!/bin/sh
+#
+# Copyright (c) Authors: http://www.armbian.com/authors
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
 
 . /etc/armbian-release
 
@@ -100,8 +106,6 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 	fi
 	# check whether desktop environment has to be considered
 	if [ "$DESKTOPDETECT" = nodm ] && [ -n "$RealName" ] ; then
-		# enable splash
-		# [[ -f /etc/systemd/system/desktop-splash.service ]] && systemctl --no-reload enable desktop-splash.service >/dev/null 2>&1 && service desktop-splash restart
 		sed -i "s/NODM_USER=\(.*\)/NODM_USER=${RealUserName}/" /etc/default/nodm
 		sed -i "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" /etc/default/nodm
 		if [[ -f /var/run/resize2fs-reboot ]]; then
