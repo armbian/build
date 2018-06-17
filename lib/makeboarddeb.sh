@@ -79,6 +79,7 @@ create_board_package()
 	[ -f "/etc/cron.daily/log2ram" ] && rm /etc/cron.daily/log2ram
 	[ -f "/etc/default/log2ram.dpkg-dist" ] && rm /etc/default/log2ram.dpkg-dist
 	[ -f "/etc/init.d/armhwinfo" ] && rm /etc/init.d/armhwinfo
+	[ -f "/etc/logrotate.d/armhwinfo" ] && rm /etc/logrotate.d/armhwinfo
 	[ -f "/etc/init.d/firstrun" ] && rm /etc/init.d/firstrun
 	[ -f "/etc/init.d/resize2fs" ] && rm /etc/init.d/resize2fs
 	[ -f "/lib/systemd/system/firstrun-config.service" ] && rm /lib/systemd/system/firstrun-config.service
