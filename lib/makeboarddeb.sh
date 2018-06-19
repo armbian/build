@@ -36,7 +36,7 @@ create_board_package()
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Suggests: armbian-config
-	Replaces: base-files, armbian-tools-$RELEASE
+	Replaces: zram-config, base-files, armbian-tools-$RELEASE
 	Recommends: bsdutils, parted, python3-apt, util-linux, toilet
 	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
 	EOF
