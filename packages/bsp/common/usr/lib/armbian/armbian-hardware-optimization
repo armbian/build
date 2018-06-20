@@ -1,0 +1,282 @@
+#!/bin/bash
+#
+# Copyright (c) Authors: http://www.armbian.com/authors
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+
+# Functions:
+#
+# set_io_scheduler
+# prepare_board
+# add_usb_storage_quirks
+
+
+# Read in basic OS image information
+. /etc/armbian-release
+# and script configuration
+. /usr/lib/armbian/armbian-common
+
+set_io_scheduler() {
+
+	for i in $( lsblk -idn -o NAME | grep -v zram ); do
+		read ROTATE </sys/block/$i/queue/rotational
+		case ${ROTATE} in
+			1) # mechanical drives
+				echo cfq >/sys/block/$i/queue/scheduler
+				echo -e "[\e[0;32m ok \x1B[0m] Setting cfg I/O scheduler for $i"
+				;;
+			0) # flash based
+				echo noop >/sys/block/$i/queue/scheduler
+				echo -e "[\e[0;32m ok \x1B[0m] Setting noop I/O scheduler for $i"
+				;;
+		esac
+	done
+
+} # set_io_scheduler
+
+
+
+
+prepare_board() {
+
+	CheckDevice=$(for i in /var/log /var / ; do findmnt -n -o SOURCE $i && break ; done)
+	# adjust logrotate configs
+	if [[ "${CheckDevice}" == "/dev/zram0" || "${CheckDevice}" == "armbian-ramlog" ]]; then
+		for ConfigFile in /etc/logrotate.d/* ; do sed -i -e "s/log\//log.hdd\//" "${ConfigFile}"; done
+		sed -i "s/log\//log.hdd\//" /etc/logrotate.conf
+	else
+		for ConfigFile in /etc/logrotate.d/* ; do sed -i -e "s/log.hdd\//log\//" "${ConfigFile}"; done
+		sed -i "s/log.hdd\//log\//" /etc/logrotate.conf 
+	fi
+
+	# enable compression where not exists
+	find /etc/logrotate.d/. -type f | xargs grep -H -c 'compress' | grep 0$ | cut -d':' -f1 | xargs -L1 sed -i '/{/ a compress'
+	sed -i "s/#compress/compress/" /etc/logrotate.conf
+
+	# tweak ondemand cpufreq governor settings to increase cpufreq with IO load
+	grep -q ondemand /etc/default/cpufrequtils
+	if [ $? -eq 0 ]; then
+		echo ondemand >/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+		cd /sys/devices/system/cpu
+		for i in cpufreq/ondemand cpu0/cpufreq/ondemand cpu4/cpufreq/ondemand ; do
+			if [ -d $i ]; then
+				echo 1 >${i}/io_is_busy
+				echo 25 >${i}/up_threshold
+				echo 10 >${i}/sampling_down_factor
+			fi
+		done
+	fi
+
+	# IRQ distribution based on $BOARDFAMILY and/or $BOARD_NAME
+	case ${BOARDFAMILY} in
+		cubox|udoo*) # i.MX6 boards: send Ethernet to cpu3, MMC to cpu1/cpu2 (when available)
+			echo 2 >/proc/irq/$(awk -F":" "/mmc0/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -1)/smp_affinity 2>/dev/null
+			echo 4 >/proc/irq/$(awk -F":" "/mmc1/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -1)/smp_affinity 2>/dev/null
+			echo 8 >/proc/irq/$(awk -F":" "/ethernet/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -1)/smp_affinity 2>/dev/null
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			;;
+		mvebu*) # Clearfog/Turris/Helios4/Espressobin: Send network IRQs to cpu1 on both kernels
+			for i in $(awk -F':' '/mwlwifi|mvneta|eth0/{print $1}' /proc/interrupts | sed 's/\ //g'); do
+				echo 2 >/proc/irq/$i/smp_affinity
+			done
+			;;
+		odroidc1) # ODROID-C0/C1/C1+
+			echo 1 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			for i in $(awk -F':' '/Mali_/{print $1}' </proc/interrupts | sed 's/\ //g'); do echo 1 >/proc/irq/${i}/smp_affinity_list; done
+			echo 2 >/proc/irq/$(awk -F":" "/usb2/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 3 >/proc/irq/$(awk -F":" "/eth0/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			;;
+		odroidc2|meson64) # S905/S905X/S912: both kernels: send eth0 to cpu3, mmc/usb2 to cpu2 and usb1 to cpu1
+			# Basics: http://forum.odroid.com/viewtopic.php?f=115&t=8121#p65777
+			for i in $(awk -F':' '/sd_emmc|usb2/{print $1}' </proc/interrupts | sed 's/\ //g'); do
+				echo 1 >/proc/irq/$i/smp_affinity_list
+			done
+			echo 2 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 3 >/proc/irq/$(awk -F":" "/eth0/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			;;
+		odroidxu4) # ODROID XU3/XU4/HC1/MC1/HC2
+			echo 2 >/proc/irq/$(awk -F":" "/:usb2/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" "/:usb3/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 7 >/proc/irq/$(awk -F":" "/:usb5/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 16 >/proc/irq/$(awk -F":" "/dw-mci/ {print \$1}" </proc/interrupts | sed 's/\ //g' | tail -1)/smp_affinity
+			echo 32 >/proc/irq/$(awk -F":" "/dw-mci/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -1)/smp_affinity
+			for i in $(awk -F':' '/11800000.mali/{print $1}' </proc/interrupts | sed 's/\ //g'); do
+				echo 64 >/proc/irq/$i/smp_affinity
+			done
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			echo 32768 >/proc/sys/net/core/rps_sock_flow_entries
+			echo 32768 >/sys/class/net/eth0/queues/rx-0/rps_flow_cnt
+			;;
+		rockchip) # RK3288: usb1 on cpu1, usb3 (EHCI) on cpu2, eth0 and GPU on cpu3
+			echo 2 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" "/usb3/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 8 >/proc/irq/$(awk -F":" "/eth0/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -n1)/smp_affinity
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			for i in $(awk -F':' '/gpu/{print $1}' /proc/interrupts | sed 's/\ //g'); do
+				echo 8 >/proc/irq/$i/smp_affinity
+			done
+			;;
+		rk3328) # ROCK64: GPU on cpu1, USB3 on cpu2, Ethernet on cpu3
+			for i in $(awk -F':' '/Mali/{print $1}' </proc/interrupts | sed 's/\ //g'); do
+				echo 2 >/proc/irq/$i/smp_affinity
+			done
+			echo 2 >/proc/irq/$(awk -F":" "/ehci/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 2 >/proc/irq/$(awk -F":" "/ohci/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" "/xhci/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 8 >/proc/irq/$(awk -F":" "/eth0/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			echo 32768 >/proc/sys/net/core/rps_sock_flow_entries
+			echo 32768 >/sys/class/net/eth0/queues/rx-0/rps_flow_cnt
+			/sbin/ethtool -K eth0 rx off tx off
+			;;
+		s500) # Roseapple Pi/LeMaker Guitar: send USB IRQs to cpu1/cpu2, DMA0 to cpu2 and Ethernet + SD card to cpu3
+			echo 2 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" "/usb2/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity 2>/dev/null
+			echo 4 >/proc/irq/$(awk -F":" "/usb3/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity 2>/dev/null
+			echo 4 >/proc/irq/$(awk -F":" "/owl_dma0/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 8 >/proc/irq/$(awk -F":" "/ethernet_mac/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 8 >/proc/irq/$(awk -F":" "/sdcard/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			;;
+		s5p6818) # NanoPi M3: dw-mci on cpu1, USB host on cpu2, GbE on cpu3, USB OTG on cpu4, video-codec on cpu5
+			for i in $(awk -F':' '/dw-mci/{print $1}' </proc/interrupts | sed 's/\ //g'); do
+				echo 1 >/proc/irq/$i/smp_affinity_list
+			done
+			echo 2 >/proc/irq/$(awk -F":" "/usb3/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 3 >/proc/irq/$(awk -F":" "/eth0/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 4 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			for i in $(awk -F':' '/c0080000.video-codec/{print $1}' </proc/interrupts | sed 's/\ //g'); do
+				echo 5 >/proc/irq/$i/smp_affinity_list
+			done
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			echo 32768 >/proc/sys/net/core/rps_sock_flow_entries
+			echo 32768 >/sys/class/net/eth0/queues/rx-0/rps_flow_cnt
+			;;
+		sun4i|sun5i|rda8810) # only one core, nothing to improve
+			:
+			;;
+		sun6i) # Banana Pi M2: process eth0 on cpu3, SDIO on cpu2, USB on cpu1
+			for i in $(awk -F':' '/hcd:usb/{print $1}' /proc/interrupts | sed 's/\ //g'); do
+				echo 2 >/proc/irq/$i/smp_affinity
+			done
+			for i in $(awk -F':' '/sunxi-mmc/{print $1}' /proc/interrupts | sed 's/\ //g'); do
+				echo 4 >/proc/irq/$i/smp_affinity
+			done
+			echo 8 >/proc/irq/$(awk -F":" '/eth0/ {print $1}' </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			;;
+		sun7i) # try to redistribute eth0 irq to dedicated core
+			echo 2 >/proc/irq/$(awk -F":" '/eth0/ {print $1}' </proc/interrupts | sed 's/\ //g')/smp_affinity 2>/dev/null
+			;;
+		sun8i*) # H3/R40/V40 boards, try to do the best based on specific board since interfaces vary a lot
+			# 10 or 120 sec user feedback that the board is ready after 1st login with 3.4 kernel
+			SwapState="$(grep swap /etc/fstab)"
+			if [ "X${SwapState}" != "X" ]; then
+				(echo heartbeat >/sys/class/leds/*green*/trigger) 2>/dev/null
+				[ -f "/root/.not_logged_in_yet" ] && BlinkTime=120 || BlinkTime=10
+				(sleep ${BlinkTime} && (echo default-on >/sys/class/leds/*green*/trigger) 2>/dev/null) &
+			fi
+
+			# check kernel version for IRQ/module names
+			case ${KERNELID} in
+				3*)
+					# BSP kernel
+					GbE="gmac0"; WiFi="wlan0"; USB1="usb2"; USB2="usb3"; USB3="usb4"
+					;;
+				*)
+					# Mainline kernel
+					GbE="eth0"; WiFi="wlan0"; USB1="usb3"; USB2="usb4"; USB3="usb5"
+					;;
+			esac
+			# Assign 1st and 2nd USB port to cpu1 and cpu2 on every sun8i board
+			echo 2 >/proc/irq/$(awk -F":" "/${USB1}/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" "/${USB2}/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			case ${BOARD_NAME} in
+				"Orange Pi+"|"Orange Pi+ 2"|"Orange Pi+ 2E"|"Banana Pi M2*"|"NanoPi M1 Plus")
+					# Send GBit Ethernet IRQs to cpu3
+					echo 8 >/proc/irq/$(awk -F":" "/${GbE}/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+					echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+					;;
+				"NanoPi M1"|"Orange Pi PC Plus"|"Orange Pi PC +"|"Orange Pi PC"|"NanoPi Neo"|"Orange Pi Zero")
+					# Send 3rd USB port's IRQs to cpu3
+					echo 8 >/proc/irq/$(awk -F":" "/${USB3}/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+					;;
+				"Orange Pi Lite"|"NanoPi Air"|"Lime A33"|"Orange Pi Zero Plus 2"*)
+					# Send SDIO/mmc IRQs to cpu3
+					for i in $(awk -F':' '/sunxi-mmc/{print $1}' </proc/interrupts | sed 's/\ //g'); do
+						echo 8 >/proc/irq/$i/smp_affinity
+					done
+					;;
+				"Beelink X2"|"Orange Pi R1")
+					# Wifi module reload workaround / fix
+					[[ -n $(lsmod | grep 8189es) ]] && rmmod 8189es && modprobe 8189es
+					# Send SDIO to cpu1, USB to cpu2, Ethernet to cpu3
+					for i in $(awk -F':' '/sunxi-mmc/{print $1}' </proc/interrupts | sed 's/\ //g'); do
+						echo 2 >/proc/irq/$i/smp_affinity
+					done
+					for i in $(awk -F':' '/hcd:usb/{print $1}' </proc/interrupts | sed 's/\ //g'); do
+						echo 4 >/proc/irq/$i/smp_affinity
+					done
+					echo 8 >/proc/irq/$(awk -F":" "/${GbE}/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+					;;
+			esac
+			;;
+		sun50i*|sunxi64*) # A64/H5 based boards like Pine64, OPi PC 2, NanoPi NEO 2
+			# Send IRQs for the lower real USB port (usb2) to cpu2 and for the upper (OTG/usb1) to cpu1
+			echo 2 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" "/usb2/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 8 >/proc/irq/$(awk -F":" "/sunxi-mmc/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -n1)/smp_affinity
+			echo 8 >/proc/irq/$(awk -F":" "/eth/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -n1)/smp_affinity
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			;;
+	esac
+} # prepare_board
+
+add_usb_storage_quirks() {
+
+	# check for /boot/armbianEnv.txt existence
+	[ -f /boot/armbianEnv.txt ] || return
+
+	# preserve old contents if existent
+	TMPFILE=$(mktemp /tmp/${0##*/}.XXXXXX)
+	trap "sleep 1 ; rm \"${TMPFILE}\" ; exit 0" 0 1 2 3 15
+	awk -F"=" '/^usbstoragequirks/ {print $2}' </boot/armbianEnv.txt | tr -d -c '[:graph:]' >${TMPFILE}
+
+	# UAS blacklist Norelsys NS1068X and NS1066X since broken. Can be removed once
+	# they're blacklisted upstream
+	[ -s ${TMPFILE} ] || echo "0x2537:0x1066:u,0x2537:0x1068:u" >${TMPFILE}
+
+	# check for connected Seagate or WD HDD enclosures and blacklist them all
+	lsusb | awk -F" " '{print "0x"$6}' | sed 's/:/:0x/' | sort | uniq | while read ; do
+		case ${REPLY} in
+			"0x0bc2:"*|"0x1058:"*)
+				grep -q "${REPLY}" ${TMPFILE} || sed -i "1 s/\$/,${REPLY}:u/" ${TMPFILE}
+				;;
+		esac
+	done
+
+	read USBQUIRKS <${TMPFILE}
+	sed -i '/^usbstoragequirks/d' /boot/armbianEnv.txt
+	echo "usbstoragequirks=${USBQUIRKS}" >>/boot/armbianEnv.txt
+	sync &
+	if [ -f /sys/module/usb_storage/parameters/quirks ]; then
+		echo ${USBQUIRKS} >/sys/module/usb_storage/parameters/quirks
+	fi
+
+} # add_usb_storage_quirks
+
+case $1 in
+	*start*)
+		# set optimal disk scheduler settings
+		set_io_scheduler &
+
+		# hardware preparation
+		prepare_board &
+
+		# add usb quirks
+		add_usb_storage_quirks &
+		;;
+esac

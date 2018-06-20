@@ -49,7 +49,7 @@ case $BRANCH in
 	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 
 	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-	KERNELBRANCH='branch:master'
+	KERNELBRANCH='branch:linux-4.17.y'
 	KERNELDIR=$MAINLINE_KERNEL_DIR
 	KERNEL_USE_GCC='> 7.0'
 	KERNELPATCHDIR='sunxi-dev'
