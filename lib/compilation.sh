@@ -191,7 +191,12 @@ compile_uboot()
 	#!/bin/bash
 	source /usr/lib/u-boot/platform_install.sh
 	[[ \$DEVICE == /dev/null ]] && exit 0
-	[[ -z \$DEVICE ]] && DEVICE="/dev/mmcblk0"
+	if [[ -z \$DEVICE ]]; then
+		DEVICE="/dev/mmcblk0"
+		# proceed to other options.
+		[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk1"
+		[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk2"
+	fi
 	[[ \$(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
 	if [[ -b \$DEVICE ]]; then
 		echo "Updating u-boot on \$DEVICE" >&2
