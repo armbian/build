@@ -11,8 +11,12 @@ CPUMAX="1200000"
 #
 KERNEL_TARGET="next"
 CLI_TARGET=""
-
+#
 CLI_BETA_TARGET=""
+#
+DESKTOP_TARGET=""
+#
+DESKTOP_BETA_TARGET="xenial:next"
 #
 RECOMMENDED="Ubuntu_xenial_next_nightly:75"
 #
