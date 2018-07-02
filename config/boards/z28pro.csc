@@ -6,7 +6,7 @@ BOOTCONFIG="rock64-rk3328_defconfig"
 MODULES=""
 MODULES_NEXT=""
 #
-KERNEL_TARGET="default,dev"
+KERNEL_TARGET="default"
 CLI_TARGET=""
 DESKTOP_TARGET="stretch:default"
 #
