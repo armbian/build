@@ -32,7 +32,7 @@ case $BRANCH in
 	;;
 
 	dev)
-	BOOTBRANCH='tag:v2018.03'
+	BOOTBRANCH='tag:v2018.05'
 	BOOTPATCHDIR='u-boot-sunxi-dev'
 
 	GOVERNOR=ondemand
