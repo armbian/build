@@ -2,57 +2,55 @@ ARCH=arm64
 KERNEL_IMAGE_TYPE=Image
 BOOTDELAY=1
 
+BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
+BOOTDIR=$MAINLINE_UBOOT_DIR
+BOOTBRANCH='tag:v2018.05'
+BOOTPATCHDIR='u-boot-sunxi'
+UBOOT_USE_GCC='> 7.0'
+UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
+BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
+
 # Here we want to rename LINUXFAMILY from sun50iw1, sun50iw2, etc for next and dev branches
 # since this doesn't affect any stable images don't add any backwards compatibility hacks
 [[ $BRANCH != default ]] && LINUXFAMILY=sunxi64
 
 case $BRANCH in
 	default)
-	CAN_BUILD_STRETCH=no
+
+		CAN_BUILD_STRETCH=no
+
 	;;
 
 	next)
-	ATFSOURCE='https://github.com/apritzel/arm-trusted-firmware'
-	ATFDIR='arm-trusted-firmware-sunxi-mainline'
-	ATFBRANCH='branch:allwinner'
-	ATF_USE_GCC='> 6.3'
-	ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
 
-	BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
-	BOOTDIR=$MAINLINE_UBOOT_DIR
-	BOOTBRANCH='tag:v2017.11'
-	BOOTPATCHDIR='u-boot-sunxi'
-	UBOOT_USE_GCC='> 7.0'
-	UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
-	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
+		ATFSOURCE='https://github.com/apritzel/arm-trusted-firmware'
+		ATFDIR='arm-trusted-firmware-sunxi-mainline'
+		ATFBRANCH='branch:allwinner'
+		ATF_USE_GCC='> 6.3'
+		ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
 
-	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-	KERNELBRANCH='branch:linux-4.17.y'
-	KERNELDIR=$MAINLINE_KERNEL_DIR
-	KERNEL_USE_GCC='> 7.0'
-	KERNELPATCHDIR='sunxi-next'
+		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+		KERNELBRANCH='branch:linux-4.17.y'
+		KERNELDIR=$MAINLINE_KERNEL_DIR
+		KERNEL_USE_GCC='> 7.0'
+		KERNELPATCHDIR='sunxi-next'
+
 	;;
 
 	dev)
-	ATFSOURCE='https://github.com/apritzel/arm-trusted-firmware'
-	ATFDIR='arm-trusted-firmware-sunxi-mainline'
-	ATFBRANCH='branch:allwinner'
-	ATF_USE_GCC='> 6.3'
-	ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
 
-	BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
-	BOOTDIR=$MAINLINE_UBOOT_DIR
-	BOOTBRANCH='tag:v2018.05'
-	BOOTPATCHDIR='u-boot-sunxi-dev'
-	UBOOT_USE_GCC='> 7.0'
-	UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
-	BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
+		ATFSOURCE='https://github.com/apritzel/arm-trusted-firmware'
+		ATFDIR='arm-trusted-firmware-sunxi-mainline'
+		ATFBRANCH='branch:allwinner'
+		ATF_USE_GCC='> 6.3'
+		ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
 
-	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-	KERNELBRANCH='branch:linux-4.17.y'
-	KERNELDIR=$MAINLINE_KERNEL_DIR
-	KERNEL_USE_GCC='> 7.0'
-	KERNELPATCHDIR='sunxi-dev'
+		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+		KERNELBRANCH='branch:master'
+		KERNELDIR=$MAINLINE_KERNEL_DIR
+		KERNEL_USE_GCC='> 7.0'
+		KERNELPATCHDIR='sunxi-dev'
+
 	;;
 esac
 
