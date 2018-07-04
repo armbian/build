@@ -10,7 +10,7 @@
 # common options
 # daily beta build contains date in subrevision
 if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
-REVISION="5.46$SUBREVISION" # all boards have same revision
+REVISION="5.51$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 MAINTAINER="Igor Pecovnik" # deb signature
 MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -166,7 +166,7 @@ case $RELEASE in
 	;;
 
 	xenial)
-		PACKAGE_LIST_RELEASE="man-db wget nano zram-config"
+		PACKAGE_LIST_RELEASE="man-db wget nano"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common system-config-printer-gnome"
 	;;
@@ -178,7 +178,7 @@ case $RELEASE in
 	;;
 
 	bionic)
-		PACKAGE_LIST_RELEASE="man-db zram-config less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
+		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer language-selector-gnome"
 	;;

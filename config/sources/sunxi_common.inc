@@ -32,12 +32,12 @@ case $BRANCH in
 	;;
 
 	dev)
-	BOOTBRANCH='tag:v2018.03'
+	BOOTBRANCH='tag:v2018.05'
 	BOOTPATCHDIR='u-boot-sunxi-dev'
 
 	GOVERNOR=ondemand
 	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-	KERNELBRANCH='branch:master'
+	KERNELBRANCH='branch:linux-4.17.y'
 	KERNELDIR=$MAINLINE_KERNEL_DIR
 	KERNEL_USE_GCC='> 7.0'
 	;;

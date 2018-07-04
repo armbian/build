@@ -232,6 +232,12 @@ create_rootfs_cache()
 
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -c > $cache_fname
+
+		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
+		if [[ -n $GPG_PASS ]]; then
+			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes $cache_fname
+		fi
+
 	fi
 
 	# used for internal purposes. Faster rootfs cache rebuilding
@@ -344,13 +350,12 @@ prepare_partitions()
 				local sdsize=$(bc -l <<< "scale=0; (($imagesize * 0.8) / 4 + 1) * 4")
 				;;
 			*)
-				# Hardcoded overhead +40% and +128MB for ext4 is needed for desktop images,
-				# for CLI it could be lower. Also add extra 128 MiB for the emergency swap
-				# file creation and align the size up to 4MiB
+				# Hardcoded overhead +25% is needed for desktop images,
+				# for CLI it could be lower. Align the size up to 4MiB
 				if [[ $BUILD_DESKTOP == yes ]]; then
-					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.4) / 1 + 128) / 4 + 1) * 4")
+					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.25) / 1 + 0) / 4 + 1) * 4")
 				else
-					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.2) / 1 + 128) / 4 + 1) * 4")
+					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.15) / 1 + 0) / 4 + 1) * 4")
 				fi
 				;;
 		esac

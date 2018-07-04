@@ -1,0 +1,70 @@
+#!/bin/bash
+#
+# Copyright (c) Authors: http://www.armbian.com/authors
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+
+# Functions:
+#
+# activate_zram
+
+
+# Read in basic OS image information
+. /etc/armbian-release
+# and script configuration
+. /usr/lib/armbian/armbian-common
+
+[ -f /etc/default/armbian-zram-config ] && . /etc/default/armbian-zram-config
+
+activate_zram() {
+
+	# Do not interfere with already present config-zram package
+	dpkg -l | grep -q 'zram-config' && return
+	[[ "$ENABLED" != "true" ]] && return
+
+	# Load zram module with n instances (one per CPU core, 4 are the maximum)
+	cpu_cores=$(grep -c '^processor' /proc/cpuinfo | sed 's/^0$/1/')
+	[[ ${cpu_cores} -gt 4 ]] && zram_devices=4 || zram_devices=${cpu_cores}
+	module_args="$(modinfo zram | awk -F" " '/num_devices/ {print $2}' | cut -f1 -d:)"
+	[[ -n ${module_args} ]] && modprobe zram ${module_args}=$(( ${zram_devices} + 1 )) || return
+
+	# Use half of the real memory by default --> 1/${ram_divisor}
+	ram_divisor=2
+	mem_info=$(LC_ALL=C free -w 2>/dev/null | grep "^Mem" || LC_ALL=C free | grep "^Mem")
+	memory_total=$(awk '{printf("%d",$2*1024)}' <<<${mem_info})
+	mem_per_zram_device=$(( ${memory_total} / ${zram_devices} / ${ram_divisor} ))
+
+	for (( i=1; i<=zram_devices; i++ )); do
+		[[ -f /sys/block/zram${i}/comp_algorithm ]] && echo lz4 >/sys/block/zram${i}/comp_algorithm 2>/dev/null
+		echo -n ${mem_per_zram_device} > /sys/block/zram${i}/disksize
+		mkswap /dev/zram${i}
+		swapon -p 5 /dev/zram${i}
+	done
+	echo -e "\n### Activated ${zram_devices} zram swap devices with ${mem_per_zram_device} MB each\n" >>${Log}
+
+	# Dedicate SIZE MB (uncompressed) /dev/zram0 device for log2ram and choose most efficient
+	# compression scheme available -- https://patchwork.kernel.org/patch/9918897/
+	for algo in lz4 quicklz zlib brotli zstd ; do
+		echo ${algo} >/sys/block/zram0/comp_algorithm 2>/dev/null
+	done
+	echo -n $(($SIZE*1024*1024)) > /sys/block/zram0/disksize
+
+	# if it fails, select lz4. Workaround for some older kernels
+	if [[ $? == 1 ]]; then
+		echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null
+		echo -n $(($SIZE*1024*1024)) > /sys/block/zram0/disksize
+	fi
+
+	mkfs.ext4 -O ^has_journal -s 1024 -L log2ram /dev/zram0
+	read algo </sys/block/zram0/comp_algorithm
+	echo -e "### Activated Armbian ramlog partition with ${algo} compression\n" >>${Log}
+} # activate_zram
+
+case $1 in
+	*start*)
+		# activate zram
+		activate_zram
+		;;
+esac

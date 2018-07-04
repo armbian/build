@@ -30,7 +30,7 @@ setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} panic=10 ${co
 if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"; fi
 
 load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
-load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}zImage
+load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image
 
 load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}

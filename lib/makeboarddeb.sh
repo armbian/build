@@ -36,7 +36,7 @@ create_board_package()
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Suggests: armbian-config
-	Replaces: base-files, armbian-tools-$RELEASE
+	Replaces: zram-config, base-files, armbian-tools-$RELEASE
 	Recommends: bsdutils, parted, python3-apt, util-linux, toilet
 	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
 	EOF
@@ -52,6 +52,39 @@ create_board_package()
 		rm /etc/network/interfaces
 		mv /etc/network/interfaces.tmp /etc/network/interfaces
 	fi
+	# disable deprecated services
+	systemctl disable armhwinfo.service >/dev/null 2>&1
+	#
+	[ -f "/etc/profile.d/activate_psd_user.sh" ] && rm /etc/profile.d/activate_psd_user.sh
+	[ -f "/etc/profile.d/check_first_login.sh" ] && rm /etc/profile.d/check_first_login.sh
+	[ -f "/etc/profile.d/check_first_login_reboot.sh" ] && rm /etc/profile.d/check_first_login_reboot.sh
+	[ -f "/etc/profile.d/ssh-title.sh" ] && rm /etc/profile.d/ssh-title.sh
+	#
+	[ -f "/etc/update-motd.d/10-header" ] && rm /etc/update-motd.d/10-header
+	[ -f "/etc/update-motd.d/30-sysinfo" ] && rm /etc/update-motd.d/30-sysinfo
+	[ -f "/etc/update-motd.d/35-tips" ] && rm /etc/update-motd.d/35-tips
+	[ -f "/etc/update-motd.d/40-updates" ] && rm /etc/update-motd.d/40-updates
+	[ -f "/etc/update-motd.d/98-autoreboot-warn" ] && rm /etc/update-motd.d/98-autoreboot-warn
+	[ -f "/etc/update-motd.d/99-point-to-faq" ] && rm /etc/update-motd.d/99-point-to-faq
+	# Remove Ubuntu junk
+	[ -f "/etc/update-motd.d/50-motd-news" ] && rm /etc/update-motd.d/50-motd-news
+	[ -f "/etc/update-motd.d/80-esm" ] && rm /etc/update-motd.d/80-esm
+	[ -f "/etc/update-motd.d/80-livepatch" ] && rm /etc/update-motd.d/80-livepatch
+	# Remove distro unattended-upgrades config
+	[ -f "/etc/apt/apt.conf.d/50unattended-upgrades" ] && rm /etc/apt/apt.conf.d/50unattended-upgrades
+	#
+	[ -f "/etc/apt/apt.conf.d/02compress-indexes" ] && rm /etc/apt/apt.conf.d/02compress-indexes
+	[ -f "/etc/apt/apt.conf.d/02periodic" ] && rm /etc/apt/apt.conf.d/02periodic
+	[ -f "/etc/apt/apt.conf.d/no-languages" ] && rm /etc/apt/apt.conf.d/no-languages
+	[ -f "/etc/init.d/armhwinfo" ] && rm /etc/init.d/armhwinfo
+	[ -f "/etc/logrotate.d/armhwinfo" ] && rm /etc/logrotate.d/armhwinfo
+	[ -f "/etc/init.d/firstrun" ] && rm /etc/init.d/firstrun
+	[ -f "/etc/init.d/resize2fs" ] && rm /etc/init.d/resize2fs
+	[ -f "/lib/systemd/system/firstrun-config.service" ] && rm /lib/systemd/system/firstrun-config.service
+	[ -f "/lib/systemd/system/firstrun.service" ] && rm /lib/systemd/system/firstrun.service
+	[ -f "/lib/systemd/system/resize2fs.service" ] && rm /lib/systemd/system/resize2fs.service
+	[ -f "/usr/lib/armbian/apt-updates" ] && rm /usr/lib/armbian/apt-updates
+	[ -f "/usr/lib/armbian/firstrun-config.sh" ] && rm /usr/lib/armbian/firstrun-config.sh
 	# make a backup since we are unconditionally overwriting this on update
 	[ -f "/etc/default/cpufrequtils" ] && cp /etc/default/cpufrequtils /etc/default/cpufrequtils.dpkg-old
 	dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename \
@@ -67,7 +100,7 @@ create_board_package()
 	if [ remove = "\$1" ] || [ abort-install = "\$1" ]; then
 		dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename \
 			--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
-		systemctl disable log2ram.service armhwinfo.service >/dev/null 2>&1
+		systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-ramlog.service >/dev/null 2>&1
 	fi
 	exit 0
 	EOF
@@ -77,20 +110,44 @@ create_board_package()
 	# set up post install script
 	cat <<-EOF > $destination/DEBIAN/postinst
 	#!/bin/sh
+	#
+	# ${BOARD} BSP post installation script
+	#
+
+	# enable ramlog only if it was enabled before
+	if [ -n "\$(service log2ram status 2> /dev/null)" ]; then
+			systemctl --no-reload enable armbian-ramlog.service
+	fi
+
+	# check if it was disabled in config and disable in new service
+	if [ -n "\$(grep -w '^ENABLED=false' /etc/default/log2ram 2> /dev/null)" ]; then
+			sed -i "s/^ENABLED=.*/ENABLED=false/" /etc/default/armbian-ramlog
+	fi
+
+	# now cleanup and remove old ramlog service
+	systemctl disable log2ram.service >/dev/null 2>&1
+	[ -f "/usr/sbin/log2ram" ] && rm /usr/sbin/log2ram
+	[ -f "/usr/share/log2ram/LICENSE" ] && rm -r /usr/share/log2ram
+	[ -f "/lib/systemd/system/log2ram.service" ] && rm /lib/systemd/system/log2ram.service
+	[ -f "/etc/cron.daily/log2ram" ] && rm /etc/cron.daily/log2ram
+	[ -f "/etc/default/log2ram.dpkg-dist" ] && rm /etc/default/log2ram.dpkg-dist
+
 	[ ! -f "/etc/network/interfaces" ] && cp /etc/network/interfaces.default /etc/network/interfaces
 	ln -sf /var/run/motd /etc/motd
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
 	rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
 	if [ ! -f "/etc/default/armbian-motd" ]; then
-		cp /etc/default/armbian-motd.dpkg-dist /etc/default/armbian-motd
+		mv /etc/default/armbian-motd.dpkg-dist /etc/default/armbian-motd
 	fi
-	if [ ! -f "/etc/default/log2ram" ]; then
-		cp /etc/default/log2ram.dpkg-dist /etc/default/log2ram
+	if [ ! -f "/etc/default/armbian-ramlog" ]; then
+		mv /etc/default/armbian-ramlog.dpkg-dist /etc/default/armbian-ramlog
 	fi
-	if [ -f "/etc/systemd/system/log2ram.service" ]; then
-		mv /etc/systemd/system/log2ram.service /etc/systemd/system/log2ram-service.dpkg-old
+	if [ ! -f "/etc/default/armbian-zram-config" ]; then
+		mv /etc/default/armbian-zram-config.dpkg-dist /etc/default/armbian-zram-config
 	fi
+
+	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service >/dev/null 2>&1
 	exit 0
 	EOF
 
