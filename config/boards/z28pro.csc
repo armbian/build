@@ -1,4 +1,4 @@
-# RK3328 quad core SoC 1GB-2GB Gbit WiFi
+# RK3328 quad core SoC 2GB/16GB Gbit WiFi
 BOARD_NAME="Z28 PRO"
 BOARDFAMILY="rk3328"
 BOOTCONFIG="rock64-rk3328_defconfig"
