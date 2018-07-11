@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright (c) Authors: http://www.armbian.com/authors
 #
@@ -6,15 +6,15 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 
-SIZE=40M
-USE_RSYNC=false
+SIZE=50M
+USE_RSYNC=true
 ENABLED=false
 
 [ -f /etc/default/armbian-ramlog ] && . /etc/default/armbian-ramlog
 
 [ "$ENABLED" != true ] && exit 0
 
-# don't touch anything below here.
+# Never touch anything below here. Only edit /etc/default/armbian-ramlog
 
 HDD_LOG=/var/log.hdd/
 RAM_LOG=/var/log/
@@ -22,68 +22,94 @@ LOG2RAM_LOG="${HDD_LOG}armbian-ramlog.log"
 LOG_OUTPUT="tee -a $LOG2RAM_LOG"
 
 isSafe () {
-    [ -d $HDD_LOG ] || echo "ERROR: $HDD_LOG doesn't exist!  Can't sync."
-    [ -d $HDD_LOG ] || exit 1
+	[ -d $HDD_LOG ] || echo "ERROR: $HDD_LOG doesn't exist! Can't sync."
+	[ -d $HDD_LOG ] || exit 1
 }
 
 RecreateLogs (){
-	# in case of crash those services doesn't start if there are no dirs & logs
-	[ ! -d /var/log/proftpd ] && mkdir -p /var/log/proftpd
-	[ ! -d /var/log/nginx ] && mkdir -p /var/log/nginx
-	[ ! -f /var/log/proftpd/controls.log ] && touch /var/log/proftpd/controls.log
-	[ ! -f /var/log/nginx/access.log ] && touch /var/log/nginx/access.log
-	[ ! -f /var/log/nginx/error.log ] && touch /var/log/nginx/error.log
+	# in case of crash those services don't start if there are no dirs & logs
+	check_if_installed apache2 && [ ! -d /var/log/apache2 ] && mkdir -p /var/log/apache2
+	check_if_installed proftpd-basic && [ ! -d /var/log/proftpd ] && \
+		(mkdir -p /var/log/proftpd ; touch /var/log/proftpd/controls.log)
+	check_if_installed nginx && [ ! -d /var/log/nginx ] && \
+		(mkdir -p /var/log/nginx ; touch /var/log/nginx/access.log ; touch /var/log/nginx/error.log)
+	check_if_installed samba && [ ! -d /var/log/samba ] && mkdir -p /var/log/samba
 }
 
 syncToDisk () {
-    isSafe
+	isSafe
 
-    if [ "$USE_RSYNC" = true ]; then
-        rsync -aXWv --exclude armbian-ramlog.log --links $RAM_LOG $HDD_LOG 2>&1 | $LOG_OUTPUT
-    else
-        cp -rfup $RAM_LOG -T $HDD_LOG 2>&1 | $LOG_OUTPUT
-    fi
+	echo -e "\n\n$(date): Syncing logs from $LOG_TYPE to storage\n" | $LOG_OUTPUT
+
+	if [ "$USE_RSYNC" = true ]; then
+		rsync -aXWv --exclude armbian-ramlog.log --links $RAM_LOG $HDD_LOG 2>&1 | $LOG_OUTPUT
+	else
+		cp -rfup $RAM_LOG -T $HDD_LOG 2>&1 | $LOG_OUTPUT
+	fi
+
+	sync
 }
 
 syncFromDisk () {
-    isSafe
+	isSafe
 
-    if [ "$USE_RSYNC" = true ]; then
+	echo -e "\n\n$(date): Loading logs from storage to $LOG_TYPE\n" | $LOG_OUTPUT
+
+	if [ "$USE_RSYNC" = true ]; then
 		rsync -aXWv --delete --exclude armbian-ramlog.log --exclude *.gz --exclude='*.[0-9]' --links $HDD_LOG $RAM_LOG 2>&1 | $LOG_OUTPUT
-    else
-		#find $RAM_LOG* -maxdepth 1 -type f -not \( -name '*.[0-9]' -or -name '*.xz*' -or -name '*.gz'   \) | awk -v var="$RAM_LOG" '{print var $1}' | xargs cp -t $RAM_LOG
+	else
 		find $HDD_LOG* -maxdepth 1 -type f -not \( -name '*.[0-9]' -or -name '*.xz*' -or -name '*.gz' \) | xargs cp -ut $RAM_LOG
-    fi
+	fi
+
+	sync
 }
 
+check_if_installed () {
+	local DPKG_Status="$(dpkg -s "$1" 2>/dev/null | awk -F": " '/^Status/ {print $2}')"
+	if [[ "X${DPKG_Status}" = "X" || "${DPKG_Status}" = *deinstall* ]]; then
+		return 1
+	else
+		return 0
+	fi
+}
+
+# Check whether zram device is available or we need to use tmpfs
+if [ "$(blkid -s TYPE /dev/zram0 | awk ' { print $2 } ' | grep ext4)" ]; then
+	LOG_TYPE="zram"
+else
+	LOG_TYPE="tmpfs"
+fi
 
 case "$1" in
-  start)
-      [ -d $HDD_LOG ] || mkdir $HDD_LOG
-	  mount --bind $RAM_LOG $HDD_LOG
-	  mount --make-private $HDD_LOG
-      rm -f $LOG2RAM_LOG
-	  # zram type
-      if [ "$(blkid -s TYPE /dev/zram0 | awk ' { print $2 } ' | grep ext4)" ]; then
-		mount /dev/zram0 $RAM_LOG | $LOG_OUTPUT
-      else
-		mount -t tmpfs -o nosuid,noexec,nodev,mode=0755,size=$SIZE armbian-ramlog $RAM_LOG | $LOG_OUTPUT
-      fi
-      syncFromDisk
-	  RecreateLogs
-      ;;
+	start)
+		[ -d $HDD_LOG ] || mkdir -p $HDD_LOG
+		mount --bind $RAM_LOG $HDD_LOG
+		mount --make-private $HDD_LOG
 
-  stop)
-      syncToDisk
-      umount -l $RAM_LOG
-      umount -l $HDD_LOG
-      ;;
+		case $LOG_TYPE in
+			zram)
+				echo -e "Mounting /dev/zram0 as $RAM_LOG \c" | $LOG_OUTPUT
+				mount /dev/zram0 $RAM_LOG 2>&1 | $LOG_OUTPUT
+				;;
+			tmpfs)
+				echo -e "Setting up $RAM_LOG as tmpfs \c" | $LOG_OUTPUT
+				mount -t tmpfs -o nosuid,noexec,nodev,mode=0755,size=$SIZE armbian-ramlog $RAM_LOG 2>&1 | $LOG_OUTPUT
+				;;
+		esac
 
-  write)
-      syncToDisk
-      ;;
-  *)
-      echo "Usage: log2ram {start|stop|write}" >&2
-      exit 1
-      ;;
+		syncFromDisk
+		RecreateLogs
+		;;
+	stop)
+		syncToDisk
+		umount -l $RAM_LOG
+		umount -l $HDD_LOG
+		;;
+	write)
+		syncToDisk
+		;;
+	*)
+		echo "Usage: ${0##*/} {start|stop|write}" >&2
+		exit 1
+		;;
 esac
