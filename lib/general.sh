@@ -639,7 +639,7 @@ prepare_host()
 
 	# Use backup server by default to balance the load
 
-	ARMBIANSERVER=dl.uk.armbian.com
+	ARMBIANSERVER=dl.armbian.com
 
 	local toolchains=(
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
