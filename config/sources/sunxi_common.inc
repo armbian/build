@@ -1,6 +1,6 @@
 BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 BOOTDIR=$MAINLINE_UBOOT_DIR
-BOOTBRANCH='tag:v2017.11'
+BOOTBRANCH='tag:v2018.05'
 BOOTSCRIPT="boot-sunxi.cmd:boot.cmd"
 BOOTENV_FILE='sunxi-default.txt'
 BOOTPATCHDIR='u-boot-sunxi'
@@ -11,35 +11,37 @@ UBOOT_USE_GCC='> 7.0'
 UBOOT_FW_ENV='0x88000,0x20000' # /etc/fw_env.config offset and env size
 
 BOOTDELAY=1
+GOVERNOR=ondemand
 
 # Here we want to rename LINUXFAMILY from sun4i, sun5i, etc for next and dev branches
 [[ $BRANCH != default ]] && LINUXFAMILY=sunxi
 
 case $BRANCH in
 	default)
-	GOVERNOR=interactive
-	CAN_BUILD_STRETCH=no
+
+		GOVERNOR=interactive
+		CAN_BUILD_STRETCH=no
+
 	;;
 
 	next)
-	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-	KERNELBRANCH='branch:linux-4.14.y'
-	KERNELDIR=$MAINLINE_KERNEL_DIR
 
-	GOVERNOR=ondemand
+		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+		KERNELBRANCH='branch:linux-4.17.y'
+		KERNELDIR=$MAINLINE_KERNEL_DIR
 
-	KERNEL_USE_GCC='> 7.0'
+		KERNEL_USE_GCC='> 7.0'
+
 	;;
 
 	dev)
-	BOOTBRANCH='tag:v2018.05'
-	BOOTPATCHDIR='u-boot-sunxi-dev'
 
-	GOVERNOR=ondemand
-	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-	KERNELBRANCH='branch:linux-4.17.y'
-	KERNELDIR=$MAINLINE_KERNEL_DIR
-	KERNEL_USE_GCC='> 7.0'
+		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+		KERNELBRANCH='branch:master'
+		KERNELDIR=$MAINLINE_KERNEL_DIR
+
+		KERNEL_USE_GCC='> 7.0'
+
 	;;
 esac
 
