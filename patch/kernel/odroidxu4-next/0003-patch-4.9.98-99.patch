@@ -1,0 +1,2106 @@
+diff --git a/Documentation/virtual/kvm/api.txt b/Documentation/virtual/kvm/api.txt
+index 1f5eab4ef88f..e46c14fac9da 100644
+--- a/Documentation/virtual/kvm/api.txt
++++ b/Documentation/virtual/kvm/api.txt
+@@ -2118,6 +2118,9 @@ ARM 32-bit VFP control registers have the following id bit patterns:
+ ARM 64-bit FP registers have the following id bit patterns:
+   0x4030 0000 0012 0 <regno:12>
+ 
++ARM firmware pseudo-registers have the following bit pattern:
++  0x4030 0000 0014 <regno:16>
++
+ 
+ arm64 registers are mapped using the lower 32 bits. The upper 16 of
+ that is the register group type, or coprocessor number:
+@@ -2134,6 +2137,9 @@ arm64 CCSIDR registers are demultiplexed by CSSELR value:
+ arm64 system registers have the following id bit patterns:
+   0x6030 0000 0013 <op0:2> <op1:3> <crn:4> <crm:4> <op2:3>
+ 
++arm64 firmware pseudo-registers have the following bit pattern:
++  0x6030 0000 0014 <regno:16>
++
+ 
+ MIPS registers are mapped using the lower 32 bits.  The upper 16 of that is
+ the register group type:
+@@ -2656,7 +2662,8 @@ Possible features:
+ 	  and execute guest code when KVM_RUN is called.
+ 	- KVM_ARM_VCPU_EL1_32BIT: Starts the CPU in a 32bit mode.
+ 	  Depends on KVM_CAP_ARM_EL1_32BIT (arm64 only).
+-	- KVM_ARM_VCPU_PSCI_0_2: Emulate PSCI v0.2 for the CPU.
++	- KVM_ARM_VCPU_PSCI_0_2: Emulate PSCI v0.2 (or a future revision
++          backward compatible with v0.2) for the CPU.
+ 	  Depends on KVM_CAP_ARM_PSCI_0_2.
+ 	- KVM_ARM_VCPU_PMU_V3: Emulate PMUv3 for the CPU.
+ 	  Depends on KVM_CAP_ARM_PMU_V3.
+diff --git a/Documentation/virtual/kvm/arm/psci.txt b/Documentation/virtual/kvm/arm/psci.txt
+new file mode 100644
+index 000000000000..aafdab887b04
+--- /dev/null
++++ b/Documentation/virtual/kvm/arm/psci.txt
+@@ -0,0 +1,30 @@
++KVM implements the PSCI (Power State Coordination Interface)
++specification in order to provide services such as CPU on/off, reset
++and power-off to the guest.
++
++The PSCI specification is regularly updated to provide new features,
++and KVM implements these updates if they make sense from a virtualization
++point of view.
++
++This means that a guest booted on two different versions of KVM can
++observe two different "firmware" revisions. This could cause issues if
++a given guest is tied to a particular PSCI revision (unlikely), or if
++a migration causes a different PSCI version to be exposed out of the
++blue to an unsuspecting guest.
++
++In order to remedy this situation, KVM exposes a set of "firmware
++pseudo-registers" that can be manipulated using the GET/SET_ONE_REG
++interface. These registers can be saved/restored by userspace, and set
++to a convenient value if required.
++
++The following register is defined:
++
++* KVM_REG_ARM_PSCI_VERSION:
++
++  - Only valid if the vcpu has the KVM_ARM_VCPU_PSCI_0_2 feature set
++    (and thus has already been initialized)
++  - Returns the current PSCI version on GET_ONE_REG (defaulting to the
++    highest PSCI version implemented by KVM and compatible with v0.2)
++  - Allows any PSCI version implemented by KVM and compatible with
++    v0.2 to be set with SET_ONE_REG
++  - Affects the whole VM (even if the register view is per-vcpu)
+diff --git a/Makefile b/Makefile
+index 96d770488ae6..d51e99f4a987 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 98
++SUBLEVEL = 99
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/arch/arm/include/asm/kvm_host.h b/arch/arm/include/asm/kvm_host.h
+index 9fe1043e72d2..f4dab20ac9f3 100644
+--- a/arch/arm/include/asm/kvm_host.h
++++ b/arch/arm/include/asm/kvm_host.h
+@@ -78,6 +78,9 @@ struct kvm_arch {
+ 	/* Interrupt controller */
+ 	struct vgic_dist	vgic;
+ 	int max_vcpus;
++
++	/* Mandated version of PSCI */
++	u32 psci_version;
+ };
+ 
+ #define KVM_NR_MEM_OBJS     40
+diff --git a/arch/arm/include/uapi/asm/kvm.h b/arch/arm/include/uapi/asm/kvm.h
+index b38c10c73579..0b8cf31d8416 100644
+--- a/arch/arm/include/uapi/asm/kvm.h
++++ b/arch/arm/include/uapi/asm/kvm.h
+@@ -173,6 +173,12 @@ struct kvm_arch_memory_slot {
+ #define KVM_REG_ARM_VFP_FPINST		0x1009
+ #define KVM_REG_ARM_VFP_FPINST2		0x100A
+ 
++/* KVM-as-firmware specific pseudo-registers */
++#define KVM_REG_ARM_FW			(0x0014 << KVM_REG_ARM_COPROC_SHIFT)
++#define KVM_REG_ARM_FW_REG(r)		(KVM_REG_ARM | KVM_REG_SIZE_U64 | \
++					 KVM_REG_ARM_FW | ((r) & 0xffff))
++#define KVM_REG_ARM_PSCI_VERSION	KVM_REG_ARM_FW_REG(0)
++
+ /* Device Control API: ARM VGIC */
+ #define KVM_DEV_ARM_VGIC_GRP_ADDR	0
+ #define KVM_DEV_ARM_VGIC_GRP_DIST_REGS	1
+diff --git a/arch/arm/kvm/guest.c b/arch/arm/kvm/guest.c
+index 9aca92074f85..630117d2e8bd 100644
+--- a/arch/arm/kvm/guest.c
++++ b/arch/arm/kvm/guest.c
+@@ -22,6 +22,7 @@
+ #include <linux/module.h>
+ #include <linux/vmalloc.h>
+ #include <linux/fs.h>
++#include <kvm/arm_psci.h>
+ #include <asm/cputype.h>
+ #include <asm/uaccess.h>
+ #include <asm/kvm.h>
+@@ -176,6 +177,7 @@ static unsigned long num_core_regs(void)
+ unsigned long kvm_arm_num_regs(struct kvm_vcpu *vcpu)
+ {
+ 	return num_core_regs() + kvm_arm_num_coproc_regs(vcpu)
++		+ kvm_arm_get_fw_num_regs(vcpu)
+ 		+ NUM_TIMER_REGS;
+ }
+ 
+@@ -196,6 +198,11 @@ int kvm_arm_copy_reg_indices(struct kvm_vcpu *vcpu, u64 __user *uindices)
+ 		uindices++;
+ 	}
+ 
++	ret = kvm_arm_copy_fw_reg_indices(vcpu, uindices);
++	if (ret)
++		return ret;
++	uindices += kvm_arm_get_fw_num_regs(vcpu);
++
+ 	ret = copy_timer_indices(vcpu, uindices);
+ 	if (ret)
+ 		return ret;
+@@ -214,6 +221,9 @@ int kvm_arm_get_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
+ 	if ((reg->id & KVM_REG_ARM_COPROC_MASK) == KVM_REG_ARM_CORE)
+ 		return get_core_reg(vcpu, reg);
+ 
++	if ((reg->id & KVM_REG_ARM_COPROC_MASK) == KVM_REG_ARM_FW)
++		return kvm_arm_get_fw_reg(vcpu, reg);
++
+ 	if (is_timer_reg(reg->id))
+ 		return get_timer_reg(vcpu, reg);
+ 
+@@ -230,6 +240,9 @@ int kvm_arm_set_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
+ 	if ((reg->id & KVM_REG_ARM_COPROC_MASK) == KVM_REG_ARM_CORE)
+ 		return set_core_reg(vcpu, reg);
+ 
++	if ((reg->id & KVM_REG_ARM_COPROC_MASK) == KVM_REG_ARM_FW)
++		return kvm_arm_set_fw_reg(vcpu, reg);
++
+ 	if (is_timer_reg(reg->id))
+ 		return set_timer_reg(vcpu, reg);
+ 
+diff --git a/arch/arm/kvm/psci.c b/arch/arm/kvm/psci.c
+index 3d962257c166..8a9c654f4f87 100644
+--- a/arch/arm/kvm/psci.c
++++ b/arch/arm/kvm/psci.c
+@@ -18,6 +18,7 @@
+ #include <linux/arm-smccc.h>
+ #include <linux/preempt.h>
+ #include <linux/kvm_host.h>
++#include <linux/uaccess.h>
+ #include <linux/wait.h>
+ 
+ #include <asm/cputype.h>
+@@ -425,3 +426,62 @@ int kvm_hvc_call_handler(struct kvm_vcpu *vcpu)
+ 	smccc_set_retval(vcpu, val, 0, 0, 0);
+ 	return 1;
+ }
++
++int kvm_arm_get_fw_num_regs(struct kvm_vcpu *vcpu)
++{
++	return 1;		/* PSCI version */
++}
++
++int kvm_arm_copy_fw_reg_indices(struct kvm_vcpu *vcpu, u64 __user *uindices)
++{
++	if (put_user(KVM_REG_ARM_PSCI_VERSION, uindices))
++		return -EFAULT;
++
++	return 0;
++}
++
++int kvm_arm_get_fw_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
++{
++	if (reg->id == KVM_REG_ARM_PSCI_VERSION) {
++		void __user *uaddr = (void __user *)(long)reg->addr;
++		u64 val;
++
++		val = kvm_psci_version(vcpu, vcpu->kvm);
++		if (copy_to_user(uaddr, &val, KVM_REG_SIZE(reg->id)))
++			return -EFAULT;
++
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++int kvm_arm_set_fw_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
++{
++	if (reg->id == KVM_REG_ARM_PSCI_VERSION) {
++		void __user *uaddr = (void __user *)(long)reg->addr;
++		bool wants_02;
++		u64 val;
++
++		if (copy_from_user(&val, uaddr, KVM_REG_SIZE(reg->id)))
++			return -EFAULT;
++
++		wants_02 = test_bit(KVM_ARM_VCPU_PSCI_0_2, vcpu->arch.features);
++
++		switch (val) {
++		case KVM_ARM_PSCI_0_1:
++			if (wants_02)
++				return -EINVAL;
++			vcpu->kvm->arch.psci_version = val;
++			return 0;
++		case KVM_ARM_PSCI_0_2:
++		case KVM_ARM_PSCI_1_0:
++			if (!wants_02)
++				return -EINVAL;
++			vcpu->kvm->arch.psci_version = val;
++			return 0;
++		}
++	}
++
++	return -EINVAL;
++}
+diff --git a/arch/arm64/include/asm/kvm_host.h b/arch/arm64/include/asm/kvm_host.h
+index 37d56e85036e..0a33ea304e63 100644
+--- a/arch/arm64/include/asm/kvm_host.h
++++ b/arch/arm64/include/asm/kvm_host.h
+@@ -73,6 +73,9 @@ struct kvm_arch {
+ 
+ 	/* Timer */
+ 	struct arch_timer_kvm	timer;
++
++	/* Mandated version of PSCI */
++	u32 psci_version;
+ };
+ 
+ #define KVM_NR_MEM_OBJS     40
+diff --git a/arch/arm64/include/uapi/asm/kvm.h b/arch/arm64/include/uapi/asm/kvm.h
+index 3051f86a9b5f..702de7a2b024 100644
+--- a/arch/arm64/include/uapi/asm/kvm.h
++++ b/arch/arm64/include/uapi/asm/kvm.h
+@@ -195,6 +195,12 @@ struct kvm_arch_memory_slot {
+ #define KVM_REG_ARM_TIMER_CNT		ARM64_SYS_REG(3, 3, 14, 3, 2)
+ #define KVM_REG_ARM_TIMER_CVAL		ARM64_SYS_REG(3, 3, 14, 0, 2)
+ 
++/* KVM-as-firmware specific pseudo-registers */
++#define KVM_REG_ARM_FW			(0x0014 << KVM_REG_ARM_COPROC_SHIFT)
++#define KVM_REG_ARM_FW_REG(r)		(KVM_REG_ARM64 | KVM_REG_SIZE_U64 | \
++					 KVM_REG_ARM_FW | ((r) & 0xffff))
++#define KVM_REG_ARM_PSCI_VERSION	KVM_REG_ARM_FW_REG(0)
++
+ /* Device Control API: ARM VGIC */
+ #define KVM_DEV_ARM_VGIC_GRP_ADDR	0
+ #define KVM_DEV_ARM_VGIC_GRP_DIST_REGS	1
+diff --git a/arch/arm64/kvm/guest.c b/arch/arm64/kvm/guest.c
+index 3f9e15722473..d3e0a2ffb383 100644
+--- a/arch/arm64/kvm/guest.c
++++ b/arch/arm64/kvm/guest.c
+@@ -25,6 +25,7 @@
+ #include <linux/module.h>
+ #include <linux/vmalloc.h>
+ #include <linux/fs.h>
++#include <kvm/arm_psci.h>
+ #include <asm/cputype.h>
+ #include <asm/uaccess.h>
+ #include <asm/kvm.h>
+@@ -205,7 +206,7 @@ static int get_timer_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
+ unsigned long kvm_arm_num_regs(struct kvm_vcpu *vcpu)
+ {
+ 	return num_core_regs() + kvm_arm_num_sys_reg_descs(vcpu)
+-                + NUM_TIMER_REGS;
++		+ kvm_arm_get_fw_num_regs(vcpu)	+ NUM_TIMER_REGS;
+ }
+ 
+ /**
+@@ -225,6 +226,11 @@ int kvm_arm_copy_reg_indices(struct kvm_vcpu *vcpu, u64 __user *uindices)
+ 		uindices++;
+ 	}
+ 
++	ret = kvm_arm_copy_fw_reg_indices(vcpu, uindices);
++	if (ret)
++		return ret;
++	uindices += kvm_arm_get_fw_num_regs(vcpu);
++
+ 	ret = copy_timer_indices(vcpu, uindices);
+ 	if (ret)
+ 		return ret;
+@@ -243,6 +249,9 @@ int kvm_arm_get_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
+ 	if ((reg->id & KVM_REG_ARM_COPROC_MASK) == KVM_REG_ARM_CORE)
+ 		return get_core_reg(vcpu, reg);
+ 
++	if ((reg->id & KVM_REG_ARM_COPROC_MASK) == KVM_REG_ARM_FW)
++		return kvm_arm_get_fw_reg(vcpu, reg);
++
+ 	if (is_timer_reg(reg->id))
+ 		return get_timer_reg(vcpu, reg);
+ 
+@@ -259,6 +268,9 @@ int kvm_arm_set_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
+ 	if ((reg->id & KVM_REG_ARM_COPROC_MASK) == KVM_REG_ARM_CORE)
+ 		return set_core_reg(vcpu, reg);
+ 
++	if ((reg->id & KVM_REG_ARM_COPROC_MASK) == KVM_REG_ARM_FW)
++		return kvm_arm_set_fw_reg(vcpu, reg);
++
+ 	if (is_timer_reg(reg->id))
+ 		return set_timer_reg(vcpu, reg);
+ 
+diff --git a/arch/s390/include/asm/facility.h b/arch/s390/include/asm/facility.h
+index 7a8a1457dbb8..5811e7849a2e 100644
+--- a/arch/s390/include/asm/facility.h
++++ b/arch/s390/include/asm/facility.h
+@@ -15,7 +15,7 @@
+ #include <linux/preempt.h>
+ #include <asm/lowcore.h>
+ 
+-#define MAX_FACILITY_BIT (256*8)	/* stfle_fac_list has 256 bytes */
++#define MAX_FACILITY_BIT (sizeof(((struct lowcore *)0)->stfle_fac_list) * 8)
+ 
+ static inline void __set_facility(unsigned long nr, void *facilities)
+ {
+diff --git a/drivers/crypto/talitos.c b/drivers/crypto/talitos.c
+index 42c060c7ae15..7c71722be395 100644
+--- a/drivers/crypto/talitos.c
++++ b/drivers/crypto/talitos.c
+@@ -1116,10 +1116,10 @@ static int sg_to_link_tbl_offset(struct scatterlist *sg, int sg_count,
+ 	return count;
+ }
+ 
+-int talitos_sg_map(struct device *dev, struct scatterlist *src,
+-		   unsigned int len, struct talitos_edesc *edesc,
+-		   struct talitos_ptr *ptr,
+-		   int sg_count, unsigned int offset, int tbl_off)
++static int talitos_sg_map_ext(struct device *dev, struct scatterlist *src,
++			      unsigned int len, struct talitos_edesc *edesc,
++			      struct talitos_ptr *ptr, int sg_count,
++			      unsigned int offset, int tbl_off, int elen)
+ {
+ 	struct talitos_private *priv = dev_get_drvdata(dev);
+ 	bool is_sec1 = has_ftr_sec1(priv);
+@@ -1130,7 +1130,7 @@ int talitos_sg_map(struct device *dev, struct scatterlist *src,
+ 	}
+ 
+ 	to_talitos_ptr_len(ptr, len, is_sec1);
+-	to_talitos_ptr_ext_set(ptr, 0, is_sec1);
++	to_talitos_ptr_ext_set(ptr, elen, is_sec1);
+ 
+ 	if (sg_count == 1) {
+ 		to_talitos_ptr(ptr, sg_dma_address(src) + offset, is_sec1);
+@@ -1140,7 +1140,7 @@ int talitos_sg_map(struct device *dev, struct scatterlist *src,
+ 		to_talitos_ptr(ptr, edesc->dma_link_tbl + offset, is_sec1);
+ 		return sg_count;
+ 	}
+-	sg_count = sg_to_link_tbl_offset(src, sg_count, offset, len,
++	sg_count = sg_to_link_tbl_offset(src, sg_count, offset, len + elen,
+ 					 &edesc->link_tbl[tbl_off]);
+ 	if (sg_count == 1) {
+ 		/* Only one segment now, so no link tbl needed*/
+@@ -1154,6 +1154,15 @@ int talitos_sg_map(struct device *dev, struct scatterlist *src,
+ 	return sg_count;
+ }
+ 
++static int talitos_sg_map(struct device *dev, struct scatterlist *src,
++			  unsigned int len, struct talitos_edesc *edesc,
++			  struct talitos_ptr *ptr, int sg_count,
++			  unsigned int offset, int tbl_off)
++{
++	return talitos_sg_map_ext(dev, src, len, edesc, ptr, sg_count, offset,
++				  tbl_off, 0);
++}
++
+ /*
+  * fill in and submit ipsec_esp descriptor
+  */
+@@ -1171,7 +1180,7 @@ static int ipsec_esp(struct talitos_edesc *edesc, struct aead_request *areq,
+ 	unsigned int ivsize = crypto_aead_ivsize(aead);
+ 	int tbl_off = 0;
+ 	int sg_count, ret;
+-	int sg_link_tbl_len;
++	int elen = 0;
+ 	bool sync_needed = false;
+ 	struct talitos_private *priv = dev_get_drvdata(dev);
+ 	bool is_sec1 = has_ftr_sec1(priv);
+@@ -1225,20 +1234,12 @@ static int ipsec_esp(struct talitos_edesc *edesc, struct aead_request *areq,
+ 	 * extent is bytes of HMAC postpended to ciphertext,
+ 	 * typically 12 for ipsec
+ 	 */
+-	to_talitos_ptr_len(&desc->ptr[4], cryptlen, is_sec1);
+-	to_talitos_ptr_ext_set(&desc->ptr[4], 0, is_sec1);
+-
+-	sg_link_tbl_len = cryptlen;
+-
+-	if (desc->hdr & DESC_HDR_TYPE_IPSEC_ESP) {
+-		to_talitos_ptr_ext_set(&desc->ptr[4], authsize, is_sec1);
+-
+-		if (edesc->desc.hdr & DESC_HDR_MODE1_MDEU_CICV)
+-			sg_link_tbl_len += authsize;
+-	}
++	if ((desc->hdr & DESC_HDR_TYPE_IPSEC_ESP) &&
++	    (desc->hdr & DESC_HDR_MODE1_MDEU_CICV))
++		elen = authsize;
+ 
+-	ret = talitos_sg_map(dev, areq->src, sg_link_tbl_len, edesc,
+-			     &desc->ptr[4], sg_count, areq->assoclen, tbl_off);
++	ret = talitos_sg_map_ext(dev, areq->src, cryptlen, edesc, &desc->ptr[4],
++				 sg_count, areq->assoclen, tbl_off, elen);
+ 
+ 	if (ret > 1) {
+ 		tbl_off += ret;
+diff --git a/drivers/gpu/drm/bridge/dumb-vga-dac.c b/drivers/gpu/drm/bridge/dumb-vga-dac.c
+index afec232185a7..cfd80bc510b6 100644
+--- a/drivers/gpu/drm/bridge/dumb-vga-dac.c
++++ b/drivers/gpu/drm/bridge/dumb-vga-dac.c
+@@ -53,7 +53,9 @@ static int dumb_vga_get_modes(struct drm_connector *connector)
+ 	}
+ 
+ 	drm_mode_connector_update_edid_property(connector, edid);
+-	return drm_add_edid_modes(connector, edid);
++	ret = drm_add_edid_modes(connector, edid);
++	kfree(edid);
++	return ret;
+ 
+ fallback:
+ 	/*
+diff --git a/drivers/gpu/drm/vmwgfx/vmwgfx_kms.c b/drivers/gpu/drm/vmwgfx/vmwgfx_kms.c
+index 87086af42114..33ca24ab983e 100644
+--- a/drivers/gpu/drm/vmwgfx/vmwgfx_kms.c
++++ b/drivers/gpu/drm/vmwgfx/vmwgfx_kms.c
+@@ -2014,6 +2014,7 @@ void vmw_kms_helper_resource_finish(struct vmw_validation_ctx *ctx,
+ 		vmw_kms_helper_buffer_finish(res->dev_priv, NULL, ctx->buf,
+ 					     out_fence, NULL);
+ 
++	vmw_dmabuf_unreference(&ctx->buf);
+ 	vmw_resource_unreserve(res, false, NULL, 0);
+ 	mutex_unlock(&res->dev_priv->cmdbuf_mutex);
+ }
+diff --git a/drivers/infiniband/core/ucma.c b/drivers/infiniband/core/ucma.c
+index cb79d171d1e4..f2f1c9fec0b1 100644
+--- a/drivers/infiniband/core/ucma.c
++++ b/drivers/infiniband/core/ucma.c
+@@ -676,7 +676,7 @@ static ssize_t ucma_resolve_ip(struct ucma_file *file,
+ 	if (copy_from_user(&cmd, inbuf, sizeof(cmd)))
+ 		return -EFAULT;
+ 
+-	if (!rdma_addr_size_in6(&cmd.src_addr) ||
++	if ((cmd.src_addr.sin6_family && !rdma_addr_size_in6(&cmd.src_addr)) ||
+ 	    !rdma_addr_size_in6(&cmd.dst_addr))
+ 		return -EINVAL;
+ 
+diff --git a/drivers/infiniband/hw/cxgb4/device.c b/drivers/infiniband/hw/cxgb4/device.c
+index b85a1a983e07..9e0f2ccf1d10 100644
+--- a/drivers/infiniband/hw/cxgb4/device.c
++++ b/drivers/infiniband/hw/cxgb4/device.c
+@@ -856,6 +856,11 @@ static int c4iw_rdev_open(struct c4iw_rdev *rdev)
+ 
+ 	rdev->status_page->db_off = 0;
+ 
++	init_completion(&rdev->rqt_compl);
++	init_completion(&rdev->pbl_compl);
++	kref_init(&rdev->rqt_kref);
++	kref_init(&rdev->pbl_kref);
++
+ 	return 0;
+ err_free_status_page:
+ 	free_page((unsigned long)rdev->status_page);
+@@ -872,12 +877,14 @@ static int c4iw_rdev_open(struct c4iw_rdev *rdev)
+ 
+ static void c4iw_rdev_close(struct c4iw_rdev *rdev)
+ {
+-	destroy_workqueue(rdev->free_workq);
+ 	kfree(rdev->wr_log);
+ 	free_page((unsigned long)rdev->status_page);
+ 	c4iw_pblpool_destroy(rdev);
+ 	c4iw_rqtpool_destroy(rdev);
++	wait_for_completion(&rdev->pbl_compl);
++	wait_for_completion(&rdev->rqt_compl);
+ 	c4iw_destroy_resource(&rdev->resource);
++	destroy_workqueue(rdev->free_workq);
+ }
+ 
+ static void c4iw_dealloc(struct uld_ctx *ctx)
+diff --git a/drivers/infiniband/hw/cxgb4/iw_cxgb4.h b/drivers/infiniband/hw/cxgb4/iw_cxgb4.h
+index 7d540667dad2..896dff7a6cee 100644
+--- a/drivers/infiniband/hw/cxgb4/iw_cxgb4.h
++++ b/drivers/infiniband/hw/cxgb4/iw_cxgb4.h
+@@ -186,6 +186,10 @@ struct c4iw_rdev {
+ 	struct wr_log_entry *wr_log;
+ 	int wr_log_size;
+ 	struct workqueue_struct *free_workq;
++	struct completion rqt_compl;
++	struct completion pbl_compl;
++	struct kref rqt_kref;
++	struct kref pbl_kref;
+ };
+ 
+ static inline int c4iw_fatal_error(struct c4iw_rdev *rdev)
+diff --git a/drivers/infiniband/hw/cxgb4/resource.c b/drivers/infiniband/hw/cxgb4/resource.c
+index 67df71a7012e..803c677e21cd 100644
+--- a/drivers/infiniband/hw/cxgb4/resource.c
++++ b/drivers/infiniband/hw/cxgb4/resource.c
+@@ -260,12 +260,22 @@ u32 c4iw_pblpool_alloc(struct c4iw_rdev *rdev, int size)
+ 		rdev->stats.pbl.cur += roundup(size, 1 << MIN_PBL_SHIFT);
+ 		if (rdev->stats.pbl.cur > rdev->stats.pbl.max)
+ 			rdev->stats.pbl.max = rdev->stats.pbl.cur;
++		kref_get(&rdev->pbl_kref);
+ 	} else
+ 		rdev->stats.pbl.fail++;
+ 	mutex_unlock(&rdev->stats.lock);
+ 	return (u32)addr;
+ }
+ 
++static void destroy_pblpool(struct kref *kref)
++{
++	struct c4iw_rdev *rdev;
++
++	rdev = container_of(kref, struct c4iw_rdev, pbl_kref);
++	gen_pool_destroy(rdev->pbl_pool);
++	complete(&rdev->pbl_compl);
++}
++
+ void c4iw_pblpool_free(struct c4iw_rdev *rdev, u32 addr, int size)
+ {
+ 	PDBG("%s addr 0x%x size %d\n", __func__, addr, size);
+@@ -273,6 +283,7 @@ void c4iw_pblpool_free(struct c4iw_rdev *rdev, u32 addr, int size)
+ 	rdev->stats.pbl.cur -= roundup(size, 1 << MIN_PBL_SHIFT);
+ 	mutex_unlock(&rdev->stats.lock);
+ 	gen_pool_free(rdev->pbl_pool, (unsigned long)addr, size);
++	kref_put(&rdev->pbl_kref, destroy_pblpool);
+ }
+ 
+ int c4iw_pblpool_create(struct c4iw_rdev *rdev)
+@@ -312,7 +323,7 @@ int c4iw_pblpool_create(struct c4iw_rdev *rdev)
+ 
+ void c4iw_pblpool_destroy(struct c4iw_rdev *rdev)
+ {
+-	gen_pool_destroy(rdev->pbl_pool);
++	kref_put(&rdev->pbl_kref, destroy_pblpool);
+ }
+ 
+ /*
+@@ -333,12 +344,22 @@ u32 c4iw_rqtpool_alloc(struct c4iw_rdev *rdev, int size)
+ 		rdev->stats.rqt.cur += roundup(size << 6, 1 << MIN_RQT_SHIFT);
+ 		if (rdev->stats.rqt.cur > rdev->stats.rqt.max)
+ 			rdev->stats.rqt.max = rdev->stats.rqt.cur;
++		kref_get(&rdev->rqt_kref);
+ 	} else
+ 		rdev->stats.rqt.fail++;
+ 	mutex_unlock(&rdev->stats.lock);
+ 	return (u32)addr;
+ }
+ 
++static void destroy_rqtpool(struct kref *kref)
++{
++	struct c4iw_rdev *rdev;
++
++	rdev = container_of(kref, struct c4iw_rdev, rqt_kref);
++	gen_pool_destroy(rdev->rqt_pool);
++	complete(&rdev->rqt_compl);
++}
++
+ void c4iw_rqtpool_free(struct c4iw_rdev *rdev, u32 addr, int size)
+ {
+ 	PDBG("%s addr 0x%x size %d\n", __func__, addr, size << 6);
+@@ -346,6 +367,7 @@ void c4iw_rqtpool_free(struct c4iw_rdev *rdev, u32 addr, int size)
+ 	rdev->stats.rqt.cur -= roundup(size << 6, 1 << MIN_RQT_SHIFT);
+ 	mutex_unlock(&rdev->stats.lock);
+ 	gen_pool_free(rdev->rqt_pool, (unsigned long)addr, size << 6);
++	kref_put(&rdev->rqt_kref, destroy_rqtpool);
+ }
+ 
+ int c4iw_rqtpool_create(struct c4iw_rdev *rdev)
+@@ -383,7 +405,7 @@ int c4iw_rqtpool_create(struct c4iw_rdev *rdev)
+ 
+ void c4iw_rqtpool_destroy(struct c4iw_rdev *rdev)
+ {
+-	gen_pool_destroy(rdev->rqt_pool);
++	kref_put(&rdev->rqt_kref, destroy_rqtpool);
+ }
+ 
+ /*
+diff --git a/drivers/infiniband/hw/hfi1/init.c b/drivers/infiniband/hw/hfi1/init.c
+index 84a97f3f9299..ae1f90ddd4e8 100644
+--- a/drivers/infiniband/hw/hfi1/init.c
++++ b/drivers/infiniband/hw/hfi1/init.c
+@@ -1049,6 +1049,8 @@ struct hfi1_devdata *hfi1_alloc_devdata(struct pci_dev *pdev, size_t extra)
+ 		return ERR_PTR(-ENOMEM);
+ 	dd->num_pports = nports;
+ 	dd->pport = (struct hfi1_pportdata *)(dd + 1);
++	dd->pcidev = pdev;
++	pci_set_drvdata(pdev, dd);
+ 
+ 	INIT_LIST_HEAD(&dd->list);
+ 	idr_preload(GFP_KERNEL);
+diff --git a/drivers/infiniband/hw/hfi1/pcie.c b/drivers/infiniband/hw/hfi1/pcie.c
+index 335613a1a46a..717626046ee5 100644
+--- a/drivers/infiniband/hw/hfi1/pcie.c
++++ b/drivers/infiniband/hw/hfi1/pcie.c
+@@ -162,9 +162,6 @@ int hfi1_pcie_ddinit(struct hfi1_devdata *dd, struct pci_dev *pdev)
+ 	unsigned long len;
+ 	resource_size_t addr;
+ 
+-	dd->pcidev = pdev;
+-	pci_set_drvdata(pdev, dd);
+-
+ 	addr = pci_resource_start(pdev, 0);
+ 	len = pci_resource_len(pdev, 0);
+ 
+diff --git a/drivers/infiniband/hw/mlx5/qp.c b/drivers/infiniband/hw/mlx5/qp.c
+index 5b8909d1b55e..3cdcbfbd6a79 100644
+--- a/drivers/infiniband/hw/mlx5/qp.c
++++ b/drivers/infiniband/hw/mlx5/qp.c
+@@ -253,7 +253,11 @@ static int set_rq_size(struct mlx5_ib_dev *dev, struct ib_qp_cap *cap,
+ 	} else {
+ 		if (ucmd) {
+ 			qp->rq.wqe_cnt = ucmd->rq_wqe_count;
++			if (ucmd->rq_wqe_shift > BITS_PER_BYTE * sizeof(ucmd->rq_wqe_shift))
++				return -EINVAL;
+ 			qp->rq.wqe_shift = ucmd->rq_wqe_shift;
++			if ((1 << qp->rq.wqe_shift) / sizeof(struct mlx5_wqe_data_seg) < qp->wq_sig)
++				return -EINVAL;
+ 			qp->rq.max_gs = (1 << qp->rq.wqe_shift) / sizeof(struct mlx5_wqe_data_seg) - qp->wq_sig;
+ 			qp->rq.max_post = qp->rq.wqe_cnt;
+ 		} else {
+@@ -2164,18 +2168,18 @@ enum {
+ 
+ static int ib_rate_to_mlx5(struct mlx5_ib_dev *dev, u8 rate)
+ {
+-	if (rate == IB_RATE_PORT_CURRENT) {
++	if (rate == IB_RATE_PORT_CURRENT)
+ 		return 0;
+-	} else if (rate < IB_RATE_2_5_GBPS || rate > IB_RATE_300_GBPS) {
++
++	if (rate < IB_RATE_2_5_GBPS || rate > IB_RATE_300_GBPS)
+ 		return -EINVAL;
+-	} else {
+-		while (rate != IB_RATE_2_5_GBPS &&
+-		       !(1 << (rate + MLX5_STAT_RATE_OFFSET) &
+-			 MLX5_CAP_GEN(dev->mdev, stat_rate_support)))
+-			--rate;
+-	}
+ 
+-	return rate + MLX5_STAT_RATE_OFFSET;
++	while (rate != IB_RATE_PORT_CURRENT &&
++	       !(1 << (rate + MLX5_STAT_RATE_OFFSET) &
++		 MLX5_CAP_GEN(dev->mdev, stat_rate_support)))
++		--rate;
++
++	return rate ? rate + MLX5_STAT_RATE_OFFSET : rate;
+ }
+ 
+ static int modify_raw_packet_eth_prio(struct mlx5_core_dev *dev,
+diff --git a/drivers/input/input-leds.c b/drivers/input/input-leds.c
+index 766bf2660116..5f04b2d94635 100644
+--- a/drivers/input/input-leds.c
++++ b/drivers/input/input-leds.c
+@@ -88,6 +88,7 @@ static int input_leds_connect(struct input_handler *handler,
+ 			      const struct input_device_id *id)
+ {
+ 	struct input_leds *leds;
++	struct input_led *led;
+ 	unsigned int num_leds;
+ 	unsigned int led_code;
+ 	int led_no;
+@@ -119,14 +120,13 @@ static int input_leds_connect(struct input_handler *handler,
+ 
+ 	led_no = 0;
+ 	for_each_set_bit(led_code, dev->ledbit, LED_CNT) {
+-		struct input_led *led = &leds->leds[led_no];
++		if (!input_led_info[led_code].name)
++			continue;
+ 
++		led = &leds->leds[led_no];
+ 		led->handle = &leds->handle;
+ 		led->code = led_code;
+ 
+-		if (!input_led_info[led_code].name)
+-			continue;
+-
+ 		led->cdev.name = kasprintf(GFP_KERNEL, "%s::%s",
+ 					   dev_name(&dev->dev),
+ 					   input_led_info[led_code].name);
+diff --git a/drivers/input/touchscreen/atmel_mxt_ts.c b/drivers/input/touchscreen/atmel_mxt_ts.c
+index e5d185fe69b9..26132402fdf9 100644
+--- a/drivers/input/touchscreen/atmel_mxt_ts.c
++++ b/drivers/input/touchscreen/atmel_mxt_ts.c
+@@ -3027,6 +3027,15 @@ static const struct dmi_system_id mxt_dmi_table[] = {
+ 		},
+ 		.driver_data = samus_platform_data,
+ 	},
++	{
++		/* Samsung Chromebook Pro */
++		.ident = "Samsung Chromebook Pro",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "Google"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "Caroline"),
++		},
++		.driver_data = samus_platform_data,
++	},
+ 	{
+ 		/* Other Google Chromebooks */
+ 		.ident = "Chromebook",
+diff --git a/drivers/net/usb/qmi_wwan.c b/drivers/net/usb/qmi_wwan.c
+index 973e90fb4a24..1029bd234c22 100644
+--- a/drivers/net/usb/qmi_wwan.c
++++ b/drivers/net/usb/qmi_wwan.c
+@@ -803,6 +803,7 @@ static const struct usb_device_id products[] = {
+ 	{QMI_FIXED_INTF(0x05c6, 0x9080, 8)},
+ 	{QMI_FIXED_INTF(0x05c6, 0x9083, 3)},
+ 	{QMI_FIXED_INTF(0x05c6, 0x9084, 4)},
++	{QMI_FIXED_INTF(0x05c6, 0x90b2, 3)},    /* ublox R410M */
+ 	{QMI_FIXED_INTF(0x05c6, 0x920d, 0)},
+ 	{QMI_FIXED_INTF(0x05c6, 0x920d, 5)},
+ 	{QMI_QUIRK_SET_DTR(0x05c6, 0x9625, 4)},	/* YUGA CLM920-NC5 */
+diff --git a/drivers/platform/x86/asus-wireless.c b/drivers/platform/x86/asus-wireless.c
+index 18716025b1db..c0983281fca4 100644
+--- a/drivers/platform/x86/asus-wireless.c
++++ b/drivers/platform/x86/asus-wireless.c
+@@ -145,8 +145,10 @@ static int asus_wireless_remove(struct acpi_device *adev)
+ {
+ 	struct asus_wireless_data *data = acpi_driver_data(adev);
+ 
+-	if (data->wq)
++	if (data->wq) {
++		devm_led_classdev_unregister(&adev->dev, &data->led);
+ 		destroy_workqueue(data->wq);
++	}
+ 	return 0;
+ }
+ 
+diff --git a/drivers/tty/serial/imx.c b/drivers/tty/serial/imx.c
+index f575a33974fa..ecadc27eea48 100644
+--- a/drivers/tty/serial/imx.c
++++ b/drivers/tty/serial/imx.c
+@@ -2145,7 +2145,9 @@ static int serial_imx_probe(struct platform_device *pdev)
+ 		 * and DCD (when they are outputs) or enables the respective
+ 		 * irqs. So set this bit early, i.e. before requesting irqs.
+ 		 */
+-		writel(UFCR_DCEDTE, sport->port.membase + UFCR);
++		reg = readl(sport->port.membase + UFCR);
++		if (!(reg & UFCR_DCEDTE))
++			writel(reg | UFCR_DCEDTE, sport->port.membase + UFCR);
+ 
+ 		/*
+ 		 * Disable UCR3_RI and UCR3_DCD irqs. They are also not
+@@ -2156,7 +2158,15 @@ static int serial_imx_probe(struct platform_device *pdev)
+ 		       sport->port.membase + UCR3);
+ 
+ 	} else {
+-		writel(0, sport->port.membase + UFCR);
++		unsigned long ucr3 = UCR3_DSR;
++
++		reg = readl(sport->port.membase + UFCR);
++		if (reg & UFCR_DCEDTE)
++			writel(reg & ~UFCR_DCEDTE, sport->port.membase + UFCR);
++
++		if (!is_imx1_uart(sport))
++			ucr3 |= IMX21_UCR3_RXDMUXSEL | UCR3_ADNIMP;
++		writel(ucr3, sport->port.membase + UCR3);
+ 	}
+ 
+ 	clk_disable_unprepare(sport->clk_ipg);
+diff --git a/drivers/usb/core/config.c b/drivers/usb/core/config.c
+index 7c54a19b20e0..5e6136d2ed71 100644
+--- a/drivers/usb/core/config.c
++++ b/drivers/usb/core/config.c
+@@ -186,7 +186,9 @@ static const unsigned short full_speed_maxpacket_maxes[4] = {
+ static const unsigned short high_speed_maxpacket_maxes[4] = {
+ 	[USB_ENDPOINT_XFER_CONTROL] = 64,
+ 	[USB_ENDPOINT_XFER_ISOC] = 1024,
+-	[USB_ENDPOINT_XFER_BULK] = 512,
++
++	/* Bulk should be 512, but some devices use 1024: we will warn below */
++	[USB_ENDPOINT_XFER_BULK] = 1024,
+ 	[USB_ENDPOINT_XFER_INT] = 1024,
+ };
+ static const unsigned short super_speed_maxpacket_maxes[4] = {
+diff --git a/drivers/usb/musb/musb_gadget.c b/drivers/usb/musb/musb_gadget.c
+index a55173c9e564..f1219f6d58a9 100644
+--- a/drivers/usb/musb/musb_gadget.c
++++ b/drivers/usb/musb/musb_gadget.c
+@@ -442,7 +442,6 @@ void musb_g_tx(struct musb *musb, u8 epnum)
+ 	req = next_request(musb_ep);
+ 	request = &req->request;
+ 
+-	trace_musb_req_tx(req);
+ 	csr = musb_readw(epio, MUSB_TXCSR);
+ 	musb_dbg(musb, "<== %s, txcsr %04x", musb_ep->end_point.name, csr);
+ 
+@@ -481,6 +480,8 @@ void musb_g_tx(struct musb *musb, u8 epnum)
+ 		u8	is_dma = 0;
+ 		bool	short_packet = false;
+ 
++		trace_musb_req_tx(req);
++
+ 		if (dma && (csr & MUSB_TXCSR_DMAENAB)) {
+ 			is_dma = 1;
+ 			csr |= MUSB_TXCSR_P_WZC_BITS;
+diff --git a/drivers/usb/musb/musb_host.c b/drivers/usb/musb/musb_host.c
+index 43033895e8f6..e2bc91585b4f 100644
+--- a/drivers/usb/musb/musb_host.c
++++ b/drivers/usb/musb/musb_host.c
+@@ -1023,7 +1023,9 @@ static void musb_bulk_nak_timeout(struct musb *musb, struct musb_hw_ep *ep,
+ 			/* set tx_reinit and schedule the next qh */
+ 			ep->tx_reinit = 1;
+ 		}
+-		musb_start_urb(musb, is_in, next_qh);
++
++		if (next_qh)
++			musb_start_urb(musb, is_in, next_qh);
+ 	}
+ }
+ 
+diff --git a/drivers/usb/serial/option.c b/drivers/usb/serial/option.c
+index 1799aa058a5b..d982c455e18e 100644
+--- a/drivers/usb/serial/option.c
++++ b/drivers/usb/serial/option.c
+@@ -236,6 +236,8 @@ static void option_instat_callback(struct urb *urb);
+ /* These Quectel products use Qualcomm's vendor ID */
+ #define QUECTEL_PRODUCT_UC20			0x9003
+ #define QUECTEL_PRODUCT_UC15			0x9090
++/* These u-blox products use Qualcomm's vendor ID */
++#define UBLOX_PRODUCT_R410M			0x90b2
+ /* These Yuga products use Qualcomm's vendor ID */
+ #define YUGA_PRODUCT_CLM920_NC5			0x9625
+ 
+@@ -244,6 +246,7 @@ static void option_instat_callback(struct urb *urb);
+ #define QUECTEL_PRODUCT_EC21			0x0121
+ #define QUECTEL_PRODUCT_EC25			0x0125
+ #define QUECTEL_PRODUCT_BG96			0x0296
++#define QUECTEL_PRODUCT_EP06			0x0306
+ 
+ #define CMOTECH_VENDOR_ID			0x16d8
+ #define CMOTECH_PRODUCT_6001			0x6001
+@@ -550,147 +553,15 @@ static void option_instat_callback(struct urb *urb);
+ #define WETELECOM_PRODUCT_6802			0x6802
+ #define WETELECOM_PRODUCT_WMD300		0x6803
+ 
+-struct option_blacklist_info {
+-	/* bitmask of interface numbers blacklisted for send_setup */
+-	const unsigned long sendsetup;
+-	/* bitmask of interface numbers that are reserved */
+-	const unsigned long reserved;
+-};
+-
+-static const struct option_blacklist_info four_g_w14_blacklist = {
+-	.sendsetup = BIT(0) | BIT(1),
+-};
+-
+-static const struct option_blacklist_info four_g_w100_blacklist = {
+-	.sendsetup = BIT(1) | BIT(2),
+-	.reserved = BIT(3),
+-};
+-
+-static const struct option_blacklist_info alcatel_x200_blacklist = {
+-	.sendsetup = BIT(0) | BIT(1),
+-	.reserved = BIT(4),
+-};
+-
+-static const struct option_blacklist_info zte_0037_blacklist = {
+-	.sendsetup = BIT(0) | BIT(1),
+-};
+-
+-static const struct option_blacklist_info zte_k3765_z_blacklist = {
+-	.sendsetup = BIT(0) | BIT(1) | BIT(2),
+-	.reserved = BIT(4),
+-};
+-
+-static const struct option_blacklist_info zte_ad3812_z_blacklist = {
+-	.sendsetup = BIT(0) | BIT(1) | BIT(2),
+-};
+-
+-static const struct option_blacklist_info zte_mc2718_z_blacklist = {
+-	.sendsetup = BIT(1) | BIT(2) | BIT(3) | BIT(4),
+-};
+-
+-static const struct option_blacklist_info zte_mc2716_z_blacklist = {
+-	.sendsetup = BIT(1) | BIT(2) | BIT(3),
+-};
+-
+-static const struct option_blacklist_info zte_me3620_mbim_blacklist = {
+-	.reserved = BIT(2) | BIT(3) | BIT(4),
+-};
+-
+-static const struct option_blacklist_info zte_me3620_xl_blacklist = {
+-	.reserved = BIT(3) | BIT(4) | BIT(5),
+-};
+-
+-static const struct option_blacklist_info zte_zm8620_x_blacklist = {
+-	.reserved = BIT(3) | BIT(4) | BIT(5),
+-};
+-
+-static const struct option_blacklist_info huawei_cdc12_blacklist = {
+-	.reserved = BIT(1) | BIT(2),
+-};
+-
+-static const struct option_blacklist_info net_intf0_blacklist = {
+-	.reserved = BIT(0),
+-};
+ 
+-static const struct option_blacklist_info net_intf1_blacklist = {
+-	.reserved = BIT(1),
+-};
++/* Device flags */
+ 
+-static const struct option_blacklist_info net_intf2_blacklist = {
+-	.reserved = BIT(2),
+-};
++/* Interface does not support modem-control requests */
++#define NCTRL(ifnum)	((BIT(ifnum) & 0xff) << 8)
+ 
+-static const struct option_blacklist_info net_intf3_blacklist = {
+-	.reserved = BIT(3),
+-};
++/* Interface is reserved */
++#define RSVD(ifnum)	((BIT(ifnum) & 0xff) << 0)
+ 
+-static const struct option_blacklist_info net_intf4_blacklist = {
+-	.reserved = BIT(4),
+-};
+-
+-static const struct option_blacklist_info net_intf5_blacklist = {
+-	.reserved = BIT(5),
+-};
+-
+-static const struct option_blacklist_info net_intf6_blacklist = {
+-	.reserved = BIT(6),
+-};
+-
+-static const struct option_blacklist_info zte_mf626_blacklist = {
+-	.sendsetup = BIT(0) | BIT(1),
+-	.reserved = BIT(4),
+-};
+-
+-static const struct option_blacklist_info zte_1255_blacklist = {
+-	.reserved = BIT(3) | BIT(4),
+-};
+-
+-static const struct option_blacklist_info simcom_sim7100e_blacklist = {
+-	.reserved = BIT(5) | BIT(6),
+-};
+-
+-static const struct option_blacklist_info telit_me910_blacklist = {
+-	.sendsetup = BIT(0),
+-	.reserved = BIT(1) | BIT(3),
+-};
+-
+-static const struct option_blacklist_info telit_me910_dual_modem_blacklist = {
+-	.sendsetup = BIT(0),
+-	.reserved = BIT(3),
+-};
+-
+-static const struct option_blacklist_info telit_le910_blacklist = {
+-	.sendsetup = BIT(0),
+-	.reserved = BIT(1) | BIT(2),
+-};
+-
+-static const struct option_blacklist_info telit_le920_blacklist = {
+-	.sendsetup = BIT(0),
+-	.reserved = BIT(1) | BIT(5),
+-};
+-
+-static const struct option_blacklist_info telit_le920a4_blacklist_1 = {
+-	.sendsetup = BIT(0),
+-	.reserved = BIT(1),
+-};
+-
+-static const struct option_blacklist_info telit_le922_blacklist_usbcfg0 = {
+-	.sendsetup = BIT(2),
+-	.reserved = BIT(0) | BIT(1) | BIT(3),
+-};
+-
+-static const struct option_blacklist_info telit_le922_blacklist_usbcfg3 = {
+-	.sendsetup = BIT(0),
+-	.reserved = BIT(1) | BIT(2) | BIT(3),
+-};
+-
+-static const struct option_blacklist_info cinterion_rmnet2_blacklist = {
+-	.reserved = BIT(4) | BIT(5),
+-};
+-
+-static const struct option_blacklist_info yuga_clm920_nc5_blacklist = {
+-	.reserved = BIT(1) | BIT(4),
+-};
+ 
+ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE(OPTION_VENDOR_ID, OPTION_PRODUCT_COLT) },
+@@ -724,26 +595,26 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE(QUANTA_VENDOR_ID, QUANTA_PRODUCT_GKE) },
+ 	{ USB_DEVICE(QUANTA_VENDOR_ID, QUANTA_PRODUCT_GLE) },
+ 	{ USB_DEVICE(QUANTA_VENDOR_ID, 0xea42),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, 0x1c05, USB_CLASS_COMM, 0x02, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, 0x1c1f, USB_CLASS_COMM, 0x02, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, 0x1c23, USB_CLASS_COMM, 0x02, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, HUAWEI_PRODUCT_E173, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t) &net_intf1_blacklist },
++	  .driver_info = RSVD(1) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, HUAWEI_PRODUCT_E173S6, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t) &net_intf1_blacklist },
++	  .driver_info = RSVD(1) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, HUAWEI_PRODUCT_E1750, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t) &net_intf2_blacklist },
++	  .driver_info = RSVD(2) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, 0x1441, USB_CLASS_COMM, 0x02, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, 0x1442, USB_CLASS_COMM, 0x02, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, HUAWEI_PRODUCT_K4505, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t) &huawei_cdc12_blacklist },
++	  .driver_info = RSVD(1) | RSVD(2) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, HUAWEI_PRODUCT_K3765, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t) &huawei_cdc12_blacklist },
++	  .driver_info = RSVD(1) | RSVD(2) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, 0x14ac, 0xff, 0xff, 0xff),	/* Huawei E1820 */
+-		.driver_info = (kernel_ulong_t) &net_intf1_blacklist },
++	  .driver_info = RSVD(1) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, HUAWEI_PRODUCT_K4605, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t) &huawei_cdc12_blacklist },
++	  .driver_info = RSVD(1) | RSVD(2) },
+ 	{ USB_VENDOR_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, 0xff, 0xff, 0xff) },
+ 	{ USB_VENDOR_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, 0xff, 0x01, 0x01) },
+ 	{ USB_VENDOR_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, 0xff, 0x01, 0x02) },
+@@ -1188,65 +1059,70 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE(KYOCERA_VENDOR_ID, KYOCERA_PRODUCT_KPC680) },
+ 	{ USB_DEVICE(QUALCOMM_VENDOR_ID, 0x6000)}, /* ZTE AC8700 */
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(QUALCOMM_VENDOR_ID, 0x6001, 0xff, 0xff, 0xff), /* 4G LTE usb-modem U901 */
+-	  .driver_info = (kernel_ulong_t)&net_intf3_blacklist },
++	  .driver_info = RSVD(3) },
+ 	{ USB_DEVICE(QUALCOMM_VENDOR_ID, 0x6613)}, /* Onda H600/ZTE MF330 */
+ 	{ USB_DEVICE(QUALCOMM_VENDOR_ID, 0x0023)}, /* ONYX 3G device */
+ 	{ USB_DEVICE(QUALCOMM_VENDOR_ID, 0x9000)}, /* SIMCom SIM5218 */
+ 	/* Quectel products using Qualcomm vendor ID */
+ 	{ USB_DEVICE(QUALCOMM_VENDOR_ID, QUECTEL_PRODUCT_UC15)},
+ 	{ USB_DEVICE(QUALCOMM_VENDOR_ID, QUECTEL_PRODUCT_UC20),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	/* Yuga products use Qualcomm vendor ID */
+ 	{ USB_DEVICE(QUALCOMM_VENDOR_ID, YUGA_PRODUCT_CLM920_NC5),
+-	  .driver_info = (kernel_ulong_t)&yuga_clm920_nc5_blacklist },
++	  .driver_info = RSVD(1) | RSVD(4) },
++	/* u-blox products using Qualcomm vendor ID */
++	{ USB_DEVICE(QUALCOMM_VENDOR_ID, UBLOX_PRODUCT_R410M),
++	  .driver_info = RSVD(1) | RSVD(3) },
+ 	/* Quectel products using Quectel vendor ID */
+ 	{ USB_DEVICE(QUECTEL_VENDOR_ID, QUECTEL_PRODUCT_EC21),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE(QUECTEL_VENDOR_ID, QUECTEL_PRODUCT_EC25),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE(QUECTEL_VENDOR_ID, QUECTEL_PRODUCT_BG96),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
++	{ USB_DEVICE(QUECTEL_VENDOR_ID, QUECTEL_PRODUCT_EP06),
++	  .driver_info = RSVD(4) | RSVD(5) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_6001) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CMU_300) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_6003),
+-	  .driver_info = (kernel_ulong_t)&net_intf0_blacklist },
++	  .driver_info = RSVD(0) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_6004) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_6005) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CGU_628A) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CHE_628S),
+-	  .driver_info = (kernel_ulong_t)&net_intf0_blacklist },
++	  .driver_info = RSVD(0) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CMU_301),
+-	  .driver_info = (kernel_ulong_t)&net_intf0_blacklist },
++	  .driver_info = RSVD(0) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CHU_628),
+-	  .driver_info = (kernel_ulong_t)&net_intf0_blacklist },
++	  .driver_info = RSVD(0) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CHU_628S) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CDU_680) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CDU_685A) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CHU_720S),
+-	  .driver_info = (kernel_ulong_t)&net_intf0_blacklist },
++	  .driver_info = RSVD(0) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_7002),
+-	  .driver_info = (kernel_ulong_t)&net_intf0_blacklist },
++	  .driver_info = RSVD(0) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CHU_629K),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_7004),
+-	  .driver_info = (kernel_ulong_t)&net_intf3_blacklist },
++	  .driver_info = RSVD(3) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_7005) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CGU_629),
+-	  .driver_info = (kernel_ulong_t)&net_intf5_blacklist },
++	  .driver_info = RSVD(5) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CHU_629S),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_CHU_720I),
+-	  .driver_info = (kernel_ulong_t)&net_intf0_blacklist },
++	  .driver_info = RSVD(0) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_7212),
+-	  .driver_info = (kernel_ulong_t)&net_intf0_blacklist },
++	  .driver_info = RSVD(0) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_7213),
+-	  .driver_info = (kernel_ulong_t)&net_intf0_blacklist },
++	  .driver_info = RSVD(0) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_7251),
+-	  .driver_info = (kernel_ulong_t)&net_intf1_blacklist },
++	  .driver_info = RSVD(1) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_7252),
+-	  .driver_info = (kernel_ulong_t)&net_intf1_blacklist },
++	  .driver_info = RSVD(1) },
+ 	{ USB_DEVICE(CMOTECH_VENDOR_ID, CMOTECH_PRODUCT_7253),
+-	  .driver_info = (kernel_ulong_t)&net_intf1_blacklist },
++	  .driver_info = RSVD(1) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_UC864E) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_UC864G) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_CC864_DUAL) },
+@@ -1254,38 +1130,38 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_DE910_DUAL) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_UE910_V2) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_LE922_USBCFG0),
+-		.driver_info = (kernel_ulong_t)&telit_le922_blacklist_usbcfg0 },
++	  .driver_info = RSVD(0) | RSVD(1) | NCTRL(2) | RSVD(3) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_LE922_USBCFG1),
+-		.driver_info = (kernel_ulong_t)&telit_le910_blacklist },
++	  .driver_info = NCTRL(0) | RSVD(1) | RSVD(2) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_LE922_USBCFG2),
+-		.driver_info = (kernel_ulong_t)&telit_le922_blacklist_usbcfg3 },
++	  .driver_info = NCTRL(0) | RSVD(1) | RSVD(2) | RSVD(3) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_LE922_USBCFG3),
+-		.driver_info = (kernel_ulong_t)&telit_le922_blacklist_usbcfg3 },
++	  .driver_info = NCTRL(0) | RSVD(1) | RSVD(2) | RSVD(3) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(TELIT_VENDOR_ID, TELIT_PRODUCT_LE922_USBCFG5, 0xff),
+-		.driver_info = (kernel_ulong_t)&telit_le922_blacklist_usbcfg0 },
++	  .driver_info = RSVD(0) | RSVD(1) | NCTRL(2) | RSVD(3) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_ME910),
+-		.driver_info = (kernel_ulong_t)&telit_me910_blacklist },
++	  .driver_info = NCTRL(0) | RSVD(1) | RSVD(3) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_ME910_DUAL_MODEM),
+-		.driver_info = (kernel_ulong_t)&telit_me910_dual_modem_blacklist },
++	  .driver_info = NCTRL(0) | RSVD(3) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_LE910),
+-		.driver_info = (kernel_ulong_t)&telit_le910_blacklist },
++	  .driver_info = NCTRL(0) | RSVD(1) | RSVD(2) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_LE910_USBCFG4),
+-		.driver_info = (kernel_ulong_t)&telit_le922_blacklist_usbcfg3 },
++	  .driver_info = NCTRL(0) | RSVD(1) | RSVD(2) | RSVD(3) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_LE920),
+-		.driver_info = (kernel_ulong_t)&telit_le920_blacklist },
++	  .driver_info = NCTRL(0) | RSVD(1) | RSVD(5) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_LE920A4_1207) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_LE920A4_1208),
+-		.driver_info = (kernel_ulong_t)&telit_le920a4_blacklist_1 },
++	  .driver_info = NCTRL(0) | RSVD(1) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_LE920A4_1211),
+-		.driver_info = (kernel_ulong_t)&telit_le922_blacklist_usbcfg3 },
++	  .driver_info = NCTRL(0) | RSVD(1) | RSVD(2) | RSVD(3) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_LE920A4_1212),
+-		.driver_info = (kernel_ulong_t)&telit_le920a4_blacklist_1 },
++	  .driver_info = NCTRL(0) | RSVD(1) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(TELIT_VENDOR_ID, TELIT_PRODUCT_LE920A4_1213, 0xff) },
+ 	{ USB_DEVICE(TELIT_VENDOR_ID, TELIT_PRODUCT_LE920A4_1214),
+-		.driver_info = (kernel_ulong_t)&telit_le922_blacklist_usbcfg3 },
++	  .driver_info = NCTRL(0) | RSVD(1) | RSVD(2) | RSVD(3) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, ZTE_PRODUCT_MF622, 0xff, 0xff, 0xff) }, /* ZTE WCDMA products */
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0002, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf1_blacklist },
++	  .driver_info = RSVD(1) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0003, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0004, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0005, 0xff, 0xff, 0xff) },
+@@ -1301,58 +1177,58 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0010, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0011, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0012, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf1_blacklist },
++	  .driver_info = RSVD(1) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0013, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, ZTE_PRODUCT_MF628, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0016, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0017, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf3_blacklist },
++	  .driver_info = RSVD(3) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0018, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0019, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf3_blacklist },
++	  .driver_info = RSVD(3) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0020, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0021, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0022, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0023, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0024, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0025, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf1_blacklist },
++	  .driver_info = RSVD(1) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0028, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0029, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0030, 0xff, 0xff, 0xff) },
+-	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, ZTE_PRODUCT_MF626, 0xff,
+-	  0xff, 0xff), .driver_info = (kernel_ulong_t)&zte_mf626_blacklist },
++	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, ZTE_PRODUCT_MF626, 0xff, 0xff, 0xff),
++	  .driver_info = NCTRL(0) | NCTRL(1) | RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0032, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0033, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0034, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0037, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&zte_0037_blacklist },
++	  .driver_info = NCTRL(0) | NCTRL(1) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0038, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0039, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0040, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0042, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0043, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0044, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0048, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0049, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf5_blacklist },
++	  .driver_info = RSVD(5) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0050, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0051, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0052, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0054, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0055, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf1_blacklist },
++	  .driver_info = RSVD(1) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0056, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0057, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0058, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0061, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0062, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0063, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0064, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0065, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0066, 0xff, 0xff, 0xff) },
+@@ -1377,26 +1253,26 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0096, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0097, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0104, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0105, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0106, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0108, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0113, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf5_blacklist },
++	  .driver_info = RSVD(5) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0117, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0118, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf5_blacklist },
++	  .driver_info = RSVD(5) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0121, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf5_blacklist },
++	  .driver_info = RSVD(5) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0122, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0123, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0124, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf5_blacklist },
++	  .driver_info = RSVD(5) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0125, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf6_blacklist },
++	  .driver_info = RSVD(6) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0126, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf5_blacklist },
++	  .driver_info = RSVD(5) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0128, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0135, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0136, 0xff, 0xff, 0xff) },
+@@ -1412,50 +1288,50 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0155, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0156, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0157, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf5_blacklist },
++	  .driver_info = RSVD(5) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0158, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf3_blacklist },
++	  .driver_info = RSVD(3) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0159, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0161, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0162, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0164, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0165, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0167, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0189, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0191, 0xff, 0xff, 0xff), /* ZTE EuFi890 */
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0196, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0197, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0199, 0xff, 0xff, 0xff), /* ZTE MF820S */
+-	  .driver_info = (kernel_ulong_t)&net_intf1_blacklist },
++	  .driver_info = RSVD(1) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0200, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0201, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0254, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0257, 0xff, 0xff, 0xff), /* ZTE MF821 */
+-	  .driver_info = (kernel_ulong_t)&net_intf3_blacklist },
++	  .driver_info = RSVD(3) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0265, 0xff, 0xff, 0xff), /* ONDA MT8205 */
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0284, 0xff, 0xff, 0xff), /* ZTE MF880 */
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0317, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0326, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0330, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0395, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0412, 0xff, 0xff, 0xff), /* Telewell TW-LTE 4G */
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0414, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0417, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1008, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1010, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1012, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1018, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1021, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf2_blacklist },
++	  .driver_info = RSVD(2) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1057, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1058, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1059, 0xff, 0xff, 0xff) },
+@@ -1572,23 +1448,23 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1170, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1244, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1245, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1246, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1247, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1248, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1249, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1250, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1251, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1252, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1253, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1254, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1255, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&zte_1255_blacklist },
++	  .driver_info = RSVD(3) | RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1256, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1257, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1258, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1259, 0xff, 0xff, 0xff) },
+@@ -1603,7 +1479,7 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1268, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1269, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1270, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf5_blacklist },
++	  .driver_info = RSVD(5) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1271, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1272, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1273, 0xff, 0xff, 0xff) },
+@@ -1639,17 +1515,17 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1303, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1333, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1401, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf2_blacklist },
++	  .driver_info = RSVD(2) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1402, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf2_blacklist },
++	  .driver_info = RSVD(2) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1424, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf2_blacklist },
++	  .driver_info = RSVD(2) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1425, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf2_blacklist },
++	  .driver_info = RSVD(2) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1426, 0xff, 0xff, 0xff),  /* ZTE MF91 */
+-		.driver_info = (kernel_ulong_t)&net_intf2_blacklist },
++	  .driver_info = RSVD(2) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1428, 0xff, 0xff, 0xff),  /* Telewell TW-LTE 4G v2 */
+-		.driver_info = (kernel_ulong_t)&net_intf2_blacklist },
++	  .driver_info = RSVD(2) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1533, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1534, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1535, 0xff, 0xff, 0xff) },
+@@ -1667,8 +1543,8 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1596, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1598, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x1600, 0xff, 0xff, 0xff) },
+-	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x2002, 0xff,
+-	  0xff, 0xff), .driver_info = (kernel_ulong_t)&zte_k3765_z_blacklist },
++	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x2002, 0xff, 0xff, 0xff),
++	  .driver_info = NCTRL(0) | NCTRL(1) | NCTRL(2) | RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x2003, 0xff, 0xff, 0xff) },
+ 
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0014, 0xff, 0xff, 0xff) }, /* ZTE CDMA products */
+@@ -1679,20 +1555,20 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0073, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0094, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0130, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf1_blacklist },
++	  .driver_info = RSVD(1) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0133, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf3_blacklist },
++	  .driver_info = RSVD(3) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0141, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf5_blacklist },
++	  .driver_info = RSVD(5) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0147, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0152, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0168, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0170, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0176, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf3_blacklist },
++	  .driver_info = RSVD(3) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0x0178, 0xff, 0xff, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf3_blacklist },
++	  .driver_info = RSVD(3) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0xff42, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0xff43, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0xff44, 0xff, 0xff, 0xff) },
+@@ -1844,19 +1720,19 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, ZTE_PRODUCT_AC2726, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, ZTE_PRODUCT_AC8710T, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, ZTE_PRODUCT_MC2718, 0xff, 0xff, 0xff),
+-	 .driver_info = (kernel_ulong_t)&zte_mc2718_z_blacklist },
++	 .driver_info = NCTRL(1) | NCTRL(2) | NCTRL(3) | NCTRL(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, ZTE_PRODUCT_AD3812, 0xff, 0xff, 0xff),
+-	 .driver_info = (kernel_ulong_t)&zte_ad3812_z_blacklist },
++	 .driver_info = NCTRL(0) | NCTRL(1) | NCTRL(2) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ZTE_VENDOR_ID, ZTE_PRODUCT_MC2716, 0xff, 0xff, 0xff),
+-	 .driver_info = (kernel_ulong_t)&zte_mc2716_z_blacklist },
++	 .driver_info = NCTRL(1) | NCTRL(2) | NCTRL(3) },
+ 	{ USB_DEVICE(ZTE_VENDOR_ID, ZTE_PRODUCT_ME3620_L),
+-	 .driver_info = (kernel_ulong_t)&zte_me3620_xl_blacklist },
++	 .driver_info = RSVD(3) | RSVD(4) | RSVD(5) },
+ 	{ USB_DEVICE(ZTE_VENDOR_ID, ZTE_PRODUCT_ME3620_MBIM),
+-	 .driver_info = (kernel_ulong_t)&zte_me3620_mbim_blacklist },
++	 .driver_info = RSVD(2) | RSVD(3) | RSVD(4) },
+ 	{ USB_DEVICE(ZTE_VENDOR_ID, ZTE_PRODUCT_ME3620_X),
+-	 .driver_info = (kernel_ulong_t)&zte_me3620_xl_blacklist },
++	 .driver_info = RSVD(3) | RSVD(4) | RSVD(5) },
+ 	{ USB_DEVICE(ZTE_VENDOR_ID, ZTE_PRODUCT_ZM8620_X),
+-	 .driver_info = (kernel_ulong_t)&zte_zm8620_x_blacklist },
++	 .driver_info = RSVD(3) | RSVD(4) | RSVD(5) },
+ 	{ USB_VENDOR_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0xff, 0x02, 0x01) },
+ 	{ USB_VENDOR_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0xff, 0x02, 0x05) },
+ 	{ USB_VENDOR_AND_INTERFACE_INFO(ZTE_VENDOR_ID, 0xff, 0x86, 0x10) },
+@@ -1876,37 +1752,34 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE(ALINK_VENDOR_ID, ALINK_PRODUCT_PH300) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(ALINK_VENDOR_ID, ALINK_PRODUCT_3GU, 0xff, 0xff, 0xff) },
+ 	{ USB_DEVICE(ALINK_VENDOR_ID, SIMCOM_PRODUCT_SIM7100E),
+-	  .driver_info = (kernel_ulong_t)&simcom_sim7100e_blacklist },
++	  .driver_info = RSVD(5) | RSVD(6) },
+ 	{ USB_DEVICE(ALCATEL_VENDOR_ID, ALCATEL_PRODUCT_X060S_X200),
+-	  .driver_info = (kernel_ulong_t)&alcatel_x200_blacklist
+-	},
++	  .driver_info = NCTRL(0) | NCTRL(1) | RSVD(4) },
+ 	{ USB_DEVICE(ALCATEL_VENDOR_ID, ALCATEL_PRODUCT_X220_X500D),
+-	  .driver_info = (kernel_ulong_t)&net_intf6_blacklist },
++	  .driver_info = RSVD(6) },
+ 	{ USB_DEVICE(ALCATEL_VENDOR_ID, 0x0052),
+-	  .driver_info = (kernel_ulong_t)&net_intf6_blacklist },
++	  .driver_info = RSVD(6) },
+ 	{ USB_DEVICE(ALCATEL_VENDOR_ID, 0x00b6),
+-	  .driver_info = (kernel_ulong_t)&net_intf3_blacklist },
++	  .driver_info = RSVD(3) },
+ 	{ USB_DEVICE(ALCATEL_VENDOR_ID, 0x00b7),
+-	  .driver_info = (kernel_ulong_t)&net_intf5_blacklist },
++	  .driver_info = RSVD(5) },
+ 	{ USB_DEVICE(ALCATEL_VENDOR_ID, ALCATEL_PRODUCT_L100V),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE(ALCATEL_VENDOR_ID, ALCATEL_PRODUCT_L800MA),
+-	  .driver_info = (kernel_ulong_t)&net_intf2_blacklist },
++	  .driver_info = RSVD(2) },
+ 	{ USB_DEVICE(AIRPLUS_VENDOR_ID, AIRPLUS_PRODUCT_MCD650) },
+ 	{ USB_DEVICE(TLAYTECH_VENDOR_ID, TLAYTECH_PRODUCT_TEU800) },
+ 	{ USB_DEVICE(LONGCHEER_VENDOR_ID, FOUR_G_SYSTEMS_PRODUCT_W14),
+-  	  .driver_info = (kernel_ulong_t)&four_g_w14_blacklist
+-  	},
++	  .driver_info = NCTRL(0) | NCTRL(1) },
+ 	{ USB_DEVICE(LONGCHEER_VENDOR_ID, FOUR_G_SYSTEMS_PRODUCT_W100),
+-	  .driver_info = (kernel_ulong_t)&four_g_w100_blacklist
+-	},
++	  .driver_info = NCTRL(1) | NCTRL(2) | RSVD(3) },
+ 	{USB_DEVICE(LONGCHEER_VENDOR_ID, FUJISOFT_PRODUCT_FS040U),
+-	 .driver_info = (kernel_ulong_t)&net_intf3_blacklist},
++	 .driver_info = RSVD(3)},
+ 	{ USB_DEVICE_INTERFACE_CLASS(LONGCHEER_VENDOR_ID, SPEEDUP_PRODUCT_SU9800, 0xff) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(LONGCHEER_VENDOR_ID, 0x9801, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf3_blacklist },
++	  .driver_info = RSVD(3) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(LONGCHEER_VENDOR_ID, 0x9803, 0xff),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE(LONGCHEER_VENDOR_ID, ZOOM_PRODUCT_4597) },
+ 	{ USB_DEVICE(LONGCHEER_VENDOR_ID, IBALL_3_5G_CONNECT) },
+ 	{ USB_DEVICE(HAIER_VENDOR_ID, HAIER_PRODUCT_CE100) },
+@@ -1932,14 +1805,14 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE(CINTERION_VENDOR_ID, CINTERION_PRODUCT_EU3_E) },
+ 	{ USB_DEVICE(CINTERION_VENDOR_ID, CINTERION_PRODUCT_EU3_P) },
+ 	{ USB_DEVICE(CINTERION_VENDOR_ID, CINTERION_PRODUCT_PH8),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(CINTERION_VENDOR_ID, CINTERION_PRODUCT_AHXX, 0xff) },
+ 	{ USB_DEVICE(CINTERION_VENDOR_ID, CINTERION_PRODUCT_PLXX),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(CINTERION_VENDOR_ID, CINTERION_PRODUCT_PH8_2RMNET, 0xff),
+-		.driver_info = (kernel_ulong_t)&cinterion_rmnet2_blacklist },
++	  .driver_info = RSVD(4) | RSVD(5) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(CINTERION_VENDOR_ID, CINTERION_PRODUCT_PH8_AUDIO, 0xff),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(CINTERION_VENDOR_ID, CINTERION_PRODUCT_AHXX_2RMNET, 0xff) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(CINTERION_VENDOR_ID, CINTERION_PRODUCT_AHXX_AUDIO, 0xff) },
+ 	{ USB_DEVICE(CINTERION_VENDOR_ID, CINTERION_PRODUCT_HC28_MDM) },
+@@ -1949,20 +1822,20 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE(SIEMENS_VENDOR_ID, CINTERION_PRODUCT_HC28_MDM) }, /* HC28 enumerates with Siemens or Cinterion VID depending on FW revision */
+ 	{ USB_DEVICE(SIEMENS_VENDOR_ID, CINTERION_PRODUCT_HC28_MDMNET) },
+ 	{ USB_DEVICE(OLIVETTI_VENDOR_ID, OLIVETTI_PRODUCT_OLICARD100),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE(OLIVETTI_VENDOR_ID, OLIVETTI_PRODUCT_OLICARD120),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE(OLIVETTI_VENDOR_ID, OLIVETTI_PRODUCT_OLICARD140),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE(OLIVETTI_VENDOR_ID, OLIVETTI_PRODUCT_OLICARD145) },
+ 	{ USB_DEVICE(OLIVETTI_VENDOR_ID, OLIVETTI_PRODUCT_OLICARD155),
+-		.driver_info = (kernel_ulong_t)&net_intf6_blacklist },
++	  .driver_info = RSVD(6) },
+ 	{ USB_DEVICE(OLIVETTI_VENDOR_ID, OLIVETTI_PRODUCT_OLICARD200),
+-		.driver_info = (kernel_ulong_t)&net_intf6_blacklist },
++	  .driver_info = RSVD(6) },
+ 	{ USB_DEVICE(OLIVETTI_VENDOR_ID, OLIVETTI_PRODUCT_OLICARD160),
+-		.driver_info = (kernel_ulong_t)&net_intf6_blacklist },
++	  .driver_info = RSVD(6) },
+ 	{ USB_DEVICE(OLIVETTI_VENDOR_ID, OLIVETTI_PRODUCT_OLICARD500),
+-		.driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE(CELOT_VENDOR_ID, CELOT_PRODUCT_CT680M) }, /* CT-650 CDMA 450 1xEVDO modem */
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(SAMSUNG_VENDOR_ID, SAMSUNG_PRODUCT_GT_B3730, USB_CLASS_CDC_DATA, 0x00, 0x00) }, /* Samsung GT-B3730 LTE USB modem.*/
+ 	{ USB_DEVICE(YUGA_VENDOR_ID, YUGA_PRODUCT_CEM600) },
+@@ -2039,9 +1912,9 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE(PETATEL_VENDOR_ID, PETATEL_PRODUCT_NP10T_600E) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(TPLINK_VENDOR_ID, TPLINK_PRODUCT_LTE, 0xff, 0x00, 0x00) },	/* TP-Link LTE Module */
+ 	{ USB_DEVICE(TPLINK_VENDOR_ID, TPLINK_PRODUCT_MA180),
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE(TPLINK_VENDOR_ID, 0x9000),					/* TP-Link MA260 */
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE(CHANGHONG_VENDOR_ID, CHANGHONG_PRODUCT_CH690) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(0x2001, 0x7d01, 0xff, 0x02, 0x01) },	/* D-Link DWM-156 (variant) */
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(0x2001, 0x7d01, 0xff, 0x00, 0x00) },	/* D-Link DWM-156 (variant) */
+@@ -2052,9 +1925,9 @@ static const struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE_INTERFACE_CLASS(0x2001, 0x7d04, 0xff) },			/* D-Link DWM-158 */
+ 	{ USB_DEVICE_INTERFACE_CLASS(0x2001, 0x7d0e, 0xff) },			/* D-Link DWM-157 C1 */
+ 	{ USB_DEVICE_INTERFACE_CLASS(0x2001, 0x7e19, 0xff),			/* D-Link DWM-221 B1 */
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(0x2001, 0x7e35, 0xff),			/* D-Link DWM-222 */
+-	  .driver_info = (kernel_ulong_t)&net_intf4_blacklist },
++	  .driver_info = RSVD(4) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(0x07d1, 0x3e01, 0xff, 0xff, 0xff) }, /* D-Link DWM-152/C1 */
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(0x07d1, 0x3e02, 0xff, 0xff, 0xff) }, /* D-Link DWM-156/C1 */
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(0x07d1, 0x7e11, 0xff, 0xff, 0xff) }, /* D-Link DWM-156/A3 */
+@@ -2114,7 +1987,7 @@ static int option_probe(struct usb_serial *serial,
+ 	struct usb_interface_descriptor *iface_desc =
+ 				&serial->interface->cur_altsetting->desc;
+ 	struct usb_device_descriptor *dev_desc = &serial->dev->descriptor;
+-	const struct option_blacklist_info *blacklist;
++	unsigned long device_flags = id->driver_info;
+ 
+ 	/* Never bind to the CD-Rom emulation interface	*/
+ 	if (iface_desc->bInterfaceClass == 0x08)
+@@ -2125,9 +1998,7 @@ static int option_probe(struct usb_serial *serial,
+ 	 * the same class/subclass/protocol as the serial interfaces.  Look at
+ 	 * the Windows driver .INF files for reserved interface numbers.
+ 	 */
+-	blacklist = (void *)id->driver_info;
+-	if (blacklist && test_bit(iface_desc->bInterfaceNumber,
+-						&blacklist->reserved))
++	if (device_flags & RSVD(iface_desc->bInterfaceNumber))
+ 		return -ENODEV;
+ 	/*
+ 	 * Don't bind network interface on Samsung GT-B3730, it is handled by
+@@ -2138,8 +2009,8 @@ static int option_probe(struct usb_serial *serial,
+ 	    iface_desc->bInterfaceClass != USB_CLASS_CDC_DATA)
+ 		return -ENODEV;
+ 
+-	/* Store the blacklist info so we can use it during attach. */
+-	usb_set_serial_data(serial, (void *)blacklist);
++	/* Store the device flags so we can use them during attach. */
++	usb_set_serial_data(serial, (void *)device_flags);
+ 
+ 	return 0;
+ }
+@@ -2147,22 +2018,21 @@ static int option_probe(struct usb_serial *serial,
+ static int option_attach(struct usb_serial *serial)
+ {
+ 	struct usb_interface_descriptor *iface_desc;
+-	const struct option_blacklist_info *blacklist;
+ 	struct usb_wwan_intf_private *data;
++	unsigned long device_flags;
+ 
+ 	data = kzalloc(sizeof(struct usb_wwan_intf_private), GFP_KERNEL);
+ 	if (!data)
+ 		return -ENOMEM;
+ 
+-	/* Retrieve blacklist info stored at probe. */
+-	blacklist = usb_get_serial_data(serial);
++	/* Retrieve device flags stored at probe. */
++	device_flags = (unsigned long)usb_get_serial_data(serial);
+ 
+ 	iface_desc = &serial->interface->cur_altsetting->desc;
+ 
+-	if (!blacklist || !test_bit(iface_desc->bInterfaceNumber,
+-						&blacklist->sendsetup)) {
++	if (!(device_flags & NCTRL(iface_desc->bInterfaceNumber)))
+ 		data->use_send_setup = 1;
+-	}
++
+ 	spin_lock_init(&data->susp_lock);
+ 
+ 	usb_set_serial_data(serial, data);
+diff --git a/drivers/usb/serial/visor.c b/drivers/usb/serial/visor.c
+index 337a0be89fcf..dbc3801b43eb 100644
+--- a/drivers/usb/serial/visor.c
++++ b/drivers/usb/serial/visor.c
+@@ -338,47 +338,48 @@ static int palm_os_3_probe(struct usb_serial *serial,
+ 		goto exit;
+ 	}
+ 
+-	if (retval == sizeof(*connection_info)) {
+-			connection_info = (struct visor_connection_info *)
+-							transfer_buffer;
+-
+-		num_ports = le16_to_cpu(connection_info->num_ports);
+-		for (i = 0; i < num_ports; ++i) {
+-			switch (
+-			   connection_info->connections[i].port_function_id) {
+-			case VISOR_FUNCTION_GENERIC:
+-				string = "Generic";
+-				break;
+-			case VISOR_FUNCTION_DEBUGGER:
+-				string = "Debugger";
+-				break;
+-			case VISOR_FUNCTION_HOTSYNC:
+-				string = "HotSync";
+-				break;
+-			case VISOR_FUNCTION_CONSOLE:
+-				string = "Console";
+-				break;
+-			case VISOR_FUNCTION_REMOTE_FILE_SYS:
+-				string = "Remote File System";
+-				break;
+-			default:
+-				string = "unknown";
+-				break;
+-			}
+-			dev_info(dev, "%s: port %d, is for %s use\n",
+-				serial->type->description,
+-				connection_info->connections[i].port, string);
+-		}
++	if (retval != sizeof(*connection_info)) {
++		dev_err(dev, "Invalid connection information received from device\n");
++		retval = -ENODEV;
++		goto exit;
+ 	}
+-	/*
+-	* Handle devices that report invalid stuff here.
+-	*/
++
++	connection_info = (struct visor_connection_info *)transfer_buffer;
++
++	num_ports = le16_to_cpu(connection_info->num_ports);
++
++	/* Handle devices that report invalid stuff here. */
+ 	if (num_ports == 0 || num_ports > 2) {
+ 		dev_warn(dev, "%s: No valid connect info available\n",
+ 			serial->type->description);
+ 		num_ports = 2;
+ 	}
+ 
++	for (i = 0; i < num_ports; ++i) {
++		switch (connection_info->connections[i].port_function_id) {
++		case VISOR_FUNCTION_GENERIC:
++			string = "Generic";
++			break;
++		case VISOR_FUNCTION_DEBUGGER:
++			string = "Debugger";
++			break;
++		case VISOR_FUNCTION_HOTSYNC:
++			string = "HotSync";
++			break;
++		case VISOR_FUNCTION_CONSOLE:
++			string = "Console";
++			break;
++		case VISOR_FUNCTION_REMOTE_FILE_SYS:
++			string = "Remote File System";
++			break;
++		default:
++			string = "unknown";
++			break;
++		}
++		dev_info(dev, "%s: port %d, is for %s use\n",
++			serial->type->description,
++			connection_info->connections[i].port, string);
++	}
+ 	dev_info(dev, "%s: Number of ports: %d\n", serial->type->description,
+ 		num_ports);
+ 
+diff --git a/fs/xfs/xfs_file.c b/fs/xfs/xfs_file.c
+index 362c6b4c1186..1410835eebe2 100644
+--- a/fs/xfs/xfs_file.c
++++ b/fs/xfs/xfs_file.c
+@@ -846,22 +846,26 @@ xfs_file_fallocate(
+ 		if (error)
+ 			goto out_unlock;
+ 	} else if (mode & FALLOC_FL_INSERT_RANGE) {
+-		unsigned int blksize_mask = i_blocksize(inode) - 1;
++		unsigned int	blksize_mask = i_blocksize(inode) - 1;
++		loff_t		isize = i_size_read(inode);
+ 
+-		new_size = i_size_read(inode) + len;
+ 		if (offset & blksize_mask || len & blksize_mask) {
+ 			error = -EINVAL;
+ 			goto out_unlock;
+ 		}
+ 
+-		/* check the new inode size does not wrap through zero */
+-		if (new_size > inode->i_sb->s_maxbytes) {
++		/*
++		 * New inode size must not exceed ->s_maxbytes, accounting for
++		 * possible signed overflow.
++		 */
++		if (inode->i_sb->s_maxbytes - isize < len) {
+ 			error = -EFBIG;
+ 			goto out_unlock;
+ 		}
++		new_size = isize + len;
+ 
+ 		/* Offset should be less than i_size */
+-		if (offset >= i_size_read(inode)) {
++		if (offset >= isize) {
+ 			error = -EINVAL;
+ 			goto out_unlock;
+ 		}
+diff --git a/include/kvm/arm_psci.h b/include/kvm/arm_psci.h
+index e518e4e3dfb5..4b1548129fa2 100644
+--- a/include/kvm/arm_psci.h
++++ b/include/kvm/arm_psci.h
+@@ -37,10 +37,15 @@ static inline int kvm_psci_version(struct kvm_vcpu *vcpu, struct kvm *kvm)
+ 	 * Our PSCI implementation stays the same across versions from
+ 	 * v0.2 onward, only adding the few mandatory functions (such
+ 	 * as FEATURES with 1.0) that are required by newer
+-	 * revisions. It is thus safe to return the latest.
++	 * revisions. It is thus safe to return the latest, unless
++	 * userspace has instructed us otherwise.
+ 	 */
+-	if (test_bit(KVM_ARM_VCPU_PSCI_0_2, vcpu->arch.features))
++	if (test_bit(KVM_ARM_VCPU_PSCI_0_2, vcpu->arch.features)) {
++		if (vcpu->kvm->arch.psci_version)
++			return vcpu->kvm->arch.psci_version;
++
+ 		return KVM_ARM_PSCI_LATEST;
++	}
+ 
+ 	return KVM_ARM_PSCI_0_1;
+ }
+@@ -48,4 +53,11 @@ static inline int kvm_psci_version(struct kvm_vcpu *vcpu, struct kvm *kvm)
+ 
+ int kvm_hvc_call_handler(struct kvm_vcpu *vcpu);
+ 
++struct kvm_one_reg;
++
++int kvm_arm_get_fw_num_regs(struct kvm_vcpu *vcpu);
++int kvm_arm_copy_fw_reg_indices(struct kvm_vcpu *vcpu, u64 __user *uindices);
++int kvm_arm_get_fw_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg);
++int kvm_arm_set_fw_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg);
++
+ #endif /* __KVM_ARM_PSCI_H__ */
+diff --git a/kernel/bpf/arraymap.c b/kernel/bpf/arraymap.c
+index a38119e4a427..eb43f7e219f9 100644
+--- a/kernel/bpf/arraymap.c
++++ b/kernel/bpf/arraymap.c
+@@ -190,7 +190,7 @@ int bpf_percpu_array_copy(struct bpf_map *map, void *key, void *value)
+ static int array_map_get_next_key(struct bpf_map *map, void *key, void *next_key)
+ {
+ 	struct bpf_array *array = container_of(map, struct bpf_array, map);
+-	u32 index = *(u32 *)key;
++	u32 index = key ? *(u32 *)key : U32_MAX;
+ 	u32 *next = (u32 *)next_key;
+ 
+ 	if (index >= array->map.max_entries) {
+diff --git a/kernel/bpf/hashtab.c b/kernel/bpf/hashtab.c
+index ad2f0ed75471..a36a532c056d 100644
+--- a/kernel/bpf/hashtab.c
++++ b/kernel/bpf/hashtab.c
+@@ -326,12 +326,15 @@ static int htab_map_get_next_key(struct bpf_map *map, void *key, void *next_key)
+ 	struct hlist_head *head;
+ 	struct htab_elem *l, *next_l;
+ 	u32 hash, key_size;
+-	int i;
++	int i = 0;
+ 
+ 	WARN_ON_ONCE(!rcu_read_lock_held());
+ 
+ 	key_size = map->key_size;
+ 
++	if (!key)
++		goto find_first_elem;
++
+ 	hash = htab_map_hash(key, key_size);
+ 
+ 	head = select_bucket(htab, hash);
+@@ -339,10 +342,8 @@ static int htab_map_get_next_key(struct bpf_map *map, void *key, void *next_key)
+ 	/* lookup the key */
+ 	l = lookup_elem_raw(head, hash, key, key_size);
+ 
+-	if (!l) {
+-		i = 0;
++	if (!l)
+ 		goto find_first_elem;
+-	}
+ 
+ 	/* key was found, get next key in the same bucket */
+ 	next_l = hlist_entry_safe(rcu_dereference_raw(hlist_next_rcu(&l->hash_node)),
+diff --git a/kernel/bpf/syscall.c b/kernel/bpf/syscall.c
+index f8b4e3e16cef..ca7e277e8b5f 100644
+--- a/kernel/bpf/syscall.c
++++ b/kernel/bpf/syscall.c
+@@ -508,14 +508,18 @@ static int map_get_next_key(union bpf_attr *attr)
+ 	if (IS_ERR(map))
+ 		return PTR_ERR(map);
+ 
+-	err = -ENOMEM;
+-	key = kmalloc(map->key_size, GFP_USER);
+-	if (!key)
+-		goto err_put;
+-
+-	err = -EFAULT;
+-	if (copy_from_user(key, ukey, map->key_size) != 0)
+-		goto free_key;
++	if (ukey) {
++		err = -ENOMEM;
++		key = kmalloc(map->key_size, GFP_USER);
++		if (!key)
++			goto err_put;
++
++		err = -EFAULT;
++		if (copy_from_user(key, ukey, map->key_size) != 0)
++			goto free_key;
++	} else {
++		key = NULL;
++	}
+ 
+ 	err = -ENOMEM;
+ 	next_key = kmalloc(map->key_size, GFP_USER);
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index b1d6b9888fba..cbc51826cb94 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -453,7 +453,7 @@ int perf_cpu_time_max_percent_handler(struct ctl_table *table, int write,
+ 				void __user *buffer, size_t *lenp,
+ 				loff_t *ppos)
+ {
+-	int ret = proc_dointvec(table, write, buffer, lenp, ppos);
++	int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+ 
+ 	if (ret || !write)
+ 		return ret;
+diff --git a/kernel/tracepoint.c b/kernel/tracepoint.c
+index d0639d917899..c8e7cc0e6ff6 100644
+--- a/kernel/tracepoint.c
++++ b/kernel/tracepoint.c
+@@ -202,7 +202,7 @@ static int tracepoint_add_func(struct tracepoint *tp,
+ 			lockdep_is_held(&tracepoints_mutex));
+ 	old = func_add(&tp_funcs, func, prio);
+ 	if (IS_ERR(old)) {
+-		WARN_ON_ONCE(1);
++		WARN_ON_ONCE(PTR_ERR(old) != -ENOMEM);
+ 		return PTR_ERR(old);
+ 	}
+ 
+@@ -235,7 +235,7 @@ static int tracepoint_remove_func(struct tracepoint *tp,
+ 			lockdep_is_held(&tracepoints_mutex));
+ 	old = func_remove(&tp_funcs, func);
+ 	if (IS_ERR(old)) {
+-		WARN_ON_ONCE(1);
++		WARN_ON_ONCE(PTR_ERR(old) != -ENOMEM);
+ 		return PTR_ERR(old);
+ 	}
+ 
+diff --git a/mm/percpu.c b/mm/percpu.c
+index f014cebbf405..3794cfc88689 100644
+--- a/mm/percpu.c
++++ b/mm/percpu.c
+@@ -70,6 +70,7 @@
+ #include <linux/vmalloc.h>
+ #include <linux/workqueue.h>
+ #include <linux/kmemleak.h>
++#include <linux/sched.h>
+ 
+ #include <asm/cacheflush.h>
+ #include <asm/sections.h>
+diff --git a/sound/core/pcm_compat.c b/sound/core/pcm_compat.c
+index 1f64ab0c2a95..7ae080bae15c 100644
+--- a/sound/core/pcm_compat.c
++++ b/sound/core/pcm_compat.c
+@@ -426,6 +426,8 @@ static int snd_pcm_ioctl_xfern_compat(struct snd_pcm_substream *substream,
+ 		return -ENOTTY;
+ 	if (substream->stream != dir)
+ 		return -EINVAL;
++	if (substream->runtime->status->state == SNDRV_PCM_STATE_OPEN)
++		return -EBADFD;
+ 
+ 	if ((ch = substream->runtime->channels) > 128)
+ 		return -EINVAL;
+diff --git a/sound/core/seq/seq_virmidi.c b/sound/core/seq/seq_virmidi.c
+index 200764948ed1..8bdc4c961f04 100644
+--- a/sound/core/seq/seq_virmidi.c
++++ b/sound/core/seq/seq_virmidi.c
+@@ -174,12 +174,12 @@ static void snd_virmidi_output_trigger(struct snd_rawmidi_substream *substream,
+ 			}
+ 			return;
+ 		}
++		spin_lock_irqsave(&substream->runtime->lock, flags);
+ 		if (vmidi->event.type != SNDRV_SEQ_EVENT_NONE) {
+ 			if (snd_seq_kernel_client_dispatch(vmidi->client, &vmidi->event, in_atomic(), 0) < 0)
+-				return;
++				goto out;
+ 			vmidi->event.type = SNDRV_SEQ_EVENT_NONE;
+ 		}
+-		spin_lock_irqsave(&substream->runtime->lock, flags);
+ 		while (1) {
+ 			count = __snd_rawmidi_transmit_peek(substream, buf, sizeof(buf));
+ 			if (count <= 0)
+diff --git a/sound/drivers/aloop.c b/sound/drivers/aloop.c
+index dc91002d1e0d..847f70348d4d 100644
+--- a/sound/drivers/aloop.c
++++ b/sound/drivers/aloop.c
+@@ -296,6 +296,8 @@ static int loopback_trigger(struct snd_pcm_substream *substream, int cmd)
+ 		cable->pause |= stream;
+ 		loopback_timer_stop(dpcm);
+ 		spin_unlock(&cable->lock);
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++			loopback_active_notify(dpcm);
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+ 	case SNDRV_PCM_TRIGGER_RESUME:
+@@ -304,6 +306,8 @@ static int loopback_trigger(struct snd_pcm_substream *substream, int cmd)
+ 		cable->pause &= ~stream;
+ 		loopback_timer_start(dpcm);
+ 		spin_unlock(&cable->lock);
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++			loopback_active_notify(dpcm);
+ 		break;
+ 	default:
+ 		return -EINVAL;
+@@ -828,9 +832,11 @@ static int loopback_rate_shift_get(struct snd_kcontrol *kcontrol,
+ {
+ 	struct loopback *loopback = snd_kcontrol_chip(kcontrol);
+ 	
++	mutex_lock(&loopback->cable_lock);
+ 	ucontrol->value.integer.value[0] =
+ 		loopback->setup[kcontrol->id.subdevice]
+ 			       [kcontrol->id.device].rate_shift;
++	mutex_unlock(&loopback->cable_lock);
+ 	return 0;
+ }
+ 
+@@ -862,9 +868,11 @@ static int loopback_notify_get(struct snd_kcontrol *kcontrol,
+ {
+ 	struct loopback *loopback = snd_kcontrol_chip(kcontrol);
+ 	
++	mutex_lock(&loopback->cable_lock);
+ 	ucontrol->value.integer.value[0] =
+ 		loopback->setup[kcontrol->id.subdevice]
+ 			       [kcontrol->id.device].notify;
++	mutex_unlock(&loopback->cable_lock);
+ 	return 0;
+ }
+ 
+@@ -876,12 +884,14 @@ static int loopback_notify_put(struct snd_kcontrol *kcontrol,
+ 	int change = 0;
+ 
+ 	val = ucontrol->value.integer.value[0] ? 1 : 0;
++	mutex_lock(&loopback->cable_lock);
+ 	if (val != loopback->setup[kcontrol->id.subdevice]
+ 				[kcontrol->id.device].notify) {
+ 		loopback->setup[kcontrol->id.subdevice]
+ 			[kcontrol->id.device].notify = val;
+ 		change = 1;
+ 	}
++	mutex_unlock(&loopback->cable_lock);
+ 	return change;
+ }
+ 
+@@ -889,13 +899,18 @@ static int loopback_active_get(struct snd_kcontrol *kcontrol,
+ 			       struct snd_ctl_elem_value *ucontrol)
+ {
+ 	struct loopback *loopback = snd_kcontrol_chip(kcontrol);
+-	struct loopback_cable *cable = loopback->cables
+-			[kcontrol->id.subdevice][kcontrol->id.device ^ 1];
++	struct loopback_cable *cable;
++
+ 	unsigned int val = 0;
+ 
+-	if (cable != NULL)
+-		val = (cable->running & (1 << SNDRV_PCM_STREAM_PLAYBACK)) ?
+-									1 : 0;
++	mutex_lock(&loopback->cable_lock);
++	cable = loopback->cables[kcontrol->id.subdevice][kcontrol->id.device ^ 1];
++	if (cable != NULL) {
++		unsigned int running = cable->running ^ cable->pause;
++
++		val = (running & (1 << SNDRV_PCM_STREAM_PLAYBACK)) ? 1 : 0;
++	}
++	mutex_unlock(&loopback->cable_lock);
+ 	ucontrol->value.integer.value[0] = val;
+ 	return 0;
+ }
+@@ -938,9 +953,11 @@ static int loopback_rate_get(struct snd_kcontrol *kcontrol,
+ {
+ 	struct loopback *loopback = snd_kcontrol_chip(kcontrol);
+ 	
++	mutex_lock(&loopback->cable_lock);
+ 	ucontrol->value.integer.value[0] =
+ 		loopback->setup[kcontrol->id.subdevice]
+ 			       [kcontrol->id.device].rate;
++	mutex_unlock(&loopback->cable_lock);
+ 	return 0;
+ }
+ 
+@@ -960,9 +977,11 @@ static int loopback_channels_get(struct snd_kcontrol *kcontrol,
+ {
+ 	struct loopback *loopback = snd_kcontrol_chip(kcontrol);
+ 	
++	mutex_lock(&loopback->cable_lock);
+ 	ucontrol->value.integer.value[0] =
+ 		loopback->setup[kcontrol->id.subdevice]
+ 			       [kcontrol->id.device].channels;
++	mutex_unlock(&loopback->cable_lock);
+ 	return 0;
+ }
+ 
+diff --git a/tools/testing/selftests/firmware/fw_filesystem.sh b/tools/testing/selftests/firmware/fw_filesystem.sh
+index 17e16fcaa0cc..99d7f13a5637 100755
+--- a/tools/testing/selftests/firmware/fw_filesystem.sh
++++ b/tools/testing/selftests/firmware/fw_filesystem.sh
+@@ -29,9 +29,11 @@ test_finish()
+ 		echo "$OLD_TIMEOUT" >/sys/class/firmware/timeout
+ 	fi
+ 	if [ "$OLD_FWPATH" = "" ]; then
+-		OLD_FWPATH=" "
++		# A zero-length write won't work; write a null byte
++		printf '\000' >/sys/module/firmware_class/parameters/path
++	else
++		echo -n "$OLD_FWPATH" >/sys/module/firmware_class/parameters/path
+ 	fi
+-	echo -n "$OLD_FWPATH" >/sys/module/firmware_class/parameters/path
+ 	rm -f "$FW"
+ 	rmdir "$FWPATH"
+ }
