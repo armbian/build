@@ -10,6 +10,4 @@ KERNEL_TARGET="next,dev"
 CLI_TARGET=""
 DESKTOP_TARGET=""
 #
-BOARDRATING=""
-HARDWARE="https://linux-sunxi.org/Banana_Pi_M3"
-FORUMS="http://forum.armbian.com/index.php/forum/11-other-boards/"
+CLI_BETA_TARGET="bionic:next"

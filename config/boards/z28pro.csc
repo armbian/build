@@ -10,11 +10,5 @@ KERNEL_TARGET="default"
 CLI_TARGET=""
 DESKTOP_TARGET="stretch:default"
 #
-CLI_BETA_TARGET="stretch:dev"
+CLI_BETA_TARGET=""
 DESKTOP_BETA_TARGET=""
-#
-RECOMMENDED="Debian_stretch_default_desktop:75"
-#
-CHIP="https://en.wikipedia.org/wiki/Rockchip#RK33xx_series"
-HARDWARE="https://www.pine64.org/?page_id=7147"
-FORUMS="https://forum.armbian.com/index.php?/forum/21-rockchip"
