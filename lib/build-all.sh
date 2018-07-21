@@ -66,6 +66,74 @@ build_main ()
 	rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid"
 }
 
+
+make_targets ()
+{
+	if [[ -n $CLI_TARGET && -z $1 ]]; then
+		# RELEASES : BRANCHES
+		CLI_TARGET=($(tr ':' ' ' <<< "$CLI_TARGET"))
+		build_settings_target=($(tr ',' ' ' <<< "${CLI_TARGET[0]}"))
+		build_settings_branch=($(tr ',' ' ' <<< "${CLI_TARGET[1]}"))
+
+		[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
+		[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
+
+		for release in ${build_settings_target[@]}; do
+			for kernel in ${build_settings_branch[@]}; do
+				buildlist+=("$BOARD $kernel $release no")
+			done
+		done
+	fi
+
+	if [[ -n $DESKTOP_TARGET && -z $1 ]]; then
+		# RELEASES : BRANCHES
+		DESKTOP_TARGET=($(tr ':' ' ' <<< "$DESKTOP_TARGET"))
+		build_settings_target=($(tr ',' ' ' <<< "${DESKTOP_TARGET[0]}"))
+		build_settings_branch=($(tr ',' ' ' <<< "${DESKTOP_TARGET[1]}"))
+
+		[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
+		[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
+
+		for release in ${build_settings_target[@]}; do
+			for kernel in ${build_settings_branch[@]}; do
+				buildlist+=("$BOARD $kernel $release yes")
+			done
+		done
+	fi
+
+	if [[ -n $CLI_BETA_TARGET && -n $1 ]]; then
+		# RELEASES : BRANCHES
+		CLI_BETA_TARGET=($(tr ':' ' ' <<< "$CLI_BETA_TARGET"))
+		build_settings_target=($(tr ',' ' ' <<< "${CLI_BETA_TARGET[0]}"))
+		build_settings_branch=($(tr ',' ' ' <<< "${CLI_BETA_TARGET[1]}"))
+
+		[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
+		[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
+
+		for release in ${build_settings_target[@]}; do
+			for kernel in ${build_settings_branch[@]}; do
+				buildlist+=("$BOARD $kernel $release no")
+			done
+		done
+	fi
+
+	if [[ -n $DESKTOP_BETA_TARGET && -n $1 ]]; then
+		# RELEASES : BRANCHES
+		DESKTOP_BETA_TARGET=($(tr ':' ' ' <<< "$DESKTOP_BETA_TARGET"))
+		build_settings_target=($(tr ',' ' ' <<< "${DESKTOP_BETA_TARGET[0]}"))
+		build_settings_branch=($(tr ',' ' ' <<< "${DESKTOP_BETA_TARGET[1]}"))
+
+		[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
+		[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
+
+		for release in ${build_settings_target[@]}; do
+			for kernel in ${build_settings_branch[@]}; do
+				buildlist+=("$BOARD $kernel $release yes")
+			done
+		done
+	fi
+}
+
 create_images_list()
 {
 	#
@@ -86,78 +154,11 @@ create_images_list()
 			DESKTOP_BETA_TARGET=$DESKTOP_TARGET
 		fi
 
-		if [[ -n $CLI_TARGET && -z $1 ]]; then
-
-			# RELEASES : BRANCHES
-			CLI_TARGET=($(tr ':' ' ' <<< "$CLI_TARGET"))
-
-			build_settings_target=($(tr ',' ' ' <<< "${CLI_TARGET[0]}"))
-			build_settings_branch=($(tr ',' ' ' <<< "${CLI_TARGET[1]}"))
-
-			[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
-			[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
-
-			for release in ${build_settings_target[@]}; do
-				for kernel in ${build_settings_branch[@]}; do
-					buildlist+=("$BOARD $kernel $release no")
-				done
-			done
+		if [[ -z $REBUILD_IMAGES ]]; then
+			make_targets
+		elif [[ $REBUILD_IMAGES == *"$BOARD"* ]]; then
+			make_targets
 		fi
-		if [[ -n $DESKTOP_TARGET && -z $1 ]]; then
-
-			# RELEASES : BRANCHES
-			DESKTOP_TARGET=($(tr ':' ' ' <<< "$DESKTOP_TARGET"))
-
-			build_settings_target=($(tr ',' ' ' <<< "${DESKTOP_TARGET[0]}"))
-			build_settings_branch=($(tr ',' ' ' <<< "${DESKTOP_TARGET[1]}"))
-
-			[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
-			[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
-
-			for release in ${build_settings_target[@]}; do
-				for kernel in ${build_settings_branch[@]}; do
-					buildlist+=("$BOARD $kernel $release yes")
-				done
-			done
-
-		fi
-		if [[ -n $CLI_BETA_TARGET && -n $1 ]]; then
-
-			# RELEASES : BRANCHES
-			CLI_BETA_TARGET=($(tr ':' ' ' <<< "$CLI_BETA_TARGET"))
-
-			build_settings_target=($(tr ',' ' ' <<< "${CLI_BETA_TARGET[0]}"))
-			build_settings_branch=($(tr ',' ' ' <<< "${CLI_BETA_TARGET[1]}"))
-
-			[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
-			[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
-
-			for release in ${build_settings_target[@]}; do
-				for kernel in ${build_settings_branch[@]}; do
-					buildlist+=("$BOARD $kernel $release no")
-				done
-			done
-
-		fi
-		if [[ -n $DESKTOP_BETA_TARGET && -n $1 ]]; then
-
-			# RELEASES : BRANCHES
-			DESKTOP_BETA_TARGET=($(tr ':' ' ' <<< "$DESKTOP_BETA_TARGET"))
-
-			build_settings_target=($(tr ',' ' ' <<< "${DESKTOP_BETA_TARGET[0]}"))
-			build_settings_branch=($(tr ',' ' ' <<< "${DESKTOP_BETA_TARGET[1]}"))
-
-			[[ ${build_settings_target[0]} == "%" ]] && build_settings_target[0]="${RELEASE_LIST[@]}"
-			[[ ${build_settings_branch[0]} == "%" ]] && build_settings_branch[0]="${BRANCH_LIST[@]}"
-
-			for release in ${build_settings_target[@]}; do
-				for kernel in ${build_settings_branch[@]}; do
-					buildlist+=("$BOARD $kernel $release yes")
-				done
-			done
-
-		fi
-
 		unset CLI_TARGET CLI_BRANCH DESKTOP_TARGET DESKTOP_BRANCH KERNEL_TARGET CLI_BETA_TARGET DESKTOP_BETA_TARGET
 	done
 }
