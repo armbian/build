@@ -140,7 +140,8 @@ create_images_list()
 	# if parameter is true, than we build beta list
 	#
 	local naming="$SRC/config/boards/*.conf";
-        if [[ "$EXPERT" == "yes" ]]; then naming=$naming" $SRC/config/boards/*.wip $SRC/config/boards/*.csc"; fi
+        if [[ "$EXPERT" == "yes" ]]; then naming=$naming" $SRC/config/boards/*.wip"; fi
+	if [[ -n $REBUILD_IMAGES ]]; then naming=$naming" $SRC/config/boards/*.csc"; fi
 
 	for board in $naming; do
 		BOARD=$(basename $board | cut -d'.' -f1)
@@ -167,7 +168,8 @@ create_images_list()
 create_kernels_list()
 {
 	local naming="$SRC/config/boards/*.conf";
-	if [[ "$EXPERT" == "yes" ]]; then naming=$naming" $SRC/config/boards/*.wip $SRC/config/boards/*.csc"; fi        
+	if [[ "$EXPERT" == "yes" ]]; then naming=$naming" $SRC/config/boards/*.wip"; fi
+	if [[ -n $REBUILD_IMAGES ]]; then naming=$naming" $SRC/config/boards/*.csc"; fi
 	for board in $naming; do
 		BOARD=$(basename $board | cut -d'.' -f1)
 		local file="${SRC}/config/boards/${BOARD}"
