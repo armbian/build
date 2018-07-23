@@ -109,6 +109,9 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 
 if [[ $RELEASE == xenial || $RELEASE == bionic ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
+# Base system dependencies
+DEBOOTSTRAP_LIST="locales,gnupg,ifupdown"
+[[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST="locales,gnupg,ifupdown,libgtk2.0-bin"
 
 # Essential packages
 PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler figlet fbset fping \
