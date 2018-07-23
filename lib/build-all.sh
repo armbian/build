@@ -155,9 +155,9 @@ create_images_list()
 		fi
 
 		if [[ -z $REBUILD_IMAGES ]]; then
-			make_targets
+			make_targets $1
 		elif [[ $REBUILD_IMAGES == *"$BOARD"* ]]; then
-			make_targets
+			make_targets $1
 		fi
 		unset CLI_TARGET CLI_BRANCH DESKTOP_TARGET DESKTOP_BRANCH KERNEL_TARGET CLI_BETA_TARGET DESKTOP_BETA_TARGET
 	done
