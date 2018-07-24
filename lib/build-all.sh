@@ -141,7 +141,7 @@ create_images_list()
 	#
 	local naming="$SRC/config/boards/*.conf";
         if [[ "$EXPERT" == "yes" ]]; then naming=$naming" $SRC/config/boards/*.wip"; fi
-	if [[ -n $REBUILD_IMAGES ]]; then naming=$naming" $SRC/config/boards/*.csc"; fi
+	if [[ -n $REBUILD_IMAGES ]]; then naming=$naming" $SRC/config/boards/*.csc"; REBUILD_IMAGES=$REBUILD_IMAGES","; fi
 
 	for board in $naming; do
 		BOARD=$(basename $board | cut -d'.' -f1)
@@ -158,7 +158,7 @@ create_images_list()
 
 		if [[ -z $REBUILD_IMAGES ]]; then
 			make_targets $1
-		elif [[ $REBUILD_IMAGES == *"$BOARD"* ]]; then
+		elif [[ $REBUILD_IMAGES == *"$BOARD,"* ]]; then
 			make_targets $1
 		fi
 		unset CLI_TARGET CLI_BRANCH DESKTOP_TARGET DESKTOP_BRANCH KERNEL_TARGET CLI_BETA_TARGET DESKTOP_BETA_TARGET
