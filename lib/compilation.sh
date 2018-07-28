@@ -342,7 +342,7 @@ compile_kernel()
 		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
 			'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" ${KERNEL_MENUCONFIG:-menuconfig}'
 		# store kernel config in easily reachable place
-		display_alert "Exporting new kernel config" "$DEST/$LINUXCONFIG.config" "info"
+		display_alert "Exporting new kernel config" "$DEST/kernel/$LINUXCONFIG.config" "info"
 		cp .config $DEST/config/$LINUXCONFIG.config
 		# export defconfig too if requested
 		if [[ $KERNEL_EXPORT_DEFCONFIG == yes ]]; then
