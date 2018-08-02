@@ -24,7 +24,7 @@ if test "${console}" = "display" || test "${console}" = "both"; then setenv cons
 if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "${consoleargs} console=ttymxc1,115200"; fi
 
 
-setenv bootargs "root=${rootdev} rootfstype=ext4 rootwait ${consoleargs} video=mxcfb0:dev=hdmi,${disp_mode},if=RGB24,bpp=32 rd.dm=0 rd.luks=0 rd.lvm=0 raid=noautodetect pci=nomsi ahci_imx.hotplug=1 vt.global_cursor_default=0 loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
+setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} video=mxcfb0:dev=hdmi,${disp_mode},if=RGB24,bpp=32 rd.dm=0 rd.luks=0 rd.lvm=0 raid=noautodetect pci=nomsi ahci_imx.hotplug=1 vt.global_cursor_default=0 loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 
 ext4load mmc 0 ${ramdisk_addr} /boot/uInitrd || fatload mmc 0 ${ramdisk_addr} uInitrd || ext4load mmc 0 ${ramdisk_addr} uInitrd
 ext4load mmc 0 ${loadaddr} /boot/zImage || fatload mmc 0 ${loadaddr} zImage
