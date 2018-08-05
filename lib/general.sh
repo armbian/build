@@ -18,6 +18,7 @@
 # addtorepo
 # prepare_host
 # download_toolchain
+# download_etcher_cli
 
 # cleaning <target>
 #
@@ -631,7 +632,7 @@ prepare_host()
 		find $SRC/output $SRC/userpatches -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 		find $SRC/output $SRC/userpatches -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 	fi
-	mkdir -p $DEST/debs/extra $DEST/{config,debug,patch} $SRC/userpatches/overlay $SRC/cache/{sources,toolchains,rootfs} $SRC/.tmp
+	mkdir -p $DEST/debs/extra $DEST/{config,debug,patch} $SRC/userpatches/overlay $SRC/cache/{sources,toolchains,utility,rootfs} $SRC/.tmp
 
 	find $SRC/patch -type d ! -name . | sed "s%/patch%/userpatches%" | xargs mkdir -p
 
@@ -674,6 +675,9 @@ prepare_host()
 			rm -rf $SRC/cache/toolchains/$dir
 		fi
 	done
+
+	# download etcher CLI utility
+	download_etcher_cli
 
 	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/config/templates/customize-image.sh.template $SRC/userpatches/customize-image.sh
 
@@ -735,6 +739,44 @@ download_toolchain()
 		display_alert "Verification failed" "" "wrn"
 	fi
 }
+
+
+download_etcher_cli()
+{
+        local url=$(curl -s https://api.github.com/repos/resin-io/etcher/releases | grep etcher-cli | grep linux-x64 | grep browser_download_url | head -1 | cut -d \" -f 4)
+        local filename=${url##*/}
+        local dirname=${filename/.tar.gz/-dist}
+
+	export PATH="$PATH:$SRC/cache/utility/$dirname"
+
+        if [[ -f $SRC/cache/utility/$dirname/.download-complete ]]; then
+                return
+        fi
+
+        cd $SRC/cache/utility/
+
+        display_alert "Downloading" "$dirname"
+        curl -Lf --progress-bar $url -o $filename
+
+        local verified=false
+
+        display_alert "Verifying"
+
+        local a=$(curl -sL $(curl -s https://api.github.com/repos/resin-io/etcher/releases | grep SHA | grep browser_download_url | head -1 | cut -d \" -f 4) | grep etcher-cli | grep linux-x64)
+        local b=$(sha256sum $filename)
+
+        [[ -n $a && -n $b && "$a" == "$b" ]] && verified=true
+
+        if [[ $verified == true ]]; then
+                display_alert "Extracting"
+                tar --no-same-owner --overwrite -xf $filename && touch $SRC/cache/utility/$dirname/.download-complete && rm $filename
+                display_alert "Download complete" "" "info"
+        else
+                display_alert "Verification failed" "" "wrn"
+        fi
+}
+
+
 
 show_developer_warning()
 {
