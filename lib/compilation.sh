@@ -148,7 +148,8 @@ compile_uboot()
 		# armbian specifics u-boot settings
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
-		if [[ $BOOTBRANCH == 'tag:v2018.03' ]]; then
+		if [[ $BOOTBRANCH == "tag:v2018".* ]]; then
+			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_FAT.*/# CONFIG_ENV_IS_IN_FAT is not set/g' .config
 			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_EXT4.*/CONFIG_ENV_IS_IN_EXT4=y/g' .config
 			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_MMC.*/# CONFIG_ENV_IS_IN_MMC is not set/g' .config
 			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_NOWHERE.*/# CONFIG_ENV_IS_NOWHERE is not set/g' .config | echo "# CONFIG_ENV_IS_NOWHERE is not set" >> .config
@@ -191,7 +192,12 @@ compile_uboot()
 	#!/bin/bash
 	source /usr/lib/u-boot/platform_install.sh
 	[[ \$DEVICE == /dev/null ]] && exit 0
-	[[ -z \$DEVICE ]] && DEVICE="/dev/mmcblk0"
+	if [[ -z \$DEVICE ]]; then
+		DEVICE="/dev/mmcblk0"
+		# proceed to other options.
+		[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk1"
+		[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk2"
+	fi
 	[[ \$(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
 	if [[ -b \$DEVICE ]]; then
 		echo "Updating u-boot on \$DEVICE" >&2
@@ -336,7 +342,7 @@ compile_kernel()
 		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
 			'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" ${KERNEL_MENUCONFIG:-menuconfig}'
 		# store kernel config in easily reachable place
-		display_alert "Exporting new kernel config" "$DEST/$LINUXCONFIG.config" "info"
+		display_alert "Exporting new kernel config" "$DEST/kernel/$LINUXCONFIG.config" "info"
 		cp .config $DEST/config/$LINUXCONFIG.config
 		# export defconfig too if requested
 		if [[ $KERNEL_EXPORT_DEFCONFIG == yes ]]; then

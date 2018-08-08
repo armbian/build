@@ -1,4 +1,4 @@
-# RK3328 quad core SoC 1GB-2GB Gbit WiFi
+# RK3328 quad core SoC 2GB/16GB Gbit WiFi BT
 BOARD_NAME="Z28 PRO"
 BOARDFAMILY="rk3328"
 BOOTCONFIG="rock64-rk3328_defconfig"
@@ -6,15 +6,9 @@ BOOTCONFIG="rock64-rk3328_defconfig"
 MODULES=""
 MODULES_NEXT=""
 #
-KERNEL_TARGET="default,dev"
-CLI_TARGET=""
+KERNEL_TARGET="default"
+CLI_TARGET="stretch:default"
 DESKTOP_TARGET="stretch:default"
 #
-CLI_BETA_TARGET="stretch:dev"
+CLI_BETA_TARGET=""
 DESKTOP_BETA_TARGET=""
-#
-RECOMMENDED="Debian_stretch_default_desktop:75"
-#
-CHIP="https://en.wikipedia.org/wiki/Rockchip#RK33xx_series"
-HARDWARE="https://www.pine64.org/?page_id=7147"
-FORUMS="https://forum.armbian.com/index.php?/forum/21-rockchip"

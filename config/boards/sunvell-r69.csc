@@ -14,5 +14,5 @@ KERNEL_TARGET="default,next,dev"
 CLI_TARGET="stretch,xenial:next"
 DESKTOP_TARGET="stretch:next"
 #
-CLI_BETA_TARGET="bionic:dev"
+CLI_BETA_TARGET=""
 DESKTOP_BETA_TARGET=""

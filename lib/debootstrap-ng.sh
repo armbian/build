@@ -115,7 +115,7 @@ create_rootfs_cache()
 		[[ -z $OUTPUT_DIALOG ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
 
 		display_alert "Installing base system" "Stage 1/2" "info"
-		eval 'debootstrap --include=locales,gnupg,ifupdown ${PACKAGE_LIST_EXCLUDE:+ --exclude=${PACKAGE_LIST_EXCLUDE// /,}} \
+		eval 'debootstrap --include=${DEBOOTSTRAP_LIST} ${PACKAGE_LIST_EXCLUDE:+ --exclude=${PACKAGE_LIST_EXCLUDE// /,}} \
 			--arch=$ARCH --foreign $RELEASE $SDCARD/ $apt_mirror' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
@@ -232,6 +232,12 @@ create_rootfs_cache()
 
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -c > $cache_fname
+
+		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
+		if [[ -n $GPG_PASS ]]; then
+			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes $cache_fname
+		fi
+
 	fi
 
 	# used for internal purposes. Faster rootfs cache rebuilding
@@ -349,7 +355,7 @@ prepare_partitions()
 				if [[ $BUILD_DESKTOP == yes ]]; then
 					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.25) / 1 + 0) / 4 + 1) * 4")
 				else
-					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.15) / 1 + 0) / 4 + 1) * 4")
+					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.20) / 1 + 0) / 4 + 1) * 4")
 				fi
 				;;
 		esac
@@ -513,5 +519,16 @@ create_image()
 
 	# call custom post build hook
 	[[ $(type -t post_build_image) == function ]] && post_build_image "$DEST/images/${version}.img"
+
+	# write image to SD card
+	if [[ -e "$CARD_DEVICE" && -f $DEST/images/${version}.img ]]; then
+		display_alert "Writing image" "$CARD_DEVICE" "info"
+		etcher $DEST/images/${version}.img -d $CARD_DEVICE -y
+		if [ $? -eq 0 ]; then
+			display_alert "Writing succeeded" "${version}.img" "info"
+			else
+			display_alert "Writing failed" "${version}.img" "err"
+		fi
+	fi
 
 } #############################################################################

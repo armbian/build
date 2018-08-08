@@ -18,6 +18,7 @@
 # addtorepo
 # prepare_host
 # download_toolchain
+# download_etcher_cli
 
 # cleaning <target>
 #
@@ -585,7 +586,7 @@ prepare_host()
 	# distribution packages are buggy, download from author
 	if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
 		display_alert "Updating from external repository" "aptly" "info"
-		wget -qO - https://www.aptly.info/pubkey.txt | apt-key add - >/dev/null 2>&1
+		apt-key adv --keyserver pool.sks-keyservers.net --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
 		echo "deb http://repo.aptly.info/ squeeze main" > /etc/apt/sources.list.d/aptly.list
 	fi
 
@@ -631,24 +632,29 @@ prepare_host()
 		find $SRC/output $SRC/userpatches -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 		find $SRC/output $SRC/userpatches -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 	fi
-	mkdir -p $DEST/debs/extra $DEST/{config,debug,patch} $SRC/userpatches/overlay $SRC/cache/{sources,toolchains,rootfs} $SRC/.tmp
+	mkdir -p $DEST/debs/extra $DEST/{config,debug,patch} $SRC/userpatches/overlay $SRC/cache/{sources,toolchains,utility,rootfs} $SRC/.tmp
 
 	find $SRC/patch -type d ! -name . | sed "s%/patch%/userpatches%" | xargs mkdir -p
 
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
+
+	# Use backup server by default to balance the load
+
+	ARMBIANSERVER=dl.armbian.com
+
 	local toolchains=(
-		"https://dl.armbian.com/_toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_arm-eabi.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabi.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_arm-eabi.tar.xz"
 		)
 
 	for toolchain in ${toolchains[@]}; do
@@ -669,6 +675,9 @@ prepare_host()
 			rm -rf $SRC/cache/toolchains/$dir
 		fi
 	done
+
+	# download etcher CLI utility
+	download_etcher_cli
 
 	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/config/templates/customize-image.sh.template $SRC/userpatches/customize-image.sh
 
@@ -730,6 +739,44 @@ download_toolchain()
 		display_alert "Verification failed" "" "wrn"
 	fi
 }
+
+
+download_etcher_cli()
+{
+        local url=$(curl -s https://api.github.com/repos/resin-io/etcher/releases | grep etcher-cli | grep linux-x64 | grep browser_download_url | head -1 | cut -d \" -f 4)
+        local filename=${url##*/}
+        local dirname=${filename/.tar.gz/-dist}
+
+	export PATH="$PATH:$SRC/cache/utility/$dirname"
+
+        if [[ -f $SRC/cache/utility/$dirname/.download-complete ]]; then
+                return
+        fi
+
+        cd $SRC/cache/utility/
+
+        display_alert "Downloading" "$dirname"
+        curl -Lf --progress-bar $url -o $filename
+
+        local verified=false
+
+        display_alert "Verifying"
+
+        local a=$(curl -sL $(curl -s https://api.github.com/repos/resin-io/etcher/releases | grep SHA | grep browser_download_url | head -1 | cut -d \" -f 4) | grep etcher-cli | grep linux-x64)
+        local b=$(sha256sum $filename)
+
+        [[ -n $a && -n $b && "$a" == "$b" ]] && verified=true
+
+        if [[ $verified == true ]]; then
+                display_alert "Extracting"
+                tar --no-same-owner --overwrite -xf $filename && touch $SRC/cache/utility/$dirname/.download-complete && rm $filename
+                display_alert "Download complete" "" "info"
+        else
+                display_alert "Verification failed" "" "wrn"
+        fi
+}
+
+
 
 show_developer_warning()
 {

@@ -15,8 +15,8 @@ SCRIPT
 Vagrant.configure(2) do |config|
 
     # What box should we base this build on?
-    config.vm.box = "ubuntu/xenial64"
-    config.vm.box_version = ">= 20180126.0.0"
+    config.vm.box = "ubuntu/bionic64"
+    config.vm.box_version = ">= 20180719.0.0"
 
     #######################################################################
     # THIS REQUIRES YOU TO INSTALL A PLUGIN. RUN THE COMMAND BELOW...
