@@ -85,12 +85,6 @@ create_desktop_package ()
 	mkdir -p $destination/etc/skel
 	cp -R $SRC/packages/blobs/desktop/skel/. $destination/etc/skel
 
-	# using different icon pack. Workaround due to this bug https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=867779
-	if [[ ${RELEASE} == bionic || ${RELEASE} == stretch ]]; then
-		sed -i 's/<property name="IconThemeName" type="string" value=".*$/<property name="IconThemeName" type="string" value="Humanity-Dark">/g' \
-		$destination/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
-	fi
-
 	# install dedicated startup icons
 	mkdir -p $destination/usr/share/pixmaps $destination/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
 	cp $SRC/packages/blobs/desktop/icons/${DISTRIBUTION,,}.png $destination/usr/share/pixmaps
