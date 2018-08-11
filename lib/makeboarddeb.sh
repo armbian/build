@@ -145,9 +145,10 @@ create_board_package()
 	if [ ! -f /boot/$bootscript_dst ]; then
 		echo "Recreating boot script"
 		cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
-		uuid=\$(awk -F'"' '/^setenv rootdev / {print \$2}' /boot/boot.ini)
-		[ -n \$uuid ] && cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
-		echo "rootdev="\$uuid >> /boot/armbianEnv.txt
+		rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
+		cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
+		echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
+		sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
 		[ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
 	fi
 
