@@ -117,7 +117,6 @@ desktop_postinstall ()
 	# Compile Turbo Frame buffer for sunxi
 	if [[ $LINUXFAMILY == sun* && $BRANCH == default ]]; then
 		sed 's/name="use_compositing" type="bool" value="true"/name="use_compositing" type="bool" value="false"/' -i $SDCARD/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
-		sed 's/name="use_compositing" type="bool" value="true"/name="use_compositing" type="bool" value="false"/' -i $SDCARD/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
 
 		# enable memory reservations
 		echo "disp_mem_reserves=on" >> $SDCARD/boot/armbianEnv.txt
