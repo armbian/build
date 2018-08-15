@@ -135,7 +135,7 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
 	libgtk2.0-bin libgnome2-perl network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
 	pulseaudio pavumeter pulseaudio-module-gconf bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
-	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme numix-icon-theme"
+	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme"
 
 
 # Recommended desktop packages
@@ -164,13 +164,13 @@ case $RELEASE in
 
 	jessie)
 		PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless policykit-1-gnome eject"
+		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless policykit-1-gnome eject numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" iceweasel pluma system-config-printer"
 	;;
 
 	xenial)
 		PACKAGE_LIST_RELEASE="man-db wget nano"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs"
+		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common system-config-printer-gnome"
 	;;
 
