@@ -1,0 +1,14 @@
+# Dragonboard820c quad core 3GB SoC UFS GBE USB3 WiFi
+BOARD_NAME="Dragonboard 820c"
+BOARDFAMILY="qcomlt"
+BOOTCONFIG="dragonboard820c_defconfig"
+#
+MODULES=""
+MODULES_NEXT=""
+#
+KERNEL_TARGET=""
+CLI_TARGET=""
+DESKTOP_TARGET=""
+
+CLI_BETA_TARGET=""
+DESKTOP_BETA_TARGET=""

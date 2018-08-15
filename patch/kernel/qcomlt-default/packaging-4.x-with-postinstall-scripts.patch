@@ -1,0 +1,651 @@
+diff --git a/scripts/package/Makefile b/scripts/package/Makefile
+index 5774a8dd..73503ebc 100644
+--- a/scripts/package/Makefile
++++ b/scripts/package/Makefile
+@@ -33,10 +33,14 @@ MKSPEC     := $(srctree)/scripts/package/mkspec
+ 
+ quiet_cmd_src_tar = TAR     $(2).tar.gz
+       cmd_src_tar = \
++set -e; \
+ if test "$(objtree)" != "$(srctree)"; then \
+-	echo "Building source tarball is not possible outside the"; \
+-	echo "kernel source tree. Don't set KBUILD_OUTPUT, or use the"; \
+-	echo "binrpm-pkg or bindeb-pkg target instead."; \
++	echo >&2; \
++	echo >&2 "  ERROR:"; \
++	echo >&2 "  Building source tarball is not possible outside the"; \
++	echo >&2 "  kernel source tree. Don't set KBUILD_OUTPUT, or use the"; \
++	echo >&2 "  binrpm-pkg or bindeb-pkg target instead."; \
++	echo >&2; \
+ 	false; \
+ fi ; \
+ $(srctree)/scripts/setlocalversion --save-scmversion; \
+@@ -46,12 +50,12 @@ rm -f $(objtree)/.scmversion
+ 
+ # rpm-pkg
+ # ---------------------------------------------------------------------------
+-rpm-pkg rpm: FORCE
++rpm-pkg: FORCE
+ 	$(MAKE) clean
+ 	$(CONFIG_SHELL) $(MKSPEC) >$(objtree)/kernel.spec
+ 	$(call cmd,src_tar,$(KERNELPATH),kernel.spec)
+-	+rpmbuild $(RPMOPTS) --target $(UTS_MACHINE) -ta $(KERNELPATH).tar.gz
+-	rm $(KERNELPATH).tar.gz kernel.spec
++	+rpmbuild $(RPMOPTS) --target $(UTS_MACHINE) -ta $(KERNELPATH).tar.gz \
++	--define='_smp_mflags %{nil}'
+ 
+ # binrpm-pkg
+ # ---------------------------------------------------------------------------
+@@ -60,7 +64,8 @@ binrpm-pkg: FORCE
+ 	$(CONFIG_SHELL) $(MKSPEC) prebuilt > $(objtree)/binkernel.spec
+ 	+rpmbuild $(RPMOPTS) --define "_builddir $(objtree)" --target \
+ 		$(UTS_MACHINE) -bb $(objtree)/binkernel.spec
+-	rm binkernel.spec
++
++clean-files += $(objtree)/*.spec
+ 
+ deb-pkg: FORCE
+ 	$(MAKE) clean
+@@ -68,17 +73,32 @@ deb-pkg: FORCE
+ 	$(call cmd,src_tar,$(KDEB_SOURCENAME))
+ 	origversion=$$(dpkg-parsechangelog -SVersion |sed 's/-[^-]*$$//');\
+ 		mv $(KDEB_SOURCENAME).tar.gz ../$(KDEB_SOURCENAME)_$${origversion}.orig.tar.gz
+-	+dpkg-buildpackage -j1 -r$(KBUILD_PKG_ROOTCMD) -a$$(cat debian/arch) -i.git -us -uc
++	+dpkg-buildpackage -r$(KBUILD_PKG_ROOTCMD) -a$$(cat debian/arch) -i.git -us -uc
+ 
+ bindeb-pkg: FORCE
+ 	$(CONFIG_SHELL) $(srctree)/scripts/package/mkdebian
+-	+dpkg-buildpackage -j1 -r$(KBUILD_PKG_ROOTCMD) -a$$(cat debian/arch) -b -nc -uc
++	+dpkg-buildpackage -r$(KBUILD_PKG_ROOTCMD) -a$$(cat debian/arch) -b -nc -uc
+ 
+ intdeb-pkg: FORCE
+ 	+$(CONFIG_SHELL) $(srctree)/scripts/package/builddeb
+ 
+ clean-dirs += $(objtree)/debian/
+ 
++# snap-pkg
++# ---------------------------------------------------------------------------
++snap-pkg: FORCE
++	rm -rf $(objtree)/snap
++	mkdir $(objtree)/snap
++	$(MAKE) clean
++	$(call cmd,src_tar,$(KERNELPATH))
++	sed "s@KERNELRELEASE@$(KERNELRELEASE)@; \
++		s@SRCTREE@$(shell realpath $(KERNELPATH).tar.gz)@" \
++		$(srctree)/scripts/package/snapcraft.template > \
++		$(objtree)/snap/snapcraft.yaml
++	cd $(objtree)/snap && \
++	snapcraft --target-arch=$(UTS_MACHINE)
++
++clean-dirs += $(objtree)/snap/
+ 
+ # tarball targets
+ # ---------------------------------------------------------------------------
+@@ -123,6 +143,7 @@ help: FORCE
+ 	@echo '  binrpm-pkg          - Build only the binary kernel RPM package'
+ 	@echo '  deb-pkg             - Build both source and binary deb kernel packages'
+ 	@echo '  bindeb-pkg          - Build only the binary kernel deb package'
++	@echo '  snap-pkg            - Build only the binary kernel snap package (will connect to external hosts)'
+ 	@echo '  tar-pkg             - Build the kernel as an uncompressed tarball'
+ 	@echo '  targz-pkg           - Build the kernel as a gzip compressed tarball'
+ 	@echo '  tarbz2-pkg          - Build the kernel as a bzip2 compressed tarball'
+diff --git a/scripts/package/builddeb b/scripts/package/builddeb
+index 47285dd2..91940105 100755
+--- a/scripts/package/builddeb
++++ b/scripts/package/builddeb
+@@ -29,6 +29,27 @@ create_package() {
+ 	# in case we are in a restrictive umask environment like 0077
+ 	chmod -R a+rX "$pdir"
+ 
++	# Create preinstall and post install script to remove dtb
++	if [[ "$1" == *dtb* ]]; then
++		echo "if [ -d /boot/dtb-$version ]; then mv /boot/dtb-$version /boot/dtb-$version.old; fi" >> $pdir/DEBIAN/preinst
++		echo "if [ -d /boot/dtb.old ]; then rm -rf /boot/dtb.old; fi" >> $pdir/DEBIAN/preinst
++		echo "if [ -d /boot/dtb ]; then mv /boot/dtb /boot/dtb.old; fi" >> $pdir/DEBIAN/preinst
++		echo "exit 0" >> $pdir/DEBIAN/preinst
++		chmod 775 $pdir/DEBIAN/preinst
++
++		echo "if [ -d /boot/dtb-$version.old ]; then rm -rf /boot/dtb-$version.old; fi" >> $pdir/DEBIAN/postinst
++		echo "ln -sf dtb-$version /boot/dtb > /dev/null 2>&1 || mv /boot/dtb-$version /boot/dtb" >> $pdir/DEBIAN/postinst
++		echo "exit 0" >> $pdir/DEBIAN/postinst
++		chmod 775 $pdir/DEBIAN/postinst
++	fi
++
++	# Create postinstall script for headers
++	if [[ "$1" == *headers* ]]; then
++		echo "cd /usr/src/linux-headers-$version; echo \"Compiling headers - please wait ...\"; make -s scripts >/dev/null 2>&1" >> $pdir/DEBIAN/postinst
++		echo "exit 0" >> $pdir/DEBIAN/postinst
++		chmod 775 $pdir/DEBIAN/postinst
++	fi
++
+ 	# Create the package
+ 	dpkg-gencontrol -p$pname -P"$pdir"
+ 	dpkg --build "$pdir" ..
+@@ -39,33 +60,26 @@ tmpdir="$objtree/debian/tmp"
+ kernel_headers_dir="$objtree/debian/hdrtmp"
+ libc_headers_dir="$objtree/debian/headertmp"
+ dbg_dir="$objtree/debian/dbgtmp"
+-packagename=linux-image-$version
+-kernel_headers_packagename=linux-headers-$version
+-libc_headers_packagename=linux-libc-dev
++dtb_dir="$objtree/debian/dtbtmp"
++packagename=linux-image"$LOCALVERSION"
++kernel_headers_packagename=linux-headers"$LOCALVERSION"
++dtb_packagename=linux-dtb"$LOCALVERSION"
++libc_headers_packagename=linux-libc-dev"$LOCALVERSION"
+ dbg_packagename=$packagename-dbg
+ 
+ if [ "$ARCH" = "um" ] ; then
+ 	packagename=user-mode-linux-$version
+ fi
+ 
+-# Not all arches have the same installed path in debian
+-# XXX: have each arch Makefile export a variable of the canonical image install
+-# path instead
+-case $ARCH in
+-um)
+-	installed_image_path="usr/bin/linux-$version"
+-	;;
+-parisc|mips|powerpc)
+-	installed_image_path="boot/vmlinux-$version"
+-	;;
+-*)
+-	installed_image_path="boot/vmlinuz-$version"
+-esac
++image_name=Image
++installed_image_path="boot/vmlinux-$version"
+ 
+ BUILD_DEBUG="$(grep -s '^CONFIG_DEBUG_INFO=y' $KCONFIG_CONFIG || true)"
+ 
+ # Setup the directory structure
+-rm -rf "$tmpdir" "$kernel_headers_dir" "$libc_headers_dir" "$dbg_dir" $objtree/debian/files
++rm -rf "$tmpdir" "$kernel_headers_dir" "$libc_headers_dir" "$dbg_dir" "$dtb_dir" $objtree/debian/files
++mkdir -m 755 -p "$dtb_dir/DEBIAN"
++mkdir -p "$dtb_dir/boot/dtb-$version" "$dtb_dir/usr/share/doc/$dtb_packagename"
+ mkdir -m 755 -p "$tmpdir/DEBIAN"
+ mkdir -p "$tmpdir/lib" "$tmpdir/boot"
+ mkdir -p "$kernel_headers_dir/lib/modules/$version/"
+@@ -118,6 +132,11 @@ if grep -q '^CONFIG_MODULES=y' $KCONFIG_CONFIG ; then
+ 	fi
+ fi
+ 
++if grep -q '^CONFIG_OF=y' $KCONFIG_CONFIG ; then
++	#mkdir -p "$tmpdir/boot/dtb"
++	INSTALL_DTBS_PATH="$dtb_dir/boot/dtb-$version" $MAKE KBUILD_SRC= dtbs_install
++fi
++
+ if [ "$ARCH" != "um" ]; then
+ 	$MAKE headers_check KBUILD_SRC=
+ 	$MAKE headers_install KBUILD_SRC= INSTALL_HDR_PATH="$libc_headers_dir/usr"
+@@ -137,7 +156,7 @@ fi
+ for script in postinst postrm preinst prerm ; do
+ 	mkdir -p "$tmpdir$debhookdir/$script.d"
+ 	cat <<EOF > "$tmpdir/DEBIAN/$script"
+-#!/bin/sh
++#!/bin/bash
+ 
+ set -e
+ 
+@@ -153,9 +172,60 @@ EOF
+ 	chmod 755 "$tmpdir/DEBIAN/$script"
+ done
+ 
++##
++## Create sym link to kernel image
++##
++sed -e "s/set -e//g" -i $tmpdir/DEBIAN/postinst
++sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/postinst
++cat >> $tmpdir/DEBIAN/postinst <<EOT
++if [ "\$(grep nand /proc/partitions)" != "" ] && [ "\$(grep mmc /proc/partitions)" = "" ]; then
++	mkimage -A arm64 -O linux -T kernel -C none -a "0x80080000" -e "0x80080000" -n "Linux kernel" -d /$installed_image_path /boot/uImage  > /dev/null 2>&1
++	cp /boot/uImage /tmp/uImage
++	sync
++	mountpoint -q /boot || mount /boot
++	cp /tmp/uImage /boot/uImage
++	rm -f /$installed_image_path
++else
++	ln -sf $(basename $installed_image_path) /boot/$image_name || mv /$installed_image_path /boot/$image_name
++fi
++touch /boot/.next
++exit 0
++EOT
++
++##
++## FAT install workaround
++##
++sed -e "s/set -e//g" -i $tmpdir/DEBIAN/preinst
++sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/preinst
++cat >> $tmpdir/DEBIAN/preinst <<EOT
++# exit if we are running chroot
++if [ "\$(stat -c %d:%i /)" != "\$(stat -c %d:%i /proc/1/root/.)" ]; then exit 0; fi
++
++check_and_unmount (){
++	boot_device=\$(mountpoint -d /boot)
++
++	for file in /dev/* ; do
++		CURRENT_DEVICE=\$(printf "%d:%d" \$(stat --printf="0x%t 0x%T" \$file))
++		if [[ "\$CURRENT_DEVICE" = "\$boot_device" ]]; then
++			boot_partition=\$file
++			break
++		fi
++	done
++
++	bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
++	if [ "\$bootfstype" = "vfat" ]; then
++		umount /boot
++		rm -f /boot/System.map* /boot/config* /boot/vmlinux* /boot/$image_name /boot/uImage
++	fi
++}
++mountpoint -q /boot && check_and_unmount
++EOT
++echo "exit 0" >> $tmpdir/DEBIAN/preinst
++
+ # Build kernel header package
+ (cd $srctree; find . -name Makefile\* -o -name Kconfig\* -o -name \*.pl) > "$objtree/debian/hdrsrcfiles"
+-(cd $srctree; find arch/*/include include scripts -type f) >> "$objtree/debian/hdrsrcfiles"
++(cd $srctree; find arch/*/include include scripts -type f -o -type l) >> "$objtree/debian/hdrsrcfiles"
++(cd $srctree; find security/*/include -type f) >> "$objtree/debian/hdrsrcfiles"
+ (cd $srctree; find arch/$SRCARCH -name module.lds -o -name Kbuild.platforms -o -name Platform) >> "$objtree/debian/hdrsrcfiles"
+ (cd $srctree; find $(find arch/$SRCARCH -name include -o -name scripts -type d) -type f) >> "$objtree/debian/hdrsrcfiles"
+ if grep -q '^CONFIG_STACK_VALIDATION=y' $KCONFIG_CONFIG ; then
+@@ -167,14 +237,19 @@ if grep -q '^CONFIG_GCC_PLUGINS=y' $KCONFIG_CONFIG ; then
+ fi
+ destdir=$kernel_headers_dir/usr/src/linux-headers-$version
+ mkdir -p "$destdir"
++(cd $destdir; patch -p1 < /tmp/headers-debian-byteshift.patch)
+ (cd $srctree; tar -c -f - -T -) < "$objtree/debian/hdrsrcfiles" | (cd $destdir; tar -xf -)
+ (cd $objtree; tar -c -f - -T -) < "$objtree/debian/hdrobjfiles" | (cd $destdir; tar -xf -)
+ (cd $objtree; cp $KCONFIG_CONFIG $destdir/.config) # copy .config manually to be where it's expected to be
+ ln -sf "/usr/src/linux-headers-$version" "$kernel_headers_dir/lib/modules/$version/build"
+ rm -f "$objtree/debian/hdrsrcfiles" "$objtree/debian/hdrobjfiles"
+ 
++(cd $destdir; make M=scripts clean)
++
+ if [ "$ARCH" != "um" ]; then
+ 	create_package "$kernel_headers_packagename" "$kernel_headers_dir"
++	# create_package "$libc_headers_packagename" "$libc_headers_dir"
++	create_package "$dtb_packagename" "$dtb_dir"
+ fi
+ 
+ create_package "$packagename" "$tmpdir"
+diff --git a/scripts/package/mkdebian b/scripts/package/mkdebian
+index 408bae9d..0557afc3 100755
+--- a/scripts/package/mkdebian
++++ b/scripts/package/mkdebian
+@@ -61,32 +61,33 @@ else
+ 	packageversion=$version-$revision
+ fi
+ sourcename=$KDEB_SOURCENAME
+-packagename=linux-image-$version
+-kernel_headers_packagename=linux-headers-$version
++packagename=linux-image"$LOCALVERSION"
++kernel_headers_packagename=linux-headers"$LOCALVERSION"
++dtb_packagename=linux-dtb"$LOCALVERSION"
+ dbg_packagename=$packagename-dbg
+ debarch=
++image_name=
+ set_debarch
+ 
+ if [ "$ARCH" = "um" ] ; then
+ 	packagename=user-mode-linux-$version
+ fi
+ 
+-# Try to determine maintainer and email values
+-if [ -n "$DEBEMAIL" ]; then
+-       email=$DEBEMAIL
+-elif [ -n "$EMAIL" ]; then
+-       email=$EMAIL
+-else
+-       email=$(id -nu)@$(hostname -f 2>/dev/null || hostname)
+-fi
+-if [ -n "$DEBFULLNAME" ]; then
+-       name=$DEBFULLNAME
+-elif [ -n "$NAME" ]; then
+-       name=$NAME
++email=${DEBEMAIL-$EMAIL}
++
++# use email string directly if it contains <email>
++if echo $email | grep -q '<.*>'; then
++	maintainer=$email
+ else
+-       name="Anonymous"
++	# or construct the maintainer string
++	user=${KBUILD_BUILD_USER-$(id -nu)}
++	name=${DEBFULLNAME-$user}
++	if [ -z "$email" ]; then
++		buildhost=${KBUILD_BUILD_HOST-$(hostname -f 2>/dev/null || hostname)}
++		email="$user@$buildhost"
++	fi
++	maintainer="$name <$email>"
+ fi
+-maintainer="$name <$email>"
+ 
+ # Try to determine distribution
+ if [ -n "$KDEB_CHANGELOG_DIST" ]; then
+@@ -119,7 +120,7 @@ This is a packacked upstream version of the Linux kernel.
+ The sources may be found at most Linux archive sites, including:
+ https://www.kernel.org/pub/linux/kernel
+ 
+-Copyright: 1991 - 2017 Linus Torvalds and others.
++Copyright: 1991 - 2018 Linus Torvalds and others.
+ 
+ The git repository for mainline kernel development is at:
+ git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+@@ -154,16 +155,29 @@ Description: Linux kernel headers for $version on $debarch
+  .
+  This is useful for people who need to build external modules
+ 
++Package: linux-libc-dev
++Section: devel
++Provides: linux-kernel-headers
++Architecture: $debarch
++Description: Linux support headers for userspace development
++ This package provides userspaces headers from the Linux kernel.  These headers
++ are used by the installed headers for GNU glibc and other system libraries.
++
+ Package: $dbg_packagename
+ Section: debug
+ Architecture: $debarch
+ Description: Linux kernel debugging symbols for $version
+  This package will come in handy if you need to debug the kernel. It provides
+  all the necessary debug symbols for the kernel and its modules.
++
++Package: $dtb_packagename
++Architecture: $debarch
++Description: Linux DTB, version $version
++ This package contains device blobs from the Linux kernel, version $version
+ EOF
+ 
+ cat <<EOF > debian/rules
+-#!/usr/bin/make -f
++#!$(command -v $MAKE) -f
+ 
+ build:
+ 	\$(MAKE) KERNELRELEASE=${version} ARCH=${ARCH} KBUILD_SRC=
+diff --git a/scripts/package/mkspec b/scripts/package/mkspec
+index f47f17aa..e05646dc 100755
+--- a/scripts/package/mkspec
++++ b/scripts/package/mkspec
+@@ -10,156 +10,137 @@
+ #
+ 
+ # how we were called determines which rpms we build and how we build them
+-if [ "$1" = "prebuilt" ]; then
+-	PREBUILT=true
++if [ "$1" = prebuilt ]; then
++	S=DEL
+ else
+-	PREBUILT=false
++	S=
+ fi
+ 
+-# starting to output the spec
+-if [ "`grep CONFIG_DRM=y .config | cut -f2 -d\=`" = "y" ]; then
+-	PROVIDES=kernel-drm
+-fi
+-
+-PROVIDES="$PROVIDES kernel-$KERNELRELEASE"
+-__KERNELRELEASE=`echo $KERNELRELEASE | sed -e "s/-/_/g"`
+-
+-echo "Name: kernel"
+-echo "Summary: The Linux Kernel"
+-echo "Version: $__KERNELRELEASE"
+-echo "Release: $(cat .version 2>/dev/null || echo 1)"
+-echo "License: GPL"
+-echo "Group: System Environment/Kernel"
+-echo "Vendor: The Linux Community"
+-echo "URL: http://www.kernel.org"
+-
+-if ! $PREBUILT; then
+-echo "Source: kernel-$__KERNELRELEASE.tar.gz"
+-fi
+-
+-echo "BuildRoot: %{_tmppath}/%{name}-%{PACKAGE_VERSION}-root"
+-echo "Provides: $PROVIDES"
+-echo "%define __spec_install_post /usr/lib/rpm/brp-compress || :"
+-echo "%define debug_package %{nil}"
+-echo ""
+-echo "%description"
+-echo "The Linux Kernel, the operating system core itself"
+-echo ""
+-echo "%package headers"
+-echo "Summary: Header files for the Linux kernel for use by glibc"
+-echo "Group: Development/System"
+-echo "Obsoletes: kernel-headers"
+-echo "Provides: kernel-headers = %{version}"
+-echo "%description headers"
+-echo "Kernel-headers includes the C header files that specify the interface"
+-echo "between the Linux kernel and userspace libraries and programs.  The"
+-echo "header files define structures and constants that are needed for"
+-echo "building most standard programs and are also needed for rebuilding the"
+-echo "glibc package."
+-echo ""
+-echo "%package devel"
+-echo "Summary: Development package for building kernel modules to match the $__KERNELRELEASE kernel"
+-echo "Group: System Environment/Kernel"
+-echo "AutoReqProv: no"
+-echo "%description -n kernel-devel"
+-echo "This package provides kernel headers and makefiles sufficient to build modules"
+-echo "against the $__KERNELRELEASE kernel package."
+-echo ""
+-
+-if ! $PREBUILT; then
+-echo "%prep"
+-echo "%setup -q"
+-echo ""
++if grep -q CONFIG_MODULES=y .config; then
++	M=
++else
++	M=DEL
+ fi
+ 
+-echo "%build"
+-
+-if ! $PREBUILT; then
+-echo "make clean && make %{?_smp_mflags} KBUILD_BUILD_VERSION=%{release}"
+-echo ""
++if grep -q CONFIG_DRM=y .config; then
++	PROVIDES=kernel-drm
+ fi
+ 
+-echo "%install"
+-echo 'KBUILD_IMAGE=$(make image_name)'
+-echo "%ifarch ia64"
+-echo 'mkdir -p $RPM_BUILD_ROOT/boot/efi $RPM_BUILD_ROOT/lib/modules'
+-echo "%else"
+-echo 'mkdir -p $RPM_BUILD_ROOT/boot $RPM_BUILD_ROOT/lib/modules'
+-echo "%endif"
+-
+-echo 'INSTALL_MOD_PATH=$RPM_BUILD_ROOT make %{?_smp_mflags} KBUILD_SRC= modules_install'
+-echo "%ifarch ia64"
+-echo 'cp $KBUILD_IMAGE $RPM_BUILD_ROOT'"/boot/efi/vmlinuz-$KERNELRELEASE"
+-echo 'ln -s '"efi/vmlinuz-$KERNELRELEASE" '$RPM_BUILD_ROOT'"/boot/"
+-echo "%else"
+-echo "%ifarch ppc64"
+-echo "cp vmlinux arch/powerpc/boot"
+-echo "cp arch/powerpc/boot/"'$KBUILD_IMAGE $RPM_BUILD_ROOT'"/boot/vmlinuz-$KERNELRELEASE"
+-echo "%else"
+-echo 'cp $KBUILD_IMAGE $RPM_BUILD_ROOT'"/boot/vmlinuz-$KERNELRELEASE"
+-echo "%endif"
+-echo "%endif"
+-
+-echo 'make %{?_smp_mflags} INSTALL_HDR_PATH=$RPM_BUILD_ROOT/usr KBUILD_SRC= headers_install'
+-echo 'cp System.map $RPM_BUILD_ROOT'"/boot/System.map-$KERNELRELEASE"
+-
+-echo 'cp .config $RPM_BUILD_ROOT'"/boot/config-$KERNELRELEASE"
+-
+-echo "%ifnarch ppc64"
+-echo 'bzip2 -9 --keep vmlinux'
+-echo 'mv vmlinux.bz2 $RPM_BUILD_ROOT'"/boot/vmlinux-$KERNELRELEASE.bz2"
+-echo "%endif"
+-
+-if ! $PREBUILT; then
+-echo 'rm -f $RPM_BUILD_ROOT'"/lib/modules/$KERNELRELEASE/build"
+-echo 'rm -f $RPM_BUILD_ROOT'"/lib/modules/$KERNELRELEASE/source"
+-echo "mkdir -p "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE"
+-echo "EXCLUDES=\"$RCS_TAR_IGNORE --exclude .tmp_versions --exclude=*vmlinux* --exclude=*.o --exclude=*.ko --exclude=*.cmd --exclude=Documentation --exclude .config.old --exclude .missing-syscalls.d\""
+-echo "tar "'$EXCLUDES'" -cf- . | (cd "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE;tar xvf -)"
+-echo 'cd $RPM_BUILD_ROOT'"/lib/modules/$KERNELRELEASE"
+-echo "ln -sf /usr/src/kernels/$KERNELRELEASE build"
+-echo "ln -sf /usr/src/kernels/$KERNELRELEASE source"
+-fi
++PROVIDES="$PROVIDES kernel-$KERNELRELEASE"
++__KERNELRELEASE=$(echo $KERNELRELEASE | sed -e "s/-/_/g")
++EXCLUDES="$RCS_TAR_IGNORE --exclude=.tmp_versions --exclude=*vmlinux* \
++--exclude=*.o --exclude=*.ko --exclude=*.cmd --exclude=Documentation \
++--exclude=.config.old --exclude=.missing-syscalls.d"
+ 
+-echo ""
+-echo "%clean"
+-echo 'rm -rf $RPM_BUILD_ROOT'
+-echo ""
+-echo "%post"
+-echo "if [ -x /sbin/installkernel -a -r /boot/vmlinuz-$KERNELRELEASE -a -r /boot/System.map-$KERNELRELEASE ]; then"
+-echo "cp /boot/vmlinuz-$KERNELRELEASE /boot/.vmlinuz-$KERNELRELEASE-rpm"
+-echo "cp /boot/System.map-$KERNELRELEASE /boot/.System.map-$KERNELRELEASE-rpm"
+-echo "rm -f /boot/vmlinuz-$KERNELRELEASE /boot/System.map-$KERNELRELEASE"
+-echo "/sbin/installkernel $KERNELRELEASE /boot/.vmlinuz-$KERNELRELEASE-rpm /boot/.System.map-$KERNELRELEASE-rpm"
+-echo "rm -f /boot/.vmlinuz-$KERNELRELEASE-rpm /boot/.System.map-$KERNELRELEASE-rpm"
+-echo "fi"
+-echo ""
+-echo "%preun"
+-echo "if [ -x /sbin/new-kernel-pkg ]; then"
+-echo "new-kernel-pkg --remove $KERNELRELEASE --rminitrd --initrdfile=/boot/initramfs-$KERNELRELEASE.img"
+-echo "fi"
+-echo ""
+-echo "%postun"
+-echo "if [ -x /sbin/update-bootloader ]; then"
+-echo "/sbin/update-bootloader --remove $KERNELRELEASE"
+-echo "fi"
+-echo ""
+-echo "%files"
+-echo '%defattr (-, root, root)'
+-echo "/lib/modules/$KERNELRELEASE"
+-echo "%exclude /lib/modules/$KERNELRELEASE/build"
+-echo "%exclude /lib/modules/$KERNELRELEASE/source"
+-echo "/boot/*"
+-echo ""
+-echo "%files headers"
+-echo '%defattr (-, root, root)'
+-echo "/usr/include"
+-echo ""
+-if ! $PREBUILT; then
+-echo "%files devel"
+-echo '%defattr (-, root, root)'
+-echo "/usr/src/kernels/$KERNELRELEASE"
+-echo "/lib/modules/$KERNELRELEASE/build"
+-echo "/lib/modules/$KERNELRELEASE/source"
+-echo ""
+-fi
++# We can label the here-doc lines for conditional output to the spec file
++#
++# Labels:
++#  $S: this line is enabled only when building source package
++#  $M: this line is enabled only when CONFIG_MODULES is enabled
++sed -e '/^DEL/d' -e 's/^\t*//' <<EOF
++	Name: kernel
++	Summary: The Linux Kernel
++	Version: $__KERNELRELEASE
++	Release: $(cat .version 2>/dev/null || echo 1)
++	License: GPL
++	Group: System Environment/Kernel
++	Vendor: The Linux Community
++	URL: http://www.kernel.org
++$S	Source: kernel-$__KERNELRELEASE.tar.gz
++	Provides: $PROVIDES
++	%define __spec_install_post /usr/lib/rpm/brp-compress || :
++	%define debug_package %{nil}
++
++	%description
++	The Linux Kernel, the operating system core itself
++
++	%package headers
++	Summary: Header files for the Linux kernel for use by glibc
++	Group: Development/System
++	Obsoletes: kernel-headers
++	Provides: kernel-headers = %{version}
++	%description headers
++	Kernel-headers includes the C header files that specify the interface
++	between the Linux kernel and userspace libraries and programs.  The
++	header files define structures and constants that are needed for
++	building most standard programs and are also needed for rebuilding the
++	glibc package.
++
++$S$M	%package devel
++$S$M	Summary: Development package for building kernel modules to match the $__KERNELRELEASE kernel
++$S$M	Group: System Environment/Kernel
++$S$M	AutoReqProv: no
++$S$M	%description -n kernel-devel
++$S$M	This package provides kernel headers and makefiles sufficient to build modules
++$S$M	against the $__KERNELRELEASE kernel package.
++$S$M
++$S	%prep
++$S	%setup -q
++$S
++$S	%build
++$S	make %{?_smp_mflags} KBUILD_BUILD_VERSION=%{release}
++$S
++	%install
++	mkdir -p %{buildroot}/boot
++	%ifarch ia64
++	mkdir -p %{buildroot}/boot/efi
++	cp \$(make image_name) %{buildroot}/boot/efi/vmlinuz-$KERNELRELEASE
++	ln -s efi/vmlinuz-$KERNELRELEASE %{buildroot}/boot/
++	%else
++	cp \$(make image_name) %{buildroot}/boot/vmlinuz-$KERNELRELEASE
++	%endif
++$M	make %{?_smp_mflags} INSTALL_MOD_PATH=%{buildroot} KBUILD_SRC= modules_install
++	make %{?_smp_mflags} INSTALL_HDR_PATH=%{buildroot}/usr KBUILD_SRC= headers_install
++	cp System.map %{buildroot}/boot/System.map-$KERNELRELEASE
++	cp .config %{buildroot}/boot/config-$KERNELRELEASE
++	bzip2 -9 --keep vmlinux
++	mv vmlinux.bz2 %{buildroot}/boot/vmlinux-$KERNELRELEASE.bz2
++$S$M	rm -f %{buildroot}/lib/modules/$KERNELRELEASE/build
++$S$M	rm -f %{buildroot}/lib/modules/$KERNELRELEASE/source
++$S$M	mkdir -p %{buildroot}/usr/src/kernels/$KERNELRELEASE
++$S$M	tar cf - $EXCLUDES . | tar xf - -C %{buildroot}/usr/src/kernels/$KERNELRELEASE
++$S$M	cd %{buildroot}/lib/modules/$KERNELRELEASE
++$S$M	ln -sf /usr/src/kernels/$KERNELRELEASE build
++$S$M	ln -sf /usr/src/kernels/$KERNELRELEASE source
++
++	%clean
++	rm -rf %{buildroot}
++
++	%post
++	if [ -x /sbin/installkernel -a -r /boot/vmlinuz-$KERNELRELEASE -a -r /boot/System.map-$KERNELRELEASE ]; then
++	cp /boot/vmlinuz-$KERNELRELEASE /boot/.vmlinuz-$KERNELRELEASE-rpm
++	cp /boot/System.map-$KERNELRELEASE /boot/.System.map-$KERNELRELEASE-rpm
++	rm -f /boot/vmlinuz-$KERNELRELEASE /boot/System.map-$KERNELRELEASE
++	/sbin/installkernel $KERNELRELEASE /boot/.vmlinuz-$KERNELRELEASE-rpm /boot/.System.map-$KERNELRELEASE-rpm
++	rm -f /boot/.vmlinuz-$KERNELRELEASE-rpm /boot/.System.map-$KERNELRELEASE-rpm
++	fi
++
++	%preun
++	if [ -x /sbin/new-kernel-pkg ]; then
++	new-kernel-pkg --remove $KERNELRELEASE --rminitrd --initrdfile=/boot/initramfs-$KERNELRELEASE.img
++	elif [ -x /usr/bin/kernel-install ]; then
++	kernel-install remove $KERNELRELEASE
++	fi
++
++	%postun
++	if [ -x /sbin/update-bootloader ]; then
++	/sbin/update-bootloader --remove $KERNELRELEASE
++	fi
++
++	%files
++	%defattr (-, root, root)
++$M	/lib/modules/$KERNELRELEASE
++$M	%exclude /lib/modules/$KERNELRELEASE/build
++$M	%exclude /lib/modules/$KERNELRELEASE/source
++	/boot/*
++
++	%files headers
++	%defattr (-, root, root)
++	/usr/include
++$S$M
++$S$M	%files devel
++$S$M	%defattr (-, root, root)
++$S$M	/usr/src/kernels/$KERNELRELEASE
++$S$M	/lib/modules/$KERNELRELEASE/build
++$S$M	/lib/modules/$KERNELRELEASE/source
++EOF
