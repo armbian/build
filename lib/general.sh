@@ -72,9 +72,11 @@ cleaning()
 		;;
 
 		oldcache)
-		if [[ -d $SRC/cache/rootfs && $(ls -1 $SRC/cache/rootfs/*.lz4 | wc -l) -gt 8 ]]; then
+		if [[ -d $SRC/cache/rootfs && $(ls -1 $SRC/cache/rootfs/*.lz4 | wc -l) -gt ${ROOTFS_CACHE_MAX} ]]; then
 			display_alert "Cleaning" "rootfs cache (old)" "info"
-			(cd $SRC/cache/rootfs; ls -t | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
+			(cd $SRC/cache/rootfs; ls -t *.lz4 | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
+			# Remove signatures if they are present. We use them for internal purpose
+			(cd $SRC/cache/rootfs; ls -t *.asc | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
 		fi
 		;;
 	esac
