@@ -72,7 +72,7 @@ cleaning()
 		;;
 
 		oldcache)
-		if [[ -d $SRC/cache/rootfs && $(ls -1 $SRC/cache/rootfs | wc -l) -gt 6 ]]; then
+		if [[ -d $SRC/cache/rootfs && $(ls -1 $SRC/cache/rootfs/*.lz4 | wc -l) -gt 8 ]]; then
 			display_alert "Cleaning" "rootfs cache (old)" "info"
 			(cd $SRC/cache/rootfs; ls -t | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
 		fi
