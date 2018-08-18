@@ -35,8 +35,7 @@ pack_upload ()
 
 	# stage: sign with PGP
 	if [[ -n $GPG_PASS ]]; then
-		echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes ${version}.img
-		echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --batch --yes armbian.txt
+		echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
 	fi
 
 	if [[ -n "${SEND_TO_SERVER}" ]]; then
