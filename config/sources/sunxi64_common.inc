@@ -30,7 +30,7 @@ case $BRANCH in
 		ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
 
 		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-		KERNELBRANCH='branch:linux-4.17.y'
+		KERNELBRANCH='branch:linux-4.18.y'
 		KERNELDIR=$MAINLINE_KERNEL_DIR
 		KERNEL_USE_GCC='> 7.0'
 		KERNELPATCHDIR='sunxi-next'
