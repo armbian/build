@@ -190,8 +190,8 @@ buildlist=()
 if [[ $KERNEL_ONLY == yes ]]; then
 	create_kernels_list
 	printf "%-3s %-20s %-10s %-10s %-10s\n" \#   BOARD BRANCH
-	REPORT="|#  |Board|Branch|U-boot|Kernel version| Network | Wireless | HDMI | USB|Build time|"
-	REPORT=$REPORT"\n|--|--|--|--:|--:|--:|--:|--:|--:|--:|"
+	REPORT="|#  |Board|Branch|U-boot|Kernel version| Network | Wireless | HDMI | USB| Armbianmonitor |Build time|"
+	REPORT=$REPORT"\n|--|--|--|--:|--:|--:|--:|--:|--:|--:|--:|"
 else
 	create_images_list $BETA
 	printf "%-3s %-20s %-10s %-10s %-10s\n" \#   BOARD BRANCH RELEASE DESKTOP
@@ -216,7 +216,7 @@ for line in "${buildlist[@]}"; do
 		MODULES MODULES_NEXT MODULES_DEV INITRD_ARCH BOOTENV_FILE BOOTDELAY MODULES_BLACKLIST MODULES_BLACKLIST_NEXT ATF_TOOLCHAIN2 \
 		MODULES_BLACKLIST_DEV MOUNT SDCARD BOOTPATCHDIR KERNELPATCHDIR buildtext RELEASE IMAGE_TYPE OVERLAY_PREFIX ASOUND_STATE \
 		ATF_COMPILER ATF_USE_GCC ATFSOURCE ATFDIR ATFBRANCH ATFSOURCEDIR PACKAGE_LIST_RM NM_IGNORE_DEVICES DISPLAY_MANAGER family_tweaks_bsp_s \
-		NETWORK HDMI USB
+		NETWORK HDMI USB WIRELESS ARMBIANMONITOR
 
 	read BOARD BRANCH RELEASE BUILD_DESKTOP <<< $line
 	n=$[$n+1]
@@ -236,7 +236,7 @@ for line in "${buildlist[@]}"; do
 				display_alert "Loading board report" "${BOARD}-${BRANCH}.report" "info"
 				source $SRC/cache/sources/testing-reports/${BOARD}-${BRANCH}.report
 			fi
-			REPORT=$REPORT"\n|$n|$BOARD|$BRANCH|$UBOOT_VER|$VER|$NETWORK|$WIRELESS|$HDMI|$USB|$runtime"
+			REPORT=$REPORT"\n|$n|$BOARD|$BRANCH|$UBOOT_VER|$VER|$NETWORK|$WIRELESS|$HDMI|$USB|$ARMBIANMONITOR|$runtime"
 		fi
 
 	fi
