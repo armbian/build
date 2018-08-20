@@ -10,8 +10,8 @@
 FORCEDRELEASE=$RELEASE
 
 # when we want to build from certain start
-#from=147
-#stop=148
+#from=1
+#stop=2
 
 rm -rf /run/armbian
 mkdir -p /run/armbian
@@ -190,6 +190,8 @@ buildlist=()
 if [[ $KERNEL_ONLY == yes ]]; then
 	create_kernels_list
 	printf "%-3s %-20s %-10s %-10s %-10s\n" \#   BOARD BRANCH
+	REPORT="|#  |Board|Branch|U-boot|Kernel version| Network | HDMI | USB|Build time|"
+	REPORT=$REPORT"\n|--|--|--|--:|--:|--:|--:|--:|--:|"
 else
 	create_images_list $BETA
 	printf "%-3s %-20s %-10s %-10s %-10s\n" \#   BOARD BRANCH RELEASE DESKTOP
@@ -213,7 +215,8 @@ for line in "${buildlist[@]}"; do
 		BOOTSCRIPT UBOOT_TARGET_MAP LOCALVERSION UBOOT_COMPILER KERNEL_COMPILER BOOTCONFIG BOOTCONFIG_VAR_NAME BOOTCONFIG_DEFAULT BOOTCONFIG_NEXT BOOTCONFIG_DEV \
 		MODULES MODULES_NEXT MODULES_DEV INITRD_ARCH BOOTENV_FILE BOOTDELAY MODULES_BLACKLIST MODULES_BLACKLIST_NEXT ATF_TOOLCHAIN2 \
 		MODULES_BLACKLIST_DEV MOUNT SDCARD BOOTPATCHDIR KERNELPATCHDIR buildtext RELEASE IMAGE_TYPE OVERLAY_PREFIX ASOUND_STATE \
-		ATF_COMPILER ATF_USE_GCC ATFSOURCE ATFDIR ATFBRANCH ATFSOURCEDIR PACKAGE_LIST_RM NM_IGNORE_DEVICES DISPLAY_MANAGER family_tweaks_bsp_s
+		ATF_COMPILER ATF_USE_GCC ATFSOURCE ATFDIR ATFBRANCH ATFSOURCEDIR PACKAGE_LIST_RM NM_IGNORE_DEVICES DISPLAY_MANAGER family_tweaks_bsp_s \
+		NETWORK HDMI USB
 
 	read BOARD BRANCH RELEASE BUILD_DESKTOP <<< $line
 	n=$[$n+1]
@@ -228,12 +231,21 @@ for line in "${buildlist[@]}"; do
 		else
 			display_alert "Building $buildtext $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
 			build_main
+			# include testing report if exist
+			if [[ -f $SRC/userpatches/reports/${BOARD}-${BRANCH}.report ]]; then
+				display_alert "Loading board report" "${BOARD}-${BRANCH}.report" "info"
+				source $SRC/userpatches/reports/${BOARD}-${BRANCH}.report
+			fi
+			REPORT=$REPORT"\n|$n|$BOARD|$BRANCH|$UBOOT_VER|$VER|$NETWORK|$HDMI|$USB|$runtime"
 		fi
 
 	fi
-	if [[ -n $stop && $n -ge $stop ]]; then exit; fi
+	if [[ -n $stop && $n -ge $stop ]]; then break; fi
 done
-
+echo -e $REPORT > $DEST/debug/report.md
+display_alert "Build report" "$DEST/debug/report.md" "info"
 buildall_end=`date +%s`
 buildall_runtime=$(((buildall_end - buildall_start) / 60))
-display_alert "Runtime" "$buildall_runtime min" "info"
+display_alert "Runtime in total" "$buildall_runtime min" "info"
+echo -e "\nSummary:\n\n|Armbian version | Built date| Built time in total\n|--|--:|--:|" >> $DEST/debug/report.md
+echo -e "|$REVISION|$(date -d "@$buildall_end")|$buildall_runtime|" >> $DEST/debug/report.md
