@@ -190,8 +190,8 @@ buildlist=()
 if [[ $KERNEL_ONLY == yes ]]; then
 	create_kernels_list
 	printf "%-3s %-20s %-10s %-10s %-10s\n" \#   BOARD BRANCH
-	REPORT="|#  |Board|Branch|U-boot|Kernel version| Network | HDMI | USB|Build time|"
-	REPORT=$REPORT"\n|--|--|--|--:|--:|--:|--:|--:|--:|"
+	REPORT="|#  |Board|Branch|U-boot|Kernel version| Network | Wireless | HDMI | USB|Build time|"
+	REPORT=$REPORT"\n|--|--|--|--:|--:|--:|--:|--:|--:|--:|"
 else
 	create_images_list $BETA
 	printf "%-3s %-20s %-10s %-10s %-10s\n" \#   BOARD BRANCH RELEASE DESKTOP
@@ -232,11 +232,11 @@ for line in "${buildlist[@]}"; do
 			display_alert "Building $buildtext $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
 			build_main
 			# include testing report if exist
-			if [[ -f $SRC/userpatches/reports/${BOARD}-${BRANCH}.report ]]; then
+			if [[ -f $SRC/cache/sources/testing-reports/${BOARD}-${BRANCH}.report ]]; then
 				display_alert "Loading board report" "${BOARD}-${BRANCH}.report" "info"
-				source $SRC/userpatches/reports/${BOARD}-${BRANCH}.report
+				source $SRC/cache/sources/testing-reports/${BOARD}-${BRANCH}.report
 			fi
-			REPORT=$REPORT"\n|$n|$BOARD|$BRANCH|$UBOOT_VER|$VER|$NETWORK|$HDMI|$USB|$runtime"
+			REPORT=$REPORT"\n|$n|$BOARD|$BRANCH|$UBOOT_VER|$VER|$NETWORK|$WIRELESS|$HDMI|$USB|$runtime"
 		fi
 
 	fi
