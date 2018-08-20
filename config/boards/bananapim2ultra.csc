@@ -6,10 +6,6 @@ MODULES=""
 MODULES_NEXT=""
 OVERLAY_PREFIX=""
 #
-KERNEL_TARGET="next,dev"
+KERNEL_TARGET="dev"
 CLI_TARGET=""
 DESKTOP_TARGET=""
-#
-BOARDRATING=""
-HARDWARE="https://linux-sunxi.org/Banana_Pi_M2_Ultra"
-FORUMS="http://forum.armbian.com/index.php/forum/11-other-boards/"
