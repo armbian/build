@@ -190,8 +190,9 @@ buildlist=()
 if [[ $KERNEL_ONLY == yes ]]; then
 	create_kernels_list
 	printf "%-3s %-20s %-10s %-10s %-10s\n" \#   BOARD BRANCH
-	REPORT="|#  |Board|Branch|U-boot|Kernel version| Network | Wireless | HDMI | USB| Armbianmonitor |Build time|"
-	REPORT=$REPORT"\n|--|--|--|--:|--:|--:|--:|--:|--:|--:|--:|"
+	REPORT="|#  |Board|Branch|U-boot|Kernel version| Network | Wireless | HDMI | USB| Armbianmonitor |"
+	REPORTHTML="<table cellpadding=5 cellspacing=5 border=1><tr><td>#</td><td>Board</td><td>Branch</td><td>U-boot</td><td>Kernel version</td><td>Network</td><td>Wireless</td><td>HDMI</td><td>USB</td><td>Armbianmonitor</td></tr>"
+	REPORT=$REPORT"\n|--|--|--|--:|--:|--:|--:|--:|--:|--:|"
 else
 	create_images_list $BETA
 	printf "%-3s %-20s %-10s %-10s %-10s\n" \#   BOARD BRANCH RELEASE DESKTOP
@@ -236,16 +237,20 @@ for line in "${buildlist[@]}"; do
 				display_alert "Loading board report" "${BOARD}-${BRANCH}.report" "info"
 				source $SRC/cache/sources/testing-reports/${BOARD}-${BRANCH}.report
 			fi
-			REPORT=$REPORT"\n|$n|$BOARD|$BRANCH|$UBOOT_VER|$VER|$NETWORK|$WIRELESS|$HDMI|$USB|$ARMBIANMONITOR|$runtime"
+			REPORT=$REPORT"\n|$n|$BOARD|$BRANCH|$UBOOT_VER|$VER|$NETWORK|$WIRELESS|$HDMI|$USB|$ARMBIANMONITOR|"
+			REPORTHTML=$REPORTHTML"\n<tr><td>$n</td><td>$BOARD</td><td>$BRANCH</td><td>$UBOOT_VER</td><td>$VER</td><td>$NETWORK</td><td>$WIRELESS</td><td>$HDMI</td><td>$USB</td><td>$ARMBIANMONITOR</td></tr>"
 		fi
 
 	fi
 	if [[ -n $stop && $n -ge $stop ]]; then break; fi
 done
 echo -e $REPORT > $DEST/debug/report.md
+echo -e $REPORTHTML"\n</table>" > $DEST/debug/report.html
+
 display_alert "Build report" "$DEST/debug/report.md" "info"
 buildall_end=`date +%s`
 buildall_runtime=$(((buildall_end - buildall_start) / 60))
 display_alert "Runtime in total" "$buildall_runtime min" "info"
 echo -e "\nSummary:\n\n|Armbian version | Built date| Built time in total\n|--|--:|--:|" >> $DEST/debug/report.md
 echo -e "|$REVISION|$(date -d "@$buildall_end")|$buildall_runtime|" >> $DEST/debug/report.md
+echo -e "$REVISION - $(date -d "@$buildall_end")" >> $DEST/debug/report.html
