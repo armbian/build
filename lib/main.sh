@@ -237,9 +237,10 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 		fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
 	fi
 	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
-	fetch_from_repo "https://github.com/rockchip-linux/rkbin" "rkbin-tools" "branch:master"
+	fetch_from_repo "https://github.com/armbian/rkbin" "rkbin-tools" "branch:master"
 	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-17.10"
 	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
+	fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
 fi
 
 if [[ $BETA == yes ]]; then
@@ -289,6 +290,8 @@ overlayfs_wrapper "cleanup"
 # extract kernel version from .deb package
 VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
 VER="${VER/-$LINUXFAMILY/}"
+
+UBOOT_VER=$(dpkg --info $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
 
 # create board support package
 [[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package

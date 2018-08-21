@@ -505,7 +505,6 @@ create_image()
 		sha256sum -b ${version}.img > sha256sum.sha
 		if [[ -n $GPG_PASS ]]; then
 			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
-			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes sha256sum.sha
 		fi
 			display_alert "Compressing" "$DEST/images/${version}.img" "info"
 		7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
@@ -519,5 +518,16 @@ create_image()
 
 	# call custom post build hook
 	[[ $(type -t post_build_image) == function ]] && post_build_image "$DEST/images/${version}.img"
+
+	# write image to SD card
+	if [[ -e "$CARD_DEVICE" && -f $DEST/images/${version}.img && $COMPRESS_OUTPUTIMAGE != yes ]]; then
+		display_alert "Writing image" "$CARD_DEVICE" "info"
+		etcher $DEST/images/${version}.img -d $CARD_DEVICE -y
+		if [ $? -eq 0 ]; then
+			display_alert "Writing succeeded" "${version}.img" "info"
+			else
+			display_alert "Writing failed" "${version}.img" "err"
+		fi
+	fi
 
 } #############################################################################
