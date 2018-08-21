@@ -238,6 +238,7 @@ for line in "${buildlist[@]}"; do
 				source $SRC/cache/sources/testing-reports/${BOARD}-${BRANCH}.report
 			fi
 			REPORT=$REPORT"\n|$n|$BOARD|$BRANCH|$UBOOT_VER|$VER|$NETWORK|$WIRELESS|$HDMI|$USB|$ARMBIANMONITOR|"
+			[[ -n $ARMBIANMONITOR ]] && ARMBIANMONITOR="<a href=$ARMBIANMONITOR target=_blank>$ARMBIANMONITOR</a>"
 			REPORTHTML=$REPORTHTML"\n<tr><td>$n</td><td>$BOARD</td><td>$BRANCH</td><td>$UBOOT_VER</td><td>$VER</td><td>$NETWORK</td><td>$WIRELESS</td><td>$HDMI</td><td>$USB</td><td>$ARMBIANMONITOR</td></tr>"
 		fi
 
