@@ -9,6 +9,6 @@ DEFAULT_OVERLAYS="usbhost1 usbhost2"
 CPUMIN="240000"
 CPUMAX="912000"
 #
-KERNEL_TARGET="next"
+KERNEL_TARGET="next,dev"
 CLI_TARGET="bionic,stretch:next"
 DESKTOP_TARGET=""

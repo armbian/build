@@ -9,9 +9,10 @@ DEFAULT_OVERLAYS=""
 CPUMIN="240000"
 CPUMAX="1200000"
 #
-KERNEL_TARGET="next"
-CLI_TARGET="bionic,stretch:next"
+KERNEL_TARGET="next,dev"
+CLI_TARGET="stretch,bionic:next"
+DESKTOP_TARGET="bionic:next"
+#
 CLI_BETA_TARGET=""
 #
-DESKTOP_TARGET="bionic:next"
 DESKTOP_BETA_TARGET=""
