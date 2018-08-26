@@ -24,7 +24,7 @@ fi
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
 if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "${consoleargs} console=ttymxc0,115200"; fi
 
-setenv bootargs "root=${rootdev} rootfstype=ext4 rootwait ${consoleargs} rd.dm=0 rd.luks=0 rd.lvm=0 rw uart_from_osc loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
+setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} rd.dm=0 rd.luks=0 rd.lvm=0 rw uart_from_osc loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 
 ext2load mmc ${mmcdev}:${mmcpart} ${fw_load_addr} /boot/bin/m4startup.fw
 ext2load mmc ${mmcdev}:${mmcpart} ${loadaddr} /boot/zImage

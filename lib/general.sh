@@ -18,6 +18,7 @@
 # addtorepo
 # prepare_host
 # download_toolchain
+# download_etcher_cli
 
 # cleaning <target>
 #
@@ -71,9 +72,11 @@ cleaning()
 		;;
 
 		oldcache)
-		if [[ -d $SRC/cache/rootfs && $(ls -1 $SRC/cache/rootfs | wc -l) -gt 6 ]]; then
+		if [[ -d $SRC/cache/rootfs && $(ls -1 $SRC/cache/rootfs/*.lz4 | wc -l) -gt ${ROOTFS_CACHE_MAX} ]]; then
 			display_alert "Cleaning" "rootfs cache (old)" "info"
-			(cd $SRC/cache/rootfs; ls -t | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
+			(cd $SRC/cache/rootfs; ls -t *.lz4 | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
+			# Remove signatures if they are present. We use them for internal purpose
+			(cd $SRC/cache/rootfs; ls -t *.asc | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
 		fi
 		;;
 	esac
@@ -631,7 +634,7 @@ prepare_host()
 		find $SRC/output $SRC/userpatches -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 		find $SRC/output $SRC/userpatches -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 	fi
-	mkdir -p $DEST/debs/extra $DEST/{config,debug,patch} $SRC/userpatches/overlay $SRC/cache/{sources,toolchains,rootfs} $SRC/.tmp
+	mkdir -p $DEST/debs/extra $DEST/{config,debug,patch} $SRC/userpatches/overlay $SRC/cache/{sources,toolchains,utility,rootfs} $SRC/.tmp
 
 	find $SRC/patch -type d ! -name . | sed "s%/patch%/userpatches%" | xargs mkdir -p
 
@@ -674,6 +677,9 @@ prepare_host()
 			rm -rf $SRC/cache/toolchains/$dir
 		fi
 	done
+
+	# download etcher CLI utility
+	download_etcher_cli
 
 	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/config/templates/customize-image.sh.template $SRC/userpatches/customize-image.sh
 
@@ -735,6 +741,44 @@ download_toolchain()
 		display_alert "Verification failed" "" "wrn"
 	fi
 }
+
+
+download_etcher_cli()
+{
+        local url="https://github.com/resin-io/etcher/releases/download/v1.4.4/etcher-cli-1.4.4-linux-x64.tar.gz"
+	local hash="54709ad34ac304d2686130c7d22a3bc13b4f491387d987274eeca4f6eea34dce"
+
+        local filename=${url##*/}
+        local dirname=${filename/.tar.gz/-dist}
+
+	export PATH="$PATH:$SRC/cache/utility/$dirname"
+
+        if [[ -f $SRC/cache/utility/$dirname/.download-complete ]]; then
+                return
+        fi
+
+        cd $SRC/cache/utility/
+
+        display_alert "Downloading" "$dirname"
+        curl -Lf --progress-bar $url -o $filename
+
+        local verified=false
+	local b=$(sha256sum $filename)
+
+        display_alert "Verifying"
+
+        [[ "$hash" == "$(sha256sum $filename | cut -d ' ' -f 1)" ]] && verified=true
+
+        if [[ $verified == true ]]; then
+                display_alert "Extracting"
+                tar --no-same-owner --overwrite -xf $filename && touch $SRC/cache/utility/$dirname/.download-complete && rm $filename
+                display_alert "Download complete" "" "info"
+        else
+                display_alert "Verification failed" "" "wrn"
+        fi
+}
+
+
 
 show_developer_warning()
 {

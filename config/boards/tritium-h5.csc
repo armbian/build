@@ -9,20 +9,10 @@ DEFAULT_OVERLAYS=""
 CPUMIN="240000"
 CPUMAX="1200000"
 #
-KERNEL_TARGET="next"
-CLI_TARGET=""
+KERNEL_TARGET="next,dev"
+CLI_TARGET="stretch,bionic:next"
+DESKTOP_TARGET="bionic:next"
 #
 CLI_BETA_TARGET=""
 #
-DESKTOP_TARGET=""
-#
-DESKTOP_BETA_TARGET="xenial:next"
-#
-RECOMMENDED="Ubuntu_xenial_next_nightly:75"
-#
-BOARDRATING=""
-CHIP="http://docs.armbian.com/Hardware_Allwinner-H3/"
-HARDWARE="https://libre.computer/products/boards/all-h3-cc/"
-FORUMS="http://forum.armbian.com/index.php/forum/13-allwinner-h3/"
-MISC3="<a href=http://forum.armbian.com/index.php/topic/1614-running-h3-boards-with-minimal-consumption/>Minimize consumption</a>"
-BUY=""
+DESKTOP_BETA_TARGET=""
