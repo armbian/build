@@ -1,0 +1,1202 @@
+diff --git a/Documentation/Changes b/Documentation/Changes
+index ec97b77c8b00..f25649ffb892 100644
+--- a/Documentation/Changes
++++ b/Documentation/Changes
+@@ -25,7 +25,7 @@ o  GNU C                  3.2                     # gcc --version
+ o  GNU make               3.80                    # make --version
+ o  binutils               2.12                    # ld -v
+ o  util-linux             2.10o                   # fdformat --version
+-o  module-init-tools      0.9.10                  # depmod -V
++o  kmod                   13                      # depmod -V
+ o  e2fsprogs              1.41.4                  # e2fsck -V
+ o  jfsutils               1.1.3                   # fsck.jfs -V
+ o  reiserfsprogs          3.6.3                   # reiserfsck -V
+@@ -132,12 +132,6 @@ is not build with CONFIG_KALLSYMS and you have no way to rebuild and
+ reproduce the Oops with that option, then you can still decode that Oops
+ with ksymoops.
+ 
+-Module-Init-Tools
+------------------
+-
+-A new module loader is now in the kernel that requires module-init-tools
+-to use.  It is backward compatible with the 2.4.x series kernels.
+-
+ Mkinitrd
+ --------
+ 
+@@ -319,14 +313,15 @@ Util-linux
+ ----------
+ o  <ftp://ftp.kernel.org/pub/linux/utils/util-linux/>
+ 
++Kmod
++----
++o  <https://www.kernel.org/pub/linux/utils/kernel/kmod/>
++o  <https://git.kernel.org/pub/scm/utils/kernel/kmod/kmod.git>
++
+ Ksymoops
+ --------
+ o  <ftp://ftp.kernel.org/pub/linux/utils/kernel/ksymoops/v2.4/>
+ 
+-Module-Init-Tools
+------------------
+-o  <ftp://ftp.kernel.org/pub/linux/kernel/people/rusty/modules/>
+-
+ Mkinitrd
+ --------
+ o  <https://code.launchpad.net/initrd-tools/main>
+diff --git a/Makefile b/Makefile
+index 9b795164122e..e7c46ece5f27 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 148
++SUBLEVEL = 149
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+@@ -418,7 +418,8 @@ export MAKE AWK GENKSYMS INSTALLKERNEL PERL PYTHON UTS_MACHINE
+ export HOSTCXX HOSTCXXFLAGS LDFLAGS_MODULE CHECK CHECKFLAGS
+ 
+ export KBUILD_CPPFLAGS NOSTDINC_FLAGS LINUXINCLUDE OBJCOPYFLAGS LDFLAGS
+-export KBUILD_CFLAGS CFLAGS_KERNEL CFLAGS_MODULE CFLAGS_GCOV CFLAGS_KASAN
++export KBUILD_CFLAGS CFLAGS_KERNEL CFLAGS_MODULE CFLAGS_GCOV
++export CFLAGS_KASAN CFLAGS_KASAN_NOSANITIZE
+ export KBUILD_AFLAGS AFLAGS_KERNEL AFLAGS_MODULE
+ export KBUILD_AFLAGS_MODULE KBUILD_CFLAGS_MODULE KBUILD_LDFLAGS_MODULE
+ export KBUILD_AFLAGS_KERNEL KBUILD_CFLAGS_KERNEL
+diff --git a/arch/arm64/mm/mmu.c b/arch/arm64/mm/mmu.c
+index 51ac84e0812d..e9d96b028766 100644
+--- a/arch/arm64/mm/mmu.c
++++ b/arch/arm64/mm/mmu.c
+@@ -699,12 +699,12 @@ void *__init fixmap_remap_fdt(phys_addr_t dt_phys)
+ }
+ 
+ #ifdef CONFIG_HAVE_ARCH_HUGE_VMAP
+-int pud_free_pmd_page(pud_t *pud)
++int pud_free_pmd_page(pud_t *pud, unsigned long addr)
+ {
+ 	return pud_none(*pud);
+ }
+ 
+-int pmd_free_pte_page(pmd_t *pmd)
++int pmd_free_pte_page(pmd_t *pmd, unsigned long addr)
+ {
+ 	return pmd_none(*pmd);
+ }
+diff --git a/arch/x86/mm/pgtable.c b/arch/x86/mm/pgtable.c
+index 08e94b6139ab..55c7446311a7 100644
+--- a/arch/x86/mm/pgtable.c
++++ b/arch/x86/mm/pgtable.c
+@@ -676,28 +676,50 @@ int pmd_clear_huge(pmd_t *pmd)
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_X86_64
+ /**
+  * pud_free_pmd_page - Clear pud entry and free pmd page.
+  * @pud: Pointer to a PUD.
++ * @addr: Virtual address associated with pud.
+  *
+- * Context: The pud range has been unmaped and TLB purged.
++ * Context: The pud range has been unmapped and TLB purged.
+  * Return: 1 if clearing the entry succeeded. 0 otherwise.
++ *
++ * NOTE: Callers must allow a single page allocation.
+  */
+-int pud_free_pmd_page(pud_t *pud)
++int pud_free_pmd_page(pud_t *pud, unsigned long addr)
+ {
+-	pmd_t *pmd;
++	pmd_t *pmd, *pmd_sv;
++	pte_t *pte;
+ 	int i;
+ 
+ 	if (pud_none(*pud))
+ 		return 1;
+ 
+ 	pmd = (pmd_t *)pud_page_vaddr(*pud);
++	pmd_sv = (pmd_t *)__get_free_page(GFP_KERNEL);
++	if (!pmd_sv)
++		return 0;
+ 
+-	for (i = 0; i < PTRS_PER_PMD; i++)
+-		if (!pmd_free_pte_page(&pmd[i]))
+-			return 0;
++	for (i = 0; i < PTRS_PER_PMD; i++) {
++		pmd_sv[i] = pmd[i];
++		if (!pmd_none(pmd[i]))
++			pmd_clear(&pmd[i]);
++	}
+ 
+ 	pud_clear(pud);
++
++	/* INVLPG to clear all paging-structure caches */
++	flush_tlb_kernel_range(addr, addr + PAGE_SIZE-1);
++
++	for (i = 0; i < PTRS_PER_PMD; i++) {
++		if (!pmd_none(pmd_sv[i])) {
++			pte = (pte_t *)pmd_page_vaddr(pmd_sv[i]);
++			free_page((unsigned long)pte);
++		}
++	}
++
++	free_page((unsigned long)pmd_sv);
+ 	free_page((unsigned long)pmd);
+ 
+ 	return 1;
+@@ -706,11 +728,12 @@ int pud_free_pmd_page(pud_t *pud)
+ /**
+  * pmd_free_pte_page - Clear pmd entry and free pte page.
+  * @pmd: Pointer to a PMD.
++ * @addr: Virtual address associated with pmd.
+  *
+- * Context: The pmd range has been unmaped and TLB purged.
++ * Context: The pmd range has been unmapped and TLB purged.
+  * Return: 1 if clearing the entry succeeded. 0 otherwise.
+  */
+-int pmd_free_pte_page(pmd_t *pmd)
++int pmd_free_pte_page(pmd_t *pmd, unsigned long addr)
+ {
+ 	pte_t *pte;
+ 
+@@ -719,8 +742,30 @@ int pmd_free_pte_page(pmd_t *pmd)
+ 
+ 	pte = (pte_t *)pmd_page_vaddr(*pmd);
+ 	pmd_clear(pmd);
++
++	/* INVLPG to clear all paging-structure caches */
++	flush_tlb_kernel_range(addr, addr + PAGE_SIZE-1);
++
+ 	free_page((unsigned long)pte);
+ 
+ 	return 1;
+ }
++
++#else /* !CONFIG_X86_64 */
++
++int pud_free_pmd_page(pud_t *pud, unsigned long addr)
++{
++	return pud_none(*pud);
++}
++
++/*
++ * Disable free page handling on x86-PAE. This assures that ioremap()
++ * does not update sync'd pmd entries. See vmalloc_sync_one().
++ */
++int pmd_free_pte_page(pmd_t *pmd, unsigned long addr)
++{
++	return pmd_none(*pmd);
++}
++
++#endif /* CONFIG_X86_64 */
+ #endif	/* CONFIG_HAVE_ARCH_HUGE_VMAP */
+diff --git a/crypto/ablkcipher.c b/crypto/ablkcipher.c
+index e5b5721809e2..149e7a7f04fe 100644
+--- a/crypto/ablkcipher.c
++++ b/crypto/ablkcipher.c
+@@ -73,11 +73,9 @@ static inline u8 *ablkcipher_get_spot(u8 *start, unsigned int len)
+ 	return max(start, end_page);
+ }
+ 
+-static inline unsigned int ablkcipher_done_slow(struct ablkcipher_walk *walk,
+-						unsigned int bsize)
++static inline void ablkcipher_done_slow(struct ablkcipher_walk *walk,
++					unsigned int n)
+ {
+-	unsigned int n = bsize;
+-
+ 	for (;;) {
+ 		unsigned int len_this_page = scatterwalk_pagelen(&walk->out);
+ 
+@@ -89,17 +87,13 @@ static inline unsigned int ablkcipher_done_slow(struct ablkcipher_walk *walk,
+ 		n -= len_this_page;
+ 		scatterwalk_start(&walk->out, sg_next(walk->out.sg));
+ 	}
+-
+-	return bsize;
+ }
+ 
+-static inline unsigned int ablkcipher_done_fast(struct ablkcipher_walk *walk,
+-						unsigned int n)
++static inline void ablkcipher_done_fast(struct ablkcipher_walk *walk,
++					unsigned int n)
+ {
+ 	scatterwalk_advance(&walk->in, n);
+ 	scatterwalk_advance(&walk->out, n);
+-
+-	return n;
+ }
+ 
+ static int ablkcipher_walk_next(struct ablkcipher_request *req,
+@@ -109,39 +103,40 @@ int ablkcipher_walk_done(struct ablkcipher_request *req,
+ 			 struct ablkcipher_walk *walk, int err)
+ {
+ 	struct crypto_tfm *tfm = req->base.tfm;
+-	unsigned int nbytes = 0;
++	unsigned int n; /* bytes processed */
++	bool more;
+ 
+-	if (likely(err >= 0)) {
+-		unsigned int n = walk->nbytes - err;
++	if (unlikely(err < 0))
++		goto finish;
+ 
+-		if (likely(!(walk->flags & ABLKCIPHER_WALK_SLOW)))
+-			n = ablkcipher_done_fast(walk, n);
+-		else if (WARN_ON(err)) {
+-			err = -EINVAL;
+-			goto err;
+-		} else
+-			n = ablkcipher_done_slow(walk, n);
++	n = walk->nbytes - err;
++	walk->total -= n;
++	more = (walk->total != 0);
+ 
+-		nbytes = walk->total - n;
+-		err = 0;
++	if (likely(!(walk->flags & ABLKCIPHER_WALK_SLOW))) {
++		ablkcipher_done_fast(walk, n);
++	} else {
++		if (WARN_ON(err)) {
++			/* unexpected case; didn't process all bytes */
++			err = -EINVAL;
++			goto finish;
++		}
++		ablkcipher_done_slow(walk, n);
+ 	}
+ 
+-	scatterwalk_done(&walk->in, 0, nbytes);
+-	scatterwalk_done(&walk->out, 1, nbytes);
+-
+-err:
+-	walk->total = nbytes;
+-	walk->nbytes = nbytes;
++	scatterwalk_done(&walk->in, 0, more);
++	scatterwalk_done(&walk->out, 1, more);
+ 
+-	if (nbytes) {
++	if (more) {
+ 		crypto_yield(req->base.flags);
+ 		return ablkcipher_walk_next(req, walk);
+ 	}
+-
++	err = 0;
++finish:
++	walk->nbytes = 0;
+ 	if (walk->iv != req->info)
+ 		memcpy(req->info, walk->iv, tfm->crt_ablkcipher.ivsize);
+ 	kfree(walk->iv_buffer);
+-
+ 	return err;
+ }
+ EXPORT_SYMBOL_GPL(ablkcipher_walk_done);
+diff --git a/crypto/blkcipher.c b/crypto/blkcipher.c
+index dca7bc87dad9..2d08e59b3212 100644
+--- a/crypto/blkcipher.c
++++ b/crypto/blkcipher.c
+@@ -71,19 +71,18 @@ static inline u8 *blkcipher_get_spot(u8 *start, unsigned int len)
+ 	return max(start, end_page);
+ }
+ 
+-static inline unsigned int blkcipher_done_slow(struct blkcipher_walk *walk,
+-					       unsigned int bsize)
++static inline void blkcipher_done_slow(struct blkcipher_walk *walk,
++				       unsigned int bsize)
+ {
+ 	u8 *addr;
+ 
+ 	addr = (u8 *)ALIGN((unsigned long)walk->buffer, walk->alignmask + 1);
+ 	addr = blkcipher_get_spot(addr, bsize);
+ 	scatterwalk_copychunks(addr, &walk->out, bsize, 1);
+-	return bsize;
+ }
+ 
+-static inline unsigned int blkcipher_done_fast(struct blkcipher_walk *walk,
+-					       unsigned int n)
++static inline void blkcipher_done_fast(struct blkcipher_walk *walk,
++				       unsigned int n)
+ {
+ 	if (walk->flags & BLKCIPHER_WALK_COPY) {
+ 		blkcipher_map_dst(walk);
+@@ -97,49 +96,48 @@ static inline unsigned int blkcipher_done_fast(struct blkcipher_walk *walk,
+ 
+ 	scatterwalk_advance(&walk->in, n);
+ 	scatterwalk_advance(&walk->out, n);
+-
+-	return n;
+ }
+ 
+ int blkcipher_walk_done(struct blkcipher_desc *desc,
+ 			struct blkcipher_walk *walk, int err)
+ {
+-	unsigned int nbytes = 0;
++	unsigned int n; /* bytes processed */
++	bool more;
+ 
+-	if (likely(err >= 0)) {
+-		unsigned int n = walk->nbytes - err;
++	if (unlikely(err < 0))
++		goto finish;
+ 
+-		if (likely(!(walk->flags & BLKCIPHER_WALK_SLOW)))
+-			n = blkcipher_done_fast(walk, n);
+-		else if (WARN_ON(err)) {
+-			err = -EINVAL;
+-			goto err;
+-		} else
+-			n = blkcipher_done_slow(walk, n);
++	n = walk->nbytes - err;
++	walk->total -= n;
++	more = (walk->total != 0);
+ 
+-		nbytes = walk->total - n;
+-		err = 0;
++	if (likely(!(walk->flags & BLKCIPHER_WALK_SLOW))) {
++		blkcipher_done_fast(walk, n);
++	} else {
++		if (WARN_ON(err)) {
++			/* unexpected case; didn't process all bytes */
++			err = -EINVAL;
++			goto finish;
++		}
++		blkcipher_done_slow(walk, n);
+ 	}
+ 
+-	scatterwalk_done(&walk->in, 0, nbytes);
+-	scatterwalk_done(&walk->out, 1, nbytes);
+-
+-err:
+-	walk->total = nbytes;
+-	walk->nbytes = nbytes;
++	scatterwalk_done(&walk->in, 0, more);
++	scatterwalk_done(&walk->out, 1, more);
+ 
+-	if (nbytes) {
++	if (more) {
+ 		crypto_yield(desc->flags);
+ 		return blkcipher_walk_next(desc, walk);
+ 	}
+-
++	err = 0;
++finish:
++	walk->nbytes = 0;
+ 	if (walk->iv != desc->info)
+ 		memcpy(desc->info, walk->iv, walk->ivsize);
+ 	if (walk->buffer != walk->page)
+ 		kfree(walk->buffer);
+ 	if (walk->page)
+ 		free_page((unsigned long)walk->page);
+-
+ 	return err;
+ }
+ EXPORT_SYMBOL_GPL(blkcipher_walk_done);
+diff --git a/crypto/vmac.c b/crypto/vmac.c
+index df76a816cfb2..bb2fc787d615 100644
+--- a/crypto/vmac.c
++++ b/crypto/vmac.c
+@@ -1,6 +1,10 @@
+ /*
+- * Modified to interface to the Linux kernel
++ * VMAC: Message Authentication Code using Universal Hashing
++ *
++ * Reference: https://tools.ietf.org/html/draft-krovetz-vmac-01
++ *
+  * Copyright (c) 2009, Intel Corporation.
++ * Copyright (c) 2018, Google Inc.
+  *
+  * This program is free software; you can redistribute it and/or modify it
+  * under the terms and conditions of the GNU General Public License,
+@@ -16,14 +20,15 @@
+  * Place - Suite 330, Boston, MA 02111-1307 USA.
+  */
+ 
+-/* --------------------------------------------------------------------------
+- * VMAC and VHASH Implementation by Ted Krovetz (tdk@acm.org) and Wei Dai.
+- * This implementation is herby placed in the public domain.
+- * The authors offers no warranty. Use at your own risk.
+- * Please send bug reports to the authors.
+- * Last modified: 17 APR 08, 1700 PDT
+- * ----------------------------------------------------------------------- */
++/*
++ * Derived from:
++ *	VMAC and VHASH Implementation by Ted Krovetz (tdk@acm.org) and Wei Dai.
++ *	This implementation is herby placed in the public domain.
++ *	The authors offers no warranty. Use at your own risk.
++ *	Last modified: 17 APR 08, 1700 PDT
++ */
+ 
++#include <asm/unaligned.h>
+ #include <linux/init.h>
+ #include <linux/types.h>
+ #include <linux/crypto.h>
+@@ -31,9 +36,35 @@
+ #include <linux/scatterlist.h>
+ #include <asm/byteorder.h>
+ #include <crypto/scatterwalk.h>
+-#include <crypto/vmac.h>
+ #include <crypto/internal/hash.h>
+ 
++/*
++ * User definable settings.
++ */
++#define VMAC_TAG_LEN	64
++#define VMAC_KEY_SIZE	128/* Must be 128, 192 or 256			*/
++#define VMAC_KEY_LEN	(VMAC_KEY_SIZE/8)
++#define VMAC_NHBYTES	128/* Must 2^i for any 3 < i < 13 Standard = 128*/
++
++/* per-transform (per-key) context */
++struct vmac_tfm_ctx {
++	struct crypto_cipher *cipher;
++	u64 nhkey[(VMAC_NHBYTES/8)+2*(VMAC_TAG_LEN/64-1)];
++	u64 polykey[2*VMAC_TAG_LEN/64];
++	u64 l3key[2*VMAC_TAG_LEN/64];
++};
++
++/* per-request context */
++struct vmac_desc_ctx {
++	union {
++		u8 partial[VMAC_NHBYTES];	/* partial block */
++		__le64 partial_words[VMAC_NHBYTES / 8];
++	};
++	unsigned int partial_size;	/* size of the partial block */
++	bool first_block_processed;
++	u64 polytmp[2*VMAC_TAG_LEN/64];	/* running total of L2-hash */
++};
++
+ /*
+  * Constants and masks
+  */
+@@ -318,13 +349,6 @@ static void poly_step_func(u64 *ahi, u64 *alo,
+ 	} while (0)
+ #endif
+ 
+-static void vhash_abort(struct vmac_ctx *ctx)
+-{
+-	ctx->polytmp[0] = ctx->polykey[0] ;
+-	ctx->polytmp[1] = ctx->polykey[1] ;
+-	ctx->first_block_processed = 0;
+-}
+-
+ static u64 l3hash(u64 p1, u64 p2, u64 k1, u64 k2, u64 len)
+ {
+ 	u64 rh, rl, t, z = 0;
+@@ -364,280 +388,209 @@ static u64 l3hash(u64 p1, u64 p2, u64 k1, u64 k2, u64 len)
+ 	return rl;
+ }
+ 
+-static void vhash_update(const unsigned char *m,
+-			unsigned int mbytes, /* Pos multiple of VMAC_NHBYTES */
+-			struct vmac_ctx *ctx)
++/* L1 and L2-hash one or more VMAC_NHBYTES-byte blocks */
++static void vhash_blocks(const struct vmac_tfm_ctx *tctx,
++			 struct vmac_desc_ctx *dctx,
++			 const __le64 *mptr, unsigned int blocks)
+ {
+-	u64 rh, rl, *mptr;
+-	const u64 *kptr = (u64 *)ctx->nhkey;
+-	int i;
+-	u64 ch, cl;
+-	u64 pkh = ctx->polykey[0];
+-	u64 pkl = ctx->polykey[1];
+-
+-	if (!mbytes)
+-		return;
+-
+-	BUG_ON(mbytes % VMAC_NHBYTES);
+-
+-	mptr = (u64 *)m;
+-	i = mbytes / VMAC_NHBYTES;  /* Must be non-zero */
+-
+-	ch = ctx->polytmp[0];
+-	cl = ctx->polytmp[1];
+-
+-	if (!ctx->first_block_processed) {
+-		ctx->first_block_processed = 1;
++	const u64 *kptr = tctx->nhkey;
++	const u64 pkh = tctx->polykey[0];
++	const u64 pkl = tctx->polykey[1];
++	u64 ch = dctx->polytmp[0];
++	u64 cl = dctx->polytmp[1];
++	u64 rh, rl;
++
++	if (!dctx->first_block_processed) {
++		dctx->first_block_processed = true;
+ 		nh_vmac_nhbytes(mptr, kptr, VMAC_NHBYTES/8, rh, rl);
+ 		rh &= m62;
+ 		ADD128(ch, cl, rh, rl);
+ 		mptr += (VMAC_NHBYTES/sizeof(u64));
+-		i--;
++		blocks--;
+ 	}
+ 
+-	while (i--) {
++	while (blocks--) {
+ 		nh_vmac_nhbytes(mptr, kptr, VMAC_NHBYTES/8, rh, rl);
+ 		rh &= m62;
+ 		poly_step(ch, cl, pkh, pkl, rh, rl);
+ 		mptr += (VMAC_NHBYTES/sizeof(u64));
+ 	}
+ 
+-	ctx->polytmp[0] = ch;
+-	ctx->polytmp[1] = cl;
++	dctx->polytmp[0] = ch;
++	dctx->polytmp[1] = cl;
+ }
+ 
+-static u64 vhash(unsigned char m[], unsigned int mbytes,
+-			u64 *tagl, struct vmac_ctx *ctx)
++static int vmac_setkey(struct crypto_shash *tfm,
++		       const u8 *key, unsigned int keylen)
+ {
+-	u64 rh, rl, *mptr;
+-	const u64 *kptr = (u64 *)ctx->nhkey;
+-	int i, remaining;
+-	u64 ch, cl;
+-	u64 pkh = ctx->polykey[0];
+-	u64 pkl = ctx->polykey[1];
+-
+-	mptr = (u64 *)m;
+-	i = mbytes / VMAC_NHBYTES;
+-	remaining = mbytes % VMAC_NHBYTES;
+-
+-	if (ctx->first_block_processed) {
+-		ch = ctx->polytmp[0];
+-		cl = ctx->polytmp[1];
+-	} else if (i) {
+-		nh_vmac_nhbytes(mptr, kptr, VMAC_NHBYTES/8, ch, cl);
+-		ch &= m62;
+-		ADD128(ch, cl, pkh, pkl);
+-		mptr += (VMAC_NHBYTES/sizeof(u64));
+-		i--;
+-	} else if (remaining) {
+-		nh_16(mptr, kptr, 2*((remaining+15)/16), ch, cl);
+-		ch &= m62;
+-		ADD128(ch, cl, pkh, pkl);
+-		mptr += (VMAC_NHBYTES/sizeof(u64));
+-		goto do_l3;
+-	} else {/* Empty String */
+-		ch = pkh; cl = pkl;
+-		goto do_l3;
+-	}
+-
+-	while (i--) {
+-		nh_vmac_nhbytes(mptr, kptr, VMAC_NHBYTES/8, rh, rl);
+-		rh &= m62;
+-		poly_step(ch, cl, pkh, pkl, rh, rl);
+-		mptr += (VMAC_NHBYTES/sizeof(u64));
+-	}
+-	if (remaining) {
+-		nh_16(mptr, kptr, 2*((remaining+15)/16), rh, rl);
+-		rh &= m62;
+-		poly_step(ch, cl, pkh, pkl, rh, rl);
+-	}
+-
+-do_l3:
+-	vhash_abort(ctx);
+-	remaining *= 8;
+-	return l3hash(ch, cl, ctx->l3key[0], ctx->l3key[1], remaining);
+-}
++	struct vmac_tfm_ctx *tctx = crypto_shash_ctx(tfm);
++	__be64 out[2];
++	u8 in[16] = { 0 };
++	unsigned int i;
++	int err;
+ 
+-static u64 vmac(unsigned char m[], unsigned int mbytes,
+-			const unsigned char n[16], u64 *tagl,
+-			struct vmac_ctx_t *ctx)
+-{
+-	u64 *in_n, *out_p;
+-	u64 p, h;
+-	int i;
+-
+-	in_n = ctx->__vmac_ctx.cached_nonce;
+-	out_p = ctx->__vmac_ctx.cached_aes;
+-
+-	i = n[15] & 1;
+-	if ((*(u64 *)(n+8) != in_n[1]) || (*(u64 *)(n) != in_n[0])) {
+-		in_n[0] = *(u64 *)(n);
+-		in_n[1] = *(u64 *)(n+8);
+-		((unsigned char *)in_n)[15] &= 0xFE;
+-		crypto_cipher_encrypt_one(ctx->child,
+-			(unsigned char *)out_p, (unsigned char *)in_n);
+-
+-		((unsigned char *)in_n)[15] |= (unsigned char)(1-i);
++	if (keylen != VMAC_KEY_LEN) {
++		crypto_shash_set_flags(tfm, CRYPTO_TFM_RES_BAD_KEY_LEN);
++		return -EINVAL;
+ 	}
+-	p = be64_to_cpup(out_p + i);
+-	h = vhash(m, mbytes, (u64 *)0, &ctx->__vmac_ctx);
+-	return le64_to_cpu(p + h);
+-}
+ 
+-static int vmac_set_key(unsigned char user_key[], struct vmac_ctx_t *ctx)
+-{
+-	u64 in[2] = {0}, out[2];
+-	unsigned i;
+-	int err = 0;
+-
+-	err = crypto_cipher_setkey(ctx->child, user_key, VMAC_KEY_LEN);
++	err = crypto_cipher_setkey(tctx->cipher, key, keylen);
+ 	if (err)
+ 		return err;
+ 
+ 	/* Fill nh key */
+-	((unsigned char *)in)[0] = 0x80;
+-	for (i = 0; i < sizeof(ctx->__vmac_ctx.nhkey)/8; i += 2) {
+-		crypto_cipher_encrypt_one(ctx->child,
+-			(unsigned char *)out, (unsigned char *)in);
+-		ctx->__vmac_ctx.nhkey[i] = be64_to_cpup(out);
+-		ctx->__vmac_ctx.nhkey[i+1] = be64_to_cpup(out+1);
+-		((unsigned char *)in)[15] += 1;
++	in[0] = 0x80;
++	for (i = 0; i < ARRAY_SIZE(tctx->nhkey); i += 2) {
++		crypto_cipher_encrypt_one(tctx->cipher, (u8 *)out, in);
++		tctx->nhkey[i] = be64_to_cpu(out[0]);
++		tctx->nhkey[i+1] = be64_to_cpu(out[1]);
++		in[15]++;
+ 	}
+ 
+ 	/* Fill poly key */
+-	((unsigned char *)in)[0] = 0xC0;
+-	in[1] = 0;
+-	for (i = 0; i < sizeof(ctx->__vmac_ctx.polykey)/8; i += 2) {
+-		crypto_cipher_encrypt_one(ctx->child,
+-			(unsigned char *)out, (unsigned char *)in);
+-		ctx->__vmac_ctx.polytmp[i] =
+-			ctx->__vmac_ctx.polykey[i] =
+-				be64_to_cpup(out) & mpoly;
+-		ctx->__vmac_ctx.polytmp[i+1] =
+-			ctx->__vmac_ctx.polykey[i+1] =
+-				be64_to_cpup(out+1) & mpoly;
+-		((unsigned char *)in)[15] += 1;
++	in[0] = 0xC0;
++	in[15] = 0;
++	for (i = 0; i < ARRAY_SIZE(tctx->polykey); i += 2) {
++		crypto_cipher_encrypt_one(tctx->cipher, (u8 *)out, in);
++		tctx->polykey[i] = be64_to_cpu(out[0]) & mpoly;
++		tctx->polykey[i+1] = be64_to_cpu(out[1]) & mpoly;
++		in[15]++;
+ 	}
+ 
+ 	/* Fill ip key */
+-	((unsigned char *)in)[0] = 0xE0;
+-	in[1] = 0;
+-	for (i = 0; i < sizeof(ctx->__vmac_ctx.l3key)/8; i += 2) {
++	in[0] = 0xE0;
++	in[15] = 0;
++	for (i = 0; i < ARRAY_SIZE(tctx->l3key); i += 2) {
+ 		do {
+-			crypto_cipher_encrypt_one(ctx->child,
+-				(unsigned char *)out, (unsigned char *)in);
+-			ctx->__vmac_ctx.l3key[i] = be64_to_cpup(out);
+-			ctx->__vmac_ctx.l3key[i+1] = be64_to_cpup(out+1);
+-			((unsigned char *)in)[15] += 1;
+-		} while (ctx->__vmac_ctx.l3key[i] >= p64
+-			|| ctx->__vmac_ctx.l3key[i+1] >= p64);
++			crypto_cipher_encrypt_one(tctx->cipher, (u8 *)out, in);
++			tctx->l3key[i] = be64_to_cpu(out[0]);
++			tctx->l3key[i+1] = be64_to_cpu(out[1]);
++			in[15]++;
++		} while (tctx->l3key[i] >= p64 || tctx->l3key[i+1] >= p64);
+ 	}
+ 
+-	/* Invalidate nonce/aes cache and reset other elements */
+-	ctx->__vmac_ctx.cached_nonce[0] = (u64)-1; /* Ensure illegal nonce */
+-	ctx->__vmac_ctx.cached_nonce[1] = (u64)0;  /* Ensure illegal nonce */
+-	ctx->__vmac_ctx.first_block_processed = 0;
+-
+-	return err;
++	return 0;
+ }
+ 
+-static int vmac_setkey(struct crypto_shash *parent,
+-		const u8 *key, unsigned int keylen)
++static int vmac_init(struct shash_desc *desc)
+ {
+-	struct vmac_ctx_t *ctx = crypto_shash_ctx(parent);
++	const struct vmac_tfm_ctx *tctx = crypto_shash_ctx(desc->tfm);
++	struct vmac_desc_ctx *dctx = shash_desc_ctx(desc);
+ 
+-	if (keylen != VMAC_KEY_LEN) {
+-		crypto_shash_set_flags(parent, CRYPTO_TFM_RES_BAD_KEY_LEN);
+-		return -EINVAL;
+-	}
+-
+-	return vmac_set_key((u8 *)key, ctx);
+-}
+-
+-static int vmac_init(struct shash_desc *pdesc)
+-{
++	dctx->partial_size = 0;
++	dctx->first_block_processed = false;
++	memcpy(dctx->polytmp, tctx->polykey, sizeof(dctx->polytmp));
+ 	return 0;
+ }
+ 
+-static int vmac_update(struct shash_desc *pdesc, const u8 *p,
+-		unsigned int len)
++static int vmac_update(struct shash_desc *desc, const u8 *p, unsigned int len)
+ {
+-	struct crypto_shash *parent = pdesc->tfm;
+-	struct vmac_ctx_t *ctx = crypto_shash_ctx(parent);
+-	int expand;
+-	int min;
+-
+-	expand = VMAC_NHBYTES - ctx->partial_size > 0 ?
+-			VMAC_NHBYTES - ctx->partial_size : 0;
+-
+-	min = len < expand ? len : expand;
+-
+-	memcpy(ctx->partial + ctx->partial_size, p, min);
+-	ctx->partial_size += min;
+-
+-	if (len < expand)
+-		return 0;
+-
+-	vhash_update(ctx->partial, VMAC_NHBYTES, &ctx->__vmac_ctx);
+-	ctx->partial_size = 0;
+-
+-	len -= expand;
+-	p += expand;
++	const struct vmac_tfm_ctx *tctx = crypto_shash_ctx(desc->tfm);
++	struct vmac_desc_ctx *dctx = shash_desc_ctx(desc);
++	unsigned int n;
++
++	if (dctx->partial_size) {
++		n = min(len, VMAC_NHBYTES - dctx->partial_size);
++		memcpy(&dctx->partial[dctx->partial_size], p, n);
++		dctx->partial_size += n;
++		p += n;
++		len -= n;
++		if (dctx->partial_size == VMAC_NHBYTES) {
++			vhash_blocks(tctx, dctx, dctx->partial_words, 1);
++			dctx->partial_size = 0;
++		}
++	}
+ 
+-	if (len % VMAC_NHBYTES) {
+-		memcpy(ctx->partial, p + len - (len % VMAC_NHBYTES),
+-			len % VMAC_NHBYTES);
+-		ctx->partial_size = len % VMAC_NHBYTES;
++	if (len >= VMAC_NHBYTES) {
++		n = round_down(len, VMAC_NHBYTES);
++		/* TODO: 'p' may be misaligned here */
++		vhash_blocks(tctx, dctx, (const __le64 *)p, n / VMAC_NHBYTES);
++		p += n;
++		len -= n;
+ 	}
+ 
+-	vhash_update(p, len - len % VMAC_NHBYTES, &ctx->__vmac_ctx);
++	if (len) {
++		memcpy(dctx->partial, p, len);
++		dctx->partial_size = len;
++	}
+ 
+ 	return 0;
+ }
+ 
+-static int vmac_final(struct shash_desc *pdesc, u8 *out)
++static u64 vhash_final(const struct vmac_tfm_ctx *tctx,
++		       struct vmac_desc_ctx *dctx)
+ {
+-	struct crypto_shash *parent = pdesc->tfm;
+-	struct vmac_ctx_t *ctx = crypto_shash_ctx(parent);
+-	vmac_t mac;
+-	u8 nonce[16] = {};
+-
+-	/* vmac() ends up accessing outside the array bounds that
+-	 * we specify.  In appears to access up to the next 2-word
+-	 * boundary.  We'll just be uber cautious and zero the
+-	 * unwritten bytes in the buffer.
+-	 */
+-	if (ctx->partial_size) {
+-		memset(ctx->partial + ctx->partial_size, 0,
+-			VMAC_NHBYTES - ctx->partial_size);
++	unsigned int partial = dctx->partial_size;
++	u64 ch = dctx->polytmp[0];
++	u64 cl = dctx->polytmp[1];
++
++	/* L1 and L2-hash the final block if needed */
++	if (partial) {
++		/* Zero-pad to next 128-bit boundary */
++		unsigned int n = round_up(partial, 16);
++		u64 rh, rl;
++
++		memset(&dctx->partial[partial], 0, n - partial);
++		nh_16(dctx->partial_words, tctx->nhkey, n / 8, rh, rl);
++		rh &= m62;
++		if (dctx->first_block_processed)
++			poly_step(ch, cl, tctx->polykey[0], tctx->polykey[1],
++				  rh, rl);
++		else
++			ADD128(ch, cl, rh, rl);
+ 	}
+-	mac = vmac(ctx->partial, ctx->partial_size, nonce, NULL, ctx);
+-	memcpy(out, &mac, sizeof(vmac_t));
+-	memzero_explicit(&mac, sizeof(vmac_t));
+-	memset(&ctx->__vmac_ctx, 0, sizeof(struct vmac_ctx));
+-	ctx->partial_size = 0;
++
++	/* L3-hash the 128-bit output of L2-hash */
++	return l3hash(ch, cl, tctx->l3key[0], tctx->l3key[1], partial * 8);
++}
++
++static int vmac_final(struct shash_desc *desc, u8 *out)
++{
++	const struct vmac_tfm_ctx *tctx = crypto_shash_ctx(desc->tfm);
++	struct vmac_desc_ctx *dctx = shash_desc_ctx(desc);
++	static const u8 nonce[16] = {}; /* TODO: this is insecure */
++	union {
++		u8 bytes[16];
++		__be64 pads[2];
++	} block;
++	int index;
++	u64 hash, pad;
++
++	/* Finish calculating the VHASH of the message */
++	hash = vhash_final(tctx, dctx);
++
++	/* Generate pseudorandom pad by encrypting the nonce */
++	memcpy(&block, nonce, 16);
++	index = block.bytes[15] & 1;
++	block.bytes[15] &= ~1;
++	crypto_cipher_encrypt_one(tctx->cipher, block.bytes, block.bytes);
++	pad = be64_to_cpu(block.pads[index]);
++
++	/* The VMAC is the sum of VHASH and the pseudorandom pad */
++	put_unaligned_le64(hash + pad, out);
+ 	return 0;
+ }
+ 
+ static int vmac_init_tfm(struct crypto_tfm *tfm)
+ {
+-	struct crypto_cipher *cipher;
+-	struct crypto_instance *inst = (void *)tfm->__crt_alg;
++	struct crypto_instance *inst = crypto_tfm_alg_instance(tfm);
+ 	struct crypto_spawn *spawn = crypto_instance_ctx(inst);
+-	struct vmac_ctx_t *ctx = crypto_tfm_ctx(tfm);
++	struct vmac_tfm_ctx *tctx = crypto_tfm_ctx(tfm);
++	struct crypto_cipher *cipher;
+ 
+ 	cipher = crypto_spawn_cipher(spawn);
+ 	if (IS_ERR(cipher))
+ 		return PTR_ERR(cipher);
+ 
+-	ctx->child = cipher;
++	tctx->cipher = cipher;
+ 	return 0;
+ }
+ 
+ static void vmac_exit_tfm(struct crypto_tfm *tfm)
+ {
+-	struct vmac_ctx_t *ctx = crypto_tfm_ctx(tfm);
+-	crypto_free_cipher(ctx->child);
++	struct vmac_tfm_ctx *tctx = crypto_tfm_ctx(tfm);
++
++	crypto_free_cipher(tctx->cipher);
+ }
+ 
+ static int vmac_create(struct crypto_template *tmpl, struct rtattr **tb)
+@@ -655,6 +608,10 @@ static int vmac_create(struct crypto_template *tmpl, struct rtattr **tb)
+ 	if (IS_ERR(alg))
+ 		return PTR_ERR(alg);
+ 
++	err = -EINVAL;
++	if (alg->cra_blocksize != 16)
++		goto out_put_alg;
++
+ 	inst = shash_alloc_instance("vmac", alg);
+ 	err = PTR_ERR(inst);
+ 	if (IS_ERR(inst))
+@@ -670,11 +627,12 @@ static int vmac_create(struct crypto_template *tmpl, struct rtattr **tb)
+ 	inst->alg.base.cra_blocksize = alg->cra_blocksize;
+ 	inst->alg.base.cra_alignmask = alg->cra_alignmask;
+ 
+-	inst->alg.digestsize = sizeof(vmac_t);
+-	inst->alg.base.cra_ctxsize = sizeof(struct vmac_ctx_t);
++	inst->alg.base.cra_ctxsize = sizeof(struct vmac_tfm_ctx);
+ 	inst->alg.base.cra_init = vmac_init_tfm;
+ 	inst->alg.base.cra_exit = vmac_exit_tfm;
+ 
++	inst->alg.descsize = sizeof(struct vmac_desc_ctx);
++	inst->alg.digestsize = VMAC_TAG_LEN / 8;
+ 	inst->alg.init = vmac_init;
+ 	inst->alg.update = vmac_update;
+ 	inst->alg.final = vmac_final;
+diff --git a/drivers/i2c/busses/i2c-ismt.c b/drivers/i2c/busses/i2c-ismt.c
+index 1111cb966a44..fa2b58142cde 100644
+--- a/drivers/i2c/busses/i2c-ismt.c
++++ b/drivers/i2c/busses/i2c-ismt.c
+@@ -587,7 +587,7 @@ static int ismt_access(struct i2c_adapter *adap, u16 addr,
+ 
+ 	/* unmap the data buffer */
+ 	if (dma_size != 0)
+-		dma_unmap_single(&adap->dev, dma_addr, dma_size, dma_direction);
++		dma_unmap_single(dev, dma_addr, dma_size, dma_direction);
+ 
+ 	if (unlikely(!time_left)) {
+ 		dev_err(dev, "completion wait timed out\n");
+diff --git a/include/asm-generic/pgtable.h b/include/asm-generic/pgtable.h
+index dabecb661264..53a47d75cc43 100644
+--- a/include/asm-generic/pgtable.h
++++ b/include/asm-generic/pgtable.h
+@@ -770,8 +770,8 @@ int pud_set_huge(pud_t *pud, phys_addr_t addr, pgprot_t prot);
+ int pmd_set_huge(pmd_t *pmd, phys_addr_t addr, pgprot_t prot);
+ int pud_clear_huge(pud_t *pud);
+ int pmd_clear_huge(pmd_t *pmd);
+-int pud_free_pmd_page(pud_t *pud);
+-int pmd_free_pte_page(pmd_t *pmd);
++int pud_free_pmd_page(pud_t *pud, unsigned long addr);
++int pmd_free_pte_page(pmd_t *pmd, unsigned long addr);
+ #else	/* !CONFIG_HAVE_ARCH_HUGE_VMAP */
+ static inline int pud_set_huge(pud_t *pud, phys_addr_t addr, pgprot_t prot)
+ {
+@@ -789,11 +789,11 @@ static inline int pmd_clear_huge(pmd_t *pmd)
+ {
+ 	return 0;
+ }
+-static inline int pud_free_pmd_page(pud_t *pud)
++static inline int pud_free_pmd_page(pud_t *pud, unsigned long addr)
+ {
+ 	return 0;
+ }
+-static inline int pmd_free_pte_page(pmd_t *pmd)
++static inline int pmd_free_pte_page(pmd_t *pmd, unsigned long addr)
+ {
+ 	return 0;
+ }
+diff --git a/include/crypto/vmac.h b/include/crypto/vmac.h
+deleted file mode 100644
+index 6b700c7b2fe1..000000000000
+--- a/include/crypto/vmac.h
++++ /dev/null
+@@ -1,63 +0,0 @@
+-/*
+- * Modified to interface to the Linux kernel
+- * Copyright (c) 2009, Intel Corporation.
+- *
+- * This program is free software; you can redistribute it and/or modify it
+- * under the terms and conditions of the GNU General Public License,
+- * version 2, as published by the Free Software Foundation.
+- *
+- * This program is distributed in the hope it will be useful, but WITHOUT
+- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+- * more details.
+- *
+- * You should have received a copy of the GNU General Public License along with
+- * this program; if not, write to the Free Software Foundation, Inc., 59 Temple
+- * Place - Suite 330, Boston, MA 02111-1307 USA.
+- */
+-
+-#ifndef __CRYPTO_VMAC_H
+-#define __CRYPTO_VMAC_H
+-
+-/* --------------------------------------------------------------------------
+- * VMAC and VHASH Implementation by Ted Krovetz (tdk@acm.org) and Wei Dai.
+- * This implementation is herby placed in the public domain.
+- * The authors offers no warranty. Use at your own risk.
+- * Please send bug reports to the authors.
+- * Last modified: 17 APR 08, 1700 PDT
+- * ----------------------------------------------------------------------- */
+-
+-/*
+- * User definable settings.
+- */
+-#define VMAC_TAG_LEN	64
+-#define VMAC_KEY_SIZE	128/* Must be 128, 192 or 256			*/
+-#define VMAC_KEY_LEN	(VMAC_KEY_SIZE/8)
+-#define VMAC_NHBYTES	128/* Must 2^i for any 3 < i < 13 Standard = 128*/
+-
+-/*
+- * This implementation uses u32 and u64 as names for unsigned 32-
+- * and 64-bit integer types. These are defined in C99 stdint.h. The
+- * following may need adaptation if you are not running a C99 or
+- * Microsoft C environment.
+- */
+-struct vmac_ctx {
+-	u64 nhkey[(VMAC_NHBYTES/8)+2*(VMAC_TAG_LEN/64-1)];
+-	u64 polykey[2*VMAC_TAG_LEN/64];
+-	u64 l3key[2*VMAC_TAG_LEN/64];
+-	u64 polytmp[2*VMAC_TAG_LEN/64];
+-	u64 cached_nonce[2];
+-	u64 cached_aes[2];
+-	int first_block_processed;
+-};
+-
+-typedef u64 vmac_t;
+-
+-struct vmac_ctx_t {
+-	struct crypto_cipher *child;
+-	struct vmac_ctx __vmac_ctx;
+-	u8 partial[VMAC_NHBYTES];	/* partial block */
+-	int partial_size;		/* size of the partial block */
+-};
+-
+-#endif /* __CRYPTO_VMAC_H */
+diff --git a/lib/ioremap.c b/lib/ioremap.c
+index 5323b59ca393..b9462037868d 100644
+--- a/lib/ioremap.c
++++ b/lib/ioremap.c
+@@ -84,7 +84,7 @@ static inline int ioremap_pmd_range(pud_t *pud, unsigned long addr,
+ 		if (ioremap_pmd_enabled() &&
+ 		    ((next - addr) == PMD_SIZE) &&
+ 		    IS_ALIGNED(phys_addr + addr, PMD_SIZE) &&
+-		    pmd_free_pte_page(pmd)) {
++		    pmd_free_pte_page(pmd, addr)) {
+ 			if (pmd_set_huge(pmd, phys_addr + addr, prot))
+ 				continue;
+ 		}
+@@ -111,7 +111,7 @@ static inline int ioremap_pud_range(pgd_t *pgd, unsigned long addr,
+ 		if (ioremap_pud_enabled() &&
+ 		    ((next - addr) == PUD_SIZE) &&
+ 		    IS_ALIGNED(phys_addr + addr, PUD_SIZE) &&
+-		    pud_free_pmd_page(pud)) {
++		    pud_free_pmd_page(pud, addr)) {
+ 			if (pud_set_huge(pud, phys_addr + addr, prot))
+ 				continue;
+ 		}
+diff --git a/net/bluetooth/hidp/core.c b/net/bluetooth/hidp/core.c
+index 1fc076420d1e..1811f8e7ddf4 100644
+--- a/net/bluetooth/hidp/core.c
++++ b/net/bluetooth/hidp/core.c
+@@ -431,8 +431,8 @@ static void hidp_del_timer(struct hidp_session *session)
+ 		del_timer(&session->timer);
+ }
+ 
+-static void hidp_process_report(struct hidp_session *session,
+-				int type, const u8 *data, int len, int intr)
++static void hidp_process_report(struct hidp_session *session, int type,
++				const u8 *data, unsigned int len, int intr)
+ {
+ 	if (len > HID_MAX_BUFFER_SIZE)
+ 		len = HID_MAX_BUFFER_SIZE;
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index 4a261e078082..9c4c6cd0316e 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -4835,6 +4835,7 @@ static void tcp_collapse_ofo_queue(struct sock *sk)
+ 			end = TCP_SKB_CB(skb)->end_seq;
+ 			range_truesize = skb->truesize;
+ 		} else {
++			range_truesize += skb->truesize;
+ 			if (before(TCP_SKB_CB(skb)->seq, start))
+ 				start = TCP_SKB_CB(skb)->seq;
+ 			if (after(TCP_SKB_CB(skb)->end_seq, end))
+diff --git a/scripts/Makefile.kasan b/scripts/Makefile.kasan
+index 37323b0df374..2624d4bf9a45 100644
+--- a/scripts/Makefile.kasan
++++ b/scripts/Makefile.kasan
+@@ -28,4 +28,7 @@ else
+         CFLAGS_KASAN := $(CFLAGS_KASAN_MINIMAL)
+     endif
+ endif
++
++CFLAGS_KASAN_NOSANITIZE := -fno-builtin
++
+ endif
+diff --git a/scripts/Makefile.lib b/scripts/Makefile.lib
+index 24914e7de944..a2d0e6d32659 100644
+--- a/scripts/Makefile.lib
++++ b/scripts/Makefile.lib
+@@ -126,7 +126,7 @@ endif
+ ifeq ($(CONFIG_KASAN),y)
+ _c_flags += $(if $(patsubst n%,, \
+ 		$(KASAN_SANITIZE_$(basetarget).o)$(KASAN_SANITIZE)y), \
+-		$(CFLAGS_KASAN))
++		$(CFLAGS_KASAN), $(CFLAGS_KASAN_NOSANITIZE))
+ endif
+ 
+ # If building the kernel in a separate objtree expand all occurrences
+diff --git a/scripts/depmod.sh b/scripts/depmod.sh
+index 122599b1c13b..ea1e96921e3b 100755
+--- a/scripts/depmod.sh
++++ b/scripts/depmod.sh
+@@ -10,10 +10,16 @@ DEPMOD=$1
+ KERNELRELEASE=$2
+ SYMBOL_PREFIX=$3
+ 
+-if ! test -r System.map -a -x "$DEPMOD"; then
++if ! test -r System.map ; then
+ 	exit 0
+ fi
+ 
++if [ -z $(command -v $DEPMOD) ]; then
++	echo "'make modules_install' requires $DEPMOD. Please install it." >&2
++	echo "This is probably in the kmod package." >&2
++	exit 1
++fi
++
+ # older versions of depmod don't support -P <symbol-prefix>
+ # support was added in module-init-tools 3.13
+ if test -n "$SYMBOL_PREFIX"; then
+diff --git a/sound/soc/intel/boards/cht_bsw_max98090_ti.c b/sound/soc/intel/boards/cht_bsw_max98090_ti.c
+index 4e2fcf188dd1..01a573a063d1 100644
+--- a/sound/soc/intel/boards/cht_bsw_max98090_ti.c
++++ b/sound/soc/intel/boards/cht_bsw_max98090_ti.c
+@@ -131,23 +131,19 @@ static int cht_codec_init(struct snd_soc_pcm_runtime *runtime)
+ 	struct cht_mc_private *ctx = snd_soc_card_get_drvdata(runtime->card);
+ 	struct snd_soc_jack *jack = &ctx->jack;
+ 
+-	/**
+-	* TI supports 4 butons headset detection
+-	* KEY_MEDIA
+-	* KEY_VOICECOMMAND
+-	* KEY_VOLUMEUP
+-	* KEY_VOLUMEDOWN
+-	*/
+-	if (ctx->ts3a227e_present)
+-		jack_type = SND_JACK_HEADPHONE | SND_JACK_MICROPHONE |
+-					SND_JACK_BTN_0 | SND_JACK_BTN_1 |
+-					SND_JACK_BTN_2 | SND_JACK_BTN_3;
+-	else
+-		jack_type = SND_JACK_HEADPHONE | SND_JACK_MICROPHONE;
++	if (ctx->ts3a227e_present) {
++		/*
++		 * The jack has already been created in the
++		 * cht_max98090_headset_init() function.
++		 */
++		snd_soc_jack_notifier_register(jack, &cht_jack_nb);
++		return 0;
++	}
++
++	jack_type = SND_JACK_HEADPHONE | SND_JACK_MICROPHONE;
+ 
+ 	ret = snd_soc_card_jack_new(runtime->card, "Headset Jack",
+ 					jack_type, jack, NULL, 0);
+-
+ 	if (ret) {
+ 		dev_err(runtime->dev, "Headset Jack creation failed %d\n", ret);
+ 		return ret;
+@@ -203,6 +199,27 @@ static int cht_max98090_headset_init(struct snd_soc_component *component)
+ {
+ 	struct snd_soc_card *card = component->card;
+ 	struct cht_mc_private *ctx = snd_soc_card_get_drvdata(card);
++	struct snd_soc_jack *jack = &ctx->jack;
++	int jack_type;
++	int ret;
++
++	/*
++	 * TI supports 4 butons headset detection
++	 * KEY_MEDIA
++	 * KEY_VOICECOMMAND
++	 * KEY_VOLUMEUP
++	 * KEY_VOLUMEDOWN
++	 */
++	jack_type = SND_JACK_HEADPHONE | SND_JACK_MICROPHONE |
++		    SND_JACK_BTN_0 | SND_JACK_BTN_1 |
++		    SND_JACK_BTN_2 | SND_JACK_BTN_3;
++
++	ret = snd_soc_card_jack_new(card, "Headset Jack", jack_type,
++				    jack, NULL, 0);
++	if (ret) {
++		dev_err(card->dev, "Headset Jack creation failed %d\n", ret);
++		return ret;
++	}
+ 
+ 	return ts3a227e_enable_jack_detect(component, &ctx->jack);
+ }

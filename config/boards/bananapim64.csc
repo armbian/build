@@ -12,13 +12,6 @@ CPUMAX="1296000"
 KERNEL_TARGET="default,next,dev"
 CLI_TARGET=""
 DESKTOP_TARGET=""
-
+#
 CLI_BETA_TARGET=""
 DESKTOP_BETA_TARGET=""
-#
-RECOMMENDED="Debian_stretch_next_desktop_nightly:75,Debian_stretch_next_nightly:75"
-#
-BOARDRATING=""
-CHIP="https://docs.armbian.com/Hardware_Allwinner-H5-A64/"
-HARDWARE="https://linux-sunxi.org/Sinovoip_Banana_Pi_M64"
-FORUMS="https://forum.armbian.com/index.php/forum/11-other-boards/"

@@ -72,9 +72,11 @@ cleaning()
 		;;
 
 		oldcache)
-		if [[ -d $SRC/cache/rootfs && $(ls -1 $SRC/cache/rootfs | wc -l) -gt 6 ]]; then
+		if [[ -d $SRC/cache/rootfs && $(ls -1 $SRC/cache/rootfs/*.lz4 | wc -l) -gt ${ROOTFS_CACHE_MAX} ]]; then
 			display_alert "Cleaning" "rootfs cache (old)" "info"
-			(cd $SRC/cache/rootfs; ls -t | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
+			(cd $SRC/cache/rootfs; ls -t *.lz4 | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
+			# Remove signatures if they are present. We use them for internal purpose
+			(cd $SRC/cache/rootfs; ls -t *.asc | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
 		fi
 		;;
 	esac
@@ -743,7 +745,9 @@ download_toolchain()
 
 download_etcher_cli()
 {
-        local url=$(curl -s https://api.github.com/repos/resin-io/etcher/releases | grep etcher-cli | grep linux-x64 | grep browser_download_url | head -1 | cut -d \" -f 4)
+        local url="https://github.com/resin-io/etcher/releases/download/v1.4.4/etcher-cli-1.4.4-linux-x64.tar.gz"
+	local hash="54709ad34ac304d2686130c7d22a3bc13b4f491387d987274eeca4f6eea34dce"
+
         local filename=${url##*/}
         local dirname=${filename/.tar.gz/-dist}
 
@@ -759,13 +763,11 @@ download_etcher_cli()
         curl -Lf --progress-bar $url -o $filename
 
         local verified=false
+	local b=$(sha256sum $filename)
 
         display_alert "Verifying"
 
-        local a=$(curl -sL $(curl -s https://api.github.com/repos/resin-io/etcher/releases | grep SHA | grep browser_download_url | head -1 | cut -d \" -f 4) | grep etcher-cli | grep linux-x64)
-        local b=$(sha256sum $filename)
-
-        [[ -n $a && -n $b && "$a" == "$b" ]] && verified=true
+        [[ "$hash" == "$(sha256sum $filename | cut -d ' ' -f 1)" ]] && verified=true
 
         if [[ $verified == true ]]; then
                 display_alert "Extracting"
