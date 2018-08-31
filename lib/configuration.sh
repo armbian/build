@@ -65,7 +65,6 @@ SERIALCON=ttyS0
 CAN_BUILD_STRETCH=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
-CRYPTROOT_SSH_UNLOCK_KEY_NAME=id_ecdsa_cryptroot-unlock
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
@@ -84,6 +83,9 @@ if [[ -f $SRC/userpatches/sources/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
 	source $SRC/userpatches/sources/$LINUXFAMILY.conf
 fi
+
+# dropbear needs to be configured differently
+[[ $CRYPTROOT_ENABLE == yes && ($RELEASE == jessie || $RELEASE == xenial) ]] && exit_with_error "Encrypted rootfs is not supported in Jessie or Xenial"
 
 [[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
 [[ $RELEASE == bionic && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Ubuntu Bionic images with selected kernel is not supported"
@@ -152,14 +154,6 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 # Recommended desktop packages
 PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi cups-pk-helper \
 	cups geany atril xarchiver leafpad"
-
-# rootfs encryption related packages
-if [[ $CRYPTROOT_ENABLE == yes ]]; then
-	PACKAGE_LIST="$PACKAGE_LIST cryptsetup"
-	if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then
-		PACKAGE_LIST="$PACKAGE_LIST dropbear-initramfs"
-	fi
-fi
 
 case $DISPLAY_MANAGER in
 	nodm)

@@ -416,7 +416,7 @@ prepare_partitions()
 	rm -f $SDCARD/etc/fstab
 	if [[ -n $rootpart ]]; then
 		local rootdevice="${LOOP}p${rootpart}"
-		
+
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			display_alert "Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
 			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $rootdevice -
@@ -425,7 +425,7 @@ prepare_partitions()
 			# TODO: pass /dev/mapper to Docker
 			rootdevice=/dev/mapper/$ROOT_MAPPER # used by `mkfs` and `mount` commands
 		fi
-		
+
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice
@@ -488,7 +488,7 @@ prepare_partitions()
 # update_initramfs
 #
 # this should be invoked as late as possible for any modifications by
-# customize_image (userpatches) and prepare_partitions to be reflected in the 
+# customize_image (userpatches) and prepare_partitions to be reflected in the
 # final initramfs
 #
 # especially, this needs to be invoked after /etc/crypttab has been created
@@ -496,15 +496,15 @@ prepare_partitions()
 # https://serverfault.com/questions/907254/cryproot-unlock-with-dropbear-timeout-while-waiting-for-askpass
 #
 update_initramfs() {
-	
+
 	update_initramfs_cmd="update-initramfs -uv -k ${VER}-${LINUXFAMILY}"
 	display_alert "Updating initramfs..." "$update_initramfs_cmd" ""
 	cp /usr/bin/$QEMU_BINARY $SDCARD/usr/bin/
 	mount_chroot "$SDCARD/"
-	
-	chroot $SDCARD /bin/bash -c "$update_initramfs_cmd" >> $DEST/debug/debootstrap.log
-	display_alert "Updated initramfs." "for details see: $DEST/debug/debootstrap.log" "ext"
-	
+
+	chroot $SDCARD /bin/bash -c "$update_initramfs_cmd" >> $DEST/debug/install.log 2>&1
+	display_alert "Updated initramfs." "for details see: $DEST/debug/install.log" "ext"
+
 	umount_chroot "$SDCARD/"
 	rm $SDCARD/usr/bin/$QEMU_BINARY
 
@@ -553,7 +553,7 @@ create_image()
 	[[ $BOOTSIZE != 0 ]] && umount -l $MOUNT/boot
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
-	
+
 	losetup -d $LOOP
 	rm -rf --one-file-system $DESTIMG $MOUNT
 	mkdir -p $DESTIMG
@@ -561,6 +561,7 @@ create_image()
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
 	if [[ $COMPRESS_OUTPUTIMAGE == yes && $BUILD_ALL != yes ]]; then
+		[[ -f $DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME ]] && cp $DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME $DESTIMG/
 		# compress image
 		cd $DESTIMG
 		sha256sum -b ${version}.img > sha256sum.sha
@@ -568,7 +569,7 @@ create_image()
 			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
 		fi
 			display_alert "Compressing" "$DEST/images/${version}.img" "info"
-		7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
+		7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
 	fi
 	#
 	if [[ $BUILD_ALL != yes ]]; then
