@@ -54,6 +54,7 @@ unmount_on_exit()
 	umount -l $SDCARD >/dev/null 2>&1
 	umount -l $MOUNT/boot >/dev/null 2>&1
 	umount -l $MOUNT >/dev/null 2>&1
+	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 	losetup -d $LOOP >/dev/null 2>&1
 	rm -rf --one-file-system $SDCARD
 	exit_with_error "debootstrap-ng was interrupted"
