@@ -7,7 +7,7 @@ setenv rootdev "/dev/mmcblk1p1"
 setenv verbosity "1"
 setenv console "both"
 setenv rootfstype "ext4"
-setenv prefix "boot/"
+
 
 if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
 	load ${devtype} ${devnum} ${loadaddr} ${prefix}armbianEnv.txt
