@@ -362,7 +362,7 @@ prepare_partitions()
 				# Hardcoded overhead +25% is needed for desktop images,
 				# for CLI it could be lower. Align the size up to 4MiB
 				if [[ $BUILD_DESKTOP == yes ]]; then
-					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.25) / 1 + 0) / 4 + 1) * 4")
+					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.30) / 1 + 0) / 4 + 1) * 4")
 				else
 					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.20) / 1 + 0) / 4 + 1) * 4")
 				fi
