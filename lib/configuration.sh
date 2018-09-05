@@ -23,6 +23,9 @@ CHROOT_CACHE_VERSION=6
 [[ -z $DISPLAY_MANAGER ]] && DISPLAY_MANAGER=nodm
 ROOTFS_CACHE_MAX=16 # max number of rootfs cache, older ones will be cleaned up
 
+# TODO: fixed name can't be used for parallel image building
+ROOT_MAPPER="armbian-root"
+
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 [[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
 
@@ -30,6 +33,11 @@ ROOTFS_CACHE_MAX=16 # max number of rootfs cache, older ones will be cleaned up
 # to get size of block device /dev/sdX execute as root:
 # echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
 [[ "f2fs" == *$ROOTFS_TYPE* && -z $FIXED_IMAGE_SIZE ]] && exit_with_error "Please define FIXED_IMAGE_SIZE"
+
+# a passphrase is mandatory if rootfs encryption is enabled
+if [[ $CRYPTROOT_ENABLE == yes && -z $CRYPTROOT_PASSPHRASE ]]; then
+	exit_with_error "Root encryption is enabled but CRYPTROOT_PASSPHRASE is not set"
+fi
 
 # small SD card with kernel, boot script and .dtb/.bin files
 [[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
@@ -55,6 +63,8 @@ ARCH=armhf
 KERNEL_IMAGE_TYPE=zImage
 SERIALCON=ttyS0
 CAN_BUILD_STRETCH=yes
+[[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
+[[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
@@ -73,6 +83,9 @@ if [[ -f $SRC/userpatches/sources/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
 	source $SRC/userpatches/sources/$LINUXFAMILY.conf
 fi
+
+# dropbear needs to be configured differently
+[[ $CRYPTROOT_ENABLE == yes && ($RELEASE == jessie || $RELEASE == xenial) ]] && exit_with_error "Encrypted rootfs is not supported in Jessie or Xenial"
 
 [[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
 [[ $RELEASE == bionic && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Ubuntu Bionic images with selected kernel is not supported"
@@ -141,7 +154,6 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 # Recommended desktop packages
 PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi cups-pk-helper \
 	cups geany atril xarchiver leafpad"
-
 
 case $DISPLAY_MANAGER in
 	nodm)
