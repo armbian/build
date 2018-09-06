@@ -19,11 +19,11 @@
 # ZRAM_PERCENTAGE, ZRAM_MAX_DEVICES and SWAP_ALGORITHM can be defined there:
 [ -f /etc/default/armbian-zram-config ] && . /etc/default/armbian-zram-config
 
-activate_zram() {
+activate_zram_swap() {
 
 	# Do not interfere with already present config-zram package
-	dpkg -l | grep -q 'zram-config' && return
-	[[ "$ENABLED" != "true" ]] && return
+	dpkg -l | grep -q 'zram-config' && exit 0
+	[[ "$ENABLED" != "true" ]] && exit 0
 
 	# Load zram module with n instances (one per CPU core, $ZRAM_MAX_DEVICES are the max)
 	zram_max_devs=${ZRAM_MAX_DEVICES:=4}
@@ -46,28 +46,38 @@ activate_zram() {
 		swapon -p 5 /dev/zram${i}
 	done
 	echo -e "### Activated ${zram_devices} zram swap devices with $(( ${mem_per_zram_device} / 1048576 )) MB each\n" >>${Log}
+} # activate_zram_swap
 
-	# Dedicate SIZE MB (uncompressed) /dev/zram0 device for log2ram and choose most efficient
-	# compression scheme available -- https://patchwork.kernel.org/patch/9918897/
+activate_ramlog_partition() {
+	# /dev/zram0 will be used as a compressed /var/log partition in RAM if
+	# ENABLED=true in /etc/default/armbian-ramlog is set
+	ENABLED=$(awk -F"=" '/^ENABLED/ {print $2}' /etc/default/armbian-ramlog)
+	[[ "$ENABLED" != "true" ]] && return
+	
+	# read size also from /etc/default/armbian-ramlog
+	ramlogsize=$(awk -F"=" '/^SIZE/ {print $2}' /etc/default/armbian-ramlog)
+	disksize=$(sed -e 's/M$/*1048576/' -e 's/K$/*1024/' <<<${ramlogsize:=50M} | bc)
+
+	# Try to choose most efficient compression scheme available -- https://patchwork.kernel.org/patch/9918897/
 	for algo in lz4 quicklz zlib brotli zstd ; do
 		echo ${algo} >/sys/block/zram0/comp_algorithm 2>/dev/null
 	done
-	echo -n $(($SIZE*1024*1024)) > /sys/block/zram0/disksize
+	echo -n ${disksize} > /sys/block/zram0/disksize
 
 	# if it fails, select $swap_algo. Workaround for some older kernels
 	if [[ $? == 1 ]]; then
 		echo ${swap_algo} > /sys/block/zram0/comp_algorithm 2>/dev/null
-		echo -n $(($SIZE*1024*1024)) > /sys/block/zram0/disksize
+		echo -n ${disksize} > /sys/block/zram0/disksize
 	fi
 
 	mkfs.ext4 -O ^has_journal -s 1024 -L log2ram /dev/zram0
 	algo=$(sed 's/.*\[\([^]]*\)\].*/\1/g' </sys/block/zram0/comp_algorithm)
 	echo -e "### Activated Armbian ramlog partition with ${algo} compression\n" >>${Log}
-} # activate_zram
+} # activate_ramlog_partition
 
 case $1 in
 	*start*)
-		# activate zram
-		activate_zram
+		activate_zram_swap
+		activate_ramlog_partition
 		;;
 esac
