@@ -10,6 +10,7 @@
 #
 # activate_zram_swap
 # activate_ramlog_partition
+# activate_compressed_tmp
 
 
 # Read in basic OS image information
@@ -17,7 +18,8 @@
 # and script configuration
 . /usr/lib/armbian/armbian-common
 
-# ZRAM_PERCENTAGE, ZRAM_MAX_DEVICES, SWAP_ALGORITHM and RAMLOG_ALGORITHM can be defined:
+# It's possible to override ZRAM_PERCENTAGE, ZRAM_MAX_DEVICES, SWAP_ALGORITHM,
+# RAMLOG_ALGORITHM and TMP_ALGORITHM here:
 [ -f /etc/default/armbian-zram-config ] && . /etc/default/armbian-zram-config
 
 activate_zram_swap() {
@@ -31,7 +33,7 @@ activate_zram_swap() {
 	cpu_cores=$(grep -c '^processor' /proc/cpuinfo | sed 's/^0$/1/')
 	[[ ${cpu_cores} -gt ${zram_max_devs} ]] && zram_devices=${zram_max_devs} || zram_devices=${cpu_cores}
 	module_args="$(modinfo zram | awk -F" " '/num_devices/ {print $2}' | cut -f1 -d:)"
-	[[ -n ${module_args} ]] && modprobe zram ${module_args}=$(( ${zram_devices} + 1 )) || return
+	[[ -n ${module_args} ]] && modprobe zram ${module_args}=$(( ${zram_devices} + 2 )) || return
 
 	# Use 50% of real memory by default
 	zram_percent=${ZRAM_PERCENTAGE:=50}
@@ -62,12 +64,12 @@ activate_ramlog_partition() {
 	# choose RAMLOG_ALGORITHM if defined in /etc/default/armbian-zram-config
 	# otherwise try to choose most efficient compression scheme available.
 	# See https://patchwork.kernel.org/patch/9918897/
-	if [ -n ${RAMLOG_ALGORITHM} ]; then		
-		echo ${RAMLOG_ALGORITHM} >/sys/block/zram0/comp_algorithm 2>/dev/null
-	else
+	if [ "X${RAMLOG_ALGORITHM}" = "X" ]; then
 		for algo in lz4 lz4hc quicklz zlib brotli zstd ; do
 			echo ${algo} >/sys/block/zram0/comp_algorithm 2>/dev/null
 		done
+	else
+		echo ${RAMLOG_ALGORITHM} >/sys/block/zram0/comp_algorithm 2>/dev/null
 	fi
 	echo -n ${disksize} > /sys/block/zram0/disksize
 
@@ -82,9 +84,30 @@ activate_ramlog_partition() {
 	echo -e "### Activated Armbian ramlog partition with ${algo} compression" >>${Log}
 } # activate_ramlog_partition
 
+activate_compressed_tmp() {
+	# create /tmp not as tmpfs but zram compressed if no fstab entry exists
+	grep -q '/tmp' /etc/fstab && return
+
+	tmp_device=$(( ${zram_devices} + 1 ))
+	if [[ -f /sys/block/zram${tmp_device}/comp_algorithm ]]; then
+		if [ "X${TMP_ALGORITHM}" = "X" ]; then
+			echo ${swap_algo} >/sys/block/zram${tmp_device}/comp_algorithm 2>/dev/null
+		else
+			echo ${TMP_ALGORITHM} >/sys/block/zram${tmp_device}/comp_algorithm 2>/dev/null
+		fi
+	fi
+	echo -n $(( ${memory_total} / 2 )) > /sys/block/zram${tmp_device}/disksize
+	mkfs.ext4 -O ^has_journal -s 1024 -L tmp /dev/zram${tmp_device}
+	mount -o nosuid /dev/zram${tmp_device} /tmp
+	chmod 777 /tmp
+	algo=$(sed 's/.*\[\([^]]*\)\].*/\1/g' </sys/block/zram${tmp_device}/comp_algorithm)
+	echo -e "\n### Activated ${algo} compressed /tmp" >>${Log}
+} # activate_compressed_tmp
+
 case $1 in
 	*start*)
 		activate_zram_swap
 		activate_ramlog_partition
+		activate_compressed_tmp
 		;;
 esac
