@@ -548,6 +548,9 @@ create_image()
 	# stage: write u-boot
 	write_uboot $LOOP
 
+	# fix wrong / permissions
+	chmod 755 $MOUNT
+
 	# unmount /boot first, rootfs second, image file last
 	sync
 	[[ $BOOTSIZE != 0 ]] && umount -l $MOUNT/boot
