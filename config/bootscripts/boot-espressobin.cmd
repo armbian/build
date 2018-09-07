@@ -12,10 +12,8 @@ setenv rootfstype "ext4"
 setenv initrd_image "boot/uInitrd"
 setenv ethaddr "F0:AD:4E:03:64:7F"
 
-if test -e ${boot_interface} 0 /boot/armbianEnv.txt; then
-	load ${boot_interface} 0 ${loadaddr} /boot/armbianEnv.txt
-	env import -t ${loadaddr} ${filesize}
-fi
+load ${boot_interface} ${devnum}:1 ${scriptaddr} ${prefix}armbianEnv.txt
+env import -t ${scriptaddr} ${filesize}
 
 setenv bootargs "$console root=${rootdev} rootfstype=${rootfstype} rootwait loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} mtdparts=spi0.0:1536k(uboot),64k(uboot-environment),-(reserved) ${extraargs}"
 
@@ -29,4 +27,3 @@ ext4load $boot_interface 0:1 $fdt_addr $fdt_name_b
 
 booti $kernel_addr $initrd_addr $fdt_addr
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
-
