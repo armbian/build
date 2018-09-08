@@ -142,10 +142,12 @@ if [[ -z $BOARD ]]; then
 				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress\n - \Z1(EOS)\Zn - End Of Support'
 				WIP_STATE=unsupported
 				WIP_BUTTON='supported'
+				EXPERT=yes
 			else
 				STATE_DESCRIPTION=' - Officially supported boards'
 				WIP_STATE=supported
 				WIP_BUTTON='CSC/WIP/EOS'
+				EXPERT=no
 			fi
 			continue
 		elif [[ $STATUS == 0 ]]; then
