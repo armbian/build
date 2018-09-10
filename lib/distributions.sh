@@ -259,7 +259,7 @@ install_common()
 	fi
 
         # nsswitch settings for sane DNS behavior: remove resolve, assure libnss-myhostname support
-        sed "s/hosts:/c\hosts:          files mymachines dns myhostname" -i $SDCARD/etc/nsswitch.conf
+	sed "s/hosts\:.*/hosts:          files mymachines dns myhostname/g" -i $SDCARD/etc/nsswitch.conf
 }
 
 install_distribution_specific()
