@@ -27,7 +27,7 @@ install_common()
 
 	fi
 	# define ARCH within global environment variables
-	[[ -f $SDCARD/etc/environment ]] && echo "ARCH=${ARCH//hf}" >> $SDCARD/etc/environment
+	[[ -f $SDCARD/etc/environment ]] && echo "ARCH=${ARCH}" >> $SDCARD/etc/environment
 
 	# add dummy fstab entry to make mkinitramfs happy
 	echo "/dev/mmcblk0p1 / $ROOTFS_TYPE defaults 0 1" >> $SDCARD/etc/fstab
@@ -246,8 +246,10 @@ install_common()
 
 	# configure network manager
 	sed "s/managed=\(.*\)/managed=true/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
-	# disable DNS management withing NM for !Stretch
-	#[[ $RELEASE != stretch || $RELEASE != jessie || $RELEASE != bionic ]] && sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
+	
+	# Just regular DNS and maintain /etc/resolv.conf as a file
+	sed "/dns/d" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
+	sed "s/\[main\]/\[main\]\ndns=default\nrc-manager=file/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
 	if [[ -n $NM_IGNORE_DEVICES ]]; then
 		mkdir -p $SDCARD/etc/NetworkManager/conf.d/
 		cat <<-EOF > $SDCARD/etc/NetworkManager/conf.d/10-ignore-interfaces.conf
@@ -255,6 +257,9 @@ install_common()
 		unmanaged-devices=$NM_IGNORE_DEVICES
 		EOF
 	fi
+
+        # nsswitch settings for sane DNS behavior: remove resolve, assure libnss-myhostname support
+        sed "s/hosts:/c\hosts:          files mymachines dns myhostname" -i $SDCARD/etc/nsswitch.conf
 }
 
 install_distribution_specific()
@@ -301,8 +306,6 @@ install_distribution_specific()
 		exit 0
 		EOF
 		chmod +x $SDCARD/etc/rc.local
-		# DNS fix
-		sed -i "s/#DNS=.*/DNS=1.1.1.1/g" $SDCARD/etc/systemd/resolved.conf
 		;;
 	bionic)
 		# remove doubled uname from motd
@@ -351,12 +354,7 @@ post_debootstrap_tweaks()
 	chroot $SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/initctl"
 	chroot $SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon"
 
-	chroot $SDCARD /bin/bash -c 'echo "resolvconf resolvconf/linkify-resolvconf boolean true" | debconf-set-selections'
-	mkdir -p $SDCARD/var/lib/resolvconf/
-	:> $SDCARD/var/lib/resolvconf/linkified
 
 	rm -f $SDCARD/usr/sbin/policy-rc.d $SDCARD/usr/bin/$QEMU_BINARY
 
-	# reenable resolvconf managed resolv.conf
-	ln -sf /run/resolvconf/resolv.conf $SDCARD/etc/resolv.conf
 }
