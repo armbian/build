@@ -235,8 +235,7 @@ install_common()
 
 	# DNS fix. package resolvconf is not available everywhere
 	if [ -d /etc/resolvconf/resolv.conf.d ]; then
-		echo -e "# In case of DNS problems, try uncommenting this and reboot for debugging\n# nameserver 1.1.1.1" \
-		> $SDCARD/etc/resolvconf/resolv.conf.d/head
+		echo 'nameserver 1.1.1.1' > $SDCARD/etc/resolvconf/resolv.conf.d/head
 	fi
 
 	# premit root login via SSH for the first boot
@@ -247,8 +246,10 @@ install_common()
 
 	# configure network manager
 	sed "s/managed=\(.*\)/managed=true/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
-	# disable DNS management withing NM for !Stretch
-	#[[ $RELEASE != stretch || $RELEASE != jessie || $RELEASE != bionic ]] && sed "s/\[main\]/\[main\]\ndns=none/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
+	
+	# Just regular DNS and maintain /etc/resolv.conf as a file
+	sed "/dns/d" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
+	sed "s/\[main\]/\[main\]\ndns=default\nrc-manager=file/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
 	if [[ -n $NM_IGNORE_DEVICES ]]; then
 		mkdir -p $SDCARD/etc/NetworkManager/conf.d/
 		cat <<-EOF > $SDCARD/etc/NetworkManager/conf.d/10-ignore-interfaces.conf
@@ -256,6 +257,9 @@ install_common()
 		unmanaged-devices=$NM_IGNORE_DEVICES
 		EOF
 	fi
+
+        # nsswitch settings for sane DNS behavior: remove resolve, assure libnss-myhostname support
+        sed "s/hosts:/c\hosts:          files mymachines dns myhostname" -i $SDCARD/etc/nsswitch.conf
 }
 
 install_distribution_specific()
@@ -332,6 +336,8 @@ install_distribution_specific()
 		  version: 2
 		  renderer: NetworkManager
 		EOF
+		# DNS fix
+		sed -i "s/#DNS=.*/DNS=1.1.1.1/g" $SDCARD/etc/systemd/resolved.conf
 		# Journal service adjustements
 		sed -i "s/#Storage=.*/Storage=volatile/g" $SDCARD/etc/systemd/journald.conf
 		sed -i "s/#Compress=.*/Compress=yes/g" $SDCARD/etc/systemd/journald.conf
@@ -348,12 +354,7 @@ post_debootstrap_tweaks()
 	chroot $SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/initctl"
 	chroot $SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon"
 
-	chroot $SDCARD /bin/bash -c 'echo "resolvconf resolvconf/linkify-resolvconf boolean true" | debconf-set-selections'
-	mkdir -p $SDCARD/var/lib/resolvconf/
-	:> $SDCARD/var/lib/resolvconf/linkified
 
 	rm -f $SDCARD/usr/sbin/policy-rc.d $SDCARD/usr/bin/$QEMU_BINARY
 
-	# reenable resolvconf managed resolv.conf
-	ln -sf /run/resolvconf/resolv.conf $SDCARD/etc/resolv.conf
 }
