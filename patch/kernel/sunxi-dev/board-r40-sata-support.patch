@@ -1,0 +1,382 @@
+This patch fix the indentation of target-supply's ':'.
+
+Signed-off-by: Corentin Labbe <clabbe.montjoie@gmail.com>
+---
+ Documentation/devicetree/bindings/ata/ahci-platform.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/ata/ahci-platform.txt b/Documentation/devicetree/bindings/ata/ahci-platform.txt
+index 5d5bd456d9d9..b88820b4c01e 100644
+--- a/Documentation/devicetree/bindings/ata/ahci-platform.txt
++++ b/Documentation/devicetree/bindings/ata/ahci-platform.txt
+@@ -47,7 +47,7 @@ Sub-nodes required properties:
+ - reg		    : the port number
+ And at least one of the following properties:
+ - phys		    : reference to the SATA PHY node
+-- target-supply    : regulator for SATA target power
++- target-supply     : regulator for SATA target power
+
+ Examples:
+         sata@ffe08000 {
+
+The SoC R40 AHCI controller need a regulator to work.
+So this patch add a way to add an optional regulator on AHCI controller.
+
+Signed-off-by: Corentin Labbe <clabbe.montjoie@gmail.com>
+---
+ drivers/ata/ahci.h             |  1 +
+ drivers/ata/libahci_platform.c | 26 ++++++++++++++++++++++++--
+ 2 files changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/ata/ahci.h b/drivers/ata/ahci.h
+index 6a1515f0da40..1415f1012de5 100644
+--- a/drivers/ata/ahci.h
++++ b/drivers/ata/ahci.h
+@@ -352,6 +352,7 @@ struct ahci_host_priv {
+ 	struct clk		*clks[AHCI_MAX_CLKS]; /* Optional */
+ 	struct reset_control	*rsts;		/* Optional */
+ 	struct regulator	**target_pwrs;	/* Optional */
++	struct regulator	*ahci_regulator;/* Optional */
+ 	/*
+ 	 * If platform uses PHYs. There is a 1:1 relation between the port number and
+ 	 * the PHY position in this array.
+diff --git a/drivers/ata/libahci_platform.c b/drivers/ata/libahci_platform.c
+index c92c10d55374..a886b61476a3 100644
+--- a/drivers/ata/libahci_platform.c
++++ b/drivers/ata/libahci_platform.c
+@@ -139,7 +139,7 @@ EXPORT_SYMBOL_GPL(ahci_platform_disable_clks);
+  * ahci_platform_enable_regulators - Enable regulators
+  * @hpriv: host private area to store config values
+  *
+- * This function enables all the regulators found in
++ * This function enables all the regulators found in controller and
+  * hpriv->target_pwrs, if any.  If a regulator fails to be enabled, it
+  * disables all the regulators already enabled in reverse order and
+  * returns an error.
+@@ -151,6 +151,12 @@ int ahci_platform_enable_regulators(struct ahci_host_priv *hpriv)
+ {
+ 	int rc, i;
+
++	if (hpriv->ahci_regulator) {
++		rc = regulator_enable(hpriv->ahci_regulator);
++		if (rc)
++			return rc;
++	}
++
+ 	for (i = 0; i < hpriv->nports; i++) {
+ 		if (!hpriv->target_pwrs[i])
+ 			continue;
+@@ -167,6 +173,8 @@ int ahci_platform_enable_regulators(struct ahci_host_priv *hpriv)
+ 		if (hpriv->target_pwrs[i])
+ 			regulator_disable(hpriv->target_pwrs[i]);
+
++	if (hpriv->ahci_regulator)
++		regulator_disable(hpriv->ahci_regulator);
+ 	return rc;
+ }
+ EXPORT_SYMBOL_GPL(ahci_platform_enable_regulators);
+@@ -175,7 +183,8 @@ EXPORT_SYMBOL_GPL(ahci_platform_enable_regulators);
+  * ahci_platform_disable_regulators - Disable regulators
+  * @hpriv: host private area to store config values
+  *
+- * This function disables all regulators found in hpriv->target_pwrs.
++ * This function disables all regulators found in hpriv->target_pwrs and
++ * AHCI controller.
+  */
+ void ahci_platform_disable_regulators(struct ahci_host_priv *hpriv)
+ {
+@@ -186,6 +195,9 @@ void ahci_platform_disable_regulators(struct ahci_host_priv *hpriv)
+ 			continue;
+ 		regulator_disable(hpriv->target_pwrs[i]);
+ 	}
++
++	if (hpriv->ahci_regulator)
++		regulator_disable(hpriv->ahci_regulator);
+ }
+ EXPORT_SYMBOL_GPL(ahci_platform_disable_regulators);
+ /**
+@@ -351,6 +363,7 @@ static int ahci_platform_get_regulator(struct ahci_host_priv *hpriv, u32 port,
+  *
+  * 1) mmio registers (IORESOURCE_MEM 0, mandatory)
+  * 2) regulator for controlling the targets power (optional)
++ *    regulator for controlling the AHCI controller (optional)
+  * 3) 0 - AHCI_MAX_CLKS clocks, as specified in the devs devicetree node,
+  *    or for non devicetree enabled platforms a single clock
+  * 4) resets, if flags has AHCI_PLATFORM_GET_RESETS (optional)
+@@ -408,6 +421,15 @@ struct ahci_host_priv *ahci_platform_get_resources(struct platform_device *pdev,
+ 		hpriv->clks[i] = clk;
+ 	}
+
++	hpriv->ahci_regulator = devm_regulator_get_optional(dev, "ahci");
++	if (IS_ERR(hpriv->ahci_regulator)) {
++		rc = PTR_ERR(hpriv->ahci_regulator);
++		if (rc == -EPROBE_DEFER)
++			goto err_out;
++		rc = 0;
++		hpriv->ahci_regulator = NULL;
++	}
++
+ 	if (flags & AHCI_PLATFORM_GET_RESETS) {
+ 		hpriv->rsts = devm_reset_control_array_get_optional_shared(dev);
+ 		if (IS_ERR(hpriv->rsts)) {
+
+This patch document the new optional ahci-supply.
+
+Signed-off-by: Corentin Labbe <clabbe.montjoie@gmail.com>
+Reviewed-by: Rob Herring <robh@kernel.org>
+---
+ Documentation/devicetree/bindings/ata/ahci-platform.txt | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/ata/ahci-platform.txt b/Documentation/devicetree/bindings/ata/ahci-platform.txt
+index b88820b4c01e..f495774c8af9 100644
+--- a/Documentation/devicetree/bindings/ata/ahci-platform.txt
++++ b/Documentation/devicetree/bindings/ata/ahci-platform.txt
+@@ -33,6 +33,7 @@ Optional properties:
+ - target-supply     : regulator for SATA target power
+ - phys              : reference to the SATA PHY node
+ - phy-names         : must be "sata-phy"
++- ahci-supply       : regulator for AHCI controller
+ - ports-implemented : Mask that indicates which ports that the HBA supports
+ 		      are available for software to use. Useful if PORTS_IMPL
+ 		      is not programmed by the BIOS, which is true with
+
+
+The SoC R40 AHCI controller need a PHY regulator to work.
+But since the PHY is embedded in the controller, we cannot do a DT node for it,
+since phy-supply works only in node with a PHY compatible.
+So this patch adds a way to add an optional phy-supply regulator on AHCI controller node.
+
+Signed-off-by: Corentin Labbe <clabbe.montjoie@gmail.com>
+---
+ drivers/ata/ahci.h             |  1 +
+ drivers/ata/libahci_platform.c | 20 ++++++++++++++++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/drivers/ata/ahci.h b/drivers/ata/ahci.h
+index 1415f1012de5..ef356e70e6de 100644
+--- a/drivers/ata/ahci.h
++++ b/drivers/ata/ahci.h
+@@ -353,6 +353,7 @@ struct ahci_host_priv {
+ 	struct reset_control	*rsts;		/* Optional */
+ 	struct regulator	**target_pwrs;	/* Optional */
+ 	struct regulator	*ahci_regulator;/* Optional */
++	struct regulator	*phy_regulator;/* Optional */
+ 	/*
+ 	 * If platform uses PHYs. There is a 1:1 relation between the port number and
+ 	 * the PHY position in this array.
+diff --git a/drivers/ata/libahci_platform.c b/drivers/ata/libahci_platform.c
+index a886b61476a3..dc4d79b1c9ae 100644
+--- a/drivers/ata/libahci_platform.c
++++ b/drivers/ata/libahci_platform.c
+@@ -157,6 +157,12 @@ int ahci_platform_enable_regulators(struct ahci_host_priv *hpriv)
+ 			return rc;
+ 	}
+
++	if (hpriv->phy_regulator) {
++		rc = regulator_enable(hpriv->phy_regulator);
++		if (rc)
++			goto disable_ahci_pwrs;
++	}
++
+ 	for (i = 0; i < hpriv->nports; i++) {
+ 		if (!hpriv->target_pwrs[i])
+ 			continue;
+@@ -173,6 +179,9 @@ int ahci_platform_enable_regulators(struct ahci_host_priv *hpriv)
+ 		if (hpriv->target_pwrs[i])
+ 			regulator_disable(hpriv->target_pwrs[i]);
+
++	if (hpriv->phy_regulator)
++		regulator_disable(hpriv->phy_regulator);
++disable_ahci_pwrs:
+ 	if (hpriv->ahci_regulator)
+ 		regulator_disable(hpriv->ahci_regulator);
+ 	return rc;
+@@ -198,6 +207,8 @@ void ahci_platform_disable_regulators(struct ahci_host_priv *hpriv)
+
+ 	if (hpriv->ahci_regulator)
+ 		regulator_disable(hpriv->ahci_regulator);
++	if (hpriv->phy_regulator)
++		regulator_disable(hpriv->phy_regulator);
+ }
+ EXPORT_SYMBOL_GPL(ahci_platform_disable_regulators);
+ /**
+@@ -430,6 +441,15 @@ struct ahci_host_priv *ahci_platform_get_resources(struct platform_device *pdev,
+ 		hpriv->ahci_regulator = NULL;
+ 	}
+
++	hpriv->phy_regulator = devm_regulator_get_optional(dev, "phy");
++	if (IS_ERR(hpriv->phy_regulator)) {
++		rc = PTR_ERR(hpriv->phy_regulator);
++		if (rc == -EPROBE_DEFER)
++			goto err_out;
++		rc = 0;
++		hpriv->phy_regulator = NULL;
++	}
++
+ 	if (flags & AHCI_PLATFORM_GET_RESETS) {
+ 		hpriv->rsts = devm_reset_control_array_get_optional_shared(dev);
+ 		if (IS_ERR(hpriv->rsts)) {
+
+This patch document the new optional phy-supply.
+
+Signed-off-by: Corentin Labbe <clabbe.montjoie@gmail.com>
+---
+ Documentation/devicetree/bindings/ata/ahci-platform.txt | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/ata/ahci-platform.txt b/Documentation/devicetree/bindings/ata/ahci-platform.txt
+index f495774c8af9..45b451961612 100644
+--- a/Documentation/devicetree/bindings/ata/ahci-platform.txt
++++ b/Documentation/devicetree/bindings/ata/ahci-platform.txt
+@@ -31,6 +31,7 @@ Optional properties:
+ - clocks            : a list of phandle + clock specifier pairs
+ - resets            : a list of phandle + reset specifier pairs
+ - target-supply     : regulator for SATA target power
++- phy-supply        : regulator for PHY power
+ - phys              : reference to the SATA PHY node
+ - phy-names         : must be "sata-phy"
+ - ahci-supply       : regulator for AHCI controller
+
+This patch add the r40 compatible to the ahci_sunxi's supported list of
+compatible.
+
+Since R40 need ahci_platform to handle the reset controller, we also add
+the new AHCI_PLATFORM_GET_RESETS flag for ahci_platform_get_resources().
+This has no consequence for older platform (a10, a20) since the reset is
+optional.
+
+Signed-off-by: Corentin Labbe <clabbe.montjoie@gmail.com>
+---
+ drivers/ata/ahci_sunxi.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/ata/ahci_sunxi.c b/drivers/ata/ahci_sunxi.c
+index 631610b72aa5..911710643305 100644
+--- a/drivers/ata/ahci_sunxi.c
++++ b/drivers/ata/ahci_sunxi.c
+@@ -181,7 +181,7 @@ static int ahci_sunxi_probe(struct platform_device *pdev)
+ 	struct ahci_host_priv *hpriv;
+ 	int rc;
+
+-	hpriv = ahci_platform_get_resources(pdev, 0);
++	hpriv = ahci_platform_get_resources(pdev, AHCI_PLATFORM_GET_RESETS);
+ 	if (IS_ERR(hpriv))
+ 		return PTR_ERR(hpriv);
+
+@@ -250,6 +250,7 @@ static SIMPLE_DEV_PM_OPS(ahci_sunxi_pm_ops, ahci_platform_suspend,
+
+ static const struct of_device_id ahci_sunxi_of_match[] = {
+ 	{ .compatible = "allwinner,sun4i-a10-ahci", },
++	{ .compatible = "allwinner,sun8i-r40-ahci", },
+ 	{ },
+ };
+ MODULE_DEVICE_TABLE(of, ahci_sunxi_of_match);
+
+This patch update binding with the new R40 compatible.
+
+Signed-off-by: Corentin Labbe <clabbe.montjoie@gmail.com>
+Reviewed-by: Rob Herring <robh@kernel.org>
+---
+ Documentation/devicetree/bindings/ata/ahci-platform.txt | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/ata/ahci-platform.txt b/Documentation/devicetree/bindings/ata/ahci-platform.txt
+index 45b451961612..e30fd106df4f 100644
+--- a/Documentation/devicetree/bindings/ata/ahci-platform.txt
++++ b/Documentation/devicetree/bindings/ata/ahci-platform.txt
+@@ -10,6 +10,7 @@ PHYs.
+ Required properties:
+ - compatible        : compatible string, one of:
+   - "allwinner,sun4i-a10-ahci"
++  - "allwinner,sun8i-r40-ahci"
+   - "brcm,iproc-ahci"
+   - "hisilicon,hisi-ahci"
+   - "cavium,octeon-7130-ahci"
+@@ -44,6 +45,7 @@ Required properties when using sub-nodes:
+ - #address-cells    : number of cells to encode an address
+ - #size-cells       : number of cells representing the size of an address
+
++For allwinner,sun8i-r40-ahci, the reset propertie must be present.
+
+ Sub-nodes required properties:
+ - reg		    : the port number
+
+R40 have a sata controller which is the same as A20.
+This patch adds a DT node for it.
+
+Signed-off-by: Icenowy Zheng <icenowy@aosc.io>
+Signed-off-by: Corentin Labbe <clabbe.montjoie@gmail.com>
+---
+ arch/arm/boot/dts/sun8i-r40.dtsi | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/arch/arm/boot/dts/sun8i-r40.dtsi b/arch/arm/boot/dts/sun8i-r40.dtsi
+index 852c2ccc3268..d27c522e1918 100644
+--- a/arch/arm/boot/dts/sun8i-r40.dtsi
++++ b/arch/arm/boot/dts/sun8i-r40.dtsi
+@@ -550,6 +550,19 @@
+ 			#size-cells = <0>;
+ 		};
+
++		ahci: sata@1c18000 {
++			compatible = "allwinner,sun8i-r40-ahci";
++			reg = <0x01c18000 0x1000>;
++			interrupts = <GIC_SPI 56 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_SATA>, <&ccu CLK_SATA>;
++			resets = <&ccu RST_BUS_SATA>;
++			resets-name = "ahci";
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++
++		};
++
+ 		gmac: ethernet@1c50000 {
+ 			compatible = "allwinner,sun8i-r40-gmac";
+ 			syscon = <&ccu>;
+
+This patch enable the AHCI controller.
+Since this controller need two regulator, this patch add them.
+
+Signed-off-by: Corentin Labbe <clabbe.montjoie@gmail.com>
+---
+ arch/arm/boot/dts/sun8i-r40-bananapi-m2-ultra.dts | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/arch/arm/boot/dts/sun8i-r40-bananapi-m2-ultra.dts b/arch/arm/boot/dts/sun8i-r40-bananapi-m2-ultra.dts
+index a891a387e8f1..438b7b44dab3 100644
+--- a/arch/arm/boot/dts/sun8i-r40-bananapi-m2-ultra.dts
++++ b/arch/arm/boot/dts/sun8i-r40-bananapi-m2-ultra.dts
+@@ -105,6 +105,12 @@
+ 	};
+ };
+
++&ahci {
++	ahci-supply = <&reg_dldo4>;
++	phy-supply = <&reg_eldo3>;
++	status = "okay";
++};
++
+ &de {
+ 	status = "okay";
+ };
+@@ -257,6 +257,18 @@
+ 	regulator-name = "vcc-wifi";
+ };
+ 
++&reg_dldo4 {
++	regulator-min-microvolt = <2500000>;
++	regulator-max-microvolt = <2500000>;
++	regulator-name = "vdd2v5-sata";
++};
++
++&reg_eldo3 {
++	regulator-min-microvolt = <1200000>;
++	regulator-max-microvolt = <1200000>;
++	regulator-name = "vdd1v2-sata";
++};
++
+ &tcon_top_hdmi_in_tcon_tv0 {
+ 	remote-endpoint = <&tcon_tv0_out_tcon_top>;
+ };
