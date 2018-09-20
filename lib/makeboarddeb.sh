@@ -154,7 +154,12 @@ create_board_package()
 
 	# check if it was disabled in config and disable in new service
 	if [ -n "\$(grep -w '^ENABLED=false' /etc/default/log2ram 2> /dev/null)" ]; then
-			sed -i "s/^ENABLED=.*/ENABLED=false/" /etc/default/armbian-ramlog
+		sed -i "s/^ENABLED=.*/ENABLED=false/" /etc/default/armbian-ramlog
+	fi
+
+	# fix boot delay "waiting for suspend/resume device"
+	if [ -n "\$(grep -w '^RESUME=none' /etc/initramfs-tools/initramfs.conf 2> /dev/null)" ]; then
+		echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
 	fi
 
 	# install bootscripts if they are not present. Fix upgrades from old images
