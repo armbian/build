@@ -199,7 +199,7 @@ install_common()
  	cp $SRC/packages/bsp/armbian_first_run.txt.template $SDCARD/boot/armbian_first_run.txt.template
 
 	# switch to beta repository at this stage if building nightly images
-	[[ $IMAGE_TYPE == nightly ]] && echo "deb http://beta.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
+	[[ $IMAGE_TYPE == nightly ]] && echo "deb https://beta.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
 
 	# Cosmetic fix [FAILED] Failed to start Set console font and keymap at first boot
 	[[ -f $SDCARD/etc/console-setup/cached_setup_font.sh ]] && sed -i "s/^printf '.*/printf '\\\033\%\%G'/g" $SDCARD/etc/console-setup/cached_setup_font.sh

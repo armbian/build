@@ -169,7 +169,7 @@ create_rootfs_cache()
 		create_sources_list "$RELEASE" "$SDCARD/"
 
 		# stage: add armbian repository and install key
-		echo "deb http://apt.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
+		echo "deb https://apt.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
 
 		cp $SRC/config/armbian.key $SDCARD
 		eval 'chroot $SDCARD /bin/bash -c "cat armbian.key | apt-key add -"' \
