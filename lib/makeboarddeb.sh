@@ -158,8 +158,11 @@ create_board_package()
 	fi
 
 	# fix boot delay "waiting for suspend/resume device"
-	if grep --quiet RESUME=none /etc/initramfs-tools/initramfs.conf; then true;
-	else echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf; fi
+	if [ -f "/etc/initramfs-tools/initramfs.conf" ]; then
+		if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
+		echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
+		fi
+	fi
 
 	# install bootscripts if they are not present. Fix upgrades from old images
 	if [ ! -f /boot/$bootscript_dst ]; then
