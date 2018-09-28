@@ -170,7 +170,7 @@ ParseOptions() {
 			exit 0
 			;;
 		r|R)
-			# Installs RPi-Monitor and patches config on sun8i
+			# Installs RPi-Monitor and patches templates (heavily on sun8i)
 			fping armbian.com 2>/dev/null | grep -q alive || \
 				(echo "Network/firewall problem detected. Please fix this prior to installing RPi-Monitor." >&2 ; exit 1)
 			InstallRPiMonitor
@@ -184,8 +184,29 @@ ParseOptions() {
 							;;
 					esac
 					;;
+				*)
+					# On other SoCs than H3 make minor adjustments to config to reflect Armbian reality:
+					. /etc/armbian-release
+					sed -e "s/^web.status.1.name=.*/web.status.1.name=$BOARD_NAME/" \
+						-e "s/^web.statistics.1.name=.*/web.statistics.1.name=$BOARD_NAME/" \
+						</etc/rpimonitor/template/raspbian.conf >/etc/rpimonitor/template/armbian.conf
+					cd /etc/rpimonitor/
+					ln -sf /etc/rpimonitor/template/armbian.conf data.conf
+					# fix temperature everywhere
+					sed -i -e 's|^dynamic.12.source=.*|dynamic.12.source=/etc/armbianmonitor/datasources/soctemp|' \
+						-e 's|^dynamic.12.postprocess=.*|dynamic.12.postprocess=sprintf("%.1f", $1/1000)|' \
+						/etc/rpimonitor/template/temperature.conf
+					# monitor big cores on big.LITTLE
+					if [ $(grep -c '^processor' /proc/cpuinfo) -ge 4 ]; then
+						sed -i 's|/sys/devices/system/cpu/cpu0/cpufreq/|/sys/devices/system/cpu/cpu4/cpufreq/|g' \
+						/etc/rpimonitor/template/cpu.conf
+					fi
+					# display processor architecture instead of undefined
+					sed -i -e "s_^static.4.source=.*_static.4.source=lscpu | awk -F' ' '/^Architecture/ {print \$2}'_" \
+						-e "s/^static.4.regexp=.*/static.4.regexp=/" /etc/rpimonitor/template/version.conf
+					;;
 			esac
-			echo -e "\nNow you're able to enjoy RPi-Monitor at http://$((ifconfig -a) | sed -n '/inet addr/s/.*addr.\([^ ]*\) .*/\1/p' | head -1):8888"
+			echo -e "\nNow you're able to enjoy RPi-Monitor at http://$(ip a | awk -F" " '/inet / {print $2}' | grep -v '127.0.0.1' | cut -f1 -d/ | head -n1):8888"
 			exit 0
 			;;
 		p|P)
@@ -660,8 +681,9 @@ CreateTempDir() {
 } #CreateTempFiles
 
 InstallRPiMonitor() {
-	# Installs rpimonitord based on the official instructions from
+	# Installs rpimonitord loosely based on the official instructions from
 	# http://rpi-experiences.blogspot.fr/p/rpi-monitor-installation.html
+	# but using the package from our own repository
 	if [ "$(id -u)" != "0" ]; then
 		echo "Installing RPi-Monitor requires root privileges, try sudo please. Exiting" >&2
 		exit 1
@@ -816,7 +838,7 @@ gwYNGjRo0KBBw1eEfwH4UoBHAKAAAA==" | base64 --decode | tar xzf -
 	which systemctl >/dev/null 2>&1
 	case $? in
 		0)
-			# Jessie
+			# Jessie|Stretch|Xenial|Bionic
 			systemctl enable rpimonitor-helper >/dev/null 2>&1
 			systemctl start rpimonitor-helper >/dev/null 2>&1
 			systemctl restart rpimonitor >/dev/null 2>&1
@@ -859,6 +881,8 @@ CollectSupportInfo() {
 		[ -f /etc/resolv.conf ] && echo -e "\n### resolv.conf\n\n$(ls -la /etc/resolv.conf ; cat /etc/resolv.conf)" || \
 		echo -e "\n### resolv.conf does not exist or readable"
 	echo -e "\n### Current sysinfo:\n\n$(iostat -p ALL | grep -v "^loop")\n\n$(vmstat -w)\n\n$(free -h)\n\n$(zramctl 2>/dev/null)\n\n$(uptime)\n\n$(dmesg | tail -n 250)"
+	echo -e "\n"
+	for sysfsnode in /proc/sys/vm/* ; do sysctl $(echo ${sysfsnode} | sed 's|/proc/sys/vm/|vm.|'); done
 	echo -e "\n### interrupts:\n$(cat /proc/interrupts)"
 	ls /tmp/armbianmonitor_checks_* >/dev/null 2>&1 || return
 	for file in /tmp/armbianmonitor_checks_* ; do
