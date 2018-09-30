@@ -81,10 +81,12 @@ create_board_package()
 	esac
 	sysctl -p >/dev/null 2>&1
 	# remove swap file if it was made by our start script
-	if [[ \$(stat -c%s /var/swap 2> /dev/null) == 134217728 ]]; then
+	if [ -f /var/swap ]; then
+	if [ "\$(stat -c%s /var/swap 2> /dev/null)" -eq "134217728" ]; then
         swapoff /var/swap
         sed -i '/\/var\/swap/d' /etc/fstab
         rm /var/swap
+	fi
 	fi
 	# disable deprecated services
 	systemctl disable armhwinfo.service >/dev/null 2>&1
