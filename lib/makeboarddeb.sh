@@ -88,6 +88,12 @@ create_board_package()
         rm /var/swap
 	fi
 	fi
+	# disable power management on network manager
+	if [ -f /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf ]; then
+		sed -i 's/wifi.powersave.*/wifi.powersave = 3/' /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+		else
+		echo -e "[connection]\nwifi.powersave = 3" > /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+	fi
 	# disable deprecated services
 	systemctl disable armhwinfo.service >/dev/null 2>&1
 	#
