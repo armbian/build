@@ -81,10 +81,20 @@ create_board_package()
 	esac
 	sysctl -p >/dev/null 2>&1
 	# remove swap file if it was made by our start script
-	if [[ \$(stat -c%s /var/swap 2> /dev/null) == 134217728 ]]; then
+	if [ -f /var/swap ]; then
+	if [ "\$(stat -c%s /var/swap 2> /dev/null)" -eq "134217728" ]; then
         swapoff /var/swap
         sed -i '/\/var\/swap/d' /etc/fstab
         rm /var/swap
+	fi
+	fi
+	# disable power management on network manager
+	if [ -f /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf ]; then
+		sed -i 's/wifi.powersave.*/wifi.powersave = 2/' /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+		else
+		echo "[connection]" > /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+		echo "# Values are 0 (use default), 1 (ignore/don't touch), 2 (disable) or 3 (enable)." >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+		echo "wifi.powersave = 2" >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
 	fi
 	# disable deprecated services
 	systemctl disable armhwinfo.service >/dev/null 2>&1
@@ -158,8 +168,10 @@ create_board_package()
 	fi
 
 	# fix boot delay "waiting for suspend/resume device"
-	if [ -n "\$(grep -w '^RESUME=none' /etc/initramfs-tools/initramfs.conf 2> /dev/null)" ]; then
+	if [ -f "/etc/initramfs-tools/initramfs.conf" ]; then
+		if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
 		echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
+		fi
 	fi
 
 	# install bootscripts if they are not present. Fix upgrades from old images
