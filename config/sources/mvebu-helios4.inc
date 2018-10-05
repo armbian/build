@@ -5,7 +5,8 @@ case $BRANCH in
 	BOOTDIR='u-boot-armada'
 	BOOTSCRIPT='boot-marvell.cmd:boot.cmd'
 
-	UBOOT_TARGET_MAP="u-boot.mmc;;u-boot.mmc"
+	UBOOT_TARGET_MAP="u-boot.mmc;;u-boot.mmc
+		u-boot.flash;spi;u-boot.flash u-boot-uart.flash"
 
 	UBOOT_USE_GCC='== 4.9'
 	UBOOT_COMPILER='arm-linux-gnueabi-'
