@@ -183,6 +183,21 @@ create_board_package()
 		echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
 		sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
 		[ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
+	else
+		echo "Updating boot script"
+		current_dpkg_ver=\$(dpkg-query -W -f='\${Version}' linux-${RELEASE}-root-${DEB_BRANCH}${BOARD})
+		cp /boot/$bootscript_dst /usr/share/armbian/${bootscript_dst}-\${current_dpkg_ver} >/dev/null 2>&1
+		cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
+		if [ -f /boot/boot.cmd ]; then
+			mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
+		elif [ -f /boot/boot.ini ]; then
+			rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
+			sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
+		fi
+		echo "Cleaning-up old boot script versions"
+		[ -f /usr/share/armbian/boot.cmd ] && ls /usr/share/armbian/boot.cmd-* | head -n -3 | xargs rm -f --
+		[ -f /usr/share/armbian/boot.ini ] && ls /usr/share/armbian/boot.ini-* | head -n -3 | xargs rm -f --
+		echo "NOTE: You can find previous boot script versions in /usr/share/armbian !"
 	fi
 
 	# now cleanup and remove old ramlog service
