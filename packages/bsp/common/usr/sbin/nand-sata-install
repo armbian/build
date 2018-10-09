@@ -48,12 +48,20 @@ root_partition_device="${root_partition::-2}"
 [[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
 emmccheck=$(ls -d -1 /dev/mmcblk* | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
 diskcheck=$(lsblk -l | awk -F" " '/ disk / {print $1}' | egrep '^sd|^nvme')
+spicheck=$(grep 'mtd' /proc/partitions | awk '{print $NF}')
 
 # define makefs and mount options
 declare -A mkopts mountopts
-mkopts[ext2]='-qF'
-mkopts[ext3]='-qF'
-mkopts[ext4]='-qF'
+# for ARMv7 remove 64bit feature from default mke2fs format features
+if [[ $LINUXFAMILY == mvebu ]]; then
+	mkopts[ext2]='-O ^64bit -qF'
+	mkopts[ext3]='-O ^64bit -qF'
+	mkopts[ext4]='-O ^64bit -qF'
+else
+	mkopts[ext2]='-qF'
+	mkopts[ext3]='-qF'
+	mkopts[ext4]='-qF'
+fi
 mkopts[btrfs]='-f'
 mkopts[f2fs]=''
 
@@ -301,7 +309,8 @@ create_armbian()
 	cat $logfile >${TempDir}/rootfs${logfile}
 	sync
 
-	umountdevice "/dev/sda"
+	umount ${TempDir}/rootfs
+	[[ $1 != "spi" ]] && unmount ${TempDir}/bootfs
 } # create_armbian
 
 
@@ -567,7 +576,7 @@ main()
 	[[ ( -n $nandcheck || -n $emmccheck ) && -n $diskcheck ]] && options+=(2 "Boot from $ichip - system on SATA, USB or NVMe")
 	[[ -n $diskcheck ]] && options+=(3 "Boot from SD   - system on SATA, USB or NVMe")
 	[[ ( $LINUXFAMILY == odroidxu4 || $LINUXFAMILY == mvebu* ) && ( -b /dev/mmcblk0boot0 || -b /dev/mmcblk1boot0 ) ]] && options+=(4 "Update the bootloader on a special eMMC partition")
-	[[ $(type -t write_uboot_platform_mtd) == function && -b /dev/mtd0 && -f /usr/sbin/flashcp ]] && options+=(5 "Install the bootloader to SPI Flash")
+	[[ -n $spicheck && $(type -t write_uboot_platform_mtd) == function ]] && options+=(5 "Install the bootloader to SPI Flash")
 	[[ -n $spicheck ]] && options+=(6 "Boot from SPI  - system on SATA, USB or NVMe")
 	[[ ${#options[@]} -eq 0 || "$root_uuid" == "$emmcuuid" || "$root_uuid" == "/dev/nand2" ]] && \
 	dialog --ok-label "Cancel" --title " Warning " --backtitle "$backtitle" --colors --no-collapse --msgbox "\n\Z1There are no targets. Please check your drives.\Zn" 7 52
@@ -590,8 +599,6 @@ main()
 					formatnand
 				fi
 				create_armbian "$dest_boot" "$dest_root"
-				umount ${TempDir}/rootfs
-				umount ${TempDir}/bootfs
 				;;
 			2)
 				title="$ichip boot | USB/SATA/NVMe root install"
@@ -608,8 +615,6 @@ main()
 				umountdevice "${DISK_ROOT_PART//[0-9]*/}"
 				formatdisk "$DISK_ROOT_PART"
 				create_armbian "$dest_boot" "$DISK_ROOT_PART"
-				umount ${TempDir}/rootfs
-				umount ${TempDir}/bootfs
 				;;
 			3)
 				title="MMC (SD/eMMC) boot | USB/SATA/NVMe root install"
@@ -631,8 +636,9 @@ main()
 				return
 				;;
 			5)
-				# TODO: Add warning dialogs with MTD device info
-				write_uboot_platform_mtd $DIR /dev/mtd0
+				MTD_BLK="/dev/${spicheck}"
+				ShowWarning "This script will update the bootloader on SPI Flash $MTD_BLK. Continue?"
+				write_uboot_platform_mtd $DIR $MTD_BLK
 				echo "Done"
 				return
 				;;
