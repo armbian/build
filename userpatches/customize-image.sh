@@ -33,6 +33,7 @@ Main() {
                         systemctl disable networking
                         cp /tmp/overlay/interfaces /etc/network/interfaces
 			cp /tmp/overlay/wpa_supplicant.conf /etc/wpa_supplicant/wpa_supplicant.conf
+			cp /tmp/overlay/set_wifi.sh /root/set_wifi.sh
 			;;
 		bionic)
 			# your code here
