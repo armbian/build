@@ -11,6 +11,6 @@
 Main() {
   read -p "WiFi SSID: " ssid_net
   read -p "WiFi Password: " ssid_pwd
-  sed -i "s/ssid=[\"]*[\"]/ssid=[\"]$ssid_net[\"]/" ../etc/wpa_supplicant/wpa_supplicant.conf
-  sed -i "s/psk=[\"]*[\"]/psk=[\"]$ssid_pwd[\"]/" ../etc/wpa_supplicant/wpa_supplicant.conf
+  sed -i "s/ssid=\"*\"/ssid=\"$ssid_net\"/" ../etc/wpa_supplicant/wpa_supplicant.conf
+  sed -i "s/psk=\"]*\"]/psk=\"$ssid_pwd\"/" ../etc/wpa_supplicant/wpa_supplicant.conf
 } #Main
