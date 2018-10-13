@@ -92,9 +92,11 @@ create_board_package()
 	if [ -f /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf ]; then
 		sed -i 's/wifi.powersave.*/wifi.powersave = 2/' /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
 		else
-		echo "[connection]" > /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
-		echo "# Values are 0 (use default), 1 (ignore/don't touch), 2 (disable) or 3 (enable)." >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
-		echo "wifi.powersave = 2" >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+		if [ -d /etc/NetworkManager/conf.d ]; then
+			echo "[connection]" > /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+			echo "# Values are 0 (use default), 1 (ignore/don't touch), 2 (disable) or 3 (enable)." >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+			echo "wifi.powersave = 2" >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+		fi
 	fi
 
 	# install bootscripts always but do their backup to /usr/share/armbian
