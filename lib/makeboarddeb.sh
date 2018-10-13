@@ -96,6 +96,36 @@ create_board_package()
 		echo "# Values are 0 (use default), 1 (ignore/don't touch), 2 (disable) or 3 (enable)." >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
 		echo "wifi.powersave = 2" >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
 	fi
+
+	# install bootscripts always but do their backup to /usr/share/armbian
+	rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
+
+	# create a boot script backup
+	if [ -f /etc/armbian-release ]; then
+		# create a backup
+		. /etc/armbian-release
+		cp /boot/$bootscript_dst /usr/share/armbian/${bootscript_dst}-\${VERSION} >/dev/null 2>&1
+	fi
+	# create boot environment if it does not exists
+	if [ ! -f /boot/armbianEnv.txt ]; then
+		cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
+		echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
+	fi
+
+	# copy new boot script
+	cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
+
+	# recompile or add rootdev to boot.ini
+	if [ -f /boot/boot.cmd ]; then
+			mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
+	elif [ -f /boot/boot.ini ]; then
+			sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
+	fi
+	echo "Cleaning-up old boot script versions"
+	[ -f /usr/share/armbian/boot.cmd ] && ls /usr/share/armbian/boot.cmd-* | head -n -5 | xargs rm -f --
+	[ -f /usr/share/armbian/boot.ini ] && ls /usr/share/armbian/boot.ini-* | head -n -5 | xargs rm -f --
+	echo "NOTE: You can find previous boot script versions in /usr/share/armbian !"
+
 	# disable deprecated services
 	systemctl disable armhwinfo.service >/dev/null 2>&1
 	#
@@ -172,17 +202,6 @@ create_board_package()
 		if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
 		echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
 		fi
-	fi
-
-	# install bootscripts if they are not present. Fix upgrades from old images
-	if [ ! -f /boot/$bootscript_dst ]; then
-		echo "Recreating boot script"
-		cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
-		rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
-		cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
-		echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
-		sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
-		[ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
 	fi
 
 	# now cleanup and remove old ramlog service
