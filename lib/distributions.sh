@@ -106,9 +106,6 @@ install_common()
 	# force change root password at first login
 	chroot $SDCARD /bin/bash -c "chage -d 0 root"
 
-	# copy predefined settings for root user
-	cp -R $SRC/packages/bsp/common/etc/skel/ $SDCARD/etc/
-
 	# display welcome message at first root login
 	touch $SDCARD/root/.not_logged_in_yet
 
