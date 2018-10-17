@@ -29,7 +29,8 @@ Main() {
 			# your code here
 			# InstallOpenMediaVault # uncomment to get an OMV 4 image
 			dpkg -i /tmp/overlay/networkaudiod_3.5.4-38_arm64.deb
-                        dpkg -i /tmp/overlay/firmware-atheros_20180825+dfsg-1_all.deb
+         #               dpkg -i /tmp/overlay/firmware-atheros_20180825+dfsg-1_all.deb
+	                apt install firmware-atheros
                         systemctl disable networking
                         cp /tmp/overlay/interfaces /etc/network/interfaces
 			cp /tmp/overlay/wpa_supplicant.conf /etc/wpa_supplicant/wpa_supplicant.conf
