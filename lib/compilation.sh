@@ -187,9 +187,37 @@ compile_uboot()
 		done
 	done <<< "$UBOOT_TARGET_MAP"
 
+	# install copy of boot script & environment file
+	local bootscript_src=${BOOTSCRIPT%%:*}
+	local bootscript_dst=${BOOTSCRIPT##*:}
+	mkdir -p $SRC/.tmp/$uboot_name/usr/share/armbian/ $SRC/.tmp/$uboot_name/etc/
+	cp $SRC/config/bootscripts/$bootscript_src $SRC/.tmp/$uboot_name/usr/share/armbian/$bootscript_dst
+	[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
+		cp $SRC/config/bootenv/$BOOTENV_FILE $SRC/.tmp/$uboot_name/usr/share/armbian/armbianEnv.txt
+
+	# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
+	if [[ -n $UBOOT_FW_ENV ]]; then
+		UBOOT_FW_ENV=($(tr ',' ' ' <<< "$UBOOT_FW_ENV"))
+		mkdir -p $destination/etc
+		echo "# Device to access      offset           env size" > $SRC/.tmp/$uboot_name/etc/fw_env.config
+		echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> $SRC/.tmp/$uboot_name/etc/fw_env.config
+	fi
+
 	# set up postinstall script
 	cat <<-EOF > $SRC/.tmp/$uboot_name/DEBIAN/postinst
 	#!/bin/bash
+
+	# install bootscripts if they are not present. Fix upgrades from old images
+	if [ ! -f /boot/$bootscript_dst ]; then
+		echo "Recreating boot script"
+		cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
+		rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
+		cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
+		echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
+		sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
+		[ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
+	fi
+
 	source /usr/lib/u-boot/platform_install.sh
 	[[ \$DEVICE == /dev/null ]] && exit 0
 	if [[ -z \$DEVICE ]]; then

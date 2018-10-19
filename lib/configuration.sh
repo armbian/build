@@ -13,13 +13,15 @@ if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tom
 REVISION="2018.10.5.64$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 MAINTAINER="Igor Pecovnik" # deb signature
-MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
+MAINTAINERMAIL="info@armbian.com" # deb signature
 TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
 ROOTFSCACHE_VERSION=4
 CHROOT_CACHE_VERSION=6
+BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
+BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
 [[ -z $DISPLAY_MANAGER ]] && DISPLAY_MANAGER=nodm
 ROOTFS_CACHE_MAX=16 # max number of rootfs cache, older ones will be cleaned up
 
@@ -237,8 +239,8 @@ cat <<-EOF >> $DEST/debug/output.log
 
 ## BUILD SCRIPT ENVIRONMENT
 
-Repository: $(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
-Version: $(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
+Repository: $REPOSITORY_URL
+Version: $REPOSITORY_COMMIT
 
 Host OS: $(lsb_release -sc)
 Host arch: $(dpkg --print-architecture)
