@@ -20,6 +20,23 @@ create_board_package()
 	rm -rf $destination
 	mkdir -p $destination/DEBIAN
 
+	# install copy of boot script & environment file
+	local bootscript_src=${BOOTSCRIPT%%:*}
+	local bootscript_dst=${BOOTSCRIPT##*:}
+
+	mkdir -p $destination/usr/share/armbian/
+	cp $SRC/config/bootscripts/$bootscript_src $destination/usr/share/armbian/$bootscript_dst
+	[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
+		cp $SRC/config/bootenv/$BOOTENV_FILE $destination/usr/share/armbian/armbianEnv.txt
+
+	# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
+	if [[ -n $UBOOT_FW_ENV ]]; then
+		UBOOT_FW_ENV=($(tr ',' ' ' <<< "$UBOOT_FW_ENV"))
+		mkdir -p $destination/etc
+		echo "# Device to access      offset           env size" > $destination/etc/fw_env.config
+		echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> $destination/etc/fw_env.config
+	fi
+
 	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
 	# Replaces: unattended-upgrades may be needed to replace /etc/apt/apt.conf.d/50unattended-upgrades
 	# (distributions provide good defaults, so this is not needed currently)
@@ -157,6 +174,17 @@ create_board_package()
 		if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
 		echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
 		fi
+	fi
+
+	# install bootscripts if they are not present. Fix upgrades from old images
+	if [ ! -f /boot/$bootscript_dst ]; then
+		echo "Recreating boot script"
+		cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
+		rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
+		cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
+		echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
+		sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
+		[ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
 	fi
 
 	# now cleanup and remove old ramlog service

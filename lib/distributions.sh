@@ -178,14 +178,11 @@ install_common()
 	# install board support package
 	install_deb_chroot "$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb"
 
-	# freeze u-boot by default
-	display_alert "Freezing package" "u-boot" "info"
-	chroot $SDCARD /bin/bash -c "apt-mark hold linux-u-boot-${BOARD}-${BRANCH}" >> $DEST/debug/install.log 2>&1
-
 	# freeze armbian packages
 	if [[ $BSPFREEZE == yes ]]; then
 		display_alert "Freezing Armbian packages" "$BOARD" "info"
-		chroot $SDCARD /bin/bash -c "apt-mark hold ${CHOSEN_KERNEL} ${CHOSEN_KERNEL/image/headers} ${CHOSEN_KERNEL/image/dtb}" >> $DEST/debug/install.log 2>&1
+		chroot $SDCARD /bin/bash -c "apt-mark hold ${CHOSEN_KERNEL} ${CHOSEN_KERNEL/image/headers} \
+			linux-u-boot-${BOARD}-${BRANCH} ${CHOSEN_KERNEL/image/dtb}" >> $DEST/debug/install.log 2>&1
 	fi
 
 	# copy boot splash images
