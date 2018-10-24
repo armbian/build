@@ -588,7 +588,7 @@ prepare_host()
 	# distribution packages are buggy, download from author
 	if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
 		display_alert "Updating from external repository" "aptly" "info"
-		apt-key adv --keyserver pool.sks-keyservers.net --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
+		apt-key adv --keyserver hkp://pool.sks-keyservers.net:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
 		echo "deb http://repo.aptly.info/ squeeze main" > /etc/apt/sources.list.d/aptly.list
 	fi
 
