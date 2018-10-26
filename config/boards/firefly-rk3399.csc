@@ -7,8 +7,8 @@ MODULES=""
 MODULES_NEXT=""
 #
 KERNEL_TARGET="default,dev"
-CLI_TARGET=""
-DESKTOP_TARGET=""
-
-CLI_BETA_TARGET="stretch,bionic:default,dev"
+CLI_TARGET="stretch:default"
+DESKTOP_TARGET="bionic:default"
+#
+CLI_BETA_TARGET="stretch,bionic:dev"
 DESKTOP_BETA_TARGET=""
