@@ -54,6 +54,7 @@ unmount_on_exit()
 	umount -l $SDCARD >/dev/null 2>&1
 	umount -l $MOUNT/boot >/dev/null 2>&1
 	umount -l $MOUNT >/dev/null 2>&1
+	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 	losetup -d $LOOP >/dev/null 2>&1
 	rm -rf --one-file-system $SDCARD
 	exit_with_error "debootstrap-ng was interrupted"
@@ -112,8 +113,12 @@ customize_image()
 	mount -o bind,ro $SRC/userpatches/overlay $SDCARD/tmp/overlay
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot $SDCARD /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
+	CUSTOMIZE_IMAGE_RC=$?
 	umount $SDCARD/tmp/overlay
 	mountpoint -q $SDCARD/tmp/overlay || rm -r $SDCARD/tmp/overlay
+	if [[ $CUSTOMIZE_IMAGE_RC != 0 ]]; then
+		exit_with_error "customize-image.sh exited with error (rc: $CUSTOMIZE_IMAGE_RC)"
+	fi
 } #############################################################################
 
 install_deb_chroot()

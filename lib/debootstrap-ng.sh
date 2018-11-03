@@ -11,6 +11,7 @@
 # debootstrap_ng
 # create_rootfs_cache
 # prepare_partitions
+# update_initramfs
 # create_image
 
 # debootstrap_ng
@@ -74,6 +75,8 @@ debootstrap_ng()
 		source $SRC/lib/fel-load.sh
 	else
 		prepare_partitions
+		# update initramfs to reflect any configuration changes since kernel installation
+		update_initramfs
 		create_image
 	fi
 
@@ -325,6 +328,12 @@ prepare_partitions()
 		local bootfs=ext4
 		local bootpart=1
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB, For cleanup processing only
+	elif [[ $CRYPTROOT_ENABLE == yes ]]; then
+		# 2 partition setup for encrypted /root and non-encrypted /boot
+		local bootfs=ext4
+		local bootpart=1
+		local rootpart=2
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB
 	else
 		# single partition ext4 root
 		local rootpart=1
@@ -353,7 +362,7 @@ prepare_partitions()
 				# Hardcoded overhead +25% is needed for desktop images,
 				# for CLI it could be lower. Align the size up to 4MiB
 				if [[ $BUILD_DESKTOP == yes ]]; then
-					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.25) / 1 + 0) / 4 + 1) * 4")
+					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.30) / 1 + 0) / 4 + 1) * 4")
 				else
 					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.20) / 1 + 0) / 4 + 1) * 4")
 				fi
@@ -407,13 +416,30 @@ prepare_partitions()
 	rm -f $SDCARD/etc/fstab
 	if [[ -n $rootpart ]]; then
 		local rootdevice="${LOOP}p${rootpart}"
-		display_alert "Creating rootfs" "$ROOTFS_TYPE"
+
+		if [[ $CRYPTROOT_ENABLE == yes ]]; then
+			display_alert "Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
+			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $rootdevice -
+			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
+			display_alert "Root partition encryption complete." "" "ext"
+			# TODO: pass /dev/mapper to Docker
+			rootdevice=/dev/mapper/$ROOT_MAPPER # used by `mkfs` and `mount` commands
+		fi
+
 		check_loop_device "$rootdevice"
+		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
 		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress-force=zlib"
 		mount ${fscreateopt} $rootdevice $MOUNT/
-		local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
+		# create fstab (and crypttab) entry
+		if [[ $CRYPTROOT_ENABLE == yes ]]; then
+			# map the LUKS container partition via its UUID to be the 'cryptroot' device
+			echo "$ROOT_MAPPER UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}) none luks" >> $SDCARD/etc/crypttab
+			local rootfs=$rootdevice # used in fstab
+		else
+			local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
+		fi
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $bootpart ]]; then
@@ -429,7 +455,11 @@ prepare_partitions()
 
 	# stage: adjust boot script or boot environment
 	if [[ -f $SDCARD/boot/armbianEnv.txt ]]; then
-		echo "rootdev=$rootfs" >> $SDCARD/boot/armbianEnv.txt
+		if [[ $CRYPTROOT_ENABLE == yes ]]; then
+			echo "rootdev=$rootdevice cryptdevice=UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}):$ROOT_MAPPER" >> $SDCARD/boot/armbianEnv.txt
+		else
+			echo "rootdev=$rootfs" >> $SDCARD/boot/armbianEnv.txt
+		fi
 		echo "rootfstype=$ROOTFS_TYPE" >> $SDCARD/boot/armbianEnv.txt
 	elif [[ $rootpart != 1 ]]; then
 		local bootscript_dst=${BOOTSCRIPT##*:}
@@ -441,13 +471,43 @@ prepare_partitions()
 	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
 	if [[ -f $SDCARD/boot/boot.ini ]]; then
 		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/boot.ini
-		sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
+		if [[ $CRYPTROOT_ENABLE == yes ]]; then
+			local rootpart="UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart})"
+			sed -i 's/^setenv rootdev .*/setenv rootdev "\/dev\/mapper\/'$ROOT_MAPPER' cryptdevice='$rootpart':'$ROOT_MAPPER'"/' $SDCARD/boot/boot.ini
+		else
+			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
+		fi
 		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
 	fi
 
 	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $SDCARD/boot/boot.cmd ]] && \
 		mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/boot.scr > /dev/null 2>&1
+
+} #############################################################################
+
+# update_initramfs
+#
+# this should be invoked as late as possible for any modifications by
+# customize_image (userpatches) and prepare_partitions to be reflected in the
+# final initramfs
+#
+# especially, this needs to be invoked after /etc/crypttab has been created
+# for cryptroot-unlock to work:
+# https://serverfault.com/questions/907254/cryproot-unlock-with-dropbear-timeout-while-waiting-for-askpass
+#
+update_initramfs() {
+
+	update_initramfs_cmd="update-initramfs -uv -k ${VER}-${LINUXFAMILY}"
+	display_alert "Updating initramfs..." "$update_initramfs_cmd" ""
+	cp /usr/bin/$QEMU_BINARY $SDCARD/usr/bin/
+	mount_chroot "$SDCARD/"
+
+	chroot $SDCARD /bin/bash -c "$update_initramfs_cmd" >> $DEST/debug/install.log 2>&1
+	display_alert "Updated initramfs." "for details see: $DEST/debug/install.log" "ext"
+
+	umount_chroot "$SDCARD/"
+	rm $SDCARD/usr/bin/$QEMU_BINARY
 
 } #############################################################################
 
@@ -489,10 +549,15 @@ create_image()
 	# stage: write u-boot
 	write_uboot $LOOP
 
+	# fix wrong / permissions
+	chmod 755 $MOUNT
+
 	# unmount /boot first, rootfs second, image file last
 	sync
 	[[ $BOOTSIZE != 0 ]] && umount -l $MOUNT/boot
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
+	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
+
 	losetup -d $LOOP
 	rm -rf --one-file-system $DESTIMG $MOUNT
 	mkdir -p $DESTIMG
@@ -500,15 +565,15 @@ create_image()
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
 	if [[ $COMPRESS_OUTPUTIMAGE == yes && $BUILD_ALL != yes ]]; then
+		[[ -f $DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME ]] && cp $DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME $DESTIMG/
 		# compress image
 		cd $DESTIMG
 		sha256sum -b ${version}.img > sha256sum.sha
 		if [[ -n $GPG_PASS ]]; then
 			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
-			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes sha256sum.sha
 		fi
 			display_alert "Compressing" "$DEST/images/${version}.img" "info"
-		7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
+		7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
 	fi
 	#
 	if [[ $BUILD_ALL != yes ]]; then

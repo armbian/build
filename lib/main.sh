@@ -142,10 +142,12 @@ if [[ -z $BOARD ]]; then
 				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress\n - \Z1(EOS)\Zn - End Of Support'
 				WIP_STATE=unsupported
 				WIP_BUTTON='supported'
+				EXPERT=yes
 			else
 				STATE_DESCRIPTION=' - Officially supported boards'
 				WIP_STATE=supported
 				WIP_BUTTON='CSC/WIP/EOS'
+				EXPERT=no
 			fi
 			continue
 		elif [[ $STATUS == 0 ]]; then
@@ -193,10 +195,10 @@ fi
 
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	options=()
-	options+=("jessie" "Debian 8 Jessie")
+	[[ $EXPERT = yes ]] && options+=("jessie" "Debian 8 Jessie / unsupported")
 	options+=("stretch" "Debian 9 Stretch")
 	options+=("xenial" "Ubuntu Xenial 16.04 LTS")
-	[[ $EXPERT = yes ]] && options+=("bionic" "Ubuntu Bionic 18.04 LTS")
+	options+=("bionic" "Ubuntu Bionic 18.04 LTS")
 	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select the target OS release" \
 		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 	unset options
@@ -237,9 +239,11 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 		fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
 	fi
 	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
-	fetch_from_repo "https://github.com/rockchip-linux/rkbin" "rkbin-tools" "branch:29mirror"
-	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-17.10"
+	fetch_from_repo "https://github.com/armbian/rkbin" "rkbin-tools" "branch:master"
+	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-18.09"
+	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git" "marvell-ddr" "branch:mv_ddr-armada-18.09"
 	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
+	fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
 fi
 
 if [[ $BETA == yes ]]; then
@@ -289,6 +293,8 @@ overlayfs_wrapper "cleanup"
 # extract kernel version from .deb package
 VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
 VER="${VER/-$LINUXFAMILY/}"
+
+UBOOT_VER=$(dpkg --info $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
 
 # create board support package
 [[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package

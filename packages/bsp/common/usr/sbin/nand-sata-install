@@ -23,7 +23,7 @@ logfile="/var/log/nand-sata-install.log"
 # read in board info
 [[ -f /etc/armbian-release ]] && source /etc/armbian-release
 backtitle="Armbian for $BOARD_NAME install script, http://www.armbian.com"
-title="NAND, eMMC, SATA and USB Armbian installer v${VERSION}"
+title="NAND, eMMC, SATA, USB and NVMe Armbian installer v${VERSION}"
 
 # exceptions
 if grep -q 'sun4i' /proc/cpuinfo; then DEVICE_TYPE="a10";
@@ -31,7 +31,7 @@ elif grep -q 'sun5i' /proc/cpuinfo; then DEVICE_TYPE="a13";
 else DEVICE_TYPE="a20"; fi
 BOOTLOADER="${CWD}/${DEVICE_TYPE}/bootloader"
 case ${LINUXFAMILY} in
-	rk3328|rk3399)
+	rk3328|rk3399|rockchip64)
 		FIRSTSECTOR=32768
 		;;
 	*)
@@ -44,17 +44,24 @@ root_uuid=$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
 root_partition=$(blkid | tr -d '":' | grep ${root_uuid} | awk '{print $1}')
 root_partition_device="${root_partition::-2}"
 
-# find targets: NAND, EMMC, SATA, SPI
+# find targets: NAND, EMMC, SATA, SPI flash, NVMe
 [[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
 emmccheck=$(ls -d -1 /dev/mmcblk* | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
-satacheck=$(grep 'sd' /proc/partitions | awk '{print $NF}')
+diskcheck=$(lsblk -l | awk -F" " '/ disk / {print $1}' | egrep '^sd|^nvme')
 spicheck=$(grep 'mtd' /proc/partitions | awk '{print $NF}')
 
 # define makefs and mount options
 declare -A mkopts mountopts
-mkopts[ext2]='-qF'
-mkopts[ext3]='-qF'
-mkopts[ext4]='-qF'
+# for ARMv7 remove 64bit feature from default mke2fs format features
+if [[ $LINUXFAMILY == mvebu ]]; then
+	mkopts[ext2]='-O ^64bit -qF'
+	mkopts[ext3]='-O ^64bit -qF'
+	mkopts[ext4]='-O ^64bit -qF'
+else
+	mkopts[ext2]='-qF'
+	mkopts[ext3]='-qF'
+	mkopts[ext4]='-qF'
+fi
 mkopts[btrfs]='-f'
 mkopts[f2fs]=''
 
@@ -122,7 +129,7 @@ create_armbian()
 	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' | grep -v "^COMMAND" >> $logfile
 	echo -e "\nTrying to stop running services to minimize open files:\c" >> $logfile
 	StopRunningServices "nfs-|smbd|nmbd|winbind|ftpd|netatalk|monit|cron|webmin|rrdcached" >> $logfile
-	StopRunningServices "log2ram|folder2ram|postgres|mariadb|mysql|postfix|mail|nginx|apache|snmpd" >> $logfile
+	StopRunningServices "fail2ban|log2ram|folder2ram|postgres|mariadb|mysql|postfix|mail|nginx|apache|snmpd" >> $logfile
 	pkill dhclient 2>/dev/null
 	LANG=C echo -e "\n\nChecking again for open files:" >> $logfile
 	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' | grep -v "^COMMAND" >> $logfile
@@ -197,10 +204,10 @@ create_armbian()
 	#
 	if [[ $2 == ${emmccheck}p* || $1 == ${emmccheck}p* ]]; then
 
-		if [[ $2 == ${SDA_ROOT_PART} ]]; then
+		if [[ $2 == ${DISK_ROOT_PART} ]]; then
 			local targetuuid=$satauuid
 			local choosen_fs=$FilesystemChoosen
-			echo "Finalizing: boot from eMMC, rootfs on USB/SATA." >> $logfile
+			echo "Finalizing: boot from eMMC, rootfs on USB/SATA/NVMe." >> $logfile
 			if [[ $eMMCFilesystemChoosen =~ ^(btrfs|f2fs)$ ]]; then
 				echo "$emmcuuid	/media/mmcroot  $eMMCFilesystemChoosen	${mountopts[$eMMCFilesystemChoosen]}" >> ${TempDir}/rootfs/etc/fstab
 			fi
@@ -229,6 +236,11 @@ create_armbian()
 			echo "$emmcbootuuid	/media/mmcboot	ext4    ${mountopts[ext4]}" >> ${TempDir}/rootfs/etc/fstab
 			echo "/media/mmcboot/boot   				/boot		none	bind								0       0" >> ${TempDir}/rootfs/etc/fstab
 		fi
+		# if the rootfstype is not defined as cmdline argument on armbianEnv.txt
+		if ! grep -qE '^rootfstype=.*' ${TempDir}/bootfs/boot/armbianEnv.txt; then
+			# Add the line of type of the selected rootfstype to the file armbianEnv.txt
+			echo "rootfstype=$choosen_fs" >> ${TempDir}/bootfs/boot/armbianEnv.txt
+		fi
 
 		if [[ $eMMCFilesystemChoosen =~ ^(btrfs|f2fs)$ ]]; then
 			echo "$targetuuid	/		$choosen_fs	${mountopts[$choosen_fs]}" >> ${TempDir}/rootfs/etc/fstab
@@ -250,8 +262,8 @@ create_armbian()
 
 	# Boot from SD card, root = SATA / USB
 	#
-	if [[ $2 == ${SDA_ROOT_PART} && -z $1 ]]; then
-		echo -e "Finishing transfer to USB/SATA, boot from SD/eMMC" >> $logfile
+	if [[ $2 == ${DISK_ROOT_PART} && -z $1 ]]; then
+		echo -e "Finishing transfer to disk, boot from SD/eMMC" >> $logfile
 		[[ -f /boot/boot.cmd ]] && sed -e 's,root='"$root_uuid"',root='"$satauuid"',g' -i /boot/boot.cmd
 		[[ -f /boot/boot.ini ]] && sed -e 's,^setenv rootdev.*$,setenv rootdev "'"$satauuid"'",' -i /boot/boot.ini
 		# new boot scripts
@@ -302,7 +314,8 @@ create_armbian()
 	cat $logfile >${TempDir}/rootfs${logfile}
 	sync
 
-	umountdevice "/dev/sda"
+	umount ${TempDir}/rootfs
+	[[ $1 != "spi" ]] && umount ${TempDir}/bootfs
 } # create_armbian
 
 
@@ -435,9 +448,9 @@ formatemmc()
 }
 
 
-# formatting SATA/USB [device] example /dev/sda3
+# formatting SATA/USB/NVMe partition, examples: /dev/sda3 or /dev/nvme0n1p1
 #
-formatsata()
+formatdisk()
 {
 	# choose and create fs
 	IFS=" "
@@ -465,26 +478,49 @@ formatsata()
 }
 
 
-# choose target SATA/USB partition.
-checksatatarget()
+# choose target SATA/USB/NVMe partition.
+checkpartitions()
 {
 	IFS=" "
-	SataTargets=$(awk '/sd/ {print "/dev/"$4}' </proc/partitions | grep -E '[0-9]{1,4}' | nl | xargs echo -n)
-	if [[ -z $SataTargets ]]; then
+	AvailablePartitions=$(lsblk -l | awk -F" " '/ part / {print $1}' | egrep '^sd|^nvme')
+	if [[ -z $AvailablePartitions ]]; then
 		dialog --title "$title" --backtitle "$backtitle" --colors --msgbox \
 		"\n\Z1There are no avaliable partitions. Please create them.\Zn" 7 60
-		fdisk /dev/$satacheck
+		# We need gdisk for proper partition alignment
+		apt-get -y -q install gdisk >/dev/null 2>&1
+		gdisk /dev/$diskcheck
 	fi
-	SataTargets=$(awk '/sd/ {print "/dev/"$4}' </proc/partitions | grep -E '[0-9]{1,4}' | nl | xargs echo -n)
-	SataOptions=($SataTargets)
+	AvailablePartitions=$(lsblk -l | awk -F" " '/ part / {print $1}' | egrep '^sd|^nvme' | sed 's|^|/dev/|' | nl | xargs echo -n)
+	PartitionOptions=($AvailablePartitions)
 
-	SataCmd=(dialog --title "Select destination:" --backtitle "$backtitle" --menu "\n$infos" 10 60 16)
-	SataChoices=$("${SataCmd[@]}" "${SataOptions[@]}" 2>&1 >/dev/tty)
+	PartitionCmd=(dialog --title "Select destination:" --backtitle "$backtitle" --menu "\n$infos" 10 60 16)
+	PartitionChoices=$("${PartitionCmd[@]}" "${PartitionOptions[@]}" 2>&1 >/dev/tty)
 
 	[[ $? -ne 0 ]] && exit 1
-	SDA_ROOT_PART=${SataOptions[(2*$SataChoices)-1]}
+	DISK_ROOT_PART=${PartitionOptions[(2*$PartitionChoices)-1]}
 }
 
+# choose target NVMe partition.
+checknvmetarget()
+{
+	IFS=" "
+	NVMeTargets=$(awk '/nvme0n1p/ {print "/dev/"$4}' </proc/partitions | nl | xargs echo -n)
+	if [[ -z $NVMeTargets ]]; then
+		dialog --title "$title" --backtitle "$backtitle" --colors --msgbox \
+		"\n\Z1There are no avaliable partitions. Please create them.\Zn" 7 60
+		# We need gdisk for proper partition alignment
+		apt-get -y -q install gdisk >/dev/null 2>&1
+		gdisk /dev/$nvmecheck
+	fi
+	NVMeTargets=$(awk '/nvme0n1p/ {print "/dev/"$4}' </proc/partitions | nl | xargs echo -n)
+	NVMeOptions=($NVMeTargets)
+
+	NVMeCmd=(dialog --title "Select destination:" --backtitle "$backtitle" --menu "\n$infos" 10 60 16)
+	NVMeChoices=$("${NVMeCmd[@]}" "${NVMeOptions[@]}" 2>&1 >/dev/tty)
+
+	[[ $? -ne 0 ]] && exit 1
+	DISK_ROOT_PART=${NVMeOptions[(2*$NVMeChoices)-1]}
+}
 
 # show warning [TEXT]
 ShowWarning()
@@ -542,11 +578,11 @@ main()
 
 
 	[[ -n $nandcheck || -n $emmccheck ]] && options+=(1 "Boot from $ichip - system on $ichip")
-	[[ ( -n $nandcheck || -n $emmccheck ) && -n $satacheck ]] && options+=(2 "Boot from $ichip - system on SATA or USB")
-	[[ -n $satacheck ]] && options+=(3 "Boot from SD   - system on SATA or USB")
+	[[ ( -n $nandcheck || -n $emmccheck ) && -n $diskcheck ]] && options+=(2 "Boot from $ichip - system on SATA, USB or NVMe")
+	[[ -n $diskcheck ]] && options+=(3 "Boot from SD   - system on SATA, USB or NVMe")
 	[[ ( $LINUXFAMILY == odroidxu4 || $LINUXFAMILY == mvebu* ) && ( -b /dev/mmcblk0boot0 || -b /dev/mmcblk1boot0 ) ]] && options+=(4 "Update the bootloader on a special eMMC partition")
-	[[ $(type -t write_uboot_platform_mtd) == function && -b /dev/mtd0 && -f /usr/sbin/flashcp ]] && options+=(5 "Install the bootloader to SPI Flash")
-	[[ -n $spicheck ]] && options+=(6 "Boot from SPI  - system on SATA or USB")
+	[[ -n $spicheck && $(type -t write_uboot_platform_mtd) == function ]] && options+=(5 "Install the bootloader to SPI Flash")
+	[[ -n $spicheck ]] && options+=(6 "Boot from SPI  - system on SATA, USB or NVMe")
 	[[ ${#options[@]} -eq 0 || "$root_uuid" == "$emmcuuid" || "$root_uuid" == "/dev/nand2" ]] && \
 	dialog --ok-label "Cancel" --title " Warning " --backtitle "$backtitle" --colors --no-collapse --msgbox "\n\Z1There are no targets. Please check your drives.\Zn" 7 52
 	cmd=(dialog --title "Choose an option:" --backtitle "$backtitle" --menu "\nCurrent root: $root_uuid \n \n" 14 60 7)
@@ -568,14 +604,12 @@ main()
 					formatnand
 				fi
 				create_armbian "$dest_boot" "$dest_root"
-				umount ${TempDir}/rootfs
-				umount ${TempDir}/bootfs
 				;;
 			2)
-				title="$ichip boot | USB/SATA root install"
+				title="$ichip boot | USB/SATA/NVMe root install"
 				command="Power off"
-				checksatatarget
-				ShowWarning "This script will erase your $ichip and $SDA_ROOT_PART. Continue?"
+				checkpartitions
+				ShowWarning "This script will erase your $ichip and $DISK_ROOT_PART. Continue?"
 				if [[ -n $emmccheck ]]; then
 					umountdevice "$emmccheck"
 					formatemmc "$emmccheck"
@@ -583,19 +617,17 @@ main()
 					umountdevice "/dev/nand"
 					formatnand
 				fi
-				umountdevice "${SDA_ROOT_PART//[0-9]*/}"
-				formatsata "$SDA_ROOT_PART"
-				create_armbian "$dest_boot" "$SDA_ROOT_PART"
-				umount ${TempDir}/rootfs
-				umount ${TempDir}/bootfs
+				umountdevice "${DISK_ROOT_PART//[0-9]*/}"
+				formatdisk "$DISK_ROOT_PART"
+				create_armbian "$dest_boot" "$DISK_ROOT_PART"
 				;;
 			3)
-				title="MMC (SD/eMMC) boot | USB/SATA root install"
+				title="MMC (SD/eMMC) boot | USB/SATA/NVMe root install"
 				command="Reboot"
-				checksatatarget
-				ShowWarning "This script will erase your device $SDA_ROOT_PART. Continue?"
-				formatsata "$SDA_ROOT_PART"
-				create_armbian "" "$SDA_ROOT_PART"
+				checkpartitions
+				ShowWarning "This script will erase your device $DISK_ROOT_PART. Continue?"
+				formatdisk "$DISK_ROOT_PART"
+				create_armbian "" "$DISK_ROOT_PART"
 				;;
 			4)
 				if [[ -b /dev/mmcblk0boot0 ]]; then
@@ -609,21 +641,22 @@ main()
 				return
 				;;
 			5)
-				# TODO: Add warning dialogs with MTD device info
-				write_uboot_platform_mtd $DIR /dev/mtd0
+				MTD_BLK="/dev/${spicheck}"
+				ShowWarning "This script will update the bootloader on SPI Flash $MTD_BLK. Continue?"
+				write_uboot_platform_mtd $DIR $MTD_BLK
 				echo "Done"
 				return
 				;;
 			6)
 				# Espressobin has flash boot by default
-				title="SPI flash boot | USB/SATA root install"
+				title="SPI flash boot | USB/SATA/NVMe root install"
 				command="Power off"
 				# we need to copy boot
 				sed -i '/boot/d' $EX_LIST
-				checksatatarget
-				ShowWarning "This script will erase your device $SDA_ROOT_PART. Continue?"
-				formatsata "$SDA_ROOT_PART"
-				create_armbian "spi" "$SDA_ROOT_PART"
+				checkpartitions
+				ShowWarning "This script will erase your device $DISK_ROOT_PART. Continue?"
+				formatdisk "$DISK_ROOT_PART"
+				create_armbian "spi" "$DISK_ROOT_PART"
 				;;
 		esac
 	done

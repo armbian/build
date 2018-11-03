@@ -1,0 +1,1458 @@
+diff --git a/Makefile b/Makefile
+index 607394a56036..57e4ff1a8b96 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 160
++SUBLEVEL = 161
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/arc/kernel/process.c b/arch/arc/kernel/process.c
+index a3f750e76b68..8f40c6c5d77e 100644
+--- a/arch/arc/kernel/process.c
++++ b/arch/arc/kernel/process.c
+@@ -153,6 +153,26 @@ int copy_thread(unsigned long clone_flags,
+ 		task_thread_info(current)->thr_ptr;
+ 	}
+ 
++
++	/*
++	 * setup usermode thread pointer #1:
++	 * when child is picked by scheduler, __switch_to() uses @c_callee to
++	 * populate usermode callee regs: this works (despite being in a kernel
++	 * function) since special return path for child @ret_from_fork()
++	 * ensures those regs are not clobbered all the way to RTIE to usermode
++	 */
++	c_callee->r25 = task_thread_info(p)->thr_ptr;
++
++#ifdef CONFIG_ARC_CURR_IN_REG
++	/*
++	 * setup usermode thread pointer #2:
++	 * however for this special use of r25 in kernel, __switch_to() sets
++	 * r25 for kernel needs and only in the final return path is usermode
++	 * r25 setup, from pt_regs->user_r25. So set that up as well
++	 */
++	c_regs->user_r25 = c_callee->r25;
++#endif
++
+ 	return 0;
+ }
+ 
+diff --git a/arch/powerpc/kernel/fadump.c b/arch/powerpc/kernel/fadump.c
+index c3c835290131..ca3ad5ebcd41 100644
+--- a/arch/powerpc/kernel/fadump.c
++++ b/arch/powerpc/kernel/fadump.c
+@@ -360,9 +360,9 @@ static int __init early_fadump_reserve_mem(char *p)
+ }
+ early_param("fadump_reserve_mem", early_fadump_reserve_mem);
+ 
+-static void register_fw_dump(struct fadump_mem_struct *fdm)
++static int register_fw_dump(struct fadump_mem_struct *fdm)
+ {
+-	int rc;
++	int rc, err;
+ 	unsigned int wait_time;
+ 
+ 	pr_debug("Registering for firmware-assisted kernel dump...\n");
+@@ -379,7 +379,11 @@ static void register_fw_dump(struct fadump_mem_struct *fdm)
+ 
+ 	} while (wait_time);
+ 
++	err = -EIO;
+ 	switch (rc) {
++	default:
++		pr_err("Failed to register. Unknown Error(%d).\n", rc);
++		break;
+ 	case -1:
+ 		printk(KERN_ERR "Failed to register firmware-assisted kernel"
+ 			" dump. Hardware Error(%d).\n", rc);
+@@ -387,18 +391,22 @@ static void register_fw_dump(struct fadump_mem_struct *fdm)
+ 	case -3:
+ 		printk(KERN_ERR "Failed to register firmware-assisted kernel"
+ 			" dump. Parameter Error(%d).\n", rc);
++		err = -EINVAL;
+ 		break;
+ 	case -9:
+ 		printk(KERN_ERR "firmware-assisted kernel dump is already "
+ 			" registered.");
+ 		fw_dump.dump_registered = 1;
++		err = -EEXIST;
+ 		break;
+ 	case 0:
+ 		printk(KERN_INFO "firmware-assisted kernel dump registration"
+ 			" is successful\n");
+ 		fw_dump.dump_registered = 1;
++		err = 0;
+ 		break;
+ 	}
++	return err;
+ }
+ 
+ void crash_fadump(struct pt_regs *regs, const char *str)
+@@ -997,7 +1005,7 @@ static unsigned long init_fadump_header(unsigned long addr)
+ 	return addr;
+ }
+ 
+-static void register_fadump(void)
++static int register_fadump(void)
+ {
+ 	unsigned long addr;
+ 	void *vaddr;
+@@ -1008,7 +1016,7 @@ static void register_fadump(void)
+ 	 * assisted dump.
+ 	 */
+ 	if (!fw_dump.reserve_dump_area_size)
+-		return;
++		return -ENODEV;
+ 
+ 	ret = fadump_setup_crash_memory_ranges();
+ 	if (ret)
+@@ -1023,7 +1031,7 @@ static void register_fadump(void)
+ 	fadump_create_elfcore_headers(vaddr);
+ 
+ 	/* register the future kernel dump with firmware. */
+-	register_fw_dump(&fdm);
++	return register_fw_dump(&fdm);
+ }
+ 
+ static int fadump_unregister_dump(struct fadump_mem_struct *fdm)
+@@ -1208,7 +1216,6 @@ static ssize_t fadump_register_store(struct kobject *kobj,
+ 	switch (buf[0]) {
+ 	case '0':
+ 		if (fw_dump.dump_registered == 0) {
+-			ret = -EINVAL;
+ 			goto unlock_out;
+ 		}
+ 		/* Un-register Firmware-assisted dump */
+@@ -1216,11 +1223,11 @@ static ssize_t fadump_register_store(struct kobject *kobj,
+ 		break;
+ 	case '1':
+ 		if (fw_dump.dump_registered == 1) {
+-			ret = -EINVAL;
++			ret = -EEXIST;
+ 			goto unlock_out;
+ 		}
+ 		/* Register Firmware-assisted dump */
+-		register_fadump();
++		ret = register_fadump();
+ 		break;
+ 	default:
+ 		ret = -EINVAL;
+diff --git a/arch/x86/entry/vdso/vclock_gettime.c b/arch/x86/entry/vdso/vclock_gettime.c
+index 5dd363d54348..049327ee8868 100644
+--- a/arch/x86/entry/vdso/vclock_gettime.c
++++ b/arch/x86/entry/vdso/vclock_gettime.c
+@@ -51,8 +51,9 @@ extern u8 pvclock_page
+ notrace static long vdso_fallback_gettime(long clock, struct timespec *ts)
+ {
+ 	long ret;
+-	asm("syscall" : "=a" (ret) :
+-	    "0" (__NR_clock_gettime), "D" (clock), "S" (ts) : "memory");
++	asm ("syscall" : "=a" (ret), "=m" (*ts) :
++	     "0" (__NR_clock_gettime), "D" (clock), "S" (ts) :
++	     "memory", "rcx", "r11");
+ 	return ret;
+ }
+ 
+@@ -60,8 +61,9 @@ notrace static long vdso_fallback_gtod(struct timeval *tv, struct timezone *tz)
+ {
+ 	long ret;
+ 
+-	asm("syscall" : "=a" (ret) :
+-	    "0" (__NR_gettimeofday), "D" (tv), "S" (tz) : "memory");
++	asm ("syscall" : "=a" (ret), "=m" (*tv), "=m" (*tz) :
++	     "0" (__NR_gettimeofday), "D" (tv), "S" (tz) :
++	     "memory", "rcx", "r11");
+ 	return ret;
+ }
+ 
+@@ -143,13 +145,13 @@ notrace static long vdso_fallback_gettime(long clock, struct timespec *ts)
+ {
+ 	long ret;
+ 
+-	asm(
++	asm (
+ 		"mov %%ebx, %%edx \n"
+-		"mov %2, %%ebx \n"
++		"mov %[clock], %%ebx \n"
+ 		"call __kernel_vsyscall \n"
+ 		"mov %%edx, %%ebx \n"
+-		: "=a" (ret)
+-		: "0" (__NR_clock_gettime), "g" (clock), "c" (ts)
++		: "=a" (ret), "=m" (*ts)
++		: "0" (__NR_clock_gettime), [clock] "g" (clock), "c" (ts)
+ 		: "memory", "edx");
+ 	return ret;
+ }
+@@ -158,13 +160,13 @@ notrace static long vdso_fallback_gtod(struct timeval *tv, struct timezone *tz)
+ {
+ 	long ret;
+ 
+-	asm(
++	asm (
+ 		"mov %%ebx, %%edx \n"
+-		"mov %2, %%ebx \n"
++		"mov %[tv], %%ebx \n"
+ 		"call __kernel_vsyscall \n"
+ 		"mov %%edx, %%ebx \n"
+-		: "=a" (ret)
+-		: "0" (__NR_gettimeofday), "g" (tv), "c" (tz)
++		: "=a" (ret), "=m" (*tv), "=m" (*tz)
++		: "0" (__NR_gettimeofday), [tv] "g" (tv), "c" (tz)
+ 		: "memory", "edx");
+ 	return ret;
+ }
+diff --git a/drivers/infiniband/core/ucma.c b/drivers/infiniband/core/ucma.c
+index 9712a63957e1..7525e9f6949e 100644
+--- a/drivers/infiniband/core/ucma.c
++++ b/drivers/infiniband/core/ucma.c
+@@ -1709,6 +1709,8 @@ static int ucma_close(struct inode *inode, struct file *filp)
+ 		mutex_lock(&mut);
+ 		if (!ctx->closing) {
+ 			mutex_unlock(&mut);
++			ucma_put_ctx(ctx);
++			wait_for_completion(&ctx->comp);
+ 			/* rdma_destroy_id ensures that no event handlers are
+ 			 * inflight for that id before releasing it.
+ 			 */
+diff --git a/drivers/md/dm-cache-target.c b/drivers/md/dm-cache-target.c
+index b59615ddf6ba..531d6f3a786e 100644
+--- a/drivers/md/dm-cache-target.c
++++ b/drivers/md/dm-cache-target.c
+@@ -3391,8 +3391,13 @@ static dm_cblock_t get_cache_dev_size(struct cache *cache)
+ 
+ static bool can_resize(struct cache *cache, dm_cblock_t new_size)
+ {
+-	if (from_cblock(new_size) > from_cblock(cache->cache_size))
+-		return true;
++	if (from_cblock(new_size) > from_cblock(cache->cache_size)) {
++		if (cache->sized) {
++			DMERR("%s: unable to extend cache due to missing cache table reload",
++			      cache_device_name(cache));
++			return false;
++		}
++	}
+ 
+ 	/*
+ 	 * We can't drop a dirty block when shrinking the cache.
+diff --git a/drivers/net/wireless/ath/ath10k/trace.h b/drivers/net/wireless/ath/ath10k/trace.h
+index 71bdb368813d..0194bebbdbf7 100644
+--- a/drivers/net/wireless/ath/ath10k/trace.h
++++ b/drivers/net/wireless/ath/ath10k/trace.h
+@@ -152,10 +152,9 @@ TRACE_EVENT(ath10k_log_dbg_dump,
+ );
+ 
+ TRACE_EVENT(ath10k_wmi_cmd,
+-	TP_PROTO(struct ath10k *ar, int id, const void *buf, size_t buf_len,
+-		 int ret),
++	TP_PROTO(struct ath10k *ar, int id, const void *buf, size_t buf_len),
+ 
+-	TP_ARGS(ar, id, buf, buf_len, ret),
++	TP_ARGS(ar, id, buf, buf_len),
+ 
+ 	TP_STRUCT__entry(
+ 		__string(device, dev_name(ar->dev))
+@@ -163,7 +162,6 @@ TRACE_EVENT(ath10k_wmi_cmd,
+ 		__field(unsigned int, id)
+ 		__field(size_t, buf_len)
+ 		__dynamic_array(u8, buf, buf_len)
+-		__field(int, ret)
+ 	),
+ 
+ 	TP_fast_assign(
+@@ -171,17 +169,15 @@ TRACE_EVENT(ath10k_wmi_cmd,
+ 		__assign_str(driver, dev_driver_string(ar->dev));
+ 		__entry->id = id;
+ 		__entry->buf_len = buf_len;
+-		__entry->ret = ret;
+ 		memcpy(__get_dynamic_array(buf), buf, buf_len);
+ 	),
+ 
+ 	TP_printk(
+-		"%s %s id %d len %zu ret %d",
++		"%s %s id %d len %zu",
+ 		__get_str(driver),
+ 		__get_str(device),
+ 		__entry->id,
+-		__entry->buf_len,
+-		__entry->ret
++		__entry->buf_len
+ 	)
+ );
+ 
+diff --git a/drivers/net/wireless/ath/ath10k/wmi-tlv.c b/drivers/net/wireless/ath/ath10k/wmi-tlv.c
+index c72eb4464de9..c27fff39ddae 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi-tlv.c
++++ b/drivers/net/wireless/ath/ath10k/wmi-tlv.c
+@@ -1459,10 +1459,10 @@ ath10k_wmi_tlv_op_gen_start_scan(struct ath10k *ar,
+ 	bssid_len = arg->n_bssids * sizeof(struct wmi_mac_addr);
+ 	ie_len = roundup(arg->ie_len, 4);
+ 	len = (sizeof(*tlv) + sizeof(*cmd)) +
+-	      (arg->n_channels ? sizeof(*tlv) + chan_len : 0) +
+-	      (arg->n_ssids ? sizeof(*tlv) + ssid_len : 0) +
+-	      (arg->n_bssids ? sizeof(*tlv) + bssid_len : 0) +
+-	      (arg->ie_len ? sizeof(*tlv) + ie_len : 0);
++	      sizeof(*tlv) + chan_len +
++	      sizeof(*tlv) + ssid_len +
++	      sizeof(*tlv) + bssid_len +
++	      sizeof(*tlv) + ie_len;
+ 
+ 	skb = ath10k_wmi_alloc_skb(ar, len);
+ 	if (!skb)
+diff --git a/drivers/net/wireless/ath/ath10k/wmi.c b/drivers/net/wireless/ath/ath10k/wmi.c
+index 7569db0f69b5..5bb1be478954 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi.c
++++ b/drivers/net/wireless/ath/ath10k/wmi.c
+@@ -1642,8 +1642,8 @@ int ath10k_wmi_cmd_send_nowait(struct ath10k *ar, struct sk_buff *skb,
+ 	cmd_hdr->cmd_id = __cpu_to_le32(cmd);
+ 
+ 	memset(skb_cb, 0, sizeof(*skb_cb));
++	trace_ath10k_wmi_cmd(ar, cmd_id, skb->data, skb->len);
+ 	ret = ath10k_htc_send(&ar->htc, ar->wmi.eid, skb);
+-	trace_ath10k_wmi_cmd(ar, cmd_id, skb->data, skb->len, ret);
+ 
+ 	if (ret)
+ 		goto err_pull;
+diff --git a/drivers/of/unittest.c b/drivers/of/unittest.c
+index 2a547ca3d443..2eac3df7dd29 100644
+--- a/drivers/of/unittest.c
++++ b/drivers/of/unittest.c
+@@ -553,6 +553,9 @@ static void __init of_unittest_parse_interrupts(void)
+ 	struct of_phandle_args args;
+ 	int i, rc;
+ 
++	if (of_irq_workarounds & OF_IMAP_OLDWORLD_MAC)
++		return;
++
+ 	np = of_find_node_by_path("/testcase-data/interrupts/interrupts0");
+ 	if (!np) {
+ 		pr_err("missing testcase data\n");
+@@ -627,6 +630,9 @@ static void __init of_unittest_parse_interrupts_extended(void)
+ 	struct of_phandle_args args;
+ 	int i, rc;
+ 
++	if (of_irq_workarounds & OF_IMAP_OLDWORLD_MAC)
++		return;
++
+ 	np = of_find_node_by_path("/testcase-data/interrupts/interrupts-extended0");
+ 	if (!np) {
+ 		pr_err("missing testcase data\n");
+@@ -778,15 +784,19 @@ static void __init of_unittest_platform_populate(void)
+ 	pdev = of_find_device_by_node(np);
+ 	unittest(pdev, "device 1 creation failed\n");
+ 
+-	irq = platform_get_irq(pdev, 0);
+-	unittest(irq == -EPROBE_DEFER, "device deferred probe failed - %d\n", irq);
+-
+-	/* Test that a parsing failure does not return -EPROBE_DEFER */
+-	np = of_find_node_by_path("/testcase-data/testcase-device2");
+-	pdev = of_find_device_by_node(np);
+-	unittest(pdev, "device 2 creation failed\n");
+-	irq = platform_get_irq(pdev, 0);
+-	unittest(irq < 0 && irq != -EPROBE_DEFER, "device parsing error failed - %d\n", irq);
++	if (!(of_irq_workarounds & OF_IMAP_OLDWORLD_MAC)) {
++		irq = platform_get_irq(pdev, 0);
++		unittest(irq == -EPROBE_DEFER,
++			 "device deferred probe failed - %d\n", irq);
++
++		/* Test that a parsing failure does not return -EPROBE_DEFER */
++		np = of_find_node_by_path("/testcase-data/testcase-device2");
++		pdev = of_find_device_by_node(np);
++		unittest(pdev, "device 2 creation failed\n");
++		irq = platform_get_irq(pdev, 0);
++		unittest(irq < 0 && irq != -EPROBE_DEFER,
++			 "device parsing error failed - %d\n", irq);
++	}
+ 
+ 	np = of_find_node_by_path("/testcase-data/platform-tests");
+ 	unittest(np, "No testcase data in device tree\n");
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 295bf1472d02..5073ab023123 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -1064,12 +1064,12 @@ int pci_save_state(struct pci_dev *dev)
+ EXPORT_SYMBOL(pci_save_state);
+ 
+ static void pci_restore_config_dword(struct pci_dev *pdev, int offset,
+-				     u32 saved_val, int retry)
++				     u32 saved_val, int retry, bool force)
+ {
+ 	u32 val;
+ 
+ 	pci_read_config_dword(pdev, offset, &val);
+-	if (val == saved_val)
++	if (!force && val == saved_val)
+ 		return;
+ 
+ 	for (;;) {
+@@ -1088,25 +1088,36 @@ static void pci_restore_config_dword(struct pci_dev *pdev, int offset,
+ }
+ 
+ static void pci_restore_config_space_range(struct pci_dev *pdev,
+-					   int start, int end, int retry)
++					   int start, int end, int retry,
++					   bool force)
+ {
+ 	int index;
+ 
+ 	for (index = end; index >= start; index--)
+ 		pci_restore_config_dword(pdev, 4 * index,
+ 					 pdev->saved_config_space[index],
+-					 retry);
++					 retry, force);
+ }
+ 
+ static void pci_restore_config_space(struct pci_dev *pdev)
+ {
+ 	if (pdev->hdr_type == PCI_HEADER_TYPE_NORMAL) {
+-		pci_restore_config_space_range(pdev, 10, 15, 0);
++		pci_restore_config_space_range(pdev, 10, 15, 0, false);
+ 		/* Restore BARs before the command register. */
+-		pci_restore_config_space_range(pdev, 4, 9, 10);
+-		pci_restore_config_space_range(pdev, 0, 3, 0);
++		pci_restore_config_space_range(pdev, 4, 9, 10, false);
++		pci_restore_config_space_range(pdev, 0, 3, 0, false);
++	} else if (pdev->hdr_type == PCI_HEADER_TYPE_BRIDGE) {
++		pci_restore_config_space_range(pdev, 12, 15, 0, false);
++
++		/*
++		 * Force rewriting of prefetch registers to avoid S3 resume
++		 * issues on Intel PCI bridges that occur when these
++		 * registers are not explicitly written.
++		 */
++		pci_restore_config_space_range(pdev, 9, 11, 0, true);
++		pci_restore_config_space_range(pdev, 0, 8, 0, false);
+ 	} else {
+-		pci_restore_config_space_range(pdev, 0, 15, 0);
++		pci_restore_config_space_range(pdev, 0, 15, 0, false);
+ 	}
+ }
+ 
+diff --git a/drivers/usb/host/xhci-pci.c b/drivers/usb/host/xhci-pci.c
+index cbf3be66f89c..d6e2199bcfe5 100644
+--- a/drivers/usb/host/xhci-pci.c
++++ b/drivers/usb/host/xhci-pci.c
+@@ -174,6 +174,8 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
+ 	}
+ 	if (pdev->vendor == PCI_VENDOR_ID_INTEL &&
+ 	    (pdev->device == PCI_DEVICE_ID_INTEL_CHERRYVIEW_XHCI ||
++	     pdev->device == PCI_DEVICE_ID_INTEL_SUNRISEPOINT_LP_XHCI ||
++	     pdev->device == PCI_DEVICE_ID_INTEL_SUNRISEPOINT_H_XHCI ||
+ 	     pdev->device == PCI_DEVICE_ID_INTEL_APL_XHCI ||
+ 	     pdev->device == PCI_DEVICE_ID_INTEL_DNV_XHCI))
+ 		xhci->quirks |= XHCI_MISSING_CAS;
+diff --git a/drivers/usb/serial/usb-serial-simple.c b/drivers/usb/serial/usb-serial-simple.c
+index 2674da40d9cd..6d6acf2c07c3 100644
+--- a/drivers/usb/serial/usb-serial-simple.c
++++ b/drivers/usb/serial/usb-serial-simple.c
+@@ -87,7 +87,8 @@ DEVICE(moto_modem, MOTO_IDS);
+ 
+ /* Motorola Tetra driver */
+ #define MOTOROLA_TETRA_IDS()			\
+-	{ USB_DEVICE(0x0cad, 0x9011) }	/* Motorola Solutions TETRA PEI */
++	{ USB_DEVICE(0x0cad, 0x9011) },	/* Motorola Solutions TETRA PEI */ \
++	{ USB_DEVICE(0x0cad, 0x9012) }	/* MTP6550 */
+ DEVICE(motorola_tetra, MOTOROLA_TETRA_IDS);
+ 
+ /* Novatel Wireless GPS driver */
+diff --git a/drivers/video/fbdev/omap2/omapfb/omapfb-ioctl.c b/drivers/video/fbdev/omap2/omapfb/omapfb-ioctl.c
+index 9ddfdd63b84c..34ab4f950f0a 100644
+--- a/drivers/video/fbdev/omap2/omapfb/omapfb-ioctl.c
++++ b/drivers/video/fbdev/omap2/omapfb/omapfb-ioctl.c
+@@ -496,6 +496,9 @@ static int omapfb_memory_read(struct fb_info *fbi,
+ 	if (!access_ok(VERIFY_WRITE, mr->buffer, mr->buffer_size))
+ 		return -EFAULT;
+ 
++	if (mr->w > 4096 || mr->h > 4096)
++		return -EINVAL;
++
+ 	if (mr->w * mr->h * 3 > mr->buffer_size)
+ 		return -EINVAL;
+ 
+@@ -509,7 +512,7 @@ static int omapfb_memory_read(struct fb_info *fbi,
+ 			mr->x, mr->y, mr->w, mr->h);
+ 
+ 	if (r > 0) {
+-		if (copy_to_user(mr->buffer, buf, mr->buffer_size))
++		if (copy_to_user(mr->buffer, buf, r))
+ 			r = -EFAULT;
+ 	}
+ 
+diff --git a/fs/ext4/xattr.c b/fs/ext4/xattr.c
+index b51bb73b06a6..d0aaf338fa9f 100644
+--- a/fs/ext4/xattr.c
++++ b/fs/ext4/xattr.c
+@@ -220,12 +220,12 @@ ext4_xattr_check_block(struct inode *inode, struct buffer_head *bh)
+ {
+ 	int error;
+ 
+-	if (buffer_verified(bh))
+-		return 0;
+-
+ 	if (BHDR(bh)->h_magic != cpu_to_le32(EXT4_XATTR_MAGIC) ||
+ 	    BHDR(bh)->h_blocks != cpu_to_le32(1))
+ 		return -EFSCORRUPTED;
++	if (buffer_verified(bh))
++		return 0;
++
+ 	if (!ext4_xattr_block_csum_verify(inode, bh->b_blocknr, BHDR(bh)))
+ 		return -EFSBADCRC;
+ 	error = ext4_xattr_check_names(BFIRST(bh), bh->b_data + bh->b_size,
+diff --git a/fs/ubifs/super.c b/fs/ubifs/super.c
+index 0bb6de356451..7968b7a5e787 100644
+--- a/fs/ubifs/super.c
++++ b/fs/ubifs/super.c
+@@ -1918,6 +1918,9 @@ static struct ubi_volume_desc *open_ubi(const char *name, int mode)
+ 	int dev, vol;
+ 	char *endptr;
+ 
++	if (!name || !*name)
++		return ERR_PTR(-EINVAL);
++
+ 	/* First, try to open using the device node path method */
+ 	ubi = ubi_open_volume_path(name, mode);
+ 	if (!IS_ERR(ubi))
+diff --git a/include/linux/netfilter_bridge/ebtables.h b/include/linux/netfilter_bridge/ebtables.h
+index 2ea517c7c6b9..bffd096fae3b 100644
+--- a/include/linux/netfilter_bridge/ebtables.h
++++ b/include/linux/netfilter_bridge/ebtables.h
+@@ -125,4 +125,9 @@ extern unsigned int ebt_do_table(struct sk_buff *skb,
+ /* True if the target is not a standard target */
+ #define INVALID_TARGET (info->target < -NUM_STANDARD_TARGETS || info->target >= 0)
+ 
++static inline bool ebt_invalid_target(int target)
++{
++	return (target < -NUM_STANDARD_TARGETS || target >= 0);
++}
++
+ #endif
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index c28bd8be290a..a490dd718654 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -2273,6 +2273,8 @@ static inline void __skb_queue_purge(struct sk_buff_head *list)
+ 		kfree_skb(skb);
+ }
+ 
++void skb_rbtree_purge(struct rb_root *root);
++
+ void *netdev_alloc_frag(unsigned int fragsz);
+ 
+ struct sk_buff *__netdev_alloc_skb(struct net_device *dev, unsigned int length,
+@@ -2807,6 +2809,12 @@ static inline int pskb_trim_rcsum(struct sk_buff *skb, unsigned int len)
+ 	return __pskb_trim(skb, len);
+ }
+ 
++#define rb_to_skb(rb) rb_entry_safe(rb, struct sk_buff, rbnode)
++#define skb_rb_first(root) rb_to_skb(rb_first(root))
++#define skb_rb_last(root)  rb_to_skb(rb_last(root))
++#define skb_rb_next(skb)   rb_to_skb(rb_next(&(skb)->rbnode))
++#define skb_rb_prev(skb)   rb_to_skb(rb_prev(&(skb)->rbnode))
++
+ #define skb_queue_walk(queue, skb) \
+ 		for (skb = (queue)->next;					\
+ 		     skb != (struct sk_buff *)(queue);				\
+diff --git a/include/linux/tcp.h b/include/linux/tcp.h
+index 5b6df1a8dc74..747404dbe506 100644
+--- a/include/linux/tcp.h
++++ b/include/linux/tcp.h
+@@ -279,10 +279,9 @@ struct tcp_sock {
+ 	struct sk_buff* lost_skb_hint;
+ 	struct sk_buff *retransmit_skb_hint;
+ 
+-	/* OOO segments go in this list. Note that socket lock must be held,
+-	 * as we do not use sk_buff_head lock.
+-	 */
+-	struct sk_buff_head	out_of_order_queue;
++	/* OOO segments go in this rbtree. Socket lock must be held. */
++	struct rb_root	out_of_order_queue;
++	struct sk_buff	*ooo_last_skb; /* cache rb_last(out_of_order_queue) */
+ 
+ 	/* SACKs data, these 2 need to be together (see tcp_options_write) */
+ 	struct tcp_sack_block duplicate_sack[1]; /* D-SACK block */
+diff --git a/include/net/sock.h b/include/net/sock.h
+index 3d5ff7436f41..577075713ad5 100644
+--- a/include/net/sock.h
++++ b/include/net/sock.h
+@@ -2139,6 +2139,13 @@ sock_skb_set_dropcount(const struct sock *sk, struct sk_buff *skb)
+ 	SOCK_SKB_CB(skb)->dropcount = atomic_read(&sk->sk_drops);
+ }
+ 
++static inline void sk_drops_add(struct sock *sk, const struct sk_buff *skb)
++{
++	int segs = max_t(u16, 1, skb_shinfo(skb)->gso_segs);
++
++	atomic_add(segs, &sk->sk_drops);
++}
++
+ void __sock_recv_timestamp(struct msghdr *msg, struct sock *sk,
+ 			   struct sk_buff *skb);
+ void __sock_recv_wifi_status(struct msghdr *msg, struct sock *sk,
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 6c89238f192e..a99f75ef6a73 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -649,7 +649,7 @@ static inline void tcp_fast_path_check(struct sock *sk)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 
+-	if (skb_queue_empty(&tp->out_of_order_queue) &&
++	if (RB_EMPTY_ROOT(&tp->out_of_order_queue) &&
+ 	    tp->rcv_wnd &&
+ 	    atomic_read(&sk->sk_rmem_alloc) < sk->sk_rcvbuf &&
+ 	    !tp->urg_data)
+diff --git a/kernel/cgroup.c b/kernel/cgroup.c
+index 4cb94b678e9f..5299618d6308 100644
+--- a/kernel/cgroup.c
++++ b/kernel/cgroup.c
+@@ -4083,7 +4083,11 @@ int cgroup_transfer_tasks(struct cgroup *to, struct cgroup *from)
+ 	 */
+ 	do {
+ 		css_task_iter_start(&from->self, &it);
+-		task = css_task_iter_next(&it);
++
++		do {
++			task = css_task_iter_next(&it);
++		} while (task && (task->flags & PF_EXITING));
++
+ 		if (task)
+ 			get_task_struct(task);
+ 		css_task_iter_end(&it);
+diff --git a/mm/vmstat.c b/mm/vmstat.c
+index 5712cdaae964..8895eff2d735 100644
+--- a/mm/vmstat.c
++++ b/mm/vmstat.c
+@@ -858,6 +858,9 @@ const char * const vmstat_text[] = {
+ #ifdef CONFIG_SMP
+ 	"nr_tlb_remote_flush",
+ 	"nr_tlb_remote_flush_received",
++#else
++	"", /* nr_tlb_remote_flush */
++	"", /* nr_tlb_remote_flush_received */
+ #endif /* CONFIG_SMP */
+ 	"nr_tlb_local_flush_all",
+ 	"nr_tlb_local_flush_one",
+diff --git a/net/bridge/netfilter/ebt_arpreply.c b/net/bridge/netfilter/ebt_arpreply.c
+index 070cf134a22f..f2660c1b29e4 100644
+--- a/net/bridge/netfilter/ebt_arpreply.c
++++ b/net/bridge/netfilter/ebt_arpreply.c
+@@ -67,6 +67,9 @@ static int ebt_arpreply_tg_check(const struct xt_tgchk_param *par)
+ 	if (e->ethproto != htons(ETH_P_ARP) ||
+ 	    e->invflags & EBT_IPROTO)
+ 		return -EINVAL;
++	if (ebt_invalid_target(info->target))
++		return -EINVAL;
++
+ 	return 0;
+ }
+ 
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 55be076706e5..9703924ed071 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -2377,6 +2377,25 @@ void skb_queue_purge(struct sk_buff_head *list)
+ }
+ EXPORT_SYMBOL(skb_queue_purge);
+ 
++/**
++ *	skb_rbtree_purge - empty a skb rbtree
++ *	@root: root of the rbtree to empty
++ *
++ *	Delete all buffers on an &sk_buff rbtree. Each buffer is removed from
++ *	the list and one reference dropped. This function does not take
++ *	any lock. Synchronization should be handled by the caller (e.g., TCP
++ *	out-of-order queue is protected by the socket lock).
++ */
++void skb_rbtree_purge(struct rb_root *root)
++{
++	struct sk_buff *skb, *next;
++
++	rbtree_postorder_for_each_entry_safe(skb, next, root, rbnode)
++		kfree_skb(skb);
++
++	*root = RB_ROOT;
++}
++
+ /**
+  *	skb_queue_head - queue a buffer at the list head
+  *	@list: list to use
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index 5e162b8ab184..b7492aabe710 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -382,7 +382,7 @@ void tcp_init_sock(struct sock *sk)
+ 	struct inet_connection_sock *icsk = inet_csk(sk);
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 
+-	__skb_queue_head_init(&tp->out_of_order_queue);
++	tp->out_of_order_queue = RB_ROOT;
+ 	tcp_init_xmit_timers(sk);
+ 	tcp_prequeue_init(tp);
+ 	INIT_LIST_HEAD(&tp->tsq_node);
+@@ -2240,7 +2240,7 @@ int tcp_disconnect(struct sock *sk, int flags)
+ 	tcp_clear_xmit_timers(sk);
+ 	__skb_queue_purge(&sk->sk_receive_queue);
+ 	tcp_write_queue_purge(sk);
+-	__skb_queue_purge(&tp->out_of_order_queue);
++	skb_rbtree_purge(&tp->out_of_order_queue);
+ 
+ 	inet->inet_dport = 0;
+ 
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index 9c4c6cd0316e..1aff93d76f24 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -4073,7 +4073,7 @@ static void tcp_fin(struct sock *sk)
+ 	/* It _is_ possible, that we have something out-of-order _after_ FIN.
+ 	 * Probably, we should reset in this case. For now drop them.
+ 	 */
+-	__skb_queue_purge(&tp->out_of_order_queue);
++	skb_rbtree_purge(&tp->out_of_order_queue);
+ 	if (tcp_is_sack(tp))
+ 		tcp_sack_reset(&tp->rx_opt);
+ 	sk_mem_reclaim(sk);
+@@ -4233,7 +4233,7 @@ static void tcp_sack_remove(struct tcp_sock *tp)
+ 	int this_sack;
+ 
+ 	/* Empty ofo queue, hence, all the SACKs are eaten. Clear. */
+-	if (skb_queue_empty(&tp->out_of_order_queue)) {
++	if (RB_EMPTY_ROOT(&tp->out_of_order_queue)) {
+ 		tp->rx_opt.num_sacks = 0;
+ 		return;
+ 	}
+@@ -4296,6 +4296,29 @@ static bool tcp_try_coalesce(struct sock *sk,
+ 	return true;
+ }
+ 
++static bool tcp_ooo_try_coalesce(struct sock *sk,
++			     struct sk_buff *to,
++			     struct sk_buff *from,
++			     bool *fragstolen)
++{
++	bool res = tcp_try_coalesce(sk, to, from, fragstolen);
++
++	/* In case tcp_drop() is called later, update to->gso_segs */
++	if (res) {
++		u32 gso_segs = max_t(u16, 1, skb_shinfo(to)->gso_segs) +
++			       max_t(u16, 1, skb_shinfo(from)->gso_segs);
++
++		skb_shinfo(to)->gso_segs = min_t(u32, gso_segs, 0xFFFF);
++	}
++	return res;
++}
++
++static void tcp_drop(struct sock *sk, struct sk_buff *skb)
++{
++	sk_drops_add(sk, skb);
++	__kfree_skb(skb);
++}
++
+ /* This one checks to see if we can put data from the
+  * out_of_order queue into the receive_queue.
+  */
+@@ -4303,10 +4326,13 @@ static void tcp_ofo_queue(struct sock *sk)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	__u32 dsack_high = tp->rcv_nxt;
++	bool fin, fragstolen, eaten;
+ 	struct sk_buff *skb, *tail;
+-	bool fragstolen, eaten;
++	struct rb_node *p;
+ 
+-	while ((skb = skb_peek(&tp->out_of_order_queue)) != NULL) {
++	p = rb_first(&tp->out_of_order_queue);
++	while (p) {
++		skb = rb_entry(p, struct sk_buff, rbnode);
+ 		if (after(TCP_SKB_CB(skb)->seq, tp->rcv_nxt))
+ 			break;
+ 
+@@ -4316,11 +4342,12 @@ static void tcp_ofo_queue(struct sock *sk)
+ 				dsack_high = TCP_SKB_CB(skb)->end_seq;
+ 			tcp_dsack_extend(sk, TCP_SKB_CB(skb)->seq, dsack);
+ 		}
++		p = rb_next(p);
++		rb_erase(&skb->rbnode, &tp->out_of_order_queue);
+ 
+-		__skb_unlink(skb, &tp->out_of_order_queue);
+-		if (!after(TCP_SKB_CB(skb)->end_seq, tp->rcv_nxt)) {
++		if (unlikely(!after(TCP_SKB_CB(skb)->end_seq, tp->rcv_nxt))) {
+ 			SOCK_DEBUG(sk, "ofo packet was already received\n");
+-			__kfree_skb(skb);
++			tcp_drop(sk, skb);
+ 			continue;
+ 		}
+ 		SOCK_DEBUG(sk, "ofo requeuing : rcv_next %X seq %X - %X\n",
+@@ -4330,12 +4357,19 @@ static void tcp_ofo_queue(struct sock *sk)
+ 		tail = skb_peek_tail(&sk->sk_receive_queue);
+ 		eaten = tail && tcp_try_coalesce(sk, tail, skb, &fragstolen);
+ 		tcp_rcv_nxt_update(tp, TCP_SKB_CB(skb)->end_seq);
++		fin = TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN;
+ 		if (!eaten)
+ 			__skb_queue_tail(&sk->sk_receive_queue, skb);
+-		if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN)
+-			tcp_fin(sk);
+-		if (eaten)
++		else
+ 			kfree_skb_partial(skb, fragstolen);
++
++		if (unlikely(fin)) {
++			tcp_fin(sk);
++			/* tcp_fin() purges tp->out_of_order_queue,
++			 * so we must end this loop right now.
++			 */
++			break;
++		}
+ 	}
+ }
+ 
+@@ -4365,14 +4399,16 @@ static int tcp_try_rmem_schedule(struct sock *sk, struct sk_buff *skb,
+ static void tcp_data_queue_ofo(struct sock *sk, struct sk_buff *skb)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
++	struct rb_node **p, *q, *parent;
+ 	struct sk_buff *skb1;
+ 	u32 seq, end_seq;
++	bool fragstolen;
+ 
+ 	tcp_ecn_check_ce(sk, skb);
+ 
+ 	if (unlikely(tcp_try_rmem_schedule(sk, skb, skb->truesize))) {
+ 		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPOFODROP);
+-		__kfree_skb(skb);
++		tcp_drop(sk, skb);
+ 		return;
+ 	}
+ 
+@@ -4381,89 +4417,89 @@ static void tcp_data_queue_ofo(struct sock *sk, struct sk_buff *skb)
+ 	inet_csk_schedule_ack(sk);
+ 
+ 	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPOFOQUEUE);
++	seq = TCP_SKB_CB(skb)->seq;
++	end_seq = TCP_SKB_CB(skb)->end_seq;
+ 	SOCK_DEBUG(sk, "out of order segment: rcv_next %X seq %X - %X\n",
+-		   tp->rcv_nxt, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq);
++		   tp->rcv_nxt, seq, end_seq);
+ 
+-	skb1 = skb_peek_tail(&tp->out_of_order_queue);
+-	if (!skb1) {
++	p = &tp->out_of_order_queue.rb_node;
++	if (RB_EMPTY_ROOT(&tp->out_of_order_queue)) {
+ 		/* Initial out of order segment, build 1 SACK. */
+ 		if (tcp_is_sack(tp)) {
+ 			tp->rx_opt.num_sacks = 1;
+-			tp->selective_acks[0].start_seq = TCP_SKB_CB(skb)->seq;
+-			tp->selective_acks[0].end_seq =
+-						TCP_SKB_CB(skb)->end_seq;
+-		}
+-		__skb_queue_head(&tp->out_of_order_queue, skb);
+-		goto end;
+-	}
+-
+-	seq = TCP_SKB_CB(skb)->seq;
+-	end_seq = TCP_SKB_CB(skb)->end_seq;
+-
+-	if (seq == TCP_SKB_CB(skb1)->end_seq) {
+-		bool fragstolen;
+-
+-		if (!tcp_try_coalesce(sk, skb1, skb, &fragstolen)) {
+-			__skb_queue_after(&tp->out_of_order_queue, skb1, skb);
+-		} else {
+-			tcp_grow_window(sk, skb);
+-			kfree_skb_partial(skb, fragstolen);
+-			skb = NULL;
++			tp->selective_acks[0].start_seq = seq;
++			tp->selective_acks[0].end_seq = end_seq;
+ 		}
+-
+-		if (!tp->rx_opt.num_sacks ||
+-		    tp->selective_acks[0].end_seq != seq)
+-			goto add_sack;
+-
+-		/* Common case: data arrive in order after hole. */
+-		tp->selective_acks[0].end_seq = end_seq;
++		rb_link_node(&skb->rbnode, NULL, p);
++		rb_insert_color(&skb->rbnode, &tp->out_of_order_queue);
++		tp->ooo_last_skb = skb;
+ 		goto end;
+ 	}
+ 
+-	/* Find place to insert this segment. */
+-	while (1) {
+-		if (!after(TCP_SKB_CB(skb1)->seq, seq))
+-			break;
+-		if (skb_queue_is_first(&tp->out_of_order_queue, skb1)) {
+-			skb1 = NULL;
+-			break;
++	/* In the typical case, we are adding an skb to the end of the list.
++	 * Use of ooo_last_skb avoids the O(Log(N)) rbtree lookup.
++	 */
++	if (tcp_ooo_try_coalesce(sk, tp->ooo_last_skb,
++				 skb, &fragstolen)) {
++coalesce_done:
++		tcp_grow_window(sk, skb);
++		kfree_skb_partial(skb, fragstolen);
++		skb = NULL;
++		goto add_sack;
++	}
++
++	/* Find place to insert this segment. Handle overlaps on the way. */
++	parent = NULL;
++	while (*p) {
++		parent = *p;
++		skb1 = rb_entry(parent, struct sk_buff, rbnode);
++		if (before(seq, TCP_SKB_CB(skb1)->seq)) {
++			p = &parent->rb_left;
++			continue;
+ 		}
+-		skb1 = skb_queue_prev(&tp->out_of_order_queue, skb1);
+-	}
+ 
+-	/* Do skb overlap to previous one? */
+-	if (skb1 && before(seq, TCP_SKB_CB(skb1)->end_seq)) {
+-		if (!after(end_seq, TCP_SKB_CB(skb1)->end_seq)) {
+-			/* All the bits are present. Drop. */
+-			NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPOFOMERGE);
+-			__kfree_skb(skb);
+-			skb = NULL;
+-			tcp_dsack_set(sk, seq, end_seq);
+-			goto add_sack;
+-		}
+-		if (after(seq, TCP_SKB_CB(skb1)->seq)) {
+-			/* Partial overlap. */
+-			tcp_dsack_set(sk, seq,
+-				      TCP_SKB_CB(skb1)->end_seq);
+-		} else {
+-			if (skb_queue_is_first(&tp->out_of_order_queue,
+-					       skb1))
+-				skb1 = NULL;
+-			else
+-				skb1 = skb_queue_prev(
+-					&tp->out_of_order_queue,
+-					skb1);
++		if (before(seq, TCP_SKB_CB(skb1)->end_seq)) {
++			if (!after(end_seq, TCP_SKB_CB(skb1)->end_seq)) {
++				/* All the bits are present. Drop. */
++				NET_INC_STATS(sock_net(sk),
++					      LINUX_MIB_TCPOFOMERGE);
++				tcp_drop(sk, skb);
++				skb = NULL;
++				tcp_dsack_set(sk, seq, end_seq);
++				goto add_sack;
++			}
++			if (after(seq, TCP_SKB_CB(skb1)->seq)) {
++				/* Partial overlap. */
++				tcp_dsack_set(sk, seq, TCP_SKB_CB(skb1)->end_seq);
++			} else {
++				/* skb's seq == skb1's seq and skb covers skb1.
++				 * Replace skb1 with skb.
++				 */
++				rb_replace_node(&skb1->rbnode, &skb->rbnode,
++						&tp->out_of_order_queue);
++				tcp_dsack_extend(sk,
++						 TCP_SKB_CB(skb1)->seq,
++						 TCP_SKB_CB(skb1)->end_seq);
++				NET_INC_STATS(sock_net(sk),
++					      LINUX_MIB_TCPOFOMERGE);
++				tcp_drop(sk, skb1);
++				goto merge_right;
++			}
++		} else if (tcp_ooo_try_coalesce(sk, skb1,
++						skb, &fragstolen)) {
++			goto coalesce_done;
+ 		}
++		p = &parent->rb_right;
+ 	}
+-	if (!skb1)
+-		__skb_queue_head(&tp->out_of_order_queue, skb);
+-	else
+-		__skb_queue_after(&tp->out_of_order_queue, skb1, skb);
+ 
+-	/* And clean segments covered by new one as whole. */
+-	while (!skb_queue_is_last(&tp->out_of_order_queue, skb)) {
+-		skb1 = skb_queue_next(&tp->out_of_order_queue, skb);
++	/* Insert segment into RB tree. */
++	rb_link_node(&skb->rbnode, parent, p);
++	rb_insert_color(&skb->rbnode, &tp->out_of_order_queue);
+ 
++merge_right:
++	/* Remove other segments covered by skb. */
++	while ((q = rb_next(&skb->rbnode)) != NULL) {
++		skb1 = rb_entry(q, struct sk_buff, rbnode);
+ 		if (!after(end_seq, TCP_SKB_CB(skb1)->seq))
+ 			break;
+ 		if (before(end_seq, TCP_SKB_CB(skb1)->end_seq)) {
+@@ -4471,12 +4507,15 @@ static void tcp_data_queue_ofo(struct sock *sk, struct sk_buff *skb)
+ 					 end_seq);
+ 			break;
+ 		}
+-		__skb_unlink(skb1, &tp->out_of_order_queue);
++		rb_erase(&skb1->rbnode, &tp->out_of_order_queue);
+ 		tcp_dsack_extend(sk, TCP_SKB_CB(skb1)->seq,
+ 				 TCP_SKB_CB(skb1)->end_seq);
+ 		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPOFOMERGE);
+-		__kfree_skb(skb1);
++		tcp_drop(sk, skb1);
+ 	}
++	/* If there is no skb after us, we are the last_skb ! */
++	if (!q)
++		tp->ooo_last_skb = skb;
+ 
+ add_sack:
+ 	if (tcp_is_sack(tp))
+@@ -4558,12 +4597,13 @@ err:
+ static void tcp_data_queue(struct sock *sk, struct sk_buff *skb)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+-	int eaten = -1;
+ 	bool fragstolen = false;
++	int eaten = -1;
+ 
+-	if (TCP_SKB_CB(skb)->seq == TCP_SKB_CB(skb)->end_seq)
+-		goto drop;
+-
++	if (TCP_SKB_CB(skb)->seq == TCP_SKB_CB(skb)->end_seq) {
++		__kfree_skb(skb);
++		return;
++	}
+ 	skb_dst_drop(skb);
+ 	__skb_pull(skb, tcp_hdr(skb)->doff * 4);
+ 
+@@ -4614,13 +4654,13 @@ queue_and_out:
+ 		if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN)
+ 			tcp_fin(sk);
+ 
+-		if (!skb_queue_empty(&tp->out_of_order_queue)) {
++		if (!RB_EMPTY_ROOT(&tp->out_of_order_queue)) {
+ 			tcp_ofo_queue(sk);
+ 
+ 			/* RFC2581. 4.2. SHOULD send immediate ACK, when
+ 			 * gap in queue is filled.
+ 			 */
+-			if (skb_queue_empty(&tp->out_of_order_queue))
++			if (RB_EMPTY_ROOT(&tp->out_of_order_queue))
+ 				inet_csk(sk)->icsk_ack.pingpong = 0;
+ 		}
+ 
+@@ -4645,7 +4685,7 @@ out_of_window:
+ 		tcp_enter_quickack_mode(sk, TCP_MAX_QUICKACKS);
+ 		inet_csk_schedule_ack(sk);
+ drop:
+-		__kfree_skb(skb);
++		tcp_drop(sk, skb);
+ 		return;
+ 	}
+ 
+@@ -4672,48 +4712,76 @@ drop:
+ 	tcp_data_queue_ofo(sk, skb);
+ }
+ 
++static struct sk_buff *tcp_skb_next(struct sk_buff *skb, struct sk_buff_head *list)
++{
++	if (list)
++		return !skb_queue_is_last(list, skb) ? skb->next : NULL;
++
++	return rb_entry_safe(rb_next(&skb->rbnode), struct sk_buff, rbnode);
++}
++
+ static struct sk_buff *tcp_collapse_one(struct sock *sk, struct sk_buff *skb,
+-					struct sk_buff_head *list)
++					struct sk_buff_head *list,
++					struct rb_root *root)
+ {
+-	struct sk_buff *next = NULL;
++	struct sk_buff *next = tcp_skb_next(skb, list);
+ 
+-	if (!skb_queue_is_last(list, skb))
+-		next = skb_queue_next(list, skb);
++	if (list)
++		__skb_unlink(skb, list);
++	else
++		rb_erase(&skb->rbnode, root);
+ 
+-	__skb_unlink(skb, list);
+ 	__kfree_skb(skb);
+ 	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPRCVCOLLAPSED);
+ 
+ 	return next;
+ }
+ 
++/* Insert skb into rb tree, ordered by TCP_SKB_CB(skb)->seq */
++static void tcp_rbtree_insert(struct rb_root *root, struct sk_buff *skb)
++{
++	struct rb_node **p = &root->rb_node;
++	struct rb_node *parent = NULL;
++	struct sk_buff *skb1;
++
++	while (*p) {
++		parent = *p;
++		skb1 = rb_entry(parent, struct sk_buff, rbnode);
++		if (before(TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb1)->seq))
++			p = &parent->rb_left;
++		else
++			p = &parent->rb_right;
++	}
++	rb_link_node(&skb->rbnode, parent, p);
++	rb_insert_color(&skb->rbnode, root);
++}
++
+ /* Collapse contiguous sequence of skbs head..tail with
+  * sequence numbers start..end.
+  *
+- * If tail is NULL, this means until the end of the list.
++ * If tail is NULL, this means until the end of the queue.
+  *
+  * Segments with FIN/SYN are not collapsed (only because this
+  * simplifies code)
+  */
+ static void
+-tcp_collapse(struct sock *sk, struct sk_buff_head *list,
+-	     struct sk_buff *head, struct sk_buff *tail,
+-	     u32 start, u32 end)
++tcp_collapse(struct sock *sk, struct sk_buff_head *list, struct rb_root *root,
++	     struct sk_buff *head, struct sk_buff *tail, u32 start, u32 end)
+ {
+-	struct sk_buff *skb, *n;
++	struct sk_buff *skb = head, *n;
++	struct sk_buff_head tmp;
+ 	bool end_of_skbs;
+ 
+ 	/* First, check that queue is collapsible and find
+-	 * the point where collapsing can be useful. */
+-	skb = head;
++	 * the point where collapsing can be useful.
++	 */
+ restart:
+-	end_of_skbs = true;
+-	skb_queue_walk_from_safe(list, skb, n) {
+-		if (skb == tail)
+-			break;
++	for (end_of_skbs = true; skb != NULL && skb != tail; skb = n) {
++		n = tcp_skb_next(skb, list);
++
+ 		/* No new bits? It is possible on ofo queue. */
+ 		if (!before(start, TCP_SKB_CB(skb)->end_seq)) {
+-			skb = tcp_collapse_one(sk, skb, list);
++			skb = tcp_collapse_one(sk, skb, list, root);
+ 			if (!skb)
+ 				break;
+ 			goto restart;
+@@ -4731,13 +4799,10 @@ restart:
+ 			break;
+ 		}
+ 
+-		if (!skb_queue_is_last(list, skb)) {
+-			struct sk_buff *next = skb_queue_next(list, skb);
+-			if (next != tail &&
+-			    TCP_SKB_CB(skb)->end_seq != TCP_SKB_CB(next)->seq) {
+-				end_of_skbs = false;
+-				break;
+-			}
++		if (n && n != tail &&
++		    TCP_SKB_CB(skb)->end_seq != TCP_SKB_CB(n)->seq) {
++			end_of_skbs = false;
++			break;
+ 		}
+ 
+ 		/* Decided to skip this, advance start seq. */
+@@ -4747,17 +4812,22 @@ restart:
+ 	    (TCP_SKB_CB(skb)->tcp_flags & (TCPHDR_SYN | TCPHDR_FIN)))
+ 		return;
+ 
++	__skb_queue_head_init(&tmp);
++
+ 	while (before(start, end)) {
+ 		int copy = min_t(int, SKB_MAX_ORDER(0, 0), end - start);
+ 		struct sk_buff *nskb;
+ 
+ 		nskb = alloc_skb(copy, GFP_ATOMIC);
+ 		if (!nskb)
+-			return;
++			break;
+ 
+ 		memcpy(nskb->cb, skb->cb, sizeof(skb->cb));
+ 		TCP_SKB_CB(nskb)->seq = TCP_SKB_CB(nskb)->end_seq = start;
+-		__skb_queue_before(list, skb, nskb);
++		if (list)
++			__skb_queue_before(list, skb, nskb);
++		else
++			__skb_queue_tail(&tmp, nskb); /* defer rbtree insertion */
+ 		skb_set_owner_r(nskb, sk);
+ 
+ 		/* Copy data, releasing collapsed skbs. */
+@@ -4775,14 +4845,17 @@ restart:
+ 				start += size;
+ 			}
+ 			if (!before(start, TCP_SKB_CB(skb)->end_seq)) {
+-				skb = tcp_collapse_one(sk, skb, list);
++				skb = tcp_collapse_one(sk, skb, list, root);
+ 				if (!skb ||
+ 				    skb == tail ||
+ 				    (TCP_SKB_CB(skb)->tcp_flags & (TCPHDR_SYN | TCPHDR_FIN)))
+-					return;
++					goto end;
+ 			}
+ 		}
+ 	}
++end:
++	skb_queue_walk_safe(&tmp, skb, n)
++		tcp_rbtree_insert(root, skb);
+ }
+ 
+ /* Collapse ofo queue. Algorithm: select contiguous sequence of skbs
+@@ -4792,34 +4865,39 @@ static void tcp_collapse_ofo_queue(struct sock *sk)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	u32 range_truesize, sum_tiny = 0;
+-	struct sk_buff *skb = skb_peek(&tp->out_of_order_queue);
+-	struct sk_buff *head;
++	struct sk_buff *skb, *head;
++	struct rb_node *p;
+ 	u32 start, end;
+ 
+-	if (!skb)
++	p = rb_first(&tp->out_of_order_queue);
++	skb = rb_entry_safe(p, struct sk_buff, rbnode);
++new_range:
++	if (!skb) {
++		p = rb_last(&tp->out_of_order_queue);
++		/* Note: This is possible p is NULL here. We do not
++		 * use rb_entry_safe(), as ooo_last_skb is valid only
++		 * if rbtree is not empty.
++		 */
++		tp->ooo_last_skb = rb_entry(p, struct sk_buff, rbnode);
+ 		return;
+-
++	}
+ 	start = TCP_SKB_CB(skb)->seq;
+ 	end = TCP_SKB_CB(skb)->end_seq;
+ 	range_truesize = skb->truesize;
+-	head = skb;
+ 
+-	for (;;) {
+-		struct sk_buff *next = NULL;
++	for (head = skb;;) {
++		skb = tcp_skb_next(skb, NULL);
+ 
+-		if (!skb_queue_is_last(&tp->out_of_order_queue, skb))
+-			next = skb_queue_next(&tp->out_of_order_queue, skb);
+-		skb = next;
+-
+-		/* Segment is terminated when we see gap or when
+-		 * we are at the end of all the queue. */
++		/* Range is terminated when we see a gap or when
++		 * we are at the queue end.
++		 */
+ 		if (!skb ||
+ 		    after(TCP_SKB_CB(skb)->seq, end) ||
+ 		    before(TCP_SKB_CB(skb)->end_seq, start)) {
+ 			/* Do not attempt collapsing tiny skbs */
+ 			if (range_truesize != head->truesize ||
+ 			    end - start >= SKB_WITH_OVERHEAD(SK_MEM_QUANTUM)) {
+-				tcp_collapse(sk, &tp->out_of_order_queue,
++				tcp_collapse(sk, NULL, &tp->out_of_order_queue,
+ 					     head, skb, start, end);
+ 			} else {
+ 				sum_tiny += range_truesize;
+@@ -4827,47 +4905,60 @@ static void tcp_collapse_ofo_queue(struct sock *sk)
+ 					return;
+ 			}
+ 
+-			head = skb;
+-			if (!skb)
+-				break;
+-			/* Start new segment */
++			goto new_range;
++		}
++
++		range_truesize += skb->truesize;
++		if (unlikely(before(TCP_SKB_CB(skb)->seq, start)))
+ 			start = TCP_SKB_CB(skb)->seq;
++		if (after(TCP_SKB_CB(skb)->end_seq, end))
+ 			end = TCP_SKB_CB(skb)->end_seq;
+-			range_truesize = skb->truesize;
+-		} else {
+-			range_truesize += skb->truesize;
+-			if (before(TCP_SKB_CB(skb)->seq, start))
+-				start = TCP_SKB_CB(skb)->seq;
+-			if (after(TCP_SKB_CB(skb)->end_seq, end))
+-				end = TCP_SKB_CB(skb)->end_seq;
+-		}
+ 	}
+ }
+ 
+ /*
+  * Purge the out-of-order queue.
++ * Drop at least 12.5 % of sk_rcvbuf to avoid malicious attacks.
+  * Return true if queue was pruned.
+  */
+ static bool tcp_prune_ofo_queue(struct sock *sk)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+-	bool res = false;
++	struct rb_node *node, *prev;
++	int goal;
+ 
+-	if (!skb_queue_empty(&tp->out_of_order_queue)) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_OFOPRUNED);
+-		__skb_queue_purge(&tp->out_of_order_queue);
++	if (RB_EMPTY_ROOT(&tp->out_of_order_queue))
++		return false;
+ 
+-		/* Reset SACK state.  A conforming SACK implementation will
+-		 * do the same at a timeout based retransmit.  When a connection
+-		 * is in a sad state like this, we care only about integrity
+-		 * of the connection not performance.
+-		 */
+-		if (tp->rx_opt.sack_ok)
+-			tcp_sack_reset(&tp->rx_opt);
+-		sk_mem_reclaim(sk);
+-		res = true;
+-	}
+-	return res;
++	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_OFOPRUNED);
++	goal = sk->sk_rcvbuf >> 3;
++	node = &tp->ooo_last_skb->rbnode;
++	do {
++		prev = rb_prev(node);
++		rb_erase(node, &tp->out_of_order_queue);
++		goal -= rb_to_skb(node)->truesize;
++		__kfree_skb(rb_to_skb(node));
++		if (!prev || goal <= 0) {
++			sk_mem_reclaim(sk);
++			if (atomic_read(&sk->sk_rmem_alloc) <= sk->sk_rcvbuf &&
++			    !tcp_under_memory_pressure(sk))
++				break;
++			goal = sk->sk_rcvbuf >> 3;
++		}
++
++		node = prev;
++	} while (node);
++	tp->ooo_last_skb = rb_entry(prev, struct sk_buff, rbnode);
++
++	/* Reset SACK state.  A conforming SACK implementation will
++	 * do the same at a timeout based retransmit.  When a connection
++	 * is in a sad state like this, we care only about integrity
++	 * of the connection not performance.
++	 */
++	if (tp->rx_opt.sack_ok)
++		tcp_sack_reset(&tp->rx_opt);
++
++	return true;
+ }
+ 
+ /* Reduce allocated memory if we can, trying to get
+@@ -4895,7 +4986,7 @@ static int tcp_prune_queue(struct sock *sk)
+ 
+ 	tcp_collapse_ofo_queue(sk);
+ 	if (!skb_queue_empty(&sk->sk_receive_queue))
+-		tcp_collapse(sk, &sk->sk_receive_queue,
++		tcp_collapse(sk, &sk->sk_receive_queue, NULL,
+ 			     skb_peek(&sk->sk_receive_queue),
+ 			     NULL,
+ 			     tp->copied_seq, tp->rcv_nxt);
+@@ -5000,7 +5091,7 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
+ 	    /* We ACK each frame or... */
+ 	    tcp_in_quickack_mode(sk) ||
+ 	    /* We have out of order data. */
+-	    (ofo_possible && skb_peek(&tp->out_of_order_queue))) {
++	    (ofo_possible && !RB_EMPTY_ROOT(&tp->out_of_order_queue))) {
+ 		/* Then ack it now */
+ 		tcp_send_ack(sk);
+ 	} else {
+@@ -5236,7 +5327,7 @@ syn_challenge:
+ 	return true;
+ 
+ discard:
+-	__kfree_skb(skb);
++	tcp_drop(sk, skb);
+ 	return false;
+ }
+ 
+@@ -5454,7 +5545,7 @@ csum_error:
+ 	TCP_INC_STATS_BH(sock_net(sk), TCP_MIB_INERRS);
+ 
+ discard:
+-	__kfree_skb(skb);
++	tcp_drop(sk, skb);
+ }
+ EXPORT_SYMBOL(tcp_rcv_established);
+ 
+@@ -5684,7 +5775,7 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
+ 						  TCP_DELACK_MAX, TCP_RTO_MAX);
+ 
+ discard:
+-			__kfree_skb(skb);
++			tcp_drop(sk, skb);
+ 			return 0;
+ 		} else {
+ 			tcp_send_ack(sk);
+@@ -6041,7 +6132,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
+ 
+ 	if (!queued) {
+ discard:
+-		__kfree_skb(skb);
++		tcp_drop(sk, skb);
+ 	}
+ 	return 0;
+ }
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index eeda67c3dd11..ee8399f11fd0 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -1716,6 +1716,7 @@ discard_it:
+ 	return 0;
+ 
+ discard_and_relse:
++	sk_drops_add(sk, skb);
+ 	sock_put(sk);
+ 	goto discard_it;
+ 
+@@ -1829,7 +1830,7 @@ void tcp_v4_destroy_sock(struct sock *sk)
+ 	tcp_write_queue_purge(sk);
+ 
+ 	/* Cleans up our, hopefully empty, out_of_order_queue. */
+-	__skb_queue_purge(&tp->out_of_order_queue);
++	skb_rbtree_purge(&tp->out_of_order_queue);
+ 
+ #ifdef CONFIG_TCP_MD5SIG
+ 	/* Clean up the MD5 key list, if any */
+diff --git a/net/ipv4/tcp_minisocks.c b/net/ipv4/tcp_minisocks.c
+index d270870bf492..a48846d81b41 100644
+--- a/net/ipv4/tcp_minisocks.c
++++ b/net/ipv4/tcp_minisocks.c
+@@ -496,7 +496,6 @@ struct sock *tcp_create_openreq_child(const struct sock *sk,
+ 		newtp->snd_cwnd_cnt = 0;
+ 
+ 		tcp_init_xmit_timers(newsk);
+-		__skb_queue_head_init(&newtp->out_of_order_queue);
+ 		newtp->write_seq = newtp->pushed_seq = treq->snt_isn + 1;
+ 
+ 		newtp->rx_opt.saw_tstamp = 0;
+diff --git a/net/ipv6/tcp_ipv6.c b/net/ipv6/tcp_ipv6.c
+index 90abe88e1b40..d6c191158e07 100644
+--- a/net/ipv6/tcp_ipv6.c
++++ b/net/ipv6/tcp_ipv6.c
+@@ -1505,6 +1505,7 @@ discard_it:
+ 	return 0;
+ 
+ discard_and_relse:
++	sk_drops_add(sk, skb);
+ 	sock_put(sk);
+ 	goto discard_it;
+ 
+diff --git a/net/mac80211/cfg.c b/net/mac80211/cfg.c
+index 1f930032253a..67348d8ac35d 100644
+--- a/net/mac80211/cfg.c
++++ b/net/mac80211/cfg.c
+@@ -219,7 +219,7 @@ static int ieee80211_add_key(struct wiphy *wiphy, struct net_device *dev,
+ 	case NL80211_IFTYPE_AP:
+ 	case NL80211_IFTYPE_AP_VLAN:
+ 		/* Keys without a station are used for TX only */
+-		if (key->sta && test_sta_flag(key->sta, WLAN_STA_MFP))
++		if (sta && test_sta_flag(sta, WLAN_STA_MFP))
+ 			key->conf.flags |= IEEE80211_KEY_FLAG_RX_MGMT;
+ 		break;
+ 	case NL80211_IFTYPE_ADHOC:

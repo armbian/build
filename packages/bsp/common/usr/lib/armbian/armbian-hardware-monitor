@@ -8,7 +8,6 @@
 
 # Functions:
 #
-# collect_information
 # prepare_temp_monitoring
 # log_hardware_info
 # get_flash_information
@@ -19,16 +18,6 @@
 . /etc/armbian-release
 # and script configuration
 . /usr/lib/armbian/armbian-common
-
-collect_information() {
-	ifconfig | grep -q eth0 || (ifconfig eth0 up ; sleep 2)
-	TMPFILE=$(mktemp /tmp/${0##*/}.XXXXXX)
-	trap "sleep 1 ; rm \"${TMPFILE}\" ; exit 0" 0 1 2 3 15
-	CPU_ARCH=$(lscpu | awk '/Architecture/ {print $2}')
-	DISTRO_ARCH=$(dpkg --print-architecture)
-	KERNELID=$(uname -r)
-	dmesg >"${TMPFILE}"
-} # collect_information
 
 prepare_temp_monitoring() {
 	# still an ugly hack but better do it just once at startup instead of every login
@@ -65,10 +54,13 @@ log_hardware_info() {
 	[ -f "/etc/logrotate.d/${0##*/}" ] || \
 		echo -e "${Log} {\n  rotate 12\n  weekly\n  compress\n  missingok\n  notifempty\n}" \
 		> "/etc/logrotate.d/${0##*/}" ; chmod 644 "/etc/logrotate.d/${0##*/}"
+	CPU_ARCH=$(lscpu | awk '/Architecture/ {print $2}')
+	DISTRO_ARCH=$(dpkg --print-architecture)
+	KERNELID=$(uname -r)
 	echo -e "\n$(date) | ${BOARD_NAME} | ${VERSION} | ${DISTRO_ARCH} | ${CPU_ARCH} | ${KERNELID}" >>${Log}
 	chmod 644 ${Log}
 	echo -e "\n### dmesg:\n" >>${Log}
-	cat "${TMPFILE}" >>${Log}
+	dmesg >>${Log}
 	echo -e "\n### armbian-release:\n" >>${Log}
 	cat /etc/armbian-release >>${Log}
 	echo -e "\n### boot environment:\n" >>${Log}
@@ -81,6 +73,8 @@ log_hardware_info() {
 	cat /proc/cpuinfo >>${Log}
 	echo -e "\n### meminfo:\n" >>${Log}
 	cat /proc/meminfo >>${Log}
+	echo -e "\n### virtual memory:\n" >>${Log}
+	for sysfsnode in /proc/sys/vm/* ; do sysctl $(echo ${sysfsnode} | sed 's|/proc/sys/vm/|vm.|'); done >>${Log}
 	if [ -x /sbin/ip ]; then
 		echo -e "\n### ip addr:\n" >>${Log}
 		/sbin/ip r s >>${Log} ; /sbin/ip a >>${Log}
@@ -90,17 +84,19 @@ log_hardware_info() {
 		ifconfig >>${Log}
 	fi
 	echo -e "### partitions:\n" >>${Log}
-	egrep -v " ram| zram" /proc/partitions >>${Log}
+	grep -v " ram" /proc/partitions >>${Log}
 	echo -e "\n### df:\n" >>${Log}
 	df -h | egrep '^udev|^tmpfs|^/dev/|log2ram|folder2ram' >>${Log}
 	which zpool >/dev/null 2>&1 && echo -e "\n### zpools:\n\n$(zpool list)\n\n### zfs datasets:\n\n$(zfs list)" >>${Log}
 	echo -e "\n### lsblk:\n" >>${Log}
-	lsblk -o NAME,FSTYPE,SIZE,MOUNTPOINT,UUID | grep -v "^zram" >>${Log}
+	lsblk -o NAME,FSTYPE,SIZE,MOUNTPOINT,UUID | grep -v "SWAP" >>${Log}
+	which zramctl >/dev/null 2>&1 && echo -e "\n### zramctl:\n\n$(zramctl)" >>${Log}
 	echo -e "\n### mtab:\n" >>${Log}
 	egrep '^/dev/|\ zfs\ ' /etc/mtab | egrep -v "log2ram|folder2ram" | sort >>${Log}
 	[[ -e /boot/script.bin ]] && echo -e "\n### /boot/script.bin --> $(readlink /boot/script.bin)" >>${Log}
 	get_flash_information >>${Log}
-	(echo -e "\n### Boot system health:\n" >>${Log} ; armbianmonitor -s | egrep "^Time|^[0-9]" >>${Log}) &
+	echo -e "\n### Boot system health:\n" >>${Log}
+	armbianmonitor -s | egrep "^Time|^[0-9]" >>${Log}
 } # log_hardware_info
 
 get_flash_information() {
@@ -144,11 +140,7 @@ case $1 in
 		# prepare correct temperature readouts
 		prepare_temp_monitoring &
 
-		# get hardware information and rely on contents of /etc/armbian-release
-		collect_information
-
-		# display message, log hardware id to file, write log
-		# echo -e "[\e[0;32m ok \x1B[0m] Starting ARM hardware info: ${BOARD_NAME} (${VERSION})"
+		# log hardware id to file, write log
 		echo $BOARD_NAME >/var/run/machine.id # we should leave this, maybe users depend on it
 		if [ $? -ne 0 ]; then
 			# most probably readonly fs. We'll try to warn the user.
@@ -157,7 +149,7 @@ case $1 in
 
 		# check whether auto detection override exists and if true use this for machine.id
 		[ -f /root/.machine.id ] && cat /root/.machine.id >/var/run/machine.id
-		log_hardware_info
+		log_hardware_info &
 
 		;;
 	*stop*)
