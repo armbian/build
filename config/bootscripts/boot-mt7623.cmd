@@ -16,7 +16,7 @@ if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
 fi
 
 
-setenv bootargs "initcall_debug console=ttyS2,115200n1 root=${rootdev} rw rootfstype=${rootfs} rootwait audit=0 loglevel=${verbosity}"
+setenv bootargs "console=ttyS2,115200n1 root=${rootdev} rw rootfstype=${rootfs} rootwait audit=0 loglevel=${verbosity}"
 ext4load ${devtype} ${devnum}:${mmcpart} ${fdtaddr} ${mmcfdtfile}
 ext4load ${devtype} ${devnum}:${mmcpart} ${rdaddr} ${mmcinitrdfile}
 ext4load ${devtype} ${devnum}:${mmcpart} ${kernel_addr_r} ${mmckernfile}
