@@ -1,0 +1,1394 @@
+From patchwork Tue Oct  2 06:13:45 2018
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+Subject: [U-Boot,08/20] clk: MediaTek: add clock driver for MT7629 SoC.
+X-Patchwork-Submitter: Ryder Lee <ryder.lee@mediatek.com>
+X-Patchwork-Id: 977716
+Message-Id: <0dcced1dad7c990ca75eef052872563a9adebe4f.1538460580.git.ryder.lee@mediatek.com>
+To: Tom Rini <trini@konsulko.com>, Simon Glass <sjg@chromium.org>, Albert
+ Aribaud <albert.u.boot@aribaud.net>
+Cc: Steven Liu <steven.liu@mediatek.com>,
+ Roy Luo <cheng-hao.luo@mediatek.com>, Sean Wang <sean.wang@mediatek.com>,
+ Weijie Gao <weijie.gao@mediatek.com>, u-boot@lists.denx.de
+Date: Tue, 2 Oct 2018 14:13:45 +0800
+From: Ryder Lee <ryder.lee@mediatek.com>
+List-Id: U-Boot discussion <u-boot.lists.denx.de>
+
+This patch adds clock driver for MediaTek SoC and divides it into two parts:
+
+- Shared functions: a common driver which contains the general operations for
+plls, muxes, dividers and clock gates so that we can reuse it for other SoCs.
+
+- Specific SoC drivers: the group of structures which describe the hardware
+configurations.
+
+And we take MT7629 as an example to demonstrate how to implement drivers if
+any other MediaTek chips would like to use it.
+
+Signed-off-by: Ryder Lee <ryder.lee@mediatek.com>
+---
+ drivers/clk/Makefile              |   1 +
+ drivers/clk/mediatek/Makefile     |   6 +
+ drivers/clk/mediatek/clk-mt7629.c | 666 ++++++++++++++++++++++++++++++++++++++
+ drivers/clk/mediatek/clk-mtk.c    | 494 ++++++++++++++++++++++++++++
+ drivers/clk/mediatek/clk-mtk.h    | 151 +++++++++
+ 5 files changed, 1318 insertions(+)
+ create mode 100644 drivers/clk/mediatek/Makefile
+ create mode 100644 drivers/clk/mediatek/clk-mt7629.c
+ create mode 100644 drivers/clk/mediatek/clk-mtk.c
+ create mode 100644 drivers/clk/mediatek/clk-mtk.h
+
+diff --git a/drivers/clk/Makefile b/drivers/clk/Makefile
+index 8bc9f52..3641991 100644
+--- a/drivers/clk/Makefile
++++ b/drivers/clk/Makefile
+@@ -10,6 +10,7 @@ obj-$(CONFIG_$(SPL_TPL_)CLK) += clk-uclass.o clk_fixed_rate.o
+ obj-y += tegra/
+ obj-$(CONFIG_ARCH_ASPEED) += aspeed/
+ obj-$(CONFIG_ARCH_MESON) += clk_meson.o
++obj-$(CONFIG_ARCH_MEDIATEK) += mediatek/
+ obj-$(CONFIG_ARCH_ROCKCHIP) += rockchip/
+ obj-$(CONFIG_ARCH_SOCFPGA) += altera/
+ obj-$(CONFIG_CLK_AT91) += at91/
+diff --git a/drivers/clk/mediatek/Makefile b/drivers/clk/mediatek/Makefile
+new file mode 100644
+index 0000000..297f99d
+--- /dev/null
++++ b/drivers/clk/mediatek/Makefile
+@@ -0,0 +1,6 @@
++# SPDX-License-Identifier: GPL-2.0
++# Core
++obj-$(CONFIG_ARCH_MEDIATEK) += clk-mtk.o
++
++# SoC Drivers
++obj-$(CONFIG_TARGET_MT7629) += clk-mt7629.o
+diff --git a/drivers/clk/mediatek/clk-mt7629.c b/drivers/clk/mediatek/clk-mt7629.c
+new file mode 100644
+index 0000000..d684d18
+--- /dev/null
++++ b/drivers/clk/mediatek/clk-mt7629.c
+@@ -0,0 +1,666 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * MediaTek clock driver for MT7629 SoC
++ *
++ * Copyright (C) 2018 MediaTek Inc.
++ * Author: Ryder Lee <ryder.lee@mediatek.com>
++ */
++
++#include <common.h>
++#include <dm.h>
++#include <asm/io.h>
++
++#include "clk-mtk.h"
++
++#define MT7629_CLKSQ_STB_CON0		0x20
++#define MT7629_PLL_ISO_CON0		0x2c
++#define MT7629_PLL_FMAX			(2500UL * MHZ)
++#define MT7629_CON0_RST_BAR		BIT(24)
++
++#define MCU_AXI_DIV			0x640
++#define AXI_DIV_MSK			GENMASK(4, 0)
++#define AXI_DIV_SEL(x)			(x)
++
++#define MCU_BUS_MUX			0x7c0
++#define MCU_BUS_MSK			GENMASK(10, 9)
++#define MCU_BUS_SEL(x)			((x) << 9)
++
++/* apmixedsys */
++#define PLL(_id, _reg, _pwr_reg, _en_mask, _flags, _pcwbits, _pd_reg,	\
++	    _pd_shift, _pcw_reg, _pcw_shift) {				\
++		.id = _id,						\
++		.reg = _reg,						\
++		.pwr_reg = _pwr_reg,					\
++		.en_mask = _en_mask,					\
++		.rst_bar_mask = MT7629_CON0_RST_BAR,			\
++		.fmax = MT7629_PLL_FMAX,				\
++		.flags = _flags,					\
++		.pcwbits = _pcwbits,					\
++		.pd_reg = _pd_reg,					\
++		.pd_shift = _pd_shift,					\
++		.pcw_reg = _pcw_reg,					\
++		.pcw_shift = _pcw_shift,				\
++	}
++
++static const struct mtk_pll_data apmixed_plls[] = {
++	PLL(CLK_APMIXED_ARMPLL, 0x200, 0x20c, 0x1, 0,
++	    21, 0x204, 24, 0x204, 0),
++	PLL(CLK_APMIXED_MAINPLL, 0x210, 0x21c, 0x1, HAVE_RST_BAR,
++	    21, 0x214, 24, 0x214, 0),
++	PLL(CLK_APMIXED_UNIV2PLL, 0x220, 0x22c, 0x1, HAVE_RST_BAR,
++	    7, 0x224, 24, 0x224, 14),
++	PLL(CLK_APMIXED_ETH1PLL, 0x300, 0x310, 0x1, 0,
++	    21, 0x300, 1, 0x304, 0),
++	PLL(CLK_APMIXED_ETH2PLL, 0x314, 0x320, 0x1, 0,
++	    21, 0x314, 1, 0x318, 0),
++	PLL(CLK_APMIXED_SGMIPLL, 0x358, 0x368, 0x1, 0,
++	    21, 0x358, 1, 0x35c, 0),
++};
++
++/* topckgen */
++#define FACTOR0(_id, _parent, _mult, _div)			\
++	FACTOR(_id, _parent, _mult, _div, CLK_PARENT_APMIXED)
++
++#define FACTOR1(_id, _parent, _mult, _div)			\
++	FACTOR(_id, _parent, _mult, _div, CLK_PARENT_TOPCKGEN)
++
++#define FACTOR2(_id, _parent, _mult, _div)			\
++	FACTOR(_id, _parent, _mult, _div, 0)
++
++static const struct mtk_fixed_clk top_fixed_clks[] = {
++	FIXED_CLK(CLK_TOP_TO_U2_PHY, CLK_XTAL, 31250000),
++	FIXED_CLK(CLK_TOP_TO_U2_PHY_1P, CLK_XTAL, 31250000),
++	FIXED_CLK(CLK_TOP_PCIE0_PIPE_EN, CLK_XTAL, 125000000),
++	FIXED_CLK(CLK_TOP_PCIE1_PIPE_EN, CLK_XTAL, 125000000),
++	FIXED_CLK(CLK_TOP_SSUSB_TX250M, CLK_XTAL, 250000000),
++	FIXED_CLK(CLK_TOP_SSUSB_EQ_RX250M, CLK_XTAL, 250000000),
++	FIXED_CLK(CLK_TOP_SSUSB_CDR_REF, CLK_XTAL, 33333333),
++	FIXED_CLK(CLK_TOP_SSUSB_CDR_FB, CLK_XTAL, 50000000),
++	FIXED_CLK(CLK_TOP_SATA_ASIC, CLK_XTAL, 50000000),
++	FIXED_CLK(CLK_TOP_SATA_RBC, CLK_XTAL, 50000000),
++};
++
++static const struct mtk_fixed_factor top_fixed_divs[] = {
++	FACTOR0(CLK_TOP_TO_USB3_SYS, CLK_APMIXED_ETH1PLL, 1, 4),
++	FACTOR0(CLK_TOP_P1_1MHZ, CLK_APMIXED_ETH1PLL, 1, 500),
++	FACTOR0(CLK_TOP_4MHZ, CLK_APMIXED_ETH1PLL, 1, 125),
++	FACTOR0(CLK_TOP_P0_1MHZ, CLK_APMIXED_ETH1PLL, 1, 500),
++	FACTOR0(CLK_TOP_ETH_500M, CLK_APMIXED_ETH1PLL, 1, 1),
++	FACTOR1(CLK_TOP_TXCLK_SRC_PRE, CLK_TOP_SGMIIPLL_D2, 1, 1),
++	FACTOR2(CLK_TOP_RTC, CLK_XTAL, 1, 1024),
++	FACTOR2(CLK_TOP_PWM_QTR_26M, CLK_XTAL, 1, 1),
++	FACTOR2(CLK_TOP_CPUM_TCK_IN, CLK_XTAL, 1, 1),
++	FACTOR2(CLK_TOP_TO_USB3_DA_TOP, CLK_XTAL, 1, 1),
++	FACTOR2(CLK_TOP_MEMPLL, CLK_XTAL, 32, 1),
++	FACTOR1(CLK_TOP_DMPLL, CLK_TOP_MEMPLL, 1, 1),
++	FACTOR1(CLK_TOP_DMPLL_D4, CLK_TOP_MEMPLL, 1, 4),
++	FACTOR1(CLK_TOP_DMPLL_D8, CLK_TOP_MEMPLL, 1, 8),
++	FACTOR0(CLK_TOP_SYSPLL_D2, CLK_APMIXED_MAINPLL, 1, 2),
++	FACTOR0(CLK_TOP_SYSPLL1_D2, CLK_APMIXED_MAINPLL, 1, 4),
++	FACTOR0(CLK_TOP_SYSPLL1_D4, CLK_APMIXED_MAINPLL, 1, 8),
++	FACTOR0(CLK_TOP_SYSPLL1_D8, CLK_APMIXED_MAINPLL, 1, 16),
++	FACTOR0(CLK_TOP_SYSPLL1_D16, CLK_APMIXED_MAINPLL, 1, 32),
++	FACTOR0(CLK_TOP_SYSPLL2_D2, CLK_APMIXED_MAINPLL, 1, 6),
++	FACTOR0(CLK_TOP_SYSPLL2_D4, CLK_APMIXED_MAINPLL, 1, 12),
++	FACTOR0(CLK_TOP_SYSPLL2_D8, CLK_APMIXED_MAINPLL, 1, 24),
++	FACTOR0(CLK_TOP_SYSPLL_D5, CLK_APMIXED_MAINPLL, 1, 5),
++	FACTOR0(CLK_TOP_SYSPLL3_D2, CLK_APMIXED_MAINPLL, 1, 10),
++	FACTOR0(CLK_TOP_SYSPLL3_D4, CLK_APMIXED_MAINPLL, 1, 20),
++	FACTOR0(CLK_TOP_SYSPLL_D7, CLK_APMIXED_MAINPLL, 1, 7),
++	FACTOR0(CLK_TOP_SYSPLL4_D2, CLK_APMIXED_MAINPLL, 1, 14),
++	FACTOR0(CLK_TOP_SYSPLL4_D4, CLK_APMIXED_MAINPLL, 1, 28),
++	FACTOR0(CLK_TOP_SYSPLL4_D16, CLK_APMIXED_MAINPLL, 1, 112),
++	FACTOR0(CLK_TOP_UNIVPLL, CLK_APMIXED_UNIV2PLL, 1, 2),
++	FACTOR1(CLK_TOP_UNIVPLL1_D2, CLK_TOP_UNIVPLL, 1, 4),
++	FACTOR1(CLK_TOP_UNIVPLL1_D4, CLK_TOP_UNIVPLL, 1, 8),
++	FACTOR1(CLK_TOP_UNIVPLL1_D8, CLK_TOP_UNIVPLL, 1, 16),
++	FACTOR1(CLK_TOP_UNIVPLL_D3, CLK_TOP_UNIVPLL, 1, 3),
++	FACTOR1(CLK_TOP_UNIVPLL2_D2, CLK_TOP_UNIVPLL, 1, 6),
++	FACTOR1(CLK_TOP_UNIVPLL2_D4, CLK_TOP_UNIVPLL, 1, 12),
++	FACTOR1(CLK_TOP_UNIVPLL2_D8, CLK_TOP_UNIVPLL, 1, 24),
++	FACTOR1(CLK_TOP_UNIVPLL2_D16, CLK_TOP_UNIVPLL, 1, 48),
++	FACTOR1(CLK_TOP_UNIVPLL_D5, CLK_TOP_UNIVPLL, 1, 5),
++	FACTOR1(CLK_TOP_UNIVPLL3_D2, CLK_TOP_UNIVPLL, 1, 10),
++	FACTOR1(CLK_TOP_UNIVPLL3_D4, CLK_TOP_UNIVPLL, 1, 20),
++	FACTOR1(CLK_TOP_UNIVPLL3_D16, CLK_TOP_UNIVPLL, 1, 80),
++	FACTOR1(CLK_TOP_UNIVPLL_D7, CLK_TOP_UNIVPLL, 1, 7),
++	FACTOR1(CLK_TOP_UNIVPLL_D80_D4, CLK_TOP_UNIVPLL, 1, 320),
++	FACTOR1(CLK_TOP_UNIV48M, CLK_TOP_UNIVPLL, 1, 25),
++	FACTOR0(CLK_TOP_SGMIIPLL_D2, CLK_APMIXED_SGMIPLL, 1, 2),
++	FACTOR2(CLK_TOP_CLKXTAL_D4, CLK_XTAL, 1, 4),
++	FACTOR1(CLK_TOP_HD_FAXI, CLK_TOP_AXI_SEL, 1, 1),
++	FACTOR1(CLK_TOP_FAXI, CLK_TOP_AXI_SEL, 1, 1),
++	FACTOR1(CLK_TOP_F_FAUD_INTBUS, CLK_TOP_AUD_INTBUS_SEL, 1, 1),
++	FACTOR1(CLK_TOP_AP2WBHIF_HCLK, CLK_TOP_SYSPLL1_D8, 1, 1),
++	FACTOR1(CLK_TOP_10M_INFRAO, CLK_TOP_10M_SEL, 1, 1),
++	FACTOR1(CLK_TOP_MSDC30_1, CLK_TOP_MSDC30_1, 1, 1),
++	FACTOR1(CLK_TOP_SPI, CLK_TOP_SPI0_SEL, 1, 1),
++	FACTOR1(CLK_TOP_SF, CLK_TOP_NFI_INFRA_SEL, 1, 1),
++	FACTOR1(CLK_TOP_FLASH, CLK_TOP_FLASH_SEL, 1, 1),
++	FACTOR1(CLK_TOP_TO_USB3_REF, CLK_TOP_SATA_SEL, 1, 4),
++	FACTOR1(CLK_TOP_TO_USB3_MCU, CLK_TOP_AXI_SEL, 1, 1),
++	FACTOR1(CLK_TOP_TO_USB3_DMA, CLK_TOP_HIF_SEL, 1, 1),
++	FACTOR1(CLK_TOP_FROM_TOP_AHB, CLK_TOP_AXI_SEL, 1, 1),
++	FACTOR1(CLK_TOP_FROM_TOP_AXI, CLK_TOP_HIF_SEL, 1, 1),
++	FACTOR1(CLK_TOP_PCIE1_MAC_EN, CLK_TOP_UNIVPLL1_D4, 1, 1),
++	FACTOR1(CLK_TOP_PCIE0_MAC_EN, CLK_TOP_UNIVPLL1_D4, 1, 1),
++};
++
++static const int axi_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL1_D2,
++	CLK_TOP_SYSPLL_D5,
++	CLK_TOP_SYSPLL1_D4,
++	CLK_TOP_UNIVPLL_D5,
++	CLK_TOP_UNIVPLL2_D2,
++	CLK_TOP_UNIVPLL_D7,
++	CLK_TOP_DMPLL
++};
++
++static const int mem_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_DMPLL
++};
++
++static const int ddrphycfg_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL1_D8
++};
++
++static const int eth_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL1_D2,
++	CLK_TOP_UNIVPLL1_D2,
++	CLK_TOP_SYSPLL1_D4,
++	CLK_TOP_UNIVPLL_D5,
++	CLK_TOP_SGMIIPLL_D2,
++	CLK_TOP_UNIVPLL_D7,
++	CLK_TOP_DMPLL
++};
++
++static const int pwm_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_UNIVPLL2_D4
++};
++
++static const int f10m_ref_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SGMIIPLL_D2
++};
++
++static const int nfi_infra_parents[] = {
++	CLK_XTAL,
++	CLK_XTAL,
++	CLK_XTAL,
++	CLK_XTAL,
++	CLK_XTAL,
++	CLK_XTAL,
++	CLK_TOP_UNIVPLL2_D8,
++	CLK_TOP_UNIVPLL3_D4,
++	CLK_TOP_SYSPLL1_D8,
++	CLK_TOP_UNIVPLL1_D8,
++	CLK_TOP_SYSPLL4_D2,
++	CLK_TOP_SYSPLL2_D4,
++	CLK_TOP_UNIVPLL2_D4,
++	CLK_TOP_UNIVPLL3_D2,
++	CLK_TOP_SYSPLL1_D4,
++	CLK_TOP_SYSPLL_D7
++};
++
++static const int flash_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_UNIVPLL_D80_D4,
++	CLK_TOP_SYSPLL2_D8,
++	CLK_TOP_SYSPLL3_D4,
++	CLK_TOP_UNIVPLL3_D4,
++	CLK_TOP_UNIVPLL1_D8,
++	CLK_TOP_SYSPLL2_D4,
++	CLK_TOP_UNIVPLL2_D4
++};
++
++static const int uart_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_UNIVPLL2_D8
++};
++
++static const int spi0_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL3_D2,
++	CLK_XTAL,
++	CLK_TOP_SYSPLL2_D4,
++	CLK_TOP_SYSPLL4_D2,
++	CLK_TOP_UNIVPLL2_D4,
++	CLK_TOP_UNIVPLL1_D8,
++	CLK_XTAL
++};
++
++static const int spi1_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL3_D2,
++	CLK_XTAL,
++	CLK_TOP_SYSPLL4_D4,
++	CLK_TOP_SYSPLL4_D2,
++	CLK_TOP_UNIVPLL2_D4,
++	CLK_TOP_UNIVPLL1_D8,
++	CLK_XTAL
++};
++
++static const int msdc30_0_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_UNIVPLL2_D16,
++	CLK_TOP_UNIV48M
++};
++
++static const int msdc30_1_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_UNIVPLL2_D16,
++	CLK_TOP_UNIV48M,
++	CLK_TOP_SYSPLL2_D4,
++	CLK_TOP_UNIVPLL2_D4,
++	CLK_TOP_SYSPLL_D7,
++	CLK_TOP_SYSPLL2_D2,
++	CLK_TOP_UNIVPLL2_D2
++};
++
++static const int ap2wbmcu_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL1_D2,
++	CLK_TOP_UNIV48M,
++	CLK_TOP_SYSPLL1_D8,
++	CLK_TOP_UNIVPLL2_D4,
++	CLK_TOP_SYSPLL_D7,
++	CLK_TOP_SYSPLL2_D2,
++	CLK_TOP_UNIVPLL2_D2
++};
++
++static const int audio_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL3_D4,
++	CLK_TOP_SYSPLL4_D4,
++	CLK_TOP_SYSPLL1_D16
++};
++
++static const int aud_intbus_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL1_D4,
++	CLK_TOP_SYSPLL4_D2,
++	CLK_TOP_DMPLL_D4
++};
++
++static const int pmicspi_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL1_D8,
++	CLK_TOP_SYSPLL3_D4,
++	CLK_TOP_SYSPLL1_D16,
++	CLK_TOP_UNIVPLL3_D4,
++	CLK_XTAL,
++	CLK_TOP_UNIVPLL2_D4,
++	CLK_TOP_DMPLL_D8
++};
++
++static const int scp_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL1_D8,
++	CLK_TOP_UNIVPLL2_D2,
++	CLK_TOP_UNIVPLL2_D4
++};
++
++static const int atb_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL1_D2,
++	CLK_TOP_SYSPLL_D5
++};
++
++static const int hif_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL1_D2,
++	CLK_TOP_UNIVPLL1_D2,
++	CLK_TOP_SYSPLL1_D4,
++	CLK_TOP_UNIVPLL_D5,
++	-1,
++	CLK_TOP_UNIVPLL_D7
++};
++
++static const int sata_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_UNIVPLL2_D4
++};
++
++static const int usb20_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_UNIVPLL3_D4,
++	CLK_TOP_SYSPLL1_D8
++};
++
++static const int aud1_parents[] = {
++	CLK_XTAL
++};
++
++static const int irrx_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_SYSPLL4_D16
++};
++
++static const int crypto_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_UNIVPLL_D3,
++	CLK_TOP_UNIVPLL1_D2,
++	CLK_TOP_SYSPLL1_D2,
++	CLK_TOP_UNIVPLL_D5,
++	CLK_TOP_SYSPLL_D5,
++	CLK_TOP_UNIVPLL2_D2,
++	CLK_TOP_SYSPLL_D2
++};
++
++static const int gpt10m_parents[] = {
++	CLK_XTAL,
++	CLK_TOP_CLKXTAL_D4
++};
++
++static const struct mtk_composite top_muxes[] = {
++	/* CLK_CFG_0 */
++	MUX_GATE(CLK_TOP_AXI_SEL, axi_parents, 0x40, 0, 3, 7),
++	MUX_GATE(CLK_TOP_MEM_SEL, mem_parents, 0x40, 8, 1, 15),
++	MUX_GATE(CLK_TOP_DDRPHYCFG_SEL, ddrphycfg_parents, 0x40, 16, 1, 23),
++	MUX_GATE(CLK_TOP_ETH_SEL, eth_parents, 0x40, 24, 3, 31),
++
++	/* CLK_CFG_1 */
++	MUX_GATE(CLK_TOP_PWM_SEL, pwm_parents, 0x50, 0, 2, 7),
++	MUX_GATE(CLK_TOP_F10M_REF_SEL, f10m_ref_parents, 0x50, 8, 1, 15),
++	MUX_GATE(CLK_TOP_NFI_INFRA_SEL, nfi_infra_parents, 0x50, 16, 4, 23),
++	MUX_GATE(CLK_TOP_FLASH_SEL, flash_parents, 0x50, 24, 3, 31),
++
++	/* CLK_CFG_2 */
++	MUX_GATE(CLK_TOP_UART_SEL, uart_parents, 0x60, 0, 1, 7),
++	MUX_GATE(CLK_TOP_SPI0_SEL, spi0_parents, 0x60, 8, 3, 15),
++	MUX_GATE(CLK_TOP_SPI1_SEL, spi1_parents, 0x60, 16, 3, 23),
++	MUX_GATE(CLK_TOP_MSDC50_0_SEL, uart_parents, 0x60, 24, 3, 31),
++
++	/* CLK_CFG_3 */
++	MUX_GATE(CLK_TOP_MSDC30_0_SEL, msdc30_0_parents, 0x70, 0, 3, 7),
++	MUX_GATE(CLK_TOP_MSDC30_1_SEL, msdc30_1_parents, 0x70, 8, 3, 15),
++	MUX_GATE(CLK_TOP_AP2WBMCU_SEL, ap2wbmcu_parents, 0x70, 16, 3, 23),
++	MUX_GATE(CLK_TOP_AP2WBHIF_SEL, ap2wbmcu_parents, 0x70, 24, 3, 31),
++
++	/* CLK_CFG_4 */
++	MUX_GATE(CLK_TOP_AUDIO_SEL, audio_parents, 0x80, 0, 2, 7),
++	MUX_GATE(CLK_TOP_AUD_INTBUS_SEL, aud_intbus_parents, 0x80, 8, 2, 15),
++	MUX_GATE(CLK_TOP_PMICSPI_SEL, pmicspi_parents, 0x80, 16, 3, 23),
++	MUX_GATE(CLK_TOP_SCP_SEL, scp_parents, 0x80, 24, 2, 31),
++
++	/* CLK_CFG_5 */
++	MUX_GATE(CLK_TOP_ATB_SEL, atb_parents, 0x90, 0, 2, 7),
++	MUX_GATE_FLAGS(CLK_TOP_HIF_SEL, hif_parents, 0x90, 8, 3, 15,
++		       CLK_DOMAIN_SCPSYS),
++	MUX_GATE(CLK_TOP_SATA_SEL, sata_parents, 0x90, 16, 1, 23),
++	MUX_GATE(CLK_TOP_U2_SEL, usb20_parents, 0x90, 24, 2, 31),
++
++	/* CLK_CFG_6 */
++	MUX_GATE(CLK_TOP_AUD1_SEL, aud1_parents, 0xA0, 0, 1, 7),
++	MUX_GATE(CLK_TOP_AUD2_SEL, aud1_parents, 0xA0, 8, 1, 15),
++	MUX_GATE(CLK_TOP_IRRX_SEL, irrx_parents, 0xA0, 16, 1, 23),
++	MUX_GATE(CLK_TOP_IRTX_SEL, irrx_parents, 0xA0, 24, 1, 31),
++
++	/* CLK_CFG_7 */
++	MUX_GATE(CLK_TOP_SATA_MCU_SEL, scp_parents, 0xB0, 0, 2, 7),
++	MUX_GATE(CLK_TOP_PCIE0_MCU_SEL, scp_parents, 0xB0, 8, 2, 15),
++	MUX_GATE(CLK_TOP_PCIE1_MCU_SEL, scp_parents, 0xB0, 16, 2, 23),
++	MUX_GATE(CLK_TOP_SSUSB_MCU_SEL, scp_parents, 0xB0, 24, 2, 31),
++
++	/* CLK_CFG_8 */
++	MUX_GATE(CLK_TOP_CRYPTO_SEL, crypto_parents, 0xC0, 0, 3, 7),
++	MUX_GATE(CLK_TOP_SGMII_REF_1_SEL, f10m_ref_parents, 0xC0, 8, 1, 15),
++	MUX_GATE(CLK_TOP_10M_SEL, gpt10m_parents, 0xC0, 16, 1, 23),
++};
++
++/* infracfg */
++static const struct mtk_gate_regs infra_cg_regs = {
++	.set_ofs = 0x40,
++	.clr_ofs = 0x44,
++	.sta_ofs = 0x48,
++};
++
++#define GATE_INFRA(_id, _parent, _shift) {			\
++		.id = _id,					\
++		.parent = _parent,				\
++		.regs = &infra_cg_regs,				\
++		.shift = _shift,				\
++		.flags = CLK_GATE_SETCLR | CLK_PARENT_TOPCKGEN,	\
++	}
++
++static const struct mtk_gate infra_cgs[] = {
++	GATE_INFRA(CLK_INFRA_DBGCLK_PD, CLK_TOP_HD_FAXI, 0),
++	GATE_INFRA(CLK_INFRA_TRNG_PD, CLK_TOP_HD_FAXI, 2),
++	GATE_INFRA(CLK_INFRA_DEVAPC_PD, CLK_TOP_HD_FAXI, 4),
++	GATE_INFRA(CLK_INFRA_APXGPT_PD, CLK_TOP_10M_INFRAO, 18),
++	GATE_INFRA(CLK_INFRA_SEJ_PD, CLK_TOP_10M_INFRAO, 19),
++};
++
++/* pericfg */
++static const struct mtk_gate_regs peri0_cg_regs = {
++	.set_ofs = 0x8,
++	.clr_ofs = 0x10,
++	.sta_ofs = 0x18,
++};
++
++static const struct mtk_gate_regs peri1_cg_regs = {
++	.set_ofs = 0xC,
++	.clr_ofs = 0x14,
++	.sta_ofs = 0x1C,
++};
++
++#define GATE_PERI0(_id, _parent, _shift) {			\
++		.id = _id,					\
++		.parent = _parent,				\
++		.regs = &peri0_cg_regs,				\
++		.shift = _shift,				\
++		.flags = CLK_GATE_SETCLR | CLK_PARENT_TOPCKGEN,	\
++	}
++
++#define GATE_PERI1(_id, _parent, _shift) {			\
++		.id = _id,					\
++		.parent = _parent,				\
++		.regs = &peri1_cg_regs,				\
++		.shift = _shift,				\
++		.flags = CLK_GATE_SETCLR | CLK_PARENT_TOPCKGEN,	\
++	}
++
++static const struct mtk_gate peri_cgs[] = {
++	GATE_PERI0(CLK_PERI_PWM1_PD, CLK_TOP_PWM_QTR_26M, 2),
++	GATE_PERI0(CLK_PERI_PWM2_PD, CLK_TOP_PWM_QTR_26M, 3),
++	GATE_PERI0(CLK_PERI_PWM3_PD, CLK_TOP_PWM_QTR_26M, 4),
++	GATE_PERI0(CLK_PERI_PWM4_PD, CLK_TOP_PWM_QTR_26M, 5),
++	GATE_PERI0(CLK_PERI_PWM5_PD, CLK_TOP_PWM_QTR_26M, 6),
++	GATE_PERI0(CLK_PERI_PWM6_PD, CLK_TOP_PWM_QTR_26M, 7),
++	GATE_PERI0(CLK_PERI_PWM7_PD, CLK_TOP_PWM_QTR_26M, 8),
++	GATE_PERI0(CLK_PERI_PWM_PD, CLK_TOP_PWM_QTR_26M, 9),
++	GATE_PERI0(CLK_PERI_AP_DMA_PD, CLK_TOP_FAXI, 12),
++	GATE_PERI0(CLK_PERI_MSDC30_1_PD, CLK_TOP_MSDC30_1, 14),
++	GATE_PERI0(CLK_PERI_UART0_PD, CLK_TOP_FAXI, 17),
++	GATE_PERI0(CLK_PERI_UART1_PD, CLK_TOP_FAXI, 18),
++	GATE_PERI0(CLK_PERI_UART2_PD, CLK_TOP_FAXI, 19),
++	GATE_PERI0(CLK_PERI_UART3_PD, CLK_TOP_FAXI, 20),
++	GATE_PERI0(CLK_PERI_BTIF_PD, CLK_TOP_FAXI, 22),
++	GATE_PERI0(CLK_PERI_I2C0_PD, CLK_TOP_FAXI, 23),
++	GATE_PERI0(CLK_PERI_SPI0_PD, CLK_TOP_SPI, 28),
++	GATE_PERI0(CLK_PERI_SNFI_PD, CLK_TOP_SF, 29),
++	GATE_PERI0(CLK_PERI_NFI_PD, CLK_TOP_FAXI, 30),
++	GATE_PERI0(CLK_PERI_NFIECC_PD, CLK_TOP_FAXI, 31),
++	GATE_PERI1(CLK_PERI_FLASH_PD, CLK_TOP_FLASH, 1),
++};
++
++/* ethsys */
++static const struct mtk_gate_regs eth_cg_regs = {
++	.sta_ofs = 0x30,
++};
++
++#define GATE_ETH(_id, _parent, _shift, _flag) {			\
++		.id = _id,					\
++		.parent = _parent,				\
++		.regs = &eth_cg_regs,				\
++		.shift = _shift,				\
++		.flags = CLK_GATE_NO_SETCLR_INV | (_flag),	\
++	}
++
++#define GATE_ETH0(_id, _parent, _shift)				\
++	GATE_ETH(_id, _parent, _shift, CLK_PARENT_APMIXED)
++
++#define GATE_ETH1(_id, _parent, _shift)				\
++	GATE_ETH(_id, _parent, _shift, CLK_PARENT_TOPCKGEN)
++
++static const struct mtk_gate eth_cgs[] = {
++	GATE_ETH0(CLK_ETH_FE_EN, CLK_APMIXED_ETH2PLL, 6),
++	GATE_ETH1(CLK_ETH_GP2_EN, CLK_TOP_TXCLK_SRC_PRE, 7),
++	GATE_ETH1(CLK_ETH_GP1_EN, CLK_TOP_TXCLK_SRC_PRE, 8),
++	GATE_ETH1(CLK_ETH_GP0_EN, CLK_TOP_TXCLK_SRC_PRE, 9),
++	GATE_ETH1(CLK_ETH_ESW_EN, CLK_TOP_ETH_500M, 16),
++};
++
++static const struct mtk_clk_tree mt7629_clk_tree = {
++	.xtal_rate = 40 * MHZ,
++	.xtal2_rate = 20 * MHZ,
++	.plls = apmixed_plls,
++	.fclks = top_fixed_clks,
++	.fdivs = top_fixed_divs,
++	.muxes = top_muxes,
++};
++
++static int mt7629_mcucfg_probe(struct udevice *dev)
++{
++	void __iomem *base;
++
++	base = dev_read_addr_ptr(dev);
++	if (!base)
++		return -ENOENT;
++
++	clrsetbits_le32(base + MCU_AXI_DIV, AXI_DIV_MSK,
++			AXI_DIV_SEL(0x12));
++	clrsetbits_le32(base + MCU_BUS_MUX, MCU_BUS_MSK,
++			MCU_BUS_SEL(0x1));
++
++	return 0;
++}
++
++static int mt7629_apmixedsys_probe(struct udevice *dev)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(dev);
++	int ret;
++
++	ret = mtk_clk_init(dev, &mt7629_clk_tree);
++	if (ret)
++		return ret;
++
++	/* reduce clock square disable time */
++	writel(0x501, priv->base + MT7629_CLKSQ_STB_CON0);
++	/* extend pwr/iso control timing to 1us */
++	writel(0x80008, priv->base + MT7629_PLL_ISO_CON0);
++
++	return 0;
++}
++
++static int mt7629_topckgen_probe(struct udevice *dev)
++{
++	return mtk_clk_init(dev, &mt7629_clk_tree);
++}
++
++static int mt7629_infracfg_probe(struct udevice *dev)
++{
++	return mtk_clk_gate_init(dev, &mt7629_clk_tree, infra_cgs);
++}
++
++static int mt7629_pericfg_probe(struct udevice *dev)
++{
++	return mtk_clk_gate_init(dev, &mt7629_clk_tree, peri_cgs);
++}
++
++static int mt7629_ethsys_probe(struct udevice *dev)
++{
++	return mtk_clk_gate_init(dev, &mt7629_clk_tree, eth_cgs);
++}
++
++static const struct udevice_id mt7629_apmixed_compat[] = {
++	{ .compatible = "mediatek,mt7629-apmixedsys" },
++	{ }
++};
++
++static const struct udevice_id mt7629_topckgen_compat[] = {
++	{ .compatible = "mediatek,mt7629-topckgen" },
++	{ }
++};
++
++static const struct udevice_id mt7629_infracfg_compat[] = {
++	{ .compatible = "mediatek,mt7629-infracfg", },
++	{ }
++};
++
++static const struct udevice_id mt7629_pericfg_compat[] = {
++	{ .compatible = "mediatek,mt7629-pericfg", },
++	{ }
++};
++
++static const struct udevice_id mt7629_ethsys_compat[] = {
++	{ .compatible = "mediatek,mt7629-ethsys", },
++	{ }
++};
++
++static const struct udevice_id mt7629_mcucfg_compat[] = {
++	{ .compatible = "mediatek,mt7629-mcucfg" },
++	{ }
++};
++
++U_BOOT_DRIVER(mtk_mcucfg) = {
++	.name = "mt7629-mcucfg",
++	.id = UCLASS_SYSCON,
++	.of_match = mt7629_mcucfg_compat,
++	.probe = mt7629_mcucfg_probe,
++	.flags = DM_FLAG_PRE_RELOC,
++};
++
++U_BOOT_DRIVER(mtk_clk_apmixedsys) = {
++	.name = "mt7629-clock-apmixedsys",
++	.id = UCLASS_CLK,
++	.of_match = mt7629_apmixed_compat,
++	.probe = mt7629_apmixedsys_probe,
++	.priv_auto_alloc_size = sizeof(struct mtk_clk_priv),
++	.ops = &mtk_clk_apmixedsys_ops,
++	.flags = DM_FLAG_PRE_RELOC,
++};
++
++U_BOOT_DRIVER(mtk_clk_topckgen) = {
++	.name = "mt7629-clock-topckgen",
++	.id = UCLASS_CLK,
++	.of_match = mt7629_topckgen_compat,
++	.probe = mt7629_topckgen_probe,
++	.priv_auto_alloc_size = sizeof(struct mtk_clk_priv),
++	.ops = &mtk_clk_topckgen_ops,
++	.flags = DM_FLAG_PRE_RELOC,
++};
++
++U_BOOT_DRIVER(mtk_clk_infracfg) = {
++	.name = "mt7629-clock-infracfg",
++	.id = UCLASS_CLK,
++	.of_match = mt7629_infracfg_compat,
++	.probe = mt7629_infracfg_probe,
++	.priv_auto_alloc_size = sizeof(struct mtk_cg_priv),
++	.ops = &mtk_clk_gate_ops,
++	.flags = DM_FLAG_PRE_RELOC,
++};
++
++U_BOOT_DRIVER(mtk_clk_pericfg) = {
++	.name = "mt7629-clock-pericfg",
++	.id = UCLASS_CLK,
++	.of_match = mt7629_pericfg_compat,
++	.probe = mt7629_pericfg_probe,
++	.priv_auto_alloc_size = sizeof(struct mtk_cg_priv),
++	.ops = &mtk_clk_gate_ops,
++	.flags = DM_FLAG_PRE_RELOC,
++};
++
++U_BOOT_DRIVER(mtk_clk_ethsys) = {
++	.name = "mt7629-clock-ethsys",
++	.id = UCLASS_CLK,
++	.of_match = mt7629_ethsys_compat,
++	.probe = mt7629_ethsys_probe,
++	.priv_auto_alloc_size = sizeof(struct mtk_cg_priv),
++	.ops = &mtk_clk_gate_ops,
++};
+diff --git a/drivers/clk/mediatek/clk-mtk.c b/drivers/clk/mediatek/clk-mtk.c
+new file mode 100644
+index 0000000..1dbbca5
+--- /dev/null
++++ b/drivers/clk/mediatek/clk-mtk.c
+@@ -0,0 +1,494 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * MediaTek common clock driver
++ *
++ * Copyright (C) 2018 MediaTek Inc.
++ * Author: Ryder Lee <ryder.lee@mediatek.com>
++ */
++
++#include <common.h>
++#include <clk-uclass.h>
++#include <div64.h>
++#include <dm.h>
++#include <asm/io.h>
++
++#include "clk-mtk.h"
++
++#define REG_CON0			0
++#define REG_CON1			4
++
++#define CON0_BASE_EN			BIT(0)
++#define CON0_PWR_ON			BIT(0)
++#define CON0_ISO_EN			BIT(1)
++#define CON1_PCW_CHG			BIT(31)
++
++#define POSTDIV_MASK			0x7
++#define INTEGER_BITS			7
++
++/* scpsys clock off control */
++#define CLK_SCP_CFG0			0x200
++#define CLK_SCP_CFG1			0x204
++#define SCP_ARMCK_OFF_EN		GENMASK(9, 0)
++#define SCP_AXICK_DCM_DIS_EN		BIT(0)
++#define SCP_AXICK_26M_SEL_EN		BIT(4)
++
++/* shared functions */
++
++/*
++ * In case the rate change propagation to parent clocks is undesirable,
++ * this function is recursively called to find the parent to calculate
++ * the accurate frequency.
++ */
++static int mtk_clk_find_parent_rate(struct clk *clk, int id,
++				    const struct driver *drv)
++{
++	struct clk parent = { .id = id, };
++
++	if (drv) {
++		struct udevice *dev;
++
++		if(uclass_get_device_by_driver(UCLASS_CLK, drv, &dev))
++			return -ENODEV;
++
++		parent.dev = dev;
++	} else {
++		parent.dev = clk->dev;
++	}
++
++	return clk_get_rate(&parent);
++}
++
++static int mtk_clk_mux_set_parent(void __iomem *base, u32 parent,
++				  const struct mtk_composite *mux)
++{
++	u32 val, index = 0;
++
++	while (mux->parent[index] != parent)
++		if (++index == mux->num_parents)
++			return -EINVAL;
++
++	/* switch mux to a select parent */
++	val = readl(base + mux->mux_reg);
++	val &= ~(mux->mux_mask << mux->mux_shift);
++
++	val |= index << mux->mux_shift;
++	writel(val, base + mux->mux_reg);
++
++	return 0;
++}
++
++/* apmixedsys functions */
++
++static unsigned long __mtk_pll_recalc_rate(const struct mtk_pll_data *pll,
++					   u32 fin, u32 pcw, int postdiv)
++{
++	int pcwbits = pll->pcwbits;
++	int pcwfbits;
++	u64 vco;
++	u8 c = 0;
++
++	/* The fractional part of the PLL divider. */
++	pcwfbits = pcwbits > INTEGER_BITS ? pcwbits - INTEGER_BITS : 0;
++
++	vco = (u64)fin * pcw;
++
++	if (pcwfbits && (vco & GENMASK(pcwfbits - 1, 0)))
++		c = 1;
++
++	vco >>= pcwfbits;
++
++	if (c)
++		vco++;
++
++	return ((unsigned long)vco + postdiv - 1) / postdiv;
++}
++
++/**
++ * MediaTek PLLs are configured through their pcw value. The pcw value
++ * describes a divider in the PLL feedback loop which consists of 7 bits
++ * for the integer part and the remaining bits (if present) for the
++ * fractional part. Also they have a 3 bit power-of-two post divider.
++ */
++static void mtk_pll_set_rate_regs(struct clk *clk, u32 pcw, int postdiv)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(clk->dev);
++	const struct mtk_pll_data *pll = &priv->tree->plls[clk->id];
++	u32 val;
++
++	/* set postdiv */
++	val = readl(priv->base + pll->pd_reg);
++	val &= ~(POSTDIV_MASK << pll->pd_shift);
++	val |= (ffs(postdiv) - 1) << pll->pd_shift;
++
++	/* postdiv and pcw need to set at the same time if on same register */
++	if (pll->pd_reg != pll->pcw_reg) {
++		writel(val, priv->base + pll->pd_reg);
++		val = readl(priv->base + pll->pcw_reg);
++	}
++
++	/* set pcw */
++	val &= ~GENMASK(pll->pcw_shift + pll->pcwbits - 1, pll->pcw_shift);
++	val |= pcw << pll->pcw_shift;
++	val &= ~CON1_PCW_CHG;
++	writel(val, priv->base + pll->pcw_reg);
++
++	val |= CON1_PCW_CHG;
++	writel(val, priv->base + pll->pcw_reg);
++
++	udelay(20);
++}
++
++/**
++ * mtk_pll_calc_values - calculate good values for a given input frequency.
++ * @clk:	The clk
++ * @pcw:	The pcw value (output)
++ * @postdiv:	The post divider (output)
++ * @freq:	The desired target frequency
++ */
++static void mtk_pll_calc_values(struct clk *clk, u32 *pcw, u32 *postdiv,
++				u32 freq)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(clk->dev);
++	const struct mtk_pll_data *pll = &priv->tree->plls[clk->id];
++	unsigned long fmin = 1000 * MHZ;
++	u64 _pcw;
++	u32 val;
++
++	if (freq > pll->fmax)
++		freq = pll->fmax;
++
++	for (val = 0; val < 5; val++) {
++		*postdiv = 1 << val;
++		if ((u64)freq * *postdiv >= fmin)
++			break;
++	}
++
++	/* _pcw = freq * postdiv / xtal_rate * 2^pcwfbits */
++	_pcw = ((u64)freq << val) << (pll->pcwbits - INTEGER_BITS);
++	do_div(_pcw, priv->tree->xtal2_rate);
++
++	*pcw = (u32)_pcw;
++}
++
++static ulong mtk_apmixedsys_set_rate(struct clk *clk, ulong rate)
++{
++	u32 pcw = 0;
++	u32 postdiv;
++
++	mtk_pll_calc_values(clk, &pcw, &postdiv, rate);
++	mtk_pll_set_rate_regs(clk, pcw, postdiv);
++
++	return 0;
++}
++
++static ulong mtk_apmixedsys_get_rate(struct clk *clk)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(clk->dev);
++	const struct mtk_pll_data *pll = &priv->tree->plls[clk->id];
++	u32 postdiv;
++	u32 pcw;
++
++	postdiv = (readl(priv->base + pll->pd_reg) >> pll->pd_shift) &
++		   POSTDIV_MASK;
++	postdiv = 1 << postdiv;
++
++	pcw = readl(priv->base + pll->pcw_reg) >> pll->pcw_shift;
++	pcw &= GENMASK(pll->pcwbits - 1, 0);
++
++	return __mtk_pll_recalc_rate(pll, priv->tree->xtal2_rate,
++				     pcw, postdiv);
++}
++
++static int mtk_apmixedsys_enable(struct clk *clk)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(clk->dev);
++	const struct mtk_pll_data *pll = &priv->tree->plls[clk->id];
++	u32 r;
++
++	r = readl(priv->base + pll->pwr_reg) | CON0_PWR_ON;
++	writel(r, priv->base + pll->pwr_reg);
++	udelay(1);
++
++	r = readl(priv->base + pll->pwr_reg) & ~CON0_ISO_EN;
++	writel(r, priv->base + pll->pwr_reg);
++	udelay(1);
++
++	r = readl(priv->base + pll->reg + REG_CON0);
++	r |= pll->en_mask;
++	writel(r, priv->base + pll->reg + REG_CON0);
++
++	udelay(20);
++
++	if (pll->flags & HAVE_RST_BAR) {
++		r = readl(priv->base + pll->reg + REG_CON0);
++		r |= pll->rst_bar_mask;
++		writel(r, priv->base + pll->reg + REG_CON0);
++	}
++
++	return 0;
++}
++
++static int mtk_apmixedsys_disable(struct clk *clk)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(clk->dev);
++	const struct mtk_pll_data *pll = &priv->tree->plls[clk->id];
++	u32 r;
++
++	if (pll->flags & HAVE_RST_BAR) {
++		r = readl(priv->base + pll->reg + REG_CON0);
++		r &= ~pll->rst_bar_mask;
++		writel(r, priv->base + pll->reg + REG_CON0);
++	}
++
++	r = readl(priv->base + pll->reg + REG_CON0);
++	r &= ~CON0_BASE_EN;
++	writel(r, priv->base + pll->reg + REG_CON0);
++
++	r = readl(priv->base + pll->pwr_reg) | CON0_ISO_EN;
++	writel(r, priv->base + pll->pwr_reg);
++
++	r = readl(priv->base + pll->pwr_reg) & ~CON0_PWR_ON;
++	writel(r, priv->base + pll->pwr_reg);
++
++	return 0;
++}
++
++/* topckgen functions */
++
++static ulong mtk_factor_recalc_rate(const struct mtk_fixed_factor *fdiv,
++				    ulong parent_rate)
++{
++	u64 rate = parent_rate * fdiv->mult;
++
++	do_div(rate, fdiv->div);
++
++	return rate;
++}
++
++static int mtk_topckgen_get_factor_rate(struct clk *clk, u32 off)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(clk->dev);
++	const struct mtk_fixed_factor *fdiv = &priv->tree->fdivs[off];
++	ulong rate;
++
++	switch (fdiv->flags & CLK_PARENT_MASK) {
++	case CLK_PARENT_APMIXED:
++		rate = mtk_clk_find_parent_rate(clk, fdiv->parent,
++				DM_GET_DRIVER(mtk_clk_apmixedsys));
++		break;
++	case CLK_PARENT_TOPCKGEN:
++		rate = mtk_clk_find_parent_rate(clk, fdiv->parent, NULL);
++		break;
++
++	default:
++		rate = priv->tree->xtal_rate;
++	}
++
++	return mtk_factor_recalc_rate(fdiv, rate);
++}
++
++static int mtk_topckgen_get_mux_rate(struct clk *clk, u32 off)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(clk->dev);
++	const struct mtk_composite *mux = &priv->tree->muxes[off];
++	u32 index;
++
++	index = readl(priv->base + mux->mux_reg);
++	index &= mux->mux_mask << mux->mux_shift;
++	index = index >> mux->mux_shift;
++
++	if (mux->parent[index])
++		return mtk_clk_find_parent_rate(clk, mux->parent[index],
++						NULL);
++
++	return priv->tree->xtal_rate;
++}
++
++static ulong mtk_topckgen_get_rate(struct clk *clk)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(clk->dev);
++
++	switch (clk->id) {
++	case 0 ... CLK_TOP_FDIVS_OFF - 1:
++		return priv->tree->fclks[clk->id].rate;
++	case CLK_TOP_FDIVS_OFF ... CLK_TOP_MUXES_OFF - 1:
++		return mtk_topckgen_get_factor_rate(clk, clk->id -
++						    CLK_TOP_FDIVS_OFF);
++	default:
++		return mtk_topckgen_get_mux_rate(clk, clk->id -
++						 CLK_TOP_MUXES_OFF);
++	}
++}
++
++static int mtk_topckgen_enable(struct clk *clk)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(clk->dev);
++	const struct mtk_composite *mux;
++	u32 val;
++
++	if (clk->id < CLK_TOP_MUXES_OFF)
++		return 0;
++
++	mux = &priv->tree->muxes[clk->id - CLK_TOP_MUXES_OFF];
++	if (mux->gate_shift < 0)
++		return 0;
++
++	/* enable clock gate */
++	val = readl(priv->base + mux->gate_reg);
++	val &= ~BIT(mux->gate_shift);
++	writel(val, priv->base + mux->gate_reg);
++
++	if (mux->flags & CLK_DOMAIN_SCPSYS) {
++		/* enable scpsys clock off control */
++		writel(SCP_ARMCK_OFF_EN, priv->base + CLK_SCP_CFG0);
++		writel(SCP_AXICK_DCM_DIS_EN | SCP_AXICK_26M_SEL_EN,
++		       priv->base + CLK_SCP_CFG1);
++	}
++
++	return 0;
++}
++
++static int mtk_topckgen_disable(struct clk *clk)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(clk->dev);
++	const struct mtk_composite *mux;
++	u32 val;
++
++	if (clk->id < CLK_TOP_MUXES_OFF)
++		return 0;
++
++	mux = &priv->tree->muxes[clk->id - CLK_TOP_MUXES_OFF];
++	if (mux->gate_shift < 0)
++		return 0;
++
++	/* disable clock gate */
++	val = readl(priv->base + mux->gate_reg);
++	val |= BIT(mux->gate_shift);
++	writel(val, priv->base + mux->gate_reg);
++
++	return 0;
++}
++
++static int mtk_topckgen_set_parent(struct clk *clk, struct clk *parent)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(clk->dev);
++
++	if (clk->id < CLK_TOP_MUXES_OFF)
++		return 0;
++
++	return mtk_clk_mux_set_parent(priv->base, parent->id,
++			&priv->tree->muxes[clk->id - CLK_TOP_MUXES_OFF]);
++}
++
++/* CG functions */
++
++static int mtk_clk_gate_enable(struct clk *clk)
++{
++	struct mtk_cg_priv *priv = dev_get_priv(clk->dev);
++	const struct mtk_gate *gate = &priv->gates[clk->id];
++	u32 bit = BIT(gate->shift);
++
++	switch (gate->flags & CLK_GATE_MASK) {
++	case CLK_GATE_SETCLR:
++		writel(bit, priv->base + gate->regs->clr_ofs);
++		break;
++	case CLK_GATE_NO_SETCLR_INV:
++		clrsetbits_le32(priv->base + gate->regs->sta_ofs, bit, bit);
++		break;
++
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int mtk_clk_gate_disable(struct clk *clk)
++{
++	struct mtk_cg_priv *priv = dev_get_priv(clk->dev);
++	const struct mtk_gate *gate = &priv->gates[clk->id];
++	u32 bit = BIT(gate->shift);
++
++	switch (gate->flags & CLK_GATE_MASK) {
++	case CLK_GATE_SETCLR:
++		writel(bit, priv->base + gate->regs->set_ofs);
++		break;
++	case CLK_GATE_NO_SETCLR_INV:
++		clrsetbits_le32(priv->base + gate->regs->sta_ofs, bit, 0);
++		break;
++
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static ulong mtk_clk_gate_get_rate(struct clk *clk)
++{
++	struct mtk_cg_priv *priv = dev_get_priv(clk->dev);
++	const struct mtk_gate *gate = &priv->gates[clk->id];
++
++	switch (gate->flags & CLK_PARENT_MASK) {
++	case CLK_PARENT_APMIXED:
++		return mtk_clk_find_parent_rate(clk, gate->parent,
++				DM_GET_DRIVER(mtk_clk_apmixedsys));
++		break;
++	case CLK_PARENT_TOPCKGEN:
++		return mtk_clk_find_parent_rate(clk, gate->parent,
++				DM_GET_DRIVER(mtk_clk_topckgen));
++		break;
++
++	default:
++		return priv->tree->xtal_rate;
++	}
++}
++
++const struct clk_ops mtk_clk_apmixedsys_ops = {
++	.enable = mtk_apmixedsys_enable,
++	.disable = mtk_apmixedsys_disable,
++	.set_rate = mtk_apmixedsys_set_rate,
++	.get_rate = mtk_apmixedsys_get_rate,
++};
++
++const struct clk_ops mtk_clk_topckgen_ops = {
++	.enable = mtk_topckgen_enable,
++	.disable = mtk_topckgen_disable,
++	.get_rate = mtk_topckgen_get_rate,
++	.set_parent = mtk_topckgen_set_parent,
++};
++
++const struct clk_ops mtk_clk_gate_ops = {
++	.enable = mtk_clk_gate_enable,
++	.disable = mtk_clk_gate_disable,
++	.get_rate = mtk_clk_gate_get_rate,
++};
++
++int mtk_clk_init(struct udevice *dev, const struct mtk_clk_tree *tree)
++{
++	struct mtk_clk_priv *priv = dev_get_priv(dev);
++
++	priv->base = dev_read_addr_ptr(dev);
++	if (!priv->base)
++		return -ENOENT;
++
++	priv->tree = tree;
++
++	return 0;
++}
++
++int mtk_clk_gate_init(struct udevice *dev,
++		      const struct mtk_clk_tree *tree,
++		      const struct mtk_gate *gates)
++{
++	struct mtk_cg_priv *priv = dev_get_priv(dev);
++
++	priv->base = dev_read_addr_ptr(dev);
++	if (!priv->base)
++		return -ENOENT;
++
++	priv->tree = tree;
++	priv->gates = gates;
++
++	return 0;
++}
+diff --git a/drivers/clk/mediatek/clk-mtk.h b/drivers/clk/mediatek/clk-mtk.h
+new file mode 100644
+index 0000000..108e456
+--- /dev/null
++++ b/drivers/clk/mediatek/clk-mtk.h
+@@ -0,0 +1,151 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Copyright (C) 2018 MediaTek Inc.
++ * Author: Ryder Lee <ryder.lee@mediatek.com>
++ */
++
++#ifndef __DRV_CLK_MTK_H
++#define __DRV_CLK_MTK_H
++
++#define CLK_XTAL			0
++#define MHZ				(1000 * 1000)
++
++#define HAVE_RST_BAR			BIT(0)
++#define CLK_DOMAIN_SCPSYS		BIT(0)
++
++#define CLK_GATE_SETCLR			BIT(0)
++#define CLK_GATE_SETCLR_INV		BIT(1)
++#define CLK_GATE_NO_SETCLR		BIT(2)
++#define CLK_GATE_NO_SETCLR_INV		BIT(3)
++#define CLK_GATE_MASK			GENMASK(3, 0)
++
++#define CLK_PARENT_APMIXED		BIT(4)
++#define CLK_PARENT_TOPCKGEN		BIT(5)
++#define CLK_PARENT_MASK			GENMASK(5, 4)
++
++struct mtk_pll_data {
++	const int id;
++	u32 reg;
++	u32 pwr_reg;
++	u32 en_mask;
++	u32 pd_reg;
++	int pd_shift;
++	u32 flags;
++	u32 rst_bar_mask;
++	u64 fmax;
++	int pcwbits;
++	u32 pcw_reg;
++	int pcw_shift;
++};
++
++struct mtk_fixed_clk {
++	const int id;
++	const int parent;
++	unsigned long rate;
++};
++
++#define FIXED_CLK(_id, _parent, _rate) {		\
++		.id = _id,				\
++		.parent = _parent,			\
++		.rate = _rate,				\
++	}
++
++struct mtk_fixed_factor {
++	const int id;
++	const int parent;
++	u32 mult;
++	u32 div;
++	u32 flags;
++};
++
++#define FACTOR(_id, _parent, _mult, _div, _flags) {	\
++		.id = _id,				\
++		.parent = _parent,			\
++		.mult = _mult,				\
++		.div = _div,				\
++		.flags = _flags,			\
++	}
++
++struct mtk_composite {
++	const int id;
++	const int *parent;
++	u32 mux_reg;
++	u32 gate_reg;
++	u32 mux_mask;
++	signed char mux_shift;
++	signed char gate_shift;
++	signed char num_parents;
++	u16 flags;
++};
++
++#define MUX_GATE_FLAGS(_id, _parents, _reg, _shift, _width, _gate,	\
++		       _flags) {					\
++		.id = _id,						\
++		.mux_reg = _reg,					\
++		.mux_shift = _shift,					\
++		.mux_mask = BIT(_width) - 1,				\
++		.gate_reg = _reg,					\
++		.gate_shift = _gate,					\
++		.parent = _parents,					\
++		.num_parents = ARRAY_SIZE(_parents),			\
++		.flags = _flags,					\
++	}
++
++#define MUX_GATE(_id, _parents, _reg, _shift, _width, _gate)		\
++	MUX_GATE_FLAGS(_id, _parents, _reg, _shift, _width, _gate, 0)
++
++#define MUX(_id, _parents, _reg, _shift, _width) {			\
++		.id = _id,						\
++		.mux_reg = _reg,					\
++		.mux_shift = _shift,					\
++		.mux_mask = BIT(_width) - 1,				\
++		.gate_shift = -1,					\
++		.parent = _parents,					\
++		.num_parents = ARRAY_SIZE(_parents),			\
++		.flags = 0,						\
++	}
++
++struct mtk_gate_regs {
++	u32 sta_ofs;
++	u32 clr_ofs;
++	u32 set_ofs;
++};
++
++struct mtk_gate {
++	const int id;
++	const int parent;
++	const struct mtk_gate_regs *regs;
++	int shift;
++	u32 flags;
++};
++
++struct mtk_clk_tree {
++	unsigned long xtal_rate;
++	unsigned long xtal2_rate;
++	const struct mtk_pll_data *plls;
++	const struct mtk_fixed_clk *fclks;
++	const struct mtk_fixed_factor *fdivs;
++	const struct mtk_composite *muxes;
++};
++
++struct mtk_clk_priv {
++	void __iomem *base;
++	const struct mtk_clk_tree *tree;
++};
++
++struct mtk_cg_priv {
++	void __iomem *base;
++	const struct mtk_clk_tree *tree;
++	const struct mtk_gate *gates;
++};
++
++extern const struct clk_ops mtk_clk_apmixedsys_ops;
++extern const struct clk_ops mtk_clk_topckgen_ops;
++extern const struct clk_ops mtk_clk_gate_ops;
++
++int mtk_clk_init(struct udevice *dev, const struct mtk_clk_tree *tree);
++int mtk_clk_gate_init(struct udevice *dev,
++		      const struct mtk_clk_tree *tree,
++		      const struct mtk_gate *gates);
++
++#endif /* __DRV_CLK_MTK_H */
