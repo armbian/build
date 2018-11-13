@@ -12,8 +12,8 @@
 if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
 REVISION="5.65$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
-MAINTAINER="Igor Pecovnik" # deb signature
-MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
+[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik" # deb signature
+[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
 TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
