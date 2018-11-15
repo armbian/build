@@ -1,0 +1,222 @@
+From fcfa6c7b5a84fac51109efd86b4edf5085359485 Mon Sep 17 00:00:00 2001
+From: Qiang Yu <yuq825@gmail.com>
+Date: Wed, 16 May 2018 11:14:41 +0800
+Subject: [PATCH 059/146] drm/lima: add context related functions
+
+Signed-off-by: Qiang Yu <yuq825@gmail.com>
+---
+ drivers/gpu/drm/lima/lima_ctx.c | 143 ++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/lima/lima_ctx.h |  51 ++++++++++++
+ 2 files changed, 194 insertions(+)
+ create mode 100644 drivers/gpu/drm/lima/lima_ctx.c
+ create mode 100644 drivers/gpu/drm/lima/lima_ctx.h
+
+diff --git a/drivers/gpu/drm/lima/lima_ctx.c b/drivers/gpu/drm/lima/lima_ctx.c
+new file mode 100644
+index 000000000000..7243861760b4
+--- /dev/null
++++ b/drivers/gpu/drm/lima/lima_ctx.c
+@@ -0,0 +1,143 @@
++/*
++ * Copyright (C) 2017-2018 Lima Project
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++ * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
++ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
++ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
++ * OTHER DEALINGS IN THE SOFTWARE.
++ */
++
++#include <linux/slab.h>
++
++#include "lima_device.h"
++#include "lima_ctx.h"
++
++int lima_ctx_create(struct lima_device *dev, struct lima_ctx_mgr *mgr, u32 *id)
++{
++	struct lima_ctx *ctx;
++	int i, err;
++
++	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return -ENOMEM;
++	ctx->dev = dev;
++	kref_init(&ctx->refcnt);
++
++	for (i = 0; i < lima_pipe_num; i++) {
++		err = lima_sched_context_init(dev->pipe + i, ctx->context + i, &ctx->guilty);
++		if (err)
++			goto err_out0;
++	}
++
++	idr_preload(GFP_KERNEL);
++	spin_lock(&mgr->lock);
++	err = idr_alloc(&mgr->handles, ctx, 1, 0, GFP_ATOMIC);
++	spin_unlock(&mgr->lock);
++	idr_preload_end();
++	if (err < 0)
++		goto err_out0;
++
++	*id = err;
++	return 0;
++
++err_out0:
++	for (i--; i >= 0; i--)
++		lima_sched_context_fini(dev->pipe + i, ctx->context + i);
++	kfree(ctx);
++	return err;
++}
++
++static void lima_ctx_do_release(struct kref *ref)
++{
++	struct lima_ctx *ctx = container_of(ref, struct lima_ctx, refcnt);
++	int i;
++
++	for (i = 0; i < lima_pipe_num; i++)
++		lima_sched_context_fini(ctx->dev->pipe + i, ctx->context + i);
++	kfree(ctx);
++}
++
++int lima_ctx_free(struct lima_ctx_mgr *mgr, u32 id)
++{
++	struct lima_ctx *ctx;
++
++	spin_lock(&mgr->lock);
++	ctx = idr_remove(&mgr->handles, id);
++	spin_unlock(&mgr->lock);
++
++	if (ctx) {
++		kref_put(&ctx->refcnt, lima_ctx_do_release);
++		return 0;
++	}
++	return -EINVAL;
++}
++
++struct lima_ctx *lima_ctx_get(struct lima_ctx_mgr *mgr, u32 id)
++{
++	struct lima_ctx *ctx;
++
++	spin_lock(&mgr->lock);
++	ctx = idr_find(&mgr->handles, id);
++	if (ctx)
++		kref_get(&ctx->refcnt);
++	spin_unlock(&mgr->lock);
++	return ctx;
++}
++
++void lima_ctx_put(struct lima_ctx *ctx)
++{
++	kref_put(&ctx->refcnt, lima_ctx_do_release);
++}
++
++void lima_ctx_mgr_init(struct lima_ctx_mgr *mgr)
++{
++        spin_lock_init(&mgr->lock);
++	idr_init(&mgr->handles);
++}
++
++void lima_ctx_mgr_fini(struct lima_ctx_mgr *mgr)
++{
++	struct lima_ctx *ctx;
++	struct idr *idp;
++	uint32_t id;
++
++	idp = &mgr->handles;
++
++	idr_for_each_entry(idp, ctx, id) {
++	        kref_put(&ctx->refcnt, lima_ctx_do_release);
++	}
++
++	idr_destroy(&mgr->handles);
++}
++
++struct dma_fence *lima_ctx_get_native_fence(struct lima_ctx_mgr *mgr,
++					    u32 ctx, u32 pipe, u32 seq)
++{
++	struct lima_ctx *c;
++	struct dma_fence *ret;
++
++	if (pipe >= lima_pipe_num)
++		return ERR_PTR(-EINVAL);
++
++	c = lima_ctx_get(mgr, ctx);
++	if (!c)
++		return ERR_PTR(-ENOENT);
++
++	ret = lima_sched_context_get_fence(c->context + pipe, seq);
++
++	lima_ctx_put(c);
++	return ret;
++}
+diff --git a/drivers/gpu/drm/lima/lima_ctx.h b/drivers/gpu/drm/lima/lima_ctx.h
+new file mode 100644
+index 000000000000..591f64532772
+--- /dev/null
++++ b/drivers/gpu/drm/lima/lima_ctx.h
+@@ -0,0 +1,51 @@
++/*
++ * Copyright (C) 2017-2018 Lima Project
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++ * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
++ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
++ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
++ * OTHER DEALINGS IN THE SOFTWARE.
++ */
++#ifndef __LIMA_CTX_H__
++#define __LIMA_CTX_H__
++
++#include <linux/idr.h>
++
++#include "lima_device.h"
++
++struct lima_ctx {
++	struct kref refcnt;
++	struct lima_device *dev;
++	struct lima_sched_context context[lima_pipe_num];
++	atomic_t guilty;
++};
++
++struct lima_ctx_mgr {
++	spinlock_t lock;
++	struct idr handles;
++};
++
++int lima_ctx_create(struct lima_device *dev, struct lima_ctx_mgr *mgr, u32 *id);
++int lima_ctx_free(struct lima_ctx_mgr *mgr, u32 id);
++struct lima_ctx *lima_ctx_get(struct lima_ctx_mgr *mgr, u32 id);
++void lima_ctx_put(struct lima_ctx *ctx);
++void lima_ctx_mgr_init(struct lima_ctx_mgr *mgr);
++void lima_ctx_mgr_fini(struct lima_ctx_mgr *mgr);
++
++struct dma_fence *lima_ctx_get_native_fence(struct lima_ctx_mgr *mgr,
++					    u32 ctx, u32 pipe, u32 seq);
++
++#endif
+-- 
+2.17.1
+
