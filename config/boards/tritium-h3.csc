@@ -10,5 +10,5 @@ CPUMIN="240000"
 CPUMAX="912000"
 #
 KERNEL_TARGET="next,dev"
-CLI_TARGET="bionic,stretch:next"
+CLI_TARGET="stretch,bionic:next"
 DESKTOP_TARGET=""

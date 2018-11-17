@@ -11,7 +11,7 @@ CPUMAX="1200000"
 #
 KERNEL_TARGET="next,dev"
 CLI_TARGET="stretch,bionic:next"
-DESKTOP_TARGET="bionic:next"
+DESKTOP_TARGET="stretch,bionic:next"
 #
 CLI_BETA_TARGET=""
 #
