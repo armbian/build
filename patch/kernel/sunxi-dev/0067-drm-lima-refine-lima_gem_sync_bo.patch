@@ -1,0 +1,125 @@
+From 5c2d27d3a2b35475ea707b14a41e5c557c9ebad2 Mon Sep 17 00:00:00 2001
+From: Qiang Yu <yuq825@gmail.com>
+Date: Mon, 28 May 2018 18:55:39 +0800
+Subject: [PATCH 067/146] drm/lima: refine lima_gem_sync_bo
+
+Signed-off-by: Qiang Yu <yuq825@gmail.com>
+---
+ drivers/gpu/drm/lima/lima_gem.c   | 58 +++++++++++++++++--------------
+ drivers/gpu/drm/lima/lima_sched.c |  5 ++-
+ 2 files changed, 36 insertions(+), 27 deletions(-)
+
+diff --git a/drivers/gpu/drm/lima/lima_gem.c b/drivers/gpu/drm/lima/lima_gem.c
+index d9c15acb7cf8..3bdff19eb2f9 100644
+--- a/drivers/gpu/drm/lima/lima_gem.c
++++ b/drivers/gpu/drm/lima/lima_gem.c
+@@ -217,9 +217,7 @@ int lima_gem_va_unmap(struct drm_file *file, u32 handle, u32 va)
+ static int lima_gem_sync_bo(struct lima_sched_task *task, struct lima_bo *bo,
+ 			    bool write, bool explicit)
+ {
+-	int i, err;
+-	struct dma_fence *f;
+-	u64 context = task->base.s_fence->finished.context;
++	int err = 0;
+ 
+ 	if (!write) {
+ 		err = reservation_object_reserve_shared(bo->tbo.resv);
+@@ -233,31 +231,38 @@ static int lima_gem_sync_bo(struct lima_sched_task *task, struct lima_bo *bo,
+ 
+ 	/* implicit sync use bo fence in resv obj */
+ 	if (write) {
+-		struct reservation_object_list *fobj =
+-			reservation_object_get_list(bo->tbo.resv);
+-
+-		if (fobj && fobj->shared_count > 0) {
+-			for (i = 0; i < fobj->shared_count; i++) {
+-				f = rcu_dereference_protected(
+-					fobj->shared[i],
+-					reservation_object_held(bo->tbo.resv));
+-				if (f->context != context) {
+-					err = lima_sched_task_add_dep(task, f);
+-					if (err)
+-						return err;
+-				}
+-			}
+-		}
+-	}
++		unsigned nr_fences;
++		struct dma_fence **fences;
++		int i;
+ 
+-	f = reservation_object_get_excl(bo->tbo.resv);
+-	if (f) {
+-		err = lima_sched_task_add_dep(task, f);
+-		if (err)
++		err = reservation_object_get_fences_rcu(
++			bo->tbo.resv, NULL, &nr_fences, &fences);
++		if (err || !nr_fences)
+ 			return err;
++
++		for (i = 0; i < nr_fences; i++) {
++			err = lima_sched_task_add_dep(task, fences[i]);
++			if (err)
++				break;
++		}
++
++		/* for error case free remaining fences */
++		for ( ; i < nr_fences; i++)
++			dma_fence_put(fences[i]);
++
++		kfree(fences);
++	}
++	else {
++		struct dma_fence *fence;
++		fence = reservation_object_get_excl_rcu(bo->tbo.resv);
++		if (fence) {
++			err = lima_sched_task_add_dep(task, fence);
++			if (err)
++				dma_fence_put(fence);
++		}
+ 	}
+ 
+-	return 0;
++	return err;
+ }
+ 
+ static int lima_gem_add_deps(struct lima_ctx_mgr *mgr, struct lima_submit *submit)
+@@ -291,9 +296,10 @@ static int lima_gem_add_deps(struct lima_ctx_mgr *mgr, struct lima_submit *submi
+ 
+ 		if (fence) {
+ 			err = lima_sched_task_add_dep(submit->task, fence);
+-			dma_fence_put(fence);
+-			if (err)
++			if (err) {
++				dma_fence_put(fence);
+ 				break;
++			}
+ 		}
+ 	}
+ 
+diff --git a/drivers/gpu/drm/lima/lima_sched.c b/drivers/gpu/drm/lima/lima_sched.c
+index 89e758718d62..91ec00811071 100644
+--- a/drivers/gpu/drm/lima/lima_sched.c
++++ b/drivers/gpu/drm/lima/lima_sched.c
+@@ -130,6 +130,10 @@ int lima_sched_task_add_dep(struct lima_sched_task *task, struct dma_fence *fenc
+ {
+ 	int i, new_dep = 4;
+ 
++	/* same context's fence is definitly earlier then this task */
++	if (fence->context == task->base.s_fence->finished.context)
++		return 0;
++
+ 	if (task->dep && task->num_dep == task->max_dep)
+ 		new_dep = task->max_dep * 2;
+ 
+@@ -141,7 +145,6 @@ int lima_sched_task_add_dep(struct lima_sched_task *task, struct dma_fence *fenc
+ 		task->dep = dep;
+ 	}
+ 
+-	dma_fence_get(fence);
+ 	for (i = 0; i < task->num_dep; i++) {
+ 		if (task->dep[i]->context == fence->context &&
+ 		    dma_fence_is_later(fence, task->dep[i])) {
+-- 
+2.17.1
+

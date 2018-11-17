@@ -210,6 +210,10 @@ create_board_package()
 		mv /etc/default/armbian-zram-config.dpkg-dist /etc/default/armbian-zram-config
 	fi
 
+	if [ -L "/usr/lib/chromium-browser/master_preferences.dpkg-dist" ]; then
+		mv /usr/lib/chromium-browser/master_preferences.dpkg-dist /usr/lib/chromium-browser/master_preferences
+	fi
+
 	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service >/dev/null 2>&1
 	exit 0
 	EOF
