@@ -92,9 +92,11 @@ create_board_package()
 	if [ -f /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf ]; then
 		sed -i 's/wifi.powersave.*/wifi.powersave = 2/' /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
 		else
-		echo "[connection]" > /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
-		echo "# Values are 0 (use default), 1 (ignore/don't touch), 2 (disable) or 3 (enable)." >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
-		echo "wifi.powersave = 2" >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+		if [ -d /etc/NetworkManager/conf.d ]; then
+			echo "[connection]" > /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+			echo "# Values are 0 (use default), 1 (ignore/don't touch), 2 (disable) or 3 (enable)." >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+			echo "wifi.powersave = 2" >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
+		fi
 	fi
 	# disable deprecated services
 	systemctl disable armhwinfo.service >/dev/null 2>&1
@@ -206,6 +208,10 @@ create_board_package()
 	fi
 	if [ ! -f "/etc/default/armbian-zram-config" ]; then
 		mv /etc/default/armbian-zram-config.dpkg-dist /etc/default/armbian-zram-config
+	fi
+
+	if [ -L "/usr/lib/chromium-browser/master_preferences.dpkg-dist" ]; then
+		mv /usr/lib/chromium-browser/master_preferences.dpkg-dist /usr/lib/chromium-browser/master_preferences
 	fi
 
 	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service >/dev/null 2>&1

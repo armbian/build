@@ -246,7 +246,7 @@ install_common()
 
 	# configure network manager
 	sed "s/managed=\(.*\)/managed=true/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
-	
+
 	# Just regular DNS and maintain /etc/resolv.conf as a file
 	sed "/dns/d" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
 	sed "s/\[main\]/\[main\]\ndns=default\nrc-manager=file/g" -i $SDCARD/etc/NetworkManager/NetworkManager.conf
