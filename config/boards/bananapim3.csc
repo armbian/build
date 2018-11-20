@@ -8,7 +8,7 @@ MODULES_NEXT=""
 OVERLAY_PREFIX="sun8i-a83t"
 #
 KERNEL_TARGET="dev"
-CLI_TARGET="stretch:dev"
-DESKTOP_TARGET="stretch:dev"
+CLI_TARGET="stretch,bionic:dev"
+DESKTOP_TARGET="stretch,bionic:dev"
 #
 CLI_BETA_TARGET=""
