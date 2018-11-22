@@ -17,7 +17,7 @@ case $BRANCH in
 	BOOTSOURCE='https://github.com/helios-4/u-boot.git'
 	BOOTBRANCH='branch:helios4'
 	BOOTDIR=$MAINLINE_UBOOT_DIR
-	BOOTSCRIPT='boot-marvell.cmd:boot.cmd'
+	BOOTSCRIPT='boot-mvebu-next.cmd:boot.cmd'
 	BOOTCONFIG='helios4_defconfig'
 
 	UBOOT_TARGET_MAP=";;u-boot-spl.kwb:u-boot.mmc
