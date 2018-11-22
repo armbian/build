@@ -62,6 +62,17 @@ if test "${emmc_fix}" = "on"; then
 	fdt set /soc/internal-regs/sdhci@d8000/ non-removable
 fi
 
+# SPI - SATA workaround
+if test "${spi_workaround}" = "on"; then
+	echo "Applying SPI workaround to the DT"
+	fdt addr ${fdt_addr}
+	fdt resize
+	fdt set /soc/internal-regs/sata@e0000 status "disabled"
+	fdt set /soc/internal-regs/sata@a8000 status "disabled"
+	fdt set /soc/spi@10680 status "okay"
+	fdt set /soc/spi@10680/spi-flash@0 status "okay"
+fi
+
 bootz ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
 # Recompile with:
