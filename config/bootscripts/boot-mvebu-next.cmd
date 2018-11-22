@@ -17,10 +17,10 @@ setenv eth3addr "00:50:43:0d:19:18"
 echo "Boot script loaded from ${devtype}"
 
 if load ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt; then
-	env import -t ${pxefile_addr_r} ${filesize}
+	env import -t ${load_addr} ${filesize}
 fi
 
-setenv bootargs "console=ttyS0,115200 root=${rootdev} rootwait rootfstype=${rootfstype} ubootdev=${boot_interface} scandelay loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
+setenv bootargs "console=ttyS0,115200 root=${rootdev} rootwait rootfstype=${rootfstype} ubootdev=${devtype} scandelay loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 
 load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
