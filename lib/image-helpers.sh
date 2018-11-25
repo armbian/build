@@ -92,6 +92,7 @@ install_external_applications()
 #
 write_uboot()
 {
+if [[ $ADD_UBOOT == yes ]]; then
 	local loop=$1
 	display_alert "Writing U-boot bootloader" "$loop" "info"
 	mkdir -p /tmp/u-boot/
@@ -100,6 +101,7 @@ write_uboot()
 	[[ $? -ne 0 ]] && exit_with_error "U-boot bootloader failed to install" "@host"
 	rm -r /tmp/u-boot/
 	sync
+fi
 } #############################################################################
 
 customize_image()

@@ -1,0 +1,199 @@
+--- a/scripts/package/builddeb
++++ b/scripts/package/builddeb
+@@ -44,7 +44,7 @@
+ 	
+ 	# Create postinstall script for headers
+ 	if [[ "$1" == *headers* ]]; then
+-		echo "cd /usr/src/linux-headers-$version; echo \"Compiling headers - please wait ...\";find -type f -exec touch {} +; make -s scripts >/dev/null 2>&1" >> $pdir/DEBIAN/postinst
++		echo "cd /usr/src/linux-headers-$version; echo \"Compiling headers - please wait ...\"; find -type f -exec touch {} +;make -s scripts >/dev/null 2>&1" >> $pdir/DEBIAN/postinst
+ 		echo "exit 0" >> $pdir/DEBIAN/postinst
+ 		chmod 775 $pdir/DEBIAN/postinst
+ 	fi
+@@ -117,11 +117,11 @@
+ libc_headers_dir="$objtree/debian/headertmp"
+ dtb_dir="$objtree/debian/dtbtmp"
+ dbg_dir="$objtree/debian/dbgtmp"
+-packagename=linux-image"$LOCAL_VERSION"
+-fwpackagename=linux-firmware-image"$LOCAL_VERSION"
+-kernel_headers_packagename=linux-headers"$LOCAL_VERSION"
+-dtb_packagename=linux-dtb"$LOCAL_VERSION"
+-libc_headers_packagename=linux-libc-dev"$LOCAL_VERSION"
++packagename=linux-image"$LOCALVERSION"
++fwpackagename=linux-firmware-image"$LOCALVERSION"
++kernel_headers_packagename=linux-headers"$LOCALVERSION"
++dtb_packagename=linux-dtb"$LOCALVERSION"
++libc_headers_packagename=linux-libc-dev"$LOCALVERSION"
+ dbg_packagename=$packagename-dbg
+ debarch=
+ forcearch=
+@@ -138,7 +138,7 @@
+ um)
+ 	installed_image_path="usr/bin/linux-$version"
+ 	;;
+-parisc|mips|powerpc)
++parisc|mips|powerpc|arm64)
+ 	installed_image_path="boot/vmlinux-$version"
+ 	;;
+ *)
+@@ -167,8 +167,13 @@
+ 	cp System.map "$tmpdir/boot/System.map-$version"
+ 	cp $KCONFIG_CONFIG "$tmpdir/boot/config-$version"
+ fi
+-
+-cp arch/$ARCH/boot/Image "$tmpdir/$installed_image_path"
++# Not all arches include the boot path in KBUILD_IMAGE
++if [ -e $KBUILD_IMAGE ]; then
++#Forcing KBUILD_MAGE reference to Image instead of zImage.. Armbian LINUX_KERNEL_TYPE=Image not being honored
++	cp Image "$tmpdir/$installed_image_path"
++else
++	cp arch/$ARCH/boot/Image "$tmpdir/$installed_image_path"
++fi
+ 
+ if grep -q "^CONFIG_OF=y" $KCONFIG_CONFIG ; then
+ 	# Only some architectures with OF support have this target
+@@ -205,9 +210,9 @@
+ 	fi
+ fi
+ 
+-if grep -q '^CONFIG_ARM64=y' $KCONFIG_CONFIG ; then
+-	mkdir -p "$tmpdir/boot/dtb-""$version"
+-	cp $objtree/arch/$SRCARCH/boot/dts/rockchip/*.dtb $dtb_dir/boot/dtb-$version
++if grep -q '^CONFIG_OF=y' $KCONFIG_CONFIG ; then
++	#mkdir -p "$tmpdir/boot/dtb"
++	INSTALL_DTBS_PATH="$dtb_dir/boot/dtb-$version" $MAKE KBUILD_SRC= dtbs_install
+ fi
+ 
+ 
+@@ -223,7 +228,7 @@
+ # so do we; recent versions of dracut and initramfs-tools will obey this.
+ debhookdir=${KDEB_HOOKDIR:-/etc/kernel}
+ if grep -q '^CONFIG_BLK_DEV_INITRD=y' $KCONFIG_CONFIG; then
+-	want_initrd=Yes
++	want_initrd=Yes 
+ else
+ 	want_initrd=No
+ fi
+@@ -235,9 +240,11 @@
+ set -e
+ 
+ # Pass maintainer script parameters to hook scripts
++
+ export DEB_MAINT_PARAMS="\$*"
+ 
+ # Tell initramfs builder whether it's wanted
++
+ export INITRD=$want_initrd
+ 
+ test -d $debhookdir/$script.d && run-parts --arg="$version" --arg="/$installed_image_path" $debhookdir/$script.d
+@@ -251,31 +258,52 @@
+ ##
+ sed -e "s/set -e//g" -i $tmpdir/DEBIAN/postinst
+ sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/postinst
+-cat >> $tmpdir/DEBIAN/postinst <<EOF
+-ln -sf $(basename $installed_image_path) /boot/zImage > /dev/null 2>&1 || mv /$installed_image_path /boot/zImage
++cat >> $tmpdir/DEBIAN/postinst <<EOT 
++if [ "\$(grep nand /proc/partitions)" != "" ] && [ "\$(grep mmc /proc/partitions)" = "" ]; then
++mkimage -A arm -O linux -T kernel -C gzip -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /$installed_image_path /boot/uImage  > /dev/null 2>&1
++cp /boot/uImage /tmp/uImage
++##copy uncompressed Kernel Image w/o Uboot for espressobin--gzip compressed forced above for mkimage
++cp $installed_image_path /tmp/Image
++sync
++mountpoint -q /boot || mount /boot
++cp /tmp/uImage /boot/uImage
++cp /tmp/Image /boot/Image
++rm -f /$installed_image_path
++else
++ln -sf $(basename $installed_image_path) /boot/Image > /dev/null 2>&1 || mv /$installed_image_path /boot/Image
++fi
++touch /boot/.next
+ exit 0
+-EOF
+-
+-## backup kernel image, config and System.map, fixup kernel upgrade issue
++EOT
++##
++## FAT install workaround
++##
++sed -e "s/set -e//g" -i $tmpdir/DEBIAN/preinst
+ sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/preinst
+-cat >> $tmpdir/DEBIAN/preinst <<EOF
+-if [ -f /$installed_image_path ]; then
+-       mv /$installed_image_path /$installed_image_path.old
+-fi
+-
+-if [ -f /boot/zImage ]; then
+-       mv /boot/zImage /boot/zImage.old
+-fi
+-
+-if [ -f /boot/System.map-$version ]; then
+-       mv /boot/System.map-$version /boot/System.map-$version.old
+-fi
+-
+-if [ -f /boot/config-$version ]; then
+-       mv /boot/config-$version /boot/config-$version.old
+-fi
+-exit 0
+-EOF
++cat >> $tmpdir/DEBIAN/preinst <<EOT 
++# exit if we are running chroot
++if [ "\$(stat -c %d:%i /)" != "\$(stat -c %d:%i /proc/1/root/.)" ]; then exit 0; fi
++
++check_and_unmount (){
++boot_device=\$(mountpoint -d /boot)
++
++for file in /dev/* ; do
++	CURRENT_DEVICE=\$(printf "%d:%d" \$(stat --printf="0x%t 0x%T" \$file))
++	if [[ "\$CURRENT_DEVICE" = "\$boot_device" ]]; then
++		boot_partition=\$file
++		break;
++	fi
++done
++
++bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
++if [ "\$bootfstype" = "vfat" ]; then 
++umount /boot; 
++rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/zImage /boot/uImage /boot/Image
++fi
++}
++mountpoint -q /boot && check_and_unmount
++EOT
++echo "exit 0" >> $tmpdir/DEBIAN/preinst 
+ 
+ # Try to determine maintainer and email values
+ if [ -n "$DEBEMAIL" ]; then
+@@ -387,16 +415,24 @@
+ (cd $objtree; find arch/$SRCARCH/include Module.symvers include scripts -type f) >> "$objtree/debian/hdrobjfiles"
+ destdir=$kernel_headers_dir/usr/src/linux-headers-$version
+ mkdir -p "$destdir"
++######################## headers patch
++ZACNI=$(pwd)
++cd $destdir
++patch -p1 < /tmp/headers-debian-byteshift.patch
++cd $ZACNI
++######################## headers patch
+ (cd $srctree; tar -c -f - -T -) < "$objtree/debian/hdrsrcfiles" | (cd $destdir; tar -xf -)
+ (cd $objtree; tar -c -f - -T -) < "$objtree/debian/hdrobjfiles" | (cd $destdir; tar -xf -)
+ (cd $objtree; cp $KCONFIG_CONFIG $destdir/.config) # copy .config manually to be where it's expected to be
+ ln -sf "/usr/src/linux-headers-$version" "$kernel_headers_dir/lib/modules/$version/build"
+ rm -f "$objtree/debian/hdrsrcfiles" "$objtree/debian/hdrobjfiles"
+ 
++(cd "$destdir"; make M=scripts clean)
++
+ cat <<EOF >> debian/control
+ 
+ Package: $kernel_headers_packagename
+-Provides: linux-headers, linux-headers-2.6
++Provides: linux-headers
+ Architecture: any
+ Description: Linux kernel headers for $KERNELRELEASE on \${kernel:debarch}
+  This package provides kernel header files for $KERNELRELEASE on \${kernel:debarch}
+@@ -443,7 +479,7 @@
+ 
+ if [ "$ARCH" != "um" ]; then
+ 	create_package "$kernel_headers_packagename" "$kernel_headers_dir"
+-	create_package "$libc_headers_packagename" "$libc_headers_dir"
++#	create_package "$libc_headers_packagename" "$libc_headers_dir"
+ fi
+ 
+ create_package "$packagename" "$tmpdir"
+

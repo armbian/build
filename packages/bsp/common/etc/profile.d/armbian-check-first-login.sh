@@ -52,6 +52,10 @@ add_user()
 	# fix for gksu in Xenial
 	touch /home/$RealUserName/.Xauthority
 	chown $RealUserName:$RealUserName /home/$RealUserName/.Xauthority
+
+#	20171019
+	usermod -a -G audio,video,disk,input,tty,root,users,games $RealUserName
+
 	RealName="$(awk -F":" "/^${RealUserName}:/ {print \$5}" </etc/passwd | cut -d',' -f1)"
 	[ -z "$RealName" ] && RealName=$RealUserName
 	echo -e "\nDear ${RealName}, your account ${RealUserName} has been created and is sudo enabled."

@@ -88,6 +88,8 @@ compile_atf()
 
 compile_uboot()
 {
+if [[ $ADD_UBOOT == yes ]]; then
+
 	# not optimal, but extra cleaning before overlayfs_wrapper should keep sources directory clean
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
@@ -249,6 +251,7 @@ compile_uboot()
 	[[ ! -f $SRC/.tmp/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
 	mv $SRC/.tmp/${uboot_name}.deb $DEST/debs/
+fi
 }
 
 compile_kernel()
@@ -356,7 +359,7 @@ compile_kernel()
 	xz < .config > $sources_pkg_dir/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz
 
 	eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
-		'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" LOCALVERSION="-$LINUXFAMILY" \
+		'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" $SRC_LOADADDR LOCALVERSION="-$LINUXFAMILY" \
 		$KERNEL_IMAGE_TYPE modules dtbs 2>&1' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \

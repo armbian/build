@@ -115,8 +115,6 @@ create_desktop_package ()
 desktop_postinstall ()
 {
 	# stage: install display manager
-	display_alert "Installing" "display manager: $DISPLAY_MANAGER" "info"
-	chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=\"--force-confold\" -y -qq install $PACKAGE_LIST_DISPLAY_MANAGER" >> $DEST/debug/install.log 2>&1
 	[[ -f $SDCARD/etc/default/nodm ]] && sed "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=false/g" -i $SDCARD/etc/default/nodm
 	[[ -d $SDCARD/etc/lightdm ]] && chroot $SDCARD /bin/bash -c "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
 
@@ -128,4 +126,8 @@ desktop_postinstall ()
 		echo "disp_mem_reserves=on" >> $SDCARD/boot/armbianEnv.txt
 		echo "extraargs=cma=96M" >> $SDCARD/boot/armbianEnv.txt
 	fi
+
+	mkdir -p $SDCARD/etc/skel/Desktop/
+	cp $SRC/cache/SRC/Test* $SDCARD/etc/skel/Desktop
+
 }

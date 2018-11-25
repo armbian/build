@@ -12,8 +12,8 @@
 if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
 REVISION="5.67$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
-MAINTAINER="Igor Pecovnik" # deb signature
-MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
+MAINTAINER="Oleg Ivanov" # deb signature
+MAINTAINERMAIL="balbes-150@yandex.ru" # deb signature
 TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
@@ -65,6 +65,9 @@ SERIALCON=ttyS0
 CAN_BUILD_STRETCH=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
+
+#s8xx
+SRC_LOADADDR=""
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
@@ -136,7 +139,7 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 
 
 # Non-essential packages
-PACKAGE_LIST_ADDITIONAL="armbian-firmware alsa-utils btrfs-tools dosfstools iotop iozone3 stress sysbench screen \
+PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools dosfstools iotop iozone3 stress sysbench screen \
 	ntfs-3g vim pciutils evtest htop pv lsof apt-transport-https libfuse2 libdigest-sha-perl \
 	libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan sysstat bash-completion \
 	hostapd git ethtool network-manager unzip ifenslave command-not-found libpam-systemd iperf3 \
@@ -148,7 +151,7 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
 	libgtk2.0-bin libgnome2-perl network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
 	pulseaudio pavumeter pulseaudio-module-gconf bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
-	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme"
+	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic gparted mc"
 
 
 # Recommended desktop packages
@@ -157,18 +160,17 @@ PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter n
 
 case $DISPLAY_MANAGER in
 	nodm)
-		PACKAGE_LIST_DISPLAY_MANAGER="nodm"
+		PACKAGE_LIST_DESKTOP+=" nodm"
 	;;
 
 	lightdm)
-		PACKAGE_LIST_DISPLAY_MANAGER="lightdm lightdm-gtk-greeter"
+		PACKAGE_LIST_DESKTOP+=" lightdm lightdm-gtk-greeter"
 	;;
 
 	*)
 		exit_with_error "Unsupported display manager selected" "$DISPLAY_MANAGER"
 	;;
 esac
-
 
 
 # Release specific packages
