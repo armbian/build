@@ -280,7 +280,7 @@ install_distribution_specific()
 		# remove legal info from Ubuntu
 		[[ -f $SDCARD/etc/legal ]] && rm $SDCARD/etc/legal
 
-		# disable not working on unneeded services
+		# disable not working or unneeded services
 		# ureadahead needs kernel tracing options that AFAIK are present only in mainline
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload mask ondemand.service ureadahead.service setserial.service etc-setserial.service >/dev/null 2>&1"
 		;;
@@ -343,6 +343,8 @@ install_distribution_specific()
 		sed -i "s/#Compress=.*/Compress=yes/g" $SDCARD/etc/systemd/journald.conf
 		sed -i "s/#RateLimitIntervalSec=.*/RateLimitIntervalSec=30s/g" $SDCARD/etc/systemd/journald.conf
 		sed -i "s/#RateLimitBurst=.*/RateLimitBurst=10000/g" $SDCARD/etc/systemd/journald.conf
+		# disable conflicting services
+		chroot $SDCARD /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
 		;;
 	esac
 }

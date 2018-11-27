@@ -747,8 +747,8 @@ download_toolchain()
 
 download_etcher_cli()
 {
-        local url="https://github.com/resin-io/etcher/releases/download/v1.4.5/etcher-cli-1.4.5-linux-x64.tar.gz"
-	local hash="f7f3d63c29f5bf0b494c68efd6cc990e2e571c5f1833ed1c6f773f0f3681eb56"
+        local url="https://github.com/balena-io/etcher/releases/download/v1.4.8/balena-etcher-cli-1.4.8-linux-x64.tar.gz"
+	local hash="9befa06b68bb5846bcf5a9516785d48d6aaa9364d80a5802deb5b6a968bf5404"
 
         local filename=${url##*/}
         local dirname=${filename/.tar.gz/-dist}
