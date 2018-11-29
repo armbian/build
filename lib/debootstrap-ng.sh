@@ -597,7 +597,7 @@ create_image()
 	# write image to SD card
 	if [[ -e "$CARD_DEVICE" && -f $DEST/images/${version}.img && $COMPRESS_OUTPUTIMAGE != yes ]]; then
 		display_alert "Writing image" "$CARD_DEVICE" "info"
-		etcher $DEST/images/${version}.img -d $CARD_DEVICE -y
+		balena-etcher $DEST/images/${version}.img -d $CARD_DEVICE -y
 		if [ $? -eq 0 ]; then
 			display_alert "Writing succeeded" "${version}.img" "info"
 			else

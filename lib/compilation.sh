@@ -57,8 +57,10 @@ compile_atf()
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
 
+	# ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF.
+	# Check: https://github.com/armbian/build/issues/1157
 	eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$toolchain2:$PATH \
-		'make $target_make $CTHREADS CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>&1 \
+		'make ENABLE_BACKTRACE="0" $target_make $CTHREADS CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>&1 \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling ATF..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
