@@ -175,24 +175,28 @@ esac
 case $RELEASE in
 
 	jessie)
+		DEBOOTSTRAP_COMPONENTS="main"
 		PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless policykit-1-gnome eject numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" iceweasel pluma system-config-printer"
 	;;
 
 	xenial)
+		DEBOOTSTRAP_COMPONENTS="main"
 		PACKAGE_LIST_RELEASE="man-db wget nano"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common system-config-printer-gnome"
 	;;
 
 	stretch)
+		DEBOOTSTRAP_COMPONENTS="main"
 		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer"
 	;;
 
 	bionic)
+		DEBOOTSTRAP_COMPONENTS="main,universe"
 		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer language-selector-gnome"
