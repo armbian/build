@@ -133,20 +133,21 @@ function create_deb_package ()
 	process_line $lowerdir "armbian.postrm" 	$2 $upperdir
 
 	# create DEBIAN control file
-	echo "Package: ${ARMBIAN_PKG_PACKAGE}"								 >  $upperdir/DEBIAN/control
-	echo "Version: ${ARMBIAN_PKG_REVISION}" 							 >> $upperdir/DEBIAN/control
-	echo "Architecture: ${ARMBIAN_PKG_ARCH}" 							 >> $upperdir/DEBIAN/control
-	echo "Maintainer: ${ARMBIAN_PKG_MAINTAINER} ${ARMBIAN_PKG_MAINTAINERMAIL}"			 >> $upperdir/DEBIAN/control
-	echo "Installed-Size: ${packagesize}" 								 >> $upperdir/DEBIAN/control
-	echo "Section: ${ARMBIAN_PKG_SECTION}"								 >> $upperdir/DEBIAN/control
-	echo "Priority: ${ARMBIAN_PKG_PRIORITY}" 							 >> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_DEPENDS ]] && echo "Depends: $(echo ${ARMBIAN_PKG_DEPENDS} | tr " " ,)"	 >> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_PROVIDES ]] && echo "Provides: $(echo ${ARMBIAN_PKG_PROVIDES} | tr " " ,)"	 >> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_RECOMMENDS ]] && echo "Recommends: $(echo ${ARMBIAN_PKG_RECOMMENDS} | tr " " ,)"	>> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_CONFLICTS ]] && echo "Conflicts: $(echo ${ARMBIAN_PKG_CONFLICTS} | tr " " ,)" >> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_REPLACES ]] && echo "Replaces: $(echo ${ARMBIAN_PKG_REPLACES} | tr " " ,)"	 >> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_HOMEPAGE ]] && echo "Homepage: ${ARMBIAN_PKG_HOMEPAGE}"			 >> $upperdir/DEBIAN/control
-	echo "Description: ${ARMBIAN_PKG_DESCRIPTION}"							 >> $upperdir/DEBIAN/control
+	local control="$upperdir/DEBIAN/control"
+	echo "Package: ${ARMBIAN_PKG_PACKAGE}"									>  $control
+	echo "Version: ${ARMBIAN_PKG_REVISION}" 								>> $control
+	echo "Architecture: ${ARMBIAN_PKG_ARCH}" 								>> $control
+	echo "Maintainer: ${ARMBIAN_PKG_MAINTAINER} ${ARMBIAN_PKG_MAINTAINERMAIL}"				>> $control
+	echo "Installed-Size: ${packagesize}" 									>> $control
+	echo "Section: ${ARMBIAN_PKG_SECTION}"									>> $control
+	echo "Priority: ${ARMBIAN_PKG_PRIORITY}" 								>> $control
+	[[ -n $ARMBIAN_PKG_DEPENDS ]] && echo "Depends: $(echo ${ARMBIAN_PKG_DEPENDS} | tr " " ,)"		>> $control
+	[[ -n $ARMBIAN_PKG_PROVIDES ]] && echo "Provides: $(echo ${ARMBIAN_PKG_PROVIDES} | tr " " ,)"		>> $control
+	[[ -n $ARMBIAN_PKG_RECOMMENDS ]] && echo "Recommends: $(echo ${ARMBIAN_PKG_RECOMMENDS} | tr " " ,)"	>> $control
+	[[ -n $ARMBIAN_PKG_CONFLICTS ]] && echo "Conflicts: $(echo ${ARMBIAN_PKG_CONFLICTS} | tr " " ,)"	>> $control
+	[[ -n $ARMBIAN_PKG_REPLACES ]] && echo "Replaces: $(echo ${ARMBIAN_PKG_REPLACES} | tr " " ,)"		>> $control
+	[[ -n $ARMBIAN_PKG_HOMEPAGE ]] && echo "Homepage: ${ARMBIAN_PKG_HOMEPAGE}"				>> $control
+	echo "Description: ${ARMBIAN_PKG_DESCRIPTION}"								>> $control
 
 	# add slash to the variable if subdirectory is defined
 	[[ -n $ARMBIAN_PKG_REPOSITORY ]] && ARMBIAN_PKG_REPOSITORY+="/"
