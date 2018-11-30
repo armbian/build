@@ -44,15 +44,17 @@ done
 function process_line()
 {
 local filename="$4/DEBIAN/"$(echo $2 | sed -e "s/^armbian.//")
+
 if [[ -f $1/$2 ]]; then
 	postinst=$(bash $1/$2)
 else
 	postinst=$(bash $SRC/debs/TEMPLATE/$2)
 fi
-	while read -r line; do
-    echo "$line" >> $filename
-	done <<< "$postinst"
-	chmod +x $filename
+
+while read -r line; do
+	echo "$line" >> $filename
+done <<< "$postinst"
+chmod +x $filename
 }
 
 
@@ -72,17 +74,19 @@ function create_deb_package ()
 	ARMBIAN_PKG_PROVIDES ARMBIAN_PKG_RECOMMENDS ARMBIAN_PKG_CONFLICTS ARMBIAN_PKG_REPLACES ARMBIAN_PKG_REPOSITORY \
 	ARMBIAN_PKG_DESCRIPTION ARMBIAN_PKG_MAINTAINER ARMBIAN_PKG_MAINTAINERMAIL
 
-	# defaults
+	# set defaults which are overwritten via package armbian.config file
 	ARMBIAN_PKG_REVISION=$REVISION
 	ARMBIAN_PKG_MAINTAINER=$MAINTAINER
 	ARMBIAN_PKG_MAINTAINERMAIL=$MAINTAINERMAIL
 	ARMBIAN_PKG_HOMEPAGE="https://www.armbian.com"
+	ARMBIAN_PKG_DESCRIPTION="Unnamed Armbian package"
 	ARMBIAN_PKG_ARCH=all
 	ARMBIAN_PKG_PRIORITY=optional
 
 	# read package configuration
 	source $1/armbian.config
 
+	# define local variables for better readability
 	local pkgname="${ARMBIAN_PKG_PACKAGE}_${ARMBIAN_PKG_REVISION}_${ARMBIAN_PKG_ARCH}"
 	local lowerdir="$1"		# source
 	local upperdir="$2${pkgname}"	# destination
@@ -97,16 +101,11 @@ function create_deb_package ()
 
 	# package name is mandatory
 	[[ -z $ARMBIAN_PKG_PACKAGE ]] && echo "Error in $1 Package name must be defined" && return 1
+
 	# overlay is mandatory
 	[[ ! -d $1overlay ]] && echo "Error in $1overlay Overlay directory is missing" && return 1
 
-	# description failover
-	[[ -z $ARMBIAN_PKG_DESCRIPTION ]] && ARMBIAN_PKG_DESCRIPTION="Unnamed Armbian package"
-
-	# add slash to the variable if subdirectory is defined
-	[[ -n $ARMBIAN_PKG_REPOSITORY ]] && ARMBIAN_PKG_REPOSITORY+="/"
-
-	# re-create directories
+	# re-create temporally directories
 	if [[ $upperdir != "/" && $workdir != "/" && $mergeddir != "/" ]]; then
 		rm -rf $upperdir $workdir $mergeddir
 		mkdir -p $upperdir/DEBIAN $workdir $mergeddir
@@ -134,23 +133,28 @@ function create_deb_package ()
 	process_line $lowerdir "armbian.postrm" 	$2 $upperdir
 
 	# create DEBIAN control file
-	echo "Package: ${ARMBIAN_PKG_PACKAGE}"									>  $upperdir/DEBIAN/control
-	echo "Version: ${ARMBIAN_PKG_REVISION}" 								>> $upperdir/DEBIAN/control
-	echo "Architecture: ${ARMBIAN_PKG_ARCH}" 								>> $upperdir/DEBIAN/control
-	echo "Maintainer: ${ARMBIAN_PKG_MAINTAINER} ${ARMBIAN_PKG_MAINTAINERMAIL}" 				>> $upperdir/DEBIAN/control
-	echo "Installed-Size: ${packagesize}" 									>> $upperdir/DEBIAN/control
-	echo "Section: ${ARMBIAN_PKG_SECTION}"									>> $upperdir/DEBIAN/control
-	echo "Priority: ${ARMBIAN_PKG_PRIORITY}" 								>> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_DEPENDS ]]    &&	echo "Depends: $(echo ${ARMBIAN_PKG_DEPENDS} | tr " " ,)"	>> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_PROVIDES ]]	 &&	echo "Provides: $(echo ${ARMBIAN_PKG_PROVIDES} | tr " " ,)"	>> $upperdir/DEBIAN/control
+	echo "Package: ${ARMBIAN_PKG_PACKAGE}"								 >  $upperdir/DEBIAN/control
+	echo "Version: ${ARMBIAN_PKG_REVISION}" 							 >> $upperdir/DEBIAN/control
+	echo "Architecture: ${ARMBIAN_PKG_ARCH}" 							 >> $upperdir/DEBIAN/control
+	echo "Maintainer: ${ARMBIAN_PKG_MAINTAINER} ${ARMBIAN_PKG_MAINTAINERMAIL}"			 >> $upperdir/DEBIAN/control
+	echo "Installed-Size: ${packagesize}" 								 >> $upperdir/DEBIAN/control
+	echo "Section: ${ARMBIAN_PKG_SECTION}"								 >> $upperdir/DEBIAN/control
+	echo "Priority: ${ARMBIAN_PKG_PRIORITY}" 							 >> $upperdir/DEBIAN/control
+	[[ -n $ARMBIAN_PKG_DEPENDS ]] && echo "Depends: $(echo ${ARMBIAN_PKG_DEPENDS} | tr " " ,)"	 >> $upperdir/DEBIAN/control
+	[[ -n $ARMBIAN_PKG_PROVIDES ]] && echo "Provides: $(echo ${ARMBIAN_PKG_PROVIDES} | tr " " ,)"	 >> $upperdir/DEBIAN/control
 	[[ -n $ARMBIAN_PKG_RECOMMENDS ]] && echo "Recommends: $(echo ${ARMBIAN_PKG_RECOMMENDS} | tr " " ,)"	>> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_CONFLICTS ]]  &&	echo "Conflicts: $(echo ${ARMBIAN_PKG_CONFLICTS} | tr " " ,)"	>> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_REPLACES ]]   &&	echo "Replaces: $(echo ${ARMBIAN_PKG_REPLACES} | tr " " ,)"	>> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_HOMEPAGE ]]   &&	echo "Homepage: ${ARMBIAN_PKG_HOMEPAGE}"			>> $upperdir/DEBIAN/control
-	echo "Description: ${ARMBIAN_PKG_DESCRIPTION}"								>> $upperdir/DEBIAN/control
-	# build the package and save in the output/debs directories
+	[[ -n $ARMBIAN_PKG_CONFLICTS ]] && echo "Conflicts: $(echo ${ARMBIAN_PKG_CONFLICTS} | tr " " ,)" >> $upperdir/DEBIAN/control
+	[[ -n $ARMBIAN_PKG_REPLACES ]] && echo "Replaces: $(echo ${ARMBIAN_PKG_REPLACES} | tr " " ,)"	 >> $upperdir/DEBIAN/control
+	[[ -n $ARMBIAN_PKG_HOMEPAGE ]] && echo "Homepage: ${ARMBIAN_PKG_HOMEPAGE}"			 >> $upperdir/DEBIAN/control
+	echo "Description: ${ARMBIAN_PKG_DESCRIPTION}"							 >> $upperdir/DEBIAN/control
+
+	# add slash to the variable if subdirectory is defined
+	[[ -n $ARMBIAN_PKG_REPOSITORY ]] && ARMBIAN_PKG_REPOSITORY+="/"
+
+	# build the package and save it in the output/debs directories
 	fakeroot dpkg-deb -b $mergeddir $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb
 	umount -l $mergeddir
+
 	# cleanup
 	if [[ $upperdir != "/" && $workdir != "/" && $mergeddir != "/" ]]; then rm -rf $upperdir $workdir $mergeddir; fi
 }
