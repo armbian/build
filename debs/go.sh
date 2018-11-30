@@ -68,9 +68,9 @@ function create_deb_package ()
 	# $4 = merged directory
 
 	# reset variables
-	unset ARMBIAN_PKG_PACKAGE ARMBIAN_PKG_ARCH ARMBIAN_PKG_SECTION ARMBIAN_PKG_PRIORITY ARMBIAN_PKG_DEPENDS ARMBIAN_PKG_PROVIDES \
-	ARMBIAN_PKG_RECOMMENDS ARMBIAN_PKG_CONFLICTS ARMBIAN_PKG_REPLACES ARMBIAN_PKG_REPOSITORY ARMBIAN_PKG_DESCRIPTION \
-	ARMBIAN_PKG_MAINTAINER ARMBIAN_PKG_MAINTAINERMAIL
+	unset ARMBIAN_PKG_PACKAGE ARMBIAN_PKG_ARCH ARMBIAN_PKG_SECTION ARMBIAN_PKG_PRIORITY ARMBIAN_PKG_DEPENDS \
+	ARMBIAN_PKG_PROVIDES ARMBIAN_PKG_RECOMMENDS ARMBIAN_PKG_CONFLICTS ARMBIAN_PKG_REPLACES ARMBIAN_PKG_REPOSITORY \
+	ARMBIAN_PKG_DESCRIPTION ARMBIAN_PKG_MAINTAINER ARMBIAN_PKG_MAINTAINERMAIL
 
 	# defaults
 	ARMBIAN_PKG_REVISION=$REVISION
@@ -83,12 +83,17 @@ function create_deb_package ()
 	# read package configuration
 	source $1/armbian.config
 
-	local upperdir="$2${ARMBIAN_PKG_PACKAGE}_${ARMBIAN_PKG_REVISION}_${ARMBIAN_PKG_ARCH}"
-	local workdir="$3${ARMBIAN_PKG_PACKAGE}_${ARMBIAN_PKG_REVISION}_${ARMBIAN_PKG_ARCH}"
-	local mergeddir="$4${ARMBIAN_PKG_PACKAGE}_${ARMBIAN_PKG_REVISION}_${ARMBIAN_PKG_ARCH}"
+	local pkgname="${ARMBIAN_PKG_PACKAGE}_${ARMBIAN_PKG_REVISION}_${ARMBIAN_PKG_ARCH}"
+	local lowerdir="$1"		# source
+	local upperdir="$2${pkgname}"	# destination
+	local workdir="$3${pkgname}"	# reserved
+	local mergeddir="$4${pkgname}"	# source overlay + destination
 
 	# check if package already exists in repository
-	[[ -n $(echo $REPOSITORY_PACKAGES | grep "${ARMBIAN_PKG_PACKAGE}_${ARMBIAN_PKG_REVISION}_${ARMBIAN_PKG_ARCH}") && $EXTERNAL_NEW != "compile" ]] && echo "${ARMBIAN_PKG_PACKAGE}_${ARMBIAN_PKG_REVISION}_${ARMBIAN_PKG_ARCH} exists. Skip building" && return 1
+	if [[ -n $(echo $REPOSITORY_PACKAGES | grep "${pkgname}") && $EXTERNAL_NEW != "compile" ]]; then
+		echo "${pkgname} exists. Skip building"
+		return 1
+	fi
 
 	# package name is mandatory
 	[[ -z $ARMBIAN_PKG_PACKAGE ]] && echo "Error in $1 Package name must be defined" && return 1
@@ -110,40 +115,41 @@ function create_deb_package ()
 	fi
 
 	# merge directories with overlay so we don't need to copy anything
-	mount -t overlay overlay -olowerdir=$1overlay,upperdir=${upperdir},workdir=${workdir} ${mergeddir}
+	mount -t overlay overlay -olowerdir=${lowerdir}overlay,upperdir=${upperdir},workdir=${workdir} ${mergeddir}
 
 	# execute package custom build script if defined
-	[[ -d $1/sources && -f $1/armbian.build ]] && source $1/armbian.build
+	[[ -d $lowerdir/sources && -f $lowerdir/armbian.build ]] && source $lowerdir/armbian.build
 
 	# calculate package size
 	local packagesize=$(du -sx --exclude DEBIAN	$mergeddir | awk '{ print $1 }')
 
-	echo "Packagin sources: $mergeddir"
+	# creaate md5sums
+	local mdsum=$(cd $mergeddir;find . -type f ! -regex '.*.hg.*' ! -regex '.*?debian-binary.*' ! -regex '.*?DEBIAN.*' \
+	-printf '%P ' | xargs --no-run-if-empty md5sum > DEBIAN/md5sums)
 
 	# compile DEBIAN scripts
-	process_line $1 "armbian.preinst" 	$2 $upperdir
-	process_line $1 "armbian.postinst"	$2 $upperdir
-	process_line $1 "armbian.prerm" 	$2 $upperdir
-	process_line $1 "armbian.postrm" 	$2 $upperdir
+	process_line $lowerdir "armbian.preinst" 	$2 $upperdir
+	process_line $lowerdir "armbian.postinst"	$2 $upperdir
+	process_line $lowerdir "armbian.prerm" 		$2 $upperdir
+	process_line $lowerdir "armbian.postrm" 	$2 $upperdir
 
 	# create DEBIAN control file
-	echo "Package: ${ARMBIAN_PKG_PACKAGE}"																		>  $upperdir/DEBIAN/control
-	echo "Version: ${ARMBIAN_PKG_REVISION}" 																	>> $upperdir/DEBIAN/control
-	echo "Architecture: ${ARMBIAN_PKG_ARCH}" 																	>> $upperdir/DEBIAN/control
-	echo "Maintainer: ${ARMBIAN_PKG_MAINTAINER} ${ARMBIAN_PKG_MAINTAINERMAIL}" 									>> $upperdir/DEBIAN/control
-	echo "Installed-Size: ${packagesize}" 																		>> $upperdir/DEBIAN/control
-	echo "Section: ${ARMBIAN_PKG_SECTION}"																		>> $upperdir/DEBIAN/control
-	echo "Priority: ${ARMBIAN_PKG_PRIORITY}" 																	>> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_DEPENDS ]] && 		echo "Depends: $(echo ${ARMBIAN_PKG_DEPENDS} | tr " " ,)"			>> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_PROVIDES ]] && 		echo "Provides: $(echo ${ARMBIAN_PKG_PROVIDES} | tr " " ,)"			>> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_RECOMMENDS ]] && 	echo "Recommends: $(echo ${ARMBIAN_PKG_RECOMMENDS} | tr " " ,)"		>> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_CONFLICTS ]] && 		echo "Conflicts: $(echo ${ARMBIAN_PKG_CONFLICTS} | tr " " ,)"		>> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_REPLACES ]] && 		echo "Replaces: $(echo ${ARMBIAN_PKG_REPLACES} | tr " " ,)"			>> $upperdir/DEBIAN/control
-	[[ -n $ARMBIAN_PKG_HOMEPAGE ]] &&		echo "Homepage: ${ARMBIAN_PKG_HOMEPAGE}"							>> $upperdir/DEBIAN/control
-	echo -e "Description: ${ARMBIAN_PKG_DESCRIPTION}\n"															>> $upperdir/DEBIAN/control
-	[[ -n $DEBUG_PKG ]] && cat $upperdir/DEBIAN/control
+	echo "Package: ${ARMBIAN_PKG_PACKAGE}"										>  $upperdir/DEBIAN/control
+	echo "Version: ${ARMBIAN_PKG_REVISION}" 									>> $upperdir/DEBIAN/control
+	echo "Architecture: ${ARMBIAN_PKG_ARCH}" 									>> $upperdir/DEBIAN/control
+	echo "Maintainer: ${ARMBIAN_PKG_MAINTAINER} ${ARMBIAN_PKG_MAINTAINERMAIL}" 					>> $upperdir/DEBIAN/control
+	echo "Installed-Size: ${packagesize}" 										>> $upperdir/DEBIAN/control
+	echo "Section: ${ARMBIAN_PKG_SECTION}"										>> $upperdir/DEBIAN/control
+	echo "Priority: ${ARMBIAN_PKG_PRIORITY}" 									>> $upperdir/DEBIAN/control
+	[[ -n $ARMBIAN_PKG_DEPENDS ]]    &&	echo "Depends: $(echo ${ARMBIAN_PKG_DEPENDS} | tr " " ,)"		>> $upperdir/DEBIAN/control
+	[[ -n $ARMBIAN_PKG_PROVIDES ]]	 &&	echo "Provides: $(echo ${ARMBIAN_PKG_PROVIDES} | tr " " ,)"		>> $upperdir/DEBIAN/control
+	[[ -n $ARMBIAN_PKG_RECOMMENDS ]] && echo "Recommends: $(echo ${ARMBIAN_PKG_RECOMMENDS} | tr " " ,)"		>> $upperdir/DEBIAN/control
+	[[ -n $ARMBIAN_PKG_CONFLICTS ]]  &&	echo "Conflicts: $(echo ${ARMBIAN_PKG_CONFLICTS} | tr " " ,)"		>> $upperdir/DEBIAN/control
+	[[ -n $ARMBIAN_PKG_REPLACES ]]   &&	echo "Replaces: $(echo ${ARMBIAN_PKG_REPLACES} | tr " " ,)"		>> $upperdir/DEBIAN/control
+	[[ -n $ARMBIAN_PKG_HOMEPAGE ]]   &&	echo "Homepage: ${ARMBIAN_PKG_HOMEPAGE}"				>> $upperdir/DEBIAN/control
+	echo "Description: ${ARMBIAN_PKG_DESCRIPTION}"									>> $upperdir/DEBIAN/control
 	# build the package and save in the output/debs directories
-	fakeroot dpkg-deb -b $mergeddir $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${ARMBIAN_PKG_PACKAGE}_${ARMBIAN_PKG_REVISION}_${ARMBIAN_PKG_ARCH}.deb
+	fakeroot dpkg-deb -b $mergeddir $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb
 	umount -l $mergeddir
 	# cleanup
 	if [[ $upperdir != "/" && $workdir != "/" && $mergeddir != "/" ]]; then rm -rf $upperdir $workdir $mergeddir; fi
