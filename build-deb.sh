@@ -14,4 +14,4 @@ MAINTAINERMAIL="igor@armbian.com" # deb signature
 
 #echo $SRC
 DEST=$SRC/output
-source debs/go.sh
+source config/packages/go.sh

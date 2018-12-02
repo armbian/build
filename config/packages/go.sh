@@ -16,7 +16,7 @@ find_deb_configs(){
 
 	IFS=$'\n'
 	names=()
-	dirs=( $(find debs -maxdepth 2 -mindepth 2 -not -path "*/TEMPLATE/*" ) )
+	dirs=( $(find config/packages -maxdepth 2 -mindepth 2 -not -path "*/TEMPLATE/*" ) )
 
 	# required for "for" command
 	shopt -s nullglob dotglob
@@ -48,7 +48,7 @@ local filename="$4/DEBIAN/"$(echo $2 | sed -e "s/^armbian.//")
 if [[ -f $1/$2 ]]; then
 	postinst=$(bash $1/$2)
 else
-	postinst=$(bash $SRC/debs/TEMPLATE/$2)
+	postinst=$(bash $SRC/config/packages/TEMPLATE/$2)
 fi
 
 while read -r line; do
