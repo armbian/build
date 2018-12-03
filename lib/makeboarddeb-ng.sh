@@ -8,15 +8,20 @@
 # https://github.com/armbian/build/
 
 # Functions:
-# find_deb_configs
+#
+# find_deb_packages_prepare
+# process_line
+# create_deb_package
 
 # cycle in deb subdirectories and look for armbian.config where are stored definitions to create DEB file
 #
-find_deb_configs(){
+find_deb_packages_prepare(){
 
+	local ifs=$IFS
+	ARMBIAN_PACKAGE_LIST=""
 	IFS=$'\n'
 	names=()
-	dirs=( $(find config/packages -maxdepth 2 -mindepth 2 -not -path "*/TEMPLATE/*" ) )
+	dirs=( $(find $SRC/config/packages -maxdepth 2 -mindepth 2 -not -path "*/TEMPLATE/*" ) )
 
 	# required for "for" command
 	shopt -s nullglob dotglob
@@ -26,14 +31,15 @@ find_deb_configs(){
 		for config in ${dir%%:*}/armbian.config; do
 			names+=($(basename $config))
 				if [[ -f ${dir%%:*}/$names ]]; then
-					local location_lowerdir="$SRC/${dir%%:*}/"
+					local location_lowerdir="${dir%%:*}/"
 					local location_upperdir="$SRC/.tmp/.upperdir/${dir%%:*}/"
 					local location_workdir="$SRC/.tmp/.workdir/${dir%%:*}/"
 					local location_merged="$SRC/.tmp/.merged/${dir%%:*}/"
 					create_deb_package $location_lowerdir $location_upperdir $location_workdir $location_merged
 				fi
 		done
-done
+	done
+	IFS=$ifs
 }
 
 
@@ -54,7 +60,7 @@ fi
 while read -r line; do
 	echo "$line" >> $filename
 done <<< "$postinst"
-chmod +x $filename
+chmod 755 $filename
 }
 
 
@@ -93,17 +99,20 @@ function create_deb_package ()
 	local workdir="$3${pkgname}"	# reserved
 	local mergeddir="$4${pkgname}"	# source overlay + destination
 
-	# check if package already exists in repository
-	if [[ -n $(echo $REPOSITORY_PACKAGES | grep "${pkgname}") && $EXTERNAL_NEW != "compile" ]]; then
-		echo "${pkgname} exists. Skip building"
-		return 1
-	fi
-
 	# package name is mandatory
-	[[ -z $ARMBIAN_PKG_PACKAGE ]] && echo "Error in $1 Package name must be defined" && return 1
+	[[ -z $ARMBIAN_PKG_PACKAGE ]] && display_alert "Packing" "Missing package name in $1 Skip building." "err" && return 1
 
 	# overlay is mandatory
-	[[ ! -d $1overlay ]] && echo "Error in $1overlay Overlay directory is missing" && return 1
+	[[ ! -d $1overlay ]] && display_alert "Packing" "Missing overlay directory in $1 Skip building." "err" && return 1
+
+	# add package to the install list
+	ARMBIAN_PACKAGE_LIST+=" ${ARMBIAN_PKG_PACKAGE}"
+
+	# check if package already exists in repository
+	if [[ -n $(echo $REPOSITORY_PACKAGES | grep "${pkgname}") && $EXTERNAL_NEW != "compile" ]]; then
+		display_alert "Packing" "dpkg-deb: ${pkgname} exists in the repository and force rebuilding is disabled. Skip building" "wrn"
+		return 1
+	fi
 
 	# re-create temporally directories
 	if [[ $upperdir != "/" && $workdir != "/" && $mergeddir != "/" ]]; then
@@ -153,11 +162,9 @@ function create_deb_package ()
 	[[ -n $ARMBIAN_PKG_REPOSITORY ]] && ARMBIAN_PKG_REPOSITORY+="/"
 
 	# build the package and save it in the output/debs directories
-	fakeroot dpkg-deb -b $mergeddir $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb
+	display_alert "Packing" "$(fakeroot dpkg-deb -b $mergeddir $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb)"
 	umount -l $mergeddir
 
 	# cleanup
 	if [[ $upperdir != "/" && $workdir != "/" && $mergeddir != "/" ]]; then rm -rf $upperdir $workdir $mergeddir; fi
 }
-
-find_deb_configs

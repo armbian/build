@@ -75,15 +75,6 @@ check_loop_device()
 	fi
 } #############################################################################
 
-install_external_applications()
-{
-	display_alert "Installing extra applications and drivers" "" "info"
-
-	for plugin in $SRC/packages/extras/*.sh; do
-		source $plugin
-	done
-}  #############################################################################
-
 # write_uboot <loopdev>
 #
 # writes u-boot to loop device
