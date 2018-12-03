@@ -533,7 +533,7 @@ prepare_host()
 	nfs-kernel-server btrfs-tools ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross \
 	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev aptly acl \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
-	bison libbison-dev flex libfl-dev cryptsetup"
+	bison libbison-dev flex libfl-dev cryptsetup gpgv1 gnupg1"
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
@@ -589,7 +589,9 @@ prepare_host()
 	if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
 		display_alert "Updating from external repository" "aptly" "info"
 		apt-key adv --keyserver hkp://pool.sks-keyservers.net:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
-		echo "deb http://repo.aptly.info/ squeeze main" > /etc/apt/sources.list.d/aptly.list
+		echo "deb http://repo.aptly.info/ nightly main" > /etc/apt/sources.list.d/aptly.list
+	else
+		sed "s/squeeze/nightly/" -i /etc/apt/sources.list.d/aptly.list
 	fi
 
 	if [[ ${#deps[@]} -gt 0 ]]; then
@@ -598,12 +600,6 @@ prepare_host()
 		apt -y upgrade
 		apt -q -y --no-install-recommends install "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
 		update-ccache-symlinks
-	fi
-
-	# Temorally broken in Bionic, reverting to prvious version
-	# https://github.com/aptly-dev/aptly/issues/740
-	if [[ $(dpkg -s aptly | grep '^Version:' | sed 's/Version: //') != "1.2.0" && "$codename" == "bionic" ]]; then
-		apt -qq -y --allow-downgrades install aptly=1.2.0
 	fi
 
 	# sync clock
