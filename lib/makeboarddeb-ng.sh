@@ -28,14 +28,19 @@ find_deb_packages_prepare(){
 
 	# check subdirectories for debian package definitions
 	for dir in "${dirs[@]}"; do
+		cleaned_dir=${dir/#$SRC}
+		cleaned_dir=${cleaned_dir//config\/packages\/}
+
 		for config in ${dir%%:*}/armbian.config; do
 			names+=($(basename $config))
+			local first="$(cut -d'/' -f2 <<<"${cleaned_dir%%:*}")"
+			local second="$(cut -d'/' -f3 <<<"${cleaned_dir%%:*}")"
 				if [[ -f ${dir%%:*}/$names ]]; then
 					local location_lowerdir="${dir%%:*}/"
-					local location_upperdir="$SRC/.tmp/.upperdir/${dir%%:*}/"
-					local location_workdir="$SRC/.tmp/.workdir/${dir%%:*}/"
-					local location_merged="$SRC/.tmp/.merged/${dir%%:*}/"
-					create_deb_package $location_lowerdir $location_upperdir $location_workdir $location_merged
+					local location_upperdir="$SRC/.tmp/.upperdir${cleaned_dir%%:*}/"
+					local location_workdir="$SRC/.tmp/.workdir${cleaned_dir%%:*}/"
+					local location_merged="$SRC/.tmp/.merged${cleaned_dir%%:*}/"
+					create_deb_package $location_lowerdir $location_upperdir $location_workdir $location_merged $first $second
 				fi
 		done
 	done
@@ -74,6 +79,8 @@ function create_deb_package ()
 	# $2 = destination
 	# $3 = work directory
 	# $4 = merged directory
+	# $5 = type (board,common,family,...)
+	# $6 = name (pinebook,armbian-config,rockchip64,)
 
 	# reset variables
 	unset ARMBIAN_PKG_PACKAGE ARMBIAN_PKG_ARCH ARMBIAN_PKG_SECTION ARMBIAN_PKG_PRIORITY ARMBIAN_PKG_DEPENDS \
@@ -98,6 +105,11 @@ function create_deb_package ()
 	local upperdir="$2${pkgname}"	# destination
 	local workdir="$3${pkgname}"	# reserved
 	local mergeddir="$4${pkgname}"	# source overlay + destination
+
+	# limit building when match
+	[[ $5 == "family" && $LINUXFAMILY != $6 ]] && display_alert "Packing" "Packing $1 only for the selected family. Skip" "wrn" && return 1
+	[[ $5 == "board" && $BOARD != $6 ]] && display_alert "Packing" "Packing $1 only for the selected board. Skip" "wrn" && return 1
+	[[ $6 == armbian-desktop* && $BUILD_DESKTOP != "yes" ]] && display_alert "Packing" "Packing $1 only for CLI. Skip" "wrn" && return 1
 
 	# package name is mandatory
 	[[ -z $ARMBIAN_PKG_PACKAGE ]] && display_alert "Packing" "Missing package name in $1 Skip building." "err" && return 1

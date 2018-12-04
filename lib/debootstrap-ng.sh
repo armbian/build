@@ -59,6 +59,8 @@ debootstrap_ng()
 	# recreate directories just to make sure aptly won't break
 	mkdir -p $DEST/debs/extra/${RELEASE}-desktop $DEST/debs/extra/${RELEASE}-utils
 
+	display_alert "Installing" "${ARMBIAN_PACKAGE_LIST}" "info"
+
 	chroot_installpackages_local "${ARMBIAN_PACKAGE_LIST}"
 
 	# install locally built packages
