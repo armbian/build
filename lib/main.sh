@@ -40,7 +40,6 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 source $SRC/lib/debootstrap-ng.sh 			# System specific install
 source $SRC/lib/image-helpers.sh			# helpers for OS image building
 source $SRC/lib/distributions.sh 			# System specific install
-source $SRC/lib/desktop.sh 					# Desktop specific install
 source $SRC/lib/compilation.sh 				# Patching and compilation of kernel, uboot, ATF
 source $SRC/lib/makeboarddeb.sh 			# Create board support package
 source $SRC/lib/makeboarddeb-ng.sh 			# Packing everything
@@ -269,7 +268,6 @@ DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
 CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
 CHOSEN_KERNEL=linux-image-${DEB_BRANCH}${LINUXFAMILY}
 CHOSEN_ROOTFS=linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
-CHOSEN_DESKTOP=armbian-${RELEASE}-desktop
 CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
 
 for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
@@ -301,9 +299,6 @@ UBOOT_VER=$(dpkg --info $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb | gre
 
 # create board support package
 [[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
-
-# create desktop package
-[[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
 
 # build additional packages
 [[ $EXTERNAL_NEW == compile ]] && chroot_build_packages

@@ -57,9 +57,9 @@ function process_line()
 local filename="$4/DEBIAN/"$(echo $2 | sed -e "s/^armbian.//")
 
 if [[ -f $1/$2 ]]; then
-	postinst=$(bash $1/$2)
+	postinst=$(source $1/$2)
 else
-	postinst=$(bash $SRC/config/packages/TEMPLATE/$2)
+	postinst=$(source $SRC/config/packages/TEMPLATE/$2)
 fi
 
 while read -r line; do
@@ -164,11 +164,11 @@ function create_deb_package ()
 	echo "Installed-Size: ${packagesize}" 									>> $control
 	echo "Section: ${ARMBIAN_PKG_SECTION}"									>> $control
 	echo "Priority: ${ARMBIAN_PKG_PRIORITY}" 								>> $control
-	[[ -n $ARMBIAN_PKG_DEPENDS ]] && echo "Depends: $(echo ${ARMBIAN_PKG_DEPENDS} | tr " " ,)"		>> $control
-	[[ -n $ARMBIAN_PKG_PROVIDES ]] && echo "Provides: $(echo ${ARMBIAN_PKG_PROVIDES} | tr " " ,)"		>> $control
-	[[ -n $ARMBIAN_PKG_RECOMMENDS ]] && echo "Recommends: $(echo ${ARMBIAN_PKG_RECOMMENDS} | tr " " ,)"	>> $control
-	[[ -n $ARMBIAN_PKG_CONFLICTS ]] && echo "Conflicts: $(echo ${ARMBIAN_PKG_CONFLICTS} | tr " " ,)"	>> $control
-	[[ -n $ARMBIAN_PKG_REPLACES ]] && echo "Replaces: $(echo ${ARMBIAN_PKG_REPLACES} | tr " " ,)"		>> $control
+	[[ -n $ARMBIAN_PKG_DEPENDS ]] && echo "Depends: $(echo ${ARMBIAN_PKG_DEPENDS} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
+	[[ -n $ARMBIAN_PKG_PROVIDES ]] && echo "Provides: $(echo ${ARMBIAN_PKG_PROVIDES} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
+	[[ -n $ARMBIAN_PKG_RECOMMENDS ]] && echo "Recommends: $(echo ${ARMBIAN_PKG_RECOMMENDS} | tr " " , | sed "s/[[:space:]]\+/ /g")"	>> $control
+	[[ -n $ARMBIAN_PKG_CONFLICTS ]] && echo "Conflicts: $(echo ${ARMBIAN_PKG_CONFLICTS} | tr " " , | sed "s/[[:space:]]\+/ /g")"	>> $control
+	[[ -n $ARMBIAN_PKG_REPLACES ]] && echo "Replaces: $(echo ${ARMBIAN_PKG_REPLACES} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
 	[[ -n $ARMBIAN_PKG_HOMEPAGE ]] && echo "Homepage: ${ARMBIAN_PKG_HOMEPAGE}"				>> $control
 	echo "Description: ${ARMBIAN_PKG_DESCRIPTION}"								>> $control
 
@@ -177,6 +177,8 @@ function create_deb_package ()
 
 	# build the package and save it in the output/debs directories
 	display_alert "Packing" "$(fakeroot dpkg-deb -b $mergeddir $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb)"
+	install_deb_chroot "$DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb"
+
 	umount -l $mergeddir
 
 	# cleanup

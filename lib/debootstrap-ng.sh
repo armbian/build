@@ -61,7 +61,14 @@ debootstrap_ng()
 
 	display_alert "Installing" "${ARMBIAN_PACKAGE_LIST}" "info"
 
-	[[ $EXTERNAL_NEW == prebuilt ]] && chroot $SDCARD /bin/bash -c "apt install -q -y ${ARMBIAN_PACKAGE_LIST}" >> $DEST/debug/install.log 2>&1
+	[[ $EXTERNAL_NEW == prebuilt ]] && chroot $SDCARD /bin/bash -c "apt install -q -y ${ARMBIAN_PACKAGE_LIST}"
+	#>> $DEST/debug/install.log 2>&1
+
+
+	if [[ $BUILD_DESKTOP == yes ]]; then
+		# install display manager
+		desktop_postinstall
+	fi
 
 	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local "${ARMBIAN_PACKAGE_LIST}"
 

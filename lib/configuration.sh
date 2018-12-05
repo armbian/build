@@ -160,11 +160,11 @@ PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter n
 
 case $DISPLAY_MANAGER in
 	nodm)
-		PACKAGE_LIST_DESKTOP+=" nodm"
+		PACKAGE_LIST_DISPLAY_MANAGER=" nodm"
 	;;
 
 	lightdm)
-		PACKAGE_LIST_DESKTOP+=" lightdm lightdm-gtk-greeter"
+		PACKAGE_LIST_DISPLAY_MANAGER=" lightdm lightdm-gtk-greeter"
 	;;
 
 	*)
