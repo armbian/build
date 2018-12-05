@@ -61,13 +61,15 @@ debootstrap_ng()
 
 	display_alert "Installing" "${ARMBIAN_PACKAGE_LIST}" "info"
 
-	chroot_installpackages_local "${ARMBIAN_PACKAGE_LIST}"
+	[[ $EXTERNAL_NEW == prebuilt ]] && chroot $SDCARD /bin/bash -c "apt install -q -y ${ARMBIAN_PACKAGE_LIST}" >> $DEST/debug/install.log 2>&1
+
+	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local "${ARMBIAN_PACKAGE_LIST}"
 
 	# install locally built packages
 	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
 
 	# install from apt.armbian.com
-	[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes" "${ARMBIAN_PACKAGE_LIST}"
+	[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes"
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount

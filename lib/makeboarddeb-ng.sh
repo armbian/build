@@ -85,7 +85,7 @@ function create_deb_package ()
 	# reset variables
 	unset ARMBIAN_PKG_PACKAGE ARMBIAN_PKG_ARCH ARMBIAN_PKG_SECTION ARMBIAN_PKG_PRIORITY ARMBIAN_PKG_DEPENDS \
 	ARMBIAN_PKG_PROVIDES ARMBIAN_PKG_RECOMMENDS ARMBIAN_PKG_CONFLICTS ARMBIAN_PKG_REPLACES ARMBIAN_PKG_REPOSITORY \
-	ARMBIAN_PKG_DESCRIPTION ARMBIAN_PKG_MAINTAINER ARMBIAN_PKG_MAINTAINERMAIL
+	ARMBIAN_PKG_DESCRIPTION ARMBIAN_PKG_MAINTAINER ARMBIAN_PKG_MAINTAINERMAIL ARMBIAN_PKG_INSTALL
 
 	# set defaults which are overwritten via package armbian.config file
 	ARMBIAN_PKG_REVISION=$REVISION
@@ -106,10 +106,12 @@ function create_deb_package ()
 	local workdir="$3${pkgname}"	# reserved
 	local mergeddir="$4${pkgname}"	# source overlay + destination
 
-	# limit building when match
-	[[ $5 == "family" && $LINUXFAMILY != $6 ]] && display_alert "Packing" "Packing $1 only for the selected family. Skip" "wrn" && return 1
-	[[ $5 == "board" && $BOARD != $6 ]] && display_alert "Packing" "Packing $1 only for the selected board. Skip" "wrn" && return 1
-	[[ $6 == armbian-desktop* && $BUILD_DESKTOP != "yes" ]] && display_alert "Packing" "Packing $1 only for CLI. Skip" "wrn" && return 1
+	# Packing only for the selected family
+	[[ $5 == "family" && $LINUXFAMILY != $6 ]] && return 1
+	# Packing only for the selected board
+	[[ $5 == "board" && $BOARD != $6 ]] && return 1
+	# Packing only for CLI
+	[[ $6 == armbian-desktop* && $BUILD_DESKTOP != "yes" ]] && return 1
 
 	# package name is mandatory
 	[[ -z $ARMBIAN_PKG_PACKAGE ]] && display_alert "Packing" "Missing package name in $1 Skip building." "err" && return 1
@@ -118,7 +120,7 @@ function create_deb_package ()
 	[[ ! -d $1overlay ]] && display_alert "Packing" "Missing overlay directory in $1 Skip building." "err" && return 1
 
 	# add package to the install list
-	ARMBIAN_PACKAGE_LIST+=" ${ARMBIAN_PKG_PACKAGE}"
+	[[ $ARMBIAN_PKG_INSTALL != "no" ]] && ARMBIAN_PACKAGE_LIST+=" ${ARMBIAN_PKG_PACKAGE}"
 
 	# check if package already exists in repository
 	if [[ -n $(echo $REPOSITORY_PACKAGES | grep "${pkgname}") && $EXTERNAL_NEW != "compile" ]]; then
