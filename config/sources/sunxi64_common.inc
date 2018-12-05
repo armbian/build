@@ -10,6 +10,12 @@ UBOOT_USE_GCC='> 7.0'
 UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
 BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 
+ATF_PLAT="sun50i_a64"
+
+if [[ $BOARDFAMILY = "sun50iw6" ]]; then
+    ATF_PLAT="sun50i_h6";
+fi
+
 # Here we want to rename LINUXFAMILY from sun50iw1, sun50iw2, etc for next and dev branches
 # since this doesn't affect any stable images don't add any backwards compatibility hacks
 [[ $BRANCH != default ]] && LINUXFAMILY=sunxi64
@@ -23,11 +29,11 @@ case $BRANCH in
 
 	next)
 
-		ATFSOURCE='https://github.com/apritzel/arm-trusted-firmware'
+		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 		ATFDIR='arm-trusted-firmware-sunxi-mainline'
-		ATFBRANCH='branch:allwinner'
+		ATFBRANCH='branch:master'
 		ATF_USE_GCC='> 6.3'
-		ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
+		ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 
 		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 		KERNELBRANCH='branch:linux-4.14.y'
@@ -39,11 +45,11 @@ case $BRANCH in
 
 	dev)
 
-		ATFSOURCE='https://github.com/apritzel/arm-trusted-firmware'
+		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 		ATFDIR='arm-trusted-firmware-sunxi-mainline'
-		ATFBRANCH='branch:allwinner'
+		ATFBRANCH='branch:master'
 		ATF_USE_GCC='> 6.3'
-		ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
+		ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 
 		#KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 		KERNELSOURCE="https://github.com/megous/linux"
