@@ -28,14 +28,19 @@ find_deb_packages_prepare(){
 
 	# check subdirectories for debian package definitions
 	for dir in "${dirs[@]}"; do
+		cleaned_dir=${dir/#$SRC}
+		cleaned_dir=${cleaned_dir//config\/packages\/}
+
 		for config in ${dir%%:*}/armbian.config; do
 			names+=($(basename $config))
+			local first="$(cut -d'/' -f2 <<<"${cleaned_dir%%:*}")"
+			local second="$(cut -d'/' -f3 <<<"${cleaned_dir%%:*}")"
 				if [[ -f ${dir%%:*}/$names ]]; then
 					local location_lowerdir="${dir%%:*}/"
-					local location_upperdir="$SRC/.tmp/.upperdir/${dir%%:*}/"
-					local location_workdir="$SRC/.tmp/.workdir/${dir%%:*}/"
-					local location_merged="$SRC/.tmp/.merged/${dir%%:*}/"
-					create_deb_package $location_lowerdir $location_upperdir $location_workdir $location_merged
+					local location_upperdir="$SRC/.tmp/.upperdir${cleaned_dir%%:*}/"
+					local location_workdir="$SRC/.tmp/.workdir${cleaned_dir%%:*}/"
+					local location_merged="$SRC/.tmp/.merged${cleaned_dir%%:*}/"
+					create_deb_package $location_lowerdir $location_upperdir $location_workdir $location_merged $first $second
 				fi
 		done
 	done
@@ -52,9 +57,9 @@ function process_line()
 local filename="$4/DEBIAN/"$(echo $2 | sed -e "s/^armbian.//")
 
 if [[ -f $1/$2 ]]; then
-	postinst=$(bash $1/$2)
+	postinst=$(source $1/$2)
 else
-	postinst=$(bash $SRC/config/packages/TEMPLATE/$2)
+	postinst=$(source $SRC/config/packages/TEMPLATE/$2)
 fi
 
 while read -r line; do
@@ -74,11 +79,13 @@ function create_deb_package ()
 	# $2 = destination
 	# $3 = work directory
 	# $4 = merged directory
+	# $5 = type (board,common,family,...)
+	# $6 = name (pinebook,armbian-config,rockchip64,)
 
 	# reset variables
 	unset ARMBIAN_PKG_PACKAGE ARMBIAN_PKG_ARCH ARMBIAN_PKG_SECTION ARMBIAN_PKG_PRIORITY ARMBIAN_PKG_DEPENDS \
 	ARMBIAN_PKG_PROVIDES ARMBIAN_PKG_RECOMMENDS ARMBIAN_PKG_CONFLICTS ARMBIAN_PKG_REPLACES ARMBIAN_PKG_REPOSITORY \
-	ARMBIAN_PKG_DESCRIPTION ARMBIAN_PKG_MAINTAINER ARMBIAN_PKG_MAINTAINERMAIL
+	ARMBIAN_PKG_DESCRIPTION ARMBIAN_PKG_MAINTAINER ARMBIAN_PKG_MAINTAINERMAIL ARMBIAN_PKG_INSTALL
 
 	# set defaults which are overwritten via package armbian.config file
 	ARMBIAN_PKG_REVISION=$REVISION
@@ -99,14 +106,23 @@ function create_deb_package ()
 	local workdir="$3${pkgname}"	# reserved
 	local mergeddir="$4${pkgname}"	# source overlay + destination
 
+	# Packing only for the selected family
+	[[ $5 == "family" && $LINUXFAMILY != $6 ]] && return 1
+	# Packing only for the selected board
+	[[ $5 == "board" && $BOARD != $6 ]] && return 1
+	# Packing only for CLI
+	[[ $6 == armbian-desktop* && $BUILD_DESKTOP != "yes" ]] && return 1
+
 	# package name is mandatory
 	[[ -z $ARMBIAN_PKG_PACKAGE ]] && display_alert "Packing" "Missing package name in $1 Skip building." "err" && return 1
 
-	# overlay is mandatory
-	[[ ! -d $1overlay ]] && display_alert "Packing" "Missing overlay directory in $1 Skip building." "err" && return 1
+        if [[ $TVBOXES_ROOT != yes ]]; then
+		# overlay is mandatory
+		[[ ! -d $1overlay ]] && display_alert "Packing" "Missing overlay directory in $1 Skip building." "err" && return 1
+	fi
 
 	# add package to the install list
-	ARMBIAN_PACKAGE_LIST+=" ${ARMBIAN_PKG_PACKAGE}"
+	[[ $ARMBIAN_PKG_INSTALL != "no" ]] && ARMBIAN_PACKAGE_LIST+=" ${ARMBIAN_PKG_PACKAGE}"
 
 	# check if package already exists in repository
 	if [[ -n $(echo $REPOSITORY_PACKAGES | grep "${pkgname}") && $EXTERNAL_NEW != "compile" ]]; then
@@ -150,11 +166,11 @@ function create_deb_package ()
 	echo "Installed-Size: ${packagesize}" 									>> $control
 	echo "Section: ${ARMBIAN_PKG_SECTION}"									>> $control
 	echo "Priority: ${ARMBIAN_PKG_PRIORITY}" 								>> $control
-	[[ -n $ARMBIAN_PKG_DEPENDS ]] && echo "Depends: $(echo ${ARMBIAN_PKG_DEPENDS} | tr " " ,)"		>> $control
-	[[ -n $ARMBIAN_PKG_PROVIDES ]] && echo "Provides: $(echo ${ARMBIAN_PKG_PROVIDES} | tr " " ,)"		>> $control
-	[[ -n $ARMBIAN_PKG_RECOMMENDS ]] && echo "Recommends: $(echo ${ARMBIAN_PKG_RECOMMENDS} | tr " " ,)"	>> $control
-	[[ -n $ARMBIAN_PKG_CONFLICTS ]] && echo "Conflicts: $(echo ${ARMBIAN_PKG_CONFLICTS} | tr " " ,)"	>> $control
-	[[ -n $ARMBIAN_PKG_REPLACES ]] && echo "Replaces: $(echo ${ARMBIAN_PKG_REPLACES} | tr " " ,)"		>> $control
+	[[ -n $ARMBIAN_PKG_DEPENDS ]] && echo "Depends: $(echo ${ARMBIAN_PKG_DEPENDS} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
+	[[ -n $ARMBIAN_PKG_PROVIDES ]] && echo "Provides: $(echo ${ARMBIAN_PKG_PROVIDES} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
+	[[ -n $ARMBIAN_PKG_RECOMMENDS ]] && echo "Recommends: $(echo ${ARMBIAN_PKG_RECOMMENDS} | tr " " , | sed "s/[[:space:]]\+/ /g")"	>> $control
+	[[ -n $ARMBIAN_PKG_CONFLICTS ]] && echo "Conflicts: $(echo ${ARMBIAN_PKG_CONFLICTS} | tr " " , | sed "s/[[:space:]]\+/ /g")"	>> $control
+	[[ -n $ARMBIAN_PKG_REPLACES ]] && echo "Replaces: $(echo ${ARMBIAN_PKG_REPLACES} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
 	[[ -n $ARMBIAN_PKG_HOMEPAGE ]] && echo "Homepage: ${ARMBIAN_PKG_HOMEPAGE}"				>> $control
 	echo "Description: ${ARMBIAN_PKG_DESCRIPTION}"								>> $control
 
@@ -163,6 +179,8 @@ function create_deb_package ()
 
 	# build the package and save it in the output/debs directories
 	display_alert "Packing" "$(fakeroot dpkg-deb -b $mergeddir $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb)"
+	install_deb_chroot "$DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb"
+
 	umount -l $mergeddir
 
 	# cleanup

@@ -16,6 +16,7 @@
 # write_uboot
 # customize_image
 # install_deb_chroot
+# desktop_postinstall
 
 
 # mount_chroot <target>
@@ -122,4 +123,22 @@ install_deb_chroot()
 	display_alert "Installing" "$name"
 	chroot $SDCARD /bin/bash -c "dpkg -i /root/$name" >> $DEST/debug/install.log 2>&1
 	rm -f $SDCARD/root/$name
+}
+
+desktop_postinstall ()
+{
+	# stage: install display manager
+	display_alert "Installing" "display manager: $DISPLAY_MANAGER" "info"
+	chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=\"--force-confold\" -y -qq install $PACKAGE_LIST_DISPLAY_MANAGER" >> $DEST/debug/install.log 2>&1
+	[[ -f $SDCARD/etc/default/nodm ]] && sed "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=false/g" -i $SDCARD/etc/default/nodm
+	[[ -d $SDCARD/etc/lightdm ]] && chroot $SDCARD /bin/bash -c "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
+
+	# Compile Turbo Frame buffer for sunxi
+	if [[ $LINUXFAMILY == sun* && $BRANCH == default ]]; then
+		sed 's/name="use_compositing" type="bool" value="true"/name="use_compositing" type="bool" value="false"/' -i $SDCARD/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
+
+		# enable memory reservations
+		echo "disp_mem_reserves=on" >> $SDCARD/boot/armbianEnv.txt
+		echo "extraargs=cma=96M" >> $SDCARD/boot/armbianEnv.txt
+	fi
 }
