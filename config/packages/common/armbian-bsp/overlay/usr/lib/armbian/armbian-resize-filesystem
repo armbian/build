@@ -1,0 +1,200 @@
+#!/bin/bash
+#
+# Copyright (c) Authors: http://www.armbian.com/authors
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+
+. /etc/armbian-release
+. /lib/init/vars.sh
+. /lib/lsb/init-functions
+. /usr/lib/armbian/armbian-common
+
+do_expand_partition()
+{
+	# trim any btrfs subvolume identifier given in square brackets (e.g. /dev/mapper/armbian-root[/@])
+	local rootsource=$(findmnt -n -o SOURCE / | sed 's~\[.*\]~~') # i.e. /dev/mmcblk0p1 or /dev/mapper/armbian-root
+	
+	# check for device type
+	local roottype=$(lsblk -n -o TYPE $rootsource) # crypt, part or disk
+	case ${roottype} in
+		crypt)
+			IS_CRYPTDEVICE=true
+			local cryptname=$(lsblk -n -o NAME $rootsource)
+			local parent_uuid=$(cat /etc/crypttab | awk '{if($1=="'$cryptname'"){print $2}}' | sed 's/UUID=//')
+			local rootpart=$(blkid -U $parent_uuid)
+			;;
+		part)
+			local rootpart=$rootsource # i.e. /dev/mmcblk0p1
+			;;
+	esac
+	
+	local rootdevice=$(lsblk -n -o PKNAME $rootpart | head -1) # i.e. mmcblk0
+	local rootdevicepath="/dev/$rootdevice" # i.e. /dev/mmcblk0
+	# get count of partitions and their boundaries
+	local partitions=$(parted $rootdevicepath print -sm | tail -1 | awk -F ':' '{print $1}')
+	local partstart=$(parted $rootdevicepath unit s print -sm | tail -1 | cut -d: -f2 | sed 's/s//') # start of first partition
+	local partend=$(parted $rootdevicepath unit s print -sm | head -3 | tail -1 | cut -d: -f3 | sed 's/s//') # end of first partition
+	local startfrom=$(( $partend + 1 ))
+	[[ $partitions == 1 ]] && startfrom=$partstart
+	local capacity=$(( $(lsblk -n -b -d -o SIZE $rootdevicepath) / 1024 / 1024 / 1024 )) # GiB
+
+	# check whether a resizing rule is defined. We will take this value if it's not too low. In
+	# this case the value will be ignored and resizing to the whole card size happens.
+	if [[ -f /root/.rootfs_resize ]]; then
+		read RESIZE_VALUE </root/.rootfs_resize
+		ResizeLog="Resize rule $RESIZE_VALUE defined for root partition"
+		case $RESIZE_VALUE in
+			*%)
+				# percentage value, we try to use 16MiB to align partitions since this is
+				# the erase block size of more recent SD cards (512 byte sectors, so we use 32
+				# as divider and substract 1)
+				local percentage=$(echo $RESIZE_VALUE | tr -c -d '[:digit:]')
+				local lastsector=$(( 32 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * $percentage / 3200))}") - 1 ))
+				[[ $lastsector -lt $partend ]] && unset lastsector
+				;;
+			*s)
+				# sector value, we use it directly
+				local lastsector=$(echo $RESIZE_VALUE | tr -c -d '[:digit:]')
+				[[ $lastsector -lt $partend ]] && unset lastsector
+				;;
+		esac
+		# if SD card is larger than 4GB then create another partition behind first one(s)
+		if [[ $capacity -ge 5 ]]; then
+			local secondpartition=$(( 32 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * 99 / 3200))}") -1 ))
+			if [[ $secondpartition -lt $partend ]]; then
+				unset secondpartition
+			fi
+		fi
+	else
+		# check device capacity. If 4GB or below do not use whole card but leave a 5% spare area
+		# to help older cards with wear leveling and garbage collection. In case this reduced card
+		# capacity is less than the actual image capacity this is a clear sign that someone wants
+		# to use Armbian on a card of inappropriate size so he gets what he deserves (at least he
+		# should know what he's doing)
+		if [[ $capacity -lt 5 ]]; then # 4 GiB or less
+			local lastsector=$(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{print \$2 - (200 * 1024 * ( 1024 / \$4 ))}")
+			if [[ $lastsector -lt $partend ]]; then
+				unset lastsector
+			else
+				ResizeLog="4GB media so leaving 200MB spare area"
+			fi
+		elif [[ $capacity -lt 9 ]]; then # 8 GiB or less
+			# Leave 2 percent unpartitioned
+			local lastsector=$(( 32 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * 98 / 3200))}") -1 ))
+			if [[ $lastsector -lt $partend ]]; then
+				unset lastsector
+			else
+				ResizeLog="8GB media so leaving 2 percent spare area"
+			fi
+		else
+			# Leave 1 percent unpartitioned
+			local lastsector=$(( 32 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * 99 / 3200))}") -1 ))
+			if [[ $lastsector -lt $partend ]]; then
+				unset lastsector
+			else
+				ResizeLog="Leaving 1 percent spare area"
+			fi
+		fi
+	fi
+
+	# Start resizing
+	echo -e "\n### [resize2fs] ${ResizeLog}. Start resizing partition $rootsource now:\n" >>${Log}
+	cat /proc/partitions >>${Log}
+	echo -e "\nExecuting fdisk, fsck and partprobe:" >>${Log}
+	local fdisk_version=$(fdisk --version | awk '{print $NF}' | grep -oE "^[[:digit:]]\.[[:digit:]]+")
+	if [[ $partitions == 1 ]] && awk "BEGIN{exit ! ($fdisk_version >= 2.27 )}"; then
+		# if dealing with fdisk from util-linux 2.27+ we need a workaround for just 1 partition
+		# though it does not break anything - just prevents an "unexpected command" to fdisk
+		# https://github.com/igorpecovnik/lib/issues/353#issuecomment-224728506
+		((echo d; echo n; echo p; echo ; echo $startfrom; echo $lastsector ; echo w;) | fdisk $rootdevicepath) >>${Log} 2>&1
+	else
+		((echo d; echo $partitions; echo n; echo p; echo ; echo $startfrom; echo $lastsector ; echo w;) | fdisk $rootdevicepath) >>${Log} 2>&1
+	fi
+	[[ -n $secondpartition ]] && \
+		((echo n; echo p; echo ; echo $(( $lastsector + 1 )); echo $secondpartition ; echo w;) | fdisk $rootdevicepath) >>${Log} 2>&1
+	local s=0
+	partprobe $rootdevicepath >>${Log} 2>&1 || s=$?
+	echo -e "New partition table:\n" >>${Log}
+	cat /proc/partitions >>${Log}
+	echo -e "\nNow trying to resize $1 filesystem on $rootsource to the limits:\n" >>${Log}
+	
+	# if crypt-device, resize LUKS container first
+	if [[ $IS_CRYPTDEVICE ]]; then
+		do_resize_crypt $cryptname
+	fi
+	
+	case $1 in
+		ext4)
+			resize2fs $rootsource >>${Log} 2>&1
+			# check whether reboot is necessary for resize2fs to take effect
+			local freesize=$(( $(findmnt --target / -n -o AVAIL -b) / 1048576 )) # MiB
+			if [[ $s != 0 || $freesize -lt 512 ]]; then
+				touch /var/run/resize2fs-reboot
+				echo -e "\n### [resize2fs] Automated reboot needed to finish the resize procedure" >>${Log}
+			fi
+			;;
+		btrfs)
+			btrfs filesystem resize max / >> ${Log} 2>&1
+			;;
+	esac
+}
+
+do_resize_crypt()
+{
+	echo -e "\n### [resize2fs] Start resizing LUKS container now\n" >> ${Log}
+	cryptsetup resize $1
+}
+
+do_expand_ext4()
+{
+	echo -e "\n### [resize2fs] Start resizing ext4 partition $1 now\n" >> ${Log}
+	resize2fs ${rootpart} >> ${Log} 2>&1
+}
+
+do_expand_btrfs()
+{
+	echo -e "\n### [resize2fs] Start resizing btrfs partition $1 now\n" >> ${Log}
+	btrfs filesystem resize max / >> ${Log} 2>&1
+}
+
+case "$1" in
+	start)
+		# skip resizing if rootfs is neither ext4 not btrfs or if explicitly disabled
+		if [[ -f /root/.no_rootfs_resize ]]; then
+			systemctl disable armbian-resize-filesystem
+			exit 0
+		fi
+
+		# Logging header
+		CPU_ARCH=$(lscpu | awk '/Architecture/ {print $2}')
+		DISTRO_ARCH=$(dpkg --print-architecture)
+		KERNELID=$(uname -r)
+		echo "$(date) | ${BOARD_NAME} | ${VERSION} | ${DISTRO_ARCH} | ${CPU_ARCH} | ${KERNELID}" >>${Log}
+		chmod 644 ${Log}
+
+		rootfstype=$(findmnt -n -o FSTYPE /)
+		rootpart=$(findmnt -n -o SOURCE /) # i.e. /dev/mmcblk0p1
+		case ${rootfstype} in
+			ext4)
+				# first stage - resize the rootfs partition
+				[[ ! -f /var/lib/armbian/resize_second_stage ]] && do_expand_partition ${rootfstype}
+				# second stage - resize the filesystem
+				[[ ! -f /var/run/resize2fs-reboot ]] && do_expand_ext4 ${rootpart}
+				;;
+			btrfs)
+				do_expand_partition ${rootfstype} && systemctl disable armbian-resize-filesystem
+				;;
+		esac
+
+		# disable itself
+		[[ ! -f /var/run/resize2fs-reboot ]] && systemctl disable armbian-resize-filesystem
+		exit 0
+		;;
+
+	*)
+		echo "Usage: $0 start"
+		exit 0
+	;;
+esac

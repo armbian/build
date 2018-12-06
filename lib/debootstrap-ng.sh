@@ -59,9 +59,9 @@ debootstrap_ng()
 	# recreate directories just to make sure aptly won't break
 	mkdir -p $DEST/debs/extra/${RELEASE}-desktop $DEST/debs/extra/${RELEASE}-utils
 
-	display_alert "Installing" "${ARMBIAN_PACKAGE_LIST}" "info"
+	#display_alert "Installing" "${ARMBIAN_PACKAGE_LIST}" "info"
 
-	[[ $EXTERNAL_NEW == prebuilt ]] && chroot $SDCARD /bin/bash -c "apt install -q -y ${ARMBIAN_PACKAGE_LIST}"
+	#[[ $EXTERNAL_NEW == prebuilt ]] && chroot $SDCARD /bin/bash -c "apt install -q -y ${ARMBIAN_PACKAGE_LIST}"
 	#>> $DEST/debug/install.log 2>&1
 
 

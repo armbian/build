@@ -85,7 +85,7 @@ function create_deb_package ()
 	# reset variables
 	unset ARMBIAN_PKG_PACKAGE ARMBIAN_PKG_ARCH ARMBIAN_PKG_SECTION ARMBIAN_PKG_PRIORITY ARMBIAN_PKG_DEPENDS \
 	ARMBIAN_PKG_PROVIDES ARMBIAN_PKG_RECOMMENDS ARMBIAN_PKG_CONFLICTS ARMBIAN_PKG_REPLACES ARMBIAN_PKG_REPOSITORY \
-	ARMBIAN_PKG_DESCRIPTION ARMBIAN_PKG_MAINTAINER ARMBIAN_PKG_MAINTAINERMAIL ARMBIAN_PKG_INSTALL
+	ARMBIAN_PKG_DESCRIPTION ARMBIAN_PKG_MAINTAINER ARMBIAN_PKG_MAINTAINERMAIL ARMBIAN_PKG_INSTALL ARMBIAN_PKG_SUGGESTS
 
 	# set defaults which are overwritten via package armbian.config file
 	ARMBIAN_PKG_REVISION=$REVISION
@@ -119,12 +119,10 @@ function create_deb_package ()
 	# overlay is mandatory
 	[[ ! -d $1overlay ]] && display_alert "Packing" "Missing overlay directory in $1 Skip building." "err" && return 1
 
-	# add package to the install list
-	[[ $ARMBIAN_PKG_INSTALL != "no" ]] && ARMBIAN_PACKAGE_LIST+=" ${ARMBIAN_PKG_PACKAGE}"
-
 	# check if package already exists in repository
 	if [[ -n $(echo $REPOSITORY_PACKAGES | grep "${pkgname}") && $EXTERNAL_NEW != "compile" ]]; then
-		display_alert "Packing" "dpkg-deb: ${pkgname} exists in the repository and force rebuilding is disabled. Skip building" "wrn"
+		display_alert "Installing" "${pkgname} from repository. Force rebuilding is disabled." "wrn"
+		apt -qq -y install ${pkgname} > /dev/null 2>&1
 		return 1
 	fi
 
@@ -154,30 +152,39 @@ function create_deb_package ()
 	process_line $lowerdir "armbian.postinst"	$2 $upperdir
 	process_line $lowerdir "armbian.prerm" 		$2 $upperdir
 	process_line $lowerdir "armbian.postrm" 	$2 $upperdir
+	process_line $lowerdir "armbian.triggers" 	$2 $upperdir
 
 	# create DEBIAN control file
 	local control="$upperdir/DEBIAN/control"
-	echo "Package: ${ARMBIAN_PKG_PACKAGE}"									>  $control
-	echo "Version: ${ARMBIAN_PKG_REVISION}" 								>> $control
-	echo "Architecture: ${ARMBIAN_PKG_ARCH}" 								>> $control
-	echo "Maintainer: ${ARMBIAN_PKG_MAINTAINER} ${ARMBIAN_PKG_MAINTAINERMAIL}"				>> $control
-	echo "Installed-Size: ${packagesize}" 									>> $control
-	echo "Section: ${ARMBIAN_PKG_SECTION}"									>> $control
-	echo "Priority: ${ARMBIAN_PKG_PRIORITY}" 								>> $control
-	[[ -n $ARMBIAN_PKG_DEPENDS ]] && echo "Depends: $(echo ${ARMBIAN_PKG_DEPENDS} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
-	[[ -n $ARMBIAN_PKG_PROVIDES ]] && echo "Provides: $(echo ${ARMBIAN_PKG_PROVIDES} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
-	[[ -n $ARMBIAN_PKG_RECOMMENDS ]] && echo "Recommends: $(echo ${ARMBIAN_PKG_RECOMMENDS} | tr " " , | sed "s/[[:space:]]\+/ /g")"	>> $control
-	[[ -n $ARMBIAN_PKG_CONFLICTS ]] && echo "Conflicts: $(echo ${ARMBIAN_PKG_CONFLICTS} | tr " " , | sed "s/[[:space:]]\+/ /g")"	>> $control
-	[[ -n $ARMBIAN_PKG_REPLACES ]] && echo "Replaces: $(echo ${ARMBIAN_PKG_REPLACES} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
-	[[ -n $ARMBIAN_PKG_HOMEPAGE ]] && echo "Homepage: ${ARMBIAN_PKG_HOMEPAGE}"				>> $control
-	echo "Description: ${ARMBIAN_PKG_DESCRIPTION}"								>> $control
+	echo "Package: ${ARMBIAN_PKG_PACKAGE}"														>  $control
+	echo "Version: ${ARMBIAN_PKG_REVISION}" 													>> $control
+	echo "Architecture: ${ARMBIAN_PKG_ARCH}" 													>> $control
+	echo "Maintainer: ${ARMBIAN_PKG_MAINTAINER} ${ARMBIAN_PKG_MAINTAINERMAIL}"					>> $control
+	echo "Installed-Size: ${packagesize}" 														>> $control
+	echo "Section: ${ARMBIAN_PKG_SECTION}"														>> $control
+	echo "Priority: ${ARMBIAN_PKG_PRIORITY}" 													>> $control
+	[[ -n $ARMBIAN_PKG_DEPENDS ]] && \
+	echo "Depends: $(echo ${ARMBIAN_PKG_DEPENDS} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
+	[[ -n $ARMBIAN_PKG_PROVIDES ]] && \
+	echo "Provides: $(echo ${ARMBIAN_PKG_PROVIDES} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
+	[[ -n $ARMBIAN_PKG_SUGGESTS ]] && \
+	echo "Suggests: $(echo ${ARMBIAN_PKG_SUGGESTS} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
+	[[ -n $ARMBIAN_PKG_RECOMMENDS ]] && \
+	echo "Recommends: $(echo ${ARMBIAN_PKG_RECOMMENDS} | tr " " , | sed "s/[[:space:]]\+/ /g")"	>> $control
+	[[ -n $ARMBIAN_PKG_CONFLICTS ]] && \
+	echo "Conflicts: $(echo ${ARMBIAN_PKG_CONFLICTS} | tr " " , | sed "s/[[:space:]]\+/ /g")"	>> $control
+	[[ -n $ARMBIAN_PKG_REPLACES ]] && \
+	echo "Replaces: $(echo ${ARMBIAN_PKG_REPLACES} | tr " " , | sed "s/[[:space:]]\+/ /g")"		>> $control
+	[[ -n $ARMBIAN_PKG_HOMEPAGE ]] && \
+	echo "Homepage: ${ARMBIAN_PKG_HOMEPAGE}"													>> $control
+	echo "Description: ${ARMBIAN_PKG_DESCRIPTION}"												>> $control
 
 	# add slash to the variable if subdirectory is defined
 	[[ -n $ARMBIAN_PKG_REPOSITORY ]] && ARMBIAN_PKG_REPOSITORY+="/"
 
 	# build the package and save it in the output/debs directories
 	display_alert "Packing" "$(fakeroot dpkg-deb -b $mergeddir $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb)"
-	install_deb_chroot "$DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb"
+	[[ $ARMBIAN_PKG_INSTALL != "no" ]] && install_deb_chroot "$DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb"
 
 	umount -l $mergeddir
 
