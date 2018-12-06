@@ -624,7 +624,7 @@ create_image()
 	[[ $(type -t post_build_image) == function ]] && post_build_image "$DEST/images/${version}.img"
 
 	# write image to SD card
-	if [[ -e "$CARD_DEVICE" && -f $DEST/images/${version}.img && $COMPRESS_OUTPUTIMAGE != yes ]]; then
+	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f $DEST/images/${version}.img && $COMPRESS_OUTPUTIMAGE != yes ]]; then
 		display_alert "Writing image" "$CARD_DEVICE" "info"
 		balena-etcher $DEST/images/${version}.img -d $CARD_DEVICE -y
 		if [ $? -eq 0 ]; then
