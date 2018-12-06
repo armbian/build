@@ -351,7 +351,7 @@ create_board_package()
 	esac
 
 	# execute $LINUXFAMILY-specific tweaks
-	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp
+	#[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp
 
 	# add some summary to the image
 	fingerprint_image "$destination/etc/armbian.txt"
