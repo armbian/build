@@ -59,9 +59,25 @@ for i in "$@"; do
 done
 
 if [[ ! -f $SRC/.ignore_changes ]]; then
+	echo -e "[\e[0;32m o.k. \x1B[0m] Initializing submodules"
+	CHANGED_FILES=$(git submodule foreach --quiet 'echo $(git status -s | cut -c4- )' | sed -r '/^\s*$/d')
+	if [[ -n $CHANGED_FILES ]]; then
+		echo -e "[\e[0;35m warn \x1B[0m] You have made changes to files in submodules:\n"
+		git submodule foreach 'git status -s'
+		echo -e "\nPress \e[0;33m<y>\x1B[0m to discard changes, \e[0;33m<Enter>\x1B[0m to ignore and continue"
+		while true; do read -p "" yn;
+			case $yn in
+				[Yy]* ) git config --file .gitmodules --get-regexp path \
+				| awk '{ print $2 }' | xargs rm -rf;git submodule update --init --recursive;break;;
+				* ) break;;
+			esac
+		done
+	else
+		git submodule update --init --recursive
+	fi
 	echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
 	git pull
-	CHANGED_FILES=$(git diff --name-only)
+	CHANGED_FILES=$(git diff --name-only --ignore-submodules)
 	if [[ -n $CHANGED_FILES ]]; then
 		echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
 		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"

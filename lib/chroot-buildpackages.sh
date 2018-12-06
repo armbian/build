@@ -271,8 +271,11 @@ chroot_installpackages_local()
 	mkdir -p /tmp/aptly-temp/
 	aptly -config=$conf repo create temp
 	# NOTE: this works recursively
-	aptly -config=$conf repo add temp $DEST/debs/extra/${RELEASE}-desktop/
-	aptly -config=$conf repo add temp $DEST/debs/extra/${RELEASE}-utils/
+	aptly -config=$conf repo add -force-replace=true temp $DEST/debs/
+
+
+	aptly -config=$conf repo add -force-replace=true temp $DEST/debs/extra/${RELEASE}-desktop/
+	aptly -config=$conf repo add -force-replace=true temp $DEST/debs/extra/${RELEASE}-utils/
 	# -gpg-key="925644A6"
 	aptly -keyring="$SRC/packages/extras-buildpkgs/buildpkg-public.gpg" -secret-keyring="$SRC/packages/extras-buildpkgs/buildpkg.gpg" -batch=true -config=$conf \
 		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution=$RELEASE publish repo temp
@@ -287,7 +290,7 @@ chroot_installpackages_local()
 	cat <<-EOF > $SDCARD/etc/apt/sources.list.d/armbian-temp.list
 	deb http://localhost:8189/ $RELEASE temp
 	EOF
-	chroot_installpackages
+	chroot_installpackages "no" "$1"
 	kill $aptly_pid
 } #############################################################################
 
@@ -296,8 +299,9 @@ chroot_installpackages_local()
 chroot_installpackages()
 {
 	local remote_only=$1
-	local install_list=""
+	local install_list=$2
 	display_alert "Installing additional packages" "EXTERNAL_NEW"
+	if [[ -z $install_list ]]; then
 	for plugin in $SRC/packages/extras-buildpkgs/*.conf; do
 		source $plugin
 		if [[ $(type -t package_checkinstall) == function ]] && package_checkinstall; then
@@ -305,6 +309,7 @@ chroot_installpackages()
 		fi
 		unset package_install_target package_checkinstall
 	done
+	fi
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
 	cat <<-EOF > $SDCARD/tmp/install.sh
 	#!/bin/bash

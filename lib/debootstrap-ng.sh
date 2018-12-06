@@ -52,14 +52,20 @@ debootstrap_ng()
 	install_distribution_specific
 	install_common
 
-	# install additional applications
-	[[ $EXTERNAL == yes ]] && install_external_applications
+	# we shell pack everything under this way
+	REPOSITORY_PACKAGES="`wget -qO- https://apt.armbian.com/.packages.txt`"
+	find_deb_packages_prepare
+
+	# recreate directories just to make sure aptly won't break
+	mkdir -p $DEST/debs/extra/${RELEASE}-desktop $DEST/debs/extra/${RELEASE}-utils
+
+	chroot_installpackages_local "${ARMBIAN_PACKAGE_LIST}"
 
 	# install locally built packages
 	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
 
 	# install from apt.armbian.com
-	[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes"
+	[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes" "${ARMBIAN_PACKAGE_LIST}"
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
@@ -119,7 +125,7 @@ create_rootfs_cache()
 
 		display_alert "Installing base system" "Stage 1/2" "info"
 		eval 'debootstrap --include=${DEBOOTSTRAP_LIST} ${PACKAGE_LIST_EXCLUDE:+ --exclude=${PACKAGE_LIST_EXCLUDE// /,}} \
-			--arch=$ARCH --foreign $RELEASE $SDCARD/ $apt_mirror' \
+			--arch=$ARCH --components=${DEBOOTSTRAP_COMPONENTS} --foreign $RELEASE $SDCARD/ $apt_mirror' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -429,7 +435,11 @@ prepare_partitions()
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice
-		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -L ROOTFS -o journal_data_writeback $rootdevice > /dev/null
+		if [[ $TVBOXES_ROOT == yes ]]; then
+			[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -L ROOTFS -o journal_data_writeback $rootdevice > /dev/null
+			else
+			[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
+		fi
 		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress-force=zlib"
 		mount ${fscreateopt} $rootdevice $MOUNT/
 		# create fstab (and crypttab) entry
@@ -438,7 +448,11 @@ prepare_partitions()
 			echo "$ROOT_MAPPER UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}) none luks" >> $SDCARD/etc/crypttab
 			local rootfs=$rootdevice # used in fstab
 		else
-			local rootfs="LABEL=ROOTFS"
+			if [[ $TVBOXES_ROOT == yes ]]; then
+				local rootfs="LABEL=ROOTFS"
+				else
+				local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
+			fi
 		fi
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 	fi
@@ -448,7 +462,11 @@ prepare_partitions()
 		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${LOOP}p${bootpart}
 		mkdir -p $MOUNT/boot/
 		mount ${LOOP}p${bootpart} $MOUNT/boot/
-		echo "LABEL=BOOT /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
+		if [[ $TVBOXES_ROOT == yes ]]; then
+			echo "LABEL=BOOT /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
+			else
+			echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
+		fi
 	fi
 	[[ $ROOTFS_TYPE == nfs ]] && echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab

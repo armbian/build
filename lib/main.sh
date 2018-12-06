@@ -43,6 +43,7 @@ source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/desktop.sh 					# Desktop specific install
 source $SRC/lib/compilation.sh 				# Patching and compilation of kernel, uboot, ATF
 source $SRC/lib/makeboarddeb.sh 			# Create board support package
+source $SRC/lib/makeboarddeb-ng.sh 			# Packing everything
 source $SRC/lib/general.sh				# General functions
 source $SRC/lib/chroot-buildpackages.sh			# Building packages in chroot
 
@@ -276,11 +277,13 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 done
 
 # Compile u-boot if packed .deb does not exist
-if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-	if [[ -n $ATFSOURCE ]]; then
-		compile_atf
+if [[ $ADD_UBOOT == yes ]]; then
+	if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+		if [[ -n $ATFSOURCE ]]; then
+			compile_atf
+		fi
+		compile_uboot
 	fi
-	compile_uboot
 fi
 
 # Compile kernel if packed .deb does not exist

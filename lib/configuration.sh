@@ -22,7 +22,7 @@ ROOTFSCACHE_VERSION=4
 CHROOT_CACHE_VERSION=6
 [[ -z $DISPLAY_MANAGER ]] && DISPLAY_MANAGER=nodm
 ROOTFS_CACHE_MAX=16 # max number of rootfs cache, older ones will be cleaned up
-
+ADD_UBOOT="yes" # some tvboxes doesn't need building u-boot
 # TODO: fixed name can't be used for parallel image building
 ROOT_MAPPER="armbian-root"
 
@@ -126,8 +126,8 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 if [[ $RELEASE == xenial || $RELEASE == bionic ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
 # Base system dependencies
-DEBOOTSTRAP_LIST="locales,gnupg,ifupdown"
-[[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST="locales,gnupg,ifupdown,libgtk2.0-bin"
+DEBOOTSTRAP_LIST="locales,gnupg,ifupdown,apt-transport-https,ca-certificates"
+[[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=",libgtk2.0-bin"
 
 # Essential packages
 PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler figlet fbset fping \
@@ -140,7 +140,7 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 
 # Non-essential packages
 PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools dosfstools iotop iozone3 stress sysbench screen \
-	ntfs-3g vim pciutils evtest htop pv lsof apt-transport-https libfuse2 libdigest-sha-perl \
+	ntfs-3g vim pciutils evtest htop pv lsof libfuse2 libdigest-sha-perl \
 	libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan sysstat bash-completion \
 	hostapd git ethtool network-manager unzip ifenslave command-not-found libpam-systemd iperf3 \
 	software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode"
@@ -178,24 +178,28 @@ esac
 case $RELEASE in
 
 	jessie)
+		DEBOOTSTRAP_COMPONENTS="main"
 		PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless policykit-1-gnome eject numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" iceweasel pluma system-config-printer"
 	;;
 
 	xenial)
+		DEBOOTSTRAP_COMPONENTS="main"
 		PACKAGE_LIST_RELEASE="man-db wget nano"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common system-config-printer-gnome"
 	;;
 
 	stretch)
+		DEBOOTSTRAP_COMPONENTS="main"
 		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer"
 	;;
 
 	bionic)
+		DEBOOTSTRAP_COMPONENTS="main,universe"
 		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer language-selector-gnome"
