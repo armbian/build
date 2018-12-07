@@ -52,24 +52,6 @@ debootstrap_ng()
 	install_distribution_specific
 	install_common
 
-	# we shell pack everything under this way
-	REPOSITORY_PACKAGES="`wget -qO- https://apt.armbian.com/.packages.txt`"
-	find_deb_packages_prepare
-
-	# recreate directories just to make sure aptly won't break
-	mkdir -p $DEST/debs/extra/${RELEASE}-desktop $DEST/debs/extra/${RELEASE}-utils
-
-	#display_alert "Installing" "${ARMBIAN_PACKAGE_LIST}" "info"
-
-	#[[ $EXTERNAL_NEW == prebuilt ]] && chroot $SDCARD /bin/bash -c "apt install -q -y ${ARMBIAN_PACKAGE_LIST}"
-	#>> $DEST/debug/install.log 2>&1
-
-
-	if [[ $BUILD_DESKTOP == yes ]]; then
-		# install display manager
-		desktop_postinstall
-	fi
-
 	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local "${ARMBIAN_PACKAGE_LIST}"
 
 	# install locally built packages

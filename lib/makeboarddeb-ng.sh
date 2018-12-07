@@ -17,6 +17,10 @@
 #
 find_deb_packages_prepare(){
 
+	REPOSITORY_PACKAGES="`wget -qO- https://apt.armbian.com/.packages.txt`"
+	# recreate directories just to make sure aptly won't break
+	mkdir -p $DEST/debs/extra/${RELEASE}-desktop $DEST/debs/extra/${RELEASE}-utils
+
 	local ifs=$IFS
 	ARMBIAN_PACKAGE_LIST=""
 	IFS=$'\n'
@@ -58,14 +62,15 @@ local filename="$4/DEBIAN/"$(echo $2 | sed -e "s/^armbian.//")
 
 if [[ -f $1/$2 ]]; then
 	postinst=$(source $1/$2)
-else
-	postinst=$(source $SRC/config/packages/TEMPLATE/$2)
-fi
+#else
+#	postinst=$(source $SRC/config/packages/TEMPLATE/$2)
+
 
 while read -r line; do
 	echo "$line" >> $filename
 done <<< "$postinst"
 chmod 755 $filename
+fi
 }
 
 
@@ -138,7 +143,7 @@ function create_deb_package ()
 	mount -t overlay overlay -olowerdir=${lowerdir}overlay,upperdir=${upperdir},workdir=${workdir} ${mergeddir}
 
 	# execute package custom build script if defined
-	[[ -d $lowerdir/sources && -f $lowerdir/armbian.build ]] && source $lowerdir/armbian.build
+	[[ -f $lowerdir/armbian.build ]] && source $lowerdir/armbian.build
 
 	# calculate package size
 	local packagesize=$(du -sx --exclude DEBIAN	$mergeddir | awk '{ print $1 }')

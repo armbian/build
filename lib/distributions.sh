@@ -172,6 +172,14 @@ install_common()
 	# install board support package
 	install_deb_chroot "$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb"
 
+	# pack all debian packages | download and install
+	find_deb_packages_prepare
+
+	if [[ $BUILD_DESKTOP == yes ]]; then
+		# install display manager
+		desktop_postinstall
+	fi
+
 	# freeze armbian packages
 	if [[ $BSPFREEZE == yes ]]; then
 		display_alert "Freezing Armbian packages" "$BOARD" "info"
