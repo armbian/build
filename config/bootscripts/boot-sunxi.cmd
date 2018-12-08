@@ -6,18 +6,27 @@
 setenv load_addr "0x44000000"
 setenv overlay_error "false"
 # default values
-setenv rootdev "/dev/mmcblk0p1"
 setenv verbosity "1"
 setenv console "both"
 setenv disp_mem_reserves "off"
 setenv disp_mode "1920x1080p60"
 setenv rootfstype "ext4"
 setenv docker_optimizations "on"
+setenv devnum "0"
+setenv rootdev "/dev/mmcblk${devnum}p1"
 
 # Print boot source
 itest.b *0x28 == 0x00 && echo "U-boot loaded from SD"
 itest.b *0x28 == 0x02 && echo "U-boot loaded from eMMC or secondary SD"
 itest.b *0x28 == 0x03 && echo "U-boot loaded from SPI"
+
+# get PARTUUID of first partition on SD/eMMC it was loaded from
+# mmc 0 is always mapped to device u-boot (2016.09+) was loaded from
+if test "${devtype}" = "mmc"; then
+  part uuid mmc ${devnum}:1 partuuid;
+  setenv devnum ${mmc_bootdev}
+  setenv rootdev "/dev/mmcblk${mmc_bootdev}p1"
+fi
 
 echo "Boot script loaded from ${devtype}"
 
@@ -30,10 +39,6 @@ if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=ttyS0,115200 console=tty1"; fi
 if test "${console}" = "serial"; then setenv consoleargs "console=ttyS0,115200"; fi
-
-# get PARTUUID of first partition on SD/eMMC it was loaded from
-# mmc 0 is always mapped to device u-boot (2016.09+) was loaded from
-if test "${devtype}" = "mmc"; then part uuid mmc 0:1 partuuid; fi
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} hdmi.audio=EDID:0 disp.screen0_output_mode=${disp_mode} panic=10 consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} ubootsource=${devtype} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
