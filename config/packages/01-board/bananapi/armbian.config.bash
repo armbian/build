@@ -1,0 +1,1 @@
+ARMBIAN_PKG_DESCRIPTION="Pinebook board support"

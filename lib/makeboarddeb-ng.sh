@@ -13,7 +13,9 @@
 # process_line
 # create_deb_package
 
-# cycle in deb subdirectories and look for armbian.config where are stored definitions to create DEB file
+
+
+# cycle in deb subdirectories and look for armbian.config.bash where are stored definitions to create DEB file
 #
 find_deb_packages_prepare(){
 
@@ -25,7 +27,7 @@ find_deb_packages_prepare(){
 	ARMBIAN_PACKAGE_LIST=""
 	IFS=$'\n'
 	names=()
-	dirs=( $(find $SRC/config/packages -maxdepth 2 -mindepth 2 -not -path "*/TEMPLATE/*" ) )
+	dirs=( $(find $SRC/config/packages -maxdepth 2 -mindepth 2 -not -path "*/TEMPLATE/*" | sort ) )
 
 	# required for "for" command
 	shopt -s nullglob dotglob
@@ -35,7 +37,7 @@ find_deb_packages_prepare(){
 		cleaned_dir=${dir/#$SRC}
 		cleaned_dir=${cleaned_dir//config\/packages\/}
 
-		for config in ${dir%%:*}/armbian.config; do
+		for config in ${dir%%:*}/armbian.config.bash; do
 			names+=($(basename $config))
 			local first="$(cut -d'/' -f2 <<<"${cleaned_dir%%:*}")"
 			local second="$(cut -d'/' -f3 <<<"${cleaned_dir%%:*}")"
@@ -58,14 +60,9 @@ find_deb_packages_prepare(){
 #
 function process_line()
 {
-local filename="$4/DEBIAN/"$(echo $2 | sed -e "s/^armbian.//")
-
+local filename="$4/DEBIAN/"$(echo $2 | sed -e "s/^armbian.bash//")
 if [[ -f $1/$2 ]]; then
 	postinst=$(source $1/$2)
-#else
-#	postinst=$(source $SRC/config/packages/TEMPLATE/$2)
-
-
 while read -r line; do
 	echo "$line" >> $filename
 done <<< "$postinst"
@@ -92,7 +89,7 @@ function create_deb_package ()
 	ARMBIAN_PKG_PROVIDES ARMBIAN_PKG_RECOMMENDS ARMBIAN_PKG_CONFLICTS ARMBIAN_PKG_REPLACES ARMBIAN_PKG_REPOSITORY \
 	ARMBIAN_PKG_DESCRIPTION ARMBIAN_PKG_MAINTAINER ARMBIAN_PKG_MAINTAINERMAIL ARMBIAN_PKG_INSTALL ARMBIAN_PKG_SUGGESTS
 
-	# set defaults which are overwritten via package armbian.config file
+	# set defaults which are overwritten via package armbian.config.bash file
 	ARMBIAN_PKG_REVISION=$REVISION
 	ARMBIAN_PKG_MAINTAINER=$MAINTAINER
 	ARMBIAN_PKG_MAINTAINERMAIL=$MAINTAINERMAIL
@@ -102,7 +99,7 @@ function create_deb_package ()
 	ARMBIAN_PKG_PRIORITY=optional
 
 	# read package configuration
-	source $1/armbian.config
+	source $1/armbian.config.bash
 
 	# define local variables for better readability
 	local pkgname="${ARMBIAN_PKG_PACKAGE}_${ARMBIAN_PKG_REVISION}_${ARMBIAN_PKG_ARCH}"
@@ -110,24 +107,26 @@ function create_deb_package ()
 	local upperdir="$2${pkgname}"	# destination
 	local workdir="$3${pkgname}"	# reserved
 	local mergeddir="$4${pkgname}"	# source overlay + destination
+	local dirforpacking=${upperdir}	# depandable wheather we have an overlay or not
 
 	# Packing only for the selected family
-	[[ $5 == "family" && $LINUXFAMILY != $6 ]] && return 1
+	[[ $5 == "02-family" && $LINUXFAMILY != $6 ]] && return 1
 	# Packing only for the selected board
-	[[ $5 == "board" && $BOARD != $6 ]] && return 1
+	[[ $5 == "01-board" && $BOARD != $6 ]] && return 1
 	# Packing only for CLI
 	[[ $6 == armbian-desktop* && $BUILD_DESKTOP != "yes" ]] && return 1
 
-	# package name is mandatory
-	[[ -z $ARMBIAN_PKG_PACKAGE ]] && display_alert "Packing" "Missing package name in $1 Skip building." "err" && return 1
-
-	# overlay is mandatory
-	[[ ! -d $1overlay ]] && display_alert "Packing" "Missing overlay directory in $1 Skip building." "err" && return 1
+	# install dependencies
+	if [[ -n $ARMBIAN_PKG_DEPENDS && $ARMBIAN_PKG_INSTALL != "no" ]]; then
+		display_alert "Dependecies for" "${ARMBIAN_PKG_PACKAGE}"
+		chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_DEPENDS}" >> $DEST/debug/install.log 2>&1
+		if [[ $? == 0 ]]; then display_alert "Installed" "${ARMBIAN_PKG_DEPENDS}" "info"; else display_alert "Installed" "${ARMBIAN_PKG_DEPENDS}" "err"; fi
+	fi
 
 	# check if package already exists in repository
-	if [[ -n $(echo $REPOSITORY_PACKAGES | grep "${pkgname}") && $EXTERNAL_NEW != "compile" ]]; then
-		display_alert "Installing" "${pkgname} from repository. Force rebuilding is disabled." "wrn"
-		apt -qq -y install ${pkgname} > /dev/null 2>&1
+	if [[ -n $(echo $REPOSITORY_PACKAGES | grep "${pkgname}") && $PACKAGES_RECOMPILE != "yes" && -n ${ARMBIAN_PKG_PACKAGE} ]]; then
+		chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_PACKAGE}" >> $DEST/debug/install.log 2>&1
+		if [[ $? == 0 ]]; then display_alert "Installed" "${ARMBIAN_PKG_PACKAGE} from repository. Force rebuilding is disabled." "info"; else display_alert "Installed" "${ARMBIAN_PKG_PACKAGE}" "err"; fi
 		return 1
 	fi
 
@@ -140,24 +139,37 @@ function create_deb_package ()
 	fi
 
 	# merge directories with overlay so we don't need to copy anything
-	mount -t overlay overlay -olowerdir=${lowerdir}overlay,upperdir=${upperdir},workdir=${workdir} ${mergeddir}
+	if [[ -d $1overlay ]]; then
+		mount -t overlay overlay -olowerdir=${lowerdir}overlay,upperdir=${upperdir},workdir=${workdir} ${mergeddir}
+		dirforpacking=${mergeddir}
+	fi
 
 	# execute package custom build script if defined
-	[[ -f $lowerdir/armbian.build ]] && source $lowerdir/armbian.build
+	if [[ -f ${lowerdir}armbian.build.bash ]]; then
+		source ${lowerdir}armbian.build.bash
+		if [[ $? == 0 ]]; then
+			display_alert "Executed" "${lowerdir}armbian.build.bash" "info"
+			else
+			display_alert "Failed" "${lowerdir}armbian.build.bash" "err"
+		fi
 
+	fi
+
+	if [[ -d $1overlay ]]; then
 	# calculate package size
 	local packagesize=$(du -sx --exclude DEBIAN	$mergeddir | awk '{ print $1 }')
 
 	# creaate md5sums
 	local mdsum=$(cd $mergeddir;find . -type f ! -regex '.*.hg.*' ! -regex '.*?debian-binary.*' ! -regex '.*?DEBIAN.*' \
 	-printf '%P ' | xargs --no-run-if-empty md5sum > DEBIAN/md5sums)
+	fi
 
 	# compile DEBIAN scripts
-	process_line $lowerdir "armbian.preinst" 	$2 $upperdir
-	process_line $lowerdir "armbian.postinst"	$2 $upperdir
-	process_line $lowerdir "armbian.prerm" 		$2 $upperdir
-	process_line $lowerdir "armbian.postrm" 	$2 $upperdir
-	process_line $lowerdir "armbian.triggers" 	$2 $upperdir
+	process_line ${lowerdir} "armbian.preinst.bash" 	$2 $upperdir
+	process_line ${lowerdir} "armbian.postinst.bash"	$2 $upperdir
+	process_line ${lowerdir} "armbian.prerm.bash" 		$2 $upperdir
+	process_line ${lowerdir} "armbian.postrm.bash" 	$2 $upperdir
+	process_line ${lowerdir} "armbian.triggers.bash" 	$2 $upperdir
 
 	# create DEBIAN control file
 	local control="$upperdir/DEBIAN/control"
@@ -187,11 +199,15 @@ function create_deb_package ()
 	# add slash to the variable if subdirectory is defined
 	[[ -n $ARMBIAN_PKG_REPOSITORY ]] && ARMBIAN_PKG_REPOSITORY+="/"
 
-	# build the package and save it in the output/debs directories
-	display_alert "Packing" "$(fakeroot dpkg-deb -b $mergeddir $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb)"
-	[[ $ARMBIAN_PKG_INSTALL != "no" ]] && install_deb_chroot "$DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb"
+	# if package name is defined, create deb file
+	if [[ -n $ARMBIAN_PKG_PACKAGE ]]; then
+		# build the package and save it in the output/debs directories
+		fakeroot dpkg-deb -b $dirforpacking $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb &> /dev/null
+		if [[ $? == 0 ]]; then display_alert "Packed" "${pkgname}.deb" "info"; else display_alert "Packed" "${pkgname}.deb" "err"; fi
+		[[ $ARMBIAN_PKG_INSTALL != "no" ]] && install_deb_chroot "$DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb"
+	fi
 
-	umount -l $mergeddir
+	umount -l $mergeddir > /dev/null 2>&1
 
 	# cleanup
 	if [[ $upperdir != "/" && $workdir != "/" && $mergeddir != "/" ]]; then rm -rf $upperdir $workdir $mergeddir; fi

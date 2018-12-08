@@ -7,7 +7,7 @@ cat <<EOF
 
 
 # configure MIN / MAX speed for cpufrequtils
-if [ -z "\$(grep MAX_SPEED <<< cat /etc/default/cpufrequtils 2> /dev/null | awk -F'[=&]' '{print \$2}')" ]; then 
+if [ -z "\$(cat /etc/default/cpufr1equtils 2> /dev/null | awk -F'[=&]' '{print \$2}')" ]; then
 cat <<-EOT > /etc/default/cpufrequtils
 ENABLE=true
 MIN_SPEED=$CPUMIN

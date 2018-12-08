@@ -41,7 +41,7 @@ source $SRC/lib/debootstrap-ng.sh 			# System specific install
 source $SRC/lib/image-helpers.sh			# helpers for OS image building
 source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/compilation.sh 				# Patching and compilation of kernel, uboot, ATF
-source $SRC/lib/makeboarddeb.sh 			# Create board support package
+#source $SRC/lib/makeboarddeb.sh 			# Create board support package
 source $SRC/lib/makeboarddeb-ng.sh 			# Packing everything
 source $SRC/lib/general.sh				# General functions
 source $SRC/lib/chroot-buildpackages.sh			# Building packages in chroot
@@ -303,7 +303,7 @@ VER="${VER/-$LINUXFAMILY/}"
 UBOOT_VER=$(dpkg --info $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
 
 # create board support package
-[[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
+# [[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
 
 # build additional packages
 [[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
