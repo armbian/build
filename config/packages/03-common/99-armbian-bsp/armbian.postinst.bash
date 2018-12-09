@@ -63,4 +63,35 @@ else
 	[ -f /usr/share/armbian/boot.ini ] && ls /usr/share/armbian/boot.ini-* | head -n -5 | xargs rm -f --
 EOF
 fi
-echo "fi"
+cat <<EOF
+fi
+# now cleanup and remove old ramlog service
+systemctl disable log2ram.service >/dev/null 2>&1
+[ -f "/usr/sbin/log2ram" ] && rm /usr/sbin/log2ram
+[ -f "/usr/share/log2ram/LICENSE" ] && rm -r /usr/share/log2ram
+[ -f "/lib/systemd/system/log2ram.service" ] && rm /lib/systemd/system/log2ram.service
+[ -f "/etc/cron.daily/log2ram" ] && rm /etc/cron.daily/log2ram
+[ -f "/etc/default/log2ram.dpkg-dist" ] && rm /etc/default/log2ram.dpkg-dist
+
+[ ! -f "/etc/network/interfaces" ] && cp /etc/network/interfaces.default /etc/network/interfaces
+ln -sf /var/run/motd /etc/motd
+rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
+if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
+rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
+if [ ! -f "/etc/default/armbian-motd" ]; then
+	mv /etc/default/armbian-motd.dpkg-dist /etc/default/armbian-motd
+fi
+if [ ! -f "/etc/default/armbian-ramlog" ]; then
+	mv /etc/default/armbian-ramlog.dpkg-dist /etc/default/armbian-ramlog
+fi
+if [ ! -f "/etc/default/armbian-zram-config" ]; then
+	mv /etc/default/armbian-zram-config.dpkg-dist /etc/default/armbian-zram-config
+fi
+
+if [ -L "/usr/lib/chromium-browser/master_preferences.dpkg-dist" ]; then
+	mv /usr/lib/chromium-browser/master_preferences.dpkg-dist /usr/lib/chromium-browser/master_preferences
+fi
+
+systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service >/dev/null 2>&1
+exit 0
+EOF

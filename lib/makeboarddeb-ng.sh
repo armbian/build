@@ -60,7 +60,7 @@ find_deb_packages_prepare(){
 #
 function process_line()
 {
-local filename="$4/DEBIAN/"$(echo $2 | sed -e "s/^armbian.bash//")
+local filename="$4/DEBIAN/"$(echo $2 | sed -e "s/^armbian.//" | sed -e "s/.bash$//")
 if [[ -f $1/$2 ]]; then
 	postinst=$(source $1/$2)
 while read -r line; do
@@ -120,7 +120,7 @@ function create_deb_package ()
 	if [[ -n $ARMBIAN_PKG_DEPENDS && $ARMBIAN_PKG_INSTALL != "no" ]]; then
 		display_alert "Dependecies for" "${ARMBIAN_PKG_PACKAGE}"
 		chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_DEPENDS}" >> $DEST/debug/install.log 2>&1
-		if [[ $? == 0 ]]; then display_alert "Installed" "${ARMBIAN_PKG_DEPENDS}" "info"; else display_alert "Installed" "${ARMBIAN_PKG_DEPENDS}" "err"; fi
+		if [[ $? == 0 ]]; then display_alert "Installed" "" "info"; else display_alert "Installed" "" "err"; fi
 	fi
 
 	# check if package already exists in repository
