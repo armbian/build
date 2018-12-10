@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # create directories
-mkdir -p ${upperdir}usr/share/armbian/ ${upperdir}etc/default ${upperdir}usr/network ${upperdir}etc/mpv ${upperdir}etc/profile.d
+mkdir -p ${upperdir}/usr/share/armbian/ ${upperdir}/etc/default ${upperdir}/usr/network ${upperdir}/etc/mpv ${upperdir}/etc/profile.d
 
 bootscript_src=${BOOTSCRIPT%%:*}
 bootscript_dst=${BOOTSCRIPT##*:}
 
-cp $SRC/config/bootscripts/$bootscript_src ${upperdir}usr/share/armbian/$bootscript_dst
+cp $SRC/config/bootscripts/$bootscript_src ${upperdir}/usr/share/armbian/$bootscript_dst
 
-if [[ -n $BOOTENV_FILE && -f $$SRC/config/bootenv/$BOOTENV_FILE ]]; then
-	cp $$SRC/config/bootenv/$BOOTENV_FILE $upperdir/usr/share/armbian/armbianEnv.txt
+if [[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]]; then
+	cp $SRC/config/bootenv/$BOOTENV_FILE $upperdir/usr/share/armbian/armbianEnv.txt
 fi
 
 # add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
@@ -43,15 +43,15 @@ sed -i 's/#no-auto-down/no-auto-down/g' $upperdir/etc/network/interfaces.default
 
 if [[ ( $LINUXFAMILY == sun*i || $LINUXFAMILY == pine64 ) && $BRANCH == default ]]; then
 	# add mpv config for vdpau_sunxi
-	ln -fs mpv_sunxi_legacy.conf ${upperdir}etc/mpv/mpv.conf
-	echo "export VDPAU_OSD=1" > ${upperdir}etc/profile.d/90-vdpau.sh
-	chmod 755 ${upperdir}etc/profile.d/90-vdpau.sh
+	ln -fs mpv_sunxi_legacy.conf ${upperdir}/etc/mpv/mpv.conf
+	echo "export VDPAU_OSD=1" > ${upperdir}/etc/profile.d/90-vdpau.sh
+	chmod 755 ${upperdir/}etc/profile.d/90-vdpau.sh
 fi
 
 if [[ $LINUXFAMILY == sunxi* && $BRANCH != default ]]; then
 	# add mpv config for x11 output - slow, but it works compared to no config at all
 	# TODO: Test which output driver is better with DRM
-	ln -fs mpv_sunxi_mainline.conf ${upperdir}etc/mpv/mpv.conf
+	ln -fs mpv_sunxi_mainline.conf ${upperdir}/etc/mpv/mpv.conf
 fi
 
 # execute $LINUXFAMILY-specific tweaks

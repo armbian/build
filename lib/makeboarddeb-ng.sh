@@ -110,9 +110,9 @@ function create_deb_package ()
 	local dirforpacking=${upperdir}	# depandable wheather we have an overlay or not
 
 	# Packing only for the selected family
-	[[ $5 == "02-family" && $LINUXFAMILY != $6 ]] && return 1
+	[[ $5 == *-family && $LINUXFAMILY != $6 ]] && return 1
 	# Packing only for the selected board
-	[[ $5 == "01-board" && $BOARD != $6 ]] && return 1
+	[[ $5 == *-board && $BOARD != $6 ]] && return 1
 	# Packing only for CLI
 	[[ $6 == armbian-desktop* && $BUILD_DESKTOP != "yes" ]] && return 1
 
@@ -146,13 +146,8 @@ function create_deb_package ()
 
 	# execute package custom build script if defined
 	if [[ -f ${lowerdir}armbian.build.bash ]]; then
+		display_alert "Executing" "${lowerdir}armbian.build.bash" "info"
 		source ${lowerdir}armbian.build.bash
-		if [[ $? == 0 ]]; then
-			display_alert "Executed" "${lowerdir}armbian.build.bash" "info"
-			else
-			display_alert "Failed" "${lowerdir}armbian.build.bash" "err"
-		fi
-
 	fi
 
 	if [[ -d $1overlay ]]; then
@@ -207,7 +202,8 @@ function create_deb_package ()
 		[[ $ARMBIAN_PKG_INSTALL != "no" ]] && install_deb_chroot "$DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb"
 	fi
 
-	umount -l $mergeddir > /dev/null 2>&1
+	umount -l $mergeddir
+	#> /dev/null 2>&1
 
 	# cleanup
 	if [[ $upperdir != "/" && $workdir != "/" && $mergeddir != "/" ]]; then rm -rf $upperdir $workdir $mergeddir; fi
