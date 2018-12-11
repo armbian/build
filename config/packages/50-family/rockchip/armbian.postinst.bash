@@ -8,9 +8,9 @@ cat <<EOF
 addgroup --system --quiet --gid 997 gpio
 addgroup --system --quiet --gid 998 i2c
 
-# link to tinkerboard audio settings
-ln -sf /etc/armbian/default.pa /etc/pulse/default.pa
+# tinkerboard audio settings
 ln -sf /etc/armbian/asound.conf /etc/asound.conf
+sed -i -e "/#load-module module-alsa-sink/r /etc/armbian/pulseaudio.txt" /etc/pulse/default.pa >/dev/null 2>&1
 
 # read config
 [ -f /etc/armbian-release ] && . /etc/armbian-release
