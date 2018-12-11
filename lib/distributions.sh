@@ -217,8 +217,9 @@ install_common()
 	# disable deprecated parameter
 	sed '/.*$KLogPermitNonKernelFacility.*/,// s/.*/#&/' -i $SDCARD/etc/rsyslog.conf
 
-	# enable getty on serial console
-	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@$SERIALCON.service >/dev/null 2>&1"
+	# add serial console to secure tty list and enable getty on it
+	[ -z "$(grep -w '^$SERIALCON' $SDCARD/etc/securetty 2> /dev/null)" ] && echo "$SERIALCON" >> /etc/securetty
+	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@${SERIALCON}.service >/dev/null 2>&1"
 
 	[[ $LINUXFAMILY == sun*i ]] && mkdir -p $SDCARD/boot/overlay-user
 
