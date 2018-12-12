@@ -228,8 +228,9 @@ install_common()
 			cp $SDCARD/lib/systemd/system/serial-getty@.service $SDCARD/lib/systemd/system/serial-getty@${array[0]}.service
 			sed -i "s/--keep-baud 115200/--keep-baud ${array[1]},115200/" $SDCARD/lib/systemd/system/serial-getty@${array[0]}.service
 		fi
-		chroot $SDCARD /bin/bash -c "systemctl daemon-reload"
-		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@${array[0]}.service"
+		display_alert "Enabling serial console" "${array[0]}" "info"
+		chroot $SDCARD /bin/bash -c "systemctl daemon-reload" >> $DEST/debug/install.log 2>&1
+		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@${array[0]}.service" >> $DEST/debug/install.log 2>&1
 	done
 	IFS=$ifs
 
