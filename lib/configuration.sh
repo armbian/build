@@ -151,7 +151,7 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
 	libgtk2.0-bin libgnome2-perl network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
 	pulseaudio pavumeter pulseaudio-module-gconf bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
-	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic gparted mc simple-scan xfce4-power-manager"
+	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic gparted mc simple-scan"
 
 
 # Recommended desktop packages

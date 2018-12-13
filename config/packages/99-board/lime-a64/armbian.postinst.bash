@@ -8,7 +8,7 @@ cat <<EOF
 [ -f /etc/armbian-release ] && . /etc/armbian-release
 
 
-if [ "\$BRANCH" == "default" ]; then
+if [ "\$BRANCH" = "default" ]; then
 # enable services
 systemctl --no-reload enable lime-a64-bluetooth.service >/dev/null 2>&1
 fi
