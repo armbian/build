@@ -45,7 +45,7 @@ if [[ ( $LINUXFAMILY == sun*i || $LINUXFAMILY == pine64 ) && $BRANCH == default 
 	# add mpv config for vdpau_sunxi
 	ln -fs mpv_sunxi_legacy.conf ${upperdir}/etc/mpv/mpv.conf
 	echo "export VDPAU_OSD=1" > ${upperdir}/etc/profile.d/90-vdpau.sh
-	chmod 755 ${upperdir/}etc/profile.d/90-vdpau.sh
+	chmod 755 ${upperdir/}/etc/profile.d/90-vdpau.sh
 fi
 
 if [[ $LINUXFAMILY == sunxi* && $BRANCH != default ]]; then
