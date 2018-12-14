@@ -185,7 +185,6 @@ install_common()
 	fi
 
 	# copy boot splash images
-	cp $SRC/packages/blobs/splash/armbian-u-boot.bmp $SDCARD/boot/boot.bmp
 	cp $SRC/packages/blobs/splash/armbian-desktop.png $SDCARD/boot/boot-desktop.png
 
 	# execute $LINUXFAMILY-specific tweaks
