@@ -152,10 +152,10 @@ function create_deb_package ()
 
 	if [[ -d $1overlay ]]; then
 	# calculate package size
-	local packagesize=$(du -sx --exclude DEBIAN	$mergeddir | awk '{ print $1 }')
+	local packagesize=$(du -sx --exclude DEBIAN	$dirforpacking | awk '{ print $1 }')
 
 	# creaate md5sums
-	local mdsum=$(cd $mergeddir;find . -type f ! -regex '.*.hg.*' ! -regex '.*?debian-binary.*' ! -regex '.*?DEBIAN.*' \
+	local mdsum=$(cd $dirforpacking;find . -type f ! -regex '.*.hg.*' ! -regex '.*?debian-binary.*' ! -regex '.*?DEBIAN.*' \
 	-printf '%P ' | xargs --no-run-if-empty md5sum > DEBIAN/md5sums)
 	fi
 
@@ -202,8 +202,7 @@ function create_deb_package ()
 		[[ $ARMBIAN_PKG_INSTALL != "no" ]] && install_deb_chroot "$DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb"
 	fi
 
-	umount -l $mergeddir
-	#> /dev/null 2>&1
+	umount -l $mergeddir > /dev/null 2>&1
 
 	# cleanup
 	if [[ $upperdir != "/" && $workdir != "/" && $mergeddir != "/" ]]; then rm -rf $upperdir $workdir $mergeddir; fi

@@ -1,9 +1,5 @@
 #!/bin/bash
 #
-
-mkdir -p ${upperdir}/usr/bin/
-arm-linux-gnueabihf-gcc ${lowerdir}/sunxi-temp/sunxi_tp_temp.c -o ${upperdir}/usr/bin/sunxi_tp_temp
-
 # convert and add fex files
 mkdir -p ${upperdir}/boot/bin
 
