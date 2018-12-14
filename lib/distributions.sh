@@ -231,6 +231,12 @@ install_common()
 		display_alert "Enabling serial console" "${array[0]}" "info"
 		chroot $SDCARD /bin/bash -c "systemctl daemon-reload" >> $DEST/debug/install.log 2>&1
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable serial-getty@${array[0]}.service" >> $DEST/debug/install.log 2>&1
+		if [[ ${array[0]} == "ttyGS0" && $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
+			cat <<-EOF > $SDCARD/etc/systemd/system/serial-getty@ttyGS0.service.d/10-switch-role.conf
+			[Service]
+			ExecStartPre=-/bin/sh -c "echo 2 > /sys/bus/platform/devices/sunxi_usb_udc/otg_role"
+			EOF
+		fi
 	done
 	IFS=$ifs
 
