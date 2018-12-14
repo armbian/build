@@ -27,7 +27,7 @@ if [ $EVENT == "RebuildStarted" ]; then
 fi
 
 # A spare component device which was being rebuilt to replace a faulty device has been successfully rebuilt and has been made active
-if [ $EVENT == "SpareActive" ]; then
+if [ $EVENT == "RebuildFinished" ]; then
     echo none > $TRIGGER
     echo 0 > $BRIGHTNESS
 fi
