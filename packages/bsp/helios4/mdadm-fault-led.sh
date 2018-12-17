@@ -26,8 +26,8 @@ if [ $EVENT == "RebuildStarted" ]; then
     echo 1 > $BRIGHTNESS
 fi
 
-# A spare component device which was being rebuilt to replace a faulty device has been successfully rebuilt and has been made active
-if [ $EVENT == "SpareActive" ]; then
+# An md array that was rebuilding, isn't any more, either because it finished normally or was aborted. 
+if [ $EVENT == "RebuildFinished" ]; then
     echo none > $TRIGGER
     echo 0 > $BRIGHTNESS
 fi
