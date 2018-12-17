@@ -52,24 +52,6 @@ debootstrap_ng()
 	install_distribution_specific
 	install_common
 
-	# we shell pack everything under this way
-	REPOSITORY_PACKAGES="`wget -qO- https://apt.armbian.com/.packages.txt`"
-	find_deb_packages_prepare
-
-	# recreate directories just to make sure aptly won't break
-	mkdir -p $DEST/debs/extra/${RELEASE}-desktop $DEST/debs/extra/${RELEASE}-utils
-
-	display_alert "Installing" "${ARMBIAN_PACKAGE_LIST}" "info"
-
-	[[ $EXTERNAL_NEW == prebuilt ]] && chroot $SDCARD /bin/bash -c "apt install -q -y ${ARMBIAN_PACKAGE_LIST}"
-	#>> $DEST/debug/install.log 2>&1
-
-
-	if [[ $BUILD_DESKTOP == yes ]]; then
-		# install display manager
-		desktop_postinstall
-	fi
-
 	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local "${ARMBIAN_PACKAGE_LIST}"
 
 	# install locally built packages
@@ -436,7 +418,7 @@ prepare_partitions()
 
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			display_alert "Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
-			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $rootdevice -
+			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $CRYPTROOT_PARAMETERS $rootdevice -
 			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
 			display_alert "Root partition encryption complete." "" "ext"
 			# TODO: pass /dev/mapper to Docker
@@ -624,7 +606,7 @@ create_image()
 	[[ $(type -t post_build_image) == function ]] && post_build_image "$DEST/images/${version}.img"
 
 	# write image to SD card
-	if [[ -e "$CARD_DEVICE" && -f $DEST/images/${version}.img && $COMPRESS_OUTPUTIMAGE != yes ]]; then
+	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f $DEST/images/${version}.img && $COMPRESS_OUTPUTIMAGE != yes ]]; then
 		display_alert "Writing image" "$CARD_DEVICE" "info"
 		balena-etcher $DEST/images/${version}.img -d $CARD_DEVICE -y
 		if [ $? -eq 0 ]; then

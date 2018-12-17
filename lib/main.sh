@@ -41,7 +41,7 @@ source $SRC/lib/debootstrap-ng.sh 			# System specific install
 source $SRC/lib/image-helpers.sh			# helpers for OS image building
 source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/compilation.sh 				# Patching and compilation of kernel, uboot, ATF
-source $SRC/lib/makeboarddeb.sh 			# Create board support package
+#source $SRC/lib/makeboarddeb.sh 			# Create board support package
 source $SRC/lib/makeboarddeb-ng.sh 			# Packing everything
 source $SRC/lib/general.sh				# General functions
 source $SRC/lib/chroot-buildpackages.sh			# Building packages in chroot
@@ -100,7 +100,7 @@ fi
 
 if [[ -z $BOARD ]]; then
 	WIP_STATE=supported
-	WIP_BUTTON='CSC/WIP/EOS'
+	WIP_BUTTON='CSC/WIP/EOS/TVB'
 	STATE_DESCRIPTION=' - Officially supported boards'
 	temp_rc=$(mktemp)
 	while true; do
@@ -118,6 +118,9 @@ if [[ -z $BOARD ]]; then
 			done
 			for board in $SRC/config/boards/*.eos; do
 				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(EOS)\Zn $(head -1 $board | cut -d'#' -f2)")
+			done
+			for board in $SRC/config/boards/*.tvb; do
+				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(TVB)\Zn $(head -1 $board | cut -d'#' -f2)")
 			done
 		fi
 		if [[ $WIP_STATE != supported ]]; then
@@ -139,7 +142,7 @@ if [[ -z $BOARD ]]; then
 		if [[ $STATUS == 3 ]]; then
 			if [[ $WIP_STATE == supported ]]; then
 				[[ $SHOW_WARNING == yes ]] && show_developer_warning
-				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress\n - \Z1(EOS)\Zn - End Of Support'
+				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress\n - \Z1(EOS)\Zn - End Of Support\n - \Z1(TVB)\Zn - TV boxes'
 				WIP_STATE=unsupported
 				WIP_BUTTON='supported'
 				EXPERT=yes
@@ -166,6 +169,8 @@ elif [[ -f $SRC/config/boards/${BOARD}.wip ]]; then
 	BOARD_TYPE='wip'
 elif [[ -f $SRC/config/boards/${BOARD}.eos ]]; then
 	BOARD_TYPE='eos'
+elif [[ -f $SRC/config/boards/${BOARD}.tvb ]]; then
+	BOARD_TYPE='tvb'
 fi
 
 source $SRC/config/boards/${BOARD}.${BOARD_TYPE}
@@ -217,6 +222,9 @@ fi
 
 source $SRC/lib/configuration.sh
 
+# re-read board configuration to make per board override possible
+source $SRC/config/boards/${BOARD}.${BOARD_TYPE}
+
 # optimize build time with 100% CPU usage
 CPUS=$(grep -c 'processor' /proc/cpuinfo)
 if [[ $USEALLCORES != no ]]; then
@@ -256,10 +264,8 @@ else
 	IMAGE_TYPE=user-built
 fi
 
-if [[ $TVBOXES_ROOT != yes ]]; then
-	compile_sunxi_tools
-	install_rkbin_tools
-fi
+compile_sunxi_tools
+install_rkbin_tools
 
 BOOTSOURCEDIR=$BOOTDIR/${BOOTBRANCH##*:}
 LINUXSOURCEDIR=$KERNELDIR/${KERNELBRANCH##*:}
@@ -302,7 +308,7 @@ VER="${VER/-$LINUXFAMILY/}"
 UBOOT_VER=$(dpkg --info $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
 
 # create board support package
-[[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
+# [[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
 
 # build additional packages
 [[ $EXTERNAL_NEW == compile ]] && chroot_build_packages

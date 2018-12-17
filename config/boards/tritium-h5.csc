@@ -5,7 +5,7 @@ BOOTCONFIG="libretech_all_h3_cc_h5_defconfig"
 #
 MODULES="#w1-sunxi #w1-gpio #w1-therm #sunxi-cir hci_uart rfcomm hidp dhd"
 MODULES_NEXT=""
-DEFAULT_OVERLAYS=""
+DEFAULT_OVERLAYS="analog-codec"
 CPUMIN="240000"
 CPUMAX="1200000"
 #

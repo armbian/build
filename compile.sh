@@ -74,6 +74,7 @@ if [[ ! -f $SRC/.ignore_changes ]]; then
 		done
 	else
 		git submodule update --init --recursive
+		git submodule update --recursive --remote
 	fi
 	echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
 	git pull

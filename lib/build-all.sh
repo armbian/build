@@ -148,6 +148,7 @@ create_images_list()
 		if [[ -f $file".conf" ]]; then source $file".conf"; fi
 		if [[ -f $file".wip"  ]]; then source $file".wip"; fi
 		if [[ -f $file".csc"  ]]; then source $file".csc"; fi
+		if [[ -f $file".tvb"  ]]; then source $file".tvb"; fi
 
 		# beta targets are the same as stable. To build the same set beta set as future stable.
 		if [[ "$MERGETARGETS" == "yes" ]]; then
@@ -175,6 +176,7 @@ create_kernels_list()
 		if [[ -f $file".conf" ]]; then source $file".conf"; fi
 		if [[ -f $file".wip"  ]]; then source $file".wip"; fi
 		if [[ -f $file".csc"  ]]; then source $file".csc"; fi
+		if [[ -f $file".tvb"  ]]; then source $file".tvb"; fi
 
 		if [[ -n $KERNEL_TARGET ]]; then
 			for kernel in $(tr ',' ' ' <<< $KERNEL_TARGET); do

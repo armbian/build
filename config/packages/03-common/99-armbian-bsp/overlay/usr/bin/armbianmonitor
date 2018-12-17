@@ -1,0 +1,1196 @@
+#!/bin/bash
+#
+# armbianmonitor
+#
+# This script serves different purposes based on how it is called:
+#
+# - toggle boot verbosity (works)
+# - monitoring mode: continually print monitoring info (WiP)
+# - uploading /var/log/armbian-hardware-monitor.log to online pastebin service
+#
+# Without arguments called it should present a simple user
+# interface that guides through:
+#
+# - installation of RPi-Monitor if not already installed by user
+# - active basic or more verbose monitoring mode
+# - provides monitoring parameters for connected disks
+#
+# The second part is WiP and all the user interaction part
+# still completely missing.
+#
+# This script is used to configure armbianmonitor behaviour.
+# It will ask the user whether to activate monitoring or not,
+# whether to enable debug monitoring and also how to deal with
+# connected disks. In fact it walks through the list of available
+# disks, checks them, tries to patch hddtemp.db if necessary
+# and provides a proposal for /etc/armbianmonitor/disks.conf
+# when a new disk is found.
+#
+# In case monitoring should be activated the following file 
+# will be created: /etc/armbianmonitor/start-monitoring. If 
+# debug output has been chosen, then DEBUG will be written to 
+# the file.
+#
+# The script will install smartmontools/gdisk if not already
+# installed and patches smartmontools' update-smart-drivedb 
+# script if necessary. For disks the 'device model' will be
+# shown but internally we rely always on the GUID. This is the
+# key for entry in /etc/armbianmonitor/disks.conf
+#
+# When the script exits and the user activated monitoring it
+# recommends doing a restart since on the next reboot the
+# setup-armbian-monitoring-environment script will configure 
+# monitoring sources and decides based on the existence and 
+# contents of /etc/armbianmonitor/start-monitoring whether 
+# rpimonitord should be started or not.
+#
+# The format of /etc/armbianmonitor/disks.conf is as follows:
+#
+# ${GUID}:${Name}:${smartctl prefix}:${temp call}:${CRC}:${LCC}
+#
+# Two examples:
+#
+# A57BF307-7D82-4783-BD1D-B346CA8C195B:WD Green::199:193 # WD HDD on SATA
+# F8D372DC-63DB-494B-B802-87DC47FAD4E1:Samsung EVO:sat::199: # SSD in USB enclosure
+#
+# - GUID is the GUID as determined by gdisk
+# - 'Name': The name as it will later be shown in RPi-Monitor, defaults to 
+#   the 'device model' read out through smartctl but can be changed to
+#   be more significant (beware that this string must contain colons!)
+# - "smartctl prefix" can be empty or should be the the necessary prefix for 
+#   USB disks, eg. '-d sat' or '-d usbjmicron' and so on -- please have a 
+#   look at https://www.smartmontools.org/wiki/Supported_USB-Devices
+# - "temp call" when being omitted indicates that hddtemp should be used. 
+#   Otherwise it should contain the complete command line ('DISK' will be 
+#   dynamically replaced by the device node when the actual monitoring 
+#   happens), for example:
+#   /sbin/hdparm -C DISK | egrep -q "standby|sleeping" || /usr/sbin/smartctl -d sat -a DISK | awk -F" " '/Temperature_Cel/ {printf $10}'
+# - 'CRC attribute': The decimal value of the S.M.A.R.T. attribute that
+#   is used to store the count of checksum errors between disk and host 
+#   controller (might be omitted if the drive doesn't support it)
+# - 'LCC attribute': The decimal value of the S.M.A.R.T. attribute that 
+#   should contain the load cycle counter value (might be omitted
+#   if the drive doesn't support it)
+#
+# TODO:
+#
+# - develop main functionality ;) asking the user regarding monitoring
+# - deal with 'SMART overall-health self-assessment test result:'
+# - write documentation
+#
+############################################################################
+
+Main() {
+	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+	# check if stdout is a terminal...
+	if test -t 1; then
+		# see if it supports colors...
+		ncolors=$(tput colors)
+		if test -n "$ncolors" && test $ncolors -ge 8; then
+			BOLD="$(tput bold)"
+			NC='\033[0m' # No Color
+			LGREEN='\033[1;32m'
+			LRED='\e[0;91m'
+		fi
+	fi
+	
+	[ $# -eq 0 ] && (DisplayUsage ; exit 0)
+	
+	ParseOptions "$@"
+
+	exit 0
+	PreRequisits
+	
+	# check whether user runs rpimonitord on his own or we activated it
+	if [ -f /etc/armbianmonitor/start-monitoring ]; then
+		# we should already provide monitoring, check whether DEBUG
+		# is also set
+		ArmbianMonitoring=TRUE
+		read DebugMode </etc/armbianmonitor/start-monitoring 2>/dev/null
+	fi
+	
+	# check whether rpimonitord is running and compare with ${ArmbianMonitoring}
+	# In case the user chose to run rpimonitord on his own, we skip the config
+	# part and only output disk info
+	:
+	
+	# check available disk devices
+	CheckDisks
+} # Main
+
+ParseOptions() {
+	while getopts 'hHbBuUrRmMsnNd:Dc:C:pPvz' c ; do
+	case ${c} in
+		H)
+			# display full help test
+			# export FullUsage=TRUE
+			DisplayUsage
+			exit 0
+			;;
+		h)
+			# display short help
+			DisplayUsage
+			exit 0
+			;;
+		m|M|s)
+			# monitoring mode, -s is for internal usage (debug log upload)
+			interval=$2
+			MonitorMode ${OPTARG}
+			exit 0
+			;;
+		n|N)
+			# network monitoring mode
+			rf1=$2
+			NetworkMonitorMode ${OPTARG}
+			exit 0
+			;;
+		u)
+			# Upload /var/log/armbian-hardware-monitor.log with additional support info
+			fping ix.io 2>/dev/null | grep -q alive || \
+				(echo -e "\nNetwork/firewall problem detected. Not able to upload debug info.\nPlease fix this or use \"-U\" instead and upload ${BOLD}whole output${NC} manually\n" >&2 ; exit 1)
+			which curl >/dev/null 2>&1 || apt-get -f -qq -y install curl
+			echo -e "System diagnosis information will now be uploaded to \c"
+			# we obfuscate IPv4 addresses somehow but not too much, MAC addresses have to remain
+			# in clear since otherwise the log becomes worthless due to randomly generated
+			# addresses here and there that might conflict
+			CollectSupportInfo \
+				| sed -E 's/([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3})/XXX.XXX.\3\4/g' \
+				| curl -F 'f:1=<-' ix.io
+			echo -e "Please post the URL in the forum where you've been asked for.\n"
+			exit 0
+			;;
+		U)
+			# Send support info to stdout to be uploaded manually. Add line numbers to prevent
+			# users being creative and supressing everything that's important
+			CollectSupportInfo \
+				| sed -E 's/([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3})/XXX.XXX.\3\4/g' \
+				| awk '!NF{$0=" "}1' | nl -
+			echo -e "\nPlease upload the ${BOLD}whole output${NC} above to an online pasteboard service\nand provide the URL in the forum where you have been asked for this.\n"
+			exit 0
+			;;
+		r|R)
+			# Installs RPi-Monitor and patches templates (heavily on sun8i)
+			fping armbian.com 2>/dev/null | grep -q alive || \
+				(echo "Network/firewall problem detected. Please fix this prior to installing RPi-Monitor." >&2 ; exit 1)
+			InstallRPiMonitor
+			case $(awk '/Hardware/ {print $3$4}' </proc/cpuinfo) in
+				*sun8i*)
+					PatchRPiMonitor_for_sun8i
+					case $(uname -r) in
+						3.4.*)
+							sed -i 's|H3_Extended_Mainline.conf|H3_Extended.conf|' /etc/rpimonitor/template/OrangePi_H3.conf
+							systemctl restart rpimonitor >/dev/null 2>&1
+							;;
+					esac
+					;;
+				*)
+					# On other SoCs than H3 make minor adjustments to config to reflect Armbian reality:
+					. /etc/armbian-release
+					sed -e "s/^web.status.1.name=.*/web.status.1.name=$BOARD_NAME/" \
+						-e "s/^web.statistics.1.name=.*/web.statistics.1.name=$BOARD_NAME/" \
+						</etc/rpimonitor/template/raspbian.conf >/etc/rpimonitor/template/armbian.conf
+					cd /etc/rpimonitor/
+					ln -sf /etc/rpimonitor/template/armbian.conf data.conf
+					# fix temperature everywhere
+					sed -i -e 's|^dynamic.12.source=.*|dynamic.12.source=/etc/armbianmonitor/datasources/soctemp|' \
+						-e 's|^dynamic.12.postprocess=.*|dynamic.12.postprocess=sprintf("%.1f", $1/1000)|' \
+						/etc/rpimonitor/template/temperature.conf
+					# monitor big cores on big.LITTLE
+					if [ $(grep -c '^processor' /proc/cpuinfo) -ge 4 ]; then
+						sed -i 's|/sys/devices/system/cpu/cpu0/cpufreq/|/sys/devices/system/cpu/cpu4/cpufreq/|g' \
+						/etc/rpimonitor/template/cpu.conf
+					fi
+					# display processor architecture instead of undefined
+					sed -i -e "s_^static.4.source=.*_static.4.source=lscpu | awk -F' ' '/^Architecture/ {print \$2}'_" \
+						-e "s/^static.4.regexp=.*/static.4.regexp=/" /etc/rpimonitor/template/version.conf
+					;;
+			esac
+			echo -e "\nNow you're able to enjoy RPi-Monitor at http://$(ip a | awk -F" " '/inet / {print $2}' | grep -v '127.0.0.1' | cut -f1 -d/ | head -n1):8888"
+			exit 0
+			;;
+		p|P)
+			# Installs cpuminer on 32-bit platforms
+			dpkg --print-architecture | grep -q armhf || (echo -e "Functionality currently not supported on 64-bit platforms. Exiting\n" >&2 ; exit 1)
+			fping armbian.com 2>/dev/null | grep -q alive || \
+				(echo "Network/firewall problem detected. Please fix this prior to installing cpuminer." >&2 ; exit 1)
+			cd /usr/local/src/
+			wget http://downloads.sourceforge.net/project/cpuminer/pooler-cpuminer-2.4.5.tar.gz
+			tar xf pooler-cpuminer-2.4.5.tar.gz && rm pooler-cpuminer-2.4.5.tar.gz
+			cd cpuminer-2.4.5/
+			apt-get -f -qq -y install libcurl4-gnutls-dev
+			./configure CFLAGS="-O3 -mfpu=neon"
+			make && make install
+			echo -e "\n\nNow you can use /usr/local/bin/minerd to do automated benchmarking.\nIn case you also installed RPi-Monitor you can do a"
+			echo -e "\n    touch /root/.cpuminer\n\nto ensure minerd is running after reboot and results are recorded\nwith RPi-Monitor"
+			exit 0
+			;;
+		d)
+			# monitors write activity to disk
+			MonitorIO "${OPTARG}"
+			exit 0
+			;;
+		D)
+			fping ix.io 2>/dev/null | grep -q alive || \
+				(echo "Network/firewall problem detected. Please fix this prior to installing RPi-Monitor." >&2 ; exit 1)
+			DebugOutput="$(mktemp /tmp/${0##*/}.XXXXXX)"
+			trap "rm \"${DebugOutput}\" ; exit 0" 0 1 2 3 15
+			set -x
+			exec 2>"${DebugOutput}"
+			PreRequisits >/dev/null 2>&1
+			CheckDisks
+			which curl >/dev/null 2>&1 || apt-get -f -qq -y install curl
+			echo -e "\nDebug output has been collected at the following URL: \c"
+			(cat "${DebugOutput}"; echo -e "\n\n\ngdisk.txt contents:\n" ; cat "${MyTempDir}/gdisk.txt" ;\
+				echo -e "\n\n\nsmartctl.txt contents:\n" ; cat "${MyTempDir}/smartctl.txt") \
+				| curl -F 'f:1=<-' ix.io
+			echo -e "Please post the URL in the Armbian forum where you've been asked for."
+			exit 0
+			;;
+		c|C)
+			# check card mode
+			CheckCard "${OPTARG}"
+			exit 0
+			;;
+		v)
+			# Verify installation integrity
+			VerifyRepairExcludes="/etc/|/boot/|cache|getty|/var/lib/smartmontools/"
+			VerifyInstallation
+			exit 0
+			;;
+		z)
+			# Do a quick 7-zip benchmark to estimate CPU performance
+			runs=$2
+			Run7ZipBenchmark 2>/dev/null
+			exit 0
+			;;
+	esac
+	done
+} # ParseOptions
+
+DisplayUsage() {
+	echo -e "Usage: ${BOLD}${0##*/} [-h] [-b] [-c \$path] [-d \$device] [-D] [-m] [-p] [-r] [-u]${NC}\n"
+	echo -e "############################################################################"
+	if [ ${FullUsage} ]; then
+		echo -e "\nDetailed Description:"
+		grep "^#" "$0" | grep -v "^#\!/bin/bash" | sed 's/^#//'
+	fi
+	echo -e "\n Use ${BOLD}armbianmonitor${NC} for the following tasks:\n"
+	echo -e " armbianmonitor ${BOLD}-c /path/to/test${NC} performs disk health/performance tests"
+	echo -e " armbianmonitor ${BOLD}-d${NC} monitors writes to \$device"
+	echo -e " armbianmonitor ${BOLD}-D${NC} tries to upload debug disk info to improve armbianmonitor"
+	echo -e " armbianmonitor ${BOLD}-m${NC} provides simple CLI monitoring - scrolling output"
+	echo -e " armbianmonitor ${BOLD}-M${NC} provides simple CLI monitoring - fixed-line output"
+	echo -e " armbianmonitor ${BOLD}-n${NC} provides simple CLI network monitoring - scrolling output"
+	echo -e " armbianmonitor ${BOLD}-N${NC} provides simple CLI network monitoring - fixed-line output"
+	echo -e " armbianmonitor ${BOLD}-p${NC} tries to install cpuminer for performance measurements"
+	echo -e " armbianmonitor ${BOLD}-r${NC} tries to install RPi-Monitor"
+	echo -e " armbianmonitor ${BOLD}-u${NC} tries to upload armbian-hardware-monitor.log for support purposes"
+	echo -e " armbianmonitor ${BOLD}-v${NC} tries to verify installed package integrity"
+	echo -e " armbianmonitor ${BOLD}-z${NC} runs a quick 7-zip benchmark to estimate CPU performance\n"
+	echo -e "############################################################################\n"
+} # DisplayUsage
+
+MonitorMode() {
+	# $1 is the time in seconds to pause between two prints, defaults to 5 seconds
+	# This functions prints out endlessly:
+	# - time/date
+	# - average 1m load
+	# - detailed CPU statistics
+	# - Soc temperature if available
+	# - PMIC temperature if available
+	# - DC-IN voltage if available
+
+	# Allow armbianmonitor to return back to armbian-config
+	trap "echo ; exit 0" 0 1 2 3 15
+	
+	# Try to renice to 19 to not interfere with OS behaviour
+	renice 19 $BASHPID >/dev/null 2>&1
+
+	LastUserStat=0
+	LastNiceStat=0
+	LastSystemStat=0
+	LastIdleStat=0
+	LastIOWaitStat=0
+	LastIrqStat=0
+	LastSoftIrqStat=0
+	LastCpuStatCheck=0
+	LastTotal=0
+
+	SleepInterval=${interval:-5}
+
+	Sensors="/etc/armbianmonitor/datasources/"
+	if [ -f /sys/devices/system/cpu/cpu4/cpufreq/cpuinfo_cur_freq ]; then
+		DisplayHeader="Time       big.LITTLE   load %cpu %sys %usr %nice %io %irq"
+		CPUs=biglittle
+	elif [ -f /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq ]; then
+		DisplayHeader="Time        CPU    load %cpu %sys %usr %nice %io %irq"
+		CPUs=normal
+	else
+		DisplayHeader="Time      CPU n/a    load %cpu %sys %usr %nice %io %irq"
+		CPUs=notavailable
+	fi
+	# Set freq output to --- if non-privileged. Overwrites settings above.
+	if [ "$(id -u)" != "0" ]; then
+		echo "Running unprivileged. CPU frequency will not be displayed."
+		CPUs=notavailable
+	fi
+
+	[ -f "${Sensors}/soctemp" ] && DisplayHeader="${DisplayHeader}   CPU" || SocTemp='n/a'
+	[ -f "${Sensors}/pmictemp" ] && DisplayHeader="${DisplayHeader}   PMIC" || PMICTemp='n/a'
+	DCIN=$(CheckDCINVoltage)
+	[ -f "${DCIN}" ] && DisplayHeader="${DisplayHeader}   DC-IN" || DCIN='n/a'
+	[ -f /sys/devices/virtual/thermal/cooling_device0/cur_state ] \
+		&& DisplayHeader="${DisplayHeader}  C.St." || CoolingState='n/a'
+	echo -e "Stop monitoring using [ctrl]-[c]"
+	[ $(echo "${SleepInterval} * 10" | bc | cut -d. -f1) -le 15 2>/dev/null ] \
+		&& echo "Warning: High update frequency (${SleepInterval} sec) might change system behaviour!"
+	echo -e "${DisplayHeader}"
+	Counter=0
+	while true ; do
+		if [ "$c" == "m" ]; then
+			let Counter++
+			if [ ${Counter} -eq 15 ]; then
+				echo -e "\n${DisplayHeader}\c"
+				Counter=0
+			fi
+		elif [ "$c" == "s" ]; then
+			# internal mode for debug log upload
+			let Counter++
+			if [ ${Counter} -eq 6 ]; then
+				exit 0
+			fi
+		else
+			printf "\x1b[1A"
+		fi
+		LoadAvg=$(cut -f1 -d" " </proc/loadavg)
+		case ${CPUs} in
+			biglittle)
+				BigFreq=$(awk '{printf ("%0.0f",$1/1000); }' </sys/devices/system/cpu/cpu4/cpufreq/cpuinfo_cur_freq) 2>/dev/null
+				LittleFreq=$(awk '{printf ("%0.0f",$1/1000); }' </sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq) 2>/dev/null
+				ProcessStats
+				echo -e "\n$(date "+%H:%M:%S"): $(printf "%4s" ${BigFreq})/$(printf "%4s" ${LittleFreq})MHz $(printf "%5s" ${LoadAvg}) ${procStats}\c"
+				;;
+			normal)
+				CpuFreq=$(awk '{printf ("%0.0f",$1/1000); }' </sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq) 2>/dev/null
+				ProcessStats
+				echo -e "\n$(date "+%H:%M:%S"): $(printf "%4s" ${CpuFreq})MHz $(printf "%5s" ${LoadAvg}) ${procStats}\c"
+				;;
+			notavailable)
+				ProcessStats
+				echo -e "\n$(date "+%H:%M:%S"):   ---     $(printf "%5s" ${LoadAvg}) ${procStats}\c"
+				;;
+		esac
+		if [ "X${SocTemp}" != "Xn/a" ]; then
+			read SocTemp <"${Sensors}/soctemp"
+			if [ ${SocTemp} -ge 1000 ]; then
+				SocTemp=$(awk '{printf ("%0.1f",$1/1000); }' <<<${SocTemp})
+			fi
+			echo -e " $(printf "%4s" ${SocTemp})°C\c"
+		fi
+		if [ "X${PMICTemp}" != "Xn/a" ]; then
+			read PMICTemp <"${Sensors}/pmictemp"
+			if [ ${PMICTemp} -ge 1000 ]; then
+				PMICTemp=$(awk '{printf ("%0.1f",$1/1000); }' <<<${PMICTemp})
+			fi
+			echo -e " $(printf "%4s" ${PMICTemp})°C\c"
+		fi
+		if [ "X${DCIN}" != "Xn/a" ]; then
+			case "${DCIN##*/}" in
+				in_voltage2_raw)
+					# Tinkerboard S
+					read RAWvoltage <"${DCIN}"
+					DCINvoltage=$(echo "(${RAWvoltage} / ((82.0/302.0) * 1023.0 / 1.8)) + 0.1" | bc -l)
+					;;
+				*)
+					DCINvoltage=$(awk '{printf ("%0.2f",$1/1000000); }' <"${DCIN}")
+					;;
+			esac
+			echo -e "  $(printf "%5s" ${DCINvoltage})V\c"
+		fi
+		[ "X${CoolingState}" != "Xn/a" ] && printf "  %d/%d" $(cat /sys/devices/virtual/thermal/cooling_device0/cur_state) $(cat /sys/devices/virtual/thermal/cooling_device0/max_state)
+		[ "$c" == "s" ] && sleep 0.3 || sleep ${SleepInterval}
+	done
+} # MonitorMode
+
+CheckDCINVoltage() {
+	for i in /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034/axp20-supplyer.28/power_supply/usb/voltage_now \
+		/sys/power/axp_pmu/vbus/voltage \
+		/sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034/axp20-supplyer.28/power_supply/ac/voltage_now \
+		/sys/power/axp_pmu/ac/voltage '/sys/bus/iio/devices/iio:device0/in_voltage2_raw' ; do
+		if [ -f $i ]; then
+			read DCINvoltage <$i 2>/dev/null
+			if [ ${DCINvoltage} -gt 4080000 ]; then
+				echo $i
+				break
+			fi
+		fi
+	done
+} # CheckDCINVoltage
+
+ProcessStats() {
+	if [ -f /tmp/cpustat ]; then
+		# RPi-Monitor/Armbianmonitor already running and providing processed values
+		set $(awk -F" " '{print $1"\t"$2"\t"$3"\t"$4"\t"$5"\t"$6}' </tmp/cpustat)
+		CPULoad=$1
+		SystemLoad=$2
+		UserLoad=$3
+		NiceLoad=$4
+		IOWaitLoad=$5
+		IrqCombinedLoad=$6		
+	else
+		procStatLine=(`sed -n 's/^cpu\s//p' /proc/stat`)
+		UserStat=${procStatLine[0]}
+		NiceStat=${procStatLine[1]}
+		SystemStat=${procStatLine[2]}
+		IdleStat=${procStatLine[3]}
+		IOWaitStat=${procStatLine[4]}
+		IrqStat=${procStatLine[5]}
+		SoftIrqStat=${procStatLine[6]}
+
+		Total=0
+		for eachstat in ${procStatLine[@]}; do
+			Total=$(( ${Total} + ${eachstat} ))
+		done
+
+		UserDiff=$(( ${UserStat} - ${LastUserStat} ))
+		NiceDiff=$(( ${NiceStat} - ${LastNiceStat} ))
+		SystemDiff=$(( ${SystemStat} - ${LastSystemStat} ))
+		IOWaitDiff=$(( ${IOWaitStat} - ${LastIOWaitStat} ))
+		IrqDiff=$(( ${IrqStat} - ${LastIrqStat} ))
+		SoftIrqDiff=$(( ${SoftIrqStat} - ${LastSoftIrqStat} ))
+		
+		diffIdle=$(( ${IdleStat} - ${LastIdleStat} ))
+		diffTotal=$(( ${Total} - ${LastTotal} ))
+		diffX=$(( ${diffTotal} - ${diffIdle} ))
+		CPULoad=$(( ${diffX}* 100 / ${diffTotal} ))
+		UserLoad=$(( ${UserDiff}* 100 / ${diffTotal} ))
+		SystemLoad=$(( ${SystemDiff}* 100 / ${diffTotal} ))
+		NiceLoad=$(( ${NiceDiff}* 100 / ${diffTotal} ))
+		IOWaitLoad=$(( ${IOWaitDiff}* 100 / ${diffTotal} ))
+		IrqCombined=$(( ${IrqDiff} + ${SoftIrqDiff} ))
+		IrqCombinedLoad=$(( ${IrqCombined}* 100 / ${diffTotal} ))
+
+		LastUserStat=${UserStat}
+		LastNiceStat=${NiceStat}
+		LastSystemStat=${SystemStat}
+		LastIdleStat=${IdleStat}
+		LastIOWaitStat=${IOWaitStat}
+		LastIrqStat=${IrqStat}
+		LastSoftIrqStat=${SoftIrqStat}
+		LastTotal=${Total}
+	fi
+	procStats=$(echo -e "$(printf "%3s" ${CPULoad})%$(printf "%4s" ${SystemLoad})%$(printf "%4s" ${UserLoad})%$(printf "%4s" ${NiceLoad})%$(printf "%4s" ${IOWaitLoad})%$(printf "%4s" ${IrqCombinedLoad})%")
+} # ProcessStats
+
+MonitorIO() {
+	LastPagesOut=$(awk -F" " '/pgpgout/ {print $2}' </proc/vmstat)
+	LastWrite=$(awk -F" " "/ $1 / {print \$8}" </proc/diskstats)
+	LastTimeChecked=$(date "+%s")
+	while true ; do
+		CurrentWrite=$(awk -F" " "/ $1 / {print \$8}" </proc/diskstats)
+		if [ ${CurrentWrite} -gt ${LastWrite} ]; then
+			PagesOut=$(awk -F" " '/pgpgout/ {print $2}' </proc/vmstat)
+			TimeNow=$(date "+%s")
+			PagesWritten=$((${CurrentWrite} - ${LastWrite}))
+			PageOuts=$((${PagesOut} - ${LastPagesOut}))
+			echo -e "$(LANG=C date)$(printf "%8s" ${PagesWritten})/${PageOuts} pages written after $((${TimeNow} - ${LastTimeChecked})) sec"
+			LastTimeChecked=${TimeNow}
+			LastPagesOut=${PagesOut}
+			LastWrite=${CurrentWrite}
+		fi
+		sleep 1
+	done
+} # MonitorIO
+
+CheckDisks() {
+	# This function walks through all block devices whose name starts with sd* and
+	# then gets the name hddtemp expects, the model name from smartctl, looks whether
+	# the drive only lists one temperature value and patches hddtemp.db if necessary
+	# and also tries to get CRC and LCC S.M.A.R.T. attributes to provide the user
+	# with the necessary config file contents for /etc/armbianmonitor/disks.conf:
+	
+	ls /sys/block/sd* >/dev/null 2>&1 || exit 0
+	
+	for i in /sys/block/sd* ; do
+		DeviceNode=/dev/${i##*/}
+		# get GUID/UUID for disk and check whether a partition table is existent. If
+		# not GUID will always be random
+		gdisk -l ${DeviceNode} >"${MyTempDir}/gdisk.txt"
+		GUID=$(awk -F" " '/^Disk identifier/ {print $4}' <"${MyTempDir}/gdisk.txt")
+		CountOfUnavailablePartitionTables=$(grep ': not present' "${MyTempDir}/gdisk.txt" | wc -l)
+		if [ ${CountOfUnavailablePartitionTables} -eq 4 ]; then
+			echo -e "\nSkipping ${DeviceNode} due to missing partition table. Use parted to create one."
+			break
+		else
+			echo -e "\nExamining ${DeviceNode} with GUID ${GUID}\c"
+		fi
+		
+		# get name hddtemp needs
+		HddtempName="$(hddtemp --debug ${DeviceNode} | awk -F": " '/^Model: / {print $2}' | \
+			cut -c-40 | sed 's/^[ \t]*//;s/[ \t]*$//')"
+		# store smartctl output in temporary file
+		smartctl -q noserial -s on -a ${DeviceNode} >"${MyTempDir}/smartctl.txt" 2>&1
+		DeviceModel="$(awk -F": " '/^Device Model/ {print $2}' <"${MyTempDir}/smartctl.txt" | \
+			sed 's/^[ \t]*//;s/[ \t]*$//')"
+		if [ "X${DeviceModel}" = "X" ]; then
+			# Reading S.M.A.R.T. failed, we try autodetect mode iterating through all
+			# known smartctl modes (-d auto|sat|usbcypress|usbjmicron|usbprolific|usbsunplus)
+			SMARTPrefix="$(CheckSMARTModes ${DeviceNode} 2>/dev/null)"
+			if [ "X${SMARTPrefix}" = "X" ]; then
+				# we can't query the disk. Time to give up
+				echo -e "\nUnable to query the disk through S.M.A.R.T.\nPlease investigate manually using smartctl\n"
+				break
+			fi
+		fi
+		
+		# user feedback
+		if [ "X${SMARTPrefix}" = "X" ]; then
+			echo -e " \n(accessible through S.M.A.R.T.)"
+		else
+			echo -e " \n(can be queried with \"-d ${SMARTPrefix}\" through S.M.A.R.T.)"
+		fi
+
+		# check for CRC and LCC attributes
+		CRCAttribute=$(awk -F" " '/CRC_Error_Count/ {print $1}' <"${MyTempDir}/smartctl.txt")
+		LCCAttribute=$(grep -i "load.cycle" "${MyTempDir}/smartctl.txt" | awk -F" " '{print $1}')
+		
+		# check whether /etc/hddtemp.db should be patched
+		grep -q "${HddtempName}" /etc/hddtemp.db
+		if [ $? -ne 0 ]; then
+			# No entry into hddtemp database, we've a look whether there's a 'temperature'
+			# attribute available (we take the 1st we find) and if that's the case we use this
+			DiskTemp=$(awk -F" " '/Temperature/ {print $1}' <"${MyTempDir}/smartctl.txt" | head -n1)
+			if [[ ${DiskTemp} -gt 0 ]]; then
+				echo -e "\"${HddtempName}\" ${DiskTemp} C \"${DeviceModel}\"" >>/etc/hddtemp.db
+				echo -e "\nAdded disk \"${DeviceModel}\"/\"${HddtempName}\" to /etc/hddtemp.db using S.M.A.R.T. attribute ${DiskTemp}\nbased on the following available thermal values:"
+				grep "Temperature" "${MyTempDir}/smartctl.txt"
+				# check hddtemp result
+				HddtempResult=$(hddtemp -n ${DeviceNode} | grep -v 'not available' | awk -F" " '{print $1}')
+				if [ "X${HddtempResult}" != "X${DeviceNode}:" ]; then
+					# hddtemp isn't able to query the disk
+					HddtempStatus="does not work. Please check with smartctl and adjust config accordingly"
+					echo -e "\nhddtemp output: $(hddtemp ${DeviceNode})"
+					echo -e "\nIt seems we can not rely on hddtemp to query this disk. Please try smartctl instead\n"
+				else
+					HddtempStatus="will work"
+					echo -e "\nhddtemp output: ${HddtempResult})"
+					echo -e "\nIn case this seems not to be correct please adjust /etc/hddtemp.db manually\n"
+				fi
+			else
+				HddtempStatus="does not work. Please check with smartctl and adjust config accordingly"
+			fi
+		else
+			HddtempStatus="will work"
+		fi
+		
+		# check for firmware updates
+		FirmwareUpdate="$(grep "^http" "${MyTempDir}/smartctl.txt")"
+		
+		# Check whether the disk (based on GUID) is already configured in our config file
+		# /etc/armbianmonitor/disks.conf or not
+		
+		grep -q "^${GUID}:" /etc/armbianmonitor/disks.conf >/dev/null 2>/dev/null
+		case $? in
+			0)
+				# already listed, we provide just infos:
+				echo -e "Disk is already configured by the following monitoring config:\n$(grep "^${GUID}:" /etc/armbianmonitor/disks.conf)\n"
+				;;
+			*)
+				# new disk, we recommend an entry for /etc/armbianmonitor/disks.conf
+				echo -e "Disk not configured for monitoring. We were able to extract the following \ninformation:\n   GUID: ${GUID}"
+				if [ "X${SMARTPrefix}" != "X" ]; then
+					echo -e "   QueryMode: -d ${SMARTPrefix}"
+				fi
+				echo -e "   hddtemp: ${HddtempStatus}\n   CRC attribute: ${CRCAttribute}\n   LCC Attribute: ${LCCAttribute}"
+				case ${HddtempStatus} in
+					"will work")
+						echo -e "If you want to monitor the disk please add to /etc/armbianmonitor/disks.conf:\n${GUID}:${DeviceModel}:${SMARTPrefix}::${CRCAttribute}:${LCCAttribute}"
+						;;
+					*)
+						echo -e "Proposal for /etc/armbianmonitor/disks.conf:\n${GUID}:${DeviceModel}:${SMARTPrefix}:FIXME:${CRCAttribute}:${LCCAttribute}"
+						echo -e "You have to figure out how to query the disk for its thermal sensor."
+						echo -e "Please check the output of \"hddtemp --debug ${DeviceNode}\" and smartctl\n"
+						;;
+				esac		
+				;;
+		esac
+		if [ "X${FirmwareUpdate}" != "X" ]; then
+			echo -e "\nWARNING: A firmware update seems to be available:\n${FirmwareUpdate}\n"
+		fi
+	done
+} # CheckDisks
+
+CheckSMARTModes() {
+	# This function tries to access USB disks through S.M.A.R.T. and returns the necessary
+	# '-d' call as well as fills in ${MyTempDir}/smartctl.txt
+	
+	for i in auto sat usbcypress usbjmicron usbprolific usbsunplus ; do
+		# user feedback
+		# echo -n "." >/dev/tty
+		# query disk using the specific protocol
+		echo -n "" >"${MyTempDir}/smartctl.txt"
+		smartctl -q noserial -s on -d ${i} -a ${1} >"${MyTempDir}/smartctl.txt" 2>/dev/null
+		DeviceModel="$(awk -F": " '/^Device Model/ {print $2}' <"${MyTempDir}/smartctl.txt" | \
+			sed 's/^[ \t]*//;s/[ \t]*$//')"
+		if [ "X${DeviceModel}" != "X" ]; then
+			echo ${i}
+			break
+		fi
+	done
+} # CheckSMARTModes
+
+PreRequisits() {
+	# Ensure that we're running as root since otherwise querying SATA/USB disks won't work
+	if [ "$(id -u)" != "0" ]; then
+		echo "This script must be run as root" >&2
+		exit 1
+	fi
+
+	export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+	unset LANG
+	DISTROCODE=$(lsb_release -s -c)
+	
+	# check whether gdisk/smartctl are available and up to date
+	echo -e "Check whether necessary software is available\c"
+	which gdisk >/dev/null 2>&1 || (echo -e " Installing gdisk\c" ; apt-get -f -qq -y install gdisk)
+	which smartctl >/dev/null 2>&1 || (echo -e " Installing smartmontools\c" ; apt-get -f -qq -y install smartmontools)
+	echo -e " [done]\nUpdating smartmontools' drivedb\c"
+	/usr/sbin/update-smart-drivedb >/dev/null 2>&1
+	if [ $? -ne 0 -a "X${DISTROCODE}" = "Xwheezy" ]; then
+		sed -i "/^SRCEXPR/{s#=.*#='http://sourceforge.net/p/smartmontools/code/HEAD/tree/\$location/smartmontools/drivedb.h?format=raw'#}" /usr/sbin/update-smart-drivedb
+		/usr/sbin/update-smart-drivedb
+	fi
+	echo -e " [done]"
+	CreateTempDir
+} # PreRequisits
+
+CreateTempDir() {
+	# create a safe temporary dir
+	MyTempDir=$(mktemp -d /tmp/${0##*/}.XXXXXX)
+	if [ ! -d "${MyTempDir}" ]; then
+		MyTempDir=/tmp/${0##*/}.$RANDOM.$RANDOM.$RANDOM.$$
+		(umask 066 && mkdir ${MyTempDir}) || (echo "Failed to create temp dir. Aborting" >&2 ; exit 1)
+	fi
+	chmod 711 "${MyTempDir}"
+	trap "rm -rf \"${MyTempDir}\" ; exit 0" 0 1 2 3 15
+	for file in smartctl.txt gdisk.txt ; do
+		touch "${MyTempDir}/${file}"
+		chmod 644 "${MyTempDir}/${file}"
+	done
+} #CreateTempFiles
+
+InstallRPiMonitor() {
+	# Installs rpimonitord loosely based on the official instructions from
+	# http://rpi-experiences.blogspot.fr/p/rpi-monitor-installation.html
+	# but using the package from our own repository
+	if [ "$(id -u)" != "0" ]; then
+		echo "Installing RPi-Monitor requires root privileges, try sudo please. Exiting" >&2
+		exit 1
+	fi
+	echo -e "Installing RPi-Monitor. This can take up to 5 minutes. Be patient please\c"
+	apt-get -qq -y update
+	apt-get -f -qq -y install rpimonitor
+	/usr/share/rpimonitor/scripts/updatePackagesStatus.pl &
+} # InstallRPiMonitor
+
+PatchRPiMonitor_for_sun8i() {
+	echo -e "\nNow patching RPi-Monitor to deal correctly with H3"
+	cd / && echo "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
+gwYNGjRo0KBBw1eEfwH4UoBHAKAAAA==" | base64 --decode | tar xzf -
+	which systemctl >/dev/null 2>&1
+	case $? in
+		0)
+			# Jessie|Stretch|Xenial|Bionic
+			systemctl enable rpimonitor-helper >/dev/null 2>&1
+			systemctl start rpimonitor-helper >/dev/null 2>&1
+			systemctl restart rpimonitor >/dev/null 2>&1
+			;;
+		*)
+			# Wheezy|Trusty
+			insserv rpimonitor-helper >/dev/null 2>&1 || update-rc.d rpimonitor-helper defaults 90 10 >/dev/null 2>&1
+			cd /tmp && nohup /usr/local/sbin/rpimonitor-helper.sh & >/dev/null 2>&1
+			/etc/init.d/rpimonitor stop >/dev/null 2>&1
+			/etc/init.d/rpimonitor start >/dev/null 2>&1
+			;;
+	esac
+} # PatchRPiMonitor_for_sun8i
+
+CollectSupportInfo() {
+	[[ -s /var/log/armbian-hardware-monitor.log ]] && cat /var/log/armbian-hardware-monitor.log || zcat /var/log/armbian-hardware-monitor.log.1.gz
+	[[ -f /boot/armbianEnv.txt ]] && LOGLEVEL=$(awk -F'=' '/^verbosity/ {print $2}' /boot/armbianEnv.txt) || LOGLEVEL=1
+	if [ ${LOGLEVEL} -gt 4 ]; then
+		VERBOSE='-v'
+		which lshw >/dev/null 2>&1 && (echo -e "\n### lshw:" ; lshw -quiet -sanitize -numeric)
+	fi
+	lsusb >/dev/null 2>&1 && (echo -e "\n### lsusb:\n" ; lsusb ${VERBOSE} 2>/dev/null ; echo "" ; lsusb -t 2>/dev/null)
+	lspci >/dev/null 2>&1 && (echo -e "\n### lspci:\n" ; lspci ${VERBOSE} 2>/dev/null)
+	nvme >/dev/null 2>&1 && (echo -e "\n### nvme:\n" ; nvme list 2>/dev/null)
+	[ -z $SUDO_USER ] || echo -e "\n### Group membership of $(groups $SUDO_USER)"
+	echo -e "\n### Installed packages:\n\n$(dpkg -l | egrep "openmediavault|armbian| linux-")"
+	KernelVersion=$(awk -F" " '{print $3}' < /proc/version)
+	case ${KernelVersion} in
+		3.*)
+			[[ -e /boot/script.bin ]] && echo -e "\n### fex settings: $(ls -la /boot/script.bin)\n\n$(bin2fex /boot/script.bin 2>/dev/null)"
+			;;
+	esac
+	echo -e "\n### Loaded modules:\n\n$(lsmod)"
+	[[ -f /var/log/nand-sata-install.log ]] && echo -e "\n### nand-sata-install.log:\n\n$(cat /var/log/nand-sata-install.log)"
+	echo -e "\n### Current system health:\n\n$("$0" -s | egrep "^Time|^[0-9]")"
+	stress -t 3 -c $(grep -c processor /proc/cpuinfo) --backoff 250 >/dev/null 2>&1 &
+	"$0" -s | grep "^[0-9]"
+	# Include name resolving information only if upload is not possible
+	fping ix.io 2>/dev/null | grep -q alive || \
+		[ -f /etc/resolv.conf ] && echo -e "\n### resolv.conf\n\n$(ls -la /etc/resolv.conf ; cat /etc/resolv.conf)" || \
+		echo -e "\n### resolv.conf does not exist or readable"
+	echo -e "\n### Current sysinfo:\n\n$(iostat -p ALL | grep -v "^loop")\n\n$(vmstat -w)\n\n$(free -h)\n\n$(zramctl 2>/dev/null)\n\n$(uptime)\n\n$(dmesg | tail -n 250)"
+	echo -e "\n"
+	for sysfsnode in /proc/sys/vm/* ; do sysctl $(echo ${sysfsnode} | sed 's|/proc/sys/vm/|vm.|'); done
+	echo -e "\n### interrupts:\n$(cat /proc/interrupts)"
+	ls /tmp/armbianmonitor_checks_* >/dev/null 2>&1 || return
+	for file in /tmp/armbianmonitor_checks_* ; do
+		echo -e "\n### \c"
+		ls "${file}" | cut -f1 -d.
+		echo
+		cat "${file}"
+	done
+} # CollectSupportInfo
+
+CheckCard() {
+	if [ "$(id -u)" = "0" ]; then
+		echo "Checking disks is not permitted as root or through sudo. Exiting" >&2
+		exit 1
+	fi
+	
+	if [ ! -d "$1" ]; then
+		echo "\"$1\" does not exist or is no directory. Exiting" >&2
+		exit 1
+	fi
+	TargetDir="$1"
+
+	# check requirements
+	which f3write >/dev/null 2>&1 || MissingTools=" f3"
+	which iozone >/dev/null 2>&1 || MissingTools="${MissingTools} iozone3"
+	if [ "X${MissingTools}" != "X" ]; then
+		echo "Some tools are missing, please do an \"sudo apt-get -f -y install${MissingTools}\" before and try again" >&2
+		exit 1
+	fi
+	
+	# check provided path
+	Device="$(GetDevice "$1")"
+	set ${Device}
+	DeviceName=$1
+	FileSystem=$2
+	echo "${DeviceName}" | grep -q "mmcblk0" || echo -e "\n${BOLD}WARNING:${NC} It seems you're not testing the SD card but instead ${DeviceName} (${FileSystem})\n"
+	
+	TestDir="$(mktemp -d "${TargetDir}/cardtest.XXXXXX" || exit 1)"
+	date "+%s" >"${TestDir}/.starttime" || exit 1
+	trap "rm -rf \"${TestDir}\" ; exit 0" 0 1 2 3 15
+	LogFile="$(mktemp /tmp/armbianmonitor_checks_${DeviceName##*/}_${FileSystem}.XXXXXX)"
+	
+	# start actual test, create a small file for some space reserve
+	fallocate -l 32M "${TestDir}/empty.32m" 2>/dev/null || dd if=/dev/zero of="${TestDir}/empty.32m" bs=1M count=32 status=noxfer >/dev/null 2>&1
+	ShowWarning=false
+	# Start writing
+	echo -e "Starting to fill ${DeviceName} with test patterns, please be patient this might take a very long time"
+	f3write "${TestDir}" | tee "${LogFile}"
+	touch "${TestDir}/.starttime" || ShowDeviceWarning
+	rm "${TestDir}/empty.32m"
+	# Start verify
+	echo -e "\nNow verifying the written data:"
+	echo "" >>"${LogFile}"
+	f3read "${TestDir}" | tee -a "${LogFile}"
+	touch "${TestDir}/.starttime" || ShowDeviceWarning
+	rm "${TestDir}/"*.h2w
+	echo -e "\nStarting iozone tests. Be patient, this can take a very long time to complete:"
+	echo "" >>"${LogFile}"
+	cd "${TestDir}"
+	iozone -e -I -a -s 100M -r 4k -r 512k -r 16M -i 0 -i 1 -i 2 | tee -a "${LogFile}"
+	touch "${TestDir}/.starttime" || ShowDeviceWarning
+	echo -e "\n${BOLD}The results from testing ${DeviceName} (${FileSystem}):${NC}"
+	egrep "Average|Data" "${LogFile}" | sort -r
+	echo "                                            random    random"
+	echo -e "reclen    write  rewrite    read    reread    read     write\c"
+	awk -F"102400  " '/102400/ {print $2}' <"${LogFile}"
+
+	# check health
+	echo -e "\n${BOLD}Health summary: \c"
+	egrep -q "Read-only|Input/output error" "${LogFile}" && (echo -e "${LRED}${BOLD}${DeviceName} failed${NC}" ; exit 0)
+	grep -q "Data LOST: 0.00 Byte" "${LogFile}" && echo -e "${LGREEN}OK" || \
+		(echo -e "${LRED}${BOLD}${DeviceName} failed. Replace it as soon as possible!" ; \
+		grep -A3 "^Data LOST" "${LogFile}")
+
+	# check performance
+	RandomSpeed=$(awk -F" " '/102400       4/ {print $7"\t"$8}' <"${LogFile}")
+	if [ "X${RandomSpeed}" != "X" ]; then
+		# Only continue when we're able to read out iozone results
+		set ${RandomSpeed}
+		RandomReadSpead=$1
+		RandomWriteSpead=$2
+		ReadSpeed=$(awk -F" " '/Average reading speed/ {print $4"\t"$5}' <"${LogFile}")
+		set ${ReadSpeed}
+		if [ "X$2" = "XMB/s" ]; then
+			RawReadSpead=$(echo "$1 * 1000" | bc -s | cut -f1 -d.)
+		else
+			RawReadSpead$(echo "$1" | cut -f1 -d.)
+		fi
+		echo -e "\n${NC}${BOLD}Performance summary:${NC}\nSequential reading speed:$(printf "%6s" $1) $2 \c"
+		[ ${RawReadSpead} -le 2500 ] && Exclamation="${LRED}${BOLD}way " || Exclamation=""
+		[ ${RawReadSpead} -le 5000 ] && Exclamation="${Exclamation}${BOLD}too "
+		[ ${RawReadSpead} -le 7500 ] && echo -e "(${Exclamation}low${NC})\c"
+		echo "${Exclamation}" | grep -q "too" && ShowWarning=true
+		echo -e "\n 4K random reading speed:$(printf "%6s" ${RandomReadSpead}) KB/s \c"
+		[ ${RandomReadSpead} -le 700 ] && Exclamation="${LRED}${BOLD}way " || Exclamation=""
+		[ ${RandomReadSpead} -le 1400 ] && Exclamation="${Exclamation}${BOLD}too "
+		[ ${RandomReadSpead} -le 2500 ] && echo -e "(${Exclamation}low${NC})\c"
+		echo "${Exclamation}" | grep -q "too" && ShowWarning=true
+		WriteSpeed=$(awk -F" " '/Average writing speed/ {print $4"\t"$5}' <"${LogFile}")
+		set ${WriteSpeed}
+		if [ "X$2" = "XMB/s" ]; then
+			RawWriteSpeed=$(echo "$1 * 1000" | bc -s | cut -f1 -d.)
+		else
+			RawWriteSpeed=$(echo "$1" | cut -f1 -d.)
+		fi
+		echo -e "\nSequential writing speed:$(printf "%6s" $1) $2 \c"
+		[ ${RawWriteSpeed} -le 2500 ] && Exclamation="${LRED}${BOLD}way " || Exclamation=""
+		[ ${RawWriteSpeed} -le 4000 ] && Exclamation="${Exclamation}${BOLD}too "
+		[ ${RawWriteSpeed} -le 6000 ] && echo -e "(${Exclamation}low${NC})\c"
+		echo "${Exclamation}" | grep -q "too" && ShowWarning=true
+		echo -e "\n 4K random writing speed:$(printf "%6s" ${RandomWriteSpead}) KB/s \c"
+		[ ${RandomWriteSpead} -le 400 ] && Exclamation="${LRED}${BOLD}way " || Exclamation=""
+		[ ${RandomWriteSpead} -le 750 ] && Exclamation="${Exclamation}${BOLD}too "
+		[ ${RandomWriteSpead} -lt 1000 ] && echo -e "(${Exclamation}low${NC})\c"
+		echo "${Exclamation}" | grep -q "too" && ShowWarning=true
+		if [ "X${ShowWarning}" = "Xtrue" ]; then
+			echo -e "\n\n${BOLD}The device you tested seems to perform too slow to be used with Armbian."
+			echo -e "This applies especially to desktop images where slow storage is responsible"
+			echo -e "for sluggish behaviour. If you want to have fun with your device do NOT use"
+			echo -e "this media to put the OS image or the user homedirs on.${NC}\c"
+		fi
+		echo -e "\n\nTo interpret the results above correctly or search for better storage
+alternatives please refer to http://oss.digirati.com.br/f3/ and also
+http://www.jeffgeerling.com/blogs/jeff-geerling/raspberry-pi-microsd-card
+and http://thewirecutter.com/reviews/best-microsd-card/"
+	fi
+} # CheckCard
+
+ShowDeviceWarning() {
+	echo -e "\n${LRED}${BOLD}Test stopped, read-only filesystem\n\n${NC}${LRED}$(dmesg | grep 'I/O error')"
+	echo -e "\n${BOLD}Please be careful using this media since it seems it's already broken. Exiting test.\n${NC}"
+	exit 0
+} # ShowDeviceWarning
+
+GetDevice() {
+	TestPath=$(findmnt "$1" | awk -F" " '/\/dev\// {print $2"\t"$3}')
+	if [[ -z ${TestPath} && -n "${1%/*}" ]]; then
+		GetDevice "${1%/*}"
+	elif [[ -z ${TestPath} && -z "${1%/*}" ]]; then
+		findmnt / | awk -F" " '/\/dev\// {print $2"\t"$3}'
+	else
+		echo "${TestPath}"
+	fi
+} # GetDevice
+
+VerifyInstallation() {
+	# Ensure that we're running as root since otherwise querying SATA/USB disks won't work
+	if [ "$(id -u)" != "0" ]; then
+		echo "This check must be run as root. Aborting." >&2
+		exit 1
+	fi
+	
+	echo -e "Starting package integrity check. This might take some time. Be patient please..."
+	OUTPUT=$(dpkg --verify | egrep -v -i "${VerifyRepairExcludes}" | awk -F" /" '{print "/"$2}')
+	if [[ -z $OUTPUT ]]; then
+		echo -e "\n${LGREEN}${BOLD}It appears you don't have any corrupt files or packages!${NC}"
+	else
+		echo -e "\n${LRED}${BOLD}It appears you may have corrupt packages.${NC}\n"
+		echo -e "This is usually a symptom of filesystem corruption caused by SD cards or eMMC"
+		echo -e "dying or burning the OS image to the installation media went wrong.\n"
+		echo -e "The following changes from packaged state files were detected:\n"
+		echo -e "${OUTPUT}\n"
+	fi
+} # VerifyInstallation
+
+NetworkMonitorMode() {
+
+	# Allow armbianmonitor to return back to armbian-config
+	trap "echo ; exit 0" 0 1 2 3 15
+	timerStart
+	kickAllStatsDown
+	
+	# Count interfaces - multiple routes causing interfaces to show up more than once, filtering...
+	ifacecount=$(route -n | egrep UG | egrep -o "[a-zA-Z0-9]*$" | sort | uniq)
+	# If there are two ore more interfaces detected open a dynamic dialog box to select which to monitor
+	if [ "$(echo -e $ifacecount | tr ' ' '\n' | wc -l)" -gt 1 ]; then
+		ifacemenu=$(route -n | egrep UG | egrep -o "[a-zA-Z0-9]*$" | sort | uniq | awk '{a[$1]=$1}END{for(i in a)printf i" "a[i]" "}')
+		ifacefunc() {
+			dialog --backtitle "Interface selector" \
+			--title "Multiple network interfaces detected" \
+			--menu "Choose which interface to monitor:" \
+			15 50 $(route -n | egrep UG | egrep -o "[a-zA-Z0-9]*$" | sort | uniq | wc -l) \
+			$(echo $ifacemenu) 2>&1 >$(tty)
+		}
+		iface=$(ifacefunc)
+	else
+	# Use default behavior if one interface is found only
+		iface=$(route -n | egrep UG | egrep -o "[a-zA-Z0-9]*$")
+	fi
+	
+	printf "\nruntime network statistics: $(uname -n)\n"
+	printf "network interface: $(echo $iface)\n"
+	printf "[tap 'd' to display column headings]\n"
+	printf "[tap 'z' to reset counters]\n"
+	printf "[use <ctrl-c> to exit]\n"
+	printf "[bps: bits/s, Mbps: megabits/s, pps: packets/s, MB: megabytes]\n\n"
+	printf "%-11s %-66s          %-66s\n" $(echo -en "$iface rx.stats____________________________________________________________ tx.stats____________________________________________________________")
+	printf "%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s\n\n" $(echo -en "count bps Mbps Mbps pps pps MB bps Mbps Mbps pps pps MB")
+	
+	while true; do
+		nss=(`sed -n 's/'$iface':\s//p' /proc/net/dev`)
+		rxB=${nss[0]}
+		rxP=${nss[1]}
+		txB=${nss[8]}
+		txP=${nss[9]}
+		drxB=$(( ${rxB} - ${prxB} ))
+		drxb=$(( ${drxB}* 8 ))
+		drxmb=$(echo "scale=2;$drxb/1000000"|bc)
+		drxP=$(( ${rxP} - ${prxP}  ))
+		dtxB=$(( ${txB} - ${ptxB} ))
+		dtxb=$(( ${dtxB}* 8 ))
+		dtxmb=$(echo "scale=2;$dtxb/1000000"|bc)
+		dtxP=$(( ${txP} - ${ptxP} ))
+		if [ "$cnt" != "0" ]; then
+			if [ "$c" == "N" ]; then
+				printf "\x1b[1A"
+			fi
+			srxb=$(( ${srxb} + ${drxb} ))
+			stxb=$(( ${stxb} + ${dtxb} ))
+			srxB=$(( ${srxB} + ${drxB} ))
+			stxB=$(( ${stxB} + ${dtxB} ))
+			srxP=$(( ${srxP} + ${drxP} ))
+			stxP=$(( ${stxP} + ${dtxP} ))
+			srxMB=$(echo "scale=2;$srxB/1024^2"|bc)
+			stxMB=$(echo "scale=2;$stxB/1024^2"|bc)
+			arxb=$(echo "scale=2;$srxb/$cnt"|bc)
+			atxb=$(echo "scale=2;$stxb/$cnt"|bc)
+			arxmb=$(echo "scale=2;$arxb/1000000"|bc)
+			atxmb=$(echo "scale=2;$atxb/1000000"|bc)
+			arxP=$(echo "scale=0;$srxP/$cnt"|bc)
+			atxP=$(echo "scale=0;$stxP/$cnt"|bc)
+			printf "%-11s %-11s %-11s   %-11s %-11s   %-11s   %-11s %-11s %-11s   %-11s %-11s   %-11s   %-11s\n" $(echo -en "$cnt $drxb $drxmb $arxmb $drxP $arxP $srxMB $dtxb $dtxmb $atxmb $dtxP $atxP $stxMB")
+		fi
+		prxB="$rxB"
+		prxP="$rxP"
+		ptxB="$txB"
+		ptxP="$txP"
+		let cnt++
+		timerShut
+		read -n1 -s -t$procSecs zeroAll
+		timerStart
+		if [ "$zeroAll" == 'z' ]; then
+			kickAllStatsDown
+		fi
+		if [ "$zeroAll" == 'd' ]; then
+			scrollingHeader
+		fi
+	done
+}
+
+scrollingHeader() {
+	printf "%-11s %-66s          %-66s\n" $(echo -en "$iface rx.stats____________________________________________________________ tx.stats____________________________________________________________")
+	printf "%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s\n\n" $(echo -en "count bps Mbps Mbps pps pps MB bps Mbps Mbps pps pps MB")
+}
+
+timerStart() {
+	read st0 st1 < <(date +'%s %N')
+}
+timerShut() {
+	read sh0 sh1 < <(date +'%s %N')
+	jusquaQuand=$(echo "scale=2;($sh0-$st0)*1000000000+($sh1-$st1)"|bc)
+	procSecs=$(echo "scale=2;(1000000000-$jusquaQuand)/1000000000"|bc)
+	if [ "$rf1" == "debug" ]; then
+		printf "time controller adjustment: $procSecs\n"
+		if [ "$c" == "N" ]; then
+			printf "\x1b[1A"
+		fi
+	fi
+}
+kickAllStatsDown() {
+	prxB=0
+	prxP=0
+	ptxB=0
+	ptxP=0
+	srxb=0
+	stxb=0
+	srxB=0
+	stxB=0
+	srxMB=0
+	stxMB=0
+	srxP=0
+	stxP=0
+	cnt=0
+}
+
+Run7ZipBenchmark() {
+	echo -e "Preparing benchmark. Be patient please..."
+	# Do a quick 7-zip benchmark, check whether binary is there. If not install it
+	MyTool=$(which 7za || which 7zr)
+	[ -z "${MyTool}" ] && apt-get -f -qq -y install p7zip && MyTool=/usr/bin/7zr
+	[ -z "${MyTool}" ] && (echo "No 7-zip binary found and could not be installed. Aborting" >&2 ; exit 1)
+	# Send CLI monitoring to the background to be able to spot throttling and other problems
+	MonitoringOutput="$(mktemp /tmp/${0##*/}.XXXXXX)"
+	trap "rm \"${MonitoringOutput}\" ; exit 0" 0 1 2 3 15
+	armbianmonitor -m >${MonitoringOutput} &
+	MonitoringPID=$!
+	# run 7-zip benchmarks after waiting 10 seconds to spot whether the system was idle before.
+	# We run the benchmark a single time by default unless otherwise specified on the command line
+	RunHowManyTimes=${runs:-1}
+	sleep 10
+	for ((i=1;i<=RunHowManyTimes;i++)); do
+		"${MyTool}" b
+	done
+	# report CLI monitoring results as well
+	kill ${MonitoringPID}
+	echo -e "\nMonitoring output recorded while running the benchmark:\n"
+	sed -e '/^\s*$/d' -e '/^Stop/d' <${MonitoringOutput}
+	echo -e "\n"
+} # Run7ZipBenchmark
+
+Main "$@"

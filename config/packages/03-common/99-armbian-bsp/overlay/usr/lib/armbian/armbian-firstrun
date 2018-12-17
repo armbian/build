@@ -1,0 +1,139 @@
+#!/bin/bash
+#
+# Copyright (c) Authors: http://www.armbian.com/authors
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+
+. /etc/armbian-release
+. /etc/os-release
+. /lib/init/vars.sh
+. /lib/lsb/init-functions
+. /usr/lib/armbian/armbian-common
+
+case "$1" in
+	start)
+
+	# read number of cores needed below
+	cpu_cores=$(grep -c '^processor' /proc/cpuinfo | sed 's/^0$/1/')
+
+	# adjust custom htop initial configuration based on CPU count https://github.com/avafinger/htop-2.1.1_enhanced-version
+	right_meters="Tasks LoadAverage Uptime"
+	right_meter_modes="2 2 2"
+	x=1
+	until [  $x -gt $cpu_cores ]; do
+		right_meters=$right_meters" CpuFreq($x)"
+		right_meter_modes=$right_meter_modes" 2"
+		let x+=1
+	done
+	sed -i 's/header_margin=.*/header_margin=1/g' /etc/skel/.config/htop/htoprc
+	sed -i 's/left_meters=.*/left_meters=AllCPUs Memory Swap CpuTemp/g' /etc/skel/.config/htop/htoprc
+	sed -i 's/left_meter_modes=.*/left_meter_modes=1 1 1 2/g' /etc/skel/.config/htop/htoprc
+	sed -i "s/right_meters=.*/right_meters=$right_meters/g" /etc/skel/.config/htop/htoprc
+	sed -i "s/right_meter_modes=.*/right_meter_modes=$right_meter_modes/g" /etc/skel/.config/htop/htoprc
+	# copy predefined settings for root user
+	cp -R /etc/skel/.config /root/
+
+	# Run a q&d benchmark to be able to identify cards way too slow easily
+	echo -e "\n### quick iozone test:$(cd /root; iozone -e -I -a -s 1M -r 4k -i 0 -i 1 -i 2 | grep '^            1024' | sed 's/            1024      //')" >> $Log
+
+	# Bluetooth tweaks
+
+	case ${BOARD} in
+		bananapim2zero|bananapim2plus|nanopiair|nanopim1plus|orangepizeroplus2*|orangepiwin|nanopineoplus2|nanopik2)
+			update-rc.d ap6212-bluetooth defaults
+			;;
+		cubox-i)
+			update-rc.d brcm4330-patch defaults && /etc/init.d/brcm4330-patch start
+			;;
+	esac
+
+	# update console info
+	setupcon --save
+
+	# add unique installation id to the image release file
+	sed '1s/^/IMAGE_UUID=/' /proc/sys/kernel/random/uuid >> /etc/armbian-image-release
+
+	# SSH Keys creation
+	rm -f /etc/ssh/ssh_host*
+	read entropy_before </proc/sys/kernel/random/entropy_avail
+	dpkg-reconfigure openssh-server >/dev/null 2>&1
+	service sshd restart
+	read entropy_after </proc/sys/kernel/random/entropy_avail
+	echo -e "\n### [firstrun] Recreated SSH keys (entropy: ${entropy_before} ${entropy_after})" >>${Log}
+
+	# get rid of purple background color in newt apps whiptail, partimage, debconf ... Reverting to Debian look.
+	[[ -f /etc/newt/palette ]] && sed -e 's/magenta/blue/g' -i /etc/newt/palette
+
+	# desktop tweaks - enable show windows content on stronger boards
+	if [[ ${cpu_cores} -gt 2 && -f /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml ]]; then
+		sed -i 's/<property name="box_move" type="bool" value=".*/<property name="box_move" type="bool" value="false"\/>/g' \
+		/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
+	fi
+
+	# randomize mac in armbianEnv.txt
+	if [[ -f /boot/armbianEnv.txt ]]; then
+		get_random_mac
+		sed  -i "s/^ethaddr=.*/ethaddr=$MACADDR/" /boot/armbianEnv.txt
+		get_random_mac
+		sed  -i "s/^eth1addr=.*/eth1addr=$MACADDR/" /boot/armbianEnv.txt
+	fi
+
+	# hardware workarounds per family
+	case $LINUXFAMILY in
+		sun7i|sun8i)
+			# set some mac address for BT
+			[[ -n $(lsmod | egrep "dhd|brcmfmac" ) ]] && \
+				(MACADDR=$(printf '43:29:B1:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]) ; \				
+				sed -i "s/^MAC_ADDR=.*/MAC_ADDR=${MACADDR}/" /etc/default/ap6212 \
+				echo -e "\n### [firstrun] Use MAC address ${MACADDR} for Bluetooth from now" >>${Log})
+
+			case $BOARD_NAME in
+				"NanoPi Air"|"NanoPi M1 Plus"|"Nanopi Neo Plus 2")
+					# change serial port for BT on FriendlyELEC H3 boards
+					sed -i "s/^PORT=.*/PORT=ttyS3/" /etc/default/ap6212
+					;;
+				"Orange Pi Zero"|"NanoPi Duo"|"Sunvell R69")
+					get_random_mac
+					echo "options xradio_wlan macaddr=${MACADDR}" >/etc/modprobe.d/xradio_wlan.conf
+					echo -e "\n### [firstrun] Use MAC address ${MACADDR} for Wi-Fi from now" >>${Log}
+					cd /etc/network/ && ln -sf interfaces.network-manager interfaces
+					(modprobe -r xradio_wlan && sleep 1 && modprobe xradio_wlan) &
+					;;
+			esac
+
+			# trigger red or blue LED as user feedback
+			echo heartbeat >/sys/class/leds/*red*/trigger 2>/dev/null || echo heartbeat >/sys/class/leds/*blue*/trigger 2>/dev/null
+			;;
+
+		mvebu64|mt7623)
+			# configure/enable/start systemd-networkd
+			systemctl start systemd-networkd.service
+			systemctl start systemd-resolved.service
+			systemctl enable systemd-networkd.service
+			systemctl enable systemd-resolved.service
+			ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+			systemctl restart systemd-networkd
+			;;
+#		rk3328-tv|rk3399-tv)
+#			set_fixed_mac
+#			;;
+		*)
+
+	esac
+
+	# varios temporary hardware workarounds
+	[[ $BRANCH == dev && ( $LINUXFAMILY == rk3399 || $LINUXFAMILY == rockchip64 )]] && set_fixed_mac
+	[[ $BRANCH == dev && $LINUXFAMILY == rockchip ]] && set_fixed_mac
+	[[ $BRANCH == next && $LINUXFAMILY == odroidc1 ]] && set_fixed_mac
+
+	systemctl disable armbian-firstrun
+	exit 0
+	;;
+
+	*)
+	echo "Usage: $0 start"
+	exit 0
+	;;
+esac

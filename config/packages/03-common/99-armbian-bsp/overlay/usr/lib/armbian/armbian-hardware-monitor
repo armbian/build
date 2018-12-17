@@ -1,0 +1,175 @@
+#!/bin/bash
+#
+# Copyright (c) Authors: http://www.armbian.com/authors
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+
+# Functions:
+#
+# prepare_temp_monitoring
+# log_hardware_info
+# get_flash_information
+# check_sd_card_speed
+
+
+# Read in basic OS image information
+. /etc/armbian-release
+# and script configuration
+. /usr/lib/armbian/armbian-common
+
+prepare_temp_monitoring() {
+	# still an ugly hack but better do it just once at startup instead of every login
+	[ -d /etc/armbianmonitor/datasources ] || mkdir -p -m775 /etc/armbianmonitor/datasources
+
+	# PMIC check
+	if [[ -f /sys/power/axp_pmu/pmu/temp ]]; then
+		ln -fs /sys/power/axp_pmu/pmu/temp /etc/armbianmonitor/datasources/pmictemp
+	elif [[ -f /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034//temp1_input ]]; then
+		ln -fs /sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034/temp1_input \
+			/etc/armbianmonitor/datasources/pmictemp
+	elif [[ -f /sys/devices/b0170000.i2c/i2c-0/0-0065/atc2603c-hwmon.0/ic_temperature ]]; then
+		ln -fs /sys/devices/b0170000.i2c/i2c-0/0-0065/atc2603c-hwmon.0/ic_temperature \
+			/etc/armbianmonitor/datasources/pmictemp
+	elif [[ -f /sys/class/axppower/ic_temp ]]; then
+		ln -fs /sys/class/axppower/ic_temp /etc/armbianmonitor/datasources/pmictemp
+	fi
+
+	# SoC temp: check sun7i legacy exception first, then standard path(s)
+	if [[ -d "/sys/devices/platform/a20-tp-hwmon" ]]; then
+		# sun7i legacy
+		ln -fs /sys/devices/platform/a20-tp-hwmon/temp1_input /etc/armbianmonitor/datasources/soctemp
+	elif [[ -f /sys/class/hwmon/hwmon0/temp1_input ]]; then
+		# usual convention with modern kernels
+		ln -fs /sys/class/hwmon/hwmon0/temp1_input /etc/armbianmonitor/datasources/soctemp
+	else
+		# all other boards/kernels use the same sysfs node except of Actions Semi S500:
+		[[ ${BOARDFAMILY} == s500 ]] && THERMAL_ZONE="thermal_zone1" || THERMAL_ZONE="thermal_zone0"
+		ln -fs /sys/devices/virtual/thermal/${THERMAL_ZONE}/temp /etc/armbianmonitor/datasources/soctemp
+	fi
+} # prepare_temp_monitoring
+
+log_hardware_info() {
+	[ -f "/etc/logrotate.d/${0##*/}" ] || \
+		echo -e "${Log} {\n  rotate 12\n  weekly\n  compress\n  missingok\n  notifempty\n}" \
+		> "/etc/logrotate.d/${0##*/}" ; chmod 644 "/etc/logrotate.d/${0##*/}"
+	CPU_ARCH=$(lscpu | awk '/Architecture/ {print $2}')
+	DISTRO_ARCH=$(dpkg --print-architecture)
+	KERNELID=$(uname -r)
+	echo -e "\n$(date) | ${BOARD_NAME} | ${VERSION} | ${DISTRO_ARCH} | ${CPU_ARCH} | ${KERNELID}" >>${Log}
+	chmod 644 ${Log}
+	echo -e "\n### dmesg:\n" >>${Log}
+	dmesg >>${Log}
+	echo -e "\n### armbian-release:\n" >>${Log}
+	cat /etc/armbian-release >>${Log}
+	echo -e "\n### boot environment:\n" >>${Log}
+	cat /boot/armbianEnv.txt >>${Log} 2>/dev/null || grep -v "^#" /boot/boot.ini | sed '/^\s*$/d' >>${Log}
+	echo -e "\n### lsusb:\n" >>${Log}
+	lsusb 2>/dev/null >>${Log}
+	echo -e "\n### lscpu:\n" >>${Log}
+	lscpu >>${Log}
+	echo -e "\n### cpuinfo:\n" >>${Log}
+	cat /proc/cpuinfo >>${Log}
+	echo -e "\n### meminfo:\n" >>${Log}
+	cat /proc/meminfo >>${Log}
+	echo -e "\n### virtual memory:\n" >>${Log}
+	for sysfsnode in /proc/sys/vm/* ; do sysctl $(echo ${sysfsnode} | sed 's|/proc/sys/vm/|vm.|'); done >>${Log}
+	if [ -x /sbin/ip ]; then
+		echo -e "\n### ip addr:\n" >>${Log}
+		/sbin/ip r s >>${Log} ; /sbin/ip a >>${Log}
+		echo " " >>${Log}
+	else
+		echo -e "\n### ifconfig:\n" >>${Log}
+		ifconfig >>${Log}
+	fi
+	echo -e "### partitions:\n" >>${Log}
+	grep -v " ram" /proc/partitions >>${Log}
+	echo -e "\n### df:\n" >>${Log}
+	df -h | egrep '^udev|^tmpfs|^/dev/|log2ram|folder2ram' >>${Log}
+	which zpool >/dev/null 2>&1 && echo -e "\n### zpools:\n\n$(zpool list)\n\n### zfs datasets:\n\n$(zfs list)" >>${Log}
+	echo -e "\n### lsblk:\n" >>${Log}
+	lsblk -o NAME,FSTYPE,SIZE,MOUNTPOINT,UUID | grep -v "SWAP" >>${Log}
+	which zramctl >/dev/null 2>&1 && echo -e "\n### zramctl:\n\n$(zramctl)" >>${Log}
+	echo -e "\n### mtab:\n" >>${Log}
+	egrep '^/dev/|\ zfs\ ' /etc/mtab | egrep -v "log2ram|folder2ram" | sort >>${Log}
+	[[ -e /boot/script.bin ]] && echo -e "\n### /boot/script.bin --> $(readlink /boot/script.bin)" >>${Log}
+	get_flash_information >>${Log}
+	echo -e "\n### Boot system health:\n" >>${Log}
+	armbianmonitor -s | egrep "^Time|^[0-9]" >>${Log}
+} # log_hardware_info
+
+get_flash_information() {
+	# http://www.bunniestudios.com/blog/?page_id=1022
+	find /sys -name oemid | while read Device ; do
+		DeviceNode="${Device%/*}"
+		DeviceName="${DeviceNode##*/}"
+		echo -e "\n### ${DeviceName} info:\n"
+		find "${DeviceNode}" -maxdepth 1 -type f | while read ; do
+			NodeName="${REPLY##*/}"
+			echo -e "$(printf "%20s" ${NodeName}): $(cat "${DeviceNode}/${NodeName}" | tr '\n' " ")"
+		done
+	done
+} # get_flash_information
+
+check_sd_card_speed() {
+	# function that checks on 3rd boot whether firstrun script made a quick benchmark
+	# and displays a motd warning when _random_ I/O is below some tresholds.
+	if [ -f /var/log/armbian-hardware-monitor.log ]; then
+		RebootCount=$(grep -c '^### df:' /var/log/armbian-hardware-monitor.log)
+		if [ ${RebootCount} -eq 2 ]; then
+			# check whether iozone data has been collected
+			IozoneResults="$(awk -F" " '/^### quick iozone test/ {print $10"\t"$11}' </var/log/armbian-hardware-monitor.log)"
+			if [ "X${IozoneResults}" != "X" ]; then
+				set ${IozoneResults}
+				Readspeed=$1
+				Writespeed=$2
+				if [ ${Readspeed} -lt 500 -o ${Writespeed} -lt 250 ]; then
+					show_motd_warning "Your SD card seems to be very slow. Please check performance using armbianmonitor -c"
+				fi
+			fi
+		fi
+	fi
+} # check_sd_card_speed
+
+case $1 in
+	*start*)
+		# check sd card speed once on 3rd boot too warn for too slow media
+		check_sd_card_speed &
+		
+		# prepare correct temperature readouts
+		prepare_temp_monitoring &
+
+		# log hardware id to file, write log
+		echo $BOARD_NAME >/var/run/machine.id # we should leave this, maybe users depend on it
+		if [ $? -ne 0 ]; then
+			# most probably readonly fs. We'll try to warn the user.
+			show_motd_warning "It seems the rootfs is readonly at the moment. Please check your SD card for errors"
+		fi
+
+		# check whether auto detection override exists and if true use this for machine.id
+		[ -f /root/.machine.id ] && cat /root/.machine.id >/var/run/machine.id
+		log_hardware_info &
+
+		;;
+	*stop*)
+		case ${BOARDFAMILY} in
+			sun?i)
+			# redefine green led to blink until shutdown, try to switch OTG port to host
+			(echo heartbeat >/sys/class/leds/*green*/trigger) 2>/dev/null
+			echo 0 > /sys/bus/platform/devices/sunxi_usb_udc/otg_role 2>/dev/null
+			;;
+		esac
+		# some kernel modules are known to crash the kernel on shutdown (an example
+		# is the mass storage gadget module at least on sun7i). We try to unload as
+		# much modules as possible to minimize such situations:
+		/sbin/modprobe -r $(cut -f1 -d' ' </proc/modules)
+		# shutdown logging
+		if [ -f /var/log.hdd/armbian-hardware-monitor.log ]; then
+			echo -e "\n### shutdown:\n\n$(iostat -p zram0)\n\n$(vmstat -w)\n\n$(free -h)\n\n$(dmesg | tail -n 100)" >>/var/log.hdd/armbian-hardware-monitor.log
+		else
+			echo -e "\n### shutdown:\n\n$(iostat -p zram0)\n\n$(vmstat -w)\n\n$(free -h)\n\n$(dmesg | tail -n 100)" >>/var/log/armbian-hardware-monitor.log
+		fi
+		sync
+		;;
+esac

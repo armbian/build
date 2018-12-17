@@ -1,0 +1,5 @@
+ARMBIAN_PKG_PACKAGE=armbian-family-mt7623
+ARMBIAN_PKG_SECTION=kernel
+ARMBIAN_PKG_DEPENDS="mmc-utils"
+ARMBIAN_PKG_SUGGESTS="armbian-firmware"
+

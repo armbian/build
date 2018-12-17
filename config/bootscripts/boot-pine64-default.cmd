@@ -19,10 +19,11 @@ if test -e mmc ${boot_part} ${prefix}armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
 
-if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
-if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "${consoleargs} console=ttyS0,115200n8"; fi
+if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=ttyS0,115200 console=tty1"; fi
+if test "${console}" = "serial"; then setenv consoleargs "console=ttyS0,115200"; fi
 
-setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} no_console_suspend earlycon=uart,mmio32,0x01c28000 mac_addr=${ethaddr} panic=10 consoleblank=0 loglevel=${verbosity} ${extraargs} ${extraboardargs}"
+
+setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} no_console_suspend earlycon=uart,mmio32,0x01c28000 mac_addr=${ethaddr} panic=10 consoleblank=0 cma=384M loglevel=${verbosity} ${extraargs} ${extraboardargs}"
 
 # determine board type from DT compiled into u-boot binary, currently SoPine is not autodetected
 fdt get value dt_name / dt-name
@@ -77,6 +78,33 @@ if test "${pine64_lcd}" = "1" || test "${pine64_lcd}" = "on"; then
 	fdt set /soc@01c00000/ctp ctp_name "gt911_DB2"
 elif test "${pine64_model}" != "pine64-pinebook"; then
 	fdt set /soc@01c00000/disp@01000000 screen0_output_mode ${fdt_disp_mode}
+fi
+
+# Pinebook LCD
+if test "${pinebook_lcd_mode}" = "batch1"; then
+	echo "Fixing LCD parameters to use Pinebook Batch 1"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_dclk_freq "<72>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_vbp "<20>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_vt "<860>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_vspw "<5>"
+elif test "${pinebook_lcd_mode}" = "batch2"; then
+	echo "Fixing LCD parameters to use Pinebook Batch 2"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_dclk_freq "<77>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_vbp "<7>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_vt "<790>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_vspw "<4>"
+elif test "${pinebook_lcd_mode}" = "1080p"; then
+	echo "Fixing LCD parameters to use Pinebook 1080p"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_if "<0>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_x "<1920>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_y "<1080>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_dclk_freq "<111>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_hbp "<112>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_hspw "<32>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_ht "<2080>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_vbp "<28>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_vspw "<5>"
+	fdt set /soc@01c00000/lcd0@01c0c000 lcd_vt "<1111>"
 fi
 
 # DVI compatibility
