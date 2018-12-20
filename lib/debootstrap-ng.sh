@@ -285,7 +285,9 @@ prepare_partitions()
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
 	# TODO: Disable metadata_csum only for older releases (jessie)?
-	if [[ $(lsb_release -sc) == bionic ]]; then
+	if [[ $(lsb_release -sc) == cosmic ]]; then
+		mkopts[ext4]='-q -m 2 -O ^64bit,^metadata_csum'
+	elif [[ $(lsb_release -sc) == bionic ]]; then
 		mkopts[ext4]='-q -m 2 -O ^64bit,^metadata_csum'
 	elif [[ $(lsb_release -sc) == xenial ]]; then
 		mkopts[ext4]='-q -m 2'

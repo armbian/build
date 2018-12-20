@@ -15,7 +15,7 @@ FORCEDRELEASE=$RELEASE
 
 rm -rf /run/armbian
 mkdir -p /run/armbian
-RELEASE_LIST=("xenial" "jessie" "stretch" "bionic")
+RELEASE_LIST=("xenial" "jessie" "stretch" "bionic" "cosmic")
 BRANCH_LIST=("default" "next" "dev")
 
 pack_upload ()

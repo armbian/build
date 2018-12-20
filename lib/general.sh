@@ -146,7 +146,7 @@ create_sources_list()
 	EOF
 	;;
 
-	xenial|bionic)
+	xenial|bionic|cosmic)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -349,7 +349,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("jessie" "xenial" "stretch" "bionic")
+	local distributions=("jessie" "xenial" "stretch" "bionic" "cosmic")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -544,7 +544,7 @@ prepare_host()
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
-	if [[ -z $codename || "xenial bionic" != *"$codename"* ]]; then
+	if [[ -z $codename || "xenial bionic cosmic" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -555,6 +555,10 @@ prepare_host()
 
 	if grep -qE "(Microsoft|WSL)" /proc/version; then
 		exit_with_error "Windows subsystem for Linux is not a supported build environment"
+	fi
+
+	if [[ -z $codename || "cosmic" == "$codename" ]]; then
+		hostdeps="${hostdeps/ lib32ncurses5 lib32tinfo5/}"
 	fi
 
 	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386

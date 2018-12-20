@@ -368,6 +368,47 @@ install_distribution_specific()
 		# disable conflicting services
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
 		;;
+	cosmic)
+		# remove doubled uname from motd
+		[[ -f $SDCARD/etc/update-motd.d/10-uname ]] && rm $SDCARD/etc/update-motd.d/10-uname
+		# remove motd news from motd.ubuntu.com
+		[[ -f $SDCARD/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" $SDCARD/etc/default/motd-news
+		# rc.local is not existing in bionic but we might need it
+		cat <<-EOF > $SDCARD/etc/rc.local
+		#!/bin/sh -e
+		#
+		# rc.local
+		#
+		# This script is executed at the end of each multiuser runlevel.
+		# Make sure that the script will "exit 0" on success or any other
+		# value on error.
+		#
+		# In order to enable or disable this script just change the execution
+		# bits.
+		#
+		# By default this script does nothing.
+
+		exit 0
+		EOF
+		chmod +x $SDCARD/etc/rc.local
+		# Basic Netplan config. Let NetworkManager manage all devices on this system
+		cat <<-EOF > $SDCARD/etc/netplan/armbian-default.yaml
+		network:
+		  version: 2
+		  renderer: NetworkManager
+		EOF
+		# DNS fix
+		sed -i "s/#DNS=.*/DNS=1.1.1.1/g" $SDCARD/etc/systemd/resolved.conf
+		# Journal service adjustements
+		sed -i "s/#Storage=.*/Storage=volatile/g" $SDCARD/etc/systemd/journald.conf
+		sed -i "s/#Compress=.*/Compress=yes/g" $SDCARD/etc/systemd/journald.conf
+		sed -i "s/#RateLimitIntervalSec=.*/RateLimitIntervalSec=30s/g" $SDCARD/etc/systemd/journald.conf
+		sed -i "s/#RateLimitBurst=.*/RateLimitBurst=10000/g" $SDCARD/etc/systemd/journald.conf
+		# disable conflicting services
+		chroot $SDCARD /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
+		;;
+
+
 	esac
 }
 

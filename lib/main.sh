@@ -204,6 +204,7 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	options+=("stretch" "Debian 9 Stretch")
 	options+=("xenial" "Ubuntu Xenial 16.04 LTS")
 	options+=("bionic" "Ubuntu Bionic 18.04 LTS")
+	options+=("cosmic" "Ubuntu Cosmic 18.10")
 	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select the target OS release" \
 		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 	unset options
