@@ -20,7 +20,6 @@ EXIT_PATCHING_ERROR="" # exit patching if failed
 HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
 ROOTFSCACHE_VERSION=4
 CHROOT_CACHE_VERSION=6
-[[ -z $DISPLAY_MANAGER ]] && DISPLAY_MANAGER=nodm
 ROOTFS_CACHE_MAX=16 # max number of rootfs cache, older ones will be cleaned up
 ADD_UBOOT="yes" # some tvboxes doesn't need building u-boot
 # TODO: fixed name can't be used for parallel image building
@@ -151,28 +150,12 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
 	libgtk2.0-bin libgnome2-perl network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
 	pulseaudio pavumeter pulseaudio-module-gconf bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
-	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic gparted mc simple-scan"
+	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic gparted mc simple-scan lightdm lightdm-gtk-greeter"
 
 
 # Recommended desktop packages
 PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi cups-pk-helper \
 	cups geany atril xarchiver leafpad"
-
-case $DISPLAY_MANAGER in
-	nodm)
-		PACKAGE_LIST_DISPLAY_MANAGER=" nodm"
-	;;
-
-	lightdm)
-		PACKAGE_LIST_DISPLAY_MANAGER=" lightdm lightdm-gtk-greeter"
-	;;
-
-	*)
-		exit_with_error "Unsupported display manager selected" "$DISPLAY_MANAGER"
-	;;
-esac
-
-
 
 # Release specific packages
 case $RELEASE in
@@ -195,7 +178,7 @@ case $RELEASE in
 		DEBOOTSTRAP_COMPONENTS="main"
 		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer "
 	;;
 
 	bionic)
