@@ -25,6 +25,7 @@ ADD_UBOOT="yes" # some tvboxes doesn't need building u-boot
 # TODO: fixed name can't be used for parallel image building
 ROOT_MAPPER="armbian-root"
 
+[[ -z $DESKTOP_ENVIRONMENT ]] && DESKTOP_ENVIRONMENT=xfce
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 [[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
 
