@@ -47,12 +47,12 @@ if [[ ( $LINUXFAMILY == sun*i || $LINUXFAMILY == pine64 ) && $BRANCH == default 
 	echo "export VDPAU_OSD=1" > ${upperdir}/etc/profile.d/90-vdpau.sh
 	chmod 755 ${upperdir/}/etc/profile.d/90-vdpau.sh
 fi
-
-if [[ $LINUXFAMILY == sunxi* && $BRANCH != default ]]; then
+#else
+#if [[ $LINUXFAMILY == sunxi* && $BRANCH != default ]]; then
 	# add mpv config for x11 output - slow, but it works compared to no config at all
 	# TODO: Test which output driver is better with DRM
 	ln -fs mpv_sunxi_mainline.conf ${upperdir}/etc/mpv/mpv.conf
-fi
+#fi
 
 # execute $LINUXFAMILY-specific tweaks
 #	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp

@@ -69,8 +69,6 @@ cat <<EOF
 	[ -f "/lib/systemd/system/resize2fs.service" ] && rm /lib/systemd/system/resize2fs.service
 	[ -f "/usr/lib/armbian/apt-updates" ] && rm /usr/lib/armbian/apt-updates
 	[ -f "/usr/lib/armbian/firstrun-config.sh" ] && rm /usr/lib/armbian/firstrun-config.sh
-	dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename \
-		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 EOF
 
 if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then

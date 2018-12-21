@@ -156,7 +156,7 @@ function create_deb_package ()
 
 	# creaate md5sums
 	local mdsum=$(cd $dirforpacking;find . -type f ! -regex '.*.hg.*' ! -regex '.*?debian-binary.*' ! -regex '.*?DEBIAN.*' \
-	-printf '%P ' | xargs --no-run-if-empty md5sum > DEBIAN/md5sums)
+	-printf '"%p"\n' | xargs --no-run-if-empty md5sum > DEBIAN/md5sums)
 	fi
 
 	# compile DEBIAN scripts
@@ -197,8 +197,11 @@ function create_deb_package ()
 	# if package name is defined, create deb file
 	if [[ -n $ARMBIAN_PKG_PACKAGE ]]; then
 		# build the package and save it in the output/debs directories
-		fakeroot dpkg-deb -b $dirforpacking $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb &> /dev/null
-		if [[ $? == 0 ]]; then display_alert "Packed" "${pkgname}.deb" "info"; else display_alert "Packed" "${pkgname}.deb" "err"; fi
+		fakeroot dpkg-deb -b $dirforpacking $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb >> $DEST/debug/install.log 2>&1
+		if [[ $? == 0 ]]; then display_alert "Packed" "${pkgname}.deb" "info"; else \
+			umount -l $mergeddir > /dev/null 2>&1
+			exit_with_error "Packaging process for ${pkgname}.deb ended with error"
+		fi
 		[[ $ARMBIAN_PKG_INSTALL != "no" ]] && install_deb_chroot "$DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb"
 	fi
 
