@@ -1,0 +1,491 @@
+#!/bin/bash
+#
+# h3disp
+#
+# Patches fex/script.bin settings to modify display settings. Currently
+# rather limited and only supporting HDMI and the available presets.
+#
+#############################################################################
+#
+# Background informations:
+#
+# Only a certain amount of predefined video modes is available on H3 devices
+# as can be seen here: http://linux-sunxi.org/Fex_Guide#disp_init_configuration
+#
+# Purpose of this script is to display the available reasonable settings and
+# let the user choose from them to adjust fex file accordingly afterwards.
+# In the meantime it's also possible to specify available resolutions on the
+# command line. To display possible values use the -h switch.
+#
+# If HDMI-to-DVI adapters are used another fix has to be applied to the fex
+# file: http://linux-sunxi.org/Orange_Pi_One#HDMI_to_DVI_converters -- so ask
+# user whether he plans to use such an adapter and adjust fex file accordingly
+#
+#############################################################################
+#
+# CHANGES:
+#
+# v0.6: Added frame buffer config (fb[0-1]_format, fb[0-1]_width, fb[0-1]_height)
+#
+# v0.5: Added bare modes display (-i)
+#
+# v0.4: Added new modes in a combination with kernel patch, but they refuse to work.
+#       Additional work is needed for all modes larger than 10
+#
+# v0.3: Added the ability to set the colour-range HDMI-output and spruced the
+#       output of h3disp in general with a splash of colour. Also, don't spit
+#       out so much text by default.
+#
+# v0.2: Added non-interactive mode. You can provide one or two arguments on
+#       the command line, eg. 'h3disp -m 1080p60 -d' (1920x1080@60Hz DVI) or
+#       'h3disp -m 720i' (1280x720@30Hz HDMI). Complete list of modes via
+#       'h3disp -h'
+#
+# v0.1: Initial release to adjust display settings in script.bin on commonly
+#       used Debian based OS images for H3 devices running Linux.
+#
+#############################################################################
+#
+# TODO:
+#
+# - implement real user interaction: dialog that asks which of the available
+#   HDMI modes to choose and whether a HDMI-to-DVI converter is used or not
+#
+# - maybe implement live resolution switching as outlined by Jernej:
+#   http://forum.armbian.com/index.php/topic/617-wip-orange-pi-one-support-for-the-upcoming-orange-pi-one/?p=5305
+#   (we would also need a working set of fbset modes in /etc/fb.modes
+#   of course)
+#
+# - maybe add the chosen mode to /boot/boot.cmd and create /boot/boot.scr
+#   afterwards?
+#
+#############################################################################
+
+Main() {
+	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+	# ensure script is running as root
+	if [ "$(id -u)" != "0" ]; then
+	        echo "This script must be executed as root. Exiting" >&2
+	        exit 1
+	fi
+
+	# check for supported boards
+	/bin/bash -n /etc/armbian-release && . /etc/armbian-release
+	if [ "X${LINUXFAMILY}" = "Xsun8i" -a "X${BRANCH}" = "Xdefault" -a "X${BOARD}" != "Xorangepizero" ]; then
+		# Supported board/kernel combination so proceed
+		:
+	else
+		echo "Unsupported board/kernel combination: ${BOARD_NAME} running $(uname -a | cut -f3 -d' '). Exiting" >&2
+		exit 1
+	fi
+
+	# interactive mode if no arguments are provided -- currently not implemented
+	# otherwise we try to parse the command line arguments and use these
+	if [ $# -eq 0 ]; then
+		DisplayUsage ; exit 0
+		# Provide a list with possible HDMI display settings and store the chosen
+		# one in the HDMIMode variable
+		:
+
+		# ask the user whether he uses a HDMI-to-DVI converter and if true then
+		# set DVIUsed=TRUE
+		:
+	else
+		ParseOptions "$@"
+		if [ -v ColourRange ]; then
+			re='^[0-9]+$'
+			if ! [[ ${ColourRange} =~ ${re} ]] ; then
+				echo "$0: Invalid colour-range specified, only values 0-2 are supported for now!"
+				exit 1
+				fi
+			if [[ ${ColourRange} -lt 0 || ${ColourRange} -gt 2 ]] ; then
+				echo "$0: Invalid colour-range specified, only values 0-2 are supported for now!"
+				exit 1
+			fi
+		fi
+
+		if [ -v FrameBuffer ]; then
+			re='^(0|4|5|6|7|8|9|10|12):[0-9]{1,4}:[0-9]{1,4}$'
+			if ! [[ ${FrameBuffer} =~ ${re} ]] ; then
+				echo "$0: Invalid frame buffer config data. use -h option to help."
+				exit 1
+				fi
+		fi
+
+		case ${VideoMode} in
+			0|480i) # res
+				HDMIMode=0
+				pll_video=54
+				;;
+			1|576i) # res
+				HDMIMode=1
+				pll_video=54
+				;;
+			2|480p) # res
+				HDMIMode=2
+				pll_video=108
+				;;
+			3|576p) # res
+				HDMIMode=3
+				pll_video=108
+				;;
+			4|720p50|1280x720p50) # res
+				HDMIMode=4
+				pll_video=297
+				;;
+			5|720p60|720p|1280x720p60) # res
+				HDMIMode=5
+				pll_video=297
+				;;
+			6|1080i50|1920x1080i50) # res
+				HDMIMode=6
+				pll_video=297
+				;;
+			7|1080i60|1080i|1920x1080i60) # res
+				HDMIMode=7
+				pll_video=297
+				;;
+			8|1080p24|1920x1080p24) # res
+				HDMIMode=8
+				pll_video=297
+				;;
+			9|1080p50|1920x1080p50) # res
+				HDMIMode=9
+				pll_video=297
+				;;
+			10|1080p60|1080p|1920x1080p60) # res
+				HDMIMode=10
+				pll_video=297
+				;;
+			11|1080p25|1080p|1920x1080p25) # res
+				HDMIMode=11
+				pll_video=297
+				;;
+			12|1080p30|1080p|1920x1080p30) # res
+				HDMIMode=12
+				pll_video=297
+				;;
+			13|1080p24_3d|1920x1080p24_3d) # res
+				HDMIMode=13
+				pll_video=594
+				;;
+			14|720p50_3d|1280x720p50_3d) # res
+				HDMIMode=14
+				pll_video=594
+				;;
+			15|720p60_3d|1280x720p60_3d) # res
+				HDMIMode=15
+				pll_video=594
+				;;
+			23|1080p24_3d|1920x1080p24_3d) # res
+				HDMIMode=23
+				pll_video=594
+				;;
+			24|720p50_3d|1280x720p50_3d) # res
+				HDMIMode=24
+				pll_video=594
+				;;
+			25|720p60_3d|1280x720p60_3d) # res
+				HDMIMode=25
+				pll_video=594
+				;;
+			26|1080p25|1080p|1920x1080p25) # res
+				HDMIMode=26
+				pll_video=297
+				;;
+			27|1080p30|1080p|1920x1080p30) # res
+				HDMIMode=27
+				pll_video=297
+				;;
+			28|4kp30|3840x2160P30) # res
+				HDMIMode=28
+				pll_video=297
+				;;
+			29|4kp25|3840x2160P25) # res
+				HDMIMode=29
+				pll_video=297
+				;;
+			31|800x480) # res
+				HDMIMode=31
+				pll_video=594
+				;;
+			32|1024x768) # res
+				HDMIMode=32
+				pll_video=260
+				;;
+			33|1280x1024) # res
+				HDMIMode=33
+				pll_video=432
+				;;
+			34|1360x768) # res
+				HDMIMode=34
+				pll_video=342
+				;;
+			35|1440x900) # res
+				HDMIMode=35
+				pll_video=432
+				;;
+			36|1680x1050) # res
+				HDMIMode=36
+				pll_video=294
+				;;
+			37|2048x1536) # res
+				HDMIMode=37
+				pll_video=688
+				;;
+			*)
+				if [ ${VideoMode} ]; then
+					echo -e "$0: missing video mode. Try one of the following:\n"
+				else
+					echo -e "$0: illegal video mode \"-m ${VideoMode}\". Try one of the following:\n"
+				fi
+				ShowVideoModes
+				exit 0
+				;;
+		esac
+	fi
+
+	echo -e "Now trying to patch script.bin with your settings. \c"
+	PatchScriptBin "${HDMIMode}" "${DVIUsed:-FALSE}" "${pll_video}"
+	echo "Successfully finished. Please reboot for changes to take effect"
+
+	# Let's see whether we have to collect debug output
+	case ${Debug} in
+		TRUE)
+			which curl >/dev/null 2>&1 || apt-get -f -qq -y install curl
+			echo -e "\nDebug output has been collected at the following URL: \c"
+			(cat "${DebugOutput}"; echo -e "\n\n\nfex contents:\n" ; cat "${MyTmpFile}") \
+				| curl -F 'sprunge=<-' http://sprunge.us
+			;;
+	esac
+} # Main
+
+ParseOptions() {
+	while getopts 'hHvVdDm:M:c:C:i:f:F' c ; do
+	case ${c} in
+		H)
+			export FullUsage=TRUE
+			DisplayUsage
+			exit 0
+			;;
+		h)
+			DisplayUsage
+			exit 0
+			;;
+		i)
+			ShowVideoModes "clean"
+			exit 0
+			;;
+		v|V)
+			# Increase verbosity. Will try to upload debug output from script
+			# to ease reporting of bugs or strange behaviour. Use only when
+			# asked for.
+			export Debug=TRUE
+			DebugOutput="$(mktemp /tmp/${0##*/}.XXXXXX)"
+			trap "rm \"${DebugOutput}\" ; exit 0" 0 1 2 3 15
+			set -x
+			exec 2>"${DebugOutput}"
+			;;
+		d|D)
+			# use HDMI-to-DVI converter
+			export DVIUsed=TRUE
+			;;
+		m|M)
+			# The HDMI mode in question
+			export VideoMode=${OPTARG}
+			;;
+		c|C)
+			# The colour-range in question
+			export ColourRange=${OPTARG}
+			;;
+		f|F)
+			# Set frame buffer config
+			export FrameBuffer=${OPTARG}
+			;;
+	esac
+	done
+} # ParseOptions
+
+DisplayUsage() {
+	# check if stdout is a terminal...
+	if test -t 1; then
+		# see if it supports colors...
+		ncolors=$(tput colors)
+		if test -n "$ncolors" && test $ncolors -ge 8; then
+			BOLD="$(tput bold)"
+			NC='\033[0m' # No Color
+			LGREEN='\033[1;32m'
+		fi
+	fi
+	echo -e "Usage: ${BOLD}${0##*/} [-h/-H] -m [video mode] [-d] [-c [0-2]] [-f [fb_mode:fb_width:fb_height]]${NC}\n"
+	echo -e "############################################################################"
+	if [ ${FullUsage} ]; then
+		echo -e "\nDetailed Description:"
+		grep "^#" "$0" | grep -v "^#\!/bin/bash" | sed 's/^#//'
+	fi
+	echo -e "\n This is a tool to set the display resolution of your Orange"
+	echo -e " Pi by patching script.bin.\n\n In case you use an HDMI-to-DVI converter\c"
+	echo -e " please use the ${LGREEN}-d${NC} switch.\n\n The resolution can be set using the ${LGREEN}-m${NC} switch.\c"
+	echo -e " The following resolutions\n are currently supported:\n"
+	ShowVideoModes
+	echo -e " You can also specify the colour-range for your HDMI-display with the ${LGREEN}-c${NC} switch."
+	echo -e "\n The following values for ${LGREEN}-c${NC} are currently supported:\n"
+	echo -e "    ${BOLD}0${NC} -- RGB range 16-255 (Default, use \"${LGREEN}-c 0${NC}\")"
+	echo -e "    ${BOLD}1${NC} -- RGB range 0-255 (Full range, use \"${LGREEN}-c 1${NC}\")"
+	echo -e "    ${BOLD}2${NC} -- RGB range 16-235 (Limited video, \"${LGREEN}-c 2${NC}\")\n"
+	echo -e "To change frame buffer config use ${LGREEN}-f${NC} option and data in format ${BOLD}fb_mode:fb_width:fb_height${NC} where:"
+	echo -e "    ${BOLD}fb_mode${NC} :"
+	echo -e "     ${LGREEN}0${NC} -- DEFAULT,  ${LGREEN}4${NC} -- RGB655, ${LGREEN}5${NC} -- RGB565,    ${LGREEN}6${NC} -- RGB556, ${LGREEN}7${NC} -- ARGB1555"
+	echo -e "     ${LGREEN}8${NC} -- RGBA5551, ${LGREEN}9${NC} -- RGB888, ${LGREEN}10${NC} -- ARGB8888, ${LGREEN}12${NC} -- ARGB4444"
+	echo -e "    ${BOLD}fb_width${NC}:"
+	echo -e "     width resolution in pixel -- range 0-9999"
+	echo -e "    ${BOLD}fb_height${NC}:"
+	echo -e "     height resolution in pixel -- range 0-9999"
+	echo -e "############################################################################\n"
+} # DisplayUsage
+
+ShowVideoModes() {
+	local clean=$1
+	# check if stdout is a terminal...
+	if test -t 1; then
+		# see if it supports colors...
+		ncolors=$(tput colors)
+		if test -n "$ncolors" && test $ncolors -ge 8; then
+			BOLD="$(tput bold)"
+			NC='\033[0m' # No Color
+			LGREEN='\033[1;32m'
+		fi
+	fi
+	OIFS=${IFS}
+	IFS="|"
+	awk -F" " '/ # res/ {print $1}' <"${0}" | tr -d ')' | grep -v 'awk' | while read ; do
+		set ${REPLY}
+		if [ ! $clean ]; then
+			echo -e "    ${BOLD}${2}${NC}\tuse \"${LGREEN}-m ${2}${NC}\" or \"${LGREEN}-m ${1}${NC}\""
+				else
+			echo -e "${2}"
+		fi
+	done
+	IFS=${OIFS}
+	if [ ! $clean ]; then
+		echo -e "\n Two examples:\n\n    '${BOLD}${0##*/}${NC} ${LGREEN}-m 1080p60 -d${NC}' (1920x1080@60Hz DVI)"
+		echo -e "    '${BOLD}${0##*/}${NC} ${LGREEN}-m 720i${NC}' (1280x720@30Hz HDMI)\n"
+	fi
+} # ShowVideoModes
+
+## Usage: FexChange <fexfile> <section> <key> <value>
+## Either changes the value of a given key or adds the key=value to the section
+FexChange() {
+	# Search in file ($1) in section ($2) for key ($3)
+	found=$(sed -n -e "/^\[$2\]/,/^\[/{/^$3\s*=/p}" "$1")
+
+	if [ -n "$found" ]; then
+		# Replace in file ($1) in section ($2) key ($3) with value ($4)
+		sed -i -e "/^\[$2\]/,/^\[/{s/^\($3\s*=\s*\).*/\1$4/}" "$1"
+	else
+		# Append in file ($1) in section ($2) key ($3) with value ($4)
+		sed -i -e "/^\[$2\]/,/^\[/{/^\[/i$3 = $4\n" -e "}" "$1"
+	fi
+}
+
+PatchScriptBin() {
+	# This function will be called with 3 arguments:
+	# $1 HDMI mode to set
+	# $2 wether HDMI-to-DVI converter should be used or not (has to be TRUE)
+	# $3 pll_video value
+
+	# check whether we've the necessary tools available
+	Fex2Bin="$(which fex2bin)"
+	if [ "X${Fex2Bin}" = "X" ]; then
+	        apt-get -f -qq -y install sunxi-tools >/dev/null 2>&1 || InstallSunxiTools >/dev/null 2>&1
+	fi
+	which fex2bin >/dev/null 2>&1 || (echo -e "Aborted\nfex2bin/bin2fex not found and unable to install. Exiting" >&2 ; exit 1)
+
+	# try to find location of script.bin
+	Path2ScriptBin=/boot
+	if [ ! -f "${Path2ScriptBin}/script.bin" ]; then
+		Path2ScriptBin="$(df | awk -F" " '/^\/dev\/mmcblk0p1/ {print $6}')"
+		if [ ! -f "${Path2ScriptBin}/script.bin" ]; then
+			echo -e "Aborted\nCan not find script.bin. Ensure boot partition is mounted" >&2
+			logger "Can not find script.bin. Ensure boot partition is mounted"
+			exit 1
+		fi
+	fi
+
+	# check for symlink
+	ScriptBin="$(readlink -f "${Path2ScriptBin}/script.bin")"
+
+	# create temp file
+	MyTmpFile="$(mktemp /tmp/${0##*/}.XXXXXX)"
+
+	# convert script.bin to temporary fex file
+	bin2fex <"${ScriptBin}" 2>/dev/null >"${MyTmpFile}"
+	if [ $? -ne 0 ]; then
+		echo -e "Aborted\nCould not convert script.bin to fex. Exiting" >&2
+		logger "Could not convert script.bin to fex"
+		exit 1
+	fi
+
+	# create backup to be able to recover from failed conversion
+	cp -p "${ScriptBin}" "${Path2ScriptBin}/script.bin.bak"
+
+	# add or replace ini values
+	FexChange "${MyTmpFile}" "disp_init" "screen0_output_type" "3"
+	FexChange "${MyTmpFile}" "disp_init" "screen0_output_mode" "$1"
+	FexChange "${MyTmpFile}" "disp_init" "screen1_output_type" "3"
+	FexChange "${MyTmpFile}" "disp_init" "screen1_output_mode" "$1"
+	FexChange "${MyTmpFile}" "clock" "pll_video" "$3"
+
+	if [ -v ColourRange ]; then
+		FexChange "${MyTmpFile}" "disp_init" "screen0_out_color_range" "${ColourRange}"
+	fi
+
+	if [ -v FrameBuffer ]; then
+		FrameBuffer_config=($(echo "${FrameBuffer}" | tr ':' '\n'))
+		FexChange "${MyTmpFile}" "disp_init" "fb0_format" "${FrameBuffer_config[0]}"
+		FexChange "${MyTmpFile}" "disp_init" "fb0_width" "${FrameBuffer_config[1]}"
+		FexChange "${MyTmpFile}" "disp_init" "fb0_height" "${FrameBuffer_config[2]}"
+		FexChange "${MyTmpFile}" "disp_init" "fb1_format" "${FrameBuffer_config[0]}"
+		FexChange "${MyTmpFile}" "disp_init" "fb1_width" "${FrameBuffer_config[1]}"
+		FexChange "${MyTmpFile}" "disp_init" "fb1_height" "${FrameBuffer_config[2]}"
+	fi
+
+	if [ "X$2" = "XTRUE" ]; then
+		# add entries necessary for HDMI-to-DVI adapters
+		FexChange "${MyTmpFile}" "hdmi_para" "hdcp_enable" "0"
+		FexChange "${MyTmpFile}" "hdmi_para" "hdmi_cts_compatibility" "1"
+	else
+		FexChange "${MyTmpFile}" "hdmi_para" "hdcp_enable" "1"
+		FexChange "${MyTmpFile}" "hdmi_para" "hdmi_cts_compatibility" "0"
+	fi
+
+	# convert temporary fex file back to script.bin. We delete symlinks to
+	# prevent future board support package updates overwriting h3disp changes
+	rm "${Path2ScriptBin}/script.bin"
+	fex2bin "${MyTmpFile}" "${Path2ScriptBin}/script.bin" 2>/dev/null
+	if [ $? -ne 0 ]; then
+		mv "${Path2ScriptBin}/script.bin.bak" "${ScriptBin}"
+		if [ "${ScriptBin}" != "${Path2ScriptBin}/script.bin" ]; then
+			cd "${Path2ScriptBin}"
+			ln -sf "${ScriptBin}" script.bin
+		fi
+		echo -e "Aborted\nWriting script.bin went wrong. Nothing changed." >&2
+		echo -e "You may look at ${MyTmpFile} to see if there is an error there." >&2
+		logger "Writing script.bin went wrong. Nothing changed"
+		exit 1
+	else rm "${MyTmpFile}"
+	fi
+} # PatchScriptBin
+
+InstallSunxiTools() {
+	sleep 1
+	apt-get -f -qq -y install libusb-1.0-0-dev || (echo -e "Aborted\nNot possible to install a sunxi-tools requirement" ; exit 1)
+	cd /tmp
+	git clone https://github.com/linux-sunxi/sunxi-tools
+	cd sunxi-tools
+	make
+	make install
+} # InstallSunxiTools
+
+Main "$@"

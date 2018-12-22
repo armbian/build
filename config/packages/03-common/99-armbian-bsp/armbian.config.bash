@@ -1,4 +1,4 @@
-ARMBIAN_PKG_PACKAGE=${CHOSEN_ROOTFS}
+ARMBIAN_PKG_PACKAGE=armbian-${RELEASE,,}
 ARMBIAN_PKG_SECTION=kernel
 ARMBIAN_PKG_ARCH=${ARCH}
 ARMBIAN_PKG_REPOSITORY="${RELEASE,,}"
@@ -7,4 +7,4 @@ ARMBIAN_PKG_RECOMMENDS="bsdutils parted python3-apt util-linux toilet"
 ARMBIAN_PKG_REPLACES="zram-config base-files armbian-tools-bionic"
 ARMBIAN_PKG_SUGGESTS="armbian-config"
 ARMBIAN_PKG_PROVIDES="armbian-bsp"
-ARMBIAN_PKG_DESCRIPTION="Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)"
+ARMBIAN_PKG_DESCRIPTION="Armbian tweaks for $DISTRIBUTION $RELEASE"

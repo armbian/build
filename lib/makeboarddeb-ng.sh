@@ -108,18 +108,23 @@ function create_deb_package ()
 	local workdir="$3${pkgname}"	# reserved
 	local mergeddir="$4${pkgname}"	# source overlay + destination
 	local dirforpacking=${upperdir}	# depandable wheather we have an overlay or not
+	local pkgsubdir="$6"
+	local sectiondir=${lowerdir/$pkgsubdir\//}
 
 	# Packing only for the selected family
-	[[ $5 == *-family && $LINUXFAMILY != $6 ]] && return 1
+	[[ $5 == *-family && $LINUXFAMILY != $pkgsubdir ]] && return 1
 	# Packing only for the selected board
-	[[ $5 == *-board && $BOARD != $6 ]] && return 1
+	[[ $5 == *-board && $BOARD != $pkgsubdir ]] && return 1
 	# Packing only for CLI
-	[[ $6 == armbian-desktop* && $BUILD_DESKTOP != "yes" ]] && return 1
+	[[ $pkgsubdir == armbian-desktop* && $BUILD_DESKTOP != "yes" ]] && return 1
 
-	# install dependencies
-	if [[ -n $ARMBIAN_PKG_DEPENDS && $ARMBIAN_PKG_INSTALL != "no" ]]; then
+	# install dependencies and suggestions
+	if [[ -n $ARMBIAN_PKG_DEPENDS || -n $ARMBIAN_PKG_SUGGESTS ]] && [[ $ARMBIAN_PKG_INSTALL != "no" ]]; then
 		display_alert "Dependecies for" "${ARMBIAN_PKG_PACKAGE}"
 		chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_DEPENDS}" >> $DEST/debug/install.log 2>&1
+		if [[ $? == 0 ]]; then display_alert "Installed" "" "info"; else display_alert "Installed" "" "err"; fi
+		display_alert "Suggestions for" "${ARMBIAN_PKG_PACKAGE}"
+		chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_SUGGESTS}" >> $DEST/debug/install.log 2>&1
 		if [[ $? == 0 ]]; then display_alert "Installed" "" "info"; else display_alert "Installed" "" "err"; fi
 	fi
 
@@ -144,6 +149,11 @@ function create_deb_package ()
 		dirforpacking=${mergeddir}
 	fi
 
+	# execute package sectio custom build script if defined
+	if [[ -f ${sectiondir}armbian.build.bash ]]; then
+		display_alert "Executing section script" "${sectiondir}armbian.build.bash" "info"
+		source ${sectiondir}armbian.build.bash
+	fi
 	# execute package custom build script if defined
 	if [[ -f ${lowerdir}armbian.build.bash ]]; then
 		display_alert "Executing" "${lowerdir}armbian.build.bash" "info"
@@ -163,7 +173,7 @@ function create_deb_package ()
 	process_line ${lowerdir} "armbian.preinst.bash" 	$2 $upperdir
 	process_line ${lowerdir} "armbian.postinst.bash"	$2 $upperdir
 	process_line ${lowerdir} "armbian.prerm.bash" 		$2 $upperdir
-	process_line ${lowerdir} "armbian.postrm.bash" 	$2 $upperdir
+	process_line ${lowerdir} "armbian.postrm.bash" 		$2 $upperdir
 	process_line ${lowerdir} "armbian.triggers.bash" 	$2 $upperdir
 
 	# create DEBIAN control file
