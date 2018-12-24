@@ -222,9 +222,6 @@ fi
 
 source $SRC/lib/configuration.sh
 
-# re-read board configuration to make per board override possible
-source $SRC/config/boards/${BOARD}.${BOARD_TYPE}
-
 # optimize build time with 100% CPU usage
 CPUS=$(grep -c 'processor' /proc/cpuinfo)
 if [[ $USEALLCORES != no ]]; then

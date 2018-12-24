@@ -169,6 +169,9 @@ install_common()
 		install_deb_chroot "$DEST/debs/${CHOSEN_KSRC}_${REVISION}_all.deb"
 	fi
 
+	# re-read board configuration to make per board override possible
+	source $SRC/config/boards/${BOARD}.${BOARD_TYPE}
+
 	# pack all debian packages | download and install
 	find_deb_packages_prepare
 
