@@ -1,23 +1,16 @@
 cat <<EOF
-#!/bin/sh
-#
-# ${BOARD} post installation script
-#
-
 # configure MIN / MAX speed for cpufrequtils
-if [ -z "\$(cat /etc/default/cpufr1equtils 2> /dev/null | awk -F'[=&]' '{print \$2}')" ]; then
-cat <<-EOT > /etc/default/cpufrequtils
-ENABLE=true
-MIN_SPEED=$CPUMIN
-MAX_SPEED=$CPUMAX
-GOVERNOR=$GOVERNOR
-EOT
+if [ -z "\$(cat /etc/default/cpufrequtils 2> /dev/null | awk -F'[=&]' '{print \$2}')" ]; then
+	echo "ENABLE=true" > /etc/default/cpufrequtils
+	echo "MIN_SPEED=$CPUMIN" >> /etc/default/cpufrequtils
+	echo "MAX_SPEED=$CPUMAX" >> /etc/default/cpufrequtils
+	echo "GOVERNOR=$GOVERNOR" >> /etc/default/cpufrequtils
 fi
 
 # fix boot delay "waiting for suspend/resume device"
 if [ -f "/etc/initramfs-tools/initramfs.conf" ]; then
 	if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
-	echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
+		echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
 	fi
 fi
 
@@ -53,7 +46,4 @@ EOF
 fi
 cat <<EOF
 fi
-if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
-rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
-exit 0
 EOF

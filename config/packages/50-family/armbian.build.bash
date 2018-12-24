@@ -2,7 +2,6 @@
 #
 
 # create directories
-mkdir -p ${upperdir}/boot/bin
 mkdir -p ${upperdir}/usr/share/armbian/
 mkdir -p ${upperdir}/etc/default
 mkdir -p ${upperdir}/usr/network
@@ -42,11 +41,6 @@ BOARD_TYPE=$BOARD_TYPE
 INITRD_ARCH=$INITRD_ARCH
 KERNEL_IMAGE_TYPE=$KERNEL_IMAGE_TYPE
 EOF
-
-# convert and add fex files
-for i in $(ls -w1 $SRC/config/fex/*.fex | xargs -n1 basename); do
-	fex2bin $SRC/config/fex/${i%*.fex}.fex ${upperdir}/boot/bin/${i%*.fex}.bin
-done
 
 # add some summary to the image
 fingerprint_image "$upperdir/etc/armbian.txt"

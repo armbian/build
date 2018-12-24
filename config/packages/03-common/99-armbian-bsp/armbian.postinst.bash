@@ -1,10 +1,4 @@
 cat <<EOF
-#!/bin/sh
-#
-# Armbian common post installation script
-#
-
-
 # enable ramlog only if it was enabled before
 if [ -n "\$(service log2ram status 2> /dev/null)" ]; then
 	systemctl --no-reload enable armbian-ramlog.service
@@ -42,5 +36,4 @@ if [ -L "/usr/lib/chromium-browser/master_preferences.dpkg-dist" ]; then
 fi
 
 systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service >/dev/null 2>&1
-exit 0
 EOF

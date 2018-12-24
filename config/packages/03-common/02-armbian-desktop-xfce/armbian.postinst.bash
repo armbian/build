@@ -1,6 +1,4 @@
 cat <<EOF
-#!/bin/sh -e
-
 # overwrite stock chromium configuration
 if [ -d /etc/chromium-browser/ ]; then
 	ln -sf /etc/armbian/chromium.conf /etc/chromium-browser/default
@@ -25,12 +23,12 @@ if [ -d /usr/lib/firefox-esr/ ]; then
 	echo 'pref("general.config.filename", "mozilla.cfg");' >> /usr/lib/firefox-esr/defaults/pref/local-settings.js
 fi
 
-# Adjust menu
+# adjust menu
 sed -i -n '/<Menuname>Settings<\/Menuname>/{p;:a;N;/<Filename>xfce4-session-logout.desktop<\/Filename>/!ba;s/.*\n/\
 \t<Separator\/>\n\t<Merge type="all"\/>\n        <Separator\/>\n        <Filename>armbian-donate.desktop<\/Filename>\
 \n        <Filename>armbian-support.desktop<\/Filename>\n/};p' /etc/xdg/menus/xfce-applications.menu
 
-# Hide few items
+# hide few items
 if [ -f /usr/share/applications/display-im6.q16.desktop ]; then
 	mv /usr/share/applications/display-im6.q16.desktop /usr/share/applications/display-im6.q16.desktop.hidden
 fi
@@ -57,6 +55,4 @@ sed -i 's/<property name="IconThemeName" type="string" value="Numix"\/>/<propert
 
 # install dedicated startup icons
 sed 's/xenial.png/${DISTRIBUTION,,}.png/' -i $destination/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
-
-exit 0
 EOF

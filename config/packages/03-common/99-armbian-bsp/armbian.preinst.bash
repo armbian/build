@@ -1,5 +1,4 @@
 cat <<EOF
-#!/bin/sh
 [ "\$1" = "upgrade" ] && touch /var/run/.reboot_required
 [ -d "/boot/bin.old" ] && rm -rf /boot/bin.old
 [ -d "/boot/bin" ] && mv -f /boot/bin /boot/bin.old
@@ -75,5 +74,4 @@ systemctl disable armhwinfo.service >/dev/null 2>&1
 [ -f "/usr/lib/armbian/firstrun-config.sh" ] && rm /usr/lib/armbian/firstrun-config.sh
 dpkg-divert --package armbian-${RELEASE} --add --rename \
 		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
-exit 0
 EOF
