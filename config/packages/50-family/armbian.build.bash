@@ -5,7 +5,6 @@
 mkdir -p ${upperdir}/usr/share/armbian/
 mkdir -p ${upperdir}/etc/default
 mkdir -p ${upperdir}/usr/network
-mkdir -p ${upperdir}/etc/mpv
 mkdir -p ${upperdir}/etc/profile.d
 
 # add boot script and environment

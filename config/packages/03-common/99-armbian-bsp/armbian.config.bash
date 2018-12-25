@@ -1,6 +1,5 @@
 ARMBIAN_PKG_PACKAGE=armbian-${RELEASE,,}
 ARMBIAN_PKG_SECTION=kernel
-ARMBIAN_PKG_ARCH=${ARCH}
 ARMBIAN_PKG_REPOSITORY="${RELEASE,,}"
 ARMBIAN_PKG_DEPENDS="bash linux-base u-boot-tools initramfs-tools"
 ARMBIAN_PKG_RECOMMENDS="bsdutils parted python3-apt util-linux toilet"

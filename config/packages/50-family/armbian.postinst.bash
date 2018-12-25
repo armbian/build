@@ -7,6 +7,11 @@ if [ -z "\$(cat /etc/default/cpufrequtils 2> /dev/null | awk -F'[=&]' '{print \$
 	echo "GOVERNOR=$GOVERNOR" >> /etc/default/cpufrequtils
 fi
 
+if [ -f "/etc/armbian/mpv.conf" ]; then
+	mkdir -p /etc/mpv
+	ln -sf /etc/armbian/mpv.conf /etc/mpv/mpv.conf
+fi
+
 # fix boot delay "waiting for suspend/resume device"
 if [ -f "/etc/initramfs-tools/initramfs.conf" ]; then
 	if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
