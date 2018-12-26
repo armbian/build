@@ -2,17 +2,29 @@
 
 This Subsystem is primarely designed to make packages from the following sections:
 
-- common
-	- armbian-config
-	- armbian-desktop
-	- armbian-firmware
-	- armbian-firmware-full
-	- armbian-bsp *(this is now the same with one exception. It doesn't execute family_tweaks and family_tweaks_bsp. Those functions are getting manually implemented into the packages below)* 
-- family
-	- rockchip
-	- sun7i
-	- etc.
-- board
+- 03-common
+	- dedicated
+		- armbian-config
+		- armbian-desktop
+		- armbian-firmware
+		- armbian-firmware-full
+		- armbian-bsp *(this is now the same with one exception. It doesn't execute family_tweaks and family_tweaks_bsp. Those functions are getting manually implemented into the packages below)* 
+- 50-family
+	- dedicated
+		- rockchip
+		- sun7i
+		- etc.
+	- shared
+		- overlay (for stuff that is present in all family packages)
+		- scripts (common place for scripts like nand-sata-install. they are place with family or board build scripts)
+		- armbian.build.bash (content is merged with dedicated scripts)
+		- armbian.postinst.bash (content is merged with dedicated scripts)
+		- armbian.preinst.bash (content is merged with dedicated scripts)
+		- armbian.prerm.bash (content is merged with dedicated scripts)
+		- armbian.postrm.bash (content is merged with dedicated scripts)
+		- armbian.triggers.bash
+
+- 99-board
 	- pinebook
 	- cubietruck
 	- etc.
