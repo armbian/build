@@ -1,8 +1,4 @@
 cat <<EOF
-#!/bin/sh
-#
-# ${BOARD_NAME} post installation script
-#
 
 # read config
 [ -f /etc/armbian-release ] && . /etc/armbian-release
@@ -16,6 +12,4 @@ fi
 
 sed -i "s/pinebook_lcd_mode=.*/pinebook_lcd_mode=1080p/" /boot/armbianEnv.txt
 
-
-exit 0
 EOF
