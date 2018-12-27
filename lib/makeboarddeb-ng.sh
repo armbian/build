@@ -45,9 +45,9 @@ find_deb_packages_prepare(){
 			local second="$(cut -d'/' -f4 <<<"${cleaned_dir%%:*}")"
 				if [[ -f ${dir%%:*}/$names ]]; then
 					local location_lowerdir="${dir%%:*}/"
-					local location_upperdir="$SRC/.tmp/.upperdir${cleaned_dir%%:*}/"
-					local location_workdir="$SRC/.tmp/.workdir${cleaned_dir%%:*}/"
-					local location_merged="$SRC/.tmp/.merged${cleaned_dir%%:*}/"
+					local location_upperdir="$SRC/.tmp/package-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}/.upperdir${cleaned_dir%%:*}/"
+					local location_workdir="$SRC/.tmp/package-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}/.workdir${cleaned_dir%%:*}/"
+					local location_merged="$SRC/.tmp/package-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}/.merged${cleaned_dir%%:*}/"
 					create_deb_package $location_lowerdir $location_upperdir $location_workdir $location_merged $first $second
 				fi
 		done
@@ -153,9 +153,11 @@ function create_deb_package ()
 	# install dependencies and suggestions
 	if [[ -n $ARMBIAN_PKG_DEPENDS || -n $ARMBIAN_PKG_SUGGESTS ]] && [[ $ARMBIAN_PKG_INSTALL != "no" ]]; then
 		display_alert "Installing dependecies for" "${ARMBIAN_PKG_PACKAGE}"
+		echo "Installing dependecies: ${ARMBIAN_PKG_DEPENDS}" >> $DEST/debug/install.log 2>&1
 		chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_DEPENDS}" >> $DEST/debug/install.log 2>&1
 		if [[ $? == 0 ]]; then display_alert "Dependecies" "Installed" "info"; else display_alert "Installed" "" "err"; fi
 		display_alert "Installing suggestions for" "${ARMBIAN_PKG_PACKAGE}"
+		echo "Installing suggestions: ${ARMBIAN_PKG_SUGGESTS}" >> $DEST/debug/install.log 2>&1
 		chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_SUGGESTS}" >> $DEST/debug/install.log 2>&1
 		if [[ $? == 0 ]]; then display_alert "Suggestions" "Installed" "info"; else display_alert "Installed" "" "err"; fi
 	fi
