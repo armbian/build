@@ -1,8 +1,4 @@
 cat <<EOF
-#!/bin/sh
-#
-# ${BOARD_NAME} post installation script
-#
 
 MACADDR=\$(printf '43:29:B1:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256])
 cat <<-EOT > /etc/default/brcm4330
@@ -11,5 +7,5 @@ PORT=ttymxc3
 EOT
 systemctl enable brcm4330-patch
 service brcm4330-patch start
-exit 0
+
 EOF
