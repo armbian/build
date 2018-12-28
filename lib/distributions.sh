@@ -149,9 +149,10 @@ install_common()
 	ff02::2     ip6-allrouters
 	EOF
 
-	# install kernel and u-boot packages
+	# install kernel
 	install_deb_chroot "$DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
-	install_deb_chroot "$DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
+	# unpack u-boot
+	dpkg -x ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb $SDCARD
 
 	if [[ $INSTALL_HEADERS == yes ]]; then
 		install_deb_chroot "$DEST/debs/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
