@@ -61,12 +61,32 @@ find_deb_packages_prepare(){
 function process_line()
 {
 local filename="$4/DEBIAN/"$(echo $2 | sed -e "s/^armbian.//" | sed -e "s/.bash$//")
+# generate header if common or specific script exists
+if [[ -f $1$2 || -f $5$2 && $2 != armbian.triggers.bash ]]; then
+	echo "#!/bin/sh" > $filename
+	figlet armbian | sed 's/^/# /'  >> $filename
+	echo "#" >> $filename
+	echo "" >> $filename
+fi
+# include section script if exists
+if [[ -f $5/$2 ]]; then
+	postinst=$(source $5$2)
+	while read -r line; do
+		echo "$line" >> $filename
+	done <<< "$postinst"
+fi
+# include package script if exists
 if [[ -f $1/$2 ]]; then
-	postinst=$(source $1/$2)
-while read -r line; do
-	echo "$line" >> $filename
-done <<< "$postinst"
-chmod 755 $filename
+	postinst=$(source $1$2)
+	while read -r line; do
+		echo "$line" >> $filename
+	done <<< "$postinst"
+fi
+# generate footer if common or specific script exists
+if [[ -f $1$2 || -f $5$2 && $2 != armbian.triggers.bash ]]; then
+	echo "" >> $filename
+	echo "exit 0" >> $filename
+	chmod 755 $filename
 fi
 }
 
@@ -101,6 +121,9 @@ function create_deb_package ()
 	# read package configuration
 	source $1/armbian.config.bash
 
+	# add slash to the variable if subdirectory is defined
+        [[ -n $ARMBIAN_PKG_REPOSITORY ]] && ARMBIAN_PKG_REPOSITORY+="/"
+
 	# define local variables for better readability
 	local pkgname="${ARMBIAN_PKG_PACKAGE}_${ARMBIAN_PKG_REVISION}_${ARMBIAN_PKG_ARCH}"
 	local lowerdir="$1"		# source
@@ -108,20 +131,28 @@ function create_deb_package ()
 	local workdir="$3${pkgname}"	# reserved
 	local mergeddir="$4${pkgname}"	# source overlay + destination
 	local dirforpacking=${upperdir}	# depandable wheather we have an overlay or not
+	local pkgsubdir="$6"
+	local sectiondir=${lowerdir/$pkgsubdir\//}
 
 	# Packing only for the selected family
-	[[ $5 == *-family && $LINUXFAMILY != $6 ]] && return 1
+	[[ $5 == *-family && $LINUXFAMILY != $pkgsubdir ]] && return 1
 	# Packing only for the selected board
-	[[ $5 == *-board && $BOARD != $6 ]] && return 1
+	[[ $5 == *-board && $BOARD != $pkgsubdir ]] && return 1
 	# Packing only for CLI
-	[[ $6 == armbian-desktop* && $BUILD_DESKTOP != "yes" ]] && return 1
+	[[ $pkgsubdir == armbian-desktop* && $BUILD_DESKTOP != "yes" ]] && return 1
 
-	# install dependencies
-	if [[ -n $ARMBIAN_PKG_DEPENDS && $ARMBIAN_PKG_INSTALL != "no" ]]; then
+	# install dependencies and suggestions
+	if [[ -n $ARMBIAN_PKG_DEPENDS || -n $ARMBIAN_PKG_SUGGESTS ]] && [[ $ARMBIAN_PKG_INSTALL != "no" ]]; then
 		display_alert "Dependecies for" "${ARMBIAN_PKG_PACKAGE}"
 		chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_DEPENDS}" >> $DEST/debug/install.log 2>&1
 		if [[ $? == 0 ]]; then display_alert "Installed" "" "info"; else display_alert "Installed" "" "err"; fi
+		display_alert "Suggestions for" "${ARMBIAN_PKG_PACKAGE}"
+		chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_SUGGESTS}" >> $DEST/debug/install.log 2>&1
+		if [[ $? == 0 ]]; then display_alert "Installed" "" "info"; else display_alert "Installed" "" "err"; fi
 	fi
+
+	# check if package already exists
+	if [[ ! -f $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb || $PACKAGES_RECOMPILE == "yes" ]]; then
 
 	# check if package already exists in repository
 	if [[ -n $(echo $REPOSITORY_PACKAGES | grep "${pkgname}") && $PACKAGES_RECOMPILE != "yes" && -n ${ARMBIAN_PKG_PACKAGE} ]]; then
@@ -144,9 +175,14 @@ function create_deb_package ()
 		dirforpacking=${mergeddir}
 	fi
 
+	# execute package sectio custom build script if defined
+	if [[ -f ${sectiondir}armbian.build.bash ]]; then
+		display_alert "Executing armbian.build.bash section script" "${ARMBIAN_PKG_PACKAGE}" "info"
+		source ${sectiondir}armbian.build.bash
+	fi
 	# execute package custom build script if defined
 	if [[ -f ${lowerdir}armbian.build.bash ]]; then
-		display_alert "Executing" "${lowerdir}armbian.build.bash" "info"
+		display_alert "Executing armbian.build.bash script" "${ARMBIAN_PKG_PACKAGE}" "info"
 		source ${lowerdir}armbian.build.bash
 	fi
 
@@ -160,11 +196,11 @@ function create_deb_package ()
 	fi
 
 	# compile DEBIAN scripts
-	process_line ${lowerdir} "armbian.preinst.bash" 	$2 $upperdir
-	process_line ${lowerdir} "armbian.postinst.bash"	$2 $upperdir
-	process_line ${lowerdir} "armbian.prerm.bash" 		$2 $upperdir
-	process_line ${lowerdir} "armbian.postrm.bash" 	$2 $upperdir
-	process_line ${lowerdir} "armbian.triggers.bash" 	$2 $upperdir
+	process_line ${lowerdir} "armbian.preinst.bash" 	$2 $upperdir ${sectiondir}
+	process_line ${lowerdir} "armbian.postinst.bash"	$2 $upperdir ${sectiondir}
+	process_line ${lowerdir} "armbian.prerm.bash" 		$2 $upperdir ${sectiondir}
+	process_line ${lowerdir} "armbian.postrm.bash" 		$2 $upperdir ${sectiondir}
+	process_line ${lowerdir} "armbian.triggers.bash" 	$2 $upperdir ${sectiondir}
 
 	# create DEBIAN control file
 	local control="$upperdir/DEBIAN/control"
@@ -191,9 +227,6 @@ function create_deb_package ()
 	echo "Homepage: ${ARMBIAN_PKG_HOMEPAGE}"													>> $control
 	echo "Description: ${ARMBIAN_PKG_DESCRIPTION}"												>> $control
 
-	# add slash to the variable if subdirectory is defined
-	[[ -n $ARMBIAN_PKG_REPOSITORY ]] && ARMBIAN_PKG_REPOSITORY+="/"
-
 	# if package name is defined, create deb file
 	if [[ -n $ARMBIAN_PKG_PACKAGE ]]; then
 		# build the package and save it in the output/debs directories
@@ -202,11 +235,17 @@ function create_deb_package ()
 			umount -l $mergeddir > /dev/null 2>&1
 			exit_with_error "Packaging process for ${pkgname}.deb ended with error"
 		fi
-		[[ $ARMBIAN_PKG_INSTALL != "no" ]] && install_deb_chroot "$DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb"
 	fi
 
 	umount -l $mergeddir > /dev/null 2>&1
 
 	# cleanup
 	if [[ $upperdir != "/" && $workdir != "/" && $mergeddir != "/" ]]; then rm -rf $upperdir $workdir $mergeddir; fi
+
+	else
+		display_alert "Skip building" "${ARMBIAN_PKG_PACKAGE} exits and force rebuilding is disabled." "info"
+	fi
+
+	# install package
+	[[ -n $ARMBIAN_PKG_PACKAGE && $ARMBIAN_PKG_INSTALL != "no" ]] && install_deb_chroot "$DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb"
 }

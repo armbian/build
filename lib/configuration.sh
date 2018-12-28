@@ -25,6 +25,7 @@ ROOTFS_CACHE_MAX=16 # max number of rootfs cache, older ones will be cleaned up
 # TODO: fixed name can't be used for parallel image building
 ROOT_MAPPER="armbian-root"
 
+[[ -z $DESKTOP_ENVIRONMENT ]] && DESKTOP_ENVIRONMENT=xfce
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 [[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
 
@@ -150,13 +151,14 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
 	libgtk2.0-bin libgnome2-perl network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
 	pulseaudio pavumeter pulseaudio-module-gconf bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
-	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic gparted mc simple-scan \
+	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic gparted \
 	onboard lightdm lightdm-gtk-greeter"
 
 
 # Recommended desktop packages
 PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi cups-pk-helper \
-	cups geany atril xarchiver leafpad"
+	cups geany atril xarchiver leafpad gnome-session-canberra libcanberra-pulse sox libcanberra-gtk-module libcanberra-gtk3-module \
+	mc simple-scan"
 
 # Release specific packages
 case $RELEASE in
