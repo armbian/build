@@ -24,9 +24,12 @@ if [ ! -f /boot/$bootscript_dst ]; then
 	echo "Recreating boot script"
 	cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
 	rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*\$//' < /proc/cmdline)
+	rootfstype=\$(sed -e 's/^.*rootfstype=//' -e 's/ .*$//' < /proc/cmdline)
 	cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
 	echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
+	echo "rootfstype="\$rootfstype >> /boot/armbianEnv.txt
 	sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
+	sed -i "s/setenv rootfstype.*/setenv rootfstype \\"\$rootfstype\\"/" /boot/boot.ini
 	[ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
 EOF
 
@@ -42,6 +45,8 @@ else
 		mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
 	elif [ -f /boot/boot.ini ]; then
 		rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*\$//' < /proc/cmdline)
+		rootfstype=\$(sed -e 's/^.*rootfstype=//' -e 's/ .*$//' < /proc/cmdline)
+		sed -i "s/setenv rootfstype.*/setenv rootfstype \\"\$rootfstype\\"/" /boot/boot.ini
 		sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
 	fi
 	# cleanup old bootscript backup
