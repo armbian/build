@@ -259,7 +259,7 @@ install_common()
 
 	# DNS fix. package resolvconf is not available everywhere
 	if [ -d /etc/resolvconf/resolv.conf.d ]; then
-		echo 'nameserver 1.1.1.1' > $SDCARD/etc/resolvconf/resolv.conf.d/head
+		echo 'nameserver 8.8.8.8' > $SDCARD/etc/resolvconf/resolv.conf.d/head
 	fi
 
 	# premit root login via SSH for the first boot
@@ -361,7 +361,7 @@ install_distribution_specific()
 		  renderer: NetworkManager
 		EOF
 		# DNS fix
-		sed -i "s/#DNS=.*/DNS=1.1.1.1/g" $SDCARD/etc/systemd/resolved.conf
+		sed -i "s/#DNS=.*/DNS=8.8.8.8/g" $SDCARD/etc/systemd/resolved.conf
 		# Journal service adjustements
 		sed -i "s/#Storage=.*/Storage=volatile/g" $SDCARD/etc/systemd/journald.conf
 		sed -i "s/#Compress=.*/Compress=yes/g" $SDCARD/etc/systemd/journald.conf

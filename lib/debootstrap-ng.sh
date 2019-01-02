@@ -224,7 +224,7 @@ create_rootfs_cache()
 
 		# this is needed for the build process later since resolvconf generated file in /run is not saved
 		rm $SDCARD/etc/resolv.conf
-		echo 'nameserver 1.1.1.1' >> $SDCARD/etc/resolv.conf
+		echo 'nameserver 8.8.8.8' >> $SDCARD/etc/resolv.conf
 
 		# stage: make rootfs cache archive
 		display_alert "Ending debootstrap process and preparing cache" "$RELEASE" "info"

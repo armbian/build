@@ -59,7 +59,7 @@ create_chroot()
 	printf '#!/bin/sh\nexit 101' > $target_dir/usr/sbin/policy-rc.d
 	chmod 755 $target_dir/usr/sbin/policy-rc.d
 	rm $target_dir/etc/resolv.conf 2>/dev/null
-	echo "1.1.1.1" > $target_dir/etc/resolv.conf
+	echo "8.8.8.8" > $target_dir/etc/resolv.conf
 	rm $target_dir/etc/hosts 2>/dev/null
 	echo "127.0.0.1 localhost" > $target_dir/etc/hosts
 	mkdir -p $target_dir/root/{build,overlay,sources} $target_dir/selinux
