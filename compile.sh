@@ -54,7 +54,7 @@ for i in "$@"; do
 		parameter=${i%%=*}
 		value=${i##*=}
 		display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
-		eval $parameter=$value
+		eval $parameter=\"$value\"
 	fi
 done
 
