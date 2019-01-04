@@ -225,6 +225,9 @@ if [[ -n $PACKAGE_LIST_RM ]]; then
 	PACKAGE_LIST=$(sed -r "s/\b($(tr ' ' '|' <<< $PACKAGE_LIST_RM))\b//g" <<< $PACKAGE_LIST)
 fi
 
+# Give the option to configure DNS server used in the chroot during the build process
+[[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
+
 # debug
 cat <<-EOF >> $DEST/debug/output.log
 
