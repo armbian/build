@@ -1,0 +1,114 @@
+From 4402e0d7858450f531f38aa7766233b4b8c8e1bb Mon Sep 17 00:00:00 2001
+From: Qiang Yu <yuq825@gmail.com>
+Date: Mon, 28 May 2018 17:36:59 +0800
+Subject: [PATCH 066/146] drm/lima: wait bo fence before bo close
+
+We can't bring preclose back, so use this
+method for user application termination.
+
+Signed-off-by: Qiang Yu <yuq825@gmail.com>
+---
+ drivers/gpu/drm/lima/lima_drv.c   |  9 +--------
+ drivers/gpu/drm/lima/lima_sched.c |  2 +-
+ drivers/gpu/drm/lima/lima_vm.c    | 32 +++++++++++++++++++++++++++++++
+ 3 files changed, 34 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/gpu/drm/lima/lima_drv.c b/drivers/gpu/drm/lima/lima_drv.c
+index 7f2e47da6801..d3ab9f7abb93 100644
+--- a/drivers/gpu/drm/lima/lima_drv.c
++++ b/drivers/gpu/drm/lima/lima_drv.c
+@@ -270,17 +270,11 @@ static int lima_drm_driver_open(struct drm_device *dev, struct drm_file *file)
+ 	return err;
+ }
+ 
+-static void lima_drm_driver_preclose(struct drm_device *dev, struct drm_file *file)
+-{
+-	struct lima_drm_priv *priv = file->driver_priv;
+-
+-        lima_ctx_mgr_fini(&priv->ctx_mgr);
+-}
+-
+ static void lima_drm_driver_postclose(struct drm_device *dev, struct drm_file *file)
+ {
+ 	struct lima_drm_priv *priv = file->driver_priv;
+ 
++	lima_ctx_mgr_fini(&priv->ctx_mgr);
+ 	lima_vm_put(priv->vm);
+ 	kfree(priv);
+ }
+@@ -310,7 +304,6 @@ static const struct file_operations lima_drm_driver_fops = {
+ static struct drm_driver lima_drm_driver = {
+ 	.driver_features    = DRIVER_RENDER | DRIVER_GEM | DRIVER_PRIME,
+ 	.open               = lima_drm_driver_open,
+-	.preclose           = lima_drm_driver_preclose,
+ 	.postclose          = lima_drm_driver_postclose,
+ 	.ioctls             = lima_drm_driver_ioctls,
+ 	.num_ioctls         = ARRAY_SIZE(lima_drm_driver_ioctls),
+diff --git a/drivers/gpu/drm/lima/lima_sched.c b/drivers/gpu/drm/lima/lima_sched.c
+index 3b5ea2e4674d..89e758718d62 100644
+--- a/drivers/gpu/drm/lima/lima_sched.c
++++ b/drivers/gpu/drm/lima/lima_sched.c
+@@ -112,7 +112,7 @@ int lima_sched_task_init(struct lima_sched_task *task,
+ 	int err;
+ 
+ 	err = drm_sched_job_init(&task->base, context->base.sched,
+-				 &context->base, context);
++				 &context->base, vm);
+ 	if (err)
+ 		return err;
+ 
+diff --git a/drivers/gpu/drm/lima/lima_vm.c b/drivers/gpu/drm/lima/lima_vm.c
+index 11eb3c278df2..19a683c2921b 100644
+--- a/drivers/gpu/drm/lima/lima_vm.c
++++ b/drivers/gpu/drm/lima/lima_vm.c
+@@ -195,15 +195,47 @@ int lima_vm_bo_add(struct lima_vm *vm, struct lima_bo *bo)
+ 	return 0;
+ }
+ 
++/* wait only fence of resv from task using vm */
++static int lima_vm_wait_resv(struct lima_vm *vm,
++			     struct reservation_object *resv)
++{
++	unsigned nr_fences;
++	struct dma_fence **fences;
++	int i;
++	long err;
++
++	err = reservation_object_get_fences_rcu(resv, NULL, &nr_fences, &fences);
++	if (err || !nr_fences)
++		return err;
++
++	for (i = 0; i < nr_fences; i++) {
++		struct drm_sched_fence *sf = to_drm_sched_fence(fences[i]);
++		if (sf && sf->owner == vm)
++			err |= dma_fence_wait(fences[i], false);
++		dma_fence_put(fences[i]);
++	}
++
++	kfree(fences);
++	return err;
++}
++
+ int lima_vm_bo_del(struct lima_vm *vm, struct lima_bo *bo)
+ {
+ 	struct lima_bo_va *bo_va;
+ 	struct lima_bo_va_mapping *mapping, *tmp;
++	int err;
+ 
+ 	bo_va = lima_vm_bo_find(vm, bo);
+ 	if (--bo_va->ref_count > 0)
+ 		return 0;
+ 
++	/* wait bo idle before unmap it from vm in case user
++	 * space application is terminated when bo is busy.
++	 */
++	err = lima_vm_wait_resv(vm, bo->tbo.resv);
++	if (err)
++		dev_err(vm->dev->dev, "bo del fail to wait (%d)\n", err);
++
+ 	list_for_each_entry_safe(mapping, tmp, &bo_va->mapping, list) {
+ 	        lima_vm_unmap(vm, mapping);
+ 	}
+-- 
+2.17.1
+

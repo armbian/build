@@ -26,8 +26,8 @@ case $BRANCH in
 
 	next)
 
-		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-		KERNELBRANCH='branch:linux-4.14.y'
+		KERNELSOURCE="https://github.com/megous/linux"
+		KERNELBRANCH="branch:orange-pi-4.19"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
 
 		KERNEL_USE_GCC='> 7.0'
