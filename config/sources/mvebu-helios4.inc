@@ -33,23 +33,8 @@ esac
 # Helios4 tweak
 family_tweaks_s()
 {
-	# install fancontrol and mdadm
-	chroot $SDCARD /bin/bash -c "apt-get -y -qq install fancontrol mdadm >/dev/null 2>&1"
-
-	### Fancontrol tweaks
-
-	# patch fancontrol
-	patch $SDCARD/usr/sbin/fancontrol $SRC/packages/bsp/helios4/fancontrol.patch
-
-	# copy fancontrol config
-	case $BRANCH in
-	default)
-		cp $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-default.conf $SDCARD/etc/fancontrol
-		;;
-	next)
-		cp $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-next.conf $SDCARD/etc/fancontrol
-		;;
-	esac
+	# install mdadm
+	chroot $SDCARD /bin/bash -c "apt-get -y -qq install mdadm >/dev/null 2>&1"
 
 	### Mdadm tweaks
 
