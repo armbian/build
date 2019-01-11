@@ -28,21 +28,3 @@ case $BRANCH in
 	BOOTPATCHDIR='u-boot-helios4-next'
 	;;
 esac
-
-
-# Helios4 tweak
-family_tweaks_s()
-{
-	# install mdadm
-	chroot $SDCARD /bin/bash -c "apt-get -y -qq install mdadm >/dev/null 2>&1"
-
-	### Mdadm tweaks
-
-	# copy mdadm-fault-led script and set right permission
-	cp $SRC/packages/bsp/helios4/mdadm-fault-led.sh $SDCARD/usr/sbin/
-	chmod a+x $SDCARD/usr/sbin/mdadm-fault-led.sh
-
-	# modify mdadm configuration
-	echo -e "\n # Trigger Fault Led script when an event is detected" >> $SDCARD/etc/mdadm/mdadm.conf
-	echo -e "PROGRAM /usr/sbin/mdadm-fault-led.sh" >> $SDCARD/etc/mdadm/mdadm.conf
-}

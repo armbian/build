@@ -2,6 +2,7 @@
 #
 
 mkdir -p ${upperdir}/etc/
+mkdir -p ${upperdir}/usr/sbin/
 mkdir -p ${upperdir}/usr/share/${ARMBIAN_PKG_PACKAGE}
 
 ## Fancontrol tweaks
@@ -15,3 +16,6 @@ next)
 	install -m 644 ${lowerdir}helios4-temp/fancontrol_pwm-fan-mvebu-next.conf ${upperdir}/etc/fancontrol
 	;;
 esac
+
+## Mdadm tweaks
+install -m 755 ${lowerdir}scripts/mdadm/mdadm-fault-led.sh ${upperdir}/usr/sbin/
