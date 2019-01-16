@@ -17,7 +17,8 @@ BOARD=$3
 BUILD_DESKTOP=$4
 
 # We don't want the damn network-manager :/
-apt remove network-manager
+apt remove network-manager -y
+apt autoremove -y
 cat << EOF >> /etc/apt/preferences
 Package: network-manager
 Pin: release *
@@ -38,11 +39,9 @@ touch /root/.not_logged_in_yet
 # "change the root password asap" so we disable it temporarily....
 chage -d 99999999 root
 
-# Go to tmp and run the install script
-cd /tmp/
-wget -O install_yunohost https://install.yunohost.org/stretch
-chmod +x /tmp/install_yunohost
-./install_yunohost -a
+# Run the install script
+curl https://install.yunohost.org/stretch | bash -s -- -a
+rm /var/log/yunohost-installation*
 
 # Clean stuff
 chage -d 0 root
