@@ -13,7 +13,7 @@ Supported build environment is **Ubuntu Bionic 18.04 x64** ([minimal iso image](
 - guest managed by [Vagrant](https://docs.armbian.com/Developer-Guide_Using-Vagrant/). This uses Virtualbox (as above) but does so in an easily repeatable way,
 - inside a [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/), [systemd-nspawn](https://www.freedesktop.org/software/systemd/man/systemd-nspawn.html) or other container environment [(example)](https://github.com/armbian/build/pull/255#issuecomment-205045273),
 - running natively on a dedicated PC or a server (**not** recommended),
-- **20GB disk space** or more and **2GB RAM** or more available for the VM, container or native OS,
+- **25GB disk space** or more and **2GB RAM** or more available for the VM, container or native OS,
 - superuser rights (configured `sudo` or root access).
 
 **Execution**
