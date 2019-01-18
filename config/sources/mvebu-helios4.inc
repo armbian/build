@@ -41,9 +41,6 @@ family_tweaks_s()
 	# copy hwmon rules to fix device mapping
 	cp $SRC/packages/bsp/helios4/90-helios4-hwmon.rules $SDCARD/etc/udev/rules.d/
 
-	# patch fancontrol
-	patch $SDCARD/usr/sbin/fancontrol $SRC/packages/bsp/helios4/fancontrol.patch
-
 	# copy fancontrol config
 	case $BRANCH in
 	default)
