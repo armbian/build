@@ -191,29 +191,6 @@ if [[ $ADD_UBOOT == yes ]]; then
 		done
 	done <<< "$UBOOT_TARGET_MAP"
 
-	# set up postinstall script
-	cat <<-EOF > $SRC/.tmp/$uboot_name/DEBIAN/postinst
-	#!/bin/bash
-	source /usr/lib/u-boot/platform_install.sh
-	[[ \$DEVICE == /dev/null ]] && exit 0
-	if [[ -z \$DEVICE ]]; then
-		DEVICE="/dev/mmcblk0"
-		# proceed to other options.
-		[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk1"
-		[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk2"
-	fi
-	[[ \$(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
-	if [[ -b \$DEVICE ]]; then
-		echo "Updating u-boot on \$DEVICE" >&2
-		write_uboot_platform \$DIR \$DEVICE
-		sync
-	else
-		echo "Device \$DEVICE does not exist, skipping" >&2
-	fi
-	exit 0
-	EOF
-	chmod 755 $SRC/.tmp/$uboot_name/DEBIAN/postinst
-
 	# declare -f on non-defined function does not do anything
 	cat <<-EOF > $SRC/.tmp/$uboot_name/usr/lib/u-boot/platform_install.sh
 	DIR=/usr/lib/$uboot_name

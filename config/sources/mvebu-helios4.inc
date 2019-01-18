@@ -28,39 +28,3 @@ case $BRANCH in
 	BOOTPATCHDIR='u-boot-helios4-next'
 	;;
 esac
-
-
-# Helios4 tweak
-family_tweaks_s()
-{
-	# install fancontrol and mdadm
-	chroot $SDCARD /bin/bash -c "apt-get -y -qq install fancontrol mdadm >/dev/null 2>&1"
-
-	### Fancontrol tweaks
-
-	# copy hwmon rules to fix device mapping
-	cp $SRC/packages/bsp/helios4/90-helios4-hwmon.rules $SDCARD/etc/udev/rules.d/
-
-	# patch fancontrol
-	patch $SDCARD/usr/sbin/fancontrol $SRC/packages/bsp/helios4/fancontrol.patch
-
-	# copy fancontrol config
-	case $BRANCH in
-	default)
-		cp $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-default.conf $SDCARD/etc/fancontrol
-		;;
-	next)
-		cp $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-next.conf $SDCARD/etc/fancontrol
-		;;
-	esac
-
-	### Mdadm tweaks
-
-	# copy mdadm-fault-led script and set right permission
-	cp $SRC/packages/bsp/helios4/mdadm-fault-led.sh $SDCARD/usr/sbin/
-	chmod a+x $SDCARD/usr/sbin/mdadm-fault-led.sh
-
-	# modify mdadm configuration
-	echo -e "\n # Trigger Fault Led script when an event is detected" >> $SDCARD/etc/mdadm/mdadm.conf
-	echo -e "PROGRAM /usr/sbin/mdadm-fault-led.sh" >> $SDCARD/etc/mdadm/mdadm.conf
-}

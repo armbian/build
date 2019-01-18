@@ -10,7 +10,7 @@
 # common options
 # daily beta build contains date in subrevision
 if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
-REVISION="5.67$SUBREVISION" # all boards have same revision
+REVISION="5.71$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 [[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik" # deb signature
 [[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -21,7 +21,8 @@ HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
 ROOTFSCACHE_VERSION=4
 CHROOT_CACHE_VERSION=6
 ROOTFS_CACHE_MAX=16 # max number of rootfs cache, older ones will be cleaned up
-###ADD_UBOOT="yes" # some tvboxes doesn't need building u-boot
+#20190117
+ADD_UBOOT="yes" # some tvboxes doesn't need building u-boot
 # TODO: fixed name can't be used for parallel image building
 ROOT_MAPPER="armbian-root"
 
@@ -224,6 +225,9 @@ PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 if [[ -n $PACKAGE_LIST_RM ]]; then
 	PACKAGE_LIST=$(sed -r "s/\b($(tr ' ' '|' <<< $PACKAGE_LIST_RM))\b//g" <<< $PACKAGE_LIST)
 fi
+
+# Give the option to configure DNS server used in the chroot during the build process
+[[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
 
 # debug
 cat <<-EOF >> $DEST/debug/output.log

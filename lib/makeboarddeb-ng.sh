@@ -19,7 +19,9 @@
 #
 find_deb_packages_prepare(){
 
+	# define storage of repository package list which is regenerated at update.
 	REPOSITORY_PACKAGES="`wget -qO- https://apt.armbian.com/.packages.txt`"
+
 	# recreate directories just to make sure aptly won't break
 	mkdir -p $DEST/debs/extra/${RELEASE}-desktop $DEST/debs/extra/${RELEASE}-utils
 
@@ -27,7 +29,7 @@ find_deb_packages_prepare(){
 	ARMBIAN_PACKAGE_LIST=""
 	IFS=$'\n'
 	names=()
-	dirs=( $(find $SRC/config/packages -maxdepth 2 -mindepth 2 -not -path "*/TEMPLATE/*" | sort ) )
+	dirs=( $(find $SRC/config/packages -maxdepth 3 -mindepth 3 -not -path "*/TEMPLATE/*" | sort ) )
 
 	# required for "for" command
 	shopt -s nullglob dotglob
@@ -40,12 +42,12 @@ find_deb_packages_prepare(){
 		for config in ${dir%%:*}/armbian.config.bash; do
 			names+=($(basename $config))
 			local first="$(cut -d'/' -f2 <<<"${cleaned_dir%%:*}")"
-			local second="$(cut -d'/' -f3 <<<"${cleaned_dir%%:*}")"
+			local second="$(cut -d'/' -f4 <<<"${cleaned_dir%%:*}")"
 				if [[ -f ${dir%%:*}/$names ]]; then
 					local location_lowerdir="${dir%%:*}/"
-					local location_upperdir="$SRC/.tmp/.upperdir${cleaned_dir%%:*}/"
-					local location_workdir="$SRC/.tmp/.workdir${cleaned_dir%%:*}/"
-					local location_merged="$SRC/.tmp/.merged${cleaned_dir%%:*}/"
+					local location_upperdir="$SRC/.tmp/package-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}/.upperdir${cleaned_dir%%:*}/"
+					local location_workdir="$SRC/.tmp/package-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}/.workdir${cleaned_dir%%:*}/"
+					local location_merged="$SRC/.tmp/package-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}/.merged${cleaned_dir%%:*}/"
 					create_deb_package $location_lowerdir $location_upperdir $location_workdir $location_merged $first $second
 				fi
 		done
@@ -68,6 +70,8 @@ if [[ -f $1$2 || -f $5$2 && $2 != armbian.triggers.bash ]]; then
 	echo "#" >> $filename
 	echo "" >> $filename
 fi
+
+
 # include section script if exists
 if [[ -f $5/$2 ]]; then
 	postinst=$(source $5$2)
@@ -82,6 +86,8 @@ if [[ -f $1/$2 ]]; then
 		echo "$line" >> $filename
 	done <<< "$postinst"
 fi
+
+
 # generate footer if common or specific script exists
 if [[ -f $1$2 || -f $5$2 && $2 != armbian.triggers.bash ]]; then
 	echo "" >> $filename
@@ -122,52 +128,62 @@ function create_deb_package ()
 	source $1/armbian.config.bash
 
 	# add slash to the variable if subdirectory is defined
-        [[ -n $ARMBIAN_PKG_REPOSITORY ]] && ARMBIAN_PKG_REPOSITORY+="/"
+	[[ -n $ARMBIAN_PKG_REPOSITORY ]] && ARMBIAN_PKG_REPOSITORY+="/"
 
 	# define local variables for better readability
-	local pkgname="${ARMBIAN_PKG_PACKAGE}_${ARMBIAN_PKG_REVISION}_${ARMBIAN_PKG_ARCH}"
-	local lowerdir="$1"		# source
-	local upperdir="$2${pkgname}"	# destination
-	local workdir="$3${pkgname}"	# reserved
-	local mergeddir="$4${pkgname}"	# source overlay + destination
-	local dirforpacking=${upperdir}	# depandable wheather we have an overlay or not
-	local pkgsubdir="$6"
-	local sectiondir=${lowerdir/$pkgsubdir\//}
+	local pkgname="${ARMBIAN_PKG_PACKAGE}_${ARMBIAN_PKG_REVISION}_${ARMBIAN_PKG_ARCH}"	# define package name
+	local lowerdir="$1"																	# source
+	local upperdir="$2${pkgname}"														# destination
+	local workdir="$3${pkgname}"														# reserved
+	local mergeddir="$4${pkgname}"														# source overlay + destination
+	local dirforpacking=${upperdir}														# if have an overlay or not
+	local pkgsubdir="$6"																# subdirectory name
+	local sectiondir=${lowerdir/$pkgsubdir\//}											# section directory
+	local sectiondir=${sectiondir/dedicated\//}"shared/"								# section shared directory
 
 	# Packing only for the selected family
 	[[ $5 == *-family && $LINUXFAMILY != $pkgsubdir ]] && return 1
+
 	# Packing only for the selected board
 	[[ $5 == *-board && $BOARD != $pkgsubdir ]] && return 1
+
 	# Packing only for CLI
 	[[ $pkgsubdir == armbian-desktop* && $BUILD_DESKTOP != "yes" ]] && return 1
 
 	# install dependencies and suggestions
 	if [[ -n $ARMBIAN_PKG_DEPENDS || -n $ARMBIAN_PKG_SUGGESTS ]] && [[ $ARMBIAN_PKG_INSTALL != "no" ]]; then
-		display_alert "Dependecies for" "${ARMBIAN_PKG_PACKAGE}"
+		display_alert "Installing dependecies for" "${ARMBIAN_PKG_PACKAGE}"
+		echo "Installing dependecies: ${ARMBIAN_PKG_DEPENDS}" >> $DEST/debug/install.log 2>&1
 		chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_DEPENDS}" >> $DEST/debug/install.log 2>&1
-		if [[ $? == 0 ]]; then display_alert "Installed" "" "info"; else display_alert "Installed" "" "err"; fi
-		display_alert "Suggestions for" "${ARMBIAN_PKG_PACKAGE}"
+		if [[ $? == 0 ]]; then display_alert "Dependecies" "Installed" "info"; else display_alert "Installed" "" "err"; fi
+		display_alert "Installing suggestions for" "${ARMBIAN_PKG_PACKAGE}"
+		echo "Installing suggestions: ${ARMBIAN_PKG_SUGGESTS}" >> $DEST/debug/install.log 2>&1
 		chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_SUGGESTS}" >> $DEST/debug/install.log 2>&1
-		if [[ $? == 0 ]]; then display_alert "Installed" "" "info"; else display_alert "Installed" "" "err"; fi
+		if [[ $? == 0 ]]; then display_alert "Suggestions" "Installed" "info"; else display_alert "Installed" "" "err"; fi
 	fi
 
-	# check if package already exists
+	# check if package does not exists
 	if [[ ! -f $DEST/debs/${ARMBIAN_PKG_REPOSITORY}${pkgname}.deb || $PACKAGES_RECOMPILE == "yes" ]]; then
 
-	# check if package already exists in repository
-	if [[ -n $(echo $REPOSITORY_PACKAGES | grep "${pkgname}") && $PACKAGES_RECOMPILE != "yes" && -n ${ARMBIAN_PKG_PACKAGE} ]]; then
-		chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_PACKAGE}" >> $DEST/debug/install.log 2>&1
-		if [[ $? == 0 ]]; then display_alert "Installed" "${ARMBIAN_PKG_PACKAGE} from repository. Force rebuilding is disabled." "info"; else display_alert "Installed" "${ARMBIAN_PKG_PACKAGE}" "err"; fi
+		# check if package already exists in the repository
+		if [[ -n $(echo $REPOSITORY_PACKAGES | grep "${pkgname}") && $PACKAGES_RECOMPILE != "yes" && -n ${ARMBIAN_PKG_PACKAGE} ]]; then
+			chroot $SDCARD /bin/bash -c "apt -qq -y install ${ARMBIAN_PKG_PACKAGE}" >> $DEST/debug/install.log 2>&1
+			if [[ $? == 0 ]]; then
+				display_alert "Installed" "${ARMBIAN_PKG_PACKAGE} from repository. Force rebuilding is disabled." "info"
+			else
+				display_alert "Installed" "${ARMBIAN_PKG_PACKAGE}" "err"
+			fi
 		return 1
-	fi
+		fi
 
-	# re-create temporally directories
-	if [[ $upperdir != "/" && $workdir != "/" && $mergeddir != "/" ]]; then
-		rm -rf $upperdir $workdir $mergeddir
-		mkdir -p $upperdir/DEBIAN $workdir $mergeddir
-		# destination debs subdirectories if needed
-		mkdir -p $DEST/debs/${ARMBIAN_PKG_REPOSITORY}
-	fi
+		# re-create temporally directories
+		if [[ $upperdir != "/" && $workdir != "/" && $mergeddir != "/" ]]; then
+			umount -l $mergeddir > /dev/null 2>&1
+			rm -rf $upperdir $workdir $mergeddir
+			mkdir -p $upperdir/DEBIAN $workdir $mergeddir
+			# destination debs subdirectories if needed
+			mkdir -p $DEST/debs/${ARMBIAN_PKG_REPOSITORY}
+		fi
 
 	# merge directories with overlay so we don't need to copy anything
 	if [[ -d $1overlay ]]; then
@@ -180,6 +196,11 @@ function create_deb_package ()
 		display_alert "Executing armbian.build.bash section script" "${ARMBIAN_PKG_PACKAGE}" "info"
 		source ${sectiondir}armbian.build.bash
 	fi
+
+	if [[ -d ${sectiondir}overlay ]]; then
+		cp -R ${sectiondir}overlay/* $upperdir
+	fi
+
 	# execute package custom build script if defined
 	if [[ -f ${lowerdir}armbian.build.bash ]]; then
 		display_alert "Executing armbian.build.bash script" "${ARMBIAN_PKG_PACKAGE}" "info"

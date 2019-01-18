@@ -26,8 +26,8 @@ case $BRANCH in
 
 	next)
 
-		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-		KERNELBRANCH='branch:linux-4.14.y'
+		KERNELSOURCE="https://github.com/megous/linux"
+		KERNELBRANCH="branch:orange-pi-4.19"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
 
 		KERNEL_USE_GCC='> 7.0'
@@ -39,7 +39,7 @@ case $BRANCH in
 		#KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 		KERNELSOURCE="https://github.com/megous/linux"
 		#KERNELBRANCH='branch:linux-4.19.y'
-		KERNELBRANCH="branch:orange-pi-4.19"
+		KERNELBRANCH="branch:orange-pi-4.20"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
 		KERNELPATCHDIR='sunxi-dev'
 		KERNEL_USE_GCC='> 7.0'
