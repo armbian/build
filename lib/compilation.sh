@@ -57,8 +57,10 @@ compile_atf()
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
 
+	# ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF.
+	# Check: https://github.com/armbian/build/issues/1157
 	eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$toolchain2:$PATH \
-		'make $target_make $CTHREADS CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>&1 \
+		'make ENABLE_BACKTRACE="0" $target_make $CTHREADS CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>&1 \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling ATF..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -186,29 +188,6 @@ compile_uboot()
 			cp $f_src $SRC/.tmp/$uboot_name/usr/lib/$uboot_name/$f_dst
 		done
 	done <<< "$UBOOT_TARGET_MAP"
-
-	# set up postinstall script
-	cat <<-EOF > $SRC/.tmp/$uboot_name/DEBIAN/postinst
-	#!/bin/bash
-	source /usr/lib/u-boot/platform_install.sh
-	[[ \$DEVICE == /dev/null ]] && exit 0
-	if [[ -z \$DEVICE ]]; then
-		DEVICE="/dev/mmcblk0"
-		# proceed to other options.
-		[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk1"
-		[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk2"
-	fi
-	[[ \$(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
-	if [[ -b \$DEVICE ]]; then
-		echo "Updating u-boot on \$DEVICE" >&2
-		write_uboot_platform \$DIR \$DEVICE
-		sync
-	else
-		echo "Device \$DEVICE does not exist, skipping" >&2
-	fi
-	exit 0
-	EOF
-	chmod 755 $SRC/.tmp/$uboot_name/DEBIAN/postinst
 
 	# declare -f on non-defined function does not do anything
 	cat <<-EOF > $SRC/.tmp/$uboot_name/usr/lib/u-boot/platform_install.sh

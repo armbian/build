@@ -22,7 +22,7 @@ if ext4load mmc ${devnum}:1 ${kernel_addr_r} ${prefix}/armbianEnv.txt; then
 	env import -t ${kernel_addr_r} ${filesize}
 fi
 
-setenv bootargs "console=ttySAC0,115200n8 root=${rootdev} rootwait rootfstype=${rootfstype} loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
+setenv bootargs "console=ttySAC0,115200n8 console=tty1 root=${rootdev} rootwait rootfstype=${rootfstype} loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 
 if ext4load mmc ${devnum}:1 ${fdt_addr} ${prefix}dtb/nexell/${fdtfile} || ext4load mmc 1:1 ${fdt_addr} ${prefix}dtb/nexell/s5p6818-nanopi3-rev07.dtb; then echo "Loading DTB"; fi
 ext4load mmc ${devnum}:1 ${ramdisk_addr_r} ${prefix}uInitrd

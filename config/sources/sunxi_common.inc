@@ -1,6 +1,6 @@
 BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 BOOTDIR=$MAINLINE_UBOOT_DIR
-BOOTBRANCH='tag:v2018.05'
+BOOTBRANCH='tag:v2018.11'
 BOOTSCRIPT="boot-sunxi.cmd:boot.cmd"
 BOOTENV_FILE='sunxi-default.txt'
 BOOTPATCHDIR='u-boot-sunxi'
@@ -26,8 +26,8 @@ case $BRANCH in
 
 	next)
 
-		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-		KERNELBRANCH='branch:linux-4.14.y'
+		KERNELSOURCE="https://github.com/megous/linux"
+		KERNELBRANCH="branch:orange-pi-4.19"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
 
 		KERNEL_USE_GCC='> 7.0'
@@ -36,10 +36,12 @@ case $BRANCH in
 
 	dev)
 
-		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-		KERNELBRANCH='branch:linux-4.18.y'
+		#KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+		KERNELSOURCE="https://github.com/megous/linux"
+		#KERNELBRANCH='branch:linux-4.19.y'
+		KERNELBRANCH="branch:orange-pi-4.20"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
-
+		KERNELPATCHDIR='sunxi-dev'
 		KERNEL_USE_GCC='> 7.0'
 
 	;;

@@ -4,11 +4,17 @@ BOOTDELAY=1
 
 BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 BOOTDIR=$MAINLINE_UBOOT_DIR
-BOOTBRANCH='tag:v2018.05'
+BOOTBRANCH='tag:v2018.11'
 BOOTPATCHDIR='u-boot-sunxi'
 UBOOT_USE_GCC='> 7.0'
 UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
 BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
+
+ATF_PLAT="sun50i_a64"
+
+if [[ $BOARDFAMILY = "sun50iw6" ]]; then
+    ATF_PLAT="sun50i_h6";
+fi
 
 # Here we want to rename LINUXFAMILY from sun50iw1, sun50iw2, etc for next and dev branches
 # since this doesn't affect any stable images don't add any backwards compatibility hacks
@@ -23,34 +29,35 @@ case $BRANCH in
 
 	next)
 
-		ATFSOURCE='https://github.com/apritzel/arm-trusted-firmware'
+		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 		ATFDIR='arm-trusted-firmware-sunxi-mainline'
-		ATFBRANCH='branch:allwinner'
+		ATFBRANCH='branch:master'
 		ATF_USE_GCC='> 6.3'
-		ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
+		ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 
-		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-		KERNELBRANCH='branch:linux-4.14.y'
+		KERNELSOURCE="https://github.com/megous/linux"
+		KERNELBRANCH="branch:orange-pi-4.19"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
-		KERNEL_USE_GCC='> 7.0'
 		KERNELPATCHDIR='sunxi-next'
+		KERNEL_USE_GCC='> 7.0'
 
 	;;
 
 	dev)
 
-		ATFSOURCE='https://github.com/apritzel/arm-trusted-firmware'
+		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 		ATFDIR='arm-trusted-firmware-sunxi-mainline'
-		ATFBRANCH='branch:allwinner'
+		ATFBRANCH='branch:master'
 		ATF_USE_GCC='> 6.3'
-		ATF_TARGET_MAP='PLAT=sun50iw1p1 DEBUG=1 bl31;;build/sun50iw1p1/debug/bl31.bin'
+		ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 
-		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-		KERNELBRANCH='branch:linux-4.18.y'
+		#KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+		KERNELSOURCE="https://github.com/megous/linux"
+		#KERNELBRANCH='branch:linux-4.19.y'
+		KERNELBRANCH="branch:orange-pi-4.20"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
-		KERNEL_USE_GCC='> 7.0'
 		KERNELPATCHDIR='sunxi-dev'
-
+		KERNEL_USE_GCC='> 7.0'
 	;;
 esac
 

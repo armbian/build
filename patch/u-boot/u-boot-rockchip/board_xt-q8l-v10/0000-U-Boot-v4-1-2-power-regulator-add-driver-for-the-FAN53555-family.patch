@@ -1,0 +1,438 @@
+From patchwork Sun Nov 26 20:45:55 2017
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+Subject: [U-Boot,v4,1/2] power: regulator: add driver for the FAN53555 family
+X-Patchwork-Submitter: "Dr. Philipp Tomsich"
+ <philipp.tomsich@theobroma-systems.com>
+X-Patchwork-Id: 841423
+X-Patchwork-Delegate: philipp.tomsich@theobroma-systems.com
+Message-Id: <1511729156-30197-1-git-send-email-philipp.tomsich@theobroma-systems.com>
+To: u-boot@lists.denx.de
+Cc: Jacob Chen <jacob-chen@iotwrt.com>
+Date: Sun, 26 Nov 2017 21:45:55 +0100
+From: Philipp Tomsich <philipp.tomsich@theobroma-systems.com>
+List-Id: U-Boot discussion <u-boot.lists.denx.de>
+
+This adds a driver for the FAN53555 family of regulators.
+
+While these devices support a 'normal' and 'suspend' mode (controlled
+via an external pin) to switch between two programmable voltages, this
+incarnation of the driver assumes that the device is always operating
+in 'normal' mode.
+
+Only setting/reading the programmed voltage is supported at this time
+and the following device functionality remains unsupported:
+  - switching the selected voltage (via a GPIO)
+  - disabling the voltage output via software-control
+This matches the functionality of the Linux driver.
+
+Tested on a RK3399-Q7 (with 'option 5' devices): setting voltages from
+the U-Boot shell and verifying output voltages on the board.
+
+Signed-off-by: Philipp Tomsich <philipp.tomsich@theobroma-systems.com>
+Tested-by: Klaus Goger <klaus.goger@theobroma-systems.com>
+---
+
+Changes in v4:
+- fix issues introduced when updating for review comments (sorry for
+  this: my submit-branch had diverged from the WIP-branch I used for
+  testing and I didn't notice)
+
+Changes in v3:
+- update for review comments
+
+Changes in v2:
+- adapted documentation on the device-tree binding from Linux
+
+ doc/device-tree-bindings/regulator/fan53555.txt |  23 +++
+ drivers/power/regulator/Kconfig                 |  14 ++
+ drivers/power/regulator/Makefile                |   1 +
+ drivers/power/regulator/fan53555.c              | 262 ++++++++++++++++++++++++
+ 4 files changed, 300 insertions(+)
+ create mode 100644 doc/device-tree-bindings/regulator/fan53555.txt
+ create mode 100644 drivers/power/regulator/fan53555.c
+
+diff --git a/doc/device-tree-bindings/regulator/fan53555.txt b/doc/device-tree-bindings/regulator/fan53555.txt
+new file mode 100644
+index 0000000..b183738
+--- /dev/null
++++ b/doc/device-tree-bindings/regulator/fan53555.txt
+@@ -0,0 +1,23 @@
++Binding for Fairchild FAN53555 regulators
++
++Required properties:
++  - compatible: "fcs,fan53555"
++  - reg: I2C address
++
++Optional properties:
++  - fcs,suspend-voltage-selector: declare which of the two available
++		voltage selector registers should be used for the suspend
++		voltage. The other one is used for the runtime voltage setting
++		Possible values are either <0> or <1>
++  - vin-supply: regulator supplying the vin pin
++
++Example:
++
++	regulator@40 {
++		compatible = "fcs,fan53555";
++		regulator-name = "fan53555";
++		regulator-min-microvolt = <1000000>;
++		regulator-max-microvolt = <1800000>;
++		vin-supply = <&parent_reg>;
++		fcs,suspend-voltage-selector = <1>;
++	};
+diff --git a/drivers/power/regulator/Kconfig b/drivers/power/regulator/Kconfig
+index 8892fa1..c26a765 100644
+--- a/drivers/power/regulator/Kconfig
++++ b/drivers/power/regulator/Kconfig
+@@ -69,6 +69,20 @@ config DM_REGULATOR_MAX77686
+ 	features for REGULATOR MAX77686. The driver implements get/set api for:
+ 	value, enable and mode.
+ 
++config DM_REGULATOR_FAN53555
++	bool "Enable Driver Model for REGULATOR FAN53555"
++	depends on DM_REGULATOR && DM_I2C
++	---help---
++	This config enables implementation of driver-model regulator uclass
++	features for the FAN53555 regulator. The FAN53555 is a (family of)
++	single-output regulators that supports transitioning between two
++	different output voltages based on an voltage selection pin.
++
++	The driver implements a get/set api for the voltage of the 'normal
++	mode' voltage only. Switching to 'suspend mode' (i.e. the alternate
++	voltage), disabling output via software, or switching the mode is
++	not supported by this driver (at this time).
++
+ config DM_REGULATOR_FIXED
+ 	bool "Enable Driver Model for REGULATOR Fixed value"
+ 	depends on DM_REGULATOR
+diff --git a/drivers/power/regulator/Makefile b/drivers/power/regulator/Makefile
+index 6c149a9..21040ea 100644
+--- a/drivers/power/regulator/Makefile
++++ b/drivers/power/regulator/Makefile
+@@ -11,6 +11,7 @@ obj-$(CONFIG_REGULATOR_AS3722)	+= as3722_regulator.o
+ obj-$(CONFIG_DM_REGULATOR_MAX77686) += max77686.o
+ obj-$(CONFIG_DM_REGULATOR_PFUZE100) += pfuze100.o
+ obj-$(CONFIG_REGULATOR_PWM) += pwm_regulator.o
++obj-$(CONFIG_$(SPL_)DM_REGULATOR_FAN53555) += fan53555.o
+ obj-$(CONFIG_$(SPL_)DM_REGULATOR_FIXED) += fixed.o
+ obj-$(CONFIG_$(SPL_)DM_REGULATOR_GPIO) += gpio-regulator.o
+ obj-$(CONFIG_REGULATOR_RK8XX) += rk8xx.o
+diff --git a/drivers/power/regulator/fan53555.c b/drivers/power/regulator/fan53555.c
+new file mode 100644
+index 0000000..297e53f
+--- /dev/null
++++ b/drivers/power/regulator/fan53555.c
+@@ -0,0 +1,262 @@
++/*
++ * (C) 2017 Theobroma Systems Design und Consulting GmbH
++ *
++ * SPDX-License-Identifier:     GPL-2.0+
++ */
++
++#include <common.h>
++#include <bitfield.h>
++#include <errno.h>
++#include <dm.h>
++#include <fdtdec.h>
++#include <i2c.h>
++#include <asm/gpio.h>
++#include <power/pmic.h>
++#include <power/regulator.h>
++
++DECLARE_GLOBAL_DATA_PTR;
++
++/**
++ * struct ic_types - definition of fan53555-family devices
++ *
++ * @die_id: Identifies the DIE_ID (lower nibble of the ID1 register)
++ * @die_rev: Identifies the DIE_REV (lower nibble of the ID2 register)
++ * @vsel_min: starting voltage (step 0) in uV
++ * @vsel_step: increment of the voltage in uV
++ *
++ * The voltage ramp (i.e. minimum voltage and step) is selected from the
++ * combination of 2 nibbles: DIE_ID and DIE_REV.
++ *
++ * See http://www.onsemi.com/pub/Collateral/FAN53555-D.pdf for details.
++ */
++static const struct {
++	u8 die_id;
++	u8 die_rev;
++	u32 vsel_min;
++	u32 vsel_step;
++} ic_types[] = {
++	{ 0x0, 0x3, 600000, 10000 },  /* Option 00 */
++	{ 0x0, 0xf, 800000, 10000 },  /* Option 13 */
++	{ 0x0, 0xc, 600000, 12500 },  /* Option 23 */
++	{ 0x1, 0x3, 600000, 10000 },  /* Option 01 */
++	{ 0x3, 0x3, 600000, 10000 },  /* Option 03 */
++	{ 0x4, 0xf, 603000, 12826 },  /* Option 04 */
++	{ 0x5, 0x3, 600000, 10000 },  /* Option 05 */
++	{ 0x8, 0x1, 600000, 10000 },  /* Option 08 */
++	{ 0x8, 0xf, 600000, 10000 },  /* Option 08 */
++	{ 0xc, 0xf, 603000, 12826 },  /* Option 09 */
++};
++
++/* I2C-accessible byte-sized registers */
++enum {
++	/* Voltage setting */
++	FAN53555_VSEL0 = 0x00,
++	FAN53555_VSEL1,
++	/* Control register */
++	FAN53555_CONTROL,
++	/* IC Type */
++	FAN53555_ID1,
++	/* IC mask version */
++	FAN53555_ID2,
++	/* Monitor register */
++	FAN53555_MONITOR,
++};
++
++struct fan53555_platdata {
++	/* Voltage setting register */
++	unsigned int vol_reg;
++	unsigned int sleep_reg;
++
++};
++
++struct fan53555_priv {
++	/* IC Vendor */
++	unsigned int vendor;
++	/* IC Type and Rev */
++	unsigned int die_id;
++	unsigned int die_rev;
++	/* Voltage range and step(linear) */
++	unsigned int vsel_min;
++	unsigned int vsel_step;
++	/* Voltage slew rate limiting */
++	unsigned int slew_rate;
++	/* Sleep voltage cache */
++	unsigned int sleep_vol_cache;
++};
++
++static int fan53555_write(struct udevice *dev, uint reg, u8 *buff, int len)
++{
++	int ret;
++
++	ret = dm_i2c_write(dev, reg, buff, len);
++	if (ret) {
++		debug("%s: %s() failed to read reg %d\n",
++		      dev->name, __func__, reg);
++		return ret;
++	}
++
++	return 0;
++}
++
++static int fan53555_read(struct udevice *dev, uint reg, u8 *buff, int len)
++{
++	int ret;
++
++	ret = dm_i2c_read(dev, reg, buff, len);
++	if (ret) {
++		debug("%s: %s() failed to read reg %d\n",
++		      dev->name, __func__, reg);
++		return ret;
++	}
++
++	return 0;
++}
++
++static int fan53555_regulator_ofdata_to_platdata(struct udevice *dev)
++{
++	struct fan53555_platdata *dev_pdata = dev_get_platdata(dev);
++	struct dm_regulator_uclass_platdata *uc_pdata =
++		dev_get_uclass_platdata(dev);
++	u32 sleep_vsel;
++
++	/* This is a buck regulator */
++	uc_pdata->type = REGULATOR_TYPE_BUCK;
++
++	sleep_vsel = dev_read_u32_default(dev, "fcs,suspend-voltage-selector",
++					  FAN53555_VSEL1);
++
++	/*
++	 * Depending on the device-tree settings, the 'normal mode'
++	 * voltage is either controlled by VSEL0 or VSEL1.
++	 */
++	switch (sleep_vsel) {
++	case FAN53555_VSEL0:
++		dev_pdata->sleep_reg = FAN53555_VSEL0;
++		dev_pdata->vol_reg = FAN53555_VSEL1;
++		break;
++	case FAN53555_VSEL1:
++		dev_pdata->sleep_reg = FAN53555_VSEL1;
++		dev_pdata->vol_reg = FAN53555_VSEL0;
++		break;
++	default:
++		pr_err("%s: invalid vsel id %d\n", dev->name, sleep_vsel);
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int fan53555_regulator_get_value(struct udevice *dev)
++{
++	struct fan53555_platdata *pdata = dev_get_platdata(dev);
++	struct fan53555_priv *priv = dev_get_priv(dev);
++	u8 vol;
++	int voltage;
++	int ret;
++
++	/* We only support a single voltage selector (i.e. 'normal' mode). */
++	ret = fan53555_read(dev, pdata->vol_reg, &vol, 1);
++	if (ret)
++		return ret;
++	voltage = priv->vsel_min + (vol & 0x3f) * priv->vsel_step;
++
++	debug("%s: %d uV\n", __func__, voltage);
++	return voltage;
++}
++
++static int fan53555_regulator_set_value(struct udevice *dev, int uV)
++{
++	struct fan53555_platdata *pdata = dev_get_platdata(dev);
++	struct fan53555_priv *priv = dev_get_priv(dev);
++	u8 vol, oldbits, newbits;
++	int ret = 0;
++
++	vol = (uV - priv->vsel_min) / priv->vsel_step;
++	ret = fan53555_read(dev, pdata->vol_reg, &oldbits, 1);
++	if (ret)
++		return ret;
++	newbits = bitfield_replace(oldbits, 0, 6, vol);
++	ret = fan53555_write(dev, pdata->vol_reg, &newbits, 1);
++
++	debug("%s: uV=%d; reg %d: %02x -> %02x\n",
++	      __func__, uV, pdata->vol_reg, oldbits, newbits);
++
++	return ret;
++}
++
++static int fan53555_voltages_setup(struct udevice *dev)
++{
++	struct fan53555_priv *priv = dev_get_priv(dev);
++	int i;
++
++	/* Init voltage range and step */
++	for (i = 0; i < ARRAY_SIZE(ic_types); ++i) {
++		if (ic_types[i].die_id != priv->die_id)
++			continue;
++
++		if (ic_types[i].die_rev != priv->die_rev)
++			continue;
++
++		priv->vsel_min = ic_types[i].vsel_min;
++		priv->vsel_step = ic_types[i].vsel_step;
++
++		return 0;
++	}
++
++	pr_err("%s: %s: die id %d rev %d not supported!\n",
++	       dev->name, __func__, priv->die_id, priv->die_rev);
++	return -EINVAL;
++}
++
++enum {
++	DIE_ID_SHIFT = 0,
++	DIE_ID_WIDTH = 4,
++	DIE_REV_SHIFT = 0,
++	DIE_REV_WIDTH = 4,
++};
++
++static int fan53555_probe(struct udevice *dev)
++{
++	struct fan53555_priv *priv = dev_get_priv(dev);
++	u8 id[2];
++	int ret;
++
++	/* read chip ID1 and ID2 (two registers, starting at ID1) */
++	ret = fan53555_read(dev, FAN53555_ID1, &id[0], 2);
++	if (ret)
++		return ret;
++
++	/* extract vendor, die_id and die_rev */
++	priv->vendor = bitfield_extract(id[0], 5, 3);
++	priv->die_id = id[0] & GENMASK(3, 0);
++	priv->die_rev = id[1] & GENMASK(3, 0);
++
++	if (fan53555_voltages_setup(dev) < 0)
++		return -ENODATA;
++
++	debug("%s: FAN53555 option %d rev %d detected\n",
++	      __func__, priv->die_id, priv->die_rev);
++
++	return 0;
++}
++
++static const struct dm_regulator_ops fan53555_regulator_ops = {
++	.get_value	= fan53555_regulator_get_value,
++	.set_value	= fan53555_regulator_set_value,
++};
++
++static const struct udevice_id fan53555_regulator_ids[] = {
++	{ .compatible = "fcs,fan53555" },
++	{ },
++};
++
++U_BOOT_DRIVER(fan53555_regulator) = {
++	.name = "fan53555 regulator",
++	.id = UCLASS_REGULATOR,
++	.ops = &fan53555_regulator_ops,
++	.of_match = fan53555_regulator_ids,
++	.ofdata_to_platdata = fan53555_regulator_ofdata_to_platdata,
++	.platdata_auto_alloc_size = sizeof(struct fan53555_platdata),
++	.priv_auto_alloc_size = sizeof(struct fan53555_priv),
++	.probe = fan53555_probe,
++};
+
+From patchwork Sun Nov 26 20:45:56 2017
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+Subject: [U-Boot, v4,
+ 2/2] rockchip: defconfig: puma-rk3399: enable FAN53555 regulator
+ driver
+X-Patchwork-Submitter: "Dr. Philipp Tomsich"
+ <philipp.tomsich@theobroma-systems.com>
+X-Patchwork-Id: 841424
+X-Patchwork-Delegate: philipp.tomsich@theobroma-systems.com
+Message-Id: <1511729156-30197-2-git-send-email-philipp.tomsich@theobroma-systems.com>
+To: u-boot@lists.denx.de
+Cc: Klaus Goger <klaus.goger@theobroma-systems.com>
+Date: Sun, 26 Nov 2017 21:45:56 +0100
+From: Philipp Tomsich <philipp.tomsich@theobroma-systems.com>
+List-Id: U-Boot discussion <u-boot.lists.denx.de>
+
+With a driver for the FAN53555 regulator family available, let's
+enable it for the RK3399-Q7 (which has two of these devices
+on-module).
+
+We enable this for the full U-Boot stage only, as these regulators
+provide a suitable default voltage and supply non-critical (i.e.
+for booting up) power rails only.
+
+Signed-off-by: Philipp Tomsich <philipp.tomsich@theobroma-systems.com>
+---
+
+Changes in v4: None
+Changes in v3: None
+Changes in v2: None
+
+ configs/puma-rk3399_defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/configs/puma-rk3399_defconfig b/configs/puma-rk3399_defconfig
+index ebbf8a9..233c15a 100644
+--- a/configs/puma-rk3399_defconfig
++++ b/configs/puma-rk3399_defconfig
+@@ -67,6 +67,7 @@ CONFIG_PINCTRL_ROCKCHIP_RK3399=y
+ CONFIG_DM_PMIC=y
+ CONFIG_PMIC_RK8XX=y
+ CONFIG_SPL_DM_REGULATOR=y
++CONFIG_DM_REGULATOR_FAN53555=y
+ CONFIG_DM_REGULATOR_FIXED=y
+ CONFIG_SPL_DM_REGULATOR_FIXED=y
+ CONFIG_DM_REGULATOR_GPIO=y

@@ -1,5 +1,5 @@
 case $BRANCH in
-	default|next)
+	default)
 	BOOTSOURCE='https://github.com/helios-4/u-boot-marvell.git'
 	BOOTBRANCH='branch:u-boot-2013.01-15t1-helios4'
 	BOOTDIR='u-boot-armada'
@@ -13,23 +13,51 @@ case $BRANCH in
 
 	BOOTPATCHDIR='u-boot-helios4'
 	;;
+	next)
+	BOOTSOURCE='https://github.com/helios-4/u-boot.git'
+	BOOTBRANCH='branch:helios4'
+	BOOTDIR=$MAINLINE_UBOOT_DIR
+	BOOTSCRIPT='boot-marvell.cmd:boot.cmd'
+
+	UBOOT_TARGET_MAP=";;u-boot-spl.kwb:u-boot.mmc
+		;spi;u-boot-spl.kwb:u-boot.flash"
+	UBOOT_USE_GCC='> 7.0'
+
+	OVERLAY_PREFIX='armada-388-helios4'
+
+	BOOTPATCHDIR='u-boot-helios4-next'
+	;;
 esac
 
 
-# Helios4 tweak : install and configure fancontrol
+# Helios4 tweak
 family_tweaks_s()
 {
-	chroot $SDCARD /bin/bash -c "apt-get -y -qq install fancontrol >/dev/null 2>&1"
-	patch $SDCARD/usr/sbin/fancontrol $SRC/packages/bsp/helios4/fancontrol.patch
-	cp -R $SRC/packages/bsp/helios4/90-helios4-hwmon.rules $SDCARD/etc/udev/rules.d/
+	# install fancontrol and mdadm
+	chroot $SDCARD /bin/bash -c "apt-get -y -qq install fancontrol mdadm >/dev/null 2>&1"
+
+	### Fancontrol tweaks
+
+	# copy hwmon rules to fix device mapping
+	cp $SRC/packages/bsp/helios4/90-helios4-hwmon.rules $SDCARD/etc/udev/rules.d/
+
+	# copy fancontrol config
 	case $BRANCH in
 	default)
-		cp -R $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-default.conf $SDCARD/etc/fancontrol
+		cp $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-default.conf $SDCARD/etc/fancontrol
 		;;
-
 	next)
-		cp -R $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-next.conf $SDCARD/etc/fancontrol
+		cp $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-next.conf $SDCARD/etc/fancontrol
 		;;
 	esac
-}
 
+	### Mdadm tweaks
+
+	# copy mdadm-fault-led script and set right permission
+	cp $SRC/packages/bsp/helios4/mdadm-fault-led.sh $SDCARD/usr/sbin/
+	chmod a+x $SDCARD/usr/sbin/mdadm-fault-led.sh
+
+	# modify mdadm configuration
+	echo -e "\n # Trigger Fault Led script when an event is detected" >> $SDCARD/etc/mdadm/mdadm.conf
+	echo -e "PROGRAM /usr/sbin/mdadm-fault-led.sh" >> $SDCARD/etc/mdadm/mdadm.conf
+}

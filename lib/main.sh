@@ -100,7 +100,7 @@ fi
 
 if [[ -z $BOARD ]]; then
 	WIP_STATE=supported
-	WIP_BUTTON='CSC/WIP/EOS'
+	WIP_BUTTON='CSC/WIP/EOS/TVB'
 	STATE_DESCRIPTION=' - Officially supported boards'
 	temp_rc=$(mktemp)
 	while true; do
@@ -118,6 +118,9 @@ if [[ -z $BOARD ]]; then
 			done
 			for board in $SRC/config/boards/*.eos; do
 				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(EOS)\Zn $(head -1 $board | cut -d'#' -f2)")
+			done
+			for board in $SRC/config/boards/*.tvb; do
+				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(TVB)\Zn $(head -1 $board | cut -d'#' -f2)")
 			done
 		fi
 		if [[ $WIP_STATE != supported ]]; then
@@ -139,7 +142,7 @@ if [[ -z $BOARD ]]; then
 		if [[ $STATUS == 3 ]]; then
 			if [[ $WIP_STATE == supported ]]; then
 				[[ $SHOW_WARNING == yes ]] && show_developer_warning
-				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress\n - \Z1(EOS)\Zn - End Of Support'
+				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress\n - \Z1(EOS)\Zn - End Of Support\n - \Z1(TVB)\Zn - TV boxes'
 				WIP_STATE=unsupported
 				WIP_BUTTON='supported'
 				EXPERT=yes
@@ -166,6 +169,8 @@ elif [[ -f $SRC/config/boards/${BOARD}.wip ]]; then
 	BOARD_TYPE='wip'
 elif [[ -f $SRC/config/boards/${BOARD}.eos ]]; then
 	BOARD_TYPE='eos'
+elif [[ -f $SRC/config/boards/${BOARD}.tvb ]]; then
+	BOARD_TYPE='tvb'
 fi
 
 source $SRC/config/boards/${BOARD}.${BOARD_TYPE}
@@ -240,8 +245,8 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 	fi
 	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
 	fetch_from_repo "https://github.com/armbian/rkbin" "rkbin-tools" "branch:master"
-	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-18.09"
-	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git" "marvell-ddr" "branch:mv_ddr-armada-18.09"
+	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-18.12"
+	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git" "marvell-ddr" "branch:mv_ddr-armada-18.12"
 	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
 	fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
 fi

@@ -148,6 +148,7 @@ create_images_list()
 		if [[ -f $file".conf" ]]; then source $file".conf"; fi
 		if [[ -f $file".wip"  ]]; then source $file".wip"; fi
 		if [[ -f $file".csc"  ]]; then source $file".csc"; fi
+		if [[ -f $file".tvb"  ]]; then source $file".tvb"; fi
 
 		# beta targets are the same as stable. To build the same set beta set as future stable.
 		if [[ "$MERGETARGETS" == "yes" ]]; then
@@ -175,6 +176,7 @@ create_kernels_list()
 		if [[ -f $file".conf" ]]; then source $file".conf"; fi
 		if [[ -f $file".wip"  ]]; then source $file".wip"; fi
 		if [[ -f $file".csc"  ]]; then source $file".csc"; fi
+		if [[ -f $file".tvb"  ]]; then source $file".tvb"; fi
 
 		if [[ -n $KERNEL_TARGET ]]; then
 			for kernel in $(tr ',' ' ' <<< $KERNEL_TARGET); do
@@ -227,7 +229,7 @@ for line in "${buildlist[@]}"; do
 		MODULES_BLACKLIST_DEV MOUNT SDCARD BOOTPATCHDIR KERNELPATCHDIR buildtext RELEASE IMAGE_TYPE OVERLAY_PREFIX ASOUND_STATE \
 		ATF_COMPILER ATF_USE_GCC ATFSOURCE ATFDIR ATFBRANCH ATFSOURCEDIR PACKAGE_LIST_RM NM_IGNORE_DEVICES DISPLAY_MANAGER family_tweaks_bsp_s \
 		CRYPTROOT_ENABLE CRYPTROOT_PASSPHRASE CRYPTROOT_SSH_UNLOCK CRYPTROOT_SSH_UNLOCK_PORT CRYPTROOT_SSH_UNLOCK_KEY_NAME ROOT_MAPPER \
-		NETWORK HDMI USB WIRELESS ARMBIANMONITOR
+		NETWORK HDMI USB WIRELESS ARMBIANMONITOR DEFAULT_CONSOLE FORCE_BOOTSCRIPT_UPDATE SERIALCON
 
 	read BOARD BRANCH RELEASE BUILD_DESKTOP <<< $line
 	n=$[$n+1]
