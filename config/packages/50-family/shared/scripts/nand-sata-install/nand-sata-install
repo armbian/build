@@ -140,9 +140,59 @@ create_armbian()
 	echo -e "\nCopying ${TODO} files to $2. \c" >> $logfile
 
 	# creating rootfs
-	rsync -avrltD --delete --exclude-from=$EX_LIST / ${TempDir}/rootfs | nl | awk '{ printf "%.0f\n", 100*$1/"'"$TODO"'" }' \
-	| dialog --backtitle "$backtitle" --title " $title " --gauge "\n\n  Transferring rootfs to $2 ($USAGE MB). \n\n \
-	This will take approximately $(( $((USAGE/300)) * 5 )) minutes to finish. Please wait!\n\n" 11 80
+	# Speed copy increased x10
+	 # Variables for interfacing with rsync progress
+	nsi_conn_path="/tmp/nand-sata-install"
+	nsi_conn_done="${nsi_conn_path}/done"
+	nsi_conn_progress="${nsi_conn_path}/progress"
+	rm -rf "${nsi_conn_path}"
+	mkdir -p "${nsi_conn_path}"
+	echo 0 >"${nsi_conn_progress}"
+	echo no >"${nsi_conn_done}"
+
+	 # Launch rsync in background
+	{ \
+	rsync -avrltD --delete --exclude-from=$EX_LIST / ${TempDir}/rootfs | \
+	nl | awk '{ printf "%.0f\n", 100*$1/"'"$TODO"'" }' \
+	> "${nsi_conn_progress}" ;
+	 # save exit code from rsync
+	echo  ${PIPESTATUS[0]} >"${nsi_conn_done}"
+	} &
+
+	 # while variables
+	rsync_copy_finish=0
+	rsync_progress=0
+	prev_progress=0
+	rsync_done=""
+	while [ "${rsync_copy_finish}" -eq 0 ]; do
+		# Sometimes reads the progress file while writing and only partial numbers (like 1 when is 15)
+		prev_progress=${rsync_progress}
+		rsync_progress=$(tail -n1 "${nsi_conn_progress}")
+		if [[ -z ${rsync_progress} ]]; then
+			rsync_progress=${prev_progress}
+		fi
+		if [ ${prev_progress} -gt ${rsync_progress} ]; then
+			rsync_progress=${prev_progress}
+		fi
+		echo "${rsync_progress}"
+		# finish the while if the rsync is finished
+		rsync_done=$(cat ${nsi_conn_done})
+		if [[ "${rsync_done}" != "no" ]]; then
+			if [[ ${rsync_done} -eq 0 ]]; then
+				rm -rf "${nsi_conn_path}"
+				rsync_copy_finish=1
+			else
+				# if rsync return error
+				echo "Error: could not copy rootfs files, exiting"
+				exit 1
+			fi
+		else
+			sleep 0.5
+		fi
+
+	done | \
+	dialog --backtitle "$backtitle" --title " $title " --gauge "\n\n  Transferring rootfs to $2 ($USAGE MB). \n\n \
+	 This will take approximately $(( $((USAGE/300)) * 1 )) minutes to finish. Please wait!\n\n" 11 80
 
 	# run rsync again to silently catch outstanding changes between / and ${TempDir}/rootfs/
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\n  Cleaning up ... Almost done." 5 40
