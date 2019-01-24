@@ -261,6 +261,14 @@ compile_kernel()
 	# read kernel version
 	local version=$(grab_version "$kerneldir")
 
+	# add WireGuard
+	if linux-version compare $version ge 3.10 ; then
+		if [[ ! -d $SRC/cache/sources/$LINUXSOURCEDIR/net/wireguard && $WIREGUARD == yes ]]; then
+		display_alert "Adding" "WireGuard" "info"
+		$SRC/cache/sources/wireguard/contrib/kernel-tree/jury-rig.sh $SRC/cache/sources/$LINUXSOURCEDIR
+		fi
+	fi
+
 	# create linux-source package - with already patched sources
 	local sources_pkg_dir=$SRC/.tmp/${CHOSEN_KSRC}_${REVISION}_all
 	rm -rf ${sources_pkg_dir}
