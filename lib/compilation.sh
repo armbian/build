@@ -262,7 +262,7 @@ compile_kernel()
 	local version=$(grab_version "$kerneldir")
 
 	# add WireGuard
-	if linux-version compare $version ge 3.10 ; then
+	if linux-version compare $version ge 3.14 ; then
 		if [[ ! -d $SRC/cache/sources/$LINUXSOURCEDIR/net/wireguard && $WIREGUARD == yes ]]; then
 		display_alert "Adding" "WireGuard" "info"
 		$SRC/cache/sources/wireguard/contrib/kernel-tree/jury-rig.sh $SRC/cache/sources/$LINUXSOURCEDIR
