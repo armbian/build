@@ -6,3 +6,5 @@ mkdir -p ${upperdir}/usr/sbin
 
 install -m 755 ${sectiondir}scripts/nand-sata-install/nand-sata-install ${upperdir}/usr/sbin
 install -m 644 ${sectiondir}scripts/nand-sata-install/exclude.txt ${upperdir}/usr/lib/nand-sata-install
+
+systemctl --no-reload enable nanopi-bluetooth.service >/dev/null 2>&1
