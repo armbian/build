@@ -271,6 +271,7 @@ compile_kernel()
 			sed -i '0,/wireguard/{/wireguard/d;}' $SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile
 			[[ $(cat $SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig | grep wireguard | wc -l) -gt 1 ]] && \
 			sed -i '0,/wireguard/{/wireguard/d;}' $SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig
+			sed -i '20i#define ALIGN_DOWN(value, align) ((value) & ~((align) - 1))\n' $SRC/cache/sources/$LINUXSOURCEDIR/net/wireguard/noise.c
 	fi
 
 	# add drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
