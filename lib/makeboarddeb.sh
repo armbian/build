@@ -178,10 +178,7 @@ create_board_package()
 	# ${BOARD} BSP post installation script
 	#
 
-	# enable ramlog only if it was enabled before
-	if [ -n "\$(service log2ram status 2> /dev/null)" ]; then
-			systemctl --no-reload enable armbian-ramlog.service
-	fi
+	systemctl --no-reload enable armbian-ramlog.service
 
 	# check if it was disabled in config and disable in new service
 	if [ -n "\$(grep -w '^ENABLED=false' /etc/default/log2ram 2> /dev/null)" ]; then
