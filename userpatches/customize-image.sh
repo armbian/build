@@ -34,6 +34,10 @@ echo "iface eth0 inet dhcp" >> /etc/network/interfaces.d/eth0.conf
 # Backports are evil
 sed -i '/backport/ s/^deb/#deb/' /etc/apt/sources.list
 
+# resolvconf stuff
+rm /etc/resolv.conf
+ln -s /etc/resolvconf/run/resolv.conf /etc/resolv.conf
+
 # Avahi and mysql/mariadb needs to do some stuff which conflicts with the
 # "change the root password asap" so we disable it temporarily....
 chage -d 99999999 root
