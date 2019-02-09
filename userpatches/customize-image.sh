@@ -21,13 +21,16 @@ apt install linux-image-next-sunxi=5.67 -y --allow-downgrades || exit -1
 apt-mark hold linux-image-next-sunxi
 
 # We don't want the damn network-manager :/
-apt remove network-manager -y
+apt remove network-manager -y || true
 apt autoremove -y
 cat << EOF >> /etc/apt/preferences
 Package: network-manager
 Pin: release *
 Pin-Priority: -1
 EOF
+echo "auto eth0" > /etc/network/interfaces.d/eth0.conf
+echo "iface eth0 inet dhcp" >> /etc/network/interfaces.d/eth0.conf
+
 
 # Avahi and mysql/mariadb needs to do some stuff which conflicts with the
 # "change the root password asap" so we disable it temporarily....
