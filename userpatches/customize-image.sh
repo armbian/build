@@ -31,6 +31,8 @@ EOF
 echo "auto eth0" > /etc/network/interfaces.d/eth0.conf
 echo "iface eth0 inet dhcp" >> /etc/network/interfaces.d/eth0.conf
 
+# Backports are evil
+sed -i '/backport/ s/^deb/#deb/' /etc/apt/sources.list
 
 # Avahi and mysql/mariadb needs to do some stuff which conflicts with the
 # "change the root password asap" so we disable it temporarily....
