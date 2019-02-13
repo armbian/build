@@ -275,7 +275,7 @@ compile_kernel()
 			display_alert "Patching WireGuard" "$(patch --directory=$SRC/cache/sources/wireguard --batch -p1 < $SRC/patch/misc/wireguard.patch)" "info"
 			# headers workaround
 			display_alert "Patching WireGuard" "Applying workaround for headers compilation" "info"
-			sed -i '/mkdir -p "$destdir"/a mkdir -p "$destdir"/net/wireguard; touch "$destdir"/net/wireguard/{Kconfig,Makefile} # workaround for Wireguard' scripts/package/builddeb
+			sed -i '/mkdir -p "$destdir"/a mkdir -p "$destdir"/net/wireguard; touch "$destdir"/net/wireguard/{Kconfig,Makefile} # workaround for Wireguard' $SRC/cache/sources/$LINUXSOURCEDIR/scripts/package/builddeb
 	fi
 
 	# add drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
