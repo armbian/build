@@ -31,15 +31,15 @@ EOF
 echo "auto eth0" > /etc/network/interfaces.d/eth0.conf
 echo "iface eth0 inet dhcp" >> /etc/network/interfaces.d/eth0.conf
 
-# Make sure resolv.conf points to DNSmasq (somehow networkmanager might have broke this)
-rm /etc/resolv.conf
-ln -s /etc/resolvconf/run/resolv.conf /etc/resolv.conf
-
 # Backports are evil
 sed -i '/backport/ s/^deb/#deb/' /etc/apt/sources.list
 
-# Avahi and mysql/mariadb needs to do some stuff which conflicts with the
-# "change the root password asap" so we disable it temporarily....
+# Avahi and mysql/mariadb needs to do some stuff which conflicts with
+# the "change the root password asap" so we disable it. In fact, now
+# that YunoHost 3.3 syncs the password with admin password at
+# postinstall we are happy with not triggering a password change at
+# first boot.  Assuming that ARM-boards won't be exposed to global
+# network right after booting the first time ...
 chage -d 99999999 root
 
 # Run the install script
@@ -48,14 +48,18 @@ rm /var/log/yunohost-installation*
 
 # Override the first login script with our own (we don't care about desktop
 # stuff + we don't want the user to manually create a user)
-rm /etc/profile.d/armbian-check-first-login.sh
-cp /tmp/overlay/check_first_login.sh /etc/profile.d/check_first_login.sh
 cp /tmp/overlay/check_yunohost_is_installed.sh /etc/profile.d/check_yunohost_is_installed.sh
-cp /tmp/overlay/armbian-motd /etc/default/armbian-motd
 dpkg-divert --divert /root/armbian-check-first-login.sh --rename /etc/profile.d/armbian-check-first-login.sh
 dpkg-divert --divert /root/armbian-motd --rename /etc/default/armbian-motd
+rm /etc/profile.d/armbian-check-first-login.sh
+cp /tmp/overlay/check_first_login.sh /etc/profile.d/check_first_login.sh
+cp /tmp/overlay/armbian-motd /etc/default/armbian-motd
 touch /root/.not_logged_in_yet
 
+# Make sure resolv.conf points to DNSmasq
+# (somehow networkmanager or something else breaks this before...)
+rm /etc/resolv.conf
+ln -s /etc/resolvconf/run/resolv.conf /etc/resolv.conf
+
 # Clean stuff
-chage -d 0 root
 apt clean
