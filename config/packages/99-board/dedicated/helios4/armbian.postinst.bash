@@ -2,9 +2,6 @@ cat <<'EOF'
 MDADM_CONF=/etc/mdadm/mdadm.conf
 MDADM_HOOK=/usr/share/initramfs-tools/hooks/mdadm
 
-# Patch fancontrol
-patch --silent --forward --no-backup-if-mismatch -r - /usr/sbin/fancontrol /usr/share/${DPKG_MAINTSCRIPT_PACKAGE}/fancontrol.patch >/dev/null 2>&1
-
 # Mdadm tweaks
 grep -q "PROGRAM" $MDADM_CONF
 if [ "$?" -ne 0 ]; then

@@ -1,0 +1,1260 @@
+diff --git a/Makefile b/Makefile
+index 082f82471b51..0d41b0626c0c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 168
++SUBLEVEL = 169
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/arc/include/asm/io.h b/arch/arc/include/asm/io.h
+index cb69299a492e..f120d823e8c2 100644
+--- a/arch/arc/include/asm/io.h
++++ b/arch/arc/include/asm/io.h
+@@ -12,6 +12,7 @@
+ #include <linux/types.h>
+ #include <asm/byteorder.h>
+ #include <asm/page.h>
++#include <asm/unaligned.h>
+ 
+ #ifdef CONFIG_ISA_ARCV2
+ #include <asm/barrier.h>
+@@ -85,6 +86,42 @@ static inline u32 __raw_readl(const volatile void __iomem *addr)
+ 	return w;
+ }
+ 
++/*
++ * {read,write}s{b,w,l}() repeatedly access the same IO address in
++ * native endianness in 8-, 16-, 32-bit chunks {into,from} memory,
++ * @count times
++ */
++#define __raw_readsx(t,f) \
++static inline void __raw_reads##f(const volatile void __iomem *addr,	\
++				  void *ptr, unsigned int count)	\
++{									\
++	bool is_aligned = ((unsigned long)ptr % ((t) / 8)) == 0;	\
++	u##t *buf = ptr;						\
++									\
++	if (!count)							\
++		return;							\
++									\
++	/* Some ARC CPU's don't support unaligned accesses */		\
++	if (is_aligned) {						\
++		do {							\
++			u##t x = __raw_read##f(addr);			\
++			*buf++ = x;					\
++		} while (--count);					\
++	} else {							\
++		do {							\
++			u##t x = __raw_read##f(addr);			\
++			put_unaligned(x, buf++);			\
++		} while (--count);					\
++	}								\
++}
++
++#define __raw_readsb __raw_readsb
++__raw_readsx(8, b)
++#define __raw_readsw __raw_readsw
++__raw_readsx(16, w)
++#define __raw_readsl __raw_readsl
++__raw_readsx(32, l)
++
+ #define __raw_writeb __raw_writeb
+ static inline void __raw_writeb(u8 b, volatile void __iomem *addr)
+ {
+@@ -117,6 +154,35 @@ static inline void __raw_writel(u32 w, volatile void __iomem *addr)
+ 
+ }
+ 
++#define __raw_writesx(t,f)						\
++static inline void __raw_writes##f(volatile void __iomem *addr, 	\
++				   const void *ptr, unsigned int count)	\
++{									\
++	bool is_aligned = ((unsigned long)ptr % ((t) / 8)) == 0;	\
++	const u##t *buf = ptr;						\
++									\
++	if (!count)							\
++		return;							\
++									\
++	/* Some ARC CPU's don't support unaligned accesses */		\
++	if (is_aligned) {						\
++		do {							\
++			__raw_write##f(*buf++, addr);			\
++		} while (--count);					\
++	} else {							\
++		do {							\
++			__raw_write##f(get_unaligned(buf++), addr);	\
++		} while (--count);					\
++	}								\
++}
++
++#define __raw_writesb __raw_writesb
++__raw_writesx(8, b)
++#define __raw_writesw __raw_writesw
++__raw_writesx(16, w)
++#define __raw_writesl __raw_writesl
++__raw_writesx(32, l)
++
+ /*
+  * MMIO can also get buffered/optimized in micro-arch, so barriers needed
+  * Based on ARM model for the typical use case
+@@ -132,10 +198,16 @@ static inline void __raw_writel(u32 w, volatile void __iomem *addr)
+ #define readb(c)		({ u8  __v = readb_relaxed(c); __iormb(); __v; })
+ #define readw(c)		({ u16 __v = readw_relaxed(c); __iormb(); __v; })
+ #define readl(c)		({ u32 __v = readl_relaxed(c); __iormb(); __v; })
++#define readsb(p,d,l)		({ __raw_readsb(p,d,l); __iormb(); })
++#define readsw(p,d,l)		({ __raw_readsw(p,d,l); __iormb(); })
++#define readsl(p,d,l)		({ __raw_readsl(p,d,l); __iormb(); })
+ 
+ #define writeb(v,c)		({ __iowmb(); writeb_relaxed(v,c); })
+ #define writew(v,c)		({ __iowmb(); writew_relaxed(v,c); })
+ #define writel(v,c)		({ __iowmb(); writel_relaxed(v,c); })
++#define writesb(p,d,l)		({ __iowmb(); __raw_writesb(p,d,l); })
++#define writesw(p,d,l)		({ __iowmb(); __raw_writesw(p,d,l); })
++#define writesl(p,d,l)		({ __iowmb(); __raw_writesl(p,d,l); })
+ 
+ /*
+  * Relaxed API for drivers which can handle barrier ordering themselves
+diff --git a/arch/arm/mm/cache-v7.S b/arch/arm/mm/cache-v7.S
+index a134d8a13d00..11d699af30ed 100644
+--- a/arch/arm/mm/cache-v7.S
++++ b/arch/arm/mm/cache-v7.S
+@@ -359,14 +359,16 @@ v7_dma_inv_range:
+ 	ALT_UP(W(nop))
+ #endif
+ 	mcrne	p15, 0, r0, c7, c14, 1		@ clean & invalidate D / U line
++	addne	r0, r0, r2
+ 
+ 	tst	r1, r3
+ 	bic	r1, r1, r3
+ 	mcrne	p15, 0, r1, c7, c14, 1		@ clean & invalidate D / U line
+-1:
+-	mcr	p15, 0, r0, c7, c6, 1		@ invalidate D / U line
+-	add	r0, r0, r2
+ 	cmp	r0, r1
++1:
++	mcrlo	p15, 0, r0, c7, c6, 1		@ invalidate D / U line
++	addlo	r0, r0, r2
++	cmplo	r0, r1
+ 	blo	1b
+ 	dsb	st
+ 	ret	lr
+diff --git a/arch/powerpc/boot/Makefile b/arch/powerpc/boot/Makefile
+index 99e4487248ff..57003d1bd243 100644
+--- a/arch/powerpc/boot/Makefile
++++ b/arch/powerpc/boot/Makefile
+@@ -70,7 +70,8 @@ $(addprefix $(obj)/,$(zlib) cuboot-c2k.o gunzip_util.o main.o): \
+ libfdt       := fdt.c fdt_ro.c fdt_wip.c fdt_sw.c fdt_rw.c fdt_strerror.c
+ libfdtheader := fdt.h libfdt.h libfdt_internal.h
+ 
+-$(addprefix $(obj)/,$(libfdt) libfdt-wrapper.o simpleboot.o epapr.o): \
++$(addprefix $(obj)/,$(libfdt) libfdt-wrapper.o simpleboot.o epapr.o \
++	treeboot-akebono.o treeboot-currituck.o treeboot-iss4xx.o): \
+ 	$(addprefix $(obj)/,$(libfdtheader))
+ 
+ src-wlib-y := string.S crt0.S crtsavres.S stdio.c main.c \
+diff --git a/arch/powerpc/kernel/msi.c b/arch/powerpc/kernel/msi.c
+index dab616a33b8d..f2197654be07 100644
+--- a/arch/powerpc/kernel/msi.c
++++ b/arch/powerpc/kernel/msi.c
+@@ -34,5 +34,10 @@ void arch_teardown_msi_irqs(struct pci_dev *dev)
+ {
+ 	struct pci_controller *phb = pci_bus_to_host(dev->bus);
+ 
+-	phb->controller_ops.teardown_msi_irqs(dev);
++	/*
++	 * We can be called even when arch_setup_msi_irqs() returns -ENOSYS,
++	 * so check the pointer again.
++	 */
++	if (phb->controller_ops.teardown_msi_irqs)
++		phb->controller_ops.teardown_msi_irqs(dev);
+ }
+diff --git a/arch/x86/platform/efi/early_printk.c b/arch/x86/platform/efi/early_printk.c
+index 524142117296..82324fc25d5e 100644
+--- a/arch/x86/platform/efi/early_printk.c
++++ b/arch/x86/platform/efi/early_printk.c
+@@ -179,7 +179,7 @@ early_efi_write(struct console *con, const char *str, unsigned int num)
+ 			num--;
+ 		}
+ 
+-		if (efi_x >= si->lfb_width) {
++		if (efi_x + font->width > si->lfb_width) {
+ 			efi_x = 0;
+ 			efi_y += font->height;
+ 		}
+diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
+index ba514fa733de..d543172b20b3 100644
+--- a/drivers/ata/libata-core.c
++++ b/drivers/ata/libata-core.c
+@@ -4297,6 +4297,7 @@ static const struct ata_blacklist_entry ata_device_blacklist [] = {
+ 	{ "SSD*INTEL*",			NULL,	ATA_HORKAGE_ZERO_AFTER_TRIM, },
+ 	{ "Samsung*SSD*",		NULL,	ATA_HORKAGE_ZERO_AFTER_TRIM, },
+ 	{ "SAMSUNG*SSD*",		NULL,	ATA_HORKAGE_ZERO_AFTER_TRIM, },
++	{ "SAMSUNG*MZ7KM*",		NULL,	ATA_HORKAGE_ZERO_AFTER_TRIM, },
+ 	{ "ST[1248][0248]0[FH]*",	NULL,	ATA_HORKAGE_ZERO_AFTER_TRIM, },
+ 
+ 	/*
+diff --git a/drivers/clk/mmp/clk.c b/drivers/clk/mmp/clk.c
+index 61893fe73251..18b6c9b55b95 100644
+--- a/drivers/clk/mmp/clk.c
++++ b/drivers/clk/mmp/clk.c
+@@ -182,7 +182,7 @@ void mmp_clk_add(struct mmp_clk_unit *unit, unsigned int id,
+ 		pr_err("CLK %d has invalid pointer %p\n", id, clk);
+ 		return;
+ 	}
+-	if (id > unit->nr_clks) {
++	if (id >= unit->nr_clks) {
+ 		pr_err("CLK %d is invalid\n", id);
+ 		return;
+ 	}
+diff --git a/drivers/gpu/drm/msm/msm_atomic.c b/drivers/gpu/drm/msm/msm_atomic.c
+index 7eb253bc24df..221eaea651d4 100644
+--- a/drivers/gpu/drm/msm/msm_atomic.c
++++ b/drivers/gpu/drm/msm/msm_atomic.c
+@@ -107,7 +107,12 @@ static void msm_atomic_wait_for_commit_done(struct drm_device *dev,
+ 		if (old_state->legacy_cursor_update)
+ 			continue;
+ 
++		if (drm_crtc_vblank_get(crtc))
++			continue;
++
+ 		kms->funcs->wait_for_crtc_commit_done(kms, crtc);
++
++		drm_crtc_vblank_put(crtc);
+ 	}
+ }
+ 
+diff --git a/drivers/i2c/busses/i2c-axxia.c b/drivers/i2c/busses/i2c-axxia.c
+index c335cc7852f9..9c9fd2e87a4b 100644
+--- a/drivers/i2c/busses/i2c-axxia.c
++++ b/drivers/i2c/busses/i2c-axxia.c
+@@ -74,8 +74,7 @@
+ 				 MST_STATUS_ND)
+ #define   MST_STATUS_ERR	(MST_STATUS_NAK | \
+ 				 MST_STATUS_AL  | \
+-				 MST_STATUS_IP  | \
+-				 MST_STATUS_TSS)
++				 MST_STATUS_IP)
+ #define MST_TX_BYTES_XFRD	0x50
+ #define MST_RX_BYTES_XFRD	0x54
+ #define SCL_HIGH_PERIOD		0x80
+@@ -241,7 +240,7 @@ static int axxia_i2c_empty_rx_fifo(struct axxia_i2c_dev *idev)
+ 			 */
+ 			if (c <= 0 || c > I2C_SMBUS_BLOCK_MAX) {
+ 				idev->msg_err = -EPROTO;
+-				i2c_int_disable(idev, ~0);
++				i2c_int_disable(idev, ~MST_STATUS_TSS);
+ 				complete(&idev->msg_complete);
+ 				break;
+ 			}
+@@ -299,14 +298,19 @@ static irqreturn_t axxia_i2c_isr(int irq, void *_dev)
+ 
+ 	if (status & MST_STATUS_SCC) {
+ 		/* Stop completed */
+-		i2c_int_disable(idev, ~0);
++		i2c_int_disable(idev, ~MST_STATUS_TSS);
+ 		complete(&idev->msg_complete);
+ 	} else if (status & MST_STATUS_SNS) {
+ 		/* Transfer done */
+-		i2c_int_disable(idev, ~0);
++		i2c_int_disable(idev, ~MST_STATUS_TSS);
+ 		if (i2c_m_rd(idev->msg) && idev->msg_xfrd < idev->msg->len)
+ 			axxia_i2c_empty_rx_fifo(idev);
+ 		complete(&idev->msg_complete);
++	} else if (status & MST_STATUS_TSS) {
++		/* Transfer timeout */
++		idev->msg_err = -ETIMEDOUT;
++		i2c_int_disable(idev, ~MST_STATUS_TSS);
++		complete(&idev->msg_complete);
+ 	} else if (unlikely(status & MST_STATUS_ERR)) {
+ 		/* Transfer error */
+ 		i2c_int_disable(idev, ~0);
+@@ -339,10 +343,10 @@ static int axxia_i2c_xfer_msg(struct axxia_i2c_dev *idev, struct i2c_msg *msg)
+ 	u32 rx_xfer, tx_xfer;
+ 	u32 addr_1, addr_2;
+ 	unsigned long time_left;
++	unsigned int wt_value;
+ 
+ 	idev->msg = msg;
+ 	idev->msg_xfrd = 0;
+-	idev->msg_err = 0;
+ 	reinit_completion(&idev->msg_complete);
+ 
+ 	if (i2c_m_ten(msg)) {
+@@ -382,9 +386,18 @@ static int axxia_i2c_xfer_msg(struct axxia_i2c_dev *idev, struct i2c_msg *msg)
+ 	else if (axxia_i2c_fill_tx_fifo(idev) != 0)
+ 		int_mask |= MST_STATUS_TFL;
+ 
++	wt_value = WT_VALUE(readl(idev->base + WAIT_TIMER_CONTROL));
++	/* Disable wait timer temporarly */
++	writel(wt_value, idev->base + WAIT_TIMER_CONTROL);
++	/* Check if timeout error happened */
++	if (idev->msg_err)
++		goto out;
++
+ 	/* Start manual mode */
+ 	writel(CMD_MANUAL, idev->base + MST_COMMAND);
+ 
++	writel(WT_EN | wt_value, idev->base + WAIT_TIMER_CONTROL);
++
+ 	i2c_int_enable(idev, int_mask);
+ 
+ 	time_left = wait_for_completion_timeout(&idev->msg_complete,
+@@ -395,13 +408,15 @@ static int axxia_i2c_xfer_msg(struct axxia_i2c_dev *idev, struct i2c_msg *msg)
+ 	if (readl(idev->base + MST_COMMAND) & CMD_BUSY)
+ 		dev_warn(idev->dev, "busy after xfer\n");
+ 
+-	if (time_left == 0)
++	if (time_left == 0) {
+ 		idev->msg_err = -ETIMEDOUT;
+-
+-	if (idev->msg_err == -ETIMEDOUT)
+ 		i2c_recover_bus(&idev->adapter);
++		axxia_i2c_init(idev);
++	}
+ 
+-	if (unlikely(idev->msg_err) && idev->msg_err != -ENXIO)
++out:
++	if (unlikely(idev->msg_err) && idev->msg_err != -ENXIO &&
++			idev->msg_err != -ETIMEDOUT)
+ 		axxia_i2c_init(idev);
+ 
+ 	return idev->msg_err;
+@@ -409,7 +424,7 @@ static int axxia_i2c_xfer_msg(struct axxia_i2c_dev *idev, struct i2c_msg *msg)
+ 
+ static int axxia_i2c_stop(struct axxia_i2c_dev *idev)
+ {
+-	u32 int_mask = MST_STATUS_ERR | MST_STATUS_SCC;
++	u32 int_mask = MST_STATUS_ERR | MST_STATUS_SCC | MST_STATUS_TSS;
+ 	unsigned long time_left;
+ 
+ 	reinit_completion(&idev->msg_complete);
+@@ -436,6 +451,9 @@ axxia_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
+ 	int i;
+ 	int ret = 0;
+ 
++	idev->msg_err = 0;
++	i2c_int_enable(idev, MST_STATUS_TSS);
++
+ 	for (i = 0; ret == 0 && i < num; ++i)
+ 		ret = axxia_i2c_xfer_msg(idev, &msgs[i]);
+ 
+diff --git a/drivers/i2c/busses/i2c-scmi.c b/drivers/i2c/busses/i2c-scmi.c
+index efefcfa24a4c..d2178f701b41 100644
+--- a/drivers/i2c/busses/i2c-scmi.c
++++ b/drivers/i2c/busses/i2c-scmi.c
+@@ -364,6 +364,7 @@ static int acpi_smbus_cmi_add(struct acpi_device *device)
+ {
+ 	struct acpi_smbus_cmi *smbus_cmi;
+ 	const struct acpi_device_id *id;
++	int ret;
+ 
+ 	smbus_cmi = kzalloc(sizeof(struct acpi_smbus_cmi), GFP_KERNEL);
+ 	if (!smbus_cmi)
+@@ -385,8 +386,10 @@ static int acpi_smbus_cmi_add(struct acpi_device *device)
+ 	acpi_walk_namespace(ACPI_TYPE_METHOD, smbus_cmi->handle, 1,
+ 			    acpi_smbus_cmi_query_methods, NULL, smbus_cmi, NULL);
+ 
+-	if (smbus_cmi->cap_info == 0)
++	if (smbus_cmi->cap_info == 0) {
++		ret = -ENODEV;
+ 		goto err;
++	}
+ 
+ 	snprintf(smbus_cmi->adapter.name, sizeof(smbus_cmi->adapter.name),
+ 		"SMBus CMI adapter %s",
+@@ -397,7 +400,8 @@ static int acpi_smbus_cmi_add(struct acpi_device *device)
+ 	smbus_cmi->adapter.class = I2C_CLASS_HWMON | I2C_CLASS_SPD;
+ 	smbus_cmi->adapter.dev.parent = &device->dev;
+ 
+-	if (i2c_add_adapter(&smbus_cmi->adapter)) {
++	ret = i2c_add_adapter(&smbus_cmi->adapter);
++	if (ret) {
+ 		dev_err(&device->dev, "Couldn't register adapter!\n");
+ 		goto err;
+ 	}
+@@ -407,7 +411,7 @@ static int acpi_smbus_cmi_add(struct acpi_device *device)
+ err:
+ 	kfree(smbus_cmi);
+ 	device->driver_data = NULL;
+-	return -EIO;
++	return ret;
+ }
+ 
+ static int acpi_smbus_cmi_remove(struct acpi_device *device)
+diff --git a/drivers/ide/pmac.c b/drivers/ide/pmac.c
+index 96a345248224..0add5bb3cee8 100644
+--- a/drivers/ide/pmac.c
++++ b/drivers/ide/pmac.c
+@@ -920,6 +920,7 @@ static u8 pmac_ide_cable_detect(ide_hwif_t *hwif)
+ 	struct device_node *root = of_find_node_by_path("/");
+ 	const char *model = of_get_property(root, "model", NULL);
+ 
++	of_node_put(root);
+ 	/* Get cable type from device-tree. */
+ 	if (cable && !strncmp(cable, "80-", 3)) {
+ 		/* Some drives fail to detect 80c cable in PowerBook */
+diff --git a/drivers/input/keyboard/omap4-keypad.c b/drivers/input/keyboard/omap4-keypad.c
+index 6639b2b8528a..f78c464899db 100644
+--- a/drivers/input/keyboard/omap4-keypad.c
++++ b/drivers/input/keyboard/omap4-keypad.c
+@@ -60,8 +60,18 @@
+ 
+ /* OMAP4 values */
+ #define OMAP4_VAL_IRQDISABLE		0x0
+-#define OMAP4_VAL_DEBOUNCINGTIME	0x7
+-#define OMAP4_VAL_PVT			0x7
++
++/*
++ * Errata i689: If a key is released for a time shorter than debounce time,
++ * the keyboard will idle and never detect the key release. The workaround
++ * is to use at least a 12ms debounce time. See omap5432 TRM chapter
++ * "26.4.6.2 Keyboard Controller Timer" for more information.
++ */
++#define OMAP4_KEYPAD_PTV_DIV_128        0x6
++#define OMAP4_KEYPAD_DEBOUNCINGTIME_MS(dbms, ptv)     \
++	((((dbms) * 1000) / ((1 << ((ptv) + 1)) * (1000000 / 32768))) - 1)
++#define OMAP4_VAL_DEBOUNCINGTIME_16MS					\
++	OMAP4_KEYPAD_DEBOUNCINGTIME_MS(16, OMAP4_KEYPAD_PTV_DIV_128)
+ 
+ enum {
+ 	KBD_REVISION_OMAP4 = 0,
+@@ -181,9 +191,9 @@ static int omap4_keypad_open(struct input_dev *input)
+ 
+ 	kbd_writel(keypad_data, OMAP4_KBD_CTRL,
+ 			OMAP4_DEF_CTRL_NOSOFTMODE |
+-			(OMAP4_VAL_PVT << OMAP4_DEF_CTRL_PTV_SHIFT));
++			(OMAP4_KEYPAD_PTV_DIV_128 << OMAP4_DEF_CTRL_PTV_SHIFT));
+ 	kbd_writel(keypad_data, OMAP4_KBD_DEBOUNCINGTIME,
+-			OMAP4_VAL_DEBOUNCINGTIME);
++			OMAP4_VAL_DEBOUNCINGTIME_16MS);
+ 	/* clear pending interrupts */
+ 	kbd_write_irqreg(keypad_data, OMAP4_KBD_IRQSTATUS,
+ 			 kbd_read_irqreg(keypad_data, OMAP4_KBD_IRQSTATUS));
+diff --git a/drivers/mmc/host/omap.c b/drivers/mmc/host/omap.c
+index b9958a123594..5bcf4f45f8b4 100644
+--- a/drivers/mmc/host/omap.c
++++ b/drivers/mmc/host/omap.c
+@@ -105,6 +105,7 @@ struct mmc_omap_slot {
+ 	unsigned int		vdd;
+ 	u16			saved_con;
+ 	u16			bus_mode;
++	u16			power_mode;
+ 	unsigned int		fclk_freq;
+ 
+ 	struct tasklet_struct	cover_tasklet;
+@@ -1156,7 +1157,7 @@ static void mmc_omap_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
+ 	struct mmc_omap_slot *slot = mmc_priv(mmc);
+ 	struct mmc_omap_host *host = slot->host;
+ 	int i, dsor;
+-	int clk_enabled;
++	int clk_enabled, init_stream;
+ 
+ 	mmc_omap_select_slot(slot, 0);
+ 
+@@ -1166,6 +1167,7 @@ static void mmc_omap_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
+ 		slot->vdd = ios->vdd;
+ 
+ 	clk_enabled = 0;
++	init_stream = 0;
+ 	switch (ios->power_mode) {
+ 	case MMC_POWER_OFF:
+ 		mmc_omap_set_power(slot, 0, ios->vdd);
+@@ -1173,13 +1175,17 @@ static void mmc_omap_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
+ 	case MMC_POWER_UP:
+ 		/* Cannot touch dsor yet, just power up MMC */
+ 		mmc_omap_set_power(slot, 1, ios->vdd);
++		slot->power_mode = ios->power_mode;
+ 		goto exit;
+ 	case MMC_POWER_ON:
+ 		mmc_omap_fclk_enable(host, 1);
+ 		clk_enabled = 1;
+ 		dsor |= 1 << 11;
++		if (slot->power_mode != MMC_POWER_ON)
++			init_stream = 1;
+ 		break;
+ 	}
++	slot->power_mode = ios->power_mode;
+ 
+ 	if (slot->bus_mode != ios->bus_mode) {
+ 		if (slot->pdata->set_bus_mode != NULL)
+@@ -1195,7 +1201,7 @@ static void mmc_omap_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
+ 	for (i = 0; i < 2; i++)
+ 		OMAP_MMC_WRITE(host, CON, dsor);
+ 	slot->saved_con = dsor;
+-	if (ios->power_mode == MMC_POWER_ON) {
++	if (init_stream) {
+ 		/* worst case at 400kHz, 80 cycles makes 200 microsecs */
+ 		int usecs = 250;
+ 
+@@ -1233,6 +1239,7 @@ static int mmc_omap_new_slot(struct mmc_omap_host *host, int id)
+ 	slot->host = host;
+ 	slot->mmc = mmc;
+ 	slot->id = id;
++	slot->power_mode = MMC_POWER_UNDEFINED;
+ 	slot->pdata = &host->pdata->slots[id];
+ 
+ 	host->slots[id] = slot;
+diff --git a/drivers/net/bonding/bond_3ad.c b/drivers/net/bonding/bond_3ad.c
+index 940e2ebbdea8..399c627b15cc 100644
+--- a/drivers/net/bonding/bond_3ad.c
++++ b/drivers/net/bonding/bond_3ad.c
+@@ -2011,6 +2011,9 @@ void bond_3ad_unbind_slave(struct slave *slave)
+ 		   aggregator->aggregator_identifier);
+ 
+ 	/* Tell the partner that this port is not suitable for aggregation */
++	port->actor_oper_port_state &= ~AD_STATE_SYNCHRONIZATION;
++	port->actor_oper_port_state &= ~AD_STATE_COLLECTING;
++	port->actor_oper_port_state &= ~AD_STATE_DISTRIBUTING;
+ 	port->actor_oper_port_state &= ~AD_STATE_AGGREGATION;
+ 	__update_lacpdu_from_port(port);
+ 	ad_lacpdu_send(port);
+diff --git a/drivers/net/dsa/mv88e6060.c b/drivers/net/dsa/mv88e6060.c
+index 0527f485c3dc..973fcd442aea 100644
+--- a/drivers/net/dsa/mv88e6060.c
++++ b/drivers/net/dsa/mv88e6060.c
+@@ -98,8 +98,7 @@ static int mv88e6060_switch_reset(struct dsa_switch *ds)
+ 	/* Reset the switch. */
+ 	REG_WRITE(REG_GLOBAL, GLOBAL_ATU_CONTROL,
+ 		  GLOBAL_ATU_CONTROL_SWRESET |
+-		  GLOBAL_ATU_CONTROL_ATUSIZE_1024 |
+-		  GLOBAL_ATU_CONTROL_ATE_AGE_5MIN);
++		  GLOBAL_ATU_CONTROL_LEARNDIS);
+ 
+ 	/* Wait up to one second for reset to complete. */
+ 	timeout = jiffies + 1 * HZ;
+@@ -124,13 +123,10 @@ static int mv88e6060_setup_global(struct dsa_switch *ds)
+ 	 */
+ 	REG_WRITE(REG_GLOBAL, GLOBAL_CONTROL, GLOBAL_CONTROL_MAX_FRAME_1536);
+ 
+-	/* Enable automatic address learning, set the address
+-	 * database size to 1024 entries, and set the default aging
+-	 * time to 5 minutes.
++	/* Disable automatic address learning.
+ 	 */
+ 	REG_WRITE(REG_GLOBAL, GLOBAL_ATU_CONTROL,
+-		  GLOBAL_ATU_CONTROL_ATUSIZE_1024 |
+-		  GLOBAL_ATU_CONTROL_ATE_AGE_5MIN);
++		  GLOBAL_ATU_CONTROL_LEARNDIS);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/net/wireless/mac80211_hwsim.c b/drivers/net/wireless/mac80211_hwsim.c
+index ab480ea6d95a..0d1abcfec003 100644
+--- a/drivers/net/wireless/mac80211_hwsim.c
++++ b/drivers/net/wireless/mac80211_hwsim.c
+@@ -3195,16 +3195,16 @@ static int __init init_mac80211_hwsim(void)
+ 	if (err)
+ 		return err;
+ 
++	err = hwsim_init_netlink();
++	if (err)
++		goto out_unregister_driver;
++
+ 	hwsim_class = class_create(THIS_MODULE, "mac80211_hwsim");
+ 	if (IS_ERR(hwsim_class)) {
+ 		err = PTR_ERR(hwsim_class);
+-		goto out_unregister_driver;
++		goto out_exit_netlink;
+ 	}
+ 
+-	err = hwsim_init_netlink();
+-	if (err < 0)
+-		goto out_unregister_driver;
+-
+ 	for (i = 0; i < radios; i++) {
+ 		struct hwsim_new_radio_params param = { 0 };
+ 
+@@ -3310,6 +3310,8 @@ out_free_mon:
+ 	free_netdev(hwsim_mon);
+ out_free_radios:
+ 	mac80211_hwsim_free();
++out_exit_netlink:
++	hwsim_exit_netlink();
+ out_unregister_driver:
+ 	platform_driver_unregister(&mac80211_hwsim_driver);
+ 	return err;
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sun8i-a83t.c b/drivers/pinctrl/sunxi/pinctrl-sun8i-a83t.c
+index a7c81e988656..383977ea3a3c 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sun8i-a83t.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sun8i-a83t.c
+@@ -568,7 +568,7 @@ static const struct sunxi_desc_pin sun8i_a83t_pins[] = {
+ 	SUNXI_PIN(SUNXI_PINCTRL_PIN(H, 11),
+ 		  SUNXI_FUNCTION(0x0, "gpio_in"),
+ 		  SUNXI_FUNCTION(0x1, "gpio_out"),
+-		  SUNXI_FUNCTION_IRQ_BANK(0x6, 2, 1)),	/* PH_EINT11 */
++		  SUNXI_FUNCTION_IRQ_BANK(0x6, 2, 11)),	/* PH_EINT11 */
+ };
+ 
+ static const struct sunxi_pinctrl_desc sun8i_a83t_pinctrl_data = {
+diff --git a/drivers/rtc/rtc-snvs.c b/drivers/rtc/rtc-snvs.c
+index a161fbf6f172..63ad5b543f14 100644
+--- a/drivers/rtc/rtc-snvs.c
++++ b/drivers/rtc/rtc-snvs.c
+@@ -47,49 +47,83 @@ struct snvs_rtc_data {
+ 	struct clk *clk;
+ };
+ 
++/* Read 64 bit timer register, which could be in inconsistent state */
++static u64 rtc_read_lpsrt(struct snvs_rtc_data *data)
++{
++	u32 msb, lsb;
++
++	regmap_read(data->regmap, data->offset + SNVS_LPSRTCMR, &msb);
++	regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &lsb);
++	return (u64)msb << 32 | lsb;
++}
++
++/* Read the secure real time counter, taking care to deal with the cases of the
++ * counter updating while being read.
++ */
+ static u32 rtc_read_lp_counter(struct snvs_rtc_data *data)
+ {
+ 	u64 read1, read2;
+-	u32 val;
++	unsigned int timeout = 100;
+ 
++	/* As expected, the registers might update between the read of the LSB
++	 * reg and the MSB reg.  It's also possible that one register might be
++	 * in partially modified state as well.
++	 */
++	read1 = rtc_read_lpsrt(data);
+ 	do {
+-		regmap_read(data->regmap, data->offset + SNVS_LPSRTCMR, &val);
+-		read1 = val;
+-		read1 <<= 32;
+-		regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &val);
+-		read1 |= val;
+-
+-		regmap_read(data->regmap, data->offset + SNVS_LPSRTCMR, &val);
+-		read2 = val;
+-		read2 <<= 32;
+-		regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &val);
+-		read2 |= val;
+-	} while (read1 != read2);
++		read2 = read1;
++		read1 = rtc_read_lpsrt(data);
++	} while (read1 != read2 && --timeout);
++	if (!timeout)
++		dev_err(&data->rtc->dev, "Timeout trying to get valid LPSRT Counter read\n");
+ 
+ 	/* Convert 47-bit counter to 32-bit raw second count */
+ 	return (u32) (read1 >> CNTR_TO_SECS_SH);
+ }
+ 
+-static void rtc_write_sync_lp(struct snvs_rtc_data *data)
++/* Just read the lsb from the counter, dealing with inconsistent state */
++static int rtc_read_lp_counter_lsb(struct snvs_rtc_data *data, u32 *lsb)
+ {
+-	u32 count1, count2, count3;
+-	int i;
+-
+-	/* Wait for 3 CKIL cycles */
+-	for (i = 0; i < 3; i++) {
+-		do {
+-			regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &count1);
+-			regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &count2);
+-		} while (count1 != count2);
+-
+-		/* Now wait until counter value changes */
+-		do {
+-			do {
+-				regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &count2);
+-				regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &count3);
+-			} while (count2 != count3);
+-		} while (count3 == count1);
++	u32 count1, count2;
++	unsigned int timeout = 100;
++
++	regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &count1);
++	do {
++		count2 = count1;
++		regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &count1);
++	} while (count1 != count2 && --timeout);
++	if (!timeout) {
++		dev_err(&data->rtc->dev, "Timeout trying to get valid LPSRT Counter read\n");
++		return -ETIMEDOUT;
+ 	}
++
++	*lsb = count1;
++	return 0;
++}
++
++static int rtc_write_sync_lp(struct snvs_rtc_data *data)
++{
++	u32 count1, count2;
++	u32 elapsed;
++	unsigned int timeout = 1000;
++	int ret;
++
++	ret = rtc_read_lp_counter_lsb(data, &count1);
++	if (ret)
++		return ret;
++
++	/* Wait for 3 CKIL cycles, about 61.0-91.5 µs */
++	do {
++		ret = rtc_read_lp_counter_lsb(data, &count2);
++		if (ret)
++			return ret;
++		elapsed = count2 - count1; /* wrap around _is_ handled! */
++	} while (elapsed < 3 && --timeout);
++	if (!timeout) {
++		dev_err(&data->rtc->dev, "Timeout waiting for LPSRT Counter to change\n");
++		return -ETIMEDOUT;
++	}
++	return 0;
+ }
+ 
+ static int snvs_rtc_enable(struct snvs_rtc_data *data, bool enable)
+@@ -173,9 +207,7 @@ static int snvs_rtc_alarm_irq_enable(struct device *dev, unsigned int enable)
+ 			   (SNVS_LPCR_LPTA_EN | SNVS_LPCR_LPWUI_EN),
+ 			   enable ? (SNVS_LPCR_LPTA_EN | SNVS_LPCR_LPWUI_EN) : 0);
+ 
+-	rtc_write_sync_lp(data);
+-
+-	return 0;
++	return rtc_write_sync_lp(data);
+ }
+ 
+ static int snvs_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
+@@ -183,10 +215,14 @@ static int snvs_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
+ 	struct snvs_rtc_data *data = dev_get_drvdata(dev);
+ 	struct rtc_time *alrm_tm = &alrm->time;
+ 	unsigned long time;
++	int ret;
+ 
+ 	rtc_tm_to_time(alrm_tm, &time);
+ 
+ 	regmap_update_bits(data->regmap, data->offset + SNVS_LPCR, SNVS_LPCR_LPTA_EN, 0);
++	ret = rtc_write_sync_lp(data);
++	if (ret)
++		return ret;
+ 	regmap_write(data->regmap, data->offset + SNVS_LPTAR, time);
+ 
+ 	/* Clear alarm interrupt status bit */
+diff --git a/drivers/sbus/char/display7seg.c b/drivers/sbus/char/display7seg.c
+index 33fbe8249fd5..044cffbc45e8 100644
+--- a/drivers/sbus/char/display7seg.c
++++ b/drivers/sbus/char/display7seg.c
+@@ -221,6 +221,7 @@ static int d7s_probe(struct platform_device *op)
+ 	dev_set_drvdata(&op->dev, p);
+ 	d7s_device = p;
+ 	err = 0;
++	of_node_put(opts);
+ 
+ out:
+ 	return err;
+diff --git a/drivers/sbus/char/envctrl.c b/drivers/sbus/char/envctrl.c
+index 5609b602c54d..baa9b322520b 100644
+--- a/drivers/sbus/char/envctrl.c
++++ b/drivers/sbus/char/envctrl.c
+@@ -910,8 +910,10 @@ static void envctrl_init_i2c_child(struct device_node *dp,
+ 			for (len = 0; len < PCF8584_MAX_CHANNELS; ++len) {
+ 				pchild->mon_type[len] = ENVCTRL_NOMON;
+ 			}
++			of_node_put(root_node);
+ 			return;
+ 		}
++		of_node_put(root_node);
+ 	}
+ 
+ 	/* Get the monitor channels. */
+diff --git a/drivers/scsi/libiscsi.c b/drivers/scsi/libiscsi.c
+index a74f8fbefd33..009a2ef829d6 100644
+--- a/drivers/scsi/libiscsi.c
++++ b/drivers/scsi/libiscsi.c
+@@ -2416,8 +2416,8 @@ int iscsi_eh_session_reset(struct scsi_cmnd *sc)
+ failed:
+ 		ISCSI_DBG_EH(session,
+ 			     "failing session reset: Could not log back into "
+-			     "%s, %s [age %d]\n", session->targetname,
+-			     conn->persistent_address, session->age);
++			     "%s [age %d]\n", session->targetname,
++			     session->age);
+ 		spin_unlock_bh(&session->frwd_lock);
+ 		mutex_unlock(&session->eh_mutex);
+ 		return FAILED;
+diff --git a/drivers/scsi/vmw_pvscsi.c b/drivers/scsi/vmw_pvscsi.c
+index 0de2f9069e23..23081ed8f1e3 100644
+--- a/drivers/scsi/vmw_pvscsi.c
++++ b/drivers/scsi/vmw_pvscsi.c
+@@ -1199,8 +1199,6 @@ static void pvscsi_shutdown_intr(struct pvscsi_adapter *adapter)
+ 
+ static void pvscsi_release_resources(struct pvscsi_adapter *adapter)
+ {
+-	pvscsi_shutdown_intr(adapter);
+-
+ 	if (adapter->workqueue)
+ 		destroy_workqueue(adapter->workqueue);
+ 
+@@ -1529,6 +1527,7 @@ static int pvscsi_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ out_reset_adapter:
+ 	ll_adapter_reset(adapter);
+ out_release_resources:
++	pvscsi_shutdown_intr(adapter);
+ 	pvscsi_release_resources(adapter);
+ 	scsi_host_put(host);
+ out_disable_device:
+@@ -1537,6 +1536,7 @@ out_disable_device:
+ 	return error;
+ 
+ out_release_resources_and_disable:
++	pvscsi_shutdown_intr(adapter);
+ 	pvscsi_release_resources(adapter);
+ 	goto out_disable_device;
+ }
+diff --git a/drivers/tty/serial/suncore.c b/drivers/tty/serial/suncore.c
+index 127472bd6a7c..209f314745ab 100644
+--- a/drivers/tty/serial/suncore.c
++++ b/drivers/tty/serial/suncore.c
+@@ -111,6 +111,7 @@ void sunserial_console_termios(struct console *con, struct device_node *uart_dp)
+ 		mode = of_get_property(dp, mode_prop, NULL);
+ 		if (!mode)
+ 			mode = "9600,8,n,1,-";
++		of_node_put(dp);
+ 	}
+ 
+ 	cflag = CREAD | HUPCL | CLOCAL;
+diff --git a/fs/aio.c b/fs/aio.c
+index c283eb03cb38..7187d03aa0bc 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -40,6 +40,7 @@
+ #include <linux/ramfs.h>
+ #include <linux/percpu-refcount.h>
+ #include <linux/mount.h>
++#include <linux/nospec.h>
+ 
+ #include <asm/kmap_types.h>
+ #include <asm/uaccess.h>
+@@ -1063,6 +1064,7 @@ static struct kioctx *lookup_ioctx(unsigned long ctx_id)
+ 	if (!table || id >= table->nr)
+ 		goto out;
+ 
++	id = array_index_nospec(id, table->nr);
+ 	ctx = rcu_dereference(table->table[id]);
+ 	if (ctx && ctx->user_id == ctx_id) {
+ 		if (percpu_ref_tryget_live(&ctx->users))
+diff --git a/fs/cifs/Kconfig b/fs/cifs/Kconfig
+index e7b478b49985..8bef27b8f85d 100644
+--- a/fs/cifs/Kconfig
++++ b/fs/cifs/Kconfig
+@@ -111,7 +111,7 @@ config CIFS_XATTR
+ 
+ config CIFS_POSIX
+         bool "CIFS POSIX Extensions"
+-        depends on CIFS_XATTR
++        depends on CIFS && CIFS_ALLOW_INSECURE_LEGACY && CIFS_XATTR
+         help
+           Enabling this option will cause the cifs client to attempt to
+ 	  negotiate a newer dialect with servers, such as Samba 3.0.5
+diff --git a/kernel/time/timer_list.c b/kernel/time/timer_list.c
+index ef4f16e81283..1407ed20ea93 100644
+--- a/kernel/time/timer_list.c
++++ b/kernel/time/timer_list.c
+@@ -399,7 +399,7 @@ static int __init init_timer_list_procfs(void)
+ {
+ 	struct proc_dir_entry *pe;
+ 
+-	pe = proc_create("timer_list", 0444, NULL, &timer_list_fops);
++	pe = proc_create("timer_list", 0400, NULL, &timer_list_fops);
+ 	if (!pe)
+ 		return -ENOMEM;
+ 	return 0;
+diff --git a/kernel/trace/ftrace.c b/kernel/trace/ftrace.c
+index ac758a53fcea..d90b42b39908 100644
+--- a/kernel/trace/ftrace.c
++++ b/kernel/trace/ftrace.c
+@@ -4767,6 +4767,7 @@ void ftrace_destroy_filter_files(struct ftrace_ops *ops)
+ 	if (ops->flags & FTRACE_OPS_FL_ENABLED)
+ 		ftrace_shutdown(ops, 0);
+ 	ops->flags |= FTRACE_OPS_FL_DELETED;
++	ftrace_free_filter(ops);
+ 	mutex_unlock(&ftrace_lock);
+ }
+ 
+diff --git a/kernel/trace/trace_events_trigger.c b/kernel/trace/trace_events_trigger.c
+index b8a894adab2c..8be66a2b0cac 100644
+--- a/kernel/trace/trace_events_trigger.c
++++ b/kernel/trace/trace_events_trigger.c
+@@ -727,8 +727,10 @@ static int set_trigger_filter(char *filter_str,
+ 
+ 	/* The filter is for the 'trigger' event, not the triggered event */
+ 	ret = create_event_filter(file->event_call, filter_str, false, &filter);
+-	if (ret)
+-		goto out;
++	/*
++	 * If create_event_filter() fails, filter still needs to be freed.
++	 * Which the calling code will do with data->filter.
++	 */
+  assign:
+ 	tmp = rcu_access_pointer(data->filter);
+ 
+diff --git a/lib/interval_tree_test.c b/lib/interval_tree_test.c
+index 245900b98c8e..222c8010bda0 100644
+--- a/lib/interval_tree_test.c
++++ b/lib/interval_tree_test.c
+@@ -1,27 +1,38 @@
+ #include <linux/module.h>
++#include <linux/moduleparam.h>
+ #include <linux/interval_tree.h>
+ #include <linux/random.h>
++#include <linux/slab.h>
+ #include <asm/timex.h>
+ 
+-#define NODES        100
+-#define PERF_LOOPS   100000
+-#define SEARCHES     100
+-#define SEARCH_LOOPS 10000
++#define __param(type, name, init, msg)		\
++	static type name = init;		\
++	module_param(name, type, 0444);		\
++	MODULE_PARM_DESC(name, msg);
++
++__param(int, nnodes, 100, "Number of nodes in the interval tree");
++__param(int, perf_loops, 1000, "Number of iterations modifying the tree");
++
++__param(int, nsearches, 100, "Number of searches to the interval tree");
++__param(int, search_loops, 1000, "Number of iterations searching the tree");
++__param(bool, search_all, false, "Searches will iterate all nodes in the tree");
++
++__param(uint, max_endpoint, ~0, "Largest value for the interval's endpoint");
+ 
+ static struct rb_root root = RB_ROOT;
+-static struct interval_tree_node nodes[NODES];
+-static u32 queries[SEARCHES];
++static struct interval_tree_node *nodes = NULL;
++static u32 *queries = NULL;
+ 
+ static struct rnd_state rnd;
+ 
+ static inline unsigned long
+-search(unsigned long query, struct rb_root *root)
++search(struct rb_root *root, unsigned long start, unsigned long last)
+ {
+ 	struct interval_tree_node *node;
+ 	unsigned long results = 0;
+ 
+-	for (node = interval_tree_iter_first(root, query, query); node;
+-	     node = interval_tree_iter_next(node, query, query))
++	for (node = interval_tree_iter_first(root, start, last); node;
++	     node = interval_tree_iter_next(node, start, last))
+ 		results++;
+ 	return results;
+ }
+@@ -29,19 +40,22 @@ search(unsigned long query, struct rb_root *root)
+ static void init(void)
+ {
+ 	int i;
+-	for (i = 0; i < NODES; i++) {
+-		u32 a = prandom_u32_state(&rnd);
+-		u32 b = prandom_u32_state(&rnd);
+-		if (a <= b) {
+-			nodes[i].start = a;
+-			nodes[i].last = b;
+-		} else {
+-			nodes[i].start = b;
+-			nodes[i].last = a;
+-		}
++
++	for (i = 0; i < nnodes; i++) {
++		u32 b = (prandom_u32_state(&rnd) >> 4) % max_endpoint;
++		u32 a = (prandom_u32_state(&rnd) >> 4) % b;
++
++		nodes[i].start = a;
++		nodes[i].last = b;
+ 	}
+-	for (i = 0; i < SEARCHES; i++)
+-		queries[i] = prandom_u32_state(&rnd);
++
++	/*
++	 * Limit the search scope to what the user defined.
++	 * Otherwise we are merely measuring empty walks,
++	 * which is pointless.
++	 */
++	for (i = 0; i < nsearches; i++)
++		queries[i] = (prandom_u32_state(&rnd) >> 4) % max_endpoint;
+ }
+ 
+ static int interval_tree_test_init(void)
+@@ -50,6 +64,16 @@ static int interval_tree_test_init(void)
+ 	unsigned long results;
+ 	cycles_t time1, time2, time;
+ 
++	nodes = kmalloc(nnodes * sizeof(struct interval_tree_node), GFP_KERNEL);
++	if (!nodes)
++		return -ENOMEM;
++
++	queries = kmalloc(nsearches * sizeof(int), GFP_KERNEL);
++	if (!queries) {
++		kfree(nodes);
++		return -ENOMEM;
++	}
++
+ 	printk(KERN_ALERT "interval tree insert/remove");
+ 
+ 	prandom_seed_state(&rnd, 3141592653589793238ULL);
+@@ -57,39 +81,46 @@ static int interval_tree_test_init(void)
+ 
+ 	time1 = get_cycles();
+ 
+-	for (i = 0; i < PERF_LOOPS; i++) {
+-		for (j = 0; j < NODES; j++)
++	for (i = 0; i < perf_loops; i++) {
++		for (j = 0; j < nnodes; j++)
+ 			interval_tree_insert(nodes + j, &root);
+-		for (j = 0; j < NODES; j++)
++		for (j = 0; j < nnodes; j++)
+ 			interval_tree_remove(nodes + j, &root);
+ 	}
+ 
+ 	time2 = get_cycles();
+ 	time = time2 - time1;
+ 
+-	time = div_u64(time, PERF_LOOPS);
++	time = div_u64(time, perf_loops);
+ 	printk(" -> %llu cycles\n", (unsigned long long)time);
+ 
+ 	printk(KERN_ALERT "interval tree search");
+ 
+-	for (j = 0; j < NODES; j++)
++	for (j = 0; j < nnodes; j++)
+ 		interval_tree_insert(nodes + j, &root);
+ 
+ 	time1 = get_cycles();
+ 
+ 	results = 0;
+-	for (i = 0; i < SEARCH_LOOPS; i++)
+-		for (j = 0; j < SEARCHES; j++)
+-			results += search(queries[j], &root);
++	for (i = 0; i < search_loops; i++)
++		for (j = 0; j < nsearches; j++) {
++			unsigned long start = search_all ? 0 : queries[j];
++			unsigned long last = search_all ? max_endpoint : queries[j];
++
++			results += search(&root, start, last);
++		}
+ 
+ 	time2 = get_cycles();
+ 	time = time2 - time1;
+ 
+-	time = div_u64(time, SEARCH_LOOPS);
+-	results = div_u64(results, SEARCH_LOOPS);
++	time = div_u64(time, search_loops);
++	results = div_u64(results, search_loops);
+ 	printk(" -> %llu cycles (%lu results)\n",
+ 	       (unsigned long long)time, results);
+ 
++	kfree(queries);
++	kfree(nodes);
++
+ 	return -EAGAIN; /* Fail will directly unload the module */
+ }
+ 
+diff --git a/lib/rbtree_test.c b/lib/rbtree_test.c
+index 8b3c9dc88262..afedd3770562 100644
+--- a/lib/rbtree_test.c
++++ b/lib/rbtree_test.c
+@@ -1,11 +1,18 @@
+ #include <linux/module.h>
++#include <linux/moduleparam.h>
+ #include <linux/rbtree_augmented.h>
+ #include <linux/random.h>
++#include <linux/slab.h>
+ #include <asm/timex.h>
+ 
+-#define NODES       100
+-#define PERF_LOOPS  100000
+-#define CHECK_LOOPS 100
++#define __param(type, name, init, msg)		\
++	static type name = init;		\
++	module_param(name, type, 0444);		\
++	MODULE_PARM_DESC(name, msg);
++
++__param(int, nnodes, 100, "Number of nodes in the rb-tree");
++__param(int, perf_loops, 1000, "Number of iterations modifying the rb-tree");
++__param(int, check_loops, 100, "Number of iterations modifying and verifying the rb-tree");
+ 
+ struct test_node {
+ 	u32 key;
+@@ -17,7 +24,7 @@ struct test_node {
+ };
+ 
+ static struct rb_root root = RB_ROOT;
+-static struct test_node nodes[NODES];
++static struct test_node *nodes = NULL;
+ 
+ static struct rnd_state rnd;
+ 
+@@ -95,7 +102,7 @@ static void erase_augmented(struct test_node *node, struct rb_root *root)
+ static void init(void)
+ {
+ 	int i;
+-	for (i = 0; i < NODES; i++) {
++	for (i = 0; i < nnodes; i++) {
+ 		nodes[i].key = prandom_u32_state(&rnd);
+ 		nodes[i].val = prandom_u32_state(&rnd);
+ 	}
+@@ -177,6 +184,10 @@ static int __init rbtree_test_init(void)
+ 	int i, j;
+ 	cycles_t time1, time2, time;
+ 
++	nodes = kmalloc(nnodes * sizeof(*nodes), GFP_KERNEL);
++	if (!nodes)
++		return -ENOMEM;
++
+ 	printk(KERN_ALERT "rbtree testing");
+ 
+ 	prandom_seed_state(&rnd, 3141592653589793238ULL);
+@@ -184,27 +195,27 @@ static int __init rbtree_test_init(void)
+ 
+ 	time1 = get_cycles();
+ 
+-	for (i = 0; i < PERF_LOOPS; i++) {
+-		for (j = 0; j < NODES; j++)
++	for (i = 0; i < perf_loops; i++) {
++		for (j = 0; j < nnodes; j++)
+ 			insert(nodes + j, &root);
+-		for (j = 0; j < NODES; j++)
++		for (j = 0; j < nnodes; j++)
+ 			erase(nodes + j, &root);
+ 	}
+ 
+ 	time2 = get_cycles();
+ 	time = time2 - time1;
+ 
+-	time = div_u64(time, PERF_LOOPS);
++	time = div_u64(time, perf_loops);
+ 	printk(" -> %llu cycles\n", (unsigned long long)time);
+ 
+-	for (i = 0; i < CHECK_LOOPS; i++) {
++	for (i = 0; i < check_loops; i++) {
+ 		init();
+-		for (j = 0; j < NODES; j++) {
++		for (j = 0; j < nnodes; j++) {
+ 			check(j);
+ 			insert(nodes + j, &root);
+ 		}
+-		for (j = 0; j < NODES; j++) {
+-			check(NODES - j);
++		for (j = 0; j < nnodes; j++) {
++			check(nnodes - j);
+ 			erase(nodes + j, &root);
+ 		}
+ 		check(0);
+@@ -216,32 +227,34 @@ static int __init rbtree_test_init(void)
+ 
+ 	time1 = get_cycles();
+ 
+-	for (i = 0; i < PERF_LOOPS; i++) {
+-		for (j = 0; j < NODES; j++)
++	for (i = 0; i < perf_loops; i++) {
++		for (j = 0; j < nnodes; j++)
+ 			insert_augmented(nodes + j, &root);
+-		for (j = 0; j < NODES; j++)
++		for (j = 0; j < nnodes; j++)
+ 			erase_augmented(nodes + j, &root);
+ 	}
+ 
+ 	time2 = get_cycles();
+ 	time = time2 - time1;
+ 
+-	time = div_u64(time, PERF_LOOPS);
++	time = div_u64(time, perf_loops);
+ 	printk(" -> %llu cycles\n", (unsigned long long)time);
+ 
+-	for (i = 0; i < CHECK_LOOPS; i++) {
++	for (i = 0; i < check_loops; i++) {
+ 		init();
+-		for (j = 0; j < NODES; j++) {
++		for (j = 0; j < nnodes; j++) {
+ 			check_augmented(j);
+ 			insert_augmented(nodes + j, &root);
+ 		}
+-		for (j = 0; j < NODES; j++) {
+-			check_augmented(NODES - j);
++		for (j = 0; j < nnodes; j++) {
++			check_augmented(nnodes - j);
+ 			erase_augmented(nodes + j, &root);
+ 		}
+ 		check_augmented(0);
+ 	}
+ 
++	kfree(nodes);
++
+ 	return -EAGAIN; /* Fail will directly unload the module */
+ }
+ 
+diff --git a/net/mac80211/mlme.c b/net/mac80211/mlme.c
+index a5e11280f405..ed4fef32b394 100644
+--- a/net/mac80211/mlme.c
++++ b/net/mac80211/mlme.c
+@@ -1886,7 +1886,8 @@ static bool ieee80211_sta_wmm_params(struct ieee80211_local *local,
+ 		params[ac].acm = acm;
+ 		params[ac].uapsd = uapsd;
+ 
+-		if (params[ac].cw_min > params[ac].cw_max) {
++		if (params[ac].cw_min == 0 ||
++		    params[ac].cw_min > params[ac].cw_max) {
+ 			sdata_info(sdata,
+ 				   "AP has invalid WMM params (CWmin/max=%d/%d for ACI %d), using defaults\n",
+ 				   params[ac].cw_min, params[ac].cw_max, aci);
+diff --git a/net/sunrpc/xprt.c b/net/sunrpc/xprt.c
+index 2e98f4a243e5..112c191b8336 100644
+--- a/net/sunrpc/xprt.c
++++ b/net/sunrpc/xprt.c
+@@ -758,8 +758,15 @@ void xprt_connect(struct rpc_task *task)
+ 			return;
+ 		if (xprt_test_and_set_connecting(xprt))
+ 			return;
+-		xprt->stat.connect_start = jiffies;
+-		xprt->ops->connect(xprt, task);
++		/* Race breaker */
++		if (!xprt_connected(xprt)) {
++			xprt->stat.connect_start = jiffies;
++			xprt->ops->connect(xprt, task);
++		} else {
++			xprt_clear_connecting(xprt);
++			task->tk_status = 0;
++			rpc_wake_up_queued_task(&xprt->pending, task);
++		}
+ 	}
+ 	xprt_release_write(xprt, task);
+ }
+diff --git a/sound/isa/wavefront/wavefront_synth.c b/sound/isa/wavefront/wavefront_synth.c
+index 69f76ff5693d..718d5e3b7806 100644
+--- a/sound/isa/wavefront/wavefront_synth.c
++++ b/sound/isa/wavefront/wavefront_synth.c
+@@ -785,6 +785,9 @@ wavefront_send_patch (snd_wavefront_t *dev, wavefront_patch_info *header)
+ 	DPRINT (WF_DEBUG_LOAD_PATCH, "downloading patch %d\n",
+ 				      header->number);
+ 
++	if (header->number >= ARRAY_SIZE(dev->patch_status))
++		return -EINVAL;
++
+ 	dev->patch_status[header->number] |= WF_SLOT_FILLED;
+ 
+ 	bptr = buf;
+@@ -809,6 +812,9 @@ wavefront_send_program (snd_wavefront_t *dev, wavefront_patch_info *header)
+ 	DPRINT (WF_DEBUG_LOAD_PATCH, "downloading program %d\n",
+ 		header->number);
+ 
++	if (header->number >= ARRAY_SIZE(dev->prog_status))
++		return -EINVAL;
++
+ 	dev->prog_status[header->number] = WF_SLOT_USED;
+ 
+ 	/* XXX need to zero existing SLOT_USED bit for program_status[i]
+@@ -898,6 +904,9 @@ wavefront_send_sample (snd_wavefront_t *dev,
+ 		header->number = x;
+ 	}
+ 
++	if (header->number >= WF_MAX_SAMPLE)
++		return -EINVAL;
++
+ 	if (header->size) {
+ 
+ 		/* XXX it's a debatable point whether or not RDONLY semantics

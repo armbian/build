@@ -264,6 +264,47 @@ compile_kernel()
 	# read kernel version
 	local version=$(grab_version "$kerneldir")
 
+	# add WireGuard
+	if linux-version compare $version ge 3.14 && [ "$WIREGUARD" == yes ]; then
+			display_alert "Adding" "WireGuard" "info"
+			rm -r $SRC/cache/sources/$LINUXSOURCEDIR/net/wireguard
+			$SRC/cache/sources/wireguard/contrib/kernel-tree/jury-rig.sh $SRC/cache/sources/$LINUXSOURCEDIR
+			# remove duplicates
+			[[ $(cat $SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile | grep wireguard | wc -l) -gt 1 ]] && \
+			sed -i '0,/wireguard/{/wireguard/d;}' $SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile
+			[[ $(cat $SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig | grep wireguard | wc -l) -gt 1 ]] && \
+			sed -i '0,/wireguard/{/wireguard/d;}' $SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig
+			# patch for 4.4 kernel
+			display_alert "Patching WireGuard" "$(patch --directory=$SRC/cache/sources/wireguard --batch -p1 < $SRC/patch/misc/wireguard.patch)" "info"
+	fi
+
+	# add drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
+	if linux-version compare $version ge 3.14 && [ "$RTL8812AU" == yes ]; then
+		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets" "info"
+		rm -rf $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au
+		mkdir -p $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/
+		ln -s $SRC/cache/sources/rtl8812au/core $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/core
+		ln -s $SRC/cache/sources/rtl8812au/hal $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/hal
+		ln -s $SRC/cache/sources/rtl8812au/include $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/include
+		ln -s $SRC/cache/sources/rtl8812au/os_dep $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/os_dep
+		ln -s $SRC/cache/sources/rtl8812au/platform $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/platform
+		ln -s $SRC/cache/sources/rtl8812au/modules.order $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/modules.order
+
+		# Makefile
+		cp $SRC/cache/sources/rtl8812au/Makefile $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/Makefile
+		cp $SRC/cache/sources/rtl8812au/Kconfig $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/Kconfig
+
+		# Adjust path
+		sed -i 's/include $(TopDIR)\/hal\/phydm\/phydm.mk/include $(TopDIR)\/drivers\/net\/wireless\/rtl8812au\/hal\/phydm\/phydm.mk/' \
+		$SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/Makefile
+
+		# Add to section Makefile
+		sed -i '/obj-$(CONFIG_.*ATMEL).*/a obj-$(CONFIG_RTL8812AU) += rtl8812au/' \
+		$SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/Makefile
+		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8812au\/Kconfig"' \
+		$SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/Kconfig
+	fi
+
 	# create linux-source package - with already patched sources
 	local sources_pkg_dir=$SRC/.tmp/${CHOSEN_KSRC}_${REVISION}_all
 	rm -rf ${sources_pkg_dir}

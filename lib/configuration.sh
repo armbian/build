@@ -10,7 +10,7 @@
 # common options
 # daily beta build contains date in subrevision
 if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
-REVISION="5.71$SUBREVISION" # all boards have same revision
+REVISION="5.75$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 [[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik" # deb signature
 [[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -21,7 +21,6 @@ HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
 ROOTFSCACHE_VERSION=4
 CHROOT_CACHE_VERSION=6
 ROOTFS_CACHE_MAX=16 # max number of rootfs cache, older ones will be cleaned up
-#20190117
 ADD_UBOOT="yes" # some tvboxes doesn't need building u-boot
 # TODO: fixed name can't be used for parallel image building
 ROOT_MAPPER="armbian-root"
@@ -66,6 +65,8 @@ SERIALCON=ttyS0
 CAN_BUILD_STRETCH=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
+[[ -z $WIREGUARD ]] && WIREGUARD="no"
+[[ -z $RTL8812AU ]] && RTL8812AU="no"
 
 #s8xx
 SRC_LOADADDR=""

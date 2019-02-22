@@ -2,7 +2,7 @@
 #
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
-setenv load_addr "0x44000000"
+setenv load_addr "0x34000000"
 setenv initrd_high "0xffffffff"
 setenv fdt_high "0xffffffff"
 setenv overlay_error "false"
