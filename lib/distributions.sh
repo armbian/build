@@ -151,16 +151,13 @@ install_common()
 
 	# install kernel and u-boot packages
 	install_deb_chroot "$DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
-
-	if [[ $ADD_UBOOT == yes ]]; then
-	    install_deb_chroot "$DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
-	fi
+	install_deb_chroot "$DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
 
 	if [[ $INSTALL_HEADERS == yes ]]; then
 		install_deb_chroot "$DEST/debs/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
 	fi
 
-	if [[ $TVBOXES_ROOT != yes ]]; then
+	if [[ -f $DEST/debs/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
 		install_deb_chroot "$DEST/debs/armbian-firmware_${REVISION}_${ARCH}.deb"
 	fi
 

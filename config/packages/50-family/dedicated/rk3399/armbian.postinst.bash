@@ -29,5 +29,7 @@ if [ "\$BOARD" = "firefly-rk3399" ]; then
 	&& echo "fdtfile=rockchip/rk3399-firefly.dtb" >> /boot/armbianEnv.txt
 fi
 
+systemctl --no-reload enable nanopi-bluetooth.service >/dev/null 2>&1
+
 exit 0
 EOF

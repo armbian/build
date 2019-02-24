@@ -139,4 +139,8 @@ desktop_postinstall ()
 		echo "disp_mem_reserves=on" >> $SDCARD/boot/armbianEnv.txt
 		echo "extraargs=cma=96M" >> $SDCARD/boot/armbianEnv.txt
 	fi
+
+	mkdir -p $SDCARD/etc/skel/Desktop/
+	cp $SRC/cache/SRC/Test* $SDCARD/etc/skel/Desktop
+
 }
