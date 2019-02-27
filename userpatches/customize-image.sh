@@ -29,7 +29,9 @@ Pin: release *
 Pin-Priority: -1
 EOF
 echo "auto eth0" > /etc/network/interfaces.d/eth0.conf
+echo "allow-hotplug eth0" >> /etc/network/interfaces.d/eth0.conf
 echo "iface eth0 inet dhcp" >> /etc/network/interfaces.d/eth0.conf
+echo " post-up ip a a fe80::42:acab/128 dev eth0" >> /etc/network/interfaces.d/eth0.conf
 
 # Disable those damn supposedly "predictive" interface names
 # c.f. https://unix.stackexchange.com/a/338730
