@@ -31,6 +31,10 @@ EOF
 echo "auto eth0" > /etc/network/interfaces.d/eth0.conf
 echo "iface eth0 inet dhcp" >> /etc/network/interfaces.d/eth0.conf
 
+# Disable those damn supposedly "predictive" interface names
+# c.f. https://unix.stackexchange.com/a/338730
+ln -s /dev/null /etc/systemd/network/99-default.link
+
 # Prevent dhcp setting the "search" thing in /etc/resolv.conf, leads to many
 # weird stuff (e.g. with numericable) where any domain will ping >.>
 echo 'supersede domain-name "";'   >> /etc/dhcp/dhclient.conf
