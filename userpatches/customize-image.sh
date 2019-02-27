@@ -63,14 +63,14 @@ rm /var/log/yunohost-installation*
 cp /tmp/overlay/check_yunohost_is_installed.sh /etc/profile.d/check_yunohost_is_installed.sh
 dpkg-divert --divert /root/armbian-check-first-login.sh --rename /etc/profile.d/armbian-check-first-login.sh
 dpkg-divert --divert /root/armbian-motd --rename /etc/default/armbian-motd
-rm /etc/profile.d/armbian-check-first-login.sh
+rm -f /etc/profile.d/armbian-check-first-login.sh
 cp /tmp/overlay/check_first_login.sh /etc/profile.d/check_first_login.sh
 cp /tmp/overlay/armbian-motd /etc/default/armbian-motd
 touch /root/.not_logged_in_yet
 
 # Make sure resolv.conf points to DNSmasq
 # (somehow networkmanager or something else breaks this before...)
-rm /etc/resolv.conf
+rm -f /etc/resolv.conf
 ln -s /etc/resolvconf/run/resolv.conf /etc/resolv.conf
 
 # Clean stuff
