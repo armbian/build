@@ -271,8 +271,9 @@ compile_kernel()
 			sed -i '0,/wireguard/{/wireguard/d;}' $SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile
 			[[ $(cat $SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig | grep wireguard | wc -l) -gt 1 ]] && \
 			sed -i '0,/wireguard/{/wireguard/d;}' $SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig
-			# patch for 4.4 kernel
-			display_alert "Patching WireGuard" "$(patch --directory=$SRC/cache/sources/wireguard --batch -p1 < $SRC/patch/misc/wireguard.patch)" "info"
+			# headers workaround
+			display_alert "Patching WireGuard" "Applying workaround for headers compilation" "info"
+			sed -i '/mkdir -p "$destdir"/a mkdir -p "$destdir"/net/wireguard; touch "$destdir"/net/wireguard/{Kconfig,Makefile} # workaround for Wireguard' $SRC/cache/sources/$LINUXSOURCEDIR/scripts/package/builddeb
 	fi
 
 	# add drivers for Realtek 8811, 8812, 8814 and 8821 chipsets

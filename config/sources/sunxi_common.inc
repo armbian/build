@@ -21,6 +21,8 @@ case $BRANCH in
 
 		GOVERNOR=interactive
 		CAN_BUILD_STRETCH=no
+		BOOTBRANCH='tag:v2018.05'
+		BOOTPATCHDIR='u-boot-sunxi-legacy'
 
 	;;
 
