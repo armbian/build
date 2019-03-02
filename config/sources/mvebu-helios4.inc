@@ -60,4 +60,10 @@ family_tweaks_s()
 	# modify mdadm configuration
 	echo -e "\n # Trigger Fault Led script when an event is detected" >> $SDCARD/etc/mdadm/mdadm.conf
 	echo -e "PROGRAM /usr/sbin/mdadm-fault-led.sh" >> $SDCARD/etc/mdadm/mdadm.conf
+
+	### Ethernet tweaks
+
+	# copy and enable helios4-wol.service
+	cp $SRC/packages/bsp/helios4/helios4-wol.service $SDCARD/usr/lib/systemd/system/
+	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable helios4-wol.service >/dev/null 2>&1"
 }
