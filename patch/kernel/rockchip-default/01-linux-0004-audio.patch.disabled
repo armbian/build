@@ -1,0 +1,1597 @@
+From dabace918ba0543c5a12e03fb823886891cd82dc Mon Sep 17 00:00:00 2001
+From: Chris Zhong <zyw@rock-chips.com>
+Date: Mon, 18 Jul 2016 22:34:34 +0800
+Subject: [PATCH] UPSTREAM: ASoC: rockchip: correct the spdif clk
+
+The spdif mclk should be 128 times of sample rate, and there is a
+internal divider, the real rate of spdif mclk is mclk / (div + 1).
+Hence, the original driver always get the good frequency for
+48000/96000/44100/192000. But for 32000, the mclk is incorrect,
+it should be 32000*128, but get 48000*128. Do not use the internal
+divider here, just set all mclk to 128 * sample rate directly.
+
+Signed-off-by: Chris Zhong <zyw@rock-chips.com>
+Signed-off-by: Mark Brown <broonie@kernel.org>
+(cherry picked from commit 46dd2e28a90e48fbf1b7e253933fa3b7242e9b1b)
+---
+ sound/soc/rockchip/rockchip_spdif.c | 17 +----------------
+ 1 file changed, 1 insertion(+), 16 deletions(-)
+
+diff --git a/sound/soc/rockchip/rockchip_spdif.c b/sound/soc/rockchip/rockchip_spdif.c
+index c211750b54ee..784941ca2408 100644
+--- a/sound/soc/rockchip/rockchip_spdif.c
++++ b/sound/soc/rockchip/rockchip_spdif.c
+@@ -105,21 +105,7 @@ static int rk_spdif_hw_params(struct snd_pcm_substream *substream,
+ 	int ret;
+ 
+ 	srate = params_rate(params);
+-	switch (srate) {
+-	case 32000:
+-	case 48000:
+-	case 96000:
+-		mclk = 96000 * 128; /* 12288000 hz */
+-		break;
+-	case 44100:
+-		mclk = 44100 * 256; /* 11289600 hz */
+-		break;
+-	case 192000:
+-		mclk = 192000 * 128; /* 24576000 hz */
+-		break;
+-	default:
+-		return -EINVAL;
+-	}
++	mclk = srate * 128;
+ 
+ 	switch (params_format(params)) {
+ 	case SNDRV_PCM_FORMAT_S16_LE:
+@@ -143,7 +129,6 @@ static int rk_spdif_hw_params(struct snd_pcm_substream *substream,
+ 		return ret;
+ 	}
+ 
+-	val |= SPDIF_CFGR_CLK_DIV(mclk/(srate * 256));
+ 	ret = regmap_update_bits(spdif->regmap, SPDIF_CFGR,
+ 		SPDIF_CFGR_CLK_DIV_MASK | SPDIF_CFGR_HALFWORD_ENABLE |
+ 		SDPIF_CFGR_VDW_MASK,
+
+From 3069a5725338532939d13e3dc329f2b3d183b260 Mon Sep 17 00:00:00 2001
+From: Sugar Zhang <sugar.zhang@rock-chips.com>
+Date: Wed, 7 Sep 2016 14:30:21 +0800
+Subject: [PATCH] UPSTREAM: ASoC: rockchip: spdif: restore register during
+ runtime_suspend/resume cycle
+
+when step into runtime_suspend, spdif pd will be disabled and loss state.
+so need to restore register when runtime_resume.
+
+Signed-off-by: Sugar Zhang <sugar.zhang@rock-chips.com>
+Signed-off-by: Mark Brown <broonie@kernel.org>
+(cherry picked from commit 3628c6987fb45d719cd963805bbba9f15017290e)
+---
+ sound/soc/rockchip/rockchip_spdif.c | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/rockchip/rockchip_spdif.c b/sound/soc/rockchip/rockchip_spdif.c
+index 784941ca2408..831e4caf29d3 100644
+--- a/sound/soc/rockchip/rockchip_spdif.c
++++ b/sound/soc/rockchip/rockchip_spdif.c
+@@ -69,6 +69,7 @@ static int __maybe_unused rk_spdif_runtime_suspend(struct device *dev)
+ {
+ 	struct rk_spdif_dev *spdif = dev_get_drvdata(dev);
+ 
++	regcache_cache_only(spdif->regmap, true);
+ 	clk_disable_unprepare(spdif->mclk);
+ 	clk_disable_unprepare(spdif->hclk);
+ 
+@@ -92,7 +93,16 @@ static int __maybe_unused rk_spdif_runtime_resume(struct device *dev)
+ 		return ret;
+ 	}
+ 
+-	return 0;
++	regcache_cache_only(spdif->regmap, false);
++	regcache_mark_dirty(spdif->regmap);
++
++	ret = regcache_sync(spdif->regmap);
++	if (ret) {
++		clk_disable_unprepare(spdif->mclk);
++		clk_disable_unprepare(spdif->hclk);
++	}
++
++	return ret;
+ }
+ 
+ static int rk_spdif_hw_params(struct snd_pcm_substream *substream,
+
+From d852c659ff563456480c55cfea53c578399c04ff Mon Sep 17 00:00:00 2001
+From: Arnaud Pouliquen <arnaud.pouliquen@st.com>
+Date: Tue, 3 Jan 2017 16:52:50 +0100
+Subject: [PATCH] UPSTREAM: DRM: add help to get ELD speaker allocation
+
+Add helper to allow users to retrieve the speaker allocations without
+knowledge of the ELD structure.
+
+Signed-off-by: Arnaud Pouliquen <arnaud.pouliquen@st.com>
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+Signed-off-by: Mark Brown <broonie@kernel.org>
+(cherry picked from commit c82dbe5c055e4d246bd07c4d7b24801c9445c241)
+---
+ include/drm/drm_edid.h | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/include/drm/drm_edid.h b/include/drm/drm_edid.h
+index 85861b63e77a..55201e7e2ede 100644
+--- a/include/drm/drm_edid.h
++++ b/include/drm/drm_edid.h
+@@ -254,6 +254,7 @@ struct detailed_timing {
+ # define DRM_ELD_AUD_SYNCH_DELAY_MAX	0xfa	/* 500 ms */
+ 
+ #define DRM_ELD_SPEAKER			7
++# define DRM_ELD_SPEAKER_MASK		0x7f
+ # define DRM_ELD_SPEAKER_RLRC		(1 << 6)
+ # define DRM_ELD_SPEAKER_FLRC		(1 << 5)
+ # define DRM_ELD_SPEAKER_RC		(1 << 4)
+@@ -417,6 +418,18 @@ static inline int drm_eld_size(const uint8_t *eld)
+ 	return DRM_ELD_HEADER_BLOCK_SIZE + eld[DRM_ELD_BASELINE_ELD_LEN] * 4;
+ }
+ 
++/**
++ * drm_eld_get_spk_alloc - Get speaker allocation
++ * @eld: pointer to an ELD memory structure
++ *
++ * The returned value is the speakers mask. User has to use %DRM_ELD_SPEAKER
++ * field definitions to identify speakers.
++ */
++static inline u8 drm_eld_get_spk_alloc(const uint8_t *eld)
++{
++	return eld[DRM_ELD_SPEAKER] & DRM_ELD_SPEAKER_MASK;
++}
++
+ struct edid *drm_do_get_edid(struct drm_connector *connector,
+ 	int (*get_edid_block)(void *data, u8 *buf, unsigned int block,
+ 			      size_t len),
+
+From 4e08e72298c858a65950b98ca62613fb95cd0a35 Mon Sep 17 00:00:00 2001
+From: Arnaud Pouliquen <arnaud.pouliquen@st.com>
+Date: Tue, 3 Jan 2017 16:52:51 +0100
+Subject: [PATCH] UPSTREAM: ASoC: core: add optional pcm_new callback for DAI
+ driver
+
+During probe, DAIs can need to perform some actions that requests
+the knowledge of the pcm runtime handle.
+The callback is called during DAIs linking, after PCM device creation.
+For instance this can be used to add relationship between a DAI pcm
+control and the pcm device.
+
+Signed-off-by: Arnaud Pouliquen <arnaud.pouliquen@st.com>
+Signed-off-by: Mark Brown <broonie@kernel.org>
+(cherry picked from commit 25f7b701c20db3e9ae09e28dd652949bd977e5cd)
+---
+ include/sound/soc-dai.h |  3 +++
+ sound/soc/soc-core.c    | 28 ++++++++++++++++++++++++++++
+ 2 files changed, 31 insertions(+)
+
+diff --git a/include/sound/soc-dai.h b/include/sound/soc-dai.h
+index 212eaaf172ed..345e4f8ee93f 100644
+--- a/include/sound/soc-dai.h
++++ b/include/sound/soc-dai.h
+@@ -230,6 +230,9 @@ struct snd_soc_dai_driver {
+ 	int (*resume)(struct snd_soc_dai *dai);
+ 	/* compress dai */
+ 	int (*compress_new)(struct snd_soc_pcm_runtime *rtd, int num);
++	/* Optional Callback used at pcm creation*/
++	int (*pcm_new)(struct snd_soc_pcm_runtime *rtd,
++		       struct snd_soc_dai *dai);
+ 	/* DAI is also used for the control bus */
+ 	bool bus_control;
+ 
+diff --git a/sound/soc/soc-core.c b/sound/soc/soc-core.c
+index 3c6713da3ad9..e46e80c0e07d 100644
+--- a/sound/soc/soc-core.c
++++ b/sound/soc/soc-core.c
+@@ -1289,6 +1289,27 @@ static int soc_probe_dai(struct snd_soc_dai *dai, int order)
+ 	return 0;
+ }
+ 
++static int soc_link_dai_pcm_new(struct snd_soc_dai **dais, int num_dais,
++				struct snd_soc_pcm_runtime *rtd)
++{
++	int i, ret = 0;
++
++	for (i = 0; i < num_dais; ++i) {
++		struct snd_soc_dai_driver *drv = dais[i]->driver;
++
++		if (!rtd->dai_link->no_pcm && drv->pcm_new)
++			ret = drv->pcm_new(rtd, dais[i]);
++		if (ret < 0) {
++			dev_err(dais[i]->dev,
++				"ASoC: Failed to bind %s with pcm device\n",
++				dais[i]->name);
++			return ret;
++		}
++	}
++
++	return 0;
++}
++
+ static int soc_link_dai_widgets(struct snd_soc_card *card,
+ 				struct snd_soc_dai_link *dai_link,
+ 				struct snd_soc_pcm_runtime *rtd)
+@@ -1400,6 +1421,13 @@ static int soc_probe_link_dais(struct snd_soc_card *card, int num, int order)
+ 				       dai_link->stream_name, ret);
+ 				return ret;
+ 			}
++			ret = soc_link_dai_pcm_new(&cpu_dai, 1, rtd);
++			if (ret < 0)
++				return ret;
++			ret = soc_link_dai_pcm_new(rtd->codec_dais,
++						   rtd->num_codecs, rtd);
++			if (ret < 0)
++				return ret;
+ 		} else {
+ 			INIT_DELAYED_WORK(&rtd->delayed_work,
+ 						codec2codec_close_delayed_work);
+
+From 900f1d7bb2cddd1f445e0f3ef92fb0f7056a4c5a Mon Sep 17 00:00:00 2001
+From: Arnaud Pouliquen <arnaud.pouliquen@st.com>
+Date: Tue, 3 Jan 2017 16:52:52 +0100
+Subject: [PATCH] UPSTREAM: ASoC: hdmi-codec: add channel mapping control
+
+Add user interface to provide channel mapping.
+In a first step this control is read only.
+
+As TLV type, the control provides all configuration available for
+HDMI sink(ELD), and provides current channel mapping selected by codec
+based on ELD and number of channels specified by user on open.
+When control is called before the number of the channel is specified
+(i.e. hw_params is set), it returns all channels set to UNKNOWN.
+
+Signed-off-by: Arnaud Pouliquen <arnaud.pouliquen@st.com>
+Signed-off-by: Mark Brown <broonie@kernel.org>
+(cherry picked from commit cd6111b26280a2f38a9fb8e6630c63a96477e4bf)
+---
+ sound/soc/codecs/hdmi-codec.c | 377 +++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 376 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/codecs/hdmi-codec.c b/sound/soc/codecs/hdmi-codec.c
+index 028d60c196ae..cb78d8971b41 100644
+--- a/sound/soc/codecs/hdmi-codec.c
++++ b/sound/soc/codecs/hdmi-codec.c
+@@ -21,12 +21,264 @@
+ #include <sound/pcm.h>
+ #include <sound/pcm_params.h>
+ #include <sound/soc.h>
++#include <sound/tlv.h>
+ #include <sound/pcm_drm_eld.h>
+ #include <sound/hdmi-codec.h>
+ #include <sound/pcm_iec958.h>
+ 
+ #include <drm/drm_crtc.h> /* This is only to get MAX_ELD_BYTES */
+ 
++#define HDMI_CODEC_CHMAP_IDX_UNKNOWN  -1
++
++struct hdmi_codec_channel_map_table {
++	unsigned char map;	/* ALSA API channel map position */
++	unsigned long spk_mask;		/* speaker position bit mask */
++};
++
++/*
++ * CEA speaker placement for HDMI 1.4:
++ *
++ *  FL  FLC   FC   FRC   FR   FRW
++ *
++ *                                  LFE
++ *
++ *  RL  RLC   RC   RRC   RR
++ *
++ *  Speaker placement has to be extended to support HDMI 2.0
++ */
++enum hdmi_codec_cea_spk_placement {
++	FL  = BIT(0),	/* Front Left           */
++	FC  = BIT(1),	/* Front Center         */
++	FR  = BIT(2),	/* Front Right          */
++	FLC = BIT(3),	/* Front Left Center    */
++	FRC = BIT(4),	/* Front Right Center   */
++	RL  = BIT(5),	/* Rear Left            */
++	RC  = BIT(6),	/* Rear Center          */
++	RR  = BIT(7),	/* Rear Right           */
++	RLC = BIT(8),	/* Rear Left Center     */
++	RRC = BIT(9),	/* Rear Right Center    */
++	LFE = BIT(10),	/* Low Frequency Effect */
++};
++
++/*
++ * cea Speaker allocation structure
++ */
++struct hdmi_codec_cea_spk_alloc {
++	const int ca_id;
++	unsigned int n_ch;
++	unsigned long mask;
++};
++
++/* Channel maps  stereo HDMI */
++const struct snd_pcm_chmap_elem hdmi_codec_stereo_chmaps[] = {
++	{ .channels = 2,
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR } },
++	{ }
++};
++
++/* Channel maps for multi-channel playbacks, up to 8 n_ch */
++const struct snd_pcm_chmap_elem hdmi_codec_8ch_chmaps[] = {
++	{ .channels = 2, /* CA_ID 0x00 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR } },
++	{ .channels = 4, /* CA_ID 0x01 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_NA } },
++	{ .channels = 4, /* CA_ID 0x02 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FC } },
++	{ .channels = 4, /* CA_ID 0x03 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_FC } },
++	{ .channels = 6, /* CA_ID 0x04 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_RC, SNDRV_CHMAP_NA } },
++	{ .channels = 6, /* CA_ID 0x05 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_RC, SNDRV_CHMAP_NA } },
++	{ .channels = 6, /* CA_ID 0x06 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_RC, SNDRV_CHMAP_NA } },
++	{ .channels = 6, /* CA_ID 0x07 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_RC, SNDRV_CHMAP_NA } },
++	{ .channels = 6, /* CA_ID 0x08 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_RL, SNDRV_CHMAP_RR } },
++	{ .channels = 6, /* CA_ID 0x09 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_RL, SNDRV_CHMAP_RR } },
++	{ .channels = 6, /* CA_ID 0x0A */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_RL, SNDRV_CHMAP_RR } },
++	{ .channels = 6, /* CA_ID 0x0B */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_RL, SNDRV_CHMAP_RR } },
++	{ .channels = 8, /* CA_ID 0x0C */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_RL, SNDRV_CHMAP_RR,
++		   SNDRV_CHMAP_RC, SNDRV_CHMAP_NA } },
++	{ .channels = 8, /* CA_ID 0x0D */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_RL, SNDRV_CHMAP_RR,
++		   SNDRV_CHMAP_RC, SNDRV_CHMAP_NA } },
++	{ .channels = 8, /* CA_ID 0x0E */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_RL, SNDRV_CHMAP_RR,
++		   SNDRV_CHMAP_RC, SNDRV_CHMAP_NA } },
++	{ .channels = 8, /* CA_ID 0x0F */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_RL, SNDRV_CHMAP_RR,
++		   SNDRV_CHMAP_RC, SNDRV_CHMAP_NA } },
++	{ .channels = 8, /* CA_ID 0x10 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_RL, SNDRV_CHMAP_RR,
++		   SNDRV_CHMAP_RLC, SNDRV_CHMAP_RRC } },
++	{ .channels = 8, /* CA_ID 0x11 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_RL, SNDRV_CHMAP_RR,
++		   SNDRV_CHMAP_RLC, SNDRV_CHMAP_RRC } },
++	{ .channels = 8, /* CA_ID 0x12 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_RL, SNDRV_CHMAP_RR,
++		   SNDRV_CHMAP_RLC, SNDRV_CHMAP_RRC } },
++	{ .channels = 8, /* CA_ID 0x13 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_RL, SNDRV_CHMAP_RR,
++		   SNDRV_CHMAP_RLC, SNDRV_CHMAP_RRC } },
++	{ .channels = 8, /* CA_ID 0x14 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_NA, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FLC, SNDRV_CHMAP_FRC } },
++	{ .channels = 8, /* CA_ID 0x15 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_NA, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FLC, SNDRV_CHMAP_FRC } },
++	{ .channels = 8, /* CA_ID 0x16 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_NA, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FLC, SNDRV_CHMAP_FRC } },
++	{ .channels = 8, /* CA_ID 0x17 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_NA, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FLC, SNDRV_CHMAP_FRC } },
++	{ .channels = 8, /* CA_ID 0x18 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_NA, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FLC, SNDRV_CHMAP_FRC } },
++	{ .channels = 8, /* CA_ID 0x19 */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_NA, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FLC, SNDRV_CHMAP_FRC } },
++	{ .channels = 8, /* CA_ID 0x1A */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_NA, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FLC, SNDRV_CHMAP_FRC } },
++	{ .channels = 8, /* CA_ID 0x1B */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_NA, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FLC, SNDRV_CHMAP_FRC } },
++	{ .channels = 8, /* CA_ID 0x1C */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_NA, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FLC, SNDRV_CHMAP_FRC } },
++	{ .channels = 8, /* CA_ID 0x1D */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_NA, SNDRV_CHMAP_NA, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FLC, SNDRV_CHMAP_FRC } },
++	{ .channels = 8, /* CA_ID 0x1E */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_NA, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FLC, SNDRV_CHMAP_FRC } },
++	{ .channels = 8, /* CA_ID 0x1F */
++	  .map = { SNDRV_CHMAP_FL, SNDRV_CHMAP_FR, SNDRV_CHMAP_LFE,
++		   SNDRV_CHMAP_FC, SNDRV_CHMAP_NA, SNDRV_CHMAP_NA,
++		   SNDRV_CHMAP_FLC, SNDRV_CHMAP_FRC } },
++	{ }
++};
++
++/*
++ * hdmi_codec_channel_alloc: speaker configuration available for CEA
++ *
++ * This is an ordered list that must match with hdmi_codec_8ch_chmaps struct
++ * The preceding ones have better chances to be selected by
++ * hdmi_codec_get_ch_alloc_table_idx().
++ */
++static const struct hdmi_codec_cea_spk_alloc hdmi_codec_channel_alloc[] = {
++	{ .ca_id = 0x00, .n_ch = 2,
++	  .mask = FL | FR},
++	/* 2.1 */
++	{ .ca_id = 0x01, .n_ch = 4,
++	  .mask = FL | FR | LFE},
++	/* Dolby Surround */
++	{ .ca_id = 0x02, .n_ch = 4,
++	  .mask = FL | FR | FC },
++	/* surround51 */
++	{ .ca_id = 0x0b, .n_ch = 6,
++	  .mask = FL | FR | LFE | FC | RL | RR},
++	/* surround40 */
++	{ .ca_id = 0x08, .n_ch = 6,
++	  .mask = FL | FR | RL | RR },
++	/* surround41 */
++	{ .ca_id = 0x09, .n_ch = 6,
++	  .mask = FL | FR | LFE | RL | RR },
++	/* surround50 */
++	{ .ca_id = 0x0a, .n_ch = 6,
++	  .mask = FL | FR | FC | RL | RR },
++	/* 6.1 */
++	{ .ca_id = 0x0f, .n_ch = 8,
++	  .mask = FL | FR | LFE | FC | RL | RR | RC },
++	/* surround71 */
++	{ .ca_id = 0x13, .n_ch = 8,
++	  .mask = FL | FR | LFE | FC | RL | RR | RLC | RRC },
++	/* others */
++	{ .ca_id = 0x03, .n_ch = 8,
++	  .mask = FL | FR | LFE | FC },
++	{ .ca_id = 0x04, .n_ch = 8,
++	  .mask = FL | FR | RC},
++	{ .ca_id = 0x05, .n_ch = 8,
++	  .mask = FL | FR | LFE | RC },
++	{ .ca_id = 0x06, .n_ch = 8,
++	  .mask = FL | FR | FC | RC },
++	{ .ca_id = 0x07, .n_ch = 8,
++	  .mask = FL | FR | LFE | FC | RC },
++	{ .ca_id = 0x0c, .n_ch = 8,
++	  .mask = FL | FR | RC | RL | RR },
++	{ .ca_id = 0x0d, .n_ch = 8,
++	  .mask = FL | FR | LFE | RL | RR | RC },
++	{ .ca_id = 0x0e, .n_ch = 8,
++	  .mask = FL | FR | FC | RL | RR | RC },
++	{ .ca_id = 0x10, .n_ch = 8,
++	  .mask = FL | FR | RL | RR | RLC | RRC },
++	{ .ca_id = 0x11, .n_ch = 8,
++	  .mask = FL | FR | LFE | RL | RR | RLC | RRC },
++	{ .ca_id = 0x12, .n_ch = 8,
++	  .mask = FL | FR | FC | RL | RR | RLC | RRC },
++	{ .ca_id = 0x14, .n_ch = 8,
++	  .mask = FL | FR | FLC | FRC },
++	{ .ca_id = 0x15, .n_ch = 8,
++	  .mask = FL | FR | LFE | FLC | FRC },
++	{ .ca_id = 0x16, .n_ch = 8,
++	  .mask = FL | FR | FC | FLC | FRC },
++	{ .ca_id = 0x17, .n_ch = 8,
++	  .mask = FL | FR | LFE | FC | FLC | FRC },
++	{ .ca_id = 0x18, .n_ch = 8,
++	  .mask = FL | FR | RC | FLC | FRC },
++	{ .ca_id = 0x19, .n_ch = 8,
++	  .mask = FL | FR | LFE | RC | FLC | FRC },
++	{ .ca_id = 0x1a, .n_ch = 8,
++	  .mask = FL | FR | RC | FC | FLC | FRC },
++	{ .ca_id = 0x1b, .n_ch = 8,
++	  .mask = FL | FR | LFE | RC | FC | FLC | FRC },
++	{ .ca_id = 0x1c, .n_ch = 8,
++	  .mask = FL | FR | RL | RR | FLC | FRC },
++	{ .ca_id = 0x1d, .n_ch = 8,
++	  .mask = FL | FR | LFE | RL | RR | FLC | FRC },
++	{ .ca_id = 0x1e, .n_ch = 8,
++	  .mask = FL | FR | FC | RL | RR | FLC | FRC },
++	{ .ca_id = 0x1f, .n_ch = 8,
++	  .mask = FL | FR | LFE | FC | RL | RR | FLC | FRC },
++};
++
+ struct hdmi_codec_priv {
+ 	struct hdmi_codec_pdata hcd;
+ 	struct snd_soc_dai_driver *daidrv;
+@@ -41,6 +293,8 @@ struct hdmi_codec_priv {
+ 	struct notifier_block nb;
+ 	unsigned int jack_status;
+ 	unsigned int mode;
++	struct snd_pcm_chmap *chmap_info;
++	unsigned int chmap_idx;
+ };
+ 
+ static const struct snd_soc_dapm_widget hdmi_widgets[] = {
+@@ -109,6 +363,83 @@ static int hdmi_audio_mode_put(struct snd_kcontrol *kcontrol,
+ 	return 0;
+ }
+ 
++static unsigned long hdmi_codec_spk_mask_from_alloc(int spk_alloc)
++{
++	int i;
++	const unsigned long hdmi_codec_eld_spk_alloc_bits[] = {
++		[0] = FL | FR, [1] = LFE, [2] = FC, [3] = RL | RR,
++		[4] = RC, [5] = FLC | FRC, [6] = RLC | RRC,
++	};
++	unsigned long spk_mask = 0;
++
++	for (i = 0; i < ARRAY_SIZE(hdmi_codec_eld_spk_alloc_bits); i++) {
++		if (spk_alloc & (1 << i))
++			spk_mask |= hdmi_codec_eld_spk_alloc_bits[i];
++	}
++
++	return spk_mask;
++}
++
++void hdmi_codec_eld_chmap(struct hdmi_codec_priv *hcp)
++{
++	u8 spk_alloc;
++	unsigned long spk_mask;
++
++	spk_alloc = drm_eld_get_spk_alloc(hcp->eld);
++	spk_mask = hdmi_codec_spk_mask_from_alloc(spk_alloc);
++
++	/* Detect if only stereo supported, else return 8 channels mappings */
++	if ((spk_mask & ~(FL | FR)) && hcp->chmap_info->max_channels > 2)
++		hcp->chmap_info->chmap = hdmi_codec_8ch_chmaps;
++	else
++		hcp->chmap_info->chmap = hdmi_codec_stereo_chmaps;
++}
++
++static int hdmi_codec_get_ch_alloc_table_idx(struct hdmi_codec_priv *hcp,
++					     unsigned char channels)
++{
++	int i;
++	u8 spk_alloc;
++	unsigned long spk_mask;
++	const struct hdmi_codec_cea_spk_alloc *cap = hdmi_codec_channel_alloc;
++
++	spk_alloc = drm_eld_get_spk_alloc(hcp->eld);
++	spk_mask = hdmi_codec_spk_mask_from_alloc(spk_alloc);
++
++	for (i = 0; i < ARRAY_SIZE(hdmi_codec_channel_alloc); i++, cap++) {
++		/* If spk_alloc == 0, HDMI is unplugged return stereo config*/
++		if (!spk_alloc && cap->ca_id == 0)
++			return i;
++		if (cap->n_ch != channels)
++			continue;
++		if (!(cap->mask == (spk_mask & cap->mask)))
++			continue;
++		return i;
++	}
++
++	return -EINVAL;
++}
++static int hdmi_codec_chmap_ctl_get(struct snd_kcontrol *kcontrol,
++			      struct snd_ctl_elem_value *ucontrol)
++{
++	unsigned const char *map;
++	unsigned int i;
++	struct snd_pcm_chmap *info = snd_kcontrol_chip(kcontrol);
++	struct hdmi_codec_priv *hcp = info->private_data;
++
++	map = info->chmap[hcp->chmap_idx].map;
++
++	for (i = 0; i < info->max_channels; i++) {
++		if (hcp->chmap_idx == HDMI_CODEC_CHMAP_IDX_UNKNOWN)
++			ucontrol->value.integer.value[i] = 0;
++		else
++			ucontrol->value.integer.value[i] = map[i];
++	}
++
++	return 0;
++}
++
++
+ static const struct snd_kcontrol_new hdmi_controls[] = {
+ 	{
+ 		.access = SNDRV_CTL_ELEM_ACCESS_READ |
+@@ -184,6 +515,9 @@ static int hdmi_codec_startup(struct snd_pcm_substream *substream,
+ 			ret = snd_pcm_hw_constraint_eld(substream->runtime,
+ 							hcp->eld);
+ 		mutex_unlock(&hcp->eld_lock);
++
++		/* Select chmap supported */
++		hdmi_codec_eld_chmap(hcp);
+ 	}
+ 	return ret;
+ }
+@@ -201,6 +535,7 @@ static void hdmi_codec_shutdown(struct snd_pcm_substream *substream,
+ 
+ 	WARN_ON(hcp->current_stream != substream);
+ 
++	hcp->chmap_idx = HDMI_CODEC_CHMAP_IDX_UNKNOWN;
+ 	hcp->hcd.ops->audio_shutdown(dai->dev->parent, hcp->hcd.data);
+ 
+ 	mutex_lock(&hcp->current_stream_lock);
+@@ -221,7 +556,7 @@ static int hdmi_codec_hw_params(struct snd_pcm_substream *substream,
+ 			.dig_subframe = { 0 },
+ 		}
+ 	};
+-	int ret;
++	int ret, idx;
+ 
+ 	dev_dbg(dai->dev, "%s() width %d rate %d channels %d\n", __func__,
+ 		params_width(params), params_rate(params),
+@@ -248,6 +583,17 @@ static int hdmi_codec_hw_params(struct snd_pcm_substream *substream,
+ 	hp.cea.sample_size = HDMI_AUDIO_SAMPLE_SIZE_STREAM;
+ 	hp.cea.sample_frequency = HDMI_AUDIO_SAMPLE_FREQUENCY_STREAM;
+ 
++	/* Select a channel allocation that matches with ELD and pcm channels */
++	idx = hdmi_codec_get_ch_alloc_table_idx(hcp, hp.cea.channels);
++	if (idx < 0) {
++		dev_err(dai->dev, "Not able to map channels to speakers (%d)\n",
++			idx);
++		hcp->chmap_idx = HDMI_CODEC_CHMAP_IDX_UNKNOWN;
++		return idx;
++	}
++	hp.cea.channel_allocation = hdmi_codec_channel_alloc[idx].ca_id;
++	hcp->chmap_idx = hdmi_codec_channel_alloc[idx].ca_id;
++
+ 	hp.sample_width = params_width(params);
+ 	hp.sample_rate = params_rate(params);
+ 	hp.channels = params_channels(params);
+@@ -377,6 +723,32 @@ static const struct snd_soc_dai_ops hdmi_dai_ops = {
+ 			 SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_S24_BE |\
+ 			 SNDRV_PCM_FMTBIT_S32_LE | SNDRV_PCM_FMTBIT_S32_BE)
+ 
++static int hdmi_codec_pcm_new(struct snd_soc_pcm_runtime *rtd,
++			      struct snd_soc_dai *dai)
++{
++	struct snd_soc_dai_driver *drv = dai->driver;
++	struct hdmi_codec_priv *hcp = snd_soc_dai_get_drvdata(dai);
++	int ret;
++
++	dev_dbg(dai->dev, "%s()\n", __func__);
++
++	ret =  snd_pcm_add_chmap_ctls(rtd->pcm, SNDRV_PCM_STREAM_PLAYBACK,
++				      NULL, drv->playback.channels_max, 0,
++				      &hcp->chmap_info);
++	if (ret < 0)
++		return ret;
++
++	/* override handlers */
++	hcp->chmap_info->private_data = hcp;
++	hcp->chmap_info->kctl->get = hdmi_codec_chmap_ctl_get;
++
++	/* default chmap supported is stereo */
++	hcp->chmap_info->chmap = hdmi_codec_stereo_chmaps;
++	hcp->chmap_idx = HDMI_CODEC_CHMAP_IDX_UNKNOWN;
++
++	return 0;
++}
++
+ static struct snd_soc_dai_driver hdmi_i2s_dai = {
+ 	.name = "i2s-hifi",
+ 	.id = DAI_ID_I2S,
+@@ -389,6 +761,7 @@ static struct snd_soc_dai_driver hdmi_i2s_dai = {
+ 		.sig_bits = 24,
+ 	},
+ 	.ops = &hdmi_dai_ops,
++	.pcm_new = hdmi_codec_pcm_new,
+ };
+ 
+ static const struct snd_soc_dai_driver hdmi_spdif_dai = {
+@@ -402,6 +775,7 @@ static const struct snd_soc_dai_driver hdmi_spdif_dai = {
+ 		.formats = SPDIF_FORMATS,
+ 	},
+ 	.ops = &hdmi_dai_ops,
++	.pcm_new = hdmi_codec_pcm_new,
+ };
+ 
+ static struct snd_soc_codec_driver hdmi_codec = {
+@@ -534,6 +908,7 @@ static int hdmi_codec_remove(struct platform_device *pdev)
+ {
+ 	struct hdmi_codec_priv *hcp = platform_get_drvdata(pdev);
+ 
++	kfree(hcp->chmap_info);
+ 	hdmi_unregister_notifier(&hcp->nb);
+ 	snd_soc_unregister_codec(&pdev->dev);
+ 	return 0;
+
+From 5ad6154eea74dec3635e2417f06ad12d3f0a36c4 Mon Sep 17 00:00:00 2001
+From: Christophe Jaillet <christophe.jaillet@wanadoo.fr>
+Date: Thu, 15 Jun 2017 07:53:11 +0200
+Subject: [PATCH] UPSTREAM: ASoC: rockchip: Fix an error handling in
+ 'rockchip_i2s_probe'
+
+If this memory allocation fail, we must disable what has been enabled.
+Do not return immediately but go thrue the error handling path instead.
+
+Also use 'devm_kmemdup' instead of 'devm_kzalloc+memcpy' to simplify code.
+
+Signed-off-by: Christophe JAILLET <christophe.jaillet@wanadoo.fr>
+Signed-off-by: Mark Brown <broonie@kernel.org>
+(cherry picked from commit c3a3d3c41b74b05267bab6173f2a8224a1443ba6)
+---
+ sound/soc/rockchip/rockchip_i2s.c | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/rockchip/rockchip_i2s.c b/sound/soc/rockchip/rockchip_i2s.c
+index b359639c1038..02ff642499bf 100644
+--- a/sound/soc/rockchip/rockchip_i2s.c
++++ b/sound/soc/rockchip/rockchip_i2s.c
+@@ -658,12 +658,13 @@ static int rockchip_i2s_probe(struct platform_device *pdev)
+ 			goto err_pm_disable;
+ 	}
+ 
+-	soc_dai = devm_kzalloc(&pdev->dev,
++	soc_dai = devm_kmemdup(&pdev->dev, &rockchip_i2s_dai,
+ 			       sizeof(*soc_dai), GFP_KERNEL);
+-	if (!soc_dai)
+-		return -ENOMEM;
++	if (!soc_dai) {
++		ret = -ENOMEM;
++		goto err_pm_disable;
++	}
+ 
+-	memcpy(soc_dai, &rockchip_i2s_dai, sizeof(*soc_dai));
+ 	if (!of_property_read_u32(node, "rockchip,playback-channels", &val)) {
+ 		if (val >= 2 && val <= 8)
+ 			soc_dai->playback.channels_max = val;
+
+From 9aeca2222a8f8a700c446fc9a38235ab2e3a4efd Mon Sep 17 00:00:00 2001
+From: Markus Elfring <elfring@users.sourceforge.net>
+Date: Thu, 10 Aug 2017 18:38:09 +0200
+Subject: [PATCH] UPSTREAM: ASoC: rockchip: Delete an error message for a
+ failed memory allocation in rockchip_i2s_probe()
+
+Omit an extra message for a memory allocation failure in this function.
+
+This issue was detected by using the Coccinelle software.
+
+Link: http://events.linuxfoundation.org/sites/events/files/slides/LCJ16-Refactor_Strings-WSang_0.pdf
+Signed-off-by: Markus Elfring <elfring@users.sourceforge.net>
+Signed-off-by: Mark Brown <broonie@kernel.org>
+(cherry picked from commit b48b2710913d583ff93c365413532e1a7cd60d84)
+---
+ sound/soc/rockchip/rockchip_i2s.c | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/sound/soc/rockchip/rockchip_i2s.c b/sound/soc/rockchip/rockchip_i2s.c
+index 02ff642499bf..16ff8d5e0033 100644
+--- a/sound/soc/rockchip/rockchip_i2s.c
++++ b/sound/soc/rockchip/rockchip_i2s.c
+@@ -594,10 +594,8 @@ static int rockchip_i2s_probe(struct platform_device *pdev)
+ 	int val;
+ 
+ 	i2s = devm_kzalloc(&pdev->dev, sizeof(*i2s), GFP_KERNEL);
+-	if (!i2s) {
+-		dev_err(&pdev->dev, "Can't allocate rk_i2s_dev\n");
++	if (!i2s)
+ 		return -ENOMEM;
+-	}
+ 
+ 	i2s->dev = &pdev->dev;
+ 
+
+From dad1bc0769692d7fd45701a4ab3fb55be012e01e Mon Sep 17 00:00:00 2001
+From: John Keeping <john@metanate.com>
+Date: Thu, 14 Sep 2017 16:58:55 +0100
+Subject: [PATCH] UPSTREAM: ASoC: rockchip: i2s: fix unbalanced clk_disable
+
+mclk is enabled and disabled only in i2s_runtime_{resume,suspend}() and
+we ensure that the device is runtime suspended before reaching this
+clk_disable_unprepare() call, so it is wrong to call it again here.
+
+Signed-off-by: John Keeping <john@metanate.com>
+Signed-off-by: Mark Brown <broonie@kernel.org>
+(cherry picked from commit 32debfcd3ff0939c93238ddde03ffcc96cca5c60)
+---
+ sound/soc/rockchip/rockchip_i2s.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/sound/soc/rockchip/rockchip_i2s.c b/sound/soc/rockchip/rockchip_i2s.c
+index 16ff8d5e0033..986ad2efc8e9 100644
+--- a/sound/soc/rockchip/rockchip_i2s.c
++++ b/sound/soc/rockchip/rockchip_i2s.c
+@@ -727,7 +727,6 @@ static int rockchip_i2s_remove(struct platform_device *pdev)
+ 	if (!pm_runtime_status_suspended(&pdev->dev))
+ 		i2s_runtime_suspend(&pdev->dev);
+ 
+-	clk_disable_unprepare(i2s->mclk);
+ 	clk_disable_unprepare(i2s->hclk);
+ 
+ 	return 0;
+
+From 20b260f46771f7313ecd6e296ec6c08a43967eb4 Mon Sep 17 00:00:00 2001
+From: John Keeping <john@metanate.com>
+Date: Mon, 8 Jan 2018 16:01:04 +0000
+Subject: [PATCH] UPSTREAM: ASoC: rockchip: i2s: fix playback after runtime
+ resume
+
+When restoring registers during runtime resume, we must not write to
+I2S_TXDR which is the transmit FIFO as this queues up a sample to be
+output and pushes all of the output channels down by one.
+
+This can be demonstrated with the speaker-test utility:
+
+	for i in a b c; do speaker-test -c 2 -s 1; done
+
+which should play a test through the left speaker three times but if the
+I2S hardware starts runtime suspended the first sample will be played
+through the right speaker.
+
+Fix this by marking I2S_TXDR as volatile (which also requires marking it
+as readble, even though it technically isn't).  This seems to be the
+most robust fix, the alternative of giving I2S_TXDR a default value is
+more fragile since it does not prevent regcache writing to the register
+in all circumstances.
+
+While here, also fix the configuration of I2S_RXDR and I2S_FIFOLR; these
+are not writable so they do not suffer from the same problem as I2S_TXDR
+but reading from I2S_RXDR does suffer from a similar problem.
+
+Fixes: f0447f6cbb20 ("ASoC: rockchip: i2s: restore register during runtime_suspend/resume cycle", 2016-09-07)
+Signed-off-by: John Keeping <john@metanate.com>
+(cherry picked from commit c66234cfedfc3e6e3b62563a5f2c1562be09a35d)
+---
+ sound/soc/rockchip/rockchip_i2s.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/sound/soc/rockchip/rockchip_i2s.c b/sound/soc/rockchip/rockchip_i2s.c
+index 986ad2efc8e9..5297373fe6c4 100644
+--- a/sound/soc/rockchip/rockchip_i2s.c
++++ b/sound/soc/rockchip/rockchip_i2s.c
+@@ -514,6 +514,7 @@ static bool rockchip_i2s_rd_reg(struct device *dev, unsigned int reg)
+ 	case I2S_INTCR:
+ 	case I2S_XFER:
+ 	case I2S_CLR:
++	case I2S_TXDR:
+ 	case I2S_RXDR:
+ 	case I2S_FIFOLR:
+ 	case I2S_INTSR:
+@@ -528,6 +529,9 @@ static bool rockchip_i2s_volatile_reg(struct device *dev, unsigned int reg)
+ 	switch (reg) {
+ 	case I2S_INTSR:
+ 	case I2S_CLR:
++	case I2S_FIFOLR:
++	case I2S_TXDR:
++	case I2S_RXDR:
+ 		return true;
+ 	default:
+ 		return false;
+@@ -537,6 +541,8 @@ static bool rockchip_i2s_volatile_reg(struct device *dev, unsigned int reg)
+ static bool rockchip_i2s_precious_reg(struct device *dev, unsigned int reg)
+ {
+ 	switch (reg) {
++	case I2S_RXDR:
++		return true;
+ 	default:
+ 		return false;
+ 	}
+
+From fa8e48f2fd0abe00ee0f04128a2e9b4fed184c3f Mon Sep 17 00:00:00 2001
+From: Romain Perier <romain.perier@collabora.com>
+Date: Fri, 14 Apr 2017 10:31:12 +0200
+Subject: [PATCH] UPSTREAM: drm: dw-hdmi: add specific I2S and AHB functions
+ for stream handling
+
+Currently, CTS+N is forced to zero as a workaround of the IP block for
+i.MX platforms. This is requested in the datasheet of the corresponding
+IP for AHB mode only. However, we have seen that it introduces glitches
+or delays when playing a sound on HDMI for I2S mode. This proves that we
+cannot keep the current functions for handling audio stream as-is if
+these contain workaround that are specific to a mode.
+
+This commit introduces two callbacks, one for each variant.
+dw_hdmi_setup defines the right function depending on the detected
+variant. Then, the exported functions dw_hdmi_audio_enable and
+dw_hdmi_audio_disable calls the corresponding callbacks
+
+Reviewed-by: Neil Armstrong <narmstrong@baylibre.com>
+Signed-off-by: Romain Perier <romain.perier@collabora.com>
+Signed-off-by: Archit Taneja <architt@codeaurora.org>
+Link: http://patchwork.freedesktop.org/patch/msgid/20170414083113.4255-2-romain.perier@collabora.com
+(cherry picked from commit a7d555d2f2bd675d641e742a202a5e4b37d4d019)
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c | 27 +++++++++++++++++++++++++--
+ 1 file changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index d57d999c50a5..0541d96be662 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -263,6 +263,9 @@ struct dw_hdmi {
+ 	u8 (*read)(struct dw_hdmi *hdmi, int offset);
+ 
+ 	bool initialized;		/* hdmi is enabled before bind */
++
++	void (*enable_audio)(struct dw_hdmi *hdmi);
++	void (*disable_audio)(struct dw_hdmi *hdmi);
+ };
+ 
+ #define HDMI_IH_PHY_STAT0_RX_SENSE \
+@@ -821,13 +824,29 @@ void dw_hdmi_set_sample_rate(struct dw_hdmi *hdmi, unsigned int rate)
+ }
+ EXPORT_SYMBOL_GPL(dw_hdmi_set_sample_rate);
+ 
++static void dw_hdmi_ahb_audio_enable(struct dw_hdmi *hdmi)
++{
++	hdmi_set_cts_n(hdmi, hdmi->audio_cts, hdmi->audio_n);
++}
++
++static void dw_hdmi_ahb_audio_disable(struct dw_hdmi *hdmi)
++{
++	hdmi_set_cts_n(hdmi, hdmi->audio_cts, 0);
++}
++
++static void dw_hdmi_i2s_audio_enable(struct dw_hdmi *hdmi)
++{
++	hdmi_set_cts_n(hdmi, hdmi->audio_cts, hdmi->audio_n);
++}
++
+ void dw_hdmi_audio_enable(struct dw_hdmi *hdmi)
+ {
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&hdmi->audio_lock, flags);
+ 	hdmi->audio_enable = true;
+-	hdmi_set_cts_n(hdmi, hdmi->audio_cts, hdmi->audio_n);
++	if (hdmi->enable_audio)
++		hdmi->enable_audio(hdmi);
+ 	spin_unlock_irqrestore(&hdmi->audio_lock, flags);
+ }
+ EXPORT_SYMBOL_GPL(dw_hdmi_audio_enable);
+@@ -838,7 +857,8 @@ void dw_hdmi_audio_disable(struct dw_hdmi *hdmi)
+ 
+ 	spin_lock_irqsave(&hdmi->audio_lock, flags);
+ 	hdmi->audio_enable = false;
+-	hdmi_set_cts_n(hdmi, hdmi->audio_cts, 0);
++	if (hdmi->disable_audio)
++		hdmi->disable_audio(hdmi);
+ 	spin_unlock_irqrestore(&hdmi->audio_lock, flags);
+ }
+ EXPORT_SYMBOL_GPL(dw_hdmi_audio_disable);
+@@ -3706,6 +3726,8 @@ int dw_hdmi_bind(struct device *dev, struct device *master,
+ 		audio.irq = irq;
+ 		audio.hdmi = hdmi;
+ 		audio.eld = hdmi->connector.eld;
++		hdmi->enable_audio = dw_hdmi_ahb_audio_enable;
++		hdmi->disable_audio = dw_hdmi_ahb_audio_disable;
+ 
+ 		pdevinfo.name = "dw-hdmi-ahb-audio";
+ 		pdevinfo.data = &audio;
+@@ -3719,6 +3741,7 @@ int dw_hdmi_bind(struct device *dev, struct device *master,
+ 		audio.write	= hdmi_writeb;
+ 		audio.read	= hdmi_readb;
+ 		audio.mod	= hdmi_modb;
++		hdmi->enable_audio = dw_hdmi_i2s_audio_enable;
+ 
+ 		pdevinfo.name = "dw-hdmi-i2s-audio";
+ 		pdevinfo.data = &audio;
+
+From f856228e8933ba1e6375dbda53cc59da8d71647a Mon Sep 17 00:00:00 2001
+From: Romain Perier <romain.perier@collabora.com>
+Date: Thu, 20 Apr 2017 14:34:34 +0530
+Subject: [PATCH] UPSTREAM: drm: dw-hdmi: gate audio clock from the I2S
+ enablement callbacks
+
+Currently, the audio sampler clock is enabled from dw_hdmi_setup() at
+step E. and is kept enabled for later use. This clock should be enabled
+and disabled along with the actual audio stream and not always on (that
+is bad for PM). Furthermore, as described by the datasheet, the I2S
+variant needs to gate/ungate the clock when the stream is
+enabled/disabled.
+
+This commit adds a parameter to hdmi_audio_enable_clk() that controls
+when the audio sample clock must be enabled or disabled. Then, it adds
+the call to this function from dw_hdmi_i2s_audio_enable() and
+dw_hdmi_i2s_audio_disable().
+
+Reviewed-by: Neil Armstrong <narmstrong@baylibre.com>
+Signed-off-by: Romain Perier <romain.perier@collabora.com>
+Link: http://patchwork.freedesktop.org/patch/msgid/20170414083113.4255-3-romain.perier@collabora.com
+Signed-off-by: Archit Taneja <architt@codeaurora.org>
+(cherry picked from commit 57fbc05585a9c841c910677228f1e3f8a3a62801)
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c | 24 +++++++++++++++++-------
+ 1 file changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index 0541d96be662..f3a2034a0883 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -824,6 +824,15 @@ void dw_hdmi_set_sample_rate(struct dw_hdmi *hdmi, unsigned int rate)
+ }
+ EXPORT_SYMBOL_GPL(dw_hdmi_set_sample_rate);
+ 
++static void hdmi_enable_audio_clk(struct dw_hdmi *hdmi, bool enable)
++{
++	if (enable)
++		hdmi->mc_clkdis &= ~HDMI_MC_CLKDIS_AUDCLK_DISABLE;
++	else
++		hdmi->mc_clkdis |= HDMI_MC_CLKDIS_AUDCLK_DISABLE;
++	hdmi_writeb(hdmi, hdmi->mc_clkdis, HDMI_MC_CLKDIS);
++}
++
+ static void dw_hdmi_ahb_audio_enable(struct dw_hdmi *hdmi)
+ {
+ 	hdmi_set_cts_n(hdmi, hdmi->audio_cts, hdmi->audio_n);
+@@ -837,6 +846,12 @@ static void dw_hdmi_ahb_audio_disable(struct dw_hdmi *hdmi)
+ static void dw_hdmi_i2s_audio_enable(struct dw_hdmi *hdmi)
+ {
+ 	hdmi_set_cts_n(hdmi, hdmi->audio_cts, hdmi->audio_n);
++	hdmi_enable_audio_clk(hdmi, true);
++}
++
++static void dw_hdmi_i2s_audio_disable(struct dw_hdmi *hdmi)
++{
++	hdmi_enable_audio_clk(hdmi, false);
+ }
+ 
+ void dw_hdmi_audio_enable(struct dw_hdmi *hdmi)
+@@ -2149,12 +2164,6 @@ static void dw_hdmi_enable_video_path(struct dw_hdmi *hdmi)
+ 			    HDMI_MC_FLOWCTRL);
+ }
+ 
+-static void hdmi_enable_audio_clk(struct dw_hdmi *hdmi)
+-{
+-	hdmi->mc_clkdis &= ~HDMI_MC_CLKDIS_AUDCLK_DISABLE;
+-	hdmi_writeb(hdmi, hdmi->mc_clkdis, HDMI_MC_CLKDIS);
+-}
+-
+ /* Workaround to clear the overflow condition */
+ static void dw_hdmi_clear_overflow(struct dw_hdmi *hdmi)
+ {
+@@ -2306,7 +2315,7 @@ static int dw_hdmi_setup(struct dw_hdmi *hdmi, struct drm_display_mode *mode)
+ 
+ 		/* HDMI Initialization Step E - Configure audio */
+ 		hdmi_clk_regenerator_update_pixel_clock(hdmi);
+-		hdmi_enable_audio_clk(hdmi);
++		hdmi_enable_audio_clk(hdmi, true);
+ 	}
+ 
+ 	/* not for DVI mode */
+@@ -3742,6 +3751,7 @@ int dw_hdmi_bind(struct device *dev, struct device *master,
+ 		audio.read	= hdmi_readb;
+ 		audio.mod	= hdmi_modb;
+ 		hdmi->enable_audio = dw_hdmi_i2s_audio_enable;
++		hdmi->disable_audio = dw_hdmi_i2s_audio_disable;
+ 
+ 		pdevinfo.name = "dw-hdmi-i2s-audio";
+ 		pdevinfo.data = &audio;
+
+From 5736074e471dc5306e07581bf0958043cf434341 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 7 Aug 2017 22:24:15 +0200
+Subject: [PATCH] drm: dw-hdmi-i2s: sync with upstream
+
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h     |  1 -
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c | 20 +++++++++++++-------
+ 2 files changed, 13 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h
+index 3930ba04977b..af7f39c85ba4 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h
+@@ -14,7 +14,6 @@ struct dw_hdmi_audio_data {
+ 
+ struct dw_hdmi_i2s_audio_data {
+ 	struct dw_hdmi *hdmi;
+-	struct platform_device *pdev;
+ 
+ 	void (*write)(struct dw_hdmi *hdmi, u8 val, int offset);
+ 	u8 (*read)(struct dw_hdmi *hdmi, int offset);
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+index f1f62d8c1d16..5ff993a35ab6 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+@@ -16,7 +16,8 @@
+ 
+ #define DRIVER_NAME "dw-hdmi-i2s-audio"
+ 
+-static inline void hdmi_write(struct dw_hdmi_i2s_audio_data *audio, u8 val, int offset)
++static inline void hdmi_write(struct dw_hdmi_i2s_audio_data *audio,
++			      u8 val, int offset)
+ {
+ 	struct dw_hdmi *hdmi = audio->hdmi;
+ 
+@@ -220,6 +221,7 @@ static int snd_dw_hdmi_probe(struct platform_device *pdev)
+ 	struct dw_hdmi_i2s_audio_data *audio = pdev->dev.platform_data;
+ 	struct platform_device_info pdevinfo;
+ 	struct hdmi_codec_pdata pdata;
++	struct platform_device *platform;
+ 
+ 	pdata.ops		= &dw_hdmi_i2s_ops;
+ 	pdata.i2s		= 1;
+@@ -234,23 +236,27 @@ static int snd_dw_hdmi_probe(struct platform_device *pdev)
+ 	pdevinfo.size_data	= sizeof(pdata);
+ 	pdevinfo.dma_mask	= DMA_BIT_MASK(32);
+ 
+-	audio->pdev = platform_device_register_full(&pdevinfo);
+-	return IS_ERR_OR_NULL(audio->pdev);
++	platform = platform_device_register_full(&pdevinfo);
++	if (IS_ERR(platform))
++		return PTR_ERR(platform);
++
++	dev_set_drvdata(&pdev->dev, platform);
++
++	return 0;
+ }
+ 
+ static int snd_dw_hdmi_remove(struct platform_device *pdev)
+ {
+-	struct dw_hdmi_i2s_audio_data *audio = pdev->dev.platform_data;
++	struct platform_device *platform = dev_get_drvdata(&pdev->dev);
+ 
+-	if (!IS_ERR_OR_NULL(audio->pdev))
+-		platform_device_unregister(audio->pdev);
++	platform_device_unregister(platform);
+ 
+ 	return 0;
+ }
+ 
+ static struct platform_driver snd_dw_hdmi_driver = {
+ 	.probe	= snd_dw_hdmi_probe,
+-	.remove = snd_dw_hdmi_remove,
++	.remove	= snd_dw_hdmi_remove,
+ 	.driver	= {
+ 		.name = DRIVER_NAME,
+ 		.owner = THIS_MODULE,
+
+From d2f29756df76806c12fa12b668aeb8ac5f626bdd Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Sun, 2 Apr 2017 11:33:39 +0200
+Subject: [PATCH] drm: dw-hdmi-i2s: implement get_eld
+
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h     |  1 +
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c | 12 ++++++++++++
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c           |  1 +
+ 3 files changed, 14 insertions(+)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h
+index af7f39c85ba4..c5ace7808fdf 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h
+@@ -14,6 +14,7 @@ struct dw_hdmi_audio_data {
+ 
+ struct dw_hdmi_i2s_audio_data {
+ 	struct dw_hdmi *hdmi;
++	u8 *eld;
+ 
+ 	void (*write)(struct dw_hdmi *hdmi, u8 val, int offset);
+ 	u8 (*read)(struct dw_hdmi *hdmi, int offset);
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+index 5ff993a35ab6..e7312571e2cb 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+@@ -11,6 +11,8 @@
+ 
+ #include <sound/hdmi-codec.h>
+ 
++#include <drm/drm_crtc.h> /* This is only to get MAX_ELD_BYTES */
++
+ #include "dw-hdmi.h"
+ #include "dw-hdmi-audio.h"
+ 
+@@ -211,9 +213,19 @@ static void dw_hdmi_i2s_audio_shutdown(struct device *dev, void *data)
+ 	hdmi_write(audio, HDMI_AUD_CONF0_SW_RESET, HDMI_AUD_CONF0);
+ }
+ 
++static int dw_hdmi_i2s_get_eld(struct device *dev, void *data, u8 *buf, size_t len)
++{
++	struct dw_hdmi_i2s_audio_data *audio = data;
++
++	memcpy(buf, audio->eld, min(len, (size_t)MAX_ELD_BYTES));
++
++	return 0;
++}
++
+ static struct hdmi_codec_ops dw_hdmi_i2s_ops = {
+ 	.hw_params	= dw_hdmi_i2s_hw_params,
+ 	.audio_shutdown	= dw_hdmi_i2s_audio_shutdown,
++	.get_eld	= dw_hdmi_i2s_get_eld,
+ };
+ 
+ static int snd_dw_hdmi_probe(struct platform_device *pdev)
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index f3a2034a0883..c222b6455f03 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -3750,6 +3750,7 @@ int dw_hdmi_bind(struct device *dev, struct device *master,
+ 		audio.write	= hdmi_writeb;
+ 		audio.read	= hdmi_readb;
+ 		audio.mod	= hdmi_modb;
++		audio.eld	= hdmi->connector.eld;
+ 		hdmi->enable_audio = dw_hdmi_i2s_audio_enable;
+ 		hdmi->disable_audio = dw_hdmi_i2s_audio_disable;
+ 
+
+From 18a9fcdb5cbde0462179d04336622cb4f97c2a7e Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 17 Apr 2017 13:09:16 +0200
+Subject: [PATCH] drm: dw-hdmi-i2s: configure channel allocation
+
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+index e7312571e2cb..1d4570e3fbed 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+@@ -188,7 +188,7 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 	hdmi_write(audio, 0x00, HDMI_FC_AUDICONF1);
+ 
+ 	/* Set Channel Allocation */
+-	hdmi_write(audio, 0x00, HDMI_FC_AUDICONF2);
++	hdmi_write(audio, hparms->cea.channel_allocation, HDMI_FC_AUDICONF2);
+ 
+ 	/* Set LFEPBLDOWN-MIX INH and LSV */
+ 	hdmi_write(audio, 0x00, HDMI_FC_AUDICONF3);
+
+From c19ba12d08a8c491d21a1daf305b1b58231ca362 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 14 Aug 2017 00:14:05 +0200
+Subject: [PATCH] ASoC: hdmi-codec: reorder channel map
+
+---
+ sound/soc/codecs/hdmi-codec.c | 113 +++++++++++++++++++-----------------------
+ 1 file changed, 52 insertions(+), 61 deletions(-)
+
+diff --git a/sound/soc/codecs/hdmi-codec.c b/sound/soc/codecs/hdmi-codec.c
+index cb78d8971b41..b74659bc3bbc 100644
+--- a/sound/soc/codecs/hdmi-codec.c
++++ b/sound/soc/codecs/hdmi-codec.c
+@@ -205,78 +205,69 @@ const struct snd_pcm_chmap_elem hdmi_codec_8ch_chmaps[] = {
+  */
+ static const struct hdmi_codec_cea_spk_alloc hdmi_codec_channel_alloc[] = {
+ 	{ .ca_id = 0x00, .n_ch = 2,
+-	  .mask = FL | FR},
+-	/* 2.1 */
+-	{ .ca_id = 0x01, .n_ch = 4,
+-	  .mask = FL | FR | LFE},
+-	/* Dolby Surround */
++	  .mask = FL | FR },
++	{ .ca_id = 0x03, .n_ch = 4,
++	  .mask = FL | FR | LFE | FC },
+ 	{ .ca_id = 0x02, .n_ch = 4,
+ 	  .mask = FL | FR | FC },
+-	/* surround51 */
++	{ .ca_id = 0x01, .n_ch = 4,
++	  .mask = FL | FR | LFE },
+ 	{ .ca_id = 0x0b, .n_ch = 6,
+-	  .mask = FL | FR | LFE | FC | RL | RR},
+-	/* surround40 */
+-	{ .ca_id = 0x08, .n_ch = 6,
+-	  .mask = FL | FR | RL | RR },
+-	/* surround41 */
+-	{ .ca_id = 0x09, .n_ch = 6,
+-	  .mask = FL | FR | LFE | RL | RR },
+-	/* surround50 */
++	  .mask = FL | FR | LFE | FC | RL | RR },
+ 	{ .ca_id = 0x0a, .n_ch = 6,
+ 	  .mask = FL | FR | FC | RL | RR },
+-	/* 6.1 */
+-	{ .ca_id = 0x0f, .n_ch = 8,
+-	  .mask = FL | FR | LFE | FC | RL | RR | RC },
+-	/* surround71 */
++	{ .ca_id = 0x09, .n_ch = 6,
++	  .mask = FL | FR | LFE | RL | RR },
++	{ .ca_id = 0x08, .n_ch = 6,
++	  .mask = FL | FR | RL | RR },
++	{ .ca_id = 0x07, .n_ch = 6,
++	  .mask = FL | FR | LFE | FC | RC },
++	{ .ca_id = 0x06, .n_ch = 6,
++	  .mask = FL | FR | FC | RC },
++	{ .ca_id = 0x05, .n_ch = 6,
++	  .mask = FL | FR | LFE | RC },
++	{ .ca_id = 0x04, .n_ch = 6,
++	  .mask = FL | FR | RC },
+ 	{ .ca_id = 0x13, .n_ch = 8,
+ 	  .mask = FL | FR | LFE | FC | RL | RR | RLC | RRC },
+-	/* others */
+-	{ .ca_id = 0x03, .n_ch = 8,
+-	  .mask = FL | FR | LFE | FC },
+-	{ .ca_id = 0x04, .n_ch = 8,
+-	  .mask = FL | FR | RC},
+-	{ .ca_id = 0x05, .n_ch = 8,
+-	  .mask = FL | FR | LFE | RC },
+-	{ .ca_id = 0x06, .n_ch = 8,
+-	  .mask = FL | FR | FC | RC },
+-	{ .ca_id = 0x07, .n_ch = 8,
+-	  .mask = FL | FR | LFE | FC | RC },
+-	{ .ca_id = 0x0c, .n_ch = 8,
+-	  .mask = FL | FR | RC | RL | RR },
+-	{ .ca_id = 0x0d, .n_ch = 8,
+-	  .mask = FL | FR | LFE | RL | RR | RC },
+-	{ .ca_id = 0x0e, .n_ch = 8,
+-	  .mask = FL | FR | FC | RL | RR | RC },
+-	{ .ca_id = 0x10, .n_ch = 8,
+-	  .mask = FL | FR | RL | RR | RLC | RRC },
+-	{ .ca_id = 0x11, .n_ch = 8,
+-	  .mask = FL | FR | LFE | RL | RR | RLC | RRC },
++	{ .ca_id = 0x1f, .n_ch = 8,
++	  .mask = FL | FR | LFE | FC | RL | RR | FLC | FRC },
+ 	{ .ca_id = 0x12, .n_ch = 8,
+ 	  .mask = FL | FR | FC | RL | RR | RLC | RRC },
+-	{ .ca_id = 0x14, .n_ch = 8,
+-	  .mask = FL | FR | FLC | FRC },
+-	{ .ca_id = 0x15, .n_ch = 8,
+-	  .mask = FL | FR | LFE | FLC | FRC },
+-	{ .ca_id = 0x16, .n_ch = 8,
+-	  .mask = FL | FR | FC | FLC | FRC },
+-	{ .ca_id = 0x17, .n_ch = 8,
+-	  .mask = FL | FR | LFE | FC | FLC | FRC },
+-	{ .ca_id = 0x18, .n_ch = 8,
+-	  .mask = FL | FR | RC | FLC | FRC },
+-	{ .ca_id = 0x19, .n_ch = 8,
+-	  .mask = FL | FR | LFE | RC | FLC | FRC },
+-	{ .ca_id = 0x1a, .n_ch = 8,
+-	  .mask = FL | FR | RC | FC | FLC | FRC },
+-	{ .ca_id = 0x1b, .n_ch = 8,
+-	  .mask = FL | FR | LFE | RC | FC | FLC | FRC },
+-	{ .ca_id = 0x1c, .n_ch = 8,
+-	  .mask = FL | FR | RL | RR | FLC | FRC },
+-	{ .ca_id = 0x1d, .n_ch = 8,
+-	  .mask = FL | FR | LFE | RL | RR | FLC | FRC },
+ 	{ .ca_id = 0x1e, .n_ch = 8,
+ 	  .mask = FL | FR | FC | RL | RR | FLC | FRC },
+-	{ .ca_id = 0x1f, .n_ch = 8,
+-	  .mask = FL | FR | LFE | FC | RL | RR | FLC | FRC },
++	{ .ca_id = 0x11, .n_ch = 8,
++	  .mask = FL | FR | LFE | RL | RR | RLC | RRC },
++	{ .ca_id = 0x1d, .n_ch = 8,
++	  .mask = FL | FR | LFE | RL | RR | FLC | FRC },
++	{ .ca_id = 0x10, .n_ch = 8,
++	  .mask = FL | FR | RL | RR | RLC | RRC },
++	{ .ca_id = 0x1c, .n_ch = 8,
++	  .mask = FL | FR | RL | RR | FLC | FRC },
++	{ .ca_id = 0x0f, .n_ch = 8,
++	  .mask = FL | FR | LFE | FC | RL | RR | RC },
++	{ .ca_id = 0x1b, .n_ch = 8,
++	  .mask = FL | FR | LFE | RC | FC | FLC | FRC },
++	{ .ca_id = 0x0e, .n_ch = 8,
++	  .mask = FL | FR | FC | RL | RR | RC },
++	{ .ca_id = 0x1a, .n_ch = 8,
++	  .mask = FL | FR | RC | FC | FLC | FRC },
++	{ .ca_id = 0x0d, .n_ch = 8,
++	  .mask = FL | FR | LFE | RL | RR | RC },
++	{ .ca_id = 0x19, .n_ch = 8,
++	  .mask = FL | FR | LFE | RC | FLC | FRC },
++	{ .ca_id = 0x0c, .n_ch = 8,
++	  .mask = FL | FR | RC | RL | RR },
++	{ .ca_id = 0x18, .n_ch = 8,
++	  .mask = FL | FR | RC | FLC | FRC },
++	{ .ca_id = 0x17, .n_ch = 8,
++	  .mask = FL | FR | LFE | FC | FLC | FRC },
++	{ .ca_id = 0x16, .n_ch = 8,
++	  .mask = FL | FR | FC | FLC | FRC },
++	{ .ca_id = 0x15, .n_ch = 8,
++	  .mask = FL | FR | LFE | FLC | FRC },
++	{ .ca_id = 0x14, .n_ch = 8,
++	  .mask = FL | FR | FLC | FRC },
+ };
+ 
+ struct hdmi_codec_priv {
+
+From 0b22ce2a2766052fe28a3162623d19ba38adaef5 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Sun, 27 Aug 2017 23:32:40 +0200
+Subject: [PATCH] ASoC: codecs: rk3328: limit to working rates
+
+---
+ sound/soc/codecs/rk3328_codec.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/codecs/rk3328_codec.c b/sound/soc/codecs/rk3328_codec.c
+index af1b7429b6d4..d0b4578ffa0e 100644
+--- a/sound/soc/codecs/rk3328_codec.c
++++ b/sound/soc/codecs/rk3328_codec.c
+@@ -354,7 +354,12 @@ static struct snd_soc_dai_driver rk3328_dai[] = {
+ 			.stream_name = "HIFI Playback",
+ 			.channels_min = 1,
+ 			.channels_max = 2,
+-			.rates = SNDRV_PCM_RATE_8000_96000,
++			.rates = (SNDRV_PCM_RATE_8000 |
++				  SNDRV_PCM_RATE_16000 |
++				  SNDRV_PCM_RATE_32000 |
++				  SNDRV_PCM_RATE_48000 |
++				  SNDRV_PCM_RATE_64000 |
++				  SNDRV_PCM_RATE_96000),
+ 			.formats = (SNDRV_PCM_FMTBIT_S16_LE |
+ 				    SNDRV_PCM_FMTBIT_S20_3LE |
+ 				    SNDRV_PCM_FMTBIT_S24_LE |
+
+From f96be8cf25bfda88d5c492f42e1f6ca5951356f3 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Sun, 8 Jul 2018 12:34:43 +0200
+Subject: [PATCH] drm: dw-hdmi: change audio config
+
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c |  9 ++-------
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c           | 15 ++++++++++++---
+ 2 files changed, 14 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+index 1d4570e3fbed..d0904f6b7a82 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+@@ -110,8 +110,7 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 			 HDMI_AUD_INT_FIFO_FULL_MSK, HDMI_AUD_INT);
+ 	hdmi_update_bits(audio, HDMI_AUD_CONF0_SW_RESET,
+ 			 HDMI_AUD_CONF0_SW_RESET, HDMI_AUD_CONF0);
+-	hdmi_update_bits(audio, HDMI_MC_SWRSTZ_I2S_RESET_MSK,
+-			 HDMI_MC_SWRSTZ_I2S_RESET_MSK, HDMI_MC_SWRSTZ);
++	hdmi_write(audio, (u8)~HDMI_MC_SWRSTZ_I2S_RESET_MSK, HDMI_MC_SWRSTZ);
+ 
+ 	switch (hparms->mode) {
+ 	case NLPCM:
+@@ -193,11 +192,6 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 	/* Set LFEPBLDOWN-MIX INH and LSV */
+ 	hdmi_write(audio, 0x00, HDMI_FC_AUDICONF3);
+ 
+-	hdmi_update_bits(audio, HDMI_AUD_CONF0_SW_RESET,
+-			 HDMI_AUD_CONF0_SW_RESET, HDMI_AUD_CONF0);
+-	hdmi_update_bits(audio, HDMI_MC_SWRSTZ_I2S_RESET_MSK,
+-			 HDMI_MC_SWRSTZ_I2S_RESET_MSK, HDMI_MC_SWRSTZ);
+-
+ 	dw_hdmi_audio_enable(hdmi);
+ 
+ 	return 0;
+@@ -211,6 +205,7 @@ static void dw_hdmi_i2s_audio_shutdown(struct device *dev, void *data)
+ 	dw_hdmi_audio_disable(hdmi);
+ 
+ 	hdmi_write(audio, HDMI_AUD_CONF0_SW_RESET, HDMI_AUD_CONF0);
++	hdmi_write(audio, (u8)~HDMI_MC_SWRSTZ_I2S_RESET_MSK, HDMI_MC_SWRSTZ);
+ }
+ 
+ static int dw_hdmi_i2s_get_eld(struct device *dev, void *data, u8 *buf, size_t len)
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index c222b6455f03..065723179791 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -89,6 +89,7 @@ static const struct dw_hdmi_audio_tmds_n common_tmds_n_table[] = {
+ 	{ .tmds = 71000000, .n_32k = 4096, .n_44k1 = 7056, .n_48k = 6144, },
+ 	{ .tmds = 72000000, .n_32k = 4096, .n_44k1 = 5635, .n_48k = 6144, },
+ 	{ .tmds = 73250000, .n_32k = 4096, .n_44k1 = 14112, .n_48k = 6144, },
++	{ .tmds = 74176000, .n_32k = 11648, .n_44k1 = 17836, .n_48k = 11648, },
+ 	{ .tmds = 74250000, .n_32k = 4096, .n_44k1 = 6272, .n_48k = 6144, },
+ 	{ .tmds = 75000000, .n_32k = 4096, .n_44k1 = 5880, .n_48k = 6144, },
+ 	{ .tmds = 78750000, .n_32k = 4096, .n_44k1 = 5600, .n_48k = 6144, },
+@@ -105,13 +106,16 @@ static const struct dw_hdmi_audio_tmds_n common_tmds_n_table[] = {
+ 	{ .tmds = 119000000, .n_32k = 4096, .n_44k1 = 5544, .n_48k = 6144, },
+ 	{ .tmds = 135000000, .n_32k = 4096, .n_44k1 = 5488, .n_48k = 6144, },
+ 	{ .tmds = 146250000, .n_32k = 4096, .n_44k1 = 6272, .n_48k = 6144, },
+-	{ .tmds = 148500000, .n_32k = 4096, .n_44k1 = 5488, .n_48k = 6144, },
++	{ .tmds = 148352000, .n_32k = 11648, .n_44k1 = 8918, .n_48k = 5824, },
++	{ .tmds = 148500000, .n_32k = 4096, .n_44k1 = 6272, .n_48k = 6144, },
+ 	{ .tmds = 154000000, .n_32k = 4096, .n_44k1 = 5544, .n_48k = 6144, },
+ 	{ .tmds = 162000000, .n_32k = 4096, .n_44k1 = 5684, .n_48k = 6144, },
+ 
+ 	/* For 297 MHz+ HDMI spec have some other rule for setting N */
+-	{ .tmds = 297000000, .n_32k = 3073, .n_44k1 = 4704, .n_48k = 5120, },
+-	{ .tmds = 594000000, .n_32k = 3073, .n_44k1 = 9408, .n_48k = 10240, },
++	{ .tmds = 296703000, .n_32k = 5824, .n_44k1 = 4459, .n_48k = 5824, },
++	{ .tmds = 297000000, .n_32k = 3072, .n_44k1 = 4704, .n_48k = 5120, },
++	{ .tmds = 593407000, .n_32k = 5824, .n_44k1 = 8918, .n_48k = 5824, },
++	{ .tmds = 594000000, .n_32k = 3072, .n_44k1 = 9408, .n_48k = 6144, },
+ 
+ 	/* End of table */
+ 	{ .tmds = 0,         .n_32k = 0,    .n_44k1 = 0,    .n_48k = 0, },
+@@ -831,6 +835,11 @@ static void hdmi_enable_audio_clk(struct dw_hdmi *hdmi, bool enable)
+ 	else
+ 		hdmi->mc_clkdis |= HDMI_MC_CLKDIS_AUDCLK_DISABLE;
+ 	hdmi_writeb(hdmi, hdmi->mc_clkdis, HDMI_MC_CLKDIS);
++
++	if (enable) {
++		hdmi_set_cts_n(hdmi, 0, 0);
++		hdmi_set_cts_n(hdmi, hdmi->audio_cts, hdmi->audio_n);
++	}
+ }
+ 
+ static void dw_hdmi_ahb_audio_enable(struct dw_hdmi *hdmi)
+
+From ed2e01d46f3bbf3eda4d37ce2a6e8874b15a478a Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Sun, 8 Jul 2018 12:56:51 +0200
+Subject: [PATCH] WIP: drm: dw-hdmi: use Auto CTS mode
+
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c | 52 ++++++++++++++++++-------------
+ 1 file changed, 31 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index 065723179791..841bdfcae3e0 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -643,14 +643,18 @@ static struct i2c_adapter *dw_hdmi_i2c_adapter(struct dw_hdmi *hdmi)
+ static void hdmi_set_cts_n(struct dw_hdmi *hdmi, unsigned int cts,
+ 			   unsigned int n)
+ {
+-	/* Must be set/cleared first */
+-	hdmi_modb(hdmi, 0, HDMI_AUD_CTS3_CTS_MANUAL, HDMI_AUD_CTS3);
+-
+-	/* nshift factor = 0 */
+-	hdmi_modb(hdmi, 0, HDMI_AUD_CTS3_N_SHIFT_MASK, HDMI_AUD_CTS3);
+-
+-	hdmi_writeb(hdmi, ((cts >> 16) & HDMI_AUD_CTS3_AUDCTS19_16_MASK) |
+-		    HDMI_AUD_CTS3_CTS_MANUAL, HDMI_AUD_CTS3);
++	/* Use Auto CTS mode with CTS is unknown */
++	if (cts) {
++		/* Must be set/cleared first */
++		hdmi_modb(hdmi, 0, HDMI_AUD_CTS3_CTS_MANUAL, HDMI_AUD_CTS3);
++
++		/* nshift factor = 0 */
++		hdmi_modb(hdmi, 0, HDMI_AUD_CTS3_N_SHIFT_MASK, HDMI_AUD_CTS3);
++
++		hdmi_writeb(hdmi, ((cts >> 16) & HDMI_AUD_CTS3_AUDCTS19_16_MASK) |
++			    HDMI_AUD_CTS3_CTS_MANUAL, HDMI_AUD_CTS3);
++	} else
++		hdmi_writeb(hdmi, 0, HDMI_AUD_CTS3);
+ 	hdmi_writeb(hdmi, (cts >> 8) & 0xff, HDMI_AUD_CTS2);
+ 	hdmi_writeb(hdmi, cts & 0xff, HDMI_AUD_CTS1);
+ 
+@@ -777,24 +781,30 @@ static void hdmi_set_clk_regenerator(struct dw_hdmi *hdmi,
+ {
+ 	unsigned long ftdms = pixel_clk;
+ 	unsigned int n, cts;
++	u8 config3;
+ 	u64 tmp;
+ 
+ 	n = hdmi_find_n(hdmi, pixel_clk, sample_rate);
+ 
+-	/*
+-	 * Compute the CTS value from the N value.  Note that CTS and N
+-	 * can be up to 20 bits in total, so we need 64-bit math.  Also
+-	 * note that our TDMS clock is not fully accurate; it is accurate
+-	 * to kHz.  This can introduce an unnecessary remainder in the
+-	 * calculation below, so we don't try to warn about that.
+-	 */
+-	tmp = (u64)ftdms * n;
+-	do_div(tmp, 128 * sample_rate);
+-	cts = tmp;
++	config3 = hdmi_readb(hdmi, HDMI_CONFIG3_ID);
+ 
+-	dev_dbg(hdmi->dev, "%s: fs=%uHz ftdms=%lu.%03luMHz N=%d cts=%d\n",
+-		__func__, sample_rate, ftdms / 1000000, (ftdms / 1000) % 1000,
+-		n, cts);
++	if (config3 & HDMI_CONFIG3_AHBAUDDMA) {
++		/*
++		 * Compute the CTS value from the N value.  Note that CTS and N
++		 * can be up to 20 bits in total, so we need 64-bit math.  Also
++		 * note that our TDMS clock is not fully accurate; it is accurate
++		 * to kHz.  This can introduce an unnecessary remainder in the
++		 * calculation below, so we don't try to warn about that.
++		 */
++		tmp = (u64)ftdms * n;
++		do_div(tmp, 128 * sample_rate);
++		cts = tmp;
++
++		dev_dbg(hdmi->dev, "%s: fs=%uHz ftdms=%lu.%03luMHz N=%d cts=%d\n",
++			__func__, sample_rate, ftdms / 1000000, (ftdms / 1000) % 1000,
++			n, cts);
++	} else
++		cts = 0;
+ 
+ 	spin_lock_irq(&hdmi->audio_lock);
+ 	hdmi->audio_n = n;

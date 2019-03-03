@@ -2,32 +2,33 @@
 #
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
-setenv load_addr "0x44000000"
+setenv load_addr "0x34000000"
 setenv initrd_high "0xffffffff"
 setenv fdt_high "0xffffffff"
 setenv overlay_error "false"
 # default values
 setenv rootdev "/dev/mmcblk1p1"
 setenv verbosity "1"
-setenv console "serial"
+setenv console "both"
 setenv rootfstype "ext4"
 setenv docker_optimizations "on"
 
 if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
-	load ${devtype} ${devnum} ${loadaddr} ${prefix}armbianEnv.txt
-	env import -t ${loadaddr} ${filesize}
+	load ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt
+	env import -t ${load_addr} ${filesize}
 fi
 
 # get PARTUUID of first partition on SD/eMMC it was loaded from
 # mmc 0 is always mapped to device u-boot (2016.09+) was loaded from
 if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:1 partuuid; fi
 
-if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
+if test "${console}" = "display"; then setenv consoleargs "console=tty1"; fi
+if test "${console}" = "serial"; then setenv consoleargs "console=ttyAML0,115200"; fi
 
-if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
-if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "${consoleargs} console=ttyAML0,115200n8"; fi
+if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=ttyAML0,115200 console=tty1"; fi
+if test "${console}" = "serial"; then setenv consoleargs "console=ttyAML0,115200"; fi
 
-setenv bootargs "root=${rootdev} rootwait rootflags=data=writeback rw rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
+setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} panic=10 ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
 if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"; fi
 
@@ -63,7 +64,7 @@ else
 		source ${load_addr}
 	fi
 fi
-booti  ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
+booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
 # Recompile with:
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr

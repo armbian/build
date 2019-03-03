@@ -134,8 +134,27 @@ create_board_package()
 	[ -f "/etc/default/cpufrequtils" ] && cp /etc/default/cpufrequtils /etc/default/cpufrequtils.dpkg-old
 	dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename \
 		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
-	exit 0
 	EOF
+
+	if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then
+		cat <<-EOF >> $destination/DEBIAN/preinst
+
+		# create a bootscript backup
+		if [ -f /etc/armbian-release ]; then
+			# create a backup
+			. /etc/armbian-release
+			cp /boot/$bootscript_dst /usr/share/armbian/${bootscript_dst}-\${VERSION} >/dev/null 2>&1
+			echo "NOTE: You can find previous bootscript versions in /usr/share/armbian !"
+		fi
+
+		exit 0
+		EOF
+	else
+		cat <<-EOF >> $destination/DEBIAN/preinst
+
+		exit 0
+		EOF
+	fi
 
 	chmod 755 $destination/DEBIAN/preinst
 
@@ -159,10 +178,7 @@ create_board_package()
 	# ${BOARD} BSP post installation script
 	#
 
-	# enable ramlog only if it was enabled before
-	if [ -n "\$(service log2ram status 2> /dev/null)" ]; then
-			systemctl --no-reload enable armbian-ramlog.service
-	fi
+	systemctl --no-reload enable armbian-ramlog.service
 
 	# check if it was disabled in config and disable in new service
 	if [ -n "\$(grep -w '^ENABLED=false' /etc/default/log2ram 2> /dev/null)" ]; then
@@ -180,13 +196,31 @@ create_board_package()
 	if [ ! -f /boot/$bootscript_dst ]; then
 		echo "Recreating boot script"
 		cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
-		rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
+		rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*\$//' < /proc/cmdline)
+		rootfstype=\$(sed -e 's/^.*rootfstype=//' -e 's/ .*$//' < /proc/cmdline)
 		cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
 		echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
+		echo "rootfstype="\$rootfstype >> /boot/armbianEnv.txt
 		sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
+		sed -i "s/setenv rootfstype.*/setenv rootfstype \\"\$rootfstype\\"/" /boot/boot.ini
 		[ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
+	EOF
+	if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then
+		cat <<-EOF >> $destination/DEBIAN/postinst
+		else
+			echo "Updating bootscript"
+
+			# copy new bootscript
+			cp -f /usr/share/armbian/$bootscript_dst /boot/${bootscript_dst}.new  >/dev/null 2>&1
+
+			# cleanup old bootscript backup
+			[ -f /usr/share/armbian/boot.cmd ] && ls /usr/share/armbian/boot.cmd-* | head -n -5 | xargs rm -f --
+			[ -f /usr/share/armbian/boot.ini ] && ls /usr/share/armbian/boot.ini-* | head -n -5 | xargs rm -f --
+		EOF
 	fi
 
+	cat <<-EOF >> $destination/DEBIAN/postinst
+	fi
 	# now cleanup and remove old ramlog service
 	systemctl disable log2ram.service >/dev/null 2>&1
 	[ -f "/usr/sbin/log2ram" ] && rm /usr/sbin/log2ram
