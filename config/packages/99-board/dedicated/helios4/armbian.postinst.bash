@@ -21,4 +21,7 @@ if [ "$?" -ne 0 ]; then
 	update-initramfs -u
 fi
 
+# enable helios4-wol.service
+systemctl --no-reload enable helios4-wol.service >/dev/null 2>&1
+
 EOF
