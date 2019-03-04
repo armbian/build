@@ -64,6 +64,6 @@ family_tweaks_s()
 	### Ethernet tweaks
 
 	# copy and enable helios4-wol.service
-	cp $SRC/packages/bsp/helios4/helios4-wol.service $SDCARD/usr/lib/systemd/system/
+	cp $SRC/packages/bsp/helios4/helios4-wol.service $SDCARD/lib/systemd/system/
 	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable helios4-wol.service >/dev/null 2>&1"
 }
