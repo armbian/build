@@ -1,8 +1,25 @@
 cat <<'EOF'
+
+# read config
+[ -f /etc/armbian-release ] && . /etc/armbian-release
+
+# copy fancontrol config
+case $BRANCH in
+default)
+	cp /usr/share/helios4/fancontrol_pwm-fan-mvebu-default.conf /etc/fancontrol
+	;;
+next)
+	cp /usr/share/helios4/fancontrol_pwm-fan-mvebu-next.conf /etc/fancontrol
+	;;
+esac
+
+# enable wol
+systemctl --no-reload enable helios4-wol.service
+
+# mdadm tweaks
 MDADM_CONF=/etc/mdadm/mdadm.conf
 MDADM_HOOK=/usr/share/initramfs-tools/hooks/mdadm
 
-# Mdadm tweaks
 grep -q "PROGRAM" $MDADM_CONF
 if [ "$?" -ne 0 ]; then
 	cat <<-EOS >> $MDADM_CONF
