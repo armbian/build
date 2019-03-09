@@ -325,3 +325,5 @@ fi
 end=`date +%s`
 runtime=$(((end-start)/60))
 display_alert "Runtime" "$runtime min" "info"
+# Make it easy to repeat build by displaying build options used
+display_alert "Repeat Build Options" "BOARD=${BOARD} BRANCH=${BRANCH} RELEASE=${RELEASE} BUILD_DESKTOP=${BUILD_DESKTOP} KERNEL_ONLY=${KERNEL_ONLY} KERNEL_CONFIGURE=no" "info"
