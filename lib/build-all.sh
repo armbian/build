@@ -192,10 +192,10 @@ buildlist=()
 
 htmlicons ()
 {
-[[ ${1^^} == YES ]] && echo "<img width=16 src=https://assets-cdn.github.com/images/icons/emoji/unicode/2714.png>"
-[[ ${1^^} == NO ]] && echo "<img width=16 src=https://assets-cdn.github.com/images/icons/emoji/unicode/274c.png>"
-[[ ${1^^} == NT ]] && echo "<img width=16 src=https://assets-cdn.github.com/images/icons/emoji/unicode/2753.png>"
-[[ ${1^^} == NA ]] && echo "<img width=16 src=https://assets-cdn.github.com/images/icons/emoji/unicode/26d4.png>"
+[[ ${1^^} == YES ]] && echo "<img width=16 src=https://github.githubassets.com/images/icons/emoji/unicode/2714.png>"
+[[ ${1^^} == NO ]] && echo "<img width=16 src=https://github.githubassets.com/images/icons/emoji/unicode/274c.png>"
+[[ ${1^^} == NT ]] && echo "<img width=16 src=https://github.githubassets.com/images/icons/emoji/unicode/2753.png>"
+[[ ${1^^} == NA ]] && echo "<img width=16 src=https://github.githubassets.com/images/icons/emoji/unicode/26d4.png>"
 }
 
 if [[ $KERNEL_ONLY == yes ]]; then
