@@ -264,8 +264,10 @@ compile_kernel()
 	# add WireGuard
 	if linux-version compare $version ge 3.14 && [ "$WIREGUARD" == yes ]; then
 			display_alert "Adding" "WireGuard" "info"
-			rm -r $SRC/cache/sources/$LINUXSOURCEDIR/net/wireguard
-			$SRC/cache/sources/wireguard/contrib/kernel-tree/jury-rig.sh $SRC/cache/sources/$LINUXSOURCEDIR
+			rm -rf $SRC/cache/sources/$LINUXSOURCEDIR/net/wireguard
+			cp -R $SRC/cache/sources/wireguard/src/ $SRC/cache/sources/$LINUXSOURCEDIR/net/wireguard
+			sed -i "/^obj-\\\$(CONFIG_NETFILTER).*+=/a obj-\$(CONFIG_WIREGUARD) += wireguard/" "$SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile"
+			sed -i "/^if INET\$/a source \"net/wireguard/Kconfig\"" "$SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig"
 			# remove duplicates
 			[[ $(cat $SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile | grep wireguard | wc -l) -gt 1 ]] && \
 			sed -i '0,/wireguard/{/wireguard/d;}' $SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile
