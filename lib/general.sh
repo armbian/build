@@ -257,14 +257,20 @@ fetch_from_repo()
 		esac
 		display_alert "Checking out"
 		git checkout -f -q FETCH_HEAD
-	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
+	fi
+
+	if [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
-		if [[ $FORCE_CHECKOUT == yes ]]; then
-			display_alert "Checking out"
-			git checkout -f -q HEAD
-		else
-			display_alert "Skipping checkout"
-		fi
+
+		display_alert "In the source of dirty files: " "$(git status -s | wc -l)"
+		display_alert "$PWD" " Cleaning .... "
+		# Return the files that are tracked by git to the initial state.
+		git reset -q --hard HEAD
+
+		# Files that are not tracked by git and were added
+		# when the patch was applied must be removed.
+		git clean -q -df
+		display_alert "And all good."
 	else
 		# working directory is clean, nothing to do
 		display_alert "Up to date"
