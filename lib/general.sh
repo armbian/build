@@ -260,9 +260,17 @@ fetch_from_repo()
 	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
 		if [[ $FORCE_CHECKOUT == yes ]]; then
-			display_alert "Checking out"
+			display_alert " Cleaning .... " "$(git status -s | wc -l) files"
+
+			# Return the files that are tracked by git to the initial state.
 			git checkout -f -q HEAD
+
+			# Files that are not tracked by git and were added
+			# when the patch was applied must be removed.
+			git clean -qdf
 		else
+			display_alert "In the source of dirty files: " "$(git status -s | wc -l)"
+			display_alert "The compilation process will probably fail." "You have been warned"
 			display_alert "Skipping checkout"
 		fi
 	else
