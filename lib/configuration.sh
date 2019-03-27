@@ -65,7 +65,7 @@ SERIALCON=ttyS0
 CAN_BUILD_STRETCH=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
-[[ -z $WIREGUARD ]] && WIREGUARD="yes"
+[[ -z $WIREGUARD ]] && WIREGUARD="no"
 [[ -z $RTL8812AU ]] && RTL8812AU="yes"
 
 # single ext4 partition is the default and preferred configuration
