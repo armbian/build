@@ -527,6 +527,9 @@ prepare_host()
 		fi
 	done
 
+	# temporally fix for Locales settings
+	export LC_ALL="en_US.UTF-8"
+
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "lsb-release"
