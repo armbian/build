@@ -512,7 +512,7 @@ prepare_host()
 
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
-		display_alert "http://www.armbian.com/using-armbian-tools/"
+		display_alert "https://docs.armbian.com/Developer-Guide_Build-Preparation/"
 		exit_with_error "Running this tool on non x86-x64 build host in not supported"
 	fi
 
@@ -699,7 +699,7 @@ prepare_host()
 	if [[ ! -f $SRC/userpatches/README ]]; then
 		rm -f $SRC/userpatches/readme.txt
 		echo 'Please read documentation about customizing build configuration' > $SRC/userpatches/README
-		echo 'http://www.armbian.com/using-armbian-tools/' >> $SRC/userpatches/README
+		echo 'https://docs.armbian.com/Developer-Guide_User-Configurations/' >> $SRC/userpatches/README
 	fi
 
 	# check free space (basic)
