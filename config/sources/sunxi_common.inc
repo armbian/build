@@ -37,7 +37,8 @@ case $BRANCH in
 	;;
 
 	dev)
-
+		
+		BOOTBRANCH='tag:v2019.04'
 		#KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 		KERNELSOURCE="https://github.com/megous/linux"
 		KERNELBRANCH="branch:orange-pi-5.0"
