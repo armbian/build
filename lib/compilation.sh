@@ -516,6 +516,14 @@ find_toolchain()
 		fi
 	done
 	echo "$toolchain"
+	# logging a stack of used compilers.
+	if [[ -f $DEST/debug/compiler.log ]]; then
+		if ! grep -q "$toolchain" $DEST/debug/compiler.log; then
+			echo "$toolchain" >> $DEST/debug/compiler.log;
+		fi
+	else
+			echo "$toolchain" >> $DEST/debug/compiler.log;
+	fi
 }
 
 # advanced_patch <dest> <family> <board> <target> <branch> <description>
