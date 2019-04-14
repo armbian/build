@@ -527,6 +527,9 @@ prepare_host()
 		fi
 	done
 
+	# temporally fix for Locales settings
+	export LC_ALL="en_US.UTF-8"
+
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "lsb-release"
@@ -662,11 +665,11 @@ prepare_host()
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabihf.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_arm-eabi.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.3.1-2018.05-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.3.1-2018.05-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-eabi.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
 		)
 
 	for toolchain in ${toolchains[@]}; do
