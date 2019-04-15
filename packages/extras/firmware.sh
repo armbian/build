@@ -11,7 +11,8 @@ build_firmware()
 {
 	display_alert "Merging and packaging linux firmware" "@host" "info"
 
-	local plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+	#local plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+	local plugin_repo="git://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
 	local plugin_dir="armbian-firmware${FULL}"
 	[[ -d $SRC/cache/sources/$plugin_dir ]] && rm -rf $SRC/cache/sources/$plugin_dir
 

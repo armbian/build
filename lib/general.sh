@@ -192,7 +192,7 @@ fetch_from_repo()
 		local ref_name=${ref##*:}
 	fi
 
-	display_alert "Checking git sources" "$dir $ref_name" "info"
+	display_alert "Checking git sources" "$url $dir $ref_name" "info"
 
 	# get default remote branch name without cloning
 	# local ref_name=$(git ls-remote --symref $url HEAD | grep -o 'refs/heads/\S*' | sed 's%refs/heads/%%')
