@@ -223,6 +223,8 @@ fetch_from_repo()
 		git remote add origin $url
 	fi
 
+	display_alert "Fetch configs: ref_type:$ref_type ref_name:$ref_name changed: $changed FORCE_CHECKOUT:$FORCE_CHECKOUT"
+
 	local changed=false
 
 	local local_hash=$(git rev-parse @ 2>/dev/null)
