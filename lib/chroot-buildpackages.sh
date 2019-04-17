@@ -26,10 +26,12 @@ create_chroot()
 	qemu_binary['arm64']='qemu-aarch64-static'
 	apt_mirror['jessie']="$DEBIAN_MIRROR"
 	apt_mirror['stretch']="$DEBIAN_MIRROR"
+	apt_mirror['buster']="$DEBIAN_MIRROR"
 	apt_mirror['xenial']="$UBUNTU_MIRROR"
 	apt_mirror['bionic']="$UBUNTU_MIRROR"
 	components['jessie']='main,contrib'
 	components['stretch']='main,contrib'
+	components['buster']='main,contrib'
 	components['xenial']='main,universe,multiverse'
 	components['bionic']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
@@ -83,6 +85,7 @@ chroot_prepare_distccd()
 	declare -A gcc_version gcc_type
 	gcc_version['jessie']='4.9'
 	gcc_version['stretch']='6.3'
+	gcc_version['buster']='8.3'
 	gcc_version['xenial']='5.4'
 	gcc_version['bionic']='5.4'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
@@ -110,7 +113,7 @@ chroot_build_packages()
 {
 	local built_ok=()
 	local failed=()
-	for release in jessie xenial stretch bionic; do
+	for release in jessie xenial stretch bionic buster; do
 		for arch in armhf arm64; do
 			display_alert "Starting package building process" "$release/$arch" "info"
 

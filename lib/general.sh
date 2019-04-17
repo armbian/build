@@ -130,7 +130,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	jessie|stretch)
+	jessie|stretch|buster)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -357,7 +357,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("jessie" "xenial" "stretch" "bionic")
+	local distributions=("jessie" "xenial" "stretch" "bionic" "buster")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
