@@ -122,7 +122,7 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-if [[ $RELEASE == xenial || $RELEASE == bionic ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
+if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == disco ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
 # Base system dependencies
 DEBOOTSTRAP_LIST="locales,gnupg,ifupdown,apt-transport-https,ca-certificates"
@@ -229,6 +229,7 @@ case $RELEASE in
 		# not in disco repo
 		PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/pulseaudio-module-gconf /}"
 		PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/libgnome2-perl /}"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS="${PACKAGE_LIST_DESKTOP/leafpad /}"
 	;;
 
 esac
