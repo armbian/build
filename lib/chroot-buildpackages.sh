@@ -29,11 +29,13 @@ create_chroot()
 	apt_mirror['buster']="$DEBIAN_MIRROR"
 	apt_mirror['xenial']="$UBUNTU_MIRROR"
 	apt_mirror['bionic']="$UBUNTU_MIRROR"
+	apt_mirror['disco']="$UBUNTU_MIRROR"
 	components['jessie']='main,contrib'
 	components['stretch']='main,contrib'
 	components['buster']='main,contrib'
 	components['xenial']='main,universe,multiverse'
 	components['bionic']='main,universe,multiverse'
+	components['disco']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc"
 	if [[ $NO_APT_CACHER != yes ]]; then
@@ -88,6 +90,7 @@ chroot_prepare_distccd()
 	gcc_version['buster']='8.3'
 	gcc_version['xenial']='5.4'
 	gcc_version['bionic']='5.4'
+	gcc_version['disco']='8.3'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
 	gcc_type['arm64']='aarch64-linux-gnu-'
 	rm -f $dest/cmdlist
@@ -113,7 +116,7 @@ chroot_build_packages()
 {
 	local built_ok=()
 	local failed=()
-	for release in jessie xenial stretch bionic buster; do
+	for release in jessie xenial stretch bionic buster disco; do
 		for arch in armhf arm64; do
 			display_alert "Starting package building process" "$release/$arch" "info"
 

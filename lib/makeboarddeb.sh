@@ -294,7 +294,7 @@ create_board_package()
 	EOF
 
 	# this is required for NFS boot to prevent deconfiguring the network on shutdown
-	[[ $RELEASE == xenial || $RELEASE == stretch || $RELEASE == bionic || $RELEASE == buster ]] && sed -i 's/#no-auto-down/no-auto-down/g' $destination/etc/network/interfaces.default
+	[[ $RELEASE == xenial || $RELEASE == stretch || $RELEASE == bionic || $RELEASE == buster || $RELEASE == disco ]] && sed -i 's/#no-auto-down/no-auto-down/g' $destination/etc/network/interfaces.default
 
 	if [[ ( $LINUXFAMILY == sun*i || $LINUXFAMILY == pine64 ) && $BRANCH == default ]]; then
 		# add mpv config for vdpau_sunxi
@@ -340,12 +340,17 @@ create_board_package()
 		cp $SRC/packages/bsp/10-override-random-mac.conf $destination/usr/lib/NetworkManager/conf.d/
 	;;
 
-	 buster)
+	buster)
                 mkdir -p $destination/usr/lib/NetworkManager/conf.d/
                 cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/usr/lib/NetworkManager/conf.d/
                 cp $SRC/packages/bsp/10-override-random-mac.conf $destination/usr/lib/NetworkManager/conf.d/
         ;;
 
+	bionic)
+		mkdir -p $destination/usr/lib/NetworkManager/conf.d/
+		cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/usr/lib/NetworkManager/conf.d/
+		cp $SRC/packages/bsp/10-override-random-mac.conf $destination/usr/lib/NetworkManager/conf.d/
+	;;
 
 	esac
 
