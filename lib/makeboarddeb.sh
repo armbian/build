@@ -346,7 +346,7 @@ create_board_package()
                 cp $SRC/packages/bsp/10-override-random-mac.conf $destination/usr/lib/NetworkManager/conf.d/
         ;;
 
-	bionic)
+	disco)
 		mkdir -p $destination/usr/lib/NetworkManager/conf.d/
 		cp $SRC/packages/bsp/zz-override-wifi-powersave-off.conf $destination/usr/lib/NetworkManager/conf.d/
 		cp $SRC/packages/bsp/10-override-random-mac.conf $destination/usr/lib/NetworkManager/conf.d/
