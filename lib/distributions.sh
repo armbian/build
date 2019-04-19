@@ -412,6 +412,12 @@ install_distribution_specific()
 		exit 0
 		EOF
 		chmod +x $SDCARD/etc/rc.local
+		# Basic Netplan config. Let NetworkManager manage all devices on this system
+		cat <<-EOF > $SDCARD/etc/netplan/armbian-default.yaml
+		network:
+		  version: 2
+		  renderer: NetworkManager
+		EOF
 		# DNS fix
 		sed -i "s/#DNS=.*/DNS=$NAMESERVER/g" $SDCARD/etc/systemd/resolved.conf
 		# Journal service adjustements
