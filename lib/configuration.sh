@@ -122,7 +122,7 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-if [[ $RELEASE == xenial || $RELEASE == bionic ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
+if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == disco ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
 # Base system dependencies
 DEBOOTSTRAP_LIST="locales,gnupg,ifupdown,apt-transport-https,ca-certificates"
@@ -214,6 +214,23 @@ case $RELEASE in
 		PACKAGE_LIST_ADDITIONAL="${PACKAGE_LIST_ADDITIONAL/armbian-firmware /}"
 		PACKAGE_LIST_ADDITIONAL="${PACKAGE_LIST_ADDITIONAL/sysbench /}"
         ;;
+
+	disco)
+		DEBOOTSTRAP_COMPONENTS="main,universe"
+		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
+		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11"
+		PACKAGE_LIST_DESKTOP+=" pulseaudio-module-gsettings"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer language-selector-gnome"
+
+		# temp disable
+		PACKAGE_LIST_ADDITIONAL="${PACKAGE_LIST_ADDITIONAL/armbian-firmware /}"
+		PACKAGE_LIST_ADDITIONAL="${PACKAGE_LIST_ADDITIONAL/sysbench /}"
+
+		# not in disco repo
+		PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/pulseaudio-module-gconf /}"
+		PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/libgnome2-perl /}"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS="${PACKAGE_LIST_DESKTOP/leafpad /}"
+	;;
 
 esac
 
