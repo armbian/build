@@ -118,7 +118,9 @@ chroot_build_packages()
 {
 	local built_ok=()
 	local failed=()
-	for release in jessie xenial stretch bionic buster disco; do
+	#pointless to make for Jessie, also broken and almost fully broken for buster and disco
+	#for release in jessie xenial stretch bionic buster disco; do
+	for release in stretch bionic; do
 		for arch in armhf arm64; do
 			display_alert "Starting package building process" "$release/$arch" "info"
 
