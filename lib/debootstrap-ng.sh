@@ -65,6 +65,9 @@ debootstrap_ng()
 	# NOTE: installing too many packages may fill tmpfs mount
 	customize_image
 
+	# create list of installed packages for debug purposes
+	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' >> $DEST/debug/installed-packages-${RELEASE}.list 2>&1
+
 	# clean up / prepare for making the image
 	umount_chroot "$SDCARD"
 	post_debootstrap_tweaks
