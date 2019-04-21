@@ -1,0 +1,150 @@
+From de8acffc1a023f92f12fa9c9a4ff9656e9be14a2 Mon Sep 17 00:00:00 2001
+From: wwd <ericrock@foxmail.com>
+Date: Fri, 28 Apr 2017 10:34:01 +0800
+Subject: [PATCH] arm64: sunxi: neo-plus2: Support AP6212/AP6212A bluetooth
+
+---
+ arch/arm/boot/dts/sunxi-h3-h5.dtsi            |  4 ++++
+ .../allwinner/sun50i-h5-nanopi-neo-plus2.dts  | 22 ++++++++++++++++++-
+ arch/arm64/configs/sunxi_arm64_defconfig      |  4 ++--
+ drivers/rtc/rtc-sun6i.c                       |  6 +++++
+ net/rfkill/rfkill-gpio.c                      | 19 +++++++++++-----
+ 5 files changed, 47 insertions(+), 8 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun50i-h5-nanopi-neo-plus2.dts b/arch/arm64/boot/dts/allwinner/sun50i-h5-nanopi-neo-plus2.dts
+index bc42210ea..60c6bfb66 100644
+--- a/arch/arm64/boot/dts/allwinner/sun50i-h5-nanopi-neo-plus2.dts
++++ b/arch/arm64/boot/dts/allwinner/sun50i-h5-nanopi-neo-plus2.dts
+@@ -54,6 +54,7 @@
+ 
+ 	aliases {
+ 		ethernet0 = &emac;
++		serial3 = &uart3;
+ 		serial0 = &uart0;
+ 	};
+ 
+@@ -117,6 +118,17 @@
+ 		reset-gpios = <&r_pio 0 7 GPIO_ACTIVE_LOW>; /* PL7 */
+ 		post-power-on-delay-ms = <200>;
+ 	};
++	
++	rfkill_bt {
++		compatible = "rfkill-gpio";
++		pinctrl-names = "default";
++		reset-gpios = <&pio 6 13 GPIO_ACTIVE_HIGH>; /* PG13 */
++		clocks = <&osc32k>;
++		clock-frequency = <32768>;
++		rfkill-name = "sunxi-bt";
++		rfkill-type = "bluetooth";
++	};
++	
+ };
+ 
+ &cpu0 {
+@@ -200,6 +212,12 @@
+ 	status = "okay";
+ };
+ 
++&uart3 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&uart3_pins>, <&uart3_rts_cts_pins>;
++	status = "okay";
++};
++
+ &usb_otg {
+ 	dr_mode = "host";
+ 	status = "okay";
+diff --git a/drivers/rtc/rtc-sun6i.c b/drivers/rtc/rtc-sun6i.c
+index 39cbc1238b92bb..e02f40bcf6a610 100644
+--- a/drivers/rtc/rtc-sun6i.c
++++ b/drivers/rtc/rtc-sun6i.c
+@@ -73,6 +73,9 @@
+ #define SUN6I_ALARM_CONFIG			0x0050
+ #define SUN6I_ALARM_CONFIG_WAKEUP		BIT(0)
+ 
++#define SUN6I_LOSC_OUT_GATING		0x0060
++#define SUN6I_LOSC_OUT_GATING_EN	BIT(0)
++
+ /*
+  * Get date values
+  */
+@@ -211,6 +214,9 @@ static void __init sun6i_rtc_clk_init(struct device_node *node)
+ 	writel(SUN6I_LOSC_CTRL_KEY | SUN6I_LOSC_CTRL_EXT_OSC,
+ 	       rtc->base + SUN6I_LOSC_CTRL);
+ 
++	writel(SUN6I_LOSC_OUT_GATING_EN,
++			   rtc->base + SUN6I_LOSC_OUT_GATING);
++
+ 	/* Yes, I know, this is ugly. */
+ 	sun6i_rtc = rtc;
+ 
+diff --git a/net/rfkill/rfkill-gpio.c b/net/rfkill/rfkill-gpio.c
+index 76c01cbd56e35b..656847bdf00d57 100644
+--- a/net/rfkill/rfkill-gpio.c
++++ b/net/rfkill/rfkill-gpio.c
+@@ -35,7 +35,7 @@ struct rfkill_gpio_data {
+ 
+ 	struct rfkill		*rfkill_dev;
+ 	struct clk		*clk;
+-
++	int             clk_frequency; 
+ 	bool			clk_enabled;
+ };
+ 
+@@ -44,13 +44,13 @@ static int rfkill_gpio_set_power(void *data, bool blocked)
+ 	struct rfkill_gpio_data *rfkill = data;
+ 
+ 	if (!blocked && !IS_ERR(rfkill->clk) && !rfkill->clk_enabled)
+-		clk_enable(rfkill->clk);
++		clk_prepare_enable(rfkill->clk);
+ 
+ 	gpiod_set_value_cansleep(rfkill->shutdown_gpio, !blocked);
+ 	gpiod_set_value_cansleep(rfkill->reset_gpio, !blocked);
+ 
+ 	if (blocked && !IS_ERR(rfkill->clk) && rfkill->clk_enabled)
+-		clk_disable(rfkill->clk);
++		clk_disable_unprepare(rfkill->clk);
+ 
+ 	rfkill->clk_enabled = !blocked;
+ 
+@@ -96,8 +96,9 @@ static int rfkill_gpio_probe(struct platform_device *pdev)
+ 	if (!rfkill)
+ 		return -ENOMEM;
+ 
+-	device_property_read_string(&pdev->dev, "name", &rfkill->name);
+-	device_property_read_string(&pdev->dev, "type", &type_name);
++	device_property_read_string(&pdev->dev, "rfkill-name", &rfkill->name);
++	device_property_read_string(&pdev->dev, "rfkill-type", &type_name);
++	device_property_read_u32(&pdev->dev, "clock-frequency", &rfkill->clk_frequency);
+ 
+ 	if (!rfkill->name)
+ 		rfkill->name = dev_name(&pdev->dev);
+@@ -111,6 +112,9 @@ static int rfkill_gpio_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	rfkill->clk = devm_clk_get(&pdev->dev, NULL);
++	if (!IS_ERR(rfkill->clk) && rfkill->clk_frequency > 0) {
++		clk_set_rate(rfkill->clk, rfkill->clk_frequency); 
++	}
+ 
+ 	gpio = devm_gpiod_get_optional(&pdev->dev, "reset", GPIOD_OUT_LOW);
+ 	if (IS_ERR(gpio))
+@@ -167,6 +171,10 @@ static const struct acpi_device_id rfkill_acpi_match[] = {
+ };
+ MODULE_DEVICE_TABLE(acpi, rfkill_acpi_match);
+ #endif
++static const struct of_device_id rfkill_of_match[] = { 
++	{ .compatible = "rfkill-gpio", }, 
++	{},
++}; 
+ 
+ static struct platform_driver rfkill_gpio_driver = {
+ 	.probe = rfkill_gpio_probe,
+@@ -174,6 +182,7 @@ static struct platform_driver rfkill_gpio_driver = {
+ 	.driver = {
+ 		.name = "rfkill_gpio",
+ 		.acpi_match_table = ACPI_PTR(rfkill_acpi_match),
++		.of_match_table = of_match_ptr(rfkill_of_match), 
+ 	},
+ };
+ 
