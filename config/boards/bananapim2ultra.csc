@@ -7,5 +7,5 @@ MODULES_NEXT=""
 OVERLAY_PREFIX=""
 #
 KERNEL_TARGET="next,dev"
-CLI_TARGET="stretch:next,dev"
-DESKTOP_TARGET="bionic:next,dev"
+CLI_TARGET="stretch:dev"
+DESKTOP_TARGET="bionic:dev"
