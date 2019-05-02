@@ -35,7 +35,7 @@ build_firmware()
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Installed-Size: 1
-	Replaces: linux-firmware, firmware-brcm80211, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}
+	Replaces: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}
 	Section: kernel
 	Priority: optional
 	Description: Linux firmware${FULL}
