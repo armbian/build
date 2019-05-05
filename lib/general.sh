@@ -547,6 +547,8 @@ prepare_host()
 	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev aptly acl \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
 	bison libbison-dev flex libfl-dev cryptsetup gpgv1 gnupg1 cpio"
+    
+	which aria2c >/dev/null || hostdeps="$hostdeps aria2"
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
@@ -718,6 +720,16 @@ prepare_host()
 	fi
 }
 
+# downloader() <url> <outputfilename>
+downloader()
+{
+	[ $# -ne 2 ] && exit_with_error "downloader args count" "$#"
+	args='--file-allocation=falloc --auto-file-renaming=false --continue=true --allow-overwrite=false'
+	display_alert "downloader args 1" "$1" "info"
+	display_alert "downloader args 2" "$2" "info"
+	aria2c $args "$1" -o "$2"
+}
+
 # download_toolchain <url>
 #
 download_toolchain()
@@ -733,8 +745,8 @@ download_toolchain()
 	cd $SRC/cache/toolchains/
 
 	display_alert "Downloading" "$dirname"
-	curl -Lf --progress-bar $url -o $filename
-	curl -Lf --progress-bar ${url}.asc -o ${filename}.asc
+	downloader $url $filename
+	downloader ${url}.asc ${filename}.asc
 
 	local verified=false
 
@@ -783,7 +795,7 @@ download_etcher_cli()
         cd $SRC/cache/utility/
 
         display_alert "Downloading" "$dirname"
-        curl -Lf --progress-bar $url -o $filename
+        downloader $url $filename
 
         local verified=false
 	local b=$(sha256sum $filename)
