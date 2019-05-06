@@ -310,7 +310,7 @@ prepare_partitions()
 	# mountopts[ext2] is empty
 	# mountopts[fat] is empty
 	# mountopts[f2fs] is empty
-	mountopts[btrfs]=',commit=600,compress=lzo'
+	mountopts[btrfs]=',commit=600,compress=zstd'
 	# mountopts[nfs] is empty
 
 	# stage: determine partition configuration
