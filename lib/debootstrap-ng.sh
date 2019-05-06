@@ -358,7 +358,7 @@ prepare_partitions()
 		case $ROOTFS_TYPE in
 			btrfs)
 				# Used for server images, currently no swap functionality, so disk space
-				# requirements are rather low since rootfs gets filled with compress-force=zlib
+				# requirements are rather low since rootfs gets filled with compress=zstd
 				local sdsize=$(bc -l <<< "scale=0; (($imagesize * 0.8) / 4 + 1) * 4")
 				;;
 			*)
@@ -433,7 +433,7 @@ prepare_partitions()
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
-		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress-force=zlib"
+		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=zstd"
 		mount ${fscreateopt} $rootdevice $MOUNT/
 		# create fstab (and crypttab) entry
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
