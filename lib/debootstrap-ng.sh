@@ -433,8 +433,17 @@ prepare_partitions()
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
-		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=zstd"
+                [[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=zstd,space_cache=v2"
 		mount ${fscreateopt} $rootdevice $MOUNT/
+                if [[ $ROOTFS_TYPE == btrfs ]];then
+                        btrfs subvolume create $MOUNT/@
+                        btrfs subvolume create $MOUNT/@home
+                        btrfs subvolume create $MOUNT/@boot
+                        umount $MOUNT
+                        mount ${fscreateopt},subvol=@ $rootdevice $MOUNT/
+                        mkdir "$MOUNT/home"
+                        mount ${fscreateopt},subvol=@home $rootdevice $MOUNT/home
+                fi
 		# create fstab (and crypttab) entry
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
@@ -443,7 +452,13 @@ prepare_partitions()
 		else
 			local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		fi
-		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+
+                if [[ $ROOTFS_TYPE == btrfs ]]; then
+                        echo "$rootfs /     ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]},subvol=@     0 1" >> $SDCARD/etc/fstab
+                        echo "$rootfs /home ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]},subvol=@home 0 1" >> $SDCARD/etc/fstab
+                else
+                        echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+                fi
 	fi
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs"
@@ -469,6 +484,7 @@ prepare_partitions()
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $SDCARD/boot/$bootscript_dst
 		sed -i -e "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" \
 			-e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/$bootscript_dst
+                [[ $ROOTFS_TYPE == btrfs ]] && echo 'extraargs=rootflags=subvol=@,noatime' >> $SDCARD/boot/$bootscript_dst
 	fi
 
 	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
