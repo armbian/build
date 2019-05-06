@@ -296,7 +296,7 @@ prepare_partitions()
 	mkopts[fat]='-n BOOT'
 	mkopts[ext2]='-q'
 	# mkopts[f2fs] is empty
-	# mkopts[btrfs] is empty
+	mkopts[btrfs]='--data single --metadata single --label btrfs'
 	# mkopts[nfs] is empty
 
 	mkfs[ext4]=ext4
