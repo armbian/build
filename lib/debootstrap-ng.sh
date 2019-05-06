@@ -484,7 +484,6 @@ prepare_partitions()
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $SDCARD/boot/$bootscript_dst
 		sed -i -e "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" \
 			-e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/$bootscript_dst
-                [[ $ROOTFS_TYPE == btrfs ]] && echo 'extraargs=rootflags=subvol=@,noatime' >> $SDCARD/boot/$bootscript_dst
 	fi
 
 	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
@@ -507,6 +506,9 @@ prepare_partitions()
 			echo "console=$DEFAULT_CONSOLE" >> $SDCARD/boot/armbianEnv.txt
         fi
 	fi
+
+    # kernel args for btrfs subvolume
+    [[ $ROOTFS_TYPE == btrfs ]] && echo 'extraargs=rootflags=subvol=@' >> $SDCARD/boot/armbianEnv.txt
 
 	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $SDCARD/boot/boot.cmd ]] && \
