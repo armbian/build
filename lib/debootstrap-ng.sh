@@ -554,7 +554,7 @@ create_image()
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files to root directory"
-		rsync -aHWXh --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
+		rsync -aHWXh --inplace --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
 			--exclude="/sys/*" --info=progress2,stats1 $SDCARD/ $MOUNT/
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
@@ -566,10 +566,10 @@ create_image()
 	display_alert "Copying files to /boot directory"
 	if [[ $(findmnt --target $MOUNT/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
-		rsync -rLtWh --info=progress2,stats1 $SDCARD/boot $MOUNT
+		rsync -rLtWh --inplace --info=progress2,stats1 $SDCARD/boot $MOUNT
 	else
 		# ext4
-		rsync -aHWXh --info=progress2,stats1 $SDCARD/boot $MOUNT
+		rsync -aHWXh --inplace --info=progress2,stats1 $SDCARD/boot $MOUNT
 	fi
 
 	# DEBUG: print free space
