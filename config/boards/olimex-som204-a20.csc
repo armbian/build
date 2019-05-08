@@ -10,12 +10,5 @@ KERNEL_TARGET="default,next,dev"
 CLI_TARGET="stretch,xenial:next"
 DESKTOP_TARGET="xenial:default,next"
 #
-CLI_BETA_TARGET="stretch:next"
-DESKTOP_BETA_TARGET="xenial:default"
-#
-RECOMMENDED="Ubuntu_xenial_default_desktop:90,Debian_jessie_next:100"
-#
-BOARDRATING=""
-CHIP="http://docs.armbian.com/Hardware_Allwinner-A20/"
-HARDWARE="https://www.olimex.com/Products/SOM204/"
-FORUMS="http://forum.armbian.com/index.php/forum/7-allwinner-a10a20/"
+CLI_BETA_TARGET=""
+DESKTOP_BETA_TARGET=""
