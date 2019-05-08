@@ -628,7 +628,7 @@ prepare_host()
 	# sync clock
 	if [[ $SYNC_CLOCK != no ]]; then
 		display_alert "Syncing clock" "host" "info"
-		ntpdate -s ${NTP_SERVER:- time.ijs.si}
+		ntpdate -s ${NTP_SERVER:- pool.ntp.org}
 	fi
 
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
