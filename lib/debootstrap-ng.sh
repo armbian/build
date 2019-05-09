@@ -433,7 +433,12 @@ prepare_partitions()
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
-                [[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=${BTRFS_COMPRESSION},space_cache=v2"
+		local btrfs_space_cache_version=v1
+		local kernel_support_space_cache_v2=4.5
+		dpkg --compare-versions $VER 'gt' $kernel_support_space_cache_v2 && btrfs_space_cache_version=v2
+                [[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=${BTRFS_COMPRESSION},space_cache=${btrfs_space_cache_version}"
+		unset btrfs_space_cache_version
+		unset kernel_support_space_cache_v2
 		mount ${fscreateopt} $rootdevice $MOUNT/
                 if [[ $ROOTFS_TYPE == btrfs ]];then
                         btrfs subvolume create $MOUNT/@
