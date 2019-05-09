@@ -37,6 +37,7 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 [[ -z $FORCE_CHECKOUT ]] && FORCE_CHECKOUT=yes
 
 # Load libraries
+source $SRC/lib/debootstrap-ng.sh 			# System specific install
 source $SRC/lib/image-helpers.sh			# helpers for OS image building
 source $SRC/lib/distributions.sh 			# System specific install
 source $SRC/lib/desktop.sh 					# Desktop specific install
@@ -223,7 +224,6 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 fi
 
 source $SRC/lib/configuration.sh
-source $SRC/lib/debootstrap-ng.sh 			# System specific install
 
 # optimize build time with 100% CPU usage
 CPUS=$(grep -c 'processor' /proc/cpuinfo)
