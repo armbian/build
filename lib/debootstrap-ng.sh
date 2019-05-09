@@ -310,7 +310,7 @@ prepare_partitions()
 	# mountopts[ext2] is empty
 	# mountopts[fat] is empty
 	# mountopts[f2fs] is empty
-	mountopts[btrfs]=',commit=600,compress=zstd'
+	mountopts[btrfs]=",commit=600,compress=${BTRFS_COMPRESSION:-lzo}"
 	# mountopts[nfs] is empty
 
 	# stage: determine partition configuration
@@ -358,7 +358,7 @@ prepare_partitions()
 		case $ROOTFS_TYPE in
 			btrfs)
 				# Used for server images, currently no swap functionality, so disk space
-				# requirements are rather low since rootfs gets filled with compress=zstd
+				# requirements are rather low since rootfs gets filled with compress=$BTRFS_COMPRESSION
 				local sdsize=$(bc -l <<< "scale=0; (($imagesize * 0.8) / 4 + 1) * 4")
 				;;
 			*)
@@ -437,7 +437,8 @@ prepare_partitions()
 		local btrfs_space_cache_version=v1
 		local kernel_support_space_cache_v2=4.5
 		dpkg --compare-versions $VER 'gt' $kernel_support_space_cache_v2 && btrfs_space_cache_version=v2
-                [[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=zstd,space_cache=${btrfs_space_cache_version}"
+                [[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=${BTRFS_COMPRESSION:-lzo},space_cache=${btrfs_space_cache_version}"
+		display_alert 'fscreateopt' "$fscreateopt" 'info'
 		unset btrfs_space_cache_version
 		unset kernel_support_space_cache_v2
 
