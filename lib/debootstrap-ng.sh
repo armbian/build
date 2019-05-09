@@ -436,7 +436,8 @@ prepare_partitions()
 		local btrfs_space_cache_version=v1
 		local kernel_support_space_cache_v2=4.5
 		dpkg --compare-versions $VER 'gt' $kernel_support_space_cache_v2 && btrfs_space_cache_version=v2
-                [[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=${BTRFS_COMPRESSION},space_cache=${btrfs_space_cache_version}"
+		local btrfs_cmp_default=lzo
+                [[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=${BTRFS_COMPRESSION:-lzo},space_cache=${btrfs_space_cache_version}"
 		unset btrfs_space_cache_version
 		unset kernel_support_space_cache_v2
 		mount ${fscreateopt} $rootdevice $MOUNT/
