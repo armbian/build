@@ -34,11 +34,13 @@ if [[ -z $BTRFS_COMPRESSION ]];then
 	BTRFS_COMPRESSION=lzo
 else
 	local btrfs_compression_ok=0
+	local btrfs_cmp_chks="$(echo $BTRFS_COMPRESSION | sed -e 's/:[0-9]\+//')"
 	for c in 'lzo zlib zstd';do
-		[[ $c == $BTRFS_COMPRESSION ]] && btrfs_compression_ok=1
+		[[ $c == $btrfs_cmp_chks ]] && btrfs_compression_ok=1 # ${BTRFS_COMPRESSION/:[0-9]+/} not works like zstd:12
 	done
 	[[ $btrfs_compression_ok -eq 0 ]] && exit_with_error "wrong btrfs compression method" "$BTRFS_COMPRESSION"
 	unset btrfs_compression_ok
+	unset btrfs_cmp_chks
 fi
 
 # Fixed image size is in 1M dd blocks (MiB)
