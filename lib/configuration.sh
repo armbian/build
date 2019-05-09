@@ -29,11 +29,9 @@ ROOT_MAPPER="armbian-root"
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 [[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
 
-# setup btrfs compression
+# check btrfs compression variable
 display_alert '$BTRFS_COMPRESSION:before' "$BTRFS_COMPRESSION" 'info'
-if [[ -z $BTRFS_COMPRESSION ]];then
-	BTRFS_COMPRESSION=lzo
-else
+if [[ -n $BTRFS_COMPRESSION ]];then
 	local btrfs_compression_ok=0
 	local btrfs_cmp_chks="$(echo $BTRFS_COMPRESSION | sed -e 's/:[0-9]\+//')"
 	display_alert '$btrfs_cmp_chks' "$btrfs_cmp_chks" "info"
