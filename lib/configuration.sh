@@ -37,6 +37,7 @@ if [[ -n $BTRFS_COMPRESSION ]];then
 	display_alert '$btrfs_cmp_chks' "$btrfs_cmp_chks" "info"
 	for c in 'lzo zlib zstd';do
 		[[ $c == $btrfs_cmp_chks ]] && btrfs_compression_ok=1 # ${BTRFS_COMPRESSION/:[0-9]+/} not works like zstd:12
+		display_alert "btrfs compress check $c" "$btrfs_compression_ok" 'info'
 	done
 	if [[ $btrfs_compression_ok -eq 0 ]] ;then
 		display_alert "wrong btrfs compression method" "$BTRFS_COMPRESSION" 'err'
