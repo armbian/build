@@ -183,6 +183,10 @@ fetch_from_repo()
 	local dir=$2
 	local ref=$3
 	local ref_subdir=$4
+	display_alert "fetch_from:url" "$url" 'info'
+	display_alert "fetch_from:dir" "$dir" 'info'
+	display_alert "fetch_from:ref" "$ref" 'info'
+	display_alert "fetch_from:ref_subdir" "$ref_subdir" 'info'
 
 	[[ -z $ref || ( $ref != tag:* && $ref != branch:* && $ref != head ) ]] && exit_with_error "Error in configuration"
 	local ref_type=${ref%%:*}
