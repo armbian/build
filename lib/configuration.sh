@@ -32,10 +32,10 @@ ROOT_MAPPER="armbian-root"
 # check btrfs compression variable
 display_alert '$BTRFS_COMPRESSION:before' "$BTRFS_COMPRESSION" 'info'
 if [[ -n $BTRFS_COMPRESSION ]];then
-	local btrfs_compression_ok=0
-	local btrfs_cmp_chks="$(echo $BTRFS_COMPRESSION | sed -e 's/:[0-9]\+//')"
+	btrfs_compression_ok=0
+	btrfs_cmp_chks="$(echo $BTRFS_COMPRESSION | sed -e 's/:[0-9]\+//')"
 	display_alert '$btrfs_cmp_chks' "$btrfs_cmp_chks" "info"
-	for c in 'lzo zlib zstd';do
+	for c in lzo zlib zstd;do
 		[[ $c == $btrfs_cmp_chks ]] && btrfs_compression_ok=1 # ${BTRFS_COMPRESSION/:[0-9]+/} not works like zstd:12
 		display_alert "btrfs compress check $c" "$btrfs_compression_ok" 'info'
 	done
