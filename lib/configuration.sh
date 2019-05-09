@@ -228,6 +228,11 @@ esac
 DEBIAN_MIRROR='httpredir.debian.org/debian'
 UBUNTU_MIRROR='ports.ubuntu.com/'
 
+if [[ $DOWNLOAD_MIRROR == china ]] ; then
+	DEBIAN_MIRROR='mirrors.tuna.tsinghua.edu.cn/debian'
+	UBUNTU_MIRROR='mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/'
+fi
+
 # For user override
 if [[ -f $SRC/userpatches/lib.config ]]; then
 	display_alert "Using user configuration override" "userpatches/lib.config" "info"
