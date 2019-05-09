@@ -29,6 +29,18 @@ ROOT_MAPPER="armbian-root"
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 [[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
 
+# setup btrfs compression
+if [[ -z $BTRFS_COMPRESSION ]];then
+	BTRFS_COMPRESSION=lzo
+else
+	local btrfs_compression_ok=0
+	for c in 'lzo zlib zstd';do
+		[[ $c == $BTRFS_COMPRESSION ]] && btrfs_compression_ok=1
+	done
+	[[ $btrfs_compression_ok -eq 0 ]] && exit_with_error "wrong btrfs compression method" "$BTRFS_COMPRESSION"
+	unset btrfs_compression_ok
+fi
+
 # Fixed image size is in 1M dd blocks (MiB)
 # to get size of block device /dev/sdX execute as root:
 # echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))

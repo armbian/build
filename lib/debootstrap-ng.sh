@@ -310,7 +310,7 @@ prepare_partitions()
 	# mountopts[ext2] is empty
 	# mountopts[fat] is empty
 	# mountopts[f2fs] is empty
-	mountopts[btrfs]=',commit=600,compress=zstd'
+	mountopts[btrfs]=",commit=600,compress=${BTRFS_COMPRESSION}"
 	# mountopts[nfs] is empty
 
 	# stage: determine partition configuration
@@ -358,7 +358,7 @@ prepare_partitions()
 		case $ROOTFS_TYPE in
 			btrfs)
 				# Used for server images, currently no swap functionality, so disk space
-				# requirements are rather low since rootfs gets filled with compress=zstd
+				# requirements are rather low since rootfs gets filled with compress=$BTRFS_COMPRESSION
 				local sdsize=$(bc -l <<< "scale=0; (($imagesize * 0.8) / 4 + 1) * 4")
 				;;
 			*)
@@ -433,7 +433,7 @@ prepare_partitions()
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
-                [[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=zstd,space_cache=v2"
+                [[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=${BTRFS_COMPRESSION},space_cache=v2"
 		mount ${fscreateopt} $rootdevice $MOUNT/
                 if [[ $ROOTFS_TYPE == btrfs ]];then
                         btrfs subvolume create $MOUNT/@
