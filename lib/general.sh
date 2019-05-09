@@ -662,6 +662,9 @@ prepare_host()
 	# Use backup server by default to balance the load
 
 	ARMBIANSERVER=dl.armbian.com
+	if [[ $DOWNLOAD_MIRROR == 'china' ]]; then
+		ARMBIANSERVER='mirrors.tuna.tsinghua.edu.cn/armbian-releases'
+	fi
 
 	local toolchains=(
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
