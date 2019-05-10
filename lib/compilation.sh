@@ -113,7 +113,16 @@ compile_uboot()
 	local toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER}gcc $UBOOT_USE_GCC"
 
-	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval env PATH=$toolchain:$PATH ${UBOOT_COMPILER}gcc -dumpversion)" "info"
+	if [[ -n $UBOOT_TOOLCHAIN2 ]]; then
+		local toolchain2_type=$(cut -d':' -f1 <<< $UBOOT_TOOLCHAIN2)
+		local toolchain2_ver=$(cut -d':' -f2 <<< $UBOOT_TOOLCHAIN2)
+		local toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
+		[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
+	fi
+
+
+	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval env PATH=$toolchain:$toolchain2:$PATH ${UBOOT_COMPILER}gcc -dumpversion)" "info"
+	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH=$toolchain:$toolchain2:$PATH ${toolchain2_type}gcc -dumpversion)" "info"
 
 	# create directory structure for the .deb package
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
@@ -145,7 +154,7 @@ compile_uboot()
 		fi
 
 		echo -e "\n\t== u-boot ==\n" >>$DEST/debug/compilation.log
-		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
+		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$toolchain2:$PATH \
 			'make $CTHREADS $BOOTCONFIG \
 			CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>>$DEST/debug/compilation.log \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
@@ -170,9 +179,13 @@ compile_uboot()
 		[[ $BOOTDELAY == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
 		[[ -n $BOOTDELAY ]] && sed -i "s/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=${BOOTDELAY}/" .config || [[ -f .config ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
 
-		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
+		# workaround when two compilers are needed
+		cross_compile="CROSS_COMPILE=$CCACHE $UBOOT_COMPILER";
+		[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe"; # empty parameter is not allowed
+
+		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$toolchain2:$PATH \
 			'make $target_make $CTHREADS \
-			CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>>$DEST/debug/compilation.log \
+			"${cross_compile}"' 2>>$DEST/debug/compilation.log \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
