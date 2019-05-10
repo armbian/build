@@ -46,9 +46,9 @@ build_firmware()
 
 	cd $SRC/cache/sources
 	# pack
-	mv armbian-firmware${FULL} armbian-firmware${FULL}_${REVISION}_all
+	ln -s armbian-firmware${FULL} armbian-firmware${FULL}_${REVISION}_all
 	fakeroot dpkg -b armbian-firmware${FULL}_${REVISION}_all >> $DEST/debug/install.log 2>&1
-	mv armbian-firmware${FULL}_${REVISION}_all armbian-firmware${FULL}
+	rm armbian-firmware${FULL}_${REVISION}_all
 	mv armbian-firmware${FULL}_${REVISION}_all.deb $DEST/debs/ || display_alert "Failed moving firmware package" "" "wrn"
 }
 
