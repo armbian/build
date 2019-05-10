@@ -662,6 +662,8 @@ prepare_host()
 	ARMBIANSERVER=dl.armbian.com
 
 	local toolchains=(
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz"
