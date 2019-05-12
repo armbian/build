@@ -444,11 +444,11 @@ prepare_partitions()
 
 		mount ${fscreateopt} $rootdevice $MOUNT/
                 if [[ $ROOTFS_TYPE == btrfs ]];then
-                        btrfs subvolume create $MOUNT/@
+                        btrfs subvolume create $MOUNT/@$RELEASE
                         btrfs subvolume create $MOUNT/@home
                         btrfs subvolume create $MOUNT/@boot
                         umount $MOUNT
-                        mount ${fscreateopt},subvol=@ $rootdevice $MOUNT/
+                        mount ${fscreateopt},subvol=@$RELEASE $rootdevice $MOUNT/
                         mkdir "$MOUNT/home"
                         mount ${fscreateopt},subvol=@home $rootdevice $MOUNT/home
                 fi
@@ -462,7 +462,7 @@ prepare_partitions()
 		fi
 
                 if [[ $ROOTFS_TYPE == btrfs ]]; then
-                        echo "$rootfs /     ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]},subvol=@     0 1" >> $SDCARD/etc/fstab
+                        echo "$rootfs /     ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]},subvol=@$RELEASE     0 1" >> $SDCARD/etc/fstab
                         echo "$rootfs /home ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]},subvol=@home 0 1" >> $SDCARD/etc/fstab
                 else
                         echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
@@ -516,7 +516,7 @@ prepare_partitions()
 	fi
 
     # kernel args for btrfs subvolume
-    [[ $ROOTFS_TYPE == btrfs ]] && echo 'extraargs=rootflags=subvol=@' >> $SDCARD/boot/armbianEnv.txt
+    [[ $ROOTFS_TYPE == btrfs ]] && echo "extraargs=rootflags=subvol=@$RELEASE" >> $SDCARD/boot/armbianEnv.txt
 
 	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $SDCARD/boot/boot.cmd ]] && \
