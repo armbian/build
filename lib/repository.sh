@@ -23,9 +23,7 @@ POT="${SCRIPTPATH}/output/debs/"
 # load functions
 source ${SCRIPTPATH}lib/general.sh
 
-#DISTROS=("jessie" "xenial" "stretch" "bionic" "buster" "disco")
-# not making until fixed
-DISTROS=("xenial" "stretch" "bionic")
+DISTROS=("jessie" "xenial" "stretch" "bionic" "buster" "disco")
 
 ParseOptions() {
 	case $@ in
