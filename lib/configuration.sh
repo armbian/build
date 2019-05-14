@@ -29,6 +29,22 @@ ROOT_MAPPER="armbian-root"
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 [[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
 
+# check btrfs compression variable
+if [[ -n $BTRFS_COMPRESSION ]];then
+	btrfs_compression_ok=0
+	btrfs_cmp_chks="$(echo $BTRFS_COMPRESSION | sed -e 's/:[0-9]\+//')"
+	for c in lzo zlib zstd;do
+		[[ $c == $btrfs_cmp_chks ]] && btrfs_compression_ok=1 # ${BTRFS_COMPRESSION/:[0-9]+/} not works like zstd:12
+	done
+	if [[ $btrfs_compression_ok -eq 0 ]] ;then
+		display_alert "wrong btrfs compression method" "$BTRFS_COMPRESSION" 'err'
+		display_alert "set BTRFS_COMPRESSION to default" "lzo" "wrn"
+		BTRFS_COMPRESSION=lzo
+	fi
+	unset btrfs_compression_ok
+	unset btrfs_cmp_chks
+fi
+
 # Fixed image size is in 1M dd blocks (MiB)
 # to get size of block device /dev/sdX execute as root:
 # echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
@@ -43,11 +59,12 @@ fi
 [[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
 
 # used by multiple sources - reduce code duplication
-if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
-	MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
-else
-	MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
-fi
+[[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
+case $MAINLINE_MIRROR in
+	google) MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable' ;;
+	tuna) MAINLINE_KERNEL_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git' ;;
+	*) MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git' ;;
+esac
 MAINLINE_KERNEL_DIR='linux-mainline'
 
 if [[ $USE_GITHUB_UBOOT_MIRROR == yes ]]; then
@@ -225,6 +242,11 @@ esac
 
 DEBIAN_MIRROR='httpredir.debian.org/debian'
 UBUNTU_MIRROR='ports.ubuntu.com/'
+
+if [[ $DOWNLOAD_MIRROR == china ]] ; then
+	DEBIAN_MIRROR='mirrors.tuna.tsinghua.edu.cn/debian'
+	UBUNTU_MIRROR='mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/'
+fi
 
 # For user override
 if [[ -f $SRC/userpatches/lib.config ]]; then
