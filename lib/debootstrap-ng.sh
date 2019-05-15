@@ -296,7 +296,7 @@ prepare_partitions()
 	mkopts[fat]='-n BOOT'
 	mkopts[ext2]='-q'
 	# mkopts[f2fs] is empty
-	mkopts[btrfs]='--data single --metadata single --label btrfs'
+	# mkopts[btrfs] is empty
 	# mkopts[nfs] is empty
 
 	mkfs[ext4]=ext4
@@ -310,7 +310,7 @@ prepare_partitions()
 	# mountopts[ext2] is empty
 	# mountopts[fat] is empty
 	# mountopts[f2fs] is empty
-	mountopts[btrfs]=",commit=600,compress=${BTRFS_COMPRESSION:-lzo}"
+	mountopts[btrfs]=',commit=600,compress=lzo'
 	# mountopts[nfs] is empty
 
 	# stage: determine partition configuration
@@ -358,7 +358,7 @@ prepare_partitions()
 		case $ROOTFS_TYPE in
 			btrfs)
 				# Used for server images, currently no swap functionality, so disk space
-				# requirements are rather low since rootfs gets filled with compress=$BTRFS_COMPRESSION
+				# requirements are rather low since rootfs gets filled with compress-force=zlib
 				local sdsize=$(bc -l <<< "scale=0; (($imagesize * 0.8) / 4 + 1) * 4")
 				;;
 			*)
@@ -375,7 +375,7 @@ prepare_partitions()
 
 	# stage: create blank image
 	display_alert "Creating blank image for rootfs" "$sdsize MiB" "info"
-	truncate --size=${sdsize}M ${SDCARD}.raw
+	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=${SDCARD}.raw
 
 	# stage: calculate boot partition size
 	local bootstart=$(($OFFSET * 2048))
@@ -433,25 +433,8 @@ prepare_partitions()
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
-
-		local btrfs_space_cache_version=v1
-		local kernel_support_space_cache_v2=4.5
-		dpkg --compare-versions $VER 'gt' $kernel_support_space_cache_v2 && btrfs_space_cache_version=v2
-                [[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress=${BTRFS_COMPRESSION:-lzo},space_cache=${btrfs_space_cache_version}"
-		display_alert 'fscreateopt' "$fscreateopt" 'info'
-		unset btrfs_space_cache_version
-		unset kernel_support_space_cache_v2
-
+		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress-force=zlib"
 		mount ${fscreateopt} $rootdevice $MOUNT/
-                if [[ $ROOTFS_TYPE == btrfs ]];then
-                        btrfs subvolume create $MOUNT/@$RELEASE
-                        btrfs subvolume create $MOUNT/@home
-                        btrfs subvolume create $MOUNT/@boot
-                        umount $MOUNT
-                        mount ${fscreateopt},subvol=@$RELEASE $rootdevice $MOUNT/
-                        mkdir "$MOUNT/home"
-                        mount ${fscreateopt},subvol=@home $rootdevice $MOUNT/home
-                fi
 		# create fstab (and crypttab) entry
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
@@ -460,13 +443,7 @@ prepare_partitions()
 		else
 			local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		fi
-
-                if [[ $ROOTFS_TYPE == btrfs ]]; then
-                        echo "$rootfs /     ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]},subvol=@$RELEASE     0 1" >> $SDCARD/etc/fstab
-                        echo "$rootfs /home ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]},subvol=@home 0 1" >> $SDCARD/etc/fstab
-                else
-                        echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
-                fi
+		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs"
@@ -477,7 +454,7 @@ prepare_partitions()
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
 	fi
 	[[ $ROOTFS_TYPE == nfs ]] && echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
-	echo "tmpfs /media tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab
+	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab
 
 	# stage: adjust boot script or boot environment
 	if [[ -f $SDCARD/boot/armbianEnv.txt ]]; then
@@ -514,9 +491,6 @@ prepare_partitions()
 			echo "console=$DEFAULT_CONSOLE" >> $SDCARD/boot/armbianEnv.txt
         fi
 	fi
-
-    # kernel args for btrfs subvolume
-    [[ $ROOTFS_TYPE == btrfs ]] && echo "extraargs=rootflags=subvol=@$RELEASE" >> $SDCARD/boot/armbianEnv.txt
 
 	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $SDCARD/boot/boot.cmd ]] && \
@@ -562,7 +536,7 @@ create_image()
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files to root directory"
-		rsync -aHWXh --inplace --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
+		rsync -aHWXh --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
 			--exclude="/sys/*" --info=progress2,stats1 $SDCARD/ $MOUNT/
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
@@ -574,10 +548,10 @@ create_image()
 	display_alert "Copying files to /boot directory"
 	if [[ $(findmnt --target $MOUNT/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
-		rsync -rLtWh --inplace --info=progress2,stats1 $SDCARD/boot $MOUNT
+		rsync -rLtWh --info=progress2,stats1 $SDCARD/boot $MOUNT
 	else
 		# ext4
-		rsync -aHWXh --inplace --info=progress2,stats1 $SDCARD/boot $MOUNT
+		rsync -aHWXh --info=progress2,stats1 $SDCARD/boot $MOUNT
 	fi
 
 	# DEBUG: print free space
