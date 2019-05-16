@@ -301,13 +301,8 @@ compile_kernel()
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets" "info"
 		rm -rf $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au
 		mkdir -p $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/
-		ln -s $SRC/cache/sources/rtl8812au/core $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/core
-		ln -s $SRC/cache/sources/rtl8812au/hal $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/hal
-		ln -s $SRC/cache/sources/rtl8812au/include $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/include
-		ln -s $SRC/cache/sources/rtl8812au/os_dep $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/os_dep
-		ln -s $SRC/cache/sources/rtl8812au/platform $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/platform
-		ln -s $SRC/cache/sources/rtl8812au/modules.order $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/modules.order
-
+		cp -R $SRC/cache/sources/rtl8812au/{core,hal,include,os_dep,platform,modules.order} $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au
+		
 		# Makefile
 		cp $SRC/cache/sources/rtl8812au/Makefile $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/Makefile
 		cp $SRC/cache/sources/rtl8812au/Kconfig $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/Kconfig
