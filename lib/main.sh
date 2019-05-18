@@ -182,7 +182,7 @@ if [[ -z $BRANCH ]]; then
 	options=()
 	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy (3.4.x - 4.4.x)")
 	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)   (4.x)")
-	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev"         "\Z1Development version      (4.x)\Zn")
+	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev"         "\Z1Development version      (4.x - 5.x)\Zn")
 	# do not display selection dialog if only one kernel branch is available
 	if [[ "${#options[@]}" == 2 ]]; then
 		BRANCH="${options[0]}"
@@ -325,3 +325,5 @@ fi
 end=`date +%s`
 runtime=$(((end-start)/60))
 display_alert "Runtime" "$runtime min" "info"
+# Make it easy to repeat build by displaying build options used
+display_alert "Repeat Build Options" "BOARD=${BOARD} BRANCH=${BRANCH} RELEASE=${RELEASE} BUILD_DESKTOP=${BUILD_DESKTOP} KERNEL_ONLY=${KERNEL_ONLY} KERNEL_CONFIGURE=no" "info"

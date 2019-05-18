@@ -27,7 +27,7 @@ install_common()
 
 	fi
 	# define ARCH within global environment variables
-	[[ -f $SDCARD/etc/environment ]] && echo "ARCH=${ARCH//hf}" >> $SDCARD/etc/environment
+	[[ -f $SDCARD/etc/environment ]] && echo -e "ARCH=${ARCH//hf}\nLC_ALL=\"C\"" >> $SDCARD/etc/environment
 
 	# add dummy fstab entry to make mkinitramfs happy
 	echo "/dev/mmcblk0p1 / $ROOTFS_TYPE defaults 0 1" >> $SDCARD/etc/fstab

@@ -1,0 +1,925 @@
+diff --git a/Makefile b/Makefile
+index 370ad0d34076..2caa131ff306 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 4
+ PATCHLEVEL = 19
+-SUBLEVEL = 24
++SUBLEVEL = 25
+ EXTRAVERSION =
+ NAME = "People's Front"
+ 
+diff --git a/crypto/af_alg.c b/crypto/af_alg.c
+index 17eb09d222ff..ec78a04eb136 100644
+--- a/crypto/af_alg.c
++++ b/crypto/af_alg.c
+@@ -122,8 +122,10 @@ static void alg_do_release(const struct af_alg_type *type, void *private)
+ 
+ int af_alg_release(struct socket *sock)
+ {
+-	if (sock->sk)
++	if (sock->sk) {
+ 		sock_put(sock->sk);
++		sock->sk = NULL;
++	}
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(af_alg_release);
+diff --git a/drivers/hwmon/lm80.c b/drivers/hwmon/lm80.c
+index 0e30fa00204c..f9b8e3e23a8e 100644
+--- a/drivers/hwmon/lm80.c
++++ b/drivers/hwmon/lm80.c
+@@ -393,8 +393,10 @@ static ssize_t set_fan_div(struct device *dev, struct device_attribute *attr,
+ 	}
+ 
+ 	rv = lm80_read_value(client, LM80_REG_FANDIV);
+-	if (rv < 0)
++	if (rv < 0) {
++		mutex_unlock(&data->update_lock);
+ 		return rv;
++	}
+ 	reg = (rv & ~(3 << (2 * (nr + 1))))
+ 	    | (data->fan_div[nr] << (2 * (nr + 1)));
+ 	lm80_write_value(client, LM80_REG_FANDIV, reg);
+diff --git a/drivers/isdn/mISDN/timerdev.c b/drivers/isdn/mISDN/timerdev.c
+index 211ed6cffd10..578978711887 100644
+--- a/drivers/isdn/mISDN/timerdev.c
++++ b/drivers/isdn/mISDN/timerdev.c
+@@ -170,8 +170,8 @@ dev_expire_timer(struct timer_list *t)
+ 	spin_lock_irqsave(&timer->dev->lock, flags);
+ 	if (timer->id >= 0)
+ 		list_move_tail(&timer->list, &timer->dev->expired);
+-	spin_unlock_irqrestore(&timer->dev->lock, flags);
+ 	wake_up_interruptible(&timer->dev->wait);
++	spin_unlock_irqrestore(&timer->dev->lock, flags);
+ }
+ 
+ static int
+diff --git a/drivers/mmc/host/meson-gx-mmc.c b/drivers/mmc/host/meson-gx-mmc.c
+index ef9deaa361c7..ddd98cdd33bc 100644
+--- a/drivers/mmc/host/meson-gx-mmc.c
++++ b/drivers/mmc/host/meson-gx-mmc.c
+@@ -1286,7 +1286,8 @@ static int meson_mmc_probe(struct platform_device *pdev)
+ 	       host->regs + SD_EMMC_IRQ_EN);
+ 
+ 	ret = request_threaded_irq(host->irq, meson_mmc_irq,
+-			meson_mmc_irq_thread, IRQF_SHARED, NULL, host);
++				   meson_mmc_irq_thread, IRQF_SHARED,
++				   dev_name(&pdev->dev), host);
+ 	if (ret)
+ 		goto err_init_clk;
+ 
+diff --git a/drivers/net/dsa/mv88e6xxx/chip.c b/drivers/net/dsa/mv88e6xxx/chip.c
+index 258918d8a416..9f697a5b8e3d 100644
+--- a/drivers/net/dsa/mv88e6xxx/chip.c
++++ b/drivers/net/dsa/mv88e6xxx/chip.c
+@@ -261,6 +261,7 @@ static irqreturn_t mv88e6xxx_g1_irq_thread_work(struct mv88e6xxx_chip *chip)
+ 	unsigned int sub_irq;
+ 	unsigned int n;
+ 	u16 reg;
++	u16 ctl1;
+ 	int err;
+ 
+ 	mutex_lock(&chip->reg_lock);
+@@ -270,13 +271,28 @@ static irqreturn_t mv88e6xxx_g1_irq_thread_work(struct mv88e6xxx_chip *chip)
+ 	if (err)
+ 		goto out;
+ 
+-	for (n = 0; n < chip->g1_irq.nirqs; ++n) {
+-		if (reg & (1 << n)) {
+-			sub_irq = irq_find_mapping(chip->g1_irq.domain, n);
+-			handle_nested_irq(sub_irq);
+-			++nhandled;
++	do {
++		for (n = 0; n < chip->g1_irq.nirqs; ++n) {
++			if (reg & (1 << n)) {
++				sub_irq = irq_find_mapping(chip->g1_irq.domain,
++							   n);
++				handle_nested_irq(sub_irq);
++				++nhandled;
++			}
+ 		}
+-	}
++
++		mutex_lock(&chip->reg_lock);
++		err = mv88e6xxx_g1_read(chip, MV88E6XXX_G1_CTL1, &ctl1);
++		if (err)
++			goto unlock;
++		err = mv88e6xxx_g1_read(chip, MV88E6XXX_G1_STS, &reg);
++unlock:
++		mutex_unlock(&chip->reg_lock);
++		if (err)
++			goto out;
++		ctl1 &= GENMASK(chip->g1_irq.nirqs, 0);
++	} while (reg & ctl1);
++
+ out:
+ 	return (nhandled > 0 ? IRQ_HANDLED : IRQ_NONE);
+ }
+diff --git a/drivers/net/ethernet/marvell/sky2.c b/drivers/net/ethernet/marvell/sky2.c
+index 697d9b374f5e..ae2f35039343 100644
+--- a/drivers/net/ethernet/marvell/sky2.c
++++ b/drivers/net/ethernet/marvell/sky2.c
+@@ -5087,7 +5087,7 @@ static int sky2_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 	INIT_WORK(&hw->restart_work, sky2_restart);
+ 
+ 	pci_set_drvdata(pdev, hw);
+-	pdev->d3_delay = 200;
++	pdev->d3_delay = 300;
+ 
+ 	return 0;
+ 
+diff --git a/drivers/net/ethernet/mellanox/mlxsw/spectrum.c b/drivers/net/ethernet/mellanox/mlxsw/spectrum.c
+index d64cd8d44d83..a12b5710891e 100644
+--- a/drivers/net/ethernet/mellanox/mlxsw/spectrum.c
++++ b/drivers/net/ethernet/mellanox/mlxsw/spectrum.c
+@@ -841,8 +841,9 @@ int __mlxsw_sp_port_headroom_set(struct mlxsw_sp_port *mlxsw_sp_port, int mtu,
+ 	for (i = 0; i < IEEE_8021QAZ_MAX_TCS; i++) {
+ 		bool configure = false;
+ 		bool pfc = false;
++		u16 thres_cells;
++		u16 delay_cells;
+ 		bool lossy;
+-		u16 thres;
+ 
+ 		for (j = 0; j < IEEE_8021QAZ_MAX_TCS; j++) {
+ 			if (prio_tc[j] == i) {
+@@ -856,10 +857,11 @@ int __mlxsw_sp_port_headroom_set(struct mlxsw_sp_port *mlxsw_sp_port, int mtu,
+ 			continue;
+ 
+ 		lossy = !(pfc || pause_en);
+-		thres = mlxsw_sp_pg_buf_threshold_get(mlxsw_sp, mtu);
+-		delay = mlxsw_sp_pg_buf_delay_get(mlxsw_sp, mtu, delay, pfc,
+-						  pause_en);
+-		mlxsw_sp_pg_buf_pack(pbmc_pl, i, thres + delay, thres, lossy);
++		thres_cells = mlxsw_sp_pg_buf_threshold_get(mlxsw_sp, mtu);
++		delay_cells = mlxsw_sp_pg_buf_delay_get(mlxsw_sp, mtu, delay,
++							pfc, pause_en);
++		mlxsw_sp_pg_buf_pack(pbmc_pl, i, thres_cells + delay_cells,
++				     thres_cells, lossy);
+ 	}
+ 
+ 	return mlxsw_reg_write(mlxsw_sp->core, MLXSW_REG(pbmc), pbmc_pl);
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac4_descs.c b/drivers/net/ethernet/stmicro/stmmac/dwmac4_descs.c
+index 20299f6f65fc..736e29635b77 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac4_descs.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac4_descs.c
+@@ -241,15 +241,18 @@ static inline void dwmac4_get_timestamp(void *desc, u32 ats, u64 *ts)
+ static int dwmac4_rx_check_timestamp(void *desc)
+ {
+ 	struct dma_desc *p = (struct dma_desc *)desc;
++	unsigned int rdes0 = le32_to_cpu(p->des0);
++	unsigned int rdes1 = le32_to_cpu(p->des1);
++	unsigned int rdes3 = le32_to_cpu(p->des3);
+ 	u32 own, ctxt;
+ 	int ret = 1;
+ 
+-	own = p->des3 & RDES3_OWN;
+-	ctxt = ((p->des3 & RDES3_CONTEXT_DESCRIPTOR)
++	own = rdes3 & RDES3_OWN;
++	ctxt = ((rdes3 & RDES3_CONTEXT_DESCRIPTOR)
+ 		>> RDES3_CONTEXT_DESCRIPTOR_SHIFT);
+ 
+ 	if (likely(!own && ctxt)) {
+-		if ((p->des0 == 0xffffffff) && (p->des1 == 0xffffffff))
++		if ((rdes0 == 0xffffffff) && (rdes1 == 0xffffffff))
+ 			/* Corrupted value */
+ 			ret = -EINVAL;
+ 		else
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_ethtool.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_ethtool.c
+index 5710864fa809..9caf79ba5ef1 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_ethtool.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_ethtool.c
+@@ -692,25 +692,27 @@ static int stmmac_ethtool_op_set_eee(struct net_device *dev,
+ 				     struct ethtool_eee *edata)
+ {
+ 	struct stmmac_priv *priv = netdev_priv(dev);
++	int ret;
+ 
+-	priv->eee_enabled = edata->eee_enabled;
+-
+-	if (!priv->eee_enabled)
++	if (!edata->eee_enabled) {
+ 		stmmac_disable_eee_mode(priv);
+-	else {
++	} else {
+ 		/* We are asking for enabling the EEE but it is safe
+ 		 * to verify all by invoking the eee_init function.
+ 		 * In case of failure it will return an error.
+ 		 */
+-		priv->eee_enabled = stmmac_eee_init(priv);
+-		if (!priv->eee_enabled)
++		edata->eee_enabled = stmmac_eee_init(priv);
++		if (!edata->eee_enabled)
+ 			return -EOPNOTSUPP;
+-
+-		/* Do not change tx_lpi_timer in case of failure */
+-		priv->tx_lpi_timer = edata->tx_lpi_timer;
+ 	}
+ 
+-	return phy_ethtool_set_eee(dev->phydev, edata);
++	ret = phy_ethtool_set_eee(dev->phydev, edata);
++	if (ret)
++		return ret;
++
++	priv->eee_enabled = edata->eee_enabled;
++	priv->tx_lpi_timer = edata->tx_lpi_timer;
++	return 0;
+ }
+ 
+ static u32 stmmac_usec2riwt(u32 usec, struct stmmac_priv *priv)
+diff --git a/drivers/net/phy/xilinx_gmii2rgmii.c b/drivers/net/phy/xilinx_gmii2rgmii.c
+index 74a8782313cf..bd6084e315de 100644
+--- a/drivers/net/phy/xilinx_gmii2rgmii.c
++++ b/drivers/net/phy/xilinx_gmii2rgmii.c
+@@ -44,7 +44,10 @@ static int xgmiitorgmii_read_status(struct phy_device *phydev)
+ 	u16 val = 0;
+ 	int err;
+ 
+-	err = priv->phy_drv->read_status(phydev);
++	if (priv->phy_drv->read_status)
++		err = priv->phy_drv->read_status(phydev);
++	else
++		err = genphy_read_status(phydev);
+ 	if (err < 0)
+ 		return err;
+ 
+diff --git a/drivers/net/vxlan.c b/drivers/net/vxlan.c
+index 27bd586b94b0..9fc9aed6ca9a 100644
+--- a/drivers/net/vxlan.c
++++ b/drivers/net/vxlan.c
+@@ -2003,7 +2003,7 @@ static void vxlan_encap_bypass(struct sk_buff *skb, struct vxlan_dev *src_vxlan,
+ 	struct pcpu_sw_netstats *tx_stats, *rx_stats;
+ 	union vxlan_addr loopback;
+ 	union vxlan_addr *remote_ip = &dst_vxlan->default_dst.remote_ip;
+-	struct net_device *dev = skb->dev;
++	struct net_device *dev;
+ 	int len = skb->len;
+ 
+ 	tx_stats = this_cpu_ptr(src_vxlan->dev->tstats);
+@@ -2023,9 +2023,15 @@ static void vxlan_encap_bypass(struct sk_buff *skb, struct vxlan_dev *src_vxlan,
+ #endif
+ 	}
+ 
++	rcu_read_lock();
++	dev = skb->dev;
++	if (unlikely(!(dev->flags & IFF_UP))) {
++		kfree_skb(skb);
++		goto drop;
++	}
++
+ 	if (dst_vxlan->cfg.flags & VXLAN_F_LEARN)
+-		vxlan_snoop(skb->dev, &loopback, eth_hdr(skb)->h_source, 0,
+-			    vni);
++		vxlan_snoop(dev, &loopback, eth_hdr(skb)->h_source, 0, vni);
+ 
+ 	u64_stats_update_begin(&tx_stats->syncp);
+ 	tx_stats->tx_packets++;
+@@ -2038,8 +2044,10 @@ static void vxlan_encap_bypass(struct sk_buff *skb, struct vxlan_dev *src_vxlan,
+ 		rx_stats->rx_bytes += len;
+ 		u64_stats_update_end(&rx_stats->syncp);
+ 	} else {
++drop:
+ 		dev->stats.rx_dropped++;
+ 	}
++	rcu_read_unlock();
+ }
+ 
+ static int encap_bypass_if_local(struct sk_buff *skb, struct net_device *dev,
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index afc4680c584f..7eb1549cea81 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -6113,7 +6113,8 @@ static int __init pci_setup(char *str)
+ 			} else if (!strncmp(str, "pcie_scan_all", 13)) {
+ 				pci_add_flags(PCI_SCAN_ALL_PCIE_DEVS);
+ 			} else if (!strncmp(str, "disable_acs_redir=", 18)) {
+-				disable_acs_redir_param = str + 18;
++				disable_acs_redir_param =
++					kstrdup(str + 18, GFP_KERNEL);
+ 			} else {
+ 				printk(KERN_ERR "PCI: Unknown option `%s'\n",
+ 						str);
+diff --git a/drivers/target/target_core_transport.c b/drivers/target/target_core_transport.c
+index 3f7aad45d215..f1b730b77a31 100644
+--- a/drivers/target/target_core_transport.c
++++ b/drivers/target/target_core_transport.c
+@@ -266,7 +266,7 @@ struct se_session *transport_alloc_session(enum target_prot_op sup_prot_ops)
+ 	}
+ 	ret = transport_init_session(se_sess);
+ 	if (ret < 0) {
+-		kfree(se_sess);
++		kmem_cache_free(se_sess_cache, se_sess);
+ 		return ERR_PTR(ret);
+ 	}
+ 	se_sess->sup_prot_ops = sup_prot_ops;
+diff --git a/drivers/vhost/vhost.c b/drivers/vhost/vhost.c
+index cf82e7266397..5eaeca805c95 100644
+--- a/drivers/vhost/vhost.c
++++ b/drivers/vhost/vhost.c
+@@ -1784,7 +1784,7 @@ static int log_used(struct vhost_virtqueue *vq, u64 used_offset, u64 len)
+ 
+ 	ret = translate_desc(vq, (uintptr_t)vq->used + used_offset,
+ 			     len, iov, 64, VHOST_ACCESS_WO);
+-	if (ret)
++	if (ret < 0)
+ 		return ret;
+ 
+ 	for (i = 0; i < ret; i++) {
+diff --git a/include/linux/netdev_features.h b/include/linux/netdev_features.h
+index 2b2a6dce1630..4c76fe2c8488 100644
+--- a/include/linux/netdev_features.h
++++ b/include/linux/netdev_features.h
+@@ -11,6 +11,8 @@
+ #define _LINUX_NETDEV_FEATURES_H
+ 
+ #include <linux/types.h>
++#include <linux/bitops.h>
++#include <asm/byteorder.h>
+ 
+ typedef u64 netdev_features_t;
+ 
+@@ -154,8 +156,26 @@ enum {
+ #define NETIF_F_HW_TLS_TX	__NETIF_F(HW_TLS_TX)
+ #define NETIF_F_HW_TLS_RX	__NETIF_F(HW_TLS_RX)
+ 
+-#define for_each_netdev_feature(mask_addr, bit)	\
+-	for_each_set_bit(bit, (unsigned long *)mask_addr, NETDEV_FEATURE_COUNT)
++/* Finds the next feature with the highest number of the range of start till 0.
++ */
++static inline int find_next_netdev_feature(u64 feature, unsigned long start)
++{
++	/* like BITMAP_LAST_WORD_MASK() for u64
++	 * this sets the most significant 64 - start to 0.
++	 */
++	feature &= ~0ULL >> (-start & ((sizeof(feature) * 8) - 1));
++
++	return fls64(feature) - 1;
++}
++
++/* This goes for the MSB to the LSB through the set feature bits,
++ * mask_addr should be a u64 and bit an int
++ */
++#define for_each_netdev_feature(mask_addr, bit)				\
++	for ((bit) = find_next_netdev_feature((mask_addr),		\
++					      NETDEV_FEATURE_COUNT);	\
++	     (bit) >= 0;						\
++	     (bit) = find_next_netdev_feature((mask_addr), (bit) - 1))
+ 
+ /* Features valid for ethtool to change */
+ /* = all defined minus driver/device-class-related */
+diff --git a/include/net/ax25.h b/include/net/ax25.h
+index 3f9aea8087e3..8b7eb46ad72d 100644
+--- a/include/net/ax25.h
++++ b/include/net/ax25.h
+@@ -201,6 +201,18 @@ static inline void ax25_hold_route(ax25_route *ax25_rt)
+ 
+ void __ax25_put_route(ax25_route *ax25_rt);
+ 
++extern rwlock_t ax25_route_lock;
++
++static inline void ax25_route_lock_use(void)
++{
++	read_lock(&ax25_route_lock);
++}
++
++static inline void ax25_route_lock_unuse(void)
++{
++	read_unlock(&ax25_route_lock);
++}
++
+ static inline void ax25_put_route(ax25_route *ax25_rt)
+ {
+ 	if (refcount_dec_and_test(&ax25_rt->refcount))
+diff --git a/include/net/inetpeer.h b/include/net/inetpeer.h
+index 00b5e7825508..74ff688568a0 100644
+--- a/include/net/inetpeer.h
++++ b/include/net/inetpeer.h
+@@ -39,6 +39,7 @@ struct inet_peer {
+ 
+ 	u32			metrics[RTAX_MAX];
+ 	u32			rate_tokens;	/* rate limiting for ICMP */
++	u32			n_redirects;
+ 	unsigned long		rate_last;
+ 	/*
+ 	 * Once inet_peer is queued for deletion (refcnt == 0), following field
+diff --git a/net/ax25/ax25_ip.c b/net/ax25/ax25_ip.c
+index 70417e9b932d..314bbc8010fb 100644
+--- a/net/ax25/ax25_ip.c
++++ b/net/ax25/ax25_ip.c
+@@ -114,6 +114,7 @@ netdev_tx_t ax25_ip_xmit(struct sk_buff *skb)
+ 	dst = (ax25_address *)(bp + 1);
+ 	src = (ax25_address *)(bp + 8);
+ 
++	ax25_route_lock_use();
+ 	route = ax25_get_route(dst, NULL);
+ 	if (route) {
+ 		digipeat = route->digipeat;
+@@ -206,9 +207,8 @@ netdev_tx_t ax25_ip_xmit(struct sk_buff *skb)
+ 	ax25_queue_xmit(skb, dev);
+ 
+ put:
+-	if (route)
+-		ax25_put_route(route);
+ 
++	ax25_route_lock_unuse();
+ 	return NETDEV_TX_OK;
+ }
+ 
+diff --git a/net/ax25/ax25_route.c b/net/ax25/ax25_route.c
+index a0eff323af12..66f74c85cf6b 100644
+--- a/net/ax25/ax25_route.c
++++ b/net/ax25/ax25_route.c
+@@ -40,7 +40,7 @@
+ #include <linux/export.h>
+ 
+ static ax25_route *ax25_route_list;
+-static DEFINE_RWLOCK(ax25_route_lock);
++DEFINE_RWLOCK(ax25_route_lock);
+ 
+ void ax25_rt_device_down(struct net_device *dev)
+ {
+@@ -335,6 +335,7 @@ const struct seq_operations ax25_rt_seqops = {
+  *	Find AX.25 route
+  *
+  *	Only routes with a reference count of zero can be destroyed.
++ *	Must be called with ax25_route_lock read locked.
+  */
+ ax25_route *ax25_get_route(ax25_address *addr, struct net_device *dev)
+ {
+@@ -342,7 +343,6 @@ ax25_route *ax25_get_route(ax25_address *addr, struct net_device *dev)
+ 	ax25_route *ax25_def_rt = NULL;
+ 	ax25_route *ax25_rt;
+ 
+-	read_lock(&ax25_route_lock);
+ 	/*
+ 	 *	Bind to the physical interface we heard them on, or the default
+ 	 *	route if none is found;
+@@ -365,11 +365,6 @@ ax25_route *ax25_get_route(ax25_address *addr, struct net_device *dev)
+ 	if (ax25_spe_rt != NULL)
+ 		ax25_rt = ax25_spe_rt;
+ 
+-	if (ax25_rt != NULL)
+-		ax25_hold_route(ax25_rt);
+-
+-	read_unlock(&ax25_route_lock);
+-
+ 	return ax25_rt;
+ }
+ 
+@@ -400,9 +395,12 @@ int ax25_rt_autobind(ax25_cb *ax25, ax25_address *addr)
+ 	ax25_route *ax25_rt;
+ 	int err = 0;
+ 
+-	if ((ax25_rt = ax25_get_route(addr, NULL)) == NULL)
++	ax25_route_lock_use();
++	ax25_rt = ax25_get_route(addr, NULL);
++	if (!ax25_rt) {
++		ax25_route_lock_unuse();
+ 		return -EHOSTUNREACH;
+-
++	}
+ 	if ((ax25->ax25_dev = ax25_dev_ax25dev(ax25_rt->dev)) == NULL) {
+ 		err = -EHOSTUNREACH;
+ 		goto put;
+@@ -437,8 +435,7 @@ int ax25_rt_autobind(ax25_cb *ax25, ax25_address *addr)
+ 	}
+ 
+ put:
+-	ax25_put_route(ax25_rt);
+-
++	ax25_route_lock_unuse();
+ 	return err;
+ }
+ 
+diff --git a/net/core/dev.c b/net/core/dev.c
+index af097ca9cb4f..5c8c0a572ee9 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -8039,7 +8039,7 @@ static netdev_features_t netdev_sync_upper_features(struct net_device *lower,
+ 	netdev_features_t feature;
+ 	int feature_bit;
+ 
+-	for_each_netdev_feature(&upper_disables, feature_bit) {
++	for_each_netdev_feature(upper_disables, feature_bit) {
+ 		feature = __NETIF_F_BIT(feature_bit);
+ 		if (!(upper->wanted_features & feature)
+ 		    && (features & feature)) {
+@@ -8059,7 +8059,7 @@ static void netdev_sync_lower_features(struct net_device *upper,
+ 	netdev_features_t feature;
+ 	int feature_bit;
+ 
+-	for_each_netdev_feature(&upper_disables, feature_bit) {
++	for_each_netdev_feature(upper_disables, feature_bit) {
+ 		feature = __NETIF_F_BIT(feature_bit);
+ 		if (!(features & feature) && (lower->features & feature)) {
+ 			netdev_dbg(upper, "Disabling feature %pNF on lower dev %s.\n",
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 589ec5b9ec5f..8656b1e20d35 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -353,6 +353,8 @@ static void *__netdev_alloc_frag(unsigned int fragsz, gfp_t gfp_mask)
+  */
+ void *netdev_alloc_frag(unsigned int fragsz)
+ {
++	fragsz = SKB_DATA_ALIGN(fragsz);
++
+ 	return __netdev_alloc_frag(fragsz, GFP_ATOMIC);
+ }
+ EXPORT_SYMBOL(netdev_alloc_frag);
+@@ -366,6 +368,8 @@ static void *__napi_alloc_frag(unsigned int fragsz, gfp_t gfp_mask)
+ 
+ void *napi_alloc_frag(unsigned int fragsz)
+ {
++	fragsz = SKB_DATA_ALIGN(fragsz);
++
+ 	return __napi_alloc_frag(fragsz, GFP_ATOMIC);
+ }
+ EXPORT_SYMBOL(napi_alloc_frag);
+diff --git a/net/ipv4/inetpeer.c b/net/ipv4/inetpeer.c
+index d757b9642d0d..be778599bfed 100644
+--- a/net/ipv4/inetpeer.c
++++ b/net/ipv4/inetpeer.c
+@@ -216,6 +216,7 @@ struct inet_peer *inet_getpeer(struct inet_peer_base *base,
+ 			atomic_set(&p->rid, 0);
+ 			p->metrics[RTAX_LOCK-1] = INETPEER_METRICS_NEW;
+ 			p->rate_tokens = 0;
++			p->n_redirects = 0;
+ 			/* 60*HZ is arbitrary, but chosen enough high so that the first
+ 			 * calculation of tokens is at its maximum.
+ 			 */
+diff --git a/net/ipv4/netfilter/nf_nat_snmp_basic_main.c b/net/ipv4/netfilter/nf_nat_snmp_basic_main.c
+index ac110c1d55b5..481437fc1eb2 100644
+--- a/net/ipv4/netfilter/nf_nat_snmp_basic_main.c
++++ b/net/ipv4/netfilter/nf_nat_snmp_basic_main.c
+@@ -104,6 +104,8 @@ static void fast_csum(struct snmp_ctx *ctx, unsigned char offset)
+ int snmp_version(void *context, size_t hdrlen, unsigned char tag,
+ 		 const void *data, size_t datalen)
+ {
++	if (datalen != 1)
++		return -EINVAL;
+ 	if (*(unsigned char *)data > 1)
+ 		return -ENOTSUPP;
+ 	return 1;
+@@ -113,8 +115,11 @@ int snmp_helper(void *context, size_t hdrlen, unsigned char tag,
+ 		const void *data, size_t datalen)
+ {
+ 	struct snmp_ctx *ctx = (struct snmp_ctx *)context;
+-	__be32 *pdata = (__be32 *)data;
++	__be32 *pdata;
+ 
++	if (datalen != 4)
++		return -EINVAL;
++	pdata = (__be32 *)data;
+ 	if (*pdata == ctx->from) {
+ 		pr_debug("%s: %pI4 to %pI4\n", __func__,
+ 			 (void *)&ctx->from, (void *)&ctx->to);
+diff --git a/net/ipv4/route.c b/net/ipv4/route.c
+index 8501554e96a4..436b46c0e687 100644
+--- a/net/ipv4/route.c
++++ b/net/ipv4/route.c
+@@ -887,13 +887,15 @@ void ip_rt_send_redirect(struct sk_buff *skb)
+ 	/* No redirected packets during ip_rt_redirect_silence;
+ 	 * reset the algorithm.
+ 	 */
+-	if (time_after(jiffies, peer->rate_last + ip_rt_redirect_silence))
++	if (time_after(jiffies, peer->rate_last + ip_rt_redirect_silence)) {
+ 		peer->rate_tokens = 0;
++		peer->n_redirects = 0;
++	}
+ 
+ 	/* Too many ignored redirects; do not send anything
+ 	 * set dst.rate_last to the last seen redirected packet.
+ 	 */
+-	if (peer->rate_tokens >= ip_rt_redirect_number) {
++	if (peer->n_redirects >= ip_rt_redirect_number) {
+ 		peer->rate_last = jiffies;
+ 		goto out_put_peer;
+ 	}
+@@ -910,6 +912,7 @@ void ip_rt_send_redirect(struct sk_buff *skb)
+ 		icmp_send(skb, ICMP_REDIRECT, ICMP_REDIR_HOST, gw);
+ 		peer->rate_last = jiffies;
+ 		++peer->rate_tokens;
++		++peer->n_redirects;
+ #ifdef CONFIG_IP_ROUTE_VERBOSE
+ 		if (log_martians &&
+ 		    peer->rate_tokens == ip_rt_redirect_number)
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index 87fe44197aa1..432dc9af1172 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -2519,6 +2519,7 @@ void tcp_write_queue_purge(struct sock *sk)
+ 	sk_mem_reclaim(sk);
+ 	tcp_clear_all_retrans_hints(tcp_sk(sk));
+ 	tcp_sk(sk)->packets_out = 0;
++	inet_csk(sk)->icsk_backoff = 0;
+ }
+ 
+ int tcp_disconnect(struct sock *sk, int flags)
+@@ -2567,7 +2568,6 @@ int tcp_disconnect(struct sock *sk, int flags)
+ 	tp->write_seq += tp->max_window + 2;
+ 	if (tp->write_seq == 0)
+ 		tp->write_seq = 1;
+-	icsk->icsk_backoff = 0;
+ 	tp->snd_cwnd = 2;
+ 	icsk->icsk_probes_out = 0;
+ 	tp->snd_ssthresh = TCP_INFINITE_SSTHRESH;
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index cd426313a298..3b83b157b0a1 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -535,14 +535,15 @@ void tcp_v4_err(struct sk_buff *icmp_skb, u32 info)
+ 		if (sock_owned_by_user(sk))
+ 			break;
+ 
++		skb = tcp_rtx_queue_head(sk);
++		if (WARN_ON_ONCE(!skb))
++			break;
++
+ 		icsk->icsk_backoff--;
+ 		icsk->icsk_rto = tp->srtt_us ? __tcp_set_rto(tp) :
+ 					       TCP_TIMEOUT_INIT;
+ 		icsk->icsk_rto = inet_csk_rto_backoff(icsk, TCP_RTO_MAX);
+ 
+-		skb = tcp_rtx_queue_head(sk);
+-		BUG_ON(!skb);
+-
+ 		tcp_mstamp_refresh(tp);
+ 		delta_us = (u32)(tp->tcp_mstamp - skb->skb_mstamp);
+ 		remaining = icsk->icsk_rto -
+diff --git a/net/ipv6/addrconf.c b/net/ipv6/addrconf.c
+index 3dfc50cd86d6..c57efd5c5b38 100644
+--- a/net/ipv6/addrconf.c
++++ b/net/ipv6/addrconf.c
+@@ -1148,7 +1148,8 @@ check_cleanup_prefix_route(struct inet6_ifaddr *ifp, unsigned long *expires)
+ 	list_for_each_entry(ifa, &idev->addr_list, if_list) {
+ 		if (ifa == ifp)
+ 			continue;
+-		if (!ipv6_prefix_equal(&ifa->addr, &ifp->addr,
++		if (ifa->prefix_len != ifp->prefix_len ||
++		    !ipv6_prefix_equal(&ifa->addr, &ifp->addr,
+ 				       ifp->prefix_len))
+ 			continue;
+ 		if (ifa->flags & (IFA_F_PERMANENT | IFA_F_NOPREFIXROUTE))
+diff --git a/net/ipv6/ip6_gre.c b/net/ipv6/ip6_gre.c
+index be04877b3827..faed98dab913 100644
+--- a/net/ipv6/ip6_gre.c
++++ b/net/ipv6/ip6_gre.c
+@@ -1735,6 +1735,24 @@ static int ip6erspan_tap_validate(struct nlattr *tb[], struct nlattr *data[],
+ 	return 0;
+ }
+ 
++static void ip6erspan_set_version(struct nlattr *data[],
++				  struct __ip6_tnl_parm *parms)
++{
++	parms->erspan_ver = 1;
++	if (data[IFLA_GRE_ERSPAN_VER])
++		parms->erspan_ver = nla_get_u8(data[IFLA_GRE_ERSPAN_VER]);
++
++	if (parms->erspan_ver == 1) {
++		if (data[IFLA_GRE_ERSPAN_INDEX])
++			parms->index = nla_get_u32(data[IFLA_GRE_ERSPAN_INDEX]);
++	} else if (parms->erspan_ver == 2) {
++		if (data[IFLA_GRE_ERSPAN_DIR])
++			parms->dir = nla_get_u8(data[IFLA_GRE_ERSPAN_DIR]);
++		if (data[IFLA_GRE_ERSPAN_HWID])
++			parms->hwid = nla_get_u16(data[IFLA_GRE_ERSPAN_HWID]);
++	}
++}
++
+ static void ip6gre_netlink_parms(struct nlattr *data[],
+ 				struct __ip6_tnl_parm *parms)
+ {
+@@ -1783,20 +1801,6 @@ static void ip6gre_netlink_parms(struct nlattr *data[],
+ 
+ 	if (data[IFLA_GRE_COLLECT_METADATA])
+ 		parms->collect_md = true;
+-
+-	parms->erspan_ver = 1;
+-	if (data[IFLA_GRE_ERSPAN_VER])
+-		parms->erspan_ver = nla_get_u8(data[IFLA_GRE_ERSPAN_VER]);
+-
+-	if (parms->erspan_ver == 1) {
+-		if (data[IFLA_GRE_ERSPAN_INDEX])
+-			parms->index = nla_get_u32(data[IFLA_GRE_ERSPAN_INDEX]);
+-	} else if (parms->erspan_ver == 2) {
+-		if (data[IFLA_GRE_ERSPAN_DIR])
+-			parms->dir = nla_get_u8(data[IFLA_GRE_ERSPAN_DIR]);
+-		if (data[IFLA_GRE_ERSPAN_HWID])
+-			parms->hwid = nla_get_u16(data[IFLA_GRE_ERSPAN_HWID]);
+-	}
+ }
+ 
+ static int ip6gre_tap_init(struct net_device *dev)
+@@ -2225,6 +2229,7 @@ static int ip6erspan_newlink(struct net *src_net, struct net_device *dev,
+ 	int err;
+ 
+ 	ip6gre_netlink_parms(data, &nt->parms);
++	ip6erspan_set_version(data, &nt->parms);
+ 	ign = net_generic(net, ip6gre_net_id);
+ 
+ 	if (nt->parms.collect_md) {
+@@ -2270,6 +2275,7 @@ static int ip6erspan_changelink(struct net_device *dev, struct nlattr *tb[],
+ 	if (IS_ERR(t))
+ 		return PTR_ERR(t);
+ 
++	ip6erspan_set_version(data, &p);
+ 	ip6gre_tunnel_unlink_md(ign, t);
+ 	ip6gre_tunnel_unlink(ign, t);
+ 	ip6erspan_tnl_change(t, &p, !tb[IFLA_MTU]);
+diff --git a/net/packet/af_packet.c b/net/packet/af_packet.c
+index b6ea0fadb34f..c76c21604ffd 100644
+--- a/net/packet/af_packet.c
++++ b/net/packet/af_packet.c
+@@ -2887,7 +2887,8 @@ static int packet_snd(struct socket *sock, struct msghdr *msg, size_t len)
+ 			goto out_free;
+ 	} else if (reserve) {
+ 		skb_reserve(skb, -reserve);
+-		if (len < reserve)
++		if (len < reserve + sizeof(struct ipv6hdr) &&
++		    dev->min_header_len != dev->hard_header_len)
+ 			skb_reset_network_header(skb);
+ 	}
+ 
+diff --git a/net/sunrpc/auth_gss/gss_krb5_seqnum.c b/net/sunrpc/auth_gss/gss_krb5_seqnum.c
+index c8b9082f4a9d..2d2ed6772fe4 100644
+--- a/net/sunrpc/auth_gss/gss_krb5_seqnum.c
++++ b/net/sunrpc/auth_gss/gss_krb5_seqnum.c
+@@ -44,7 +44,7 @@ krb5_make_rc4_seq_num(struct krb5_ctx *kctx, int direction, s32 seqnum,
+ 		      unsigned char *cksum, unsigned char *buf)
+ {
+ 	struct crypto_skcipher *cipher;
+-	unsigned char plain[8];
++	unsigned char *plain;
+ 	s32 code;
+ 
+ 	dprintk("RPC:       %s:\n", __func__);
+@@ -53,6 +53,10 @@ krb5_make_rc4_seq_num(struct krb5_ctx *kctx, int direction, s32 seqnum,
+ 	if (IS_ERR(cipher))
+ 		return PTR_ERR(cipher);
+ 
++	plain = kmalloc(8, GFP_NOFS);
++	if (!plain)
++		return -ENOMEM;
++
+ 	plain[0] = (unsigned char) ((seqnum >> 24) & 0xff);
+ 	plain[1] = (unsigned char) ((seqnum >> 16) & 0xff);
+ 	plain[2] = (unsigned char) ((seqnum >> 8) & 0xff);
+@@ -69,6 +73,7 @@ krb5_make_rc4_seq_num(struct krb5_ctx *kctx, int direction, s32 seqnum,
+ 	code = krb5_encrypt(cipher, cksum, plain, buf, 8);
+ out:
+ 	crypto_free_skcipher(cipher);
++	kfree(plain);
+ 	return code;
+ }
+ s32
+@@ -78,12 +83,17 @@ krb5_make_seq_num(struct krb5_ctx *kctx,
+ 		u32 seqnum,
+ 		unsigned char *cksum, unsigned char *buf)
+ {
+-	unsigned char plain[8];
++	unsigned char *plain;
++	s32 code;
+ 
+ 	if (kctx->enctype == ENCTYPE_ARCFOUR_HMAC)
+ 		return krb5_make_rc4_seq_num(kctx, direction, seqnum,
+ 					     cksum, buf);
+ 
++	plain = kmalloc(8, GFP_NOFS);
++	if (!plain)
++		return -ENOMEM;
++
+ 	plain[0] = (unsigned char) (seqnum & 0xff);
+ 	plain[1] = (unsigned char) ((seqnum >> 8) & 0xff);
+ 	plain[2] = (unsigned char) ((seqnum >> 16) & 0xff);
+@@ -94,7 +104,9 @@ krb5_make_seq_num(struct krb5_ctx *kctx,
+ 	plain[6] = direction;
+ 	plain[7] = direction;
+ 
+-	return krb5_encrypt(key, cksum, plain, buf, 8);
++	code = krb5_encrypt(key, cksum, plain, buf, 8);
++	kfree(plain);
++	return code;
+ }
+ 
+ static s32
+@@ -102,7 +114,7 @@ krb5_get_rc4_seq_num(struct krb5_ctx *kctx, unsigned char *cksum,
+ 		     unsigned char *buf, int *direction, s32 *seqnum)
+ {
+ 	struct crypto_skcipher *cipher;
+-	unsigned char plain[8];
++	unsigned char *plain;
+ 	s32 code;
+ 
+ 	dprintk("RPC:       %s:\n", __func__);
+@@ -115,20 +127,28 @@ krb5_get_rc4_seq_num(struct krb5_ctx *kctx, unsigned char *cksum,
+ 	if (code)
+ 		goto out;
+ 
++	plain = kmalloc(8, GFP_NOFS);
++	if (!plain) {
++		code = -ENOMEM;
++		goto out;
++	}
++
+ 	code = krb5_decrypt(cipher, cksum, buf, plain, 8);
+ 	if (code)
+-		goto out;
++		goto out_plain;
+ 
+ 	if ((plain[4] != plain[5]) || (plain[4] != plain[6])
+ 				   || (plain[4] != plain[7])) {
+ 		code = (s32)KG_BAD_SEQ;
+-		goto out;
++		goto out_plain;
+ 	}
+ 
+ 	*direction = plain[4];
+ 
+ 	*seqnum = ((plain[0] << 24) | (plain[1] << 16) |
+ 					(plain[2] << 8) | (plain[3]));
++out_plain:
++	kfree(plain);
+ out:
+ 	crypto_free_skcipher(cipher);
+ 	return code;
+@@ -141,26 +161,33 @@ krb5_get_seq_num(struct krb5_ctx *kctx,
+ 	       int *direction, u32 *seqnum)
+ {
+ 	s32 code;
+-	unsigned char plain[8];
+ 	struct crypto_skcipher *key = kctx->seq;
++	unsigned char *plain;
+ 
+ 	dprintk("RPC:       krb5_get_seq_num:\n");
+ 
+ 	if (kctx->enctype == ENCTYPE_ARCFOUR_HMAC)
+ 		return krb5_get_rc4_seq_num(kctx, cksum, buf,
+ 					    direction, seqnum);
++	plain = kmalloc(8, GFP_NOFS);
++	if (!plain)
++		return -ENOMEM;
+ 
+ 	if ((code = krb5_decrypt(key, cksum, buf, plain, 8)))
+-		return code;
++		goto out;
+ 
+ 	if ((plain[4] != plain[5]) || (plain[4] != plain[6]) ||
+-	    (plain[4] != plain[7]))
+-		return (s32)KG_BAD_SEQ;
++	    (plain[4] != plain[7])) {
++		code = (s32)KG_BAD_SEQ;
++		goto out;
++	}
+ 
+ 	*direction = plain[4];
+ 
+ 	*seqnum = ((plain[0]) |
+ 		   (plain[1] << 8) | (plain[2] << 16) | (plain[3] << 24));
+ 
+-	return 0;
++out:
++	kfree(plain);
++	return code;
+ }
+diff --git a/net/vmw_vsock/vmci_transport.c b/net/vmw_vsock/vmci_transport.c
+index c361ce782412..c3d5ab01fba7 100644
+--- a/net/vmw_vsock/vmci_transport.c
++++ b/net/vmw_vsock/vmci_transport.c
+@@ -1651,6 +1651,10 @@ static void vmci_transport_cleanup(struct work_struct *work)
+ 
+ static void vmci_transport_destruct(struct vsock_sock *vsk)
+ {
++	/* transport can be NULL if we hit a failure at init() time */
++	if (!vmci_trans(vsk))
++		return;
++
+ 	/* Ensure that the detach callback doesn't use the sk/vsk
+ 	 * we are about to destruct.
+ 	 */
+diff --git a/net/x25/af_x25.c b/net/x25/af_x25.c
+index d49aa79b7997..fef473c736fa 100644
+--- a/net/x25/af_x25.c
++++ b/net/x25/af_x25.c
+@@ -352,17 +352,15 @@ static unsigned int x25_new_lci(struct x25_neigh *nb)
+ 	unsigned int lci = 1;
+ 	struct sock *sk;
+ 
+-	read_lock_bh(&x25_list_lock);
+-
+-	while ((sk = __x25_find_socket(lci, nb)) != NULL) {
++	while ((sk = x25_find_socket(lci, nb)) != NULL) {
+ 		sock_put(sk);
+ 		if (++lci == 4096) {
+ 			lci = 0;
+ 			break;
+ 		}
++		cond_resched();
+ 	}
+ 
+-	read_unlock_bh(&x25_list_lock);
+ 	return lci;
+ }
+ 
