@@ -55,9 +55,9 @@ ParseOptions() {
 			;;
 		purge)
 			for release in "${DISTROS[@]}"; do
-				repo-remove-old-packages "$release" "armhf" "5"
-				repo-remove-old-packages "$release" "arm64" "5"
-				repo-remove-old-packages "$release" "all" "5"
+				repo-remove-old-packages "$release" "armhf" "3"
+				repo-remove-old-packages "$release" "arm64" "3"
+				repo-remove-old-packages "$release" "all" "3"
 				aptly -config=${SCRIPTPATH}config/aptly.conf -passphrase=$GPG_PASS publish update $release
 				# example to remove all packages from bionic that contain source in the name
 				# aptly repo remove -config=${SCRIPTPATH}config/aptly.conf bionic 'Name (% *-source*)'
