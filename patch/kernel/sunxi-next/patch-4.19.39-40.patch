@@ -1,0 +1,1032 @@
+diff --git a/Makefile b/Makefile
+index be1bd297bca9..3822720a8a1c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 4
+ PATCHLEVEL = 19
+-SUBLEVEL = 39
++SUBLEVEL = 40
+ EXTRAVERSION =
+ NAME = "People's Front"
+ 
+diff --git a/arch/x86/include/uapi/asm/kvm.h b/arch/x86/include/uapi/asm/kvm.h
+index fd23d5778ea1..f1645578d9d0 100644
+--- a/arch/x86/include/uapi/asm/kvm.h
++++ b/arch/x86/include/uapi/asm/kvm.h
+@@ -378,6 +378,7 @@ struct kvm_sync_regs {
+ #define KVM_X86_QUIRK_LINT0_REENABLED	(1 << 0)
+ #define KVM_X86_QUIRK_CD_NW_CLEARED	(1 << 1)
+ #define KVM_X86_QUIRK_LAPIC_MMIO_HOLE	(1 << 2)
++#define KVM_X86_QUIRK_OUT_7E_INC_RIP	(1 << 3)
+ 
+ #define KVM_STATE_NESTED_GUEST_MODE	0x00000001
+ #define KVM_STATE_NESTED_RUN_PENDING	0x00000002
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index 3380a312d186..215339c7d161 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -14236,7 +14236,7 @@ static int vmx_set_nested_state(struct kvm_vcpu *vcpu,
+ 		return ret;
+ 
+ 	/* Empty 'VMXON' state is permitted */
+-	if (kvm_state->size < sizeof(kvm_state) + sizeof(*vmcs12))
++	if (kvm_state->size < sizeof(*kvm_state) + sizeof(*vmcs12))
+ 		return 0;
+ 
+ 	if (kvm_state->vmx.vmcs_pa == kvm_state->vmx.vmxon_pa ||
+@@ -14269,7 +14269,7 @@ static int vmx_set_nested_state(struct kvm_vcpu *vcpu,
+ 	if (nested_cpu_has_shadow_vmcs(vmcs12) &&
+ 	    vmcs12->vmcs_link_pointer != -1ull) {
+ 		struct vmcs12 *shadow_vmcs12 = get_shadow_vmcs12(vcpu);
+-		if (kvm_state->size < sizeof(kvm_state) + 2 * sizeof(*vmcs12))
++		if (kvm_state->size < sizeof(*kvm_state) + 2 * sizeof(*vmcs12))
+ 			return -EINVAL;
+ 
+ 		if (copy_from_user(shadow_vmcs12,
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 4a61e1609c97..f3337adaf9b3 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -6328,6 +6328,12 @@ int kvm_emulate_instruction_from_buffer(struct kvm_vcpu *vcpu,
+ }
+ EXPORT_SYMBOL_GPL(kvm_emulate_instruction_from_buffer);
+ 
++static int complete_fast_pio_out_port_0x7e(struct kvm_vcpu *vcpu)
++{
++	vcpu->arch.pio.count = 0;
++	return 1;
++}
++
+ static int complete_fast_pio_out(struct kvm_vcpu *vcpu)
+ {
+ 	vcpu->arch.pio.count = 0;
+@@ -6344,12 +6350,23 @@ static int kvm_fast_pio_out(struct kvm_vcpu *vcpu, int size,
+ 	unsigned long val = kvm_register_read(vcpu, VCPU_REGS_RAX);
+ 	int ret = emulator_pio_out_emulated(&vcpu->arch.emulate_ctxt,
+ 					    size, port, &val, 1);
++	if (ret)
++		return ret;
+ 
+-	if (!ret) {
++	/*
++	 * Workaround userspace that relies on old KVM behavior of %rip being
++	 * incremented prior to exiting to userspace to handle "OUT 0x7e".
++	 */
++	if (port == 0x7e &&
++	    kvm_check_has_quirk(vcpu->kvm, KVM_X86_QUIRK_OUT_7E_INC_RIP)) {
++		vcpu->arch.complete_userspace_io =
++			complete_fast_pio_out_port_0x7e;
++		kvm_skip_emulated_instruction(vcpu);
++	} else {
+ 		vcpu->arch.pio.linear_rip = kvm_get_linear_rip(vcpu);
+ 		vcpu->arch.complete_userspace_io = complete_fast_pio_out;
+ 	}
+-	return ret;
++	return 0;
+ }
+ 
+ static int complete_fast_pio_in(struct kvm_vcpu *vcpu)
+diff --git a/drivers/net/dsa/bcm_sf2_cfp.c b/drivers/net/dsa/bcm_sf2_cfp.c
+index 47c5f272a084..21db1804e85d 100644
+--- a/drivers/net/dsa/bcm_sf2_cfp.c
++++ b/drivers/net/dsa/bcm_sf2_cfp.c
+@@ -742,6 +742,9 @@ static int bcm_sf2_cfp_rule_set(struct dsa_switch *ds, int port,
+ 	     fs->m_ext.data[1]))
+ 		return -EINVAL;
+ 
++	if (fs->location != RX_CLS_LOC_ANY && fs->location >= CFP_NUM_RULES)
++		return -EINVAL;
++
+ 	if (fs->location != RX_CLS_LOC_ANY &&
+ 	    test_bit(fs->location, priv->cfp.used))
+ 		return -EBUSY;
+@@ -836,6 +839,9 @@ static int bcm_sf2_cfp_rule_del(struct bcm_sf2_priv *priv, int port,
+ 	u32 next_loc = 0;
+ 	int ret;
+ 
++	if (loc >= CFP_NUM_RULES)
++		return -EINVAL;
++
+ 	/* Refuse deleting unused rules, and those that are not unique since
+ 	 * that could leave IPv6 rules with one of the chained rule in the
+ 	 * table.
+diff --git a/drivers/net/ethernet/broadcom/bnxt/bnxt.c b/drivers/net/ethernet/broadcom/bnxt/bnxt.c
+index 581ad0a17d0c..de46331aefc1 100644
+--- a/drivers/net/ethernet/broadcom/bnxt/bnxt.c
++++ b/drivers/net/ethernet/broadcom/bnxt/bnxt.c
+@@ -1584,7 +1584,7 @@ static int bnxt_rx_pkt(struct bnxt *bp, struct bnxt_napi *bnapi, u32 *raw_cons,
+ 			netdev_warn(bp->dev, "RX buffer error %x\n", rx_err);
+ 			bnxt_sched_reset(bp, rxr);
+ 		}
+-		goto next_rx;
++		goto next_rx_no_len;
+ 	}
+ 
+ 	len = le32_to_cpu(rxcmp->rx_cmp_len_flags_type) >> RX_CMP_LEN_SHIFT;
+@@ -1665,12 +1665,13 @@ static int bnxt_rx_pkt(struct bnxt *bp, struct bnxt_napi *bnapi, u32 *raw_cons,
+ 	rc = 1;
+ 
+ next_rx:
+-	rxr->rx_prod = NEXT_RX(prod);
+-	rxr->rx_next_cons = NEXT_RX(cons);
+-
+ 	cpr->rx_packets += 1;
+ 	cpr->rx_bytes += len;
+ 
++next_rx_no_len:
++	rxr->rx_prod = NEXT_RX(prod);
++	rxr->rx_next_cons = NEXT_RX(cons);
++
+ next_rx_no_prod_no_len:
+ 	*raw_cons = tmp_raw_cons;
+ 
+@@ -7441,8 +7442,15 @@ static int bnxt_cfg_rx_mode(struct bnxt *bp)
+ 
+ skip_uc:
+ 	rc = bnxt_hwrm_cfa_l2_set_rx_mask(bp, 0);
++	if (rc && vnic->mc_list_count) {
++		netdev_info(bp->dev, "Failed setting MC filters rc: %d, turning on ALL_MCAST mode\n",
++			    rc);
++		vnic->rx_mask |= CFA_L2_SET_RX_MASK_REQ_MASK_ALL_MCAST;
++		vnic->mc_list_count = 0;
++		rc = bnxt_hwrm_cfa_l2_set_rx_mask(bp, 0);
++	}
+ 	if (rc)
+-		netdev_err(bp->dev, "HWRM cfa l2 rx mask failure rc: %x\n",
++		netdev_err(bp->dev, "HWRM cfa l2 rx mask failure rc: %d\n",
+ 			   rc);
+ 
+ 	return rc;
+@@ -9077,6 +9085,7 @@ init_err_cleanup_tc:
+ 	bnxt_clear_int_mode(bp);
+ 
+ init_err_pci_clean:
++	bnxt_free_hwrm_short_cmd_req(bp);
+ 	bnxt_free_hwrm_resources(bp);
+ 	bnxt_cleanup_pci(bp);
+ 
+diff --git a/drivers/net/phy/marvell.c b/drivers/net/phy/marvell.c
+index 73813c7afa49..bb6107f3b947 100644
+--- a/drivers/net/phy/marvell.c
++++ b/drivers/net/phy/marvell.c
+@@ -1513,9 +1513,10 @@ static int marvell_get_sset_count(struct phy_device *phydev)
+ 
+ static void marvell_get_strings(struct phy_device *phydev, u8 *data)
+ {
++	int count = marvell_get_sset_count(phydev);
+ 	int i;
+ 
+-	for (i = 0; i < ARRAY_SIZE(marvell_hw_stats); i++) {
++	for (i = 0; i < count; i++) {
+ 		strlcpy(data + i * ETH_GSTRING_LEN,
+ 			marvell_hw_stats[i].string, ETH_GSTRING_LEN);
+ 	}
+@@ -1543,9 +1544,10 @@ static u64 marvell_get_stat(struct phy_device *phydev, int i)
+ static void marvell_get_stats(struct phy_device *phydev,
+ 			      struct ethtool_stats *stats, u64 *data)
+ {
++	int count = marvell_get_sset_count(phydev);
+ 	int i;
+ 
+-	for (i = 0; i < ARRAY_SIZE(marvell_hw_stats); i++)
++	for (i = 0; i < count; i++)
+ 		data[i] = marvell_get_stat(phydev, i);
+ }
+ 
+diff --git a/drivers/net/wireless/ath/ath10k/mac.c b/drivers/net/wireless/ath/ath10k/mac.c
+index 90f9372dec25..f3b1cfacfe9d 100644
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -5622,7 +5622,7 @@ static void ath10k_bss_info_changed(struct ieee80211_hw *hw,
+ 	}
+ 
+ 	if (changed & BSS_CHANGED_MCAST_RATE &&
+-	    !WARN_ON(ath10k_mac_vif_chan(arvif->vif, &def))) {
++	    !ath10k_mac_vif_chan(arvif->vif, &def)) {
+ 		band = def.chan->band;
+ 		rateidx = vif->bss_conf.mcast_rate[band] - 1;
+ 
+diff --git a/include/net/sctp/command.h b/include/net/sctp/command.h
+index 6640f84fe536..6d5beac29bc1 100644
+--- a/include/net/sctp/command.h
++++ b/include/net/sctp/command.h
+@@ -105,7 +105,6 @@ enum sctp_verb {
+ 	SCTP_CMD_T1_RETRAN,	 /* Mark for retransmission after T1 timeout  */
+ 	SCTP_CMD_UPDATE_INITTAG, /* Update peer inittag */
+ 	SCTP_CMD_SEND_MSG,	 /* Send the whole use message */
+-	SCTP_CMD_SEND_NEXT_ASCONF, /* Send the next ASCONF after ACK */
+ 	SCTP_CMD_PURGE_ASCONF_QUEUE, /* Purge all asconf queues.*/
+ 	SCTP_CMD_SET_ASOC,	 /* Restore association context */
+ 	SCTP_CMD_LAST
+diff --git a/net/ipv4/ip_output.c b/net/ipv4/ip_output.c
+index 9c4e72e9c60a..73894ed12a70 100644
+--- a/net/ipv4/ip_output.c
++++ b/net/ipv4/ip_output.c
+@@ -519,6 +519,7 @@ static void ip_copy_metadata(struct sk_buff *to, struct sk_buff *from)
+ 	to->pkt_type = from->pkt_type;
+ 	to->priority = from->priority;
+ 	to->protocol = from->protocol;
++	to->skb_iif = from->skb_iif;
+ 	skb_dst_drop(to);
+ 	skb_dst_copy(to, from);
+ 	to->dev = from->dev;
+diff --git a/net/ipv6/ip6_fib.c b/net/ipv6/ip6_fib.c
+index cbe46175bb59..3e2a9bd3459c 100644
+--- a/net/ipv6/ip6_fib.c
++++ b/net/ipv6/ip6_fib.c
+@@ -889,9 +889,7 @@ static void fib6_drop_pcpu_from(struct fib6_info *f6i,
+ 		if (pcpu_rt) {
+ 			struct fib6_info *from;
+ 
+-			from = rcu_dereference_protected(pcpu_rt->from,
+-					     lockdep_is_held(&table->tb6_lock));
+-			rcu_assign_pointer(pcpu_rt->from, NULL);
++			from = xchg((__force struct fib6_info **)&pcpu_rt->from, NULL);
+ 			fib6_info_release(from);
+ 		}
+ 	}
+diff --git a/net/ipv6/ip6_flowlabel.c b/net/ipv6/ip6_flowlabel.c
+index cb54a8a3c273..be5f3d7ceb96 100644
+--- a/net/ipv6/ip6_flowlabel.c
++++ b/net/ipv6/ip6_flowlabel.c
+@@ -94,15 +94,21 @@ static struct ip6_flowlabel *fl_lookup(struct net *net, __be32 label)
+ 	return fl;
+ }
+ 
++static void fl_free_rcu(struct rcu_head *head)
++{
++	struct ip6_flowlabel *fl = container_of(head, struct ip6_flowlabel, rcu);
++
++	if (fl->share == IPV6_FL_S_PROCESS)
++		put_pid(fl->owner.pid);
++	kfree(fl->opt);
++	kfree(fl);
++}
++
+ 
+ static void fl_free(struct ip6_flowlabel *fl)
+ {
+-	if (fl) {
+-		if (fl->share == IPV6_FL_S_PROCESS)
+-			put_pid(fl->owner.pid);
+-		kfree(fl->opt);
+-		kfree_rcu(fl, rcu);
+-	}
++	if (fl)
++		call_rcu(&fl->rcu, fl_free_rcu);
+ }
+ 
+ static void fl_release(struct ip6_flowlabel *fl)
+@@ -633,9 +639,9 @@ recheck:
+ 				if (fl1->share == IPV6_FL_S_EXCL ||
+ 				    fl1->share != fl->share ||
+ 				    ((fl1->share == IPV6_FL_S_PROCESS) &&
+-				     (fl1->owner.pid == fl->owner.pid)) ||
++				     (fl1->owner.pid != fl->owner.pid)) ||
+ 				    ((fl1->share == IPV6_FL_S_USER) &&
+-				     uid_eq(fl1->owner.uid, fl->owner.uid)))
++				     !uid_eq(fl1->owner.uid, fl->owner.uid)))
+ 					goto release;
+ 
+ 				err = -ENOMEM;
+diff --git a/net/ipv6/route.c b/net/ipv6/route.c
+index 06fa8425d82c..2e519f7b983c 100644
+--- a/net/ipv6/route.c
++++ b/net/ipv6/route.c
+@@ -382,11 +382,8 @@ static void ip6_dst_destroy(struct dst_entry *dst)
+ 		in6_dev_put(idev);
+ 	}
+ 
+-	rcu_read_lock();
+-	from = rcu_dereference(rt->from);
+-	rcu_assign_pointer(rt->from, NULL);
++	from = xchg((__force struct fib6_info **)&rt->from, NULL);
+ 	fib6_info_release(from);
+-	rcu_read_unlock();
+ }
+ 
+ static void ip6_dst_ifdown(struct dst_entry *dst, struct net_device *dev,
+@@ -1296,9 +1293,7 @@ static void rt6_remove_exception(struct rt6_exception_bucket *bucket,
+ 	/* purge completely the exception to allow releasing the held resources:
+ 	 * some [sk] cache may keep the dst around for unlimited time
+ 	 */
+-	from = rcu_dereference_protected(rt6_ex->rt6i->from,
+-					 lockdep_is_held(&rt6_exception_lock));
+-	rcu_assign_pointer(rt6_ex->rt6i->from, NULL);
++	from = xchg((__force struct fib6_info **)&rt6_ex->rt6i->from, NULL);
+ 	fib6_info_release(from);
+ 	dst_dev_put(&rt6_ex->rt6i->dst);
+ 
+@@ -3454,11 +3449,8 @@ static void rt6_do_redirect(struct dst_entry *dst, struct sock *sk, struct sk_bu
+ 
+ 	rcu_read_lock();
+ 	from = rcu_dereference(rt->from);
+-	/* This fib6_info_hold() is safe here because we hold reference to rt
+-	 * and rt already holds reference to fib6_info.
+-	 */
+-	fib6_info_hold(from);
+-	rcu_read_unlock();
++	if (!from)
++		goto out;
+ 
+ 	nrt = ip6_rt_cache_alloc(from, &msg->dest, NULL);
+ 	if (!nrt)
+@@ -3470,10 +3462,7 @@ static void rt6_do_redirect(struct dst_entry *dst, struct sock *sk, struct sk_bu
+ 
+ 	nrt->rt6i_gateway = *(struct in6_addr *)neigh->primary_key;
+ 
+-	/* No need to remove rt from the exception table if rt is
+-	 * a cached route because rt6_insert_exception() will
+-	 * takes care of it
+-	 */
++	/* rt6_insert_exception() will take care of duplicated exceptions */
+ 	if (rt6_insert_exception(nrt, from)) {
+ 		dst_release_immediate(&nrt->dst);
+ 		goto out;
+@@ -3486,7 +3475,7 @@ static void rt6_do_redirect(struct dst_entry *dst, struct sock *sk, struct sk_bu
+ 	call_netevent_notifiers(NETEVENT_REDIRECT, &netevent);
+ 
+ out:
+-	fib6_info_release(from);
++	rcu_read_unlock();
+ 	neigh_release(neigh);
+ }
+ 
+@@ -4991,16 +4980,20 @@ static int inet6_rtm_getroute(struct sk_buff *in_skb, struct nlmsghdr *nlh,
+ 
+ 	rcu_read_lock();
+ 	from = rcu_dereference(rt->from);
+-
+-	if (fibmatch)
+-		err = rt6_fill_node(net, skb, from, NULL, NULL, NULL, iif,
+-				    RTM_NEWROUTE, NETLINK_CB(in_skb).portid,
+-				    nlh->nlmsg_seq, 0);
+-	else
+-		err = rt6_fill_node(net, skb, from, dst, &fl6.daddr,
+-				    &fl6.saddr, iif, RTM_NEWROUTE,
+-				    NETLINK_CB(in_skb).portid, nlh->nlmsg_seq,
+-				    0);
++	if (from) {
++		if (fibmatch)
++			err = rt6_fill_node(net, skb, from, NULL, NULL, NULL,
++					    iif, RTM_NEWROUTE,
++					    NETLINK_CB(in_skb).portid,
++					    nlh->nlmsg_seq, 0);
++		else
++			err = rt6_fill_node(net, skb, from, dst, &fl6.daddr,
++					    &fl6.saddr, iif, RTM_NEWROUTE,
++					    NETLINK_CB(in_skb).portid,
++					    nlh->nlmsg_seq, 0);
++	} else {
++		err = -ENETUNREACH;
++	}
+ 	rcu_read_unlock();
+ 
+ 	if (err < 0) {
+diff --git a/net/l2tp/l2tp_core.c b/net/l2tp/l2tp_core.c
+index fed6becc5daf..52b5a2797c0c 100644
+--- a/net/l2tp/l2tp_core.c
++++ b/net/l2tp/l2tp_core.c
+@@ -169,8 +169,8 @@ struct l2tp_tunnel *l2tp_tunnel_get(const struct net *net, u32 tunnel_id)
+ 
+ 	rcu_read_lock_bh();
+ 	list_for_each_entry_rcu(tunnel, &pn->l2tp_tunnel_list, list) {
+-		if (tunnel->tunnel_id == tunnel_id) {
+-			l2tp_tunnel_inc_refcount(tunnel);
++		if (tunnel->tunnel_id == tunnel_id &&
++		    refcount_inc_not_zero(&tunnel->ref_count)) {
+ 			rcu_read_unlock_bh();
+ 
+ 			return tunnel;
+@@ -190,8 +190,8 @@ struct l2tp_tunnel *l2tp_tunnel_get_nth(const struct net *net, int nth)
+ 
+ 	rcu_read_lock_bh();
+ 	list_for_each_entry_rcu(tunnel, &pn->l2tp_tunnel_list, list) {
+-		if (++count > nth) {
+-			l2tp_tunnel_inc_refcount(tunnel);
++		if (++count > nth &&
++		    refcount_inc_not_zero(&tunnel->ref_count)) {
+ 			rcu_read_unlock_bh();
+ 			return tunnel;
+ 		}
+@@ -909,7 +909,7 @@ int l2tp_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
+ {
+ 	struct l2tp_tunnel *tunnel;
+ 
+-	tunnel = l2tp_tunnel(sk);
++	tunnel = rcu_dereference_sk_user_data(sk);
+ 	if (tunnel == NULL)
+ 		goto pass_up;
+ 
+diff --git a/net/packet/af_packet.c b/net/packet/af_packet.c
+index a0d295478e69..ebbb30064251 100644
+--- a/net/packet/af_packet.c
++++ b/net/packet/af_packet.c
+@@ -2603,8 +2603,8 @@ static int tpacket_snd(struct packet_sock *po, struct msghdr *msg)
+ 	void *ph;
+ 	DECLARE_SOCKADDR(struct sockaddr_ll *, saddr, msg->msg_name);
+ 	bool need_wait = !(msg->msg_flags & MSG_DONTWAIT);
++	unsigned char *addr = NULL;
+ 	int tp_len, size_max;
+-	unsigned char *addr;
+ 	void *data;
+ 	int len_sum = 0;
+ 	int status = TP_STATUS_AVAILABLE;
+@@ -2615,7 +2615,6 @@ static int tpacket_snd(struct packet_sock *po, struct msghdr *msg)
+ 	if (likely(saddr == NULL)) {
+ 		dev	= packet_cached_dev_get(po);
+ 		proto	= po->num;
+-		addr	= NULL;
+ 	} else {
+ 		err = -EINVAL;
+ 		if (msg->msg_namelen < sizeof(struct sockaddr_ll))
+@@ -2625,10 +2624,13 @@ static int tpacket_snd(struct packet_sock *po, struct msghdr *msg)
+ 						sll_addr)))
+ 			goto out;
+ 		proto	= saddr->sll_protocol;
+-		addr	= saddr->sll_halen ? saddr->sll_addr : NULL;
+ 		dev = dev_get_by_index(sock_net(&po->sk), saddr->sll_ifindex);
+-		if (addr && dev && saddr->sll_halen < dev->addr_len)
+-			goto out_put;
++		if (po->sk.sk_socket->type == SOCK_DGRAM) {
++			if (dev && msg->msg_namelen < dev->addr_len +
++				   offsetof(struct sockaddr_ll, sll_addr))
++				goto out_put;
++			addr = saddr->sll_addr;
++		}
+ 	}
+ 
+ 	err = -ENXIO;
+@@ -2800,7 +2802,7 @@ static int packet_snd(struct socket *sock, struct msghdr *msg, size_t len)
+ 	struct sk_buff *skb;
+ 	struct net_device *dev;
+ 	__be16 proto;
+-	unsigned char *addr;
++	unsigned char *addr = NULL;
+ 	int err, reserve = 0;
+ 	struct sockcm_cookie sockc;
+ 	struct virtio_net_hdr vnet_hdr = { 0 };
+@@ -2817,7 +2819,6 @@ static int packet_snd(struct socket *sock, struct msghdr *msg, size_t len)
+ 	if (likely(saddr == NULL)) {
+ 		dev	= packet_cached_dev_get(po);
+ 		proto	= po->num;
+-		addr	= NULL;
+ 	} else {
+ 		err = -EINVAL;
+ 		if (msg->msg_namelen < sizeof(struct sockaddr_ll))
+@@ -2825,10 +2826,13 @@ static int packet_snd(struct socket *sock, struct msghdr *msg, size_t len)
+ 		if (msg->msg_namelen < (saddr->sll_halen + offsetof(struct sockaddr_ll, sll_addr)))
+ 			goto out;
+ 		proto	= saddr->sll_protocol;
+-		addr	= saddr->sll_halen ? saddr->sll_addr : NULL;
+ 		dev = dev_get_by_index(sock_net(sk), saddr->sll_ifindex);
+-		if (addr && dev && saddr->sll_halen < dev->addr_len)
+-			goto out_unlock;
++		if (sock->type == SOCK_DGRAM) {
++			if (dev && msg->msg_namelen < dev->addr_len +
++				   offsetof(struct sockaddr_ll, sll_addr))
++				goto out_unlock;
++			addr = saddr->sll_addr;
++		}
+ 	}
+ 
+ 	err = -ENXIO;
+diff --git a/net/rxrpc/call_object.c b/net/rxrpc/call_object.c
+index 8f1a8f85b1f9..215f4d98baa0 100644
+--- a/net/rxrpc/call_object.c
++++ b/net/rxrpc/call_object.c
+@@ -701,30 +701,30 @@ void rxrpc_destroy_all_calls(struct rxrpc_net *rxnet)
+ 
+ 	_enter("");
+ 
+-	if (list_empty(&rxnet->calls))
+-		return;
++	if (!list_empty(&rxnet->calls)) {
++		write_lock(&rxnet->call_lock);
+ 
+-	write_lock(&rxnet->call_lock);
++		while (!list_empty(&rxnet->calls)) {
++			call = list_entry(rxnet->calls.next,
++					  struct rxrpc_call, link);
++			_debug("Zapping call %p", call);
+ 
+-	while (!list_empty(&rxnet->calls)) {
+-		call = list_entry(rxnet->calls.next, struct rxrpc_call, link);
+-		_debug("Zapping call %p", call);
++			rxrpc_see_call(call);
++			list_del_init(&call->link);
+ 
+-		rxrpc_see_call(call);
+-		list_del_init(&call->link);
++			pr_err("Call %p still in use (%d,%s,%lx,%lx)!\n",
++			       call, atomic_read(&call->usage),
++			       rxrpc_call_states[call->state],
++			       call->flags, call->events);
+ 
+-		pr_err("Call %p still in use (%d,%s,%lx,%lx)!\n",
+-		       call, atomic_read(&call->usage),
+-		       rxrpc_call_states[call->state],
+-		       call->flags, call->events);
++			write_unlock(&rxnet->call_lock);
++			cond_resched();
++			write_lock(&rxnet->call_lock);
++		}
+ 
+ 		write_unlock(&rxnet->call_lock);
+-		cond_resched();
+-		write_lock(&rxnet->call_lock);
+ 	}
+ 
+-	write_unlock(&rxnet->call_lock);
+-
+ 	atomic_dec(&rxnet->nr_calls);
+ 	wait_var_event(&rxnet->nr_calls, !atomic_read(&rxnet->nr_calls));
+ }
+diff --git a/net/sctp/sm_sideeffect.c b/net/sctp/sm_sideeffect.c
+index 85d393090238..48fe8f01265f 100644
+--- a/net/sctp/sm_sideeffect.c
++++ b/net/sctp/sm_sideeffect.c
+@@ -1112,32 +1112,6 @@ static void sctp_cmd_send_msg(struct sctp_association *asoc,
+ }
+ 
+ 
+-/* Sent the next ASCONF packet currently stored in the association.
+- * This happens after the ASCONF_ACK was succeffully processed.
+- */
+-static void sctp_cmd_send_asconf(struct sctp_association *asoc)
+-{
+-	struct net *net = sock_net(asoc->base.sk);
+-
+-	/* Send the next asconf chunk from the addip chunk
+-	 * queue.
+-	 */
+-	if (!list_empty(&asoc->addip_chunk_list)) {
+-		struct list_head *entry = asoc->addip_chunk_list.next;
+-		struct sctp_chunk *asconf = list_entry(entry,
+-						struct sctp_chunk, list);
+-		list_del_init(entry);
+-
+-		/* Hold the chunk until an ASCONF_ACK is received. */
+-		sctp_chunk_hold(asconf);
+-		if (sctp_primitive_ASCONF(net, asoc, asconf))
+-			sctp_chunk_free(asconf);
+-		else
+-			asoc->addip_last_asconf = asconf;
+-	}
+-}
+-
+-
+ /* These three macros allow us to pull the debugging code out of the
+  * main flow of sctp_do_sm() to keep attention focused on the real
+  * functionality there.
+@@ -1783,9 +1757,6 @@ static int sctp_cmd_interpreter(enum sctp_event event_type,
+ 			}
+ 			sctp_cmd_send_msg(asoc, cmd->obj.msg, gfp);
+ 			break;
+-		case SCTP_CMD_SEND_NEXT_ASCONF:
+-			sctp_cmd_send_asconf(asoc);
+-			break;
+ 		case SCTP_CMD_PURGE_ASCONF_QUEUE:
+ 			sctp_asconf_queue_teardown(asoc);
+ 			break;
+diff --git a/net/sctp/sm_statefuns.c b/net/sctp/sm_statefuns.c
+index c9ae3404b1bb..713a669d2058 100644
+--- a/net/sctp/sm_statefuns.c
++++ b/net/sctp/sm_statefuns.c
+@@ -3824,6 +3824,29 @@ enum sctp_disposition sctp_sf_do_asconf(struct net *net,
+ 	return SCTP_DISPOSITION_CONSUME;
+ }
+ 
++static enum sctp_disposition sctp_send_next_asconf(
++					struct net *net,
++					const struct sctp_endpoint *ep,
++					struct sctp_association *asoc,
++					const union sctp_subtype type,
++					struct sctp_cmd_seq *commands)
++{
++	struct sctp_chunk *asconf;
++	struct list_head *entry;
++
++	if (list_empty(&asoc->addip_chunk_list))
++		return SCTP_DISPOSITION_CONSUME;
++
++	entry = asoc->addip_chunk_list.next;
++	asconf = list_entry(entry, struct sctp_chunk, list);
++
++	list_del_init(entry);
++	sctp_chunk_hold(asconf);
++	asoc->addip_last_asconf = asconf;
++
++	return sctp_sf_do_prm_asconf(net, ep, asoc, type, asconf, commands);
++}
++
+ /*
+  * ADDIP Section 4.3 General rules for address manipulation
+  * When building TLV parameters for the ASCONF Chunk that will add or
+@@ -3915,14 +3938,10 @@ enum sctp_disposition sctp_sf_do_asconf_ack(struct net *net,
+ 				SCTP_TO(SCTP_EVENT_TIMEOUT_T4_RTO));
+ 
+ 		if (!sctp_process_asconf_ack((struct sctp_association *)asoc,
+-					     asconf_ack)) {
+-			/* Successfully processed ASCONF_ACK.  We can
+-			 * release the next asconf if we have one.
+-			 */
+-			sctp_add_cmd_sf(commands, SCTP_CMD_SEND_NEXT_ASCONF,
+-					SCTP_NULL());
+-			return SCTP_DISPOSITION_CONSUME;
+-		}
++					     asconf_ack))
++			return sctp_send_next_asconf(net, ep,
++					(struct sctp_association *)asoc,
++							type, commands);
+ 
+ 		abort = sctp_make_abort(asoc, asconf_ack,
+ 					sizeof(struct sctp_errhdr));
+diff --git a/net/tls/tls_device.c b/net/tls/tls_device.c
+index c9588b682db4..f4a19eac975d 100644
+--- a/net/tls/tls_device.c
++++ b/net/tls/tls_device.c
+@@ -569,7 +569,7 @@ void handle_device_resync(struct sock *sk, u32 seq, u64 rcd_sn)
+ static int tls_device_reencrypt(struct sock *sk, struct sk_buff *skb)
+ {
+ 	struct strp_msg *rxm = strp_msg(skb);
+-	int err = 0, offset = rxm->offset, copy, nsg;
++	int err = 0, offset = rxm->offset, copy, nsg, data_len, pos;
+ 	struct sk_buff *skb_iter, *unused;
+ 	struct scatterlist sg[1];
+ 	char *orig_buf, *buf;
+@@ -600,25 +600,42 @@ static int tls_device_reencrypt(struct sock *sk, struct sk_buff *skb)
+ 	else
+ 		err = 0;
+ 
+-	copy = min_t(int, skb_pagelen(skb) - offset,
+-		     rxm->full_len - TLS_CIPHER_AES_GCM_128_TAG_SIZE);
++	data_len = rxm->full_len - TLS_CIPHER_AES_GCM_128_TAG_SIZE;
+ 
+-	if (skb->decrypted)
+-		skb_store_bits(skb, offset, buf, copy);
++	if (skb_pagelen(skb) > offset) {
++		copy = min_t(int, skb_pagelen(skb) - offset, data_len);
+ 
+-	offset += copy;
+-	buf += copy;
++		if (skb->decrypted)
++			skb_store_bits(skb, offset, buf, copy);
+ 
++		offset += copy;
++		buf += copy;
++	}
++
++	pos = skb_pagelen(skb);
+ 	skb_walk_frags(skb, skb_iter) {
+-		copy = min_t(int, skb_iter->len,
+-			     rxm->full_len - offset + rxm->offset -
+-			     TLS_CIPHER_AES_GCM_128_TAG_SIZE);
++		int frag_pos;
++
++		/* Practically all frags must belong to msg if reencrypt
++		 * is needed with current strparser and coalescing logic,
++		 * but strparser may "get optimized", so let's be safe.
++		 */
++		if (pos + skb_iter->len <= offset)
++			goto done_with_frag;
++		if (pos >= data_len + rxm->offset)
++			break;
++
++		frag_pos = offset - pos;
++		copy = min_t(int, skb_iter->len - frag_pos,
++			     data_len + rxm->offset - offset);
+ 
+ 		if (skb_iter->decrypted)
+-			skb_store_bits(skb_iter, offset, buf, copy);
++			skb_store_bits(skb_iter, frag_pos, buf, copy);
+ 
+ 		offset += copy;
+ 		buf += copy;
++done_with_frag:
++		pos += skb_iter->len;
+ 	}
+ 
+ free_buf:
+diff --git a/net/tls/tls_device_fallback.c b/net/tls/tls_device_fallback.c
+index ef8934fd8698..426dd97725e4 100644
+--- a/net/tls/tls_device_fallback.c
++++ b/net/tls/tls_device_fallback.c
+@@ -200,13 +200,14 @@ static void complete_skb(struct sk_buff *nskb, struct sk_buff *skb, int headln)
+ 
+ 	skb_put(nskb, skb->len);
+ 	memcpy(nskb->data, skb->data, headln);
+-	update_chksum(nskb, headln);
+ 
+ 	nskb->destructor = skb->destructor;
+ 	nskb->sk = sk;
+ 	skb->destructor = NULL;
+ 	skb->sk = NULL;
+ 
++	update_chksum(nskb, headln);
++
+ 	delta = nskb->truesize - skb->truesize;
+ 	if (likely(delta < 0))
+ 		WARN_ON_ONCE(refcount_sub_and_test(-delta, &sk->sk_wmem_alloc));
+diff --git a/sound/usb/line6/driver.c b/sound/usb/line6/driver.c
+index c1376bfdc90b..aa28510d23ad 100644
+--- a/sound/usb/line6/driver.c
++++ b/sound/usb/line6/driver.c
+@@ -351,12 +351,16 @@ int line6_read_data(struct usb_line6 *line6, unsigned address, void *data,
+ {
+ 	struct usb_device *usbdev = line6->usbdev;
+ 	int ret;
+-	unsigned char len;
++	unsigned char *len;
+ 	unsigned count;
+ 
+ 	if (address > 0xffff || datalen > 0xff)
+ 		return -EINVAL;
+ 
++	len = kmalloc(sizeof(*len), GFP_KERNEL);
++	if (!len)
++		return -ENOMEM;
++
+ 	/* query the serial number: */
+ 	ret = usb_control_msg(usbdev, usb_sndctrlpipe(usbdev, 0), 0x67,
+ 			      USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_DIR_OUT,
+@@ -365,7 +369,7 @@ int line6_read_data(struct usb_line6 *line6, unsigned address, void *data,
+ 
+ 	if (ret < 0) {
+ 		dev_err(line6->ifcdev, "read request failed (error %d)\n", ret);
+-		return ret;
++		goto exit;
+ 	}
+ 
+ 	/* Wait for data length. We'll get 0xff until length arrives. */
+@@ -375,28 +379,29 @@ int line6_read_data(struct usb_line6 *line6, unsigned address, void *data,
+ 		ret = usb_control_msg(usbdev, usb_rcvctrlpipe(usbdev, 0), 0x67,
+ 				      USB_TYPE_VENDOR | USB_RECIP_DEVICE |
+ 				      USB_DIR_IN,
+-				      0x0012, 0x0000, &len, 1,
++				      0x0012, 0x0000, len, 1,
+ 				      LINE6_TIMEOUT * HZ);
+ 		if (ret < 0) {
+ 			dev_err(line6->ifcdev,
+ 				"receive length failed (error %d)\n", ret);
+-			return ret;
++			goto exit;
+ 		}
+ 
+-		if (len != 0xff)
++		if (*len != 0xff)
+ 			break;
+ 	}
+ 
+-	if (len == 0xff) {
++	ret = -EIO;
++	if (*len == 0xff) {
+ 		dev_err(line6->ifcdev, "read failed after %d retries\n",
+ 			count);
+-		return -EIO;
+-	} else if (len != datalen) {
++		goto exit;
++	} else if (*len != datalen) {
+ 		/* should be equal or something went wrong */
+ 		dev_err(line6->ifcdev,
+ 			"length mismatch (expected %d, got %d)\n",
+-			(int)datalen, (int)len);
+-		return -EIO;
++			(int)datalen, (int)*len);
++		goto exit;
+ 	}
+ 
+ 	/* receive the result: */
+@@ -405,12 +410,12 @@ int line6_read_data(struct usb_line6 *line6, unsigned address, void *data,
+ 			      0x0013, 0x0000, data, datalen,
+ 			      LINE6_TIMEOUT * HZ);
+ 
+-	if (ret < 0) {
++	if (ret < 0)
+ 		dev_err(line6->ifcdev, "read failed (error %d)\n", ret);
+-		return ret;
+-	}
+ 
+-	return 0;
++exit:
++	kfree(len);
++	return ret;
+ }
+ EXPORT_SYMBOL_GPL(line6_read_data);
+ 
+@@ -422,12 +427,16 @@ int line6_write_data(struct usb_line6 *line6, unsigned address, void *data,
+ {
+ 	struct usb_device *usbdev = line6->usbdev;
+ 	int ret;
+-	unsigned char status;
++	unsigned char *status;
+ 	int count;
+ 
+ 	if (address > 0xffff || datalen > 0xffff)
+ 		return -EINVAL;
+ 
++	status = kmalloc(sizeof(*status), GFP_KERNEL);
++	if (!status)
++		return -ENOMEM;
++
+ 	ret = usb_control_msg(usbdev, usb_sndctrlpipe(usbdev, 0), 0x67,
+ 			      USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_DIR_OUT,
+ 			      0x0022, address, data, datalen,
+@@ -436,7 +445,7 @@ int line6_write_data(struct usb_line6 *line6, unsigned address, void *data,
+ 	if (ret < 0) {
+ 		dev_err(line6->ifcdev,
+ 			"write request failed (error %d)\n", ret);
+-		return ret;
++		goto exit;
+ 	}
+ 
+ 	for (count = 0; count < LINE6_READ_WRITE_MAX_RETRIES; count++) {
+@@ -447,28 +456,29 @@ int line6_write_data(struct usb_line6 *line6, unsigned address, void *data,
+ 				      USB_TYPE_VENDOR | USB_RECIP_DEVICE |
+ 				      USB_DIR_IN,
+ 				      0x0012, 0x0000,
+-				      &status, 1, LINE6_TIMEOUT * HZ);
++				      status, 1, LINE6_TIMEOUT * HZ);
+ 
+ 		if (ret < 0) {
+ 			dev_err(line6->ifcdev,
+ 				"receiving status failed (error %d)\n", ret);
+-			return ret;
++			goto exit;
+ 		}
+ 
+-		if (status != 0xff)
++		if (*status != 0xff)
+ 			break;
+ 	}
+ 
+-	if (status == 0xff) {
++	if (*status == 0xff) {
+ 		dev_err(line6->ifcdev, "write failed after %d retries\n",
+ 			count);
+-		return -EIO;
+-	} else if (status != 0) {
++		ret = -EIO;
++	} else if (*status != 0) {
+ 		dev_err(line6->ifcdev, "write failed (error %d)\n", ret);
+-		return -EIO;
++		ret = -EIO;
+ 	}
+-
+-	return 0;
++exit:
++	kfree(status);
++	return ret;
+ }
+ EXPORT_SYMBOL_GPL(line6_write_data);
+ 
+diff --git a/sound/usb/line6/podhd.c b/sound/usb/line6/podhd.c
+index 36ed9c85c0eb..5f3c87264e66 100644
+--- a/sound/usb/line6/podhd.c
++++ b/sound/usb/line6/podhd.c
+@@ -225,28 +225,32 @@ static void podhd_startup_start_workqueue(struct timer_list *t)
+ static int podhd_dev_start(struct usb_line6_podhd *pod)
+ {
+ 	int ret;
+-	u8 init_bytes[8];
++	u8 *init_bytes;
+ 	int i;
+ 	struct usb_device *usbdev = pod->line6.usbdev;
+ 
++	init_bytes = kmalloc(8, GFP_KERNEL);
++	if (!init_bytes)
++		return -ENOMEM;
++
+ 	ret = usb_control_msg(usbdev, usb_sndctrlpipe(usbdev, 0),
+ 					0x67, USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_DIR_OUT,
+ 					0x11, 0,
+ 					NULL, 0, LINE6_TIMEOUT * HZ);
+ 	if (ret < 0) {
+ 		dev_err(pod->line6.ifcdev, "read request failed (error %d)\n", ret);
+-		return ret;
++		goto exit;
+ 	}
+ 
+ 	/* NOTE: looks like some kind of ping message */
+ 	ret = usb_control_msg(usbdev, usb_rcvctrlpipe(usbdev, 0), 0x67,
+ 					USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_DIR_IN,
+ 					0x11, 0x0,
+-					&init_bytes, 3, LINE6_TIMEOUT * HZ);
++					init_bytes, 3, LINE6_TIMEOUT * HZ);
+ 	if (ret < 0) {
+ 		dev_err(pod->line6.ifcdev,
+ 			"receive length failed (error %d)\n", ret);
+-		return ret;
++		goto exit;
+ 	}
+ 
+ 	pod->firmware_version =
+@@ -255,7 +259,7 @@ static int podhd_dev_start(struct usb_line6_podhd *pod)
+ 	for (i = 0; i <= 16; i++) {
+ 		ret = line6_read_data(&pod->line6, 0xf000 + 0x08 * i, init_bytes, 8);
+ 		if (ret < 0)
+-			return ret;
++			goto exit;
+ 	}
+ 
+ 	ret = usb_control_msg(usbdev, usb_sndctrlpipe(usbdev, 0),
+@@ -263,10 +267,9 @@ static int podhd_dev_start(struct usb_line6_podhd *pod)
+ 					USB_TYPE_STANDARD | USB_RECIP_DEVICE | USB_DIR_OUT,
+ 					1, 0,
+ 					NULL, 0, LINE6_TIMEOUT * HZ);
+-	if (ret < 0)
+-		return ret;
+-
+-	return 0;
++exit:
++	kfree(init_bytes);
++	return ret;
+ }
+ 
+ static void podhd_startup_workqueue(struct work_struct *work)
+diff --git a/sound/usb/line6/toneport.c b/sound/usb/line6/toneport.c
+index f47ba94e6f4a..19bee725de00 100644
+--- a/sound/usb/line6/toneport.c
++++ b/sound/usb/line6/toneport.c
+@@ -365,16 +365,21 @@ static bool toneport_has_source_select(struct usb_line6_toneport *toneport)
+ /*
+ 	Setup Toneport device.
+ */
+-static void toneport_setup(struct usb_line6_toneport *toneport)
++static int toneport_setup(struct usb_line6_toneport *toneport)
+ {
+-	u32 ticks;
++	u32 *ticks;
+ 	struct usb_line6 *line6 = &toneport->line6;
+ 	struct usb_device *usbdev = line6->usbdev;
+ 
++	ticks = kmalloc(sizeof(*ticks), GFP_KERNEL);
++	if (!ticks)
++		return -ENOMEM;
++
+ 	/* sync time on device with host: */
+ 	/* note: 32-bit timestamps overflow in year 2106 */
+-	ticks = (u32)ktime_get_real_seconds();
+-	line6_write_data(line6, 0x80c6, &ticks, 4);
++	*ticks = (u32)ktime_get_real_seconds();
++	line6_write_data(line6, 0x80c6, ticks, 4);
++	kfree(ticks);
+ 
+ 	/* enable device: */
+ 	toneport_send_cmd(usbdev, 0x0301, 0x0000);
+@@ -389,6 +394,7 @@ static void toneport_setup(struct usb_line6_toneport *toneport)
+ 		toneport_update_led(toneport);
+ 
+ 	mod_timer(&toneport->timer, jiffies + TONEPORT_PCM_DELAY * HZ);
++	return 0;
+ }
+ 
+ /*
+@@ -451,7 +457,9 @@ static int toneport_init(struct usb_line6 *line6,
+ 			return err;
+ 	}
+ 
+-	toneport_setup(toneport);
++	err = toneport_setup(toneport);
++	if (err)
++		return err;
+ 
+ 	/* register audio system: */
+ 	return snd_card_register(line6->card);
+@@ -463,7 +471,11 @@ static int toneport_init(struct usb_line6 *line6,
+ */
+ static int toneport_reset_resume(struct usb_interface *interface)
+ {
+-	toneport_setup(usb_get_intfdata(interface));
++	int err;
++
++	err = toneport_setup(usb_get_intfdata(interface));
++	if (err)
++		return err;
+ 	return line6_resume(interface);
+ }
+ #endif
+diff --git a/tools/testing/selftests/net/fib_rule_tests.sh b/tools/testing/selftests/net/fib_rule_tests.sh
+index d4cfb6a7a086..d84193bdc307 100755
+--- a/tools/testing/selftests/net/fib_rule_tests.sh
++++ b/tools/testing/selftests/net/fib_rule_tests.sh
+@@ -27,6 +27,7 @@ log_test()
+ 		nsuccess=$((nsuccess+1))
+ 		printf "\n    TEST: %-50s  [ OK ]\n" "${msg}"
+ 	else
++		ret=1
+ 		nfail=$((nfail+1))
+ 		printf "\n    TEST: %-50s  [FAIL]\n" "${msg}"
+ 		if [ "${PAUSE_ON_FAIL}" = "yes" ]; then
+@@ -245,4 +246,9 @@ setup
+ run_fibrule_tests
+ cleanup
+ 
++if [ "$TESTS" != "none" ]; then
++	printf "\nTests passed: %3d\n" ${nsuccess}
++	printf "Tests failed: %3d\n"   ${nfail}
++fi
++
+ exit $ret

@@ -10,7 +10,7 @@
 # common options
 # daily beta build contains date in subrevision
 if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
-REVISION="5.77$SUBREVISION" # all boards have same revision
+REVISION="5.87$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 [[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik" # deb signature
 [[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -43,11 +43,12 @@ fi
 [[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
 
 # used by multiple sources - reduce code duplication
-if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
-	MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
-else
-	MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
-fi
+[[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
+case $MAINLINE_MIRROR in
+	google) MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable' ;;
+	tuna) MAINLINE_KERNEL_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git' ;;
+	*) MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git' ;;
+esac
 MAINLINE_KERNEL_DIR='linux-mainline'
 
 if [[ $USE_GITHUB_UBOOT_MIRROR == yes ]]; then
@@ -65,7 +66,7 @@ SERIALCON=ttyS0
 CAN_BUILD_STRETCH=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
-[[ -z $WIREGUARD ]] && WIREGUARD="yes"
+[[ -z $WIREGUARD ]] && WIREGUARD="no"
 [[ -z $RTL8812AU ]] && RTL8812AU="yes"
 
 # single ext4 partition is the default and preferred configuration
@@ -122,7 +123,7 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-if [[ $RELEASE == xenial || $RELEASE == bionic ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
+if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == disco ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
 # Base system dependencies
 DEBOOTSTRAP_LIST="locales,gnupg,ifupdown,apt-transport-https,ca-certificates"
@@ -138,7 +139,7 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 
 
 # Non-essential packages
-PACKAGE_LIST_ADDITIONAL="armbian-firmware alsa-utils btrfs-tools dosfstools iotop iozone3 stress sysbench screen \
+PACKAGE_LIST_ADDITIONAL="armbian-firmware alsa-utils btrfs-tools dosfstools iotop iozone3 stress screen \
 	ntfs-3g vim pciutils evtest htop pv lsof libfuse2 libdigest-sha-perl \
 	libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan sysstat bash-completion \
 	hostapd git ethtool network-manager unzip ifenslave command-not-found libpam-systemd iperf3 \
@@ -148,14 +149,14 @@ PACKAGE_LIST_ADDITIONAL="armbian-firmware alsa-utils btrfs-tools dosfstools ioto
 # Dependent desktop packages
 PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit \
 	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
-	libgtk2.0-bin libgnome2-perl network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
-	pulseaudio pavumeter pulseaudio-module-gconf bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
+	libgtk2.0-bin network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
+	pulseaudio pavumeter bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
 	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme"
 
 
 # Recommended desktop packages
 PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi cups-pk-helper \
-	cups geany atril xarchiver leafpad"
+	cups geany atril xarchiver"
 
 case $DISPLAY_MANAGER in
 	nodm)
@@ -178,30 +179,46 @@ case $RELEASE in
 
 	jessie)
 		DEBOOTSTRAP_COMPONENTS="main"
-		PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless policykit-1-gnome eject numix-icon-theme"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" iceweasel pluma system-config-printer"
+		PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr sysbench"
+		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless policykit-1-gnome eject numix-icon-theme libgnome2-perl pulseaudio-module-gconf"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" iceweasel pluma system-config-printer leafpad"
 	;;
 
 	xenial)
 		DEBOOTSTRAP_COMPONENTS="main"
-		PACKAGE_LIST_RELEASE="man-db wget nano"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common system-config-printer-gnome"
+		PACKAGE_LIST_RELEASE="man-db wget nano sysbench"
+		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl pulseaudio-module-gconf"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common system-config-printer-gnome leafpad"
 	;;
 
 	stretch)
 		DEBOOTSTRAP_COMPONENTS="main"
-		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer"
+		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr sysbench"
+		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad"
 	;;
 
 	bionic)
 		DEBOOTSTRAP_COMPONENTS="main,universe"
 		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11"
+		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer language-selector-gnome leafpad"
+	;;
+
+	buster)
+		DEBOOTSTRAP_COMPONENTS="main"
+		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr wget"
+		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer"
+	;;
+
+	disco)
+		DEBOOTSTRAP_COMPONENTS="main,universe"
+		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
+		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer language-selector-gnome"
+		# temp disable
+		PACKAGE_LIST_ADDITIONAL="${PACKAGE_LIST_ADDITIONAL/armbian-firmware /}"
 	;;
 
 esac
@@ -209,6 +226,11 @@ esac
 
 DEBIAN_MIRROR='httpredir.debian.org/debian'
 UBUNTU_MIRROR='ports.ubuntu.com/'
+
+if [[ $DOWNLOAD_MIRROR == china ]] ; then
+	DEBIAN_MIRROR='mirrors.tuna.tsinghua.edu.cn/debian'
+	UBUNTU_MIRROR='mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/'
+fi
 
 # For user override
 if [[ -f $SRC/userpatches/lib.config ]]; then

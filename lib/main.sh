@@ -101,7 +101,7 @@ fi
 if [[ -z $BOARD ]]; then
 	WIP_STATE=supported
 	WIP_BUTTON='CSC/WIP/EOS/TVB'
-	STATE_DESCRIPTION=' - Officially supported boards'
+	STATE_DESCRIPTION=' - boards with high level of software maturity'
 	temp_rc=$(mktemp)
 	while true; do
 		options=()
@@ -144,10 +144,10 @@ if [[ -z $BOARD ]]; then
 				[[ $SHOW_WARNING == yes ]] && show_developer_warning
 				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress\n - \Z1(EOS)\Zn - End Of Support\n - \Z1(TVB)\Zn - TV boxes'
 				WIP_STATE=unsupported
-				WIP_BUTTON='supported'
+				WIP_BUTTON='matured'
 				EXPERT=yes
 			else
-				STATE_DESCRIPTION=' - Officially supported boards'
+				STATE_DESCRIPTION=' - boards with high level of software maturity'
 				WIP_STATE=supported
 				WIP_BUTTON='CSC/WIP/EOS'
 				EXPERT=no
@@ -182,7 +182,7 @@ if [[ -z $BRANCH ]]; then
 	options=()
 	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy (3.4.x - 4.4.x)")
 	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)   (4.x)")
-	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev"         "\Z1Development version      (4.x)\Zn")
+	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev"         "\Z1Development version      (4.x - 5.x)\Zn")
 	# do not display selection dialog if only one kernel branch is available
 	if [[ "${#options[@]}" == 2 ]]; then
 		BRANCH="${options[0]}"
@@ -202,8 +202,11 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	options=()
 	[[ $EXPERT = yes ]] && options+=("jessie" "Debian 8 Jessie / unsupported")
 	options+=("stretch" "Debian 9 Stretch")
+	[[ $EXPERT = yes ]] && options+=("buster" "Debian 10 Buster / unsupported")
 	options+=("xenial" "Ubuntu Xenial 16.04 LTS")
 	options+=("bionic" "Ubuntu Bionic 18.04 LTS")
+	[[ $EXPERT = yes ]] && options+=("disco" "Ubuntu Disco 19.04 / unsupported")
+
 	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select the target OS release" \
 		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
 	unset options
@@ -297,11 +300,19 @@ fi
 
 overlayfs_wrapper "cleanup"
 
-# extract kernel version from .deb package
-VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
-VER="${VER/-$LINUXFAMILY/}"
+# extract kernel version
+if [[ -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb && $BUILD_ALL != yes ]]; then
+	VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}' | sed "s/-$LINUXFAMILY//")
+else
+	VER=$(grep -E "^VERSION|^PATCHLEVEL|^SUBLEVEL" $SRC/cache/sources/$LINUXSOURCEDIR/Makefile | awk '{print $(NF)}' | paste -sd "." -)
+fi
 
-UBOOT_VER=$(dpkg --info $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
+# extract u-boot version
+if [[ -f  $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb && $BUILD_ALL != yes ]]; then
+	UBOOT_VER=$(dpkg --info $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
+else
+	UBOOT_VER=$(grep -E "^VERSION|^PATCHLEVEL" $SRC/cache/sources/$BOOTSOURCEDIR/Makefile | awk '{print $(NF)}' | paste -sd "." -)
+fi
 
 # create board support package
 [[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package

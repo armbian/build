@@ -130,7 +130,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	jessie|stretch)
+	jessie|stretch|buster)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -146,7 +146,7 @@ create_sources_list()
 	EOF
 	;;
 
-	xenial|bionic)
+	xenial|bionic|disco)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -357,7 +357,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("jessie" "xenial" "stretch" "bionic")
+	local distributions=("jessie" "xenial" "stretch" "bionic" "buster" "disco")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -527,6 +527,9 @@ prepare_host()
 		fi
 	done
 
+	# temporally fix for Locales settings
+	export LC_ALL="en_US.UTF-8"
+
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "lsb-release"
@@ -552,7 +555,7 @@ prepare_host()
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
-	if [[ -z $codename || "xenial bionic" != *"$codename"* ]]; then
+	if [[ -z $codename || "xenial bionic disco" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -563,6 +566,10 @@ prepare_host()
 
 	if grep -qE "(Microsoft|WSL)" /proc/version; then
 		exit_with_error "Windows subsystem for Linux is not a supported build environment"
+	fi
+
+	if [[ -z $codename || "disco" == "$codename" ]]; then
+	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 
 	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
@@ -617,7 +624,7 @@ prepare_host()
 	# sync clock
 	if [[ $SYNC_CLOCK != no ]]; then
 		display_alert "Syncing clock" "host" "info"
-		ntpdate -s ${NTP_SERVER:- time.ijs.si}
+		ntpdate -s ${NTP_SERVER:- pool.ntp.org}
 	fi
 
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
@@ -651,8 +658,13 @@ prepare_host()
 	# Use backup server by default to balance the load
 
 	ARMBIANSERVER=dl.armbian.com
+	if [[ $DOWNLOAD_MIRROR == 'china' ]]; then
+		ARMBIANSERVER='mirrors.tuna.tsinghua.edu.cn/armbian-releases'
+	fi
 
 	local toolchains=(
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz"
@@ -662,11 +674,10 @@ prepare_host()
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabihf.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_arm-eabi.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.3.1-2018.05-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.3.1-2018.05-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-eabi.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
+		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
 		)
 
 	for toolchain in ${toolchains[@]}; do
