@@ -724,6 +724,7 @@ function webseed ()
 unset text
 WEBSEED=(
 	"https://dl.armbian.com/"
+	"https://imola.armbian.com/"
 	"https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 	"http://mirrors.netix.net/armbian/dl/"
 	"http://mirrors.dotsrc.org/armbian-dl/"
@@ -759,7 +760,8 @@ download_and_verify()
 	if [[ ! `wget -S --spider https://dl.armbian.com/$remotedir/${filename}.asc 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK'` ]]; then
 		return
 	fi
-	aria2c --download-result=hide --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
+
+	aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
 	--continue=false --allow-overwrite=true --dir=${localdir} $(webseed "$remotedir/${filename}.asc") -o "${filename}.asc"
 	[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
 
@@ -769,10 +771,17 @@ download_and_verify()
 		| grep 'HTTP/1.1 200 OK'` && ${USE_TORRENT} != "no" ]]; then
 
 		display_alert "downloading using torrent network" "$filename"
-		aria2c --summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=15 --console-log-level=error \
+		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=15 --console-log-level=error \
 		--allow-overwrite=true --download-result=hide --rpc-save-upload-metadata=false --auto-file-renaming=false \
 		--file-allocation=trunc --continue=true https://dl.armbian.com/torrent/${filename}.torrent \
-		--stderr --follow-torrent=mem --dir=${localdir} 
+		--dht-file-path=$SRC/cache/.aria2/dht.dat --disable-ipv6=true --stderr --follow-torrent=mem --dir=${localdir}"
+
+		# exception. It throws error if dht.dat file does not exists. Error suppress needed only at first download.
+		if [[ -f $SRC/cache/.aria2/dht.dat ]]; then
+			aria2c ${ariatorrent}
+		else
+			aria2c ${ariatorrent} &> $DEST/debug/torrent.log
+		fi
 		# mark complete
 		[[ $? -eq 0 ]] && touch ${localdir}/${filename}.complete
 
@@ -786,7 +795,7 @@ download_and_verify()
 			[[ -z $USE_TORRENT ]] && display_alert "torrent download failed" "use parameter USE_TORRENT=\"no\" to skip torrent network" "wrn"
 			display_alert "downloading using http(s) network" "$filename"
 			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
-			--summary-interval=0 --auto-file-renaming=false --dir=${localdir} $(webseed "$remotedir/$filename") -o ${filename}
+			--dht-file-path=$SRC/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir=${localdir} $(webseed "$remotedir/$filename") -o ${filename}
 			# mark complete
 			[[ $? -eq 0 ]] && touch ${localdir}/${filename}.complete && echo ""
 
