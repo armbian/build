@@ -304,6 +304,22 @@ create_board_package()
 		chmod 755 $destination/etc/profile.d/90-vdpau.sh
 	fi
 
+	# H3 hdmi sound
+	if [[ ( $LINUXFAMILY == sun8i && $BRANCH == next ) \
+		BOARD_NAME=="Orange Pi PC" ||  BOARD_NAME=="Orange Pi PC +" \
+	]]; then
+	#	Boards with h3 but the device tree needs to be updated
+	#	BOARD_NAME=="Orange Pi Lite" || BOARD_NAME=="Orange Pi One" || BOARD_NAME=="Orange Pi PC" || \
+	#	BOARD_NAME=="Orange Pi PC +" || BOARD_NAME=="Orange Pi+ 2E" || BOARD_NAME=="Orange Pi+" || BOARD_NAME=="Tritium"  ]]; then
+
+		# Alsa config for hdmi sound
+		mkdir -p $destination/usr/share/alsa/cards
+		cp $SRC/packages/bsp/sunxi-next-h3-hdmi/allwinner-hdmi.conf $destination/usr/share/alsa/cards/
+
+		# Makes hdmi sound the default output
+		mkdir -p $destination/etc
+		cp $SRC/packages/bsp/sunxi-next-h3-hdmi/asound.conf $destination/etc
+	fi
 	if [[ $LINUXFAMILY == sunxi* && $BRANCH != default ]]; then
 		# add mpv config for x11 output - slow, but it works compared to no config at all
 		# TODO: Test which output driver is better with DRM
