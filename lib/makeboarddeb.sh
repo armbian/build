@@ -49,12 +49,12 @@ create_board_package()
 	Installed-Size: 1
 	Section: kernel
 	Priority: optional
-	Depends: bash, linux-base, u-boot-tools, initramfs-tools
+	Depends: bash, linux-base, u-boot-tools, initramfs-tools, python3-apt
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Suggests: armbian-config
 	Replaces: zram-config, base-files, armbian-tools-$RELEASE
-	Recommends: bsdutils, parted, python3-apt, util-linux, toilet
+	Recommends: bsdutils, parted, util-linux, toilet
 	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
 	EOF
 
