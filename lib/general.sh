@@ -357,9 +357,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	#local distributions=("jessie" "xenial" "stretch" "bionic" "buster" "disco")
-	local distributions=("xenial" "stretch" "bionic")
-
+	local distributions=("jessie" "xenial" "stretch" "bionic" "buster" "disco")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -626,7 +624,7 @@ prepare_host()
 	# sync clock
 	if [[ $SYNC_CLOCK != no ]]; then
 		display_alert "Syncing clock" "host" "info"
-		ntpdate -s ${NTP_SERVER:- time.ijs.si}
+		ntpdate -s ${NTP_SERVER:- pool.ntp.org}
 	fi
 
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
@@ -660,6 +658,9 @@ prepare_host()
 	# Use backup server by default to balance the load
 
 	ARMBIANSERVER=dl.armbian.com
+	if [[ $DOWNLOAD_MIRROR == 'china' ]]; then
+		ARMBIANSERVER='mirrors.tuna.tsinghua.edu.cn/armbian-releases'
+	fi
 
 	local toolchains=(
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
@@ -673,7 +674,6 @@ prepare_host()
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabihf.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabihf.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-eabi.tar.xz"
 		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"

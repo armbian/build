@@ -101,7 +101,7 @@ fi
 if [[ -z $BOARD ]]; then
 	WIP_STATE=supported
 	WIP_BUTTON='CSC/WIP/EOS/TVB'
-	STATE_DESCRIPTION=' - Officially supported boards'
+	STATE_DESCRIPTION=' - boards with high level of software maturity'
 	temp_rc=$(mktemp)
 	while true; do
 		options=()
@@ -144,10 +144,10 @@ if [[ -z $BOARD ]]; then
 				[[ $SHOW_WARNING == yes ]] && show_developer_warning
 				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress\n - \Z1(EOS)\Zn - End Of Support\n - \Z1(TVB)\Zn - TV boxes'
 				WIP_STATE=unsupported
-				WIP_BUTTON='supported'
+				WIP_BUTTON='matured'
 				EXPERT=yes
 			else
-				STATE_DESCRIPTION=' - Officially supported boards'
+				STATE_DESCRIPTION=' - boards with high level of software maturity'
 				WIP_STATE=supported
 				WIP_BUTTON='CSC/WIP/EOS'
 				EXPERT=no
@@ -300,11 +300,19 @@ fi
 
 overlayfs_wrapper "cleanup"
 
-# extract kernel version from .deb package
-VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
-VER="${VER/-$LINUXFAMILY/}"
+# extract kernel version
+if [[ -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb && $BUILD_ALL != yes ]]; then
+	VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}' | sed "s/-$LINUXFAMILY//")
+else
+	VER=$(grep -E "^VERSION|^PATCHLEVEL|^SUBLEVEL" $SRC/cache/sources/$LINUXSOURCEDIR/Makefile | awk '{print $(NF)}' | paste -sd "." -)
+fi
 
-UBOOT_VER=$(dpkg --info $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
+# extract u-boot version
+if [[ -f  $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb && $BUILD_ALL != yes ]]; then
+	UBOOT_VER=$(dpkg --info $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
+else
+	UBOOT_VER=$(grep -E "^VERSION|^PATCHLEVEL" $SRC/cache/sources/$BOOTSOURCEDIR/Makefile | awk '{print $(NF)}' | paste -sd "." -)
+fi
 
 # create board support package
 [[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
