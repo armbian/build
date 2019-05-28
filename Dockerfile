@@ -12,4 +12,6 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y dist-upgrade && 
 RUN locale-gen en_US.UTF-8
 ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8' TERM=screen
 WORKDIR /root/armbian
+ENV SRC=/root/armbian
+RUN bash -c ". ${SRC}/lib/general.sh && prepare_host"
 ENTRYPOINT [ "/bin/bash", "/root/armbian/compile.sh" ]
