@@ -725,14 +725,20 @@ unset text
 WEBSEED=(
 	"https://dl.armbian.com/"
 	"https://imola.armbian.com/"
-	"https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 	"http://mirrors.netix.net/armbian/dl/"
 	"http://mirrors.dotsrc.org/armbian-dl/"
 	)
+	# aria2 simply split chunks based on sources count not depending on download speed
+	# when selecting china mirrors, use only China mirror, others are very slow there
+	if [[ $DOWNLOAD_MIRROR == china ]]; then
+		WEBSEED=(
+		"https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+		)
+	fi
 	for toolchain in ${WEBSEED[@]}; do
 		# use only live
 		if [[ `wget -S --spider $toolchain$1 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK'` ]]; then
-		text=$text" "$toolchain$1
+			text=$text" "$toolchain$1
 		fi
 	done
 	text="${text:1}"
