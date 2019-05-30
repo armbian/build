@@ -725,8 +725,8 @@ unset text
 WEBSEED=(
 	"https://dl.armbian.com/"
 	"https://imola.armbian.com/"
-	"http://mirrors.netix.net/armbian/dl/"
-	"http://mirrors.dotsrc.org/armbian-dl/"
+	"https://mirrors.netix.net/armbian/dl/"
+	"https://mirrors.dotsrc.org/armbian-dl/"
 	)
 	# aria2 simply split chunks based on sources count not depending on download speed
 	# when selecting china mirrors, use only China mirror, others are very slow there
