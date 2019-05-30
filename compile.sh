@@ -13,33 +13,36 @@
 # use configuration files like config-default.conf to set the build configuration
 # check Armbian documentation for more info
 
-SRC="$(dirname "$(realpath "${BASH_SOURCE}")")"
+SRC="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 # fallback for Trusty
 [[ -z "${SRC}" ]] && SRC="$(pwd)"
 
 # check for whitespace in $SRC and exit for safety reasons
 grep -q "[[:space:]]" <<<"${SRC}" && { echo "\"${SRC}\" contains whitespace. Not supported. Aborting." >&2 ; exit 1 ; }
 
-cd $SRC
+cd "${SRC}" || exit
 
-if [[ -f $SRC/lib/general.sh && -L $SRC/main.sh ]]; then
-	source $SRC/lib/general.sh
+if [[ -f "${SRC}"/lib/general.sh && -L "${SRC}"/main.sh ]]; then
+	# shellcheck source=lib/general.sh
+	source "${SRC}"/lib/general.sh
 else
 	echo "Error: missing build directory structure"
 	echo "Please clone the full repository https://github.com/armbian/build/"
-	exit -1
+	exit 255
 fi
 
 # copy default config from the template
-[[ ! -f $SRC/config-default.conf ]] && cp $SRC/config/templates/config-example.conf $SRC/config-default.conf
+[[ ! -f "${SRC}"/config-default.conf ]] && cp "${SRC}"/config/templates/config-example.conf "${SRC}"/config-default.conf
 
 # source build configuration file
-if [[ -n $1 && -f $SRC/config-$1.conf ]]; then
+if [[ -n $1 && -f "${SRC}/config-$1.conf" ]]; then
 	display_alert "Using config file" "config-$1.conf" "info"
-	source $SRC/config-$1.conf
+	# shellcheck source=/dev/null
+	source "${SRC}/config-$1.conf"
 else
 	display_alert "Using config file" "config-default.conf" "info"
-	source $SRC/config-default.conf
+	# shellcheck source=/dev/null
+	source "${SRC}"/config-default.conf
 fi
 
 if [[ $EUID != 0 ]]; then
@@ -54,7 +57,7 @@ for i in "$@"; do
 		parameter=${i%%=*}
 		value=${i##*=}
 		display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
-		eval $parameter=\"$value\"
+		eval "$parameter=\"$value\""
 	fi
 done
 
@@ -82,14 +85,16 @@ if [[ ! -f $SRC/.ignore_changes ]]; then
 	if [[ -n $CHANGED_FILES ]]; then
 		echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
 		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
-		read
+		read -r
 	else
-		git checkout ${LIB_TAG:- master}
+		git checkout "${LIB_TAG:-master}"
 	fi
 fi
 
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
-	source $SRC/lib/build-all.sh
+	# shellcheck source=lib/build-all.sh
+	source "${SRC}"/lib/build-all.sh
 else
-	source $SRC/lib/main.sh
+	# shellcheck source=lib/main.sh
+	source "${SRC}"/lib/main.sh
 fi
