@@ -26,6 +26,7 @@
 # "make" - "make clean" for selected kernel and u-boot
 # "debs" - delete output/debs
 # "cache" - delete output/cache
+# "oldcache" - remove old output/cache
 # "images" - delete output/images
 # "sources" - delete output/sources
 #
@@ -71,7 +72,7 @@ cleaning()
 		[[ -d $SRC/cache/sources ]] && display_alert "Cleaning" "sources" "info" && rm -rf $SRC/cache/sources/* $DEST/buildpkg/*
 		;;
 
-		oldcache)
+		oldcache) # remove old `cache/rootfs` except for the newest 8 files
 		if [[ -d $SRC/cache/rootfs && $(ls -1 $SRC/cache/rootfs/*.lz4 2> /dev/null | wc -l) -gt ${ROOTFS_CACHE_MAX} ]]; then
 			display_alert "Cleaning" "rootfs cache (old)" "info"
 			(cd $SRC/cache/rootfs; ls -t *.lz4 | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
