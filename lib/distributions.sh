@@ -106,6 +106,17 @@ install_common()
 	# force change root password at first login
 	chroot $SDCARD /bin/bash -c "chage -d 0 root"
 
+	# change console welcome text
+	echo -e "Armbian ${RELEASE^} \\l \n" > $SDCARD/etc/issue
+	echo "Armbian ${RELEASE^}" > $SDCARD/etc/issue.net
+
+	# enable few bash aliases enabled in Ubuntu by default to make it even
+	sed "s/#alias ll='ls -l'/alias ll='ls -l'/" -i $SDCARD/etc/skel/.bashrc
+	sed "s/#alias la='ls -A'/alias la='ls -A'/" -i $SDCARD/etc/skel/.bashrc
+	sed "s/#alias l='ls -CF'/alias l='ls -CF'/" -i $SDCARD/etc/skel/.bashrc
+	# root user is already there. Copy bashrc there as well
+	cp $SDCARD/etc/skel/.bashrc $SDCARD/root
+
 	# display welcome message at first root login
 	touch $SDCARD/root/.not_logged_in_yet
 
