@@ -729,6 +729,11 @@ WEBSEED=(
 	"https://mirrors.netix.net/armbian/dl/"
 	"https://mirrors.dotsrc.org/armbian-dl/"
 	)
+	if [[ -z $DOWNLOAD_MIRROR ]]; then
+		WEBSEED=(
+                "https://dl.armbian.com/"
+                )
+	fi
 	# aria2 simply split chunks based on sources count not depending on download speed
 	# when selecting china mirrors, use only China mirror, others are very slow there
 	if [[ $DOWNLOAD_MIRROR == china ]]; then
@@ -775,7 +780,7 @@ download_and_verify()
 
 	# download torrent first
 	if [[ `wget -S --spider https://dl.armbian.com/torrent/${filename}.torrent 2>&1 >/dev/null \
-		| grep 'HTTP/1.1 200 OK'` && ${USE_TORRENT} != "no" ]]; then
+		| grep 'HTTP/1.1 200 OK'` && ${USE_TORRENT} == "yes" ]]; then
 
 		display_alert "downloading using torrent network" "$filename"
 		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=15 --console-log-level=error \
@@ -796,10 +801,9 @@ download_and_verify()
 
 
 	# direct download if torrent fails
-	if [[ ${USE_TORRENT} != "yes" && ! -f ${localdir}/${filename}.complete ]]; then
+	if [[ ! -f ${localdir}/${filename}.complete ]]; then
 		if [[ `wget -S --spider https://dl.armbian.com/${remotedir}/${filename} 2>&1 >/dev/null \
 			| grep 'HTTP/1.1 200 OK'` ]]; then
-			[[ -z $USE_TORRENT ]] && display_alert "torrent download failed" "use parameter USE_TORRENT=\"no\" to skip torrent network" "wrn"
 			display_alert "downloading using http(s) network" "$filename"
 			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
 			--dht-file-path=$SRC/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir=${localdir} $(webseed "$remotedir/$filename") -o ${filename}
