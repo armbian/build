@@ -1,3 +1,5 @@
+#!/bin/bash
+#
 # Copyright (c) Authors: http://www.armbian.com/authors
 #
 # This file is licensed under the terms of the GNU General Public
@@ -30,17 +32,17 @@ pack_upload ()
 	local filename=$DESTIMG/${version}.7z
 
 	# stage: generate sha256sum.sha
-	cd $DESTIMG
-	sha256sum -b ${version}.img > sha256sum.sha
+	cd "${DESTIMG}" || exit
+	sha256sum -b "${version}.img" > sha256sum.sha
 
 	# stage: sign with PGP
 	if [[ -n $GPG_PASS ]]; then
-		echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
+		echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes "${version}.img"
 	fi
 
 	if [[ -n "${SEND_TO_SERVER}" ]]; then
 	# create remote directory structure
-	ssh ${SEND_TO_SERVER} "mkdir -p /var/www/dl.armbian.com/${BOARD}/{archive,nightly};";
+	ssh "${SEND_TO_SERVER}" "mkdir -p /var/www/dl.armbian.com/${BOARD}/{archive,nightly};";
 
 	# pack and move file to server under new process
 	nice -n 19 bash -c "\
@@ -60,7 +62,8 @@ pack_upload ()
 build_main ()
 {
 	touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid";
-	source $SRC/lib/main.sh;
+	# shellcheck source=main.sh
+	source "${SRC}"/lib/main.sh;
 	[[ $KERNEL_ONLY != yes ]] && pack_upload
 	rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}.pid"
 }
@@ -143,12 +146,12 @@ create_images_list()
 	if [[ -n $REBUILD_IMAGES ]]; then naming=$naming" $SRC/config/boards/*.csc"; REBUILD_IMAGES=$REBUILD_IMAGES","; fi
 
 	for board in $naming; do
-		BOARD=$(basename $board | cut -d'.' -f1)
+		BOARD=$(basename "${board}" | cut -d'.' -f1)
 		local file="${SRC}/config/boards/${BOARD}"
-		if [[ -f $file".conf" ]]; then source $file".conf"; fi
-		if [[ -f $file".wip"  ]]; then source $file".wip"; fi
-		if [[ -f $file".csc"  ]]; then source $file".csc"; fi
-		if [[ -f $file".tvb"  ]]; then source $file".tvb"; fi
+		if [[ -f $file".conf" ]]; then source "${file}.conf"; fi
+		if [[ -f $file".wip"  ]]; then source "${file}.wip"; fi
+		if [[ -f $file".csc"  ]]; then source "${file}.csc"; fi
+		if [[ -f $file".tvb"  ]]; then source "${file}.tvb"; fi
 
 		# beta targets are the same as stable. To build the same set beta set as future stable.
 		if [[ "$MERGETARGETS" == "yes" ]]; then
@@ -173,10 +176,10 @@ create_kernels_list()
 	for board in $naming; do
 		BOARD=$(basename $board | cut -d'.' -f1)
 		local file="${SRC}/config/boards/${BOARD}"
-		if [[ -f $file".conf" ]]; then source $file".conf"; fi
-		if [[ -f $file".wip"  ]]; then source $file".wip"; fi
-		if [[ -f $file".csc"  ]]; then source $file".csc"; fi
-		if [[ -f $file".tvb"  ]]; then source $file".tvb"; fi
+		if [[ -f $file".conf" ]]; then source "${file}.conf"; fi
+		if [[ -f $file".wip"  ]]; then source "${file}.wip"; fi
+		if [[ -f $file".csc"  ]]; then source "${file}.csc"; fi
+		if [[ -f $file".tvb"  ]]; then source "${file}.tvb"; fi
 
 		if [[ -n $KERNEL_TARGET ]]; then
 			for kernel in $(tr ',' ' ' <<< $KERNEL_TARGET); do
@@ -211,14 +214,15 @@ fi
 
 n=0
 for line in "${buildlist[@]}"; do
-	n=$[$n+1]
-	printf "%-3s %-20s %-10s %-10s %-10s\n" $n $line
+	((n+=1))
+	read -r BOARD BRANCH RELEASE BUILD_DESKTOP <<< "${line}"
+	printf "%-3s %-20s %-10s %-10s %-10s\n" "$n" "$BOARD" "$BRANCH" "$RELEASE" "$BUILD_DESKTOP"
 done
 echo -e "\n${#buildlist[@]} total\n"
 
 [[ $BUILD_ALL == demo ]] && exit 0
 
-buildall_start=`date +%s`
+buildall_start=$(date +%s)
 n=0
 for line in "${buildlist[@]}"; do
 	unset LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSOURCE BOOTBRANCH ARCH UBOOT_USE_GCC KERNEL_USE_GCC DEFAULT_OVERLAYS \
@@ -231,12 +235,12 @@ for line in "${buildlist[@]}"; do
 		CRYPTROOT_ENABLE CRYPTROOT_PASSPHRASE CRYPTROOT_SSH_UNLOCK CRYPTROOT_SSH_UNLOCK_PORT CRYPTROOT_SSH_UNLOCK_KEY_NAME ROOT_MAPPER \
 		NETWORK HDMI USB WIRELESS ARMBIANMONITOR DEFAULT_CONSOLE FORCE_BOOTSCRIPT_UPDATE SERIALCON UBOOT_TOOLCHAIN2 toolchain2
 
-	read BOARD BRANCH RELEASE BUILD_DESKTOP <<< $line
-	n=$[$n+1]
+	read -r BOARD BRANCH RELEASE BUILD_DESKTOP <<< "${line}"
+	((n+=1))
 	[[ -z $RELEASE ]] && RELEASE=$FORCEDRELEASE;
 	if [[ $from -le $n ]]; then
 		[[ -z $BUILD_DESKTOP ]] && BUILD_DESKTOP="no"
-		jobs=$(ls /run/armbian | wc -l)
+		jobs=$(find /run/armbian | wc -l)
 		if [[ $jobs -lt $MULTITHREAD ]]; then
 			display_alert "Building in the back $n / ${#buildlist[@]}" "Board: $BOARD Kernel:$BRANCH${RELEASE:+ Release: $RELEASE}${BUILD_DESKTOP:+ Desktop: $BUILD_DESKTOP}" "ext"
 			(build_main) &
@@ -247,7 +251,8 @@ for line in "${buildlist[@]}"; do
 			# include testing report if exist
 			if [[ -f $SRC/cache/sources/testing-reports/${BOARD}-${BRANCH}.report ]]; then
 				display_alert "Loading board report" "${BOARD}-${BRANCH}.report" "info"
-				source $SRC/cache/sources/testing-reports/${BOARD}-${BRANCH}.report
+				# shellcheck source=/dev/null
+				source "${SRC}/cache/sources/testing-reports/${BOARD}-${BRANCH}.report"
 			fi
 			if [[ $KERNEL_ONLY == yes ]]; then
 				REPORT=$REPORT"\n|$n|$BOARD|$BRANCH|$UBOOT_VER|$VER|$NETWORK|$WIRELESS|$HDMI|$USB|$ARMBIANMONITOR|"
@@ -261,16 +266,16 @@ for line in "${buildlist[@]}"; do
 done
 
 display_alert "Build report" "$DEST/debug/report.md" "info"
-buildall_end=`date +%s`
+buildall_end=$(date +%s)
 buildall_runtime=$(((buildall_end - buildall_start) / 60))
 display_alert "Runtime in total" "$buildall_runtime min" "info"
 
 if [[ $KERNEL_ONLY == yes ]]; then
 
-	echo -e $REPORT > $DEST/debug/report.md
+	echo -e "${REPORT}" > "${DEST}"/debug/report.md
 
-	echo -e "\nSummary:\n\n|Armbian version | Built date| Built time in total\n|--|--:|--:|" >> $DEST/debug/report.md
-	echo -e "|$REVISION|$(date -d "@$buildall_end")|$buildall_runtime|" >> $DEST/debug/report.md
-	echo -e "$REPORTHTML<tr><td colspan=10>Current version: $REVISION - Refreshed at: $(date -d "@$buildall_end")</td></tr></table>" > $DEST/debug/report.html
+	echo -e "\nSummary:\n\n|Armbian version | Built date| Built time in total\n|--|--:|--:|" >> "${DEST}"/debug/report.md
+	echo -e "|$REVISION|$(date -d "@$buildall_end")|$buildall_runtime|" >> "${DEST}"/debug/report.md
+	echo -e "$REPORTHTML<tr><td colspan=10>Current version: $REVISION - Refreshed at: $(date -d "@$buildall_end")</td></tr></table>" > "${DEST}"/debug/report.html
 
 fi
