@@ -266,6 +266,7 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 	fetch_from_repo "https://git.zx2c4.com/WireGuard" "wireguard" "branch:master"
 	fetch_from_repo "https://github.com/aircrack-ng/rtl8812au" "rtl8812au" "branch:v5.2.20"
 	fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
+	fetch_from_repo "https://github.com/StefanMavrodiev/sunxi-mali" "sunxi-mali" "branch:sun50i-a64"
 fi
 
 if [[ $BETA == yes ]]; then
