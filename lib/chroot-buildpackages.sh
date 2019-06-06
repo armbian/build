@@ -1,3 +1,5 @@
+#!/bin/bash
+# 
 # Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
@@ -293,7 +295,7 @@ chroot_installpackages_local()
 	Pin: origin "localhost"
 	Pin-Priority: 550
 	EOF
-	cat <<-EOF > $SDCARD/etc/apt/sources.list.d/armbian-temp.list
+	cat <<-EOF > "${SDCARD}"/etc/apt/sources.list.d/armbian-temp.list
 	deb http://localhost:8189/ $RELEASE temp
 	EOF
 	chroot_installpackages
@@ -307,15 +309,15 @@ chroot_installpackages()
 	local remote_only=$1
 	local install_list=""
 	display_alert "Installing additional packages" "EXTERNAL_NEW"
-	for plugin in $SRC/packages/extras-buildpkgs/*.conf; do
-		source $plugin
+	for plugin in "${SRC}"/packages/extras-buildpkgs/*.conf; do
+		source "$plugin"
 		if [[ $(type -t package_checkinstall) == function ]] && package_checkinstall; then
 			install_list="$install_list $package_install_target"
 		fi
 		unset package_install_target package_checkinstall
 	done
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
-	cat <<-EOF > $SDCARD/tmp/install.sh
+	cat <<-EOF > "${SDCARD}"/tmp/install.sh
 	#!/bin/bash
 	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
 	apt-get $apt_extra -q update
@@ -335,6 +337,6 @@ chroot_installpackages()
 	rm /tmp/buildpkg.key 2>/dev/null
 	rm -- "\$0"
 	EOF
-	chmod +x $SDCARD/tmp/install.sh
-	chroot $SDCARD /bin/bash -c "/tmp/install.sh"
+	chmod +x "${SDCARD}"/tmp/install.sh
+	chroot "${SDCARD}" /bin/bash -c "/tmp/install.sh"
 } #############################################################################
