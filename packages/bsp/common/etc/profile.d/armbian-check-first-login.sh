@@ -108,10 +108,12 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 
 			# 1st run goes without login
 			mkdir -p /etc/lightdm/lightdm.conf.d
-			echo "[Seat:*]" > /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
-			echo "autologin-user=$RealUserName" >> /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
-			echo "autologin-user-timeout=0" >> /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
-			echo "user-session=xfce" >> /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+			cat <<-EOF > /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+			[Seat:*]
+			autologin-user=$RealUserName
+			autologin-user-timeout=0
+			user-session=xfce
+			EOF
 
 			ln -sf /lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
 		if [[ -f /var/run/resize2fs-reboot ]]; then
