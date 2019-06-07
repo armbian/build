@@ -1,5 +1,5 @@
 #!/bin/bash
-# 
+#
 # Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
@@ -120,9 +120,19 @@ chroot_build_packages()
 {
 	local built_ok=()
 	local failed=()
-	# only make packages for recent releases. There are no changes on older
-	for release in stretch bionic buster disco; do
-		for arch in armhf arm64; do
+
+	if [[ $IMAGE_TYPE == user-built ]]; then
+		# if user-built image compile only for selected arch/release
+		target_release="$RELEASE"
+		target_arch="$ARCH"
+	else
+		# only make packages for recent releases. There are no changes on older
+		target_release="stretch bionic buster disco"
+		target_arch="armhf arm64"
+	fi
+
+	for release in $target_release; do
+		for arch in $target_arch; do
 			display_alert "Starting package building process" "$release/$arch" "info"
 
 			local target_dir=$SRC/cache/buildpkg/${release}-${arch}-v${CHROOT_CACHE_VERSION}
