@@ -318,8 +318,8 @@ compile_kernel()
 		$SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/Kconfig
 	fi
 
-	# add sunxi-mali
-	if [[ "$SUNXI_MALI" == yes ]]; then
+	# Add sunxi-mali only for sunxi64
+	if [[ $LINUXFAMILY == sunxi64 && "$SUNXI_MALI" == yes ]]; then
 		display_alert "Adding" "Mali drivers for Allwinner SoC" "info"
 
 		cd $SRC/cache/sources/sunxi-mali
