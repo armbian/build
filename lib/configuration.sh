@@ -1,3 +1,5 @@
+#!/bin/bash
+#
 # Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
@@ -10,11 +12,11 @@
 # common options
 # daily beta build contains date in subrevision
 if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
-REVISION="5.86$SUBREVISION" # all boards have same revision
+REVISION="5.88$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 [[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik" # deb signature
 [[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
-TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
+TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
@@ -43,11 +45,12 @@ fi
 [[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
 
 # used by multiple sources - reduce code duplication
-if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
-	MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
-else
-	MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
-fi
+[[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
+case $MAINLINE_MIRROR in
+	google) MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable' ;;
+	tuna) MAINLINE_KERNEL_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git' ;;
+	*) MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git' ;;
+esac
 MAINLINE_KERNEL_DIR='linux-mainline'
 
 if [[ $USE_GITHUB_UBOOT_MIRROR == yes ]]; then
@@ -72,18 +75,18 @@ CAN_BUILD_STRETCH=yes
 #BOOTFS_TYPE=''
 
 # set unique mounting directory
-SDCARD="$SRC/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
-MOUNT="$SRC/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
-DESTIMG="$SRC/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
+SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
+MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
+DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
 
-[[ ! -f $SRC/config/sources/$LINUXFAMILY.conf ]] && \
+[[ ! -f ${SRC}/config/sources/$LINUXFAMILY.conf ]] && \
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 
-source $SRC/config/sources/$LINUXFAMILY.conf
+source "${SRC}/config/sources/${LINUXFAMILY}.conf"
 
-if [[ -f $SRC/userpatches/sources/$LINUXFAMILY.conf ]]; then
+if [[ -f ${SRC}/userpatches/sources/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
-	source $SRC/userpatches/sources/$LINUXFAMILY.conf
+	source "${SRC}/userpatches/sources/${LINUXFAMILY}.conf"
 fi
 
 # dropbear needs to be configured differently
@@ -226,10 +229,15 @@ esac
 DEBIAN_MIRROR='httpredir.debian.org/debian'
 UBUNTU_MIRROR='ports.ubuntu.com/'
 
+if [[ $DOWNLOAD_MIRROR == china ]] ; then
+	DEBIAN_MIRROR='mirrors.tuna.tsinghua.edu.cn/debian'
+	UBUNTU_MIRROR='mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/'
+fi
+
 # For user override
-if [[ -f $SRC/userpatches/lib.config ]]; then
+if [[ -f ${SRC}/userpatches/lib.config ]]; then
 	display_alert "Using user configuration override" "userpatches/lib.config" "info"
-	source $SRC/userpatches/lib.config
+	source "${SRC}"/userpatches/lib.config
 fi
 
 # apt-cacher-ng mirror configurarion
@@ -251,18 +259,18 @@ PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
 if [[ -n $PACKAGE_LIST_RM ]]; then
-	PACKAGE_LIST=$(sed -r "s/\b($(tr ' ' '|' <<< $PACKAGE_LIST_RM))\b//g" <<< $PACKAGE_LIST)
+	PACKAGE_LIST=$(sed -r "s/\b($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\b//g" <<< "${PACKAGE_LIST}")
 fi
 
 # Give the option to configure DNS server used in the chroot during the build process
 [[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
 
 # debug
-cat <<-EOF >> $DEST/debug/output.log
+cat <<-EOF >> "${DEST}"/debug/output.log
 
 ## BUILD SCRIPT ENVIRONMENT
 
-Repository: $(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
+Repository: $(git remote get-url "$(git remote 2>/dev/null)" 2>/dev/null)
 Version: $(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
 
 Host OS: $(lsb_release -sc)
@@ -272,13 +280,13 @@ Virtualization type: $(systemd-detect-virt)
 
 ## Build script directories
 Build directory is located on:
-$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T $SRC)
+$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T "${SRC}")
 
 Build directory permissions:
-$(getfacl -p $SRC)
+$(getfacl -p "${SRC}")
 
 Temp directory permissions:
-$(getfacl -p $SRC/.tmp)
+$(getfacl -p "${SRC}"/.tmp)
 
 ## BUILD CONFIGURATION
 
