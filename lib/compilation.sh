@@ -319,7 +319,7 @@ compile_kernel()
 	fi
 
 	# Add sunxi-mali only for sunxi64
-	if [[ $LINUXFAMILY == sunxi64 && "$SUNXI_MALI" == yes ]]; then
+	if linux-version compare $version ge 3.14 && [[ $LINUXFAMILY == sunxi64 && "$SUNXI_MALI" == yes ]]; then
 		display_alert "Adding" "Mali drivers for Allwinner SoC" "info"
 
 		cd $SRC/cache/sources/sunxi-mali
