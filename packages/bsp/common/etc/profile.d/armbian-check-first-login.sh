@@ -124,7 +124,11 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
 			sleep 1
 			service lightdm start 2>/dev/null
-			(sleep 20; rm /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf) &
+			if [ -f /root/.desktop_autologin ]; then
+				rm /root/.desktop_autologin
+			else
+				(sleep 20; rm /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf) &
+			fi
 			# logout if logged at console
 			[[ -n $(who -la | grep root | grep tty1) ]] && exit 1
 		fi

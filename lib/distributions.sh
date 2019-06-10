@@ -122,6 +122,11 @@ install_common()
 	# display welcome message at first root login
 	touch "${SDCARD}"/root/.not_logged_in_yet
 
+	if [[ ${DESKTOP_AUTOLOGIN} != no ]]; then
+		# set desktop autologin
+		touch "${SDCARD}"/root/.desktop_autologin
+	fi
+
 	# NOTE: this needs to be executed before family_tweaks
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
