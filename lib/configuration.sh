@@ -22,7 +22,8 @@ EXIT_PATCHING_ERROR="" # exit patching if failed
 HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
 ROOTFSCACHE_VERSION=4
 CHROOT_CACHE_VERSION=6
-[[ -z $DISPLAY_MANAGER ]] && DISPLAY_MANAGER=nodm
+BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
+BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
 ROOTFS_CACHE_MAX=16 # max number of rootfs cache, older ones will be cleaned up
 
 # TODO: fixed name can't be used for parallel image building
@@ -136,7 +137,7 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 	iw fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl linux-base dialog crda \
 	wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
 	usbutils wireless-tools console-setup unicode-data openssh-server initramfs-tools \
-	ca-certificates resolvconf expect iptables automake nocache \
+	ca-certificates resolvconf expect iptables automake nocache debconf-utils html2text \
 	bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev"
 
 
@@ -145,7 +146,7 @@ PACKAGE_LIST_ADDITIONAL="armbian-firmware alsa-utils btrfs-tools dosfstools ioto
 	ntfs-3g vim pciutils evtest htop pv lsof libfuse2 libdigest-sha-perl \
 	libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan sysstat bash-completion \
 	hostapd git ethtool network-manager unzip ifenslave command-not-found libpam-systemd iperf3 \
-	software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode"
+	software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode mmc-utils sunxi-tools"
 
 
 # Dependent desktop packages
@@ -153,28 +154,12 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
 	libgtk2.0-bin network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
 	pulseaudio pavumeter bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
-	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme"
+	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic onboard lightdm lightdm-gtk-greeter"
 
 
 # Recommended desktop packages
 PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi cups-pk-helper \
 	cups geany atril xarchiver"
-
-case $DISPLAY_MANAGER in
-	nodm)
-		PACKAGE_LIST_DISPLAY_MANAGER="nodm"
-	;;
-
-	lightdm)
-		PACKAGE_LIST_DISPLAY_MANAGER="lightdm lightdm-gtk-greeter"
-	;;
-
-	*)
-		exit_with_error "Unsupported display manager selected" "$DISPLAY_MANAGER"
-	;;
-esac
-
-
 
 # Release specific packages
 case $RELEASE in
@@ -270,8 +255,8 @@ cat <<-EOF >> "${DEST}"/debug/output.log
 
 ## BUILD SCRIPT ENVIRONMENT
 
-Repository: $(git remote get-url "$(git remote 2>/dev/null)" 2>/dev/null)
-Version: $(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
+Repository: $REPOSITORY_URL
+Version: $REPOSITORY_COMMIT
 
 Host OS: $(lsb_release -sc)
 Host arch: $(dpkg --print-architecture)
