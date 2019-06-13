@@ -1,3 +1,5 @@
+#!/bin/bash
+#
 # Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
@@ -10,17 +12,18 @@
 # common options
 # daily beta build contains date in subrevision
 if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
-REVISION="5.87$SUBREVISION" # all boards have same revision
+REVISION="5.89$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 [[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik" # deb signature
 [[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
-TZDATA=`cat /etc/timezone` # Timezone for target is taken from host or defined here.
+TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
 ROOTFSCACHE_VERSION=4
 CHROOT_CACHE_VERSION=6
-[[ -z $DISPLAY_MANAGER ]] && DISPLAY_MANAGER=nodm
+BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
+BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
 ROOTFS_CACHE_MAX=16 # max number of rootfs cache, older ones will be cleaned up
 
 # TODO: fixed name can't be used for parallel image building
@@ -73,18 +76,18 @@ CAN_BUILD_STRETCH=yes
 #BOOTFS_TYPE=''
 
 # set unique mounting directory
-SDCARD="$SRC/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
-MOUNT="$SRC/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
-DESTIMG="$SRC/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
+SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
+MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
+DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
 
-[[ ! -f $SRC/config/sources/$LINUXFAMILY.conf ]] && \
+[[ ! -f ${SRC}/config/sources/$LINUXFAMILY.conf ]] && \
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 
-source $SRC/config/sources/$LINUXFAMILY.conf
+source "${SRC}/config/sources/${LINUXFAMILY}.conf"
 
-if [[ -f $SRC/userpatches/sources/$LINUXFAMILY.conf ]]; then
+if [[ -f ${SRC}/userpatches/sources/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
-	source $SRC/userpatches/sources/$LINUXFAMILY.conf
+	source "${SRC}/userpatches/sources/${LINUXFAMILY}.conf"
 fi
 
 # dropbear needs to be configured differently
@@ -134,7 +137,7 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 	iw fake-hwclock wpasupplicant psmisc ntp parted rsync sudo curl linux-base dialog crda \
 	wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
 	usbutils wireless-tools console-setup unicode-data openssh-server initramfs-tools \
-	ca-certificates resolvconf expect iptables automake nocache \
+	ca-certificates resolvconf expect iptables automake nocache debconf-utils html2text \
 	bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev"
 
 
@@ -143,7 +146,7 @@ PACKAGE_LIST_ADDITIONAL="armbian-firmware alsa-utils btrfs-tools dosfstools ioto
 	ntfs-3g vim pciutils evtest htop pv lsof libfuse2 libdigest-sha-perl \
 	libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan sysstat bash-completion \
 	hostapd git ethtool network-manager unzip ifenslave command-not-found libpam-systemd iperf3 \
-	software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode"
+	software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode mmc-utils sunxi-tools"
 
 
 # Dependent desktop packages
@@ -151,28 +154,12 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
 	libgtk2.0-bin network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
 	pulseaudio pavumeter bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
-	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme"
+	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic onboard lightdm lightdm-gtk-greeter"
 
 
 # Recommended desktop packages
 PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi cups-pk-helper \
 	cups geany atril xarchiver"
-
-case $DISPLAY_MANAGER in
-	nodm)
-		PACKAGE_LIST_DISPLAY_MANAGER="nodm"
-	;;
-
-	lightdm)
-		PACKAGE_LIST_DISPLAY_MANAGER="lightdm lightdm-gtk-greeter"
-	;;
-
-	*)
-		exit_with_error "Unsupported display manager selected" "$DISPLAY_MANAGER"
-	;;
-esac
-
-
 
 # Release specific packages
 case $RELEASE in
@@ -233,9 +220,9 @@ if [[ $DOWNLOAD_MIRROR == china ]] ; then
 fi
 
 # For user override
-if [[ -f $SRC/userpatches/lib.config ]]; then
+if [[ -f ${SRC}/userpatches/lib.config ]]; then
 	display_alert "Using user configuration override" "userpatches/lib.config" "info"
-	source $SRC/userpatches/lib.config
+	source "${SRC}"/userpatches/lib.config
 fi
 
 # apt-cacher-ng mirror configurarion
@@ -257,19 +244,19 @@ PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
 if [[ -n $PACKAGE_LIST_RM ]]; then
-	PACKAGE_LIST=$(sed -r "s/\b($(tr ' ' '|' <<< $PACKAGE_LIST_RM))\b//g" <<< $PACKAGE_LIST)
+	PACKAGE_LIST=$(sed -r "s/\b($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\b//g" <<< "${PACKAGE_LIST}")
 fi
 
 # Give the option to configure DNS server used in the chroot during the build process
 [[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
 
 # debug
-cat <<-EOF >> $DEST/debug/output.log
+cat <<-EOF >> "${DEST}"/debug/output.log
 
 ## BUILD SCRIPT ENVIRONMENT
 
-Repository: $(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
-Version: $(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
+Repository: $REPOSITORY_URL
+Version: $REPOSITORY_COMMIT
 
 Host OS: $(lsb_release -sc)
 Host arch: $(dpkg --print-architecture)
@@ -278,13 +265,13 @@ Virtualization type: $(systemd-detect-virt)
 
 ## Build script directories
 Build directory is located on:
-$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T $SRC)
+$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T "${SRC}")
 
 Build directory permissions:
-$(getfacl -p $SRC)
+$(getfacl -p "${SRC}")
 
 Temp directory permissions:
-$(getfacl -p $SRC/.tmp)
+$(getfacl -p "${SRC}"/.tmp)
 
 ## BUILD CONFIGURATION
 

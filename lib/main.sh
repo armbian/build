@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
@@ -10,9 +12,11 @@
 # Main program
 #
 
-if [[ $(basename $0) == main.sh ]]; then
+if [[ $(basename "$0") == main.sh ]]; then
+
 	echo "Please use compile.sh to start the build process"
-	exit -1
+	exit 255
+
 fi
 
 # default umask for root is 022 so parent directories won't be group writeable without this
@@ -22,8 +26,8 @@ umask 002
 # destination
 DEST=$SRC/output
 
-TTY_X=$(($(stty size | awk '{print $2}')-6)) # determine terminal width
-TTY_Y=$(($(stty size | awk '{print $1}')-6)) # determine terminal height
+TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
+TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
 
 # We'll use this title on all menus
 backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
@@ -37,40 +41,57 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 [[ -z $FORCE_CHECKOUT ]] && FORCE_CHECKOUT=yes
 
 # Load libraries
-source $SRC/lib/debootstrap-ng.sh 			# System specific install
-source $SRC/lib/image-helpers.sh			# helpers for OS image building
-source $SRC/lib/distributions.sh 			# System specific install
-source $SRC/lib/desktop.sh 					# Desktop specific install
-source $SRC/lib/compilation.sh 				# Patching and compilation of kernel, uboot, ATF
-source $SRC/lib/makeboarddeb.sh 			# Create board support package
-source $SRC/lib/general.sh				# General functions
-source $SRC/lib/chroot-buildpackages.sh			# Building packages in chroot
+# shellcheck source=debootstrap-ng.sh
+source "${SRC}"/lib/debootstrap-ng.sh 						# system specific install
+# shellcheck source=image-helpers.sh
+source "${SRC}"/lib/image-helpers.sh						# helpers for OS image building
+# shellcheck source=distributions.sh
+source "${SRC}"/lib/distributions.sh						# system specific install
+# shellcheck source=desktop.sh
+source "${SRC}"/lib/desktop.sh							# desktop specific install
+# shellcheck source=compilation.sh
+source "${SRC}"/lib/compilation.sh						# patching and compilation of kernel, uboot, ATF
+# shellcheck source=makeboarddeb.sh
+source "${SRC}"/lib/makeboarddeb.sh						# create board support package
+# shellcheck source=general.sh
+source "${SRC}"/lib/general.sh							# general functions
+# shellcheck source=chroot-buildpackages.sh
+source "${SRC}"/lib/chroot-buildpackages.sh					# building packages in chroot
 
 # compress and remove old logs
-mkdir -p $DEST/debug
-(cd $DEST/debug && tar -czf logs-$(<timestamp).tgz *.log) > /dev/null 2>&1
-rm -f $DEST/debug/*.log > /dev/null 2>&1
-date +"%d_%m_%Y-%H_%M_%S" > $DEST/debug/timestamp
+mkdir -p "${DEST}"/debug
+(cd "${DEST}"/debug && tar -czf logs-"$(<timestamp)".tgz ./*.log) > /dev/null 2>&1
+rm -f "${DEST}"/debug/*.log > /dev/null 2>&1
+date +"%d_%m_%Y-%H_%M_%S" > "${DEST}"/debug/timestamp
 # delete compressed logs older than 7 days
-(cd $DEST/debug && find . -name '*.tgz' -mtime +7 -delete) > /dev/null
+(cd "${DEST}"/debug && find . -name '*.tgz' -mtime +7 -delete) > /dev/null
 
 if [[ $PROGRESS_DISPLAY == none ]]; then
+
 	OUTPUT_VERYSILENT=yes
+
 elif [[ $PROGRESS_DISPLAY == dialog ]]; then
+
 	OUTPUT_DIALOG=yes
+
 fi
+
 if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
 
 SHOW_WARNING=yes
 
 if [[ $USE_CCACHE != no ]]; then
+
 	CCACHE=ccache
 	export PATH="/usr/lib/ccache:$PATH"
 	# private ccache directory to avoid permission issues when using build script with "sudo"
 	# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
 	[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache
+
 else
+
 	CCACHE=""
+
 fi
 
 # Check and install dependencies, directory structure and settings
@@ -79,52 +100,61 @@ prepare_host
 # if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
 if [[ -z $KERNEL_ONLY ]]; then
+
 	options+=("yes" "U-boot and kernel packages")
 	options+=("no" "Full OS image for flashing")
-	KERNEL_ONLY=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select what to build" \
-		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+	KERNEL_ONLY=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
+	--menu "Select what to build" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected"
 
 fi
 
 if [[ -z $KERNEL_CONFIGURE ]]; then
+
 	options+=("no" "Do not change the kernel configuration")
 	options+=("yes" "Show a kernel configuration menu before compilation")
-	KERNEL_CONFIGURE=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select the kernel configuration" \
-		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+	KERNEL_CONFIGURE=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
+	--menu "Select the kernel configuration" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $KERNEL_CONFIGURE ]] && exit_with_error "No option selected"
 
 fi
 
 if [[ -z $BOARD ]]; then
+
 	WIP_STATE=supported
 	WIP_BUTTON='CSC/WIP/EOS/TVB'
 	STATE_DESCRIPTION=' - boards with high level of software maturity'
 	temp_rc=$(mktemp)
+
 	while true; do
 		options=()
 		if [[ $WIP_STATE == supported ]]; then
-			for board in $SRC/config/boards/*.conf; do
-				options+=("$(basename $board | cut -d'.' -f1)" "$(head -1 $board | cut -d'#' -f2)")
+
+			for board in "${SRC}"/config/boards/*.conf; do
+				options+=("$(basename "${board}" | cut -d'.' -f1)" "$(head -1 "${board}" | cut -d'#' -f2)")
 			done
+
 		else
-			for board in $SRC/config/boards/*.wip; do
-				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(WIP)\Zn $(head -1 $board | cut -d'#' -f2)")
+
+			for board in "${SRC}"/config/boards/*.wip; do
+				options+=("$(basename "${board}" | cut -d'.' -f1)" "\Z1(WIP)\Zn $(head -1 "${board}" | cut -d'#' -f2)")
 			done
-			for board in $SRC/config/boards/*.csc; do
-				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(CSC)\Zn $(head -1 $board | cut -d'#' -f2)")
+			for board in "${SRC}"/config/boards/*.csc; do
+				options+=("$(basename "${board}" | cut -d'.' -f1)" "\Z1(CSC)\Zn $(head -1 "${board}" | cut -d'#' -f2)")
 			done
-			for board in $SRC/config/boards/*.eos; do
-				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(EOS)\Zn $(head -1 $board | cut -d'#' -f2)")
+			for board in "${SRC}"/config/boards/*.eos; do
+				options+=("$(basename "${board}" | cut -d'.' -f1)" "\Z1(EOS)\Zn $(head -1 "${board}" | cut -d'#' -f2)")
 			done
-			for board in $SRC/config/boards/*.tvb; do
-				options+=("$(basename $board | cut -d'.' -f1)" "\Z1(TVB)\Zn $(head -1 $board | cut -d'#' -f2)")
+			for board in "${SRC}"/config/boards/*.tvb; do
+				options+=("$(basename "${board}" | cut -d'.' -f1)" "\Z1(TVB)\Zn $(head -1 "${board}" | cut -d'#' -f2)")
 			done
+
 		fi
+
 		if [[ $WIP_STATE != supported ]]; then
-			cat <<-'EOF' > $temp_rc
+			cat <<-'EOF' > "${temp_rc}"
 			dialog_color = (RED,WHITE,OFF)
 			screen_color = (WHITE,RED,ON)
 			tag_color = (RED,WHITE,ON)
@@ -133,24 +163,29 @@ if [[ -z $BOARD ]]; then
 			tag_key_selected_color = (WHITE,RED,ON)
 			EOF
 		else
-			echo > $temp_rc
+			echo > "${temp_rc}"
 		fi
-		BOARD=$(DIALOGRC=$temp_rc dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar --colors \
-			--extra-label "Show $WIP_BUTTON" --extra-button --menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" \
-			$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+		BOARD=$(DIALOGRC=$temp_rc dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar \
+			--colors --extra-label "Show $WIP_BUTTON" --extra-button \
+			--menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 		STATUS=$?
 		if [[ $STATUS == 3 ]]; then
 			if [[ $WIP_STATE == supported ]]; then
+
 				[[ $SHOW_WARNING == yes ]] && show_developer_warning
-				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress\n - \Z1(EOS)\Zn - End Of Support\n - \Z1(TVB)\Zn - TV boxes'
+				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress 
+				\n - \Z1(EOS)\Zn - End Of Support\n - \Z1(TVB)\Zn - TV boxes'
 				WIP_STATE=unsupported
 				WIP_BUTTON='matured'
 				EXPERT=yes
+
 			else
+
 				STATE_DESCRIPTION=' - boards with high level of software maturity'
 				WIP_STATE=supported
 				WIP_BUTTON='CSC/WIP/EOS'
 				EXPERT=no
+
 			fi
 			continue
 		elif [[ $STATUS == 0 ]]; then
@@ -173,12 +208,14 @@ elif [[ -f $SRC/config/boards/${BOARD}.tvb ]]; then
 	BOARD_TYPE='tvb'
 fi
 
-source $SRC/config/boards/${BOARD}.${BOARD_TYPE}
+# shellcheck source=/dev/null
+source "${SRC}/config/boards/${BOARD}.${BOARD_TYPE}"
 LINUXFAMILY="${BOARDFAMILY}"
 
 [[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
 
 if [[ -z $BRANCH ]]; then
+
 	options=()
 	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy (3.4.x - 4.4.x)")
 	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)   (4.x)")
@@ -189,16 +226,20 @@ if [[ -z $BRANCH ]]; then
 	else
 		BRANCH=$(dialog --stdout --title "Choose a kernel" --backtitle "$backtitle" --colors \
 			--menu "Select the target kernel branch\nExact kernel versions depend on selected board" \
-			$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+			$TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	fi
 	unset options
 	[[ -z $BRANCH ]] && exit_with_error "No kernel branch selected"
 	[[ $BRANCH == dev && $SHOW_WARNING == yes ]] && show_developer_warning
+
 else
+
 	[[ $KERNEL_TARGET != *$BRANCH* ]] && exit_with_error "Kernel branch not defined for this board" "$BRANCH"
+
 fi
 
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
+
 	options=()
 	[[ $EXPERT = yes ]] && options+=("jessie" "Debian 8 Jessie / unsupported")
 	options+=("stretch" "Debian 9 Stretch")
@@ -207,33 +248,41 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	options+=("bionic" "Ubuntu Bionic 18.04 LTS")
 	[[ $EXPERT = yes ]] && options+=("disco" "Ubuntu Disco 19.04 / unsupported")
 
-	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" --menu "Select the target OS release" \
-		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" \
+	--menu "Select the target OS release" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $RELEASE ]] && exit_with_error "No release selected"
+
 fi
 
 if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
+
 	options=()
 	options+=("no" "Image with console interface (server)")
 	options+=("yes" "Image with desktop environment")
-	BUILD_DESKTOP=$(dialog --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags --menu "Select the target image type" \
-		$TTY_Y $TTY_X $(($TTY_Y - 8)) "${options[@]}")
+	BUILD_DESKTOP=$(dialog --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags \
+	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
+
 fi
 
-source $SRC/lib/configuration.sh
+#shellcheck source=configuration.sh
+source "${SRC}"/lib/configuration.sh
 
 # optimize build time with 100% CPU usage
 CPUS=$(grep -c 'processor' /proc/cpuinfo)
 if [[ $USEALLCORES != no ]]; then
-	CTHREADS="-j$(($CPUS + $CPUS/2))"
+
+	CTHREADS="-j$((CPUS + CPUS/2))"
+
 else
+
 	CTHREADS="-j1"
+
 fi
 
-start=`date +%s`
+start=$(date +%s)
 
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 
@@ -286,7 +335,7 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 done
 
 # Compile u-boot if packed .deb does not exist
-if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+if [[ ! -f ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 	if [[ -n $ATFSOURCE ]]; then
 		compile_atf
 	fi
@@ -294,25 +343,17 @@ if [[ ! -f $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 fi
 
 # Compile kernel if packed .deb does not exist
-if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+if [[ ! -f ${DEST}/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 	compile_kernel
 fi
 
 overlayfs_wrapper "cleanup"
 
-# extract kernel version
-if [[ -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb && $BUILD_ALL != yes ]]; then
-	VER=$(dpkg --info $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}' | sed "s/-$LINUXFAMILY//")
-else
-	VER=$(grep -E "^VERSION|^PATCHLEVEL|^SUBLEVEL" $SRC/cache/sources/$LINUXSOURCEDIR/Makefile | awk '{print $(NF)}' | paste -sd "." -)
-fi
+# extract kernel version from .deb package
+VER=$(dpkg --info "${DEST}/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
+VER="${VER/-$LINUXFAMILY/}"
 
-# extract u-boot version
-if [[ -f  $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb && $BUILD_ALL != yes ]]; then
-	UBOOT_VER=$(dpkg --info $DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb | grep Descr | awk '{print $(NF)}')
-else
-	UBOOT_VER=$(grep -E "^VERSION|^PATCHLEVEL" $SRC/cache/sources/$BOOTSOURCEDIR/Makefile | awk '{print $(NF)}' | paste -sd "." -)
-fi
+UBOOT_VER=$(dpkg --info "${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 
 # create board support package
 [[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
@@ -335,8 +376,14 @@ fi
 # NOTE: this will run only if there were no errors during build process
 [[ $(type -t run_after_build) == function ]] && run_after_build || true
 
-end=`date +%s`
+end=$(date +%s)
 runtime=$(((end-start)/60))
 display_alert "Runtime" "$runtime min" "info"
+
 # Make it easy to repeat build by displaying build options used
-display_alert "Repeat Build Options" "BOARD=${BOARD} BRANCH=${BRANCH} RELEASE=${RELEASE} BUILD_DESKTOP=${BUILD_DESKTOP} KERNEL_ONLY=${KERNEL_ONLY} KERNEL_CONFIGURE=no" "info"
+display_alert "Repeat Build Options" "./compile.sh BOARD=${BOARD} BRANCH=${BRANCH} \
+$([[ -n $RELEASE ]] && echo "RELEASE=${RELEASE} ")\
+$([[ -n $BUILD_DESKTOP ]] && echo "BUILD_DESKTOP=${BUILD_DESKTOP} ")\
+$([[ -n $KERNEL_ONLY ]] && echo "KERNEL_ONLY=${KERNEL_ONLY} ")\
+$([[ -n $KERNEL_CONFIGURE ]] && echo "KERNEL_CONFIGURE=${KERNEL_CONFIGURE} ")\
+" "info"
