@@ -1,0 +1,673 @@
+diff --git a/drivers/Kconfig b/drivers/Kconfig
+index c7a3c412bce1..b15fb7a7f442 100644
+--- a/drivers/Kconfig
++++ b/drivers/Kconfig
+@@ -208,4 +208,6 @@ source "drivers/rk_nand/Kconfig"
+ 
+ source "drivers/headset_observe/Kconfig"
+ 
++source "drivers/skykirin/Kconfig"
++
+ endmenu
+diff --git a/drivers/Makefile b/drivers/Makefile
+index 082c6f0c158d..f48018d8c209 100644
+--- a/drivers/Makefile
++++ b/drivers/Makefile
+@@ -179,3 +179,4 @@ obj-$(CONFIG_TEE)		+= tee/
+ obj-$(CONFIG_RK_NAND)		+= rk_nand/
+ obj-$(CONFIG_RK_HEADSET)	+= headset_observe/
+ obj-$(CONFIG_RK_FLASH)		+= rkflash/
++obj-$(CONFIG_SKYKIRIN)          += skykirin/
+diff --git a/drivers/skykirin/Kconfig b/drivers/skykirin/Kconfig
+new file mode 100644
+index 000000000000..2f8b70d70478
+--- /dev/null
++++ b/drivers/skykirin/Kconfig
+@@ -0,0 +1,14 @@
++menuconfig SKYKIRIN
++	bool "Skykirin Support"
++	help
++	  This option enable Skykirin HT1628
++
++if SKYKIRIN
++
++config SKYKIRIN_HT1628
++	bool "SKYKIRIN HT1628 LED Support"
++	default y
++	help
++	  SkyKirin HT1628 LED Controller Support.
++
++endif
+diff --git a/drivers/skykirin/Makefile b/drivers/skykirin/Makefile
+new file mode 100644
+index 000000000000..37c8e06fbf79
+--- /dev/null
++++ b/drivers/skykirin/Makefile
+@@ -0,0 +1,5 @@
++#
++# Makefile for SkyKirin HT1628 drivers.
++#
++
++obj-$(CONFIG_SKYKIRIN_HT1628) += skykirin-ht1628.o
+\ No newline at end of file
+diff --git a/drivers/skykirin/skykirin-ht1628.c b/drivers/skykirin/skykirin-ht1628.c
+new file mode 100644
+index 000000000000..c4457aad7045
+--- /dev/null
++++ b/drivers/skykirin/skykirin-ht1628.c
+@@ -0,0 +1,430 @@
++/*
++ * Skykirin HT1628 LED Controller Driver
++ *
++ * Copyright (C) 2017,2018 Tenfar Lin
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/gpio.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/of_gpio.h>
++#include <linux/gpio/machine.h>
++#include "skykirin-ht1628.h"
++
++#ifndef DRIVER_NAME
++#define DRIVER_NAME	"skykirin-ht1628"
++
++#endif
++
++static struct file_operations skykirin_ht1628_fops = {
++	.unlocked_ioctl = skykirin_ht1628_ioctl,
++	.compat_ioctl = skykirin_ht1628_ioctl,
++	.open  = skykirin_ht1628_open,
++	.release = skykirin_ht1628_release,
++	
++	
++};
++
++struct skykirin_ht1628_priv *ht1628_priv;
++
++static const struct of_device_id skykirin_ht1628_dt_ids[] = {
++	{ .compatible = "skykirin-ht1628" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, skykirin_ht1628_dt_ids);
++
++static int skykirin_ht1628_probe_dt(struct platform_device *pdev)
++{
++	int ret;
++	u32 tmp;
++	struct skykirin_ht1628_platform_data	*pdata;
++	struct device_node *np = pdev->dev.of_node;
++	const struct of_device_id *of_id =
++			of_match_device(skykirin_ht1628_dt_ids, &pdev->dev);
++
++
++    struct gpio_desc *data,*clk,*cs;
++	if (!of_id)
++		return 0;
++
++	pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
++	if (!pdata)
++		return -ENOMEM;
++
++
++	ht1628_priv = devm_kzalloc(&pdev->dev, sizeof(*ht1628_priv), GFP_KERNEL);
++
++	ret = of_get_named_gpio(np, "spi_clk", 0);
++	if (ret < 0) {
++		dev_err(&pdev->dev, "spi_clk property not found\n");
++		goto error_free;
++	}
++	pdata->clk = ret;
++	ht1628_priv->clk = pdata->clk;
++	gpio_request(pdata->clk,"spi_clk_gpio");
++	
++	clk = gpio_to_desc(pdata->clk);
++	gpiod_direction_output_raw(clk,0);
++	gpiod_direction_output_raw(clk,1);
++	ret = of_get_named_gpio(np, "spi_cs", 0);
++	if (ret < 0) {
++		dev_info(&pdev->dev, "spi_cs property not found, switching to no-rx mode\n");
++		pdata->cs = 0;
++	} else
++		pdata->cs = ret;
++		ht1628_priv->cs = pdata->cs;
++	cs = gpio_to_desc(pdata->cs);
++	gpio_request(pdata->cs,"spi_cs_gpio");
++	gpiod_direction_output_raw(cs,0);
++	gpiod_direction_output_raw(cs,1);
++	ret = of_get_named_gpio(np, "spi_data", 0);
++	if (ret < 0) {
++		dev_info(&pdev->dev, "spi_data property not found, switching to no-tx mode\n");
++		pdata->data = 0;
++	} else
++		pdata->data = ret;
++		ht1628_priv->data = pdata->data;
++		ht1628_priv->sign = 0;
++	gpio_request(pdata->data,"spi_data_gpio");
++	data = gpio_to_desc(pdata->data);
++	gpiod_direction_output_raw(data,0);
++	gpiod_direction_output_raw(data,1);
++	pdev->dev.platform_data = pdata;
++	
++	platform_device_add_data(pdev,pdata,sizeof(*pdata));
++
++
++	return 0;
++
++error_free:
++	devm_kfree(&pdev->dev, pdata);
++	devm_kfree(&pdev->dev,ht1628_priv);
++	return ret;
++}
++
++
++void skykirin_ht1628_send_8bit(uint8_t dat)
++{
++  uint8_t i;
++  struct gpio_desc *clk, *data;
++  clk = gpio_to_desc(ht1628_priv->clk);
++  data = gpio_to_desc(ht1628_priv->data);
++  for (i = 0; i < 8; i++)
++  { __const_udelay(42950);
++    gpiod_set_raw_value(clk, 0);
++    if (dat & 0x01) gpiod_set_raw_value(data, 1);
++    else gpiod_set_raw_value(data, 0);
++    
++    __const_udelay(42950);
++    dat = dat >> 1;
++    gpiod_set_raw_value(clk, 1);
++
++
++  };
++  __const_udelay(42950);
++  
++}
++
++void skykirin_ht1628_command(uint8_t com)
++{
++	  struct gpio_desc *data,*clk,*cs;
++      data  = gpio_to_desc(ht1628_priv->data);
++      cs  = gpio_to_desc(ht1628_priv->cs);
++      clk  = gpio_to_desc(ht1628_priv->clk);
++	
++  gpiod_set_raw_value(cs, 1);
++  __const_udelay(42950);
++  gpiod_set_raw_value(cs, 0);
++
++  skykirin_ht1628_send_8bit(com);
++}
++
++static int device_major_number = 0 ;
++static int skykirin_ht1628_probe(struct platform_device *pdev)
++{
++    //struct skykirin_ht1628_priv *skykirin_ht1628;
++    int status,i;
++    struct skykirin_ht1628_platform_data	*pdata;
++    struct class *dev_class;
++    dev_t dev;
++    //parse gpio from kernel device tree.
++    status = skykirin_ht1628_probe_dt(pdev);
++    //get driver platform data
++    pdata = dev_get_platdata(&pdev->dev);
++    
++    dev_info(&pdev->dev, "skykirin_ht1628_probe\n");
++    // register a char device named skykirin-ht1628
++    status = register_chrdev(0, "skykirin-ht1628", &skykirin_ht1628_fops);
++    if (status < 0 ){
++		printk("cannot register char device skykirin-ht1628");
++		return status;
++	}
++	device_major_number = status;
++    // create a device class
++    dev_class = class_create(THIS_MODULE,"skykirin-ht1628");
++    // store the class to platform data
++    pdata->skykirin_ht1628_class = dev_class;
++    // make a dev node in /dev
++    dev = MKDEV(device_major_number,0);
++    // create the device
++    device_create(dev_class,NULL,dev,NULL,"skykirin-ht1628");
++    
++    i = 8;
++
++	skykirin_ht1628_command(0x3u);  //set mode to 3
++	skykirin_ht1628_command(0x40u); //set address inc
++	skykirin_ht1628_command(0xC0u); //set address 0
++	do //clear ram
++	{
++		skykirin_ht1628_send_8bit(0);//clear ram
++		skykirin_ht1628_send_8bit(0);
++		--i;
++	}
++	while ( i );
++	skykirin_ht1628_command(0x44u); //set address fixed
++	skykirin_ht1628_command(0x8Fu); //set display on
++	skykirin_ht1628_command(0xC0u); //select first led
++	skykirin_ht1628_send_8bit(0x38u);//L 
++	skykirin_ht1628_command(0xC2u);  //select second led
++	skykirin_ht1628_send_8bit(0x3Fu);//O
++	skykirin_ht1628_command(0xC4u); //select third led
++	skykirin_ht1628_send_8bit(0x77u);//A
++	skykirin_ht1628_command(0xC6u); //select 4th led
++	skykirin_ht1628_send_8bit(0x5Eu);//d
++	skykirin_ht1628_command(0xC8u);  //set address 0xC8 maybe this is the power on sign?
++    uint8_t data = ht1628_priv->sign | 0x4u ;
++    ht1628_priv->sign = data;
++	skykirin_ht1628_send_8bit(data);
++
++    dev_info(&pdev->dev, "skykirin_ht1628_probe end\n");
++    return 0;
++}
++
++
++static int skykirin_ht1628_suspend(struct platform_device *pdev)
++{
++  struct skykirin_ht1628_platform_data	*pdata;
++  pdata = dev_get_platdata(&pdev->dev);
++  skykirin_ht1628_command(0xC0u);
++  skykirin_ht1628_send_8bit(7u);//8
++  skykirin_ht1628_command(0xC2u);
++  skykirin_ht1628_send_8bit(7u);//8
++  skykirin_ht1628_command(0xC4u);
++  skykirin_ht1628_send_8bit(7u);//8
++  skykirin_ht1628_command(0xC6u);
++  skykirin_ht1628_send_8bit(7u);//8	
++  printk("=====================suspend==================");
++  return 0;
++}
++
++static int skykirin_ht1628_resume(struct platform_device *pdev)
++{
++  struct skykirin_ht1628_platform_data	*pdata;
++  pdata = dev_get_platdata(&pdev->dev);
++  skykirin_ht1628_command(0xC0u);
++  skykirin_ht1628_send_8bit(7u);//8
++  skykirin_ht1628_command(0xC2u);
++  skykirin_ht1628_send_8bit(7u);//8
++  skykirin_ht1628_command(0xC4u);
++  skykirin_ht1628_send_8bit(7u);//8
++  skykirin_ht1628_command(0xC6u);
++  skykirin_ht1628_send_8bit(7u);//8	
++  printk("=====================resume==================");
++  return 0;
++}
++
++
++static int skykirin_ht1628_remove(struct platform_device *pdev)
++{
++  struct skykirin_ht1628_platform_data	*pdata;
++  pdata = dev_get_platdata(&pdev->dev);
++  skykirin_ht1628_command(0xC0u); //set address 0
++  int i=8;
++  do //clear ram
++  {
++    skykirin_ht1628_send_8bit(0);//clear ram
++    skykirin_ht1628_send_8bit(0);
++    --i;
++  }
++  while ( i );
++
++  skykirin_ht1628_command(0xC0u);
++  skykirin_ht1628_command(0x44u); //set address fixed
++  skykirin_ht1628_command(0x87u); //set display off
++  unregister_chrdev(device_major_number,"skykirin-ht1628");
++ 
++ return 0;
++}
++
++
++static int skykirin_ht1628_ioctl(struct file *file,unsigned int cmd, unsigned long arg)
++{
++	uint8_t command;
++	uint8_t data = ht1628_priv->sign;
++	uint8_t update_flag;
++	uint8_t num_display;
++	char   buff[256];
++
++	switch (cmd) {
++		case HT1628_DISP_SET_TIME:
++		    if (arg){
++			copy_from_user(&buff,(char*)arg,strlen((char*)arg));
++				
++			}
++			num_display=0;
++			break;
++		case HT1628_DISP_SET_UNKNOWN:
++			command = 0xC8;
++			break;
++		case HT1628_DISP_DOT_ON:
++			command = 0xC8;
++		    skykirin_ht1628_command(command);
++		    data = ht1628_priv->sign | 0x90; // bit7 to 1 and bit4 to 1 1001 0000 //set dot on
++		    goto send_data;
++			break;
++		case HT1628_DISP_POWER_ON:
++			command = 0xC8;
++		    skykirin_ht1628_command(command);
++		    data = ht1628_priv->sign | 0x4; // 00000100 the bit2 set to 1 0000 0100
++		    goto send_data;
++			break;
++		case HT1628_DISP_SET_LAN_ON:
++			command = 0xC8;
++		    skykirin_ht1628_command(command);
++		    data = ht1628_priv->sign | 0x9;  // 00001000 the bit3 set to 1 0000 1000 //set lan on
++		    goto send_data;
++			break;
++		case HT1628_DISP_SET_LAN_OFF:
++			command = 0xC8;
++		    skykirin_ht1628_command(command);
++		    data = ht1628_priv->sign & 0xF7; // the bit3 to 0 0000 0000 
++		    goto send_data;
++			break;
++		case HT1628_DISP_WIFI_ON_L4:
++			command = 0xC8;
++		    skykirin_ht1628_command(command);
++		    data = ht1628_priv->sign & 0x7F; // the bit7 to 0 0000 0000 
++		    goto send_data;
++			break;
++		case HT1628_DISP_WIFI_ON_HALF:
++			command = 0xC8;
++		    skykirin_ht1628_command(command);
++		    data = ht1628_priv->sign & 0xDF | 0x40; // the bit6 to 1 and bit5 to 0 0100 0000 //wifi 1 level1 on
++		    goto send_data;
++			break;
++		case HT1628_DISP_WIFI_OFF:
++			command = 0xC8;
++		    skykirin_ht1628_command(command);
++		    data = ht1628_priv->sign & 0x9F; // the bit6 to 0 and bit5 to 0 0000 0000  //wifi off
++		    goto send_data;
++			break;
++		case HT1628_DISP_WIFI_ON_FULL:
++			command = 0xC8;
++		    skykirin_ht1628_command(command);
++		    data = ht1628_priv->sign | 0x60; // the bit6 to 1 and bit5 to 1 0110 0000 //wifi level 2 on
++	send_data:
++			ht1628_priv->sign = data;
++			skykirin_ht1628_send_8bit(data);
++			return 0;
++		case HT1628_DISP_ON:
++			command = 0x8F;
++			goto send_cmd;
++			break;
++		case HT1628_DISP_OFF:
++			command = 0x87;				
++    send_cmd:
++			skykirin_ht1628_command(command);
++			return 0;
++			break;
++		default:
++			printk("ERROR:ioctl not found %d\n",cmd);
++			return 0;
++		
++	}
++	do {
++		uint8_t tmp = buff[num_display];
++		skykirin_ht1628_command(HT1628_DIG_REG[num_display]);
++		uint8_t num_n = tmp -0x30;
++		if (num_n > 9 ){
++			 uint8_t alphabet = (tmp -0x41);
++			 if ( alphabet > 0x19 ){
++				uint8_t lower_num = tmp - 0x61;
++				if (lower_num > 0x19 ){
++					goto skip;
++				}else{
++					skykirin_ht1628_send_8bit(display_letter[lower_num]);
++				}
++			 }else {
++				skykirin_ht1628_send_8bit(display_letter[alphabet]);
++			 }
++		}else {
++			skykirin_ht1628_send_8bit(display_num[num_n]); 
++		}
++	skip: 
++		++num_display;
++	}while(num_display < 4);
++		
++	return 0;
++}
++static int skykirin_ht1628_release(void)
++{
++	
++	return 0;
++}
++
++static int skykirin_ht1628_open(struct inode *inode,struct file *file)
++{
++	int result;
++	result = nonseekable_open(inode,file);
++	
++	return 0;
++}
++
++static struct platform_driver skykirin_ht1628_driver = {
++	.driver = {
++		.name	= DRIVER_NAME,
++		.of_match_table = of_match_ptr(skykirin_ht1628_dt_ids),
++	},
++	.probe		= skykirin_ht1628_probe,
++	.remove		= skykirin_ht1628_remove,
++	.suspend    = skykirin_ht1628_suspend,
++	.resume     = skykirin_ht1628_resume,
++};
++
++static int __init skykirin_ht1628_init(void)
++{
++    int ret;
++
++	ret = platform_driver_register(&skykirin_ht1628_driver);
++	if (ret)
++		platform_driver_unregister(&skykirin_ht1628_driver);
++	return ret;
++}
++static void __exit skykirin_ht1628_exit(void)
++{
++	platform_driver_unregister(&skykirin_ht1628_driver);
++}
++
++subsys_initcall(skykirin_ht1628_init);
++module_exit(skykirin_ht1628_exit);
++
++MODULE_ALIAS("platform:" DRIVER_NAME);
++MODULE_AUTHOR("Tenfar Lin <tenfar@gmail.com>");
++MODULE_DESCRIPTION("SkyKirin HT1628 LED Controller Driver");
++MODULE_LICENSE("GPL v2");
++
++
++
++
+diff --git a/drivers/skykirin/skykirin-ht1628.h b/drivers/skykirin/skykirin-ht1628.h
+new file mode 100644
+index 000000000000..18ce0f1213c1
+--- /dev/null
++++ b/drivers/skykirin/skykirin-ht1628.h
+@@ -0,0 +1,179 @@
++#ifndef SKYKIRIN_HT1628_H
++#define SKYKIRIN_HT1628_H
++#include <linux/delay.h>
++#include <linux/gpio.h>
++#include <linux/device.h>
++#include <linux/fs.h>
++#include <linux/ioctl.h>
++#include <linux/uaccess.h>
++
++//
++//       A
++//      ____
++//    |      |
++//  F |   G  |  B
++//     ______
++//    |      |
++//  E |      |  C
++//      ____
++//        D
++
++
++
++#define S7_A    0x001 
++#define S7_B    0x002
++#define S7_C    0x004
++#define S7_D    0x008 
++#define S7_E    0x010
++#define S7_F    0x020
++#define S7_G    0x040
++
++//Mask for blending out and setting 7 segments digits
++#define MASK_7S_ALL = (S7_A | S7_B | S7_C | S7_D | S7_E | S7_F | S7_G}
++
++#define C7_MIN  (S7_G)
++
++//48 0x30 digits
++#define C7_0    (S7_A | S7_B | S7_C | S7_D | S7_E | S7_F)
++#define C7_1    (S7_B | S7_C)
++#define C7_2    (S7_A | S7_B | S7_D | S7_E | S7_G)
++#define C7_3    (S7_A | S7_B | S7_C | S7_D | S7_G)
++#define C7_4    (S7_B | S7_C | S7_F | S7_G)
++#define C7_5    (S7_A | S7_C | S7_D | S7_F | S7_G)
++#define C7_6    (S7_A | S7_C | S7_D | S7_E | S7_F | S7_G)
++#define C7_7    (S7_A | S7_B | S7_C)
++#define C7_8    (S7_A | S7_B | S7_C | S7_D | S7_E | S7_F | S7_G)
++#define C7_9    (S7_A | S7_B | S7_C | S7_D | S7_F | S7_G)
++//64 0x40
++#define C7_A    (S7_A | S7_B | S7_C | S7_E | S7_F | S7_G )  // Upper case alphabet
++#define C7_B    (S7_C | S7_D | S7_E | S7_F | S7_G)
++#define C7_C    (S7_A | S7_D | S7_E | S7_F)
++#define C7_D    (S7_B | S7_C | S7_D | S7_E | S7_G)
++#define C7_E    (S7_A | S7_D | S7_E | S7_F | S7_G)
++#define C7_F    (S7_A | S7_E | S7_F | S7_G)
++#define C7_G    (S7_A | S7_B | S7_C | S7_F | S7_G)
++#define C7_H    (S7_B | S7_C | S7_E | S7_F | S7_G)
++#define C7_I    (S7_B | S7_C)
++#define C7_J    (S7_B | S7_C | S7_D)
++#define C7_K    (S7_E | S7_F | S7_G)
++#define C7_L    (S7_D | S7_E | S7_F)
++#define C7_M    (S7_C | S7_E | S7_G)
++#define C7_N    (S7_C | S7_E | S7_G)
++#define C7_O    (S7_A | S7_B | S7_C | S7_D | S7_E | S7_F)
++#define C7_P    (S7_A | S7_B | S7_E | S7_F | S7_G)
++#define C7_Q    (S7_A | S7_B | S7_C | S7_F | S7_G)
++#define C7_R    (S7_E | S7_G)
++#define C7_S    (S7_A | S7_C | S7_D | S7_F | S7_G)
++#define C7_T    (S7_D | S7_E | S7_F | S7_G)
++#define C7_U    (S7_B | S7_C | S7_D | S7_E | S7_F)
++#define C7_Y    (S7_B | S7_C | S7_D | S7_F | S7_G)
++#define C7_Z    (S7_A | S7_B | S7_D | S7_E | S7_G)
++
++//97 0x61  Lower case alphabet
++#define C7_a     C7_A
++#define C7_b     C7_B
++#define C7_c     C7_C
++#define C7_d     C7_D
++#define C7_e     C7_E
++#define C7_f     C7_H
++#define C7_g     C7_G
++#define C7_h     C7_H
++#define C7_i     C7_I
++#define C7_j     C7_J
++#define C7_k     C7_K
++#define C7_l     C7_L
++#define C7_m     C7_M
++#define C7_n     C7_N
++#define C7_o     C7_O
++#define C7_p     C7_P
++#define C7_q     C7_Q
++#define C7_r     C7_R
++#define C7_s     C7_S
++#define C7_t     C7_T
++#define C7_u     C7_U
++#define C7_y     C7_Y
++#define C7_z     C7_Z
++
++
++
++const uint8_t HT1628_DIG_REG[8] = {0xC0,0xC2,0xC4,0xC6,0xC8,0x0,0x0,0x0};
++//                                 0   1   2     3    4    5    6    7   8    9    A   B   C   D   E  F
++const uint8_t display_num[16] = {0x3F,0x6,0x5B,0x4F,0x66,0x6D,0x7D,0x7,0x7F,0x6F,C7_A,C7_B,C7_C,C7_D,C7_E,C7_F};
++
++//                                    A   B   C   D     E     F    G    T   L
++const uint8_t display_letter[26] = {C7_A,C7_B,C7_C,C7_D,C7_E,C7_F,C7_G,C7_H,C7_I,C7_J,C7_K,C7_L,C7_M,C7_N,C7_O,C7_P,C7_Q,C7_R,C7_S,C7_T,C7_U,0x0,0x0,0x0,C7_Y,C7_Z};
++
++
++#define IOCTL_MAGIC 'k'
++
++#define DISPLAY_SET_UNKNOWN 0
++#define DISPLAY_SET_TIME 1
++#define DISPLAY_DOT_ON 2
++#define DISPLAY_WIFI_ON_1 3 
++#define DISPLAY_WIFI_ON_2 4
++#define DISPLAY_WIFI_ON_3 5 
++#define DISPLAY_WIFI_ON_4 6
++#define DISPLAY_LAN_ON 7 
++#define DISPLAY_LAN_OFF 8
++#define DISPLAY_ON 9
++#define DISPLAY_OFF 10
++#define DISPLAY_WIFI_ON_HALF 11
++#define DISPLAY_WIFI_ON_FULL 12
++#define DISPLAY_WIFI_OFF 13
++#define DISPLAY_POWER_ON 14
++
++
++//the ioctl use in ioctl function
++#define HT1628_DISP_ON     _IO(IOCTL_MAGIC,DISPLAY_ON)
++#define HT1628_DISP_OFF    _IO(IOCTL_MAGIC,DISPLAY_OFF)
++#define HT1628_DISP_SET_LAN_ON _IO(IOCTL_MAGIC,DISPLAY_LAN_ON)
++#define HT1628_DISP_SET_LAN_OFF _IO(IOCTL_MAGIC,DISPLAY_LAN_OFF)
++#define HT1628_DISP_WIFI_ON_L3 _IO(IOCTL_MAGIC,DISPLAY_WIFI_ON_3)
++#define HT1628_DISP_WIFI_ON_L4 _IO(IOCTL_MAGIC,DISPLAY_WIFI_ON_4)
++#define HT1628_DISP_DOT_ON     _IO(IOCTL_MAGIC,DISPLAY_DOT_ON)
++#define HT1628_DISP_SET_TIME   _IOW(IOCTL_MAGIC,DISPLAY_SET_TIME,unsigned long)
++#define HT1628_DISP_SET_UNKNOWN _IOW(IOCTL_MAGIC,DISPLAY_SET_UNKNOWN,unsigned long)
++#define HT1628_DISP_WIFI_ON_FULL _IO(IOCTL_MAGIC,DISPLAY_WIFI_ON_FULL)
++#define HT1628_DISP_WIFI_ON_HALF _IO(IOCTL_MAGIC,DISPLAY_WIFI_ON_HALF)
++#define HT1628_DISP_WIFI_OFF     _IO(IOCTL_MAGIC,DISPLAY_WIFI_OFF)
++#define HT1628_DISP_POWER_ON	_IO(IOCTL_MAGIC,DISPLAY_POWER_ON)
++
++struct skykirin_ht1628_priv {
++	unsigned long data;
++	unsigned clk;
++	unsigned long cs;
++	uint8_t sign;
++};
++
++struct skykirin_ht1628_platform_data {
++	unsigned long data;
++	unsigned  clk;
++	unsigned long cs;
++	struct class *skykirin_ht1628_class;
++	uint8_t brightness;
++};
++
++#define ON 0xff
++#define OFF 0x0
++
++struct skykirin_ht1628_operations {
++	int (*open)(void);
++	int (*release)(void);
++	int (*ioctl)(void);
++};
++
++static int skykirin_ht1628_suspend(struct platform_device *pdev);
++static int skykirin_ht1628_resume(struct platform_device *pdev);
++static int skykirin_ht1628_remove(struct platform_device *pdev);
++static int skykirin_ht1628_ioctl(struct file *file,unsigned int cmd,unsigned long arg);
++static int skykirin_ht1628_release(void);
++static int skykirin_ht1628_open(struct inode *inode,struct file *file);
++static int __init skykirin_ht1628_init(void);
++static void __exit skykirin_ht1628_exit(void);
++static int skykirin_ht1628_probe_dt(struct platform_device *pdev);
++void skykirin_ht1628_send_8bit(uint8_t dat);
++void skykirin_ht1628_command(uint8_t com);
++static int skykirin_ht1628_probe(struct platform_device *pdev);
++static int skykirin_ht1628_remove(struct platform_device *pdev);
++
++#endif
