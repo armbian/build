@@ -234,6 +234,9 @@ create_rootfs_cache()
 		# stage: remove downloaded packages
 		chroot $SDCARD /bin/bash -c "apt-get clean"
 
+		# create list of installed packages for debug purposes
+		chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > ${cache_fname}.list 2>&1
+
 		# this is needed for the build process later since resolvconf generated file in /run is not saved
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
