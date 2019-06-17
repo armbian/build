@@ -41,8 +41,8 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 [[ -z $FORCE_CHECKOUT ]] && FORCE_CHECKOUT=yes
 
 # Load libraries
-# shellcheck source=debootstrap-ng.sh
-source "${SRC}"/lib/debootstrap-ng.sh 						# system specific install
+# shellcheck source=debootstrap.sh
+source "${SRC}"/lib/debootstrap.sh 						# system specific install
 # shellcheck source=image-helpers.sh
 source "${SRC}"/lib/image-helpers.sh						# helpers for OS image building
 # shellcheck source=distributions.sh
