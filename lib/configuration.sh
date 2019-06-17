@@ -195,7 +195,7 @@ case $RELEASE in
 	buster)
 		DEBOOTSTRAP_COMPONENTS="main"
 		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr wget"
-		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11"
+		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer"
 	;;
 
