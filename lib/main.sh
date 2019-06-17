@@ -51,6 +51,8 @@ source "${SRC}"/lib/distributions.sh						# system specific install
 source "${SRC}"/lib/desktop.sh							# desktop specific install
 # shellcheck source=compilation.sh
 source "${SRC}"/lib/compilation.sh						# patching and compilation of kernel, uboot, ATF
+# shellcheck source=compilation-prepare.sh
+source "${SRC}"/lib/compilation-prepare.sh					# kernel plugins - 3rd party drivers that are not upstreamed. Like WG, AUFS, various Wifi
 # shellcheck source=makeboarddeb.sh
 source "${SRC}"/lib/makeboarddeb.sh						# create board support package
 # shellcheck source=general.sh
@@ -301,8 +303,6 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git" "marvell-ddr" "branch:mv_ddr-armada-18.12"
 	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" "marvell-binaries" "branch:binaries-marvell-armada-18.12"
 	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
-	fetch_from_repo "https://git.zx2c4.com/WireGuard" "wireguard" "branch:master"
-	fetch_from_repo "https://github.com/aircrack-ng/rtl8812au" "rtl8812au" "branch:v5.2.20"
 	fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
 fi
 
