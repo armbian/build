@@ -26,6 +26,10 @@ umask 002
 # destination
 DEST=$SRC/output
 
+# override stty size
+[[ -n $COLUMNS ]] && stty cols $COLUMNS
+[[ -n $LINES ]] && stty rows $LINES
+
 TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
 TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
 
