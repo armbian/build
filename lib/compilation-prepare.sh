@@ -73,7 +73,7 @@ compilation_prepare()
 
 	# Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
 		
-	if linux-version compare $version ge 3.14 && [ "$RTL8812AU" == yes ]; then
+	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8812auver="branch:v5.3.4"
@@ -94,13 +94,85 @@ compilation_prepare()
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8812au/Kconfig
 
 		# Adjust path
+		sed -i 's/include $(src)\/hal\/phydm\/phydm.mk/include $(TopDIR)\/drivers\/net\/wireless\/rtl8812au\/hal\/phydm\/phydm.mk/' \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8812au/Makefile
 		sed -i 's/include $(TopDIR)\/hal\/phydm\/phydm.mk/include $(TopDIR)\/drivers\/net\/wireless\/rtl8812au\/hal\/phydm\/phydm.mk/' \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8812au/Makefile
 
 		# Add to section Makefile
-		sed -i '/obj-$(CONFIG_.*ATMEL).*/a obj-$(CONFIG_RTL8812AU) += rtl8812au/' \
+		sed -i '/obj-$(CONFIG_.*ATMEL).*/a obj-$(CONFIG_RTL8821AU) += rtl8812au/' \
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8812au\/Kconfig"' \
+		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
+
+	fi
+
+
+
+
+	# Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets
+
+	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+
+		# attach to specifics tag or branch
+		local rtl8811euver="branch:v5.3.9"
+
+		display_alert "Adding" "Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets ${rtl8811euver}" "info"
+
+		fetch_from_repo "https://github.com/aircrack-ng/rtl8188eus" "rtl8188eu" "${rtl8811euver}" "yes"
+		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+		rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu
+		mkdir -p ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/
+		cp -R ${SRC}/cache/sources/rtl8188eu/${rtl8811euver#*:}/{core,hal,include,os_dep,platform} \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu
+
+		# Makefile
+		cp ${SRC}/cache/sources/rtl8188eu/${rtl8811euver#*:}/Makefile \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/Makefile
+		cp ${SRC}/cache/sources/rtl8188eu/${rtl8811euver#*:}/Kconfig \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/Kconfig
+
+		# Add to section Makefile
+		sed -i '/obj-$(CONFIG_.*ATMEL).*/a obj-$(CONFIG_RTL8188EU) += rtl8188eu/' \
+		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
+		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8188eu\/Kconfig"' \
+		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
+
+	fi
+
+
+
+
+	# Wireless drivers for Realtek 88x2bu chipsets
+
+	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+
+		# attach to specifics tag or branch
+		local rtl88x2buver="branch:master"
+
+		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
+
+		fetch_from_repo "https://github.com/cilynx/rtl88x2BU_WiFi_linux_v5.3.1_27678.20180430_COEX20180427-5959" "rtl88x2bu" "${rtl88x2buver}" "yes"
+		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+		rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl88x2bu
+		mkdir -p ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl88x2bu/
+		cp -R ${SRC}/cache/sources/rtl88x2bu/${rtl88x2buver#*:}/{core,hal,include,os_dep,platform,rtl8822b.mk} \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl88x2bu
+
+		# Makefile
+		cp ${SRC}/cache/sources/rtl88x2bu/${rtl88x2buver#*:}/Makefile \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl88x2bu/Makefile
+		cp ${SRC}/cache/sources/rtl88x2bu/${rtl88x2buver#*:}/Kconfig \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl88x2bu/Kconfig
+
+		# Adjust path
+		sed -i 's/include $(src)\/rtl8822b.mk /include $(TopDIR)\/drivers\/net\/wireless\/rtl88x2bu\/rtl8822b.mk/' \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl88x2bu/Makefile
+
+		# Add to section Makefile
+		sed -i '/obj-$(CONFIG_.*ATMEL).*/a obj-$(CONFIG_RTL8822BU) += rtl88x2bu/' \
+		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
+		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl88x2bu\/Kconfig"' \
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
 
 	fi
