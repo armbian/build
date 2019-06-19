@@ -21,9 +21,9 @@ compilation_prepare()
 
 		# attach to specifics tag or branch
 		local aufsver="branch:aufs5.1"
-		
+
 		display_alert "Adding" "AUFS 5.1" "info"
-		
+
 		fetch_from_repo "https://github.com/sfjro/aufs5-standalone" "aufs5" "branch:${aufsver}" "yes"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-kbuild.patch"		"applying"
@@ -44,9 +44,9 @@ compilation_prepare()
 
 		# attach to specifics tag or branch
 		local wirever="tag:0.0.20190406" # last known working
-		
+
 		display_alert "Adding" "WireGuard ${wirever} " "info"
-		
+
 		fetch_from_repo "https://git.zx2c4.com/WireGuard" "wireguard" "${wirever}" "yes"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/net/wireguard
@@ -72,21 +72,21 @@ compilation_prepare()
 
 
 	# Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
-		
+
 	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8812auver="branch:v5.3.4"
-	
+
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
-	
+
 		fetch_from_repo "https://github.com/aircrack-ng/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8812au
 		mkdir -p ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8812au/
 		cp -R ${SRC}/cache/sources/rtl8812au/${rtl8812auver#*:}/{core,hal,include,os_dep,platform} \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8812au
-		
+
 		# Makefile
 		cp ${SRC}/cache/sources/rtl8812au/${rtl8812auver#*:}/Makefile \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8812au/Makefile
