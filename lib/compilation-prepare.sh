@@ -76,7 +76,7 @@ compilation_prepare()
 	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8812auver="branch:v5.3.4"
+		local rtl8812auver="branch:v5.2.20"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
@@ -100,7 +100,7 @@ compilation_prepare()
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8812au/Makefile
 
 		# Add to section Makefile
-		sed -i '/obj-$(CONFIG_.*ATMEL).*/a obj-$(CONFIG_RTL8821AU) += rtl8812au/' \
+		sed -i '/obj-$(CONFIG_.*ATMEL).*/a obj-$(CONFIG_RTL8812AU) += rtl8812au/' \
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8812au\/Kconfig"' \
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
