@@ -66,4 +66,10 @@ family_tweaks_s()
 	# copy and enable helios4-wol.service
 	cp $SRC/packages/bsp/helios4/helios4-wol.service $SDCARD/lib/systemd/system/
 	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable helios4-wol.service >/dev/null 2>&1"
+
+	### Other tweaks
+
+	# add custom motd default conf file
+        cp $SRC/packages/bsp/helios4/armbian-motd $SDCARD/etc/default/
+
 }
