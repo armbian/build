@@ -43,9 +43,9 @@ compilation_prepare()
 	if linux-version compare $version ge 3.10 && [ "${WIREGUARD}" == yes ]; then
 
 		# attach to specifics tag or branch
-		# local wirever="tag:0.0.20190406" # last known working
+		#local wirever="branch:master"
+		local wirever="tag:0.0.20190601"
 
-		local wirever="branch:master"
 		display_alert "Adding" "WireGuard ${wirever} " "info"
 
 		fetch_from_repo "https://git.zx2c4.com/WireGuard" "wireguard" "${wirever}" "yes"
