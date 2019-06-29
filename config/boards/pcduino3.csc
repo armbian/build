@@ -6,7 +6,7 @@ MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT="bonding"
 #
 KERNEL_TARGET="next"
-CLI_TARGET="stretch:next"
+CLI_TARGET="buster:next"
 DESKTOP_TARGET=""
 #
 CLI_BETA_TARGET=""

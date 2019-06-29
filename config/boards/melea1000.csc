@@ -11,6 +11,3 @@ CLI_TARGET=""
 DESKTOP_TARGET=""
 #
 RECOMMENDED=""
-#
-BOARDRATING=""
-HARDWARE="http://linux-sunxi.org/Mele_A1000"
