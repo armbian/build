@@ -292,6 +292,7 @@ fi
 
 # Compile kernel if packed .deb does not exist
 if [[ ! -f $DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+	KDEB_CHANGELOG_DIST=$RELEASE
 	compile_kernel
 fi
 
