@@ -163,15 +163,21 @@ compile_uboot()
 		# armbian specifics u-boot settings
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
-		if [[ $BOOTBRANCH =~ ^tag:v201[8-9](.*) ]]; then
-			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_FAT.*/# CONFIG_ENV_IS_IN_FAT is not set/g' .config
-			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_EXT4.*/CONFIG_ENV_IS_IN_EXT4=y/g' .config
-			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_MMC.*/# CONFIG_ENV_IS_IN_MMC is not set/g' .config
-			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_NOWHERE.*/# CONFIG_ENV_IS_NOWHERE is not set/g' .config | echo "# CONFIG_ENV_IS_NOWHERE is not set" >> .config
-			[[ -f .config ]] && echo 'CONFIG_ENV_EXT4_INTERFACE="mmc"' >> .config
-			[[ -f .config ]] && echo 'CONFIG_ENV_EXT4_DEVICE_AND_PART="0:auto"' >> .config
-			[[ -f .config ]] && echo 'CONFIG_ENV_EXT4_FILE="/boot/boot.env"' >> .config
+
+		# for modern kernel and non spi targets
+		if [[ $BOOTBRANCH =~ ^tag:v201[8-9](.*) && target != "spi" && -f .config ]]; then
+
+			sed -i 's/^.*CONFIG_ENV_IS_IN_FAT.*/# CONFIG_ENV_IS_IN_FAT is not set/g' .config
+			sed -i 's/^.*CONFIG_ENV_IS_IN_EXT4.*/CONFIG_ENV_IS_IN_EXT4=y/g' .config
+			sed -i 's/^.*CONFIG_ENV_IS_IN_MMC.*/# CONFIG_ENV_IS_IN_MMC is not set/g' .config
+			sed -i 's/^.*CONFIG_ENV_IS_NOWHERE.*/# CONFIG_ENV_IS_NOWHERE is not set/g' .config | echo \
+			"# CONFIG_ENV_IS_NOWHERE is not set" >> .config
+			echo 'CONFIG_ENV_EXT4_INTERFACE="mmc"' >> .config
+			echo 'CONFIG_ENV_EXT4_DEVICE_AND_PART="0:auto"' >> .config
+			echo 'CONFIG_ENV_EXT4_FILE="/boot/boot.env"' >> .config
+
 		fi
+
 		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/packages/blobs/splash/udoo.bmp tools/logos/udoo.bmp
 		touch .scmversion
 
