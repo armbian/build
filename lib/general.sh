@@ -17,7 +17,8 @@
 # fingerprint_image
 # addtorepo
 # prepare_host
-# download_toolchain
+# webseed
+# download_and_verify
 # download_etcher_cli
 
 # cleaning <target>
@@ -26,6 +27,7 @@
 # "make" - "make clean" for selected kernel and u-boot
 # "debs" - delete output/debs
 # "cache" - delete output/cache
+# "oldcache" - remove old output/cache
 # "images" - delete output/images
 # "sources" - delete output/sources
 #
@@ -71,7 +73,7 @@ cleaning()
 		[[ -d $SRC/cache/sources ]] && display_alert "Cleaning" "sources" "info" && rm -rf $SRC/cache/sources/* $DEST/buildpkg/*
 		;;
 
-		oldcache)
+		oldcache) # remove old `cache/rootfs` except for the newest 8 files
 		if [[ -d $SRC/cache/rootfs && $(ls -1 $SRC/cache/rootfs/*.lz4 2> /dev/null | wc -l) -gt ${ROOTFS_CACHE_MAX} ]]; then
 			display_alert "Cleaning" "rootfs cache (old)" "info"
 			(cd $SRC/cache/rootfs; ls -t *.lz4 | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
@@ -130,7 +132,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	jessie|stretch)
+	jessie|stretch|buster)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -146,7 +148,7 @@ create_sources_list()
 	EOF
 	;;
 
-	xenial|bionic)
+	xenial|bionic|disco)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -260,9 +262,17 @@ fetch_from_repo()
 	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
 		if [[ $FORCE_CHECKOUT == yes ]]; then
-			display_alert "Checking out"
+			display_alert " Cleaning .... " "$(git status -s | wc -l) files"
+
+			# Return the files that are tracked by git to the initial state.
 			git checkout -f -q HEAD
+
+			# Files that are not tracked by git and were added
+			# when the patch was applied must be removed.
+			git clean -qdf
 		else
+			display_alert "In the source of dirty files: " "$(git status -s | wc -l)"
+			display_alert "The compilation process will probably fail." "You have been warned"
 			display_alert "Skipping checkout"
 		fi
 	else
@@ -349,7 +359,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("jessie" "xenial" "stretch" "bionic")
+	local distributions=("jessie" "xenial" "stretch" "bionic" "buster" "disco")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -519,6 +529,9 @@ prepare_host()
 		fi
 	done
 
+	# temporally fix for Locales settings
+	export LC_ALL="en_US.UTF-8"
+
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "lsb-release"
@@ -533,7 +546,7 @@ prepare_host()
 	nfs-kernel-server btrfs-tools ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross \
 	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev aptly acl \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
-	bison libbison-dev flex libfl-dev cryptsetup gpgv1 gnupg1"
+	bison libbison-dev flex libfl-dev cryptsetup gpgv1 gnupg1 cpio aria2"
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
@@ -544,7 +557,7 @@ prepare_host()
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
-	if [[ -z $codename || "xenial bionic" != *"$codename"* ]]; then
+	if [[ -z $codename || "xenial bionic disco" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -555,6 +568,10 @@ prepare_host()
 
 	if grep -qE "(Microsoft|WSL)" /proc/version; then
 		exit_with_error "Windows subsystem for Linux is not a supported build environment"
+	fi
+
+	if [[ -z $codename || "disco" == "$codename" ]]; then
+	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 
 	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
@@ -588,7 +605,11 @@ prepare_host()
 	# distribution packages are buggy, download from author
 	if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
 		display_alert "Updating from external repository" "aptly" "info"
-		apt-key adv --keyserver hkp://pool.sks-keyservers.net:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
+		if [ x"" != x$http_proxy ]; then
+			apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy=$http_proxy --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
+		else
+			apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
+		fi
 		echo "deb http://repo.aptly.info/ nightly main" > /etc/apt/sources.list.d/aptly.list
 	else
 		sed "s/squeeze/nightly/" -i /etc/apt/sources.list.d/aptly.list
@@ -605,7 +626,7 @@ prepare_host()
 	# sync clock
 	if [[ $SYNC_CLOCK != no ]]; then
 		display_alert "Syncing clock" "host" "info"
-		ntpdate -s ${NTP_SERVER:- time.ijs.si}
+		ntpdate -s ${NTP_SERVER:- pool.ntp.org}
 	fi
 
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
@@ -634,34 +655,32 @@ prepare_host()
 
 	find $SRC/patch -type d ! -name . | sed "s%/patch%/userpatches%" | xargs mkdir -p
 
+	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
-	# Use backup server by default to balance the load
-
-	ARMBIANSERVER=dl.armbian.com
-
 	local toolchains=(
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.2.1-2017.11-x86_64_arm-eabi.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.3.1-2018.05-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://${ARMBIANSERVER}/_toolchains/gcc-linaro-7.3.1-2018.05-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabi.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-5.5.0-2017.10-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-6.4.1-2017.11-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabihf.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-eabi.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
 		)
 
 	for toolchain in ${toolchains[@]}; do
-		download_toolchain "$toolchain"
+		download_and_verify "_toolchains" "${toolchain##*/}"
 	done
 
-	rm -rf $SRC/cache/toolchains/*.tar.xz $SRC/cache/toolchains/*.tar.xz.asc
+	rm -rf $SRC/cache/toolchains/*.tar.xz*
 	local existing_dirs=( $(ls -1 $SRC/cache/toolchains) )
 	for dir in ${existing_dirs[@]}; do
 		local found=no
@@ -697,46 +716,159 @@ prepare_host()
 	fi
 }
 
-# download_toolchain <url>
-#
-download_toolchain()
+
+
+
+function webseed ()
 {
-	local url=$1
-	local filename=${url##*/}
+# list of mirrors that host our files
+unset text
+WEBSEED=(
+	"https://dl.armbian.com/"
+	"https://imola.armbian.com/"
+	"https://mirrors.netix.net/armbian/dl/"
+	"https://mirrors.dotsrc.org/armbian-dl/"
+	)
+	if [[ -z $DOWNLOAD_MIRROR ]]; then
+		WEBSEED=(
+                "https://dl.armbian.com/"
+                )
+	fi
+	# aria2 simply split chunks based on sources count not depending on download speed
+	# when selecting china mirrors, use only China mirror, others are very slow there
+	if [[ $DOWNLOAD_MIRROR == china ]]; then
+		WEBSEED=(
+		"https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+		)
+	fi
+	for toolchain in ${WEBSEED[@]}; do
+		# use only live
+		if [[ `wget -S --spider $toolchain$1 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK'` ]]; then
+			text=$text" "$toolchain$1
+		fi
+	done
+	text="${text:1}"
+	echo $text
+}
+
+
+
+
+download_and_verify()
+{
+
+	local remotedir=$1
+	local filename=$2
+	local localdir=$SRC/cache/${remotedir//_}
 	local dirname=${filename//.tar.xz}
 
-	if [[ -f $SRC/cache/toolchains/$dirname/.download-complete ]]; then
+	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then
 		return
 	fi
 
-	cd $SRC/cache/toolchains/
+	cd ${localdir}
 
-	display_alert "Downloading" "$dirname"
-	curl -Lf --progress-bar $url -o $filename
-	curl -Lf --progress-bar ${url}.asc -o ${filename}.asc
-
-	local verified=false
-
-	display_alert "Verifying"
-	if grep -q 'BEGIN PGP SIGNATURE' ${filename}.asc; then
-		if [[ ! -d $SRC/cache/.gpg ]]; then
-			mkdir -p $SRC/cache/.gpg
-			chmod 700 $SRC/cache/.gpg
-			touch $SRC/cache/.gpg/gpg.conf
-			chmod 600 $SRC/cache/.gpg/gpg.conf
-		fi
-		(gpg --homedir $SRC/cache/.gpg --no-permission-warning --list-keys 8F427EAF || gpg --homedir $SRC/cache/.gpg --no-permission-warning --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 8F427EAF) 2>&1 | tee -a $DEST/debug/output.log
-		gpg --homedir $SRC/cache/.gpg --no-permission-warning --verify --trust-model always -q ${filename}.asc 2>&1 | tee -a $DEST/debug/output.log
-		[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true
-	else
-		md5sum -c --status ${filename}.asc && verified=true
+	# download control file
+	if [[ ! `wget -S --spider https://dl.armbian.com/$remotedir/${filename}.asc 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK'` ]]; then
+		return
 	fi
-	if [[ $verified == true ]]; then
-		display_alert "Extracting"
-		tar --no-same-owner --overwrite -xf $filename && touch $SRC/cache/toolchains/$dirname/.download-complete
-		display_alert "Download complete" "" "info"
-	else
-		display_alert "Verification failed" "" "wrn"
+
+	aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
+	--continue=false --allow-overwrite=true --dir=${localdir} $(webseed "$remotedir/${filename}.asc") -o "${filename}.asc"
+	[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
+
+
+	# download torrent first
+	if [[ `wget -S --spider https://dl.armbian.com/torrent/${filename}.torrent 2>&1 >/dev/null \
+		| grep 'HTTP/1.1 200 OK'` && ${USE_TORRENT} == "yes" ]]; then
+
+		display_alert "downloading using torrent network" "$filename"
+		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=15 --console-log-level=error \
+		--allow-overwrite=true --download-result=hide --rpc-save-upload-metadata=false --auto-file-renaming=false \
+		--file-allocation=trunc --continue=true https://dl.armbian.com/torrent/${filename}.torrent \
+		--dht-file-path=$SRC/cache/.aria2/dht.dat --disable-ipv6=true --stderr --follow-torrent=mem --dir=${localdir}"
+
+		# exception. It throws error if dht.dat file does not exists. Error suppress needed only at first download.
+		if [[ -f $SRC/cache/.aria2/dht.dat ]]; then
+			aria2c ${ariatorrent}
+		else
+			aria2c ${ariatorrent} &> $DEST/debug/torrent.log
+		fi
+		# mark complete
+		[[ $? -eq 0 ]] && touch ${localdir}/${filename}.complete
+
+	fi
+
+
+	# direct download if torrent fails
+	if [[ ! -f ${localdir}/${filename}.complete ]]; then
+		if [[ `wget -S --spider https://dl.armbian.com/${remotedir}/${filename} 2>&1 >/dev/null \
+			| grep 'HTTP/1.1 200 OK'` ]]; then
+			display_alert "downloading using http(s) network" "$filename"
+			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
+			--dht-file-path=$SRC/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir=${localdir} $(webseed "$remotedir/$filename") -o ${filename}
+			# mark complete
+			[[ $? -eq 0 ]] && touch ${localdir}/${filename}.complete && echo ""
+
+		fi
+	fi
+
+	if [[ -f ${localdir}/${filename}.asc ]]; then
+
+		if grep -q 'BEGIN PGP SIGNATURE' ${localdir}/${filename}.asc; then
+
+			if [[ ! -d $SRC/cache/.gpg ]]; then
+				mkdir -p $SRC/cache/.gpg
+				chmod 700 $SRC/cache/.gpg
+				touch $SRC/cache/.gpg/gpg.conf
+				chmod 600 $SRC/cache/.gpg/gpg.conf
+			fi
+
+			# Verify archives with Linaro and Armbian GPG keys
+
+			if [ x"" != x$http_proxy ]; then
+				(gpg --homedir $SRC/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> $DEST/debug/output.log 2>&1\
+				 || gpg --homedir $SRC/cache/.gpg --no-permission-warning \
+				--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy=$http_proxy \
+				--recv-keys 8F427EAF >> $DEST/debug/output.log 2>&1)
+
+				(gpg --homedir $SRC/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> $DEST/debug/output.log 2>&1\
+				|| gpg --homedir $SRC/cache/.gpg --no-permission-warning \
+				--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy=$http_proxy \
+				--recv-keys 9F0E78D5 >> $DEST/debug/output.log 2>&1)
+			else
+				(gpg --homedir $SRC/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> $DEST/debug/output.log 2>&1\
+				 || gpg --homedir $SRC/cache/.gpg --no-permission-warning \
+				--keyserver hkp://keyserver.ubuntu.com:80 \
+				--recv-keys 8F427EAF >> $DEST/debug/output.log 2>&1)
+
+				(gpg --homedir $SRC/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> $DEST/debug/output.log 2>&1\
+				|| gpg --homedir $SRC/cache/.gpg --no-permission-warning \
+				--keyserver hkp://keyserver.ubuntu.com:80 \
+				--recv-keys 9F0E78D5 >> $DEST/debug/output.log 2>&1)
+			fi
+
+			gpg --homedir $SRC/cache/.gpg --no-permission-warning --verify \
+			--trust-model always -q ${localdir}/${filename}.asc >> $DEST/debug/output.log 2>&1
+			[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true && display_alert "Verified" "PGP" "info"
+
+		else
+
+			md5sum -c --status ${localdir}/${filename}.asc && verified=true && display_alert "Verified" "MD5" "info"
+
+		fi
+
+		if [[ $verified == true ]]; then
+			if [[ "${filename:(-6)}" == "tar.xz" ]]; then
+
+				display_alert "decompressing"
+				pv -p -b -r -c -N "[ .... ] ${filename}" $filename | xz -dc | tar xp --xattrs --no-same-owner --overwrite
+				[[ $? -eq 0 ]] && touch ${localdir}/$dirname/.download-complete
+			fi
+		else
+			exit_with_error "verification failed"
+		fi
+
 	fi
 }
 

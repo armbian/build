@@ -46,12 +46,14 @@ add_user()
 	[ -z "$RealUserName" ] && return
 	echo "Trying to add user $RealUserName"
 	adduser $RealUserName || return
-	for additionalgroup in sudo netdev audio video dialout plugdev input bluetooth systemd-journal ssh; do
+	for additionalgroup in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh; do
 		usermod -aG ${additionalgroup} ${RealUserName} 2>/dev/null
 	done
+
 	# fix for gksu in Xenial
 	touch /home/$RealUserName/.Xauthority
 	chown $RealUserName:$RealUserName /home/$RealUserName/.Xauthority
+
 	RealName="$(awk -F":" "/^${RealUserName}:/ {print \$5}" </etc/passwd | cut -d',' -f1)"
 	[ -z "$RealName" ] && RealName=$RealUserName
 	echo -e "\nDear ${RealName}, your account ${RealUserName} has been created and is sudo enabled."
@@ -67,15 +69,17 @@ add_user()
 }
 
 if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*i}" ]; then
-	# detect desktop
-	desktop_nodm=$(dpkg-query -W -f='${db:Status-Abbrev}\n' nodm 2>/dev/null)
+
+	# detect lightdm
 	desktop_lightdm=$(dpkg-query -W -f='${db:Status-Abbrev}\n' lightdm 2>/dev/null)
 
-	if [ -n "$desktop_nodm" ]; then DESKTOPDETECT="nodm"; fi
-	if [ -n "$desktop_lightdm" ]; then DESKTOPDETECT="lightdm"; fi
-
 	if [ "$IMAGE_TYPE" != "nightly" ]; then
-		echo -e "\n\e[0;31mThank you for choosing Armbian! Support: \e[1m\e[39mwww.armbian.com\x1B[0m\n"
+		if [ "$BRANCH" == "dev" ]; then
+			echo -e "\nYou are using an Armbian preview build !!!"
+			echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
+		else
+			echo -e "\n\e[0;31mThank you for choosing Armbian! Support: \e[1m\e[39mwww.armbian.com\x1B[0m\n"
+		fi
 	else
 		echo -e "\nYou are using an Armbian nightly build meant only for developers to provide"
 		echo -e "constructive feedback to improve build system, OS settings or user experience."
@@ -85,7 +89,7 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 		echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
 	fi
 	echo "Creating a new user account. Press <Ctrl-C> to abort"
-	[ -n "$DESKTOPDETECT" ] && echo "Desktop environment will not be enabled if you abort the new user creation"
+	[ -n "$desktop_lightdm" ] && echo "Desktop environment will not be enabled if you abort the new user creation"
 	trap check_abort INT
 	while [ -f "/root/.not_logged_in_yet" ]; do
 		add_user
@@ -105,21 +109,17 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 		fi
 	fi
 	# check whether desktop environment has to be considered
-	if [ "$DESKTOPDETECT" = nodm ] && [ -n "$RealName" ] ; then
-		sed -i "s/NODM_USER=\(.*\)/NODM_USER=${RealUserName}/" /etc/default/nodm
-		sed -i "s/NODM_ENABLED=\(.*\)/NODM_ENABLED=true/g" /etc/default/nodm
-		if [[ -f /var/run/resize2fs-reboot ]]; then
-			# Let the user reboot now otherwise start desktop environment
-			printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"
-			printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
-		elif [ -z "$ConfigureDisplay" ] || [ "$ConfigureDisplay" = "n" ] || [ "$ConfigureDisplay" = "N" ]; then
-			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
-			sleep 3
-			service nodm stop
-			sleep 1
-			service nodm start
-		fi
-	elif [ "$DESKTOPDETECT" = lightdm ] && [ -n "$RealName" ] ; then
+	if [ -n "$desktop_lightdm" ] && [ -n "$RealName" ] ; then
+
+			# 1st run goes without login
+			mkdir -p /etc/lightdm/lightdm.conf.d
+			cat <<-EOF > /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+			[Seat:*]
+			autologin-user=$RealUserName
+			autologin-user-timeout=0
+			user-session=xfce
+			EOF
+
 			ln -sf /lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
 		if [[ -f /var/run/resize2fs-reboot ]]; then
 			# Let the user reboot now otherwise start desktop environment
@@ -129,6 +129,11 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
 			sleep 1
 			service lightdm start 2>/dev/null
+			if [ -f /root/.desktop_autologin ]; then
+				rm /root/.desktop_autologin
+			else
+				(sleep 20; rm /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf) &
+			fi
 			# logout if logged at console
 			[[ -n $(who -la | grep root | grep tty1) ]] && exit 1
 		fi

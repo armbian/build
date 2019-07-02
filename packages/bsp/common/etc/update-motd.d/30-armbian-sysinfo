@@ -17,6 +17,9 @@ MOTD_DISABLE=""
 STORAGE=/dev/sda1
 SHOW_IP_PATTERN="^[ewr].*|^br.*|^lt.*|^umts.*"
 
+CPU_TEMP_LIMIT=45
+AMB_TEMP_LIMIT=40
+
 [[ -f /etc/default/armbian-motd ]] && . /etc/default/armbian-motd
 
 for f in $MOTD_DISABLE; do
@@ -45,7 +48,10 @@ function getboardtemp() {
 			# Allwinner legacy kernels output degree C
 			board_temp=${raw_temp}
 		else
-			board_temp=$(awk '{printf("%d",$1/1000)}' <<<${raw_temp})
+			# Tweak for Marvell Armada error in the default value of Tc trim (Errata #132698)
+			grep -qi Armada /proc/cpuinfo && \
+				board_temp=$(( $(awk '{printf("%d",$1/1000)}' <<<${raw_temp}) - 20 )) || \
+				board_temp=$(awk '{printf("%d",$1/1000)}' <<<${raw_temp})
 		fi
 	elif [ -f /etc/armbianmonitor/datasources/pmictemp ]; then
 		# fallback to PMIC temperature
@@ -58,7 +64,7 @@ function batteryinfo() {
 	mainline_dir="/sys/power/axp_pmu"
 	legacy_dir="/sys/class/power_supply"
 	if [[ -e "$mainline_dir" ]]; then
-		read status_battery_connected < $mainline_dir/battery/connected
+		read status_battery_connected < $mainline_dir/battery/connected 2>/dev/null
 		if [[ "$status_battery_connected" == "1" ]]; then
 			read status_battery_charging < $mainline_dir/charger/charging
 			read status_ac_connect < $mainline_dir/ac/connected
@@ -88,10 +94,20 @@ function batteryinfo() {
 } # batteryinfo
 
 function ambienttemp() {
+	# define where w1 usually shows up
+        W1_DIR="/sys/devices/w1_bus_master1/"
 	if [ -f /etc/armbianmonitor/datasources/ambienttemp ]; then
 		read raw_temp </etc/armbianmonitor/datasources/ambienttemp 2>/dev/null
 		amb_temp=$(awk '{printf("%d",$1/1000)}' <<<${raw_temp})
 		echo $amb_temp
+	elif [[ -d $W1_DIR && $ONE_WIRE == yes ]]; then
+		device=$(ls -1 $W1_DIR | grep -Eo '^[0-9]{1,4}' | head -1)
+		if [[ -n $device ]]; then
+			if [[ -d ${W1_DIR}${device}/hwmon/hwmon0 ]]; then hwmon=0; else hwmon=1; fi
+			read raw_temp < ${W1_DIR}${device}/hwmon/hwmon${hwmon}/temp1_input 2>/dev/null
+			amb_temp=$(awk '{printf("%d",$1/1000)}' <<<${raw_temp})
+			echo $amb_temp
+		fi
 	else
 		# read ambient temperature from USB device if available
 		if [[ ! -f /usr/bin/temper ]]; then
@@ -187,8 +203,8 @@ printf "IP:            "
 printf "\x1B[92m%s\x1B[0m" "$ip_address"
 echo "" # fixed newline
 a=0;b=0;c=0
-display "CPU temp" "$board_temp" "45" "0" "°C" "" ; a=$?
-display "Ambient temp" "$amb_temp" "40" "0" "°C" "" ; b=$?
+display "CPU temp" "$board_temp" $CPU_TEMP_LIMIT "0" "°C" "" ; a=$?
+display "Ambient temp" "$amb_temp" $AMB_TEMP_LIMIT "0" "°C" "" ; b=$?
 (( ($a+$b) >0 )) && echo "" # new line only if some value is displayed
 display "Usage of /" "$root_usage" "90" "1" "%" " of $root_total"
 display "storage/" "$storage_usage" "90" "1" "%" " of $storage_total"

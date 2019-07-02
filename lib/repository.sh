@@ -15,33 +15,35 @@ SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 SCRIPTPATH=${SCRIPTPATH//lib}
 
 # load user config
+# shellcheck source=/dev/null
 [[ -f "${SCRIPTPATH}userpatches/lib.config" ]] && source "${SCRIPTPATH}/userpatches/lib.config"
 
 # define debs path
 POT="${SCRIPTPATH}/output/debs/"
 
 # load functions
-source ${SCRIPTPATH}lib/general.sh
+# shellcheck source=general.sh
+source "${SCRIPTPATH}"lib/general.sh
 
-DISTROS=("jessie" "xenial" "stretch" "bionic")
+DISTROS=("jessie" "xenial" "stretch" "bionic" "buster" "disco")
 
 ParseOptions() {
 	case $@ in
 		serve)
 			# display repository content
 			display_alert "Serving content" "common utils" "ext"
-			aptly serve -listen=:8080 -config=${SCRIPTPATH}config/aptly.conf
+			aptly serve -listen=:8080 -config="${SCRIPTPATH}"config/aptly.conf
 			exit 0
 			;;
 		show)
 			# display repository content
 			for release in "${DISTROS[@]}"; do
 				display_alert "Displaying repository contents for" "$release" "ext"
-				aptly repo show -with-packages -config=${SCRIPTPATH}config/aptly.conf $release | tail -n +7
-				aptly repo show -with-packages -config=${SCRIPTPATH}config/aptly.conf ${release}-desktop | tail -n +7
+				aptly repo show -with-packages -config="${SCRIPTPATH}"config/aptly.conf "${release}" | tail -n +7
+				aptly repo show -with-packages -config="${SCRIPTPATH}"config/aptly.conf "${release}-desktop" | tail -n +7
 			done
 			display_alert "Displaying repository contents for" "common utils" "ext"
-			aptly repo show -with-packages -config=${SCRIPTPATH}config/aptly.conf utils | tail -n +7
+			aptly repo show -with-packages -config="${SCRIPTPATH}"config/aptly.conf utils | tail -n +7
 			echo "done."
 			exit 0
 			;;
@@ -50,15 +52,15 @@ ParseOptions() {
 			# run repository update
 			addtorepo "$@" ""
 			# add a key to repo
-			cp ${SCRIPTPATH}config/armbian.key ${SCRIPTPATH}output/repository/public
+			cp "${SCRIPTPATH}"config/armbian.key "${SCRIPTPATH}"output/repository/public
 			exit 0
 			;;
 		purge)
 			for release in "${DISTROS[@]}"; do
-				repo-remove-old-packages "$release" "armhf" "5"
-				repo-remove-old-packages "$release" "arm64" "5"
-				repo-remove-old-packages "$release" "all" "5"
-				aptly -config=${SCRIPTPATH}config/aptly.conf -passphrase=$GPG_PASS publish update $release
+				repo-remove-old-packages "$release" "armhf" "3"
+				repo-remove-old-packages "$release" "arm64" "3"
+				repo-remove-old-packages "$release" "all" "3"
+				aptly -config="${SCRIPTPATH}"config/aptly.conf -passphrase="${GPG_PASS}" publish update "${release}"
 				# example to remove all packages from bionic that contain source in the name
 				# aptly repo remove -config=${SCRIPTPATH}config/aptly.conf bionic 'Name (% *-source*)'
 			done
@@ -81,18 +83,19 @@ repo-remove-old-packages() {
     local arch=$2
     local keep=$3
 
-    for pkg in $(aptly repo search -config=${SCRIPTPATH}config/aptly.conf $repo "Architecture ($arch)" | grep -v "ERROR: no results" | sort -rV); do
-        local pkg_name=$(echo $pkg | cut -d_ -f1)
+    for pkg in $(aptly repo search -config="${SCRIPTPATH}"config/aptly.conf "${repo}" "Architecture ($arch)" | grep -v "ERROR: no results" | sort -rV); do
+        local pkg_name
+        pkg_name=$(echo "${pkg}" | cut -d_ -f1)
         if [ "$pkg_name" != "$cur_pkg" ]; then
             local count=0
             local deleted=""
             local cur_pkg="$pkg_name"
         fi
         test -n "$deleted" && continue
-        let count+=1
-        if [ $count -gt $keep ]; then
-            pkg_version=$(echo $pkg | cut -d_ -f2)
-            aptly repo remove -config=${SCRIPTPATH}config/aptly.conf $repo "Name ($pkg_name), Version (<= $pkg_version)"
+        ((count+=1))
+        if [[ $count -gt $keep ]]; then
+            pkg_version=$(echo "${pkg}" | cut -d_ -f2)
+            aptly repo remove -config="${SCRIPTPATH}"config/aptly.conf "${repo}" "Name ($pkg_name), Version (<= $pkg_version)"
             deleted='yes'
         fi
     done

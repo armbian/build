@@ -1,0 +1,1306 @@
+diff --git a/Makefile b/Makefile
+index ba5f14d38d8e..8cfcb01fcd7b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 4
+ PATCHLEVEL = 19
+-SUBLEVEL = 21
++SUBLEVEL = 22
+ EXTRAVERSION =
+ NAME = "People's Front"
+ 
+diff --git a/arch/arm/boot/dts/da850.dtsi b/arch/arm/boot/dts/da850.dtsi
+index 47aa53ba6b92..559659b399d0 100644
+--- a/arch/arm/boot/dts/da850.dtsi
++++ b/arch/arm/boot/dts/da850.dtsi
+@@ -476,7 +476,7 @@
+ 		clocksource: timer@20000 {
+ 			compatible = "ti,da830-timer";
+ 			reg = <0x20000 0x1000>;
+-			interrupts = <12>, <13>;
++			interrupts = <21>, <22>;
+ 			interrupt-names = "tint12", "tint34";
+ 			clocks = <&pll0_auxclk>;
+ 		};
+diff --git a/arch/arm/mach-iop32x/n2100.c b/arch/arm/mach-iop32x/n2100.c
+index 3b73813c6b04..23e8c93515d4 100644
+--- a/arch/arm/mach-iop32x/n2100.c
++++ b/arch/arm/mach-iop32x/n2100.c
+@@ -75,8 +75,7 @@ void __init n2100_map_io(void)
+ /*
+  * N2100 PCI.
+  */
+-static int __init
+-n2100_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
++static int n2100_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+ {
+ 	int irq;
+ 
+diff --git a/arch/arm/mach-tango/pm.c b/arch/arm/mach-tango/pm.c
+index 028e50c6383f..a32c3b631484 100644
+--- a/arch/arm/mach-tango/pm.c
++++ b/arch/arm/mach-tango/pm.c
+@@ -3,6 +3,7 @@
+ #include <linux/suspend.h>
+ #include <asm/suspend.h>
+ #include "smc.h"
++#include "pm.h"
+ 
+ static int tango_pm_powerdown(unsigned long arg)
+ {
+@@ -24,10 +25,7 @@ static const struct platform_suspend_ops tango_pm_ops = {
+ 	.valid = suspend_valid_only_mem,
+ };
+ 
+-static int __init tango_pm_init(void)
++void __init tango_pm_init(void)
+ {
+ 	suspend_set_ops(&tango_pm_ops);
+-	return 0;
+ }
+-
+-late_initcall(tango_pm_init);
+diff --git a/arch/arm/mach-tango/pm.h b/arch/arm/mach-tango/pm.h
+new file mode 100644
+index 000000000000..35ea705a0ee2
+--- /dev/null
++++ b/arch/arm/mach-tango/pm.h
+@@ -0,0 +1,7 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++
++#ifdef CONFIG_SUSPEND
++void __init tango_pm_init(void);
++#else
++#define tango_pm_init NULL
++#endif
+diff --git a/arch/arm/mach-tango/setup.c b/arch/arm/mach-tango/setup.c
+index 677dd7b5efd9..824f90737b04 100644
+--- a/arch/arm/mach-tango/setup.c
++++ b/arch/arm/mach-tango/setup.c
+@@ -2,6 +2,7 @@
+ #include <asm/mach/arch.h>
+ #include <asm/hardware/cache-l2x0.h>
+ #include "smc.h"
++#include "pm.h"
+ 
+ static void tango_l2c_write(unsigned long val, unsigned int reg)
+ {
+@@ -15,4 +16,5 @@ DT_MACHINE_START(TANGO_DT, "Sigma Tango DT")
+ 	.dt_compat	= tango_dt_compat,
+ 	.l2c_aux_mask	= ~0,
+ 	.l2c_write_sec	= tango_l2c_write,
++	.init_late	= tango_pm_init,
+ MACHINE_END
+diff --git a/arch/mips/kernel/mips-cm.c b/arch/mips/kernel/mips-cm.c
+index 8f5bd04f320a..7f3f136572de 100644
+--- a/arch/mips/kernel/mips-cm.c
++++ b/arch/mips/kernel/mips-cm.c
+@@ -457,5 +457,5 @@ void mips_cm_error_report(void)
+ 	}
+ 
+ 	/* reprime cause register */
+-	write_gcr_error_cause(0);
++	write_gcr_error_cause(cm_error);
+ }
+diff --git a/arch/mips/loongson64/common/reset.c b/arch/mips/loongson64/common/reset.c
+index a60715e11306..b26892ce871c 100644
+--- a/arch/mips/loongson64/common/reset.c
++++ b/arch/mips/loongson64/common/reset.c
+@@ -59,7 +59,12 @@ static void loongson_poweroff(void)
+ {
+ #ifndef CONFIG_LEFI_FIRMWARE_INTERFACE
+ 	mach_prepare_shutdown();
+-	unreachable();
++
++	/*
++	 * It needs a wait loop here, but mips/kernel/reset.c already calls
++	 * a generic delay loop, machine_hang(), so simply return.
++	 */
++	return;
+ #else
+ 	void (*fw_poweroff)(void) = (void *)loongson_sysconf.poweroff_addr;
+ 
+diff --git a/arch/mips/pci/pci-octeon.c b/arch/mips/pci/pci-octeon.c
+index 5017d5843c5a..fc29b85cfa92 100644
+--- a/arch/mips/pci/pci-octeon.c
++++ b/arch/mips/pci/pci-octeon.c
+@@ -568,6 +568,11 @@ static int __init octeon_pci_setup(void)
+ 	if (octeon_has_feature(OCTEON_FEATURE_PCIE))
+ 		return 0;
+ 
++	if (!octeon_is_pci_host()) {
++		pr_notice("Not in host mode, PCI Controller not initialized\n");
++		return 0;
++	}
++
+ 	/* Point pcibios_map_irq() to the PCI version of it */
+ 	octeon_pcibios_map_irq = octeon_pci_pcibios_map_irq;
+ 
+@@ -579,11 +584,6 @@ static int __init octeon_pci_setup(void)
+ 	else
+ 		octeon_dma_bar_type = OCTEON_DMA_BAR_TYPE_BIG;
+ 
+-	if (!octeon_is_pci_host()) {
+-		pr_notice("Not in host mode, PCI Controller not initialized\n");
+-		return 0;
+-	}
+-
+ 	/* PCI I/O and PCI MEM values */
+ 	set_io_port_base(OCTEON_PCI_IOSPACE_BASE);
+ 	ioport_resource.start = 0;
+diff --git a/arch/mips/vdso/Makefile b/arch/mips/vdso/Makefile
+index 34605ca21498..6f10312e0c76 100644
+--- a/arch/mips/vdso/Makefile
++++ b/arch/mips/vdso/Makefile
+@@ -8,6 +8,7 @@ ccflags-vdso := \
+ 	$(filter -E%,$(KBUILD_CFLAGS)) \
+ 	$(filter -mmicromips,$(KBUILD_CFLAGS)) \
+ 	$(filter -march=%,$(KBUILD_CFLAGS)) \
++	$(filter -m%-float,$(KBUILD_CFLAGS)) \
+ 	-D__VDSO__
+ 
+ ifeq ($(cc-name),clang)
+@@ -128,7 +129,7 @@ $(obj)/%-o32.o: $(src)/%.c FORCE
+ 	$(call cmd,force_checksrc)
+ 	$(call if_changed_rule,cc_o_c)
+ 
+-$(obj)/vdso-o32.lds: KBUILD_CPPFLAGS := -mabi=32
++$(obj)/vdso-o32.lds: KBUILD_CPPFLAGS := $(ccflags-vdso) -mabi=32
+ $(obj)/vdso-o32.lds: $(src)/vdso.lds.S FORCE
+ 	$(call if_changed_dep,cpp_lds_S)
+ 
+@@ -168,7 +169,7 @@ $(obj)/%-n32.o: $(src)/%.c FORCE
+ 	$(call cmd,force_checksrc)
+ 	$(call if_changed_rule,cc_o_c)
+ 
+-$(obj)/vdso-n32.lds: KBUILD_CPPFLAGS := -mabi=n32
++$(obj)/vdso-n32.lds: KBUILD_CPPFLAGS := $(ccflags-vdso) -mabi=n32
+ $(obj)/vdso-n32.lds: $(src)/vdso.lds.S FORCE
+ 	$(call if_changed_dep,cpp_lds_S)
+ 
+diff --git a/arch/powerpc/include/asm/book3s/64/pgtable.h b/arch/powerpc/include/asm/book3s/64/pgtable.h
+index 2a2486526d1f..855dbae6d351 100644
+--- a/arch/powerpc/include/asm/book3s/64/pgtable.h
++++ b/arch/powerpc/include/asm/book3s/64/pgtable.h
+@@ -1234,21 +1234,13 @@ extern pmd_t pmdp_invalidate(struct vm_area_struct *vma, unsigned long address,
+ 
+ #define pmd_move_must_withdraw pmd_move_must_withdraw
+ struct spinlock;
+-static inline int pmd_move_must_withdraw(struct spinlock *new_pmd_ptl,
+-					 struct spinlock *old_pmd_ptl,
+-					 struct vm_area_struct *vma)
+-{
+-	if (radix_enabled())
+-		return false;
+-	/*
+-	 * Archs like ppc64 use pgtable to store per pmd
+-	 * specific information. So when we switch the pmd,
+-	 * we should also withdraw and deposit the pgtable
+-	 */
+-	return true;
+-}
+-
+-
++extern int pmd_move_must_withdraw(struct spinlock *new_pmd_ptl,
++				  struct spinlock *old_pmd_ptl,
++				  struct vm_area_struct *vma);
++/*
++ * Hash translation mode use the deposited table to store hash pte
++ * slot information.
++ */
+ #define arch_needs_pgtable_deposit arch_needs_pgtable_deposit
+ static inline bool arch_needs_pgtable_deposit(void)
+ {
+diff --git a/arch/powerpc/mm/pgtable-book3s64.c b/arch/powerpc/mm/pgtable-book3s64.c
+index 01d7c0f7c4f0..297db665d953 100644
+--- a/arch/powerpc/mm/pgtable-book3s64.c
++++ b/arch/powerpc/mm/pgtable-book3s64.c
+@@ -477,3 +477,25 @@ void arch_report_meminfo(struct seq_file *m)
+ 		   atomic_long_read(&direct_pages_count[MMU_PAGE_1G]) << 20);
+ }
+ #endif /* CONFIG_PROC_FS */
++
++/*
++ * For hash translation mode, we use the deposited table to store hash slot
++ * information and they are stored at PTRS_PER_PMD offset from related pmd
++ * location. Hence a pmd move requires deposit and withdraw.
++ *
++ * For radix translation with split pmd ptl, we store the deposited table in the
++ * pmd page. Hence if we have different pmd page we need to withdraw during pmd
++ * move.
++ *
++ * With hash we use deposited table always irrespective of anon or not.
++ * With radix we use deposited table only for anonymous mapping.
++ */
++int pmd_move_must_withdraw(struct spinlock *new_pmd_ptl,
++			   struct spinlock *old_pmd_ptl,
++			   struct vm_area_struct *vma)
++{
++	if (radix_enabled())
++		return (new_pmd_ptl != old_pmd_ptl) && vma_is_anonymous(vma);
++
++	return true;
++}
+diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
+index b8c3f9e6af89..adf28788cab5 100644
+--- a/drivers/ata/libata-core.c
++++ b/drivers/ata/libata-core.c
+@@ -4554,6 +4554,7 @@ static const struct ata_blacklist_entry ata_device_blacklist [] = {
+ 	{ "SAMSUNG MZMPC128HBFU-000MV", "CXM14M1Q", ATA_HORKAGE_NOLPM, },
+ 	{ "SAMSUNG SSD PM830 mSATA *",  "CXM13D1Q", ATA_HORKAGE_NOLPM, },
+ 	{ "SAMSUNG MZ7TD256HAFV-000L9", NULL,       ATA_HORKAGE_NOLPM, },
++	{ "SAMSUNG MZ7TE512HMHP-000L1", "EXT06L0Q", ATA_HORKAGE_NOLPM, },
+ 
+ 	/* devices that don't properly handle queued TRIM commands */
+ 	{ "Micron_M500IT_*",		"MU01",	ATA_HORKAGE_NO_NCQ_TRIM |
+diff --git a/drivers/firmware/arm_scmi/bus.c b/drivers/firmware/arm_scmi/bus.c
+index 472c88ae1c0f..92f843eaf1e0 100644
+--- a/drivers/firmware/arm_scmi/bus.c
++++ b/drivers/firmware/arm_scmi/bus.c
+@@ -119,6 +119,11 @@ void scmi_driver_unregister(struct scmi_driver *driver)
+ }
+ EXPORT_SYMBOL_GPL(scmi_driver_unregister);
+ 
++static void scmi_device_release(struct device *dev)
++{
++	kfree(to_scmi_dev(dev));
++}
++
+ struct scmi_device *
+ scmi_device_create(struct device_node *np, struct device *parent, int protocol)
+ {
+@@ -138,6 +143,7 @@ scmi_device_create(struct device_node *np, struct device *parent, int protocol)
+ 	scmi_dev->dev.parent = parent;
+ 	scmi_dev->dev.of_node = np;
+ 	scmi_dev->dev.bus = &scmi_bus_type;
++	scmi_dev->dev.release = scmi_device_release;
+ 	dev_set_name(&scmi_dev->dev, "scmi_dev.%d", id);
+ 
+ 	retval = device_register(&scmi_dev->dev);
+@@ -156,9 +162,8 @@ free_mem:
+ void scmi_device_destroy(struct scmi_device *scmi_dev)
+ {
+ 	scmi_handle_put(scmi_dev->handle);
+-	device_unregister(&scmi_dev->dev);
+ 	ida_simple_remove(&scmi_bus_id, scmi_dev->id);
+-	kfree(scmi_dev);
++	device_unregister(&scmi_dev->dev);
+ }
+ 
+ void scmi_set_handle(struct scmi_device *scmi_dev)
+diff --git a/drivers/gpu/drm/amd/powerplay/hwmgr/smu10_hwmgr.c b/drivers/gpu/drm/amd/powerplay/hwmgr/smu10_hwmgr.c
+index a63e00653324..1546bc49004f 100644
+--- a/drivers/gpu/drm/amd/powerplay/hwmgr/smu10_hwmgr.c
++++ b/drivers/gpu/drm/amd/powerplay/hwmgr/smu10_hwmgr.c
+@@ -984,6 +984,7 @@ static int smu10_get_clock_by_type_with_latency(struct pp_hwmgr *hwmgr,
+ 		break;
+ 	case amd_pp_dpp_clock:
+ 		pclk_vol_table = pinfo->vdd_dep_on_dppclk;
++		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+diff --git a/drivers/gpu/drm/drm_modes.c b/drivers/gpu/drm/drm_modes.c
+index 02db9ac82d7a..a3104d79b48f 100644
+--- a/drivers/gpu/drm/drm_modes.c
++++ b/drivers/gpu/drm/drm_modes.c
+@@ -758,7 +758,7 @@ int drm_mode_hsync(const struct drm_display_mode *mode)
+ 	if (mode->hsync)
+ 		return mode->hsync;
+ 
+-	if (mode->htotal < 0)
++	if (mode->htotal <= 0)
+ 		return 0;
+ 
+ 	calc_val = (mode->clock * 1000) / mode->htotal; /* hsync in Hz */
+diff --git a/drivers/gpu/drm/i915/intel_ddi.c b/drivers/gpu/drm/i915/intel_ddi.c
+index c9af34861d9e..b4b1f9ca05b6 100644
+--- a/drivers/gpu/drm/i915/intel_ddi.c
++++ b/drivers/gpu/drm/i915/intel_ddi.c
+@@ -1085,7 +1085,7 @@ static uint32_t icl_pll_to_ddi_pll_sel(struct intel_encoder *encoder,
+ 			return DDI_CLK_SEL_TBT_810;
+ 		default:
+ 			MISSING_CASE(clock);
+-			break;
++			return DDI_CLK_SEL_NONE;
+ 		}
+ 	case DPLL_ID_ICL_MGPLL1:
+ 	case DPLL_ID_ICL_MGPLL2:
+diff --git a/drivers/gpu/drm/vmwgfx/vmwgfx_drv.c b/drivers/gpu/drm/vmwgfx/vmwgfx_drv.c
+index bb6dbbe18835..c72b942f2bdf 100644
+--- a/drivers/gpu/drm/vmwgfx/vmwgfx_drv.c
++++ b/drivers/gpu/drm/vmwgfx/vmwgfx_drv.c
+@@ -627,13 +627,16 @@ out_fixup:
+ static int vmw_dma_masks(struct vmw_private *dev_priv)
+ {
+ 	struct drm_device *dev = dev_priv->dev;
++	int ret = 0;
+ 
+-	if (intel_iommu_enabled &&
++	ret = dma_set_mask_and_coherent(dev->dev, DMA_BIT_MASK(64));
++	if (dev_priv->map_mode != vmw_dma_phys &&
+ 	    (sizeof(unsigned long) == 4 || vmw_restrict_dma_mask)) {
+ 		DRM_INFO("Restricting DMA addresses to 44 bits.\n");
+-		return dma_set_mask(dev->dev, DMA_BIT_MASK(44));
++		return dma_set_mask_and_coherent(dev->dev, DMA_BIT_MASK(44));
+ 	}
+-	return 0;
++
++	return ret;
+ }
+ #else
+ static int vmw_dma_masks(struct vmw_private *dev_priv)
+diff --git a/drivers/gpu/drm/vmwgfx/vmwgfx_execbuf.c b/drivers/gpu/drm/vmwgfx/vmwgfx_execbuf.c
+index f0ab6b2313bb..c3e2022bda5d 100644
+--- a/drivers/gpu/drm/vmwgfx/vmwgfx_execbuf.c
++++ b/drivers/gpu/drm/vmwgfx/vmwgfx_execbuf.c
+@@ -3843,7 +3843,7 @@ int vmw_execbuf_fence_commands(struct drm_file *file_priv,
+ 		*p_fence = NULL;
+ 	}
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ /**
+diff --git a/drivers/iio/adc/axp288_adc.c b/drivers/iio/adc/axp288_adc.c
+index 031d568b4972..4e339cfd0c54 100644
+--- a/drivers/iio/adc/axp288_adc.c
++++ b/drivers/iio/adc/axp288_adc.c
+@@ -27,9 +27,18 @@
+ #include <linux/iio/machine.h>
+ #include <linux/iio/driver.h>
+ 
+-#define AXP288_ADC_EN_MASK		0xF1
+-#define AXP288_ADC_TS_PIN_GPADC		0xF2
+-#define AXP288_ADC_TS_PIN_ON		0xF3
++/*
++ * This mask enables all ADCs except for the battery temp-sensor (TS), that is
++ * left as-is to avoid breaking charging on devices without a temp-sensor.
++ */
++#define AXP288_ADC_EN_MASK				0xF0
++#define AXP288_ADC_TS_ENABLE				0x01
++
++#define AXP288_ADC_TS_CURRENT_ON_OFF_MASK		GENMASK(1, 0)
++#define AXP288_ADC_TS_CURRENT_OFF			(0 << 0)
++#define AXP288_ADC_TS_CURRENT_ON_WHEN_CHARGING		(1 << 0)
++#define AXP288_ADC_TS_CURRENT_ON_ONDEMAND		(2 << 0)
++#define AXP288_ADC_TS_CURRENT_ON			(3 << 0)
+ 
+ enum axp288_adc_id {
+ 	AXP288_ADC_TS,
+@@ -44,6 +53,7 @@ enum axp288_adc_id {
+ struct axp288_adc_info {
+ 	int irq;
+ 	struct regmap *regmap;
++	bool ts_enabled;
+ };
+ 
+ static const struct iio_chan_spec axp288_adc_channels[] = {
+@@ -115,21 +125,33 @@ static int axp288_adc_read_channel(int *val, unsigned long address,
+ 	return IIO_VAL_INT;
+ }
+ 
+-static int axp288_adc_set_ts(struct regmap *regmap, unsigned int mode,
+-				unsigned long address)
++/*
++ * The current-source used for the battery temp-sensor (TS) is shared
++ * with the GPADC. For proper fuel-gauge and charger operation the TS
++ * current-source needs to be permanently on. But to read the GPADC we
++ * need to temporary switch the TS current-source to ondemand, so that
++ * the GPADC can use it, otherwise we will always read an all 0 value.
++ */
++static int axp288_adc_set_ts(struct axp288_adc_info *info,
++			     unsigned int mode, unsigned long address)
+ {
+ 	int ret;
+ 
+-	/* channels other than GPADC do not need to switch TS pin */
++	/* No need to switch the current-source if the TS pin is disabled */
++	if (!info->ts_enabled)
++		return 0;
++
++	/* Channels other than GPADC do not need the current source */
+ 	if (address != AXP288_GP_ADC_H)
+ 		return 0;
+ 
+-	ret = regmap_write(regmap, AXP288_ADC_TS_PIN_CTRL, mode);
++	ret = regmap_update_bits(info->regmap, AXP288_ADC_TS_PIN_CTRL,
++				 AXP288_ADC_TS_CURRENT_ON_OFF_MASK, mode);
+ 	if (ret)
+ 		return ret;
+ 
+ 	/* When switching to the GPADC pin give things some time to settle */
+-	if (mode == AXP288_ADC_TS_PIN_GPADC)
++	if (mode == AXP288_ADC_TS_CURRENT_ON_ONDEMAND)
+ 		usleep_range(6000, 10000);
+ 
+ 	return 0;
+@@ -145,14 +167,14 @@ static int axp288_adc_read_raw(struct iio_dev *indio_dev,
+ 	mutex_lock(&indio_dev->mlock);
+ 	switch (mask) {
+ 	case IIO_CHAN_INFO_RAW:
+-		if (axp288_adc_set_ts(info->regmap, AXP288_ADC_TS_PIN_GPADC,
++		if (axp288_adc_set_ts(info, AXP288_ADC_TS_CURRENT_ON_ONDEMAND,
+ 					chan->address)) {
+ 			dev_err(&indio_dev->dev, "GPADC mode\n");
+ 			ret = -EINVAL;
+ 			break;
+ 		}
+ 		ret = axp288_adc_read_channel(val, chan->address, info->regmap);
+-		if (axp288_adc_set_ts(info->regmap, AXP288_ADC_TS_PIN_ON,
++		if (axp288_adc_set_ts(info, AXP288_ADC_TS_CURRENT_ON,
+ 						chan->address))
+ 			dev_err(&indio_dev->dev, "TS pin restore\n");
+ 		break;
+@@ -164,13 +186,35 @@ static int axp288_adc_read_raw(struct iio_dev *indio_dev,
+ 	return ret;
+ }
+ 
+-static int axp288_adc_set_state(struct regmap *regmap)
++static int axp288_adc_initialize(struct axp288_adc_info *info)
+ {
+-	/* ADC should be always enabled for internal FG to function */
+-	if (regmap_write(regmap, AXP288_ADC_TS_PIN_CTRL, AXP288_ADC_TS_PIN_ON))
+-		return -EIO;
++	int ret, adc_enable_val;
++
++	/*
++	 * Determine if the TS pin is enabled and set the TS current-source
++	 * accordingly.
++	 */
++	ret = regmap_read(info->regmap, AXP20X_ADC_EN1, &adc_enable_val);
++	if (ret)
++		return ret;
++
++	if (adc_enable_val & AXP288_ADC_TS_ENABLE) {
++		info->ts_enabled = true;
++		ret = regmap_update_bits(info->regmap, AXP288_ADC_TS_PIN_CTRL,
++					 AXP288_ADC_TS_CURRENT_ON_OFF_MASK,
++					 AXP288_ADC_TS_CURRENT_ON);
++	} else {
++		info->ts_enabled = false;
++		ret = regmap_update_bits(info->regmap, AXP288_ADC_TS_PIN_CTRL,
++					 AXP288_ADC_TS_CURRENT_ON_OFF_MASK,
++					 AXP288_ADC_TS_CURRENT_OFF);
++	}
++	if (ret)
++		return ret;
+ 
+-	return regmap_write(regmap, AXP20X_ADC_EN1, AXP288_ADC_EN_MASK);
++	/* Turn on the ADC for all channels except TS, leave TS as is */
++	return regmap_update_bits(info->regmap, AXP20X_ADC_EN1,
++				  AXP288_ADC_EN_MASK, AXP288_ADC_EN_MASK);
+ }
+ 
+ static const struct iio_info axp288_adc_iio_info = {
+@@ -200,7 +244,7 @@ static int axp288_adc_probe(struct platform_device *pdev)
+ 	 * Set ADC to enabled state at all time, including system suspend.
+ 	 * otherwise internal fuel gauge functionality may be affected.
+ 	 */
+-	ret = axp288_adc_set_state(axp20x->regmap);
++	ret = axp288_adc_initialize(info);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "unable to enable ADC device\n");
+ 		return ret;
+diff --git a/drivers/iio/adc/ti-ads8688.c b/drivers/iio/adc/ti-ads8688.c
+index 184d686ebd99..8b4568edd5cb 100644
+--- a/drivers/iio/adc/ti-ads8688.c
++++ b/drivers/iio/adc/ti-ads8688.c
+@@ -41,6 +41,7 @@
+ 
+ #define ADS8688_VREF_MV			4096
+ #define ADS8688_REALBITS		16
++#define ADS8688_MAX_CHANNELS		8
+ 
+ /*
+  * enum ads8688_range - ADS8688 reference voltage range
+@@ -385,7 +386,7 @@ static irqreturn_t ads8688_trigger_handler(int irq, void *p)
+ {
+ 	struct iio_poll_func *pf = p;
+ 	struct iio_dev *indio_dev = pf->indio_dev;
+-	u16 buffer[8];
++	u16 buffer[ADS8688_MAX_CHANNELS + sizeof(s64)/sizeof(u16)];
+ 	int i, j = 0;
+ 
+ 	for (i = 0; i < indio_dev->masklength; i++) {
+diff --git a/drivers/iio/chemical/atlas-ph-sensor.c b/drivers/iio/chemical/atlas-ph-sensor.c
+index a406ad31b096..3a20cb5d9bff 100644
+--- a/drivers/iio/chemical/atlas-ph-sensor.c
++++ b/drivers/iio/chemical/atlas-ph-sensor.c
+@@ -444,9 +444,8 @@ static int atlas_read_raw(struct iio_dev *indio_dev,
+ 	case IIO_CHAN_INFO_SCALE:
+ 		switch (chan->type) {
+ 		case IIO_TEMP:
+-			*val = 1; /* 0.01 */
+-			*val2 = 100;
+-			break;
++			*val = 10;
++			return IIO_VAL_INT;
+ 		case IIO_PH:
+ 			*val = 1; /* 0.001 */
+ 			*val2 = 1000;
+@@ -477,7 +476,7 @@ static int atlas_write_raw(struct iio_dev *indio_dev,
+ 			   int val, int val2, long mask)
+ {
+ 	struct atlas_data *data = iio_priv(indio_dev);
+-	__be32 reg = cpu_to_be32(val);
++	__be32 reg = cpu_to_be32(val / 10);
+ 
+ 	if (val2 != 0 || val < 0 || val > 20000)
+ 		return -EINVAL;
+diff --git a/drivers/misc/mei/hw-me-regs.h b/drivers/misc/mei/hw-me-regs.h
+index 23739a60517f..bb1ee9834a02 100644
+--- a/drivers/misc/mei/hw-me-regs.h
++++ b/drivers/misc/mei/hw-me-regs.h
+@@ -139,6 +139,8 @@
+ #define MEI_DEV_ID_CNP_H      0xA360  /* Cannon Point H */
+ #define MEI_DEV_ID_CNP_H_4    0xA364  /* Cannon Point H 4 (iTouch) */
+ 
++#define MEI_DEV_ID_ICP_LP     0x34E0  /* Ice Lake Point LP */
++
+ /*
+  * MEI HW Section
+  */
+diff --git a/drivers/misc/mei/pci-me.c b/drivers/misc/mei/pci-me.c
+index c8e21c894a5f..4299658d48d6 100644
+--- a/drivers/misc/mei/pci-me.c
++++ b/drivers/misc/mei/pci-me.c
+@@ -105,6 +105,8 @@ static const struct pci_device_id mei_me_pci_tbl[] = {
+ 	{MEI_PCI_DEVICE(MEI_DEV_ID_CNP_H, MEI_ME_PCH8_CFG)},
+ 	{MEI_PCI_DEVICE(MEI_DEV_ID_CNP_H_4, MEI_ME_PCH8_CFG)},
+ 
++	{MEI_PCI_DEVICE(MEI_DEV_ID_ICP_LP, MEI_ME_PCH12_CFG)},
++
+ 	/* required last entry */
+ 	{0, }
+ };
+diff --git a/drivers/misc/mic/vop/vop_main.c b/drivers/misc/mic/vop/vop_main.c
+index 3633202e18f4..de7f035a176d 100644
+--- a/drivers/misc/mic/vop/vop_main.c
++++ b/drivers/misc/mic/vop/vop_main.c
+@@ -563,6 +563,8 @@ static int _vop_remove_device(struct mic_device_desc __iomem *d,
+ 	int ret = -1;
+ 
+ 	if (ioread8(&dc->config_change) == MIC_VIRTIO_PARAM_DEV_REMOVE) {
++		struct device *dev = get_device(&vdev->vdev.dev);
++
+ 		dev_dbg(&vpdev->dev,
+ 			"%s %d config_change %d type %d vdev %p\n",
+ 			__func__, __LINE__,
+@@ -574,7 +576,7 @@ static int _vop_remove_device(struct mic_device_desc __iomem *d,
+ 		iowrite8(-1, &dc->h2c_vdev_db);
+ 		if (status & VIRTIO_CONFIG_S_DRIVER_OK)
+ 			wait_for_completion(&vdev->reset_done);
+-		put_device(&vdev->vdev.dev);
++		put_device(dev);
+ 		iowrite8(1, &dc->guest_ack);
+ 		dev_dbg(&vpdev->dev, "%s %d guest_ack %d\n",
+ 			__func__, __LINE__, ioread8(&dc->guest_ack));
+diff --git a/drivers/misc/vexpress-syscfg.c b/drivers/misc/vexpress-syscfg.c
+index 6c3591cdf855..a3c6c773d9dc 100644
+--- a/drivers/misc/vexpress-syscfg.c
++++ b/drivers/misc/vexpress-syscfg.c
+@@ -61,7 +61,7 @@ static int vexpress_syscfg_exec(struct vexpress_syscfg_func *func,
+ 	int tries;
+ 	long timeout;
+ 
+-	if (WARN_ON(index > func->num_templates))
++	if (WARN_ON(index >= func->num_templates))
+ 		return -EINVAL;
+ 
+ 	command = readl(syscfg->base + SYS_CFGCTRL);
+diff --git a/drivers/mtd/mtdpart.c b/drivers/mtd/mtdpart.c
+index 99c460facd5e..0bbb23b014f1 100644
+--- a/drivers/mtd/mtdpart.c
++++ b/drivers/mtd/mtdpart.c
+@@ -470,6 +470,10 @@ static struct mtd_part *allocate_partition(struct mtd_info *parent,
+ 		/* let's register it anyway to preserve ordering */
+ 		slave->offset = 0;
+ 		slave->mtd.size = 0;
++
++		/* Initialize ->erasesize to make add_mtd_device() happy. */
++		slave->mtd.erasesize = parent->erasesize;
++
+ 		printk(KERN_ERR"mtd: partition \"%s\" is out of reach -- disabled\n",
+ 			part->name);
+ 		goto out_register;
+diff --git a/drivers/mtd/nand/raw/gpmi-nand/gpmi-lib.c b/drivers/mtd/nand/raw/gpmi-nand/gpmi-lib.c
+index 88ea2203e263..322a008290e5 100644
+--- a/drivers/mtd/nand/raw/gpmi-nand/gpmi-lib.c
++++ b/drivers/mtd/nand/raw/gpmi-nand/gpmi-lib.c
+@@ -155,9 +155,10 @@ int gpmi_init(struct gpmi_nand_data *this)
+ 
+ 	/*
+ 	 * Reset BCH here, too. We got failures otherwise :(
+-	 * See later BCH reset for explanation of MX23 handling
++	 * See later BCH reset for explanation of MX23 and MX28 handling
+ 	 */
+-	ret = gpmi_reset_block(r->bch_regs, GPMI_IS_MX23(this));
++	ret = gpmi_reset_block(r->bch_regs,
++			       GPMI_IS_MX23(this) || GPMI_IS_MX28(this));
+ 	if (ret)
+ 		goto err_out;
+ 
+@@ -263,12 +264,10 @@ int bch_set_geometry(struct gpmi_nand_data *this)
+ 	/*
+ 	* Due to erratum #2847 of the MX23, the BCH cannot be soft reset on this
+ 	* chip, otherwise it will lock up. So we skip resetting BCH on the MX23.
+-	* On the other hand, the MX28 needs the reset, because one case has been
+-	* seen where the BCH produced ECC errors constantly after 10000
+-	* consecutive reboots. The latter case has not been seen on the MX23
+-	* yet, still we don't know if it could happen there as well.
++	* and MX28.
+ 	*/
+-	ret = gpmi_reset_block(r->bch_regs, GPMI_IS_MX23(this));
++	ret = gpmi_reset_block(r->bch_regs,
++			       GPMI_IS_MX23(this) || GPMI_IS_MX28(this));
+ 	if (ret)
+ 		goto err_out;
+ 
+diff --git a/drivers/mtd/nand/spi/core.c b/drivers/mtd/nand/spi/core.c
+index 30f83649c481..8c7bf91ce4e1 100644
+--- a/drivers/mtd/nand/spi/core.c
++++ b/drivers/mtd/nand/spi/core.c
+@@ -304,24 +304,30 @@ static int spinand_write_to_cache_op(struct spinand_device *spinand,
+ 	struct nand_device *nand = spinand_to_nand(spinand);
+ 	struct mtd_info *mtd = nanddev_to_mtd(nand);
+ 	struct nand_page_io_req adjreq = *req;
+-	unsigned int nbytes = 0;
+-	void *buf = NULL;
++	void *buf = spinand->databuf;
++	unsigned int nbytes;
+ 	u16 column = 0;
+ 	int ret;
+ 
+-	memset(spinand->databuf, 0xff,
+-	       nanddev_page_size(nand) +
+-	       nanddev_per_page_oobsize(nand));
++	/*
++	 * Looks like PROGRAM LOAD (AKA write cache) does not necessarily reset
++	 * the cache content to 0xFF (depends on vendor implementation), so we
++	 * must fill the page cache entirely even if we only want to program
++	 * the data portion of the page, otherwise we might corrupt the BBM or
++	 * user data previously programmed in OOB area.
++	 */
++	nbytes = nanddev_page_size(nand) + nanddev_per_page_oobsize(nand);
++	memset(spinand->databuf, 0xff, nbytes);
++	adjreq.dataoffs = 0;
++	adjreq.datalen = nanddev_page_size(nand);
++	adjreq.databuf.out = spinand->databuf;
++	adjreq.ooblen = nanddev_per_page_oobsize(nand);
++	adjreq.ooboffs = 0;
++	adjreq.oobbuf.out = spinand->oobbuf;
+ 
+-	if (req->datalen) {
++	if (req->datalen)
+ 		memcpy(spinand->databuf + req->dataoffs, req->databuf.out,
+ 		       req->datalen);
+-		adjreq.dataoffs = 0;
+-		adjreq.datalen = nanddev_page_size(nand);
+-		adjreq.databuf.out = spinand->databuf;
+-		nbytes = adjreq.datalen;
+-		buf = spinand->databuf;
+-	}
+ 
+ 	if (req->ooblen) {
+ 		if (req->mode == MTD_OPS_AUTO_OOB)
+@@ -332,14 +338,6 @@ static int spinand_write_to_cache_op(struct spinand_device *spinand,
+ 		else
+ 			memcpy(spinand->oobbuf + req->ooboffs, req->oobbuf.out,
+ 			       req->ooblen);
+-
+-		adjreq.ooblen = nanddev_per_page_oobsize(nand);
+-		adjreq.ooboffs = 0;
+-		nbytes += nanddev_per_page_oobsize(nand);
+-		if (!buf) {
+-			buf = spinand->oobbuf;
+-			column = nanddev_page_size(nand);
+-		}
+ 	}
+ 
+ 	spinand_cache_op_adjust_colum(spinand, &adjreq, &column);
+@@ -370,8 +368,8 @@ static int spinand_write_to_cache_op(struct spinand_device *spinand,
+ 
+ 		/*
+ 		 * We need to use the RANDOM LOAD CACHE operation if there's
+-		 * more than one iteration, because the LOAD operation resets
+-		 * the cache to 0xff.
++		 * more than one iteration, because the LOAD operation might
++		 * reset the cache to 0xff.
+ 		 */
+ 		if (nbytes) {
+ 			column = op.addr.val;
+@@ -1016,11 +1014,11 @@ static int spinand_init(struct spinand_device *spinand)
+ 	for (i = 0; i < nand->memorg.ntargets; i++) {
+ 		ret = spinand_select_target(spinand, i);
+ 		if (ret)
+-			goto err_free_bufs;
++			goto err_manuf_cleanup;
+ 
+ 		ret = spinand_lock_block(spinand, BL_ALL_UNLOCKED);
+ 		if (ret)
+-			goto err_free_bufs;
++			goto err_manuf_cleanup;
+ 	}
+ 
+ 	ret = nanddev_init(nand, &spinand_ops, THIS_MODULE);
+diff --git a/drivers/pinctrl/intel/pinctrl-cherryview.c b/drivers/pinctrl/intel/pinctrl-cherryview.c
+index 6d31ad799987..b7e272d6ae81 100644
+--- a/drivers/pinctrl/intel/pinctrl-cherryview.c
++++ b/drivers/pinctrl/intel/pinctrl-cherryview.c
+@@ -1524,7 +1524,7 @@ static const struct dmi_system_id chv_no_valid_mask[] = {
+ 		.matches = {
+ 			DMI_MATCH(DMI_SYS_VENDOR, "GOOGLE"),
+ 			DMI_MATCH(DMI_PRODUCT_FAMILY, "Intel_Strago"),
+-			DMI_MATCH(DMI_BOARD_VERSION, "1.0"),
++			DMI_MATCH(DMI_PRODUCT_VERSION, "1.0"),
+ 		},
+ 	},
+ 	{
+@@ -1532,7 +1532,7 @@ static const struct dmi_system_id chv_no_valid_mask[] = {
+ 		.matches = {
+ 			DMI_MATCH(DMI_SYS_VENDOR, "HP"),
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "Setzer"),
+-			DMI_MATCH(DMI_BOARD_VERSION, "1.0"),
++			DMI_MATCH(DMI_PRODUCT_VERSION, "1.0"),
+ 		},
+ 	},
+ 	{
+@@ -1540,7 +1540,7 @@ static const struct dmi_system_id chv_no_valid_mask[] = {
+ 		.matches = {
+ 			DMI_MATCH(DMI_SYS_VENDOR, "GOOGLE"),
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "Cyan"),
+-			DMI_MATCH(DMI_BOARD_VERSION, "1.0"),
++			DMI_MATCH(DMI_PRODUCT_VERSION, "1.0"),
+ 		},
+ 	},
+ 	{
+@@ -1548,7 +1548,7 @@ static const struct dmi_system_id chv_no_valid_mask[] = {
+ 		.matches = {
+ 			DMI_MATCH(DMI_SYS_VENDOR, "GOOGLE"),
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "Celes"),
+-			DMI_MATCH(DMI_BOARD_VERSION, "1.0"),
++			DMI_MATCH(DMI_PRODUCT_VERSION, "1.0"),
+ 		},
+ 	},
+ 	{}
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sun50i-h6.c b/drivers/pinctrl/sunxi/pinctrl-sun50i-h6.c
+index aa8b58125568..ef4268cc6227 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sun50i-h6.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sun50i-h6.c
+@@ -588,7 +588,7 @@ static const unsigned int h6_irq_bank_map[] = { 1, 5, 6, 7 };
+ static const struct sunxi_pinctrl_desc h6_pinctrl_data = {
+ 	.pins = h6_pins,
+ 	.npins = ARRAY_SIZE(h6_pins),
+-	.irq_banks = 3,
++	.irq_banks = 4,
+ 	.irq_bank_map = h6_irq_bank_map,
+ 	.irq_read_needs_mux = true,
+ };
+diff --git a/fs/debugfs/inode.c b/fs/debugfs/inode.c
+index 13b01351dd1c..41ef452c1fcf 100644
+--- a/fs/debugfs/inode.c
++++ b/fs/debugfs/inode.c
+@@ -787,6 +787,13 @@ struct dentry *debugfs_rename(struct dentry *old_dir, struct dentry *old_dentry,
+ 	struct dentry *dentry = NULL, *trap;
+ 	struct name_snapshot old_name;
+ 
++	if (IS_ERR(old_dir))
++		return old_dir;
++	if (IS_ERR(new_dir))
++		return new_dir;
++	if (IS_ERR_OR_NULL(old_dentry))
++		return old_dentry;
++
+ 	trap = lock_rename(new_dir, old_dir);
+ 	/* Source or destination directories don't exist? */
+ 	if (d_really_is_negative(old_dir) || d_really_is_negative(new_dir))
+diff --git a/fs/ext4/fsync.c b/fs/ext4/fsync.c
+index 712f00995390..5508baa11bb6 100644
+--- a/fs/ext4/fsync.c
++++ b/fs/ext4/fsync.c
+@@ -116,16 +116,8 @@ int ext4_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
+ 		goto out;
+ 	}
+ 
+-	ret = file_write_and_wait_range(file, start, end);
+-	if (ret)
+-		return ret;
+-
+ 	if (!journal) {
+-		struct writeback_control wbc = {
+-			.sync_mode = WB_SYNC_ALL
+-		};
+-
+-		ret = ext4_write_inode(inode, &wbc);
++		ret = __generic_file_fsync(file, start, end, datasync);
+ 		if (!ret)
+ 			ret = ext4_sync_parent(inode);
+ 		if (test_opt(inode->i_sb, BARRIER))
+@@ -133,6 +125,9 @@ int ext4_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
+ 		goto out;
+ 	}
+ 
++	ret = file_write_and_wait_range(file, start, end);
++	if (ret)
++		return ret;
+ 	/*
+ 	 * data=writeback,ordered:
+ 	 *  The caller's filemap_fdatawrite()/wait will sync the data.
+diff --git a/include/linux/sunrpc/xprt.h b/include/linux/sunrpc/xprt.h
+index 336fd1a19cca..f30bf500888d 100644
+--- a/include/linux/sunrpc/xprt.h
++++ b/include/linux/sunrpc/xprt.h
+@@ -443,6 +443,11 @@ static inline int xprt_test_and_set_connecting(struct rpc_xprt *xprt)
+ 	return test_and_set_bit(XPRT_CONNECTING, &xprt->state);
+ }
+ 
++static inline int xprt_close_wait(struct rpc_xprt *xprt)
++{
++	return test_bit(XPRT_CLOSE_WAIT, &xprt->state);
++}
++
+ static inline void xprt_set_bound(struct rpc_xprt *xprt)
+ {
+ 	test_and_set_bit(XPRT_BOUND, &xprt->state);
+diff --git a/kernel/signal.c b/kernel/signal.c
+index edc28afc9fb4..c187def3dba6 100644
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -681,6 +681,48 @@ int dequeue_signal(struct task_struct *tsk, sigset_t *mask, siginfo_t *info)
+ 	return signr;
+ }
+ 
++static int dequeue_synchronous_signal(siginfo_t *info)
++{
++	struct task_struct *tsk = current;
++	struct sigpending *pending = &tsk->pending;
++	struct sigqueue *q, *sync = NULL;
++
++	/*
++	 * Might a synchronous signal be in the queue?
++	 */
++	if (!((pending->signal.sig[0] & ~tsk->blocked.sig[0]) & SYNCHRONOUS_MASK))
++		return 0;
++
++	/*
++	 * Return the first synchronous signal in the queue.
++	 */
++	list_for_each_entry(q, &pending->list, list) {
++		/* Synchronous signals have a postive si_code */
++		if ((q->info.si_code > SI_USER) &&
++		    (sigmask(q->info.si_signo) & SYNCHRONOUS_MASK)) {
++			sync = q;
++			goto next;
++		}
++	}
++	return 0;
++next:
++	/*
++	 * Check if there is another siginfo for the same signal.
++	 */
++	list_for_each_entry_continue(q, &pending->list, list) {
++		if (q->info.si_signo == sync->info.si_signo)
++			goto still_pending;
++	}
++
++	sigdelset(&pending->signal, sync->info.si_signo);
++	recalc_sigpending();
++still_pending:
++	list_del_init(&sync->list);
++	copy_siginfo(info, &sync->info);
++	__sigqueue_free(sync);
++	return info->si_signo;
++}
++
+ /*
+  * Tell a process that it has a new active signal..
+  *
+@@ -2390,6 +2432,11 @@ relock:
+ 		goto relock;
+ 	}
+ 
++	/* Has this task already been marked for death? */
++	ksig->info.si_signo = signr = SIGKILL;
++	if (signal_group_exit(signal))
++		goto fatal;
++
+ 	for (;;) {
+ 		struct k_sigaction *ka;
+ 
+@@ -2403,7 +2450,15 @@ relock:
+ 			goto relock;
+ 		}
+ 
+-		signr = dequeue_signal(current, &current->blocked, &ksig->info);
++		/*
++		 * Signals generated by the execution of an instruction
++		 * need to be delivered before any other pending signals
++		 * so that the instruction pointer in the signal stack
++		 * frame points to the faulting instruction.
++		 */
++		signr = dequeue_synchronous_signal(&ksig->info);
++		if (!signr)
++			signr = dequeue_signal(current, &current->blocked, &ksig->info);
+ 
+ 		if (!signr)
+ 			break; /* will return 0 */
+@@ -2485,6 +2540,7 @@ relock:
+ 			continue;
+ 		}
+ 
++	fatal:
+ 		spin_unlock_irq(&sighand->siglock);
+ 
+ 		/*
+diff --git a/kernel/trace/trace_uprobe.c b/kernel/trace/trace_uprobe.c
+index e696667da29a..a6aebbc848fe 100644
+--- a/kernel/trace/trace_uprobe.c
++++ b/kernel/trace/trace_uprobe.c
+@@ -5,7 +5,7 @@
+  * Copyright (C) IBM Corporation, 2010-2012
+  * Author:	Srikar Dronamraju <srikar@linux.vnet.ibm.com>
+  */
+-#define pr_fmt(fmt)	"trace_kprobe: " fmt
++#define pr_fmt(fmt)	"trace_uprobe: " fmt
+ 
+ #include <linux/module.h>
+ #include <linux/uaccess.h>
+diff --git a/net/batman-adv/hard-interface.c b/net/batman-adv/hard-interface.c
+index 2f0d42f2f913..08690d06b7be 100644
+--- a/net/batman-adv/hard-interface.c
++++ b/net/batman-adv/hard-interface.c
+@@ -20,7 +20,6 @@
+ #include "main.h"
+ 
+ #include <linux/atomic.h>
+-#include <linux/bug.h>
+ #include <linux/byteorder/generic.h>
+ #include <linux/errno.h>
+ #include <linux/gfp.h>
+@@ -179,8 +178,10 @@ static bool batadv_is_on_batman_iface(const struct net_device *net_dev)
+ 	parent_dev = __dev_get_by_index((struct net *)parent_net,
+ 					dev_get_iflink(net_dev));
+ 	/* if we got a NULL parent_dev there is something broken.. */
+-	if (WARN(!parent_dev, "Cannot find parent device"))
++	if (!parent_dev) {
++		pr_err("Cannot find parent device\n");
+ 		return false;
++	}
+ 
+ 	if (batadv_mutual_parents(net_dev, net, parent_dev, parent_net))
+ 		return false;
+diff --git a/net/batman-adv/soft-interface.c b/net/batman-adv/soft-interface.c
+index 626ddca332db..3899fa6e201d 100644
+--- a/net/batman-adv/soft-interface.c
++++ b/net/batman-adv/soft-interface.c
+@@ -221,6 +221,8 @@ static netdev_tx_t batadv_interface_tx(struct sk_buff *skb,
+ 
+ 	netif_trans_update(soft_iface);
+ 	vid = batadv_get_vid(skb, 0);
++
++	skb_reset_mac_header(skb);
+ 	ethhdr = eth_hdr(skb);
+ 
+ 	switch (ntohs(ethhdr->h_proto)) {
+diff --git a/net/ceph/messenger.c b/net/ceph/messenger.c
+index 9a1c27c61de8..a127d1442116 100644
+--- a/net/ceph/messenger.c
++++ b/net/ceph/messenger.c
+@@ -3240,9 +3240,10 @@ void ceph_con_keepalive(struct ceph_connection *con)
+ 	dout("con_keepalive %p\n", con);
+ 	mutex_lock(&con->mutex);
+ 	clear_standby(con);
++	con_flag_set(con, CON_FLAG_KEEPALIVE_PENDING);
+ 	mutex_unlock(&con->mutex);
+-	if (con_flag_test_and_set(con, CON_FLAG_KEEPALIVE_PENDING) == 0 &&
+-	    con_flag_test_and_set(con, CON_FLAG_WRITE_PENDING) == 0)
++
++	if (con_flag_test_and_set(con, CON_FLAG_WRITE_PENDING) == 0)
+ 		queue_con(con);
+ }
+ EXPORT_SYMBOL(ceph_con_keepalive);
+diff --git a/net/mac80211/tx.c b/net/mac80211/tx.c
+index 995a491f73a9..c7ccd7b71b15 100644
+--- a/net/mac80211/tx.c
++++ b/net/mac80211/tx.c
+@@ -1913,9 +1913,16 @@ static int ieee80211_skb_resize(struct ieee80211_sub_if_data *sdata,
+ 				int head_need, bool may_encrypt)
+ {
+ 	struct ieee80211_local *local = sdata->local;
++	struct ieee80211_hdr *hdr;
++	bool enc_tailroom;
+ 	int tail_need = 0;
+ 
+-	if (may_encrypt && sdata->crypto_tx_tailroom_needed_cnt) {
++	hdr = (struct ieee80211_hdr *) skb->data;
++	enc_tailroom = may_encrypt &&
++		       (sdata->crypto_tx_tailroom_needed_cnt ||
++			ieee80211_is_mgmt(hdr->frame_control));
++
++	if (enc_tailroom) {
+ 		tail_need = IEEE80211_ENCRYPT_TAILROOM;
+ 		tail_need -= skb_tailroom(skb);
+ 		tail_need = max_t(int, tail_need, 0);
+@@ -1923,8 +1930,7 @@ static int ieee80211_skb_resize(struct ieee80211_sub_if_data *sdata,
+ 
+ 	if (skb_cloned(skb) &&
+ 	    (!ieee80211_hw_check(&local->hw, SUPPORTS_CLONED_SKBS) ||
+-	     !skb_clone_writable(skb, ETH_HLEN) ||
+-	     (may_encrypt && sdata->crypto_tx_tailroom_needed_cnt)))
++	     !skb_clone_writable(skb, ETH_HLEN) || enc_tailroom))
+ 		I802_DEBUG_INC(local->tx_expand_skb_head_cloned);
+ 	else if (head_need || tail_need)
+ 		I802_DEBUG_INC(local->tx_expand_skb_head);
+diff --git a/net/sunrpc/clnt.c b/net/sunrpc/clnt.c
+index 8ea2f5fadd96..1fc812ba9871 100644
+--- a/net/sunrpc/clnt.c
++++ b/net/sunrpc/clnt.c
+@@ -1992,13 +1992,15 @@ call_transmit(struct rpc_task *task)
+ static void
+ call_transmit_status(struct rpc_task *task)
+ {
++	struct rpc_xprt *xprt = task->tk_rqstp->rq_xprt;
+ 	task->tk_action = call_status;
+ 
+ 	/*
+ 	 * Common case: success.  Force the compiler to put this
+-	 * test first.
++	 * test first.  Or, if any error and xprt_close_wait,
++	 * release the xprt lock so the socket can close.
+ 	 */
+-	if (task->tk_status == 0) {
++	if (task->tk_status == 0 || xprt_close_wait(xprt)) {
+ 		xprt_end_transmit(task);
+ 		rpc_task_force_reencode(task);
+ 		return;
+diff --git a/net/sunrpc/xprtrdma/svc_rdma_sendto.c b/net/sunrpc/xprtrdma/svc_rdma_sendto.c
+index 8602a5f1b515..e8ad7ddf347a 100644
+--- a/net/sunrpc/xprtrdma/svc_rdma_sendto.c
++++ b/net/sunrpc/xprtrdma/svc_rdma_sendto.c
+@@ -563,6 +563,99 @@ void svc_rdma_sync_reply_hdr(struct svcxprt_rdma *rdma,
+ 				      DMA_TO_DEVICE);
+ }
+ 
++/* If the xdr_buf has more elements than the device can
++ * transmit in a single RDMA Send, then the reply will
++ * have to be copied into a bounce buffer.
++ */
++static bool svc_rdma_pull_up_needed(struct svcxprt_rdma *rdma,
++				    struct xdr_buf *xdr,
++				    __be32 *wr_lst)
++{
++	int elements;
++
++	/* xdr->head */
++	elements = 1;
++
++	/* xdr->pages */
++	if (!wr_lst) {
++		unsigned int remaining;
++		unsigned long pageoff;
++
++		pageoff = xdr->page_base & ~PAGE_MASK;
++		remaining = xdr->page_len;
++		while (remaining) {
++			++elements;
++			remaining -= min_t(u32, PAGE_SIZE - pageoff,
++					   remaining);
++			pageoff = 0;
++		}
++	}
++
++	/* xdr->tail */
++	if (xdr->tail[0].iov_len)
++		++elements;
++
++	/* assume 1 SGE is needed for the transport header */
++	return elements >= rdma->sc_max_send_sges;
++}
++
++/* The device is not capable of sending the reply directly.
++ * Assemble the elements of @xdr into the transport header
++ * buffer.
++ */
++static int svc_rdma_pull_up_reply_msg(struct svcxprt_rdma *rdma,
++				      struct svc_rdma_send_ctxt *ctxt,
++				      struct xdr_buf *xdr, __be32 *wr_lst)
++{
++	unsigned char *dst, *tailbase;
++	unsigned int taillen;
++
++	dst = ctxt->sc_xprt_buf;
++	dst += ctxt->sc_sges[0].length;
++
++	memcpy(dst, xdr->head[0].iov_base, xdr->head[0].iov_len);
++	dst += xdr->head[0].iov_len;
++
++	tailbase = xdr->tail[0].iov_base;
++	taillen = xdr->tail[0].iov_len;
++	if (wr_lst) {
++		u32 xdrpad;
++
++		xdrpad = xdr_padsize(xdr->page_len);
++		if (taillen && xdrpad) {
++			tailbase += xdrpad;
++			taillen -= xdrpad;
++		}
++	} else {
++		unsigned int len, remaining;
++		unsigned long pageoff;
++		struct page **ppages;
++
++		ppages = xdr->pages + (xdr->page_base >> PAGE_SHIFT);
++		pageoff = xdr->page_base & ~PAGE_MASK;
++		remaining = xdr->page_len;
++		while (remaining) {
++			len = min_t(u32, PAGE_SIZE - pageoff, remaining);
++
++			memcpy(dst, page_address(*ppages), len);
++			remaining -= len;
++			dst += len;
++			pageoff = 0;
++		}
++	}
++
++	if (taillen)
++		memcpy(dst, tailbase, taillen);
++
++	ctxt->sc_sges[0].length += xdr->len;
++	ib_dma_sync_single_for_device(rdma->sc_pd->device,
++				      ctxt->sc_sges[0].addr,
++				      ctxt->sc_sges[0].length,
++				      DMA_TO_DEVICE);
++
++	return 0;
++}
++
+ /* svc_rdma_map_reply_msg - Map the buffer holding RPC message
+  * @rdma: controlling transport
+  * @ctxt: send_ctxt for the Send WR
+@@ -585,8 +678,10 @@ int svc_rdma_map_reply_msg(struct svcxprt_rdma *rdma,
+ 	u32 xdr_pad;
+ 	int ret;
+ 
+-	if (++ctxt->sc_cur_sge_no >= rdma->sc_max_send_sges)
+-		return -EIO;
++	if (svc_rdma_pull_up_needed(rdma, xdr, wr_lst))
++		return svc_rdma_pull_up_reply_msg(rdma, ctxt, xdr, wr_lst);
++
++	++ctxt->sc_cur_sge_no;
+ 	ret = svc_rdma_dma_map_buf(rdma, ctxt,
+ 				   xdr->head[0].iov_base,
+ 				   xdr->head[0].iov_len);
+@@ -617,8 +712,7 @@ int svc_rdma_map_reply_msg(struct svcxprt_rdma *rdma,
+ 	while (remaining) {
+ 		len = min_t(u32, PAGE_SIZE - page_off, remaining);
+ 
+-		if (++ctxt->sc_cur_sge_no >= rdma->sc_max_send_sges)
+-			return -EIO;
++		++ctxt->sc_cur_sge_no;
+ 		ret = svc_rdma_dma_map_page(rdma, ctxt, *ppages++,
+ 					    page_off, len);
+ 		if (ret < 0)
+@@ -632,8 +726,7 @@ int svc_rdma_map_reply_msg(struct svcxprt_rdma *rdma,
+ 	len = xdr->tail[0].iov_len;
+ tail:
+ 	if (len) {
+-		if (++ctxt->sc_cur_sge_no >= rdma->sc_max_send_sges)
+-			return -EIO;
++		++ctxt->sc_cur_sge_no;
+ 		ret = svc_rdma_dma_map_buf(rdma, ctxt, base, len);
+ 		if (ret < 0)
+ 			return ret;
+diff --git a/net/sunrpc/xprtrdma/svc_rdma_transport.c b/net/sunrpc/xprtrdma/svc_rdma_transport.c
+index 2848cafd4a17..ce5c610b49c7 100644
+--- a/net/sunrpc/xprtrdma/svc_rdma_transport.c
++++ b/net/sunrpc/xprtrdma/svc_rdma_transport.c
+@@ -475,13 +475,12 @@ static struct svc_xprt *svc_rdma_accept(struct svc_xprt *xprt)
+ 
+ 	/* Qualify the transport resource defaults with the
+ 	 * capabilities of this particular device */
+-	newxprt->sc_max_send_sges = dev->attrs.max_send_sge;
+-	/* transport hdr, head iovec, one page list entry, tail iovec */
+-	if (newxprt->sc_max_send_sges < 4) {
+-		pr_err("svcrdma: too few Send SGEs available (%d)\n",
+-		       newxprt->sc_max_send_sges);
+-		goto errout;
+-	}
++	/* Transport header, head iovec, tail iovec */
++	newxprt->sc_max_send_sges = 3;
++	/* Add one SGE per page list entry */
++	newxprt->sc_max_send_sges += (svcrdma_max_req_size / PAGE_SIZE) + 1;
++	if (newxprt->sc_max_send_sges > dev->attrs.max_send_sge)
++		newxprt->sc_max_send_sges = dev->attrs.max_send_sge;
+ 	newxprt->sc_max_req_size = svcrdma_max_req_size;
+ 	newxprt->sc_max_requests = svcrdma_max_requests;
+ 	newxprt->sc_max_bc_requests = svcrdma_max_bc_requests;
+diff --git a/net/xfrm/xfrm_policy.c b/net/xfrm/xfrm_policy.c
+index 119a427d9b2b..6ea8036fcdbe 100644
+--- a/net/xfrm/xfrm_policy.c
++++ b/net/xfrm/xfrm_policy.c
+@@ -1628,7 +1628,10 @@ static struct dst_entry *xfrm_bundle_create(struct xfrm_policy *policy,
+ 		dst_copy_metrics(dst1, dst);
+ 
+ 		if (xfrm[i]->props.mode != XFRM_MODE_TRANSPORT) {
+-			__u32 mark = xfrm_smark_get(fl->flowi_mark, xfrm[i]);
++			__u32 mark = 0;
++
++			if (xfrm[i]->props.smark.v || xfrm[i]->props.smark.m)
++				mark = xfrm_smark_get(fl->flowi_mark, xfrm[i]);
+ 
+ 			family = xfrm[i]->props.family;
+ 			dst = xfrm_dst_lookup(xfrm[i], tos, fl->flowi_oif,
+diff --git a/net/xfrm/xfrm_user.c b/net/xfrm/xfrm_user.c
+index 566919838d5e..ab557827aac0 100644
+--- a/net/xfrm/xfrm_user.c
++++ b/net/xfrm/xfrm_user.c
+@@ -1488,10 +1488,15 @@ static int validate_tmpl(int nr, struct xfrm_user_tmpl *ut, u16 family)
+ 		if (!ut[i].family)
+ 			ut[i].family = family;
+ 
+-		if ((ut[i].mode == XFRM_MODE_TRANSPORT) &&
+-		    (ut[i].family != prev_family))
+-			return -EINVAL;
+-
++		switch (ut[i].mode) {
++		case XFRM_MODE_TUNNEL:
++		case XFRM_MODE_BEET:
++			break;
++		default:
++			if (ut[i].family != prev_family)
++				return -EINVAL;
++			break;
++		}
+ 		if (ut[i].mode >= XFRM_MODE_MAX)
+ 			return -EINVAL;
+ 
+diff --git a/samples/mei/mei-amt-version.c b/samples/mei/mei-amt-version.c
+index 57d0d871dcf7..bb9988914a56 100644
+--- a/samples/mei/mei-amt-version.c
++++ b/samples/mei/mei-amt-version.c
+@@ -117,7 +117,7 @@ static bool mei_init(struct mei *me, const uuid_le *guid,
+ 
+ 	me->verbose = verbose;
+ 
+-	me->fd = open("/dev/mei", O_RDWR);
++	me->fd = open("/dev/mei0", O_RDWR);
+ 	if (me->fd == -1) {
+ 		mei_err(me, "Cannot establish a handle to the Intel MEI driver\n");
+ 		goto err;
+diff --git a/tools/iio/iio_generic_buffer.c b/tools/iio/iio_generic_buffer.c
+index 3040830d7797..84545666a09c 100644
+--- a/tools/iio/iio_generic_buffer.c
++++ b/tools/iio/iio_generic_buffer.c
+@@ -330,7 +330,7 @@ static const struct option longopts[] = {
+ 
+ int main(int argc, char **argv)
+ {
+-	unsigned long long num_loops = 2;
++	long long num_loops = 2;
+ 	unsigned long timedelay = 1000000;
+ 	unsigned long buf_len = 128;
+ 

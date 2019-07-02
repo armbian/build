@@ -10,18 +10,24 @@
 build_firmware()
 {
 	display_alert "Merging and packaging linux firmware" "@host" "info"
-
-	local plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+	if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
+		plugin_repo="https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+	else
+		plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+	fi
 	local plugin_dir="armbian-firmware${FULL}"
 	[[ -d $SRC/cache/sources/$plugin_dir ]] && rm -rf $SRC/cache/sources/$plugin_dir
+	mkdir -p $SRC/cache/sources/$plugin_dir/lib/firmware
 
 	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
 	if [[ -n $FULL ]]; then
-		fetch_from_repo "$plugin_repo" "$plugin_dir/lib/firmware" "branch:master"
+		fetch_from_repo "$plugin_repo" "linux-firmware-git" "branch:master"
+		# cp : create hardlinks
+		cp -alf $SRC/cache/sources/linux-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware/
 	fi
-	mkdir -p $SRC/cache/sources/$plugin_dir/lib/firmware
 	# overlay our firmware
-	cp -R $SRC/cache/sources/armbian-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware
+	# cp : create hardlinks
+	cp -alf $SRC/cache/sources/armbian-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware/
 
 	# cleanup what's not needed for sure
 	rm -rf $SRC/cache/sources/$plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
@@ -35,7 +41,7 @@ build_firmware()
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Installed-Size: 1
-	Replaces: linux-firmware, firmware-brcm80211, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}
+	Replaces: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}
 	Section: kernel
 	Priority: optional
 	Description: Linux firmware${FULL}

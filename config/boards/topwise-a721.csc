@@ -6,5 +6,5 @@ MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sunxi zet6221 ssd2
 MODULES_NEXT="bonding"
 #
 KERNEL_TARGET="default"
-CLI_TARGET="jessie:next"
+CLI_TARGET="buster:next"
 DESKTOP_TARGET="xenial:default"
