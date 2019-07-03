@@ -43,7 +43,7 @@ compilation_prepare()
 
 		# attach to specifics tag or branch
 		#local wirever="branch:master"
-		local wirever="tag:0.0.20190601"
+		local wirever="tag:0.0.20190702"
 
 		display_alert "Adding" "WireGuard ${wirever} " "info"
 
