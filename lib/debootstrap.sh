@@ -616,11 +616,7 @@ create_image()
 	#
 	if [[ $COMPRESS_OUTPUTIMAGE == *gz* && $BUILD_ALL != yes ]]; then
 		display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
-		gzip < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
-	fi
-	if [[ $COMPRESS_OUTPUTIMAGE == *bz2* && $BUILD_ALL != yes ]]; then
-		display_alert "Compressing" "$DEST/images/${version}.img.bz2" "info"
-		bzip2 < $DESTIMG/${version}.img > $DEST/images/${version}.img.bz2
+		pigz < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
 	fi
 	#
 	if [[ $BUILD_ALL != yes ]]; then
