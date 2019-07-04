@@ -590,16 +590,37 @@ create_image()
 	cp $SDCARD/etc/armbian.txt $DESTIMG
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
-	if [[ $COMPRESS_OUTPUTIMAGE == yes && $BUILD_ALL != yes ]]; then
+	if [[ $COMPRESS_OUTPUTIMAGE == yes ]]; then
+		COMPRESS_OUTPUTIMAGE="sha,7z"
+	fi
+
+	if [[ $COMPRESS_OUTPUTIMAGE == *sha* && $BUILD_ALL != yes ]]; then
+		cd $DESTIMG
+		display_alert "SHS256 calculating" "${version}.img" "info"
+		sha256sum -b ${version}.img > sha256sum.sha
+		cp sha256sum.sha "$DEST/images/${version}.img.sha"
+		if [[ -n $GPG_PASS ]]; then
+			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img || exit 1
+		fi
+		cd ..
+	fi
+	#
+	if [[ $COMPRESS_OUTPUTIMAGE == *7z* && $BUILD_ALL != yes ]]; then
 		[[ -f $DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME ]] && cp $DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME $DESTIMG/
 		# compress image
 		cd $DESTIMG
-		sha256sum -b ${version}.img > sha256sum.sha
-		if [[ -n $GPG_PASS ]]; then
-			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
-		fi
-			display_alert "Compressing" "$DEST/images/${version}.img" "info"
-		7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
+		display_alert "Compressing" "$DEST/images/${version}.7z" "info"
+		gz 7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
+		cd ..
+	fi
+	#
+	if [[ $COMPRESS_OUTPUTIMAGE == *gz* && $BUILD_ALL != yes ]]; then
+		display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
+		gzip < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
+	fi
+	if [[ $COMPRESS_OUTPUTIMAGE == *bz2* && $BUILD_ALL != yes ]]; then
+		display_alert "Compressing" "$DEST/images/${version}.img.bz2" "info"
+		bzip2 < $DESTIMG/${version}.img > $DEST/images/${version}.img.bz2
 	fi
 	#
 	if [[ $BUILD_ALL != yes ]]; then
@@ -617,7 +638,7 @@ create_image()
 		balena-etcher $DEST/images/${version}.img -d $CARD_DEVICE -y
 		if [ $? -eq 0 ]; then
 			display_alert "Writing succeeded" "${version}.img" "info"
-			else
+		else
 			display_alert "Writing failed" "${version}.img" "err"
 		fi
 	fi
