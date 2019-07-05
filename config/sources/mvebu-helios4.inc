@@ -41,6 +41,8 @@ family_tweaks_s()
 		;;
 	esac
 
+	cp $SRC/packages/bsp/helios4/fancontrol.service $SDCARD/etc/systemd/system/
+
 	### Mdadm tweaks
 
 	# copy mdadm-fault-led script and set right permission
