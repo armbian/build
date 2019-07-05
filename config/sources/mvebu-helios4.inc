@@ -14,19 +14,8 @@ case $BRANCH in
 
 	BOOTPATCHDIR='u-boot-helios4'
 	;;
-	next)
-	BOOTSOURCE='https://github.com/helios-4/u-boot.git'
-	BOOTBRANCH='branch:helios4'
-	BOOTDIR=$MAINLINE_UBOOT_DIR
-	BOOTSCRIPT='boot-marvell.cmd:boot.cmd'
-
-	UBOOT_TARGET_MAP=";;u-boot-spl.kwb:u-boot.mmc
-		;spi;u-boot-spl.kwb:u-boot.flash"
-	UBOOT_USE_GCC='> 7.0'
-
+	next|dev)
 	OVERLAY_PREFIX='armada-388-helios4'
-
-	BOOTPATCHDIR='u-boot-helios4-next'
 	;;
 esac
 
