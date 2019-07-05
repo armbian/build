@@ -1,6 +1,6 @@
 case $BRANCH in
 
-	default|next|dev)
+	default|next)
 
 		# Check https://developer.solid-run.com/knowledge-base/a388-u-boot
 		# for advanced config options
@@ -19,4 +19,10 @@ case $BRANCH in
 		UBOOT_COMPILER='arm-linux-gnueabihf-'
 
 	;;
+	dev)
+		if [[ $BOARD == clearfogbase ]]; then
+			OVERLAY_PREFIX='armada-388-clearfog-base'
+		else
+			OVERLAY_PREFIX='armada-388-clearfog'
+		fi
 esac
