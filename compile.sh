@@ -74,7 +74,7 @@ if [[ ! -f $SRC/.ignore_changes ]]; then
 	if [[ -n $CHANGED_FILES ]]; then
 		echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
 		while true; do
-			echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue, \e[0;33mdiff\x1B[0m to display changes"
+			echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m or \e[0;33mexit\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue, \e[0;33mdiff\x1B[0m to display changes"
 			read -r
 			if [[ "$REPLY" == "diff" ]]; then
 				git diff
