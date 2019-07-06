@@ -249,7 +249,7 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	options=()
 	[[ $EXPERT = yes ]] && options+=("jessie" "Debian 8 Jessie / unsupported")
 	options+=("stretch" "Debian 9 Stretch")
-	[[ $EXPERT = yes ]] && options+=("buster" "Debian 10 Buster / unsupported")
+	options+=("buster" "Debian 10 Buster")
 	options+=("xenial" "Ubuntu Xenial 16.04 LTS")
 	options+=("bionic" "Ubuntu Bionic 18.04 LTS")
 	[[ $EXPERT = yes ]] && options+=("disco" "Ubuntu Disco 19.04 / unsupported")
