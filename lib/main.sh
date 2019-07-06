@@ -349,6 +349,7 @@ fi
 
 # Compile kernel if packed .deb does not exist
 if [[ ! -f ${DEST}/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+	KDEB_CHANGELOG_DIST=$RELEASE
 	compile_kernel
 fi
 
@@ -391,4 +392,5 @@ $([[ -n $RELEASE ]] && echo "RELEASE=${RELEASE} ")\
 $([[ -n $BUILD_DESKTOP ]] && echo "BUILD_DESKTOP=${BUILD_DESKTOP} ")\
 $([[ -n $KERNEL_ONLY ]] && echo "KERNEL_ONLY=${KERNEL_ONLY} ")\
 $([[ -n $KERNEL_CONFIGURE ]] && echo "KERNEL_CONFIGURE=${KERNEL_CONFIGURE} ")\
+$([[ -n $COMPRESS_OUTPUTIMAGE ]] && echo "COMPRESS_OUTPUTIMAGE=${COMPRESS_OUTPUTIMAGE} ")\
 " "info"
