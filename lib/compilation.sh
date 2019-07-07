@@ -316,9 +316,9 @@ compile_kernel()
 		display_alert "Using previous kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
 		cp $DEST/config/$LINUXCONFIG.config .config
 	else
-		if [[ -f $SRC/userpatches/$LINUXCONFIG.config ]]; then
+		if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
-			cp $SRC/userpatches/$LINUXCONFIG.config .config
+			cp $USERPATCHES_PATH/$LINUXCONFIG.config .config
 		else
 			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
 			cp $SRC/config/kernel/$LINUXCONFIG.config .config
@@ -515,10 +515,10 @@ find_toolchain()
 # <description>: additional description text
 #
 # priority:
-# $SRC/userpatches/<dest>/<family>/target_<target>
-# $SRC/userpatches/<dest>/<family>/board_<board>
-# $SRC/userpatches/<dest>/<family>/branch_<branch>
-# $SRC/userpatches/<dest>/<family>
+# $USERPATCHES_PATH/<dest>/<family>/target_<target>
+# $USERPATCHES_PATH/<dest>/<family>/board_<board>
+# $USERPATCHES_PATH/<dest>/<family>/branch_<branch>
+# $USERPATCHES_PATH/<dest>/<family>
 # $SRC/patch/<dest>/<family>/target_<target>
 # $SRC/patch/<dest>/<family>/board_<board>
 # $SRC/patch/<dest>/<family>/branch_<branch>
@@ -538,10 +538,10 @@ advanced_patch()
 
 	local names=()
 	local dirs=(
-		"$SRC/userpatches/$dest/$family/target_${target}:[\e[33mu\e[0m][\e[34mt\e[0m]"
-		"$SRC/userpatches/$dest/$family/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
-		"$SRC/userpatches/$dest/$family/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
-		"$SRC/userpatches/$dest/$family:[\e[33mu\e[0m][\e[32mc\e[0m]"
+		"$USERPATCHES_PATH/$dest/$family/target_${target}:[\e[33mu\e[0m][\e[34mt\e[0m]"
+		"$USERPATCHES_PATH/$dest/$family/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
+		"$USERPATCHES_PATH/$dest/$family/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
+		"$USERPATCHES_PATH/$dest/$family:[\e[33mu\e[0m][\e[32mc\e[0m]"
 		"$SRC/patch/$dest/$family/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]"
 		"$SRC/patch/$dest/$family/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"
 		"$SRC/patch/$dest/$family/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]"

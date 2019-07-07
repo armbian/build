@@ -50,6 +50,7 @@ else
 	# shellcheck source=/dev/null
 	source "${SRC}"/config-default.conf
 fi
+[[ -z "${USERPATCHES_PATH}" ]] && USERPATCHES_PATH="$SRC/userpatches"
 
 if [[ $EUID != 0 ]]; then
 	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
