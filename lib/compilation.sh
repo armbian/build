@@ -163,15 +163,21 @@ compile_uboot()
 		# armbian specifics u-boot settings
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
-		if [[ $BOOTBRANCH =~ ^tag:v201[8-9](.*) ]]; then
-			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_FAT.*/# CONFIG_ENV_IS_IN_FAT is not set/g' .config
-			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_EXT4.*/CONFIG_ENV_IS_IN_EXT4=y/g' .config
-			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_MMC.*/# CONFIG_ENV_IS_IN_MMC is not set/g' .config
-			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_NOWHERE.*/# CONFIG_ENV_IS_NOWHERE is not set/g' .config | echo "# CONFIG_ENV_IS_NOWHERE is not set" >> .config
-			[[ -f .config ]] && echo 'CONFIG_ENV_EXT4_INTERFACE="mmc"' >> .config
-			[[ -f .config ]] && echo 'CONFIG_ENV_EXT4_DEVICE_AND_PART="0:auto"' >> .config
-			[[ -f .config ]] && echo 'CONFIG_ENV_EXT4_FILE="/boot/boot.env"' >> .config
+
+		# for modern kernel and non spi targets
+		if [[ $BOOTBRANCH =~ ^tag:v201[8-9](.*) && target != "spi" && -f .config ]]; then
+
+			sed -i 's/^.*CONFIG_ENV_IS_IN_FAT.*/# CONFIG_ENV_IS_IN_FAT is not set/g' .config
+			sed -i 's/^.*CONFIG_ENV_IS_IN_EXT4.*/CONFIG_ENV_IS_IN_EXT4=y/g' .config
+			sed -i 's/^.*CONFIG_ENV_IS_IN_MMC.*/# CONFIG_ENV_IS_IN_MMC is not set/g' .config
+			sed -i 's/^.*CONFIG_ENV_IS_NOWHERE.*/# CONFIG_ENV_IS_NOWHERE is not set/g' .config | echo \
+			"# CONFIG_ENV_IS_NOWHERE is not set" >> .config
+			echo 'CONFIG_ENV_EXT4_INTERFACE="mmc"' >> .config
+			echo 'CONFIG_ENV_EXT4_DEVICE_AND_PART="0:auto"' >> .config
+			echo 'CONFIG_ENV_EXT4_FILE="/boot/boot.env"' >> .config
+
 		fi
+
 		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/packages/blobs/splash/udoo.bmp tools/logos/udoo.bmp
 		touch .scmversion
 
@@ -279,44 +285,8 @@ compile_kernel()
 	# read kernel version
 	local version=$(grab_version "$kerneldir")
 
-	# add WireGuard
-	if linux-version compare $version ge 3.14 && [ "$WIREGUARD" == yes ]; then
-			display_alert "Adding" "WireGuard" "info"
-			rm -rf $SRC/cache/sources/$LINUXSOURCEDIR/net/wireguard
-			cp -R $SRC/cache/sources/wireguard/src/ $SRC/cache/sources/$LINUXSOURCEDIR/net/wireguard
-			sed -i "/^obj-\\\$(CONFIG_NETFILTER).*+=/a obj-\$(CONFIG_WIREGUARD) += wireguard/" "$SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile"
-			sed -i "/^if INET\$/a source \"net/wireguard/Kconfig\"" "$SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig"
-			# remove duplicates
-			[[ $(cat $SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile | grep wireguard | wc -l) -gt 1 ]] && \
-			sed -i '0,/wireguard/{/wireguard/d;}' $SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile
-			[[ $(cat $SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig | grep wireguard | wc -l) -gt 1 ]] && \
-			sed -i '0,/wireguard/{/wireguard/d;}' $SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig
-			# headers workaround
-			display_alert "Patching WireGuard" "Applying workaround for headers compilation" "info"
-			sed -i '/mkdir -p "$destdir"/a mkdir -p "$destdir"/net/wireguard; touch "$destdir"/net/wireguard/{Kconfig,Makefile} # workaround for Wireguard' $SRC/cache/sources/$LINUXSOURCEDIR/scripts/package/builddeb
-	fi
-
-	# add drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
-	if linux-version compare $version ge 3.14 && [ "$RTL8812AU" == yes ]; then
-		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets" "info"
-		rm -rf $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au
-		mkdir -p $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/
-		cp -R $SRC/cache/sources/rtl8812au/{core,hal,include,os_dep,platform,modules.order} $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au
-		
-		# Makefile
-		cp $SRC/cache/sources/rtl8812au/Makefile $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/Makefile
-		cp $SRC/cache/sources/rtl8812au/Kconfig $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/Kconfig
-
-		# Adjust path
-		sed -i 's/include $(TopDIR)\/hal\/phydm\/phydm.mk/include $(TopDIR)\/drivers\/net\/wireless\/rtl8812au\/hal\/phydm\/phydm.mk/' \
-		$SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/Makefile
-
-		# Add to section Makefile
-		sed -i '/obj-$(CONFIG_.*ATMEL).*/a obj-$(CONFIG_RTL8812AU) += rtl8812au/' \
-		$SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/Makefile
-		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8812au\/Kconfig"' \
-		$SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/Kconfig
-	fi
+	# build 3rd party drivers
+	compilation_prepare
 
 	# create linux-source package - with already patched sources
 	local sources_pkg_dir=$SRC/.tmp/${CHOSEN_KSRC}_${REVISION}_all
