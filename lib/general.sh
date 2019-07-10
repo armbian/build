@@ -341,11 +341,16 @@ fingerprint_image()
 	Title:			Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH
 	Kernel:			Linux $VER
 	Build date:		$(date +'%d.%m.%Y')
+	Maintainer:		$MAINTAINER <$MAINTAINERMAIL>
 	Authors:		https://www.armbian.com/authors
 	Sources: 		https://github.com/armbian/
 	Support: 		https://forum.armbian.com/
 	Changelog: 		https://www.armbian.com/logbook/
 	Documantation:		https://docs.armbian.com/
+	--------------------------------------------------------------------------------
+	Partitioning configuration:
+	Root partition type: $ROOTFS_TYPE
+	Boot partition type: ${BOOTFS_TYPE:-(none)}
 	--------------------------------------------------------------------------------
 	$(cat $SRC/LICENSE)
 	--------------------------------------------------------------------------------
