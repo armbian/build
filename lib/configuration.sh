@@ -85,9 +85,9 @@ DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
 
 source "${SRC}/config/sources/${LINUXFAMILY}.conf"
 
-if [[ -f ${SRC}/userpatches/sources/$LINUXFAMILY.conf ]]; then
+if [[ -f $USERPATCHES_PATH/sources/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
-	source "${SRC}/userpatches/sources/${LINUXFAMILY}.conf"
+	source "$USERPATCHES_PATH/sources/${LINUXFAMILY}.conf"
 fi
 
 # dropbear needs to be configured differently
@@ -220,9 +220,9 @@ if [[ $DOWNLOAD_MIRROR == china ]] ; then
 fi
 
 # For user override
-if [[ -f ${SRC}/userpatches/lib.config ]]; then
+if [[ -f $USERPATCHES_PATH/lib.config ]]; then
 	display_alert "Using user configuration override" "userpatches/lib.config" "info"
-	source "${SRC}"/userpatches/lib.config
+	source "$USERPATCHES_PATH"/lib.config
 fi
 
 # apt-cacher-ng mirror configurarion
