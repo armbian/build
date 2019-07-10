@@ -587,7 +587,7 @@ create_image()
 	losetup -d $LOOP
 	rm -rf --one-file-system $DESTIMG $MOUNT
 	mkdir -p $DESTIMG
-	cp $SDCARD/etc/armbian.txt $DESTIMG
+	fingerprint_image "$DESTIMG/${version}.txt"
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
 	if [[ $BUILD_ALL != yes ]]; then
@@ -629,7 +629,8 @@ create_image()
 			pigz < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
 		fi
 
-		mv $DESTIMG/${version}.img $DEST/images/${version}.img
+		mv $DESTIMG/${version}.txt $DEST/images/${version}.txt || exit 1
+		mv $DESTIMG/${version}.img $DEST/images/${version}.img || exit 1
 		rm -rf $DESTIMG
 	fi
 
