@@ -587,7 +587,7 @@ create_image()
 	losetup -d $LOOP
 	rm -rf --one-file-system $DESTIMG $MOUNT
 	mkdir -p $DESTIMG
-	fingerprint_image "$DESTIMG/${version}.txt"
+	fingerprint_image "$DESTIMG/${version}.txt" "${version}"
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
 	if [[ $BUILD_ALL != yes ]]; then
