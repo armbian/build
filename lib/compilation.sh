@@ -275,18 +275,18 @@ compile_kernel()
 		patch --batch --silent -t -p1 < $SRC/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
 	fi
 
+	# read kernel version
+	local version=$(grab_version "$kerneldir")
+
+	# build 3rd party drivers
+	compilation_prepare
+
 	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
 
 	if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
 		sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
 	fi
 	rm -f localversion
-
-	# read kernel version
-	local version=$(grab_version "$kerneldir")
-
-	# build 3rd party drivers
-	compilation_prepare
 
 	# create linux-source package - with already patched sources
 	local sources_pkg_dir=$SRC/.tmp/${CHOSEN_KSRC}_${REVISION}_all
