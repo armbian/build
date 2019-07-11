@@ -132,8 +132,13 @@ install_common()
 	local bootscript_dst=${BOOTSCRIPT##*:}
 	cp "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
 
-	[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
-		cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+	if [[ -n $BOOTENV_FILE ]]; then
+		if [[ -f $USERPATCHES_PATH/bootenv/$BOOTENV_FILE ]]; then
+			cp "$USERPATCHES_PATH/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+		elif [[ -f $SRC/config/bootenv/$BOOTENV_FILE ]]; then
+			cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+		fi
+	fi
 
 	# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
 	# instead of copying sunxi-specific template

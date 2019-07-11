@@ -296,10 +296,10 @@ fetch_from_repo()
 	fi
 } #############################################################################
 
-display_alert()
 #--------------------------------------------------------------------------------------------------------------------------------
 # Let's have unique way of displaying alerts
 #--------------------------------------------------------------------------------------------------------------------------------
+display_alert()
 {
 	# log function parameters to install.log
 	[[ -n $DEST ]] && echo "Displaying message: $@" >> $DEST/debug/output.log
@@ -330,22 +330,51 @@ display_alert()
 	esac
 }
 
-fingerprint_image()
-{
 #--------------------------------------------------------------------------------------------------------------------------------
+# fingerprint_image <out_txt_file> [image_filename]
 # Saving build summary to the image
 #--------------------------------------------------------------------------------------------------------------------------------
+fingerprint_image()
+{
 	display_alert "Fingerprinting"
 	cat <<-EOF > $1
 	--------------------------------------------------------------------------------
 	Title:			Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH
 	Kernel:			Linux $VER
 	Build date:		$(date +'%d.%m.%Y')
+	Maintainer:		$MAINTAINER <$MAINTAINERMAIL>
 	Authors:		https://www.armbian.com/authors
 	Sources: 		https://github.com/armbian/
 	Support: 		https://forum.armbian.com/
 	Changelog: 		https://www.armbian.com/logbook/
 	Documantation:		https://docs.armbian.com/
+	EOF
+
+	if [ -n "$2" ]; then
+	cat <<-EOF >> $1
+	--------------------------------------------------------------------------------
+	Partitioning configuration:
+	Root partition type: $ROOTFS_TYPE
+	Boot partition type: ${BOOTFS_TYPE:-(none)}
+	User provided boot partition size: ${BOOTSIZE:-0}
+	Offset: $OFFSET
+	CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
+	--------------------------------------------------------------------------------
+	Verify GPG signature:
+	gpg --verify $2.img.asc
+	
+	Verify image file integrity:
+	sha256sum --check $2.img.sha
+	
+	Prepare SD card (four methodes):
+	zcat $2.img.gz | pv | dd of=/dev/mmcblkX bs=1M
+	dd if=$2.img of=/dev/mmcblkX bs=1M
+	balena-etcher $2.img.gz -d /dev/mmcblkX
+	balena-etcher $2.img -d /dev/mmcblkX
+	EOF
+        fi
+
+	cat <<-EOF >> $1
 	--------------------------------------------------------------------------------
 	$(cat $SRC/LICENSE)
 	--------------------------------------------------------------------------------

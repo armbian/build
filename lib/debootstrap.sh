@@ -587,7 +587,7 @@ create_image()
 	losetup -d $LOOP
 	rm -rf --one-file-system $DESTIMG $MOUNT
 	mkdir -p $DESTIMG
-	cp $SDCARD/etc/armbian.txt $DESTIMG
+	fingerprint_image "$DESTIMG/${version}.txt" "${version}"
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
 	if [[ $BUILD_ALL != yes ]]; then
@@ -598,8 +598,8 @@ create_image()
 		if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
 			cd $DESTIMG
 			display_alert "SHA256 calculating" "${version}.img" "info"
-			sha256sum -b ${version}.img > sha256sum.sha
-			cp sha256sum.sha "$DEST/images/${version}.img.sha"
+			sha256sum -b ${version}.img > ${version}.img.sha
+			cp ${version}.img.sha "$DEST/images/${version}.img.sha"
 			cd ..
 		fi
 
@@ -620,7 +620,7 @@ create_image()
 			# compress image
 			cd $DESTIMG
 			display_alert "Compressing" "$DEST/images/${version}.7z" "info"
-			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
+			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img* armbian.txt >/dev/null 2>&1
 			cd ..
 		fi
 
@@ -629,7 +629,8 @@ create_image()
 			pigz < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
 		fi
 
-		mv $DESTIMG/${version}.img $DEST/images/${version}.img
+		mv $DESTIMG/${version}.txt $DEST/images/${version}.txt || exit 1
+		mv $DESTIMG/${version}.img $DEST/images/${version}.img || exit 1
 		rm -rf $DESTIMG
 	fi
 
