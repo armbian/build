@@ -12,7 +12,7 @@
 # common options
 # daily beta build contains date in subrevision
 if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
-REVISION="5.89$SUBREVISION" # all boards have same revision
+REVISION=$(cat ${SRC}/VERSION)"$SUBREVISION" # all boards have same revision
 ROOTPWD="1234" # Must be changed @first login
 [[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik" # deb signature
 [[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -70,7 +70,7 @@ CAN_BUILD_STRETCH=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
 [[ -z $WIREGUARD ]] && WIREGUARD="no"
-[[ -z $RTL8812AU ]] && RTL8812AU="yes"
+[[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
@@ -85,9 +85,9 @@ DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}"
 
 source "${SRC}/config/sources/${LINUXFAMILY}.conf"
 
-if [[ -f ${SRC}/userpatches/sources/$LINUXFAMILY.conf ]]; then
+if [[ -f $USERPATCHES_PATH/sources/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
-	source "${SRC}/userpatches/sources/${LINUXFAMILY}.conf"
+	source "$USERPATCHES_PATH/sources/${LINUXFAMILY}.conf"
 fi
 
 # dropbear needs to be configured differently
@@ -220,9 +220,9 @@ if [[ $DOWNLOAD_MIRROR == china ]] ; then
 fi
 
 # For user override
-if [[ -f ${SRC}/userpatches/lib.config ]]; then
+if [[ -f $USERPATCHES_PATH/lib.config ]]; then
 	display_alert "Using user configuration override" "userpatches/lib.config" "info"
-	source "${SRC}"/userpatches/lib.config
+	source "$USERPATCHES_PATH"/lib.config
 fi
 
 # apt-cacher-ng mirror configurarion

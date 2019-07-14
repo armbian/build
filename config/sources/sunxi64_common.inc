@@ -53,8 +53,7 @@ case $BRANCH in
 
 		#KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 		KERNELSOURCE="https://github.com/megous/linux"
-		#KERNELBRANCH='branch:linux-4.19.y'
-		KERNELBRANCH="branch:orange-pi-5.1"
+		KERNELBRANCH="branch:orange-pi-5.2"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
 		KERNELPATCHDIR='sunxi-dev'
 		KERNEL_USE_GCC='> 7.0'
