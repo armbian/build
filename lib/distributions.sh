@@ -44,8 +44,8 @@ install_common()
 		[[ -f $SDCARD/etc/dropbear-initramfs/config ]] && sed -i 's/^#DROPBEAR_OPTIONS=/DROPBEAR_OPTIONS="-p '"${CRYPTROOT_SSH_UNLOCK_PORT}"'"/' "${SDCARD}"/etc/dropbear-initramfs/config
 
 		# setup dropbear authorized_keys, either provided by userpatches or generated
-		if [[ -f $SRC/userpatches/dropbear_authorized_keys ]]; then
-			cp "${SRC}"/userpatches/dropbear_authorized_keys "${SDCARD}"/etc/dropbear-initramfs/authorized_keys
+		if [[ -f $USERPATCHES_PATH/dropbear_authorized_keys ]]; then
+			cp "$USERPATCHES_PATH"/dropbear_authorized_keys "${SDCARD}"/etc/dropbear-initramfs/authorized_keys
 		else
 			# generate a default ssh key for login on dropbear in initramfs
 			# this key should be changed by the user on first login
@@ -132,15 +132,20 @@ install_common()
 	local bootscript_dst=${BOOTSCRIPT##*:}
 	cp "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
 
-	[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
-		cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+	if [[ -n $BOOTENV_FILE ]]; then
+		if [[ -f $USERPATCHES_PATH/bootenv/$BOOTENV_FILE ]]; then
+			cp "$USERPATCHES_PATH/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+		elif [[ -f $SRC/config/bootenv/$BOOTENV_FILE ]]; then
+			cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+		fi
+	fi
 
 	# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
 	# instead of copying sunxi-specific template
 	if [[ $ROOTFS_TYPE == nfs ]]; then
 		display_alert "Copying NFS boot script template"
-		if [[ -f $SRC/userpatches/nfs-boot.cmd ]]; then
-			cp "${SRC}"/userpatches/nfs-boot.cmd "${SDCARD}"/boot/boot.cmd
+		if [[ -f $USERPATCHES_PATH/nfs-boot.cmd ]]; then
+			cp "$USERPATCHES_PATH"/nfs-boot.cmd "${SDCARD}"/boot/boot.cmd
 		else
 			cp "${SRC}"/config/templates/nfs-boot.cmd.template "${SDCARD}"/boot/boot.cmd
 		fi

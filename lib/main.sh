@@ -26,6 +26,10 @@ umask 002
 # destination
 DEST=$SRC/output
 
+# override stty size
+[[ -n $COLUMNS ]] && stty cols $COLUMNS
+[[ -n $LINES ]] && stty rows $LINES
+
 TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
 TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
 
@@ -41,8 +45,8 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 [[ -z $FORCE_CHECKOUT ]] && FORCE_CHECKOUT=yes
 
 # Load libraries
-# shellcheck source=debootstrap-ng.sh
-source "${SRC}"/lib/debootstrap-ng.sh 						# system specific install
+# shellcheck source=debootstrap.sh
+source "${SRC}"/lib/debootstrap.sh 						# system specific install
 # shellcheck source=image-helpers.sh
 source "${SRC}"/lib/image-helpers.sh						# helpers for OS image building
 # shellcheck source=distributions.sh
@@ -51,6 +55,8 @@ source "${SRC}"/lib/distributions.sh						# system specific install
 source "${SRC}"/lib/desktop.sh							# desktop specific install
 # shellcheck source=compilation.sh
 source "${SRC}"/lib/compilation.sh						# patching and compilation of kernel, uboot, ATF
+# shellcheck source=compilation-prepare.sh
+source "${SRC}"/lib/compilation-prepare.sh					# kernel plugins - 3rd party drivers that are not upstreamed. Like WG, AUFS, various Wifi
 # shellcheck source=makeboarddeb.sh
 source "${SRC}"/lib/makeboarddeb.sh						# create board support package
 # shellcheck source=general.sh
@@ -217,9 +223,9 @@ LINUXFAMILY="${BOARDFAMILY}"
 if [[ -z $BRANCH ]]; then
 
 	options=()
-	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy (3.4.x - 4.4.x)")
-	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)   (4.x)")
-	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev"         "\Z1Development version      (4.x - 5.x)\Zn")
+	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy")
+	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)")
+	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev"         "\Z1Development version (@kernel.org)\Zn")
 	# do not display selection dialog if only one kernel branch is available
 	if [[ "${#options[@]}" == 2 ]]; then
 		BRANCH="${options[0]}"
@@ -243,7 +249,7 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	options=()
 	[[ $EXPERT = yes ]] && options+=("jessie" "Debian 8 Jessie / unsupported")
 	options+=("stretch" "Debian 9 Stretch")
-	[[ $EXPERT = yes ]] && options+=("buster" "Debian 10 Buster / unsupported")
+	options+=("buster" "Debian 10 Buster")
 	options+=("xenial" "Ubuntu Xenial 16.04 LTS")
 	options+=("bionic" "Ubuntu Bionic 18.04 LTS")
 	[[ $EXPERT = yes ]] && options+=("disco" "Ubuntu Disco 19.04 / unsupported")
@@ -299,9 +305,8 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 	fetch_from_repo "https://github.com/armbian/rkbin" "rkbin-tools" "branch:master"
 	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-18.12"
 	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git" "marvell-ddr" "branch:mv_ddr-armada-18.12"
+	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" "marvell-binaries" "branch:binaries-marvell-armada-18.12"
 	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
-	fetch_from_repo "https://git.zx2c4.com/WireGuard" "wireguard" "branch:master"
-	fetch_from_repo "https://github.com/aircrack-ng/rtl8812au" "rtl8812au" "branch:v5.2.20"
 	fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
 fi
 
@@ -344,6 +349,7 @@ fi
 
 # Compile kernel if packed .deb does not exist
 if [[ ! -f ${DEST}/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+	KDEB_CHANGELOG_DIST=$RELEASE
 	compile_kernel
 fi
 
@@ -386,4 +392,5 @@ $([[ -n $RELEASE ]] && echo "RELEASE=${RELEASE} ")\
 $([[ -n $BUILD_DESKTOP ]] && echo "BUILD_DESKTOP=${BUILD_DESKTOP} ")\
 $([[ -n $KERNEL_ONLY ]] && echo "KERNEL_ONLY=${KERNEL_ONLY} ")\
 $([[ -n $KERNEL_CONFIGURE ]] && echo "KERNEL_CONFIGURE=${KERNEL_CONFIGURE} ")\
+$([[ -n $COMPRESS_OUTPUTIMAGE ]] && echo "COMPRESS_OUTPUTIMAGE=${COMPRESS_OUTPUTIMAGE} ")\
 " "info"

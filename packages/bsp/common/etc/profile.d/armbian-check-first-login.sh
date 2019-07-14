@@ -74,7 +74,12 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 	desktop_lightdm=$(dpkg-query -W -f='${db:Status-Abbrev}\n' lightdm 2>/dev/null)
 
 	if [ "$IMAGE_TYPE" != "nightly" ]; then
-		echo -e "\n\e[0;31mThank you for choosing Armbian! Support: \e[1m\e[39mwww.armbian.com\x1B[0m\n"
+		if [ "$BRANCH" == "dev" ]; then
+			echo -e "\nYou are using an Armbian preview build !!!"
+			echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
+		else
+			echo -e "\n\e[0;31mThank you for choosing Armbian! Support: \e[1m\e[39mwww.armbian.com\x1B[0m\n"
+		fi
 	else
 		echo -e "\nYou are using an Armbian nightly build meant only for developers to provide"
 		echo -e "constructive feedback to improve build system, OS settings or user experience."

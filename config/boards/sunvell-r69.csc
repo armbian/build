@@ -9,8 +9,8 @@ MODULES_BLACKLIST="dhd"
 DEFAULT_OVERLAYS="cir analog-codec"
 #
 KERNEL_TARGET="default,next,dev"
-CLI_TARGET="stretch,xenial:next"
-DESKTOP_TARGET="stretch:next"
+CLI_TARGET="buster,xenial:next"
+DESKTOP_TARGET="buster:next"
 #
 CLI_BETA_TARGET=""
 DESKTOP_BETA_TARGET=""
