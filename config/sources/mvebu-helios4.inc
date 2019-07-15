@@ -66,6 +66,15 @@ family_tweaks_bsp()
 	# add custom motd default conf file
         install -m 644 $SRC/packages/bsp/helios4/armbian-motd $destination/etc/default/
 
+        # create modules file
+	if [[ $BRANCH == dev && -n $MODULES_DEV ]]; then
+		tr ' ' '\n' <<< "$MODULES_DEV" > "${destination}"/etc/modules
+	elif [[ $BRANCH == next || $BRANCH == dev ]]; then
+		tr ' ' '\n' <<< "$MODULES_NEXT" > "${destination}"/etc/modules
+	else
+		tr ' ' '\n' <<< "$MODULES" > "${destination}"/etc/modules
+	fi
+
 	## Postinst
 	# Remove exit 0 on end of file
 	sed -i '$ s/^exit 0//g' "${destination}"/DEBIAN/postinst
