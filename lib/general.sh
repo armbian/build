@@ -117,7 +117,7 @@ exit_with_error()
 get_package_list_hash()
 {
 	( printf '%s\n' $PACKAGE_LIST | sort -u; printf '%s\n' $PACKAGE_LIST_EXCLUDE | sort -u; echo "$ROOTFSCACHE_VERSION" ) \
-		| md5sum | cut -d' ' -f 1
+		| echo "${REVISION::-1}" | md5sum | cut -d' ' -f 1
 }
 
 # create_sources_list <release> <basedir>
