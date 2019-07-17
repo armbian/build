@@ -40,15 +40,7 @@ family_tweaks_bsp()
 	install -m 644 $SRC/packages/bsp/helios4/90-helios4-hwmon.rules $destination/etc/udev/rules.d/
 
 	# copy fancontrol config
-	case $BRANCH in
-	default)
-		install -m 644 $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-default.conf $destination/etc/fancontrol
-		;;
-	next)
-		install -m 644 $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-next.conf $destination/etc/fancontrol
-		;;
-	esac
-
+	install -m 644 $SRC/packages/bsp/helios4/fancontrol_pwm-fan.conf $destination/etc/fancontrol
 	install -m 644 $SRC/packages/bsp/helios4/fancontrol.service $destination/etc/systemd/system/
 
 	### Mdadm tweaks
