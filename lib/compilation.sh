@@ -128,6 +128,7 @@ compile_uboot()
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
 	rm -rf $SRC/.tmp/$uboot_name
 	mkdir -p $SRC/.tmp/$uboot_name/usr/lib/{u-boot,$uboot_name} $SRC/.tmp/$uboot_name/DEBIAN
+    chmod o+rx $SRC/.tmp/$uboot_name/DEBIAN
 
 	# process compilation for one or multiple targets
 	while read -r target; do
