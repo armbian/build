@@ -173,7 +173,8 @@ if [[ $BUILD_MINIMAL == yes  ]]; then
 		ca-certificates resolvconf iptables nocache debconf-utils"
 
 	# Non-essential packages for minimal build
-	PACKAGE_LIST_ADDITIONAL="autofs cron lsof htop overlayroot vim mmc-utils sunxi-tools"
+	PACKAGE_LIST_ADDITIONAL="autofs network-manager cron lsof \
+		hostapd htop overlayroot vim mmc-utils sunxi-tools"
 
 	# Dependent desktop packages for minimal build
 	PACKAGE_LIST_DESKTOP=""
