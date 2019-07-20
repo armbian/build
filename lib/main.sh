@@ -261,7 +261,7 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
 fi
 
-if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
+if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP && -z $BUILD_MINIMAL ]]; then
 
 	options=()
 	options+=("no" "Image with console interface (server)")
@@ -272,6 +272,21 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
 
 fi
+
+if [[ $KERNEL_ONLY != yes && $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
+
+	options=()
+	options+=("no" "Development image with console interface")
+	options+=("yes" "Minimal image with console interface")
+	BUILD_MINIMAL=$(dialog --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags \
+	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+	unset options
+	[[ -z $BUILD_MINIMAL ]] && exit_with_error "No option selected"
+
+fi
+
+#secure conflicting options are not set
+[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
@@ -389,6 +404,7 @@ display_alert "Runtime" "$runtime min" "info"
 # Make it easy to repeat build by displaying build options used
 display_alert "Repeat Build Options" "./compile.sh BOARD=${BOARD} BRANCH=${BRANCH} \
 $([[ -n $RELEASE ]] && echo "RELEASE=${RELEASE} ")\
+$([[ -n $BUILD_MINIMAL ]] && echo "BUILD_MINIMAL=${BUILD_MINIMAL} ")\
 $([[ -n $BUILD_DESKTOP ]] && echo "BUILD_DESKTOP=${BUILD_DESKTOP} ")\
 $([[ -n $KERNEL_ONLY ]] && echo "KERNEL_ONLY=${KERNEL_ONLY} ")\
 $([[ -n $KERNEL_CONFIGURE ]] && echo "KERNEL_CONFIGURE=${KERNEL_CONFIGURE} ")\

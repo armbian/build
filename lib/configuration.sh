@@ -161,47 +161,69 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi cups-pk-helper \
 	cups geany atril xarchiver"
 
+
+# For minimal build different set of packages is needed
+if [[ $BUILD_MINIMAL == yes  ]]; then
+
+	# Essential packages for minimal build
+	PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping \
+		fake-hwclock psmisc ntp parted sudo linux-base dialog \
+		ncurses-term sysfsutils toilet u-boot-tools unattended-upgrades \
+		usbutils console-setup openssh-server initramfs-tools \
+		ca-certificates resolvconf iptables nocache debconf-utils"
+
+	# Non-essential packages for minimal build
+	PACKAGE_LIST_ADDITIONAL="autofs cron lsof htop overlayroot vim mmc-utils sunxi-tools"
+
+	# Dependent desktop packages for minimal build
+	PACKAGE_LIST_DESKTOP=""
+
+	# Recommended desktop packages for minimal build
+	PACKAGE_LIST_DESKTOP_RECOMMENDS=""
+
+fi
+
 # Release specific packages
 case $RELEASE in
 
 	jessie)
 		DEBOOTSTRAP_COMPONENTS="main"
-		PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr sysbench"
+		[[ $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr sysbench"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless policykit-1-gnome eject numix-icon-theme libgnome2-perl pulseaudio-module-gconf"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" iceweasel pluma system-config-printer leafpad"
 	;;
 
 	xenial)
 		DEBOOTSTRAP_COMPONENTS="main"
-		PACKAGE_LIST_RELEASE="man-db wget nano sysbench"
+		[[ $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db wget nano sysbench"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl pulseaudio-module-gconf"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common system-config-printer-gnome leafpad"
 	;;
 
 	stretch)
 		DEBOOTSTRAP_COMPONENTS="main"
-		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr sysbench"
+		[[ $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr sysbench"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad"
 	;;
 
 	bionic)
 		DEBOOTSTRAP_COMPONENTS="main,universe"
-		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
+		[[ $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer language-selector-gnome leafpad"
 	;;
 
 	buster)
 		DEBOOTSTRAP_COMPONENTS="main"
-		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr wget"
+		[[ $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr wget"
 		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer"
 	;;
 
 	disco)
 		DEBOOTSTRAP_COMPONENTS="main,universe"
-		PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
+		[[ $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer language-selector-gnome"
 		# temp disable
@@ -278,6 +300,7 @@ $(getfacl -p "${SRC}"/.tmp)
 Build target:
 Board: $BOARD
 Branch: $BRANCH
+Minimal: $BUILD_MINIMAL
 Desktop: $BUILD_DESKTOP
 
 Kernel configuration:
