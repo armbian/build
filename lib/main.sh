@@ -287,6 +287,7 @@ fi
 
 #secure conflicting options are not set
 [[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
+[[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh

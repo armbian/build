@@ -167,20 +167,13 @@ if [[ $BUILD_MINIMAL == yes  ]]; then
 
 	# Essential packages for minimal build
 	PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping \
-		fake-hwclock psmisc ntp parted sudo linux-base dialog \
-		ncurses-term sysfsutils toilet u-boot-tools unattended-upgrades \
+		fake-hwclock psmisc ntp parted linux-base dialog \
+		ncurses-term sysfsutils toilet u-boot-tools \
 		usbutils console-setup openssh-server initramfs-tools \
-		ca-certificates resolvconf iptables nocache debconf-utils"
+		ca-certificates nocache debconf-utils"
 
 	# Non-essential packages for minimal build
-	PACKAGE_LIST_ADDITIONAL="autofs network-manager cron lsof \
-		hostapd htop overlayroot vim mmc-utils sunxi-tools"
-
-	# Dependent desktop packages for minimal build
-	PACKAGE_LIST_DESKTOP=""
-
-	# Recommended desktop packages for minimal build
-	PACKAGE_LIST_DESKTOP_RECOMMENDS=""
+	PACKAGE_LIST_ADDITIONAL="network-manager cron lsof htop vim mmc-utils"
 
 fi
 
