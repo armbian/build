@@ -377,7 +377,7 @@ install_distribution_specific()
 		EOF
 		chmod +x "${SDCARD}"/etc/rc.local
 		# Basic Netplan config. Let NetworkManager manage all devices on this system
-		cat <<-EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
+		[[ -d "${SDCARD}"/etc/netplan ]] && cat <<-EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
 		network:
 		  version: 2
 		  renderer: NetworkManager
