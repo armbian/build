@@ -172,7 +172,7 @@ if [[ $BUILD_MINIMAL == yes  ]]; then
 		ca-certificates nocache debconf-utils"
 
 	# Non-essential packages for minimal build
-	PACKAGE_LIST_ADDITIONAL="network-manager cron lsof htop vim mmc-utils python3-apt rsyslog"
+	PACKAGE_LIST_ADDITIONAL="network-manager cron lsof htop vim mmc-utils rsyslog"
 
 fi
 
