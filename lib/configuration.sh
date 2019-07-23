@@ -128,7 +128,7 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 
 if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == disco ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
-# Base system dependencies
+# Base system dependencies. Since adding MINIMAL_IMAGE we rely on "variant=minbase" which has very basic package set
 DEBOOTSTRAP_LIST="locales,gnupg,ifupdown,apt-utils,apt-transport-https,ca-certificates,bzip2,console-setup,cpio,cron,dbus,eject,file,init,initramfs-tools,iputils-ping,isc-dhcp-client,kbd,keyboard-configuration,kmod,less,libcryptsetup12,libpam-systemd,linux-base,logrotate,netbase,netcat-openbsd,rsyslog,systemd,sudo,ucf,udev,whiptail,resolvconf"
 [[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=",libgtk2.0-bin"
 
@@ -174,8 +174,6 @@ if [[ $BUILD_MINIMAL == yes  ]]; then
 	# Non-essential packages for minimal build
 	PACKAGE_LIST_ADDITIONAL="network-manager cron lsof htop vim mmc-utils rsyslog"
 
-#PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping openssh-server initramfs-tools"
-#PACKAGE_LIST_ADDITIONAL="cron network-manager"
 fi
 
 # Release specific packages
