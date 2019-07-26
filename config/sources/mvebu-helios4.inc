@@ -1,21 +1,36 @@
 case $BRANCH in
 	default)
-	BOOTSOURCE='https://github.com/helios-4/u-boot.git'
-	BOOTBRANCH='branch:helios4'
-	BOOTDIR=$MAINLINE_UBOOT_DIR
-	BOOTSCRIPT='boot-marvell.cmd:boot.cmd'
+		BOOTSOURCE='https://github.com/helios-4/u-boot.git'
+		BOOTBRANCH='branch:helios4'
+		BOOTDIR=$MAINLINE_UBOOT_DIR
+		BOOTSCRIPT='boot-marvell.cmd:boot.cmd'
 
-	UBOOT_TARGET_MAP=";sdhc;u-boot-spl.kwb:u-boot.mmc
-			  ;spi;u-boot-spl.kwb:u-boot.flash"
+		UBOOT_TARGET_MAP=";sdhc;u-boot-spl.kwb:u-boot.mmc
+				  ;spi;u-boot-spl.kwb:u-boot.flash"
 
-	UBOOT_USE_GCC='> 7.0'
-	UBOOT_COMPILER='arm-linux-gnueabi-'
-	OVERLAY_PREFIX='armada-388-helios4'
+		UBOOT_USE_GCC='> 7.0'
+		UBOOT_COMPILER='arm-linux-gnueabi-'
+		OVERLAY_PREFIX='armada-388-helios4'
 
-	BOOTPATCHDIR='u-boot-helios4'
+		BOOTPATCHDIR='u-boot-helios4'
 	;;
-	next|dev)
-	OVERLAY_PREFIX='armada-388-helios4'
+	next)
+		BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
+		BOOTBRANCH='tag:v2019.04'
+		BOOTDIR=$MAINLINE_UBOOT_DIR
+		BOOTPATCHDIR='u-boot-mvebu-next'
+		BOOTSCRIPT='boot-mvebu-next.cmd:boot.cmd'
+
+		UBOOT_TARGET_MAP=";sdhc;u-boot-spl.kwb:u-boot.mmc
+				  ;spi;u-boot-spl.kwb:u-boot.flash
+				  ;uart;u-boot-spl.kwb:u-boot.uart"
+
+		UBOOT_USE_GCC='> 7.0'
+
+		OVERLAY_PREFIX='armada-388-helios4'
+	;;
+	dev)
+		OVERLAY_PREFIX='armada-388-helios4'
 	;;
 esac
 
