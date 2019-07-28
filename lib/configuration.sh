@@ -167,7 +167,7 @@ if [[ $BUILD_MINIMAL == yes  ]]; then
 	# Essential packages for minimal build
 	PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping \
 		fake-hwclock psmisc ntp parted linux-base dialog \
-		ncurses-term sysfsutils toilet u-boot-tools \
+		ncurses-term sysfsutils toilet figlet u-boot-tools \
 		usbutils console-setup openssh-server initramfs-tools \
 		ca-certificates nocache debconf-utils"
 
