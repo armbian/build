@@ -107,12 +107,12 @@ write_uboot()
 customize_image()
 {
 	# for users that need to prepare files at host
-	[[ -f $SRC/userpatches/customize-image-host.sh ]] && source "${SRC}"/userpatches/customize-image-host.sh
-	cp "${SRC}"/userpatches/customize-image.sh "${SDCARD}"/tmp/customize-image.sh
+	[[ -f $USERPATCHES_PATH/customize-image-host.sh ]] && source "$USERPATCHES_PATH"/customize-image-host.sh
+	cp "$USERPATCHES_PATH"/customize-image.sh "${SDCARD}"/tmp/customize-image.sh
 	chmod +x "${SDCARD}"/tmp/customize-image.sh
 	mkdir -p "${SDCARD}"/tmp/overlay
 	# util-linux >= 2.27 required
-	mount -o bind,ro "${SRC}"/userpatches/overlay "${SDCARD}"/tmp/overlay
+	mount -o bind,ro "$USERPATCHES_PATH"/overlay "${SDCARD}"/tmp/overlay
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot "${SDCARD}" /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
 	CUSTOMIZE_IMAGE_RC=$?

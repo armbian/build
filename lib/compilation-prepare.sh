@@ -39,12 +39,11 @@ compilation_prepare()
 
 
 	# WireGuard - fast, modern, secure VPN tunnel
-
 	if linux-version compare $version ge 3.14 && [ "${WIREGUARD}" == yes ]; then
 
 		# attach to specifics tag or branch
 		#local wirever="branch:master"
-		local wirever="tag:0.0.20190601"
+		local wirever="tag:0.0.20190702"
 
 		display_alert "Adding" "WireGuard ${wirever} " "info"
 
