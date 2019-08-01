@@ -129,7 +129,7 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == disco ]]; then DISTRIBUTION="Ubuntu"; else DISTRIBUTION="Debian"; fi
 
 # Base system dependencies. Since adding MINIMAL_IMAGE we rely on "variant=minbase" which has very basic package set
-DEBOOTSTRAP_LIST="locales,gnupg,ifupdown,apt-utils,apt-transport-https,ca-certificates,bzip2,console-setup,cpio,cron,dbus,eject,file,init,initramfs-tools,iputils-ping,isc-dhcp-client,kbd,keyboard-configuration,kmod,less,libcryptsetup12,libpam-systemd,linux-base,logrotate,netbase,netcat-openbsd,rsyslog,systemd,sudo,ucf,udev,whiptail,resolvconf,wireless-regdb,crda"
+DEBOOTSTRAP_LIST="locales,gnupg,ifupdown,apt-utils,apt-transport-https,ca-certificates,bzip2,console-setup,cpio,cron,dbus,init,initramfs-tools,iputils-ping,isc-dhcp-client,kbd,keyboard-configuration,kmod,less,libpam-systemd,linux-base,logrotate,netbase,netcat-openbsd,rsyslog,systemd,sudo,ucf,udev,whiptail,resolvconf,wireless-regdb,crda"
 [[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=",libgtk2.0-bin"
 
 # Essential packages
@@ -172,7 +172,7 @@ if [[ $BUILD_MINIMAL == yes  ]]; then
 		ca-certificates nocache debconf-utils"
 
 	# Non-essential packages for minimal build
-	PACKAGE_LIST_ADDITIONAL="network-manager cron lsof htop vim mmc-utils rsyslog"
+	PACKAGE_LIST_ADDITIONAL="network-manager cron lsof htop vim-tiny mmc-utils rsyslog"
 
 fi
 
@@ -181,7 +181,7 @@ case $RELEASE in
 
 	jessie)
 		DEBOOTSTRAP_COMPONENTS="main"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr sysbench"
+		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="less kbd gnupg2 dirmngr sysbench nano"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless policykit-1-gnome eject numix-icon-theme libgnome2-perl pulseaudio-module-gconf"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" iceweasel pluma system-config-printer leafpad"
 	;;
@@ -195,7 +195,7 @@ case $RELEASE in
 
 	stretch)
 		DEBOOTSTRAP_COMPONENTS="main"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr sysbench"
+		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db nano wget less kbd net-tools netcat-openbsd gnupg2 dirmngr sysbench"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad"
 	;;
@@ -209,7 +209,7 @@ case $RELEASE in
 
 	buster)
 		DEBOOTSTRAP_COMPONENTS="main"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr wget"
+		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db less kbd net-tools netcat-openbsd gnupg2 dirmngr nano wget"
 		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer"
 	;;
