@@ -259,6 +259,7 @@ fetch_from_repo()
 		esac
 		display_alert "Checking out"
 		git checkout -f -q FETCH_HEAD
+		git clean -qdf
 	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
 		if [[ $FORCE_CHECKOUT == yes ]]; then
