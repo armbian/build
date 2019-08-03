@@ -277,7 +277,7 @@ fi
 if [[ $KERNEL_ONLY != yes && $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
 
 	options=()
-	options+=("no" "Development image with console interface")
+	options+=("no" "Standard server image with console interface")
 	options+=("yes" "Minimal image with console interface")
 	BUILD_MINIMAL=$(dialog --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags \
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
