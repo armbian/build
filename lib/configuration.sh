@@ -136,7 +136,7 @@ fi
 DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certificates bzip2 console-setup cpio cron \
 	dbus init initramfs-tools iputils-ping isc-dhcp-client kbd keyboard-configuration kmod less libpam-systemd \
 	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail resolvconf \
-	wireless-regdb crda"
+	wireless-regdb crda dmsetup"
 
 [[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
 
@@ -183,7 +183,7 @@ if [[ $BUILD_MINIMAL == yes  ]]; then
 		nocache debconf-utils"
 
 	# Non-essential packages for minimal build
-	PACKAGE_LIST_ADDITIONAL="network-manager lsof htop mmc-utils wget armbian-firmware"
+	PACKAGE_LIST_ADDITIONAL="network-manager lsof htop mmc-utils wget armbian-firmware nano sysstat"
 
 fi
 
