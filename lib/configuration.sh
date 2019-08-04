@@ -134,8 +134,8 @@ fi
 
 # Base system dependencies. Since adding MINIMAL_IMAGE we rely on "variant=minbase" which has very basic package set
 DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certificates bzip2 console-setup cpio cron \
-	dbus init initramfs-tools iputils-ping isc-dhcp-client kbd keyboard-configuration kmod less libpam-systemd \
-	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail resolvconf \
+	dbus init initramfs-tools iputils-ping isc-dhcp-client kmod less libpam-systemd \
+	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
 	wireless-regdb crda dmsetup"
 
 [[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
@@ -150,7 +150,7 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 	wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
 	usbutils wireless-tools console-setup unicode-data openssh-server initramfs-tools \
 	ca-certificates resolvconf expect iptables automake nocache debconf-utils html2text \
-	bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev wget"
+	bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev wget keyboard-configuration"
 
 
 # Non-essential packages
@@ -183,7 +183,7 @@ if [[ $BUILD_MINIMAL == yes  ]]; then
 		nocache debconf-utils"
 
 	# Non-essential packages for minimal build
-	PACKAGE_LIST_ADDITIONAL="network-manager lsof htop mmc-utils wget armbian-firmware nano sysstat"
+	PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget armbian-firmware nano sysstat net-tools"
 
 fi
 

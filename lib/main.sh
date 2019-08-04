@@ -277,7 +277,7 @@ fi
 if [[ $KERNEL_ONLY != yes && $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
 
 	options=()
-	options+=("no" "Standard server image with console interface")
+	options+=("no" "Standard image with console interface")
 	options+=("yes" "Minimal image with console interface")
 	BUILD_MINIMAL=$(dialog --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags \
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
@@ -288,7 +288,7 @@ fi
 
 #prevent conflicting setup
 [[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
-[[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no
+[[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no && EXTERNAL=no
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh

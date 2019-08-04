@@ -293,6 +293,9 @@ install_common()
 	# configure network manager
 	sed "s/managed=\(.*\)/managed=true/g" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
 
+	# remove network manager defaults to handle eth by default
+	rm -f "${SDCARD}"/usr/lib/NetworkManager/conf.d/10-globally-managed-devices.conf
+
 	# Just regular DNS and maintain /etc/resolv.conf as a file
 	sed "/dns/d" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
 	sed "s/\[main\]/\[main\]\ndns=default\nrc-manager=file/g" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
@@ -304,7 +307,7 @@ install_common()
 		EOF
 	fi
 
-        # nsswitch settings for sane DNS behavior: remove resolve, assure libnss-myhostname support
+	# nsswitch settings for sane DNS behavior: remove resolve, assure libnss-myhostname support
 	sed "s/hosts\:.*/hosts:          files mymachines dns myhostname/g" -i "${SDCARD}"/etc/nsswitch.conf
 }
 
