@@ -1,0 +1,229 @@
+From 825323b9734ff59ff7fc39c8bd095ec671be3563 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Tue, 10 Jul 2018 20:54:33 +0200
+Subject: [PATCH 55/91] drm: dw-hdmi-i2s: add multi-channel lpcm support
+
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h    |  1 +
+ .../gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c    | 75 +++++++++++++++++++++-
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c          |  1 +
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.h          | 24 +++++++
+ 4 files changed, 98 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h
+index 69b8a97..9e9cbf9 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-audio.h
+@@ -18,6 +18,7 @@ struct dw_hdmi_i2s_audio_data {
+ 
+ 	void (*write)(struct dw_hdmi *hdmi, u8 val, int offset);
+ 	u8 (*read)(struct dw_hdmi *hdmi, int offset);
++	void (*mod)(struct dw_hdmi *hdmi, u8 data, u8 mask, unsigned reg);
+ };
+ 
+ #endif
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+index 609ebad..637ef1f 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+@@ -32,6 +32,14 @@ static inline u8 hdmi_read(struct dw_hdmi_i2s_audio_data *audio, int offset)
+ 	return audio->read(hdmi, offset);
+ }
+ 
++static inline void hdmi_update_bits(struct dw_hdmi_i2s_audio_data *audio,
++				    u8 data, u8 mask, unsigned int reg)
++{
++	struct dw_hdmi *hdmi = audio->hdmi;
++
++	audio->mod(hdmi, data, mask, reg);
++}
++
+ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 				 struct hdmi_codec_daifmt *fmt,
+ 				 struct hdmi_codec_params *hparms)
+@@ -41,6 +49,7 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 	u8 conf0 = 0;
+ 	u8 conf1 = 0;
+ 	u8 inputclkfs = 0;
++	u8 val;
+ 
+ 	/* it cares I2S only */
+ 	if ((fmt->fmt != HDMI_I2S) ||
+@@ -49,8 +58,23 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 		return -EINVAL;
+ 	}
+ 
+-	inputclkfs	= HDMI_AUD_INPUTCLKFS_64FS;
+-	conf0		= HDMI_AUD_CONF0_I2S_ALL_ENABLE;
++	inputclkfs = HDMI_AUD_INPUTCLKFS_64FS;
++
++	switch (hparms->channels) {
++	case 2:
++		conf0 = HDMI_AUD_CONF0_I2S_2CHANNEL_ENABLE;
++		break;
++	case 4:
++		conf0 = HDMI_AUD_CONF0_I2S_4CHANNEL_ENABLE;
++		break;
++	case 6:
++		conf0 = HDMI_AUD_CONF0_I2S_6CHANNEL_ENABLE;
++		break;
++	case 8:
++	default:
++		conf0 = HDMI_AUD_CONF0_I2S_ALL_ENABLE;
++		break;
++	}
+ 
+ 	switch (hparms->sample_width) {
+ 	case 16:
+@@ -62,12 +86,56 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 		break;
+ 	}
+ 
++	hdmi_update_bits(audio, HDMI_AUD_CONF0_SW_RESET,
++			 HDMI_AUD_CONF0_SW_RESET, HDMI_AUD_CONF0);
++	hdmi_write(audio, (u8)~HDMI_MC_SWRSTZ_I2SSWRST_REQ, HDMI_MC_SWRSTZ);
++
+ 	dw_hdmi_set_sample_rate(hdmi, hparms->sample_rate);
+ 
+ 	hdmi_write(audio, inputclkfs, HDMI_AUD_INPUTCLKFS);
+ 	hdmi_write(audio, conf0, HDMI_AUD_CONF0);
+ 	hdmi_write(audio, conf1, HDMI_AUD_CONF1);
+ 
++	val = HDMI_FC_AUDSCONF_AUD_PACKET_LAYOUT_LAYOUT0;
++	if (hparms->channels > 2)
++		val = HDMI_FC_AUDSCONF_AUD_PACKET_LAYOUT_LAYOUT1;
++	hdmi_update_bits(audio, val, HDMI_FC_AUDSCONF_AUD_PACKET_LAYOUT_MASK,
++			 HDMI_FC_AUDSCONF);
++
++	switch (hparms->sample_rate) {
++	case 32000:
++		val = HDMI_FC_AUDSCHNLS_SAMPFREQ_32K;
++		break;
++	case 44100:
++		val = HDMI_FC_AUDSCHNLS_SAMPFREQ_441K;
++		break;
++	case 48000:
++		val = HDMI_FC_AUDSCHNLS_SAMPFREQ_48K;
++		break;
++	case 88200:
++		val = HDMI_FC_AUDSCHNLS_SAMPFREQ_882K;
++		break;
++	case 96000:
++		val = HDMI_FC_AUDSCHNLS_SAMPFREQ_96K;
++		break;
++	case 176400:
++		val = HDMI_FC_AUDSCHNLS_SAMPFREQ_1764K;
++		break;
++	case 192000:
++		val = HDMI_FC_AUDSCHNLS_SAMPFREQ_192K;
++		break;
++	default:
++		val = HDMI_FC_AUDSCHNLS_SAMPFREQ_441K;
++		break;
++	}
++
++	hdmi_update_bits(audio, val, HDMI_FC_AUDSCHNLS7_SAMPFREQ_MASK,
++			 HDMI_FC_AUDSCHNLS7);
++	hdmi_update_bits(audio,
++			 (hparms->channels - 1) << HDMI_FC_AUDICONF0_CC_OFFSET,
++			 HDMI_FC_AUDICONF0_CC_MASK, HDMI_FC_AUDICONF0);
++	hdmi_write(audio, hparms->cea.channel_allocation, HDMI_FC_AUDICONF2);
++
+ 	dw_hdmi_audio_enable(hdmi);
+ 
+ 	return 0;
+@@ -81,6 +149,7 @@ static void dw_hdmi_i2s_audio_shutdown(struct device *dev, void *data)
+ 	dw_hdmi_audio_disable(hdmi);
+ 
+ 	hdmi_write(audio, HDMI_AUD_CONF0_SW_RESET, HDMI_AUD_CONF0);
++	hdmi_write(audio, (u8)~HDMI_MC_SWRSTZ_I2SSWRST_REQ, HDMI_MC_SWRSTZ);
+ }
+ 
+ static void dw_hdmi_i2s_update_eld(struct device *dev, u8 *eld)
+@@ -147,7 +216,7 @@ static int snd_dw_hdmi_probe(struct platform_device *pdev)
+ 
+ 	pdata.ops		= &dw_hdmi_i2s_ops;
+ 	pdata.i2s		= 1;
+-	pdata.max_i2s_channels	= 6;
++	pdata.max_i2s_channels	= 8;
+ 	pdata.data		= audio;
+ 
+ 	memset(&pdevinfo, 0, sizeof(pdevinfo));
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index fc6d551..ae39696 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -2640,6 +2640,7 @@ __dw_hdmi_probe(struct platform_device *pdev,
+ 		audio.hdmi	= hdmi;
+ 		audio.write	= hdmi_writeb;
+ 		audio.read	= hdmi_readb;
++		audio.mod	= hdmi_modb;
+ 		hdmi->enable_audio = dw_hdmi_i2s_audio_enable;
+ 		hdmi->disable_audio = dw_hdmi_i2s_audio_disable;
+ 
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h
+index 3f3c616..26d2f1b 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h
+@@ -162,6 +162,15 @@
+ #define HDMI_FC_SPDDEVICEINF                    0x1062
+ #define HDMI_FC_AUDSCONF                        0x1063
+ #define HDMI_FC_AUDSSTAT                        0x1064
++#define HDMI_FC_AUDSCHNLS0                      0x1067
++#define HDMI_FC_AUDSCHNLS1                      0x1068
++#define HDMI_FC_AUDSCHNLS2                      0x1069
++#define HDMI_FC_AUDSCHNLS3                      0x106a
++#define HDMI_FC_AUDSCHNLS4                      0x106b
++#define HDMI_FC_AUDSCHNLS5                      0x106c
++#define HDMI_FC_AUDSCHNLS6                      0x106d
++#define HDMI_FC_AUDSCHNLS7                      0x106e
++#define HDMI_FC_AUDSCHNLS8                      0x106f
+ #define HDMI_FC_DATACH0FILL                     0x1070
+ #define HDMI_FC_DATACH1FILL                     0x1071
+ #define HDMI_FC_DATACH2FILL                     0x1072
+@@ -710,6 +719,8 @@ enum {
+ /* HDMI_FC_AUDSCHNLS7 field values */
+ 	HDMI_FC_AUDSCHNLS7_ACCURACY_OFFSET = 4,
+ 	HDMI_FC_AUDSCHNLS7_ACCURACY_MASK = 0x30,
++	HDMI_FC_AUDSCHNLS7_SAMPFREQ_OFFSET = 0,
++	HDMI_FC_AUDSCHNLS7_SAMPFREQ_MASK = 0x0f,
+ 
+ /* HDMI_FC_AUDSCHNLS8 field values */
+ 	HDMI_FC_AUDSCHNLS8_ORIGSAMPFREQ_MASK = 0xf0,
+@@ -717,6 +728,15 @@ enum {
+ 	HDMI_FC_AUDSCHNLS8_WORDLEGNTH_MASK = 0x0f,
+ 	HDMI_FC_AUDSCHNLS8_WORDLEGNTH_OFFSET = 0,
+ 
++/* HDMI_FC_AUDSCHNLS sampling frequency */
++	HDMI_FC_AUDSCHNLS_SAMPFREQ_32K = 0x3,
++	HDMI_FC_AUDSCHNLS_SAMPFREQ_441K = 0x0,
++	HDMI_FC_AUDSCHNLS_SAMPFREQ_48K = 0x2,
++	HDMI_FC_AUDSCHNLS_SAMPFREQ_882K = 0x8,
++	HDMI_FC_AUDSCHNLS_SAMPFREQ_96K = 0xa,
++	HDMI_FC_AUDSCHNLS_SAMPFREQ_1764K = 0xc,
++	HDMI_FC_AUDSCHNLS_SAMPFREQ_192K = 0xe,
++
+ /* FC_AUDSCONF field values */
+ 	HDMI_FC_AUDSCONF_AUD_PACKET_SAMPFIT_MASK = 0xF0,
+ 	HDMI_FC_AUDSCONF_AUD_PACKET_SAMPFIT_OFFSET = 4,
+@@ -869,6 +889,9 @@ enum {
+ 
+ /* AUD_CONF0 field values */
+ 	HDMI_AUD_CONF0_SW_RESET = 0x80,
++	HDMI_AUD_CONF0_I2S_2CHANNEL_ENABLE = 0x21,
++	HDMI_AUD_CONF0_I2S_4CHANNEL_ENABLE = 0x23,
++	HDMI_AUD_CONF0_I2S_6CHANNEL_ENABLE = 0x27,
+ 	HDMI_AUD_CONF0_I2S_ALL_ENABLE = 0x2F,
+ 
+ /* AUD_CONF1 field values */
+@@ -942,6 +965,7 @@ enum {
+ 	HDMI_MC_CLKDIS_PIXELCLK_DISABLE = 0x1,
+ 
+ /* MC_SWRSTZ field values */
++	HDMI_MC_SWRSTZ_I2SSWRST_REQ = 0x08,
+ 	HDMI_MC_SWRSTZ_TMDSSWRST_REQ = 0x02,
+ 
+ /* MC_FLOWCTRL field values */
+-- 
+2.7.4
+
