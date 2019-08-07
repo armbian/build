@@ -66,7 +66,7 @@ debootstrap_ng()
 	customize_image
 
 	# create list of installed packages for debug purposes
-	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' >> $DEST/debug/installed-packages-${RELEASE}.list 2>&1
+	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > $DEST/debug/installed-packages-${RELEASE}-${BUILD_DESKTOP}.list 2>&1
 
 	# clean up / prepare for making the image
 	umount_chroot "$SDCARD"
@@ -115,6 +115,8 @@ create_rootfs_cache()
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
 		pv -p -b -r -c -N "[ .... ] $display_name" "$cache_fname" | lz4 -dc | tar xp --xattrs -C $SDCARD/
 		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
+		rm $SDCARD/etc/resolv.conf
+		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
 	else
 		display_alert "... remote not found" "Creating new rootfs cache for $RELEASE" "info"
 
@@ -300,8 +302,7 @@ prepare_partitions()
 	# parttype[nfs] is empty
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	# TODO: Disable metadata_csum only for older releases (jessie)?
-	if [[ $(lsb_release -sc) == bionic ]]; then
+	if [[ $(lsb_release -sc) =~ bionic|buster|cosmic|disco ]]; then
 		mkopts[ext4]='-q -m 2 -O ^64bit,^metadata_csum'
 	elif [[ $(lsb_release -sc) == xenial ]]; then
 		mkopts[ext4]='-q -m 2'
@@ -587,25 +588,53 @@ create_image()
 	losetup -d $LOOP
 	rm -rf --one-file-system $DESTIMG $MOUNT
 	mkdir -p $DESTIMG
-	cp $SDCARD/etc/armbian.txt $DESTIMG
+	fingerprint_image "$DESTIMG/${version}.txt" "${version}"
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
-	if [[ $COMPRESS_OUTPUTIMAGE == yes && $BUILD_ALL != yes ]]; then
-		[[ -f $DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME ]] && cp $DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME $DESTIMG/
-		# compress image
-		cd $DESTIMG
-		sha256sum -b ${version}.img > sha256sum.sha
-		if [[ -n $GPG_PASS ]]; then
-			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img
-		fi
-			display_alert "Compressing" "$DEST/images/${version}.img" "info"
-		7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img armbian.txt *.asc sha256sum.sha >/dev/null 2>&1
-	fi
-	#
 	if [[ $BUILD_ALL != yes ]]; then
-		mv $DESTIMG/${version}.img $DEST/images/${version}.img
+		if [[ $COMPRESS_OUTPUTIMAGE == yes ]]; then
+			COMPRESS_OUTPUTIMAGE="sha,gpg,7z"
+		fi
+
+		if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
+			cd $DESTIMG
+			display_alert "SHA256 calculating" "${version}.img" "info"
+			sha256sum -b ${version}.img > ${version}.img.sha
+			cp ${version}.img.sha "$DEST/images/${version}.img.sha"
+			cd ..
+		fi
+
+		if [[ $COMPRESS_OUTPUTIMAGE == *gpg* ]]; then
+			cd $DESTIMG
+			if [[ -n $GPG_PASS ]]; then
+				display_alert "GPG signing" "${version}.img" "info"
+				echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img || exit 1
+				cp ${version}.img.asc "$DEST/images/${version}.img.asc"
+			else
+				display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
+			fi
+			cd ..
+		fi
+
+		if [[ $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
+			[[ -f $DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME ]] && cp $DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME $DESTIMG/
+			# compress image
+			cd $DESTIMG
+			display_alert "Compressing" "$DEST/images/${version}.7z" "info"
+			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img* armbian.txt >/dev/null 2>&1
+			cd ..
+		fi
+
+		if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
+			display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
+			pigz < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
+		fi
+
+		mv $DESTIMG/${version}.txt $DEST/images/${version}.txt || exit 1
+		mv $DESTIMG/${version}.img $DEST/images/${version}.img || exit 1
 		rm -rf $DESTIMG
 	fi
+
 	display_alert "Done building" "$DEST/images/${version}.img" "info"
 
 	# call custom post build hook
@@ -617,7 +646,7 @@ create_image()
 		balena-etcher $DEST/images/${version}.img -d $CARD_DEVICE -y
 		if [ $? -eq 0 ]; then
 			display_alert "Writing succeeded" "${version}.img" "info"
-			else
+		else
 			display_alert "Writing failed" "${version}.img" "err"
 		fi
 	fi

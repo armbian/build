@@ -7,7 +7,7 @@ MODULES_NEXT=""
 OVERLAY_PREFIX="sun8i-a33"
 #
 KERNEL_TARGET="next,dev"
-CLI_TARGET="stretch,bionic:next"
+CLI_TARGET="buster,bionic:next"
 DESKTOP_TARGET=""
 #
 CLI_BETA_TARGET=""

@@ -13,38 +13,48 @@
 compilation_prepare()
 {
 
-	# AUFS - advanced multi layered unification filesystem for Kernel 5.1.y
+
+	# AUFS - advanced multi layered unification filesystem for Kernel > 5.1
+
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare $version ge 5.1 && linux-version compare $version le 5.2 && [ "$AUFS" == yes ]; then
+	if linux-version compare $version ge 5.1 && [ "$AUFS" == yes ]; then
 
 		# attach to specifics tag or branch
-		local aufsver="branch:aufs5.1"
+		local aufstag=$(echo ${version} | cut -f 1-2 -d ".")
+		local aufsver="branch:aufs${aufstag}"
 
-		display_alert "Adding" "AUFS 5.1" "info"
+		# check if Mr. Okajima already made a branch for this version
+		git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone aufs${aufstag} >/dev/null
 
-		fetch_from_repo "https://github.com/sfjro/aufs5-standalone" "aufs5" "branch:${aufsver}" "yes"
-		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-		process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-kbuild.patch"		"applying"
-		process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-base.patch"			"applying"
-		process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-mmap.patch"			"applying"
-		process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-standalone.patch"	"applying"
-		cp -R ${SRC}/cache/sources/aufs5/${aufsver#*:}/{Documentation,fs} .
-		cp ${SRC}/cache/sources/aufs5/${aufsver#*:}/include/uapi/linux/aufs_type.h include/uapi/linux/
 
+		if [ "$?" -eq "0" ]; then
+
+			display_alert "Adding" "AUFS ${aufstag}" "info"
+
+
+			fetch_from_repo "https://github.com/sfjro/aufs5-standalone" "aufs5" "branch:${aufsver}" "yes"
+			cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-kbuild.patch"		"applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-base.patch"			"applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-mmap.patch"			"applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-standalone.patch"	"applying"
+			cp -R ${SRC}/cache/sources/aufs5/${aufsver#*:}/{Documentation,fs} .
+			cp ${SRC}/cache/sources/aufs5/${aufsver#*:}/include/uapi/linux/aufs_type.h include/uapi/linux/
+
+		fi
 	fi
 
 
 
 
 	# WireGuard - fast, modern, secure VPN tunnel
-
-	if linux-version compare $version ge 3.10 && [ "${WIREGUARD}" == yes ]; then
+	if linux-version compare $version ge 3.14 && [ "${WIREGUARD}" == yes ]; then
 
 		# attach to specifics tag or branch
 		#local wirever="branch:master"
-		local wirever="tag:0.0.20190601"
+		local wirever="tag:0.0.20190702"
 
 		display_alert "Adding" "WireGuard ${wirever} " "info"
 
