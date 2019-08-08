@@ -30,8 +30,10 @@ DEST=$SRC/output
 [[ -n $COLUMNS ]] && stty cols $COLUMNS
 [[ -n $LINES ]] && stty rows $LINES
 
-TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
-TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
+if [[ $BUILD_ALL != "yes" ]]; then
+	TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
+	TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
+fi
 
 # We'll use this title on all menus
 backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
