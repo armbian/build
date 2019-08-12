@@ -161,7 +161,8 @@ function build_all()
 
 			else
 
-			echo "${n}.	$BOARD	$BRANCH		$RELEASE		$BUILD_DESKTOP		$BUILD_MINIMAL"
+		echo "${n}.	$BOARD	$BRANCH		$RELEASE\
+		$BUILD_DESKTOP		$BUILD_MINIMAL"
 
 			fi
 		fi
