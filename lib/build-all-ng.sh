@@ -89,10 +89,26 @@ function build_all()
 {
 buildall_start=$(date +%s)
 n=0
-buildlistcount=$(cat ${SRC}/config/targets.conf|grep $STABILITY | wc -l)
+buildlist="cat "
+
+# building selected ones
+if [[ -n ${REBUILD_IMAGES} ]]; then
+	buildlist="grep -w '"
+	filter="'"
+	for build in $(tr ',' ' ' <<< $REBUILD_IMAGES); do
+			buildlist=$buildlist"$build\|"
+			filter=$filter"$build\|"
+	done
+	buildlist=${buildlist::-2}"'"
+	filter=${filter::-2}"'"
+fi
+
+buildlistcount=$(eval $buildlist ${SRC}/config/targets.conf|grep $STABILITY | wc -l)
+
 while read line; do
 
 	[[ "$line" =~ ^#.*$ ]] && continue
+	[[ -n ${REBUILD_IMAGES} ]] && [[ -z $(echo $line | eval grep -w $filter) ]] && continue
 
 	unset LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSOURCE BOOTBRANCH ARCH UBOOT_USE_GCC \
 	KERNEL_USE_GCC DEFAULT_OVERLAYS CPUMIN CPUMAX UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE BOOTFS_TYPE UBOOT_TOOLCHAIN \
@@ -142,9 +158,12 @@ else echo "images"; fi)" "info"
 echo ""
 echo "	board		branch		release		desktop		minimal"
 build_all "dryrun"
-echo ""
-# build
-build_all
+
+if [[ $BUILD_ALL != demo ]] ; then
+	echo ""
+	# build
+	build_all
+fi
 
 # wait until they are not finshed
 sleep 10
