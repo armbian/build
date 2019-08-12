@@ -7,5 +7,3 @@ MODULES="gpio_sunxi spi_sunxi 8021q 8192cu 8188eu sun4i_ts"
 MODULES_NEXT="bonding"
 #
 KERNEL_TARGET="next,dev"
-CLI_TARGET="xenial:next"
-DESKTOP_TARGET="xenial:next"
