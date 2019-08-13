@@ -11,6 +11,7 @@
 
 # Functions:
 # build_main
+# array_contains
 # build_all
 # pack_upload
 
@@ -92,11 +93,30 @@ build_main ()
 
 
 
+array_contains () {
+
+    local array="$1[@]"
+    local seeking=$2
+    local in=1
+    for element in "${!array}"; do
+        if [[ $element == $seeking ]]; then
+            in=0
+            break
+        fi
+    done
+    return $in
+
+}
+
+
+
+
 function build_all()
 {
 
 	buildall_start=$(date +%s)
 	n=0
+	ARRAY=()
 	buildlist="cat "
 
 	# building selected ones
@@ -111,7 +131,10 @@ function build_all()
 		filter=${filter::-2}"'"
 	fi
 
-	buildlistcount=$(eval $buildlist ${SRC}/config/targets.conf|grep $STABILITY | wc -l)
+	# find unique boards - we will build debs for all variants
+	sorted_unique_ids=($(echo "${ids[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
+	unique_boards=$(eval $buildlist ${SRC}/config/targets.conf | sed '/^#/ d' | awk '{print $1}')
+	unique_boards=$(echo "${unique_boards[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')
 
 	while read line; do
 
@@ -125,14 +148,29 @@ function build_all()
 		atf_custom_postprocess family_tweaks_s BOOTSCRIPT UBOOT_TARGET_MAP LOCALVERSION UBOOT_COMPILER \
 		KERNEL_COMPILER BOOTCONFIG BOOTCONFIG_VAR_NAME BOOTCONFIG_DEFAULT BOOTCONFIG_NEXT BOOTCONFIG_DEV MODULES \
 		MODULES_NEXT MODULES_DEV INITRD_ARCH BOOTENV_FILE BOOTDELAY MODULES_BLACKLIST MODULES_BLACKLIST_NEXT \
-		ATF_TOOLCHAIN2 MODULES_BLACKLIST_DEV MOUNT SDCARD BOOTPATCHDIR KERNELPATCHDIR buildtext	RELEASE \
+		ATF_TOOLCHAIN2 MODULES_BLACKLIST_DEV MOUNT SDCARD BOOTPATCHDIR KERNELPATCHDIR RELEASE \
 		IMAGE_TYPE OVERLAY_PREFIX ASOUND_STATE ATF_COMPILER ATF_USE_GCC ATFSOURCE ATFDIR ATFBRANCH ATFSOURCEDIR \
 		PACKAGE_LIST_RM NM_IGNORE_DEVICES DISPLAY_MANAGER family_tweaks_bsp_s CRYPTROOT_ENABLE CRYPTROOT_PASSPHRASE \
 		CRYPTROOT_SSH_UNLOCK CRYPTROOT_SSH_UNLOCK_PORT CRYPTROOT_SSH_UNLOCK_KEY_NAME ROOT_MAPPER NETWORK HDMI \
 		USB WIRELESS ARMBIANMONITOR DEFAULT_CONSOLE FORCE_BOOTSCRIPT_UPDATE SERIALCON UBOOT_TOOLCHAIN2 toolchain2 \
-		BUILD_REPOSITORY_URL BUILD_REPOSITORY_COMMIT DESKTOP_AUTOLOGIN BUILD_MINIMAL BUILD_TARGET BUILD_STABILITY
+		BUILD_REPOSITORY_URL BUILD_REPOSITORY_COMMIT DESKTOP_AUTOLOGIN BUILD_MINIMAL BUILD_TARGET BUILD_STABILITY BUILD_IMAGE
 
-		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY <<< "${line}"
+		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE <<< "${line}"
+
+		source ${SRC}"/config/boards/${BOARD}".eos 2> /dev/null
+		source ${SRC}"/config/boards/${BOARD}".tvb 2> /dev/null
+		source ${SRC}"/config/boards/${BOARD}".csc 2> /dev/null
+		source ${SRC}"/config/boards/${BOARD}".wip 2> /dev/null
+		source ${SRC}"/config/boards/${BOARD}".conf 2> /dev/null
+
+		[[ ${BOARDFAMILY} == sun*i && $BRANCH == next ]] && BOARDFAMILY=sunxi
+
+		if [[ $KERNEL_ONLY == yes ]]; then
+			array_contains ARRAY "${BOARDFAMILY}" && continue
+			elif [[ $BUILD_IMAGE == no ]] ; then continue
+		fi
+
+		ARRAY+=("${BOARDFAMILY}")
 
 		BUILD_DESKTOP="no"
 		BUILD_MINIMAL="no"
@@ -148,21 +186,21 @@ function build_all()
 
 				if [[ $(find /run/armbian/*.pid 2&> /dev/null | wc -l) -lt ${MULTITHREAD} ]]; then
 
-					echo "Building in the back $buildtext $n / ${buildlistcount}"
+					display_alert "Building in the back ${n}."
 					(build_main) &
 					sleep $(( ( RANDOM % 10 )  + 1 ))
 
 				else
 
-					echo "Building $buildtext $n / ${buildlistcount}"
+					display_alert "Building ${n}."
 					build_main
 
 				fi
 
 			else
 
-		echo "${n}.	$BOARD	$BRANCH		$RELEASE\
-		$BUILD_DESKTOP		$BUILD_MINIMAL"
+		echo "${n}.	$BOARD			$BRANCH		$RELEASE\
+		$BUILD_DESKTOP		$BUILD_MINIMAL		$BUILD_IMAGE"
 
 			fi
 		fi
@@ -176,7 +214,7 @@ echo ""
 display_alert "Building all targets" "$STABILITY $(if [[ $KERNEL_ONLY == "yes" ]] ; then echo "kernels"; \
 else echo "images"; fi)" "info"
 echo ""
-echo "	board		branch		release		desktop		minimal"
+echo "	board				branch		release		desktop		minimal		image"
 build_all "dryrun"
 
 if [[ $BUILD_ALL != demo ]] ; then
