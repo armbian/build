@@ -16,9 +16,12 @@ LINUXFAMILY=$2
 BOARD=$3
 BUILD_DESKTOP=$4
 
-# Downgrade kernel to 4.14 because 4.19 is causing issues with Wifi drivers so far
-apt install linux-image-next-sunxi=5.67 -y --allow-downgrades || exit -1
-apt-mark hold linux-image-next-sunxi
+if $BOARD == "orangepipcplus"
+then
+  # Downgrade kernel to 4.14 because 4.19 is causing issues with Wifi drivers so far
+  apt install linux-image-next-sunxi=5.67 -y --allow-downgrades || exit -1
+  apt-mark hold linux-image-next-sunxi
+fi
 
 # We don't want the damn network-manager :/
 apt remove network-manager -y || true
