@@ -99,6 +99,10 @@ install_common()
 	# console fix due to Debian bug
 	sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i "${SDCARD}"/etc/default/console-setup
 
+	# ping needs privileged action to be able to create raw network socket
+	# this is working properly but not with (at least) Debian Buster
+	chroot "${SDCARD}" /bin/bash -c "chmod u+s /bin/ping"
+
 	# change time zone data
 	echo "${TZDATA}" > "${SDCARD}"/etc/timezone
 	chroot "${SDCARD}" /bin/bash -c "dpkg-reconfigure -f noninteractive tzdata >/dev/null 2>&1"
