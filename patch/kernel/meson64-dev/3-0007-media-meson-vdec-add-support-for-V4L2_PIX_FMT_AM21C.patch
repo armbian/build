@@ -1,0 +1,125 @@
+From 074266402100ff1764d5a0307616edcd847e8f6d Mon Sep 17 00:00:00 2001
+From: Maxime Jourdan <mjourdan@baylibre.com>
+Date: Sun, 21 Oct 2018 15:15:26 +0200
+Subject: [PATCH 07/14] media: meson: vdec: add support for V4L2_PIX_FMT_AM21C
+
+Support the lossless framebuffer compression format.
+
+Signed-off-by: Maxime Jourdan <mjourdan@baylibre.com>
+---
+ drivers/staging/media/meson/vdec/vdec.c       | 12 +++++++
+ .../staging/media/meson/vdec/vdec_helpers.c   | 31 +++++++++++++++++++
+ .../staging/media/meson/vdec/vdec_helpers.h   |  4 +++
+ 3 files changed, 47 insertions(+)
+
+diff --git a/drivers/staging/media/meson/vdec/vdec.c b/drivers/staging/media/meson/vdec/vdec.c
+index 4e4f9d614e41..e466a9905c78 100644
+--- a/drivers/staging/media/meson/vdec/vdec.c
++++ b/drivers/staging/media/meson/vdec/vdec.c
+@@ -186,6 +186,7 @@ static int vdec_queue_setup(struct vb2_queue *q, unsigned int *num_buffers,
+ {
+ 	struct amvdec_session *sess = vb2_get_drv_priv(q);
+ 	u32 output_size = amvdec_get_output_size(sess);
++	u32 am21c_size = amvdec_am21c_size(sess->width, sess->height);
+ 
+ 	if (*num_planes) {
+ 		switch (q->type) {
+@@ -208,6 +209,10 @@ static int vdec_queue_setup(struct vb2_queue *q, unsigned int *num_buffers,
+ 				    sizes[2] < output_size / 4)
+ 					return -EINVAL;
+ 				break;
++			case V4L2_PIX_FMT_AM21C:
++				if (*num_planes != 1 || sizes[0] < am21c_size)
++					return -EINVAL;
++				break;
+ 			default:
+ 				return -EINVAL;
+ 			}
+@@ -237,6 +242,9 @@ static int vdec_queue_setup(struct vb2_queue *q, unsigned int *num_buffers,
+ 			sizes[2] = output_size / 4;
+ 			*num_planes = 3;
+ 			break;
++		case V4L2_PIX_FMT_AM21C:
++			sizes[0] = am21c_size;
++			*num_planes = 1;
+ 		default:
+ 			return -EINVAL;
+ 		}
+@@ -517,6 +525,10 @@ vdec_try_fmt_common(struct amvdec_session *sess, u32 size,
+ 			      get_output_size(pixmp->width, pixmp->height) / 4;
+ 			pfmt[2].bytesperline = ALIGN(pixmp->width, 64) / 2;
+ 			pixmp->num_planes = 3;
++		} else if (pixmp->pixelformat == V4L2_PIX_FMT_AM21C) {
++			pfmt[0].sizeimage =
++				amvdec_am21c_size(pixmp->width, pixmp->height);
++			pfmt[0].bytesperline = 0;
+ 		}
+ 	} else {
+ 		return NULL;
+diff --git a/drivers/staging/media/meson/vdec/vdec_helpers.c b/drivers/staging/media/meson/vdec/vdec_helpers.c
+index f16948bdbf2f..2b554f21e3c1 100644
+--- a/drivers/staging/media/meson/vdec/vdec_helpers.c
++++ b/drivers/staging/media/meson/vdec/vdec_helpers.c
+@@ -50,6 +50,33 @@ void amvdec_write_parser(struct amvdec_core *core, u32 reg, u32 val)
+ }
+ EXPORT_SYMBOL_GPL(amvdec_write_parser);
+ 
++/* 4 KiB per 64x32 block */
++u32 amvdec_am21c_body_size(u32 width, u32 height)
++{
++	u32 width_64 = ALIGN(width, 64) / 64;
++	u32 height_32 = ALIGN(height, 32) / 32;
++
++	return SZ_4K * width_64 * height_32;
++}
++EXPORT_SYMBOL_GPL(amvdec_am21c_body_size);
++
++/* 32 bytes per 128x64 block */
++u32 amvdec_am21c_head_size(u32 width, u32 height)
++{
++	u32 width_128 = ALIGN(width, 128) / 128;
++	u32 height_64 = ALIGN(height, 64) / 64;
++
++	return 32 * width_128 * height_64;
++}
++EXPORT_SYMBOL_GPL(amvdec_am21c_head_size);
++
++u32 amvdec_am21c_size(u32 width, u32 height)
++{
++	return ALIGN(amvdec_am21c_body_size(width, height) +
++		     amvdec_am21c_head_size(width, height), SZ_64K);
++}
++EXPORT_SYMBOL_GPL(amvdec_am21c_size);
++
+ static int canvas_alloc(struct amvdec_session *sess, u8 *canvas_id)
+ {
+ 	int ret;
+@@ -267,6 +294,10 @@ static void dst_buf_done(struct amvdec_session *sess,
+ 		vbuf->vb2_buf.planes[1].bytesused = output_size / 4;
+ 		vbuf->vb2_buf.planes[2].bytesused = output_size / 4;
+ 		break;
++	case V4L2_PIX_FMT_AM21C:
++		vbuf->vb2_buf.planes[0].bytesused =
++			amvdec_am21c_size(sess->width, sess->height);
++		break;
+ 	}
+ 
+ 	vbuf->vb2_buf.timestamp = timestamp;
+diff --git a/drivers/staging/media/meson/vdec/vdec_helpers.h b/drivers/staging/media/meson/vdec/vdec_helpers.h
+index a455a9ee1cc2..94d2c1ecfe14 100644
+--- a/drivers/staging/media/meson/vdec/vdec_helpers.h
++++ b/drivers/staging/media/meson/vdec/vdec_helpers.h
+@@ -27,6 +27,10 @@ void amvdec_clear_dos_bits(struct amvdec_core *core, u32 reg, u32 val);
+ u32 amvdec_read_parser(struct amvdec_core *core, u32 reg);
+ void amvdec_write_parser(struct amvdec_core *core, u32 reg, u32 val);
+ 
++u32 amvdec_am21c_body_size(u32 width, u32 height);
++u32 amvdec_am21c_head_size(u32 width, u32 height);
++u32 amvdec_am21c_size(u32 width, u32 height);
++
+ /**
+  * amvdec_dst_buf_done_idx() - Signal that a buffer is done decoding
+  *
+-- 
+2.20.1
+
