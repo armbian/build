@@ -1,10 +1,9 @@
-#!/usr/bin/python3
+#!/bin/bash
 #
 #   40-updates - create the list of packages for update with caching
-#   Copyright (c) 2015 Igor Pecovnik
+#   Copyright (c) 2015 Arkadiusz Raj
 #
-#   Author:  Igor Pecovnik igor.pecovnik@gmail.com
-#   Based upon prior work by Nick Charlton, Dustin Kirkland and Michael Vogt.
+#   Author: Arkadiusz Raj arek.raj@gmail.com
 #
 #   This program is free software; you can redistribute it and/or modify
 #   it under the terms of the GNU General Public License as published by
@@ -20,115 +19,37 @@
 #   with this program; if not, write to the Free Software Foundation, Inc.,
 #   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-import sys
-import subprocess
-import apt_pkg
-import time
-import os
-import os.path as path
-import fcntl
 
-lock_file = '/var/run/armbian-motd-updates.lock'
-fp = open(lock_file, 'w')
-try:
-    fcntl.lockf(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except IOError:
-    # another instance is running
-    sys.exit(0)
-
-myfile = "/var/cache/apt/archives/updates.number"
-
-# update procedure
-DISTRO = subprocess.Popen(["lsb_release", "-c", "-s"], stdout=subprocess.PIPE).communicate()[0].strip()
-
-class OpNullProgress(object):
-	'''apt progress handler which supresses any output.'''
-	def update(self):
-		pass
-	def done(self):
-		pass
-
-def is_security_upgrade(pkg):
-	'''
-	Checks to see if a package comes from a DISTRO-security source.
-	'''
-	security_package_sources = [("Ubuntu", "%s-security" % DISTRO),
-							   ("Debian", "%s-security" % DISTRO)]
-
-	for (file, index) in pkg.file_list:
-		for origin, archive in security_package_sources:
-			if (file.archive == archive and file.origin == origin):
-				return True
-	return False
-
-# init apt and config
-apt_pkg.init()
-
-# open the apt cache
-try:
-	cache = apt_pkg.Cache(OpNullProgress())
-except SystemError as e:
-	sys.stderr.write("Error: Opening the cache (%s)" % e)
-	sys.exit(0)
-
-# setup a DepCache instance to interact with the repo
-depcache = apt_pkg.DepCache(cache)
-
-# take into account apt policies
-depcache.read_pinfile()
-
-# initialise it
-depcache.init()
+lock_file='/var/run/armbian-motd-updates.lock'
+if { set -C; 2>/dev/null >${lock_file}; }; then
+    trap "rm -f ${lock_file}" EXIT
+else
+    exit 0
+fi
 
 # give up if packages are broken
-if depcache.broken_count > 0:
-	sys.stderr.write("Error: Broken packages exist.")
-	sys.exit(0)
+[[ ! $(dpkg -l | grep ^..r) ]] && exit 0
 
-# mark possible packages
-try:
-	# run distro-upgrade
-	depcache.upgrade(True)
-	# reset if packages get marked as deleted -> we don't want to break anything
-	if depcache.del_count > 0:
-		depcache.init()
+myfile="/var/cache/apt/archives/updates.number"
 
-	# then a standard upgrade
-	depcache.upgrade()
-except SystemError as e:
-	sys.stderr.write("Error: Couldn't mark the upgrade (%s)" % e)
-	sys.exit(0)
+# update procedure
+DISTRO=$(lsb_release -c | cut -d ":" -f 2 |  tr -d '[:space:]') && DISTRO=${DISTRO,,}
 
 # run around the packages
-upgrades = 0
-security_upgrades = 0
-for pkg in cache.packages:
-	candidate = depcache.get_candidate_ver(pkg)
-	current = pkg.current_ver
+upgrades=0
+security_upgrades=0
+while IFS= read -r LINE; do
+        # increment the upgrade counter
+        (( upgrades++ ))
+        # keep another count for security upgrades
+        [[ ${LINE} == *"${DISTRO}-sec"* ]] && (( security_upgrades++ ))
+done < <(apt-get upgrade -s -qq | sed -n '/^Inst/p')
 
-	# skip packages not marked as upgraded/installed
-	if not (depcache.marked_install(pkg) or depcache.marked_upgrade(pkg)):
-		continue
+cat >|${myfile} <<EOT
+NUM_UPDATES="${upgrades}"
+NUM_SECURITY_UPDATES="${security_upgrades}"
+DATE="$(date +"%Y-%m-%d %H:%M")"
+EOT
 
-	# increment the upgrade counter
-	upgrades += 1
+exit 0
 
-	# keep another count for security upgrades
-	if is_security_upgrade(candidate):
-		security_upgrades += 1
-
-	# double check for security upgrades masked by another package
-	for version in pkg.version_list:
-		if (current and apt_pkg.version_compare(version.ver_str, current.ver_str) <= 0):
-			continue
-		if is_security_upgrade(version):
-			security_upgrades += 1
-			break
-
-f = open(myfile, 'w')
-f.write('NUM_UPDATES="{}"\n'.format(upgrades))
-f.write('NUM_SECURITY_UPDATES="{}"\n'.format(security_upgrades))
-f.write('DATE="{}"\n'.format(time.strftime("%Y-%m-%d %H:%M")))
-f.close()
-
-exit(0)
