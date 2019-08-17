@@ -99,7 +99,7 @@ debootstrap_ng()
 create_rootfs_cache()
 {
 	local packages_hash=$(get_package_list_hash)
-	local cache_type=$(if [[ ${BUILD_DESKTOP} == yes  ]]; then echo "desktop"; else echo "cli";fi)
+	local cache_type=$(if [[ ${BUILD_DESKTOP} == yes  ]]; then echo "desktop"; elif [[ ${BUILD_MINIMAL} == yes  ]]; then echo "minimal"; else echo "cli";fi)
 	local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.lz4
 	local cache_fname=${SRC}/cache/rootfs/${cache_name}
 	local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
@@ -191,10 +191,6 @@ create_rootfs_cache()
 		eval 'chroot $SDCARD /bin/bash -c "cat armbian.key | apt-key add -"' \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 		rm $SDCARD/armbian.key
-
-		# compressing packages list to gain some space
-		echo "Acquire::GzipIndexes "true"; Acquire::CompressionTypes::Order:: "gz";" > $SDCARD/etc/apt/apt.conf.d/02compress-indexes
-		echo "Acquire::Languages "none";" > $SDCARD/etc/apt/apt.conf.d/no-languages
 
 		# add armhf arhitecture to arm64
 		[[ $ARCH == arm64 ]] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "dpkg --add-architecture armhf"'
@@ -328,30 +324,33 @@ prepare_partitions()
 	mountopts[btrfs]=',commit=600,compress=lzo'
 	# mountopts[nfs] is empty
 
+	# default BOOTSIZE to use if not specified
+	DEFAULT_BOOTSIZE=96	# MiB
+
 	# stage: determine partition configuration
 	if [[ -n $BOOTFS_TYPE ]]; then
 		# 2 partition setup with forced /boot type
 		local bootfs=$BOOTFS_TYPE
 		local bootpart=1
 		local rootpart=2
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
 	elif [[ $ROOTFS_TYPE != ext4 && $ROOTFS_TYPE != nfs ]]; then
 		# 2 partition setup for non-ext4 local root
 		local bootfs=ext4
 		local bootpart=1
 		local rootpart=2
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
 	elif [[ $ROOTFS_TYPE == nfs ]]; then
 		# single partition ext4 /boot, no root
 		local bootfs=ext4
 		local bootpart=1
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB, For cleanup processing only
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE} # For cleanup processing only
 	elif [[ $CRYPTROOT_ENABLE == yes ]]; then
 		# 2 partition setup for encrypted /root and non-encrypted /boot
 		local bootfs=ext4
 		local bootpart=1
 		local rootpart=2
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
 	else
 		# single partition ext4 root
 		local rootpart=1
