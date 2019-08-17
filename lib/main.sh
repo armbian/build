@@ -261,6 +261,8 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
 fi
 
+[[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no && EXTERNAL=no
+
 if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 
 	options=()
@@ -288,7 +290,6 @@ fi
 
 #prevent conflicting setup
 [[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
-[[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no && EXTERNAL=no
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
