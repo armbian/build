@@ -328,30 +328,33 @@ prepare_partitions()
 	mountopts[btrfs]=',commit=600,compress=lzo'
 	# mountopts[nfs] is empty
 
+	# default BOOTSIZE to use if not specified
+	DEFAULT_BOOTSIZE=96	# MiB
+
 	# stage: determine partition configuration
 	if [[ -n $BOOTFS_TYPE ]]; then
 		# 2 partition setup with forced /boot type
 		local bootfs=$BOOTFS_TYPE
 		local bootpart=1
 		local rootpart=2
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
 	elif [[ $ROOTFS_TYPE != ext4 && $ROOTFS_TYPE != nfs ]]; then
 		# 2 partition setup for non-ext4 local root
 		local bootfs=ext4
 		local bootpart=1
 		local rootpart=2
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
 	elif [[ $ROOTFS_TYPE == nfs ]]; then
 		# single partition ext4 /boot, no root
 		local bootfs=ext4
 		local bootpart=1
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB, For cleanup processing only
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE} # For cleanup processing only
 	elif [[ $CRYPTROOT_ENABLE == yes ]]; then
 		# 2 partition setup for encrypted /root and non-encrypted /boot
 		local bootfs=ext4
 		local bootpart=1
 		local rootpart=2
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=64 # MiB
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
 	else
 		# single partition ext4 root
 		local rootpart=1
