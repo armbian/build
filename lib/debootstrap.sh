@@ -394,7 +394,7 @@ prepare_partitions()
 	# stage: create blank image
 	display_alert "Creating blank image for rootfs" "$sdsize MiB" "info"
 	# truncate --size=${sdsize}M ${SDCARD}.raw # sometimes results in fs corruption, revert to previous know to work solution
-	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=${SDCARD}.raw
+	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) -N "[ .... ] dd" | dd status=none of=${SDCARD}.raw
 
 	# stage: calculate boot partition size
 	local bootstart=$(($OFFSET * 2048))
@@ -645,12 +645,28 @@ create_image()
 	# call custom post build hook
 	[[ $(type -t post_build_image) == function ]] && post_build_image "$DEST/images/${version}.img"
 
+	# display warning when we want to write sd card under Docker
+	[[ `systemd-detect-virt` == 'docker' && -n $CARD_DEVICE ]] && display_alert "Can't write to $CARD_DEVICE" "Enable docker privileged mode in config-docker.conf" "wrn"
+
 	# write image to SD card
-	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f $DEST/images/${version}.img && $COMPRESS_OUTPUTIMAGE != yes ]]; then
-		display_alert "Writing image" "$CARD_DEVICE" "info"
-		balena-etcher $DEST/images/${version}.img -d $CARD_DEVICE -y
-		if [ $? -eq 0 ]; then
-			display_alert "Writing succeeded" "${version}.img" "info"
+	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f $DEST/images/${version}.img ]]; then
+
+		# make sha256sum if it does not exists. we need it for comparisson
+		if [[ -f "$DEST/images/${version}".img.sha ]]; then
+			local ifsha=$(cat $DEST/images/${version}.img.sha | awk '{print $1}')
+		else
+			local ifsha=$(sha256sum -b "$DEST/images/${version}".img | awk '{print $1}')
+		fi
+
+		display_alert "Writing image" "$CARD_DEVICE ${readsha}" "info"
+
+		# write to SD card
+		pv -p -b -r -c -N "[ .... ] dd" $DEST/images/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
+
+		# read and compare
+		local ofsha=$(dd if=$CARD_DEVICE count=$(du -b $DEST/images/${version}.img | cut -f1) status=none iflag=count_bytes oflag=direct | sha256sum | awk '{print $1}')
+		if [[ $ifsha == $ofsha ]]; then
+			display_alert "Writing verified" "${version}.img" "info"
 		else
 			display_alert "Writing failed" "${version}.img" "err"
 		fi

@@ -19,7 +19,6 @@
 # prepare_host
 # webseed
 # download_and_verify
-# download_etcher_cli
 
 # cleaning <target>
 #
@@ -723,9 +722,6 @@ prepare_host()
 		fi
 	done
 
-	# download etcher CLI utility
-	download_etcher_cli
-
 	[[ ! -f $USERPATCHES_PATH/customize-image.sh ]] && cp $SRC/config/templates/customize-image.sh.template $USERPATCHES_PATH/customize-image.sh
 
 	if [[ ! -f $USERPATCHES_PATH/README ]]; then
@@ -900,41 +896,6 @@ download_and_verify()
 	fi
 }
 
-
-download_etcher_cli()
-{
-        local url="https://github.com/balena-io/etcher/releases/download/v1.4.8/balena-etcher-cli-1.4.8-linux-x64.tar.gz"
-	local hash="9befa06b68bb5846bcf5a9516785d48d6aaa9364d80a5802deb5b6a968bf5404"
-
-        local filename=${url##*/}
-        local dirname=${filename/.tar.gz/-dist}
-
-	export PATH="$PATH:$SRC/cache/utility/$dirname"
-
-        if [[ -f $SRC/cache/utility/$dirname/.download-complete ]]; then
-                return
-        fi
-
-        cd $SRC/cache/utility/
-
-        display_alert "Downloading" "$dirname"
-        curl -Lf --progress-bar $url -o $filename
-
-        local verified=false
-	local b=$(sha256sum $filename)
-
-        display_alert "Verifying"
-
-        [[ "$hash" == "$(sha256sum $filename | cut -d ' ' -f 1)" ]] && verified=true
-
-        if [[ $verified == true ]]; then
-                display_alert "Extracting"
-                tar --no-same-owner --overwrite -xf $filename && touch $SRC/cache/utility/$dirname/.download-complete && rm $filename
-                display_alert "Download complete" "" "info"
-        else
-                display_alert "Verification failed" "" "wrn"
-        fi
-}
 
 
 
