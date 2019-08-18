@@ -118,6 +118,12 @@ if [[ -n $REPOSITORY_UPDATE ]]; then
 		REPO_CONFIG="aptly.conf"
 	fi
 
+	# For user override
+	if [[ -f $USERPATCHES_PATH/lib.config ]]; then
+		display_alert "Using user configuration override" "userpatches/lib.config" "info"
+	        source "$USERPATCHES_PATH"/lib.config
+	fi
+
 	repo-manipulate "$REPOSITORY_UPDATE"
 	exit
 
