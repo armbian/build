@@ -433,8 +433,8 @@ addtorepo()
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1)); fi
 			fi
 		else
-			# display_alert "Adding dummy package $release" "main" "wrn"
-			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${SCRIPTPATH}config/templates/example.deb
+			# workaround - add dummy package to not trigger error
+			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${SCRIPTPATH}config/templates/example.deb >/dev/null
 		fi
 
 		local COMPONENTS="main"
@@ -450,8 +450,8 @@ addtorepo()
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
 			fi
 		else
-			# display_alert "Adding dummy package $release" "root" "wrn"
-			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${SCRIPTPATH}config/templates/example.deb
+			# workaround - add dummy package to not trigger error
+			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${SCRIPTPATH}config/templates/example.deb >/dev/null
 		fi
 
 		# adding old utils and new jessie-utils for backwards compatibility with older images
@@ -465,8 +465,8 @@ addtorepo()
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
 			fi
 		else
-			# display_alert "Adding dummy package $release" "utils" "wrn"
-			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "utils" ${SCRIPTPATH}config/templates/example.deb
+			# workaround - add dummy package to not trigger error
+			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "utils" ${SCRIPTPATH}config/templates/example.deb >/dev/null
 		fi
 		COMPONENTS="${COMPONENTS} utils"
 
@@ -481,8 +481,8 @@ addtorepo()
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
 			fi
 		else
-			# display_alert "Adding dummy package $release" "${release}-utils" "wrn"
-			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-utils" ${SCRIPTPATH}config/templates/example.deb
+			# workaround - add dummy package to not trigger error
+			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-utils" ${SCRIPTPATH}config/templates/example.deb >/dev/null
 		fi
 		COMPONENTS="${COMPONENTS} ${release}-utils"
 
@@ -497,8 +497,8 @@ addtorepo()
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
 			fi
 		else
-			# display_alert "Adding dummy package $release" "desktop" "wrn"
-			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-desktop" ${SCRIPTPATH}config/templates/example.deb
+			# workaround - add dummy package to not trigger error
+			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-desktop" ${SCRIPTPATH}config/templates/example.deb >/dev/null
 		fi
 		COMPONENTS="${COMPONENTS} ${release}-desktop"
 
