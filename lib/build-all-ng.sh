@@ -46,7 +46,7 @@ pack_upload ()
 
 	# stage: generate sha256sum.sha
 	cd "${DESTIMG}" || exit
-	sha256sum -b "${version}.img" > sha256sum.sha
+	sha256sum -b "${version}.img" > ${version}.img.sha
 
 	# stage: sign with PGP
 	if [[ -n $GPG_PASS ]]; then
@@ -60,7 +60,7 @@ pack_upload ()
 
 	# pack and move file to server under new process
 	nice -n 19 bash -c "\
-	7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img ${version}.txt *.asc sha256sum.sha \
+	7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img ${version}.img.txt *.asc ${version}.img.sha \
 	>/dev/null 2>&1 ; find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; \
 	while ! rsync -arP $DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir};\
 	do sleep 5;done; rm -r $DESTIMG; \
@@ -68,7 +68,7 @@ pack_upload ()
 	else
 	# pack and move file to debs subdirectory
 	nice -n 19 bash -c "\
-	7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img ${version}.txt *.asc sha256sum.sha \
+	7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img ${version}.img.txt *.asc ${version}.img.sha \
 	>/dev/null 2>&1 ; find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; mv $filename $DEST/images ; \
 	rm -r $DESTIMG; rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid" &
 	fi

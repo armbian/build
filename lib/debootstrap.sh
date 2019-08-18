@@ -589,7 +589,7 @@ create_image()
 	losetup -d $LOOP
 	rm -rf --one-file-system $DESTIMG $MOUNT
 	mkdir -p $DESTIMG
-	fingerprint_image "$DESTIMG/${version}.txt" "${version}"
+	fingerprint_image "$DESTIMG/${version}.img.txt" "${version}"
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
 	if [[ $BUILD_ALL != yes ]]; then
@@ -622,7 +622,7 @@ create_image()
 			# compress image
 			cd $DESTIMG
 			display_alert "Compressing" "$DEST/images/${version}.7z" "info"
-			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img* ${version}.txt >/dev/null 2>&1
+			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img* ${version}.img.txt >/dev/null 2>&1
 			cd ..
 		fi
 
@@ -631,7 +631,7 @@ create_image()
 			pigz < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
 		fi
 
-		mv $DESTIMG/${version}.txt $DEST/images/${version}.txt || exit 1
+		mv $DESTIMG/${version}.img.txt $DEST/images/${version}.img.txt || exit 1
 		mv $DESTIMG/${version}.img $DEST/images/${version}.img || exit 1
 		rm -rf $DESTIMG
 	fi
