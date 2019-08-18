@@ -406,19 +406,19 @@ addtorepo()
 		if [[ -z $(aptly repo list -config=${SCRIPTPATH}config/${REPO_CONFIG} -raw | awk '{print $(NF)}' | grep $release) ]]; then
 			display_alert "Creating section" "$release" "info"
 			aptly repo create -config=${SCRIPTPATH}config/${REPO_CONFIG} -distribution=$release -component="main" \
-			-comment="Armbian main repository" ${release}
+			-comment="Armbian main repository" ${release} >/dev/null
 		fi
 		if [[ -z $(aptly repo list -config=${SCRIPTPATH}config/${REPO_CONFIG} -raw | awk '{print $(NF)}' | grep "^utils") ]]; then
 			aptly repo create -config=${SCRIPTPATH}config/${REPO_CONFIG} -distribution=$release -component="utils" \
-			-comment="Armbian utilities (backwards compatibility)" utils
+			-comment="Armbian utilities (backwards compatibility)" utils >/dev/null
 		fi
 		if [[ -z $(aptly repo list -config=${SCRIPTPATH}config/${REPO_CONFIG} -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
 			aptly repo create -config=${SCRIPTPATH}config/${REPO_CONFIG} -distribution=$release -component="${release}-utils" \
-			-comment="Armbian ${release} utilities" ${release}-utils
+			-comment="Armbian ${release} utilities" ${release}-utils >/dev/null
 		fi
 		if [[ -z $(aptly repo list -config=${SCRIPTPATH}config/${REPO_CONFIG} -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
 			aptly repo create -config=${SCRIPTPATH}config/${REPO_CONFIG} -distribution=$release -component="${release}-desktop" \
-			-comment="Armbian ${release} desktop" ${release}-desktop
+			-comment="Armbian ${release} desktop" ${release}-desktop >/dev/null
 		fi
 
 
@@ -433,8 +433,8 @@ addtorepo()
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1)); fi
 			fi
 		else
-			display_alert "Adding dummy package $release" "main" "wrn"
-			aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${SCRIPTPATH}config/templates/example.deb
+			# display_alert "Adding dummy package $release" "main" "wrn"
+			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${SCRIPTPATH}config/templates/example.deb
 		fi
 
 		local COMPONENTS="main"
@@ -450,8 +450,8 @@ addtorepo()
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
 			fi
 		else
-			display_alert "Adding dummy package $release" "root" "wrn"
-			aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${SCRIPTPATH}config/templates/example.deb
+			# display_alert "Adding dummy package $release" "root" "wrn"
+			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${SCRIPTPATH}config/templates/example.deb
 		fi
 
 		# adding old utils and new jessie-utils for backwards compatibility with older images
@@ -465,8 +465,8 @@ addtorepo()
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
 			fi
 		else
-			display_alert "Adding dummy package $release" "utils" "wrn"
-			aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} "utils" ${SCRIPTPATH}config/templates/example.deb
+			# display_alert "Adding dummy package $release" "utils" "wrn"
+			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "utils" ${SCRIPTPATH}config/templates/example.deb
 		fi
 		COMPONENTS="${COMPONENTS} utils"
 
@@ -481,8 +481,8 @@ addtorepo()
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
 			fi
 		else
-			display_alert "Adding dummy package $release" "${release}-utils" "wrn"
-			aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-utils" ${SCRIPTPATH}config/templates/example.deb
+			# display_alert "Adding dummy package $release" "${release}-utils" "wrn"
+			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-utils" ${SCRIPTPATH}config/templates/example.deb
 		fi
 		COMPONENTS="${COMPONENTS} ${release}-utils"
 
@@ -497,8 +497,8 @@ addtorepo()
 				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
 			fi
 		else
-			display_alert "Adding dummy package $release" "desktop" "wrn"
-			aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-desktop" ${SCRIPTPATH}config/templates/example.deb
+			# display_alert "Adding dummy package $release" "desktop" "wrn"
+			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-desktop" ${SCRIPTPATH}config/templates/example.deb
 		fi
 		COMPONENTS="${COMPONENTS} ${release}-desktop"
 
@@ -509,7 +509,7 @@ addtorepo()
 		if [ $mainnum -gt 0 ] && [ $utilnum -gt 0 ] && [ $desknum -gt 0 ]; then
 			# publish
 			aptly publish $forceoverwrite -passphrase=$GPG_PASS -origin=Armbian -label=Armbian -config=${SCRIPTPATH}config/${REPO_CONFIG} -component=${COMPONENTS// /,} \
-				--distribution=$release repo $release ${COMPONENTS//main/}
+				--distribution=$release repo $release ${COMPONENTS//main/} >/dev/null
 			if [[ $? -ne 0 ]]; then
 				display_alert "Publishing failed" "$release" "err"
 				errors=$((errors+1))
@@ -523,7 +523,7 @@ addtorepo()
 	done
 
 	# display what we have
-	display_Qalert "List of local repos" "local" "info"
+	display_alert "List of local repos" "local" "info"
 	(aptly repo list -config=${SCRIPTPATH}config/${REPO_CONFIG}) | egrep packages
 
 	# remove debs if no errors found
