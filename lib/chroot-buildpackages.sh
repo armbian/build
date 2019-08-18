@@ -168,7 +168,7 @@ chroot_build_packages()
 					continue
 				fi
 
-				local plugin_target_dir=$DEST/debs/extra/$package_component/
+				local plugin_target_dir=${DEB_STORAGE}/extra/$package_component/
 				mkdir -p $plugin_target_dir
 
 				# check if needs building
@@ -292,8 +292,8 @@ chroot_installpackages_local()
 	mkdir -p /tmp/aptly-temp/
 	aptly -config=$conf repo create temp
 	# NOTE: this works recursively
-	aptly -config=$conf repo add temp $DEST/debs/extra/${RELEASE}-desktop/
-	aptly -config=$conf repo add temp $DEST/debs/extra/${RELEASE}-utils/
+	aptly -config=$conf repo add temp ${DEB_STORAGE}/extra/${RELEASE}-desktop/
+	aptly -config=$conf repo add temp ${DEB_STORAGE}/extra/${RELEASE}-utils/
 	# -gpg-key="925644A6"
 	aptly -keyring="$SRC/packages/extras-buildpkgs/buildpkg-public.gpg" -secret-keyring="$SRC/packages/extras-buildpkgs/buildpkg.gpg" -batch=true -config=$conf \
 		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution=$RELEASE publish repo temp

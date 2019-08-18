@@ -105,6 +105,24 @@ fi
 # Check and install dependencies, directory structure and settings
 prepare_host
 
+if [[ -n $REPOSITORY_UPDATE ]]; then
+
+	# select stable/beta configuration
+	if [[ $BETA == yes ]]; then
+		DEB_STORAGE=$DEST/debs-beta
+		REPO_STORAGE=$DEST/repository-beta
+		REPO_CONFIG="aptly-beta.conf"
+	else
+		DEB_STORAGE=$DEST/debs
+		REPO_STORAGE=$DEST/repository
+		REPO_CONFIG="aptly.conf"
+	fi
+
+	repo-manipulate "$REPOSITORY_UPDATE"
+	exit
+
+fi
+
 # if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
 if [[ -z $KERNEL_ONLY ]]; then
@@ -384,10 +402,10 @@ VER="${VER/-$LINUXFAMILY/}"
 UBOOT_VER=$(dpkg --info "${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 
 # create board support package
-[[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
+[[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
 
 # create desktop package
-[[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
+[[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
 
 # build additional packages
 [[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
@@ -396,7 +414,7 @@ if [[ $KERNEL_ONLY != yes ]]; then
 	debootstrap_ng
 else
 	display_alert "Kernel build done" "@host" "info"
-	display_alert "Target directory" "$DEST/debs/" "info"
+	display_alert "Target directory" "${DEB_STORAGE}/" "info"
 	display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
 fi
 

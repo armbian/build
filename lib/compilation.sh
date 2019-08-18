@@ -251,7 +251,7 @@ compile_uboot()
 
 	[[ ! -f $SRC/.tmp/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
-	mv $SRC/.tmp/${uboot_name}.deb $DEST/debs/
+	mv $SRC/.tmp/${uboot_name}.deb ${DEB_STORAGE}/
 }
 
 compile_kernel()
@@ -416,14 +416,14 @@ compile_kernel()
 
 	if [[ $BUILD_KSRC != no ]]; then
 		fakeroot dpkg-deb -z0 -b $sources_pkg_dir ${sources_pkg_dir}.deb
-		mv ${sources_pkg_dir}.deb $DEST/debs/
+		mv ${sources_pkg_dir}.deb ${DEB_STORAGE}/
 	fi
 	rm -rf $sources_pkg_dir
 
 	cd ..
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
-	mv *.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
+	mv *.deb ${DEB_STORAGE}/ || exit_with_error "Failed moving kernel DEBs"
 }
 
 compile_sunxi_tools()

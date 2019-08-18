@@ -177,34 +177,34 @@ install_common()
 	EOF
 
 	# install kernel and u-boot packages
-	install_deb_chroot "$DEST/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
-	install_deb_chroot "$DEST/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
+	install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
+	install_deb_chroot "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
 
 
 	if [[ $BUILD_DESKTOP == yes ]]; then
-		install_deb_chroot "$DEST/debs/$RELEASE/armbian-${RELEASE}-desktop_${REVISION}_all.deb"
+		install_deb_chroot "${DEB_STORAGE}/$RELEASE/armbian-${RELEASE}-desktop_${REVISION}_all.deb"
 		# install display manager
 		desktop_postinstall
 	fi
 
 	if [[ $INSTALL_HEADERS == yes ]]; then
-		install_deb_chroot "$DEST/debs/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
+		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
 	fi
 
-	if [[ -f $DEST/debs/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
-		install_deb_chroot "$DEST/debs/armbian-firmware_${REVISION}_${ARCH}.deb"
+	if [[ -f ${DEB_STORAGE}/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
+		install_deb_chroot "${DEB_STORAGE}/armbian-firmware_${REVISION}_${ARCH}.deb"
 	fi
 
-	if [[ -f $DEST/debs/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
-		install_deb_chroot "$DEST/debs/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb"
+	if [[ -f ${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
+		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb"
 	fi
 
-	if [[ -f $DEST/debs/${CHOSEN_KSRC}_${REVISION}_all.deb && $INSTALL_KSRC == yes ]]; then
-		install_deb_chroot "$DEST/debs/${CHOSEN_KSRC}_${REVISION}_all.deb"
+	if [[ -f ${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb && $INSTALL_KSRC == yes ]]; then
+		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb"
 	fi
 
 	# install board support package
-	install_deb_chroot "$DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb"
+	install_deb_chroot "${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb"
 
 	# freeze armbian packages
 	if [[ $BSPFREEZE == yes ]]; then
