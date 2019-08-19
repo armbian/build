@@ -386,7 +386,7 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 done
 
 # Compile u-boot if packed .deb does not exist
-if [[ ! -f ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+if [[ ! -f ${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 	if [[ -n $ATFSOURCE ]]; then
 		compile_atf
 	fi
@@ -394,7 +394,7 @@ if [[ ! -f ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 fi
 
 # Compile kernel if packed .deb does not exist
-if [[ ! -f ${DEST}/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 	KDEB_CHANGELOG_DIST=$RELEASE
 	compile_kernel
 fi
@@ -402,10 +402,10 @@ fi
 overlayfs_wrapper "cleanup"
 
 # extract kernel version from .deb package
-VER=$(dpkg --info "${DEST}/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
+VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 VER="${VER/-$LINUXFAMILY/}"
 
-UBOOT_VER=$(dpkg --info "${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
+UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 
 # create board support package
 [[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package

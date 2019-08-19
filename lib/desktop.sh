@@ -108,8 +108,8 @@ create_desktop_package ()
 	# create board DEB file
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
 	fakeroot dpkg-deb -b "${destination}" "${destination}.deb" >/dev/null
-	mkdir -p "${DEST}/debs/${RELEASE}"
-	mv "${destination}.deb" "${DEST}/debs/${RELEASE}"
+	mkdir -p "${DEB_STORAGE}/${RELEASE}"
+	mv "${destination}.deb" "${DEB_STORAGE}/${RELEASE}"
 	# cleanup
 	rm -rf "${destination}"
 }

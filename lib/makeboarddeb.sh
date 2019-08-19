@@ -370,8 +370,8 @@ create_board_package()
 	# create board DEB file
 	display_alert "Building package" "$CHOSEN_ROOTFS" "info"
 	fakeroot dpkg-deb -b "${destination}" "${destination}.deb" >> "${DEST}"/debug/install.log 2>&1
-	mkdir -p "${DEST}/debs/${RELEASE}/"
-	mv "${destination}.deb" "${DEST}/debs/${RELEASE}/"
+	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
+	mv "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"
 	# cleanup
 	rm -rf "${destination}"
 }

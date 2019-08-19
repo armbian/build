@@ -51,15 +51,15 @@ cleaning()
 		fi
 		;;
 
-		extras) # delete output/debs/extra/$RELEASE for all architectures
+		extras) # delete ${DEB_STORAGE}/extra/$RELEASE for all architectures
 		if [[ -n $RELEASE && -d ${DEB_STORAGE}/extra/$RELEASE ]]; then
-			display_alert "Cleaning output/debs/extra for" "$RELEASE" "info"
+			display_alert "Cleaning ${DEB_STORAGE}/extra for" "$RELEASE" "info"
 			rm -rf ${DEB_STORAGE}/extra/$RELEASE
 		fi
 		;;
 
 		alldebs) # delete output/debs
-		[[ -d ${DEB_STORAGE} ]] && display_alert "Cleaning" "output/debs" "info" && rm -rf ${DEB_STORAGE}/*
+		[[ -d ${DEB_STORAGE} ]] && display_alert "Cleaning" "${DEB_STORAGE}" "info" && rm -rf ${DEB_STORAGE}/*
 		;;
 
 		cache) # delete output/cache
