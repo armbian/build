@@ -184,14 +184,6 @@ create_rootfs_cache()
 		# stage: create apt sources list
 		create_sources_list "$RELEASE" "$SDCARD/"
 
-		# stage: add armbian repository and install key
-		echo "deb http://apt.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
-
-		cp $SRC/config/armbian.key $SDCARD
-		eval 'chroot $SDCARD /bin/bash -c "cat armbian.key | apt-key add -"' \
-			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-		rm $SDCARD/armbian.key
-
 		# add armhf arhitecture to arm64
 		[[ $ARCH == arm64 ]] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "dpkg --add-architecture armhf"'
 
