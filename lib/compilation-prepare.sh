@@ -21,15 +21,20 @@ compilation_prepare()
 
 		# attach to specifics tag or branch
 		local aufstag=$(echo ${version} | cut -f 1-2 -d ".")
-		local aufsver="branch:aufs${aufstag}"
 
 		# check if Mr. Okajima already made a branch for this version
 		git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone aufs${aufstag} >/dev/null
 
+		if [ "$?" -ne "0" ]; then
+			# then use rc branch
+			aufstag="5.x-rcN"
+			git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone aufs${aufstag} >/dev/null
+		fi
+
 		if [ "$?" -eq "0" ]; then
 
 			display_alert "Adding" "AUFS ${aufstag}" "info"
-
+			local aufsver="branch:aufs${aufstag}"
 			fetch_from_repo "https://github.com/sfjro/aufs5-standalone" "aufs5" "branch:${aufsver}" "yes"
 			cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-kbuild.patch"		"applying"
