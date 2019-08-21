@@ -237,6 +237,12 @@ create_rootfs_cache()
 		# create list of installed packages for debug purposes
 		chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > ${cache_fname}.list 2>&1
 
+		# creating xapian index that synaptic runs faster
+		if [[ $BUILD_DESKTOP == yes ]]; then
+			display_alert "Recreating Synaptic search index" "Please wait" "info"
+			chroot $SDCARD /bin/bash -c "/usr/sbin/update-apt-xapian-index -u"
+		fi
+
 		# this is needed for the build process later since resolvconf generated file in /run is not saved
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
