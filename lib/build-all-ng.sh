@@ -26,8 +26,13 @@ CLEAN_LEVEL="make,oldcache"
 rm -f /run/armbian/*.pid
 mkdir -p /run/armbian
 
-
-
+# support user defined configuration
+if [[ -f $USERPATCHES_PATH/targets.conf ]]; then
+	display_alert "Adding user provided targets configuration"
+	TARGETS="${USERPATCHES_PATH}/targets.conf"
+else
+	TARGETS="${SRC}/config/targets.conf"
+fi
 
 pack_upload ()
 {
@@ -204,7 +209,7 @@ function build_all()
 			fi
 		fi
 
-	done < ${SRC}/config/targets.conf
+	done < ${TARGETS}
 
 }
 
