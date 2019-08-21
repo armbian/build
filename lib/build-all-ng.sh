@@ -34,7 +34,7 @@ pack_upload ()
 
 	# pack into .7z and upload to server
 
-	display_alert "Signing and compressing" "Please wait!" "info"
+	display_alert "Signing" "Please wait!" "info"
 	local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
 	local subdir="archive"
 
@@ -55,22 +55,13 @@ pack_upload ()
 	fi
 
 	if [[ -n "${SEND_TO_SERVER}" ]]; then
-	# create remote directory structure
-	ssh "${SEND_TO_SERVER}" "mkdir -p /var/www/dl.armbian.com/${BOARD}/{archive,nightly};";
-
-	# pack and move file to server under new process
-	nice -n 19 bash -c "\
-	7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img ${version}.img.txt *.asc ${version}.img.sha \
-	>/dev/null 2>&1 ; find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; \
-	while ! rsync -arP $DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir};\
-	do sleep 5;done; rm -r $DESTIMG; \
-	rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid" &
+		display_alert "Compressing and uploading" "Please wait!" "info"
+		# pack and move file to server under new process
+		nice -n 19 bash -c "7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img ${version}.img.txt *.asc ${version}.img.sha >/dev/null 2>&1 ; find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; while ! rsync -arP $DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir}; do sleep 5; done; rm -r $DESTIMG; rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid" &
 	else
-	# pack and move file to debs subdirectory
-	nice -n 19 bash -c "\
-	7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img ${version}.img.txt *.asc ${version}.img.sha \
-	>/dev/null 2>&1 ; find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; mv $filename $DEST/images ; \
-	rm -r $DESTIMG; rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid" &
+		display_alert "Compressing" "Please wait!" "info"
+		# pack and move file to debs subdirectory
+		nice -n 19 bash -c "7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img ${version}.img.txt *.asc ${version}.img.sha >/dev/null 2>&1 ; find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; mv $filename $DEST/images ; rm -r $DESTIMG; rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid" &
 	fi
 
 }
@@ -84,7 +75,7 @@ build_main ()
 	touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
 	if [[ $KERNEL_ONLY != yes ]]; then
 		source "${SRC}"/lib/main.sh
-		pack_upload &
+		pack_upload
 	else
 		source "${SRC}"/lib/main.sh
 		rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
@@ -145,7 +136,7 @@ function build_all()
 
 		unset LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSOURCE BOOTBRANCH ARCH \
 		UBOOT_USE_GCC KERNEL_USE_GCC DEFAULT_OVERLAYS CPUMIN CPUMAX UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE \
-		BOOTFS_TYPE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN PACKAGE_LIST_EXCLUDE KERNEL_IMAGE_TYPE \
+		BOOTFS_TYPE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN DEBOOTSTRAP_LIST PACKAGE_LIST_EXCLUDE KERNEL_IMAGE_TYPE \
 		write_uboot_platform family_tweaks family_tweaks_bsp setup_write_uboot_platform uboot_custom_postprocess \
 		atf_custom_postprocess family_tweaks_s BOOTSCRIPT UBOOT_TARGET_MAP LOCALVERSION UBOOT_COMPILER \
 		KERNEL_COMPILER BOOTCONFIG BOOTCONFIG_VAR_NAME BOOTCONFIG_DEFAULT BOOTCONFIG_NEXT BOOTCONFIG_DEV MODULES \
@@ -156,7 +147,7 @@ function build_all()
 		CRYPTROOT_SSH_UNLOCK CRYPTROOT_SSH_UNLOCK_PORT CRYPTROOT_SSH_UNLOCK_KEY_NAME ROOT_MAPPER NETWORK HDMI \
 		USB WIRELESS ARMBIANMONITOR DEFAULT_CONSOLE FORCE_BOOTSCRIPT_UPDATE SERIALCON UBOOT_TOOLCHAIN2 toolchain2 \
 		BUILD_REPOSITORY_URL BUILD_REPOSITORY_COMMIT DESKTOP_AUTOLOGIN BUILD_MINIMAL BUILD_TARGET BUILD_STABILITY \
-		HOST BUILD_IMAGE
+		HOST BUILD_IMAGE BOARDFAMILY DEB_STORAGE REPO_STORAGE REPO_CONFIG REPOSITORY_UPDATE PACKAGE_LIST_RELEASE
 
 		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE <<< "${line}"
 
@@ -169,8 +160,10 @@ function build_all()
 		[[ ${BOARDFAMILY} == sun*i && $BRANCH == next ]] && BOARDFAMILY=sunxi
 
 		if [[ $KERNEL_ONLY == yes ]]; then
-			array_contains ARRAY "${BOARDFAMILY}${BRANCH}" && continue
-			elif [[ $BUILD_IMAGE == no ]] ; then continue
+			array_contains ARRAY "${BOARDFAMILY}${BRANCH}"
+			continue
+		elif [[ $BUILD_IMAGE == no ]] ; then
+			continue
 		fi
 
 		ARRAY+=("${BOARDFAMILY}${BRANCH}")
@@ -204,7 +197,10 @@ function build_all()
 
 		echo "${n}.	$BOARD			$BRANCH		$RELEASE\
 		$BUILD_DESKTOP		$BUILD_MINIMAL		$BUILD_IMAGE"
-
+				if [[ -n "${SEND_TO_SERVER}" ]]; then
+			                # create remote directory structure
+					ssh "${SEND_TO_SERVER}" "mkdir -p /var/www/dl.armbian.com/${BOARD}/{archive,nightly}"
+				fi
 			fi
 		fi
 
@@ -252,3 +248,9 @@ done
 buildall_end=$(date +%s)
 buildall_runtime=$(((buildall_end - buildall_start) / 60))
 display_alert "Runtime in total" "$buildall_runtime min" "info"
+
+if [[ $BUILD_ALL != demo ]] ; then
+	# recreate link to images
+	ssh igor@dl.armbian.com "/home/igor/recreate.sh"
+	ssh igor@dl.armbian.com "/home/igor/tools.sh"
+fi

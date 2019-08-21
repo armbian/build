@@ -194,7 +194,7 @@ if [[ $BUILD_MINIMAL == yes  ]]; then
 		nocache debconf-utils"
 
 	# Non-essential packages for minimal build
-	PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget armbian-firmware nano sysstat net-tools"
+	PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget armbian-firmware nano sysstat net-tools resolvconf"
 
 fi
 
