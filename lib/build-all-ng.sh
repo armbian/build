@@ -251,6 +251,6 @@ display_alert "Runtime in total" "$buildall_runtime min" "info"
 
 if [[ $BUILD_ALL != demo ]] ; then
 	# recreate link to images
-	ssh igor@dl.armbian.com "/home/igor/recreate.sh"
-	ssh igor@dl.armbian.com "/home/igor/tools.sh"
+	ssh "${SEND_TO_SERVER}" "/home/igor/recreate.sh"
+	ssh "${SEND_TO_SERVER}" "/home/igor/tools.sh"
 fi
