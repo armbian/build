@@ -575,7 +575,7 @@ repo-manipulate() {
 				repo-remove-old-packages "$release" "armhf" "3"
 				repo-remove-old-packages "$release" "arm64" "3"
 				repo-remove-old-packages "$release" "all" "3"
-				aptly -config="${SCRIPTPATH}"config/${REPO_CONFIG} -passphrase="${GPG_PASS}" publish update "${release}"
+				aptly -config="${SCRIPTPATH}"config/${REPO_CONFIG} -passphrase="${GPG_PASS}" publish update "${release}" > /dev/null 2>&1
 				# example to remove all packages from bionic that contain source in the name
 				# aptly repo remove -config=${SCRIPTPATH}config/${REPO_CONFIG} bionic 'Name (% *-source*)'
 			done
