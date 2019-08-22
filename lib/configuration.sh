@@ -145,21 +145,32 @@ DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certif
 DEBOOTSTRAP_LIST=$(echo $DEBOOTSTRAP_LIST | sed -e 's,\\[trn],,g')
 
 
-# Essential packages
-PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler figlet fbset fping \
-	iw fake-hwclock wpasupplicant psmisc chrony parted sudo curl linux-base dialog crda \
-	wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
-	usbutils wireless-tools console-setup unicode-data openssh-server initramfs-tools \
-	ca-certificates resolvconf expect iptables automake nocache debconf-utils html2text \
-	bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev wget keyboard-configuration"
+# For minimal build different set of packages is needed
+# Essential packages for minimal build
+PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chrony parted dialog \
+		ncurses-term sysfsutils toilet figlet u-boot-tools usbutils openssh-server \
+		nocache debconf-utils"
+
+# Non-essential packages for minimal build
+PACKAGE_LIST_ADDITIONAL="network-manager networkd-dispatcher wireless-tools lsof htop mmc-utils wget nano sysstat net-tools"
+
+if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
+	# Essential packages
+	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
+		iw wpasupplicant sudo curl linux-base crda \
+		wireless-regdb python3-apt unattended-upgrades \
+		console-setup unicode-data initramfs-tools \
+		ca-certificates resolvconf expect iptables automake html2text \
+		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
 
 
-# Non-essential packages
-PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools dosfstools iotop iozone3 stress screen \
-	ntfs-3g vim pciutils evtest htop pv lsof libfuse2 libdigest-sha-perl \
-	libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan sysstat bash-completion \
-	hostapd git ethtool network-manager networkd-dispatcher unzip ifenslave command-not-found libpam-systemd iperf3 nano \
-	software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode mmc-utils sunxi-tools"
+	# Non-essential packages
+	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils btrfs-tools dosfstools iotop iozone3 stress screen \
+		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
+		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
+		hostapd git ethtool unzip ifenslave command-not-found libpam-systemd iperf3 \
+		software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode sunxi-tools"
+fi
 
 
 # Dependent desktop packages
@@ -174,19 +185,6 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
 	cups-pk-helper cups geany atril xarchiver"
 
-
-# For minimal build different set of packages is needed
-if [[ $BUILD_MINIMAL == yes  ]]; then
-
-	# Essential packages for minimal build
-	PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chrony parted dialog \
-		ncurses-term sysfsutils toilet figlet u-boot-tools usbutils openssh-server \
-		nocache debconf-utils"
-
-	# Non-essential packages for minimal build
-	PACKAGE_LIST_ADDITIONAL="network-manager networkd-dispatcher wireless-tools lsof htop mmc-utils wget nano sysstat net-tools"
-
-fi
 
 # Release specific packages
 case $RELEASE in
