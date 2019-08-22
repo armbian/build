@@ -10,34 +10,43 @@
 # https://github.com/armbian/build/
 
 # Functions:
+# pack_upload
 # build_main
 # array_contains
 # build_all
-# pack_upload
+
 
 
 
 
 if [[ $BETA == "yes" ]];  then STABILITY="beta";	else STABILITY="stable"; fi
 if [[ -z $KERNEL_ONLY ]]; then KERNEL_ONLY="yes"; fi
+# just to make sure we set those variables
 KERNEL_CONFIGURE="no"
 CLEAN_LEVEL="make,oldcache"
 
+
+# cleanup
 rm -f /run/armbian/*.pid
 mkdir -p /run/armbian
 
-# support user defined configuration
+
+# support user defined configurations
 if [[ -f $USERPATCHES_PATH/targets.conf ]]; then
+
 	display_alert "Adding user provided targets configuration"
 	TARGETS="${USERPATCHES_PATH}/targets.conf"
+
 else
+
 	TARGETS="${SRC}/config/targets.conf"
+
 fi
 
 pack_upload ()
 {
 
-	# pack into .7z and upload to server
+	# pack into .7z and upload to server or just pack. In the background
 
 	display_alert "Signing" "Please wait!" "info"
 	local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
@@ -55,18 +64,32 @@ pack_upload ()
 
 	# stage: sign with PGP
 	if [[ -n $GPG_PASS ]]; then
+
 		echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes \
 		"${version}.img"
+
 	fi
 
 	if [[ -n "${SEND_TO_SERVER}" ]]; then
+
 		display_alert "Compressing and uploading" "Please wait!" "info"
 		# pack and move file to server under new process
-		nice -n 19 bash -c "7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img ${version}.img.txt *.asc ${version}.img.sha >/dev/null 2>&1 ; find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; while ! rsync -arP $DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir}; do sleep 5; done; rm -r $DESTIMG; rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid" &
+		nice -n 19 bash -c "7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img \
+		${version}.img.txt *.asc ${version}.img.sha >/dev/null 2>&1 ; \
+		find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; \
+		while ! rsync -arP $DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir}; \
+		do sleep 5; done; rm -r $DESTIMG; \
+		rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid" &
+
 	else
+
 		display_alert "Compressing" "Please wait!" "info"
 		# pack and move file to debs subdirectory
-		nice -n 19 bash -c "7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img ${version}.img.txt *.asc ${version}.img.sha >/dev/null 2>&1 ; find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; mv $filename $DEST/images ; rm -r $DESTIMG; rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid" &
+		nice -n 19 bash -c "7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img \
+		${version}.img.txt *.asc ${version}.img.sha >/dev/null 2>&1 ; \
+		find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; mv $filename $DEST/images ; \
+		rm -r $DESTIMG; rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid" &
+
 	fi
 
 }
@@ -77,13 +100,19 @@ pack_upload ()
 build_main ()
 {
 
+	# build images which we do pack or kernel
+
 	touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
 	if [[ $KERNEL_ONLY != yes ]]; then
+
 		source "${SRC}"/lib/main.sh
 		pack_upload
+		
 	else
+
 		source "${SRC}"/lib/main.sh
 		rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
+
 	fi
 
 }
@@ -91,18 +120,22 @@ build_main ()
 
 
 
-array_contains () {
+array_contains ()
+{
 
-    local array="$1[@]"
-    local seeking=$2
-    local in=1
-    for element in "${!array}"; do
-        if [[ $element == $seeking ]]; then
-            in=0
-            break
-        fi
-    done
-    return $in
+	# utility snippet
+
+	local array="$1[@]"
+	local seeking=$2
+	local in=1
+
+	for element in "${!array}"; do
+		if [[ $element == $seeking ]]; then
+			in=0
+			break
+		fi
+	done
+	return $in
 
 }
 
@@ -112,6 +145,8 @@ array_contains () {
 function build_all()
 {
 
+	# main routine
+
 	buildall_start=$(date +%s)
 	n=0
 	ARRAY=()
@@ -119,6 +154,7 @@ function build_all()
 
 	# building selected ones
 	if [[ -n ${REBUILD_IMAGES} ]]; then
+
 		buildlist="grep -w '"
 		filter="'"
 		for build in $(tr ',' ' ' <<< $REBUILD_IMAGES); do
@@ -127,8 +163,10 @@ function build_all()
 		done
 		buildlist=${buildlist::-2}"'"
 		filter=${filter::-2}"'"
+
 	fi
 
+	# TO DO!
 	# find unique boards - we will build debs for all variants
 	sorted_unique_ids=($(echo "${ids[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
 	unique_boards=$(eval $buildlist ${SRC}/config/targets.conf | sed '/^#/ d' | awk '{print $1}')
@@ -156,18 +194,25 @@ function build_all()
 
 		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE <<< "${line}"
 
+		# read all possible configurations
 		source ${SRC}"/config/boards/${BOARD}".eos 2> /dev/null
 		source ${SRC}"/config/boards/${BOARD}".tvb 2> /dev/null
 		source ${SRC}"/config/boards/${BOARD}".csc 2> /dev/null
 		source ${SRC}"/config/boards/${BOARD}".wip 2> /dev/null
 		source ${SRC}"/config/boards/${BOARD}".conf 2> /dev/null
 
+		# exceptions handling
 		[[ ${BOARDFAMILY} == sun*i* && $BRANCH != default ]] && BOARDFAMILY=sunxi
 
+		# small optimisation. we only (try to) build needed kernels
 		if [[ $KERNEL_ONLY == yes ]]; then
+
 			array_contains ARRAY "${BOARDFAMILY}${BRANCH}" && continue
+
 		elif [[ $BUILD_IMAGE == no ]] ; then
+
 			continue
+
 		fi
 
 		ARRAY+=("${BOARDFAMILY}${BRANCH}")
@@ -180,6 +225,7 @@ function build_all()
 
 		# create beta or stable
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
+
 			((n+=1))
 
 			if [[ $1 != "dryrun" ]]; then
@@ -199,15 +245,17 @@ function build_all()
 
 			else
 
-		printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
+				# In dryrun it only prints out what will be build
+				printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." \
+				"$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
 
-	#	echo "${n}.	$BOARD (${BOARDFAMILY})			$BRANCH		$RELEASE\
-	#	$BUILD_DESKTOP		$BUILD_MINIMAL		$BUILD_IMAGE"
+				# create remote directory structure
 				if [[ -n "${SEND_TO_SERVER}" ]]; then
-			                # create remote directory structure
 					ssh "${SEND_TO_SERVER}" "mkdir -p /var/www/dl.armbian.com/${BOARD}/{archive,nightly}"
 				fi
+
 			fi
+
 		fi
 
 	done < ${TARGETS}
@@ -218,7 +266,10 @@ function build_all()
 echo ""
 display_alert "Building all targets" "$STABILITY $(if [[ $KERNEL_ONLY == "yes" ]] ; then echo "kernels"; \
 else echo "images"; fi)" "info"
+
 printf "\n%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n\n" "" "board" "branch" "release" "XFCE" "minimal"
+
+# display what we will build
 build_all "dryrun"
 
 if [[ $BUILD_ALL != demo ]] ; then
@@ -230,32 +281,23 @@ if [[ $BUILD_ALL != demo ]] ; then
 fi
 
 # wait until they are not finshed
-sleep 10
+sleep 5
 while :
 do
-        if [[ $(df | grep .tmp | wc -l) -lt 1 ]]; then
-                break
-        fi
-        sleep 10
+		if [[ $(df | grep .tmp | wc -l) -lt 1 ]]; then
+			break
+		fi
+	sleep 5
 done
 
-display_alert "Compressing and uploading" "7z" "info"
-# wait until builds in the background are finished
-sleep 10
 while :
 do
-        if [[ -z $(ps -uax | grep 7z | grep Armbian) ]]; then
-                break
-        fi
-        sleep 10
+		if [[ -z $(ps -uax | grep 7z | grep Armbian) ]]; then
+			break
+		fi
+	sleep 5
 done
 
 buildall_end=$(date +%s)
 buildall_runtime=$(((buildall_end - buildall_start) / 60))
 display_alert "Runtime in total" "$buildall_runtime min" "info"
-
-if [[ $BUILD_ALL != demo ]] ; then
-	# recreate link to images
-	ssh "${SEND_TO_SERVER}" "/home/igor/recreate.sh"
-	ssh "${SEND_TO_SERVER}" "/home/igor/tools.sh"
-fi
