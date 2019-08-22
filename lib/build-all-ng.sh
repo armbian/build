@@ -162,11 +162,10 @@ function build_all()
 		source ${SRC}"/config/boards/${BOARD}".wip 2> /dev/null
 		source ${SRC}"/config/boards/${BOARD}".conf 2> /dev/null
 
-		[[ ${BOARDFAMILY} == sun*i && $BRANCH == next ]] && BOARDFAMILY=sunxi
+		[[ ${BOARDFAMILY} == sun*i* && $BRANCH != default ]] && BOARDFAMILY=sunxi
 
 		if [[ $KERNEL_ONLY == yes ]]; then
-			array_contains ARRAY "${BOARDFAMILY}${BRANCH}"
-			continue
+			array_contains ARRAY "${BOARDFAMILY}${BRANCH}" && continue
 		elif [[ $BUILD_IMAGE == no ]] ; then
 			continue
 		fi
@@ -200,8 +199,10 @@ function build_all()
 
 			else
 
-		echo "${n}.	$BOARD			$BRANCH		$RELEASE\
-		$BUILD_DESKTOP		$BUILD_MINIMAL		$BUILD_IMAGE"
+		printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
+
+	#	echo "${n}.	$BOARD (${BOARDFAMILY})			$BRANCH		$RELEASE\
+	#	$BUILD_DESKTOP		$BUILD_MINIMAL		$BUILD_IMAGE"
 				if [[ -n "${SEND_TO_SERVER}" ]]; then
 			                # create remote directory structure
 					ssh "${SEND_TO_SERVER}" "mkdir -p /var/www/dl.armbian.com/${BOARD}/{archive,nightly}"
@@ -217,8 +218,7 @@ function build_all()
 echo ""
 display_alert "Building all targets" "$STABILITY $(if [[ $KERNEL_ONLY == "yes" ]] ; then echo "kernels"; \
 else echo "images"; fi)" "info"
-echo ""
-echo "	board				branch		release		desktop		minimal		image"
+printf "\n%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n\n" "" "board" "branch" "release" "XFCE" "minimal"
 build_all "dryrun"
 
 if [[ $BUILD_ALL != demo ]] ; then
