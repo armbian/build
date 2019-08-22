@@ -147,7 +147,7 @@ DEBOOTSTRAP_LIST=$(echo $DEBOOTSTRAP_LIST | sed -e 's,\\[trn],,g')
 
 # Essential packages
 PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler figlet fbset fping \
-	iw fake-hwclock wpasupplicant psmisc ntp parted sudo curl linux-base dialog crda \
+	iw fake-hwclock wpasupplicant psmisc chrony parted sudo curl linux-base dialog crda \
 	wireless-regdb ncurses-term python3-apt sysfsutils toilet u-boot-tools unattended-upgrades \
 	usbutils wireless-tools console-setup unicode-data openssh-server initramfs-tools \
 	ca-certificates resolvconf expect iptables automake nocache debconf-utils html2text \
@@ -155,10 +155,10 @@ PACKAGE_LIST="bc bridge-utils build-essential cpufrequtils device-tree-compiler 
 
 
 # Non-essential packages
-PACKAGE_LIST_ADDITIONAL="armbian-firmware alsa-utils btrfs-tools dosfstools iotop iozone3 stress screen \
+PACKAGE_LIST_ADDITIONAL="alsa-utils btrfs-tools dosfstools iotop iozone3 stress screen \
 	ntfs-3g vim pciutils evtest htop pv lsof libfuse2 libdigest-sha-perl \
 	libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan sysstat bash-completion \
-	hostapd git ethtool network-manager unzip ifenslave command-not-found libpam-systemd iperf3 nano \
+	hostapd git ethtool network-manager networkd-dispatcher unzip ifenslave command-not-found libpam-systemd iperf3 nano \
 	software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode mmc-utils sunxi-tools"
 
 
@@ -179,12 +179,12 @@ PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter n
 if [[ $BUILD_MINIMAL == yes  ]]; then
 
 	# Essential packages for minimal build
-	PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc ntp parted dialog \
+	PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chrony parted dialog \
 		ncurses-term sysfsutils toilet figlet u-boot-tools usbutils openssh-server \
 		nocache debconf-utils"
 
 	# Non-essential packages for minimal build
-	PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget armbian-firmware nano sysstat net-tools"
+	PACKAGE_LIST_ADDITIONAL="network-manager networkd-dispatcher wireless-tools lsof htop mmc-utils wget nano sysstat net-tools"
 
 fi
 
