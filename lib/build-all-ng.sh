@@ -165,8 +165,7 @@ function build_all()
 		[[ ${BOARDFAMILY} == sun*i && $BRANCH == next ]] && BOARDFAMILY=sunxi
 
 		if [[ $KERNEL_ONLY == yes ]]; then
-			array_contains ARRAY "${BOARDFAMILY}${BRANCH}"
-			continue
+			array_contains ARRAY "${BOARDFAMILY}${BRANCH}" && continue
 		elif [[ $BUILD_IMAGE == no ]] ; then
 			continue
 		fi
