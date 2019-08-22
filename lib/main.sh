@@ -399,6 +399,18 @@ if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 	compile_kernel
 fi
 
+# Pack armbian-config and armbian-firmware
+if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
+	compile_armbian-config
+	
+	FULL=""
+	REPLACE="-full"
+	[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_all.deb ]] && compile_firmware
+	FULL="-full"
+	REPLACE=""
+	[[ ! -f $DEST/debs/armbian-firmware${FULL}_${REVISION}_all.deb ]] && compile_firmware
+fi
+
 overlayfs_wrapper "cleanup"
 
 # extract kernel version from .deb package

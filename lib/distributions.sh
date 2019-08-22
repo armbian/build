@@ -191,8 +191,12 @@ install_common()
 		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
 	fi
 
-	if [[ -f ${DEB_STORAGE}/armbian-firmware_${REVISION}_${ARCH}.deb ]]; then
-		install_deb_chroot "${DEB_STORAGE}/armbian-firmware_${REVISION}_${ARCH}.deb"
+	if [[ $BUILD_MINIMAL != yes ]]; then
+		install_deb_chroot "${DEB_STORAGE}/armbian-config_${REVISION}_all.deb"
+	fi
+	
+	if [[ -f ${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb ]]; then
+		install_deb_chroot "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb"
 	fi
 
 	if [[ -f ${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
