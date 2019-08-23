@@ -162,7 +162,7 @@ PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chr
 		nocache debconf-utils"
 
 # Non-essential packages for minimal build
-PACKAGE_LIST_ADDITIONAL="network-manager networkd-dispatcher wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf"
+PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf"
 
 if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
 	# Essential packages
@@ -170,7 +170,7 @@ if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
 		iw wpasupplicant sudo curl linux-base crda \
 		wireless-regdb python3-apt unattended-upgrades \
 		console-setup unicode-data initramfs-tools \
-		ca-certificates expect iptables automake html2text \
+		ca-certificates expect iptables automake html2text networkd-dispatcher \
 		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
 
 
