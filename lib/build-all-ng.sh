@@ -106,8 +106,8 @@ build_main ()
 	if [[ $KERNEL_ONLY != yes ]]; then
 
 		source "${SRC}"/lib/main.sh
-		pack_upload
-		
+		[[ $BSP_BUILD != yes ]] && pack_upload
+
 	else
 
 		source "${SRC}"/lib/main.sh
@@ -214,7 +214,6 @@ function build_all()
 			continue
 
 		fi
-
 		ARRAY+=("${BOARDFAMILY}${BRANCH}")
 
 		BUILD_DESKTOP="no"
@@ -239,7 +238,16 @@ function build_all()
 				else
 
 					display_alert "Building ${n}."
-					build_main
+					if [[ "${BSP_BUILD}" == yes && ALLTARGETS == "yes" ]]; then
+						TARGETS=(xenial stretch buster bionic disco)
+						for RELEASE in "${TARGETS[@]}"
+						do
+							display_alert "BSP for ${RELEASE}."
+							build_main
+						done
+					else
+							build_main
+					fi
 
 				fi
 

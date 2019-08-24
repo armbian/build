@@ -194,7 +194,7 @@ install_common()
 	if [[ $BUILD_MINIMAL != yes ]]; then
 		install_deb_chroot "${DEB_STORAGE}/armbian-config_${REVISION}_all.deb"
 	fi
-	
+
 	if [[ -f ${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb ]]; then
 		install_deb_chroot "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb"
 	fi

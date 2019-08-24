@@ -402,7 +402,7 @@ fi
 # Pack armbian-config and armbian-firmware
 if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
 	compile_armbian-config
-	
+
 	FULL=""
 	REPLACE="-full"
 	[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_all.deb ]] && compile_firmware
@@ -429,7 +429,7 @@ UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
 [[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
 
 if [[ $KERNEL_ONLY != yes ]]; then
-	debootstrap_ng
+	[[ $BSP_BUILD != yes ]] && debootstrap_ng
 else
 	display_alert "Kernel build done" "@host" "info"
 	display_alert "Target directory" "${DEB_STORAGE}/" "info"
