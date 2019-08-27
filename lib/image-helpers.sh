@@ -40,13 +40,12 @@ mount_chroot()
 umount_chroot()
 {
 	local target=$1
-	while grep -qs $target /proc/mounts
+	display_alert "Unmounting" "$target" "info"
+	while grep -Eq "${target}.*(dev|proc|sys)" /proc/mounts
 	do
-		display_alert "Unmounting" "$target"
-		umount -l "${target}"/dev/pts >/dev/null 2>&1
-		umount -l "${target}"/dev >/dev/null 2>&1
-		umount -l "${target}"/proc >/dev/null 2>&1
-		umount -l "${target}"/sys >/dev/null 2>&1
+		umount -l --recursive "${target}"/dev
+		umount -l "${target}"/proc
+		umount -l "${target}"/sys
 		sleep 5
 	done
 } #############################################################################

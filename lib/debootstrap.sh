@@ -85,7 +85,7 @@ debootstrap_ng()
 		while grep -qs '$SDCARD' /proc/mounts
 		do
 			umount $SDCARD
-			sleep 1
+			sleep 5
 		done
 	fi
 	rm -rf $SDCARD
