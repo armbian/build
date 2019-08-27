@@ -586,8 +586,16 @@ create_image()
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
+	# to make sure its unmounted
+	while grep -qs '$MOUNT' /proc/mounts
+	do
+		display_alert "Unmounting" "${MOUNT}" "info"
+		sleep 5
+	done
+
 	losetup -d $LOOP
 	rm -rf --one-file-system $DESTIMG $MOUNT
+
 	mkdir -p $DESTIMG
 	fingerprint_image "$DESTIMG/${version}.img.txt" "${version}"
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
