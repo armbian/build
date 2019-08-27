@@ -72,6 +72,7 @@ CAN_BUILD_STRETCH=yes
 [[ -z $WIREGUARD ]] && WIREGUARD="yes"
 [[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 [[ -z $AUFS ]] && AUFS="yes"
+[[ -z $BUILD_MESA ]] && BUILD_MESA="no"
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''

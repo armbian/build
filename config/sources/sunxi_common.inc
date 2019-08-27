@@ -43,6 +43,7 @@ case $BRANCH in
 		KERNELDIR=$MAINLINE_KERNEL_DIR
 		KERNELPATCHDIR='sunxi-dev'
 		KERNEL_USE_GCC='> 7.0'
+		BUILD_MESA='yes'
 
 	;;
 esac
@@ -67,6 +68,10 @@ family_tweaks_bsp()
 		for i in $(ls -w1 $SRC/config/fex/*.fex | xargs -n1 basename); do
 			fex2bin $SRC/config/fex/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
 		done
+	fi
+	if [[ $BRANCH == dev ]] && [[ $RELEASE == buster ]]; then
+		mkdir -p $destination/etc/X11/xorg.conf.d/
+		cp $SRC/packages/blobs/mesa/sunxi/02-lima.conf $destination/etc/X11/xorg.conf.d/
 	fi
 }
 

@@ -63,6 +63,8 @@ source "${SRC}"/lib/makeboarddeb.sh						# create board support package
 source "${SRC}"/lib/general.sh							# general functions
 # shellcheck source=chroot-buildpackages.sh
 source "${SRC}"/lib/chroot-buildpackages.sh					# building packages in chroot
+# shellcheck source=build_mesa.sh
+source "${SRC}"/lib/build_mesa.sh					# building mesa in chroot
 
 # compress and remove old logs
 mkdir -p "${DEST}"/debug
