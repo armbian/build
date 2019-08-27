@@ -81,8 +81,13 @@ debootstrap_ng()
 	fi
 
 	# stage: unmount tmpfs
-	[[ $use_tmpfs = yes ]] && umount $SDCARD
-
+	if [[ $use_tmpfs = yes ]]; then
+		while grep -qs '$SDCARD' /proc/mounts
+		do
+			umount $SDCARD
+			sleep 1
+		done
+	fi
 	rm -rf $SDCARD
 
 	# remove exit trap
@@ -254,7 +259,7 @@ create_rootfs_cache()
 	fi
 
 	# used for internal purposes. Faster rootfs cache rebuilding
-    if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
+	if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
 		[[ $use_tmpfs = yes ]] && umount $SDCARD
 		rm -rf $SDCARD
 		# remove exit trap

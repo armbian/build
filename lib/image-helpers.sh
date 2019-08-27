@@ -40,10 +40,15 @@ mount_chroot()
 umount_chroot()
 {
 	local target=$1
-	umount -l "${target}"/dev/pts >/dev/null 2>&1
-	umount -l "${target}"/dev >/dev/null 2>&1
-	umount -l "${target}"/proc >/dev/null 2>&1
-	umount -l "${target}"/sys >/dev/null 2>&1
+	while grep -qs $target /proc/mounts
+	do
+		display_alert "Unmounting" "$target"
+		umount -l "${target}"/dev/pts >/dev/null 2>&1
+		umount -l "${target}"/dev >/dev/null 2>&1
+		umount -l "${target}"/proc >/dev/null 2>&1
+		umount -l "${target}"/sys >/dev/null 2>&1
+		sleep 5
+	done
 } #############################################################################
 
 # unmount_on_exit
