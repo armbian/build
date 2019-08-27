@@ -261,6 +261,9 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
 fi
 
+# don't show desktop option if we choose minimal build
+[[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no
+
 if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 
 	options=()
@@ -270,8 +273,25 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
+	[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
 
 fi
+
+if [[ $KERNEL_ONLY != yes && $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
+
+	options=()
+	options+=("no" "Standard image with console interface")
+	options+=("yes" "Minimal image with console interface")
+	BUILD_MINIMAL=$(dialog --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags \
+	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+	unset options
+	[[ -z $BUILD_MINIMAL ]] && exit_with_error "No option selected"
+
+fi
+
+#prevent conflicting setup
+[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
+[[ $BUILD_MINIMAL == yes ]] && EXTERNAL=no
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
@@ -390,6 +410,7 @@ display_alert "Runtime" "$runtime min" "info"
 [ `systemd-detect-virt` == 'docker' ] && BUILD_CONFIG='docker'
 display_alert "Repeat Build Options" "./compile.sh ${BUILD_CONFIG} BOARD=${BOARD} BRANCH=${BRANCH} \
 $([[ -n $RELEASE ]] && echo "RELEASE=${RELEASE} ")\
+$([[ -n $BUILD_MINIMAL ]] && echo "BUILD_MINIMAL=${BUILD_MINIMAL} ")\
 $([[ -n $BUILD_DESKTOP ]] && echo "BUILD_DESKTOP=${BUILD_DESKTOP} ")\
 $([[ -n $KERNEL_ONLY ]] && echo "KERNEL_ONLY=${KERNEL_ONLY} ")\
 $([[ -n $KERNEL_CONFIGURE ]] && echo "KERNEL_CONFIGURE=${KERNEL_CONFIGURE} ")\
