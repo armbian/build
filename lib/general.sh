@@ -259,6 +259,7 @@ fetch_from_repo()
 		esac
 		display_alert "Checking out"
 		git checkout -f -q FETCH_HEAD
+		git clean -qdf
 	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
 		if [[ $FORCE_CHECKOUT == yes ]]; then
@@ -296,10 +297,10 @@ fetch_from_repo()
 	fi
 } #############################################################################
 
-display_alert()
 #--------------------------------------------------------------------------------------------------------------------------------
 # Let's have unique way of displaying alerts
 #--------------------------------------------------------------------------------------------------------------------------------
+display_alert()
 {
 	# log function parameters to install.log
 	[[ -n $DEST ]] && echo "Displaying message: $@" >> $DEST/debug/output.log
@@ -330,22 +331,51 @@ display_alert()
 	esac
 }
 
-fingerprint_image()
-{
 #--------------------------------------------------------------------------------------------------------------------------------
+# fingerprint_image <out_txt_file> [image_filename]
 # Saving build summary to the image
 #--------------------------------------------------------------------------------------------------------------------------------
+fingerprint_image()
+{
 	display_alert "Fingerprinting"
 	cat <<-EOF > $1
 	--------------------------------------------------------------------------------
 	Title:			Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH
 	Kernel:			Linux $VER
 	Build date:		$(date +'%d.%m.%Y')
+	Maintainer:		$MAINTAINER <$MAINTAINERMAIL>
 	Authors:		https://www.armbian.com/authors
 	Sources: 		https://github.com/armbian/
 	Support: 		https://forum.armbian.com/
 	Changelog: 		https://www.armbian.com/logbook/
 	Documantation:		https://docs.armbian.com/
+	EOF
+
+	if [ -n "$2" ]; then
+	cat <<-EOF >> $1
+	--------------------------------------------------------------------------------
+	Partitioning configuration:
+	Root partition type: $ROOTFS_TYPE
+	Boot partition type: ${BOOTFS_TYPE:-(none)}
+	User provided boot partition size: ${BOOTSIZE:-0}
+	Offset: $OFFSET
+	CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
+	--------------------------------------------------------------------------------
+	Verify GPG signature:
+	gpg --verify $2.img.asc
+	
+	Verify image file integrity:
+	sha256sum --check $2.img.sha
+	
+	Prepare SD card (four methodes):
+	zcat $2.img.gz | pv | dd of=/dev/mmcblkX bs=1M
+	dd if=$2.img of=/dev/mmcblkX bs=1M
+	balena-etcher $2.img.gz -d /dev/mmcblkX
+	balena-etcher $2.img -d /dev/mmcblkX
+	EOF
+        fi
+
+	cat <<-EOF >> $1
 	--------------------------------------------------------------------------------
 	$(cat $SRC/LICENSE)
 	--------------------------------------------------------------------------------
@@ -642,18 +672,16 @@ prepare_host()
 	fi
 
 	# create directory structure
-	mkdir -p $SRC/{cache,output,userpatches}
+	mkdir -p $SRC/{cache,output} $USERPATCHES_PATH
 	if [[ -n $SUDO_USER ]]; then
-		chgrp --quiet sudo cache output userpatches
+		chgrp --quiet sudo cache output $USERPATCHES_PATH
 		# SGID bit on cache/sources breaks kernel dpkg packaging
-		chmod --quiet g+w,g+s output userpatches
+		chmod --quiet g+w,g+s output $USERPATCHES_PATH
 		# fix existing permissions
-		find $SRC/output $SRC/userpatches -type d ! -group sudo -exec chgrp --quiet sudo {} \;
-		find $SRC/output $SRC/userpatches -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
+		find $SRC/output $USERPATCHES_PATH -type d ! -group sudo -exec chgrp --quiet sudo {} \;
+		find $SRC/output $USERPATCHES_PATH -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 	fi
-	mkdir -p $DEST/debs/extra $DEST/{config,debug,patch} $SRC/userpatches/overlay $SRC/cache/{sources,toolchains,utility,rootfs} $SRC/.tmp
-
-	find $SRC/patch -type d ! -name . | sed "s%/patch%/userpatches%" | xargs mkdir -p
+	mkdir -p $DEST/debs/extra $DEST/{config,debug,patch} $USERPATCHES_PATH/overlay $SRC/cache/{sources,toolchains,utility,rootfs} $SRC/.tmp
 
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
@@ -698,12 +726,12 @@ prepare_host()
 	# download etcher CLI utility
 	download_etcher_cli
 
-	[[ ! -f $SRC/userpatches/customize-image.sh ]] && cp $SRC/config/templates/customize-image.sh.template $SRC/userpatches/customize-image.sh
+	[[ ! -f $USERPATCHES_PATH/customize-image.sh ]] && cp $SRC/config/templates/customize-image.sh.template $USERPATCHES_PATH/customize-image.sh
 
-	if [[ ! -f $SRC/userpatches/README ]]; then
-		rm -f $SRC/userpatches/readme.txt
-		echo 'Please read documentation about customizing build configuration' > $SRC/userpatches/README
-		echo 'http://www.armbian.com/using-armbian-tools/' >> $SRC/userpatches/README
+	if [[ ! -f $USERPATCHES_PATH/README ]]; then
+		rm -f $USERPATCHES_PATH/readme.txt
+		echo 'Please read documentation about customizing build configuration' > $USERPATCHES_PATH/README
+		echo 'http://www.armbian.com/using-armbian-tools/' >> $USERPATCHES_PATH/README
 	fi
 
 	# check free space (basic)
