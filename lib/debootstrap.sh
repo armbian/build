@@ -26,6 +26,16 @@ debootstrap_ng()
 	trap unmount_on_exit INT TERM EXIT
 
 	# stage: clean and create directories
+
+	# unmount tmpfs
+	umount $SDCARD
+	umount $MOUNT
+	while grep -Eq '(${MOUNT}|${SDCARD})' /proc/mounts
+		do
+			umount $SDCARD
+			umount $MOUNT
+			sleep 5
+		done
 	rm -rf $SDCARD $MOUNT
 	mkdir -p $SDCARD $MOUNT $DEST/images $SRC/cache/rootfs
 
@@ -81,6 +91,7 @@ debootstrap_ng()
 	fi
 
 	# stage: unmount tmpfs
+	umount $SDCARD
 	if [[ $use_tmpfs = yes ]]; then
 		while grep -qs '$SDCARD' /proc/mounts
 		do
