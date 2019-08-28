@@ -598,7 +598,8 @@ create_image()
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
 	# to make sure its unmounted
-	while grep -qs '$MOUNT' /proc/mounts
+
+	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts
 	do
 		display_alert "Unmounting" "${MOUNT}" "info"
 		sleep 5
