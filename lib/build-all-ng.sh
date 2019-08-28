@@ -228,7 +228,7 @@ function build_all()
 			((n+=1))
 
 			if [[ $1 != "dryrun" ]]; then
-				if [[ $(find /run/armbian/*.pid | wc -l) -lt ${MULTITHREAD} ]]; then
+				if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -lt ${MULTITHREAD} ]]; then
 
 					display_alert "Building in the back ${n}."
 					(build_main) &
