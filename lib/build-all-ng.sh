@@ -231,13 +231,23 @@ function build_all()
 				if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -lt ${MULTITHREAD} ]]; then
 
 					display_alert "Building in the back ${n}."
-					(build_main) &
-					sleep $(( ( RANDOM % 10 )  + 10 ))
+					if [[ "${BSP_BUILD}" == yes && ${ALLTARGETS} == "yes" ]]; then
+                                                TARGETS=(xenial stretch buster bionic disco)
+                                                for RELEASE in "${TARGETS[@]}"
+						do
+							display_alert "BSP for ${RELEASE}."
+							sleep .1
+							(build_main) &
+						done
+					else
+							(build_main) &
+							sleep $(( ( RANDOM % 10 )  + 10 ))
+					fi
 
 				else
 
 					display_alert "Building ${n}."
-					if [[ "${BSP_BUILD}" == yes && ALLTARGETS == "yes" ]]; then
+					if [[ "${BSP_BUILD}" == yes && ${ALLTARGETS} == "yes" ]]; then
 						TARGETS=(xenial stretch buster bionic disco)
 						for RELEASE in "${TARGETS[@]}"
 						do
