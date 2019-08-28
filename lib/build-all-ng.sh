@@ -236,7 +236,7 @@ function build_all()
                                                 for RELEASE in "${TARGETS[@]}"
 						do
 							display_alert "BSP for ${RELEASE}."
-							sleep .1
+							sleep .5
 							(build_main) &
 						done
 					else
