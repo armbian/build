@@ -26,16 +26,6 @@ debootstrap_ng()
 	trap unmount_on_exit INT TERM EXIT
 
 	# stage: clean and create directories
-
-	# unmount tmpfs
-	umount $SDCARD
-	umount $MOUNT
-	while grep -Eq '(${MOUNT}|${SDCARD})' /proc/mounts
-		do
-			umount $SDCARD
-			umount $MOUNT
-			sleep 5
-		done
 	rm -rf $SDCARD $MOUNT
 	mkdir -p $SDCARD $MOUNT $DEST/images $SRC/cache/rootfs
 
@@ -598,7 +588,6 @@ create_image()
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
 	# to make sure its unmounted
-
 	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts
 	do
 		display_alert "Unmounting" "${MOUNT}" "info"
