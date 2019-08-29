@@ -207,14 +207,14 @@ function build_all()
 		# small optimisation. we only (try to) build needed kernels
 		if [[ $KERNEL_ONLY == yes ]]; then
 
-			array_contains ARRAY "${BOARDFAMILY}${BRANCH}" && continue
+			array_contains ARRAY "${BOARDFAMILY}${BRANCH}${BUILD_STABILITY}" && continue
 
 		elif [[ $BUILD_IMAGE == no ]] ; then
 
 			continue
 
 		fi
-		ARRAY+=("${BOARDFAMILY}${BRANCH}")
+		ARRAY+=("${BOARDFAMILY}${BRANCH}${BUILD_STABILITY}")
 
 		BUILD_DESKTOP="no"
 		BUILD_MINIMAL="no"

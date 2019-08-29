@@ -391,9 +391,36 @@ fingerprint_image()
 	EOF
 }
 
+
+
+
+adding_packages()
+{
+# add deb files to repository if they are not already there
+
+	echo ""
+	display_alert "Checking and adding to repository $release" "$3" "ext"
+	for f in ${DEB_STORAGE}$2/*.deb
+	do
+		echo -en "."
+		local name=$(dpkg-deb -I $f | grep Package | awk '{print $2}')
+		local version=$(dpkg-deb -I $f | grep Version | awk '{print $2}')
+		local arch=$(dpkg-deb -I $f | grep Architecture | awk '{print $2}')
+		aptly repo search -architectures=$arch -config=config/aptly-beta.conf $1 'Name (% '$name'), $Version (='$version'), $Architecture (='$arch')' &>/dev/null
+		if [[ $? -ne 0 ]]; then
+			echo ""
+			aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${f}
+		fi
+	done
+
+}
+
+
+
+
 addtorepo()
 {
-# add all deb files to repository
+# create repository
 # parameter "remove" dumps all and creates new
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
@@ -432,16 +459,8 @@ addtorepo()
 
 		# adding main
 		if find ${DEB_STORAGE}/ -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
-			display_alert "Adding to repository $release" "main" "ext"
-			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${DEB_STORAGE}/*.deb
-			if [[ $? -ne 0 ]]; then
-				# try again with
-				display_alert "Adding by force to repository $release" "main" "ext"
-				aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${DEB_STORAGE}/*.deb
-				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1)); fi
-			fi
+			adding_packages "$release" "" "main"
 		else
-			# workaround - add dummy package to not trigger error
 			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${SCRIPTPATH}config/templates/example.deb >/dev/null
 		fi
 
@@ -449,61 +468,23 @@ addtorepo()
 
 		# adding main distribution packages
 		if find ${DEB_STORAGE}/${release} -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
-			display_alert "Adding to repository $release" "root" "ext"
-			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${DEB_STORAGE}/${release}/*.deb
-			if [[ $? -ne 0 ]]; then
-				# try again with
-				display_alert "Adding by force to repository $release" "root" "ext"
-				aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${DEB_STORAGE}/${release}/*.deb
-				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
-			fi
+			adding_packages "$release" "/${release}" "release"
 		else
 			# workaround - add dummy package to not trigger error
 			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${SCRIPTPATH}config/templates/example.deb >/dev/null
 		fi
 
-		# adding old utils and new jessie-utils for backwards compatibility with older images
-		if find ${DEB_STORAGE}/extra/jessie-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
-			display_alert "Adding to repository $release" "utils" "ext"
-			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "utils" ${DEB_STORAGE}/extra/jessie-utils/*.deb
-			if [[ $? -ne 0 ]]; then
-				# try again with
-				display_alert "Adding by force to repository $release" "utils" "ext"
-				aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG}  ${DEB_STORAGE}/extra/jessie-utils/*.deb
-				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
-			fi
-		else
-			# workaround - add dummy package to not trigger error
-			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "utils" ${SCRIPTPATH}config/templates/example.deb >/dev/null
-		fi
-		COMPONENTS="${COMPONENTS} utils"
-
 		# adding release-specific utils
 		if find ${DEB_STORAGE}/extra/${release}-utils -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
-			display_alert "Adding to repository $release" "${release}-utils" "ext"
-			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-utils" ${DEB_STORAGE}/extra/${release}-utils/*.deb
-			if [[ $? -ne 0 ]]; then
-				# try again with
-				display_alert "Adding by force to repository $release" "${release}-utils" "ext"
-				aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-utils" ${DEB_STORAGE}/extra/${release}-utils/*.deb
-				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
-			fi
+			adding_packages "${release}-utils" "/extra/${release}-utils" "release utils"
 		else
-			# workaround - add dummy package to not trigger error
 			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-utils" ${SCRIPTPATH}config/templates/example.deb >/dev/null
 		fi
 		COMPONENTS="${COMPONENTS} ${release}-utils"
 
 		# adding desktop
 		if find ${DEB_STORAGE}/extra/${release}-desktop -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
-			display_alert "Adding to repository $release" "desktop" "ext"
-			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-desktop" ${DEB_STORAGE}/extra/${release}-desktop/*.deb
-			if [[ $? -ne 0 ]]; then
-				# try again with
-				display_alert "Adding by force to repository $release" "desktop" "ext"
-				aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-desktop" ${DEB_STORAGE}/extra/${release}-desktop/*.deb
-				if [[ $? -eq 0 ]]; then forceoverwrite="-force-overwrite"; else errors=$((errors+1));fi
-			fi
+			adding_packages "${release}-desktop" "/extra/${release}-desktop" "desktop"
 		else
 			# workaround - add dummy package to not trigger error
 			aptly repo add -config=${SCRIPTPATH}config/${REPO_CONFIG} "${release}-desktop" ${SCRIPTPATH}config/templates/example.deb >/dev/null
@@ -531,6 +512,7 @@ addtorepo()
 	done
 
 	# display what we have
+	echo ""
 	display_alert "List of local repos" "local" "info"
 	(aptly repo list -config=${SCRIPTPATH}config/${REPO_CONFIG}) | egrep packages
 
@@ -555,7 +537,7 @@ repo-manipulate() {
 		serve)
 			# display repository content
 			display_alert "Serving content" "common utils" "ext"
-			aptly serve -listen=:8080 -config="${SCRIPTPATH}"config/${REPO_CONFIG}
+			aptly serve -listen=$(ip -f inet addr | grep -Po 'inet \K[\d.]+' | grep -v 127.0.0.1):8080 -config="${SCRIPTPATH}"config/${REPO_CONFIG}
 			exit 0
 			;;
 		show)
