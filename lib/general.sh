@@ -398,18 +398,17 @@ adding_packages()
 {
 # add deb files to repository if they are not already there
 
-	echo ""
 	display_alert "Checking and adding to repository $release" "$3" "ext"
 	for f in ${DEB_STORAGE}$2/*.deb
 	do
-		echo -en "."
 		local name=$(dpkg-deb -I $f | grep Package | awk '{print $2}')
 		local version=$(dpkg-deb -I $f | grep Version | awk '{print $2}')
 		local arch=$(dpkg-deb -I $f | grep Architecture | awk '{print $2}')
-		aptly repo search -architectures=$arch -config=config/aptly-beta.conf $1 'Name (% '$name'), $Version (='$version'), $Architecture (='$arch')' &>/dev/null
+		# add if not already there
+		aptly repo search -architectures=$arch -config=${SCRIPTPATH}config/${REPO_CONFIG} $1 'Name (% '$name'), $Version (='$version'), $Architecture (='$arch')' &>/dev/null
 		if [[ $? -ne 0 ]]; then
-			echo ""
-			aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${f}
+			display_alert "Adding" "$name" "info"
+			aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${f} &>/dev/null
 		fi
 	done
 
@@ -511,6 +510,10 @@ addtorepo()
 
 	done
 
+	# cleanup
+	display_alert "Cleaning repository" "${DEB_STORAGE}" "info"
+	aptly db cleanup -config=${SCRIPTPATH}config/${REPO_CONFIG}
+
 	# display what we have
 	echo ""
 	display_alert "List of local repos" "local" "info"
@@ -566,9 +569,15 @@ repo-manipulate() {
 				repo-remove-old-packages "$release" "arm64" "3"
 				repo-remove-old-packages "$release" "all" "3"
 				aptly -config="${SCRIPTPATH}"config/${REPO_CONFIG} -passphrase="${GPG_PASS}" publish update "${release}" > /dev/null 2>&1
-				# example to remove all packages from bionic that contain source in the name
-				# aptly repo remove -config=${SCRIPTPATH}config/${REPO_CONFIG} bionic 'Name (% *-source*)'
 			done
+			exit 0
+			;;
+		purgesource)
+			for release in "${DISTROS[@]}"; do
+				aptly repo remove -config=${SCRIPTPATH}config/${REPO_CONFIG} ${release} 'Name (% *-source*)' 
+				aptly -config="${SCRIPTPATH}"config/${REPO_CONFIG} -passphrase="${GPG_PASS}" publish update "${release}"  > /dev/null 2>&1
+			done
+			aptly db cleanup -config=${SCRIPTPATH}config/${REPO_CONFIG} > /dev/null 2>&1
 			exit 0
 			;;
 		*)
