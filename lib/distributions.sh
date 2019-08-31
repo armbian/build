@@ -183,7 +183,7 @@ install_common()
 
 	if [[ $BUILD_DESKTOP == yes ]]; then
 		install_deb_chroot "${DEB_STORAGE}/$RELEASE/armbian-${RELEASE}-desktop_${REVISION}_all.deb"
-		# install display manager
+		# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 		desktop_postinstall
 	fi
 
@@ -303,6 +303,10 @@ install_common()
 
 	# remove network manager defaults to handle eth by default
 	rm -f "${SDCARD}"/usr/lib/NetworkManager/conf.d/10-globally-managed-devices.conf
+
+	# avahi daemon defaults if exists
+	[[ -f "${SDCARD}"/usr/share/doc/avahi-daemon/examples/sftp-ssh.service ]] && cp "${SDCARD}"/usr/share/doc/avahi-daemon/examples/sftp-ssh.service "${SDCARD}"/etc/avahi/services/
+	[[ -f "${SDCARD}"/usr/share/doc/avahi-daemon/examples/ssh.service ]] && cp "${SDCARD}"/usr/share/doc/avahi-daemon/examples/ssh.service "${SDCARD}"/etc/avahi/services/
 
 	# Just regular DNS and maintain /etc/resolv.conf as a file
 	sed "/dns/d" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf

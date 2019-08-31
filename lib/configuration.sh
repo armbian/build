@@ -195,6 +195,8 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
 	cups-pk-helper cups geany atril xarchiver"
 
+# Full desktop packages
+PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina thunderbird kazam avahi-daemon transmission"
 
 # Release specific packages
 case $RELEASE in
