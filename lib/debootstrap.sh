@@ -645,12 +645,6 @@ create_image()
 	# call custom post build hook
 	[[ $(type -t post_build_image) == function ]] && post_build_image "$DEST/images/${version}.img"
 
-	# display warning when we want to write sd card under Docker
-	if [[ `systemd-detect-virt` == 'docker' && -n $CARD_DEVICE ]]; then
-		dd if=/dev/zero of=$CARD_DEVICE count=1 status=none  >/dev/null 2>&1
-		[[ $? -ne 0 ]] && display_alert "Can't write to $CARD_DEVICE" "Enable docker privileged mode in config-docker.conf" "wrn"
-	fi
-
 	# write image to SD card
 	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f $DEST/images/${version}.img ]]; then
 
@@ -674,6 +668,9 @@ create_image()
 		else
 			display_alert "Writing failed" "${version}.img" "err"
 		fi
+	elif [[ `systemd-detect-virt` == 'docker' && -n $CARD_DEVICE ]]; then
+		# display warning when we want to write sd card under Docker
+		display_alert "Can't write to $CARD_DEVICE" "Enable docker privileged mode in config-docker.conf" "wrn"
 	fi
 
 } #############################################################################
