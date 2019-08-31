@@ -646,7 +646,10 @@ create_image()
 	[[ $(type -t post_build_image) == function ]] && post_build_image "$DEST/images/${version}.img"
 
 	# display warning when we want to write sd card under Docker
-	[[ `systemd-detect-virt` == 'docker' && -n $CARD_DEVICE ]] && display_alert "Can't write to $CARD_DEVICE" "Enable docker privileged mode in config-docker.conf" "wrn"
+	if [[ `systemd-detect-virt` == 'docker' && -n $CARD_DEVICE ]]; then
+		dd if=/dev/zero of=$CARD_DEVICE count=1 status=none  >/dev/null 2>&1
+		[[ $? -ne 0 ]] && display_alert "Can't write to $CARD_DEVICE" "Enable docker privileged mode in config-docker.conf" "wrn"
+	fi
 
 	# write image to SD card
 	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f $DEST/images/${version}.img ]]; then
@@ -664,6 +667,7 @@ create_image()
 		pv -p -b -r -c -N "[ .... ] dd" $DEST/images/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
 
 		# read and compare
+		display_alert "Verifying. Please wait!"
 		local ofsha=$(dd if=$CARD_DEVICE count=$(du -b $DEST/images/${version}.img | cut -f1) status=none iflag=count_bytes oflag=direct | sha256sum | awk '{print $1}')
 		if [[ $ifsha == $ofsha ]]; then
 			display_alert "Writing verified" "${version}.img" "info"
