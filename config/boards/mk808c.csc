@@ -6,5 +6,3 @@ MODULES="hci_uart rfcomm hidp sunxi-ir"
 MODULES_NEXT=""
 #
 KERNEL_TARGET="default,next"
-CLI_TARGET=""
-DESKTOP_TARGET=""

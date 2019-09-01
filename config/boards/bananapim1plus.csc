@@ -6,11 +6,7 @@ MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp
 MODULES_NEXT="brcmfmac bonding"
 #
 KERNEL_TARGET="default,next,dev"
-CLI_TARGET=""
-DESKTOP_TARGET=""
 #
-CLI_BETA_TARGET=""
-DESKTOP_BETA_TARGET=""
 #
 
 #

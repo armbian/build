@@ -108,8 +108,8 @@ create_desktop_package ()
 	# create board DEB file
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
 	fakeroot dpkg-deb -b "${destination}" "${destination}.deb" >/dev/null
-	mkdir -p "${DEST}/debs/${RELEASE}"
-	mv "${destination}.deb" "${DEST}/debs/${RELEASE}"
+	mkdir -p "${DEB_STORAGE}/${RELEASE}"
+	mv "${destination}.deb" "${DEB_STORAGE}/${RELEASE}"
 	# cleanup
 	rm -rf "${destination}"
 }
@@ -118,6 +118,7 @@ desktop_postinstall ()
 {
 	# disable display manager for first run
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
+	[[ ${FULL_DESKTOP} == yes ]] && chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FULL" >> "${DEST}"/debug/install.log 
 
 	# Compile Turbo Frame buffer for sunxi
 	if [[ $LINUXFAMILY == sun* && $BRANCH == default ]]; then

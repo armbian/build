@@ -52,9 +52,6 @@ debootstrap_ng()
 	install_distribution_specific
 	install_common
 
-	# install additional applications
-	[[ $EXTERNAL == yes ]] && install_external_applications
-
 	# install locally built packages
 	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
 
@@ -84,8 +81,13 @@ debootstrap_ng()
 	fi
 
 	# stage: unmount tmpfs
-	[[ $use_tmpfs = yes ]] && umount $SDCARD
-
+	if [[ $use_tmpfs = yes ]]; then
+		while grep -qs '$SDCARD' /proc/mounts
+		do
+			umount $SDCARD
+			sleep 5
+		done
+	fi
 	rm -rf $SDCARD
 
 	# remove exit trap
@@ -230,6 +232,12 @@ create_rootfs_cache()
 		# create list of installed packages for debug purposes
 		chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > ${cache_fname}.list 2>&1
 
+		# creating xapian index that synaptic runs faster
+		if [[ $BUILD_DESKTOP == yes ]]; then
+			display_alert "Recreating Synaptic search index" "Please wait" "info"
+			chroot $SDCARD /bin/bash -c "/usr/sbin/update-apt-xapian-index -u"
+		fi
+
 		# this is needed for the build process later since resolvconf generated file in /run is not saved
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
@@ -252,7 +260,7 @@ create_rootfs_cache()
 	fi
 
 	# used for internal purposes. Faster rootfs cache rebuilding
-    if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
+	if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
 		[[ $use_tmpfs = yes ]] && umount $SDCARD
 		rm -rf $SDCARD
 		# remove exit trap
@@ -579,10 +587,18 @@ create_image()
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
+	# to make sure its unmounted
+	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts
+	do
+		display_alert "Unmounting" "${MOUNT}" "info"
+		sleep 5
+	done
+
 	losetup -d $LOOP
 	rm -rf --one-file-system $DESTIMG $MOUNT
+
 	mkdir -p $DESTIMG
-	fingerprint_image "$DESTIMG/${version}.txt" "${version}"
+	fingerprint_image "$DESTIMG/${version}.img.txt" "${version}"
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
 	if [[ $BUILD_ALL != yes ]]; then
@@ -615,7 +631,7 @@ create_image()
 			# compress image
 			cd $DESTIMG
 			display_alert "Compressing" "$DEST/images/${version}.7z" "info"
-			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img* armbian.txt >/dev/null 2>&1
+			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img* ${version}.img.txt >/dev/null 2>&1
 			cd ..
 		fi
 
@@ -624,7 +640,7 @@ create_image()
 			pigz < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
 		fi
 
-		mv $DESTIMG/${version}.txt $DEST/images/${version}.txt || exit 1
+		mv $DESTIMG/${version}.img.txt $DEST/images/${version}.img.txt || exit 1
 		mv $DESTIMG/${version}.img $DEST/images/${version}.img || exit 1
 		rm -rf $DESTIMG
 	fi

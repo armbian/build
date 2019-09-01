@@ -7,8 +7,4 @@ MODULES=""
 MODULES_NEXT=""
 #
 KERNEL_TARGET="default,dev"
-CLI_TARGET="buster,bionic:default"
-DESKTOP_TARGET="buster,bionic:default"
-#
-CLI_BETA_TARGET=""
-DESKTOP_BETA_TARGET=""
+FULL_DESKTOP="yes"

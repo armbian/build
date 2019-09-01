@@ -7,8 +7,4 @@ MODULES_NEXT="bonding g_serial gpio-ir-tx r8723bs"
 MODULES_DEV="bonding g_serial gpio-ir-tx r8723bs "
 #
 KERNEL_TARGET="default,next,dev"
-CLI_TARGET="buster,xenial:next"
-DESKTOP_TARGET="xenial:default,next"
 #
-CLI_BETA_TARGET=""
-DESKTOP_BETA_TARGET=""

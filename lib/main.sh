@@ -30,8 +30,10 @@ DEST=$SRC/output
 [[ -n $COLUMNS ]] && stty cols $COLUMNS
 [[ -n $LINES ]] && stty rows $LINES
 
-TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
-TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
+if [[ $BUILD_ALL != "yes" ]]; then
+	TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
+	TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
+fi
 
 # We'll use this title on all menus
 backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
@@ -102,6 +104,30 @@ fi
 
 # Check and install dependencies, directory structure and settings
 prepare_host
+
+if [[ -n $REPOSITORY_UPDATE ]]; then
+
+	# select stable/beta configuration
+	if [[ $BETA == yes ]]; then
+		DEB_STORAGE=$DEST/debs-beta
+		REPO_STORAGE=$DEST/repository-beta
+		REPO_CONFIG="aptly-beta.conf"
+	else
+		DEB_STORAGE=$DEST/debs
+		REPO_STORAGE=$DEST/repository
+		REPO_CONFIG="aptly.conf"
+	fi
+
+	# For user override
+	if [[ -f $USERPATCHES_PATH/lib.config ]]; then
+		display_alert "Using user configuration override" "userpatches/lib.config" "info"
+	        source "$USERPATCHES_PATH"/lib.config
+	fi
+
+	repo-manipulate "$REPOSITORY_UPDATE"
+	exit
+
+fi
 
 # if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
@@ -360,7 +386,7 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 done
 
 # Compile u-boot if packed .deb does not exist
-if [[ ! -f ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+if [[ ! -f ${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 	if [[ -n $ATFSOURCE ]]; then
 		compile_atf
 	fi
@@ -368,33 +394,45 @@ if [[ ! -f ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 fi
 
 # Compile kernel if packed .deb does not exist
-if [[ ! -f ${DEST}/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 	KDEB_CHANGELOG_DIST=$RELEASE
 	compile_kernel
+fi
+
+# Pack armbian-config and armbian-firmware
+if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
+	compile_armbian-config
+
+	FULL=""
+	REPLACE="-full"
+	[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_all.deb ]] && compile_firmware
+	FULL="-full"
+	REPLACE=""
+	[[ ! -f $DEST/debs/armbian-firmware${FULL}_${REVISION}_all.deb ]] && compile_firmware
 fi
 
 overlayfs_wrapper "cleanup"
 
 # extract kernel version from .deb package
-VER=$(dpkg --info "${DEST}/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
+VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 VER="${VER/-$LINUXFAMILY/}"
 
-UBOOT_VER=$(dpkg --info "${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
+UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 
 # create board support package
-[[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
+[[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
 
 # create desktop package
-[[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
+[[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
 
 # build additional packages
 [[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
 
 if [[ $KERNEL_ONLY != yes ]]; then
-	debootstrap_ng
+	[[ $BSP_BUILD != yes ]] && debootstrap_ng
 else
 	display_alert "Kernel build done" "@host" "info"
-	display_alert "Target directory" "$DEST/debs/" "info"
+	display_alert "Target directory" "${DEB_STORAGE}/" "info"
 	display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
 fi
 

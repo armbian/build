@@ -6,7 +6,3 @@ MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp sun4i_cs
 MODULES_NEXT="bonding"
 #
 KERNEL_TARGET="default,next,dev"
-CLI_TARGET="buster,xenial:next"
-DESKTOP_TARGET="xenial:default,next"
-CLI_BETA_TARGET=""
-DESKTOP_BETA_TARGET=""
