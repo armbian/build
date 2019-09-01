@@ -43,9 +43,9 @@ umount_chroot()
 	display_alert "Unmounting" "$target" "info"
 	while grep -Eq "${target}.*(dev|proc|sys)" /proc/mounts
 	do
-		umount -l --recursive "${target}"/dev
-		umount -l "${target}"/proc
-		umount -l "${target}"/sys
+		umount -l --recursive "${target}"/dev >/dev/null 2>&1
+		umount -l "${target}"/proc >/dev/null 2>&1
+		umount -l "${target}"/sys >/dev/null 2>&1
 		sleep 5
 	done
 } #############################################################################
@@ -111,7 +111,7 @@ customize_image()
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot "${SDCARD}" /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
 	CUSTOMIZE_IMAGE_RC=$?
-	umount -i "${SDCARD}"/tmp/overlay
+	umount -i "${SDCARD}"/tmp/overlay >/dev/null 2>&1
 	mountpoint -q "${SDCARD}"/tmp/overlay || rm -r "${SDCARD}"/tmp/overlay
 	if [[ $CUSTOMIZE_IMAGE_RC != 0 ]]; then
 		exit_with_error "customize-image.sh exited with error (rc: $CUSTOMIZE_IMAGE_RC)"
