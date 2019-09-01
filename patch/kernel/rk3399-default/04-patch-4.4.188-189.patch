@@ -1,0 +1,840 @@
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 175d57049168..7a9fd54a0186 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -2184,6 +2184,7 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 				improves system performance, but it may also
+ 				expose users to several CPU vulnerabilities.
+ 				Equivalent to: nopti [X86]
++					       nospectre_v1 [X86]
+ 					       nospectre_v2 [X86]
+ 					       spectre_v2_user=off [X86]
+ 					       spec_store_bypass_disable=off [X86]
+@@ -2498,9 +2499,9 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 
+ 	nohugeiomap	[KNL,x86] Disable kernel huge I/O mappings.
+ 
+-	nospectre_v1	[PPC] Disable mitigations for Spectre Variant 1 (bounds
+-			check bypass). With this option data leaks are possible
+-			in the system.
++	nospectre_v1	[X86,PPC] Disable mitigations for Spectre Variant 1
++			(bounds check bypass). With this option data leaks are
++			possible in the system.
+ 
+ 	nospectre_v2	[X86,PPC_FSL_BOOK3E] Disable all mitigations for the Spectre variant 2
+ 			(indirect branch prediction) vulnerability. System may
+diff --git a/Makefile b/Makefile
+index 87d663191986..81a0ada6536f 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 188
++SUBLEVEL = 189
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/arm64/include/asm/cpufeature.h b/arch/arm64/include/asm/cpufeature.h
+index ad83c245781c..0a66f8241f18 100644
+--- a/arch/arm64/include/asm/cpufeature.h
++++ b/arch/arm64/include/asm/cpufeature.h
+@@ -41,9 +41,10 @@
+ 
+ /* CPU feature register tracking */
+ enum ftr_type {
+-	FTR_EXACT,	/* Use a predefined safe value */
+-	FTR_LOWER_SAFE,	/* Smaller value is safe */
+-	FTR_HIGHER_SAFE,/* Bigger value is safe */
++	FTR_EXACT,			/* Use a predefined safe value */
++	FTR_LOWER_SAFE,			/* Smaller value is safe */
++	FTR_HIGHER_SAFE,		/* Bigger value is safe */
++	FTR_HIGHER_OR_ZERO_SAFE,	/* Bigger value is safe, but 0 is biggest */
+ };
+ 
+ #define FTR_STRICT	true	/* SANITY check strict matching required */
+diff --git a/arch/arm64/kernel/cpufeature.c b/arch/arm64/kernel/cpufeature.c
+index c1eddc07d996..062484d34450 100644
+--- a/arch/arm64/kernel/cpufeature.c
++++ b/arch/arm64/kernel/cpufeature.c
+@@ -126,10 +126,12 @@ static struct arm64_ftr_bits ftr_id_aa64mmfr1[] = {
+ };
+ 
+ static struct arm64_ftr_bits ftr_ctr[] = {
+-	U_ARM64_FTR_BITS(FTR_STRICT, FTR_EXACT, 31, 1, 1),	/* RAO */
+-	ARM64_FTR_BITS(FTR_STRICT, FTR_EXACT, 28, 3, 0),
+-	U_ARM64_FTR_BITS(FTR_STRICT, FTR_HIGHER_SAFE, 24, 4, 0),	/* CWG */
+-	U_ARM64_FTR_BITS(FTR_STRICT, FTR_LOWER_SAFE, 20, 4, 0),	/* ERG */
++	U_ARM64_FTR_BITS(FTR_STRICT, FTR_EXACT, 31, 1, 1),	/* RES1 */
++	ARM64_FTR_BITS(FTR_STRICT, FTR_EXACT, 30, 1, 0),
++	U_ARM64_FTR_BITS(FTR_STRICT, FTR_LOWER_SAFE, 29, 1, 1),	/* DIC */
++	U_ARM64_FTR_BITS(FTR_STRICT, FTR_LOWER_SAFE, 28, 1, 1),	/* IDC */
++	U_ARM64_FTR_BITS(FTR_STRICT, FTR_HIGHER_OR_ZERO_SAFE, 24, 4, 0),	/* CWG */
++	U_ARM64_FTR_BITS(FTR_STRICT, FTR_HIGHER_OR_ZERO_SAFE, 20, 4, 0),	/* ERG */
+ 	U_ARM64_FTR_BITS(FTR_STRICT, FTR_LOWER_SAFE, 16, 4, 1),	/* DminLine */
+ 	/*
+ 	 * Linux can handle differing I-cache policies. Userspace JITs will
+@@ -339,6 +341,10 @@ static s64 arm64_ftr_safe_value(struct arm64_ftr_bits *ftrp, s64 new, s64 cur)
+ 	case FTR_LOWER_SAFE:
+ 		ret = new < cur ? new : cur;
+ 		break;
++	case FTR_HIGHER_OR_ZERO_SAFE:
++		if (!cur || !new)
++			break;
++		/* Fallthrough */
+ 	case FTR_HIGHER_SAFE:
+ 		ret = new > cur ? new : cur;
+ 		break;
+diff --git a/arch/x86/entry/calling.h b/arch/x86/entry/calling.h
+index 3c71dd947c7b..5e24cd248728 100644
+--- a/arch/x86/entry/calling.h
++++ b/arch/x86/entry/calling.h
+@@ -1,3 +1,5 @@
++#include <asm/cpufeatures.h>
++
+ /*
+ 
+  x86 function call convention, 64-bit:
+@@ -199,6 +201,23 @@ For 32-bit we have the following conventions - kernel is built with
+ 	.byte 0xf1
+ 	.endm
+ 
++/*
++ * Mitigate Spectre v1 for conditional swapgs code paths.
++ *
++ * FENCE_SWAPGS_USER_ENTRY is used in the user entry swapgs code path, to
++ * prevent a speculative swapgs when coming from kernel space.
++ *
++ * FENCE_SWAPGS_KERNEL_ENTRY is used in the kernel entry non-swapgs code path,
++ * to prevent the swapgs from getting speculatively skipped when coming from
++ * user space.
++ */
++.macro FENCE_SWAPGS_USER_ENTRY
++	ALTERNATIVE "", "lfence", X86_FEATURE_FENCE_SWAPGS_USER
++.endm
++.macro FENCE_SWAPGS_KERNEL_ENTRY
++	ALTERNATIVE "", "lfence", X86_FEATURE_FENCE_SWAPGS_KERNEL
++.endm
++
+ #else /* CONFIG_X86_64 */
+ 
+ /*
+diff --git a/arch/x86/entry/entry_64.S b/arch/x86/entry/entry_64.S
+index 375ed605c83d..afb805b0148b 100644
+--- a/arch/x86/entry/entry_64.S
++++ b/arch/x86/entry/entry_64.S
+@@ -551,6 +551,7 @@ END(irq_entries_start)
+ 	 * tracking that we're in kernel mode.
+ 	 */
+ 	SWAPGS
++	FENCE_SWAPGS_USER_ENTRY
+ 	SWITCH_KERNEL_CR3
+ 
+ 	/*
+@@ -566,8 +567,10 @@ END(irq_entries_start)
+ #ifdef CONFIG_CONTEXT_TRACKING
+ 	call enter_from_user_mode
+ #endif
+-
++	jmp	2f
+ 1:
++	FENCE_SWAPGS_KERNEL_ENTRY
++2:
+ 	/*
+ 	 * Save previous stack pointer, optionally switch to interrupt stack.
+ 	 * irq_count is used to check if a CPU is already on an interrupt stack
+@@ -1077,6 +1080,13 @@ ENTRY(paranoid_entry)
+ 	movq	%rax, %cr3
+ 2:
+ #endif
++	/*
++	 * The above doesn't do an unconditional CR3 write, even in the PTI
++	 * case.  So do an lfence to prevent GS speculation, regardless of
++	 * whether PTI is enabled.
++	 */
++	FENCE_SWAPGS_KERNEL_ENTRY
++
+ 	ret
+ END(paranoid_entry)
+ 
+@@ -1133,12 +1143,12 @@ ENTRY(error_entry)
+ 	testb	$3, CS+8(%rsp)
+ 	jz	.Lerror_kernelspace
+ 
+-.Lerror_entry_from_usermode_swapgs:
+ 	/*
+ 	 * We entered from user mode or we're pretending to have entered
+ 	 * from user mode due to an IRET fault.
+ 	 */
+ 	SWAPGS
++	FENCE_SWAPGS_USER_ENTRY
+ 
+ .Lerror_entry_from_usermode_after_swapgs:
+ 	/*
+@@ -1152,6 +1162,8 @@ ENTRY(error_entry)
+ #endif
+ 	ret
+ 
++.Lerror_entry_done_lfence:
++	FENCE_SWAPGS_KERNEL_ENTRY
+ .Lerror_entry_done:
+ 	TRACE_IRQS_OFF
+ 	ret
+@@ -1170,14 +1182,16 @@ ENTRY(error_entry)
+ 	cmpq	%rax, RIP+8(%rsp)
+ 	je	.Lbstep_iret
+ 	cmpq	$gs_change, RIP+8(%rsp)
+-	jne	.Lerror_entry_done
++	jne	.Lerror_entry_done_lfence
+ 
+ 	/*
+ 	 * hack: gs_change can fail with user gsbase.  If this happens, fix up
+ 	 * gsbase and proceed.  We'll fix up the exception and land in
+ 	 * gs_change's error handler with kernel gsbase.
+ 	 */
+-	jmp	.Lerror_entry_from_usermode_swapgs
++	SWAPGS
++	FENCE_SWAPGS_USER_ENTRY
++	jmp .Lerror_entry_done
+ 
+ .Lbstep_iret:
+ 	/* Fix truncated RIP */
+@@ -1190,6 +1204,7 @@ ENTRY(error_entry)
+ 	 * Switch to kernel gsbase:
+ 	 */
+ 	SWAPGS
++	FENCE_SWAPGS_USER_ENTRY
+ 
+ 	/*
+ 	 * Pretend that the exception came from user mode: set up pt_regs
+@@ -1286,6 +1301,7 @@ ENTRY(nmi)
+ 	 * to switch CR3 here.
+ 	 */
+ 	cld
++	FENCE_SWAPGS_USER_ENTRY
+ 	movq	%rsp, %rdx
+ 	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
+ 	pushq	5*8(%rdx)	/* pt_regs->ss */
+@@ -1574,6 +1590,7 @@ end_repeat_nmi:
+ 	movq	%rax, %cr3
+ 2:
+ #endif
++	FENCE_SWAPGS_KERNEL_ENTRY
+ 
+ 	/* paranoidentry do_nmi, 0; without TRACE_IRQS_OFF */
+ 	call	do_nmi
+diff --git a/arch/x86/include/asm/cpufeatures.h b/arch/x86/include/asm/cpufeatures.h
+index d9f7d1770e98..113cb01ebaac 100644
+--- a/arch/x86/include/asm/cpufeatures.h
++++ b/arch/x86/include/asm/cpufeatures.h
+@@ -192,17 +192,17 @@
+ #define X86_FEATURE_HW_PSTATE	( 7*32+ 8) /* AMD HW-PState */
+ #define X86_FEATURE_PROC_FEEDBACK ( 7*32+ 9) /* AMD ProcFeedbackInterface */
+ 
++#define X86_FEATURE_FENCE_SWAPGS_USER	( 7*32+10) /* "" LFENCE in user entry SWAPGS path */
++#define X86_FEATURE_FENCE_SWAPGS_KERNEL	( 7*32+11) /* "" LFENCE in kernel entry SWAPGS path */
++
+ #define X86_FEATURE_RETPOLINE	( 7*32+12) /* "" Generic Retpoline mitigation for Spectre variant 2 */
+ #define X86_FEATURE_RETPOLINE_AMD ( 7*32+13) /* "" AMD Retpoline mitigation for Spectre variant 2 */
+ 
+ #define X86_FEATURE_INTEL_PT	( 7*32+15) /* Intel Processor Trace */
+-#define X86_FEATURE_RSB_CTXSW	( 7*32+19) /* "" Fill RSB on context switches */
+-
+ #define X86_FEATURE_MSR_SPEC_CTRL ( 7*32+16) /* "" MSR SPEC_CTRL is implemented */
+ #define X86_FEATURE_SSBD	( 7*32+17) /* Speculative Store Bypass Disable */
+ 
+-/* Because the ALTERNATIVE scheme is for members of the X86_FEATURE club... */
+-#define X86_FEATURE_KAISER	( 7*32+31) /* CONFIG_PAGE_TABLE_ISOLATION w/o nokaiser */
++#define X86_FEATURE_RSB_CTXSW	( 7*32+19) /* "" Fill RSB on context switches */
+ 
+ #define X86_FEATURE_USE_IBPB	( 7*32+21) /* "" Indirect Branch Prediction Barrier enabled*/
+ #define X86_FEATURE_USE_IBRS_FW	( 7*32+22) /* "" Use IBRS during runtime firmware calls */
+@@ -215,6 +215,7 @@
+ #define X86_FEATURE_ZEN		( 7*32+28) /* "" CPU is AMD family 0x17 (Zen) */
+ #define X86_FEATURE_L1TF_PTEINV	( 7*32+29) /* "" L1TF workaround PTE inversion */
+ #define X86_FEATURE_IBRS_ENHANCED	( 7*32+30) /* Enhanced IBRS */
++#define X86_FEATURE_KAISER	( 7*32+31) /* CONFIG_PAGE_TABLE_ISOLATION w/o nokaiser */
+ 
+ /* Virtualization flags: Linux defined, word 8 */
+ #define X86_FEATURE_TPR_SHADOW  ( 8*32+ 0) /* Intel TPR Shadow */
+@@ -338,5 +339,6 @@
+ #define X86_BUG_L1TF		X86_BUG(18) /* CPU is affected by L1 Terminal Fault */
+ #define X86_BUG_MDS		X86_BUG(19) /* CPU is affected by Microarchitectural data sampling */
+ #define X86_BUG_MSBDS_ONLY	X86_BUG(20) /* CPU is only affected by the  MSDBS variant of BUG_MDS */
++#define X86_BUG_SWAPGS		X86_BUG(21) /* CPU is affected by speculation through SWAPGS */
+ 
+ #endif /* _ASM_X86_CPUFEATURES_H */
+diff --git a/arch/x86/kernel/cpu/bugs.c b/arch/x86/kernel/cpu/bugs.c
+index ab2df0f9ac45..917c63aa1599 100644
+--- a/arch/x86/kernel/cpu/bugs.c
++++ b/arch/x86/kernel/cpu/bugs.c
+@@ -30,6 +30,7 @@
+ #include <asm/intel-family.h>
+ #include <asm/e820.h>
+ 
++static void __init spectre_v1_select_mitigation(void);
+ static void __init spectre_v2_select_mitigation(void);
+ static void __init ssb_select_mitigation(void);
+ static void __init l1tf_select_mitigation(void);
+@@ -87,17 +88,11 @@ void __init check_bugs(void)
+ 	if (boot_cpu_has(X86_FEATURE_STIBP))
+ 		x86_spec_ctrl_mask |= SPEC_CTRL_STIBP;
+ 
+-	/* Select the proper spectre mitigation before patching alternatives */
++	/* Select the proper CPU mitigations before patching alternatives: */
++	spectre_v1_select_mitigation();
+ 	spectre_v2_select_mitigation();
+-
+-	/*
+-	 * Select proper mitigation for any exposure to the Speculative Store
+-	 * Bypass vulnerability.
+-	 */
+ 	ssb_select_mitigation();
+-
+ 	l1tf_select_mitigation();
+-
+ 	mds_select_mitigation();
+ 
+ 	arch_smt_update();
+@@ -251,6 +246,98 @@ static int __init mds_cmdline(char *str)
+ }
+ early_param("mds", mds_cmdline);
+ 
++#undef pr_fmt
++#define pr_fmt(fmt)     "Spectre V1 : " fmt
++
++enum spectre_v1_mitigation {
++	SPECTRE_V1_MITIGATION_NONE,
++	SPECTRE_V1_MITIGATION_AUTO,
++};
++
++static enum spectre_v1_mitigation spectre_v1_mitigation =
++	SPECTRE_V1_MITIGATION_AUTO;
++
++static const char * const spectre_v1_strings[] = {
++	[SPECTRE_V1_MITIGATION_NONE] = "Vulnerable: __user pointer sanitization and usercopy barriers only; no swapgs barriers",
++	[SPECTRE_V1_MITIGATION_AUTO] = "Mitigation: usercopy/swapgs barriers and __user pointer sanitization",
++};
++
++/*
++ * Does SMAP provide full mitigation against speculative kernel access to
++ * userspace?
++ */
++static bool smap_works_speculatively(void)
++{
++	if (!boot_cpu_has(X86_FEATURE_SMAP))
++		return false;
++
++	/*
++	 * On CPUs which are vulnerable to Meltdown, SMAP does not
++	 * prevent speculative access to user data in the L1 cache.
++	 * Consider SMAP to be non-functional as a mitigation on these
++	 * CPUs.
++	 */
++	if (boot_cpu_has(X86_BUG_CPU_MELTDOWN))
++		return false;
++
++	return true;
++}
++
++static void __init spectre_v1_select_mitigation(void)
++{
++	if (!boot_cpu_has_bug(X86_BUG_SPECTRE_V1) || cpu_mitigations_off()) {
++		spectre_v1_mitigation = SPECTRE_V1_MITIGATION_NONE;
++		return;
++	}
++
++	if (spectre_v1_mitigation == SPECTRE_V1_MITIGATION_AUTO) {
++		/*
++		 * With Spectre v1, a user can speculatively control either
++		 * path of a conditional swapgs with a user-controlled GS
++		 * value.  The mitigation is to add lfences to both code paths.
++		 *
++		 * If FSGSBASE is enabled, the user can put a kernel address in
++		 * GS, in which case SMAP provides no protection.
++		 *
++		 * [ NOTE: Don't check for X86_FEATURE_FSGSBASE until the
++		 *	   FSGSBASE enablement patches have been merged. ]
++		 *
++		 * If FSGSBASE is disabled, the user can only put a user space
++		 * address in GS.  That makes an attack harder, but still
++		 * possible if there's no SMAP protection.
++		 */
++		if (!smap_works_speculatively()) {
++			/*
++			 * Mitigation can be provided from SWAPGS itself or
++			 * PTI as the CR3 write in the Meltdown mitigation
++			 * is serializing.
++			 *
++			 * If neither is there, mitigate with an LFENCE to
++			 * stop speculation through swapgs.
++			 */
++			if (boot_cpu_has_bug(X86_BUG_SWAPGS) &&
++			    !boot_cpu_has(X86_FEATURE_KAISER))
++				setup_force_cpu_cap(X86_FEATURE_FENCE_SWAPGS_USER);
++
++			/*
++			 * Enable lfences in the kernel entry (non-swapgs)
++			 * paths, to prevent user entry from speculatively
++			 * skipping swapgs.
++			 */
++			setup_force_cpu_cap(X86_FEATURE_FENCE_SWAPGS_KERNEL);
++		}
++	}
++
++	pr_info("%s\n", spectre_v1_strings[spectre_v1_mitigation]);
++}
++
++static int __init nospectre_v1_cmdline(char *str)
++{
++	spectre_v1_mitigation = SPECTRE_V1_MITIGATION_NONE;
++	return 0;
++}
++early_param("nospectre_v1", nospectre_v1_cmdline);
++
+ #undef pr_fmt
+ #define pr_fmt(fmt)     "Spectre V2 : " fmt
+ 
+@@ -1154,7 +1241,7 @@ static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr
+ 		break;
+ 
+ 	case X86_BUG_SPECTRE_V1:
+-		return sprintf(buf, "Mitigation: __user pointer sanitization\n");
++		return sprintf(buf, "%s\n", spectre_v1_strings[spectre_v1_mitigation]);
+ 
+ 	case X86_BUG_SPECTRE_V2:
+ 		return sprintf(buf, "%s%s%s%s%s%s\n", spectre_v2_strings[spectre_v2_enabled],
+diff --git a/arch/x86/kernel/cpu/common.c b/arch/x86/kernel/cpu/common.c
+index 4bce77bc7e61..3965235973c8 100644
+--- a/arch/x86/kernel/cpu/common.c
++++ b/arch/x86/kernel/cpu/common.c
+@@ -853,6 +853,7 @@ static void identify_cpu_without_cpuid(struct cpuinfo_x86 *c)
+ #define NO_L1TF		BIT(3)
+ #define NO_MDS		BIT(4)
+ #define MSBDS_ONLY	BIT(5)
++#define NO_SWAPGS	BIT(6)
+ 
+ #define VULNWL(_vendor, _family, _model, _whitelist)	\
+ 	{ X86_VENDOR_##_vendor, _family, _model, X86_FEATURE_ANY, _whitelist }
+@@ -876,29 +877,37 @@ static const __initconst struct x86_cpu_id cpu_vuln_whitelist[] = {
+ 	VULNWL_INTEL(ATOM_BONNELL,		NO_SPECULATION),
+ 	VULNWL_INTEL(ATOM_BONNELL_MID,		NO_SPECULATION),
+ 
+-	VULNWL_INTEL(ATOM_SILVERMONT,		NO_SSB | NO_L1TF | MSBDS_ONLY),
+-	VULNWL_INTEL(ATOM_SILVERMONT_X,		NO_SSB | NO_L1TF | MSBDS_ONLY),
+-	VULNWL_INTEL(ATOM_SILVERMONT_MID,	NO_SSB | NO_L1TF | MSBDS_ONLY),
+-	VULNWL_INTEL(ATOM_AIRMONT,		NO_SSB | NO_L1TF | MSBDS_ONLY),
+-	VULNWL_INTEL(XEON_PHI_KNL,		NO_SSB | NO_L1TF | MSBDS_ONLY),
+-	VULNWL_INTEL(XEON_PHI_KNM,		NO_SSB | NO_L1TF | MSBDS_ONLY),
++	VULNWL_INTEL(ATOM_SILVERMONT,		NO_SSB | NO_L1TF | MSBDS_ONLY | NO_SWAPGS),
++	VULNWL_INTEL(ATOM_SILVERMONT_X,		NO_SSB | NO_L1TF | MSBDS_ONLY | NO_SWAPGS),
++	VULNWL_INTEL(ATOM_SILVERMONT_MID,	NO_SSB | NO_L1TF | MSBDS_ONLY | NO_SWAPGS),
++	VULNWL_INTEL(ATOM_AIRMONT,		NO_SSB | NO_L1TF | MSBDS_ONLY | NO_SWAPGS),
++	VULNWL_INTEL(XEON_PHI_KNL,		NO_SSB | NO_L1TF | MSBDS_ONLY | NO_SWAPGS),
++	VULNWL_INTEL(XEON_PHI_KNM,		NO_SSB | NO_L1TF | MSBDS_ONLY | NO_SWAPGS),
+ 
+ 	VULNWL_INTEL(CORE_YONAH,		NO_SSB),
+ 
+-	VULNWL_INTEL(ATOM_AIRMONT_MID,		NO_L1TF | MSBDS_ONLY),
++	VULNWL_INTEL(ATOM_AIRMONT_MID,		NO_L1TF | MSBDS_ONLY | NO_SWAPGS),
+ 
+-	VULNWL_INTEL(ATOM_GOLDMONT,		NO_MDS | NO_L1TF),
+-	VULNWL_INTEL(ATOM_GOLDMONT_X,		NO_MDS | NO_L1TF),
+-	VULNWL_INTEL(ATOM_GOLDMONT_PLUS,	NO_MDS | NO_L1TF),
++	VULNWL_INTEL(ATOM_GOLDMONT,		NO_MDS | NO_L1TF | NO_SWAPGS),
++	VULNWL_INTEL(ATOM_GOLDMONT_X,		NO_MDS | NO_L1TF | NO_SWAPGS),
++	VULNWL_INTEL(ATOM_GOLDMONT_PLUS,	NO_MDS | NO_L1TF | NO_SWAPGS),
++
++	/*
++	 * Technically, swapgs isn't serializing on AMD (despite it previously
++	 * being documented as such in the APM).  But according to AMD, %gs is
++	 * updated non-speculatively, and the issuing of %gs-relative memory
++	 * operands will be blocked until the %gs update completes, which is
++	 * good enough for our purposes.
++	 */
+ 
+ 	/* AMD Family 0xf - 0x12 */
+-	VULNWL_AMD(0x0f,	NO_MELTDOWN | NO_SSB | NO_L1TF | NO_MDS),
+-	VULNWL_AMD(0x10,	NO_MELTDOWN | NO_SSB | NO_L1TF | NO_MDS),
+-	VULNWL_AMD(0x11,	NO_MELTDOWN | NO_SSB | NO_L1TF | NO_MDS),
+-	VULNWL_AMD(0x12,	NO_MELTDOWN | NO_SSB | NO_L1TF | NO_MDS),
++	VULNWL_AMD(0x0f,	NO_MELTDOWN | NO_SSB | NO_L1TF | NO_MDS | NO_SWAPGS),
++	VULNWL_AMD(0x10,	NO_MELTDOWN | NO_SSB | NO_L1TF | NO_MDS | NO_SWAPGS),
++	VULNWL_AMD(0x11,	NO_MELTDOWN | NO_SSB | NO_L1TF | NO_MDS | NO_SWAPGS),
++	VULNWL_AMD(0x12,	NO_MELTDOWN | NO_SSB | NO_L1TF | NO_MDS | NO_SWAPGS),
+ 
+ 	/* FAMILY_ANY must be last, otherwise 0x0f - 0x12 matches won't work */
+-	VULNWL_AMD(X86_FAMILY_ANY,	NO_MELTDOWN | NO_L1TF | NO_MDS),
++	VULNWL_AMD(X86_FAMILY_ANY,	NO_MELTDOWN | NO_L1TF | NO_MDS | NO_SWAPGS),
+ 	{}
+ };
+ 
+@@ -935,6 +944,9 @@ static void __init cpu_set_bug_bits(struct cpuinfo_x86 *c)
+ 			setup_force_cpu_bug(X86_BUG_MSBDS_ONLY);
+ 	}
+ 
++	if (!cpu_matches(NO_SWAPGS))
++		setup_force_cpu_bug(X86_BUG_SWAPGS);
++
+ 	if (cpu_matches(NO_MELTDOWN))
+ 		return;
+ 
+diff --git a/block/blk-core.c b/block/blk-core.c
+index 50d77c90070d..7662f97dded6 100644
+--- a/block/blk-core.c
++++ b/block/blk-core.c
+@@ -870,6 +870,7 @@ blk_init_allocated_queue(struct request_queue *q, request_fn_proc *rfn,
+ 
+ fail:
+ 	blk_free_flush_queue(q->fq);
++	q->fq = NULL;
+ 	return NULL;
+ }
+ EXPORT_SYMBOL(blk_init_allocated_queue);
+diff --git a/drivers/atm/iphase.c b/drivers/atm/iphase.c
+index 7d00f2994738..860a33a90ebf 100644
+--- a/drivers/atm/iphase.c
++++ b/drivers/atm/iphase.c
+@@ -63,6 +63,7 @@
+ #include <asm/byteorder.h>  
+ #include <linux/vmalloc.h>
+ #include <linux/jiffies.h>
++#include <linux/nospec.h>
+ #include "iphase.h"		  
+ #include "suni.h"		  
+ #define swap_byte_order(x) (((x & 0xff) << 8) | ((x & 0xff00) >> 8))
+@@ -2755,8 +2756,11 @@ static int ia_ioctl(struct atm_dev *dev, unsigned int cmd, void __user *arg)
+    }
+    if (copy_from_user(&ia_cmds, arg, sizeof ia_cmds)) return -EFAULT; 
+    board = ia_cmds.status;
+-   if ((board < 0) || (board > iadev_count))
+-         board = 0;    
++
++	if ((board < 0) || (board > iadev_count))
++		board = 0;
++	board = array_index_nospec(board, iadev_count + 1);
++
+    iadev = ia_dev[board];
+    switch (ia_cmds.cmd) {
+    case MEMDUMP:
+diff --git a/drivers/hid/hid-ids.h b/drivers/hid/hid-ids.h
+index 00d8366a614e..e1807296a1a0 100644
+--- a/drivers/hid/hid-ids.h
++++ b/drivers/hid/hid-ids.h
+@@ -470,6 +470,7 @@
+ #define USB_PRODUCT_ID_HP_LOGITECH_OEM_USB_OPTICAL_MOUSE_0A4A	0x0a4a
+ #define USB_PRODUCT_ID_HP_LOGITECH_OEM_USB_OPTICAL_MOUSE_0B4A	0x0b4a
+ #define USB_PRODUCT_ID_HP_PIXART_OEM_USB_OPTICAL_MOUSE		0x134a
++#define USB_PRODUCT_ID_HP_PIXART_OEM_USB_OPTICAL_MOUSE_0641	0x0641
+ 
+ #define USB_VENDOR_ID_HUION		0x256c
+ #define USB_DEVICE_ID_HUION_TABLET	0x006e
+diff --git a/drivers/hid/usbhid/hid-quirks.c b/drivers/hid/usbhid/hid-quirks.c
+index c9a11315493b..5dcdfdca4fd7 100644
+--- a/drivers/hid/usbhid/hid-quirks.c
++++ b/drivers/hid/usbhid/hid-quirks.c
+@@ -82,6 +82,7 @@ static const struct hid_blacklist {
+ 	{ USB_VENDOR_ID_HP, USB_PRODUCT_ID_HP_LOGITECH_OEM_USB_OPTICAL_MOUSE_0A4A, HID_QUIRK_ALWAYS_POLL },
+ 	{ USB_VENDOR_ID_HP, USB_PRODUCT_ID_HP_LOGITECH_OEM_USB_OPTICAL_MOUSE_0B4A, HID_QUIRK_ALWAYS_POLL },
+ 	{ USB_VENDOR_ID_HP, USB_PRODUCT_ID_HP_PIXART_OEM_USB_OPTICAL_MOUSE, HID_QUIRK_ALWAYS_POLL },
++	{ USB_VENDOR_ID_HP, USB_PRODUCT_ID_HP_PIXART_OEM_USB_OPTICAL_MOUSE_0641, HID_QUIRK_ALWAYS_POLL },
+ 	{ USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_C077, HID_QUIRK_ALWAYS_POLL },
+ 	{ USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_KEYBOARD_G710_PLUS, HID_QUIRK_NOGET },
+ 	{ USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_MOUSE_C01A, HID_QUIRK_ALWAYS_POLL },
+diff --git a/drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c b/drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c
+index 4dc5e12dbfce..13de5ce3facf 100644
+--- a/drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c
++++ b/drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c
+@@ -1957,7 +1957,7 @@ u16 bnx2x_select_queue(struct net_device *dev, struct sk_buff *skb,
+ 	}
+ 
+ 	/* select a non-FCoE queue */
+-	return fallback(dev, skb) % (BNX2X_NUM_ETH_QUEUES(bp) * bp->max_cos);
++	return fallback(dev, skb) % (BNX2X_NUM_ETH_QUEUES(bp));
+ }
+ 
+ void bnx2x_set_num_queues(struct bnx2x *bp)
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/main.c b/drivers/net/ethernet/mellanox/mlx5/core/main.c
+index 7c42be586be8..35bcc6dbada9 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/main.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/main.c
+@@ -778,7 +778,7 @@ static void mlx5_unregister_device(struct mlx5_core_dev *dev)
+ 	struct mlx5_interface *intf;
+ 
+ 	mutex_lock(&intf_mutex);
+-	list_for_each_entry(intf, &intf_list, list)
++	list_for_each_entry_reverse(intf, &intf_list, list)
+ 		mlx5_remove_device(intf, priv);
+ 	list_del(&priv->dev_list);
+ 	mutex_unlock(&intf_mutex);
+diff --git a/drivers/net/ppp/pppoe.c b/drivers/net/ppp/pppoe.c
+index 02327e6c4819..39976892b312 100644
+--- a/drivers/net/ppp/pppoe.c
++++ b/drivers/net/ppp/pppoe.c
+@@ -1152,6 +1152,9 @@ static const struct proto_ops pppoe_ops = {
+ 	.recvmsg	= pppoe_recvmsg,
+ 	.mmap		= sock_no_mmap,
+ 	.ioctl		= pppox_ioctl,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl	= pppox_compat_ioctl,
++#endif
+ };
+ 
+ static const struct pppox_proto pppoe_proto = {
+diff --git a/drivers/net/ppp/pppox.c b/drivers/net/ppp/pppox.c
+index 0e1b30622477..011fbd10cb73 100644
+--- a/drivers/net/ppp/pppox.c
++++ b/drivers/net/ppp/pppox.c
+@@ -22,6 +22,7 @@
+ #include <linux/string.h>
+ #include <linux/module.h>
+ #include <linux/kernel.h>
++#include <linux/compat.h>
+ #include <linux/errno.h>
+ #include <linux/netdevice.h>
+ #include <linux/net.h>
+@@ -103,6 +104,18 @@ int pppox_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
+ 
+ EXPORT_SYMBOL(pppox_ioctl);
+ 
++#ifdef CONFIG_COMPAT
++int pppox_compat_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
++{
++	if (cmd == PPPOEIOCSFWD32)
++		cmd = PPPOEIOCSFWD;
++
++	return pppox_ioctl(sock, cmd, (unsigned long)compat_ptr(arg));
++}
++
++EXPORT_SYMBOL(pppox_compat_ioctl);
++#endif
++
+ static int pppox_create(struct net *net, struct socket *sock, int protocol,
+ 			int kern)
+ {
+diff --git a/drivers/net/ppp/pptp.c b/drivers/net/ppp/pptp.c
+index 53c1f2bd0f24..19d0692a2d2f 100644
+--- a/drivers/net/ppp/pptp.c
++++ b/drivers/net/ppp/pptp.c
+@@ -674,6 +674,9 @@ static const struct proto_ops pptp_ops = {
+ 	.recvmsg    = sock_no_recvmsg,
+ 	.mmap       = sock_no_mmap,
+ 	.ioctl      = pppox_ioctl,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl = pppox_compat_ioctl,
++#endif
+ };
+ 
+ static const struct pppox_proto pppox_pptp_proto = {
+diff --git a/drivers/spi/spi-bcm2835.c b/drivers/spi/spi-bcm2835.c
+index 1a1368f5863c..25daebd6f410 100644
+--- a/drivers/spi/spi-bcm2835.c
++++ b/drivers/spi/spi-bcm2835.c
+@@ -554,7 +554,8 @@ static int bcm2835_spi_transfer_one(struct spi_master *master,
+ 	bcm2835_wr(bs, BCM2835_SPI_CLK, cdiv);
+ 
+ 	/* handle all the 3-wire mode */
+-	if ((spi->mode & SPI_3WIRE) && (tfr->rx_buf))
++	if (spi->mode & SPI_3WIRE && tfr->rx_buf &&
++	    tfr->rx_buf != master->dummy_rx)
+ 		cs |= BCM2835_SPI_CS_REN;
+ 	else
+ 		cs &= ~BCM2835_SPI_CS_REN;
+diff --git a/fs/compat_ioctl.c b/fs/compat_ioctl.c
+index a52ca5cba015..5af973621c73 100644
+--- a/fs/compat_ioctl.c
++++ b/fs/compat_ioctl.c
+@@ -1016,9 +1016,6 @@ COMPATIBLE_IOCTL(PPPIOCDISCONN)
+ COMPATIBLE_IOCTL(PPPIOCATTCHAN)
+ COMPATIBLE_IOCTL(PPPIOCGCHAN)
+ COMPATIBLE_IOCTL(PPPIOCGL2TPSTATS)
+-/* PPPOX */
+-COMPATIBLE_IOCTL(PPPOEIOCSFWD)
+-COMPATIBLE_IOCTL(PPPOEIOCDFWD)
+ /* ppdev */
+ COMPATIBLE_IOCTL(PPSETMODE)
+ COMPATIBLE_IOCTL(PPRSTATUS)
+diff --git a/include/linux/if_pppox.h b/include/linux/if_pppox.h
+index b49cf923becc..93ef387eadb1 100644
+--- a/include/linux/if_pppox.h
++++ b/include/linux/if_pppox.h
+@@ -84,6 +84,9 @@ extern int register_pppox_proto(int proto_num, const struct pppox_proto *pp);
+ extern void unregister_pppox_proto(int proto_num);
+ extern void pppox_unbind_sock(struct sock *sk);/* delete ppp-channel binding */
+ extern int pppox_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg);
++extern int pppox_compat_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg);
++
++#define PPPOEIOCSFWD32    _IOW(0xB1 ,0, compat_size_t)
+ 
+ /* PPPoX socket states */
+ enum {
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 77438a8406ec..0410fd29d569 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -1526,6 +1526,23 @@ static inline void tcp_check_send_head(struct sock *sk, struct sk_buff *skb_unli
+ 		tcp_sk(sk)->highest_sack = NULL;
+ }
+ 
++static inline struct sk_buff *tcp_rtx_queue_head(const struct sock *sk)
++{
++	struct sk_buff *skb = tcp_write_queue_head(sk);
++
++	if (skb == tcp_send_head(sk))
++		skb = NULL;
++
++	return skb;
++}
++
++static inline struct sk_buff *tcp_rtx_queue_tail(const struct sock *sk)
++{
++	struct sk_buff *skb = tcp_send_head(sk);
++
++	return skb ? tcp_write_queue_prev(sk, skb) : tcp_write_queue_tail(sk);
++}
++
+ static inline void __tcp_add_write_queue_tail(struct sock *sk, struct sk_buff *skb)
+ {
+ 	__skb_queue_tail(&sk->sk_write_queue, skb);
+diff --git a/net/bridge/br_vlan.c b/net/bridge/br_vlan.c
+index 1394da63614a..a7953962112a 100644
+--- a/net/bridge/br_vlan.c
++++ b/net/bridge/br_vlan.c
+@@ -580,6 +580,11 @@ void br_vlan_flush(struct net_bridge *br)
+ 
+ 	ASSERT_RTNL();
+ 
++	/* delete auto-added default pvid local fdb before flushing vlans
++	 * otherwise it will be leaked on bridge device init failure
++	 */
++	br_fdb_delete_by_port(br, NULL, 0, 1);
++
+ 	vg = br_vlan_group(br);
+ 	__vlan_flush(vg);
+ 	RCU_INIT_POINTER(br->vlgrp, NULL);
+diff --git a/net/core/dev.c b/net/core/dev.c
+index db5345f5f7b0..152e1e6316e6 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -7768,6 +7768,8 @@ static void __net_exit default_device_exit(struct net *net)
+ 
+ 		/* Push remaining network devices to init_net */
+ 		snprintf(fb_name, IFNAMSIZ, "dev%d", dev->ifindex);
++		if (__dev_get_by_name(&init_net, fb_name))
++			snprintf(fb_name, IFNAMSIZ, "dev%%d");
+ 		err = dev_change_net_namespace(dev, &init_net, fb_name);
+ 		if (err) {
+ 			pr_emerg("%s: failed to move %s to init_net: %d\n",
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 53edd60fd381..76ffce0c18ae 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -1151,6 +1151,7 @@ int tcp_fragment(struct sock *sk, struct sk_buff *skb, u32 len,
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	struct sk_buff *buff;
+ 	int nsize, old_factor;
++	long limit;
+ 	int nlen;
+ 	u8 flags;
+ 
+@@ -1161,7 +1162,15 @@ int tcp_fragment(struct sock *sk, struct sk_buff *skb, u32 len,
+ 	if (nsize < 0)
+ 		nsize = 0;
+ 
+-	if (unlikely((sk->sk_wmem_queued >> 1) > sk->sk_sndbuf + 0x20000)) {
++	/* tcp_sendmsg() can overshoot sk_wmem_queued by one full size skb.
++	 * We need some allowance to not penalize applications setting small
++	 * SO_SNDBUF values.
++	 * Also allow first and last skb in retransmit queue to be split.
++	 */
++	limit = sk->sk_sndbuf + 2 * SKB_TRUESIZE(GSO_MAX_SIZE);
++	if (unlikely((sk->sk_wmem_queued >> 1) > limit &&
++		     skb != tcp_rtx_queue_head(sk) &&
++		     skb != tcp_rtx_queue_tail(sk))) {
+ 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPWQUEUETOOBIG);
+ 		return -ENOMEM;
+ 	}
+diff --git a/net/l2tp/l2tp_ppp.c b/net/l2tp/l2tp_ppp.c
+index 2764c4bd072c..d3f1222c1a8c 100644
+--- a/net/l2tp/l2tp_ppp.c
++++ b/net/l2tp/l2tp_ppp.c
+@@ -1805,6 +1805,9 @@ static const struct proto_ops pppol2tp_ops = {
+ 	.recvmsg	= pppol2tp_recvmsg,
+ 	.mmap		= sock_no_mmap,
+ 	.ioctl		= pppox_ioctl,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl = pppox_compat_ioctl,
++#endif
+ };
+ 
+ static const struct pppox_proto pppol2tp_proto = {
+diff --git a/net/netfilter/nfnetlink_acct.c b/net/netfilter/nfnetlink_acct.c
+index 088e8da06b00..0f3cb410e42e 100644
+--- a/net/netfilter/nfnetlink_acct.c
++++ b/net/netfilter/nfnetlink_acct.c
+@@ -97,6 +97,8 @@ nfnl_acct_new(struct sock *nfnl, struct sk_buff *skb,
+ 			return -EINVAL;
+ 		if (flags & NFACCT_F_OVERQUOTA)
+ 			return -EINVAL;
++		if ((flags & NFACCT_F_QUOTA) && !tb[NFACCT_QUOTA])
++			return -EINVAL;
+ 
+ 		size += sizeof(u64);
+ 	}
+diff --git a/net/sched/sch_codel.c b/net/sched/sch_codel.c
+index 9b7e2980ee5c..3bc5dec3b17b 100644
+--- a/net/sched/sch_codel.c
++++ b/net/sched/sch_codel.c
+@@ -68,7 +68,8 @@ static struct sk_buff *dequeue(struct codel_vars *vars, struct Qdisc *sch)
+ {
+ 	struct sk_buff *skb = __skb_dequeue(&sch->q);
+ 
+-	prefetch(&skb->end); /* we'll need skb_shinfo() */
++	if (skb)
++		prefetch(&skb->end); /* we'll need skb_shinfo() */
+ 	return skb;
+ }
+ 
+diff --git a/net/tipc/netlink_compat.c b/net/tipc/netlink_compat.c
+index 9a65664f749c..d2bf92e71150 100644
+--- a/net/tipc/netlink_compat.c
++++ b/net/tipc/netlink_compat.c
+@@ -55,6 +55,7 @@ struct tipc_nl_compat_msg {
+ 	int rep_type;
+ 	int rep_size;
+ 	int req_type;
++	int req_size;
+ 	struct net *net;
+ 	struct sk_buff *rep;
+ 	struct tlv_desc *req;
+@@ -252,7 +253,8 @@ static int tipc_nl_compat_dumpit(struct tipc_nl_compat_cmd_dump *cmd,
+ 	int err;
+ 	struct sk_buff *arg;
+ 
+-	if (msg->req_type && !TLV_CHECK_TYPE(msg->req, msg->req_type))
++	if (msg->req_type && (!msg->req_size ||
++			      !TLV_CHECK_TYPE(msg->req, msg->req_type)))
+ 		return -EINVAL;
+ 
+ 	msg->rep = tipc_tlv_alloc(msg->rep_size);
+@@ -345,7 +347,8 @@ static int tipc_nl_compat_doit(struct tipc_nl_compat_cmd_doit *cmd,
+ {
+ 	int err;
+ 
+-	if (msg->req_type && !TLV_CHECK_TYPE(msg->req, msg->req_type))
++	if (msg->req_type && (!msg->req_size ||
++			      !TLV_CHECK_TYPE(msg->req, msg->req_type)))
+ 		return -EINVAL;
+ 
+ 	err = __tipc_nl_compat_doit(cmd, msg);
+@@ -1192,8 +1195,8 @@ static int tipc_nl_compat_recv(struct sk_buff *skb, struct genl_info *info)
+ 		goto send;
+ 	}
+ 
+-	len = nlmsg_attrlen(req_nlh, GENL_HDRLEN + TIPC_GENL_HDRLEN);
+-	if (!len || !TLV_OK(msg.req, len)) {
++	msg.req_size = nlmsg_attrlen(req_nlh, GENL_HDRLEN + TIPC_GENL_HDRLEN);
++	if (msg.req_size && !TLV_OK(msg.req, msg.req_size)) {
+ 		msg.rep = tipc_get_err_tlv(TIPC_CFG_NOT_SUPPORTED);
+ 		err = -EOPNOTSUPP;
+ 		goto send;
