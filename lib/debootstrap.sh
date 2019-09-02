@@ -81,6 +81,7 @@ debootstrap_ng()
 	fi
 
 	# stage: unmount tmpfs
+	umount $SDCARD 2>&1
 	if [[ $use_tmpfs = yes ]]; then
 		while grep -qs '$SDCARD' /proc/mounts
 		do
