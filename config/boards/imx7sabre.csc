@@ -1,6 +1,6 @@
 # iMX7d dual core + M4 1Gb RAM SoC 1xmPCIe 2xGBE
 BOARD_NAME="MCIMX7SABRE"
-BOARDFAMILY="mx7dsabre"
+BOARDFAMILY="imx7d"
 BOOTCONFIG="imx_v7_defconfig"
 MODULES=""
 MODULES_NEXT=""
