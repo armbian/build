@@ -1,17 +1,28 @@
 case $BRANCH in
+
 	default|next)
-	BOOTSOURCE='https://github.com/SolidRun/u-boot-armada38x'
-	BOOTBRANCH='branch:u-boot-2013.01-15t1-clearfog'
-	BOOTDIR='u-boot-armada'
-	BOOTSCRIPT='boot-marvell.cmd:boot.cmd'
 
-	UBOOT_TARGET_MAP="u-boot.mmc;;u-boot.mmc u-boot-uart.mmc
-		u-boot.sata;sata;u-boot.sata u-boot-uart.sata
-		u-boot.flash;spi;u-boot.flash u-boot-uart.flash"
+		# Check https://developer.solid-run.com/knowledge-base/a388-u-boot
+		# for advanced config options
 
-	UBOOT_USE_GCC='== 4.9'
-	UBOOT_COMPILER='arm-linux-gnueabi-'
+		BOOTDIR='u-boot-armada'
+		BOOTSOURCE='https://github.com/SolidRun/u-boot'
+		BOOTBRANCH='branch:v2018.01-solidrun-a38x'
+		BOOTSCRIPT='boot-mvebu-next.cmd:boot.cmd'
+		BOOTPATCHDIR='u-boot-mvebu'
+		UBOOT_TARGET_MAP=";sdhc;u-boot-spl-sdhc.kwb:u-boot.mmc
+						  ;mmc;u-boot-spl-mmc.kwb:u-boot.emmc
+						  ;spi;u-boot-spl-spi.kwb:u-boot.flash
+						  ;sata;u-boot-spl-sata.kwb:u-boot.sata
+						  ;uart;u-boot-spl-uart.kwb:u-boot.uart"
+		UBOOT_USE_GCC='> 7.0'
+		UBOOT_COMPILER='arm-linux-gnueabihf-'
 
-	BOOTPATCHDIR='u-boot-mvebu'
 	;;
+	dev)
+		if [[ $BOARD == clearfogbase ]]; then
+			OVERLAY_PREFIX='armada-388-clearfog-base'
+		else
+			OVERLAY_PREFIX='armada-388-clearfog'
+		fi
 esac

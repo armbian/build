@@ -4,7 +4,7 @@ BOOTDELAY=1
 
 BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 BOOTDIR=$MAINLINE_UBOOT_DIR
-BOOTBRANCH='tag:v2019.01'
+BOOTBRANCH='tag:v2019.04'
 BOOTPATCHDIR='u-boot-sunxi'
 UBOOT_USE_GCC='> 7.0'
 UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
@@ -35,8 +35,8 @@ case $BRANCH in
 		ATF_USE_GCC='> 6.3'
 		ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 
-		KERNELSOURCE="https://github.com/megous/linux"
-		KERNELBRANCH="branch:orange-pi-4.19"
+		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+		KERNELBRANCH='branch:linux-4.19.y'
 		KERNELDIR=$MAINLINE_KERNEL_DIR
 		KERNELPATCHDIR='sunxi-next'
 		KERNEL_USE_GCC='> 7.0'
@@ -53,8 +53,7 @@ case $BRANCH in
 
 		#KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 		KERNELSOURCE="https://github.com/megous/linux"
-		#KERNELBRANCH='branch:linux-4.19.y'
-		KERNELBRANCH="branch:orange-pi-5.0"
+		KERNELBRANCH="branch:orange-pi-5.3"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
 		KERNELPATCHDIR='sunxi-dev'
 		KERNEL_USE_GCC='> 7.0'

@@ -11,6 +11,8 @@
 # compile_atf
 # compile_uboot
 # compile_kernel
+# compile_firmware
+# compile_ambian-config
 # compile_sunxi_tools
 # install_rkbin_tools
 # grab_version
@@ -90,6 +92,9 @@ compile_atf()
 	[[ -f license.md ]] && cp license.md $atftempdir/
 }
 
+
+
+
 compile_uboot()
 {
 	# not optimal, but extra cleaning before overlayfs_wrapper should keep sources directory clean
@@ -113,7 +118,16 @@ compile_uboot()
 	local toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER}gcc $UBOOT_USE_GCC"
 
-	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval env PATH=$toolchain:$PATH ${UBOOT_COMPILER}gcc -dumpversion)" "info"
+	if [[ -n $UBOOT_TOOLCHAIN2 ]]; then
+		local toolchain2_type=$(cut -d':' -f1 <<< $UBOOT_TOOLCHAIN2)
+		local toolchain2_ver=$(cut -d':' -f2 <<< $UBOOT_TOOLCHAIN2)
+		local toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
+		[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
+	fi
+
+
+	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval env PATH=$toolchain:$toolchain2:$PATH ${UBOOT_COMPILER}gcc -dumpversion)" "info"
+	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH=$toolchain:$toolchain2:$PATH ${toolchain2_type}gcc -dumpversion)" "info"
 
 	# create directory structure for the .deb package
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
@@ -145,7 +159,7 @@ compile_uboot()
 		fi
 
 		echo -e "\n\t== u-boot ==\n" >>$DEST/debug/compilation.log
-		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
+		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$toolchain2:$PATH \
 			'make $CTHREADS $BOOTCONFIG \
 			CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>>$DEST/debug/compilation.log \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
@@ -154,15 +168,21 @@ compile_uboot()
 		# armbian specifics u-boot settings
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
-		if [[ $BOOTBRANCH == "tag:v2018".* ]]; then
-			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_FAT.*/# CONFIG_ENV_IS_IN_FAT is not set/g' .config
-			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_EXT4.*/CONFIG_ENV_IS_IN_EXT4=y/g' .config
-			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_IN_MMC.*/# CONFIG_ENV_IS_IN_MMC is not set/g' .config
-			[[ -f .config ]] && sed -i 's/^.*CONFIG_ENV_IS_NOWHERE.*/# CONFIG_ENV_IS_NOWHERE is not set/g' .config | echo "# CONFIG_ENV_IS_NOWHERE is not set" >> .config
-			[[ -f .config ]] && echo 'CONFIG_ENV_EXT4_INTERFACE="mmc"' >> .config
-			[[ -f .config ]] && echo 'CONFIG_ENV_EXT4_DEVICE_AND_PART="0:auto"' >> .config
-			[[ -f .config ]] && echo 'CONFIG_ENV_EXT4_FILE="/boot/boot.env"' >> .config
+
+		# for modern kernel and non spi targets
+		if [[ ${BOOTBRANCH} =~ ^tag:v201[8-9](.*) && ${target} != "spi" && -f .config ]]; then
+
+			sed -i 's/^.*CONFIG_ENV_IS_IN_FAT.*/# CONFIG_ENV_IS_IN_FAT is not set/g' .config
+			sed -i 's/^.*CONFIG_ENV_IS_IN_EXT4.*/CONFIG_ENV_IS_IN_EXT4=y/g' .config
+			sed -i 's/^.*CONFIG_ENV_IS_IN_MMC.*/# CONFIG_ENV_IS_IN_MMC is not set/g' .config
+			sed -i 's/^.*CONFIG_ENV_IS_NOWHERE.*/# CONFIG_ENV_IS_NOWHERE is not set/g' .config | echo \
+			"# CONFIG_ENV_IS_NOWHERE is not set" >> .config
+			echo 'CONFIG_ENV_EXT4_INTERFACE="mmc"' >> .config
+			echo 'CONFIG_ENV_EXT4_DEVICE_AND_PART="0:auto"' >> .config
+			echo 'CONFIG_ENV_EXT4_FILE="/boot/boot.env"' >> .config
+
 		fi
+
 		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/packages/blobs/splash/udoo.bmp tools/logos/udoo.bmp
 		touch .scmversion
 
@@ -170,9 +190,13 @@ compile_uboot()
 		[[ $BOOTDELAY == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
 		[[ -n $BOOTDELAY ]] && sed -i "s/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=${BOOTDELAY}/" .config || [[ -f .config ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
 
-		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
+		# workaround when two compilers are needed
+		cross_compile="CROSS_COMPILE=$CCACHE $UBOOT_COMPILER";
+		[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe"; # empty parameter is not allowed
+
+		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$toolchain2:$PATH \
 			'make $target_make $CTHREADS \
-			CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>>$DEST/debug/compilation.log \
+			"${cross_compile}"' 2>>$DEST/debug/compilation.log \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -232,7 +256,7 @@ compile_uboot()
 
 	[[ ! -f $SRC/.tmp/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
-	mv $SRC/.tmp/${uboot_name}.deb $DEST/debs/
+	mv $SRC/.tmp/${uboot_name}.deb ${DEB_STORAGE}/
 }
 
 compile_kernel()
@@ -266,49 +290,8 @@ compile_kernel()
 	# read kernel version
 	local version=$(grab_version "$kerneldir")
 
-	# add WireGuard
-	if linux-version compare $version ge 3.14 && [ "$WIREGUARD" == yes ]; then
-			display_alert "Adding" "WireGuard" "info"
-			rm -rf $SRC/cache/sources/$LINUXSOURCEDIR/net/wireguard
-			cp -R $SRC/cache/sources/wireguard/src/ $SRC/cache/sources/$LINUXSOURCEDIR/net/wireguard
-			sed -i "/^obj-\\\$(CONFIG_NETFILTER).*+=/a obj-\$(CONFIG_WIREGUARD) += wireguard/" "$SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile"
-			sed -i "/^if INET\$/a source \"net/wireguard/Kconfig\"" "$SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig"
-			# remove duplicates
-			[[ $(cat $SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile | grep wireguard | wc -l) -gt 1 ]] && \
-			sed -i '0,/wireguard/{/wireguard/d;}' $SRC/cache/sources/$LINUXSOURCEDIR/net/Makefile
-			[[ $(cat $SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig | grep wireguard | wc -l) -gt 1 ]] && \
-			sed -i '0,/wireguard/{/wireguard/d;}' $SRC/cache/sources/$LINUXSOURCEDIR/net/Kconfig
-			# headers workaround
-			display_alert "Patching WireGuard" "Applying workaround for headers compilation" "info"
-			sed -i '/mkdir -p "$destdir"/a mkdir -p "$destdir"/net/wireguard; touch "$destdir"/net/wireguard/{Kconfig,Makefile} # workaround for Wireguard' $SRC/cache/sources/$LINUXSOURCEDIR/scripts/package/builddeb
-	fi
-
-	# add drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
-	if linux-version compare $version ge 3.14 && [ "$RTL8812AU" == yes ]; then
-		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets" "info"
-		rm -rf $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au
-		mkdir -p $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/
-		ln -s $SRC/cache/sources/rtl8812au/core $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/core
-		ln -s $SRC/cache/sources/rtl8812au/hal $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/hal
-		ln -s $SRC/cache/sources/rtl8812au/include $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/include
-		ln -s $SRC/cache/sources/rtl8812au/os_dep $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/os_dep
-		ln -s $SRC/cache/sources/rtl8812au/platform $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/platform
-		ln -s $SRC/cache/sources/rtl8812au/modules.order $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/modules.order
-
-		# Makefile
-		cp $SRC/cache/sources/rtl8812au/Makefile $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/Makefile
-		cp $SRC/cache/sources/rtl8812au/Kconfig $SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/Kconfig
-
-		# Adjust path
-		sed -i 's/include $(TopDIR)\/hal\/phydm\/phydm.mk/include $(TopDIR)\/drivers\/net\/wireless\/rtl8812au\/hal\/phydm\/phydm.mk/' \
-		$SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/rtl8812au/Makefile
-
-		# Add to section Makefile
-		sed -i '/obj-$(CONFIG_.*ATMEL).*/a obj-$(CONFIG_RTL8812AU) += rtl8812au/' \
-		$SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/Makefile
-		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8812au\/Kconfig"' \
-		$SRC/cache/sources/$LINUXSOURCEDIR/drivers/net/wireless/Kconfig
-	fi
+	# build 3rd party drivers
+	compilation_prepare
 
 	# create linux-source package - with already patched sources
 	local sources_pkg_dir=$SRC/.tmp/${CHOSEN_KSRC}_${REVISION}_all
@@ -338,9 +321,9 @@ compile_kernel()
 		display_alert "Using previous kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
 		cp $DEST/config/$LINUXCONFIG.config .config
 	else
-		if [[ -f $SRC/userpatches/$LINUXCONFIG.config ]]; then
+		if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
-			cp $SRC/userpatches/$LINUXCONFIG.config .config
+			cp $USERPATCHES_PATH/$LINUXCONFIG.config .config
 		else
 			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
 			cp $SRC/config/kernel/$LINUXCONFIG.config .config
@@ -371,7 +354,7 @@ compile_kernel()
 		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
 			'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" ${KERNEL_MENUCONFIG:-menuconfig}'
 		# store kernel config in easily reachable place
-		display_alert "Exporting new kernel config" "$DEST/kernel/$LINUXCONFIG.config" "info"
+		display_alert "Exporting new kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
 		cp .config $DEST/config/$LINUXCONFIG.config
 		# export defconfig too if requested
 		if [[ $KERNEL_EXPORT_DEFCONFIG == yes ]]; then
@@ -387,6 +370,7 @@ compile_kernel()
 	eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
 		'make $CTHREADS ARCH=$ARCHITECTURE \
 		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" \
+		$SRC_LOADADDR \
 		LOCALVERSION="-$LINUXFAMILY" \
 		$KERNEL_IMAGE_TYPE modules dtbs 2>>$DEST/debug/compilation.log' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
@@ -437,15 +421,114 @@ compile_kernel()
 
 	if [[ $BUILD_KSRC != no ]]; then
 		fakeroot dpkg-deb -z0 -b $sources_pkg_dir ${sources_pkg_dir}.deb
-		mv ${sources_pkg_dir}.deb $DEST/debs/
+		mv ${sources_pkg_dir}.deb ${DEB_STORAGE}/
 	fi
 	rm -rf $sources_pkg_dir
 
 	cd ..
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
-	mv *.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
+	mv *.deb ${DEB_STORAGE}/ || exit_with_error "Failed moving kernel DEBs"
 }
+
+
+
+
+compile_firmware()
+{
+	display_alert "Merging and packaging linux firmware" "@host" "info"
+	if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
+		plugin_repo="https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+	else
+		plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+	fi
+	local plugin_dir="armbian-firmware${FULL}"
+	[[ -d $SRC/cache/sources/$plugin_dir ]] && rm -rf $SRC/cache/sources/$plugin_dir
+	mkdir -p $SRC/cache/sources/$plugin_dir/lib/firmware
+
+	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
+	if [[ -n $FULL ]]; then
+		fetch_from_repo "$plugin_repo" "linux-firmware-git" "branch:master"
+		# cp : create hardlinks
+		cp -alf $SRC/cache/sources/linux-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware/
+	fi
+	# overlay our firmware
+	# cp : create hardlinks
+	cp -alf $SRC/cache/sources/armbian-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware/
+
+	# cleanup what's not needed for sure
+	rm -rf $SRC/cache/sources/$plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
+	cd $SRC/cache/sources/$plugin_dir
+
+	# set up control file
+	mkdir -p DEBIAN
+	cat <<-END > DEBIAN/control
+	Package: armbian-firmware${FULL}
+	Version: $REVISION
+	Architecture: all
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Installed-Size: 1
+	Replaces: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}
+	Section: kernel
+	Priority: optional
+	Description: Linux firmware${FULL}
+	END
+
+	cd $SRC/cache/sources
+	# pack
+	mv armbian-firmware${FULL} armbian-firmware${FULL}_${REVISION}_all
+	fakeroot dpkg -b armbian-firmware${FULL}_${REVISION}_all >> $DEST/debug/install.log 2>&1
+	mv armbian-firmware${FULL}_${REVISION}_all armbian-firmware${FULL}
+	mv armbian-firmware${FULL}_${REVISION}_all.deb ${DEB_STORAGE}/
+}
+
+
+
+
+compile_armbian-config()
+{
+	local tmpdir=$SRC/.tmp/armbian-config_${REVISION}_all
+
+	display_alert "Building deb" "armbian-config" "info"
+
+	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
+
+	mkdir -p $tmpdir/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
+
+	# set up control file
+	cat <<-END > $tmpdir/DEBIAN/control
+	Package: armbian-config
+	Version: $REVISION
+	Architecture: all
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Replaces: armbian-bsp
+	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, iptables, resolvconf, \
+	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common
+	Recommends: armbian-bsp
+	Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
+	Section: utils
+	Priority: optional
+	Description: Armbian configuration utility
+	END
+
+	install -m 755 $SRC/cache/sources/armbian-config/scripts/tv_grab_file $tmpdir/usr/bin/tv_grab_file
+	install -m 755 $SRC/cache/sources/armbian-config/debian-config $tmpdir/usr/sbin/armbian-config
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-jobs $tmpdir/usr/lib/armbian-config/jobs.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-submenu $tmpdir/usr/lib/armbian-config/submenu.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-functions $tmpdir/usr/lib/armbian-config/functions.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-functions-network $tmpdir/usr/lib/armbian-config/functions-network.sh
+	install -m 755 $SRC/cache/sources/armbian-config/softy $tmpdir/usr/sbin/softy
+	# fallback to replace armbian-config in BSP
+	ln -sf /usr/sbin/armbian-config $tmpdir/usr/bin/armbian-config
+	ln -sf /usr/sbin/softy $tmpdir/usr/bin/softy
+
+	fakeroot dpkg -b ${tmpdir} >/dev/null
+	mv ${tmpdir}.deb ${DEB_STORAGE}/
+	rm -rf $tmpdir
+}
+
+
+
 
 compile_sunxi_tools()
 {
@@ -516,6 +599,14 @@ find_toolchain()
 		fi
 	done
 	echo "$toolchain"
+	# logging a stack of used compilers.
+	if [[ -f $DEST/debug/compiler.log ]]; then
+		if ! grep -q "$toolchain" $DEST/debug/compiler.log; then
+			echo "$toolchain" >> $DEST/debug/compiler.log;
+		fi
+	else
+			echo "$toolchain" >> $DEST/debug/compiler.log;
+	fi
 }
 
 # advanced_patch <dest> <family> <board> <target> <branch> <description>
@@ -528,10 +619,10 @@ find_toolchain()
 # <description>: additional description text
 #
 # priority:
-# $SRC/userpatches/<dest>/<family>/target_<target>
-# $SRC/userpatches/<dest>/<family>/board_<board>
-# $SRC/userpatches/<dest>/<family>/branch_<branch>
-# $SRC/userpatches/<dest>/<family>
+# $USERPATCHES_PATH/<dest>/<family>/target_<target>
+# $USERPATCHES_PATH/<dest>/<family>/board_<board>
+# $USERPATCHES_PATH/<dest>/<family>/branch_<branch>
+# $USERPATCHES_PATH/<dest>/<family>
 # $SRC/patch/<dest>/<family>/target_<target>
 # $SRC/patch/<dest>/<family>/board_<board>
 # $SRC/patch/<dest>/<family>/branch_<branch>
@@ -551,10 +642,10 @@ advanced_patch()
 
 	local names=()
 	local dirs=(
-		"$SRC/userpatches/$dest/$family/target_${target}:[\e[33mu\e[0m][\e[34mt\e[0m]"
-		"$SRC/userpatches/$dest/$family/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
-		"$SRC/userpatches/$dest/$family/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
-		"$SRC/userpatches/$dest/$family:[\e[33mu\e[0m][\e[32mc\e[0m]"
+		"$USERPATCHES_PATH/$dest/$family/target_${target}:[\e[33mu\e[0m][\e[34mt\e[0m]"
+		"$USERPATCHES_PATH/$dest/$family/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
+		"$USERPATCHES_PATH/$dest/$family/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
+		"$USERPATCHES_PATH/$dest/$family:[\e[33mu\e[0m][\e[32mc\e[0m]"
 		"$SRC/patch/$dest/$family/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]"
 		"$SRC/patch/$dest/$family/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"
 		"$SRC/patch/$dest/$family/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]"

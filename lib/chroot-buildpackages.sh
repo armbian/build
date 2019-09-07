@@ -1,3 +1,5 @@
+#!/bin/bash
+#
 # Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
@@ -26,14 +28,20 @@ create_chroot()
 	qemu_binary['arm64']='qemu-aarch64-static'
 	apt_mirror['jessie']="$DEBIAN_MIRROR"
 	apt_mirror['stretch']="$DEBIAN_MIRROR"
+	apt_mirror['buster']="$DEBIAN_MIRROR"
 	apt_mirror['xenial']="$UBUNTU_MIRROR"
 	apt_mirror['bionic']="$UBUNTU_MIRROR"
+	apt_mirror['disco']="$UBUNTU_MIRROR"
 	components['jessie']='main,contrib'
 	components['stretch']='main,contrib'
+	components['buster']='main,contrib'
 	components['xenial']='main,universe,multiverse'
 	components['bionic']='main,universe,multiverse'
+	components['disco']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc"
+	# perhaps a temporally workaround
+	[[ $release == buster || $release == disco ]] && includes=$includes",perl-openssl-defaults,libnet-ssleay-perl"
 	if [[ $NO_APT_CACHER != yes ]]; then
 		local mirror_addr="http://localhost:3142/${apt_mirror[$release]}"
 	else
@@ -83,8 +91,10 @@ chroot_prepare_distccd()
 	declare -A gcc_version gcc_type
 	gcc_version['jessie']='4.9'
 	gcc_version['stretch']='6.3'
+	gcc_version['buster']='8.3'
 	gcc_version['xenial']='5.4'
 	gcc_version['bionic']='5.4'
+	gcc_version['disco']='8.3'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
 	gcc_type['arm64']='aarch64-linux-gnu-'
 	rm -f $dest/cmdlist
@@ -110,8 +120,19 @@ chroot_build_packages()
 {
 	local built_ok=()
 	local failed=()
-	for release in jessie xenial stretch bionic; do
-		for arch in armhf arm64; do
+
+	if [[ $IMAGE_TYPE == user-built ]]; then
+		# if user-built image compile only for selected arch/release
+		target_release="$RELEASE"
+		target_arch="$ARCH"
+	else
+		# only make packages for recent releases. There are no changes on older
+		target_release="stretch bionic buster disco"
+		target_arch="armhf arm64"
+	fi
+
+	for release in $target_release; do
+		for arch in $target_arch; do
 			display_alert "Starting package building process" "$release/$arch" "info"
 
 			local target_dir=$SRC/cache/buildpkg/${release}-${arch}-v${CHROOT_CACHE_VERSION}
@@ -147,7 +168,7 @@ chroot_build_packages()
 					continue
 				fi
 
-				local plugin_target_dir=$DEST/debs/extra/$package_component/
+				local plugin_target_dir=${DEB_STORAGE}/extra/$package_component/
 				mkdir -p $plugin_target_dir
 
 				# check if needs building
@@ -271,8 +292,8 @@ chroot_installpackages_local()
 	mkdir -p /tmp/aptly-temp/
 	aptly -config=$conf repo create temp
 	# NOTE: this works recursively
-	aptly -config=$conf repo add temp $DEST/debs/extra/${RELEASE}-desktop/
-	aptly -config=$conf repo add temp $DEST/debs/extra/${RELEASE}-utils/
+	aptly -config=$conf repo add temp ${DEB_STORAGE}/extra/${RELEASE}-desktop/
+	aptly -config=$conf repo add temp ${DEB_STORAGE}/extra/${RELEASE}-utils/
 	# -gpg-key="925644A6"
 	aptly -keyring="$SRC/packages/extras-buildpkgs/buildpkg-public.gpg" -secret-keyring="$SRC/packages/extras-buildpkgs/buildpkg.gpg" -batch=true -config=$conf \
 		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution=$RELEASE publish repo temp
@@ -284,7 +305,7 @@ chroot_installpackages_local()
 	Pin: origin "localhost"
 	Pin-Priority: 550
 	EOF
-	cat <<-EOF > $SDCARD/etc/apt/sources.list.d/armbian-temp.list
+	cat <<-EOF > "${SDCARD}"/etc/apt/sources.list.d/armbian-temp.list
 	deb http://localhost:8189/ $RELEASE temp
 	EOF
 	chroot_installpackages
@@ -298,15 +319,15 @@ chroot_installpackages()
 	local remote_only=$1
 	local install_list=""
 	display_alert "Installing additional packages" "EXTERNAL_NEW"
-	for plugin in $SRC/packages/extras-buildpkgs/*.conf; do
-		source $plugin
+	for plugin in "${SRC}"/packages/extras-buildpkgs/*.conf; do
+		source "$plugin"
 		if [[ $(type -t package_checkinstall) == function ]] && package_checkinstall; then
 			install_list="$install_list $package_install_target"
 		fi
 		unset package_install_target package_checkinstall
 	done
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
-	cat <<-EOF > $SDCARD/tmp/install.sh
+	cat <<-EOF > "${SDCARD}"/tmp/install.sh
 	#!/bin/bash
 	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
 	apt-get $apt_extra -q update
@@ -326,6 +347,6 @@ chroot_installpackages()
 	rm /tmp/buildpkg.key 2>/dev/null
 	rm -- "\$0"
 	EOF
-	chmod +x $SDCARD/tmp/install.sh
-	chroot $SDCARD /bin/bash -c "/tmp/install.sh"
+	chmod +x "${SDCARD}"/tmp/install.sh
+	chroot "${SDCARD}" /bin/bash -c "/tmp/install.sh"
 } #############################################################################

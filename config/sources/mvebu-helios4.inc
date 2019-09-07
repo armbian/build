@@ -1,69 +1,114 @@
 case $BRANCH in
 	default)
-	BOOTSOURCE='https://github.com/helios-4/u-boot-marvell.git'
-	BOOTBRANCH='branch:u-boot-2013.01-15t1-helios4'
-	BOOTDIR='u-boot-armada'
-	BOOTSCRIPT='boot-marvell.cmd:boot.cmd'
+		BOOTSOURCE='https://github.com/helios-4/u-boot.git'
+		BOOTBRANCH='branch:helios4'
+		BOOTDIR=$MAINLINE_UBOOT_DIR
+		BOOTSCRIPT='boot-marvell.cmd:boot.cmd'
 
-	UBOOT_TARGET_MAP="u-boot.mmc;;u-boot.mmc
-		u-boot.flash;spi;u-boot.flash u-boot-uart.flash"
+		UBOOT_TARGET_MAP=";sdhc;u-boot-spl.kwb:u-boot.mmc
+				  ;spi;u-boot-spl.kwb:u-boot.flash"
 
-	UBOOT_USE_GCC='== 4.9'
-	UBOOT_COMPILER='arm-linux-gnueabi-'
+		UBOOT_USE_GCC='> 7.0'
+		UBOOT_COMPILER='arm-linux-gnueabi-'
+		OVERLAY_PREFIX='armada-388-helios4'
 
-	BOOTPATCHDIR='u-boot-helios4'
+		BOOTPATCHDIR='u-boot-helios4'
 	;;
 	next)
-	BOOTSOURCE='https://github.com/helios-4/u-boot.git'
-	BOOTBRANCH='branch:helios4'
-	BOOTDIR=$MAINLINE_UBOOT_DIR
-	BOOTSCRIPT='boot-marvell.cmd:boot.cmd'
+		BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
+		BOOTBRANCH='tag:v2019.04'
+		BOOTDIR=$MAINLINE_UBOOT_DIR
+		BOOTPATCHDIR='u-boot-mvebu-next'
+		BOOTSCRIPT='boot-mvebu-next.cmd:boot.cmd'
 
-	UBOOT_TARGET_MAP=";;u-boot-spl.kwb:u-boot.mmc
-		;spi;u-boot-spl.kwb:u-boot.flash"
-	UBOOT_USE_GCC='> 7.0'
+		UBOOT_TARGET_MAP=";sdhc;u-boot-spl.kwb:u-boot.mmc
+				  ;spi;u-boot-spl.kwb:u-boot.flash
+				  ;uart;u-boot-spl.kwb:u-boot.uart"
 
-	OVERLAY_PREFIX='armada-388-helios4'
+		UBOOT_USE_GCC='> 7.0'
 
-	BOOTPATCHDIR='u-boot-helios4-next'
+		OVERLAY_PREFIX='armada-388-helios4'
+	;;
+	dev)
+		OVERLAY_PREFIX='armada-388-helios4'
 	;;
 esac
 
 
 # Helios4 tweak
-family_tweaks_s()
+family_tweaks_bsp()
 {
-	# install fancontrol and mdadm
-	chroot $SDCARD /bin/bash -c "apt-get -y -qq install fancontrol mdadm >/dev/null 2>&1"
+	## Add dependency list
+	local DEPENDENCIES="fancontrol, mdadm"
+	sed -i "/^Depends:/ s/$/, $DEPENDENCIES/" "${destination}"/DEBIAN/control
+
+	## Pack additional files
+
+	mkdir -p $destination/etc/systemd/system/
+	mkdir -p $destination/etc/udev/rules.d/
+	mkdir -p $destination/etc/default/
+	mkdir -p $destination/lib/systemd/system/
+	mkdir -p $destination/usr/sbin
 
 	### Fancontrol tweaks
-
 	# copy hwmon rules to fix device mapping
-	cp $SRC/packages/bsp/helios4/90-helios4-hwmon.rules $SDCARD/etc/udev/rules.d/
+	install -m 644 $SRC/packages/bsp/helios4/90-helios4-hwmon.rules $destination/etc/udev/rules.d/
 
 	# copy fancontrol config
-	case $BRANCH in
-	default)
-		cp $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-default.conf $SDCARD/etc/fancontrol
-		;;
-	next)
-		cp $SRC/packages/bsp/helios4/fancontrol_pwm-fan-mvebu-next.conf $SDCARD/etc/fancontrol
-		;;
-	esac
+	install -m 644 $SRC/packages/bsp/helios4/fancontrol_pwm-fan.conf $destination/etc/fancontrol
+	install -m 644 $SRC/packages/bsp/helios4/fancontrol.service $destination/etc/systemd/system/
 
 	### Mdadm tweaks
 
 	# copy mdadm-fault-led script and set right permission
-	cp $SRC/packages/bsp/helios4/mdadm-fault-led.sh $SDCARD/usr/sbin/
-	chmod a+x $SDCARD/usr/sbin/mdadm-fault-led.sh
-
-	# modify mdadm configuration
-	echo -e "\n # Trigger Fault Led script when an event is detected" >> $SDCARD/etc/mdadm/mdadm.conf
-	echo -e "PROGRAM /usr/sbin/mdadm-fault-led.sh" >> $SDCARD/etc/mdadm/mdadm.conf
+	install -m 755 $SRC/packages/bsp/helios4/mdadm-fault-led.sh $destination/usr/sbin
 
 	### Ethernet tweaks
 
 	# copy and enable helios4-wol.service
-	cp $SRC/packages/bsp/helios4/helios4-wol.service $SDCARD/lib/systemd/system/
-	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable helios4-wol.service >/dev/null 2>&1"
+	install -m 644 $SRC/packages/bsp/helios4/helios4-wol.service $destination/lib/systemd/system/
+
+	### Other tweaks
+
+	# add custom motd default conf file
+        install -m 644 $SRC/packages/bsp/helios4/armbian-motd $destination/etc/default/
+
+        # create modules file
+	if [[ $BRANCH == dev && -n $MODULES_DEV ]]; then
+		tr ' ' '\n' <<< "$MODULES_DEV" > "${destination}"/etc/modules
+	elif [[ $BRANCH == next || $BRANCH == dev ]]; then
+		tr ' ' '\n' <<< "$MODULES_NEXT" > "${destination}"/etc/modules
+	else
+		tr ' ' '\n' <<< "$MODULES" > "${destination}"/etc/modules
+	fi
+
+	## Postinst
+	# Remove exit 0 on end of file
+	sed -i '$ s/^exit 0//g' "${destination}"/DEBIAN/postinst
+
+	cat <<-'EOF' >> "${destination}"/DEBIAN/postinst
+		### Mdadm tweaks
+		MDADM_CONF=/etc/mdadm/mdadm.conf
+		MDADM_HOOK=/usr/share/initramfs-tools/hooks/mdadm
+		grep -q "PROGRAM" $MDADM_CONF
+		if [ "$?" -ne 0 ]; then
+			cat <<-EOS >> $MDADM_CONF
+			# Trigger Fault Led script when an event is detected
+			PROGRAM /usr/sbin/mdadm-fault-led.sh
+			EOS
+		fi
+
+		# Fix for "mdadm: initramfs boot message: /scripts/local-bottom/mdadm: rm: not found"
+		# Refer to https://wiki.kobol.io/mdadm/#fix-mdadm
+		grep -q "^[[:blank:]]*copy_exec /bin/rm /bin" $MDADM_HOOK
+		if [ "$?" -ne 0 ]; then
+			sed -i '/copy_exec \/sbin\/mdmon \/sbin/ a\copy_exec /bin/rm /bin' $MDADM_HOOK
+			update-initramfs -u
+		fi
+
+		# enable helios4-wol.service
+		systemctl --no-reload enable helios4-wol.service >/dev/null 2>&1
+
+		exit 0
+	EOF
 }

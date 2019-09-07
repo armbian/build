@@ -8,5 +8,3 @@ MODULES_NEXT="#"
 BUILD_DESKTOP="no"
 #
 KERNEL_TARGET="default"
-CLI_TARGET="stretch,bionic:default"
-CLI_BETA_TARGET=""
