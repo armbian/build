@@ -265,6 +265,11 @@ if [[ -f $USERPATCHES_PATH/lib.config ]]; then
 	source "$USERPATCHES_PATH"/lib.config
 fi
 
+if [[ "$(type -t user_config)" == "function" ]]; then
+	display_alert "Invoke function with user override" "user_config" "info"
+	user_config
+fi
+
 # apt-cacher-ng mirror configurarion
 if [[ $DISTRIBUTION == Ubuntu ]]; then
 	APT_MIRROR=$UBUNTU_MIRROR
