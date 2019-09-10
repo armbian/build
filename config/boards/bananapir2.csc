@@ -2,9 +2,7 @@
 BOARD_NAME="Banana Pi R2"
 BOARDFAMILY="mt7623"
 BOOTCONFIG="mt7623n_bpir2_defconfig"
-#
-MODULES="#"
-MODULES_NEXT="#"
+MODULES=""
+MODULES_NEXT=""
 BUILD_DESKTOP="no"
-#
 KERNEL_TARGET="default"

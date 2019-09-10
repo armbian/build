@@ -4,5 +4,4 @@ BOARDFAMILY="sun7i"
 BOOTCONFIG="MK808C_defconfig"
 MODULES="hci_uart rfcomm hidp sunxi-ir"
 MODULES_NEXT=""
-#
 KERNEL_TARGET="default,next"
