@@ -7,4 +7,3 @@ MODULES_NEXT=""
 MODULES_BLACKLIST="dhd"
 DEFAULT_OVERLAYS="cir analog-codec"
 KERNEL_TARGET="default,next,dev"
-
