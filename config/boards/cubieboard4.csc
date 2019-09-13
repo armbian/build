@@ -6,5 +6,4 @@ BOOTCONFIG=Cubieboard4_defconfig
 MODULES=""
 MODULES_NEXT=""
 BUILD_DESKTOP="no"
-#
 KERNEL_TARGET="next,dev"
