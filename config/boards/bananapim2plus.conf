@@ -6,4 +6,3 @@ MODULES="#w1-sunxi #w1-gpio #w1-therm #sunxi-cir dhd hci_uart rfcomm hidp"
 MODULES_NEXT="brcmfmac g_serial"
 SERIALCON="ttyS0,ttyGS0"
 KERNEL_TARGET="default,next,dev"
-
