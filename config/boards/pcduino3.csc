@@ -4,6 +4,4 @@ BOARDFAMILY="sun7i"
 BOOTCONFIG="Linksprite_pcDuino3_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i"
 MODULES_NEXT="bonding"
-#
 KERNEL_TARGET="next"
-#

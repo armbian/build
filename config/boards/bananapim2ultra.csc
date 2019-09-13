@@ -5,5 +5,4 @@ BOOTCONFIG="Bananapi_M2_Ultra_defconfig"
 MODULES=""
 MODULES_NEXT=""
 OVERLAY_PREFIX=""
-#
 KERNEL_TARGET="next,dev"

@@ -5,6 +5,5 @@ BOOTCONFIG="A33-OLinuXino_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp bonding spi_sun7i 8021q a20_tp"
 MODULES_NEXT=""
 OVERLAY_PREFIX="sun8i-a33"
-#
 KERNEL_TARGET="next,dev"
-#
+

@@ -4,13 +4,4 @@ BOARDFAMILY="sun7i"
 BOOTCONFIG="bananapi_m1_plus_defconfig"
 MODULES="hci_uart gpio_sunxi rfcomm hidp sunxi-ir bonding spi_sun7i 8021q a20_tp #ap6211"
 MODULES_NEXT="brcmfmac bonding"
-#
 KERNEL_TARGET="default,next,dev"
-#
-#
-
-#
-BOARDRATING=""
-CHIP="http://docs.armbian.com/Hardware_Allwinner-A20/"
-HARDWARE="https://linux-sunxi.org/Banana_Pi"
-FORUMS="http://forum.armbian.com/index.php/forum/7-allwinner-a10a20/"
