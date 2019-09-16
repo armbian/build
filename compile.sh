@@ -70,8 +70,12 @@ fi
 
 # usind default if custom not found
 if [[ -z "$CONFIG" && -f "${SRC}/userpatches/config-default.conf" ]]; then
-	[[ ! -f "${SRC}/userpatches/config-$CONFIG.conf" ]] && display_alert "User defined config \"$1\" not found. Using defaults" "config-default.conf" "wrn"
 	CONFIG="userpatches/config-default.conf"
+fi
+
+# display warning that custom was not found
+if [[ ! -f "${SRC}/userpatches/config-$1.conf" ]]; then
+	display_alert "User defined config \"$1\" not found." "" "wrn"
 fi
 
 # source build configuration file
