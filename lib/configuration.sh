@@ -102,7 +102,7 @@ if [[ -f $USERPATCHES_PATH/sources/$LINUXFAMILY.conf ]]; then
 fi
 
 # dropbear needs to be configured differently
-[[ $CRYPTROOT_ENABLE == yes && ($RELEASE == jessie || $RELEASE == xenial) ]] && exit_with_error "Encrypted rootfs is not supported in Jessie or Xenial"
+[[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
 
 [[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
 [[ $RELEASE == bionic && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Ubuntu Bionic images with selected kernel is not supported"
@@ -200,14 +200,6 @@ PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina thun
 
 # Release specific packages
 case $RELEASE in
-
-	jessie)
-		DEBOOTSTRAP_COMPONENTS="main"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE=" kbd gnupg2 dirmngr sysbench"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless policykit-1-gnome eject numix-icon-theme \
-								libgnome2-perl pulseaudio-module-gconf"
-		PACKAGE_LIST_DESKTOP_SUGGESTS+=" iceweasel pluma system-config-printer leafpad"
-	;;
 
 	xenial)
 		DEBOOTSTRAP_COMPONENTS="main"

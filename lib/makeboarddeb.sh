@@ -315,11 +315,6 @@ create_board_package()
 	fi
 
 	case $RELEASE in
-	jessie)
-		mkdir -p "${destination}"/etc/NetworkManager/dispatcher.d/
-		install -m 755 "${SRC}"/packages/bsp/99disable-power-management "${destination}"/etc/NetworkManager/dispatcher.d/
-	;;
-
 	xenial)
 		mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
 		cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
