@@ -36,12 +36,17 @@ if [[ -z "$CONFIG" && -n "$1" && -f "${SRC}/userpatches/config-$1.conf" ]]; then
 fi
 
 if [[ -z "$CONFIG" && -z "$1" && ! -f "${SRC}/userpatches/config-default.conf" ]]; then
-	display_alert "Create example config file using template" "config-default.conf" "info"
 	mkdir -p $SRC/userpatches
-	if [[ ! -f "${SRC}"/userpatches/config-example.conf ]]; then
-		cp "${SRC}"/config/templates/config-example.conf "${SRC}"/userpatches/config-example.conf || exit 1
+	if [[ -f "${SRC}/config-default.conf" ]]; then
+		display_alert "Migrate config file to userpatches directory" "config-default.conf" "info"
+		mv "${SRC}/config-default.conf" "${SRC}/userpatches" || exit 1
+	else
+		display_alert "Create example config file using template" "config-default.conf" "info"
+		if [[ ! -f "${SRC}"/userpatches/config-example.conf ]]; then
+			cp "${SRC}"/config/templates/config-example.conf "${SRC}"/userpatches/config-example.conf || exit 1
+		fi
+		ln -s config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
 	fi
-	ln -s config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
 fi
 
 if [[ -z "$CONFIG" && -f "${SRC}/userpatches/config-default.conf" ]]; then
