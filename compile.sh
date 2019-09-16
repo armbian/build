@@ -14,8 +14,6 @@
 # check Armbian documentation for more info
 
 SRC="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
-# fallback for Trusty
-[[ -z "${SRC}" ]] && SRC="$(pwd)"
 
 # check for whitespace in $SRC and exit for safety reasons
 grep -q "[[:space:]]" <<<"${SRC}" && { echo "\"${SRC}\" contains whitespace. Not supported. Aborting." >&2 ; exit 1 ; }
@@ -31,32 +29,67 @@ else
 	exit 255
 fi
 
-# source build configuration file
-if [[ -n $1 && -f "${SRC}/config-$1.conf" ]]; then
-	display_alert "Using config file" "config-$1.conf" "info"
-	# shellcheck source=/dev/null
-	source "${SRC}/config-$1.conf"
-else
-	# copy default config from the template
-	if [[ ! -f "${SRC}"/config-default.conf ]]; then
-		display_alert "Create example config file using template" "config-default.conf" "info"
-		if [[ ! -f "${SRC}"/config-example.conf ]]; then
-			cp "${SRC}"/config/templates/config-example.conf "${SRC}"/config-example.conf || exit 1
-		fi
-		ln -s config-example.conf "${SRC}"/config-default.conf || exit 1
-	fi
-
-	display_alert "Using config file" "config-default.conf" "info"
-	# shellcheck source=/dev/null
-	source "${SRC}"/config-default.conf
-fi
-[[ -z "${USERPATCHES_PATH}" ]] && USERPATCHES_PATH="$SRC/userpatches"
-
 if [[ $EUID != 0 ]]; then
 	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
 	sudo "$SRC/compile.sh" "$@"
 	exit $?
 fi
+
+if [[ -z "$CONFIG" && -n "$1" && -f "${SRC}/userpatches/config-$1.conf" ]]; then
+	CONFIG="userpatches/config-$1.conf"
+fi
+
+if [[ -z "$CONFIG" && -z "$1" && ! -f "${SRC}/userpatches/config-default.conf" ]]; then
+	mkdir -p $SRC/userpatches
+	if [[ -f "${SRC}/config-default.conf" ]]; then
+		display_alert "Migrate config file to userpatches directory" "config-default.conf" "info"
+		mv "${SRC}/config-default.conf" "${SRC}/userpatches" || exit 1
+	else
+		display_alert "Create example config file using template" "config-default.conf" "info"
+		if [[ ! -f "${SRC}"/userpatches/config-example.conf ]]; then
+			cp "${SRC}"/config/templates/config-example.conf "${SRC}"/userpatches/config-example.conf || exit 1
+		fi
+		ln -fs config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
+	fi
+fi
+
+# migrate docker config
+if [[ -f "${SRC}/config-docker.conf" ]]; then
+	mv "${SRC}/config-docker.conf" "${SRC}"/userpatches/config-docker.conf || exit 1
+	elif [[ ! -f "${SRC}/userpatches/config-docker.conf" ]]; then
+	cp "${SRC}"/config/templates/config-docker.conf "${SRC}"/userpatches/config-docker.conf || exit 1
+fi
+
+# migrate vagrant config
+if [[ -f "${SRC}/config-vagrant.conf" ]]; then
+        mv "${SRC}/config-vagrant.conf" "${SRC}"/userpatches/config-vagrant.conf || exit 1
+        elif [[ ! -f "${SRC}/userpatches/config-vagrant.conf" ]]; then
+        cp "${SRC}"/config/templates/config-vagrant.conf "${SRC}"/userpatches/config-vagrant.conf || exit 1
+fi
+
+# usind default if custom not found
+if [[ -z "$CONFIG" && -f "${SRC}/userpatches/config-default.conf" ]]; then
+	[[ ! -f "${SRC}/userpatches/config-$CONFIG.conf" ]] && display_alert "User defined config \"$1\" not found. Using defaults" "config-default.conf" "wrn"
+	CONFIG="userpatches/config-default.conf"
+fi
+
+# source build configuration file
+CONFIG_FILE="$(realpath "$CONFIG")"
+
+if [[ ! -f $CONFIG_FILE ]]; then
+	display_alert "Config file does not exist" "$CONFIG" "error"
+	exit 254
+fi
+
+CONFIG_PATH=$(dirname "$CONFIG_FILE")
+
+display_alert "Using config file" "$CONFIG_FILE" "info"
+pushd $CONFIG_PATH > /dev/null
+# shellcheck source=/dev/null
+source "$CONFIG_FILE"
+popd > /dev/null
+
+[[ -z "${USERPATCHES_PATH}" ]] && USERPATCHES_PATH="$CONFIG_PATH"
 
 # Script parameters handling
 for i in "$@"; do
