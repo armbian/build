@@ -73,11 +73,6 @@ if [[ -z "$CONFIG" && -f "${SRC}/userpatches/config-default.conf" ]]; then
 	CONFIG="userpatches/config-default.conf"
 fi
 
-# display warning that custom was not found
-if [[ ! -f "${SRC}/userpatches/config-$1.conf" ]]; then
-	display_alert "User defined config \"$1\" not found." "" "wrn"
-fi
-
 # source build configuration file
 CONFIG_FILE="$(realpath "$CONFIG")"
 
