@@ -35,6 +35,18 @@ if [[ $EUID != 0 ]]; then
 	exit $?
 fi
 
+# Install Docker if not there but wanted
+if [[ "$1" == docker && -z "$(which docker)" ]]; then
+	display_alert "Docker not installed." "Installing" "Info"
+	echo "deb https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}') $(lsb_release -cs) edge" > /etc/apt/sources.list.d/docker.list
+	[[ ! $(which curl) ]] && apt-get update;apt-get install -y -qq --no-install-recommends curl
+	curl -fsSL "https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}')/gpg" | apt-key add -qq - > /dev/null 2>&1
+	apt-get update
+	apt-get install -y -qq --no-install-recommends docker-ce
+	sudo "$SRC/compile.sh" "$@"
+        exit $?
+fi
+
 if [[ -z "$CONFIG" && -n "$1" && -f "${SRC}/userpatches/config-$1.conf" ]]; then
 	CONFIG="userpatches/config-$1.conf"
 fi
