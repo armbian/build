@@ -57,6 +57,7 @@ fi
 if [[ -f "${SRC}/config-docker.conf" ]]; then
 	mv "${SRC}/config-docker.conf" "${SRC}"/userpatches/config-docker.conf || exit 1
 	elif [[ ! -f "${SRC}/userpatches/config-docker.conf" ]]; then
+	cp "${SRC}"/config/templates/Dockerfile "${SRC}"/userpatches/Dockerfile || exit 1
 	cp "${SRC}"/config/templates/config-docker.conf "${SRC}"/userpatches/config-docker.conf || exit 1
 fi
 
