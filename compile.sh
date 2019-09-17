@@ -35,6 +35,12 @@ if [[ $EUID != 0 ]]; then
 	exit $?
 fi
 
+# Check for Vagrant
+if [[ "$1" == vagrant && -z "$(which vagrant)" ]]; then
+        display_alert "Vagrant not installed." "Install manually!" "err"
+        exit $?
+fi
+
 # Install Docker if not there but wanted
 if [[ "$1" == docker && -z "$(which docker)" ]]; then
 	display_alert "Docker not installed." "Installing" "Info"
@@ -47,37 +53,53 @@ if [[ "$1" == docker && -z "$(which docker)" ]]; then
         exit $?
 fi
 
+# Create userpatches directory if not exists
+mkdir -p $SRC/userpatches
+
+# Create example configs if none found in userpatches
+if ! ls ${SRC}/userpatches/{config-example.conf,config-docker.conf,config-vagrant.conf} 1> /dev/null 2>&1; then
+
+	# Migrate old configs
+	if ls ${SRC}/*.conf 1> /dev/null 2>&1; then
+		display_alert "Migrate config files to userpatches directory" "all *.conf" "info"
+                cp "${SRC}"/*.conf "${SRC}"/userpatches  || exit 1
+		rm "${SRC}"/*.conf
+	fi
+
+	display_alert "Create example config file using template" "config-default.conf" "info"
+
+	# Create example config
+	if [[ ! -f "${SRC}"/userpatches/config-example.conf ]]; then
+		cp "${SRC}"/config/templates/config-example.conf "${SRC}"/userpatches/config-example.conf || exit 1
+                ln -fs config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
+	fi
+
+	# Create Docker config
+	if [[ ! -f "${SRC}"/userpatches/config-docker.conf ]]; then
+		cp "${SRC}"/config/templates/config-docker.conf "${SRC}"/userpatches/config-docker.conf || exit 1
+	fi
+
+	# Create Docker file
+        if [[ ! -f "${SRC}"/userpatches/Dockerfile ]]; then
+                cp "${SRC}"/config/templates/Dockerfile "${SRC}"/userpatches/Dockerfile || exit 1
+        fi
+
+	# Create Vagrant config
+	if [[ ! -f "${SRC}"/userpatches/config-vagrant.conf ]]; then
+	        cp "${SRC}"/config/templates/config-vagrant.conf "${SRC}"/userpatches/config-vagrant.conf || exit 1
+	fi
+
+        # Create Vagrant file
+        if [[ ! -f "${SRC}"/userpatches/Vagrantfile ]]; then
+                cp "${SRC}"/config/templates/Vagrantfile "${SRC}"/userpatches/Vagrantfile || exit 1
+        fi
+
+        sudo "$SRC/compile.sh" "$@"
+        exit $?
+fi
+
 if [[ -z "$CONFIG" && -n "$1" && -f "${SRC}/userpatches/config-$1.conf" ]]; then
 	CONFIG="userpatches/config-$1.conf"
-fi
-
-if [[ -z "$CONFIG" && -z "$1" && ! -f "${SRC}/userpatches/config-default.conf" ]]; then
-	mkdir -p $SRC/userpatches
-	if [[ -f "${SRC}/config-default.conf" ]]; then
-		display_alert "Migrate config file to userpatches directory" "config-default.conf" "info"
-		mv "${SRC}/config-default.conf" "${SRC}/userpatches" || exit 1
-	else
-		display_alert "Create example config file using template" "config-default.conf" "info"
-		if [[ ! -f "${SRC}"/userpatches/config-example.conf ]]; then
-			cp "${SRC}"/config/templates/config-example.conf "${SRC}"/userpatches/config-example.conf || exit 1
-		fi
-		ln -fs config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
-	fi
-fi
-
-# migrate docker config
-if [[ -f "${SRC}/config-docker.conf" ]]; then
-	mv "${SRC}/config-docker.conf" "${SRC}"/userpatches/config-docker.conf || exit 1
-	elif [[ ! -f "${SRC}/userpatches/config-docker.conf" ]]; then
-	cp "${SRC}"/config/templates/Dockerfile "${SRC}"/userpatches/Dockerfile || exit 1
-	cp "${SRC}"/config/templates/config-docker.conf "${SRC}"/userpatches/config-docker.conf || exit 1
-fi
-
-# migrate vagrant config
-if [[ -f "${SRC}/config-vagrant.conf" ]]; then
-        mv "${SRC}/config-vagrant.conf" "${SRC}"/userpatches/config-vagrant.conf || exit 1
-        elif [[ ! -f "${SRC}/userpatches/config-vagrant.conf" ]]; then
-        cp "${SRC}"/config/templates/config-vagrant.conf "${SRC}"/userpatches/config-vagrant.conf || exit 1
 fi
 
 # usind default if custom not found
