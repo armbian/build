@@ -147,7 +147,7 @@ fi
 DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certificates bzip2 console-setup cpio cron \
 	dbus init initramfs-tools iputils-ping isc-dhcp-client kmod less libpam-systemd \
 	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
-	wireless-regdb crda dmsetup rsync rng-tools"
+	wireless-regdb crda dmsetup rsync rng-tools tzdata"
 
 [[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
 
