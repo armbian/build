@@ -29,7 +29,7 @@ else
 	exit 255
 fi
 
-if [[ $EUID != 0 ]]; then
+if [[ $EUID != 0 && "$1" != vagrant ]]; then
 	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
 	sudo "$SRC/compile.sh" "$@"
 	exit $?
@@ -47,6 +47,7 @@ if [[ "$1" == docker && -z "$(which docker)" ]]; then
 	echo "deb https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}') $(lsb_release -cs) edge" > /etc/apt/sources.list.d/docker.list
 	[[ ! $(which curl) ]] && apt-get update;apt-get install -y -qq --no-install-recommends curl
 	curl -fsSL "https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}')/gpg" | apt-key add -qq - > /dev/null 2>&1
+	export DEBIAN_FRONTEND=noninteractive
 	apt-get update
 	apt-get install -y -qq --no-install-recommends docker-ce
 	sudo "$SRC/compile.sh" "$@"
