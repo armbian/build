@@ -64,6 +64,7 @@ if ! ls ${SRC}/userpatches/{config-example.conf,config-docker.conf,config-vagran
 		display_alert "Migrate config files to userpatches directory" "all *.conf" "info"
                 cp "${SRC}"/*.conf "${SRC}"/userpatches  || exit 1
 		rm "${SRC}"/*.conf
+		[[ ! -L "${SRC}"/userpatches/config-example.conf ]] && ln -fs config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
 	fi
 
 	display_alert "Create example config file using template" "config-default.conf" "info"
