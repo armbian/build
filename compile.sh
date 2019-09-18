@@ -91,13 +91,11 @@ if ! ls ${SRC}/userpatches/{config-example.conf,config-docker.conf,config-vagran
 	        cp "${SRC}"/config/templates/config-vagrant.conf "${SRC}"/userpatches/config-vagrant.conf || exit 1
 	fi
 
-        # Create Vagrant file
-        if [[ ! -f "${SRC}"/userpatches/Vagrantfile ]]; then
-                cp "${SRC}"/config/templates/Vagrantfile "${SRC}"/userpatches/Vagrantfile || exit 1
-        fi
+	# Create Vagrant file
+	if [[ ! -f "${SRC}"/userpatches/Vagrantfile ]]; then
+		cp "${SRC}"/config/templates/Vagrantfile "${SRC}"/userpatches/Vagrantfile || exit 1
+	fi
 
-        sudo "$SRC/compile.sh" "$@"
-        exit $?
 fi
 
 if [[ -z "$CONFIG" && -n "$1" && -f "${SRC}/userpatches/config-$1.conf" ]]; then
