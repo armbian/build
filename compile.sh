@@ -37,8 +37,9 @@ fi
 
 # Check for Vagrant
 if [[ "$1" == vagrant && -z "$(which vagrant)" ]]; then
-        display_alert "Vagrant not installed." "Install manually!" "err"
-        exit $?
+	display_alert "Vagrant not installed." "Installing"
+	sudo apt-get update
+	sudo apt-get install -y vagrant virtualbox
 fi
 
 # Install Docker if not there but wanted
