@@ -46,7 +46,7 @@ fi
 if [[ "$1" == docker && -f /etc/debian_version && -z "$(which docker)" ]]; then
 	display_alert "Docker not installed." "Installing" "Info"
 	echo "deb https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}') $(lsb_release -cs) edge" > /etc/apt/sources.list.d/docker.list
-	[[ ! $(which curl) ]] && apt-get update;apt-get install -y -qq --no-install-recommends curl gnupg
+	[[ ! $(which curl) || ! $(which gnupg) ]] && apt-get update;apt-get install -y -qq --no-install-recommends curl gnupg
 	curl -fsSL "https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}')/gpg" | apt-key add -qq - > /dev/null 2>&1
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update
