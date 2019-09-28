@@ -1,5 +1,5 @@
 FROM ubuntu:18.04
-RUN apt update && DEBIAN_FRONTEND=noninteractive apt install -y  gnupg1 gpgv1 --no-install-recommends
+RUN apt update && DEBIAN_FRONTEND=noninteractive apt install -y gnupg gnupg1 gpgv1 --no-install-recommends
 RUN sh -c  "if [ x"" != x$http_proxy ]; then \
                 apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy=$http_proxy --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
 		    else \
