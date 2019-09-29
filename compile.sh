@@ -31,7 +31,7 @@ fi
 
 if [[ $EUID == 0 ]] || [[ "$1" == vagrant ]]; then
 	:
-elif [[ "$1" == docker ]] && grep -q `whoami` <(getent group docker); then
+elif [[ "$1" == docker || "$1" == dockerpurge ]] && grep -q `whoami` <(getent group docker); then
 	:
 else
 	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
@@ -110,6 +110,16 @@ if [[ "$1" == docker && -f /etc/debian_version && -z "$(which docker)" ]]; then
 	apt-get install -y -qq --no-install-recommends docker-ce
 	display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
 	"$SRC/compile.sh" "$@"
+	exit $?
+fi
+
+if [[ "$1" == dockerpurge && -f /etc/debian_version ]]; then
+	display_alert "Purging Armbian Docker containers" "" "wrn"
+	docker container ls -a | grep armbian | awk '{print $1}' | xargs docker container rm &> /dev/null
+	docker image ls | grep armbian | awk '{print $3}' | xargs docker image rm &> /dev/null
+	shift
+	arr=("docker" "$@")
+	"$SRC/compile.sh" ${arr[@]}
 	exit $?
 fi
 
