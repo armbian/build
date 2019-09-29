@@ -105,7 +105,7 @@ if [[ "$1" == docker && -f /etc/debian_version && -z "$(which docker)" ]]; then
 	apt-get update
 	apt-get install -y -qq --no-install-recommends docker-ce
 	display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
-	sudo "$SRC/compile.sh" "$@"
+	"$SRC/compile.sh" "$@"
 	exit $?
 fi
 
