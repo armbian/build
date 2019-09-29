@@ -688,6 +688,9 @@ process_patch_file()
 	local patch=$1
 	local status=$2
 
+	# detect and remove files which patch will create
+	lsdiff -s --strip=1 $patch | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
+
 	echo "Processing file $patch" >> $DEST/debug/patching.log
 	patch --batch --silent -p1 -N < $patch >> $DEST/debug/patching.log 2>&1
 
