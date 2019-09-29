@@ -29,7 +29,11 @@ else
 	exit 255
 fi
 
-if [[ $EUID != 0 && "$1" != vagrant ]]; then
+if [[ $EUID == 0 ]] || [[ "$1" == vagrant ]]; then
+	:
+elif [[ "$1" == docker ]] && grep -q `whoami` <(getent group docker); then
+	:
+else
 	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
 	sudo "$SRC/compile.sh" "$@"
 	exit $?
@@ -51,8 +55,8 @@ if [[ "$1" == docker && -f /etc/debian_version && -z "$(which docker)" ]]; then
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update
 	apt-get install -y -qq --no-install-recommends docker-ce
-	sudo "$SRC/compile.sh" "$@"
-        exit $?
+	"$SRC/compile.sh" "$@"
+	exit $?
 fi
 
 # Create userpatches directory if not exists
