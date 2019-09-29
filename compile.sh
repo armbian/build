@@ -29,7 +29,11 @@ else
 	exit 255
 fi
 
-if [[ $EUID != 0 && "$1" != vagrant ]]; then
+if [[ $EUID == 0 ]] || [[ "$1" == vagrant ]]; then
+	:
+elif [[ "$1" == docker ]] && grep -q `whoami` <(getent group docker); then
+	:
+else
 	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
 	sudo "$SRC/compile.sh" "$@"
 	exit $?
