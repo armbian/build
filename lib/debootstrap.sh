@@ -52,9 +52,6 @@ debootstrap_ng()
 	install_distribution_specific
 	install_common
 
-	# install additional applications
-	[[ $EXTERNAL == yes ]] && install_external_applications
-
 	# install locally built packages
 	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
 
@@ -84,8 +81,14 @@ debootstrap_ng()
 	fi
 
 	# stage: unmount tmpfs
-	[[ $use_tmpfs = yes ]] && umount $SDCARD
-
+	umount $SDCARD 2>&1
+	if [[ $use_tmpfs = yes ]]; then
+		while grep -qs '$SDCARD' /proc/mounts
+		do
+			umount $SDCARD
+			sleep 5
+		done
+	fi
 	rm -rf $SDCARD
 
 	# remove exit trap
@@ -117,6 +120,7 @@ create_rootfs_cache()
 		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
+		create_sources_list "$RELEASE" "$SDCARD/"
 	else
 		display_alert "... remote not found" "Creating new rootfs cache for $RELEASE" "info"
 
@@ -184,14 +188,6 @@ create_rootfs_cache()
 		# stage: create apt sources list
 		create_sources_list "$RELEASE" "$SDCARD/"
 
-		# stage: add armbian repository and install key
-		echo "deb http://apt.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
-
-		cp $SRC/config/armbian.key $SDCARD
-		eval 'chroot $SDCARD /bin/bash -c "cat armbian.key | apt-key add -"' \
-			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-		rm $SDCARD/armbian.key
-
 		# add armhf arhitecture to arm64
 		[[ $ARCH == arm64 ]] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "dpkg --add-architecture armhf"'
 
@@ -237,6 +233,12 @@ create_rootfs_cache()
 		# create list of installed packages for debug purposes
 		chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > ${cache_fname}.list 2>&1
 
+		# creating xapian index that synaptic runs faster
+		if [[ $BUILD_DESKTOP == yes ]]; then
+			display_alert "Recreating Synaptic search index" "Please wait" "info"
+			chroot $SDCARD /bin/bash -c "/usr/sbin/update-apt-xapian-index -u"
+		fi
+
 		# this is needed for the build process later since resolvconf generated file in /run is not saved
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
@@ -259,7 +261,7 @@ create_rootfs_cache()
 	fi
 
 	# used for internal purposes. Faster rootfs cache rebuilding
-    if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
+	if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
 		[[ $use_tmpfs = yes ]] && umount $SDCARD
 		rm -rf $SDCARD
 		# remove exit trap
@@ -390,7 +392,7 @@ prepare_partitions()
 	# stage: create blank image
 	display_alert "Creating blank image for rootfs" "$sdsize MiB" "info"
 	# truncate --size=${sdsize}M ${SDCARD}.raw # sometimes results in fs corruption, revert to previous know to work solution
-	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) | dd status=none of=${SDCARD}.raw
+	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) -N "[ .... ] dd" | dd status=none of=${SDCARD}.raw
 
 	# stage: calculate boot partition size
 	local bootstart=$(($OFFSET * 2048))
@@ -586,10 +588,18 @@ create_image()
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
+	# to make sure its unmounted
+	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts
+	do
+		display_alert "Unmounting" "${MOUNT}" "info"
+		sleep 5
+	done
+
 	losetup -d $LOOP
 	rm -rf --one-file-system $DESTIMG $MOUNT
+
 	mkdir -p $DESTIMG
-	fingerprint_image "$DESTIMG/${version}.txt" "${version}"
+	fingerprint_image "$DESTIMG/${version}.img.txt" "${version}"
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
 	if [[ $BUILD_ALL != yes ]]; then
@@ -622,7 +632,7 @@ create_image()
 			# compress image
 			cd $DESTIMG
 			display_alert "Compressing" "$DEST/images/${version}.7z" "info"
-			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img* armbian.txt >/dev/null 2>&1
+			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img* ${version}.img.txt >/dev/null 2>&1
 			cd ..
 		fi
 
@@ -631,7 +641,7 @@ create_image()
 			pigz < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
 		fi
 
-		mv $DESTIMG/${version}.txt $DEST/images/${version}.txt || exit 1
+		mv $DESTIMG/${version}.img.txt $DEST/images/${version}.img.txt || exit 1
 		mv $DESTIMG/${version}.img $DEST/images/${version}.img || exit 1
 		rm -rf $DESTIMG
 	fi
@@ -642,14 +652,31 @@ create_image()
 	[[ $(type -t post_build_image) == function ]] && post_build_image "$DEST/images/${version}.img"
 
 	# write image to SD card
-	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f $DEST/images/${version}.img && $COMPRESS_OUTPUTIMAGE != yes ]]; then
-		display_alert "Writing image" "$CARD_DEVICE" "info"
-		balena-etcher $DEST/images/${version}.img -d $CARD_DEVICE -y
-		if [ $? -eq 0 ]; then
-			display_alert "Writing succeeded" "${version}.img" "info"
+	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f $DEST/images/${version}.img ]]; then
+
+		# make sha256sum if it does not exists. we need it for comparisson
+		if [[ -f "$DEST/images/${version}".img.sha ]]; then
+			local ifsha=$(cat $DEST/images/${version}.img.sha | awk '{print $1}')
+		else
+			local ifsha=$(sha256sum -b "$DEST/images/${version}".img | awk '{print $1}')
+		fi
+
+		display_alert "Writing image" "$CARD_DEVICE ${readsha}" "info"
+
+		# write to SD card
+		pv -p -b -r -c -N "[ .... ] dd" $DEST/images/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
+
+		# read and compare
+		display_alert "Verifying. Please wait!"
+		local ofsha=$(dd if=$CARD_DEVICE count=$(du -b $DEST/images/${version}.img | cut -f1) status=none iflag=count_bytes oflag=direct | sha256sum | awk '{print $1}')
+		if [[ $ifsha == $ofsha ]]; then
+			display_alert "Writing verified" "${version}.img" "info"
 		else
 			display_alert "Writing failed" "${version}.img" "err"
 		fi
+	elif [[ `systemd-detect-virt` == 'docker' && -n $CARD_DEVICE ]]; then
+		# display warning when we want to write sd card under Docker
+		display_alert "Can't write to $CARD_DEVICE" "Enable docker privileged mode in config-docker.conf" "wrn"
 	fi
 
 } #############################################################################

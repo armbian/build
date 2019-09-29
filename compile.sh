@@ -22,7 +22,7 @@ grep -q "[[:space:]]" <<<"${SRC}" && { echo "\"${SRC}\" contains whitespace. Not
 
 cd "${SRC}" || exit
 
-if [[ -f "${SRC}"/lib/general.sh && -L "${SRC}"/main.sh ]]; then
+if [[ -f "${SRC}"/lib/general.sh ]]; then
 	# shellcheck source=lib/general.sh
 	source "${SRC}"/lib/general.sh
 else
@@ -93,8 +93,8 @@ if [[ ! -f $SRC/.ignore_changes ]]; then
 fi
 
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
-	# shellcheck source=lib/build-all.sh
-	source "${SRC}"/lib/build-all.sh
+	# shellcheck source=lib/build-all-ng.sh
+	source "${SRC}"/lib/build-all-ng.sh
 else
 	# shellcheck source=lib/main.sh
 	source "${SRC}"/lib/main.sh

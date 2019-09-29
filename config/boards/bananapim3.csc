@@ -6,9 +6,4 @@ BOOTCONFIG="Sinovoip_BPI_M3_defconfig"
 MODULES=""
 MODULES_NEXT=""
 OVERLAY_PREFIX="sun8i-a83t"
-#
 KERNEL_TARGET="next,dev"
-CLI_TARGET="buster:next"
-DESKTOP_TARGET="bionic:next"
-#
-CLI_BETA_TARGET=""

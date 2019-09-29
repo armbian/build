@@ -11,6 +11,8 @@
 # compile_atf
 # compile_uboot
 # compile_kernel
+# compile_firmware
+# compile_ambian-config
 # compile_sunxi_tools
 # install_rkbin_tools
 # grab_version
@@ -89,6 +91,9 @@ compile_atf()
 	# copy license file to pack it to u-boot package later
 	[[ -f license.md ]] && cp license.md $atftempdir/
 }
+
+
+
 
 compile_uboot()
 {
@@ -251,7 +256,7 @@ compile_uboot()
 
 	[[ ! -f $SRC/.tmp/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
-	mv $SRC/.tmp/${uboot_name}.deb $DEST/debs/
+	mv $SRC/.tmp/${uboot_name}.deb ${DEB_STORAGE}/
 }
 
 compile_kernel()
@@ -416,15 +421,114 @@ compile_kernel()
 
 	if [[ $BUILD_KSRC != no ]]; then
 		fakeroot dpkg-deb -z0 -b $sources_pkg_dir ${sources_pkg_dir}.deb
-		mv ${sources_pkg_dir}.deb $DEST/debs/
+		mv ${sources_pkg_dir}.deb ${DEB_STORAGE}/
 	fi
 	rm -rf $sources_pkg_dir
 
 	cd ..
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
-	mv *.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
+	mv *.deb ${DEB_STORAGE}/ || exit_with_error "Failed moving kernel DEBs"
 }
+
+
+
+
+compile_firmware()
+{
+	display_alert "Merging and packaging linux firmware" "@host" "info"
+	if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
+		plugin_repo="https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+	else
+		plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+	fi
+	local plugin_dir="armbian-firmware${FULL}"
+	[[ -d $SRC/cache/sources/$plugin_dir ]] && rm -rf $SRC/cache/sources/$plugin_dir
+	mkdir -p $SRC/cache/sources/$plugin_dir/lib/firmware
+
+	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
+	if [[ -n $FULL ]]; then
+		fetch_from_repo "$plugin_repo" "linux-firmware-git" "branch:master"
+		# cp : create hardlinks
+		cp -alf $SRC/cache/sources/linux-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware/
+	fi
+	# overlay our firmware
+	# cp : create hardlinks
+	cp -alf $SRC/cache/sources/armbian-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware/
+
+	# cleanup what's not needed for sure
+	rm -rf $SRC/cache/sources/$plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
+	cd $SRC/cache/sources/$plugin_dir
+
+	# set up control file
+	mkdir -p DEBIAN
+	cat <<-END > DEBIAN/control
+	Package: armbian-firmware${FULL}
+	Version: $REVISION
+	Architecture: all
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Installed-Size: 1
+	Replaces: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}
+	Section: kernel
+	Priority: optional
+	Description: Linux firmware${FULL}
+	END
+
+	cd $SRC/cache/sources
+	# pack
+	mv armbian-firmware${FULL} armbian-firmware${FULL}_${REVISION}_all
+	fakeroot dpkg -b armbian-firmware${FULL}_${REVISION}_all >> $DEST/debug/install.log 2>&1
+	mv armbian-firmware${FULL}_${REVISION}_all armbian-firmware${FULL}
+	mv armbian-firmware${FULL}_${REVISION}_all.deb ${DEB_STORAGE}/
+}
+
+
+
+
+compile_armbian-config()
+{
+	local tmpdir=$SRC/.tmp/armbian-config_${REVISION}_all
+
+	display_alert "Building deb" "armbian-config" "info"
+
+	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
+
+	mkdir -p $tmpdir/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
+
+	# set up control file
+	cat <<-END > $tmpdir/DEBIAN/control
+	Package: armbian-config
+	Version: $REVISION
+	Architecture: all
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Replaces: armbian-bsp
+	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, iptables, resolvconf, \
+	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common
+	Recommends: armbian-bsp
+	Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
+	Section: utils
+	Priority: optional
+	Description: Armbian configuration utility
+	END
+
+	install -m 755 $SRC/cache/sources/armbian-config/scripts/tv_grab_file $tmpdir/usr/bin/tv_grab_file
+	install -m 755 $SRC/cache/sources/armbian-config/debian-config $tmpdir/usr/sbin/armbian-config
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-jobs $tmpdir/usr/lib/armbian-config/jobs.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-submenu $tmpdir/usr/lib/armbian-config/submenu.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-functions $tmpdir/usr/lib/armbian-config/functions.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-functions-network $tmpdir/usr/lib/armbian-config/functions-network.sh
+	install -m 755 $SRC/cache/sources/armbian-config/softy $tmpdir/usr/sbin/softy
+	# fallback to replace armbian-config in BSP
+	ln -sf /usr/sbin/armbian-config $tmpdir/usr/bin/armbian-config
+	ln -sf /usr/sbin/softy $tmpdir/usr/bin/softy
+
+	fakeroot dpkg -b ${tmpdir} >/dev/null
+	mv ${tmpdir}.deb ${DEB_STORAGE}/
+	rm -rf $tmpdir
+}
+
+
+
 
 compile_sunxi_tools()
 {
@@ -583,9 +687,6 @@ process_patch_file()
 {
 	local patch=$1
 	local status=$2
-
-	# detect and remove files which patch will create
-	lsdiff -s --strip=1 $patch | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
 
 	echo "Processing file $patch" >> $DEST/debug/patching.log
 	patch --batch --silent -p1 -N < $patch >> $DEST/debug/patching.log 2>&1
