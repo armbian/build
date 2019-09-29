@@ -90,14 +90,23 @@ fi
 # Install Docker if not there but wanted. We cover only Debian based distro install. Else, manual Docker install is needed
 if [[ "$1" == docker && -f /etc/debian_version && -z "$(which docker)" ]]; then
 	display_alert "Docker not installed." "Installing" "Info"
-	echo "deb https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}') $(lsb_release -cs) edge" > /etc/apt/sources.list.d/docker.list
-	[[ ! $(which curl) || ! $(which gnupg) ]] && apt-get update;apt-get install -y -qq --no-install-recommends curl gnupg
+	echo "deb [arch=amd64] https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}') $(lsb_release -cs) edge" > /etc/apt/sources.list.d/docker.list
+	
+	# minimal set of utilities that are needed for prep
+	packages = ("curl" "gnupg" "apt-transport-https")
+	for i in "${packages[@]}"
+	do
+	[[ ! $(which $i) ]] && install_packages+=$i" "
+	done
+	[[ -z $install_packages ]] && apt-get update;apt-get install -y -qq --no-install-recommends $install_packages
+	
 	curl -fsSL "https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}')/gpg" | apt-key add -qq - > /dev/null 2>&1
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update
 	apt-get install -y -qq --no-install-recommends docker-ce
+	display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
 	sudo "$SRC/compile.sh" "$@"
-        exit $?
+	exit $?
 fi
 
 # Create userpatches directory if not exists
