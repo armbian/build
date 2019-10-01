@@ -651,6 +651,7 @@ advanced_patch()
 		"$SRC/patch/$dest/$family/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]"
 		"$SRC/patch/$dest/$family:[\e[32ml\e[0m][\e[32mc\e[0m]"
 		)
+	local links=()
 
 	# required for "for" command
 	shopt -s nullglob dotglob
@@ -659,7 +660,14 @@ advanced_patch()
 		for patch in ${dir%%:*}/*.patch; do
 			names+=($(basename $patch))
 		done
+		# add linked patch directories
+		if [[ -d ${dir%%:*} ]]; then
+			lamer=$(find ${dir%%:*} -maxdepth 1 -type l -print0 2>&1 | xargs -0)
+			[[ -n $lamer ]] && readarray -d '' links < <(find $lamer -type f -follow -print -iname "*.patch" -print | grep "\.patch$" | sed "s|${dir%%:*}/||g" 2>&1)
+		fi
 	done
+	# merge static and linked
+	names=("${names[@]}" "${links[@]}")
 	# remove duplicates
 	local names_s=($(echo "${names[@]}" | tr ' ' '\n' | LC_ALL=C sort -u | tr '\n' ' '))
 	# apply patches
