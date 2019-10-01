@@ -76,7 +76,7 @@ echo update_src >> $TMPFILE
 #due to in docker/VM, we can't su to a normal user, so do not update/checkout git.
 if [[ `systemd-detect-virt` == 'none' ]]; then
 	if [[ $EUID == 0 ]]; then
-		su `stat --format=%U $SRC/.git` -c bash $TMPFILE
+		su `stat --format=%U $SRC/.git` -c "bash $TMPFILE"
 	else
 		bash $TMPFILE
 	fi
