@@ -91,12 +91,12 @@ SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUIL
 MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
 DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
 
-[[ ! -f ${SRC}/config/sources/$LINUXFAMILY.conf ]] && \
+[[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] && \
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 
-source "${SRC}/config/sources/${LINUXFAMILY}.conf"
+source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
 
-if [[ -f $USERPATCHES_PATH/sources/$LINUXFAMILY.conf ]]; then
+if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
 	source "$USERPATCHES_PATH/sources/${LINUXFAMILY}.conf"
 fi
