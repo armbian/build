@@ -13,6 +13,14 @@
 compilation_prepare()
 {
 
+	# Packaging patch for modern kernels should be one for all. Currently we have it per kernel family since we can't have one
+	# Maintaining one from central location starting with 5.3+
+	if linux-version compare $version ge 5.3; then
+		display_alert "Adjustin" "packaging" "info"
+		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+		process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch"                "applying"
+	fi
+
 	# AUFS - advanced multi layered unification filesystem for Kernel > 5.1
 	#
 	# Older versions have AUFS support with a patch
