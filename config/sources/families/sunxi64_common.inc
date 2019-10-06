@@ -55,7 +55,7 @@ case $BRANCH in
 		KERNELSOURCE="https://github.com/megous/linux"
 		KERNELBRANCH="branch:orange-pi-5.3"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
-		KERNELPATCHDIR='sunxi-$BRANCH'
+		KERNELPATCHDIR='sunxi-'$BRANCH
 		KERNEL_USE_GCC='> 7.0'
 	;;
 esac
