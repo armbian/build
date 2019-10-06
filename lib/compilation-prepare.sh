@@ -14,8 +14,10 @@ compilation_prepare()
 {
 
 	# Packaging patch for modern kernels should be one for all. Currently we have it per kernel family since we can't have one
-	# Maintaining one from central location starting with 5.4+
-	if linux-version compare $version ge 5.4; then
+	# Maintaining one from central location starting with 5.3+
+	# Temporally set for new "default->legacy,next->current" family naming
+
+	if linux-version compare $version ge 5.3 && [ "$BRANCH" == current ]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch"                "applying"
