@@ -23,6 +23,13 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch"                "applying"
 	fi
 
+	if [[ $version == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* ]]; then
+		display_alert "Adjustin" "packaging" "info"
+		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y.patch"                "applying"
+	fi
+
+
 	# AUFS - advanced multi layered unification filesystem for Kernel > 5.1
 	#
 	# Older versions have AUFS support with a patch

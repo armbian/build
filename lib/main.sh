@@ -250,6 +250,7 @@ if [[ -z $BRANCH ]]; then
 
 	options=()
 	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy")
+	[[ $KERNEL_TARGET == *legacy* && $EXPERT = yes ]] && options+=("legacy" "Old stable / Legacy")
 	[[ $KERNEL_TARGET == *current* && $EXPERT = yes ]] && options+=("current"         "Recommended. Come with best support")
 	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)")
 	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev"         "\Z1Development version (@kernel.org)\Zn")

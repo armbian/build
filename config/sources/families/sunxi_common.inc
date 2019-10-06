@@ -1,32 +1,22 @@
+ARCH=armhf
+BOOTDELAY=1
+
 BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 BOOTDIR=$MAINLINE_UBOOT_DIR
 BOOTBRANCH='tag:v2019.04'
+BOOTPATCHDIR='u-boot-sunxi'
+UBOOT_USE_GCC='> 7.0'
+UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
 BOOTSCRIPT="boot-sunxi.cmd:boot.cmd"
 BOOTENV_FILE='sunxi-default.txt'
-BOOTPATCHDIR='u-boot-sunxi'
+LINUXFAMILY=sunxi
 
-UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
-
-UBOOT_USE_GCC='> 7.0'
 UBOOT_FW_ENV='0x88000,0x20000' # /etc/fw_env.config offset and env size
-
-BOOTDELAY=1
+ASOUND_STATE='asound.state.sunxi-next'
 GOVERNOR=ondemand
 
-# Here we want to rename LINUXFAMILY from sun4i, sun5i, etc for next and dev branches
-[[ $BRANCH != default ]] && LINUXFAMILY=sunxi
-
 case $BRANCH in
-	default)
-
-		GOVERNOR=interactive
-		CAN_BUILD_STRETCH=no
-		BOOTBRANCH='tag:v2018.05'
-		BOOTPATCHDIR='u-boot-sunxi-legacy'
-
-	;;
-
-	next)
+	next|legacy)
 
 		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 		KERNELBRANCH='branch:linux-4.19.y'
@@ -35,9 +25,8 @@ case $BRANCH in
 
 	;;
 
-	dev)
+	dev|current)
 
-		#KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 		KERNELSOURCE="https://github.com/megous/linux"
 		KERNELBRANCH="branch:orange-pi-5.3"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
@@ -59,15 +48,6 @@ family_tweaks_bsp()
 {
 	# execute specific tweaks function if present
 	[[ $(type -t family_tweaks_bsp_s) == function ]] && family_tweaks_bsp_s
-
-	if [[ $BRANCH == default ]]; then
-		arm-linux-gnueabihf-gcc $SRC/packages/bsp/sunxi-temp/sunxi_tp_temp.c -o $destination/usr/bin/sunxi_tp_temp
-		# convert and add fex files
-		mkdir -p $destination/boot/bin
-		for i in $(ls -w1 $SRC/config/fex/*.fex | xargs -n1 basename); do
-			fex2bin $SRC/config/fex/${i%*.fex}.fex $destination/boot/bin/${i%*.fex}.bin
-		done
-	fi
 }
 
 write_uboot_platform()
