@@ -43,7 +43,7 @@ case $BRANCH in
 
 	;;
 
-	dev)
+	dev|current)
 
 		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 		ATFDIR='arm-trusted-firmware-sunxi-mainline'
@@ -55,7 +55,7 @@ case $BRANCH in
 		KERNELSOURCE="https://github.com/megous/linux"
 		KERNELBRANCH="branch:orange-pi-5.3"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
-		KERNELPATCHDIR='sunxi-dev'
+		KERNELPATCHDIR='sunxi-$BRANCH'
 		KERNEL_USE_GCC='> 7.0'
 	;;
 esac
