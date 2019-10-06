@@ -663,8 +663,8 @@ advanced_patch()
 		done
 		# add linked patch directories
 		if [[ -d ${dir%%:*} ]]; then
-			lamer=$(find ${dir%%:*} -maxdepth 1 -type l -print0 2>&1 | xargs -0)
-			[[ -n $lamer ]] && readarray -d '' links < <(find $lamer -type f -follow -maxdepth 1 -print -iname "*.patch" -print | grep "\.patch$" | sed "s|${dir%%:*}/||g" 2>&1)
+			local findlinks=$(find ${dir%%:*} -maxdepth 1 -type l -print0 2>&1 | xargs -0)
+			[[ -n $findlinks ]] && readarray -d '' links < <(find $findlinks -type f -follow -maxdepth 1 -print -iname "*.patch" -print | grep "\.patch$" | sed "s|${dir%%:*}/||g" 2>&1)
 		fi
 	done
 	# merge static and linked
