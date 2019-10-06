@@ -101,6 +101,9 @@ if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
 	source "$USERPATCHES_PATH/sources/${LINUXFAMILY}.conf"
 fi
 
+# architecture stuff
+source "${SRC}/config/sources/${ARCH}.conf"
+
 # dropbear needs to be configured differently
 [[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
 
@@ -111,25 +114,6 @@ fi
 [[ -n $ATFSOURCE && -z $ATF_USE_GCC ]] && exit_with_error "Error in configuration: ATF_USE_GCC is unset"
 [[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
 [[ -z $KERNEL_USE_GCC ]] && exit_with_error "Error in configuration: KERNEL_USE_GCC is unset"
-
-case $ARCH in
-	arm64)
-	[[ -z $KERNEL_COMPILER ]] && KERNEL_COMPILER="aarch64-linux-gnu-"
-	[[ -z $UBOOT_COMPILER ]] && UBOOT_COMPILER="aarch64-linux-gnu-"
-	ATF_COMPILER="aarch64-linux-gnu-"
-	[[ -z $INITRD_ARCH ]] && INITRD_ARCH=arm64
-	QEMU_BINARY="qemu-aarch64-static"
-	ARCHITECTURE=arm64
-	;;
-
-	armhf)
-	[[ -z $KERNEL_COMPILER ]] && KERNEL_COMPILER="arm-linux-gnueabihf-"
-	[[ -z $UBOOT_COMPILER ]] && UBOOT_COMPILER="arm-linux-gnueabihf-"
-	[[ -z $INITRD_ARCH ]] && INITRD_ARCH=arm
-	QEMU_BINARY="qemu-arm-static"
-	ARCHITECTURE=arm
-	;;
-esac
 
 BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -n ${!BOOTCONFIG_VAR_NAME} ]] && BOOTCONFIG=${!BOOTCONFIG_VAR_NAME}
