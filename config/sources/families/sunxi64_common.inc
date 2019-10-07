@@ -9,25 +9,10 @@ BOOTPATCHDIR='u-boot-sunxi'
 UBOOT_USE_GCC='> 7.0'
 UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
 BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
-
-ATF_PLAT="sun50i_a64"
-
-if [[ $BOARDFAMILY = "sun50iw6" ]]; then
-    ATF_PLAT="sun50i_h6";
-fi
-
-# Here we want to rename LINUXFAMILY from sun50iw1, sun50iw2, etc for next and dev branches
-# since this doesn't affect any stable images don't add any backwards compatibility hacks
-[[ $BRANCH != default ]] && LINUXFAMILY=sunxi64
+LINUXFAMILY=sunxi64
 
 case $BRANCH in
-	default)
-
-		CAN_BUILD_STRETCH=no
-
-	;;
-
-	next)
+	next|legacy)
 
 		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 		ATFDIR='arm-trusted-firmware-sunxi-mainline'
@@ -43,7 +28,7 @@ case $BRANCH in
 
 	;;
 
-	dev)
+	dev|current)
 
 		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 		ATFDIR='arm-trusted-firmware-sunxi-mainline'
@@ -55,7 +40,7 @@ case $BRANCH in
 		KERNELSOURCE="https://github.com/megous/linux"
 		KERNELBRANCH="branch:orange-pi-5.3"
 		KERNELDIR=$MAINLINE_KERNEL_DIR
-		KERNELPATCHDIR='sunxi-dev'
+		KERNELPATCHDIR='sunxi-'$BRANCH
 		KERNEL_USE_GCC='> 7.0'
 	;;
 esac
@@ -64,15 +49,11 @@ family_tweaks()
 {
 	# execute specific tweaks function if present
 	[[ $(type -t family_tweaks_s) == function ]] && family_tweaks_s
-
-	[[ $BRANCH != default ]] && cp $SRC/packages/blobs/splash/armbian-u-boot-24.bmp $SDCARD/boot/boot.bmp
+	cp $SRC/packages/blobs/splash/armbian-u-boot-24.bmp $SDCARD/boot/boot.bmp
 }
 
 write_uboot_platform()
 {
-	# default
-	[[ -f $1/u-boot-with-dtb.bin ]] && dd if=$1/u-boot-with-dtb.bin of=$2 bs=1k seek=8 conv=fsync > /dev/null 2>&1 || true
-	# mainline
 	[[ -f $1/sunxi-spl.bin ]] && dd if=$1/sunxi-spl.bin of=$2 bs=8k seek=1 conv=fsync > /dev/null 2>&1
 	[[ -f $1/u-boot.itb ]] && dd if=$1/u-boot.itb of=$2 bs=8k seek=5 conv=fsync > /dev/null 2>&1 || true
 }
