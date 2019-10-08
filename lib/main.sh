@@ -268,7 +268,9 @@ if [[ -z $BRANCH ]]; then
 	[[ $BRANCH == dev && $SHOW_WARNING == yes ]] && show_developer_warning
 
 else
-
+	[[ $BRANCH == next ]] && KERNEL_TARGET="next" 
+	# next = new legacy. Should stay for backward compatibility, but be removed from menu above
+	# or we left definitions in board configs and only remove menu
 	[[ $KERNEL_TARGET != *$BRANCH* ]] && exit_with_error "Kernel branch not defined for this board" "$BRANCH"
 
 fi
