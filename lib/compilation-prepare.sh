@@ -29,6 +29,11 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y.patch"                "applying"
 	fi
 
+	if [[ $version == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip ]]; then
+		display_alert "Adjustin" "packaging" "info"
+		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y.patch"                "applying"
+	fi
 
 	# AUFS - advanced multi layered unification filesystem for Kernel > 5.1
 	#
