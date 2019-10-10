@@ -1,5 +1,5 @@
 case $BRANCH in
-	default)
+	legacy|default)
 		BOOTSOURCE='https://github.com/helios-4/u-boot.git'
 		BOOTBRANCH='branch:helios4'
 		BOOTDIR=$MAINLINE_UBOOT_DIR
@@ -14,7 +14,7 @@ case $BRANCH in
 
 		BOOTPATCHDIR='u-boot-helios4'
 	;;
-	next)
+	current|next)
 		BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 		BOOTBRANCH='tag:v2019.04'
 		BOOTDIR=$MAINLINE_UBOOT_DIR

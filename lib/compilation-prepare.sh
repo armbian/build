@@ -23,13 +23,13 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch"                "applying"
 	fi
 
-	if [[ $version == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 || "$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == mt7623 ]]; then
+	if [[ $version == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 || "$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == mt7623 || "$LINUXFAMILY" == mvebu ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y.patch"                "applying"
 	fi
 
-	if [[ $version == "4.14."* ]] && [[ "$LINUXFAMILY" == s5p6818 || "$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == imx7d || "$LINUXFAMILY" == odroidxu4 ]]; then
+	if [[ $version == "4.14."* ]] && [[ "$LINUXFAMILY" == s5p6818 || "$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == imx7d || "$LINUXFAMILY" == odroidxu4 || "$LINUXFAMILY" == mvebu ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.14.y.patch"                "applying"
