@@ -5,5 +5,4 @@ BOOTCONFIG="imx_v7_defconfig"
 MODULES=""
 MODULES_NEXT=""
 #
-KERNEL_TARGET="default"
-DESKTOP_TARGET=""
+KERNEL_TARGET="legacy"
