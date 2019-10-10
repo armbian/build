@@ -23,7 +23,7 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch"                "applying"
 	fi
 
-	if [[ $version == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 || "$LINUXFAMILY" == mvebu64 ]]; then
+	if [[ $version == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 || "$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == mt7623 ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y.patch"                "applying"
@@ -35,7 +35,7 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.14.y.patch"                "applying"
 	fi
 
-	if [[ $version == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip* || "$LINUXFAMILY" == rk3399 ]]; then
+	if [[ $version == "4.4."* || $version == "4.9."* ]] && [[ "$LINUXFAMILY" == rockchip* || "$LINUXFAMILY" == rk3399 || "$LINUXFAMILY" == cubox ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y.patch"                "applying"
