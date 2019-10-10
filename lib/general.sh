@@ -172,6 +172,9 @@ create_sources_list()
 		echo "deb http://apt.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
 	fi
 
+	# add local package server if defined. Suitable for development
+	[[ -n $LOCAL_MIRROR ]] && echo "deb http://$LOCAL_MIRROR $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" >> $SDCARD/etc/apt/sources.list.d/armbian.list
+
 	display_alert "Adding Armbian repository and authentication key" "/etc/apt/sources.list.d/armbian.list" "info"
 	cp $SRC/config/armbian.key $SDCARD
 	chroot $SDCARD /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
