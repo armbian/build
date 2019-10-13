@@ -1,16 +1,10 @@
 ARCH=armhf
 BOOTDELAY=1
-
-BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
-BOOTDIR=$MAINLINE_UBOOT_DIR
-BOOTBRANCH='tag:v2019.04'
 BOOTPATCHDIR='u-boot-sunxi'
-UBOOT_USE_GCC='> 7.0'
 UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
 BOOTSCRIPT="boot-sunxi.cmd:boot.cmd"
 BOOTENV_FILE='sunxi-default.txt'
 LINUXFAMILY=sunxi
-
 UBOOT_FW_ENV='0x88000,0x20000' # /etc/fw_env.config offset and env size
 ASOUND_STATE='asound.state.sunxi-next'
 GOVERNOR=ondemand
@@ -18,10 +12,7 @@ GOVERNOR=ondemand
 case $BRANCH in
 	next|legacy)
 
-		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 		KERNELBRANCH='branch:linux-4.19.y'
-		KERNELDIR=$MAINLINE_KERNEL_DIR
-		KERNEL_USE_GCC='> 7.0'
 
 	;;
 
@@ -29,9 +20,7 @@ case $BRANCH in
 
 		KERNELSOURCE="https://github.com/megous/linux"
 		KERNELBRANCH="branch:orange-pi-5.3"
-		KERNELDIR=$MAINLINE_KERNEL_DIR
 		KERNELPATCHDIR='sunxi-dev'
-		KERNEL_USE_GCC='> 7.0'
 
 	;;
 esac
