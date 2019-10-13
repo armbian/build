@@ -65,7 +65,7 @@ install_common()
 	# create modules file
 	if [[ $BRANCH == dev && -n $MODULES_DEV ]]; then
 		tr ' ' '\n' <<< "$MODULES_DEV" > "${SDCARD}"/etc/modules
-	elif [[ $BRANCH == next || $BRANCH == dev ]]; then
+	elif [[ $BRANCH == current || $BRANCH == dev ]]; then
 		tr ' ' '\n' <<< "$MODULES_NEXT" > "${SDCARD}"/etc/modules
 	else
 		tr ' ' '\n' <<< "$MODULES" > "${SDCARD}"/etc/modules
@@ -74,9 +74,9 @@ install_common()
 	# create blacklist files
 	if [[ $BRANCH == dev && -n $MODULES_BLACKLIST_DEV ]]; then
 		tr ' ' '\n' <<< "$MODULES_BLACKLIST_DEV" | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
-	elif [[ ($BRANCH == next || $BRANCH == dev) && -n $MODULES_BLACKLIST_NEXT ]]; then
+	elif [[ ($BRANCH == current || $BRANCH == dev) && -n $MODULES_BLACKLIST_NEXT ]]; then
 		tr ' ' '\n' <<< "$MODULES_BLACKLIST_NEXT" | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
-	elif [[ $BRANCH == default && -n $MODULES_BLACKLIST ]]; then
+	elif [[ $BRANCH == legacy && -n $MODULES_BLACKLIST ]]; then
 		tr ' ' '\n' <<< "$MODULES_BLACKLIST" | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
 	fi
 
