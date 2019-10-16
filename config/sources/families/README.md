@@ -6,10 +6,10 @@
 | <a href="https://www.armbian.com/download/?tx_soc=a388" target="_blank">mvebu</a> | mvebu64 |
 | <a href="https://www.armbian.com/download/?tx_soc=exynos-5422" target="_blank">odroidxu4</a> | odroidn2 |
 | <a href="https://www.armbian.com/download/?tx_soc=rk3288" target="_blank">rockchip</a> | rk3399 |
-| sun4i | rockchip64 |
-| sun5i | s5p6818 |
-| sun6i | <a href="https://www.armbian.com/download/?tx_soc=a64" target="_blank">sun50iw1</a> |
-| sun7i | <a href="https://www.armbian.com/download/?tx_soc=h5" target="_blank">sun50iw2</a> |
-| sun8i | <a href="https://www.armbian.com/download/?tx_soc=h6" target="_blank">sun50iw6</a> |
+| sun4i | Rockchip <a href="https://www.armbian.com/download/?tx_soc=ockchip64" target="_blank">ockchip64</a> |
+| sun5i | Nexell <a href="https://www.armbian.com/download/?tx_soc=s5p6818" target="_blank">s5p6818</a> |
+| sun6i | Allwinner <a href="https://www.armbian.com/download/?tx_soc=a64" target="_blank">sun50iw1</a> |
+| sun7i | Allwinner <a href="https://www.armbian.com/download/?tx_soc=h5" target="_blank">sun50iw2</a> |
+| sun8i | Allwinner <a href="https://www.armbian.com/download/?tx_soc=h6" target="_blank">sun50iw6</a> |
 | sun9i | |
 | udoo | |
