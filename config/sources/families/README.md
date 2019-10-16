@@ -1,5 +1,5 @@
-|armhf  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| arm64 |
-|-------------|-------------|
+|armhf| arm64 |
+|:--|:--|
 | Freescale/NXP <a href="https://www.armbian.com/download/?tx_soc=imx6" target="_blank">imx6</a>| meson-gxbb  |
 | Freescale/NXP imx7d |  meson-gxl |
 | Amlogic <a href="https://www.armbian.com/download/?tx_soc=s805" target="_blank">meson8b</a> | mt7623 |
@@ -11,4 +11,4 @@
 | Allwinner sun6i | Allwinner <a href="https://www.armbian.com/download/?tx_soc=a64" target="_blank">sun50iw1</a> |
 | Allwinner sun7i | Allwinner <a href="https://www.armbian.com/download/?tx_soc=h5" target="_blank">sun50iw2</a> |
 | Allwinner sun8i | Allwinner <a href="https://www.armbian.com/download/?tx_soc=h6" target="_blank">sun50iw6</a> |
-| Allwinner sun9i | |
+| Allwinner sun9i &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; | &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; |
