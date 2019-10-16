@@ -1,11 +1,12 @@
 - armhf
 
-        cubox              Cubox, Hummingboard, ...
-        imx7d              Sabre
-        meson8b            HardKernel Odroid C0/C1
-        mvebu              Clearfog base/pro, Helios4
-        odroidxu4          HardKernel Odroid XU4
-        rockchip           Rockchip RK3288: Tinkerboard
+    - <a href="https://www.armbian.com/download/?tx_soc=imx6" target="_blank">imx6</a>
+    - imx7d
+    - <a href="https://www.armbian.com/download/?tx_soc=s805" target="_blank">meson8b</a>
+    - <a href="https://www.armbian.com/download/?tx_soc=a388" target="_blank">mvebu</a>
+    - <a href="https://www.armbian.com/download/?tx_soc=exynos-5422" target="_blank">odroidxu4</a>
+    - <a href="https://www.armbian.com/download/?tx_soc=rk3288" target="_blank">rockchip</a>
+
         sun4i              Allwinner A10: Cubieboard 1
         sun5i              Allwinner A13
         sun6i              Allwinner A31
