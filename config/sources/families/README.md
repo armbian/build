@@ -1,4 +1,4 @@
-|armhf  | arm64 |
+|armhf  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| arm64 |
 |-------------|-------------|
 | Freescale/NXP <a href="https://www.armbian.com/download/?tx_soc=imx6" target="_blank">imx6</a>| meson-gxbb  |
 | Freescale/NXP imx7d |  meson-gxl |
