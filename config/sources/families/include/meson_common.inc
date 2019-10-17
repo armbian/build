@@ -30,12 +30,10 @@ write_uboot_platform()
 
 family_tweaks()
 {
-	# enable service installed from BSP
-	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable odroid-c1-hdmi.service >/dev/null 2>&1"
+	:
 }
 
 family_tweaks_bsp()
 {
-	install -m 755 $SRC/packages/bsp/odroid/c1_init.sh $destination/usr/lib/armbian/c1_init.sh
-	cp $SRC/packages/bsp/odroid/odroid-c1-hdmi.service $destination/lib/systemd/system/
+	:	
 }
