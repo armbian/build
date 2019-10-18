@@ -54,7 +54,7 @@ compile_atf()
 	local target_patchdir=$(cut -d';' -f2 <<< $ATF_TARGET_MAP)
 	local target_files=$(cut -d';' -f3 <<< $ATF_TARGET_MAP)
 
-	advanced_patch "atf" "atf-${LINUXFAMILY}" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
+	advanced_patch "atf" "${ATFPATCHDIR}" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
 
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
