@@ -1,6 +1,6 @@
 case $BRANCH in
 
-	legacy|current|default|next)
+	legacy|current)
 
 		# Check https://developer.solid-run.com/knowledge-base/a388-u-boot
 		# for advanced config options
