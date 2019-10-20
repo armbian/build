@@ -233,7 +233,7 @@ function build_all()
 
 					display_alert "Building in the back ${n}."
 					if [[ "${BSP_BUILD}" == yes && ${ALLTARGETS} == "yes" ]]; then
-                                                TARGETS=(xenial stretch buster bionic disco)
+                                                TARGETS=(xenial stretch buster bionic disco eoan)
                                                 for RELEASE in "${TARGETS[@]}"
 						do
 							display_alert "BSP for ${RELEASE}."
@@ -249,7 +249,7 @@ function build_all()
 
 					display_alert "Building ${n}."
 					if [[ "${BSP_BUILD}" == yes && ${ALLTARGETS} == "yes" ]]; then
-						TARGETS=(xenial stretch buster bionic disco)
+						TARGETS=(xenial stretch buster bionic disco eoan)
 						for RELEASE in "${TARGETS[@]}"
 						do
 							display_alert "BSP for ${RELEASE}."
