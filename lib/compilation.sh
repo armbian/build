@@ -275,9 +275,9 @@ compile_kernel()
 
 	# this is a patch that Ubuntu Trusty compiler works
 	# TODO: Check if still required
-	if [[ $(patch --dry-run -t -p1 < $SRC/patch/kernel/compiler.patch | grep Reversed) != "" ]]; then
+	if [[ $(patch --dry-run -t -p1 < $SRC/patch/misc/compiler.patch | grep Reversed) != "" ]]; then
 		display_alert "Patching kernel for compiler support"
-		patch --batch --silent -t -p1 < $SRC/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
+		patch --batch --silent -t -p1 < $SRC/patch/misc/compiler.patch >> $DEST/debug/output.log 2>&1
 	fi
 
 	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"

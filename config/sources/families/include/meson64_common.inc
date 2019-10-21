@@ -18,11 +18,11 @@ fi
 
 case $BRANCH in
 
-	next|legacy)
+	legacy)
 		KERNELBRANCH='branch:linux-4.19.y'
 	;;
 
-	dev|current)
+	current)
 		:
 	;;
 
