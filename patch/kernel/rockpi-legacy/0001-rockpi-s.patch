@@ -1,0 +1,151 @@
+diff --git a/arch/arm64/Makefile b/arch/arm64/Makefile
+index 4cdadc24..45263aa6 100644
+--- a/arch/arm64/Makefile
++++ b/arch/arm64/Makefile
+@@ -100,7 +100,7 @@ core-$(CONFIG_EFI_STUB) += $(objtree)/drivers/firmware/efi/libstub/lib.a
+ ifeq ($(CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE),y)
+ KBUILD_IMAGE	:= $(subst $\",,$(CONFIG_BUILD_ARM64_APPENDED_KERNEL_IMAGE_NAME))
+ else
+-KBUILD_IMAGE	:= Image.gz
++KBUILD_IMAGE	:= Image
+ endif
+ 
+ KBUILD_DTBS	:= dtbs
+@@ -121,6 +121,12 @@ zinstall install: vmlinux
+ %.dtb: scripts
+ 	$(Q)$(MAKE) $(build)=$(boot)/dts $(boot)/dts/$@
+ 
++%.dtbo: | scripts
++	$(Q)$(MAKE) $(build)=$(boot)/dts MACHINE=$(MACHINE) $(boot)/dts/$@
++
++%.scr: | scripts
++	$(Q)$(MAKE) $(build)=$(boot)/dts ARCH=$(ARCH) $(boot)/dts/$@
++
+ PHONY += dtbs dtbs_install
+ 
+ dtbs: prepare scripts
+diff --git a/arch/arm64/boot/dts/rockchip/rk3308.dtsi b/arch/arm64/boot/dts/rockchip/rk3308.dtsi
+index dfa1ae79..2a0d76b4 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3308.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3308.dtsi
+@@ -180,7 +180,6 @@
+ 			opp-microvolt-L4 = <1150000 1150000 1340000>;
+ 			opp-microvolt-L5 = <1125000 1125000 1340000>;
+ 			clock-latency-ns = <40000>;
+-			status = "disabled";
+ 		};
+ 		opp-1296000000 {
+ 			opp-hz = /bits/ 64 <1296000000>;
+@@ -192,7 +191,6 @@
+ 			opp-microvolt-L4 = <1200000 1200000 1340000>;
+ 			opp-microvolt-L5 = <1175000 1175000 1340000>;
+ 			clock-latency-ns = <40000>;
+-			status = "disabled";
+ 		};
+ 	};
+ 
+diff --git a/arch/arm64/boot/dts/rockchip/rockpi-s-linux.dts b/arch/arm64/boot/dts/rockchip/rockpi-s-linux.dts
+index c64afc6a..e039eaa9 100644
+--- a/arch/arm64/boot/dts/rockchip/rockpi-s-linux.dts
++++ b/arch/arm64/boot/dts/rockchip/rockpi-s-linux.dts
+@@ -7,7 +7,7 @@
+ 
+ #include <dt-bindings/input/input.h>
+ /* #include "rk3308.dtsi" */
+-#include "rk3308k.dtsi"
++#include "rk3308.dtsi"
+ 
+ / {
+ 	model = "Radxa ROCK Pi S";
+@@ -151,7 +151,7 @@
+ 		pinctrl-1 = <&uart4_rts_gpio>;
+ 		BT,power_gpio    = <&gpio4 RK_PB3 GPIO_ACTIVE_HIGH>;
+ 		BT,wake_host_irq = <&gpio4 RK_PB4 GPIO_ACTIVE_HIGH>;
+-		status = "okay";
++		status = "disabled";
+ 	};
+ 
+ 	wireless-wlan {
+@@ -164,7 +164,7 @@
+ 		pinctrl-0 = <&wifi_wake_host>;
+ 		wifi_chip_type = "rtl8723ds";
+ 		WIFI,host_wake_irq = <&gpio0 RK_PA0 GPIO_ACTIVE_HIGH>;
+-		status = "okay";
++		status = "disabled";
+ 	};
+ 
+ 	gpio-leds {
+@@ -342,6 +342,10 @@
+ 	};
+ };
+ 
++&uart0 {
++	status = "okay";
++};
++
+ &uart4 {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&uart4_xfer &uart4_cts>;
+diff --git a/scripts/Makefile.dtbinst b/scripts/Makefile.dtbinst
+index 1c15717e..8b1aabd3 100644
+--- a/scripts/Makefile.dtbinst
++++ b/scripts/Makefile.dtbinst
+@@ -29,6 +29,9 @@ ifeq ("$(dtbinst-root)", "$(obj)")
+ endif
+ 
+ dtbinst-files	:= $(dtb-y)
++dtboinst-files	:= $(dtbo-y)
++script-files	:= $(scr-y)
++readme-files	:= $(dtbotxt-y)
+ dtbinst-dirs	:= $(dts-dirs)
+ 
+ # Helper targets for Installing DTBs into the boot directory
+@@ -42,10 +45,19 @@ $(dtbinst-files) $(dtbinst-dirs): | __dtbs_install_prep
+ $(dtbinst-files): %.dtb: $(obj)/%.dtb
+ 	$(call cmd,dtb_install,$(install-dir))
+ 
++$(dtboinst-files): %.dtbo: $(obj)/%.dtbo
++	$(call cmd,dtb_install,$(install-dir))
++
++$(script-files): %.scr: $(obj)/%.scr
++	$(call cmd,dtb_install,$(install-dir))
++
++$(readme-files): %: $(src)/%
++	$(call cmd,dtb_install,$(install-dir))
++
+ $(dtbinst-dirs):
+ 	$(Q)$(MAKE) $(dtbinst)=$(obj)/$@
+ 
+-PHONY += $(dtbinst-files) $(dtbinst-dirs)
+-__dtbs_install: $(dtbinst-files) $(dtbinst-dirs)
++PHONY += $(dtbinst-files) $(dtboinst-files) $(script-files) $(readme-files) $(dtbinst-dirs)
++__dtbs_install: $(dtbinst-files) $(dtboinst-files) $(script-files) $(readme-files) $(dtbinst-dirs)
+ 
+ .PHONY: $(PHONY)
+diff --git a/scripts/Makefile.lib b/scripts/Makefile.lib
+index 75aa16f7..f3d5c23d 100644
+--- a/scripts/Makefile.lib
++++ b/scripts/Makefile.lib
+@@ -322,14 +322,20 @@ $(obj)/%.dtb: $(src)/%.dts FORCE
+ quiet_cmd_dtco = DTCO    $@
+ cmd_dtco = mkdir -p $(dir ${dtc-tmp}) ; \
+ 	$(CPP) $(dtc_cpp_flags) -x assembler-with-cpp -o $(dtc-tmp) $< ; \
+-	$(DTC) -@ -H epapr -O dtb -o $@ -b 0 \
++	$(DTC) -O dtb -o $@ -b 0 \
+ 		-i $(dir $<) $(DTC_FLAGS) \
+ 		-d $(depfile).dtc.tmp $(dtc-tmp) ; \
+ 	cat $(depfile).pre.tmp $(depfile).dtc.tmp > $(depfile)
+ 
+-$(obj)/%.dtbo: $(src)/%-overlay.dts FORCE
++$(obj)/%.dtbo: $(src)/%.dts FORCE
+ 	$(call if_changed_dep,dtco)
+ 
++quiet_cmd_scr = MKIMAGE $@
++cmd_scr = mkimage -C none -A $(ARCH) -T script -d $< $@
++
++$(obj)/%.scr: $(src)/%.scr-cmd FORCE
++	$(call if_changed,scr)
++
+ dtc-tmp = $(subst $(comma),_,$(dot-target).dts.tmp)
+ 
+ # cat

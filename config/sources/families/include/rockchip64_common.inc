@@ -25,6 +25,11 @@ elif [[ $BOARD == rockpro64 ]] || [[ $BOARD == rockpi-4* ]]; then
 
 	UBOOT_TARGET_MAP="BL31=$SRC/cache/sources/rkbin-tools/rk33/rk3399_bl31_v1.17.elf u-boot-dtb.bin spl/u-boot-spl.bin u-boot.itb;;spl/u-boot-spl.bin u-boot.itb"
 
+elif [[ $BOARD == rockpi-s ]]; then
+
+	UBOOT_TARGET_MAP="u-boot-dtb.bin;;idbloader.bin uboot.img trust.bin"
+	CPUMAX="1296000"
+
 else
 
 	ATFPATCHDIR='atf-rk3399'
