@@ -414,7 +414,7 @@ adding_packages()
 		aptly repo search -architectures=$arch -config=${SCRIPTPATH}config/${REPO_CONFIG} $1 'Name (% '$name'), $Version (='$version'), $Architecture (='$arch')' &>/dev/null
 		if [[ $? -ne 0 ]]; then
 			display_alert "Adding" "$name" "info"
-			aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${f} &>/dev/null
+			aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} $1 ${f} &>/dev/null
 		fi
 	done
 
@@ -803,6 +803,8 @@ prepare_host()
 		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-eabi.tar.xz"
 		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
 		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
 		)
 
 	for toolchain in ${toolchains[@]}; do

@@ -122,8 +122,16 @@ desktop_postinstall ()
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
 	if [[ ${FULL_DESKTOP} == yes ]]; then
 		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get update" >> "${DEST}"/debug/install.log
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt update; apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FULL" >> "${DEST}"/debug/install.log
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get update; apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FULL" >> "${DEST}"/debug/install.log
 	fi
+
+	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get update; apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" >> "${DEST}"/debug/install.log
+	fi
+
+	if [[ -n ${PACKAGE_LIST_DESKTOP_FAMILY} ]]; then
+                chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get update; apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY" >> "${DEST}"/debug/install.log
+        fi
 
 	# Compile Turbo Frame buffer for sunxi
 	if [[ $LINUXFAMILY == sun* && $BRANCH == default ]]; then

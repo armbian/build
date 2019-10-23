@@ -249,9 +249,12 @@ LINUXFAMILY="${BOARDFAMILY}"
 if [[ -z $BRANCH ]]; then
 
 	options=()
-	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy")
-	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)")
+#	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy")
+	[[ $KERNEL_TARGET == *legacy* ]] && options+=("legacy" "Old stable / Legacy")
+	[[ $KERNEL_TARGET == *current* ]] && options+=("current"         "Recommended. Come with best support")
+#	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)")
 	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev"         "\Z1Development version (@kernel.org)\Zn")
+
 	# do not display selection dialog if only one kernel branch is available
 	if [[ "${#options[@]}" == 2 ]]; then
 		BRANCH="${options[0]}"
@@ -265,7 +268,9 @@ if [[ -z $BRANCH ]]; then
 	[[ $BRANCH == dev && $SHOW_WARNING == yes ]] && show_developer_warning
 
 else
-
+	[[ $BRANCH == next ]] && KERNEL_TARGET="next" 
+	# next = new legacy. Should stay for backward compatibility, but be removed from menu above
+	# or we left definitions in board configs and only remove menu
 	[[ $KERNEL_TARGET != *$BRANCH* ]] && exit_with_error "Kernel branch not defined for this board" "$BRANCH"
 
 fi

@@ -77,6 +77,7 @@ ARCH=armhf
 KERNEL_IMAGE_TYPE=zImage
 [[ -z $SERIALCON ]] && SERIALCON=ttyS0
 CAN_BUILD_STRETCH=yes
+ATF_COMPILE=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
 [[ -z $WIREGUARD ]] && WIREGUARD="yes"
@@ -91,19 +92,21 @@ SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUIL
 MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
 DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
 
-[[ ! -f ${SRC}/config/sources/$LINUXFAMILY.conf ]] && \
+[[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] && \
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 
-source "${SRC}/config/sources/${LINUXFAMILY}.conf"
+source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
 
-if [[ -f $USERPATCHES_PATH/sources/$LINUXFAMILY.conf ]]; then
+if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
 	source "$USERPATCHES_PATH/sources/${LINUXFAMILY}.conf"
 fi
 
+# load architecture defaults
+source "${SRC}/config/sources/${ARCH}.conf"
+
 # dropbear needs to be configured differently
 [[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
-
 [[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
 [[ $RELEASE == bionic && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Ubuntu Bionic images with selected kernel is not supported"
 [[ $RELEASE == bionic && $(lsb_release -sc) == xenial ]] && exit_with_error "Building Ubuntu Bionic images requires a Bionic build host. Please upgrade your host or select a different target OS"
@@ -112,29 +115,11 @@ fi
 [[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
 [[ -z $KERNEL_USE_GCC ]] && exit_with_error "Error in configuration: KERNEL_USE_GCC is unset"
 
-case $ARCH in
-	arm64)
-	[[ -z $KERNEL_COMPILER ]] && KERNEL_COMPILER="aarch64-linux-gnu-"
-	[[ -z $UBOOT_COMPILER ]] && UBOOT_COMPILER="aarch64-linux-gnu-"
-	ATF_COMPILER="aarch64-linux-gnu-"
-	[[ -z $INITRD_ARCH ]] && INITRD_ARCH=arm64
-	QEMU_BINARY="qemu-aarch64-static"
-	ARCHITECTURE=arm64
-	;;
-
-	armhf)
-	[[ -z $KERNEL_COMPILER ]] && KERNEL_COMPILER="arm-linux-gnueabihf-"
-	[[ -z $UBOOT_COMPILER ]] && UBOOT_COMPILER="arm-linux-gnueabihf-"
-	[[ -z $INITRD_ARCH ]] && INITRD_ARCH=arm
-	QEMU_BINARY="qemu-arm-static"
-	ARCHITECTURE=arm
-	;;
-esac
-
 BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -n ${!BOOTCONFIG_VAR_NAME} ]] && BOOTCONFIG=${!BOOTCONFIG_VAR_NAME}
 [[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
 [[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY"
+[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
 if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == disco || $RELEASE == eoan ]]; then
@@ -287,10 +272,6 @@ fi
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
-#if [[ $ARCH == arm64 ]]; then
-	#PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/iceweasel/iceweasel:armhf}"
-	#PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/thunderbird/thunderbird:armhf}"
-#fi
 [[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP $PACKAGE_LIST_DESKTOP_SUGGESTS"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config

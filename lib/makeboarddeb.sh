@@ -297,15 +297,7 @@ create_board_package()
 	EOF
 
 	# this is required for NFS boot to prevent deconfiguring the network on shutdown
-	[[ $RELEASE == xenial || $RELEASE == stretch || $RELEASE == bionic || $RELEASE == buster || $RELEASE == disco || $RELEASE == eoan ]] && sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
-
-	if [[ ( $LINUXFAMILY == sun*i || $LINUXFAMILY == pine64 ) && $BRANCH == default ]]; then
-		# add mpv config for vdpau_sunxi
-		mkdir -p "${destination}"/etc/mpv/
-		cp "${SRC}"/packages/bsp/mpv/mpv_sunxi.conf "${destination}"/etc/mpv/mpv.conf
-		echo "export VDPAU_OSD=1" > "${destination}"/etc/profile.d/90-vdpau.sh
-		chmod 755 "${destination}"/etc/profile.d/90-vdpau.sh
-	fi
+	sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
 
 	if [[ $LINUXFAMILY == sunxi* && $BRANCH != default ]]; then
 		# add mpv config for x11 output - slow, but it works compared to no config at all
@@ -314,49 +306,9 @@ create_board_package()
 		cp "${SRC}"/packages/bsp/mpv/mpv_mainline.conf "${destination}"/etc/mpv/mpv.conf
 	fi
 
-	case $RELEASE in
-	xenial)
-		mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-		if [[ $BRANCH == default ]]; then
-			# this is required only for old kernels
-			# not needed for Stretch since there will be no Stretch images with kernels < 4.4
-			mkdir -p "${destination}"/lib/systemd/system/haveged.service.d/
-			cp "${SRC}"/packages/bsp/10-no-new-privileges.conf "${destination}"/lib/systemd/system/haveged.service.d/
-		fi
-	;;
-
-	stretch)
-		mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/10-override-random-mac.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-	;;
-
-	bionic)
-		mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/10-override-random-mac.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-	;;
-
-	buster)
-                mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
-                cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-                cp "${SRC}"/packages/bsp/10-override-random-mac.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-        ;;
-
-	disco)
-		mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/10-override-random-mac.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-	;;
-
-	eoan)
-		mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/10-override-random-mac.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-	;;
-
-	esac
+	# disable power savings by default
+	mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
+	cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
 
 	# execute $LINUXFAMILY-specific tweaks
 	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp
