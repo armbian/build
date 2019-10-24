@@ -31,15 +31,17 @@ create_chroot()
 	apt_mirror['xenial']="$UBUNTU_MIRROR"
 	apt_mirror['bionic']="$UBUNTU_MIRROR"
 	apt_mirror['disco']="$UBUNTU_MIRROR"
+	apt_mirror['eoan']="$UBUNTU_MIRROR"
 	components['stretch']='main,contrib'
 	components['buster']='main,contrib'
 	components['xenial']='main,universe,multiverse'
 	components['bionic']='main,universe,multiverse'
 	components['disco']='main,universe,multiverse'
+	components['eoan']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc"
 	# perhaps a temporally workaround
-	[[ $release == buster || $release == disco ]] && includes=$includes",perl-openssl-defaults,libnet-ssleay-perl"
+	[[ $release == buster || $release == disco || $release == eoan ]] && includes=$includes",perl-openssl-defaults,libnet-ssleay-perl"
 	if [[ $NO_APT_CACHER != yes ]]; then
 		local mirror_addr="http://localhost:3142/${apt_mirror[$release]}"
 	else
@@ -92,6 +94,7 @@ chroot_prepare_distccd()
 	gcc_version['xenial']='5.4'
 	gcc_version['bionic']='5.4'
 	gcc_version['disco']='8.3'
+	gcc_version['eoan']='9.2'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
 	gcc_type['arm64']='aarch64-linux-gnu-'
 	rm -f $dest/cmdlist
@@ -124,7 +127,7 @@ chroot_build_packages()
 		target_arch="$ARCH"
 	else
 		# only make packages for recent releases. There are no changes on older
-		target_release="stretch bionic buster disco"
+		target_release="stretch bionic buster disco eoan"
 		target_arch="armhf arm64"
 	fi
 

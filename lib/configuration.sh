@@ -122,7 +122,7 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == disco ]]; then
+if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == disco || $RELEASE == eoan ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
@@ -160,7 +160,7 @@ if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
 
 
 	# Non-essential packages
-	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils btrfs-tools dosfstools iotop iozone3 stress screen \
+	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils dosfstools iotop iozone3 stress screen \
 		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
 		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
 		hostapd git ethtool unzip ifenslave command-not-found libpam-systemd iperf3 \
@@ -188,6 +188,7 @@ case $RELEASE in
 
 	xenial)
 		DEBOOTSTRAP_COMPONENTS="main"
+		DEBOOTSTRAP_LIST+=" btrfs-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db sysbench"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
 								pulseaudio-module-gconf"
@@ -197,7 +198,7 @@ case $RELEASE in
 
 	stretch)
 		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools"
+		DEBOOTSTRAP_LIST+=" rng-tools,btrfs-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf"
 		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium system-config-printer-common system-config-printer leafpad"
@@ -205,7 +206,7 @@ case $RELEASE in
 
 	bionic)
 		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools"
+		DEBOOTSTRAP_LIST+=" rng-tools,btrfs-progs"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf"
 		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium-browser system-config-printer-common system-config-printer \
@@ -214,7 +215,7 @@ case $RELEASE in
 
 	buster)
 		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools"
+		DEBOOTSTRAP_LIST+=" rng-tools,btrfs-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium system-config-printer-common system-config-printer"
@@ -222,10 +223,19 @@ case $RELEASE in
 
 	disco)
 		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools"
+		DEBOOTSTRAP_LIST+=" rng-tools,btrfs-progs"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings"
 		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium-browser system-config-printer-common system-config-printer \
+								language-selector-gnome"
+	;;
+
+	eoan)
+		DEBOOTSTRAP_COMPONENTS="main,universe"
+		DEBOOTSTRAP_LIST+=" rng-tools,btrfs-progs"
+		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
+		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings"
+		PACKAGE_LIST_DESKTOP_SUGGESTS+=" system-config-printer-common system-config-printer \
 								language-selector-gnome"
 	;;
 

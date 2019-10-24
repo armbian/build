@@ -427,7 +427,7 @@ install_distribution_specific()
 
 		;;
 
-	bionic|disco)
+	bionic|disco|eoan)
 
 			# remove doubled uname from motd
 			[[ -f $SDCARD/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
@@ -458,7 +458,7 @@ install_distribution_specific()
 			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
 
 		;;
-
+	
 	esac
 
 }
