@@ -414,7 +414,7 @@ adding_packages()
 		aptly repo search -architectures=$arch -config=${SCRIPTPATH}config/${REPO_CONFIG} $1 'Name (% '$name'), $Version (='$version'), $Architecture (='$arch')' &>/dev/null
 		if [[ $? -ne 0 ]]; then
 			display_alert "Adding" "$name" "info"
-			aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} $release ${f} &>/dev/null
+			aptly repo add -force-replace=true -config=${SCRIPTPATH}config/${REPO_CONFIG} $1 ${f} &>/dev/null
 		fi
 	done
 
