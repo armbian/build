@@ -29,11 +29,60 @@ else
 	exit 255
 fi
 
-if [[ $EUID != 0 && "$1" != vagrant ]]; then
+if [[ $EUID == 0 ]] || [[ "$1" == vagrant ]]; then
+	:
+elif [[ "$1" == docker || "$1" == dockerpurge ]] && grep -q `whoami` <(getent group docker); then
+	:
+else
 	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
 	sudo "$SRC/compile.sh" "$@"
 	exit $?
 fi
+
+update_src() {
+	cd "${SRC}" || exit
+	if [[ ! -f $SRC/.ignore_changes ]]; then
+		echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
+		git pull
+		CHANGED_FILES=$(git diff --name-only)
+		if [[ -n $CHANGED_FILES ]]; then
+			echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
+			while true; do
+				echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m or \e[0;33mexit\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue, \e[0;33mdiff\x1B[0m to display changes"
+				read -r
+				if [[ "$REPLY" == "diff" ]]; then
+					git diff
+				elif [[ "$REPLY" == "exit" ]]; then
+					exit 1
+				elif [[ "$REPLY" == "" ]]; then
+					break
+				else
+					echo "Unknown command!"
+				fi
+			done
+		else
+			git checkout "${LIB_TAG:-master}"
+		fi
+	fi
+}
+
+TMPFILE=`mktemp`
+echo SRC=$SRC > $TMPFILE
+echo LIB_TAG=$LIB_TAG >> $TMPFILE
+declare -f update_src >> $TMPFILE
+echo update_src >> $TMPFILE
+
+#do not update/checkout git with root privileges to messup files onwership.
+#due to in docker/VM, we can't su to a normal user, so do not update/checkout git.
+if [[ `systemd-detect-virt` == 'none' ]]; then
+	if [[ $EUID == 0 ]]; then
+		su `stat --format=%U $SRC/.git` -c "bash $TMPFILE"
+	else
+		bash $TMPFILE
+	fi
+fi
+
+rm $TMPFILE
 
 # Check for Vagrant
 if [[ "$1" == vagrant && -z "$(which vagrant)" ]]; then
@@ -45,14 +94,33 @@ fi
 # Install Docker if not there but wanted. We cover only Debian based distro install. Else, manual Docker install is needed
 if [[ "$1" == docker && -f /etc/debian_version && -z "$(which docker)" ]]; then
 	display_alert "Docker not installed." "Installing" "Info"
-	echo "deb https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}') $(lsb_release -cs) edge" > /etc/apt/sources.list.d/docker.list
-	[[ ! $(which curl) || ! $(which gnupg) ]] && apt-get update;apt-get install -y -qq --no-install-recommends curl gnupg
+	echo "deb [arch=amd64] https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}') $(lsb_release -cs) edge" > /etc/apt/sources.list.d/docker.list
+
+	# minimal set of utilities that are needed for prep
+	packages=("curl" "gnupg" "apt-transport-https")
+	for i in "${packages[@]}"
+	do
+	[[ ! $(which $i) ]] && install_packages+=$i" "
+	done
+	[[ -z $install_packages ]] && apt-get update;apt-get install -y -qq --no-install-recommends $install_packages
+
 	curl -fsSL "https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}')/gpg" | apt-key add -qq - > /dev/null 2>&1
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update
 	apt-get install -y -qq --no-install-recommends docker-ce
-	sudo "$SRC/compile.sh" "$@"
-        exit $?
+	display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
+	"$SRC/compile.sh" "$@"
+	exit $?
+fi
+
+if [[ "$1" == dockerpurge && -f /etc/debian_version ]]; then
+	display_alert "Purging Armbian Docker containers" "" "wrn"
+	docker container ls -a | grep armbian | awk '{print $1}' | xargs docker container rm &> /dev/null
+	docker image ls | grep armbian | awk '{print $3}' | xargs docker image rm &> /dev/null
+	shift
+	arr=("docker" "$@")
+	"$SRC/compile.sh" ${arr[@]}
+	exit $?
 fi
 
 # Create userpatches directory if not exists
@@ -135,30 +203,6 @@ for i in "$@"; do
 		eval "$parameter=\"$value\""
 	fi
 done
-
-if [[ ! -f $SRC/.ignore_changes ]]; then
-	echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
-	git pull
-	CHANGED_FILES=$(git diff --name-only)
-	if [[ -n $CHANGED_FILES ]]; then
-		echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
-		while true; do
-			echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m or \e[0;33mexit\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue, \e[0;33mdiff\x1B[0m to display changes"
-			read -r
-			if [[ "$REPLY" == "diff" ]]; then
-				git diff
-			elif [[ "$REPLY" == "exit" ]]; then
-				exit 1
-			elif [[ "$REPLY" == "" ]]; then
-				break
-			else
-				echo "Unknown command!"
-			fi
-		done
-	else
-		git checkout "${LIB_TAG:-master}"
-	fi
-fi
 
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
 	# shellcheck source=lib/build-all-ng.sh

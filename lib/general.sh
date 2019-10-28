@@ -172,6 +172,9 @@ create_sources_list()
 		echo "deb http://apt.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
 	fi
 
+	# add local package server if defined. Suitable for development
+	[[ -n $LOCAL_MIRROR ]] && echo "deb http://$LOCAL_MIRROR $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" >> $SDCARD/etc/apt/sources.list.d/armbian.list
+
 	display_alert "Adding Armbian repository and authentication key" "/etc/apt/sources.list.d/armbian.list" "info"
 	cp $SRC/config/armbian.key $SDCARD
 	chroot $SDCARD /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
@@ -672,7 +675,7 @@ prepare_host()
 	nfs-kernel-server btrfs-tools ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross \
 	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev aptly acl \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
-	bison libbison-dev flex libfl-dev cryptsetup gpgv1 gnupg1 cpio aria2 pigz"
+	bison libbison-dev flex libfl-dev cryptsetup gpgv1 gnupg1 cpio aria2 pigz dirmngr"
 
 	local codename=$(lsb_release -sc)
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
@@ -733,8 +736,10 @@ prepare_host()
 		display_alert "Updating from external repository" "aptly" "info"
 		if [ x"" != x$http_proxy ]; then
 			apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy=$http_proxy --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
+			apt-key adv --keyserver pool.sks-keyservers.net --keyserver-options http-proxy=$http_proxy --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
 		else
 			apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
+			apt-key adv --keyserver pool.sks-keyservers.net --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
 		fi
 		echo "deb http://repo.aptly.info/ nightly main" > /etc/apt/sources.list.d/aptly.list
 	else
