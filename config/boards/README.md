@@ -2,7 +2,7 @@
 |:--|:--|
 | # | Name of the board with specs displayed in the build menu |
 | BOARD_NAME | welcome text and hostname |
-| BOARDFAMILY | sun8i, sun7i, rockchip64, ... |
+| BOARDFAMILY | [sun8i, sun7i, rockchip64](../sources) |
 | BOOTCONFIG | name of u-boot config |
 | DEFAULT_OVERLAYS | usbhost1 usbhost2 ... |
 | DEFAULT_CONSOLE | serial = change default boot output |
