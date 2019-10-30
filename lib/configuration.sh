@@ -198,7 +198,7 @@ case $RELEASE in
 
 	stretch)
 		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools,btrfs-tools"
+		DEBOOTSTRAP_LIST+=" rng-tools,btrfs-progs"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf"
 		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium system-config-printer-common system-config-printer leafpad"
@@ -215,7 +215,7 @@ case $RELEASE in
 
 	buster)
 		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools,btrfs-tools"
+		DEBOOTSTRAP_LIST+=" rng-tools,btrfs-progs"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium system-config-printer-common system-config-printer"
