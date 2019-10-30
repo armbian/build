@@ -71,25 +71,20 @@ install_common()
 	fi
 
 	# create modules file
-	if [[ $BRANCH == dev && -n $MODULES_DEV ]]; then
-		tr ' ' '\n' <<< "$MODULES_DEV" > "${SDCARD}"/etc/modules
-	elif [[ $BRANCH == current || $BRANCH == dev ]]; then
-		tr ' ' '\n' <<< "$MODULES_NEXT" > "${SDCARD}"/etc/modules
-	else
+	local modules=MODULES_${BRANCH^^}
+	if [[ -n ${!modules} ]]; then
+		tr ' ' '\n' <<< ${!modules} > "${SDCARD}"/etc/modules
+	elif [[ -n ${MODULES} ]]; then
 		tr ' ' '\n' <<< "$MODULES" > "${SDCARD}"/etc/modules
 	fi
 
 	# create blacklist files
-	if [[ $BRANCH == dev && -n $MODULES_BLACKLIST_DEV ]]; then
-		tr ' ' '\n' <<< "$MODULES_BLACKLIST_DEV" | sed -e 's/^/blacklist /' \
-		> "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
-	elif [[ ($BRANCH == current || $BRANCH == dev) && -n $MODULES_BLACKLIST_NEXT ]]; then
-		tr ' ' '\n' <<< "$MODULES_BLACKLIST_NEXT" | sed -e 's/^/blacklist /' \
-		> "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
-	elif [[ $BRANCH == legacy && -n $MODULES_BLACKLIST ]]; then
-		tr ' ' '\n' <<< "$MODULES_BLACKLIST" | sed -e 's/^/blacklist /' \
-		> "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
-	fi
+	local blacklist=MODULES_BLACKLIST_${BRANCH^^}
+        if [[ -n ${!blacklist} ]]; then
+		tr ' ' '\n' <<< ${!blacklist} | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
+        elif [[ -n ${MODULES_BLACKLIST} ]]; then
+		tr ' ' '\n' <<< "$MODULES_BLACKLIST" | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
+        fi
 
 	# remove default interfaces file if present
 	# before installing board support package
