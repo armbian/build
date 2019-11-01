@@ -1,0 +1,170 @@
+From aebb309f8ed621b424e5266f46fda9375976f4fb Mon Sep 17 00:00:00 2001
+From: Neil Armstrong <narmstrong@baylibre.com>
+Date: Wed, 31 Jul 2019 10:40:17 +0200
+Subject: [PATCH 019/182] FROMGIT: clk: meson: add g12a cpu dynamic divider
+ driver
+
+Add a clock driver for the cpu dynamic divider, this divider needs
+to have a flag set before setting the divider value then removed
+while writing the new value to the register.
+
+This drivers implements this behavior and will be used essentially
+on the Amlogic G12A and G12B SoCs for cpu clock trees.
+
+Signed-off-by: Neil Armstrong <narmstrong@baylibre.com>
+Reviewed-by: Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+Signed-off-by: Jerome Brunet <jbrunet@baylibre.com>
+(cherry picked from commit 26d34431add04a98a60b8935c25765914fa773f7
+ https://github.com/BayLibre/clk-meson v5.4/drivers)
+---
+ drivers/clk/meson/Kconfig          |  5 +++
+ drivers/clk/meson/Makefile         |  1 +
+ drivers/clk/meson/clk-cpu-dyndiv.c | 73 ++++++++++++++++++++++++++++++++++++++
+ drivers/clk/meson/clk-cpu-dyndiv.h | 20 +++++++++++
+ 4 files changed, 99 insertions(+)
+ create mode 100644 drivers/clk/meson/clk-cpu-dyndiv.c
+ create mode 100644 drivers/clk/meson/clk-cpu-dyndiv.h
+
+diff --git a/drivers/clk/meson/Kconfig b/drivers/clk/meson/Kconfig
+index 500be0b..dabeb43 100644
+--- a/drivers/clk/meson/Kconfig
++++ b/drivers/clk/meson/Kconfig
+@@ -36,6 +36,10 @@ config COMMON_CLK_MESON_EE_CLKC
+ 	tristate
+ 	select COMMON_CLK_MESON_REGMAP
+ 
++config COMMON_CLK_MESON_CPU_DYNDIV
++	tristate
++	select COMMON_CLK_MESON_REGMAP
++
+ config COMMON_CLK_MESON8B
+ 	bool
+ 	depends on ARCH_MESON
+@@ -98,6 +102,7 @@ config COMMON_CLK_G12A
+ 	select COMMON_CLK_MESON_PLL
+ 	select COMMON_CLK_MESON_AO_CLKC
+ 	select COMMON_CLK_MESON_EE_CLKC
++	select COMMON_CLK_MESON_CPU_DYNDIV
+ 	select MFD_SYSCON
+ 	help
+ 	  Support for the clock controller on Amlogic S905D2, S905X2 and S905Y2
+diff --git a/drivers/clk/meson/Makefile b/drivers/clk/meson/Makefile
+index f09d83d..3939f21 100644
+--- a/drivers/clk/meson/Makefile
++++ b/drivers/clk/meson/Makefile
+@@ -2,6 +2,7 @@
+ # Amlogic clock drivers
+ 
+ obj-$(CONFIG_COMMON_CLK_MESON_AO_CLKC) += meson-aoclk.o
++obj-$(CONFIG_COMMON_CLK_MESON_CPU_DYNDIV) += clk-cpu-dyndiv.o
+ obj-$(CONFIG_COMMON_CLK_MESON_DUALDIV) += clk-dualdiv.o
+ obj-$(CONFIG_COMMON_CLK_MESON_EE_CLKC) += meson-eeclk.o
+ obj-$(CONFIG_COMMON_CLK_MESON_MPLL) += clk-mpll.o
+diff --git a/drivers/clk/meson/clk-cpu-dyndiv.c b/drivers/clk/meson/clk-cpu-dyndiv.c
+new file mode 100644
+index 0000000..3697692
+--- /dev/null
++++ b/drivers/clk/meson/clk-cpu-dyndiv.c
+@@ -0,0 +1,73 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++/*
++ * Copyright (c) 2019 BayLibre, SAS.
++ * Author: Neil Armstrong <narmstrong@baylibre.com>
++ */
++
++#include <linux/clk-provider.h>
++#include <linux/module.h>
++
++#include "clk-regmap.h"
++#include "clk-cpu-dyndiv.h"
++
++static inline struct meson_clk_cpu_dyndiv_data *
++meson_clk_cpu_dyndiv_data(struct clk_regmap *clk)
++{
++	return (struct meson_clk_cpu_dyndiv_data *)clk->data;
++}
++
++static unsigned long meson_clk_cpu_dyndiv_recalc_rate(struct clk_hw *hw,
++						      unsigned long prate)
++{
++	struct clk_regmap *clk = to_clk_regmap(hw);
++	struct meson_clk_cpu_dyndiv_data *data = meson_clk_cpu_dyndiv_data(clk);
++
++	return divider_recalc_rate(hw, prate,
++				   meson_parm_read(clk->map, &data->div),
++				   NULL, 0, data->div.width);
++}
++
++static long meson_clk_cpu_dyndiv_round_rate(struct clk_hw *hw,
++					    unsigned long rate,
++					    unsigned long *prate)
++{
++	struct clk_regmap *clk = to_clk_regmap(hw);
++	struct meson_clk_cpu_dyndiv_data *data = meson_clk_cpu_dyndiv_data(clk);
++
++	return divider_round_rate(hw, rate, prate, NULL, data->div.width, 0);
++}
++
++static int meson_clk_cpu_dyndiv_set_rate(struct clk_hw *hw, unsigned long rate,
++					  unsigned long parent_rate)
++{
++	struct clk_regmap *clk = to_clk_regmap(hw);
++	struct meson_clk_cpu_dyndiv_data *data = meson_clk_cpu_dyndiv_data(clk);
++	unsigned int val;
++	int ret;
++
++	ret = divider_get_val(rate, parent_rate, NULL, data->div.width, 0);
++	if (ret < 0)
++		return ret;
++
++	val = (unsigned int)ret << data->div.shift;
++
++	/* Write the SYS_CPU_DYN_ENABLE bit before changing the divider */
++	meson_parm_write(clk->map, &data->dyn, 1);
++
++	/* Update the divider while removing the SYS_CPU_DYN_ENABLE bit */
++	return regmap_update_bits(clk->map, data->div.reg_off,
++				  SETPMASK(data->div.width, data->div.shift) |
++				  SETPMASK(data->dyn.width, data->dyn.shift),
++				  val);
++};
++
++const struct clk_ops meson_clk_cpu_dyndiv_ops = {
++	.recalc_rate = meson_clk_cpu_dyndiv_recalc_rate,
++	.round_rate = meson_clk_cpu_dyndiv_round_rate,
++	.set_rate = meson_clk_cpu_dyndiv_set_rate,
++};
++EXPORT_SYMBOL_GPL(meson_clk_cpu_dyndiv_ops);
++
++MODULE_DESCRIPTION("Amlogic CPU Dynamic Clock divider");
++MODULE_AUTHOR("Neil Armstrong <narmstrong@baylibre.com>");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/clk/meson/clk-cpu-dyndiv.h b/drivers/clk/meson/clk-cpu-dyndiv.h
+new file mode 100644
+index 0000000..f490840
+--- /dev/null
++++ b/drivers/clk/meson/clk-cpu-dyndiv.h
+@@ -0,0 +1,20 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Copyright (c) 2019 BayLibre, SAS.
++ * Author: Neil Armstrong <narmstrong@baylibre.com>
++ */
++
++#ifndef __MESON_CLK_CPU_DYNDIV_H
++#define __MESON_CLK_CPU_DYNDIV_H
++
++#include <linux/clk-provider.h>
++#include "parm.h"
++
++struct meson_clk_cpu_dyndiv_data {
++	struct parm div;
++	struct parm dyn;
++};
++
++extern const struct clk_ops meson_clk_cpu_dyndiv_ops;
++
++#endif /* __MESON_CLK_CPU_DYNDIV_H */
+-- 
+2.7.4
+

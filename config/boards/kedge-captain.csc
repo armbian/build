@@ -1,0 +1,7 @@
+BOARD_NAME="Khadas Edge Captain"
+BOARDFAMILY="edge"
+BOOTCONFIG="khadas-edge-captain-rk3399_defconfig"
+MODULES=""
+MODULES_NEXT=""
+KERNEL_TARGET="dev"
+FULL_DESKTOP="yes"
