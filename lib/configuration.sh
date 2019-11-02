@@ -11,7 +11,7 @@
 
 # common options
 # daily beta build contains date in subrevision
-if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
+if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%j"); fi
 REVISION=$(cat ${SRC}/VERSION)"$SUBREVISION" # all boards have same revision
 [[ -z $ROOTPWD ]] && ROOTPWD="1234" # Must be changed @first login
 [[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik" # deb signature
@@ -24,7 +24,7 @@ ROOTFSCACHE_VERSION=12
 CHROOT_CACHE_VERSION=6
 BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
-ROOTFS_CACHE_MAX=30 # max number of rootfs cache, older ones will be cleaned up
+ROOTFS_CACHE_MAX=36 # max number of rootfs cache, older ones will be cleaned up
 
 if [[ $BETA == yes ]]; then
 	DEB_STORAGE=$DEST/debs-beta

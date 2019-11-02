@@ -18,20 +18,18 @@
 
 
 
-
 if [[ $BETA == "yes" ]];  then STABILITY="beta";	else STABILITY="stable"; fi
 if [[ -z $KERNEL_ONLY ]]; then KERNEL_ONLY="yes"; fi
-# just to make sure we set those variables
-KERNEL_CONFIGURE="no"
-CLEAN_LEVEL="make,oldcache"
-
+if [[ -z $MULTITHREAD ]]; then MULTITHREAD=1; fi
+if [[ -z $START ]]; then START=0; fi
+if [[ -z $KERNEL_CONFIGURE ]]; then KERNEL_CONFIGURE="no"; fi
+if [[ -z $CLEAN_LEVEL ]]; then CLEAN_LEVEL="make,oldcache"; fi
 
 # cleanup
 rm -f /run/armbian/*.pid
 mkdir -p /run/armbian
 
-
-# support user defined configurations
+# read user defined targets if exits
 if [[ -f $USERPATCHES_PATH/targets.conf ]]; then
 
 	display_alert "Adding user provided targets configuration"
@@ -49,7 +47,7 @@ pack_upload ()
 	# pack and upload to server or just pack
 
 	display_alert "Signing" "Please wait!" "info"
-	local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
+	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
 	local subdir="archive"
 
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
@@ -98,7 +96,7 @@ pack_upload ()
 		mv $DESTIMG/* $DEST/images
 
 	fi
-	rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid
+
 }
 
 
@@ -107,21 +105,32 @@ pack_upload ()
 build_main ()
 {
 
+	source "$USERPATCHES_PATH"/lib.config
 	# build images which we do pack or kernel
+	local upload_image="Armbian_$(cat ${SRC}/VERSION)_${BOARD^}_${RELEASE}_${BRANCH}_*${VER/-$LINUXFAMILY/}"
+	local upload_subdir="archive"
+
+	[[ $BUILD_DESKTOP == yes ]] && upload_image=${upload_image}_desktop
+	[[ $BUILD_MINIMAL == yes ]] && upload_image=${upload_image}_minimal
+	[[ $BETA == yes ]] && local upload_subdir=nightly
 
 	touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
-	if [[ $KERNEL_ONLY != yes ]]; then
 
-		source "${SRC}"/lib/main.sh
-		[[ $BSP_BUILD != yes ]] && pack_upload
+	if [[ $KERNEL_ONLY != yes ]]; then
+		#if ssh ${SEND_TO_SERVER} stat ${SEND_TO_LOCATION}${BOARD}/${upload_subdir}/${upload_image}* \> /dev/null 2\>\&1; then
+		#	echo "$n exists $upload_image"
+		#else
+			source "${SRC}"/lib/main.sh
+			[[ $BSP_BUILD != yes ]] && pack_upload
+		#fi
 
 	else
 
 		source "${SRC}"/lib/main.sh
-		rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
 
 	fi
 
+	rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
 }
 
 
@@ -183,7 +192,7 @@ function build_all()
 
 		[[ "$line" =~ ^#.*$ ]] && continue
 		[[ -n ${REBUILD_IMAGES} ]] && [[ -z $(echo $line | eval grep -w $filter) ]] && continue
-
+		#[[ $n -lt $START ]] && ((n+=1)) && continue
 		unset LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSOURCE BOOTBRANCH ARCH \
 		UBOOT_USE_GCC KERNEL_USE_GCC DEFAULT_OVERLAYS CPUMIN CPUMAX UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE \
 		BOOTFS_TYPE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN DEBOOTSTRAP_LIST PACKAGE_LIST_EXCLUDE KERNEL_IMAGE_TYPE \
@@ -235,13 +244,20 @@ function build_all()
 
 			((n+=1))
 
-			if [[ $1 != "dryrun" ]]; then
-				if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -lt ${MULTITHREAD} ]]; then
+			if [[ $1 != "dryrun" ]] && [[ $n -ge $START ]]; then
 
-					display_alert "Building in the back ${n}."
+							while :
+							do
+							if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -le ${MULTITHREAD} ]]; then
+								break
+							fi
+							sleep 5
+							done
+
+					display_alert "Building ${n}."
 					if [[ "${BSP_BUILD}" == yes && ${ALLTARGETS} == "yes" ]]; then
-                                                TARGETS=(xenial stretch buster bionic disco eoan)
-                                                for RELEASE in "${TARGETS[@]}"
+                                                RELTARGETS=(xenial stretch buster bionic disco eoan)
+                                                for RELEASE in "${RELTARGETS[@]}"
 						do
 							display_alert "BSP for ${RELEASE}."
 							sleep .5
@@ -252,21 +268,6 @@ function build_all()
 							sleep $(( ( RANDOM % 10 )  + 10 ))
 					fi
 
-				else
-
-					display_alert "Building ${n}."
-					if [[ "${BSP_BUILD}" == yes && ${ALLTARGETS} == "yes" ]]; then
-						TARGETS=(xenial stretch buster bionic disco eoan)
-						for RELEASE in "${TARGETS[@]}"
-						do
-							display_alert "BSP for ${RELEASE}."
-							build_main
-						done
-					else
-							build_main
-					fi
-
-				fi
 
 			else
 
