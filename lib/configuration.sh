@@ -20,11 +20,11 @@ TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined 
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
-ROOTFSCACHE_VERSION=12
-CHROOT_CACHE_VERSION=6
+ROOTFSCACHE_VERSION=13
+CHROOT_CACHE_VERSION=7
 BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
-ROOTFS_CACHE_MAX=30 # max number of rootfs cache, older ones will be cleaned up
+ROOTFS_CACHE_MAX=36 # max number of rootfs cache, older ones will be cleaned up
 
 if [[ $BETA == yes ]]; then
 	DEB_STORAGE=$DEST/debs-beta
@@ -175,7 +175,7 @@ if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
 
 
 	# Non-essential packages
-	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils btrfs-tools dosfstools iotop iozone3 stress screen \
+	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils btrfs-progs dosfstools iotop iozone3 stress screen \
 		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
 		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
 		hostapd git ethtool unzip ifenslave command-not-found libpam-systemd iperf3 \
