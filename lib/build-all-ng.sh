@@ -20,7 +20,7 @@
 
 if [[ $BETA == "yes" ]];  then STABILITY="beta";	else STABILITY="stable"; fi
 if [[ -z $KERNEL_ONLY ]]; then KERNEL_ONLY="yes"; fi
-if [[ -z $MULTITHREAD ]]; then MULTITHREAD=1; fi
+if [[ -z $MULTITHREAD ]]; then MULTITHREAD=0; fi
 if [[ -z $START ]]; then START=0; fi
 if [[ -z $KERNEL_CONFIGURE ]]; then KERNEL_CONFIGURE="no"; fi
 if [[ -z $CLEAN_LEVEL ]]; then CLEAN_LEVEL="make,oldcache"; fi
