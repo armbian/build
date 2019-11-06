@@ -7,7 +7,7 @@ BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 LINUXFAMILY=sunxi64
 
 case $BRANCH in
-	next|legacy)
+	legacy)
 		
 		KERNELBRANCH='branch:linux-4.19.y'
 		KERNELPATCHDIR='sunxi-next'
