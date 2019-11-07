@@ -123,8 +123,8 @@ install_common()
 	chroot "${SDCARD}" /bin/bash -c "chage -d 0 root"
 
 	# change console welcome text
-	echo -e "Armbian ${VERSION} ${RELEASE^} \\l \n" > "${SDCARD}"/etc/issue
-	echo "Armbian ${VERSION} ${RELEASE^}" > "${SDCARD}"/etc/issue.net
+	echo -e "Armbian ${REVISION} ${RELEASE^} \\l \n" > "${SDCARD}"/etc/issue
+	echo "Armbian ${REVISION} ${RELEASE^}" > "${SDCARD}"/etc/issue.net
 
 	# enable few bash aliases enabled in Ubuntu by default to make it even
 	sed "s/#alias ll='ls -l'/alias ll='ls -l'/" -i "${SDCARD}"/etc/skel/.bashrc
