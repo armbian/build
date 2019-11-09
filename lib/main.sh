@@ -249,11 +249,9 @@ LINUXFAMILY="${BOARDFAMILY}"
 if [[ -z $BRANCH ]]; then
 
 	options=()
-#	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy")
 	[[ $KERNEL_TARGET == *legacy* ]] && options+=("legacy" "Old stable / Legacy")
-	[[ $KERNEL_TARGET == *current* ]] && options+=("current"         "Recommended. Come with best support")
-#	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)")
-	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev"         "\Z1Development version (@kernel.org)\Zn")
+	[[ $KERNEL_TARGET == *current* ]] && options+=("current" "Recommended. Come with best support")
+	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev" "\Z1Development version (@kernel.org)\Zn")
 
 	# do not display selection dialog if only one kernel branch is available
 	if [[ "${#options[@]}" == 2 ]]; then
@@ -275,22 +273,41 @@ else
 
 fi
 
+# define distribution support status
+declare -A distro_name distro_support
+distro_name['stretch']="Debian 9 Stretch"
+distro_support['stretch']="eos"
+distro_name['buster']="Debian 10 Buster"
+distro_support['buster']="supported"
+distro_name['xenial']="Ubuntu Xenial 16.04 LTS"
+distro_support['xenial']="eos"
+distro_name['bionic']="Ubuntu Bionic 18.04 LTS"
+distro_support['bionic']="supported"
+distro_name['disco']="Ubuntu Disco 19.04"
+distro_support['disco']="csc"
+distro_name['eoan']="Ubuntu Eoan 19.10"
+distro_support['eoan']="csc"
+
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
 	options=()
-	options+=("stretch" "Debian 9 Stretch")
-	options+=("buster" "Debian 10 Buster")
-	options+=("xenial" "Ubuntu Xenial 16.04 LTS")
-	options+=("bionic" "Ubuntu Bionic 18.04 LTS")
-	[[ $EXPERT = yes ]] && options+=("disco" "Ubuntu Disco 19.04 / unsupported")
-	[[ $EXPERT = yes ]] && options+=("eoan" "Ubuntu Eoan 19.10 / unsupported")
 
-	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" \
-	--menu "Select the target OS release" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
-	unset options
-	[[ -z $RELEASE ]] && exit_with_error "No release selected"
+		distro_menu "stretch"
+		distro_menu "buster"
+		distro_menu "xenial"
+		distro_menu "bionic"
+		distro_menu "disco"
+		distro_menu "eoan"
+
+		RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" \
+		--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+		[[ -z $RELEASE ]] && exit_with_error "No release selected"
 
 fi
+
+# read distribution support status which is written to the armbian-release file
+distro_menu "$RELEASE"
+unset options
 
 # don't show desktop option if we choose minimal build
 [[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no

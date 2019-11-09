@@ -15,6 +15,7 @@
 # fetch_from_repo
 # display_alert
 # fingerprint_image
+# distro_menu
 # addtorepo
 # repo-remove-old-packages
 # prepare_host
@@ -395,6 +396,29 @@ fingerprint_image()
 	$(cat $SRC/LICENSE)
 	--------------------------------------------------------------------------------
 	EOF
+}
+
+
+
+
+function distro_menu ()
+{
+# create a select menu for choosing a distribution based EXPERT status
+# also sets DISTRIBUTION_STATUS which goes to BSP package / armbian-release
+
+	for i in "${!distro_name[@]}"
+	do
+		if [[ $i == $1 ]]; then
+			if [[ "${distro_support[$i]}" != "supported" && $EXPERT != "yes" ]]; then
+				:
+			else
+				options+=("$i" "${distro_name[$i]}")
+			fi
+			DISTRIBUTION_STATUS=${distro_support[$i]}
+			break
+		fi
+	done
+
 }
 
 
