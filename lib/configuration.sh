@@ -177,7 +177,7 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 
 
 # Recommended desktop packages
-PACKAGE_LIST_DESKTOP_SUGGESTS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
+PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
 	cups-pk-helper cups geany atril xarchiver"
 
 # Full desktop packages
@@ -192,7 +192,7 @@ case $RELEASE in
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db sysbench"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
 								pulseaudio-module-gconf"
-		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium-browser language-selector-gnome system-config-printer-common \
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common \
 								system-config-printer-gnome leafpad"
 	;;
 
@@ -201,7 +201,7 @@ case $RELEASE in
 		DEBOOTSTRAP_LIST+=" rng-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf"
-		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium system-config-printer-common system-config-printer leafpad"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad"
 	;;
 
 	bionic)
@@ -209,7 +209,7 @@ case $RELEASE in
 		DEBOOTSTRAP_LIST+=" rng-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf"
-		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium-browser system-config-printer-common system-config-printer \
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
 								language-selector-gnome leafpad"
 	;;
 
@@ -218,7 +218,7 @@ case $RELEASE in
 		DEBOOTSTRAP_LIST+=" rng-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
-		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium system-config-printer-common system-config-printer"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer"
 	;;
 
 	disco)
@@ -226,7 +226,7 @@ case $RELEASE in
 		DEBOOTSTRAP_LIST+=" rng-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings"
-		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium-browser system-config-printer-common system-config-printer \
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
 								language-selector-gnome"
 	;;
 
@@ -235,7 +235,7 @@ case $RELEASE in
 		DEBOOTSTRAP_LIST+=" rng-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings"
-		PACKAGE_LIST_DESKTOP_SUGGESTS+=" system-config-printer-common system-config-printer \
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" system-config-printer-common system-config-printer \
 								language-selector-gnome"
 	;;
 
@@ -272,7 +272,7 @@ fi
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
-[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP $PACKAGE_LIST_DESKTOP_SUGGESTS"
+[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP $PACKAGE_LIST_DESKTOP_RECOMMENDS"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
 if [[ -n $PACKAGE_LIST_RM ]]; then
