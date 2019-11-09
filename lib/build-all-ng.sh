@@ -46,7 +46,7 @@ fi
 pack_upload ()
 {
 
-	# pack into .7z and upload to server or just pack. In the background
+	# pack and upload to server or just pack
 
 	display_alert "Signing" "Please wait!" "info"
 	local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
@@ -54,44 +54,51 @@ pack_upload ()
 
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
-
 	[[ $BETA == yes ]] && local subdir=nightly
-	local filename=$DESTIMG/${version}.7z
 
-	# stage: generate sha256sum.sha
 	cd "${DESTIMG}" || exit
-	sha256sum -b "${version}.img" > ${version}.img.sha
 
-	# stage: sign with PGP
-	if [[ -n $GPG_PASS ]]; then
+	if [[ $COMPRESS_OUTPUTIMAGE == yes ]]; then
+		COMPRESS_OUTPUTIMAGE="sha,gpg,7z"
+	fi
 
-		echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes \
-		"${version}.img"
+	if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
+		display_alert "SHA256 calculating" "${version}.img" "info"
+		sha256sum -b ${version}.img > ${version}.img.sha
+	fi
 
+	if [[ $COMPRESS_OUTPUTIMAGE == *gpg* ]]; then
+		if [[ -n $GPG_PASS ]]; then
+			display_alert "GPG signing" "${version}.img" "info"
+			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img || exit 1
+		else
+			display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
+		fi
+	fi
+
+	if [[ $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
+		display_alert "Compressing" "${version}.7z" "info"
+		7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on ${version}.7z ${version}.img* >/dev/null 2>&1
+		find . -type f -not -name '*.7z' -print0 | xargs -0 rm --
+	fi
+
+	if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
+		display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
+		pigz < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.gz
 	fi
 
 	if [[ -n "${SEND_TO_SERVER}" ]]; then
-
-		display_alert "Compressing and uploading" "Please wait!" "info"
-		# pack and move file to server under new process
-		nice -n 19 bash -c "7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img \
-		${version}.img.txt *.asc ${version}.img.sha >/dev/null 2>&1 ; \
-		find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; \
-		while ! rsync -arP $DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:/var/www/dl.armbian.com/${BOARD}/${subdir}; \
-		do sleep 5; done; rm -r $DESTIMG; \
-		rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid" &
+		ssh "${SEND_TO_SERVER}" "mkdir -p ${SEND_TO_LOCATION}${BOARD}/{archive,nightly}" &
+		display_alert "Uploading" "Please wait!" "info"
+		nice -n 19 bash -c "while ! rsync -arP $DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:${SEND_TO_LOCATION}${BOARD}/${subdir}; \
+		do sleep 5; done; rm -r $DESTIMG" &
 
 	else
 
-		display_alert "Compressing" "Please wait!" "info"
-		# pack and move file to debs subdirectory
-		nice -n 19 bash -c "7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $filename ${version}.img \
-		${version}.img.txt *.asc ${version}.img.sha >/dev/null 2>&1 ; \
-		find . -type f -not -name '*.7z' -print0 | xargs -0 rm -- ; mv $filename $DEST/images ; \
-		rm -r $DESTIMG; rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid" &
+		mv $DESTIMG/* $DEST/images
 
 	fi
-
+	rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid
 }
 
 
@@ -266,11 +273,6 @@ function build_all()
 				# In dryrun it only prints out what will be build
 				printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." \
 				"$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
-
-				# create remote directory structure
-				if [[ -n "${SEND_TO_SERVER}" ]]; then
-					ssh "${SEND_TO_SERVER}" "mkdir -p /var/www/dl.armbian.com/${BOARD}/{archive,nightly}"
-				fi
 
 			fi
 
