@@ -8,14 +8,6 @@ UBOOT_TARGET_MAP=';;sd_fuse/bl1.bin.hardkernel sd_fuse/u-boot.bin'
 SRC_LOADADDR='LOADADDR=0x00208000'
 KERNEL_IMAGE_TYPE=uImage
 LINUXFAMILY=meson
-case $BRANCH in
-	next|current)
-
-		:
-
-	;;
-esac
-
 CPUMIN=504000
 CPUMAX=1632000
 GOVERNOR=interactive
