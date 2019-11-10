@@ -12,4 +12,4 @@
 | Allwinner sun6i : sunxi | sun50iw1 : sunxi64 |
 | Allwinner sun7i : sunxi | sun50iw2 : sunxi64 |
 | Allwinner sun8i : sunxi | sun50iw6 : sunxi64 |
-| Allwinner sun9i : sunxi &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; | &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; |
+| Allwinner sun9i : sunxi &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; | &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; |
