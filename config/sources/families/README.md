@@ -1,14 +1,15 @@
+
 |armhf| arm64 |
 |:--|:--|
-| Freescale/NXP <a href="https://www.armbian.com/download/?tx_soc=imx6" target="_blank">imx6</a>| meson-gxbb  |
-| Freescale/NXP imx7d |  meson-gxl |
-| Amlogic <a href="https://www.armbian.com/download/?tx_soc=s805" target="_blank">meson8b</a> | mt7623 |
-| Armada <a href="https://www.armbian.com/download/?tx_soc=a388" target="_blank">mvebu</a> | mvebu64 |
-| Samsung <a href="https://www.armbian.com/download/?tx_soc=exynos-5422" target="_blank">odroidxu4</a> | odroidn2 |
-| Rockchip <a href="https://www.armbian.com/download/?tx_soc=rk3288" target="_blank">rockchip</a> | Rockchip <a href="https://www.armbian.com/download/?tx_soc=rk3399" target="_blank">rk3399</a> |
-| Allwinner sun4i | Rockchip <a href="https://www.armbian.com/download/?tx_soc=rk3399" target="_blank">rockchip64</a> |
-| Allwinner sun5i | Nexell <a href="https://www.armbian.com/download/?tx_soc=s5p6818" target="_blank">s5p6818</a> |
-| Allwinner sun6i | Allwinner <a href="https://www.armbian.com/download/?tx_soc=a64" target="_blank">sun50iw1</a> |
-| Allwinner sun7i | Allwinner <a href="https://www.armbian.com/download/?tx_soc=h5" target="_blank">sun50iw2</a> |
-| Allwinner sun8i | Allwinner <a href="https://www.armbian.com/download/?tx_soc=h6" target="_blank">sun50iw6</a> |
-| Allwinner sun9i &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; | &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; |
+| imx6 : imx6 | meson-gxbb : meson64 |
+| imx7d : imx7d |  meson-gxl : meson64 |
+| meson8b: meson | mt7623 : mt7623|
+| mvebu : mvebu | mvebu64 : mvebu64 |
+| odroidxu4 : odroidxu4 | odroidn2 : odroidn2|
+| rockchip : rockchip | rk3399 : rk3399 |
+| Allwinner sun4i : sunxi | rockchip64 : rockchip64|
+| Allwinner sun5i : sunxi | s5p6818 : s5p6818 |
+| Allwinner sun6i : sunxi | sun50iw1 : sunxi64 |
+| Allwinner sun7i : sunxi | sun50iw2 : sunxi64 |
+| Allwinner sun8i : sunxi | sun50iw6 : sunxi64 |
+| Allwinner sun9i : sunxi &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; | &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; |
