@@ -16,18 +16,6 @@ if [[ $BOARD == lafrite ]]; then
 		UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin:u-boot.bin u-boot-dtb.img"
 fi
 
-case $BRANCH in
-
-	legacy)
-		KERNELBRANCH='branch:linux-4.19.y'
-	;;
-
-	current)
-		:
-	;;
-
-esac
-
 CPUMIN=500000
 CPUMAX=1536000
 GOVERNOR=conservative
