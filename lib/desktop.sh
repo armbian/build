@@ -11,7 +11,8 @@
 
 create_desktop_package ()
 {
-	# cleanup package list
+	# join and cleanup package list
+	PACKAGE_LIST_DESKTOP+=" "${PACKAGE_LIST_DESKTOP_RECOMMENDS}
 	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP// /,};
 	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP//[[:space:]]/}
 
