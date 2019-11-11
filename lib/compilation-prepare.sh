@@ -35,10 +35,16 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.14.y.patch"                "applying"
 	fi
 
-	if [[ $version == "4.4."* || $version == "4.9."* ]] && [[ "$LINUXFAMILY" == rock* || "$LINUXFAMILY" == rk3399 || "$LINUXFAMILY" == odroidn2 ]]; then
+	if [[ $version == "4.4."* || $version == "4.9."* ]] && [[ "$LINUXFAMILY" == rock* || "$LINUXFAMILY" == rk3399 ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y.patch"                "applying"
+	fi
+
+	if [[ $version == "4.9."* ]] && [[ "$LINUXFAMILY" == odroidn2 ]]; then
+		display_alert "Adjustin" "packaging" "info"
+		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+		process_patch_file "${SRC}/patch/misc/general-packaging-4.9.y.patch"                "applying"
 	fi
 
 	# AUFS - advanced multi layered unification filesystem for Kernel > 5.1
