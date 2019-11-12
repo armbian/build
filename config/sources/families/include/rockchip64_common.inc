@@ -104,7 +104,14 @@ atf_custom_postprocess()
 
 family_tweaks()
 {
-	
+
+	[[ $BOARD == nanopct4 ]] && echo "fdtfile=rockchip/rk3399-nanopc-t4.dtb" >> $SDCARD/boot/armbianEnv.txt
+	[[ $BOARD == nanopim4 ]] && echo "fdtfile=rockchip/rk3399-nanopi-m4.dtb" >> $SDCARD/boot/armbianEnv.txt
+	[[ $BOARD == nanopim4v2 ]] && echo "fdtfile=rockchip/rk3399-nanopi-m4.dtb" >> $SDCARD/boot/armbianEnv.txt
+	[[ $BOARD == nanopineo4 ]] && echo "fdtfile=rockchip/rk3399-nanopi-neo4.dtb" >> $SDCARD/boot/armbianEnv.txt
+	[[ $BOARD == orangepi-rk3399 ]] && echo "fdtfile=rockchip/rk3399-orangepi.dtb" >> $SDCARD/boot/armbianEnv.txt
+	[[ $BOARD == firefly-rk3399 ]] && echo "fdtfile=rockchip/rk3399-firefly.dtb" >> $SDCARD/boot/armbianEnv.txt
+
 	if [[ $BOARD == z28pro ]]; then
 
 		echo "fdtfile=rockchip/rk3328-z28pro.dtb" >> $SDCARD/boot/armbianEnv.txt
