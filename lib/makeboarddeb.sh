@@ -62,45 +62,44 @@ create_board_package()
 	cat <<-EOF > "${destination}"/DEBIAN/preinst
 	#!/bin/sh
 
+	# tell people to reboot at next login
 	[ "\$1" = "upgrade" ] && touch /var/run/.reboot_required
+
+	# convert link to file
 	if [ -L "/etc/network/interfaces" ]; then
-		cp /etc/network/interfaces /etc/network/interfaces.tmp
-		rm /etc/network/interfaces
-		mv /etc/network/interfaces.tmp /etc/network/interfaces
+
+	    cp /etc/network/interfaces /etc/network/interfaces.tmp
+	    rm /etc/network/interfaces
+	    mv /etc/network/interfaces.tmp /etc/network/interfaces
+
 	fi
 
 	# swap
 	grep -q vm.swappiness /etc/sysctl.conf
 	case \$? in
 	0)
-		sed -i 's/vm\.swappiness.*/vm.swappiness=100/' /etc/sysctl.conf
-		;;
+	    sed -i 's/vm\.swappiness.*/vm.swappiness=100/' /etc/sysctl.conf
+	    ;;
 	*)
-		echo vm.swappiness=100 >>/etc/sysctl.conf
-		;;
+	    echo vm.swappiness=100 >>/etc/sysctl.conf
+	    ;;
 	esac
 	sysctl -p >/dev/null 2>&1
 
 	# disable deprecated services
-	systemctl disable armhwinfo.service >/dev/null 2>&1
-	#
 	[ -f "/etc/profile.d/activate_psd_user.sh" ] && rm /etc/profile.d/activate_psd_user.sh
 	[ -f "/etc/profile.d/check_first_login.sh" ] && rm /etc/profile.d/check_first_login.sh
 	[ -f "/etc/profile.d/check_first_login_reboot.sh" ] && rm /etc/profile.d/check_first_login_reboot.sh
 	[ -f "/etc/profile.d/ssh-title.sh" ] && rm /etc/profile.d/ssh-title.sh
-	#
 	[ -f "/etc/update-motd.d/10-header" ] && rm /etc/update-motd.d/10-header
 	[ -f "/etc/update-motd.d/30-sysinfo" ] && rm /etc/update-motd.d/30-sysinfo
 	[ -f "/etc/update-motd.d/35-tips" ] && rm /etc/update-motd.d/35-tips
 	[ -f "/etc/update-motd.d/40-updates" ] && rm /etc/update-motd.d/40-updates
 	[ -f "/etc/update-motd.d/98-autoreboot-warn" ] && rm /etc/update-motd.d/98-autoreboot-warn
 	[ -f "/etc/update-motd.d/99-point-to-faq" ] && rm /etc/update-motd.d/99-point-to-faq
-	# Remove Ubuntu junk
 	[ -f "/etc/update-motd.d/80-esm" ] && rm /etc/update-motd.d/80-esm
 	[ -f "/etc/update-motd.d/80-livepatch" ] && rm /etc/update-motd.d/80-livepatch
-	# Remove distro unattended-upgrades config
 	[ -f "/etc/apt/apt.conf.d/50unattended-upgrades" ] && rm /etc/apt/apt.conf.d/50unattended-upgrades
-	#
 	[ -f "/etc/apt/apt.conf.d/02compress-indexes" ] && rm /etc/apt/apt.conf.d/02compress-indexes
 	[ -f "/etc/apt/apt.conf.d/02periodic" ] && rm /etc/apt/apt.conf.d/02periodic
 	[ -f "/etc/apt/apt.conf.d/no-languages" ] && rm /etc/apt/apt.conf.d/no-languages
@@ -113,22 +112,26 @@ create_board_package()
 	[ -f "/lib/systemd/system/resize2fs.service" ] && rm /lib/systemd/system/resize2fs.service
 	[ -f "/usr/lib/armbian/apt-updates" ] && rm /usr/lib/armbian/apt-updates
 	[ -f "/usr/lib/armbian/firstrun-config.sh" ] && rm /usr/lib/armbian/firstrun-config.sh
-	# make a backup since we are unconditionally overwriting this on update
-	[ -f "/etc/default/cpufrequtils" ] && cp /etc/default/cpufrequtils /etc/default/cpufrequtils.dpkg-old
-	dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename \
-		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
+	dpkg-divert --quiet --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename --divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 	EOF
 
 	# continue to set up pre install script
 	if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then
 		cat <<-EOF >> "${destination}"/DEBIAN/preinst
 
-		# create a bootscript backup
+		# move bootscript to /usr/share/armbian
+		# if boot script does not exits its recreated by default
+
 		if [ -f /etc/armbian-release ]; then
-			# create a backup
-			. /etc/armbian-release
-			cp /boot/$bootscript_dst /usr/share/armbian/${bootscript_dst}-\${VERSION} >/dev/null 2>&1
-			echo "NOTE: You can find previous bootscript versions in /usr/share/armbian !"
+
+		    # create a backup
+		    . /etc/armbian-release
+		    mv /boot/$bootscript_dst /usr/share/armbian/${bootscript_dst}-\${VERSION} >/dev/null 2>&1
+		    echo "NOTE: You can find previous bootscript versions in /usr/share/armbian !"
+		    # cleanup old bootscript backup
+		    [ -f /usr/share/armbian/boot.cmd ] && ls /usr/share/armbian/boot.cmd-* | head -n -5 | xargs rm -f --
+		    [ -f /usr/share/armbian/boot.ini ] && ls /usr/share/armbian/boot.ini-* | head -n -5 | xargs rm -f --
+
 		fi
 
 		exit 0
@@ -146,10 +149,11 @@ create_board_package()
 	cat <<-EOF > "${destination}"/DEBIAN/postrm
 	#!/bin/sh
 	if [ remove = "\$1" ] || [ abort-install = "\$1" ]; then
-		dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename \
-			--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
-		systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service >/dev/null 2>&1
-		systemctl disable armbian-zram-config.service armbian-ramlog.service >/dev/null 2>&1
+
+	    dpkg-divert --quiet --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename	--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
+	    systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service >/dev/null 2>&1
+	    systemctl disable armbian-zram-config.service armbian-ramlog.service >/dev/null 2>&1
+
 	fi
 	exit 0
 	EOF
@@ -167,58 +171,40 @@ create_board_package()
 
 	# check if it was disabled in config and disable in new service
 	if [ -n "\$(grep -w '^ENABLED=false' /etc/default/log2ram 2> /dev/null)" ]; then
-		sed -i "s/^ENABLED=.*/ENABLED=false/" /etc/default/armbian-ramlog
+
+	     sed -i "s/^ENABLED=.*/ENABLED=false/" /etc/default/armbian-ramlog
+
 	fi
 
 	# fix boot delay "waiting for suspend/resume device"
 	if [ -f "/etc/initramfs-tools/initramfs.conf" ]; then
-		if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
-		echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
-		fi
+
+	    if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
+	         echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
+	    fi
+
 	fi
 
 	# install bootscripts if they are not present. Fix upgrades from old images
 	if [ ! -f /boot/$bootscript_dst ]; then
-		echo "Recreating boot script"
-		cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
-		rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*\$//' < /proc/cmdline)
-		rootfstype=\$(sed -e 's/^.*rootfstype=//' -e 's/ .*$//' < /proc/cmdline)
-		cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
-		echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
-		echo "rootfstype="\$rootfstype >> /boot/armbianEnv.txt
-		sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
-		sed -i "s/setenv rootfstype.*/setenv rootfstype \\"\$rootfstype\\"/" /boot/boot.ini
-		[ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
-	EOF
-	if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then
-		cat <<-EOF >> "${destination}"/DEBIAN/postinst
-		else
-			echo "Updating bootscript"
 
-			# copy new bootscript
-			cp -f /usr/share/armbian/$bootscript_dst /boot/${bootscript_dst}.new  >/dev/null 2>&1
+	    echo "Recreating boot script"
+	    cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
+	    rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*\$//' < /proc/cmdline)
+	    rootfstype=\$(sed -e 's/^.*rootfstype=//' -e 's/ .*$//' < /proc/cmdline)
+	    cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
+	    echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
+	    echo "rootfstype="\$rootfstype >> /boot/armbianEnv.txt
+	    [ -f /boot/boot.ini ] && sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
+	    [ -f /boot/boot.ini ] && sed -i "s/setenv rootfstype.*/setenv rootfstype \\"\$rootfstype\\"/" /boot/boot.ini
+	    [ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
 
-			# cleanup old bootscript backup
-			[ -f /usr/share/armbian/boot.cmd ] && ls /usr/share/armbian/boot.cmd-* | head -n -5 | xargs rm -f --
-			[ -f /usr/share/armbian/boot.ini ] && ls /usr/share/armbian/boot.ini-* | head -n -5 | xargs rm -f --
-		EOF
 	fi
-
-	cat <<-EOF >> "${destination}"/DEBIAN/postinst
-	fi
-	# now cleanup and remove old ramlog service
-	systemctl disable log2ram.service >/dev/null 2>&1
-	[ -f "/usr/sbin/log2ram" ] && rm /usr/sbin/log2ram
-	[ -f "/usr/share/log2ram/LICENSE" ] && rm -r /usr/share/log2ram
-	[ -f "/lib/systemd/system/log2ram.service" ] && rm /lib/systemd/system/log2ram.service
-	[ -f "/etc/cron.daily/log2ram" ] && rm /etc/cron.daily/log2ram
-	[ -f "/etc/default/log2ram.dpkg-dist" ] && rm /etc/default/log2ram.dpkg-dist
 
 	[ ! -f "/etc/network/interfaces" ] && cp /etc/network/interfaces.default /etc/network/interfaces
 	ln -sf /var/run/motd /etc/motd
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
-	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
-	rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
+
 	if [ ! -f "/etc/default/armbian-motd" ]; then
 		mv /etc/default/armbian-motd.dpkg-dist /etc/default/armbian-motd
 	fi
