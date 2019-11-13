@@ -80,11 +80,19 @@ install_common()
 
 	# create blacklist files
 	local blacklist=MODULES_BLACKLIST_${BRANCH^^}
-        if [[ -n ${!blacklist} ]]; then
+	if [[ -n ${!blacklist} ]]; then
 		tr ' ' '\n' <<< ${!blacklist} | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
-        elif [[ -n ${MODULES_BLACKLIST} ]]; then
+	elif [[ -n ${MODULES_BLACKLIST} ]]; then
 		tr ' ' '\n' <<< "$MODULES_BLACKLIST" | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
-        fi
+	fi
+
+	# configure MIN / MAX speed for cpufrequtils
+	cat <<-EOF > "${SDCARD}"/etc/default/cpufrequtils	
+	ENABLE=true
+	MIN_SPEED=$CPUMIN
+	MAX_SPEED=$CPUMAX
+	GOVERNOR=$GOVERNOR
+	EOF
 
 	# remove default interfaces file if present
 	# before installing board support package
@@ -119,6 +127,7 @@ install_common()
 
 	# set root password
 	chroot "${SDCARD}" /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
+
 	# force change root password at first login
 	chroot "${SDCARD}" /bin/bash -c "chage -d 0 root"
 
