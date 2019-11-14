@@ -135,29 +135,24 @@ family_tweaks_bsp()
 
 		mkdir -p $destination/usr/local/bin
 
-		# Bluetooth
+		# Bluetooth for Z28 PRO
 		install -m 755 $SRC/packages/bsp/rk3328/z28pro/8822b_hciattach $destination/usr/bin
 		install -m 755 $SRC/packages/bsp/rk3328/z28pro/start_bt.sh $destination/usr/local/bin
 		cp $SRC/packages/bsp/rk3328/z28pro/z28pro-bluetooth.service $destination/lib/systemd/system/
 
-	elif [[ $BOARD == rockpi-4b ]]; then
+	elif [[ $BOARD == rockpi-4b || $BOARD == nanop* || $BOARD == orangepi* || BOARD == firefly* ]]; then
 
-		# Bluetooth
-		install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
-		cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/
-
-	else
-
-		# Graphics and media
-		mkdir -p $destination/etc/udev/rules.d
-		cp $SRC/packages/bsp/rk3399/50-mali.rules $destination/etc/udev/rules.d/
-		cp $SRC/packages/bsp/rk3399/50-rk3399-vpu.rules $destination/etc/udev/rules.d/
-		mkdir -p $destination/etc/sysfs.d
-		cp $SRC/packages/bsp/rk3399/20-gpu-governor.conf $destination/etc/sysfs.d/
-		# Bluetooth
+		# Bluetooth for most of others
 		install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
 		cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/
 
 	fi
+
+	# Graphics and media
+	mkdir -p $destination/etc/udev/rules.d
+	cp $SRC/packages/bsp/rk3399/50-mali.rules $destination/etc/udev/rules.d/
+	cp $SRC/packages/bsp/rk3399/50-rk3399-vpu.rules $destination/etc/udev/rules.d/
+	mkdir -p $destination/etc/sysfs.d
+	cp $SRC/packages/bsp/rk3399/20-gpu-governor.conf $destination/etc/sysfs.d/
 
 }
