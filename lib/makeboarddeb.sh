@@ -120,19 +120,16 @@ create_board_package()
 		cat <<-EOF >> "${destination}"/DEBIAN/preinst
 
 		# move bootscript to /usr/share/armbian
+
 		# if boot script does not exits its recreated by default
-
-		if [ -f /etc/armbian-release ]; then
-
-		    # create a backup
-		    . /etc/armbian-release
-		    mv /boot/$bootscript_dst /usr/share/armbian/${bootscript_dst}-\${VERSION} >/dev/null 2>&1
-		    echo "NOTE: You can find previous bootscript versions in /usr/share/armbian !"
-		    # cleanup old bootscript backup
-		    [ -f /usr/share/armbian/boot.cmd ] && ls /usr/share/armbian/boot.cmd-* | head -n -5 | xargs rm -f --
-		    [ -f /usr/share/armbian/boot.ini ] && ls /usr/share/armbian/boot.ini-* | head -n -5 | xargs rm -f --
-
-		fi
+		# create a backup
+		[ -f /etc/armbian-release ] &&  . /etc/armbian-release
+		[ -z \${VERSION} ] && VERSION=$(echo \`date +%s\`)
+		[ -f /boot/$bootscript_dst ] && mv /boot/$bootscript_dst /usr/share/armbian/${bootscript_dst}-\${VERSION} >/dev/null 2>&1
+		[ -f /boot/$bootscript_dst ] && echo "NOTE: You can find previous bootscript versions in /usr/share/armbian !"
+		# cleanup old bootscript backup
+		ls /usr/share/armbian/boot.cmd-* | head -n -5 | xargs rm -f --
+		ls /usr/share/armbian/boot.ini-* | head -n -5 | xargs rm -f --
 
 		exit 0
 		EOF
