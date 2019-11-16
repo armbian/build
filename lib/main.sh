@@ -389,9 +389,13 @@ fi
 compile_sunxi_tools
 install_rkbin_tools
 
-BOOTSOURCEDIR=$BOOTDIR/${BOOTBRANCH##*:}
-LINUXSOURCEDIR=$KERNELDIR/${KERNELBRANCH##*:}
-[[ -n $ATFSOURCE ]] && ATFSOURCEDIR=$ATFDIR/${ATFBRANCH##*:}
+branch2dir() {
+	[[ $1 == head ]] && echo HEAD || echo ${1##*:}
+}
+
+BOOTSOURCEDIR=$BOOTDIR/$(branch2dir ${BOOTBRANCH})
+LINUXSOURCEDIR=$KERNELDIR/$(branch2dir ${KERNELBRANCH})
+[[ -n $ATFSOURCE ]] && ATFSOURCEDIR=$ATFDIR/$(branch2dir ${ATFBRANCH})
 
 # define package names
 DEB_BRANCH=${BRANCH//default}
