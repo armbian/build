@@ -61,6 +61,11 @@ chage -d 99999999 root
 curl https://install.yunohost.org/stretch | bash -s -- -a
 rm /var/log/yunohost-installation*
 
+# Install InternetCube dependencies
+apt install php7.0-fpm sipcalc hostapd iptables iw dnsmasq # hotspot
+apt install sipcalc dnsutils openvpn curl fake-hwclock # vpnclient
+apt install php-cli php-common php-intl php-json php-mcrypt php-pear php-auth-sasl php-mail-mime php-patchwork-utf8 php-net-smtp php-net-socket php-net-ldap2 php-net-ldap3 php-zip php-gd php-mbstring php-curl # roundcube
+
 # Override the first login script with our own (we don't care about desktop
 # stuff + we don't want the user to manually create a user)
 cp /tmp/overlay/check_yunohost_is_installed.sh /etc/profile.d/check_yunohost_is_installed.sh
