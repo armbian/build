@@ -189,9 +189,12 @@ create_board_package()
 	    cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
 	    rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*\$//' < /proc/cmdline)
 	    rootfstype=\$(sed -e 's/^.*rootfstype=//' -e 's/ .*$//' < /proc/cmdline)
-	    cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
-	    echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
-	    echo "rootfstype="\$rootfstype >> /boot/armbianEnv.txt
+	    # recreate armbianEnv.txt only not exists
+	    if [ ! -f /boot/armbianEnv.txt ]; then
+	       cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
+	       echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
+	       echo "rootfstype="\$rootfstype >> /boot/armbianEnv.txt
+	    fi
 	    [ -f /boot/boot.ini ] && sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
 	    [ -f /boot/boot.ini ] && sed -i "s/setenv rootfstype.*/setenv rootfstype \\"\$rootfstype\\"/" /boot/boot.ini
 	    [ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
