@@ -113,32 +113,8 @@ create_board_package()
 	[ -f "/usr/lib/armbian/apt-updates" ] && rm /usr/lib/armbian/apt-updates
 	[ -f "/usr/lib/armbian/firstrun-config.sh" ] && rm /usr/lib/armbian/firstrun-config.sh
 	dpkg-divert --quiet --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename --divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
+	exit 0
 	EOF
-
-	# continue to set up pre install script
-	if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then
-		cat <<-EOF >> "${destination}"/DEBIAN/preinst
-
-		# move bootscript to /usr/share/armbian
-
-		# if boot script does not exits its recreated by default
-		# create a backup
-		[ -f /etc/armbian-release ] &&  . /etc/armbian-release
-		[ -z \${VERSION} ] && VERSION=$(echo \`date +%s\`)
-		[ -f /boot/$bootscript_dst ] && mv /boot/$bootscript_dst /usr/share/armbian/${bootscript_dst}-\${VERSION} >/dev/null 2>&1
-		[ -f /boot/$bootscript_dst ] && echo "NOTE: You can find previous bootscript versions in /usr/share/armbian !"
-		# cleanup old bootscript backup
-		ls /usr/share/armbian/boot.cmd-* | head -n -5 | xargs rm -f --
-		ls /usr/share/armbian/boot.ini-* | head -n -5 | xargs rm -f --
-
-		exit 0
-		EOF
-	else
-		cat <<-EOF >> "${destination}"/DEBIAN/preinst
-
-		exit 0
-		EOF
-	fi
 
 	chmod 755 "${destination}"/DEBIAN/preinst
 
@@ -182,24 +158,52 @@ create_board_package()
 
 	fi
 
+	EOF
 	# install bootscripts if they are not present. Fix upgrades from old images
+	if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then
+	    cat <<-EOF >> "${destination}"/DEBIAN/postinst
+	if [ true ]; then
+
+    # this package recreate boot scripts
+	EOF
+	else
+	    cat <<-EOF >> "${destination}"/DEBIAN/postinst
 	if [ ! -f /boot/$bootscript_dst ]; then
 
-	    echo "Recreating boot script"
-	    cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
-	    rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*\$//' < /proc/cmdline)
-	    rootfstype=\$(sed -e 's/^.*rootfstype=//' -e 's/ .*$//' < /proc/cmdline)
-	    # recreate armbianEnv.txt only not exists
-	    if [ ! -f /boot/armbianEnv.txt ]; then
-	       cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
-	       echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
-	       echo "rootfstype="\$rootfstype >> /boot/armbianEnv.txt
-	    fi
-	    [ -f /boot/boot.ini ] && sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
-	    [ -f /boot/boot.ini ] && sed -i "s/setenv rootfstype.*/setenv rootfstype \\"\$rootfstype\\"/" /boot/boot.ini
-	    [ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
-
+	# if boot script does not exits its recreated
+	EOF
 	fi
+	cat <<-EOF >> "${destination}"/DEBIAN/postinst
+    # move bootscript to /usr/share/armbian
+    # create a backup
+    [ -f /etc/armbian-release ] &&  . /etc/armbian-release
+    [ -z \${VERSION} ] && VERSION=$(echo \`date +%s\`)
+    if [ -f /boot/$bootscript_dst ]; then
+       cp /boot/$bootscript_dst /usr/share/armbian/${bootscript_dst}-\${VERSION} >/dev/null 2>&1
+       echo "NOTE: You can find previous bootscript versions in /usr/share/armbian !"
+    fi
+
+    # cleanup old bootscript backup
+    ls /usr/share/armbian/boot.cmd-* >/dev/null 2>&1 | head -n -5 | xargs rm -f --
+    ls /usr/share/armbian/boot.ini-* >/dev/null 2>&1 | head -n -5 | xargs rm -f --
+
+    echo "Recreating boot script"
+    cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
+    rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*\$//' < /proc/cmdline)
+    rootfstype=\$(sed -e 's/^.*rootfstype=//' -e 's/ .*$//' < /proc/cmdline)
+
+    # recreate armbianEnv.txt only not exists
+    if [ ! -f /boot/armbianEnv.txt ]; then
+      cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
+      echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
+      echo "rootfstype="\$rootfstype >> /boot/armbianEnv.txt
+    fi
+
+    [ -f /boot/boot.ini ] && sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
+    [ -f /boot/boot.ini ] && sed -i "s/setenv rootfstype.*/setenv rootfstype \\"\$rootfstype\\"/" /boot/boot.ini
+    [ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
+
+fi
 
 	[ ! -f "/etc/network/interfaces" ] && cp /etc/network/interfaces.default /etc/network/interfaces
 	ln -sf /var/run/motd /etc/motd
