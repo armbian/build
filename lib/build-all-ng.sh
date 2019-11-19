@@ -18,20 +18,18 @@
 
 
 
-
 if [[ $BETA == "yes" ]];  then STABILITY="beta";	else STABILITY="stable"; fi
 if [[ -z $KERNEL_ONLY ]]; then KERNEL_ONLY="yes"; fi
-# just to make sure we set those variables
-KERNEL_CONFIGURE="no"
-CLEAN_LEVEL="make,oldcache"
-
+if [[ -z $MULTITHREAD ]]; then MULTITHREAD=0; fi
+if [[ -z $START ]]; then START=0; fi
+if [[ -z $KERNEL_CONFIGURE ]]; then KERNEL_CONFIGURE="no"; fi
+if [[ -z $CLEAN_LEVEL ]]; then CLEAN_LEVEL="make,oldcache"; fi
 
 # cleanup
 rm -f /run/armbian/*.pid
 mkdir -p /run/armbian
 
-
-# support user defined configurations
+# read user defined targets if exits
 if [[ -f $USERPATCHES_PATH/targets.conf ]]; then
 
 	display_alert "Adding user provided targets configuration"
@@ -43,13 +41,29 @@ else
 
 fi
 
+unset_all ()
+{
+unset	LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSOURCE BOOTBRANCH ARCH UBOOT_USE_GCC \
+		KERNEL_USE_GCC CPUMIN CPUMAX UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE BOOTFS_TYPE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN \
+		DEBOOTSTRAP_LIST PACKAGE_LIST_EXCLUDE KERNEL_IMAGE_TYPE write_uboot_platform family_tweaks family_tweaks_bsp \
+		setup_write_uboot_platform uboot_custom_postprocess atf_custom_postprocess family_tweaks_s BOOTSCRIPT \
+		UBOOT_TARGET_MAP LOCALVERSION UBOOT_COMPILER KERNEL_COMPILER BOOTCONFIG_VAR_NAME INITRD_ARCH BOOTENV_FILE BOOTDELAY \
+		ATF_TOOLCHAIN2 MOUNT SDCARD BOOTPATCHDIR KERNELPATCHDIR RELEASE IMAGE_TYPE OVERLAY_PREFIX ASOUND_STATE ATF_COMPILER \
+		ATF_USE_GCC ATFSOURCE ATFDIR ATFBRANCH ATFSOURCEDIR PACKAGE_LIST_RM NM_IGNORE_DEVICES DISPLAY_MANAGER \
+		family_tweaks_bsp_s CRYPTROOT_ENABLE CRYPTROOT_PASSPHRASE CRYPTROOT_SSH_UNLOCK CRYPTROOT_SSH_UNLOCK_PORT \
+		CRYPTROOT_SSH_UNLOCK_KEY_NAME ROOT_MAPPER NETWORK HDMI USB WIRELESS ARMBIANMONITOR FORCE_BOOTSCRIPT_UPDATE \
+		UBOOT_TOOLCHAIN2 toolchain2 BUILD_REPOSITORY_URL BUILD_REPOSITORY_COMMIT BUILD_TARGET HOST BUILD_IMAGE \
+		DEB_STORAGE REPO_STORAGE REPO_CONFIG REPOSITORY_UPDATE PACKAGE_LIST_RELEASE LOCAL_MIRROR COMPILE_ATF \
+		PACKAGE_LIST_DESKTOP_BOARD PACKAGE_LIST_DESKTOP_FAMILY ATF_COMPILE ATFPATCHDIR OFFSET BOOTSOURCEDIR
+}
+
 pack_upload ()
 {
 
 	# pack and upload to server or just pack
 
 	display_alert "Signing" "Please wait!" "info"
-	local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
+	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
 	local subdir="archive"
 
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
@@ -98,7 +112,7 @@ pack_upload ()
 		mv $DESTIMG/* $DEST/images
 
 	fi
-	rm /run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid
+
 }
 
 
@@ -107,21 +121,32 @@ pack_upload ()
 build_main ()
 {
 
+	source "$USERPATCHES_PATH"/lib.config
 	# build images which we do pack or kernel
+	local upload_image="Armbian_$(cat ${SRC}/VERSION)_${BOARD^}_${RELEASE}_${BRANCH}_*${VER/-$LINUXFAMILY/}"
+	local upload_subdir="archive"
+
+	[[ $BUILD_DESKTOP == yes ]] && upload_image=${upload_image}_desktop
+	[[ $BUILD_MINIMAL == yes ]] && upload_image=${upload_image}_minimal
+	[[ $BETA == yes ]] && local upload_subdir=nightly
 
 	touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
-	if [[ $KERNEL_ONLY != yes ]]; then
 
-		source "${SRC}"/lib/main.sh
-		[[ $BSP_BUILD != yes ]] && pack_upload
+	if [[ $KERNEL_ONLY != yes ]]; then
+		#if ssh ${SEND_TO_SERVER} stat ${SEND_TO_LOCATION}${BOARD}/${upload_subdir}/${upload_image}* \> /dev/null 2\>\&1; then
+		#	echo "$n exists $upload_image"
+		#else
+			source "${SRC}"/lib/main.sh
+			[[ $BSP_BUILD != yes ]] && pack_upload
+		#fi
 
 	else
 
 		source "${SRC}"/lib/main.sh
-		rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
 
 	fi
 
+	rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
 }
 
 
@@ -173,32 +198,22 @@ function build_all()
 
 	fi
 
-	# TO DO!
 	# find unique boards - we will build debs for all variants
 	sorted_unique_ids=($(echo "${ids[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
 	unique_boards=$(eval $buildlist ${SRC}/config/targets.conf | sed '/^#/ d' | awk '{print $1}')
-	unique_boards=$(echo "${unique_boards[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+	read -a unique_boards <<< $(echo "${unique_boards[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')
 
 	while read line; do
 
 		[[ "$line" =~ ^#.*$ ]] && continue
 		[[ -n ${REBUILD_IMAGES} ]] && [[ -z $(echo $line | eval grep -w $filter) ]] && continue
+		#[[ $n -lt $START ]] && ((n+=1)) && continue
 
-		unset LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSOURCE BOOTBRANCH ARCH \
-		UBOOT_USE_GCC KERNEL_USE_GCC DEFAULT_OVERLAYS CPUMIN CPUMAX UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE \
-		BOOTFS_TYPE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN DEBOOTSTRAP_LIST PACKAGE_LIST_EXCLUDE KERNEL_IMAGE_TYPE \
-		write_uboot_platform family_tweaks family_tweaks_bsp setup_write_uboot_platform uboot_custom_postprocess \
-		atf_custom_postprocess family_tweaks_s BOOTSCRIPT UBOOT_TARGET_MAP LOCALVERSION UBOOT_COMPILER \
-		KERNEL_COMPILER BOOTCONFIG BOOTCONFIG_VAR_NAME BOOTCONFIG_DEFAULT BOOTCONFIG_NEXT BOOTCONFIG_DEV MODULES \
-		MODULES_NEXT MODULES_DEV INITRD_ARCH BOOTENV_FILE BOOTDELAY MODULES_BLACKLIST MODULES_BLACKLIST_NEXT \
-		ATF_TOOLCHAIN2 MODULES_BLACKLIST_DEV MOUNT SDCARD BOOTPATCHDIR KERNELPATCHDIR RELEASE FULL_DESKTOP \
-		IMAGE_TYPE OVERLAY_PREFIX ASOUND_STATE ATF_COMPILER ATF_USE_GCC ATFSOURCE ATFDIR ATFBRANCH ATFSOURCEDIR \
-		PACKAGE_LIST_RM NM_IGNORE_DEVICES DISPLAY_MANAGER family_tweaks_bsp_s CRYPTROOT_ENABLE CRYPTROOT_PASSPHRASE \
-		CRYPTROOT_SSH_UNLOCK CRYPTROOT_SSH_UNLOCK_PORT CRYPTROOT_SSH_UNLOCK_KEY_NAME ROOT_MAPPER NETWORK HDMI \
-		USB WIRELESS ARMBIANMONITOR DEFAULT_CONSOLE FORCE_BOOTSCRIPT_UPDATE SERIALCON UBOOT_TOOLCHAIN2 toolchain2 \
-		BUILD_REPOSITORY_URL BUILD_REPOSITORY_COMMIT DESKTOP_AUTOLOGIN BUILD_MINIMAL BUILD_TARGET BUILD_STABILITY \
-		HOST BUILD_IMAGE BOARDFAMILY DEB_STORAGE REPO_STORAGE REPO_CONFIG REPOSITORY_UPDATE PACKAGE_LIST_RELEASE \
-		LOCAL_MIRROR
+		unset_all
+		# unset also board related variables
+		unset BOARDFAMILY DESKTOP_AUTOLOGIN DEFAULT_CONSOLE FULL_DESKTOP MODULES_CURRENT MODULES_LEGACY MODULES_DEV \
+		BOOTCONFIG MODULES_BLACKLIST_LEGACY MODULES_BLACKLIST_CURRENT MODULES_BLACKLIST_DEV DEFAULT_OVERLAYS SERIALCON \
+		BUILD_MINIMAL
 
 		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE <<< "${line}"
 
@@ -235,39 +250,45 @@ function build_all()
 
 			((n+=1))
 
-			if [[ $1 != "dryrun" ]]; then
-				if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -lt ${MULTITHREAD} ]]; then
+			if [[ $1 != "dryrun" ]] && [[ $n -ge $START ]]; then
 
-					display_alert "Building in the back ${n}."
-					if [[ "${BSP_BUILD}" == yes && ${ALLTARGETS} == "yes" ]]; then
-                                                TARGETS=(xenial stretch buster bionic disco)
-                                                for RELEASE in "${TARGETS[@]}"
-						do
-							display_alert "BSP for ${RELEASE}."
-							sleep .5
-							(build_main) &
-						done
-					else
-							(build_main) &
-							sleep $(( ( RANDOM % 10 )  + 10 ))
-					fi
-
-				else
+							while :
+							do
+							if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -le ${MULTITHREAD} ]]; then
+								break
+							fi
+							sleep 5
+							done
 
 					display_alert "Building ${n}."
-					if [[ "${BSP_BUILD}" == yes && ${ALLTARGETS} == "yes" ]]; then
-						TARGETS=(xenial stretch buster bionic disco)
-						for RELEASE in "${TARGETS[@]}"
-						do
-							display_alert "BSP for ${RELEASE}."
-							build_main
-						done
-					else
-							build_main
-					fi
+					(build_main) &
+					sleep $(( ( RANDOM % 10 )  + 10 ))
 
-				fi
+			# create BSP for all boards
+			elif [[ "${BSP_BUILD}" == yes ]]; then
 
+				for BOARD in "${unique_boards[@]}"
+				do
+					source ${SRC}"/config/boards/${BOARD}".eos 2> /dev/null
+					source ${SRC}"/config/boards/${BOARD}".tvb 2> /dev/null
+					source ${SRC}"/config/boards/${BOARD}".csc 2> /dev/null
+					source ${SRC}"/config/boards/${BOARD}".wip 2> /dev/null
+					source ${SRC}"/config/boards/${BOARD}".conf 2> /dev/null
+					IFS=',' read -a RELBRANCH <<< $KERNEL_TARGET
+					for BRANCH in "${RELBRANCH[@]}"
+					do
+					RELTARGETS=(xenial stretch buster bionic disco eoan)
+					for RELEASE in "${RELTARGETS[@]}"
+					do
+						display_alert "BSP for ${BOARD} ${BRANCH} ${RELEASE}."
+						build_main
+						# unset non board related stuff
+						unset_all
+					done
+					done
+				done
+				display_alert "Done building all BSP images"
+				exit
 			else
 
 				# In dryrun it only prints out what will be build

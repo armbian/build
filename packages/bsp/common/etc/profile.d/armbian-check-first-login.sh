@@ -77,6 +77,9 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 		if [ "$BRANCH" == "dev" ]; then
 			echo -e "\nYou are using an Armbian preview build !!!"
 			echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
+		elif [ "$DISTRIBUTION_STATUS" != "supported" ]; then
+			echo -e "\nYou are using an Armbian with unsupported ($DISTRIBUTION_CODENAME) userspace !!!"
+			echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
 		else
 			echo -e "\n\e[0;31mThank you for choosing Armbian! Support: \e[1m\e[39mwww.armbian.com\x1B[0m\n"
 		fi
