@@ -24,7 +24,6 @@ create_board_package()
 	# install copy of boot script & environment file
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
-
 	mkdir -p "${destination}"/usr/share/armbian/
 	cp "${SRC}/config/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
 	[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
@@ -62,63 +61,45 @@ create_board_package()
 	# set up pre install script
 	cat <<-EOF > "${destination}"/DEBIAN/preinst
 	#!/bin/sh
+
+	# tell people to reboot at next login
 	[ "\$1" = "upgrade" ] && touch /var/run/.reboot_required
-	[ -d "/boot/bin.old" ] && rm -rf /boot/bin.old
-	[ -d "/boot/bin" ] && mv -f /boot/bin /boot/bin.old
+
+	# convert link to file
 	if [ -L "/etc/network/interfaces" ]; then
-		cp /etc/network/interfaces /etc/network/interfaces.tmp
-		rm /etc/network/interfaces
-		mv /etc/network/interfaces.tmp /etc/network/interfaces
+
+	    cp /etc/network/interfaces /etc/network/interfaces.tmp
+	    rm /etc/network/interfaces
+	    mv /etc/network/interfaces.tmp /etc/network/interfaces
+
 	fi
+
 	# swap
 	grep -q vm.swappiness /etc/sysctl.conf
 	case \$? in
 	0)
-		sed -i 's/vm\.swappiness.*/vm.swappiness=100/' /etc/sysctl.conf
-		;;
+	    sed -i 's/vm\.swappiness.*/vm.swappiness=100/' /etc/sysctl.conf
+	    ;;
 	*)
-		echo vm.swappiness=100 >>/etc/sysctl.conf
-		;;
+	    echo vm.swappiness=100 >>/etc/sysctl.conf
+	    ;;
 	esac
 	sysctl -p >/dev/null 2>&1
-	# remove swap file if it was made by our start script
-	if [ -f /var/swap ]; then
-	if [ "\$(stat -c%s /var/swap 2> /dev/null)" -eq "134217728" ]; then
-        swapoff /var/swap
-        sed -i '/\/var\/swap/d' /etc/fstab
-        rm /var/swap
-	fi
-	fi
-	# disable power management on network manager
-	if [ -f /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf ]; then
-		sed -i 's/wifi.powersave.*/wifi.powersave = 2/' /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
-		else
-		if [ -d /etc/NetworkManager/conf.d ]; then
-			echo "[connection]" > /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
-			echo "# Values are 0 (use default), 1 (ignore/don't touch), 2 (disable) or 3 (enable)." >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
-			echo "wifi.powersave = 2" >> /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf
-		fi
-	fi
+
 	# disable deprecated services
-	systemctl disable armhwinfo.service >/dev/null 2>&1
-	#
 	[ -f "/etc/profile.d/activate_psd_user.sh" ] && rm /etc/profile.d/activate_psd_user.sh
 	[ -f "/etc/profile.d/check_first_login.sh" ] && rm /etc/profile.d/check_first_login.sh
 	[ -f "/etc/profile.d/check_first_login_reboot.sh" ] && rm /etc/profile.d/check_first_login_reboot.sh
 	[ -f "/etc/profile.d/ssh-title.sh" ] && rm /etc/profile.d/ssh-title.sh
-	#
 	[ -f "/etc/update-motd.d/10-header" ] && rm /etc/update-motd.d/10-header
 	[ -f "/etc/update-motd.d/30-sysinfo" ] && rm /etc/update-motd.d/30-sysinfo
 	[ -f "/etc/update-motd.d/35-tips" ] && rm /etc/update-motd.d/35-tips
 	[ -f "/etc/update-motd.d/40-updates" ] && rm /etc/update-motd.d/40-updates
 	[ -f "/etc/update-motd.d/98-autoreboot-warn" ] && rm /etc/update-motd.d/98-autoreboot-warn
 	[ -f "/etc/update-motd.d/99-point-to-faq" ] && rm /etc/update-motd.d/99-point-to-faq
-	# Remove Ubuntu junk
 	[ -f "/etc/update-motd.d/80-esm" ] && rm /etc/update-motd.d/80-esm
 	[ -f "/etc/update-motd.d/80-livepatch" ] && rm /etc/update-motd.d/80-livepatch
-	# Remove distro unattended-upgrades config
 	[ -f "/etc/apt/apt.conf.d/50unattended-upgrades" ] && rm /etc/apt/apt.conf.d/50unattended-upgrades
-	#
 	[ -f "/etc/apt/apt.conf.d/02compress-indexes" ] && rm /etc/apt/apt.conf.d/02compress-indexes
 	[ -f "/etc/apt/apt.conf.d/02periodic" ] && rm /etc/apt/apt.conf.d/02periodic
 	[ -f "/etc/apt/apt.conf.d/no-languages" ] && rm /etc/apt/apt.conf.d/no-languages
@@ -131,31 +112,9 @@ create_board_package()
 	[ -f "/lib/systemd/system/resize2fs.service" ] && rm /lib/systemd/system/resize2fs.service
 	[ -f "/usr/lib/armbian/apt-updates" ] && rm /usr/lib/armbian/apt-updates
 	[ -f "/usr/lib/armbian/firstrun-config.sh" ] && rm /usr/lib/armbian/firstrun-config.sh
-	# make a backup since we are unconditionally overwriting this on update
-	[ -f "/etc/default/cpufrequtils" ] && cp /etc/default/cpufrequtils /etc/default/cpufrequtils.dpkg-old
-	dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename \
-		--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
+	dpkg-divert --quiet --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename --divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
+	exit 0
 	EOF
-
-	if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then
-		cat <<-EOF >> "${destination}"/DEBIAN/preinst
-
-		# create a bootscript backup
-		if [ -f /etc/armbian-release ]; then
-			# create a backup
-			. /etc/armbian-release
-			cp /boot/$bootscript_dst /usr/share/armbian/${bootscript_dst}-\${VERSION} >/dev/null 2>&1
-			echo "NOTE: You can find previous bootscript versions in /usr/share/armbian !"
-		fi
-
-		exit 0
-		EOF
-	else
-		cat <<-EOF >> "${destination}"/DEBIAN/preinst
-
-		exit 0
-		EOF
-	fi
 
 	chmod 755 "${destination}"/DEBIAN/preinst
 
@@ -163,9 +122,11 @@ create_board_package()
 	cat <<-EOF > "${destination}"/DEBIAN/postrm
 	#!/bin/sh
 	if [ remove = "\$1" ] || [ abort-install = "\$1" ]; then
-		dpkg-divert --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename \
-			--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
-		systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-ramlog.service >/dev/null 2>&1
+
+	    dpkg-divert --quiet --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename	--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
+	    systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service >/dev/null 2>&1
+	    systemctl disable armbian-zram-config.service armbian-ramlog.service >/dev/null 2>&1
+
 	fi
 	exit 0
 	EOF
@@ -183,58 +144,71 @@ create_board_package()
 
 	# check if it was disabled in config and disable in new service
 	if [ -n "\$(grep -w '^ENABLED=false' /etc/default/log2ram 2> /dev/null)" ]; then
-		sed -i "s/^ENABLED=.*/ENABLED=false/" /etc/default/armbian-ramlog
+
+	     sed -i "s/^ENABLED=.*/ENABLED=false/" /etc/default/armbian-ramlog
+
 	fi
 
 	# fix boot delay "waiting for suspend/resume device"
 	if [ -f "/etc/initramfs-tools/initramfs.conf" ]; then
-		if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
-		echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
-		fi
+
+	    if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
+	         echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
+	    fi
+
 	fi
 
-	# install bootscripts if they are not present. Fix upgrades from old images
-	if [ ! -f /boot/$bootscript_dst ]; then
-		echo "Recreating boot script"
-		cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
-		rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*\$//' < /proc/cmdline)
-		rootfstype=\$(sed -e 's/^.*rootfstype=//' -e 's/ .*$//' < /proc/cmdline)
-		cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
-		echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
-		echo "rootfstype="\$rootfstype >> /boot/armbianEnv.txt
-		sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
-		sed -i "s/setenv rootfstype.*/setenv rootfstype \\"\$rootfstype\\"/" /boot/boot.ini
-		[ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
 	EOF
+	# install bootscripts if they are not present. Fix upgrades from old images
 	if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then
-		cat <<-EOF >> "${destination}"/DEBIAN/postinst
-		else
-			echo "Updating bootscript"
+	    cat <<-EOF >> "${destination}"/DEBIAN/postinst
+	if [ true ]; then
 
-			# copy new bootscript
-			cp -f /usr/share/armbian/$bootscript_dst /boot/${bootscript_dst}.new  >/dev/null 2>&1
+    # this package recreate boot scripts
+	EOF
+	else
+	    cat <<-EOF >> "${destination}"/DEBIAN/postinst
+	if [ ! -f /boot/$bootscript_dst ]; then
 
-			# cleanup old bootscript backup
-			[ -f /usr/share/armbian/boot.cmd ] && ls /usr/share/armbian/boot.cmd-* | head -n -5 | xargs rm -f --
-			[ -f /usr/share/armbian/boot.ini ] && ls /usr/share/armbian/boot.ini-* | head -n -5 | xargs rm -f --
-		EOF
+	# if boot script does not exits its recreated
+	EOF
 	fi
-
 	cat <<-EOF >> "${destination}"/DEBIAN/postinst
-	fi
-	# now cleanup and remove old ramlog service
-	systemctl disable log2ram.service >/dev/null 2>&1
-	[ -f "/usr/sbin/log2ram" ] && rm /usr/sbin/log2ram
-	[ -f "/usr/share/log2ram/LICENSE" ] && rm -r /usr/share/log2ram
-	[ -f "/lib/systemd/system/log2ram.service" ] && rm /lib/systemd/system/log2ram.service
-	[ -f "/etc/cron.daily/log2ram" ] && rm /etc/cron.daily/log2ram
-	[ -f "/etc/default/log2ram.dpkg-dist" ] && rm /etc/default/log2ram.dpkg-dist
+    # move bootscript to /usr/share/armbian
+    # create a backup
+    [ -f /etc/armbian-release ] &&  . /etc/armbian-release
+    [ -z \${VERSION} ] && VERSION=$(echo \`date +%s\`)
+    if [ -f /boot/$bootscript_dst ]; then
+       cp /boot/$bootscript_dst /usr/share/armbian/${bootscript_dst}-\${VERSION} >/dev/null 2>&1
+       echo "NOTE: You can find previous bootscript versions in /usr/share/armbian !"
+    fi
+
+    # cleanup old bootscript backup
+    ls /usr/share/armbian/boot.cmd-* >/dev/null 2>&1 | head -n -5 | xargs rm -f --
+    ls /usr/share/armbian/boot.ini-* >/dev/null 2>&1 | head -n -5 | xargs rm -f --
+
+    echo "Recreating boot script"
+    cp /usr/share/armbian/$bootscript_dst /boot  >/dev/null 2>&1
+    rootdev=\$(sed -e 's/^.*root=//' -e 's/ .*\$//' < /proc/cmdline)
+    rootfstype=\$(sed -e 's/^.*rootfstype=//' -e 's/ .*$//' < /proc/cmdline)
+
+    # recreate armbianEnv.txt only not exists
+    if [ ! -f /boot/armbianEnv.txt ]; then
+      cp /usr/share/armbian/armbianEnv.txt /boot  >/dev/null 2>&1
+      echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
+      echo "rootfstype="\$rootfstype >> /boot/armbianEnv.txt
+    fi
+
+    [ -f /boot/boot.ini ] && sed -i "s/setenv rootdev.*/setenv rootdev \\"\$rootdev\\"/" /boot/boot.ini
+    [ -f /boot/boot.ini ] && sed -i "s/setenv rootfstype.*/setenv rootfstype \\"\$rootfstype\\"/" /boot/boot.ini
+    [ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr  >/dev/null 2>&1
+
+fi
 
 	[ ! -f "/etc/network/interfaces" ] && cp /etc/network/interfaces.default /etc/network/interfaces
 	ln -sf /var/run/motd /etc/motd
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
-	if [ -f "/boot/bin/$BOARD.bin" ] && [ ! -f "/boot/script.bin" ]; then ln -sf bin/$BOARD.bin /boot/script.bin >/dev/null 2>&1 || cp /boot/bin/$BOARD.bin /boot/script.bin; fi
-	rm -f /usr/local/bin/h3disp /usr/local/bin/h3consumption
+
 	if [ ! -f "/etc/default/armbian-motd" ]; then
 		mv /etc/default/armbian-motd.dpkg-dist /etc/default/armbian-motd
 	fi
@@ -269,15 +243,6 @@ create_board_package()
 	activate update-initramfs
 	EOF
 
-	# configure MIN / MAX speed for cpufrequtils
-	cat <<-EOF > "${destination}"/etc/default/cpufrequtils
-	# WARNING: this file will be replaced on board support package (linux-root-...) upgrade
-	ENABLE=true
-	MIN_SPEED=$CPUMIN
-	MAX_SPEED=$CPUMAX
-	GOVERNOR=$GOVERNOR
-	EOF
-
 	# armhwinfo, firstrun, armbianmonitor, etc. config file
 	cat <<-EOF > "${destination}"/etc/armbian-release
 	# PLEASE DO NOT EDIT THIS FILE
@@ -286,6 +251,8 @@ create_board_package()
 	BOARDFAMILY=${BOARDFAMILY}
 	BUILD_REPOSITORY_URL=${BUILD_REPOSITORY_URL}
 	BUILD_REPOSITORY_COMMIT=${BUILD_REPOSITORY_COMMIT}
+	DISTRIBUTION_CODENAME=${RELEASE}
+	DISTRIBUTION_STATUS=${DISTRIBUTION_STATUS}
 	VERSION=$REVISION
 	LINUXFAMILY=$LINUXFAMILY
 	BRANCH=$BRANCH
@@ -297,60 +264,18 @@ create_board_package()
 	EOF
 
 	# this is required for NFS boot to prevent deconfiguring the network on shutdown
-	[[ $RELEASE == xenial || $RELEASE == stretch || $RELEASE == bionic || $RELEASE == buster || $RELEASE == disco ]] && sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
+	sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
 
-	if [[ ( $LINUXFAMILY == sun*i || $LINUXFAMILY == pine64 ) && $BRANCH == default ]]; then
-		# add mpv config for vdpau_sunxi
-		mkdir -p "${destination}"/etc/mpv/
-		cp "${SRC}"/packages/bsp/mpv/mpv_sunxi.conf "${destination}"/etc/mpv/mpv.conf
-		echo "export VDPAU_OSD=1" > "${destination}"/etc/profile.d/90-vdpau.sh
-		chmod 755 "${destination}"/etc/profile.d/90-vdpau.sh
-	fi
-
-	if [[ $LINUXFAMILY == sunxi* && $BRANCH != default ]]; then
+	if [[ $LINUXFAMILY == sunxi* ]]; then
 		# add mpv config for x11 output - slow, but it works compared to no config at all
 		# TODO: Test which output driver is better with DRM
 		mkdir -p "${destination}"/etc/mpv/
 		cp "${SRC}"/packages/bsp/mpv/mpv_mainline.conf "${destination}"/etc/mpv/mpv.conf
 	fi
 
-	case $RELEASE in
-	xenial)
-		mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-		if [[ $BRANCH == default ]]; then
-			# this is required only for old kernels
-			# not needed for Stretch since there will be no Stretch images with kernels < 4.4
-			mkdir -p "${destination}"/lib/systemd/system/haveged.service.d/
-			cp "${SRC}"/packages/bsp/10-no-new-privileges.conf "${destination}"/lib/systemd/system/haveged.service.d/
-		fi
-	;;
-
-	stretch)
-		mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/10-override-random-mac.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-	;;
-
-	bionic)
-		mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/10-override-random-mac.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-	;;
-
-	buster)
-                mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
-                cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-                cp "${SRC}"/packages/bsp/10-override-random-mac.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-        ;;
-
-	disco)
-		mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-		cp "${SRC}"/packages/bsp/10-override-random-mac.conf "${destination}"/usr/lib/NetworkManager/conf.d/
-	;;
-
-	esac
+	# disable power savings on wireless connections by default
+	mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
+	cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
 
 	# execute $LINUXFAMILY-specific tweaks
 	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp

@@ -11,7 +11,7 @@
 
 # common options
 # daily beta build contains date in subrevision
-if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%y%m%d"); fi
+if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%j"); fi
 REVISION=$(cat ${SRC}/VERSION)"$SUBREVISION" # all boards have same revision
 [[ -z $ROOTPWD ]] && ROOTPWD="1234" # Must be changed @first login
 [[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik" # deb signature
@@ -77,6 +77,7 @@ ARCH=armhf
 KERNEL_IMAGE_TYPE=zImage
 [[ -z $SERIALCON ]] && SERIALCON=ttyS0
 CAN_BUILD_STRETCH=yes
+ATF_COMPILE=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
 [[ -z $WIREGUARD ]] && WIREGUARD="yes"
@@ -91,19 +92,21 @@ SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUIL
 MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
 DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
 
-[[ ! -f ${SRC}/config/sources/$LINUXFAMILY.conf ]] && \
+[[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] && \
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 
-source "${SRC}/config/sources/${LINUXFAMILY}.conf"
+source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
 
-if [[ -f $USERPATCHES_PATH/sources/$LINUXFAMILY.conf ]]; then
+if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
 	source "$USERPATCHES_PATH/sources/${LINUXFAMILY}.conf"
 fi
 
+# load architecture defaults
+source "${SRC}/config/sources/${ARCH}.conf"
+
 # dropbear needs to be configured differently
 [[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
-
 [[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
 [[ $RELEASE == bionic && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Ubuntu Bionic images with selected kernel is not supported"
 [[ $RELEASE == bionic && $(lsb_release -sc) == xenial ]] && exit_with_error "Building Ubuntu Bionic images requires a Bionic build host. Please upgrade your host or select a different target OS"
@@ -112,32 +115,14 @@ fi
 [[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
 [[ -z $KERNEL_USE_GCC ]] && exit_with_error "Error in configuration: KERNEL_USE_GCC is unset"
 
-case $ARCH in
-	arm64)
-	[[ -z $KERNEL_COMPILER ]] && KERNEL_COMPILER="aarch64-linux-gnu-"
-	[[ -z $UBOOT_COMPILER ]] && UBOOT_COMPILER="aarch64-linux-gnu-"
-	ATF_COMPILER="aarch64-linux-gnu-"
-	[[ -z $INITRD_ARCH ]] && INITRD_ARCH=arm64
-	QEMU_BINARY="qemu-aarch64-static"
-	ARCHITECTURE=arm64
-	;;
-
-	armhf)
-	[[ -z $KERNEL_COMPILER ]] && KERNEL_COMPILER="arm-linux-gnueabihf-"
-	[[ -z $UBOOT_COMPILER ]] && UBOOT_COMPILER="arm-linux-gnueabihf-"
-	[[ -z $INITRD_ARCH ]] && INITRD_ARCH=arm
-	QEMU_BINARY="qemu-arm-static"
-	ARCHITECTURE=arm
-	;;
-esac
-
 BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -n ${!BOOTCONFIG_VAR_NAME} ]] && BOOTCONFIG=${!BOOTCONFIG_VAR_NAME}
 [[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
 [[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY"
+[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == disco ]]; then
+if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == disco || $RELEASE == eoan ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
@@ -192,7 +177,7 @@ PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-f
 
 
 # Recommended desktop packages
-PACKAGE_LIST_DESKTOP_SUGGESTS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
+PACKAGE_LIST_DESKTOP_RECOMMENDS="mirage galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
 	cups-pk-helper cups geany atril xarchiver"
 
 # Full desktop packages
@@ -203,10 +188,11 @@ case $RELEASE in
 
 	xenial)
 		DEBOOTSTRAP_COMPONENTS="main"
+		DEBOOTSTRAP_LIST+=" btrfs-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db sysbench"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
 								pulseaudio-module-gconf"
-		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium-browser language-selector-gnome system-config-printer-common \
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common \
 								system-config-printer-gnome leafpad"
 	;;
 
@@ -215,7 +201,7 @@ case $RELEASE in
 		DEBOOTSTRAP_LIST+=" rng-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf"
-		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium system-config-printer-common system-config-printer leafpad"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad"
 	;;
 
 	bionic)
@@ -223,7 +209,7 @@ case $RELEASE in
 		DEBOOTSTRAP_LIST+=" rng-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf"
-		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium-browser system-config-printer-common system-config-printer \
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
 								language-selector-gnome leafpad"
 	;;
 
@@ -232,7 +218,7 @@ case $RELEASE in
 		DEBOOTSTRAP_LIST+=" rng-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
-		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium system-config-printer-common system-config-printer"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer"
 	;;
 
 	disco)
@@ -240,7 +226,16 @@ case $RELEASE in
 		DEBOOTSTRAP_LIST+=" rng-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings"
-		PACKAGE_LIST_DESKTOP_SUGGESTS+=" chromium-browser system-config-printer-common system-config-printer \
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
+								language-selector-gnome"
+	;;
+
+	eoan)
+		DEBOOTSTRAP_COMPONENTS="main,universe"
+		DEBOOTSTRAP_LIST+=" rng-tools"
+		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
+		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings"
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
 								language-selector-gnome"
 	;;
 
@@ -277,11 +272,7 @@ fi
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
-#if [[ $ARCH == arm64 ]]; then
-	#PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/iceweasel/iceweasel:armhf}"
-	#PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP/thunderbird/thunderbird:armhf}"
-#fi
-[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP $PACKAGE_LIST_DESKTOP_SUGGESTS"
+[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP $PACKAGE_LIST_DESKTOP_RECOMMENDS"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
 if [[ -n $PACKAGE_LIST_RM ]]; then

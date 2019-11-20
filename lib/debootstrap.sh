@@ -301,7 +301,7 @@ prepare_partitions()
 	# parttype[nfs] is empty
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	if [[ $(lsb_release -sc) =~ bionic|buster|cosmic|disco ]]; then
+	if [[ $(lsb_release -sc) =~ bionic|buster|cosmic|disco|eoan ]]; then
 		mkopts[ext4]='-q -m 2 -O ^64bit,^metadata_csum'
 	elif [[ $(lsb_release -sc) == xenial ]]; then
 		mkopts[ext4]='-q -m 2'
@@ -547,7 +547,7 @@ update_initramfs() {
 create_image()
 {
 	# stage: create file name
-	local version="Armbian_${REVISION}_${BOARD^}_${DISTRIBUTION}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
+	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
@@ -632,7 +632,7 @@ create_image()
 			# compress image
 			cd $DESTIMG
 			display_alert "Compressing" "$DEST/images/${version}.7z" "info"
-			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img* ${version}.img.txt >/dev/null 2>&1
+			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on $DEST/images/${version}.7z ${version}.key ${version}.img* >/dev/null 2>&1
 			cd ..
 		fi
 
