@@ -17,8 +17,8 @@ GOVERNOR="ondemand"
 CPUMAX="2016000"
 
 if [[ $BOOTCONFIG == *3328* ]]; then
-	
-	ATF_TARGET_MAP='PLAT=rk322xh DEBUG=1 bl31;;trust.bin'	
+
+	ATF_TARGET_MAP='PLAT=rk322xh DEBUG=1 bl31;;trust.bin'
 	CPUMAX="1390000"
 
 elif [[ $BOARD == rockpro64 ]] || [[ $BOARD == rockpi-4* ]]; then
@@ -54,9 +54,9 @@ case $BRANCH in
 		KERNELPATCHDIR='rockchip64-'$BRANCH
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
-	
+
 	;;
-	
+
 esac
 
 
@@ -105,12 +105,13 @@ atf_custom_postprocess()
 family_tweaks()
 {
 
+	[[ $BOARD == firefly-rk3399 ]] && echo "fdtfile=rockchip/rk3399-firefly.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == nanopct4 ]] && echo "fdtfile=rockchip/rk3399-nanopc-t4.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == nanopim4 ]] && echo "fdtfile=rockchip/rk3399-nanopi-m4.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == nanopim4v2 ]] && echo "fdtfile=rockchip/rk3399-nanopi-m4.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == nanopineo4 ]] && echo "fdtfile=rockchip/rk3399-nanopi-neo4.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == orangepi-rk3399 ]] && echo "fdtfile=rockchip/rk3399-orangepi.dtb" >> $SDCARD/boot/armbianEnv.txt
-	[[ $BOARD == firefly-rk3399 ]] && echo "fdtfile=rockchip/rk3399-firefly.dtb" >> $SDCARD/boot/armbianEnv.txt
+	[[ $BOARD == roc-rk3399-pc ]] && echo "fdtfile=rockchip/rk3399-roc-pc.dtb" >> $SDCARD/boot/armbianEnv.txt
 
 	if [[ $BOARD == z28pro ]]; then
 
@@ -120,8 +121,8 @@ family_tweaks()
 	elif [[ -f $SDCARD/lib/systemd/system/rk3399-bluetooth.service ]]; then
 
 		# install and enable Bluetooth
-		chroot $SDCARD /bin/bash -c "apt-get -y -qq install rfkill bluetooth bluez bluez-tools"			 
-		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable rk3399-bluetooth.service >/dev/null 2>&1" 
+		chroot $SDCARD /bin/bash -c "apt-get -y -qq install rfkill bluetooth bluez bluez-tools"
+		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable rk3399-bluetooth.service >/dev/null 2>&1"
 
 	fi
 
@@ -140,7 +141,7 @@ family_tweaks_bsp()
 		install -m 755 $SRC/packages/bsp/rk3328/z28pro/start_bt.sh $destination/usr/local/bin
 		cp $SRC/packages/bsp/rk3328/z28pro/z28pro-bluetooth.service $destination/lib/systemd/system/
 
-	elif [[ $BOARD == rockpi-4b || $BOARD == nanop* || $BOARD == orangepi* || BOARD == firefly* ]]; then
+	elif [[ $BOARD == rockpi-4b || $BOARD == nanop* || $BOARD == orangepi* || $BOARD == firefly* || $BOARD == roc-rk3399-pc ]]; then
 
 		# Bluetooth for most of others
 		install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
