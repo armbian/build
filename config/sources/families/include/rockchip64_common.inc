@@ -15,6 +15,7 @@ ATFBRANCH='branch:rockchip'
 ATF_USE_GCC='> 6.3'
 GOVERNOR="ondemand"
 CPUMAX="2016000"
+CPUMIN="600000"
 
 if [[ $BOOTCONFIG == *3328* ]]; then
 	
