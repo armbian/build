@@ -24,7 +24,6 @@ case $BRANCH in
 
 	dev)
 
-		BOOTBRANCH='tag:v2019.10'
 		KERNELSOURCE="https://github.com/megous/linux"
 		KERNELBRANCH="branch:orange-pi-5.4"
 		KERNELPATCHDIR='sunxi-'$BRANCH
