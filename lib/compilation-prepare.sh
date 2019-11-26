@@ -51,7 +51,7 @@ compilation_prepare()
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare $version ge 5.1 && [ "$AUFS" == yes ]; then
+	if linux-version compare $version ge 5.1 && linux-version compare $version le 5.4 && [ "$AUFS" == yes ]; then
 
 		# attach to specifics tag or branch
 		local aufstag=$(echo ${version} | cut -f 1-2 -d ".")
