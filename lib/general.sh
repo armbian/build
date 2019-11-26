@@ -808,6 +808,9 @@ prepare_host()
 	fi
 	mkdir -p $DEST/debs-beta/extra $DEST/debs/extra $DEST/{config,debug,patch} $USERPATCHES_PATH/overlay $SRC/cache/{sources,toolchains,utility,rootfs} $SRC/.tmp
 
+	# create patches directory structure under USERPATCHES_PATH
+	find $SRC/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
+
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
