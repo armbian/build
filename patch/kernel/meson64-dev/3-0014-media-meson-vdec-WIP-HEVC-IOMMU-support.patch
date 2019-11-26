@@ -1,0 +1,138 @@
+From 7602acfcd7cca5e3c8edb6b87801715a33e99944 Mon Sep 17 00:00:00 2001
+From: Maxime Jourdan <mjourdan@baylibre.com>
+Date: Wed, 5 Jun 2019 16:14:36 +0200
+Subject: [PATCH 14/14] media: meson: vdec: [WIP] HEVC IOMMU support
+
+Signed-off-by: Maxime Jourdan <mjourdan@baylibre.com>
+---
+ drivers/staging/media/meson/vdec/codec_hevc.c | 59 +++++++++++++------
+ 1 file changed, 41 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/staging/media/meson/vdec/codec_hevc.c b/drivers/staging/media/meson/vdec/codec_hevc.c
+index 65d2ad4d8345..20bee7689dbd 100644
+--- a/drivers/staging/media/meson/vdec/codec_hevc.c
++++ b/drivers/staging/media/meson/vdec/codec_hevc.c
+@@ -500,8 +500,11 @@ static void codec_hevc_output_frames(struct amvdec_session *sess)
+ 
+ 
+ static int
+-codec_hevc_setup_workspace(struct amvdec_core *core, struct codec_hevc *hevc)
++codec_hevc_setup_workspace(struct amvdec_session *sess,
++			   struct codec_hevc *hevc)
+ {
++	struct amvdec_core *core = sess->core;
++	u32 revision = core->platform->revision;
+ 	dma_addr_t wkaddr;
+ 
+ 	/* Allocate some memory for the HEVC decoder's state */
+@@ -522,19 +525,32 @@ codec_hevc_setup_workspace(struct amvdec_core *core, struct codec_hevc *hevc)
+ 	amvdec_write_dos(core, HEVC_PPS_BUFFER, wkaddr + PPS_OFFSET);
+ 	amvdec_write_dos(core, HEVC_SAO_UP, wkaddr + SAO_UP_OFFSET);
+ 
+-	if (core->platform->revision >= VDEC_REVISION_G12A)
+-		amvdec_write_dos(core, HEVC_ASSIST_MMU_MAP_ADDR,
+-				 wkaddr + MMU_MAP_OFFSET);
+-
+-	/* No MMU */
+-	/*amvdec_write_dos(core, HEVC_STREAM_SWAP_BUFFER,
+-			 wkaddr + SWAP_BUF_OFFSET);
+-	amvdec_write_dos(core, HEVC_STREAM_SWAP_BUFFER2,
+-			 wkaddr + SWAP_BUF2_OFFSET);*/
++	if (codec_hevc_use_mmu(revision, sess->pixfmt_cap, hevc->is_10bit)) {
++		amvdec_write_dos(core, HEVC_SAO_MMU_VH0_ADDR,
++				 wkaddr + MMU_VBH_OFFSET);
++		amvdec_write_dos(core, HEVC_SAO_MMU_VH1_ADDR,
++				 wkaddr + MMU_VBH_OFFSET + (MMU_VBH_SIZE / 2));
++
++		if (revision >= VDEC_REVISION_G12A)
++			amvdec_write_dos(core, HEVC_ASSIST_MMU_MAP_ADDR,
++					 hevc->common.mmu_map_paddr);
++		else
++			amvdec_write_dos(core, H265_MMU_MAP_BUFFER,
++					 hevc->common.mmu_map_paddr);
++	} else if (revision < VDEC_REVISION_G12A) {
++		amvdec_write_dos(core, HEVC_STREAM_SWAP_BUFFER,
++				 wkaddr + SWAP_BUF_OFFSET);
++		amvdec_write_dos(core, HEVC_STREAM_SWAP_BUFFER2,
++				 wkaddr + SWAP_BUF2_OFFSET);
++	}
++
+ 	amvdec_write_dos(core, HEVC_SCALELUT, wkaddr + SCALELUT_OFFSET);
+ 	amvdec_write_dos(core, HEVC_DBLK_CFG4, wkaddr + DBLK_PARA_OFFSET);
+ 	amvdec_write_dos(core, HEVC_DBLK_CFG5, wkaddr + DBLK_DATA_OFFSET);
+-	amvdec_write_dos(core, HEVC_DBLK_CFGE, wkaddr + DBLK_DATA2_OFFSET);
++	if (revision >= VDEC_REVISION_G12A)
++		amvdec_write_dos(core, HEVC_DBLK_CFGE,
++				 wkaddr + DBLK_DATA2_OFFSET);
++
+ 	amvdec_write_dos(core, LMEM_DUMP_ADR, wkaddr + LMEM_OFFSET);
+ 
+ 	return 0;
+@@ -555,7 +571,7 @@ static int codec_hevc_start(struct amvdec_session *sess)
+ 	INIT_LIST_HEAD(&hevc->ref_frames_list);
+ 	hevc->curr_poc = INVALID_POC;
+ 
+-	ret = codec_hevc_setup_workspace(core, hevc);
++	ret = codec_hevc_setup_workspace(sess, hevc);
+ 	if (ret)
+ 		goto free_hevc;
+ 
+@@ -720,6 +736,7 @@ codec_hevc_set_sao(struct amvdec_session *sess, struct hevc_frame *frame)
+ {
+ 	struct amvdec_core *core = sess->core;
+ 	struct codec_hevc *hevc = sess->priv;
++	struct vb2_buffer *vb = &frame->vbuf->vb2_buf;
+ 	union rpm_param *param = &hevc->rpm_param;
+ 	u32 pic_height_cu =
+ 		(hevc->height + hevc->lcu_size - 1) / hevc->lcu_size;
+@@ -743,10 +760,10 @@ codec_hevc_set_sao(struct amvdec_session *sess, struct hevc_frame *frame)
+ 
+ 	if (codec_hevc_use_downsample(sess->pixfmt_cap, hevc->is_10bit))
+ 		buf_y_paddr =
+-		     hevc->common.fbc_buffer_paddr[frame->vbuf->vb2_buf.index];
++		     hevc->common.fbc_buffer_paddr[vb->index];
+ 	else
+ 		buf_y_paddr =
+-		       vb2_dma_contig_plane_dma_addr(&frame->vbuf->vb2_buf, 0);
++		       vb2_dma_contig_plane_dma_addr(vb, 0);
+ 
+ 	if (codec_hevc_use_fbc(sess->pixfmt_cap, hevc->is_10bit)) {
+ 		val = amvdec_read_dos(core, HEVC_SAO_CTRL5) & ~0xff0200;
+@@ -756,15 +773,23 @@ codec_hevc_set_sao(struct amvdec_session *sess, struct hevc_frame *frame)
+ 
+ 	if (sess->pixfmt_cap == V4L2_PIX_FMT_NV12M) {
+ 		buf_y_paddr =
+-		       vb2_dma_contig_plane_dma_addr(&frame->vbuf->vb2_buf, 0);
++		       vb2_dma_contig_plane_dma_addr(vb, 0);
+ 		buf_u_v_paddr =
+-		       vb2_dma_contig_plane_dma_addr(&frame->vbuf->vb2_buf, 1);
++		       vb2_dma_contig_plane_dma_addr(vb, 1);
+ 		amvdec_write_dos(core, HEVC_SAO_Y_START_ADDR, buf_y_paddr);
+ 		amvdec_write_dos(core, HEVC_SAO_C_START_ADDR, buf_u_v_paddr);
+ 		amvdec_write_dos(core, HEVC_SAO_Y_WPTR, buf_y_paddr);
+ 		amvdec_write_dos(core, HEVC_SAO_C_WPTR, buf_u_v_paddr);
+ 	}
+ 
++	if (codec_hevc_use_mmu(core->platform->revision, sess->pixfmt_cap,
++			       hevc->is_10bit)) {
++		amvdec_write_dos(core, HEVC_CM_HEADER_START_ADDR,
++				 hevc->common.mmu_header_paddr[vb->index]);
++		/*  use HEVC_CM_HEADER_START_ADDR */
++		amvdec_write_dos_bits(core, HEVC_SAO_CTRL5, BIT(10));
++	}
++
+ 	amvdec_write_dos(core, HEVC_SAO_Y_LENGTH,
+ 			 amvdec_get_output_size(sess));
+ 	amvdec_write_dos(core, HEVC_SAO_C_LENGTH,
+@@ -1351,8 +1376,6 @@ static irqreturn_t codec_hevc_threaded_isr(struct amvdec_session *sess)
+ 	struct codec_hevc *hevc = sess->priv;
+ 	u32 dec_status = amvdec_read_dos(core, HEVC_DEC_STATUS_REG);
+ 
+-	printk("ISR!\n");
+-
+ 	if (!hevc)
+ 		return IRQ_HANDLED;
+ 
+-- 
+2.20.1
+
