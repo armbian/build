@@ -169,6 +169,7 @@ fi
 
 if [[ -z "$CONFIG" && -n "$1" && -f "${SRC}/userpatches/config-$1.conf" ]]; then
 	CONFIG="userpatches/config-$1.conf"
+	shift
 fi
 
 # usind default if custom not found
@@ -195,13 +196,12 @@ popd > /dev/null
 [[ -z "${USERPATCHES_PATH}" ]] && USERPATCHES_PATH="$CONFIG_PATH"
 
 # Script parameters handling
-for i in "$@"; do
-	if [[ $i == *=* ]]; then
-		parameter=${i%%=*}
-		value=${i##*=}
-		display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
-		eval "$parameter=\"$value\""
-	fi
+while [[ $1 == *=* ]]; do
+    parameter=${1%%=*}
+    value=${1##*=}
+    shift
+    display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
+    eval "$parameter=\"$value\""
 done
 
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
