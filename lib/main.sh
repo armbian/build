@@ -102,6 +102,33 @@ else
 
 fi
 
+# Check and install dependencies, directory structure and settings
+prepare_host
+
+if [[ -n $REPOSITORY_UPDATE ]]; then
+
+	# select stable/beta configuration
+	if [[ $BETA == yes ]]; then
+		DEB_STORAGE=$DEST/debs-beta
+		REPO_STORAGE=$DEST/repository-beta
+		REPO_CONFIG="aptly-beta.conf"
+	else
+		DEB_STORAGE=$DEST/debs
+		REPO_STORAGE=$DEST/repository
+		REPO_CONFIG="aptly.conf"
+	fi
+
+	# For user override
+	if [[ -f $USERPATCHES_PATH/lib.config ]]; then
+		display_alert "Using user configuration override" "userpatches/lib.config" "info"
+	        source "$USERPATCHES_PATH"/lib.config
+	fi
+
+	repo-manipulate "$REPOSITORY_UPDATE"
+	exit
+
+fi
+
 # if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
 if [[ -z $KERNEL_ONLY ]]; then
@@ -329,62 +356,7 @@ else
 
 fi
 
-if [[ $BETA == yes ]]; then
-	IMAGE_TYPE=nightly
-elif [[ $BETA != "yes" && $BUILD_ALL == yes && -n $GPG_PASS ]]; then
-	IMAGE_TYPE=stable
-else
-	IMAGE_TYPE=user-built
-fi
-
-branch2dir() {
-	[[ $1 == head ]] && echo HEAD || echo ${1##*:}
-}
-
-BOOTSOURCEDIR=$BOOTDIR/$(branch2dir ${BOOTBRANCH})
-LINUXSOURCEDIR=$KERNELDIR/$(branch2dir ${KERNELBRANCH})
-[[ -n $ATFSOURCE ]] && ATFSOURCEDIR=$ATFDIR/$(branch2dir ${ATFBRANCH})
-
-# define package names
-DEB_BRANCH=${BRANCH//default}
-# if not empty, append hyphen
-DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
-CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
-CHOSEN_KERNEL=linux-image-${DEB_BRANCH}${LINUXFAMILY}
-CHOSEN_ROOTFS=linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
-CHOSEN_DESKTOP=armbian-${RELEASE}-desktop
-CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
-
-do_default() {
-
 start=$(date +%s)
-
-# Check and install dependencies, directory structure and settings
-prepare_host
-
-if [[ -n $REPOSITORY_UPDATE ]]; then
-
-	# select stable/beta configuration
-	if [[ $BETA == yes ]]; then
-		DEB_STORAGE=$DEST/debs-beta
-		REPO_STORAGE=$DEST/repository-beta
-		REPO_CONFIG="aptly-beta.conf"
-	else
-		DEB_STORAGE=$DEST/debs
-		REPO_STORAGE=$DEST/repository
-		REPO_CONFIG="aptly.conf"
-	fi
-
-	# For user override
-	if [[ -f $USERPATCHES_PATH/lib.config ]]; then
-		display_alert "Using user configuration override" "userpatches/lib.config" "info"
-	    source "$USERPATCHES_PATH"/lib.config
-	fi
-
-	repo-manipulate "$REPOSITORY_UPDATE"
-	exit
-
-fi
 
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 
@@ -406,8 +378,34 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 	fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
 fi
 
+if [[ $BETA == yes ]]; then
+	IMAGE_TYPE=nightly
+elif [[ $BETA != "yes" && $BUILD_ALL == yes && -n $GPG_PASS ]]; then
+	IMAGE_TYPE=stable
+else
+	IMAGE_TYPE=user-built
+fi
+
 compile_sunxi_tools
 install_rkbin_tools
+
+branch2dir() {
+	[[ $1 == head ]] && echo HEAD || echo ${1##*:}
+}
+
+BOOTSOURCEDIR=$BOOTDIR/$(branch2dir ${BOOTBRANCH})
+LINUXSOURCEDIR=$KERNELDIR/$(branch2dir ${KERNELBRANCH})
+[[ -n $ATFSOURCE ]] && ATFSOURCEDIR=$ATFDIR/$(branch2dir ${ATFBRANCH})
+
+# define package names
+DEB_BRANCH=${BRANCH//default}
+# if not empty, append hyphen
+DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
+CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
+CHOSEN_KERNEL=linux-image-${DEB_BRANCH}${LINUXFAMILY}
+CHOSEN_ROOTFS=linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
+CHOSEN_DESKTOP=armbian-${RELEASE}-desktop
+CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
 
 for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
@@ -482,11 +480,3 @@ $([[ -n $KERNEL_ONLY ]] && echo "KERNEL_ONLY=${KERNEL_ONLY} ")\
 $([[ -n $KERNEL_CONFIGURE ]] && echo "KERNEL_CONFIGURE=${KERNEL_CONFIGURE} ")\
 $([[ -n $COMPRESS_OUTPUTIMAGE ]] && echo "COMPRESS_OUTPUTIMAGE=${COMPRESS_OUTPUTIMAGE} ")\
 " "info"
-
-} # end of do_default()
-
-if [[ -z $1 ]]; then
-	do_default
-else
-	eval "$@"
-fi
