@@ -50,7 +50,7 @@ case $BRANCH in
 	dev)
 
 		KERNELSOURCE='https://github.com/ayufan-rock64/linux-mainline-kernel'
-		KERNELBRANCH='tag:5.3.0-rc4-1118-ayufan'
+		KERNELBRANCH='tag:5.4.0-rc1-1120-ayufan'
 		KERNELDIR='linux-rockchip64'
 		KERNELPATCHDIR='rockchip64-'$BRANCH
 		LINUXFAMILY=rockchip64
