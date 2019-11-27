@@ -42,6 +42,7 @@ case $BRANCH in
 	current)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
+		KERNELBRANCH="branch:linux-5.4.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
@@ -113,6 +114,7 @@ family_tweaks()
 	[[ $BOARD == nanopineo4 ]] && echo "fdtfile=rockchip/rk3399-nanopi-neo4.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == orangepi-rk3399 ]] && echo "fdtfile=rockchip/rk3399-orangepi.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == roc-rk3399-pc ]] && echo "fdtfile=rockchip/rk3399-roc-pc.dtb" >> $SDCARD/boot/armbianEnv.txt
+	[[ $BOARD == rockpi-4* ]] && echo "fdtfile=rockchip/rk3399-rock-pi-4.dtb" >> $SDCARD/boot/armbianEnv.txt
 
 	if [[ $BOARD == z28pro ]]; then
 

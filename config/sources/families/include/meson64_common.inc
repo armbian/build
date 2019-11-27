@@ -18,6 +18,16 @@ CPUMIN=500000
 CPUMAX=1536000
 GOVERNOR=conservative
 
+case $BRANCH in
+        dev)
+
+		KERNELBRANCH='branch:linux-5.4.y'
+		KERNELPATCHDIR='meson64-'$BRANCH
+
+        ;;
+esac
+
+
 # this helper function includes postprocess for p212 and its variants.
 # $1 PATH for uboot blob repo
 # $2 dir name in uboot blob repo
