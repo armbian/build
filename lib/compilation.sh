@@ -26,7 +26,7 @@ compile_atf()
 {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$ATFSOURCEDIR" "info"
-		(cd $SRC/cache/sources/$ATFSOURCEDIR; make clean > /dev/null 2>&1)
+		(cd $SRC/cache/sources/$ATFSOURCEDIR; make distclean > /dev/null 2>&1)
 	fi
 
 	if [[ $USE_OVERLAYFS == yes ]]; then
