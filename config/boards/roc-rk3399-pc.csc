@@ -6,7 +6,7 @@ BOOTCONFIG="roc-rk3399-pc_defconfig"
 MODULES=""
 MODULES_NEXT=""
 #
-KERNEL_TARGET="default,dev"
+KERNEL_TARGET="legacy,current,dev"
 CLI_TARGET="buster,bionic:default"
 DESKTOP_TARGET="buster,bionic:default"
 #
