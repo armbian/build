@@ -110,7 +110,7 @@ family_tweaks()
 	[[ $BOARD == firefly-rk3399 ]] && echo "fdtfile=rockchip/rk3399-firefly.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == nanopct4 ]] && echo "fdtfile=rockchip/rk3399-nanopc-t4.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == nanopim4 ]] && echo "fdtfile=rockchip/rk3399-nanopi-m4.dtb" >> $SDCARD/boot/armbianEnv.txt
-	[[ $BOARD == nanopim4v2 ]] && echo "fdtfile=rockchip/rk3399-nanopi-m4.dtb" >> $SDCARD/boot/armbianEnv.txt
+	[[ $BOARD == nanopim4v2 ]] && echo "fdtfile=rockchip/rk3399-nanopi-m4v2.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == nanopineo4 ]] && echo "fdtfile=rockchip/rk3399-nanopi-neo4.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == orangepi-rk3399 ]] && echo "fdtfile=rockchip/rk3399-orangepi.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == roc-rk3399-pc ]] && echo "fdtfile=rockchip/rk3399-roc-pc.dtb" >> $SDCARD/boot/armbianEnv.txt
@@ -127,6 +127,12 @@ family_tweaks()
 		chroot $SDCARD /bin/bash -c "apt-get -y -qq install rfkill bluetooth bluez bluez-tools"
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable rk3399-bluetooth.service >/dev/null 2>&1"
 
+	fi
+
+	if [[ $BOARD == nanopim4v2 ]]; then
+		mv $SDCARD/lib/firmware/brcm/brcmfmac4356-sdio.bin{,.bak}
+		ln -s brcmfmac4356-sdio-nanopi-m4v2.bin $SDCARD/lib/firmware/brcm/brcmfmac4356-sdio.bin
+		ln -s brcmfmac4356-sdio-nanopi-m4v2.txt $SDCARD/lib/firmware/brcm/brcmfmac4356-sdio.friendlyarm,nanopi-m4.txt
 	fi
 
 }
