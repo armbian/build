@@ -15,6 +15,7 @@
 # fetch_from_repo
 # display_alert
 # fingerprint_image
+# distro_menu
 # addtorepo
 # repo-remove-old-packages
 # prepare_host
@@ -122,7 +123,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: stretch|buster|xenial|bionic|disco
+# <release>: stretch|buster|xenial|bionic|disco|eoan
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -148,7 +149,7 @@ create_sources_list()
 	EOF
 	;;
 
-	xenial|bionic|disco)
+	xenial|bionic|disco|eoan)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -400,6 +401,29 @@ fingerprint_image()
 
 
 
+function distro_menu ()
+{
+# create a select menu for choosing a distribution based EXPERT status
+# also sets DISTRIBUTION_STATUS which goes to BSP package / armbian-release
+
+	for i in "${!distro_name[@]}"
+	do
+		if [[ $i == $1 ]]; then
+			if [[ "${distro_support[$i]}" != "supported" && $EXPERT != "yes" ]]; then
+				:
+			else
+				options+=("$i" "${distro_name[$i]}")
+			fi
+			DISTRIBUTION_STATUS=${distro_support[$i]}
+			break
+		fi
+	done
+
+}
+
+
+
+
 adding_packages()
 {
 # add deb files to repository if they are not already there
@@ -430,7 +454,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("xenial" "stretch" "bionic" "buster" "disco")
+	local distributions=("xenial" "stretch" "bionic" "buster" "disco" "eoan")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -541,7 +565,7 @@ addtorepo()
 
 
 repo-manipulate() {
-	local DISTROS=("xenial" "stretch" "bionic" "buster" "disco")
+	local DISTROS=("xenial" "stretch" "bionic" "buster" "disco" "eoan")
 	case $@ in
 		serve)
 			# display repository content
@@ -686,7 +710,7 @@ prepare_host()
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
-	if [[ -z $codename || "xenial bionic disco" != *"$codename"* ]]; then
+	if [[ -z $codename || "xenial bionic disco eoan" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -699,7 +723,7 @@ prepare_host()
 		exit_with_error "Windows subsystem for Linux is not a supported build environment"
 	fi
 
-	if [[ -z $codename || "disco" == "$codename" ]]; then
+	if [[ -z $codename || "disco" == "$codename" || "eoan" == "$codename" ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 
@@ -784,6 +808,9 @@ prepare_host()
 	fi
 	mkdir -p $DEST/debs-beta/extra $DEST/debs/extra $DEST/{config,debug,patch} $USERPATCHES_PATH/overlay $SRC/cache/{sources,toolchains,utility,rootfs} $SRC/.tmp
 
+	# create patches directory structure under USERPATCHES_PATH
+	find $SRC/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
+
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
@@ -803,6 +830,8 @@ prepare_host()
 		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-eabi.tar.xz"
 		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
 		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
+		"https://dl.armbian.com/_toolchains/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
 		)
 
 	for toolchain in ${toolchains[@]}; do

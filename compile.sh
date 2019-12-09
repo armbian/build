@@ -31,7 +31,7 @@ fi
 
 if [[ $EUID == 0 ]] || [[ "$1" == vagrant ]]; then
 	:
-elif [[ "$1" == docker || "$1" == dockerpurge ]] && grep -q `whoami` <(getent group docker); then
+elif [[ "$1" == docker || "$1" == dockerpurge || "$1" == docker-shell ]] && grep -q `whoami` <(getent group docker); then
 	:
 else
 	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
@@ -91,6 +91,20 @@ if [[ "$1" == vagrant && -z "$(which vagrant)" ]]; then
 	sudo apt-get install -y vagrant virtualbox
 fi
 
+if [[ "$1" == dockerpurge && -f /etc/debian_version ]]; then
+	display_alert "Purging Armbian Docker containers" "" "wrn"
+	docker container ls -a | grep armbian | awk '{print $1}' | xargs docker container rm &> /dev/null
+	docker image ls | grep armbian | awk '{print $3}' | xargs docker image rm &> /dev/null
+	shift
+	set -- "docker" "$@"
+fi
+
+if [[ "$1" == docker-shell ]]; then
+	shift
+	SHELL_ONLY=yes
+	set -- "docker" "$@"
+fi
+
 # Install Docker if not there but wanted. We cover only Debian based distro install. Else, manual Docker install is needed
 if [[ "$1" == docker && -f /etc/debian_version && -z "$(which docker)" ]]; then
 	display_alert "Docker not installed." "Installing" "Info"
@@ -110,16 +124,6 @@ if [[ "$1" == docker && -f /etc/debian_version && -z "$(which docker)" ]]; then
 	apt-get install -y -qq --no-install-recommends docker-ce
 	display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
 	"$SRC/compile.sh" "$@"
-	exit $?
-fi
-
-if [[ "$1" == dockerpurge && -f /etc/debian_version ]]; then
-	display_alert "Purging Armbian Docker containers" "" "wrn"
-	docker container ls -a | grep armbian | awk '{print $1}' | xargs docker container rm &> /dev/null
-	docker image ls | grep armbian | awk '{print $3}' | xargs docker image rm &> /dev/null
-	shift
-	arr=("docker" "$@")
-	"$SRC/compile.sh" ${arr[@]}
 	exit $?
 fi
 
@@ -169,6 +173,7 @@ fi
 
 if [[ -z "$CONFIG" && -n "$1" && -f "${SRC}/userpatches/config-$1.conf" ]]; then
 	CONFIG="userpatches/config-$1.conf"
+	shift
 fi
 
 # usind default if custom not found
@@ -195,13 +200,12 @@ popd > /dev/null
 [[ -z "${USERPATCHES_PATH}" ]] && USERPATCHES_PATH="$CONFIG_PATH"
 
 # Script parameters handling
-for i in "$@"; do
-	if [[ $i == *=* ]]; then
-		parameter=${i%%=*}
-		value=${i##*=}
-		display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
-		eval "$parameter=\"$value\""
-	fi
+while [[ $1 == *=* ]]; do
+    parameter=${1%%=*}
+    value=${1##*=}
+    shift
+    display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
+    eval "$parameter=\"$value\""
 done
 
 if [[ $BUILD_ALL == yes || $BUILD_ALL == demo ]]; then
