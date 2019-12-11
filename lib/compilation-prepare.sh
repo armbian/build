@@ -152,12 +152,34 @@ compilation_prepare()
 
 	fi
 
+	# Wireless drivers for Xradio XR819 chipsets
+	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
+		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
+                fetch_from_repo "https://github.com/karabek/xradio" "xradio" "branch:master" "yes"
+		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+                rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio
+                mkdir -p ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio/
+                cp ${SRC}/cache/sources/xradio/master/*.{h,c} \
+                ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio/
+
+                # Makefile
+                cp ${SRC}/cache/sources/xradio/master/Makefile \
+                ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio/Makefile
+                cp ${SRC}/cache/sources/xradio/master/Kconfig \
+                ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio/Kconfig
+
+                # Add to section Makefile
+                echo "obj-\$(CONFIG_WLAN_VENDOR_XRADIO) += xradio/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
+                sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/xradio\/Kconfig"' \
+                $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
+
+	fi
 
 	# Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets
 
-	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare $version ge 3.14 && [ "$LINUXFAMILY" == sunxi ] && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8811euver="branch:v5.3.9"
