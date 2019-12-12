@@ -425,13 +425,12 @@ install_distribution_specific()
 
 			# remove doubled uname from motd
 			[[ -f $SDCARD/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
-			
 			# rc.local is not existing but one might need it
 			install_rclocal
 
 		;;
 
-	bionic|disco|eoan)
+	bionic|eoan|focal)
 
 			# remove doubled uname from motd
 			[[ -f $SDCARD/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
