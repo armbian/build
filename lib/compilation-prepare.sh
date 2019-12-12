@@ -35,11 +35,17 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.14.y.patch"                "applying"
 	fi
 
-	if [[ $version == "4.4."* || $version == "4.9."* ]] && [[ "$LINUXFAMILY" == rock* || "$LINUXFAMILY" == rk3399 ]]; then
+	if [[ $version == "4.4."* || $version == "4.9."* ]] && [[ "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk3399 ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rk3399.patch"                "applying"
 	fi
+
+	if [[ $version == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip ]]; then
+                display_alert "Adjustin" "packaging" "info"
+                cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+                process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y.patch"                "applying"
+        fi
 
 	if [[ $version == "4.9."* ]] && [[ "$LINUXFAMILY" == meson64 ]]; then
 		display_alert "Adjustin" "packaging" "info"
@@ -153,7 +159,7 @@ compilation_prepare()
 	fi
 
 	# Wireless drivers for Xradio XR819 chipsets
-	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare $version ge 4.19 && [ "$LINUXFAMILY" == sunxi ] && [ "$EXTRAWIFI" == yes ]; then
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
@@ -179,7 +185,7 @@ compilation_prepare()
 
 	# Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets
 
-	if linux-version compare $version ge 3.14 && [ "$LINUXFAMILY" == sunxi ] && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8811euver="branch:v5.3.9"
