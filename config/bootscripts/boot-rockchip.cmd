@@ -30,7 +30,7 @@ if test "${console}" = "serial" || test "${console}" = "both"; then setenv conso
 # get PARTUUID of first partition on SD/eMMC the boot script was loaded from
 if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:1 partuuid; fi
 
-setenv bootargs "earlyprintk root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} panic=10 consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
+setenv bootargs "earlyprintk root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
 if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1"; fi
 
