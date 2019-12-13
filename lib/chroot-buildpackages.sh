@@ -28,12 +28,14 @@ create_chroot()
 	qemu_binary['arm64']='qemu-aarch64-static'
 	apt_mirror['stretch']="$DEBIAN_MIRROR"
 	apt_mirror['buster']="$DEBIAN_MIRROR"
+	apt_mirror['bullseye']="$DEBIAN_MIRROR"
 	apt_mirror['xenial']="$UBUNTU_MIRROR"
 	apt_mirror['bionic']="$UBUNTU_MIRROR"
 	apt_mirror['focal']="$UBUNTU_MIRROR"
 	apt_mirror['eoan']="$UBUNTU_MIRROR"
 	components['stretch']='main,contrib'
 	components['buster']='main,contrib'
+	components['bullseye']='main,contrib'
 	components['xenial']='main,universe,multiverse'
 	components['bionic']='main,universe,multiverse'
 	components['focal']='main,universe,multiverse'
@@ -41,7 +43,7 @@ create_chroot()
 	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc"
 	# perhaps a temporally workaround
-	[[ $release == buster || $release == focal || $release == eoan ]] && includes=$includes",perl-openssl-defaults,libnet-ssleay-perl"
+	[[ $release == buster || $release == bullseye || $release == focal || $release == eoan ]] && includes=$includes",perl-openssl-defaults,libnet-ssleay-perl"
 	if [[ $NO_APT_CACHER != yes ]]; then
 		local mirror_addr="http://localhost:3142/${apt_mirror[$release]}"
 	else
@@ -91,9 +93,10 @@ chroot_prepare_distccd()
 	declare -A gcc_version gcc_type
 	gcc_version['stretch']='6.3'
 	gcc_version['buster']='8.3'
+	gcc_version['bullseye']='9.2'
 	gcc_version['xenial']='5.4'
 	gcc_version['bionic']='5.4'
-	gcc_version['focal']='8.3'
+	gcc_version['focal']='9.2'
 	gcc_version['eoan']='9.2'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
 	gcc_type['arm64']='aarch64-linux-gnu-'
@@ -127,7 +130,7 @@ chroot_build_packages()
 		target_arch="$ARCH"
 	else
 		# only make packages for recent releases. There are no changes on older
-		target_release="stretch bionic buster focal eoan"
+		target_release="stretch bionic buster bullseye eoan focal"
 		target_arch="armhf arm64"
 	fi
 

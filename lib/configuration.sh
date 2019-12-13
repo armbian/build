@@ -213,7 +213,7 @@ case $RELEASE in
 								language-selector-gnome leafpad"
 	;;
 
-	buster)
+	buster|bullseye)
 		DEBOOTSTRAP_COMPONENTS="main"
 		DEBOOTSTRAP_LIST+=" rng-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"

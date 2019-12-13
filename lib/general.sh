@@ -123,7 +123,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: stretch|buster|xenial|bionic|eoan|focal
+# <release>: stretch|buster|bullseye|xenial|bionic|eoan|focal
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -133,7 +133,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	stretch|buster)
+	stretch|buster|bullseye)
 	cat <<-EOF > $basedir/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -454,7 +454,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("xenial" "stretch" "bionic" "buster" "eoan" "focal")
+	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "eoan" "focal")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -565,7 +565,7 @@ addtorepo()
 
 
 repo-manipulate() {
-	local DISTROS=("xenial" "stretch" "bionic" "buster" "eoan" "focal")
+	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "eoan" "focal")
 	case $@ in
 		serve)
 			# display repository content
