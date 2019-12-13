@@ -412,7 +412,9 @@ function distro_menu ()
 			if [[ "${distro_support[$i]}" != "supported" && $EXPERT != "yes" ]]; then
 				:
 			else
-				options+=("$i" "${distro_name[$i]}")
+				local text=""
+				[[ $EXPERT == "yes" ]] && local text="(${distro_support[$i]})"
+				options+=("$i" "${distro_name[$i]} $text")
 			fi
 			DISTRIBUTION_STATUS=${distro_support[$i]}
 			break
