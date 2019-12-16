@@ -159,7 +159,7 @@ compilation_prepare()
 	fi
 
 	# Wireless drivers for Xradio XR819 chipsets
-	if linux-version compare $version ge 4.19 && [ "$LINUXFAMILY" == sunxi ] && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare $version ge 4.19 && [[ "$LINUXFAMILY" == sunxi* ]] && [[ "$EXTRAWIFI" == yes ]]; then
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
