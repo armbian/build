@@ -28,7 +28,7 @@ if test "${console}" = "serial"; then setenv consoleargs "console=ttyAML0,115200
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=ttyAML0,115200 console=tty1"; fi
 if test "${console}" = "serial"; then setenv consoleargs "console=ttyAML0,115200"; fi
 
-setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} panic=10 ${consoleargs} consoleblank=0 coherent_pool=2M loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
+setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 coherent_pool=2M loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
 if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"; fi
 
