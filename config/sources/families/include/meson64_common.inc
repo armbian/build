@@ -19,12 +19,14 @@ CPUMAX=1536000
 GOVERNOR=conservative
 
 case $BRANCH in
-        dev)
+        dev|current)
 
-		KERNELBRANCH='branch:linux-5.4.y'
+		KERNELSOURCE='https://github.com/150balbes/Amlogic_s905-kernel'
+		KERNELBRANCH='branch:le'
 		KERNELPATCHDIR='meson64-'$BRANCH
 
         ;;
+
 esac
 
 
