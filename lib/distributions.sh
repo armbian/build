@@ -226,8 +226,10 @@ install_common()
 		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb"
 	fi
 
-	# install wireguard tools
-	chroot "${SDCARD}" /bin/bash -c "apt -y -qq install wireguard-tools" >> "${DEST}"/debug/install.log 2>&1
+	if [[ $WIREGUARD == yes ]]; then
+		# install wireguard tools
+		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install wireguard-tools" >> "${DEST}"/debug/install.log 2>&1
+	fi
 
 	# install board support package
 	install_deb_chroot "${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> "${DEST}"/debug/install.log 2>&1
