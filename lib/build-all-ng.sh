@@ -33,11 +33,11 @@ mkdir -p /run/armbian
 if [[ -f $USERPATCHES_PATH/targets.conf ]]; then
 
 	display_alert "Adding user provided targets configuration"
-	TARGETS="${USERPATCHES_PATH}/targets.conf"
+	BUILD_TARGETS="${USERPATCHES_PATH}/targets.conf"
 
 else
 
-	TARGETS="${SRC}/config/targets.conf"
+	BUILD_TARGETS="${SRC}/config/targets.conf"
 
 fi
 
@@ -254,7 +254,7 @@ function build_all()
 
 							while :
 							do
-							if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -le ${MULTITHREAD} ]]; then
+							if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -le ${MULTITHREAD} || -z ${MULTITHREAD} ]]; then
 								break
 							fi
 							sleep 5
@@ -299,7 +299,7 @@ function build_all()
 
 		fi
 
-	done < ${TARGETS}
+	done < ${BUILD_TARGETS}
 
 }
 
