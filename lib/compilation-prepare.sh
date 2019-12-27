@@ -99,7 +99,12 @@ compilation_prepare()
 
 		display_alert "Adding" "WireGuard ${wirever} " "info"
 
-		fetch_from_repo "https://git.zx2c4.com/WireGuard" "wireguard" "${wirever}" "yes"
+		fetch_from_repo "https://git.zx2c4.com/wireguard-monolithic-historical" "wireguard" "${wirever}" "yes"
+
+		#if linux-version compare $version gt 5.6; then
+		#	fetch_from_repo "https://git.zx2c4.com/wireguard-linux" "wireguard" "stable" "yes"
+		#fi
+
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/net/wireguard
 		cp -R ${SRC}/cache/sources/wireguard/${wirever#*:}/src/ ${SRC}/cache/sources/${LINUXSOURCEDIR}/net/wireguard
