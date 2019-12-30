@@ -104,13 +104,9 @@ pack_upload ()
 	if [[ -n "${SEND_TO_SERVER}" ]]; then
 		ssh "${SEND_TO_SERVER}" "mkdir -p ${SEND_TO_LOCATION}${BOARD}/{archive,nightly}" &
 		display_alert "Uploading" "Please wait!" "info"
-		nice -n 19 bash -c "while ! rsync -arP $DESTIMG/. -e 'ssh -p 22' ${SEND_TO_SERVER}:${SEND_TO_LOCATION}${BOARD}/${subdir}; \
-		do sleep 5; done; rm -r $DESTIMG" &
-
+		nice -n 19 bash -c "rsync -arP --info=progress2,stats1 --ignore-existing --remove-source-files --prune-empty-dirs $DESTIMG/ -e 'ssh -p 22' ${SEND_TO_SERVER}:${SEND_TO_LOCATION}${BOARD}/${subdir}" &
 	else
-
-		mv $DESTIMG/* $DEST/images
-
+		mv $DESTIMG/*.* $DEST/images/
 	fi
 
 }
@@ -213,7 +209,7 @@ function build_all()
 		# unset also board related variables
 		unset BOARDFAMILY DESKTOP_AUTOLOGIN DEFAULT_CONSOLE FULL_DESKTOP MODULES_CURRENT MODULES_LEGACY MODULES_DEV \
 		BOOTCONFIG MODULES_BLACKLIST_LEGACY MODULES_BLACKLIST_CURRENT MODULES_BLACKLIST_DEV DEFAULT_OVERLAYS SERIALCON \
-		BUILD_MINIMAL
+		BUILD_MINIMAL RELEASE
 
 		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE <<< "${line}"
 
