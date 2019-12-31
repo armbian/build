@@ -273,9 +273,9 @@ compile_kernel()
 	fi
 	cd "$kerneldir"
 
-	  if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
-                sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
-        fi
+	if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
+		sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
+	fi
         rm -f localversion
 
         # read kernel version
@@ -298,6 +298,9 @@ compile_kernel()
 			| pixz -4 > $sources_pkg_dir/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz
 		cp COPYING $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE
 	fi
+
+	# re-read kernel version after patching
+	local version=$(grab_version "$kerneldir")
 
 	# create patch for manual source changes in debug mode
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
