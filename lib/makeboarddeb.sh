@@ -49,7 +49,7 @@ create_board_package()
 	Installed-Size: 1
 	Section: kernel
 	Priority: optional
-	Depends: bash, linux-base, u-boot-tools, initramfs-tools, python-apt, lsb-release
+	Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Suggests: armbian-config
