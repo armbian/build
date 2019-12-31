@@ -273,25 +273,18 @@ compile_kernel()
 	fi
 	cd "$kerneldir"
 
-	# this is a patch that Ubuntu Trusty compiler works
-	# TODO: Check if still required
-	if [[ $(patch --dry-run -t -p1 < $SRC/patch/misc/compiler.patch | grep Reversed) != "" ]]; then
-		display_alert "Patching kernel for compiler support"
-		patch --batch --silent -t -p1 < $SRC/patch/misc/compiler.patch >> $DEST/debug/output.log 2>&1
-	fi
+	  if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
+                sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
+        fi
+        rm -f localversion
 
-	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
-
-	if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
-		sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
-	fi
-	rm -f localversion
-
-	# read kernel version
-	local version=$(grab_version "$kerneldir")
+        # read kernel version
+        local version=$(grab_version "$kerneldir")
 
 	# build 3rd party drivers
-	compilation_prepare
+        compilation_prepare
+
+	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
 
 	# create linux-source package - with already patched sources
 	local sources_pkg_dir=$SRC/.tmp/${CHOSEN_KSRC}_${REVISION}_all
