@@ -276,13 +276,13 @@ compile_kernel()
 	if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
 		sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
 	fi
-        rm -f localversion
+	rm -f localversion
 
-        # read kernel version
-        local version=$(grab_version "$kerneldir")
+	# read kernel version
+	local version=$(grab_version "$kerneldir")
 
 	# build 3rd party drivers
-        compilation_prepare
+	compilation_prepare
 
 	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
 
