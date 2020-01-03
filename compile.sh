@@ -87,8 +87,8 @@ rm $TMPFILE
 # Check for Vagrant
 if [[ "$1" == vagrant && -z "$(which vagrant)" ]]; then
 	display_alert "Vagrant not installed." "Installing"
-	sudo apt-get update
-	sudo apt-get install -y vagrant virtualbox
+	sudo apt update
+	sudo apt install -y vagrant virtualbox
 fi
 
 if [[ "$1" == dockerpurge && -f /etc/debian_version ]]; then
@@ -116,12 +116,12 @@ if [[ "$1" == docker && -f /etc/debian_version && -z "$(which docker)" ]]; then
 	do
 	[[ ! $(which $i) ]] && install_packages+=$i" "
 	done
-	[[ -z $install_packages ]] && apt-get update;apt-get install -y -qq --no-install-recommends $install_packages
+	[[ -z $install_packages ]] && apt update;apt install -y -qq --no-install-recommends $install_packages
 
 	curl -fsSL "https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}')/gpg" | apt-key add -qq - > /dev/null 2>&1
 	export DEBIAN_FRONTEND=noninteractive
-	apt-get update
-	apt-get install -y -qq --no-install-recommends docker-ce
+	apt update
+	apt install -y -qq --no-install-recommends docker-ce
 	display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
 	"$SRC/compile.sh" "$@"
 	exit $?
