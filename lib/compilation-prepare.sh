@@ -35,10 +35,16 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.14.y.patch"                "applying"
 	fi
 
-	if [[ $version == "4.4."* || $version == "4.9."* ]] && [[ "$LINUXFAMILY" == rockpis || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk3399 ]]; then
+	if [[ $version == "4.4."* || $version == "4.9."* ]] && [[ "$LINUXFAMILY" == rockpis || "$LINUXFAMILY" == rk3399 ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rk3399.patch"                "applying"
+	fi
+
+	if [[ $version == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip64 ]]; then
+		display_alert "Adjustin" "packaging" "info"
+		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rockchip64.patch"                "applying"
 	fi
 
 	if [[ $version == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip ]]; then
