@@ -1,0 +1,2588 @@
+From d3806bd3da91a4d5c991bc6e5a46ef8a7c803a4f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Kamil=20Trzci=C5=84ski?= <ayufan@ayufan.eu>
+Date: Sat, 23 Nov 2019 13:57:18 +0100
+Subject: [PATCH] PATCH: kernel 4.4.199-200
+
+---
+ Makefile                                      |   8 +-
+ arch/arm/boot/dts/logicpd-torpedo-som.dtsi    |   4 +
+ arch/arm/include/asm/arch_gicv3.h             |  27 ++-
+ arch/arm/include/asm/assembler.h              |  10 ++
+ arch/arm/include/asm/bugs.h                   |   6 +-
+ arch/arm/include/asm/cp15.h                   |  18 ++
+ arch/arm/include/asm/cputype.h                |   9 +
+ arch/arm/include/asm/proc-fns.h               |  65 +++++--
+ arch/arm/include/asm/system_misc.h            |  15 ++
+ arch/arm/include/asm/uaccess.h                | 102 ++++++-----
+ arch/arm/kernel/Makefile                      |   1 +
+ arch/arm/kernel/bugs.c                        |  18 ++
+ arch/arm/kernel/entry-header.S                |  25 +++
+ arch/arm/kernel/head-common.S                 |   6 +-
+ arch/arm/kernel/setup.c                       |  40 +++--
+ arch/arm/kernel/signal.c                      |   9 +-
+ arch/arm/kernel/smp.c                         |  36 ++++
+ arch/arm/kernel/suspend.c                     |   2 +
+ arch/arm/kernel/sys_oabi-compat.c             |   8 +-
+ arch/arm/mm/Makefile                          |   2 +-
+ arch/arm/mm/alignment.c                       |  44 ++++-
+ arch/arm/mm/fault.c                           |   3 +
+ arch/arm/mm/proc-macros.S                     |  13 +-
+ arch/arm/mm/proc-v7-bugs.c                    | 161 ++++++++++++++++++
+ arch/arm/mm/proc-v7.S                         |  36 +++-
+ arch/arm/vfp/vfpmodule.c                      |  20 +--
+ arch/mips/bcm63xx/prom.c                      |   2 +-
+ arch/mips/include/asm/bmips.h                 |  10 +-
+ arch/mips/kernel/smp-bmips.c                  |   8 +-
+ drivers/dma/qcom_bam_dma.c                    |  14 ++
+ drivers/firmware/Kconfig                      |   3 +
+ drivers/firmware/psci.c                       |  55 +++++-
+ drivers/net/ethernet/hisilicon/hip04_eth.c    |  15 +-
+ .../ethernet/mellanox/mlx4/resource_tracker.c |  42 +++--
+ drivers/net/vxlan.c                           |   5 +-
+ drivers/of/unittest.c                         |   1 +
+ drivers/regulator/pfuze100-regulator.c        |   8 +-
+ drivers/regulator/ti-abb-regulator.c          |  26 +--
+ drivers/scsi/Kconfig                          |   2 +-
+ drivers/scsi/sni_53c710.c                     |   4 +-
+ drivers/target/target_core_device.c           |  21 ---
+ fs/cifs/cifsglob.h                            |   5 +
+ fs/cifs/cifsproto.h                           |   1 +
+ fs/cifs/file.c                                |  23 ++-
+ fs/cifs/smb2file.c                            |   2 +-
+ fs/dcache.c                                   |   2 +-
+ include/linux/arm-smccc.h                     |   8 +
+ include/linux/gfp.h                           |  23 +++
+ include/linux/psci.h                          |  13 ++
+ include/linux/skbuff.h                        |   3 +-
+ include/net/flow_dissector.h                  |   3 +-
+ include/net/sock.h                            |  11 +-
+ kernel/time/alarmtimer.c                      |   4 +-
+ net/core/datagram.c                           |   2 +-
+ net/core/ethtool.c                            |   4 +-
+ net/core/flow_dissector.c                     |  48 +++---
+ net/dccp/ipv4.c                               |   4 +-
+ net/ipv4/datagram.c                           |   2 +-
+ net/ipv4/tcp_ipv4.c                           |   4 +-
+ net/sched/sch_fq_codel.c                      |   6 +-
+ net/sched/sch_hhf.c                           |   8 +-
+ net/sched/sch_sfb.c                           |  13 +-
+ net/sched/sch_sfq.c                           |  14 +-
+ net/sctp/socket.c                             |   2 +-
+ sound/soc/rockchip/rockchip_i2s.c             |   2 +-
+ tools/perf/builtin-kmem.c                     |   1 +
+ 66 files changed, 840 insertions(+), 272 deletions(-)
+ create mode 100644 arch/arm/kernel/bugs.c
+ create mode 100644 arch/arm/mm/proc-v7-bugs.c
+
+diff --git a/Makefile b/Makefile
+index e22792ed1807..4ec657792181 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 199
++SUBLEVEL = 200
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+@@ -866,6 +866,12 @@ KBUILD_CFLAGS   += $(call cc-option,-Werror=strict-prototypes)
+ # Prohibit date/time macros, which would make the build non-deterministic
+ KBUILD_CFLAGS   += $(call cc-option,-Werror=date-time)
+ 
++# ensure -fcf-protection is disabled when using retpoline as it is
++# incompatible with -mindirect-branch=thunk-extern
++ifdef CONFIG_RETPOLINE
++KBUILD_CFLAGS += $(call cc-option,-fcf-protection=none)
++endif
++
+ # use the deterministic mode of AR if available
+ KBUILD_ARFLAGS := $(call ar-option,D)
+ 
+diff --git a/arch/arm/boot/dts/logicpd-torpedo-som.dtsi b/arch/arm/boot/dts/logicpd-torpedo-som.dtsi
+index e05670423d8b..a6c59bf698b3 100644
+--- a/arch/arm/boot/dts/logicpd-torpedo-som.dtsi
++++ b/arch/arm/boot/dts/logicpd-torpedo-som.dtsi
+@@ -169,3 +169,7 @@
+ &twl_gpio {
+ 	ti,use-leds;
+ };
++
++&twl_keypad {
++	status = "disabled";
++};
+diff --git a/arch/arm/include/asm/arch_gicv3.h b/arch/arm/include/asm/arch_gicv3.h
+index e08d15184056..af25c32b1ccc 100644
+--- a/arch/arm/include/asm/arch_gicv3.h
++++ b/arch/arm/include/asm/arch_gicv3.h
+@@ -22,9 +22,7 @@
+ 
+ #include <linux/io.h>
+ #include <asm/barrier.h>
+-
+-#define __ACCESS_CP15(CRn, Op1, CRm, Op2)	p15, Op1, %0, CRn, CRm, Op2
+-#define __ACCESS_CP15_64(Op1, CRm)		p15, Op1, %Q0, %R0, CRm
++#include <asm/cp15.h>
+ 
+ #define ICC_EOIR1			__ACCESS_CP15(c12, 0, c12, 1)
+ #define ICC_DIR				__ACCESS_CP15(c12, 0, c11, 1)
+@@ -102,58 +100,55 @@
+ 
+ static inline void gic_write_eoir(u32 irq)
+ {
+-	asm volatile("mcr " __stringify(ICC_EOIR1) : : "r" (irq));
++	write_sysreg(irq, ICC_EOIR1);
+ 	isb();
+ }
+ 
+ static inline void gic_write_dir(u32 val)
+ {
+-	asm volatile("mcr " __stringify(ICC_DIR) : : "r" (val));
++	write_sysreg(val, ICC_DIR);
+ 	isb();
+ }
+ 
+ static inline u32 gic_read_iar(void)
+ {
+-	u32 irqstat;
++	u32 irqstat = read_sysreg(ICC_IAR1);
+ 
+-	asm volatile("mrc " __stringify(ICC_IAR1) : "=r" (irqstat));
+ 	dsb(sy);
++
+ 	return irqstat;
+ }
+ 
+ static inline void gic_write_pmr(u32 val)
+ {
+-	asm volatile("mcr " __stringify(ICC_PMR) : : "r" (val));
++	write_sysreg(val, ICC_PMR);
+ }
+ 
+ static inline void gic_write_ctlr(u32 val)
+ {
+-	asm volatile("mcr " __stringify(ICC_CTLR) : : "r" (val));
++	write_sysreg(val, ICC_CTLR);
+ 	isb();
+ }
+ 
+ static inline void gic_write_grpen1(u32 val)
+ {
+-	asm volatile("mcr " __stringify(ICC_IGRPEN1) : : "r" (val));
++	write_sysreg(val, ICC_IGRPEN1);
+ 	isb();
+ }
+ 
+ static inline void gic_write_sgi1r(u64 val)
+ {
+-	asm volatile("mcrr " __stringify(ICC_SGI1R) : : "r" (val));
++	write_sysreg(val, ICC_SGI1R);
+ }
+ 
+ static inline u32 gic_read_sre(void)
+ {
+-	u32 val;
+-
+-	asm volatile("mrc " __stringify(ICC_SRE) : "=r" (val));
+-	return val;
++	return read_sysreg(ICC_SRE);
+ }
+ 
+ static inline void gic_write_sre(u32 val)
+ {
+-	asm volatile("mcr " __stringify(ICC_SRE) : : "r" (val));
++	write_sysreg(val, ICC_SRE);
+ 	isb();
+ }
+ 
+diff --git a/arch/arm/include/asm/assembler.h b/arch/arm/include/asm/assembler.h
+index 483481c6937e..c347702965ab 100644
+--- a/arch/arm/include/asm/assembler.h
++++ b/arch/arm/include/asm/assembler.h
+@@ -461,6 +461,16 @@ THUMB(	orr	\reg , \reg , #PSR_T_BIT	)
+ #endif
+ 	.endm
+ 
++	.macro uaccess_mask_range_ptr, addr:req, size:req, limit:req, tmp:req
++#ifdef CONFIG_CPU_SPECTRE
++	sub	\tmp, \limit, #1
++	subs	\tmp, \tmp, \addr	@ tmp = limit - 1 - addr
++	addhs	\tmp, \tmp, #1		@ if (tmp >= 0) {
++	subhss	\tmp, \tmp, \size	@ tmp = limit - (addr + size) }
++	movlo	\addr, #0		@ if (tmp < 0) addr = NULL
++	csdb
++#endif
++
+ 	.macro	uaccess_disable, tmp, isb=1
+ #ifdef CONFIG_CPU_SW_DOMAIN_PAN
+ 	/*
+diff --git a/arch/arm/include/asm/bugs.h b/arch/arm/include/asm/bugs.h
+index a97f1ea708d1..73a99c72a930 100644
+--- a/arch/arm/include/asm/bugs.h
++++ b/arch/arm/include/asm/bugs.h
+@@ -10,12 +10,14 @@
+ #ifndef __ASM_BUGS_H
+ #define __ASM_BUGS_H
+ 
+-#ifdef CONFIG_MMU
+ extern void check_writebuffer_bugs(void);
+ 
+-#define check_bugs() check_writebuffer_bugs()
++#ifdef CONFIG_MMU
++extern void check_bugs(void);
++extern void check_other_bugs(void);
+ #else
+ #define check_bugs() do { } while (0)
++#define check_other_bugs() do { } while (0)
+ #endif
+ 
+ #endif
+diff --git a/arch/arm/include/asm/cp15.h b/arch/arm/include/asm/cp15.h
+index c3f11524f10c..b74b174ac9fc 100644
+--- a/arch/arm/include/asm/cp15.h
++++ b/arch/arm/include/asm/cp15.h
+@@ -49,6 +49,24 @@
+ 
+ #ifdef CONFIG_CPU_CP15
+ 
++#define __ACCESS_CP15(CRn, Op1, CRm, Op2)	\
++	"mrc", "mcr", __stringify(p15, Op1, %0, CRn, CRm, Op2), u32
++#define __ACCESS_CP15_64(Op1, CRm)		\
++	"mrrc", "mcrr", __stringify(p15, Op1, %Q0, %R0, CRm), u64
++
++#define __read_sysreg(r, w, c, t) ({				\
++	t __val;						\
++	asm volatile(r " " c : "=r" (__val));			\
++	__val;							\
++})
++#define read_sysreg(...)		__read_sysreg(__VA_ARGS__)
++
++#define __write_sysreg(v, r, w, c, t)	asm volatile(w " " c : : "r" ((t)(v)))
++#define write_sysreg(v, ...)		__write_sysreg(v, __VA_ARGS__)
++
++#define BPIALL				__ACCESS_CP15(c7, 0, c5, 6)
++#define ICIALLU				__ACCESS_CP15(c7, 0, c5, 0)
++
+ extern unsigned long cr_alignment;	/* defined in entry-armv.S */
+ 
+ static inline unsigned long get_cr(void)
+diff --git a/arch/arm/include/asm/cputype.h b/arch/arm/include/asm/cputype.h
+index e9d04f475929..53125dad6edd 100644
+--- a/arch/arm/include/asm/cputype.h
++++ b/arch/arm/include/asm/cputype.h
+@@ -74,8 +74,16 @@
+ #define ARM_CPU_PART_CORTEX_A12		0x4100c0d0
+ #define ARM_CPU_PART_CORTEX_A17		0x4100c0e0
+ #define ARM_CPU_PART_CORTEX_A15		0x4100c0f0
++#define ARM_CPU_PART_CORTEX_A53		0x4100d030
++#define ARM_CPU_PART_CORTEX_A57		0x4100d070
++#define ARM_CPU_PART_CORTEX_A72		0x4100d080
++#define ARM_CPU_PART_CORTEX_A73		0x4100d090
++#define ARM_CPU_PART_CORTEX_A75		0x4100d0a0
+ #define ARM_CPU_PART_MASK		0xff00fff0
+ 
++/* Broadcom cores */
++#define ARM_CPU_PART_BRAHMA_B15		0x420000f0
++
+ #define ARM_CPU_XSCALE_ARCH_MASK	0xe000
+ #define ARM_CPU_XSCALE_ARCH_V1		0x2000
+ #define ARM_CPU_XSCALE_ARCH_V2		0x4000
+@@ -85,6 +93,7 @@
+ #define ARM_CPU_PART_SCORPION		0x510002d0
+ 
+ extern unsigned int processor_id;
++struct proc_info_list *lookup_processor(u32 midr);
+ 
+ #ifdef CONFIG_CPU_CP15
+ #define read_cpuid(reg)							\
+diff --git a/arch/arm/include/asm/proc-fns.h b/arch/arm/include/asm/proc-fns.h
+index 8877ad5ffe10..1bfcc3bcfc6d 100644
+--- a/arch/arm/include/asm/proc-fns.h
++++ b/arch/arm/include/asm/proc-fns.h
+@@ -23,7 +23,7 @@ struct mm_struct;
+ /*
+  * Don't change this structure - ASM code relies on it.
+  */
+-extern struct processor {
++struct processor {
+ 	/* MISC
+ 	 * get data abort address/flags
+ 	 */
+@@ -36,6 +36,10 @@ extern struct processor {
+ 	 * Set up any processor specifics
+ 	 */
+ 	void (*_proc_init)(void);
++	/*
++	 * Check for processor bugs
++	 */
++	void (*check_bugs)(void);
+ 	/*
+ 	 * Disable any processor specifics
+ 	 */
+@@ -75,9 +79,13 @@ extern struct processor {
+ 	unsigned int suspend_size;
+ 	void (*do_suspend)(void *);
+ 	void (*do_resume)(void *);
+-} processor;
++};
+ 
+ #ifndef MULTI_CPU
++static inline void init_proc_vtable(const struct processor *p)
++{
++}
++
+ extern void cpu_proc_init(void);
+ extern void cpu_proc_fin(void);
+ extern int cpu_do_idle(void);
+@@ -94,17 +102,50 @@ extern void cpu_reset(unsigned long addr) __attribute__((noreturn));
+ extern void cpu_do_suspend(void *);
+ extern void cpu_do_resume(void *);
+ #else
+-#define cpu_proc_init			processor._proc_init
+-#define cpu_proc_fin			processor._proc_fin
+-#define cpu_reset			processor.reset
+-#define cpu_do_idle			processor._do_idle
+-#define cpu_dcache_clean_area		processor.dcache_clean_area
+-#define cpu_set_pte_ext			processor.set_pte_ext
+-#define cpu_do_switch_mm		processor.switch_mm
+ 
+-/* These three are private to arch/arm/kernel/suspend.c */
+-#define cpu_do_suspend			processor.do_suspend
+-#define cpu_do_resume			processor.do_resume
++extern struct processor processor;
++#if defined(CONFIG_BIG_LITTLE) && defined(CONFIG_HARDEN_BRANCH_PREDICTOR)
++#include <linux/smp.h>
++/*
++ * This can't be a per-cpu variable because we need to access it before
++ * per-cpu has been initialised.  We have a couple of functions that are
++ * called in a pre-emptible context, and so can't use smp_processor_id()
++ * there, hence PROC_TABLE().  We insist in init_proc_vtable() that the
++ * function pointers for these are identical across all CPUs.
++ */
++extern struct processor *cpu_vtable[];
++#define PROC_VTABLE(f)			cpu_vtable[smp_processor_id()]->f
++#define PROC_TABLE(f)			cpu_vtable[0]->f
++static inline void init_proc_vtable(const struct processor *p)
++{
++	unsigned int cpu = smp_processor_id();
++	*cpu_vtable[cpu] = *p;
++	WARN_ON_ONCE(cpu_vtable[cpu]->dcache_clean_area !=
++		     cpu_vtable[0]->dcache_clean_area);
++	WARN_ON_ONCE(cpu_vtable[cpu]->set_pte_ext !=
++		     cpu_vtable[0]->set_pte_ext);
++}
++#else
++#define PROC_VTABLE(f)			processor.f
++#define PROC_TABLE(f)			processor.f
++static inline void init_proc_vtable(const struct processor *p)
++{
++	processor = *p;
++}
++#endif
++
++#define cpu_proc_init			PROC_VTABLE(_proc_init)
++#define cpu_check_bugs			PROC_VTABLE(check_bugs)
++#define cpu_proc_fin			PROC_VTABLE(_proc_fin)
++#define cpu_reset			PROC_VTABLE(reset)
++#define cpu_do_idle			PROC_VTABLE(_do_idle)
++#define cpu_dcache_clean_area		PROC_TABLE(dcache_clean_area)
++#define cpu_set_pte_ext			PROC_TABLE(set_pte_ext)
++#define cpu_do_switch_mm		PROC_VTABLE(switch_mm)
++
++/* These two are private to arch/arm/kernel/suspend.c */
++#define cpu_do_suspend			PROC_VTABLE(do_suspend)
++#define cpu_do_resume			PROC_VTABLE(do_resume)
+ #endif
+ 
+ extern void cpu_resume(void);
+diff --git a/arch/arm/include/asm/system_misc.h b/arch/arm/include/asm/system_misc.h
+index a3d61ad984af..1fed41440af9 100644
+--- a/arch/arm/include/asm/system_misc.h
++++ b/arch/arm/include/asm/system_misc.h
+@@ -7,6 +7,7 @@
+ #include <linux/linkage.h>
+ #include <linux/irqflags.h>
+ #include <linux/reboot.h>
++#include <linux/percpu.h>
+ 
+ extern void cpu_init(void);
+ 
+@@ -14,6 +15,20 @@ void soft_restart(unsigned long);
+ extern void (*arm_pm_restart)(enum reboot_mode reboot_mode, const char *cmd);
+ extern void (*arm_pm_idle)(void);
+ 
++#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
++typedef void (*harden_branch_predictor_fn_t)(void);
++DECLARE_PER_CPU(harden_branch_predictor_fn_t, harden_branch_predictor_fn);
++static inline void harden_branch_predictor(void)
++{
++	harden_branch_predictor_fn_t fn = per_cpu(harden_branch_predictor_fn,
++						  smp_processor_id());
++	if (fn)
++		fn();
++}
++#else
++#define harden_branch_predictor() do { } while (0)
++#endif
++
+ #define UDBG_UNDEFINED	(1 << 0)
+ #define UDBG_SYSCALL	(1 << 1)
+ #define UDBG_BADABORT	(1 << 2)
+diff --git a/arch/arm/include/asm/uaccess.h b/arch/arm/include/asm/uaccess.h
+index 7c9e682b4060..387a810257f7 100644
+--- a/arch/arm/include/asm/uaccess.h
++++ b/arch/arm/include/asm/uaccess.h
+@@ -99,6 +99,14 @@ extern int __put_user_bad(void);
+ static inline void set_fs(mm_segment_t fs)
+ {
+ 	current_thread_info()->addr_limit = fs;
++
++	/*
++	 * Prevent a mispredicted conditional call to set_fs from forwarding
++	 * the wrong address limit to access_ok under speculation.
++	 */
++	dsb(nsh);
++	isb();
++
+ 	modify_domain(DOMAIN_KERNEL, fs ? DOMAIN_CLIENT : DOMAIN_MANAGER);
+ }
+ 
+@@ -122,6 +130,39 @@ static inline void set_fs(mm_segment_t fs)
+ 		: "cc"); \
+ 	flag; })
+ 
++/*
++ * This is a type: either unsigned long, if the argument fits into
++ * that type, or otherwise unsigned long long.
++ */
++#define __inttype(x) \
++	__typeof__(__builtin_choose_expr(sizeof(x) > sizeof(0UL), 0ULL, 0UL))
++
++/*
++ * Sanitise a uaccess pointer such that it becomes NULL if addr+size
++ * is above the current addr_limit.
++ */
++#define uaccess_mask_range_ptr(ptr, size)			\
++	((__typeof__(ptr))__uaccess_mask_range_ptr(ptr, size))
++static inline void __user *__uaccess_mask_range_ptr(const void __user *ptr,
++						    size_t size)
++{
++	void __user *safe_ptr = (void __user *)ptr;
++	unsigned long tmp;
++
++	asm volatile(
++	"	sub	%1, %3, #1\n"
++	"	subs	%1, %1, %0\n"
++	"	addhs	%1, %1, #1\n"
++	"	subhss	%1, %1, %2\n"
++	"	movlo	%0, #0\n"
++	: "+r" (safe_ptr), "=&r" (tmp)
++	: "r" (size), "r" (current_thread_info()->addr_limit)
++	: "cc");
++
++	csdb();
++	return safe_ptr;
++}
++
+ /*
+  * This is a type: either unsigned long, if the argument fits into
+  * that type, or otherwise unsigned long long.
+@@ -245,49 +286,23 @@ extern int __put_user_2(void *, unsigned int);
+ extern int __put_user_4(void *, unsigned int);
+ extern int __put_user_8(void *, unsigned long long);
+ 
+-#define __put_user_x(__r2, __p, __e, __l, __s)				\
+-	   __asm__ __volatile__ (					\
+-		__asmeq("%0", "r0") __asmeq("%2", "r2")			\
+-		__asmeq("%3", "r1")					\
+-		"bl	__put_user_" #__s				\
+-		: "=&r" (__e)						\
+-		: "0" (__p), "r" (__r2), "r" (__l)			\
+-		: "ip", "lr", "cc")
+-
+-#define __put_user_check(x, p)						\
++#define __put_user_check(__pu_val, __ptr, __err, __s)			\
+ 	({								\
+ 		unsigned long __limit = current_thread_info()->addr_limit - 1; \
+-		const typeof(*(p)) __user *__tmp_p = (p);		\
+-		register typeof(*(p)) __r2 asm("r2") = (x);	\
+-		register const typeof(*(p)) __user *__p asm("r0") = __tmp_p; \
++		register typeof(__pu_val) __r2 asm("r2") = __pu_val;	\
++		register const void __user *__p asm("r0") = __ptr;	\
+ 		register unsigned long __l asm("r1") = __limit;		\
+ 		register int __e asm("r0");				\
+-		unsigned int __ua_flags = uaccess_save_and_enable();	\
+-		switch (sizeof(*(__p))) {				\
+-		case 1:							\
+-			__put_user_x(__r2, __p, __e, __l, 1);		\
+-			break;						\
+-		case 2:							\
+-			__put_user_x(__r2, __p, __e, __l, 2);		\
+-			break;						\
+-		case 4:							\
+-			__put_user_x(__r2, __p, __e, __l, 4);		\
+-			break;						\
+-		case 8:							\
+-			__put_user_x(__r2, __p, __e, __l, 8);		\
+-			break;						\
+-		default: __e = __put_user_bad(); break;			\
+-		}							\
+-		uaccess_restore(__ua_flags);				\
+-		__e;							\
++		__asm__ __volatile__ (					\
++			__asmeq("%0", "r0") __asmeq("%2", "r2")		\
++			__asmeq("%3", "r1")				\
++			"bl	__put_user_" #__s			\
++			: "=&r" (__e)					\
++			: "0" (__p), "r" (__r2), "r" (__l)		\
++			: "ip", "lr", "cc");				\
++		__err = __e;						\
+ 	})
+ 
+-#define put_user(x, p)							\
+-	({								\
+-		might_fault();						\
+-		__put_user_check(x, p);					\
+-	 })
+-
+ #else /* CONFIG_MMU */
+ 
+ /*
+@@ -305,7 +320,7 @@ static inline void set_fs(mm_segment_t fs)
+ }
+ 
+ #define get_user(x, p)	__get_user(x, p)
+-#define put_user(x, p)	__put_user(x, p)
++#define __put_user_check __put_user_nocheck
+ 
+ #endif /* CONFIG_MMU */
+ 
+@@ -324,6 +339,16 @@ static inline void set_fs(mm_segment_t fs)
+ #define __get_user(x, ptr) get_user(x, ptr)
+ #else
+ 
++#ifdef CONFIG_CPU_SPECTRE
++/*
++ * When mitigating Spectre variant 1, it is not worth fixing the non-
++ * verifying accessors, because we need to add verification of the
++ * address space there.  Force these to use the standard get_user()
++ * version instead.
++ */
++#define __get_user(x, ptr) get_user(x, ptr)
++#else
++
+ /*
+  * The "__xxx" versions of the user access functions do not verify the
+  * address space - it must have been done previously with a separate
+@@ -500,6 +525,7 @@ do {									\
+ 	: "r" (x), "i" (-EFAULT)				\
+ 	: "cc")
+ 
++#endif /* !CONFIG_CPU_SPECTRE */
+ 
+ #ifdef CONFIG_MMU
+ extern unsigned long __must_check
+diff --git a/arch/arm/kernel/Makefile b/arch/arm/kernel/Makefile
+index 82bdac0f2804..649bc3300c93 100644
+--- a/arch/arm/kernel/Makefile
++++ b/arch/arm/kernel/Makefile
+@@ -30,6 +30,7 @@ else
+ obj-y		+= entry-armv.o
+ endif
+ 
++obj-$(CONFIG_MMU)		+= bugs.o
+ obj-$(CONFIG_CPU_IDLE)		+= cpuidle.o
+ obj-$(CONFIG_ISA_DMA_API)	+= dma.o
+ obj-$(CONFIG_FIQ)		+= fiq.o fiqasm.o
+diff --git a/arch/arm/kernel/bugs.c b/arch/arm/kernel/bugs.c
+new file mode 100644
+index 000000000000..d41d3598e5e5
+--- /dev/null
++++ b/arch/arm/kernel/bugs.c
+@@ -0,0 +1,18 @@
++// SPDX-Identifier: GPL-2.0
++#include <linux/init.h>
++#include <asm/bugs.h>
++#include <asm/proc-fns.h>
++
++void check_other_bugs(void)
++{
++#ifdef MULTI_CPU
++	if (cpu_check_bugs)
++		cpu_check_bugs();
++#endif
++}
++
++void __init check_bugs(void)
++{
++	check_writebuffer_bugs();
++	check_other_bugs();
++}
+diff --git a/arch/arm/kernel/entry-header.S b/arch/arm/kernel/entry-header.S
+index 86dfee487e24..13a5b02ed09e 100644
+--- a/arch/arm/kernel/entry-header.S
++++ b/arch/arm/kernel/entry-header.S
+@@ -398,6 +398,31 @@
+ #endif
+ 	.endm
+ 
++	.macro	invoke_syscall, table, nr, tmp, ret, reload=0
++#ifdef CONFIG_CPU_SPECTRE
++	mov	\tmp, \nr
++	cmp	\tmp, #NR_syscalls		@ check upper syscall limit
++	movcs	\tmp, #0
++	csdb
++	badr	lr, \ret			@ return address
++	.if	\reload
++	add	r1, sp, #S_R0 + S_OFF		@ pointer to regs
++	ldmccia	r1, {r0 - r6}			@ reload r0-r6
++	stmccia	sp, {r4, r5}			@ update stack arguments
++	.endif
++	ldrcc	pc, [\table, \tmp, lsl #2]	@ call sys_* routine
++#else
++	cmp	\nr, #NR_syscalls		@ check upper syscall limit
++	badr	lr, \ret			@ return address
++	.if	\reload
++	add	r1, sp, #S_R0 + S_OFF		@ pointer to regs
++	ldmccia	r1, {r0 - r6}			@ reload r0-r6
++	stmccia	sp, {r4, r5}			@ update stack arguments
++	.endif
++	ldrcc	pc, [\table, \nr, lsl #2]	@ call sys_* routine
++#endif
++	.endm
++
+ /*
+  * These are the registers used in the syscall handler, and allow us to
+  * have in theory up to 7 arguments to a function - r0 to r6.
+diff --git a/arch/arm/kernel/head-common.S b/arch/arm/kernel/head-common.S
+index 8733012d231f..7e662bdd5cb3 100644
+--- a/arch/arm/kernel/head-common.S
++++ b/arch/arm/kernel/head-common.S
+@@ -122,6 +122,9 @@ __mmap_switched_data:
+ 	.long	init_thread_union + THREAD_START_SP @ sp
+ 	.size	__mmap_switched_data, . - __mmap_switched_data
+ 
++	__FINIT
++	.text
++
+ /*
+  * This provides a C-API version of __lookup_processor_type
+  */
+@@ -133,9 +136,6 @@ ENTRY(lookup_processor_type)
+ 	ldmfd	sp!, {r4 - r6, r9, pc}
+ ENDPROC(lookup_processor_type)
+ 
+-	__FINIT
+-	.text
+-
+ /*
+  * Read processor ID register (CP#15, CR0), and look up in the linker-built
+  * supported processor list.  Note that we can't use the absolute addresses
+diff --git a/arch/arm/kernel/setup.c b/arch/arm/kernel/setup.c
+index bf63b4693457..75b680500811 100644
+--- a/arch/arm/kernel/setup.c
++++ b/arch/arm/kernel/setup.c
+@@ -113,6 +113,11 @@ EXPORT_SYMBOL(elf_hwcap2);
+ 
+ #ifdef MULTI_CPU
+ struct processor processor __read_mostly;
++#if defined(CONFIG_BIG_LITTLE) && defined(CONFIG_HARDEN_BRANCH_PREDICTOR)
++struct processor *cpu_vtable[NR_CPUS] = {
++	[0] = &processor,
++};
++#endif
+ #endif
+ #ifdef MULTI_TLB
+ struct cpu_tlb_fns cpu_tlb __read_mostly;
+@@ -599,28 +604,33 @@ static void __init smp_build_mpidr_hash(void)
+ }
+ #endif
+ 
+-static void __init setup_processor(void)
++/*
++ * locate processor in the list of supported processor types.  The linker
++ * builds this table for us from the entries in arch/arm/mm/proc-*.S
++ */
++struct proc_info_list *lookup_processor(u32 midr)
+ {
+-	struct proc_info_list *list;
++	struct proc_info_list *list = lookup_processor_type(midr);
+ 
+-	/*
+-	 * locate processor in the list of supported processor
+-	 * types.  The linker builds this table for us from the
+-	 * entries in arch/arm/mm/proc-*.S
+-	 */
+-	list = lookup_processor_type(read_cpuid_id());
+ 	if (!list) {
+-		pr_err("CPU configuration botched (ID %08x), unable to continue.\n",
+-		       read_cpuid_id());
+-		while (1);
++		pr_err("CPU%u: configuration botched (ID %08x), CPU halted\n",
++		       smp_processor_id(), midr);
++		while (1)
++		/* can't use cpu_relax() here as it may require MMU setup */;
+ 	}
+ 
++	return list;
++}
++
++static void __init setup_processor(void)
++{
++	unsigned int midr = read_cpuid_id();
++	struct proc_info_list *list = lookup_processor(midr);
++
+ 	cpu_name = list->cpu_name;
+ 	__cpu_architecture = __get_cpu_architecture();
+ 
+-#ifdef MULTI_CPU
+-	processor = *list->proc;
+-#endif
++	init_proc_vtable(list->proc);
+ #ifdef MULTI_TLB
+ 	cpu_tlb = *list->tlb;
+ #endif
+@@ -632,7 +642,7 @@ static void __init setup_processor(void)
+ #endif
+ 
+ 	pr_info("CPU: %s [%08x] revision %d (ARMv%s), cr=%08lx\n",
+-		cpu_name, read_cpuid_id(), read_cpuid_id() & 15,
++		list->cpu_name, midr, midr & 15,
+ 		proc_arch[cpu_architecture()], get_cr());
+ 
+ 	snprintf(init_utsname()->machine, __NEW_UTS_LEN + 1, "%s%c",
+diff --git a/arch/arm/kernel/signal.c b/arch/arm/kernel/signal.c
+index 4dd36737c205..8617f44dc3b7 100644
+--- a/arch/arm/kernel/signal.c
++++ b/arch/arm/kernel/signal.c
+@@ -255,6 +255,7 @@ asmlinkage int sys_rt_sigreturn(struct pt_regs *regs)
+ static int
+ setup_sigframe(struct sigframe __user *sf, struct pt_regs *regs, sigset_t *set)
+ {
++	struct sigcontext context;
+ 	struct aux_sigframe __user *aux;
+ 	int err = 0;
+ 
+@@ -296,7 +297,7 @@ setup_sigframe(struct sigframe __user *sf, struct pt_regs *regs, sigset_t *set)
+ 	if (err == 0)
+ 		err |= preserve_vfp_context(&aux->vfp);
+ #endif
+-	__put_user_error(0, &aux->end_magic, err);
++	err |= __put_user(0, &aux->end_magic);
+ 
+ 	return err;
+ }
+@@ -428,7 +429,7 @@ setup_frame(struct ksignal *ksig, sigset_t *set, struct pt_regs *regs)
+ 	/*
+ 	 * Set uc.uc_flags to a value which sc.trap_no would never have.
+ 	 */
+-	__put_user_error(0x5ac3c35a, &frame->uc.uc_flags, err);
++	err = __put_user(0x5ac3c35a, &frame->uc.uc_flags);
+ 
+ 	err |= setup_sigframe(frame, regs, set);
+ 	if (err == 0)
+@@ -448,8 +449,8 @@ setup_rt_frame(struct ksignal *ksig, sigset_t *set, struct pt_regs *regs)
+ 
+ 	err |= copy_siginfo_to_user(&frame->info, &ksig->info);
+ 
+-	__put_user_error(0, &frame->sig.uc.uc_flags, err);
+-	__put_user_error(NULL, &frame->sig.uc.uc_link, err);
++	err |= __put_user(0, &frame->sig.uc.uc_flags);
++	err |= __put_user(NULL, &frame->sig.uc.uc_link);
+ 
+ 	err |= __save_altstack(&frame->sig.uc.uc_stack, regs->ARM_sp);
+ 	err |= setup_sigframe(&frame->sig, regs, set);
+diff --git a/arch/arm/kernel/smp.c b/arch/arm/kernel/smp.c
+index 2f9587f1d863..8efe992bddca 100644
+--- a/arch/arm/kernel/smp.c
++++ b/arch/arm/kernel/smp.c
+@@ -27,8 +27,10 @@
+ #include <linux/completion.h>
+ #include <linux/cpufreq.h>
+ #include <linux/irq_work.h>
++#include <linux/slab.h>
+ 
+ #include <linux/atomic.h>
++#include <asm/bugs.h>
+ #include <asm/smp.h>
+ #include <asm/cacheflush.h>
+ #include <asm/cpu.h>
+@@ -39,6 +41,7 @@
+ #include <asm/mmu_context.h>
+ #include <asm/pgtable.h>
+ #include <asm/pgalloc.h>
++#include <asm/procinfo.h>
+ #include <asm/processor.h>
+ #include <asm/sections.h>
+ #include <asm/tlbflush.h>
+@@ -99,6 +102,30 @@ static unsigned long get_arch_pgd(pgd_t *pgd)
+ #endif
+ }
+ 
++#if defined(CONFIG_BIG_LITTLE) && defined(CONFIG_HARDEN_BRANCH_PREDICTOR)
++static int secondary_biglittle_prepare(unsigned int cpu)
++{
++	if (!cpu_vtable[cpu])
++		cpu_vtable[cpu] = kzalloc(sizeof(*cpu_vtable[cpu]), GFP_KERNEL);
++
++	return cpu_vtable[cpu] ? 0 : -ENOMEM;
++}
++
++static void secondary_biglittle_init(void)
++{
++	init_proc_vtable(lookup_processor(read_cpuid_id())->proc);
++}
++#else
++static int secondary_biglittle_prepare(unsigned int cpu)
++{
++	return 0;
++}
++
++static void secondary_biglittle_init(void)
++{
++}
++#endif
++
+ int __cpu_up(unsigned int cpu, struct task_struct *idle)
+ {
+ 	int ret;
+@@ -106,6 +133,10 @@ int __cpu_up(unsigned int cpu, struct task_struct *idle)
+ 	if (!smp_ops.smp_boot_secondary)
+ 		return -ENOSYS;
+ 
++	ret = secondary_biglittle_prepare(cpu);
++	if (ret)
++		return ret;
++
+ 	/*
+ 	 * We need to tell the secondary core where to find
+ 	 * its stack and the page tables.
+@@ -357,6 +388,8 @@ asmlinkage void secondary_start_kernel(void)
+ 	struct mm_struct *mm = &init_mm;
+ 	unsigned int cpu;
+ 
++	secondary_biglittle_init();
++
+ 	/*
+ 	 * The identity mapping is uncached (strongly ordered), so
+ 	 * switch away from it before attempting any exclusive accesses.
+@@ -400,6 +433,9 @@ asmlinkage void secondary_start_kernel(void)
+ 	 * before we continue - which happens after __cpu_up returns.
+ 	 */
+ 	set_cpu_online(cpu, true);
++
++	check_other_bugs();
++
+ 	complete(&cpu_running);
+ 
+ 	local_irq_enable();
+diff --git a/arch/arm/kernel/suspend.c b/arch/arm/kernel/suspend.c
+index 9a2f882a0a2d..134f0d432610 100644
+--- a/arch/arm/kernel/suspend.c
++++ b/arch/arm/kernel/suspend.c
+@@ -1,6 +1,7 @@
+ #include <linux/init.h>
+ #include <linux/slab.h>
+ 
++#include <asm/bugs.h>
+ #include <asm/cacheflush.h>
+ #include <asm/idmap.h>
+ #include <asm/pgalloc.h>
+@@ -34,6 +35,7 @@ int cpu_suspend(unsigned long arg, int (*fn)(unsigned long))
+ 		cpu_switch_mm(mm->pgd, mm);
+ 		local_flush_bp_all();
+ 		local_flush_tlb_all();
++		check_other_bugs();
+ 	}
+ 
+ 	return ret;
+diff --git a/arch/arm/kernel/sys_oabi-compat.c b/arch/arm/kernel/sys_oabi-compat.c
+index 640748e27035..d844c5c9364b 100644
+--- a/arch/arm/kernel/sys_oabi-compat.c
++++ b/arch/arm/kernel/sys_oabi-compat.c
+@@ -276,6 +276,7 @@ asmlinkage long sys_oabi_epoll_wait(int epfd,
+ 				    int maxevents, int timeout)
+ {
+ 	struct epoll_event *kbuf;
++	struct oabi_epoll_event e;
+ 	mm_segment_t fs;
+ 	long ret, err, i;
+ 
+@@ -294,8 +295,11 @@ asmlinkage long sys_oabi_epoll_wait(int epfd,
+ 	set_fs(fs);
+ 	err = 0;
+ 	for (i = 0; i < ret; i++) {
+-		__put_user_error(kbuf[i].events, &events->events, err);
+-		__put_user_error(kbuf[i].data,   &events->data,   err);
++		e.events = kbuf[i].events;
++		e.data = kbuf[i].data;
++		err = __copy_to_user(events, &e, sizeof(e));
++		if (err)
++			break;
+ 		events++;
+ 	}
+ 	kfree(kbuf);
+diff --git a/arch/arm/mm/Makefile b/arch/arm/mm/Makefile
+index 7f76d96ce546..35307176e46c 100644
+--- a/arch/arm/mm/Makefile
++++ b/arch/arm/mm/Makefile
+@@ -92,7 +92,7 @@ obj-$(CONFIG_CPU_MOHAWK)	+= proc-mohawk.o
+ obj-$(CONFIG_CPU_FEROCEON)	+= proc-feroceon.o
+ obj-$(CONFIG_CPU_V6)		+= proc-v6.o
+ obj-$(CONFIG_CPU_V6K)		+= proc-v6.o
+-obj-$(CONFIG_CPU_V7)		+= proc-v7.o
++obj-$(CONFIG_CPU_V7)		+= proc-v7.o proc-v7-bugs.o
+ obj-$(CONFIG_CPU_V7M)		+= proc-v7m.o
+ 
+ AFLAGS_proc-v6.o	:=-Wa,-march=armv6
+diff --git a/arch/arm/mm/alignment.c b/arch/arm/mm/alignment.c
+index 7d5f4c736a16..cd18eda014c2 100644
+--- a/arch/arm/mm/alignment.c
++++ b/arch/arm/mm/alignment.c
+@@ -767,6 +767,36 @@ do_alignment_t32_to_handler(unsigned long *pinstr, struct pt_regs *regs,
+ 	return NULL;
+ }
+ 
++static int alignment_get_arm(struct pt_regs *regs, u32 *ip, unsigned long *inst)
++{
++	u32 instr = 0;
++	int fault;
++
++	if (user_mode(regs))
++		fault = get_user(instr, ip);
++	else
++		fault = probe_kernel_address(ip, instr);
++
++	*inst = __mem_to_opcode_arm(instr);
++
++	return fault;
++}
++
++static int alignment_get_thumb(struct pt_regs *regs, u16 *ip, u16 *inst)
++{
++	u16 instr = 0;
++	int fault;
++
++	if (user_mode(regs))
++		fault = get_user(instr, ip);
++	else
++		fault = probe_kernel_address(ip, instr);
++
++	*inst = __mem_to_opcode_thumb16(instr);
++
++	return fault;
++}
++
+ static int
+ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
+ {
+@@ -774,10 +804,10 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
+ 	unsigned long instr = 0, instrptr;
+ 	int (*handler)(unsigned long addr, unsigned long instr, struct pt_regs *regs);
+ 	unsigned int type;
+-	unsigned int fault;
+ 	u16 tinstr = 0;
+ 	int isize = 4;
+ 	int thumb2_32b = 0;
++	int fault;
+ 
+ 	if (interrupts_enabled(regs))
+ 		local_irq_enable();
+@@ -786,15 +816,14 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
+ 
+ 	if (thumb_mode(regs)) {
+ 		u16 *ptr = (u16 *)(instrptr & ~1);
+-		fault = probe_kernel_address(ptr, tinstr);
+-		tinstr = __mem_to_opcode_thumb16(tinstr);
++
++		fault = alignment_get_thumb(regs, ptr, &tinstr);
+ 		if (!fault) {
+ 			if (cpu_architecture() >= CPU_ARCH_ARMv7 &&
+ 			    IS_T32(tinstr)) {
+ 				/* Thumb-2 32-bit */
+-				u16 tinst2 = 0;
+-				fault = probe_kernel_address(ptr + 1, tinst2);
+-				tinst2 = __mem_to_opcode_thumb16(tinst2);
++				u16 tinst2;
++				fault = alignment_get_thumb(regs, ptr + 1, &tinst2);
+ 				instr = __opcode_thumb32_compose(tinstr, tinst2);
+ 				thumb2_32b = 1;
+ 			} else {
+@@ -803,8 +832,7 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
+ 			}
+ 		}
+ 	} else {
+-		fault = probe_kernel_address((void *)instrptr, instr);
+-		instr = __mem_to_opcode_arm(instr);
++		fault = alignment_get_arm(regs, (void *)instrptr, &instr);
+ 	}
+ 
+ 	if (fault) {
+diff --git a/arch/arm/mm/fault.c b/arch/arm/mm/fault.c
+index b4e54ba4b892..4b0e4506371f 100644
+--- a/arch/arm/mm/fault.c
++++ b/arch/arm/mm/fault.c
+@@ -164,6 +164,9 @@ __do_user_fault(struct task_struct *tsk, unsigned long addr,
+ {
+ 	struct siginfo si;
+ 
++	if (addr > TASK_SIZE)
++		harden_branch_predictor();
++
+ #ifdef CONFIG_DEBUG_USER
+ 	if (((user_debug & UDBG_SEGV) && (sig == SIGSEGV)) ||
+ 	    ((user_debug & UDBG_BUS)  && (sig == SIGBUS))) {
+diff --git a/arch/arm/mm/proc-macros.S b/arch/arm/mm/proc-macros.S
+index c671f345266a..e6bfdcc381f8 100644
+--- a/arch/arm/mm/proc-macros.S
++++ b/arch/arm/mm/proc-macros.S
+@@ -258,13 +258,21 @@
+ 	mcr	p15, 0, ip, c7, c10, 4		@ data write barrier
+ 	.endm
+ 
+-.macro define_processor_functions name:req, dabort:req, pabort:req, nommu=0, suspend=0
++.macro define_processor_functions name:req, dabort:req, pabort:req, nommu=0, suspend=0, bugs=0
++/*
++ * If we are building for big.Little with branch predictor hardening,
++ * we need the processor function tables to remain available after boot.
++ */
++#if defined(CONFIG_BIG_LITTLE) && defined(CONFIG_HARDEN_BRANCH_PREDICTOR)
++	.section ".rodata"
++#endif
+ 	.type	\name\()_processor_functions, #object
+ 	.align 2
+ ENTRY(\name\()_processor_functions)
+ 	.word	\dabort
+ 	.word	\pabort
+ 	.word	cpu_\name\()_proc_init
++	.word	\bugs
+ 	.word	cpu_\name\()_proc_fin
+ 	.word	cpu_\name\()_reset
+ 	.word	cpu_\name\()_do_idle
+@@ -293,6 +301,9 @@ ENTRY(\name\()_processor_functions)
+ 	.endif
+ 
+ 	.size	\name\()_processor_functions, . - \name\()_processor_functions
++#if defined(CONFIG_BIG_LITTLE) && defined(CONFIG_HARDEN_BRANCH_PREDICTOR)
++	.previous
++#endif
+ .endm
+ 
+ .macro define_cache_functions name:req
+diff --git a/arch/arm/mm/proc-v7-bugs.c b/arch/arm/mm/proc-v7-bugs.c
+new file mode 100644
+index 000000000000..9a07916af8dd
+--- /dev/null
++++ b/arch/arm/mm/proc-v7-bugs.c
+@@ -0,0 +1,161 @@
++// SPDX-License-Identifier: GPL-2.0
++#include <linux/arm-smccc.h>
++#include <linux/kernel.h>
++#include <linux/psci.h>
++#include <linux/smp.h>
++
++#include <asm/cp15.h>
++#include <asm/cputype.h>
++#include <asm/proc-fns.h>
++#include <asm/system_misc.h>
++
++#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
++DEFINE_PER_CPU(harden_branch_predictor_fn_t, harden_branch_predictor_fn);
++
++extern void cpu_v7_iciallu_switch_mm(phys_addr_t pgd_phys, struct mm_struct *mm);
++extern void cpu_v7_bpiall_switch_mm(phys_addr_t pgd_phys, struct mm_struct *mm);
++extern void cpu_v7_smc_switch_mm(phys_addr_t pgd_phys, struct mm_struct *mm);
++extern void cpu_v7_hvc_switch_mm(phys_addr_t pgd_phys, struct mm_struct *mm);
++
++static void harden_branch_predictor_bpiall(void)
++{
++	write_sysreg(0, BPIALL);
++}
++
++static void harden_branch_predictor_iciallu(void)
++{
++	write_sysreg(0, ICIALLU);
++}
++
++static void __maybe_unused call_smc_arch_workaround_1(void)
++{
++	arm_smccc_1_1_smc(ARM_SMCCC_ARCH_WORKAROUND_1, NULL);
++}
++
++static void __maybe_unused call_hvc_arch_workaround_1(void)
++{
++	arm_smccc_1_1_hvc(ARM_SMCCC_ARCH_WORKAROUND_1, NULL);
++}
++
++static void cpu_v7_spectre_init(void)
++{
++	const char *spectre_v2_method = NULL;
++	int cpu = smp_processor_id();
++
++	if (per_cpu(harden_branch_predictor_fn, cpu))
++		return;
++
++	switch (read_cpuid_part()) {
++	case ARM_CPU_PART_CORTEX_A8:
++	case ARM_CPU_PART_CORTEX_A9:
++	case ARM_CPU_PART_CORTEX_A12:
++	case ARM_CPU_PART_CORTEX_A17:
++	case ARM_CPU_PART_CORTEX_A73:
++	case ARM_CPU_PART_CORTEX_A75:
++		per_cpu(harden_branch_predictor_fn, cpu) =
++			harden_branch_predictor_bpiall;
++		spectre_v2_method = "BPIALL";
++		break;
++
++	case ARM_CPU_PART_CORTEX_A15:
++	case ARM_CPU_PART_BRAHMA_B15:
++		per_cpu(harden_branch_predictor_fn, cpu) =
++			harden_branch_predictor_iciallu;
++		spectre_v2_method = "ICIALLU";
++		break;
++
++#ifdef CONFIG_ARM_PSCI
++	default:
++		/* Other ARM CPUs require no workaround */
++		if (read_cpuid_implementor() == ARM_CPU_IMP_ARM)
++			break;
++		/* fallthrough */
++		/* Cortex A57/A72 require firmware workaround */
++	case ARM_CPU_PART_CORTEX_A57:
++	case ARM_CPU_PART_CORTEX_A72: {
++		struct arm_smccc_res res;
++
++		if (psci_ops.smccc_version == SMCCC_VERSION_1_0)
++			break;
++
++		switch (psci_ops.conduit) {
++		case PSCI_CONDUIT_HVC:
++			arm_smccc_1_1_hvc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
++					  ARM_SMCCC_ARCH_WORKAROUND_1, &res);
++			if ((int)res.a0 != 0)
++				break;
++			per_cpu(harden_branch_predictor_fn, cpu) =
++				call_hvc_arch_workaround_1;
++			cpu_do_switch_mm = cpu_v7_hvc_switch_mm;
++			spectre_v2_method = "hypervisor";
++			break;
++
++		case PSCI_CONDUIT_SMC:
++			arm_smccc_1_1_smc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
++					  ARM_SMCCC_ARCH_WORKAROUND_1, &res);
++			if ((int)res.a0 != 0)
++				break;
++			per_cpu(harden_branch_predictor_fn, cpu) =
++				call_smc_arch_workaround_1;
++			cpu_do_switch_mm = cpu_v7_smc_switch_mm;
++			spectre_v2_method = "firmware";
++			break;
++
++		default:
++			break;
++		}
++	}
++#endif
++	}
++
++	if (spectre_v2_method)
++		pr_info("CPU%u: Spectre v2: using %s workaround\n",
++			smp_processor_id(), spectre_v2_method);
++}
++#else
++static void cpu_v7_spectre_init(void)
++{
++}
++#endif
++
++static __maybe_unused bool cpu_v7_check_auxcr_set(bool *warned,
++						  u32 mask, const char *msg)
++{
++	u32 aux_cr;
++
++	asm("mrc p15, 0, %0, c1, c0, 1" : "=r" (aux_cr));
++
++	if ((aux_cr & mask) != mask) {
++		if (!*warned)
++			pr_err("CPU%u: %s", smp_processor_id(), msg);
++		*warned = true;
++		return false;
++	}
++	return true;
++}
++
++static DEFINE_PER_CPU(bool, spectre_warned);
++
++static bool check_spectre_auxcr(bool *warned, u32 bit)
++{
++	return IS_ENABLED(CONFIG_HARDEN_BRANCH_PREDICTOR) &&
++		cpu_v7_check_auxcr_set(warned, bit,
++				       "Spectre v2: firmware did not set auxiliary control register IBE bit, system vulnerable\n");
++}
++
++void cpu_v7_ca8_ibe(void)
++{
++	if (check_spectre_auxcr(this_cpu_ptr(&spectre_warned), BIT(6)))
++		cpu_v7_spectre_init();
++}
++
++void cpu_v7_ca15_ibe(void)
++{
++	if (check_spectre_auxcr(this_cpu_ptr(&spectre_warned), BIT(0)))
++		cpu_v7_spectre_init();
++}
++
++void cpu_v7_bugs_init(void)
++{
++	cpu_v7_spectre_init();
++}
+diff --git a/arch/arm/mm/proc-v7.S b/arch/arm/mm/proc-v7.S
+index d7232706a0f7..2d890d1928c1 100644
+--- a/arch/arm/mm/proc-v7.S
++++ b/arch/arm/mm/proc-v7.S
+@@ -9,6 +9,7 @@
+  *
+  *  This is the "shell" of the ARMv7 processor support.
+  */
++#include <linux/arm-smccc.h>
+ #include <linux/init.h>
+ #include <linux/linkage.h>
+ #include <asm/assembler.h>
+@@ -87,6 +88,37 @@ ENTRY(cpu_v7_dcache_clean_area)
+ 	ret	lr
+ ENDPROC(cpu_v7_dcache_clean_area)
+ 
++#ifdef CONFIG_ARM_PSCI
++	.arch_extension sec
++ENTRY(cpu_v7_smc_switch_mm)
++	stmfd	sp!, {r0 - r3}
++	movw	r0, #:lower16:ARM_SMCCC_ARCH_WORKAROUND_1
++	movt	r0, #:upper16:ARM_SMCCC_ARCH_WORKAROUND_1
++	smc	#0
++	ldmfd	sp!, {r0 - r3}
++	b	cpu_v7_switch_mm
++ENDPROC(cpu_v7_smc_switch_mm)
++	.arch_extension virt
++ENTRY(cpu_v7_hvc_switch_mm)
++	stmfd	sp!, {r0 - r3}
++	movw	r0, #:lower16:ARM_SMCCC_ARCH_WORKAROUND_1
++	movt	r0, #:upper16:ARM_SMCCC_ARCH_WORKAROUND_1
++	hvc	#0
++	ldmfd	sp!, {r0 - r3}
++	b	cpu_v7_switch_mm
++ENDPROC(cpu_v7_hvc_switch_mm)
++#endif
++ENTRY(cpu_v7_iciallu_switch_mm)
++	mov	r3, #0
++	mcr	p15, 0, r3, c7, c5, 0		@ ICIALLU
++	b	cpu_v7_switch_mm
++ENDPROC(cpu_v7_iciallu_switch_mm)
++ENTRY(cpu_v7_bpiall_switch_mm)
++	mov	r3, #0
++	mcr	p15, 0, r3, c7, c5, 6		@ flush BTAC/BTB
++	b	cpu_v7_switch_mm
++ENDPROC(cpu_v7_bpiall_switch_mm)
++
+ 	string	cpu_v7_name, "ARMv7 Processor"
+ 	.align
+ 
+@@ -610,7 +642,7 @@ __v7_ca12mp_proc_info:
+ __v7_ca15mp_proc_info:
+ 	.long	0x410fc0f0
+ 	.long	0xff0ffff0
+-	__v7_proc __v7_ca15mp_proc_info, __v7_ca15mp_setup
++	__v7_proc __v7_ca15mp_proc_info, __v7_ca15mp_setup, proc_fns = ca15_processor_functions
+ 	.size	__v7_ca15mp_proc_info, . - __v7_ca15mp_proc_info
+ 
+ 	/*
+@@ -620,7 +652,7 @@ __v7_ca15mp_proc_info:
+ __v7_b15mp_proc_info:
+ 	.long	0x420f00f0
+ 	.long	0xff0ffff0
+-	__v7_proc __v7_b15mp_proc_info, __v7_b15mp_setup
++	__v7_proc __v7_b15mp_proc_info, __v7_b15mp_setup, proc_fns = ca15_processor_functions
+ 	.size	__v7_b15mp_proc_info, . - __v7_b15mp_proc_info
+ 
+ 	/*
+diff --git a/arch/arm/vfp/vfpmodule.c b/arch/arm/vfp/vfpmodule.c
+index d3eadb71556e..7c5a99974442 100644
+--- a/arch/arm/vfp/vfpmodule.c
++++ b/arch/arm/vfp/vfpmodule.c
+@@ -554,12 +554,11 @@ void vfp_flush_hwstate(struct thread_info *thread)
+  * Save the current VFP state into the provided structures and prepare
+  * for entry into a new function (signal handler).
+  */
+-int vfp_preserve_user_clear_hwstate(struct user_vfp __user *ufp,
+-				    struct user_vfp_exc __user *ufp_exc)
++int vfp_preserve_user_clear_hwstate(struct user_vfp *ufp,
++				    struct user_vfp_exc *ufp_exc)
+ {
+ 	struct thread_info *thread = current_thread_info();
+ 	struct vfp_hard_struct *hwstate = &thread->vfpstate.hard;
+-	int err = 0;
+ 
+ 	/* Ensure that the saved hwstate is up-to-date. */
+ 	vfp_sync_hwstate(thread);
+@@ -568,22 +567,19 @@ int vfp_preserve_user_clear_hwstate(struct user_vfp __user *ufp,
+ 	 * Copy the floating point registers. There can be unused
+ 	 * registers see asm/hwcap.h for details.
+ 	 */
+-	err |= __copy_to_user(&ufp->fpregs, &hwstate->fpregs,
+-			      sizeof(hwstate->fpregs));
++	memcpy(&ufp->fpregs, &hwstate->fpregs, sizeof(hwstate->fpregs));
++
+ 	/*
+ 	 * Copy the status and control register.
+ 	 */
+-	__put_user_error(hwstate->fpscr, &ufp->fpscr, err);
++	ufp->fpscr = hwstate->fpscr;
+ 
+ 	/*
+ 	 * Copy the exception registers.
+ 	 */
+-	__put_user_error(hwstate->fpexc, &ufp_exc->fpexc, err);
+-	__put_user_error(hwstate->fpinst, &ufp_exc->fpinst, err);
+-	__put_user_error(hwstate->fpinst2, &ufp_exc->fpinst2, err);
+-
+-	if (err)
+-		return -EFAULT;
++	ufp_exc->fpexc = hwstate->fpexc;
++	ufp_exc->fpinst = hwstate->fpinst;
++	ufp_exc->fpinst2 = hwstate->fpinst2;
+ 
+ 	/* Ensure that VFP is disabled. */
+ 	vfp_flush_hwstate(thread);
+diff --git a/arch/mips/bcm63xx/prom.c b/arch/mips/bcm63xx/prom.c
+index 7019e2967009..bbbf8057565b 100644
+--- a/arch/mips/bcm63xx/prom.c
++++ b/arch/mips/bcm63xx/prom.c
+@@ -84,7 +84,7 @@ void __init prom_init(void)
+ 		 * Here we will start up CPU1 in the background and ask it to
+ 		 * reconfigure itself then go back to sleep.
+ 		 */
+-		memcpy((void *)0xa0000200, &bmips_smp_movevec, 0x20);
++		memcpy((void *)0xa0000200, bmips_smp_movevec, 0x20);
+ 		__sync();
+ 		set_c0_cause(C_SW0);
+ 		cpumask_set_cpu(1, &bmips_booted_mask);
+diff --git a/arch/mips/include/asm/bmips.h b/arch/mips/include/asm/bmips.h
+index 6d25ad33ec78..860e4cef61be 100644
+--- a/arch/mips/include/asm/bmips.h
++++ b/arch/mips/include/asm/bmips.h
+@@ -75,11 +75,11 @@ static inline int register_bmips_smp_ops(void)
+ #endif
+ }
+ 
+-extern char bmips_reset_nmi_vec;
+-extern char bmips_reset_nmi_vec_end;
+-extern char bmips_smp_movevec;
+-extern char bmips_smp_int_vec;
+-extern char bmips_smp_int_vec_end;
++extern char bmips_reset_nmi_vec[];
++extern char bmips_reset_nmi_vec_end[];
++extern char bmips_smp_movevec[];
++extern char bmips_smp_int_vec[];
++extern char bmips_smp_int_vec_end[];
+ 
+ extern int bmips_smp_enabled;
+ extern int bmips_cpu_offset;
+diff --git a/arch/mips/kernel/smp-bmips.c b/arch/mips/kernel/smp-bmips.c
+index 4874712b475e..a62d24169d75 100644
+--- a/arch/mips/kernel/smp-bmips.c
++++ b/arch/mips/kernel/smp-bmips.c
+@@ -451,10 +451,10 @@ static void bmips_wr_vec(unsigned long dst, char *start, char *end)
+ 
+ static inline void bmips_nmi_handler_setup(void)
+ {
+-	bmips_wr_vec(BMIPS_NMI_RESET_VEC, &bmips_reset_nmi_vec,
+-		&bmips_reset_nmi_vec_end);
+-	bmips_wr_vec(BMIPS_WARM_RESTART_VEC, &bmips_smp_int_vec,
+-		&bmips_smp_int_vec_end);
++	bmips_wr_vec(BMIPS_NMI_RESET_VEC, bmips_reset_nmi_vec,
++		bmips_reset_nmi_vec_end);
++	bmips_wr_vec(BMIPS_WARM_RESTART_VEC, bmips_smp_int_vec,
++		bmips_smp_int_vec_end);
+ }
+ 
+ struct reset_vec_info {
+diff --git a/drivers/dma/qcom_bam_dma.c b/drivers/dma/qcom_bam_dma.c
+index 5a250cdc8376..eca5b106d7d4 100644
+--- a/drivers/dma/qcom_bam_dma.c
++++ b/drivers/dma/qcom_bam_dma.c
+@@ -671,7 +671,21 @@ static int bam_dma_terminate_all(struct dma_chan *chan)
+ 
+ 	/* remove all transactions, including active transaction */
+ 	spin_lock_irqsave(&bchan->vc.lock, flag);
++	/*
++	 * If we have transactions queued, then some might be committed to the
++	 * hardware in the desc fifo.  The only way to reset the desc fifo is
++	 * to do a hardware reset (either by pipe or the entire block).
++	 * bam_chan_init_hw() will trigger a pipe reset, and also reinit the
++	 * pipe.  If the pipe is left disabled (default state after pipe reset)
++	 * and is accessed by a connected hardware engine, a fatal error in
++	 * the BAM will occur.  There is a small window where this could happen
++	 * with bam_chan_init_hw(), but it is assumed that the caller has
++	 * stopped activity on any attached hardware engine.  Make sure to do
++	 * this first so that the BAM hardware doesn't cause memory corruption
++	 * by accessing freed resources.
++	 */
+ 	if (bchan->curr_txd) {
++		bam_chan_init_hw(bchan, bchan->curr_txd->dir);
+ 		list_add(&bchan->curr_txd->vd.node, &bchan->vc.desc_issued);
+ 		bchan->curr_txd = NULL;
+ 	}
+diff --git a/drivers/firmware/Kconfig b/drivers/firmware/Kconfig
+index dc4039ab1814..c3dc5456b174 100644
+--- a/drivers/firmware/Kconfig
++++ b/drivers/firmware/Kconfig
+@@ -184,6 +184,9 @@ config ROCKCHIP_SIP
+ 	  Say Y here if you want to enable SIP callbacks for Rockchip platforms
+ 	  This option enables support for communicating with the ATF.
+ 
++config HAVE_ARM_SMCCC
++	bool
++
+ source "drivers/firmware/broadcom/Kconfig"
+ source "drivers/firmware/google/Kconfig"
+ source "drivers/firmware/efi/Kconfig"
+diff --git a/drivers/firmware/psci.c b/drivers/firmware/psci.c
+index 1066146abd47..c825e3981b1c 100644
+--- a/drivers/firmware/psci.c
++++ b/drivers/firmware/psci.c
+@@ -59,7 +59,10 @@ bool psci_tos_resident_on(int cpu)
+ 	return cpu == resident_cpu;
+ }
+ 
+-struct psci_operations psci_ops;
++struct psci_operations psci_ops = {
++	.conduit = PSCI_CONDUIT_NONE,
++	.smccc_version = SMCCC_VERSION_1_0,
++};
+ 
+ typedef unsigned long (psci_fn)(unsigned long, unsigned long,
+ 				unsigned long, unsigned long);
+@@ -210,6 +213,22 @@ static unsigned long psci_migrate_info_up_cpu(void)
+ 			      0, 0, 0);
+ }
+ 
++static void set_conduit(enum psci_conduit conduit)
++{
++	switch (conduit) {
++	case PSCI_CONDUIT_HVC:
++		invoke_psci_fn = __invoke_psci_fn_hvc;
++		break;
++	case PSCI_CONDUIT_SMC:
++		invoke_psci_fn = __invoke_psci_fn_smc;
++		break;
++	default:
++		WARN(1, "Unexpected PSCI conduit %d\n", conduit);
++	}
++
++	psci_ops.conduit = conduit;
++}
++
+ static int get_set_conduit_method(struct device_node *np)
+ {
+ 	const char *method;
+@@ -222,9 +241,9 @@ static int get_set_conduit_method(struct device_node *np)
+ 	}
+ 
+ 	if (!strcmp("hvc", method)) {
+-		invoke_psci_fn = __invoke_psci_fn_hvc;
++		set_conduit(PSCI_CONDUIT_HVC);
+ 	} else if (!strcmp("smc", method)) {
+-		invoke_psci_fn = __invoke_psci_fn_smc;
++		set_conduit(PSCI_CONDUIT_SMC);
+ 	} else {
+ 		pr_warn("invalid \"method\" property: %s\n", method);
+ 		return -EINVAL;
+@@ -458,6 +477,31 @@ static void __init psci_init_migrate(void)
+ 	pr_info("Trusted OS resident on physical CPU 0x%lx\n", cpuid);
+ }
+ 
++static void __init psci_init_smccc(void)
++{
++	u32 ver = ARM_SMCCC_VERSION_1_0;
++	int feature;
++
++	feature = psci_features(ARM_SMCCC_VERSION_FUNC_ID);
++
++	if (feature != PSCI_RET_NOT_SUPPORTED) {
++		u32 ret;
++		ret = invoke_psci_fn(ARM_SMCCC_VERSION_FUNC_ID, 0, 0, 0);
++		if (ret == ARM_SMCCC_VERSION_1_1) {
++			psci_ops.smccc_version = SMCCC_VERSION_1_1;
++			ver = ret;
++		}
++	}
++
++	/*
++	 * Conveniently, the SMCCC and PSCI versions are encoded the
++	 * same way. No, this isn't accidental.
++	 */
++	pr_info("SMC Calling Convention v%d.%d\n",
++		PSCI_VERSION_MAJOR(ver), PSCI_VERSION_MINOR(ver));
++
++}
++
+ static void __init psci_0_2_set_functions(void)
+ {
+ 	pr_info("Using standard PSCI v0.2 function IDs\n");
+@@ -504,6 +548,7 @@ static int __init psci_probe(void)
+ 	psci_init_migrate();
+ 
+ 	if (PSCI_VERSION_MAJOR(ver) >= 1) {
++		psci_init_smccc();
+ 		psci_init_cpu_suspend();
+ 		psci_init_system_suspend();
+ 	}
+@@ -617,9 +662,9 @@ int __init psci_acpi_init(void)
+ 	pr_info("probing for conduit method from ACPI.\n");
+ 
+ 	if (acpi_psci_use_hvc())
+-		invoke_psci_fn = __invoke_psci_fn_hvc;
++		set_conduit(PSCI_CONDUIT_HVC);
+ 	else
+-		invoke_psci_fn = __invoke_psci_fn_smc;
++		set_conduit(PSCI_CONDUIT_SMC);
+ 
+ 	return psci_probe();
+ }
+diff --git a/drivers/net/ethernet/hisilicon/hip04_eth.c b/drivers/net/ethernet/hisilicon/hip04_eth.c
+index def831c89d35..e8b7dc1bcfa6 100644
+--- a/drivers/net/ethernet/hisilicon/hip04_eth.c
++++ b/drivers/net/ethernet/hisilicon/hip04_eth.c
+@@ -174,6 +174,7 @@ struct hip04_priv {
+ 	dma_addr_t rx_phys[RX_DESC_NUM];
+ 	unsigned int rx_head;
+ 	unsigned int rx_buf_size;
++	unsigned int rx_cnt_remaining;
+ 
+ 	struct device_node *phy_node;
+ 	struct phy_device *phy;
+@@ -487,7 +488,6 @@ static int hip04_rx_poll(struct napi_struct *napi, int budget)
+ 	struct hip04_priv *priv = container_of(napi, struct hip04_priv, napi);
+ 	struct net_device *ndev = priv->ndev;
+ 	struct net_device_stats *stats = &ndev->stats;
+-	unsigned int cnt = hip04_recv_cnt(priv);
+ 	struct rx_desc *desc;
+ 	struct sk_buff *skb;
+ 	unsigned char *buf;
+@@ -500,8 +500,8 @@ static int hip04_rx_poll(struct napi_struct *napi, int budget)
+ 
+ 	/* clean up tx descriptors */
+ 	tx_remaining = hip04_tx_reclaim(ndev, false);
+-
+-	while (cnt && !last) {
++	priv->rx_cnt_remaining += hip04_recv_cnt(priv);
++	while (priv->rx_cnt_remaining && !last) {
+ 		buf = priv->rx_buf[priv->rx_head];
+ 		skb = build_skb(buf, priv->rx_buf_size);
+ 		if (unlikely(!skb))
+@@ -544,11 +544,13 @@ static int hip04_rx_poll(struct napi_struct *napi, int budget)
+ 		hip04_set_recv_desc(priv, phys);
+ 
+ 		priv->rx_head = RX_NEXT(priv->rx_head);
+-		if (rx >= budget)
++		if (rx >= budget) {
++			--priv->rx_cnt_remaining;
+ 			goto done;
++		}
+ 
+-		if (--cnt == 0)
+-			cnt = hip04_recv_cnt(priv);
++		if (--priv->rx_cnt_remaining == 0)
++			priv->rx_cnt_remaining += hip04_recv_cnt(priv);
+ 	}
+ 
+ 	if (!(priv->reg_inten & RCV_INT)) {
+@@ -633,6 +635,7 @@ static int hip04_mac_open(struct net_device *ndev)
+ 	int i;
+ 
+ 	priv->rx_head = 0;
++	priv->rx_cnt_remaining = 0;
+ 	priv->tx_head = 0;
+ 	priv->tx_tail = 0;
+ 	hip04_reset_ppe(priv);
+diff --git a/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c b/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c
+index 37dfdb1329f4..170a49a6803e 100644
+--- a/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c
++++ b/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c
+@@ -463,12 +463,31 @@ void mlx4_init_quotas(struct mlx4_dev *dev)
+ 		priv->mfunc.master.res_tracker.res_alloc[RES_MPT].quota[pf];
+ }
+ 
+-static int get_max_gauranteed_vfs_counter(struct mlx4_dev *dev)
++static int
++mlx4_calc_res_counter_guaranteed(struct mlx4_dev *dev,
++				 struct resource_allocator *res_alloc,
++				 int vf)
+ {
+-	/* reduce the sink counter */
+-	return (dev->caps.max_counters - 1 -
+-		(MLX4_PF_COUNTERS_PER_PORT * MLX4_MAX_PORTS))
+-		/ MLX4_MAX_PORTS;
++	struct mlx4_active_ports actv_ports;
++	int ports, counters_guaranteed;
++
++	/* For master, only allocate according to the number of phys ports */
++	if (vf == mlx4_master_func_num(dev))
++		return MLX4_PF_COUNTERS_PER_PORT * dev->caps.num_ports;
++
++	/* calculate real number of ports for the VF */
++	actv_ports = mlx4_get_active_ports(dev, vf);
++	ports = bitmap_weight(actv_ports.ports, dev->caps.num_ports);
++	counters_guaranteed = ports * MLX4_VF_COUNTERS_PER_PORT;
++
++	/* If we do not have enough counters for this VF, do not
++	 * allocate any for it. '-1' to reduce the sink counter.
++	 */
++	if ((res_alloc->res_reserved + counters_guaranteed) >
++	    (dev->caps.max_counters - 1))
++		return 0;
++
++	return counters_guaranteed;
+ }
+ 
+ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
+@@ -476,7 +495,6 @@ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
+ 	struct mlx4_priv *priv = mlx4_priv(dev);
+ 	int i, j;
+ 	int t;
+-	int max_vfs_guarantee_counter = get_max_gauranteed_vfs_counter(dev);
+ 
+ 	priv->mfunc.master.res_tracker.slave_list =
+ 		kzalloc(dev->num_slaves * sizeof(struct slave_list),
+@@ -593,16 +611,8 @@ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
+ 				break;
+ 			case RES_COUNTER:
+ 				res_alloc->quota[t] = dev->caps.max_counters;
+-				if (t == mlx4_master_func_num(dev))
+-					res_alloc->guaranteed[t] =
+-						MLX4_PF_COUNTERS_PER_PORT *
+-						MLX4_MAX_PORTS;
+-				else if (t <= max_vfs_guarantee_counter)
+-					res_alloc->guaranteed[t] =
+-						MLX4_VF_COUNTERS_PER_PORT *
+-						MLX4_MAX_PORTS;
+-				else
+-					res_alloc->guaranteed[t] = 0;
++				res_alloc->guaranteed[t] =
++					mlx4_calc_res_counter_guaranteed(dev, res_alloc, t);
+ 				res_alloc->res_free -= res_alloc->guaranteed[t];
+ 				break;
+ 			default:
+diff --git a/drivers/net/vxlan.c b/drivers/net/vxlan.c
+index 835129152fc4..536fee1e4b70 100644
+--- a/drivers/net/vxlan.c
++++ b/drivers/net/vxlan.c
+@@ -2006,8 +2006,11 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct net_device *dev,
+ 		ttl = info->key.ttl;
+ 		tos = info->key.tos;
+ 
+-		if (info->options_len)
++		if (info->options_len) {
++			if (info->options_len < sizeof(*md))
++				goto drop;
+ 			md = ip_tunnel_info_opts(info);
++		}
+ 	} else {
+ 		md->gbp = skb->mark;
+ 	}
+diff --git a/drivers/of/unittest.c b/drivers/of/unittest.c
+index 2eac3df7dd29..af9e4785b7a6 100644
+--- a/drivers/of/unittest.c
++++ b/drivers/of/unittest.c
+@@ -924,6 +924,7 @@ static int __init unittest_data_add(void)
+ 	of_fdt_unflatten_tree(unittest_data, &unittest_data_node);
+ 	if (!unittest_data_node) {
+ 		pr_warn("%s: No tree to attach; not running tests\n", __func__);
++		kfree(unittest_data);
+ 		return -ENODATA;
+ 	}
+ 	of_node_set_flag(unittest_data_node, OF_DETACHED);
+diff --git a/drivers/regulator/pfuze100-regulator.c b/drivers/regulator/pfuze100-regulator.c
+index c68556bf6f39..ec185502dceb 100644
+--- a/drivers/regulator/pfuze100-regulator.c
++++ b/drivers/regulator/pfuze100-regulator.c
+@@ -609,7 +609,13 @@ static int pfuze100_regulator_probe(struct i2c_client *client,
+ 
+ 		/* SW2~SW4 high bit check and modify the voltage value table */
+ 		if (i >= sw_check_start && i <= sw_check_end) {
+-			regmap_read(pfuze_chip->regmap, desc->vsel_reg, &val);
++			ret = regmap_read(pfuze_chip->regmap,
++						desc->vsel_reg, &val);
++			if (ret) {
++				dev_err(&client->dev, "Fails to read from the register.\n");
++				return ret;
++			}
++
+ 			if (val & sw_hi) {
+ 				if (pfuze_chip->chip_id == PFUZE3000) {
+ 					desc->volt_table = pfuze3000_sw2hi;
+diff --git a/drivers/regulator/ti-abb-regulator.c b/drivers/regulator/ti-abb-regulator.c
+index d2f994298753..6d17357b3a24 100644
+--- a/drivers/regulator/ti-abb-regulator.c
++++ b/drivers/regulator/ti-abb-regulator.c
+@@ -173,19 +173,14 @@ static int ti_abb_wait_txdone(struct device *dev, struct ti_abb *abb)
+ 	while (timeout++ <= abb->settling_time) {
+ 		status = ti_abb_check_txdone(abb);
+ 		if (status)
+-			break;
++			return 0;
+ 
+ 		udelay(1);
+ 	}
+ 
+-	if (timeout > abb->settling_time) {
+-		dev_warn_ratelimited(dev,
+-				     "%s:TRANXDONE timeout(%duS) int=0x%08x\n",
+-				     __func__, timeout, readl(abb->int_base));
+-		return -ETIMEDOUT;
+-	}
+-
+-	return 0;
++	dev_warn_ratelimited(dev, "%s:TRANXDONE timeout(%duS) int=0x%08x\n",
++			     __func__, timeout, readl(abb->int_base));
++	return -ETIMEDOUT;
+ }
+ 
+ /**
+@@ -205,19 +200,14 @@ static int ti_abb_clear_all_txdone(struct device *dev, const struct ti_abb *abb)
+ 
+ 		status = ti_abb_check_txdone(abb);
+ 		if (!status)
+-			break;
++			return 0;
+ 
+ 		udelay(1);
+ 	}
+ 
+-	if (timeout > abb->settling_time) {
+-		dev_warn_ratelimited(dev,
+-				     "%s:TRANXDONE timeout(%duS) int=0x%08x\n",
+-				     __func__, timeout, readl(abb->int_base));
+-		return -ETIMEDOUT;
+-	}
+-
+-	return 0;
++	dev_warn_ratelimited(dev, "%s:TRANXDONE timeout(%duS) int=0x%08x\n",
++			     __func__, timeout, readl(abb->int_base));
++	return -ETIMEDOUT;
+ }
+ 
+ /**
+diff --git a/drivers/scsi/Kconfig b/drivers/scsi/Kconfig
+index 433c5e3d5733..070359a7eea1 100644
+--- a/drivers/scsi/Kconfig
++++ b/drivers/scsi/Kconfig
+@@ -1013,7 +1013,7 @@ config SCSI_SNI_53C710
+ 
+ config 53C700_LE_ON_BE
+ 	bool
+-	depends on SCSI_LASI700
++	depends on SCSI_LASI700 || SCSI_SNI_53C710
+ 	default y
+ 
+ config SCSI_STEX
+diff --git a/drivers/scsi/sni_53c710.c b/drivers/scsi/sni_53c710.c
+index 76278072147e..b0f5220ae23a 100644
+--- a/drivers/scsi/sni_53c710.c
++++ b/drivers/scsi/sni_53c710.c
+@@ -78,10 +78,8 @@ static int snirm710_probe(struct platform_device *dev)
+ 
+ 	base = res->start;
+ 	hostdata = kzalloc(sizeof(*hostdata), GFP_KERNEL);
+-	if (!hostdata) {
+-		dev_printk(KERN_ERR, dev, "Failed to allocate host data\n");
++	if (!hostdata)
+ 		return -ENOMEM;
+-	}
+ 
+ 	hostdata->dev = &dev->dev;
+ 	dma_set_mask(&dev->dev, DMA_BIT_MASK(32));
+diff --git a/drivers/target/target_core_device.c b/drivers/target/target_core_device.c
+index bb6a6c35324a..4198ed4ac607 100644
+--- a/drivers/target/target_core_device.c
++++ b/drivers/target/target_core_device.c
+@@ -1056,27 +1056,6 @@ passthrough_parse_cdb(struct se_cmd *cmd,
+ {
+ 	unsigned char *cdb = cmd->t_task_cdb;
+ 
+-	/*
+-	 * Clear a lun set in the cdb if the initiator talking to use spoke
+-	 * and old standards version, as we can't assume the underlying device
+-	 * won't choke up on it.
+-	 */
+-	switch (cdb[0]) {
+-	case READ_10: /* SBC - RDProtect */
+-	case READ_12: /* SBC - RDProtect */
+-	case READ_16: /* SBC - RDProtect */
+-	case SEND_DIAGNOSTIC: /* SPC - SELF-TEST Code */
+-	case VERIFY: /* SBC - VRProtect */
+-	case VERIFY_16: /* SBC - VRProtect */
+-	case WRITE_VERIFY: /* SBC - VRProtect */
+-	case WRITE_VERIFY_12: /* SBC - VRProtect */
+-	case MAINTENANCE_IN: /* SPC - Parameter Data Format for SA RTPG */
+-		break;
+-	default:
+-		cdb[1] &= 0x1f; /* clear logical unit number */
+-		break;
+-	}
+-
+ 	/*
+ 	 * For REPORT LUNS we always need to emulate the response, for everything
+ 	 * else, pass it up.
+diff --git a/fs/cifs/cifsglob.h b/fs/cifs/cifsglob.h
+index 8225de3c9743..6b61d4ad30b5 100644
+--- a/fs/cifs/cifsglob.h
++++ b/fs/cifs/cifsglob.h
+@@ -1152,6 +1152,11 @@ void cifsFileInfo_put(struct cifsFileInfo *cifs_file);
+ struct cifsInodeInfo {
+ 	bool can_cache_brlcks;
+ 	struct list_head llist;	/* locks helb by this inode */
++	/*
++	 * NOTE: Some code paths call down_read(lock_sem) twice, so
++	 * we must always use use cifs_down_write() instead of down_write()
++	 * for this semaphore to avoid deadlocks.
++	 */
+ 	struct rw_semaphore lock_sem;	/* protect the fields above */
+ 	/* BB add in lists for dirty pages i.e. write caching info for oplock */
+ 	struct list_head openFileList;
+diff --git a/fs/cifs/cifsproto.h b/fs/cifs/cifsproto.h
+index 54590fd33df1..257c06c6a6c2 100644
+--- a/fs/cifs/cifsproto.h
++++ b/fs/cifs/cifsproto.h
+@@ -138,6 +138,7 @@ extern int cifs_unlock_range(struct cifsFileInfo *cfile,
+ 			     struct file_lock *flock, const unsigned int xid);
+ extern int cifs_push_mandatory_locks(struct cifsFileInfo *cfile);
+ 
++extern void cifs_down_write(struct rw_semaphore *sem);
+ extern struct cifsFileInfo *cifs_new_fileinfo(struct cifs_fid *fid,
+ 					      struct file *file,
+ 					      struct tcon_link *tlink,
+diff --git a/fs/cifs/file.c b/fs/cifs/file.c
+index 737cff7bc08a..c6bd820f9409 100644
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -280,6 +280,13 @@ cifs_has_mand_locks(struct cifsInodeInfo *cinode)
+ 	return has_locks;
+ }
+ 
++void
++cifs_down_write(struct rw_semaphore *sem)
++{
++	while (!down_write_trylock(sem))
++		msleep(10);
++}
++
+ struct cifsFileInfo *
+ cifs_new_fileinfo(struct cifs_fid *fid, struct file *file,
+ 		  struct tcon_link *tlink, __u32 oplock)
+@@ -305,7 +312,7 @@ cifs_new_fileinfo(struct cifs_fid *fid, struct file *file,
+ 	INIT_LIST_HEAD(&fdlocks->locks);
+ 	fdlocks->cfile = cfile;
+ 	cfile->llist = fdlocks;
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	list_add(&fdlocks->llist, &cinode->llist);
+ 	up_write(&cinode->lock_sem);
+ 
+@@ -438,7 +445,7 @@ void cifsFileInfo_put(struct cifsFileInfo *cifs_file)
+ 	 * Delete any outstanding lock records. We'll lose them when the file
+ 	 * is closed anyway.
+ 	 */
+-	down_write(&cifsi->lock_sem);
++	cifs_down_write(&cifsi->lock_sem);
+ 	list_for_each_entry_safe(li, tmp, &cifs_file->llist->locks, llist) {
+ 		list_del(&li->llist);
+ 		cifs_del_lock_waiters(li);
+@@ -947,7 +954,7 @@ static void
+ cifs_lock_add(struct cifsFileInfo *cfile, struct cifsLockInfo *lock)
+ {
+ 	struct cifsInodeInfo *cinode = CIFS_I(d_inode(cfile->dentry));
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	list_add_tail(&lock->llist, &cfile->llist->locks);
+ 	up_write(&cinode->lock_sem);
+ }
+@@ -969,7 +976,7 @@ cifs_lock_add_if(struct cifsFileInfo *cfile, struct cifsLockInfo *lock,
+ 
+ try_again:
+ 	exist = false;
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 
+ 	exist = cifs_find_lock_conflict(cfile, lock->offset, lock->length,
+ 					lock->type, &conf_lock, CIFS_LOCK_OP);
+@@ -991,7 +998,7 @@ cifs_lock_add_if(struct cifsFileInfo *cfile, struct cifsLockInfo *lock,
+ 					(lock->blist.next == &lock->blist));
+ 		if (!rc)
+ 			goto try_again;
+-		down_write(&cinode->lock_sem);
++		cifs_down_write(&cinode->lock_sem);
+ 		list_del_init(&lock->blist);
+ 	}
+ 
+@@ -1044,7 +1051,7 @@ cifs_posix_lock_set(struct file *file, struct file_lock *flock)
+ 		return rc;
+ 
+ try_again:
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	if (!cinode->can_cache_brlcks) {
+ 		up_write(&cinode->lock_sem);
+ 		return rc;
+@@ -1242,7 +1249,7 @@ cifs_push_locks(struct cifsFileInfo *cfile)
+ 	int rc = 0;
+ 
+ 	/* we are going to update can_cache_brlcks here - need a write access */
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	if (!cinode->can_cache_brlcks) {
+ 		up_write(&cinode->lock_sem);
+ 		return rc;
+@@ -1430,7 +1437,7 @@ cifs_unlock_range(struct cifsFileInfo *cfile, struct file_lock *flock,
+ 	if (!buf)
+ 		return -ENOMEM;
+ 
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	for (i = 0; i < 2; i++) {
+ 		cur = buf;
+ 		num = 0;
+diff --git a/fs/cifs/smb2file.c b/fs/cifs/smb2file.c
+index dee5250701de..41f1a5dd33a5 100644
+--- a/fs/cifs/smb2file.c
++++ b/fs/cifs/smb2file.c
+@@ -138,7 +138,7 @@ smb2_unlock_range(struct cifsFileInfo *cfile, struct file_lock *flock,
+ 
+ 	cur = buf;
+ 
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	list_for_each_entry_safe(li, tmp, &cfile->llist->locks, llist) {
+ 		if (flock->fl_start > li->offset ||
+ 		    (flock->fl_start + length) <
+diff --git a/fs/dcache.c b/fs/dcache.c
+index 695c09652b36..9aa4a81dc9b3 100644
+--- a/fs/dcache.c
++++ b/fs/dcache.c
+@@ -1903,7 +1903,6 @@ void d_instantiate_new(struct dentry *entry, struct inode *inode)
+ 	BUG_ON(!hlist_unhashed(&entry->d_u.d_alias));
+ 	BUG_ON(!inode);
+ 	lockdep_annotate_inode_mutex_key(inode);
+-	security_d_instantiate(entry, inode);
+ 	spin_lock(&inode->i_lock);
+ 	__d_instantiate(entry, inode);
+ 	WARN_ON(!(inode->i_state & I_NEW));
+@@ -1911,6 +1910,7 @@ void d_instantiate_new(struct dentry *entry, struct inode *inode)
+ 	smp_mb();
+ 	wake_up_bit(&inode->i_state, __I_NEW);
+ 	spin_unlock(&inode->i_lock);
++	security_d_instantiate(entry, inode);
+ }
+ EXPORT_SYMBOL(d_instantiate_new);
+ 
+diff --git a/include/linux/arm-smccc.h b/include/linux/arm-smccc.h
+index b5abfda80465..a39cdff1543a 100644
+--- a/include/linux/arm-smccc.h
++++ b/include/linux/arm-smccc.h
+@@ -60,6 +60,14 @@
+ #define ARM_SMCCC_OWNER_TRUSTED_OS	50
+ #define ARM_SMCCC_OWNER_TRUSTED_OS_END	63
+ 
++#define ARM_SMCCC_VERSION_1_0		0x10000
++#define ARM_SMCCC_VERSION_1_1		0x10001
++
++#define ARM_SMCCC_VERSION_FUNC_ID					\
++	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
++			   ARM_SMCCC_SMC_32,				\
++			   0, 0)
++
+ /**
+  * struct arm_smccc_res - Result from SMC/HVC call
+  * @a0-a3 result values from registers 0 to 3
+diff --git a/include/linux/gfp.h b/include/linux/gfp.h
+index 8942af0813e3..824bd16ae408 100644
+--- a/include/linux/gfp.h
++++ b/include/linux/gfp.h
+@@ -274,6 +274,29 @@ static inline bool gfpflags_allow_blocking(const gfp_t gfp_flags)
+ 	return (bool __force)(gfp_flags & __GFP_DIRECT_RECLAIM);
+ }
+ 
++/**
++ * gfpflags_normal_context - is gfp_flags a normal sleepable context?
++ * @gfp_flags: gfp_flags to test
++ *
++ * Test whether @gfp_flags indicates that the allocation is from the
++ * %current context and allowed to sleep.
++ *
++ * An allocation being allowed to block doesn't mean it owns the %current
++ * context.  When direct reclaim path tries to allocate memory, the
++ * allocation context is nested inside whatever %current was doing at the
++ * time of the original allocation.  The nested allocation may be allowed
++ * to block but modifying anything %current owns can corrupt the outer
++ * context's expectations.
++ *
++ * %true result from this function indicates that the allocation context
++ * can sleep and use anything that's associated with %current.
++ */
++static inline bool gfpflags_normal_context(const gfp_t gfp_flags)
++{
++	return (gfp_flags & (__GFP_DIRECT_RECLAIM | __GFP_MEMALLOC)) ==
++		__GFP_DIRECT_RECLAIM;
++}
++
+ #ifdef CONFIG_HIGHMEM
+ #define OPT_ZONE_HIGHMEM ZONE_HIGHMEM
+ #else
+diff --git a/include/linux/psci.h b/include/linux/psci.h
+index 393efe2edf9a..1867f8980126 100644
+--- a/include/linux/psci.h
++++ b/include/linux/psci.h
+@@ -27,6 +27,17 @@ bool psci_power_state_is_valid(u32 state);
+ int psci_cpu_init_idle(unsigned int cpu);
+ int psci_cpu_suspend_enter(unsigned long index);
+ 
++enum psci_conduit {
++	PSCI_CONDUIT_NONE,
++	PSCI_CONDUIT_SMC,
++	PSCI_CONDUIT_HVC,
++};
++
++enum smccc_version {
++	SMCCC_VERSION_1_0,
++	SMCCC_VERSION_1_1,
++};
++
+ struct psci_operations {
+ 	int (*cpu_suspend)(u32 state, unsigned long entry_point);
+ 	int (*cpu_off)(u32 state);
+@@ -35,6 +46,8 @@ struct psci_operations {
+ 	int (*affinity_info)(unsigned long target_affinity,
+ 			unsigned long lowest_affinity_level);
+ 	int (*migrate_info_type)(void);
++	enum psci_conduit conduit;
++	enum smccc_version smccc_version;
+ };
+ 
+ extern struct psci_operations psci_ops;
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index a2f12d377d23..735ff1525f48 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -1073,7 +1073,8 @@ static inline __u32 skb_get_hash_flowi4(struct sk_buff *skb, const struct flowi4
+ 	return skb->hash;
+ }
+ 
+-__u32 skb_get_hash_perturb(const struct sk_buff *skb, u32 perturb);
++__u32 skb_get_hash_perturb(const struct sk_buff *skb,
++			   const siphash_key_t *perturb);
+ 
+ static inline __u32 skb_get_hash_raw(const struct sk_buff *skb)
+ {
+diff --git a/include/net/flow_dissector.h b/include/net/flow_dissector.h
+index 8c8548cf5888..62a462413081 100644
+--- a/include/net/flow_dissector.h
++++ b/include/net/flow_dissector.h
+@@ -3,6 +3,7 @@
+ 
+ #include <linux/types.h>
+ #include <linux/in6.h>
++#include <linux/siphash.h>
+ #include <uapi/linux/if_ether.h>
+ 
+ /**
+@@ -146,7 +147,7 @@ struct flow_dissector {
+ struct flow_keys {
+ 	struct flow_dissector_key_control control;
+ #define FLOW_KEYS_HASH_START_FIELD basic
+-	struct flow_dissector_key_basic basic;
++	struct flow_dissector_key_basic basic __aligned(SIPHASH_ALIGNMENT);
+ 	struct flow_dissector_key_tags tags;
+ 	struct flow_dissector_key_keyid keyid;
+ 	struct flow_dissector_key_ports ports;
+diff --git a/include/net/sock.h b/include/net/sock.h
+index 51d99569f4b0..05052a864384 100644
+--- a/include/net/sock.h
++++ b/include/net/sock.h
+@@ -2085,12 +2085,17 @@ struct sk_buff *sk_stream_alloc_skb(struct sock *sk, int size, gfp_t gfp,
+  * sk_page_frag - return an appropriate page_frag
+  * @sk: socket
+  *
+- * If socket allocation mode allows current thread to sleep, it means its
+- * safe to use the per task page_frag instead of the per socket one.
++ * Use the per task page_frag instead of the per socket one for
++ * optimization when we know that we're in the normal context and owns
++ * everything that's associated with %current.
++ *
++ * gfpflags_allow_blocking() isn't enough here as direct reclaim may nest
++ * inside other socket operations and end up recursing into sk_page_frag()
++ * while it's already in use.
+  */
+ static inline struct page_frag *sk_page_frag(struct sock *sk)
+ {
+-	if (gfpflags_allow_blocking(sk->sk_allocation))
++	if (gfpflags_normal_context(sk->sk_allocation))
+ 		return &current->task_frag;
+ 
+ 	return &sk->sk_frag;
+diff --git a/kernel/time/alarmtimer.c b/kernel/time/alarmtimer.c
+index 70aef327b6e8..015d432bcb08 100644
+--- a/kernel/time/alarmtimer.c
++++ b/kernel/time/alarmtimer.c
+@@ -573,7 +573,7 @@ static void alarm_timer_get(struct k_itimer *timr,
+ static int alarm_timer_del(struct k_itimer *timr)
+ {
+ 	if (!rtcdev)
+-		return -ENOTSUPP;
++		return -EOPNOTSUPP;
+ 
+ 	if (alarm_try_to_cancel(&timr->it.alarm.alarmtimer) < 0)
+ 		return TIMER_RETRY;
+@@ -597,7 +597,7 @@ static int alarm_timer_set(struct k_itimer *timr, int flags,
+ 	ktime_t exp;
+ 
+ 	if (!rtcdev)
+-		return -ENOTSUPP;
++		return -EOPNOTSUPP;
+ 
+ 	if (flags & ~TIMER_ABSTIME)
+ 		return -EINVAL;
+diff --git a/net/core/datagram.c b/net/core/datagram.c
+index d62af69ad844..ba8af8b55f1f 100644
+--- a/net/core/datagram.c
++++ b/net/core/datagram.c
+@@ -96,7 +96,7 @@ static int wait_for_more_packets(struct sock *sk, int *err, long *timeo_p,
+ 	if (error)
+ 		goto out_err;
+ 
+-	if (sk->sk_receive_queue.prev != skb)
++	if (READ_ONCE(sk->sk_receive_queue.prev) != skb)
+ 		goto out;
+ 
+ 	/* Socket shut down? */
+diff --git a/net/core/ethtool.c b/net/core/ethtool.c
+index 66428c0eb663..7e4e7deb2542 100644
+--- a/net/core/ethtool.c
++++ b/net/core/ethtool.c
+@@ -941,11 +941,13 @@ static int ethtool_reset(struct net_device *dev, char __user *useraddr)
+ 
+ static int ethtool_get_wol(struct net_device *dev, char __user *useraddr)
+ {
+-	struct ethtool_wolinfo wol = { .cmd = ETHTOOL_GWOL };
++	struct ethtool_wolinfo wol;
+ 
+ 	if (!dev->ethtool_ops->get_wol)
+ 		return -EOPNOTSUPP;
+ 
++	memset(&wol, 0, sizeof(struct ethtool_wolinfo));
++	wol.cmd = ETHTOOL_GWOL;
+ 	dev->ethtool_ops->get_wol(dev, &wol);
+ 
+ 	if (copy_to_user(useraddr, &wol, sizeof(wol)))
+diff --git a/net/core/flow_dissector.c b/net/core/flow_dissector.c
+index 697c4212129a..496bfcb787e7 100644
+--- a/net/core/flow_dissector.c
++++ b/net/core/flow_dissector.c
+@@ -505,45 +505,34 @@ bool __skb_flow_dissect(const struct sk_buff *skb,
+ }
+ EXPORT_SYMBOL(__skb_flow_dissect);
+ 
+-static u32 hashrnd __read_mostly;
++static siphash_key_t hashrnd __read_mostly;
+ static __always_inline void __flow_hash_secret_init(void)
+ {
+ 	net_get_random_once(&hashrnd, sizeof(hashrnd));
+ }
+ 
+-static __always_inline u32 __flow_hash_words(const u32 *words, u32 length,
+-					     u32 keyval)
++static const void *flow_keys_hash_start(const struct flow_keys *flow)
+ {
+-	return jhash2(words, length, keyval);
+-}
+-
+-static inline const u32 *flow_keys_hash_start(const struct flow_keys *flow)
+-{
+-	const void *p = flow;
+-
+-	BUILD_BUG_ON(FLOW_KEYS_HASH_OFFSET % sizeof(u32));
+-	return (const u32 *)(p + FLOW_KEYS_HASH_OFFSET);
++	BUILD_BUG_ON(FLOW_KEYS_HASH_OFFSET % SIPHASH_ALIGNMENT);
++	return &flow->FLOW_KEYS_HASH_START_FIELD;
+ }
+ 
+ static inline size_t flow_keys_hash_length(const struct flow_keys *flow)
+ {
+-	size_t diff = FLOW_KEYS_HASH_OFFSET + sizeof(flow->addrs);
+-	BUILD_BUG_ON((sizeof(*flow) - FLOW_KEYS_HASH_OFFSET) % sizeof(u32));
+-	BUILD_BUG_ON(offsetof(typeof(*flow), addrs) !=
+-		     sizeof(*flow) - sizeof(flow->addrs));
++	size_t len = offsetof(typeof(*flow), addrs) - FLOW_KEYS_HASH_OFFSET;
+ 
+ 	switch (flow->control.addr_type) {
+ 	case FLOW_DISSECTOR_KEY_IPV4_ADDRS:
+-		diff -= sizeof(flow->addrs.v4addrs);
++		len += sizeof(flow->addrs.v4addrs);
+ 		break;
+ 	case FLOW_DISSECTOR_KEY_IPV6_ADDRS:
+-		diff -= sizeof(flow->addrs.v6addrs);
++		len += sizeof(flow->addrs.v6addrs);
+ 		break;
+ 	case FLOW_DISSECTOR_KEY_TIPC_ADDRS:
+-		diff -= sizeof(flow->addrs.tipcaddrs);
++		len += sizeof(flow->addrs.tipcaddrs);
+ 		break;
+ 	}
+-	return (sizeof(*flow) - diff) / sizeof(u32);
++	return len;
+ }
+ 
+ __be32 flow_get_u32_src(const struct flow_keys *flow)
+@@ -609,14 +598,15 @@ static inline void __flow_hash_consistentify(struct flow_keys *keys)
+ 	}
+ }
+ 
+-static inline u32 __flow_hash_from_keys(struct flow_keys *keys, u32 keyval)
++static inline u32 __flow_hash_from_keys(struct flow_keys *keys,
++					const siphash_key_t *keyval)
+ {
+ 	u32 hash;
+ 
+ 	__flow_hash_consistentify(keys);
+ 
+-	hash = __flow_hash_words(flow_keys_hash_start(keys),
+-				 flow_keys_hash_length(keys), keyval);
++	hash = siphash(flow_keys_hash_start(keys),
++		       flow_keys_hash_length(keys), keyval);
+ 	if (!hash)
+ 		hash = 1;
+ 
+@@ -626,12 +616,13 @@ static inline u32 __flow_hash_from_keys(struct flow_keys *keys, u32 keyval)
+ u32 flow_hash_from_keys(struct flow_keys *keys)
+ {
+ 	__flow_hash_secret_init();
+-	return __flow_hash_from_keys(keys, hashrnd);
++	return __flow_hash_from_keys(keys, &hashrnd);
+ }
+ EXPORT_SYMBOL(flow_hash_from_keys);
+ 
+ static inline u32 ___skb_get_hash(const struct sk_buff *skb,
+-				  struct flow_keys *keys, u32 keyval)
++				  struct flow_keys *keys,
++				  const siphash_key_t *keyval)
+ {
+ 	skb_flow_dissect_flow_keys(skb, keys,
+ 				   FLOW_DISSECTOR_F_STOP_AT_FLOW_LABEL);
+@@ -679,7 +670,7 @@ u32 __skb_get_hash_symmetric(struct sk_buff *skb)
+ 			   NULL, 0, 0, 0,
+ 			   FLOW_DISSECTOR_F_STOP_AT_FLOW_LABEL);
+ 
+-	return __flow_hash_from_keys(&keys, hashrnd);
++	return __flow_hash_from_keys(&keys, &hashrnd);
+ }
+ EXPORT_SYMBOL_GPL(__skb_get_hash_symmetric);
+ 
+@@ -698,12 +689,13 @@ void __skb_get_hash(struct sk_buff *skb)
+ 
+ 	__flow_hash_secret_init();
+ 
+-	__skb_set_sw_hash(skb, ___skb_get_hash(skb, &keys, hashrnd),
++	__skb_set_sw_hash(skb, ___skb_get_hash(skb, &keys, &hashrnd),
+ 			  flow_keys_have_l4(&keys));
+ }
+ EXPORT_SYMBOL(__skb_get_hash);
+ 
+-__u32 skb_get_hash_perturb(const struct sk_buff *skb, u32 perturb)
++__u32 skb_get_hash_perturb(const struct sk_buff *skb,
++			   const siphash_key_t *perturb)
+ {
+ 	struct flow_keys keys;
+ 
+diff --git a/net/dccp/ipv4.c b/net/dccp/ipv4.c
+index b0a577a79a6a..ef4c44d46293 100644
+--- a/net/dccp/ipv4.c
++++ b/net/dccp/ipv4.c
+@@ -121,7 +121,7 @@ int dccp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+ 						    inet->inet_daddr,
+ 						    inet->inet_sport,
+ 						    inet->inet_dport);
+-	inet->inet_id = dp->dccps_iss ^ jiffies;
++	inet->inet_id = prandom_u32();
+ 
+ 	err = dccp_connect(sk);
+ 	rt = NULL;
+@@ -417,7 +417,7 @@ struct sock *dccp_v4_request_recv_sock(const struct sock *sk,
+ 	RCU_INIT_POINTER(newinet->inet_opt, rcu_dereference(ireq->ireq_opt));
+ 	newinet->mc_index  = inet_iif(skb);
+ 	newinet->mc_ttl	   = ip_hdr(skb)->ttl;
+-	newinet->inet_id   = jiffies;
++	newinet->inet_id   = prandom_u32();
+ 
+ 	if (dst == NULL && (dst = inet_csk_route_child_sock(sk, newsk, req)) == NULL)
+ 		goto put_and_exit;
+diff --git a/net/ipv4/datagram.c b/net/ipv4/datagram.c
+index f915abff1350..d3eddfd13875 100644
+--- a/net/ipv4/datagram.c
++++ b/net/ipv4/datagram.c
+@@ -75,7 +75,7 @@ int __ip4_datagram_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len
+ 	inet->inet_dport = usin->sin_port;
+ 	sk->sk_state = TCP_ESTABLISHED;
+ 	sk_set_txhash(sk);
+-	inet->inet_id = jiffies;
++	inet->inet_id = prandom_u32();
+ 
+ 	sk_dst_set(sk, &rt->dst);
+ 	err = 0;
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index fa2280bd794e..b25fb42c7dd1 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -241,7 +241,7 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+ 							   inet->inet_sport,
+ 							   usin->sin_port);
+ 
+-	inet->inet_id = tp->write_seq ^ jiffies;
++	inet->inet_id = prandom_u32();
+ 
+ 	err = tcp_connect(sk);
+ 
+@@ -1305,7 +1305,7 @@ struct sock *tcp_v4_syn_recv_sock(const struct sock *sk, struct sk_buff *skb,
+ 	inet_csk(newsk)->icsk_ext_hdr_len = 0;
+ 	if (inet_opt)
+ 		inet_csk(newsk)->icsk_ext_hdr_len = inet_opt->opt.optlen;
+-	newinet->inet_id = newtp->write_seq ^ jiffies;
++	newinet->inet_id = prandom_u32();
+ 
+ 	if (!dst) {
+ 		dst = inet_csk_route_child_sock(sk, newsk, req);
+diff --git a/net/sched/sch_fq_codel.c b/net/sched/sch_fq_codel.c
+index d3fc8f9dd3d4..1800f7977595 100644
+--- a/net/sched/sch_fq_codel.c
++++ b/net/sched/sch_fq_codel.c
+@@ -55,7 +55,7 @@ struct fq_codel_sched_data {
+ 	struct fq_codel_flow *flows;	/* Flows table [flows_cnt] */
+ 	u32		*backlogs;	/* backlog table [flows_cnt] */
+ 	u32		flows_cnt;	/* number of flows */
+-	u32		perturbation;	/* hash perturbation */
++	siphash_key_t	perturbation;	/* hash perturbation */
+ 	u32		quantum;	/* psched_mtu(qdisc_dev(sch)); */
+ 	struct codel_params cparams;
+ 	struct codel_stats cstats;
+@@ -69,7 +69,7 @@ struct fq_codel_sched_data {
+ static unsigned int fq_codel_hash(const struct fq_codel_sched_data *q,
+ 				  struct sk_buff *skb)
+ {
+-	u32 hash = skb_get_hash_perturb(skb, q->perturbation);
++	u32 hash = skb_get_hash_perturb(skb, &q->perturbation);
+ 
+ 	return reciprocal_scale(hash, q->flows_cnt);
+ }
+@@ -420,7 +420,7 @@ static int fq_codel_init(struct Qdisc *sch, struct nlattr *opt)
+ 	sch->limit = 10*1024;
+ 	q->flows_cnt = 1024;
+ 	q->quantum = psched_mtu(qdisc_dev(sch));
+-	q->perturbation = prandom_u32();
++	get_random_bytes(&q->perturbation, sizeof(q->perturbation));
+ 	INIT_LIST_HEAD(&q->new_flows);
+ 	INIT_LIST_HEAD(&q->old_flows);
+ 	codel_params_init(&q->cparams, sch);
+diff --git a/net/sched/sch_hhf.c b/net/sched/sch_hhf.c
+index dc68dccc6b0c..40ec5b280eb6 100644
+--- a/net/sched/sch_hhf.c
++++ b/net/sched/sch_hhf.c
+@@ -4,11 +4,11 @@
+  * Copyright (C) 2013 Nandita Dukkipati <nanditad@google.com>
+  */
+ 
+-#include <linux/jhash.h>
+ #include <linux/jiffies.h>
+ #include <linux/module.h>
+ #include <linux/skbuff.h>
+ #include <linux/vmalloc.h>
++#include <linux/siphash.h>
+ #include <net/pkt_sched.h>
+ #include <net/sock.h>
+ 
+@@ -125,7 +125,7 @@ struct wdrr_bucket {
+ 
+ struct hhf_sched_data {
+ 	struct wdrr_bucket buckets[WDRR_BUCKET_CNT];
+-	u32		   perturbation;   /* hash perturbation */
++	siphash_key_t	   perturbation;   /* hash perturbation */
+ 	u32		   quantum;        /* psched_mtu(qdisc_dev(sch)); */
+ 	u32		   drop_overlimit; /* number of times max qdisc packet
+ 					    * limit was hit
+@@ -263,7 +263,7 @@ static enum wdrr_bucket_idx hhf_classify(struct sk_buff *skb, struct Qdisc *sch)
+ 	}
+ 
+ 	/* Get hashed flow-id of the skb. */
+-	hash = skb_get_hash_perturb(skb, q->perturbation);
++	hash = skb_get_hash_perturb(skb, &q->perturbation);
+ 
+ 	/* Check if this packet belongs to an already established HH flow. */
+ 	flow_pos = hash & HHF_BIT_MASK;
+@@ -602,7 +602,7 @@ static int hhf_init(struct Qdisc *sch, struct nlattr *opt)
+ 
+ 	sch->limit = 1000;
+ 	q->quantum = psched_mtu(qdisc_dev(sch));
+-	q->perturbation = prandom_u32();
++	get_random_bytes(&q->perturbation, sizeof(q->perturbation));
+ 	INIT_LIST_HEAD(&q->new_buckets);
+ 	INIT_LIST_HEAD(&q->old_buckets);
+ 
+diff --git a/net/sched/sch_sfb.c b/net/sched/sch_sfb.c
+index c69611640fa5..10c0b184cdbe 100644
+--- a/net/sched/sch_sfb.c
++++ b/net/sched/sch_sfb.c
+@@ -22,7 +22,7 @@
+ #include <linux/errno.h>
+ #include <linux/skbuff.h>
+ #include <linux/random.h>
+-#include <linux/jhash.h>
++#include <linux/siphash.h>
+ #include <net/ip.h>
+ #include <net/pkt_sched.h>
+ #include <net/inet_ecn.h>
+@@ -48,7 +48,7 @@ struct sfb_bucket {
+  * (Section 4.4 of SFB reference : moving hash functions)
+  */
+ struct sfb_bins {
+-	u32		  perturbation; /* jhash perturbation */
++	siphash_key_t	  perturbation; /* siphash key */
+ 	struct sfb_bucket bins[SFB_LEVELS][SFB_NUMBUCKETS];
+ };
+ 
+@@ -219,7 +219,8 @@ static u32 sfb_compute_qlen(u32 *prob_r, u32 *avgpm_r, const struct sfb_sched_da
+ 
+ static void sfb_init_perturbation(u32 slot, struct sfb_sched_data *q)
+ {
+-	q->bins[slot].perturbation = prandom_u32();
++	get_random_bytes(&q->bins[slot].perturbation,
++			 sizeof(q->bins[slot].perturbation));
+ }
+ 
+ static void sfb_swap_slot(struct sfb_sched_data *q)
+@@ -313,9 +314,9 @@ static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch)
+ 		/* If using external classifiers, get result and record it. */
+ 		if (!sfb_classify(skb, fl, &ret, &salt))
+ 			goto other_drop;
+-		sfbhash = jhash_1word(salt, q->bins[slot].perturbation);
++		sfbhash = siphash_1u32(salt, &q->bins[slot].perturbation);
+ 	} else {
+-		sfbhash = skb_get_hash_perturb(skb, q->bins[slot].perturbation);
++		sfbhash = skb_get_hash_perturb(skb, &q->bins[slot].perturbation);
+ 	}
+ 
+ 
+@@ -351,7 +352,7 @@ static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch)
+ 		/* Inelastic flow */
+ 		if (q->double_buffering) {
+ 			sfbhash = skb_get_hash_perturb(skb,
+-			    q->bins[slot].perturbation);
++			    &q->bins[slot].perturbation);
+ 			if (!sfbhash)
+ 				sfbhash = 1;
+ 			sfb_skb_cb(skb)->hashes[slot] = sfbhash;
+diff --git a/net/sched/sch_sfq.c b/net/sched/sch_sfq.c
+index 8b8c084b32cd..e2e4ebc0c4c3 100644
+--- a/net/sched/sch_sfq.c
++++ b/net/sched/sch_sfq.c
+@@ -18,7 +18,7 @@
+ #include <linux/errno.h>
+ #include <linux/init.h>
+ #include <linux/skbuff.h>
+-#include <linux/jhash.h>
++#include <linux/siphash.h>
+ #include <linux/slab.h>
+ #include <linux/vmalloc.h>
+ #include <net/netlink.h>
+@@ -120,7 +120,7 @@ struct sfq_sched_data {
+ 	u8		headdrop;
+ 	u8		maxdepth;	/* limit of packets per flow */
+ 
+-	u32		perturbation;
++	siphash_key_t 	perturbation;
+ 	u8		cur_depth;	/* depth of longest slot */
+ 	u8		flags;
+ 	unsigned short  scaled_quantum; /* SFQ_ALLOT_SIZE(quantum) */
+@@ -158,7 +158,7 @@ static inline struct sfq_head *sfq_dep_head(struct sfq_sched_data *q, sfq_index
+ static unsigned int sfq_hash(const struct sfq_sched_data *q,
+ 			     const struct sk_buff *skb)
+ {
+-	return skb_get_hash_perturb(skb, q->perturbation) & (q->divisor - 1);
++	return skb_get_hash_perturb(skb, &q->perturbation) & (q->divisor - 1);
+ }
+ 
+ static unsigned int sfq_classify(struct sk_buff *skb, struct Qdisc *sch,
+@@ -607,9 +607,11 @@ static void sfq_perturbation(unsigned long arg)
+ 	struct Qdisc *sch = (struct Qdisc *)arg;
+ 	struct sfq_sched_data *q = qdisc_priv(sch);
+ 	spinlock_t *root_lock = qdisc_lock(qdisc_root_sleeping(sch));
++	siphash_key_t nkey;
+ 
++	get_random_bytes(&nkey, sizeof(nkey));
+ 	spin_lock(root_lock);
+-	q->perturbation = prandom_u32();
++	q->perturbation = nkey;
+ 	if (!q->filter_list && q->tail)
+ 		sfq_rehash(sch);
+ 	spin_unlock(root_lock);
+@@ -681,7 +683,7 @@ static int sfq_change(struct Qdisc *sch, struct nlattr *opt)
+ 	del_timer(&q->perturb_timer);
+ 	if (q->perturb_period) {
+ 		mod_timer(&q->perturb_timer, jiffies + q->perturb_period);
+-		q->perturbation = prandom_u32();
++		get_random_bytes(&q->perturbation, sizeof(q->perturbation));
+ 	}
+ 	sch_tree_unlock(sch);
+ 	kfree(p);
+@@ -737,7 +739,7 @@ static int sfq_init(struct Qdisc *sch, struct nlattr *opt)
+ 	q->quantum = psched_mtu(qdisc_dev(sch));
+ 	q->scaled_quantum = SFQ_ALLOT_SIZE(q->quantum);
+ 	q->perturb_period = 0;
+-	q->perturbation = prandom_u32();
++	get_random_bytes(&q->perturbation, sizeof(q->perturbation));
+ 
+ 	if (opt) {
+ 		int err = sfq_change(sch, opt);
+diff --git a/net/sctp/socket.c b/net/sctp/socket.c
+index 7add261dd626..2b6c88b9a038 100644
+--- a/net/sctp/socket.c
++++ b/net/sctp/socket.c
+@@ -7267,7 +7267,7 @@ void sctp_copy_sock(struct sock *newsk, struct sock *sk,
+ 	newinet->inet_rcv_saddr = inet->inet_rcv_saddr;
+ 	newinet->inet_dport = htons(asoc->peer.port);
+ 	newinet->pmtudisc = inet->pmtudisc;
+-	newinet->inet_id = asoc->next_tsn ^ jiffies;
++	newinet->inet_id = prandom_u32();
+ 
+ 	newinet->uc_ttl = inet->uc_ttl;
+ 	newinet->mc_loop = 1;
+diff --git a/sound/soc/rockchip/rockchip_i2s.c b/sound/soc/rockchip/rockchip_i2s.c
+index 2271e25b0675..4d6a2f35b6af 100644
+--- a/sound/soc/rockchip/rockchip_i2s.c
++++ b/sound/soc/rockchip/rockchip_i2s.c
+@@ -737,7 +737,7 @@ static int rockchip_i2s_probe(struct platform_device *pdev)
+ 	ret = devm_snd_dmaengine_pcm_register(&pdev->dev, NULL, 0);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "Could not register PCM\n");
+-		return ret;
++		goto err_suspend;
+ 	}
+ 
+ 	return 0;
+diff --git a/tools/perf/builtin-kmem.c b/tools/perf/builtin-kmem.c
+index 93ce665f976f..b62f2f139edf 100644
+--- a/tools/perf/builtin-kmem.c
++++ b/tools/perf/builtin-kmem.c
+@@ -664,6 +664,7 @@ static char *compact_gfp_flags(char *gfp_flags)
+ 			new = realloc(new_flags, len + strlen(cpt) + 2);
+ 			if (new == NULL) {
+ 				free(new_flags);
++				free(orig_flags);
+ 				return NULL;
+ 			}
+ 
