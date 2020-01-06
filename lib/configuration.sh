@@ -314,7 +314,7 @@ Build directory permissions:
 $(getfacl -p "${SRC}")
 
 Temp directory permissions:
-$(getfacl -p "${SRC}"/.tmp)
+$(getfacl -p "${SRC}"/.tmp 2> /dev/null)
 
 ## BUILD CONFIGURATION
 
