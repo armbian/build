@@ -75,8 +75,6 @@ debootstrap_ng()
 		source $SRC/lib/fel-load.sh
 	else
 		prepare_partitions
-		# update initramfs to reflect any configuration changes since kernel installation
-		update_initramfs
 		create_image
 	fi
 
@@ -525,18 +523,23 @@ prepare_partitions()
 # for cryptroot-unlock to work:
 # https://serverfault.com/questions/907254/cryproot-unlock-with-dropbear-timeout-while-waiting-for-askpass
 #
-update_initramfs() {
-
+# since Debian buster, it has to be called within create_image() on the $MOUNT 
+# path instead of $SDCARD (which can be a tmpfs and breaks cryptsetup-initramfs).
+# see: https://github.com/armbian/build/issues/1584
+#
+update_initramfs()
+{
+	local chroot_target=$1
 	update_initramfs_cmd="update-initramfs -uv -k ${VER}-${LINUXFAMILY}"
 	display_alert "Updating initramfs..." "$update_initramfs_cmd" ""
-	cp /usr/bin/$QEMU_BINARY $SDCARD/usr/bin/
-	mount_chroot "$SDCARD/"
+	cp /usr/bin/$QEMU_BINARY $chroot_target/usr/bin/
+	mount_chroot "$chroot_target/"
 
-	chroot $SDCARD /bin/bash -c "$update_initramfs_cmd" >> $DEST/debug/install.log 2>&1
+	chroot $chroot_target /bin/bash -c "$update_initramfs_cmd" >> $DEST/debug/install.log 2>&1
 	display_alert "Updated initramfs." "for details see: $DEST/debug/install.log" "ext"
 
-	umount_chroot "$SDCARD/"
-	rm $SDCARD/usr/bin/$QEMU_BINARY
+	umount_chroot "$chroot_target/"
+	rm $chroot_target/usr/bin/$QEMU_BINARY
 
 } #############################################################################
 
@@ -571,6 +574,9 @@ create_image()
 		# ext4
 		rsync -aHWXh --info=progress2,stats1 $SDCARD/boot $MOUNT
 	fi
+
+	# stage: create final initramfs
+	update_initramfs $MOUNT
 
 	# DEBUG: print free space
 	display_alert "Free space:" "SD card" "info"
