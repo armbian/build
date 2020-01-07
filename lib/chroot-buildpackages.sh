@@ -156,7 +156,7 @@ chroot_build_packages()
 			local t=$target_dir/root/.update-timestamp
 			if [[ ! -f $t || $(( ($(date +%s) - $(<$t)) / 86400 )) -gt 7 ]]; then
 				display_alert "Upgrading packages" "$release/$arch" "info"
-				systemd-nspawn -a -q -D $target_dir /bin/bash -c "apt-get -q update; apt-get -q -y upgrade; apt-get clean"
+				systemd-nspawn -a -q -D $target_dir /bin/bash -c "apt -q update; apt -q -y upgrade; apt clean"
 				date +%s > $t
 			fi
 
@@ -219,8 +219,8 @@ chroot_build_packages()
 					for packet in $package_builddeps; do grep -q -x -e "\$packet" <<< "\$installed" || deps+=("\$packet"); done
 					if [[ \${#deps[@]} -gt 0 ]]; then
 						display_alert "Installing build dependencies"
-						apt-get -y -q update
-						apt-get -y -q --no-install-recommends --show-progress -o DPKG::Progress-Fancy=1 install "\${deps[@]}"
+						apt -y -q update
+						apt -y -q --no-install-recommends --show-progress -o DPKG::Progress-Fancy=1 install "\${deps[@]}"
 					fi
 				fi
 				display_alert "Copying sources"
@@ -333,17 +333,17 @@ chroot_installpackages()
 	cat <<-EOF > "${SDCARD}"/tmp/install.sh
 	#!/bin/bash
 	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
-	apt-get $apt_extra -q update
+	apt $apt_extra -q update
 	# uncomment to debug
 	# /bin/bash
 	# TODO: check if package exists in case new config was added
 	#if [[ -n "$remote_only" == yes ]]; then
 	#	for p in $install_list; do
 	#		if grep -qE "apt.armbian.com|localhost" <(apt-cache madison \$p); then
-	#		if apt-get -s -qq install \$p; then
+	#		if apt -s -qq install \$p; then
 	#fi
-	apt-get -q $apt_extra --show-progress -o DPKG::Progress-Fancy=1 install -y $install_list
-	apt-get clean
+	apt -q $apt_extra --show-progress -o DPKG::Progress-Fancy=1 install -y $install_list
+	apt clean
 	[[ "$remote_only" != yes ]] && apt-key del "925644A6"
 	rm /etc/apt/sources.list.d/armbian-temp.list 2>/dev/null
 	rm /etc/apt/preferences.d/90-armbian-temp.pref 2>/dev/null
