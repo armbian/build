@@ -20,7 +20,7 @@ TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined 
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
-ROOTFSCACHE_VERSION=15
+ROOTFSCACHE_VERSION=16
 CHROOT_CACHE_VERSION=7
 BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
