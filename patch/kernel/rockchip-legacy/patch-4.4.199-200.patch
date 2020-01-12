@@ -1,0 +1,3347 @@
+diff --git a/Makefile b/Makefile
+index 6b09890b170c..8715489f3462 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 199
++SUBLEVEL = 200
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+@@ -823,6 +823,12 @@ KBUILD_CFLAGS   += $(call cc-option,-Werror=strict-prototypes)
+ # Prohibit date/time macros, which would make the build non-deterministic
+ KBUILD_CFLAGS   += $(call cc-option,-Werror=date-time)
+ 
++# ensure -fcf-protection is disabled when using retpoline as it is
++# incompatible with -mindirect-branch=thunk-extern
++ifdef CONFIG_RETPOLINE
++KBUILD_CFLAGS += $(call cc-option,-fcf-protection=none)
++endif
++
+ # use the deterministic mode of AR if available
+ KBUILD_ARFLAGS := $(call ar-option,D)
+ 
+diff --git a/arch/arm/boot/dts/logicpd-torpedo-som.dtsi b/arch/arm/boot/dts/logicpd-torpedo-som.dtsi
+index e05670423d8b..a6c59bf698b3 100644
+--- a/arch/arm/boot/dts/logicpd-torpedo-som.dtsi
++++ b/arch/arm/boot/dts/logicpd-torpedo-som.dtsi
+@@ -169,3 +169,7 @@
+ &twl_gpio {
+ 	ti,use-leds;
+ };
++
++&twl_keypad {
++	status = "disabled";
++};
+diff --git a/arch/arm/include/asm/arch_gicv3.h b/arch/arm/include/asm/arch_gicv3.h
+index e08d15184056..af25c32b1ccc 100644
+--- a/arch/arm/include/asm/arch_gicv3.h
++++ b/arch/arm/include/asm/arch_gicv3.h
+@@ -22,9 +22,7 @@
+ 
+ #include <linux/io.h>
+ #include <asm/barrier.h>
+-
+-#define __ACCESS_CP15(CRn, Op1, CRm, Op2)	p15, Op1, %0, CRn, CRm, Op2
+-#define __ACCESS_CP15_64(Op1, CRm)		p15, Op1, %Q0, %R0, CRm
++#include <asm/cp15.h>
+ 
+ #define ICC_EOIR1			__ACCESS_CP15(c12, 0, c12, 1)
+ #define ICC_DIR				__ACCESS_CP15(c12, 0, c11, 1)
+@@ -102,58 +100,55 @@
+ 
+ static inline void gic_write_eoir(u32 irq)
+ {
+-	asm volatile("mcr " __stringify(ICC_EOIR1) : : "r" (irq));
++	write_sysreg(irq, ICC_EOIR1);
+ 	isb();
+ }
+ 
+ static inline void gic_write_dir(u32 val)
+ {
+-	asm volatile("mcr " __stringify(ICC_DIR) : : "r" (val));
++	write_sysreg(val, ICC_DIR);
+ 	isb();
+ }
+ 
+ static inline u32 gic_read_iar(void)
+ {
+-	u32 irqstat;
++	u32 irqstat = read_sysreg(ICC_IAR1);
+ 
+-	asm volatile("mrc " __stringify(ICC_IAR1) : "=r" (irqstat));
+ 	dsb(sy);
++
+ 	return irqstat;
+ }
+ 
+ static inline void gic_write_pmr(u32 val)
+ {
+-	asm volatile("mcr " __stringify(ICC_PMR) : : "r" (val));
++	write_sysreg(val, ICC_PMR);
+ }
+ 
+ static inline void gic_write_ctlr(u32 val)
+ {
+-	asm volatile("mcr " __stringify(ICC_CTLR) : : "r" (val));
++	write_sysreg(val, ICC_CTLR);
+ 	isb();
+ }
+ 
+ static inline void gic_write_grpen1(u32 val)
+ {
+-	asm volatile("mcr " __stringify(ICC_IGRPEN1) : : "r" (val));
++	write_sysreg(val, ICC_IGRPEN1);
+ 	isb();
+ }
+ 
+ static inline void gic_write_sgi1r(u64 val)
+ {
+-	asm volatile("mcrr " __stringify(ICC_SGI1R) : : "r" (val));
++	write_sysreg(val, ICC_SGI1R);
+ }
+ 
+ static inline u32 gic_read_sre(void)
+ {
+-	u32 val;
+-
+-	asm volatile("mrc " __stringify(ICC_SRE) : "=r" (val));
+-	return val;
++	return read_sysreg(ICC_SRE);
+ }
+ 
+ static inline void gic_write_sre(u32 val)
+ {
+-	asm volatile("mcr " __stringify(ICC_SRE) : : "r" (val));
++	write_sysreg(val, ICC_SRE);
+ 	isb();
+ }
+ 
+diff --git a/arch/arm/include/asm/assembler.h b/arch/arm/include/asm/assembler.h
+index 4a275fba6059..f2624fbd0336 100644
+--- a/arch/arm/include/asm/assembler.h
++++ b/arch/arm/include/asm/assembler.h
+@@ -441,11 +441,34 @@ THUMB(	orr	\reg , \reg , #PSR_T_BIT	)
+ 	.size \name , . - \name
+ 	.endm
+ 
++	.macro	csdb
++#ifdef CONFIG_THUMB2_KERNEL
++	.inst.w	0xf3af8014
++#else
++	.inst	0xe320f014
++#endif
++	.endm
++
+ 	.macro check_uaccess, addr:req, size:req, limit:req, tmp:req, bad:req
+ #ifndef CONFIG_CPU_USE_DOMAINS
+ 	adds	\tmp, \addr, #\size - 1
+ 	sbcccs	\tmp, \tmp, \limit
+ 	bcs	\bad
++#ifdef CONFIG_CPU_SPECTRE
++	movcs	\addr, #0
++	csdb
++#endif
++#endif
++	.endm
++
++	.macro uaccess_mask_range_ptr, addr:req, size:req, limit:req, tmp:req
++#ifdef CONFIG_CPU_SPECTRE
++	sub	\tmp, \limit, #1
++	subs	\tmp, \tmp, \addr	@ tmp = limit - 1 - addr
++	addhs	\tmp, \tmp, #1		@ if (tmp >= 0) {
++	subhss	\tmp, \tmp, \size	@ tmp = limit - (addr + size) }
++	movlo	\addr, #0		@ if (tmp < 0) addr = NULL
++	csdb
+ #endif
+ 	.endm
+ 
+diff --git a/arch/arm/include/asm/barrier.h b/arch/arm/include/asm/barrier.h
+index 27c1d26b05b5..8514b70704de 100644
+--- a/arch/arm/include/asm/barrier.h
++++ b/arch/arm/include/asm/barrier.h
+@@ -18,6 +18,12 @@
+ #define isb(option) __asm__ __volatile__ ("isb " #option : : : "memory")
+ #define dsb(option) __asm__ __volatile__ ("dsb " #option : : : "memory")
+ #define dmb(option) __asm__ __volatile__ ("dmb " #option : : : "memory")
++#ifdef CONFIG_THUMB2_KERNEL
++#define CSDB	".inst.w 0xf3af8014"
++#else
++#define CSDB	".inst	0xe320f014"
++#endif
++#define csdb() __asm__ __volatile__(CSDB : : : "memory")
+ #elif defined(CONFIG_CPU_XSC3) || __LINUX_ARM_ARCH__ == 6
+ #define isb(x) __asm__ __volatile__ ("mcr p15, 0, %0, c7, c5, 4" \
+ 				    : : "r" (0) : "memory")
+@@ -38,6 +44,13 @@
+ #define dmb(x) __asm__ __volatile__ ("" : : : "memory")
+ #endif
+ 
++#ifndef CSDB
++#define CSDB
++#endif
++#ifndef csdb
++#define csdb()
++#endif
++
+ #ifdef CONFIG_ARM_HEAVY_MB
+ extern void (*soc_mb)(void);
+ extern void arm_heavy_mb(void);
+@@ -95,5 +108,26 @@ do {									\
+ #define smp_mb__before_atomic()	smp_mb()
+ #define smp_mb__after_atomic()	smp_mb()
+ 
++#ifdef CONFIG_CPU_SPECTRE
++static inline unsigned long array_index_mask_nospec(unsigned long idx,
++						    unsigned long sz)
++{
++	unsigned long mask;
++
++	asm volatile(
++		"cmp	%1, %2\n"
++	"	sbc	%0, %1, %1\n"
++	CSDB
++	: "=r" (mask)
++	: "r" (idx), "Ir" (sz)
++	: "cc");
++
++	return mask;
++}
++#define array_index_mask_nospec array_index_mask_nospec
++#endif
++
++#include <asm-generic/barrier.h>
++
+ #endif /* !__ASSEMBLY__ */
+ #endif /* __ASM_BARRIER_H */
+diff --git a/arch/arm/include/asm/bugs.h b/arch/arm/include/asm/bugs.h
+index a97f1ea708d1..73a99c72a930 100644
+--- a/arch/arm/include/asm/bugs.h
++++ b/arch/arm/include/asm/bugs.h
+@@ -10,12 +10,14 @@
+ #ifndef __ASM_BUGS_H
+ #define __ASM_BUGS_H
+ 
+-#ifdef CONFIG_MMU
+ extern void check_writebuffer_bugs(void);
+ 
+-#define check_bugs() check_writebuffer_bugs()
++#ifdef CONFIG_MMU
++extern void check_bugs(void);
++extern void check_other_bugs(void);
+ #else
+ #define check_bugs() do { } while (0)
++#define check_other_bugs() do { } while (0)
+ #endif
+ 
+ #endif
+diff --git a/arch/arm/include/asm/cp15.h b/arch/arm/include/asm/cp15.h
+index c3f11524f10c..b74b174ac9fc 100644
+--- a/arch/arm/include/asm/cp15.h
++++ b/arch/arm/include/asm/cp15.h
+@@ -49,6 +49,24 @@
+ 
+ #ifdef CONFIG_CPU_CP15
+ 
++#define __ACCESS_CP15(CRn, Op1, CRm, Op2)	\
++	"mrc", "mcr", __stringify(p15, Op1, %0, CRn, CRm, Op2), u32
++#define __ACCESS_CP15_64(Op1, CRm)		\
++	"mrrc", "mcrr", __stringify(p15, Op1, %Q0, %R0, CRm), u64
++
++#define __read_sysreg(r, w, c, t) ({				\
++	t __val;						\
++	asm volatile(r " " c : "=r" (__val));			\
++	__val;							\
++})
++#define read_sysreg(...)		__read_sysreg(__VA_ARGS__)
++
++#define __write_sysreg(v, r, w, c, t)	asm volatile(w " " c : : "r" ((t)(v)))
++#define write_sysreg(v, ...)		__write_sysreg(v, __VA_ARGS__)
++
++#define BPIALL				__ACCESS_CP15(c7, 0, c5, 6)
++#define ICIALLU				__ACCESS_CP15(c7, 0, c5, 0)
++
+ extern unsigned long cr_alignment;	/* defined in entry-armv.S */
+ 
+ static inline unsigned long get_cr(void)
+diff --git a/arch/arm/include/asm/cputype.h b/arch/arm/include/asm/cputype.h
+index e9d04f475929..53125dad6edd 100644
+--- a/arch/arm/include/asm/cputype.h
++++ b/arch/arm/include/asm/cputype.h
+@@ -74,8 +74,16 @@
+ #define ARM_CPU_PART_CORTEX_A12		0x4100c0d0
+ #define ARM_CPU_PART_CORTEX_A17		0x4100c0e0
+ #define ARM_CPU_PART_CORTEX_A15		0x4100c0f0
++#define ARM_CPU_PART_CORTEX_A53		0x4100d030
++#define ARM_CPU_PART_CORTEX_A57		0x4100d070
++#define ARM_CPU_PART_CORTEX_A72		0x4100d080
++#define ARM_CPU_PART_CORTEX_A73		0x4100d090
++#define ARM_CPU_PART_CORTEX_A75		0x4100d0a0
+ #define ARM_CPU_PART_MASK		0xff00fff0
+ 
++/* Broadcom cores */
++#define ARM_CPU_PART_BRAHMA_B15		0x420000f0
++
+ #define ARM_CPU_XSCALE_ARCH_MASK	0xe000
+ #define ARM_CPU_XSCALE_ARCH_V1		0x2000
+ #define ARM_CPU_XSCALE_ARCH_V2		0x4000
+@@ -85,6 +93,7 @@
+ #define ARM_CPU_PART_SCORPION		0x510002d0
+ 
+ extern unsigned int processor_id;
++struct proc_info_list *lookup_processor(u32 midr);
+ 
+ #ifdef CONFIG_CPU_CP15
+ #define read_cpuid(reg)							\
+diff --git a/arch/arm/include/asm/proc-fns.h b/arch/arm/include/asm/proc-fns.h
+index 8877ad5ffe10..1bfcc3bcfc6d 100644
+--- a/arch/arm/include/asm/proc-fns.h
++++ b/arch/arm/include/asm/proc-fns.h
+@@ -23,7 +23,7 @@ struct mm_struct;
+ /*
+  * Don't change this structure - ASM code relies on it.
+  */
+-extern struct processor {
++struct processor {
+ 	/* MISC
+ 	 * get data abort address/flags
+ 	 */
+@@ -36,6 +36,10 @@ extern struct processor {
+ 	 * Set up any processor specifics
+ 	 */
+ 	void (*_proc_init)(void);
++	/*
++	 * Check for processor bugs
++	 */
++	void (*check_bugs)(void);
+ 	/*
+ 	 * Disable any processor specifics
+ 	 */
+@@ -75,9 +79,13 @@ extern struct processor {
+ 	unsigned int suspend_size;
+ 	void (*do_suspend)(void *);
+ 	void (*do_resume)(void *);
+-} processor;
++};
+ 
+ #ifndef MULTI_CPU
++static inline void init_proc_vtable(const struct processor *p)
++{
++}
++
+ extern void cpu_proc_init(void);
+ extern void cpu_proc_fin(void);
+ extern int cpu_do_idle(void);
+@@ -94,17 +102,50 @@ extern void cpu_reset(unsigned long addr) __attribute__((noreturn));
+ extern void cpu_do_suspend(void *);
+ extern void cpu_do_resume(void *);
+ #else
+-#define cpu_proc_init			processor._proc_init
+-#define cpu_proc_fin			processor._proc_fin
+-#define cpu_reset			processor.reset
+-#define cpu_do_idle			processor._do_idle
+-#define cpu_dcache_clean_area		processor.dcache_clean_area
+-#define cpu_set_pte_ext			processor.set_pte_ext
+-#define cpu_do_switch_mm		processor.switch_mm
+ 
+-/* These three are private to arch/arm/kernel/suspend.c */
+-#define cpu_do_suspend			processor.do_suspend
+-#define cpu_do_resume			processor.do_resume
++extern struct processor processor;
++#if defined(CONFIG_BIG_LITTLE) && defined(CONFIG_HARDEN_BRANCH_PREDICTOR)
++#include <linux/smp.h>
++/*
++ * This can't be a per-cpu variable because we need to access it before
++ * per-cpu has been initialised.  We have a couple of functions that are
++ * called in a pre-emptible context, and so can't use smp_processor_id()
++ * there, hence PROC_TABLE().  We insist in init_proc_vtable() that the
++ * function pointers for these are identical across all CPUs.
++ */
++extern struct processor *cpu_vtable[];
++#define PROC_VTABLE(f)			cpu_vtable[smp_processor_id()]->f
++#define PROC_TABLE(f)			cpu_vtable[0]->f
++static inline void init_proc_vtable(const struct processor *p)
++{
++	unsigned int cpu = smp_processor_id();
++	*cpu_vtable[cpu] = *p;
++	WARN_ON_ONCE(cpu_vtable[cpu]->dcache_clean_area !=
++		     cpu_vtable[0]->dcache_clean_area);
++	WARN_ON_ONCE(cpu_vtable[cpu]->set_pte_ext !=
++		     cpu_vtable[0]->set_pte_ext);
++}
++#else
++#define PROC_VTABLE(f)			processor.f
++#define PROC_TABLE(f)			processor.f
++static inline void init_proc_vtable(const struct processor *p)
++{
++	processor = *p;
++}
++#endif
++
++#define cpu_proc_init			PROC_VTABLE(_proc_init)
++#define cpu_check_bugs			PROC_VTABLE(check_bugs)
++#define cpu_proc_fin			PROC_VTABLE(_proc_fin)
++#define cpu_reset			PROC_VTABLE(reset)
++#define cpu_do_idle			PROC_VTABLE(_do_idle)
++#define cpu_dcache_clean_area		PROC_TABLE(dcache_clean_area)
++#define cpu_set_pte_ext			PROC_TABLE(set_pte_ext)
++#define cpu_do_switch_mm		PROC_VTABLE(switch_mm)
++
++/* These two are private to arch/arm/kernel/suspend.c */
++#define cpu_do_suspend			PROC_VTABLE(do_suspend)
++#define cpu_do_resume			PROC_VTABLE(do_resume)
+ #endif
+ 
+ extern void cpu_resume(void);
+diff --git a/arch/arm/include/asm/system_misc.h b/arch/arm/include/asm/system_misc.h
+index a3d61ad984af..1fed41440af9 100644
+--- a/arch/arm/include/asm/system_misc.h
++++ b/arch/arm/include/asm/system_misc.h
+@@ -7,6 +7,7 @@
+ #include <linux/linkage.h>
+ #include <linux/irqflags.h>
+ #include <linux/reboot.h>
++#include <linux/percpu.h>
+ 
+ extern void cpu_init(void);
+ 
+@@ -14,6 +15,20 @@ void soft_restart(unsigned long);
+ extern void (*arm_pm_restart)(enum reboot_mode reboot_mode, const char *cmd);
+ extern void (*arm_pm_idle)(void);
+ 
++#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
++typedef void (*harden_branch_predictor_fn_t)(void);
++DECLARE_PER_CPU(harden_branch_predictor_fn_t, harden_branch_predictor_fn);
++static inline void harden_branch_predictor(void)
++{
++	harden_branch_predictor_fn_t fn = per_cpu(harden_branch_predictor_fn,
++						  smp_processor_id());
++	if (fn)
++		fn();
++}
++#else
++#define harden_branch_predictor() do { } while (0)
++#endif
++
+ #define UDBG_UNDEFINED	(1 << 0)
+ #define UDBG_SYSCALL	(1 << 1)
+ #define UDBG_BADABORT	(1 << 2)
+diff --git a/arch/arm/include/asm/thread_info.h b/arch/arm/include/asm/thread_info.h
+index 776757d1604a..df8420672c7e 100644
+--- a/arch/arm/include/asm/thread_info.h
++++ b/arch/arm/include/asm/thread_info.h
+@@ -124,10 +124,10 @@ extern void vfp_flush_hwstate(struct thread_info *);
+ struct user_vfp;
+ struct user_vfp_exc;
+ 
+-extern int vfp_preserve_user_clear_hwstate(struct user_vfp __user *,
+-					   struct user_vfp_exc __user *);
+-extern int vfp_restore_user_hwstate(struct user_vfp __user *,
+-				    struct user_vfp_exc __user *);
++extern int vfp_preserve_user_clear_hwstate(struct user_vfp *,
++					   struct user_vfp_exc *);
++extern int vfp_restore_user_hwstate(struct user_vfp *,
++				    struct user_vfp_exc *);
+ #endif
+ 
+ /*
+diff --git a/arch/arm/include/asm/uaccess.h b/arch/arm/include/asm/uaccess.h
+index cd8b589111ba..9ae610bf5234 100644
+--- a/arch/arm/include/asm/uaccess.h
++++ b/arch/arm/include/asm/uaccess.h
+@@ -99,6 +99,14 @@ extern int __put_user_bad(void);
+ static inline void set_fs(mm_segment_t fs)
+ {
+ 	current_thread_info()->addr_limit = fs;
++
++	/*
++	 * Prevent a mispredicted conditional call to set_fs from forwarding
++	 * the wrong address limit to access_ok under speculation.
++	 */
++	dsb(nsh);
++	isb();
++
+ 	modify_domain(DOMAIN_KERNEL, fs ? DOMAIN_CLIENT : DOMAIN_MANAGER);
+ }
+ 
+@@ -122,6 +130,39 @@ static inline void set_fs(mm_segment_t fs)
+ 		: "cc"); \
+ 	flag; })
+ 
++/*
++ * This is a type: either unsigned long, if the argument fits into
++ * that type, or otherwise unsigned long long.
++ */
++#define __inttype(x) \
++	__typeof__(__builtin_choose_expr(sizeof(x) > sizeof(0UL), 0ULL, 0UL))
++
++/*
++ * Sanitise a uaccess pointer such that it becomes NULL if addr+size
++ * is above the current addr_limit.
++ */
++#define uaccess_mask_range_ptr(ptr, size)			\
++	((__typeof__(ptr))__uaccess_mask_range_ptr(ptr, size))
++static inline void __user *__uaccess_mask_range_ptr(const void __user *ptr,
++						    size_t size)
++{
++	void __user *safe_ptr = (void __user *)ptr;
++	unsigned long tmp;
++
++	asm volatile(
++	"	sub	%1, %3, #1\n"
++	"	subs	%1, %1, %0\n"
++	"	addhs	%1, %1, #1\n"
++	"	subhss	%1, %1, %2\n"
++	"	movlo	%0, #0\n"
++	: "+r" (safe_ptr), "=&r" (tmp)
++	: "r" (size), "r" (current_thread_info()->addr_limit)
++	: "cc");
++
++	csdb();
++	return safe_ptr;
++}
++
+ /*
+  * Single-value transfer routines.  They automatically use the right
+  * size if we just have the right pointer type.  Note that the functions
+@@ -191,7 +232,7 @@ extern int __get_user_64t_4(void *);
+ 	({								\
+ 		unsigned long __limit = current_thread_info()->addr_limit - 1; \
+ 		register const typeof(*(p)) __user *__p asm("r0") = (p);\
+-		register typeof(x) __r2 asm("r2");			\
++		register __inttype(x) __r2 asm("r2");			\
+ 		register unsigned long __l asm("r1") = __limit;		\
+ 		register int __e asm("r0");				\
+ 		unsigned int __ua_flags = uaccess_save_and_enable();	\
+@@ -238,49 +279,23 @@ extern int __put_user_2(void *, unsigned int);
+ extern int __put_user_4(void *, unsigned int);
+ extern int __put_user_8(void *, unsigned long long);
+ 
+-#define __put_user_x(__r2, __p, __e, __l, __s)				\
+-	   __asm__ __volatile__ (					\
+-		__asmeq("%0", "r0") __asmeq("%2", "r2")			\
+-		__asmeq("%3", "r1")					\
+-		"bl	__put_user_" #__s				\
+-		: "=&r" (__e)						\
+-		: "0" (__p), "r" (__r2), "r" (__l)			\
+-		: "ip", "lr", "cc")
+-
+-#define __put_user_check(x, p)						\
++#define __put_user_check(__pu_val, __ptr, __err, __s)			\
+ 	({								\
+ 		unsigned long __limit = current_thread_info()->addr_limit - 1; \
+-		const typeof(*(p)) __user *__tmp_p = (p);		\
+-		register typeof(*(p)) __r2 asm("r2") = (x);	\
+-		register const typeof(*(p)) __user *__p asm("r0") = __tmp_p; \
++		register typeof(__pu_val) __r2 asm("r2") = __pu_val;	\
++		register const void __user *__p asm("r0") = __ptr;	\
+ 		register unsigned long __l asm("r1") = __limit;		\
+ 		register int __e asm("r0");				\
+-		unsigned int __ua_flags = uaccess_save_and_enable();	\
+-		switch (sizeof(*(__p))) {				\
+-		case 1:							\
+-			__put_user_x(__r2, __p, __e, __l, 1);		\
+-			break;						\
+-		case 2:							\
+-			__put_user_x(__r2, __p, __e, __l, 2);		\
+-			break;						\
+-		case 4:							\
+-			__put_user_x(__r2, __p, __e, __l, 4);		\
+-			break;						\
+-		case 8:							\
+-			__put_user_x(__r2, __p, __e, __l, 8);		\
+-			break;						\
+-		default: __e = __put_user_bad(); break;			\
+-		}							\
+-		uaccess_restore(__ua_flags);				\
+-		__e;							\
++		__asm__ __volatile__ (					\
++			__asmeq("%0", "r0") __asmeq("%2", "r2")		\
++			__asmeq("%3", "r1")				\
++			"bl	__put_user_" #__s			\
++			: "=&r" (__e)					\
++			: "0" (__p), "r" (__r2), "r" (__l)		\
++			: "ip", "lr", "cc");				\
++		__err = __e;						\
+ 	})
+ 
+-#define put_user(x, p)							\
+-	({								\
+-		might_fault();						\
+-		__put_user_check(x, p);					\
+-	 })
+-
+ #else /* CONFIG_MMU */
+ 
+ /*
+@@ -298,7 +313,7 @@ static inline void set_fs(mm_segment_t fs)
+ }
+ 
+ #define get_user(x, p)	__get_user(x, p)
+-#define put_user(x, p)	__put_user(x, p)
++#define __put_user_check __put_user_nocheck
+ 
+ #endif /* CONFIG_MMU */
+ 
+@@ -307,6 +322,16 @@ static inline void set_fs(mm_segment_t fs)
+ #define user_addr_max() \
+ 	(segment_eq(get_fs(), KERNEL_DS) ? ~0UL : get_fs())
+ 
++#ifdef CONFIG_CPU_SPECTRE
++/*
++ * When mitigating Spectre variant 1, it is not worth fixing the non-
++ * verifying accessors, because we need to add verification of the
++ * address space there.  Force these to use the standard get_user()
++ * version instead.
++ */
++#define __get_user(x, ptr) get_user(x, ptr)
++#else
++
+ /*
+  * The "__xxx" versions of the user access functions do not verify the
+  * address space - it must have been done previously with a separate
+@@ -323,12 +348,6 @@ static inline void set_fs(mm_segment_t fs)
+ 	__gu_err;							\
+ })
+ 
+-#define __get_user_error(x, ptr, err)					\
+-({									\
+-	__get_user_err((x), (ptr), err);				\
+-	(void) 0;							\
+-})
+-
+ #define __get_user_err(x, ptr, err)					\
+ do {									\
+ 	unsigned long __gu_addr = (unsigned long)(ptr);			\
+@@ -388,37 +407,58 @@ do {									\
+ 
+ #define __get_user_asm_word(x, addr, err)			\
+ 	__get_user_asm(x, addr, err, ldr)
++#endif
+ 
+-#define __put_user(x, ptr)						\
++
++#define __put_user_switch(x, ptr, __err, __fn)				\
++	do {								\
++		const __typeof__(*(ptr)) __user *__pu_ptr = (ptr);	\
++		__typeof__(*(ptr)) __pu_val = (x);			\
++		unsigned int __ua_flags;				\
++		might_fault();						\
++		__ua_flags = uaccess_save_and_enable();			\
++		switch (sizeof(*(ptr))) {				\
++		case 1: __fn(__pu_val, __pu_ptr, __err, 1); break;	\
++		case 2:	__fn(__pu_val, __pu_ptr, __err, 2); break;	\
++		case 4:	__fn(__pu_val, __pu_ptr, __err, 4); break;	\
++		case 8:	__fn(__pu_val, __pu_ptr, __err, 8); break;	\
++		default: __err = __put_user_bad(); break;		\
++		}							\
++		uaccess_restore(__ua_flags);				\
++	} while (0)
++
++#define put_user(x, ptr)						\
+ ({									\
+-	long __pu_err = 0;						\
+-	__put_user_err((x), (ptr), __pu_err);				\
++	int __pu_err = 0;						\
++	__put_user_switch((x), (ptr), __pu_err, __put_user_check);	\
+ 	__pu_err;							\
+ })
+ 
+-#define __put_user_error(x, ptr, err)					\
++#ifdef CONFIG_CPU_SPECTRE
++/*
++ * When mitigating Spectre variant 1.1, all accessors need to include
++ * verification of the address space.
++ */
++#define __put_user(x, ptr) put_user(x, ptr)
++
++#else
++#define __put_user(x, ptr)						\
+ ({									\
+-	__put_user_err((x), (ptr), err);				\
+-	(void) 0;							\
++	long __pu_err = 0;						\
++	__put_user_switch((x), (ptr), __pu_err, __put_user_nocheck);	\
++	__pu_err;							\
+ })
+ 
+-#define __put_user_err(x, ptr, err)					\
+-do {									\
+-	unsigned long __pu_addr = (unsigned long)(ptr);			\
+-	unsigned int __ua_flags;					\
+-	__typeof__(*(ptr)) __pu_val = (x);				\
+-	__chk_user_ptr(ptr);						\
+-	might_fault();							\
+-	__ua_flags = uaccess_save_and_enable();				\
+-	switch (sizeof(*(ptr))) {					\
+-	case 1: __put_user_asm_byte(__pu_val, __pu_addr, err);	break;	\
+-	case 2: __put_user_asm_half(__pu_val, __pu_addr, err);	break;	\
+-	case 4: __put_user_asm_word(__pu_val, __pu_addr, err);	break;	\
+-	case 8:	__put_user_asm_dword(__pu_val, __pu_addr, err);	break;	\
+-	default: __put_user_bad();					\
+-	}								\
+-	uaccess_restore(__ua_flags);					\
+-} while (0)
++#define __put_user_nocheck(x, __pu_ptr, __err, __size)			\
++	do {								\
++		unsigned long __pu_addr = (unsigned long)__pu_ptr;	\
++		__put_user_nocheck_##__size(x, __pu_addr, __err);	\
++	} while (0)
++
++#define __put_user_nocheck_1 __put_user_asm_byte
++#define __put_user_nocheck_2 __put_user_asm_half
++#define __put_user_nocheck_4 __put_user_asm_word
++#define __put_user_nocheck_8 __put_user_asm_dword
+ 
+ #define __put_user_asm(x, __pu_addr, err, instr)		\
+ 	__asm__ __volatile__(					\
+@@ -488,6 +528,7 @@ do {									\
+ 	: "r" (x), "i" (-EFAULT)				\
+ 	: "cc")
+ 
++#endif /* !CONFIG_CPU_SPECTRE */
+ 
+ #ifdef CONFIG_MMU
+ extern unsigned long __must_check
+diff --git a/arch/arm/kernel/Makefile b/arch/arm/kernel/Makefile
+index 3c789496297f..649bc3300c93 100644
+--- a/arch/arm/kernel/Makefile
++++ b/arch/arm/kernel/Makefile
+@@ -30,6 +30,7 @@ else
+ obj-y		+= entry-armv.o
+ endif
+ 
++obj-$(CONFIG_MMU)		+= bugs.o
+ obj-$(CONFIG_CPU_IDLE)		+= cpuidle.o
+ obj-$(CONFIG_ISA_DMA_API)	+= dma.o
+ obj-$(CONFIG_FIQ)		+= fiq.o fiqasm.o
+diff --git a/arch/arm/kernel/bugs.c b/arch/arm/kernel/bugs.c
+new file mode 100644
+index 000000000000..d41d3598e5e5
+--- /dev/null
++++ b/arch/arm/kernel/bugs.c
+@@ -0,0 +1,18 @@
++// SPDX-Identifier: GPL-2.0
++#include <linux/init.h>
++#include <asm/bugs.h>
++#include <asm/proc-fns.h>
++
++void check_other_bugs(void)
++{
++#ifdef MULTI_CPU
++	if (cpu_check_bugs)
++		cpu_check_bugs();
++#endif
++}
++
++void __init check_bugs(void)
++{
++	check_writebuffer_bugs();
++	check_other_bugs();
++}
+diff --git a/arch/arm/kernel/entry-common.S b/arch/arm/kernel/entry-common.S
+index 30a7228eaceb..e969b18d9ff9 100644
+--- a/arch/arm/kernel/entry-common.S
++++ b/arch/arm/kernel/entry-common.S
+@@ -223,9 +223,7 @@ local_restart:
+ 	tst	r10, #_TIF_SYSCALL_WORK		@ are we tracing syscalls?
+ 	bne	__sys_trace
+ 
+-	cmp	scno, #NR_syscalls		@ check upper syscall limit
+-	badr	lr, ret_fast_syscall		@ return address
+-	ldrcc	pc, [tbl, scno, lsl #2]		@ call sys_* routine
++	invoke_syscall tbl, scno, r10, ret_fast_syscall
+ 
+ 	add	r1, sp, #S_OFF
+ 2:	cmp	scno, #(__ARM_NR_BASE - __NR_SYSCALL_BASE)
+@@ -258,14 +256,8 @@ __sys_trace:
+ 	mov	r1, scno
+ 	add	r0, sp, #S_OFF
+ 	bl	syscall_trace_enter
+-
+-	badr	lr, __sys_trace_return		@ return address
+-	mov	scno, r0			@ syscall number (possibly new)
+-	add	r1, sp, #S_R0 + S_OFF		@ pointer to regs
+-	cmp	scno, #NR_syscalls		@ check upper syscall limit
+-	ldmccia	r1, {r0 - r6}			@ have to reload r0 - r6
+-	stmccia	sp, {r4, r5}			@ and update the stack args
+-	ldrcc	pc, [tbl, scno, lsl #2]		@ call sys_* routine
++	mov	scno, r0
++	invoke_syscall tbl, scno, r10, __sys_trace_return, reload=1
+ 	cmp	scno, #-1			@ skip the syscall?
+ 	bne	2b
+ 	add	sp, sp, #S_OFF			@ restore stack
+@@ -317,6 +309,10 @@ sys_syscall:
+ 		bic	scno, r0, #__NR_OABI_SYSCALL_BASE
+ 		cmp	scno, #__NR_syscall - __NR_SYSCALL_BASE
+ 		cmpne	scno, #NR_syscalls	@ check range
++#ifdef CONFIG_CPU_SPECTRE
++		movhs	scno, #0
++		csdb
++#endif
+ 		stmloia	sp, {r5, r6}		@ shuffle args
+ 		movlo	r0, r1
+ 		movlo	r1, r2
+diff --git a/arch/arm/kernel/entry-header.S b/arch/arm/kernel/entry-header.S
+index 6d243e830516..86dfee487e24 100644
+--- a/arch/arm/kernel/entry-header.S
++++ b/arch/arm/kernel/entry-header.S
+@@ -373,6 +373,31 @@
+ #endif
+ 	.endm
+ 
++	.macro	invoke_syscall, table, nr, tmp, ret, reload=0
++#ifdef CONFIG_CPU_SPECTRE
++	mov	\tmp, \nr
++	cmp	\tmp, #NR_syscalls		@ check upper syscall limit
++	movcs	\tmp, #0
++	csdb
++	badr	lr, \ret			@ return address
++	.if	\reload
++	add	r1, sp, #S_R0 + S_OFF		@ pointer to regs
++	ldmccia	r1, {r0 - r6}			@ reload r0-r6
++	stmccia	sp, {r4, r5}			@ update stack arguments
++	.endif
++	ldrcc	pc, [\table, \tmp, lsl #2]	@ call sys_* routine
++#else
++	cmp	\nr, #NR_syscalls		@ check upper syscall limit
++	badr	lr, \ret			@ return address
++	.if	\reload
++	add	r1, sp, #S_R0 + S_OFF		@ pointer to regs
++	ldmccia	r1, {r0 - r6}			@ reload r0-r6
++	stmccia	sp, {r4, r5}			@ update stack arguments
++	.endif
++	ldrcc	pc, [\table, \nr, lsl #2]	@ call sys_* routine
++#endif
++	.endm
++
+ /*
+  * These are the registers used in the syscall handler, and allow us to
+  * have in theory up to 7 arguments to a function - r0 to r6.
+diff --git a/arch/arm/kernel/head-common.S b/arch/arm/kernel/head-common.S
+index 8733012d231f..7e662bdd5cb3 100644
+--- a/arch/arm/kernel/head-common.S
++++ b/arch/arm/kernel/head-common.S
+@@ -122,6 +122,9 @@ __mmap_switched_data:
+ 	.long	init_thread_union + THREAD_START_SP @ sp
+ 	.size	__mmap_switched_data, . - __mmap_switched_data
+ 
++	__FINIT
++	.text
++
+ /*
+  * This provides a C-API version of __lookup_processor_type
+  */
+@@ -133,9 +136,6 @@ ENTRY(lookup_processor_type)
+ 	ldmfd	sp!, {r4 - r6, r9, pc}
+ ENDPROC(lookup_processor_type)
+ 
+-	__FINIT
+-	.text
+-
+ /*
+  * Read processor ID register (CP#15, CR0), and look up in the linker-built
+  * supported processor list.  Note that we can't use the absolute addresses
+diff --git a/arch/arm/kernel/setup.c b/arch/arm/kernel/setup.c
+index 20edd349d379..e9c3d38d995d 100644
+--- a/arch/arm/kernel/setup.c
++++ b/arch/arm/kernel/setup.c
+@@ -113,6 +113,11 @@ EXPORT_SYMBOL(elf_hwcap2);
+ 
+ #ifdef MULTI_CPU
+ struct processor processor __read_mostly;
++#if defined(CONFIG_BIG_LITTLE) && defined(CONFIG_HARDEN_BRANCH_PREDICTOR)
++struct processor *cpu_vtable[NR_CPUS] = {
++	[0] = &processor,
++};
++#endif
+ #endif
+ #ifdef MULTI_TLB
+ struct cpu_tlb_fns cpu_tlb __read_mostly;
+@@ -599,28 +604,33 @@ static void __init smp_build_mpidr_hash(void)
+ }
+ #endif
+ 
+-static void __init setup_processor(void)
++/*
++ * locate processor in the list of supported processor types.  The linker
++ * builds this table for us from the entries in arch/arm/mm/proc-*.S
++ */
++struct proc_info_list *lookup_processor(u32 midr)
+ {
+-	struct proc_info_list *list;
++	struct proc_info_list *list = lookup_processor_type(midr);
+ 
+-	/*
+-	 * locate processor in the list of supported processor
+-	 * types.  The linker builds this table for us from the
+-	 * entries in arch/arm/mm/proc-*.S
+-	 */
+-	list = lookup_processor_type(read_cpuid_id());
+ 	if (!list) {
+-		pr_err("CPU configuration botched (ID %08x), unable to continue.\n",
+-		       read_cpuid_id());
+-		while (1);
++		pr_err("CPU%u: configuration botched (ID %08x), CPU halted\n",
++		       smp_processor_id(), midr);
++		while (1)
++		/* can't use cpu_relax() here as it may require MMU setup */;
+ 	}
+ 
++	return list;
++}
++
++static void __init setup_processor(void)
++{
++	unsigned int midr = read_cpuid_id();
++	struct proc_info_list *list = lookup_processor(midr);
++
+ 	cpu_name = list->cpu_name;
+ 	__cpu_architecture = __get_cpu_architecture();
+ 
+-#ifdef MULTI_CPU
+-	processor = *list->proc;
+-#endif
++	init_proc_vtable(list->proc);
+ #ifdef MULTI_TLB
+ 	cpu_tlb = *list->tlb;
+ #endif
+@@ -632,7 +642,7 @@ static void __init setup_processor(void)
+ #endif
+ 
+ 	pr_info("CPU: %s [%08x] revision %d (ARMv%s), cr=%08lx\n",
+-		cpu_name, read_cpuid_id(), read_cpuid_id() & 15,
++		list->cpu_name, midr, midr & 15,
+ 		proc_arch[cpu_architecture()], get_cr());
+ 
+ 	snprintf(init_utsname()->machine, __NEW_UTS_LEN + 1, "%s%c",
+diff --git a/arch/arm/kernel/signal.c b/arch/arm/kernel/signal.c
+index 7b8f2141427b..0a066f03b5ec 100644
+--- a/arch/arm/kernel/signal.c
++++ b/arch/arm/kernel/signal.c
+@@ -94,34 +94,34 @@ static int restore_iwmmxt_context(struct iwmmxt_sigframe *frame)
+ 
+ static int preserve_vfp_context(struct vfp_sigframe __user *frame)
+ {
+-	const unsigned long magic = VFP_MAGIC;
+-	const unsigned long size = VFP_STORAGE_SIZE;
++	struct vfp_sigframe kframe;
+ 	int err = 0;
+ 
+-	__put_user_error(magic, &frame->magic, err);
+-	__put_user_error(size, &frame->size, err);
++	memset(&kframe, 0, sizeof(kframe));
++	kframe.magic = VFP_MAGIC;
++	kframe.size = VFP_STORAGE_SIZE;
+ 
++	err = vfp_preserve_user_clear_hwstate(&kframe.ufp, &kframe.ufp_exc);
+ 	if (err)
+-		return -EFAULT;
++		return err;
+ 
+-	return vfp_preserve_user_clear_hwstate(&frame->ufp, &frame->ufp_exc);
++	return __copy_to_user(frame, &kframe, sizeof(kframe));
+ }
+ 
+-static int restore_vfp_context(struct vfp_sigframe __user *frame)
++static int restore_vfp_context(struct vfp_sigframe __user *auxp)
+ {
+-	unsigned long magic;
+-	unsigned long size;
+-	int err = 0;
++	struct vfp_sigframe frame;
++	int err;
+ 
+-	__get_user_error(magic, &frame->magic, err);
+-	__get_user_error(size, &frame->size, err);
++	err = __copy_from_user(&frame, (char __user *) auxp, sizeof(frame));
+ 
+ 	if (err)
+-		return -EFAULT;
+-	if (magic != VFP_MAGIC || size != VFP_STORAGE_SIZE)
++		return err;
++
++	if (frame.magic != VFP_MAGIC || frame.size != VFP_STORAGE_SIZE)
+ 		return -EINVAL;
+ 
+-	return vfp_restore_user_hwstate(&frame->ufp, &frame->ufp_exc);
++	return vfp_restore_user_hwstate(&frame.ufp, &frame.ufp_exc);
+ }
+ 
+ #endif
+@@ -141,6 +141,7 @@ struct rt_sigframe {
+ 
+ static int restore_sigframe(struct pt_regs *regs, struct sigframe __user *sf)
+ {
++	struct sigcontext context;
+ 	struct aux_sigframe __user *aux;
+ 	sigset_t set;
+ 	int err;
+@@ -149,23 +150,26 @@ static int restore_sigframe(struct pt_regs *regs, struct sigframe __user *sf)
+ 	if (err == 0)
+ 		set_current_blocked(&set);
+ 
+-	__get_user_error(regs->ARM_r0, &sf->uc.uc_mcontext.arm_r0, err);
+-	__get_user_error(regs->ARM_r1, &sf->uc.uc_mcontext.arm_r1, err);
+-	__get_user_error(regs->ARM_r2, &sf->uc.uc_mcontext.arm_r2, err);
+-	__get_user_error(regs->ARM_r3, &sf->uc.uc_mcontext.arm_r3, err);
+-	__get_user_error(regs->ARM_r4, &sf->uc.uc_mcontext.arm_r4, err);
+-	__get_user_error(regs->ARM_r5, &sf->uc.uc_mcontext.arm_r5, err);
+-	__get_user_error(regs->ARM_r6, &sf->uc.uc_mcontext.arm_r6, err);
+-	__get_user_error(regs->ARM_r7, &sf->uc.uc_mcontext.arm_r7, err);
+-	__get_user_error(regs->ARM_r8, &sf->uc.uc_mcontext.arm_r8, err);
+-	__get_user_error(regs->ARM_r9, &sf->uc.uc_mcontext.arm_r9, err);
+-	__get_user_error(regs->ARM_r10, &sf->uc.uc_mcontext.arm_r10, err);
+-	__get_user_error(regs->ARM_fp, &sf->uc.uc_mcontext.arm_fp, err);
+-	__get_user_error(regs->ARM_ip, &sf->uc.uc_mcontext.arm_ip, err);
+-	__get_user_error(regs->ARM_sp, &sf->uc.uc_mcontext.arm_sp, err);
+-	__get_user_error(regs->ARM_lr, &sf->uc.uc_mcontext.arm_lr, err);
+-	__get_user_error(regs->ARM_pc, &sf->uc.uc_mcontext.arm_pc, err);
+-	__get_user_error(regs->ARM_cpsr, &sf->uc.uc_mcontext.arm_cpsr, err);
++	err |= __copy_from_user(&context, &sf->uc.uc_mcontext, sizeof(context));
++	if (err == 0) {
++		regs->ARM_r0 = context.arm_r0;
++		regs->ARM_r1 = context.arm_r1;
++		regs->ARM_r2 = context.arm_r2;
++		regs->ARM_r3 = context.arm_r3;
++		regs->ARM_r4 = context.arm_r4;
++		regs->ARM_r5 = context.arm_r5;
++		regs->ARM_r6 = context.arm_r6;
++		regs->ARM_r7 = context.arm_r7;
++		regs->ARM_r8 = context.arm_r8;
++		regs->ARM_r9 = context.arm_r9;
++		regs->ARM_r10 = context.arm_r10;
++		regs->ARM_fp = context.arm_fp;
++		regs->ARM_ip = context.arm_ip;
++		regs->ARM_sp = context.arm_sp;
++		regs->ARM_lr = context.arm_lr;
++		regs->ARM_pc = context.arm_pc;
++		regs->ARM_cpsr = context.arm_cpsr;
++	}
+ 
+ 	err |= !valid_user_regs(regs);
+ 
+@@ -253,30 +257,35 @@ static int
+ setup_sigframe(struct sigframe __user *sf, struct pt_regs *regs, sigset_t *set)
+ {
+ 	struct aux_sigframe __user *aux;
++	struct sigcontext context;
+ 	int err = 0;
+ 
+-	__put_user_error(regs->ARM_r0, &sf->uc.uc_mcontext.arm_r0, err);
+-	__put_user_error(regs->ARM_r1, &sf->uc.uc_mcontext.arm_r1, err);
+-	__put_user_error(regs->ARM_r2, &sf->uc.uc_mcontext.arm_r2, err);
+-	__put_user_error(regs->ARM_r3, &sf->uc.uc_mcontext.arm_r3, err);
+-	__put_user_error(regs->ARM_r4, &sf->uc.uc_mcontext.arm_r4, err);
+-	__put_user_error(regs->ARM_r5, &sf->uc.uc_mcontext.arm_r5, err);
+-	__put_user_error(regs->ARM_r6, &sf->uc.uc_mcontext.arm_r6, err);
+-	__put_user_error(regs->ARM_r7, &sf->uc.uc_mcontext.arm_r7, err);
+-	__put_user_error(regs->ARM_r8, &sf->uc.uc_mcontext.arm_r8, err);
+-	__put_user_error(regs->ARM_r9, &sf->uc.uc_mcontext.arm_r9, err);
+-	__put_user_error(regs->ARM_r10, &sf->uc.uc_mcontext.arm_r10, err);
+-	__put_user_error(regs->ARM_fp, &sf->uc.uc_mcontext.arm_fp, err);
+-	__put_user_error(regs->ARM_ip, &sf->uc.uc_mcontext.arm_ip, err);
+-	__put_user_error(regs->ARM_sp, &sf->uc.uc_mcontext.arm_sp, err);
+-	__put_user_error(regs->ARM_lr, &sf->uc.uc_mcontext.arm_lr, err);
+-	__put_user_error(regs->ARM_pc, &sf->uc.uc_mcontext.arm_pc, err);
+-	__put_user_error(regs->ARM_cpsr, &sf->uc.uc_mcontext.arm_cpsr, err);
+-
+-	__put_user_error(current->thread.trap_no, &sf->uc.uc_mcontext.trap_no, err);
+-	__put_user_error(current->thread.error_code, &sf->uc.uc_mcontext.error_code, err);
+-	__put_user_error(current->thread.address, &sf->uc.uc_mcontext.fault_address, err);
+-	__put_user_error(set->sig[0], &sf->uc.uc_mcontext.oldmask, err);
++	context = (struct sigcontext) {
++		.arm_r0        = regs->ARM_r0,
++		.arm_r1        = regs->ARM_r1,
++		.arm_r2        = regs->ARM_r2,
++		.arm_r3        = regs->ARM_r3,
++		.arm_r4        = regs->ARM_r4,
++		.arm_r5        = regs->ARM_r5,
++		.arm_r6        = regs->ARM_r6,
++		.arm_r7        = regs->ARM_r7,
++		.arm_r8        = regs->ARM_r8,
++		.arm_r9        = regs->ARM_r9,
++		.arm_r10       = regs->ARM_r10,
++		.arm_fp        = regs->ARM_fp,
++		.arm_ip        = regs->ARM_ip,
++		.arm_sp        = regs->ARM_sp,
++		.arm_lr        = regs->ARM_lr,
++		.arm_pc        = regs->ARM_pc,
++		.arm_cpsr      = regs->ARM_cpsr,
++
++		.trap_no       = current->thread.trap_no,
++		.error_code    = current->thread.error_code,
++		.fault_address = current->thread.address,
++		.oldmask       = set->sig[0],
++	};
++
++	err |= __copy_to_user(&sf->uc.uc_mcontext, &context, sizeof(context));
+ 
+ 	err |= __copy_to_user(&sf->uc.uc_sigmask, set, sizeof(*set));
+ 
+@@ -293,7 +302,7 @@ setup_sigframe(struct sigframe __user *sf, struct pt_regs *regs, sigset_t *set)
+ 	if (err == 0)
+ 		err |= preserve_vfp_context(&aux->vfp);
+ #endif
+-	__put_user_error(0, &aux->end_magic, err);
++	err |= __put_user(0, &aux->end_magic);
+ 
+ 	return err;
+ }
+@@ -425,7 +434,7 @@ setup_frame(struct ksignal *ksig, sigset_t *set, struct pt_regs *regs)
+ 	/*
+ 	 * Set uc.uc_flags to a value which sc.trap_no would never have.
+ 	 */
+-	__put_user_error(0x5ac3c35a, &frame->uc.uc_flags, err);
++	err = __put_user(0x5ac3c35a, &frame->uc.uc_flags);
+ 
+ 	err |= setup_sigframe(frame, regs, set);
+ 	if (err == 0)
+@@ -445,8 +454,8 @@ setup_rt_frame(struct ksignal *ksig, sigset_t *set, struct pt_regs *regs)
+ 
+ 	err |= copy_siginfo_to_user(&frame->info, &ksig->info);
+ 
+-	__put_user_error(0, &frame->sig.uc.uc_flags, err);
+-	__put_user_error(NULL, &frame->sig.uc.uc_link, err);
++	err |= __put_user(0, &frame->sig.uc.uc_flags);
++	err |= __put_user(NULL, &frame->sig.uc.uc_link);
+ 
+ 	err |= __save_altstack(&frame->sig.uc.uc_stack, regs->ARM_sp);
+ 	err |= setup_sigframe(&frame->sig, regs, set);
+diff --git a/arch/arm/kernel/smccc-call.S b/arch/arm/kernel/smccc-call.S
+new file mode 100644
+index 000000000000..2e48b674aab1
+--- /dev/null
++++ b/arch/arm/kernel/smccc-call.S
+@@ -0,0 +1,62 @@
++/*
++ * Copyright (c) 2015, Linaro Limited
++ *
++ * This software is licensed under the terms of the GNU General Public
++ * License version 2, as published by the Free Software Foundation, and
++ * may be copied, distributed, and modified under those terms.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ */
++#include <linux/linkage.h>
++
++#include <asm/opcodes-sec.h>
++#include <asm/opcodes-virt.h>
++#include <asm/unwind.h>
++
++	/*
++	 * Wrap c macros in asm macros to delay expansion until after the
++	 * SMCCC asm macro is expanded.
++	 */
++	.macro SMCCC_SMC
++	__SMC(0)
++	.endm
++
++	.macro SMCCC_HVC
++	__HVC(0)
++	.endm
++
++	.macro SMCCC instr
++UNWIND(	.fnstart)
++	mov	r12, sp
++	push	{r4-r7}
++UNWIND(	.save	{r4-r7})
++	ldm	r12, {r4-r7}
++	\instr
++	pop	{r4-r7}
++	ldr	r12, [sp, #(4 * 4)]
++	stm	r12, {r0-r3}
++	bx	lr
++UNWIND(	.fnend)
++	.endm
++
++/*
++ * void smccc_smc(unsigned long a0, unsigned long a1, unsigned long a2,
++ *		  unsigned long a3, unsigned long a4, unsigned long a5,
++ *		  unsigned long a6, unsigned long a7, struct arm_smccc_res *res)
++ */
++ENTRY(arm_smccc_smc)
++	SMCCC SMCCC_SMC
++ENDPROC(arm_smccc_smc)
++
++/*
++ * void smccc_hvc(unsigned long a0, unsigned long a1, unsigned long a2,
++ *		  unsigned long a3, unsigned long a4, unsigned long a5,
++ *		  unsigned long a6, unsigned long a7, struct arm_smccc_res *res)
++ */
++ENTRY(arm_smccc_hvc)
++	SMCCC SMCCC_HVC
++ENDPROC(arm_smccc_hvc)
+diff --git a/arch/arm/kernel/smp.c b/arch/arm/kernel/smp.c
+index 0f1c11861147..d2033d09125f 100644
+--- a/arch/arm/kernel/smp.c
++++ b/arch/arm/kernel/smp.c
+@@ -27,8 +27,10 @@
+ #include <linux/completion.h>
+ #include <linux/cpufreq.h>
+ #include <linux/irq_work.h>
++#include <linux/slab.h>
+ 
+ #include <linux/atomic.h>
++#include <asm/bugs.h>
+ #include <asm/smp.h>
+ #include <asm/cacheflush.h>
+ #include <asm/cpu.h>
+@@ -39,6 +41,7 @@
+ #include <asm/mmu_context.h>
+ #include <asm/pgtable.h>
+ #include <asm/pgalloc.h>
++#include <asm/procinfo.h>
+ #include <asm/processor.h>
+ #include <asm/sections.h>
+ #include <asm/tlbflush.h>
+@@ -95,6 +98,30 @@ static unsigned long get_arch_pgd(pgd_t *pgd)
+ #endif
+ }
+ 
++#if defined(CONFIG_BIG_LITTLE) && defined(CONFIG_HARDEN_BRANCH_PREDICTOR)
++static int secondary_biglittle_prepare(unsigned int cpu)
++{
++	if (!cpu_vtable[cpu])
++		cpu_vtable[cpu] = kzalloc(sizeof(*cpu_vtable[cpu]), GFP_KERNEL);
++
++	return cpu_vtable[cpu] ? 0 : -ENOMEM;
++}
++
++static void secondary_biglittle_init(void)
++{
++	init_proc_vtable(lookup_processor(read_cpuid_id())->proc);
++}
++#else
++static int secondary_biglittle_prepare(unsigned int cpu)
++{
++	return 0;
++}
++
++static void secondary_biglittle_init(void)
++{
++}
++#endif
++
+ int __cpu_up(unsigned int cpu, struct task_struct *idle)
+ {
+ 	int ret;
+@@ -102,6 +129,10 @@ int __cpu_up(unsigned int cpu, struct task_struct *idle)
+ 	if (!smp_ops.smp_boot_secondary)
+ 		return -ENOSYS;
+ 
++	ret = secondary_biglittle_prepare(cpu);
++	if (ret)
++		return ret;
++
+ 	/*
+ 	 * We need to tell the secondary core where to find
+ 	 * its stack and the page tables.
+@@ -353,6 +384,8 @@ asmlinkage void secondary_start_kernel(void)
+ 	struct mm_struct *mm = &init_mm;
+ 	unsigned int cpu;
+ 
++	secondary_biglittle_init();
++
+ 	/*
+ 	 * The identity mapping is uncached (strongly ordered), so
+ 	 * switch away from it before attempting any exclusive accesses.
+@@ -396,6 +429,9 @@ asmlinkage void secondary_start_kernel(void)
+ 	 * before we continue - which happens after __cpu_up returns.
+ 	 */
+ 	set_cpu_online(cpu, true);
++
++	check_other_bugs();
++
+ 	complete(&cpu_running);
+ 
+ 	local_irq_enable();
+diff --git a/arch/arm/kernel/suspend.c b/arch/arm/kernel/suspend.c
+index 9a2f882a0a2d..134f0d432610 100644
+--- a/arch/arm/kernel/suspend.c
++++ b/arch/arm/kernel/suspend.c
+@@ -1,6 +1,7 @@
+ #include <linux/init.h>
+ #include <linux/slab.h>
+ 
++#include <asm/bugs.h>
+ #include <asm/cacheflush.h>
+ #include <asm/idmap.h>
+ #include <asm/pgalloc.h>
+@@ -34,6 +35,7 @@ int cpu_suspend(unsigned long arg, int (*fn)(unsigned long))
+ 		cpu_switch_mm(mm->pgd, mm);
+ 		local_flush_bp_all();
+ 		local_flush_tlb_all();
++		check_other_bugs();
+ 	}
+ 
+ 	return ret;
+diff --git a/arch/arm/kernel/sys_oabi-compat.c b/arch/arm/kernel/sys_oabi-compat.c
+index 5f221acd21ae..d844c5c9364b 100644
+--- a/arch/arm/kernel/sys_oabi-compat.c
++++ b/arch/arm/kernel/sys_oabi-compat.c
+@@ -276,6 +276,7 @@ asmlinkage long sys_oabi_epoll_wait(int epfd,
+ 				    int maxevents, int timeout)
+ {
+ 	struct epoll_event *kbuf;
++	struct oabi_epoll_event e;
+ 	mm_segment_t fs;
+ 	long ret, err, i;
+ 
+@@ -294,8 +295,11 @@ asmlinkage long sys_oabi_epoll_wait(int epfd,
+ 	set_fs(fs);
+ 	err = 0;
+ 	for (i = 0; i < ret; i++) {
+-		__put_user_error(kbuf[i].events, &events->events, err);
+-		__put_user_error(kbuf[i].data,   &events->data,   err);
++		e.events = kbuf[i].events;
++		e.data = kbuf[i].data;
++		err = __copy_to_user(events, &e, sizeof(e));
++		if (err)
++			break;
+ 		events++;
+ 	}
+ 	kfree(kbuf);
+@@ -328,9 +332,11 @@ asmlinkage long sys_oabi_semtimedop(int semid,
+ 		return -ENOMEM;
+ 	err = 0;
+ 	for (i = 0; i < nsops; i++) {
+-		__get_user_error(sops[i].sem_num, &tsops->sem_num, err);
+-		__get_user_error(sops[i].sem_op,  &tsops->sem_op,  err);
+-		__get_user_error(sops[i].sem_flg, &tsops->sem_flg, err);
++		struct oabi_sembuf osb;
++		err |= __copy_from_user(&osb, tsops, sizeof(osb));
++		sops[i].sem_num = osb.sem_num;
++		sops[i].sem_op = osb.sem_op;
++		sops[i].sem_flg = osb.sem_flg;
+ 		tsops++;
+ 	}
+ 	if (timeout) {
+diff --git a/arch/arm/lib/copy_from_user.S b/arch/arm/lib/copy_from_user.S
+index 1512bebfbf1b..e32b51838439 100644
+--- a/arch/arm/lib/copy_from_user.S
++++ b/arch/arm/lib/copy_from_user.S
+@@ -90,6 +90,11 @@
+ 	.text
+ 
+ ENTRY(arm_copy_from_user)
++#ifdef CONFIG_CPU_SPECTRE
++	get_thread_info r3
++	ldr	r3, [r3, #TI_ADDR_LIMIT]
++	uaccess_mask_range_ptr r1, r2, r3, ip
++#endif
+ 
+ #include "copy_template.S"
+ 
+diff --git a/arch/arm/mm/Kconfig b/arch/arm/mm/Kconfig
+index 41218867a9a6..71115afb71a0 100644
+--- a/arch/arm/mm/Kconfig
++++ b/arch/arm/mm/Kconfig
+@@ -396,6 +396,7 @@ config CPU_V7
+ 	select CPU_CP15_MPU if !MMU
+ 	select CPU_HAS_ASID if MMU
+ 	select CPU_PABRT_V7
++	select CPU_SPECTRE if MMU
+ 	select CPU_TLB_V7 if MMU
+ 
+ # ARMv7M
+@@ -793,6 +794,28 @@ config CPU_BPREDICT_DISABLE
+ 	help
+ 	  Say Y here to disable branch prediction.  If unsure, say N.
+ 
++config CPU_SPECTRE
++	bool
++
++config HARDEN_BRANCH_PREDICTOR
++	bool "Harden the branch predictor against aliasing attacks" if EXPERT
++	depends on CPU_SPECTRE
++	default y
++	help
++	   Speculation attacks against some high-performance processors rely
++	   on being able to manipulate the branch predictor for a victim
++	   context by executing aliasing branches in the attacker context.
++	   Such attacks can be partially mitigated against by clearing
++	   internal branch predictor state and limiting the prediction
++	   logic in some situations.
++
++	   This config option will take CPU-specific actions to harden
++	   the branch predictor against aliasing attacks and may rely on
++	   specific instruction sequences or control bits being set by
++	   the system firmware.
++
++	   If unsure, say Y.
++
+ config TLS_REG_EMUL
+ 	bool
+ 	select NEED_KUSER_HELPERS
+diff --git a/arch/arm/mm/Makefile b/arch/arm/mm/Makefile
+index 7f76d96ce546..35307176e46c 100644
+--- a/arch/arm/mm/Makefile
++++ b/arch/arm/mm/Makefile
+@@ -92,7 +92,7 @@ obj-$(CONFIG_CPU_MOHAWK)	+= proc-mohawk.o
+ obj-$(CONFIG_CPU_FEROCEON)	+= proc-feroceon.o
+ obj-$(CONFIG_CPU_V6)		+= proc-v6.o
+ obj-$(CONFIG_CPU_V6K)		+= proc-v6.o
+-obj-$(CONFIG_CPU_V7)		+= proc-v7.o
++obj-$(CONFIG_CPU_V7)		+= proc-v7.o proc-v7-bugs.o
+ obj-$(CONFIG_CPU_V7M)		+= proc-v7m.o
+ 
+ AFLAGS_proc-v6.o	:=-Wa,-march=armv6
+diff --git a/arch/arm/mm/alignment.c b/arch/arm/mm/alignment.c
+index 7d5f4c736a16..cd18eda014c2 100644
+--- a/arch/arm/mm/alignment.c
++++ b/arch/arm/mm/alignment.c
+@@ -767,6 +767,36 @@ do_alignment_t32_to_handler(unsigned long *pinstr, struct pt_regs *regs,
+ 	return NULL;
+ }
+ 
++static int alignment_get_arm(struct pt_regs *regs, u32 *ip, unsigned long *inst)
++{
++	u32 instr = 0;
++	int fault;
++
++	if (user_mode(regs))
++		fault = get_user(instr, ip);
++	else
++		fault = probe_kernel_address(ip, instr);
++
++	*inst = __mem_to_opcode_arm(instr);
++
++	return fault;
++}
++
++static int alignment_get_thumb(struct pt_regs *regs, u16 *ip, u16 *inst)
++{
++	u16 instr = 0;
++	int fault;
++
++	if (user_mode(regs))
++		fault = get_user(instr, ip);
++	else
++		fault = probe_kernel_address(ip, instr);
++
++	*inst = __mem_to_opcode_thumb16(instr);
++
++	return fault;
++}
++
+ static int
+ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
+ {
+@@ -774,10 +804,10 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
+ 	unsigned long instr = 0, instrptr;
+ 	int (*handler)(unsigned long addr, unsigned long instr, struct pt_regs *regs);
+ 	unsigned int type;
+-	unsigned int fault;
+ 	u16 tinstr = 0;
+ 	int isize = 4;
+ 	int thumb2_32b = 0;
++	int fault;
+ 
+ 	if (interrupts_enabled(regs))
+ 		local_irq_enable();
+@@ -786,15 +816,14 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
+ 
+ 	if (thumb_mode(regs)) {
+ 		u16 *ptr = (u16 *)(instrptr & ~1);
+-		fault = probe_kernel_address(ptr, tinstr);
+-		tinstr = __mem_to_opcode_thumb16(tinstr);
++
++		fault = alignment_get_thumb(regs, ptr, &tinstr);
+ 		if (!fault) {
+ 			if (cpu_architecture() >= CPU_ARCH_ARMv7 &&
+ 			    IS_T32(tinstr)) {
+ 				/* Thumb-2 32-bit */
+-				u16 tinst2 = 0;
+-				fault = probe_kernel_address(ptr + 1, tinst2);
+-				tinst2 = __mem_to_opcode_thumb16(tinst2);
++				u16 tinst2;
++				fault = alignment_get_thumb(regs, ptr + 1, &tinst2);
+ 				instr = __opcode_thumb32_compose(tinstr, tinst2);
+ 				thumb2_32b = 1;
+ 			} else {
+@@ -803,8 +832,7 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
+ 			}
+ 		}
+ 	} else {
+-		fault = probe_kernel_address((void *)instrptr, instr);
+-		instr = __mem_to_opcode_arm(instr);
++		fault = alignment_get_arm(regs, (void *)instrptr, &instr);
+ 	}
+ 
+ 	if (fault) {
+diff --git a/arch/arm/mm/fault.c b/arch/arm/mm/fault.c
+index 702a5542b11a..20172b6fa773 100644
+--- a/arch/arm/mm/fault.c
++++ b/arch/arm/mm/fault.c
+@@ -163,6 +163,9 @@ __do_user_fault(struct task_struct *tsk, unsigned long addr,
+ {
+ 	struct siginfo si;
+ 
++	if (addr > TASK_SIZE)
++		harden_branch_predictor();
++
+ #ifdef CONFIG_DEBUG_USER
+ 	if (((user_debug & UDBG_SEGV) && (sig == SIGSEGV)) ||
+ 	    ((user_debug & UDBG_BUS)  && (sig == SIGBUS))) {
+diff --git a/arch/arm/mm/proc-macros.S b/arch/arm/mm/proc-macros.S
+index c671f345266a..e6bfdcc381f8 100644
+--- a/arch/arm/mm/proc-macros.S
++++ b/arch/arm/mm/proc-macros.S
+@@ -258,13 +258,21 @@
+ 	mcr	p15, 0, ip, c7, c10, 4		@ data write barrier
+ 	.endm
+ 
+-.macro define_processor_functions name:req, dabort:req, pabort:req, nommu=0, suspend=0
++.macro define_processor_functions name:req, dabort:req, pabort:req, nommu=0, suspend=0, bugs=0
++/*
++ * If we are building for big.Little with branch predictor hardening,
++ * we need the processor function tables to remain available after boot.
++ */
++#if defined(CONFIG_BIG_LITTLE) && defined(CONFIG_HARDEN_BRANCH_PREDICTOR)
++	.section ".rodata"
++#endif
+ 	.type	\name\()_processor_functions, #object
+ 	.align 2
+ ENTRY(\name\()_processor_functions)
+ 	.word	\dabort
+ 	.word	\pabort
+ 	.word	cpu_\name\()_proc_init
++	.word	\bugs
+ 	.word	cpu_\name\()_proc_fin
+ 	.word	cpu_\name\()_reset
+ 	.word	cpu_\name\()_do_idle
+@@ -293,6 +301,9 @@ ENTRY(\name\()_processor_functions)
+ 	.endif
+ 
+ 	.size	\name\()_processor_functions, . - \name\()_processor_functions
++#if defined(CONFIG_BIG_LITTLE) && defined(CONFIG_HARDEN_BRANCH_PREDICTOR)
++	.previous
++#endif
+ .endm
+ 
+ .macro define_cache_functions name:req
+diff --git a/arch/arm/mm/proc-v7-bugs.c b/arch/arm/mm/proc-v7-bugs.c
+new file mode 100644
+index 000000000000..9a07916af8dd
+--- /dev/null
++++ b/arch/arm/mm/proc-v7-bugs.c
+@@ -0,0 +1,161 @@
++// SPDX-License-Identifier: GPL-2.0
++#include <linux/arm-smccc.h>
++#include <linux/kernel.h>
++#include <linux/psci.h>
++#include <linux/smp.h>
++
++#include <asm/cp15.h>
++#include <asm/cputype.h>
++#include <asm/proc-fns.h>
++#include <asm/system_misc.h>
++
++#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
++DEFINE_PER_CPU(harden_branch_predictor_fn_t, harden_branch_predictor_fn);
++
++extern void cpu_v7_iciallu_switch_mm(phys_addr_t pgd_phys, struct mm_struct *mm);
++extern void cpu_v7_bpiall_switch_mm(phys_addr_t pgd_phys, struct mm_struct *mm);
++extern void cpu_v7_smc_switch_mm(phys_addr_t pgd_phys, struct mm_struct *mm);
++extern void cpu_v7_hvc_switch_mm(phys_addr_t pgd_phys, struct mm_struct *mm);
++
++static void harden_branch_predictor_bpiall(void)
++{
++	write_sysreg(0, BPIALL);
++}
++
++static void harden_branch_predictor_iciallu(void)
++{
++	write_sysreg(0, ICIALLU);
++}
++
++static void __maybe_unused call_smc_arch_workaround_1(void)
++{
++	arm_smccc_1_1_smc(ARM_SMCCC_ARCH_WORKAROUND_1, NULL);
++}
++
++static void __maybe_unused call_hvc_arch_workaround_1(void)
++{
++	arm_smccc_1_1_hvc(ARM_SMCCC_ARCH_WORKAROUND_1, NULL);
++}
++
++static void cpu_v7_spectre_init(void)
++{
++	const char *spectre_v2_method = NULL;
++	int cpu = smp_processor_id();
++
++	if (per_cpu(harden_branch_predictor_fn, cpu))
++		return;
++
++	switch (read_cpuid_part()) {
++	case ARM_CPU_PART_CORTEX_A8:
++	case ARM_CPU_PART_CORTEX_A9:
++	case ARM_CPU_PART_CORTEX_A12:
++	case ARM_CPU_PART_CORTEX_A17:
++	case ARM_CPU_PART_CORTEX_A73:
++	case ARM_CPU_PART_CORTEX_A75:
++		per_cpu(harden_branch_predictor_fn, cpu) =
++			harden_branch_predictor_bpiall;
++		spectre_v2_method = "BPIALL";
++		break;
++
++	case ARM_CPU_PART_CORTEX_A15:
++	case ARM_CPU_PART_BRAHMA_B15:
++		per_cpu(harden_branch_predictor_fn, cpu) =
++			harden_branch_predictor_iciallu;
++		spectre_v2_method = "ICIALLU";
++		break;
++
++#ifdef CONFIG_ARM_PSCI
++	default:
++		/* Other ARM CPUs require no workaround */
++		if (read_cpuid_implementor() == ARM_CPU_IMP_ARM)
++			break;
++		/* fallthrough */
++		/* Cortex A57/A72 require firmware workaround */
++	case ARM_CPU_PART_CORTEX_A57:
++	case ARM_CPU_PART_CORTEX_A72: {
++		struct arm_smccc_res res;
++
++		if (psci_ops.smccc_version == SMCCC_VERSION_1_0)
++			break;
++
++		switch (psci_ops.conduit) {
++		case PSCI_CONDUIT_HVC:
++			arm_smccc_1_1_hvc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
++					  ARM_SMCCC_ARCH_WORKAROUND_1, &res);
++			if ((int)res.a0 != 0)
++				break;
++			per_cpu(harden_branch_predictor_fn, cpu) =
++				call_hvc_arch_workaround_1;
++			cpu_do_switch_mm = cpu_v7_hvc_switch_mm;
++			spectre_v2_method = "hypervisor";
++			break;
++
++		case PSCI_CONDUIT_SMC:
++			arm_smccc_1_1_smc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
++					  ARM_SMCCC_ARCH_WORKAROUND_1, &res);
++			if ((int)res.a0 != 0)
++				break;
++			per_cpu(harden_branch_predictor_fn, cpu) =
++				call_smc_arch_workaround_1;
++			cpu_do_switch_mm = cpu_v7_smc_switch_mm;
++			spectre_v2_method = "firmware";
++			break;
++
++		default:
++			break;
++		}
++	}
++#endif
++	}
++
++	if (spectre_v2_method)
++		pr_info("CPU%u: Spectre v2: using %s workaround\n",
++			smp_processor_id(), spectre_v2_method);
++}
++#else
++static void cpu_v7_spectre_init(void)
++{
++}
++#endif
++
++static __maybe_unused bool cpu_v7_check_auxcr_set(bool *warned,
++						  u32 mask, const char *msg)
++{
++	u32 aux_cr;
++
++	asm("mrc p15, 0, %0, c1, c0, 1" : "=r" (aux_cr));
++
++	if ((aux_cr & mask) != mask) {
++		if (!*warned)
++			pr_err("CPU%u: %s", smp_processor_id(), msg);
++		*warned = true;
++		return false;
++	}
++	return true;
++}
++
++static DEFINE_PER_CPU(bool, spectre_warned);
++
++static bool check_spectre_auxcr(bool *warned, u32 bit)
++{
++	return IS_ENABLED(CONFIG_HARDEN_BRANCH_PREDICTOR) &&
++		cpu_v7_check_auxcr_set(warned, bit,
++				       "Spectre v2: firmware did not set auxiliary control register IBE bit, system vulnerable\n");
++}
++
++void cpu_v7_ca8_ibe(void)
++{
++	if (check_spectre_auxcr(this_cpu_ptr(&spectre_warned), BIT(6)))
++		cpu_v7_spectre_init();
++}
++
++void cpu_v7_ca15_ibe(void)
++{
++	if (check_spectre_auxcr(this_cpu_ptr(&spectre_warned), BIT(0)))
++		cpu_v7_spectre_init();
++}
++
++void cpu_v7_bugs_init(void)
++{
++	cpu_v7_spectre_init();
++}
+diff --git a/arch/arm/vfp/vfpmodule.c b/arch/arm/vfp/vfpmodule.c
+index 2a61e4b04600..f9392fb060ea 100644
+--- a/arch/arm/vfp/vfpmodule.c
++++ b/arch/arm/vfp/vfpmodule.c
+@@ -558,12 +558,11 @@ void vfp_flush_hwstate(struct thread_info *thread)
+  * Save the current VFP state into the provided structures and prepare
+  * for entry into a new function (signal handler).
+  */
+-int vfp_preserve_user_clear_hwstate(struct user_vfp __user *ufp,
+-				    struct user_vfp_exc __user *ufp_exc)
++int vfp_preserve_user_clear_hwstate(struct user_vfp *ufp,
++				    struct user_vfp_exc *ufp_exc)
+ {
+ 	struct thread_info *thread = current_thread_info();
+ 	struct vfp_hard_struct *hwstate = &thread->vfpstate.hard;
+-	int err = 0;
+ 
+ 	/* Ensure that the saved hwstate is up-to-date. */
+ 	vfp_sync_hwstate(thread);
+@@ -572,22 +571,19 @@ int vfp_preserve_user_clear_hwstate(struct user_vfp __user *ufp,
+ 	 * Copy the floating point registers. There can be unused
+ 	 * registers see asm/hwcap.h for details.
+ 	 */
+-	err |= __copy_to_user(&ufp->fpregs, &hwstate->fpregs,
+-			      sizeof(hwstate->fpregs));
++	memcpy(&ufp->fpregs, &hwstate->fpregs, sizeof(hwstate->fpregs));
++
+ 	/*
+ 	 * Copy the status and control register.
+ 	 */
+-	__put_user_error(hwstate->fpscr, &ufp->fpscr, err);
++	ufp->fpscr = hwstate->fpscr;
+ 
+ 	/*
+ 	 * Copy the exception registers.
+ 	 */
+-	__put_user_error(hwstate->fpexc, &ufp_exc->fpexc, err);
+-	__put_user_error(hwstate->fpinst, &ufp_exc->fpinst, err);
+-	__put_user_error(hwstate->fpinst2, &ufp_exc->fpinst2, err);
+-
+-	if (err)
+-		return -EFAULT;
++	ufp_exc->fpexc = hwstate->fpexc;
++	ufp_exc->fpinst = hwstate->fpinst;
++	ufp_exc->fpinst2 = hwstate->fpinst2;
+ 
+ 	/* Ensure that VFP is disabled. */
+ 	vfp_flush_hwstate(thread);
+@@ -601,13 +597,11 @@ int vfp_preserve_user_clear_hwstate(struct user_vfp __user *ufp,
+ }
+ 
+ /* Sanitise and restore the current VFP state from the provided structures. */
+-int vfp_restore_user_hwstate(struct user_vfp __user *ufp,
+-			     struct user_vfp_exc __user *ufp_exc)
++int vfp_restore_user_hwstate(struct user_vfp *ufp, struct user_vfp_exc *ufp_exc)
+ {
+ 	struct thread_info *thread = current_thread_info();
+ 	struct vfp_hard_struct *hwstate = &thread->vfpstate.hard;
+ 	unsigned long fpexc;
+-	int err = 0;
+ 
+ 	/* Disable VFP to avoid corrupting the new thread state. */
+ 	vfp_flush_hwstate(thread);
+@@ -616,17 +610,16 @@ int vfp_restore_user_hwstate(struct user_vfp __user *ufp,
+ 	 * Copy the floating point registers. There can be unused
+ 	 * registers see asm/hwcap.h for details.
+ 	 */
+-	err |= __copy_from_user(&hwstate->fpregs, &ufp->fpregs,
+-				sizeof(hwstate->fpregs));
++	memcpy(&hwstate->fpregs, &ufp->fpregs, sizeof(hwstate->fpregs));
+ 	/*
+ 	 * Copy the status and control register.
+ 	 */
+-	__get_user_error(hwstate->fpscr, &ufp->fpscr, err);
++	hwstate->fpscr = ufp->fpscr;
+ 
+ 	/*
+ 	 * Sanitise and restore the exception registers.
+ 	 */
+-	__get_user_error(fpexc, &ufp_exc->fpexc, err);
++	fpexc = ufp_exc->fpexc;
+ 
+ 	/* Ensure the VFP is enabled. */
+ 	fpexc |= FPEXC_EN;
+@@ -635,10 +628,10 @@ int vfp_restore_user_hwstate(struct user_vfp __user *ufp,
+ 	fpexc &= ~(FPEXC_EX | FPEXC_FP2V);
+ 	hwstate->fpexc = fpexc;
+ 
+-	__get_user_error(hwstate->fpinst, &ufp_exc->fpinst, err);
+-	__get_user_error(hwstate->fpinst2, &ufp_exc->fpinst2, err);
++	hwstate->fpinst = ufp_exc->fpinst;
++	hwstate->fpinst2 = ufp_exc->fpinst2;
+ 
+-	return err ? -EFAULT : 0;
++	return 0;
+ }
+ 
+ /*
+diff --git a/arch/arm64/kernel/smccc-call.S b/arch/arm64/kernel/smccc-call.S
+new file mode 100644
+index 000000000000..ae0496fa4235
+--- /dev/null
++++ b/arch/arm64/kernel/smccc-call.S
+@@ -0,0 +1,43 @@
++/*
++ * Copyright (c) 2015, Linaro Limited
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License Version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ *
++ */
++#include <linux/linkage.h>
++#include <asm/asm-offsets.h>
++
++	.macro SMCCC instr
++	.cfi_startproc
++	\instr	#0
++	ldr	x4, [sp]
++	stp	x0, x1, [x4, #ARM_SMCCC_RES_X0_OFFS]
++	stp	x2, x3, [x4, #ARM_SMCCC_RES_X2_OFFS]
++	ret
++	.cfi_endproc
++	.endm
++
++/*
++ * void arm_smccc_smc(unsigned long a0, unsigned long a1, unsigned long a2,
++ *		  unsigned long a3, unsigned long a4, unsigned long a5,
++ *		  unsigned long a6, unsigned long a7, struct arm_smccc_res *res)
++ */
++ENTRY(arm_smccc_smc)
++	SMCCC	smc
++ENDPROC(arm_smccc_smc)
++
++/*
++ * void arm_smccc_hvc(unsigned long a0, unsigned long a1, unsigned long a2,
++ *		  unsigned long a3, unsigned long a4, unsigned long a5,
++ *		  unsigned long a6, unsigned long a7, struct arm_smccc_res *res)
++ */
++ENTRY(arm_smccc_hvc)
++	SMCCC	hvc
++ENDPROC(arm_smccc_hvc)
+diff --git a/arch/mips/bcm63xx/prom.c b/arch/mips/bcm63xx/prom.c
+index 7019e2967009..bbbf8057565b 100644
+--- a/arch/mips/bcm63xx/prom.c
++++ b/arch/mips/bcm63xx/prom.c
+@@ -84,7 +84,7 @@ void __init prom_init(void)
+ 		 * Here we will start up CPU1 in the background and ask it to
+ 		 * reconfigure itself then go back to sleep.
+ 		 */
+-		memcpy((void *)0xa0000200, &bmips_smp_movevec, 0x20);
++		memcpy((void *)0xa0000200, bmips_smp_movevec, 0x20);
+ 		__sync();
+ 		set_c0_cause(C_SW0);
+ 		cpumask_set_cpu(1, &bmips_booted_mask);
+diff --git a/arch/mips/include/asm/bmips.h b/arch/mips/include/asm/bmips.h
+index 6d25ad33ec78..860e4cef61be 100644
+--- a/arch/mips/include/asm/bmips.h
++++ b/arch/mips/include/asm/bmips.h
+@@ -75,11 +75,11 @@ static inline int register_bmips_smp_ops(void)
+ #endif
+ }
+ 
+-extern char bmips_reset_nmi_vec;
+-extern char bmips_reset_nmi_vec_end;
+-extern char bmips_smp_movevec;
+-extern char bmips_smp_int_vec;
+-extern char bmips_smp_int_vec_end;
++extern char bmips_reset_nmi_vec[];
++extern char bmips_reset_nmi_vec_end[];
++extern char bmips_smp_movevec[];
++extern char bmips_smp_int_vec[];
++extern char bmips_smp_int_vec_end[];
+ 
+ extern int bmips_smp_enabled;
+ extern int bmips_cpu_offset;
+diff --git a/arch/mips/kernel/smp-bmips.c b/arch/mips/kernel/smp-bmips.c
+index 4874712b475e..a62d24169d75 100644
+--- a/arch/mips/kernel/smp-bmips.c
++++ b/arch/mips/kernel/smp-bmips.c
+@@ -451,10 +451,10 @@ static void bmips_wr_vec(unsigned long dst, char *start, char *end)
+ 
+ static inline void bmips_nmi_handler_setup(void)
+ {
+-	bmips_wr_vec(BMIPS_NMI_RESET_VEC, &bmips_reset_nmi_vec,
+-		&bmips_reset_nmi_vec_end);
+-	bmips_wr_vec(BMIPS_WARM_RESTART_VEC, &bmips_smp_int_vec,
+-		&bmips_smp_int_vec_end);
++	bmips_wr_vec(BMIPS_NMI_RESET_VEC, bmips_reset_nmi_vec,
++		bmips_reset_nmi_vec_end);
++	bmips_wr_vec(BMIPS_WARM_RESTART_VEC, bmips_smp_int_vec,
++		bmips_smp_int_vec_end);
+ }
+ 
+ struct reset_vec_info {
+diff --git a/drivers/dma/qcom_bam_dma.c b/drivers/dma/qcom_bam_dma.c
+index 5a250cdc8376..eca5b106d7d4 100644
+--- a/drivers/dma/qcom_bam_dma.c
++++ b/drivers/dma/qcom_bam_dma.c
+@@ -671,7 +671,21 @@ static int bam_dma_terminate_all(struct dma_chan *chan)
+ 
+ 	/* remove all transactions, including active transaction */
+ 	spin_lock_irqsave(&bchan->vc.lock, flag);
++	/*
++	 * If we have transactions queued, then some might be committed to the
++	 * hardware in the desc fifo.  The only way to reset the desc fifo is
++	 * to do a hardware reset (either by pipe or the entire block).
++	 * bam_chan_init_hw() will trigger a pipe reset, and also reinit the
++	 * pipe.  If the pipe is left disabled (default state after pipe reset)
++	 * and is accessed by a connected hardware engine, a fatal error in
++	 * the BAM will occur.  There is a small window where this could happen
++	 * with bam_chan_init_hw(), but it is assumed that the caller has
++	 * stopped activity on any attached hardware engine.  Make sure to do
++	 * this first so that the BAM hardware doesn't cause memory corruption
++	 * by accessing freed resources.
++	 */
+ 	if (bchan->curr_txd) {
++		bam_chan_init_hw(bchan, bchan->curr_txd->dir);
+ 		list_add(&bchan->curr_txd->vd.node, &bchan->vc.desc_issued);
+ 		bchan->curr_txd = NULL;
+ 	}
+diff --git a/drivers/firmware/Kconfig b/drivers/firmware/Kconfig
+index b0d42234fba0..cc5e79dc4cda 100644
+--- a/drivers/firmware/Kconfig
++++ b/drivers/firmware/Kconfig
+@@ -174,6 +174,9 @@ config QCOM_SCM_64
+ 	def_bool y
+ 	depends on QCOM_SCM && ARM64
+ 
++config HAVE_ARM_SMCCC
++	bool
++
+ source "drivers/firmware/broadcom/Kconfig"
+ source "drivers/firmware/google/Kconfig"
+ source "drivers/firmware/efi/Kconfig"
+diff --git a/drivers/firmware/psci.c b/drivers/firmware/psci.c
+index 1066146abd47..c825e3981b1c 100644
+--- a/drivers/firmware/psci.c
++++ b/drivers/firmware/psci.c
+@@ -59,7 +59,10 @@ bool psci_tos_resident_on(int cpu)
+ 	return cpu == resident_cpu;
+ }
+ 
+-struct psci_operations psci_ops;
++struct psci_operations psci_ops = {
++	.conduit = PSCI_CONDUIT_NONE,
++	.smccc_version = SMCCC_VERSION_1_0,
++};
+ 
+ typedef unsigned long (psci_fn)(unsigned long, unsigned long,
+ 				unsigned long, unsigned long);
+@@ -210,6 +213,22 @@ static unsigned long psci_migrate_info_up_cpu(void)
+ 			      0, 0, 0);
+ }
+ 
++static void set_conduit(enum psci_conduit conduit)
++{
++	switch (conduit) {
++	case PSCI_CONDUIT_HVC:
++		invoke_psci_fn = __invoke_psci_fn_hvc;
++		break;
++	case PSCI_CONDUIT_SMC:
++		invoke_psci_fn = __invoke_psci_fn_smc;
++		break;
++	default:
++		WARN(1, "Unexpected PSCI conduit %d\n", conduit);
++	}
++
++	psci_ops.conduit = conduit;
++}
++
+ static int get_set_conduit_method(struct device_node *np)
+ {
+ 	const char *method;
+@@ -222,9 +241,9 @@ static int get_set_conduit_method(struct device_node *np)
+ 	}
+ 
+ 	if (!strcmp("hvc", method)) {
+-		invoke_psci_fn = __invoke_psci_fn_hvc;
++		set_conduit(PSCI_CONDUIT_HVC);
+ 	} else if (!strcmp("smc", method)) {
+-		invoke_psci_fn = __invoke_psci_fn_smc;
++		set_conduit(PSCI_CONDUIT_SMC);
+ 	} else {
+ 		pr_warn("invalid \"method\" property: %s\n", method);
+ 		return -EINVAL;
+@@ -458,6 +477,31 @@ static void __init psci_init_migrate(void)
+ 	pr_info("Trusted OS resident on physical CPU 0x%lx\n", cpuid);
+ }
+ 
++static void __init psci_init_smccc(void)
++{
++	u32 ver = ARM_SMCCC_VERSION_1_0;
++	int feature;
++
++	feature = psci_features(ARM_SMCCC_VERSION_FUNC_ID);
++
++	if (feature != PSCI_RET_NOT_SUPPORTED) {
++		u32 ret;
++		ret = invoke_psci_fn(ARM_SMCCC_VERSION_FUNC_ID, 0, 0, 0);
++		if (ret == ARM_SMCCC_VERSION_1_1) {
++			psci_ops.smccc_version = SMCCC_VERSION_1_1;
++			ver = ret;
++		}
++	}
++
++	/*
++	 * Conveniently, the SMCCC and PSCI versions are encoded the
++	 * same way. No, this isn't accidental.
++	 */
++	pr_info("SMC Calling Convention v%d.%d\n",
++		PSCI_VERSION_MAJOR(ver), PSCI_VERSION_MINOR(ver));
++
++}
++
+ static void __init psci_0_2_set_functions(void)
+ {
+ 	pr_info("Using standard PSCI v0.2 function IDs\n");
+@@ -504,6 +548,7 @@ static int __init psci_probe(void)
+ 	psci_init_migrate();
+ 
+ 	if (PSCI_VERSION_MAJOR(ver) >= 1) {
++		psci_init_smccc();
+ 		psci_init_cpu_suspend();
+ 		psci_init_system_suspend();
+ 	}
+@@ -617,9 +662,9 @@ int __init psci_acpi_init(void)
+ 	pr_info("probing for conduit method from ACPI.\n");
+ 
+ 	if (acpi_psci_use_hvc())
+-		invoke_psci_fn = __invoke_psci_fn_hvc;
++		set_conduit(PSCI_CONDUIT_HVC);
+ 	else
+-		invoke_psci_fn = __invoke_psci_fn_smc;
++		set_conduit(PSCI_CONDUIT_SMC);
+ 
+ 	return psci_probe();
+ }
+diff --git a/drivers/net/ethernet/hisilicon/hip04_eth.c b/drivers/net/ethernet/hisilicon/hip04_eth.c
+index def831c89d35..e8b7dc1bcfa6 100644
+--- a/drivers/net/ethernet/hisilicon/hip04_eth.c
++++ b/drivers/net/ethernet/hisilicon/hip04_eth.c
+@@ -174,6 +174,7 @@ struct hip04_priv {
+ 	dma_addr_t rx_phys[RX_DESC_NUM];
+ 	unsigned int rx_head;
+ 	unsigned int rx_buf_size;
++	unsigned int rx_cnt_remaining;
+ 
+ 	struct device_node *phy_node;
+ 	struct phy_device *phy;
+@@ -487,7 +488,6 @@ static int hip04_rx_poll(struct napi_struct *napi, int budget)
+ 	struct hip04_priv *priv = container_of(napi, struct hip04_priv, napi);
+ 	struct net_device *ndev = priv->ndev;
+ 	struct net_device_stats *stats = &ndev->stats;
+-	unsigned int cnt = hip04_recv_cnt(priv);
+ 	struct rx_desc *desc;
+ 	struct sk_buff *skb;
+ 	unsigned char *buf;
+@@ -500,8 +500,8 @@ static int hip04_rx_poll(struct napi_struct *napi, int budget)
+ 
+ 	/* clean up tx descriptors */
+ 	tx_remaining = hip04_tx_reclaim(ndev, false);
+-
+-	while (cnt && !last) {
++	priv->rx_cnt_remaining += hip04_recv_cnt(priv);
++	while (priv->rx_cnt_remaining && !last) {
+ 		buf = priv->rx_buf[priv->rx_head];
+ 		skb = build_skb(buf, priv->rx_buf_size);
+ 		if (unlikely(!skb))
+@@ -544,11 +544,13 @@ static int hip04_rx_poll(struct napi_struct *napi, int budget)
+ 		hip04_set_recv_desc(priv, phys);
+ 
+ 		priv->rx_head = RX_NEXT(priv->rx_head);
+-		if (rx >= budget)
++		if (rx >= budget) {
++			--priv->rx_cnt_remaining;
+ 			goto done;
++		}
+ 
+-		if (--cnt == 0)
+-			cnt = hip04_recv_cnt(priv);
++		if (--priv->rx_cnt_remaining == 0)
++			priv->rx_cnt_remaining += hip04_recv_cnt(priv);
+ 	}
+ 
+ 	if (!(priv->reg_inten & RCV_INT)) {
+@@ -633,6 +635,7 @@ static int hip04_mac_open(struct net_device *ndev)
+ 	int i;
+ 
+ 	priv->rx_head = 0;
++	priv->rx_cnt_remaining = 0;
+ 	priv->tx_head = 0;
+ 	priv->tx_tail = 0;
+ 	hip04_reset_ppe(priv);
+diff --git a/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c b/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c
+index 37dfdb1329f4..170a49a6803e 100644
+--- a/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c
++++ b/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c
+@@ -463,12 +463,31 @@ void mlx4_init_quotas(struct mlx4_dev *dev)
+ 		priv->mfunc.master.res_tracker.res_alloc[RES_MPT].quota[pf];
+ }
+ 
+-static int get_max_gauranteed_vfs_counter(struct mlx4_dev *dev)
++static int
++mlx4_calc_res_counter_guaranteed(struct mlx4_dev *dev,
++				 struct resource_allocator *res_alloc,
++				 int vf)
+ {
+-	/* reduce the sink counter */
+-	return (dev->caps.max_counters - 1 -
+-		(MLX4_PF_COUNTERS_PER_PORT * MLX4_MAX_PORTS))
+-		/ MLX4_MAX_PORTS;
++	struct mlx4_active_ports actv_ports;
++	int ports, counters_guaranteed;
++
++	/* For master, only allocate according to the number of phys ports */
++	if (vf == mlx4_master_func_num(dev))
++		return MLX4_PF_COUNTERS_PER_PORT * dev->caps.num_ports;
++
++	/* calculate real number of ports for the VF */
++	actv_ports = mlx4_get_active_ports(dev, vf);
++	ports = bitmap_weight(actv_ports.ports, dev->caps.num_ports);
++	counters_guaranteed = ports * MLX4_VF_COUNTERS_PER_PORT;
++
++	/* If we do not have enough counters for this VF, do not
++	 * allocate any for it. '-1' to reduce the sink counter.
++	 */
++	if ((res_alloc->res_reserved + counters_guaranteed) >
++	    (dev->caps.max_counters - 1))
++		return 0;
++
++	return counters_guaranteed;
+ }
+ 
+ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
+@@ -476,7 +495,6 @@ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
+ 	struct mlx4_priv *priv = mlx4_priv(dev);
+ 	int i, j;
+ 	int t;
+-	int max_vfs_guarantee_counter = get_max_gauranteed_vfs_counter(dev);
+ 
+ 	priv->mfunc.master.res_tracker.slave_list =
+ 		kzalloc(dev->num_slaves * sizeof(struct slave_list),
+@@ -593,16 +611,8 @@ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
+ 				break;
+ 			case RES_COUNTER:
+ 				res_alloc->quota[t] = dev->caps.max_counters;
+-				if (t == mlx4_master_func_num(dev))
+-					res_alloc->guaranteed[t] =
+-						MLX4_PF_COUNTERS_PER_PORT *
+-						MLX4_MAX_PORTS;
+-				else if (t <= max_vfs_guarantee_counter)
+-					res_alloc->guaranteed[t] =
+-						MLX4_VF_COUNTERS_PER_PORT *
+-						MLX4_MAX_PORTS;
+-				else
+-					res_alloc->guaranteed[t] = 0;
++				res_alloc->guaranteed[t] =
++					mlx4_calc_res_counter_guaranteed(dev, res_alloc, t);
+ 				res_alloc->res_free -= res_alloc->guaranteed[t];
+ 				break;
+ 			default:
+diff --git a/drivers/net/vxlan.c b/drivers/net/vxlan.c
+index 835129152fc4..536fee1e4b70 100644
+--- a/drivers/net/vxlan.c
++++ b/drivers/net/vxlan.c
+@@ -2006,8 +2006,11 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct net_device *dev,
+ 		ttl = info->key.ttl;
+ 		tos = info->key.tos;
+ 
+-		if (info->options_len)
++		if (info->options_len) {
++			if (info->options_len < sizeof(*md))
++				goto drop;
+ 			md = ip_tunnel_info_opts(info);
++		}
+ 	} else {
+ 		md->gbp = skb->mark;
+ 	}
+diff --git a/drivers/of/unittest.c b/drivers/of/unittest.c
+index 2eac3df7dd29..af9e4785b7a6 100644
+--- a/drivers/of/unittest.c
++++ b/drivers/of/unittest.c
+@@ -924,6 +924,7 @@ static int __init unittest_data_add(void)
+ 	of_fdt_unflatten_tree(unittest_data, &unittest_data_node);
+ 	if (!unittest_data_node) {
+ 		pr_warn("%s: No tree to attach; not running tests\n", __func__);
++		kfree(unittest_data);
+ 		return -ENODATA;
+ 	}
+ 	of_node_set_flag(unittest_data_node, OF_DETACHED);
+diff --git a/drivers/regulator/pfuze100-regulator.c b/drivers/regulator/pfuze100-regulator.c
+index c68556bf6f39..ec185502dceb 100644
+--- a/drivers/regulator/pfuze100-regulator.c
++++ b/drivers/regulator/pfuze100-regulator.c
+@@ -609,7 +609,13 @@ static int pfuze100_regulator_probe(struct i2c_client *client,
+ 
+ 		/* SW2~SW4 high bit check and modify the voltage value table */
+ 		if (i >= sw_check_start && i <= sw_check_end) {
+-			regmap_read(pfuze_chip->regmap, desc->vsel_reg, &val);
++			ret = regmap_read(pfuze_chip->regmap,
++						desc->vsel_reg, &val);
++			if (ret) {
++				dev_err(&client->dev, "Fails to read from the register.\n");
++				return ret;
++			}
++
+ 			if (val & sw_hi) {
+ 				if (pfuze_chip->chip_id == PFUZE3000) {
+ 					desc->volt_table = pfuze3000_sw2hi;
+diff --git a/drivers/regulator/ti-abb-regulator.c b/drivers/regulator/ti-abb-regulator.c
+index d2f994298753..6d17357b3a24 100644
+--- a/drivers/regulator/ti-abb-regulator.c
++++ b/drivers/regulator/ti-abb-regulator.c
+@@ -173,19 +173,14 @@ static int ti_abb_wait_txdone(struct device *dev, struct ti_abb *abb)
+ 	while (timeout++ <= abb->settling_time) {
+ 		status = ti_abb_check_txdone(abb);
+ 		if (status)
+-			break;
++			return 0;
+ 
+ 		udelay(1);
+ 	}
+ 
+-	if (timeout > abb->settling_time) {
+-		dev_warn_ratelimited(dev,
+-				     "%s:TRANXDONE timeout(%duS) int=0x%08x\n",
+-				     __func__, timeout, readl(abb->int_base));
+-		return -ETIMEDOUT;
+-	}
+-
+-	return 0;
++	dev_warn_ratelimited(dev, "%s:TRANXDONE timeout(%duS) int=0x%08x\n",
++			     __func__, timeout, readl(abb->int_base));
++	return -ETIMEDOUT;
+ }
+ 
+ /**
+@@ -205,19 +200,14 @@ static int ti_abb_clear_all_txdone(struct device *dev, const struct ti_abb *abb)
+ 
+ 		status = ti_abb_check_txdone(abb);
+ 		if (!status)
+-			break;
++			return 0;
+ 
+ 		udelay(1);
+ 	}
+ 
+-	if (timeout > abb->settling_time) {
+-		dev_warn_ratelimited(dev,
+-				     "%s:TRANXDONE timeout(%duS) int=0x%08x\n",
+-				     __func__, timeout, readl(abb->int_base));
+-		return -ETIMEDOUT;
+-	}
+-
+-	return 0;
++	dev_warn_ratelimited(dev, "%s:TRANXDONE timeout(%duS) int=0x%08x\n",
++			     __func__, timeout, readl(abb->int_base));
++	return -ETIMEDOUT;
+ }
+ 
+ /**
+diff --git a/drivers/scsi/Kconfig b/drivers/scsi/Kconfig
+index 433c5e3d5733..070359a7eea1 100644
+--- a/drivers/scsi/Kconfig
++++ b/drivers/scsi/Kconfig
+@@ -1013,7 +1013,7 @@ config SCSI_SNI_53C710
+ 
+ config 53C700_LE_ON_BE
+ 	bool
+-	depends on SCSI_LASI700
++	depends on SCSI_LASI700 || SCSI_SNI_53C710
+ 	default y
+ 
+ config SCSI_STEX
+diff --git a/drivers/scsi/sni_53c710.c b/drivers/scsi/sni_53c710.c
+index 76278072147e..b0f5220ae23a 100644
+--- a/drivers/scsi/sni_53c710.c
++++ b/drivers/scsi/sni_53c710.c
+@@ -78,10 +78,8 @@ static int snirm710_probe(struct platform_device *dev)
+ 
+ 	base = res->start;
+ 	hostdata = kzalloc(sizeof(*hostdata), GFP_KERNEL);
+-	if (!hostdata) {
+-		dev_printk(KERN_ERR, dev, "Failed to allocate host data\n");
++	if (!hostdata)
+ 		return -ENOMEM;
+-	}
+ 
+ 	hostdata->dev = &dev->dev;
+ 	dma_set_mask(&dev->dev, DMA_BIT_MASK(32));
+diff --git a/drivers/target/target_core_device.c b/drivers/target/target_core_device.c
+index bb6a6c35324a..4198ed4ac607 100644
+--- a/drivers/target/target_core_device.c
++++ b/drivers/target/target_core_device.c
+@@ -1056,27 +1056,6 @@ passthrough_parse_cdb(struct se_cmd *cmd,
+ {
+ 	unsigned char *cdb = cmd->t_task_cdb;
+ 
+-	/*
+-	 * Clear a lun set in the cdb if the initiator talking to use spoke
+-	 * and old standards version, as we can't assume the underlying device
+-	 * won't choke up on it.
+-	 */
+-	switch (cdb[0]) {
+-	case READ_10: /* SBC - RDProtect */
+-	case READ_12: /* SBC - RDProtect */
+-	case READ_16: /* SBC - RDProtect */
+-	case SEND_DIAGNOSTIC: /* SPC - SELF-TEST Code */
+-	case VERIFY: /* SBC - VRProtect */
+-	case VERIFY_16: /* SBC - VRProtect */
+-	case WRITE_VERIFY: /* SBC - VRProtect */
+-	case WRITE_VERIFY_12: /* SBC - VRProtect */
+-	case MAINTENANCE_IN: /* SPC - Parameter Data Format for SA RTPG */
+-		break;
+-	default:
+-		cdb[1] &= 0x1f; /* clear logical unit number */
+-		break;
+-	}
+-
+ 	/*
+ 	 * For REPORT LUNS we always need to emulate the response, for everything
+ 	 * else, pass it up.
+diff --git a/fs/cifs/cifsglob.h b/fs/cifs/cifsglob.h
+index 8225de3c9743..6b61d4ad30b5 100644
+--- a/fs/cifs/cifsglob.h
++++ b/fs/cifs/cifsglob.h
+@@ -1152,6 +1152,11 @@ void cifsFileInfo_put(struct cifsFileInfo *cifs_file);
+ struct cifsInodeInfo {
+ 	bool can_cache_brlcks;
+ 	struct list_head llist;	/* locks helb by this inode */
++	/*
++	 * NOTE: Some code paths call down_read(lock_sem) twice, so
++	 * we must always use use cifs_down_write() instead of down_write()
++	 * for this semaphore to avoid deadlocks.
++	 */
+ 	struct rw_semaphore lock_sem;	/* protect the fields above */
+ 	/* BB add in lists for dirty pages i.e. write caching info for oplock */
+ 	struct list_head openFileList;
+diff --git a/fs/cifs/cifsproto.h b/fs/cifs/cifsproto.h
+index 54590fd33df1..257c06c6a6c2 100644
+--- a/fs/cifs/cifsproto.h
++++ b/fs/cifs/cifsproto.h
+@@ -138,6 +138,7 @@ extern int cifs_unlock_range(struct cifsFileInfo *cfile,
+ 			     struct file_lock *flock, const unsigned int xid);
+ extern int cifs_push_mandatory_locks(struct cifsFileInfo *cfile);
+ 
++extern void cifs_down_write(struct rw_semaphore *sem);
+ extern struct cifsFileInfo *cifs_new_fileinfo(struct cifs_fid *fid,
+ 					      struct file *file,
+ 					      struct tcon_link *tlink,
+diff --git a/fs/cifs/file.c b/fs/cifs/file.c
+index 737cff7bc08a..c6bd820f9409 100644
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -280,6 +280,13 @@ cifs_has_mand_locks(struct cifsInodeInfo *cinode)
+ 	return has_locks;
+ }
+ 
++void
++cifs_down_write(struct rw_semaphore *sem)
++{
++	while (!down_write_trylock(sem))
++		msleep(10);
++}
++
+ struct cifsFileInfo *
+ cifs_new_fileinfo(struct cifs_fid *fid, struct file *file,
+ 		  struct tcon_link *tlink, __u32 oplock)
+@@ -305,7 +312,7 @@ cifs_new_fileinfo(struct cifs_fid *fid, struct file *file,
+ 	INIT_LIST_HEAD(&fdlocks->locks);
+ 	fdlocks->cfile = cfile;
+ 	cfile->llist = fdlocks;
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	list_add(&fdlocks->llist, &cinode->llist);
+ 	up_write(&cinode->lock_sem);
+ 
+@@ -438,7 +445,7 @@ void cifsFileInfo_put(struct cifsFileInfo *cifs_file)
+ 	 * Delete any outstanding lock records. We'll lose them when the file
+ 	 * is closed anyway.
+ 	 */
+-	down_write(&cifsi->lock_sem);
++	cifs_down_write(&cifsi->lock_sem);
+ 	list_for_each_entry_safe(li, tmp, &cifs_file->llist->locks, llist) {
+ 		list_del(&li->llist);
+ 		cifs_del_lock_waiters(li);
+@@ -947,7 +954,7 @@ static void
+ cifs_lock_add(struct cifsFileInfo *cfile, struct cifsLockInfo *lock)
+ {
+ 	struct cifsInodeInfo *cinode = CIFS_I(d_inode(cfile->dentry));
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	list_add_tail(&lock->llist, &cfile->llist->locks);
+ 	up_write(&cinode->lock_sem);
+ }
+@@ -969,7 +976,7 @@ cifs_lock_add_if(struct cifsFileInfo *cfile, struct cifsLockInfo *lock,
+ 
+ try_again:
+ 	exist = false;
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 
+ 	exist = cifs_find_lock_conflict(cfile, lock->offset, lock->length,
+ 					lock->type, &conf_lock, CIFS_LOCK_OP);
+@@ -991,7 +998,7 @@ try_again:
+ 					(lock->blist.next == &lock->blist));
+ 		if (!rc)
+ 			goto try_again;
+-		down_write(&cinode->lock_sem);
++		cifs_down_write(&cinode->lock_sem);
+ 		list_del_init(&lock->blist);
+ 	}
+ 
+@@ -1044,7 +1051,7 @@ cifs_posix_lock_set(struct file *file, struct file_lock *flock)
+ 		return rc;
+ 
+ try_again:
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	if (!cinode->can_cache_brlcks) {
+ 		up_write(&cinode->lock_sem);
+ 		return rc;
+@@ -1242,7 +1249,7 @@ cifs_push_locks(struct cifsFileInfo *cfile)
+ 	int rc = 0;
+ 
+ 	/* we are going to update can_cache_brlcks here - need a write access */
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	if (!cinode->can_cache_brlcks) {
+ 		up_write(&cinode->lock_sem);
+ 		return rc;
+@@ -1430,7 +1437,7 @@ cifs_unlock_range(struct cifsFileInfo *cfile, struct file_lock *flock,
+ 	if (!buf)
+ 		return -ENOMEM;
+ 
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	for (i = 0; i < 2; i++) {
+ 		cur = buf;
+ 		num = 0;
+diff --git a/fs/cifs/smb2file.c b/fs/cifs/smb2file.c
+index dee5250701de..41f1a5dd33a5 100644
+--- a/fs/cifs/smb2file.c
++++ b/fs/cifs/smb2file.c
+@@ -138,7 +138,7 @@ smb2_unlock_range(struct cifsFileInfo *cfile, struct file_lock *flock,
+ 
+ 	cur = buf;
+ 
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	list_for_each_entry_safe(li, tmp, &cfile->llist->locks, llist) {
+ 		if (flock->fl_start > li->offset ||
+ 		    (flock->fl_start + length) <
+diff --git a/fs/dcache.c b/fs/dcache.c
+index cb554e406545..dae84332534d 100644
+--- a/fs/dcache.c
++++ b/fs/dcache.c
+@@ -1903,7 +1903,6 @@ void d_instantiate_new(struct dentry *entry, struct inode *inode)
+ 	BUG_ON(!hlist_unhashed(&entry->d_u.d_alias));
+ 	BUG_ON(!inode);
+ 	lockdep_annotate_inode_mutex_key(inode);
+-	security_d_instantiate(entry, inode);
+ 	spin_lock(&inode->i_lock);
+ 	__d_instantiate(entry, inode);
+ 	WARN_ON(!(inode->i_state & I_NEW));
+@@ -1911,6 +1910,7 @@ void d_instantiate_new(struct dentry *entry, struct inode *inode)
+ 	smp_mb();
+ 	wake_up_bit(&inode->i_state, __I_NEW);
+ 	spin_unlock(&inode->i_lock);
++	security_d_instantiate(entry, inode);
+ }
+ EXPORT_SYMBOL(d_instantiate_new);
+ 
+diff --git a/include/linux/arm-smccc.h b/include/linux/arm-smccc.h
+new file mode 100644
+index 000000000000..78b8e0a61f3f
+--- /dev/null
++++ b/include/linux/arm-smccc.h
+@@ -0,0 +1,283 @@
++/*
++ * Copyright (c) 2015, Linaro Limited
++ *
++ * This software is licensed under the terms of the GNU General Public
++ * License version 2, as published by the Free Software Foundation, and
++ * may be copied, distributed, and modified under those terms.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ */
++#ifndef __LINUX_ARM_SMCCC_H
++#define __LINUX_ARM_SMCCC_H
++
++#include <uapi/linux/const.h>
++
++/*
++ * This file provides common defines for ARM SMC Calling Convention as
++ * specified in
++ * http://infocenter.arm.com/help/topic/com.arm.doc.den0028a/index.html
++ */
++
++#define ARM_SMCCC_STD_CALL	        _AC(0,U)
++#define ARM_SMCCC_FAST_CALL	        _AC(1,U)
++#define ARM_SMCCC_TYPE_SHIFT		31
++
++#define ARM_SMCCC_SMC_32		0
++#define ARM_SMCCC_SMC_64		1
++#define ARM_SMCCC_CALL_CONV_SHIFT	30
++
++#define ARM_SMCCC_OWNER_MASK		0x3F
++#define ARM_SMCCC_OWNER_SHIFT		24
++
++#define ARM_SMCCC_FUNC_MASK		0xFFFF
++
++#define ARM_SMCCC_IS_FAST_CALL(smc_val)	\
++	((smc_val) & (ARM_SMCCC_FAST_CALL << ARM_SMCCC_TYPE_SHIFT))
++#define ARM_SMCCC_IS_64(smc_val) \
++	((smc_val) & (ARM_SMCCC_SMC_64 << ARM_SMCCC_CALL_CONV_SHIFT))
++#define ARM_SMCCC_FUNC_NUM(smc_val)	((smc_val) & ARM_SMCCC_FUNC_MASK)
++#define ARM_SMCCC_OWNER_NUM(smc_val) \
++	(((smc_val) >> ARM_SMCCC_OWNER_SHIFT) & ARM_SMCCC_OWNER_MASK)
++
++#define ARM_SMCCC_CALL_VAL(type, calling_convention, owner, func_num) \
++	(((type) << ARM_SMCCC_TYPE_SHIFT) | \
++	((calling_convention) << ARM_SMCCC_CALL_CONV_SHIFT) | \
++	(((owner) & ARM_SMCCC_OWNER_MASK) << ARM_SMCCC_OWNER_SHIFT) | \
++	((func_num) & ARM_SMCCC_FUNC_MASK))
++
++#define ARM_SMCCC_OWNER_ARCH		0
++#define ARM_SMCCC_OWNER_CPU		1
++#define ARM_SMCCC_OWNER_SIP		2
++#define ARM_SMCCC_OWNER_OEM		3
++#define ARM_SMCCC_OWNER_STANDARD	4
++#define ARM_SMCCC_OWNER_TRUSTED_APP	48
++#define ARM_SMCCC_OWNER_TRUSTED_APP_END	49
++#define ARM_SMCCC_OWNER_TRUSTED_OS	50
++#define ARM_SMCCC_OWNER_TRUSTED_OS_END	63
++
++#define ARM_SMCCC_VERSION_1_0		0x10000
++#define ARM_SMCCC_VERSION_1_1		0x10001
++
++#define ARM_SMCCC_VERSION_FUNC_ID					\
++	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
++			   ARM_SMCCC_SMC_32,				\
++			   0, 0)
++
++#define ARM_SMCCC_ARCH_FEATURES_FUNC_ID					\
++	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
++			   ARM_SMCCC_SMC_32,				\
++			   0, 1)
++
++#define ARM_SMCCC_ARCH_WORKAROUND_1					\
++	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
++			   ARM_SMCCC_SMC_32,				\
++			   0, 0x8000)
++
++#ifndef __ASSEMBLY__
++
++#include <linux/linkage.h>
++#include <linux/types.h>
++
++/**
++ * struct arm_smccc_res - Result from SMC/HVC call
++ * @a0-a3 result values from registers 0 to 3
++ */
++struct arm_smccc_res {
++	unsigned long a0;
++	unsigned long a1;
++	unsigned long a2;
++	unsigned long a3;
++};
++
++/**
++ * arm_smccc_smc() - make SMC calls
++ * @a0-a7: arguments passed in registers 0 to 7
++ * @res: result values from registers 0 to 3
++ *
++ * This function is used to make SMC calls following SMC Calling Convention.
++ * The content of the supplied param are copied to registers 0 to 7 prior
++ * to the SMC instruction. The return values are updated with the content
++ * from register 0 to 3 on return from the SMC instruction.
++ */
++asmlinkage void arm_smccc_smc(unsigned long a0, unsigned long a1,
++			unsigned long a2, unsigned long a3, unsigned long a4,
++			unsigned long a5, unsigned long a6, unsigned long a7,
++			struct arm_smccc_res *res);
++
++/**
++ * arm_smccc_hvc() - make HVC calls
++ * @a0-a7: arguments passed in registers 0 to 7
++ * @res: result values from registers 0 to 3
++ *
++ * This function is used to make HVC calls following SMC Calling
++ * Convention.  The content of the supplied param are copied to registers 0
++ * to 7 prior to the HVC instruction. The return values are updated with
++ * the content from register 0 to 3 on return from the HVC instruction.
++ */
++asmlinkage void arm_smccc_hvc(unsigned long a0, unsigned long a1,
++			unsigned long a2, unsigned long a3, unsigned long a4,
++			unsigned long a5, unsigned long a6, unsigned long a7,
++			struct arm_smccc_res *res);
++
++/* SMCCC v1.1 implementation madness follows */
++#ifdef CONFIG_ARM64
++
++#define SMCCC_SMC_INST	"smc	#0"
++#define SMCCC_HVC_INST	"hvc	#0"
++
++#elif defined(CONFIG_ARM)
++#include <asm/opcodes-sec.h>
++#include <asm/opcodes-virt.h>
++
++#define SMCCC_SMC_INST	__SMC(0)
++#define SMCCC_HVC_INST	__HVC(0)
++
++#endif
++
++#define ___count_args(_0, _1, _2, _3, _4, _5, _6, _7, _8, x, ...) x
++
++#define __count_args(...)						\
++	___count_args(__VA_ARGS__, 7, 6, 5, 4, 3, 2, 1, 0)
++
++#define __constraint_write_0						\
++	"+r" (r0), "=&r" (r1), "=&r" (r2), "=&r" (r3)
++#define __constraint_write_1						\
++	"+r" (r0), "+r" (r1), "=&r" (r2), "=&r" (r3)
++#define __constraint_write_2						\
++	"+r" (r0), "+r" (r1), "+r" (r2), "=&r" (r3)
++#define __constraint_write_3						\
++	"+r" (r0), "+r" (r1), "+r" (r2), "+r" (r3)
++#define __constraint_write_4	__constraint_write_3
++#define __constraint_write_5	__constraint_write_4
++#define __constraint_write_6	__constraint_write_5
++#define __constraint_write_7	__constraint_write_6
++
++#define __constraint_read_0
++#define __constraint_read_1
++#define __constraint_read_2
++#define __constraint_read_3
++#define __constraint_read_4	"r" (r4)
++#define __constraint_read_5	__constraint_read_4, "r" (r5)
++#define __constraint_read_6	__constraint_read_5, "r" (r6)
++#define __constraint_read_7	__constraint_read_6, "r" (r7)
++
++#define __declare_arg_0(a0, res)					\
++	struct arm_smccc_res   *___res = res;				\
++	register unsigned long r0 asm("r0") = (u32)a0;			\
++	register unsigned long r1 asm("r1");				\
++	register unsigned long r2 asm("r2");				\
++	register unsigned long r3 asm("r3")
++
++#define __declare_arg_1(a0, a1, res)					\
++	typeof(a1) __a1 = a1;						\
++	struct arm_smccc_res   *___res = res;				\
++	register unsigned long r0 asm("r0") = (u32)a0;			\
++	register unsigned long r1 asm("r1") = __a1;			\
++	register unsigned long r2 asm("r2");				\
++	register unsigned long r3 asm("r3")
++
++#define __declare_arg_2(a0, a1, a2, res)				\
++	typeof(a1) __a1 = a1;						\
++	typeof(a2) __a2 = a2;						\
++	struct arm_smccc_res   *___res = res;				\
++	register unsigned long r0 asm("r0") = (u32)a0;			\
++	register unsigned long r1 asm("r1") = __a1;			\
++	register unsigned long r2 asm("r2") = __a2;			\
++	register unsigned long r3 asm("r3")
++
++#define __declare_arg_3(a0, a1, a2, a3, res)				\
++	typeof(a1) __a1 = a1;						\
++	typeof(a2) __a2 = a2;						\
++	typeof(a3) __a3 = a3;						\
++	struct arm_smccc_res   *___res = res;				\
++	register unsigned long r0 asm("r0") = (u32)a0;			\
++	register unsigned long r1 asm("r1") = __a1;			\
++	register unsigned long r2 asm("r2") = __a2;			\
++	register unsigned long r3 asm("r3") = __a3
++
++#define __declare_arg_4(a0, a1, a2, a3, a4, res)			\
++	typeof(a4) __a4 = a4;						\
++	__declare_arg_3(a0, a1, a2, a3, res);				\
++	register unsigned long r4 asm("r4") = __a4
++
++#define __declare_arg_5(a0, a1, a2, a3, a4, a5, res)			\
++	typeof(a5) __a5 = a5;						\
++	__declare_arg_4(a0, a1, a2, a3, a4, res);			\
++	register unsigned long r5 asm("r5") = __a5
++
++#define __declare_arg_6(a0, a1, a2, a3, a4, a5, a6, res)		\
++	typeof(a6) __a6 = a6;						\
++	__declare_arg_5(a0, a1, a2, a3, a4, a5, res);			\
++	register unsigned long r6 asm("r6") = __a6
++
++#define __declare_arg_7(a0, a1, a2, a3, a4, a5, a6, a7, res)		\
++	typeof(a7) __a7 = a7;						\
++	__declare_arg_6(a0, a1, a2, a3, a4, a5, a6, res);		\
++	register unsigned long r7 asm("r7") = __a7
++
++#define ___declare_args(count, ...) __declare_arg_ ## count(__VA_ARGS__)
++#define __declare_args(count, ...)  ___declare_args(count, __VA_ARGS__)
++
++#define ___constraints(count)						\
++	: __constraint_write_ ## count					\
++	: __constraint_read_ ## count					\
++	: "memory"
++#define __constraints(count)	___constraints(count)
++
++/*
++ * We have an output list that is not necessarily used, and GCC feels
++ * entitled to optimise the whole sequence away. "volatile" is what
++ * makes it stick.
++ */
++#define __arm_smccc_1_1(inst, ...)					\
++	do {								\
++		__declare_args(__count_args(__VA_ARGS__), __VA_ARGS__);	\
++		asm volatile(inst "\n"					\
++			     __constraints(__count_args(__VA_ARGS__)));	\
++		if (___res)						\
++			*___res = (typeof(*___res)){r0, r1, r2, r3};	\
++	} while (0)
++
++/*
++ * arm_smccc_1_1_smc() - make an SMCCC v1.1 compliant SMC call
++ *
++ * This is a variadic macro taking one to eight source arguments, and
++ * an optional return structure.
++ *
++ * @a0-a7: arguments passed in registers 0 to 7
++ * @res: result values from registers 0 to 3
++ *
++ * This macro is used to make SMC calls following SMC Calling Convention v1.1.
++ * The content of the supplied param are copied to registers 0 to 7 prior
++ * to the SMC instruction. The return values are updated with the content
++ * from register 0 to 3 on return from the SMC instruction if not NULL.
++ */
++#define arm_smccc_1_1_smc(...)	__arm_smccc_1_1(SMCCC_SMC_INST, __VA_ARGS__)
++
++/*
++ * arm_smccc_1_1_hvc() - make an SMCCC v1.1 compliant HVC call
++ *
++ * This is a variadic macro taking one to eight source arguments, and
++ * an optional return structure.
++ *
++ * @a0-a7: arguments passed in registers 0 to 7
++ * @res: result values from registers 0 to 3
++ *
++ * This macro is used to make HVC calls following SMC Calling Convention v1.1.
++ * The content of the supplied param are copied to registers 0 to 7 prior
++ * to the HVC instruction. The return values are updated with the content
++ * from register 0 to 3 on return from the HVC instruction if not NULL.
++ */
++#define arm_smccc_1_1_hvc(...)	__arm_smccc_1_1(SMCCC_HVC_INST, __VA_ARGS__)
++
++/* Return codes defined in ARM DEN 0070A */
++#define SMCCC_RET_SUCCESS			0
++#define SMCCC_RET_NOT_SUPPORTED			-1
++#define SMCCC_RET_NOT_REQUIRED			-2
++
++#endif /*__ASSEMBLY__*/
++#endif /*__LINUX_ARM_SMCCC_H*/
+diff --git a/include/linux/gfp.h b/include/linux/gfp.h
+index 8942af0813e3..824bd16ae408 100644
+--- a/include/linux/gfp.h
++++ b/include/linux/gfp.h
+@@ -274,6 +274,29 @@ static inline bool gfpflags_allow_blocking(const gfp_t gfp_flags)
+ 	return (bool __force)(gfp_flags & __GFP_DIRECT_RECLAIM);
+ }
+ 
++/**
++ * gfpflags_normal_context - is gfp_flags a normal sleepable context?
++ * @gfp_flags: gfp_flags to test
++ *
++ * Test whether @gfp_flags indicates that the allocation is from the
++ * %current context and allowed to sleep.
++ *
++ * An allocation being allowed to block doesn't mean it owns the %current
++ * context.  When direct reclaim path tries to allocate memory, the
++ * allocation context is nested inside whatever %current was doing at the
++ * time of the original allocation.  The nested allocation may be allowed
++ * to block but modifying anything %current owns can corrupt the outer
++ * context's expectations.
++ *
++ * %true result from this function indicates that the allocation context
++ * can sleep and use anything that's associated with %current.
++ */
++static inline bool gfpflags_normal_context(const gfp_t gfp_flags)
++{
++	return (gfp_flags & (__GFP_DIRECT_RECLAIM | __GFP_MEMALLOC)) ==
++		__GFP_DIRECT_RECLAIM;
++}
++
+ #ifdef CONFIG_HIGHMEM
+ #define OPT_ZONE_HIGHMEM ZONE_HIGHMEM
+ #else
+diff --git a/include/linux/psci.h b/include/linux/psci.h
+index 12c4865457ad..f78438214a59 100644
+--- a/include/linux/psci.h
++++ b/include/linux/psci.h
+@@ -24,6 +24,17 @@ bool psci_tos_resident_on(int cpu);
+ bool psci_power_state_loses_context(u32 state);
+ bool psci_power_state_is_valid(u32 state);
+ 
++enum psci_conduit {
++	PSCI_CONDUIT_NONE,
++	PSCI_CONDUIT_SMC,
++	PSCI_CONDUIT_HVC,
++};
++
++enum smccc_version {
++	SMCCC_VERSION_1_0,
++	SMCCC_VERSION_1_1,
++};
++
+ struct psci_operations {
+ 	int (*cpu_suspend)(u32 state, unsigned long entry_point);
+ 	int (*cpu_off)(u32 state);
+@@ -32,6 +43,8 @@ struct psci_operations {
+ 	int (*affinity_info)(unsigned long target_affinity,
+ 			unsigned long lowest_affinity_level);
+ 	int (*migrate_info_type)(void);
++	enum psci_conduit conduit;
++	enum smccc_version smccc_version;
+ };
+ 
+ extern struct psci_operations psci_ops;
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index a2f12d377d23..735ff1525f48 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -1073,7 +1073,8 @@ static inline __u32 skb_get_hash_flowi4(struct sk_buff *skb, const struct flowi4
+ 	return skb->hash;
+ }
+ 
+-__u32 skb_get_hash_perturb(const struct sk_buff *skb, u32 perturb);
++__u32 skb_get_hash_perturb(const struct sk_buff *skb,
++			   const siphash_key_t *perturb);
+ 
+ static inline __u32 skb_get_hash_raw(const struct sk_buff *skb)
+ {
+diff --git a/include/net/flow_dissector.h b/include/net/flow_dissector.h
+index 8c8548cf5888..62a462413081 100644
+--- a/include/net/flow_dissector.h
++++ b/include/net/flow_dissector.h
+@@ -3,6 +3,7 @@
+ 
+ #include <linux/types.h>
+ #include <linux/in6.h>
++#include <linux/siphash.h>
+ #include <uapi/linux/if_ether.h>
+ 
+ /**
+@@ -146,7 +147,7 @@ struct flow_dissector {
+ struct flow_keys {
+ 	struct flow_dissector_key_control control;
+ #define FLOW_KEYS_HASH_START_FIELD basic
+-	struct flow_dissector_key_basic basic;
++	struct flow_dissector_key_basic basic __aligned(SIPHASH_ALIGNMENT);
+ 	struct flow_dissector_key_tags tags;
+ 	struct flow_dissector_key_keyid keyid;
+ 	struct flow_dissector_key_ports ports;
+diff --git a/include/net/sock.h b/include/net/sock.h
+index 0aadd3b03ced..1571ab68de16 100644
+--- a/include/net/sock.h
++++ b/include/net/sock.h
+@@ -2077,12 +2077,17 @@ struct sk_buff *sk_stream_alloc_skb(struct sock *sk, int size, gfp_t gfp,
+  * sk_page_frag - return an appropriate page_frag
+  * @sk: socket
+  *
+- * If socket allocation mode allows current thread to sleep, it means its
+- * safe to use the per task page_frag instead of the per socket one.
++ * Use the per task page_frag instead of the per socket one for
++ * optimization when we know that we're in the normal context and owns
++ * everything that's associated with %current.
++ *
++ * gfpflags_allow_blocking() isn't enough here as direct reclaim may nest
++ * inside other socket operations and end up recursing into sk_page_frag()
++ * while it's already in use.
+  */
+ static inline struct page_frag *sk_page_frag(struct sock *sk)
+ {
+-	if (gfpflags_allow_blocking(sk->sk_allocation))
++	if (gfpflags_normal_context(sk->sk_allocation))
+ 		return &current->task_frag;
+ 
+ 	return &sk->sk_frag;
+diff --git a/kernel/time/alarmtimer.c b/kernel/time/alarmtimer.c
+index 70aef327b6e8..015d432bcb08 100644
+--- a/kernel/time/alarmtimer.c
++++ b/kernel/time/alarmtimer.c
+@@ -573,7 +573,7 @@ static void alarm_timer_get(struct k_itimer *timr,
+ static int alarm_timer_del(struct k_itimer *timr)
+ {
+ 	if (!rtcdev)
+-		return -ENOTSUPP;
++		return -EOPNOTSUPP;
+ 
+ 	if (alarm_try_to_cancel(&timr->it.alarm.alarmtimer) < 0)
+ 		return TIMER_RETRY;
+@@ -597,7 +597,7 @@ static int alarm_timer_set(struct k_itimer *timr, int flags,
+ 	ktime_t exp;
+ 
+ 	if (!rtcdev)
+-		return -ENOTSUPP;
++		return -EOPNOTSUPP;
+ 
+ 	if (flags & ~TIMER_ABSTIME)
+ 		return -EINVAL;
+diff --git a/net/core/datagram.c b/net/core/datagram.c
+index d62af69ad844..ba8af8b55f1f 100644
+--- a/net/core/datagram.c
++++ b/net/core/datagram.c
+@@ -96,7 +96,7 @@ static int wait_for_more_packets(struct sock *sk, int *err, long *timeo_p,
+ 	if (error)
+ 		goto out_err;
+ 
+-	if (sk->sk_receive_queue.prev != skb)
++	if (READ_ONCE(sk->sk_receive_queue.prev) != skb)
+ 		goto out;
+ 
+ 	/* Socket shut down? */
+diff --git a/net/core/ethtool.c b/net/core/ethtool.c
+index 66428c0eb663..7e4e7deb2542 100644
+--- a/net/core/ethtool.c
++++ b/net/core/ethtool.c
+@@ -941,11 +941,13 @@ static int ethtool_reset(struct net_device *dev, char __user *useraddr)
+ 
+ static int ethtool_get_wol(struct net_device *dev, char __user *useraddr)
+ {
+-	struct ethtool_wolinfo wol = { .cmd = ETHTOOL_GWOL };
++	struct ethtool_wolinfo wol;
+ 
+ 	if (!dev->ethtool_ops->get_wol)
+ 		return -EOPNOTSUPP;
+ 
++	memset(&wol, 0, sizeof(struct ethtool_wolinfo));
++	wol.cmd = ETHTOOL_GWOL;
+ 	dev->ethtool_ops->get_wol(dev, &wol);
+ 
+ 	if (copy_to_user(useraddr, &wol, sizeof(wol)))
+diff --git a/net/core/flow_dissector.c b/net/core/flow_dissector.c
+index 697c4212129a..496bfcb787e7 100644
+--- a/net/core/flow_dissector.c
++++ b/net/core/flow_dissector.c
+@@ -505,45 +505,34 @@ out_bad:
+ }
+ EXPORT_SYMBOL(__skb_flow_dissect);
+ 
+-static u32 hashrnd __read_mostly;
++static siphash_key_t hashrnd __read_mostly;
+ static __always_inline void __flow_hash_secret_init(void)
+ {
+ 	net_get_random_once(&hashrnd, sizeof(hashrnd));
+ }
+ 
+-static __always_inline u32 __flow_hash_words(const u32 *words, u32 length,
+-					     u32 keyval)
++static const void *flow_keys_hash_start(const struct flow_keys *flow)
+ {
+-	return jhash2(words, length, keyval);
+-}
+-
+-static inline const u32 *flow_keys_hash_start(const struct flow_keys *flow)
+-{
+-	const void *p = flow;
+-
+-	BUILD_BUG_ON(FLOW_KEYS_HASH_OFFSET % sizeof(u32));
+-	return (const u32 *)(p + FLOW_KEYS_HASH_OFFSET);
++	BUILD_BUG_ON(FLOW_KEYS_HASH_OFFSET % SIPHASH_ALIGNMENT);
++	return &flow->FLOW_KEYS_HASH_START_FIELD;
+ }
+ 
+ static inline size_t flow_keys_hash_length(const struct flow_keys *flow)
+ {
+-	size_t diff = FLOW_KEYS_HASH_OFFSET + sizeof(flow->addrs);
+-	BUILD_BUG_ON((sizeof(*flow) - FLOW_KEYS_HASH_OFFSET) % sizeof(u32));
+-	BUILD_BUG_ON(offsetof(typeof(*flow), addrs) !=
+-		     sizeof(*flow) - sizeof(flow->addrs));
++	size_t len = offsetof(typeof(*flow), addrs) - FLOW_KEYS_HASH_OFFSET;
+ 
+ 	switch (flow->control.addr_type) {
+ 	case FLOW_DISSECTOR_KEY_IPV4_ADDRS:
+-		diff -= sizeof(flow->addrs.v4addrs);
++		len += sizeof(flow->addrs.v4addrs);
+ 		break;
+ 	case FLOW_DISSECTOR_KEY_IPV6_ADDRS:
+-		diff -= sizeof(flow->addrs.v6addrs);
++		len += sizeof(flow->addrs.v6addrs);
+ 		break;
+ 	case FLOW_DISSECTOR_KEY_TIPC_ADDRS:
+-		diff -= sizeof(flow->addrs.tipcaddrs);
++		len += sizeof(flow->addrs.tipcaddrs);
+ 		break;
+ 	}
+-	return (sizeof(*flow) - diff) / sizeof(u32);
++	return len;
+ }
+ 
+ __be32 flow_get_u32_src(const struct flow_keys *flow)
+@@ -609,14 +598,15 @@ static inline void __flow_hash_consistentify(struct flow_keys *keys)
+ 	}
+ }
+ 
+-static inline u32 __flow_hash_from_keys(struct flow_keys *keys, u32 keyval)
++static inline u32 __flow_hash_from_keys(struct flow_keys *keys,
++					const siphash_key_t *keyval)
+ {
+ 	u32 hash;
+ 
+ 	__flow_hash_consistentify(keys);
+ 
+-	hash = __flow_hash_words(flow_keys_hash_start(keys),
+-				 flow_keys_hash_length(keys), keyval);
++	hash = siphash(flow_keys_hash_start(keys),
++		       flow_keys_hash_length(keys), keyval);
+ 	if (!hash)
+ 		hash = 1;
+ 
+@@ -626,12 +616,13 @@ static inline u32 __flow_hash_from_keys(struct flow_keys *keys, u32 keyval)
+ u32 flow_hash_from_keys(struct flow_keys *keys)
+ {
+ 	__flow_hash_secret_init();
+-	return __flow_hash_from_keys(keys, hashrnd);
++	return __flow_hash_from_keys(keys, &hashrnd);
+ }
+ EXPORT_SYMBOL(flow_hash_from_keys);
+ 
+ static inline u32 ___skb_get_hash(const struct sk_buff *skb,
+-				  struct flow_keys *keys, u32 keyval)
++				  struct flow_keys *keys,
++				  const siphash_key_t *keyval)
+ {
+ 	skb_flow_dissect_flow_keys(skb, keys,
+ 				   FLOW_DISSECTOR_F_STOP_AT_FLOW_LABEL);
+@@ -679,7 +670,7 @@ u32 __skb_get_hash_symmetric(struct sk_buff *skb)
+ 			   NULL, 0, 0, 0,
+ 			   FLOW_DISSECTOR_F_STOP_AT_FLOW_LABEL);
+ 
+-	return __flow_hash_from_keys(&keys, hashrnd);
++	return __flow_hash_from_keys(&keys, &hashrnd);
+ }
+ EXPORT_SYMBOL_GPL(__skb_get_hash_symmetric);
+ 
+@@ -698,12 +689,13 @@ void __skb_get_hash(struct sk_buff *skb)
+ 
+ 	__flow_hash_secret_init();
+ 
+-	__skb_set_sw_hash(skb, ___skb_get_hash(skb, &keys, hashrnd),
++	__skb_set_sw_hash(skb, ___skb_get_hash(skb, &keys, &hashrnd),
+ 			  flow_keys_have_l4(&keys));
+ }
+ EXPORT_SYMBOL(__skb_get_hash);
+ 
+-__u32 skb_get_hash_perturb(const struct sk_buff *skb, u32 perturb)
++__u32 skb_get_hash_perturb(const struct sk_buff *skb,
++			   const siphash_key_t *perturb)
+ {
+ 	struct flow_keys keys;
+ 
+diff --git a/net/dccp/ipv4.c b/net/dccp/ipv4.c
+index b0a577a79a6a..ef4c44d46293 100644
+--- a/net/dccp/ipv4.c
++++ b/net/dccp/ipv4.c
+@@ -121,7 +121,7 @@ int dccp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+ 						    inet->inet_daddr,
+ 						    inet->inet_sport,
+ 						    inet->inet_dport);
+-	inet->inet_id = dp->dccps_iss ^ jiffies;
++	inet->inet_id = prandom_u32();
+ 
+ 	err = dccp_connect(sk);
+ 	rt = NULL;
+@@ -417,7 +417,7 @@ struct sock *dccp_v4_request_recv_sock(const struct sock *sk,
+ 	RCU_INIT_POINTER(newinet->inet_opt, rcu_dereference(ireq->ireq_opt));
+ 	newinet->mc_index  = inet_iif(skb);
+ 	newinet->mc_ttl	   = ip_hdr(skb)->ttl;
+-	newinet->inet_id   = jiffies;
++	newinet->inet_id   = prandom_u32();
+ 
+ 	if (dst == NULL && (dst = inet_csk_route_child_sock(sk, newsk, req)) == NULL)
+ 		goto put_and_exit;
+diff --git a/net/ipv4/datagram.c b/net/ipv4/datagram.c
+index f915abff1350..d3eddfd13875 100644
+--- a/net/ipv4/datagram.c
++++ b/net/ipv4/datagram.c
+@@ -75,7 +75,7 @@ int __ip4_datagram_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len
+ 	inet->inet_dport = usin->sin_port;
+ 	sk->sk_state = TCP_ESTABLISHED;
+ 	sk_set_txhash(sk);
+-	inet->inet_id = jiffies;
++	inet->inet_id = prandom_u32();
+ 
+ 	sk_dst_set(sk, &rt->dst);
+ 	err = 0;
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 744afb4fbf84..12d4d2758caf 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -241,7 +241,7 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+ 							   inet->inet_sport,
+ 							   usin->sin_port);
+ 
+-	inet->inet_id = tp->write_seq ^ jiffies;
++	inet->inet_id = prandom_u32();
+ 
+ 	err = tcp_connect(sk);
+ 
+@@ -1302,7 +1302,7 @@ struct sock *tcp_v4_syn_recv_sock(const struct sock *sk, struct sk_buff *skb,
+ 	inet_csk(newsk)->icsk_ext_hdr_len = 0;
+ 	if (inet_opt)
+ 		inet_csk(newsk)->icsk_ext_hdr_len = inet_opt->opt.optlen;
+-	newinet->inet_id = newtp->write_seq ^ jiffies;
++	newinet->inet_id = prandom_u32();
+ 
+ 	if (!dst) {
+ 		dst = inet_csk_route_child_sock(sk, newsk, req);
+diff --git a/net/sched/sch_fq_codel.c b/net/sched/sch_fq_codel.c
+index d3fc8f9dd3d4..1800f7977595 100644
+--- a/net/sched/sch_fq_codel.c
++++ b/net/sched/sch_fq_codel.c
+@@ -55,7 +55,7 @@ struct fq_codel_sched_data {
+ 	struct fq_codel_flow *flows;	/* Flows table [flows_cnt] */
+ 	u32		*backlogs;	/* backlog table [flows_cnt] */
+ 	u32		flows_cnt;	/* number of flows */
+-	u32		perturbation;	/* hash perturbation */
++	siphash_key_t	perturbation;	/* hash perturbation */
+ 	u32		quantum;	/* psched_mtu(qdisc_dev(sch)); */
+ 	struct codel_params cparams;
+ 	struct codel_stats cstats;
+@@ -69,7 +69,7 @@ struct fq_codel_sched_data {
+ static unsigned int fq_codel_hash(const struct fq_codel_sched_data *q,
+ 				  struct sk_buff *skb)
+ {
+-	u32 hash = skb_get_hash_perturb(skb, q->perturbation);
++	u32 hash = skb_get_hash_perturb(skb, &q->perturbation);
+ 
+ 	return reciprocal_scale(hash, q->flows_cnt);
+ }
+@@ -420,7 +420,7 @@ static int fq_codel_init(struct Qdisc *sch, struct nlattr *opt)
+ 	sch->limit = 10*1024;
+ 	q->flows_cnt = 1024;
+ 	q->quantum = psched_mtu(qdisc_dev(sch));
+-	q->perturbation = prandom_u32();
++	get_random_bytes(&q->perturbation, sizeof(q->perturbation));
+ 	INIT_LIST_HEAD(&q->new_flows);
+ 	INIT_LIST_HEAD(&q->old_flows);
+ 	codel_params_init(&q->cparams, sch);
+diff --git a/net/sched/sch_hhf.c b/net/sched/sch_hhf.c
+index dc68dccc6b0c..40ec5b280eb6 100644
+--- a/net/sched/sch_hhf.c
++++ b/net/sched/sch_hhf.c
+@@ -4,11 +4,11 @@
+  * Copyright (C) 2013 Nandita Dukkipati <nanditad@google.com>
+  */
+ 
+-#include <linux/jhash.h>
+ #include <linux/jiffies.h>
+ #include <linux/module.h>
+ #include <linux/skbuff.h>
+ #include <linux/vmalloc.h>
++#include <linux/siphash.h>
+ #include <net/pkt_sched.h>
+ #include <net/sock.h>
+ 
+@@ -125,7 +125,7 @@ struct wdrr_bucket {
+ 
+ struct hhf_sched_data {
+ 	struct wdrr_bucket buckets[WDRR_BUCKET_CNT];
+-	u32		   perturbation;   /* hash perturbation */
++	siphash_key_t	   perturbation;   /* hash perturbation */
+ 	u32		   quantum;        /* psched_mtu(qdisc_dev(sch)); */
+ 	u32		   drop_overlimit; /* number of times max qdisc packet
+ 					    * limit was hit
+@@ -263,7 +263,7 @@ static enum wdrr_bucket_idx hhf_classify(struct sk_buff *skb, struct Qdisc *sch)
+ 	}
+ 
+ 	/* Get hashed flow-id of the skb. */
+-	hash = skb_get_hash_perturb(skb, q->perturbation);
++	hash = skb_get_hash_perturb(skb, &q->perturbation);
+ 
+ 	/* Check if this packet belongs to an already established HH flow. */
+ 	flow_pos = hash & HHF_BIT_MASK;
+@@ -602,7 +602,7 @@ static int hhf_init(struct Qdisc *sch, struct nlattr *opt)
+ 
+ 	sch->limit = 1000;
+ 	q->quantum = psched_mtu(qdisc_dev(sch));
+-	q->perturbation = prandom_u32();
++	get_random_bytes(&q->perturbation, sizeof(q->perturbation));
+ 	INIT_LIST_HEAD(&q->new_buckets);
+ 	INIT_LIST_HEAD(&q->old_buckets);
+ 
+diff --git a/net/sched/sch_sfb.c b/net/sched/sch_sfb.c
+index c69611640fa5..10c0b184cdbe 100644
+--- a/net/sched/sch_sfb.c
++++ b/net/sched/sch_sfb.c
+@@ -22,7 +22,7 @@
+ #include <linux/errno.h>
+ #include <linux/skbuff.h>
+ #include <linux/random.h>
+-#include <linux/jhash.h>
++#include <linux/siphash.h>
+ #include <net/ip.h>
+ #include <net/pkt_sched.h>
+ #include <net/inet_ecn.h>
+@@ -48,7 +48,7 @@ struct sfb_bucket {
+  * (Section 4.4 of SFB reference : moving hash functions)
+  */
+ struct sfb_bins {
+-	u32		  perturbation; /* jhash perturbation */
++	siphash_key_t	  perturbation; /* siphash key */
+ 	struct sfb_bucket bins[SFB_LEVELS][SFB_NUMBUCKETS];
+ };
+ 
+@@ -219,7 +219,8 @@ static u32 sfb_compute_qlen(u32 *prob_r, u32 *avgpm_r, const struct sfb_sched_da
+ 
+ static void sfb_init_perturbation(u32 slot, struct sfb_sched_data *q)
+ {
+-	q->bins[slot].perturbation = prandom_u32();
++	get_random_bytes(&q->bins[slot].perturbation,
++			 sizeof(q->bins[slot].perturbation));
+ }
+ 
+ static void sfb_swap_slot(struct sfb_sched_data *q)
+@@ -313,9 +314,9 @@ static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch)
+ 		/* If using external classifiers, get result and record it. */
+ 		if (!sfb_classify(skb, fl, &ret, &salt))
+ 			goto other_drop;
+-		sfbhash = jhash_1word(salt, q->bins[slot].perturbation);
++		sfbhash = siphash_1u32(salt, &q->bins[slot].perturbation);
+ 	} else {
+-		sfbhash = skb_get_hash_perturb(skb, q->bins[slot].perturbation);
++		sfbhash = skb_get_hash_perturb(skb, &q->bins[slot].perturbation);
+ 	}
+ 
+ 
+@@ -351,7 +352,7 @@ static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch)
+ 		/* Inelastic flow */
+ 		if (q->double_buffering) {
+ 			sfbhash = skb_get_hash_perturb(skb,
+-			    q->bins[slot].perturbation);
++			    &q->bins[slot].perturbation);
+ 			if (!sfbhash)
+ 				sfbhash = 1;
+ 			sfb_skb_cb(skb)->hashes[slot] = sfbhash;
+diff --git a/net/sched/sch_sfq.c b/net/sched/sch_sfq.c
+index 8b8c084b32cd..e2e4ebc0c4c3 100644
+--- a/net/sched/sch_sfq.c
++++ b/net/sched/sch_sfq.c
+@@ -18,7 +18,7 @@
+ #include <linux/errno.h>
+ #include <linux/init.h>
+ #include <linux/skbuff.h>
+-#include <linux/jhash.h>
++#include <linux/siphash.h>
+ #include <linux/slab.h>
+ #include <linux/vmalloc.h>
+ #include <net/netlink.h>
+@@ -120,7 +120,7 @@ struct sfq_sched_data {
+ 	u8		headdrop;
+ 	u8		maxdepth;	/* limit of packets per flow */
+ 
+-	u32		perturbation;
++	siphash_key_t 	perturbation;
+ 	u8		cur_depth;	/* depth of longest slot */
+ 	u8		flags;
+ 	unsigned short  scaled_quantum; /* SFQ_ALLOT_SIZE(quantum) */
+@@ -158,7 +158,7 @@ static inline struct sfq_head *sfq_dep_head(struct sfq_sched_data *q, sfq_index
+ static unsigned int sfq_hash(const struct sfq_sched_data *q,
+ 			     const struct sk_buff *skb)
+ {
+-	return skb_get_hash_perturb(skb, q->perturbation) & (q->divisor - 1);
++	return skb_get_hash_perturb(skb, &q->perturbation) & (q->divisor - 1);
+ }
+ 
+ static unsigned int sfq_classify(struct sk_buff *skb, struct Qdisc *sch,
+@@ -607,9 +607,11 @@ static void sfq_perturbation(unsigned long arg)
+ 	struct Qdisc *sch = (struct Qdisc *)arg;
+ 	struct sfq_sched_data *q = qdisc_priv(sch);
+ 	spinlock_t *root_lock = qdisc_lock(qdisc_root_sleeping(sch));
++	siphash_key_t nkey;
+ 
++	get_random_bytes(&nkey, sizeof(nkey));
+ 	spin_lock(root_lock);
+-	q->perturbation = prandom_u32();
++	q->perturbation = nkey;
+ 	if (!q->filter_list && q->tail)
+ 		sfq_rehash(sch);
+ 	spin_unlock(root_lock);
+@@ -681,7 +683,7 @@ static int sfq_change(struct Qdisc *sch, struct nlattr *opt)
+ 	del_timer(&q->perturb_timer);
+ 	if (q->perturb_period) {
+ 		mod_timer(&q->perturb_timer, jiffies + q->perturb_period);
+-		q->perturbation = prandom_u32();
++		get_random_bytes(&q->perturbation, sizeof(q->perturbation));
+ 	}
+ 	sch_tree_unlock(sch);
+ 	kfree(p);
+@@ -737,7 +739,7 @@ static int sfq_init(struct Qdisc *sch, struct nlattr *opt)
+ 	q->quantum = psched_mtu(qdisc_dev(sch));
+ 	q->scaled_quantum = SFQ_ALLOT_SIZE(q->quantum);
+ 	q->perturb_period = 0;
+-	q->perturbation = prandom_u32();
++	get_random_bytes(&q->perturbation, sizeof(q->perturbation));
+ 
+ 	if (opt) {
+ 		int err = sfq_change(sch, opt);
+diff --git a/net/sctp/socket.c b/net/sctp/socket.c
+index 7add261dd626..2b6c88b9a038 100644
+--- a/net/sctp/socket.c
++++ b/net/sctp/socket.c
+@@ -7267,7 +7267,7 @@ void sctp_copy_sock(struct sock *newsk, struct sock *sk,
+ 	newinet->inet_rcv_saddr = inet->inet_rcv_saddr;
+ 	newinet->inet_dport = htons(asoc->peer.port);
+ 	newinet->pmtudisc = inet->pmtudisc;
+-	newinet->inet_id = asoc->next_tsn ^ jiffies;
++	newinet->inet_id = prandom_u32();
+ 
+ 	newinet->uc_ttl = inet->uc_ttl;
+ 	newinet->mc_loop = 1;
+diff --git a/sound/soc/rockchip/rockchip_i2s.c b/sound/soc/rockchip/rockchip_i2s.c
+index 58ee64594f07..f583f317644a 100644
+--- a/sound/soc/rockchip/rockchip_i2s.c
++++ b/sound/soc/rockchip/rockchip_i2s.c
+@@ -530,7 +530,7 @@ static int rockchip_i2s_probe(struct platform_device *pdev)
+ 	ret = devm_snd_dmaengine_pcm_register(&pdev->dev, NULL, 0);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "Could not register PCM\n");
+-		return ret;
++		goto err_suspend;
+ 	}
+ 
+ 	return 0;
+diff --git a/tools/perf/builtin-kmem.c b/tools/perf/builtin-kmem.c
+index 93ce665f976f..b62f2f139edf 100644
+--- a/tools/perf/builtin-kmem.c
++++ b/tools/perf/builtin-kmem.c
+@@ -664,6 +664,7 @@ static char *compact_gfp_flags(char *gfp_flags)
+ 			new = realloc(new_flags, len + strlen(cpt) + 2);
+ 			if (new == NULL) {
+ 				free(new_flags);
++				free(orig_flags);
+ 				return NULL;
+ 			}
+ 
