@@ -330,8 +330,19 @@ chroot_installpackages()
 		unset package_install_target package_checkinstall
 	done
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
+	# add the local resolver config as a potential fallback
+	cp /etc/resolv.conf "${SDCARD}"/tmp
 	cat <<-EOF > "${SDCARD}"/tmp/install.sh
 	#!/bin/bash
+	# check dns connectiivity (1.0.0.1 might not be available)
+	cd /tmp
+	wget http://apt.armbian.com
+	if [ -f index.html ]; then
+		rm /tmp/index.html
+	else
+		# fallback to your working dns config
+		mv /tmp/resolv.conf /etc
+	fi
 	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
 	apt $apt_extra -q update
 	# uncomment to debug
