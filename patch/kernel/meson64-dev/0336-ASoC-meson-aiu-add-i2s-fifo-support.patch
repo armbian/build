@@ -1,0 +1,580 @@
+From 9a78881a4a3b0b079433c222655f9a51052854d1 Mon Sep 17 00:00:00 2001
+From: Jerome Brunet <jbrunet@baylibre.com>
+Date: Tue, 22 Oct 2019 17:51:56 +0200
+Subject: [PATCH 50/94] WIP: ASoC: meson: aiu: add i2s fifo support
+
+Signed-off-by: Jerome Brunet <jbrunet@baylibre.com>
+---
+ sound/soc/meson/Kconfig        |  11 ++
+ sound/soc/meson/Makefile       |   4 +
+ sound/soc/meson/aiu-fifo.c     | 268 +++++++++++++++++++++++++++++++++++++++++
+ sound/soc/meson/aiu-fifo.h     |  60 +++++++++
+ sound/soc/meson/aiu-i2s-fifo.c | 170 ++++++++++++++++++++++++++
+ 5 files changed, 513 insertions(+)
+ create mode 100644 sound/soc/meson/aiu-fifo.c
+ create mode 100644 sound/soc/meson/aiu-fifo.h
+ create mode 100644 sound/soc/meson/aiu-i2s-fifo.c
+
+diff --git a/sound/soc/meson/Kconfig b/sound/soc/meson/Kconfig
+index 5b15077..7633057 100644
+--- a/sound/soc/meson/Kconfig
++++ b/sound/soc/meson/Kconfig
+@@ -9,6 +9,17 @@ config SND_MESON_AIU_BUS
+ 	  Select Y or M to add support for audio output interfaces
+ 	  embedded in the Amlogic GX SoC families
+ 
++config SND_MESON_AIU_FIFO
++	tristate
++	imply SND_MESON_AIU_BUS
++	select MFD_SYSCON
++
++config SND_MESON_AIU_I2S_FIFO
++	tristate "Amlogic AIU I2S FIFO"
++	select SND_MESON_AIU_FIFO
++	help
++	  Select Y or M to add support for i2s FIFO of the GXL family
++
+ config SND_MESON_AXG_FIFO
+ 	tristate
+ 	select REGMAP_MMIO
+diff --git a/sound/soc/meson/Makefile b/sound/soc/meson/Makefile
+index 6c89ab3..b3c23ec 100644
+--- a/sound/soc/meson/Makefile
++++ b/sound/soc/meson/Makefile
+@@ -1,6 +1,8 @@
+ # SPDX-License-Identifier: (GPL-2.0 OR MIT)
+ 
+ snd-soc-meson-aiu-bus-objs := aiu-bus.o
++snd-soc-meson-aiu-fifo-objs := aiu-fifo.o
++snd-soc-meson-aiu-i2s-fifo-objs := aiu-i2s-fifo.o
+ snd-soc-meson-axg-fifo-objs := axg-fifo.o
+ snd-soc-meson-axg-frddr-objs := axg-frddr.o
+ snd-soc-meson-axg-toddr-objs := axg-toddr.o
+@@ -18,6 +20,8 @@ snd-soc-meson-g12a-tohdmitx-objs := g12a-tohdmitx.o
+ snd-soc-meson-t9015-objs := t9015.o
+ 
+ obj-$(CONFIG_SND_MESON_AIU_BUS) += snd-soc-meson-aiu-bus.o
++obj-$(CONFIG_SND_MESON_AIU_FIFO) += snd-soc-meson-aiu-fifo.o
++obj-$(CONFIG_SND_MESON_AIU_I2S_FIFO) += snd-soc-meson-aiu-i2s-fifo.o
+ obj-$(CONFIG_SND_MESON_AXG_FIFO) += snd-soc-meson-axg-fifo.o
+ obj-$(CONFIG_SND_MESON_AXG_FRDDR) += snd-soc-meson-axg-frddr.o
+ obj-$(CONFIG_SND_MESON_AXG_TODDR) += snd-soc-meson-axg-toddr.o
+diff --git a/sound/soc/meson/aiu-fifo.c b/sound/soc/meson/aiu-fifo.c
+new file mode 100644
+index 0000000..14eccd5
+--- /dev/null
++++ b/sound/soc/meson/aiu-fifo.c
+@@ -0,0 +1,268 @@
++// SPDX-License-Identifier: GPL-2.0
++//
++// Copyright (c) 2019 BayLibre, SAS.
++// Author: Jerome Brunet <jbrunet@baylibre.com>
++
++#include <linux/bitfield.h>
++#include <linux/clk.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of_platform.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/soc-dai.h>
++
++#include "aiu-fifo.h"
++
++#define AIU_MEM_START	0x00
++#define AIU_MEM_RD	0x04
++#define AIU_MEM_END	0x08
++#define AIU_MEM_MASKS	0x0c
++#define  AIU_MEM_MASK_CH_RD GENMASK(7, 0)
++#define  AIU_MEM_MASK_CH_MEM GENMASK(15, 8)
++#define AIU_MEM_CONTROL	0x10
++#define  AIU_MEM_CONTROL_INIT BIT(0)
++#define  AIU_MEM_CONTROL_FILL_EN BIT(1)
++#define  AIU_MEM_CONTROL_EMPTY_EN BIT(2)
++
++snd_pcm_uframes_t aiu_fifo_pointer(struct snd_soc_component *component,
++				   struct snd_pcm_substream *substream)
++{
++	struct aiu_fifo *fifo = snd_soc_component_get_drvdata(component);
++	struct snd_pcm_runtime *runtime = substream->runtime; 
++	unsigned int addr;
++
++	snd_soc_component_read(component, fifo->hw->mem_offset + AIU_MEM_RD,
++			       &addr);
++
++	return bytes_to_frames(runtime, addr - (unsigned int)runtime->dma_addr);
++}
++EXPORT_SYMBOL_GPL(aiu_fifo_pointer);
++
++static void aiu_fifo_enable(struct snd_soc_component *component,
++			    bool enable)
++{
++	struct aiu_fifo *fifo = snd_soc_component_get_drvdata(component);
++	unsigned int en_mask = (AIU_MEM_CONTROL_FILL_EN |
++				AIU_MEM_CONTROL_EMPTY_EN);
++
++	snd_soc_component_update_bits(component,
++				      fifo->hw->mem_offset + AIU_MEM_CONTROL,
++				      en_mask, enable ? en_mask : 0);
++}
++
++int aiu_fifo_trigger(struct snd_pcm_substream *substream, int cmd,
++		     struct snd_soc_dai *dai)
++{
++	struct snd_soc_component *component = dai->component;
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++	        aiu_fifo_enable(component, true);
++		break;
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++	case SNDRV_PCM_TRIGGER_STOP:
++		aiu_fifo_enable(component, false);
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(aiu_fifo_trigger);
++
++
++int aiu_fifo_prepare(struct snd_pcm_substream *substream,
++		     struct snd_soc_dai *dai)
++{
++	struct snd_soc_component *component = dai->component;
++	struct aiu_fifo *fifo = snd_soc_component_get_drvdata(component);
++
++        snd_soc_component_update_bits(component,
++				      fifo->hw->mem_offset + AIU_MEM_CONTROL,
++				      AIU_MEM_CONTROL_INIT,
++				      AIU_MEM_CONTROL_INIT);
++	snd_soc_component_update_bits(component,
++				      fifo->hw->mem_offset + AIU_MEM_CONTROL,
++				      AIU_MEM_CONTROL_INIT, 0);
++	return 0;
++}
++EXPORT_SYMBOL_GPL(aiu_fifo_prepare);
++
++int aiu_fifo_hw_params(struct snd_pcm_substream *substream,
++		       struct snd_pcm_hw_params *params,
++		       struct snd_soc_dai *dai)
++{
++	struct snd_pcm_runtime *runtime = substream->runtime;
++	struct snd_soc_component *component = dai->component;
++	struct aiu_fifo *fifo = snd_soc_component_get_drvdata(component);
++	dma_addr_t end;
++	int ret;
++
++	ret = snd_pcm_lib_malloc_pages(substream, params_buffer_bytes(params));
++	if (ret < 0)
++		return ret;
++
++	/* Setup the fifo boundaries */
++	end = runtime->dma_addr + runtime->dma_bytes - fifo->hw->fifo_block;
++	snd_soc_component_write(component, fifo->hw->mem_offset + AIU_MEM_START,
++				runtime->dma_addr);
++	snd_soc_component_write(component, fifo->hw->mem_offset + AIU_MEM_RD,
++				runtime->dma_addr);
++	snd_soc_component_write(component, fifo->hw->mem_offset + AIU_MEM_END,
++				end);
++
++	/* Setup the fifo to read all the memory - no skip */
++	snd_soc_component_update_bits(component,
++				      fifo->hw->mem_offset + AIU_MEM_MASKS,
++				      AIU_MEM_MASK_CH_RD | AIU_MEM_MASK_CH_MEM,
++				      FIELD_PREP(AIU_MEM_MASK_CH_RD, 0xff) |
++				      FIELD_PREP(AIU_MEM_MASK_CH_MEM, 0xff));
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(aiu_fifo_hw_params);
++
++int aiu_fifo_hw_free(struct snd_pcm_substream *substream,
++			    struct snd_soc_dai *dai)
++{
++	return snd_pcm_lib_free_pages(substream);
++}
++EXPORT_SYMBOL_GPL(aiu_fifo_hw_free);
++
++static irqreturn_t aiu_fifo_isr(int irq, void *dev_id)
++{
++	struct snd_pcm_substream *playback = dev_id;
++
++	snd_pcm_period_elapsed(playback);
++
++	return IRQ_HANDLED;
++}
++
++int aiu_fifo_startup(struct snd_pcm_substream *substream,
++		     struct snd_soc_dai *dai)
++{
++	struct snd_soc_component *component = dai->component;
++	struct aiu_fifo *fifo = snd_soc_component_get_drvdata(component);
++	int ret;
++
++	snd_soc_set_runtime_hwparams(substream, fifo->hw->pcm);
++
++	/*
++	 * Make sure the buffer and period size are multiple of the fifo burst
++	 * size
++	 */
++	ret = snd_pcm_hw_constraint_step(substream->runtime, 0,
++					 SNDRV_PCM_HW_PARAM_BUFFER_BYTES,
++					 fifo->hw->fifo_block);
++	if (ret)
++		return ret;
++
++	ret = snd_pcm_hw_constraint_step(substream->runtime, 0,
++					 SNDRV_PCM_HW_PARAM_PERIOD_BYTES,
++					 fifo->hw->fifo_block);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(fifo->pclk);
++	if (ret)
++		return ret;
++
++	ret = request_irq(fifo->irq, aiu_fifo_isr, 0, dev_name(dai->dev),
++			  substream);
++	if (ret)
++		clk_disable_unprepare(fifo->pclk);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(aiu_fifo_startup);
++
++void aiu_fifo_shutdown(struct snd_pcm_substream *substream,
++		       struct snd_soc_dai *dai)
++{
++	struct snd_soc_component *component = dai->component;
++	struct aiu_fifo *fifo = snd_soc_component_get_drvdata(component);
++
++	free_irq(fifo->irq, substream);
++	clk_disable_unprepare(fifo->pclk);
++}
++EXPORT_SYMBOL_GPL(aiu_fifo_shutdown);
++
++int aiu_fifo_pcm_new(struct snd_soc_pcm_runtime *rtd,
++		     struct snd_soc_dai *dai)
++{
++	struct snd_card *card = rtd->card->snd_card;
++	struct snd_soc_component *component = dai->component;
++	struct aiu_fifo *fifo = snd_soc_component_get_drvdata(component);
++	size_t size = fifo->hw->pcm->buffer_bytes_max;
++
++
++	snd_pcm_lib_preallocate_pages(
++		rtd->pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream,
++		SNDRV_DMA_TYPE_DEV, card->dev, size, size);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(aiu_fifo_pcm_new);
++
++int aiu_fifo_component_probe(struct snd_soc_component *component)
++{
++	struct device *dev = component->dev;
++	struct regmap *map;
++
++	map = syscon_node_to_regmap(dev->parent->of_node);
++	if (IS_ERR(map)) {
++		dev_err(dev, "Could not get regmap\n");
++		return PTR_ERR(map);
++	}
++
++	snd_soc_component_init_regmap(component, map);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(aiu_fifo_component_probe);
++
++int aiu_fifo_probe(struct platform_device *pdev)
++{
++	const struct aiu_fifo_match_data *data;
++	struct device *dev = &pdev->dev;
++	struct aiu_fifo *fifo;
++
++	data = of_device_get_match_data(dev);
++	if (!data) {
++		dev_err(dev, "failed to match device\n");
++		return -ENODEV;
++	}
++
++	fifo = devm_kzalloc(dev, sizeof(*fifo), GFP_KERNEL);
++	if (!fifo)
++		return -ENOMEM;
++	platform_set_drvdata(pdev, fifo);
++	fifo->hw = data->hw;
++
++	fifo->pclk = devm_clk_get(dev, NULL);
++	if (IS_ERR(fifo->pclk)) {
++		if (PTR_ERR(fifo->pclk) != -EPROBE_DEFER)
++			dev_err(dev, "failed to get pclk: %ld\n",
++				PTR_ERR(fifo->pclk));
++		return PTR_ERR(fifo->pclk);
++	}
++
++	fifo->irq = platform_get_irq(pdev, 0);
++	if (fifo->irq <= 0) {
++		dev_err(dev, "Can't get irq\n");
++		return fifo->irq;
++	}
++
++	return devm_snd_soc_register_component(dev, data->component_drv,
++					       data->dai_drv, 1);
++}
++EXPORT_SYMBOL_GPL(aiu_fifo_probe);
++
++MODULE_DESCRIPTION("Amlogic AIU FIFO driver");
++MODULE_AUTHOR("Jerome Brunet <jbrunet@baylibre.com>");
++MODULE_LICENSE("GPL v2");
+diff --git a/sound/soc/meson/aiu-fifo.h b/sound/soc/meson/aiu-fifo.h
+new file mode 100644
+index 0000000..3de5f2d
+--- /dev/null
++++ b/sound/soc/meson/aiu-fifo.h
+@@ -0,0 +1,60 @@
++/* SPDX-License-Identifier: (GPL-2.0 OR MIT) */
++/*
++ * Copyright (c) 2019 BayLibre, SAS.
++ * Author: Jerome Brunet <jbrunet@baylibre.com>
++ */
++
++#ifndef _MESON_AIU_FIFO_H
++#define _MESON_AIU_FIFO_H
++
++struct snd_pcm_hardware;
++struct snd_soc_component_driver;
++struct snd_soc_dai_driver;
++struct clk;
++struct snd_pcm_ops;
++struct snd_pcm_substream;
++struct snd_soc_dai;
++struct snd_pcm_hw_params;
++struct platform_device;
++
++struct aiu_fifo_hw {
++	struct snd_pcm_hardware *pcm;
++	unsigned int mem_offset;
++	unsigned int fifo_block;
++};
++
++struct aiu_fifo_match_data {
++	const struct snd_soc_component_driver *component_drv;
++	const struct aiu_fifo_hw *hw;
++	struct snd_soc_dai_driver *dai_drv;
++};
++
++struct aiu_fifo {
++	const struct aiu_fifo_hw *hw;
++	struct clk *pclk;
++	int irq;
++};
++
++snd_pcm_uframes_t aiu_fifo_pointer(struct snd_soc_component *component,
++				   struct snd_pcm_substream *substream);
++
++int aiu_fifo_trigger(struct snd_pcm_substream *substream, int cmd,
++		     struct snd_soc_dai *dai);
++int aiu_fifo_prepare(struct snd_pcm_substream *substream,
++		     struct snd_soc_dai *dai);
++int aiu_fifo_hw_params(struct snd_pcm_substream *substream,
++		       struct snd_pcm_hw_params *params,
++		       struct snd_soc_dai *dai);
++int aiu_fifo_hw_free(struct snd_pcm_substream *substream,
++		     struct snd_soc_dai *dai);
++int aiu_fifo_startup(struct snd_pcm_substream *substream,
++		     struct snd_soc_dai *dai);
++void aiu_fifo_shutdown(struct snd_pcm_substream *substream,
++		       struct snd_soc_dai *dai);
++int aiu_fifo_pcm_new(struct snd_soc_pcm_runtime *rtd,
++		     struct snd_soc_dai *dai);
++
++int aiu_fifo_component_probe(struct snd_soc_component *component);
++int aiu_fifo_probe(struct platform_device *pdev);
++
++#endif /* _MESON_AIU_FIFO_H */
+diff --git a/sound/soc/meson/aiu-i2s-fifo.c b/sound/soc/meson/aiu-i2s-fifo.c
+new file mode 100644
+index 0000000..efb6bbd
+--- /dev/null
++++ b/sound/soc/meson/aiu-i2s-fifo.c
+@@ -0,0 +1,170 @@
++// SPDX-License-Identifier: GPL-2.0
++//
++// Copyright (c) 2019 BayLibre, SAS.
++// Author: Jerome Brunet <jbrunet@baylibre.com>
++
++#include <linux/bitfield.h>
++#include <linux/clk.h>
++#include <linux/module.h>
++#include <linux/of_platform.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/soc-dai.h>
++
++#include "aiu-fifo.h"
++
++#define AIU_MEM_I2S_START		0x180
++#define AIU_MEM_I2S_MASKS		0x18c
++#define  AIU_MEM_I2S_MASKS_IRQ_BLOCK	GENMASK(31, 16)
++#define AIU_MEM_I2S_CONTROL		0x190
++#define  AIU_MEM_I2S_CONTROL_MODE_16BIT	BIT(6)
++#define AIU_MEM_I2S_BUF_CNTL		0x1d8
++#define  AIU_MEM_I2S_BUF_CNTL_INIT	BIT(0)
++
++#define AIU_I2S_FIFO_BLOCK 		256
++#define AIU_I2S_FIFO_FORMATS 		(SNDRV_PCM_FMTBIT_S16_LE | \
++					 SNDRV_PCM_FMTBIT_S20_LE | \
++					 SNDRV_PCM_FMTBIT_S24_LE | \
++					 SNDRV_PCM_FMTBIT_S32_LE)
++
++static int i2s_fifo_prepare(struct snd_pcm_substream *substream,
++			    struct snd_soc_dai *dai)
++{
++	struct snd_soc_component *component = dai->component;
++	int ret;
++
++	ret = aiu_fifo_prepare(substream, dai);
++	if (ret)
++		return ret;
++
++	snd_soc_component_update_bits(component,
++				      AIU_MEM_I2S_BUF_CNTL,
++				      AIU_MEM_I2S_BUF_CNTL_INIT,
++				      AIU_MEM_I2S_BUF_CNTL_INIT);
++	snd_soc_component_update_bits(component,
++				      AIU_MEM_I2S_BUF_CNTL,
++				      AIU_MEM_I2S_BUF_CNTL_INIT, 0);
++
++	return 0;
++}
++
++static int i2s_fifo_hw_params(struct snd_pcm_substream *substream,
++			      struct snd_pcm_hw_params *params,
++			      struct snd_soc_dai *dai)
++{
++	struct snd_soc_component *component = dai->component;
++	struct aiu_fifo *fifo = snd_soc_component_get_drvdata(component);
++	unsigned int val;
++	int ret;
++
++	ret = aiu_fifo_hw_params(substream, params, dai);
++	if (ret)
++		return ret;
++
++	switch (params_physical_width(params)) {
++	case 16:
++		val = AIU_MEM_I2S_CONTROL_MODE_16BIT;
++		break;
++	case 32:
++		val = 0;
++		break;
++	default:
++		dev_err(dai->dev, "Unsupported physical width %u\n",
++			params_physical_width(params));
++		return -EINVAL;
++	}
++
++	snd_soc_component_update_bits(component, AIU_MEM_I2S_CONTROL,
++				      AIU_MEM_I2S_CONTROL_MODE_16BIT,
++				      val);
++
++	/* Setup the irq periodicity */
++	val = params_period_bytes(params) / fifo->hw->fifo_block;
++	val = FIELD_PREP(AIU_MEM_I2S_MASKS_IRQ_BLOCK, val);
++	snd_soc_component_update_bits(component, AIU_MEM_I2S_MASKS,
++				      AIU_MEM_I2S_MASKS_IRQ_BLOCK, val);
++
++	return 0;
++}
++
++static const struct snd_soc_dai_ops i2s_fifo_dai_ops = {
++	.trigger	= aiu_fifo_trigger,
++	.prepare	= i2s_fifo_prepare,
++	.hw_params	= i2s_fifo_hw_params,
++	.hw_free	= aiu_fifo_hw_free,
++	.startup	= aiu_fifo_startup,
++	.shutdown	= aiu_fifo_shutdown,
++};
++
++static struct snd_soc_dai_driver i2s_fifo_dai_drv = {
++	.name = "AIU I2S FIFO",
++	.playback = {
++		.stream_name	= "Playback",
++		.channels_min	= 2,
++		.channels_max	= 8,
++		.rates		= SNDRV_PCM_RATE_CONTINUOUS,
++		.rate_min	= 5512,
++		.rate_max	= 192000,
++		.formats	= AIU_I2S_FIFO_FORMATS,
++	},
++	.ops		= &i2s_fifo_dai_ops,
++	.pcm_new	= aiu_fifo_pcm_new,
++};
++
++static const struct snd_soc_component_driver i2s_fifo_component_drv = {
++	.probe		= aiu_fifo_component_probe,
++	.pointer	= aiu_fifo_pointer,
++	.ioctl		= snd_soc_pcm_lib_ioctl,
++};
++
++static struct snd_pcm_hardware i2s_fifo_pcm = {
++	.info = (SNDRV_PCM_INFO_INTERLEAVED |
++		 SNDRV_PCM_INFO_MMAP |
++		 SNDRV_PCM_INFO_MMAP_VALID |
++		 SNDRV_PCM_INFO_PAUSE),
++	.formats = AIU_I2S_FIFO_FORMATS,
++	.rate_min = 5512,
++	.rate_max = 192000,
++	.channels_min = 2,
++	.channels_max = 8,
++	.period_bytes_min = AIU_I2S_FIFO_BLOCK,
++	.period_bytes_max = AIU_I2S_FIFO_BLOCK * USHRT_MAX,
++	.periods_min = 2,
++	.periods_max = UINT_MAX,
++
++	/* No real justification for this */
++	.buffer_bytes_max = 1 * 1024 * 1024,
++};
++
++static const struct aiu_fifo_hw i2s_fifo_hw = {
++	.fifo_block = AIU_I2S_FIFO_BLOCK,
++	.mem_offset = AIU_MEM_I2S_START,
++	.pcm = &i2s_fifo_pcm,
++};
++
++static const struct aiu_fifo_match_data i2s_fifo_data = {
++	.component_drv = &i2s_fifo_component_drv,
++	.dai_drv = &i2s_fifo_dai_drv,
++	.hw = &i2s_fifo_hw,
++};
++
++static const struct of_device_id aiu_i2s_fifo_of_match[] = {
++	{
++		.compatible = "amlogic,aiu-i2s-fifo",
++		.data = &i2s_fifo_data,
++	}, {}
++};
++MODULE_DEVICE_TABLE(of, aiu_i2s_fifo_of_match);
++
++static struct platform_driver aiu_i2s_fifo_pdrv = {
++	.probe = aiu_fifo_probe,
++	.driver = {
++		.name = "meson-aiu-i2s-fifo",
++		.of_match_table = aiu_i2s_fifo_of_match,
++	},
++};
++module_platform_driver(aiu_i2s_fifo_pdrv);
++
++MODULE_DESCRIPTION("Amlogic AIU I2S FIFO driver");
++MODULE_AUTHOR("Jerome Brunet <jbrunet@baylibre.com>");
++MODULE_LICENSE("GPL v2");
+-- 
+2.7.1
+

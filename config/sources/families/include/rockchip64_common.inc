@@ -159,6 +159,11 @@ family_tweaks_bsp()
 
 	fi
 
+	if [[ $BOARD == pinebook-pro ]]; then
+		
+		cp $SRC/packages/bsp/pinebook-pro/xorg.conf $destination/etc/X11/
+	fi
+
 	# Graphics and media
 	mkdir -p $destination/etc/udev/rules.d
 	cp $SRC/packages/bsp/rk3399/50-mali.rules $destination/etc/udev/rules.d/

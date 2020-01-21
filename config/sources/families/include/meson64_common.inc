@@ -19,16 +19,14 @@ CPUMAX=1536000
 GOVERNOR=conservative
 
 case $BRANCH in
-        dev|current)
 
-		KERNELSOURCE='https://github.com/150balbes/Amlogic_s905-kernel'
-		KERNELBRANCH='branch:le'
-		KERNELPATCHDIR='meson64-'$BRANCH
+        dev)
+
+		KERNELBRANCH='branch:master'
 
         ;;
 
 esac
-
 
 # this helper function includes postprocess for p212 and its variants.
 # $1 PATH for uboot blob repo
