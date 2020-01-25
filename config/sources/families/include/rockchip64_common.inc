@@ -113,6 +113,7 @@ family_tweaks()
 	[[ $BOARD == nanopim4v2 ]] && echo "fdtfile=rockchip/rk3399-nanopi-m4v2.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == nanopineo4 ]] && echo "fdtfile=rockchip/rk3399-nanopi-neo4.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == orangepi-rk3399 ]] && echo "fdtfile=rockchip/rk3399-orangepi.dtb" >> $SDCARD/boot/armbianEnv.txt
+	[[ $BOARD == orangepi4 ]] && echo "fdtfile=rockchip/rk3399-orangepi-4.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == pinebook-pro ]] && echo "fdtfile=rockchip/rk3399-pinebook-pro.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == roc-rk3399-pc ]] && echo "fdtfile=rockchip/rk3399-roc-pc.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == rockpi-4* ]] && echo "fdtfile=rockchip/rk3399-rock-pi-4.dtb" >> $SDCARD/boot/armbianEnv.txt
