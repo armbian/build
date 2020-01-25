@@ -64,6 +64,7 @@ else
 		source ${load_addr}
 	fi
 fi
+print ${bootargs}
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
 # Recompile with:
