@@ -107,8 +107,13 @@ fi
 
 # Install Docker if not there but wanted. We cover only Debian based distro install. Else, manual Docker install is needed
 if [[ "$1" == docker && -f /etc/debian_version && -z "$(which docker)" ]]; then
+
+	# add exception for Ubuntu Focal until Docker provides dedicated binary
+	codename=$(lsb_release -sc)
+	[[ $codename == focal ]] && codename="bionic"
+
 	display_alert "Docker not installed." "Installing" "Info"
-	echo "deb [arch=amd64] https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}') $(lsb_release -cs) edge" > /etc/apt/sources.list.d/docker.list
+	echo "deb [arch=amd64] https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}') ${codename} edge" > /etc/apt/sources.list.d/docker.list
 
 	# minimal set of utilities that are needed for prep
 	packages=("curl" "gnupg" "apt-transport-https")

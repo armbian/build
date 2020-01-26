@@ -699,11 +699,21 @@ prepare_host()
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross \
-	curl patchutils python liblz4-tool libpython2.7-dev linux-base swig libpython-dev aptly acl \
+	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
 	bison libbison-dev flex libfl-dev cryptsetup gpgv1 gnupg1 cpio aria2 pigz dirmngr"
 
 	local codename=$(lsb_release -sc)
+
+	# Getting ready for Ubuntu 20.04
+	if [[ $codename == focal ]]; then
+		hostdeps+=" python2 python3 libpython3-dev"
+		ln -fs /usr/bin/python2.7 /usr/bin/python2
+		ln -fs /usr/bin/python2.7 /usr/bin/python
+	else
+		hostdeps+=" python libpython-dev"
+	fi
+
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
 
 	# Ubuntu Xenial x86_64 is the only fully supported host OS release
