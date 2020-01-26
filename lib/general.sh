@@ -18,6 +18,8 @@
 # distro_menu
 # addtorepo
 # repo-remove-old-packages
+# wait_for_package_manager
+# prepare_host_basic
 # prepare_host
 # webseed
 # download_and_verify
@@ -657,6 +659,52 @@ repo-remove-old-packages() {
 
 
 
+# wait_for_package_manager
+#
+# * installation will break if we try to install when package manager is running
+#
+wait_for_package_manager()
+{
+	# exit if package manager is running in the back
+	while true; do
+		if [[ "$(fuser /var/lib/dpkg/lock; echo $?)" != 1 && "$(fuser /var/lib/dpkg/lock-frontend; echo $?)" != 1 ]]; then
+				display_alert "Package manager is running in the background." "retrying in 30 sec" "wrn"
+				sleep 30
+			else
+				break
+		fi
+	done
+}
+
+
+
+
+# prepare_host_basic
+#
+# * installs only basic packages
+#
+prepare_host_basic()
+{
+	# wait until package manager finishes possible system maintanace
+	wait_for_package_manager
+
+	# need lsb_release to decide what to install
+	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
+		display_alert "Installing package" "lsb-release"
+		apt -q update && apt install -q -y --no-install-recommends lsb-release
+	fi
+
+	# need to install dialog if person is starting with a interactive mode
+	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
+		display_alert "Installing package" "dialog"
+		apt -q update && apt install -q -y --no-install-recommends dialog
+	fi
+
+}
+
+
+
+
 # prepare_host
 #
 # * checks and installs necessary packages
@@ -673,25 +721,11 @@ prepare_host()
 		exit_with_error "Running this tool on non x86-x64 build host in not supported"
 	fi
 
-	# exit if package manager is running in the back
-	while true; do
-		fuser -s /var/lib/dpkg/lock
-		if [[ $? = 0 ]]; then
-				display_alert "Package manager is running in the background." "retrying in 30 sec" "wrn"
-				sleep 30
-			else
-				break
-		fi
-	done
+	# wait until package manager finishes possible system maintanace
+	wait_for_package_manager
 
 	# temporally fix for Locales settings
 	export LC_ALL="en_US.UTF-8"
-
-	# need lsb_release to decide what to install
-	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "lsb-release"
-		apt -q update && apt install -q -y --no-install-recommends lsb-release
-	fi
 
 	# packages list for host
 	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
@@ -786,7 +820,7 @@ prepare_host()
 		display_alert "Installing build dependencies"
 		apt -q update
 		apt -y upgrade
-		apt -q -y --no-install-recommends install "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
+		apt -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
 		update-ccache-symlinks
 	fi
 
