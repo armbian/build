@@ -144,8 +144,8 @@ create_sources_list()
 	deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
 
-	deb http://security.debian.org/ ${release}/updates main contrib non-free
-	#deb-src http://security.debian.org/ ${release}/updates main contrib non-free
+	deb http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
+	#deb-src http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
 	EOF
 	;;
 
@@ -919,30 +919,39 @@ download_and_verify()
 	local localdir=$SRC/cache/${remotedir//_}
 	local dirname=${filename//.tar.xz}
 
+        if [[ $DOWNLOAD_MIRROR == china ]]; then
+		local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+			else
+		local server="https://dl.armbian.com/"
+        fi
+
 	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then
 		return
 	fi
 
 	cd ${localdir}
 
-	# download control file
-	if [[ ! `wget -S --spider https://dl.armbian.com/$remotedir/${filename}.asc 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK'` ]]; then
+	# use local control file
+	if [[ -f $SRC/config/torrents/${filename}.asc ]]; then
+		local torrent=$SRC/config/torrents/${filename}.torrent
+		ln -s $SRC/config/torrents/${filename}.asc ${localdir}/${filename}.asc
+	elif [[ ! `wget -S --spider ${server}${remotedir}/${filename}.asc 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK'` ]]; then
 		return
+	else
+		# download control file
+		local torrent=${server}torrent/${filename}.torrent
+		aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
+		--continue=false --allow-overwrite=true --dir=${localdir} $(webseed "$remotedir/${filename}.asc") -o "${filename}.asc"
+		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
 	fi
 
-	aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
-	--continue=false --allow-overwrite=true --dir=${localdir} $(webseed "$remotedir/${filename}.asc") -o "${filename}.asc"
-	[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
-
-
 	# download torrent first
-	if [[ `wget -S --spider https://dl.armbian.com/torrent/${filename}.torrent 2>&1 >/dev/null \
-		| grep 'HTTP/1.1 200 OK'` && ${USE_TORRENT} == "yes" ]]; then
+	if [[ ${USE_TORRENT} == "yes" ]]; then
 
 		display_alert "downloading using torrent network" "$filename"
 		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=15 --console-log-level=error \
 		--allow-overwrite=true --download-result=hide --rpc-save-upload-metadata=false --auto-file-renaming=false \
-		--file-allocation=trunc --continue=true https://dl.armbian.com/torrent/${filename}.torrent \
+		--file-allocation=trunc --continue=true ${torrent} \
 		--dht-file-path=$SRC/cache/.aria2/dht.dat --disable-ipv6=true --stderr --follow-torrent=mem --dir=${localdir}"
 
 		# exception. It throws error if dht.dat file does not exists. Error suppress needed only at first download.
@@ -959,7 +968,7 @@ download_and_verify()
 
 	# direct download if torrent fails
 	if [[ ! -f ${localdir}/${filename}.complete ]]; then
-		if [[ `wget -S --spider https://dl.armbian.com/${remotedir}/${filename} 2>&1 >/dev/null \
+		if [[ `wget -S --spider ${server}${remotedir}/${filename} 2>&1 >/dev/null \
 			| grep 'HTTP/1.1 200 OK'` ]]; then
 			display_alert "downloading using http(s) network" "$filename"
 			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \

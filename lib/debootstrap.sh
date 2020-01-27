@@ -75,8 +75,6 @@ debootstrap_ng()
 		source $SRC/lib/fel-load.sh
 	else
 		prepare_partitions
-		# update initramfs to reflect any configuration changes since kernel installation
-		update_initramfs
 		create_image
 	fi
 
@@ -126,7 +124,7 @@ create_rootfs_cache()
 
 		# stage: debootstrap base system
 		if [[ $NO_APT_CACHER != yes ]]; then
-			# apt-cacher-ng apt-get proxy parameter
+			# apt-cacher-ng apt proxy parameter
 			local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
 			local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/$APT_MIRROR"
 		else
@@ -196,7 +194,7 @@ create_rootfs_cache()
 
 		# stage: update packages list
 		display_alert "Updating package list" "$RELEASE" "info"
-		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "apt-get -q -y $apt_extra update"' \
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "apt -q -y $apt_extra update"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Updating package lists..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -205,7 +203,7 @@ create_rootfs_cache()
 
 		# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
 		display_alert "Upgrading base packages" "Armbian" "info"
-		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -y -q \
 			$apt_extra $apt_extra_progress upgrade"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Upgrading base packages..." $TTY_Y $TTY_X'} \
@@ -224,7 +222,7 @@ create_rootfs_cache()
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian packages failed"
 
 		# stage: remove downloaded packages
-		chroot $SDCARD /bin/bash -c "apt-get clean"
+		chroot $SDCARD /bin/bash -c "apt clean"
 
 		# DEBUG: print free space
 		echo -e "\nFree space:"
@@ -525,18 +523,23 @@ prepare_partitions()
 # for cryptroot-unlock to work:
 # https://serverfault.com/questions/907254/cryproot-unlock-with-dropbear-timeout-while-waiting-for-askpass
 #
-update_initramfs() {
-
+# since Debian buster, it has to be called within create_image() on the $MOUNT 
+# path instead of $SDCARD (which can be a tmpfs and breaks cryptsetup-initramfs).
+# see: https://github.com/armbian/build/issues/1584
+#
+update_initramfs()
+{
+	local chroot_target=$1
 	update_initramfs_cmd="update-initramfs -uv -k ${VER}-${LINUXFAMILY}"
 	display_alert "Updating initramfs..." "$update_initramfs_cmd" ""
-	cp /usr/bin/$QEMU_BINARY $SDCARD/usr/bin/
-	mount_chroot "$SDCARD/"
+	cp /usr/bin/$QEMU_BINARY $chroot_target/usr/bin/
+	mount_chroot "$chroot_target/"
 
-	chroot $SDCARD /bin/bash -c "$update_initramfs_cmd" >> $DEST/debug/install.log 2>&1
+	chroot $chroot_target /bin/bash -c "$update_initramfs_cmd" >> $DEST/debug/install.log 2>&1
 	display_alert "Updated initramfs." "for details see: $DEST/debug/install.log" "ext"
 
-	umount_chroot "$SDCARD/"
-	rm $SDCARD/usr/bin/$QEMU_BINARY
+	umount_chroot "$chroot_target/"
+	rm $chroot_target/usr/bin/$QEMU_BINARY
 
 } #############################################################################
 
@@ -571,6 +574,9 @@ create_image()
 		# ext4
 		rsync -aHWXh --info=progress2,stats1 $SDCARD/boot $MOUNT
 	fi
+
+	# stage: create final initramfs
+	update_initramfs $MOUNT
 
 	# DEBUG: print free space
 	display_alert "Free space:" "SD card" "info"

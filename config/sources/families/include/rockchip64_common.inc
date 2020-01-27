@@ -22,7 +22,7 @@ if [[ $BOOTCONFIG == *3328* ]]; then
 	ATF_TARGET_MAP='PLAT=rk322xh DEBUG=1 bl31;;trust.bin'
 	CPUMAX="1390000"
 
-elif [[ $BOARD == rockpro64 ]] || [[ $BOARD == rockpi-4* ]]; then
+elif [[ $BOARD == rockpro64 ]] || [[ $BOARD == rockpi-4* ]] || [[ $BOARD == pinebook-pro ]]; then
 
 	UBOOT_TARGET_MAP="BL31=$SRC/cache/sources/rkbin-tools/rk33/rk3399_bl31_v1.17.elf u-boot-dtb.bin spl/u-boot-spl.bin u-boot.itb;;spl/u-boot-spl.bin u-boot.itb"
 
@@ -113,6 +113,8 @@ family_tweaks()
 	[[ $BOARD == nanopim4v2 ]] && echo "fdtfile=rockchip/rk3399-nanopi-m4v2.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == nanopineo4 ]] && echo "fdtfile=rockchip/rk3399-nanopi-neo4.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == orangepi-rk3399 ]] && echo "fdtfile=rockchip/rk3399-orangepi.dtb" >> $SDCARD/boot/armbianEnv.txt
+	[[ $BOARD == orangepi4 ]] && echo "fdtfile=rockchip/rk3399-orangepi-4.dtb" >> $SDCARD/boot/armbianEnv.txt
+	[[ $BOARD == pinebook-pro ]] && echo "fdtfile=rockchip/rk3399-pinebook-pro.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == roc-rk3399-pc ]] && echo "fdtfile=rockchip/rk3399-roc-pc.dtb" >> $SDCARD/boot/armbianEnv.txt
 	[[ $BOARD == rockpi-4* ]] && echo "fdtfile=rockchip/rk3399-rock-pi-4.dtb" >> $SDCARD/boot/armbianEnv.txt
 
@@ -156,6 +158,11 @@ family_tweaks_bsp()
 		install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
 		cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/
 
+	fi
+
+	if [[ $BOARD == pinebook-pro ]]; then
+		
+		cp $SRC/packages/bsp/pinebook-pro/xorg.conf $destination/etc/X11/
 	fi
 
 	# Graphics and media

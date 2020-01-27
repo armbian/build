@@ -49,7 +49,7 @@ create_board_package()
 	Installed-Size: 1
 	Section: kernel
 	Priority: optional
-	Depends: bash, linux-base, u-boot-tools, initramfs-tools, python-apt, lsb-release
+	Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Suggests: armbian-config
@@ -159,6 +159,18 @@ create_board_package()
 	fi
 
 	EOF
+
+	if [[ $RELEASE == bionic ]]; then
+		cat <<-EOF >> "${destination}"/DEBIAN/postinst
+		# temporally disable acceleration in Bionic due to broken mesa packages
+		if [ -n "\$(cat /etc/X11/xorg.conf.d/01-armbian-defaults.conf 2> /dev/null | grep AccelMethod)" ]; then
+		        sed -i '/\Device/,/^\[/ s/AccelMethod".*/AccelMethod"\t "none"/' /etc/X11/xorg.conf.d/01-armbian-defaults.conf
+		else
+		        sed -i '/\Device/a \\\tOption\t\t\t"AccelMethod" "none"' /etc/X11/xorg.conf.d/01-armbian-defaults.conf
+		fi
+		EOF
+	fi
+
 	# install bootscripts if they are not present. Fix upgrades from old images
 	if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then
 	    cat <<-EOF >> "${destination}"/DEBIAN/postinst

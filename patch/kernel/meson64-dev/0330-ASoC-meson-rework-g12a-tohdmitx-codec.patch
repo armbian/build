@@ -1,0 +1,398 @@
+From 67aceea7296da928b9df16d9098e482e25eb84d4 Mon Sep 17 00:00:00 2001
+From: Jerome Brunet <jbrunet@baylibre.com>
+Date: Thu, 8 Aug 2019 15:54:05 +0200
+Subject: [PATCH 41/94] WIP: ASoC: meson: rework: g12a tohdmitx codec
+
+Signed-off-by: Jerome Brunet <jbrunet@baylibre.com>
+---
+ sound/soc/meson/Kconfig            |   4 ++
+ sound/soc/meson/Makefile           |   2 +
+ sound/soc/meson/g12a-tohdmitx.c    | 124 +++++------------------------------
+ sound/soc/meson/meson-codec-glue.c | 129 +++++++++++++++++++++++++++++++++++++
+ sound/soc/meson/meson-codec-glue.h |  37 +++++++++++
+ 5 files changed, 187 insertions(+), 109 deletions(-)
+ create mode 100644 sound/soc/meson/meson-codec-glue.c
+ create mode 100644 sound/soc/meson/meson-codec-glue.h
+
+diff --git a/sound/soc/meson/Kconfig b/sound/soc/meson/Kconfig
+index 2e36761..ee6d539 100644
+--- a/sound/soc/meson/Kconfig
++++ b/sound/soc/meson/Kconfig
+@@ -85,9 +85,13 @@ config SND_MESON_AXG_PDM
+ 	  Select Y or M to add support for PDM input embedded
+ 	  in the Amlogic AXG SoC family
+ 
++config SND_MESON_CODEC_GLUE
++	tristate
++
+ config SND_MESON_G12A_TOHDMITX
+ 	tristate "Amlogic G12A To HDMI TX Control Support"
+ 	select REGMAP_MMIO
++	select SND_MESON_CODEC_GLUE
+ 	imply SND_SOC_HDMI_CODEC
+ 	help
+ 	  Select Y or M to add support for HDMI audio on the g12a SoC
+diff --git a/sound/soc/meson/Makefile b/sound/soc/meson/Makefile
+index 1a8b147..529a807 100644
+--- a/sound/soc/meson/Makefile
++++ b/sound/soc/meson/Makefile
+@@ -11,6 +11,7 @@ snd-soc-meson-axg-sound-card-objs := axg-card.o
+ snd-soc-meson-axg-spdifin-objs := axg-spdifin.o
+ snd-soc-meson-axg-spdifout-objs := axg-spdifout.o
+ snd-soc-meson-axg-pdm-objs := axg-pdm.o
++snd-soc-meson-codec-glue-objs := meson-codec-glue.o
+ snd-soc-meson-g12a-tohdmitx-objs := g12a-tohdmitx.o
+ 
+ obj-$(CONFIG_SND_MESON_AXG_FIFO) += snd-soc-meson-axg-fifo.o
+@@ -24,4 +25,5 @@ obj-$(CONFIG_SND_MESON_AXG_SOUND_CARD) += snd-soc-meson-axg-sound-card.o
+ obj-$(CONFIG_SND_MESON_AXG_SPDIFIN) += snd-soc-meson-axg-spdifin.o
+ obj-$(CONFIG_SND_MESON_AXG_SPDIFOUT) += snd-soc-meson-axg-spdifout.o
+ obj-$(CONFIG_SND_MESON_AXG_PDM) += snd-soc-meson-axg-pdm.o
++obj-$(CONFIG_SND_MESON_CODEC_GLUE) += snd-soc-meson-codec-glue.o
+ obj-$(CONFIG_SND_MESON_G12A_TOHDMITX) += snd-soc-meson-g12a-tohdmitx.o
+diff --git a/sound/soc/meson/g12a-tohdmitx.c b/sound/soc/meson/g12a-tohdmitx.c
+index 9cfbd34..c7791ca 100644
+--- a/sound/soc/meson/g12a-tohdmitx.c
++++ b/sound/soc/meson/g12a-tohdmitx.c
+@@ -12,6 +12,7 @@
+ #include <sound/soc-dai.h>
+ 
+ #include <dt-bindings/sound/meson-g12a-tohdmitx.h>
++#include "meson-codec-glue.h"
+ 
+ #define G12A_TOHDMITX_DRV_NAME "g12a-tohdmitx"
+ 
+@@ -27,52 +28,6 @@
+ #define  CTRL0_SPDIF_SEL		BIT(1)
+ #define  CTRL0_SPDIF_CLK_SEL		BIT(0)
+ 
+-struct g12a_tohdmitx_input {
+-	struct snd_soc_pcm_stream params;
+-	unsigned int fmt;
+-};
+-
+-static struct snd_soc_dapm_widget *
+-g12a_tohdmitx_get_input(struct snd_soc_dapm_widget *w)
+-{
+-	struct snd_soc_dapm_path *p = NULL;
+-	struct snd_soc_dapm_widget *in;
+-
+-	snd_soc_dapm_widget_for_each_source_path(w, p) {
+-		if (!p->connect)
+-			continue;
+-
+-		/* Check that we still are in the same component */
+-		if (snd_soc_dapm_to_component(w->dapm) !=
+-		    snd_soc_dapm_to_component(p->source->dapm))
+-			continue;
+-
+-		if (p->source->id == snd_soc_dapm_dai_in)
+-			return p->source;
+-
+-		in = g12a_tohdmitx_get_input(p->source);
+-		if (in)
+-			return in;
+-	}
+-
+-	return NULL;
+-}
+-
+-static struct g12a_tohdmitx_input *
+-g12a_tohdmitx_get_input_data(struct snd_soc_dapm_widget *w)
+-{
+-	struct snd_soc_dapm_widget *in =
+-		g12a_tohdmitx_get_input(w);
+-	struct snd_soc_dai *dai;
+-
+-	if (WARN_ON(!in))
+-		return NULL;
+-
+-	dai = in->priv;
+-
+-	return dai->playback_dma_data;
+-}
+-
+ static const char * const g12a_tohdmitx_i2s_mux_texts[] = {
+ 	"I2S A", "I2S B", "I2S C",
+ };
+@@ -201,85 +156,36 @@ static const struct snd_soc_dapm_widget g12a_tohdmitx_widgets[] = {
+ 			    &g12a_tohdmitx_out_enable),
+ };
+ 
++static const struct snd_soc_dai_ops g12a_tohdmitx_input_ops = {
++	.hw_params	= meson_codec_glue_input_hw_params,
++	.set_fmt	= meson_codec_glue_input_set_fmt,
++};
++
++static const struct snd_soc_dai_ops g12a_tohdmitx_output_ops = {
++	.startup	= meson_codec_glue_output_startup,
++};
++
+ static int g12a_tohdmitx_input_probe(struct snd_soc_dai *dai)
+ {
+-	struct g12a_tohdmitx_input *data;
++	struct meson_codec_glue_input *data;
+ 
+ 	data = kzalloc(sizeof(*data), GFP_KERNEL);
+ 	if (!data)
+ 		return -ENOMEM;
+ 
+-	dai->playback_dma_data = data;
++	meson_codec_glue_input_set_data(dai, data);
+ 	return 0;
+ }
+ 
+ static int g12a_tohdmitx_input_remove(struct snd_soc_dai *dai)
+ {
+-	kfree(dai->playback_dma_data);
+-	return 0;
+-}
++	struct meson_codec_glue_input *data =
++		meson_codec_glue_input_get_data(dai);
+ 
+-static int g12a_tohdmitx_input_hw_params(struct snd_pcm_substream *substream,
+-					 struct snd_pcm_hw_params *params,
+-					 struct snd_soc_dai *dai)
+-{
+-	struct g12a_tohdmitx_input *data = dai->playback_dma_data;
+-
+-	data->params.rates = snd_pcm_rate_to_rate_bit(params_rate(params));
+-	data->params.rate_min = params_rate(params);
+-	data->params.rate_max = params_rate(params);
+-	data->params.formats = 1 << params_format(params);
+-	data->params.channels_min = params_channels(params);
+-	data->params.channels_max = params_channels(params);
+-	data->params.sig_bits = dai->driver->playback.sig_bits;
+-
+-	return 0;
+-}
+-
+-
+-static int g12a_tohdmitx_input_set_fmt(struct snd_soc_dai *dai,
+-				       unsigned int fmt)
+-{
+-	struct g12a_tohdmitx_input *data = dai->playback_dma_data;
+-
+-	/* Save the source stream format for the downstream link */
+-	data->fmt = fmt;
++	kfree(data);
+ 	return 0;
+ }
+ 
+-static int g12a_tohdmitx_output_startup(struct snd_pcm_substream *substream,
+-					struct snd_soc_dai *dai)
+-{
+-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+-	struct g12a_tohdmitx_input *in_data =
+-		g12a_tohdmitx_get_input_data(dai->capture_widget);
+-
+-	if (!in_data)
+-		return -ENODEV;
+-
+-	if (WARN_ON(!rtd->dai_link->params)) {
+-		dev_warn(dai->dev, "codec2codec link expected\n");
+-		return -EINVAL;
+-	}
+-
+-	/* Replace link params with the input params */
+-	rtd->dai_link->params = &in_data->params;
+-
+-	if (!in_data->fmt)
+-		return 0;
+-
+-	return snd_soc_runtime_set_dai_fmt(rtd, in_data->fmt);
+-}
+-
+-static const struct snd_soc_dai_ops g12a_tohdmitx_input_ops = {
+-	.hw_params	= g12a_tohdmitx_input_hw_params,
+-	.set_fmt	= g12a_tohdmitx_input_set_fmt,
+-};
+-
+-static const struct snd_soc_dai_ops g12a_tohdmitx_output_ops = {
+-	.startup	= g12a_tohdmitx_output_startup,
+-};
+-
+ #define TOHDMITX_SPDIF_FORMATS					\
+ 	(SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S20_3LE |	\
+ 	 SNDRV_PCM_FMTBIT_S24_3LE | SNDRV_PCM_FMTBIT_S24_LE)
+diff --git a/sound/soc/meson/meson-codec-glue.c b/sound/soc/meson/meson-codec-glue.c
+new file mode 100644
+index 0000000..58fc94c
+--- /dev/null
++++ b/sound/soc/meson/meson-codec-glue.c
+@@ -0,0 +1,129 @@
++// SPDX-License-Identifier: GPL-2.0
++//
++// Copyright (c) 2019 BayLibre, SAS.
++// Author: Jerome Brunet <jbrunet@baylibre.com>
++
++#include <linux/module.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/soc-dai.h>
++
++#include "meson-codec-glue.h"
++
++struct snd_soc_dapm_widget *
++meson_codec_glue_get_input(struct snd_soc_dapm_widget *w)
++{
++	struct snd_soc_dapm_path *p = NULL;
++	struct snd_soc_dapm_widget *in;
++
++	snd_soc_dapm_widget_for_each_source_path(w, p) {
++		if (!p->connect)
++			continue;
++
++		/* Check that we still are in the same component */
++		if (snd_soc_dapm_to_component(w->dapm) !=
++		    snd_soc_dapm_to_component(p->source->dapm))
++			continue;
++
++		if (p->source->id == snd_soc_dapm_dai_in)
++			return p->source;
++
++		in = meson_codec_glue_get_input(p->source);
++		if (in)
++			return in;
++	}
++
++	return NULL;
++}
++EXPORT_SYMBOL_GPL(meson_codec_glue_get_input);
++
++void meson_codec_glue_input_set_data(struct snd_soc_dai *dai,
++				     struct meson_codec_glue_input *data)
++{
++	dai->playback_dma_data = data;
++}
++EXPORT_SYMBOL_GPL(meson_codec_glue_input_set_data);
++
++struct meson_codec_glue_input *
++meson_codec_glue_input_get_data(struct snd_soc_dai *dai)
++{
++	return dai->playback_dma_data;
++}
++EXPORT_SYMBOL_GPL(meson_codec_glue_input_get_data);
++
++struct meson_codec_glue_input *
++meson_codec_glue_output_get_input_data(struct snd_soc_dapm_widget *w)
++{
++	struct snd_soc_dapm_widget *in =
++		meson_codec_glue_get_input(w);
++	struct snd_soc_dai *dai;
++
++	if (WARN_ON(!in))
++		return NULL;
++
++	dai = in->priv;
++
++	return meson_codec_glue_input_get_data(dai);
++}
++EXPORT_SYMBOL_GPL(meson_codec_glue_output_get_input_data);
++
++int meson_codec_glue_input_hw_params(struct snd_pcm_substream *substream,
++				     struct snd_pcm_hw_params *params,
++				     struct snd_soc_dai *dai)
++{
++	struct meson_codec_glue_input *data =
++		meson_codec_glue_input_get_data(dai);
++
++	data->params.rates = snd_pcm_rate_to_rate_bit(params_rate(params));
++	data->params.rate_min = params_rate(params);
++	data->params.rate_max = params_rate(params);
++	data->params.formats = 1 << params_format(params);
++	data->params.channels_min = params_channels(params);
++	data->params.channels_max = params_channels(params);
++	data->params.sig_bits = dai->driver->playback.sig_bits;
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(meson_codec_glue_input_hw_params);
++
++int meson_codec_glue_input_set_fmt(struct snd_soc_dai *dai,
++				   unsigned int fmt)
++{
++	struct meson_codec_glue_input *data =
++		meson_codec_glue_input_get_data(dai);
++
++	/* Save the source stream format for the downstream link */
++	data->fmt = fmt;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(meson_codec_glue_input_set_fmt);
++
++int meson_codec_glue_output_startup(struct snd_pcm_substream *substream,
++				    struct snd_soc_dai *dai)
++{
++	struct snd_soc_pcm_runtime *rtd = substream->private_data;
++	struct meson_codec_glue_input *in_data =
++		meson_codec_glue_output_get_input_data(dai->capture_widget);
++
++	if (!in_data)
++		return -ENODEV;
++
++	if (WARN_ON(!rtd->dai_link->params)) {
++		dev_warn(dai->dev, "codec2codec link expected\n");
++		return -EINVAL;
++	}
++
++	/* Replace link params with the input params */
++	rtd->dai_link->params = &in_data->params;
++
++	if (!in_data->fmt)
++		return 0;
++
++	return snd_soc_runtime_set_dai_fmt(rtd, in_data->fmt);
++}
++EXPORT_SYMBOL_GPL(meson_codec_glue_output_startup);
++
++MODULE_AUTHOR("Jerome Brunet <jbrunet@baylibre.com>");
++MODULE_DESCRIPTION("Amlogic Codec Glue Helpers");
++MODULE_LICENSE("GPL v2");
++
+diff --git a/sound/soc/meson/meson-codec-glue.h b/sound/soc/meson/meson-codec-glue.h
+new file mode 100644
+index 0000000..f76ab73
+--- /dev/null
++++ b/sound/soc/meson/meson-codec-glue.h
+@@ -0,0 +1,37 @@
++/* SPDX-License-Identifier: GPL-2.0
++ *
++ * Copyright (c) 2018 Baylibre SAS.
++ * Author: Jerome Brunet <jbrunet@baylibre.com>
++ */
++
++#ifndef _MESON_CODEC_GLUE_H
++#define _MESON_CODEC_GLUE_H
++
++#include <sound/soc.h>
++
++struct meson_codec_glue_input {
++	struct snd_soc_pcm_stream params;
++	unsigned int fmt;
++};
++
++struct snd_soc_dapm_widget *
++meson_codec_glue_get_input(struct snd_soc_dapm_widget *w);
++
++/* Input helpers */
++struct meson_codec_glue_input *
++meson_codec_glue_input_get_data(struct snd_soc_dai *dai);
++void meson_codec_glue_input_set_data(struct snd_soc_dai *dai,
++				     struct meson_codec_glue_input *data);
++int meson_codec_glue_input_hw_params(struct snd_pcm_substream *substream,
++				     struct snd_pcm_hw_params *params,
++				     struct snd_soc_dai *dai);
++int meson_codec_glue_input_set_fmt(struct snd_soc_dai *dai,
++				   unsigned int fmt);
++
++/* Output helpers */
++struct meson_codec_glue_input *
++meson_codec_glue_output_get_input_data(struct snd_soc_dapm_widget *w);
++int meson_codec_glue_output_startup(struct snd_pcm_substream *substream,
++				    struct snd_soc_dai *dai);
++
++#endif /* _MESON_CODEC_GLUE_H */
+-- 
+2.7.1
+

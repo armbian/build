@@ -1,0 +1,86 @@
+From 2b023147a39ee588958b436e9bca22987c1e6cd4 Mon Sep 17 00:00:00 2001
+From: Jerome Brunet <jbrunet@baylibre.com>
+Date: Wed, 23 Oct 2019 17:49:35 +0200
+Subject: [PATCH 59/94] WIP: ASoC: hdmi-codec: re-introduce mutex locking again
+
+The dai codec needs to ensure that on one dai is used at any time.
+This is currently protected by bit atomic operation. With this change,
+it done with a mutex instead.
+
+Suggested-by: Mark Brown <broonie@kernel.org>
+Signed-off-by: Jerome Brunet <jbrunet@baylibre.com>
+---
+ sound/soc/codecs/hdmi-codec.c | 23 ++++++++++++++++-------
+ 1 file changed, 16 insertions(+), 7 deletions(-)
+
+diff --git a/sound/soc/codecs/hdmi-codec.c b/sound/soc/codecs/hdmi-codec.c
+index f8b5b96..56f6373 100644
+--- a/sound/soc/codecs/hdmi-codec.c
++++ b/sound/soc/codecs/hdmi-codec.c
+@@ -274,7 +274,8 @@ struct hdmi_codec_priv {
+ 	uint8_t eld[MAX_ELD_BYTES];
+ 	struct snd_pcm_chmap *chmap_info;
+ 	unsigned int chmap_idx;
+-	unsigned long busy;
++	struct mutex lock;
++	bool busy;
+ 	struct snd_soc_jack *jack;
+ 	unsigned int jack_status;
+ };
+@@ -390,12 +391,15 @@ static int hdmi_codec_startup(struct snd_pcm_substream *substream,
+ 	struct hdmi_codec_priv *hcp = snd_soc_dai_get_drvdata(dai);
+ 	int ret = 0;
+ 
+-	ret = test_and_set_bit(0, &hcp->busy);
+-	if (ret) {
++	mutex_lock(&hcp->lock);
++	if (hcp->busy) {
+ 		dev_err(dai->dev, "Only one simultaneous stream supported!\n");
++		mutex_unlock(&hcp->lock);
+ 		return -EINVAL;
+ 	}
+ 
++	hcp->busy = true;
++
+ 	if (hcp->hcd.ops->audio_startup) {
+ 		ret = hcp->hcd.ops->audio_startup(dai->dev->parent, hcp->hcd.data);
+ 		if (ret)
+@@ -415,11 +419,12 @@ static int hdmi_codec_startup(struct snd_pcm_substream *substream,
+ 		/* Select chmap supported */
+ 		hdmi_codec_eld_chmap(hcp);
+ 	}
+-	return 0;
+ 
+ err:
+-	/* Release the exclusive lock on error */
+-	clear_bit(0, &hcp->busy);
++	if (ret)
++		hcp->busy = false;
++
++	mutex_unlock(&hcp->lock);
+ 	return ret;
+ }
+ 
+@@ -431,7 +436,9 @@ static void hdmi_codec_shutdown(struct snd_pcm_substream *substream,
+ 	hcp->chmap_idx = HDMI_CODEC_CHMAP_IDX_UNKNOWN;
+ 	hcp->hcd.ops->audio_shutdown(dai->dev->parent, hcp->hcd.data);
+ 
+-	clear_bit(0, &hcp->busy);
++	mutex_lock(&hcp->lock);
++	hcp->busy = false;
++	mutex_unlock(&hcp->lock);
+ }
+ 
+ static int hdmi_codec_hw_params(struct snd_pcm_substream *substream,
+@@ -811,6 +818,8 @@ static int hdmi_codec_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 
+ 	hcp->hcd = *hcd;
++	mutex_init(&hcp->lock);
++
+ 	daidrv = devm_kcalloc(dev, dai_count, sizeof(*daidrv), GFP_KERNEL);
+ 	if (!daidrv)
+ 		return -ENOMEM;
+-- 
+2.7.1
+
