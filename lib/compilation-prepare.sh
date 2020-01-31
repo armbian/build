@@ -295,4 +295,33 @@ compilation_prepare()
 
 	fi
 
+	# Wireless drivers for Realtek 8723DS chipsets
+
+	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+
+		# attach to specifics tag or branch
+		local rtl8723dsver="branch:master"
+
+		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
+
+		fetch_from_repo "https://github.com/lwfinger/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes"
+		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+		rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds
+		mkdir -p ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds/
+		cp -R ${SRC}/cache/sources/rtl8723ds/${rtl8723dsver#*:}/{core,hal,include,os_dep,platform} \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds
+
+		# Makefile
+		cp ${SRC}/cache/sources/rtl8723ds/${rtl8723dsver#*:}/Makefile \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds/Makefile
+		cp ${SRC}/cache/sources/rtl8723ds/${rtl8723dsver#*:}/Kconfig \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds/Kconfig
+
+		# Add to section Makefile
+		echo "obj-\$(CONFIG_RTL8723DS) += rtl8723ds/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
+		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723ds\/Kconfig"' \
+		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
+
+	fi
+
 }
