@@ -84,6 +84,12 @@ fi
 
 rm $TMPFILE
 
+# Check for required packages for compiling
+if [[ -z "$(which dialog)" ]]; then
+	sudo apt update
+	sudo apt install -y dialog
+fi
+
 # Check for Vagrant
 if [[ "$1" == vagrant && -z "$(which vagrant)" ]]; then
 	display_alert "Vagrant not installed." "Installing"
