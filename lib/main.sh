@@ -126,6 +126,9 @@ if [[ -n $REPOSITORY_UPDATE ]]; then
 
 fi
 
+# we need dialog to display the menu in case not installed. Other stuff gets installed later
+prepare_host_basic
+
 # if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
 if [[ -z $KERNEL_ONLY ]]; then
