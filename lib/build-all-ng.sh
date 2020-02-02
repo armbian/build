@@ -226,14 +226,16 @@ function build_all()
 		# small optimisation. we only (try to) build needed kernels
 		if [[ $KERNEL_ONLY == yes ]]; then
 
-			array_contains ARRAY "${BOARDFAMILY}${BRANCH}${BUILD_STABILITY}" && continue
+			LINUXFAMILY="${BOARDFAMILY}"
+			source "${SRC}/config/sources/families/${BOARDFAMILY}.conf" 2> /dev/null
+			array_contains ARRAY "${LINUXFAMILY}${BRANCH}${BUILD_STABILITY}" && continue
 
 		elif [[ $BUILD_IMAGE == no ]] ; then
 
 			continue
 
 		fi
-		ARRAY+=("${BOARDFAMILY}${BRANCH}${BUILD_STABILITY}")
+		ARRAY+=("${LINUXFAMILY}${BRANCH}${BUILD_STABILITY}")
 
 		BUILD_DESKTOP="no"
 		BUILD_MINIMAL="no"

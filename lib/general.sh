@@ -574,7 +574,7 @@ repo-manipulate() {
 		serve)
 			# display repository content
 			display_alert "Serving content" "common utils" "ext"
-			aptly serve -listen=$(ip -f inet addr | grep -Po 'inet \K[\d.]+' | grep -v 127.0.0.1):8080 -config="${SCRIPTPATH}"config/${REPO_CONFIG}
+			aptly serve -listen=$(ip -f inet addr | grep -Po 'inet \K[\d.]+' | grep -v 127.0.0.1 | head -1):8080 -config="${SCRIPTPATH}"config/${REPO_CONFIG}
 			exit 0
 			;;
 		show)
@@ -589,6 +589,41 @@ repo-manipulate() {
 			echo "done."
 			exit 0
 			;;
+
+		unique)
+			IFS=$'\n'
+			while true; do
+				LIST=()
+				for release in "${DISTROS[@]}"; do
+					LIST+=( $(aptly repo show -with-packages -config="${SCRIPTPATH}"config/${REPO_CONFIG} "${release}" | tail -n +7) )
+					LIST+=( $(aptly repo show -with-packages -config="${SCRIPTPATH}"config/${REPO_CONFIG} "${release}-desktop" | tail -n +7) )
+				done
+				LIST+=( $(aptly repo show -with-packages -config="${SCRIPTPATH}"config/${REPO_CONFIG} utils | tail -n +7) )
+				LIST=( $(echo "${LIST[@]}" | tr ' ' '\n' | sort -u))
+				new_list=()
+				# create a human readable menu
+				for ((n=0;n<$((${#LIST[@]}));n++));
+				do
+					new_list+=( "${LIST[$n]}" )
+					new_list+=( "" )
+				done
+				LIST=("${new_list[@]}")
+				LIST_LENGTH=$((${#LIST[@]}/2));
+				exec 3>&1
+				TARGET_VERSION=$(dialog --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Switch from and reboot" --clear --menu "Delete" $((9+${LIST_LENGTH})) 82 65 "${LIST[@]}" 2>&1 1>&3)
+				exitstatus=$?;
+				exec 3>&-
+				if [[ $exitstatus -eq 0 ]]; then
+					for release in "${DISTROS[@]}"; do
+						aptly repo remove -config="${SCRIPTPATH}"config/${REPO_CONFIG}  "${release}" "$TARGET_VERSION"
+						aptly repo remove -config="${SCRIPTPATH}"config/${REPO_CONFIG}  "${release}-desktop" "$TARGET_VERSION"
+					done
+					aptly repo remove -config="${SCRIPTPATH}"config/${REPO_CONFIG} "utils" "$TARGET_VERSION"
+				else
+					exit 1
+				fi
+			done
+			;;
 		update)
 			# display full help test
 			# run repository update
@@ -599,6 +634,7 @@ repo-manipulate() {
 			;;
 		purge)
 			for release in "${DISTROS[@]}"; do
+				aptly repo remove -config=${BLTPATH}config/aptly.conf "${release}" 'Name (% linux-*dev*)'
 				repo-remove-old-packages "$release" "armhf" "3"
 				repo-remove-old-packages "$release" "arm64" "3"
 				repo-remove-old-packages "$release" "all" "3"
