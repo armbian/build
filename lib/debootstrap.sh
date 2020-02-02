@@ -613,7 +613,7 @@ create_image()
 			COMPRESS_OUTPUTIMAGE="sha,gpg,7z"
 		fi
 
-		if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
+		if [[ $COMPRESS_OUTPUTIMAGE == *sha* || -n $CARD_DEVICE ]]; then
 			cd $DESTIMG
 			display_alert "SHA256 calculating" "${version}.img" "info"
 			sha256sum -b ${version}.img > ${version}.img.sha
