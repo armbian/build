@@ -60,7 +60,6 @@ Function | Armbian | Yocto | Buildroot |
 | Root file system | Debian or Ubuntu based| custom | custom |
 | Package manager | APT | any | none |
 | Configurability | limited | large | large |
-| Hardware support | limited | unlimited | unlimited |
 | Initramfs support | yes | yes | yes |
 | Getting started | quick | very slow | slow |
 | Cross compilation | yes | yes | yes |
