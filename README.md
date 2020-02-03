@@ -1,50 +1,179 @@
-# Armbian #
+<h3 align=center><a href="#armbian-build-engine"><img src="https://avatars0.githubusercontent.com/u/15922037" alt="Armbian logo" width="144" height="144"></a><br>
+Armbian build engine</h3>
 
-Debian based Linux for ARM based single-board computers
-  
-[https://www.armbian.com](https://www.armbian.com "Armbian")
+<p align=right>&nbsp;</p>
 
+## Table of contents
 
-# How to build an image or a kernel?
+- [What this project does?](#what-this-project-does)
+- [What do you need to get started?](#what-do-you-need-to-get-started)
+- [How to build an image or a kernel?](#how-to-build-an-image-or-a-kernel)
+- [Compare with industry standards](#compare-with-industry-standards)
+- [Where to download prebuilt images?](#where-to-download-prebuilt-images)
+- [Additional information](#additional-information)
+- [Build engine overview](#build-engine-overview)
+- [Support](#support)
+- [Contributing](#support)
+- [Social](#social)
+- [Credits](#credits)
+- [Sponsors](#sponsors)
 
-Supported build environment is **Ubuntu Bionic 18.04 x64** ([minimal iso image](http://archive.ubuntu.com/ubuntu/dists/bionic/main/installer-amd64/current/images/netboot/mini.iso)).
+<p align=right>&nbsp;</p>
 
-- guest inside a [VirtualBox](https://www.virtualbox.org/wiki/Downloads) or other virtualization software,
-- guest managed by [Vagrant](https://docs.armbian.com/Developer-Guide_Using-Vagrant/). This uses Virtualbox (as above) but does so in an easily repeatable way,
-- inside a [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/), [systemd-nspawn](https://www.freedesktop.org/software/systemd/man/systemd-nspawn.html) or other container environment [(example)](https://github.com/armbian/build/pull/255#issuecomment-205045273),
-- running natively on a dedicated PC or a server (**not** recommended),
-- **25GB disk space** or more and **2GB RAM** or more available for the VM, container or native OS,
-- superuser rights (configured `sudo` or root access).
+## What this project does?
 
-**Execution**
+- builds custom Debian based Linux system for [supported single board computers](https://www.armbian.com/download/),
+- covers root filesystem generation, kernel image compilation and bootloader compilation,
+- secure top support for a [selection of hardware](https://www.armbian.com/download/?device_support=Supported).
 
-	apt -y install git
-	git clone https://github.com/armbian/build
-	cd build
-	./compile.sh
+<p align=right>&nbsp;</p>
 
-Make sure that full path to the build script does not contain spaces.
+## What do you need to get started?
+    
+- x64 machine with at least 2GB of memory and ~30GB of disk space for the VM, container or native OS,
+- Ubuntu Bionic 18.04 / Focal 20.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised
+- superuser rights (configured sudo or root access)
+(https://www.armbian.com/donate)
+<p align=right><a href=#table-of-contents>⇧</a></p>
 
-You will be prompted with a selection menu for a build option, a board name, a kernel branch and an OS release. Please check the documentation for [advanced options](https://docs.armbian.com/Developer-Guide_Build-Options/) and [additional customization](https://docs.armbian.com/Developer-Guide_User-Configurations/).
+## How to build an image or a kernel?
 
-Build process uses caching for the compilation and the debootstrap process, so consecutive runs with similar settings will be much faster.
+```text
+apt -y install git
+git clone https://github.com/armbian/build
+cd build
+./compile.sh
+```
+<a href="#how-to-build-an-image-or-a-kernel"><img src="./github/README.gif" alt="Armbian logo" width="100%"></a>
 
-# How to report issues?
+<p align=right><a href=#table-of-contents>⇧</a></p>
 
-Please read [this](https://github.com/igorpecovnik/lib/blob/master/.github/ISSUE_TEMPLATE.md) notice first before opening an issue.
+## Compare with industry standards
 
-# How to contribute?
+Check similarity, advantages and disadvantages compared with leading industry standard software.
 
-- [Fork](https://help.github.com/articles/fork-a-repo/) the project
-- Make one or more well commented and clean commits to the repository. 
-- Perform a [pull request](https://help.github.com/articles/creating-a-pull-request/) in github's web interface.
+Function | Armbian | Yocto | Buildroot |
+|:--|:--|:--|:--|
+| Target | general purpose | embedded | embedded / IOT | 
+| U-boot and kernel | compiled from sources | compiled from sources | compiled from sources |
+| Hardware support maintenance &nbsp;&nbsp; &nbsp; &nbsp;| complete | outside | outside | 
+| Root file system | Debian or Ubuntu based| custom | custom |
+| Package manager | APT | any | none |
+| Configurability | limited | large | large |
+| Hardware support | limited | unlimited | unlimited |
+| Initramfs support | yes | yes | yes |
+| Getting started | quick | very slow | slow |
+| Cross compilation | yes | yes | yes |
 
-If it is a new feature request, don't start the coding first. Remember to [open an issue](https://guides.github.com/features/issues/) to discuss the new feature.
+<p align=right><a href=#table-of-contents>⇧</a></p>
 
-If you are struggling, check [this detailed step by step guide on contributing](https://www.exchangecore.com/blog/contributing-concrete5-github/).
+## Where to download prebuilt images?
 
-## Where to get more info?
+https://www.armbian.com/download/
 
-- [Documentation](https://docs.armbian.com/Developer-Guide_Build-Preparation/ "Developer resources")
-- [Prebuilt images](https://www.armbian.com/download/ "Download section")
-- [Support forums](https://forum.armbian.com/ "Armbian support forum")
+Armbian releases quarterly at the end of [February, May, August, November](https://github.com/armbian/documentation/blob/master/docs/Process_Release-Model.md). Welcome to propose changes to the our default [images build list](https://github.com/armbian/build/blob/master/config/targets.conf).
+
+<p align=right><a href=#table-of-contents>⇧</a></p>
+
+## Additional information
+
+- [Advanced build options](https://docs.armbian.com/Developer-Guide_Build-Options/)
+- [User configurations](https://docs.armbian.com/Developer-Guide_User-Configurations/)
+- Building with [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) or [Vagrant](https://docs.armbian.com/Developer-Guide_Using-Vagrant/)
+- [Developers forums](https://forum.armbian.com/forum/4-development/)
+- [Central project search](https://www.armbian.com/search)
+- [IRC channel logs](http://irc.armbian.com)
+
+<p align=right><a href=#table-of-contents>⇧</a></p>
+
+## Build engine overview
+
+```text
+├── cache                                    Cache and work directory
+│   ├── rootfs                               Compressed Vanilla Debian/Ubuntu rootfilesystem cache
+│   ├── sources                              Kernel, u-boot and other sources. Mainly C code
+│   ├── toolchains                           External compilers
+├── config                                   Package repository configurations
+│   ├── targets.conf                         Board build target
+│   ├── boards                               Board configurations
+│   ├── bootenv                              Boot environments
+│   ├── bootscripts                          Boot scripts
+│   ├── kernel                               Kernel configurations
+│   ├── sources                              Kernel and u-boot sources locations and scripts
+│   ├── templates                            User configuration templates
+│   └── torrents                             External compiler and rootfs cache torrents
+├── lib                                      Main build engine libraires
+├── output                                   Build artifact
+│   └── deb                                  Deb packages
+│   └── images                               Bootable images
+│   └── debug                                Patch and build logs
+│   └── config                               Kernel configuration export area
+│   └── patch                                Location of created patches
+├── packages                                 Support scripts, blobs, packages
+│   ├── blobs                                Wallpapers, various configs, closed bootloaders
+│   ├── bsp                                  Script/config overlay for rootfs
+│   └── extras-buildpkgs                     Optional compilation and packaging engine
+├── patch                                    Collection of patches
+│   ├── atf                                  ARM trusted firmware
+│   ├── kernel                               Linux kernel per kernel family
+│   ├── misc                                 Various
+│   └── u-boot                               Universal boot loader per family or per board
+└── userpatches                              User: configuration patching area
+    ├── lib.config                           User: Engine common config/override file
+    ├── config-default.conf                  User: Default user config file
+    ├── customize-image.sh                   User: Script will execute just before closing the image
+    ├── atf                                  User: ARM trusted firmware
+    ├── kernel                               User: Linux kernel per kernel family
+    ├── misc                                 User: Various
+    └── u-boot                               User: Universal boot loader per family or per board
+```
+
+<p align=right><a href=#table-of-contents>⇧</a></p>
+
+## Support
+
+- Have you found a bug in the **build engine**? 
+
+    Try to recreate the problem with a clean build script clone. If a problem does not go away, search for [existing and closed issues](https://github.com/armbian/build/issues) and if your problem or idea is not addressed yet, [open a new issue](https://github.com/armbian/build/issues/new). For solving troubles **after booting the image, with your hardware or applications** use [general search](https://www.armbian.com/search) and (!)best effort [community support](https://forum.armbian.com/).
+
+- Want to add a new feature? 
+
+    Armbian build engine is an open source project and you are more then welcome [to contribute](https://www.armbian.com/get-involved) to it. Remember to [discuss new feature](https://forum.armbian.com/forum/4-development/) prior to development since we might already have plans or we have no plans to integrate your work.
+
+- Want to help with anything? 
+
+    Address [opened issues](https://github.com/armbian/build/issues), join regulars on [their already active missions](https://armbian.atlassian.net/browse/AR), start maintaining low level u-boot / kernel code, drivers or scripted applications like [armbian-config](https://github.com/armbian/config). Or just make a [donation](https://www.armbian.com/donate)!
+
+<p align=right><a href=#table-of-contents>⇧</a></p>
+
+## Social
+
+- Interact in [forums](https://forum.armbian.com),
+- Chat with fellow users on IRC [#armbian](https://webchat.freenode.net/?channels=armbian) on [freenode](https://freenode.net/)
+- Follow @armbian on [Twitter](https://twitter.com/armbian) or [LinkedIN](https://www.linkedin.com/company/armbian).
+
+Get [updates on Armbian development̉](https://docs.armbian.com/Release_Changelog/) and chat with the project maintainers.
+
+<p align=right><a href=#table-of-contents>⇧</a></p>
+
+## Credits
+
+- [Current and past contributors](https://github.com/armbian/build/graphs/contributors), our families and friends,
+- [Support staff that keeps forums usable](https://forum.armbian.com/members/2-moderators/),
+- [Individuals that help with their ideas](https://forum.armbian.com/), reports and [donations](https://www.armbian.com/donate).
+
+<p align=right><a href=#table-of-contents>⇧</a></p>
+
+## Sponsors
+
+Most of the project is sponsored with a work done by voolonteer collaborators, while some part of the project costs are beeing covered by the industry. We would not be able to get this far without their help. 
+
+[Do you want to see yourself below?](https://www.armbian.com/#contact)
+
+<img src="https://www.armbian.com/wp-content/uploads/2018/03/orangepi-logo-150x150.png" alt="Armbian logo" width="144" height="144"><img src="https://www.armbian.com/wp-content/uploads/2018/02/friendlyelec-logo-150x150.png" alt="Armbian logo" width="144" height="144">
+<img src="https://www.armbian.com/wp-content/uploads/2018/03/kspace-150x150.png" width="144" height="144">
+<img src="https://www.armbian.com/wp-content/uploads/2018/02/olimex-logo-150x150.png" width="144" height="144">
+<img src="https://www.armbian.com/wp-content/uploads/2018/03/helios4_logo-150x150.png" width="144" height="144">
+
+<p align=right><a href=#table-of-contents>⇧</a></p>
+
