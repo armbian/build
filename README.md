@@ -165,7 +165,7 @@ Get [updates on Armbian development̉](https://docs.armbian.com/Release_Changelo
 
 ## Sponsors
 
-Most of the project is sponsored with a work done by voolonteer collaborators, while some part of the project costs are beeing covered by the industry. We would not be able to get this far without their help. 
+Most of the project is sponsored with a work done by volunteer collaborators, while some part of the project costs are being covered by the industry. We would not be able to get this far without their help. 
 
 [Do you want to see yourself below?](https://www.armbian.com/#contact)
 
