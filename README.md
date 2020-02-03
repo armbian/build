@@ -44,7 +44,7 @@ git clone https://github.com/armbian/build
 cd build
 ./compile.sh
 ```
-<a href="#how-to-build-an-image-or-a-kernel"><img src="./github/README.gif" alt="Armbian logo" width="100%"></a>
+<a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
