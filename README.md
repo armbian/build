@@ -116,8 +116,11 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 ├── patch                                    Collection of patches
 │   ├── atf                                  ARM trusted firmware
 │   ├── kernel                               Linux kernel per kernel family
+|       └── family-branch                    Kernel family and per branch
 │   ├── misc                                 Various
 │   └── u-boot                               Universal boot loader per family or per board
+|       ├── u-boot-board                     For specific board
+|       └── u-boot-family                    For entire kernel family
 └── userpatches                              User: configuration patching area
     ├── lib.config                           User: Engine common config/override file
     ├── config-default.conf                  User: Default user config file
