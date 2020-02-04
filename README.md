@@ -139,6 +139,8 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
     Try to recreate the problem with a clean build script clone. If a problem does not go away, search for [existing and closed issues](https://github.com/armbian/build/issues) and if your problem or idea is not addressed yet, [open a new issue](https://github.com/armbian/build/issues/new). For solving troubles **after booting the image, with your hardware or applications** use [general search](https://www.armbian.com/search) and best effort [community support](https://forum.armbian.com/).
 
+<p align=right><a href=#table-of-contents>⇧</a></p>
+
 ## Contribute
 
 - Want to add a new feature? 
