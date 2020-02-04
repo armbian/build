@@ -141,7 +141,7 @@ Armbian releases quarterly at the end of [February, May, August, November](https
     
 - Do you have troubles with **your board or Linux application**? 
     
-    We only support our work. Hardware and generic support is very limited. Consider using [general project search]https://www.armbian.com/search), best effort [community support](https://forum.armbian.com/) or hiring an Linux expert.
+    We only support our work. Hardware and generic support is very limited. Consider using [general project search](https://www.armbian.com/search), best effort [community support](https://forum.armbian.com/) or hiring an expert.
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
