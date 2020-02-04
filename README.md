@@ -13,7 +13,7 @@ Armbian build engine</h3>
 - [Additional information](#additional-information)
 - [Build engine overview](#build-engine-overview)
 - [Support](#support)
-- [Contributing](#support)
+- [Contribute](#contribute)
 - [Social](#social)
 - [Credits](#credits)
 - [Sponsors](#sponsors)
@@ -138,6 +138,8 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 - Have you found a bug in the **build engine**? 
 
     Try to recreate the problem with a clean build script clone. If a problem does not go away, search for [existing and closed issues](https://github.com/armbian/build/issues) and if your problem or idea is not addressed yet, [open a new issue](https://github.com/armbian/build/issues/new). For solving troubles **after booting the image, with your hardware or applications** use [general search](https://www.armbian.com/search) and best effort [community support](https://forum.armbian.com/).
+
+## Contribute
 
 - Want to add a new feature? 
 
