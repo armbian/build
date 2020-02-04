@@ -34,7 +34,7 @@ Armbian build engine</h3>
 - x64 machine with at least 2GB of memory and ~30GB of disk space for the VM, container or native OS,
 - Ubuntu Bionic 18.04 / Focal 20.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised
 - superuser rights (configured sudo or root access)
-(https://www.armbian.com/donate)
+
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
 ## How to build an image or a kernel?
