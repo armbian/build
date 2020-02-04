@@ -1,5 +1,5 @@
-<h3 align=center><a href="#armbian-build-engine"><img src="https://avatars0.githubusercontent.com/u/15922037" alt="Armbian logo" width="144" height="144"></a><br>
-Armbian build engine</h3>
+<a href="#armbian-build-engine"><img src=".github/armbian-logo.png" alt="Armbian logo" width="144"></a><br>
+<h1>Armbian build engine</h1>
 
 <p align=right>&nbsp;</p>
 
