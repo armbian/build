@@ -139,9 +139,9 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
     Try to recreate the problem with a clean build script clone. If a problem does not go away, search for [existing and closed issues](https://github.com/armbian/build/issues) and if your problem or idea is not addressed yet, [open a new issue](https://github.com/armbian/build/issues/new). 
     
-- Do you have troubles with **your board or (Armbian) Linux application**? 
-
-    Build engine project does not provide such support. Consider using [general project search]https://www.armbian.com/search), best effort [community support](https://forum.armbian.com/) or hiring an Linux expert.
+- Do you have troubles with **your board or Linux application**? 
+    
+    We only support our work. Hardware and generic support is very limited. Consider using [general project search]https://www.armbian.com/search), best effort [community support](https://forum.armbian.com/) or hiring an Linux expert.
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
