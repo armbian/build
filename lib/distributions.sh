@@ -225,7 +225,7 @@ install_common()
 
 	if [[ $WIREGUARD == yes ]]; then
 		# install wireguard tools
-		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install wireguard-tools" >> "${DEST}"/debug/install.log 2>&1
+		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install wireguard-tools --no-install-recommends" >> "${DEST}"/debug/install.log 2>&1
 	fi
 
 	# install board support package
