@@ -141,7 +141,7 @@ Armbian releases quarterly at the end of [February, May, August, November](https
     
 - Do you have troubles with **your board or application**? 
 
-    Build engine project does not provide such support. Consider using [general project search] https://www.armbian.com/search), best effort [community support](https://forum.armbian.com/) or hiring an Linux expert.
+    Build engine project does not provide such support. Consider using [general project search]https://www.armbian.com/search), best effort [community support](https://forum.armbian.com/) or hiring an Linux expert.
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
