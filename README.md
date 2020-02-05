@@ -144,11 +144,11 @@ Armbian releases quarterly at the end of [February, May, August, November](https
     
 - Do you have troubles with **your board or generic Linux application**? 
     
-    Consider using [general project search](https://www.armbian.com/search), best effort [community support](https://forum.armbian.com/) or hiring an expert. 
+    Armbian is free software and offers free best effort help through [community forums](https://forum.armbian.com/). If you can't find information about your problem via [general project search](https://www.armbian.com/search) engine, consider hiring an expert.
 
-- Commercial support?
+- Paid support?
 
-    Limited to project supporters when other conditions are met. We receive pleads for help round the clock which is why a [donation](https://www.armbian.com/donate) of at least 500 EUR is a first step.
+    Limited to project supporters when other conditions are met. We receive pleads for help round the clock which is why a [donation](https://www.armbian.com/donate) of at least 500 EUR is a first step. All income subtracted by costs and taxes goes back to project.
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
