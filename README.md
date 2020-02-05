@@ -21,7 +21,7 @@ build engine</h3>
 <p align=right>&nbsp;</p>
 
 ## What this project does?
-
+Help with maintaining
 - builds custom Debian based Linux system optimised for [supported single board computers](https://www.armbian.com/download/),
 - covers root filesystem generation, kernel image compilation and bootloader compilation,
 - maintains low-level control software for a [selection of hardware](https://www.armbian.com/download/),
@@ -151,15 +151,15 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
 - Adding a new feature? 
 
-    You are welcome to suggest [or contribute](https://www.armbian.com/get-involved) directly with a pull request. In case your proposed changes are large, remember to [discuss](https://forum.armbian.com/forum/4-development/) integration prior to development.
+    You are welcome to suggest [or contribute](https://www.armbian.com/get-involved) directly to the code with a pull request. In case your proposed changes are large, remember to [discuss](https://forum.armbian.com/forum/4-development/) them prior to development.
 
 - Join development? 
 
-    Address [opened issues](https://github.com/armbian/build/issues), join regulars on [their already active missions](https://armbian.atlassian.net/browse/AR), start maintaining any part of the code, patches, drivers or scripted applications like [armbian-config](https://github.com/armbian/config). 
+    Join regulars on [their active missions](https://armbian.atlassian.net/browse/AR), start maintaining any part of the code, patches, drivers or scripted applications like [armbian-config](https://github.com/armbian/config), address [community wishes](https://github.com/armbian/build/issues),
 
 - Help elsewhere?
 
-    Address [users wishes](https://forum.armbian.com/forum/38-feature-requests/), [maintain documentation](https://github.com/armbian/documentation), [maintain CI](https://github.com/armbian/ci-testing-tools), autotests(https://github.com/armbian/autotests), [seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/), help on [forum moderating](https://forum.armbian.com/topic/12631-help-on-forum-moderating/), [managing our costs](https://www.armbian.com/donate) ...
+    Maintain [documentation](https://github.com/armbian/documentation), [CI](https://github.com/armbian/ci-testing-tools), autotests(https://github.com/armbian/autotests), [seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/), help on [forum moderating](https://forum.armbian.com/topic/12631-help-on-forum-moderating/), [managing costs](https://www.armbian.com/donate) ...
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
