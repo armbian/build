@@ -77,12 +77,12 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
 ## Additional information
 
-- [Advanced build options](https://docs.armbian.com/Developer-Guide_Build-Options/),
-- [User configurations](https://docs.armbian.com/Developer-Guide_User-Configurations/),
-- Building with [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) or [Vagrant](https://docs.armbian.com/Developer-Guide_Using-Vagrant/),
-- [Developers forums](https://forum.armbian.com/forum/4-development/),
-- [Central project search](https://www.armbian.com/search),
-- [IRC channel logs](http://irc.armbian.com).
+- [Build parameters and advanced build options](https://docs.armbian.com/Developer-Guide_Build-Options/),
+- [Make use of user defined configurations](https://docs.armbian.com/Developer-Guide_User-Configurations/),
+- [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) and [Vagrant](https://docs.armbian.com/Developer-Guide_Using-Vagrant/) building guides,
+- Collaborate in [developers forums](https://forum.armbian.com/forum/4-development/),
+- Make use of [central project search engine](https://www.armbian.com/search),
+- Browse [IRC channel logs](http://irc.armbian.com).
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
