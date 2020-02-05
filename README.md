@@ -144,7 +144,7 @@ Armbian releases quarterly at the end of [February, May, August, November](https
     
 - Do you have troubles **elsewhere**? 
     
-    Armbian is free software and offers best effort help through [community forums](https://forum.armbian.com/). If you can't find answer there and with help of [general project search](https://www.armbian.com/search) engine, consider hiring an expert.
+    Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). If you can't find answer there and/or with help of [general project search](https://www.armbian.com/search) engine, consider hiring an expert.
 
 - Paid support?
 
