@@ -83,7 +83,7 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 - [Make use of user defined configurations](https://docs.armbian.com/Developer-Guide_User-Configurations/),
 - [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) and [Vagrant](https://docs.armbian.com/Developer-Guide_Using-Vagrant/) building guides,
 - Engage in [Armbian build framework forums](https://forum.armbian.com/forum/4-development/),
-- Track [project management Jira](https://armbian.atlassian.net/browse/AR)
+- Check [Jira project management application](https://armbian.atlassian.net/browse/AR) status,
 - Make use of [central project search engine](https://www.armbian.com/search),
 - Browse [IRC channel logs](http://irc.armbian.com) or interact at #armbian on [freenode](https://freenode.net/).
 
