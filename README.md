@@ -148,7 +148,7 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
 - Personalized support?
 
-    It is limited only to active project supporters & when other conditions are met. We receive pleads for help round the clock which is why a [donation to our non-profit project](https://www.armbian.com/donate) of at least 500 EUR is a first step.
+    It is limited only to active project supporters & when other conditions are met. We receive pleads for help round the clock which is why a [donation to our non-profit project](https://www.armbian.com/donate) with at least 500 EUR is a first step.
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
