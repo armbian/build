@@ -89,46 +89,46 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 ## Build engine overview
 
 ```text
-├── cache                                    Cache and work directory
-│   ├── rootfs                               Compressed Vanilla Debian/Ubuntu rootfilesystem cache
-│   ├── sources                              Kernel, u-boot and other sources. Mainly C code
-│   ├── toolchains                           External compilers
-├── config                                   Package repository configurations
-│   ├── targets.conf                         Board build target
+├── cache                                    Work / cache directory
+│   ├── rootfs                               Compressed vanilla Debian and Ubuntu rootfilesystem variants cache
+│   ├── sources                              Kernel, u-boot and various drivers sources. Mainly C code
+│   ├── toolchains                           External cross compilers from Linaro™ or ARM™
+├── config                                   Packages repository configurations
+│   ├── targets.conf                         Board build target configuration
 │   ├── boards                               Board configurations
-│   ├── bootenv                              Boot environments
-│   ├── bootscripts                          Boot scripts
-│   ├── kernel                               Kernel configurations
+│   ├── bootenv                              Initial boot loaders environments per family
+│   ├── bootscripts                          Initial Boot loaders scripts per family
+│   ├── kernel                               Kernel build configurations per family
 │   ├── sources                              Kernel and u-boot sources locations and scripts
-│   ├── templates                            User configuration templates
+│   ├── templates                            User configuration templates which populate userpatches
 │   └── torrents                             External compiler and rootfs cache torrents
-├── lib                                      Main build engine libraires
+├── lib                                      Main build engine libraries
 ├── output                                   Build artifact
 │   └── deb                                  Deb packages
-│   └── images                               Bootable images
+│   └── images                               Bootable images - RAW or compressed
 │   └── debug                                Patch and build logs
-│   └── config                               Kernel configuration export area
-│   └── patch                                Location of created patches
-├── packages                                 Support scripts, blobs, packages
-│   ├── blobs                                Wallpapers, various configs, closed bootloaders
-│   ├── bsp                                  Script/config overlay for rootfs
+│   └── config                               Kernel configuration export location
+│   └── patch                                Created patches location
+├── packages                                 Support scripts, binary blobs, packages
+│   ├── blobs                                Wallpapers, various configs, closed source bootloaders
+│   ├── bsp                                  Scripts and configs overlay for rootfs
 │   └── extras-buildpkgs                     Optional compilation and packaging engine
 ├── patch                                    Collection of patches
 │   ├── atf                                  ARM trusted firmware
-│   ├── kernel                               Linux kernel per kernel family
-|       └── family-branch                    Kernel family and per branch
-│   ├── misc                                 Various
-│   └── u-boot                               Universal boot loader per family or per board
+│   ├── kernel                               Linux kernel patches
+|   |   └── family-branch                    Per kernel family and branch
+│   ├── misc                                 Linux kernel packaging patches
+│   └── u-boot                               Universal boot loader patches
 |       ├── u-boot-board                     For specific board
 |       └── u-boot-family                    For entire kernel family
 └── userpatches                              User: configuration patching area
-    ├── lib.config                           User: Engine common config/override file
-    ├── config-default.conf                  User: Default user config file
-    ├── customize-image.sh                   User: Script will execute just before closing the image
+    ├── lib.config                           User: engine common config/override file
+    ├── config-default.conf                  User: default user config file
+    ├── customize-image.sh                   User: script will execute just before closing the image
     ├── atf                                  User: ARM trusted firmware
     ├── kernel                               User: Linux kernel per kernel family
-    ├── misc                                 User: Various
-    └── u-boot                               User: Universal boot loader per family or per board
+    ├── misc                                 User: various
+    └── u-boot                               User: universal boot loader patches
 ```
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
