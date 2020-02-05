@@ -148,7 +148,7 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
 - Commercial support?
 
-    Limited only to project supporters in case conditions are met. We receive pleads for assistance round the clock which is why a [donation](https://www.armbian.com/donate) of at least 500 EUR is a first step.
+    Limited to project supporters when other conditions are met. We receive pleads for help round the clock which is why a [donation](https://www.armbian.com/donate) of at least 500 EUR is a first step.
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
