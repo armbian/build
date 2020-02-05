@@ -24,7 +24,7 @@ build engine</h3>
 
 - builds custom Debian based Linux system optimised for [supported single board computers](https://www.armbian.com/download/),
 - covers root filesystem generation, kernel image compilation and bootloader compilation,
-- secure top support for a [selection of hardware](https://www.armbian.com/download/?device_support=Supported),
+- maintain low-level control software for a [selection of hardware](https://www.armbian.com/download/?device_support=Supported),
 - provides a consistent user experience by keeping system standards across different SBC platforms
 
 <p align=right>&nbsp;</p>
