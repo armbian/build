@@ -142,9 +142,9 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
     Try to recreate the problem with a clean build script clone. If a problem does not go away, search for [existing and closed issues](https://github.com/armbian/build/issues) and if your problem or idea is not addressed yet, [open a new issue](https://github.com/armbian/build/issues/new). 
     
-- Do you have troubles with **your board or generic Linux application**? 
+- Do you have troubles **elsewhere**? 
     
-    Armbian is free software and offers free best effort help through [community forums](https://forum.armbian.com/). If you can't find information about your problem via [general project search](https://www.armbian.com/search) engine, consider hiring an expert.
+    Armbian is free software and offers best effort help through [community forums](https://forum.armbian.com/). If you can't find answer there and with help of [general project search](https://www.armbian.com/search) engine, consider hiring an expert.
 
 - Paid support?
 
