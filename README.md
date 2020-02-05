@@ -140,7 +140,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 
 - Have you found a bug in the **build engine**? 
 
-    Try to recreate the problem with a clean build script clone. If a problem does not go away, search for [existing and closed issues](https://github.com/armbian/build/issues) and if your problem or idea is not addressed yet, [open a new issue](https://github.com/armbian/build/issues/new). 
+    Try to recreate it with a clean build script clone. Then search for [existing and closed issues](https://github.com/armbian/build/issues). If you don't find it there, [open a new issue](https://github.com/armbian/build/issues/new).
     
 - Do you have troubles **elsewhere**? 
     
