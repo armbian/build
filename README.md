@@ -83,6 +83,7 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 - [Make use of user defined configurations](https://docs.armbian.com/Developer-Guide_User-Configurations/),
 - [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) and [Vagrant](https://docs.armbian.com/Developer-Guide_Using-Vagrant/) building guides,
 - Engage in [Armbian build framework forums](https://forum.armbian.com/forum/4-development/),
+- Track [project management Jira](https://armbian.atlassian.net/browse/AR)
 - Make use of [central project search engine](https://www.armbian.com/search),
 - Browse [IRC channel logs](http://irc.armbian.com) or interact at #armbian on [freenode](https://freenode.net/).
 
@@ -151,11 +152,11 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
 - Adding a new feature? 
 
-    You are welcome to suggest [or contribute](https://www.armbian.com/get-involved) directly to the code with a pull request. In case your proposed changes are large, remember to [discuss](https://forum.armbian.com/forum/4-development/) them prior to development.
+    You are welcome to suggest or contribute directly to the code with a pull request. In case your proposed changes are large, remember to discuss them prior to development.
 
 - Join development? 
 
-    Join regulars on [their active missions](https://armbian.atlassian.net/browse/AR), start maintaining any part of the code, patches, drivers or scripted applications like [armbian-config](https://github.com/armbian/config), address [community wishes](https://github.com/armbian/build/issues),
+    Join regulars on their active missions, start maintaining any part of the code: patches, drivers or scripted applications like [armbian-config](https://github.com/armbian/config), address [community wishes](https://github.com/armbian/build/issues),
 
 - Help elsewhere?
 
