@@ -99,7 +99,7 @@ source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
 
 if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
-	source "$USERPATCHES_PATH/sources/${LINUXFAMILY}.conf"
+	source "$USERPATCHES_PATH/sources/families/${LINUXFAMILY}.conf"
 fi
 
 # load architecture defaults
