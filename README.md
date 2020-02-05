@@ -51,7 +51,7 @@ cd build
 
 ## Compare with industry standards
 
-Check similarity, advantages and disadvantages compared with leading industry standard software.
+Check similarity, advantages and disadvantages compared with leading industry standard build software.
 
 Function | Armbian | Yocto | Buildroot |
 |:--|:--|:--|:--|
