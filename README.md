@@ -148,7 +148,7 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
 - Commercial support?
 
-    Limited but possible. [Donate 500 EUR](https://www.armbian.com/donate) to get attention and cover negotiation costs.
+    Limited but possible. [Donate](https://www.armbian.com/donate) 500 EUR to get attention.
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
