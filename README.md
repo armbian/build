@@ -161,8 +161,8 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
 ## Social
 
-- Interact in [forums](https://forum.armbian.com),
-- Chat with fellow users on IRC [#armbian](https://webchat.freenode.net/?channels=armbian) on [freenode](https://freenode.net/)
+- [Participate in Armbian forums](https://forum.armbian.com),
+- Chat with fellow users on IRC [#armbian](https://webchat.freenode.net/?channels=armbian) on Freenode,
 - Follow [@armbian on Twitter](https://twitter.com/armbian) or [LinkedIN](https://www.linkedin.com/company/armbian).
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
