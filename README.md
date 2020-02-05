@@ -147,13 +147,13 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
-## Contribute to the build engine
+## Contribute
 
 - Adding a new feature? 
 
     You are welcome to suggest [or contribute](https://www.armbian.com/get-involved) directly with a pull request. In case your proposed changes are large, remember to [discuss](https://forum.armbian.com/forum/4-development/) integration prior to development.
 
-- Help with maintaining? 
+- Join development? 
 
     Address [opened issues](https://github.com/armbian/build/issues), join regulars on [their already active missions](https://armbian.atlassian.net/browse/AR), start maintaining any part of the code, patches, drivers or scripted applications like [armbian-config](https://github.com/armbian/config). 
 
