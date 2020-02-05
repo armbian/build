@@ -24,16 +24,16 @@ build engine</h3>
 
 - builds custom Debian based Linux system optimised for [supported single board computers](https://www.armbian.com/download/),
 - covers root filesystem generation, kernel image compilation and bootloader compilation,
-- maintain low-level control software for a [selection of hardware](https://www.armbian.com/download/?device_support=Supported),
-- provides a consistent user experience by keeping system standards across different SBC platforms
+- maintains low-level control software for a [selection of hardware](https://www.armbian.com/download/),
+- provides a consistent user experience by keeping system standards across different SBC platforms.
 
 <p align=right>&nbsp;</p>
 
 ## What do you need to get started?
     
 - x64 machine with at least 2GB of memory and ~30GB of disk space for the VM, container or native OS,
-- Ubuntu Bionic 18.04 / Focal 20.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised
-- superuser rights (configured sudo or root access)
+- Ubuntu Bionic 18.04 / Focal 20.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised,
+- superuser rights (configured sudo or root access).
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
@@ -77,12 +77,12 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
 ## Additional information
 
-- [Advanced build options](https://docs.armbian.com/Developer-Guide_Build-Options/)
-- [User configurations](https://docs.armbian.com/Developer-Guide_User-Configurations/)
-- Building with [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) or [Vagrant](https://docs.armbian.com/Developer-Guide_Using-Vagrant/)
-- [Developers forums](https://forum.armbian.com/forum/4-development/)
-- [Central project search](https://www.armbian.com/search)
-- [IRC channel logs](http://irc.armbian.com)
+- [Advanced build options](https://docs.armbian.com/Developer-Guide_Build-Options/),
+- [User configurations](https://docs.armbian.com/Developer-Guide_User-Configurations/),
+- Building with [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) or [Vagrant](https://docs.armbian.com/Developer-Guide_Using-Vagrant/),
+- [Developers forums](https://forum.armbian.com/forum/4-development/),
+- [Central project search](https://www.armbian.com/search),
+- [IRC channel logs](http://irc.armbian.com).
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
