@@ -90,7 +90,7 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
 ```text
 ├── cache                                    Work / cache directory
-│   ├── rootfs                               Compressed vanilla Debian and Ubuntu rootfilesystem variants cache
+│   ├── rootfs                               Compressed vanilla Debian and Ubuntu rootfilesystem cache
 │   ├── sources                              Kernel, u-boot and various drivers sources. Mainly C code
 │   ├── toolchains                           External cross compilers from Linaro™ or ARM™
 ├── config                                   Packages repository configurations
