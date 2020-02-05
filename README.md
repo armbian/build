@@ -147,15 +147,19 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
-## Contribute
+## Contribute to the build engine
 
-- Want to add a new feature? 
+- Adding a new feature? 
 
-    Armbian build engine is an open source project and you are more then welcome [to contribute](https://www.armbian.com/get-involved) to it. Remember to [discuss new feature](https://forum.armbian.com/forum/4-development/) prior to development since we might already have plans or we have no plans to integrate your work.
+    You are welcome to suggest [or contribute](https://www.armbian.com/get-involved) directly with a pull request. In case your proposed changes are large, remember to [discuss](https://forum.armbian.com/forum/4-development/) integration prior to development.
 
-- Want to help with anything? 
+- Help with maintaining? 
 
-    Address [opened issues](https://github.com/armbian/build/issues), join regulars on [their already active missions](https://armbian.atlassian.net/browse/AR), start maintaining low level u-boot / kernel code, drivers or scripted applications like [armbian-config](https://github.com/armbian/config). Or help [managing our costs](https://www.armbian.com/donate)!
+    Address [opened issues](https://github.com/armbian/build/issues), join regulars on [their already active missions](https://armbian.atlassian.net/browse/AR), start maintaining any part of the code, patches, drivers or scripted applications like [armbian-config](https://github.com/armbian/config). 
+
+- Help elsewhere?
+
+    Address [users wishes](https://forum.armbian.com/forum/38-feature-requests/), [maintain documentation](https://github.com/armbian/documentation), [maintain CI](https://github.com/armbian/ci-testing-tools), autotests(https://github.com/armbian/autotests), [seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/), help on [forum moderating](https://forum.armbian.com/topic/12631-help-on-forum-moderating/), [managing our costs](https://www.armbian.com/donate) ...
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
