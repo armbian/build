@@ -71,9 +71,9 @@ Function | Armbian | Yocto | Buildroot |
 
 https://www.armbian.com/download/
 
-Armbian releases quarterly at the end of [February, May, August, November](https://github.com/armbian/documentation/blob/master/docs/Process_Release-Model.md). Contributers are welcome to propose changes to our default [images build list](https://github.com/armbian/build/blob/master/config/targets.conf).
+Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the end of [February, May, August, November](https://github.com/armbian/documentation/blob/master/docs/Process_Release-Model.md). Contributers are welcome to propose changes to our default [images build list](https://github.com/armbian/build/blob/master/config/targets.conf).
 
-[Release history](https://docs.armbian.com/Release_Changelog/)
+
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
