@@ -153,7 +153,7 @@ Armbian releases quarterly at the end of [February, May, August, November](https
 
 - Want to help with anything? 
 
-    Address [opened issues](https://github.com/armbian/build/issues), join regulars on [their already active missions](https://armbian.atlassian.net/browse/AR), start maintaining low level u-boot / kernel code, drivers or scripted applications like [armbian-config](https://github.com/armbian/config). Or just make a [donation](https://www.armbian.com/donate)!
+    Address [opened issues](https://github.com/armbian/build/issues), join regulars on [their already active missions](https://armbian.atlassian.net/browse/AR), start maintaining low level u-boot / kernel code, drivers or scripted applications like [armbian-config](https://github.com/armbian/config). Or help [managing our costs](https://www.armbian.com/donate)!
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
