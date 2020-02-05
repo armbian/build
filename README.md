@@ -146,9 +146,9 @@ Armbian releases quarterly at the end of [February, May, August, November](https
     
     Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). If you can't find answer there and/or with help of [general project search](https://www.armbian.com/search) engine, consider hiring an expert.
 
-- Paid support?
+- Personalized support?
 
-    It is limited only to active project supporters & when other conditions are met. We receive pleads for help round the clock which is why a [donation to the non-profit project](https://www.armbian.com/donate) of at least 500 EUR is a first step.
+    It is limited only to active project supporters & when other conditions are met. We receive pleads for help round the clock which is why a [donation to our non-profit project](https://www.armbian.com/donate) of at least 500 EUR is a first step.
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
