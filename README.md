@@ -174,7 +174,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 
 - Personalized support?
 
-    It is limited to active project supporters and sponsors. We receive pleads for help round the clock which is why a four figure [donation to our non-profit project](https://www.armbian.com/donate) is step to get attention.
+    It is limited to active project supporters and sponsors. We receive pleads for help round the clock which is why a four figure [donation to our non-profit project](https://www.armbian.com/donate) is expected step to get our attention.
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
