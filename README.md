@@ -22,7 +22,7 @@ build engine</h3>
 
 ## What this project does?
 
-- builds custom Debian based Linux system optimised for [supported single board computers](https://www.armbian.com/download/),
+- builds custom Debian based Linux system optimised for <a target=_blank href=https://www.armbian.com/download/>supported single board computers</a>,
 - covers root filesystem generation, kernel image compilation and bootloader compilation,
 - maintains low-level control software for a [selection of hardware](https://www.armbian.com/download/),
 - provides a consistent user experience by keeping system standards across different SBC platforms.
