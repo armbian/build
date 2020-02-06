@@ -8,7 +8,7 @@ build engine</h3>
 - [What this project does?](#what-this-project-does)
 - [What do you need to get started?](#what-do-you-need-to-get-started)
 - [How to build an image or a kernel?](#how-to-build-an-image-or-a-kernel)
-- (Build parameter examples)(#build-parameter-examples)
+- [Build parameter examples](#build-parameter-examples)
 - [Compare with industry standards](#compare-with-industry-standards)
 - [Where to download prebuilt images?](#where-to-download-prebuilt-images)
 - [Additional information](#additional-information)
