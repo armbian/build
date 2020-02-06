@@ -8,6 +8,7 @@ build engine</h3>
 - [What this project does?](#what-this-project-does)
 - [What do you need to get started?](#what-do-you-need-to-get-started)
 - [How to build an image or a kernel?](#how-to-build-an-image-or-a-kernel)
+- (Build parameter examples)(#build-parameter-examples)
 - [Compare with industry standards](#compare-with-industry-standards)
 - [Where to download prebuilt images?](#where-to-download-prebuilt-images)
 - [Additional information](#additional-information)
@@ -66,8 +67,8 @@ Run build script inside Docker container:
 Build minimal Debian buster based image for Odroid XU4 with a modern kernel, write image to the SD card and verify:
 
 ```text
-./compile.sh BOARD="odroidxu4" BRANCH="current" RELEASE="buster" CARD_DEVICE="/dev/sda" KERNEL_ONLY="no" \
-KERNEL_CONFIGURE="no" INSTALL_HEADERS="yes" BUILD_DESKTOP="no" BUILD_MINIMAL="yes"
+./compile.sh BOARD="odroidxu4" BRANCH="current" RELEASE="buster" CARD_DEVICE="/dev/sda" \
+KERNEL_ONLY="no" KERNEL_CONFIGURE="no" INSTALL_HEADERS="yes" BUILD_DESKTOP="no" BUILD_MINIMAL="yes"
 ```
 
 - [Additional information](#additional-information)
