@@ -1,5 +1,5 @@
-<h3 align=center><a href="#armbian-build-engine"><img src=".github/armbian-logo.png" alt="Armbian logo" width="144"></a><br>
-build engine</h3>
+<h3 align=center><a href="#armbian-build-tools"><img src=".github/armbian-logo.png" alt="Armbian logo" width="144"></a><br>
+build tools</h3>
 
 <p align=right>&nbsp;</p>
 
@@ -12,7 +12,7 @@ build engine</h3>
 - [Compare with industry standards](#compare-with-industry-standards)
 - [Where to download prebuilt images?](#where-to-download-prebuilt-images)
 - [Additional information](#additional-information)
-- [Build engine overview](#build-engine-overview)
+- [Build tools overview](#build-tools-overview)
 - [Support](#support)
 - [Contribute](#contribute)
 - [Social](#social)
@@ -115,7 +115,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
-## Build engine overview
+## Build tools overview
 
 ```text
 ├── cache                                    Work / cache directory
@@ -131,7 +131,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 │   ├── sources                              Kernel and u-boot sources locations and scripts
 │   ├── templates                            User configuration templates which populate userpatches
 │   └── torrents                             External compiler and rootfs cache torrents
-├── lib                                      Main build engine libraries
+├── lib                                      Main build tools libraries
 ├── output                                   Build artifact
 │   └── deb                                  Deb packages
 │   └── images                               Bootable images - RAW or compressed
@@ -151,7 +151,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 |       ├── u-boot-board                     For specific board
 |       └── u-boot-family                    For entire kernel family
 └── userpatches                              User: configuration patching area
-    ├── lib.config                           User: engine common config/override file
+    ├── lib.config                           User: tools common config/override file
     ├── config-default.conf                  User: default user config file
     ├── customize-image.sh                   User: script will execute just before closing the image
     ├── atf                                  User: ARM trusted firmware
@@ -164,7 +164,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 
 ## Support
 
-- Have you found a bug in the **build engine**? 
+- Have you found a bug in the **build tools**? 
 
     Try to recreate it with a clean build script clone. Then search for [existing and closed issues](https://github.com/armbian/build/issues). If you don't find it there, [open a new issue](https://github.com/armbian/build/issues/new).
     
@@ -222,4 +222,3 @@ Most of the project is sponsored with a work done by volunteer collaborators, wh
 <img src="https://www.armbian.com/wp-content/uploads/2018/03/helios4_logo-150x150.png" width="144" height="144">
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
-
