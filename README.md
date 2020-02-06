@@ -49,6 +49,31 @@ cd build
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
+## Build parameter examples
+
+Show work in progress areas in interactive mode:
+
+```text
+./compile.sh EXPERT="yes"
+```
+
+Run build script inside Docker container:
+
+```text
+./compile.sh docker
+```
+
+Build minimal Debian buster based image for Odroid XU4 with a modern kernel, write image to the SD card and verify:
+
+```text
+./compile.sh BOARD="odroidxu4" BRANCH="current" RELEASE="buster" CARD_DEVICE="/dev/sda" KERNEL_ONLY="no" \
+KERNEL_CONFIGURE="no" INSTALL_HEADERS="yes" BUILD_DESKTOP="no" BUILD_MINIMAL="yes"
+```
+
+- [Additional information](#additional-information)
+
+<p align=right><a href=#table-of-contents>⇧</a></p>
+
 ## Compare with industry standards
 
 Check similarity, advantages and disadvantages compared with leading industry standard build software.
