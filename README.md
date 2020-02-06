@@ -64,7 +64,7 @@ Run build tools inside Docker container:
 ./compile.sh docker
 ```
 
-Build minimal Debian buster based image for Odroid XU4 with a modern kernel, write image to the SD card and verify:
+Build minimal CLI Debian buster based image for Odroid XU4. Use modern kernel and write image to the SD card:
 
 ```text
 ./compile.sh BOARD="odroidxu4" BRANCH="current" RELEASE="buster" CARD_DEVICE="/dev/sda" \
