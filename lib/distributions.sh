@@ -177,6 +177,9 @@ install_common()
 	[[ -n $DEFAULT_OVERLAYS && -f $SDCARD/boot/armbianEnv.txt ]] && \
 		echo "overlays=${DEFAULT_OVERLAYS//,/ }" >> "${SDCARD}"/boot/armbianEnv.txt
 
+	[[ -n $BOOT_FDT_FILE && -f $SDCARD/boot/armbianEnv.txt ]] && \
+		echo "fdtfile=${BOOT_FDT_FILE}" >> "${SDCARD}/boot/armbianEnv.txt"
+
 	# initial date for fake-hwclock
 	date -u '+%Y-%m-%d %H:%M:%S' > "${SDCARD}"/etc/fake-hwclock.data
 
