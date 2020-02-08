@@ -2,13 +2,5 @@
 BOARD_NAME="ROC-RK3399-PC"
 BOARDFAMILY="rk3399"
 BOOTCONFIG="roc-pc-rk3399_defconfig"
-#
-MODULES=""
-MODULES_NEXT=""
-#
 KERNEL_TARGET="legacy,current,dev"
-CLI_TARGET="buster,bionic:default"
-DESKTOP_TARGET="buster,bionic:default"
-#
-CLI_BETA_TARGET="buster,bionic:dev"
-DESKTOP_BETA_TARGET=""
+FULL_DESKTOP="yes"
