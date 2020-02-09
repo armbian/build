@@ -3,6 +3,8 @@ build tools</h3>
 
 <p align=right>&nbsp;</p>
 
+[![Build Status](https://armbian.lane-fu.com/jenkins/buildStatus/icon?job=test-full)](https://armbian.lane-fu.com/jenkins/job/test-full/)
+
 ## Table of contents
 
 - [What this project does?](#what-this-project-does)
