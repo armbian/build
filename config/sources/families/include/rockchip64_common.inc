@@ -146,8 +146,18 @@ family_tweaks_bsp()
 
 	fi
 
-	if [[ $BOARD == pinebook-pro ]]; then
+	if [[ $BOARD == nanopi-r2s ]]; then
 		
+		# rename USB based network to lan0
+		mkdir -p $destination/etc/udev/rules.d/
+		echo 'SUBSYSTEM=="net", ACTION=="add", DRIVERS=="r8152", KERNEL=="eth1", NAME="lan0"' > $destination/etc/udev/rules.d/70-rename-lan.rules
+		# this board is without BT
+		rm $destination/lib/systemd/system/rk3399-bluetooth.service
+
+	fi
+
+	if [[ $BOARD == pinebook-pro ]]; then
+
 		cp $SRC/packages/bsp/pinebook-pro/xorg.conf $destination/etc/X11/
 	fi
 
