@@ -40,10 +40,9 @@ fi
 case $BRANCH in
 
 	current)
-		
-		KERNELSOURCE='https://gitlab.manjaro.org/tsys/linux-pinebook-pro.git'
+
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="branch:v5.5"
+		KERNELBRANCH="branch:linux-5.4.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
