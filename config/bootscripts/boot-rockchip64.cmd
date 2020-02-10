@@ -19,7 +19,7 @@ if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
 
-if test "${fdtfile}" = "rockchip/rk3399-pinebook-pro.dtb"; then setenv ${displayoutput} "video=eDP-1:1920x1080@60"; fi
+if test "${fdtfile}" = "rockchip/rk3399-pinebook-pro.dtb"; then setenv displayoutput "video=eDP-1:1920x1080@60"; fi
 if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
@@ -64,7 +64,7 @@ else
 		source ${load_addr}
 	fi
 fi
-print ${bootargs}
+printenv bootargs
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
 # Recompile with:
