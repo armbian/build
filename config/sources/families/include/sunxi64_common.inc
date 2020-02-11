@@ -10,8 +10,7 @@ case $BRANCH in
 	legacy)
 		
 		KERNELBRANCH='branch:linux-4.19.y'
-		KERNELPATCHDIR='sunxi-next'
-
+		KERNELPATCHDIR='sunxi-'$BRANCH
 	;;
 
 	current)
