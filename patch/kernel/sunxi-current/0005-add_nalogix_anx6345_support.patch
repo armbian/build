@@ -1,36 +1,37 @@
-From 2da065ab8aa3f562a02dfd3df4ad971d1229b136 Mon Sep 17 00:00:00 2001
+From 6aa192698089b450b06d609355fc9c82c07856d2 Mon Sep 17 00:00:00 2001
 From: Icenowy Zheng <icenowy@aosc.io>
-Date: Thu, 18 Oct 2018 15:33:23 +0800
-Subject: [PATCH 130/146] drm/bridge: Add Analogix anx6345 support
+Date: Tue, 29 Oct 2019 13:16:57 +0100
+Subject: drm/bridge: Add Analogix anx6345 support
 
 The ANX6345 is an ultra-low power DisplayPower/eDP transmitter designed
 for portable devices. This driver adds initial support for RGB to eDP
-mode, without HPD and interrupts, but with possibility to inject EDID.
+mode, without HPD and interrupts.
+
 This is a configuration usually seen in eDP applications.
 
 Signed-off-by: Icenowy Zheng <icenowy@aosc.io>
+Signed-off-by: Vasily Khoruzhick <anarsoul@gmail.com>
+Signed-off-by: Torsten Duwe <duwe@suse.de>
+Signed-off-by: Maxime Ripard <maxime@cerno.tech>
+Link: https://patchwork.freedesktop.org/patch/msgid/20191107135220.590D968BFE@verein.lst.de
 ---
- drivers/gpu/drm/bridge/analogix/Kconfig       |  11 +
- drivers/gpu/drm/bridge/analogix/Makefile      |   1 +
- .../drm/bridge/analogix/analogix-anx6345.c    | 862 ++++++++++++++++++
- .../drm/bridge/analogix/analogix-i2c-dptx.c   |   2 +-
- .../drm/bridge/analogix/analogix-i2c-dptx.h   |   8 +
- .../bridge/analogix/analogix-i2c-txcommon.h   |   3 +
- 6 files changed, 886 insertions(+), 1 deletion(-)
+ drivers/gpu/drm/bridge/analogix/Kconfig            |  12 +
+ drivers/gpu/drm/bridge/analogix/Makefile           |   1 +
+ drivers/gpu/drm/bridge/analogix/analogix-anx6345.c | 793 +++++++++++++++++++++
+ 3 files changed, 806 insertions(+)
  create mode 100644 drivers/gpu/drm/bridge/analogix/analogix-anx6345.c
 
+(limited to 'drivers/gpu/drm/bridge/analogix')
+
 diff --git a/drivers/gpu/drm/bridge/analogix/Kconfig b/drivers/gpu/drm/bridge/analogix/Kconfig
-index eb893b465dd8..784ddca83b47 100644
+index 29ba1b21019e..1425a96a28c3 100644
 --- a/drivers/gpu/drm/bridge/analogix/Kconfig
 +++ b/drivers/gpu/drm/bridge/analogix/Kconfig
-@@ -15,3 +15,14 @@ config DRM_ANALOGIX_ANX78XX
- 	  designed for portable devices. The ANX78XX transforms
- 	  the HDMI output of an application processor to MyDP
- 	  or DisplayPort.
-+
+@@ -1,6 +1,18 @@
+ # SPDX-License-Identifier: GPL-2.0-only
 +config DRM_ANALOGIX_ANX6345
 +	tristate "Analogix ANX6345 bridge"
-+	select DRM_ANALOGIX_DP_I2C
++	select DRM_ANALOGIX_DP
 +	select DRM_KMS_HELPER
 +	select REGMAP_I2C
 +	help
@@ -38,71 +39,73 @@ index eb893b465dd8..784ddca83b47 100644
 +	  transmitter designed for portable devices. The
 +	  ANX6345 transforms the LVTTL RGB output of an
 +	  application processor to eDP or DisplayPort.
++
+ config DRM_ANALOGIX_ANX78XX
+ 	tristate "Analogix ANX78XX bridge"
++	select DRM_ANALOGIX_DP
+ 	select DRM_KMS_HELPER
+ 	select REGMAP_I2C
+ 	help
 diff --git a/drivers/gpu/drm/bridge/analogix/Makefile b/drivers/gpu/drm/bridge/analogix/Makefile
-index c37e2ded8ce3..3af9feab6e17 100644
+index 7623b9b80167..97669b374098 100644
 --- a/drivers/gpu/drm/bridge/analogix/Makefile
 +++ b/drivers/gpu/drm/bridge/analogix/Makefile
-@@ -3,3 +3,4 @@ analogix_dp_i2c-objs := analogix-i2c-dptx.o
- obj-$(CONFIG_DRM_ANALOGIX_DP) += analogix_dp.o
- obj-$(CONFIG_DRM_ANALOGIX_DP_I2C) += analogix_dp_i2c.o
- obj-$(CONFIG_DRM_ANALOGIX_ANX78XX) += analogix-anx78xx.o
+@@ -1,4 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ analogix_dp-objs := analogix_dp_core.o analogix_dp_reg.o analogix-i2c-dptx.o
 +obj-$(CONFIG_DRM_ANALOGIX_ANX6345) += analogix-anx6345.o
+ obj-$(CONFIG_DRM_ANALOGIX_ANX78XX) += analogix-anx78xx.o
+ obj-$(CONFIG_DRM_ANALOGIX_DP) += analogix_dp.o
 diff --git a/drivers/gpu/drm/bridge/analogix/analogix-anx6345.c b/drivers/gpu/drm/bridge/analogix/analogix-anx6345.c
 new file mode 100644
-index 000000000000..81676407aa6d
+index 000000000000..4574d6b264de
 --- /dev/null
 +++ b/drivers/gpu/drm/bridge/analogix/analogix-anx6345.c
-@@ -0,0 +1,863 @@
-+// SPDX-License-Identifier: GPL-2.0
+@@ -0,0 +1,793 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
 +/*
-+ * Copyright(c) Icenowy Zheng <icenowy@aosc.io>
-+ * Based on analogix-anx6345.c, which is:
-+ *   Copyright(c) 2016, Analogix Semiconductor.
++ * Copyright(c) 2016, Analogix Semiconductor.
++ * Copyright(c) 2017, Icenowy Zheng <icenowy@aosc.io>
++ *
++ * Based on anx7808 driver obtained from chromeos with copyright:
++ * Copyright(c) 2013, Google Inc.
 + */
 +#include <linux/delay.h>
 +#include <linux/err.h>
-+#include <linux/interrupt.h>
++#include <linux/gpio/consumer.h>
 +#include <linux/i2c.h>
++#include <linux/interrupt.h>
 +#include <linux/kernel.h>
 +#include <linux/module.h>
-+#include <linux/of_gpio.h>
 +#include <linux/of_platform.h>
 +#include <linux/regmap.h>
-+#include <linux/types.h>
-+#include <linux/gpio/consumer.h>
 +#include <linux/regulator/consumer.h>
++#include <linux/types.h>
 +
-+#include <drm/drmP.h>
 +#include <drm/drm_atomic_helper.h>
 +#include <drm/drm_crtc.h>
 +#include <drm/drm_crtc_helper.h>
-+#include <drm/drm_probe_helper.h>
 +#include <drm/drm_dp_helper.h>
 +#include <drm/drm_edid.h>
++#include <drm/drm_of.h>
++#include <drm/drm_panel.h>
++#include <drm/drm_print.h>
++#include <drm/drm_probe_helper.h>
 +
 +#include "analogix-i2c-dptx.h"
 +#include "analogix-i2c-txcommon.h"
 +
-+#define I2C_NUM_ADDRESSES	2
-+#define I2C_IDX_DPTX		0
-+#define I2C_IDX_TXCOM		1
-+
-+#define XTAL_CLK		270 /* 27M */
-+
 +#define POLL_DELAY		50000 /* us */
 +#define POLL_TIMEOUT		5000000 /* us */
 +
-+static const u8 anx6345_i2c_addresses[] = {
-+	[I2C_IDX_DPTX]	= ANALOGIX_I2C_DPTX,
-+	[I2C_IDX_TXCOM]	= ANALOGIX_I2C_TXCOMMON,
-+};
++#define I2C_IDX_DPTX		0
++#define I2C_IDX_TXCOM		1
 +
-+struct anx6345_platform_data {
-+	struct regulator *dvdd12;
-+	struct regulator *dvdd25;
-+	struct regulator *vcc_panel;
-+	struct gpio_desc *gpiod_reset;
++static const u8 anx6345_i2c_addresses[] = {
++	[I2C_IDX_DPTX]	= 0x70,
++	[I2C_IDX_TXCOM]	= 0x72,
 +};
++#define I2C_NUM_ADDRESSES	ARRAY_SIZE(anx6345_i2c_addresses)
 +
 +struct anx6345 {
 +	struct drm_dp_aux aux;
@@ -111,12 +114,13 @@ index 000000000000..81676407aa6d
 +	struct edid *edid;
 +	struct drm_connector connector;
 +	struct drm_dp_link link;
-+	struct anx6345_platform_data pdata;
-+	struct mutex lock;
++	struct drm_panel *panel;
++	struct regulator *dvdd12;
++	struct regulator *dvdd25;
++	struct gpio_desc *gpiod_reset;
++	struct mutex lock;	/* protect EDID access */
 +
-+	/*
-+	 * I2C Slave addresses of ANX6345 are mapped as DPTX and SYS
-+	 */
++	/* I2C Slave addresses of ANX6345 are mapped as DPTX and SYS */
 +	struct i2c_client *i2c_clients[I2C_NUM_ADDRESSES];
 +	struct regmap *map[I2C_NUM_ADDRESSES];
 +
@@ -151,7 +155,7 @@ index 000000000000..81676407aa6d
 +{
 +	struct anx6345 *anx6345 = container_of(aux, struct anx6345, aux);
 +
-+	return anx_aux_transfer(anx6345->map[I2C_IDX_DPTX], msg);
++	return anx_dp_aux_transfer(anx6345->map[I2C_IDX_DPTX], msg);
 +}
 +
 +static int anx6345_dp_link_training(struct anx6345 *anx6345)
@@ -277,21 +281,17 @@ index 000000000000..81676407aa6d
 +	if (err)
 +		return err;
 +
-+	err = regmap_read_poll_timeout(anx6345->map[I2C_IDX_DPTX],
++	return regmap_read_poll_timeout(anx6345->map[I2C_IDX_DPTX],
 +				       SP_DP_LT_CTRL_REG,
 +				       value, !(value & SP_DP_LT_INPROGRESS),
 +				       POLL_DELAY, POLL_TIMEOUT);
-+	if (err)
-+		return err;
-+
-+	return 0;
 +}
 +
 +static int anx6345_tx_initialization(struct anx6345 *anx6345)
 +{
 +	int err, i;
 +
-+	/* FIXME: hardcode color depth now */
++	/* FIXME: colordepth is hardcoded for now */
 +	err = regmap_write(anx6345->map[I2C_IDX_TXCOM], SP_VID_CTRL2_REG,
 +			   SP_IN_BPC_6BIT << SP_IN_BPC_SHIFT);
 +	if (err)
@@ -338,61 +338,41 @@ index 000000000000..81676407aa6d
 +	if (err)
 +		return err;
 +
-+	err = anx6345_clear_bits(anx6345->map[I2C_IDX_TXCOM],
++	return anx6345_clear_bits(anx6345->map[I2C_IDX_TXCOM],
 +				 SP_RESET_CTRL2_REG, SP_AUX_RST);
-+	if (err)
-+		return err;
-+
-+	err = anx6345_dp_link_training(anx6345);
-+	if (err)
-+		return err;
-+
-+	return 0;
 +}
 +
 +static void anx6345_poweron(struct anx6345 *anx6345)
 +{
-+	struct anx6345_platform_data *pdata = &anx6345->pdata;
 +	int err;
 +
-+	if (WARN_ON(anx6345->powered))
-+		return;
-+
-+	if (pdata->dvdd12) {
-+		err = regulator_enable(pdata->dvdd12);
-+		if (err) {
-+			DRM_ERROR("Failed to enable DVDD12 regulator: %d\n",
-+				  err);
-+			return;
-+		}
-+
-+		usleep_range(1000, 2000);
-+	}
-+
-+	if (pdata->dvdd25) {
-+		err = regulator_enable(pdata->dvdd25);
-+		if (err) {
-+			DRM_ERROR("Failed to enable DVDD25 regulator: %d\n",
-+				  err);
-+			return;
-+		}
-+
-+		usleep_range(5000, 10000);
-+	}
-+
-+	if (pdata->vcc_panel) {
-+		err = regulator_enable(pdata->vcc_panel);
-+		if (err) {
-+			DRM_ERROR("Failed to enable panel regulator: %d\n",
-+				  err);
-+			return;
-+		}
-+	}
-+
-+	gpiod_set_value_cansleep(pdata->gpiod_reset, 0);
++	/* Ensure reset is asserted before starting power on sequence */
++	gpiod_set_value_cansleep(anx6345->gpiod_reset, 1);
 +	usleep_range(1000, 2000);
 +
-+	gpiod_set_value_cansleep(pdata->gpiod_reset, 1);
++	err = regulator_enable(anx6345->dvdd12);
++	if (err) {
++		DRM_ERROR("Failed to enable dvdd12 regulator: %d\n",
++			  err);
++		return;
++	}
++
++	/* T1 - delay between VDD12 and VDD25 should be 0-2ms */
++	usleep_range(1000, 2000);
++
++	err = regulator_enable(anx6345->dvdd25);
++	if (err) {
++		DRM_ERROR("Failed to enable dvdd25 regulator: %d\n",
++			  err);
++		return;
++	}
++
++	/* T2 - delay between RESETN and all power rail stable,
++	 * should be 2-5ms
++	 */
++	usleep_range(2000, 5000);
++
++	gpiod_set_value_cansleep(anx6345->gpiod_reset, 0);
 +
 +	/* Power on registers module */
 +	anx6345_set_bits(anx6345->map[I2C_IDX_TXCOM], SP_POWERDOWN_CTRL_REG,
@@ -400,50 +380,39 @@ index 000000000000..81676407aa6d
 +	anx6345_clear_bits(anx6345->map[I2C_IDX_TXCOM], SP_POWERDOWN_CTRL_REG,
 +			   SP_REGISTER_PD | SP_TOTAL_PD);
 +
++	if (anx6345->panel)
++		drm_panel_prepare(anx6345->panel);
++
 +	anx6345->powered = true;
 +}
 +
 +static void anx6345_poweroff(struct anx6345 *anx6345)
 +{
-+	struct anx6345_platform_data *pdata = &anx6345->pdata;
 +	int err;
 +
-+	if (WARN_ON(!anx6345->powered))
-+		return;
-+
-+	gpiod_set_value_cansleep(pdata->gpiod_reset, 1);
++	gpiod_set_value_cansleep(anx6345->gpiod_reset, 1);
 +	usleep_range(1000, 2000);
 +
-+	if (pdata->vcc_panel) {
-+		err = regulator_disable(pdata->vcc_panel);
-+		if (err) {
-+			DRM_ERROR("Failed to disable panel regulator: %d\n",
-+				  err);
-+			return;
-+		}
++	if (anx6345->panel)
++		drm_panel_unprepare(anx6345->panel);
++
++	err = regulator_disable(anx6345->dvdd25);
++	if (err) {
++		DRM_ERROR("Failed to disable dvdd25 regulator: %d\n",
++			  err);
++		return;
 +	}
 +
-+	if (pdata->dvdd25) {
-+		err = regulator_disable(pdata->dvdd25);
-+		if (err) {
-+			DRM_ERROR("Failed to disable DVDD25 regulator: %d\n",
-+				  err);
-+			return;
-+		}
++	usleep_range(5000, 10000);
 +
-+		usleep_range(5000, 10000);
++	err = regulator_disable(anx6345->dvdd12);
++	if (err) {
++		DRM_ERROR("Failed to disable dvdd12 regulator: %d\n",
++			  err);
++		return;
 +	}
 +
-+	if (pdata->dvdd12) {
-+		err = regulator_disable(pdata->dvdd12);
-+		if (err) {
-+			DRM_ERROR("Failed to disable DVDD12 regulator: %d\n",
-+				  err);
-+			return;
-+		}
-+
-+		usleep_range(1000, 2000);
-+	}
++	usleep_range(1000, 2000);
 +
 +	anx6345->powered = false;
 +}
@@ -457,13 +426,21 @@ index 000000000000..81676407aa6d
 +
 +	/* Power on needed modules */
 +	err = anx6345_clear_bits(anx6345->map[I2C_IDX_TXCOM],
-+				 SP_POWERDOWN_CTRL_REG,
-+				 SP_VIDEO_PD | SP_LINK_PD);
++				SP_POWERDOWN_CTRL_REG,
++				SP_VIDEO_PD | SP_LINK_PD);
 +
 +	err = anx6345_tx_initialization(anx6345);
 +	if (err) {
-+		DRM_ERROR("Failed transmitter initialization: %d\n", err);
-+		goto err_poweroff;
++		DRM_ERROR("Failed eDP transmitter initialization: %d\n", err);
++		anx6345_poweroff(anx6345);
++		return err;
++	}
++
++	err = anx6345_dp_link_training(anx6345);
++	if (err) {
++		DRM_ERROR("Failed link training: %d\n", err);
++		anx6345_poweroff(anx6345);
++		return err;
 +	}
 +
 +	/*
@@ -473,44 +450,6 @@ index 000000000000..81676407aa6d
 +	usleep_range(10000, 15000);
 +
 +	return 0;
-+
-+err_poweroff:
-+	DRM_ERROR("Failed DisplayPort transmitter initialization: %d\n", err);
-+	anx6345_poweroff(anx6345);
-+
-+	return err;
-+}
-+
-+static int anx6345_init_pdata(struct anx6345 *anx6345)
-+{
-+	struct anx6345_platform_data *pdata = &anx6345->pdata;
-+	struct device *dev = &anx6345->client->dev;
-+
-+	/* 1.2V digital core power regulator  */
-+	pdata->dvdd12 = devm_regulator_get(dev, "dvdd12");
-+	if (IS_ERR(pdata->dvdd12)) {
-+		DRM_ERROR("DVDD12 regulator not found\n");
-+		return PTR_ERR(pdata->dvdd12);
-+	}
-+
-+	/* 2.5V digital core power regulator  */
-+	pdata->dvdd25 = devm_regulator_get(dev, "dvdd25");
-+	if (IS_ERR(pdata->dvdd25)) {
-+		DRM_ERROR("DVDD25 regulator not found\n");
-+		return PTR_ERR(pdata->dvdd25);
-+	}
-+
-+	/* panel power regulator  */
-+	pdata->vcc_panel = devm_regulator_get(dev, "panel");
-+	if (IS_ERR(pdata->vcc_panel)) {
-+		DRM_ERROR("panel regulator  not found\n");
-+		return PTR_ERR(pdata->vcc_panel);
-+	}
-+
-+	/* GPIO for chip reset */
-+	pdata->gpiod_reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
-+
-+	return PTR_ERR_OR_ZERO(pdata->gpiod_reset);
 +}
 +
 +static int anx6345_config_dp_output(struct anx6345 *anx6345)
@@ -529,13 +468,9 @@ index 000000000000..81676407aa6d
 +		return err;
 +
 +	/* Force stream valid */
-+	err = anx6345_set_bits(anx6345->map[I2C_IDX_DPTX],
++	return anx6345_set_bits(anx6345->map[I2C_IDX_DPTX],
 +			       SP_DP_SYSTEM_CTRL_BASE + 3,
 +			       SP_STRM_FORCE | SP_STRM_CTRL);
-+	if (err)
-+		return err;
-+
-+	return 0;
 +}
 +
 +static int anx6345_get_downstream_info(struct anx6345 *anx6345)
@@ -557,69 +492,48 @@ index 000000000000..81676407aa6d
 +	return 0;
 +}
 +
-+static int anx6345_probe_edid_from_of(struct anx6345 *anx6345)
-+{
-+	const u8 *edidp;
-+	int len;
-+
-+	if (!anx6345->bridge.of_node)
-+		return -ENODEV;
-+
-+	edidp = of_get_property(anx6345->bridge.of_node, "edid", &len);
-+	if (!edidp || len != EDID_LENGTH)
-+		return -EINVAL;
-+
-+	anx6345->edid = devm_kmemdup(&anx6345->client->dev, edidp,
-+				     len, GFP_KERNEL);
-+
-+	if (!anx6345->edid)
-+		return -ENOMEM;
-+
-+	return 0;
-+}
-+
 +static int anx6345_get_modes(struct drm_connector *connector)
 +{
 +	struct anx6345 *anx6345 = connector_to_anx6345(connector);
 +	int err, num_modes = 0;
-+
-+	if (WARN_ON(!anx6345->powered))
-+		return 0;
-+
-+	if (anx6345->edid)
-+		return drm_add_edid_modes(connector, anx6345->edid);
++	bool power_off = false;
 +
 +	mutex_lock(&anx6345->lock);
 +
-+	err = anx6345_get_downstream_info(anx6345);
-+	if (err) {
-+		DRM_ERROR("Failed to get downstream info: %d\n", err);
-+		goto unlock;
-+	}
-+
-+	anx6345->edid = drm_get_edid(connector, &anx6345->aux.ddc);
-+	if (!anx6345->edid)
-+		DRM_ERROR("Failed to read EDID from panel\n");
-+
 +	if (!anx6345->edid) {
-+		err = anx6345_probe_edid_from_of(anx6345);
++		if (!anx6345->powered) {
++			anx6345_poweron(anx6345);
++			power_off = true;
++		}
++
++		err = anx6345_get_downstream_info(anx6345);
 +		if (err) {
-+			DRM_ERROR("Failed to probe EDID from device tree: %d\n", err);
++			DRM_ERROR("Failed to get downstream info: %d\n", err);
++			goto unlock;
++		}
++
++		anx6345->edid = drm_get_edid(connector, &anx6345->aux.ddc);
++		if (!anx6345->edid)
++			DRM_ERROR("Failed to read EDID from panel\n");
++
++		err = drm_connector_update_edid_property(connector,
++							 anx6345->edid);
++		if (err) {
++			DRM_ERROR("Failed to update EDID property: %d\n", err);
 +			goto unlock;
 +		}
 +	}
 +
-+	err = drm_connector_update_edid_property(connector,
-+						 anx6345->edid);
-+	if (err) {
-+		DRM_ERROR("Failed to update EDID property: %d\n", err);
-+		goto unlock;
-+	}
-+
-+	num_modes = drm_add_edid_modes(connector, anx6345->edid);
++	num_modes += drm_add_edid_modes(connector, anx6345->edid);
 +
 +unlock:
++	if (power_off)
++		anx6345_poweroff(anx6345);
++
 +	mutex_unlock(&anx6345->lock);
++
++	if (!num_modes && anx6345->panel)
++		num_modes += drm_panel_get_modes(anx6345->panel);
 +
 +	return num_modes;
 +}
@@ -628,16 +542,19 @@ index 000000000000..81676407aa6d
 +	.get_modes = anx6345_get_modes,
 +};
 +
-+static enum drm_connector_status anx6345_detect(struct drm_connector *connector,
-+						bool force)
++static void
++anx6345_connector_destroy(struct drm_connector *connector)
 +{
-+	return connector_status_connected;
++	struct anx6345 *anx6345 = connector_to_anx6345(connector);
++
++	if (anx6345->panel)
++		drm_panel_detach(anx6345->panel);
++	drm_connector_cleanup(connector);
 +}
 +
 +static const struct drm_connector_funcs anx6345_connector_funcs = {
 +	.fill_modes = drm_helper_probe_single_connector_modes,
-+	.detect = anx6345_detect,
-+	.destroy = drm_connector_cleanup,
++	.destroy = anx6345_connector_destroy,
 +	.reset = drm_atomic_helper_connector_reset,
 +	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
 +	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
@@ -690,21 +607,29 @@ index 000000000000..81676407aa6d
 +		return err;
 +	}
 +
++	if (anx6345->panel) {
++		err = drm_panel_attach(anx6345->panel, &anx6345->connector);
++		if (err) {
++			DRM_ERROR("Failed to attach panel: %d\n", err);
++			return err;
++		}
++	}
++
 +	return 0;
 +}
 +
-+static bool anx6345_bridge_mode_fixup(struct drm_bridge *bridge,
-+				      const struct drm_display_mode *mode,
-+				      struct drm_display_mode *adjusted_mode)
++static enum drm_mode_status
++anx6345_bridge_mode_valid(struct drm_bridge *bridge,
++			  const struct drm_display_mode *mode)
 +{
 +	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
-+		return false;
++		return MODE_NO_INTERLACE;
 +
 +	/* Max 1200p at 5.4 Ghz, one lane */
 +	if (mode->clock > 154000)
-+		return false;
++		return MODE_CLOCK_HIGH;
 +
-+	return true;
++	return MODE_OK;
 +}
 +
 +static void anx6345_bridge_disable(struct drm_bridge *bridge)
@@ -714,22 +639,20 @@ index 000000000000..81676407aa6d
 +	/* Power off all modules except configuration registers access */
 +	anx6345_set_bits(anx6345->map[I2C_IDX_TXCOM], SP_POWERDOWN_CTRL_REG,
 +			 SP_HDCP_PD | SP_AUDIO_PD | SP_VIDEO_PD | SP_LINK_PD);
-+}
++	if (anx6345->panel)
++		drm_panel_disable(anx6345->panel);
 +
-+static void anx6345_bridge_mode_set(struct drm_bridge *bridge,
-+				    const struct drm_display_mode *mode,
-+				    const struct drm_display_mode *adjusted_mode)
-+{
-+	struct anx6345 *anx6345 = bridge_to_anx6345(bridge);
-+
-+	if (WARN_ON(!anx6345->powered))
-+		return;
++	if (anx6345->powered)
++		anx6345_poweroff(anx6345);
 +}
 +
 +static void anx6345_bridge_enable(struct drm_bridge *bridge)
 +{
 +	struct anx6345 *anx6345 = bridge_to_anx6345(bridge);
 +	int err;
++
++	if (anx6345->panel)
++		drm_panel_enable(anx6345->panel);
 +
 +	err = anx6345_start(anx6345);
 +	if (err) {
@@ -744,9 +667,8 @@ index 000000000000..81676407aa6d
 +
 +static const struct drm_bridge_funcs anx6345_bridge_funcs = {
 +	.attach = anx6345_bridge_attach,
-+	.mode_fixup = anx6345_bridge_mode_fixup,
++	.mode_valid = anx6345_bridge_mode_valid,
 +	.disable = anx6345_bridge_disable,
-+	.mode_set = anx6345_bridge_mode_set,
 +	.enable = anx6345_bridge_enable,
 +};
 +
@@ -764,40 +686,90 @@ index 000000000000..81676407aa6d
 +	.reg_bits = 8,
 +	.val_bits = 8,
 +	.max_register = 0xff,
++	.cache_type = REGCACHE_NONE,
 +};
 +
 +static const u16 anx6345_chipid_list[] = {
 +	0x6345,
 +};
 +
++static bool anx6345_get_chip_id(struct anx6345 *anx6345)
++{
++	unsigned int i, idl, idh, version;
++
++	if (regmap_read(anx6345->map[I2C_IDX_TXCOM], SP_DEVICE_IDL_REG, &idl))
++		return false;
++
++	if (regmap_read(anx6345->map[I2C_IDX_TXCOM], SP_DEVICE_IDH_REG, &idh))
++		return false;
++
++	anx6345->chipid = (u8)idl | ((u8)idh << 8);
++
++	if (regmap_read(anx6345->map[I2C_IDX_TXCOM], SP_DEVICE_VERSION_REG,
++			&version))
++		return false;
++
++	for (i = 0; i < ARRAY_SIZE(anx6345_chipid_list); i++) {
++		if (anx6345->chipid == anx6345_chipid_list[i]) {
++			DRM_INFO("Found ANX%x (ver. %d) eDP Transmitter\n",
++				 anx6345->chipid, version);
++			return true;
++		}
++	}
++
++	DRM_ERROR("ANX%x (ver. %d) not supported by this driver\n",
++		  anx6345->chipid, version);
++
++	return false;
++}
++
 +static int anx6345_i2c_probe(struct i2c_client *client,
 +			     const struct i2c_device_id *id)
 +{
 +	struct anx6345 *anx6345;
-+	struct anx6345_platform_data *pdata;
-+	unsigned int i, idl, idh, version;
-+	bool found = false;
-+	int err;
++	struct device *dev;
++	int i, err;
 +
 +	anx6345 = devm_kzalloc(&client->dev, sizeof(*anx6345), GFP_KERNEL);
 +	if (!anx6345)
 +		return -ENOMEM;
 +
-+	pdata = &anx6345->pdata;
-+
 +	mutex_init(&anx6345->lock);
 +
-+#if IS_ENABLED(CONFIG_OF)
 +	anx6345->bridge.of_node = client->dev.of_node;
-+#endif
 +
 +	anx6345->client = client;
 +	i2c_set_clientdata(client, anx6345);
 +
-+	err = anx6345_init_pdata(anx6345);
-+	if (err) {
-+		DRM_ERROR("Failed to initialize pdata: %d\n", err);
++	dev = &anx6345->client->dev;
++
++	err = drm_of_find_panel_or_bridge(client->dev.of_node, 1, 0,
++					  &anx6345->panel, NULL);
++	if (err == -EPROBE_DEFER)
 +		return err;
++
++	if (err)
++		DRM_DEBUG("No panel found\n");
++
++	/* 1.2V digital core power regulator  */
++	anx6345->dvdd12 = devm_regulator_get(dev, "dvdd12-supply");
++	if (IS_ERR(anx6345->dvdd12)) {
++		DRM_ERROR("dvdd12-supply not found\n");
++		return PTR_ERR(anx6345->dvdd12);
++	}
++
++	/* 2.5V digital core power regulator  */
++	anx6345->dvdd25 = devm_regulator_get(dev, "dvdd25-supply");
++	if (IS_ERR(anx6345->dvdd25)) {
++		DRM_ERROR("dvdd25-supply not found\n");
++		return PTR_ERR(anx6345->dvdd25);
++	}
++
++	/* GPIO for chip reset */
++	anx6345->gpiod_reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
++	if (IS_ERR(anx6345->gpiod_reset)) {
++		DRM_ERROR("Reset gpio not found\n");
++		return PTR_ERR(anx6345->gpiod_reset);
 +	}
 +
 +	/* Map slave addresses of ANX6345 */
@@ -827,48 +799,15 @@ index 000000000000..81676407aa6d
 +
 +	/* Look for supported chip ID */
 +	anx6345_poweron(anx6345);
++	if (anx6345_get_chip_id(anx6345)) {
++		anx6345->bridge.funcs = &anx6345_bridge_funcs;
++		drm_bridge_add(&anx6345->bridge);
 +
-+	err = regmap_read(anx6345->map[I2C_IDX_TXCOM], SP_DEVICE_IDL_REG,
-+			  &idl);
-+	if (err)
-+		goto err_poweroff;
-+
-+	err = regmap_read(anx6345->map[I2C_IDX_TXCOM], SP_DEVICE_IDH_REG,
-+			  &idh);
-+	if (err)
-+		goto err_poweroff;
-+
-+	anx6345->chipid = (u8)idl | ((u8)idh << 8);
-+
-+	err = regmap_read(anx6345->map[I2C_IDX_TXCOM], SP_DEVICE_VERSION_REG,
-+			  &version);
-+	if (err)
-+		goto err_poweroff;
-+
-+	for (i = 0; i < ARRAY_SIZE(anx6345_chipid_list); i++) {
-+		if (anx6345->chipid == anx6345_chipid_list[i]) {
-+			DRM_INFO("Found ANX%x (ver. %d) eDP Transmitter\n",
-+				 anx6345->chipid, version);
-+			found = true;
-+			break;
-+		}
-+	}
-+
-+	if (!found) {
-+		DRM_ERROR("ANX%x (ver. %d) not supported by this driver\n",
-+			  anx6345->chipid, version);
++		return 0;
++	} else {
++		anx6345_poweroff(anx6345);
 +		err = -ENODEV;
-+		goto err_poweroff;
 +	}
-+
-+	anx6345->bridge.funcs = &anx6345_bridge_funcs;
-+
-+	drm_bridge_add(&anx6345->bridge);
-+
-+	return 0;
-+
-+err_poweroff:
-+	anx6345_poweroff(anx6345);
 +
 +err_unregister_i2c:
 +	unregister_i2c_dummy_clients(anx6345);
@@ -885,6 +824,8 @@ index 000000000000..81676407aa6d
 +
 +	kfree(anx6345->edid);
 +
++	mutex_destroy(&anx6345->lock);
++
 +	return 0;
 +}
 +
@@ -894,13 +835,11 @@ index 000000000000..81676407aa6d
 +};
 +MODULE_DEVICE_TABLE(i2c, anx6345_id);
 +
-+#if IS_ENABLED(CONFIG_OF)
 +static const struct of_device_id anx6345_match_table[] = {
 +	{ .compatible = "analogix,anx6345", },
 +	{ /* sentinel */ },
 +};
 +MODULE_DEVICE_TABLE(of, anx6345_match_table);
-+#endif
 +
 +static struct i2c_driver anx6345_driver = {
 +	.driver = {
@@ -916,67 +855,6 @@ index 000000000000..81676407aa6d
 +MODULE_DESCRIPTION("ANX6345 eDP Transmitter driver");
 +MODULE_AUTHOR("Icenowy Zheng <icenowy@aosc.io>");
 +MODULE_LICENSE("GPL v2");
-diff --git a/drivers/gpu/drm/bridge/analogix/analogix-i2c-dptx.c b/drivers/gpu/drm/bridge/analogix/analogix-i2c-dptx.c
-index 9cb30962032e..53b0e73d6a24 100644
---- a/drivers/gpu/drm/bridge/analogix/analogix-i2c-dptx.c
-+++ b/drivers/gpu/drm/bridge/analogix/analogix-i2c-dptx.c
-@@ -117,7 +117,7 @@ ssize_t anx_aux_transfer(struct regmap *map_dptx, struct drm_dp_aux_msg *msg)
- 	else	/* For non-zero-sized set the length field. */
- 		ctrl1 |= (msg->size - 1) << SP_AUX_LENGTH_SHIFT;
- 
--	if ((msg->request & DP_AUX_I2C_READ) == 0) {
-+	if ((msg->size > 0) && ((msg->request & DP_AUX_I2C_READ) == 0)) {
- 		/* When WRITE | MOT write values to data buffer */
- 		err = regmap_bulk_write(map_dptx,
- 					SP_DP_BUF_DATA0_REG, buffer,
-diff --git a/drivers/gpu/drm/bridge/analogix/analogix-i2c-dptx.h b/drivers/gpu/drm/bridge/analogix/analogix-i2c-dptx.h
-index c2ca854613a0..b29a0b3bc23c 100644
---- a/drivers/gpu/drm/bridge/analogix/analogix-i2c-dptx.h
-+++ b/drivers/gpu/drm/bridge/analogix/analogix-i2c-dptx.h
-@@ -75,7 +75,11 @@
- #define SP_CHA_STA			BIT(2)
- /* Bits for DP System Control Register 3 */
- #define SP_HPD_STATUS			BIT(6)
-+#define SP_HPD_FORCE			BIT(5)
-+#define SP_HPD_CTRL			BIT(4)
- #define SP_STRM_VALID			BIT(2)
-+#define SP_STRM_FORCE			BIT(1)
-+#define SP_STRM_CTRL			BIT(0)
- /* Bits for DP System Control Register 4 */
- #define SP_ENHANCED_MODE		BIT(3)
- 
-@@ -120,6 +124,9 @@
- #define SP_LINK_BW_SET_MASK		0x1f
- #define SP_INITIAL_SLIM_M_AUD_SEL	BIT(5)
- 
-+/* DP Lane Count Setting Register */
-+#define SP_DP_LANE_COUNT_SET_REG	0xa1
-+
- /* DP Training Pattern Set Register */
- #define SP_DP_TRAINING_PATTERN_SET_REG	0xa2
- 
-@@ -133,6 +140,7 @@
- 
- /* DP Link Training Control Register */
- #define SP_DP_LT_CTRL_REG		0xa8
-+#define SP_DP_LT_INPROGRESS		0x80
- #define SP_LT_ERROR_TYPE_MASK		0x70
- #  define SP_LT_NO_ERROR		0x00
- #  define SP_LT_AUX_WRITE_ERROR		0x01
-diff --git a/drivers/gpu/drm/bridge/analogix/analogix-i2c-txcommon.h b/drivers/gpu/drm/bridge/analogix/analogix-i2c-txcommon.h
-index 7d683573e970..480c98a225b1 100644
---- a/drivers/gpu/drm/bridge/analogix/analogix-i2c-txcommon.h
-+++ b/drivers/gpu/drm/bridge/analogix/analogix-i2c-txcommon.h
-@@ -183,6 +183,9 @@
- #define SP_VBIT				BIT(1)
- #define SP_AUDIO_LAYOUT			BIT(0)
- 
-+/* Analog Debug Register 1 */
-+#define SP_ANALOG_DEBUG1_REG		0xdc
-+
- /* Analog Debug Register 2 */
- #define SP_ANALOG_DEBUG2_REG		0xdd
- #define SP_FORCE_SW_OFF_BYPASS		0x20
 -- 
-2.17.1
+cgit 1.2-0.3.lf.el7
 
