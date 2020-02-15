@@ -163,11 +163,10 @@ create_board_package()
 	if [[ $RELEASE == bionic ]]; then
 		cat <<-EOF >> "${destination}"/DEBIAN/postinst
 		# temporally disable acceleration in Bionic due to broken mesa packages
-		if [ -n "\$(cat /etc/X11/xorg.conf.d/01-armbian-defaults.conf 2> /dev/null | grep AccelMethod)" ]; then
-		        sed -i '/\Device/,/^\[/ s/AccelMethod".*/AccelMethod"\t "none"/' /etc/X11/xorg.conf.d/01-armbian-defaults.conf
-		else
-		        sed -i '/\Device/a \\\tOption\t\t\t"AccelMethod" "none"' /etc/X11/xorg.conf.d/01-armbian-defaults.conf
-		fi
+		echo 'Section "Device"
+			Identifier "Default Device"
+			Option "AccelMethod" "none"
+		EndSection' >> /etc/X11/xorg.conf.d/01-armbian-defaults.conf
 		EOF
 	fi
 
