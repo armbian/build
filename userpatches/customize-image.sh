@@ -61,10 +61,12 @@ chage -d 99999999 root
 curl https://install.yunohost.org/stretch | bash -s -- -a
 rm /var/log/yunohost-installation*
 
-# Install InternetCube dependencies
-apt install php7.0-fpm sipcalc hostapd iptables iw dnsmasq # hotspot
-apt install sipcalc dnsutils openvpn curl fake-hwclock # vpnclient
-apt install php-cli php-common php-intl php-json php-mcrypt php-pear php-auth-sasl php-mail-mime php-patchwork-utf8 php-net-smtp php-net-socket php-net-ldap2 php-net-ldap3 php-zip php-gd php-mbstring php-curl # roundcube
+# Install InternetCube dependencies usb detection, hotspot, vpnclient, roundcube
+apt-get install -o Dpkg::Options::='--force-confold' -y --force-yes \
+  file udisks2 udiskie ntfs-3g jq \
+  php7.0-fpm sipcalc hostapd iptables iw dnsmasq firmware-linux-free \
+  sipcalc dnsutils openvpn curl fake-hwclock \
+  php-cli php-common php-intl php-json php-mcrypt php-pear php-auth-sasl php-mail-mime php-patchwork-utf8 php-net-smtp php-net-socket php-net-ldap2 php-net-ldap3 php-zip php-gd php-mbstring php-curl
 
 # Override the first login script with our own (we don't care about desktop
 # stuff + we don't want the user to manually create a user)
