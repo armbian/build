@@ -238,7 +238,7 @@ compilation_prepare()
 	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8811euver="branch:v5.3.9"
+		local rtl8811euver="branch:v5.7.6.1"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets ${rtl8811euver}" "info"
 
@@ -254,6 +254,9 @@ compilation_prepare()
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/Makefile
 		cp ${SRC}/cache/sources/rtl8188eu/${rtl8811euver#*:}/Kconfig \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/Kconfig
+
+		# Disable debug
+		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/Makefile
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8188EU) += rtl8188eu/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
