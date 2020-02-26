@@ -19,7 +19,7 @@ REVISION=$(cat ${SRC}/VERSION)"$SUBREVISION" # all boards have same revision
 TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
-[[ -z $HOST ]] && HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
+[[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 ROOTFSCACHE_VERSION=18
 CHROOT_CACHE_VERSION=7
 BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
@@ -99,7 +99,7 @@ source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
 
 if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
-	source "$USERPATCHES_PATH/sources/${LINUXFAMILY}.conf"
+	source "$USERPATCHES_PATH/sources/families/${LINUXFAMILY}.conf"
 fi
 
 # load architecture defaults
