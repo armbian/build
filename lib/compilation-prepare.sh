@@ -99,20 +99,14 @@ compilation_prepare()
 
 
 
-	# WireGuard - fast, modern, secure VPN tunnel
-	if linux-version compare $version ge 3.14 && [ "${WIREGUARD}" == yes ]; then
+	# WireGuard VPN for Linux 3.10 - 5.5
+	if linux-version compare $version ge 3.10 && linux-version compare $version le 5.5 && [ "${WIREGUARD}" == yes ]; then
 
 		# attach to specifics tag or branch
-		#local wirever="branch:master"
-		local wirever="tag:0.0.20191219"
+		local wirever="branch:master"
 
-		display_alert "Adding" "WireGuard ${wirever} " "info"
-
-		fetch_from_repo "https://git.zx2c4.com/wireguard-monolithic-historical" "wireguard" "${wirever}" "yes"
-
-		#if linux-version compare $version gt 5.6; then
-		#	fetch_from_repo "https://git.zx2c4.com/wireguard-linux" "wireguard" "stable" "yes"
-		#fi
+		display_alert "Adding" "WireGuard VPN for Linux 3.10 - 5.5 ${wirever} " "info"
+		fetch_from_repo "https://git.zx2c4.com/wireguard-linux-compat" "wireguard" "${wirever}" "yes"
 
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/net/wireguard
