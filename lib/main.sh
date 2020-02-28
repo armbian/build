@@ -126,6 +126,9 @@ if [[ -n $REPOSITORY_UPDATE ]]; then
 
 fi
 
+# we need dialog to display the menu in case not installed. Other stuff gets installed later
+prepare_host_basic
+
 # if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
 if [[ -z $KERNEL_ONLY ]]; then
@@ -297,8 +300,7 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 		distro_menu "xenial"
 		distro_menu "bionic"
 		distro_menu "eoan"
-		# chroot completly broken atm, disable for now
-		# distro_menu "focal"
+		distro_menu "focal"
 
 		RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" \
 		--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")

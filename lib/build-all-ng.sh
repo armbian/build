@@ -209,7 +209,7 @@ function build_all()
 		# unset also board related variables
 		unset BOARDFAMILY DESKTOP_AUTOLOGIN DEFAULT_CONSOLE FULL_DESKTOP MODULES_CURRENT MODULES_LEGACY MODULES_DEV \
 		BOOTCONFIG MODULES_BLACKLIST_LEGACY MODULES_BLACKLIST_CURRENT MODULES_BLACKLIST_DEV DEFAULT_OVERLAYS SERIALCON \
-		BUILD_MINIMAL RELEASE ATFBRANCH
+		BUILD_MINIMAL RELEASE ATFBRANCH BOOT_FDT_FILE
 
 		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE <<< "${line}"
 
@@ -226,14 +226,16 @@ function build_all()
 		# small optimisation. we only (try to) build needed kernels
 		if [[ $KERNEL_ONLY == yes ]]; then
 
-			array_contains ARRAY "${BOARDFAMILY}${BRANCH}${BUILD_STABILITY}" && continue
+			LINUXFAMILY="${BOARDFAMILY}"
+			source "${SRC}/config/sources/families/${BOARDFAMILY}.conf" 2> /dev/null
+			array_contains ARRAY "${LINUXFAMILY}${BRANCH}${BUILD_STABILITY}" && continue
 
 		elif [[ $BUILD_IMAGE == no ]] ; then
 
 			continue
 
 		fi
-		ARRAY+=("${BOARDFAMILY}${BRANCH}${BUILD_STABILITY}")
+		ARRAY+=("${LINUXFAMILY}${BRANCH}${BUILD_STABILITY}")
 
 		BUILD_DESKTOP="no"
 		BUILD_MINIMAL="no"

@@ -78,6 +78,7 @@ create_chroot()
 		mkdir -p $target_dir/var/lock
 	fi
 	chroot $target_dir /bin/bash -c "/usr/sbin/update-ccache-symlinks"
+	[[ $release == focal ]] && chroot $target_dir /bin/bash -c "ln -s /usr/bin/python3 /usr/bin/python"
 	touch $target_dir/root/.debootstrap-complete
 	display_alert "Debootstrap complete" "$release/$arch" "info"
 } #############################################################################

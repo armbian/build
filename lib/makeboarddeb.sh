@@ -159,6 +159,17 @@ create_board_package()
 	fi
 
 	EOF
+
+#	if [[ $RELEASE == bionic ]]; then
+#		cat <<-EOF >> "${destination}"/DEBIAN/postinst
+#		# temporally disable acceleration in Bionic due to broken mesa packages
+#		echo 'Section "Device"
+#			Identifier "Default Device"
+#			Option "AccelMethod" "none"
+#		EndSection' >> /etc/X11/xorg.conf.d/01-armbian-defaults.conf
+#		EOF
+#	fi
+
 	# install bootscripts if they are not present. Fix upgrades from old images
 	if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then
 	    cat <<-EOF >> "${destination}"/DEBIAN/postinst
@@ -272,10 +283,6 @@ fi
 		mkdir -p "${destination}"/etc/mpv/
 		cp "${SRC}"/packages/bsp/mpv/mpv_mainline.conf "${destination}"/etc/mpv/mpv.conf
 	fi
-
-	# disable power savings on wireless connections by default
-	mkdir -p "${destination}"/usr/lib/NetworkManager/conf.d/
-	cp "${SRC}"/packages/bsp/zz-override-wifi-powersave-off.conf "${destination}"/usr/lib/NetworkManager/conf.d/
 
 	# execute $LINUXFAMILY-specific tweaks
 	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp
