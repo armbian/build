@@ -284,8 +284,11 @@ fetch_from_repo()
 		esac
 		if [[ $? -ne 0 ]]; then
 			display_alert "Commit checkout not supported on this repository. Doing full clone." "" "wrn"
-			git pull --no-tags --all --no-summary
+			git pull -a --no-tags --no-summary origin HEAD
+			git fetch -all
+			git branch --set-upstream-to=origin/master master
 			git checkout -f $ref_name
+			display_alert "Checkout out to" "$(git --no-pager log -2 --pretty=format:"$ad%s [%an]" | head -1)" "info"
 		else
 			git checkout -f -q FETCH_HEAD
 			git clean -qdf
