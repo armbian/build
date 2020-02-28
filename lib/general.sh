@@ -191,10 +191,10 @@ create_sources_list()
 #	branch:name
 #	tag:name
 #	head(*)
-#	commit:hash
+#	commit:hash@depth(**)
 #
 # *: Implies ref_subdir=no
-#
+# **: Not implemented yet
 # <ref_subdir>: "yes" to create subdirectory for tag or branch name
 #
 fetch_from_repo()
@@ -204,7 +204,7 @@ fetch_from_repo()
 	local ref=$3
 	local ref_subdir=$4
 
-	[[ -z $ref || ( $ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:* ) ]] && exit_with_error "Error in configuration"
+	[[ -z $ref || ( $ref != tag:* && $ref != branch:* && $ref != head ) ]] && exit_with_error "Error in configuration"
 	local ref_type=${ref%%:*}
 	if [[ $ref_type == head ]]; then
 		local ref_name=HEAD
@@ -246,7 +246,6 @@ fetch_from_repo()
 	local changed=false
 
 	local local_hash=$(git rev-parse @ 2>/dev/null)
-
 	case $ref_type in
 		branch)
 		# TODO: grep refs/heads/$name
@@ -266,30 +265,19 @@ fetch_from_repo()
 		local remote_hash=$(git ls-remote $url HEAD | cut -f1)
 		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
 		;;
-
-		commit)
-		[[ -z $local_hash || $local_hash == "@" ]] && changed=true
-		;;
 	esac
-
 
 	if [[ $changed == true ]]; then
 		# remote was updated, fetch and check out updates
 		display_alert "Fetching updates"
 		case $ref_type in
 			branch) git fetch --depth 1 origin $ref_name ;;
-			tag)  ;;
+			tag) git fetch --depth 1 origin tags/$ref_name ;;
 			head) git fetch --depth 1 origin HEAD ;;
-			commit) git fetch --depth 1 origin $ref_name ;;
 		esac
-		if [[ $? -ne 0 ]]; then
-			display_alert "Commit checkout not supported on this repository. Doing full clone." "" "wrn"
-			git pull --no-tags --all --no-summary
-			git checkout -f $ref_name
-		else
-			git checkout -f -q FETCH_HEAD
-			git clean -qdf
-		fi
+		display_alert "Checking out"
+		git checkout -f -q FETCH_HEAD
+		git clean -qdf
 	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
 		if [[ $FORCE_CHECKOUT == yes ]]; then
