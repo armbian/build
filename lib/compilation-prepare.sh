@@ -99,20 +99,14 @@ compilation_prepare()
 
 
 
-	# WireGuard - fast, modern, secure VPN tunnel
-	if linux-version compare $version ge 3.14 && [ "${WIREGUARD}" == yes ]; then
+	# WireGuard VPN for Linux 3.10 - 5.5
+	if linux-version compare $version ge 3.10 && linux-version compare $version le 5.5 && [ "${WIREGUARD}" == yes ]; then
 
 		# attach to specifics tag or branch
-		#local wirever="branch:master"
-		local wirever="tag:0.0.20191219"
+		local wirever="branch:master"
 
-		display_alert "Adding" "WireGuard ${wirever} " "info"
-
-		fetch_from_repo "https://git.zx2c4.com/wireguard-monolithic-historical" "wireguard" "${wirever}" "yes"
-
-		#if linux-version compare $version gt 5.6; then
-		#	fetch_from_repo "https://git.zx2c4.com/wireguard-linux" "wireguard" "stable" "yes"
-		#fi
+		display_alert "Adding" "WireGuard VPN for Linux 3.10 - 5.5 ${wirever} " "info"
+		fetch_from_repo "https://git.zx2c4.com/wireguard-linux-compat" "wireguard" "${wirever}" "yes"
 
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/net/wireguard
@@ -142,7 +136,7 @@ compilation_prepare()
 	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8812auver="branch:v5.2.20"
+		local rtl8812auver="branch:v5.6.4.2"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
@@ -159,14 +153,8 @@ compilation_prepare()
 		cp ${SRC}/cache/sources/rtl8812au/${rtl8812auver#*:}/Kconfig \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8812au/Kconfig
 
-		# Adjust path
-		sed -i 's/include $(src)\/hal\/phydm\/phydm.mk/include $(TopDIR)\/drivers\/net\/wireless\/rtl8812au\/hal\/phydm\/phydm.mk/' \
-		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8812au/Makefile
-		sed -i 's/include $(TopDIR)\/hal\/phydm\/phydm.mk/include $(TopDIR)\/drivers\/net\/wireless\/rtl8812au\/hal\/phydm\/phydm.mk/' \
-		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8812au/Makefile
-
 		# Add to section Makefile
-		echo "obj-\$(CONFIG_RTL8812AU) += rtl8812au/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
+		echo "obj-\$(CONFIG_88XXAU) += rtl8812au/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8812au\/Kconfig"' \
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
 
@@ -238,7 +226,7 @@ compilation_prepare()
 	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8811euver="branch:v5.3.9"
+		local rtl8811euver="branch:v5.7.6.1"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets ${rtl8811euver}" "info"
 
@@ -254,6 +242,9 @@ compilation_prepare()
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/Makefile
 		cp ${SRC}/cache/sources/rtl8188eu/${rtl8811euver#*:}/Kconfig \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/Kconfig
+
+		# Disable debug
+		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/Makefile
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8188EU) += rtl8188eu/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
