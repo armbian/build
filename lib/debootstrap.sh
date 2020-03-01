@@ -123,6 +123,14 @@ create_rootfs_cache()
 
 	done
 
+	if [[ $NO_APT_CACHER != yes ]]; then
+		# apt-cacher-ng apt proxy parameter
+		local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
+		local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/$APT_MIRROR"
+	else
+		local apt_mirror="http://$APT_MIRROR"
+	fi
+
 	if [[ -f $cache_fname && "$ROOT_FS_CREATE_ONLY" != "force" ]]; then
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
@@ -131,17 +139,12 @@ create_rootfs_cache()
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
 		create_sources_list "$RELEASE" "$SDCARD/"
+
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "apt -q -y $apt_extra update"' >> "${DEST}"/debug/install.log 2>&1
 	else
 		display_alert "... remote not found" "Creating new rootfs cache for $RELEASE" "info"
 
 		# stage: debootstrap base system
-		if [[ $NO_APT_CACHER != yes ]]; then
-			# apt-cacher-ng apt proxy parameter
-			local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
-			local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/$APT_MIRROR"
-		else
-			local apt_mirror="http://$APT_MIRROR"
-		fi
 
 		# fancy progress bars
 		[[ -z $OUTPUT_DIALOG ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
