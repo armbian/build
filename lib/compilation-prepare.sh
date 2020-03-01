@@ -201,6 +201,9 @@ compilation_prepare()
 		cp -R ${SRC}/cache/sources/rtl8811cu/${rtl8811cuver#*:}/{core,hal,include,os_dep,platform,rtl8821c.mk} \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8811cu
 
+		# Patch
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-disable-debug.patch"                "applying"
+
 		# Makefile
 		cp ${SRC}/cache/sources/rtl8811cu/${rtl8811cuver#*:}/Makefile \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8811cu/Makefile
