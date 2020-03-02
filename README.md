@@ -174,7 +174,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
     
     Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). If you can't find answer there and/or with help of [general project search](https://www.armbian.com/search) engine, consider [hiring an expert](https://www.debian.org/consultants/).
 
-- Personalized support?
+- Personalised support?
 
     It is limited to active project supporters and sponsors. The shortest way to become one and receive our attention is a four figure [donation to our non-profit project](https://www.armbian.com/donate).
 
