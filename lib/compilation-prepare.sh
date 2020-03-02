@@ -210,10 +210,6 @@ compilation_prepare()
 		# Disable debug
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8811cu/Makefile
 
-		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8811cu/
-		process_patch_file "${SRC}/patch/misc/wireless-fail-if-debug-is-disabled.patch"                "applying"
-		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-
 		# Address ARM related bug https://github.com/aircrack-ng/rtl8812au/issues/233
 		sed -i "s/^CONFIG_MP_VHT_HW_TX_MODE.*/CONFIG_MP_VHT_HW_TX_MODE = n/" \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8811cu/Makefile
