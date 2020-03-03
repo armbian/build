@@ -181,7 +181,7 @@ PACKAGE_LIST_DESKTOP_RECOMMENDS="galculator hexchat xfce4-screenshooter network-
 	cups-pk-helper cups geany atril xarchiver"
 
 # Full desktop packages
-PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina thunderbird kazam avahi-daemon transmission"
+PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
 
 # Release specific packages
 case $RELEASE in
@@ -194,6 +194,7 @@ case $RELEASE in
 								pulseaudio-module-gconf onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common \
 								system-config-printer-gnome leafpad mirage"
+		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	stretch)
@@ -202,6 +203,7 @@ case $RELEASE in
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench command-not-found"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad mirage"
+		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	bionic)
@@ -211,6 +213,7 @@ case $RELEASE in
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
 								language-selector-gnome leafpad mirage"
+		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	buster)
@@ -219,6 +222,7 @@ case $RELEASE in
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
 		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
+		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	bullseye)
@@ -227,6 +231,7 @@ case $RELEASE in
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
 		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
+		PACKAGE_LIST_DESKTOP_FULL+=""
 	;;
 
 
@@ -237,6 +242,7 @@ case $RELEASE in
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
 								language-selector-gnome viewnior"
+		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	eoan)
@@ -246,6 +252,7 @@ case $RELEASE in
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
 								language-selector-gnome mirage"
+		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 esac
