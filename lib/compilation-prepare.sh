@@ -314,7 +314,8 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 
-		fetch_from_repo "https://github.com/lwfinger/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes"
+		#fetch_from_repo "https://github.com/lwfinger/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes"
+		fetch_from_repo "https://github.com/igorpecovnik/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds
 		mkdir -p ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds/
@@ -326,6 +327,9 @@ compilation_prepare()
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds/Makefile
 		cp ${SRC}/cache/sources/rtl8723ds/${rtl8723dsver#*:}/Kconfig \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds/Kconfig
+
+                # Disable debug
+                sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds/Makefile
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8723DS) += rtl8723ds/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
