@@ -307,7 +307,7 @@ compilation_prepare()
 
 	# Wireless drivers for Realtek 8723DS chipsets
 
-	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare $version ge 4.19 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8723dsver="branch:master"
