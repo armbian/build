@@ -6,7 +6,7 @@ BOOTENV_FILE='rockchip-default.txt'
 UBOOT_TARGET_MAP=";;idbloader.bin uboot.img trust.bin"
 BOOTDELAY=0
 OVERLAY_PREFIX='rockchip'
-SERIALCON='ttyFIQ0:1500000'
+SERIALCON=${SERIALCON:-'ttyFIQ0:1500000'}
 ATFSOURCE='https://github.com/ayufan-rock64/arm-trusted-firmware'
 ATF_TARGET_MAP='M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=rk3399 DEBUG=1 bl31;;trust.bin'
 ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
