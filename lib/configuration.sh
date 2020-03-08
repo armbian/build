@@ -19,7 +19,7 @@ REVISION=$(cat ${SRC}/VERSION)"$SUBREVISION" # all boards have same revision
 TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
-[[ -z $HOST ]] && HOST="$(echo "$BOARD" | cut -f1 -d-)" # set hostname to the board
+[[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 ROOTFSCACHE_VERSION=18
 CHROOT_CACHE_VERSION=7
 BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
@@ -99,7 +99,7 @@ source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
 
 if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
 	display_alert "Adding user provided $LINUXFAMILY overrides"
-	source "$USERPATCHES_PATH/sources/${LINUXFAMILY}.conf"
+	source "$USERPATCHES_PATH/sources/families/${LINUXFAMILY}.conf"
 fi
 
 # load architecture defaults
@@ -144,7 +144,7 @@ DEBOOTSTRAP_LIST=$(echo $DEBOOTSTRAP_LIST | sed -e 's,\\[trn],,g')
 # Essential packages for minimal build
 PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chrony parted dialog \
 		ncurses-term sysfsutils toilet figlet u-boot-tools usbutils openssh-server \
-		nocache debconf-utils"
+		nocache debconf-utils python3-apt"
 
 # Non-essential packages for minimal build
 PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf"
@@ -153,7 +153,7 @@ if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
 	# Essential packages
 	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
 		iw wpasupplicant sudo curl linux-base crda \
-		wireless-regdb python3-apt unattended-upgrades \
+		wireless-regdb unattended-upgrades \
 		console-setup unicode-data initramfs-tools \
 		ca-certificates expect iptables automake html2text \
 		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
@@ -181,7 +181,7 @@ PACKAGE_LIST_DESKTOP_RECOMMENDS="galculator hexchat xfce4-screenshooter network-
 	cups-pk-helper cups geany atril xarchiver"
 
 # Full desktop packages
-PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina thunderbird kazam avahi-daemon transmission"
+PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
 
 # Release specific packages
 case $RELEASE in
@@ -194,6 +194,7 @@ case $RELEASE in
 								pulseaudio-module-gconf onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common \
 								system-config-printer-gnome leafpad mirage"
+		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	stretch)
@@ -202,6 +203,7 @@ case $RELEASE in
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench command-not-found"
 		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad mirage"
+		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	bionic)
@@ -211,6 +213,7 @@ case $RELEASE in
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
 								language-selector-gnome leafpad mirage"
+		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	buster)
@@ -219,6 +222,7 @@ case $RELEASE in
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
 		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
+		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	bullseye)
@@ -227,6 +231,7 @@ case $RELEASE in
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
 		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
+		PACKAGE_LIST_DESKTOP_FULL+=""
 	;;
 
 
@@ -237,6 +242,7 @@ case $RELEASE in
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
 								language-selector-gnome viewnior"
+		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	eoan)
@@ -246,6 +252,7 @@ case $RELEASE in
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
 								language-selector-gnome mirage"
+		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 esac

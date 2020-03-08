@@ -191,10 +191,10 @@ create_sources_list()
 #	branch:name
 #	tag:name
 #	head(*)
-#	commit:hash@depth(**)
+#	commit:hash
 #
 # *: Implies ref_subdir=no
-# **: Not implemented yet
+#
 # <ref_subdir>: "yes" to create subdirectory for tag or branch name
 #
 fetch_from_repo()
@@ -204,7 +204,7 @@ fetch_from_repo()
 	local ref=$3
 	local ref_subdir=$4
 
-	[[ -z $ref || ( $ref != tag:* && $ref != branch:* && $ref != head ) ]] && exit_with_error "Error in configuration"
+	[[ -z $ref || ( $ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:* ) ]] && exit_with_error "Error in configuration"
 	local ref_type=${ref%%:*}
 	if [[ $ref_type == head ]]; then
 		local ref_name=HEAD
@@ -246,6 +246,7 @@ fetch_from_repo()
 	local changed=false
 
 	local local_hash=$(git rev-parse @ 2>/dev/null)
+
 	case $ref_type in
 		branch)
 		# TODO: grep refs/heads/$name
@@ -265,9 +266,15 @@ fetch_from_repo()
 		local remote_hash=$(git ls-remote $url HEAD | cut -f1)
 		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
 		;;
+
+		commit)
+		[[ -z $local_hash || $local_hash == "@" ]] && changed=true
+		;;
+
 	esac
 
 	if [[ $changed == true ]]; then
+
 		# remote was updated, fetch and check out updates
 		display_alert "Fetching updates"
 		case $ref_type in
@@ -275,9 +282,34 @@ fetch_from_repo()
 			tag) git fetch --depth 1 origin tags/$ref_name ;;
 			head) git fetch --depth 1 origin HEAD ;;
 		esac
-		display_alert "Checking out"
-		git checkout -f -q FETCH_HEAD
-		git clean -qdf
+
+		# commit type needs support for older git servers that doesn't support fetching id directly
+		if [[ $ref_type == commit ]]; then
+
+			git fetch --depth 1 origin $ref_name
+
+			# cover old type
+			if [[ $? -ne 0 ]]; then
+
+				display_alert "Commit checkout not supported on this repository. Doing full clone." "" "wrn"
+				git pull
+				git checkout -fq $ref_name
+				display_alert "Checkout out to" "$(git --no-pager log -2 --pretty=format:"$ad%s [%an]" | head -1)" "info"
+
+			else
+
+				display_alert "Checking out"
+				git checkout -f -q FETCH_HEAD
+				git clean -qdf
+
+			fi
+		else
+
+			display_alert "Checking out"
+			git checkout -f -q FETCH_HEAD
+			git clean -qdf
+
+		fi
 	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
 		if [[ $FORCE_CHECKOUT == yes ]]; then
@@ -769,15 +801,15 @@ prepare_host()
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross \
-	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl \
+	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
-	bison libbison-dev flex libfl-dev cryptsetup gpgv1 gnupg1 cpio aria2 pigz dirmngr"
+	bison libbison-dev flex libfl-dev cryptsetup gpgv1 gnupg1 cpio aria2 pigz dirmngr python3-distutils"
 
 	local codename=$(lsb_release -sc)
 
 	# Getting ready for Ubuntu 20.04
 	if [[ $codename == focal ]]; then
-		hostdeps+=" python2 python3 libpython3-dev"
+		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
 	else
