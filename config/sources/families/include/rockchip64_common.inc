@@ -6,7 +6,7 @@ BOOTENV_FILE='rockchip-default.txt'
 UBOOT_TARGET_MAP=";;idbloader.bin uboot.img trust.bin"
 BOOTDELAY=0
 OVERLAY_PREFIX='rockchip'
-SERIALCON='ttyFIQ0:1500000'
+SERIALCON=${SERIALCON:-'ttyFIQ0:1500000'}
 ATFSOURCE='https://github.com/ayufan-rock64/arm-trusted-firmware'
 ATF_TARGET_MAP='M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=rk3399 DEBUG=1 bl31;;trust.bin'
 ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
@@ -146,8 +146,18 @@ family_tweaks_bsp()
 
 	fi
 
-	if [[ $BOARD == pinebook-pro ]]; then
+	if [[ $BOARD == nanopi-r2s ]]; then
 		
+		# rename USB based network to lan0
+		mkdir -p $destination/etc/udev/rules.d/
+		echo 'SUBSYSTEM=="net", ACTION=="add", DRIVERS=="r8152", KERNEL=="eth1", NAME="lan0"' > $destination/etc/udev/rules.d/70-rename-lan.rules
+		# this board is without BT
+		rm $destination/lib/systemd/system/rk3399-bluetooth.service
+
+	fi
+
+	if [[ $BOARD == pinebook-pro ]]; then
+
 		cp $SRC/packages/bsp/pinebook-pro/xorg.conf $destination/etc/X11/
 	fi
 
