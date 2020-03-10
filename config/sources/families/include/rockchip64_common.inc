@@ -109,6 +109,18 @@ family_tweaks()
 
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable z28pro-bluetooth.service >/dev/null 2>&1"
 
+	elif [[ $BOARD == nanopi-r2s ]]; then
+
+		# rename USB based network to lan0
+		mkdir -p $SDCARD/etc/udev/rules.d/
+		echo 'SUBSYSTEM=="net", ACTION=="add", DRIVERS=="r8152", KERNEL=="eth1", NAME="lan0"' > $SDCARD/etc/udev/rules.d/70-rename-lan.rules
+
+		# workaround - create old school initial network config since network manager have issues
+		echo "auto eth0" >> $SDCARD/etc/network/interfaces
+		echo "	iface eth0 inet dhcp" >> $SDCARD/etc/network/interfaces
+		echo "auto lan0" >> $SDCARD/etc/network/interfaces
+		echo "	iface lan0 inet dhcp" >> $SDCARD/etc/network/interfaces
+
 	elif [[ -f $SDCARD/lib/systemd/system/rk3399-bluetooth.service ]]; then
 
 		# install and enable Bluetooth
@@ -143,16 +155,6 @@ family_tweaks_bsp()
 		# Bluetooth for most of others
 		install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
 		cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/
-
-	fi
-
-	if [[ $BOARD == nanopi-r2s ]]; then
-		
-		# rename USB based network to lan0
-		mkdir -p $destination/etc/udev/rules.d/
-		echo 'SUBSYSTEM=="net", ACTION=="add", DRIVERS=="r8152", KERNEL=="eth1", NAME="lan0"' > $destination/etc/udev/rules.d/70-rename-lan.rules
-		# this board is without BT
-		rm $destination/lib/systemd/system/rk3399-bluetooth.service
 
 	fi
 
