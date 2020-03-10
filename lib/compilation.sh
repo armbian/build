@@ -433,34 +433,20 @@ compile_kernel()
 
 compile_firmware()
 {
-	display_alert "Merging and packaging linux firmware" "@host" "info"
-	if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
-		plugin_repo="https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
-	else
-		plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
-	fi
-	local plugin_dir="armbian-firmware${FULL}"
-	[[ -d $SRC/cache/sources/$plugin_dir ]] && rm -rf $SRC/cache/sources/$plugin_dir
-	mkdir -p $SRC/cache/sources/$plugin_dir/lib/firmware
+	display_alert "Install and packaging linux firmware" "@host" "info"
+	[[ -d $SRC/cache/sources/${CHOSEN_FIRMWARE} ]] && rm -rf $SRC/cache/sources/${CHOSEN_FIRMWARE}
+	mkdir -p $SRC/cache/sources/${CHOSEN_FIRMWARE}/lib/firmware
 
-	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
-	if [[ -n $FULL ]]; then
-		fetch_from_repo "$plugin_repo" "linux-firmware-git" "branch:master"
-		# cp : create hardlinks
-		cp -alf $SRC/cache/sources/linux-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware/
-	fi
-	# overlay our firmware
-	# cp : create hardlinks
-	cp -alf $SRC/cache/sources/armbian-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware/
+	[[ $(type -t family_firmware_install) == function ]] && family_firmware_install $SRC/cache/sources/${CHOSEN_FIRMWARE}/lib/firmware
+	[[ $(type -t board_firmware_install) == function ]] && board_firmware_install $SRC/cache/sources/${CHOSEN_FIRMWARE}/lib/firmware
 
-	# cleanup what's not needed for sure
-	rm -rf $SRC/cache/sources/$plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
-	cd $SRC/cache/sources/$plugin_dir
+	cd $SRC/cache/sources/${CHOSEN_FIRMWARE}
+	mkdir -p DEBIAN
 
 	# set up control file
 	mkdir -p DEBIAN
 	cat <<-END > DEBIAN/control
-	Package: armbian-firmware${FULL}
+	Package: ${CHOSEN_FIRMWARE}
 	Version: $REVISION
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
@@ -473,10 +459,10 @@ compile_firmware()
 
 	cd $SRC/cache/sources
 	# pack
-	mv armbian-firmware${FULL} armbian-firmware${FULL}_${REVISION}_all
-	fakeroot dpkg -b armbian-firmware${FULL}_${REVISION}_all >> $DEST/debug/install.log 2>&1
-	mv armbian-firmware${FULL}_${REVISION}_all armbian-firmware${FULL}
-	mv armbian-firmware${FULL}_${REVISION}_all.deb ${DEB_STORAGE}/
+	mv ${CHOSEN_FIRMWARE} ${CHOSEN_FIRMWARE}_${REVISION}_all
+	fakeroot dpkg -b ${CHOSEN_FIRMWARE}_${REVISION}_all >> $DEST/debug/install.log 2>&1
+	mv ${CHOSEN_FIRMWARE}_${REVISION}_all ${CHOSEN_FIRMWARE}
+	mv ${CHOSEN_FIRMWARE}_${REVISION}_all.deb ${DEB_STORAGE}/
 }
 
 
