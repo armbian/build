@@ -254,7 +254,6 @@ compilation_prepare()
 
 		# Disable debug
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/Makefile
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu-disable-efuse.patch"                "applying"
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8188EU) += rtl8188eu/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
