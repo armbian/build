@@ -6,7 +6,7 @@ BOOTENV_FILE='rockchip-default.txt'
 UBOOT_TARGET_MAP=";;idbloader.bin uboot.img trust.bin"
 BOOTDELAY=0
 OVERLAY_PREFIX='rockchip'
-SERIALCON='ttyFIQ0:1500000'
+SERIALCON=${SERIALCON:-'ttyFIQ0:1500000'}
 ATFSOURCE='https://github.com/ayufan-rock64/arm-trusted-firmware'
 ATF_TARGET_MAP='M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=rk3399 DEBUG=1 bl31;;trust.bin'
 ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
@@ -109,6 +109,18 @@ family_tweaks()
 
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable z28pro-bluetooth.service >/dev/null 2>&1"
 
+	elif [[ $BOARD == nanopi-r2s ]]; then
+
+		# rename USB based network to lan0
+		mkdir -p $SDCARD/etc/udev/rules.d/
+		echo 'SUBSYSTEM=="net", ACTION=="add", DRIVERS=="r8152", KERNEL=="eth1", NAME="lan0"' > $SDCARD/etc/udev/rules.d/70-rename-lan.rules
+
+		# workaround - create old school initial network config since network manager have issues
+		echo "auto eth0" >> $SDCARD/etc/network/interfaces
+		echo "	iface eth0 inet dhcp" >> $SDCARD/etc/network/interfaces
+		echo "auto lan0" >> $SDCARD/etc/network/interfaces
+		echo "	iface lan0 inet dhcp" >> $SDCARD/etc/network/interfaces
+
 	elif [[ -f $SDCARD/lib/systemd/system/rk3399-bluetooth.service ]]; then
 
 		# install and enable Bluetooth
@@ -147,7 +159,7 @@ family_tweaks_bsp()
 	fi
 
 	if [[ $BOARD == pinebook-pro ]]; then
-		
+
 		cp $SRC/packages/bsp/pinebook-pro/xorg.conf $destination/etc/X11/
 	fi
 
