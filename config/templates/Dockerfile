@@ -3,7 +3,6 @@ RUN apt update && DEBIAN_FRONTEND=noninteractive apt install -y gnupg gnupg1 gpg
 RUN sh -c  "if [ x"" != x$http_proxy ]; then \
 			    apt-key adv --keyserver hkp://pool.sks-keyservers.net:80 --keyserver-options http-proxy=$http_proxy --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
 		    else \
-
 			    apt-key adv --keyserver hkp://pool.sks-keyservers.net:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
 		    fi"
 RUN echo "deb http://repo.aptly.info/ nightly main" > /etc/apt/sources.list.d/aptly.list
