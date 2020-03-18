@@ -1,0 +1,196 @@
+diff --git a/drivers/regulator/core.c b/drivers/regulator/core.c
+index d015d99cb..f621f7468 100644
+--- a/drivers/regulator/core.c
++++ b/drivers/regulator/core.c
+@@ -5271,6 +5271,14 @@ void regulator_unregister(struct regulator_dev *rdev)
+ EXPORT_SYMBOL_GPL(regulator_unregister);
+ 
+ #ifdef CONFIG_SUSPEND
++static inline int can_enable(struct regulator_dev *rdev) {
++	return rdev->ena_pin || rdev->desc->ops->enable;
++}
++
++static inline int can_disable(struct regulator_dev *rdev) {
++	return rdev->ena_pin || rdev->desc->ops->disable;
++}
++
+ /**
+  * regulator_suspend - prepare regulators for system wide suspend
+  * @dev: ``&struct device`` pointer that is passed to _regulator_suspend()
+@@ -5281,10 +5289,33 @@ static int regulator_suspend(struct device *dev)
+ {
+ 	struct regulator_dev *rdev = dev_to_rdev(dev);
+ 	suspend_state_t state = pm_suspend_target_state;
++	struct regulator_state *rstate;
+ 	int ret;
+ 
+ 	regulator_lock(rdev);
+ 	ret = suspend_set_state(rdev, state);
++	if (ret) {
++		goto out;
++	}
++
++	rstate = regulator_get_suspend_state(rdev, state);
++	if (rstate == NULL)
++		goto out;
++
++	if (rstate->enabled == ENABLE_IN_SUSPEND && can_enable(rdev)) {
++		if (!rdev->desc->ops->set_suspend_enable) {
++			rdev->resume_state = _regulator_is_enabled(rdev);
++			rdev_info(rdev, "Entering suspend %d, enabling forcibly, was %s\n", state, rdev->resume_state ? "on" : "off");
++			ret = _regulator_do_enable(rdev);
++		}
++	} else if (rstate->enabled == DISABLE_IN_SUSPEND && can_disable(rdev)) {
++		if (!rdev->desc->ops->set_suspend_disable) {
++			rdev->resume_state = _regulator_is_enabled(rdev);
++			rdev_info(rdev, "Entering suspend %d, disabling forcibly, was %s\n", state, rdev->resume_state ? "on" : "off");
++			ret = _regulator_do_disable(rdev);
++		}
++	}
++out:
+ 	regulator_unlock(rdev);
+ 
+ 	return ret;
+@@ -5303,10 +5334,19 @@ static int regulator_resume(struct device *dev)
+ 
+ 	regulator_lock(rdev);
+ 
+-	if (rdev->desc->ops->resume &&
+-	    (rstate->enabled == ENABLE_IN_SUSPEND ||
+-	     rstate->enabled == DISABLE_IN_SUSPEND))
+-		ret = rdev->desc->ops->resume(rdev);
++	if (rstate->enabled == ENABLE_IN_SUSPEND || rstate->enabled == DISABLE_IN_SUSPEND) {
++		if (rdev->desc->ops->resume) {
++			ret = rdev->desc->ops->resume(rdev);
++		} else if ((rstate->enabled == ENABLE_IN_SUSPEND && !rdev->desc->ops->set_suspend_enable) || 
++		           (rstate->enabled == DISABLE_IN_SUSPEND && !rdev->desc->ops->set_suspend_disable)) {
++			rdev_info(rdev, "Resuming, restoring state to %s\n", rdev->resume_state ? "on" : "off");
++			if (rdev->resume_state && can_enable(rdev)) {
++				ret = _regulator_do_enable(rdev);
++			} else if (!rdev->resume_state && can_disable(rdev)) {
++				ret = _regulator_do_disable(rdev);
++			}
++		}
++	}
+ 
+ 	regulator_unlock(rdev);
+ 
+diff --git a/drivers/tty/serdev/core.c b/drivers/tty/serdev/core.c
+index c5f0d936b..37e45c356 100644
+--- a/drivers/tty/serdev/core.c
++++ b/drivers/tty/serdev/core.c
+@@ -432,11 +432,22 @@ static int serdev_drv_remove(struct device *dev)
+ 	return 0;
+ }
+ 
++static void serdev_drv_shutdown(struct device *dev)
++{
++	const struct serdev_device_driver *sdrv;
++	if (dev->driver) {
++		sdrv = to_serdev_device_driver(dev->driver);
++		if (sdrv->shutdown)
++			sdrv->shutdown(to_serdev_device(dev));
++	}
++}
++
+ static struct bus_type serdev_bus_type = {
+ 	.name		= "serial",
+ 	.match		= serdev_device_match,
+ 	.probe		= serdev_drv_probe,
+ 	.remove		= serdev_drv_remove,
++	.shutdown	= serdev_drv_shutdown,
+ };
+ 
+ /**
+diff --git a/include/dt-bindings/suspend/rockchip-rk3399.h b/include/dt-bindings/suspend/rockchip-rk3399.h
+new file mode 100644
+index 000000000..0cccd6430
+--- /dev/null
++++ b/include/dt-bindings/suspend/rockchip-rk3399.h
+@@ -0,0 +1,60 @@
++/*
++ * Header providing constants for Rockchip suspend bindings.
++ *
++ * Copyright (C) 2017, Fuzhou Rockchip Electronics Co., Ltd
++ * Author: Tony.Xie
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef __DT_BINDINGS_SUSPEND_ROCKCHIP_RK3399_H__
++#define __DT_BINDINGS_SUSPEND_ROCKCHIP_RK3399_H__
++
++/* the suspend mode */
++#define RKPM_SLP_WFI				(1 << 0)
++#define RKPM_SLP_ARMPD				(1 << 1)
++#define RKPM_SLP_PERILPPD			(1 << 2)
++#define RKPM_SLP_DDR_RET			(1 << 3)
++#define RKPM_SLP_PLLPD				(1 << 4)
++#define RKPM_SLP_OSC_DIS			(1 << 5)
++#define RKPM_SLP_CENTER_PD			(1 << 6)
++#define RKPM_SLP_AP_PWROFF			(1 << 7)
++
++/* the wake up source */
++#define RKPM_CLUSTER_L_WKUP_EN			(1 << 0)
++#define RKPM_CLUSTER_B_WKUPB_EN			(1 << 1)
++#define RKPM_GPIO_WKUP_EN			(1 << 2)
++#define RKPM_SDIO_WKUP_EN			(1 << 3)
++#define RKPM_SDMMC_WKUP_EN			(1 << 4)
++#define RKPM_TIMER_WKUP_EN			(1 << 6)
++#define RKPM_USB_WKUP_EN			(1 << 7)
++#define RKPM_SFT_WKUP_EN			(1 << 8)
++#define RKPM_WDT_M0_WKUP_EN			(1 << 9)
++#define RKPM_TIME_OUT_WKUP_EN			(1 << 10)
++#define RKPM_PWM_WKUP_EN			(1 << 11)
++#define RKPM_PCIE_WKUP_EN			(1 << 13)
++
++/* the pwm regulator */
++#define PWM0_REGULATOR_EN			(1 << 0)
++#define PWM1_REGULATOR_EN			(1 << 1)
++#define PWM2_REGULATOR_EN			(1 << 2)
++#define PWM3A_REGULATOR_EN			(1 << 3)
++#define PWM3B_REGULATOR_EN			(1 << 4)
++
++/* the APIO voltage domain */
++#define RKPM_APIO0_SUSPEND			(1 << 0)
++#define RKPM_APIO1_SUSPEND			(1 << 1)
++#define RKPM_APIO2_SUSPEND			(1 << 2)
++#define RKPM_APIO3_SUSPEND			(1 << 3)
++#define RKPM_APIO4_SUSPEND			(1 << 4)
++#define RKPM_APIO5_SUSPEND			(1 << 5)
++
++#endif
+diff --git a/include/linux/regulator/driver.h b/include/linux/regulator/driver.h
+index 9a911bb5f..146fb5e8f 100644
+--- a/include/linux/regulator/driver.h
++++ b/include/linux/regulator/driver.h
+@@ -482,6 +482,9 @@ struct regulator_dev {
+ 
+ 	/* time when this regulator was disabled last time */
+ 	unsigned long last_off_jiffy;
++
++	/* state when resuming */
++	int resume_state;
+ };
+ 
+ struct regulator_dev *
+diff --git a/include/linux/serdev.h b/include/linux/serdev.h
+index 9f14f9c12..940505613 100644
+--- a/include/linux/serdev.h
++++ b/include/linux/serdev.h
+@@ -63,6 +63,7 @@ struct serdev_device_driver {
+ 	struct device_driver driver;
+ 	int	(*probe)(struct serdev_device *);
+ 	void	(*remove)(struct serdev_device *);
++	void	(*shutdown)(struct serdev_device *);
+ };
+ 
+ static inline struct serdev_device_driver *to_serdev_device_driver(struct device_driver *d)
