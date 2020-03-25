@@ -295,7 +295,7 @@ install_common()
 	# example: SERIALCON="ttyS0:15000000,ttyGS1"
 	#
 	ifs=$IFS
-	for i in $(echo ${SERIALCON} | sed "s/,/ /g")
+	for i in $(echo ${SERIALCON:-'ttyS0'} | sed "s/,/ /g")
 	do
 		IFS=':' read -r -a array <<< "$i"
 		# add serial console to secure tty list
