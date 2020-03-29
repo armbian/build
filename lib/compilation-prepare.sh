@@ -146,6 +146,39 @@ compilation_prepare()
 
 	fi
 
+	# Wireless drivers for Realtek 8189ES chipsets
+
+	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+
+	# attach to specifics tag or branch
+	local rtl8189esver="branch:master"
+
+	display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
+
+	fetch_from_repo "https://github.com/jwrdegoede/rtl8189ES_linux" "rtl8189es" "${rtl8189esver}" "yes"
+	cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+	rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8189es
+	mkdir -p ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8189es/
+	cp -R ${SRC}/cache/sources/rtl8189es/${rtl8189esver#*:}/{core,hal,include,os_dep,platform} \
+	${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8189es
+
+	# Makefile
+	cp ${SRC}/cache/sources/rtl8189es/${rtl8189esver#*:}/Makefile \
+	${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8189es/Makefile
+	cp ${SRC}/cache/sources/rtl8189es/${rtl8189esver#*:}/Kconfig \
+	${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8189es/Kconfig
+
+	# Patch
+	cd ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8189es/
+	process_patch_file "${SRC}/patch/misc/wireless-rtl8189es.patch"                "applying"
+	cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
+
+	# Add to section Makefile
+	echo "obj-\$(CONFIG_RTL8189ES) += rtl8189es/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
+	sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189es\/Kconfig"' \
+	$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
+
+	fi
 
 
 
