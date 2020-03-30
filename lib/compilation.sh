@@ -438,7 +438,6 @@ compile_firmware()
 	mkdir -p $SRC/cache/sources/${CHOSEN_FIRMWARE}/lib/firmware
 
 	[[ $(type -t family_firmware_install) == function ]] && family_firmware_install $SRC/cache/sources/${CHOSEN_FIRMWARE}/lib/firmware
-	[[ $(type -t board_firmware_install) == function ]] && board_firmware_install $SRC/cache/sources/${CHOSEN_FIRMWARE}/lib/firmware
 
 	cd $SRC/cache/sources/${CHOSEN_FIRMWARE}
 	mkdir -p DEBIAN
