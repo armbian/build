@@ -341,6 +341,9 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8188eu\/Kconfig"' \
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
 
+		# kernel 5.6 ->
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu.patch"                "applying"
+
 	fi
 
 
@@ -383,6 +386,7 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl88x2bu\/Kconfig"' \
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
 
+		# kernel 5.6 ->
 		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu.patch"                "applying"
 
 	fi
@@ -417,6 +421,9 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8723DS) += rtl8723ds/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723ds\/Kconfig"' \
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
+
+		# kernel 5.6 ->
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds.patch"                "applying"
 
 	fi
 
