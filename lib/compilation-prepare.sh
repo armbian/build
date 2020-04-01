@@ -13,56 +13,60 @@
 compilation_prepare()
 {
 
-	# Packaging patch for modern kernels should be one for all. Currently we have it per kernel family since we can't have one
+	# Packaging patch for modern kernels should be one for all. 
+	# Currently we have it per kernel family since we can't have one
 	# Maintaining one from central location starting with 5.3+
 	# Temporally set for new "default->legacy,next->current" family naming
 
 	if linux-version compare $version ge 5.6 && [[ "$BRANCH" == current || "$BRANCH" == dev ]]; then
 		display_alert "Adjusting" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-		process_patch_file "${SRC}/patch/misc/general-packaging-5.6.y.patch"                "applying"
+		process_patch_file "${SRC}/patch/misc/general-packaging-5.6.y.patch" "applying"
 	else
 		if linux-version compare $version ge 5.3 && [[ "$BRANCH" == current || "$BRANCH" == dev ]]; then
 			display_alert "Adjusting" "packaging" "info"
 			cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-			process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch"                "applying"
+			process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch" "applying"
 		fi
 	fi
 
-	if [[ $version == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 || "$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == mt7623 || "$LINUXFAMILY" == mvebu ]]; then
+	if [[ $version == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 || \
+	"$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == mt7623 || "$LINUXFAMILY" == mvebu ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y.patch"                "applying"
+		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y.patch" "applying"
 	fi
 
-	if [[ $version == "4.14."* ]] && [[ "$LINUXFAMILY" == s5p6818 || "$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == imx7d || "$LINUXFAMILY" == odroidxu4 || "$LINUXFAMILY" == mvebu ]]; then
+	if [[ $version == "4.14."* ]] && [[ "$LINUXFAMILY" == s5p6818 || "$LINUXFAMILY" == mvebu64 || \
+	"$LINUXFAMILY" == imx7d || "$LINUXFAMILY" == odroidxu4 || "$LINUXFAMILY" == mvebu ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.14.y.patch"                "applying"
+		process_patch_file "${SRC}/patch/misc/general-packaging-4.14.y.patch" "applying"
 	fi
 
-	if [[ $version == "4.4."* || $version == "4.9."* ]] && [[ "$LINUXFAMILY" == rockpis || "$LINUXFAMILY" == rk3399 ]]; then
+	if [[ $version == "4.4."* || $version == "4.9."* ]] && \
+	[[ "$LINUXFAMILY" == rockpis || "$LINUXFAMILY" == rk3399 ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rk3399.patch"                "applying"
+		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rk3399.patch" "applying"
 	fi
 
 	if [[ $version == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip64 ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rockchip64.patch"                "applying"
+		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rockchip64.patch" "applying"
 	fi
 
 	if [[ $version == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip ]]; then
                 display_alert "Adjustin" "packaging" "info"
                 cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-                process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y.patch"                "applying"
+                process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y.patch" "applying"
         fi
 
 	if [[ $version == "4.9."* ]] && [[ "$LINUXFAMILY" == meson64 ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.9.y.patch"                "applying"
+		process_patch_file "${SRC}/patch/misc/general-packaging-4.9.y.patch" "applying"
 	fi
 
 	#
@@ -72,8 +76,8 @@ compilation_prepare()
 	if linux-version compare $version ge 5.4; then
 
 		display_alert "Adding" "Wireless package injections for mac80211 compatible chipsets" "info"
-		process_patch_file "${SRC}/patch/misc/kali-wifi-injection-1.patch"                "applying"
-		process_patch_file "${SRC}/patch/misc/kali-wifi-injection-2.patch"                "applying"
+		process_patch_file "${SRC}/patch/misc/kali-wifi-injection-1.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/kali-wifi-injection-2.patch" "applying"
 
 	fi
 
@@ -104,10 +108,10 @@ compilation_prepare()
 			local aufsver="branch:aufs${aufstag}"
 			fetch_from_repo "https://github.com/sfjro/aufs5-standalone" "aufs5" "branch:${aufsver}" "yes"
 			cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-kbuild.patch"		"applying"
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-base.patch"			"applying"
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-mmap.patch"			"applying"
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-standalone.patch"	"applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-kbuild.patch" "applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-base.patch" "applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-mmap.patch" "applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-standalone.patch" "applying"
 			cp -R ${SRC}/cache/sources/aufs5/${aufsver#*:}/{Documentation,fs} .
 			cp ${SRC}/cache/sources/aufs5/${aufsver#*:}/include/uapi/linux/aufs_type.h include/uapi/linux/
 
@@ -247,30 +251,37 @@ compilation_prepare()
 
 	fi
 
+
+
+
 	# Wireless drivers for Xradio XR819 chipsets
 	if linux-version compare $version ge 4.19 && [[ "$LINUXFAMILY" == sunxi* ]] && [[ "$EXTRAWIFI" == yes ]]; then
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
-                fetch_from_repo "https://github.com/karabek/xradio" "xradio" "branch:master" "yes"
+		fetch_from_repo "https://github.com/karabek/xradio" "xradio" "branch:master" "yes"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-                rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio
-                mkdir -p ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio/
-                cp ${SRC}/cache/sources/xradio/master/*.{h,c} \
-                ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio/
+		rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio
+		mkdir -p ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio/
+		cp ${SRC}/cache/sources/xradio/master/*.{h,c} \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio/
 
-                # Makefile
-                cp ${SRC}/cache/sources/xradio/master/Makefile \
-                ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio/Makefile
-                cp ${SRC}/cache/sources/xradio/master/Kconfig \
-                ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio/Kconfig
+		# Makefile
+		cp ${SRC}/cache/sources/xradio/master/Makefile \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio/Makefile
+		cp ${SRC}/cache/sources/xradio/master/Kconfig \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/xradio/Kconfig
 
-                # Add to section Makefile
-                echo "obj-\$(CONFIG_WLAN_VENDOR_XRADIO) += xradio/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
-                sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/xradio\/Kconfig"' \
-                $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
+		# Add to section Makefile
+		echo "obj-\$(CONFIG_WLAN_VENDOR_XRADIO) += xradio/" \
+		>> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
+		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/xradio\/Kconfig"' \
+		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
 
 	fi
+
+
+
 
 	# Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets
 
@@ -295,7 +306,8 @@ compilation_prepare()
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8811cu/Kconfig
 
 		# Disable debug
-		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8811cu/Makefile
+		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8811cu/Makefile
 
 		# Address ARM related bug https://github.com/aircrack-ng/rtl8812au/issues/233
 		sed -i "s/^CONFIG_MP_VHT_HW_TX_MODE.*/CONFIG_MP_VHT_HW_TX_MODE = n/" \
@@ -334,7 +346,8 @@ compilation_prepare()
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/Kconfig
 
 		# Disable debug
-		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/Makefile
+		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8188eu/Makefile
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8188EU) += rtl8188eu/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
@@ -342,7 +355,7 @@ compilation_prepare()
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
 
 		# kernel 5.6 ->
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu.patch"                "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu.patch" "applying"
 
 	fi
 
@@ -381,9 +394,12 @@ compilation_prepare()
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
 
 		# kernel 5.6 ->
-		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu.patch"                "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu.patch" "applying"
 
 	fi
+
+
+
 
 	# Wireless drivers for Realtek 8723DS chipsets
 
@@ -408,8 +424,9 @@ compilation_prepare()
 		cp ${SRC}/cache/sources/rtl8723ds/${rtl8723dsver#*:}/Kconfig \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds/Kconfig
 
-                # Disable debug
-                sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds/Makefile
+		# Disable debug
+		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
+		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds/Makefile
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8723DS) += rtl8723ds/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
@@ -417,7 +434,7 @@ compilation_prepare()
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
 
 		# kernel 5.6 ->
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds.patch"                "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds.patch" "applying"
 
 	fi
 
