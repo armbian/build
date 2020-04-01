@@ -30,8 +30,10 @@ DEST=$SRC/output
 [[ -n $COLUMNS ]] && stty cols $COLUMNS
 [[ -n $LINES ]] && stty rows $LINES
 
-TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
-TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
+if [[ $BUILD_ALL != "yes" ]]; then
+	TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
+	TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
+fi
 
 # We'll use this title on all menus
 backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
@@ -100,8 +102,32 @@ else
 
 fi
 
-# Check and install dependencies, directory structure and settings
-prepare_host
+if [[ -n $REPOSITORY_UPDATE ]]; then
+
+        # select stable/beta configuration
+        if [[ $BETA == yes ]]; then
+                DEB_STORAGE=$DEST/debs-beta
+                REPO_STORAGE=$DEST/repository-beta
+                REPO_CONFIG="aptly-beta.conf"
+        else
+                DEB_STORAGE=$DEST/debs
+                REPO_STORAGE=$DEST/repository
+                REPO_CONFIG="aptly.conf"
+        fi
+
+        # For user override
+        if [[ -f $USERPATCHES_PATH/lib.config ]]; then
+                display_alert "Using user configuration override" "userpatches/lib.config" "info"
+            source "$USERPATCHES_PATH"/lib.config
+        fi
+
+        repo-manipulate "$REPOSITORY_UPDATE"
+        exit
+
+fi
+
+# we need dialog to display the menu in case not installed. Other stuff gets installed later
+prepare_host_basic
 
 # if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
@@ -223,9 +249,10 @@ LINUXFAMILY="${BOARDFAMILY}"
 if [[ -z $BRANCH ]]; then
 
 	options=()
-	[[ $KERNEL_TARGET == *default* ]] && options+=("default" "Vendor provided / legacy")
-	[[ $KERNEL_TARGET == *next* ]] && options+=("next"       "Mainline (@kernel.org)")
-	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev"         "\Z1Development version (@kernel.org)\Zn")
+	[[ $KERNEL_TARGET == *legacy* ]] && options+=("legacy" "Old stable / Legacy")
+	[[ $KERNEL_TARGET == *current* ]] && options+=("current" "Recommended. Come with best support")
+	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev" "\Z1Development version (@kernel.org)\Zn")
+
 	# do not display selection dialog if only one kernel branch is available
 	if [[ "${#options[@]}" == 2 ]]; then
 		BRANCH="${options[0]}"
@@ -239,27 +266,54 @@ if [[ -z $BRANCH ]]; then
 	[[ $BRANCH == dev && $SHOW_WARNING == yes ]] && show_developer_warning
 
 else
-
+	[[ $BRANCH == next ]] && KERNEL_TARGET="next" 
+	# next = new legacy. Should stay for backward compatibility, but be removed from menu above
+	# or we left definitions in board configs and only remove menu
 	[[ $KERNEL_TARGET != *$BRANCH* ]] && exit_with_error "Kernel branch not defined for this board" "$BRANCH"
 
 fi
 
+# define distribution support status
+declare -A distro_name distro_support
+distro_name['stretch']="Debian 9 Stretch"
+distro_support['stretch']="eos"
+distro_name['buster']="Debian 10 Buster"
+distro_support['buster']="supported"
+distro_name['bullseye']="Debian 11 Bullseye"
+distro_support['bullseye']="csc"
+distro_name['xenial']="Ubuntu Xenial 16.04 LTS"
+distro_support['xenial']="eos"
+distro_name['bionic']="Ubuntu Bionic 18.04 LTS"
+distro_support['bionic']="supported"
+distro_name['focal']="Ubuntu Focal 20.04 LTS"
+distro_support['focal']="csc"
+distro_name['eoan']="Ubuntu Eoan 19.10"
+distro_support['eoan']="csc"
+
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
 	options=()
-	[[ $EXPERT = yes ]] && options+=("jessie" "Debian 8 Jessie / unsupported")
-	options+=("stretch" "Debian 9 Stretch")
-	[[ $EXPERT = yes ]] && options+=("buster" "Debian 10 Buster / unsupported")
-	options+=("xenial" "Ubuntu Xenial 16.04 LTS")
-	options+=("bionic" "Ubuntu Bionic 18.04 LTS")
-	[[ $EXPERT = yes ]] && options+=("disco" "Ubuntu Disco 19.04 / unsupported")
 
-	RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" \
-	--menu "Select the target OS release" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
-	unset options
-	[[ -z $RELEASE ]] && exit_with_error "No release selected"
+		distro_menu "stretch"
+		distro_menu "buster"
+		distro_menu "bullseye"
+		distro_menu "xenial"
+		distro_menu "bionic"
+		distro_menu "eoan"
+		distro_menu "focal"
+
+		RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" \
+		--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+		[[ -z $RELEASE ]] && exit_with_error "No release selected"
 
 fi
+
+# read distribution support status which is written to the armbian-release file
+distro_menu "$RELEASE"
+unset options
+
+# don't show desktop option if we choose minimal build
+[[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no
 
 if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 
@@ -270,8 +324,25 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
+	[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
 
 fi
+
+if [[ $KERNEL_ONLY != yes && $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
+
+	options=()
+	options+=("no" "Standard image with console interface")
+	options+=("yes" "Minimal image with console interface")
+	BUILD_MINIMAL=$(dialog --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags \
+	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+	unset options
+	[[ -z $BUILD_MINIMAL ]] && exit_with_error "No option selected"
+
+fi
+
+#prevent conflicting setup
+[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
+[[ $BUILD_MINIMAL == yes ]] && EXTERNAL=no
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
@@ -288,7 +359,38 @@ else
 
 fi
 
+if [[ $BETA == yes ]]; then
+	IMAGE_TYPE=nightly
+elif [[ $BETA != "yes" && $BUILD_ALL == yes && -n $GPG_PASS ]]; then
+	IMAGE_TYPE=stable
+else
+	IMAGE_TYPE=user-built
+fi
+
+branch2dir() {
+	[[ $1 == head ]] && echo HEAD || echo ${1##*:}
+}
+
+BOOTSOURCEDIR=$BOOTDIR/$(branch2dir ${BOOTBRANCH})
+LINUXSOURCEDIR=$KERNELDIR/$(branch2dir ${KERNELBRANCH})
+[[ -n $ATFSOURCE ]] && ATFSOURCEDIR=$ATFDIR/$(branch2dir ${ATFBRANCH})
+
+# define package names
+DEB_BRANCH=${BRANCH//default}
+# if not empty, append hyphen
+DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
+CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
+CHOSEN_KERNEL=linux-image-${DEB_BRANCH}${LINUXFAMILY}
+CHOSEN_ROOTFS=linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
+CHOSEN_DESKTOP=armbian-${RELEASE}-desktop
+CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
+
+do_default() {
+
 start=$(date +%s)
+
+# Check and install dependencies, directory structure and settings
+prepare_host
 
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 
@@ -310,37 +412,15 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 	fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
 fi
 
-if [[ $BETA == yes ]]; then
-	IMAGE_TYPE=nightly
-elif [[ $BETA != "yes" && $BUILD_ALL == yes && -n $GPG_PASS ]]; then
-	IMAGE_TYPE=stable
-else
-	IMAGE_TYPE=user-built
-fi
-
 compile_sunxi_tools
 install_rkbin_tools
-
-BOOTSOURCEDIR=$BOOTDIR/${BOOTBRANCH##*:}
-LINUXSOURCEDIR=$KERNELDIR/${KERNELBRANCH##*:}
-[[ -n $ATFSOURCE ]] && ATFSOURCEDIR=$ATFDIR/${ATFBRANCH##*:}
-
-# define package names
-DEB_BRANCH=${BRANCH//default}
-# if not empty, append hyphen
-DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
-CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
-CHOSEN_KERNEL=linux-image-${DEB_BRANCH}${LINUXFAMILY}
-CHOSEN_ROOTFS=linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
-CHOSEN_DESKTOP=armbian-${RELEASE}-desktop
-CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
 
 for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
 done
 
 # Compile u-boot if packed .deb does not exist
-if [[ ! -f ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+if [[ ! -f ${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 	if [[ -n $ATFSOURCE ]]; then
 		compile_atf
 	fi
@@ -348,32 +428,45 @@ if [[ ! -f ${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 fi
 
 # Compile kernel if packed .deb does not exist
-if [[ ! -f ${DEST}/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+	KDEB_CHANGELOG_DIST=$RELEASE
 	compile_kernel
+fi
+
+# Pack armbian-config and armbian-firmware
+if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
+	compile_armbian-config
+
+	FULL=""
+	REPLACE="-full"
+	[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_all.deb ]] && compile_firmware
+	FULL="-full"
+	REPLACE=""
+	[[ ! -f $DEST/debs/armbian-firmware${FULL}_${REVISION}_all.deb ]] && compile_firmware
 fi
 
 overlayfs_wrapper "cleanup"
 
 # extract kernel version from .deb package
-VER=$(dpkg --info "${DEST}/debs/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
+VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 VER="${VER/-$LINUXFAMILY/}"
 
-UBOOT_VER=$(dpkg --info "${DEST}/debs/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
+UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 
 # create board support package
-[[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
+[[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
 
 # create desktop package
-[[ -n $RELEASE && ! -f $DEST/debs/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
+[[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
 
 # build additional packages
 [[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
 
 if [[ $KERNEL_ONLY != yes ]]; then
-	debootstrap_ng
+	[[ $BSP_BUILD != yes ]] && debootstrap_ng
 else
 	display_alert "Kernel build done" "@host" "info"
-	display_alert "Target directory" "$DEST/debs/" "info"
+	display_alert "Target directory" "${DEB_STORAGE}/" "info"
 	display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
 fi
 
@@ -386,9 +479,20 @@ runtime=$(((end-start)/60))
 display_alert "Runtime" "$runtime min" "info"
 
 # Make it easy to repeat build by displaying build options used
-display_alert "Repeat Build Options" "./compile.sh BOARD=${BOARD} BRANCH=${BRANCH} \
+[ `systemd-detect-virt` == 'docker' ] && BUILD_CONFIG='docker'
+display_alert "Repeat Build Options" "./compile.sh ${BUILD_CONFIG} BOARD=${BOARD} BRANCH=${BRANCH} \
 $([[ -n $RELEASE ]] && echo "RELEASE=${RELEASE} ")\
+$([[ -n $BUILD_MINIMAL ]] && echo "BUILD_MINIMAL=${BUILD_MINIMAL} ")\
 $([[ -n $BUILD_DESKTOP ]] && echo "BUILD_DESKTOP=${BUILD_DESKTOP} ")\
 $([[ -n $KERNEL_ONLY ]] && echo "KERNEL_ONLY=${KERNEL_ONLY} ")\
 $([[ -n $KERNEL_CONFIGURE ]] && echo "KERNEL_CONFIGURE=${KERNEL_CONFIGURE} ")\
+$([[ -n $COMPRESS_OUTPUTIMAGE ]] && echo "COMPRESS_OUTPUTIMAGE=${COMPRESS_OUTPUTIMAGE} ")\
 " "info"
+
+} # end of do_default()
+
+if [[ -z $1 ]]; then
+	do_default
+else
+	eval "$@"
+fi

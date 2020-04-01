@@ -1,0 +1,269 @@
+diff --git a/drivers/devfreq/exynos-bus.c b/drivers/devfreq/exynos-bus.c
+index 37bd34d56..8fa8eb541 100644
+--- a/drivers/devfreq/exynos-bus.c
++++ b/drivers/devfreq/exynos-bus.c
+@@ -15,11 +15,10 @@
+ #include <linux/device.h>
+ #include <linux/export.h>
+ #include <linux/module.h>
+-#include <linux/of_device.h>
++#include <linux/of.h>
+ #include <linux/pm_opp.h>
+ #include <linux/platform_device.h>
+ #include <linux/regulator/consumer.h>
+-#include <linux/slab.h>
+ 
+ #define DEFAULT_SATURATION_RATIO	40
+ 
+@@ -127,6 +126,7 @@ static int exynos_bus_get_dev_status(struct device *dev,
+ 
+ 	ret = exynos_bus_get_event(bus, &edata);
+ 	if (ret < 0) {
++		dev_err(dev, "failed to get event from devfreq-event devices\n");
+ 		stat->total_time = stat->busy_time = 0;
+ 		goto err;
+ 	}
+@@ -243,7 +243,7 @@ static int exynos_bus_parse_of(struct device_node *np,
+ {
+ 	struct device *dev = bus->dev;
+ 	struct dev_pm_opp *opp;
+-	unsigned long rate, opp_rate;
++	unsigned long rate;
+ 	int ret;
+ 
+ 	/* Get the clock to provide each bus with source clock */
+@@ -267,21 +267,13 @@ static int exynos_bus_parse_of(struct device_node *np,
+ 	}
+ 
+ 	rate = clk_get_rate(bus->clk);
+-	opp_rate = rate;
+-	opp = devfreq_recommended_opp(dev, &opp_rate, 0);
++
++	opp = devfreq_recommended_opp(dev, &rate, 0);
+ 	if (IS_ERR(opp)) {
+ 		dev_err(dev, "failed to find dev_pm_opp\n");
+ 		ret = PTR_ERR(opp);
+ 		goto err_opp;
+ 	}
+-	/*
+-	 * FIXME: U-boot leaves clock source at incorrect PLL, this results
+-	 * in clock rate outside defined OPP rate. Work around this bug by
+-	 * setting clock rate to recommended one.
+-	 */
+-	if (rate > opp_rate)
+-		clk_set_rate(bus->clk, opp_rate);
+-
+ 	bus->curr_freq = dev_pm_opp_get_freq(opp);
+ 	dev_pm_opp_put(opp);
+ 
+@@ -295,52 +287,12 @@ static int exynos_bus_parse_of(struct device_node *np,
+ 	return ret;
+ }
+ 
+-static int exynos_bus_probe(struct platform_device *pdev)
++static int exynos_bus_profile_init(struct exynos_bus *bus,
++				   struct devfreq_dev_profile *profile)
+ {
+-	struct device *dev = &pdev->dev;
+-	struct device_node *np = dev->of_node, *node;
+-	struct devfreq_dev_profile *profile;
++	struct device *dev = bus->dev;
+ 	struct devfreq_simple_ondemand_data *ondemand_data;
+-	struct devfreq_passive_data *passive_data;
+-	struct devfreq *parent_devfreq;
+-	struct exynos_bus *bus;
+-	int ret, max_state;
+-	unsigned long min_freq, max_freq;
+-	bool passive = false;
+-
+-	if (!np) {
+-		dev_err(dev, "failed to find devicetree node\n");
+-		return -EINVAL;
+-	}
+-
+-	bus = devm_kzalloc(&pdev->dev, sizeof(*bus), GFP_KERNEL);
+-	if (!bus)
+-		return -ENOMEM;
+-	mutex_init(&bus->lock);
+-	bus->dev = &pdev->dev;
+-	platform_set_drvdata(pdev, bus);
+-
+-	profile = devm_kzalloc(dev, sizeof(*profile), GFP_KERNEL);
+-	if (!profile)
+-		return -ENOMEM;
+-
+-	node = of_parse_phandle(dev->of_node, "devfreq", 0);
+-	if (node) {
+-		of_node_put(node);
+-		passive = true;
+-	} else {
+-		ret = exynos_bus_parent_parse_of(np, bus);
+-		if (ret < 0)
+-			return ret;
+-	}
+-
+-	/* Parse the device-tree to get the resource information */
+-	ret = exynos_bus_parse_of(np, bus);
+-	if (ret < 0)
+-		goto err_reg;
+-
+-	if (passive)
+-		goto passive;
++	int ret;
+ 
+ 	/* Initialize the struct profile and governor data for parent device */
+ 	profile->polling_ms = 50;
+@@ -349,10 +301,9 @@ static int exynos_bus_probe(struct platform_device *pdev)
+ 	profile->exit = exynos_bus_exit;
+ 
+ 	ondemand_data = devm_kzalloc(dev, sizeof(*ondemand_data), GFP_KERNEL);
+-	if (!ondemand_data) {
+-		ret = -ENOMEM;
+-		goto err;
+-	}
++	if (!ondemand_data)
++		return -ENOMEM;
++
+ 	ondemand_data->upthreshold = 40;
+ 	ondemand_data->downdifferential = 5;
+ 
+@@ -362,15 +313,14 @@ static int exynos_bus_probe(struct platform_device *pdev)
+ 						ondemand_data);
+ 	if (IS_ERR(bus->devfreq)) {
+ 		dev_err(dev, "failed to add devfreq device\n");
+-		ret = PTR_ERR(bus->devfreq);
+-		goto err;
++		return PTR_ERR(bus->devfreq);
+ 	}
+ 
+ 	/* Register opp_notifier to catch the change of OPP  */
+ 	ret = devm_devfreq_register_opp_notifier(dev, bus->devfreq);
+ 	if (ret < 0) {
+ 		dev_err(dev, "failed to register opp notifier\n");
+-		goto err;
++		return ret;
+ 	}
+ 
+ 	/*
+@@ -380,33 +330,44 @@ static int exynos_bus_probe(struct platform_device *pdev)
+ 	ret = exynos_bus_enable_edev(bus);
+ 	if (ret < 0) {
+ 		dev_err(dev, "failed to enable devfreq-event devices\n");
+-		goto err;
++		return ret;
+ 	}
+ 
+ 	ret = exynos_bus_set_event(bus);
+ 	if (ret < 0) {
+ 		dev_err(dev, "failed to set event to devfreq-event devices\n");
+-		goto err;
++		goto err_edev;
+ 	}
+ 
+-	goto out;
+-passive:
++	return 0;
++
++err_edev:
++	if (exynos_bus_disable_edev(bus))
++		dev_warn(dev, "failed to disable the devfreq-event devices\n");
++
++	return ret;
++}
++
++static int exynos_bus_profile_init_passive(struct exynos_bus *bus,
++					   struct devfreq_dev_profile *profile)
++{
++	struct device *dev = bus->dev;
++	struct devfreq_passive_data *passive_data;
++	struct devfreq *parent_devfreq;
++
+ 	/* Initialize the struct profile and governor data for passive device */
+ 	profile->target = exynos_bus_target;
+ 	profile->exit = exynos_bus_passive_exit;
+ 
+ 	/* Get the instance of parent devfreq device */
+ 	parent_devfreq = devfreq_get_devfreq_by_phandle(dev, 0);
+-	if (IS_ERR(parent_devfreq)) {
+-		ret = -EPROBE_DEFER;
+-		goto err;
+-	}
++	if (IS_ERR(parent_devfreq))
++		return -EPROBE_DEFER;
+ 
+ 	passive_data = devm_kzalloc(dev, sizeof(*passive_data), GFP_KERNEL);
+-	if (!passive_data) {
+-		ret = -ENOMEM;
+-		goto err;
+-	}
++	if (!passive_data)
++		return -ENOMEM;
++
+ 	passive_data->parent = parent_devfreq;
+ 
+ 	/* Add devfreq device for exynos bus with passive governor */
+@@ -415,11 +376,61 @@ static int exynos_bus_probe(struct platform_device *pdev)
+ 	if (IS_ERR(bus->devfreq)) {
+ 		dev_err(dev,
+ 			"failed to add devfreq dev with passive governor\n");
+-		ret = PTR_ERR(bus->devfreq);
+-		goto err;
++		return PTR_ERR(bus->devfreq);
++	}
++
++	return 0;
++}
++
++static int exynos_bus_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *np = dev->of_node, *node;
++	struct devfreq_dev_profile *profile;
++	struct exynos_bus *bus;
++	int ret, max_state;
++	unsigned long min_freq, max_freq;
++	bool passive = false;
++
++	if (!np) {
++		dev_err(dev, "failed to find devicetree node\n");
++		return -EINVAL;
++	}
++
++	bus = devm_kzalloc(&pdev->dev, sizeof(*bus), GFP_KERNEL);
++	if (!bus)
++		return -ENOMEM;
++	mutex_init(&bus->lock);
++	bus->dev = &pdev->dev;
++	platform_set_drvdata(pdev, bus);
++
++	profile = devm_kzalloc(dev, sizeof(*profile), GFP_KERNEL);
++	if (!profile)
++		return -ENOMEM;
++
++	node = of_parse_phandle(dev->of_node, "devfreq", 0);
++	if (node) {
++		of_node_put(node);
++		passive = true;
++	} else {
++		ret = exynos_bus_parent_parse_of(np, bus);
++		if (ret < 0)
++			return ret;
+ 	}
+ 
+-out:
++	/* Parse the device-tree to get the resource information */
++	ret = exynos_bus_parse_of(np, bus);
++	if (ret < 0)
++		goto err_reg;
++
++	if (passive)
++		ret = exynos_bus_profile_init_passive(bus, profile);
++	else
++		ret = exynos_bus_profile_init(bus, profile);
++
++	if (ret < 0)
++		goto err;
++
+ 	max_state = bus->devfreq->profile->max_state;
+ 	min_freq = (bus->devfreq->profile->freq_table[0] / 1000);
+ 	max_freq = (bus->devfreq->profile->freq_table[max_state - 1] / 1000);

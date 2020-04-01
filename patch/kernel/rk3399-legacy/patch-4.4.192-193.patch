@@ -1,0 +1,307 @@
+From c82acce4371607a1fdda085e0fa84514fd76ed25 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Kamil=20Trzci=C5=84ski?= <ayufan@ayufan.eu>
+Date: Thu, 19 Sep 2019 11:19:35 +0200
+Subject: [PATCH] PATCH: kernel 4.4.192-193
+
+---
+ Makefile                        |  2 +-
+ arch/x86/boot/compressed/misc.c |  1 +
+ arch/x86/boot/compressed/misc.h |  1 -
+ drivers/clk/clk-s2mps11.c       |  2 +-
+ drivers/vhost/test.c            | 13 +++++++++----
+ drivers/vhost/vhost.c           |  4 ++--
+ include/net/xfrm.h              | 17 +++++++++++++++++
+ net/key/af_key.c                |  4 +++-
+ net/packet/af_packet.c          |  2 +-
+ net/xfrm/xfrm_state.c           |  2 +-
+ net/xfrm/xfrm_user.c            | 14 +-------------
+ scripts/decode_stacktrace.sh    |  2 +-
+ sound/pci/hda/hda_auto_parser.c |  4 ++--
+ sound/pci/hda/hda_generic.c     |  3 ++-
+ sound/pci/hda/hda_generic.h     |  1 +
+ sound/pci/hda/patch_realtek.c   |  2 ++
+ 16 files changed, 45 insertions(+), 29 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 1cae5df52344..b4d8643d3f94 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 192
++SUBLEVEL = 193
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/x86/boot/compressed/misc.c b/arch/x86/boot/compressed/misc.c
+index 16df89c30c20..1e5b68228aff 100644
+--- a/arch/x86/boot/compressed/misc.c
++++ b/arch/x86/boot/compressed/misc.c
+@@ -11,6 +11,7 @@
+ 
+ #include "misc.h"
+ #include "../string.h"
++#include <asm/bootparam_utils.h>
+ 
+ /* WARNING!!
+  * This code is compiled with -fPIC and it is relocated dynamically
+diff --git a/arch/x86/boot/compressed/misc.h b/arch/x86/boot/compressed/misc.h
+index 4abb284a5b9c..bce182708814 100644
+--- a/arch/x86/boot/compressed/misc.h
++++ b/arch/x86/boot/compressed/misc.h
+@@ -19,7 +19,6 @@
+ #include <asm/page.h>
+ #include <asm/boot.h>
+ #include <asm/bootparam.h>
+-#include <asm/bootparam_utils.h>
+ 
+ #define BOOT_BOOT_H
+ #include "../ctype.h"
+diff --git a/drivers/clk/clk-s2mps11.c b/drivers/clk/clk-s2mps11.c
+index 785864893f9a..14af5c916c9c 100644
+--- a/drivers/clk/clk-s2mps11.c
++++ b/drivers/clk/clk-s2mps11.c
+@@ -307,7 +307,7 @@ MODULE_DEVICE_TABLE(platform, s2mps11_clk_id);
+  * This requires of_device_id table.  In the same time this will not change the
+  * actual *device* matching so do not add .of_match_table.
+  */
+-static const struct of_device_id s2mps11_dt_match[] = {
++static const struct of_device_id s2mps11_dt_match[] __used = {
+ 	{
+ 		.compatible = "samsung,s2mps11-clk",
+ 		.data = (void *)S2MPS11X,
+diff --git a/drivers/vhost/test.c b/drivers/vhost/test.c
+index f2882ac98726..6666ca451452 100644
+--- a/drivers/vhost/test.c
++++ b/drivers/vhost/test.c
+@@ -23,6 +23,12 @@
+  * Using this limit prevents one virtqueue from starving others. */
+ #define VHOST_TEST_WEIGHT 0x80000
+ 
++/* Max number of packets transferred before requeueing the job.
++ * Using this limit prevents one virtqueue from starving others with
++ * pkts.
++ */
++#define VHOST_TEST_PKT_WEIGHT 256
++
+ enum {
+ 	VHOST_TEST_VQ = 0,
+ 	VHOST_TEST_VQ_MAX = 1,
+@@ -81,10 +87,8 @@ static void handle_vq(struct vhost_test *n)
+ 		}
+ 		vhost_add_used_and_signal(&n->dev, vq, head, 0);
+ 		total_len += len;
+-		if (unlikely(total_len >= VHOST_TEST_WEIGHT)) {
+-			vhost_poll_queue(&vq->poll);
++		if (unlikely(vhost_exceeds_weight(vq, 0, total_len)))
+ 			break;
+-		}
+ 	}
+ 
+ 	mutex_unlock(&vq->mutex);
+@@ -116,7 +120,8 @@ static int vhost_test_open(struct inode *inode, struct file *f)
+ 	dev = &n->dev;
+ 	vqs[VHOST_TEST_VQ] = &n->vqs[VHOST_TEST_VQ];
+ 	n->vqs[VHOST_TEST_VQ].handle_kick = handle_vq_kick;
+-	vhost_dev_init(dev, vqs, VHOST_TEST_VQ_MAX);
++	vhost_dev_init(dev, vqs, VHOST_TEST_VQ_MAX,
++		       VHOST_TEST_PKT_WEIGHT, VHOST_TEST_WEIGHT);
+ 
+ 	f->private_data = n;
+ 
+diff --git a/drivers/vhost/vhost.c b/drivers/vhost/vhost.c
+index 0f653f314876..eb7a4df69e2b 100644
+--- a/drivers/vhost/vhost.c
++++ b/drivers/vhost/vhost.c
+@@ -1324,7 +1324,7 @@ static int get_indirect(struct vhost_virtqueue *vq,
+ 		/* If this is an input descriptor, increment that count. */
+ 		if (desc.flags & cpu_to_vhost16(vq, VRING_DESC_F_WRITE)) {
+ 			*in_num += ret;
+-			if (unlikely(log)) {
++			if (unlikely(log && ret)) {
+ 				log[*log_num].addr = vhost64_to_cpu(vq, desc.addr);
+ 				log[*log_num].len = vhost32_to_cpu(vq, desc.len);
+ 				++*log_num;
+@@ -1453,7 +1453,7 @@ int vhost_get_vq_desc(struct vhost_virtqueue *vq,
+ 			/* If this is an input descriptor,
+ 			 * increment that count. */
+ 			*in_num += ret;
+-			if (unlikely(log)) {
++			if (unlikely(log && ret)) {
+ 				log[*log_num].addr = vhost64_to_cpu(vq, desc.addr);
+ 				log[*log_num].len = vhost32_to_cpu(vq, desc.len);
+ 				++*log_num;
+diff --git a/include/net/xfrm.h b/include/net/xfrm.h
+index 9e1325e36415..c5c03fa47f8c 100644
+--- a/include/net/xfrm.h
++++ b/include/net/xfrm.h
+@@ -1304,6 +1304,23 @@ static inline int xfrm_state_kern(const struct xfrm_state *x)
+ 	return atomic_read(&x->tunnel_users);
+ }
+ 
++static inline bool xfrm_id_proto_valid(u8 proto)
++{
++	switch (proto) {
++	case IPPROTO_AH:
++	case IPPROTO_ESP:
++	case IPPROTO_COMP:
++#if IS_ENABLED(CONFIG_IPV6)
++	case IPPROTO_ROUTING:
++	case IPPROTO_DSTOPTS:
++#endif
++		return true;
++	default:
++		return false;
++	}
++}
++
++/* IPSEC_PROTO_ANY only matches 3 IPsec protocols, 0 could match all. */
+ static inline int xfrm_id_proto_match(u8 proto, u8 userproto)
+ {
+ 	return (!userproto || proto == userproto ||
+diff --git a/net/key/af_key.c b/net/key/af_key.c
+index 36db179d848e..d2ec620319d7 100644
+--- a/net/key/af_key.c
++++ b/net/key/af_key.c
+@@ -1969,8 +1969,10 @@ parse_ipsecrequest(struct xfrm_policy *xp, struct sadb_x_ipsecrequest *rq)
+ 
+ 	if (rq->sadb_x_ipsecrequest_mode == 0)
+ 		return -EINVAL;
++	if (!xfrm_id_proto_valid(rq->sadb_x_ipsecrequest_proto))
++		return -EINVAL;
+ 
+-	t->id.proto = rq->sadb_x_ipsecrequest_proto; /* XXX check proto */
++	t->id.proto = rq->sadb_x_ipsecrequest_proto;
+ 	if ((mode = pfkey_mode_to_xfrm(rq->sadb_x_ipsecrequest_mode)) < 0)
+ 		return -EINVAL;
+ 	t->mode = mode;
+diff --git a/net/packet/af_packet.c b/net/packet/af_packet.c
+index 5d8988185c59..0dd9fc3f57e8 100644
+--- a/net/packet/af_packet.c
++++ b/net/packet/af_packet.c
+@@ -4176,7 +4176,7 @@ static int packet_set_ring(struct sock *sk, union tpacket_req_u *req_u,
+ 
+ 	/* Opening a Tx-ring is NOT supported in TPACKET_V3 */
+ 	if (!closing && tx_ring && (po->tp_version > TPACKET_V2)) {
+-		WARN(1, "Tx-ring is not supported.\n");
++		net_warn_ratelimited("Tx-ring is not supported.\n");
+ 		goto out;
+ 	}
+ 
+diff --git a/net/xfrm/xfrm_state.c b/net/xfrm/xfrm_state.c
+index 2e48d0b1ddd0..3de0b9aca18b 100644
+--- a/net/xfrm/xfrm_state.c
++++ b/net/xfrm/xfrm_state.c
+@@ -2142,7 +2142,7 @@ void xfrm_state_fini(struct net *net)
+ 	unsigned int sz;
+ 
+ 	flush_work(&net->xfrm.state_hash_work);
+-	xfrm_state_flush(net, IPSEC_PROTO_ANY, false);
++	xfrm_state_flush(net, 0, false);
+ 	flush_work(&net->xfrm.state_gc_work);
+ 
+ 	WARN_ON(!list_empty(&net->xfrm.state_all));
+diff --git a/net/xfrm/xfrm_user.c b/net/xfrm/xfrm_user.c
+index bcd90579cc51..201926ae2e87 100644
+--- a/net/xfrm/xfrm_user.c
++++ b/net/xfrm/xfrm_user.c
+@@ -1456,20 +1456,8 @@ static int validate_tmpl(int nr, struct xfrm_user_tmpl *ut, u16 family)
+ 			return -EINVAL;
+ 		}
+ 
+-		switch (ut[i].id.proto) {
+-		case IPPROTO_AH:
+-		case IPPROTO_ESP:
+-		case IPPROTO_COMP:
+-#if IS_ENABLED(CONFIG_IPV6)
+-		case IPPROTO_ROUTING:
+-		case IPPROTO_DSTOPTS:
+-#endif
+-		case IPSEC_PROTO_ANY:
+-			break;
+-		default:
++		if (!xfrm_id_proto_valid(ut[i].id.proto))
+ 			return -EINVAL;
+-		}
+-
+ 	}
+ 
+ 	return 0;
+diff --git a/scripts/decode_stacktrace.sh b/scripts/decode_stacktrace.sh
+index ffc46c7c3afb..4f5e76f76b9d 100755
+--- a/scripts/decode_stacktrace.sh
++++ b/scripts/decode_stacktrace.sh
+@@ -64,7 +64,7 @@ parse_symbol() {
+ 	fi
+ 
+ 	# Strip out the base of the path
+-	code=${code//^$basepath/""}
++	code=${code#$basepath/}
+ 
+ 	# In the case of inlines, move everything to same line
+ 	code=${code//$'\n'/' '}
+diff --git a/sound/pci/hda/hda_auto_parser.c b/sound/pci/hda/hda_auto_parser.c
+index a03cf68d0bcd..12d87204e373 100644
+--- a/sound/pci/hda/hda_auto_parser.c
++++ b/sound/pci/hda/hda_auto_parser.c
+@@ -827,6 +827,8 @@ static void apply_fixup(struct hda_codec *codec, int id, int action, int depth)
+ 	while (id >= 0) {
+ 		const struct hda_fixup *fix = codec->fixup_list + id;
+ 
++		if (++depth > 10)
++			break;
+ 		if (fix->chained_before)
+ 			apply_fixup(codec, fix->chain_id, action, depth + 1);
+ 
+@@ -866,8 +868,6 @@ static void apply_fixup(struct hda_codec *codec, int id, int action, int depth)
+ 		}
+ 		if (!fix->chained || fix->chained_before)
+ 			break;
+-		if (++depth > 10)
+-			break;
+ 		id = fix->chain_id;
+ 	}
+ }
+diff --git a/sound/pci/hda/hda_generic.c b/sound/pci/hda/hda_generic.c
+index 142549bbeb53..869c322ddae3 100644
+--- a/sound/pci/hda/hda_generic.c
++++ b/sound/pci/hda/hda_generic.c
+@@ -5826,7 +5826,8 @@ int snd_hda_gen_init(struct hda_codec *codec)
+ 	if (spec->init_hook)
+ 		spec->init_hook(codec);
+ 
+-	snd_hda_apply_verbs(codec);
++	if (!spec->skip_verbs)
++		snd_hda_apply_verbs(codec);
+ 
+ 	init_multi_out(codec);
+ 	init_extra_out(codec);
+diff --git a/sound/pci/hda/hda_generic.h b/sound/pci/hda/hda_generic.h
+index 56e4139b9032..25f2397c29f7 100644
+--- a/sound/pci/hda/hda_generic.h
++++ b/sound/pci/hda/hda_generic.h
+@@ -236,6 +236,7 @@ struct hda_gen_spec {
+ 	unsigned int indep_hp_enabled:1; /* independent HP enabled */
+ 	unsigned int have_aamix_ctl:1;
+ 	unsigned int hp_mic_jack_modes:1;
++	unsigned int skip_verbs:1; /* don't apply verbs at snd_hda_gen_init() */
+ 
+ 	/* additional mute flags (only effective with auto_mute_via_amp=1) */
+ 	u64 mute_bits;
+diff --git a/sound/pci/hda/patch_realtek.c b/sound/pci/hda/patch_realtek.c
+index 68d96c2e8cde..d5ca16048ce0 100644
+--- a/sound/pci/hda/patch_realtek.c
++++ b/sound/pci/hda/patch_realtek.c
+@@ -772,9 +772,11 @@ static int alc_init(struct hda_codec *codec)
+ 	if (spec->init_hook)
+ 		spec->init_hook(codec);
+ 
++	spec->gen.skip_verbs = 1; /* applied in below */
+ 	snd_hda_gen_init(codec);
+ 	alc_fix_pll(codec);
+ 	alc_auto_init_amp(codec, spec->init_amp);
++	snd_hda_apply_verbs(codec); /* apply verbs here after own init */
+ 
+ 	snd_hda_apply_fixup(codec, HDA_FIXUP_ACT_INIT);
+ 

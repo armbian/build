@@ -24,9 +24,9 @@ fel_prepare_host()
 
 fel_prepare_target()
 {
-	if [[ -f $SRC/userpatches/fel-boot.cmd ]]; then
+	if [[ -f $USERPATCHES_PATH/fel-boot.cmd ]]; then
 		display_alert "Using custom boot script" "userpatches/fel-boot.cmd" "info"
-		cp "${SRC}"/userpatches/fel-boot.cmd "${FEL_ROOTFS}"/boot/boot.cmd
+		cp "$USERPATCHES_PATH"/fel-boot.cmd "${FEL_ROOTFS}"/boot/boot.cmd
 	else
 		cp "${SRC}"/config/templates/fel-boot.cmd.template "${FEL_ROOTFS}"/boot/boot.cmd
 	fi
@@ -72,10 +72,10 @@ fel_load()
 		write 0x43100000 "${FEL_ROOTFS}"/boot/boot.scr
 }
 
-if [[ -f $SRC/userpatches/fel-hooks.sh ]]; then
+if [[ -f $USERPATCHES_PATH/fel-hooks.sh ]]; then
 	display_alert "Using additional FEL hooks in" "userpatches/fel-hooks.sh" "info"
 	# shellcheck source=/dev/null
-	source "${SRC}"/userpatches/fel-hooks.sh
+	source "$USERPATCHES_PATH"/fel-hooks.sh
 fi
 
 # basic sanity check

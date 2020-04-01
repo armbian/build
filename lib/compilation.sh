@@ -11,6 +11,8 @@
 # compile_atf
 # compile_uboot
 # compile_kernel
+# compile_firmware
+# compile_ambian-config
 # compile_sunxi_tools
 # install_rkbin_tools
 # grab_version
@@ -24,7 +26,7 @@ compile_atf()
 {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$ATFSOURCEDIR" "info"
-		(cd $SRC/cache/sources/$ATFSOURCEDIR; make clean > /dev/null 2>&1)
+		(cd $SRC/cache/sources/$ATFSOURCEDIR; make distclean > /dev/null 2>&1)
 	fi
 
 	if [[ $USE_OVERLAYFS == yes ]]; then
@@ -52,7 +54,7 @@ compile_atf()
 	local target_patchdir=$(cut -d';' -f2 <<< $ATF_TARGET_MAP)
 	local target_files=$(cut -d';' -f3 <<< $ATF_TARGET_MAP)
 
-	advanced_patch "atf" "atf-${LINUXFAMILY}" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
+	advanced_patch "atf" "${ATFPATCHDIR}" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
 
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
@@ -89,6 +91,9 @@ compile_atf()
 	# copy license file to pack it to u-boot package later
 	[[ -f license.md ]] && cp license.md $atftempdir/
 }
+
+
+
 
 compile_uboot()
 {
@@ -165,7 +170,7 @@ compile_uboot()
 		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
 
 		# for modern kernel and non spi targets
-		if [[ $BOOTBRANCH =~ ^tag:v201[8-9](.*) && target != "spi" && -f .config ]]; then
+		if [[ ${BOOTBRANCH} =~ ^tag:v201[8-9](.*) && ${target} != "spi" && -f .config ]]; then
 
 			sed -i 's/^.*CONFIG_ENV_IS_IN_FAT.*/# CONFIG_ENV_IS_IN_FAT is not set/g' .config
 			sed -i 's/^.*CONFIG_ENV_IS_IN_EXT4.*/CONFIG_ENV_IS_IN_EXT4=y/g' .config
@@ -251,7 +256,7 @@ compile_uboot()
 
 	[[ ! -f $SRC/.tmp/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
-	mv $SRC/.tmp/${uboot_name}.deb $DEST/debs/
+	mv $SRC/.tmp/${uboot_name}.deb ${DEB_STORAGE}/
 }
 
 compile_kernel()
@@ -268,15 +273,6 @@ compile_kernel()
 	fi
 	cd "$kerneldir"
 
-	# this is a patch that Ubuntu Trusty compiler works
-	# TODO: Check if still required
-	if [[ $(patch --dry-run -t -p1 < $SRC/patch/kernel/compiler.patch | grep Reversed) != "" ]]; then
-		display_alert "Patching kernel for compiler support"
-		patch --batch --silent -t -p1 < $SRC/patch/kernel/compiler.patch >> $DEST/debug/output.log 2>&1
-	fi
-
-	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
-
 	if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
 		sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
 	fi
@@ -287,6 +283,14 @@ compile_kernel()
 
 	# build 3rd party drivers
 	compilation_prepare
+
+	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
+
+        # create patch for manual source changes in debug mode
+        [[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
+
+        # re-read kernel version after patching
+        local version=$(grab_version "$kerneldir")
 
 	# create linux-source package - with already patched sources
 	local sources_pkg_dir=$SRC/.tmp/${CHOSEN_KSRC}_${REVISION}_all
@@ -301,9 +305,6 @@ compile_kernel()
 		cp COPYING $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE
 	fi
 
-	# create patch for manual source changes in debug mode
-	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
-
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
 	local toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
@@ -316,9 +317,9 @@ compile_kernel()
 		display_alert "Using previous kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
 		cp $DEST/config/$LINUXCONFIG.config .config
 	else
-		if [[ -f $SRC/userpatches/$LINUXCONFIG.config ]]; then
+		if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
-			cp $SRC/userpatches/$LINUXCONFIG.config .config
+			cp $USERPATCHES_PATH/$LINUXCONFIG.config .config
 		else
 			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
 			cp $SRC/config/kernel/$LINUXCONFIG.config .config
@@ -391,6 +392,7 @@ compile_kernel()
 	eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
 		'make -j1 $kernel_packing \
 		KDEB_PKGVERSION=$REVISION \
+		BRANCH=$BRANCH \
 		LOCALVERSION="-${LINUXFAMILY}" \
 		KBUILD_DEBARCH=$ARCH \
 		ARCH=$ARCHITECTURE \
@@ -416,15 +418,114 @@ compile_kernel()
 
 	if [[ $BUILD_KSRC != no ]]; then
 		fakeroot dpkg-deb -z0 -b $sources_pkg_dir ${sources_pkg_dir}.deb
-		mv ${sources_pkg_dir}.deb $DEST/debs/
+		mv ${sources_pkg_dir}.deb ${DEB_STORAGE}/
 	fi
 	rm -rf $sources_pkg_dir
 
 	cd ..
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
-	mv *.deb $DEST/debs/ || exit_with_error "Failed moving kernel DEBs"
+	mv *.deb ${DEB_STORAGE}/ || exit_with_error "Failed moving kernel DEBs"
 }
+
+
+
+
+compile_firmware()
+{
+	display_alert "Merging and packaging linux firmware" "@host" "info"
+	if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
+		plugin_repo="https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+	else
+		plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+	fi
+	local plugin_dir="armbian-firmware${FULL}"
+	[[ -d $SRC/cache/sources/$plugin_dir ]] && rm -rf $SRC/cache/sources/$plugin_dir
+	mkdir -p $SRC/cache/sources/$plugin_dir/lib/firmware
+
+	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
+	if [[ -n $FULL ]]; then
+		fetch_from_repo "$plugin_repo" "linux-firmware-git" "branch:master"
+		# cp : create hardlinks
+		cp -alf $SRC/cache/sources/linux-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware/
+	fi
+	# overlay our firmware
+	# cp : create hardlinks
+	cp -alf $SRC/cache/sources/armbian-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware/
+
+	# cleanup what's not needed for sure
+	rm -rf $SRC/cache/sources/$plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
+	cd $SRC/cache/sources/$plugin_dir
+
+	# set up control file
+	mkdir -p DEBIAN
+	cat <<-END > DEBIAN/control
+	Package: armbian-firmware${FULL}
+	Version: $REVISION
+	Architecture: all
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Installed-Size: 1
+	Replaces: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}
+	Section: kernel
+	Priority: optional
+	Description: Linux firmware${FULL}
+	END
+
+	cd $SRC/cache/sources
+	# pack
+	mv armbian-firmware${FULL} armbian-firmware${FULL}_${REVISION}_all
+	fakeroot dpkg -b armbian-firmware${FULL}_${REVISION}_all >> $DEST/debug/install.log 2>&1
+	mv armbian-firmware${FULL}_${REVISION}_all armbian-firmware${FULL}
+	mv armbian-firmware${FULL}_${REVISION}_all.deb ${DEB_STORAGE}/
+}
+
+
+
+
+compile_armbian-config()
+{
+	local tmpdir=$SRC/.tmp/armbian-config_${REVISION}_all
+
+	display_alert "Building deb" "armbian-config" "info"
+
+	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
+
+	mkdir -p $tmpdir/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
+
+	# set up control file
+	cat <<-END > $tmpdir/DEBIAN/control
+	Package: armbian-config
+	Version: $REVISION
+	Architecture: all
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Replaces: armbian-bsp
+	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, iptables, resolvconf, \
+	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common
+	Recommends: armbian-bsp
+	Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
+	Section: utils
+	Priority: optional
+	Description: Armbian configuration utility
+	END
+
+	install -m 755 $SRC/cache/sources/armbian-config/scripts/tv_grab_file $tmpdir/usr/bin/tv_grab_file
+	install -m 755 $SRC/cache/sources/armbian-config/debian-config $tmpdir/usr/sbin/armbian-config
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-jobs $tmpdir/usr/lib/armbian-config/jobs.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-submenu $tmpdir/usr/lib/armbian-config/submenu.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-functions $tmpdir/usr/lib/armbian-config/functions.sh
+	install -m 644 $SRC/cache/sources/armbian-config/debian-config-functions-network $tmpdir/usr/lib/armbian-config/functions-network.sh
+	install -m 755 $SRC/cache/sources/armbian-config/softy $tmpdir/usr/sbin/softy
+	# fallback to replace armbian-config in BSP
+	ln -sf /usr/sbin/armbian-config $tmpdir/usr/bin/armbian-config
+	ln -sf /usr/sbin/softy $tmpdir/usr/bin/softy
+
+	fakeroot dpkg -b ${tmpdir} >/dev/null
+	mv ${tmpdir}.deb ${DEB_STORAGE}/
+	rm -rf $tmpdir
+}
+
+
+
 
 compile_sunxi_tools()
 {
@@ -515,10 +616,10 @@ find_toolchain()
 # <description>: additional description text
 #
 # priority:
-# $SRC/userpatches/<dest>/<family>/target_<target>
-# $SRC/userpatches/<dest>/<family>/board_<board>
-# $SRC/userpatches/<dest>/<family>/branch_<branch>
-# $SRC/userpatches/<dest>/<family>
+# $USERPATCHES_PATH/<dest>/<family>/target_<target>
+# $USERPATCHES_PATH/<dest>/<family>/board_<board>
+# $USERPATCHES_PATH/<dest>/<family>/branch_<branch>
+# $USERPATCHES_PATH/<dest>/<family>
 # $SRC/patch/<dest>/<family>/target_<target>
 # $SRC/patch/<dest>/<family>/board_<board>
 # $SRC/patch/<dest>/<family>/branch_<branch>
@@ -538,15 +639,16 @@ advanced_patch()
 
 	local names=()
 	local dirs=(
-		"$SRC/userpatches/$dest/$family/target_${target}:[\e[33mu\e[0m][\e[34mt\e[0m]"
-		"$SRC/userpatches/$dest/$family/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
-		"$SRC/userpatches/$dest/$family/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
-		"$SRC/userpatches/$dest/$family:[\e[33mu\e[0m][\e[32mc\e[0m]"
+		"$USERPATCHES_PATH/$dest/$family/target_${target}:[\e[33mu\e[0m][\e[34mt\e[0m]"
+		"$USERPATCHES_PATH/$dest/$family/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
+		"$USERPATCHES_PATH/$dest/$family/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
+		"$USERPATCHES_PATH/$dest/$family:[\e[33mu\e[0m][\e[32mc\e[0m]"
 		"$SRC/patch/$dest/$family/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]"
 		"$SRC/patch/$dest/$family/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"
 		"$SRC/patch/$dest/$family/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]"
 		"$SRC/patch/$dest/$family:[\e[32ml\e[0m][\e[32mc\e[0m]"
 		)
+	local links=()
 
 	# required for "for" command
 	shopt -s nullglob dotglob
@@ -555,7 +657,14 @@ advanced_patch()
 		for patch in ${dir%%:*}/*.patch; do
 			names+=($(basename $patch))
 		done
+		# add linked patch directories
+		if [[ -d ${dir%%:*} ]]; then
+			local findlinks=$(find ${dir%%:*} -maxdepth 1 -type l -print0 2>&1 | xargs -0)
+			[[ -n $findlinks ]] && readarray -d '' links < <(find $findlinks -maxdepth 1 -type f -follow -print -iname "*.patch" -print | grep "\.patch$" | sed "s|${dir%%:*}/||g" 2>&1)
+		fi
 	done
+	# merge static and linked
+	names=("${names[@]}" "${links[@]}")
 	# remove duplicates
 	local names_s=($(echo "${names[@]}" | tr ' ' '\n' | LC_ALL=C sort -u | tr '\n' ' '))
 	# apply patches

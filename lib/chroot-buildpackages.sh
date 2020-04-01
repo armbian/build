@@ -26,22 +26,24 @@ create_chroot()
 	declare -A qemu_binary apt_mirror components
 	qemu_binary['armhf']='qemu-arm-static'
 	qemu_binary['arm64']='qemu-aarch64-static'
-	apt_mirror['jessie']="$DEBIAN_MIRROR"
 	apt_mirror['stretch']="$DEBIAN_MIRROR"
 	apt_mirror['buster']="$DEBIAN_MIRROR"
+	apt_mirror['bullseye']="$DEBIAN_MIRROR"
 	apt_mirror['xenial']="$UBUNTU_MIRROR"
 	apt_mirror['bionic']="$UBUNTU_MIRROR"
-	apt_mirror['disco']="$UBUNTU_MIRROR"
-	components['jessie']='main,contrib'
+	apt_mirror['focal']="$UBUNTU_MIRROR"
+	apt_mirror['eoan']="$UBUNTU_MIRROR"
 	components['stretch']='main,contrib'
 	components['buster']='main,contrib'
+	components['bullseye']='main,contrib'
 	components['xenial']='main,universe,multiverse'
 	components['bionic']='main,universe,multiverse'
-	components['disco']='main,universe,multiverse'
+	components['focal']='main,universe,multiverse'
+	components['eoan']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc"
 	# perhaps a temporally workaround
-	[[ $release == buster || $release == disco ]] && includes=$includes",perl-openssl-defaults,libnet-ssleay-perl"
+	[[ $release == buster || $release == bullseye || $release == focal || $release == eoan ]] && includes=$includes",perl-openssl-defaults,libnet-ssleay-perl"
 	if [[ $NO_APT_CACHER != yes ]]; then
 		local mirror_addr="http://localhost:3142/${apt_mirror[$release]}"
 	else
@@ -76,6 +78,7 @@ create_chroot()
 		mkdir -p $target_dir/var/lock
 	fi
 	chroot $target_dir /bin/bash -c "/usr/sbin/update-ccache-symlinks"
+	[[ $release == focal ]] && chroot $target_dir /bin/bash -c "ln -s /usr/bin/python3 /usr/bin/python"
 	touch $target_dir/root/.debootstrap-complete
 	display_alert "Debootstrap complete" "$release/$arch" "info"
 } #############################################################################
@@ -89,12 +92,13 @@ chroot_prepare_distccd()
 	local arch=$2
 	local dest=/tmp/distcc/${release}-${arch}
 	declare -A gcc_version gcc_type
-	gcc_version['jessie']='4.9'
 	gcc_version['stretch']='6.3'
 	gcc_version['buster']='8.3'
+	gcc_version['bullseye']='9.2'
 	gcc_version['xenial']='5.4'
 	gcc_version['bionic']='5.4'
-	gcc_version['disco']='8.3'
+	gcc_version['focal']='9.2'
+	gcc_version['eoan']='9.2'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
 	gcc_type['arm64']='aarch64-linux-gnu-'
 	rm -f $dest/cmdlist
@@ -127,7 +131,7 @@ chroot_build_packages()
 		target_arch="$ARCH"
 	else
 		# only make packages for recent releases. There are no changes on older
-		target_release="stretch bionic buster disco"
+		target_release="stretch bionic buster bullseye eoan focal"
 		target_arch="armhf arm64"
 	fi
 
@@ -153,7 +157,7 @@ chroot_build_packages()
 			local t=$target_dir/root/.update-timestamp
 			if [[ ! -f $t || $(( ($(date +%s) - $(<$t)) / 86400 )) -gt 7 ]]; then
 				display_alert "Upgrading packages" "$release/$arch" "info"
-				systemd-nspawn -a -q -D $target_dir /bin/bash -c "apt-get -q update; apt-get -q -y upgrade; apt-get clean"
+				systemd-nspawn -a -q -D $target_dir /bin/bash -c "apt -q update; apt -q -y upgrade; apt clean"
 				date +%s > $t
 			fi
 
@@ -168,7 +172,7 @@ chroot_build_packages()
 					continue
 				fi
 
-				local plugin_target_dir=$DEST/debs/extra/$package_component/
+				local plugin_target_dir=${DEB_STORAGE}/extra/$package_component/
 				mkdir -p $plugin_target_dir
 
 				# check if needs building
@@ -216,8 +220,8 @@ chroot_build_packages()
 					for packet in $package_builddeps; do grep -q -x -e "\$packet" <<< "\$installed" || deps+=("\$packet"); done
 					if [[ \${#deps[@]} -gt 0 ]]; then
 						display_alert "Installing build dependencies"
-						apt-get -y -q update
-						apt-get -y -q --no-install-recommends --show-progress -o DPKG::Progress-Fancy=1 install "\${deps[@]}"
+						apt -y -q update
+						apt -y -q --no-install-recommends --show-progress -o DPKG::Progress-Fancy=1 install "\${deps[@]}"
 					fi
 				fi
 				display_alert "Copying sources"
@@ -292,8 +296,8 @@ chroot_installpackages_local()
 	mkdir -p /tmp/aptly-temp/
 	aptly -config=$conf repo create temp
 	# NOTE: this works recursively
-	aptly -config=$conf repo add temp $DEST/debs/extra/${RELEASE}-desktop/
-	aptly -config=$conf repo add temp $DEST/debs/extra/${RELEASE}-utils/
+	aptly -config=$conf repo add temp ${DEB_STORAGE}/extra/${RELEASE}-desktop/
+	aptly -config=$conf repo add temp ${DEB_STORAGE}/extra/${RELEASE}-utils/
 	# -gpg-key="925644A6"
 	aptly -keyring="$SRC/packages/extras-buildpkgs/buildpkg-public.gpg" -secret-keyring="$SRC/packages/extras-buildpkgs/buildpkg.gpg" -batch=true -config=$conf \
 		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution=$RELEASE publish repo temp
@@ -330,17 +334,17 @@ chroot_installpackages()
 	cat <<-EOF > "${SDCARD}"/tmp/install.sh
 	#!/bin/bash
 	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
-	apt-get $apt_extra -q update
+	apt $apt_extra -q update
 	# uncomment to debug
 	# /bin/bash
 	# TODO: check if package exists in case new config was added
 	#if [[ -n "$remote_only" == yes ]]; then
 	#	for p in $install_list; do
 	#		if grep -qE "apt.armbian.com|localhost" <(apt-cache madison \$p); then
-	#		if apt-get -s -qq install \$p; then
+	#		if apt -s -qq install \$p; then
 	#fi
-	apt-get -q $apt_extra --show-progress -o DPKG::Progress-Fancy=1 install -y $install_list
-	apt-get clean
+	apt -q $apt_extra --show-progress -o DPKG::Progress-Fancy=1 install -y $install_list
+	apt clean
 	[[ "$remote_only" != yes ]] && apt-key del "925644A6"
 	rm /etc/apt/sources.list.d/armbian-temp.list 2>/dev/null
 	rm /etc/apt/preferences.d/90-armbian-temp.pref 2>/dev/null

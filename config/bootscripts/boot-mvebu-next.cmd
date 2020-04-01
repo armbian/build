@@ -9,6 +9,7 @@ setenv rootdev "/dev/mmcblk0p1"
 setenv rootfstype "ext4"
 setenv verbosity "1"
 setenv emmc_fix "off"
+setenv spi_workaround "off"
 setenv ethaddr "00:50:43:84:fb:2f"
 setenv eth1addr "00:50:43:25:fb:84"
 setenv eth2addr "00:50:43:84:25:2f"
@@ -42,7 +43,7 @@ for overlay_file in ${user_overlays}; do
 done
 if test "${overlay_error}" = "true"; then
 	echo "Error applying DT overlays, restoring original DT"
-	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/rockchip/${fdtfile}
+	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 else
 	if test -e ${devtype} ${devnum} ${prefix}dtb/overlay/${overlay_prefix}-fixup.scr; then
 		load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix}-fixup.scr

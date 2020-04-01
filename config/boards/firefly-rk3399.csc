@@ -2,13 +2,5 @@
 BOARD_NAME="Firefly RK3399"
 BOARDFAMILY="rk3399"
 BOOTCONFIG="firefly-rk3399_defconfig"
-#
-MODULES=""
-MODULES_NEXT=""
-#
-KERNEL_TARGET="default,dev"
-CLI_TARGET="buster,bionic:default"
-DESKTOP_TARGET="buster,bionic:default"
-#
-CLI_BETA_TARGET="buster,bionic:dev"
-DESKTOP_BETA_TARGET=""
+KERNEL_TARGET="legacy,current,dev"
+FULL_DESKTOP="yes"
