@@ -29,28 +29,12 @@ compilation_prepare()
 		fi
 	fi
 
-	if [[ $version == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 || "$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == mt7623 || "$LINUXFAMILY" == mvebu ]]; then
-		display_alert "Adjustin" "packaging" "info"
-		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y.patch"                "applying"
-	fi
-
-	if [[ $version == "4.14."* ]] && [[ "$LINUXFAMILY" == s5p6818 || "$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == imx7d || "$LINUXFAMILY" == odroidxu4 || "$LINUXFAMILY" == mvebu ]]; then
-		display_alert "Adjustin" "packaging" "info"
-		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.14.y.patch"                "applying"
-	fi
-
 	if [[ $version == "4.4."* || $version == "4.9."* ]] && [[ "$LINUXFAMILY" == rockpis || "$LINUXFAMILY" == rk3399 ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rk3399.patch"                "applying"
 	fi
 
-	if [[ $version == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip64 ]]; then
-		display_alert "Adjustin" "packaging" "info"
-		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rockchip64.patch"                "applying"
 	fi
 
 	if [[ $version == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip ]]; then
@@ -64,57 +48,6 @@ compilation_prepare()
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.9.y.patch"                "applying"
 	fi
-
-	#
-	# mac80211 wireless driver injection features from Kali Linux
-	#
-
-	if linux-version compare $version ge 5.4; then
-
-		display_alert "Adding" "Wireless package injections for mac80211 compatible chipsets" "info"
-		process_patch_file "${SRC}/patch/misc/kali-wifi-injection-1.patch"                "applying"
-		process_patch_file "${SRC}/patch/misc/kali-wifi-injection-2.patch"                "applying"
-
-	fi
-
-	# AUFS - advanced multi layered unification filesystem for Kernel > 5.1
-	#
-	# Older versions have AUFS support with a patch
-
-	if linux-version compare $version ge 5.1 && [ "$AUFS" == yes ]; then
-
-		# attach to specifics tag or branch
-		local aufstag=$(echo ${version} | cut -f 1-2 -d ".")
-
-		# manual overrides
-		if linux-version compare $version ge 5.4.3 ; then aufstag="5.4.3"; fi
-
-		# check if Mr. Okajima already made a branch for this version
-		git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone aufs${aufstag} >/dev/null
-
-		if [ "$?" -ne "0" ]; then
-			# then use rc branch
-			aufstag="5.x-rcN"
-			git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone aufs${aufstag} >/dev/null
-		fi
-
-		if [ "$?" -eq "0" ]; then
-
-			display_alert "Adding" "AUFS ${aufstag}" "info"
-			local aufsver="branch:aufs${aufstag}"
-			fetch_from_repo "https://github.com/sfjro/aufs5-standalone" "aufs5" "branch:${aufsver}" "yes"
-			cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-kbuild.patch"		"applying"
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-base.patch"			"applying"
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-mmap.patch"			"applying"
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-standalone.patch"	"applying"
-			cp -R ${SRC}/cache/sources/aufs5/${aufsver#*:}/{Documentation,fs} .
-			cp ${SRC}/cache/sources/aufs5/${aufsver#*:}/include/uapi/linux/aufs_type.h include/uapi/linux/
-
-		fi
-	fi
-
-
 
 
 	# WireGuard VPN for Linux 3.10 - 5.5
@@ -302,6 +235,12 @@ compilation_prepare()
 		# Adjust path
 		sed -i 's/include $(src)\/rtl8822b.mk /include $(TopDIR)\/drivers\/net\/wireless\/rtl88x2bu\/rtl8822b.mk/' \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl88x2bu/Makefile
+
+                # Disable debug
+		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl88x2bu/Makefile
+		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl88x2bu/
+		process_patch_file "${SRC}/patch/misc/wireless-fail-if-debug-is-disabled.patch"                "applying"
+		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8822BU) += rtl88x2bu/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
