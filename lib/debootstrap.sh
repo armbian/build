@@ -659,6 +659,11 @@ create_image()
 			pigz < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
 		fi
 
+		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
+			display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
+			pixz < $DESTIMG/${version}.img > $DEST/images/${version}.img.xz
+		fi
+
 		mv $DESTIMG/${version}.img.txt $DEST/images/${version}.img.txt || exit 1
 		mv $DESTIMG/${version}.img $DEST/images/${version}.img || exit 1
 		rm -rf $DESTIMG
