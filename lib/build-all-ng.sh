@@ -101,6 +101,11 @@ pack_upload ()
 		pigz < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.gz
 	fi
 
+if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
+		display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
+		pixz < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.xz
+	fi
+
 	if [[ -n "${SEND_TO_SERVER}" ]]; then
 		ssh "${SEND_TO_SERVER}" "mkdir -p ${SEND_TO_LOCATION}${BOARD}/{archive,nightly}" &
 		display_alert "Uploading" "Please wait!" "info"
