@@ -98,12 +98,13 @@ pack_upload ()
 
 	if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
 		display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
-		pigz < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.gz
+		pigz $DESTIMG/${version}.img
 	fi
 
-if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
+	if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
 		display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
-		pixz < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.xz
+		pixz -3 < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.xz
+		find $DESTIMG -type f -name '${version}.img' -print0 | xargs -0 rm --
 	fi
 
 	if [[ -n "${SEND_TO_SERVER}" ]]; then
