@@ -99,8 +99,13 @@ debootstrap_ng()
 #
 create_rootfs_cache()
 {
+	if [[ "$ROOT_FS_CREATE_ONLY" == "force" ]]; then
+		local cycles=1
+		else
+		local cycles=2
+	fi
 	# seek last cache, proceed to previous otherwise build it
-	for ((n=0;n<2;n++)); do
+	for ((n=0;n<${cycles};n++)); do
 
 		local packages_hash=$(get_package_list_hash "$(($ROOTFSCACHE_VERSION - $n))")
 		local cache_type=$(if [[ ${BUILD_DESKTOP} == yes  ]]; then echo "desktop"; elif [[ ${BUILD_MINIMAL} == yes  ]]; then echo "minimal"; else echo "cli";fi)
