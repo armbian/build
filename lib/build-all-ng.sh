@@ -226,6 +226,15 @@ function build_all()
 		source ${SRC}"/config/boards/${BOARD}".wip 2> /dev/null
 		source ${SRC}"/config/boards/${BOARD}".conf 2> /dev/null
 
+		# override branch to build selected branches if defined
+		if [[ -n "${BROVER}" ]]; then
+			if [[ "${KERNEL_TARGET}" == *${BROVER}* ]]; then
+				BRANCH=${BROVER}
+			else
+				continue
+			fi
+		fi
+
 		# exceptions handling
 		[[ ${BOARDFAMILY} == sun*i* && $BRANCH != default ]] && BOARDFAMILY=sunxi
 
