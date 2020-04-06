@@ -175,11 +175,6 @@ compilation_prepare()
 		cp ${SRC}/cache/sources/rtl8189es/${rtl8189esver#*:}/Kconfig \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8189es/Kconfig
 
-		# Patch
-		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8189es/
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es.patch"                "applying"
-		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
-
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8189ES) += rtl8189es/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189es\/Kconfig"' \
