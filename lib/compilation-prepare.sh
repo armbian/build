@@ -85,7 +85,7 @@ compilation_prepare()
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare $version ge 5.1 && [ "$AUFS" == yes ]; then
+	if linux-version compare $version ge 5.1 && linux-version compare $version le 5.6 && [ "$AUFS" == yes ]; then
 
 		# attach to specifics tag or branch
 		local aufstag=$(echo ${version} | cut -f 1-2 -d ".")
@@ -174,11 +174,6 @@ compilation_prepare()
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8189es/Makefile
 		cp ${SRC}/cache/sources/rtl8189es/${rtl8189esver#*:}/Kconfig \
 		${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8189es/Kconfig
-
-		# Patch
-		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8189es/
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es.patch"                "applying"
-		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8189ES) += rtl8189es/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
@@ -290,7 +285,7 @@ compilation_prepare()
 		# attach to specifics tag or branch
 		local rtl8811cuver="branch:master"
 
-		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811euver}" "info"
+		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
 		fetch_from_repo "https://github.com/brektrou/rtl8821CU" "rtl8811cu" "${rtl8811cuver}" "yes"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}

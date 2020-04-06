@@ -99,8 +99,13 @@ debootstrap_ng()
 #
 create_rootfs_cache()
 {
+	if [[ "$ROOT_FS_CREATE_ONLY" == "force" ]]; then
+		local cycles=1
+		else
+		local cycles=2
+	fi
 	# seek last cache, proceed to previous otherwise build it
-	for ((n=0;n<2;n++)); do
+	for ((n=0;n<${cycles};n++)); do
 
 		local packages_hash=$(get_package_list_hash "$(($ROOTFSCACHE_VERSION - $n))")
 		local cache_type=$(if [[ ${BUILD_DESKTOP} == yes  ]]; then echo "desktop"; elif [[ ${BUILD_MINIMAL} == yes  ]]; then echo "minimal"; else echo "cli";fi)
@@ -656,7 +661,13 @@ create_image()
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
 			display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
-			pigz < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
+			pigz $DESTIMG/${version}.img
+		fi
+
+		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
+			display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
+			pixz -3 < $DESTIMG/${version}.img > $DEST/images/${version}.img.xz
+			find $DESTIMG -type f -name '${version}.img' -print0 | xargs -0 rm --
 		fi
 
 		mv $DESTIMG/${version}.img.txt $DEST/images/${version}.img.txt || exit 1
