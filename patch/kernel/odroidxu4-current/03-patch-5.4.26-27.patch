@@ -1,0 +1,1989 @@
+diff --git a/Documentation/admin-guide/kernel-parameters.txt b/Documentation/admin-guide/kernel-parameters.txt
+index 5594c8bf1dcd..b5c933fa971f 100644
+--- a/Documentation/admin-guide/kernel-parameters.txt
++++ b/Documentation/admin-guide/kernel-parameters.txt
+@@ -136,6 +136,10 @@
+ 			dynamic table installation which will install SSDT
+ 			tables to /sys/firmware/acpi/tables/dynamic.
+ 
++	acpi_no_watchdog	[HW,ACPI,WDT]
++			Ignore the ACPI-based watchdog interface (WDAT) and let
++			a native driver control the watchdog device instead.
++
+ 	acpi_rsdp=	[ACPI,EFI,KEXEC]
+ 			Pass the RSDP address to the kernel, mostly used
+ 			on machines running EFI runtime service to boot the
+diff --git a/Makefile b/Makefile
+index 2250b1bb8aa9..36a0847534dd 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 5
+ PATCHLEVEL = 4
+-SUBLEVEL = 26
++SUBLEVEL = 27
+ EXTRAVERSION =
+ NAME = Kleptomaniac Octopus
+ 
+@@ -1237,7 +1237,7 @@ ifneq ($(dtstree),)
+ %.dtb: include/config/kernel.release scripts_dtc
+ 	$(Q)$(MAKE) $(build)=$(dtstree) $(dtstree)/$@
+ 
+-PHONY += dtbs dtbs_install dt_binding_check
++PHONY += dtbs dtbs_install dtbs_check
+ dtbs dtbs_check: include/config/kernel.release scripts_dtc
+ 	$(Q)$(MAKE) $(build)=$(dtstree)
+ 
+@@ -1257,6 +1257,7 @@ PHONY += scripts_dtc
+ scripts_dtc: scripts_basic
+ 	$(Q)$(MAKE) $(build)=scripts/dtc
+ 
++PHONY += dt_binding_check
+ dt_binding_check: scripts_dtc
+ 	$(Q)$(MAKE) $(build)=Documentation/devicetree/bindings
+ 
+diff --git a/arch/arm/Makefile b/arch/arm/Makefile
+index db857d07114f..1fc32b611f8a 100644
+--- a/arch/arm/Makefile
++++ b/arch/arm/Makefile
+@@ -307,13 +307,15 @@ endif
+ ifeq ($(CONFIG_STACKPROTECTOR_PER_TASK),y)
+ prepare: stack_protector_prepare
+ stack_protector_prepare: prepare0
+-	$(eval KBUILD_CFLAGS += \
++	$(eval SSP_PLUGIN_CFLAGS := \
+ 		-fplugin-arg-arm_ssp_per_task_plugin-tso=$(shell	\
+ 			awk '{if ($$2 == "THREAD_SZ_ORDER") print $$3;}'\
+ 				include/generated/asm-offsets.h)	\
+ 		-fplugin-arg-arm_ssp_per_task_plugin-offset=$(shell	\
+ 			awk '{if ($$2 == "TI_STACK_CANARY") print $$3;}'\
+ 				include/generated/asm-offsets.h))
++	$(eval KBUILD_CFLAGS += $(SSP_PLUGIN_CFLAGS))
++	$(eval GCC_PLUGINS_CFLAGS += $(SSP_PLUGIN_CFLAGS))
+ endif
+ 
+ all:	$(notdir $(KBUILD_IMAGE))
+diff --git a/arch/arm/boot/compressed/Makefile b/arch/arm/boot/compressed/Makefile
+index 9219389bbe61..1483966dcf23 100644
+--- a/arch/arm/boot/compressed/Makefile
++++ b/arch/arm/boot/compressed/Makefile
+@@ -101,7 +101,6 @@ clean-files += piggy_data lib1funcs.S ashldi3.S bswapsdi2.S \
+ 		$(libfdt) $(libfdt_hdrs) hyp-stub.S
+ 
+ KBUILD_CFLAGS += -DDISABLE_BRANCH_PROFILING
+-KBUILD_CFLAGS += $(DISABLE_ARM_SSP_PER_TASK_PLUGIN)
+ 
+ ifeq ($(CONFIG_FUNCTION_TRACER),y)
+ ORIG_CFLAGS := $(KBUILD_CFLAGS)
+@@ -117,7 +116,8 @@ CFLAGS_fdt_ro.o := $(nossp_flags)
+ CFLAGS_fdt_rw.o := $(nossp_flags)
+ CFLAGS_fdt_wip.o := $(nossp_flags)
+ 
+-ccflags-y := -fpic $(call cc-option,-mno-single-pic-base,) -fno-builtin -I$(obj)
++ccflags-y := -fpic $(call cc-option,-mno-single-pic-base,) -fno-builtin \
++	     -I$(obj) $(DISABLE_ARM_SSP_PER_TASK_PLUGIN)
+ asflags-y := -DZIMAGE
+ 
+ # Supply kernel BSS size to the decompressor via a linker symbol.
+diff --git a/arch/arm/kernel/vdso.c b/arch/arm/kernel/vdso.c
+index 9bf16c93ee6a..f00e45fa62c4 100644
+--- a/arch/arm/kernel/vdso.c
++++ b/arch/arm/kernel/vdso.c
+@@ -92,6 +92,8 @@ static bool __init cntvct_functional(void)
+ 	 * this.
+ 	 */
+ 	np = of_find_compatible_node(NULL, NULL, "arm,armv7-timer");
++	if (!np)
++		np = of_find_compatible_node(NULL, NULL, "arm,armv8-timer");
+ 	if (!np)
+ 		goto out_put;
+ 
+diff --git a/arch/arm/lib/copy_from_user.S b/arch/arm/lib/copy_from_user.S
+index 95b2e1ce559c..f8016e3db65d 100644
+--- a/arch/arm/lib/copy_from_user.S
++++ b/arch/arm/lib/copy_from_user.S
+@@ -118,7 +118,7 @@ ENTRY(arm_copy_from_user)
+ 
+ ENDPROC(arm_copy_from_user)
+ 
+-	.pushsection .fixup,"ax"
++	.pushsection .text.fixup,"ax"
+ 	.align 0
+ 	copy_abort_preamble
+ 	ldmfd	sp!, {r1, r2, r3}
+diff --git a/block/blk-flush.c b/block/blk-flush.c
+index b1f0a1ac505c..5aa6fada2259 100644
+--- a/block/blk-flush.c
++++ b/block/blk-flush.c
+@@ -399,7 +399,7 @@ void blk_insert_flush(struct request *rq)
+ 	 */
+ 	if ((policy & REQ_FSEQ_DATA) &&
+ 	    !(policy & (REQ_FSEQ_PREFLUSH | REQ_FSEQ_POSTFLUSH))) {
+-		blk_mq_request_bypass_insert(rq, false);
++		blk_mq_request_bypass_insert(rq, false, false);
+ 		return;
+ 	}
+ 
+diff --git a/block/blk-mq-sched.c b/block/blk-mq-sched.c
+index ca22afd47b3d..74cedea56034 100644
+--- a/block/blk-mq-sched.c
++++ b/block/blk-mq-sched.c
+@@ -361,13 +361,19 @@ static bool blk_mq_sched_bypass_insert(struct blk_mq_hw_ctx *hctx,
+ 				       bool has_sched,
+ 				       struct request *rq)
+ {
+-	/* dispatch flush rq directly */
+-	if (rq->rq_flags & RQF_FLUSH_SEQ) {
+-		spin_lock(&hctx->lock);
+-		list_add(&rq->queuelist, &hctx->dispatch);
+-		spin_unlock(&hctx->lock);
++	/*
++	 * dispatch flush and passthrough rq directly
++	 *
++	 * passthrough request has to be added to hctx->dispatch directly.
++	 * For some reason, device may be in one situation which can't
++	 * handle FS request, so STS_RESOURCE is always returned and the
++	 * FS request will be added to hctx->dispatch. However passthrough
++	 * request may be required at that time for fixing the problem. If
++	 * passthrough request is added to scheduler queue, there isn't any
++	 * chance to dispatch it given we prioritize requests in hctx->dispatch.
++	 */
++	if ((rq->rq_flags & RQF_FLUSH_SEQ) || blk_rq_is_passthrough(rq))
+ 		return true;
+-	}
+ 
+ 	if (has_sched)
+ 		rq->rq_flags |= RQF_SORTED;
+@@ -391,8 +397,32 @@ void blk_mq_sched_insert_request(struct request *rq, bool at_head,
+ 
+ 	WARN_ON(e && (rq->tag != -1));
+ 
+-	if (blk_mq_sched_bypass_insert(hctx, !!e, rq))
++	if (blk_mq_sched_bypass_insert(hctx, !!e, rq)) {
++		/*
++		 * Firstly normal IO request is inserted to scheduler queue or
++		 * sw queue, meantime we add flush request to dispatch queue(
++		 * hctx->dispatch) directly and there is at most one in-flight
++		 * flush request for each hw queue, so it doesn't matter to add
++		 * flush request to tail or front of the dispatch queue.
++		 *
++		 * Secondly in case of NCQ, flush request belongs to non-NCQ
++		 * command, and queueing it will fail when there is any
++		 * in-flight normal IO request(NCQ command). When adding flush
++		 * rq to the front of hctx->dispatch, it is easier to introduce
++		 * extra time to flush rq's latency because of S_SCHED_RESTART
++		 * compared with adding to the tail of dispatch queue, then
++		 * chance of flush merge is increased, and less flush requests
++		 * will be issued to controller. It is observed that ~10% time
++		 * is saved in blktests block/004 on disk attached to AHCI/NCQ
++		 * drive when adding flush rq to the front of hctx->dispatch.
++		 *
++		 * Simply queue flush rq to the front of hctx->dispatch so that
++		 * intensive flush workloads can benefit in case of NCQ HW.
++		 */
++		at_head = (rq->rq_flags & RQF_FLUSH_SEQ) ? true : at_head;
++		blk_mq_request_bypass_insert(rq, at_head, false);
+ 		goto run;
++	}
+ 
+ 	if (e && e->type->ops.insert_requests) {
+ 		LIST_HEAD(list);
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index ec791156e9cc..3c1abab1fdf5 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -761,7 +761,7 @@ static void blk_mq_requeue_work(struct work_struct *work)
+ 		 * merge.
+ 		 */
+ 		if (rq->rq_flags & RQF_DONTPREP)
+-			blk_mq_request_bypass_insert(rq, false);
++			blk_mq_request_bypass_insert(rq, false, false);
+ 		else
+ 			blk_mq_sched_insert_request(rq, true, false, false);
+ 	}
+@@ -1313,7 +1313,7 @@ bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list,
+ 			q->mq_ops->commit_rqs(hctx);
+ 
+ 		spin_lock(&hctx->lock);
+-		list_splice_init(list, &hctx->dispatch);
++		list_splice_tail_init(list, &hctx->dispatch);
+ 		spin_unlock(&hctx->lock);
+ 
+ 		/*
+@@ -1668,12 +1668,16 @@ void __blk_mq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
+  * Should only be used carefully, when the caller knows we want to
+  * bypass a potential IO scheduler on the target device.
+  */
+-void blk_mq_request_bypass_insert(struct request *rq, bool run_queue)
++void blk_mq_request_bypass_insert(struct request *rq, bool at_head,
++				  bool run_queue)
+ {
+ 	struct blk_mq_hw_ctx *hctx = rq->mq_hctx;
+ 
+ 	spin_lock(&hctx->lock);
+-	list_add_tail(&rq->queuelist, &hctx->dispatch);
++	if (at_head)
++		list_add(&rq->queuelist, &hctx->dispatch);
++	else
++		list_add_tail(&rq->queuelist, &hctx->dispatch);
+ 	spin_unlock(&hctx->lock);
+ 
+ 	if (run_queue)
+@@ -1863,7 +1867,7 @@ insert:
+ 	if (bypass_insert)
+ 		return BLK_STS_RESOURCE;
+ 
+-	blk_mq_request_bypass_insert(rq, run_queue);
++	blk_mq_request_bypass_insert(rq, false, run_queue);
+ 	return BLK_STS_OK;
+ }
+ 
+@@ -1879,7 +1883,7 @@ static void blk_mq_try_issue_directly(struct blk_mq_hw_ctx *hctx,
+ 
+ 	ret = __blk_mq_try_issue_directly(hctx, rq, cookie, false, true);
+ 	if (ret == BLK_STS_RESOURCE || ret == BLK_STS_DEV_RESOURCE)
+-		blk_mq_request_bypass_insert(rq, true);
++		blk_mq_request_bypass_insert(rq, false, true);
+ 	else if (ret != BLK_STS_OK)
+ 		blk_mq_end_request(rq, ret);
+ 
+@@ -1913,7 +1917,7 @@ void blk_mq_try_issue_list_directly(struct blk_mq_hw_ctx *hctx,
+ 		if (ret != BLK_STS_OK) {
+ 			if (ret == BLK_STS_RESOURCE ||
+ 					ret == BLK_STS_DEV_RESOURCE) {
+-				blk_mq_request_bypass_insert(rq,
++				blk_mq_request_bypass_insert(rq, false,
+ 							list_empty(list));
+ 				break;
+ 			}
+diff --git a/block/blk-mq.h b/block/blk-mq.h
+index 32c62c64e6c2..f2075978db50 100644
+--- a/block/blk-mq.h
++++ b/block/blk-mq.h
+@@ -66,7 +66,8 @@ int blk_mq_alloc_rqs(struct blk_mq_tag_set *set, struct blk_mq_tags *tags,
+  */
+ void __blk_mq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
+ 				bool at_head);
+-void blk_mq_request_bypass_insert(struct request *rq, bool run_queue);
++void blk_mq_request_bypass_insert(struct request *rq, bool at_head,
++				  bool run_queue);
+ void blk_mq_insert_requests(struct blk_mq_hw_ctx *hctx, struct blk_mq_ctx *ctx,
+ 				struct list_head *list);
+ 
+diff --git a/drivers/acpi/acpi_watchdog.c b/drivers/acpi/acpi_watchdog.c
+index d827a4a3e946..6e9ec6e3fe47 100644
+--- a/drivers/acpi/acpi_watchdog.c
++++ b/drivers/acpi/acpi_watchdog.c
+@@ -55,12 +55,14 @@ static bool acpi_watchdog_uses_rtc(const struct acpi_table_wdat *wdat)
+ }
+ #endif
+ 
++static bool acpi_no_watchdog;
++
+ static const struct acpi_table_wdat *acpi_watchdog_get_wdat(void)
+ {
+ 	const struct acpi_table_wdat *wdat = NULL;
+ 	acpi_status status;
+ 
+-	if (acpi_disabled)
++	if (acpi_disabled || acpi_no_watchdog)
+ 		return NULL;
+ 
+ 	status = acpi_get_table(ACPI_SIG_WDAT, 0,
+@@ -88,6 +90,14 @@ bool acpi_has_watchdog(void)
+ }
+ EXPORT_SYMBOL_GPL(acpi_has_watchdog);
+ 
++/* ACPI watchdog can be disabled on boot command line */
++static int __init disable_acpi_watchdog(char *str)
++{
++	acpi_no_watchdog = true;
++	return 1;
++}
++__setup("acpi_no_watchdog", disable_acpi_watchdog);
++
+ void __init acpi_watchdog_init(void)
+ {
+ 	const struct acpi_wdat_entry *entries;
+diff --git a/drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c b/drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c
+index a7ba4c6cf7a1..f642e066e67a 100644
+--- a/drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c
++++ b/drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c
+@@ -230,7 +230,8 @@ static void gmc_v10_0_flush_vm_hub(struct amdgpu_device *adev, uint32_t vmid,
+ 				   unsigned int vmhub, uint32_t flush_type)
+ {
+ 	struct amdgpu_vmhub *hub = &adev->vmhub[vmhub];
+-	u32 tmp = gmc_v10_0_get_invalidate_req(vmid, flush_type);
++	u32 inv_req = gmc_v10_0_get_invalidate_req(vmid, flush_type);
++	u32 tmp;
+ 	/* Use register 17 for GART */
+ 	const unsigned eng = 17;
+ 	unsigned int i;
+@@ -258,7 +259,7 @@ static void gmc_v10_0_flush_vm_hub(struct amdgpu_device *adev, uint32_t vmid,
+ 			DRM_ERROR("Timeout waiting for sem acquire in VM flush!\n");
+ 	}
+ 
+-	WREG32_NO_KIQ(hub->vm_inv_eng0_req + eng, tmp);
++	WREG32_NO_KIQ(hub->vm_inv_eng0_req + eng, inv_req);
+ 
+ 	/*
+ 	 * Issue a dummy read to wait for the ACK register to be cleared
+diff --git a/drivers/gpu/drm/amd/amdgpu/gmc_v9_0.c b/drivers/gpu/drm/amd/amdgpu/gmc_v9_0.c
+index da53a55bf955..688111ef814d 100644
+--- a/drivers/gpu/drm/amd/amdgpu/gmc_v9_0.c
++++ b/drivers/gpu/drm/amd/amdgpu/gmc_v9_0.c
+@@ -487,13 +487,13 @@ static void gmc_v9_0_flush_gpu_tlb(struct amdgpu_device *adev, uint32_t vmid,
+ {
+ 	bool use_semaphore = gmc_v9_0_use_invalidate_semaphore(adev, vmhub);
+ 	const unsigned eng = 17;
+-	u32 j, tmp;
++	u32 j, inv_req, tmp;
+ 	struct amdgpu_vmhub *hub;
+ 
+ 	BUG_ON(vmhub >= adev->num_vmhubs);
+ 
+ 	hub = &adev->vmhub[vmhub];
+-	tmp = gmc_v9_0_get_invalidate_req(vmid, flush_type);
++	inv_req = gmc_v9_0_get_invalidate_req(vmid, flush_type);
+ 
+ 	/* This is necessary for a HW workaround under SRIOV as well
+ 	 * as GFXOFF under bare metal
+@@ -504,7 +504,7 @@ static void gmc_v9_0_flush_gpu_tlb(struct amdgpu_device *adev, uint32_t vmid,
+ 		uint32_t req = hub->vm_inv_eng0_req + eng;
+ 		uint32_t ack = hub->vm_inv_eng0_ack + eng;
+ 
+-		amdgpu_virt_kiq_reg_write_reg_wait(adev, req, ack, tmp,
++		amdgpu_virt_kiq_reg_write_reg_wait(adev, req, ack, inv_req,
+ 				1 << vmid);
+ 		return;
+ 	}
+@@ -532,7 +532,7 @@ static void gmc_v9_0_flush_gpu_tlb(struct amdgpu_device *adev, uint32_t vmid,
+ 			DRM_ERROR("Timeout waiting for sem acquire in VM flush!\n");
+ 	}
+ 
+-	WREG32_NO_KIQ(hub->vm_inv_eng0_req + eng, tmp);
++	WREG32_NO_KIQ(hub->vm_inv_eng0_req + eng, inv_req);
+ 
+ 	/*
+ 	 * Issue a dummy read to wait for the ACK register to be cleared
+diff --git a/drivers/gpu/drm/amd/powerplay/smu_v11_0.c b/drivers/gpu/drm/amd/powerplay/smu_v11_0.c
+index c5257ae3188a..0922d9cd858a 100644
+--- a/drivers/gpu/drm/amd/powerplay/smu_v11_0.c
++++ b/drivers/gpu/drm/amd/powerplay/smu_v11_0.c
+@@ -988,8 +988,12 @@ static int smu_v11_0_init_max_sustainable_clocks(struct smu_context *smu)
+ 	struct smu_11_0_max_sustainable_clocks *max_sustainable_clocks;
+ 	int ret = 0;
+ 
+-	max_sustainable_clocks = kzalloc(sizeof(struct smu_11_0_max_sustainable_clocks),
++	if (!smu->smu_table.max_sustainable_clocks)
++		max_sustainable_clocks = kzalloc(sizeof(struct smu_11_0_max_sustainable_clocks),
+ 					 GFP_KERNEL);
++	else
++		max_sustainable_clocks = smu->smu_table.max_sustainable_clocks;
++
+ 	smu->smu_table.max_sustainable_clocks = (void *)max_sustainable_clocks;
+ 
+ 	max_sustainable_clocks->uclock = smu->smu_table.boot_values.uclk / 100;
+diff --git a/drivers/hid/hid-apple.c b/drivers/hid/hid-apple.c
+index 6ac8becc2372..d732d1d10caf 100644
+--- a/drivers/hid/hid-apple.c
++++ b/drivers/hid/hid-apple.c
+@@ -340,7 +340,8 @@ static int apple_input_mapping(struct hid_device *hdev, struct hid_input *hi,
+ 		unsigned long **bit, int *max)
+ {
+ 	if (usage->hid == (HID_UP_CUSTOM | 0x0003) ||
+-			usage->hid == (HID_UP_MSVENDOR | 0x0003)) {
++			usage->hid == (HID_UP_MSVENDOR | 0x0003) ||
++			usage->hid == (HID_UP_HPVENDOR2 | 0x0003)) {
+ 		/* The fn key on Apple USB keyboards */
+ 		set_bit(EV_REP, hi->input->evbit);
+ 		hid_map_usage_clear(hi, usage, bit, max, EV_KEY, KEY_FN);
+diff --git a/drivers/hid/hid-bigbenff.c b/drivers/hid/hid-bigbenff.c
+index 3f6abd190df4..db6da21ade06 100644
+--- a/drivers/hid/hid-bigbenff.c
++++ b/drivers/hid/hid-bigbenff.c
+@@ -174,6 +174,7 @@ static __u8 pid0902_rdesc_fixed[] = {
+ struct bigben_device {
+ 	struct hid_device *hid;
+ 	struct hid_report *report;
++	bool removed;
+ 	u8 led_state;         /* LED1 = 1 .. LED4 = 8 */
+ 	u8 right_motor_on;    /* right motor off/on 0/1 */
+ 	u8 left_motor_force;  /* left motor force 0-255 */
+@@ -190,6 +191,9 @@ static void bigben_worker(struct work_struct *work)
+ 		struct bigben_device, worker);
+ 	struct hid_field *report_field = bigben->report->field[0];
+ 
++	if (bigben->removed)
++		return;
++
+ 	if (bigben->work_led) {
+ 		bigben->work_led = false;
+ 		report_field->value[0] = 0x01; /* 1 = led message */
+@@ -220,10 +224,16 @@ static void bigben_worker(struct work_struct *work)
+ static int hid_bigben_play_effect(struct input_dev *dev, void *data,
+ 			 struct ff_effect *effect)
+ {
+-	struct bigben_device *bigben = data;
++	struct hid_device *hid = input_get_drvdata(dev);
++	struct bigben_device *bigben = hid_get_drvdata(hid);
+ 	u8 right_motor_on;
+ 	u8 left_motor_force;
+ 
++	if (!bigben) {
++		hid_err(hid, "no device data\n");
++		return 0;
++	}
++
+ 	if (effect->type != FF_RUMBLE)
+ 		return 0;
+ 
+@@ -298,8 +308,8 @@ static void bigben_remove(struct hid_device *hid)
+ {
+ 	struct bigben_device *bigben = hid_get_drvdata(hid);
+ 
++	bigben->removed = true;
+ 	cancel_work_sync(&bigben->worker);
+-	hid_hw_close(hid);
+ 	hid_hw_stop(hid);
+ }
+ 
+@@ -319,6 +329,7 @@ static int bigben_probe(struct hid_device *hid,
+ 		return -ENOMEM;
+ 	hid_set_drvdata(hid, bigben);
+ 	bigben->hid = hid;
++	bigben->removed = false;
+ 
+ 	error = hid_parse(hid);
+ 	if (error) {
+@@ -341,10 +352,10 @@ static int bigben_probe(struct hid_device *hid,
+ 
+ 	INIT_WORK(&bigben->worker, bigben_worker);
+ 
+-	error = input_ff_create_memless(hidinput->input, bigben,
++	error = input_ff_create_memless(hidinput->input, NULL,
+ 		hid_bigben_play_effect);
+ 	if (error)
+-		return error;
++		goto error_hw_stop;
+ 
+ 	name_sz = strlen(dev_name(&hid->dev)) + strlen(":red:bigben#") + 1;
+ 
+@@ -354,8 +365,10 @@ static int bigben_probe(struct hid_device *hid,
+ 			sizeof(struct led_classdev) + name_sz,
+ 			GFP_KERNEL
+ 		);
+-		if (!led)
+-			return -ENOMEM;
++		if (!led) {
++			error = -ENOMEM;
++			goto error_hw_stop;
++		}
+ 		name = (void *)(&led[1]);
+ 		snprintf(name, name_sz,
+ 			"%s:red:bigben%d",
+@@ -369,7 +382,7 @@ static int bigben_probe(struct hid_device *hid,
+ 		bigben->leds[n] = led;
+ 		error = devm_led_classdev_register(&hid->dev, led);
+ 		if (error)
+-			return error;
++			goto error_hw_stop;
+ 	}
+ 
+ 	/* initial state: LED1 is on, no rumble effect */
+@@ -383,6 +396,10 @@ static int bigben_probe(struct hid_device *hid,
+ 	hid_info(hid, "LED and force feedback support for BigBen gamepad\n");
+ 
+ 	return 0;
++
++error_hw_stop:
++	hid_hw_stop(hid);
++	return error;
+ }
+ 
+ static __u8 *bigben_report_fixup(struct hid_device *hid, __u8 *rdesc,
+diff --git a/drivers/hid/hid-google-hammer.c b/drivers/hid/hid-google-hammer.c
+index d86a9189e88f..aeb351658ad3 100644
+--- a/drivers/hid/hid-google-hammer.c
++++ b/drivers/hid/hid-google-hammer.c
+@@ -473,6 +473,8 @@ static const struct hid_device_id hammer_devices[] = {
+ 		     USB_VENDOR_ID_GOOGLE, USB_DEVICE_ID_GOOGLE_MAGNEMITE) },
+ 	{ HID_DEVICE(BUS_USB, HID_GROUP_GENERIC,
+ 		     USB_VENDOR_ID_GOOGLE, USB_DEVICE_ID_GOOGLE_MASTERBALL) },
++	{ HID_DEVICE(BUS_USB, HID_GROUP_GENERIC,
++		     USB_VENDOR_ID_GOOGLE, USB_DEVICE_ID_GOOGLE_MOONBALL) },
+ 	{ HID_DEVICE(BUS_USB, HID_GROUP_GENERIC,
+ 		     USB_VENDOR_ID_GOOGLE, USB_DEVICE_ID_GOOGLE_STAFF) },
+ 	{ HID_DEVICE(BUS_USB, HID_GROUP_GENERIC,
+diff --git a/drivers/hid/hid-ids.h b/drivers/hid/hid-ids.h
+index 5fc82029a03b..646b98809ed3 100644
+--- a/drivers/hid/hid-ids.h
++++ b/drivers/hid/hid-ids.h
+@@ -478,6 +478,7 @@
+ #define USB_DEVICE_ID_GOOGLE_WHISKERS	0x5030
+ #define USB_DEVICE_ID_GOOGLE_MASTERBALL	0x503c
+ #define USB_DEVICE_ID_GOOGLE_MAGNEMITE	0x503d
++#define USB_DEVICE_ID_GOOGLE_MOONBALL	0x5044
+ 
+ #define USB_VENDOR_ID_GOTOP		0x08f2
+ #define USB_DEVICE_ID_SUPER_Q2		0x007f
+@@ -726,6 +727,7 @@
+ #define USB_DEVICE_ID_LENOVO_X1_COVER	0x6085
+ #define USB_DEVICE_ID_LENOVO_X1_TAB	0x60a3
+ #define USB_DEVICE_ID_LENOVO_X1_TAB3	0x60b5
++#define USB_DEVICE_ID_LENOVO_PIXART_USB_MOUSE_608D	0x608d
+ 
+ #define USB_VENDOR_ID_LG		0x1fd2
+ #define USB_DEVICE_ID_LG_MULTITOUCH	0x0064
+diff --git a/drivers/hid/hid-quirks.c b/drivers/hid/hid-quirks.c
+index fa58a7cbb3ff..ae64a286a68f 100644
+--- a/drivers/hid/hid-quirks.c
++++ b/drivers/hid/hid-quirks.c
+@@ -103,6 +103,7 @@ static const struct hid_device_id hid_quirks[] = {
+ 	{ HID_USB_DEVICE(USB_VENDOR_ID_KYE, USB_DEVICE_ID_KYE_PENSKETCH_M912), HID_QUIRK_MULTI_INPUT },
+ 	{ HID_USB_DEVICE(USB_VENDOR_ID_KYE, USB_DEVICE_ID_KYE_EASYPEN_M406XE), HID_QUIRK_MULTI_INPUT },
+ 	{ HID_USB_DEVICE(USB_VENDOR_ID_KYE, USB_DEVICE_ID_PIXART_USB_OPTICAL_MOUSE_ID2), HID_QUIRK_ALWAYS_POLL },
++	{ HID_USB_DEVICE(USB_VENDOR_ID_LENOVO, USB_DEVICE_ID_LENOVO_PIXART_USB_MOUSE_608D), HID_QUIRK_ALWAYS_POLL },
+ 	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_C007), HID_QUIRK_ALWAYS_POLL },
+ 	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_C077), HID_QUIRK_ALWAYS_POLL },
+ 	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_KEYBOARD_G710_PLUS), HID_QUIRK_NOGET },
+diff --git a/drivers/hid/i2c-hid/i2c-hid-dmi-quirks.c b/drivers/hid/i2c-hid/i2c-hid-dmi-quirks.c
+index d31ea82b84c1..a66f08041a1a 100644
+--- a/drivers/hid/i2c-hid/i2c-hid-dmi-quirks.c
++++ b/drivers/hid/i2c-hid/i2c-hid-dmi-quirks.c
+@@ -341,6 +341,14 @@ static const struct dmi_system_id i2c_hid_dmi_desc_override_table[] = {
+ 		},
+ 		.driver_data = (void *)&sipodev_desc
+ 	},
++	{
++		.ident = "Trekstor SURFBOOK E11B",
++		.matches = {
++			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "TREKSTOR"),
++			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "SURFBOOK E11B"),
++		},
++		.driver_data = (void *)&sipodev_desc
++	},
+ 	{
+ 		.ident = "Direkt-Tek DTLAPY116-2",
+ 		.matches = {
+diff --git a/drivers/net/ethernet/huawei/hinic/hinic_hw_dev.c b/drivers/net/ethernet/huawei/hinic/hinic_hw_dev.c
+index 6f2cf569a283..79b3d53f2fbf 100644
+--- a/drivers/net/ethernet/huawei/hinic/hinic_hw_dev.c
++++ b/drivers/net/ethernet/huawei/hinic/hinic_hw_dev.c
+@@ -297,6 +297,7 @@ static int set_hw_ioctxt(struct hinic_hwdev *hwdev, unsigned int rq_depth,
+ 	}
+ 
+ 	hw_ioctxt.func_idx = HINIC_HWIF_FUNC_IDX(hwif);
++	hw_ioctxt.ppf_idx = HINIC_HWIF_PPF_IDX(hwif);
+ 
+ 	hw_ioctxt.set_cmdq_depth = HW_IOCTXT_SET_CMDQ_DEPTH_DEFAULT;
+ 	hw_ioctxt.cmdq_depth = 0;
+diff --git a/drivers/net/ethernet/huawei/hinic/hinic_hw_dev.h b/drivers/net/ethernet/huawei/hinic/hinic_hw_dev.h
+index b069045de416..66fd2340d447 100644
+--- a/drivers/net/ethernet/huawei/hinic/hinic_hw_dev.h
++++ b/drivers/net/ethernet/huawei/hinic/hinic_hw_dev.h
+@@ -151,8 +151,8 @@ struct hinic_cmd_hw_ioctxt {
+ 
+ 	u8      lro_en;
+ 	u8      rsvd3;
++	u8      ppf_idx;
+ 	u8      rsvd4;
+-	u8      rsvd5;
+ 
+ 	u16     rq_depth;
+ 	u16     rx_buf_sz_idx;
+diff --git a/drivers/net/ethernet/huawei/hinic/hinic_hw_if.h b/drivers/net/ethernet/huawei/hinic/hinic_hw_if.h
+index 517794509eb2..c7bb9ceca72c 100644
+--- a/drivers/net/ethernet/huawei/hinic/hinic_hw_if.h
++++ b/drivers/net/ethernet/huawei/hinic/hinic_hw_if.h
+@@ -137,6 +137,7 @@
+ #define HINIC_HWIF_FUNC_IDX(hwif)       ((hwif)->attr.func_idx)
+ #define HINIC_HWIF_PCI_INTF(hwif)       ((hwif)->attr.pci_intf_idx)
+ #define HINIC_HWIF_PF_IDX(hwif)         ((hwif)->attr.pf_idx)
++#define HINIC_HWIF_PPF_IDX(hwif)        ((hwif)->attr.ppf_idx)
+ 
+ #define HINIC_FUNC_TYPE(hwif)           ((hwif)->attr.func_type)
+ #define HINIC_IS_PF(hwif)               (HINIC_FUNC_TYPE(hwif) == HINIC_PF)
+diff --git a/drivers/net/ethernet/huawei/hinic/hinic_hw_qp.h b/drivers/net/ethernet/huawei/hinic/hinic_hw_qp.h
+index f4a339b10b10..79091e131418 100644
+--- a/drivers/net/ethernet/huawei/hinic/hinic_hw_qp.h
++++ b/drivers/net/ethernet/huawei/hinic/hinic_hw_qp.h
+@@ -94,6 +94,7 @@ struct hinic_rq {
+ 
+ 	struct hinic_wq         *wq;
+ 
++	struct cpumask		affinity_mask;
+ 	u32                     irq;
+ 	u16                     msix_entry;
+ 
+diff --git a/drivers/net/ethernet/huawei/hinic/hinic_main.c b/drivers/net/ethernet/huawei/hinic/hinic_main.c
+index 2411ad270c98..42d00b049c6e 100644
+--- a/drivers/net/ethernet/huawei/hinic/hinic_main.c
++++ b/drivers/net/ethernet/huawei/hinic/hinic_main.c
+@@ -356,7 +356,8 @@ static void hinic_enable_rss(struct hinic_dev *nic_dev)
+ 	if (!num_cpus)
+ 		num_cpus = num_online_cpus();
+ 
+-	nic_dev->num_qps = min_t(u16, nic_dev->max_qps, num_cpus);
++	nic_dev->num_qps = hinic_hwdev_num_qps(hwdev);
++	nic_dev->num_qps = min_t(u16, nic_dev->num_qps, num_cpus);
+ 
+ 	nic_dev->rss_limit = nic_dev->num_qps;
+ 	nic_dev->num_rss = nic_dev->num_qps;
+diff --git a/drivers/net/ethernet/huawei/hinic/hinic_rx.c b/drivers/net/ethernet/huawei/hinic/hinic_rx.c
+index 56ea6d692f1c..2695ad69fca6 100644
+--- a/drivers/net/ethernet/huawei/hinic/hinic_rx.c
++++ b/drivers/net/ethernet/huawei/hinic/hinic_rx.c
+@@ -475,7 +475,6 @@ static int rx_request_irq(struct hinic_rxq *rxq)
+ 	struct hinic_hwdev *hwdev = nic_dev->hwdev;
+ 	struct hinic_rq *rq = rxq->rq;
+ 	struct hinic_qp *qp;
+-	struct cpumask mask;
+ 	int err;
+ 
+ 	rx_add_napi(rxq);
+@@ -492,8 +491,8 @@ static int rx_request_irq(struct hinic_rxq *rxq)
+ 	}
+ 
+ 	qp = container_of(rq, struct hinic_qp, rq);
+-	cpumask_set_cpu(qp->q_id % num_online_cpus(), &mask);
+-	return irq_set_affinity_hint(rq->irq, &mask);
++	cpumask_set_cpu(qp->q_id % num_online_cpus(), &rq->affinity_mask);
++	return irq_set_affinity_hint(rq->irq, &rq->affinity_mask);
+ }
+ 
+ static void rx_free_irq(struct hinic_rxq *rxq)
+diff --git a/drivers/net/ethernet/micrel/ks8851_mll.c b/drivers/net/ethernet/micrel/ks8851_mll.c
+index 1c9e70c8cc30..58579baf3f7a 100644
+--- a/drivers/net/ethernet/micrel/ks8851_mll.c
++++ b/drivers/net/ethernet/micrel/ks8851_mll.c
+@@ -513,14 +513,17 @@ static irqreturn_t ks_irq(int irq, void *pw)
+ {
+ 	struct net_device *netdev = pw;
+ 	struct ks_net *ks = netdev_priv(netdev);
++	unsigned long flags;
+ 	u16 status;
+ 
++	spin_lock_irqsave(&ks->statelock, flags);
+ 	/*this should be the first in IRQ handler */
+ 	ks_save_cmd_reg(ks);
+ 
+ 	status = ks_rdreg16(ks, KS_ISR);
+ 	if (unlikely(!status)) {
+ 		ks_restore_cmd_reg(ks);
++		spin_unlock_irqrestore(&ks->statelock, flags);
+ 		return IRQ_NONE;
+ 	}
+ 
+@@ -546,6 +549,7 @@ static irqreturn_t ks_irq(int irq, void *pw)
+ 		ks->netdev->stats.rx_over_errors++;
+ 	/* this should be the last in IRQ handler*/
+ 	ks_restore_cmd_reg(ks);
++	spin_unlock_irqrestore(&ks->statelock, flags);
+ 	return IRQ_HANDLED;
+ }
+ 
+@@ -615,6 +619,7 @@ static int ks_net_stop(struct net_device *netdev)
+ 
+ 	/* shutdown RX/TX QMU */
+ 	ks_disable_qmu(ks);
++	ks_disable_int(ks);
+ 
+ 	/* set powermode to soft power down to save power */
+ 	ks_set_powermode(ks, PMECR_PM_SOFTDOWN);
+@@ -671,10 +676,9 @@ static netdev_tx_t ks_start_xmit(struct sk_buff *skb, struct net_device *netdev)
+ {
+ 	netdev_tx_t retv = NETDEV_TX_OK;
+ 	struct ks_net *ks = netdev_priv(netdev);
++	unsigned long flags;
+ 
+-	disable_irq(netdev->irq);
+-	ks_disable_int(ks);
+-	spin_lock(&ks->statelock);
++	spin_lock_irqsave(&ks->statelock, flags);
+ 
+ 	/* Extra space are required:
+ 	*  4 byte for alignment, 4 for status/length, 4 for CRC
+@@ -688,9 +692,7 @@ static netdev_tx_t ks_start_xmit(struct sk_buff *skb, struct net_device *netdev)
+ 		dev_kfree_skb(skb);
+ 	} else
+ 		retv = NETDEV_TX_BUSY;
+-	spin_unlock(&ks->statelock);
+-	ks_enable_int(ks);
+-	enable_irq(netdev->irq);
++	spin_unlock_irqrestore(&ks->statelock, flags);
+ 	return retv;
+ }
+ 
+diff --git a/drivers/net/ethernet/qualcomm/rmnet/rmnet_config.c b/drivers/net/ethernet/qualcomm/rmnet/rmnet_config.c
+index 06de59521fc4..fbf4cbcf1a65 100644
+--- a/drivers/net/ethernet/qualcomm/rmnet/rmnet_config.c
++++ b/drivers/net/ethernet/qualcomm/rmnet/rmnet_config.c
+@@ -13,25 +13,6 @@
+ #include "rmnet_vnd.h"
+ #include "rmnet_private.h"
+ 
+-/* Locking scheme -
+- * The shared resource which needs to be protected is realdev->rx_handler_data.
+- * For the writer path, this is using rtnl_lock(). The writer paths are
+- * rmnet_newlink(), rmnet_dellink() and rmnet_force_unassociate_device(). These
+- * paths are already called with rtnl_lock() acquired in. There is also an
+- * ASSERT_RTNL() to ensure that we are calling with rtnl acquired. For
+- * dereference here, we will need to use rtnl_dereference(). Dev list writing
+- * needs to happen with rtnl_lock() acquired for netdev_master_upper_dev_link().
+- * For the reader path, the real_dev->rx_handler_data is called in the TX / RX
+- * path. We only need rcu_read_lock() for these scenarios. In these cases,
+- * the rcu_read_lock() is held in __dev_queue_xmit() and
+- * netif_receive_skb_internal(), so readers need to use rcu_dereference_rtnl()
+- * to get the relevant information. For dev list reading, we again acquire
+- * rcu_read_lock() in rmnet_dellink() for netdev_master_upper_dev_get_rcu().
+- * We also use unregister_netdevice_many() to free all rmnet devices in
+- * rmnet_force_unassociate_device() so we dont lose the rtnl_lock() and free in
+- * same context.
+- */
+-
+ /* Local Definitions and Declarations */
+ 
+ static const struct nla_policy rmnet_policy[IFLA_RMNET_MAX + 1] = {
+@@ -51,9 +32,10 @@ rmnet_get_port_rtnl(const struct net_device *real_dev)
+ 	return rtnl_dereference(real_dev->rx_handler_data);
+ }
+ 
+-static int rmnet_unregister_real_device(struct net_device *real_dev,
+-					struct rmnet_port *port)
++static int rmnet_unregister_real_device(struct net_device *real_dev)
+ {
++	struct rmnet_port *port = rmnet_get_port_rtnl(real_dev);
++
+ 	if (port->nr_rmnet_devs)
+ 		return -EINVAL;
+ 
+@@ -61,9 +43,6 @@ static int rmnet_unregister_real_device(struct net_device *real_dev,
+ 
+ 	kfree(port);
+ 
+-	/* release reference on real_dev */
+-	dev_put(real_dev);
+-
+ 	netdev_dbg(real_dev, "Removed from rmnet\n");
+ 	return 0;
+ }
+@@ -89,9 +68,6 @@ static int rmnet_register_real_device(struct net_device *real_dev)
+ 		return -EBUSY;
+ 	}
+ 
+-	/* hold on to real dev for MAP data */
+-	dev_hold(real_dev);
+-
+ 	for (entry = 0; entry < RMNET_MAX_LOGICAL_EP; entry++)
+ 		INIT_HLIST_HEAD(&port->muxed_ep[entry]);
+ 
+@@ -99,28 +75,33 @@ static int rmnet_register_real_device(struct net_device *real_dev)
+ 	return 0;
+ }
+ 
+-static void rmnet_unregister_bridge(struct net_device *dev,
+-				    struct rmnet_port *port)
++static void rmnet_unregister_bridge(struct rmnet_port *port)
+ {
+-	struct rmnet_port *bridge_port;
+-	struct net_device *bridge_dev;
++	struct net_device *bridge_dev, *real_dev, *rmnet_dev;
++	struct rmnet_port *real_port;
+ 
+ 	if (port->rmnet_mode != RMNET_EPMODE_BRIDGE)
+ 		return;
+ 
+-	/* bridge slave handling */
++	rmnet_dev = port->rmnet_dev;
+ 	if (!port->nr_rmnet_devs) {
+-		bridge_dev = port->bridge_ep;
++		/* bridge device */
++		real_dev = port->bridge_ep;
++		bridge_dev = port->dev;
+ 
+-		bridge_port = rmnet_get_port_rtnl(bridge_dev);
+-		bridge_port->bridge_ep = NULL;
+-		bridge_port->rmnet_mode = RMNET_EPMODE_VND;
++		real_port = rmnet_get_port_rtnl(real_dev);
++		real_port->bridge_ep = NULL;
++		real_port->rmnet_mode = RMNET_EPMODE_VND;
+ 	} else {
++		/* real device */
+ 		bridge_dev = port->bridge_ep;
+ 
+-		bridge_port = rmnet_get_port_rtnl(bridge_dev);
+-		rmnet_unregister_real_device(bridge_dev, bridge_port);
++		port->bridge_ep = NULL;
++		port->rmnet_mode = RMNET_EPMODE_VND;
+ 	}
++
++	netdev_upper_dev_unlink(bridge_dev, rmnet_dev);
++	rmnet_unregister_real_device(bridge_dev);
+ }
+ 
+ static int rmnet_newlink(struct net *src_net, struct net_device *dev,
+@@ -135,6 +116,11 @@ static int rmnet_newlink(struct net *src_net, struct net_device *dev,
+ 	int err = 0;
+ 	u16 mux_id;
+ 
++	if (!tb[IFLA_LINK]) {
++		NL_SET_ERR_MSG_MOD(extack, "link not specified");
++		return -EINVAL;
++	}
++
+ 	real_dev = __dev_get_by_index(src_net, nla_get_u32(tb[IFLA_LINK]));
+ 	if (!real_dev || !dev)
+ 		return -ENODEV;
+@@ -157,7 +143,12 @@ static int rmnet_newlink(struct net *src_net, struct net_device *dev,
+ 	if (err)
+ 		goto err1;
+ 
++	err = netdev_upper_dev_link(real_dev, dev, extack);
++	if (err < 0)
++		goto err2;
++
+ 	port->rmnet_mode = mode;
++	port->rmnet_dev = dev;
+ 
+ 	hlist_add_head_rcu(&ep->hlnode, &port->muxed_ep[mux_id]);
+ 
+@@ -173,8 +164,11 @@ static int rmnet_newlink(struct net *src_net, struct net_device *dev,
+ 
+ 	return 0;
+ 
++err2:
++	unregister_netdevice(dev);
++	rmnet_vnd_dellink(mux_id, port, ep);
+ err1:
+-	rmnet_unregister_real_device(real_dev, port);
++	rmnet_unregister_real_device(real_dev);
+ err0:
+ 	kfree(ep);
+ 	return err;
+@@ -183,77 +177,74 @@ err0:
+ static void rmnet_dellink(struct net_device *dev, struct list_head *head)
+ {
+ 	struct rmnet_priv *priv = netdev_priv(dev);
+-	struct net_device *real_dev;
++	struct net_device *real_dev, *bridge_dev;
++	struct rmnet_port *real_port, *bridge_port;
+ 	struct rmnet_endpoint *ep;
+-	struct rmnet_port *port;
+-	u8 mux_id;
++	u8 mux_id = priv->mux_id;
+ 
+ 	real_dev = priv->real_dev;
+ 
+-	if (!real_dev || !rmnet_is_real_dev_registered(real_dev))
++	if (!rmnet_is_real_dev_registered(real_dev))
+ 		return;
+ 
+-	port = rmnet_get_port_rtnl(real_dev);
+-
+-	mux_id = rmnet_vnd_get_mux(dev);
++	real_port = rmnet_get_port_rtnl(real_dev);
++	bridge_dev = real_port->bridge_ep;
++	if (bridge_dev) {
++		bridge_port = rmnet_get_port_rtnl(bridge_dev);
++		rmnet_unregister_bridge(bridge_port);
++	}
+ 
+-	ep = rmnet_get_endpoint(port, mux_id);
++	ep = rmnet_get_endpoint(real_port, mux_id);
+ 	if (ep) {
+ 		hlist_del_init_rcu(&ep->hlnode);
+-		rmnet_unregister_bridge(dev, port);
+-		rmnet_vnd_dellink(mux_id, port, ep);
++		rmnet_vnd_dellink(mux_id, real_port, ep);
+ 		kfree(ep);
+ 	}
+-	rmnet_unregister_real_device(real_dev, port);
+ 
++	netdev_upper_dev_unlink(real_dev, dev);
++	rmnet_unregister_real_device(real_dev);
+ 	unregister_netdevice_queue(dev, head);
+ }
+ 
+-static void rmnet_force_unassociate_device(struct net_device *dev)
++static void rmnet_force_unassociate_device(struct net_device *real_dev)
+ {
+-	struct net_device *real_dev = dev;
+ 	struct hlist_node *tmp_ep;
+ 	struct rmnet_endpoint *ep;
+ 	struct rmnet_port *port;
+ 	unsigned long bkt_ep;
+ 	LIST_HEAD(list);
+ 
+-	if (!rmnet_is_real_dev_registered(real_dev))
+-		return;
+-
+-	ASSERT_RTNL();
+-
+-	port = rmnet_get_port_rtnl(dev);
+-
+-	rcu_read_lock();
+-	rmnet_unregister_bridge(dev, port);
+-
+-	hash_for_each_safe(port->muxed_ep, bkt_ep, tmp_ep, ep, hlnode) {
+-		unregister_netdevice_queue(ep->egress_dev, &list);
+-		rmnet_vnd_dellink(ep->mux_id, port, ep);
++	port = rmnet_get_port_rtnl(real_dev);
+ 
+-		hlist_del_init_rcu(&ep->hlnode);
+-		kfree(ep);
++	if (port->nr_rmnet_devs) {
++		/* real device */
++		rmnet_unregister_bridge(port);
++		hash_for_each_safe(port->muxed_ep, bkt_ep, tmp_ep, ep, hlnode) {
++			unregister_netdevice_queue(ep->egress_dev, &list);
++			netdev_upper_dev_unlink(real_dev, ep->egress_dev);
++			rmnet_vnd_dellink(ep->mux_id, port, ep);
++			hlist_del_init_rcu(&ep->hlnode);
++			kfree(ep);
++		}
++		rmnet_unregister_real_device(real_dev);
++		unregister_netdevice_many(&list);
++	} else {
++		rmnet_unregister_bridge(port);
+ 	}
+-
+-	rcu_read_unlock();
+-	unregister_netdevice_many(&list);
+-
+-	rmnet_unregister_real_device(real_dev, port);
+ }
+ 
+ static int rmnet_config_notify_cb(struct notifier_block *nb,
+ 				  unsigned long event, void *data)
+ {
+-	struct net_device *dev = netdev_notifier_info_to_dev(data);
++	struct net_device *real_dev = netdev_notifier_info_to_dev(data);
+ 
+-	if (!dev)
++	if (!rmnet_is_real_dev_registered(real_dev))
+ 		return NOTIFY_DONE;
+ 
+ 	switch (event) {
+ 	case NETDEV_UNREGISTER:
+-		netdev_dbg(dev, "Kernel unregister\n");
+-		rmnet_force_unassociate_device(dev);
++		netdev_dbg(real_dev, "Kernel unregister\n");
++		rmnet_force_unassociate_device(real_dev);
+ 		break;
+ 
+ 	default:
+@@ -295,16 +286,18 @@ static int rmnet_changelink(struct net_device *dev, struct nlattr *tb[],
+ 	if (!dev)
+ 		return -ENODEV;
+ 
+-	real_dev = __dev_get_by_index(dev_net(dev),
+-				      nla_get_u32(tb[IFLA_LINK]));
+-
+-	if (!real_dev || !rmnet_is_real_dev_registered(real_dev))
++	real_dev = priv->real_dev;
++	if (!rmnet_is_real_dev_registered(real_dev))
+ 		return -ENODEV;
+ 
+ 	port = rmnet_get_port_rtnl(real_dev);
+ 
+ 	if (data[IFLA_RMNET_MUX_ID]) {
+ 		mux_id = nla_get_u16(data[IFLA_RMNET_MUX_ID]);
++		if (rmnet_get_endpoint(port, mux_id)) {
++			NL_SET_ERR_MSG_MOD(extack, "MUX ID already exists");
++			return -EINVAL;
++		}
+ 		ep = rmnet_get_endpoint(port, priv->mux_id);
+ 		if (!ep)
+ 			return -ENODEV;
+@@ -379,11 +372,10 @@ struct rtnl_link_ops rmnet_link_ops __read_mostly = {
+ 	.fill_info	= rmnet_fill_info,
+ };
+ 
+-/* Needs either rcu_read_lock() or rtnl lock */
+-struct rmnet_port *rmnet_get_port(struct net_device *real_dev)
++struct rmnet_port *rmnet_get_port_rcu(struct net_device *real_dev)
+ {
+ 	if (rmnet_is_real_dev_registered(real_dev))
+-		return rcu_dereference_rtnl(real_dev->rx_handler_data);
++		return rcu_dereference_bh(real_dev->rx_handler_data);
+ 	else
+ 		return NULL;
+ }
+@@ -409,7 +401,7 @@ int rmnet_add_bridge(struct net_device *rmnet_dev,
+ 	struct rmnet_port *port, *slave_port;
+ 	int err;
+ 
+-	port = rmnet_get_port(real_dev);
++	port = rmnet_get_port_rtnl(real_dev);
+ 
+ 	/* If there is more than one rmnet dev attached, its probably being
+ 	 * used for muxing. Skip the briding in that case
+@@ -417,6 +409,9 @@ int rmnet_add_bridge(struct net_device *rmnet_dev,
+ 	if (port->nr_rmnet_devs > 1)
+ 		return -EINVAL;
+ 
++	if (port->rmnet_mode != RMNET_EPMODE_VND)
++		return -EINVAL;
++
+ 	if (rmnet_is_real_dev_registered(slave_dev))
+ 		return -EBUSY;
+ 
+@@ -424,9 +419,17 @@ int rmnet_add_bridge(struct net_device *rmnet_dev,
+ 	if (err)
+ 		return -EBUSY;
+ 
+-	slave_port = rmnet_get_port(slave_dev);
++	err = netdev_master_upper_dev_link(slave_dev, rmnet_dev, NULL, NULL,
++					   extack);
++	if (err) {
++		rmnet_unregister_real_device(slave_dev);
++		return err;
++	}
++
++	slave_port = rmnet_get_port_rtnl(slave_dev);
+ 	slave_port->rmnet_mode = RMNET_EPMODE_BRIDGE;
+ 	slave_port->bridge_ep = real_dev;
++	slave_port->rmnet_dev = rmnet_dev;
+ 
+ 	port->rmnet_mode = RMNET_EPMODE_BRIDGE;
+ 	port->bridge_ep = slave_dev;
+@@ -438,16 +441,9 @@ int rmnet_add_bridge(struct net_device *rmnet_dev,
+ int rmnet_del_bridge(struct net_device *rmnet_dev,
+ 		     struct net_device *slave_dev)
+ {
+-	struct rmnet_priv *priv = netdev_priv(rmnet_dev);
+-	struct net_device *real_dev = priv->real_dev;
+-	struct rmnet_port *port, *slave_port;
++	struct rmnet_port *port = rmnet_get_port_rtnl(slave_dev);
+ 
+-	port = rmnet_get_port(real_dev);
+-	port->rmnet_mode = RMNET_EPMODE_VND;
+-	port->bridge_ep = NULL;
+-
+-	slave_port = rmnet_get_port(slave_dev);
+-	rmnet_unregister_real_device(slave_dev, slave_port);
++	rmnet_unregister_bridge(port);
+ 
+ 	netdev_dbg(slave_dev, "removed from rmnet as slave\n");
+ 	return 0;
+@@ -473,8 +469,8 @@ static int __init rmnet_init(void)
+ 
+ static void __exit rmnet_exit(void)
+ {
+-	unregister_netdevice_notifier(&rmnet_dev_notifier);
+ 	rtnl_link_unregister(&rmnet_link_ops);
++	unregister_netdevice_notifier(&rmnet_dev_notifier);
+ }
+ 
+ module_init(rmnet_init)
+diff --git a/drivers/net/ethernet/qualcomm/rmnet/rmnet_config.h b/drivers/net/ethernet/qualcomm/rmnet/rmnet_config.h
+index cd0a6bcbe74a..be515982d628 100644
+--- a/drivers/net/ethernet/qualcomm/rmnet/rmnet_config.h
++++ b/drivers/net/ethernet/qualcomm/rmnet/rmnet_config.h
+@@ -28,6 +28,7 @@ struct rmnet_port {
+ 	u8 rmnet_mode;
+ 	struct hlist_head muxed_ep[RMNET_MAX_LOGICAL_EP];
+ 	struct net_device *bridge_ep;
++	struct net_device *rmnet_dev;
+ };
+ 
+ extern struct rtnl_link_ops rmnet_link_ops;
+@@ -65,7 +66,7 @@ struct rmnet_priv {
+ 	struct rmnet_priv_stats stats;
+ };
+ 
+-struct rmnet_port *rmnet_get_port(struct net_device *real_dev);
++struct rmnet_port *rmnet_get_port_rcu(struct net_device *real_dev);
+ struct rmnet_endpoint *rmnet_get_endpoint(struct rmnet_port *port, u8 mux_id);
+ int rmnet_add_bridge(struct net_device *rmnet_dev,
+ 		     struct net_device *slave_dev,
+diff --git a/drivers/net/ethernet/qualcomm/rmnet/rmnet_handlers.c b/drivers/net/ethernet/qualcomm/rmnet/rmnet_handlers.c
+index 1b74bc160402..29a7bfa2584d 100644
+--- a/drivers/net/ethernet/qualcomm/rmnet/rmnet_handlers.c
++++ b/drivers/net/ethernet/qualcomm/rmnet/rmnet_handlers.c
+@@ -159,6 +159,9 @@ static int rmnet_map_egress_handler(struct sk_buff *skb,
+ static void
+ rmnet_bridge_handler(struct sk_buff *skb, struct net_device *bridge_dev)
+ {
++	if (skb_mac_header_was_set(skb))
++		skb_push(skb, skb->mac_len);
++
+ 	if (bridge_dev) {
+ 		skb->dev = bridge_dev;
+ 		dev_queue_xmit(skb);
+@@ -184,7 +187,7 @@ rx_handler_result_t rmnet_rx_handler(struct sk_buff **pskb)
+ 		return RX_HANDLER_PASS;
+ 
+ 	dev = skb->dev;
+-	port = rmnet_get_port(dev);
++	port = rmnet_get_port_rcu(dev);
+ 
+ 	switch (port->rmnet_mode) {
+ 	case RMNET_EPMODE_VND:
+@@ -217,7 +220,7 @@ void rmnet_egress_handler(struct sk_buff *skb)
+ 	skb->dev = priv->real_dev;
+ 	mux_id = priv->mux_id;
+ 
+-	port = rmnet_get_port(skb->dev);
++	port = rmnet_get_port_rcu(skb->dev);
+ 	if (!port)
+ 		goto drop;
+ 
+diff --git a/drivers/net/ethernet/qualcomm/rmnet/rmnet_vnd.c b/drivers/net/ethernet/qualcomm/rmnet/rmnet_vnd.c
+index 509dfc895a33..26ad40f19c64 100644
+--- a/drivers/net/ethernet/qualcomm/rmnet/rmnet_vnd.c
++++ b/drivers/net/ethernet/qualcomm/rmnet/rmnet_vnd.c
+@@ -266,14 +266,6 @@ int rmnet_vnd_dellink(u8 id, struct rmnet_port *port,
+ 	return 0;
+ }
+ 
+-u8 rmnet_vnd_get_mux(struct net_device *rmnet_dev)
+-{
+-	struct rmnet_priv *priv;
+-
+-	priv = netdev_priv(rmnet_dev);
+-	return priv->mux_id;
+-}
+-
+ int rmnet_vnd_do_flow_control(struct net_device *rmnet_dev, int enable)
+ {
+ 	netdev_dbg(rmnet_dev, "Setting VND TX queue state to %d\n", enable);
+diff --git a/drivers/net/ethernet/qualcomm/rmnet/rmnet_vnd.h b/drivers/net/ethernet/qualcomm/rmnet/rmnet_vnd.h
+index 54cbaf3c3bc4..14d77c709d4a 100644
+--- a/drivers/net/ethernet/qualcomm/rmnet/rmnet_vnd.h
++++ b/drivers/net/ethernet/qualcomm/rmnet/rmnet_vnd.h
+@@ -16,6 +16,5 @@ int rmnet_vnd_dellink(u8 id, struct rmnet_port *port,
+ 		      struct rmnet_endpoint *ep);
+ void rmnet_vnd_rx_fixup(struct sk_buff *skb, struct net_device *dev);
+ void rmnet_vnd_tx_fixup(struct sk_buff *skb, struct net_device *dev);
+-u8 rmnet_vnd_get_mux(struct net_device *rmnet_dev);
+ void rmnet_vnd_setup(struct net_device *dev);
+ #endif /* _RMNET_VND_H_ */
+diff --git a/drivers/net/ethernet/sfc/ptp.c b/drivers/net/ethernet/sfc/ptp.c
+index af15a737c675..59b4f16896a8 100644
+--- a/drivers/net/ethernet/sfc/ptp.c
++++ b/drivers/net/ethernet/sfc/ptp.c
+@@ -560,13 +560,45 @@ efx_ptp_mac_nic_to_ktime_correction(struct efx_nic *efx,
+ 				    u32 nic_major, u32 nic_minor,
+ 				    s32 correction)
+ {
++	u32 sync_timestamp;
+ 	ktime_t kt = { 0 };
++	s16 delta;
+ 
+ 	if (!(nic_major & 0x80000000)) {
+ 		WARN_ON_ONCE(nic_major >> 16);
+-		/* Use the top bits from the latest sync event. */
+-		nic_major &= 0xffff;
+-		nic_major |= (last_sync_timestamp_major(efx) & 0xffff0000);
++
++		/* Medford provides 48 bits of timestamp, so we must get the top
++		 * 16 bits from the timesync event state.
++		 *
++		 * We only have the lower 16 bits of the time now, but we do
++		 * have a full resolution timestamp at some point in past. As
++		 * long as the difference between the (real) now and the sync
++		 * is less than 2^15, then we can reconstruct the difference
++		 * between those two numbers using only the lower 16 bits of
++		 * each.
++		 *
++		 * Put another way
++		 *
++		 * a - b = ((a mod k) - b) mod k
++		 *
++		 * when -k/2 < (a-b) < k/2. In our case k is 2^16. We know
++		 * (a mod k) and b, so can calculate the delta, a - b.
++		 *
++		 */
++		sync_timestamp = last_sync_timestamp_major(efx);
++
++		/* Because delta is s16 this does an implicit mask down to
++		 * 16 bits which is what we need, assuming
++		 * MEDFORD_TX_SECS_EVENT_BITS is 16. delta is signed so that
++		 * we can deal with the (unlikely) case of sync timestamps
++		 * arriving from the future.
++		 */
++		delta = nic_major - sync_timestamp;
++
++		/* Recover the fully specified time now, by applying the offset
++		 * to the (fully specified) sync time.
++		 */
++		nic_major = sync_timestamp + delta;
+ 
+ 		kt = ptp->nic_to_kernel_time(nic_major, nic_minor,
+ 					     correction);
+diff --git a/drivers/net/ethernet/xilinx/ll_temac.h b/drivers/net/ethernet/xilinx/ll_temac.h
+index 276292bca334..53fb8141f1a6 100644
+--- a/drivers/net/ethernet/xilinx/ll_temac.h
++++ b/drivers/net/ethernet/xilinx/ll_temac.h
+@@ -375,10 +375,14 @@ struct temac_local {
+ 	int tx_bd_next;
+ 	int tx_bd_tail;
+ 	int rx_bd_ci;
++	int rx_bd_tail;
+ 
+ 	/* DMA channel control setup */
+ 	u32 tx_chnl_ctrl;
+ 	u32 rx_chnl_ctrl;
++	u8 coalesce_count_rx;
++
++	struct delayed_work restart_work;
+ };
+ 
+ /* Wrappers for temac_ior()/temac_iow() function pointers above */
+diff --git a/drivers/net/ethernet/xilinx/ll_temac_main.c b/drivers/net/ethernet/xilinx/ll_temac_main.c
+index 21c1b4322ea7..eb480204cdbe 100644
+--- a/drivers/net/ethernet/xilinx/ll_temac_main.c
++++ b/drivers/net/ethernet/xilinx/ll_temac_main.c
+@@ -51,6 +51,7 @@
+ #include <linux/ip.h>
+ #include <linux/slab.h>
+ #include <linux/interrupt.h>
++#include <linux/workqueue.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/processor.h>
+ #include <linux/platform_data/xilinx-ll-temac.h>
+@@ -367,6 +368,8 @@ static int temac_dma_bd_init(struct net_device *ndev)
+ 		skb_dma_addr = dma_map_single(ndev->dev.parent, skb->data,
+ 					      XTE_MAX_JUMBO_FRAME_SIZE,
+ 					      DMA_FROM_DEVICE);
++		if (dma_mapping_error(ndev->dev.parent, skb_dma_addr))
++			goto out;
+ 		lp->rx_bd_v[i].phys = cpu_to_be32(skb_dma_addr);
+ 		lp->rx_bd_v[i].len = cpu_to_be32(XTE_MAX_JUMBO_FRAME_SIZE);
+ 		lp->rx_bd_v[i].app0 = cpu_to_be32(STS_CTRL_APP0_IRQONEND);
+@@ -387,12 +390,13 @@ static int temac_dma_bd_init(struct net_device *ndev)
+ 	lp->tx_bd_next = 0;
+ 	lp->tx_bd_tail = 0;
+ 	lp->rx_bd_ci = 0;
++	lp->rx_bd_tail = RX_BD_NUM - 1;
+ 
+ 	/* Enable RX DMA transfers */
+ 	wmb();
+ 	lp->dma_out(lp, RX_CURDESC_PTR,  lp->rx_bd_p);
+ 	lp->dma_out(lp, RX_TAILDESC_PTR,
+-		       lp->rx_bd_p + (sizeof(*lp->rx_bd_v) * (RX_BD_NUM - 1)));
++		       lp->rx_bd_p + (sizeof(*lp->rx_bd_v) * lp->rx_bd_tail));
+ 
+ 	/* Prepare for TX DMA transfer */
+ 	lp->dma_out(lp, TX_CURDESC_PTR, lp->tx_bd_p);
+@@ -788,6 +792,9 @@ static void temac_start_xmit_done(struct net_device *ndev)
+ 		stat = be32_to_cpu(cur_p->app0);
+ 	}
+ 
++	/* Matches barrier in temac_start_xmit */
++	smp_mb();
++
+ 	netif_wake_queue(ndev);
+ }
+ 
+@@ -830,9 +837,19 @@ temac_start_xmit(struct sk_buff *skb, struct net_device *ndev)
+ 	cur_p = &lp->tx_bd_v[lp->tx_bd_tail];
+ 
+ 	if (temac_check_tx_bd_space(lp, num_frag + 1)) {
+-		if (!netif_queue_stopped(ndev))
+-			netif_stop_queue(ndev);
+-		return NETDEV_TX_BUSY;
++		if (netif_queue_stopped(ndev))
++			return NETDEV_TX_BUSY;
++
++		netif_stop_queue(ndev);
++
++		/* Matches barrier in temac_start_xmit_done */
++		smp_mb();
++
++		/* Space might have just been freed - check again */
++		if (temac_check_tx_bd_space(lp, num_frag))
++			return NETDEV_TX_BUSY;
++
++		netif_wake_queue(ndev);
+ 	}
+ 
+ 	cur_p->app0 = 0;
+@@ -850,12 +867,16 @@ temac_start_xmit(struct sk_buff *skb, struct net_device *ndev)
+ 	skb_dma_addr = dma_map_single(ndev->dev.parent, skb->data,
+ 				      skb_headlen(skb), DMA_TO_DEVICE);
+ 	cur_p->len = cpu_to_be32(skb_headlen(skb));
++	if (WARN_ON_ONCE(dma_mapping_error(ndev->dev.parent, skb_dma_addr))) {
++		dev_kfree_skb_any(skb);
++		ndev->stats.tx_dropped++;
++		return NETDEV_TX_OK;
++	}
+ 	cur_p->phys = cpu_to_be32(skb_dma_addr);
+ 	ptr_to_txbd((void *)skb, cur_p);
+ 
+ 	for (ii = 0; ii < num_frag; ii++) {
+-		lp->tx_bd_tail++;
+-		if (lp->tx_bd_tail >= TX_BD_NUM)
++		if (++lp->tx_bd_tail >= TX_BD_NUM)
+ 			lp->tx_bd_tail = 0;
+ 
+ 		cur_p = &lp->tx_bd_v[lp->tx_bd_tail];
+@@ -863,6 +884,27 @@ temac_start_xmit(struct sk_buff *skb, struct net_device *ndev)
+ 					      skb_frag_address(frag),
+ 					      skb_frag_size(frag),
+ 					      DMA_TO_DEVICE);
++		if (dma_mapping_error(ndev->dev.parent, skb_dma_addr)) {
++			if (--lp->tx_bd_tail < 0)
++				lp->tx_bd_tail = TX_BD_NUM - 1;
++			cur_p = &lp->tx_bd_v[lp->tx_bd_tail];
++			while (--ii >= 0) {
++				--frag;
++				dma_unmap_single(ndev->dev.parent,
++						 be32_to_cpu(cur_p->phys),
++						 skb_frag_size(frag),
++						 DMA_TO_DEVICE);
++				if (--lp->tx_bd_tail < 0)
++					lp->tx_bd_tail = TX_BD_NUM - 1;
++				cur_p = &lp->tx_bd_v[lp->tx_bd_tail];
++			}
++			dma_unmap_single(ndev->dev.parent,
++					 be32_to_cpu(cur_p->phys),
++					 skb_headlen(skb), DMA_TO_DEVICE);
++			dev_kfree_skb_any(skb);
++			ndev->stats.tx_dropped++;
++			return NETDEV_TX_OK;
++		}
+ 		cur_p->phys = cpu_to_be32(skb_dma_addr);
+ 		cur_p->len = cpu_to_be32(skb_frag_size(frag));
+ 		cur_p->app0 = 0;
+@@ -884,31 +926,56 @@ temac_start_xmit(struct sk_buff *skb, struct net_device *ndev)
+ 	return NETDEV_TX_OK;
+ }
+ 
++static int ll_temac_recv_buffers_available(struct temac_local *lp)
++{
++	int available;
++
++	if (!lp->rx_skb[lp->rx_bd_ci])
++		return 0;
++	available = 1 + lp->rx_bd_tail - lp->rx_bd_ci;
++	if (available <= 0)
++		available += RX_BD_NUM;
++	return available;
++}
+ 
+ static void ll_temac_recv(struct net_device *ndev)
+ {
+ 	struct temac_local *lp = netdev_priv(ndev);
+-	struct sk_buff *skb, *new_skb;
+-	unsigned int bdstat;
+-	struct cdmac_bd *cur_p;
+-	dma_addr_t tail_p, skb_dma_addr;
+-	int length;
+ 	unsigned long flags;
++	int rx_bd;
++	bool update_tail = false;
+ 
+ 	spin_lock_irqsave(&lp->rx_lock, flags);
+ 
+-	tail_p = lp->rx_bd_p + sizeof(*lp->rx_bd_v) * lp->rx_bd_ci;
+-	cur_p = &lp->rx_bd_v[lp->rx_bd_ci];
+-
+-	bdstat = be32_to_cpu(cur_p->app0);
+-	while ((bdstat & STS_CTRL_APP0_CMPLT)) {
++	/* Process all received buffers, passing them on network
++	 * stack.  After this, the buffer descriptors will be in an
++	 * un-allocated stage, where no skb is allocated for it, and
++	 * they are therefore not available for TEMAC/DMA.
++	 */
++	do {
++		struct cdmac_bd *bd = &lp->rx_bd_v[lp->rx_bd_ci];
++		struct sk_buff *skb = lp->rx_skb[lp->rx_bd_ci];
++		unsigned int bdstat = be32_to_cpu(bd->app0);
++		int length;
++
++		/* While this should not normally happen, we can end
++		 * here when GFP_ATOMIC allocations fail, and we
++		 * therefore have un-allocated buffers.
++		 */
++		if (!skb)
++			break;
+ 
+-		skb = lp->rx_skb[lp->rx_bd_ci];
+-		length = be32_to_cpu(cur_p->app4) & 0x3FFF;
++		/* Loop over all completed buffer descriptors */
++		if (!(bdstat & STS_CTRL_APP0_CMPLT))
++			break;
+ 
+-		dma_unmap_single(ndev->dev.parent, be32_to_cpu(cur_p->phys),
++		dma_unmap_single(ndev->dev.parent, be32_to_cpu(bd->phys),
+ 				 XTE_MAX_JUMBO_FRAME_SIZE, DMA_FROM_DEVICE);
++		/* The buffer is not valid for DMA anymore */
++		bd->phys = 0;
++		bd->len = 0;
+ 
++		length = be32_to_cpu(bd->app4) & 0x3FFF;
+ 		skb_put(skb, length);
+ 		skb->protocol = eth_type_trans(skb, ndev);
+ 		skb_checksum_none_assert(skb);
+@@ -923,43 +990,102 @@ static void ll_temac_recv(struct net_device *ndev)
+ 			 * (back) for proper IP checksum byte order
+ 			 * (be16).
+ 			 */
+-			skb->csum = htons(be32_to_cpu(cur_p->app3) & 0xFFFF);
++			skb->csum = htons(be32_to_cpu(bd->app3) & 0xFFFF);
+ 			skb->ip_summed = CHECKSUM_COMPLETE;
+ 		}
+ 
+ 		if (!skb_defer_rx_timestamp(skb))
+ 			netif_rx(skb);
++		/* The skb buffer is now owned by network stack above */
++		lp->rx_skb[lp->rx_bd_ci] = NULL;
+ 
+ 		ndev->stats.rx_packets++;
+ 		ndev->stats.rx_bytes += length;
+ 
+-		new_skb = netdev_alloc_skb_ip_align(ndev,
+-						XTE_MAX_JUMBO_FRAME_SIZE);
+-		if (!new_skb) {
+-			spin_unlock_irqrestore(&lp->rx_lock, flags);
+-			return;
++		rx_bd = lp->rx_bd_ci;
++		if (++lp->rx_bd_ci >= RX_BD_NUM)
++			lp->rx_bd_ci = 0;
++	} while (rx_bd != lp->rx_bd_tail);
++
++	/* DMA operations will halt when the last buffer descriptor is
++	 * processed (ie. the one pointed to by RX_TAILDESC_PTR).
++	 * When that happens, no more interrupt events will be
++	 * generated.  No IRQ_COAL or IRQ_DLY, and not even an
++	 * IRQ_ERR.  To avoid stalling, we schedule a delayed work
++	 * when there is a potential risk of that happening.  The work
++	 * will call this function, and thus re-schedule itself until
++	 * enough buffers are available again.
++	 */
++	if (ll_temac_recv_buffers_available(lp) < lp->coalesce_count_rx)
++		schedule_delayed_work(&lp->restart_work, HZ / 1000);
++
++	/* Allocate new buffers for those buffer descriptors that were
++	 * passed to network stack.  Note that GFP_ATOMIC allocations
++	 * can fail (e.g. when a larger burst of GFP_ATOMIC
++	 * allocations occurs), so while we try to allocate all
++	 * buffers in the same interrupt where they were processed, we
++	 * continue with what we could get in case of allocation
++	 * failure.  Allocation of remaining buffers will be retried
++	 * in following calls.
++	 */
++	while (1) {
++		struct sk_buff *skb;
++		struct cdmac_bd *bd;
++		dma_addr_t skb_dma_addr;
++
++		rx_bd = lp->rx_bd_tail + 1;
++		if (rx_bd >= RX_BD_NUM)
++			rx_bd = 0;
++		bd = &lp->rx_bd_v[rx_bd];
++
++		if (bd->phys)
++			break;	/* All skb's allocated */
++
++		skb = netdev_alloc_skb_ip_align(ndev, XTE_MAX_JUMBO_FRAME_SIZE);
++		if (!skb) {
++			dev_warn(&ndev->dev, "skb alloc failed\n");
++			break;
+ 		}
+ 
+-		cur_p->app0 = cpu_to_be32(STS_CTRL_APP0_IRQONEND);
+-		skb_dma_addr = dma_map_single(ndev->dev.parent, new_skb->data,
++		skb_dma_addr = dma_map_single(ndev->dev.parent, skb->data,
+ 					      XTE_MAX_JUMBO_FRAME_SIZE,
+ 					      DMA_FROM_DEVICE);
+-		cur_p->phys = cpu_to_be32(skb_dma_addr);
+-		cur_p->len = cpu_to_be32(XTE_MAX_JUMBO_FRAME_SIZE);
+-		lp->rx_skb[lp->rx_bd_ci] = new_skb;
++		if (WARN_ON_ONCE(dma_mapping_error(ndev->dev.parent,
++						   skb_dma_addr))) {
++			dev_kfree_skb_any(skb);
++			break;
++		}
+ 
+-		lp->rx_bd_ci++;
+-		if (lp->rx_bd_ci >= RX_BD_NUM)
+-			lp->rx_bd_ci = 0;
++		bd->phys = cpu_to_be32(skb_dma_addr);
++		bd->len = cpu_to_be32(XTE_MAX_JUMBO_FRAME_SIZE);
++		bd->app0 = cpu_to_be32(STS_CTRL_APP0_IRQONEND);
++		lp->rx_skb[rx_bd] = skb;
+ 
+-		cur_p = &lp->rx_bd_v[lp->rx_bd_ci];
+-		bdstat = be32_to_cpu(cur_p->app0);
++		lp->rx_bd_tail = rx_bd;
++		update_tail = true;
++	}
++
++	/* Move tail pointer when buffers have been allocated */
++	if (update_tail) {
++		lp->dma_out(lp, RX_TAILDESC_PTR,
++			lp->rx_bd_p + sizeof(*lp->rx_bd_v) * lp->rx_bd_tail);
+ 	}
+-	lp->dma_out(lp, RX_TAILDESC_PTR, tail_p);
+ 
+ 	spin_unlock_irqrestore(&lp->rx_lock, flags);
+ }
+ 
++/* Function scheduled to ensure a restart in case of DMA halt
++ * condition caused by running out of buffer descriptors.
++ */
++static void ll_temac_restart_work_func(struct work_struct *work)
++{
++	struct temac_local *lp = container_of(work, struct temac_local,
++					      restart_work.work);
++	struct net_device *ndev = lp->ndev;
++
++	ll_temac_recv(ndev);
++}
++
+ static irqreturn_t ll_temac_tx_irq(int irq, void *_ndev)
+ {
+ 	struct net_device *ndev = _ndev;
+@@ -1052,6 +1178,8 @@ static int temac_stop(struct net_device *ndev)
+ 
+ 	dev_dbg(&ndev->dev, "temac_close()\n");
+ 
++	cancel_delayed_work_sync(&lp->restart_work);
++
+ 	free_irq(lp->tx_irq, ndev);
+ 	free_irq(lp->rx_irq, ndev);
+ 
+@@ -1184,6 +1312,7 @@ static int temac_probe(struct platform_device *pdev)
+ 	lp->dev = &pdev->dev;
+ 	lp->options = XTE_OPTION_DEFAULTS;
+ 	spin_lock_init(&lp->rx_lock);
++	INIT_DELAYED_WORK(&lp->restart_work, ll_temac_restart_work_func);
+ 
+ 	/* Setup mutex for synchronization of indirect register access */
+ 	if (pdata) {
+@@ -1290,6 +1419,7 @@ static int temac_probe(struct platform_device *pdev)
+ 		 */
+ 		lp->tx_chnl_ctrl = 0x10220000;
+ 		lp->rx_chnl_ctrl = 0xff070000;
++		lp->coalesce_count_rx = 0x07;
+ 
+ 		/* Finished with the DMA node; drop the reference */
+ 		of_node_put(dma_np);
+@@ -1321,11 +1451,14 @@ static int temac_probe(struct platform_device *pdev)
+ 				(pdata->tx_irq_count << 16);
+ 		else
+ 			lp->tx_chnl_ctrl = 0x10220000;
+-		if (pdata->rx_irq_timeout || pdata->rx_irq_count)
++		if (pdata->rx_irq_timeout || pdata->rx_irq_count) {
+ 			lp->rx_chnl_ctrl = (pdata->rx_irq_timeout << 24) |
+ 				(pdata->rx_irq_count << 16);
+-		else
++			lp->coalesce_count_rx = pdata->rx_irq_count;
++		} else {
+ 			lp->rx_chnl_ctrl = 0xff070000;
++			lp->coalesce_count_rx = 0x07;
++		}
+ 	}
+ 
+ 	/* Error handle returned DMA RX and TX interrupts */
+diff --git a/drivers/net/phy/mscc.c b/drivers/net/phy/mscc.c
+index 7ada1fd9ca71..2339b9381d21 100644
+--- a/drivers/net/phy/mscc.c
++++ b/drivers/net/phy/mscc.c
+@@ -302,11 +302,11 @@ enum rgmii_rx_clock_delay {
+ 				BIT(VSC8531_FORCE_LED_OFF) | \
+ 				BIT(VSC8531_FORCE_LED_ON))
+ 
+-#define MSCC_VSC8584_REVB_INT8051_FW		"mscc_vsc8584_revb_int8051_fb48.bin"
++#define MSCC_VSC8584_REVB_INT8051_FW		"microchip/mscc_vsc8584_revb_int8051_fb48.bin"
+ #define MSCC_VSC8584_REVB_INT8051_FW_START_ADDR	0xe800
+ #define MSCC_VSC8584_REVB_INT8051_FW_CRC	0xfb48
+ 
+-#define MSCC_VSC8574_REVB_INT8051_FW		"mscc_vsc8574_revb_int8051_29e8.bin"
++#define MSCC_VSC8574_REVB_INT8051_FW		"microchip/mscc_vsc8574_revb_int8051_29e8.bin"
+ #define MSCC_VSC8574_REVB_INT8051_FW_START_ADDR	0x4000
+ #define MSCC_VSC8574_REVB_INT8051_FW_CRC	0x29e8
+ 
+diff --git a/drivers/net/slip/slip.c b/drivers/net/slip/slip.c
+index 61d7e0d1d77d..8e56a41dd758 100644
+--- a/drivers/net/slip/slip.c
++++ b/drivers/net/slip/slip.c
+@@ -863,7 +863,10 @@ err_free_chan:
+ 	tty->disc_data = NULL;
+ 	clear_bit(SLF_INUSE, &sl->flags);
+ 	sl_free_netdev(sl->dev);
++	/* do not call free_netdev before rtnl_unlock */
++	rtnl_unlock();
+ 	free_netdev(sl->dev);
++	return err;
+ 
+ err_exit:
+ 	rtnl_unlock();
+diff --git a/drivers/net/usb/qmi_wwan.c b/drivers/net/usb/qmi_wwan.c
+index 3b7a3b8a5e06..5754bb6ca0ee 100644
+--- a/drivers/net/usb/qmi_wwan.c
++++ b/drivers/net/usb/qmi_wwan.c
+@@ -337,6 +337,9 @@ static void qmi_wwan_netdev_setup(struct net_device *net)
+ 		netdev_dbg(net, "mode: raw IP\n");
+ 	} else if (!net->header_ops) { /* don't bother if already set */
+ 		ether_setup(net);
++		/* Restoring min/max mtu values set originally by usbnet */
++		net->min_mtu = 0;
++		net->max_mtu = ETH_MAX_MTU;
+ 		clear_bit(EVENT_NO_IP_ALIGN, &dev->flags);
+ 		netdev_dbg(net, "mode: Ethernet\n");
+ 	}
+diff --git a/drivers/scsi/libfc/fc_disc.c b/drivers/scsi/libfc/fc_disc.c
+index 9c5f7c9178c6..2b865c6423e2 100644
+--- a/drivers/scsi/libfc/fc_disc.c
++++ b/drivers/scsi/libfc/fc_disc.c
+@@ -628,6 +628,8 @@ redisc:
+ 	}
+ out:
+ 	kref_put(&rdata->kref, fc_rport_destroy);
++	if (!IS_ERR(fp))
++		fc_frame_free(fp);
+ }
+ 
+ /**
+diff --git a/drivers/watchdog/wdat_wdt.c b/drivers/watchdog/wdat_wdt.c
+index 1ce39de917f0..88c5e6361aa0 100644
+--- a/drivers/watchdog/wdat_wdt.c
++++ b/drivers/watchdog/wdat_wdt.c
+@@ -54,6 +54,13 @@ module_param(nowayout, bool, 0);
+ MODULE_PARM_DESC(nowayout, "Watchdog cannot be stopped once started (default="
+ 		 __MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
+ 
++#define WDAT_DEFAULT_TIMEOUT	30
++
++static int timeout = WDAT_DEFAULT_TIMEOUT;
++module_param(timeout, int, 0);
++MODULE_PARM_DESC(timeout, "Watchdog timeout in seconds (default="
++		 __MODULE_STRING(WDAT_DEFAULT_TIMEOUT) ")");
++
+ static int wdat_wdt_read(struct wdat_wdt *wdat,
+ 	 const struct wdat_instruction *instr, u32 *value)
+ {
+@@ -438,6 +445,22 @@ static int wdat_wdt_probe(struct platform_device *pdev)
+ 
+ 	platform_set_drvdata(pdev, wdat);
+ 
++	/*
++	 * Set initial timeout so that userspace has time to configure the
++	 * watchdog properly after it has opened the device. In some cases
++	 * the BIOS default is too short and causes immediate reboot.
++	 */
++	if (timeout * 1000 < wdat->wdd.min_hw_heartbeat_ms ||
++	    timeout * 1000 > wdat->wdd.max_hw_heartbeat_ms) {
++		dev_warn(dev, "Invalid timeout %d given, using %d\n",
++			 timeout, WDAT_DEFAULT_TIMEOUT);
++		timeout = WDAT_DEFAULT_TIMEOUT;
++	}
++
++	ret = wdat_wdt_set_timeout(&wdat->wdd, timeout);
++	if (ret)
++		return ret;
++
+ 	watchdog_set_nowayout(&wdat->wdd, nowayout);
+ 	return devm_watchdog_register_device(dev, &wdat->wdd);
+ }
+diff --git a/fs/jbd2/transaction.c b/fs/jbd2/transaction.c
+index b17f05ae6011..de992a70ddfe 100644
+--- a/fs/jbd2/transaction.c
++++ b/fs/jbd2/transaction.c
+@@ -1079,8 +1079,8 @@ static bool jbd2_write_access_granted(handle_t *handle, struct buffer_head *bh,
+ 	/* For undo access buffer must have data copied */
+ 	if (undo && !jh->b_committed_data)
+ 		goto out;
+-	if (jh->b_transaction != handle->h_transaction &&
+-	    jh->b_next_transaction != handle->h_transaction)
++	if (READ_ONCE(jh->b_transaction) != handle->h_transaction &&
++	    READ_ONCE(jh->b_next_transaction) != handle->h_transaction)
+ 		goto out;
+ 	/*
+ 	 * There are two reasons for the barrier here:
+@@ -2535,8 +2535,8 @@ void __jbd2_journal_refile_buffer(struct journal_head *jh)
+ 	 * our jh reference and thus __jbd2_journal_file_buffer() must not
+ 	 * take a new one.
+ 	 */
+-	jh->b_transaction = jh->b_next_transaction;
+-	jh->b_next_transaction = NULL;
++	WRITE_ONCE(jh->b_transaction, jh->b_next_transaction);
++	WRITE_ONCE(jh->b_next_transaction, NULL);
+ 	if (buffer_freed(bh))
+ 		jlist = BJ_Forget;
+ 	else if (jh->b_modified)
+diff --git a/kernel/signal.c b/kernel/signal.c
+index bcd46f547db3..eea748174ade 100644
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -413,27 +413,32 @@ __sigqueue_alloc(int sig, struct task_struct *t, gfp_t flags, int override_rlimi
+ {
+ 	struct sigqueue *q = NULL;
+ 	struct user_struct *user;
++	int sigpending;
+ 
+ 	/*
+ 	 * Protect access to @t credentials. This can go away when all
+ 	 * callers hold rcu read lock.
++	 *
++	 * NOTE! A pending signal will hold on to the user refcount,
++	 * and we get/put the refcount only when the sigpending count
++	 * changes from/to zero.
+ 	 */
+ 	rcu_read_lock();
+-	user = get_uid(__task_cred(t)->user);
+-	atomic_inc(&user->sigpending);
++	user = __task_cred(t)->user;
++	sigpending = atomic_inc_return(&user->sigpending);
++	if (sigpending == 1)
++		get_uid(user);
+ 	rcu_read_unlock();
+ 
+-	if (override_rlimit ||
+-	    atomic_read(&user->sigpending) <=
+-			task_rlimit(t, RLIMIT_SIGPENDING)) {
++	if (override_rlimit || likely(sigpending <= task_rlimit(t, RLIMIT_SIGPENDING))) {
+ 		q = kmem_cache_alloc(sigqueue_cachep, flags);
+ 	} else {
+ 		print_dropped_signal(sig);
+ 	}
+ 
+ 	if (unlikely(q == NULL)) {
+-		atomic_dec(&user->sigpending);
+-		free_uid(user);
++		if (atomic_dec_and_test(&user->sigpending))
++			free_uid(user);
+ 	} else {
+ 		INIT_LIST_HEAD(&q->list);
+ 		q->flags = 0;
+@@ -447,8 +452,8 @@ static void __sigqueue_free(struct sigqueue *q)
+ {
+ 	if (q->flags & SIGQUEUE_PREALLOC)
+ 		return;
+-	atomic_dec(&q->user->sigpending);
+-	free_uid(q->user);
++	if (atomic_dec_and_test(&q->user->sigpending))
++		free_uid(q->user);
+ 	kmem_cache_free(sigqueue_cachep, q);
+ }
+ 
+diff --git a/kernel/trace/trace_events_hist.c b/kernel/trace/trace_events_hist.c
+index a31be3fce3e8..6495800fb92a 100644
+--- a/kernel/trace/trace_events_hist.c
++++ b/kernel/trace/trace_events_hist.c
+@@ -811,6 +811,29 @@ static const char *synth_field_fmt(char *type)
+ 	return fmt;
+ }
+ 
++static void print_synth_event_num_val(struct trace_seq *s,
++				      char *print_fmt, char *name,
++				      int size, u64 val, char *space)
++{
++	switch (size) {
++	case 1:
++		trace_seq_printf(s, print_fmt, name, (u8)val, space);
++		break;
++
++	case 2:
++		trace_seq_printf(s, print_fmt, name, (u16)val, space);
++		break;
++
++	case 4:
++		trace_seq_printf(s, print_fmt, name, (u32)val, space);
++		break;
++
++	default:
++		trace_seq_printf(s, print_fmt, name, val, space);
++		break;
++	}
++}
++
+ static enum print_line_t print_synth_event(struct trace_iterator *iter,
+ 					   int flags,
+ 					   struct trace_event *event)
+@@ -849,10 +872,13 @@ static enum print_line_t print_synth_event(struct trace_iterator *iter,
+ 		} else {
+ 			struct trace_print_flags __flags[] = {
+ 			    __def_gfpflag_names, {-1, NULL} };
++			char *space = (i == se->n_fields - 1 ? "" : " ");
+ 
+-			trace_seq_printf(s, print_fmt, se->fields[i]->name,
+-					 entry->fields[n_u64],
+-					 i == se->n_fields - 1 ? "" : " ");
++			print_synth_event_num_val(s, print_fmt,
++						  se->fields[i]->name,
++						  se->fields[i]->size,
++						  entry->fields[n_u64],
++						  space);
+ 
+ 			if (strcmp(se->fields[i]->type, "gfp_t") == 0) {
+ 				trace_seq_puts(s, " (");
+diff --git a/mm/slub.c b/mm/slub.c
+index 20d72cb20515..3ca4a223f44c 100644
+--- a/mm/slub.c
++++ b/mm/slub.c
+@@ -3154,6 +3154,15 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
+ 		void *object = c->freelist;
+ 
+ 		if (unlikely(!object)) {
++			/*
++			 * We may have removed an object from c->freelist using
++			 * the fastpath in the previous iteration; in that case,
++			 * c->tid has not been bumped yet.
++			 * Since ___slab_alloc() may reenable interrupts while
++			 * allocating memory, we should bump c->tid now.
++			 */
++			c->tid = next_tid(c->tid);
++
+ 			/*
+ 			 * Invoking slow path likely have side-effect
+ 			 * of re-populating per CPU c->freelist
+diff --git a/net/ipv4/cipso_ipv4.c b/net/ipv4/cipso_ipv4.c
+index 376882215919..0bd10a1f477f 100644
+--- a/net/ipv4/cipso_ipv4.c
++++ b/net/ipv4/cipso_ipv4.c
+@@ -1724,6 +1724,7 @@ void cipso_v4_error(struct sk_buff *skb, int error, u32 gateway)
+ {
+ 	unsigned char optbuf[sizeof(struct ip_options) + 40];
+ 	struct ip_options *opt = (struct ip_options *)optbuf;
++	int res;
+ 
+ 	if (ip_hdr(skb)->protocol == IPPROTO_ICMP || error != -EACCES)
+ 		return;
+@@ -1735,7 +1736,11 @@ void cipso_v4_error(struct sk_buff *skb, int error, u32 gateway)
+ 
+ 	memset(opt, 0, sizeof(struct ip_options));
+ 	opt->optlen = ip_hdr(skb)->ihl*4 - sizeof(struct iphdr);
+-	if (__ip_options_compile(dev_net(skb->dev), opt, skb, NULL))
++	rcu_read_lock();
++	res = __ip_options_compile(dev_net(skb->dev), opt, skb, NULL);
++	rcu_read_unlock();
++
++	if (res)
+ 		return;
+ 
+ 	if (gateway)
+diff --git a/net/mac80211/rx.c b/net/mac80211/rx.c
+index 0e05ff037672..0ba98ad9bc85 100644
+--- a/net/mac80211/rx.c
++++ b/net/mac80211/rx.c
+@@ -4114,7 +4114,7 @@ void __ieee80211_check_fast_rx_iface(struct ieee80211_sub_if_data *sdata)
+ 
+ 	lockdep_assert_held(&local->sta_mtx);
+ 
+-	list_for_each_entry_rcu(sta, &local->sta_list, list) {
++	list_for_each_entry(sta, &local->sta_list, list) {
+ 		if (sdata != sta->sdata &&
+ 		    (!sta->sdata->bss || sta->sdata->bss != sdata->bss))
+ 			continue;
+diff --git a/net/netfilter/xt_hashlimit.c b/net/netfilter/xt_hashlimit.c
+index 1b68a131083c..8c835ad63729 100644
+--- a/net/netfilter/xt_hashlimit.c
++++ b/net/netfilter/xt_hashlimit.c
+@@ -358,21 +358,7 @@ static int htable_create(struct net *net, struct hashlimit_cfg3 *cfg,
+ 	return 0;
+ }
+ 
+-static bool select_all(const struct xt_hashlimit_htable *ht,
+-		       const struct dsthash_ent *he)
+-{
+-	return true;
+-}
+-
+-static bool select_gc(const struct xt_hashlimit_htable *ht,
+-		      const struct dsthash_ent *he)
+-{
+-	return time_after_eq(jiffies, he->expires);
+-}
+-
+-static void htable_selective_cleanup(struct xt_hashlimit_htable *ht,
+-			bool (*select)(const struct xt_hashlimit_htable *ht,
+-				      const struct dsthash_ent *he))
++static void htable_selective_cleanup(struct xt_hashlimit_htable *ht, bool select_all)
+ {
+ 	unsigned int i;
+ 
+@@ -382,7 +368,7 @@ static void htable_selective_cleanup(struct xt_hashlimit_htable *ht,
+ 
+ 		spin_lock_bh(&ht->lock);
+ 		hlist_for_each_entry_safe(dh, n, &ht->hash[i], node) {
+-			if ((*select)(ht, dh))
++			if (time_after_eq(jiffies, dh->expires) || select_all)
+ 				dsthash_free(ht, dh);
+ 		}
+ 		spin_unlock_bh(&ht->lock);
+@@ -396,7 +382,7 @@ static void htable_gc(struct work_struct *work)
+ 
+ 	ht = container_of(work, struct xt_hashlimit_htable, gc_work.work);
+ 
+-	htable_selective_cleanup(ht, select_gc);
++	htable_selective_cleanup(ht, false);
+ 
+ 	queue_delayed_work(system_power_efficient_wq,
+ 			   &ht->gc_work, msecs_to_jiffies(ht->cfg.gc_interval));
+@@ -416,15 +402,6 @@ static void htable_remove_proc_entry(struct xt_hashlimit_htable *hinfo)
+ 		remove_proc_entry(hinfo->name, parent);
+ }
+ 
+-static void htable_destroy(struct xt_hashlimit_htable *hinfo)
+-{
+-	cancel_delayed_work_sync(&hinfo->gc_work);
+-	htable_remove_proc_entry(hinfo);
+-	htable_selective_cleanup(hinfo, select_all);
+-	kfree(hinfo->name);
+-	vfree(hinfo);
+-}
+-
+ static struct xt_hashlimit_htable *htable_find_get(struct net *net,
+ 						   const char *name,
+ 						   u_int8_t family)
+@@ -446,8 +423,13 @@ static void htable_put(struct xt_hashlimit_htable *hinfo)
+ {
+ 	if (refcount_dec_and_mutex_lock(&hinfo->use, &hashlimit_mutex)) {
+ 		hlist_del(&hinfo->node);
++		htable_remove_proc_entry(hinfo);
+ 		mutex_unlock(&hashlimit_mutex);
+-		htable_destroy(hinfo);
++
++		cancel_delayed_work_sync(&hinfo->gc_work);
++		htable_selective_cleanup(hinfo, true);
++		kfree(hinfo->name);
++		vfree(hinfo);
+ 	}
+ }
+ 
+diff --git a/net/qrtr/qrtr.c b/net/qrtr/qrtr.c
+index 88f98f27ad88..3d24d45be5f4 100644
+--- a/net/qrtr/qrtr.c
++++ b/net/qrtr/qrtr.c
+@@ -196,7 +196,7 @@ static int qrtr_node_enqueue(struct qrtr_node *node, struct sk_buff *skb,
+ 	hdr->size = cpu_to_le32(len);
+ 	hdr->confirm_rx = 0;
+ 
+-	skb_put_padto(skb, ALIGN(len, 4));
++	skb_put_padto(skb, ALIGN(len, 4) + sizeof(*hdr));
+ 
+ 	mutex_lock(&node->ep_lock);
+ 	if (node->ep)
+diff --git a/net/wireless/reg.c b/net/wireless/reg.c
+index fff9a74891fc..1a8218f1bbe0 100644
+--- a/net/wireless/reg.c
++++ b/net/wireless/reg.c
+@@ -2276,7 +2276,7 @@ static void handle_channel_custom(struct wiphy *wiphy,
+ 			break;
+ 	}
+ 
+-	if (IS_ERR(reg_rule)) {
++	if (IS_ERR_OR_NULL(reg_rule)) {
+ 		pr_debug("Disabling freq %d MHz as custom regd has no rule that fits it\n",
+ 			 chan->center_freq);
+ 		if (wiphy->regulatory_flags & REGULATORY_WIPHY_SELF_MANAGED) {
+diff --git a/tools/testing/selftests/rseq/Makefile b/tools/testing/selftests/rseq/Makefile
+index f1053630bb6f..2af9d39a9716 100644
+--- a/tools/testing/selftests/rseq/Makefile
++++ b/tools/testing/selftests/rseq/Makefile
+@@ -4,7 +4,7 @@ ifneq ($(shell $(CC) --version 2>&1 | head -n 1 | grep clang),)
+ CLANG_FLAGS += -no-integrated-as
+ endif
+ 
+-CFLAGS += -O2 -Wall -g -I./ -I../../../../usr/include/ -L./ -Wl,-rpath=./ \
++CFLAGS += -O2 -Wall -g -I./ -I../../../../usr/include/ -L$(OUTPUT) -Wl,-rpath=./ \
+ 	  $(CLANG_FLAGS)
+ LDLIBS += -lpthread
+ 

@@ -286,6 +286,12 @@ compile_kernel()
 
 	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
 
+        # create patch for manual source changes in debug mode
+        [[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
+
+        # re-read kernel version after patching
+        local version=$(grab_version "$kerneldir")
+
 	# create linux-source package - with already patched sources
 	local sources_pkg_dir=$SRC/.tmp/${CHOSEN_KSRC}_${REVISION}_all
 	rm -rf ${sources_pkg_dir}
@@ -298,12 +304,6 @@ compile_kernel()
 			| pixz -4 > $sources_pkg_dir/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz
 		cp COPYING $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE
 	fi
-
-	# re-read kernel version after patching
-	local version=$(grab_version "$kerneldir")
-
-	# create patch for manual source changes in debug mode
-	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
