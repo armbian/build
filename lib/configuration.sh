@@ -269,7 +269,7 @@ fi
 
 # For user override
 if [[ -f $USERPATCHES_PATH/lib.config ]]; then
-	display_alert "Using user configuration override" "userpatches/lib.config" "info"
+	display_alert "Using user configuration override" "$USERPATCHES_PATH/lib.config" "info"
 	source "$USERPATCHES_PATH"/lib.config
 fi
 
