@@ -22,7 +22,7 @@ case $BRANCH in
 
         dev)
 
-		KERNELBRANCH='branch:linux-5.5.y'
+		KERNELBRANCH='branch:linux-5.6.y'
 
         ;;
 
