@@ -15,10 +15,15 @@
 
 fel_prepare_host()
 {
+	# Start rpcbind for NFS if inside docker container
+	[ `systemd-detect-virt` == 'docker' ] && service rpcbind start
+
 	# remove and re-add NFS share
 	rm -f /etc/exports.d/armbian.exports
 	mkdir -p /etc/exports.d
 	echo "$FEL_ROOTFS *(rw,async,no_subtree_check,no_root_squash,fsid=root)" > /etc/exports.d/armbian.exports
+	# Start NFS server if inside docker container
+	[ `systemd-detect-virt` == 'docker' ] && service nfs-kernel-server start
 	exportfs -ra
 }
 
@@ -65,7 +70,7 @@ fel_load()
 	[[ $(type -t fel_pre_load) == function ]] && fel_pre_load
 
 	display_alert "Loading files via" "FEL USB" "info"
-	sunxi-fel "${FEL_EXTRA_ARGS}" -p uboot "${FEL_ROOTFS}/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot-sunxi-with-spl.bin" \
+	sunxi-fel ${FEL_EXTRA_ARGS} -p uboot "${FEL_ROOTFS}/usr/lib/${CHOSEN_UBOOT}_${REVISION}_armhf/u-boot-sunxi-with-spl.bin" \
 		write 0x42000000 "${FEL_ROOTFS}"/boot/zImage \
 		write 0x43000000 "${FEL_ROOTFS}/${dtb_file}" \
 		write 0x43300000 "${FEL_ROOTFS}"/boot/uInitrd \
