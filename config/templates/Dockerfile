@@ -18,6 +18,11 @@ RUN apt update && DEBIAN_FRONTEND=noninteractive apt -y upgrade && \
 	libc6-i386 lib32ncurses5 lib32tinfo5 locales ncurses-base zlib1g:i386 pixz bison libbison-dev flex libfl-dev \
 	pigz aptly aria2 cryptsetup cryptsetup-bin python3-distutils --no-install-recommends
 RUN locale-gen en_US.UTF-8
+
+# Static port for NFSv3 server used for USB FEL boot
+RUN sed -i 's/\(^STATDOPTS=\).*/\1"--port 32765 --outgoing-port 32766"/' /etc/default/nfs-common && \
+  sed -i 's/\(^RPCMOUNTDOPTS=\).*/\1"--port 32767"/' /etc/default/nfs-kernel-server
+
 ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8' TERM=screen
 WORKDIR /root/armbian
 ENTRYPOINT [ "/bin/bash", "/root/armbian/compile.sh" ]
