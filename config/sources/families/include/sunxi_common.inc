@@ -1,4 +1,3 @@
-BOOTBRANCH='tag:v2020.04'
 ARCH=armhf
 BOOTDELAY=1
 BOOTPATCHDIR='u-boot-sunxi'
