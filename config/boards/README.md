@@ -17,3 +17,4 @@
 | KERNEL_TARGET | legacy,current,dev |
 | FULL_DESKTOP | yes/no = install Office, Thunderbird, ... |
 | DESKTOP_AUTOLOGIN | yes/no |
+| PACKAGE_LIST_DESKTOP_BOARD | space delimited packages to be installed on this boards desktop build |
