@@ -160,15 +160,15 @@ create_board_package()
 
 	EOF
 
-#	if [[ $RELEASE == bionic ]]; then
-#		cat <<-EOF >> "${destination}"/DEBIAN/postinst
-#		# temporally disable acceleration in Bionic due to broken mesa packages
-#		echo 'Section "Device"
-#			Identifier "Default Device"
-#			Option "AccelMethod" "none"
-#		EndSection' >> /etc/X11/xorg.conf.d/01-armbian-defaults.conf
-#		EOF
-#	fi
+	if [[ $RELEASE == bionic ]]; then
+		cat <<-EOF >> "${destination}"/DEBIAN/postinst
+		# temporally disable acceleration in Bionic due to broken mesa packages
+		echo 'Section "Device"
+		\tIdentifier \t"Default Device"
+		\tOption \t"AccelMethod" "none"
+		EndSection' >> /etc/X11/xorg.conf.d/01-armbian-defaults.conf
+		EOF
+	fi
 
 	# install bootscripts if they are not present. Fix upgrades from old images
 	if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then
