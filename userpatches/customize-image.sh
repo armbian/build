@@ -23,14 +23,6 @@ then
   apt-mark hold linux-image-next-sunxi
 fi
 
-# We don't want the damn network-manager :/
-apt remove network-manager -y || true
-apt autoremove -y
-cat << EOF >> /etc/apt/preferences
-Package: network-manager
-Pin: release *
-Pin-Priority: -1
-EOF
 echo "auto eth0" > /etc/network/interfaces.d/eth0.conf
 echo "allow-hotplug eth0" >> /etc/network/interfaces.d/eth0.conf
 echo "iface eth0 inet dhcp" >> /etc/network/interfaces.d/eth0.conf
