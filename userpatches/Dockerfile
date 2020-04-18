@@ -1,1 +1,0 @@
-../config/templates/Dockerfile
