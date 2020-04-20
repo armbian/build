@@ -540,7 +540,7 @@ prepare_partitions()
 # for cryptroot-unlock to work:
 # https://serverfault.com/questions/907254/cryproot-unlock-with-dropbear-timeout-while-waiting-for-askpass
 #
-# since Debian buster, it has to be called within create_image() on the $MOUNT 
+# since Debian buster, it has to be called within create_image() on the $MOUNT
 # path instead of $SDCARD (which can be a tmpfs and breaks cryptsetup-initramfs).
 # see: https://github.com/armbian/build/issues/1584
 #
@@ -626,7 +626,9 @@ create_image()
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
 	if [[ $BUILD_ALL != yes ]]; then
-		if [[ $COMPRESS_OUTPUTIMAGE == yes ]]; then
+		if [[ $COMPRESS_OUTPUTIMAGE == "" || $COMPRESS_OUTPUTIMAGE == no ]]; then
+			COMPRESS_OUTPUTIMAGE="sha,gpg,img"
+		elif [[ $COMPRESS_OUTPUTIMAGE == yes ]]; then
 			COMPRESS_OUTPUTIMAGE="sha,gpg,7z"
 		fi
 
@@ -663,13 +665,16 @@ create_image()
 			f \( -name "${version}.img" -o -name "${version}.img.asc" -o -name "${version}.img.sha" \) -print0 \
 			| xargs -0 rm >/dev/null 2>&1
 			cd ..
-		elif [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
+		fi
+		if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
 			display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
 			pigz -3 < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
-		elif [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
+		fi
+		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
 			display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
 			pixz -3 < $DESTIMG/${version}.img > $DEST/images/${version}.img.xz
-		else
+		fi
+		if [[ $COMPRESS_OUTPUTIMAGE == *img* ]]; then
 			[[ -f $DESTIMG/${version}.img.txt ]] && mv $DESTIMG/${version}.img.txt $DEST/images/${version}.img.txt
 			mv $DESTIMG/${version}.img $DEST/images/${version}.img || exit 1
 		fi
