@@ -116,10 +116,12 @@ if [[ "$1" == docker && -f /etc/debian_version && -z "$(which docker)" ]]; then
 
 	# add exception for Ubuntu Focal until Docker provides dedicated binary
 	codename=$(lsb_release -sc)
+	codeid=$(lsb_release -is | awk '{print tolower($0)}')
+	[[ $codeid == linuxmint && $codename == debbie ]] && codename="buster" && codeid="debian"
 	[[ $codename == focal ]] && codename="bionic"
 
 	display_alert "Docker not installed." "Installing" "Info"
-	echo "deb [arch=amd64] https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}') ${codename} edge" > /etc/apt/sources.list.d/docker.list
+	echo "deb [arch=amd64] https://download.docker.com/linux/${codeid} ${codename} edge" > /etc/apt/sources.list.d/docker.list
 
 	# minimal set of utilities that are needed for prep
 	packages=("curl" "gnupg" "apt-transport-https")
@@ -129,7 +131,7 @@ if [[ "$1" == docker && -f /etc/debian_version && -z "$(which docker)" ]]; then
 	done
 	[[ -z $install_packages ]] && apt update;apt install -y -qq --no-install-recommends $install_packages
 
-	curl -fsSL "https://download.docker.com/linux/$(lsb_release -is | awk '{print tolower($0)}')/gpg" | apt-key add -qq - > /dev/null 2>&1
+	curl -fsSL "https://download.docker.com/linux/${codeid}/gpg" | apt-key add -qq - > /dev/null 2>&1
 	export DEBIAN_FRONTEND=noninteractive
 	apt update
 	apt install -y -qq --no-install-recommends docker-ce
