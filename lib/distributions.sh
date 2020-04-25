@@ -22,11 +22,11 @@ install_common()
 	# install rootfs encryption related packages separate to not break packages cache
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
 		display_alert "Installing rootfs encryption related packages" "cryptsetup" "info"
-		chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq --no-install-recommends install cryptsetup" \
+		chroot "${SDCARD}" /bin/bash -c "apt -y -qq --no-install-recommends install cryptsetup" \
 		>> "${DEST}"/debug/install.log 2>&1
 		if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then
 			display_alert "Installing rootfs encryption related packages" "dropbear-initramfs" "info"
-			chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq --no-install-recommends install dropbear-initramfs " \
+			chroot "${SDCARD}" /bin/bash -c "apt -y -qq --no-install-recommends install dropbear-initramfs " \
 			>> "${DEST}"/debug/install.log 2>&1
 		fi
 
@@ -228,7 +228,7 @@ install_common()
 
 	if [[ $WIREGUARD == yes ]]; then
 		# install wireguard tools
-		chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install wireguard-tools --no-install-recommends" >> "${DEST}"/debug/install.log 2>&1
+		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install wireguard-tools --no-install-recommends" >> "${DEST}"/debug/install.log 2>&1
 	fi
 
 	# install board support package
