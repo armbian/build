@@ -44,7 +44,7 @@ build tools</h3>
 ## How to build an image or a kernel?
 
 ```text
-apt -y install git
+apt-get -y install git
 git clone https://github.com/armbian/build
 cd build
 ./compile.sh
