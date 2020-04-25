@@ -759,13 +759,13 @@ prepare_host_basic()
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "lsb-release"
-		apt -q update && apt install -q -y --no-install-recommends lsb-release
+		apt-get -q update && apt-get install -q -y --no-install-recommends lsb-release
 	fi
 
 	# need to install dialog if person is starting with a interactive mode
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "dialog"
-		apt -q update && apt install -q -y --no-install-recommends dialog
+		apt-get -q update && apt-get install -q -y --no-install-recommends dialog
 	fi
 
 }
@@ -886,9 +886,9 @@ prepare_host()
 
 	if [[ ${#deps[@]} -gt 0 ]]; then
 		display_alert "Installing build dependencies"
-		apt -q update
-		apt -y upgrade
-		apt -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
+		apt-get -q update
+		apt-get -y upgrade
+		apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
 		update-ccache-symlinks
 	fi
 
@@ -899,7 +899,7 @@ prepare_host()
 	fi
 
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
-		apt install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
+		apt-get install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
 	fi
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
