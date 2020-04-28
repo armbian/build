@@ -1,0 +1,818 @@
+diff --git a/AvailableMetersPanel.c b/AvailableMetersPanel.c
+index ddb5536..89823e2 100644
+--- a/AvailableMetersPanel.c
++++ b/AvailableMetersPanel.c
+@@ -9,6 +9,7 @@ in the source distribution for its full text.
+ #include "MetersPanel.h"
+ 
+ #include "CPUMeter.h"
++#include "CpuFreqMeter.h"
+ #include "Header.h"
+ #include "ListItem.h"
+ #include "Platform.h"
+@@ -100,6 +101,8 @@ PanelClass AvailableMetersPanel_class = {
+ };
+ 
+ AvailableMetersPanel* AvailableMetersPanel_new(Settings* settings, Header* header, Panel* leftMeters, Panel* rightMeters, ScreenManager* scr, ProcessList* pl) {
++   int i;
++    
+    AvailableMetersPanel* this = AllocThis(AvailableMetersPanel);
+    Panel* super = (Panel*) this;
+    FunctionBar* fuBar = FunctionBar_newEnterEsc("Add   ", "Done   ");
+@@ -114,18 +117,26 @@ AvailableMetersPanel* AvailableMetersPanel_new(Settings* settings, Header* heade
+    Panel_setHeader(super, "Available meters");
+    // Platform_meterTypes[0] should be always (&CPUMeter_class), which we will
+    // handle separately in the code below.
+-   for (int i = 1; Platform_meterTypes[i]; i++) {
++   for (i = 1; Platform_meterTypes[i]; i++) {
+       MeterClass* type = Platform_meterTypes[i];
+       assert(type != &CPUMeter_class);
+       const char* label = type->description ? type->description : type->uiName;
+       Panel_add(super, (Object*) ListItem_new(label, i << 16));
+    }
+-   // Handle (&CPUMeter_class)
+-   MeterClass* type = &CPUMeter_class;
++   MeterClass* type = &CpuFreqMeter_class;
+    int cpus = pl->cpuCount;
++   if (cpus > 1) {
++      for ( int z = 1; z <= cpus; z++) {
++         char buffer[50];
++         xSnprintf(buffer, 50, "%s %d", type->uiName, z);
++         Panel_add(super, (Object*) ListItem_new(buffer, z | (18 << 16)));
++      }
++   }
++   // Handle (&CPUMeter_class)
++   type = &CPUMeter_class;
+    if (cpus > 1) {
+       Panel_add(super, (Object*) ListItem_new("CPU average", 0));
+-      for (int i = 1; i <= cpus; i++) {
++      for (i = 1; i <= cpus; i++) {
+          char buffer[50];
+          xSnprintf(buffer, 50, "%s %d", type->uiName, i);
+          Panel_add(super, (Object*) ListItem_new(buffer, i));
+diff --git a/CPUMeter.c b/CPUMeter.c
+index de5490d..757270f 100644
+--- a/CPUMeter.c
++++ b/CPUMeter.c
+@@ -6,6 +6,7 @@ in the source distribution for its full text.
+ */
+ 
+ #include "CPUMeter.h"
++#include "CpuFreqMeter.h"
+ 
+ #include "CRT.h"
+ #include "Settings.h"
+@@ -149,6 +150,11 @@ static void AllCPUsMeter_init(Meter* this) {
+          meters[i] = Meter_new(this->pl, start+i+1, (MeterClass*) Class(CPUMeter));
+       Meter_init(meters[i]);
+    }
++   Meter* meter = NULL;
++   for (int i = 0; i < count; i++) {
++      meter = Meter_new(this->pl, i+1, (MeterClass*) Class(CpuFreqMeter));
++      Meter_init(meter);
++   }
+    if (this->mode == 0)
+       this->mode = BAR_METERMODE;
+    int h = Meter_modes[this->mode]->h;
+diff --git a/CRT.c b/CRT.c
+index ca9a10d..b21299f 100644
+--- a/CRT.c
++++ b/CRT.c
+@@ -128,6 +128,9 @@ typedef enum ColorElements_ {
+    CPU_SOFTIRQ,
+    CPU_STEAL,
+    CPU_GUEST,
++   CPU_TEMP,
++   CPU_FREQ,
++   CPU_VCORE,
+    LAST_COLORELEMENT
+ } ColorElements;
+ 
+@@ -232,6 +235,9 @@ int CRT_colorSchemes[LAST_COLORSCHEME][LAST_COLORELEMENT] = {
+       [CPU_SOFTIRQ] = ColorPair(Magenta,Black),
+       [CPU_STEAL] = ColorPair(Cyan,Black),
+       [CPU_GUEST] = ColorPair(Cyan,Black),
++      [CPU_FREQ] = A_BOLD | ColorPair(Yellow,Black),
++      [CPU_TEMP] = A_BOLD | ColorPair(Red,Black),
++      [CPU_VCORE] = A_BOLD | ColorPair(Yellow,Black),
+    },
+    [COLORSCHEME_MONOCHROME] = {
+       [RESET_COLOR] = A_NORMAL,
+@@ -291,6 +297,9 @@ int CRT_colorSchemes[LAST_COLORSCHEME][LAST_COLORELEMENT] = {
+       [CPU_SOFTIRQ] = A_BOLD,
+       [CPU_STEAL] = A_REVERSE,
+       [CPU_GUEST] = A_REVERSE,
++      [CPU_FREQ] = A_BOLD,
++      [CPU_TEMP] = A_BOLD,
++      [CPU_VCORE] = A_BOLD,
+    },
+    [COLORSCHEME_BLACKONWHITE] = {
+       [RESET_COLOR] = ColorPair(Black,White),
+@@ -350,6 +359,9 @@ int CRT_colorSchemes[LAST_COLORSCHEME][LAST_COLORELEMENT] = {
+       [CPU_SOFTIRQ] = ColorPair(Blue,White),
+       [CPU_STEAL] = ColorPair(Cyan,White),
+       [CPU_GUEST] = ColorPair(Cyan,White),
++      [CPU_FREQ] = A_BOLD | ColorPair(Yellow,White),
++      [CPU_TEMP] = A_BOLD | ColorPair(Yellow,White),
++      [CPU_VCORE] = A_BOLD | ColorPair(Yellow,White),
+    },
+    [COLORSCHEME_LIGHTTERMINAL] = {
+       [RESET_COLOR] = ColorPair(Black,Black),
+@@ -409,6 +421,9 @@ int CRT_colorSchemes[LAST_COLORSCHEME][LAST_COLORELEMENT] = {
+       [CPU_SOFTIRQ] = ColorPair(Blue,Black),
+       [CPU_STEAL] = ColorPair(Black,Black),
+       [CPU_GUEST] = ColorPair(Black,Black),
++      [CPU_FREQ] = A_BOLD | ColorPair(Yellow,Black),
++      [CPU_TEMP] = A_BOLD | ColorPair(Yellow,Black),
++      [CPU_VCORE] = A_BOLD | ColorPair(Yellow,Black),
+    },
+    [COLORSCHEME_MIDNIGHT] = {
+       [RESET_COLOR] = ColorPair(White,Blue),
+@@ -468,6 +483,9 @@ int CRT_colorSchemes[LAST_COLORSCHEME][LAST_COLORELEMENT] = {
+       [CPU_SOFTIRQ] = ColorPair(Black,Blue),
+       [CPU_STEAL] = ColorPair(White,Blue),
+       [CPU_GUEST] = ColorPair(White,Blue),
++      [CPU_FREQ] = A_BOLD | ColorPair(Red,Black),
++      [CPU_TEMP] = A_BOLD | ColorPair(Red,Black),
++      [CPU_VCORE] = A_BOLD | ColorPair(Yellow,Black),
+    },
+    [COLORSCHEME_BLACKNIGHT] = {
+       [RESET_COLOR] = ColorPair(Cyan,Black),
+@@ -527,6 +545,9 @@ int CRT_colorSchemes[LAST_COLORSCHEME][LAST_COLORELEMENT] = {
+       [CPU_SOFTIRQ] = ColorPair(Blue,Black),
+       [CPU_STEAL] = ColorPair(Cyan,Black),
+       [CPU_GUEST] = ColorPair(Cyan,Black),
++      [CPU_FREQ] = A_BOLD | ColorPair(Red,Black),
++      [CPU_TEMP] = A_BOLD | ColorPair(Red,Black),
++      [CPU_VCORE] = A_BOLD | ColorPair(Yellow,Black),
+    },
+    [COLORSCHEME_BROKENGRAY] = { 0 } // dynamically generated.
+ };
+@@ -596,6 +617,15 @@ void CRT_restorePrivileges() {
+ // TODO: pass an instance of Settings instead.
+ 
+ void CRT_init(int delay, int colorScheme) {
++#ifdef DEBUG    
++   setenv("TERM", "xterm", 1);
++   CRT_termType = getenv("TERM");
++   if (String_eq(CRT_termType, "linux"))
++      CRT_scrollHAmount = 20;
++   else
++      CRT_scrollHAmount = 5;
++   setenv("TERM", "xterm", 1);    
++#endif   
+    initscr();
+    noecho();
+    CRT_delay = delay;
+diff --git a/CpuFreqMeter.c b/CpuFreqMeter.c
+new file mode 100644
+index 0000000..354273a
+--- /dev/null
++++ b/CpuFreqMeter.c
+@@ -0,0 +1,128 @@
++/*
++htop - CpuFreqMeter.c
++(C) 2018 @lex
++*/
++
++#include "CpuFreqMeter.h"
++#include "Platform.h"
++#include "CRT.h"
++
++/*{
++#include "Meter.h"
++}*/
++
++
++int CpuFreqMeter_attributes[] = {
++   CPU_FREQ
++};
++
++static void CpuFreqMeter_setValues(Meter* this, char* buffer, int len) {
++   int ghz,mhz,roundup;
++   int cpu, Freq;
++   int bigLITTLE;
++   char buf[32];
++
++   cpu = this->param;
++   cpu--;
++   if (cpu < 0) {
++      // xSnprintf(buffer, len, "cpu: %d",cpu);
++      cpu = 0;
++   }
++   bigLITTLE = Platform_getCpuBigLITTLE();
++   if (bigLITTLE)  {
++       if (bigLITTLE > 0) {
++           if (cpu < bigLITTLE) {
++               strcpy(buf, "(   .LITTLE)");
++           } else {
++               strcpy(buf, "(big.      )");
++           }
++       }
++   }
++   Freq = Platform_getCpuFreq(cpu);
++   if (Freq > 1000) {
++       Freq /= 1000;
++   }
++   if (Freq > 1000) {
++       ghz = Freq / 1000;
++       mhz = Freq % 1000;
++       roundup = ((mhz % 10) > 5);
++       mhz /= 10;
++       mhz += roundup;
++       if (bigLITTLE)  {
++           xSnprintf(buffer, len, "%d.%02d GHz %s", ghz, mhz, buf);
++       } else {
++           xSnprintf(buffer, len, "%d.%02d GHz", ghz, mhz);
++       }
++   } else {
++       if (bigLITTLE)  {
++           xSnprintf(buffer, len, "%4d MHz %s", Freq, buf);
++       } else {
++            xSnprintf(buffer, len, "%4d MHz", Freq);
++       }
++   }
++}
++
++static void CpuFreqMeter_init(Meter* this) {
++   int cpu = this->param;
++   if (cpu > 0) {
++       char caption[16];
++       xSnprintf(caption, sizeof(caption), "CpuFreq%d: ", cpu);
++       Meter_setCaption(this, caption);
++    }
++}
++
++MeterClass CpuFreqMeter_class = {
++   .super = {
++      .extends = Class(Meter),
++      .delete = Meter_delete
++   },
++   .updateValues = CpuFreqMeter_setValues, 
++   .defaultMode = TEXT_METERMODE,
++   .maxItems = 8,
++   .total = 100.0,
++   .attributes = CpuFreqMeter_attributes,
++   .name = "CpuFreq",
++   .uiName = "CpuFreq",
++   .caption = "Cpu Freq: ",
++   .init = CpuFreqMeter_init
++};
++
++static void AllCpuFreqMeter_init(Meter* this) {
++   int cpus = this->pl->cpuCount;
++   if (!this->drawData)
++       this->drawData = xCalloc(cpus, sizeof(Meter*));
++   Meter** meters = (Meter**) this->drawData;
++   for (int i = 0; i < cpus; i++) {
++        if (!meters[i])
++             meters[i] = Meter_new(this->pl, i+1, (MeterClass*) Class(CpuFreqMeter));
++        Meter_init(meters[i]);
++   }
++}
++
++static void AllCpuFreqMeter_done(Meter* this) {
++   int cpus = this->pl->cpuCount;
++   Meter** meters = (Meter**) this->drawData;
++   if (meters) {
++       for (int i = 0; i < cpus; i++)
++          Meter_delete((Object*)meters[i]);
++  }
++}
++
++
++MeterClass AllCpuFreqMeter_class = {
++   .super = {
++      .extends = Class(Meter),
++      .delete = Meter_delete
++   },
++   .updateValues = CpuFreqMeter_setValues, 
++   .defaultMode = TEXT_METERMODE,
++   .maxItems = 8,
++   .total = 100.0,
++   .attributes = CpuFreqMeter_attributes,
++   .name = "AllCpuFreq",
++   .uiName = "AllCpuFreq",
++   .caption = "AllCpu Freq: ",
++   .init = AllCpuFreqMeter_init,
++   .done = AllCpuFreqMeter_done   
++};
++
+diff --git a/CpuTempMeter.c b/CpuTempMeter.c
+new file mode 100644
+index 0000000..79a5a08
+--- /dev/null
++++ b/CpuTempMeter.c
+@@ -0,0 +1,39 @@
++/*
++htop - CpuTempMeter.c
++(C) 2018 @lex
++*/
++
++#include "CpuTempMeter.h"
++#include "Platform.h"
++#include "CRT.h"
++
++/*{
++#include "Meter.h"
++}*/
++
++int CpuTempMeter_attributes[] = {
++   CPU_TEMP
++};
++
++static void CpuTempMeter_setValues(Meter* this, char* buffer, int len) {
++   int Temp = Platform_getCpuTemp();
++   if (Temp > 1000) {
++       Temp /= 1000;
++   }
++   xSnprintf(buffer, len, "%4d C", Temp);
++}
++
++MeterClass CpuTempMeter_class = {
++   .super = {
++      .extends = Class(Meter),
++      .delete = Meter_delete
++   },
++   .updateValues = CpuTempMeter_setValues, 
++   .defaultMode = TEXT_METERMODE,
++   .maxItems = 1,
++   .total = 100.0,
++   .attributes = CpuTempMeter_attributes,
++   .name = "CpuTemp",
++   .uiName = "CpuTemp",
++   .caption = "Cpu Temp: "
++};
+diff --git a/CpuVcoreMeter.c b/CpuVcoreMeter.c
+new file mode 100644
+index 0000000..d5e7599
+--- /dev/null
++++ b/CpuVcoreMeter.c
+@@ -0,0 +1,84 @@
++/*
++htop - CpuVcoreMeter.c
++(C) 2018 @lex
++*/
++
++#include "CpuVcoreMeter.h"
++#include "Platform.h"
++#include "CRT.h"
++
++/*{
++#include "Meter.h"
++}*/
++
++
++int CpuVcoreMeter_attributes[] = {
++   CPU_VCORE
++};
++
++static void CpuVcoreMeter_setValues(Meter* this, char* buffer, int len) {
++   int v1,v2;
++   int Vcore, Vcore_l, Vcore_b;
++   char buf1[80], buf2[80];
++   int h;
++   
++   if (Platform_getCpuBigLITTLE()) {
++       h = len / 2;
++       if (h > 79)
++           h = 79;
++       Vcore_b = Platform_getCpuVcore_b();
++       if (Vcore_b > 1000) {
++           Vcore_b /= 1000;
++       }
++       if (Vcore_b >= 1000) {
++           Vcore_b /= 10;
++           v1 = Vcore_b / 100;
++           v2 = Vcore_b % 100;
++           xSnprintf(buf1, h, "%d.%02d V", v1, v2);
++       } else {
++           xSnprintf(buf1, h, "%4d mV", Vcore_b);
++       }
++       Vcore_l = Platform_getCpuVcore_l();
++       if (Vcore_l > 1000) {
++           Vcore_l /= 1000;
++       }
++       if (Vcore_l >= 1000) {
++           Vcore_l /= 10;
++           v1 = Vcore_l / 100;
++           v2 = Vcore_l % 100;
++           xSnprintf(buf2, h, "%d.%02d V ", v1, v2);
++       } else {
++           xSnprintf(buf2, h, "%4d mV", Vcore_l);
++       }
++       xSnprintf(buffer, len, "%s,%s (big.LITTLE)", buf1, buf2);
++       return;
++   }
++   
++   Vcore = Platform_getCpuVcore();
++   if (Vcore > 1000) {
++       Vcore /= 1000;
++   }
++   if (Vcore >= 1000) {
++       Vcore /= 10;
++       v1 = Vcore / 100;
++       v2 = Vcore % 100;
++       xSnprintf(buffer, len, "%d.%02d V", v1, v2);
++   } else {
++       xSnprintf(buffer, len, "%4d mV", Vcore);
++   }
++}
++
++MeterClass CpuVcoreMeter_class = {
++   .super = {
++      .extends = Class(Meter),
++      .delete = Meter_delete
++   },
++   .updateValues = CpuVcoreMeter_setValues, 
++   .defaultMode = TEXT_METERMODE,
++   .maxItems = 1,
++   .total = 100.0,
++   .attributes = CpuVcoreMeter_attributes,
++   .name = "CpuVcore",
++   .uiName = "CpuVcore",
++   .caption = "Cpu Vcor: "
++};
+diff --git a/Makefile.am b/Makefile.am
+index cd5209c..5791680 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -21,7 +21,7 @@ ClockMeter.c ColorsPanel.c ColumnsPanel.c CPUMeter.c CRT.c MainPanel.c \
+ DisplayOptionsPanel.c FunctionBar.c Hashtable.c Header.c htop.c ListItem.c \
+ LoadAverageMeter.c MemoryMeter.c Meter.c MetersPanel.c Object.c Panel.c \
+ BatteryMeter.c Process.c ProcessList.c RichString.c ScreenManager.c Settings.c \
+-SignalsPanel.c StringUtils.c SwapMeter.c TasksMeter.c UptimeMeter.c \
++SignalsPanel.c StringUtils.c SwapMeter.c TasksMeter.c UptimeMeter.c CpuFreqMeter.c CpuTempMeter.c CpuVcoreMeter.c \
+ TraceScreen.c UsersTable.c Vector.c AvailableColumnsPanel.c AffinityPanel.c \
+ HostnameMeter.c OpenFilesScreen.c Affinity.c IncSet.c Action.c EnvScreen.c \
+ InfoScreen.c XAlloc.c
+@@ -32,7 +32,7 @@ CPUMeter.h CRT.h MainPanel.h DisplayOptionsPanel.h FunctionBar.h \
+ Hashtable.h Header.h htop.h ListItem.h LoadAverageMeter.h MemoryMeter.h \
+ BatteryMeter.h Meter.h MetersPanel.h Object.h Panel.h ProcessList.h RichString.h \
+ ScreenManager.h Settings.h SignalsPanel.h StringUtils.h SwapMeter.h \
+-TasksMeter.h UptimeMeter.h TraceScreen.h UsersTable.h Vector.h Process.h \
++TasksMeter.h UptimeMeter.h CpuFreqMeter.h CpuTempMeter.h CpuVcoreMeter.h TraceScreen.h UsersTable.h Vector.h Process.h \
+ AffinityPanel.h HostnameMeter.h OpenFilesScreen.h Affinity.h IncSet.h Action.h \
+ EnvScreen.h InfoScreen.h XAlloc.h
+ 
+diff --git a/ProcessList.c b/ProcessList.c
+index 7482b03..4ef1e83 100644
+--- a/ProcessList.c
++++ b/ProcessList.c
+@@ -69,6 +69,7 @@ typedef struct ProcessList_ {
+    unsigned long long int freeSwap;
+ 
+    int cpuCount;
++   int cpuBigLITTLE;
+ 
+ } ProcessList;
+ 
+diff --git a/ScreenManager.c b/ScreenManager.c
+index 05e1c02..3ae6670 100644
+--- a/ScreenManager.c
++++ b/ScreenManager.c
+@@ -130,6 +130,7 @@ static void checkRecalculation(ScreenManager* this, double* oldTime, int* sortTi
+    if (newTime < *oldTime) *rescan = true; // clock was adjusted?
+    if (*rescan) {
+       *oldTime = newTime;
++      Header_draw(this->header);
+       ProcessList_scan(pl);
+       if (*sortTimeout == 0 || this->settings->treeView) {
+          ProcessList_sort(pl);
+@@ -139,7 +140,7 @@ static void checkRecalculation(ScreenManager* this, double* oldTime, int* sortTi
+    }
+    if (*redraw) {
+       ProcessList_rebuildPanel(pl);
+-      Header_draw(this->header);
++      // Header_draw(this->header);
+    }
+    *rescan = false;
+ }
+diff --git a/Settings.c b/Settings.c
+index db2fa06..f9ed1ea 100644
+--- a/Settings.c
++++ b/Settings.c
+@@ -141,6 +141,13 @@ static void Settings_defaultMeters(Settings* this) {
+    this->columns[1].modes[r++] = TEXT_METERMODE;
+    this->columns[1].names[r] = xStrdup("Uptime");
+    this->columns[1].modes[r++] = TEXT_METERMODE;
++   
++#if 0   
++   this->columns[1].names[r] = xStrdup("CpuFreq");
++   this->columns[1].modes[r++] = TEXT_METERMODE;
++   this->columns[1].names[r] = xStrdup("CpuTemp");
++   this->columns[1].modes[r++] = TEXT_METERMODE;
++#endif   
+ }
+ 
+ static void readFields(ProcessField* fields, int* flags, const char* line) {
+diff --git a/htop.c b/htop.c
+index 6db81dd..d98e7a1 100644
+--- a/htop.c
++++ b/htop.c
+@@ -193,6 +193,8 @@ int main(int argc, char** argv) {
+    UsersTable* ut = UsersTable_new();
+    ProcessList* pl = ProcessList_new(ut, flags.pidWhiteList, flags.userId);
+    
++   Platform_findCpuBigLITTLE(pl->cpuCount, &pl->cpuBigLITTLE);
++
+    Settings* settings = Settings_new(pl->cpuCount);
+    pl->settings = settings;
+ 
+diff --git a/linux/LinuxProcess.c b/linux/LinuxProcess.c
+index 09ccbe1..d26874e 100644
+--- a/linux/LinuxProcess.c
++++ b/linux/LinuxProcess.c
+@@ -120,7 +120,7 @@ typedef struct LinuxProcess_ {
+    double io_rate_write_bps;
+    #endif
+    #ifdef HAVE_OPENVZ
+-   unsigned int ctid;
++   char* ctid;
+    unsigned int vpid;
+    #endif
+    #ifdef HAVE_VSERVER
+@@ -272,6 +272,9 @@ LinuxProcess* LinuxProcess_new(Settings* settings) {
+ void Process_delete(Object* cast) {
+    LinuxProcess* this = (LinuxProcess*) cast;
+    Process_done((Process*)cast);
++#ifdef HAVE_OPENVZ
++   free(this->ctid);
++#endif
+ #ifdef HAVE_CGROUP
+    free(this->cgroup);
+ #endif
+@@ -362,7 +365,7 @@ void LinuxProcess_writeField(Process* this, RichString* str, ProcessField field)
+    }
+    #endif
+    #ifdef HAVE_OPENVZ
+-   case CTID: xSnprintf(buffer, n, "%7u ", lp->ctid); break;
++   case CTID: xSnprintf(buffer, n, "%8.8s ", lp->ctid); break;
+    case VPID: xSnprintf(buffer, n, Process_pidFormat, lp->vpid); break;
+    #endif
+    #ifdef HAVE_VSERVER
+@@ -442,7 +445,7 @@ long LinuxProcess_compare(const void* v1, const void* v2) {
+    #endif
+    #ifdef HAVE_OPENVZ
+    case CTID:
+-      return (p2->ctid - p1->ctid);
++      return strcmp(p1->ctid ?: "", p2->ctid ?: "");
+    case VPID:
+       return (p2->vpid - p1->vpid);
+    #endif
+diff --git a/linux/LinuxProcessList.c b/linux/LinuxProcessList.c
+index 2edd042..a03e61d 100644
+--- a/linux/LinuxProcessList.c
++++ b/linux/LinuxProcessList.c
+@@ -486,27 +486,35 @@ static bool LinuxProcessList_readStatmFile(LinuxProcess* process, const char* di
+ #ifdef HAVE_OPENVZ
+ 
+ static void LinuxProcessList_readOpenVZData(LinuxProcess* process, const char* dirname, const char* name) {
+-   if ( (access("/proc/vz", R_OK) != 0)) {
+-      process->vpid = process->super.pid;
+-      process->ctid = 0;
++   process->vpid = process->super.pid;
++   free(process->ctid);
++   process->ctid = xStrdup("0");
++   if ( (access("/proc/vz", R_OK) != 0))
+       return;
+-   }
+    char filename[MAX_NAME+1];
+-   xSnprintf(filename, MAX_NAME, "%s/%s/stat", dirname, name);
++   xSnprintf(filename, MAX_NAME, "%s/%s/status", dirname, name);
+    FILE* file = fopen(filename, "r");
+    if (!file)
+       return;
+-   (void) fscanf(file,
+-      "%*32u %*32s %*1c %*32u %*32u %*32u %*32u %*32u %*32u %*32u "
+-      "%*32u %*32u %*32u %*32u %*32u %*32u %*32u %*32u "
+-      "%*32u %*32u %*32u %*32u %*32u %*32u %*32u %*32u "
+-      "%*32u %*32u %*32u %*32u %*32u %*32u %*32u %*32u "
+-      "%*32u %*32u %*32u %*32u %*32u %*32u %*32u %*32u "
+-      "%*32u %*32u %*32u %*32u %*32u %*32u %*32u "
+-      "%*32u %*32u %32u %32u",
+-      &process->vpid, &process->ctid);
++   char buffer[PROC_LINE_LENGTH + 1];
++   while (fgets(buffer, PROC_LINE_LENGTH, file)) {
++      if (String_startsWith(buffer, "envID:")) {
++         char ctid[PROC_LINE_LENGTH + 1];
++         int ok = sscanf(buffer, "envID:\t%36s", ctid);
++         if (ok == 1) {
++            free(process->ctid);
++            process->ctid = xStrdup(ctid);
++         }
++      }
++      else if (String_startsWith(buffer, "VPid:")) {
++         unsigned int vpid;
++         int ok = sscanf(buffer, "VPid:\t%32u", &vpid);
++         if (ok == 1) {
++            process->vpid = vpid;
++         }
++      }
++   }
+    fclose(file);
+-   return;
+ }
+ 
+ #endif
+diff --git a/linux/Platform.c b/linux/Platform.c
+index ab90ca7..1166a02 100644
+--- a/linux/Platform.c
++++ b/linux/Platform.c
+@@ -14,6 +14,9 @@ in the source distribution for its full text.
+ 
+ #include "Meter.h"
+ #include "CPUMeter.h"
++#include "CpuFreqMeter.h"
++#include "CpuTempMeter.h"
++#include "CpuVcoreMeter.h"
+ #include "MemoryMeter.h"
+ #include "SwapMeter.h"
+ #include "TasksMeter.h"
+@@ -23,6 +26,14 @@ in the source distribution for its full text.
+ #include "HostnameMeter.h"
+ #include "LinuxProcess.h"
+ 
++#ifdef WIN32
++#include <windows.h>
++#elif _POSIX_C_SOURCE >= 199309L
++#include <time.h>   /* for nanosleep */
++#else
++#include <unistd.h> /* for usleep */
++#endif
++
+ #include <math.h>
+ #include <assert.h>
+ #include <limits.h>
+@@ -35,6 +46,14 @@ in the source distribution for its full text.
+ #include "BatteryMeter.h"
+ #include "LinuxProcess.h"
+ #include "SignalsPanel.h"
++#ifdef WIN32
++#include <windows.h>
++#elif _POSIX_C_SOURCE >= 199309L
++#include <time.h>   
++#else
++#include <unistd.h> 
++#endif
++#include <string.h> 
+ }*/
+ 
+ #ifndef CLAMP
+@@ -45,6 +64,7 @@ ProcessField Platform_defaultFields[] = { PID, USER, PRIORITY, NICE, M_SIZE, M_R
+ 
+ //static ProcessField defaultIoFields[] = { PID, IO_PRIORITY, USER, IO_READ_RATE, IO_WRITE_RATE, IO_RATE, COMM, 0 };
+ 
++int Platform_cpuBigLITTLE;
+ int Platform_numberOfFields = LAST_PROCESSFIELD;
+ 
+ const SignalItem Platform_signals[] = {
+@@ -126,9 +146,148 @@ MeterClass* Platform_meterTypes[] = {
+    &LeftCPUs2Meter_class,
+    &RightCPUs2Meter_class,
+    &BlankMeter_class,
++   &CpuTempMeter_class,
++   &CpuFreqMeter_class,
++   /* --- fix me --- &AllCpuFreqMeter_class, */
++   &CpuVcoreMeter_class,
+    NULL
+ };
+ 
++/* cross-platform sleep function */
++void sleep_ms(int milliseconds) {
++#ifdef WIN32
++    Sleep(milliseconds);
++#elif _POSIX_C_SOURCE >= 199309L
++    struct timespec ts;
++    ts.tv_sec = milliseconds / 1000;
++    ts.tv_nsec = (milliseconds % 1000) * 1000000;
++    nanosleep(&ts, NULL);
++#else
++    usleep(milliseconds * 1000);
++#endif
++}
++
++
++int Platform_getCpuTemp() {
++   int Temp = 0;
++
++   FILE* fd = fopen("/sys/class/thermal/thermal_zone0/temp", "r");
++   if (!fd) {
++       fd = fopen("/sys/devices/virtual/thermal/thermal_zone0/temp", "r");
++   }
++   if (fd) {
++      int n = fscanf(fd, "%d", &Temp);
++      fclose(fd);
++      if (n <= 0) return 0;
++   }
++   return Temp;
++}
++
++int Platform_getCpuFreq(int cpu) {
++   int Freq = 0;
++   FILE* fd;
++   char szbuf[256];
++   // sleep_ms(30);
++   xSnprintf(szbuf, sizeof(szbuf), "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_cur_freq", cpu);
++   fd = fopen(szbuf, "r");
++   if (fd) {
++      int n;
++      n = fscanf(fd, "%d", &Freq);
++      fclose(fd);
++      if (n <= 0) return 0;
++   }
++   return Freq;
++}
++
++int Platform_getCpuVcore() {
++   int Vcore = 0;
++   FILE* fd;
++   // sleep_ms(10);
++   fd = fopen("/sys/devices/platform/soc/7081400.i2c/i2c-0/0-0036/regulator/regulator.1/microvolts", "r");
++   if (!fd) {
++       fd = fopen("/sys/devices/platform/soc/1f02400.i2c/i2c-4/4-0065/regulator/regulator.5/microvolts", "r");
++       if (!fd) {
++           fd = fopen("/sys/devices/platform/ff3c0000.i2c/i2c-0/0-001b/regulator/regulator.12/microvolts", "r");
++       }
++   }
++   if (fd) {
++      int n;
++      n = fscanf(fd, "%d", &Vcore);
++      fclose(fd);
++      if (n <= 0) return 0;
++   }
++   return Vcore;
++}
++
++int Platform_getCpuVcore_l() {
++   int Vcore = 0;
++   FILE* fd;
++   // sleep_ms(10);
++   fd = fopen("/sys/devices/platform/ff3c0000.i2c/i2c-0/0-001b/regulator/regulator.12/microvolts", "r");
++   if (fd) {
++      int n;
++      n = fscanf(fd, "%d", &Vcore);
++      fclose(fd);
++      if (n <= 0) return 0;
++   }
++   return Vcore;
++}
++
++int Platform_getCpuVcore_b() {
++   int Vcore = 0;
++   FILE* fd;
++   // sleep_ms(10);
++   fd = fopen("/sys/devices/platform/ff3c0000.i2c/i2c-0/0-0040/regulator/regulator.9/microvolts", "r");
++   if (fd) {
++      int n;
++      n = fscanf(fd, "%d", &Vcore);
++      fclose(fd);
++      if (n <= 0) return 0;
++   }
++   return Vcore;
++}
++
++
++int Platform_getCpuBigLITTLE() {
++    return Platform_cpuBigLITTLE;
++}
++
++int Platform_findCpuBigLITTLE(int cpucount, int *cpuBigLITTLE) {
++    char buf[256];
++    int n, prev, next;
++    FILE* fd;
++    
++    *cpuBigLITTLE = 0;
++    prev = next = -1;
++    int cpu = 0;
++    while (cpu < cpucount) {
++        xSnprintf(buf, sizeof(buf), "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", cpu);
++        fd = fopen(buf, "r");
++        if (fd) {
++            n = fscanf(fd, "%d", &next);
++            fclose(fd);
++            if (n <= 0) 
++                break;
++            if (prev == -1) {
++                prev = next;
++            } else {
++                if (prev != next) {
++                    if (prev < next) {
++                        Platform_cpuBigLITTLE = cpu;
++                    } else {
++                        Platform_cpuBigLITTLE = cpu * -1; /* fix me */
++                    }
++                    *cpuBigLITTLE = Platform_cpuBigLITTLE;
++                    break;                    
++                }
++            }
++        }
++        cpu++;
++    }
++    return cpu;
++}
++
++
+ int Platform_getUptime() {
+    double uptime = 0;
+    FILE* fd = fopen(PROCDIR "/uptime", "r");

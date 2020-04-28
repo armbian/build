@@ -22,7 +22,7 @@ fi
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
 if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "${consoleargs} console=ttyS0,115200n8"; fi
 
-setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} no_console_suspend earlycon=uart,mmio32,0x01c28000 mac_addr=${ethaddr} panic=10 consoleblank=0 loglevel=${verbosity} ${extraargs} ${extraboardargs}"
+setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} no_console_suspend earlycon=uart,mmio32,0x01c28000 mac_addr=${ethaddr} consoleblank=0 loglevel=${verbosity} ${extraargs} ${extraboardargs}"
 
 # determine board type from DT compiled into u-boot binary, currently SoPine is not autodetected
 fdt get value dt_name / dt-name
