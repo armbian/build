@@ -12,6 +12,21 @@ CPUMIN=504000
 CPUMAX=1632000
 GOVERNOR=interactive
 
+case $BRANCH in
+	current)
+
+		KERNELBRANCH="branch:linux-5.4.y"
+		KERNELPATCHDIR='meson-'$BRANCH
+
+	;;
+	dev)
+
+		KERNELBRANCH="branch:linux-5.6.y"
+		KERNELPATCHDIR='meson-'$BRANCH
+
+	;;
+esac
+
 write_uboot_platform()
 {
 	dd if=$1/bl1.bin.hardkernel of=$2 bs=1 count=442 conv=fsync > /dev/null 2>&1
