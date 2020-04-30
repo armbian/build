@@ -26,11 +26,10 @@ umask 002
 # destination
 DEST=$SRC/output
 
-# override stty size
-[[ -n $COLUMNS ]] && stty cols $COLUMNS
-[[ -n $LINES ]] && stty rows $LINES
-
 if [[ $BUILD_ALL != "yes" ]]; then
+	# override stty size
+	[[ -n $COLUMNS ]] && stty cols $COLUMNS
+	[[ -n $LINES ]] && stty rows $LINES
 	TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
 	TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
 fi
@@ -422,7 +421,7 @@ done
 
 # Compile u-boot if packed .deb does not exist
 if [[ ! -f ${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-	if [[ -n $ATFSOURCE ]]; then
+	if [[ -n $ATFSOURCE && $FORCE_REPOSITORY_PKG != yes ]]; then
 		compile_atf
 	fi
 	[[ $FORCE_REPOSITORY_PKG != yes ]] && compile_uboot
