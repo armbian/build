@@ -80,6 +80,10 @@ prepare_boot_configuration()
 	elif [[ $BOOT_RK3399_LEGACY_HYBRID == yes ]]; then # to be removed
 
 		UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB u-boot-dtb.bin spl/u-boot-spl.bin u-boot.itb;;spl/u-boot-spl.bin u-boot.itb"
+		ATFSOURCE=''
+		ATF_COMPILE='no'
+
+		legacy_uboot_locations
 
 	elif [[ $BOOT_RK3328_USE_AYUFAN_ATF == yes ]]; then # to be removed
 
@@ -91,7 +95,24 @@ prepare_boot_configuration()
 		ATF_TARGET_MAP='PLAT=rk322xh DEBUG=1 bl31;;trust.bin'
 		ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
 
+		legacy_uboot_locations
+
 	fi
+}
+
+legacy_uboot_locations()
+{
+	BOOTSOURCE='https://github.com/ayufan-rock64/linux-u-boot'
+	BOOTDIR='u-boot-rockchip64'
+	BOOTBRANCH='branch:rockchip-master'
+	case $BRANCH in
+		legacy)
+			BOOTPATCHDIR="u-boot-rockchip64"
+			;;
+		*)
+			BOOTPATCHDIR="u-boot-rockchip64-dev"
+			;;
+	esac
 }
 
 uboot_custom_postprocess()
