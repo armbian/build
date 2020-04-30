@@ -59,18 +59,55 @@ case $BRANCH in
 
 esac
 
+prepare_boot_configuration()
+{
+	if [[ $BOOT_USE_MAINLINE_ATF == yes ]]; then
+
+		UBOOT_TARGET_MAP="BL31=bl31.bin idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
+		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
+		ATFDIR='arm-trusted-firmware'
+		ATFBRANCH='tag:v2.2'
+		ATF_USE_GCC='> 6.3'
+		ATF_TARGET_MAP='M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=rk3399 bl31;;build/rk3399/release/bl31/bl31.elf:bl31.bin'
+		ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
+
+	elif [[ $BOOT_USE_TPL_SPL_BLOB == yes ]]; then
+
+		UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
+		ATFSOURCE=''
+		ATF_COMPILE='no'
+
+	elif [[ $BOOT_USE_BLOBS == yes ]]; then
+
+		UBOOT_TARGET_MAP="u-boot-dtb.bin;;idbloader.bin uboot.img trust.bin"
+		ATFSOURCE=''
+		ATF_COMPILE='no'
+
+	fi
+}
 
 write_uboot_platform()
 {
+	if [[ -f $1/u-boot.itb ]]; then # $BOOT_USE_MAINLINE_ATF == yes || $BOOT_USE_TPL_SPL_BLOB == yes
 
-	if [[ -f $1/rksd_loader.img ]] ; then
-		dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none >/dev/null 2>&1
-	else
+		dd if=$1/idbloader.img of=$2 seek=64 conv=notrunc status=none >/dev/null 2>&1
+		dd if=$1/u-boot.itb of=$2 seek=16384 conv=notrunc status=none >/dev/null 2>&1
+
+	elif [[ -f $1/uboot.img ]]; then # $BOOT_USE_BLOBS == yes
+
 		dd if=$1/idbloader.bin of=$2 seek=64 conv=notrunc status=none >/dev/null 2>&1
 		dd if=$1/uboot.img of=$2 seek=16384 conv=notrunc status=none >/dev/null 2>&1
 		dd if=$1/trust.bin of=$2 seek=24576 conv=notrunc status=none >/dev/null 2>&1
-	fi
 
+	elif [[ -f $1/rksd_loader.img ]] ; then # legacy rk3399 loader
+
+		dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none >/dev/null 2>&1
+
+	else
+		echo "Unsupported u-boot processing configuration!"
+		exit 1
+
+	fi
 }
 
 
