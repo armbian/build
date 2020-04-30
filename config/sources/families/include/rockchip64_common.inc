@@ -7,24 +7,18 @@ UBOOT_TARGET_MAP=";;idbloader.bin uboot.img trust.bin"
 BOOTDELAY=0
 OVERLAY_PREFIX='rockchip'
 SERIALCON=${SERIALCON:-'ttyFIQ0:1500000'}
-ATFSOURCE='https://github.com/ayufan-rock64/arm-trusted-firmware'
-ATF_TARGET_MAP='M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=rk3399 DEBUG=1 bl31;;trust.bin'
-ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
-ATFDIR='arm-trusted-firmware-rockchip64'
-ATFBRANCH='branch:rockchip'
-ATF_USE_GCC='> 6.3'
 GOVERNOR="ondemand"
 CPUMAX="2016000"
 CPUMIN="600000"
 
 if [[ $BOOTCONFIG == *3328* ]]; then
 
-	ATF_TARGET_MAP='PLAT=rk322xh DEBUG=1 bl31;;trust.bin'
+	BOOT_RK3328_USE_AYUFAN_ATF=yes
 	CPUMAX="1390000"
 
 elif [[ $BOARD == rockpro64 ]] || [[ $BOARD == rockpi-4* ]] || [[ $BOARD == pinebook-pro ]]; then
 
-	UBOOT_TARGET_MAP="BL31=$SRC/cache/sources/rkbin-tools/rk33/rk3399_bl31_v1.17.elf u-boot-dtb.bin spl/u-boot-spl.bin u-boot.itb;;spl/u-boot-spl.bin u-boot.itb"
+	BOOT_RK3399_LEGACY_HYBRID=yes
 
 elif [[ $BOARD == rockpi-s ]]; then
 
@@ -83,6 +77,61 @@ prepare_boot_configuration()
 		ATFSOURCE=''
 		ATF_COMPILE='no'
 
+	elif [[ $BOOT_RK3399_LEGACY_HYBRID == yes ]]; then # to be removed
+
+		UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB u-boot-dtb.bin spl/u-boot-spl.bin u-boot.itb;;spl/u-boot-spl.bin u-boot.itb"
+
+	elif [[ $BOOT_RK3328_USE_AYUFAN_ATF == yes ]]; then # to be removed
+
+		UBOOT_TARGET_MAP=";;idbloader.bin uboot.img trust.bin"
+		ATFSOURCE='https://github.com/ayufan-rock64/arm-trusted-firmware'
+		ATFDIR='arm-trusted-firmware-rockchip64'
+		ATFBRANCH='branch:rockchip'
+		ATF_USE_GCC='> 6.3'
+		ATF_TARGET_MAP='PLAT=rk322xh DEBUG=1 bl31;;trust.bin'
+		ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
+
+	fi
+}
+
+uboot_custom_postprocess()
+{
+	if [[ $BOOT_USE_MAINLINE_ATF == yes || $BOOT_USE_TPL_SPL_BLOB == yes ]]; then
+
+		:
+
+	elif [[ $BOOT_USE_BLOBS == yes ]]; then
+
+		local tempfile=$(mktemp)
+		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
+		cat $RKBIN_DIR/$MINILOADER_BLOB >> idbloader.bin
+		loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
+		trust_merger --replace ./build/rk3399/debug/bl31/bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
+
+	elif [[ $BOOT_RK3399_LEGACY_HYBRID == yes ]]; then
+
+		# 3399
+		tools/mkimage -n rk3399 -T rksd -d $SRC/cache/sources/rkbin-tools/rk33/rk3399_ddr_933MHz_v1.13.bin rksd_loader.img
+		cat spl/u-boot-spl.bin >> rksd_loader.img
+		dd if=u-boot.itb of=rksd_loader.img seek=448 conv=notrunc
+		cp rksd_loader.img $SRC/.tmp/$uboot_name/usr/lib/$uboot_name/$f_dst
+		tools/mkimage -n rk3399 -T rksd -d $SRC/cache/sources/rkbin-tools/rk33/rk3399_ddr_933MHz_v1.13.bin rkspi_loader.img
+		cat spl/u-boot-spl.bin >> rkspi_loader.img
+		for i in `seq 1 128`; do dd count=4 status=none; dd if=/dev/zero count=4 status=none; done < rkspi_loader.img > rkspi_loader.tmp
+		mv rkspi_loader.tmp rkspi_loader.img
+		dd if=u-boot.itb of=rkspi_loader.img seek=1024 conv=notrunc
+		cp rkspi_loader.img $SRC/.tmp/$uboot_name/usr/lib/$uboot_name/$f_dst
+
+	elif [[ $BOOT_RK3328_USE_AYUFAN_ATF == yes ]]; then
+
+		# 3328
+		tools/mkimage -n rk3328 -T rksd -d $SRC/cache/sources/rkbin-tools/rk33/rk3328_ddr_786MHz_v1.13.bin idbloader.bin
+		cat $SRC/cache/sources/rkbin-tools/rk33/rk3328_miniloader_v2.46.bin >> idbloader.bin
+		loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
+
+	else
+		echo "Unsupported u-boot processing configuration!"
+		exit 1
 	fi
 }
 
