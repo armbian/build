@@ -26,6 +26,7 @@ elif [[ $BOARD == rockpi-4* ]]; then
 elif [[ $BOARD == rockpro64 ]] || [[ $BOARD == pinebook-pro ]]; then
 
 	BOOT_RK3399_LEGACY_HYBRID=yes
+	BL31_BLOB='rk33/rk3399_bl31_v1.17.elf'
 
 elif [[ $BOARD == rockpi-s ]]; then
 
