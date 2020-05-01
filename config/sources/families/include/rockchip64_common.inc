@@ -18,7 +18,12 @@ if [[ $BOOTCONFIG == *3328* ]]; then
 	BOOT_RK3328_USE_AYUFAN_ATF=yes
 	CPUMAX="1390000"
 
-elif [[ $BOARD == rockpro64 ]] || [[ $BOARD == rockpi-4* ]] || [[ $BOARD == pinebook-pro ]]; then
+elif [[ $BOARD == rockpi-4* ]]; then
+
+	BOOT_USE_TPL_SPL_BLOB=yes
+	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
+
+elif [[ $BOARD == rockpro64 ]] || [[ $BOARD == pinebook-pro ]]; then
 
 	BOOT_RK3399_LEGACY_HYBRID=yes
 
