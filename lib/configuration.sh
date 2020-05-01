@@ -20,6 +20,7 @@ TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined 
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
+cd ${SRC}
 ROOTFSCACHE_VERSION=23
 CHROOT_CACHE_VERSION=7
 cd ${SRC}
