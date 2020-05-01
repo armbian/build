@@ -11,6 +11,8 @@ GOVERNOR="ondemand"
 CPUMAX="2016000"
 CPUMIN="600000"
 
+RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
+
 if [[ $BOOTCONFIG == *3328* ]]; then
 
 	BOOT_RK3328_USE_AYUFAN_ATF=yes
