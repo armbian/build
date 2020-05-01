@@ -419,30 +419,45 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
 done
 
-# Compile u-boot if packed .deb does not exist
-if [[ ! -f ${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-	if [[ -n $ATFSOURCE && $FORCE_REPOSITORY_PKG != yes ]]; then
+# Compile u-boot if packed .deb does not exist or use the one from repository
+if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+
+	if [[ -n "${ATFSOURCE}" && "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
 		compile_atf
 	fi
-	[[ $FORCE_REPOSITORY_PKG != yes ]] && compile_uboot
+	[[ "${REPOSITORY_INSTALL}" != *u-boot* ]] && compile_uboot
+
 fi
 
-# Compile kernel if packed .deb does not exist
+# Compile kernel if packed .deb does not exist or use the one from repository
 if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+
 	KDEB_CHANGELOG_DIST=$RELEASE
-	[[ $FORCE_REPOSITORY_PKG != yes ]] && compile_kernel
+	[[ "${REPOSITORY_INSTALL}" != *kernel* ]] && compile_kernel
+
 fi
 
-# Pack armbian-config and armbian-firmware
+# Compile armbian-config if packed .deb does not exist or use the one from repository
 if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
-	compile_armbian-config
 
-	FULL=""
-	REPLACE="-full"
-	[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_all.deb ]] && compile_firmware
-	FULL="-full"
-	REPLACE=""
-	[[ ! -f $DEST/debs/armbian-firmware${FULL}_${REVISION}_all.deb ]] && compile_firmware
+	[[ "${REPOSITORY_INSTALL}" != *armbian-config* ]] && compile_armbian-config
+
+fi
+
+# Compile armbian-firmware if packed .deb does not exist or use the one from repository
+if [[ ! -f ${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb || ! -f $DEST/debs/armbian-firmware${FULL}_${REVISION}_all.deb ]]; then
+
+	if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
+
+		FULL=""
+		REPLACE="-full"
+		compile_firmware
+		FULL="-full"
+		REPLACE=""
+		compile_firmware
+
+	fi
+
 fi
 
 overlayfs_wrapper "cleanup"

@@ -195,92 +195,95 @@ install_common()
 	ff02::2     ip6-allrouters
 	EOF
 
-	if [[ $FORCE_REPOSITORY_PKG == yes ]]; then
-
-		# install kernel and u-boot packages
-		display_alert "Installing from repository" "linux-image-${BRANCH}-${LINUXFAMILY}"
-		VER=$(chroot "${SDCARD}" "apt-cache --names-only search ^linux-image-${BRANCH}-${LINUXFAMILY} | awk '{print \$(NF)}'")
-		VER="${VER/-$LINUXFAMILY/}"
-		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install linux-image-${BRANCH}-${LINUXFAMILY}" >> "${DEST}"/debug/install.log 2>&1
-		display_alert "Installing from repository" "linux-dtb-${BRANCH}-${LINUXFAMILY}"
-		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install linux-dtb-${BRANCH}-${LINUXFAMILY}" >> "${DEST}"/debug/install.log 2>&1
-		display_alert "Installing from repository" "${CHOSEN_ROOTFS}"
-		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install ${CHOSEN_ROOTFS}" >> "${DEST}"/debug/install.log 2>&1
-
-		display_alert "Installing from repository" "linux-u-boot-${BOARD}-${BRANCH}"
-		UBOOT_VER=$(chroot "${SDCARD}" "apt-cache --names-only search ^linux-u-boot-${BOARD}-${BRANCH} | awk '{print \$(NF)}'")
+	# install u-boot
+	if [[ "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
+		UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
+		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
+	else
+		UBOOT_VER=$(chroot "${SDCARD}" /bin/bash -c "apt-cache --names-only search ^linux-u-boot-${BOARD}-${BRANCH} | awk '{print \$(NF)}'")
+		display_alert "Installing from repository" "linux-u-boot-${BOARD}-${BRANCH} $UBOOT_VER"
 		chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install linux-u-boot-${BOARD}-${BRANCH}" >> "${DEST}"/debug/install.log 2>&1
 		# we need package later, move to output, apt-get must be here, apt deletes file
 		mv ${SDCARD}/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb ${DEB_STORAGE}
+	fi
 
+	# install kernel
+	if [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
+		VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
+		VER="${VER/-$LINUXFAMILY/}"
+		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
+		if [[ -f ${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
+			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb"
+		fi
+		if [[ $INSTALL_HEADERS == yes ]]; then
+			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
+		fi
+	else
+		VER=$(chroot "${SDCARD}" /bin/bash -c "apt-cache --names-only search ^linux-image-${BRANCH}-${LINUXFAMILY} | awk '{print \$(NF)}'")
+		VER="${VER/-$LINUXFAMILY/}"
+		display_alert "Installing from repository" "linux-image-${BRANCH}-${LINUXFAMILY} $VER"
+		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install linux-image-${BRANCH}-${LINUXFAMILY}" >> "${DEST}"/debug/install.log 2>&1
+		display_alert "Installing from repository" "linux-dtb-${BRANCH}-${LINUXFAMILY}"
+		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install linux-dtb-${BRANCH}-${LINUXFAMILY}" >> "${DEST}"/debug/install.log 2>&1
+		if [[ $INSTALL_HEADERS == yes ]]; then
+			display_alert "Installing from repository" "armbian-headers"
+			chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install linux-headers-${BRANCH}-${LINUXFAMILY}" >> "${DEST}"/debug/install.log 2>&1
+		fi
+	fi
+
+	# install board support packages
+	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
+		install_deb_chroot "${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> "${DEST}"/debug/install.log 2>&1
+	else
+		display_alert "Installing from repository" "${CHOSEN_ROOTFS}"
+		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install ${CHOSEN_ROOTFS}" >> "${DEST}"/debug/install.log 2>&1
+	fi
+
+	# install armbian-desktop
+	if [[ "${REPOSITORY_INSTALL}" != *armbian-desktop* ]]; then
+		if [[ $BUILD_DESKTOP == yes ]]; then
+			install_deb_chroot "${DEB_STORAGE}/$RELEASE/armbian-${RELEASE}-desktop_${REVISION}_all.deb"
+			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
+			desktop_postinstall
+		fi
+	else
 		if [[ $BUILD_DESKTOP == yes ]]; then
 			display_alert "Installing from repository" "armbian-${RELEASE}-desktop"
 			chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install armbian-${RELEASE}-desktop" >> "${DEST}"/debug/install.log 2>&1
 			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 			desktop_postinstall
 		fi
+	fi
 
-		if [[ $INSTALL_HEADERS == yes ]]; then
-			display_alert "Installing from repository" "armbian-headers"
-			chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install linux-headers-${BRANCH}-${LINUXFAMILY}" >> "${DEST}"/debug/install.log 2>&1
+	# install armbian-firmware
+	if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
+		if [[ -f ${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb ]]; then
+			install_deb_chroot "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb"
 		fi
+	else
+		display_alert "Installing from repository" "armbian-firmware"
+		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install armbian-firmware" >> "${DEST}"/debug/install.log 2>&1
+	fi
 
+	# install armbian-config
+	if [[ "${REPOSITORY_INSTALL}" != *armbian-config* ]]; then
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			install_deb_chroot "${DEB_STORAGE}/armbian-config_${REVISION}_all.deb"
+		fi
+	else
 		if [[ $BUILD_MINIMAL != yes ]]; then
 			display_alert "Installing from repository" "armbian-config"
 			chroot "${SDCARD}" /bin/bash -c "apt -y -qq install armbian-config" >> "${DEST}"/debug/install.log 2>&1
 		fi
-
-		display_alert "Installing from repository" "armbian-firmware"
-		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install armbian-firmware" >> "${DEST}"/debug/install.log 2>&1
-
-		if [[ $INSTALL_KSRC == yes ]]; then
-			display_alert "Sources can't be installed when" "FORCE_REPOSITORY_PKG = yes" "wrn"
-		fi
-
-	else
-
-		# extract kernel version from .deb package
-		VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
-		VER="${VER/-$LINUXFAMILY/}"
-		UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
-
-		# install kernel and u-boot packages
-		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
-		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
-
-		if [[ -f ${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb"
-		fi
-
-		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/$RELEASE/armbian-${RELEASE}-desktop_${REVISION}_all.deb"
-			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
-			desktop_postinstall
-		fi
-
-		if [[ $INSTALL_HEADERS == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
-		fi
-
-		if [[ $BUILD_MINIMAL != yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/armbian-config_${REVISION}_all.deb"
-		fi
-
-		if [[ -f ${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb ]]; then
-			install_deb_chroot "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb"
-		fi
-
-		if [[ -f ${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb && $INSTALL_KSRC == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb"
-		fi
-
-		# install board support package
-		install_deb_chroot "${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> "${DEST}"/debug/install.log 2>&1
-
 	fi
 
+	# install kernel sources
+	if [[ -f ${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb && $INSTALL_KSRC == yes ]]; then
+		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb"
+	fi
+
+	# install wireguard tools
 	if [[ $WIREGUARD == yes ]]; then
-		# install wireguard tools
 		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install wireguard-tools --no-install-recommends" >> "${DEST}"/debug/install.log 2>&1
 	fi
 
