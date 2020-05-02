@@ -10,7 +10,7 @@ KERNEL_IMAGE_TYPE=uImage
 LINUXFAMILY=meson
 CPUMIN=504000
 CPUMAX=1632000
-GOVERNOR=interactive
+GOVERNOR=ondemand
 
 case $BRANCH in
 	current)
