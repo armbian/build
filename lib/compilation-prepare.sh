@@ -85,13 +85,13 @@ compilation_prepare()
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare $version ge 5.1 && linux-version compare $version le 5.6 && [ "$AUFS" == yes ]; then
+	if linux-version compare $version ge 5.1 && linux-version compare $version le 5.7 && [ "$AUFS" == yes ]; then
 
 		# attach to specifics tag or branch
 		local aufstag=$(echo ${version} | cut -f 1-2 -d ".")
 
 		# manual overrides
-		if linux-version compare $version ge 5.4.3 ; then aufstag="5.4.3"; fi
+		if linux-version compare $version ge 5.4.3 && linux-version compare $version le 5.5 ; then aufstag="5.4.3"; fi
 
 		# check if Mr. Okajima already made a branch for this version
 		git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone aufs${aufstag} >/dev/null
