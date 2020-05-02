@@ -16,6 +16,11 @@ LINUXFAMILY=$2
 BOARD=$3
 BUILD_DESKTOP=$4
 
+set -e
+
+# Import variable from env file
+source /tmp/overlay/image_env.sh
+
 if $BOARD == "orangepipcplus"
 then
   # Downgrade kernel to 4.14 because 4.19 is causing issues with Wifi drivers so far
@@ -50,15 +55,22 @@ sed -i '/backport/ s/^deb/#deb/' /etc/apt/sources.list
 chage -d 99999999 root
 
 # Run the install script
-curl https://install.yunohost.org/stretch | bash -s -- -a
+curl https://install.yunohost.org/stretch | bash -s -- -a -d $YNH_BUILDER_BRANCH
 rm /var/log/yunohost-installation*
 
-# Install InternetCube dependencies usb detection, hotspot, vpnclient, roundcube
-apt-get install -o Dpkg::Options::='--force-confold' -y --force-yes \
-  file udisks2 udiskie ntfs-3g jq \
-  php7.0-fpm sipcalc hostapd iptables iw dnsmasq firmware-linux-free \
-  sipcalc dnsutils openvpn curl fake-hwclock \
-  php-cli php-common php-intl php-json php-mcrypt php-pear php-auth-sasl php-mail-mime php-patchwork-utf8 php-net-smtp php-net-socket php-net-ldap2 php-net-ldap3 php-zip php-gd php-mbstring php-curl
+InstallInternetCubeDependencies() {
+  # Install InternetCube dependencies usb detection, hotspot, vpnclient, roundcube
+  apt-get install -o Dpkg::Options::='--force-confold' -y --force-yes \
+    file udisks2 udiskie ntfs-3g jq \
+    php7.0-fpm sipcalc hostapd iptables iw dnsmasq firmware-linux-free \
+    sipcalc dnsutils openvpn curl fake-hwclock \
+    php-cli php-common php-intl php-json php-mcrypt php-pear php-auth-sasl php-mail-mime php-patchwork-utf8 php-net-smtp php-net-socket php-net-ldap2 php-net-ldap3 php-zip php-gd php-mbstring php-curl
+}
+
+if $YNH_BUILDER_INSTALL_CUBE_DEPS == "yes"
+then
+  InstallInternetCubeDependencies
+fi
 
 # Override the first login script with our own (we don't care about desktop
 # stuff + we don't want the user to manually create a user)
@@ -74,6 +86,9 @@ touch /root/.not_logged_in_yet
 # (somehow networkmanager or something else breaks this before...)
 rm -f /etc/resolv.conf
 ln -s /etc/resolvconf/run/resolv.conf /etc/resolv.conf
+
+# Get the yunohost version for naming the .img
+apt-cache policy yunohost | grep -Po 'Installed: \K.+' > /tmp/overlay/yunohost_version
 
 # Clean stuff
 apt clean
