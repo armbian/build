@@ -13,7 +13,15 @@ CPUMIN="600000"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 
-if [[ $BOOTCONFIG == *3328* ]]; then
+if [[ $BOARD == nanopi-r2s ]]; then
+
+	BOOT_USE_BLOBS=yes
+	BOOT_SOC=rk3328
+	DDR_BLOB='rk33/rk3328_ddr_333MHz_v1.16.bin'
+	MINILOADER_BLOB='rk33/rk322xh_miniloader_v2.50.bin'
+	BL31_BLOB='rk33/rk322xh_bl31_v1.42.elf'
+
+elif [[ $BOOTCONFIG == *3328* ]]; then
 
 	BOOT_RK3328_USE_AYUFAN_ATF=yes
 	CPUMAX="1390000"
