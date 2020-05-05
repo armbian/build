@@ -254,6 +254,11 @@ family_tweaks()
 		echo "auto lan0" >> $SDCARD/etc/network/interfaces
 		echo "	iface lan0 inet dhcp" >> $SDCARD/etc/network/interfaces
 
+	elif [[ $BOARD == helios64 ]]; then
+
+		chroot $SDCARD /bin/bash -c "apt-get -y -qq install mdadm i2c-tools"
+		chroot $SDCARD /bin/bash -c "apt-get -y -qq remove --auto-remove fake-hwclock>/dev/null 2>&1"
+
 	elif [[ -f $SDCARD/lib/systemd/system/rk3399-bluetooth.service ]]; then
 
 		# install and enable Bluetooth
@@ -288,6 +293,16 @@ family_tweaks_bsp()
 	if [[ $BOARD == pinebook-pro ]]; then
 
 		cp $SRC/packages/bsp/pinebook-pro/xorg.conf $destination/etc/X11/
+	fi
+
+	if [[ $BOARD == helios64 ]]; then
+
+		mkdir -p $destination/etc/udev/rules.d/
+		mkdir -p $destination/lib/systemd/system-shutdown/
+		cp $SRC/packages/bsp/helios64/50-usb-realtek-net.rules $destination/etc/udev/rules.d/
+		cp $SRC/packages/bsp/helios64/70-keep-usb-lan-as-eth1.rules $destination/etc/udev/rules.d/
+		cp $SRC/packages/bsp/helios64/asound.conf $destination/etc/
+		install -m 755 $SRC/packages/bsp/helios64/disable_auto_poweron $destination/lib/systemd/system-shutdown/
 	fi
 
 	# Graphics and media
