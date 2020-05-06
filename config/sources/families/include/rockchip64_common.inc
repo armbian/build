@@ -29,6 +29,7 @@ elif [[ $BOOTCONFIG == *3328* ]]; then
 elif [[ $BOARD == rockpi-4* ]]; then
 
 	BOOT_USE_BLOBS=yes
+	BOOT_SOC=rk3399
 	DDR_BLOB='rk33/rk3399_ddr_933MHz_v1.24.bin'
 	MINILOADER_BLOB='rk33/rk3399_miniloader_v1.19.bin'
 	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
@@ -40,7 +41,11 @@ elif [[ $BOARD == rockpro64 ]] || [[ $BOARD == pinebook-pro ]]; then
 
 elif [[ $BOARD == rockpi-s ]]; then
 
-	UBOOT_TARGET_MAP="u-boot-dtb.bin;;idbloader.bin uboot.img trust.bin"
+	BOOT_USE_BLOBS=yes
+	BOOT_SOC=rk3308
+	DDR_BLOB='rk33/rk3308_ddr_589MHz_uart0_m0_v1.26.bin'
+	MINILOADER_BLOB='rk33/rk3308_miniloader_v1.13.bin'
+	BL31_BLOB='rk33/rk3308_bl31_v2.10.elf'
 	CPUMAX="1296000"
 
 else
@@ -145,7 +150,7 @@ uboot_custom_postprocess()
 		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
 		cat $RKBIN_DIR/$MINILOADER_BLOB >> idbloader.bin
 		loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
-		trust_merger --replace ./build/rk3399/debug/bl31/bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
+		trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
 
 	elif [[ $BOOT_RK3399_LEGACY_HYBRID == yes ]]; then
 
