@@ -21,7 +21,7 @@ set -e
 # Import variable from env file
 source /tmp/overlay/image_env.sh
 
-if $BOARD == "orangepipcplus"
+if [[ $BOARD == "orangepipcplus" ]]
 then
   # Downgrade kernel to 4.14 because 4.19 is causing issues with Wifi drivers so far
   apt install linux-image-next-sunxi=5.67 -y --allow-downgrades || exit -1
@@ -67,7 +67,7 @@ InstallInternetCubeDependencies() {
     php-cli php-common php-intl php-json php-mcrypt php-pear php-auth-sasl php-mail-mime php-patchwork-utf8 php-net-smtp php-net-socket php-net-ldap2 php-net-ldap3 php-zip php-gd php-mbstring php-curl
 }
 
-if $YNH_BUILDER_INSTALL_CUBE_DEPS == "yes"
+if [[ $YNH_BUILDER_INSTALL_CUBE_DEPS == "yes" ]]
 then
   InstallInternetCubeDependencies
 fi
