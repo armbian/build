@@ -89,6 +89,10 @@ if [[ -z "$(which dialog)" ]]; then
 	sudo apt-get update
 	sudo apt-get install -y dialog
 fi
+if [[ -z "$(which getfacl)" ]]; then
+	sudo apt-get update
+	sudo apt-get install -y acl
+fi
 
 # Check for Vagrant
 if [[ "$1" == vagrant && -z "$(which vagrant)" ]]; then
