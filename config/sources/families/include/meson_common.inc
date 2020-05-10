@@ -10,7 +10,22 @@ KERNEL_IMAGE_TYPE=uImage
 LINUXFAMILY=meson
 CPUMIN=504000
 CPUMAX=1632000
-GOVERNOR=interactive
+GOVERNOR=ondemand
+
+case $BRANCH in
+	current)
+
+		KERNELBRANCH="branch:linux-5.4.y"
+		KERNELPATCHDIR='meson-'$BRANCH
+
+	;;
+	dev)
+
+		KERNELBRANCH="branch:linux-5.6.y"
+		KERNELPATCHDIR='meson-'$BRANCH
+
+	;;
+esac
 
 write_uboot_platform()
 {

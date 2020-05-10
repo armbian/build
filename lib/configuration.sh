@@ -21,7 +21,7 @@ USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd ${SRC}
-ROOTFSCACHE_VERSION=23
+ROOTFSCACHE_VERSION=24
 CHROOT_CACHE_VERSION=7
 cd ${SRC}
 BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
@@ -148,7 +148,7 @@ PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chr
 		nocache debconf-utils python3-apt"
 
 # Non-essential packages for minimal build
-PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf"
+PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf iozone3"
 
 if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
 	# Essential packages
@@ -161,7 +161,7 @@ if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
 
 
 	# Non-essential packages
-	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils btrfs-progs dosfstools iotop iozone3 stress screen \
+	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils btrfs-progs dosfstools iotop stress screen \
 		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
 		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
 		hostapd git ethtool unzip ifenslave libpam-systemd iperf3 \
