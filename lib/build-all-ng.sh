@@ -278,7 +278,7 @@ function build_all()
 
 					display_alert "Building ${n}."
 					(build_main) &
-					sleep $(( ( RANDOM % 10 )  + 10 ))
+#					sleep $(( ( RANDOM % 10 )  + 10 ))
 
 			# create BSP for all boards
 			elif [[ "${BSP_BUILD}" == yes ]]; then
