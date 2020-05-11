@@ -190,6 +190,7 @@ create_rootfs_cache()
 		# DEFAULT LANGUAGE = 'en_US.UTF-8 UTF-8'
 		local lng='en_US.UTF-8'
 		if [ "$DEST_LANG" == "" ]; then
+			display_alert "The variable DEST_LANG is empty" "[$DEST_LANG]" "info"
 			display_alert "Configuring default locale" "$lng" "info"
 			DEST_LANG=$lng
 		elif [ "$DEST_LANG" == "en_US.UTF-8" ]; then
@@ -200,7 +201,7 @@ create_rootfs_cache()
 		fi
 
 		eval 'chroot $SDCARD /bin/bash -c "locale-gen $lng"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-		eval 'chroot $SDCARD /bin/bash -c "update-locale LANG=$DEST_LANG LC_MESSAGES=$DEST_LANG"' \
+		eval 'chroot $SDCARD /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=$DEST_LANG"' \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		if [[ -f $SDCARD/etc/default/console-setup ]]; then
