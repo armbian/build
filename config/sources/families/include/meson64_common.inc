@@ -111,7 +111,7 @@ uboot_g12_postprocess()
 			    --output bl2.n.bin.sig
 	if [ -e $1/lpddr3_1d.fw ]
 		then
-			$1/aml_encrypt_g12a --bootmk --output u-boot.bin \
+			$1/aml_encrypt_$2 --bootmk --output u-boot.bin \
 			--bl2 bl2.n.bin.sig \
 			--bl30 bl30_new.bin.enc \
 			--bl31 bl31.img.enc \
@@ -127,7 +127,7 @@ uboot_g12_postprocess()
 			--ddrfw9 $1/lpddr3_1d.fw \
 			--level v3
 	else
-		$1/aml_encrypt_g12a --bootmk  --output u-boot.bin \
+		$1/aml_encrypt_$2 --bootmk  --output u-boot.bin \
 			--bl2 bl2.n.bin.sig \
 			--bl30 bl30_new.bin.enc \
 			--bl31 bl31.img.enc \
