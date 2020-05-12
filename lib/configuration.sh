@@ -184,6 +184,9 @@ PACKAGE_LIST_DESKTOP_RECOMMENDS="galculator hexchat xfce4-screenshooter network-
 # Full desktop packages
 PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
 
+# Packages installed before desktop.
+PACKAGE_LIST_PREDEPENDS=""
+
 # Release specific packages
 case $RELEASE in
 
@@ -244,6 +247,7 @@ case $RELEASE in
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
 								language-selector-gnome viewnior"
 		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+		PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
 	;;
 
 	eoan)
@@ -254,6 +258,7 @@ case $RELEASE in
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
 								language-selector-gnome mirage"
 		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+		PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
 	;;
 
 esac
