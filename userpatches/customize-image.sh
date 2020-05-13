@@ -20,6 +20,8 @@ set -e
 
 # Import variable from env file
 source /tmp/overlay/image_env.sh
+# Import InternetCube functions
+source /tmp/overlay/internetcube/yunocube.sh
 
 if [[ $BOARD == "orangepipcplus" ]]
 then
@@ -58,18 +60,9 @@ chage -d 99999999 root
 curl https://install.yunohost.org/stretch | bash -s -- -a -d $YNH_BUILDER_BRANCH
 rm /var/log/yunohost-installation*
 
-InstallInternetCubeDependencies() {
-  # Install InternetCube dependencies usb detection, hotspot, vpnclient, roundcube
-  apt-get install -o Dpkg::Options::='--force-confold' -y --force-yes \
-    file udisks2 udiskie ntfs-3g jq \
-    php7.0-fpm sipcalc hostapd iptables iw dnsmasq firmware-linux-free \
-    sipcalc dnsutils openvpn curl fake-hwclock \
-    php-cli php-common php-intl php-json php-mcrypt php-pear php-auth-sasl php-mail-mime php-patchwork-utf8 php-net-smtp php-net-socket php-net-ldap2 php-net-ldap3 php-zip php-gd php-mbstring php-curl
-}
-
 if [[ $YNH_BUILDER_INSTALL_CUBE_DEPS == "yes" ]]
 then
-  InstallInternetCubeDependencies
+  InstallInternetCubeServices
 fi
 
 # Override the first login script with our own (we don't care about desktop
