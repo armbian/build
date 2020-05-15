@@ -5,7 +5,7 @@
 | BOARDFAMILY | [sun8i, sun7i, rockchip64](../sources) |
 | BOOTCONFIG | name of u-boot config |
 | BOOTSIZE | size of a separate boot partition in Mib |
-| BOOTFS_TYPE | boot parittion type: ext4, fat |
+| BOOTFS_TYPE | boot partition type: ext4, fat |
 | DEFAULT_OVERLAYS | usbhost1 usbhost2 ... |
 | DEFAULT_CONSOLE | serial = change default boot output |
 | MODULES_LEGACY | space delimited modules for legacy branch |
