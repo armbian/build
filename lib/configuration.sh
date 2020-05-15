@@ -264,7 +264,7 @@ case $RELEASE in
 esac
 
 
-DEBIAN_MIRROR='httpredir.debian.org/debian'
+DEBIAN_MIRROR='deb.debian.org/debian'
 DEBIAN_SECURTY='security.debian.org/'
 UBUNTU_MIRROR='ports.ubuntu.com/'
 
