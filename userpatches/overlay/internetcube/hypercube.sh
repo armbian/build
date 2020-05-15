@@ -188,18 +188,6 @@ function start_logwebserver() {
 function find_hypercubefile() {
   logfile ${FUNCNAME[0]}
 
-  info "Heating up ..."
-  # This is a yolo-commited quick and dirty hack
-  # to try to avoid the following steps failing miserably
-  # just because DNS resolution is broken
-  # There's possibly a more elegant solution to this
-  # using systemd services but meh I'm lazy and not very expert
-  sleep 10
-
-  info "Install some dependencies..."
-  apt-get update &>> $log_file
-  apt-get install -o Dpkg::Options::='--force-confold' -y --force-yes file udisks2 udiskie ntfs-3g jq traceroute  &>> $log_file || true
-
   info "Detecting USB sticks..."
   udiskie-mount -a || true
   sleep 10
