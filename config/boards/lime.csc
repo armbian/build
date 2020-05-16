@@ -2,4 +2,4 @@
 BOARD_NAME="Lime"
 BOARDFAMILY="sun7i"
 BOOTCONFIG="A20-OLinuXino-Lime_defconfig"
-KERNEL_TARGET="current,dev"
+KERNEL_TARGET="legacy,current,dev"
