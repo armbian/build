@@ -23,13 +23,6 @@ source /tmp/overlay/image_env.sh
 # Import InternetCube functions
 source /tmp/overlay/internetcube/yunocube.sh
 
-if [[ $BOARD == "orangepipcplus" ]]
-then
-  # Downgrade kernel to 4.14 because 4.19 is causing issues with Wifi drivers so far
-  apt install linux-image-next-sunxi=5.67 -y --allow-downgrades || exit -1
-  apt-mark hold linux-image-next-sunxi
-fi
-
 echo "auto eth0" > /etc/network/interfaces.d/eth0.conf
 echo "allow-hotplug eth0" >> /etc/network/interfaces.d/eth0.conf
 echo "iface eth0 inet dhcp" >> /etc/network/interfaces.d/eth0.conf
