@@ -60,7 +60,7 @@ chage -d 99999999 root
 curl https://install.yunohost.org/stretch | bash -s -- -a -d $YNH_BUILDER_BRANCH
 rm /var/log/yunohost-installation*
 
-if [[ $YNH_BUILDER_INSTALL_CUBE_DEPS == "yes" ]]
+if [[ $YNH_BUILDER_INSTALL_INTERNETCUBE == "yes" ]]
 then
   InstallInternetCubeServices
 fi
