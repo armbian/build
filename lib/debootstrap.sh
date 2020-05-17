@@ -141,7 +141,7 @@ create_rootfs_cache()
 
 		# stage: debootstrap base system
 		if [[ $NO_APT_CACHER != yes ]]; then
-			# apt-cacher-ng apt proxy parameter
+			# apt-cacher-ng apt-get proxy parameter
 			local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
 			local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/$APT_MIRROR"
 		else
@@ -200,7 +200,7 @@ create_rootfs_cache()
 			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "setupcon --save"'
 		fi
 
-		# stage: create apt sources list
+		# stage: create apt-get sources list
 		create_sources_list "$RELEASE" "$SDCARD/"
 
 		# add armhf arhitecture to arm64

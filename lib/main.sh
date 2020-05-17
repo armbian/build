@@ -26,11 +26,10 @@ umask 002
 # destination
 DEST=$SRC/output
 
-# override stty size
-[[ -n $COLUMNS ]] && stty cols $COLUMNS
-[[ -n $LINES ]] && stty rows $LINES
-
 if [[ $BUILD_ALL != "yes" ]]; then
+	# override stty size
+	[[ -n $COLUMNS ]] && stty cols $COLUMNS
+	[[ -n $LINES ]] && stty rows $LINES
 	TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
 	TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
 fi
@@ -286,7 +285,7 @@ distro_support['xenial']="eos"
 distro_name['bionic']="Ubuntu Bionic 18.04 LTS"
 distro_support['bionic']="supported"
 distro_name['focal']="Ubuntu Focal 20.04 LTS"
-distro_support['focal']="csc"
+distro_support['focal']="supported"
 distro_name['eoan']="Ubuntu Eoan 19.10"
 distro_support['eoan']="csc"
 
@@ -410,6 +409,7 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" "marvell-binaries" "branch:binaries-marvell-armada-18.12"
 	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
 	fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
+	fetch_from_repo "https://gitlab.com/superna9999/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
 fi
 
 compile_sunxi_tools
@@ -419,39 +419,48 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
 done
 
-# Compile u-boot if packed .deb does not exist
-if [[ ! -f ${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-	if [[ -n $ATFSOURCE ]]; then
+# Compile u-boot if packed .deb does not exist or use the one from repository
+if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+
+	if [[ -n "${ATFSOURCE}" && "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
 		compile_atf
 	fi
-	compile_uboot
+	[[ "${REPOSITORY_INSTALL}" != *u-boot* ]] && compile_uboot
+
 fi
 
-# Compile kernel if packed .deb does not exist
+# Compile kernel if packed .deb does not exist or use the one from repository
 if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+
 	KDEB_CHANGELOG_DIST=$RELEASE
-	compile_kernel
+	[[ "${REPOSITORY_INSTALL}" != *kernel* ]] && compile_kernel
+
 fi
 
-# Pack armbian-config and armbian-firmware
+# Compile armbian-config if packed .deb does not exist or use the one from repository
 if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
-	compile_armbian-config
 
-	FULL=""
-	REPLACE="-full"
-	[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_all.deb ]] && compile_firmware
-	FULL="-full"
-	REPLACE=""
-	[[ ! -f $DEST/debs/armbian-firmware${FULL}_${REVISION}_all.deb ]] && compile_firmware
+	[[ "${REPOSITORY_INSTALL}" != *armbian-config* ]] && compile_armbian-config
+
+fi
+
+# Compile armbian-firmware if packed .deb does not exist or use the one from repository
+if [[ ! -f ${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb || ! -f $DEST/debs/armbian-firmware${FULL}_${REVISION}_all.deb ]]; then
+
+	if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
+
+		FULL=""
+		REPLACE="-full"
+		compile_firmware
+		FULL="-full"
+		REPLACE=""
+		compile_firmware
+
+	fi
+
 fi
 
 overlayfs_wrapper "cleanup"
-
-# extract kernel version from .deb package
-VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
-VER="${VER/-$LINUXFAMILY/}"
-
-UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 
 # create board support package
 [[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package

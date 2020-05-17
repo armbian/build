@@ -26,7 +26,7 @@ build tools</h3>
 
 ## What this project does?
 
-- builds custom Debian based Linux system optimised for [supported single board computers](https://www.armbian.com/download/),
+- builds custom Debian based Linux system optimized for [supported single board computers](https://www.armbian.com/download/),
 - covers root filesystem generation, kernel image compilation and bootloader compilation,
 - maintains low-level control software for a [selection of hardware](https://www.armbian.com/download/),
 - provides a consistent user experience by keeping system standards across different SBC platforms.
@@ -44,7 +44,7 @@ build tools</h3>
 ## How to build an image or a kernel?
 
 ```text
-apt -y install git
+apt-get -y install git
 git clone https://github.com/armbian/build
 cd build
 ./compile.sh
@@ -222,6 +222,7 @@ Most of the project is sponsored with a work done by volunteer collaborators, wh
 <img src="https://www.armbian.com/wp-content/uploads/2018/03/orangepi-logo-150x150.png" alt="Armbian logo" width="144" height="144"><img src="https://www.armbian.com/wp-content/uploads/2018/02/friendlyelec-logo-150x150.png" alt="Armbian logo" width="144" height="144">
 <img src="https://www.armbian.com/wp-content/uploads/2018/03/kspace-150x150.png" width="144" height="144">
 <img src="https://www.armbian.com/wp-content/uploads/2018/02/olimex-logo-150x150.png" width="144" height="144">
-<img src="https://www.armbian.com/wp-content/uploads/2018/03/helios4_logo-150x150.png" width="144" height="144">
+<img src="https://www.armbian.com/wp-content/uploads/2020/05/Kobol_R_logo_420pxsq-150x150.png" width="144" height="144">
+
 
 <p align=right><a href=#table-of-contents>⇧</a></p>

@@ -759,13 +759,13 @@ prepare_host_basic()
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "lsb-release"
-		apt -q update && apt install -q -y --no-install-recommends lsb-release
+		apt-get -q update && apt-get install -q -y --no-install-recommends lsb-release
 	fi
 
 	# need to install dialog if person is starting with a interactive mode
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "dialog"
-		apt -q update && apt install -q -y --no-install-recommends dialog
+		apt-get -q update && apt-get install -q -y --no-install-recommends dialog
 	fi
 
 }
@@ -801,7 +801,7 @@ prepare_host()
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross \
-	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
+	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
 	bison libbison-dev flex libfl-dev cryptsetup gpgv1 gnupg1 cpio aria2 pigz dirmngr python3-distutils"
 
@@ -818,13 +818,13 @@ prepare_host()
 
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
 
-	# Ubuntu Xenial x86_64 is the only fully supported host OS release
-	# Ubuntu Bionic x86_64 support is WIP, especially for building full images and additional packages
+	# Ubuntu Focal x86_64 is the only fully supported host OS release
+	# Ubuntu Bionic x86_64 support is legacy until it breaks
 	# Using Docker/VirtualBox/Vagrant is the only supported way to run the build script on other Linux distributions
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
-	if [[ -z $codename || "xenial bionic eoan focal" != *"$codename"* ]]; then
+	if [[ -z $codename || "bionic buster eoan focal debbie tricia" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -837,7 +837,7 @@ prepare_host()
 		exit_with_error "Windows subsystem for Linux is not a supported build environment"
 	fi
 
-	if [[ -z $codename || "focal" == "$codename" || "eoan" == "$codename" ]]; then
+	if [[ -z $codename || "focal" == "$codename" || "eoan" == "$codename"  || "debbie" == "$codename"  || "buster" == "$codename" ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 
@@ -886,9 +886,9 @@ prepare_host()
 
 	if [[ ${#deps[@]} -gt 0 ]]; then
 		display_alert "Installing build dependencies"
-		apt -q update
-		apt -y upgrade
-		apt -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
+		apt-get -q update
+		apt-get -y upgrade
+		apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
 		update-ccache-symlinks
 	fi
 
@@ -899,7 +899,7 @@ prepare_host()
 	fi
 
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
-		apt install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
+		apt-get install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
 	fi
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
