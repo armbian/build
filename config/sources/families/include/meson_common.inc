@@ -10,7 +10,28 @@ KERNEL_IMAGE_TYPE=uImage
 LINUXFAMILY=meson
 CPUMIN=504000
 CPUMAX=1632000
-GOVERNOR=interactive
+GOVERNOR=ondemand
+
+case $BRANCH in
+	legacy)
+
+		KERNELBRANCH="branch:linux-5.4.y"
+		KERNELPATCHDIR='meson-'$BRANCH
+
+        ;;
+	current)
+
+		KERNELBRANCH="branch:linux-5.6.y"
+		KERNELPATCHDIR='meson-'$BRANCH
+
+	;;
+	dev)
+
+		KERNELSOURCE="https://github.com/xdarklight/linux"
+		KERNELBRANCH="commit:15faa34a0d22dcd15a6f6984a865895110c2f81b"
+
+	;;
+esac
 
 write_uboot_platform()
 {

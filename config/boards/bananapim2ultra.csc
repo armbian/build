@@ -2,5 +2,5 @@
 BOARD_NAME="Banana Pi M2U"
 BOARDFAMILY="sun8i"
 BOOTCONFIG="Bananapi_M2_Ultra_defconfig"
-OVERLAY_PREFIX=""
+OVERLAY_PREFIX="sun8i-r40"
 KERNEL_TARGET="current,dev"
