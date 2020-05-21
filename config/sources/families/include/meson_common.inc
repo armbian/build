@@ -13,10 +13,22 @@ CPUMAX=1632000
 GOVERNOR=ondemand
 
 case $BRANCH in
-	current|dev)
+	legacy)
+
+		KERNELBRANCH="branch:linux-5.4.y"
+		KERNELPATCHDIR='meson-'$BRANCH
+
+        ;;
+	current)
 
 		KERNELBRANCH="branch:linux-5.6.y"
 		KERNELPATCHDIR='meson-current'
+
+	;;
+	dev)
+
+		KERNELSOURCE="https://github.com/xdarklight/linux"
+		KERNELBRANCH="commit:15faa34a0d22dcd15a6f6984a865895110c2f81b"
 
 	;;
 esac

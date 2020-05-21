@@ -160,9 +160,9 @@ create_board_package()
 
 	EOF
 
-	if [[ $RELEASE == bionic ]]; then
+	if [[ $RELEASE == bionic && $LINUXFAMILY != imx* ]]; then
 		cat <<-EOF >> "${destination}"/DEBIAN/postinst
-		# temporally disable acceleration in Bionic due to broken mesa packages
+		# temporally disable acceleration on some arch in Bionic due to broken mesa packages
 		echo 'Section "Device"
 		\tIdentifier \t"Default Device"
 		\tOption \t"AccelMethod" "none"

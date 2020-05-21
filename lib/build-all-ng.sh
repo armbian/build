@@ -19,6 +19,7 @@
 
 
 if [[ $BETA == "yes" ]];  then STABILITY="beta";	else STABILITY="stable"; fi
+if [[ $MAKE_ALL_BETA == "yes" ]]; then STABILITY="stable"; fi
 if [[ -z $KERNEL_ONLY ]]; then KERNEL_ONLY="yes"; fi
 if [[ -z $MULTITHREAD ]]; then MULTITHREAD=0; fi
 if [[ -z $START ]]; then START=0; fi
@@ -112,7 +113,7 @@ pack_upload ()
 	if [[ -n "${SEND_TO_SERVER}" ]]; then
 		ssh "${SEND_TO_SERVER}" "mkdir -p ${SEND_TO_LOCATION}${BOARD}/{archive,nightly}" &
 		display_alert "Uploading" "Please wait!" "info"
-		nice -n 19 bash -c "rsync -arP --info=progress2 --ignore-existing --remove-source-files --prune-empty-dirs $DESTIMG/ -e 'ssh -T -c aes128-ctr -o Compression=no -x -p 22' ${SEND_TO_SERVER}:${SEND_TO_LOCATION}${BOARD}/${subdir}" &
+		nice -n 19 bash -c "rsync -arP --info=progress2 --prune-empty-dirs $DESTIMG/ -e 'ssh -T -c aes128-ctr -o Compression=no -x -p 22' ${SEND_TO_SERVER}:${SEND_TO_LOCATION}${BOARD}/${subdir}; rm -rf ${DESTIMG}/*" &
 	else
 		mv $DESTIMG/*.* $DEST/images/
 	fi
@@ -277,7 +278,7 @@ function build_all()
 
 					display_alert "Building ${n}."
 					(build_main) &
-					sleep $(( ( RANDOM % 10 )  + 10 ))
+#					sleep $(( ( RANDOM % 10 )  + 10 ))
 
 			# create BSP for all boards
 			elif [[ "${BSP_BUILD}" == yes ]]; then

@@ -42,26 +42,26 @@ family_tweaks_bsp()
 
 	### Fancontrol tweaks
 	# copy hwmon rules to fix device mapping
-	install -m 644 $SRC/packages/bsp/helios4/90-helios4-hwmon.rules $destination/etc/udev/rules.d/
+	install -m 644 $SRC/packages/bsp/mvebu/helios4/90-helios4-hwmon.rules $destination/etc/udev/rules.d/
 
 	# copy fancontrol config
-	install -m 644 $SRC/packages/bsp/helios4/fancontrol_pwm-fan.conf $destination/etc/fancontrol
-	install -m 644 $SRC/packages/bsp/helios4/fancontrol.service $destination/etc/systemd/system/
+	install -m 644 $SRC/packages/bsp/mvebu/helios4/fancontrol_pwm-fan.conf $destination/etc/fancontrol
+	install -m 644 $SRC/packages/bsp/mvebu/helios4/fancontrol.service $destination/etc/systemd/system/
 
 	### Mdadm tweaks
 
 	# copy mdadm-fault-led script and set right permission
-	install -m 755 $SRC/packages/bsp/helios4/mdadm-fault-led.sh $destination/usr/sbin
+	install -m 755 $SRC/packages/bsp/mvebu/helios4/mdadm-fault-led.sh $destination/usr/sbin
 
 	### Ethernet tweaks
 
 	# copy and enable helios4-wol.service
-	install -m 644 $SRC/packages/bsp/helios4/helios4-wol.service $destination/lib/systemd/system/
+	install -m 644 $SRC/packages/bsp/mvebu/helios4/helios4-wol.service $destination/lib/systemd/system/
 
 	### Other tweaks
 
 	# add custom motd default conf file
-        install -m 644 $SRC/packages/bsp/helios4/armbian-motd $destination/etc/default/
+        install -m 644 $SRC/packages/bsp/mvebu/helios4/armbian-motd $destination/etc/default/
 
     # create modules file
 	if [[ $BRANCH == dev && -n $MODULES_DEV ]]; then

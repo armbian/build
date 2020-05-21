@@ -18,12 +18,12 @@ compilation_prepare()
 	# Maintaining one from central location starting with 5.3+
 	# Temporally set for new "default->legacy,next->current" family naming
 
-	if linux-version compare $version ge 5.6 && [[ "$BRANCH" == current || "$BRANCH" == dev ]]; then
+	if linux-version compare $version ge 5.6; then
 		display_alert "Adjusting" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-5.6.y.patch" "applying"
 	else
-		if linux-version compare $version ge 5.3 && [[ "$BRANCH" == current || "$BRANCH" == dev ]]; then
+		if linux-version compare $version ge 5.3; then
 			display_alert "Adjusting" "packaging" "info"
 			cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 			process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch" "applying"
@@ -283,7 +283,7 @@ compilation_prepare()
 	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8811cuver="branch:master"
+		local rtl8811cuver="commit:2bebdb9a35c1d9b6e6a928e371fa39d5fcec8a62"
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
