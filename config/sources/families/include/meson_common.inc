@@ -22,7 +22,7 @@ case $BRANCH in
 	current)
 
 		KERNELBRANCH="branch:linux-5.6.y"
-		KERNELPATCHDIR='meson-'$BRANCH
+		KERNELPATCHDIR='meson-current'
 
 	;;
 	dev)
