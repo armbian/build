@@ -63,7 +63,7 @@ compilation_prepare()
                 process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y.patch" "applying"
         fi
 
-	if [[ $version == "4.9."* ]] && [[ "$LINUXFAMILY" == meson64 ]]; then
+	if [[ $version == "4.9."* ]] && [[ "$LINUXFAMILY" == meson64 || "$LINUXFAMILY" == odroidc4 ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.9.y.patch" "applying"
