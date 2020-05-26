@@ -24,7 +24,10 @@
 
 Statuses displayed at the login prompt:
 
-.csc or. tvb	community creations
-.wip		work in progress
-.eos		end of life
+
+|file type|	|description|
+|:--|:--|
+|.csc or. tvb	|community creations|
+|.wip		|work in progress|
+|.eos		|end of life|
 
