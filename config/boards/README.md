@@ -25,7 +25,7 @@
 Statuses displayed at the login prompt:
 
 
-|file type|	|description|
+|file type|description|
 |:--|:--|
 |.csc or. tvb	|community creations|
 |.wip		|work in progress|
