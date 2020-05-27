@@ -20,3 +20,14 @@
 | FULL_DESKTOP | yes/no = install Office, Thunderbird, ... |
 | DESKTOP_AUTOLOGIN | yes/no |
 | PACKAGE_LIST_DESKTOP_BOARD | space delimited packages to be installed on this boards desktop build |
+
+
+Statuses displayed at the login prompt:
+
+
+|file type|description|
+|:--|:--|
+|.csc or. tvb	|community creations|
+|.wip		|work in progress|
+|.eos		|end of life|
+
