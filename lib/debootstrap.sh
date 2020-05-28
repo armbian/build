@@ -81,7 +81,7 @@ debootstrap_ng()
 	# stage: unmount tmpfs
 	umount $SDCARD 2>&1
 	if [[ $use_tmpfs = yes ]]; then
-		while grep -qs '$SDCARD' /proc/mounts
+		while grep -qs "$SDCARD" /proc/mounts
 		do
 			umount $SDCARD
 			sleep 5
@@ -324,7 +324,7 @@ prepare_partitions()
 	mkopts[fat]='-n BOOT'
 	mkopts[ext2]='-q'
 	# mkopts[f2fs] is empty
-	# mkopts[btrfs] is empty
+	mkopts[btrfs]='-m dup'
 	# mkopts[nfs] is empty
 
 	mkfs[ext4]=ext4

@@ -66,7 +66,7 @@ update_src() {
 	fi
 }
 
-TMPFILE=`mktemp`
+TMPFILE=`mktemp` && chmod 644 $TMPFILE
 echo SRC=$SRC > $TMPFILE
 echo LIB_TAG=$LIB_TAG >> $TMPFILE
 declare -f update_src >> $TMPFILE
