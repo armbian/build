@@ -26,7 +26,7 @@ install_common()
 		>> "${DEST}"/debug/install.log 2>&1
 		if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then
 			display_alert "Installing rootfs encryption related packages" "dropbear-initramfs" "info"
-			chroot "${SDCARD}" /bin/bash -c "apt -y -qq --no-install-recommends install dropbear-initramfs " \
+			chroot "${SDCARD}" /bin/bash -c "apt -y -qq --no-install-recommends install dropbear-initramfs cryptsetup-initramfs" \
 			>> "${DEST}"/debug/install.log 2>&1
 		fi
 
