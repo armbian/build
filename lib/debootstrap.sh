@@ -622,62 +622,60 @@ create_image()
 	rm -rf --one-file-system $DESTIMG $MOUNT
 
 	mkdir -p $DESTIMG
-	fingerprint_image "$DESTIMG/${version}.img.txt" "${version}"
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
 	if [[ $BUILD_ALL != yes ]]; then
+
 		if [[ $COMPRESS_OUTPUTIMAGE == "" || $COMPRESS_OUTPUTIMAGE == no ]]; then
 			COMPRESS_OUTPUTIMAGE="sha,gpg,img"
 		elif [[ $COMPRESS_OUTPUTIMAGE == yes ]]; then
 			COMPRESS_OUTPUTIMAGE="sha,gpg,7z"
 		fi
 
-		if [[ $COMPRESS_OUTPUTIMAGE == *sha* || -n $CARD_DEVICE ]]; then
-			cd $DESTIMG
-			display_alert "SHA256 calculating" "${version}.img" "info"
-			sha256sum -b ${version}.img > ${version}.img.sha
-			cp ${version}.img.sha "$DEST/images/${version}.img.sha"
-			cd ..
+		if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
+			display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
+			pigz -3 < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
+			compression_type=".gz"
+		fi
+
+		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
+			display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
+			pixz -3 < $DESTIMG/${version}.img > $DEST/images/${version}.img.xz
+			compression_type=".xz"
+		fi
+
+		if [[ $COMPRESS_OUTPUTIMAGE == *img* || $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
+			mv $DESTIMG/${version}.img $DEST/images/${version}.img || exit 1
+			compression_type=""
+		fi
+
+		if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
+			cd $DEST/images
+			display_alert "SHA256 calculating" "${version}.img${compression_type}" "info"
+			sha256sum -b ${version}.img${compression_type} > ${version}.img${compression_type}.sha
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *gpg* ]]; then
-			cd $DESTIMG
+			cd $DEST/images
 			if [[ -n $GPG_PASS ]]; then
-				display_alert "GPG signing" "${version}.img" "info"
-				echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img || exit 1
-				cp ${version}.img.asc "$DEST/images/${version}.img.asc"
+				display_alert "GPG signing" "${version}.img${compression_type}" "info"
+				echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes $DEST/images/${version}.img${compression_type} || exit 1
 			else
 				display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 			fi
-			cd ..
 		fi
 
-		# compress image
+		fingerprint_image "$DEST/images/${version}.img${compression_type}.txt" "${version}"
+
 		if [[ $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
-			# copy unlock keys
-			[[ -f $DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME ]] && \
-			cp $DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME $DESTIMG/
-			cd $DESTIMG
 			display_alert "Compressing" "$DEST/images/${version}.7z" "info"
 			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on \
 			$DEST/images/${version}.7z ${version}.key ${version}.img* >/dev/null 2>&1
 			find $DEST/images/ -type \
-			f \( -name "${version}.img" -o -name "${version}.img.asc" -o -name "${version}.img.sha" \) -print0 \
+			f \( -name "${version}.img" -o -name "${version}.img.asc" -o -name "${version}.img.txt" -o -name "${version}.img.sha" \) -print0 \
 			| xargs -0 rm >/dev/null 2>&1
-			cd ..
 		fi
-		if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
-			display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
-			pigz -3 < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
-		fi
-		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
-			display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
-			pixz -3 < $DESTIMG/${version}.img > $DEST/images/${version}.img.xz
-		fi
-		if [[ $COMPRESS_OUTPUTIMAGE == *img* ]]; then
-			[[ -f $DESTIMG/${version}.img.txt ]] && mv $DESTIMG/${version}.img.txt $DEST/images/${version}.img.txt
-			mv $DESTIMG/${version}.img $DEST/images/${version}.img || exit 1
-		fi
+
 		rm -rf $DESTIMG
 	fi
 	display_alert "Done building" "$DEST/images/${version}.img" "info"
