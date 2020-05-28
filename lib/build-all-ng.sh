@@ -83,6 +83,7 @@ pack_upload ()
 	if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
 		display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
 		pigz $DESTIMG/${version}.img
+		rm ${DESTIMG}/${version}.img
 		compression_type=".gz"
 	fi
 
