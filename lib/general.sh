@@ -234,6 +234,13 @@ fetch_from_repo()
 	local ref=$3
 	local ref_subdir=$4
 
+	# The 'offline' variable must always be set to 'true' or 'false'
+	if [ "$OFFLINE_WORK" == "yes" ]; then
+		local offline=true
+	else
+		local offline=false
+	fi
+
 	[[ -z $ref || ( $ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:* ) ]] && exit_with_error "Error in configuration"
 	local ref_type=${ref%%:*}
 	if [[ $ref_type == head ]]; then
@@ -274,37 +281,42 @@ fetch_from_repo()
 		display_alert "Creating local copy"
 		git init -q .
 		git remote add origin $url
+		# Here you need to upload from a new address
+		offline=false
 	fi
 
 	local changed=false
 
-	local local_hash=$(git rev-parse @ 2>/dev/null)
+	# when we work offline we simply return the sources to their original state
+	if ! $offline; then
+		local local_hash=$(git rev-parse @ 2>/dev/null)
 
-	case $ref_type in
-		branch)
-		# TODO: grep refs/heads/$name
-		local remote_hash=$(git ls-remote -h $url "$ref_name" | head -1 | cut -f1)
-		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
-		;;
+		case $ref_type in
+			branch)
+			# TODO: grep refs/heads/$name
+			local remote_hash=$(git ls-remote -h $url "$ref_name" | head -1 | cut -f1)
+			[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
+			;;
 
-		tag)
-		local remote_hash=$(git ls-remote -t $url "$ref_name" | cut -f1)
-		if [[ -z $local_hash || $local_hash != $remote_hash ]]; then
-			remote_hash=$(git ls-remote -t $url "$ref_name^{}" | cut -f1)
-			[[ -z $remote_hash || $local_hash != $remote_hash ]] && changed=true
-		fi
-		;;
+			tag)
+			local remote_hash=$(git ls-remote -t $url "$ref_name" | cut -f1)
+			if [[ -z $local_hash || $local_hash != $remote_hash ]]; then
+				remote_hash=$(git ls-remote -t $url "$ref_name^{}" | cut -f1)
+				[[ -z $remote_hash || $local_hash != $remote_hash ]] && changed=true
+			fi
+			;;
 
-		head)
-		local remote_hash=$(git ls-remote $url HEAD | cut -f1)
-		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
-		;;
+			head)
+			local remote_hash=$(git ls-remote $url HEAD | cut -f1)
+			[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
+			;;
 
-		commit)
-		[[ -z $local_hash || $local_hash == "@" ]] && changed=true
-		;;
+			commit)
+			[[ -z $local_hash || $local_hash == "@" ]] && changed=true
+			;;
+		esac
 
-	esac
+	fi # offline
 
 	if [[ $changed == true ]]; then
 
