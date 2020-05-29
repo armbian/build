@@ -1,4 +1,4 @@
-# H2+ quad core 1GB SoC WiFi eMMC
+# Allwinner H2+ quad core 1GB SoC WiFi eMMC
 BOARD_NAME="Sunvell R69"
 BOARDFAMILY="sun8i"
 BOOTCONFIG="sunvell_r69_defconfig"
