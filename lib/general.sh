@@ -823,6 +823,13 @@ prepare_host()
 {
 	display_alert "Preparing" "host" "info"
 
+	# The 'offline' variable must always be set to 'true' or 'false'
+	if [ "$OFFLINE_WORK" == "yes" ]; then
+		local offline=true
+	else
+		local offline=false
+	fi
+
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "http://www.armbian.com/using-armbian-tools/"
@@ -898,6 +905,9 @@ prepare_host()
 		SYNC_CLOCK=no
 	fi
 
+	# Skip verification if you are working offline
+	if ! $offline; then
+
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
 	if [[ $NO_APT_CACHER != yes ]]; then hostdeps="$hostdeps apt-cacher-ng"; fi
@@ -940,14 +950,6 @@ prepare_host()
 
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
 		apt-get install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
-	fi
-
-	# enable arm binary format so that the cross-architecture chroot environment will work
-	if [[ $KERNEL_ONLY != yes ]]; then
-		modprobe -q binfmt_misc
-		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
-		test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
 	fi
 
 	# create directory structure
@@ -1003,6 +1005,16 @@ prepare_host()
 			rm -rf $SRC/cache/toolchains/$dir
 		fi
 	done
+
+	fi # check offline
+
+	# enable arm binary format so that the cross-architecture chroot environment will work
+	if [[ $KERNEL_ONLY != yes ]]; then
+		modprobe -q binfmt_misc
+		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
+		test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
+		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+	fi
 
 	[[ ! -f $USERPATCHES_PATH/customize-image.sh ]] && cp $SRC/config/templates/customize-image.sh.template $USERPATCHES_PATH/customize-image.sh
 

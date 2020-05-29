@@ -123,8 +123,16 @@ if [[ -n $REPOSITORY_UPDATE ]]; then
 
 fi
 
-# we need dialog to display the menu in case not installed. Other stuff gets installed later
-prepare_host_basic
+if [ "$OFFLINE_WORK" == "yes" ]; then
+	echo -e "\n"
+	display_alert "* " "You are working offline."
+	display_alert "* " "Sources, time and host will not be checked"
+	echo -e "\n"
+	sleep 3s
+else
+	# we need dialog to display the menu in case not installed. Other stuff gets installed later
+	prepare_host_basic
+fi
 
 # if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
@@ -387,6 +395,7 @@ do_default() {
 start=$(date +%s)
 
 # Check and install dependencies, directory structure and settings
+# The OFFLINE_WORK variable inside the function
 prepare_host
 
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
