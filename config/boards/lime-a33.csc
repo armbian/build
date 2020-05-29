@@ -1,4 +1,4 @@
-# A33 quad core 1Gb SoC
+# Allwinner A33 quad core 1Gb SoC
 BOARD_NAME="Lime A33"
 BOARDFAMILY="sun8i"
 BOOTCONFIG="A33-OLinuXino_defconfig"
