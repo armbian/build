@@ -253,21 +253,24 @@ fetch_from_repo()
 	else
 		local workdir=$dir
 	fi
-	mkdir -p $SRC/cache/sources/$workdir
+
+	mkdir -p $SRC/cache/sources/$workdir 2>/dev/null || \
+		exit_with_error "No path or no write permission" "$SRC/cache/sources/$workdir"
+
 	cd $SRC/cache/sources/$workdir
 
 	# check if existing remote URL for the repo or branch does not match current one
 	# may not be supported by older git versions
-	local current_url=$(git remote get-url origin 2>/dev/null)
-	if [[ -n $current_url && $(git rev-parse --is-inside-work-tree 2>/dev/null) == true && \
-				$(git rev-parse --show-toplevel) == $(pwd) && \
-				$current_url != $url ]]; then
+	#  Check the folder as a git repository.
+	#  Then the target URL matches the local URL.
+
+	if [[ "$(git rev-parse --git-dir 2>/dev/null)" == ".git" && \
+		  "$url" != "$(git remote get-url origin 2>/dev/null)" ]]; then
 		display_alert "Remote URL does not match, removing existing local copy"
 		rm -rf .git *
 	fi
 
-	if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null) != true || \
-				$(git rev-parse --show-toplevel) != $(pwd) ]]; then
+	if [[ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]]; then
 		display_alert "Creating local copy"
 		git init -q .
 		git remote add origin $url
