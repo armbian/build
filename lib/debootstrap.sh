@@ -556,6 +556,12 @@ update_initramfs()
 	display_alert "Updated initramfs." "for details see: $DEST/debug/install.log" "ext"
 
 	umount_chroot "$chroot_target/"
+
+	# dirty workaround for random initrd corruption https://armbian.atlassian.net/browse/AR-294
+	if [[ "$RELEASE" == focal || "$RELEASE" == bullseye ]]; then
+		chroot $chroot_target $QEMU_BINARY /bin/bash -c "$update_initramfs_cmd" >> $DEST/debug/install.log 2>&1
+	fi
+
 	rm $chroot_target/usr/bin/$QEMU_BINARY
 
 } #############################################################################
