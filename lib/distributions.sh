@@ -501,6 +501,9 @@ install_distribution_specific()
 		;;
 	bionic|eoan|focal)
 
+			# by using default lz4 initrd compression leads to corruption, go back to proven method
+			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" $SDCARD/etc/initramfs-tools/initramfs.conf
+
 			# remove doubled uname from motd
 			[[ -f $SDCARD/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
 
