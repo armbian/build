@@ -75,6 +75,9 @@ create_board_package()
 
 	fi
 
+	# fixing ramdisk corruption when using lz4 compression method
+	sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" /etc/initramfs-tools/initramfs.conf
+
 	# swap
 	grep -q vm.swappiness /etc/sysctl.conf
 	case \$? in
