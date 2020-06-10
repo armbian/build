@@ -85,6 +85,9 @@ ATF_COMPILE=yes
 [[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 [[ -z $AUFS ]] && AUFS="yes"
 
+# default partition table is mbr/msdos
+ROOTFS_PARTITION_TABLE="msdos"
+
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
 
