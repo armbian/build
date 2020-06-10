@@ -154,7 +154,7 @@ if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
 	# Essential packages
 	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
 		iw wpasupplicant sudo curl linux-base crda \
-		wireless-regdb unattended-upgrades \
+		wireless-regdb unattended-upgrades selinux-policy-default \
 		console-setup unicode-data initramfs-tools \
 		ca-certificates expect iptables automake html2text \
 		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"

@@ -95,7 +95,9 @@ install_common()
 	# before installing board support package
 	rm -f "${SDCARD}"/etc/network/interfaces
 
+	# disable selinux by default
 	mkdir -p "${SDCARD}"/selinux
+	sed "s/^SELINUX=.*/SELINUX=disabled/" -i "${SDCARD}"/etc/selinux/default
 
 	# remove Ubuntu's legal text
 	[[ -f $SDCARD/etc/legal ]] && rm "${SDCARD}"/etc/legal
