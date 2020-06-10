@@ -84,7 +84,7 @@ ATF_COMPILE=yes
 [[ -z $WIREGUARD ]] && WIREGUARD="yes"
 [[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 [[ -z $AUFS ]] && AUFS="yes"
-[[ -z $ROOTFS_PARTITION_TABLE ]] && ROOTFS_PARTITION_TABLE="msdos"
+[[ -z $IMAGE_PARTITION_TABLE ]] && IMAGE_PARTITION_TABLE="msdos"
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
