@@ -140,9 +140,6 @@ compile_uboot()
 		local target_patchdir=$(cut -d';' -f2 <<< $target)
 		local target_files=$(cut -d';' -f3 <<< $target)
 
-		display_alert "Checking out sources"
-		git checkout -f -q HEAD
-
 		if [[ $CLEAN_LEVEL == *make* ]]; then
 			display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
 			(cd $SRC/cache/sources/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
