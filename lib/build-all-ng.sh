@@ -26,6 +26,9 @@ if [[ -z $START ]]; then START=0; fi
 if [[ -z $KERNEL_CONFIGURE ]]; then KERNEL_CONFIGURE="no"; fi
 if [[ -z $CLEAN_LEVEL ]]; then CLEAN_LEVEL="make,oldcache"; fi
 
+MAINLINE_UBOOT_SOURCE='git://git.denx.de/u-boot.git'
+MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
+
 # cleanup
 rm -f /run/armbian/*.pid
 mkdir -p /run/armbian
@@ -185,6 +188,34 @@ array_contains ()
 
 
 
+function check_hash()
+{
+	local BOARDFAMILY=$(cat ${SRC}/config/boards/${BOARD}.* | grep BOARDFAMILY | cut -d \" -f2)
+	source "${SRC}/config/sources/families/${BOARDFAMILY}.conf"
+        source "${SRC}/config/sources/${ARCH}.conf"
+
+	local ref_type=${KERNELBRANCH%%:*}
+	if [[ $ref_type == head ]]; then
+		local ref_name=HEAD
+	else
+		local ref_name=${KERNELBRANCH##*:}
+	fi
+
+	case $ref_type in
+		branch) hash=$(git ls-remote $KERNELSOURCE refs/heads/$ref_name | awk '{print $1}') ;;
+		tag) hash=$(git ls-remote $KERNELSOURCE  tags/$ref_name | awk '{print $1}') ;;
+		head) hash=$(git ls-remote $KERNELSOURCE  HEAD | awk '{print $1}') ;;
+	esac
+
+	local kernel_hash=${SRC}/cache/hash/linux-image-$BRANCH-$LINUXFAMILY.githash
+	if [[ -f ${kernel_hash} ]]; then
+		[[ "$hash" == "$(cat $kernel_hash)" ]] && echo "idential"
+	fi
+}
+
+
+
+
 function build_all()
 {
 
@@ -249,9 +280,7 @@ function build_all()
 
 		# small optimisation. we only (try to) build needed kernels
 		if [[ $KERNEL_ONLY == yes ]]; then
-
 			LINUXFAMILY="${BOARDFAMILY}"
-			source "${SRC}/config/sources/families/${BOARDFAMILY}.conf" 2> /dev/null
 			array_contains ARRAY "${LINUXFAMILY}${BRANCH}${BUILD_STABILITY}" && continue
 
 		elif [[ $BUILD_IMAGE == no ]] ; then
@@ -270,6 +299,10 @@ function build_all()
 		# create beta or stable
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
 
+
+			# check if currnt hash is the same as upstream
+			if [[ $(check_hash) != idential ]]; then
+
 			((n+=1))
 
 			if [[ $1 != "dryrun" ]] && [[ $n -ge $START ]]; then
@@ -283,7 +316,8 @@ function build_all()
 							done
 
 					display_alert "Building ${n}."
-					(build_main) &
+					(build_main) 
+#&
 #					sleep $(( ( RANDOM % 10 )  + 10 ))
 
 			# create BSP for all boards
@@ -312,12 +346,12 @@ function build_all()
 				display_alert "Done building all BSP images"
 				exit
 			else
-
 				# In dryrun it only prints out what will be build
-				printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." \
-				"$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
-
+                                printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." \
+                                "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
 			fi
+
+fi
 
 		fi
 

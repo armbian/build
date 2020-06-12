@@ -112,6 +112,7 @@ compile_uboot()
 
 	# read uboot version
 	local version=$(grab_version "$ubootdir")
+	local hash=$(git --git-dir="$ubootdir"/.git rev-parse HEAD)
 
 	display_alert "Compiling u-boot" "$version" "info"
 
@@ -254,6 +255,10 @@ compile_uboot()
 	[[ ! -f $SRC/.tmp/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
 	mv $SRC/.tmp/${uboot_name}.deb ${DEB_STORAGE}/
+
+	# store git hash to the file
+	echo $hash > ${SRC}/cache/hash/${CHOSEN_UBOOT}.githash
+	ls -1 ${SRC}/patch/u-boot/$BOOTPATCHDIR | git hash-object --stdin >> ${SRC}/cache/hash/${CHOSEN_UBOOT}.githash
 }
 
 compile_kernel()
@@ -277,6 +282,9 @@ compile_kernel()
 
 	# read kernel version
 	local version=$(grab_version "$kerneldir")
+
+	# read kernel git hash
+	local hash=$(git --git-dir="$kerneldir"/.git rev-parse HEAD)
 
 	# build 3rd party drivers
 	compilation_prepare
@@ -423,6 +431,10 @@ compile_kernel()
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
 	mv *.deb ${DEB_STORAGE}/ || exit_with_error "Failed moving kernel DEBs"
+
+	# store git hash to the file
+	echo $hash > ${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash
+	ls -1 ${SRC}/patch/kernel/$KERNELPATCHDIR | git hash-object --stdin >> ${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash
 }
 
 
