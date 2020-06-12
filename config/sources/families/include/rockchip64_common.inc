@@ -10,6 +10,7 @@ SERIALCON=${SERIALCON:=$([ $BRANCH == "legacy" ] && echo "ttyFIQ0:1500000" || ec
 GOVERNOR="ondemand"
 CPUMAX="2016000"
 CPUMIN="600000"
+BOOTBRANCH="tag:v2020.07-rc4"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 
