@@ -29,46 +29,77 @@ else
 	exit 255
 fi
 
-if [[ $EUID == 0 ]] || [[ "$1" == vagrant ]]; then
-	:
-elif [[ "$1" == docker || "$1" == dockerpurge || "$1" == docker-shell ]] && grep -q `whoami` <(getent group docker); then
-	:
-else
-	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
-	sudo "$SRC/compile.sh" "$@"
-	exit $?
-fi
-
-update_src() {
+update_src()
+{
 	cd "${SRC}" || exit
-	if [[ ! -f $SRC/.ignore_changes ]]; then
-		echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
-		git pull
-		CHANGED_FILES=$(git diff --name-only)
-		if [[ -n $CHANGED_FILES ]]; then
-			echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
-			while true; do
-				echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m or \e[0;33mexit\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue, \e[0;33mdiff\x1B[0m to display changes"
-				read -r
-				if [[ "$REPLY" == "diff" ]]; then
-					git diff
-				elif [[ "$REPLY" == "exit" ]]; then
-					exit 1
-				elif [[ "$REPLY" == "" ]]; then
-					break
-				else
-					echo "Unknown command!"
-				fi
-			done
-		else
-			git checkout "${LIB_TAG:-master}"
-		fi
+	echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
+
+	#   Operations (git pull | fetch) are performed only         #
+	#   for the original armbian repository                      #
+	local valid_url="https://github.com/armbian/build"
+
+	#   Find the name of the repository that tracks              #
+	#   the original armbian/build. In general, the name         #
+	#   can be any if it was added using (git remote add ...)    #
+	#   valid_remote -> "$(git remote -v show)" return:          #
+	# origin  https://github.com/User-repo/armbian-build (fetch) #
+	# origin  https://github.com/User-repo/armbian-build (push)  #
+	# upstream        https://github.com/armbian/build (fetch)   #
+	# upstream        https://github.com/armbian/build (push)    #
+	local valid_remote=$(git remote -v show | \
+				   grep $valid_url | \
+				   gawk '/fetch/ {print $1}')
+
+	#   If it's empty , we don't do anything, because we don't   #
+	#   know exactly what is needed. A simple message to the     #
+	#   user. Probably need to stop here if there is an error.   #
+	if [ "$valid_remote" == "" ]; then
+		display_alert \
+		"There is no information about the tracked object from" \
+		 "$valid_url" "warn"
 	fi
+
+	#   (git branch --show-current) available in newer versions  #
+	#   of the git. For compatibility, we use this option.       #
+	local current_branch=$(git branch | gawk '/^\*/ {print $2}')
+
+	#   Let's find out if the current branch tracks the original #
+	#   armbian repository. If it is not empty and there are no  #
+	#   modified files, then (git pull $valid_remote)            #
+	#   Otherwise we just check for updates to the original      #
+	#   armbian repository.  (git fetch $valid_remote)           #
+	if [ "$valid_remote" != "" ]; then
+		local valid_trecking="$(
+					git config -l | \
+					grep ${current_branch}.remote=$valid_remote)"
+	fi
+	local changed_files="$(git diff --name-only)"
+
+	if [ "$valid_trecking" != "" ]; then
+		if [ "$changed_files" == "" ]; then
+			display_alert "Update" "$current_branch" "info"
+			git pull $valid_remote $current_branch
+		else
+			display_alert "Can't update since you made changes to:" " " "warn"
+			echo -e "\e[0;32m\n${CHANGED_FILES}\x1B\n[0m"
+
+			display_alert "Fetch from the" "$valid_remote" "info"
+			git fetch $valid_remote
+		fi
+	else
+		echo -e "[\e[0;35m warn \x1B[0m] Unable to update the \e[0;36m${current_branch}\x1B[0m"
+		echo -e "         branch, it does not track the repository:"
+		echo -e "         [ \e[0;32m${valid_url}\x1B[0m ]"
+	fi
+
+	###   All other actions with branches are performed   ###
+	###   by the user himself.                            ###
 }
 
 TMPFILE=`mktemp` && chmod 644 $TMPFILE
 echo SRC=$SRC > $TMPFILE
 echo LIB_TAG=$LIB_TAG >> $TMPFILE
+declare -f display_alert >>$TMPFILE
 declare -f update_src >> $TMPFILE
 echo update_src >> $TMPFILE
 
@@ -80,9 +111,24 @@ if [[ `systemd-detect-virt` == 'none' ]]; then
 	else
 		bash $TMPFILE
 	fi
+else
+	if [[ $EUID != 0 ]]; then
+		bash $TMPFILE
+	fi
 fi
 
 rm $TMPFILE
+
+
+if [[ $EUID == 0 ]] || [[ "$1" == vagrant ]]; then
+	:
+elif [[ "$1" == docker || "$1" == dockerpurge || "$1" == docker-shell ]] && grep -q `whoami` <(getent group docker); then
+	:
+else
+	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
+	sudo "$SRC/compile.sh" "$@"
+	exit $?
+fi
 
 # Check for required packages for compiling
 if [[ -z "$(which dialog)" ]]; then
