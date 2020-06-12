@@ -201,6 +201,8 @@ function check_hash()
 		local ref_name=${KERNELBRANCH##*:}
 	fi
 
+	patch_hash=$(ls -l ${SRC}/patch/kernel/$KERNELPATCHDIR | awk '{print $5, $9}' | git hash-object --stdin)
+
 	case $ref_type in
 		branch) hash=$(git ls-remote $KERNELSOURCE refs/heads/$ref_name | awk '{print $1}') ;;
 		tag) hash=$(git ls-remote $KERNELSOURCE  tags/$ref_name | awk '{print $1}') ;;
@@ -209,7 +211,7 @@ function check_hash()
 
 	local kernel_hash=${SRC}/cache/hash/linux-image-$BRANCH-$LINUXFAMILY.githash
 	if [[ -f ${kernel_hash} ]]; then
-		[[ "$hash" == "$(cat $kernel_hash)" ]] && echo "idential"
+		[[ "$hash" == "$(cat $kernel_hash | head -1)" && "$patch_hash" == "$(cat $kernel_hash | tail -1)" ]] && echo "idential"
 	fi
 }
 

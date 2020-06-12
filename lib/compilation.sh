@@ -258,7 +258,7 @@ compile_uboot()
 
 	# store git hash to the file
 	echo $hash > ${SRC}/cache/hash/${CHOSEN_UBOOT}.githash
-	ls -1 ${SRC}/patch/u-boot/$BOOTPATCHDIR | git hash-object --stdin >> ${SRC}/cache/hash/${CHOSEN_UBOOT}.githash
+	ls -l ${SRC}/patch/u-boot/$BOOTPATCHDIR | awk '{print $5, $9}' | git hash-object --stdin >> ${SRC}/cache/hash/${CHOSEN_UBOOT}.githash
 }
 
 compile_kernel()
@@ -434,7 +434,7 @@ compile_kernel()
 
 	# store git hash to the file
 	echo $hash > ${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash
-	ls -1 ${SRC}/patch/kernel/$KERNELPATCHDIR | git hash-object --stdin >> ${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash
+	ls -l ${SRC}/patch/kernel/$KERNELPATCHDIR | awk '{print $5, $9}' | git hash-object --stdin >> ${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash
 }
 
 
