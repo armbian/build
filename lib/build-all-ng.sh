@@ -211,7 +211,7 @@ function check_hash()
 
 	local kernel_hash=${SRC}/cache/hash/linux-image-$BRANCH-$LINUXFAMILY.githash
 	if [[ -f ${kernel_hash} ]]; then
-		[[ "$hash" == "$(cat $kernel_hash | head -1)" && "$patch_hash" == "$(cat $kernel_hash | tail -1)" ]] && echo "idential"
+		[[ "$hash" == "$(head -1 ${kernel_hash})" && "$patch_hash" == "$(tail -1 ${kernel_hash})" ]] && echo "idential"
 	fi
 }
 
