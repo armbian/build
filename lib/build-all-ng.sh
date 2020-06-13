@@ -311,7 +311,7 @@ function build_all()
 
 							while :
 							do
-							if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -le ${MULTITHREAD} || -z ${MULTITHREAD} ]]; then
+							if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -le ${MULTITHREAD} || ${MULTITHREAD} -eq 0  ]]; then
 								break
 							fi
 							sleep 5
