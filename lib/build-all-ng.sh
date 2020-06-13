@@ -201,7 +201,7 @@ function check_hash()
 		local ref_name=${KERNELBRANCH##*:}
 	fi
 
-	patch_hash=$(ls -l ${SRC}/patch/kernel/$KERNELPATCHDIR | awk '{print $5, $9}' | git hash-object --stdin)
+	patch_hash=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | git hash-object --stdin)
 
 	case $ref_type in
 		branch) hash=$(git ls-remote $KERNELSOURCE refs/heads/$ref_name | awk '{print $1}') ;;
