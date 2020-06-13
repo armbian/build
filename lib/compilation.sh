@@ -257,8 +257,8 @@ compile_uboot()
 	mv $SRC/.tmp/${uboot_name}.deb ${DEB_STORAGE}/
 
 	# store git hash to the file
-	echo $hash > ${SRC}/cache/hash/${CHOSEN_UBOOT}.githash
-	find "${SRC}/patch/u-boot/${BOOTPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | git hash-object --stdin >> "${SRC}/cache/hash/${CHOSEN_UBOOT}.githash"
+#	echo $hash > ${SRC}/cache/hash/${CHOSEN_UBOOT}.githash
+#	find "${SRC}/patch/u-boot/${BOOTPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | git hash-object --stdin >> "${SRC}/cache/hash/${CHOSEN_UBOOT}.githash"
 }
 
 compile_kernel()
