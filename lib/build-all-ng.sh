@@ -26,8 +26,7 @@ if [[ -z $START ]]; then START=0; fi
 if [[ -z $KERNEL_CONFIGURE ]]; then KERNEL_CONFIGURE="no"; fi
 if [[ -z $CLEAN_LEVEL ]]; then CLEAN_LEVEL="make,oldcache"; fi
 
-MAINLINE_UBOOT_SOURCE='git://git.denx.de/u-boot.git'
-MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
+MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 
 # cleanup
 rm -f /run/armbian/*.pid
@@ -225,7 +224,6 @@ function build_all()
 	buildall_start=$(date +%s)
 	n=0
 	ARRAY=()
-	ARRAY_GIT=()
 	buildlist="cat "
 
 	# building selected ones
@@ -279,6 +277,8 @@ function build_all()
 
 		# exceptions handling
 		[[ ${BOARDFAMILY} == sun*i* && $BRANCH != default ]] && BOARDFAMILY=sunxi
+		[[ ${BOARDFAMILY} == meson8b ]] && BOARDFAMILY=meson
+		[[ ${BOARDFAMILY} == meson-* ]] && BOARDFAMILY=meson64
 
 		# small optimisation. we only (try to) build needed kernels
 		if [[ $KERNEL_ONLY == yes ]]; then
@@ -303,9 +303,6 @@ function build_all()
 
 			# check if currnt hash is the same as upstream
 			if [[ $(check_hash) != idential ]]; then
-
-			# add boards for commit display
-			ARRAY_GIT+=("${LINUXFAMILY} ${BRANCH}")
 
 			((n+=1))
 
@@ -401,12 +398,18 @@ done
 
 # bump version in case there was a change
 if [[ $n -gt 0 ]]; then
-	NEW_VERSION=$(cat $SRC/VERSION | cut -f1,2 -d'.')
-	NEW_VERSION+="."$(echo $(($(cat $SRC/VERSION | cut -f3,3 -d'.' | tr -d "\-trunk") + 1)))
-	NEW_VERSION+=$(cat $SRC/VERSION | tr -d "$(cat $SRC/VERSION | cut -f1,1 -d'-')")
+
+	CURRENT_VERSION=$(cat VERSION)
+	NEW_VERSION=$(echo $CURRENT_VERSION | tr -d "\-trunk")
+	if [[ $CURRENT_VERSION == *trunk* ]]; then
+		NEW_VERSION=$(echo $CURRENT_VERSION | cut -d. -f1-3)"."$(($(echo ${NEW_VERSION##*.}) + 1))
+	else
+		NEW_VERSION=$(echo $CURRENT_VERSION | cut -d. -f1-2)"."$(($(echo ${NEW_VERSION##*.}) + 1))
+	fi
+
 	echo $NEW_VERSION > VERSION
 	git add $SRC/VERSION
-	git commit $SRC/VERSION -m "Bumping to new version" -m "$(printf '%s\n' "${ARRAY_GIT[@]}")"
+	git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*$CURRENT_VERSION*.deb" -printf "%f\n" | sort)"
 	git push
 	display_alert "Bumping to new version" "$NEW_VERSION" "info"
 
