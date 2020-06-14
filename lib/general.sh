@@ -234,6 +234,13 @@ fetch_from_repo()
 	local ref=$3
 	local ref_subdir=$4
 
+	# The 'offline' variable must always be set to 'true' or 'false'
+	if [ "$OFFLINE_WORK" == "yes" ]; then
+		local offline=true
+	else
+		local offline=false
+	fi
+
 	[[ -z $ref || ( $ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:* ) ]] && exit_with_error "Error in configuration"
 	local ref_type=${ref%%:*}
 	if [[ $ref_type == head ]]; then
@@ -274,37 +281,42 @@ fetch_from_repo()
 		display_alert "Creating local copy"
 		git init -q .
 		git remote add origin $url
+		# Here you need to upload from a new address
+		offline=false
 	fi
 
 	local changed=false
 
-	local local_hash=$(git rev-parse @ 2>/dev/null)
+	# when we work offline we simply return the sources to their original state
+	if ! $offline; then
+		local local_hash=$(git rev-parse @ 2>/dev/null)
 
-	case $ref_type in
-		branch)
-		# TODO: grep refs/heads/$name
-		local remote_hash=$(git ls-remote -h $url "$ref_name" | head -1 | cut -f1)
-		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
-		;;
+		case $ref_type in
+			branch)
+			# TODO: grep refs/heads/$name
+			local remote_hash=$(git ls-remote -h $url "$ref_name" | head -1 | cut -f1)
+			[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
+			;;
 
-		tag)
-		local remote_hash=$(git ls-remote -t $url "$ref_name" | cut -f1)
-		if [[ -z $local_hash || $local_hash != $remote_hash ]]; then
-			remote_hash=$(git ls-remote -t $url "$ref_name^{}" | cut -f1)
-			[[ -z $remote_hash || $local_hash != $remote_hash ]] && changed=true
-		fi
-		;;
+			tag)
+			local remote_hash=$(git ls-remote -t $url "$ref_name" | cut -f1)
+			if [[ -z $local_hash || $local_hash != $remote_hash ]]; then
+				remote_hash=$(git ls-remote -t $url "$ref_name^{}" | cut -f1)
+				[[ -z $remote_hash || $local_hash != $remote_hash ]] && changed=true
+			fi
+			;;
 
-		head)
-		local remote_hash=$(git ls-remote $url HEAD | cut -f1)
-		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
-		;;
+			head)
+			local remote_hash=$(git ls-remote $url HEAD | cut -f1)
+			[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
+			;;
 
-		commit)
-		[[ -z $local_hash || $local_hash == "@" ]] && changed=true
-		;;
+			commit)
+			[[ -z $local_hash || $local_hash == "@" ]] && changed=true
+			;;
+		esac
 
-	esac
+	fi # offline
 
 	if [[ $changed == true ]]; then
 
@@ -345,24 +357,19 @@ fetch_from_repo()
 		fi
 	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
-		if [[ $FORCE_CHECKOUT == yes ]]; then
-			display_alert " Cleaning .... " "$(git status -s | wc -l) files"
+		display_alert " Cleaning .... " "$(git status -s | wc -l) files"
 
-			# Return the files that are tracked by git to the initial state.
-			git checkout -f -q HEAD
+		# Return the files that are tracked by git to the initial state.
+		git checkout -f -q HEAD
 
-			# Files that are not tracked by git and were added
-			# when the patch was applied must be removed.
-			git clean -qdf
-		else
-			display_alert "In the source of dirty files: " "$(git status -s | wc -l)"
-			display_alert "The compilation process will probably fail." "You have been warned"
-			display_alert "Skipping checkout"
-		fi
+		# Files that are not tracked by git and were added
+		# when the patch was applied must be removed.
+		git clean -qdf
 	else
 		# working directory is clean, nothing to do
 		display_alert "Up to date"
 	fi
+
 	if [[ -f .gitmodules ]]; then
 		display_alert "Updating submodules" "" "ext"
 		# FML: http://stackoverflow.com/a/17692710
@@ -816,6 +823,13 @@ prepare_host()
 {
 	display_alert "Preparing" "host" "info"
 
+	# The 'offline' variable must always be set to 'true' or 'false'
+	if [ "$OFFLINE_WORK" == "yes" ]; then
+		local offline=true
+	else
+		local offline=false
+	fi
+
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "http://www.armbian.com/using-armbian-tools/"
@@ -891,6 +905,9 @@ prepare_host()
 		SYNC_CLOCK=no
 	fi
 
+	# Skip verification if you are working offline
+	if ! $offline; then
+
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
 	if [[ $NO_APT_CACHER != yes ]]; then hostdeps="$hostdeps apt-cacher-ng"; fi
@@ -933,14 +950,6 @@ prepare_host()
 
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
 		apt-get install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
-	fi
-
-	# enable arm binary format so that the cross-architecture chroot environment will work
-	if [[ $KERNEL_ONLY != yes ]]; then
-		modprobe -q binfmt_misc
-		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
-		test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
 	fi
 
 	# create directory structure
@@ -996,6 +1005,16 @@ prepare_host()
 			rm -rf $SRC/cache/toolchains/$dir
 		fi
 	done
+
+	fi # check offline
+
+	# enable arm binary format so that the cross-architecture chroot environment will work
+	if [[ $KERNEL_ONLY != yes ]]; then
+		modprobe -q binfmt_misc
+		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
+		test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
+		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+	fi
 
 	[[ ! -f $USERPATCHES_PATH/customize-image.sh ]] && cp $SRC/config/templates/customize-image.sh.template $USERPATCHES_PATH/customize-image.sh
 
