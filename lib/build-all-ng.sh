@@ -193,20 +193,19 @@ function check_hash()
 	local BOARDFAMILY=$(cat ${SRC}/config/boards/${BOARD}.* | grep BOARDFAMILY | cut -d \" -f2)
 	source "${SRC}/config/sources/families/${BOARDFAMILY}.conf"
         source "${SRC}/config/sources/${ARCH}.conf"
-
 	local ref_type=${KERNELBRANCH%%:*}
 	if [[ $ref_type == head ]]; then
 		local ref_name=HEAD
 	else
 		local ref_name=${KERNELBRANCH##*:}
 	fi
-
+	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	patch_hash=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | git hash-object --stdin)
-
 	case $ref_type in
 		branch) hash=$(git ls-remote $KERNELSOURCE refs/heads/$ref_name | awk '{print $1}') ;;
 		tag) hash=$(git ls-remote $KERNELSOURCE  tags/$ref_name | awk '{print $1}') ;;
 		head) hash=$(git ls-remote $KERNELSOURCE  HEAD | awk '{print $1}') ;;
+		commit) hash=$ref_name ;;
 	esac
 
 	local kernel_hash=${SRC}/cache/hash/linux-image-$BRANCH-$LINUXFAMILY.githash
@@ -300,7 +299,6 @@ function build_all()
 
 		# create beta or stable
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
-
 
 			# check if currnt hash is the same as upstream
 			if [[ $(check_hash) != idential ]]; then
