@@ -68,7 +68,7 @@ case $BRANCH in
 	dev)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="branch:linux-5.6.y"
+		KERNELBRANCH="branch:linux-5.7.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
