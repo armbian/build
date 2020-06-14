@@ -225,6 +225,7 @@ function build_all()
 	buildall_start=$(date +%s)
 	n=0
 	ARRAY=()
+	ARRAY_GIT=()
 	buildlist="cat "
 
 	# building selected ones
@@ -302,6 +303,9 @@ function build_all()
 
 			# check if currnt hash is the same as upstream
 			if [[ $(check_hash) != idential ]]; then
+
+			# add boards for commit display
+			ARRAY_GIT+=("${LINUXFAMILY} ${BRANCH}")
 
 			((n+=1))
 
@@ -396,12 +400,13 @@ do
 done
 
 # bump version in case there was a change
-if [[ $n -eq 0 ]]; then
+if [[ $n -gt 0 ]]; then
 	NEW_VERSION=$(cat $SRC/VERSION | cut -f1,2 -d'.')
 	NEW_VERSION+="."$(echo $(($(cat $SRC/VERSION | cut -f3,3 -d'.' | tr -d "\-trunk") + 1)))
 	NEW_VERSION+=$(cat $SRC/VERSION | tr -d "$(cat $SRC/VERSION | cut -f1,1 -d'-')")
+	echo $NEW_VERSION > VERSION
 	git add $SRC/VERSION
-	git commit $SRC/VERSION -m "Bumping to new version"
+	git commit $SRC/VERSION -m "Bumping to new version" -m "$(printf '%s\n' "${ARRAY_GIT[@]}")"
 	git push
 	display_alert "Bumping to new version" "$NEW_VERSION" "info"
 
