@@ -5,6 +5,7 @@
 | BOARDFAMILY | [sun8i, sun7i, rockchip64](../sources) |
 | BOOTCONFIG | name of u-boot config |
 | BOOTSIZE | size of a separate boot partition in Mib |
+| IMAGE_PARTITION_TABLE | "msdos" (default) or "gpt" (boot loader must supports it) |
 | BOOTFS_TYPE | boot partition type: ext4, fat |
 | DEFAULT_OVERLAYS | usbhost1 usbhost2 ... |
 | DEFAULT_CONSOLE | serial = change default boot output |
