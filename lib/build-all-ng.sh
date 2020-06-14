@@ -395,6 +395,18 @@ do
 	sleep 5
 done
 
+# bump version in case there was a change
+if [[ $n -eq 0 ]]; then
+	NEW_VERSION=$(cat $SRC/VERSION | cut -f1,2 -d'.')
+	NEW_VERSION+="."$(echo $(($(cat $SRC/VERSION | cut -f3,3 -d'.' | tr -d "\-trunk") + 1)))
+	NEW_VERSION+=$(cat $SRC/VERSION | tr -d "$(cat $SRC/VERSION | cut -f1,1 -d'-')")
+#	git add $SRC/VERSION
+	git commit $SRC/VERSION -m "Bumping to new version"
+	git push
+	display_alert "Bumping to new version" "$NEW_VERSION" "info"
+
+fi
+
 buildall_end=$(date +%s)
 buildall_runtime=$(((buildall_end - buildall_start) / 60))
 display_alert "Runtime in total" "$buildall_runtime min" "info"
