@@ -29,6 +29,17 @@ else
 	exit 255
 fi
 
+check_args ()
+{
+  for p in "$@"; do
+	if [ "$p" == "OFFLINE_WORK=yes" ]; then
+        eval "$p"
+	fi
+  done
+}
+
+check_args $*
+
 update_src()
 {
 	cd "${SRC}" || exit
@@ -80,8 +91,8 @@ update_src()
 			display_alert "Update" "$current_branch" "info"
 			git pull $valid_remote $current_branch
 		else
-			display_alert "Can't update since you made changes to:" " " "warn"
-			echo -e "\e[0;32m\n${CHANGED_FILES}\x1B\n[0m"
+			echo "Can't update since you made changes to:"
+			echo -e "\e[0;32m\n${changed_files}\x1B\n[0m"
 
 			display_alert "Fetch from the" "$valid_remote" "info"
 			git fetch $valid_remote
@@ -96,28 +107,30 @@ update_src()
 	###   by the user himself.                            ###
 }
 
-TMPFILE=`mktemp` && chmod 644 $TMPFILE
-echo SRC=$SRC > $TMPFILE
-echo LIB_TAG=$LIB_TAG >> $TMPFILE
-declare -f display_alert >>$TMPFILE
-declare -f update_src >> $TMPFILE
-echo update_src >> $TMPFILE
+if [ "$OFFLINE_WORK" != "yes" ]; then
+	TMPFILE=`mktemp` && chmod 644 $TMPFILE
+	echo SRC=$SRC > $TMPFILE
+	echo LIB_TAG=$LIB_TAG >> $TMPFILE
+	declare -f display_alert >>$TMPFILE
+	declare -f update_src >> $TMPFILE
+	echo update_src >> $TMPFILE
 
-#do not update/checkout git with root privileges to messup files onwership.
-#due to in docker/VM, we can't su to a normal user, so do not update/checkout git.
-if [[ `systemd-detect-virt` == 'none' ]]; then
-	if [[ $EUID == 0 ]]; then
-		su `stat --format=%U $SRC/.git` -c "bash $TMPFILE"
+	#do not update/checkout git with root privileges to messup files onwership.
+	#due to in docker/VM, we can't su to a normal user, so do not update/checkout git.
+	if [[ `systemd-detect-virt` == 'none' ]]; then
+		if [[ $EUID == 0 ]]; then
+			su `stat --format=%U $SRC/.git` -c "bash $TMPFILE"
+		else
+			bash $TMPFILE
+		fi
 	else
-		bash $TMPFILE
+		if [[ $EUID != 0 ]]; then
+			bash $TMPFILE
+		fi
 	fi
-else
-	if [[ $EUID != 0 ]]; then
-		bash $TMPFILE
-	fi
-fi
 
-rm $TMPFILE
+	rm $TMPFILE
+fi
 
 
 if [[ $EUID == 0 ]] || [[ "$1" == vagrant ]]; then
