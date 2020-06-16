@@ -6,7 +6,7 @@ BOOTENV_FILE='rockchip-default.txt'
 UBOOT_TARGET_MAP=";;idbloader.bin uboot.img trust.bin"
 BOOTDELAY=0
 OVERLAY_PREFIX='rockchip'
-SERIALCON=${SERIALCON:-'ttyFIQ0:1500000'}
+SERIALCON=${SERIALCON:=$([ $BRANCH == "legacy" ] && echo "ttyFIQ0:1500000" || echo "ttyS2:1500000")}
 GOVERNOR="ondemand"
 CPUMAX="2016000"
 CPUMIN="600000"
@@ -68,7 +68,7 @@ case $BRANCH in
 	dev)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="branch:linux-5.6.y"
+		KERNELBRANCH="branch:linux-5.7.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
