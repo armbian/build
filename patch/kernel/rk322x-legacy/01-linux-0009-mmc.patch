@@ -1,0 +1,267 @@
+diff --git a/drivers/mmc/core/core.c b/drivers/mmc/core/core.c
+index f82b1eb..d2c59b5 100644
+--- a/drivers/mmc/core/core.c
++++ b/drivers/mmc/core/core.c
+@@ -1574,7 +1574,34 @@ u32 mmc_select_voltage(struct mmc_host *host, u32 ocr)
+ 	return ocr;
+ }
+ 
+-int mmc_host_set_uhs_voltage(struct mmc_host *host, int signal_voltage)
++int mmc_set_signal_voltage(struct mmc_host *host, int signal_voltage)
++{
++	int err = 0;
++	int old_signal_voltage = host->ios.signal_voltage;
++
++	host->ios.signal_voltage = signal_voltage;
++	if (host->ops->start_signal_voltage_switch)
++		err = host->ops->start_signal_voltage_switch(host, &host->ios);
++
++	if (err)
++		host->ios.signal_voltage = old_signal_voltage;
++
++	return err;
++
++}
++
++void mmc_set_initial_signal_voltage(struct mmc_host *host)
++{
++	/* Try to set signal voltage to 3.3V but fall back to 1.8v or 1.2v */
++	if (!mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_330))
++		dev_dbg(mmc_dev(host), "Initial signal voltage of 3.3v\n");
++	else if (!mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180))
++		dev_dbg(mmc_dev(host), "Initial signal voltage of 1.8v\n");
++	else if (!mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_120))
++		dev_dbg(mmc_dev(host), "Initial signal voltage of 1.2v\n");
++}
++
++int mmc_host_set_uhs_voltage(struct mmc_host *host)
+ {
+ 	u32 clock;
+ 
+@@ -1586,7 +1613,7 @@ int mmc_host_set_uhs_voltage(struct mmc_host *host, int signal_voltage)
+ 	host->ios.clock = 0;
+ 	mmc_set_ios(host);
+ 
+-	if (__mmc_set_signal_voltage(host, signal_voltage))
++	if (mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180))
+ 		return -EAGAIN;
+ 
+ 	/* Keep clock gated for at least 10 ms, though spec only says 5 ms */
+@@ -1597,23 +1624,7 @@ int mmc_host_set_uhs_voltage(struct mmc_host *host, int signal_voltage)
+ 	return 0;
+ }
+ 
+-int __mmc_set_signal_voltage(struct mmc_host *host, int signal_voltage)
+-{
+-	int err = 0;
+-	int old_signal_voltage = host->ios.signal_voltage;
+-
+-	host->ios.signal_voltage = signal_voltage;
+-	if (host->ops->start_signal_voltage_switch)
+-		err = host->ops->start_signal_voltage_switch(host, &host->ios);
+-
+-	if (err)
+-		host->ios.signal_voltage = old_signal_voltage;
+-
+-	return err;
+-
+-}
+-
+-int mmc_set_signal_voltage(struct mmc_host *host, int signal_voltage, u32 ocr)
++int mmc_set_uhs_voltage(struct mmc_host *host, u32 ocr)
+ {
+ 	struct mmc_command cmd = {0};
+ 	int err = 0;
+@@ -1621,13 +1632,6 @@ int mmc_set_signal_voltage(struct mmc_host *host, int signal_voltage, u32 ocr)
+ 	BUG_ON(!host);
+ 
+ 	/*
+-	 * Send CMD11 only if the request is to switch the card to
+-	 * 1.8V signalling.
+-	 */
+-	if (signal_voltage == MMC_SIGNAL_VOLTAGE_330)
+-		return __mmc_set_signal_voltage(host, signal_voltage);
+-
+-	/*
+ 	 * If we cannot switch voltages, return failure so the caller
+ 	 * can continue without UHS mode
+ 	 */
+@@ -1658,7 +1662,7 @@ int mmc_set_signal_voltage(struct mmc_host *host, int signal_voltage, u32 ocr)
+ 		goto power_cycle;
+ 	}
+ 
+-	if (mmc_host_set_uhs_voltage(host, signal_voltage)) {
++	if (mmc_host_set_uhs_voltage(host)) {
+ 		/*
+ 		 * Voltages may not have been switched, but we've already
+ 		 * sent CMD11, so a power cycle is required anyway
+@@ -1761,13 +1765,7 @@ void mmc_power_up(struct mmc_host *host, u32 ocr)
+ 	/* Set initial state and call mmc_set_ios */
+ 	mmc_set_initial_state(host);
+ 
+-	/* Try to set signal voltage to 3.3V but fall back to 1.8v or 1.2v */
+-	if (__mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_330) == 0)
+-		dev_dbg(mmc_dev(host), "Initial signal voltage of 3.3v\n");
+-	else if (__mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180) == 0)
+-		dev_dbg(mmc_dev(host), "Initial signal voltage of 1.8v\n");
+-	else if (__mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_120) == 0)
+-		dev_dbg(mmc_dev(host), "Initial signal voltage of 1.2v\n");
++	mmc_set_initial_signal_voltage(host);
+ 
+ 	/*
+ 	 * This delay should be sufficient to allow the power supply
+@@ -1794,6 +1792,14 @@ void mmc_power_off(struct mmc_host *host)
+ 	if (host->ios.power_mode == MMC_POWER_OFF)
+ 		return;
+ 
++	mmc_set_initial_signal_voltage(host);
++
++	/*
++	 * This delay should be sufficient to allow the power supply
++	 * to reach the minimum voltage.
++	 */
++	mmc_delay(10);
++
+ 	mmc_pwrseq_power_off(host);
+ 
+ 	host->ios.clock = 0;
+diff --git a/drivers/mmc/core/core.h b/drivers/mmc/core/core.h
+index 2cd32dc..2634722 100644
+--- a/drivers/mmc/core/core.h
++++ b/drivers/mmc/core/core.h
+@@ -43,9 +43,10 @@ void mmc_set_clock(struct mmc_host *host, unsigned int hz);
+ void mmc_set_bus_mode(struct mmc_host *host, unsigned int mode);
+ void mmc_set_bus_width(struct mmc_host *host, unsigned int width);
+ u32 mmc_select_voltage(struct mmc_host *host, u32 ocr);
+-int mmc_set_signal_voltage(struct mmc_host *host, int signal_voltage, u32 ocr);
+-int mmc_host_set_uhs_voltage(struct mmc_host *host, int signal_voltage);
+-int __mmc_set_signal_voltage(struct mmc_host *host, int signal_voltage);
++int mmc_set_uhs_voltage(struct mmc_host *host, u32 ocr);
++int mmc_host_set_uhs_voltage(struct mmc_host *host);
++int mmc_set_signal_voltage(struct mmc_host *host, int signal_voltage);
++void mmc_set_initial_signal_voltage(struct mmc_host *host);
+ void mmc_set_timing(struct mmc_host *host, unsigned int timing);
+ void mmc_set_driver_type(struct mmc_host *host, unsigned int drv_type);
+ int mmc_select_drive_strength(struct mmc_card *card, unsigned int max_dtr,
+diff --git a/drivers/mmc/core/mmc.c b/drivers/mmc/core/mmc.c
+index a814eb6..dd0040a 100644
+--- a/drivers/mmc/core/mmc.c
++++ b/drivers/mmc/core/mmc.c
+@@ -1088,14 +1088,14 @@ static int mmc_select_hs_ddr(struct mmc_card *card)
+ 	 */
+ 	err = -EINVAL;
+ 	if (card->mmc_avail_type & EXT_CSD_CARD_TYPE_DDR_1_2V)
+-		err = __mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_120);
++		err = mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_120);
+ 
+ 	if (err && (card->mmc_avail_type & EXT_CSD_CARD_TYPE_DDR_1_8V))
+-		err = __mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180);
++		err = mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180);
+ 
+ 	/* make sure vccq is 3.3v after switching disaster */
+ 	if (err)
+-		err = __mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_330);
++		err = mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_330);
+ 
+ 	if (!err)
+ 		mmc_set_timing(host, MMC_TIMING_MMC_DDR52);
+@@ -1251,7 +1251,7 @@ out_err:
+ static int mmc_select_hs400es(struct mmc_card *card)
+ {
+ 	struct mmc_host *host = card->host;
+-	int err = 0;
++	int err = -EINVAL;
+ 	u8 val;
+ 
+ 	if (!(host->caps & MMC_CAP_8_BIT_DATA)) {
+@@ -1259,11 +1259,11 @@ static int mmc_select_hs400es(struct mmc_card *card)
+ 		goto out_err;
+ 	}
+ 
+-	if (card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS200_1_2V)
+-		err = __mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_120);
++	if (card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS400_1_2V)
++		err = mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_120);
+ 
+-	if (err && card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS200_1_8V)
+-		err = __mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180);
++	if (err && card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS400_1_8V)
++		err = mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180);
+ 
+ 	/* If fails try again during next card power cycle */
+ 	if (err)
+@@ -1362,10 +1362,10 @@ static int mmc_select_hs200(struct mmc_card *card)
+ 
+ 	old_signal_voltage = host->ios.signal_voltage;
+ 	if (card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS200_1_2V)
+-		err = __mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_120);
++		err = mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_120);
+ 
+ 	if (err && card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS200_1_8V)
+-		err = __mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180);
++		err = mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180);
+ 
+ 	/* If fails try again during next card power cycle */
+ 	if (err)
+@@ -1393,7 +1393,7 @@ static int mmc_select_hs200(struct mmc_card *card)
+ err:
+ 	if (err) {
+ 		/* fall back to the old signal voltage, if fails report error */
+-		if (__mmc_set_signal_voltage(host, old_signal_voltage))
++		if (mmc_set_signal_voltage(host, old_signal_voltage))
+ 			err = -EIO;
+ 
+ 		pr_err("%s: %s failed, error %d\n", mmc_hostname(card->host),
+diff --git a/drivers/mmc/core/sd.c b/drivers/mmc/core/sd.c
+index 78638ee..17919cb 100644
+--- a/drivers/mmc/core/sd.c
++++ b/drivers/mmc/core/sd.c
+@@ -742,8 +742,7 @@ try_again:
+ 	 */
+ 	if (!mmc_host_is_spi(host) && rocr &&
+ 	   ((*rocr & 0x41000000) == 0x41000000)) {
+-		err = mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180,
+-					pocr);
++		err = mmc_set_uhs_voltage(host, pocr);
+ 		if (err == -EAGAIN) {
+ 			retries--;
+ 			goto try_again;
+@@ -928,7 +927,6 @@ static int mmc_sd_init_card(struct mmc_host *host, u32 ocr,
+ 
+ 	BUG_ON(!host);
+ 	WARN_ON(!host->claimed);
+-
+ retry:
+ 	err = mmc_sd_get_cid(host, ocr, cid, &rocr);
+ 	if (err)
+@@ -1013,7 +1011,7 @@ retry:
+ 				goto free_card;
+ 		}
+ 		if (mmc_sd_card_using_v18(card)) {
+-			if (mmc_host_set_uhs_voltage(host, MMC_SIGNAL_VOLTAGE_180) ||
++			if (mmc_host_set_uhs_voltage(host) ||
+ 			    mmc_sd_init_uhs_card(card)) {
+ 				v18_fixup_failed = true;
+ 				mmc_power_cycle(host, ocr);
+@@ -1057,7 +1055,6 @@ retry:
+ 			mmc_set_bus_width(host, MMC_BUS_WIDTH_4);
+ 		}
+ 	}
+-
+ done:
+ 	host->card = card;
+ 	return 0;
+diff --git a/drivers/mmc/core/sdio.c b/drivers/mmc/core/sdio.c
+index c586b11..f221418 100644
+--- a/drivers/mmc/core/sdio.c
++++ b/drivers/mmc/core/sdio.c
+@@ -648,8 +648,7 @@ try_again:
+ 	 * to make sure which speed mode should work.
+ 	 */
+ 	if (!powered_resume && (rocr & ocr & R4_18V_PRESENT)) {
+-		err = mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180,
+-					ocr_card);
++		err = mmc_set_uhs_voltage(host, ocr_card);
+ 		if (err == -EAGAIN) {
+ 			mmc_sdio_resend_if_cond(host, card);
+ 			retries--;
