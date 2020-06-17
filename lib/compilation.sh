@@ -435,7 +435,10 @@ compile_kernel()
 	# store git hash to the file
 	echo $hash > ${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
-	find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | git hash-object --stdin >> "${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
+	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
+        hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n')
+        hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
+        echo ${hash_watch_1}${hash_watch_2} | git hash-object --stdin >> "${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 }
 
 

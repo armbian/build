@@ -199,7 +199,11 @@ function check_hash()
 		local ref_name=${KERNELBRANCH##*:}
 	fi
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
-	patch_hash=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | git hash-object --stdin)
+	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
+	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n')
+	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
+	patch_hash=$(echo ${hash_watch_1}${hash_watch_2} | git hash-object --stdin)
+
 	case $ref_type in
 		branch) hash=$(git ls-remote $KERNELSOURCE refs/heads/$ref_name | awk '{print $1}') ;;
 		tag) hash=$(git ls-remote $KERNELSOURCE  tags/$ref_name | awk '{print $1}') ;;
