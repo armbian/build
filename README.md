@@ -3,7 +3,7 @@ build tools</h3>
 
 <p align=right>&nbsp;</p>
 
-![Build](https://github.com/armbian/build/workflows/CI/badge.svg)
+[![Build](https://github.com/armbian/build/workflows/Build/badge.svg)](https://github.com/armbian/build/actions?query=workflow%3ABuild)
 [![Twitter Follow](https://img.shields.io/twitter/follow/armbian?style=flat-square)](https://twitter.com/intent/follow?screen_name=armbian)
 
 ## Table of contents
