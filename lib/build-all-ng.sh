@@ -26,6 +26,8 @@ if [[ -z $START ]]; then START=0; fi
 if [[ -z $KERNEL_CONFIGURE ]]; then KERNEL_CONFIGURE="no"; fi
 if [[ -z $CLEAN_LEVEL ]]; then CLEAN_LEVEL="make,oldcache"; fi
 
+MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
+
 # cleanup
 rm -f /run/armbian/*.pid
 mkdir -p /run/armbian
@@ -185,6 +187,35 @@ array_contains ()
 
 
 
+function check_hash()
+{
+	local BOARDFAMILY=$(cat ${SRC}/config/boards/${BOARD}.* | grep BOARDFAMILY | cut -d \" -f2)
+	source "${SRC}/config/sources/families/${BOARDFAMILY}.conf"
+        source "${SRC}/config/sources/${ARCH}.conf"
+	local ref_type=${KERNELBRANCH%%:*}
+	if [[ $ref_type == head ]]; then
+		local ref_name=HEAD
+	else
+		local ref_name=${KERNELBRANCH##*:}
+	fi
+	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
+	patch_hash=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | git hash-object --stdin)
+	case $ref_type in
+		branch) hash=$(git ls-remote $KERNELSOURCE refs/heads/$ref_name | awk '{print $1}') ;;
+		tag) hash=$(git ls-remote $KERNELSOURCE  tags/$ref_name | awk '{print $1}') ;;
+		head) hash=$(git ls-remote $KERNELSOURCE  HEAD | awk '{print $1}') ;;
+		commit) hash=$ref_name ;;
+	esac
+
+	local kernel_hash=${SRC}/cache/hash/linux-image-$BRANCH-$LINUXFAMILY.githash
+	if [[ -f ${kernel_hash} ]]; then
+		[[ "$hash" == "$(head -1 ${kernel_hash})" && "$patch_hash" == "$(tail -1 ${kernel_hash})" ]] && echo "idential"
+	fi
+}
+
+
+
+
 function build_all()
 {
 
@@ -246,12 +277,12 @@ function build_all()
 
 		# exceptions handling
 		[[ ${BOARDFAMILY} == sun*i* && $BRANCH != default ]] && BOARDFAMILY=sunxi
+		[[ ${BOARDFAMILY} == meson8b ]] && BOARDFAMILY=meson
+		[[ ${BOARDFAMILY} == meson-* ]] && BOARDFAMILY=meson64
 
 		# small optimisation. we only (try to) build needed kernels
 		if [[ $KERNEL_ONLY == yes ]]; then
-
 			LINUXFAMILY="${BOARDFAMILY}"
-			source "${SRC}/config/sources/families/${BOARDFAMILY}.conf" 2> /dev/null
 			array_contains ARRAY "${LINUXFAMILY}${BRANCH}${BUILD_STABILITY}" && continue
 
 		elif [[ $BUILD_IMAGE == no ]] ; then
@@ -270,21 +301,23 @@ function build_all()
 		# create beta or stable
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
 
+			# check if currnt hash is the same as upstream
+			if [[ $(check_hash) != idential ]]; then
+
 			((n+=1))
 
 			if [[ $1 != "dryrun" ]] && [[ $n -ge $START ]]; then
 
 							while :
 							do
-							if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -le ${MULTITHREAD} || -z ${MULTITHREAD} ]]; then
+							if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -le ${MULTITHREAD} || ${MULTITHREAD} -eq 0  ]]; then
 								break
 							fi
 							sleep 5
 							done
 
 					display_alert "Building ${n}."
-					(build_main) &
-#					sleep $(( ( RANDOM % 10 )  + 10 ))
+					build_main
 
 			# create BSP for all boards
 			elif [[ "${BSP_BUILD}" == yes ]]; then
@@ -312,12 +345,12 @@ function build_all()
 				display_alert "Done building all BSP images"
 				exit
 			else
-
 				# In dryrun it only prints out what will be build
-				printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." \
-				"$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
-
+                                printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." \
+                                "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
 			fi
+
+fi
 
 		fi
 
@@ -360,6 +393,25 @@ do
 		fi
 	sleep 5
 done
+
+# bump version in case there was a change
+if [[ $n -gt 0 && -n $SEND_TO_SERVER ]]; then
+
+	CURRENT_VERSION=$(cat VERSION)
+	NEW_VERSION=$(echo $CURRENT_VERSION | tr -d "\-trunk")
+	if [[ $CURRENT_VERSION == *trunk* ]]; then
+		NEW_VERSION=$(echo $CURRENT_VERSION | cut -d. -f1-3)"."$(($(echo ${NEW_VERSION##*.}) + 1))
+	else
+		NEW_VERSION=$(echo $CURRENT_VERSION | cut -d. -f1-2)"."$(($(echo ${NEW_VERSION##*.}) + 1))
+	fi
+
+	echo $NEW_VERSION > VERSION
+	git add $SRC/VERSION
+	git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*$CURRENT_VERSION*.deb" -printf "%f\n" | sort)"
+	git push
+	display_alert "Bumping to new version" "$NEW_VERSION" "info"
+
+fi
 
 buildall_end=$(date +%s)
 buildall_runtime=$(((buildall_end - buildall_start) / 60))
