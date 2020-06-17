@@ -3,7 +3,7 @@ build tools</h3>
 
 <p align=right>&nbsp;</p>
 
-[![Build Status](https://armbian.lane-fu.com/jenkins/buildStatus/icon?job=test-full)](https://armbian.lane-fu.com/jenkins/job/test-full/)
+![Build](https://github.com/armbian/build/workflows/CI/badge.svg)
 [![Twitter Follow](https://img.shields.io/twitter/follow/armbian?style=flat-square)](https://twitter.com/intent/follow?screen_name=armbian)
 
 ## Table of contents
