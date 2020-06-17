@@ -395,7 +395,7 @@ do
 done
 
 # bump version in case there was a change
-if [[ $n -gt 0 ]]; then
+if [[ $n -gt 0 && -n $SEND_TO_SERVER ]]; then
 
 	CURRENT_VERSION=$(cat VERSION)
 	NEW_VERSION=$(echo $CURRENT_VERSION | tr -d "\-trunk")
