@@ -222,7 +222,7 @@ Most of the project is sponsored with a work done by volunteer collaborators, wh
 <img src="https://www.armbian.com/wp-content/uploads/2018/03/orangepi-logo-150x150.png" alt="Armbian logo" width="144" height="144"><img src="https://www.armbian.com/wp-content/uploads/2018/02/friendlyelec-logo-150x150.png" alt="Armbian logo" width="144" height="144">
 <img src="https://www.armbian.com/wp-content/uploads/2018/03/kspace-150x150.png" width="144" height="144">
 <img src="https://www.armbian.com/wp-content/uploads/2018/02/olimex-logo-150x150.png" width="144" height="144">
-<img src="https://www.armbian.com/wp-content/uploads/2020/05/Kobol_R_logo_420pxsq-150x150.png" width="144" height="144">
+<img src="https://www.armbian.com/wp-content/uploads/2020/06/Kobol_logo-150x150.png" width="144" height="144">
 
 
 <p align=right><a href=#table-of-contents>⇧</a></p>

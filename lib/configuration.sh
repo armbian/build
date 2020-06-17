@@ -21,7 +21,7 @@ USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd ${SRC}
-ROOTFSCACHE_VERSION=27
+ROOTFSCACHE_VERSION=28
 CHROOT_CACHE_VERSION=7
 cd ${SRC}
 BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
@@ -155,7 +155,7 @@ if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
 	# Essential packages
 	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
 		iw wpasupplicant sudo curl linux-base crda \
-		wireless-regdb unattended-upgrades \
+		wireless-regdb unattended-upgrades selinux-policy-default \
 		console-setup unicode-data initramfs-tools \
 		ca-certificates expect iptables automake html2text \
 		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
