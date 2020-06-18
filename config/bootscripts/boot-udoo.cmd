@@ -12,6 +12,7 @@ setenv verbosity "1"
 setenv console "both"
 setenv disp_mode "1920x1080M60"
 setenv rootfstype "ext4"
+setenv earlycon "off"
 
 # Print boot source
 echo "Booting from SD"
@@ -22,7 +23,7 @@ fi
 
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=ttymxc1,115200 console=tty1"; fi
 if test "${console}" = "serial"; then setenv consoleargs "console=ttymxc1,115200"; fi
-
+if test "${earlycon}" = "on"; then setenv consoleargs "earlycon ${consoleargs}"; fi
 
 setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} video=mxcfb0:dev=hdmi,${disp_mode},if=RGB24,bpp=32 rd.dm=0 rd.luks=0 rd.lvm=0 raid=noautodetect pci=nomsi ahci_imx.hotplug=1 vt.global_cursor_default=0 loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 run findfdt

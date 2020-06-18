@@ -19,11 +19,14 @@
 
 
 if [[ $BETA == "yes" ]];  then STABILITY="beta";	else STABILITY="stable"; fi
+if [[ $MAKE_ALL_BETA == "yes" ]]; then STABILITY="stable"; fi
 if [[ -z $KERNEL_ONLY ]]; then KERNEL_ONLY="yes"; fi
 if [[ -z $MULTITHREAD ]]; then MULTITHREAD=0; fi
 if [[ -z $START ]]; then START=0; fi
 if [[ -z $KERNEL_CONFIGURE ]]; then KERNEL_CONFIGURE="no"; fi
 if [[ -z $CLEAN_LEVEL ]]; then CLEAN_LEVEL="make,oldcache"; fi
+
+MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 
 # cleanup
 rm -f /run/armbian/*.pid
@@ -54,7 +57,9 @@ unset	LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSO
 		CRYPTROOT_SSH_UNLOCK_KEY_NAME ROOT_MAPPER NETWORK HDMI USB WIRELESS ARMBIANMONITOR FORCE_BOOTSCRIPT_UPDATE \
 		UBOOT_TOOLCHAIN2 toolchain2 BUILD_REPOSITORY_URL BUILD_REPOSITORY_COMMIT BUILD_TARGET HOST BUILD_IMAGE \
 		DEB_STORAGE REPO_STORAGE REPO_CONFIG REPOSITORY_UPDATE PACKAGE_LIST_RELEASE LOCAL_MIRROR COMPILE_ATF \
-		PACKAGE_LIST_DESKTOP_BOARD PACKAGE_LIST_DESKTOP_FAMILY ATF_COMPILE ATFPATCHDIR OFFSET BOOTSOURCEDIR
+		PACKAGE_LIST_DESKTOP_BOARD PACKAGE_LIST_DESKTOP_FAMILY ATF_COMPILE ATFPATCHDIR OFFSET BOOTSOURCEDIR BOOT_USE_BLOBS \
+		BOOT_SOC DDR_BLOB MINILOADER_BLOB BL31_BLOB BOOT_RK3328_USE_AYUFAN_ATF BOOT_USE_BLOBS BOOT_RK3399_LEGACY_HYBRID \
+		BOOT_USE_MAINLINE_ATF BOOT_USE_TPL_SPL_BLOB OFFLINE_WORK IMAGE_PARTITION_TABLE
 }
 
 pack_upload ()
@@ -65,6 +70,7 @@ pack_upload ()
 	display_alert "Signing" "Please wait!" "info"
 	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
 	local subdir="archive"
+	compression_type=""
 
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
@@ -76,19 +82,35 @@ pack_upload ()
 		COMPRESS_OUTPUTIMAGE="sha,gpg,7z"
 	fi
 
+	if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
+		display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
+		pigz $DESTIMG/${version}.img
+		rm ${DESTIMG}/${version}.img
+		compression_type=".gz"
+	fi
+
+	if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
+		display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
+		pixz -3 < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.xz
+		rm ${DESTIMG}/${version}.img
+		compression_type=".xz"
+	fi
+
 	if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
 		display_alert "SHA256 calculating" "${version}.img" "info"
-		sha256sum -b ${version}.img > ${version}.img.sha
+		sha256sum -b ${version}.img${compression_type} > ${version}.img${compression_type}.sha
 	fi
 
 	if [[ $COMPRESS_OUTPUTIMAGE == *gpg* ]]; then
 		if [[ -n $GPG_PASS ]]; then
 			display_alert "GPG signing" "${version}.img" "info"
-			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img || exit 1
+			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img${compression_type} || exit 1
 		else
 			display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 		fi
 	fi
+
+	fingerprint_image "${version}.img${compression_type}.txt" "${version}"
 
 	if [[ $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
 		display_alert "Compressing" "${version}.7z" "info"
@@ -96,21 +118,10 @@ pack_upload ()
 		find . -type f -not -name '*.7z' -print0 | xargs -0 rm --
 	fi
 
-	if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
-		display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
-		pigz $DESTIMG/${version}.img
-	fi
-
-	if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
-		display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
-		pixz -3 < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.xz
-		rm ${DESTIMG}/${version}.img
-	fi
-
 	if [[ -n "${SEND_TO_SERVER}" ]]; then
 		ssh "${SEND_TO_SERVER}" "mkdir -p ${SEND_TO_LOCATION}${BOARD}/{archive,nightly}" &
 		display_alert "Uploading" "Please wait!" "info"
-		nice -n 19 bash -c "rsync -arP --info=progress2 --ignore-existing --remove-source-files --prune-empty-dirs $DESTIMG/ -e 'ssh -T -c aes128-ctr -o Compression=no -x -p 22' ${SEND_TO_SERVER}:${SEND_TO_LOCATION}${BOARD}/${subdir}" &
+		nice -n 19 bash -c "rsync -arP --info=progress2 --prune-empty-dirs $DESTIMG/ -e 'ssh -T -c aes128-ctr -o Compression=no -x -p 22' ${SEND_TO_SERVER}:${SEND_TO_LOCATION}${BOARD}/${subdir}; rm -rf ${DESTIMG}/*" &
 	else
 		mv $DESTIMG/*.* $DEST/images/
 	fi
@@ -171,6 +182,39 @@ array_contains ()
 	done
 	return $in
 
+}
+
+
+
+
+function check_hash()
+{
+	local BOARDFAMILY=$(cat ${SRC}/config/boards/${BOARD}.* | grep BOARDFAMILY | cut -d \" -f2)
+	source "${SRC}/config/sources/families/${BOARDFAMILY}.conf"
+        source "${SRC}/config/sources/${ARCH}.conf"
+	local ref_type=${KERNELBRANCH%%:*}
+	if [[ $ref_type == head ]]; then
+		local ref_name=HEAD
+	else
+		local ref_name=${KERNELBRANCH##*:}
+	fi
+	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
+	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
+	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n')
+	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
+	patch_hash=$(echo ${hash_watch_1}${hash_watch_2} | git hash-object --stdin)
+
+	case $ref_type in
+		branch) hash=$(git ls-remote $KERNELSOURCE refs/heads/$ref_name | awk '{print $1}') ;;
+		tag) hash=$(git ls-remote $KERNELSOURCE  tags/$ref_name | awk '{print $1}') ;;
+		head) hash=$(git ls-remote $KERNELSOURCE  HEAD | awk '{print $1}') ;;
+		commit) hash=$ref_name ;;
+	esac
+
+	local kernel_hash=${SRC}/cache/hash/linux-image-$BRANCH-$LINUXFAMILY.githash
+	if [[ -f ${kernel_hash} ]]; then
+		[[ "$hash" == "$(head -1 ${kernel_hash})" && "$patch_hash" == "$(tail -1 ${kernel_hash})" ]] && echo "idential"
+	fi
 }
 
 
@@ -237,12 +281,12 @@ function build_all()
 
 		# exceptions handling
 		[[ ${BOARDFAMILY} == sun*i* && $BRANCH != default ]] && BOARDFAMILY=sunxi
+		[[ ${BOARDFAMILY} == meson8b ]] && BOARDFAMILY=meson
+		[[ ${BOARDFAMILY} == meson-* ]] && BOARDFAMILY=meson64
 
 		# small optimisation. we only (try to) build needed kernels
 		if [[ $KERNEL_ONLY == yes ]]; then
-
 			LINUXFAMILY="${BOARDFAMILY}"
-			source "${SRC}/config/sources/families/${BOARDFAMILY}.conf" 2> /dev/null
 			array_contains ARRAY "${LINUXFAMILY}${BRANCH}${BUILD_STABILITY}" && continue
 
 		elif [[ $BUILD_IMAGE == no ]] ; then
@@ -261,21 +305,23 @@ function build_all()
 		# create beta or stable
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
 
+			# check if currnt hash is the same as upstream
+			if [[ $(check_hash) != idential ]]; then
+
 			((n+=1))
 
 			if [[ $1 != "dryrun" ]] && [[ $n -ge $START ]]; then
 
 							while :
 							do
-							if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -le ${MULTITHREAD} || -z ${MULTITHREAD} ]]; then
+							if [[ $(find /run/armbian/*.pid 2>/dev/null | wc -l) -le ${MULTITHREAD} || ${MULTITHREAD} -eq 0  ]]; then
 								break
 							fi
 							sleep 5
 							done
 
 					display_alert "Building ${n}."
-					(build_main) &
-					sleep $(( ( RANDOM % 10 )  + 10 ))
+					build_main
 
 			# create BSP for all boards
 			elif [[ "${BSP_BUILD}" == yes ]]; then
@@ -303,12 +349,12 @@ function build_all()
 				display_alert "Done building all BSP images"
 				exit
 			else
-
 				# In dryrun it only prints out what will be build
-				printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." \
-				"$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
-
+                                printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." \
+                                "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
 			fi
+
+fi
 
 		fi
 
@@ -351,6 +397,25 @@ do
 		fi
 	sleep 5
 done
+
+# bump version in case there was a change
+if [[ $n -gt 0 && -n $SEND_TO_SERVER ]]; then
+
+	CURRENT_VERSION=$(cat VERSION)
+	NEW_VERSION=$(echo $CURRENT_VERSION | tr -d "\-trunk")
+	if [[ $CURRENT_VERSION == *trunk* ]]; then
+		NEW_VERSION=$(echo $CURRENT_VERSION | cut -d. -f1-3)"."$(($(echo ${NEW_VERSION##*.}) + 1))
+	else
+		NEW_VERSION=$(echo $CURRENT_VERSION | cut -d. -f1-2)"."$(($(echo ${NEW_VERSION##*.}) + 1))
+	fi
+
+	echo $NEW_VERSION > VERSION
+	git add $SRC/VERSION
+	git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*$CURRENT_VERSION*.deb" -printf "%f\n" | sort)"
+	git push
+	display_alert "Bumping to new version" "$NEW_VERSION" "info"
+
+fi
 
 buildall_end=$(date +%s)
 buildall_runtime=$(((buildall_end - buildall_start) / 60))

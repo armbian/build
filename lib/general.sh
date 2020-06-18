@@ -168,6 +168,36 @@ create_sources_list()
 	;;
 	esac
 
+	# workaround for Chromium by downloading it from Debian
+	if [[ $release == focal || $release == eoan ]]; then
+
+		cat <<-EOF > $basedir/etc/apt/preferences.d/chromium.pref
+		# Note: 2 blank lines are required between entries
+		Package: *
+		Pin: release a=${release}
+		Pin-Priority: 500
+
+		Package: *
+		Pin: origin "${DEBIAN_MIRROR//\/debian}"
+		Pin-Priority: 300
+
+		# Pattern includes 'chromium', 'chromium-browser' and similarly
+		# named dependencies:
+		Package: chromium*
+		Pin: origin "${DEBIAN_MIRROR//\/debian}"
+		Pin-Priority: 700
+		EOF
+
+		cat <<-EOF > $basedir/etc/apt/sources.list.d/debian.list
+		deb http://${DEBIAN_MIRROR} stable main
+		deb http://${DEBIAN_MIRROR} stable-updates main
+		deb http://${DEBIAN_MIRROR}-security stable/updates main
+		EOF
+
+		chroot "${SDCARD}" /bin/bash -c "apt-key add /usr/share/keyrings/debian-archive-keyring.gpg >/dev/null 2>&1"
+
+	fi
+
 	# stage: add armbian repository and install key
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
 		echo "deb http://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > $SDCARD/etc/apt/sources.list.d/armbian.list
@@ -204,6 +234,13 @@ fetch_from_repo()
 	local ref=$3
 	local ref_subdir=$4
 
+	# The 'offline' variable must always be set to 'true' or 'false'
+	if [ "$OFFLINE_WORK" == "yes" ]; then
+		local offline=true
+	else
+		local offline=false
+	fi
+
 	[[ -z $ref || ( $ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:* ) ]] && exit_with_error "Error in configuration"
 	local ref_type=${ref%%:*}
 	if [[ $ref_type == head ]]; then
@@ -223,55 +260,63 @@ fetch_from_repo()
 	else
 		local workdir=$dir
 	fi
-	mkdir -p $SRC/cache/sources/$workdir
+
+	mkdir -p $SRC/cache/sources/$workdir 2>/dev/null || \
+		exit_with_error "No path or no write permission" "$SRC/cache/sources/$workdir"
+
 	cd $SRC/cache/sources/$workdir
 
 	# check if existing remote URL for the repo or branch does not match current one
 	# may not be supported by older git versions
-	local current_url=$(git remote get-url origin 2>/dev/null)
-	if [[ -n $current_url && $(git rev-parse --is-inside-work-tree 2>/dev/null) == true && \
-				$(git rev-parse --show-toplevel) == $(pwd) && \
-				$current_url != $url ]]; then
+	#  Check the folder as a git repository.
+	#  Then the target URL matches the local URL.
+
+	if [[ "$(git rev-parse --git-dir 2>/dev/null)" == ".git" && \
+		  "$url" != "$(git remote get-url origin 2>/dev/null)" ]]; then
 		display_alert "Remote URL does not match, removing existing local copy"
 		rm -rf .git *
 	fi
 
-	if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null) != true || \
-				$(git rev-parse --show-toplevel) != $(pwd) ]]; then
+	if [[ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]]; then
 		display_alert "Creating local copy"
 		git init -q .
 		git remote add origin $url
+		# Here you need to upload from a new address
+		offline=false
 	fi
 
 	local changed=false
 
-	local local_hash=$(git rev-parse @ 2>/dev/null)
+	# when we work offline we simply return the sources to their original state
+	if ! $offline; then
+		local local_hash=$(git rev-parse @ 2>/dev/null)
 
-	case $ref_type in
-		branch)
-		# TODO: grep refs/heads/$name
-		local remote_hash=$(git ls-remote -h $url "$ref_name" | head -1 | cut -f1)
-		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
-		;;
+		case $ref_type in
+			branch)
+			# TODO: grep refs/heads/$name
+			local remote_hash=$(git ls-remote -h $url "$ref_name" | head -1 | cut -f1)
+			[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
+			;;
 
-		tag)
-		local remote_hash=$(git ls-remote -t $url "$ref_name" | cut -f1)
-		if [[ -z $local_hash || $local_hash != $remote_hash ]]; then
-			remote_hash=$(git ls-remote -t $url "$ref_name^{}" | cut -f1)
-			[[ -z $remote_hash || $local_hash != $remote_hash ]] && changed=true
-		fi
-		;;
+			tag)
+			local remote_hash=$(git ls-remote -t $url "$ref_name" | cut -f1)
+			if [[ -z $local_hash || $local_hash != $remote_hash ]]; then
+				remote_hash=$(git ls-remote -t $url "$ref_name^{}" | cut -f1)
+				[[ -z $remote_hash || $local_hash != $remote_hash ]] && changed=true
+			fi
+			;;
 
-		head)
-		local remote_hash=$(git ls-remote $url HEAD | cut -f1)
-		[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
-		;;
+			head)
+			local remote_hash=$(git ls-remote $url HEAD | cut -f1)
+			[[ -z $local_hash || $local_hash != $remote_hash ]] && changed=true
+			;;
 
-		commit)
-		[[ -z $local_hash || $local_hash == "@" ]] && changed=true
-		;;
+			commit)
+			[[ -z $local_hash || $local_hash == "@" ]] && changed=true
+			;;
+		esac
 
-	esac
+	fi # offline
 
 	if [[ $changed == true ]]; then
 
@@ -312,24 +357,19 @@ fetch_from_repo()
 		fi
 	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
-		if [[ $FORCE_CHECKOUT == yes ]]; then
-			display_alert " Cleaning .... " "$(git status -s | wc -l) files"
+		display_alert " Cleaning .... " "$(git status -s | wc -l) files"
 
-			# Return the files that are tracked by git to the initial state.
-			git checkout -f -q HEAD
+		# Return the files that are tracked by git to the initial state.
+		git checkout -f -q HEAD
 
-			# Files that are not tracked by git and were added
-			# when the patch was applied must be removed.
-			git clean -qdf
-		else
-			display_alert "In the source of dirty files: " "$(git status -s | wc -l)"
-			display_alert "The compilation process will probably fail." "You have been warned"
-			display_alert "Skipping checkout"
-		fi
+		# Files that are not tracked by git and were added
+		# when the patch was applied must be removed.
+		git clean -qdf
 	else
 		# working directory is clean, nothing to do
 		display_alert "Up to date"
 	fi
+
 	if [[ -f .gitmodules ]]; then
 		display_alert "Updating submodules" "" "ext"
 		# FML: http://stackoverflow.com/a/17692710
@@ -413,10 +453,10 @@ fingerprint_image()
 	--------------------------------------------------------------------------------
 	Verify GPG signature:
 	gpg --verify $2.img.asc
-	
+
 	Verify image file integrity:
 	sha256sum --check $2.img.sha
-	
+
 	Prepare SD card (four methodes):
 	zcat $2.img.gz | pv | dd of=/dev/mmcblkX bs=1M
 	dd if=$2.img of=/dev/mmcblkX bs=1M
@@ -676,7 +716,7 @@ repo-manipulate() {
 			;;
 		purgesource)
 			for release in "${DISTROS[@]}"; do
-				aptly repo remove -config=${SCRIPTPATH}config/${REPO_CONFIG} ${release} 'Name (% *-source*)' 
+				aptly repo remove -config=${SCRIPTPATH}config/${REPO_CONFIG} ${release} 'Name (% *-source*)'
 				aptly -config="${SCRIPTPATH}"config/${REPO_CONFIG} -passphrase="${GPG_PASS}" publish update "${release}"  > /dev/null 2>&1
 			done
 			aptly db cleanup -config=${SCRIPTPATH}config/${REPO_CONFIG} > /dev/null 2>&1
@@ -759,13 +799,13 @@ prepare_host_basic()
 	# need lsb_release to decide what to install
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "lsb-release"
-		apt -q update && apt install -q -y --no-install-recommends lsb-release
+		apt-get -q update && apt-get install -q -y --no-install-recommends lsb-release
 	fi
 
 	# need to install dialog if person is starting with a interactive mode
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing package" "dialog"
-		apt -q update && apt install -q -y --no-install-recommends dialog
+		apt-get -q update && apt-get install -q -y --no-install-recommends dialog
 	fi
 
 }
@@ -782,6 +822,13 @@ prepare_host_basic()
 prepare_host()
 {
 	display_alert "Preparing" "host" "info"
+
+	# The 'offline' variable must always be set to 'true' or 'false'
+	if [ "$OFFLINE_WORK" == "yes" ]; then
+		local offline=true
+	else
+		local offline=false
+	fi
 
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
@@ -801,7 +848,7 @@ prepare_host()
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross \
-	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
+	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
 	bison libbison-dev flex libfl-dev cryptsetup gpgv1 gnupg1 cpio aria2 pigz dirmngr python3-distutils"
 
@@ -818,13 +865,13 @@ prepare_host()
 
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
 
-	# Ubuntu Xenial x86_64 is the only fully supported host OS release
-	# Ubuntu Bionic x86_64 support is WIP, especially for building full images and additional packages
+	# Ubuntu Focal x86_64 is the only fully supported host OS release
+	# Ubuntu Bionic x86_64 support is legacy until it breaks
 	# Using Docker/VirtualBox/Vagrant is the only supported way to run the build script on other Linux distributions
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
-	if [[ -z $codename || "xenial bionic eoan focal" != *"$codename"* ]]; then
+	if [[ -z $codename || "bionic buster eoan focal debbie tricia" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -837,7 +884,7 @@ prepare_host()
 		exit_with_error "Windows subsystem for Linux is not a supported build environment"
 	fi
 
-	if [[ -z $codename || "focal" == "$codename" || "eoan" == "$codename" ]]; then
+	if [[ -z $codename || "focal" == "$codename" || "eoan" == "$codename"  || "debbie" == "$codename"  || "buster" == "$codename" ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 
@@ -857,6 +904,9 @@ prepare_host()
 		fi
 		SYNC_CLOCK=no
 	fi
+
+	# Skip verification if you are working offline
+	if ! $offline; then
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
@@ -886,9 +936,9 @@ prepare_host()
 
 	if [[ ${#deps[@]} -gt 0 ]]; then
 		display_alert "Installing build dependencies"
-		apt -q update
-		apt -y upgrade
-		apt -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
+		apt-get -q update
+		apt-get -y upgrade
+		apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a $DEST/debug/hostdeps.log
 		update-ccache-symlinks
 	fi
 
@@ -899,15 +949,7 @@ prepare_host()
 	fi
 
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
-		apt install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
-	fi
-
-	# enable arm binary format so that the cross-architecture chroot environment will work
-	if [[ $KERNEL_ONLY != yes ]]; then
-		modprobe -q binfmt_misc
-		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
-		test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+		apt-get install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
 	fi
 
 	# create directory structure
@@ -920,10 +962,7 @@ prepare_host()
 		find $SRC/output $USERPATCHES_PATH -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 		find $SRC/output $USERPATCHES_PATH -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 	fi
-	mkdir -p $DEST/debs-beta/extra $DEST/debs/extra $DEST/{config,debug,patch} $USERPATCHES_PATH/overlay $SRC/cache/{sources,toolchains,utility,rootfs} $SRC/.tmp
-
-	# create patches directory structure under USERPATCHES_PATH
-	find $SRC/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
+	mkdir -p $DEST/debs-beta/extra $DEST/debs/extra $DEST/{config,debug,patch} $USERPATCHES_PATH/overlay $SRC/cache/{sources,hash,toolchains,utility,rootfs} $SRC/.tmp
 
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
@@ -967,12 +1006,25 @@ prepare_host()
 		fi
 	done
 
+	fi # check offline
+
+	# enable arm binary format so that the cross-architecture chroot environment will work
+	if [[ $KERNEL_ONLY != yes ]]; then
+		modprobe -q binfmt_misc
+		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
+		test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
+		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+	fi
+
 	[[ ! -f $USERPATCHES_PATH/customize-image.sh ]] && cp $SRC/config/templates/customize-image.sh.template $USERPATCHES_PATH/customize-image.sh
 
 	if [[ ! -f $USERPATCHES_PATH/README ]]; then
 		rm -f $USERPATCHES_PATH/readme.txt
 		echo 'Please read documentation about customizing build configuration' > $USERPATCHES_PATH/README
 		echo 'http://www.armbian.com/using-armbian-tools/' >> $USERPATCHES_PATH/README
+
+		# create patches directory structure under USERPATCHES_PATH
+		find $SRC/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
 	fi
 
 	# check free space (basic)

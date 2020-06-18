@@ -1,4 +1,4 @@
-# A20 dual core 1Gb SoC dual ethernet
+# Allwinner A20 dual core 1Gb SoC dual ethernet
 BOARD_NAME="SOM204-A20"
 BOARDFAMILY="sun7i"
 BOOTCONFIG="A20-Olimex-SOM204-EVB-eMMC_defconfig"

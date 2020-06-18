@@ -20,8 +20,10 @@ TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined 
 USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
-ROOTFSCACHE_VERSION=21
+cd ${SRC}
+ROOTFSCACHE_VERSION=28
 CHROOT_CACHE_VERSION=7
+cd ${SRC}
 BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
 ROOTFS_CACHE_MAX=42 # max number of rootfs cache, older ones will be cleaned up
@@ -82,6 +84,7 @@ ATF_COMPILE=yes
 [[ -z $WIREGUARD ]] && WIREGUARD="yes"
 [[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 [[ -z $AUFS ]] && AUFS="yes"
+[[ -z $IMAGE_PARTITION_TABLE ]] && IMAGE_PARTITION_TABLE="msdos"
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
@@ -146,20 +149,20 @@ PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chr
 		nocache debconf-utils python3-apt"
 
 # Non-essential packages for minimal build
-PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf"
+PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf iozone3"
 
 if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
 	# Essential packages
 	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
 		iw wpasupplicant sudo curl linux-base crda \
-		wireless-regdb unattended-upgrades \
+		wireless-regdb unattended-upgrades selinux-policy-default \
 		console-setup unicode-data initramfs-tools \
 		ca-certificates expect iptables automake html2text \
 		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
 
 
 	# Non-essential packages
-	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils btrfs-progs dosfstools iotop iozone3 stress screen \
+	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils btrfs-progs dosfstools iotop stress screen \
 		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
 		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
 		hostapd git ethtool unzip ifenslave libpam-systemd iperf3 \
@@ -181,6 +184,9 @@ PACKAGE_LIST_DESKTOP_RECOMMENDS="galculator hexchat xfce4-screenshooter network-
 
 # Full desktop packages
 PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
+
+# Packages installed before desktop.
+PACKAGE_LIST_PREDEPENDS=""
 
 # Release specific packages
 case $RELEASE in
@@ -207,7 +213,7 @@ case $RELEASE in
 
 	bionic)
 		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools"
+		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
@@ -217,7 +223,7 @@ case $RELEASE in
 
 	buster)
 		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools"
+		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
 		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme onboard"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
@@ -226,7 +232,7 @@ case $RELEASE in
 
 	bullseye)
 		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" haveged"
+		DEBOOTSTRAP_LIST+=" haveged fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
 		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
 		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
@@ -236,28 +242,30 @@ case $RELEASE in
 
 	focal)
 		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools"
+		DEBOOTSTRAP_LIST+=" rng-tools debian-archive-keyring fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer \
 								language-selector-gnome viewnior"
 		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+		PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
 	;;
 
 	eoan)
 		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools"
+		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher"
 		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
+		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer \
 								language-selector-gnome mirage"
 		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+		PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
 	;;
 
 esac
 
 
-DEBIAN_MIRROR='httpredir.debian.org/debian'
+DEBIAN_MIRROR='deb.debian.org/debian'
 DEBIAN_SECURTY='security.debian.org/'
 UBUNTU_MIRROR='ports.ubuntu.com/'
 
@@ -269,7 +277,7 @@ fi
 
 # For user override
 if [[ -f $USERPATCHES_PATH/lib.config ]]; then
-	display_alert "Using user configuration override" "userpatches/lib.config" "info"
+	display_alert "Using user configuration override" "$USERPATCHES_PATH/lib.config" "info"
 	source "$USERPATCHES_PATH"/lib.config
 fi
 

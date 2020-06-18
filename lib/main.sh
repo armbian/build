@@ -26,11 +26,10 @@ umask 002
 # destination
 DEST=$SRC/output
 
-# override stty size
-[[ -n $COLUMNS ]] && stty cols $COLUMNS
-[[ -n $LINES ]] && stty rows $LINES
-
 if [[ $BUILD_ALL != "yes" ]]; then
+	# override stty size
+	[[ -n $COLUMNS ]] && stty cols $COLUMNS
+	[[ -n $LINES ]] && stty rows $LINES
 	TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
 	TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
 fi
@@ -43,8 +42,6 @@ backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovn
 
 # default console if not set
 [[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8"
-
-[[ -z $FORCE_CHECKOUT ]] && FORCE_CHECKOUT=yes
 
 # Load libraries
 # shellcheck source=debootstrap.sh
@@ -126,8 +123,16 @@ if [[ -n $REPOSITORY_UPDATE ]]; then
 
 fi
 
-# we need dialog to display the menu in case not installed. Other stuff gets installed later
-prepare_host_basic
+if [ "$OFFLINE_WORK" == "yes" ]; then
+	echo -e "\n"
+	display_alert "* " "You are working offline."
+	display_alert "* " "Sources, time and host will not be checked"
+	echo -e "\n"
+	sleep 3s
+else
+	# we need dialog to display the menu in case not installed. Other stuff gets installed later
+	prepare_host_basic
+fi
 
 # if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
@@ -205,7 +210,7 @@ if [[ -z $BOARD ]]; then
 			if [[ $WIP_STATE == supported ]]; then
 
 				[[ $SHOW_WARNING == yes ]] && show_developer_warning
-				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress 
+				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress
 				\n - \Z1(EOS)\Zn - End Of Support\n - \Z1(TVB)\Zn - TV boxes'
 				WIP_STATE=unsupported
 				WIP_BUTTON='matured'
@@ -266,7 +271,7 @@ if [[ -z $BRANCH ]]; then
 	[[ $BRANCH == dev && $SHOW_WARNING == yes ]] && show_developer_warning
 
 else
-	[[ $BRANCH == next ]] && KERNEL_TARGET="next" 
+	[[ $BRANCH == next ]] && KERNEL_TARGET="next"
 	# next = new legacy. Should stay for backward compatibility, but be removed from menu above
 	# or we left definitions in board configs and only remove menu
 	[[ $KERNEL_TARGET != *$BRANCH* ]] && exit_with_error "Kernel branch not defined for this board" "$BRANCH"
@@ -286,7 +291,7 @@ distro_support['xenial']="eos"
 distro_name['bionic']="Ubuntu Bionic 18.04 LTS"
 distro_support['bionic']="supported"
 distro_name['focal']="Ubuntu Focal 20.04 LTS"
-distro_support['focal']="csc"
+distro_support['focal']="supported"
 distro_name['eoan']="Ubuntu Eoan 19.10"
 distro_support['eoan']="csc"
 
@@ -390,27 +395,27 @@ do_default() {
 start=$(date +%s)
 
 # Check and install dependencies, directory structure and settings
+# The OFFLINE_WORK variable inside the function
 prepare_host
 
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 
-# ignore updates help on building all images - for internal purposes
 # fetch_from_repo <url> <dir> <ref> <subdir_flag>
-if [[ $IGNORE_UPDATES != yes ]]; then
-	display_alert "Downloading sources" "" "info"
-	fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
-	fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
-	if [[ -n $ATFSOURCE ]]; then
-		fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
-	fi
-	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
-	fetch_from_repo "https://github.com/armbian/rkbin" "rkbin-tools" "branch:master"
-	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-18.12"
-	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git" "marvell-ddr" "branch:mv_ddr-armada-18.12"
-	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" "marvell-binaries" "branch:binaries-marvell-armada-18.12"
-	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
-	fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
+display_alert "Downloading sources" "" "info"
+
+fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
+fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
+if [[ -n $ATFSOURCE ]]; then
+	fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
 fi
+fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
+fetch_from_repo "https://github.com/armbian/rkbin" "rkbin-tools" "branch:master"
+fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-18.12"
+fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git" "marvell-ddr" "branch:mv_ddr-armada-18.12"
+fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" "marvell-binaries" "branch:binaries-marvell-armada-18.12"
+fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
+fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
+fetch_from_repo "https://gitlab.com/superna9999/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
 
 compile_sunxi_tools
 install_rkbin_tools
@@ -419,39 +424,48 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
 done
 
-# Compile u-boot if packed .deb does not exist
-if [[ ! -f ${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-	if [[ -n $ATFSOURCE ]]; then
+# Compile u-boot if packed .deb does not exist or use the one from repository
+if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+
+	if [[ -n "${ATFSOURCE}" && "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
 		compile_atf
 	fi
-	compile_uboot
+	[[ "${REPOSITORY_INSTALL}" != *u-boot* ]] && compile_uboot
+
 fi
 
-# Compile kernel if packed .deb does not exist
+# Compile kernel if packed .deb does not exist or use the one from repository
 if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+
 	KDEB_CHANGELOG_DIST=$RELEASE
-	compile_kernel
+	[[ "${REPOSITORY_INSTALL}" != *kernel* ]] && compile_kernel
+
 fi
 
-# Pack armbian-config and armbian-firmware
+# Compile armbian-config if packed .deb does not exist or use the one from repository
 if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
-	compile_armbian-config
 
-	FULL=""
-	REPLACE="-full"
-	[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_all.deb ]] && compile_firmware
-	FULL="-full"
-	REPLACE=""
-	[[ ! -f $DEST/debs/armbian-firmware${FULL}_${REVISION}_all.deb ]] && compile_firmware
+	[[ "${REPOSITORY_INSTALL}" != *armbian-config* ]] && compile_armbian-config
+
+fi
+
+# Compile armbian-firmware if packed .deb does not exist or use the one from repository
+if ! ls ${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb 1> /dev/null 2>&1 || ! ls ${DEB_STORAGE}/armbian-firmware-full_${REVISION}_all.deb 1> /dev/null 2>&1; then
+
+	if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
+
+		FULL=""
+		REPLACE="-full"
+		compile_firmware
+		FULL="-full"
+		REPLACE=""
+		compile_firmware
+
+	fi
+
 fi
 
 overlayfs_wrapper "cleanup"
-
-# extract kernel version from .deb package
-VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
-VER="${VER/-$LINUXFAMILY/}"
-
-UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 
 # create board support package
 [[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package

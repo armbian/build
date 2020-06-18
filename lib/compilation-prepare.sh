@@ -18,12 +18,12 @@ compilation_prepare()
 	# Maintaining one from central location starting with 5.3+
 	# Temporally set for new "default->legacy,next->current" family naming
 
-	if linux-version compare $version ge 5.6 && [[ "$BRANCH" == current || "$BRANCH" == dev ]]; then
+	if linux-version compare $version ge 5.6; then
 		display_alert "Adjusting" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-5.6.y.patch" "applying"
 	else
-		if linux-version compare $version ge 5.3 && [[ "$BRANCH" == current || "$BRANCH" == dev ]]; then
+		if linux-version compare $version ge 5.3; then
 			display_alert "Adjusting" "packaging" "info"
 			cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 			process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch" "applying"
@@ -63,7 +63,7 @@ compilation_prepare()
                 process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y.patch" "applying"
         fi
 
-	if [[ $version == "4.9."* ]] && [[ "$LINUXFAMILY" == meson64 ]]; then
+	if [[ $version == "4.9."* ]] && [[ "$LINUXFAMILY" == meson64 || "$LINUXFAMILY" == odroidc4 ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.9.y.patch" "applying"
@@ -85,13 +85,13 @@ compilation_prepare()
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare $version ge 5.1 && linux-version compare $version le 5.6 && [ "$AUFS" == yes ]; then
+	if linux-version compare $version ge 5.1 && linux-version compare $version le 5.8 && [ "$AUFS" == yes ]; then
 
 		# attach to specifics tag or branch
 		local aufstag=$(echo ${version} | cut -f 1-2 -d ".")
 
 		# manual overrides
-		if linux-version compare $version ge 5.4.3 ; then aufstag="5.4.3"; fi
+		if linux-version compare $version ge 5.4.3 && linux-version compare $version le 5.5 ; then aufstag="5.4.3"; fi
 
 		# check if Mr. Okajima already made a branch for this version
 		git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone aufs${aufstag} >/dev/null
@@ -283,7 +283,7 @@ compilation_prepare()
 	if linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8811cuver="branch:master"
+		local rtl8811cuver="commit:2bebdb9a35c1d9b6e6a928e371fa39d5fcec8a62"
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
@@ -395,15 +395,14 @@ compilation_prepare()
 
 	# Wireless drivers for Realtek 8723DS chipsets
 
-	if linux-version compare $version ge 5.5 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare $version ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8723dsver="branch:master"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 
-		#fetch_from_repo "https://github.com/lwfinger/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes"
-		fetch_from_repo "https://github.com/igorpecovnik/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes"
+		fetch_from_repo "https://github.com/lwfinger/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes"
 		cd ${SRC}/cache/sources/${LINUXSOURCEDIR}
 		rm -rf ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds
 		mkdir -p ${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8723ds/
@@ -424,9 +423,6 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8723DS) += rtl8723ds/" >> $SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723ds\/Kconfig"' \
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
-
-		# kernel 5.6 ->
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds.patch" "applying"
 
 	fi
 
