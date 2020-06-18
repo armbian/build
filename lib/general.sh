@@ -706,10 +706,9 @@ repo-manipulate() {
 			;;
 		purge)
 			for release in "${DISTROS[@]}"; do
-				aptly repo remove -config=${BLTPATH}config/aptly.conf "${release}" 'Name (% linux-*dev*)'
-				repo-remove-old-packages "$release" "armhf" "3"
-				repo-remove-old-packages "$release" "arm64" "3"
-				repo-remove-old-packages "$release" "all" "3"
+				repo-remove-old-packages "$release" "armhf" "5"
+				repo-remove-old-packages "$release" "arm64" "5"
+				repo-remove-old-packages "$release" "all" "5"
 				aptly -config="${SCRIPTPATH}"config/${REPO_CONFIG} -passphrase="${GPG_PASS}" publish update "${release}" > /dev/null 2>&1
 			done
 			exit 0
