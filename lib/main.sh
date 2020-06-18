@@ -24,7 +24,7 @@ fi
 umask 002
 
 # destination
-DEST=$SRC/output
+DEST="${SRC}"/output
 
 if [[ $BUILD_ALL != "yes" ]]; then
 	# override stty size
@@ -113,9 +113,9 @@ if [[ -n $REPOSITORY_UPDATE ]]; then
         fi
 
         # For user override
-        if [[ -f $USERPATCHES_PATH/lib.config ]]; then
+        if [[ -f "${USERPATCHES_PATH}"/lib.config ]]; then
                 display_alert "Using user configuration override" "userpatches/lib.config" "info"
-            source "$USERPATCHES_PATH"/lib.config
+            source "${USERPATCHES_PATH}"/lib.config
         fi
 
         repo-manipulate "$REPOSITORY_UPDATE"
@@ -373,12 +373,12 @@ else
 fi
 
 branch2dir() {
-	[[ $1 == head ]] && echo HEAD || echo ${1##*:}
+	[[ "${1}" == "head" ]] && echo "HEAD" || echo "${1##*:}"
 }
 
-BOOTSOURCEDIR=$BOOTDIR/$(branch2dir ${BOOTBRANCH})
-LINUXSOURCEDIR=$KERNELDIR/$(branch2dir ${KERNELBRANCH})
-[[ -n $ATFSOURCE ]] && ATFSOURCEDIR=$ATFDIR/$(branch2dir ${ATFBRANCH})
+BOOTSOURCEDIR="${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
+LINUXSOURCEDIR="${KERNELDIR}/$(branch2dir "${KERNELBRANCH}")"
+[[ -n $ATFSOURCE ]] && ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
 
 # define package names
 DEB_BRANCH=${BRANCH//default}
@@ -450,7 +450,7 @@ if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
 fi
 
 # Compile armbian-firmware if packed .deb does not exist or use the one from repository
-if ! ls ${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb 1> /dev/null 2>&1 || ! ls ${DEB_STORAGE}/armbian-firmware-full_${REVISION}_all.deb 1> /dev/null 2>&1; then
+if ! ls "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb" 1> /dev/null 2>&1 || ! ls "${DEB_STORAGE}/armbian-firmware-full_${REVISION}_all.deb" 1> /dev/null 2>&1; then
 
 	if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
 
@@ -493,7 +493,7 @@ runtime=$(((end-start)/60))
 display_alert "Runtime" "$runtime min" "info"
 
 # Make it easy to repeat build by displaying build options used
-[ `systemd-detect-virt` == 'docker' ] && BUILD_CONFIG='docker'
+[ "$(systemd-detect-virt)" == 'docker' ] && BUILD_CONFIG='docker'
 display_alert "Repeat Build Options" "./compile.sh ${BUILD_CONFIG} BOARD=${BOARD} BRANCH=${BRANCH} \
 $([[ -n $RELEASE ]] && echo "RELEASE=${RELEASE} ")\
 $([[ -n $BUILD_MINIMAL ]] && echo "BUILD_MINIMAL=${BUILD_MINIMAL} ")\
