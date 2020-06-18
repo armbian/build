@@ -402,6 +402,7 @@ done
 # bump version in case there was a change
 if [[ $n -gt 0 && -n $SEND_TO_SERVER ]]; then
 
+	cd ${SRC}
 	CURRENT_VERSION=$(cat VERSION)
 	NEW_VERSION=$(echo $CURRENT_VERSION | tr -d "\-trunk")
 	if [[ $CURRENT_VERSION == *trunk* ]]; then
