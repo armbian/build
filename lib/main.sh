@@ -401,6 +401,9 @@ prepare_host
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 
 # fetch_from_repo <url> <dir> <ref> <subdir_flag>
+
+# ignore updates help on building all images - for internal purposes
+if [[ $IGNORE_UPDATES != yes ]]; then
 display_alert "Downloading sources" "" "info"
 
 fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
@@ -423,6 +426,8 @@ install_rkbin_tools
 for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
 done
+
+fi
 
 # Compile u-boot if packed .deb does not exist or use the one from repository
 if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then

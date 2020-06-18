@@ -307,7 +307,7 @@ function build_all()
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
 
 			# check if currnt hash is the same as upstream
-			if [[ $(check_hash) != idential ]]; then
+			if [[ $(check_hash) != idential || "$IGNORE_HASH" == yes ]]; then
 
 			((n+=1))
 
@@ -341,7 +341,11 @@ function build_all()
 					for RELEASE in "${RELTARGETS[@]}"
 					do
 						display_alert "BSP for ${BOARD} ${BRANCH} ${RELEASE}."
-						build_main
+						if [[ $IGNORE_HASH == yes ]]; then
+							build_main &
+							else
+							build_main
+						fi
 						# unset non board related stuff
 						unset_all
 					done
