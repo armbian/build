@@ -343,6 +343,7 @@ function build_all()
 						display_alert "BSP for ${BOARD} ${BRANCH} ${RELEASE}."
 						if [[ $IGNORE_HASH == yes ]]; then
 							build_main &
+							sleep 0.1
 							else
 							build_main
 						fi
