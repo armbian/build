@@ -354,6 +354,9 @@ compile_kernel()
 			'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" oldconfig'
 		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
 			'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" ${KERNEL_MENUCONFIG:-menuconfig}'
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Error kernel menuconfig failed"
+
 		# store kernel config in easily reachable place
 		display_alert "Exporting new kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
 		cp .config $DEST/config/$LINUXCONFIG.config
