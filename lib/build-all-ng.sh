@@ -84,27 +84,27 @@ pack_upload ()
 
 	if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
 		display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
-		pigz $DESTIMG/${version}.img
-		rm ${DESTIMG}/${version}.img
+		pigz "$DESTIMG/${version}.img"
+		rm "${DESTIMG}/${version}.img"
 		compression_type=".gz"
 	fi
 
 	if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
 		display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
-		pixz -3 < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.xz
-		rm ${DESTIMG}/${version}.img
+		pixz -3 < "$DESTIMG/${version}.img" > "${DESTIMG}/${version}.img.xz"
+		rm "${DESTIMG}/${version}.img"
 		compression_type=".xz"
 	fi
 
 	if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
 		display_alert "SHA256 calculating" "${version}.img" "info"
-		sha256sum -b ${version}.img${compression_type} > ${version}.img${compression_type}.sha
+		sha256sum -b "${version}.img${compression_type}" > "${version}.img${compression_type}.sha"
 	fi
 
 	if [[ $COMPRESS_OUTPUTIMAGE == *gpg* ]]; then
 		if [[ -n $GPG_PASS ]]; then
 			display_alert "GPG signing" "${version}.img" "info"
-			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img${compression_type} || exit 1
+			echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes "${version}.img${compression_type}" || exit 1
 		else
 			display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 		fi
@@ -114,7 +114,7 @@ pack_upload ()
 
 	if [[ $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
 		display_alert "Compressing" "${version}.7z" "info"
-		7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on ${version}.7z ${version}.img* >/dev/null 2>&1
+		7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on "${version}".7z "${version}".img* >/dev/null 2>&1
 		find . -type f -not -name '*.7z' -print0 | xargs -0 rm --
 	fi
 
@@ -123,7 +123,7 @@ pack_upload ()
 		display_alert "Uploading" "Please wait!" "info"
 		nice -n 19 bash -c "rsync -arP --info=progress2 --prune-empty-dirs $DESTIMG/ -e 'ssh -T -c aes128-ctr -o Compression=no -x -p 22' ${SEND_TO_SERVER}:${SEND_TO_LOCATION}${BOARD}/${subdir}; rm -rf ${DESTIMG}/*" &
 	else
-		mv $DESTIMG/*.* $DEST/images/
+		mv "${DESTIMG}"/*.* "${DEST}"/images/
 	fi
 
 }
@@ -133,11 +133,12 @@ pack_upload ()
 
 build_main ()
 {
-
+	# shellcheck source=/dev/null
 	source "$USERPATCHES_PATH"/lib.config
 	# build images which we do pack or kernel
-	local upload_image="Armbian_$(cat ${SRC}/VERSION)_${BOARD^}_${RELEASE}_${BRANCH}_*${VER/-$LINUXFAMILY/}"
-	local upload_subdir="archive"
+	local upload_image upload_subdir
+	upload_image="Armbian_$(cat "${SRC}"/VERSION)_${BOARD^}_${RELEASE}_${BRANCH}_*${VER/-$LINUXFAMILY/}"
+	upload_subdir="archive"
 
 	[[ $BUILD_DESKTOP == yes ]] && upload_image=${upload_image}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && upload_image=${upload_image}_minimal
@@ -149,12 +150,13 @@ build_main ()
 		#if ssh ${SEND_TO_SERVER} stat ${SEND_TO_LOCATION}${BOARD}/${upload_subdir}/${upload_image}* \> /dev/null 2\>\&1; then
 		#	echo "$n exists $upload_image"
 		#else
+			#shellcheck source=lib/main.sh
 			source "${SRC}"/lib/main.sh
 			[[ $BSP_BUILD != yes ]] && pack_upload
 		#fi
 
 	else
-
+		#shellcheck source=lib/main.sh
 		source "${SRC}"/lib/main.sh
 
 	fi
@@ -175,7 +177,7 @@ array_contains ()
 	local in=1
 
 	for element in "${!array}"; do
-		if [[ $element == $seeking ]]; then
+		if [[ "${element}" == "${seeking}" ]]; then
 			in=0
 			break
 		fi
@@ -189,31 +191,35 @@ array_contains ()
 
 function check_hash()
 {
-	local BOARDFAMILY=$(cat ${SRC}/config/boards/${BOARD}.* | grep BOARDFAMILY | cut -d \" -f2)
+	local BOARDFAMILY ref_type ref_name
+
+	BOARD_FAMILY=$(grep BOARDFAMILY "${SRC}/config/boards/${BOARD}".* | cut -d \" -f2)
+	# shellcheck source=/dev/null
 	source "${SRC}/config/sources/families/${BOARDFAMILY}.conf"
-        source "${SRC}/config/sources/${ARCH}.conf"
-	local ref_type=${KERNELBRANCH%%:*}
+	# shellcheck source=/dev/null
+	source "${SRC}/config/sources/${ARCH}.conf"
+	ref_type=${KERNELBRANCH%%:*}
 	if [[ $ref_type == head ]]; then
-		local ref_name=HEAD
+		ref_name=HEAD
 	else
-		local ref_name=${KERNELBRANCH##*:}
+		ref_name=${KERNELBRANCH##*:}
 	fi
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
 	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n')
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
-	patch_hash=$(echo ${hash_watch_1}${hash_watch_2} | git hash-object --stdin)
+	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin)
 
 	case $ref_type in
-		branch) hash=$(git ls-remote $KERNELSOURCE refs/heads/$ref_name | awk '{print $1}') ;;
-		tag) hash=$(git ls-remote $KERNELSOURCE  tags/$ref_name | awk '{print $1}') ;;
-		head) hash=$(git ls-remote $KERNELSOURCE  HEAD | awk '{print $1}') ;;
+		branch) hash=$(git ls-remote "${KERNELSOURCE}" refs/heads/"${ref_name}" | awk '{print $1}') ;;
+		tag) hash=$(git ls-remote "${KERNELSOURCE}" tags/"${ref_name}" | awk '{print $1}') ;;
+		head) hash=$(git ls-remote "${KERNELSOURCE}" HEAD | awk '{print $1}') ;;
 		commit) hash=$ref_name ;;
 	esac
 
-	local kernel_hash=${SRC}/cache/hash/linux-image-$BRANCH-$LINUXFAMILY.githash
+	local kernel_hash="${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 	if [[ -f ${kernel_hash} ]]; then
-		[[ "$hash" == "$(head -1 ${kernel_hash})" && "$patch_hash" == "$(tail -1 ${kernel_hash})" ]] && echo "idential"
+		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" ]] && echo "idential"
 	fi
 }
 
@@ -235,7 +241,7 @@ function build_all()
 
 		buildlist="grep -w '"
 		filter="'"
-		for build in $(tr ',' ' ' <<< $REBUILD_IMAGES); do
+		for build in $(tr ',' ' ' <<< "${REBUILD_IMAGES}"); do
 				buildlist=$buildlist"$build\|"
 				filter=$filter"$build\|"
 		done
@@ -246,13 +252,13 @@ function build_all()
 
 	# find unique boards - we will build debs for all variants
 	sorted_unique_ids=($(echo "${ids[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
-	unique_boards=$(eval $buildlist ${SRC}/config/targets.conf | sed '/^#/ d' | awk '{print $1}')
-	read -a unique_boards <<< $(echo "${unique_boards[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+	unique_boards=$(eval "${buildlist}" "${SRC}"/config/targets.conf | sed '/^#/ d' | awk '{print $1}')
+	read -a -r unique_boards <<< "$(echo "${unique_boards[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')"
 
-	while read line; do
+	while read -r line; do
 
-		[[ "$line" =~ ^#.*$ ]] && continue
-		[[ -n ${REBUILD_IMAGES} ]] && [[ -z $(echo $line | eval grep -w $filter) ]] && continue
+		[[ "${line}" =~ ^#.*$ ]] && continue
+		[[ -n "${REBUILD_IMAGES}" ]] && [[ -z $(echo "${line}" | eval grep -w "${filter}") ]] && continue
 		#[[ $n -lt $START ]] && ((n+=1)) && continue
 
 		unset_all
@@ -264,11 +270,16 @@ function build_all()
 		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE <<< "${line}"
 
 		# read all possible configurations
-		source ${SRC}"/config/boards/${BOARD}".eos 2> /dev/null
-		source ${SRC}"/config/boards/${BOARD}".tvb 2> /dev/null
-		source ${SRC}"/config/boards/${BOARD}".csc 2> /dev/null
-		source ${SRC}"/config/boards/${BOARD}".wip 2> /dev/null
-		source ${SRC}"/config/boards/${BOARD}".conf 2> /dev/null
+		# shellcheck source=/dev/null
+		source "${SRC}/config/boards/${BOARD}".eos 2> /dev/null
+		# shellcheck source=/dev/null
+		source "${SRC}/config/boards/${BOARD}".tvb 2> /dev/null
+		# shellcheck source=/dev/null
+		source "${SRC}/config/boards/${BOARD}".csc 2> /dev/null
+		# shellcheck source=/dev/null
+		source "${SRC}/config/boards/${BOARD}".wip 2> /dev/null
+		# shellcheck source=/dev/null
+		source "${SRC}/config/boards/${BOARD}".conf 2> /dev/null
 
 		# override branch to build selected branches if defined
 		if [[ -n "${BROVER}" ]]; then
@@ -308,7 +319,8 @@ function build_all()
 
 			# check if currnt hash is the same as upstream
 			if [[ "$IGNORE_HASH" != yes ]]; then
-				local store_hash=$(check_hash)
+				local store_hash
+				store_hash=$(check_hash)
 			fi
 			if [[ "$store_hash" != idential ]]; then
 
@@ -336,12 +348,17 @@ function build_all()
 
 				for BOARD in "${unique_boards[@]}"
 				do
-					source ${SRC}"/config/boards/${BOARD}".eos 2> /dev/null
-					source ${SRC}"/config/boards/${BOARD}".tvb 2> /dev/null
-					source ${SRC}"/config/boards/${BOARD}".csc 2> /dev/null
-					source ${SRC}"/config/boards/${BOARD}".wip 2> /dev/null
-					source ${SRC}"/config/boards/${BOARD}".conf 2> /dev/null
-					IFS=',' read -a RELBRANCH <<< $KERNEL_TARGET
+					# shellcheck source=/dev/null
+					source "${SRC}/config/boards/${BOARD}".eos 2> /dev/null
+					# shellcheck source=/dev/null
+					source "${SRC}/config/boards/${BOARD}".tvb 2> /dev/null
+					# shellcheck source=/dev/null
+					source "${SRC}/config/boards/${BOARD}".csc 2> /dev/null
+					# shellcheck source=/dev/null
+					source "${SRC}/config/boards/${BOARD}".wip 2> /dev/null
+					# shellcheck source=/dev/null
+					source "${SRC}/config/boards/${BOARD}".conf 2> /dev/null
+					IFS=',' read -a -r RELBRANCH <<< "${KERNEL_TARGET}"
 					for BRANCH in "${RELBRANCH[@]}"
 					do
 					RELTARGETS=(xenial stretch buster bullseye bionic eoan focal)
@@ -371,7 +388,7 @@ fi
 
 		fi
 
-	done < ${BUILD_TARGETS}
+	done < "${BUILD_TARGETS}"
 
 }
 
@@ -397,7 +414,7 @@ fi
 sleep 5
 while :
 do
-		if [[ $(df | grep .tmp | wc -l) -lt 1 ]]; then
+		if [[ $(df | grep -c .tmp) -lt 1 ]]; then
 			break
 		fi
 	sleep 5
@@ -405,7 +422,7 @@ done
 
 while :
 do
-		if [[ -z $(ps -uax | grep 7z | grep Armbian) ]]; then
+		if [[ $(pgrep -ac '[7z.*Armbian]') -lt 1 ]]; then
 			break
 		fi
 	sleep 5
@@ -414,24 +431,24 @@ done
 # bump version in case there was a change
 if [[ $n -gt 0 && -n ${SEND_TO_SERVER} && -z ${REBUILD_IMAGES} ]]; then
 
-	cd ${SRC}
+	cd "${SRC}" || exit
 	CURRENT_VERSION=$(cat VERSION)
-	NEW_VERSION=$(echo $CURRENT_VERSION | tr -d "\-trunk")
+	NEW_VERSION="${CURRENT_VERSION%%-trunk}"
 	if [[ $CURRENT_VERSION == *trunk* ]]; then
-		NEW_VERSION=$(echo $CURRENT_VERSION | cut -d. -f1-3)"."$(($(echo ${NEW_VERSION##*.}) + 1))
+		NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-3)"."$((${NEW_VERSION##*.} + 1))
 	else
-		NEW_VERSION=$(echo $CURRENT_VERSION | cut -d. -f1-2)"."$(($(echo ${NEW_VERSION##*.}) + 1))
+		NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-2)"."$((${NEW_VERSION##*.} + 1))
 	fi
 
-	echo $NEW_VERSION > VERSION
-	git add $SRC/VERSION
-	git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*$CURRENT_VERSION*.deb" -printf "%f\n" | sort)"
+	echo "${NEW_VERSION}" > VERSION
+	git add "${SRC}"/VERSION
+	git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
 	git push
-	display_alert "Bumping to new version" "$NEW_VERSION" "info"
+	display_alert "Bumping to new version" "${NEW_VERSION}" "info"
 
 fi
 
 buildall_end=$(date +%s)
 buildall_runtime=$(((buildall_end - buildall_start) / 60))
-display_alert "Runtime in total" "$buildall_runtime min" "info"
-echo $n > ${SRC}/.tmp/n
+display_alert "Runtime in total" "${buildall_runtime} min" "info"
+echo "${n}" > "${SRC}"/.tmp/n
