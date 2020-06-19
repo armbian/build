@@ -42,7 +42,7 @@ install_common()
 	if [[ $CRYPTROOT_ENABLE == yes && $CRYPTROOT_SSH_UNLOCK == yes ]]; then
 		# Set the port of the dropbear ssh deamon in the initramfs to a different one if configured
 		# this avoids the typical 'host key changed warning' - `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!`
-		[[ -f $SDCARD/etc/dropbear-initramfs/config ]] && \
+		[[ -f "${SDCARD}"/etc/dropbear-initramfs/config ]] && \
 		sed -i 's/^#DROPBEAR_OPTIONS=/DROPBEAR_OPTIONS="-p '"${CRYPTROOT_SSH_UNLOCK_PORT}"'"/' \
 		"${SDCARD}"/etc/dropbear-initramfs/config
 
@@ -58,7 +58,7 @@ install_common()
 
 			# /usr/share/initramfs-tools/hooks/dropbear will automatically add 'id_ecdsa.pub' to authorized_keys file
 			# during mkinitramfs of update-initramfs
-			#cat $SDCARD/etc/dropbear-initramfs/id_ecdsa.pub > $SDCARD/etc/dropbear-initramfs/authorized_keys
+			#cat "${SDCARD}"/etc/dropbear-initramfs/id_ecdsa.pub > "${SDCARD}"/etc/dropbear-initramfs/authorized_keys
 			CRYPTROOT_SSH_UNLOCK_KEY_NAME="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}".key
 			# copy dropbear ssh key to image output dir for convenience
 			cp "${SDCARD}"/etc/dropbear-initramfs/id_ecdsa "${DEST}/images/${CRYPTROOT_SSH_UNLOCK_KEY_NAME}"
@@ -69,18 +69,18 @@ install_common()
 
 	# create modules file
 	local modules=MODULES_${BRANCH^^}
-	if [[ -n ${!modules} ]]; then
-		tr ' ' '\n' <<< ${!modules} > "${SDCARD}"/etc/modules
-	elif [[ -n ${MODULES} ]]; then
-		tr ' ' '\n' <<< "$MODULES" > "${SDCARD}"/etc/modules
+	if [[ -n "${!modules}" ]]; then
+		tr ' ' '\n' <<< "${!modules}" > "${SDCARD}"/etc/modules
+	elif [[ -n "${MODULES}" ]]; then
+		tr ' ' '\n' <<< "${MODULES}" > "${SDCARD}"/etc/modules
 	fi
 
 	# create blacklist files
 	local blacklist=MODULES_BLACKLIST_${BRANCH^^}
-	if [[ -n ${!blacklist} ]]; then
-		tr ' ' '\n' <<< ${!blacklist} | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
-	elif [[ -n ${MODULES_BLACKLIST} ]]; then
-		tr ' ' '\n' <<< "$MODULES_BLACKLIST" | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
+	if [[ -n "${!blacklist}" ]]; then
+		tr ' ' '\n' <<< "${!blacklist}" | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
+	elif [[ -n "${MODULES_BLACKLIST}" ]]; then
+		tr ' ' '\n' <<< "${MODULES_BLACKLIST}" | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
 	fi
 
 	# configure MIN / MAX speed for cpufrequtils
@@ -100,11 +100,11 @@ install_common()
 	[[ -f "${SDCARD}"/etc/selinux/default ]] && sed "s/^SELINUX=.*/SELINUX=disabled/" -i "${SDCARD}"/etc/selinux/default
 
 	# remove Ubuntu's legal text
-	[[ -f $SDCARD/etc/legal ]] && rm "${SDCARD}"/etc/legal
+	[[ -f "${SDCARD}"/etc/legal ]] && rm "${SDCARD}"/etc/legal
 
 	# Prevent loading paralel printer port drivers which we don't need here.
 	# Suppress boot error if kernel modules are absent
-	if [[ -f $SDCARD/etc/modules-load.d/cups-filters.conf ]]; then
+	if [[ -f "${SDCARD}"/etc/modules-load.d/cups-filters.conf ]]; then
 		sed "s/^lp/#lp/" -i "${SDCARD}"/etc/modules-load.d/cups-filters.conf
 		sed "s/^ppdev/#ppdev/" -i "${SDCARD}"/etc/modules-load.d/cups-filters.conf
 		sed "s/^parport_pc/#parport_pc/" -i "${SDCARD}"/etc/modules-load.d/cups-filters.conf
@@ -173,13 +173,13 @@ install_common()
 		fi
 	fi
 
-	[[ -n $OVERLAY_PREFIX && -f $SDCARD/boot/armbianEnv.txt ]] && \
+	[[ -n $OVERLAY_PREFIX && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
 		echo "overlay_prefix=$OVERLAY_PREFIX" >> "${SDCARD}"/boot/armbianEnv.txt
 
-	[[ -n $DEFAULT_OVERLAYS && -f $SDCARD/boot/armbianEnv.txt ]] && \
+	[[ -n $DEFAULT_OVERLAYS && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
 		echo "overlays=${DEFAULT_OVERLAYS//,/ }" >> "${SDCARD}"/boot/armbianEnv.txt
 
-	[[ -n $BOOT_FDT_FILE && -f $SDCARD/boot/armbianEnv.txt ]] && \
+	[[ -n $BOOT_FDT_FILE && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
 		echo "fdtfile=${BOOT_FDT_FILE}" >> "${SDCARD}/boot/armbianEnv.txt"
 
 	# initial date for fake-hwclock
@@ -206,7 +206,7 @@ install_common()
 		display_alert "Installing from repository" "linux-u-boot-${BOARD}-${BRANCH} $UBOOT_VER"
 		chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install linux-u-boot-${BOARD}-${BRANCH}" >> "${DEST}"/debug/install.log 2>&1
 		# we need package later, move to output, apt-get must be here, apt deletes file
-		mv ${SDCARD}/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb ${DEB_STORAGE}
+		mv "${SDCARD}/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb" "${DEB_STORAGE}"
 	fi
 
 	# install kernel
@@ -321,11 +321,11 @@ install_common()
 	> "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 
 	# Cosmetic fix [FAILED] Failed to start Set console font and keymap at first boot
-	[[ -f $SDCARD/etc/console-setup/cached_setup_font.sh ]] \
+	[[ -f "${SDCARD}"/etc/console-setup/cached_setup_font.sh ]] \
 	&& sed -i "s/^printf '.*/printf '\\\033\%\%G'/g" "${SDCARD}"/etc/console-setup/cached_setup_font.sh
-	[[ -f $SDCARD/etc/console-setup/cached_setup_terminal.sh ]] \
+	[[ -f "${SDCARD}"/etc/console-setup/cached_setup_terminal.sh ]] \
 	&& sed -i "s/^printf '.*/printf '\\\033\%\%G'/g" "${SDCARD}"/etc/console-setup/cached_setup_terminal.sh
-	[[ -f $SDCARD/etc/console-setup/cached_setup_keyboard.sh ]] \
+	[[ -f "${SDCARD}"/etc/console-setup/cached_setup_keyboard.sh ]] \
 	&& sed -i "s/-u/-x'/g" "${SDCARD}"/etc/console-setup/cached_setup_keyboard.sh
 
 	# fix for https://bugs.launchpad.net/ubuntu/+source/blueman/+bug/1542723
@@ -338,7 +338,7 @@ install_common()
 	fi
 
 	# disable repeated messages due to xconsole not being installed.
-	[[ -f $SDCARD/etc/rsyslog.d/50-default.conf ]] && \
+	[[ -f "${SDCARD}"/etc/rsyslog.d/50-default.conf ]] && \
 	sed '/daemon\.\*\;mail.*/,/xconsole/ s/.*/#&/' -i "${SDCARD}"/etc/rsyslog.d/50-default.conf
 
 	# disable deprecated parameter
@@ -350,7 +350,7 @@ install_common()
 	# example: SERIALCON="ttyS0:15000000,ttyGS1"
 	#
 	ifs=$IFS
-	for i in $(echo ${SERIALCON:-'ttyS0'} | sed "s/,/ /g")
+	for i in $(echo "${SERIALCON:-'ttyS0'}" | sed "s/,/ /g")
 	do
 		IFS=':' read -r -a array <<< "$i"
 		# add serial console to secure tty list
@@ -359,15 +359,15 @@ install_common()
 		if [[ ${array[1]} != "115200" && -n ${array[1]} ]]; then
 			# make a copy, fix speed and enable
 			cp "${SDCARD}"/lib/systemd/system/serial-getty@.service \
-			"${SDCARD}"/lib/systemd/system/serial-getty@${array[0]}.service
+			"${SDCARD}/lib/systemd/system/serial-getty@${array[0]}.service"
 			sed -i "s/--keep-baud 115200/--keep-baud ${array[1]},115200/" \
-			"${SDCARD}"/lib/systemd/system/serial-getty@${array[0]}.service
+			"${SDCARD}/lib/systemd/system/serial-getty@${array[0]}.service"
 		fi
 		display_alert "Enabling serial console" "${array[0]}" "info"
 		chroot "${SDCARD}" /bin/bash -c "systemctl daemon-reload" >> "${DEST}"/debug/install.log 2>&1
 		chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable serial-getty@${array[0]}.service" \
 		>> "${DEST}"/debug/install.log 2>&1
-		if [[ ${array[0]} == "ttyGS0" && $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
+		if [[ "${array[0]}" == "ttyGS0" && $LINUXFAMILY == sun8i && $BRANCH == default ]]; then
 			mkdir -p "${SDCARD}"/etc/systemd/system/serial-getty@ttyGS0.service.d
 			cat <<-EOF > "${SDCARD}"/etc/systemd/system/serial-getty@ttyGS0.service.d/10-switch-role.conf
 			[Service]
@@ -468,7 +468,7 @@ install_distribution_specific()
 	xenial)
 
 			# remove legal info from Ubuntu
-			[[ -f $SDCARD/etc/legal ]] && rm "${SDCARD}"/etc/legal
+			[[ -f "${SDCARD}"/etc/legal ]] && rm "${SDCARD}"/etc/legal
 
 			# ureadahead needs kernel tracing options that AFAIK are present only in mainline. disable
 			chroot "${SDCARD}" /bin/bash -c \
@@ -481,7 +481,7 @@ install_distribution_specific()
 	stretch|buster)
 
 			# remove doubled uname from motd
-			[[ -f $SDCARD/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
+			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
 			# rc.local is not existing but one might need it
 			install_rclocal
 
@@ -490,7 +490,7 @@ install_distribution_specific()
 	bullseye)
 
 			# remove doubled uname from motd
-			[[ -f $SDCARD/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
+			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
 			# rc.local is not existing but one might need it
 			install_rclocal
 			# fix missing versioning
@@ -504,13 +504,13 @@ install_distribution_specific()
 	bionic|eoan|focal)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
-			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" $SDCARD/etc/initramfs-tools/initramfs.conf
+			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 
 			# remove doubled uname from motd
-			[[ -f $SDCARD/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
+			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
 
 			# remove motd news from motd.ubuntu.com
-			[[ -f $SDCARD/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news
+			[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news
 
 			# rc.local is not existing but one might need it
 			install_rclocal
