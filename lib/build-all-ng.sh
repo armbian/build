@@ -343,7 +343,7 @@ function build_all()
 						display_alert "BSP for ${BOARD} ${BRANCH} ${RELEASE}."
 						if [[ $IGNORE_HASH == yes ]]; then
 							build_main &
-							sleep 0.1
+							sleep 0.5
 							else
 							build_main
 						fi
@@ -427,3 +427,4 @@ fi
 buildall_end=$(date +%s)
 buildall_runtime=$(((buildall_end - buildall_start) / 60))
 display_alert "Runtime in total" "$buildall_runtime min" "info"
+echo $n > ${SRC}/.tmp/n
