@@ -307,7 +307,10 @@ function build_all()
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
 
 			# check if currnt hash is the same as upstream
-			if [[ $(check_hash) != idential || "$IGNORE_HASH" == yes ]]; then
+			if [[ "$IGNORE_HASH" != yes ]]; then
+				local store_hash=$(check_hash)
+			fi
+			if [[ "$store_hash" != idential ]]; then
 
 			((n+=1))
 
@@ -322,7 +325,11 @@ function build_all()
 							done
 
 					display_alert "Building ${n}."
-					build_main
+					if [[ "$KERNEL_ONLY" == "no" ]]; then
+						build_main &
+					else
+						build_main
+					fi
 
 			# create BSP for all boards
 			elif [[ "${BSP_BUILD}" == yes ]]; then
@@ -341,7 +348,7 @@ function build_all()
 					for RELEASE in "${RELTARGETS[@]}"
 					do
 						display_alert "BSP for ${BOARD} ${BRANCH} ${RELEASE}."
-						if [[ $IGNORE_HASH == yes ]]; then
+						if [[ "$IGNORE_HASH" == yes && "$KERNEL_ONLY" != "yes" ]]; then
 							build_main &
 							sleep 0.5
 							else
@@ -405,7 +412,7 @@ do
 done
 
 # bump version in case there was a change
-if [[ $n -gt 0 && -n $SEND_TO_SERVER ]]; then
+if [[ $n -gt 0 && -n ${SEND_TO_SERVER} && -z ${REBUILD_IMAGES} ]]; then
 
 	cd ${SRC}
 	CURRENT_VERSION=$(cat VERSION)
