@@ -29,16 +29,6 @@ else
 	exit 255
 fi
 
-if [[ "${EUID}" == "0" ]] || [[ "${1}" == "vagrant" ]]; then
-	:
-elif [[ "${1}" == docker || "${1}" == dockerpurge || "${1}" == docker-shell ]] && grep -q "$(whoami)" <(getent group docker); then
-	:
-else
-	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
-	sudo "${SRC}/compile.sh" "$@"
-	exit $?
-fi
-
 update_src() {
 	cd "${SRC}" || exit
 	if [[ ! -f "${SRC}"/.ignore_changes ]]; then
@@ -86,6 +76,16 @@ if [[ $(systemd-detect-virt) == 'none' ]]; then
 fi
 
 rm "${TMPFILE}"
+
+if [[ "${EUID}" == "0" ]] || [[ "${1}" == "vagrant" ]]; then
+	:
+elif [[ "${1}" == docker || "${1}" == dockerpurge || "${1}" == docker-shell ]] && grep -q "$(whoami)" <(getent group docker); then
+	:
+else
+	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
+	sudo "${SRC}/compile.sh" "$@"
+	exit $?
+fi
 
 # Check for required packages for compiling
 if [[ -z "$(command -v dialog)" ]]; then
