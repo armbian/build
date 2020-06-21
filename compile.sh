@@ -58,12 +58,13 @@ update_src() {
 
 TMPFILE=$(mktemp)
 chmod 644 "${TMPFILE}"
-cat <<EOF >> "${TMPFILE}"
-SRC="${SRC}"
-LIB_TAG="${LIB_TAG}"
-declare -f update_src
-update_src
-EOF
+{
+	echo SRC="$SRC"
+	echo LIB_TAG="$LIB_TAG"
+	declare -f update_src
+	echo "update_src"
+
+}  > "$TMPFILE"
 
 #do not update/checkout git with root privileges to messup files onwership.
 #due to in docker/VM, we can't su to a normal user, so do not update/checkout git.
