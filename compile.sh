@@ -29,6 +29,30 @@ else
 	exit 255
 fi
 
+#  Add the variables needed at the beginning of the path
+check_args ()
+{
+  for p in "$@"; do
+
+	case "${p%=*}" in
+		LIB_TAG)
+			# Take a variable if the branch exists locally
+			if [ "${p#*=}" == "$(git branch | \
+				gawk -v b="${p#*=}" '{if ( $NF == b ) {print $NF}}')" ]; then
+				echo "Setting $p"
+				eval "$p"
+			else
+				echo "Skip $p Set as LIB_TAG=\"\""
+				eval LIB_TAG=""
+			fi
+			;;
+	esac
+
+  done
+}
+
+check_args "$@"
+
 update_src() {
 	cd "${SRC}" || exit
 	if [[ ! -f "${SRC}"/.ignore_changes ]]; then
