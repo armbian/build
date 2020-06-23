@@ -422,7 +422,7 @@ done
 
 while :
 do
-		if [[ $(pgrep -ac '[7z.*Armbian]') -lt 1 ]]; then
+		if [[ -z $(ps -uax | grep 7z | grep Armbian) ]]; then
 			break
 		fi
 	sleep 5
