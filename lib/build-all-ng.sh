@@ -193,7 +193,7 @@ function check_hash()
 {
 	local BOARDFAMILY ref_type ref_name
 
-	BOARD_FAMILY=$(grep BOARDFAMILY "${SRC}/config/boards/${BOARD}".* | cut -d \" -f2)
+	BOARDFAMILY=$(grep BOARDFAMILY "${SRC}/config/boards/${BOARD}".* | cut -d \" -f2)
 	# shellcheck source=/dev/null
 	source "${SRC}/config/sources/families/${BOARDFAMILY}.conf"
 	# shellcheck source=/dev/null
@@ -253,7 +253,7 @@ function build_all()
 	# find unique boards - we will build debs for all variants
 	sorted_unique_ids=($(echo "${ids[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
 	unique_boards=$(eval "${buildlist}" "${SRC}"/config/targets.conf | sed '/^#/ d' | awk '{print $1}')
-	read -a -r unique_boards <<< "$(echo "${unique_boards[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')"
+	read -r -a unique_boards <<< "$(echo "${unique_boards[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')"
 
 	while read -r line; do
 
@@ -422,7 +422,7 @@ done
 
 while :
 do
-		if [[ $(pgrep -ac '[7z.*Armbian]') -lt 1 ]]; then
+		if [[ -z $(ps -uax | grep 7z | grep Armbian) ]]; then
 			break
 		fi
 	sleep 5
