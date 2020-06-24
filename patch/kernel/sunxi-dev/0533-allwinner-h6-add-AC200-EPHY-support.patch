@@ -1,269 +1,54 @@
-diff -Naur linux-5.3-rc2-old/drivers/mfd/ac200.c linux-5.3-rc2-old-new/drivers/mfd/ac200.c
---- linux-5.3-rc2-old/drivers/mfd/ac200.c	1970-01-01 01:00:00.000000000 +0100
-+++ linux-5.3-rc2-old-new/drivers/mfd/ac200.c	2019-08-03 15:24:25.929999997 +0200
-@@ -0,0 +1,223 @@
-+// SPDX-License-Identifier: GPL-2.0-only
-+/*
-+ * MFD core driver for X-Powers' AC200 IC
-+ *
-+ * The AC200 is a chip which is co-packaged with Allwinner H6 SoC and
-+ * includes analog audio codec, analog TV encoder, ethernet PHY, eFuse
-+ * and RTC.
-+ *
-+ * Copyright (c) 2019 Jernej Skrabec <jernej.skrabec@siol.net>
-+ *
-+ * Based on AC100 driver with following copyrights:
-+ * Copyright (2016) Chen-Yu Tsai
-+ */
-+
-+#include <linux/clk.h>
-+#include <linux/i2c.h>
-+#include <linux/kernel.h>
-+#include <linux/mfd/core.h>
-+#include <linux/mfd/ac200.h>
-+#include <linux/module.h>
-+#include <linux/mutex.h>
-+#include <linux/of.h>
-+#include <linux/regmap.h>
-+
-+struct ac200_dev {
-+	struct clk	*clk;
-+	/*
-+	 * Lock is needed for serializing concurrent access to
-+	 * AC200 registers in order not to mess with register page.
-+	 */
-+	struct mutex	lock;
-+	struct regmap	*regmap;
-+};
-+
-+/*
-+ * Register values can't be cached because registers are divided
-+ * into multiple pages.
-+ */
-+static const struct regmap_config ac200_regmap_config = {
-+	.reg_bits	= 8,
-+	.val_bits	= 16,
-+};
-+
-+int ac200_reg_read(struct ac200_dev *ac200, u16 reg, u16 *value)
-+{
-+	unsigned int val;
-+	int ret;
-+
-+	mutex_lock(&ac200->lock);
-+	ret = regmap_write(ac200->regmap, AC200_TWI_REG_ADDR_H, reg >> 8);
-+	if (ret)
-+		goto read_reg_out;
-+
-+	ret = regmap_read(ac200->regmap, reg & 0xff, &val);
-+	*value = val;
-+
-+read_reg_out:
-+	mutex_unlock(&ac200->lock);
-+
-+	return ret;
-+}
-+EXPORT_SYMBOL_GPL(ac200_reg_read);
-+
-+int ac200_reg_write(struct ac200_dev *ac200, u16 reg, u16 value)
-+{
-+	int ret;
-+
-+	mutex_lock(&ac200->lock);
-+	ret = regmap_write(ac200->regmap, AC200_TWI_REG_ADDR_H, reg >> 8);
-+	if (ret)
-+		goto write_reg_out;
-+
-+	ret = regmap_write(ac200->regmap, reg & 0xff, value);
-+
-+write_reg_out:
-+	mutex_unlock(&ac200->lock);
-+
-+	return ret;
-+}
-+EXPORT_SYMBOL_GPL(ac200_reg_write);
-+
-+int ac200_reg_mod(struct ac200_dev *ac200, u16 reg, u16 mask, u16 value)
-+{
-+	unsigned int val;
-+	int ret;
-+
-+	mutex_lock(&ac200->lock);
-+	ret = regmap_write(ac200->regmap, AC200_TWI_REG_ADDR_H, reg >> 8);
-+	if (ret)
-+		goto mod_reg_out;
-+
-+	ret = regmap_read(ac200->regmap, reg & 0xff, &val);
-+	if (ret)
-+		goto mod_reg_out;
-+
-+	val &= ~mask;
-+	val |= value;
-+
-+	ret = regmap_write(ac200->regmap, reg & 0xff, val);
-+
-+mod_reg_out:
-+	mutex_unlock(&ac200->lock);
-+
-+	return ret;
-+}
-+EXPORT_SYMBOL_GPL(ac200_reg_mod);
-+
-+static struct mfd_cell ac200_cells[] = {
-+	{
-+		.name		= "ac200-codec",
-+		.of_compatible	= "x-powers,ac200-codec",
-+	}, {
-+		.name		= "ac200-efuse",
-+		.of_compatible	= "x-powers,ac200-efuse",
-+	}, {
-+		.name		= "ac200-ephy",
-+		.of_compatible	= "x-powers,ac200-ephy",
-+	}, {
-+		.name		= "ac200-rtc",
-+		.of_compatible	= "x-powers,ac200-rtc",
-+	}, {
-+		.name		= "ac200-tve",
-+		.of_compatible	= "x-powers,ac200-tve",
-+	},
-+};
-+
-+static int ac200_i2c_probe(struct i2c_client *i2c,
-+			   const struct i2c_device_id *id)
-+{
-+	struct device *dev = &i2c->dev;
-+	struct ac200_dev *ac200;
-+	int ret;
-+
-+	ac200 = devm_kzalloc(dev, sizeof(*ac200), GFP_KERNEL);
-+	if (!ac200)
-+		return -ENOMEM;
-+
-+	mutex_init(&ac200->lock);
-+	i2c_set_clientdata(i2c, ac200);
-+
-+	ac200->clk = devm_clk_get(dev, NULL);
-+	if (IS_ERR(ac200->clk)) {
-+		ret = PTR_ERR(ac200->clk);
-+		dev_err(dev, "Can't obtain the clock: %d\n", ret);
-+		return ret;
-+	}
-+
-+	ac200->regmap = devm_regmap_init_i2c(i2c, &ac200_regmap_config);
-+	if (IS_ERR(ac200->regmap)) {
-+		ret = PTR_ERR(ac200->regmap);
-+		dev_err(dev, "Regmap init failed: %d\n", ret);
-+		return ret;
-+	}
-+
-+	ret = clk_prepare_enable(ac200->clk);
-+	if (ret) {
-+		dev_err(dev, "Can't enable the clock: %d\n", ret);
-+		return ret;
-+	}
-+
-+	ret = ac200_reg_write(ac200, AC200_SYS_CONTROL, 0);
-+	if (ret) {
-+		dev_err(dev, "Can't put AC200 in reset: %d\n", ret);
-+		goto err;
-+	}
-+
-+	ret = ac200_reg_write(ac200, AC200_SYS_CONTROL, 1);
-+	if (ret) {
-+		dev_err(dev, "Can't put AC200 out of reset: %d\n", ret);
-+		goto err;
-+	}
-+
-+	ret = devm_mfd_add_devices(dev, PLATFORM_DEVID_NONE, ac200_cells,
-+				   ARRAY_SIZE(ac200_cells), NULL, 0, NULL);
-+	if (ret) {
-+		dev_err(dev, "Failed to add MFD devices: %d\n", ret);
-+		goto err;
-+	}
-+
-+	return 0;
-+
-+err:
-+	clk_disable_unprepare(ac200->clk);
-+	return ret;
-+}
-+
-+static int ac200_i2c_remove(struct i2c_client *i2c)
-+{
-+	struct ac200_dev *ac200 = i2c_get_clientdata(i2c);
-+
-+	ac200_reg_write(ac200, AC200_SYS_CONTROL, 0);
-+
-+	clk_disable_unprepare(ac200->clk);
-+
-+	return 0;
-+}
-+
-+static const struct i2c_device_id ac200_ids[] = {
-+	{ "ac200", },
-+	{ /* sentinel */ }
-+};
-+MODULE_DEVICE_TABLE(i2c, ac200_ids);
-+
-+static const struct of_device_id ac200_of_match[] = {
-+	{ .compatible = "x-powers,ac200" },
-+	{ /* sentinel */ }
-+};
-+MODULE_DEVICE_TABLE(of, ac200_of_match);
-+
-+static struct i2c_driver ac200_i2c_driver = {
-+	.driver = {
-+		.name	= "ac200",
-+		.of_match_table	= of_match_ptr(ac200_of_match),
-+	},
-+	.probe	= ac200_i2c_probe,
-+	.remove = ac200_i2c_remove,
-+	.id_table = ac200_ids,
-+};
-+module_i2c_driver(ac200_i2c_driver);
-+
-+MODULE_DESCRIPTION("MFD core driver for AC200");
-+MODULE_AUTHOR("Jernej Skrabec <jernej.skrabec@siol.net>");
-+MODULE_LICENSE("GPL v2");
-diff -Naur linux-5.3-rc2-old/drivers/mfd/Kconfig linux-5.3-rc2-old-new/drivers/mfd/Kconfig
---- linux-5.3-rc2-old/drivers/mfd/Kconfig	2019-07-28 21:47:02.000000000 +0200
-+++ linux-5.3-rc2-old-new/drivers/mfd/Kconfig	2019-08-03 15:24:25.929999997 +0200
-@@ -178,6 +178,15 @@
- 	  This driver include only the core APIs. You have to select individual
- 	  components like codecs or RTC under the corresponding menus.
+AC200 MFD IC supports Fast Ethernet PHY. Add a driver for it.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@siol.net>
+---
+ drivers/net/phy/Kconfig  |   7 ++
+ drivers/net/phy/Makefile |   1 +
+ drivers/net/phy/ac200.c  | 206 +++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 214 insertions(+)
+ create mode 100644 drivers/net/phy/ac200.c
+
+diff --git a/drivers/net/phy/Kconfig b/drivers/net/phy/Kconfig
+index 3fa33d27eeba..16af69f69eaf 100644
+--- a/drivers/net/phy/Kconfig
++++ b/drivers/net/phy/Kconfig
+@@ -288,6 +288,13 @@ config ADIN_PHY
+ 	  - ADIN1300 - Robust,Industrial, Low Latency 10/100/1000 Gigabit
+ 	    Ethernet PHY
  
-+config MFD_AC200
-+	tristate "X-Powers AC200"
-+	select MFD_CORE
-+	depends on I2C
++config AC200_PHY
++	tristate "AC200 EPHY"
++	depends on NVMEM
++	depends on OF
 +	help
-+	  If you say Y here you get support for the X-Powers AC200 IC.
-+	  This driver include only the core APIs. You have to select individual
-+	  components like Ethernet PHY or RTC under the corresponding menus.
++	  Fast ethernet PHY as found in X-Powers AC200 multi-function device.
 +
- config MFD_AXP20X
- 	tristate
- 	select MFD_CORE
-diff -Naur linux-5.3-rc2-old/drivers/mfd/Makefile linux-5.3-rc2-old-new/drivers/mfd/Makefile
---- linux-5.3-rc2-old/drivers/mfd/Makefile	2019-07-28 21:47:02.000000000 +0200
-+++ linux-5.3-rc2-old-new/drivers/mfd/Makefile	2019-08-03 15:24:25.929999997 +0200
-@@ -143,6 +143,7 @@
- obj-$(CONFIG_MFD_DA9052_I2C)	+= da9052-i2c.o
+ config AMD_PHY
+ 	tristate "AMD PHYs"
+ 	---help---
+diff --git a/drivers/net/phy/Makefile b/drivers/net/phy/Makefile
+index 2f5c7093a65b..b0c5b91900fa 100644
+--- a/drivers/net/phy/Makefile
++++ b/drivers/net/phy/Makefile
+@@ -53,6 +53,7 @@ obj-$(CONFIG_SFP)		+= sfp.o
+ sfp-obj-$(CONFIG_SFP)		+= sfp-bus.o
+ obj-y				+= $(sfp-obj-y) $(sfp-obj-m)
  
- obj-$(CONFIG_MFD_AC100)		+= ac100.o
-+obj-$(CONFIG_MFD_AC200)		+= ac200.o
- obj-$(CONFIG_MFD_AXP20X)	+= axp20x.o
- obj-$(CONFIG_MFD_AXP20X_I2C)	+= axp20x-i2c.o
- obj-$(CONFIG_MFD_AXP20X_RSB)	+= axp20x-rsb.o
-diff -Naur linux-5.3-rc2-old/drivers/net/phy/ac200.c linux-5.3-rc2-old-new/drivers/net/phy/ac200.c
---- linux-5.3-rc2-old/drivers/net/phy/ac200.c	1970-01-01 01:00:00.000000000 +0100
-+++ linux-5.3-rc2-old-new/drivers/net/phy/ac200.c	2019-08-03 15:24:25.929999997 +0200
-@@ -0,0 +1,231 @@
++obj-$(CONFIG_AC200_PHY)		+= ac200.o
+ obj-$(CONFIG_ADIN_PHY)		+= adin.o
+ obj-$(CONFIG_AMD_PHY)		+= amd.o
+ aquantia-objs			+= aquantia_main.o
+diff --git a/drivers/net/phy/ac200.c b/drivers/net/phy/ac200.c
+new file mode 100644
+index 000000000000..3d7856ff8f91
+--- /dev/null
++++ b/drivers/net/phy/ac200.c
+@@ -0,0 +1,206 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/**
 + * Driver for AC200 Ethernet PHY
 + *
-+ * Copyright (c) 2019 Jernej Skrabec <jernej.skrabec@siol.net>
++ * Copyright (c) 2020 Jernej Skrabec <jernej.skrabec@siol.net>
 + */
 +
 +#include <linux/kernel.h>
@@ -297,44 +82,16 @@ diff -Naur linux-5.3-rc2-old/drivers/net/phy/ac200.c linux-5.3-rc2-old-new/drive
 +
 +struct ac200_ephy_dev {
 +	struct phy_driver	*ephy;
-+	struct ac200_dev	*ac200;
++	struct regmap		*regmap;
 +};
 +
 +static char *ac200_phy_name = "AC200 EPHY";
 +
-+static void disable_intelligent_ieee(struct phy_device *phydev)
-+{
-+	unsigned int value;
-+
-+	phy_write(phydev, 0x1f, 0x0100);	/* switch to page 1 */
-+	value = phy_read(phydev, 0x17);
-+	value &= ~BIT(3);			/* disable IEEE */
-+	phy_write(phydev, 0x17, value);
-+	phy_write(phydev, 0x1f, 0x0000);	/* switch to page 0 */
-+}
-+
-+static void disable_802_3az_ieee(struct phy_device *phydev)
-+{
-+	unsigned int value;
-+
-+	phy_write(phydev, 0xd, 0x7);
-+	phy_write(phydev, 0xe, 0x3c);
-+	phy_write(phydev, 0xd, BIT(14) | 0x7);
-+	value = phy_read(phydev, 0xe);
-+	value &= ~BIT(1);
-+	phy_write(phydev, 0xd, 0x7);
-+	phy_write(phydev, 0xe, 0x3c);
-+	phy_write(phydev, 0xd, BIT(14) | 0x7);
-+	phy_write(phydev, 0xe, value);
-+
-+	phy_write(phydev, 0x1f, 0x0200);	/* switch to page 2 */
-+	phy_write(phydev, 0x18, 0x0000);
-+}
-+
 +static int ac200_ephy_config_init(struct phy_device *phydev)
 +{
 +	const struct ac200_ephy_dev *priv = phydev->drv->driver_data;
-+	u16 value;
++	unsigned int value;
++	int ret;
 +
 +	phy_write(phydev, 0x1f, 0x0100);	/* Switch to Page 1 */
 +	phy_write(phydev, 0x12, 0x4824);	/* Disable APS */
@@ -350,28 +107,31 @@ diff -Naur linux-5.3-rc2-old/drivers/net/phy/ac200.c linux-5.3-rc2-old-new/drive
 +	phy_write(phydev, 0x1f, 0x0800);	/* Switch to Page 6 */
 +	phy_write(phydev, 0x18, 0x00bc);	/* PHYAFE TRX optimization */
 +
-+	disable_intelligent_ieee(phydev);	/* Disable Intelligent IEEE */
-+	disable_802_3az_ieee(phydev);		/* Disable 802.3az IEEE */
-+	phy_write(phydev, 0x1f, 0x0000);	/* Switch to Page 0 */
++	phy_write(phydev, 0x1f, 0x0100);	/* switch to page 1 */
++	phy_clear_bits(phydev, 0x17, BIT(3));	/* disable intelligent IEEE */
 +
-+	value = (phydev->interface == PHY_INTERFACE_MODE_RMII) ?
-+		AC200_EPHY_XMII_SEL : 0;
-+	ac200_reg_mod(priv->ac200, AC200_EPHY_CTL, AC200_EPHY_XMII_SEL, value);
++	/* next two blocks disable 802.3az IEEE */
++	phy_write(phydev, 0x1f, 0x0200);	/* switch to page 2 */
++	phy_write(phydev, 0x18, 0x0000);
 +
-+	/* FIXME: This is probably H6 specific */
-+	value = phy_read(phydev, 0x13);
-+	value |= BIT(12);
-+	phy_write(phydev, 0x13, value);
++	phy_write(phydev, 0x1f, 0x0000);	/* switch to page 0 */
++	phy_clear_bits_mmd(phydev, 0x7, 0x3c, BIT(1));
++
++	if (phydev->interface == PHY_INTERFACE_MODE_RMII)
++		value = AC200_EPHY_XMII_SEL;
++	else
++		value = 0;
++
++	ret = regmap_update_bits(priv->regmap, AC200_EPHY_CTL,
++				 AC200_EPHY_XMII_SEL, value);
++	if (ret)
++		return ret;
++
++	/* FIXME: This is H6 specific */
++	phy_set_bits(phydev, 0x13, BIT(12));
 +
 +	return 0;
-+
 +}
-+
-+static const struct mdio_device_id __maybe_unused ac200_ephy_phy_tbl[] = {
-+	{ AC200_EPHY_ID, AC200_EPHY_ID_MASK },
-+	{ /* sentinel */ }
-+};
-+MODULE_DEVICE_TABLE(mdio, ac200_ephy_phy_tbl);
 +
 +static int ac200_ephy_probe(struct platform_device *pdev)
 +{
@@ -392,7 +152,7 @@ diff -Naur linux-5.3-rc2-old/drivers/net/phy/ac200.c linux-5.3-rc2-old-new/drive
 +	if (!ephy)
 +		return -ENOMEM;
 +
-+	calcell = devm_nvmem_cell_get(dev, "ephy_calib");
++	calcell = devm_nvmem_cell_get(dev, "calibration");
 +	if (IS_ERR(calcell)) {
 +		dev_err(dev, "Unable to find calibration data!\n");
 +		return PTR_ERR(calcell);
@@ -405,8 +165,9 @@ diff -Naur linux-5.3-rc2-old/drivers/net/phy/ac200.c linux-5.3-rc2-old-new/drive
 +	}
 +
 +	if (callen != 2) {
-+		dev_err(dev, "Calibration data has wrong length: 2 != %lu\n",
++		dev_err(dev, "Calibration data has wrong length: 2 != %zu\n",
 +			callen);
++		kfree(caldata);
 +		return -EINVAL;
 +	}
 +
@@ -422,29 +183,29 @@ diff -Naur linux-5.3-rc2-old/drivers/net/phy/ac200.c linux-5.3-rc2-old-new/drive
 +	ephy->suspend = genphy_suspend;
 +	ephy->resume = genphy_resume;
 +
-+	priv->ac200 = ac200;
 +	priv->ephy = ephy;
++	priv->regmap = ac200->regmap;
 +	platform_set_drvdata(pdev, priv);
 +
-+	ret = ac200_reg_write(ac200, AC200_SYS_EPHY_CTL0,
-+			      AC200_EPHY_RESET_INVALID |
-+			      AC200_EPHY_SYSCLK_GATING);
++	ret = regmap_write(ac200->regmap, AC200_SYS_EPHY_CTL0,
++			   AC200_EPHY_RESET_INVALID |
++			   AC200_EPHY_SYSCLK_GATING);
 +	if (ret)
 +		return ret;
 +
-+	ret = ac200_reg_write(ac200, AC200_SYS_EPHY_CTL1,
-+			      AC200_EPHY_E_EPHY_MII_IO_EN |
-+			      AC200_EPHY_E_LNK_LED_IO_EN |
-+			      AC200_EPHY_E_SPD_LED_IO_EN |
-+			      AC200_EPHY_E_DPX_LED_IO_EN);
++	ret = regmap_write(ac200->regmap, AC200_SYS_EPHY_CTL1,
++			   AC200_EPHY_E_EPHY_MII_IO_EN |
++			   AC200_EPHY_E_LNK_LED_IO_EN |
++			   AC200_EPHY_E_SPD_LED_IO_EN |
++			   AC200_EPHY_E_DPX_LED_IO_EN);
 +	if (ret)
 +		return ret;
 +
-+	ret = ac200_reg_write(ac200, AC200_EPHY_CTL,
-+			      AC200_EPHY_LED_POL |
-+			      AC200_EPHY_CLK_SEL |
-+			      AC200_EPHY_ADDR(1) |
-+			      AC200_EPHY_CALIB(calib));
++	ret = regmap_write(ac200->regmap, AC200_EPHY_CTL,
++			   AC200_EPHY_LED_POL |
++			   AC200_EPHY_CLK_SEL |
++			   AC200_EPHY_ADDR(1) |
++			   AC200_EPHY_CALIB(calib));
 +	if (ret)
 +		return ret;
 +
@@ -463,10 +224,9 @@ diff -Naur linux-5.3-rc2-old/drivers/net/phy/ac200.c linux-5.3-rc2-old-new/drive
 +
 +	phy_driver_unregister(priv->ephy);
 +
-+	ac200_reg_write(priv->ac200, AC200_EPHY_CTL,
-+			AC200_EPHY_SHUTDOWN);
-+	ac200_reg_write(priv->ac200, AC200_SYS_EPHY_CTL1, 0);
-+	ac200_reg_write(priv->ac200, AC200_SYS_EPHY_CTL0, 0);
++	regmap_write(priv->regmap, AC200_EPHY_CTL, AC200_EPHY_SHUTDOWN);
++	regmap_write(priv->regmap, AC200_SYS_EPHY_CTL1, 0);
++	regmap_write(priv->regmap, AC200_SYS_EPHY_CTL0, 0);
 +
 +	return 0;
 +}
@@ -487,41 +247,13 @@ diff -Naur linux-5.3-rc2-old/drivers/net/phy/ac200.c linux-5.3-rc2-old-new/drive
 +};
 +module_platform_driver(ac200_ephy_driver);
 +
-+MODULE_AUTHOR("Jernej Skrabec <jernej.skrabec@siol.net>>");
++MODULE_AUTHOR("Jernej Skrabec <jernej.skrabec@siol.net>");
 +MODULE_DESCRIPTION("AC200 Ethernet PHY driver");
 +MODULE_LICENSE("GPL");
-diff -Naur linux-5.3-rc2-old/drivers/net/phy/Kconfig linux-5.3-rc2-old-new/drivers/net/phy/Kconfig
---- linux-5.3-rc2-old/drivers/net/phy/Kconfig	2019-07-28 21:47:02.000000000 +0200
-+++ linux-5.3-rc2-old-new/drivers/net/phy/Kconfig	2019-08-03 15:24:25.929999997 +0200
-@@ -244,6 +244,13 @@
- 	depends on HWMON || HWMON=n
- 	select MDIO_I2C
- 
-+config AC200_PHY
-+	tristate "AC200 EPHY"
-+	depends on NVMEM
-+	depends on OF
-+	help
-+	  Fast ethernet PHY as found in X-Powers AC200 multi-function device.
-+
- config AMD_PHY
- 	tristate "AMD PHYs"
- 	---help---
-diff -Naur linux-5.3-rc2-old/drivers/net/phy/Makefile linux-5.3-rc2-old-new/drivers/net/phy/Makefile
---- linux-5.3-rc2-old/drivers/net/phy/Makefile	2019-07-28 21:47:02.000000000 +0200
-+++ linux-5.3-rc2-old-new/drivers/net/phy/Makefile	2019-08-03 15:24:25.929999997 +0200
-@@ -46,6 +46,7 @@
- sfp-obj-$(CONFIG_SFP)		+= sfp-bus.o
- obj-y				+= $(sfp-obj-y) $(sfp-obj-m)
- 
-+obj-$(CONFIG_AC200_PHY)		+= ac200.o
- obj-$(CONFIG_ADIN_PHY)		+= adin.o
- obj-$(CONFIG_AMD_PHY)		+= amd.o
- aquantia-objs			+= aquantia_main.o
-
-diff -Naur linux-5.3-rc2-old/include/linux/mfd/ac200.h linux-5.3-rc2-old-new/include/linux/mfd/ac200.h
---- linux-5.3-rc2-old/include/linux/mfd/ac200.h	1970-01-01 01:00:00.000000000 +0100
-+++ linux-5.3-rc2-old-new/include/linux/mfd/ac200.h	2019-08-03 15:24:25.929999997 +0200
+diff --git a/include/linux/mfd/ac200.h b/include/linux/mfd/ac200.h
+index 3fa33d27eeba..16af69f69eaf 100644
+--- a/include/linux/mfd/ac200.h
++++ b/include/linux/mfd/ac200.h
 @@ -0,0 +1,44 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +/*
