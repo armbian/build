@@ -358,7 +358,7 @@ function build_all()
 					source "${SRC}/config/boards/${BOARD}".wip 2> /dev/null
 					# shellcheck source=/dev/null
 					source "${SRC}/config/boards/${BOARD}".conf 2> /dev/null
-					IFS=',' read -a -r RELBRANCH <<< "${KERNEL_TARGET}"
+					IFS=',' read -r -a RELBRANCH <<< "${KERNEL_TARGET}"
 					for BRANCH in "${RELBRANCH[@]}"
 					do
 					RELTARGETS=(xenial stretch buster bullseye bionic eoan focal)
