@@ -613,7 +613,7 @@ addtorepo()
 		if [ $mainnum -gt 0 ] && [ $utilnum -gt 0 ] && [ $desknum -gt 0 ]; then
 			# publish
 			aptly publish -force-overwrite -passphrase="${GPG_PASS}" -origin=Armbian -label=Armbian -config="${SCRIPTPATH}config/${REPO_CONFIG}" -component="${COMPONENTS// /,}" \
-				--distribution="${release}" repo "${release}" "${COMPONENTS//main/}" >/dev/null
+				--distribution="${release}" repo "${release}" ${COMPONENTS//main/} >/dev/null
 			if [[ $? -ne 0 ]]; then
 				display_alert "Publishing failed" "${release}" "err"
 				errors=$((errors+1))
