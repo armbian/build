@@ -57,7 +57,7 @@ update_src() {
 	cd "${SRC}" || exit
 	if [[ ! -f "${SRC}"/.ignore_changes ]]; then
 		echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
-		git pull
+
 		CHANGED_FILES=$(git diff --name-only)
 		if [[ -n "${CHANGED_FILES}" ]]; then
 			echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
@@ -76,6 +76,7 @@ update_src() {
 			done
 		else
 			git checkout "${LIB_TAG:-master}"
+			git pull
 		fi
 	fi
 }
