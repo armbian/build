@@ -864,7 +864,7 @@ prepare_host()
 	local codename=$(lsb_release -sc)
 
 	# Getting ready for Ubuntu 20.04
-	if [[ $codename == focal ]]; then
+	if [[ $codename == focal || $codename == ulyana ]]; then
 		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
@@ -880,7 +880,7 @@ prepare_host()
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
-	if [[ -z $codename || "bionic buster eoan focal debbie tricia" != *"$codename"* ]]; then
+	if [[ -z $codename || "bionic buster eoan focal debbie tricia ulyana" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -893,7 +893,7 @@ prepare_host()
 		exit_with_error "Windows subsystem for Linux is not a supported build environment"
 	fi
 
-	if [[ -z $codename || "focal" == "$codename" || "eoan" == "$codename"  || "debbie" == "$codename"  || "buster" == "$codename" ]]; then
+	if [[ -z $codename || "focal" == "$codename" || "eoan" == "$codename"  || "debbie" == "$codename"  || "buster" == "$codename" || "ulyana" == "$codename" ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 
