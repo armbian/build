@@ -138,8 +138,7 @@ DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certif
 [[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
 
 # tab cleanup is mandatory
-DEBOOTSTRAP_LIST=$(echo "${DEBOOTSTRAP_LIST}" | sed -e 's,\\[trn],,g')
-
+DEBOOTSTRAP_LIST=$(echo $DEBOOTSTRAP_LIST | sed -e 's,\\[trn],,g')
 
 # For minimal build different set of packages is needed
 # Essential packages for minimal build
