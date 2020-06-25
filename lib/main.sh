@@ -254,8 +254,8 @@ LINUXFAMILY="${BOARDFAMILY}"
 if [[ -z $BRANCH ]]; then
 
 	options=()
-	[[ $KERNEL_TARGET == *legacy* ]] && options+=("legacy" "Old stable / Legacy")
 	[[ $KERNEL_TARGET == *current* ]] && options+=("current" "Recommended. Come with best support")
+	[[ $KERNEL_TARGET == *legacy* ]] && options+=("legacy" "Old stable / Legacy")
 	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev" "\Z1Development version (@kernel.org)\Zn")
 
 	# do not display selection dialog if only one kernel branch is available
