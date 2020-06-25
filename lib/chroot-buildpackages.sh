@@ -345,7 +345,7 @@ chroot_installpackages()
 	#		if grep -qE "apt.armbian.com|localhost" <(apt-cache madison \$p); then
 	#		if apt-get -s -qq install \$p; then
 	#fi
-	apt-get -q "${apt_extra}" --show-progress -o DPKG::Progress-Fancy=1 install -y "${install_list}"
+	apt-get -q "${apt_extra}" --show-progress -o DPKG::Progress-Fancy=1 install -y ${install_list}
 	apt-get clean
 	[[ "${remote_only}" != yes ]] && apt-key del "925644A6"
 	rm /etc/apt/sources.list.d/armbian-temp.list 2>/dev/null
