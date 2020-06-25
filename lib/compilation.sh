@@ -145,8 +145,8 @@ compile_uboot()
 
 	# create directory structure for the .deb package
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
-	rm -rf "${SRC}/.tmp/${uboot_name}"
-	mkdir -p "${SRC}/.tmp/${uboot_name}/usr/lib/{u-boot,${uboot_name}}" "${SRC}/.tmp/${uboot_name}/DEBIAN"
+	rm -rf $SRC/.tmp/$uboot_name
+	mkdir -p $SRC/.tmp/$uboot_name/usr/lib/{u-boot,$uboot_name} $SRC/.tmp/$uboot_name/DEBIAN
 
 	# process compilation for one or multiple targets
 	while read -r target; do
