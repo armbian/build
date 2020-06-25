@@ -29,21 +29,35 @@ else
 	exit 255
 fi
 
-if [[ "${EUID}" == "0" ]] || [[ "${1}" == "vagrant" ]]; then
-	:
-elif [[ "${1}" == docker || "${1}" == dockerpurge || "${1}" == docker-shell ]] && grep -q "$(whoami)" <(getent group docker); then
-	:
-else
-	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
-	sudo "${SRC}/compile.sh" "$@"
-	exit $?
-fi
+#  Add the variables needed at the beginning of the path
+check_args ()
+{
+  for p in "$@"; do
+
+	case "${p%=*}" in
+		LIB_TAG)
+			# Take a variable if the branch exists locally
+			if [ "${p#*=}" == "$(git branch | \
+				gawk -v b="${p#*=}" '{if ( $NF == b ) {print $NF}}')" ]; then
+				echo "Setting $p"
+				eval "$p"
+			else
+				echo "Skip $p Set as LIB_TAG=\"\""
+				eval LIB_TAG=""
+			fi
+			;;
+	esac
+
+  done
+}
+
+check_args "$@"
 
 update_src() {
 	cd "${SRC}" || exit
 	if [[ ! -f "${SRC}"/.ignore_changes ]]; then
 		echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
-		git pull
+
 		CHANGED_FILES=$(git diff --name-only)
 		if [[ -n "${CHANGED_FILES}" ]]; then
 			echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
@@ -62,18 +76,20 @@ update_src() {
 			done
 		else
 			git checkout "${LIB_TAG:-master}"
+			git pull
 		fi
 	fi
 }
 
 TMPFILE=$(mktemp)
 chmod 644 "${TMPFILE}"
-cat <<EOF >> "${TMPFILE}"
-SRC="${SRC}"
-LIB_TAG="${LIB_TAG}"
-declare -f update_src
-update_src
-EOF
+{
+	echo SRC="$SRC"
+	echo LIB_TAG="$LIB_TAG"
+	declare -f update_src
+	echo "update_src"
+
+}  > "$TMPFILE"
 
 #do not update/checkout git with root privileges to messup files onwership.
 #due to in docker/VM, we can't su to a normal user, so do not update/checkout git.
@@ -86,6 +102,16 @@ if [[ $(systemd-detect-virt) == 'none' ]]; then
 fi
 
 rm "${TMPFILE}"
+
+if [[ "${EUID}" == "0" ]] || [[ "${1}" == "vagrant" ]]; then
+	:
+elif [[ "${1}" == docker || "${1}" == dockerpurge || "${1}" == docker-shell ]] && grep -q "$(whoami)" <(getent group docker); then
+	:
+else
+	display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
+	sudo "${SRC}/compile.sh" "$@"
+	exit $?
+fi
 
 # Check for required packages for compiling
 if [[ -z "$(command -v dialog)" ]]; then
