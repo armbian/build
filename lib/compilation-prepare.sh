@@ -72,6 +72,28 @@ compilation_prepare()
 	fi
 
 	#
+	# Linux splah file
+	#
+
+	if linux-version compare "${version}" ge 5.4; then
+
+		display_alert "Adding" "Kernel splash file" "info"
+		process_patch_file "${SRC}/patch/misc/0001-bootsplash.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/0002-bootsplash.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/0003-bootsplash.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/0004-bootsplash.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/0005-bootsplash.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/0006-bootsplash.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/0007-bootsplash.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/0008-bootsplash.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/0009-bootsplash.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/0010-bootsplash.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/0011-bootsplash.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/0012-bootsplash.patch" "applying"
+
+	fi
+
+	#
 	# mac80211 wireless driver injection features from Kali Linux
 	#
 
