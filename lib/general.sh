@@ -589,8 +589,9 @@ display_alert "Building kernel splash logo" "$RELEASE" "info"
 	--blob "${SDCARD}"/tmp/throbber72.rgb \
 	--blob "${SDCARD}"/tmp/throbber73.rgb \
 	--blob "${SDCARD}"/tmp/throbber74.rgb \
-	"${SDCARD}"/lib/firmware/bootsplash >/dev/null 2>&1
-	echo "extraargs=bootsplash.bootfile=bootsplash" >> "${SDCARD}"/boot/armbianEnv.txt
+	"${SDCARD}"/lib/firmware/bootsplash.armbian >/dev/null 2>&1
+	grep -q '^bootlogo' "${SDCARD}"/boot/armbianEnv.txt && \
+	sed -i 's/^bootlogo.*/bootlogo=true/' "${SDCARD}"/boot/armbianEnv.txt || echo 'bootlogo=true' >> "${SDCARD}"/boot/armbianEnv.txt
 
 	# enable additional services
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-ask-password-console.path >/dev/null 2>&1"

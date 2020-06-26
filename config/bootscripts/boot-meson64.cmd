@@ -10,6 +10,7 @@ setenv overlay_error "false"
 setenv rootdev "/dev/mmcblk1p1"
 setenv verbosity "1"
 setenv console "both"
+setenv bootlogo "false"
 setenv rootfstype "ext4"
 setenv docker_optimizations "on"
 
@@ -27,6 +28,7 @@ if test "${console}" = "serial"; then setenv consoleargs "console=ttyAML0,115200
 
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=ttyAML0,115200 console=tty1"; fi
 if test "${console}" = "serial"; then setenv consoleargs "console=ttyAML0,115200"; fi
+if test "${bootlogo}" = "true"; then setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"; fi
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 coherent_pool=2M loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
