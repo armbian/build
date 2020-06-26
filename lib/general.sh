@@ -590,8 +590,9 @@ display_alert "Building kernel splash logo" "$RELEASE" "info"
 	--blob "${SDCARD}"/tmp/throbber73.rgb \
 	--blob "${SDCARD}"/tmp/throbber74.rgb \
 	"${SDCARD}"/lib/firmware/bootsplash.armbian >/dev/null 2>&1
-	grep -q '^bootlogo' "${SDCARD}"/boot/armbianEnv.txt && \
+	[[ -f "${SDCARD}"/boot/armbianEnv.txt ]] &&	grep -q '^bootlogo' "${SDCARD}"/boot/armbianEnv.txt && \
 	sed -i 's/^bootlogo.*/bootlogo=true/' "${SDCARD}"/boot/armbianEnv.txt || echo 'bootlogo=true' >> "${SDCARD}"/boot/armbianEnv.txt
+	[[ -f "${SDCARD}"/boot/boot.ini ]] &&	sed -i 's/^setenv bootlogo.*/setenv bootlogo "true"/' "${SDCARD}"/boot/boot.ini
 
 	# enable additional services
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-ask-password-console.path >/dev/null 2>&1"
@@ -1207,7 +1208,7 @@ download_and_verify()
 
 	local remotedir=$1
 	local filename=$2
-	local localdir="${SRC}"/cache/${remotedir//_}
+	local localdir=$SRC/cache/${remotedir//_}
 	local dirname=${filename//.tar.xz}
 
         if [[ $DOWNLOAD_MIRROR == china ]]; then
