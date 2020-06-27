@@ -8,7 +8,7 @@ case $BRANCH in
 		BOOTBRANCH='branch:v2018.01-solidrun-a38x'
 		BOOTDIR='u-boot-armada'
 		BOOTPATCHDIR='u-boot-clearfog'
-        BOOTSCRIPT='boot-mvebu-next.cmd:boot.cmd'
+        BOOTSCRIPT='boot-mvebu.cmd:boot.cmd'
 
 		UBOOT_TARGET_MAP=";sdhc;u-boot-spl-sdhc.kwb:u-boot.mmc
 						  ;mmc;u-boot-spl-mmc.kwb:u-boot.emmc
