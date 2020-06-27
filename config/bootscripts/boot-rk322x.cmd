@@ -10,6 +10,7 @@ setenv overlay_error "false"
 setenv rootdev "/dev/mmcblk0p1"
 setenv verbosity "1"
 setenv console "both"
+setenv bootlogo "false"
 setenv rootfstype "ext4"
 setenv docker_optimizations "on"
 
@@ -24,6 +25,7 @@ if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 
 # get PARTUUID of first partition on SD/eMMC the boot script was loaded from
 if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:1 partuuid; fi
+if test "${bootlogo}" = "true"; then setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"; fi
 
 setenv bootargs "earlyprintk root=${rootdev} console=ttyS2,115200n8 console=tty1 rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
