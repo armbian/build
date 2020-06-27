@@ -1244,13 +1244,15 @@ download_and_verify()
 		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=15 --console-log-level=error \
 		--allow-overwrite=true --download-result=hide --rpc-save-upload-metadata=false --auto-file-renaming=false \
 		--file-allocation=trunc --continue=true ${torrent} \
-		--dht-file-path=${SRC}/cache/.aria2/dht.dat --disable-ipv6=true --stderr --follow-torrent=mem --dir=${localdir}"
+		--dht-file-path=${SRC}/cache/.aria2/dht.dat --disable-ipv6=true --stderr --follow-torrent=mem --dir=$localdir"
 
 		# exception. It throws error if dht.dat file does not exists. Error suppress needed only at first download.
 		if [[ -f "${SRC}"/cache/.aria2/dht.dat ]]; then
-			aria2c "${ariatorrent}"
+			# shellcheck disable=SC2086
+			aria2c ${ariatorrent}
 		else
-			aria2c "${ariatorrent}" &> "${DEST}"/debug/torrent.log
+			# shellcheck disable=SC2035
+			aria2c ${ariatorrent} &> "${DEST}"/debug/torrent.log
 		fi
 		# mark complete
 		[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete"
