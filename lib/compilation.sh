@@ -779,7 +779,7 @@ userpatch_create()
 		if [[ -n $(git config user.email) ]]; then
 			display_alert "Add / change patch name" "$COMMIT_MESSAGE" "wrn"
 			read -e -p "Patch description: " -i "$COMMIT_MESSAGE" COMMIT_MESSAGE
-			[[ -z "$COMMIT_MESSAGE" ]] && COMMIT_MESSAGE="Patch made with https://github.com/armbian/build"
+			[[ -z "$COMMIT_MESSAGE" ]] && COMMIT_MESSAGE="Patching something"
 			git commit -s -m "$COMMIT_MESSAGE"
 			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com/armbian/build" > "${patch}"
 			PATCHFILE=$(git format-patch -1 HEAD)
