@@ -783,6 +783,7 @@ userpatch_create()
 			git commit -s -m "$COMMIT_MESSAGE"
 			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com/armbian/build" > "${patch}"
 			PATCHFILE=$(git format-patch -1 HEAD)
+			rm $PATCHFILE # delete the actual file
 			# create a symlink to have a nice name ready
 			find $DEST/patch/ -type l -delete # delete any existing
 			ln -sf $patch $DEST/patch/$PATCHFILE
