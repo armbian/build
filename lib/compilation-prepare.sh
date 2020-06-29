@@ -176,7 +176,19 @@ compilation_prepare()
 	fi
 
 
+	# Updated USB network drivers for RTL8152/RTL8153 based dongles that also support 2.5Gbs variants
 
+	if linux-version compare "${version}" ge 5.4; then
+
+		# attach to specifics tag or branch
+		local rtl8152ver="branch:master"
+
+		display_alert "Adding" "Drivers for 2.5Gb RTL8152/RTL8153 USB dongles ${rtl8152ver}" "info"
+		fetch_from_repo "https://github.com/igorpecovnik/realtek-r8152-linux" "rtl8152" "${rtl8152ver}" "yes"
+		cp -R "${SRC}/cache/sources/rtl8152/${rtl8152ver#*:}"/{r8152.c,compatibility.h} \
+		"${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/usb/"
+
+	fi
 
 	# Wireless drivers for Realtek 8189ES chipsets
 
