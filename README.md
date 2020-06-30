@@ -86,7 +86,7 @@ Function | Armbian | Yocto | Buildroot |
 |:--|:--|:--|:--|
 | Target | general purpose | embedded | embedded / IOT | 
 | U-boot and kernel | compiled from sources | compiled from sources | compiled from sources |
-| Hardware support maintenance &nbsp;&nbsp; | complete | outside | outside | 
+| Board support maintenance &nbsp; | complete | outside | outside | 
 | Root file system | Debian or Ubuntu based| custom | custom |
 | Package manager | APT | any | none |
 | Configurability | limited | large | large |
