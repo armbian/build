@@ -71,7 +71,7 @@ Build minimal CLI Debian buster based image for Odroid XU4. Use modern kernel an
 
 ```text
 ./compile.sh BOARD="odroidxu4" BRANCH="current" RELEASE="buster" CARD_DEVICE="/dev/sda" \
-KERNEL_ONLY="no" KERNEL_CONFIGURE="no" INSTALL_HEADERS="yes" BUILD_DESKTOP="no" BUILD_MINIMAL="yes"
+KERNEL_ONLY="no" KERNEL_CONFIGURE="no" BUILD_DESKTOP="no" BUILD_MINIMAL="yes"
 ```
 
 [Build parameters, advanced build options, user defined configuration, build with Docker?](#additional-information)
