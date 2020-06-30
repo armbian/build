@@ -35,7 +35,7 @@ build tools</h3>
 
 ## What do you need to get started?
     
-- x64 machine with at least 2GB of memory and ~30GB of disk space for the VM, container or native OS,
+- x64 machine with at least 2GB of memory and ~35GB of disk space for the VM, container or native OS,
 - Ubuntu Bionic 18.04 / Focal 20.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised,
 - superuser rights (configured sudo or root access).
 
@@ -71,7 +71,7 @@ Build minimal CLI Debian buster based image for Odroid XU4. Use modern kernel an
 
 ```text
 ./compile.sh BOARD="odroidxu4" BRANCH="current" RELEASE="buster" CARD_DEVICE="/dev/sda" \
-KERNEL_ONLY="no" KERNEL_CONFIGURE="no" INSTALL_HEADERS="yes" BUILD_DESKTOP="no" BUILD_MINIMAL="yes"
+KERNEL_ONLY="no" KERNEL_CONFIGURE="no" BUILD_DESKTOP="no" BUILD_MINIMAL="yes"
 ```
 
 [Build parameters, advanced build options, user defined configuration, build with Docker?](#additional-information)
@@ -86,7 +86,7 @@ Function | Armbian | Yocto | Buildroot |
 |:--|:--|:--|:--|
 | Target | general purpose | embedded | embedded / IOT | 
 | U-boot and kernel | compiled from sources | compiled from sources | compiled from sources |
-| Hardware support maintenance &nbsp;&nbsp; &nbsp; &nbsp;| complete | outside | outside | 
+| Board support maintenance &nbsp; | complete | outside | outside | 
 | Root file system | Debian or Ubuntu based| custom | custom |
 | Package manager | APT | any | none |
 | Configurability | limited | large | large |
@@ -121,46 +121,46 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 ## Build tools overview
 
 ```text
-├── cache                                    Work / cache directory
-│   ├── rootfs                               Compressed vanilla Debian and Ubuntu rootfilesystem cache
-│   ├── sources                              Kernel, u-boot and various drivers sources. Mainly C code
-│   ├── toolchains                           External cross compilers from Linaro™ or ARM™
-├── config                                   Packages repository configurations
-│   ├── targets.conf                         Board build target configuration
-│   ├── boards                               Board configurations
-│   ├── bootenv                              Initial boot loaders environments per family
-│   ├── bootscripts                          Initial Boot loaders scripts per family
-│   ├── kernel                               Kernel build configurations per family
-│   ├── sources                              Kernel and u-boot sources locations and scripts
-│   ├── templates                            User configuration templates which populate userpatches
-│   └── torrents                             External compiler and rootfs cache torrents
-├── lib                                      Main build tools libraries
-├── output                                   Build artifact
-│   └── deb                                  Deb packages
-│   └── images                               Bootable images - RAW or compressed
-│   └── debug                                Patch and build logs
-│   └── config                               Kernel configuration export location
-│   └── patch                                Created patches location
-├── packages                                 Support scripts, binary blobs, packages
-│   ├── blobs                                Wallpapers, various configs, closed source bootloaders
-│   ├── bsp                                  Scripts and configs overlay for rootfs
-│   └── extras-buildpkgs                     Optional compilation and packaging engine
-├── patch                                    Collection of patches
-│   ├── atf                                  ARM trusted firmware
-│   ├── kernel                               Linux kernel patches
-|   |   └── family-branch                    Per kernel family and branch
-│   ├── misc                                 Linux kernel packaging patches
-│   └── u-boot                               Universal boot loader patches
-|       ├── u-boot-board                     For specific board
-|       └── u-boot-family                    For entire kernel family
-└── userpatches                              User: configuration patching area
-    ├── lib.config                           User: tools common config/override file
-    ├── config-default.conf                  User: default user config file
-    ├── customize-image.sh                   User: script will execute just before closing the image
-    ├── atf                                  User: ARM trusted firmware
-    ├── kernel                               User: Linux kernel per kernel family
-    ├── misc                                 User: various
-    └── u-boot                               User: universal boot loader patches
+├── cache                                Work / cache directory
+│   ├── rootfs                           Compressed vanilla Debian and Ubuntu rootfilesystem cache
+│   ├── sources                          Kernel, u-boot and various drivers sources. Mainly C code
+│   ├── toolchains                       External cross compilers from Linaro™ or ARM™
+├── config                               Packages repository configurations
+│   ├── targets.conf                     Board build target configuration
+│   ├── boards                           Board configurations
+│   ├── bootenv                          Initial boot loaders environments per family
+│   ├── bootscripts                      Initial Boot loaders scripts per family
+│   ├── kernel                           Kernel build configurations per family
+│   ├── sources                          Kernel and u-boot sources locations and scripts
+│   ├── templates                        User configuration templates which populate userpatches
+│   └── torrents                         External compiler and rootfs cache torrents
+├── lib                                  Main build tools libraries
+├── output                               Build artifact
+│   └── deb                              Deb packages
+│   └── images                           Bootable images - RAW or compressed
+│   └── debug                            Patch and build logs
+│   └── config                           Kernel configuration export location
+│   └── patch                            Created patches location
+├── packages                             Support scripts, binary blobs, packages
+│   ├── blobs                            Wallpapers, various configs, closed source bootloaders
+│   ├── bsp                              Scripts and configs overlay for rootfs
+│   └── extras-buildpkgs                 Optional compilation and packaging engine
+├── patch                                Collection of patches
+│   ├── atf                              ARM trusted firmware
+│   ├── kernel                           Linux kernel patches
+|   |   └── family-branch                Per kernel family and branch
+│   ├── misc                             Linux kernel packaging patches
+│   └── u-boot                           Universal boot loader patches
+|       ├── u-boot-board                 For specific board
+|       └── u-boot-family                For entire kernel family
+└── userpatches                          User: configuration patching area
+    ├── lib.config                       User: tools common config/override file
+    ├── config-default.conf              User: default user config file
+    ├── customize-image.sh               User: script will execute just before closing the image
+    ├── atf                              User: ARM trusted firmware
+    ├── kernel                           User: Linux kernel per kernel family
+    ├── misc                             User: various
+    └── u-boot                           User: universal boot loader patches
 ```
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
