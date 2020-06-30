@@ -121,46 +121,46 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 ## Build tools overview
 
 ```text
-├── cache                                 Work / cache directory
-│   ├── rootfs                            Compressed vanilla Debian and Ubuntu rootfilesystem cache
-│   ├── sources                           Kernel, u-boot and various drivers sources. Mainly C code
-│   ├── toolchains                        External cross compilers from Linaro™ or ARM™
-├── config                                Packages repository configurations
-│   ├── targets.conf                      Board build target configuration
-│   ├── boards                            Board configurations
-│   ├── bootenv                           Initial boot loaders environments per family
-│   ├── bootscripts                       Initial Boot loaders scripts per family
-│   ├── kernel                            Kernel build configurations per family
-│   ├── sources                           Kernel and u-boot sources locations and scripts
-│   ├── templates                         User configuration templates which populate userpatches
-│   └── torrents                          External compiler and rootfs cache torrents
-├── lib                                   Main build tools libraries
-├── output                                Build artifact
-│   └── deb                               Deb packages
-│   └── images                            Bootable images - RAW or compressed
-│   └── debug                             Patch and build logs
-│   └── config                            Kernel configuration export location
-│   └── patch                             Created patches location
-├── packages                              Support scripts, binary blobs, packages
-│   ├── blobs                             Wallpapers, various configs, closed source bootloaders
-│   ├── bsp                               Scripts and configs overlay for rootfs
-│   └── extras-buildpkgs                  Optional compilation and packaging engine
-├── patch                                 Collection of patches
-│   ├── atf                               ARM trusted firmware
-│   ├── kernel                            Linux kernel patches
-|   |   └── family-branch                 Per kernel family and branch
-│   ├── misc                              Linux kernel packaging patches
-│   └── u-boot                            Universal boot loader patches
-|       ├── u-boot-board                  For specific board
-|       └── u-boot-family                 For entire kernel family
-└── userpatches                           User: configuration patching area
-    ├── lib.config                        User: tools common config/override file
-    ├── config-default.conf               User: default user config file
-    ├── customize-image.sh                User: script will execute just before closing the image
-    ├── atf                               User: ARM trusted firmware
-    ├── kernel                            User: Linux kernel per kernel family
-    ├── misc                              User: various
-    └── u-boot                            User: universal boot loader patches
+├── cache                                Work / cache directory
+│   ├── rootfs                           Compressed vanilla Debian and Ubuntu rootfilesystem cache
+│   ├── sources                          Kernel, u-boot and various drivers sources. Mainly C code
+│   ├── toolchains                       External cross compilers from Linaro™ or ARM™
+├── config                               Packages repository configurations
+│   ├── targets.conf                     Board build target configuration
+│   ├── boards                           Board configurations
+│   ├── bootenv                          Initial boot loaders environments per family
+│   ├── bootscripts                      Initial Boot loaders scripts per family
+│   ├── kernel                           Kernel build configurations per family
+│   ├── sources                          Kernel and u-boot sources locations and scripts
+│   ├── templates                        User configuration templates which populate userpatches
+│   └── torrents                         External compiler and rootfs cache torrents
+├── lib                                  Main build tools libraries
+├── output                               Build artifact
+│   └── deb                              Deb packages
+│   └── images                           Bootable images - RAW or compressed
+│   └── debug                            Patch and build logs
+│   └── config                           Kernel configuration export location
+│   └── patch                            Created patches location
+├── packages                             Support scripts, binary blobs, packages
+│   ├── blobs                            Wallpapers, various configs, closed source bootloaders
+│   ├── bsp                              Scripts and configs overlay for rootfs
+│   └── extras-buildpkgs                 Optional compilation and packaging engine
+├── patch                                Collection of patches
+│   ├── atf                              ARM trusted firmware
+│   ├── kernel                           Linux kernel patches
+|   |   └── family-branch                Per kernel family and branch
+│   ├── misc                             Linux kernel packaging patches
+│   └── u-boot                           Universal boot loader patches
+|       ├── u-boot-board                 For specific board
+|       └── u-boot-family                For entire kernel family
+└── userpatches                          User: configuration patching area
+    ├── lib.config                       User: tools common config/override file
+    ├── config-default.conf              User: default user config file
+    ├── customize-image.sh               User: script will execute just before closing the image
+    ├── atf                              User: ARM trusted firmware
+    ├── kernel                           User: Linux kernel per kernel family
+    ├── misc                             User: various
+    └── u-boot                           User: universal boot loader patches
 ```
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
