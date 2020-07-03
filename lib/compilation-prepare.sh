@@ -97,7 +97,7 @@ compilation_prepare()
 	# mac80211 wireless driver injection features from Kali Linux
 	#
 
-	if linux-version compare "${version}" ge 5.4; then
+	if linux-version compare "${version}" ge 5.4 && [ $EXTRAWIFI == yes ]; then
 
 		display_alert "Adding" "Wireless package injections for mac80211 compatible chipsets" "info"
 		process_patch_file "${SRC}/patch/misc/kali-wifi-injection-1.patch" "applying"
@@ -178,7 +178,7 @@ compilation_prepare()
 
 	# Updated USB network drivers for RTL8152/RTL8153 based dongles that also support 2.5Gbs variants
 
-	if linux-version compare "${version}" ge 5.4 && [ $LINUXFAMILY != rk322x ]; then
+	if linux-version compare "${version}" ge 5.4 && [ $LINUXFAMILY != rk322x ] && [ $EXTRAWIFI == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8152ver="branch:master"
