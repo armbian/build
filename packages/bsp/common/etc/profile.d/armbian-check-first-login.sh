@@ -16,6 +16,38 @@ check_abort()
 	exit 0
 }
 
+set_timezone()
+{
+	# Grab this machine's public IP address
+	PUBLIC_IP=`curl -s https://ipinfo.io/ip`
+	if [ $? -eq 0 ]; then
+		while true; do
+		echo ""
+		read -p "\nDo you wish to determine time zone from your location? [Yes]" yn
+		if [ -z $yn ]; then yn=yes; fi
+		case $yn in
+	        [Yy]* )
+		echo -e "\nSetting Timezone based on your geo location with help from ipinfo.io"
+		# Call the geolocation API and capture the output
+		TZ=$(curl -s https://ipvigilante.com/${PUBLIC_IP} | \
+	        jq '.data.continent_name, .data.city_name' | \
+
+		while read -r CONTINENT; do
+	                read -r CITY
+	                echo "${CONTINENT}/${CITY}" | \
+	                        tr --delete \"
+		done)
+		timedatectl set-timezone "${TZ}"
+		dpkg-reconfigure --frontend=noninteractive tzdata
+		break
+		;;
+		[Nn]* ) break;;
+		* ) echo "Please answer yes or no.";;
+		esac
+	done
+	fi
+}
+
 add_profile_sync_settings()
 {
 	/usr/bin/psd >/dev/null 2>&1
@@ -70,6 +102,10 @@ add_user()
 
 if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*i}" ]; then
 
+	# disable autologin
+	rm -f /etc/systemd/system/getty@.service.d/override.conf
+	rm -f /etc/systemd/system/serial-getty@.service.d/override.conf
+
 	# detect lightdm
 	desktop_lightdm=$(dpkg-query -W -f='${db:Status-Abbrev}\n' lightdm 2>/dev/null)
 
@@ -95,6 +131,7 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 	[ -n "$desktop_lightdm" ] && echo "Desktop environment will not be enabled if you abort the new user creation"
 	trap check_abort INT
 	while [ -f "/root/.not_logged_in_yet" ]; do
+		set_timezone
 		add_user
 	done
 	trap - INT TERM EXIT

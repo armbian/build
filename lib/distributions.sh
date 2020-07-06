@@ -127,12 +127,23 @@ install_common()
 	# set root password
 	chroot "${SDCARD}" /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
 
+	# enable automated login to console(s)
+	mkdir -p "${SDCARD}"/etc/systemd/system/getty@.service.d/
+	mkdir -p "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/
+	cat <<-EOF > "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf
+	[Service]
+	ExecStart=
+	ExecStart=-/sbin/agetty --noclear --autologin root %I $TERM
+	EOF
+	cp "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf "${SDCARD}"/etc/systemd/system/getty@.service.d/override.conf
+
 	# force change root password at first login
 	chroot "${SDCARD}" /bin/bash -c "chage -d 0 root"
 
 	# change console welcome text
 	echo -e "Armbian ${REVISION} ${RELEASE^} \\l \n" > "${SDCARD}"/etc/issue
 	echo "Armbian ${REVISION} ${RELEASE^}" > "${SDCARD}"/etc/issue.net
+	sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"Armbian $REVISION "${RELEASE^}"\"/" "${SDCARD}"/etc/os-release
 
 	# enable few bash aliases enabled in Ubuntu by default to make it even
 	sed "s/#alias ll='ls -l'/alias ll='ls -l'/" -i "${SDCARD}"/etc/skel/.bashrc
