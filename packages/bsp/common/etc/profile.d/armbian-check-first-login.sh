@@ -16,29 +16,40 @@ check_abort()
 	exit 0
 }
 
-set_timezone()
+
+set_timezone_and_locales()
 {
 	# Grab this machine's public IP address
 	PUBLIC_IP=`curl -s https://ipinfo.io/ip`
 	if [ $? -eq 0 ]; then
 		while true; do
-		echo ""
-		read -p "\nDo you wish to determine time zone from your location? [Yes]" yn
+		echo "\n"
+		read -p "Do you wish to determine time zone from your location? [Yes]" yn
 		if [ -z $yn ]; then yn=yes; fi
 		case $yn in
 	        [Yy]* )
-		echo -e "\nSetting Timezone based on your geo location with help from ipinfo.io"
+		echo -e "\nSetting Timezone based on your geo location with help from http://ipwhois.app"
 		# Call the geolocation API and capture the output
-		TZ=$(curl -s https://ipvigilante.com/${PUBLIC_IP} | \
-	        jq '.data.continent_name, .data.city_name' | \
+		RES=$(
+			curl -s http://ipwhois.app/json/${PUBLIC_IP} | \
+			jq '.timezone, .country' | \
+			while read -r TIMEZONE; do
+				read -r COUNTRY
+				echo "${TIMEZONE},${COUNTRY}" | tr --delete \"
+			done
+		)
 
-		while read -r CONTINENT; do
-	                read -r CITY
-	                echo "${CONTINENT}/${CITY}" | \
-	                        tr --delete \"
-		done)
-		timedatectl set-timezone "${TZ}"
-		dpkg-reconfigure --frontend=noninteractive tzdata
+		TZDATA=$(echo ${RES} | cut -d"," -f1)
+		STATE=$(echo ${RES} | cut -d"," -f2)
+		LOCALES=$(grep territory /usr/share/i18n/locales/* | grep "$STATE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  xargs -I{} grep {} /usr/share/i18n/SUPPORTED | grep "\.UTF-8" | cut -d " " -f 1)
+		if [[ $(echo LOCALES | wc -l) -eq 1 ]]; then
+			timedatectl set-timezone "${TZDATA}"
+			dpkg-reconfigure --frontend=noninteractive tzdata
+			locale-gen $LOCALES
+			update-locale LANG=$LOCALES LANGUAGE=$LOCALES
+		# else
+		# add select when we have more locales per location
+		fi
 		break
 		;;
 		[Nn]* ) break;;
@@ -47,6 +58,8 @@ set_timezone()
 	done
 	fi
 }
+
+
 
 add_profile_sync_settings()
 {
@@ -131,7 +144,7 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 	[ -n "$desktop_lightdm" ] && echo "Desktop environment will not be enabled if you abort the new user creation"
 	trap check_abort INT
 	while [ -f "/root/.not_logged_in_yet" ]; do
-		set_timezone
+		set_timezone_and_locales
 		add_user
 	done
 	trap - INT TERM EXIT
