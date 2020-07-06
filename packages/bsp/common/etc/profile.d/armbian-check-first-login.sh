@@ -17,21 +17,23 @@ check_abort()
 }
 
 
+
+
 set_timezone_and_locales()
 {
+
 	# Grab this machine's public IP address
-	PUBLIC_IP=`curl -s https://ipinfo.io/ip`
+	PUBLIC_IP=`curl --max-time 5 -s https://ipinfo.io/ip`
 	if [ $? -eq 0 ]; then
 		while true; do
-		echo "\n"
-		read -p "Do you wish to determine time zone from your location? [Yes]" yn
+		echo ""
+		read -p "Do you wish to determine time zone and locales from your location? [Yes]" yn
 		if [ -z $yn ]; then yn=yes; fi
 		case $yn in
 	        [Yy]* )
-		echo -e "\nSetting Timezone based on your geo location with help from http://ipwhois.app"
 		# Call the geolocation API and capture the output
 		RES=$(
-			curl -s http://ipwhois.app/json/${PUBLIC_IP} | \
+			curl --max-time 5 -s http://ipwhois.app/json/${PUBLIC_IP} | \
 			jq '.timezone, .country' | \
 			while read -r TIMEZONE; do
 				read -r COUNTRY
@@ -42,14 +44,30 @@ set_timezone_and_locales()
 		TZDATA=$(echo ${RES} | cut -d"," -f1)
 		STATE=$(echo ${RES} | cut -d"," -f2)
 		LOCALES=$(grep territory /usr/share/i18n/locales/* | grep "$STATE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  xargs -I{} grep {} /usr/share/i18n/SUPPORTED | grep "\.UTF-8" | cut -d " " -f 1)
-		if [[ $(echo LOCALES | wc -l) -eq 1 ]]; then
-			timedatectl set-timezone "${TZDATA}"
-			dpkg-reconfigure --frontend=noninteractive tzdata
-			locale-gen $LOCALES
-			update-locale LANG=$LOCALES LANGUAGE=$LOCALES
-		# else
-		# add select when we have more locales per location
+		options=(`echo ${LOCALES}`);
+		# when having more locales, prompt for choosing one
+		if [[ "${#options[@]}" -gt 1 ]]; then
+			PS3='Please enter your choice:'
+			select opt in "${options[@]}"
+			do
+				if [[ " ${options[@]} " =~ " ${opt} " ]]; then
+					LOCALES=${opt}
+					break
+				fi
+			done
+
 		fi
+
+		# reconfigure tzdata
+		timedatectl set-timezone "${TZDATA}"
+		dpkg-reconfigure --frontend=noninteractive tzdata
+
+		# generate locales
+		sed -i 's/# '"${LOCALES}"'/'"${LOCALES}"'/' /etc/locale.gen
+		echo "Generating locales ..."
+		locale-gen $LOCALES > /dev/null 2>&1
+		update-locale LANG=$LOCALES LANGUAGE=$LOCALES LC=$LOCALES LC_MESSAGES=$LOCALES
+
 		break
 		;;
 		[Nn]* ) break;;
@@ -58,6 +76,7 @@ set_timezone_and_locales()
 	done
 	fi
 }
+
 
 
 
@@ -81,6 +100,9 @@ add_profile_sync_settings()
 	systemctl --user enable psd.service >/dev/null 2>&1
 	systemctl --user start psd.service >/dev/null 2>&1
 }
+
+
+
 
 add_user()
 {
@@ -112,6 +134,9 @@ add_user()
 		chown $RealUserName:$RealUserName /home/${RealUserName}/.activate_psd
 	fi
 }
+
+
+
 
 if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*i}" ]; then
 
