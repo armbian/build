@@ -138,7 +138,7 @@ install_common()
 	cp "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf "${SDCARD}"/etc/systemd/system/getty@.service.d/override.conf
 
 	# force change root password at first login
-	chroot "${SDCARD}" /bin/bash -c "chage -d 0 root"
+	#chroot "${SDCARD}" /bin/bash -c "chage -d 0 root"
 
 	# change console welcome text
 	echo -e "Armbian ${REVISION} ${RELEASE^} \\l \n" > "${SDCARD}"/etc/issue
