@@ -417,6 +417,9 @@ install_common()
 	# remove network manager defaults to handle eth by default
 	rm -f "${SDCARD}"/usr/lib/NetworkManager/conf.d/10-globally-managed-devices.conf
 
+	# most likely we don't need to wait for nm to get online
+	chroot "${SDCARD}" /bin/bash -c "systemctl disable NetworkManager-wait-online.service" >> "${DEST}"/debug/install.log 2>&1
+
 	# avahi daemon defaults if exists
 	[[ -f "${SDCARD}"/usr/share/doc/avahi-daemon/examples/sftp-ssh.service ]] && \
 	cp "${SDCARD}"/usr/share/doc/avahi-daemon/examples/sftp-ssh.service "${SDCARD}"/etc/avahi/services/
