@@ -181,6 +181,7 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 	# disable autologin
 	rm -f /etc/systemd/system/getty@.service.d/override.conf
 	rm -f /etc/systemd/system/serial-getty@.service.d/override.conf
+	systemctl daemon-reload
 
 	# detect lightdm
 	desktop_lightdm=$(dpkg-query -W -f='${db:Status-Abbrev}\n' lightdm 2>/dev/null)
@@ -206,7 +207,13 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 
 	trap '' 2
 	while [ -f "/root/.not_logged_in_yet" ]; do
+
 		read_password "New root"
+
+		# only allow one login. Once you enter root password, kill others.
+		loginfrom=$(who am i | awk '{print $2}')
+		who -la | grep root | grep -v "$loginfrom" | awk '{print $7}' | xargs --no-run-if-empty kill -9
+
 		first_input=$password
 		echo ""
 		read_password "Repeat"
