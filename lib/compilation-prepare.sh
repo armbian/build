@@ -178,7 +178,7 @@ compilation_prepare()
 
 	# Updated USB network drivers for RTL8152/RTL8153 based dongles that also support 2.5Gbs variants
 
-	if linux-version compare "${version}" ge 5.4 && [ $LINUXFAMILY != rk322x ] && [ $EXTRAWIFI == yes ]; then
+	if linux-version compare "${version}" ge 5.4 && [ $LINUXFAMILY != rk322x ] && [ $LINUXFAMILY != odroidxu4 ] && [ $EXTRAWIFI == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8152ver="branch:master"
