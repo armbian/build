@@ -155,6 +155,13 @@ compile_uboot()
 		target_patchdir=$(cut -d';' -f2 <<< "${target}")
 		target_files=$(cut -d';' -f3 <<< "${target}")
 
+		# only checkout when we go several times over the source
+		if [[ $target_cycles -ge 1 ]]; then
+			display_alert "Checking out to clean sources"
+			git checkout -f -q HEAD
+		fi
+		target_cycles=$((target_cycles+1))
+
 		if [[ $CLEAN_LEVEL == *make* ]]; then
 			display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
 			(cd "${SRC}/cache/sources/${BOOTSOURCEDIR}"; make clean > /dev/null 2>&1)
