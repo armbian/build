@@ -82,6 +82,7 @@ prepare_boot_configuration()
 
 		UBOOT_TARGET_MAP="BL31=bl31.bin idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
 		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
+		ATF_COMPILER='aarch64-linux-gnu-'
 		ATFDIR='arm-trusted-firmware'
 		ATFBRANCH='tag:v2.2'
 		ATF_USE_GCC='> 6.3'
@@ -112,6 +113,7 @@ prepare_boot_configuration()
 
 		UBOOT_TARGET_MAP=";;idbloader.bin uboot.img trust.bin"
 		ATFSOURCE='https://github.com/ayufan-rock64/arm-trusted-firmware'
+		ATF_COMPILER='aarch64-linux-gnu-'
 		ATFDIR='arm-trusted-firmware-rockchip64'
 		ATFBRANCH='branch:rockchip'
 		ATF_USE_GCC='> 6.3'
