@@ -210,6 +210,16 @@ install_common()
 	ff02::2     ip6-allrouters
 	EOF
 
+	# install family packages
+	if [[ -n ${PACKAGE_LIST_FAMILY} ]]; then
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_FAMILY" >> "${DEST}"/debug/install.log
+	fi
+
+	# install family packages
+	if [[ -n ${PACKAGE_LIST_BOARD} ]]; then
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_BOARD" >> "${DEST}"/debug/install.log
+	fi
+
 	# install u-boot
 	if [[ "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
 		UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
