@@ -9,7 +9,7 @@ OVERLAY_PREFIX='rockchip'
 SERIALCON=${SERIALCON:=$([ $BRANCH == "legacy" ] && echo "ttyFIQ0:1500000" || echo "ttyS2:1500000")}
 GOVERNOR="ondemand"
 CPUMAX="2016000"
-CPUMIN="600000"
+CPUMIN="408000"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 
