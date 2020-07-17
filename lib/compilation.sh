@@ -155,6 +155,13 @@ compile_uboot()
 		target_patchdir=$(cut -d';' -f2 <<< "${target}")
 		target_files=$(cut -d';' -f3 <<< "${target}")
 
+		# only checkout when we go several times over the source
+		if [[ $target_cycles -ge 1 ]]; then
+			display_alert "Checking out to clean sources"
+			git checkout -f -q HEAD
+		fi
+		target_cycles=$((target_cycles+1))
+
 		if [[ $CLEAN_LEVEL == *make* ]]; then
 			display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
 			(cd "${SRC}/cache/sources/${BOOTSOURCEDIR}"; make clean > /dev/null 2>&1)
@@ -758,7 +765,14 @@ userpatch_create()
 	local patch="$DEST/patch/$1-$LINUXFAMILY-$BRANCH.patch"
 
 	# apply previous user debug mode created patches
-	[[ -f $patch ]] && display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < "${patch}"
+	if [[ -f $patch ]]; then
+		display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < "${patch}"
+		# read title of a patch in case Git is configured
+		if [[ -n $(git config user.email) ]]; then
+			COMMIT_MESSAGE=$(cat "${patch}" | grep Subject | sed -n -e '0,/PATCH/s/.*PATCH]//p' | xargs)
+			display_alert "Patch name extracted" "$COMMIT_MESSAGE" "wrn"
+		fi
+	fi
 
 	# prompt to alter source
 	display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
@@ -768,7 +782,21 @@ userpatch_create()
 	git add .
 	# create patch out of changes
 	if ! git diff-index --quiet --cached HEAD; then
-		git diff --staged > "${patch}"
+		# If Git is configured, create proper patch and ask for a name
+		if [[ -n $(git config user.email) ]]; then
+			display_alert "Add / change patch name" "$COMMIT_MESSAGE" "wrn"
+			read -e -p "Patch description: " -i "$COMMIT_MESSAGE" COMMIT_MESSAGE
+			[[ -z "$COMMIT_MESSAGE" ]] && COMMIT_MESSAGE="Patching something"
+			git commit -s -m "$COMMIT_MESSAGE"
+			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com/armbian/build" > "${patch}"
+			PATCHFILE=$(git format-patch -1 HEAD)
+			rm $PATCHFILE # delete the actual file
+			# create a symlink to have a nice name ready
+			find $DEST/patch/ -type l -delete # delete any existing
+			ln -sf $patch $DEST/patch/$PATCHFILE
+		else
+			git diff --staged > "${patch}"
+		fi
 		display_alert "You will find your patch here:" "$patch" "info"
 	else
 		display_alert "No changes found, skipping patch creation" "" "wrn"

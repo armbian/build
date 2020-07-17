@@ -16,6 +16,96 @@ check_abort()
 	exit 0
 }
 
+
+function read_password()
+{
+unset password
+prompt="$1 password: "
+while IFS= read -p "$prompt" -r -s -n 1 char
+do
+	if [[ $char == $'\0' ]]
+	then
+		break
+	fi
+	prompt='*'
+	password+="$char"
+done
+}
+
+
+set_timezone_and_locales()
+{
+
+	# Grab this machine's public IP address
+	PUBLIC_IP=`curl --max-time 5 -s https://ipinfo.io/ip`
+	if [ $? -eq 0 ]; then
+
+		# Call the geolocation API and capture the output
+		RES=$(
+				curl --max-time 5 -s http://ipwhois.app/json/${PUBLIC_IP} | \
+				jq '.timezone, .country' | \
+				while read -r TIMEZONE; do
+					read -r COUNTRY
+					echo "${TIMEZONE},${COUNTRY}" | tr --delete \"
+				done
+			)
+
+		TZDATA=$(echo ${RES} | cut -d"," -f1)
+		STATE=$(echo ${RES} | cut -d"," -f2)
+		LOCALES=$(grep territory /usr/share/i18n/locales/* | grep "$STATE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  xargs -I{} grep {} /usr/share/i18n/SUPPORTED | grep "\.UTF-8" | cut -d " " -f 1)
+		options=(`echo ${LOCALES}`);
+
+		# reconfigure tzdata
+		timedatectl set-timezone "${TZDATA}"
+		dpkg-reconfigure --frontend=noninteractive tzdata > /dev/null 2>&1
+
+		echo -e "Detected timezone: \x1B[92m$(LC_ALL=C timedatectl | grep "Time zone" | cut -d":" -f2 | xargs)\x1B[0m"
+
+		# when having more locales, prompt for choosing one
+		if [[ "${#options[@]}" -gt 1 ]]; then
+
+			echo -e "\nAt your location, more locales are possible:\n"
+			PS3='Please enter your choice:'
+			select opt in "${options[@]}"
+			do
+				if [[ " ${options[@]} " =~ " ${opt} " ]]; then
+					LOCALES=${opt}
+					break
+				fi
+			done
+
+		fi
+
+		# generate locales
+		sed -i 's/# '"${LOCALES}"'/'"${LOCALES}"'/' /etc/locale.gen
+		echo -e "Generating locales: \x1B[92m${LOCALES}\x1B[0m"
+		locale-gen $LOCALES > /dev/null 2>&1
+		update-locale LANG=$LOCALES LANGUAGE=$LOCALES LC=$LOCALES LC_MESSAGES=$LOCALES
+
+	else
+
+		while true; do
+			echo ""
+			read -p "Do you wish to set time zone and locales? [No]" yn
+			if [ -z $yn ]; then yn=no; fi
+			case $yn in
+				[Yy]* )
+					dpkg-reconfigure tzdata
+					dpkg-reconfigure locales
+					break
+					;;
+				[Nn]* )
+					break
+					;;
+				* ) echo "Please answer yes or no.";;
+			esac
+		done
+	fi
+
+}
+
+
+
 add_profile_sync_settings()
 {
 	/usr/bin/psd >/dev/null 2>&1
@@ -37,38 +127,72 @@ add_profile_sync_settings()
 	systemctl --user start psd.service >/dev/null 2>&1
 }
 
+
+
+
 add_user()
 {
 	read -t 0 temp
-	echo -e "\nPlease provide a username (eg. your forename): \c"
-	read -e username
-	RealUserName="$(echo "$username" | tr '[:upper:]' '[:lower:]' | tr -d -c '[:alnum:]')"
-	[ -z "$RealUserName" ] && return
-	echo "Trying to add user $RealUserName"
-	adduser $RealUserName || return
-	for additionalgroup in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh; do
-		usermod -aG ${additionalgroup} ${RealUserName} 2>/dev/null
+
+	while [ -f "/root/.not_logged_in_yet" ]; do
+		echo -e "\nPlease provide a username (eg. your forename): \c"
+		read -e username
+		RealUserName="$(echo "$username" | tr '[:upper:]' '[:lower:]' | tr -d -c '[:alnum:]')"
+		[ -z "$RealUserName" ] && return
+		if ! id "$RealUserName" >/dev/null 2>&1; then break; else echo -e "Username \e[0;31m$RealUserName\x1B[0m already exists on the system."; fi
 	done
 
-	# fix for gksu in Xenial
-	touch /home/$RealUserName/.Xauthority
-	chown $RealUserName:$RealUserName /home/$RealUserName/.Xauthority
+	while [ -f "/root/.not_logged_in_yet" ]; do
+		read_password "Create"
+		first_input=$password
+		echo ""
+		read_password "Repeat"
+		second_input=$password
+		echo ""
+                if [[ $first_input == $second_input ]]; then
+                        result="$(cracklib-check <<<"$password")"
+                        okay="$(awk -F': ' '{ print $2}' <<<"$result")"
+                        if [[ "$okay" == "OK" ]]; then
+				echo -e "\nPlease provide your real name (eg. John Doe): \c"
+		                read -e RealName
+				adduser --quiet --disabled-password --shell /bin/bash --home /home/"$RealUserName" --gecos "$RealName" "$RealUserName"
+				(echo $first_input;echo $second_input;) | passwd "$RealUserName" >/dev/null 2>&1
+				for additionalgroup in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh; do
+					usermod -aG ${additionalgroup} ${RealUserName} 2>/dev/null
+				done
+				# fix for gksu in Xenial
+				touch /home/$RealUserName/.Xauthority
+				chown $RealUserName:$RealUserName /home/$RealUserName/.Xauthority
+				RealName="$(awk -F":" "/^${RealUserName}:/ {print \$5}" </etc/passwd | cut -d',' -f1)"
+				[ -z "$RealName" ] && RealName=$RealUserName
+				echo -e "\nDear \e[0;92m${RealName}\x1B[0m, your account \e[0;92m${RealUserName}\x1B[0m has been created and is sudo enabled."
+				echo -e "Please use this account for your daily work from now on.\n"
+				rm -f /root/.not_logged_in_yet
 
-	RealName="$(awk -F":" "/^${RealUserName}:/ {print \$5}" </etc/passwd | cut -d',' -f1)"
-	[ -z "$RealName" ] && RealName=$RealUserName
-	echo -e "\nDear ${RealName}, your account ${RealUserName} has been created and is sudo enabled."
-	echo -e "Please use this account for your daily work from now on.\n"
-	rm -f /root/.not_logged_in_yet
-	# set up profile sync daemon on desktop systems
-	which psd >/dev/null 2>&1
-	if [ $? -eq 0 ]; then
-		echo -e "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> /etc/sudoers
-		touch /home/${RealUserName}/.activate_psd
-		chown $RealUserName:$RealUserName /home/${RealUserName}/.activate_psd
-	fi
+				# set up profile sync daemon on desktop systems
+				which psd >/dev/null 2>&1
+				if [ $? -eq 0 ]; then
+					echo -e "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> /etc/sudoers
+					touch /home/${RealUserName}/.activate_psd
+					chown $RealUserName:$RealUserName /home/${RealUserName}/.activate_psd
+				fi
+                                break
+			else
+                                echo -e "Rejected - \e[0;31m$okay.\x1B[0m Try again."
+                        fi
+                elif [[ -n $password ]]; then
+                        echo -e "Rejected - \e[0;31mpasswords do not match.\x1B[0m Try again."
+                fi
+        done
+
 }
 
 if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*i}" ]; then
+
+	# disable autologin
+	rm -f /etc/systemd/system/getty@.service.d/override.conf
+	rm -f /etc/systemd/system/serial-getty@.service.d/override.conf
+	systemctl daemon-reload
 
 	# detect lightdm
 	desktop_lightdm=$(dpkg-query -W -f='${db:Status-Abbrev}\n' lightdm 2>/dev/null)
@@ -91,13 +215,45 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 		echo -e "anytime with next update. \e[0;31mYOU HAVE BEEN WARNED!\x1B[0m"
 		echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
 	fi
-	echo "Creating a new user account. Press <Ctrl-C> to abort"
-	[ -n "$desktop_lightdm" ] && echo "Desktop environment will not be enabled if you abort the new user creation"
+
+	trap '' 2
+	while [ -f "/root/.not_logged_in_yet" ]; do
+
+		read_password "New root"
+
+		# only allow one login. Once you enter root password, kill others.
+		loginfrom=$(who am i | awk '{print $2}')
+		who -la | grep root | grep -v "$loginfrom" | awk '{print $7}' | xargs --no-run-if-empty kill -9
+
+		first_input=$password
+		echo ""
+		read_password "Repeat"
+		second_input=$password
+		echo ""
+		if [[ $first_input == $second_input ]]; then
+			result="$(cracklib-check <<<"$password")"
+			okay="$(awk -F': ' '{ print $2}' <<<"$result")"
+			if [[ "$okay" == "OK" ]]; then
+				(echo $first_input;echo $second_input;) | passwd root >/dev/null 2>&1
+				set_timezone_and_locales
+				break
+				else
+				echo -e "Rejected - \e[0;31m$okay.\x1B[0m Try again."
+			fi
+		elif [[ -n $password ]]; then
+			echo -e "Rejected - \e[0;31mpasswords do not match.\x1B[0m Try again."
+		fi
+	done
+	trap - INT TERM EXIT
+
 	trap check_abort INT
 	while [ -f "/root/.not_logged_in_yet" ]; do
+		echo -e "\nCreating a new user account. Press <Ctrl-C> to abort"
+		[ -n "$desktop_lightdm" ] && echo "Desktop environment will not be enabled if you abort the new user creation"
 		add_user
 	done
 	trap - INT TERM EXIT
+
 	# check for H3/legacy kernel to promote h3disp utility
 	if [ -f /boot/script.bin ]; then tmp=$(bin2fex </boot/script.bin 2>/dev/null | grep -w "hdmi_used = 1"); fi
 	if [ "$LINUXFAMILY" = "sun8i" ] && [ "$BRANCH" = "default" ] && [ -n "$tmp" ]; then

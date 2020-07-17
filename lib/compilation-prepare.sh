@@ -178,7 +178,7 @@ compilation_prepare()
 
 	# Updated USB network drivers for RTL8152/RTL8153 based dongles that also support 2.5Gbs variants
 
-	if linux-version compare "${version}" ge 5.4 && [ $LINUXFAMILY != rk322x ] && [ $EXTRAWIFI == yes ]; then
+	if linux-version compare "${version}" ge 5.4 && [ $LINUXFAMILY != rk322x ] && [ $LINUXFAMILY != odroidxu4 ] && [ $EXTRAWIFI == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8152ver="branch:master"
@@ -260,6 +260,8 @@ compilation_prepare()
 
 		# attach to specifics tag or branch
 		local rtl8812auver="branch:v5.6.4.2"
+		# temporally override
+		local rtl8812auver="commit:058ef814b8e27639fdf10b03cac1a1d8e41c6777"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
@@ -496,6 +498,12 @@ compilation_prepare()
 		$SRC/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du.patch" "applying"
+	fi
+
+
+	if linux-version compare $version ge 4.4 && linux-version compare $version lt 5.8; then
+		display_alert "Adjustin" "Framebuffer driver for ST7789 IPS display" "info"
+		process_patch_file "${SRC}/patch/misc/fbtft-st7789v-invert-color.patch" "applying"
 	fi
 
 }

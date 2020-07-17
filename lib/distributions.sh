@@ -127,12 +127,25 @@ install_common()
 	# set root password
 	chroot "${SDCARD}" /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
 
+	# enable automated login to console(s)
+	mkdir -p "${SDCARD}"/etc/systemd/system/getty@.service.d/
+	mkdir -p "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/
+	cat <<-EOF > "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf
+	[Service]
+	ExecStartPre=/bin/sleep 6
+	ExecStart=
+	ExecStart=-/sbin/agetty --noclear --autologin root %I $TERM
+	Type=idle
+	EOF
+	cp "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf "${SDCARD}"/etc/systemd/system/getty@.service.d/override.conf
+
 	# force change root password at first login
-	chroot "${SDCARD}" /bin/bash -c "chage -d 0 root"
+	#chroot "${SDCARD}" /bin/bash -c "chage -d 0 root"
 
 	# change console welcome text
 	echo -e "Armbian ${REVISION} ${RELEASE^} \\l \n" > "${SDCARD}"/etc/issue
 	echo "Armbian ${REVISION} ${RELEASE^}" > "${SDCARD}"/etc/issue.net
+	sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"Armbian $REVISION "${RELEASE^}"\"/" "${SDCARD}"/etc/os-release
 
 	# enable few bash aliases enabled in Ubuntu by default to make it even
 	sed "s/#alias ll='ls -l'/alias ll='ls -l'/" -i "${SDCARD}"/etc/skel/.bashrc
@@ -196,6 +209,16 @@ install_common()
 	ff02::1     ip6-allnodes
 	ff02::2     ip6-allrouters
 	EOF
+
+	# install family packages
+	if [[ -n ${PACKAGE_LIST_FAMILY} ]]; then
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_FAMILY" >> "${DEST}"/debug/install.log
+	fi
+
+	# install family packages
+	if [[ -n ${PACKAGE_LIST_BOARD} ]]; then
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_BOARD" >> "${DEST}"/debug/install.log
+	fi
 
 	# install u-boot
 	if [[ "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
@@ -405,6 +428,9 @@ install_common()
 
 	# remove network manager defaults to handle eth by default
 	rm -f "${SDCARD}"/usr/lib/NetworkManager/conf.d/10-globally-managed-devices.conf
+
+	# most likely we don't need to wait for nm to get online
+	chroot "${SDCARD}" /bin/bash -c "systemctl disable NetworkManager-wait-online.service" >> "${DEST}"/debug/install.log 2>&1
 
 	# avahi daemon defaults if exists
 	[[ -f "${SDCARD}"/usr/share/doc/avahi-daemon/examples/sftp-ssh.service ]] && \
