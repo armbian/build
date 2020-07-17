@@ -13,7 +13,7 @@ CPUMIN="600000"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 
-if [[ $BOARD == nanopi-r2s || $BOARD == rockpi-e ]]; then
+if [[ $BOARD == nanopi-r2s || $BOARD == rockpi-e || $BOARD == nanopineo3 ]]; then
 
 	BOOT_USE_BLOBS=yes
 	BOOT_SOC=rk3328
