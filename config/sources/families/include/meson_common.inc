@@ -2,6 +2,7 @@ ARCH=armhf
 BOOTSOURCE='https://github.com/hardkernel/u-boot.git'
 BOOTBRANCH='branch:odroidc-v2011.03'
 BOOTDIR='u-boot-odroidc1'
+UBOOT_COMPILER="arm-linux-gnueabihf-"
 UBOOT_USE_GCC='< 4.9'
 BOOTSCRIPT="boot-odroid-c1.ini:boot.ini"
 SERIALCON="ttyAML0"
