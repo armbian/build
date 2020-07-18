@@ -10,14 +10,16 @@ LINUXFAMILY=sunxi64
 case $BRANCH in
 	legacy)
 		
-		KERNELBRANCH='branch:linux-4.19.y'
+		KERNELSOURCE="https://github.com/megous/linux"
+		KERNELBRANCH="branch:orange-pi-5.4"
 		KERNELPATCHDIR='sunxi-'$BRANCH
+
 	;;
 
 	current)
 
 		KERNELSOURCE="https://github.com/megous/linux"
-		KERNELBRANCH="branch:orange-pi-5.4"
+		KERNELBRANCH="branch:orange-pi-5.7"
 		KERNELPATCHDIR='sunxi-'$BRANCH
 
 	;;

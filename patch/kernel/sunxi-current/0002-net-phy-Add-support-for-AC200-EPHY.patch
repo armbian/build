@@ -1,0 +1,272 @@
+From 1b528543ea41a9837d39e9ab621631c77122f1aa Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@siol.net>
+Date: Fri, 16 Aug 2019 16:38:57 +0200
+Subject: [PATCH 2/4] net: phy: Add support for AC200 EPHY
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@siol.net>
+---
+ drivers/net/phy/Kconfig  |   7 ++
+ drivers/net/phy/Makefile |   1 +
+ drivers/net/phy/ac200.c  | 220 +++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 228 insertions(+)
+ create mode 100644 drivers/net/phy/ac200.c
+
+diff --git a/drivers/net/phy/Kconfig b/drivers/net/phy/Kconfig
+index 2e016271e126..248d9384091c 100644
+--- a/drivers/net/phy/Kconfig
++++ b/drivers/net/phy/Kconfig
+@@ -266,6 +266,13 @@ config ADIN_PHY
+ 	  - ADIN1300 - Robust,Industrial, Low Latency 10/100/1000 Gigabit
+ 	    Ethernet PHY
+ 
++config AC200_PHY
++	tristate "AC200 EPHY"
++	depends on NVMEM
++	depends on OF
++	help
++	  Fast ethernet PHY as found in X-Powers AC200 multi-function device.
++
+ config AMD_PHY
+ 	tristate "AMD PHYs"
+ 	---help---
+diff --git a/drivers/net/phy/Makefile b/drivers/net/phy/Makefile
+index fe5badf13b65..2143587f010e 100644
+--- a/drivers/net/phy/Makefile
++++ b/drivers/net/phy/Makefile
+@@ -49,6 +49,7 @@ obj-$(CONFIG_SFP)		+= sfp.o
+ sfp-obj-$(CONFIG_SFP)		+= sfp-bus.o
+ obj-y				+= $(sfp-obj-y) $(sfp-obj-m)
+ 
++obj-$(CONFIG_AC200_PHY)		+= ac200.o
+ obj-$(CONFIG_ADIN_PHY)		+= adin.o
+ obj-$(CONFIG_AMD_PHY)		+= amd.o
+ aquantia-objs			+= aquantia_main.o
+diff --git a/drivers/net/phy/ac200.c b/drivers/net/phy/ac200.c
+new file mode 100644
+index 000000000000..cb713188f7ec
+--- /dev/null
++++ b/drivers/net/phy/ac200.c
+@@ -0,0 +1,220 @@
++// SPDX-License-Identifier: GPL-2.0+
++/**
++ * Driver for AC200 Ethernet PHY
++ *
++ * Copyright (c) 2020 Jernej Skrabec <jernej.skrabec@siol.net>
++ */
++
++#include <linux/clk.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mfd/ac200.h>
++#include <linux/nvmem-consumer.h>
++#include <linux/of.h>
++#include <linux/phy.h>
++#include <linux/platform_device.h>
++
++#define AC200_EPHY_ID			0x00441400
++#define AC200_EPHY_ID_MASK		0x0ffffff0
++
++/* macros for system ephy control 0 register */
++#define AC200_EPHY_RESET_INVALID	BIT(0)
++#define AC200_EPHY_SYSCLK_GATING	BIT(1)
++
++/* macros for system ephy control 1 register */
++#define AC200_EPHY_E_EPHY_MII_IO_EN	BIT(0)
++#define AC200_EPHY_E_LNK_LED_IO_EN	BIT(1)
++#define AC200_EPHY_E_SPD_LED_IO_EN	BIT(2)
++#define AC200_EPHY_E_DPX_LED_IO_EN	BIT(3)
++
++/* macros for ephy control register */
++#define AC200_EPHY_SHUTDOWN		BIT(0)
++#define AC200_EPHY_LED_POL		BIT(1)
++#define AC200_EPHY_CLK_SEL		BIT(2)
++#define AC200_EPHY_ADDR(x)		(((x) & 0x1F) << 4)
++#define AC200_EPHY_XMII_SEL		BIT(11)
++#define AC200_EPHY_CALIB(x)		(((x) & 0xF) << 12)
++
++struct ac200_ephy_dev {
++	struct clk		*clk;
++	struct phy_driver	*ephy;
++	struct regmap		*regmap;
++};
++
++static char *ac200_phy_name = "AC200 EPHY";
++
++static int ac200_ephy_config_init(struct phy_device *phydev)
++{
++	const struct ac200_ephy_dev *priv = phydev->drv->driver_data;
++	unsigned int value;
++	int ret;
++
++	phy_write(phydev, 0x1f, 0x0100);	/* Switch to Page 1 */
++	phy_write(phydev, 0x12, 0x4824);	/* Disable APS */
++
++	phy_write(phydev, 0x1f, 0x0200);	/* Switch to Page 2 */
++	phy_write(phydev, 0x18, 0x0000);	/* PHYAFE TRX optimization */
++
++	phy_write(phydev, 0x1f, 0x0600);	/* Switch to Page 6 */
++	phy_write(phydev, 0x14, 0x708f);	/* PHYAFE TX optimization */
++	phy_write(phydev, 0x13, 0xF000);	/* PHYAFE RX optimization */
++	phy_write(phydev, 0x15, 0x1530);
++
++	phy_write(phydev, 0x1f, 0x0800);	/* Switch to Page 6 */
++	phy_write(phydev, 0x18, 0x00bc);	/* PHYAFE TRX optimization */
++
++	phy_write(phydev, 0x1f, 0x0100);	/* switch to page 1 */
++	phy_clear_bits(phydev, 0x17, BIT(3));	/* disable intelligent IEEE */
++
++	/* next two blocks disable 802.3az IEEE */
++	phy_write(phydev, 0x1f, 0x0200);	/* switch to page 2 */
++	phy_write(phydev, 0x18, 0x0000);
++
++	phy_write(phydev, 0x1f, 0x0000);	/* switch to page 0 */
++	phy_clear_bits_mmd(phydev, 0x7, 0x3c, BIT(1));
++
++	if (phydev->interface == PHY_INTERFACE_MODE_RMII)
++		value = AC200_EPHY_XMII_SEL;
++	else
++		value = 0;
++
++	ret = regmap_update_bits(priv->regmap, AC200_EPHY_CTL,
++				 AC200_EPHY_XMII_SEL, value);
++	if (ret)
++		return ret;
++
++	/* FIXME: This is H6 specific */
++	phy_set_bits(phydev, 0x13, BIT(12));
++
++	return 0;
++}
++
++static int ac200_ephy_probe(struct platform_device *pdev)
++{
++	struct ac200_dev *ac200 = dev_get_drvdata(pdev->dev.parent);
++	struct device *dev = &pdev->dev;
++	struct ac200_ephy_dev *priv;
++	struct nvmem_cell *calcell;
++	struct phy_driver *ephy;
++	u16 *caldata, calib;
++	size_t callen;
++	int ret;
++
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	ephy = devm_kzalloc(dev, sizeof(*ephy), GFP_KERNEL);
++	if (!ephy)
++		return -ENOMEM;
++
++	priv->clk = devm_clk_get(dev, NULL);
++	if (IS_ERR(priv->clk)) {
++		dev_err(dev, "Can't obtain the clock!\n");
++		return PTR_ERR(priv->clk);
++	}
++
++	calcell = devm_nvmem_cell_get(dev, "calibration");
++	if (IS_ERR(calcell)) {
++		dev_err(dev, "Unable to find calibration data!\n");
++		return PTR_ERR(calcell);
++	}
++
++	caldata = nvmem_cell_read(calcell, &callen);
++	if (IS_ERR(caldata)) {
++		dev_err(dev, "Unable to read calibration data!\n");
++		return PTR_ERR(caldata);
++	}
++
++	if (callen != 2) {
++		dev_err(dev, "Calibration data has wrong length: 2 != %zu\n",
++			callen);
++		kfree(caldata);
++		return -EINVAL;
++	}
++
++	calib = *caldata + 3;
++	kfree(caldata);
++
++	ret = clk_prepare_enable(priv->clk);
++	if (ret)
++		return ret;
++
++	ephy->phy_id = AC200_EPHY_ID;
++	ephy->phy_id_mask = AC200_EPHY_ID_MASK;
++	ephy->name = ac200_phy_name;
++	ephy->driver_data = priv;
++	ephy->soft_reset = genphy_soft_reset;
++	ephy->config_init = ac200_ephy_config_init;
++	ephy->suspend = genphy_suspend;
++	ephy->resume = genphy_resume;
++
++	priv->ephy = ephy;
++	priv->regmap = ac200->regmap;
++	platform_set_drvdata(pdev, priv);
++
++	ret = regmap_write(ac200->regmap, AC200_SYS_EPHY_CTL0,
++			   AC200_EPHY_RESET_INVALID |
++			   AC200_EPHY_SYSCLK_GATING);
++	if (ret)
++		return ret;
++
++	ret = regmap_write(ac200->regmap, AC200_SYS_EPHY_CTL1,
++			   AC200_EPHY_E_EPHY_MII_IO_EN |
++			   AC200_EPHY_E_LNK_LED_IO_EN |
++			   AC200_EPHY_E_SPD_LED_IO_EN |
++			   AC200_EPHY_E_DPX_LED_IO_EN);
++	if (ret)
++		return ret;
++
++	ret = regmap_write(ac200->regmap, AC200_EPHY_CTL,
++			   AC200_EPHY_LED_POL |
++			   AC200_EPHY_CLK_SEL |
++			   AC200_EPHY_ADDR(1) |
++			   AC200_EPHY_CALIB(calib));
++	if (ret)
++		return ret;
++
++	ret = phy_driver_register(priv->ephy, THIS_MODULE);
++	if (ret) {
++		dev_err(dev, "Unable to register phy\n");
++		return ret;
++	}
++
++	return 0;
++}
++
++static int ac200_ephy_remove(struct platform_device *pdev)
++{
++	struct ac200_ephy_dev *priv = platform_get_drvdata(pdev);
++
++	phy_driver_unregister(priv->ephy);
++
++	regmap_write(priv->regmap, AC200_EPHY_CTL, AC200_EPHY_SHUTDOWN);
++	regmap_write(priv->regmap, AC200_SYS_EPHY_CTL1, 0);
++	regmap_write(priv->regmap, AC200_SYS_EPHY_CTL0, 0);
++
++	clk_disable_unprepare(priv->clk);
++
++	return 0;
++}
++
++static const struct of_device_id ac200_ephy_match[] = {
++	{ .compatible = "x-powers,ac200-ephy" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, ac200_ephy_match);
++
++static struct platform_driver ac200_ephy_driver = {
++	.probe		= ac200_ephy_probe,
++	.remove		= ac200_ephy_remove,
++	.driver		= {
++		.name		= "ac200-ephy",
++		.of_match_table	= ac200_ephy_match,
++	},
++};
++module_platform_driver(ac200_ephy_driver);
++
++MODULE_AUTHOR("Jernej Skrabec <jernej.skrabec@siol.net>");
++MODULE_DESCRIPTION("AC200 Ethernet PHY driver");
++MODULE_LICENSE("GPL");
+-- 
+2.20.1
+
