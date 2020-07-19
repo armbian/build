@@ -1,0 +1,145 @@
+From b8a21868558751c745e268464466d56dbb35e29c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Cl=C3=A9ment=20P=C3=A9ron?= <peron.clem@gmail.com>
+Date: Sun, 10 May 2020 18:55:28 +0200
+Subject: [PATCH 101/346] drm/panfrost: use spinlock instead of atomic
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Convert busy_count to a simple int protected by spinlock.
+
+Reviewed-by: Steven Price <steven.price@arm.com>
+Reviewed-by: Alyssa Rosenzweig <alyssa.rosenzweig@collabora.com>
+Signed-off-by: Clément Péron <peron.clem@gmail.com>
+---
+ drivers/gpu/drm/panfrost/panfrost_devfreq.c | 43 +++++++++++++++------
+ drivers/gpu/drm/panfrost/panfrost_devfreq.h |  9 ++++-
+ 2 files changed, 40 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/panfrost/panfrost_devfreq.c b/drivers/gpu/drm/panfrost/panfrost_devfreq.c
+index 962550363391..78753cfb59fb 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_devfreq.c
++++ b/drivers/gpu/drm/panfrost/panfrost_devfreq.c
+@@ -12,16 +12,12 @@
+ 
+ static void panfrost_devfreq_update_utilization(struct panfrost_devfreq *pfdevfreq)
+ {
+-	ktime_t now;
+-	ktime_t last;
+-
+-	if (!pfdevfreq->devfreq)
+-		return;
++	ktime_t now, last;
+ 
+ 	now = ktime_get();
+ 	last = pfdevfreq->time_last_update;
+ 
+-	if (atomic_read(&pfdevfreq->busy_count) > 0)
++	if (pfdevfreq->busy_count > 0)
+ 		pfdevfreq->busy_time += ktime_sub(now, last);
+ 	else
+ 		pfdevfreq->idle_time += ktime_sub(now, last);
+@@ -59,10 +55,14 @@ static int panfrost_devfreq_get_dev_status(struct device *dev,
+ {
+ 	struct panfrost_device *pfdev = dev_get_drvdata(dev);
+ 	struct panfrost_devfreq *pfdevfreq = &pfdev->pfdevfreq;
++	unsigned long irqflags;
++
++	status->current_frequency = clk_get_rate(pfdev->clock);
++
++	spin_lock_irqsave(&pfdevfreq->lock, irqflags);
+ 
+ 	panfrost_devfreq_update_utilization(pfdevfreq);
+ 
+-	status->current_frequency = clk_get_rate(pfdev->clock);
+ 	status->total_time = ktime_to_ns(ktime_add(pfdevfreq->busy_time,
+ 						   pfdevfreq->idle_time));
+ 
+@@ -70,6 +70,8 @@ static int panfrost_devfreq_get_dev_status(struct device *dev,
+ 
+ 	panfrost_devfreq_reset(pfdevfreq);
+ 
++	spin_unlock_irqrestore(&pfdevfreq->lock, irqflags);
++
+ 	dev_dbg(pfdev->dev, "busy %lu total %lu %lu %% freq %lu MHz\n",
+ 		status->busy_time, status->total_time,
+ 		status->busy_time / (status->total_time / 100),
+@@ -100,6 +102,8 @@ int panfrost_devfreq_init(struct panfrost_device *pfdev)
+ 	else if (ret)
+ 		return ret;
+ 
++	spin_lock_init(&pfdevfreq->lock);
++
+ 	panfrost_devfreq_reset(pfdevfreq);
+ 
+ 	cur_freq = clk_get_rate(pfdev->clock);
+@@ -162,15 +166,32 @@ void panfrost_devfreq_suspend(struct panfrost_device *pfdev)
+ 
+ void panfrost_devfreq_record_busy(struct panfrost_devfreq *pfdevfreq)
+ {
++	unsigned long irqflags;
++
++	if (!pfdevfreq->devfreq)
++		return;
++
++	spin_lock_irqsave(&pfdevfreq->lock, irqflags);
++
+ 	panfrost_devfreq_update_utilization(pfdevfreq);
+-	atomic_inc(&pfdevfreq->busy_count);
++
++	pfdevfreq->busy_count++;
++
++	spin_unlock_irqrestore(&pfdevfreq->lock, irqflags);
+ }
+ 
+ void panfrost_devfreq_record_idle(struct panfrost_devfreq *pfdevfreq)
+ {
+-	int count;
++	unsigned long irqflags;
++
++	if (!pfdevfreq->devfreq)
++		return;
++
++	spin_lock_irqsave(&pfdevfreq->lock, irqflags);
+ 
+ 	panfrost_devfreq_update_utilization(pfdevfreq);
+-	count = atomic_dec_if_positive(&pfdevfreq->busy_count);
+-	WARN_ON(count < 0);
++
++	WARN_ON(--pfdevfreq->busy_count < 0);
++
++	spin_unlock_irqrestore(&pfdevfreq->lock, irqflags);
+ }
+diff --git a/drivers/gpu/drm/panfrost/panfrost_devfreq.h b/drivers/gpu/drm/panfrost/panfrost_devfreq.h
+index 0697f8d5aa34..3392df1020be 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_devfreq.h
++++ b/drivers/gpu/drm/panfrost/panfrost_devfreq.h
+@@ -4,6 +4,7 @@
+ #ifndef __PANFROST_DEVFREQ_H__
+ #define __PANFROST_DEVFREQ_H__
+ 
++#include <linux/spinlock.h>
+ #include <linux/ktime.h>
+ 
+ struct devfreq;
+@@ -14,10 +15,16 @@ struct panfrost_device;
+ struct panfrost_devfreq {
+ 	struct devfreq *devfreq;
+ 	struct thermal_cooling_device *cooling;
++
+ 	ktime_t busy_time;
+ 	ktime_t idle_time;
+ 	ktime_t time_last_update;
+-	atomic_t busy_count;
++	int busy_count;
++	/*
++	 * Protect busy_time, idle_time, time_last_update and busy_count
++	 * because these can be updated concurrently between multiple jobs.
++	 */
++	spinlock_t lock;
+ };
+ 
+ int panfrost_devfreq_init(struct panfrost_device *pfdev);
+-- 
+2.25.1
+

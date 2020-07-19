@@ -1,0 +1,100 @@
+From a25c4ace48675437d8a8cbee6567945e4f5109a3 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Cl=C3=A9ment=20P=C3=A9ron?= <peron.clem@gmail.com>
+Date: Sun, 10 May 2020 18:55:29 +0200
+Subject: [PATCH 102/346] drm/panfrost: properly handle error in probe
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Introduce a boolean to know if opp table has been added.
+
+With this, we can call panfrost_devfreq_fini() in case of error
+and release what has been initialised.
+
+Reviewed-by: Steven Price <steven.price@arm.com>
+Reviewed-by: Alyssa Rosenzweig <alyssa.rosenzweig@collabora.com>
+Signed-off-by: Clément Péron <peron.clem@gmail.com>
+---
+ drivers/gpu/drm/panfrost/panfrost_devfreq.c | 25 ++++++++++++++++-----
+ drivers/gpu/drm/panfrost/panfrost_devfreq.h |  1 +
+ 2 files changed, 20 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/panfrost/panfrost_devfreq.c b/drivers/gpu/drm/panfrost/panfrost_devfreq.c
+index 78753cfb59fb..d9007f44b772 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_devfreq.c
++++ b/drivers/gpu/drm/panfrost/panfrost_devfreq.c
+@@ -101,6 +101,7 @@ int panfrost_devfreq_init(struct panfrost_device *pfdev)
+ 		return 0;
+ 	else if (ret)
+ 		return ret;
++	pfdevfreq->opp_of_table_added = true;
+ 
+ 	spin_lock_init(&pfdevfreq->lock);
+ 
+@@ -109,8 +110,10 @@ int panfrost_devfreq_init(struct panfrost_device *pfdev)
+ 	cur_freq = clk_get_rate(pfdev->clock);
+ 
+ 	opp = devfreq_recommended_opp(dev, &cur_freq, 0);
+-	if (IS_ERR(opp))
+-		return PTR_ERR(opp);
++	if (IS_ERR(opp)) {
++		ret = PTR_ERR(opp);
++		goto err_fini;
++	}
+ 
+ 	panfrost_devfreq_profile.initial_freq = cur_freq;
+ 	dev_pm_opp_put(opp);
+@@ -119,8 +122,8 @@ int panfrost_devfreq_init(struct panfrost_device *pfdev)
+ 					  DEVFREQ_GOV_SIMPLE_ONDEMAND, NULL);
+ 	if (IS_ERR(devfreq)) {
+ 		DRM_DEV_ERROR(dev, "Couldn't initialize GPU devfreq\n");
+-		dev_pm_opp_of_remove_table(dev);
+-		return PTR_ERR(devfreq);
++		ret = PTR_ERR(devfreq);
++		goto err_fini;
+ 	}
+ 	pfdevfreq->devfreq = devfreq;
+ 
+@@ -131,15 +134,25 @@ int panfrost_devfreq_init(struct panfrost_device *pfdev)
+ 		pfdevfreq->cooling = cooling;
+ 
+ 	return 0;
++
++err_fini:
++	panfrost_devfreq_fini(pfdev);
++	return ret;
+ }
+ 
+ void panfrost_devfreq_fini(struct panfrost_device *pfdev)
+ {
+ 	struct panfrost_devfreq *pfdevfreq = &pfdev->pfdevfreq;
+ 
+-	if (pfdevfreq->cooling)
++	if (pfdevfreq->cooling) {
+ 		devfreq_cooling_unregister(pfdevfreq->cooling);
+-	dev_pm_opp_of_remove_table(&pfdev->pdev->dev);
++		pfdevfreq->cooling = NULL;
++	}
++
++	if (pfdevfreq->opp_of_table_added) {
++		dev_pm_opp_of_remove_table(&pfdev->pdev->dev);
++		pfdevfreq->opp_of_table_added = false;
++	}
+ }
+ 
+ void panfrost_devfreq_resume(struct panfrost_device *pfdev)
+diff --git a/drivers/gpu/drm/panfrost/panfrost_devfreq.h b/drivers/gpu/drm/panfrost/panfrost_devfreq.h
+index 3392df1020be..210269944687 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_devfreq.h
++++ b/drivers/gpu/drm/panfrost/panfrost_devfreq.h
+@@ -15,6 +15,7 @@ struct panfrost_device;
+ struct panfrost_devfreq {
+ 	struct devfreq *devfreq;
+ 	struct thermal_cooling_device *cooling;
++	bool opp_of_table_added;
+ 
+ 	ktime_t busy_time;
+ 	ktime_t idle_time;
+-- 
+2.25.1
+

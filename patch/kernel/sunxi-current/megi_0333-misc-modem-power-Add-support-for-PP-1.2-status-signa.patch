@@ -1,0 +1,351 @@
+From fcdc2ed7ebc5de2e002b20301e19f8f7e5654034 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megous@megous.com>
+Date: Sun, 12 Jul 2020 00:19:15 +0200
+Subject: [PATCH 333/346] misc: modem-power: Add support for PP 1.2 status
+ signal
+
+Signed-off-by: Ondrej Jirman <megous@megous.com>
+---
+ drivers/misc/modem-power.c | 221 ++++++++++++++++++++++++++++---------
+ 1 file changed, 168 insertions(+), 53 deletions(-)
+
+diff --git a/drivers/misc/modem-power.c b/drivers/misc/modem-power.c
+index 27fe231bfdfa..e84877e74b10 100644
+--- a/drivers/misc/modem-power.c
++++ b/drivers/misc/modem-power.c
+@@ -85,6 +85,7 @@ struct mpwr_variant {
+ 	int (*power_down)(struct mpwr_dev* mpwr);
+ 	int (*reset)(struct mpwr_dev* mpwr);
+ 	const struct mpwr_gpio* gpios;
++	bool regulator_required;
+ };
+ 
+ struct mpwr_dev {
+@@ -125,6 +126,7 @@ struct mpwr_dev {
+ 	struct work_struct work;
+ 	int last_request;
+ 	int is_enabled;
++	int cts_last;
+ 
+ 	unsigned long flags[1];
+ 
+@@ -235,66 +237,161 @@ static const struct mpwr_variant mpwr_mg2723_variant = {
+ 
+ // eg25
+ 
++/*
++ * Gpio meanings:
++ *
++ * enable_gpio - 1 = enables RF, 0 = disables RF
++ * sleep_gpio  - 1 = puts modem to sleep, 0 = wakes up the modem (must be 0
++ *               during poweron)
++ * reset_gpio  - accepts 150-460ms reset pulse (high __|^|__)
++ * pwrkey_gpio - accepts 100ms-650ms pulse for powerup (high __|^|__)
++ *                       650ms+ pulse for powerdown
++ *                       (initiated after pulse ends, pulse may have indefinite
++ *                        duration)
++ * status_gpio - modem power status 0 = powered  1 = unpowered
++ *
++ * pwrkey may be multiplexed to status_gpio, and then powering down the modem
++ * via gpio will become impossible.
++ */
+ static int mpwr_eg25_power_up(struct mpwr_dev* mpwr)
+ {
+-	int ret;
+-
+-	// power up
+-	if (mpwr->regulator) {
+-		if (regulator_is_enabled(mpwr->regulator)) {
+-			// if the regulator is still enabled
+-			dev_warn(mpwr->dev,
+-				 "regulator was already enabled during powerup");
+-		}
+-
+-		ret = regulator_enable(mpwr->regulator);
+-		if (ret < 0) {
+-			dev_err(mpwr->dev,
+-				"can't enable power supply err=%d", ret);
+-			return ret;
+-		}
+-	} else {
+-		dev_err(mpwr->dev, "regulator required for eg25, none defined");
+-		return -ENODEV;
++	struct gpio_desc *pwrkey_gpio;
++	bool cts_ok, status_ok;
++	int ret, retries;
++
++	if (mpwr->status_pwrkey_multiplexed)
++		pwrkey_gpio = mpwr->status_gpio;
++	else
++		pwrkey_gpio = mpwr->pwrkey_gpio;
++
++	if (regulator_is_enabled(mpwr->regulator))
++		dev_warn(mpwr->dev,
++			 "regulator was already enabled during powerup");
++
++	/* Enable the modem power. */
++	ret = regulator_enable(mpwr->regulator);
++	if (ret < 0) {
++		dev_err(mpwr->dev,
++			"can't enable power supply err=%d", ret);
++		return ret;
+ 	}
+ 
+-	// drive default gpio signals during powerup
++	/* Drive default gpio signals during powerup */
+ 	gpiod_direction_output(mpwr->enable_gpio, 1);
+ 	gpiod_direction_output(mpwr->sleep_gpio, 0);
+ 	gpiod_direction_output(mpwr->reset_gpio, 0);
+-	gpiod_direction_output(mpwr->pwrkey_gpio, 0);
++	gpiod_direction_output(pwrkey_gpio, 0);
+ 
+-	// wait for powerup
+-	msleep(100);
++	/* Wait for powerup. (30ms min. according to datasheet) */
++	msleep(50);
+ 
+-	// send 200ms pwrkey pulse
+-	gpiod_set_value(mpwr->pwrkey_gpio, 1);
++	/* Send 200ms pwrkey pulse to initiate poweron */
++	gpiod_set_value(pwrkey_gpio, 1);
+ 	msleep(200);
+-	gpiod_set_value(mpwr->pwrkey_gpio, 0);
++	gpiod_set_value(pwrkey_gpio, 0);
++
++	/* Switch status key to input, in case it's multiplexed with pwrkey. */
++	if (mpwr->status_pwrkey_multiplexed)
++		gpiod_direction_input(pwrkey_gpio);
++
++	/*
++	 * Wait for status/cts change, assume good values, if CTS/status
++	 * signals, are not configured.
++	 */
++	cts_ok = mpwr->cts_gpio ? false : true;
++	status_ok = mpwr->status_gpio ? false : true;
++
++	/* wait up to 10s for status */
++	for (retries = 100; retries >= 0; retries--) {
++		if (mpwr->cts_gpio && gpiod_get_value(mpwr->cts_gpio)) {
++			dev_info(mpwr->dev, "cts ok\n");
++			cts_ok = true;
++		}
++
++		if (mpwr->status_gpio && !gpiod_get_value(mpwr->status_gpio)) {
++			dev_info(mpwr->dev, "status ok\n");
++			status_ok = true;
++		}
++
++		/* modem is ready */
++		if (cts_ok && status_ok)
++			break;
++
++		msleep(100);
++	}
++
++	if (!cts_ok) {
++		dev_err(mpwr->dev, "Power up failed, the modem looks kill-switched\n");
++		goto err_shutdown;
++	}
++
++	if (!status_ok) {
++		dev_err(mpwr->dev, "Power up failed, the modem didn't report powerup success\n");
++		goto err_shutdown;
++	}
+ 
+ 	return 0;
++
++err_shutdown:
++	gpiod_direction_input(mpwr->enable_gpio);
++	gpiod_direction_input(mpwr->reset_gpio);
++	gpiod_direction_input(mpwr->sleep_gpio);
++	gpiod_direction_input(pwrkey_gpio);
++
++	regulator_disable(mpwr->regulator);
++	return -ENODEV;
+ }
+ 
+ static int mpwr_eg25_power_down(struct mpwr_dev* mpwr)
+ {
+-	// send 800ms pwrkey pulse
+-	gpiod_set_value(mpwr->pwrkey_gpio, 1);
++	struct gpio_desc *pwrkey_gpio;
++	int retries;
++
++	//XXX: on BH, status shorts the pwrkey to the ground, and
++	//we can't override it from here, so this is not enough:
++
++	if (mpwr->status_pwrkey_multiplexed)
++		pwrkey_gpio = mpwr->status_gpio;
++	else
++		pwrkey_gpio = mpwr->pwrkey_gpio;
++
++	/* Send 800ms pwrkey pulse to initiated powerdown. */
++	gpiod_direction_output(pwrkey_gpio, 1);
+ 	msleep(800);
+-	gpiod_set_value(mpwr->pwrkey_gpio, 0);
++	gpiod_set_value(pwrkey_gpio, 0);
+ 
+-	// wait 30s for modem shutdown (usually shuts down in a few seconds)
+-	msleep(mpwr->powerdown_delay);
++	if (mpwr->status_pwrkey_multiplexed)
++		gpiod_direction_input(pwrkey_gpio);
+ 
+-	// if it comes to powerdown we know we have a regulator configured
+-	// so we don't handle the else branch
+-	if (mpwr->regulator) {
+-		regulator_disable(mpwr->regulator);
+-		gpiod_direction_input(mpwr->enable_gpio);
+-		gpiod_direction_input(mpwr->reset_gpio);
+-		gpiod_direction_input(mpwr->sleep_gpio);
+-		gpiod_direction_input(mpwr->pwrkey_gpio);
++	if (mpwr->status_gpio) {
++		/* wait up to 30s for status */
++		for (retries = 300; retries >= 0; retries--) {
++			if (gpiod_get_value(mpwr->status_gpio)) {
++				dev_info(mpwr->dev, "status went 1 (powered down)\n");
++				goto powerdown;
++			}
++
++			msleep(100);
++		}
++
++		dev_warn(mpwr->dev, "status never went 1 after powerdown signal\n");
++	} else if (mpwr->cts_gpio) {
++		//TODO: maybe a proxy for status pin is CTS pin, need to verify
++		// wait 30s for modem shutdown (usually shuts down in a few seconds)
++		msleep(mpwr->powerdown_delay);
++	} else {
++		// wait 30s for modem shutdown (usually shuts down in a few seconds)
++		msleep(mpwr->powerdown_delay);
+ 	}
+ 
++powerdown:
++	gpiod_direction_input(mpwr->enable_gpio);
++	gpiod_direction_input(mpwr->reset_gpio);
++	gpiod_direction_input(mpwr->sleep_gpio);
++	gpiod_direction_input(pwrkey_gpio);
++
++	regulator_disable(mpwr->regulator);
++
+ 	return 0;
+ }
+ 
+@@ -306,12 +403,11 @@ static const struct mpwr_gpio mpwr_eg25_gpios[] = {
+ 	MPWR_GPIO_DEF(dtr, GPIOD_OUT_LOW, false),
+ 	MPWR_GPIO_DEF(rts, GPIOD_OUT_LOW, false),
+ 
+-	MPWR_GPIO_DEF_IRQ(status, GPIOD_IN, true,
++	MPWR_GPIO_DEF(cts, GPIOD_IN, false),
++	MPWR_GPIO_DEF_IRQ(status, GPIOD_IN, false,
+ 			  IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING),
+ 	MPWR_GPIO_DEF_IRQ(wakeup, GPIOD_IN, true,
+ 			  IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING),
+-	MPWR_GPIO_DEF_IRQ(cts, GPIOD_IN, false,
+-			  IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING),
+ 	{ },
+ };
+ 
+@@ -319,10 +415,11 @@ static const struct mpwr_variant mpwr_eg25_variant = {
+ 	.power_init = mpwr_mg2723_power_init,
+ 	.power_up = mpwr_eg25_power_up,
+ 	.power_down = mpwr_eg25_power_down,
+-	.reset = mpwr_generic_reset,
+-	.reset_duration = 20,
++	//.reset = mpwr_generic_reset,
++	//.reset_duration = 20,
+ 	.powerdown_delay = 30000,
+ 	.gpios = mpwr_eg25_gpios,
++	.regulator_required = true,
+ };
+ 
+ static void mpwr_reset(struct mpwr_dev* mpwr)
+@@ -664,6 +761,14 @@ static void mpwr_wd_timer_fn(struct timer_list *t)
+ {
+ 	struct mpwr_dev *mpwr = from_timer(mpwr, t, wd_timer);
+ 
++	if (mpwr->cts_gpio) {
++		int cts = gpiod_get_value(mpwr->cts_gpio);
++		if (cts != mpwr->cts_last) {
++			pr_err("cts = %d\n", cts);
++			mpwr->cts_last = cts;
++		}
++	}
++
+ 	//schedule_delayed_work(&mpwr->work, 0);
+ 
+         //schedule_delayed_work(&anx7688->work, msecs_to_jiffies(10));
+@@ -772,6 +877,8 @@ static int mpwr_probe(struct platform_device *pdev)
+ 	if (!mpwr)
+ 		return -ENOMEM;
+ 
++	mpwr->cts_last = -1;
++
+ 	mpwr->variant = of_device_get_match_data(&pdev->dev);
+ 	if (!mpwr->variant)
+ 		return -EINVAL;
+@@ -804,8 +911,10 @@ static int mpwr_probe(struct platform_device *pdev)
+ 		mpwr->regulator = NULL;
+ 	}
+ 
+-	timer_setup(&mpwr->wd_timer, mpwr_wd_timer_fn, 0);
+-	mod_timer(&mpwr->wd_timer, jiffies + msecs_to_jiffies(1000));
++	if (!mpwr->regulator && mpwr->variant->regulator_required) {
++		dev_err(dev, "can't get power supply err=%d", -ENODEV);
++		return -ENODEV;
++	}
+ 
+ 	for (i = 0; mpwr->variant->gpios[i].name; i++) {
+ 		const struct mpwr_gpio *io = &mpwr->variant->gpios[i];
+@@ -827,6 +936,9 @@ static int mpwr_probe(struct platform_device *pdev)
+ 		if (!*desc)
+ 			continue;
+ 
++		if (io->irq_flags == 0 || io->irq_off == 0)
++			continue;
++
+ 		*irq = gpiod_to_irq(*desc);
+ 		if (*irq <= 0) {
+ 			dev_err(dev, "error converting %s gpio to irq: %d",
+@@ -834,22 +946,22 @@ static int mpwr_probe(struct platform_device *pdev)
+ 			return *irq;
+ 		}
+ 
+-		ret = devm_request_irq(dev, mpwr->wakeup_irq,
+-				       mpwr_gpio_isr,
+-				       io->irq_flags,
++		ret = devm_request_irq(dev, *irq, mpwr_gpio_isr, io->irq_flags,
+ 				       "modem-power-wakeup", mpwr);
+ 		if (ret) {
+ 			dev_err(dev, "error requesting %s irq: %d",
+ 				io->name, ret);
+ 			return ret;
+ 		}
+-
+-		//XXX: disable irq until we power up the modem
+-		//disable_irq(mpwr->wakeup_irq);
+ 	}
+ 
+ 	if (mpwr->status_pwrkey_multiplexed && mpwr->pwrkey_gpio) {
+-		dev_err(dev, "status and pwrkey is multiplexed, but pwrkey defined\n");
++		dev_err(dev, "status and pwrkey are multiplexed, but pwrkey defined\n");
++		return -EINVAL;
++	}
++
++	if (mpwr->status_pwrkey_multiplexed && !mpwr->status_gpio) {
++		dev_err(dev, "status and pwrkey are multiplexed, but status is not defined\n");
+ 		return -EINVAL;
+ 	}
+ 
+@@ -887,6 +999,9 @@ static int mpwr_probe(struct platform_device *pdev)
+ 
+ 	mpwr->variant->power_init(mpwr);
+ 
++	timer_setup(&mpwr->wd_timer, mpwr_wd_timer_fn, 0);
++	mod_timer(&mpwr->wd_timer, jiffies + msecs_to_jiffies(1000));
++
+ 	dev_info(dev, "modem power manager ready");
+ 
+ 	return 0;
+-- 
+2.25.1
+
