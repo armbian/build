@@ -82,24 +82,6 @@ set_timezone_and_locales()
 		locale-gen $LOCALES > /dev/null 2>&1
 		update-locale LANG=$LOCALES LANGUAGE=$LOCALES LC=$LOCALES LC_MESSAGES=$LOCALES
 
-	else
-
-		while true; do
-			echo ""
-			read -p "Do you wish to set time zone and locales? [No]" yn
-			if [ -z $yn ]; then yn=no; fi
-			case $yn in
-				[Yy]* )
-					dpkg-reconfigure tzdata
-					dpkg-reconfigure locales
-					break
-					;;
-				[Nn]* )
-					break
-					;;
-				* ) echo "Please answer yes or no.";;
-			esac
-		done
 	fi
 
 }
