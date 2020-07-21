@@ -4,7 +4,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        gnupg \
        gnupg1 \
-       gpgv1
+       gpgv1 \
+    && rm -rf /var/lib/apt/lists/*
 RUN sh -c  "if [ x"" != x$http_proxy ]; then \
 			    apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --keyserver-options http-proxy=$http_proxy --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
 		    else \
@@ -93,7 +94,8 @@ RUN apt-get update \
        xxd \
        zip \
        zlib1g-dev \
-       zlib1g:i386
+       zlib1g:i386 \
+    && rm -rf /var/lib/apt/lists/*
 RUN locale-gen en_US.UTF-8
 
 # Static port for NFSv3 server used for USB FEL boot
