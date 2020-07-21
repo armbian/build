@@ -1,5 +1,6 @@
 FROM ubuntu:20.04
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y gnupg gnupg1 gpgv1 --no-install-recommends
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y gnupg gnupg1 gpgv1 --no-install-recommends
 RUN sh -c  "if [ x"" != x$http_proxy ]; then \
 			    apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --keyserver-options http-proxy=$http_proxy --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
 		    else \
@@ -7,8 +8,8 @@ RUN sh -c  "if [ x"" != x$http_proxy ]; then \
 		    fi"
 RUN echo "deb http://repo.aptly.info/ nightly main" > /etc/apt/sources.list.d/aptly.list
 RUN dpkg --add-architecture i386
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y upgrade && \
-	DEBIAN_FRONTEND=noninteractive apt-get install -y git dialog lsb-release binutils wget ca-certificates device-tree-compiler \
+RUN apt-get update && apt-get -y upgrade && \
+	apt-get install -y git dialog lsb-release binutils wget ca-certificates device-tree-compiler \
 	pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate gawk gcc-arm-linux-gnueabihf \
 	qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev parted pkg-config libncurses5-dev whiptail \
 	debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev nfs-kernel-server btrfs-progs \
