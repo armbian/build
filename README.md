@@ -219,10 +219,13 @@ Most of the project is sponsored with a work done by volunteer collaborators, wh
 
 [Do you want to see yourself below?](https://www.armbian.com/#contact)
 
-<img src="https://www.armbian.com/wp-content/uploads/2018/03/orangepi-logo-150x150.png" alt="Armbian logo" width="144" height="144"><img src="https://www.armbian.com/wp-content/uploads/2018/02/friendlyelec-logo-150x150.png" alt="Armbian logo" width="144" height="144">
-<img src="https://www.armbian.com/wp-content/uploads/2018/03/kspace-150x150.png" width="144" height="144">
-<img src="https://www.armbian.com/wp-content/uploads/2018/02/olimex-logo-150x150.png" width="144" height="144">
-<img src="https://www.armbian.com/wp-content/uploads/2020/06/Kobol_logo-150x150.png" width="144" height="144">
-
+<table><tr>
+<td><a href="http://www.orangepi.org" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/03/orangepi-logo-150x150.png" width="144" height="144"></a></td>
+<td><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/02/friendlyelec-logo-150x150.png" width="144" height="144"></a></td>
+<td><a href="https://k-space.ee" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/03/kspace-150x150.png" width="144" height="144"></a></td>
+<td><a href="https://www.innoscale.net" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/07/innoscale-2-150x150.png" width="144" height="144"></a></td>
+<td><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/02/olimex-logo-150x150.png" width="144" height="144"></a></td>
+<td><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/06/Kobol_logo-150x150.png" width="144" height="144"></a></td>
+</tr></table>
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
