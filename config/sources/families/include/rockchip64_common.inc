@@ -262,12 +262,6 @@ family_tweaks()
 
 	fi
 
-	if [[ $BOARD == nanopim4v2 ]]; then
-		mv $SDCARD/lib/firmware/brcm/brcmfmac4356-sdio.bin{,.bak}
-		ln -s brcmfmac4356-sdio-nanopi-m4v2.bin $SDCARD/lib/firmware/brcm/brcmfmac4356-sdio.bin
-		ln -s brcmfmac4356-sdio-nanopi-m4v2.txt $SDCARD/lib/firmware/brcm/brcmfmac4356-sdio.friendlyarm,nanopi-m4.txt
-	fi
-
 }
 
 
