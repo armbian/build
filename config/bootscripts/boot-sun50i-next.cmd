@@ -4,7 +4,7 @@
 #
 
 # default values
-setenv load_addr "0x44000000"
+setenv load_addr "0x45000000"
 setenv rootdev "/dev/mmcblk0p1"
 setenv verbosity "1"
 setenv rootfstype "ext4"
