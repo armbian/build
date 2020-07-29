@@ -366,7 +366,7 @@ function build_all()
 					for RELEASE in "${RELTARGETS[@]}"
 					do
 						display_alert "BSP for ${BOARD} ${BRANCH} ${RELEASE}."
-						if [[ "$IGNORE_HASH" == yes && "$KERNEL_ONLY" != "yes" ]]; then
+						if [[ "$IGNORE_HASH" == yes && "$KERNEL_ONLY" != "yes" && "${MULTITHREAD}" -gt 0 ]]; then
 							build_main &
 							sleep 0.5
 							else
