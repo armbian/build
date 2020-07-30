@@ -51,6 +51,7 @@ elif [[ $BOARD == pinebook-pro ]]; then
 elif [[ $BOARD == rockpi-4* || $BOARD == rockpro64 ]]; then
 
 	BOOT_USE_TPL_SPL_BLOB=yes
+	BOOT_SUPPORT_SPI=yes
 	BOOT_SOC=rk3399
 	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
 
