@@ -262,12 +262,6 @@ family_tweaks()
 
 	fi
 
-	if [[ $BOARD == nanopim4v2 ]]; then
-		mv $SDCARD/lib/firmware/brcm/brcmfmac4356-sdio.bin{,.bak}
-		ln -s brcmfmac4356-sdio-nanopi-m4v2.bin $SDCARD/lib/firmware/brcm/brcmfmac4356-sdio.bin
-		ln -s brcmfmac4356-sdio-nanopi-m4v2.txt $SDCARD/lib/firmware/brcm/brcmfmac4356-sdio.friendlyarm,nanopi-m4.txt
-	fi
-
 }
 
 
@@ -283,7 +277,7 @@ family_tweaks_bsp()
 		install -m 755 $SRC/packages/bsp/rk3328/z28pro/start_bt.sh $destination/usr/local/bin
 		cp $SRC/packages/bsp/rk3328/z28pro/z28pro-bluetooth.service $destination/lib/systemd/system/
 
-	elif [[ $BOARD == rockpi-4b || $BOARD == nanop* || $BOARD == orangepi* || $BOARD == firefly* || $BOARD == roc-rk3399-pc ]]; then
+	elif [[ $BOARD == rockpi-4b || $BOARD == nanop*4 || $BOARD == orangepi* || $BOARD == firefly* ]]; then
 
 		# Bluetooth for most of others
 		install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin

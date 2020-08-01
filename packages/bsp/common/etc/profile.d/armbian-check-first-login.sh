@@ -43,16 +43,17 @@ set_timezone_and_locales()
 		# Call the geolocation API and capture the output
 		RES=$(
 				curl --max-time 5 -s http://ipwhois.app/json/${PUBLIC_IP} | \
-				jq '.timezone, .country' | \
+				jq '.timezone, .country, .country_code' | \
 				while read -r TIMEZONE; do
 					read -r COUNTRY
-					echo "${TIMEZONE},${COUNTRY}" | tr --delete \"
+					echo "${TIMEZONE},${COUNTRY},${COUNTRYCODE}" | tr --delete \"
 				done
 			)
 
 		TZDATA=$(echo ${RES} | cut -d"," -f1)
 		STATE=$(echo ${RES} | cut -d"," -f2)
 		LOCALES=$(grep territory /usr/share/i18n/locales/* | grep "$STATE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  xargs -I{} grep {} /usr/share/i18n/SUPPORTED | grep "\.UTF-8" | cut -d " " -f 1)
+		CCODE=$(echo ${RES} | cut -d"," -f3 | awk '{print tolower($0)}' | xargs)
 		options=(`echo ${LOCALES}`);
 
 		# reconfigure tzdata
@@ -82,24 +83,11 @@ set_timezone_and_locales()
 		locale-gen $LOCALES > /dev/null 2>&1
 		update-locale LANG=$LOCALES LANGUAGE=$LOCALES LC=$LOCALES LC_MESSAGES=$LOCALES
 
-	else
+		# setting up keyboard
+		echo -e "Console keyboard layout: \x1B[92m$CCODE\x1B[0m"
+		sed -i "s/XKBLAYOUT=.*/XKBLAYOUT=\"$CCODE\"/" /etc/default/keyboard
+		setupcon -k --force
 
-		while true; do
-			echo ""
-			read -p "Do you wish to set time zone and locales? [No]" yn
-			if [ -z $yn ]; then yn=no; fi
-			case $yn in
-				[Yy]* )
-					dpkg-reconfigure tzdata
-					dpkg-reconfigure locales
-					break
-					;;
-				[Nn]* )
-					break
-					;;
-				* ) echo "Please answer yes or no.";;
-			esac
-		done
 	fi
 
 }
@@ -254,19 +242,6 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 	done
 	trap - INT TERM EXIT
 
-	# check for H3/legacy kernel to promote h3disp utility
-	if [ -f /boot/script.bin ]; then tmp=$(bin2fex </boot/script.bin 2>/dev/null | grep -w "hdmi_used = 1"); fi
-	if [ "$LINUXFAMILY" = "sun8i" ] && [ "$BRANCH" = "default" ] && [ -n "$tmp" ]; then
-		setterm -default
-		echo -e "\nYour display settings are currently 720p (1280x720). To change this use the"
-		echo -e "h3disp utility. Do you want to change display settings now? [nY] \c"
-		read -n1 ConfigureDisplay
-		if [ "$ConfigureDisplay" != "n" ] && [ "$ConfigureDisplay" != "N" ]; then
-			echo -e "\n" ; h3disp
-		else
-			echo -e "\n"
-		fi
-	fi
 	# check whether desktop environment has to be considered
 	if [ -n "$desktop_lightdm" ] && [ -n "$RealName" ] ; then
 
