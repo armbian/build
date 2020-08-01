@@ -164,7 +164,7 @@ create_board_package()
 
 	EOF
 
-	if [[ $RELEASE == bionic && $LINUXFAMILY != imx* ]]; then
+	if [[ $RELEASE == bionic || $RELEASE == focal ]] && [[ $BOARDFAMILY == sun50iw6 ]]; then
 		cat <<-EOF >> "${destination}"/DEBIAN/postinst
 		# temporally disable acceleration on some arch in Bionic due to broken mesa packages
 		echo 'Section "Device"
