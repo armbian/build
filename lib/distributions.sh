@@ -211,6 +211,10 @@ install_common()
 	ff02::2     ip6-allrouters
 	EOF
 
+	if [[ -n "${REPOSITORY_INSTALL}" ]]; then
+		chroot "${SDCARD}" /bin/bash -c "apt-get update"
+	fi
+
 	# install family packages
 	if [[ -n ${PACKAGE_LIST_FAMILY} ]]; then
 		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_FAMILY" >> "${DEST}"/debug/install.log
@@ -228,9 +232,10 @@ install_common()
 	else
 		UBOOT_VER=$(chroot "${SDCARD}" /bin/bash -c "apt-cache --names-only search ^linux-u-boot-${BOARD}-${BRANCH} | awk '{print \$(NF)}'")
 		display_alert "Installing from repository" "linux-u-boot-${BOARD}-${BRANCH} $UBOOT_VER"
-		chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install linux-u-boot-${BOARD}-${BRANCH}" >> "${DEST}"/debug/install.log 2>&1
+		chroot "${SDCARD}" /bin/bash -c "apt-get -qq -y install linux-u-boot-${BOARD}-${BRANCH}" >> "${DEST}"/debug/install.log 2>&1
 		# we need package later, move to output, apt-get must be here, apt deletes file
-		mv "${SDCARD}/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb" "${DEB_STORAGE}"
+		UPSTREM_VER=$(dpkg-deb -I "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb | grep Version | awk '{print $(NF)}')
+		mv "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb ${DEB_STORAGE}/${CHOSEN_UBOOT}_${UPSTREM_VER}_${ARCH}.deb
 	fi
 
 	# install kernel
