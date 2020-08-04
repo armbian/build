@@ -22,7 +22,9 @@
 | FULL_DESKTOP | yes/no = install Office, Thunderbird, ... |
 | DESKTOP_AUTOLOGIN | yes/no |
 | PACKAGE_LIST_BOARD | space delimited packages to be installed on this boards |
+| PACKAGE_LIST_BOARD_REMOVE | space delimited packages to be removed |
 | PACKAGE_LIST_DESKTOP_BOARD | space delimited packages to be installed on this boards desktop build |
+| PACKAGE_LIST_DESKTOP_BOARD_REMOVE | space delimited packages to be removed |
 
 
 Statuses displayed at the login prompt:
