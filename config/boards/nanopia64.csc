@@ -2,5 +2,5 @@
 BOARD_NAME="NanoPi A64"
 BOARDFAMILY="sun50iw1"
 BOOTCONFIG="nanopi_a64_defconfig"
-KERNEL_TARGET="current,dev"
+KERNEL_TARGET="legacy,current,dev"
 FULL_DESKTOP="yes"

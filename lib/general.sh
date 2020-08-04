@@ -171,41 +171,11 @@ create_sources_list()
 	;;
 	esac
 
-	# workaround for Chromium by downloading it from Debian
-	if [[ $release == focal || $release == eoan ]]; then
-
-		cat <<-EOF > "${basedir}"/etc/apt/preferences.d/chromium.pref
-		# Note: 2 blank lines are required between entries
-		Package: *
-		Pin: release a=${release}
-		Pin-Priority: 500
-
-		Package: *
-		Pin: origin "${DEBIAN_MIRROR//\/debian}"
-		Pin-Priority: 300
-
-		# Pattern includes 'chromium', 'chromium-browser' and similarly
-		# named dependencies:
-		Package: chromium*
-		Pin: origin "${DEBIAN_MIRROR//\/debian}"
-		Pin-Priority: 700
-		EOF
-
-		cat <<-EOF > "${basedir}"/etc/apt/sources.list.d/debian.list
-		deb http://${DEBIAN_MIRROR} stable main
-		deb http://${DEBIAN_MIRROR} stable-updates main
-		deb http://${DEBIAN_MIRROR}-security stable/updates main
-		EOF
-
-		chroot "${SDCARD}" /bin/bash -c "apt-key add /usr/share/keyrings/debian-archive-keyring.gpg >/dev/null 2>&1"
-
-	fi
-
 	# stage: add armbian repository and install key
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
 		echo "deb http://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 	else
-		echo "deb http://apt.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+		echo "deb http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt" )".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 	fi
 
 	# add local package server if defined. Suitable for development
