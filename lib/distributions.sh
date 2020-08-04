@@ -220,9 +220,19 @@ install_common()
 		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_FAMILY" >> "${DEST}"/debug/install.log
 	fi
 
-	# install family packages
+	# install board packages
 	if [[ -n ${PACKAGE_LIST_BOARD} ]]; then
 		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_BOARD" >> "${DEST}"/debug/install.log
+	fi
+
+	# remove family packages
+	if [[ -n ${PACKAGE_LIST_FAMILY_REMOVE} ]]; then
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq remove --auto-remove $PACKAGE_LIST_FAMILY_REMOVE" >> "${DEST}"/debug/install.log
+	fi
+
+	# remove board packages
+	if [[ -n ${PACKAGE_LIST_BOARD_REMOVE} ]]; then
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq remove --auto-remove $PACKAGE_LIST_BOARD_REMOVE" >> "${DEST}"/debug/install.log
 	fi
 
 	# install u-boot
