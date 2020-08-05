@@ -254,11 +254,6 @@ family_tweaks()
 		echo "auto lan0" >> $SDCARD/etc/network/interfaces
 		echo "	iface lan0 inet dhcp" >> $SDCARD/etc/network/interfaces
 
-	elif [[ $BOARD == helios64 ]]; then
-
-		chroot $SDCARD /bin/bash -c "apt-get -y -qq install mdadm i2c-tools"
-		chroot $SDCARD /bin/bash -c "apt-get -y -qq remove --auto-remove fake-hwclock>/dev/null 2>&1"
-
 	elif [[ -f $SDCARD/lib/systemd/system/rk3399-bluetooth.service ]]; then
 
 		# install and enable Bluetooth
