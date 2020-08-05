@@ -61,32 +61,40 @@ set_timezone_and_locales()
 		dpkg-reconfigure --frontend=noninteractive tzdata > /dev/null 2>&1
 
 		echo -e "Detected timezone: \x1B[92m$(LC_ALL=C timedatectl | grep "Time zone" | cut -d":" -f2 | xargs)\x1B[0m"
+		echo -e "Do you want to set locales and console keyboard automatically from your location [Y/n]"
+		read -sn1 SetLocales
+		if [ "$SetLocales" != "n" ] && [ "$SetLocales" != "N" ]; then
 
-		# when having more locales, prompt for choosing one
-		if [[ "${#options[@]}" -gt 1 ]]; then
+			# when having more locales, prompt for choosing one
+			if [[ "${#options[@]}" -gt 1 ]]; then
 
-			echo -e "\nAt your location, more locales are possible:\n"
-			PS3='Please enter your choice:'
-			select opt in "${options[@]}"
-			do
-				if [[ " ${options[@]} " =~ " ${opt} " ]]; then
-					LOCALES=${opt}
-					break
-				fi
-			done
+				echo -e "\nAt your location, more locales are possible:\n"
+				PS3='Please enter your choice:'
+				select opt in "${options[@]}"
+				do
+					if [[ " ${options[@]} " =~ " ${opt} " ]]; then
+						LOCALES=${opt}
+						break
+					fi
+				done
+
+			fi
+
+			# generate locales
+			sed -i 's/# '"${LOCALES}"'/'"${LOCALES}"'/' /etc/locale.gen
+			echo -e "Generating locales: \x1B[92m${LOCALES}\x1B[0m"
+			locale-gen $LOCALES > /dev/null 2>&1
+			update-locale LANG=$LOCALES LANGUAGE=$LOCALES LC=$LOCALES LC_MESSAGES=$LOCALES
+
+			# setting up keyboard
+			echo -e "Console keyboard layout: \x1B[92m$CCODE\x1B[0m"
+			sed -i "s/XKBLAYOUT=.*/XKBLAYOUT=\"$CCODE\"/" /etc/default/keyboard
+			setupcon -k --force
+		else
+
+			echo -e "You can use \x1B[92marmbian-config\x1B[0m to set locales and console keyboard."
 
 		fi
-
-		# generate locales
-		sed -i 's/# '"${LOCALES}"'/'"${LOCALES}"'/' /etc/locale.gen
-		echo -e "Generating locales: \x1B[92m${LOCALES}\x1B[0m"
-		locale-gen $LOCALES > /dev/null 2>&1
-		update-locale LANG=$LOCALES LANGUAGE=$LOCALES LC=$LOCALES LC_MESSAGES=$LOCALES
-
-		# setting up keyboard
-		echo -e "Console keyboard layout: \x1B[92m$CCODE\x1B[0m"
-		sed -i "s/XKBLAYOUT=.*/XKBLAYOUT=\"$CCODE\"/" /etc/default/keyboard
-		setupcon -k --force
 
 	fi
 
