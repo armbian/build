@@ -62,7 +62,7 @@ set_timezone_and_locales()
 
 		echo -e "Detected timezone: \x1B[92m$(LC_ALL=C timedatectl | grep "Time zone" | cut -d":" -f2 | xargs)\x1B[0m"
 		echo -e "Do you want to set locales and console keyboard automatically from your location [Y/n]"
-		read -n1 SetLocales
+		read -sn1 SetLocales
 		if [ "$SetLocales" != "n" ] && [ "$SetLocales" != "N" ]; then
 
 			# when having more locales, prompt for choosing one
@@ -92,7 +92,7 @@ set_timezone_and_locales()
 			setupcon -k --force
 		else
 
-		echo -e "You can use \x1B[92marmbian-config\x1B[0m to set locales and console keyboard."
+			echo -e "You can use \x1B[92marmbian-config\x1B[0m to set locales and console keyboard."
 
 		fi
 
