@@ -8,11 +8,21 @@ BOOTDELAY=0
 OVERLAY_PREFIX='rockchip'
 SERIALCON=${SERIALCON:=$([ $BRANCH == "legacy" ] && echo "ttyFIQ0:1500000" || echo "ttyS2:1500000")}
 GOVERNOR="ondemand"
-CPUMAX="2016000"
-CPUMIN="408000"
 BOOTBRANCH="tag:v2020.07"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
+
+if [[ $BOOTCONFIG == *3399* ]]; then
+
+	CPUMIN=${CPUMIN:="408000"}
+	CPUMAX=${CPUMAX:="2016000"}
+
+else # rk3308, rk3328
+
+	CPUMIN=${CPUMIN:="408000"}
+	CPUMAX=${CPUMAX:="1296000"}
+
+fi
 
 if [[ $BOARD == nanopi-r2s || $BOARD == rockpi-e || $BOARD == nanopineo3 ]]; then
 
@@ -21,12 +31,10 @@ if [[ $BOARD == nanopi-r2s || $BOARD == rockpi-e || $BOARD == nanopineo3 ]]; the
 	DDR_BLOB='rk33/rk3328_ddr_333MHz_v1.16.bin'
 	MINILOADER_BLOB='rk33/rk322xh_miniloader_v2.50.bin'
 	BL31_BLOB='rk33/rk322xh_bl31_v1.42.elf'
-	CPUMAX="1296000"
 
 elif [[ $BOOTCONFIG == *3328* ]]; then
 
 	BOOT_RK3328_USE_AYUFAN_ATF=yes
-	CPUMAX="1296000"
 
 elif [[ $BOARD == rockpi-4* ]]; then
 
@@ -48,7 +56,6 @@ elif [[ $BOARD == rockpi-s ]]; then
 	DDR_BLOB='rk33/rk3308_ddr_589MHz_uart0_m0_v1.26.bin'
 	MINILOADER_BLOB='rk33/rk3308_miniloader_sd_nand_v1.13.bin'
 	BL31_BLOB='rk33/rk3308_bl31_v2.10.elf'
-	CPUMAX="1296000"
 
 else
 
