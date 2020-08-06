@@ -152,7 +152,7 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 	codename=$(lsb_release -sc)
 	codeid=$(lsb_release -is | awk '{print tolower($0)}')
 	[[ "${codeid}" == "linuxmint" && "${codename}" == "debbie" ]] && codename="buster" && codeid="debian"
-	[[ "${codename}" == "focal" ]] && codename="bionic"
+	[[ "${codename}" == "focal" || "${codename}" == "ulyana" ]] && codename="bionic" && codeid="ubuntu"
 
 	display_alert "Docker not installed." "Installing" "Info"
 	echo "deb [arch=amd64] https://download.docker.com/linux/${codeid} ${codename} edge" > /etc/apt/sources.list.d/docker.list
