@@ -97,7 +97,7 @@ install_common()
 
 	# disable selinux by default
 	mkdir -p "${SDCARD}"/selinux
-	[[ -f "${SDCARD}"/etc/selinux/default ]] && sed "s/^SELINUX=.*/SELINUX=disabled/" -i "${SDCARD}"/etc/selinux/default
+	[[ -f "${SDCARD}"/etc/selinux/config ]] && sed "s/^SELINUX=.*/SELINUX=disabled/" -i "${SDCARD}"/etc/selinux/config
 
 	# remove Ubuntu's legal text
 	[[ -f "${SDCARD}"/etc/legal ]] && rm "${SDCARD}"/etc/legal
