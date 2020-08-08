@@ -260,8 +260,6 @@ compilation_prepare()
 
 		# attach to specifics tag or branch
 		local rtl8812auver="branch:v5.6.4.2"
-		# temporally override
-		local rtl8812auver="commit:058ef814b8e27639fdf10b03cac1a1d8e41c6777"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
