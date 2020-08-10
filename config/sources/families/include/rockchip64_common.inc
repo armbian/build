@@ -298,6 +298,16 @@ family_tweaks_bsp()
 		cp $SRC/packages/bsp/pinebook-pro/xorg.conf $destination/etc/X11/
 	fi
 
+	if [[ $BOARD == helios64 ]]; then
+
+		mkdir -p $destination/etc/udev/rules.d/
+		mkdir -p $destination/lib/systemd/system-shutdown/
+		cp $SRC/packages/bsp/helios64/50-usb-realtek-net.rules $destination/etc/udev/rules.d/
+		cp $SRC/packages/bsp/helios64/70-keep-usb-lan-as-eth1.rules $destination/etc/udev/rules.d/
+		cp $SRC/packages/bsp/helios64/asound.conf $destination/etc/
+		install -m 755 $SRC/packages/bsp/helios64/disable_auto_poweron $destination/lib/systemd/system-shutdown/
+	fi
+
 	# Graphics and media
 	mkdir -p $destination/etc/udev/rules.d
 	cp $SRC/packages/bsp/rk3399/50-mali.rules $destination/etc/udev/rules.d/
