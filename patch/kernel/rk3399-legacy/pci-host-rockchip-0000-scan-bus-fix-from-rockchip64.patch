@@ -1,0 +1,241 @@
+From e5467fb60570c9c300e9d412b9d5386cbb9951ba Mon Sep 17 00:00:00 2001
+From: Aditya Prayoga <aditya@kobol.io>
+Date: Mon, 18 May 2020 09:42:14 +0700
+Subject: [PATCH] port pcie changes from ayufan rockchip64
+
+Signed-off-by: Aditya Prayoga <aditya@kobol.io>
+---
+ drivers/pci/host/pcie-rockchip.c | 119 +++++++++++++++++++++++++------
+ 1 file changed, 96 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/pci/host/pcie-rockchip.c b/drivers/pci/host/pcie-rockchip.c
+index 87291016d..1823323f8 100644
+--- a/drivers/pci/host/pcie-rockchip.c
++++ b/drivers/pci/host/pcie-rockchip.c
+@@ -26,6 +26,7 @@
+ #include <linux/irqdomain.h>
+ #include <linux/kernel.h>
+ #include <linux/mfd/syscon.h>
++#include <linux/moduleparam.h>
+ #include <linux/of_address.h>
+ #include <linux/of_device.h>
+ #include <linux/of_pci.h>
+@@ -153,6 +154,7 @@
+ 		 PCIE_CORE_INT_CT | PCIE_CORE_INT_UTC | \
+ 		 PCIE_CORE_INT_MMVC)
+ 
++#define PCIE_RC_CONFIG_NORMAL_BASE	0x800000
+ #define PCIE_RC_CONFIG_BASE		0xa00000
+ #define PCIE_RC_CONFIG_RID_CCR		(PCIE_RC_CONFIG_BASE + 0x08)
+ #define   PCIE_RC_CONFIG_SCC_SHIFT		16
+@@ -189,6 +191,8 @@
+ #define IB_ROOT_PORT_REG_SIZE_SHIFT		3
+ #define AXI_WRAPPER_IO_WRITE			0x6
+ #define AXI_WRAPPER_MEM_WRITE			0x2
++#define AXI_WRAPPER_TYPE0_CFG			0xa
++#define AXI_WRAPPER_TYPE1_CFG			0xb
+ #define AXI_WRAPPER_CFG0			0xa
+ #define AXI_WRAPPER_NOR_MSG			0xc
+ 
+@@ -213,6 +217,7 @@
+ #define RC_REGION_0_ADDR_TRANS_H		0x00000000
+ #define RC_REGION_0_ADDR_TRANS_L		0x00000000
+ #define RC_REGION_0_PASS_BITS			(25 - 1)
++#define RC_REGION_0_TYPE_MASK			GENMASK(3, 0)
+ #define MAX_AXI_WRAPPER_REGION_NUM		33
+ 
+ struct rockchip_pcie {
+@@ -253,8 +258,12 @@ struct rockchip_pcie {
+ 	int wait_ep;
+ 	struct dma_trx_obj *dma_obj;
+ 	struct list_head resources;
++	u32	bus_scan_delay;
+ };
+ 
++static int bus_scan_delay = -1;
++core_param(pcie_rk_bus_scan_delay, bus_scan_delay, int, S_IRUGO);
++
+ static u32 rockchip_pcie_read(struct rockchip_pcie *rockchip, u32 reg)
+ {
+ 	return readl(rockchip->apb_base + reg);
+@@ -330,7 +339,9 @@ static int rockchip_pcie_valid_device(struct rockchip_pcie *rockchip,
+ static int rockchip_pcie_rd_own_conf(struct rockchip_pcie *rockchip,
+ 				     int where, int size, u32 *val)
+ {
+-	void __iomem *addr = rockchip->apb_base + PCIE_RC_CONFIG_BASE + where;
++	void __iomem *addr;
++
++	addr = rockchip->apb_base + PCIE_RC_CONFIG_NORMAL_BASE + where;
+ 
+ 	if (!IS_ALIGNED((uintptr_t)addr, size)) {
+ 		*val = 0;
+@@ -354,11 +365,13 @@ static int rockchip_pcie_wr_own_conf(struct rockchip_pcie *rockchip,
+ 				     int where, int size, u32 val)
+ {
+ 	u32 mask, tmp, offset;
++	void __iomem *addr;
+ 
+ 	offset = where & ~0x3;
++	addr = rockchip->apb_base + PCIE_RC_CONFIG_NORMAL_BASE + offset;
+ 
+ 	if (size == 4) {
+-		writel(val, rockchip->apb_base + PCIE_RC_CONFIG_BASE + offset);
++		writel(val, addr);
+ 		return PCIBIOS_SUCCESSFUL;
+ 	}
+ 
+@@ -369,13 +382,33 @@ static int rockchip_pcie_wr_own_conf(struct rockchip_pcie *rockchip,
+ 	 * corrupt RW1C bits in adjacent registers.  But the hardware
+ 	 * doesn't support smaller writes.
+ 	 */
+-	tmp = readl(rockchip->apb_base + PCIE_RC_CONFIG_BASE + offset) & mask;
++	tmp = readl(addr) & mask;
+ 	tmp |= val << ((where & 0x3) * 8);
+-	writel(tmp, rockchip->apb_base + PCIE_RC_CONFIG_BASE + offset);
++	writel(tmp, addr);
+ 
+ 	return PCIBIOS_SUCCESSFUL;
+ }
+ 
++static void rockchip_pcie_cfg_configuration_accesses(
++		struct rockchip_pcie *rockchip, u32 type)
++{
++	u32 ob_desc_0;
++
++	/* Configuration Accesses for region 0 */
++	rockchip_pcie_write(rockchip, 0x0, PCIE_RC_BAR_CONF);
++
++	rockchip_pcie_write(rockchip,
++			    (RC_REGION_0_ADDR_TRANS_L + RC_REGION_0_PASS_BITS),
++			    PCIE_CORE_OB_REGION_ADDR0);
++	rockchip_pcie_write(rockchip, RC_REGION_0_ADDR_TRANS_H,
++			    PCIE_CORE_OB_REGION_ADDR1);
++	ob_desc_0 = rockchip_pcie_read(rockchip, PCIE_CORE_OB_REGION_DESC0);
++	ob_desc_0 &= ~(RC_REGION_0_TYPE_MASK);
++	ob_desc_0 |= (type | (0x1 << 23));
++	rockchip_pcie_write(rockchip, ob_desc_0, PCIE_CORE_OB_REGION_DESC0);
++	rockchip_pcie_write(rockchip, 0x0, PCIE_CORE_OB_REGION_DESC1);
++}
++
+ static int rockchip_pcie_rd_other_conf(struct rockchip_pcie *rockchip,
+ 				       struct pci_bus *bus, u32 devfn,
+ 				       int where, int size, u32 *val)
+@@ -385,11 +418,23 @@ static int rockchip_pcie_rd_other_conf(struct rockchip_pcie *rockchip,
+ 	busdev = PCIE_ECAM_ADDR(bus->number, PCI_SLOT(devfn),
+ 				PCI_FUNC(devfn), where);
+ 
++	if (bus->number > 0x1f) {
++		*val = 0;
++		return PCIBIOS_DEVICE_NOT_FOUND;
++	}
++
+ 	if (!IS_ALIGNED(busdev, size)) {
+ 		*val = 0;
+ 		return PCIBIOS_BAD_REGISTER_NUMBER;
+ 	}
+ 
++	if (bus->parent->number == rockchip->root_bus_nr)
++		rockchip_pcie_cfg_configuration_accesses(rockchip,
++						AXI_WRAPPER_TYPE0_CFG);
++	else
++		rockchip_pcie_cfg_configuration_accesses(rockchip,
++						AXI_WRAPPER_TYPE1_CFG);
++
+ 	if (size == 4) {
+ 		*val = readl(rockchip->reg_base + busdev);
+ 	} else if (size == 2) {
+@@ -411,9 +456,19 @@ static int rockchip_pcie_wr_other_conf(struct rockchip_pcie *rockchip,
+ 
+ 	busdev = PCIE_ECAM_ADDR(bus->number, PCI_SLOT(devfn),
+ 				PCI_FUNC(devfn), where);
++
++	if (bus->number > 0x1f)
++		return PCIBIOS_DEVICE_NOT_FOUND;
+ 	if (!IS_ALIGNED(busdev, size))
+ 		return PCIBIOS_BAD_REGISTER_NUMBER;
+ 
++	if (bus->parent->number == rockchip->root_bus_nr)
++		rockchip_pcie_cfg_configuration_accesses(rockchip,
++						AXI_WRAPPER_TYPE0_CFG);
++	else
++		rockchip_pcie_cfg_configuration_accesses(rockchip,
++						AXI_WRAPPER_TYPE1_CFG);
++
+ 	if (size == 4)
+ 		writel(val, rockchip->reg_base + busdev);
+ 	else if (size == 2)
+@@ -638,6 +693,11 @@ static int rockchip_pcie_init_port(struct rockchip_pcie *rockchip)
+ 	status |= PCI_EXP_LNKCTL_CCC;
+ 	rockchip_pcie_write(rockchip, status, PCIE_RC_CONFIG_LCS);
+ 
++	/* Set RC's RCB to 128 */
++	status = rockchip_pcie_read(rockchip, PCIE_RC_CONFIG_LCS);
++	status |= PCI_EXP_LNKCTL_RCB;
++	rockchip_pcie_write(rockchip, status, PCIE_RC_CONFIG_LCS);
++
+ 	/* Enable Gen1 training */
+ 	rockchip_pcie_write(rockchip, PCIE_CLIENT_LINK_TRAIN_ENABLE,
+ 			    PCIE_CLIENT_CONFIG);
+@@ -696,15 +756,8 @@ static int rockchip_pcie_init_port(struct rockchip_pcie *rockchip)
+ 		rockchip_pcie_write(rockchip, status, PCIE_RC_CONFIG_LINK_CAP);
+ 	}
+ 
+-	rockchip_pcie_write(rockchip, 0x0, PCIE_RC_BAR_CONF);
+-
+-	rockchip_pcie_write(rockchip,
+-			    (RC_REGION_0_ADDR_TRANS_L + RC_REGION_0_PASS_BITS),
+-			    PCIE_CORE_OB_REGION_ADDR0);
+-	rockchip_pcie_write(rockchip, RC_REGION_0_ADDR_TRANS_H,
+-			    PCIE_CORE_OB_REGION_ADDR1);
+-	rockchip_pcie_write(rockchip, 0x0080000a, PCIE_CORE_OB_REGION_DESC0);
+-	rockchip_pcie_write(rockchip, 0x0, PCIE_CORE_OB_REGION_DESC1);
++	rockchip_pcie_cfg_configuration_accesses(rockchip,
++					AXI_WRAPPER_TYPE0_CFG);
+ 
+ 	return 0;
+ }
+@@ -1067,6 +1120,14 @@ static int rockchip_pcie_parse_dt(struct rockchip_pcie *rockchip)
+ 		dev_info(dev, "no vpcie0v9 regulator found\n");
+ 	}
+ 
++	err = of_property_read_u32(node, "bus-scan-delay-ms", &rockchip->bus_scan_delay);
++	if (err) {
++		dev_info(dev, "no bus-scan-delay-ms in device tree, default 0 ms\n");
++		rockchip->bus_scan_delay = 0;
++	} else {
++		dev_info(dev, "bus-scan-delay-ms in device tree is %u ms\n", rockchip->bus_scan_delay);
++	}
++
+ 	mem = of_parse_phandle(node, "memory-region", 0);
+ 	if (!mem) {
+ 		dev_warn(dev, "missing \"memory-region\" property\n");
+@@ -1396,6 +1457,7 @@ static int rockchip_pcie_really_probe(struct rockchip_pcie *rockchip)
+ 	int err;
+ 	struct pci_bus *bus, *child;
+ 	struct	device *dev = rockchip->dev;
++	u32 delay = 0;
+ 
+ 	err = rockchip_pcie_init_port(rockchip);
+ 	if (err)
+@@ -1407,6 +1469,18 @@ static int rockchip_pcie_really_probe(struct rockchip_pcie *rockchip)
+ 	if (err)
+ 		return err;
+ 
++	/* Prefer command-line param over device tree */
++	if (bus_scan_delay > 0) {
++		delay = bus_scan_delay;
++		dev_info(dev, "wait %u ms (from command-line) before bus scan\n", delay);
++	} else if (rockchip->bus_scan_delay > 0 && bus_scan_delay < 0) {
++		delay = rockchip->bus_scan_delay;
++		dev_info(dev, "wait %u ms (from device tree) before bus scan\n", delay);
++	}
++	if (delay > 0) {
++		msleep(delay);
++	}
++
+ 	bus = pci_scan_root_bus(dev, 0, &rockchip_pcie_ops,
+ 				rockchip, &rockchip->resources);
+ 	if (!bus)
+-- 
+Created with Armbian build tools https://github.com/armbian/build
+
