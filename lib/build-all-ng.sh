@@ -205,6 +205,7 @@ function check_hash()
 	else
 		ref_name=${KERNELBRANCH##*:}
 	fi
+	[[ -z $LINUXFAMILY ]] && LINUXFAMILY=$BOARDFAMILY
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
 	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n')
