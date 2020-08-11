@@ -1,0 +1,294 @@
+diff --git a/Makefile b/Makefile
+index b77b4332a41a..70942a6541d8 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 5
+ PATCHLEVEL = 7
+-SUBLEVEL = 13
++SUBLEVEL = 14
+ EXTRAVERSION =
+ NAME = Kleptomaniac Octopus
+ 
+diff --git a/arch/arm/include/asm/percpu.h b/arch/arm/include/asm/percpu.h
+index f44f448537f2..1a3eedbac4a2 100644
+--- a/arch/arm/include/asm/percpu.h
++++ b/arch/arm/include/asm/percpu.h
+@@ -5,6 +5,8 @@
+ #ifndef _ASM_ARM_PERCPU_H_
+ #define _ASM_ARM_PERCPU_H_
+ 
++#include <asm/thread_info.h>
++
+ /*
+  * Same as asm-generic/percpu.h, except that we store the per cpu offset
+  * in the TPIDRPRW. TPIDRPRW only exists on V6K and V7
+diff --git a/arch/arm64/include/asm/archrandom.h b/arch/arm64/include/asm/archrandom.h
+index fc1594a0710e..44209f6146aa 100644
+--- a/arch/arm64/include/asm/archrandom.h
++++ b/arch/arm64/include/asm/archrandom.h
+@@ -6,7 +6,6 @@
+ 
+ #include <linux/bug.h>
+ #include <linux/kernel.h>
+-#include <linux/random.h>
+ #include <asm/cpufeature.h>
+ 
+ static inline bool __arm64_rndr(unsigned long *v)
+diff --git a/arch/arm64/include/asm/pointer_auth.h b/arch/arm64/include/asm/pointer_auth.h
+index c6b4f0603024..be7f853738e6 100644
+--- a/arch/arm64/include/asm/pointer_auth.h
++++ b/arch/arm64/include/asm/pointer_auth.h
+@@ -3,7 +3,6 @@
+ #define __ASM_POINTER_AUTH_H
+ 
+ #include <linux/bitops.h>
+-#include <linux/random.h>
+ 
+ #include <asm/cpufeature.h>
+ #include <asm/memory.h>
+@@ -34,6 +33,13 @@ struct ptrauth_keys_kernel {
+ 	struct ptrauth_key apia;
+ };
+ 
++/*
++ * Only include random.h once ptrauth_keys_* structures are defined
++ * to avoid yet another circular include hell (random.h * ends up
++ * including asm/smp.h, which requires ptrauth_keys_kernel).
++ */
++#include <linux/random.h>
++
+ static inline void ptrauth_keys_init_user(struct ptrauth_keys_user *keys)
+ {
+ 	if (system_supports_address_auth()) {
+diff --git a/arch/arm64/kernel/kaslr.c b/arch/arm64/kernel/kaslr.c
+index 91a83104c6e8..e2101440c314 100644
+--- a/arch/arm64/kernel/kaslr.c
++++ b/arch/arm64/kernel/kaslr.c
+@@ -10,8 +10,8 @@
+ #include <linux/mm_types.h>
+ #include <linux/sched.h>
+ #include <linux/types.h>
++#include <linux/random.h>
+ 
+-#include <asm/archrandom.h>
+ #include <asm/cacheflush.h>
+ #include <asm/fixmap.h>
+ #include <asm/kernel-pgtable.h>
+diff --git a/drivers/char/random.c b/drivers/char/random.c
+index 0d10e31fd342..344a57ebb35e 100644
+--- a/drivers/char/random.c
++++ b/drivers/char/random.c
+@@ -1277,6 +1277,7 @@ void add_interrupt_randomness(int irq, int irq_flags)
+ 
+ 	fast_mix(fast_pool);
+ 	add_interrupt_bench(cycles);
++	this_cpu_add(net_rand_state.s1, fast_pool->pool[cycles & 3]);
+ 
+ 	if (unlikely(crng_init == 0)) {
+ 		if ((fast_pool->count >= 64) &&
+diff --git a/include/linux/prandom.h b/include/linux/prandom.h
+new file mode 100644
+index 000000000000..aa16e6468f91
+--- /dev/null
++++ b/include/linux/prandom.h
+@@ -0,0 +1,78 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * include/linux/prandom.h
++ *
++ * Include file for the fast pseudo-random 32-bit
++ * generation.
++ */
++#ifndef _LINUX_PRANDOM_H
++#define _LINUX_PRANDOM_H
++
++#include <linux/types.h>
++#include <linux/percpu.h>
++
++u32 prandom_u32(void);
++void prandom_bytes(void *buf, size_t nbytes);
++void prandom_seed(u32 seed);
++void prandom_reseed_late(void);
++
++struct rnd_state {
++	__u32 s1, s2, s3, s4;
++};
++
++DECLARE_PER_CPU(struct rnd_state, net_rand_state);
++
++u32 prandom_u32_state(struct rnd_state *state);
++void prandom_bytes_state(struct rnd_state *state, void *buf, size_t nbytes);
++void prandom_seed_full_state(struct rnd_state __percpu *pcpu_state);
++
++#define prandom_init_once(pcpu_state)			\
++	DO_ONCE(prandom_seed_full_state, (pcpu_state))
++
++/**
++ * prandom_u32_max - returns a pseudo-random number in interval [0, ep_ro)
++ * @ep_ro: right open interval endpoint
++ *
++ * Returns a pseudo-random number that is in interval [0, ep_ro). Note
++ * that the result depends on PRNG being well distributed in [0, ~0U]
++ * u32 space. Here we use maximally equidistributed combined Tausworthe
++ * generator, that is, prandom_u32(). This is useful when requesting a
++ * random index of an array containing ep_ro elements, for example.
++ *
++ * Returns: pseudo-random number in interval [0, ep_ro)
++ */
++static inline u32 prandom_u32_max(u32 ep_ro)
++{
++	return (u32)(((u64) prandom_u32() * ep_ro) >> 32);
++}
++
++/*
++ * Handle minimum values for seeds
++ */
++static inline u32 __seed(u32 x, u32 m)
++{
++	return (x < m) ? x + m : x;
++}
++
++/**
++ * prandom_seed_state - set seed for prandom_u32_state().
++ * @state: pointer to state structure to receive the seed.
++ * @seed: arbitrary 64-bit value to use as a seed.
++ */
++static inline void prandom_seed_state(struct rnd_state *state, u64 seed)
++{
++	u32 i = (seed >> 32) ^ (seed << 10) ^ seed;
++
++	state->s1 = __seed(i,   2U);
++	state->s2 = __seed(i,   8U);
++	state->s3 = __seed(i,  16U);
++	state->s4 = __seed(i, 128U);
++}
++
++/* Pseudo random number generator from numerical recipes. */
++static inline u32 next_pseudo_random32(u32 seed)
++{
++	return seed * 1664525 + 1013904223;
++}
++
++#endif
+diff --git a/include/linux/random.h b/include/linux/random.h
+index 45e1f8fa742b..f45b8be3e3c4 100644
+--- a/include/linux/random.h
++++ b/include/linux/random.h
+@@ -110,61 +110,12 @@ declare_get_random_var_wait(long)
+ 
+ unsigned long randomize_page(unsigned long start, unsigned long range);
+ 
+-u32 prandom_u32(void);
+-void prandom_bytes(void *buf, size_t nbytes);
+-void prandom_seed(u32 seed);
+-void prandom_reseed_late(void);
+-
+-struct rnd_state {
+-	__u32 s1, s2, s3, s4;
+-};
+-
+-u32 prandom_u32_state(struct rnd_state *state);
+-void prandom_bytes_state(struct rnd_state *state, void *buf, size_t nbytes);
+-void prandom_seed_full_state(struct rnd_state __percpu *pcpu_state);
+-
+-#define prandom_init_once(pcpu_state)			\
+-	DO_ONCE(prandom_seed_full_state, (pcpu_state))
+-
+-/**
+- * prandom_u32_max - returns a pseudo-random number in interval [0, ep_ro)
+- * @ep_ro: right open interval endpoint
+- *
+- * Returns a pseudo-random number that is in interval [0, ep_ro). Note
+- * that the result depends on PRNG being well distributed in [0, ~0U]
+- * u32 space. Here we use maximally equidistributed combined Tausworthe
+- * generator, that is, prandom_u32(). This is useful when requesting a
+- * random index of an array containing ep_ro elements, for example.
+- *
+- * Returns: pseudo-random number in interval [0, ep_ro)
+- */
+-static inline u32 prandom_u32_max(u32 ep_ro)
+-{
+-	return (u32)(((u64) prandom_u32() * ep_ro) >> 32);
+-}
+-
+ /*
+- * Handle minimum values for seeds
++ * This is designed to be standalone for just prandom
++ * users, but for now we include it from <linux/random.h>
++ * for legacy reasons.
+  */
+-static inline u32 __seed(u32 x, u32 m)
+-{
+-	return (x < m) ? x + m : x;
+-}
+-
+-/**
+- * prandom_seed_state - set seed for prandom_u32_state().
+- * @state: pointer to state structure to receive the seed.
+- * @seed: arbitrary 64-bit value to use as a seed.
+- */
+-static inline void prandom_seed_state(struct rnd_state *state, u64 seed)
+-{
+-	u32 i = (seed >> 32) ^ (seed << 10) ^ seed;
+-
+-	state->s1 = __seed(i,   2U);
+-	state->s2 = __seed(i,   8U);
+-	state->s3 = __seed(i,  16U);
+-	state->s4 = __seed(i, 128U);
+-}
++#include <linux/prandom.h>
+ 
+ #ifdef CONFIG_ARCH_RANDOM
+ # include <asm/archrandom.h>
+@@ -207,10 +158,4 @@ static inline bool __init arch_get_random_long_early(unsigned long *v)
+ }
+ #endif
+ 
+-/* Pseudo random number generator from numerical recipes. */
+-static inline u32 next_pseudo_random32(u32 seed)
+-{
+-	return seed * 1664525 + 1013904223;
+-}
+-
+ #endif /* _LINUX_RANDOM_H */
+diff --git a/kernel/time/timer.c b/kernel/time/timer.c
+index 03c9fc395ab1..721d5af8cfc7 100644
+--- a/kernel/time/timer.c
++++ b/kernel/time/timer.c
+@@ -43,6 +43,7 @@
+ #include <linux/sched/debug.h>
+ #include <linux/slab.h>
+ #include <linux/compat.h>
++#include <linux/random.h>
+ 
+ #include <linux/uaccess.h>
+ #include <asm/unistd.h>
+@@ -1743,6 +1744,13 @@ void update_process_times(int user_tick)
+ 	scheduler_tick();
+ 	if (IS_ENABLED(CONFIG_POSIX_TIMERS))
+ 		run_posix_cpu_timers();
++
++	/* The current CPU might make use of net randoms without receiving IRQs
++	 * to renew them often enough. Let's update the net_rand_state from a
++	 * non-constant value that's not affine to the number of calls to make
++	 * sure it's updated when there's some activity (we don't care in idle).
++	 */
++	this_cpu_add(net_rand_state.s1, rol32(jiffies, 24) + user_tick);
+ }
+ 
+ /**
+diff --git a/lib/random32.c b/lib/random32.c
+index 763b920a6206..3d749abb9e80 100644
+--- a/lib/random32.c
++++ b/lib/random32.c
+@@ -48,7 +48,7 @@ static inline void prandom_state_selftest(void)
+ }
+ #endif
+ 
+-static DEFINE_PER_CPU(struct rnd_state, net_rand_state) __latent_entropy;
++DEFINE_PER_CPU(struct rnd_state, net_rand_state);
+ 
+ /**
+  *	prandom_u32_state - seeded pseudo-random number generator.

@@ -1,4 +1,4 @@
-# A83T octa core 2Gb SoC Wifi
+# Allwinner A83T octa core 2Gb SoC Wifi
 BOARD_NAME="Cubietruck+"
 BOARDFAMILY="sun8i"
 BOOTCONFIG="Cubietruck_plus_defconfig"

@@ -1,6 +1,8 @@
+ARCH=armhf
 BOOTSOURCE='https://github.com/hardkernel/u-boot.git'
 BOOTBRANCH='branch:odroidc-v2011.03'
 BOOTDIR='u-boot-odroidc1'
+UBOOT_COMPILER="arm-linux-gnueabihf-"
 UBOOT_USE_GCC='< 4.9'
 BOOTSCRIPT="boot-odroid-c1.ini:boot.ini"
 SERIALCON="ttyAML0"
@@ -10,7 +12,28 @@ KERNEL_IMAGE_TYPE=uImage
 LINUXFAMILY=meson
 CPUMIN=504000
 CPUMAX=1632000
-GOVERNOR=interactive
+GOVERNOR=ondemand
+
+case $BRANCH in
+	legacy)
+
+		KERNELBRANCH="branch:linux-5.4.y"
+		KERNELPATCHDIR='meson-'$BRANCH
+
+        ;;
+	current)
+
+		KERNELBRANCH="branch:linux-5.7.y"
+		KERNELPATCHDIR='meson-current'
+
+	;;
+	dev)
+
+		KERNELSOURCE="https://github.com/xdarklight/linux"
+		KERNELBRANCH="commit:15faa34a0d22dcd15a6f6984a865895110c2f81b"
+
+	;;
+esac
 
 write_uboot_platform()
 {

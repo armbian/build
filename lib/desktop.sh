@@ -16,6 +16,9 @@ create_desktop_package ()
 	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP// /,};
 	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP//[[:space:]]/}
 
+	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,};
+	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS//[[:space:]]/}
+
 	local destination=${SRC}/.tmp/${RELEASE}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
@@ -31,6 +34,7 @@ create_desktop_package ()
 	Priority: optional
 	Recommends: ${PACKAGE_LIST_DESKTOP//[:space:]+/,}
 	Provides: ${CHOSEN_DESKTOP}
+	Pre-Depends: ${PACKAGE_LIST_PREDEPENDS//[:space:]+/,}
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
 

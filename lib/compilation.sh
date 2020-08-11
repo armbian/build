@@ -1,3 +1,5 @@
+#!/bin/bash
+#
 # Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
@@ -26,45 +28,49 @@ compile_atf()
 {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$ATFSOURCEDIR" "info"
-		(cd $SRC/cache/sources/$ATFSOURCEDIR; make distclean > /dev/null 2>&1)
+		(cd "${SRC}/cache/sources/${ATFSOURCEDIR}"; make distclean > /dev/null 2>&1)
 	fi
 
 	if [[ $USE_OVERLAYFS == yes ]]; then
-		local atfdir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$ATFSOURCEDIR" "atf_${LINUXFAMILY}_${BRANCH}")
+		local atfdir
+		atfdir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$ATFSOURCEDIR" "atf_${LINUXFAMILY}_${BRANCH}")
 	else
 		local atfdir="$SRC/cache/sources/$ATFSOURCEDIR"
 	fi
-	cd "$atfdir"
+	cd "$atfdir" || exit
 
 	display_alert "Compiling ATF" "" "info"
 
-	local toolchain=$(find_toolchain "$ATF_COMPILER" "$ATF_USE_GCC")
+	local toolchain
+	toolchain=$(find_toolchain "$ATF_COMPILER" "$ATF_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${ATF_COMPILER}gcc $ATF_USE_GCC"
 
 	if [[ -n $ATF_TOOLCHAIN2 ]]; then
-		local toolchain2_type=$(cut -d':' -f1 <<< $ATF_TOOLCHAIN2)
-		local toolchain2_ver=$(cut -d':' -f2 <<< $ATF_TOOLCHAIN2)
-		local toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
+		local toolchain2_type toolchain2_ver toolchain2
+		toolchain2_type=$(cut -d':' -f1 <<< "${ATF_TOOLCHAIN2}")
+		toolchain2_ver=$(cut -d':' -f2 <<< "${ATF_TOOLCHAIN2}")
+		toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
 		[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
 	fi
 
-	display_alert "Compiler version" "${ATF_COMPILER}gcc $(eval env PATH=$toolchain:$PATH ${ATF_COMPILER}gcc -dumpversion)" "info"
+	display_alert "Compiler version" "${ATF_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${ATF_COMPILER}gcc" -dumpversion)" "info"
 
-	local target_make=$(cut -d';' -f1 <<< $ATF_TARGET_MAP)
-	local target_patchdir=$(cut -d';' -f2 <<< $ATF_TARGET_MAP)
-	local target_files=$(cut -d';' -f3 <<< $ATF_TARGET_MAP)
+	local target_make target_patchdir target_files
+	target_make=$(cut -d';' -f1 <<< "${ATF_TARGET_MAP}")
+	target_patchdir=$(cut -d';' -f2 <<< "${ATF_TARGET_MAP}")
+	target_files=$(cut -d';' -f3 <<< "${ATF_TARGET_MAP}")
 
 	advanced_patch "atf" "${ATFPATCHDIR}" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
 
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
 
-	echo -e "\n\t==  atf  ==\n" >>$DEST/debug/compilation.log
+	echo -e "\n\t==  atf  ==\n" >> "${DEST}"/debug/compilation.log
 	# ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF.
 	# Check: https://github.com/armbian/build/issues/1157
-	eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$toolchain2:$PATH \
+	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
 		'make ENABLE_BACKTRACE="0" $target_make $CTHREADS \
-		CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>>$DEST/debug/compilation.log \
+		CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>> "${DEST}"/debug/compilation.log \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling ATF..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -74,22 +80,25 @@ compile_atf()
 	[[ $(type -t atf_custom_postprocess) == function ]] && atf_custom_postprocess
 
 	local atftempdir=$SRC/.tmp/atf-${LINUXFAMILY}-${BOARD}-${BRANCH}
-	mkdir -p $atftempdir
+	mkdir -p "${atftempdir}"
 
 	# copy files to temp directory
 	for f in $target_files; do
-		local f_src=$(cut -d':' -f1 <<< $f)
+		local f_src
+		f_src=$(cut -d':' -f1 <<< "${f}")
 		if [[ $f == *:* ]]; then
-			local f_dst=$(cut -d':' -f2 <<< $f)
+			local f_dst
+			f_dst=$(cut -d':' -f2 <<< "${f}")
 		else
-			local f_dst=$(basename $f_src)
+			local f_dst
+			f_dst=$(basename "${f_src}")
 		fi
-		[[ ! -f $f_src ]] && exit_with_error "ATF file not found" "$(basename $f_src)"
-		cp $f_src $atftempdir/$f_dst
+		[[ ! -f $f_src ]] && exit_with_error "ATF file not found" "$(basename "${f_src}")"
+		cp "${f_src}" "${atftempdir}/${f_dst}"
 	done
 
 	# copy license file to pack it to u-boot package later
-	[[ -f license.md ]] && cp license.md $atftempdir/
+	[[ -f license.md ]] && cp license.md "${atftempdir}"/
 }
 
 
@@ -100,34 +109,39 @@ compile_uboot()
 	# not optimal, but extra cleaning before overlayfs_wrapper should keep sources directory clean
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
-		(cd $SRC/cache/sources/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
+		(cd "${SRC}/cache/sources/${BOOTSOURCEDIR}"; make clean > /dev/null 2>&1)
 	fi
 
 	if [[ $USE_OVERLAYFS == yes ]]; then
-		local ubootdir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$BOOTSOURCEDIR" "u-boot_${LINUXFAMILY}_${BRANCH}")
+		local ubootdir
+		ubootdir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$BOOTSOURCEDIR" "u-boot_${LINUXFAMILY}_${BRANCH}")
 	else
 		local ubootdir="$SRC/cache/sources/$BOOTSOURCEDIR"
 	fi
-	cd "$ubootdir"
+	cd "${ubootdir}" || exit
 
 	# read uboot version
-	local version=$(grab_version "$ubootdir")
+	local version hash
+	version=$(grab_version "$ubootdir")
+	hash=$(git --git-dir="$ubootdir"/.git rev-parse HEAD)
 
 	display_alert "Compiling u-boot" "$version" "info"
 
-	local toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")
+	local toolchain
+	toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER}gcc $UBOOT_USE_GCC"
 
 	if [[ -n $UBOOT_TOOLCHAIN2 ]]; then
-		local toolchain2_type=$(cut -d':' -f1 <<< $UBOOT_TOOLCHAIN2)
-		local toolchain2_ver=$(cut -d':' -f2 <<< $UBOOT_TOOLCHAIN2)
-		local toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
+		local toolchain2_type toolchain2_ver toolchain2
+		toolchain2_type=$(cut -d':' -f1 <<< "${UBOOT_TOOLCHAIN2}")
+		toolchain2_ver=$(cut -d':' -f2 <<< "${UBOOT_TOOLCHAIN2}")
+		toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
 		[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
 	fi
 
 
-	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval env PATH=$toolchain:$toolchain2:$PATH ${UBOOT_COMPILER}gcc -dumpversion)" "info"
-	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH=$toolchain:$toolchain2:$PATH ${toolchain2_type}gcc -dumpversion)" "info"
+	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${UBOOT_COMPILER}gcc" -dumpversion)" "info"
+	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${toolchain2_type}gcc" -dumpversion)" "info"
 
 	# create directory structure for the .deb package
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
@@ -136,16 +150,18 @@ compile_uboot()
 
 	# process compilation for one or multiple targets
 	while read -r target; do
-		local target_make=$(cut -d';' -f1 <<< $target)
-		local target_patchdir=$(cut -d';' -f2 <<< $target)
-		local target_files=$(cut -d';' -f3 <<< $target)
+		local target_make target_patchdir target_files
+		target_make=$(cut -d';' -f1 <<< "${target}")
+		target_patchdir=$(cut -d';' -f2 <<< "${target}")
+		target_files=$(cut -d';' -f3 <<< "${target}")
 
-		display_alert "Checking out sources"
+		# needed for multiple targets and for calling compile_uboot directly
+		display_alert "Checking out to clean sources"
 		git checkout -f -q HEAD
 
 		if [[ $CLEAN_LEVEL == *make* ]]; then
 			display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
-			(cd $SRC/cache/sources/$BOOTSOURCEDIR; make clean > /dev/null 2>&1)
+			(cd "${SRC}/cache/sources/${BOOTSOURCEDIR}"; make clean > /dev/null 2>&1)
 		fi
 
 		advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
@@ -155,13 +171,13 @@ compile_uboot()
 
 		if [[ -n $ATFSOURCE ]]; then
 			local atftempdir=$SRC/.tmp/atf-${LINUXFAMILY}-${BOARD}-${BRANCH}
-			cp -Rv $atftempdir/*.bin .
+			cp -Rv "${atftempdir}"/*.bin .
 		fi
 
-		echo -e "\n\t== u-boot ==\n" >>$DEST/debug/compilation.log
-		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$toolchain2:$PATH \
+		echo -e "\n\t== u-boot ==\n" >> "${DEST}"/debug/compilation.log
+		eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
 			'make $CTHREADS $BOOTCONFIG \
-			CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>>$DEST/debug/compilation.log \
+			CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>> "${DEST}"/debug/compilation.log \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
@@ -183,7 +199,7 @@ compile_uboot()
 
 		fi
 
-		[[ -f tools/logos/udoo.bmp ]] && cp $SRC/packages/blobs/splash/udoo.bmp tools/logos/udoo.bmp
+		[[ -f tools/logos/udoo.bmp ]] && cp "${SRC}"/packages/blobs/splash/udoo.bmp tools/logos/udoo.bmp
 		touch .scmversion
 
 		# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
@@ -194,10 +210,10 @@ compile_uboot()
 		cross_compile="CROSS_COMPILE=$CCACHE $UBOOT_COMPILER";
 		[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe"; # empty parameter is not allowed
 
-		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$toolchain2:$PATH \
+		eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
 			'make $target_make $CTHREADS \
-			"${cross_compile}"' 2>>$DEST/debug/compilation.log \
-			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+			"${cross_compile}"' 2>>"${DEST}"/debug/compilation.log \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a "${DEST}"/debug/compilation.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
@@ -207,19 +223,22 @@ compile_uboot()
 
 		# copy files to build directory
 		for f in $target_files; do
-			local f_src=$(cut -d':' -f1 <<< $f)
+			local f_src
+			f_src=$(cut -d':' -f1 <<< "${f}")
 			if [[ $f == *:* ]]; then
-				local f_dst=$(cut -d':' -f2 <<< $f)
+				local f_dst
+				f_dst=$(cut -d':' -f2 <<< "${f}")
 			else
-				local f_dst=$(basename $f_src)
+				local f_dst
+				f_dst=$(basename "${f_src}")
 			fi
-			[[ ! -f $f_src ]] && exit_with_error "U-boot file not found" "$(basename $f_src)"
-			cp $f_src $SRC/.tmp/$uboot_name/usr/lib/$uboot_name/$f_dst
+			[[ ! -f $f_src ]] && exit_with_error "U-boot file not found" "$(basename "${f_src}")"
+			cp "${f_src}" "${SRC}/.tmp/${uboot_name}/usr/lib/${uboot_name}/${f_dst}"
 		done
 	done <<< "$UBOOT_TARGET_MAP"
 
 	# declare -f on non-defined function does not do anything
-	cat <<-EOF > $SRC/.tmp/$uboot_name/usr/lib/u-boot/platform_install.sh
+	cat <<-EOF > "${SRC}/.tmp/${uboot_name}/usr/lib/u-boot/platform_install.sh"
 	DIR=/usr/lib/$uboot_name
 	$(declare -f write_uboot_platform)
 	$(declare -f write_uboot_platform_mtd)
@@ -227,7 +246,7 @@ compile_uboot()
 	EOF
 
 	# set up control file
-	cat <<-EOF > $SRC/.tmp/$uboot_name/DEBIAN/control
+	cat <<-EOF > "${SRC}/.tmp/${uboot_name}/DEBIAN/control"
 	Package: linux-u-boot-${BOARD}-${BRANCH}
 	Version: $REVISION
 	Architecture: $ARCH
@@ -243,35 +262,40 @@ compile_uboot()
 
 	# copy config file to the package
 	# useful for FEL boot with overlayfs_wrapper
-	[[ -f .config && -n $BOOTCONFIG ]] && cp .config $SRC/.tmp/$uboot_name/usr/lib/u-boot/$BOOTCONFIG
+	[[ -f .config && -n $BOOTCONFIG ]] && cp .config "${SRC}/.tmp/${uboot_name}/usr/lib/u-boot/${BOOTCONFIG}"
 	# copy license files from typical locations
-	[[ -f COPYING ]] && cp COPYING $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE
-	[[ -f Licenses/README ]] && cp Licenses/README $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE
-	[[ -n $atftempdir && -f $atftempdir/license.md ]] && cp $atftempdir/license.md $SRC/.tmp/$uboot_name/usr/lib/u-boot/LICENSE.atf
+	[[ -f COPYING ]] && cp COPYING "${SRC}/.tmp/${uboot_name}/usr/lib/u-boot/LICENSE"
+	[[ -f Licenses/README ]] && cp Licenses/README "${SRC}/.tmp/${uboot_name}/usr/lib/u-boot/LICENSE"
+	[[ -n $atftempdir && -f $atftempdir/license.md ]] && cp "${atftempdir}/license.md" "${SRC}/.tmp/${uboot_name}/usr/lib/u-boot/LICENSE.atf"
 
 	display_alert "Building deb" "${uboot_name}.deb" "info"
-	fakeroot dpkg-deb -b $SRC/.tmp/$uboot_name $SRC/.tmp/${uboot_name}.deb >> $DEST/debug/output.log 2>&1
-	rm -rf $SRC/.tmp/$uboot_name
-	[[ -n $$atftempdir ]] && rm -rf $atftempdir
+	fakeroot dpkg-deb -b "${SRC}/.tmp/${uboot_name}" "${SRC}/.tmp/${uboot_name}.deb" >> "${DEST}"/debug/output.log 2>&1
+	rm -rf "${SRC}/.tmp/${uboot_name}"
+	[[ -n $atftempdir ]] && rm -rf "${atftempdir}"
 
 	[[ ! -f $SRC/.tmp/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
-	mv $SRC/.tmp/${uboot_name}.deb ${DEB_STORAGE}/
+	mv "${SRC}/.tmp/${uboot_name}.deb" "${DEB_STORAGE}/"
+
+	# store git hash to the file
+#	echo $hash > ${SRC}/cache/hash/${CHOSEN_UBOOT}.githash
+#	find "${SRC}/patch/u-boot/${BOOTPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | git hash-object --stdin >> "${SRC}/cache/hash/${CHOSEN_UBOOT}.githash"
 }
 
 compile_kernel()
 {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"
-		(cd $SRC/cache/sources/$LINUXSOURCEDIR; make ARCH=$ARCHITECTURE clean >/dev/null 2>&1)
+		(cd "${SRC}/cache/sources/${LINUXSOURCEDIR}"; make ARCH="${ARCHITECTURE}" clean >/dev/null 2>&1)
 	fi
 
 	if [[ $USE_OVERLAYFS == yes ]]; then
-		local kerneldir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
+		local kerneldir
+		kerneldir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
 	else
 		local kerneldir="$SRC/cache/sources/$LINUXSOURCEDIR"
 	fi
-	cd "$kerneldir"
+	cd "${kerneldir}" || exit
 
 	if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
 		sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
@@ -279,7 +303,11 @@ compile_kernel()
 	rm -f localversion
 
 	# read kernel version
-	local version=$(grab_version "$kerneldir")
+	local version hash
+	version=$(grab_version "$kerneldir")
+
+	# read kernel git hash
+	hash=$(git --git-dir="$kerneldir"/.git rev-parse HEAD)
 
 	# build 3rd party drivers
 	compilation_prepare
@@ -290,80 +318,85 @@ compile_kernel()
         [[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
 
         # re-read kernel version after patching
-        local version=$(grab_version "$kerneldir")
+        local version
+        version=$(grab_version "$kerneldir")
 
 	# create linux-source package - with already patched sources
 	local sources_pkg_dir=$SRC/.tmp/${CHOSEN_KSRC}_${REVISION}_all
-	rm -rf ${sources_pkg_dir}
-	mkdir -p $sources_pkg_dir/usr/src/ $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY} $sources_pkg_dir/DEBIAN
+	rm -rf "${sources_pkg_dir}"
+	mkdir -p "${sources_pkg_dir}"/usr/src/ "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}" "${sources_pkg_dir}"/DEBIAN
 
 	if [[ $BUILD_KSRC != no ]]; then
 		display_alert "Compressing sources for the linux-source package"
 		tar cp --directory="$kerneldir" --exclude='./.git/' --owner=root . \
-			 | pv -p -b -r -s $(du -sb "$kerneldir" --exclude=='./.git/' | cut -f1) \
-			| pixz -4 > $sources_pkg_dir/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz
-		cp COPYING $sources_pkg_dir/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE
+			 | pv -p -b -r -s "$(du -sb "$kerneldir" --exclude=='./.git/' | cut -f1)" \
+			| pixz -4 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz"
+		cp COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
 	fi
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
-	local toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
+	local toolchain
+	toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
 
-	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval env PATH=$toolchain:$PATH ${KERNEL_COMPILER}gcc -dumpversion)" "info"
+	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER}gcc" -dumpversion)" "info"
 
 	# copy kernel config
-	if [[ $KERNEL_KEEP_CONFIG == yes && -f $DEST/config/$LINUXCONFIG.config ]]; then
-		display_alert "Using previous kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
-		cp $DEST/config/$LINUXCONFIG.config .config
+	if [[ $KERNEL_KEEP_CONFIG == yes && -f "${DEST}"/config/$LINUXCONFIG.config ]]; then
+		display_alert "Using previous kernel config" "${DEST}/config/$LINUXCONFIG.config" "info"
+		cp "${DEST}/config/${LINUXCONFIG}.config" .config
 	else
 		if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
-			cp $USERPATCHES_PATH/$LINUXCONFIG.config .config
+			cp "${USERPATCHES_PATH}/${LINUXCONFIG}.config" .config
 		else
 			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
-			cp $SRC/config/kernel/$LINUXCONFIG.config .config
+			cp "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
 		fi
 	fi
 
 	# hack for OdroidXU4. Copy firmare files
 	if [[ $BOARD == odroidxu4 ]]; then
-		mkdir -p $SRC/cache/sources/$LINUXSOURCEDIR/firmware/edid
-		cp $SRC/packages/blobs/odroidxu4/*.bin $SRC/cache/sources/$LINUXSOURCEDIR/firmware/edid
+		mkdir -p "${SRC}/cache/sources/${LINUXSOURCEDIR}/firmware/edid"
+		cp "${SRC}"/packages/blobs/odroidxu4/*.bin "${SRC}/cache/sources/${LINUXSOURCEDIR}/firmware/edid"
 	fi
 
 	# hack for deb builder. To pack what's missing in headers pack.
-	cp $SRC/patch/misc/headers-debian-byteshift.patch /tmp
+	cp "${SRC}"/patch/misc/headers-debian-byteshift.patch /tmp
 
 	if [[ $KERNEL_CONFIGURE != yes ]]; then
 		if [[ $BRANCH == default ]]; then
-			eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
+			eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 				'make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" silentoldconfig'
 		else
 			# TODO: check if required
-			eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
+			eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 				'make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" olddefconfig'
 		fi
 	else
-		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
+		eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 			'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" oldconfig'
-		eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
+		eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 			'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" ${KERNEL_MENUCONFIG:-menuconfig}'
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Error kernel menuconfig failed"
+
 		# store kernel config in easily reachable place
 		display_alert "Exporting new kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
-		cp .config $DEST/config/$LINUXCONFIG.config
+		cp .config "${DEST}/config/${LINUXCONFIG}.config"
 		# export defconfig too if requested
 		if [[ $KERNEL_EXPORT_DEFCONFIG == yes ]]; then
-			eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
+			eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 				'make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" savedefconfig'
-			[[ -f defconfig ]] && cp defconfig $DEST/config/$LINUXCONFIG.defconfig
+			[[ -f defconfig ]] && cp defconfig "${DEST}/config/${LINUXCONFIG}.defconfig"
 		fi
 	fi
 
-	xz < .config > $sources_pkg_dir/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz
+	xz < .config > "${sources_pkg_dir}/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz"
 
-	echo -e "\n\t== kernel ==\n" >>$DEST/debug/compilation.log
-	eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
+	echo -e "\n\t== kernel ==\n" >> "${DEST}"/debug/compilation.log
+	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 		'make $CTHREADS ARCH=$ARCHITECTURE \
 		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" \
 		$SRC_LOADADDR \
@@ -379,7 +412,7 @@ compile_kernel()
 	fi
 
 	# different packaging for 4.3+
-	if linux-version compare $version ge 4.3; then
+	if linux-version compare "${version}" ge 4.3; then
 		local kernel_packing="bindeb-pkg"
 	else
 		local kernel_packing="deb-pkg"
@@ -388,8 +421,8 @@ compile_kernel()
 	display_alert "Creating packages"
 
 	# produce deb packages: image, headers, firmware, dtb
-	echo -e "\n\t== deb packages: image, headers, firmware, dtb ==\n" >>$DEST/debug/compilation.log
-	eval CCACHE_BASEDIR="$(pwd)" env PATH=$toolchain:$PATH \
+	echo -e "\n\t== deb packages: image, headers, firmware, dtb ==\n" >> "${DEST}"/debug/compilation.log
+	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 		'make -j1 $kernel_packing \
 		KDEB_PKGVERSION=$REVISION \
 		BRANCH=$BRANCH \
@@ -403,7 +436,7 @@ compile_kernel()
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-	cat <<-EOF > $sources_pkg_dir/DEBIAN/control
+	cat <<-EOF > "${sources_pkg_dir}"/DEBIAN/control
 	Package: linux-source-${version}-${BRANCH}-${LINUXFAMILY}
 	Version: ${version}-${BRANCH}-${LINUXFAMILY}+${REVISION}
 	Architecture: all
@@ -417,15 +450,23 @@ compile_kernel()
 	EOF
 
 	if [[ $BUILD_KSRC != no ]]; then
-		fakeroot dpkg-deb -z0 -b $sources_pkg_dir ${sources_pkg_dir}.deb
-		mv ${sources_pkg_dir}.deb ${DEB_STORAGE}/
+		fakeroot dpkg-deb -z0 -b "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
+		mv "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
 	fi
-	rm -rf $sources_pkg_dir
+	rm -rf "${sources_pkg_dir}"
 
-	cd ..
+	cd .. || exit
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
-	mv *.deb ${DEB_STORAGE}/ || exit_with_error "Failed moving kernel DEBs"
+	mv ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
+
+	# store git hash to the file
+	echo "${hash}" > "${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
+	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
+	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
+	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n')
+	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
+	echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin >> "${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 }
 
 
@@ -440,22 +481,22 @@ compile_firmware()
 		plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
 	fi
 	local plugin_dir="armbian-firmware${FULL}"
-	[[ -d $SRC/cache/sources/$plugin_dir ]] && rm -rf $SRC/cache/sources/$plugin_dir
-	mkdir -p $SRC/cache/sources/$plugin_dir/lib/firmware
+	[[ -d "${SRC}/cache/sources/${plugin_dir}" ]] && rm -rf "${SRC}/cache/sources/${plugin_dir}"
+	mkdir -p "${SRC}/cache/sources/${plugin_dir}/lib/firmware"
 
 	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
 	if [[ -n $FULL ]]; then
 		fetch_from_repo "$plugin_repo" "linux-firmware-git" "branch:master"
 		# cp : create hardlinks
-		cp -alf $SRC/cache/sources/linux-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware/
+		cp -alf "${SRC}"/cache/sources/linux-firmware-git/* "${SRC}/cache/sources/${plugin_dir}/lib/firmware/"
 	fi
 	# overlay our firmware
 	# cp : create hardlinks
-	cp -alf $SRC/cache/sources/armbian-firmware-git/* $SRC/cache/sources/$plugin_dir/lib/firmware/
+	cp -alf "${SRC}"/cache/sources/armbian-firmware-git/* "${SRC}/cache/sources/${plugin_dir}/lib/firmware/"
 
 	# cleanup what's not needed for sure
-	rm -rf $SRC/cache/sources/$plugin_dir/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
-	cd $SRC/cache/sources/$plugin_dir
+	rm -rf "${SRC}/cache/sources/${plugin_dir}"/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
+	cd "${SRC}/cache/sources/${plugin_dir}" || exit
 
 	# set up control file
 	mkdir -p DEBIAN
@@ -471,12 +512,12 @@ compile_firmware()
 	Description: Linux firmware${FULL}
 	END
 
-	cd $SRC/cache/sources
+	cd "${SRC}"/cache/sources || exit
 	# pack
-	mv armbian-firmware${FULL} armbian-firmware${FULL}_${REVISION}_all
-	fakeroot dpkg -b armbian-firmware${FULL}_${REVISION}_all >> $DEST/debug/install.log 2>&1
-	mv armbian-firmware${FULL}_${REVISION}_all armbian-firmware${FULL}
-	mv armbian-firmware${FULL}_${REVISION}_all.deb ${DEB_STORAGE}/
+	mv "armbian-firmware${FULL}" "armbian-firmware${FULL}_${REVISION}_all"
+	fakeroot dpkg -b "armbian-firmware${FULL}_${REVISION}_all" >> "${DEST}"/debug/install.log 2>&1
+	mv "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
+	mv "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
 }
 
 
@@ -490,16 +531,16 @@ compile_armbian-config()
 
 	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
 
-	mkdir -p $tmpdir/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
+	mkdir -p "${tmpdir}"/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
 
 	# set up control file
-	cat <<-END > $tmpdir/DEBIAN/control
+	cat <<-END > "${tmpdir}"/DEBIAN/control
 	Package: armbian-config
 	Version: $REVISION
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Replaces: armbian-bsp
-	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, iptables, resolvconf, pv, \
+	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, pv, \
 	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common
 	Recommends: armbian-bsp
 	Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
@@ -508,20 +549,20 @@ compile_armbian-config()
 	Description: Armbian configuration utility
 	END
 
-	install -m 755 $SRC/cache/sources/armbian-config/scripts/tv_grab_file $tmpdir/usr/bin/tv_grab_file
-	install -m 755 $SRC/cache/sources/armbian-config/debian-config $tmpdir/usr/sbin/armbian-config
-	install -m 644 $SRC/cache/sources/armbian-config/debian-config-jobs $tmpdir/usr/lib/armbian-config/jobs.sh
-	install -m 644 $SRC/cache/sources/armbian-config/debian-config-submenu $tmpdir/usr/lib/armbian-config/submenu.sh
-	install -m 644 $SRC/cache/sources/armbian-config/debian-config-functions $tmpdir/usr/lib/armbian-config/functions.sh
-	install -m 644 $SRC/cache/sources/armbian-config/debian-config-functions-network $tmpdir/usr/lib/armbian-config/functions-network.sh
-	install -m 755 $SRC/cache/sources/armbian-config/softy $tmpdir/usr/sbin/softy
+	install -m 755 "${SRC}"/cache/sources/armbian-config/scripts/tv_grab_file "${tmpdir}"/usr/bin/tv_grab_file
+	install -m 755 "${SRC}"/cache/sources/armbian-config/debian-config "${tmpdir}"/usr/sbin/armbian-config
+	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-jobs "${tmpdir}"/usr/lib/armbian-config/jobs.sh
+	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-submenu "${tmpdir}"/usr/lib/armbian-config/submenu.sh
+	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-functions "${tmpdir}"/usr/lib/armbian-config/functions.sh
+	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-functions-network "${tmpdir}"/usr/lib/armbian-config/functions-network.sh
+	install -m 755 "${SRC}"/cache/sources/armbian-config/softy "${tmpdir}"/usr/sbin/softy
 	# fallback to replace armbian-config in BSP
-	ln -sf /usr/sbin/armbian-config $tmpdir/usr/bin/armbian-config
-	ln -sf /usr/sbin/softy $tmpdir/usr/bin/softy
+	ln -sf /usr/sbin/armbian-config "${tmpdir}"/usr/bin/armbian-config
+	ln -sf /usr/sbin/softy "${tmpdir}"/usr/bin/softy
 
-	fakeroot dpkg -b ${tmpdir} >/dev/null
-	mv ${tmpdir}.deb ${DEB_STORAGE}/
-	rm -rf $tmpdir
+	fakeroot dpkg -b "${tmpdir}" >/dev/null
+	mv "${tmpdir}.deb" "${DEB_STORAGE}/"
+	rm -rf "${tmpdir}"
 }
 
 
@@ -530,7 +571,7 @@ compile_armbian-config()
 compile_sunxi_tools()
 {
 	# Compile and install only if git commit hash changed
-	cd $SRC/cache/sources/sunxi-tools
+	cd "${SRC}"/cache/sources/sunxi-tools || exit
 	# need to check if /usr/local/bin/sunxi-fexc to detect new Docker containers with old cached sources
 	if [[ ! -f .commit_id || $(git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/sunxi-fexc ]]; then
 		display_alert "Compiling" "sunxi-tools" "info"
@@ -545,7 +586,7 @@ compile_sunxi_tools()
 install_rkbin_tools()
 {
 	# install only if git commit hash changed
-	cd $SRC/cache/sources/rkbin-tools
+	cd "${SRC}"/cache/sources/rkbin-tools || exit
 	# need to check if /usr/local/bin/sunxi-fexc to detect new Docker containers with old cached sources
 	if [[ ! -f .commit_id || $(git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/loaderimage ]]; then
 		display_alert "Installing" "rkbin-tools" "info"
@@ -559,10 +600,10 @@ install_rkbin_tools()
 grab_version()
 {
 	local ver=()
-	ver[0]=$(grep "^VERSION" $1/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
-	ver[1]=$(grep "^PATCHLEVEL" $1/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
-	ver[2]=$(grep "^SUBLEVEL" $1/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
-	ver[3]=$(grep "^EXTRAVERSION" $1/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^-rc[[:digit:]]+')
+	ver[0]=$(grep "^VERSION" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
+	ver[1]=$(grep "^PATCHLEVEL" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
+	ver[2]=$(grep "^SUBLEVEL" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
+	ver[3]=$(grep "^EXTRAVERSION" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^-rc[[:digit:]]+')
 	echo "${ver[0]:-0}${ver[1]:+.${ver[1]}}${ver[2]:+.${ver[2]}}${ver[3]}"
 }
 
@@ -577,19 +618,22 @@ find_toolchain()
 	local dist=10
 	local toolchain=""
 	# extract target major.minor version from expression
-	local target_ver=$(grep -oE "[[:digit:]]+\.[[:digit:]]" <<< "$expression")
-	for dir in $SRC/cache/toolchains/*/; do
+	local target_ver
+	target_ver=$(grep -oE "[[:digit:]]+\.[[:digit:]]" <<< "$expression")
+	for dir in "${SRC}"/cache/toolchains/*/; do
 		# check if is a toolchain for current $ARCH
 		[[ ! -f ${dir}bin/${compiler}gcc ]] && continue
 		# get toolchain major.minor version
-		local gcc_ver=$(${dir}bin/${compiler}gcc -dumpversion | grep -oE "^[[:digit:]]+\.[[:digit:]]")
+		local gcc_ver
+		gcc_ver=$("${dir}bin/${compiler}gcc" -dumpversion | grep -oE "^[[:digit:]]+\.[[:digit:]]")
 		# check if toolchain version satisfies requirement
 		awk "BEGIN{exit ! ($gcc_ver $expression)}" >/dev/null || continue
 		# check if found version is the closest to target
 		# may need different logic here with more than 1 digit minor version numbers
 		# numbers: 3.9 > 3.10; versions: 3.9 < 3.10
 		# dpkg --compare-versions can be used here if operators are changed
-		local d=$(awk '{x = $1 - $2}{printf "%.1f\n", (x > 0) ? x : -x}' <<< "$target_ver $gcc_ver")
+		local d
+		d=$(awk '{x = $1 - $2}{printf "%.1f\n", (x > 0) ? x : -x}' <<< "$target_ver $gcc_ver")
 		if awk "BEGIN{exit ! ($d < $dist)}" >/dev/null ; then
 			dist=$d
 			toolchain=${dir}bin
@@ -597,12 +641,12 @@ find_toolchain()
 	done
 	echo "$toolchain"
 	# logging a stack of used compilers.
-	if [[ -f $DEST/debug/compiler.log ]]; then
-		if ! grep -q "$toolchain" $DEST/debug/compiler.log; then
-			echo "$toolchain" >> $DEST/debug/compiler.log;
+	if [[ -f "${DEST}"/debug/compiler.log ]]; then
+		if ! grep -q "$toolchain" "${DEST}"/debug/compiler.log; then
+			echo "$toolchain" >> "${DEST}"/debug/compiler.log;
 		fi
 	else
-			echo "$toolchain" >> $DEST/debug/compiler.log;
+			echo "$toolchain" >> "${DEST}"/debug/compiler.log;
 	fi
 }
 
@@ -655,12 +699,13 @@ advanced_patch()
 	# get patch file names
 	for dir in "${dirs[@]}"; do
 		for patch in ${dir%%:*}/*.patch; do
-			names+=($(basename $patch))
+			names+=($(basename "${patch}"))
 		done
 		# add linked patch directories
 		if [[ -d ${dir%%:*} ]]; then
-			local findlinks=$(find ${dir%%:*} -maxdepth 1 -type l -print0 2>&1 | xargs -0)
-			[[ -n $findlinks ]] && readarray -d '' links < <(find $findlinks -maxdepth 1 -type f -follow -print -iname "*.patch" -print | grep "\.patch$" | sed "s|${dir%%:*}/||g" 2>&1)
+			local findlinks
+			findlinks=$(find "${dir%%:*}" -maxdepth 1 -type l -print0 2>&1 | xargs -0)
+			[[ -n $findlinks ]] && readarray -d '' links < <(find "${findlinks}" -maxdepth 1 -type f -follow -print -iname "*.patch" -print | grep "\.patch$" | sed "s|${dir%%:*}/||g" 2>&1)
 		fi
 	done
 	# merge static and linked
@@ -694,18 +739,18 @@ process_patch_file()
 	local status=$2
 
 	# detect and remove files which patch will create
-	lsdiff -s --strip=1 $patch | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
+	lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
 
-	echo "Processing file $patch" >> $DEST/debug/patching.log
-	patch --batch --silent -p1 -N < $patch >> $DEST/debug/patching.log 2>&1
+	echo "Processing file $patch" >> "${DEST}"/debug/patching.log
+	patch --batch --silent -p1 -N < "${patch}" >> "${DEST}"/debug/patching.log 2>&1
 
 	if [[ $? -ne 0 ]]; then
-		display_alert "* $status $(basename $patch)" "failed" "wrn"
+		display_alert "* $status $(basename "${patch}")" "failed" "wrn"
 		[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
 	else
-		display_alert "* $status $(basename $patch)" "" "info"
+		display_alert "* $status $(basename "${patch}")" "" "info"
 	fi
-	echo >> $DEST/debug/patching.log
+	echo >> "${DEST}"/debug/patching.log
 }
 
 userpatch_create()
@@ -717,17 +762,38 @@ userpatch_create()
 	local patch="$DEST/patch/$1-$LINUXFAMILY-$BRANCH.patch"
 
 	# apply previous user debug mode created patches
-	[[ -f $patch ]] && display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < $patch
+	if [[ -f $patch ]]; then
+		display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < "${patch}"
+		# read title of a patch in case Git is configured
+		if [[ -n $(git config user.email) ]]; then
+			COMMIT_MESSAGE=$(cat "${patch}" | grep Subject | sed -n -e '0,/PATCH/s/.*PATCH]//p' | xargs)
+			display_alert "Patch name extracted" "$COMMIT_MESSAGE" "wrn"
+		fi
+	fi
 
 	# prompt to alter source
 	display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
 	display_alert "Press <Enter> after you are done" "waiting" "wrn"
-	read </dev/tty
+	read -r </dev/tty
 	tput cuu1
 	git add .
 	# create patch out of changes
 	if ! git diff-index --quiet --cached HEAD; then
-		git diff --staged > $patch
+		# If Git is configured, create proper patch and ask for a name
+		if [[ -n $(git config user.email) ]]; then
+			display_alert "Add / change patch name" "$COMMIT_MESSAGE" "wrn"
+			read -e -p "Patch description: " -i "$COMMIT_MESSAGE" COMMIT_MESSAGE
+			[[ -z "$COMMIT_MESSAGE" ]] && COMMIT_MESSAGE="Patching something"
+			git commit -s -m "$COMMIT_MESSAGE"
+			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com/armbian/build" > "${patch}"
+			PATCHFILE=$(git format-patch -1 HEAD)
+			rm $PATCHFILE # delete the actual file
+			# create a symlink to have a nice name ready
+			find $DEST/patch/ -type l -delete # delete any existing
+			ln -sf $patch $DEST/patch/$PATCHFILE
+		else
+			git diff --staged > "${patch}"
+		fi
 		display_alert "You will find your patch here:" "$patch" "info"
 	else
 		display_alert "No changes found, skipping patch creation" "" "wrn"
@@ -757,9 +823,10 @@ overlayfs_wrapper()
 		local srcdir="$2"
 		local description="$3"
 		mkdir -p /tmp/overlay_components/ /tmp/armbian_build/
-		local tempdir=$(mktemp -d --tmpdir="/tmp/overlay_components/")
-		local workdir=$(mktemp -d --tmpdir="/tmp/overlay_components/")
-		local mergeddir=$(mktemp -d --suffix="_$description" --tmpdir="/tmp/armbian_build/")
+		local tempdir workdir mergeddir
+		tempdir=$(mktemp -d --tmpdir="/tmp/overlay_components/")
+		workdir=$(mktemp -d --tmpdir="/tmp/overlay_components/")
+		mergeddir=$(mktemp -d --suffix="_$description" --tmpdir="/tmp/armbian_build/")
 		mount -t overlay overlay -o lowerdir="$srcdir",upperdir="$tempdir",workdir="$workdir" "$mergeddir"
 		# this is executed in a subshell, so use temp files to pass extra data outside
 		echo "$tempdir" >> /tmp/.overlayfs_wrapper_cleanup
