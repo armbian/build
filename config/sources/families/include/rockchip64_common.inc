@@ -231,6 +231,19 @@ write_uboot_platform()
 	fi
 }
 
+write_uboot_platform_mtd()
+{
+	if [[ -f $1/rkspi_loader.img ]]; then
+
+		dd if=$1/rkspi_loader.img of=$2 conv=notrunc status=none >/dev/null 2>&1
+	
+	else
+
+		echo "SPI u-boot image not found!"
+		exit 1
+
+	fi
+}
 
 setup_write_uboot_platform()
 {
