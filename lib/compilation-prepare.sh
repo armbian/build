@@ -254,6 +254,38 @@ compilation_prepare()
 
 
 
+	# Wireless drivers for Realtek 8192EU chipsets
+
+	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+
+		# attach to specifics tag or branch
+		local rtl8192euver="branch:realtek-4.4.x"
+
+		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
+
+		fetch_from_repo "https://github.com/Mange/rtl8192eu-linux-driver" "rtl8192eu" "${rtl8192euver}" "yes"
+		cd "${SRC}/cache/sources/${LINUXSOURCEDIR}" || exit
+		rm -rf "${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8192eu"
+		mkdir -p "${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8192eu/"
+		cp -R "${SRC}/cache/sources/rtl8192eu/${rtl8192euver#*:}"/{core,hal,include,os_dep,platform} \
+		"${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8192eu"
+
+		# Makefile
+		cp "${SRC}/cache/sources/rtl8192eu/${rtl8192euver#*:}/Makefile" \
+		"${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8192eu/Makefile"
+		cp "${SRC}/cache/sources/rtl8192eu/${rtl8192euver#*:}/Kconfig" \
+		"${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/rtl8192eu/Kconfig"
+
+		# Add to section Makefile
+		echo "obj-\$(CONFIG_RTL8192EU) += rtl8192eu/" >> "${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Makefile"
+		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8192eu\/Kconfig"' \
+		"${SRC}/cache/sources/${LINUXSOURCEDIR}/drivers/net/wireless/Kconfig"
+
+	fi
+
+
+
+
 	# Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
