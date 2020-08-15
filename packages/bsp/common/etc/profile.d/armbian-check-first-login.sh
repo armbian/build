@@ -286,4 +286,5 @@ if [ -f /root/.not_logged_in_yet ] && [ -n "$BASH_VERSION" ] && [ "$-" != "${-#*
 			printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
 		fi
 	fi
+	export TERM=linux
 fi
