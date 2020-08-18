@@ -335,6 +335,9 @@ install_common()
 			linux-u-boot-${BOARD}-${BRANCH} ${CHOSEN_KERNEL/image/dtb}" >> "${DEST}"/debug/install.log 2>&1
 	fi
 
+	# remove deb files
+	rm -f "${SDCARD}/root/*.deb"
+
 	# copy boot splash images
 	cp "${SRC}"/packages/blobs/splash/armbian-u-boot.bmp "${SDCARD}"/boot/boot.bmp
 
