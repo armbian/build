@@ -624,7 +624,7 @@ create_image()
 	mkdir -p $DESTIMG
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
-	if [[ $BUILD_ALL != yes ]]; then
+	if [[ -z $SEND_TO_SERVER ]]; then
 
 		if [[ $COMPRESS_OUTPUTIMAGE == "" || $COMPRESS_OUTPUTIMAGE == no ]]; then
 			COMPRESS_OUTPUTIMAGE="sha,gpg,img"
@@ -679,6 +679,17 @@ create_image()
 		rm -rf $DESTIMG
 	fi
 	display_alert "Done building" "$DEST/images/${version}.img" "info"
+
+	if [[ $BUILD_ALL == yes ]]; then
+		install -d -o igorp -g igorp -m 775 $DEST/images/${BOARD}/{archive,nightly}
+		if [[ "$BETA" == yes ]]; then
+			install ${INSTALL_PARA} $DEST/images/"${version}"* $DEST/images/"${BOARD}"/nightly
+			rm $DEST/images/"${version}"*
+		else
+			install ${INSTALL_PARA} $DEST/images/"${version}"* $DEST/images/"${BOARD}"/archive
+			rm $DEST/images/"${version}"*
+		fi
+	fi
 
 	# call custom post build hook
 	[[ $(type -t post_build_image) == function ]] && post_build_image "$DEST/images/${version}.img"
