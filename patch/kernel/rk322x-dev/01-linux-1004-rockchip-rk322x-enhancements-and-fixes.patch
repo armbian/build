@@ -1,0 +1,383 @@
+diff --git a/drivers/soc/rockchip/pm_domains.c b/drivers/soc/rockchip/pm_domains.c
+index 54eb6cfc5d5b..c6b33f7c43df 100644
+--- a/drivers/soc/rockchip/pm_domains.c
++++ b/drivers/soc/rockchip/pm_domains.c
+@@ -71,6 +71,7 @@ struct rockchip_pm_domain {
+ 	struct regmap **qos_regmap;
+ 	u32 *qos_save_regs[MAX_QOS_REGS_NUM];
+ 	int num_clks;
++	bool is_ignore_pwr;
+ 	struct clk_bulk_data *clks;
+ };
+ 
+@@ -330,6 +331,9 @@ static int rockchip_pd_power_on(struct generic_pm_domain *domain)
+ {
+ 	struct rockchip_pm_domain *pd = to_rockchip_pd(domain);
+ 
++	if (pd->is_ignore_pwr)
++		return 0;
++
+ 	return rockchip_pd_power(pd, true);
+ }
+ 
+@@ -337,6 +341,9 @@ static int rockchip_pd_power_off(struct generic_pm_domain *domain)
+ {
+ 	struct rockchip_pm_domain *pd = to_rockchip_pd(domain);
+ 
++	if (pd->is_ignore_pwr)
++		return 0;
++
+ 	return rockchip_pd_power(pd, false);
+ }
+ 
+@@ -416,6 +423,9 @@ static int rockchip_pm_add_one_domain(struct rockchip_pmu *pmu,
+ 	pd->info = pd_info;
+ 	pd->pmu = pmu;
+ 
++	if (!pd_info->pwr_mask)
++		pd->is_ignore_pwr = true;
++
+ 	pd->num_clks = of_clk_get_parent_count(node);
+ 	if (pd->num_clks > 0) {
+ 		pd->clks = devm_kcalloc(pmu->dev, pd->num_clks,
+@@ -566,6 +576,7 @@ static int rockchip_pm_add_subdomain(struct rockchip_pmu *pmu,
+ {
+ 	struct device_node *np;
+ 	struct generic_pm_domain *child_domain, *parent_domain;
++	struct rockchip_pm_domain *child_pd, *parent_pd;
+ 	int error;
+ 
+ 	for_each_child_of_node(parent, np) {
+@@ -606,6 +617,18 @@ static int rockchip_pm_add_subdomain(struct rockchip_pmu *pmu,
+ 				parent_domain->name, child_domain->name);
+ 		}
+ 
++		/*
++		 * If child_pd doesn't do idle request or power on/off,
++		 * parent_pd may fail to do power on/off, so if parent_pd
++		 * need to power on/off, child_pd can't ignore to do idle
++		 * request and power on/off.
++		 */
++		child_pd = to_rockchip_pd(child_domain);
++		parent_pd = to_rockchip_pd(parent_domain);
++		if (!parent_pd->is_ignore_pwr)
++			child_pd->is_ignore_pwr = false;
++
++
+ 		rockchip_pm_add_subdomain(pmu, np);
+ 	}
+ 
+-- 
+2.17.1
+
+From c94b1272290bafced10d79b7da1525466e8c843b Mon Sep 17 00:00:00 2001
+From: "Huang, Tao" <huangtao@rock-chips.com>
+Date: Thu, 28 Jul 2016 10:59:22 +0800
+Subject: [PATCH] power: reset: reboot-mode: fix normal mode setup
+
+If cmd is empty in get_reboot_mode_magic, we should return normal magic.
+
+Change-Id: I10931adc49e33f72ae73d9471159f82cc02ff0c0
+Signed-off-by: Huang, Tao <huangtao@rock-chips.com>
+---
+ drivers/power/reset/reboot-mode.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/power/reset/reboot-mode.c b/drivers/power/reset/reboot-mode.c
+index b4076b10b893..47f9a162807d 100644
+--- a/drivers/power/reset/reboot-mode.c
++++ b/drivers/power/reset/reboot-mode.c
+@@ -26,7 +26,7 @@ static unsigned int get_reboot_mode_magic(struct reboot_mode_driver *reboot,
+ 	int magic = 0;
+ 	struct mode_info *info;
+ 
+-	if (!cmd)
++	if (!cmd || !cmd[0])
+ 		cmd = normal;
+ 
+ 	list_for_each_entry(info, &reboot->head, list) {
+-- 
+2.17.1
+
+
+From be9674f270c97399f9f6b1facb11e93eced6ec34 Mon Sep 17 00:00:00 2001
+From: Andy Yan <andy.yan@rock-chips.com>
+Date: Thu, 8 Dec 2016 16:58:07 +0800
+Subject: [PATCH] power: reset: reboot-mode: treat unrecognized reboot mode as
+ normal mode
+
+Some bootloader will check the reboot mode to take different action, so
+we treat unrecognized reboot mode as normal mode to prevent the system
+run into abnormal case.
+
+Change-Id: I88063a5b41e4e645443229fa490b2b55db5ccf27
+Signed-off-by: Andy Yan <andy.yan@rock-chips.com>
+---
+ drivers/power/reset/reboot-mode.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/power/reset/reboot-mode.c b/drivers/power/reset/reboot-mode.c
+index 47f9a162807d..99bf938404e3 100644
+--- a/drivers/power/reset/reboot-mode.c
++++ b/drivers/power/reset/reboot-mode.c
+@@ -47,6 +47,8 @@ static int reboot_mode_notify(struct notifier_block *this,
+ 
+ 	reboot = container_of(this, struct reboot_mode_driver, reboot_notifier);
+ 	magic = get_reboot_mode_magic(reboot, cmd);
++	if (!magic)
++		magic = get_reboot_mode_magic(reboot, NULL);
+ 	if (magic)
+ 		reboot->write(reboot, magic);
+ 
+-- 
+2.17.1
+
+From 7c097120eb21a9bd15ab63c0ac60ffd5cba902b2 Mon Sep 17 00:00:00 2001
+From: Alex Bee <knaerzche@gmail.com>
+Date: Fri, 24 Apr 2020 13:01:07 +0200
+Subject: [PATCH] sound: soc: rockchip: use rouned rate for i2s
+
+---
+ sound/soc/rockchip/rockchip_i2s.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/sound/soc/rockchip/rockchip_i2s.c b/sound/soc/rockchip/rockchip_i2s.c
+index 61c984f10d8e..efca853eba6b 100644
+--- a/sound/soc/rockchip/rockchip_i2s.c
++++ b/sound/soc/rockchip/rockchip_i2s.c
+@@ -279,10 +279,13 @@ static int rockchip_i2s_hw_params(struct snd_pcm_substream *substream,
+ 	if (i2s->is_master_mode) {
+ 		mclk_rate = clk_get_rate(i2s->mclk);
+ 		bclk_rate = 2 * 32 * params_rate(params);
+-		if (bclk_rate && mclk_rate % bclk_rate)
++		if (!bclk_rate) {
++			dev_err(i2s->dev, "invalid bclk_rate: %d\n",
++				bclk_rate);
+ 			return -EINVAL;
++		}
+ 
+-		div_bclk = mclk_rate / bclk_rate;
++		div_bclk = DIV_ROUND_CLOSEST(mclk_rate, bclk_rate);
+ 		div_lrck = bclk_rate / params_rate(params);
+ 		regmap_update_bits(i2s->regmap, I2S_CKR,
+ 				   I2S_CKR_MDIV_MASK,
+@@ -312,6 +315,8 @@ static int rockchip_i2s_hw_params(struct snd_pcm_substream *substream,
+ 		val |= I2S_TXCR_VDW(32);
+ 		break;
+ 	default:
++		dev_err(i2s->dev, "invalid format: %d\n",
++			params_format(params));
+ 		return -EINVAL;
+ 	}
+ 
+-- 
+2.17.1
+
+
+From 4102c5b07d8610c729d577612c1df52737fb9a0f Mon Sep 17 00:00:00 2001
+From: Alex Bee <knaerzche@gmail.com>
+Date: Fri, 24 Apr 2020 09:08:44 +0200
+Subject: [PATCH] phy: rockchip: hdmi: readout hdmi phy flag for RK3228 HDMI
+ phys
+
+Some RK3228 HDMI phys only get a stable pll on frequencies higher 337,5 MHz.
+This is defined in a flag in efuse of those devices.
+---
+ arch/arm/boot/dts/rk322x.dtsi                 |  7 ++++
+ drivers/phy/rockchip/phy-rockchip-inno-hdmi.c | 38 ++++++++++++++++++-
+ 2 files changed, 43 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm/boot/dts/rk322x.dtsi b/arch/arm/boot/dts/rk322x.dtsi
+index 2ed8aa7ae520..8c50dcb0e9f1 100644
+--- a/arch/arm/boot/dts/rk322x.dtsi
++++ b/arch/arm/boot/dts/rk322x.dtsi
+@@ -402,6 +402,11 @@
+ 		cpu_leakage: cpu_leakage@17 {
+ 			reg = <0x17 0x1>;
+ 		};
++
++		hdmi_phy_flag: hdmi-phy-flag@1d {
++			reg = <0x1d 0x1>;
++			bits = <1 1>;
++		};
+ 	};
+ 
+ 	i2c0: i2c@11050000 {
+@@ -628,6 +633,8 @@
+ 		clock-names = "sysclk", "refoclk", "refpclk";
+ 		#clock-cells = <0>;
+ 		clock-output-names = "hdmiphy_phy";
++		nvmem-cells = <&hdmi_phy_flag>;
++		nvmem-cell-names = "hdmi-phy-flag";
+ 		#phy-cells = <0>;
+ 		status = "disabled";
+ 	};
+diff --git a/drivers/phy/rockchip/phy-rockchip-inno-hdmi.c b/drivers/phy/rockchip/phy-rockchip-inno-hdmi.c
+index bb8bdf5e3301..0c7a97352714 100644
+--- a/drivers/phy/rockchip/phy-rockchip-inno-hdmi.c
++++ b/drivers/phy/rockchip/phy-rockchip-inno-hdmi.c
+@@ -237,6 +237,9 @@ struct inno_hdmi_phy {
+ 	struct clk *refoclk;
+ 	struct clk *refpclk;
+ 
++	/* phy_flag flag */
++	bool phy_flag;
++
+ 	/* platform data */
+ 	const struct inno_hdmi_phy_drv_data *plat_data;
+ 	int chip_version;
+@@ -347,6 +350,7 @@ static const struct pre_pll_config pre_pll_cfg_table[] = {
+ static const struct post_pll_config post_pll_cfg_table[] = {
+ 	{33750000,  1, 40, 8, 1},
+ 	{33750000,  1, 80, 8, 2},
++	{33750000,  1, 10, 2, 4},
+ 	{74250000,  1, 40, 8, 1},
+ 	{74250000, 18, 80, 8, 2},
+ 	{148500000, 2, 40, 4, 3},
+@@ -497,8 +501,11 @@ static int inno_hdmi_phy_power_on(struct phy *phy)
+ 		return -EINVAL;
+ 
+ 	for (; cfg->tmdsclock != 0; cfg++)
+-		if (tmdsclock <= cfg->tmdsclock &&
+-		    cfg->version & inno->chip_version)
++		if (((!inno->phy_flag || tmdsclock > 33750000)
++		     && tmdsclock <= cfg->tmdsclock
++		     && cfg->version & inno->chip_version) ||
++		    (inno->phy_flag && tmdsclock <= 33750000
++		     && cfg->version & 4))
+ 			break;
+ 
+ 	for (; phy_cfg->tmdsclock != 0; phy_cfg++)
+@@ -909,6 +916,10 @@ static int inno_hdmi_phy_clk_register(struct inno_hdmi_phy *inno)
+ 
+ static int inno_hdmi_phy_rk3228_init(struct inno_hdmi_phy *inno)
+ {
++	struct nvmem_cell *cell;
++	unsigned char *efuse_buf;
++	size_t len;
++
+ 	/*
+ 	 * Use phy internal register control
+ 	 * rxsense/poweron/pllpd/pdataen signal.
+@@ -923,7 +934,28 @@ static int inno_hdmi_phy_rk3228_init(struct inno_hdmi_phy *inno)
+ 	inno_update_bits(inno, 0xaa, RK3228_POST_PLL_CTRL_MANUAL,
+ 			 RK3228_POST_PLL_CTRL_MANUAL);
+ 
++
+ 	inno->chip_version = 1;
++	inno->phy_flag = false;
++
++	cell = nvmem_cell_get(inno->dev, "hdmi-phy-flag");
++	if (IS_ERR(cell)) {
++		if (PTR_ERR(cell) == -EPROBE_DEFER)
++			return -EPROBE_DEFER;
++
++		return 0;
++	}
++
++	efuse_buf = nvmem_cell_read(cell, &len);
++	nvmem_cell_put(cell);
++
++	if (IS_ERR(efuse_buf))
++		return 0;
++	if (len == 1)
++		inno->phy_flag = (efuse_buf[0] & BIT(1)) ? true : false;
++	kfree(efuse_buf);
++
++	dev_info(inno->dev, "phy_flag is: %d\n", inno->phy_flag);
+ 
+ 	return 0;
+ }
+@@ -1023,6 +1055,8 @@ static int inno_hdmi_phy_rk3328_init(struct inno_hdmi_phy *inno)
+ 
+ 	/* try to read the chip-version */
+ 	inno->chip_version = 1;
++	inno->phy_flag = false;
++
+ 	cell = nvmem_cell_get(inno->dev, "cpu-version");
+ 	if (IS_ERR(cell)) {
+ 		if (PTR_ERR(cell) == -EPROBE_DEFER)
+-- 
+2.17.1
+
+
+From fe30b024a7a7d6261dff0b87c2aec270ad530c39 Mon Sep 17 00:00:00 2001
+From: Alex Bee <knaerzche@gmail.com>
+Date: Fri, 24 Apr 2020 14:23:38 +0200
+Subject: [PATCH] drm: rockchip: Use 2nd RK3228 plane as an overlay
+
+As per datasheet the second plane of RK3228 vop is an overlay window. For
+the missing implementation of hardware cursor it is missued as such (as
+already pointed in comment for RK3288). Furthermore the overlay window
+does not support YUV modes with the current implementation - so it
+supports only RGB modes for now.
+---
+ drivers/gpu/drm/rockchip/rockchip_vop_reg.c | 44 +++++++++++++++++++--
+ 1 file changed, 41 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+index 73d24c6bbf05..d4ac6e161ef2 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+@@ -614,6 +614,44 @@ static const struct vop_common rk3288_common = {
+ 	.dsp_background = VOP_REG(RK3288_DSP_BG, 0xffffffff, 0),
+ };
+ 
++static const struct vop_win_phy rk3228_win0_data = {
++	.scl = &rk3288_win_full_scl,
++	.data_formats = formats_win_full,
++	.nformats = ARRAY_SIZE(formats_win_full),
++	.enable = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 0),
++	.format = VOP_REG(RK3288_WIN0_CTRL0, 0x7, 1),
++	.rb_swap = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 12),
++	.act_info = VOP_REG(RK3288_WIN0_ACT_INFO, 0x1fff1fff, 0),
++	.dsp_info = VOP_REG(RK3288_WIN0_DSP_INFO, 0x0fff0fff, 0),
++	.dsp_st = VOP_REG(RK3288_WIN0_DSP_ST, 0x1fff1fff, 0),
++	.yrgb_mst = VOP_REG(RK3288_WIN0_YRGB_MST, 0xffffffff, 0),
++	.uv_mst = VOP_REG(RK3288_WIN0_CBR_MST, 0xffffffff, 0),
++	.yrgb_vir = VOP_REG(RK3288_WIN0_VIR, 0x3fff, 0),
++	.uv_vir = VOP_REG(RK3288_WIN0_VIR, 0x3fff, 16),
++	.src_alpha_ctl = VOP_REG(RK3288_WIN0_SRC_ALPHA_CTRL, 0xff, 0),
++	.dst_alpha_ctl = VOP_REG(RK3288_WIN0_DST_ALPHA_CTRL, 0xff, 0),
++	.channel = VOP_REG(RK3288_WIN0_CTRL2, 0xff, 0),
++};
++
++static const struct vop_win_phy rk3228_win1_data = {
++	.scl = &rk3288_win_full_scl,
++	.data_formats = formats_win_lite,
++	.nformats = ARRAY_SIZE(formats_win_lite),
++	.enable = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 0),
++	.format = VOP_REG(RK3288_WIN0_CTRL0, 0x7, 1),
++	.rb_swap = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 12),
++	.act_info = VOP_REG(RK3288_WIN0_ACT_INFO, 0x1fff1fff, 0),
++	.dsp_info = VOP_REG(RK3288_WIN0_DSP_INFO, 0x0fff0fff, 0),
++	.dsp_st = VOP_REG(RK3288_WIN0_DSP_ST, 0x1fff1fff, 0),
++	.yrgb_mst = VOP_REG(RK3288_WIN0_YRGB_MST, 0xffffffff, 0),
++	.uv_mst = VOP_REG(RK3288_WIN0_CBR_MST, 0xffffffff, 0),
++	.yrgb_vir = VOP_REG(RK3288_WIN0_VIR, 0x3fff, 0),
++	.uv_vir = VOP_REG(RK3288_WIN0_VIR, 0x3fff, 16),
++	.src_alpha_ctl = VOP_REG(RK3288_WIN0_SRC_ALPHA_CTRL, 0xff, 0),
++	.dst_alpha_ctl = VOP_REG(RK3288_WIN0_DST_ALPHA_CTRL, 0xff, 0),
++	.channel = VOP_REG(RK3288_WIN0_CTRL2, 0xff, 0),
++};
++
+ /*
+  * Note: rk3288 has a dedicated 'cursor' window, however, that window requires
+  * special support to get alpha blending working.  For now, just use overlay
+@@ -864,10 +902,10 @@ static const struct vop_data rk3399_vop_lit = {
+ };
+ 
+ static const struct vop_win_data rk3228_vop_win_data[] = {
+-	{ .base = 0x00, .phy = &rk3288_win01_data,
++	{ .base = 0x00, .phy = &rk3228_win0_data,
+ 	  .type = DRM_PLANE_TYPE_PRIMARY },
+-	{ .base = 0x40, .phy = &rk3288_win01_data,
+-	  .type = DRM_PLANE_TYPE_CURSOR },
++	{ .base = 0x40, .phy = &rk3228_win1_data,
++	  .type = DRM_PLANE_TYPE_OVERLAY },
+ };
+ 
+ static const struct vop_data rk3228_vop = {
+-- 
+2.17.1
+
