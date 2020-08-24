@@ -1076,9 +1076,12 @@ prepare_host()
 		"https://dl.armbian.com/_toolchains/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
 		)
 
+	USE_TORRENT_STATUS=${USE_TORRENT}
+	USE_TORRENT="no"
 	for toolchain in ${toolchains[@]}; do
 		download_and_verify "_toolchains" "${toolchain##*/}"
 	done
+	USE_TORRENT=${USE_TORRENT_STATUS}
 
 	rm -rf "${SRC}"/cache/toolchains/*.tar.xz*
 	local existing_dirs=( $(ls -1 "${SRC}"/cache/toolchains) )
@@ -1135,9 +1138,12 @@ function webseed ()
 unset text
 WEBSEED=(
 	"https://dl.armbian.com/"
-	"https://imola.armbian.com/"
+	"https://imola.armbian.com/dl/"
 	"https://mirrors.netix.net/armbian/dl/"
 	"https://mirrors.dotsrc.org/armbian-dl/"
+	"https://us.mirrors.fossho.st/armbian/dl/"
+	"https://uk.mirrors.fossho.st/armbian/dl/"
+	"https://armbian.systemonachip.net/dl/"
 	)
 	if [[ -z $DOWNLOAD_MIRROR ]]; then
 		WEBSEED=(
@@ -1192,7 +1198,7 @@ download_and_verify()
 		return
 	else
 		# download control file
-		local torrent=${server}torrent/${filename}.torrent
+		local torrent=${server}$remotedir/${filename}.torrent
 		aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
 		--continue=false --allow-overwrite=true --dir="${localdir}" "$(webseed "$remotedir/${filename}.asc")" -o "${filename}.asc"
 		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
