@@ -1061,12 +1061,12 @@ prepare_host()
 		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 	fi
-	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,toolchains,utility,rootfs} "${SRC}"/.tmp
+	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,toolchain,utility,rootfs} "${SRC}"/.tmp
 
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
-	local toolchains=(
+	local toolchain=(
 		"https://dl.armbian.com/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
 		"https://dl.armbian.com/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
 		"https://dl.armbian.com/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
@@ -1078,23 +1078,23 @@ prepare_host()
 
 	USE_TORRENT_STATUS=${USE_TORRENT}
 	USE_TORRENT="no"
-	for toolchain in ${toolchains[@]}; do
+	for toolchain in ${toolchain[@]}; do
 		download_and_verify "_toolchain" "${toolchain##*/}"
 	done
 	USE_TORRENT=${USE_TORRENT_STATUS}
 
-	rm -rf "${SRC}"/cache/toolchains/*.tar.xz*
-	local existing_dirs=( $(ls -1 "${SRC}"/cache/toolchains) )
+	rm -rf "${SRC}"/cache/toolchain/*.tar.xz*
+	local existing_dirs=( $(ls -1 "${SRC}"/cache/toolchain) )
 	for dir in ${existing_dirs[@]}; do
 		local found=no
-		for toolchain in ${toolchains[@]}; do
+		for toolchain in ${toolchain[@]}; do
 			local filename=${toolchain##*/}
 			local dirname=${filename//.tar.xz}
 			[[ $dir == $dirname ]] && found=yes
 		done
 		if [[ $found == no ]]; then
 			display_alert "Removing obsolete toolchain" "$dir"
-			rm -rf "${SRC}/cache/toolchains/${dir}"
+			rm -rf "${SRC}/cache/toolchain/${dir}"
 		fi
 	done
 
