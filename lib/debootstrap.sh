@@ -338,7 +338,11 @@ prepare_partitions()
 	# mountopts[ext2] is empty
 	# mountopts[fat] is empty
 	# mountopts[f2fs] is empty
-	mountopts[btrfs]=',commit=600,compress=lzo'
+	if [[ $BTRFS_COMPRESSION == none ]]; then
+		mountopts[btrfs]=',commit=600'
+	else
+		mountopts[btrfs]=",commit=600,compress=${BTRFS_COMPRESSION}"
+	fi
 	# mountopts[nfs] is empty
 
 	# default BOOTSIZE to use if not specified
@@ -389,8 +393,12 @@ prepare_partitions()
 		case $ROOTFS_TYPE in
 			btrfs)
 				# Used for server images, currently no swap functionality, so disk space
-				# requirements are rather low since rootfs gets filled with compress-force=zlib
-				local sdsize=$(bc -l <<< "scale=0; (($imagesize * 0.8) / 4 + 1) * 4")
+				if [[ $BTRFS_COMPRESSION == none ]]; then
+					local sdsize=$(bc -l <<< "scale=0; (($imagesize * 1.25) / 4 + 1) * 4")
+				else
+					# requirements are rather low since rootfs gets filled with compress-force=zlib
+					local sdsize=$(bc -l <<< "scale=0; (($imagesize * 0.8) / 4 + 1) * 4")
+				fi
 				;;
 			*)
 				# Hardcoded overhead +25% is needed for desktop images,
@@ -465,7 +473,9 @@ prepare_partitions()
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
-		[[ $ROOTFS_TYPE == btrfs ]] && local fscreateopt="-o compress-force=zlib"
+		if [[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]]; then
+			local fscreateopt="-o compress-force=${BTRFS_COMPRESSION}"
+		fi
 		mount ${fscreateopt} $rootdevice $MOUNT/
 		# create fstab (and crypttab) entry
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
