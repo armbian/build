@@ -118,6 +118,10 @@ if [[ -z "$(command -v dialog)" ]]; then
 	sudo apt-get update
 	sudo apt-get install -y dialog
 fi
+if [[ -z "$(command -v fuser)" ]]; then
+	sudo apt-get update
+	sudo apt-get install -y psmisc
+fi
 if [[ -z "$(command -v getfacl)" ]]; then
 	sudo apt-get update
 	sudo apt-get install -y acl
