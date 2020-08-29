@@ -29,6 +29,7 @@ declare -A WIFI_CHIPS
 declare -A DT_FLASH_OVERLAYS
 declare -A DT_LED_OVERLAYS
 declare -A DT_CPU_OVERLAYS
+declare -A DT_WIFI_OVERLAYS
 
 # Declarations for the various SoCs IDs
 CHIP_IDS+=(["524b2382"]="RK3228A/B")
@@ -38,11 +39,18 @@ CHIP_IDS+=(["524b2392"]="RK3229")
 WIFI_NAMES+=(["3030:3030"]="South Silicon Valley 6051p/6256p")
 WIFI_NAMES+=(["024c:b703"]="Realtek RTL8703bs")
 WIFI_NAMES+=(["024c:8179"]="Realtek RTL8189ES/ETV")
+WIFI_NAMES+=(["6666:1111"]="Espressif ESP8089")
 
 # Declarations for the various wifi IDs -> kernel modules
-WIFI_CHIPS+=(["3030:3030"]=ssv6051)
-WIFI_CHIPS+=(["024c:b703"]=8723cs)
-WIFI_CHIPS+=(["024c:8179"]=8189es)
+# In case the vendor has the same vendor:device ids for more than one
+# device (the infamouse ssv6051p/6256p), modules are separated by comma
+# and the user is asked which one she pefers.
+# Note: this is only for legacy kernel for rockchip_wlan modules which
+# load themselves without declaring their device ids.
+WIFI_CHIPS+=(["3030:3030"]="ssv6051 ssv6x5x")
+WIFI_CHIPS+=(["024c:b703"]="8723cs")
+WIFI_CHIPS+=(["024c:8179"]="8189es")
+WIFI_CHIPS+=(["6666:1111"]="")
 
 # Declarations for device tree overlays
 DT_FLASH_OVERLAYS+=(["emmc"]="eMMC only flash memory")
@@ -53,6 +61,8 @@ DT_LED_OVERLAYS+=(["led-conf1"]="LED configuration #1 (Chiptrip)")
 DT_LED_OVERLAYS+=(["led-conf2"]="LED configuration #2 (R329q)")
 
 DT_CPU_OVERLAYS+=(["cpu-hs"]="RK3228B or RK3229")
+
+DT_WIFI_OVERLAYS+=(["6666:1111"]="wlan-esp8089")
 
 KERNEL_VERSION=$(uname -r | cut -d "-" -f 1)
 if [[ "$KERNEL_VERSION" < "4.5.0" ]]; then
@@ -142,47 +152,73 @@ function get_internal_flash_type() {
 
 }
 
+function select_wifi_module() {
+
+	MODULES=$1
+
+	declare -a DIALOG_ENTRIES
+	declare -a MODULES
+
+	IDX=0
+	for MODULE in $WIFI_MODULE; do
+		MODULES[$IDX]="$MODULE"
+		DIALOG_ENTRIES+=("$IDX" "$MODULE")
+		IDX=$((IDX + 1))
+	done
+
+	MENU_TITLE="${BOARD_INFO}Please choose the wifi module suitable for your configuration\n"
+	MENU_CMD=(dialog --colors --backtitle "$BACKTITLE" --title "$TITLE" --default-item "0" --menu "$MENU_TITLE" 24 0 20)
+	SELECTION=$("${MENU_CMD[@]}" "${DIALOG_ENTRIES[@]}" 2>&1 >/dev/tty)
+
+	if [[ $? -ne 0 ]]; then
+		return 1
+	fi
+
+	WIFI_MODULE="${MODULES[$SELECTION]}"
+
+	echo $WIFI_MODULE
+
+	return 0
+
+}
+
 # Blacklists all the modules buth whitelist only that one
 # that has been detected
 function apply_wifi_blacklist() {
 
-	WIFI_ID=$1
-
 	# Detect wifi chip on legacy kernel and unblacklist it
-	WIFI_MODULE=""
+	WIFI_MODULE=$1
 
-	if [ -n "$WIFI_ID" ]; then
+	if [ ! -f $BLACKLIST_MODPROBE_CONF ]; then
+		touch $BLACKLIST_MODPROBE_CONF
+	fi
 
-		# blacklist all the modules and unblacklist only the one which is matching
-		WIFI_MODULE="${WIFI_CHIPS[$WIFI_ID]}"
+	if [ -n "$WIFI_MODULE" ]; then
 
-		if [ ! -f $BLACKLIST_MODPROBE_CONF ]; then
-			touch $BLACKLIST_MODPROBE_CONF
-		fi
-
-		if [ -n "$WIFI_MODULE" ]; then
-
-			for MODULE in "${WIFI_CHIPS[@]}"; do
+		for MODULES in "${WIFI_CHIPS[@]}"; do
+			for MODULE in $MODULES; do
 				sed -i "/blacklist $MODULE/d" $BLACKLIST_MODPROBE_CONF
 			done
+		done
 
-			declare -A BLACKLIST_MODULES
+		declare -A BLACKLIST_MODULES
 
-			for VALUE in "${WIFI_CHIPS[@]}"; do
-				if [ "$VALUE" != "$WIFI_MODULE" ]; then
-					BLACKLIST_MODULES+=([$VALUE]=1)
+		for MODULES in "${WIFI_CHIPS[@]}"; do
+			for MODULE in $MODULES; do
+				if [ "$MODULE" != "$WIFI_MODULE" ]; then
+					BLACKLIST_MODULES+=([$MODULE]=1)
 				fi
 			done
+		done
 
-			for MODULE in "${!BLACKLIST_MODULES[@]}"; do
-				echo "blacklist $MODULE" >> $BLACKLIST_MODPROBE_CONF
-			done
+		for MODULE in "${!BLACKLIST_MODULES[@]}"; do
+			echo "blacklist $MODULE" >> $BLACKLIST_MODPROBE_CONF
+		done
 
-			echo "#blacklist $WIFI_MODULE" >> $BLACKLIST_MODPROBE_CONF
-
-		fi
+		echo "#blacklist $WIFI_MODULE" >> $BLACKLIST_MODPROBE_CONF
 
 	fi
+
 
 	# unsupported wifi_chip_type: blacklist all known wifi
 	# modules if the blacklist file exists. If the blacklist file does not exist just skip over
@@ -197,10 +233,6 @@ function apply_wifi_blacklist() {
 		fi
 
 	fi
-
-	echo $WIFI_MODULE
-
-	return 0
 
 }
 
@@ -363,6 +395,11 @@ DT_OVERLAYS_TO_APPLY+=($SELECTION)
 SELECTION=$(select_led_configuration) || exit 1
 DT_OVERLAYS_TO_APPLY+=($SELECTION)
 
+# Apply overlays for wifi chips
+if [[ -n $WIFI_ID ]] && [[ -n "${DT_WIFI_OVERLAYS[$WIFI_ID]}" ]]; then
+	DT_OVERLAYS_TO_APPLY+=(${DT_WIFI_OVERLAYS[$WIFI_ID]})
+fi
+
 sed -i '/^overlays=/d' $ARMBIAN_ENV_TXT
 
 if [ $? -ne 0 ]; then
@@ -378,8 +415,30 @@ if [ $? -ne 0 ]; then
 fi
 
 # Apply the wifi blacklist only with legacy kernel
-if [[ $LEGACY_KERNEL -eq 1 ]]; then
-	WIFI_MODULE=$(apply_wifi_blacklist "$WIFI_ID")
+if [[ $LEGACY_KERNEL -eq 1 ]] && [[ -n "$WIFI_ID" ]]; then
+
+	WIFI_MODULE="${WIFI_CHIPS[$WIFI_ID]}"
+
+	if [[ -n $WIFI_MODULE ]]; then
+		
+		echo "$WIFI_MODULE" | grep " " > /dev/null 2>&1
+
+		if [[ $? -eq 0 ]]; then
+
+			WIFI_MODULE=$(select_wifi_module "$WIFI_MODULE")
+
+			if [[ $? -ne 0 ]]; then
+				WIFI_MODULE=""
+			fi
+
+		fi
+
+		if [[ -n "$WIFI_MODULE" ]]; then
+			apply_wifi_blacklist "$WIFI_MODULE"
+		fi
+
+	fi
+
 fi
 
 echo ""
@@ -390,11 +449,11 @@ echo "Device tree overlays enabled: ${DT_OVERLAYS_TO_APPLY[@]}"
 # Mainline kernel is supposed to work ok by itself with hardware recognition
 if [[ $LEGACY_KERNEL -eq 1 ]]; then
 
-	if [ -n "$WIFI_MODULE" ]; then
-		echo "Enabled wifi module $WIFI_MODULE"
+	if [[ -n "$WIFI_MODULE" ]]; then
+		echo "Forcefully enabled wifi module $WIFI_MODULE"
 	fi
 
-	if [ -n "$WIFI_ID" ] && [ -z "$WIFI_MODULE" ]; then
+	if [[ -n "$WIFI_ID" ]] && [[ ! -v WIFI_CHIPS[$WIFI_ID] ]]; then
 		echo "Wifi chip $WIFI_ID has been detected, but currently it is unsupported"
 		echo "Please report to: https://forum.armbian.com/topic/12656-wip-armbian-for-rk322x-devices/"
 	fi

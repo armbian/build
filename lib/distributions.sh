@@ -336,7 +336,7 @@ install_common()
 	fi
 
 	# remove deb files
-	rm -f "${SDCARD}/root/*.deb"
+	rm -f "${SDCARD}"/root/*.deb
 
 	# copy boot splash images
 	cp "${SRC}"/packages/blobs/splash/armbian-u-boot.bmp "${SDCARD}"/boot/boot.bmp

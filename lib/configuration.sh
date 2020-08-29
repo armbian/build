@@ -21,7 +21,7 @@ USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
-ROOTFSCACHE_VERSION=34
+ROOTFSCACHE_VERSION=37
 CHROOT_CACHE_VERSION=7
 BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
@@ -42,6 +42,9 @@ ROOT_MAPPER="armbian-root"
 
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 [[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
+
+[[ -z $BTRFS_COMPRESSION ]] && BTRFS_COMPRESSION=lzo # default btrfs filesystem compression method is lzo
+[[ ! $BTRFS_COMPRESSION =~ zlib|lzo|zstd|none ]] && exit_with_error "Unknown btrfs compression method" "$BTRFS_COMPRESSION"
 
 # Fixed image size is in 1M dd blocks (MiB)
 # to get size of block device /dev/sdX execute as root:

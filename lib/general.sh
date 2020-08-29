@@ -1061,27 +1061,30 @@ prepare_host()
 		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 	fi
-	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,toolchains,utility,rootfs} "${SRC}"/.tmp
+	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,toolchain,utility,rootfs} "${SRC}"/.tmp
 
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
 	local toolchains=(
-		"https://dl.armbian.com/_toolchains/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
 		)
 
+	USE_TORRENT_STATUS=${USE_TORRENT}
+	USE_TORRENT="no"
 	for toolchain in ${toolchains[@]}; do
-		download_and_verify "_toolchains" "${toolchain##*/}"
+		download_and_verify "_toolchain" "${toolchain##*/}"
 	done
+	USE_TORRENT=${USE_TORRENT_STATUS}
 
-	rm -rf "${SRC}"/cache/toolchains/*.tar.xz*
-	local existing_dirs=( $(ls -1 "${SRC}"/cache/toolchains) )
+	rm -rf "${SRC}"/cache/toolchain/*.tar.xz*
+	local existing_dirs=( $(ls -1 "${SRC}"/cache/toolchain) )
 	for dir in ${existing_dirs[@]}; do
 		local found=no
 		for toolchain in ${toolchains[@]}; do
@@ -1091,7 +1094,7 @@ prepare_host()
 		done
 		if [[ $found == no ]]; then
 			display_alert "Removing obsolete toolchain" "$dir"
-			rm -rf "${SRC}/cache/toolchains/${dir}"
+			rm -rf "${SRC}/cache/toolchain/${dir}"
 		fi
 	done
 
@@ -1135,9 +1138,12 @@ function webseed ()
 unset text
 WEBSEED=(
 	"https://dl.armbian.com/"
-	"https://imola.armbian.com/"
+	"https://imola.armbian.com/dl/"
 	"https://mirrors.netix.net/armbian/dl/"
 	"https://mirrors.dotsrc.org/armbian-dl/"
+	"https://us.mirrors.fossho.st/armbian/dl/"
+	"https://uk.mirrors.fossho.st/armbian/dl/"
+	"https://armbian.systemonachip.net/dl/"
 	)
 	if [[ -z $DOWNLOAD_MIRROR ]]; then
 		WEBSEED=(
@@ -1192,7 +1198,7 @@ download_and_verify()
 		return
 	else
 		# download control file
-		local torrent=${server}torrent/${filename}.torrent
+		local torrent=${server}$remotedir/${filename}.torrent
 		aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
 		--continue=false --allow-overwrite=true --dir="${localdir}" "$(webseed "$remotedir/${filename}.asc")" -o "${filename}.asc"
 		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"

@@ -620,7 +620,7 @@ find_toolchain()
 	# extract target major.minor version from expression
 	local target_ver
 	target_ver=$(grep -oE "[[:digit:]]+\.[[:digit:]]" <<< "$expression")
-	for dir in "${SRC}"/cache/toolchains/*/; do
+	for dir in "${SRC}"/cache/toolchain/*/; do
 		# check if is a toolchain for current $ARCH
 		[[ ! -f ${dir}bin/${compiler}gcc ]] && continue
 		# get toolchain major.minor version
