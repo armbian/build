@@ -292,8 +292,8 @@ distro_name['bionic']="Ubuntu Bionic 18.04 LTS"
 distro_support['bionic']="supported"
 distro_name['focal']="Ubuntu Focal 20.04 LTS"
 distro_support['focal']="supported"
-distro_name['eoan']="Ubuntu Eoan 19.10"
-distro_support['eoan']="csc"
+#distro_name['eoan']="Ubuntu Eoan 19.10"
+#distro_support['eoan']="csc"
 
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
