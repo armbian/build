@@ -2,37 +2,16 @@
 
 This README describes how we currently build the Internet Cube images.
 
-Since January 2019, we do not build the InternetCube images anymore. We simply use [YunoHost images](https://yunohost.org/#/images) to which we add InternetCube specific scripts for automatic configuration.
-
-The images are currently based on Armbian Stretch.
+The images are currently based on Armbian Buster.
 
 For previous build scripts, refer to the git history of this repo.
 
 ### Supported Devices
 
-For now, we support only 2 boards: Olimex LIME and Olimex LIME2.
+For now, we support 3 boards: Olimex LIME, Olimex LIME2 and Orange Pi PC
+Plus.
 
 Encrypted images are not supported at the moment.
-
-### Configure a YunoHost Image
-
-```
-bash yunocube.sh <yunohostimagefile.img>
-```
-
-example:
-```
-bash yunocube.sh yunohost-stretch-3.4.2-lime2-stable.img
-```
-
-This will create named under the same directory as the source images:
-
-```
-internetcube-stretch-3.4.2-lime2-stable.img
-```
-
-Respecting the format of the filenames is important to ensure the compatibility with *install-sd.sh*.
-For generating (optional) GPG signatures, please ask on the *La Brique Internet*'s mailing list.
 
 ### Installing the New Images
 

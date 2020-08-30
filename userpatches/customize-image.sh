@@ -26,6 +26,7 @@ source /tmp/overlay/internetcube/yunocube.sh
 echo "auto eth0" > /etc/network/interfaces.d/eth0.conf
 echo "allow-hotplug eth0" >> /etc/network/interfaces.d/eth0.conf
 echo "iface eth0 inet dhcp" >> /etc/network/interfaces.d/eth0.conf
+# TODO Use RFC4862 with maybe a local-link prefix
 echo " post-up ip a a fe80::42:acab/128 dev eth0" >> /etc/network/interfaces.d/eth0.conf
 
 # Disable those damn supposedly "predictive" interface names
@@ -50,7 +51,7 @@ sed -i '/backport/ s/^deb/#deb/' /etc/apt/sources.list
 chage -d 99999999 root
 
 # Run the install script
-curl https://install.yunohost.org/stretch | bash -s -- -a -d $YNH_BUILDER_BRANCH
+curl https://install.yunohost.org/buster | bash -s -- -a -d $YNH_BUILDER_BRANCH
 rm /var/log/yunohost-installation*
 
 if [[ $YNH_BUILDER_INSTALL_INTERNETCUBE == "yes" ]]
