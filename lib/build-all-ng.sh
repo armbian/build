@@ -434,7 +434,7 @@ do
 done
 
 # bump version in case there was a change
-if [[ $n -gt 0 && -n ${SEND_TO_SERVER} && -z ${REBUILD_IMAGES} ]]; then
+if [[ $n -gt 0 && ${BUMP_VERSION} ]]; then
 
 	cd "${SRC}" || exit
 	CURRENT_VERSION=$(cat VERSION)
