@@ -338,11 +338,7 @@ prepare_partitions()
 	# mountopts[ext2] is empty
 	# mountopts[fat] is empty
 	# mountopts[f2fs] is empty
-	if [[ $BTRFS_COMPRESSION == none ]]; then
-		mountopts[btrfs]=',commit=600'
-	else
-		mountopts[btrfs]=",commit=600,compress=${BTRFS_COMPRESSION}"
-	fi
+	mountopts[btrfs]=',commit=600'
 	# mountopts[nfs] is empty
 
 	# default BOOTSIZE to use if not specified

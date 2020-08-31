@@ -43,7 +43,7 @@ ROOT_MAPPER="armbian-root"
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 [[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
 
-[[ -z $BTRFS_COMPRESSION ]] && BTRFS_COMPRESSION=lzo # default btrfs filesystem compression method is lzo
+[[ -z $BTRFS_COMPRESSION ]] && BTRFS_COMPRESSION=zlib # default btrfs filesystem compression method is zlib
 [[ ! $BTRFS_COMPRESSION =~ zlib|lzo|zstd|none ]] && exit_with_error "Unknown btrfs compression method" "$BTRFS_COMPRESSION"
 
 # Fixed image size is in 1M dd blocks (MiB)
