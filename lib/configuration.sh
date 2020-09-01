@@ -86,15 +86,16 @@ ATF_COMPILE=yes
 [[ -z $WIREGUARD ]] && WIREGUARD="yes"
 [[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 [[ -z $AUFS ]] && AUFS="yes"
+[[ -z $DESKTOP_TYPE ]] && DESKTOP_TYPE="cli"
 [[ -z $IMAGE_PARTITION_TABLE ]] && IMAGE_PARTITION_TABLE="msdos"
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
 
 # set unique mounting directory
-SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
-MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
-DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
+SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${DESKTOP_TYPE}-${BUILD_MINIMAL}"
+MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${DESKTOP_TYPE}-${BUILD_MINIMAL}"
+DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${DESKTOP_TYPE}-${BUILD_MINIMAL}"
 
 [[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] && \
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
@@ -172,19 +173,45 @@ fi
 
 
 # Dependent desktop packages
-PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit \
-	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
-	libgtk2.0-bin network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
-	pulseaudio pavumeter bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
-	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic apt-xapian-index lightdm lightdm-gtk-greeter"
+PACKAGE_LIST_DESKTOP_XFCE="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit \
+x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
+libgtk2.0-bin network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
+pulseaudio pavumeter bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
+libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic apt-xapian-index lightdm lightdm-gtk-greeter"
 
+PACKAGE_LIST_DESKTOP_PLASMA=" \
+xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit \
+x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
+libgtk2.0-bin network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
+pulseaudio pavumeter bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
+libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic apt-xapian-index lightdm lightdm-gtk-greeter \
+"
+
+PACKAGE_LIST_DESKTOP_GNOME3=" \
+xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit \
+x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
+libgtk2.0-bin network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
+pulseaudio pavumeter bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
+libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic apt-xapian-index lightdm lightdm-gtk-greeter \
+"
 
 # Recommended desktop packages
-PACKAGE_LIST_DESKTOP_RECOMMENDS="galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
-	cups-pk-helper cups geany atril xarchiver"
+PACKAGE_LIST_DESKTOP_XFCE_RECOMMENDS="galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
+cups-pk-helper cups geany atril xarchiver"
+
+PACKAGE_LIST_DESKTOP_PLASMA_RECOMMENDS=" \
+galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
+cups-pk-helper cups geany atril xarchiver \
+"
+PACKAGE_LIST_DESKTOP_GNOME3_RECOMMENDS=" \
+galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
+cups-pk-helper cups geany atril xarchiver \
+"
 
 # Full desktop packages
-PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
+PACKAGE_LIST_DESKTOP_XFCE_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
+PACKAGE_LIST_DESKTOP_PLASMA_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
+PACKAGE_LIST_DESKTOP_GNOME3_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
 
 # Packages installed before desktop.
 PACKAGE_LIST_PREDEPENDS=""
@@ -193,74 +220,132 @@ PACKAGE_LIST_PREDEPENDS=""
 case $RELEASE in
 
 	xenial)
+
 		DEBOOTSTRAP_COMPONENTS="main"
 		DEBOOTSTRAP_LIST+=" btrfs-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db sysbench command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
-								pulseaudio-module-gconf onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common \
-								system-config-printer-gnome leafpad mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
 
-	stretch)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+		PACKAGE_LIST_DESKTOP_XFCE+=" \
+		paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
+		pulseaudio-module-gconf onboard \
+		"
+
+		PACKAGE_LIST_DESKTOP_PLASMA+=" \
+		paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
+		pulseaudio-module-gconf onboard \
+		"
+
+		PACKAGE_LIST_DESKTOP_GNOME3+=" \
+		paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
+		pulseaudio-module-gconf onboard \
+		"
+
+		PACKAGE_LIST_DESKTOP_XFCE_RECOMMENDS+=" \
+		chromium-browser language-selector-gnome system-config-printer-common \
+		system-config-printer-gnome leafpad mirage \
+		"
+
+		PACKAGE_LIST_DESKTOP_PLASMA_RECOMMENDS+=" \
+		chromium-browser language-selector-gnome system-config-printer-common \
+		system-config-printer-gnome leafpad mirage \
+		"
+
+		PACKAGE_LIST_DESKTOP_GNOME3_RECOMMENDS+=" \
+		chromium-browser language-selector-gnome system-config-printer-common \
+		system-config-printer-gnome leafpad mirage \
+		"
+
+		PACKAGE_LIST_DESKTOP_XFCE_FULL+=" thunderbird"
+		PACKAGE_LIST_DESKTOP_PLASMA_FULL+=" thunderbird"
+		PACKAGE_LIST_DESKTOP_GNOME3_FULL+=" thunderbird"
+
 	;;
 
 	bionic)
+
 		DEBOOTSTRAP_COMPONENTS="main,universe"
 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
-								language-selector-gnome leafpad mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+
+		PACKAGE_LIST_DESKTOP_XFCE+=" \
+		xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard \
+		"
+		PACKAGE_LIST_DESKTOP_PLASMA+=" \
+		xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard \
+		"
+		PACKAGE_LIST_DESKTOP_GNOME3+=" \
+		xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard \
+		"
+		PACKAGE_LIST_DESKTOP_XFCE_RECOMMENDS+=" \
+		chromium-browser system-config-printer-common system-config-printer language-selector-gnome leafpad mirage \
+		"
+		PACKAGE_LIST_DESKTOP_PLASMA_RECOMMENDS+=" \
+		chromium-browser system-config-printer-common system-config-printer language-selector-gnome leafpad mirage \
+		"
+		PACKAGE_LIST_DESKTOP_GNOME3_RECOMMENDS+=" \
+		chromium-browser system-config-printer-common system-config-printer language-selector-gnome leafpad mirage \
+		"
+		PACKAGE_LIST_DESKTOP_XFCE_FULL+=" thunderbird"
+		PACKAGE_LIST_DESKTOP_PLASMA_FULL+=" thunderbird"
+		PACKAGE_LIST_DESKTOP_GNOME3_FULL+=" thunderbird"
+
 	;;
 
 	buster)
+
 		DEBOOTSTRAP_COMPONENTS="main"
 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+
+		PACKAGE_LIST_DESKTOP_XFCE+=" paprefs dbus-x11 numix-icon-theme onboard"
+		PACKAGE_LIST_DESKTOP_PLASMA+=" paprefs dbus-x11 numix-icon-theme onboard"
+		PACKAGE_LIST_DESKTOP_GNOME3+=" paprefs dbus-x11 numix-icon-theme onboard"
+		PACKAGE_LIST_DESKTOP_XFCE_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
+		PACKAGE_LIST_DESKTOP_PLASMA_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
+		PACKAGE_LIST_DESKTOP_GNOME3_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
+		PACKAGE_LIST_DESKTOP_XFCE_FULL+=" thunderbird"
+		PACKAGE_LIST_DESKTOP_PLASMA_FULL+=" thunderbird"
+		PACKAGE_LIST_DESKTOP_GNOME3_FULL+=" thunderbird"
+
 	;;
 
 	bullseye)
+
 		DEBOOTSTRAP_COMPONENTS="main"
 		DEBOOTSTRAP_LIST+=" haveged fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
-		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
-		PACKAGE_LIST_DESKTOP_FULL+=""
+
+		PACKAGE_LIST_DESKTOP_XFCE+=" paprefs dbus-x11 numix-icon-theme"
+		PACKAGE_LIST_DESKTOP_PLASMA+=" paprefs dbus-x11 numix-icon-theme"
+		PACKAGE_LIST_DESKTOP_GNOME3+=" paprefs dbus-x11 numix-icon-theme"
+		PACKAGE_LIST_DESKTOP_XFCE_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
+		PACKAGE_LIST_DESKTOP_PLASMA_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
+		PACKAGE_LIST_DESKTOP_GNOME3_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
+		PACKAGE_LIST_DESKTOP_XFCE_FULL+=""
+		PACKAGE_LIST_DESKTOP_PLASMA_FULL+=""
+		PACKAGE_LIST_DESKTOP_GNOME3_FULL+=""
+
 	;;
 
 
 	focal)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
-								language-selector-gnome viewnior"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-		PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
-	;;
 
-	eoan)
 		DEBOOTSTRAP_COMPONENTS="main,universe"
 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
-								language-selector-gnome mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+
+		PACKAGE_LIST_DESKTOP_XFCE+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
+		PACKAGE_LIST_DESKTOP_PLASMA+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
+		PACKAGE_LIST_DESKTOP_GNOME3+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
+		PACKAGE_LIST_DESKTOP_XFCE_RECOMMENDS+=" firefox system-config-printer-common system-config-printer language-selector-gnome viewnior"
+		PACKAGE_LIST_DESKTOP_PLASMA_RECOMMENDS+=" firefox system-config-printer-common system-config-printer language-selector-gnome viewnior"
+		PACKAGE_LIST_DESKTOP_GNOME3_RECOMMENDS+=" firefox system-config-printer-common system-config-printer language-selector-gnome viewnior"
+		PACKAGE_LIST_DESKTOP_XFCE_FULL+=" thunderbird"
+		PACKAGE_LIST_DESKTOP_PLASMA_FULL+=" thunderbird"
+		PACKAGE_LIST_DESKTOP_GNOME3_FULL+=" thunderbird"
+
 		PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
+
 	;;
 
 esac

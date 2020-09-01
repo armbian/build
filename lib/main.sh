@@ -280,8 +280,8 @@ fi
 
 # define distribution support status
 declare -A distro_name distro_support
-distro_name['stretch']="Debian 9 Stretch"
-distro_support['stretch']="eos"
+#distro_name['stretch']="Debian 9 Stretch"
+#distro_support['stretch']="eos"
 distro_name['buster']="Debian 10 Buster"
 distro_support['buster']="supported"
 distro_name['bullseye']="Debian 11 Bullseye"
@@ -330,6 +330,19 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	unset options
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
 	[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
+
+fi
+
+if [[ $KERNEL_ONLY != yes && $BUILD_DESKTOP == yes && $BUILD_MINIMAL == no ]]; then
+
+	options=()
+	options+=("xfce" "Lightweight desktop - best for small devices")
+	options+=("plasma" "Powerfull but still classical desktop")
+	options+=("gnome3" "Modern high end desktop")
+	DESKTOP_TYPE=$(dialog --stdout --title "Choose image type" --backtitle "$backtitle" \
+	--menu "Select the target desktop type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+	unset options
+	[[ -z $DESKTOP_TYPE ]] && exit_with_error "No option selected"
 
 fi
 
@@ -387,7 +400,7 @@ DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
 CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
 CHOSEN_KERNEL=linux-image-${DEB_BRANCH}${LINUXFAMILY}
 CHOSEN_ROOTFS=linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
-CHOSEN_DESKTOP=armbian-${RELEASE}-desktop
+CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_TYPE}
 CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
 
 do_default() {
@@ -476,7 +489,7 @@ overlayfs_wrapper "cleanup"
 [[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
 
 # create desktop package
-[[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
+[[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_${DESKTOP_TYPE}_package
 
 # build additional packages
 [[ $EXTERNAL_NEW == compile ]] && chroot_build_packages

@@ -283,16 +283,16 @@ install_common()
 	# install armbian-desktop
 	if [[ "${REPOSITORY_INSTALL}" != *armbian-desktop* ]]; then
 		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/$RELEASE/armbian-${RELEASE}-desktop_${REVISION}_all.deb"
+			install_deb_chroot "${DEB_STORAGE}/$RELEASE/armbian-${RELEASE}-desktop-${DESKTOP_TYPE}_${REVISION}_all.deb"
 			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
-			desktop_postinstall
+			desktop_xfce_postinstall
 		fi
 	else
 		if [[ $BUILD_DESKTOP == yes ]]; then
 			display_alert "Installing from repository" "armbian-${RELEASE}-desktop"
 			chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install armbian-${RELEASE}-desktop" >> "${DEST}"/debug/install.log 2>&1
 			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
-			desktop_postinstall
+			desktop_xfce_postinstall
 		fi
 	fi
 

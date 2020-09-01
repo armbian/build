@@ -9,12 +9,12 @@
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
-create_desktop_package ()
+create_desktop_xfce_package ()
 {
 	# join and cleanup package list
-	PACKAGE_LIST_DESKTOP+=" "${PACKAGE_LIST_DESKTOP_RECOMMENDS}
-	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP// /,};
-	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP//[[:space:]]/}
+	PACKAGE_LIST_DESKTOP_XFCE+=" "${PACKAGE_LIST_DESKTOP_XFCE_RECOMMENDS}
+	PACKAGE_LIST_DESKTOP_XFCE=${PACKAGE_LIST_DESKTOP_XFCE// /,};
+	PACKAGE_LIST_DESKTOP_XFCE=${PACKAGE_LIST_DESKTOP_XFCE//[[:space:]]/}
 
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,};
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS//[[:space:]]/}
@@ -32,10 +32,10 @@ create_desktop_package ()
 	Installed-Size: 1
 	Section: xorg
 	Priority: optional
-	Recommends: ${PACKAGE_LIST_DESKTOP//[:space:]+/,}
+	Recommends: ${PACKAGE_LIST_DESKTOP_XFCE//[:space:]+/,}
 	Provides: ${CHOSEN_DESKTOP}
 	Pre-Depends: ${PACKAGE_LIST_PREDEPENDS//[:space:]+/,}
-	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
+	Description: Armbian XFCE desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
 
 	cat <<-EOF > "${destination}"/DEBIAN/postinst
@@ -120,21 +120,21 @@ create_desktop_package ()
 	rm -rf "${destination}"
 }
 
-desktop_postinstall ()
+desktop_xfce_postinstall ()
 {
 	# disable display manager for first run
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
 	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt update" >> "${DEST}"/debug/install.log
 	if [[ ${FULL_DESKTOP} == yes ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FULL" >> "${DEST}"/debug/install.log
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_XFCE_FULL" >> "${DEST}"/debug/install.log
 	fi
 
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" >> "${DEST}"/debug/install.log
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_XFCE_BOARD" >> "${DEST}"/debug/install.log
 	fi
 
 	if [[ -n ${PACKAGE_LIST_DESKTOP_FAMILY} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY" >> "${DEST}"/debug/install.log
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_XFCE_FAMILY" >> "${DEST}"/debug/install.log
 	fi
 
 	# Compile Turbo Frame buffer for sunxi
