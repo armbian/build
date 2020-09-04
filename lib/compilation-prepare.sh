@@ -100,8 +100,13 @@ compilation_prepare()
 	if linux-version compare "${version}" ge 5.4 && [ $EXTRAWIFI == yes ]; then
 
 		display_alert "Adding" "Wireless package injections for mac80211 compatible chipsets" "info"
-		process_patch_file "${SRC}/patch/misc/kali-wifi-injection-1.patch" "applying"
+		if linux-version compare "${version}" ge 5.9; then
+			process_patch_file "${SRC}/patch/misc/kali-wifi-injection-1-v5.9-post.patch" "applying"
+		else
+			process_patch_file "${SRC}/patch/misc/kali-wifi-injection-1-pre-v5.9.patch" "applying"
+		fi
 		process_patch_file "${SRC}/patch/misc/kali-wifi-injection-2.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/kali-wifi-injection-3.patch" "applying"
 
 	fi
 
