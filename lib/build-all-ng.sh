@@ -208,7 +208,7 @@ function check_hash()
 	[[ -z $LINUXFAMILY ]] && LINUXFAMILY=$BOARDFAMILY
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
-	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' 2> /dev/null)
+	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
 	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin)
 
@@ -434,7 +434,7 @@ do
 done
 
 # bump version in case there was a change
-if [[ $n -gt 0 && -n ${SEND_TO_SERVER} && -z ${REBUILD_IMAGES} ]]; then
+if [[ $n -gt 0 && ${BUMP_VERSION} == yes ]]; then
 
 	cd "${SRC}" || exit
 	CURRENT_VERSION=$(cat VERSION)
