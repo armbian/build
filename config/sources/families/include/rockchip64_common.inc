@@ -262,6 +262,10 @@ family_tweaks()
 		echo "auto lan0" >> $SDCARD/etc/network/interfaces
 		echo "	iface lan0 inet dhcp" >> $SDCARD/etc/network/interfaces
 
+	elif [[ $BOARD == helios64 ]]; then
+
+		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable helios64-heartbeat-led.service >/dev/null 2>&1"
+
 	elif [[ -f $SDCARD/lib/systemd/system/rk3399-bluetooth.service ]]; then
 
 		# install and enable Bluetooth
@@ -306,6 +310,17 @@ family_tweaks_bsp()
 		cp $SRC/packages/bsp/helios64/70-keep-usb-lan-as-eth1.rules $destination/etc/udev/rules.d/
 		cp $SRC/packages/bsp/helios64/asound.conf $destination/etc/
 		install -m 755 $SRC/packages/bsp/helios64/disable_auto_poweron $destination/lib/systemd/system-shutdown/
+
+		### Fancontrol tweaks
+		# copy hwmon rules to fix device mapping
+		install -m 644 $SRC/packages/bsp/helios64/90-helios64-hwmon.rules $destination/etc/udev/rules.d/
+
+		# copy fancontrol config
+		install -m 644 $SRC/packages/bsp/helios64/fancontrol.conf $destination/etc/fancontrol
+
+		# LED tweak
+		cp $SRC/packages/bsp/helios64/helios64-heartbeat-led.service $destination/etc/systemd/system/
+
 	fi
 
 	# Graphics and media
