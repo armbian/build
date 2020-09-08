@@ -17,7 +17,8 @@ MOTD_DISABLE=""
 STORAGE=/dev/sda1
 SHOW_IP_PATTERN="^bond.*|^[ewr].*|^br.*|^lt.*|^umts.*|^lan.*"
 
-CPU_TEMP_LIMIT=45
+CPU_TEMP_LIMIT=60
+HDD_TEMP_LIMIT=60
 AMB_TEMP_LIMIT=40
 
 [[ -f /etc/default/armbian-motd ]] && . /etc/default/armbian-motd
@@ -123,13 +124,6 @@ function ambienttemp() {
 	fi
 } # ambienttemp
 
-#function get_ip_addresses() {
-#	# return up to 2 IPv4 address(es) comma separated
-#	hostname -I | tr " " "\n" | \
-#		grep -E "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$" | \
-#		tail -n2 | sed ':a;N;$!ba;s/\n/,/g'
-#} # get_ip_addresses
-
 function get_ip_addresses() {
 	local ips=()
 	for f in /sys/class/net/*; do
@@ -155,8 +149,14 @@ function storage_info() {
 	if [[ -n "${StorageInfo}" && ${RootInfo} != *$STORAGE* ]]; then
 		storage_usage=$(awk '/\// {print $(NF-1)}' <<<${StorageInfo} | sed 's/%//g')
 		storage_total=$(awk '/\// {print $(NF-4)}' <<<${StorageInfo})
+		if [[ -n "$(command -v smartctl)" ]]; then
+			DISK="${STORAGE::-1}"
+			storage_temp+=$(sudo smartctl -A $DISK 2> /dev/null | grep -i temperature | awk '{print $(NF-2)}')
+		fi
 	fi
 } # storage_info
+
+
 
 # query various systems and send some stuff to the background for overall faster execution.
 # Works only with ambienttemp and batteryinfo since A20 is slow enough :)
@@ -165,7 +165,7 @@ ip_address=$(get_ip_addresses &)
 batteryinfo
 storage_info
 getboardtemp
-critical_load=$(( 1 + $(grep -c processor /proc/cpuinfo) / 2 ))
+critical_load=80
 
 # get uptime, logged in users and load in one take
 UPTIME=$(LC_ALL=C uptime)
@@ -175,33 +175,54 @@ users=${UPT2//*','}
 users=${users//' '}
 time=${UPT2%','*}
 time=${time//','}
+time=$(echo $time | xargs)
 load=${UPTIME#*'load average: '}
 load=${load//','}
+load=$(echo $load | cut -d" " -f1)
+[[ $load == 0.0* ]] && load=0.10
+cpucount=$(grep -c processor /proc/cpuinfo)
+
+load=$(awk '{printf("%.0f",($1/$2) * 100)}' <<< "$load $cpucount")
 
 # memory and swap
 mem_info=$(LC_ALL=C free -w 2>/dev/null | grep "^Mem" || LC_ALL=C free | grep "^Mem")
 memory_usage=$(awk '{printf("%.0f",(($2-($4+$6+$7))/$2) * 100)}' <<<${mem_info})
-memory_total=$(awk '{printf("%d",$2/1024)}' <<<${mem_info})
+mem_info=$(echo $mem_info | awk '{print $2}')
+memory_total=$(( mem_info / 1024 ))
 swap_info=$(LC_ALL=C free -m | grep "^Swap")
 swap_usage=$( (awk '/Swap/ { printf("%3.0f", $3/$2*100) }' <<<${swap_info} 2>/dev/null || echo 0) | tr -c -d '[:digit:]')
 swap_total=$(awk '{print $(2)}' <<<${swap_info})
 
 # display info
-display "System load" "${load%% *}" "${critical_load}" "0" "" "${load#* }"
+display "System load" "${load%% *}" "${critical_load}" "0" "%" ""
+
 printf "Up time:       \x1B[92m%s\x1B[0m\t\t" "$time"
 display "Local users" "${users##* }" "3" "2" ""
 echo "" # fixed newline
-display "Memory usage" "$memory_usage" "70" "0" " %" " of ${memory_total}MB"
-display "Zram usage" "$swap_usage" "75" "0" " %" " of $swap_total""Mb"
+if [[ ${memory_total} -gt 1000 ]]; then
+	 memory_total=$(awk '{printf("%.2f",$1/1024)}' <<<${memory_total})"G"
+else
+	memory_total+="M"
+fi
+
+if [[ ${swap_total} -gt 500 ]]; then
+	swap_total=$(awk '{printf("%.2f",$1/1024)}' <<<${swap_total})"G"
+else
+	swap_total+="M"
+fi
+
+display "Memory usage" "$memory_usage" "70" "0" "%" " of ${memory_total}"
+display "Zram usage" "$swap_usage" "75" "0" "%" " of ${swap_total}"
 printf "IP:            "
 printf "\x1B[92m%s\x1B[0m" "$ip_address"
 echo "" # fixed newline
 a=0;b=0;c=0
-display "CPU temp" "$board_temp" $CPU_TEMP_LIMIT "0" "°C" "" ; a=$?
-display "Ambient temp" "$amb_temp" $AMB_TEMP_LIMIT "0" "°C" "" ; b=$?
+display "CPU temp" "$board_temp" $CPU_TEMP_LIMIT "0" "°C" ""
+display "Ambient temp" "$amb_temp" $AMB_TEMP_LIMIT "0" "°C" "" ; a=$?
 (( ($a+$b) >0 )) && echo "" # new line only if some value is displayed
 display "Usage of /" "$root_usage" "90" "1" "%" " of $root_total"
 display "storage/" "$storage_usage" "90" "1" "%" " of $storage_total"
+display "storage temp" "$storage_temp" $HDD_TEMP_LIMIT "0" "°C" "" ; a=$?
 display "Battery" "$battery_percent" "20" "1" "%" "$status_battery_text"
 echo ""
 echo ""
