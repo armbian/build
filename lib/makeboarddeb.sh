@@ -239,7 +239,7 @@ fi
 	fi
 
 	sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"Armbian $REVISION "${RELEASE^}"\"/" /etc/os-release
-	echo -e "Armbian ${REVISION} ${RELEASE^} \\l \n" > /etc/issue
+	echo "Armbian ${REVISION} ${RELEASE^} \\l \n" > /etc/issue
 	echo "Armbian ${REVISION} ${RELEASE^}" > /etc/issue.net
 
 	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service >/dev/null 2>&1
