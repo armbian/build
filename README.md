@@ -174,7 +174,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
     
 - Do you have troubles **elsewhere**? 
     
-    Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). If you can't find answer there and/or with help of [general project search engine](https://www.armbian.com/search) and [documentation](https://github.com/armbian/documentation), consider [hiring an expert](https://www.debian.org/consultants/).
+    Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). If you can't find answer there and/or with help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com), consider [hiring an expert](https://www.debian.org/consultants/).
 
 - Personalised support?
 
