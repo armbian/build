@@ -83,6 +83,11 @@ CAN_BUILD_STRETCH=yes
 ATF_COMPILE=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
+# Default to pdkdf2, this used to be the default with cryptroot <= 2.0, however
+# cryptroot 2.1 changed that to Argon2i. Argon2i is a memory intensive
+# algorithm which doesn't play well with SBCs (need 1GiB RAM by default !)
+# https://gitlab.com/cryptsetup/cryptsetup/-/issues/372
+[[ -z $CRYPTROOT_PARAMETERS ]] && CRYPTROOT_PARAMETERS="--pbkdf pbkdf2"
 [[ -z $WIREGUARD ]] && WIREGUARD="yes"
 [[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 [[ -z $AUFS ]] && AUFS="yes"
