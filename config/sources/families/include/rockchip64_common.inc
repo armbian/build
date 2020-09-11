@@ -305,6 +305,7 @@ family_tweaks_bsp()
 	if [[ $BOARD == helios64 ]]; then
 
 		mkdir -p $destination/etc/udev/rules.d/
+		mkdir -p $destination/etc/systemd/system/fancontrol.service.d/
 		mkdir -p $destination/lib/systemd/system-shutdown/
 		cp $SRC/packages/bsp/helios64/50-usb-realtek-net.rules $destination/etc/udev/rules.d/
 		cp $SRC/packages/bsp/helios64/70-keep-usb-lan-as-eth1.rules $destination/etc/udev/rules.d/
@@ -314,6 +315,7 @@ family_tweaks_bsp()
 		### Fancontrol tweaks
 		# copy hwmon rules to fix device mapping
 		install -m 644 $SRC/packages/bsp/helios64/90-helios64-hwmon.rules $destination/etc/udev/rules.d/
+		install -m 644 $SRC/packages/bsp/helios64/fancontrol.service.pid-override $destination/etc/systemd/system/fancontrol.service.d/pid.conf
 
 		# copy fancontrol config
 		install -m 644 $SRC/packages/bsp/helios64/fancontrol.conf $destination/etc/fancontrol
