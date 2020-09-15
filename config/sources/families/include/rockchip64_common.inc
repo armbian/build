@@ -295,8 +295,8 @@ family_tweaks_bsp()
 
 		cp $SRC/packages/bsp/pinebook-pro/xorg.conf $destination/etc/X11/
                 # from https://github.com/ayufan-rock64/linux-package/tree/master/root-pinebookpro
-                cp $SRC/packages/bsp/pineboook-pro/40-pinebookpro-touchpad.conf $destunatuin/etc/X11/xorg.conf.d/
-                cp $SRC/packages/bsp/pineboook-pro/10-usb-kbd.hwdb $destunatuin/etc/udev/hwdb.d/
+                cp $SRC/packages/bsp/pineboook-pro/40-pinebookpro-touchpad.conf $destination/etc/X11/xorg.conf.d/
+                cp $SRC/packages/bsp/pineboook-pro/10-usb-kbd.hwdb $destination/etc/udev/hwdb.d/
 	fi
 
 	if [[ $BOARD == helios64 ]]; then
