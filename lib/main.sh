@@ -366,8 +366,9 @@ show_menu() {
 }
 
 DESKTOP_CONFIGS_DIR="${SRC}/config/desktop/environments"
+DESKTOP_CONFIG_PREFIX="config_"
 
-#if [[ $BUILD_DESKTOP != no ]]; then
+if [[ $BUILD_DESKTOP != no ]]; then
 	options=()
 	for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
 		desktop_env_name=$(basename $desktop_env_dir)
@@ -380,9 +381,34 @@ DESKTOP_CONFIGS_DIR="${SRC}/config/desktop/environments"
 	
 	echo "You have chosen $DESKTOP_ENVIRONMENT as your default desktop environment !? WHY !?"
 	unset options
-#fi
 
-exit_with_error "Meow"
+	if [[ -z $DESKTOP_ENVIRONMENT ]]; then
+		exit_with_error "No desktop environment selected..."
+	fi
+
+	# FIXME Check for empty folders, just in case the current maintainer
+	# messed up
+	# Note, we could also ignore it and don't show anything in the previous
+	# menu, but that hides information and make debugging harder, which I
+	# don't like. Adding desktop environments as a maintainer is not a
+	# trivial nor common task.
+	desktop_environment_config_dir="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
+	options=()
+	for configuration in "${desktop_environment_config_dir}/${DESKTOP_CONFIG_PREFIX}"*; do
+		config_filename=$(basename ${configuration})
+		config_name=${config_filename#"${DESKTOP_CONFIG_PREFIX}"}
+		options+=("${config_filename}" "${config_name} configuration")
+	done
+
+	DESKTOP_CONFIGURATION=$(show_menu "Choose the desktop environment config" "$backtitle" "Select the cofiguration for this environment. These are sourced from ${desktop_environment_config_dir}" "${options[@]}")
+	unset options
+
+	echo "You've chosen the configuration ${DESKTOP_CONFIGURATION}"
+
+	exit_with_error "Meow"
+fi
+
+
 
 
 #shellcheck source=configuration.sh
