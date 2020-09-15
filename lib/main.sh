@@ -349,6 +349,42 @@ fi
 [[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
 [[ $BUILD_MINIMAL == yes ]] && EXTERNAL=no
 
+# Myy : Menu configuration for choosing desktop configurations
+
+show_menu() {
+	provided_title=$1
+	provided_backtitle=$2
+	provided_menuname=$3
+	# Myy : I don't know why there's a TTY_Y - 8... 
+	#echo "Provided title : $provided_title"
+	#echo "Provided backtitle : $provided_backtitle"
+	#echo "Provided menuname : $provided_menuname"
+	#echo "Provided options : " "${@:4}"
+	#echo "TTY X: $TTY_X Y: $TTY_Y"
+	dialog --stdout --title "$provided_title" --backtitle "${provided_backtitle}" \
+	--menu "$provided_menuname" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+}
+
+DESKTOP_CONFIGS_DIR="${SRC}/config/desktop/environments"
+
+#if [[ $BUILD_DESKTOP != no ]]; then
+	options=()
+	for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
+		desktop_env_name=$(basename $desktop_env_dir)
+		options+=("${desktop_env_name}" "${desktop_env_name^} desktop environment")
+	done
+
+	#DESKTOP_ENVIRONMENT=$(dialog --stdout --title "Choose a desktop environment" --backtitle "$backtitle" --menu "Select the default desktop environment to bundle with this image" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+
+	DESKTOP_ENVIRONMENT=$(show_menu "Choose a desktop environment" "$backtitle" "Select the default desktop environment to bundle with this image" "${options[@]}")
+	
+	echo "You have chosen $DESKTOP_ENVIRONMENT as your default desktop environment !? WHY !?"
+	unset options
+#fi
+
+exit_with_error "Meow"
+
+
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
 
