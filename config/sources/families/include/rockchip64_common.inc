@@ -256,12 +256,6 @@ family_tweaks()
 		mkdir -p $SDCARD/etc/udev/rules.d/
 		echo 'SUBSYSTEM=="net", ACTION=="add", DRIVERS=="r8152", KERNEL=="eth1", NAME="lan0"' > $SDCARD/etc/udev/rules.d/70-rename-lan.rules
 
-		# workaround - create old school initial network config since network manager have issues
-		echo "auto eth0" >> $SDCARD/etc/network/interfaces
-		echo "	iface eth0 inet dhcp" >> $SDCARD/etc/network/interfaces
-		echo "auto lan0" >> $SDCARD/etc/network/interfaces
-		echo "	iface lan0 inet dhcp" >> $SDCARD/etc/network/interfaces
-
 	elif [[ $BOARD == helios64 ]]; then
 
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable helios64-heartbeat-led.service >/dev/null 2>&1"
@@ -305,6 +299,7 @@ family_tweaks_bsp()
 	if [[ $BOARD == helios64 ]]; then
 
 		mkdir -p $destination/etc/udev/rules.d/
+		mkdir -p $destination/etc/systemd/system/fancontrol.service.d/
 		mkdir -p $destination/lib/systemd/system-shutdown/
 		cp $SRC/packages/bsp/helios64/50-usb-realtek-net.rules $destination/etc/udev/rules.d/
 		cp $SRC/packages/bsp/helios64/70-keep-usb-lan-as-eth1.rules $destination/etc/udev/rules.d/
@@ -313,7 +308,13 @@ family_tweaks_bsp()
 
 		### Fancontrol tweaks
 		# copy hwmon rules to fix device mapping
-		install -m 644 $SRC/packages/bsp/helios64/90-helios64-hwmon.rules $destination/etc/udev/rules.d/
+		if [[ $BRANCH == legacy ]]; then
+			install -m 644 $SRC/packages/bsp/helios64/90-helios64-hwmon-legacy.rules $destination/etc/udev/rules.d/
+		else
+			install -m 644 $SRC/packages/bsp/helios64/90-helios64-hwmon.rules $destination/etc/udev/rules.d/
+		fi
+
+		install -m 644 $SRC/packages/bsp/helios64/fancontrol.service.pid-override $destination/etc/systemd/system/fancontrol.service.d/pid.conf
 
 		# copy fancontrol config
 		install -m 644 $SRC/packages/bsp/helios64/fancontrol.conf $destination/etc/fancontrol

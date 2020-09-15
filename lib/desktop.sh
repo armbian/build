@@ -48,6 +48,7 @@ create_desktop_package ()
 		# overwrite stock lightdm greeter configuration
 		if [ -d /etc/armbian/lightdm ]; then cp -R /etc/armbian/lightdm /etc/; fi
 
+		if [ -d /etc/firefox/ ]; then ln -sf /etc/armbian/firefox.conf /etc/firefox/syspref.js; fi
 
 		if [ -d /usr/lib/firefox-esr/ ]; then
 			ln -sf /etc/armbian/firefox.conf /usr/lib/firefox-esr/mozilla.cfg
