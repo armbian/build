@@ -138,6 +138,7 @@ DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certif
 	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
 	wireless-regdb crda dmsetup rsync tzdata"
 
+# Myy : ???
 [[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
 
 # tab cleanup is mandatory
@@ -172,18 +173,18 @@ fi
 
 
 # Dependent desktop packages
-PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit \
-	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
-	libgtk2.0-bin network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
-	pulseaudio pavumeter bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
-	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic apt-xapian-index lightdm lightdm-gtk-greeter"
+# Myy : Sources packages from file here
+PACKAGE_LIST_DESKTOP="$(cat ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH}) "
 
+echo $PACKAGE_LIST_DESKTOP
 
 # Recommended desktop packages
+# Myy : Source additional packages from here
 PACKAGE_LIST_DESKTOP_RECOMMENDS="galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
 	cups-pk-helper cups geany atril xarchiver"
 
 # Full desktop packages
+# Myy : Source additional packages list from there
 PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
 
 # Packages installed before desktop.

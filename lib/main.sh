@@ -365,8 +365,13 @@ show_menu() {
 	--menu "$provided_menuname" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
 }
 
-DESKTOP_CONFIGS_DIR="${SRC}/config/desktop/environments"
+DESKTOP_CONFIGS_DIR="${SRC}/config/desktop/environments/"
 DESKTOP_CONFIG_PREFIX="config_"
+
+# Myy : FIXME Rename CONFIG to PACKAGE_LIST
+DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME=""
+DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH=""
+DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH=""
 
 if [[ $BUILD_DESKTOP != no ]]; then
 	options=()
@@ -392,24 +397,22 @@ if [[ $BUILD_DESKTOP != no ]]; then
 	# menu, but that hides information and make debugging harder, which I
 	# don't like. Adding desktop environments as a maintainer is not a
 	# trivial nor common task.
-	desktop_environment_config_dir="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
+	DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}/${RELEASE}"
+
 	options=()
-	for configuration in "${desktop_environment_config_dir}/${DESKTOP_CONFIG_PREFIX}"*; do
+	for configuration in "${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/${DESKTOP_CONFIG_PREFIX}"*; do
 		config_filename=$(basename ${configuration})
 		config_name=${config_filename#"${DESKTOP_CONFIG_PREFIX}"}
 		options+=("${config_filename}" "${config_name} configuration")
 	done
 
-	DESKTOP_CONFIGURATION=$(show_menu "Choose the desktop environment config" "$backtitle" "Select the cofiguration for this environment. These are sourced from ${desktop_environment_config_dir}" "${options[@]}")
+	DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME=$(show_menu "Choose the desktop environment config" "$backtitle" "Select the cofiguration for this environment.\nThese are sourced from ${desktop_environment_config_dir}" "${options[@]}")
 	unset options
 
-	echo "You've chosen the configuration ${DESKTOP_CONFIGURATION}"
+	if [[ -z $DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME ]]; then echo "No desktop configuration selected... Do you really want a desktop environment ?"; fi
 
-	exit_with_error "Meow"
+	DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/${DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME}"
 fi
-
-
-
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
