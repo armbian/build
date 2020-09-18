@@ -12,9 +12,10 @@
 create_desktop_package ()
 {
 	# join and cleanup package list
-	PACKAGE_LIST_DESKTOP+=" "${PACKAGE_LIST_DESKTOP_RECOMMENDS}
 	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP// /,};
 	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP//[[:space:]]/}
+
+	echo "PACKAGE_LIST_DESKTOP : ${PACKAGE_LIST_DESKTOP}"
 
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,};
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS//[[:space:]]/}
@@ -22,6 +23,8 @@ create_desktop_package ()
 	local destination=${SRC}/.tmp/${RELEASE}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
+
+	echo "${PACKAGE_LIST_PREDEPENDS}"
 
 	# set up control file
 	cat <<-EOF > "${destination}"/DEBIAN/control
@@ -37,6 +40,8 @@ create_desktop_package ()
 	Pre-Depends: ${PACKAGE_LIST_PREDEPENDS//[:space:]+/,}
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
+
+	cat "${destination}"/DEBIAN/control
 
 	cat <<-EOF > "${destination}"/DEBIAN/postinst
 	#!/bin/sh -e
@@ -125,9 +130,9 @@ desktop_postinstall ()
 	# disable display manager for first run
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
 	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt update" >> "${DEST}"/debug/install.log
-	if [[ ${FULL_DESKTOP} == yes ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FULL" >> "${DEST}"/debug/install.log
-	fi
+	#if [[ ${FULL_DESKTOP} == yes ]]; then
+	#	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FULL" >> "${DEST}"/debug/install.log
+	#fi
 
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
 		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" >> "${DEST}"/debug/install.log

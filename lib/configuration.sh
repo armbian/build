@@ -174,71 +174,88 @@ fi
 
 # Dependent desktop packages
 # Myy : Sources packages from file here
-PACKAGE_LIST_DESKTOP="$(cat ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH}) "
-
-echo $PACKAGE_LIST_DESKTOP
+PACKAGE_LIST_DESKTOP="$(cat ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH})"
 
 # Recommended desktop packages
 # Myy : Source additional packages from here
-PACKAGE_LIST_DESKTOP_RECOMMENDS="galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
-	cups-pk-helper cups geany atril xarchiver"
+#PACKAGE_LIST_DESKTOP_RECOMMENDS="galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
+#	cups-pk-helper cups geany atril xarchiver"
 
 # Full desktop packages
 # Myy : Source additional packages list from there
-PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
+#PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
 
 # Packages installed before desktop.
-PACKAGE_LIST_PREDEPENDS=""
+#PACKAGE_LIST_PREDEPENDS=""
 
 # Release specific packages
+# Myy : Oublier RECOMMENDS et FULL.
+# Myy : Tout est traité depuis la liste de paquets du bureau sélectionné
+
+echo "DEALING WITH SOFTWARE GROUPS"
+for software_group in ${DESKTOP_SOFTWARE_GROUPS_SELECTED}; do
+	software_group_path="${DESKTOP_SOFTWARE_GROUPS_DIR}/${software_group}"
+	software_group_affinity_path="${software_group_path}/affinities/${DESKTOP_ENVIRONMENT}"
+	PACKAGE_LIST_DESKTOP+=" $(cat "${software_group_path}/packages")"
+
+	if [[ -d "${software_group_affinity_path}" ]]; then
+		PACKAGE_LIST_DESKTOP+=" $(cat "${software_group_affinity_path}/packages")"
+	fi
+done
+
+echo "Groups selected ${DESKTOP_SOFTWARE_GROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}"
+
+echo "YAY !"
+
+
 case $RELEASE in
 
 	xenial)
 		DEBOOTSTRAP_COMPONENTS="main"
 		DEBOOTSTRAP_LIST+=" btrfs-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db sysbench command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
-								pulseaudio-module-gconf onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common \
-								system-config-printer-gnome leafpad mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+		#PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
+		#						pulseaudio-module-gconf onboard"
+		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common \
+		#						system-config-printer-gnome leafpad mirage"
+		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	stretch)
 		DEBOOTSTRAP_COMPONENTS="main"
 		DEBOOTSTRAP_LIST+=" rng-tools"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+		#PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
+		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad mirage"
+		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	bionic)
 		DEBOOTSTRAP_COMPONENTS="main,universe"
 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
-								language-selector-gnome leafpad mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+		#PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
+		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
+		#						language-selector-gnome leafpad mirage"
+		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	buster)
 		DEBOOTSTRAP_COMPONENTS="main"
 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+		#PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme onboard"
+		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
+		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
 	;;
 
 	bullseye)
 		DEBOOTSTRAP_COMPONENTS="main"
 		DEBOOTSTRAP_LIST+=" haveged fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
-		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
-		PACKAGE_LIST_DESKTOP_FULL+=""
+		#PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
+		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
+		#PACKAGE_LIST_DESKTOP_FULL+=""
 	;;
 
 
@@ -246,22 +263,22 @@ case $RELEASE in
 		DEBOOTSTRAP_COMPONENTS="main,universe"
 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
-								language-selector-gnome viewnior"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-		PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
+		#PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
+		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
+		#						language-selector-gnome viewnior"
+		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+		#PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
 	;;
 
 	eoan)
 		DEBOOTSTRAP_COMPONENTS="main,universe"
 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
-								language-selector-gnome mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-		PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
+		#PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
+		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
+		#						language-selector-gnome mirage"
+		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+		#PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
 	;;
 
 esac
@@ -299,7 +316,7 @@ fi
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
-[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP $PACKAGE_LIST_DESKTOP_RECOMMENDS"
+[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
 if [[ -n $PACKAGE_LIST_RM ]]; then

@@ -365,8 +365,19 @@ show_menu() {
 	--menu "$provided_menuname" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
 }
 
-DESKTOP_CONFIGS_DIR="${SRC}/config/desktop/environments/"
+# Myy : FIXME Factorize
+show_select_menu() {
+	provided_title=$1
+	provided_backtitle=$2
+	provided_menuname=$3
+	dialog --stdout --title "${provided_title}" --backtitle "${provided_backtitle}" \
+	--checklist "${provided_menuname}" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+}
+# Myy : Once we got a list of selected groups, parse the PACKAGE_LIST inside configuration.sh
+
+DESKTOP_CONFIGS_DIR="${SRC}/config/desktop/${RELEASE}/environments/"
 DESKTOP_CONFIG_PREFIX="config_"
+DESKTOP_SOFTWARE_GROUPS_DIR="${SRC}/config/desktop/${RELEASE}/softwares"
 
 # Myy : FIXME Rename CONFIG to PACKAGE_LIST
 DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME=""
@@ -397,7 +408,7 @@ if [[ $BUILD_DESKTOP != no ]]; then
 	# menu, but that hides information and make debugging harder, which I
 	# don't like. Adding desktop environments as a maintainer is not a
 	# trivial nor common task.
-	DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}/${RELEASE}"
+	DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
 
 	options=()
 	for configuration in "${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/${DESKTOP_CONFIG_PREFIX}"*; do
@@ -406,12 +417,29 @@ if [[ $BUILD_DESKTOP != no ]]; then
 		options+=("${config_filename}" "${config_name} configuration")
 	done
 
-	DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME=$(show_menu "Choose the desktop environment config" "$backtitle" "Select the cofiguration for this environment.\nThese are sourced from ${desktop_environment_config_dir}" "${options[@]}")
+	DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME=$(show_menu "Choose the desktop environment config" "$backtitle" "Select the configuration for this environment.\nThese are sourced from ${desktop_environment_config_dir}" "${options[@]}")
 	unset options
 
-	if [[ -z $DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME ]]; then echo "No desktop configuration selected... Do you really want a desktop environment ?"; fi
+	if [[ -z $DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME ]]; then
+		echo "No desktop configuration selected... Do you really want a desktop environment ?"
+	fi
 
 	DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/${DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME}"
+
+	options=()
+	for software_group_path in "${DESKTOP_SOFTWARE_GROUPS_DIR}/"*; do
+		software_group="$(basename "${software_group_path}")"
+		options+=("${software_group}" "${software_group^}" off)
+	done
+
+	DESKTOP_SOFTWARE_GROUPS_SELECTED=$(\
+		show_select_menu \
+		"Choose desktop softwares to add" \
+		"$backtitle" \
+		"Select which kind of softwares you'd like to add to your build" \
+		"${options[@]}")
+
+	unset options
 fi
 
 #shellcheck source=configuration.sh
@@ -452,7 +480,7 @@ DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
 CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
 CHOSEN_KERNEL=linux-image-${DEB_BRANCH}${LINUXFAMILY}
 CHOSEN_ROOTFS=linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
-CHOSEN_DESKTOP=armbian-${RELEASE}-desktop
+CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}
 CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
 
 do_default() {
