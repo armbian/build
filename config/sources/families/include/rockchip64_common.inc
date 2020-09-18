@@ -297,8 +297,8 @@ family_tweaks_bsp()
                 mkdir -p $destination/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/
 		cp $SRC/packages/bsp/pinebook-pro/xfce4-power-manager.xml $destination/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/
                 # from https://github.com/ayufan-rock64/linux-package/tree/master/root-pinebookpro
-                cp $SRC/packages/bsp/pineboook-pro/40-pinebookpro-touchpad.conf $destination/etc/X11/xorg.conf.d/
-                cp $SRC/packages/bsp/pineboook-pro/10-usb-kbd.hwdb $destination/etc/udev/hwdb.d/
+                cp $SRC/packages/bsp/pinebook-pro/40-pinebookpro-touchpad.conf $destination/etc/X11/xorg.conf.d/
+                cp $SRC/packages/bsp/pinebook-pro/10-usb-kbd.hwdb $destination/etc/udev/hwdb.d/
 	fi
 
 	if [[ $BOARD == helios64 ]]; then
