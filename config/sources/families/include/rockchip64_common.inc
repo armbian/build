@@ -295,7 +295,9 @@ family_tweaks_bsp()
 
 		cp $SRC/packages/bsp/pinebook-pro/xorg.conf $destination/etc/X11/
                 mkdir -p $destination/usr/local/share/xdg/xfce4/xfconf/xfce-perchannel-xml/
-		cp $SRC/packages/bsp/pinebook-pro/xfce4-power-manager.xml $destination/usr/local/share/xdg/xfce4/xfconf/xfce-perchannel-xml/
+                for XFCE4_CONFIG_FILE in xfce4-power-manager.xml pointers.xml; do
+			cp $SRC/packages/bsp/pinebook-pro/${XFCE4_CONFIG_FILE} $destination/usr/local/share/xdg/xfce4/xfconf/xfce-perchannel-xml/
+                done
                 # from https://github.com/ayufan-rock64/linux-package/tree/master/root-pinebookpro
                 cp $SRC/packages/bsp/pinebook-pro/40-pinebookpro-touchpad.conf $destination/etc/X11/xorg.conf.d/
                 mkdir -p $destination/etc/udev/hwdb.d/
