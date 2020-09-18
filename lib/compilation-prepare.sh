@@ -78,8 +78,8 @@ compilation_prepare()
 	if linux-version compare "${version}" ge 5.4; then
 
 		display_alert "Adding" "Kernel splash file" "info"
-		if linux-version compare "${version}" lt 5.8; then
-			process_patch_file "${SRC}/patch/misc/0001-bootsplash-pre-5.8.10.patch" "applying"
+		if linux-version compare "${version}" ge 5.8 && linux-version compare "${version}" lt 5.9 ; then
+			process_patch_file "${SRC}/patch/misc/0001-bootsplash-5.8.patch" "applying -- assumes patchlevel 5.8.10 or above"
                 else
 			process_patch_file "${SRC}/patch/misc/0001-bootsplash.patch" "applying"
                 fi
