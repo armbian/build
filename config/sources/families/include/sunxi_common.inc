@@ -31,6 +31,7 @@ case $BRANCH in
 		KERNELSOURCE="https://github.com/megous/linux"
 		KERNELBRANCH="branch:orange-pi-5.9"
 		KERNELPATCHDIR='sunxi-'$BRANCH
+		BOOTBRANCH='tag:v2020.07'
 
 	;;
 esac
