@@ -304,6 +304,7 @@ family_tweaks_bsp()
                 cp $SRC/packages/bsp/pinebook-pro/40-pinebookpro-touchpad.conf $destination/etc/X11/xorg.conf.d/
                 mkdir -p $destination/etc/udev/hwdb.d/
                 cp $SRC/packages/bsp/pinebook-pro/10-usb-kbd.hwdb $destination/etc/udev/hwdb.d/
+                cp $SRC/packages/bsp/pinebook-pro/asound.state $destination/var/lib/alsa/
 	fi
 
 	if [[ $BOARD == helios64 ]]; then
