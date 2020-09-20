@@ -1,0 +1,305 @@
+diff --git a/drivers/leds/Kconfig b/drivers/leds/Kconfig
+index 9e8358673..c59034432 100644
+--- a/drivers/leds/Kconfig
++++ b/drivers/leds/Kconfig
+@@ -887,13 +887,6 @@ config LEDS_SGM3140
+ 	  This option enables support for the SGM3140 500mA Buck/Boost Charge
+ 	  Pump LED Driver.
+ 
+-config LEDS_AXP20X
+-	tristate "Charger LED support for AXP20X-like PMICs (AXP813, ...)"
+-	depends on LEDS_CLASS && MFD_AXP20X
+-	help
+-	  This option enables support for on-chip LED driver on
+-	  AXP20X-like PMICs.
+-
+ comment "LED Triggers"
+ source "drivers/leds/trigger/Kconfig"
+ 
+diff --git a/drivers/leds/Makefile b/drivers/leds/Makefile
+index ee4be5be3..d6b8a792c 100644
+--- a/drivers/leds/Makefile
++++ b/drivers/leds/Makefile
+@@ -89,7 +89,6 @@ obj-$(CONFIG_LEDS_TPS6105X)		+= leds-tps6105x.o
+ obj-$(CONFIG_LEDS_WM831X_STATUS)	+= leds-wm831x-status.o
+ obj-$(CONFIG_LEDS_WM8350)		+= leds-wm8350.o
+ obj-$(CONFIG_LEDS_WRAP)			+= leds-wrap.o
+-obj-$(CONFIG_LEDS_AXP20X)		+= leds-axp20x.o
+ 
+ # LED SPI Drivers
+ obj-$(CONFIG_LEDS_CR0014114)		+= leds-cr0014114.o
+diff --git a/drivers/leds/leds-axp20x.c b/drivers/leds/leds-axp20x.c
+deleted file mode 100644
+index bc5896d65..000000000
+--- a/drivers/leds/leds-axp20x.c
++++ /dev/null
+@@ -1,255 +0,0 @@
+-// SPDX-License-Identifier: GPL-2.0-or-later
+-/*
+- * LED Driver for X-Powers AXP813 PMIC and similar.
+- *
+- * Copyright(c) 2020 Ondrej Jirman <megous@megous.com>
+- */
+-
+-#include <linux/module.h>
+-#include <linux/kernel.h>
+-#include <linux/platform_device.h>
+-#include <linux/leds.h>
+-#include <linux/slab.h>
+-#include <linux/of.h>
+-#include <linux/of_device.h>
+-#include <linux/mfd/axp20x.h>
+-
+-#define AXP20X_CHGLED_CTRL_MASK		BIT(3)
+-#define AXP20X_CHGLED_CTRL_CHARGER	BIT(3)
+-#define AXP20X_CHGLED_CTRL_USER		0
+-
+-#define AXP20X_CHRG_CTRL2_MODE		BIT(4)
+-
+-#define AXP20X_CHGLED_USER_STATE_MASK		GENMASK(5, 4)
+-#define AXP20X_CHGLED_USER_STATE_OFF		(0 << 4)
+-#define AXP20X_CHGLED_USER_STATE_BLINK_SLOW	(1 << 4)
+-#define AXP20X_CHGLED_USER_STATE_BLINK_FAST	(2 << 4)
+-#define AXP20X_CHGLED_USER_STATE_ON		(3 << 4)
+-
+-static struct led_hw_trigger_type axp20x_charger_led_trigger_type;
+-
+-struct axp20x_led {
+-	struct led_classdev cdev;
+-	struct regmap *regmap;
+-};
+-
+-static int axp20x_led_set(struct led_classdev *led_cdev,
+-			   enum led_brightness value)
+-{
+-	struct axp20x_led *led =
+-			container_of(led_cdev, struct axp20x_led, cdev);
+-	unsigned int val;
+-
+-	val = value == LED_OFF ? AXP20X_CHGLED_USER_STATE_OFF :
+-		AXP20X_CHGLED_USER_STATE_ON;
+-
+-	return regmap_update_bits(led->regmap, AXP20X_OFF_CTRL,
+-				  AXP20X_CHGLED_USER_STATE_MASK, val);
+-
+-}
+-
+-static int axp20x_set_charger_control(struct led_classdev *led_cdev, bool on)
+-{
+-	struct axp20x_led *led = container_of(led_cdev, struct axp20x_led, cdev);
+-
+-	return regmap_update_bits(led->regmap, AXP20X_OFF_CTRL,
+-				  AXP20X_CHGLED_CTRL_MASK,
+-				  on ? AXP20X_CHGLED_CTRL_CHARGER :
+-				  AXP20X_CHGLED_CTRL_USER);
+-}
+-
+-static int axp20x_trig_charger_activate(struct led_classdev *led_cdev)
+-{
+-	return axp20x_set_charger_control(led_cdev, true);
+-}
+-
+-static void axp20x_trig_charger_deactivate(struct led_classdev *led_cdev)
+-{
+-	axp20x_set_charger_control(led_cdev, false);
+-}
+-
+-static ssize_t charger_mode_show(struct device *dev,
+-				 struct device_attribute *attr, char *buf)
+-{
+-	struct led_classdev *led_cdev = led_trigger_get_led(dev);
+-	struct axp20x_led *led = container_of(led_cdev, struct axp20x_led, cdev);
+-	unsigned int val;
+-	int ret;
+-
+-	ret = regmap_read(led->regmap, AXP20X_CHRG_CTRL2, &val);
+-	if (ret)
+-		return ret;
+-
+-	return scnprintf(buf, PAGE_SIZE, "%u\n",
+-			 val & AXP20X_CHRG_CTRL2_MODE ? 1 : 0);
+-}
+-
+-static ssize_t charger_mode_store(struct device *dev,
+-				  struct device_attribute *attr,
+-				  const char *buf, size_t len)
+-{
+-	struct led_classdev *led_cdev = led_trigger_get_led(dev);
+-	struct axp20x_led *led = container_of(led_cdev, struct axp20x_led, cdev);
+-	unsigned int mode;
+-	int ret;
+-
+-	ret = kstrtouint(buf, 0, &mode);
+-	if (ret)
+-		return ret;
+-
+-	if (mode > 1)
+-		return -ERANGE;
+-
+-	ret = regmap_update_bits(led->regmap, AXP20X_CHRG_CTRL2,
+-				 AXP20X_CHRG_CTRL2_MODE,
+-				 mode ? AXP20X_CHRG_CTRL2_MODE : 0);
+-	if (ret)
+-		return ret;
+-
+-	return len;
+-}
+-static DEVICE_ATTR_RW(charger_mode);
+-
+-static struct attribute *axp20x_led_attrs[] = {
+-	&dev_attr_charger_mode.attr,
+-	NULL,
+-};
+-
+-ATTRIBUTE_GROUPS(axp20x_led);
+-
+-static struct led_trigger axp20x_charger_led_trigger = {
+-	.name		= "charger",
+-	.trigger_type	= &axp20x_charger_led_trigger_type,
+-	.activate	= axp20x_trig_charger_activate,
+-	.deactivate	= axp20x_trig_charger_deactivate,
+-	.groups		= axp20x_led_groups,
+-};
+-
+-static int axp20x_led_probe(struct platform_device *pdev)
+-{
+-	struct axp20x_dev *axp20x;
+-	struct axp20x_led *led;
+-	unsigned int val;
+-	int ret;
+-
+-	if (!of_device_is_available(pdev->dev.of_node))
+-		return -ENODEV;
+-
+-	axp20x = dev_get_drvdata(pdev->dev.parent);
+-	if (!axp20x)
+-		return -EINVAL;
+-
+-	led = devm_kzalloc(&pdev->dev,
+-			   sizeof(struct axp20x_led),
+-			   GFP_KERNEL);
+-	if (!led)
+-		return -ENOMEM;
+-
+-	platform_set_drvdata(pdev, led);
+-
+-	led->regmap = axp20x->regmap;
+-
+-	led->cdev.name = "axp20x-chgarger-led";
+-	led->cdev.brightness_set_blocking = axp20x_led_set;
+-	led->cdev.brightness = LED_OFF;
+-	led->cdev.max_brightness = 1;
+-	led->cdev.trigger_type = &axp20x_charger_led_trigger_type;
+-
+-	ret = regmap_read(led->regmap, AXP20X_OFF_CTRL, &val);
+-	if (ret) {
+-		dev_err(&pdev->dev, "Failed to read charger control status\n");
+-		return ret;
+-	}
+-
+-	if ((val & AXP20X_CHGLED_CTRL_MASK) == AXP20X_CHGLED_CTRL_CHARGER)
+-		led->cdev.default_trigger = axp20x_charger_led_trigger.name;
+-
+-	ret = devm_led_classdev_register(pdev->dev.parent, &led->cdev);
+-	if (ret) {
+-		dev_err(&pdev->dev, "Failed to register led %s\n",
+-			led->cdev.name);
+-		return ret;
+-	}
+-
+-	ret = regmap_update_bits(led->regmap, AXP20X_OFF_CTRL,
+-				 AXP20X_CHGLED_CTRL_MASK,
+-				 AXP20X_CHGLED_CTRL_CHARGER);
+-	if (ret) {
+-		dev_err(&pdev->dev, "Failed to enable charger control\n");
+-		return ret;
+-	}
+-
+-	ret = axp20x_led_set(&led->cdev, led->cdev.brightness);
+-	if (ret) {
+-		dev_err(&pdev->dev, "Failed to init led brightness\n");
+-		return ret;
+-	}
+-
+-	return 0;
+-}
+-
+-static void axp20x_led_shutdown(struct platform_device *pdev)
+-{
+-	struct axp20x_led *led = platform_get_drvdata(pdev);
+-
+-	/* On shutdown, we want to give LED control back to the PMIC,
+-	 * so that it doesn't stay on, while the system is off.
+-	 */
+-
+-	axp20x_led_set(&led->cdev, LED_OFF);
+-	axp20x_set_charger_control(&led->cdev, true);
+-}
+-
+-static int axp20x_led_remove(struct platform_device *pdev)
+-{
+-	axp20x_led_shutdown(pdev);
+-
+-	return 0;
+-}
+-
+-static const struct of_device_id axp20x_leds_of_match[] = {
+-	{ .compatible = "x-powers,axp813-charger-led", },
+-	{ },
+-};
+-MODULE_DEVICE_TABLE(of, axp20x_leds_of_match);
+-
+-static struct platform_driver axp20x_led_driver = {
+-	.driver		= {
+-		.name	= "leds-axp20x",
+-		.of_match_table = axp20x_leds_of_match,
+-	},
+-	.probe		= axp20x_led_probe,
+-	.remove		= axp20x_led_remove,
+-	.shutdown	= axp20x_led_shutdown,
+-};
+-
+-static int __init axp20x_led_driver_init(void)
+-{
+-	int ret;
+-
+-	ret = led_trigger_register(&axp20x_charger_led_trigger);
+-	if (ret)
+-		return ret;
+-
+-	ret = platform_driver_register(&axp20x_led_driver);
+-	if (ret) {
+-		led_trigger_unregister(&axp20x_charger_led_trigger);
+-		return ret;
+-	}
+-
+-	return 0;
+-}
+-
+-static void __exit axp20x_led_driver_exit(void)
+-{
+-	platform_driver_unregister(&axp20x_led_driver);
+-	led_trigger_unregister(&axp20x_charger_led_trigger);
+-}
+-
+-module_init(axp20x_led_driver_init);
+-module_exit(axp20x_led_driver_exit);
+-
+-MODULE_AUTHOR("Ondrej Jirman <megous@megous.com>");
+-MODULE_DESCRIPTION("LED driver for AXP813 PMIC");
+-MODULE_LICENSE("GPL");
+-MODULE_ALIAS("platform:leds-axp20x");
+diff --git a/drivers/mfd/axp20x.c b/drivers/mfd/axp20x.c
+index 8d42bbd61..6c0d66ad6 100644
+--- a/drivers/mfd/axp20x.c
++++ b/drivers/mfd/axp20x.c
+@@ -809,9 +809,6 @@ static const struct mfd_cell axp813_cells[] = {
+ 		.num_resources	= ARRAY_SIZE(axp803_usb_power_supply_resources),
+ 		.resources	= axp803_usb_power_supply_resources,
+ 		.of_compatible	= "x-powers,axp813-usb-power-supply",
+-	}, {
+-		.name		= "axp20x-charger-led",
+-		.of_compatible	= "x-powers,axp813-charger-led",
+ 	},
+ };
+ 

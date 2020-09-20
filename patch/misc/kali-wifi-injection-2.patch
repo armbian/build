@@ -1,0 +1,66 @@
+--- a/drivers/net/wireless/zydas/zd1211rw/zd_mac.c
++++ b/drivers/net/wireless/zydas/zd1211rw/zd_mac.c
+@@ -229,14 +229,19 @@ void zd_mac_clear(struct zd_mac *mac)
+ static int set_rx_filter(struct zd_mac *mac)
+ {
+ 	unsigned long flags;
+-	u32 filter = STA_RX_FILTER;
++	struct zd_ioreq32 ioreqs[] = {
++		{CR_RX_FILTER, STA_RX_FILTER},
++		{ CR_SNIFFER_ON, 0U },
++	};
+ 
+ 	spin_lock_irqsave(&mac->lock, flags);
+-	if (mac->pass_ctrl)
+-		filter |= RX_FILTER_CTRL;
++	if (mac->pass_ctrl) {
++		ioreqs[0].value |= 0xFFFFFFFF;
++		ioreqs[1].value = 0x1;
++	}
+ 	spin_unlock_irqrestore(&mac->lock, flags);
+ 
+-	return zd_iowrite32(&mac->chip, CR_RX_FILTER, filter);
++	return zd_iowrite32a(&mac->chip, ioreqs, ARRAY_SIZE(ioreqs));
+ }
+ 
+ static int set_mac_and_bssid(struct zd_mac *mac)
+@@ -1043,7 +1048,8 @@ int zd_mac_rx(struct ieee80211_hw *hw, c
+ 	/* Caller has to ensure that length >= sizeof(struct rx_status). */
+ 	status = (struct rx_status *)
+ 		(buffer + (length - sizeof(struct rx_status)));
+-	if (status->frame_status & ZD_RX_ERROR) {
++	if ((status->frame_status & ZD_RX_ERROR) ||
++		(status->frame_status & ~0x21)) {
+ 		if (mac->pass_failed_fcs &&
+ 				(status->frame_status & ZD_RX_CRC32_ERROR)) {
+ 			stats.flag |= RX_FLAG_FAILED_FCS_CRC;
+@@ -1386,7 +1392,7 @@ struct ieee80211_hw *zd_mac_alloc_hw(str
+ 	ieee80211_hw_set(hw, MFP_CAPABLE);
+ 	ieee80211_hw_set(hw, HOST_BROADCAST_PS_BUFFERING);
+ 	ieee80211_hw_set(hw, RX_INCLUDES_FCS);
+-	ieee80211_hw_set(hw, SIGNAL_UNSPEC);
++	ieee80211_hw_set(hw, SIGNAL_DBM);
+ 
+ 	hw->wiphy->interface_modes =
+ 		BIT(NL80211_IFTYPE_MESH_POINT) |
+--- a/drivers/net/wireless/realtek/rtl818x/rtl8187/dev.c
++++ b/drivers/net/wireless/realtek/rtl818x/rtl8187/dev.c
+@@ -248,8 +248,17 @@ static void rtl8187_tx(struct ieee80211_
+ 	flags |= RTL818X_TX_DESC_FLAG_NO_ENC;
+ 
+ 	flags |= ieee80211_get_tx_rate(dev, info)->hw_value << 24;
++
++	// When this flag is set the firmware waits untill ALL fragments have
++	// reached the USB device. Then it sends the first fragment and waits
++	// for ACKS's. Of course in monitor mode it won't detect these ACK's.
+ 	if (ieee80211_has_morefrags(tx_hdr->frame_control))
+-		flags |= RTL818X_TX_DESC_FLAG_MOREFRAG;
++	{
++		// If info->control.vif is NULL it's most likely in monitor mode
++		if (likely(info->control.vif != NULL && info->control.vif->type != NL80211_IFTYPE_MONITOR)) {
++			flags |= RTL818X_TX_DESC_FLAG_MOREFRAG;
++		}
++	}
+ 
+ 	/* HW will perform RTS-CTS when only RTS flags is set.
+ 	 * HW will perform CTS-to-self when both RTS and CTS flags are set.

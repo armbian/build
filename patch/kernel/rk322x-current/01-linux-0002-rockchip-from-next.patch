@@ -1,0 +1,434 @@
+From 9d29c5e2f20a44575a5a0e483319682d62daa4b3 Mon Sep 17 00:00:00 2001
+From: Heiko Stuebner <heiko.stuebner@theobroma-systems.com>
+Date: Wed, 29 Jan 2020 17:38:19 +0100
+Subject: [PATCH] clk: rockchip: convert rk3399 pll type to use
+ readl_relaxed_poll_timeout
+
+Instead of open coding the polling of the lock status, use the handy
+readl_relaxed_poll_timeout for this. As the pll locking is normally
+blazingly fast and we don't want to incur additional delays, we're
+not doing any sleeps similar to for example the imx clk-pllv4
+and define a very safe but still short timeout of 1ms.
+
+Suggested-by: Stephen Boyd <sboyd@kernel.org>
+Signed-off-by: Heiko Stuebner <heiko.stuebner@theobroma-systems.com>
+Reviewed-by: Stephen Boyd <sboyd@kernel.org>
+Link: https://lore.kernel.org/r/20200129163821.1547295-1-heiko@sntech.de
+(cherry picked from commit bf4237a188f872e535de8cbfc7903c1387b83b01)
+---
+ drivers/clk/rockchip/clk-pll.c | 23 ++++++++++++-----------
+ 1 file changed, 12 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/clk/rockchip/clk-pll.c b/drivers/clk/rockchip/clk-pll.c
+index 10560d963baf..28b04aad31ad 100644
+--- a/drivers/clk/rockchip/clk-pll.c
++++ b/drivers/clk/rockchip/clk-pll.c
+@@ -589,19 +589,20 @@ static const struct clk_ops rockchip_rk3066_pll_clk_ops = {
+ static int rockchip_rk3399_pll_wait_lock(struct rockchip_clk_pll *pll)
+ {
+ 	u32 pllcon;
+-	int delay = 24000000;
++	int ret;
+ 
+-	/* poll check the lock status in rk3399 xPLLCON2 */
+-	while (delay > 0) {
+-		pllcon = readl_relaxed(pll->reg_base + RK3399_PLLCON(2));
+-		if (pllcon & RK3399_PLLCON2_LOCK_STATUS)
+-			return 0;
++	/*
++	 * Lock time typical 250, max 500 input clock cycles @24MHz
++	 * So define a very safe maximum of 1000us, meaning 24000 cycles.
++	 */
++	ret = readl_relaxed_poll_timeout(pll->reg_base + RK3399_PLLCON(2),
++					 pllcon,
++					 pllcon & RK3399_PLLCON2_LOCK_STATUS,
++					 0, 1000);
++	if (ret)
++		pr_err("%s: timeout waiting for pll to lock\n", __func__);
+ 
+-		delay--;
+-	}
+-
+-	pr_err("%s: timeout waiting for pll to lock\n", __func__);
+-	return -ETIMEDOUT;
++	return ret;
+ }
+ 
+ static void rockchip_rk3399_pll_get_params(struct rockchip_clk_pll *pll,
+
+From afe54d66a661ce9d99250431f1371e46f9b6d8a5 Mon Sep 17 00:00:00 2001
+From: Heiko Stuebner <heiko.stuebner@theobroma-systems.com>
+Date: Wed, 29 Jan 2020 17:38:20 +0100
+Subject: [PATCH] clk: rockchip: convert basic pll lock_wait to use
+ regmap_read_poll_timeout
+
+Instead of open coding the polling of the lock status, use the
+handy regmap_read_poll_timeout for this. As the pll locking is
+normally blazingly fast and we don't want to incur additional
+delays, we're not doing any sleeps similar to for example the imx
+clk-pllv4 and define a very safe but still short timeout of 1ms.
+
+Suggested-by: Stephen Boyd <sboyd@kernel.org>
+Signed-off-by: Heiko Stuebner <heiko.stuebner@theobroma-systems.com>
+Reviewed-by: Stephen Boyd <sboyd@kernel.org>
+Link: https://lore.kernel.org/r/20200129163821.1547295-2-heiko@sntech.de
+(cherry picked from commit 3507df1a4615113ae6509e0f14f6546f0d1c84b4)
+---
+ drivers/clk/rockchip/clk-pll.c | 21 ++++++---------------
+ 1 file changed, 6 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/clk/rockchip/clk-pll.c b/drivers/clk/rockchip/clk-pll.c
+index 28b04aad31ad..945f8b2cacc1 100644
+--- a/drivers/clk/rockchip/clk-pll.c
++++ b/drivers/clk/rockchip/clk-pll.c
+@@ -86,23 +86,14 @@ static int rockchip_pll_wait_lock(struct rockchip_clk_pll *pll)
+ {
+ 	struct regmap *grf = pll->ctx->grf;
+ 	unsigned int val;
+-	int delay = 24000000, ret;
+-
+-	while (delay > 0) {
+-		ret = regmap_read(grf, pll->lock_offset, &val);
+-		if (ret) {
+-			pr_err("%s: failed to read pll lock status: %d\n",
+-			       __func__, ret);
+-			return ret;
+-		}
++	int ret;
+ 
+-		if (val & BIT(pll->lock_shift))
+-			return 0;
+-		delay--;
+-	}
++	ret = regmap_read_poll_timeout(grf, pll->lock_offset, val,
++				       val & BIT(pll->lock_shift), 0, 1000);
++	if (ret)
++		pr_err("%s: timeout waiting for pll to lock\n", __func__);
+ 
+-	pr_err("%s: timeout waiting for pll to lock\n", __func__);
+-	return -ETIMEDOUT;
++	return ret;
+ }
+ 
+ /**
+
+From 9a37c781854b2cc475aced9045ba8c35b6838f3a Mon Sep 17 00:00:00 2001
+From: Heiko Stuebner <heiko.stuebner@theobroma-systems.com>
+Date: Wed, 29 Jan 2020 17:38:21 +0100
+Subject: [PATCH] clk: rockchip: convert rk3036 pll type to use internal lock
+ status
+
+The rk3036 pll type exposes its lock status in both its pllcon registers
+as well as the General Register Files. To remove one dependency convert
+it to the "internal" lock status, similar to how rk3399 handles it.
+
+Signed-off-by: Heiko Stuebner <heiko.stuebner@theobroma-systems.com>
+Reviewed-by: Stephen Boyd <sboyd@kernel.org>
+Link: https://lore.kernel.org/r/20200129163821.1547295-3-heiko@sntech.de
+(cherry picked from commit 7f6ffbb885d147557bdca471c37b7b1204005798)
+---
+ drivers/clk/rockchip/clk-pll.c | 26 +++++++++++++++++++++++---
+ 1 file changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/clk/rockchip/clk-pll.c b/drivers/clk/rockchip/clk-pll.c
+index 945f8b2cacc1..4c6c9167ef50 100644
+--- a/drivers/clk/rockchip/clk-pll.c
++++ b/drivers/clk/rockchip/clk-pll.c
+@@ -12,6 +12,7 @@
+ #include <linux/io.h>
+ #include <linux/delay.h>
+ #include <linux/clk-provider.h>
++#include <linux/iopoll.h>
+ #include <linux/regmap.h>
+ #include <linux/clk.h>
+ #include "clk.h"
+@@ -109,12 +110,31 @@ static int rockchip_pll_wait_lock(struct rockchip_clk_pll *pll)
+ #define RK3036_PLLCON1_REFDIV_SHIFT		0
+ #define RK3036_PLLCON1_POSTDIV2_MASK		0x7
+ #define RK3036_PLLCON1_POSTDIV2_SHIFT		6
++#define RK3036_PLLCON1_LOCK_STATUS		BIT(10)
+ #define RK3036_PLLCON1_DSMPD_MASK		0x1
+ #define RK3036_PLLCON1_DSMPD_SHIFT		12
++#define RK3036_PLLCON1_PWRDOWN			BIT(13)
+ #define RK3036_PLLCON2_FRAC_MASK		0xffffff
+ #define RK3036_PLLCON2_FRAC_SHIFT		0
+ 
+-#define RK3036_PLLCON1_PWRDOWN			(1 << 13)
++static int rockchip_rk3036_pll_wait_lock(struct rockchip_clk_pll *pll)
++{
++	u32 pllcon;
++	int ret;
++
++	/*
++	 * Lock time typical 250, max 500 input clock cycles @24MHz
++	 * So define a very safe maximum of 1000us, meaning 24000 cycles.
++	 */
++	ret = readl_relaxed_poll_timeout(pll->reg_base + RK3036_PLLCON(1),
++					 pllcon,
++					 pllcon & RK3036_PLLCON1_LOCK_STATUS,
++					 0, 1000);
++	if (ret)
++		pr_err("%s: timeout waiting for pll to lock\n", __func__);
++
++	return ret;
++}
+ 
+ static void rockchip_rk3036_pll_get_params(struct rockchip_clk_pll *pll,
+ 					struct rockchip_pll_rate_table *rate)
+@@ -212,7 +232,7 @@ static int rockchip_rk3036_pll_set_params(struct rockchip_clk_pll *pll,
+ 	writel_relaxed(pllcon, pll->reg_base + RK3036_PLLCON(2));
+ 
+ 	/* wait for the pll to lock */
+-	ret = rockchip_pll_wait_lock(pll);
++	ret = rockchip_rk3036_pll_wait_lock(pll);
+ 	if (ret) {
+ 		pr_warn("%s: pll update unsuccessful, trying to restore old params\n",
+ 			__func__);
+@@ -251,7 +271,7 @@ static int rockchip_rk3036_pll_enable(struct clk_hw *hw)
+ 
+ 	writel(HIWORD_UPDATE(0, RK3036_PLLCON1_PWRDOWN, 0),
+ 	       pll->reg_base + RK3036_PLLCON(1));
+-	rockchip_pll_wait_lock(pll);
++	rockchip_rk3036_pll_wait_lock(pll);
+ 
+ 	return 0;
+ }
+
+From 4e8605e139b42a4b239339fc54016ef2d0704908 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Myl=C3=A8ne=20Josserand?= <mylene.josserand@collabora.com>
+Date: Tue, 2 Jun 2020 10:06:43 +0200
+Subject: [PATCH] clk: rockchip: Handle clock tree for rk3288w variant
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The revision rk3288w has a different clock tree about "hclk_vio"
+clock, according to the BSP kernel code.
+
+This patch handles this difference by detecting which device-tree
+we are using. If it is a "rockchip,rk3288-cru", let's register
+the clock tree as it was before. If the device-tree node is
+"rockchip,rk3288w-cru", we will apply the difference with this
+version of this SoC.
+
+Noticed that this new device-tree compatible must be handled in
+bootloader such as u-boot.
+
+Signed-off-by: Mylène Josserand <mylene.josserand@collabora.com>
+Link: https://lore.kernel.org/r/20200602080644.11333-2-mylene.josserand@collabora.com
+Signed-off-by: Heiko Stuebner <heiko@sntech.de>
+(cherry picked from commit 1627f683636df70fb25358b0a7b39a24e8fce5bf)
+---
+ drivers/clk/rockchip/clk-rk3288.c | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clk/rockchip/clk-rk3288.c b/drivers/clk/rockchip/clk-rk3288.c
+index cc2a177bbdbf..204976e2d0cb 100644
+--- a/drivers/clk/rockchip/clk-rk3288.c
++++ b/drivers/clk/rockchip/clk-rk3288.c
+@@ -425,8 +425,6 @@ static struct rockchip_clk_branch rk3288_clk_branches[] __initdata = {
+ 	COMPOSITE(0, "aclk_vio0", mux_pll_src_cpll_gpll_usb480m_p, CLK_IGNORE_UNUSED,
+ 			RK3288_CLKSEL_CON(31), 6, 2, MFLAGS, 0, 5, DFLAGS,
+ 			RK3288_CLKGATE_CON(3), 0, GFLAGS),
+-	DIV(0, "hclk_vio", "aclk_vio0", 0,
+-			RK3288_CLKSEL_CON(28), 8, 5, DFLAGS),
+ 	COMPOSITE(0, "aclk_vio1", mux_pll_src_cpll_gpll_usb480m_p, CLK_IGNORE_UNUSED,
+ 			RK3288_CLKSEL_CON(31), 14, 2, MFLAGS, 8, 5, DFLAGS,
+ 			RK3288_CLKGATE_CON(3), 2, GFLAGS),
+@@ -819,6 +817,16 @@ static struct rockchip_clk_branch rk3288_clk_branches[] __initdata = {
+ 	INVERTER(0, "pclk_isp", "pclk_isp_in", RK3288_CLKSEL_CON(29), 3, IFLAGS),
+ };
+ 
++static struct rockchip_clk_branch rk3288w_hclkvio_branch[] __initdata = {
++	DIV(0, "hclk_vio", "aclk_vio1", 0,
++			RK3288_CLKSEL_CON(28), 8, 5, DFLAGS),
++};
++
++static struct rockchip_clk_branch rk3288_hclkvio_branch[] __initdata = {
++	DIV(0, "hclk_vio", "aclk_vio0", 0,
++			RK3288_CLKSEL_CON(28), 8, 5, DFLAGS),
++};
++
+ static const char *const rk3288_critical_clocks[] __initconst = {
+ 	"aclk_cpu",
+ 	"aclk_peri",
+@@ -936,6 +944,14 @@ static void __init rk3288_clk_init(struct device_node *np)
+ 				   RK3288_GRF_SOC_STATUS1);
+ 	rockchip_clk_register_branches(ctx, rk3288_clk_branches,
+ 				  ARRAY_SIZE(rk3288_clk_branches));
++
++	if (of_device_is_compatible(np, "rockchip,rk3288w-cru"))
++		rockchip_clk_register_branches(ctx, rk3288w_hclkvio_branch,
++					       ARRAY_SIZE(rk3288w_hclkvio_branch));
++	else
++		rockchip_clk_register_branches(ctx, rk3288_hclkvio_branch,
++					       ARRAY_SIZE(rk3288_hclkvio_branch));
++
+ 	rockchip_clk_protect_critical(rk3288_critical_clocks,
+ 				      ARRAY_SIZE(rk3288_critical_clocks));
+ 
+
+From cac2ef41ac59ff839b73fea934e8ffd161d406f2 Mon Sep 17 00:00:00 2001
+From: Heiko Stuebner <heiko.stuebner@theobroma-systems.com>
+Date: Fri, 3 Jul 2020 17:49:48 +0200
+Subject: [PATCH] clk: rockchip: use separate compatibles for rk3288w-cru
+
+Commit 1627f683636d ("clk: rockchip: Handle clock tree for rk3288w variant")
+added the check for rk3288w-specific clock-tree changes but in turn would
+require a double-compatible due to re-using the main rockchip,rk3288-cru
+compatible as entry point.
+
+The binding change actually describes the compatibles as one or the other
+so adapt the code accordingly and add a real second entry-point for the
+clock controller.
+
+Signed-off-by: Heiko Stuebner <heiko.stuebner@theobroma-systems.com>
+Reviewed-by: Ezequiel Garcia <ezequiel@collabora.com>
+Reviewed-by: Jagan Teki <jagan@amarulasolutions.com>
+Tested-by: Jagan Teki <jagan@amarulasolutions.com> # rock-pi-n8
+Link: https://lore.kernel.org/r/20200703154948.260369-1-heiko@sntech.de
+(cherry picked from commit 0a7f99aad259d223ce69c03e792c7e2bfcf8c2c6)
+---
+ drivers/clk/rockchip/clk-rk3288.c | 21 +++++++++++++++++++--
+ 1 file changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clk/rockchip/clk-rk3288.c b/drivers/clk/rockchip/clk-rk3288.c
+index 204976e2d0cb..93c794695c46 100644
+--- a/drivers/clk/rockchip/clk-rk3288.c
++++ b/drivers/clk/rockchip/clk-rk3288.c
+@@ -15,6 +15,11 @@
+ #define RK3288_GRF_SOC_CON(x)	(0x244 + x * 4)
+ #define RK3288_GRF_SOC_STATUS1	0x284
+ 
++enum rk3288_variant {
++	RK3288_CRU,
++	RK3288W_CRU,
++};
++
+ enum rk3288_plls {
+ 	apll, dpll, cpll, gpll, npll,
+ };
+@@ -922,7 +927,8 @@ static struct syscore_ops rk3288_clk_syscore_ops = {
+ 	.resume = rk3288_clk_resume,
+ };
+ 
+-static void __init rk3288_clk_init(struct device_node *np)
++static void __init rk3288_common_init(struct device_node *np,
++				      enum rk3288_variant soc)
+ {
+ 	struct rockchip_clk_provider *ctx;
+ 
+@@ -945,7 +951,7 @@ static void __init rk3288_clk_init(struct device_node *np)
+ 	rockchip_clk_register_branches(ctx, rk3288_clk_branches,
+ 				  ARRAY_SIZE(rk3288_clk_branches));
+ 
+-	if (of_device_is_compatible(np, "rockchip,rk3288w-cru"))
++	if (soc == RK3288W_CRU)
+ 		rockchip_clk_register_branches(ctx, rk3288w_hclkvio_branch,
+ 					       ARRAY_SIZE(rk3288w_hclkvio_branch));
+ 	else
+@@ -970,4 +976,15 @@ static void __init rk3288_clk_init(struct device_node *np)
+ 
+ 	rockchip_clk_of_add_provider(np, ctx);
+ }
++
++static void __init rk3288_clk_init(struct device_node *np)
++{
++	rk3288_common_init(np, RK3288_CRU);
++}
+ CLK_OF_DECLARE(rk3288_cru, "rockchip,rk3288-cru", rk3288_clk_init);
++
++static void __init rk3288w_clk_init(struct device_node *np)
++{
++	rk3288_common_init(np, RK3288W_CRU);
++}
++CLK_OF_DECLARE(rk3288w_cru, "rockchip,rk3288w-cru", rk3288w_clk_init);
+
+From b80ef30ce22bba6a4bdf9f0aaa9376b6fea24249 Mon Sep 17 00:00:00 2001
+From: Robin Murphy <robin.murphy@arm.com>
+Date: Thu, 18 Jun 2020 18:56:29 +0100
+Subject: [PATCH] clk: rockchip: Revert "fix wrong mmc sample phase shift for
+ rk3328"
+
+This reverts commit 82f4b67f018c88a7cc9337f0067ed3d6ec352648.
+
+According to a subsequent revert in the vendor kernel, the original
+change was based on unclear documentation and was in fact incorrect.
+
+Emprically, my board's HS200 eMMC at 200MHZ apparently gets lucky with a
+phase where this had no impact, but limiting max-frequency to 150MHz to
+match the nominal capability of the I/O pins made it virtually unusable,
+constantly throwing errors and retuning. With this revert, it starts
+behaving perfectly at 150MHz too.
+
+Fixes: 82f4b67f018c ("clk: rockchip: fix wrong mmc sample phase shift for rk3328")
+Signed-off-by: Robin Murphy <robin.murphy@arm.com>
+Reviewed-by: Shawn Lin <shawn.lin@rock-chips.com>
+Link: https://lore.kernel.org/r/c80eb52e34c03f817586b6b7912fbd4e31be9079.1589475794.git.robin.murphy@arm.com
+Signed-off-by: Heiko Stuebner <heiko@sntech.de>
+(cherry picked from commit 465931e70881476a210d44705102ef8b6ee6cdb0)
+---
+ drivers/clk/rockchip/clk-rk3328.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/clk/rockchip/clk-rk3328.c b/drivers/clk/rockchip/clk-rk3328.c
+index c186a1985bf4..2429b7c2a8b3 100644
+--- a/drivers/clk/rockchip/clk-rk3328.c
++++ b/drivers/clk/rockchip/clk-rk3328.c
+@@ -808,22 +808,22 @@ static struct rockchip_clk_branch rk3328_clk_branches[] __initdata = {
+ 	MMC(SCLK_SDMMC_DRV, "sdmmc_drv", "clk_sdmmc",
+ 	    RK3328_SDMMC_CON0, 1),
+ 	MMC(SCLK_SDMMC_SAMPLE, "sdmmc_sample", "clk_sdmmc",
+-	    RK3328_SDMMC_CON1, 0),
++	    RK3328_SDMMC_CON1, 1),
+ 
+ 	MMC(SCLK_SDIO_DRV, "sdio_drv", "clk_sdio",
+ 	    RK3328_SDIO_CON0, 1),
+ 	MMC(SCLK_SDIO_SAMPLE, "sdio_sample", "clk_sdio",
+-	    RK3328_SDIO_CON1, 0),
++	    RK3328_SDIO_CON1, 1),
+ 
+ 	MMC(SCLK_EMMC_DRV, "emmc_drv", "clk_emmc",
+ 	    RK3328_EMMC_CON0, 1),
+ 	MMC(SCLK_EMMC_SAMPLE, "emmc_sample", "clk_emmc",
+-	    RK3328_EMMC_CON1, 0),
++	    RK3328_EMMC_CON1, 1),
+ 
+ 	MMC(SCLK_SDMMC_EXT_DRV, "sdmmc_ext_drv", "clk_sdmmc_ext",
+ 	    RK3328_SDMMC_EXT_CON0, 1),
+ 	MMC(SCLK_SDMMC_EXT_SAMPLE, "sdmmc_ext_sample", "clk_sdmmc_ext",
+-	    RK3328_SDMMC_EXT_CON1, 0),
++	    RK3328_SDMMC_EXT_CON1, 1),
+ };
+ 
+ static const char *const rk3328_critical_clocks[] __initconst = {
+
+From 21710a18bfba0cf0993a1ef700f03f540d2648ed Mon Sep 17 00:00:00 2001
+From: Alex Bee <knaerzche@gmail.com>
+Date: Wed, 22 Jul 2020 18:18:20 +0200
+Subject: [PATCH] clk: rockchip: add sclk_mac_lbtest to rk3188_critical_clocks
+
+Since the loopbacktest clock is not exported and is not touched in the
+driver, it has to be added to rk3188_critical_clocks to be protected from
+being disabled and in order to get the emac working.
+
+Signed-off-by: Alex Bee <knaerzche@gmail.com>
+Link: https://lore.kernel.org/r/20200722161820.5316-1-knaerzche@gmail.com
+Signed-off-by: Heiko Stuebner <heiko@sntech.de>
+(cherry picked from commit ef990bcad58cf1d13c5a49191a2c2342eb8d6709)
+---
+ drivers/clk/rockchip/clk-rk3188.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/clk/rockchip/clk-rk3188.c b/drivers/clk/rockchip/clk-rk3188.c
+index 77aebfb1d6d5..730020fcc7fe 100644
+--- a/drivers/clk/rockchip/clk-rk3188.c
++++ b/drivers/clk/rockchip/clk-rk3188.c
+@@ -751,6 +751,7 @@ static const char *const rk3188_critical_clocks[] __initconst = {
+ 	"pclk_peri",
+ 	"hclk_cpubus",
+ 	"hclk_vio_bus",
++	"sclk_mac_lbtest",
+ };
+ 
+ static struct rockchip_clk_provider *__init rk3188_common_clk_init(struct device_node *np)

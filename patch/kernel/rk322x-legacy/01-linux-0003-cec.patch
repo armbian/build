@@ -1,0 +1,4422 @@
+From 0dcc2992b7f03fbe5bf9bd9f65edaf5479bf975a Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 4 Sep 2017 22:34:19 +0200
+Subject: [PATCH] BACKPORT: HDMI CEC support from v4.15
+
+Skipped changes:
+857313e51006ff51524579bcd8808b70f9a80812 "media: utilize new cdev_device_add helper function"
+0f7499fddb153a333dff3c1dc4280c178b9b5a80 "[media] rc-main: assign driver type during allocation"
+---
+ Documentation/devicetree/bindings/media/cec.txt    |   8 +
+ Documentation/media/kapi/cec-core.rst              | 381 +++++++++++++++++++++
+ Documentation/media/uapi/cec/cec-api.rst           |  46 +++
+ Documentation/media/uapi/cec/cec-func-close.rst    |  47 +++
+ Documentation/media/uapi/cec/cec-func-ioctl.rst    |  66 ++++
+ Documentation/media/uapi/cec/cec-func-open.rst     |  78 +++++
+ Documentation/media/uapi/cec/cec-func-poll.rst     |  77 +++++
+ Documentation/media/uapi/cec/cec-funcs.rst         |  20 ++
+ Documentation/media/uapi/cec/cec-header.rst        |  10 +
+ Documentation/media/uapi/cec/cec-intro.rst         |  40 +++
+ .../media/uapi/cec/cec-ioc-adap-g-caps.rst         | 139 ++++++++
+ .../media/uapi/cec/cec-ioc-adap-g-log-addrs.rst    | 371 ++++++++++++++++++++
+ .../media/uapi/cec/cec-ioc-adap-g-phys-addr.rst    |  93 +++++
+ Documentation/media/uapi/cec/cec-ioc-dqevent.rst   | 226 ++++++++++++
+ Documentation/media/uapi/cec/cec-ioc-g-mode.rst    | 293 ++++++++++++++++
+ Documentation/media/uapi/cec/cec-ioc-receive.rst   | 344 +++++++++++++++++++
+ MAINTAINERS                                        |  16 +
+ drivers/media/cec/cec-adap.c                       |  61 +++-
+ drivers/media/cec/cec-core.c                       |  15 +-
+ drivers/media/rc/keymaps/Makefile                  |   1 +
+ drivers/media/rc/keymaps/rc-cec.c                  | 182 ++++++++++
+ drivers/media/rc/rc-main.c                         |   1 +
+ fs/compat_ioctl.c                                  |  12 +
+ include/media/cec-notifier.h                       |  22 ++
+ include/media/cec.h                                |   9 +-
+ include/media/rc-map.h                             |   5 +-
+ include/uapi/linux/cec-funcs.h                     |   1 +
+ include/uapi/linux/cec.h                           |   2 +-
+ include/uapi/linux/input-event-codes.h             |  31 ++
+ include/uapi/linux/input.h                         |   1 +
+ 30 files changed, 2606 insertions(+), 15 deletions(-)
+ create mode 100644 Documentation/devicetree/bindings/media/cec.txt
+ create mode 100644 Documentation/media/kapi/cec-core.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-api.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-func-close.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-func-ioctl.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-func-open.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-func-poll.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-funcs.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-header.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-intro.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-ioc-adap-g-caps.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-ioc-adap-g-log-addrs.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-ioc-adap-g-phys-addr.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-ioc-dqevent.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-ioc-g-mode.rst
+ create mode 100644 Documentation/media/uapi/cec/cec-ioc-receive.rst
+ create mode 100644 drivers/media/rc/keymaps/rc-cec.c
+
+diff --git a/Documentation/devicetree/bindings/media/cec.txt b/Documentation/devicetree/bindings/media/cec.txt
+new file mode 100644
+index 000000000000..22d7aae3d3d7
+--- /dev/null
++++ b/Documentation/devicetree/bindings/media/cec.txt
+@@ -0,0 +1,8 @@
++Common bindings for HDMI CEC adapters
++
++- hdmi-phandle: phandle to the HDMI controller.
++
++- needs-hpd: if present the CEC support is only available when the HPD
++  is high. Some boards only let the CEC pin through if the HPD is high,
++  for example if there is a level converter that uses the HPD to power
++  up or down.
+diff --git a/Documentation/media/kapi/cec-core.rst b/Documentation/media/kapi/cec-core.rst
+new file mode 100644
+index 000000000000..d37e107f2fde
+--- /dev/null
++++ b/Documentation/media/kapi/cec-core.rst
+@@ -0,0 +1,381 @@
++CEC Kernel Support
++==================
++
++The CEC framework provides a unified kernel interface for use with HDMI CEC
++hardware. It is designed to handle a multiple types of hardware (receivers,
++transmitters, USB dongles). The framework also gives the option to decide
++what to do in the kernel driver and what should be handled by userspace
++applications. In addition it integrates the remote control passthrough
++feature into the kernel's remote control framework.
++
++
++The CEC Protocol
++----------------
++
++The CEC protocol enables consumer electronic devices to communicate with each
++other through the HDMI connection. The protocol uses logical addresses in the
++communication. The logical address is strictly connected with the functionality
++provided by the device. The TV acting as the communication hub is always
++assigned address 0. The physical address is determined by the physical
++connection between devices.
++
++The CEC framework described here is up to date with the CEC 2.0 specification.
++It is documented in the HDMI 1.4 specification with the new 2.0 bits documented
++in the HDMI 2.0 specification. But for most of the features the freely available
++HDMI 1.3a specification is sufficient:
++
++http://www.microprocessor.org/HDMISpecification13a.pdf
++
++
++CEC Adapter Interface
++---------------------
++
++The struct cec_adapter represents the CEC adapter hardware. It is created by
++calling cec_allocate_adapter() and deleted by calling cec_delete_adapter():
++
++.. c:function::
++   struct cec_adapter *cec_allocate_adapter(const struct cec_adap_ops *ops, void *priv,
++   const char *name, u32 caps, u8 available_las);
++
++.. c:function::
++   void cec_delete_adapter(struct cec_adapter *adap);
++
++To create an adapter you need to pass the following information:
++
++ops:
++	adapter operations which are called by the CEC framework and that you
++	have to implement.
++
++priv:
++	will be stored in adap->priv and can be used by the adapter ops.
++	Use cec_get_drvdata(adap) to get the priv pointer.
++
++name:
++	the name of the CEC adapter. Note: this name will be copied.
++
++caps:
++	capabilities of the CEC adapter. These capabilities determine the
++	capabilities of the hardware and which parts are to be handled
++	by userspace and which parts are handled by kernelspace. The
++	capabilities are returned by CEC_ADAP_G_CAPS.
++
++available_las:
++	the number of simultaneous logical addresses that this
++	adapter can handle. Must be 1 <= available_las <= CEC_MAX_LOG_ADDRS.
++
++To obtain the priv pointer use this helper function:
++
++.. c:function::
++	void *cec_get_drvdata(const struct cec_adapter *adap);
++
++To register the /dev/cecX device node and the remote control device (if
++CEC_CAP_RC is set) you call:
++
++.. c:function::
++	int cec_register_adapter(struct cec_adapter *adap, struct device *parent);
++
++where parent is the parent device.
++
++To unregister the devices call:
++
++.. c:function::
++	void cec_unregister_adapter(struct cec_adapter *adap);
++
++Note: if cec_register_adapter() fails, then call cec_delete_adapter() to
++clean up. But if cec_register_adapter() succeeded, then only call
++cec_unregister_adapter() to clean up, never cec_delete_adapter(). The
++unregister function will delete the adapter automatically once the last user
++of that /dev/cecX device has closed its file handle.
++
++
++Implementing the Low-Level CEC Adapter
++--------------------------------------
++
++The following low-level adapter operations have to be implemented in
++your driver:
++
++.. c:type:: struct cec_adap_ops
++
++.. code-block:: none
++
++	struct cec_adap_ops
++	{
++		/* Low-level callbacks */
++		int (*adap_enable)(struct cec_adapter *adap, bool enable);
++		int (*adap_monitor_all_enable)(struct cec_adapter *adap, bool enable);
++		int (*adap_log_addr)(struct cec_adapter *adap, u8 logical_addr);
++		int (*adap_transmit)(struct cec_adapter *adap, u8 attempts,
++				      u32 signal_free_time, struct cec_msg *msg);
++		void (*adap_status)(struct cec_adapter *adap, struct seq_file *file);
++		void (*adap_free)(struct cec_adapter *adap);
++
++		/* High-level callbacks */
++		...
++	};
++
++The five low-level ops deal with various aspects of controlling the CEC adapter
++hardware:
++
++
++To enable/disable the hardware:
++
++.. c:function::
++	int (*adap_enable)(struct cec_adapter *adap, bool enable);
++
++This callback enables or disables the CEC hardware. Enabling the CEC hardware
++means powering it up in a state where no logical addresses are claimed. This
++op assumes that the physical address (adap->phys_addr) is valid when enable is
++true and will not change while the CEC adapter remains enabled. The initial
++state of the CEC adapter after calling cec_allocate_adapter() is disabled.
++
++Note that adap_enable must return 0 if enable is false.
++
++
++To enable/disable the 'monitor all' mode:
++
++.. c:function::
++	int (*adap_monitor_all_enable)(struct cec_adapter *adap, bool enable);
++
++If enabled, then the adapter should be put in a mode to also monitor messages
++that not for us. Not all hardware supports this and this function is only
++called if the CEC_CAP_MONITOR_ALL capability is set. This callback is optional
++(some hardware may always be in 'monitor all' mode).
++
++Note that adap_monitor_all_enable must return 0 if enable is false.
++
++
++To program a new logical address:
++
++.. c:function::
++	int (*adap_log_addr)(struct cec_adapter *adap, u8 logical_addr);
++
++If logical_addr == CEC_LOG_ADDR_INVALID then all programmed logical addresses
++are to be erased. Otherwise the given logical address should be programmed.
++If the maximum number of available logical addresses is exceeded, then it
++should return -ENXIO. Once a logical address is programmed the CEC hardware
++can receive directed messages to that address.
++
++Note that adap_log_addr must return 0 if logical_addr is CEC_LOG_ADDR_INVALID.
++
++
++To transmit a new message:
++
++.. c:function::
++	int (*adap_transmit)(struct cec_adapter *adap, u8 attempts,
++			     u32 signal_free_time, struct cec_msg *msg);
++
++This transmits a new message. The attempts argument is the suggested number of
++attempts for the transmit.
++
++The signal_free_time is the number of data bit periods that the adapter should
++wait when the line is free before attempting to send a message. This value
++depends on whether this transmit is a retry, a message from a new initiator or
++a new message for the same initiator. Most hardware will handle this
++automatically, but in some cases this information is needed.
++
++The CEC_FREE_TIME_TO_USEC macro can be used to convert signal_free_time to
++microseconds (one data bit period is 2.4 ms).
++
++
++To log the current CEC hardware status:
++
++.. c:function::
++	void (*adap_status)(struct cec_adapter *adap, struct seq_file *file);
++
++This optional callback can be used to show the status of the CEC hardware.
++The status is available through debugfs: cat /sys/kernel/debug/cec/cecX/status
++
++To free any resources when the adapter is deleted:
++
++.. c:function::
++	void (*adap_free)(struct cec_adapter *adap);
++
++This optional callback can be used to free any resources that might have been
++allocated by the driver. It's called from cec_delete_adapter.
++
++
++Your adapter driver will also have to react to events (typically interrupt
++driven) by calling into the framework in the following situations:
++
++When a transmit finished (successfully or otherwise):
++
++.. c:function::
++	void cec_transmit_done(struct cec_adapter *adap, u8 status, u8 arb_lost_cnt,
++		       u8 nack_cnt, u8 low_drive_cnt, u8 error_cnt);
++
++or:
++
++.. c:function::
++	void cec_transmit_attempt_done(struct cec_adapter *adap, u8 status);
++
++The status can be one of:
++
++CEC_TX_STATUS_OK:
++	the transmit was successful.
++
++CEC_TX_STATUS_ARB_LOST:
++	arbitration was lost: another CEC initiator
++	took control of the CEC line and you lost the arbitration.
++
++CEC_TX_STATUS_NACK:
++	the message was nacked (for a directed message) or
++	acked (for a broadcast message). A retransmission is needed.
++
++CEC_TX_STATUS_LOW_DRIVE:
++	low drive was detected on the CEC bus. This indicates that
++	a follower detected an error on the bus and requested a
++	retransmission.
++
++CEC_TX_STATUS_ERROR:
++	some unspecified error occurred: this can be one of ARB_LOST
++	or LOW_DRIVE if the hardware cannot differentiate or something
++	else entirely.
++
++CEC_TX_STATUS_MAX_RETRIES:
++	could not transmit the message after trying multiple times.
++	Should only be set by the driver if it has hardware support for
++	retrying messages. If set, then the framework assumes that it
++	doesn't have to make another attempt to transmit the message
++	since the hardware did that already.
++
++The hardware must be able to differentiate between OK, NACK and 'something
++else'.
++
++The \*_cnt arguments are the number of error conditions that were seen.
++This may be 0 if no information is available. Drivers that do not support
++hardware retry can just set the counter corresponding to the transmit error
++to 1, if the hardware does support retry then either set these counters to
++0 if the hardware provides no feedback of which errors occurred and how many
++times, or fill in the correct values as reported by the hardware.
++
++The cec_transmit_attempt_done() function is a helper for cases where the
++hardware never retries, so the transmit is always for just a single
++attempt. It will call cec_transmit_done() in turn, filling in 1 for the
++count argument corresponding to the status. Or all 0 if the status was OK.
++
++When a CEC message was received:
++
++.. c:function::
++	void cec_received_msg(struct cec_adapter *adap, struct cec_msg *msg);
++
++Speaks for itself.
++
++Implementing the interrupt handler
++----------------------------------
++
++Typically the CEC hardware provides interrupts that signal when a transmit
++finished and whether it was successful or not, and it provides and interrupt
++when a CEC message was received.
++
++The CEC driver should always process the transmit interrupts first before
++handling the receive interrupt. The framework expects to see the cec_transmit_done
++call before the cec_received_msg call, otherwise it can get confused if the
++received message was in reply to the transmitted message.
++
++Implementing the High-Level CEC Adapter
++---------------------------------------
++
++The low-level operations drive the hardware, the high-level operations are
++CEC protocol driven. The following high-level callbacks are available:
++
++.. code-block:: none
++
++	struct cec_adap_ops {
++		/* Low-level callbacks */
++		...
++
++		/* High-level CEC message callback */
++		int (*received)(struct cec_adapter *adap, struct cec_msg *msg);
++	};
++
++The received() callback allows the driver to optionally handle a newly
++received CEC message
++
++.. c:function::
++	int (*received)(struct cec_adapter *adap, struct cec_msg *msg);
++
++If the driver wants to process a CEC message, then it can implement this
++callback. If it doesn't want to handle this message, then it should return
++-ENOMSG, otherwise the CEC framework assumes it processed this message and
++it will not do anything with it.
++
++
++CEC framework functions
++-----------------------
++
++CEC Adapter drivers can call the following CEC framework functions:
++
++.. c:function::
++	int cec_transmit_msg(struct cec_adapter *adap, struct cec_msg *msg,
++			     bool block);
++
++Transmit a CEC message. If block is true, then wait until the message has been
++transmitted, otherwise just queue it and return.
++
++.. c:function::
++	void cec_s_phys_addr(struct cec_adapter *adap, u16 phys_addr,
++			     bool block);
++
++Change the physical address. This function will set adap->phys_addr and
++send an event if it has changed. If cec_s_log_addrs() has been called and
++the physical address has become valid, then the CEC framework will start
++claiming the logical addresses. If block is true, then this function won't
++return until this process has finished.
++
++When the physical address is set to a valid value the CEC adapter will
++be enabled (see the adap_enable op). When it is set to CEC_PHYS_ADDR_INVALID,
++then the CEC adapter will be disabled. If you change a valid physical address
++to another valid physical address, then this function will first set the
++address to CEC_PHYS_ADDR_INVALID before enabling the new physical address.
++
++.. c:function::
++	void cec_s_phys_addr_from_edid(struct cec_adapter *adap,
++				       const struct edid *edid);
++
++A helper function that extracts the physical address from the edid struct
++and calls cec_s_phys_addr() with that address, or CEC_PHYS_ADDR_INVALID
++if the EDID did not contain a physical address or edid was a NULL pointer.
++
++.. c:function::
++	int cec_s_log_addrs(struct cec_adapter *adap,
++			    struct cec_log_addrs *log_addrs, bool block);
++
++Claim the CEC logical addresses. Should never be called if CEC_CAP_LOG_ADDRS
++is set. If block is true, then wait until the logical addresses have been
++claimed, otherwise just queue it and return. To unconfigure all logical
++addresses call this function with log_addrs set to NULL or with
++log_addrs->num_log_addrs set to 0. The block argument is ignored when
++unconfiguring. This function will just return if the physical address is
++invalid. Once the physical address becomes valid, then the framework will
++attempt to claim these logical addresses.
++
++CEC Pin framework
++-----------------
++
++Most CEC hardware operates on full CEC messages where the software provides
++the message and the hardware handles the low-level CEC protocol. But some
++hardware only drives the CEC pin and software has to handle the low-level
++CEC protocol. The CEC pin framework was created to handle such devices.
++
++Note that due to the close-to-realtime requirements it can never be guaranteed
++to work 100%. This framework uses highres timers internally, but if a
++timer goes off too late by more than 300 microseconds wrong results can
++occur. In reality it appears to be fairly reliable.
++
++One advantage of this low-level implementation is that it can be used as
++a cheap CEC analyser, especially if interrupts can be used to detect
++CEC pin transitions from low to high or vice versa.
++
++.. kernel-doc:: include/media/cec-pin.h
++
++CEC Notifier framework
++----------------------
++
++Most drm HDMI implementations have an integrated CEC implementation and no
++notifier support is needed. But some have independent CEC implementations
++that have their own driver. This could be an IP block for an SoC or a
++completely separate chip that deals with the CEC pin. For those cases a
++drm driver can install a notifier and use the notifier to inform the
++CEC driver about changes in the physical address.
++
++.. kernel-doc:: include/media/cec-notifier.h
+diff --git a/Documentation/media/uapi/cec/cec-api.rst b/Documentation/media/uapi/cec/cec-api.rst
+new file mode 100644
+index 000000000000..b68ca9c1d2e0
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-api.rst
+@@ -0,0 +1,46 @@
++.. -*- coding: utf-8; mode: rst -*-
++
++.. include:: <isonum.txt>
++
++.. _cec:
++
++#########################################
++Part V - Consumer Electronics Control API
++#########################################
++
++This part describes the CEC: Consumer Electronics Control
++
++
++.. only:: html
++
++   .. class:: toc-title
++
++        Table of Contents
++
++.. toctree::
++    :maxdepth: 5
++    :numbered:
++
++    cec-intro
++    cec-funcs
++    cec-header
++
++
++**********************
++Revision and Copyright
++**********************
++Authors:
++
++- Verkuil, Hans <hans.verkuil@cisco.com>
++
++ - Initial version.
++
++**Copyright** |copy| 2016 : Hans Verkuil
++
++****************
++Revision History
++****************
++
++:revision: 1.0.0 / 2016-03-17 (*hv*)
++
++Initial revision
+diff --git a/Documentation/media/uapi/cec/cec-func-close.rst b/Documentation/media/uapi/cec/cec-func-close.rst
+new file mode 100644
+index 000000000000..334358dfa72e
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-func-close.rst
+@@ -0,0 +1,47 @@
++.. -*- coding: utf-8; mode: rst -*-
++
++.. _cec-func-close:
++
++***********
++cec close()
++***********
++
++Name
++====
++
++cec-close - Close a cec device
++
++
++Synopsis
++========
++
++.. code-block:: c
++
++    #include <unistd.h>
++
++
++.. c:function:: int close( int fd )
++    :name: cec-close
++
++Arguments
++=========
++
++``fd``
++    File descriptor returned by :c:func:`open() <cec-open>`.
++
++
++Description
++===========
++
++Closes the cec device. Resources associated with the file descriptor are
++freed. The device configuration remain unchanged.
++
++
++Return Value
++============
++
++:c:func:`close() <cec-close>` returns 0 on success. On error, -1 is returned, and
++``errno`` is set appropriately. Possible error codes are:
++
++``EBADF``
++    ``fd`` is not a valid open file descriptor.
+diff --git a/Documentation/media/uapi/cec/cec-func-ioctl.rst b/Documentation/media/uapi/cec/cec-func-ioctl.rst
+new file mode 100644
+index 000000000000..e2b6260b0086
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-func-ioctl.rst
+@@ -0,0 +1,66 @@
++.. -*- coding: utf-8; mode: rst -*-
++
++.. _cec-func-ioctl:
++
++***********
++cec ioctl()
++***********
++
++Name
++====
++
++cec-ioctl - Control a cec device
++
++Synopsis
++========
++
++.. code-block:: c
++
++    #include <sys/ioctl.h>
++
++
++.. c:function:: int ioctl( int fd, int request, void *argp )
++   :name: cec-ioctl
++
++Arguments
++=========
++
++``fd``
++    File descriptor returned by :c:func:`open() <cec-open>`.
++
++``request``
++    CEC ioctl request code as defined in the cec.h header file, for
++    example :ref:`CEC_ADAP_G_CAPS <CEC_ADAP_G_CAPS>`.
++
++``argp``
++    Pointer to a request-specific structure.
++
++
++Description
++===========
++
++The :c:func:`ioctl() <cec-ioctl>` function manipulates cec device parameters. The
++argument ``fd`` must be an open file descriptor.
++
++The ioctl ``request`` code specifies the cec function to be called. It
++has encoded in it whether the argument is an input, output or read/write
++parameter, and the size of the argument ``argp`` in bytes.
++
++Macros and structures definitions specifying cec ioctl requests and
++their parameters are located in the cec.h header file. All cec ioctl
++requests, their respective function and parameters are specified in
++:ref:`cec-user-func`.
++
++
++Return Value
++============
++
++On success 0 is returned, on error -1 and the ``errno`` variable is set
++appropriately. The generic error codes are described at the
++:ref:`Generic Error Codes <gen-errors>` chapter.
++
++Request-specific error codes are listed in the individual requests
++descriptions.
++
++When an ioctl that takes an output or read/write parameter fails, the
++parameter remains unmodified.
+diff --git a/Documentation/media/uapi/cec/cec-func-open.rst b/Documentation/media/uapi/cec/cec-func-open.rst
+new file mode 100644
+index 000000000000..5d6663a649bd
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-func-open.rst
+@@ -0,0 +1,78 @@
++.. -*- coding: utf-8; mode: rst -*-
++
++.. _cec-func-open:
++
++**********
++cec open()
++**********
++
++Name
++====
++
++cec-open - Open a cec device
++
++Synopsis
++========
++
++.. code-block:: c
++
++    #include <fcntl.h>
++
++
++.. c:function:: int open( const char *device_name, int flags )
++   :name: cec-open
++
++
++Arguments
++=========
++
++``device_name``
++    Device to be opened.
++
++``flags``
++    Open flags. Access mode must be ``O_RDWR``.
++
++    When the ``O_NONBLOCK`` flag is given, the
++    :ref:`CEC_RECEIVE <CEC_RECEIVE>` and :ref:`CEC_DQEVENT <CEC_DQEVENT>` ioctls
++    will return the ``EAGAIN`` error code when no message or event is available, and
++    ioctls :ref:`CEC_TRANSMIT <CEC_TRANSMIT>`,
++    :ref:`CEC_ADAP_S_PHYS_ADDR <CEC_ADAP_S_PHYS_ADDR>` and
++    :ref:`CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>`
++    all return 0.
++
++    Other flags have no effect.
++
++
++Description
++===========
++
++To open a cec device applications call :c:func:`open() <cec-open>` with the
++desired device name. The function has no side effects; the device
++configuration remain unchanged.
++
++When the device is opened in read-only mode, attempts to modify its
++configuration will result in an error, and ``errno`` will be set to
++EBADF.
++
++
++Return Value
++============
++
++:c:func:`open() <cec-open>` returns the new file descriptor on success. On error,
++-1 is returned, and ``errno`` is set appropriately. Possible error codes
++include:
++
++``EACCES``
++    The requested access to the file is not allowed.
++
++``EMFILE``
++    The process already has the maximum number of files open.
++
++``ENFILE``
++    The system limit on the total number of open files has been reached.
++
++``ENOMEM``
++    Insufficient kernel memory was available.
++
++``ENXIO``
++    No device corresponding to this device special file exists.
+diff --git a/Documentation/media/uapi/cec/cec-func-poll.rst b/Documentation/media/uapi/cec/cec-func-poll.rst
+new file mode 100644
+index 000000000000..d49f1ee0742d
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-func-poll.rst
+@@ -0,0 +1,77 @@
++.. -*- coding: utf-8; mode: rst -*-
++
++.. _cec-func-poll:
++
++**********
++cec poll()
++**********
++
++Name
++====
++
++cec-poll - Wait for some event on a file descriptor
++
++
++Synopsis
++========
++
++.. code-block:: c
++
++    #include <sys/poll.h>
++
++
++.. c:function:: int poll( struct pollfd *ufds, unsigned int nfds, int timeout )
++   :name: cec-poll
++
++Arguments
++=========
++
++``ufds``
++   List of FD events to be watched
++
++``nfds``
++   Number of FD events at the \*ufds array
++
++``timeout``
++   Timeout to wait for events
++
++
++Description
++===========
++
++With the :c:func:`poll() <cec-poll>` function applications can wait for CEC
++events.
++
++On success :c:func:`poll() <cec-poll>` returns the number of file descriptors
++that have been selected (that is, file descriptors for which the
++``revents`` field of the respective struct :c:type:`pollfd`
++is non-zero). CEC devices set the ``POLLIN`` and ``POLLRDNORM`` flags in
++the ``revents`` field if there are messages in the receive queue. If the
++transmit queue has room for new messages, the ``POLLOUT`` and
++``POLLWRNORM`` flags are set. If there are events in the event queue,
++then the ``POLLPRI`` flag is set. When the function times out it returns
++a value of zero, on failure it returns -1 and the ``errno`` variable is
++set appropriately.
++
++For more details see the :c:func:`poll() <cec-poll>` manual page.
++
++
++Return Value
++============
++
++On success, :c:func:`poll() <cec-poll>` returns the number structures which have
++non-zero ``revents`` fields, or zero if the call timed out. On error -1
++is returned, and the ``errno`` variable is set appropriately:
++
++``EBADF``
++    One or more of the ``ufds`` members specify an invalid file
++    descriptor.
++
++``EFAULT``
++    ``ufds`` references an inaccessible memory area.
++
++``EINTR``
++    The call was interrupted by a signal.
++
++``EINVAL``
++    The ``nfds`` argument is greater than ``OPEN_MAX``.
+diff --git a/Documentation/media/uapi/cec/cec-funcs.rst b/Documentation/media/uapi/cec/cec-funcs.rst
+new file mode 100644
+index 000000000000..6d696cead5cb
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-funcs.rst
+@@ -0,0 +1,20 @@
++.. _cec-user-func:
++
++******************
++Function Reference
++******************
++
++
++.. toctree::
++    :maxdepth: 1
++
++    cec-func-open
++    cec-func-close
++    cec-func-ioctl
++    cec-func-poll
++    cec-ioc-adap-g-caps
++    cec-ioc-adap-g-log-addrs
++    cec-ioc-adap-g-phys-addr
++    cec-ioc-dqevent
++    cec-ioc-g-mode
++    cec-ioc-receive
+diff --git a/Documentation/media/uapi/cec/cec-header.rst b/Documentation/media/uapi/cec/cec-header.rst
+new file mode 100644
+index 000000000000..d5a9a2828274
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-header.rst
+@@ -0,0 +1,10 @@
++.. -*- coding: utf-8; mode: rst -*-
++
++.. _cec_header:
++
++***************
++CEC Header File
++***************
++
++.. kernel-include:: $BUILDDIR/cec.h.rst
++
+diff --git a/Documentation/media/uapi/cec/cec-intro.rst b/Documentation/media/uapi/cec/cec-intro.rst
+new file mode 100644
+index 000000000000..07ee2b8f89d6
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-intro.rst
+@@ -0,0 +1,40 @@
++.. _cec-intro:
++
++Introduction
++============
++
++HDMI connectors provide a single pin for use by the Consumer Electronics
++Control protocol. This protocol allows different devices connected by an
++HDMI cable to communicate. The protocol for CEC version 1.4 is defined
++in supplements 1 (CEC) and 2 (HEAC or HDMI Ethernet and Audio Return
++Channel) of the HDMI 1.4a (:ref:`hdmi`) specification and the
++extensions added to CEC version 2.0 are defined in chapter 11 of the
++HDMI 2.0 (:ref:`hdmi2`) specification.
++
++The bitrate is very slow (effectively no more than 36 bytes per second)
++and is based on the ancient AV.link protocol used in old SCART
++connectors. The protocol closely resembles a crazy Rube Goldberg
++contraption and is an unholy mix of low and high level messages. Some
++messages, especially those part of the HEAC protocol layered on top of
++CEC, need to be handled by the kernel, others can be handled either by
++the kernel or by userspace.
++
++In addition, CEC can be implemented in HDMI receivers, transmitters and
++in USB devices that have an HDMI input and an HDMI output and that
++control just the CEC pin.
++
++Drivers that support CEC will create a CEC device node (/dev/cecX) to
++give userspace access to the CEC adapter. The
++:ref:`CEC_ADAP_G_CAPS` ioctl will tell userspace what it is allowed to do.
++
++In order to check the support and test it, it is suggested to download
++the `v4l-utils <https://git.linuxtv.org/v4l-utils.git/>`_ package. It
++provides three tools to handle CEC:
++
++- cec-ctl: the Swiss army knife of CEC. Allows you to configure, transmit
++  and monitor CEC messages.
++
++- cec-compliance: does a CEC compliance test of a remote CEC device to
++  determine how compliant the CEC implementation is.
++
++- cec-follower: emulates a CEC follower.
+diff --git a/Documentation/media/uapi/cec/cec-ioc-adap-g-caps.rst b/Documentation/media/uapi/cec/cec-ioc-adap-g-caps.rst
+new file mode 100644
+index 000000000000..6c1f6efb822e
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-ioc-adap-g-caps.rst
+@@ -0,0 +1,139 @@
++.. -*- coding: utf-8; mode: rst -*-
++
++.. _CEC_ADAP_G_CAPS:
++
++*********************
++ioctl CEC_ADAP_G_CAPS
++*********************
++
++Name
++====
++
++CEC_ADAP_G_CAPS - Query device capabilities
++
++Synopsis
++========
++
++.. c:function:: int ioctl( int fd, CEC_ADAP_G_CAPS, struct cec_caps *argp )
++    :name: CEC_ADAP_G_CAPS
++
++Arguments
++=========
++
++``fd``
++    File descriptor returned by :c:func:`open() <cec-open>`.
++
++``argp``
++
++
++Description
++===========
++
++All cec devices must support :ref:`ioctl CEC_ADAP_G_CAPS <CEC_ADAP_G_CAPS>`. To query
++device information, applications call the ioctl with a pointer to a
++struct :c:type:`cec_caps`. The driver fills the structure and
++returns the information to the application. The ioctl never fails.
++
++.. tabularcolumns:: |p{1.2cm}|p{2.5cm}|p{13.8cm}|
++
++.. c:type:: cec_caps
++
++.. flat-table:: struct cec_caps
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 16
++
++    * - char
++      - ``driver[32]``
++      - The name of the cec adapter driver.
++    * - char
++      - ``name[32]``
++      - The name of this CEC adapter. The combination ``driver`` and
++	``name`` must be unique.
++    * - __u32
++      - ``capabilities``
++      - The capabilities of the CEC adapter, see
++	:ref:`cec-capabilities`.
++    * - __u32
++      - ``version``
++      - CEC Framework API version, formatted with the ``KERNEL_VERSION()``
++	macro.
++
++
++.. tabularcolumns:: |p{4.4cm}|p{2.5cm}|p{10.6cm}|
++
++.. _cec-capabilities:
++
++.. flat-table:: CEC Capabilities Flags
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 8
++
++    * .. _`CEC-CAP-PHYS-ADDR`:
++
++      - ``CEC_CAP_PHYS_ADDR``
++      - 0x00000001
++      - Userspace has to configure the physical address by calling
++	:ref:`ioctl CEC_ADAP_S_PHYS_ADDR <CEC_ADAP_S_PHYS_ADDR>`. If
++	this capability isn't set, then setting the physical address is
++	handled by the kernel whenever the EDID is set (for an HDMI
++	receiver) or read (for an HDMI transmitter).
++    * .. _`CEC-CAP-LOG-ADDRS`:
++
++      - ``CEC_CAP_LOG_ADDRS``
++      - 0x00000002
++      - Userspace has to configure the logical addresses by calling
++	:ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>`. If
++	this capability isn't set, then the kernel will have configured
++	this.
++    * .. _`CEC-CAP-TRANSMIT`:
++
++      - ``CEC_CAP_TRANSMIT``
++      - 0x00000004
++      - Userspace can transmit CEC messages by calling
++	:ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>`. This implies that
++	userspace can be a follower as well, since being able to transmit
++	messages is a prerequisite of becoming a follower. If this
++	capability isn't set, then the kernel will handle all CEC
++	transmits and process all CEC messages it receives.
++    * .. _`CEC-CAP-PASSTHROUGH`:
++
++      - ``CEC_CAP_PASSTHROUGH``
++      - 0x00000008
++      - Userspace can use the passthrough mode by calling
++	:ref:`ioctl CEC_S_MODE <CEC_S_MODE>`.
++    * .. _`CEC-CAP-RC`:
++
++      - ``CEC_CAP_RC``
++      - 0x00000010
++      - This adapter supports the remote control protocol.
++    * .. _`CEC-CAP-MONITOR-ALL`:
++
++      - ``CEC_CAP_MONITOR_ALL``
++      - 0x00000020
++      - The CEC hardware can monitor all messages, not just directed and
++	broadcast messages.
++    * .. _`CEC-CAP-NEEDS-HPD`:
++
++      - ``CEC_CAP_NEEDS_HPD``
++      - 0x00000040
++      - The CEC hardware is only active if the HDMI Hotplug Detect pin is
++        high. This makes it impossible to use CEC to wake up displays that
++	set the HPD pin low when in standby mode, but keep the CEC bus
++	alive.
++    * .. _`CEC-CAP-MONITOR-PIN`:
++
++      - ``CEC_CAP_MONITOR_PIN``
++      - 0x00000080
++      - The CEC hardware can monitor CEC pin changes from low to high voltage
++        and vice versa. When in pin monitoring mode the application will
++	receive ``CEC_EVENT_PIN_CEC_LOW`` and ``CEC_EVENT_PIN_CEC_HIGH`` events.
++
++
++
++Return Value
++============
++
++On success 0 is returned, on error -1 and the ``errno`` variable is set
++appropriately. The generic error codes are described at the
++:ref:`Generic Error Codes <gen-errors>` chapter.
+diff --git a/Documentation/media/uapi/cec/cec-ioc-adap-g-log-addrs.rst b/Documentation/media/uapi/cec/cec-ioc-adap-g-log-addrs.rst
+new file mode 100644
+index 000000000000..84f431a022ad
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-ioc-adap-g-log-addrs.rst
+@@ -0,0 +1,371 @@
++.. -*- coding: utf-8; mode: rst -*-
++
++.. _CEC_ADAP_LOG_ADDRS:
++.. _CEC_ADAP_G_LOG_ADDRS:
++.. _CEC_ADAP_S_LOG_ADDRS:
++
++****************************************************
++ioctls CEC_ADAP_G_LOG_ADDRS and CEC_ADAP_S_LOG_ADDRS
++****************************************************
++
++Name
++====
++
++CEC_ADAP_G_LOG_ADDRS, CEC_ADAP_S_LOG_ADDRS - Get or set the logical addresses
++
++
++Synopsis
++========
++
++.. c:function:: int ioctl( int fd, CEC_ADAP_G_LOG_ADDRS, struct cec_log_addrs *argp )
++   :name: CEC_ADAP_G_LOG_ADDRS
++
++.. c:function:: int ioctl( int fd, CEC_ADAP_S_LOG_ADDRS, struct cec_log_addrs *argp )
++   :name: CEC_ADAP_S_LOG_ADDRS
++
++Arguments
++=========
++
++``fd``
++    File descriptor returned by :c:func:`open() <cec-open>`.
++
++``argp``
++    Pointer to struct :c:type:`cec_log_addrs`.
++
++Description
++===========
++
++To query the current CEC logical addresses, applications call
++:ref:`ioctl CEC_ADAP_G_LOG_ADDRS <CEC_ADAP_G_LOG_ADDRS>` with a pointer to a
++struct :c:type:`cec_log_addrs` where the driver stores the logical addresses.
++
++To set new logical addresses, applications fill in
++struct :c:type:`cec_log_addrs` and call :ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>`
++with a pointer to this struct. The :ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>`
++is only available if ``CEC_CAP_LOG_ADDRS`` is set (the ``ENOTTY`` error code is
++returned otherwise). The :ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>`
++can only be called by a file descriptor in initiator mode (see :ref:`CEC_S_MODE`), if not
++the ``EBUSY`` error code will be returned.
++
++To clear existing logical addresses set ``num_log_addrs`` to 0. All other fields
++will be ignored in that case. The adapter will go to the unconfigured state and the
++``cec_version``, ``vendor_id`` and ``osd_name`` fields are all reset to their default
++values (CEC version 2.0, no vendor ID and an empty OSD name).
++
++If the physical address is valid (see :ref:`ioctl CEC_ADAP_S_PHYS_ADDR <CEC_ADAP_S_PHYS_ADDR>`),
++then this ioctl will block until all requested logical
++addresses have been claimed. If the file descriptor is in non-blocking mode then it will
++not wait for the logical addresses to be claimed, instead it just returns 0.
++
++A :ref:`CEC_EVENT_STATE_CHANGE <CEC-EVENT-STATE-CHANGE>` event is sent when the
++logical addresses are claimed or cleared.
++
++Attempting to call :ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>` when
++logical address types are already defined will return with error ``EBUSY``.
++
++.. c:type:: cec_log_addrs
++
++.. tabularcolumns:: |p{1.0cm}|p{8.0cm}|p{7.5cm}|
++
++.. cssclass:: longtable
++
++.. flat-table:: struct cec_log_addrs
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 16
++
++    * - __u8
++      - ``log_addr[CEC_MAX_LOG_ADDRS]``
++      - The actual logical addresses that were claimed. This is set by the
++	driver. If no logical address could be claimed, then it is set to
++	``CEC_LOG_ADDR_INVALID``. If this adapter is Unregistered, then
++	``log_addr[0]`` is set to 0xf and all others to
++	``CEC_LOG_ADDR_INVALID``.
++    * - __u16
++      - ``log_addr_mask``
++      - The bitmask of all logical addresses this adapter has claimed. If
++	this adapter is Unregistered then ``log_addr_mask`` sets bit 15
++	and clears all other bits. If this adapter is not configured at
++	all, then ``log_addr_mask`` is set to 0. Set by the driver.
++    * - __u8
++      - ``cec_version``
++      - The CEC version that this adapter shall use. See
++	:ref:`cec-versions`. Used to implement the
++	``CEC_MSG_CEC_VERSION`` and ``CEC_MSG_REPORT_FEATURES`` messages.
++	Note that :ref:`CEC_OP_CEC_VERSION_1_3A <CEC-OP-CEC-VERSION-1-3A>` is not allowed by the CEC
++	framework.
++    * - __u8
++      - ``num_log_addrs``
++      - Number of logical addresses to set up. Must be ≤
++	``available_log_addrs`` as returned by
++	:ref:`CEC_ADAP_G_CAPS`. All arrays in
++	this structure are only filled up to index
++	``available_log_addrs``-1. The remaining array elements will be
++	ignored. Note that the CEC 2.0 standard allows for a maximum of 2
++	logical addresses, although some hardware has support for more.
++	``CEC_MAX_LOG_ADDRS`` is 4. The driver will return the actual
++	number of logical addresses it could claim, which may be less than
++	what was requested. If this field is set to 0, then the CEC
++	adapter shall clear all claimed logical addresses and all other
++	fields will be ignored.
++    * - __u32
++      - ``vendor_id``
++      - The vendor ID is a 24-bit number that identifies the specific
++	vendor or entity. Based on this ID vendor specific commands may be
++	defined. If you do not want a vendor ID then set it to
++	``CEC_VENDOR_ID_NONE``.
++    * - __u32
++      - ``flags``
++      - Flags. See :ref:`cec-log-addrs-flags` for a list of available flags.
++    * - char
++      - ``osd_name[15]``
++      - The On-Screen Display name as is returned by the
++	``CEC_MSG_SET_OSD_NAME`` message.
++    * - __u8
++      - ``primary_device_type[CEC_MAX_LOG_ADDRS]``
++      - Primary device type for each logical address. See
++	:ref:`cec-prim-dev-types` for possible types.
++    * - __u8
++      - ``log_addr_type[CEC_MAX_LOG_ADDRS]``
++      - Logical address types. See :ref:`cec-log-addr-types` for
++	possible types. The driver will update this with the actual
++	logical address type that it claimed (e.g. it may have to fallback
++	to :ref:`CEC_LOG_ADDR_TYPE_UNREGISTERED <CEC-LOG-ADDR-TYPE-UNREGISTERED>`).
++    * - __u8
++      - ``all_device_types[CEC_MAX_LOG_ADDRS]``
++      - CEC 2.0 specific: the bit mask of all device types. See
++	:ref:`cec-all-dev-types-flags`. It is used in the CEC 2.0
++	``CEC_MSG_REPORT_FEATURES`` message. For CEC 1.4 you can either leave
++	this field to 0, or fill it in according to the CEC 2.0 guidelines to
++	give the CEC framework more information about the device type, even
++	though the framework won't use it directly in the CEC message.
++    * - __u8
++      - ``features[CEC_MAX_LOG_ADDRS][12]``
++      - Features for each logical address. It is used in the CEC 2.0
++	``CEC_MSG_REPORT_FEATURES`` message. The 12 bytes include both the
++	RC Profile and the Device Features. For CEC 1.4 you can either leave
++        this field to all 0, or fill it in according to the CEC 2.0 guidelines to
++        give the CEC framework more information about the device type, even
++        though the framework won't use it directly in the CEC message.
++
++
++.. tabularcolumns:: |p{7.8cm}|p{1.0cm}|p{8.7cm}|
++
++.. _cec-log-addrs-flags:
++
++.. flat-table:: Flags for struct cec_log_addrs
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 4
++
++    * .. _`CEC-LOG-ADDRS-FL-ALLOW-UNREG-FALLBACK`:
++
++      - ``CEC_LOG_ADDRS_FL_ALLOW_UNREG_FALLBACK``
++      - 1
++      - By default if no logical address of the requested type can be claimed, then
++	it will go back to the unconfigured state. If this flag is set, then it will
++	fallback to the Unregistered logical address. Note that if the Unregistered
++	logical address was explicitly requested, then this flag has no effect.
++    * .. _`CEC-LOG-ADDRS-FL-ALLOW-RC-PASSTHRU`:
++
++      - ``CEC_LOG_ADDRS_FL_ALLOW_RC_PASSTHRU``
++      - 2
++      - By default the ``CEC_MSG_USER_CONTROL_PRESSED`` and ``CEC_MSG_USER_CONTROL_RELEASED``
++        messages are only passed on to the follower(s), if any. If this flag is set,
++	then these messages are also passed on to the remote control input subsystem
++	and will appear as keystrokes. This features needs to be enabled explicitly.
++	If CEC is used to enter e.g. passwords, then you may not want to enable this
++	to avoid trivial snooping of the keystrokes.
++    * .. _`CEC-LOG-ADDRS-FL-CDC-ONLY`:
++
++      - ``CEC_LOG_ADDRS_FL_CDC_ONLY``
++      - 4
++      - If this flag is set, then the device is CDC-Only. CDC-Only CEC devices
++	are CEC devices that can only handle CDC messages.
++
++	All other messages are ignored.
++
++
++.. tabularcolumns:: |p{7.8cm}|p{1.0cm}|p{8.7cm}|
++
++.. _cec-versions:
++
++.. flat-table:: CEC Versions
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 4
++
++    * .. _`CEC-OP-CEC-VERSION-1-3A`:
++
++      - ``CEC_OP_CEC_VERSION_1_3A``
++      - 4
++      - CEC version according to the HDMI 1.3a standard.
++    * .. _`CEC-OP-CEC-VERSION-1-4B`:
++
++      - ``CEC_OP_CEC_VERSION_1_4B``
++      - 5
++      - CEC version according to the HDMI 1.4b standard.
++    * .. _`CEC-OP-CEC-VERSION-2-0`:
++
++      - ``CEC_OP_CEC_VERSION_2_0``
++      - 6
++      - CEC version according to the HDMI 2.0 standard.
++
++
++.. tabularcolumns:: |p{6.6cm}|p{2.2cm}|p{8.7cm}|
++
++.. _cec-prim-dev-types:
++
++.. flat-table:: CEC Primary Device Types
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 4
++
++    * .. _`CEC-OP-PRIM-DEVTYPE-TV`:
++
++      - ``CEC_OP_PRIM_DEVTYPE_TV``
++      - 0
++      - Use for a TV.
++    * .. _`CEC-OP-PRIM-DEVTYPE-RECORD`:
++
++      - ``CEC_OP_PRIM_DEVTYPE_RECORD``
++      - 1
++      - Use for a recording device.
++    * .. _`CEC-OP-PRIM-DEVTYPE-TUNER`:
++
++      - ``CEC_OP_PRIM_DEVTYPE_TUNER``
++      - 3
++      - Use for a device with a tuner.
++    * .. _`CEC-OP-PRIM-DEVTYPE-PLAYBACK`:
++
++      - ``CEC_OP_PRIM_DEVTYPE_PLAYBACK``
++      - 4
++      - Use for a playback device.
++    * .. _`CEC-OP-PRIM-DEVTYPE-AUDIOSYSTEM`:
++
++      - ``CEC_OP_PRIM_DEVTYPE_AUDIOSYSTEM``
++      - 5
++      - Use for an audio system (e.g. an audio/video receiver).
++    * .. _`CEC-OP-PRIM-DEVTYPE-SWITCH`:
++
++      - ``CEC_OP_PRIM_DEVTYPE_SWITCH``
++      - 6
++      - Use for a CEC switch.
++    * .. _`CEC-OP-PRIM-DEVTYPE-VIDEOPROC`:
++
++      - ``CEC_OP_PRIM_DEVTYPE_VIDEOPROC``
++      - 7
++      - Use for a video processor device.
++
++
++.. tabularcolumns:: |p{6.6cm}|p{2.2cm}|p{8.7cm}|
++
++.. _cec-log-addr-types:
++
++.. flat-table:: CEC Logical Address Types
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 16
++
++    * .. _`CEC-LOG-ADDR-TYPE-TV`:
++
++      - ``CEC_LOG_ADDR_TYPE_TV``
++      - 0
++      - Use for a TV.
++    * .. _`CEC-LOG-ADDR-TYPE-RECORD`:
++
++      - ``CEC_LOG_ADDR_TYPE_RECORD``
++      - 1
++      - Use for a recording device.
++    * .. _`CEC-LOG-ADDR-TYPE-TUNER`:
++
++      - ``CEC_LOG_ADDR_TYPE_TUNER``
++      - 2
++      - Use for a tuner device.
++    * .. _`CEC-LOG-ADDR-TYPE-PLAYBACK`:
++
++      - ``CEC_LOG_ADDR_TYPE_PLAYBACK``
++      - 3
++      - Use for a playback device.
++    * .. _`CEC-LOG-ADDR-TYPE-AUDIOSYSTEM`:
++
++      - ``CEC_LOG_ADDR_TYPE_AUDIOSYSTEM``
++      - 4
++      - Use for an audio system device.
++    * .. _`CEC-LOG-ADDR-TYPE-SPECIFIC`:
++
++      - ``CEC_LOG_ADDR_TYPE_SPECIFIC``
++      - 5
++      - Use for a second TV or for a video processor device.
++    * .. _`CEC-LOG-ADDR-TYPE-UNREGISTERED`:
++
++      - ``CEC_LOG_ADDR_TYPE_UNREGISTERED``
++      - 6
++      - Use this if you just want to remain unregistered. Used for pure
++	CEC switches or CDC-only devices (CDC: Capability Discovery and
++	Control).
++
++
++
++.. tabularcolumns:: |p{6.6cm}|p{2.2cm}|p{8.7cm}|
++
++.. _cec-all-dev-types-flags:
++
++.. flat-table:: CEC All Device Types Flags
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 4
++
++    * .. _`CEC-OP-ALL-DEVTYPE-TV`:
++
++      - ``CEC_OP_ALL_DEVTYPE_TV``
++      - 0x80
++      - This supports the TV type.
++    * .. _`CEC-OP-ALL-DEVTYPE-RECORD`:
++
++      - ``CEC_OP_ALL_DEVTYPE_RECORD``
++      - 0x40
++      - This supports the Recording type.
++    * .. _`CEC-OP-ALL-DEVTYPE-TUNER`:
++
++      - ``CEC_OP_ALL_DEVTYPE_TUNER``
++      - 0x20
++      - This supports the Tuner type.
++    * .. _`CEC-OP-ALL-DEVTYPE-PLAYBACK`:
++
++      - ``CEC_OP_ALL_DEVTYPE_PLAYBACK``
++      - 0x10
++      - This supports the Playback type.
++    * .. _`CEC-OP-ALL-DEVTYPE-AUDIOSYSTEM`:
++
++      - ``CEC_OP_ALL_DEVTYPE_AUDIOSYSTEM``
++      - 0x08
++      - This supports the Audio System type.
++    * .. _`CEC-OP-ALL-DEVTYPE-SWITCH`:
++
++      - ``CEC_OP_ALL_DEVTYPE_SWITCH``
++      - 0x04
++      - This supports the CEC Switch or Video Processing type.
++
++
++
++Return Value
++============
++
++On success 0 is returned, on error -1 and the ``errno`` variable is set
++appropriately. The generic error codes are described at the
++:ref:`Generic Error Codes <gen-errors>` chapter.
++
++The :ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>` can return the following
++error codes:
++
++ENOTTY
++    The ``CEC_CAP_LOG_ADDRS`` capability wasn't set, so this ioctl is not supported.
++
++EBUSY
++    The CEC adapter is currently configuring itself, or it is already configured and
++    ``num_log_addrs`` is non-zero, or another filehandle is in exclusive follower or
++    initiator mode, or the filehandle is in mode ``CEC_MODE_NO_INITIATOR``.
++
++EINVAL
++    The contents of struct :c:type:`cec_log_addrs` is invalid.
+diff --git a/Documentation/media/uapi/cec/cec-ioc-adap-g-phys-addr.rst b/Documentation/media/uapi/cec/cec-ioc-adap-g-phys-addr.rst
+new file mode 100644
+index 000000000000..9e49d4be35d5
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-ioc-adap-g-phys-addr.rst
+@@ -0,0 +1,93 @@
++.. -*- coding: utf-8; mode: rst -*-
++
++.. _CEC_ADAP_PHYS_ADDR:
++.. _CEC_ADAP_G_PHYS_ADDR:
++.. _CEC_ADAP_S_PHYS_ADDR:
++
++****************************************************
++ioctls CEC_ADAP_G_PHYS_ADDR and CEC_ADAP_S_PHYS_ADDR
++****************************************************
++
++Name
++====
++
++CEC_ADAP_G_PHYS_ADDR, CEC_ADAP_S_PHYS_ADDR - Get or set the physical address
++
++
++Synopsis
++========
++
++.. c:function:: int ioctl( int fd, CEC_ADAP_G_PHYS_ADDR, __u16 *argp )
++    :name: CEC_ADAP_G_PHYS_ADDR
++
++.. c:function:: int ioctl( int fd, CEC_ADAP_S_PHYS_ADDR, __u16 *argp )
++    :name: CEC_ADAP_S_PHYS_ADDR
++
++Arguments
++=========
++
++``fd``
++    File descriptor returned by :c:func:`open() <cec-open>`.
++
++``argp``
++    Pointer to the CEC address.
++
++Description
++===========
++
++To query the current physical address applications call
++:ref:`ioctl CEC_ADAP_G_PHYS_ADDR <CEC_ADAP_G_PHYS_ADDR>` with a pointer to a __u16 where the
++driver stores the physical address.
++
++To set a new physical address applications store the physical address in
++a __u16 and call :ref:`ioctl CEC_ADAP_S_PHYS_ADDR <CEC_ADAP_S_PHYS_ADDR>` with a pointer to
++this integer. The :ref:`ioctl CEC_ADAP_S_PHYS_ADDR <CEC_ADAP_S_PHYS_ADDR>` is only available if
++``CEC_CAP_PHYS_ADDR`` is set (the ``ENOTTY`` error code will be returned
++otherwise). The :ref:`ioctl CEC_ADAP_S_PHYS_ADDR <CEC_ADAP_S_PHYS_ADDR>` can only be called
++by a file descriptor in initiator mode (see :ref:`CEC_S_MODE`), if not
++the ``EBUSY`` error code will be returned.
++
++To clear an existing physical address use ``CEC_PHYS_ADDR_INVALID``.
++The adapter will go to the unconfigured state.
++
++If logical address types have been defined (see :ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>`),
++then this ioctl will block until all
++requested logical addresses have been claimed. If the file descriptor is in non-blocking mode
++then it will not wait for the logical addresses to be claimed, instead it just returns 0.
++
++A :ref:`CEC_EVENT_STATE_CHANGE <CEC-EVENT-STATE-CHANGE>` event is sent when the physical address
++changes.
++
++The physical address is a 16-bit number where each group of 4 bits
++represent a digit of the physical address a.b.c.d where the most
++significant 4 bits represent 'a'. The CEC root device (usually the TV)
++has address 0.0.0.0. Every device that is hooked up to an input of the
++TV has address a.0.0.0 (where 'a' is ≥ 1), devices hooked up to those in
++turn have addresses a.b.0.0, etc. So a topology of up to 5 devices deep
++is supported. The physical address a device shall use is stored in the
++EDID of the sink.
++
++For example, the EDID for each HDMI input of the TV will have a
++different physical address of the form a.0.0.0 that the sources will
++read out and use as their physical address.
++
++
++Return Value
++============
++
++On success 0 is returned, on error -1 and the ``errno`` variable is set
++appropriately. The generic error codes are described at the
++:ref:`Generic Error Codes <gen-errors>` chapter.
++
++The :ref:`ioctl CEC_ADAP_S_PHYS_ADDR <CEC_ADAP_S_PHYS_ADDR>` can return the following
++error codes:
++
++ENOTTY
++    The ``CEC_CAP_PHYS_ADDR`` capability wasn't set, so this ioctl is not supported.
++
++EBUSY
++    Another filehandle is in exclusive follower or initiator mode, or the filehandle
++    is in mode ``CEC_MODE_NO_INITIATOR``.
++
++EINVAL
++    The physical address is malformed.
+diff --git a/Documentation/media/uapi/cec/cec-ioc-dqevent.rst b/Documentation/media/uapi/cec/cec-ioc-dqevent.rst
+new file mode 100644
+index 000000000000..b6fd86424fbb
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-ioc-dqevent.rst
+@@ -0,0 +1,226 @@
++.. -*- coding: utf-8; mode: rst -*-
++
++.. _CEC_DQEVENT:
++
++*****************
++ioctl CEC_DQEVENT
++*****************
++
++Name
++====
++
++CEC_DQEVENT - Dequeue a CEC event
++
++
++Synopsis
++========
++
++.. c:function:: int ioctl( int fd, CEC_DQEVENT, struct cec_event *argp )
++    :name: CEC_DQEVENT
++
++Arguments
++=========
++
++``fd``
++    File descriptor returned by :c:func:`open() <cec-open>`.
++
++``argp``
++
++
++Description
++===========
++
++CEC devices can send asynchronous events. These can be retrieved by
++calling :c:func:`CEC_DQEVENT`. If the file descriptor is in
++non-blocking mode and no event is pending, then it will return -1 and
++set errno to the ``EAGAIN`` error code.
++
++The internal event queues are per-filehandle and per-event type. If
++there is no more room in a queue then the last event is overwritten with
++the new one. This means that intermediate results can be thrown away but
++that the latest event is always available. This also means that is it
++possible to read two successive events that have the same value (e.g.
++two :ref:`CEC_EVENT_STATE_CHANGE <CEC-EVENT-STATE-CHANGE>` events with
++the same state). In that case the intermediate state changes were lost but
++it is guaranteed that the state did change in between the two events.
++
++.. tabularcolumns:: |p{1.2cm}|p{2.9cm}|p{13.4cm}|
++
++.. c:type:: cec_event_state_change
++
++.. flat-table:: struct cec_event_state_change
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 8
++
++    * - __u16
++      - ``phys_addr``
++      - The current physical address. This is ``CEC_PHYS_ADDR_INVALID`` if no
++        valid physical address is set.
++    * - __u16
++      - ``log_addr_mask``
++      - The current set of claimed logical addresses. This is 0 if no logical
++        addresses are claimed or if ``phys_addr`` is ``CEC_PHYS_ADDR_INVALID``.
++	If bit 15 is set (``1 << CEC_LOG_ADDR_UNREGISTERED``) then this device
++	has the unregistered logical address. In that case all other bits are 0.
++
++
++.. c:type:: cec_event_lost_msgs
++
++.. tabularcolumns:: |p{1.0cm}|p{2.0cm}|p{14.5cm}|
++
++.. flat-table:: struct cec_event_lost_msgs
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 16
++
++    * - __u32
++      - ``lost_msgs``
++      - Set to the number of lost messages since the filehandle was opened
++	or since the last time this event was dequeued for this
++	filehandle. The messages lost are the oldest messages. So when a
++	new message arrives and there is no more room, then the oldest
++	message is discarded to make room for the new one. The internal
++	size of the message queue guarantees that all messages received in
++	the last two seconds will be stored. Since messages should be
++	replied to within a second according to the CEC specification,
++	this is more than enough.
++
++
++.. tabularcolumns:: |p{1.0cm}|p{4.4cm}|p{2.5cm}|p{9.6cm}|
++
++.. c:type:: cec_event
++
++.. flat-table:: struct cec_event
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 1 8
++
++    * - __u64
++      - ``ts``
++      - :cspan:`1`\ Timestamp of the event in ns.
++
++	The timestamp has been taken from the ``CLOCK_MONOTONIC`` clock.
++
++	To access the same clock from userspace use :c:func:`clock_gettime`.
++    * - __u32
++      - ``event``
++      - :cspan:`1` The CEC event type, see :ref:`cec-events`.
++    * - __u32
++      - ``flags``
++      - :cspan:`1` Event flags, see :ref:`cec-event-flags`.
++    * - union
++      - (anonymous)
++      -
++      -
++    * -
++      - struct cec_event_state_change
++      - ``state_change``
++      - The new adapter state as sent by the :ref:`CEC_EVENT_STATE_CHANGE <CEC-EVENT-STATE-CHANGE>`
++	event.
++    * -
++      - struct cec_event_lost_msgs
++      - ``lost_msgs``
++      - The number of lost messages as sent by the :ref:`CEC_EVENT_LOST_MSGS <CEC-EVENT-LOST-MSGS>`
++	event.
++
++
++.. tabularcolumns:: |p{5.6cm}|p{0.9cm}|p{11.0cm}|
++
++.. _cec-events:
++
++.. flat-table:: CEC Events Types
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 16
++
++    * .. _`CEC-EVENT-STATE-CHANGE`:
++
++      - ``CEC_EVENT_STATE_CHANGE``
++      - 1
++      - Generated when the CEC Adapter's state changes. When open() is
++	called an initial event will be generated for that filehandle with
++	the CEC Adapter's state at that time.
++    * .. _`CEC-EVENT-LOST-MSGS`:
++
++      - ``CEC_EVENT_LOST_MSGS``
++      - 2
++      - Generated if one or more CEC messages were lost because the
++	application didn't dequeue CEC messages fast enough.
++    * .. _`CEC-EVENT-PIN-CEC-LOW`:
++
++      - ``CEC_EVENT_PIN_CEC_LOW``
++      - 3
++      - Generated if the CEC pin goes from a high voltage to a low voltage.
++        Only applies to adapters that have the ``CEC_CAP_MONITOR_PIN``
++	capability set.
++    * .. _`CEC-EVENT-PIN-CEC-HIGH`:
++
++      - ``CEC_EVENT_PIN_CEC_HIGH``
++      - 4
++      - Generated if the CEC pin goes from a low voltage to a high voltage.
++        Only applies to adapters that have the ``CEC_CAP_MONITOR_PIN``
++	capability set.
++    * .. _`CEC-EVENT-PIN-HPD-LOW`:
++
++      - ``CEC_EVENT_PIN_HPD_LOW``
++      - 5
++      - Generated if the HPD pin goes from a high voltage to a low voltage.
++	Only applies to adapters that have the ``CEC_CAP_MONITOR_PIN``
++	capability set. When open() is called, the HPD pin can be read and
++	if the HPD is low, then an initial event will be generated for that
++	filehandle.
++    * .. _`CEC-EVENT-PIN-HPD-HIGH`:
++
++      - ``CEC_EVENT_PIN_HPD_HIGH``
++      - 6
++      - Generated if the HPD pin goes from a low voltage to a high voltage.
++	Only applies to adapters that have the ``CEC_CAP_MONITOR_PIN``
++	capability set. When open() is called, the HPD pin can be read and
++	if the HPD is high, then an initial event will be generated for that
++	filehandle.
++
++
++.. tabularcolumns:: |p{6.0cm}|p{0.6cm}|p{10.9cm}|
++
++.. _cec-event-flags:
++
++.. flat-table:: CEC Event Flags
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 8
++
++    * .. _`CEC-EVENT-FL-INITIAL-STATE`:
++
++      - ``CEC_EVENT_FL_INITIAL_STATE``
++      - 1
++      - Set for the initial events that are generated when the device is
++	opened. See the table above for which events do this. This allows
++	applications to learn the initial state of the CEC adapter at
++	open() time.
++    * .. _`CEC-EVENT-FL-DROPPED-EVENTS`:
++
++      - ``CEC_EVENT_FL_DROPPED_EVENTS``
++      - 2
++      - Set if one or more events of the given event type have been dropped.
++        This is an indication that the application cannot keep up.
++
++
++
++Return Value
++============
++
++On success 0 is returned, on error -1 and the ``errno`` variable is set
++appropriately. The generic error codes are described at the
++:ref:`Generic Error Codes <gen-errors>` chapter.
++
++The :ref:`ioctl CEC_DQEVENT <CEC_DQEVENT>` can return the following
++error codes:
++
++EAGAIN
++    This is returned when the filehandle is in non-blocking mode and there
++    are no pending events.
++
++ERESTARTSYS
++    An interrupt (e.g. Ctrl-C) arrived while in blocking mode waiting for
++    events to arrive.
+diff --git a/Documentation/media/uapi/cec/cec-ioc-g-mode.rst b/Documentation/media/uapi/cec/cec-ioc-g-mode.rst
+new file mode 100644
+index 000000000000..508e2e325683
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-ioc-g-mode.rst
+@@ -0,0 +1,293 @@
++.. -*- coding: utf-8; mode: rst -*-
++
++.. _CEC_MODE:
++.. _CEC_G_MODE:
++.. _CEC_S_MODE:
++
++********************************
++ioctls CEC_G_MODE and CEC_S_MODE
++********************************
++
++CEC_G_MODE, CEC_S_MODE - Get or set exclusive use of the CEC adapter
++
++Synopsis
++========
++
++.. c:function:: int ioctl( int fd, CEC_G_MODE, __u32 *argp )
++   :name: CEC_G_MODE
++
++.. c:function:: int ioctl( int fd, CEC_S_MODE, __u32 *argp )
++   :name: CEC_S_MODE
++
++Arguments
++=========
++
++``fd``
++    File descriptor returned by :c:func:`open() <cec-open>`.
++
++``argp``
++    Pointer to CEC mode.
++
++Description
++===========
++
++By default any filehandle can use :ref:`CEC_TRANSMIT`, but in order to prevent
++applications from stepping on each others toes it must be possible to
++obtain exclusive access to the CEC adapter. This ioctl sets the
++filehandle to initiator and/or follower mode which can be exclusive
++depending on the chosen mode. The initiator is the filehandle that is
++used to initiate messages, i.e. it commands other CEC devices. The
++follower is the filehandle that receives messages sent to the CEC
++adapter and processes them. The same filehandle can be both initiator
++and follower, or this role can be taken by two different filehandles.
++
++When a CEC message is received, then the CEC framework will decide how
++it will be processed. If the message is a reply to an earlier
++transmitted message, then the reply is sent back to the filehandle that
++is waiting for it. In addition the CEC framework will process it.
++
++If the message is not a reply, then the CEC framework will process it
++first. If there is no follower, then the message is just discarded and a
++feature abort is sent back to the initiator if the framework couldn't
++process it. If there is a follower, then the message is passed on to the
++follower who will use :ref:`ioctl CEC_RECEIVE <CEC_RECEIVE>` to dequeue
++the new message. The framework expects the follower to make the right
++decisions.
++
++The CEC framework will process core messages unless requested otherwise
++by the follower. The follower can enable the passthrough mode. In that
++case, the CEC framework will pass on most core messages without
++processing them and the follower will have to implement those messages.
++There are some messages that the core will always process, regardless of
++the passthrough mode. See :ref:`cec-core-processing` for details.
++
++If there is no initiator, then any CEC filehandle can use
++:ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>`. If there is an exclusive
++initiator then only that initiator can call
++:ref:`CEC_TRANSMIT`. The follower can of course
++always call :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>`.
++
++Available initiator modes are:
++
++.. tabularcolumns:: |p{5.6cm}|p{0.9cm}|p{11.0cm}|
++
++.. _cec-mode-initiator_e:
++
++.. flat-table:: Initiator Modes
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 16
++
++    * .. _`CEC-MODE-NO-INITIATOR`:
++
++      - ``CEC_MODE_NO_INITIATOR``
++      - 0x0
++      - This is not an initiator, i.e. it cannot transmit CEC messages or
++	make any other changes to the CEC adapter.
++    * .. _`CEC-MODE-INITIATOR`:
++
++      - ``CEC_MODE_INITIATOR``
++      - 0x1
++      - This is an initiator (the default when the device is opened) and
++	it can transmit CEC messages and make changes to the CEC adapter,
++	unless there is an exclusive initiator.
++    * .. _`CEC-MODE-EXCL-INITIATOR`:
++
++      - ``CEC_MODE_EXCL_INITIATOR``
++      - 0x2
++      - This is an exclusive initiator and this file descriptor is the
++	only one that can transmit CEC messages and make changes to the
++	CEC adapter. If someone else is already the exclusive initiator
++	then an attempt to become one will return the ``EBUSY`` error code
++	error.
++
++
++Available follower modes are:
++
++.. tabularcolumns:: |p{6.6cm}|p{0.9cm}|p{10.0cm}|
++
++.. _cec-mode-follower_e:
++
++.. cssclass:: longtable
++
++.. flat-table:: Follower Modes
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 16
++
++    * .. _`CEC-MODE-NO-FOLLOWER`:
++
++      - ``CEC_MODE_NO_FOLLOWER``
++      - 0x00
++      - This is not a follower (the default when the device is opened).
++    * .. _`CEC-MODE-FOLLOWER`:
++
++      - ``CEC_MODE_FOLLOWER``
++      - 0x10
++      - This is a follower and it will receive CEC messages unless there
++	is an exclusive follower. You cannot become a follower if
++	:ref:`CEC_CAP_TRANSMIT <CEC-CAP-TRANSMIT>` is not set or if :ref:`CEC_MODE_NO_INITIATOR <CEC-MODE-NO-INITIATOR>`
++	was specified, the ``EINVAL`` error code is returned in that case.
++    * .. _`CEC-MODE-EXCL-FOLLOWER`:
++
++      - ``CEC_MODE_EXCL_FOLLOWER``
++      - 0x20
++      - This is an exclusive follower and only this file descriptor will
++	receive CEC messages for processing. If someone else is already
++	the exclusive follower then an attempt to become one will return
++	the ``EBUSY`` error code. You cannot become a follower if
++	:ref:`CEC_CAP_TRANSMIT <CEC-CAP-TRANSMIT>` is not set or if :ref:`CEC_MODE_NO_INITIATOR <CEC-MODE-NO-INITIATOR>`
++	was specified, the ``EINVAL`` error code is returned in that case.
++    * .. _`CEC-MODE-EXCL-FOLLOWER-PASSTHRU`:
++
++      - ``CEC_MODE_EXCL_FOLLOWER_PASSTHRU``
++      - 0x30
++      - This is an exclusive follower and only this file descriptor will
++	receive CEC messages for processing. In addition it will put the
++	CEC device into passthrough mode, allowing the exclusive follower
++	to handle most core messages instead of relying on the CEC
++	framework for that. If someone else is already the exclusive
++	follower then an attempt to become one will return the ``EBUSY`` error
++	code. You cannot become a follower if :ref:`CEC_CAP_TRANSMIT <CEC-CAP-TRANSMIT>`
++	is not set or if :ref:`CEC_MODE_NO_INITIATOR <CEC-MODE-NO-INITIATOR>` was specified,
++	the ``EINVAL`` error code is returned in that case.
++    * .. _`CEC-MODE-MONITOR-PIN`:
++
++      - ``CEC_MODE_MONITOR_PIN``
++      - 0xd0
++      - Put the file descriptor into pin monitoring mode. Can only be used in
++	combination with :ref:`CEC_MODE_NO_INITIATOR <CEC-MODE-NO-INITIATOR>`,
++	otherwise the ``EINVAL`` error code will be returned.
++	This mode requires that the :ref:`CEC_CAP_MONITOR_PIN <CEC-CAP-MONITOR-PIN>`
++	capability is set, otherwise the ``EINVAL`` error code is returned.
++	While in pin monitoring mode this file descriptor can receive the
++	``CEC_EVENT_PIN_CEC_LOW`` and ``CEC_EVENT_PIN_CEC_HIGH`` events to see the
++	low-level CEC pin transitions. This is very useful for debugging.
++	This mode is only allowed if the process has the ``CAP_NET_ADMIN``
++	capability. If that is not set, then the ``EPERM`` error code is returned.
++    * .. _`CEC-MODE-MONITOR`:
++
++      - ``CEC_MODE_MONITOR``
++      - 0xe0
++      - Put the file descriptor into monitor mode. Can only be used in
++	combination with :ref:`CEC_MODE_NO_INITIATOR <CEC-MODE-NO-INITIATOR>`,i
++	otherwise the ``EINVAL`` error code will be returned.
++	In monitor mode all messages this CEC
++	device transmits and all messages it receives (both broadcast
++	messages and directed messages for one its logical addresses) will
++	be reported. This is very useful for debugging. This is only
++	allowed if the process has the ``CAP_NET_ADMIN`` capability. If
++	that is not set, then the ``EPERM`` error code is returned.
++    * .. _`CEC-MODE-MONITOR-ALL`:
++
++      - ``CEC_MODE_MONITOR_ALL``
++      - 0xf0
++      - Put the file descriptor into 'monitor all' mode. Can only be used
++	in combination with :ref:`CEC_MODE_NO_INITIATOR <CEC-MODE-NO-INITIATOR>`, otherwise
++	the ``EINVAL`` error code will be returned. In 'monitor all' mode all messages
++	this CEC device transmits and all messages it receives, including
++	directed messages for other CEC devices will be reported. This is
++	very useful for debugging, but not all devices support this. This
++	mode requires that the :ref:`CEC_CAP_MONITOR_ALL <CEC-CAP-MONITOR-ALL>` capability is set,
++	otherwise the ``EINVAL`` error code is returned. This is only allowed if
++	the process has the ``CAP_NET_ADMIN`` capability. If that is not
++	set, then the ``EPERM`` error code is returned.
++
++
++Core message processing details:
++
++.. tabularcolumns:: |p{6.6cm}|p{10.9cm}|
++
++.. _cec-core-processing:
++
++.. flat-table:: Core Message Processing
++    :header-rows:  0
++    :stub-columns: 0
++    :widths: 1 8
++
++    * .. _`CEC-MSG-GET-CEC-VERSION`:
++
++      - ``CEC_MSG_GET_CEC_VERSION``
++      - The core will return the CEC version that was set with
++	:ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>`,
++	except when in passthrough mode. In passthrough mode the core
++	does nothing and this message has to be handled by a follower
++	instead.
++    * .. _`CEC-MSG-GIVE-DEVICE-VENDOR-ID`:
++
++      - ``CEC_MSG_GIVE_DEVICE_VENDOR_ID``
++      - The core will return the vendor ID that was set with
++	:ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>`,
++	except when in passthrough mode. In passthrough mode the core
++	does nothing and this message has to be handled by a follower
++	instead.
++    * .. _`CEC-MSG-ABORT`:
++
++      - ``CEC_MSG_ABORT``
++      - The core will return a Feature Abort message with reason
++        'Feature Refused' as per the specification, except when in
++	passthrough mode. In passthrough mode the core does nothing
++	and this message has to be handled by a follower instead.
++    * .. _`CEC-MSG-GIVE-PHYSICAL-ADDR`:
++
++      - ``CEC_MSG_GIVE_PHYSICAL_ADDR``
++      - The core will report the current physical address, except when
++        in passthrough mode. In passthrough mode the core does nothing
++	and this message has to be handled by a follower instead.
++    * .. _`CEC-MSG-GIVE-OSD-NAME`:
++
++      - ``CEC_MSG_GIVE_OSD_NAME``
++      - The core will report the current OSD name that was set with
++	:ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>`,
++	except when in passthrough mode. In passthrough mode the core
++	does nothing and this message has to be handled by a follower
++	instead.
++    * .. _`CEC-MSG-GIVE-FEATURES`:
++
++      - ``CEC_MSG_GIVE_FEATURES``
++      - The core will do nothing if the CEC version is older than 2.0,
++        otherwise it will report the current features that were set with
++	:ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>`,
++	except when in passthrough mode. In passthrough mode the core
++	does nothing (for any CEC version) and this message has to be handled
++	by a follower instead.
++    * .. _`CEC-MSG-USER-CONTROL-PRESSED`:
++
++      - ``CEC_MSG_USER_CONTROL_PRESSED``
++      - If :ref:`CEC_CAP_RC <CEC-CAP-RC>` is set and if
++        :ref:`CEC_LOG_ADDRS_FL_ALLOW_RC_PASSTHRU <CEC-LOG-ADDRS-FL-ALLOW-RC-PASSTHRU>`
++	is set, then generate a remote control key
++	press. This message is always passed on to the follower(s).
++    * .. _`CEC-MSG-USER-CONTROL-RELEASED`:
++
++      - ``CEC_MSG_USER_CONTROL_RELEASED``
++      - If :ref:`CEC_CAP_RC <CEC-CAP-RC>` is set and if
++        :ref:`CEC_LOG_ADDRS_FL_ALLOW_RC_PASSTHRU <CEC-LOG-ADDRS-FL-ALLOW-RC-PASSTHRU>`
++        is set, then generate a remote control key
++	release. This message is always passed on to the follower(s).
++    * .. _`CEC-MSG-REPORT-PHYSICAL-ADDR`:
++
++      - ``CEC_MSG_REPORT_PHYSICAL_ADDR``
++      - The CEC framework will make note of the reported physical address
++	and then just pass the message on to the follower(s).
++
++
++
++Return Value
++============
++
++On success 0 is returned, on error -1 and the ``errno`` variable is set
++appropriately. The generic error codes are described at the
++:ref:`Generic Error Codes <gen-errors>` chapter.
++
++The :ref:`ioctl CEC_S_MODE <CEC_S_MODE>` can return the following
++error codes:
++
++EINVAL
++    The requested mode is invalid.
++
++EPERM
++    Monitor mode is requested without having root permissions
++
++EBUSY
++    Someone else is already an exclusive follower or initiator.
+diff --git a/Documentation/media/uapi/cec/cec-ioc-receive.rst b/Documentation/media/uapi/cec/cec-ioc-receive.rst
+new file mode 100644
+index 000000000000..bdad4b197bcd
+--- /dev/null
++++ b/Documentation/media/uapi/cec/cec-ioc-receive.rst
+@@ -0,0 +1,344 @@
++.. -*- coding: utf-8; mode: rst -*-
++
++.. _CEC_TRANSMIT:
++.. _CEC_RECEIVE:
++
++***********************************
++ioctls CEC_RECEIVE and CEC_TRANSMIT
++***********************************
++
++Name
++====
++
++CEC_RECEIVE, CEC_TRANSMIT - Receive or transmit a CEC message
++
++
++Synopsis
++========
++
++.. c:function:: int ioctl( int fd, CEC_RECEIVE, struct cec_msg *argp )
++    :name: CEC_RECEIVE
++
++.. c:function:: int ioctl( int fd, CEC_TRANSMIT, struct cec_msg *argp )
++    :name: CEC_TRANSMIT
++
++Arguments
++=========
++
++``fd``
++    File descriptor returned by :c:func:`open() <cec-open>`.
++
++``argp``
++    Pointer to struct cec_msg.
++
++Description
++===========
++
++To receive a CEC message the application has to fill in the
++``timeout`` field of struct :c:type:`cec_msg` and pass it to
++:ref:`ioctl CEC_RECEIVE <CEC_RECEIVE>`.
++If the file descriptor is in non-blocking mode and there are no received
++messages pending, then it will return -1 and set errno to the ``EAGAIN``
++error code. If the file descriptor is in blocking mode and ``timeout``
++is non-zero and no message arrived within ``timeout`` milliseconds, then
++it will return -1 and set errno to the ``ETIMEDOUT`` error code.
++
++A received message can be:
++
++1. a message received from another CEC device (the ``sequence`` field will
++   be 0).
++2. the result of an earlier non-blocking transmit (the ``sequence`` field will
++   be non-zero).
++
++To send a CEC message the application has to fill in the struct
++:c:type:`cec_msg` and pass it to :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>`.
++The :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>` is only available if
++``CEC_CAP_TRANSMIT`` is set. If there is no more room in the transmit
++queue, then it will return -1 and set errno to the ``EBUSY`` error code.
++The transmit queue has enough room for 18 messages (about 1 second worth
++of 2-byte messages). Note that the CEC kernel framework will also reply
++to core messages (see :ref:`cec-core-processing`), so it is not a good
++idea to fully fill up the transmit queue.
++
++If the file descriptor is in non-blocking mode then the transmit will
++return 0 and the result of the transmit will be available via
++:ref:`ioctl CEC_RECEIVE <CEC_RECEIVE>` once the transmit has finished
++(including waiting for a reply, if requested).
++
++The ``sequence`` field is filled in for every transmit and this can be
++checked against the received messages to find the corresponding transmit
++result.
++
++Normally calling :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>` when the physical
++address is invalid (due to e.g. a disconnect) will return ``ENONET``.
++
++However, the CEC specification allows sending messages from 'Unregistered' to
++'TV' when the physical address is invalid since some TVs pull the hotplug detect
++pin of the HDMI connector low when they go into standby, or when switching to
++another input.
++
++When the hotplug detect pin goes low the EDID disappears, and thus the
++physical address, but the cable is still connected and CEC still works.
++In order to detect/wake up the device it is allowed to send poll and 'Image/Text
++View On' messages from initiator 0xf ('Unregistered') to destination 0 ('TV').
++
++.. tabularcolumns:: |p{1.0cm}|p{3.5cm}|p{13.0cm}|
++
++.. c:type:: cec_msg
++
++.. cssclass:: longtable
++
++.. flat-table:: struct cec_msg
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 16
++
++    * - __u64
++      - ``tx_ts``
++      - Timestamp in ns of when the last byte of the message was transmitted.
++	The timestamp has been taken from the ``CLOCK_MONOTONIC`` clock. To access
++	the same clock from userspace use :c:func:`clock_gettime`.
++    * - __u64
++      - ``rx_ts``
++      - Timestamp in ns of when the last byte of the message was received.
++	The timestamp has been taken from the ``CLOCK_MONOTONIC`` clock. To access
++	the same clock from userspace use :c:func:`clock_gettime`.
++    * - __u32
++      - ``len``
++      - The length of the message. For :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>` this is filled in
++	by the application. The driver will fill this in for
++	:ref:`ioctl CEC_RECEIVE <CEC_RECEIVE>`. For :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>` it will be
++	filled in by the driver with the length of the reply message if ``reply`` was set.
++    * - __u32
++      - ``timeout``
++      - The timeout in milliseconds. This is the time the device will wait
++	for a message to be received before timing out. If it is set to 0,
++	then it will wait indefinitely when it is called by :ref:`ioctl CEC_RECEIVE <CEC_RECEIVE>`.
++	If it is 0 and it is called by :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>`,
++	then it will be replaced by 1000 if the ``reply`` is non-zero or
++	ignored if ``reply`` is 0.
++    * - __u32
++      - ``sequence``
++      - A non-zero sequence number is automatically assigned by the CEC framework
++	for all transmitted messages. It is used by the CEC framework when it queues
++	the transmit result (when transmit was called in non-blocking mode). This
++	allows the application to associate the received message with the original
++	transmit.
++    * - __u32
++      - ``flags``
++      - Flags. See :ref:`cec-msg-flags` for a list of available flags.
++    * - __u8
++      - ``tx_status``
++      - The status bits of the transmitted message. See
++	:ref:`cec-tx-status` for the possible status values. It is 0 if
++	this message was received, not transmitted.
++    * - __u8
++      - ``msg[16]``
++      - The message payload. For :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>` this is filled in by the
++	application. The driver will fill this in for :ref:`ioctl CEC_RECEIVE <CEC_RECEIVE>`.
++	For :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>` it will be filled in by the driver with
++	the payload of the reply message if ``timeout`` was set.
++    * - __u8
++      - ``reply``
++      - Wait until this message is replied. If ``reply`` is 0 and the
++	``timeout`` is 0, then don't wait for a reply but return after
++	transmitting the message. Ignored by :ref:`ioctl CEC_RECEIVE <CEC_RECEIVE>`.
++	The case where ``reply`` is 0 (this is the opcode for the Feature Abort
++	message) and ``timeout`` is non-zero is specifically allowed to make it
++	possible to send a message and wait up to ``timeout`` milliseconds for a
++	Feature Abort reply. In this case ``rx_status`` will either be set
++	to :ref:`CEC_RX_STATUS_TIMEOUT <CEC-RX-STATUS-TIMEOUT>` or
++	:ref:`CEC_RX_STATUS_FEATURE_ABORT <CEC-RX-STATUS-FEATURE-ABORT>`.
++
++	If the transmitter message is ``CEC_MSG_INITIATE_ARC`` then the ``reply``
++	values ``CEC_MSG_REPORT_ARC_INITIATED`` and ``CEC_MSG_REPORT_ARC_TERMINATED``
++	are processed differently: either value will match both possible replies.
++	The reason is that the ``CEC_MSG_INITIATE_ARC`` message is the only CEC
++	message that has two possible replies other than Feature Abort. The
++	``reply`` field will be updated with the actual reply so that it is
++	synchronized with the contents of the received message.
++    * - __u8
++      - ``rx_status``
++      - The status bits of the received message. See
++	:ref:`cec-rx-status` for the possible status values. It is 0 if
++	this message was transmitted, not received, unless this is the
++	reply to a transmitted message. In that case both ``rx_status``
++	and ``tx_status`` are set.
++    * - __u8
++      - ``tx_status``
++      - The status bits of the transmitted message. See
++	:ref:`cec-tx-status` for the possible status values. It is 0 if
++	this message was received, not transmitted.
++    * - __u8
++      - ``tx_arb_lost_cnt``
++      - A counter of the number of transmit attempts that resulted in the
++	Arbitration Lost error. This is only set if the hardware supports
++	this, otherwise it is always 0. This counter is only valid if the
++	:ref:`CEC_TX_STATUS_ARB_LOST <CEC-TX-STATUS-ARB-LOST>` status bit is set.
++    * - __u8
++      - ``tx_nack_cnt``
++      - A counter of the number of transmit attempts that resulted in the
++	Not Acknowledged error. This is only set if the hardware supports
++	this, otherwise it is always 0. This counter is only valid if the
++	:ref:`CEC_TX_STATUS_NACK <CEC-TX-STATUS-NACK>` status bit is set.
++    * - __u8
++      - ``tx_low_drive_cnt``
++      - A counter of the number of transmit attempts that resulted in the
++	Arbitration Lost error. This is only set if the hardware supports
++	this, otherwise it is always 0. This counter is only valid if the
++	:ref:`CEC_TX_STATUS_LOW_DRIVE <CEC-TX-STATUS-LOW-DRIVE>` status bit is set.
++    * - __u8
++      - ``tx_error_cnt``
++      - A counter of the number of transmit errors other than Arbitration
++	Lost or Not Acknowledged. This is only set if the hardware
++	supports this, otherwise it is always 0. This counter is only
++	valid if the :ref:`CEC_TX_STATUS_ERROR <CEC-TX-STATUS-ERROR>` status bit is set.
++
++
++.. tabularcolumns:: |p{6.2cm}|p{1.0cm}|p{10.3cm}|
++
++.. _cec-msg-flags:
++
++.. flat-table:: Flags for struct cec_msg
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 4
++
++    * .. _`CEC-MSG-FL-REPLY-TO-FOLLOWERS`:
++
++      - ``CEC_MSG_FL_REPLY_TO_FOLLOWERS``
++      - 1
++      - If a CEC transmit expects a reply, then by default that reply is only sent to
++	the filehandle that called :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>`. If this
++	flag is set, then the reply is also sent to all followers, if any. If the
++	filehandle that called :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>` is also a
++	follower, then that filehandle will receive the reply twice: once as the
++	result of the :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>`, and once via
++	:ref:`ioctl CEC_RECEIVE <CEC_RECEIVE>`.
++
++
++.. tabularcolumns:: |p{5.6cm}|p{0.9cm}|p{11.0cm}|
++
++.. _cec-tx-status:
++
++.. flat-table:: CEC Transmit Status
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 16
++
++    * .. _`CEC-TX-STATUS-OK`:
++
++      - ``CEC_TX_STATUS_OK``
++      - 0x01
++      - The message was transmitted successfully. This is mutually
++	exclusive with :ref:`CEC_TX_STATUS_MAX_RETRIES <CEC-TX-STATUS-MAX-RETRIES>`. Other bits can still
++	be set if earlier attempts met with failure before the transmit
++	was eventually successful.
++    * .. _`CEC-TX-STATUS-ARB-LOST`:
++
++      - ``CEC_TX_STATUS_ARB_LOST``
++      - 0x02
++      - CEC line arbitration was lost.
++    * .. _`CEC-TX-STATUS-NACK`:
++
++      - ``CEC_TX_STATUS_NACK``
++      - 0x04
++      - Message was not acknowledged.
++    * .. _`CEC-TX-STATUS-LOW-DRIVE`:
++
++      - ``CEC_TX_STATUS_LOW_DRIVE``
++      - 0x08
++      - Low drive was detected on the CEC bus. This indicates that a
++	follower detected an error on the bus and requests a
++	retransmission.
++    * .. _`CEC-TX-STATUS-ERROR`:
++
++      - ``CEC_TX_STATUS_ERROR``
++      - 0x10
++      - Some error occurred. This is used for any errors that do not fit
++	``CEC_TX_STATUS_ARB_LOST`` or ``CEC_TX_STATUS_LOW_DRIVE``, either because
++	the hardware could not tell which error occurred, or because the hardware
++	tested for other conditions besides those two.
++    * .. _`CEC-TX-STATUS-MAX-RETRIES`:
++
++      - ``CEC_TX_STATUS_MAX_RETRIES``
++      - 0x20
++      - The transmit failed after one or more retries. This status bit is
++	mutually exclusive with :ref:`CEC_TX_STATUS_OK <CEC-TX-STATUS-OK>`. Other bits can still
++	be set to explain which failures were seen.
++
++
++.. tabularcolumns:: |p{5.6cm}|p{0.9cm}|p{11.0cm}|
++
++.. _cec-rx-status:
++
++.. flat-table:: CEC Receive Status
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       3 1 16
++
++    * .. _`CEC-RX-STATUS-OK`:
++
++      - ``CEC_RX_STATUS_OK``
++      - 0x01
++      - The message was received successfully.
++    * .. _`CEC-RX-STATUS-TIMEOUT`:
++
++      - ``CEC_RX_STATUS_TIMEOUT``
++      - 0x02
++      - The reply to an earlier transmitted message timed out.
++    * .. _`CEC-RX-STATUS-FEATURE-ABORT`:
++
++      - ``CEC_RX_STATUS_FEATURE_ABORT``
++      - 0x04
++      - The message was received successfully but the reply was
++	``CEC_MSG_FEATURE_ABORT``. This status is only set if this message
++	was the reply to an earlier transmitted message.
++
++
++
++Return Value
++============
++
++On success 0 is returned, on error -1 and the ``errno`` variable is set
++appropriately. The generic error codes are described at the
++:ref:`Generic Error Codes <gen-errors>` chapter.
++
++The :ref:`ioctl CEC_RECEIVE <CEC_RECEIVE>` can return the following
++error codes:
++
++EAGAIN
++    No messages are in the receive queue, and the filehandle is in non-blocking mode.
++
++ETIMEDOUT
++    The ``timeout`` was reached while waiting for a message.
++
++ERESTARTSYS
++    The wait for a message was interrupted (e.g. by Ctrl-C).
++
++The :ref:`ioctl CEC_TRANSMIT <CEC_TRANSMIT>` can return the following
++error codes:
++
++ENOTTY
++    The ``CEC_CAP_TRANSMIT`` capability wasn't set, so this ioctl is not supported.
++
++EPERM
++    The CEC adapter is not configured, i.e. :ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>`
++    has never been called.
++
++ENONET
++    The CEC adapter is not configured, i.e. :ref:`ioctl CEC_ADAP_S_LOG_ADDRS <CEC_ADAP_S_LOG_ADDRS>`
++    was called, but the physical address is invalid so no logical address was claimed.
++    An exception is made in this case for transmits from initiator 0xf ('Unregistered')
++    to destination 0 ('TV'). In that case the transmit will proceed as usual.
++
++EBUSY
++    Another filehandle is in exclusive follower or initiator mode, or the filehandle
++    is in mode ``CEC_MODE_NO_INITIATOR``. This is also returned if the transmit
++    queue is full.
++
++EINVAL
++    The contents of struct :c:type:`cec_msg` is invalid.
++
++ERESTARTSYS
++    The wait for a successful transmit was interrupted (e.g. by Ctrl-C).
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 443bc975b562..225ab2c1d35b 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2674,6 +2674,22 @@ F:	drivers/net/ieee802154/cc2520.c
+ F:	include/linux/spi/cc2520.h
+ F:	Documentation/devicetree/bindings/net/ieee802154/cc2520.txt
+ 
++CEC FRAMEWORK
++M:	Hans Verkuil <hans.verkuil@cisco.com>
++L:	linux-media@vger.kernel.org
++T:	git git://linuxtv.org/media_tree.git
++W:	http://linuxtv.org
++S:	Supported
++F:	Documentation/media/kapi/cec-core.rst
++F:	Documentation/media/uapi/cec
++F:	drivers/media/cec/
++F:	drivers/media/rc/keymaps/rc-cec.c
++F:	include/media/cec.h
++F:	include/media/cec-notifier.h
++F:	include/uapi/linux/cec.h
++F:	include/uapi/linux/cec-funcs.h
++F:	Documentation/devicetree/bindings/media/cec.txt
++
+ CELL BROADBAND ENGINE ARCHITECTURE
+ M:	Arnd Bergmann <arnd@arndb.de>
+ L:	linuxppc-dev@lists.ozlabs.org
+diff --git a/drivers/media/cec/cec-adap.c b/drivers/media/cec/cec-adap.c
+index 8c75a51333b2..4f5d382268f7 100644
+--- a/drivers/media/cec/cec-adap.c
++++ b/drivers/media/cec/cec-adap.c
+@@ -202,7 +202,10 @@ static void cec_queue_msg_fh(struct cec_fh *fh, const struct cec_msg *msg)
+ {
+ 	static const struct cec_event ev_lost_msgs = {
+ 		.event = CEC_EVENT_LOST_MSGS,
+-		.lost_msgs.lost_msgs = 1,
++		.flags = 0,
++		{
++			.lost_msgs = { 1 },
++		},
+ 	};
+ 	struct cec_msg_entry *entry;
+ 
+@@ -1793,6 +1796,9 @@ static int cec_receive_notify(struct cec_adapter *adap, struct cec_msg *msg,
+ 	int la_idx = cec_log_addr2idx(adap, dest_laddr);
+ 	bool from_unregistered = init_laddr == 0xf;
+ 	struct cec_msg tx_cec_msg = { };
++#ifdef CONFIG_MEDIA_CEC_RC
++	int scancode;
++#endif
+ 
+ 	dprintk(2, "%s: %*ph\n", __func__, msg->len, msg->msg);
+ 
+@@ -1888,11 +1894,9 @@ static int cec_receive_notify(struct cec_adapter *adap, struct cec_msg *msg,
+ 		 */
+ 		case 0x60:
+ 			if (msg->len == 2)
+-				rc_keydown(adap->rc, RC_TYPE_CEC,
+-					   msg->msg[2], 0);
++				scancode = msg->msg[2];
+ 			else
+-				rc_keydown(adap->rc, RC_TYPE_CEC,
+-					   msg->msg[2] << 8 | msg->msg[3], 0);
++				scancode = msg->msg[2] << 8 | msg->msg[3];
+ 			break;
+ 		/*
+ 		 * Other function messages that are not handled.
+@@ -1905,11 +1909,54 @@ static int cec_receive_notify(struct cec_adapter *adap, struct cec_msg *msg,
+ 		 */
+ 		case 0x56: case 0x57:
+ 		case 0x67: case 0x68: case 0x69: case 0x6a:
++			scancode = -1;
+ 			break;
+ 		default:
+-			rc_keydown(adap->rc, RC_TYPE_CEC, msg->msg[2], 0);
++			scancode = msg->msg[2];
++			break;
++		}
++
++		/* Was repeating, but keypress timed out */
++		if (adap->rc_repeating && !adap->rc->keypressed) {
++			adap->rc_repeating = false;
++			adap->rc_last_scancode = -1;
++		}
++		/* Different keypress from last time, ends repeat mode */
++		if (adap->rc_last_scancode != scancode) {
++			rc_keyup(adap->rc);
++			adap->rc_repeating = false;
++		}
++		/* We can't handle this scancode */
++		if (scancode < 0) {
++			adap->rc_last_scancode = scancode;
++			break;
++		}
++
++		/* Send key press */
++		rc_keydown(adap->rc, RC_TYPE_CEC, scancode, 0);
++
++		/* When in repeating mode, we're done */
++		if (adap->rc_repeating)
++			break;
++
++		/*
++		 * We are not repeating, but the new scancode is
++		 * the same as the last one, and this second key press is
++		 * within 550 ms (the 'Follower Safety Timeout') from the
++		 * previous key press, so we now enable the repeating mode.
++		 */
++		if (adap->rc_last_scancode == scancode &&
++		    msg->rx_ts - adap->rc_last_keypress < 550 * NSEC_PER_MSEC) {
++			adap->rc_repeating = true;
+ 			break;
+ 		}
++		/*
++		 * Not in repeating mode, so avoid triggering repeat mode
++		 * by calling keyup.
++		 */
++		rc_keyup(adap->rc);
++		adap->rc_last_scancode = scancode;
++		adap->rc_last_keypress = msg->rx_ts;
+ #endif
+ 		break;
+ 
+@@ -1919,6 +1966,8 @@ static int cec_receive_notify(struct cec_adapter *adap, struct cec_msg *msg,
+ 			break;
+ #ifdef CONFIG_MEDIA_CEC_RC
+ 		rc_keyup(adap->rc);
++		adap->rc_repeating = false;
++		adap->rc_last_scancode = -1;
+ #endif
+ 		break;
+ 
+diff --git a/drivers/media/cec/cec-core.c b/drivers/media/cec/cec-core.c
+index 969f770acf77..65d763be4385 100644
+--- a/drivers/media/cec/cec-core.c
++++ b/drivers/media/cec/cec-core.c
+@@ -263,7 +263,7 @@ struct cec_adapter *cec_allocate_adapter(const struct cec_adap_ops *ops,
+ 		return adap;
+ 
+ 	/* Prepare the RC input device */
+-	adap->rc = rc_allocate_device(RC_DRIVER_SCANCODE);
++	adap->rc = rc_allocate_device();
+ 	if (!adap->rc) {
+ 		pr_err("cec-%s: failed to allocate memory for rc_dev\n",
+ 		       name);
+@@ -283,11 +283,13 @@ struct cec_adapter *cec_allocate_adapter(const struct cec_adap_ops *ops,
+ 	adap->rc->input_id.vendor = 0;
+ 	adap->rc->input_id.product = 0;
+ 	adap->rc->input_id.version = 1;
++	adap->rc->driver_type = RC_DRIVER_SCANCODE;
+ 	adap->rc->driver_name = CEC_NAME;
+ 	adap->rc->allowed_protocols = RC_BIT_CEC;
+ 	adap->rc->priv = adap;
+ 	adap->rc->map_name = RC_MAP_CEC;
+ 	adap->rc->timeout = MS_TO_NS(550);
++	adap->rc_last_scancode = -1;
+ #endif
+ 	return adap;
+ }
+@@ -319,6 +321,17 @@ int cec_register_adapter(struct cec_adapter *adap,
+ 			adap->rc = NULL;
+ 			return res;
+ 		}
++		/*
++		 * The REP_DELAY for CEC is really the time between the initial
++		 * 'User Control Pressed' message and the second. The first
++		 * keypress is always seen as non-repeating, the second
++		 * (provided it has the same UI Command) will start the 'Press
++		 * and Hold' (aka repeat) behavior. By setting REP_DELAY to the
++		 * same value as REP_PERIOD the expected CEC behavior is
++		 * reproduced.
++		 */
++		adap->rc->input_dev->rep[REP_DELAY] =
++			adap->rc->input_dev->rep[REP_PERIOD];
+ 	}
+ #endif
+ 
+diff --git a/drivers/media/rc/keymaps/Makefile b/drivers/media/rc/keymaps/Makefile
+index fbbd3bbcd252..9cffcc61fdca 100644
+--- a/drivers/media/rc/keymaps/Makefile
++++ b/drivers/media/rc/keymaps/Makefile
+@@ -18,6 +18,7 @@ obj-$(CONFIG_RC_MAP) += rc-adstech-dvb-t-pci.o \
+ 			rc-behold.o \
+ 			rc-behold-columbus.o \
+ 			rc-budget-ci-old.o \
++			rc-cec.o \
+ 			rc-cinergy-1400.o \
+ 			rc-cinergy.o \
+ 			rc-delock-61959.o \
+diff --git a/drivers/media/rc/keymaps/rc-cec.c b/drivers/media/rc/keymaps/rc-cec.c
+new file mode 100644
+index 000000000000..354c8e724b8e
+--- /dev/null
++++ b/drivers/media/rc/keymaps/rc-cec.c
+@@ -0,0 +1,182 @@
++/* Keytable for the CEC remote control
++ *
++ * Copyright (c) 2015 by Kamil Debski
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ */
++
++#include <media/rc-map.h>
++#include <linux/module.h>
++
++/*
++ * CEC Spec "High-Definition Multimedia Interface Specification" can be obtained
++ * here: http://xtreamerdev.googlecode.com/files/CEC_Specs.pdf
++ * The list of control codes is listed in Table 27: User Control Codes p. 95
++ */
++
++static struct rc_map_table cec[] = {
++	{ 0x00, KEY_OK },
++	{ 0x01, KEY_UP },
++	{ 0x02, KEY_DOWN },
++	{ 0x03, KEY_LEFT },
++	{ 0x04, KEY_RIGHT },
++	{ 0x05, KEY_RIGHT_UP },
++	{ 0x06, KEY_RIGHT_DOWN },
++	{ 0x07, KEY_LEFT_UP },
++	{ 0x08, KEY_LEFT_DOWN },
++	{ 0x09, KEY_ROOT_MENU }, /* CEC Spec: Device Root Menu - see Note 2 */
++	/*
++	 * Note 2: This is the initial display that a device shows. It is
++	 * device-dependent and can be, for example, a contents menu, setup
++	 * menu, favorite menu or other menu. The actual menu displayed
++	 * may also depend on the device's current state.
++	 */
++	{ 0x0a, KEY_SETUP },
++	{ 0x0b, KEY_MENU }, /* CEC Spec: Contents Menu */
++	{ 0x0c, KEY_FAVORITES }, /* CEC Spec: Favorite Menu */
++	{ 0x0d, KEY_EXIT },
++	/* 0x0e-0x0f: Reserved */
++	{ 0x10, KEY_MEDIA_TOP_MENU },
++	{ 0x11, KEY_CONTEXT_MENU },
++	/* 0x12-0x1c: Reserved */
++	{ 0x1d, KEY_DIGITS }, /* CEC Spec: select/toggle a Number Entry Mode */
++	{ 0x1e, KEY_NUMERIC_11 },
++	{ 0x1f, KEY_NUMERIC_12 },
++	/* 0x20-0x29: Keys 0 to 9 */
++	{ 0x20, KEY_NUMERIC_0 },
++	{ 0x21, KEY_NUMERIC_1 },
++	{ 0x22, KEY_NUMERIC_2 },
++	{ 0x23, KEY_NUMERIC_3 },
++	{ 0x24, KEY_NUMERIC_4 },
++	{ 0x25, KEY_NUMERIC_5 },
++	{ 0x26, KEY_NUMERIC_6 },
++	{ 0x27, KEY_NUMERIC_7 },
++	{ 0x28, KEY_NUMERIC_8 },
++	{ 0x29, KEY_NUMERIC_9 },
++	{ 0x2a, KEY_DOT },
++	{ 0x2b, KEY_ENTER },
++	{ 0x2c, KEY_CLEAR },
++	/* 0x2d-0x2e: Reserved */
++	{ 0x2f, KEY_NEXT_FAVORITE }, /* CEC Spec: Next Favorite */
++	{ 0x30, KEY_CHANNELUP },
++	{ 0x31, KEY_CHANNELDOWN },
++	{ 0x32, KEY_PREVIOUS }, /* CEC Spec: Previous Channel */
++	{ 0x33, KEY_SOUND }, /* CEC Spec: Sound Select */
++	{ 0x34, KEY_VIDEO }, /* 0x34: CEC Spec: Input Select */
++	{ 0x35, KEY_INFO }, /* CEC Spec: Display Information */
++	{ 0x36, KEY_HELP },
++	{ 0x37, KEY_PAGEUP },
++	{ 0x38, KEY_PAGEDOWN },
++	/* 0x39-0x3f: Reserved */
++	{ 0x40, KEY_POWER },
++	{ 0x41, KEY_VOLUMEUP },
++	{ 0x42, KEY_VOLUMEDOWN },
++	{ 0x43, KEY_MUTE },
++	{ 0x44, KEY_PLAYCD },
++	{ 0x45, KEY_STOPCD },
++	{ 0x46, KEY_PAUSECD },
++	{ 0x47, KEY_RECORD },
++	{ 0x48, KEY_REWIND },
++	{ 0x49, KEY_FASTFORWARD },
++	{ 0x4a, KEY_EJECTCD }, /* CEC Spec: Eject */
++	{ 0x4b, KEY_FORWARD },
++	{ 0x4c, KEY_BACK },
++	{ 0x4d, KEY_STOP_RECORD }, /* CEC Spec: Stop-Record */
++	{ 0x4e, KEY_PAUSE_RECORD }, /* CEC Spec: Pause-Record */
++	/* 0x4f: Reserved */
++	{ 0x50, KEY_ANGLE },
++	{ 0x51, KEY_TV2 },
++	{ 0x52, KEY_VOD }, /* CEC Spec: Video on Demand */
++	{ 0x53, KEY_EPG },
++	{ 0x54, KEY_TIME }, /* CEC Spec: Timer */
++	{ 0x55, KEY_CONFIG },
++	/*
++	 * The following codes are hard to implement at this moment, as they
++	 * carry an additional additional argument. Most likely changes to RC
++	 * framework are necessary.
++	 * For now they are interpreted by the CEC framework as non keycodes
++	 * and are passed as messages enabling user application to parse them.
++	 */
++	/* 0x56: CEC Spec: Select Broadcast Type */
++	/* 0x57: CEC Spec: Select Sound presentation */
++	{ 0x58, KEY_AUDIO_DESC }, /* CEC 2.0 and up */
++	{ 0x59, KEY_WWW }, /* CEC 2.0 and up */
++	{ 0x5a, KEY_3D_MODE }, /* CEC 2.0 and up */
++	/* 0x5b-0x5f: Reserved */
++	{ 0x60, KEY_PLAYCD }, /* CEC Spec: Play Function */
++	{ 0x6005, KEY_FASTFORWARD },
++	{ 0x6006, KEY_FASTFORWARD },
++	{ 0x6007, KEY_FASTFORWARD },
++	{ 0x6015, KEY_SLOW },
++	{ 0x6016, KEY_SLOW },
++	{ 0x6017, KEY_SLOW },
++	{ 0x6009, KEY_FASTREVERSE },
++	{ 0x600a, KEY_FASTREVERSE },
++	{ 0x600b, KEY_FASTREVERSE },
++	{ 0x6019, KEY_SLOWREVERSE },
++	{ 0x601a, KEY_SLOWREVERSE },
++	{ 0x601b, KEY_SLOWREVERSE },
++	{ 0x6020, KEY_REWIND },
++	{ 0x6024, KEY_PLAYCD },
++	{ 0x6025, KEY_PAUSECD },
++	{ 0x61, KEY_PLAYPAUSE }, /* CEC Spec: Pause-Play Function */
++	{ 0x62, KEY_RECORD }, /* Spec: Record Function */
++	{ 0x63, KEY_PAUSE_RECORD }, /* CEC Spec: Pause-Record Function */
++	{ 0x64, KEY_STOPCD }, /* CEC Spec: Stop Function */
++	{ 0x65, KEY_MUTE }, /* CEC Spec: Mute Function */
++	{ 0x66, KEY_UNMUTE }, /* CEC Spec: Restore the volume */
++	/*
++	 * The following codes are hard to implement at this moment, as they
++	 * carry an additional additional argument. Most likely changes to RC
++	 * framework are necessary.
++	 * For now they are interpreted by the CEC framework as non keycodes
++	 * and are passed as messages enabling user application to parse them.
++	 */
++	/* 0x67: CEC Spec: Tune Function */
++	/* 0x68: CEC Spec: Seleect Media Function */
++	/* 0x69: CEC Spec: Select A/V Input Function */
++	/* 0x6a: CEC Spec: Select Audio Input Function */
++	{ 0x6b, KEY_POWER }, /* CEC Spec: Power Toggle Function */
++	{ 0x6c, KEY_SLEEP }, /* CEC Spec: Power Off Function */
++	{ 0x6d, KEY_WAKEUP }, /* CEC Spec: Power On Function */
++	/* 0x6e-0x70: Reserved */
++	{ 0x71, KEY_BLUE }, /* CEC Spec: F1 (Blue) */
++	{ 0x72, KEY_RED }, /* CEC Spec: F2 (Red) */
++	{ 0x73, KEY_GREEN }, /* CEC Spec: F3 (Green) */
++	{ 0x74, KEY_YELLOW }, /* CEC Spec: F4 (Yellow) */
++	{ 0x75, KEY_F5 },
++	{ 0x76, KEY_DATA }, /* CEC Spec: Data - see Note 3 */
++	/*
++	 * Note 3: This is used, for example, to enter or leave a digital TV
++	 * data broadcast application.
++	 */
++	/* 0x77-0xff: Reserved */
++};
++
++static struct rc_map_list cec_map = {
++	.map = {
++		.scan		= cec,
++		.size		= ARRAY_SIZE(cec),
++		.rc_type	= RC_TYPE_CEC,
++		.name		= RC_MAP_CEC,
++	}
++};
++
++static int __init init_rc_map_cec(void)
++{
++	return rc_map_register(&cec_map);
++}
++
++static void __exit exit_rc_map_cec(void)
++{
++	rc_map_unregister(&cec_map);
++}
++
++module_init(init_rc_map_cec);
++module_exit(exit_rc_map_cec);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Kamil Debski");
+diff --git a/fs/compat_ioctl.c b/fs/compat_ioctl.c
+index a52ca5cba015..b0b96fc01da3 100644
+--- a/fs/compat_ioctl.c
++++ b/fs/compat_ioctl.c
+@@ -57,6 +57,7 @@
+ #include <linux/i2c-dev.h>
+ #include <linux/atalk.h>
+ #include <linux/gfp.h>
++#include <linux/cec.h>
+ 
+ #include <net/bluetooth/bluetooth.h>
+ #include <net/bluetooth/hci_sock.h>
+@@ -1381,6 +1382,17 @@ COMPATIBLE_IOCTL(VIDEO_GET_NAVI)
+ COMPATIBLE_IOCTL(VIDEO_SET_ATTRIBUTES)
+ COMPATIBLE_IOCTL(VIDEO_GET_SIZE)
+ COMPATIBLE_IOCTL(VIDEO_GET_FRAME_RATE)
++/* cec */
++COMPATIBLE_IOCTL(CEC_ADAP_G_CAPS)
++COMPATIBLE_IOCTL(CEC_ADAP_G_LOG_ADDRS)
++COMPATIBLE_IOCTL(CEC_ADAP_S_LOG_ADDRS)
++COMPATIBLE_IOCTL(CEC_ADAP_G_PHYS_ADDR)
++COMPATIBLE_IOCTL(CEC_ADAP_S_PHYS_ADDR)
++COMPATIBLE_IOCTL(CEC_G_MODE)
++COMPATIBLE_IOCTL(CEC_S_MODE)
++COMPATIBLE_IOCTL(CEC_TRANSMIT)
++COMPATIBLE_IOCTL(CEC_RECEIVE)
++COMPATIBLE_IOCTL(CEC_DQEVENT)
+ 
+ /* joystick */
+ COMPATIBLE_IOCTL(JSIOCGVERSION)
+diff --git a/include/media/cec-notifier.h b/include/media/cec-notifier.h
+index ca19a9305782..8bb169ac7afd 100644
+--- a/include/media/cec-notifier.h
++++ b/include/media/cec-notifier.h
+@@ -91,6 +91,14 @@ void cec_notifier_register(struct cec_notifier *n,
+  */
+ void cec_notifier_unregister(struct cec_notifier *n);
+ 
++/**
++ * cec_register_cec_notifier - register the notifier with the cec adapter.
++ * @adap: the CEC adapter
++ * @notifier: the CEC notifier
++ */
++void cec_register_cec_notifier(struct cec_adapter *adap,
++			       struct cec_notifier *notifier);
++
+ #else
+ static inline struct cec_notifier *cec_notifier_get(struct device *dev)
+ {
+@@ -111,6 +119,20 @@ static inline void cec_notifier_set_phys_addr_from_edid(struct cec_notifier *n,
+ {
+ }
+ 
++static inline void cec_notifier_register(struct cec_notifier *n,
++			 struct cec_adapter *adap,
++			 void (*callback)(struct cec_adapter *adap, u16 pa))
++{
++}
++
++static inline void cec_notifier_unregister(struct cec_notifier *n)
++{
++}
++
++static inline void cec_register_cec_notifier(struct cec_adapter *adap,
++					     struct cec_notifier *notifier)
++{
++}
+ #endif
+ 
+ /**
+diff --git a/include/media/cec.h b/include/media/cec.h
+index df3c94f05aa5..f64807a78064 100644
+--- a/include/media/cec.h
++++ b/include/media/cec.h
+@@ -191,6 +191,11 @@ struct cec_adapter {
+ 
+ 	u32 tx_timeouts;
+ 
++#ifdef CONFIG_MEDIA_CEC_RC
++	bool rc_repeating;
++	int rc_last_scancode;
++	u64 rc_last_keypress;
++#endif
+ #ifdef CONFIG_CEC_NOTIFIER
+ 	struct cec_notifier *notifier;
+ #endif
+@@ -229,7 +234,7 @@ static inline bool cec_is_sink(const struct cec_adapter *adap)
+ 
+ struct edid;
+ 
+-#if IS_ENABLED(CONFIG_CEC_CORE)
++#if IS_REACHABLE(CONFIG_CEC_CORE)
+ struct cec_adapter *cec_allocate_adapter(const struct cec_adap_ops *ops,
+ 		void *priv, const char *name, u32 caps, u8 available_las);
+ int cec_register_adapter(struct cec_adapter *adap, struct device *parent);
+@@ -427,6 +427,10 @@ static inline u16 cec_phys_addr_for_input(u16 phys_addr, u8 input)
+ 
+ static inline int cec_phys_addr_validate(u16 phys_addr, u16 *parent, u16 *port)
+ {
++	if (parent)
++		*parent = phys_addr;
++	if (port)
++		*port = 0;
+ 	return 0;
+ }
+ 
+diff --git a/include/uapi/linux/cec-funcs.h b/include/uapi/linux/cec-funcs.h
+index c451eec42a83..270b251a3d9b 100644
+--- a/include/uapi/linux/cec-funcs.h
++++ b/include/uapi/linux/cec-funcs.h
+@@ -895,6 +895,7 @@ static inline void cec_ops_report_features(const struct cec_msg *msg,
+ 	*cec_version = msg->msg[2];
+ 	*all_device_types = msg->msg[3];
+ 	*rc_profile = p;
++	*dev_features = NULL;
+ 	while (p < &msg->msg[14] && (*p & CEC_OP_FEAT_EXT))
+ 		p++;
+ 	if (!(*p & CEC_OP_FEAT_EXT)) {
+diff --git a/include/uapi/linux/cec.h b/include/uapi/linux/cec.h
+index af6682f5ea85..b9f8df3a0477 100644
+--- a/include/uapi/linux/cec.h
++++ b/include/uapi/linux/cec.h
+@@ -223,7 +223,7 @@ static inline int cec_msg_status_is_ok(const struct cec_msg *msg)
+ #define CEC_LOG_ADDR_BACKUP_2		13
+ #define CEC_LOG_ADDR_SPECIFIC		14
+ #define CEC_LOG_ADDR_UNREGISTERED	15 /* as initiator address */
+-#define CEC_LOG_ADDR_BROADCAST		15 /* ad destination address */
++#define CEC_LOG_ADDR_BROADCAST		15 /* as destination address */
+ 
+ /* The logical address types that the CEC device wants to claim */
+ #define CEC_LOG_ADDR_TYPE_TV		0
+diff --git a/include/uapi/linux/input-event-codes.h b/include/uapi/linux/input-event-codes.h
+index 87cf351bab03..b0c5c4888a4b 100644
+--- a/include/uapi/linux/input-event-codes.h
++++ b/include/uapi/linux/input-event-codes.h
+@@ -611,6 +611,37 @@
+ #define KEY_KBDINPUTASSIST_ACCEPT		0x264
+ #define KEY_KBDINPUTASSIST_CANCEL		0x265
+ 
++/* Diagonal movement keys */
++#define KEY_RIGHT_UP			0x266
++#define KEY_RIGHT_DOWN			0x267
++#define KEY_LEFT_UP			0x268
++#define KEY_LEFT_DOWN			0x269
++
++#define KEY_ROOT_MENU			0x26a /* Show Device's Root Menu */
++/* Show Top Menu of the Media (e.g. DVD) */
++#define KEY_MEDIA_TOP_MENU		0x26b
++#define KEY_NUMERIC_11			0x26c
++#define KEY_NUMERIC_12			0x26d
++/*
++ * Toggle Audio Description: refers to an audio service that helps blind and
++ * visually impaired consumers understand the action in a program. Note: in
++ * some countries this is referred to as "Video Description".
++ */
++#define KEY_AUDIO_DESC			0x26e
++#define KEY_3D_MODE			0x26f
++#define KEY_NEXT_FAVORITE		0x270
++#define KEY_STOP_RECORD			0x271
++#define KEY_PAUSE_RECORD		0x272
++#define KEY_VOD				0x273 /* Video on Demand */
++#define KEY_UNMUTE			0x274
++#define KEY_FASTREVERSE			0x275
++#define KEY_SLOWREVERSE			0x276
++/*
++ * Control a data application associated with the currently viewed channel,
++ * e.g. teletext or data broadcast application (MHEG, MHP, HbbTV, etc.)
++ */
++#define KEY_DATA			0x277
++
+ #define BTN_TRIGGER_HAPPY		0x2c0
+ #define BTN_TRIGGER_HAPPY1		0x2c0
+ #define BTN_TRIGGER_HAPPY2		0x2c1
+diff --git a/include/uapi/linux/input.h b/include/uapi/linux/input.h
+index 2758687300b4..41e8dff588e1 100644
+--- a/include/uapi/linux/input.h
++++ b/include/uapi/linux/input.h
+@@ -246,6 +246,7 @@ struct input_mask {
+ #define BUS_GSC			0x1A
+ #define BUS_ATARI		0x1B
+ #define BUS_SPI			0x1C
++#define BUS_CEC			0x1E
+ 
+ /*
+  * MT_TOOL types
+
+From 8e3b262321c2121f8ceed952be3619039aebea9d Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 4 Sep 2017 22:34:22 +0200
+Subject: [PATCH] BACKPORT: Pulse Eight HDMI CEC from v4.15
+
+---
+ MAINTAINERS                               |   7 +
+ drivers/input/serio/serport.c             |  17 +-
+ drivers/media/usb/Kconfig                 |   5 +
+ drivers/media/usb/Makefile                |   1 +
+ drivers/media/usb/pulse8-cec/Kconfig      |  11 +
+ drivers/media/usb/pulse8-cec/Makefile     |   1 +
+ drivers/media/usb/pulse8-cec/pulse8-cec.c | 757 ++++++++++++++++++++++++++++++
+ include/uapi/linux/serio.h                |   1 +
+ 8 files changed, 797 insertions(+), 3 deletions(-)
+ create mode 100644 drivers/media/usb/pulse8-cec/Kconfig
+ create mode 100644 drivers/media/usb/pulse8-cec/Makefile
+ create mode 100644 drivers/media/usb/pulse8-cec/pulse8-cec.c
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 225ab2c1d35b..0c1232c326a5 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -8673,6 +8673,13 @@ F:	include/linux/tracehook.h
+ F:	include/uapi/linux/ptrace.h
+ F:	kernel/ptrace.c
+ 
++PULSE8-CEC DRIVER
++M:	Hans Verkuil <hverkuil@xs4all.nl>
++L:	linux-media@vger.kernel.org
++T:	git git://linuxtv.org/media_tree.git
++S:	Maintained
++F:	drivers/media/usb/pulse8-cec/*
++
+ PVRUSB2 VIDEO4LINUX DRIVER
+ M:	Mike Isely <isely@pobox.com>
+ L:	pvrusb2@isely.net	(subscribers-only)
+diff --git a/drivers/input/serio/serport.c b/drivers/input/serio/serport.c
+index 9c927d35c1f5..d189843f3727 100644
+--- a/drivers/input/serio/serport.c
++++ b/drivers/input/serio/serport.c
+@@ -71,10 +71,7 @@ static void serport_serio_close(struct serio *serio)
+ 
+ 	spin_lock_irqsave(&serport->lock, flags);
+ 	clear_bit(SERPORT_ACTIVE, &serport->flags);
+-	set_bit(SERPORT_DEAD, &serport->flags);
+ 	spin_unlock_irqrestore(&serport->lock, flags);
+-
+-	wake_up_interruptible(&serport->wait);
+ }
+ 
+ /*
+@@ -248,6 +245,19 @@ static long serport_ldisc_compat_ioctl(struct tty_struct *tty,
+ }
+ #endif
+ 
++static int serport_ldisc_hangup(struct tty_struct *tty)
++{
++	struct serport *serport = (struct serport *) tty->disc_data;
++	unsigned long flags;
++
++	spin_lock_irqsave(&serport->lock, flags);
++	set_bit(SERPORT_DEAD, &serport->flags);
++	spin_unlock_irqrestore(&serport->lock, flags);
++
++	wake_up_interruptible(&serport->wait);
++	return 0;
++}
++
+ static void serport_ldisc_write_wakeup(struct tty_struct * tty)
+ {
+ 	struct serport *serport = (struct serport *) tty->disc_data;
+@@ -274,6 +284,7 @@ static struct tty_ldisc_ops serport_ldisc = {
+ 	.compat_ioctl =	serport_ldisc_compat_ioctl,
+ #endif
+ 	.receive_buf =	serport_ldisc_receive,
++	.hangup =	serport_ldisc_hangup,
+ 	.write_wakeup =	serport_ldisc_write_wakeup
+ };
+ 
+diff --git a/drivers/media/usb/Kconfig b/drivers/media/usb/Kconfig
+index 7496f332f3f5..c9644b62f91a 100644
+--- a/drivers/media/usb/Kconfig
++++ b/drivers/media/usb/Kconfig
+@@ -60,5 +60,10 @@ source "drivers/media/usb/hackrf/Kconfig"
+ source "drivers/media/usb/msi2500/Kconfig"
+ endif
+ 
++if MEDIA_CEC_SUPPORT
++	comment "USB HDMI CEC adapters"
++source "drivers/media/usb/pulse8-cec/Kconfig"
++endif
++
+ endif #MEDIA_USB_SUPPORT
+ endif #USB
+diff --git a/drivers/media/usb/Makefile b/drivers/media/usb/Makefile
+index 8874ba774a34..0f15e3351ddc 100644
+--- a/drivers/media/usb/Makefile
++++ b/drivers/media/usb/Makefile
+@@ -24,3 +24,4 @@ obj-$(CONFIG_VIDEO_EM28XX) += em28xx/
+ obj-$(CONFIG_VIDEO_USBTV) += usbtv/
+ obj-$(CONFIG_VIDEO_GO7007) += go7007/
+ obj-$(CONFIG_DVB_AS102) += as102/
++obj-$(CONFIG_USB_PULSE8_CEC) += pulse8-cec/
+diff --git a/drivers/media/usb/pulse8-cec/Kconfig b/drivers/media/usb/pulse8-cec/Kconfig
+new file mode 100644
+index 000000000000..18ead44824ba
+--- /dev/null
++++ b/drivers/media/usb/pulse8-cec/Kconfig
+@@ -0,0 +1,11 @@
++config USB_PULSE8_CEC
++	tristate "Pulse Eight HDMI CEC"
++	depends on USB_ACM
++	select CEC_CORE
++	select SERIO
++	select SERIO_SERPORT
++	---help---
++	  This is a cec driver for the Pulse Eight HDMI CEC device.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called pulse8-cec.
+diff --git a/drivers/media/usb/pulse8-cec/Makefile b/drivers/media/usb/pulse8-cec/Makefile
+new file mode 100644
+index 000000000000..9800690bc25a
+--- /dev/null
++++ b/drivers/media/usb/pulse8-cec/Makefile
+@@ -0,0 +1 @@
++obj-$(CONFIG_USB_PULSE8_CEC) += pulse8-cec.o
+diff --git a/drivers/media/usb/pulse8-cec/pulse8-cec.c b/drivers/media/usb/pulse8-cec/pulse8-cec.c
+new file mode 100644
+index 000000000000..50146f263d90
+--- /dev/null
++++ b/drivers/media/usb/pulse8-cec/pulse8-cec.c
+@@ -0,0 +1,757 @@
++/*
++ * Pulse Eight HDMI CEC driver
++ *
++ * Copyright 2016 Hans Verkuil <hverkuil@xs4all.nl
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version of 2 of the License, or (at your
++ * option) any later version. See the file COPYING in the main directory of
++ * this archive for more details.
++ */
++
++/*
++ * Notes:
++ *
++ * - Devices with firmware version < 2 do not store their configuration in
++ *   EEPROM.
++ *
++ * - In autonomous mode, only messages from a TV will be acknowledged, even
++ *   polling messages. Upon receiving a message from a TV, the dongle will
++ *   respond to messages from any logical address.
++ *
++ * - In autonomous mode, the dongle will by default reply Feature Abort
++ *   [Unrecognized Opcode] when it receives Give Device Vendor ID. It will
++ *   however observe vendor ID's reported by other devices and possibly
++ *   alter this behavior. When TV's (and TV's only) report that their vendor ID
++ *   is LG (0x00e091), the dongle will itself reply that it has the same vendor
++ *   ID, and it will respond to at least one vendor specific command.
++ *
++ * - In autonomous mode, the dongle is known to attempt wakeup if it receives
++ *   <User Control Pressed> ["Power On"], ["Power] or ["Power Toggle"], or if it
++ *   receives <Set Stream Path> with its own physical address. It also does this
++ *   if it receives <Vendor Specific Command> [0x03 0x00] from an LG TV.
++ */
++
++#include <linux/completion.h>
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/workqueue.h>
++#include <linux/serio.h>
++#include <linux/slab.h>
++#include <linux/time.h>
++#include <linux/delay.h>
++
++#include <media/cec.h>
++
++MODULE_AUTHOR("Hans Verkuil <hverkuil@xs4all.nl>");
++MODULE_DESCRIPTION("Pulse Eight HDMI CEC driver");
++MODULE_LICENSE("GPL");
++
++static int debug;
++static int persistent_config;
++module_param(debug, int, 0644);
++module_param(persistent_config, int, 0644);
++MODULE_PARM_DESC(debug, "debug level (0-1)");
++MODULE_PARM_DESC(persistent_config, "read config from persistent memory (0-1)");
++
++enum pulse8_msgcodes {
++	MSGCODE_NOTHING = 0,
++	MSGCODE_PING,
++	MSGCODE_TIMEOUT_ERROR,
++	MSGCODE_HIGH_ERROR,
++	MSGCODE_LOW_ERROR,
++	MSGCODE_FRAME_START,
++	MSGCODE_FRAME_DATA,
++	MSGCODE_RECEIVE_FAILED,
++	MSGCODE_COMMAND_ACCEPTED,	/* 0x08 */
++	MSGCODE_COMMAND_REJECTED,
++	MSGCODE_SET_ACK_MASK,
++	MSGCODE_TRANSMIT,
++	MSGCODE_TRANSMIT_EOM,
++	MSGCODE_TRANSMIT_IDLETIME,
++	MSGCODE_TRANSMIT_ACK_POLARITY,
++	MSGCODE_TRANSMIT_LINE_TIMEOUT,
++	MSGCODE_TRANSMIT_SUCCEEDED,	/* 0x10 */
++	MSGCODE_TRANSMIT_FAILED_LINE,
++	MSGCODE_TRANSMIT_FAILED_ACK,
++	MSGCODE_TRANSMIT_FAILED_TIMEOUT_DATA,
++	MSGCODE_TRANSMIT_FAILED_TIMEOUT_LINE,
++	MSGCODE_FIRMWARE_VERSION,
++	MSGCODE_START_BOOTLOADER,
++	MSGCODE_GET_BUILDDATE,
++	MSGCODE_SET_CONTROLLED,		/* 0x18 */
++	MSGCODE_GET_AUTO_ENABLED,
++	MSGCODE_SET_AUTO_ENABLED,
++	MSGCODE_GET_DEFAULT_LOGICAL_ADDRESS,
++	MSGCODE_SET_DEFAULT_LOGICAL_ADDRESS,
++	MSGCODE_GET_LOGICAL_ADDRESS_MASK,
++	MSGCODE_SET_LOGICAL_ADDRESS_MASK,
++	MSGCODE_GET_PHYSICAL_ADDRESS,
++	MSGCODE_SET_PHYSICAL_ADDRESS,	/* 0x20 */
++	MSGCODE_GET_DEVICE_TYPE,
++	MSGCODE_SET_DEVICE_TYPE,
++	MSGCODE_GET_HDMI_VERSION,
++	MSGCODE_SET_HDMI_VERSION,
++	MSGCODE_GET_OSD_NAME,
++	MSGCODE_SET_OSD_NAME,
++	MSGCODE_WRITE_EEPROM,
++	MSGCODE_GET_ADAPTER_TYPE,	/* 0x28 */
++	MSGCODE_SET_ACTIVE_SOURCE,
++
++	MSGCODE_FRAME_EOM = 0x80,
++	MSGCODE_FRAME_ACK = 0x40,
++};
++
++#define MSGSTART	0xff
++#define MSGEND		0xfe
++#define MSGESC		0xfd
++#define MSGOFFSET	3
++
++#define DATA_SIZE 256
++
++#define PING_PERIOD	(15 * HZ)
++
++struct pulse8 {
++	struct device *dev;
++	struct serio *serio;
++	struct cec_adapter *adap;
++	unsigned int vers;
++	struct completion cmd_done;
++	struct work_struct work;
++	struct delayed_work ping_eeprom_work;
++	struct cec_msg rx_msg;
++	u8 data[DATA_SIZE];
++	unsigned int len;
++	u8 buf[DATA_SIZE];
++	unsigned int idx;
++	bool escape;
++	bool started;
++	struct mutex config_lock;
++	struct mutex write_lock;
++	bool config_pending;
++	bool restoring_config;
++	bool autonomous;
++};
++
++static void pulse8_ping_eeprom_work_handler(struct work_struct *work);
++
++static void pulse8_irq_work_handler(struct work_struct *work)
++{
++	struct pulse8 *pulse8 =
++		container_of(work, struct pulse8, work);
++
++	switch (pulse8->data[0] & 0x3f) {
++	case MSGCODE_FRAME_DATA:
++		cec_received_msg(pulse8->adap, &pulse8->rx_msg);
++		break;
++	case MSGCODE_TRANSMIT_SUCCEEDED:
++		cec_transmit_attempt_done(pulse8->adap, CEC_TX_STATUS_OK);
++		break;
++	case MSGCODE_TRANSMIT_FAILED_ACK:
++		cec_transmit_attempt_done(pulse8->adap, CEC_TX_STATUS_NACK);
++		break;
++	case MSGCODE_TRANSMIT_FAILED_LINE:
++	case MSGCODE_TRANSMIT_FAILED_TIMEOUT_DATA:
++	case MSGCODE_TRANSMIT_FAILED_TIMEOUT_LINE:
++		cec_transmit_attempt_done(pulse8->adap, CEC_TX_STATUS_ERROR);
++		break;
++	}
++}
++
++static irqreturn_t pulse8_interrupt(struct serio *serio, unsigned char data,
++				    unsigned int flags)
++{
++	struct pulse8 *pulse8 = serio_get_drvdata(serio);
++
++	if (!pulse8->started && data != MSGSTART)
++		return IRQ_HANDLED;
++	if (data == MSGESC) {
++		pulse8->escape = true;
++		return IRQ_HANDLED;
++	}
++	if (pulse8->escape) {
++		data += MSGOFFSET;
++		pulse8->escape = false;
++	} else if (data == MSGEND) {
++		struct cec_msg *msg = &pulse8->rx_msg;
++
++		if (debug)
++			dev_info(pulse8->dev, "received: %*ph\n",
++				 pulse8->idx, pulse8->buf);
++		pulse8->data[0] = pulse8->buf[0];
++		switch (pulse8->buf[0] & 0x3f) {
++		case MSGCODE_FRAME_START:
++			msg->len = 1;
++			msg->msg[0] = pulse8->buf[1];
++			break;
++		case MSGCODE_FRAME_DATA:
++			if (msg->len == CEC_MAX_MSG_SIZE)
++				break;
++			msg->msg[msg->len++] = pulse8->buf[1];
++			if (pulse8->buf[0] & MSGCODE_FRAME_EOM)
++				schedule_work(&pulse8->work);
++			break;
++		case MSGCODE_TRANSMIT_SUCCEEDED:
++		case MSGCODE_TRANSMIT_FAILED_LINE:
++		case MSGCODE_TRANSMIT_FAILED_ACK:
++		case MSGCODE_TRANSMIT_FAILED_TIMEOUT_DATA:
++		case MSGCODE_TRANSMIT_FAILED_TIMEOUT_LINE:
++			schedule_work(&pulse8->work);
++			break;
++		case MSGCODE_HIGH_ERROR:
++		case MSGCODE_LOW_ERROR:
++		case MSGCODE_RECEIVE_FAILED:
++		case MSGCODE_TIMEOUT_ERROR:
++			break;
++		case MSGCODE_COMMAND_ACCEPTED:
++		case MSGCODE_COMMAND_REJECTED:
++		default:
++			if (pulse8->idx == 0)
++				break;
++			memcpy(pulse8->data, pulse8->buf, pulse8->idx);
++			pulse8->len = pulse8->idx;
++			complete(&pulse8->cmd_done);
++			break;
++		}
++		pulse8->idx = 0;
++		pulse8->started = false;
++		return IRQ_HANDLED;
++	} else if (data == MSGSTART) {
++		pulse8->idx = 0;
++		pulse8->started = true;
++		return IRQ_HANDLED;
++	}
++
++	if (pulse8->idx >= DATA_SIZE) {
++		dev_dbg(pulse8->dev,
++			"throwing away %d bytes of garbage\n", pulse8->idx);
++		pulse8->idx = 0;
++	}
++	pulse8->buf[pulse8->idx++] = data;
++	return IRQ_HANDLED;
++}
++
++static void pulse8_disconnect(struct serio *serio)
++{
++	struct pulse8 *pulse8 = serio_get_drvdata(serio);
++
++	cec_unregister_adapter(pulse8->adap);
++	cancel_delayed_work_sync(&pulse8->ping_eeprom_work);
++	dev_info(&serio->dev, "disconnected\n");
++	serio_close(serio);
++	serio_set_drvdata(serio, NULL);
++	kfree(pulse8);
++}
++
++static int pulse8_send(struct serio *serio, const u8 *command, u8 cmd_len)
++{
++	int err = 0;
++
++	err = serio_write(serio, MSGSTART);
++	if (err)
++		return err;
++	for (; !err && cmd_len; command++, cmd_len--) {
++		if (*command >= MSGESC) {
++			err = serio_write(serio, MSGESC);
++			if (!err)
++				err = serio_write(serio, *command - MSGOFFSET);
++		} else {
++			err = serio_write(serio, *command);
++		}
++	}
++	if (!err)
++		err = serio_write(serio, MSGEND);
++
++	return err;
++}
++
++static int pulse8_send_and_wait_once(struct pulse8 *pulse8,
++				     const u8 *cmd, u8 cmd_len,
++				     u8 response, u8 size)
++{
++	int err;
++
++	/*dev_info(pulse8->dev, "transmit: %*ph\n", cmd_len, cmd);*/
++	init_completion(&pulse8->cmd_done);
++
++	err = pulse8_send(pulse8->serio, cmd, cmd_len);
++	if (err)
++		return err;
++
++	if (!wait_for_completion_timeout(&pulse8->cmd_done, HZ))
++		return -ETIMEDOUT;
++	if ((pulse8->data[0] & 0x3f) == MSGCODE_COMMAND_REJECTED &&
++	    cmd[0] != MSGCODE_SET_CONTROLLED &&
++	    cmd[0] != MSGCODE_SET_AUTO_ENABLED &&
++	    cmd[0] != MSGCODE_GET_BUILDDATE)
++		return -ENOTTY;
++	if (response &&
++	    ((pulse8->data[0] & 0x3f) != response || pulse8->len < size + 1)) {
++		dev_info(pulse8->dev, "transmit: failed %02x\n",
++			 pulse8->data[0] & 0x3f);
++		return -EIO;
++	}
++	return 0;
++}
++
++static int pulse8_send_and_wait(struct pulse8 *pulse8,
++				const u8 *cmd, u8 cmd_len, u8 response, u8 size)
++{
++	u8 cmd_sc[2];
++	int err;
++
++	mutex_lock(&pulse8->write_lock);
++	err = pulse8_send_and_wait_once(pulse8, cmd, cmd_len, response, size);
++
++	if (err == -ENOTTY) {
++		cmd_sc[0] = MSGCODE_SET_CONTROLLED;
++		cmd_sc[1] = 1;
++		err = pulse8_send_and_wait_once(pulse8, cmd_sc, 2,
++						MSGCODE_COMMAND_ACCEPTED, 1);
++		if (err)
++			goto unlock;
++		err = pulse8_send_and_wait_once(pulse8, cmd, cmd_len,
++						response, size);
++	}
++
++unlock:
++	mutex_unlock(&pulse8->write_lock);
++	return err == -ENOTTY ? -EIO : err;
++}
++
++static int pulse8_setup(struct pulse8 *pulse8, struct serio *serio,
++			struct cec_log_addrs *log_addrs, u16 *pa)
++{
++	u8 *data = pulse8->data + 1;
++	u8 cmd[2];
++	int err;
++	struct tm tm;
++	time_t date;
++
++	pulse8->vers = 0;
++
++	cmd[0] = MSGCODE_FIRMWARE_VERSION;
++	err = pulse8_send_and_wait(pulse8, cmd, 1, cmd[0], 2);
++	if (err)
++		return err;
++	pulse8->vers = (data[0] << 8) | data[1];
++	dev_info(pulse8->dev, "Firmware version %04x\n", pulse8->vers);
++	if (pulse8->vers < 2) {
++		*pa = CEC_PHYS_ADDR_INVALID;
++		return 0;
++	}
++
++	cmd[0] = MSGCODE_GET_BUILDDATE;
++	err = pulse8_send_and_wait(pulse8, cmd, 1, cmd[0], 4);
++	if (err)
++		return err;
++	date = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
++	time_to_tm(date, 0, &tm);
++	dev_info(pulse8->dev, "Firmware build date %04ld.%02d.%02d %02d:%02d:%02d\n",
++		 tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
++		 tm.tm_hour, tm.tm_min, tm.tm_sec);
++
++	dev_dbg(pulse8->dev, "Persistent config:\n");
++	cmd[0] = MSGCODE_GET_AUTO_ENABLED;
++	err = pulse8_send_and_wait(pulse8, cmd, 1, cmd[0], 1);
++	if (err)
++		return err;
++	pulse8->autonomous = data[0];
++	dev_dbg(pulse8->dev, "Autonomous mode: %s",
++		data[0] ? "on" : "off");
++
++	cmd[0] = MSGCODE_GET_DEVICE_TYPE;
++	err = pulse8_send_and_wait(pulse8, cmd, 1, cmd[0], 1);
++	if (err)
++		return err;
++	log_addrs->primary_device_type[0] = data[0];
++	dev_dbg(pulse8->dev, "Primary device type: %d\n", data[0]);
++	switch (log_addrs->primary_device_type[0]) {
++	case CEC_OP_PRIM_DEVTYPE_TV:
++		log_addrs->log_addr_type[0] = CEC_LOG_ADDR_TYPE_TV;
++		log_addrs->all_device_types[0] = CEC_OP_ALL_DEVTYPE_TV;
++		break;
++	case CEC_OP_PRIM_DEVTYPE_RECORD:
++		log_addrs->log_addr_type[0] = CEC_LOG_ADDR_TYPE_RECORD;
++		log_addrs->all_device_types[0] = CEC_OP_ALL_DEVTYPE_RECORD;
++		break;
++	case CEC_OP_PRIM_DEVTYPE_TUNER:
++		log_addrs->log_addr_type[0] = CEC_LOG_ADDR_TYPE_TUNER;
++		log_addrs->all_device_types[0] = CEC_OP_ALL_DEVTYPE_TUNER;
++		break;
++	case CEC_OP_PRIM_DEVTYPE_PLAYBACK:
++		log_addrs->log_addr_type[0] = CEC_LOG_ADDR_TYPE_PLAYBACK;
++		log_addrs->all_device_types[0] = CEC_OP_ALL_DEVTYPE_PLAYBACK;
++		break;
++	case CEC_OP_PRIM_DEVTYPE_AUDIOSYSTEM:
++		log_addrs->log_addr_type[0] = CEC_LOG_ADDR_TYPE_PLAYBACK;
++		log_addrs->all_device_types[0] = CEC_OP_ALL_DEVTYPE_AUDIOSYSTEM;
++		break;
++	case CEC_OP_PRIM_DEVTYPE_SWITCH:
++		log_addrs->log_addr_type[0] = CEC_LOG_ADDR_TYPE_UNREGISTERED;
++		log_addrs->all_device_types[0] = CEC_OP_ALL_DEVTYPE_SWITCH;
++		break;
++	case CEC_OP_PRIM_DEVTYPE_PROCESSOR:
++		log_addrs->log_addr_type[0] = CEC_LOG_ADDR_TYPE_SPECIFIC;
++		log_addrs->all_device_types[0] = CEC_OP_ALL_DEVTYPE_SWITCH;
++		break;
++	default:
++		log_addrs->log_addr_type[0] = CEC_LOG_ADDR_TYPE_UNREGISTERED;
++		log_addrs->all_device_types[0] = CEC_OP_ALL_DEVTYPE_SWITCH;
++		dev_info(pulse8->dev, "Unknown Primary Device Type: %d\n",
++			 log_addrs->primary_device_type[0]);
++		break;
++	}
++
++	cmd[0] = MSGCODE_GET_LOGICAL_ADDRESS_MASK;
++	err = pulse8_send_and_wait(pulse8, cmd, 1, cmd[0], 2);
++	if (err)
++		return err;
++	log_addrs->log_addr_mask = (data[0] << 8) | data[1];
++	dev_dbg(pulse8->dev, "Logical address ACK mask: %x\n",
++		log_addrs->log_addr_mask);
++	if (log_addrs->log_addr_mask)
++		log_addrs->num_log_addrs = 1;
++
++	cmd[0] = MSGCODE_GET_PHYSICAL_ADDRESS;
++	err = pulse8_send_and_wait(pulse8, cmd, 1, cmd[0], 1);
++	if (err)
++		return err;
++	*pa = (data[0] << 8) | data[1];
++	dev_dbg(pulse8->dev, "Physical address: %x.%x.%x.%x\n",
++		cec_phys_addr_exp(*pa));
++
++	cmd[0] = MSGCODE_GET_HDMI_VERSION;
++	err = pulse8_send_and_wait(pulse8, cmd, 1, cmd[0], 1);
++	if (err)
++		return err;
++	log_addrs->cec_version = data[0];
++	dev_dbg(pulse8->dev, "CEC version: %d\n", log_addrs->cec_version);
++
++	cmd[0] = MSGCODE_GET_OSD_NAME;
++	err = pulse8_send_and_wait(pulse8, cmd, 1, cmd[0], 0);
++	if (err)
++		return err;
++	strncpy(log_addrs->osd_name, data, 13);
++	dev_dbg(pulse8->dev, "OSD name: %s\n", log_addrs->osd_name);
++
++	return 0;
++}
++
++static int pulse8_apply_persistent_config(struct pulse8 *pulse8,
++					  struct cec_log_addrs *log_addrs,
++					  u16 pa)
++{
++	int err;
++
++	err = cec_s_log_addrs(pulse8->adap, log_addrs, false);
++	if (err)
++		return err;
++
++	cec_s_phys_addr(pulse8->adap, pa, false);
++
++	return 0;
++}
++
++static int pulse8_cec_adap_enable(struct cec_adapter *adap, bool enable)
++{
++	struct pulse8 *pulse8 = cec_get_drvdata(adap);
++	u8 cmd[16];
++	int err;
++
++	cmd[0] = MSGCODE_SET_CONTROLLED;
++	cmd[1] = enable;
++	err = pulse8_send_and_wait(pulse8, cmd, 2,
++				   MSGCODE_COMMAND_ACCEPTED, 1);
++	return enable ? err : 0;
++}
++
++static int pulse8_cec_adap_log_addr(struct cec_adapter *adap, u8 log_addr)
++{
++	struct pulse8 *pulse8 = cec_get_drvdata(adap);
++	u16 mask = 0;
++	u16 pa = adap->phys_addr;
++	u8 cmd[16];
++	int err = 0;
++
++	mutex_lock(&pulse8->config_lock);
++	if (log_addr != CEC_LOG_ADDR_INVALID)
++		mask = 1 << log_addr;
++	cmd[0] = MSGCODE_SET_ACK_MASK;
++	cmd[1] = mask >> 8;
++	cmd[2] = mask & 0xff;
++	err = pulse8_send_and_wait(pulse8, cmd, 3,
++				   MSGCODE_COMMAND_ACCEPTED, 0);
++	if ((err && mask != 0) || pulse8->restoring_config)
++		goto unlock;
++
++	cmd[0] = MSGCODE_SET_AUTO_ENABLED;
++	cmd[1] = log_addr == CEC_LOG_ADDR_INVALID ? 0 : 1;
++	err = pulse8_send_and_wait(pulse8, cmd, 2,
++				   MSGCODE_COMMAND_ACCEPTED, 0);
++	if (err)
++		goto unlock;
++	pulse8->autonomous = cmd[1];
++	if (log_addr == CEC_LOG_ADDR_INVALID)
++		goto unlock;
++
++	cmd[0] = MSGCODE_SET_DEVICE_TYPE;
++	cmd[1] = adap->log_addrs.primary_device_type[0];
++	err = pulse8_send_and_wait(pulse8, cmd, 2,
++				   MSGCODE_COMMAND_ACCEPTED, 0);
++	if (err)
++		goto unlock;
++
++	switch (adap->log_addrs.primary_device_type[0]) {
++	case CEC_OP_PRIM_DEVTYPE_TV:
++		mask = CEC_LOG_ADDR_MASK_TV;
++		break;
++	case CEC_OP_PRIM_DEVTYPE_RECORD:
++		mask = CEC_LOG_ADDR_MASK_RECORD;
++		break;
++	case CEC_OP_PRIM_DEVTYPE_TUNER:
++		mask = CEC_LOG_ADDR_MASK_TUNER;
++		break;
++	case CEC_OP_PRIM_DEVTYPE_PLAYBACK:
++		mask = CEC_LOG_ADDR_MASK_PLAYBACK;
++		break;
++	case CEC_OP_PRIM_DEVTYPE_AUDIOSYSTEM:
++		mask = CEC_LOG_ADDR_MASK_AUDIOSYSTEM;
++		break;
++	case CEC_OP_PRIM_DEVTYPE_SWITCH:
++		mask = CEC_LOG_ADDR_MASK_UNREGISTERED;
++		break;
++	case CEC_OP_PRIM_DEVTYPE_PROCESSOR:
++		mask = CEC_LOG_ADDR_MASK_SPECIFIC;
++		break;
++	default:
++		mask = 0;
++		break;
++	}
++	cmd[0] = MSGCODE_SET_LOGICAL_ADDRESS_MASK;
++	cmd[1] = mask >> 8;
++	cmd[2] = mask & 0xff;
++	err = pulse8_send_and_wait(pulse8, cmd, 3,
++				   MSGCODE_COMMAND_ACCEPTED, 0);
++	if (err)
++		goto unlock;
++
++	cmd[0] = MSGCODE_SET_DEFAULT_LOGICAL_ADDRESS;
++	cmd[1] = log_addr;
++	err = pulse8_send_and_wait(pulse8, cmd, 2,
++				   MSGCODE_COMMAND_ACCEPTED, 0);
++	if (err)
++		goto unlock;
++
++	cmd[0] = MSGCODE_SET_PHYSICAL_ADDRESS;
++	cmd[1] = pa >> 8;
++	cmd[2] = pa & 0xff;
++	err = pulse8_send_and_wait(pulse8, cmd, 3,
++				   MSGCODE_COMMAND_ACCEPTED, 0);
++	if (err)
++		goto unlock;
++
++	cmd[0] = MSGCODE_SET_HDMI_VERSION;
++	cmd[1] = adap->log_addrs.cec_version;
++	err = pulse8_send_and_wait(pulse8, cmd, 2,
++				   MSGCODE_COMMAND_ACCEPTED, 0);
++	if (err)
++		goto unlock;
++
++	if (adap->log_addrs.osd_name[0]) {
++		size_t osd_len = strlen(adap->log_addrs.osd_name);
++		char *osd_str = cmd + 1;
++
++		cmd[0] = MSGCODE_SET_OSD_NAME;
++		strncpy(cmd + 1, adap->log_addrs.osd_name, 13);
++		if (osd_len < 4) {
++			memset(osd_str + osd_len, ' ', 4 - osd_len);
++			osd_len = 4;
++			osd_str[osd_len] = '\0';
++			strcpy(adap->log_addrs.osd_name, osd_str);
++		}
++		err = pulse8_send_and_wait(pulse8, cmd, 1 + osd_len,
++					   MSGCODE_COMMAND_ACCEPTED, 0);
++		if (err)
++			goto unlock;
++	}
++
++unlock:
++	if (pulse8->restoring_config)
++		pulse8->restoring_config = false;
++	else
++		pulse8->config_pending = true;
++	mutex_unlock(&pulse8->config_lock);
++	return err;
++}
++
++static int pulse8_cec_adap_transmit(struct cec_adapter *adap, u8 attempts,
++				    u32 signal_free_time, struct cec_msg *msg)
++{
++	struct pulse8 *pulse8 = cec_get_drvdata(adap);
++	u8 cmd[2];
++	unsigned int i;
++	int err;
++
++	cmd[0] = MSGCODE_TRANSMIT_IDLETIME;
++	cmd[1] = signal_free_time;
++	err = pulse8_send_and_wait(pulse8, cmd, 2,
++				   MSGCODE_COMMAND_ACCEPTED, 1);
++	cmd[0] = MSGCODE_TRANSMIT_ACK_POLARITY;
++	cmd[1] = cec_msg_is_broadcast(msg);
++	if (!err)
++		err = pulse8_send_and_wait(pulse8, cmd, 2,
++					   MSGCODE_COMMAND_ACCEPTED, 1);
++	cmd[0] = msg->len == 1 ? MSGCODE_TRANSMIT_EOM : MSGCODE_TRANSMIT;
++	cmd[1] = msg->msg[0];
++	if (!err)
++		err = pulse8_send_and_wait(pulse8, cmd, 2,
++					   MSGCODE_COMMAND_ACCEPTED, 1);
++	if (!err && msg->len > 1) {
++		cmd[0] = msg->len == 2 ? MSGCODE_TRANSMIT_EOM :
++					 MSGCODE_TRANSMIT;
++		cmd[1] = msg->msg[1];
++		err = pulse8_send_and_wait(pulse8, cmd, 2,
++					   MSGCODE_COMMAND_ACCEPTED, 1);
++		for (i = 0; !err && i + 2 < msg->len; i++) {
++			cmd[0] = (i + 2 == msg->len - 1) ?
++				MSGCODE_TRANSMIT_EOM : MSGCODE_TRANSMIT;
++			cmd[1] = msg->msg[i + 2];
++			err = pulse8_send_and_wait(pulse8, cmd, 2,
++						   MSGCODE_COMMAND_ACCEPTED, 1);
++		}
++	}
++
++	return err;
++}
++
++static int pulse8_received(struct cec_adapter *adap, struct cec_msg *msg)
++{
++	return -ENOMSG;
++}
++
++static const struct cec_adap_ops pulse8_cec_adap_ops = {
++	.adap_enable = pulse8_cec_adap_enable,
++	.adap_log_addr = pulse8_cec_adap_log_addr,
++	.adap_transmit = pulse8_cec_adap_transmit,
++	.received = pulse8_received,
++};
++
++static int pulse8_connect(struct serio *serio, struct serio_driver *drv)
++{
++	u32 caps = CEC_CAP_DEFAULTS | CEC_CAP_PHYS_ADDR | CEC_CAP_MONITOR_ALL;
++	struct pulse8 *pulse8;
++	int err = -ENOMEM;
++	struct cec_log_addrs log_addrs = {};
++	u16 pa = CEC_PHYS_ADDR_INVALID;
++
++	pulse8 = kzalloc(sizeof(*pulse8), GFP_KERNEL);
++
++	if (!pulse8)
++		return -ENOMEM;
++
++	pulse8->serio = serio;
++	pulse8->adap = cec_allocate_adapter(&pulse8_cec_adap_ops, pulse8,
++					    dev_name(&serio->dev), caps, 1);
++	err = PTR_ERR_OR_ZERO(pulse8->adap);
++	if (err < 0)
++		goto free_device;
++
++	pulse8->dev = &serio->dev;
++	serio_set_drvdata(serio, pulse8);
++	INIT_WORK(&pulse8->work, pulse8_irq_work_handler);
++	mutex_init(&pulse8->write_lock);
++	mutex_init(&pulse8->config_lock);
++	pulse8->config_pending = false;
++
++	err = serio_open(serio, drv);
++	if (err)
++		goto delete_adap;
++
++	err = pulse8_setup(pulse8, serio, &log_addrs, &pa);
++	if (err)
++		goto close_serio;
++
++	err = cec_register_adapter(pulse8->adap, &serio->dev);
++	if (err < 0)
++		goto close_serio;
++
++	pulse8->dev = &pulse8->adap->devnode.dev;
++
++	if (persistent_config && pulse8->autonomous) {
++		err = pulse8_apply_persistent_config(pulse8, &log_addrs, pa);
++		if (err)
++			goto close_serio;
++		pulse8->restoring_config = true;
++	}
++
++	INIT_DELAYED_WORK(&pulse8->ping_eeprom_work,
++			  pulse8_ping_eeprom_work_handler);
++	schedule_delayed_work(&pulse8->ping_eeprom_work, PING_PERIOD);
++
++	return 0;
++
++close_serio:
++	serio_close(serio);
++delete_adap:
++	cec_delete_adapter(pulse8->adap);
++	serio_set_drvdata(serio, NULL);
++free_device:
++	kfree(pulse8);
++	return err;
++}
++
++static void pulse8_ping_eeprom_work_handler(struct work_struct *work)
++{
++	struct pulse8 *pulse8 =
++		container_of(work, struct pulse8, ping_eeprom_work.work);
++	u8 cmd;
++
++	schedule_delayed_work(&pulse8->ping_eeprom_work, PING_PERIOD);
++	cmd = MSGCODE_PING;
++	pulse8_send_and_wait(pulse8, &cmd, 1,
++			     MSGCODE_COMMAND_ACCEPTED, 0);
++
++	if (pulse8->vers < 2)
++		return;
++
++	mutex_lock(&pulse8->config_lock);
++	if (pulse8->config_pending && persistent_config) {
++		dev_dbg(pulse8->dev, "writing pending config to EEPROM\n");
++		cmd = MSGCODE_WRITE_EEPROM;
++		if (pulse8_send_and_wait(pulse8, &cmd, 1,
++					 MSGCODE_COMMAND_ACCEPTED, 0))
++			dev_info(pulse8->dev, "failed to write pending config to EEPROM\n");
++		else
++			pulse8->config_pending = false;
++	}
++	mutex_unlock(&pulse8->config_lock);
++}
++
++static const struct serio_device_id pulse8_serio_ids[] = {
++	{
++		.type	= SERIO_RS232,
++		.proto	= SERIO_PULSE8_CEC,
++		.id	= SERIO_ANY,
++		.extra	= SERIO_ANY,
++	},
++	{ 0 }
++};
++
++MODULE_DEVICE_TABLE(serio, pulse8_serio_ids);
++
++static struct serio_driver pulse8_drv = {
++	.driver		= {
++		.name	= "pulse8-cec",
++	},
++	.description	= "Pulse Eight HDMI CEC driver",
++	.id_table	= pulse8_serio_ids,
++	.interrupt	= pulse8_interrupt,
++	.connect	= pulse8_connect,
++	.disconnect	= pulse8_disconnect,
++};
++
++module_serio_driver(pulse8_drv);
+diff --git a/include/uapi/linux/serio.h b/include/uapi/linux/serio.h
+index becdd78295cc..4588c66a8df0 100644
+--- a/include/uapi/linux/serio.h
++++ b/include/uapi/linux/serio.h
+@@ -77,5 +77,6 @@
+ #define SERIO_PS2MULT	0x3c
+ #define SERIO_TSC40	0x3d
+ #define SERIO_WACOM_IV	0x3e
++#define SERIO_PULSE8_CEC	0x40
+ 
+ #endif /* _UAPI_SERIO_H */
+
+From 7f6dbf0df7f833b1d9e8da72365eebffd046e7c7 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 4 Sep 2017 22:34:24 +0200
+Subject: [PATCH] BACKPORT: RainShadow Tech HDMI CEC from v4.15
+
+---
+ MAINTAINERS                                       |   7 +
+ drivers/media/usb/Kconfig                         |   1 +
+ drivers/media/usb/Makefile                        |   1 +
+ drivers/media/usb/rainshadow-cec/Kconfig          |  11 +
+ drivers/media/usb/rainshadow-cec/Makefile         |   1 +
+ drivers/media/usb/rainshadow-cec/rainshadow-cec.c | 384 ++++++++++++++++++++++
+ include/uapi/linux/serio.h                        |   1 +
+ 7 files changed, 406 insertions(+)
+ create mode 100644 drivers/media/usb/rainshadow-cec/Kconfig
+ create mode 100644 drivers/media/usb/rainshadow-cec/Makefile
+ create mode 100644 drivers/media/usb/rainshadow-cec/rainshadow-cec.c
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 0c1232c326a5..551555a162c3 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -8912,6 +8912,13 @@ L:	linux-fbdev@vger.kernel.org
+ S:	Maintained
+ F:	drivers/video/fbdev/aty/aty128fb.c
+ 
++RAINSHADOW-CEC DRIVER
++M:	Hans Verkuil <hverkuil@xs4all.nl>
++L:	linux-media@vger.kernel.org
++T:	git git://linuxtv.org/media_tree.git
++S:	Maintained
++F:	drivers/media/usb/rainshadow-cec/*
++
+ RALINK RT2X00 WIRELESS LAN DRIVER
+ P:	rt2x00 project
+ M:	Stanislaw Gruszka <sgruszka@redhat.com>
+diff --git a/drivers/media/usb/Kconfig b/drivers/media/usb/Kconfig
+index c9644b62f91a..b24e753c4766 100644
+--- a/drivers/media/usb/Kconfig
++++ b/drivers/media/usb/Kconfig
+@@ -63,6 +63,7 @@ endif
+ if MEDIA_CEC_SUPPORT
+ 	comment "USB HDMI CEC adapters"
+ source "drivers/media/usb/pulse8-cec/Kconfig"
++source "drivers/media/usb/rainshadow-cec/Kconfig"
+ endif
+ 
+ endif #MEDIA_USB_SUPPORT
+diff --git a/drivers/media/usb/Makefile b/drivers/media/usb/Makefile
+index 0f15e3351ddc..738b993ec8b0 100644
+--- a/drivers/media/usb/Makefile
++++ b/drivers/media/usb/Makefile
+@@ -25,3 +25,4 @@ obj-$(CONFIG_VIDEO_USBTV) += usbtv/
+ obj-$(CONFIG_VIDEO_GO7007) += go7007/
+ obj-$(CONFIG_DVB_AS102) += as102/
+ obj-$(CONFIG_USB_PULSE8_CEC) += pulse8-cec/
++obj-$(CONFIG_USB_RAINSHADOW_CEC) += rainshadow-cec/
+diff --git a/drivers/media/usb/rainshadow-cec/Kconfig b/drivers/media/usb/rainshadow-cec/Kconfig
+new file mode 100644
+index 000000000000..030ef01b1ff0
+--- /dev/null
++++ b/drivers/media/usb/rainshadow-cec/Kconfig
+@@ -0,0 +1,11 @@
++config USB_RAINSHADOW_CEC
++	tristate "RainShadow Tech HDMI CEC"
++	depends on USB_ACM
++	select CEC_CORE
++	select SERIO
++	select SERIO_SERPORT
++	---help---
++	  This is a cec driver for the RainShadow Tech HDMI CEC device.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called rainshadow-cec.
+diff --git a/drivers/media/usb/rainshadow-cec/Makefile b/drivers/media/usb/rainshadow-cec/Makefile
+new file mode 100644
+index 000000000000..a79fbc77e1f7
+--- /dev/null
++++ b/drivers/media/usb/rainshadow-cec/Makefile
+@@ -0,0 +1 @@
++obj-$(CONFIG_USB_RAINSHADOW_CEC) += rainshadow-cec.o
+diff --git a/drivers/media/usb/rainshadow-cec/rainshadow-cec.c b/drivers/media/usb/rainshadow-cec/rainshadow-cec.c
+new file mode 100644
+index 000000000000..cecdcbcd400c
+--- /dev/null
++++ b/drivers/media/usb/rainshadow-cec/rainshadow-cec.c
+@@ -0,0 +1,384 @@
++/*
++ * RainShadow Tech HDMI CEC driver
++ *
++ * Copyright 2016 Hans Verkuil <hverkuil@xs4all.nl
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version of 2 of the License, or (at your
++ * option) any later version. See the file COPYING in the main directory of
++ * this archive for more details.
++ */
++
++/*
++ * Notes:
++ *
++ * The higher level protocols are currently disabled. This can be added
++ * later, similar to how this is done for the Pulse Eight CEC driver.
++ *
++ * Documentation of the protocol is available here:
++ *
++ * http://rainshadowtech.com/doc/HDMICECtoUSBandRS232v2.0.pdf
++ */
++
++#include <linux/completion.h>
++#include <linux/ctype.h>
++#include <linux/delay.h>
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/serio.h>
++#include <linux/slab.h>
++#include <linux/spinlock.h>
++#include <linux/time.h>
++#include <linux/workqueue.h>
++
++#include <media/cec.h>
++
++MODULE_AUTHOR("Hans Verkuil <hverkuil@xs4all.nl>");
++MODULE_DESCRIPTION("RainShadow Tech HDMI CEC driver");
++MODULE_LICENSE("GPL");
++
++#define DATA_SIZE 256
++
++struct rain {
++	struct device *dev;
++	struct serio *serio;
++	struct cec_adapter *adap;
++	struct completion cmd_done;
++	struct work_struct work;
++
++	/* Low-level ringbuffer, collecting incoming characters */
++	char buf[DATA_SIZE];
++	unsigned int buf_rd_idx;
++	unsigned int buf_wr_idx;
++	unsigned int buf_len;
++	spinlock_t buf_lock;
++
++	/* command buffer */
++	char cmd[DATA_SIZE];
++	unsigned int cmd_idx;
++	bool cmd_started;
++
++	/* reply to a command, only used to store the firmware version */
++	char cmd_reply[DATA_SIZE];
++
++	struct mutex write_lock;
++};
++
++static void rain_process_msg(struct rain *rain)
++{
++	struct cec_msg msg = {};
++	const char *cmd = rain->cmd + 3;
++	int stat = -1;
++
++	for (; *cmd; cmd++) {
++		if (!isxdigit(*cmd))
++			continue;
++		if (isxdigit(cmd[0]) && isxdigit(cmd[1])) {
++			if (msg.len == CEC_MAX_MSG_SIZE)
++				break;
++			if (hex2bin(msg.msg + msg.len, cmd, 1))
++				continue;
++			msg.len++;
++			cmd++;
++			continue;
++		}
++		if (!cmd[1])
++			stat = hex_to_bin(cmd[0]);
++		break;
++	}
++
++	if (rain->cmd[0] == 'R') {
++		if (stat == 1 || stat == 2)
++			cec_received_msg(rain->adap, &msg);
++		return;
++	}
++
++	switch (stat) {
++	case 1:
++		cec_transmit_attempt_done(rain->adap, CEC_TX_STATUS_OK);
++		break;
++	case 2:
++		cec_transmit_attempt_done(rain->adap, CEC_TX_STATUS_NACK);
++		break;
++	default:
++		cec_transmit_attempt_done(rain->adap, CEC_TX_STATUS_LOW_DRIVE);
++		break;
++	}
++}
++
++static void rain_irq_work_handler(struct work_struct *work)
++{
++	struct rain *rain =
++		container_of(work, struct rain, work);
++
++	while (true) {
++		unsigned long flags;
++		char data;
++
++		spin_lock_irqsave(&rain->buf_lock, flags);
++		if (!rain->buf_len) {
++			spin_unlock_irqrestore(&rain->buf_lock, flags);
++			break;
++		}
++
++		data = rain->buf[rain->buf_rd_idx];
++		rain->buf_len--;
++		rain->buf_rd_idx = (rain->buf_rd_idx + 1) & 0xff;
++
++		spin_unlock_irqrestore(&rain->buf_lock, flags);
++
++		if (!rain->cmd_started && data != '?')
++			continue;
++
++		switch (data) {
++		case '\r':
++			rain->cmd[rain->cmd_idx] = '\0';
++			dev_dbg(rain->dev, "received: %s\n", rain->cmd);
++			if (!memcmp(rain->cmd, "REC", 3) ||
++			    !memcmp(rain->cmd, "STA", 3)) {
++				rain_process_msg(rain);
++			} else {
++				strcpy(rain->cmd_reply, rain->cmd);
++				complete(&rain->cmd_done);
++			}
++			rain->cmd_idx = 0;
++			rain->cmd_started = false;
++			break;
++
++		case '\n':
++			rain->cmd_idx = 0;
++			rain->cmd_started = false;
++			break;
++
++		case '?':
++			rain->cmd_idx = 0;
++			rain->cmd_started = true;
++			break;
++
++		default:
++			if (rain->cmd_idx >= DATA_SIZE - 1) {
++				dev_dbg(rain->dev,
++					"throwing away %d bytes of garbage\n", rain->cmd_idx);
++				rain->cmd_idx = 0;
++			}
++			rain->cmd[rain->cmd_idx++] = data;
++			break;
++		}
++	}
++}
++
++static irqreturn_t rain_interrupt(struct serio *serio, unsigned char data,
++				    unsigned int flags)
++{
++	struct rain *rain = serio_get_drvdata(serio);
++
++	if (rain->buf_len == DATA_SIZE) {
++		dev_warn_once(rain->dev, "buffer overflow\n");
++		return IRQ_HANDLED;
++	}
++	spin_lock(&rain->buf_lock);
++	rain->buf_len++;
++	rain->buf[rain->buf_wr_idx] = data;
++	rain->buf_wr_idx = (rain->buf_wr_idx + 1) & 0xff;
++	spin_unlock(&rain->buf_lock);
++	schedule_work(&rain->work);
++	return IRQ_HANDLED;
++}
++
++static void rain_disconnect(struct serio *serio)
++{
++	struct rain *rain = serio_get_drvdata(serio);
++
++	cancel_work_sync(&rain->work);
++	cec_unregister_adapter(rain->adap);
++	dev_info(&serio->dev, "disconnected\n");
++	serio_close(serio);
++	serio_set_drvdata(serio, NULL);
++	kfree(rain);
++}
++
++static int rain_send(struct rain *rain, const char *command)
++{
++	int err = serio_write(rain->serio, '!');
++
++	dev_dbg(rain->dev, "send: %s\n", command);
++	while (!err && *command)
++		err = serio_write(rain->serio, *command++);
++	if (!err)
++		err = serio_write(rain->serio, '~');
++
++	return err;
++}
++
++static int rain_send_and_wait(struct rain *rain,
++			      const char *cmd, const char *reply)
++{
++	int err;
++
++	init_completion(&rain->cmd_done);
++
++	mutex_lock(&rain->write_lock);
++	err = rain_send(rain, cmd);
++	if (err)
++		goto err;
++
++	if (!wait_for_completion_timeout(&rain->cmd_done, HZ)) {
++		err = -ETIMEDOUT;
++		goto err;
++	}
++	if (reply && strncmp(rain->cmd_reply, reply, strlen(reply))) {
++		dev_dbg(rain->dev,
++			 "transmit of '%s': received '%s' instead of '%s'\n",
++			 cmd, rain->cmd_reply, reply);
++		err = -EIO;
++	}
++err:
++	mutex_unlock(&rain->write_lock);
++	return err;
++}
++
++static int rain_setup(struct rain *rain, struct serio *serio,
++			struct cec_log_addrs *log_addrs, u16 *pa)
++{
++	int err;
++
++	err = rain_send_and_wait(rain, "R", "REV");
++	if (err)
++		return err;
++	dev_info(rain->dev, "Firmware version %s\n", rain->cmd_reply + 4);
++
++	err = rain_send_and_wait(rain, "Q 1", "QTY");
++	if (err)
++		return err;
++	err = rain_send_and_wait(rain, "c0000", "CFG");
++	if (err)
++		return err;
++	return rain_send_and_wait(rain, "A F 0000", "ADR");
++}
++
++static int rain_cec_adap_enable(struct cec_adapter *adap, bool enable)
++{
++	return 0;
++}
++
++static int rain_cec_adap_log_addr(struct cec_adapter *adap, u8 log_addr)
++{
++	struct rain *rain = cec_get_drvdata(adap);
++	u8 cmd[16];
++
++	if (log_addr == CEC_LOG_ADDR_INVALID)
++		log_addr = CEC_LOG_ADDR_UNREGISTERED;
++	snprintf(cmd, sizeof(cmd), "A %x", log_addr);
++	return rain_send_and_wait(rain, cmd, "ADR");
++}
++
++static int rain_cec_adap_transmit(struct cec_adapter *adap, u8 attempts,
++				    u32 signal_free_time, struct cec_msg *msg)
++{
++	struct rain *rain = cec_get_drvdata(adap);
++	char cmd[2 * CEC_MAX_MSG_SIZE + 16];
++	unsigned int i;
++	int err;
++
++	if (msg->len == 1) {
++		snprintf(cmd, sizeof(cmd), "x%x", cec_msg_destination(msg));
++	} else {
++		char hex[3];
++
++		snprintf(cmd, sizeof(cmd), "x%x %02x ",
++			 cec_msg_destination(msg), msg->msg[1]);
++		for (i = 2; i < msg->len; i++) {
++			snprintf(hex, sizeof(hex), "%02x", msg->msg[i]);
++			strlcat(cmd, hex, sizeof(cmd));
++		}
++	}
++	mutex_lock(&rain->write_lock);
++	err = rain_send(rain, cmd);
++	mutex_unlock(&rain->write_lock);
++	return err;
++}
++
++static const struct cec_adap_ops rain_cec_adap_ops = {
++	.adap_enable = rain_cec_adap_enable,
++	.adap_log_addr = rain_cec_adap_log_addr,
++	.adap_transmit = rain_cec_adap_transmit,
++};
++
++static int rain_connect(struct serio *serio, struct serio_driver *drv)
++{
++	u32 caps = CEC_CAP_DEFAULTS | CEC_CAP_PHYS_ADDR | CEC_CAP_MONITOR_ALL;
++	struct rain *rain;
++	int err = -ENOMEM;
++	struct cec_log_addrs log_addrs = {};
++	u16 pa = CEC_PHYS_ADDR_INVALID;
++
++	rain = kzalloc(sizeof(*rain), GFP_KERNEL);
++
++	if (!rain)
++		return -ENOMEM;
++
++	rain->serio = serio;
++	rain->adap = cec_allocate_adapter(&rain_cec_adap_ops, rain,
++					  dev_name(&serio->dev), caps, 1);
++	err = PTR_ERR_OR_ZERO(rain->adap);
++	if (err < 0)
++		goto free_device;
++
++	rain->dev = &serio->dev;
++	serio_set_drvdata(serio, rain);
++	INIT_WORK(&rain->work, rain_irq_work_handler);
++	mutex_init(&rain->write_lock);
++	spin_lock_init(&rain->buf_lock);
++
++	err = serio_open(serio, drv);
++	if (err)
++		goto delete_adap;
++
++	err = rain_setup(rain, serio, &log_addrs, &pa);
++	if (err)
++		goto close_serio;
++
++	err = cec_register_adapter(rain->adap, &serio->dev);
++	if (err < 0)
++		goto close_serio;
++
++	rain->dev = &rain->adap->devnode.dev;
++	return 0;
++
++close_serio:
++	serio_close(serio);
++delete_adap:
++	cec_delete_adapter(rain->adap);
++	serio_set_drvdata(serio, NULL);
++free_device:
++	kfree(rain);
++	return err;
++}
++
++static const struct serio_device_id rain_serio_ids[] = {
++	{
++		.type	= SERIO_RS232,
++		.proto	= SERIO_RAINSHADOW_CEC,
++		.id	= SERIO_ANY,
++		.extra	= SERIO_ANY,
++	},
++	{ 0 }
++};
++
++MODULE_DEVICE_TABLE(serio, rain_serio_ids);
++
++static struct serio_driver rain_drv = {
++	.driver		= {
++		.name	= "rainshadow-cec",
++	},
++	.description	= "RainShadow Tech HDMI CEC driver",
++	.id_table	= rain_serio_ids,
++	.interrupt	= rain_interrupt,
++	.connect	= rain_connect,
++	.disconnect	= rain_disconnect,
++};
++
++module_serio_driver(rain_drv);
+diff --git a/include/uapi/linux/serio.h b/include/uapi/linux/serio.h
+index 4588c66a8df0..89b72003fb68 100644
+--- a/include/uapi/linux/serio.h
++++ b/include/uapi/linux/serio.h
+@@ -78,5 +78,6 @@
+ #define SERIO_TSC40	0x3d
+ #define SERIO_WACOM_IV	0x3e
+ #define SERIO_PULSE8_CEC	0x40
++#define SERIO_RAINSHADOW_CEC	0x41
+ 
+ #endif /* _UAPI_SERIO_H */
+
+From f532f514ca373430332f2733be987335af7ae75c Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Sat, 2 Sep 2017 16:23:11 +0200
+Subject: [PATCH] [media] rc/keymaps: initialize rc-cec early
+
+---
+ drivers/media/rc/keymaps/rc-cec.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/media/rc/keymaps/rc-cec.c b/drivers/media/rc/keymaps/rc-cec.c
+index 354c8e724b8e..fb0c2b1f3814 100644
+--- a/drivers/media/rc/keymaps/rc-cec.c
++++ b/drivers/media/rc/keymaps/rc-cec.c
+@@ -175,7 +175,7 @@ static void __exit exit_rc_map_cec(void)
+ 	rc_map_unregister(&cec_map);
+ }
+ 
+-module_init(init_rc_map_cec);
++subsys_initcall(init_rc_map_cec);
+ module_exit(exit_rc_map_cec);
+ 
+ MODULE_LICENSE("GPL");
+
+From 54c779a399fb852e06f11a03bf03c31090c4b722 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Sat, 2 Sep 2017 16:23:11 +0200
+Subject: [PATCH] drm/bridge: dw-hdmi: read edid on hpd event
+
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c | 23 +++++++++++++++++++----
+ 1 file changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index 8cb2cb4e61a6..c045cc0717cd 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -2479,6 +2479,7 @@ static void dw_hdmi_bridge_nop(struct drm_bridge *bridge)
+ static enum drm_connector_status
+ dw_hdmi_connector_detect(struct drm_connector *connector, bool force)
+ {
++	enum drm_connector_status status;
+ 	struct dw_hdmi *hdmi = container_of(connector, struct dw_hdmi,
+ 					     connector);
+ 
+@@ -2488,7 +2489,24 @@ dw_hdmi_connector_detect(struct drm_connector *connector, bool force)
+ 	dw_hdmi_update_phy_mask(hdmi);
+ 	mutex_unlock(&hdmi->mutex);
+ 
+-	return hdmi->phy.ops->read_hpd(hdmi, hdmi->phy.data);
++	status = hdmi->phy.ops->read_hpd(hdmi, hdmi->phy.data);
++
++	if (status == connector_status_connected && hdmi->ddc) {
++		struct edid *edid = drm_get_edid(connector, hdmi->ddc);
++		if (edid) {
++			dev_dbg(hdmi->dev, "got edid: width[%d] x height[%d]\n",
++				edid->width_cm, edid->height_cm);
++
++			hdmi->sink_is_hdmi = drm_detect_hdmi_monitor(edid);
++			hdmi->sink_has_audio = drm_detect_monitor_audio(edid);
++			drm_mode_connector_update_edid_property(connector, edid);
++			cec_notifier_set_phys_addr_from_edid(hdmi->cec_notifier, edid);
++			drm_edid_to_eld(connector, edid);
++			kfree(edid);
++		}
++	}
++
++	return status;
+ }
+ 
+ static int dw_hdmi_connector_get_modes(struct drm_connector *connector)
+@@ -2891,9 +2909,6 @@ static irqreturn_t dw_hdmi_irq(int irq, void *dev_id)
+ 			dw_hdmi_update_phy_mask(hdmi);
+ 		}
+ 		mutex_unlock(&hdmi->mutex);
+-		if (!(phy_stat & (HDMI_PHY_RX_SENSE | HDMI_PHY_HPD)))
+-			cec_notifier_set_phys_addr(hdmi->cec_notifier,
+-						   CEC_PHYS_ADDR_INVALID);
+ 	}
+ 
+ 	check_hdmi_irq(hdmi, intr_stat, phy_int_pol);

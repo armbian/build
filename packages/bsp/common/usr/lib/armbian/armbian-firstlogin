@@ -1,0 +1,295 @@
+#!/bin/bash
+#
+# Copyright (c) Authors: http://www.armbian.com/authors
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+
+. /etc/armbian-release
+
+check_abort()
+{
+	echo -e "\nDisabling user account creation procedure\n"
+	rm -f /root/.not_logged_in_yet
+	trap - INT
+	exit 0
+}
+
+
+function read_password()
+{
+unset password
+prompt="$1 password: "
+while IFS= read -p "$prompt" -r -s -n 1 char
+do
+	if [[ $char == $'\0' ]]
+	then
+		break
+	fi
+	prompt='*'
+	password+="$char"
+done
+}
+
+
+set_timezone_and_locales()
+{
+
+	# Grab this machine's public IP address
+	PUBLIC_IP=`curl --max-time 5 -s https://ipinfo.io/ip`
+	if [ $? -eq 0 ]; then
+
+		# Call the geolocation API and capture the output
+		RES=$(
+				curl --max-time 5 -s http://ipwhois.app/json/${PUBLIC_IP} | \
+				jq '.timezone, .country, .country_code' | \
+				while read -r TIMEZONE; do
+					read -r COUNTRY
+					echo "${TIMEZONE},${COUNTRY},${COUNTRYCODE}" | tr --delete \"
+				done
+			)
+
+		TZDATA=$(echo ${RES} | cut -d"," -f1)
+		STATE=$(echo ${RES} | cut -d"," -f2)
+		LOCALES=$(grep territory /usr/share/i18n/locales/* | grep "$STATE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  xargs -I{} grep {} /usr/share/i18n/SUPPORTED | grep "\.UTF-8" | cut -d " " -f 1)
+		CCODE=$(echo ${RES} | cut -d"," -f3 | awk '{print tolower($0)}' | xargs)
+		options=(`echo ${LOCALES}`);
+
+		# reconfigure tzdata
+		timedatectl set-timezone "${TZDATA}"
+		dpkg-reconfigure --frontend=noninteractive tzdata > /dev/null 2>&1
+
+		echo -e "Detected timezone: \x1B[92m$(LC_ALL=C timedatectl | grep "Time zone" | cut -d":" -f2 | xargs)\x1B[0m"
+		timelimit=4
+		SetLocales=""
+		for (( i = 1 ; i <= $timelimit; i++ )); do
+		echo -ne "\rCreating locales and console keyboard from your location [Y/n] \x1B[92m$(expr $timelimit - $i)\x1B[0m \c"
+			[ ! -z "$SetLocales" ] && { break ; }
+			read -sn1 -t 1 $SetLocales
+		done
+		if [ "$SetLocales" != "n" ] && [ "$SetLocales" != "N" ]; then
+			echo ""
+			# when having more locales, prompt for choosing one
+			if [[ "${#options[@]}" -gt 1 ]]; then
+
+				echo -e "\nAt your location, more locales are possible:\n"
+				PS3='Please enter your choice:'
+				select opt in "${options[@]}"
+				do
+					if [[ " ${options[@]} " =~ " ${opt} " ]]; then
+						LOCALES=${opt}
+						break
+					fi
+				done
+
+			fi
+
+			# generate locales
+			sed -i 's/# '"${LOCALES}"'/'"${LOCALES}"'/' /etc/locale.gen
+			echo -e "Generating locales: \x1B[92m${LOCALES}\x1B[0m"
+			locale-gen $LOCALES > /dev/null 2>&1
+			update-locale LANG=$LOCALES LANGUAGE=$LOCALES LC=$LOCALES LC_MESSAGES=$LOCALES
+
+			# setting up keyboard
+			echo -e "Console keyboard layout: \x1B[92m$CCODE\x1B[0m"
+			sed -i "s/XKBLAYOUT=.*/XKBLAYOUT=\"$CCODE\"/" /etc/default/keyboard
+			setupcon -k --force
+		else
+
+			echo -e "You can use \x1B[92marmbian-config\x1B[0m to set locales and console keyboard."
+
+		fi
+
+	fi
+
+}
+
+
+
+add_profile_sync_settings()
+{
+	/usr/bin/psd >/dev/null 2>&1
+	config_file="${HOME}/.config/psd/psd.conf"
+	if [ -f "${config_file}" ]; then
+		# test for overlayfs
+		sed -i 's/#USE_OVERLAYFS=.*/USE_OVERLAYFS="yes"/' "${config_file}"
+		case $(/usr/bin/psd p 2>/dev/null | grep Overlayfs) in
+			*active*)
+				echo -e "\nConfigured profile sync daemon with overlayfs."
+				;;
+			*)
+				echo -e "\nConfigured profile sync daemon."
+				sed -i 's/USE_OVERLAYFS="yes"/#USE_OVERLAYFS="no"/' "${config_file}"
+				;;
+		esac
+	fi
+	systemctl --user enable psd.service >/dev/null 2>&1
+	systemctl --user start psd.service >/dev/null 2>&1
+}
+
+
+
+
+add_user()
+{
+	read -t 0 temp
+
+	while [ -f "/root/.not_logged_in_yet" ]; do
+		echo -e "\nPlease provide a username (eg. your forename): \c"
+		read -e username
+		RealUserName="$(echo "$username" | tr '[:upper:]' '[:lower:]' | tr -d -c '[:alnum:]')"
+		[ -z "$RealUserName" ] && return
+		if ! id "$RealUserName" >/dev/null 2>&1; then break; else echo -e "Username \e[0;31m$RealUserName\x1B[0m already exists on the system."; fi
+	done
+
+	while [ -f "/root/.not_logged_in_yet" ]; do
+		read_password "Create"
+		first_input=$password
+		echo ""
+		read_password "Repeat"
+		second_input=$password
+		echo ""
+                if [[ $first_input == $second_input ]]; then
+                        result="$(cracklib-check <<<"$password")"
+                        okay="$(awk -F': ' '{ print $2}' <<<"$result")"
+                        if [[ "$okay" == "OK" ]]; then
+				echo -e "\nPlease provide your real name (eg. John Doe): \c"
+		                read -e RealName
+				adduser --quiet --disabled-password --shell /bin/bash --home /home/"$RealUserName" --gecos "$RealName" "$RealUserName"
+				(echo $first_input;echo $second_input;) | passwd "$RealUserName" >/dev/null 2>&1
+				for additionalgroup in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh; do
+					usermod -aG ${additionalgroup} ${RealUserName} 2>/dev/null
+				done
+				# fix for gksu in Xenial
+				touch /home/$RealUserName/.Xauthority
+				chown $RealUserName:$RealUserName /home/$RealUserName/.Xauthority
+				RealName="$(awk -F":" "/^${RealUserName}:/ {print \$5}" </etc/passwd | cut -d',' -f1)"
+				[ -z "$RealName" ] && RealName=$RealUserName
+				echo -e "\nDear \e[0;92m${RealName}\x1B[0m, your account \e[0;92m${RealUserName}\x1B[0m has been created and is sudo enabled."
+				echo -e "Please use this account for your daily work from now on.\n"
+				rm -f /root/.not_logged_in_yet
+
+				# set up profile sync daemon on desktop systems
+				which psd >/dev/null 2>&1
+				if [ $? -eq 0 ]; then
+					echo -e "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> /etc/sudoers
+					touch /home/${RealUserName}/.activate_psd
+					chown $RealUserName:$RealUserName /home/${RealUserName}/.activate_psd
+				fi
+                                break
+			else
+                                echo -e "Rejected - \e[0;31m$okay.\x1B[0m Try again."
+                        fi
+                elif [[ -n $password ]]; then
+                        echo -e "Rejected - \e[0;31mpasswords do not match.\x1B[0m Try again."
+                fi
+        done
+
+}
+
+if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
+
+	# disable autologin
+	rm -f /etc/systemd/system/getty@.service.d/override.conf
+	rm -f /etc/systemd/system/serial-getty@.service.d/override.conf
+	systemctl daemon-reload
+
+	# detect lightdm
+	desktop_lightdm=$(dpkg-query -W -f='${db:Status-Abbrev}\n' lightdm 2>/dev/null)
+
+	if [ "$IMAGE_TYPE" != "nightly" ]; then
+		if [ "$BRANCH" == "dev" ]; then
+			echo -e "\nYou are using an Armbian preview build !!!"
+			echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
+		elif [ "$DISTRIBUTION_STATUS" != "supported" ]; then
+			echo -e "\nYou are using an Armbian with unsupported ($DISTRIBUTION_CODENAME) userspace !!!"
+			echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
+		fi
+	else
+		echo -e "\nYou are using an Armbian nightly build meant only for developers to provide"
+		echo -e "constructive feedback to improve build system, OS settings or user experience."
+		echo -e "If this does not apply to you, \e[0;31mSTOP NOW!\x1B[0m. Especially don't use this image for"
+		echo -e "daily work since things might not work as expected or at all and may break"
+		echo -e "anytime with next update. \e[0;31mYOU HAVE BEEN WARNED!\x1B[0m"
+		echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
+	fi
+
+	echo -e "New to Armbian? Documentation: \e[1m\e[39mhttps://docs.armbian.com\x1B[0m Support: \e[1m\e[39mhttps://forum.armbian.com\x1B[0m\n"
+
+	trap '' 2
+	while [ -f "/root/.not_logged_in_yet" ]; do
+
+		read_password "New root"
+
+		# only allow one login. Once you enter root password, kill others.
+		loginfrom=$(who am i | awk '{print $2}')
+		who -la | grep root | grep -v "$loginfrom" | awk '{print $7}' | xargs --no-run-if-empty kill -9
+
+		first_input=$password
+		echo ""
+		read_password "Repeat"
+		second_input=$password
+		echo ""
+		if [[ $first_input == $second_input ]]; then
+			result="$(cracklib-check <<<"$password")"
+			okay="$(awk -F': ' '{ print $2}' <<<"$result")"
+			if [[ "$okay" == "OK" ]]; then
+				(echo $first_input;echo $second_input;) | passwd root >/dev/null 2>&1
+				set_timezone_and_locales
+				break
+				else
+				echo -e "Rejected - \e[0;31m$okay.\x1B[0m Try again."
+			fi
+		elif [[ -n $password ]]; then
+			echo -e "Rejected - \e[0;31mpasswords do not match.\x1B[0m Try again."
+		fi
+	done
+	trap - INT TERM EXIT
+
+	trap check_abort INT
+	while [ -f "/root/.not_logged_in_yet" ]; do
+		echo -e "\nCreating a new user account. Press <Ctrl-C> to abort"
+		[ -n "$desktop_lightdm" ] && echo "Desktop environment will not be enabled if you abort the new user creation"
+		add_user
+	done
+	trap - INT TERM EXIT
+
+	# check whether desktop environment has to be considered
+	if [ -n "$desktop_lightdm" ] && [ -n "$RealName" ] ; then
+
+			# 1st run goes without login
+			mkdir -p /etc/lightdm/lightdm.conf.d
+			cat <<-EOF > /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+			[Seat:*]
+			autologin-user=$RealUserName
+			autologin-user-timeout=0
+			user-session=xfce
+			EOF
+
+			ln -sf /lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
+		if [[ -f /var/run/resize2fs-reboot ]]; then
+			# Let the user reboot now otherwise start desktop environment
+			printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"
+			printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
+		elif [ -z "$ConfigureDisplay" ] || [ "$ConfigureDisplay" = "n" ] || [ "$ConfigureDisplay" = "N" ]; then
+			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
+			sleep 1
+			service lightdm start 2>/dev/null
+			if [ -f /root/.desktop_autologin ]; then
+				rm /root/.desktop_autologin
+			else
+				(sleep 20; rm /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf) &
+			fi
+			# logout if logged at console
+			[[ -n $(who -la | grep root | grep tty1) ]] && exit 1
+		fi
+	else
+		# Display reboot recommendation if necessary
+		if [[ -f /var/run/resize2fs-reboot ]]; then
+			printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"
+			printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
+		fi
+	fi
+	export TERM=linux
+fi

@@ -1,0 +1,69 @@
+From 89640ed25401f53b2d144a5d1bd762e98a4d1fe3 Mon Sep 17 00:00:00 2001
+From: Heng-Ruey Hsu <henryhsu@chromium.org>
+Date: Wed, 26 Oct 2016 10:52:06 +0200
+Subject: [PATCH 06/24] MEMEKA: videobuf2-dc: Support cacheable MMAP
+
+DMA allocations for MMAP type are uncached by default. But for
+some cases, CPU has to access the buffers. ie: memcpy for format
+converter. Supporting cacheable MMAP improves huge performance.
+
+This patch enables cacheable memory for DMA coherent allocator in mmap
+buffer allocation if non-consistent DMA attribute is set and kernel
+mapping is present. Even if userspace doesn't mmap the buffer, sync
+still should be happening if kernel mapping is present.
+If not done in allocation, it is enabled when memory is mapped from
+userspace (if non-consistent DMA attribute is set).
+
+Signed-off-by: Heng-Ruey Hsu <henryhsu@chromium.org>
+Tested-by: Heng-ruey Hsu <henryhsu@chromium.org>
+Reviewed-by: Tomasz Figa <tfiga@chromium.org>
+Signed-off-by: Thierry Escande <thierry.escande@collabora.com>
+Signed-off-by: memeka <mihailescu2m@gmail.com>
+---
+ .../common/videobuf2/videobuf2-dma-contig.c      | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/drivers/media/common/videobuf2/videobuf2-dma-contig.c b/drivers/media/common/videobuf2/videobuf2-dma-contig.c
+index 1150e83c9c8d..8c868c6309b6 100644
+--- a/drivers/media/common/videobuf2/videobuf2-dma-contig.c
++++ b/drivers/media/common/videobuf2/videobuf2-dma-contig.c
+@@ -152,6 +152,10 @@ static void vb2_dc_put(void *buf_priv)
+ 		sg_free_table(buf->sgt_base);
+ 		kfree(buf->sgt_base);
+ 	}
++	if (buf->dma_sgt) {
++		sg_free_table(buf->dma_sgt);
++		kfree(buf->dma_sgt);
++	}
+ 	dma_free_attrs(buf->dev, buf->size, buf->cookie, buf->dma_addr,
+ 		       buf->attrs);
+ 	put_device(buf->dev);
+@@ -193,6 +197,14 @@ static void *vb2_dc_alloc(struct device *dev, unsigned long attrs,
+ 	buf->handler.put = vb2_dc_put;
+ 	buf->handler.arg = buf;
+ 
++	/*
++	 * Enable cache maintenance. Even if userspace doesn't mmap the buffer,
++	 * sync still should be happening if kernel mapping is present.
++	 */
++	if (!(buf->attrs & DMA_ATTR_NO_KERNEL_MAPPING) &&
++	    buf->attrs & DMA_ATTR_NON_CONSISTENT)
++		buf->dma_sgt = vb2_dc_get_base_sgt(buf);
++
+ 	refcount_set(&buf->refcount, 1);
+ 
+ 	return buf;
+@@ -222,6 +234,10 @@ static int vb2_dc_mmap(void *buf_priv, struct vm_area_struct *vma)
+ 
+ 	vma->vm_ops->open(vma);
+ 
++	/* Enable cache maintenance if not enabled in allocation. */
++	if (!buf->dma_sgt && buf->attrs & DMA_ATTR_NON_CONSISTENT)
++		buf->dma_sgt = vb2_dc_get_base_sgt(buf);
++
+ 	pr_debug("%s: mapped dma addr 0x%08lx at 0x%08lx, size %ld\n",
+ 		__func__, (unsigned long)buf->dma_addr, vma->vm_start,
+ 		buf->size);
+-- 
+2.20.1
+
