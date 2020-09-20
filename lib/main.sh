@@ -373,15 +373,16 @@ show_select_menu() {
 	dialog --stdout --title "${provided_title}" --backtitle "${provided_backtitle}" \
 	--checklist "${provided_menuname}" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
 }
+
 # Myy : Once we got a list of selected groups, parse the PACKAGE_LIST inside configuration.sh
 
-DESKTOP_CONFIGS_DIR="${SRC}/config/desktop/${RELEASE}/environments/"
+DESKTOP_CONFIGS_DIR="${SRC}/config/desktop/${RELEASE}/environments"
 DESKTOP_CONFIG_PREFIX="config_"
 DESKTOP_SOFTWARE_GROUPS_DIR="${SRC}/config/desktop/${RELEASE}/softwares"
 
 # Myy : FIXME Rename CONFIG to PACKAGE_LIST
 DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME=""
-DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH=""
+DESKTOP_ENVIRONMENT_DIRPATH=""
 DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH=""
 
 if [[ $BUILD_DESKTOP != no ]]; then
@@ -408,10 +409,10 @@ if [[ $BUILD_DESKTOP != no ]]; then
 	# menu, but that hides information and make debugging harder, which I
 	# don't like. Adding desktop environments as a maintainer is not a
 	# trivial nor common task.
-	DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
+	DESKTOP_ENVIRONMENT_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
 
 	options=()
-	for configuration in "${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/${DESKTOP_CONFIG_PREFIX}"*; do
+	for configuration in "${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_CONFIG_PREFIX}"*; do
 		config_filename=$(basename ${configuration})
 		config_name=${config_filename#"${DESKTOP_CONFIG_PREFIX}"}
 		options+=("${config_filename}" "${config_name} configuration")
@@ -424,7 +425,7 @@ if [[ $BUILD_DESKTOP != no ]]; then
 		echo "No desktop configuration selected... Do you really want a desktop environment ?"
 	fi
 
-	DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/${DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME}"
+	DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME}"
 
 	options=()
 	for software_group_path in "${DESKTOP_SOFTWARE_GROUPS_DIR}/"*; do

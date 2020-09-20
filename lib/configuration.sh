@@ -189,17 +189,25 @@ PACKAGE_LIST_DESKTOP="$(cat ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH})"
 #PACKAGE_LIST_PREDEPENDS=""
 
 # Release specific packages
-# Myy : Oublier RECOMMENDS et FULL.
-# Myy : Tout est traité depuis la liste de paquets du bureau sélectionné
+
+# Myy : TODO File list + per pacakge file affinities and debian/armbian postinst files
 
 echo "DEALING WITH SOFTWARE GROUPS"
 for software_group in ${DESKTOP_SOFTWARE_GROUPS_SELECTED}; do
 	software_group_path="${DESKTOP_SOFTWARE_GROUPS_DIR}/${software_group}"
-	software_group_affinity_path="${software_group_path}/affinities/${DESKTOP_ENVIRONMENT}"
+	#software_group_affinity_path="${software_group_path}/affinities/${DESKTOP_ENVIRONMENT}"
+	software_group_desktop_affinity_path="${software_group_path}/affinities/${DESKTOP_ENVIRONMENT}"
+	software_group_board_affinity_path="${software_group_path}/affinities/${BOARD}"
+
+	# Myy : TODO Create a list of all the potential "packages lists" paths and add them, if present
 	PACKAGE_LIST_DESKTOP+=" $(cat "${software_group_path}/packages")"
 
-	if [[ -d "${software_group_affinity_path}" ]]; then
-		PACKAGE_LIST_DESKTOP+=" $(cat "${software_group_affinity_path}/packages")"
+	if [[ -d "${software_group_desktop_affinity_path}" ]]; then
+		PACKAGE_LIST_DESKTOP+=" $(cat "${software_group_desktop_affinity_path}/packages")"
+	fi
+
+	if [[ -d "${software_group_board_affinity_path}" ]]; then
+		PACKAGE_LIST_DESKTOP+=" $(cat "${software_group_board_affinity_path}/packages")"
 	fi
 done
 
@@ -356,6 +364,8 @@ Board: $BOARD
 Branch: $BRANCH
 Minimal: $BUILD_MINIMAL
 Desktop: $BUILD_DESKTOP
+Desktop Environment: $DESKTOP_ENVIRONMENT
+Software groups: $DESKTOP_SOFTWARE_GROUPS_SELECTED
 
 Kernel configuration:
 Repository: $KERNELSOURCE
