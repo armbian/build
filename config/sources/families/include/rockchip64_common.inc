@@ -268,6 +268,11 @@ family_tweaks()
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable rk3399-bluetooth.service >/dev/null 2>&1"
 
 	fi
+	if [[ $BOARD == pinebook-pro ]]; then
+
+                echo "AllowHibernation=no" >> $destination/etc/systemd/sleep.conf
+                echo "HandlePowerKey=ignore" >> $destination/etc/systemd/login.d
+	fi
 
 }
 
@@ -309,8 +314,6 @@ family_tweaks_bsp()
                 mkdir -p $destination/var/lib/alsa
                 cp $SRC/packages/bsp/pinebook-pro/asound.state $destination/var/lib/alsa/
                 ## disable sleep and power key
-                echo "AllowHibernation=no" >> $destination/etc/systemd/sleep.conf
-                echo "HandlePowerKey=ignore" >> $destination/etc/systemd/login.d
 	fi
 
 	if [[ $BOARD == helios64 ]]; then
