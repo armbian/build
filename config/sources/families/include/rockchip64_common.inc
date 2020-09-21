@@ -268,11 +268,12 @@ family_tweaks()
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable rk3399-bluetooth.service >/dev/null 2>&1"
 
 	fi
-	if [[ $BOARD == pinebook-pro ]]; then
 
-                echo "AllowHibernation=no" >> $destination/etc/systemd/sleep.conf
-                echo "HandlePowerKey=ignore" >> $destination/etc/systemd/login.d
-	fi
+#	if [[ $BOARD == pinebook-pro ]]; then
+#
+#                chroot $SDCARD /bin/bash -c "echo AllowHibernation=no >> /etc/systemd/sleep.conf"
+#                chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
+#	fi
 
 }
 
