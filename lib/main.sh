@@ -299,13 +299,13 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
 	options=()
 
-		distro_menu "stretch"
-		distro_menu "buster"
-		distro_menu "bullseye"
-		distro_menu "xenial"
-		distro_menu "bionic"
-		distro_menu "eoan"
 		distro_menu "focal"
+		distro_menu "buster"
+		distro_menu "bionic"
+		distro_menu "bullseye"
+		distro_menu "stretch"
+		distro_menu "xenial"
+
 
 		RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" \
 		--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
