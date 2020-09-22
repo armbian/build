@@ -381,11 +381,9 @@ DESKTOP_CONFIG_PREFIX="config_"
 DESKTOP_SOFTWARE_GROUPS_DIR="${SRC}/config/desktop/${RELEASE}/softwares"
 
 # Myy : FIXME Rename CONFIG to PACKAGE_LIST
-DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME=""
-DESKTOP_ENVIRONMENT_DIRPATH=""
 DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH=""
 
-if [[ $BUILD_DESKTOP != no ]]; then
+if [[ $BUILD_DESKTOP != no && -z $DESKTOP_ENVIRONMENT ]]; then
 	options=()
 	for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
 		desktop_env_name=$(basename $desktop_env_dir)
@@ -402,14 +400,17 @@ if [[ $BUILD_DESKTOP != no ]]; then
 	if [[ -z $DESKTOP_ENVIRONMENT ]]; then
 		exit_with_error "No desktop environment selected..."
 	fi
+fi
 
+DESKTOP_ENVIRONMENT_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
+
+if [[ $BUILD_DESKTOP != no && -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
 	# FIXME Check for empty folders, just in case the current maintainer
 	# messed up
 	# Note, we could also ignore it and don't show anything in the previous
 	# menu, but that hides information and make debugging harder, which I
 	# don't like. Adding desktop environments as a maintainer is not a
 	# trivial nor common task.
-	DESKTOP_ENVIRONMENT_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
 
 	options=()
 	for configuration in "${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_CONFIG_PREFIX}"*; do
@@ -418,14 +419,20 @@ if [[ $BUILD_DESKTOP != no ]]; then
 		options+=("${config_filename}" "${config_name} configuration")
 	done
 
-	DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME=$(show_menu "Choose the desktop environment config" "$backtitle" "Select the configuration for this environment.\nThese are sourced from ${desktop_environment_config_dir}" "${options[@]}")
+	DESKTOP_ENVIRONMENT_CONFIG_NAME=$(show_menu "Choose the desktop environment config" "$backtitle" "Select the configuration for this environment.\nThese are sourced from ${desktop_environment_config_dir}" "${options[@]}")
 	unset options
 
-	if [[ -z $DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME ]]; then
-		echo "No desktop configuration selected... Do you really want a desktop environment ?"
+	if [[ -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
+		exit_with_error "No desktop configuration selected... Do you really want a desktop environment ?"
 	fi
+fi
 
-	DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILENAME}"
+DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
+
+# "-z ${VAR+x}" allows to check for unset variable
+# Technically, someone might want to build a desktop with no additional
+# software groups.
+if [[ $BUILD_DESKTOP != no && -z ${DESKTOP_SOFTWARE_GROUPS_SELECTED+x} ]]; then
 
 	options=()
 	for software_group_path in "${DESKTOP_SOFTWARE_GROUPS_DIR}/"*; do
@@ -442,6 +449,57 @@ if [[ $BUILD_DESKTOP != no ]]; then
 
 	unset options
 fi
+
+# Expected variables :
+# - potential_paths
+# - BOARD
+# - DESKTOP_ENVIRONMENT
+# - DESKTOP_SOFTWARE_GROUPS_SELECTED
+# - DESKTOP_SOFTWARE_GROUPS_DIR
+# Example usage :
+# local potential_paths=""
+# get_all_potential_paths_for debian/postinst
+# echo $potential_paths
+
+get_all_potential_paths_for() {
+	looked_up_subpath="${1}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/${looked_up_subpath}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/affinities/${BOARD}/${looked_up_subpath}"
+	for software_group in ${DESKTOP_SOFTWARE_GROUPS_SELECTED}; do
+		software_group_dirpath="${DESKTOP_SOFTWARE_GROUPS_DIR}/${software_group}"
+		potential_paths+=" ${software_group_dirpath}/${looked_up_subpath}"
+		potential_paths+=" ${software_group_dirpath}/affinities/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
+		potential_paths+=" ${software_group_dirpath}/affinities/${BOARD}/${looked_up_subpath}"
+		potential_paths+=" ${software_group_dirpath}/affinities/${BOARD}/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
+	done
+}
+
+# Expected variables
+# - aggregated_content
+# - BOARD
+# - DESKTOP_ENVIRONMENT
+# - DESKTOP_SOFTWARE_GROUPS_SELECTED
+# - DESKTOP_SOFTWARE_GROUPS_DIR
+aggregate_all() {
+	looked_up_subpath="${1}"
+	local potential_paths=""
+	get_all_potential_paths_for "${looked_up_subpath}"
+
+	echo "Potential paths : ${potential_paths}"
+	for filepath in ${potential_paths}; do
+		echo "$filepath exist ?"
+		if [[ -f "${filepath}" ]]; then
+			echo "Yes !"
+			aggregated_content+=$(cat "${filepath}")
+			aggregated_content+=$'\n'
+			echo ${aggregated_content}
+		else
+			echo "Nope :C"
+		fi
+
+	done
+
+}
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh

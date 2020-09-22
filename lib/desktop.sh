@@ -9,6 +9,8 @@
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
+
+
 create_desktop_package ()
 {
 	# join and cleanup package list
@@ -44,72 +46,54 @@ create_desktop_package ()
 	# Recreating the DEBIAN/postinst file
 	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
 
-	postinst_paths=""
-	postinst_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/debian/postinst"
-	postinst_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/affinities/${BOARD}/debian/postinst"
-	for software_group in ${DESKTOP_SOFTWARE_GROUPS_SELECTED}; do
-		software_group_dirpath="${DESKTOP_SOFTWARE_GROUPS_DIR}/${software_group}"
-		postinst_paths+=" ${software_group_dirpath}/debian/postinst"
-		postinst_paths+=" ${software_group_dirpath}/affinities/${DESKTOP_ENVIRONMENT}/debian/postinst"
-		postinst_paths+=" ${software_group_dirpath}/affinities/${BOARD}/debian/postinst"
-	done
+	local aggregated_content=""
+	aggregate_all "debian/postinst"
 
-	echo "Parsed postinst_paths : ${postinst_paths}"
-	for postinst_filepath in ${postinst_paths}; do
-		echo -n "${postinst_filepath} exist ? "
-		if [[ -f "${postinst_filepath}" ]]; then
-			echo "Yes"
-			cat "${postinst_filepath}" >> "${destination}/DEBIAN/postinst"
-			# Just in case the file doesn't end up with a carriage return, for "reasons"
-			echo "" >> "${destination}/DEBIAN/postinst"
-		else
-			echo "Nope"
-		fi
-	done
+	#postinst_paths=""
+	#postinst_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/debian/postinst"
+	#postinst_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/affinities/${BOARD}/debian/postinst"
+	#for software_group in ${DESKTOP_SOFTWARE_GROUPS_SELECTED}; do
+	#	software_group_dirpath="${DESKTOP_SOFTWARE_GROUPS_DIR}/${software_group}"
+	#	postinst_paths+=" ${software_group_dirpath}/debian/postinst"
+	#	postinst_paths+=" ${software_group_dirpath}/affinities/${DESKTOP_ENVIRONMENT}/debian/postinst"
+	#	postinst_paths+=" ${software_group_dirpath}/affinities/${BOARD}/debian/postinst"
+	#done
 
-	unset postinst_paths
+	#echo "Parsed postinst_paths : ${postinst_paths}"
+	#for postinst_filepath in ${postinst_paths}; do
+	#	echo -n "${postinst_filepath} exist ? "
+	#	if [[ -f "${postinst_filepath}" ]]; then
+	#		echo "Yes"
+	#		cat "${postinst_filepath}" >> "${destination}/DEBIAN/postinst"
+	#		# Just in case the file doesn't end up with a carriage return, for "reasons"
+	#		echo "" >> "${destination}/DEBIAN/postinst"
+	#	else
+	#		echo "Nope"
+	#	fi
+	#done
 
+	# unset postinst_paths
+
+	echo "${aggregated_content}" >> "${destination}/DEBIAN/postinst"
 	echo "exit 0" >> "${destination}/DEBIAN/postinst"
 
 	chmod 755 "${destination}"/DEBIAN/postinst
 
 	cat "${destination}/DEBIAN/postinst"
 
-	# add loading desktop splash service
-	mkdir -p "${destination}"/etc/systemd/system/
-	cp "${SRC}"/packages/blobs/desktop/desktop-splash/desktop-splash.service "${destination}"/etc/systemd/system/desktop-splash.service
+	# Armbian create_desktop_package scripts
 
-	# install optimized browser configurations
+	unset aggregated_content
+
+	# Myy : I'm preparing the common armbian folders, in advance, since the scripts are now splitted
 	mkdir -p "${destination}"/etc/armbian
-	cp "${SRC}"/packages/blobs/desktop/chromium.conf "${destination}"/etc/armbian
-	cp "${SRC}"/packages/blobs/desktop/firefox.conf  "${destination}"/etc/armbian
-	cp -R "${SRC}"/packages/blobs/desktop/chromium "${destination}"/etc/armbian
 
-	# install lightdm greeter
-	cp -R "${SRC}"/packages/blobs/desktop/lightdm "${destination}"/etc/armbian
+	local aggregated_content=""
 
-	# install default desktop settings
-	mkdir -p "${destination}"/etc/skel
-	cp -R "${SRC}"/packages/blobs/desktop/skel/. "${destination}"/etc/skel
+	aggregate_all "armbian/create_desktop_package.sh"
 
-
-	# using different icon pack. Workaround due to this bug https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=867779
-	if [[ ${RELEASE} == bionic || ${RELEASE} == stretch || ${RELEASE} == buster || ${RELEASE} == bullseye || ${RELEASE} == focal || ${RELEASE} == eoan ]]; then
-	sed -i 's/<property name="IconThemeName" type="string" value=".*$/<property name="IconThemeName" type="string" value="Humanity-Dark"\/>/g' \
-	"${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
-	fi
-
-	# install dedicated startup icons
-	mkdir -p "${destination}"/usr/share/pixmaps "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
-	cp "${SRC}/packages/blobs/desktop/icons/${DISTRIBUTION,,}.png" "${destination}"/usr/share/pixmaps
-	sed 's/xenial.png/'"${DISTRIBUTION,,}"'.png/' -i "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
-
-	# install logo for login screen
-	cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps
-
-	# install wallpapers
-	mkdir -p "${destination}"/usr/share/backgrounds/xfce/
-	cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/xfce/
+	echo "${aggregated_content}"
+	eval "${aggregated_content}"
 
 	# create board DEB file
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
@@ -118,6 +102,9 @@ create_desktop_package ()
 	mv "${destination}.deb" "${DEB_STORAGE}/${RELEASE}"
 	# cleanup
 	rm -rf "${destination}"
+
+	unset aggregated_content
+
 }
 
 desktop_postinstall ()
