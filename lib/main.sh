@@ -418,7 +418,7 @@ fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git
 fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" "marvell-binaries" "branch:binaries-marvell-armada-18.12"
 fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
 fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
-fetch_from_repo "https://gitlab.com/superna9999/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
+fetch_from_repo "https://github.com/LibreELEC/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
 
 compile_sunxi_tools
 install_rkbin_tools
