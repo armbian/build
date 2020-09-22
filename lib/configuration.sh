@@ -195,6 +195,24 @@ pulseaudio pavumeter bluez bluez-tools pulseaudio-module-bluetooth blueman libpa
 libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic apt-xapian-index lightdm lightdm-gtk-greeter \
 "
 
+PACKAGE_LIST_DESKTOP_DDE=" 
+xorg xserver-xorg xserver-xorg-video-fbdev gvfs-fuse xfonts-base xinit x11-xserver-utils xserver-xorg-input-all xserver-xephyr xorg-docs-core x11-apps xauth \
+xorg-docs xscreensaver xfonts-100dpi xfonts-75dpi xfonts-scalable xcursor-themes xdg-user-dirs xdg-user-dirs-gtk xdg-utils \
+ubuntu-drivers-common ubuntu-keyring ubuntu-minimal user-setup ubuntudde-dde ubuntudde-dde-extras ubuntudde-plymouth-logo ubuntudde-plymouth-text \
+ubuntudde-default-settings ubuntudde-icon-theme dde-kwin deepin-turbo deepin-turbo-booster deepin-voice-recorder deepin-screenshot dde-calendar deepin-music \
+deepin-picker deepin-gettext-tools deepin-image-viewer deepin-movie deepin-calculator deepin-shortcut-viewer deepin-system-monitor deepin-terminal deepin-topbar \
+deepin-deb-installer deepin-screensaver dde-dock-onboard-plugin qtwayland5 lightdm lightdm-gtk-greeter slick-greeter gnome-control-center keyutils redshift bluez \
+bluez-tools bluez-cups htop brltty orca policykit-desktop-privileges network-manager-pptp network-manager-l2tp network-manager-openconnect network-manager-openvpn \
+network-manager-openvpn-gnome network-manager-vpnc cups cups-bsd cups-filters cups-pk-helper avahi-daemon liblouisutdml-bin liblouis-bin fonts-droid-fallback \
+libpaper-utils pulseaudio pulseaudio-module-bluetooth blueman xdg-user-dirs pamix pasystray pavucontrol pavumeter pavucontrol-qt kwin-addons hunspell-en-au \
+hunspell-en-ca hunspell-en-gb hunspell-en-us hunspell-en-za fonts-arphic-ukai fonts-arphic-uming fonts-dejavu-core fonts-kacst-one fonts-noto-cjk fonts-sil-padauk \
+fonts-ubuntu printer-driver-brlaser printer-driver-c2esp printer-driver-foo2zjs printer-driver-m2300w printer-driver-min12xxw printer-driver-pnm2ppa printer-driver-ptouch \
+printer-driver-pxljr printer-driver-sag-gdi printer-driver-splix gstreamer1.0-packagekit gstreamer1.0-plugins-base-apps gstreamer1.0-pulseaudio \
+libpam-gnome-keyring libproxy1-plugin-gsettings libproxy1-plugin-networkmanager libu2f-udev libwmf0.2-7-gtk mousetweaks openprinting-ppds p7zip-full \
+policykit-desktop-privileges anacron doc-base eject foomatic-db-compressed-ppds ghostscript-x im-config inputattach kerneloops language-pack-en libatk-adaptor \
+libgail-common libnotify-bin libnss-mdns sensible-utils software-properties-gtk speech-dispatcher spice-vdagent zenity zip
+"
+
 # Recommended desktop packages
 PACKAGE_LIST_DESKTOP_XFCE_RECOMMENDS="galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
 cups-pk-helper cups geany atril xarchiver"
@@ -208,10 +226,15 @@ galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
 cups-pk-helper cups geany atril xarchiver \
 "
 
+# Recommended desktop packages
+PACKAGE_LIST_DESKTOP_DDE_RECOMMENDS="
+hexchat mpv fbi geany atril xarchiver \
+"
 # Full desktop packages
 PACKAGE_LIST_DESKTOP_XFCE_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
 PACKAGE_LIST_DESKTOP_PLASMA_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
 PACKAGE_LIST_DESKTOP_GNOME3_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
+PACKAGE_LIST_DESKTOP_DDE_FULL="libreoffice libreoffice-style-tango meld remmina kazam transmission"
 
 # Packages installed before desktop.
 PACKAGE_LIST_PREDEPENDS=""
