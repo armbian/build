@@ -551,7 +551,7 @@ install_distribution_specific()
 	bionic|eoan|focal)
 	
 			#add ppa repository
-			[[ DDE_DESKTOP eq "yes" ]] then add-apt-repository ppa:ubuntudde-dev/stable
+			if [[ ${DDE_DESKTOP} -eq "yes" ]] && add-apt-repository ppa:ubuntudde-dev/stable
 			
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
