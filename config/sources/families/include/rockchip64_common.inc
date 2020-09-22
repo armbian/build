@@ -269,11 +269,11 @@ family_tweaks()
 
 	fi
 
-#	if [[ $BOARD == pinebook-pro ]]; then
-#
-#                chroot $SDCARD /bin/bash -c "echo AllowHibernation=no >> /etc/systemd/sleep.conf"
-#                chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
-#	fi
+	if [[ $BOARD == pinebook-pro ]]; then
+
+                chroot $SDCARD /bin/bash -c "echo SuspandState=freeze >> /etc/systemd/sleep.conf"
+                chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
+	fi
 
 }
 
@@ -301,20 +301,11 @@ family_tweaks_bsp()
 	if [[ $BOARD == pinebook-pro ]]; then
 
 		cp $SRC/packages/bsp/pinebook-pro/xorg.conf $destination/etc/X11/
-                mkdir -p $destination/usr/local/share/xdg/xfce4/xfconf/xfce-perchannel-xml/
-                mkdir -p $destination/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/
-                # powerconfig goes in usr share to avoid package conflict
-	        cp $SRC/packages/bsp/pinebook-pro/xfce4-power-manager.xml $destination/usr/local/share/xdg/xfce4/xfconf/xfce-perchannel-xml/
-                # pointer defaults dont work in usr/local/share
-		cp $SRC/packages/bsp/pinebook-pro/pointers.xml $destination/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/
-		cp $SRC/packages/bsp/pinebook-pro/xfce4-keyboard-shortcuts.xml $destination/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/
                 # from https://github.com/ayufan-rock64/linux-package/tree/master/root-pinebookpro
                 cp $SRC/packages/bsp/pinebook-pro/40-pinebookpro-touchpad.conf $destination/etc/X11/xorg.conf.d/
                 mkdir -p $destination/etc/udev/hwdb.d/
                 cp $SRC/packages/bsp/pinebook-pro/10-usb-kbd.hwdb $destination/etc/udev/hwdb.d/
-                mkdir -p $destination/var/lib/alsa
-                cp $SRC/packages/bsp/pinebook-pro/asound.state $destination/var/lib/alsa/
-                ## disable sleep and power key
+		## additional keyboard configs in lib/desktop.sh
 	fi
 
 	if [[ $BOARD == helios64 ]]; then
