@@ -22,11 +22,11 @@ install_common()
 	# install rootfs encryption related packages separate to not break packages cache
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
 		display_alert "Installing rootfs encryption related packages" "cryptsetup" "info"
-		chroot "${SDCARD}" /bin/bash -c "apt -y -qq --no-install-recommends install cryptsetup" \
+		chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq --no-install-recommends install cryptsetup" \
 		>> "${DEST}"/debug/install.log 2>&1
 		if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then
 			display_alert "Installing rootfs encryption related packages" "dropbear-initramfs" "info"
-			chroot "${SDCARD}" /bin/bash -c "apt -y -qq --no-install-recommends install dropbear-initramfs cryptsetup-initramfs" \
+			chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq --no-install-recommends install dropbear-initramfs cryptsetup-initramfs" \
 			>> "${DEST}"/debug/install.log 2>&1
 		fi
 
@@ -211,9 +211,9 @@ install_common()
 	ff02::2     ip6-allrouters
 	EOF
 
-	if [[ -n "${REPOSITORY_INSTALL}" ]]; then
-		chroot "${SDCARD}" /bin/bash -c "apt-get update"
-	fi
+	display_alert "Updating" "package lists"
+	chroot "${SDCARD}" /bin/bash -c "apt-get update &>/dev/null"
+	[[ $? -ne 0 ]] && exit_with_error "Updating packages failed"
 
 	# install family packages
 	if [[ -n ${PACKAGE_LIST_FAMILY} ]]; then
