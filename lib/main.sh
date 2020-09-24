@@ -467,6 +467,7 @@ get_all_potential_paths_for() {
 	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/${looked_up_subpath}"
 	potential_paths+=" ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/${looked_up_subpath}"
 	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/affinities/boards/${BOARD}/${looked_up_subpath}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/affinities/boards/${BOARD}/${looked_up_subpath}"
 	for software_group in ${DESKTOP_SOFTWARE_GROUPS_SELECTED}; do
 		software_group_dirpath="${DESKTOP_SOFTWARE_GROUPS_DIR}/${software_group}"
 		potential_paths+=" ${software_group_dirpath}/${looked_up_subpath}"

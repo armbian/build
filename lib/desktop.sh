@@ -20,7 +20,7 @@ create_desktop_package ()
 	echo "\"$PACKAGE_LIST_DESKTOP\""
 
 	# Remove leading and trailing spaces with some bash monstruosity
-	# https://stackoverflow.com/questions/369758/how-to-trim-whitespace-from-a-bash-variable#12973694
+	# https://stackoverflow.com/questions/369758/how-to-trim-whitespace-from-a-bash-variable#12973694>
 	PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
 	PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP%"${PACKAGE_LIST_DESKTOP##*[![:space:]]}"}"
 	# Replace whitespace characters by commas
