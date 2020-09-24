@@ -174,42 +174,13 @@ fi
 
 # Dependent desktop packages
 # Myy : Sources packages from file here
-PACKAGE_LIST_DESKTOP="$(cat ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH})"
 
-# Recommended desktop packages
-# Myy : Source additional packages from here
-#PACKAGE_LIST_DESKTOP_RECOMMENDS="galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
-#	cups-pk-helper cups geany atril xarchiver"
+aggregated_content=""
+aggregate_all "packages" " "
 
-# Full desktop packages
-# Myy : Source additional packages list from there
-#PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
+PACKAGE_LIST_DESKTOP+="${aggregated_content}"
 
-# Packages installed before desktop.
-#PACKAGE_LIST_PREDEPENDS=""
-
-# Release specific packages
-
-# Myy : TODO File list + per pacakge file affinities and debian/armbian postinst files
-
-echo "DEALING WITH SOFTWARE GROUPS"
-for software_group in ${DESKTOP_SOFTWARE_GROUPS_SELECTED}; do
-	software_group_path="${DESKTOP_SOFTWARE_GROUPS_DIR}/${software_group}"
-	#software_group_affinity_path="${software_group_path}/affinities/${DESKTOP_ENVIRONMENT}"
-	software_group_desktop_affinity_path="${software_group_path}/affinities/${DESKTOP_ENVIRONMENT}"
-	software_group_board_affinity_path="${software_group_path}/affinities/${BOARD}"
-
-	# Myy : TODO Create a list of all the potential "packages lists" paths and add them, if present
-	PACKAGE_LIST_DESKTOP+=" $(cat "${software_group_path}/packages")"
-
-	if [[ -d "${software_group_desktop_affinity_path}" ]]; then
-		PACKAGE_LIST_DESKTOP+=" $(cat "${software_group_desktop_affinity_path}/packages")"
-	fi
-
-	if [[ -d "${software_group_board_affinity_path}" ]]; then
-		PACKAGE_LIST_DESKTOP+=" $(cat "${software_group_board_affinity_path}/packages")"
-	fi
-done
+unset aggregated_content
 
 echo "Groups selected ${DESKTOP_SOFTWARE_GROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}"
 

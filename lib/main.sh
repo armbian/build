@@ -427,7 +427,8 @@ if [[ $BUILD_DESKTOP != no && -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
 	fi
 fi
 
-DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
+DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
+DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/packages"
 
 # "-z ${VAR+x}" allows to check for unset variable
 # Technically, someone might want to build a desktop with no additional
@@ -464,13 +465,14 @@ fi
 get_all_potential_paths_for() {
 	looked_up_subpath="${1}"
 	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/${looked_up_subpath}"
-	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/affinities/${BOARD}/${looked_up_subpath}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/${looked_up_subpath}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/affinities/boards/${BOARD}/${looked_up_subpath}"
 	for software_group in ${DESKTOP_SOFTWARE_GROUPS_SELECTED}; do
 		software_group_dirpath="${DESKTOP_SOFTWARE_GROUPS_DIR}/${software_group}"
 		potential_paths+=" ${software_group_dirpath}/${looked_up_subpath}"
-		potential_paths+=" ${software_group_dirpath}/affinities/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
-		potential_paths+=" ${software_group_dirpath}/affinities/${BOARD}/${looked_up_subpath}"
-		potential_paths+=" ${software_group_dirpath}/affinities/${BOARD}/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
+		potential_paths+=" ${software_group_dirpath}/affinities/desktops/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
+		potential_paths+=" ${software_group_dirpath}/affinities/boards/${BOARD}/${looked_up_subpath}"
+		potential_paths+=" ${software_group_dirpath}/affinities/boards/${BOARD}/affinities/desktops/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
 	done
 }
 
@@ -482,6 +484,8 @@ get_all_potential_paths_for() {
 # - DESKTOP_SOFTWARE_GROUPS_DIR
 aggregate_all() {
 	looked_up_subpath="${1}"
+	separator="${2}"
+
 	local potential_paths=""
 	get_all_potential_paths_for "${looked_up_subpath}"
 
@@ -491,8 +495,7 @@ aggregate_all() {
 		if [[ -f "${filepath}" ]]; then
 			echo "Yes !"
 			aggregated_content+=$(cat "${filepath}")
-			aggregated_content+=$'\n'
-			echo ${aggregated_content}
+			aggregated_content+="${separator}"
 		else
 			echo "Nope :C"
 		fi

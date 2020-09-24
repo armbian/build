@@ -14,12 +14,25 @@
 create_desktop_package ()
 {
 	# join and cleanup package list
+	# Remove leading and trailing whitespaces
+	display_alert "Showing PACKAGE_LIST_DESKTOP before postprocessing"
+	# Use quotes to show leading and trailing spaces
+	echo "\"$PACKAGE_LIST_DESKTOP\""
+
+	# Remove leading and trailing spaces with some bash monstruosity
+	# https://stackoverflow.com/questions/369758/how-to-trim-whitespace-from-a-bash-variable#12973694
+	PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
+	PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP%"${PACKAGE_LIST_DESKTOP##*[![:space:]]}"}"
+	# Replace whitespace characters by commas
 	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP// /,};
+	# Remove others 'spacing characters' (like tabs)
 	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP//[[:space:]]/}
 
 	echo "PACKAGE_LIST_DESKTOP : ${PACKAGE_LIST_DESKTOP}"
 
+	# Replace whitespace characters by commas
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,};
+	# Remove others 'spacing characters' (like tabs)
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS//[[:space:]]/}
 
 	local destination=${SRC}/.tmp/${RELEASE}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
@@ -43,42 +56,22 @@ create_desktop_package ()
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
 
+	display_alert "Showing ${destination}/DEBIAN/control" 
+
+	cat "${destination}"/DEBIAN/control
+
 	# Recreating the DEBIAN/postinst file
 	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
 
 	local aggregated_content=""
-	aggregate_all "debian/postinst"
-
-	#postinst_paths=""
-	#postinst_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/debian/postinst"
-	#postinst_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/affinities/${BOARD}/debian/postinst"
-	#for software_group in ${DESKTOP_SOFTWARE_GROUPS_SELECTED}; do
-	#	software_group_dirpath="${DESKTOP_SOFTWARE_GROUPS_DIR}/${software_group}"
-	#	postinst_paths+=" ${software_group_dirpath}/debian/postinst"
-	#	postinst_paths+=" ${software_group_dirpath}/affinities/${DESKTOP_ENVIRONMENT}/debian/postinst"
-	#	postinst_paths+=" ${software_group_dirpath}/affinities/${BOARD}/debian/postinst"
-	#done
-
-	#echo "Parsed postinst_paths : ${postinst_paths}"
-	#for postinst_filepath in ${postinst_paths}; do
-	#	echo -n "${postinst_filepath} exist ? "
-	#	if [[ -f "${postinst_filepath}" ]]; then
-	#		echo "Yes"
-	#		cat "${postinst_filepath}" >> "${destination}/DEBIAN/postinst"
-	#		# Just in case the file doesn't end up with a carriage return, for "reasons"
-	#		echo "" >> "${destination}/DEBIAN/postinst"
-	#	else
-	#		echo "Nope"
-	#	fi
-	#done
-
-	# unset postinst_paths
+	aggregate_all "debian/postinst" $'\n'
 
 	echo "${aggregated_content}" >> "${destination}/DEBIAN/postinst"
 	echo "exit 0" >> "${destination}/DEBIAN/postinst"
 
 	chmod 755 "${destination}"/DEBIAN/postinst
 
+	display_alert "Showing ${destination}/DEBIAN/postinst"
 	cat "${destination}/DEBIAN/postinst"
 
 	# Armbian create_desktop_package scripts
@@ -90,8 +83,9 @@ create_desktop_package ()
 
 	local aggregated_content=""
 
-	aggregate_all "armbian/create_desktop_package.sh"
+	aggregate_all "armbian/create_desktop_package.sh" $'\n'
 
+	display_alert "Showing the user scripts executed in create_desktop_package"
 	echo "${aggregated_content}"
 	eval "${aggregated_content}"
 
