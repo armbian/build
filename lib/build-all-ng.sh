@@ -213,16 +213,15 @@ function check_hash()
 	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin)
 
 	case $ref_type in
-		branch) hash=$(git ls-remote "${KERNELSOURCE}" refs/heads/"${ref_name}" | awk '{print $1}') ;;
-		tag) hash=$(git ls-remote "${KERNELSOURCE}" tags/"${ref_name}" | awk '{print $1}') ;;
-		head) hash=$(git ls-remote "${KERNELSOURCE}" HEAD | awk '{print $1}') ;;
+		branch) hash=$(git ls-remote "${KERNELSOURCE}" refs/heads/"${ref_name}" 2> /dev/null | awk '{print $1}') ;;
+		tag) hash=$(git ls-remote "${KERNELSOURCE}" tags/"${ref_name}" 2> /dev/null | awk '{print $1}') ;;
+		head) hash=$(git ls-remote "${KERNELSOURCE}" HEAD 2> /dev/null | awk '{print $1}') ;;
 		commit) hash=$ref_name ;;
 	esac
-	errorcode=$?
 	# ignore diff checking in case of network errrors
 	local kernel_hash="${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 	if [[ -f ${kernel_hash} ]]; then
-		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" || $errorcode -ne 0 ]] && echo "idential"
+		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" || -z $hash ]] && echo "idential"
 	fi
 }
 
@@ -319,7 +318,6 @@ function build_all()
 
 		# create beta or stable
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
-
 			# check if currnt hash is the same as upstream
 			if [[ "$IGNORE_HASH" != yes ]]; then
 				local store_hash
