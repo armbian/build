@@ -1,6 +1,102 @@
 <h3 align=center><a href="#armbian-build-tools"><img src=".github/armbian-logo.png" alt="Armbian logo" width="144"></a><br>
 build tools</h3>
 
+## THIS BRANCH IS IN ALPHA STATE. DON'T RELY ON IT !
+
+This branch is focused on making adding new desktop environments and application groups easy.
+
+If you're using that branch, it is assumed that you are familiar with
+Armbian build scripts !
+
+### The architecture added to the build system
+
+```
+├── config                                                Packages repository configurations
+│   ├──desktop                                            Desktop environment and appgroups packages lists and scripts
+│   │   ├──${RELEASE}                                     The name of the targeted distribution in lowercase (focal, buster, ...)
+│   │   │   ├──environments                               Desktop environments packages lists and scripts
+│   │   │   │   ├──${DESKTOP_ENVIRONMENT}                 The name of the desktop environment (or window manager), in lowercase (xfce, gnome, kde, ...)
+│   │   │   │   │   |──${DESKTOP_ENVIRONMENT_CONFIG_NAME} Different configuration name, in lowercase, prefixed with "config_" (config_basic, config_full, ...)
+│   │   │   │──appgroups                                  Application groups packages lists and scripts
+│   │   │   │   ├──${DESKTOP_APPGROUPS_SELECTED}          Appgroups names (editors, programming, ...)
+```
+
+In each directory representing a desktop environment, a desktop
+environment configuration or an appgroup, the following files
+can be present :
+
+* `packages`  
+  If present, the content of the file will be added to the list
+  of packages 'required' by the Armbian desktop package.
+* `debian/postinst`  
+  If present, the content of the file will be added to the `postinst`
+  script of the Armbian desktop package, which will be executed after
+  installing it.
+* `armbian/create_desktop_package.sh`  
+  If present the content of this script will be executed, by the build
+  script, just before actually creating the Armbian Desktop `.deb`
+  package.  
+  Any variable recognized and function defined by the build script,
+  at that point, can be used.
+
+Then in each directory representing a desktop environment, a desktop
+environment configuration or an appgroup, you can add :
+
+* `custom/boards/${BOARD}/`  
+  For example `custom/orangepipc`.  
+  A Board (odroidc4, tinkerboard, bananapi, ...) specific directory
+  where you can provide additional`packages`, `debian/postinst` and
+  `armbian/create_desktop_package.sh`. 
+  The files, if present, will be parsed accordingly when building
+  for that specific board, if the element (desktop environment,
+  appgroup, ...) is selected.
+
+Then in each appgroup, you can add :
+
+* `custom/desktops/${DESTKOP_ENVIRONMENT}/`  
+  For example `custom/desktops/xfce`.  
+  A desktop environment specific directory where you can provide
+  additional `packages`, `debian/postinst` and
+  `armbian/create_desktop_package.sh`.  
+  The files, if present, will be parsed accordingly if the appgroup
+  AND that desktop environment are both selected during a build.
+* `custom/boards/${BOARD}/custom/desktops/${DESTKOP_ENVIRONMENT}/`  
+  For example `custom/boards/tinkerboard/custom/desktops/kde`.  
+  A Board AND desktop environment specific directory where you can
+  provided additional `packages`, `debian/postinst` and
+  `armbian/create_desktop_package.sh`.  
+  The files, if present, will be parsed accordingly if the appgroup,
+  that specific board and that specific desktop environments are
+  all selected during a build.
+
+### Adding a desktop environment
+
+> Currently, only official repositories are supported.
+
+Let's say that you want to add that new desktop environment
+"superduperde", that is now available on official on Debian/Ubuntu
+repositories.
+
+First, focus on one specific distribution like `focal` (Ubuntu)
+or `buster` (Debian). In our example, will take `focal`.  
+We'll create our first configuration 'full', which should provide the
+DE along with all its specific apps, widgets and the kitchen sink.
+
+* Create the directory
+  `config/desktop/focal/environments/superduperde/config_full`
+* Create the file 
+  `config/desktop/focal/environments/superduperde/config_full/packages`
+* Open the `packages` file, add the list of packages for `apt`.
+
+Then select it in the configuration menu, or pass the following
+variables to `./compile.sh` :
+
+```bash
+BUILD_DESKTOP="yes" RELEASE="focal" DESKTOP_ENVIRONMENT="superduperde" DESKTOP_ENVIRONMENT_CONFIG_NAME="config_full"
+```
+
+Then test the resulting image !
+
 <p align=right>&nbsp;</p>
 
 [![Build](https://github.com/armbian/build/workflows/Build/badge.svg)](https://github.com/armbian/build/actions?query=workflow%3ABuild)
@@ -72,7 +168,7 @@ Build minimal CLI Debian buster based image for Odroid XU4. Use modern kernel an
 
 ```text
 ./compile.sh BOARD="odroidxu4" BRANCH="current" RELEASE="buster" CARD_DEVICE="/dev/sda" \
-KERNEL_ONLY="no" KERNEL_CONFIGURE="no" BUILD_DESKTOP="no" BUILD_MINIMAL="yes"
+KERNEL_ONLY="no" KERNEL_CONFIGURE="no" BUILD_DESKTOP="yes" RELEASE="focal" BUILD_DESKTOP="yes" DESKTOP_ENVIRONMENT="xfce" DESKTOP_ENVIRONMENT_CONFIG_NAME="config_full" DESKTOP_APPGROUPS_SELECTED="browsers editors programming"
 ```
 
 [Build parameters, advanced build options, user defined configuration, build with Docker?](#additional-information)

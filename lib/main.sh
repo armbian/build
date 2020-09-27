@@ -378,7 +378,7 @@ show_select_menu() {
 
 DESKTOP_CONFIGS_DIR="${SRC}/config/desktop/${RELEASE}/environments"
 DESKTOP_CONFIG_PREFIX="config_"
-DESKTOP_SOFTWARE_GROUPS_DIR="${SRC}/config/desktop/${RELEASE}/softwares"
+DESKTOP_APPGROUPS_DIR="${SRC}/config/desktop/${RELEASE}/appgroups"
 
 # Myy : FIXME Rename CONFIG to PACKAGE_LIST
 DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH=""
@@ -432,16 +432,16 @@ DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DI
 
 # "-z ${VAR+x}" allows to check for unset variable
 # Technically, someone might want to build a desktop with no additional
-# software groups.
-if [[ $BUILD_DESKTOP != no && -z ${DESKTOP_SOFTWARE_GROUPS_SELECTED+x} ]]; then
+# appgroups.
+if [[ $BUILD_DESKTOP != no && -z ${DESKTOP_APPGROUPS_SELECTED+x} ]]; then
 
 	options=()
-	for software_group_path in "${DESKTOP_SOFTWARE_GROUPS_DIR}/"*; do
-		software_group="$(basename "${software_group_path}")"
-		options+=("${software_group}" "${software_group^}" off)
+	for appgroup_path in "${DESKTOP_APPGROUPS_DIR}/"*; do
+		appgroup="$(basename "${appgroup_path}")"
+		options+=("${appgroup}" "${appgroup^}" off)
 	done
 
-	DESKTOP_SOFTWARE_GROUPS_SELECTED=$(\
+	DESKTOP_APPGROUPS_SELECTED=$(\
 		show_select_menu \
 		"Choose desktop softwares to add" \
 		"$backtitle" \
@@ -455,8 +455,8 @@ fi
 # - potential_paths
 # - BOARD
 # - DESKTOP_ENVIRONMENT
-# - DESKTOP_SOFTWARE_GROUPS_SELECTED
-# - DESKTOP_SOFTWARE_GROUPS_DIR
+# - DESKTOP_APPGROUPS_SELECTED
+# - DESKTOP_APPGROUPS_DIR
 # Example usage :
 # local potential_paths=""
 # get_all_potential_paths_for debian/postinst
@@ -468,12 +468,12 @@ get_all_potential_paths_for() {
 	potential_paths+=" ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/${looked_up_subpath}"
 	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/custom/boards/${BOARD}/${looked_up_subpath}"
 	potential_paths+=" ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/custom/boards/${BOARD}/${looked_up_subpath}"
-	for software_group in ${DESKTOP_SOFTWARE_GROUPS_SELECTED}; do
-		software_group_dirpath="${DESKTOP_SOFTWARE_GROUPS_DIR}/${software_group}"
-		potential_paths+=" ${software_group_dirpath}/${looked_up_subpath}"
-		potential_paths+=" ${software_group_dirpath}/custom/desktops/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
-		potential_paths+=" ${software_group_dirpath}/custom/boards/${BOARD}/${looked_up_subpath}"
-		potential_paths+=" ${software_group_dirpath}/custom/boards/${BOARD}/custom/desktops/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
+	for appgroup in ${DESKTOP_APPGROUPS_SELECTED}; do
+		appgroup_dirpath="${DESKTOP_APPGROUPS_DIR}/${appgroup}"
+		potential_paths+=" ${appgroup_dirpath}/${looked_up_subpath}"
+		potential_paths+=" ${appgroup_dirpath}/custom/desktops/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
+		potential_paths+=" ${appgroup_dirpath}/custom/boards/${BOARD}/${looked_up_subpath}"
+		potential_paths+=" ${appgroup_dirpath}/custom/boards/${BOARD}/custom/desktops/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
 	done
 }
 
@@ -481,8 +481,8 @@ get_all_potential_paths_for() {
 # - aggregated_content
 # - BOARD
 # - DESKTOP_ENVIRONMENT
-# - DESKTOP_SOFTWARE_GROUPS_SELECTED
-# - DESKTOP_SOFTWARE_GROUPS_DIR
+# - DESKTOP_APPGROUPS_SELECTED
+# - DESKTOP_APPGROUPS_DIR
 aggregate_all() {
 	looked_up_subpath="${1}"
 	separator="${2}"

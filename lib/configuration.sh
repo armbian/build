@@ -182,10 +182,7 @@ PACKAGE_LIST_DESKTOP+="${aggregated_content}"
 
 unset aggregated_content
 
-echo "Groups selected ${DESKTOP_SOFTWARE_GROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}"
-
-echo "YAY !"
-
+echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}"
 
 case $RELEASE in
 
@@ -336,7 +333,7 @@ Branch: $BRANCH
 Minimal: $BUILD_MINIMAL
 Desktop: $BUILD_DESKTOP
 Desktop Environment: $DESKTOP_ENVIRONMENT
-Software groups: $DESKTOP_SOFTWARE_GROUPS_SELECTED
+Software groups: $DESKTOP_APPGROUPS_SELECTED
 
 Kernel configuration:
 Repository: $KERNELSOURCE
