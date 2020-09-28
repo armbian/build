@@ -51,7 +51,7 @@ elif [[ $BOARD == rockpi-4* ]]; then
 	MINILOADER_BLOB='rk33/rk3399_miniloader_v1.19.bin'
 	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
 
-elif [[ $BOARD == rockpro64 ]] || [[ $BOARD == pinebook-pro ]]; then
+elif [[ $BOARD == rockpro64 ]]; then
 
 	BOOT_RK3399_LEGACY_HYBRID=yes
 	BL31_BLOB='rk33/rk3399_bl31_v1.17.elf'
