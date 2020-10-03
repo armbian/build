@@ -9,6 +9,7 @@ OVERLAY_PREFIX='rockchip'
 SERIALCON=${SERIALCON:=$([ $BRANCH == "legacy" ] && echo "ttyFIQ0:1500000" || echo "ttyS2:1500000")}
 GOVERNOR="ondemand"
 BOOTBRANCH="tag:v2020.07"
+PACKAGE_LIST_FAMILY="ethtool"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 
@@ -36,16 +37,17 @@ elif [[ $BOOTCONFIG == *3328* ]]; then
 
 	BOOT_RK3328_USE_AYUFAN_ATF=yes
 
+elif [[ $BOARD == pinebook-pro ]]; then
+
+	BOOT_USE_MAINLINE_ATF=yes
+	BOOT_SOC=rk3399
+	ATFPATCHDIR='atf-rk3399'
+
 elif [[ $BOARD == rockpi-4* || $BOARD == rockpro64 ]]; then
 
 	BOOT_USE_TPL_SPL_BLOB=yes
 	BOOT_SOC=rk3399
 	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
-
-elif [[ $BOARD == pinebook-pro ]]; then
-
-	BOOT_RK3399_LEGACY_HYBRID=yes
-	BL31_BLOB='rk33/rk3399_bl31_v1.17.elf'
 
 elif [[ $BOARD == rockpi-s ]]; then
 
@@ -266,6 +268,12 @@ family_tweaks()
 
 	fi
 
+	if [[ $BOARD == pinebook-pro ]]; then
+
+                chroot $SDCARD /bin/bash -c "echo SuspandState=freeze >> /etc/systemd/sleep.conf"
+                chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
+	fi
+
 }
 
 
@@ -291,7 +299,18 @@ family_tweaks_bsp()
 
 	if [[ $BOARD == pinebook-pro ]]; then
 
+		## accelerated X
 		cp $SRC/packages/bsp/pinebook-pro/xorg.conf $destination/etc/X11/
+		## touchpad and keyboard tweaks
+		# from https://github.com/ayufan-rock64/linux-package/tree/master/root-pinebookpro
+		cp $SRC/packages/bsp/pinebook-pro/40-pinebookpro-touchpad.conf $destination/etc/X11/xorg.conf.d/
+		mkdir -p $destination/etc/udev/hwdb.d/
+		cp $SRC/packages/bsp/pinebook-pro/10-usb-kbd.hwdb $destination/etc/udev/hwdb.d/
+		## brightness and power management defaults
+		mkdir -p $destination/usr/local/share/xdg/xfce4/xfconf/xfce-perchannel-xml/		
+		cp $SRC/packages/bsp/pinebook-pro/xfce4-power-manager.xml $destination/usr/local/share/xdg/xfce4/xfconf/xfce-perchannel-xml/
+		## additional keyboard configs in lib/desktop.sh
+
 	fi
 
 	if [[ $BOARD == helios64 ]]; then
