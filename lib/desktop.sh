@@ -101,6 +101,72 @@ create_desktop_package ()
 
 }
 
+run_on_sdcard() {
+	# Myy : The lack of quotes is deliberate here
+	# This allows for redirections and pipes easily.
+	chroot "${SDCARD}" /bin/bash -c "${@}"
+}
+
+install_ppa_prerequisites() {
+	# Myy : So... The whole idea is that, a good bunch of external sources
+	# are PPA.
+	# Adding PPA without add-apt-repository is poorly conveninent since
+	# you need to reconstruct the URL by hand, and find the GPG key yourself.
+	# add-apt-repository does that automatically, and in a way that allows you
+	# to remove it cleanly through the same tool.
+
+	# Myy : TODO Try to find a way to install this package only when
+	# we encounter a PPA.
+	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt install -yqq software-properties-common"
+}
+
+add_apt_sources() {
+	local potential_paths=""
+	get_all_potential_paths_for "sources/apt"
+
+	display_alert "ADDING ADDITIONAL APT SOURCES"
+
+	for apt_sources_dirpath in ${potential_paths}; do
+		if [[ -d "${apt_sources_dirpath}" ]]; then
+			for apt_source_filepath in "${apt_sources_dirpath}/"*.source; do
+				local new_apt_source="$(cat "${apt_source_filepath}")"
+				display_alert "Adding APT Source ${new_apt_source}"
+				# -y -> Assumes yes to all queries
+				# -n -> Do not update package cache after adding
+				run_on_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
+				display_alert "Return code : $?" # (´・ω・｀)
+
+				local apt_source_gpg_filepath="${apt_source_filepath}.gpg"
+
+				# PPA provide GPG keys automatically, it seems.
+				# But other repositories (Docker for example) require the
+				# user to import GPG keys manually
+				# Myy : FIXME We need some automatic Git warnings when someone
+				# add a GPG key, since trusting the wrong keys could lead to
+				# serious issues.
+				if [[ -f "${apt_source_gpg_filepath}" ]]; then
+					local apt_source_gpg_filename="$(basename ${apt_source_gpg_filepath})"
+					cp "${apt_source_gpg_filepath}" "${SDCARD}/tmp/${apt_source_gpg_filename}"
+					run_on_sdcard "apt-key add \"/tmp/${apt_source_gpg_filename}\""
+					echo "APT Key returned : $?"
+				fi
+			done
+		fi
+	done
+}
+
+add_desktop_package_sources() {
+	# Myy : I see Snap and Flatpak coming up in the next releases
+	# so... let's prepare for that
+	display_alert "/!\ MEOW MEOW /!\ "
+	# install_ppa_prerequisites
+	add_apt_sources
+	run_on_sdcard "apt -y -q update"
+	ls -l "${SDCARD}/etc/apt/sources.list.d"
+	cat "${SDCARD}/etc/apt/sources.list"
+	display_alert "/!\ ____ ____ /!\ "
+}
+
 desktop_postinstall ()
 {
 	# disable display manager for first run

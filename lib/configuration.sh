@@ -164,11 +164,11 @@ if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
 
 
 	# Non-essential packages
-	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils btrfs-progs dosfstools iotop stress screen \
+	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL software-properties-common alsa-utils btrfs-progs dosfstools iotop stress screen \
 		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
 		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
 		hostapd git ethtool unzip ifenslave libpam-systemd iperf3 \
-		software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode sunxi-tools"
+		libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode sunxi-tools"
 fi
 
 
@@ -292,6 +292,7 @@ fi
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
+PACKAGE_MAIN_LIST="${PACKAGE_LIST}"
 [[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config

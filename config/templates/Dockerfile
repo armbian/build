@@ -104,4 +104,4 @@ RUN sed -i 's/\(^STATDOPTS=\).*/\1"--port 32765 --outgoing-port 32766"/' /etc/de
 
 ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8' TERM=screen
 WORKDIR /root/armbian
-ENTRYPOINT [ "/bin/bash", "/root/armbian/compile.sh" ]
+ENTRYPOINT [ "/bin/bash", "-x", "/root/armbian/compile.sh" ]
