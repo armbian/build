@@ -91,14 +91,14 @@ write_uboot()
 {
 	local loop=$1 revision
 	display_alert "Writing U-boot bootloader" "$loop" "info"
-	mkdir -p /tmp/u-boot/
+	TEMP_DIR=$(mktemp -d || exit 1)
+	chmod 700 ${TEMP_DIR}
 	revision=${REVISION}
 	[[ -n $UPSTREM_VER ]] && revision=${UPSTREM_VER}
-	dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" /tmp/u-boot/
-	write_uboot_platform "/tmp/u-boot/usr/lib/${CHOSEN_UBOOT}_${revision}_${ARCH}" "$loop"
+	dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
+	write_uboot_platform "${TEMP_DIR}/usr/lib/${CHOSEN_UBOOT}_${revision}_${ARCH}" "$loop"
 	[[ $? -ne 0 ]] && exit_with_error "U-boot bootloader failed to install" "@host"
-	rm -r /tmp/u-boot/
-	sync
+	rm -rf ${TEMP_DIR}
 } #############################################################################
 
 customize_image()
@@ -128,6 +128,6 @@ install_deb_chroot()
 	[[ ! -f "${SDCARD}/root/${name}" ]] && cp "${package}" "${SDCARD}/root/${name}"
 	display_alert "Installing" "$name"
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
-	LC_ALL=C LANG=C chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -yqq \
+	LC_ALL=C LANG=C chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq \
 		$apt_extra --no-install-recommends install ./root/$name" >> "${DEST}"/debug/install.log 2>&1
 }

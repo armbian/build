@@ -125,17 +125,17 @@ desktop_postinstall ()
 {
 	# disable display manager for first run
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt update" >> "${DEST}"/debug/install.log
+	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get update" >> "${DEST}"/debug/install.log
 	if [[ ${FULL_DESKTOP} == yes ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FULL" >> "${DEST}"/debug/install.log
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FULL" >> "${DEST}"/debug/install.log
 	fi
 
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" >> "${DEST}"/debug/install.log
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" >> "${DEST}"/debug/install.log
 	fi
 
 	if [[ -n ${PACKAGE_LIST_DESKTOP_FAMILY} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY" >> "${DEST}"/debug/install.log
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY" >> "${DEST}"/debug/install.log
 	fi
 
 	# Compile Turbo Frame buffer for sunxi
@@ -145,5 +145,12 @@ desktop_postinstall ()
 		# enable memory reservations
 		echo "disp_mem_reserves=on" >> "${SDCARD}"/boot/armbianEnv.txt
 		echo "extraargs=cma=96M" >> "${SDCARD}"/boot/armbianEnv.txt
+	fi
+
+        if [[ $BOARD == "pinebook-pro" ]]; then
+                # powerconfig, touchpad, and special keys
+	        cp $SRC/packages/bsp/pinebook-pro/xfce4-power-manager.xml ${SDCARD}/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+		cp $SRC/packages/bsp/pinebook-pro/pointers.xml ${SDCARD}/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+		cp $SRC/packages/bsp/pinebook-pro/xfce4-keyboard-shortcuts.xml ${SDCARD}/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
 	fi
 }

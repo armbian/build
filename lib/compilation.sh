@@ -279,7 +279,7 @@ compile_uboot()
 
 	# store git hash to the file
 #	echo $hash > ${SRC}/cache/hash/${CHOSEN_UBOOT}.githash
-#	find "${SRC}/patch/u-boot/${BOOTPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | git hash-object --stdin >> "${SRC}/cache/hash/${CHOSEN_UBOOT}.githash"
+#	find "${SRC}/patch/u-boot/${BOOTPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | git hash-object --stdin >> "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/${CHOSEN_UBOOT}.githash"
 }
 
 compile_kernel()
@@ -466,7 +466,7 @@ compile_kernel()
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
 	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
-	echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin >> "${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
+	echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin >> "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 }
 
 

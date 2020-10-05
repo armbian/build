@@ -60,7 +60,7 @@ unset	LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSO
 		PACKAGE_LIST_BOARD PACKAGE_LIST_FAMILY PACKAGE_LIST_DESKTOP_BOARD PACKAGE_LIST_DESKTOP_FAMILY ATF_COMPILE ATFPATCHDIR OFFSET BOOTSOURCEDIR BOOT_USE_BLOBS \
 		BOOT_SOC DDR_BLOB MINILOADER_BLOB BL31_BLOB BOOT_RK3328_USE_AYUFAN_ATF BOOT_USE_BLOBS BOOT_RK3399_LEGACY_HYBRID \
 		BOOT_USE_MAINLINE_ATF BOOT_USE_TPL_SPL_BLOB OFFLINE_WORK IMAGE_PARTITION_TABLE BOOT_LOGO UPSTREM_VER \
-		PACKAGE_LIST_BOARD_REMOVE PACKAGE_LIST_FAMILY_REMOVE PACKAGE_LIST_DESKTOP_BOARD_REMOVE PACKAGE_LIST_DESKTOP_FAMILY_REMOVE
+		PACKAGE_LIST_BOARD_REMOVE PACKAGE_LIST_FAMILY_REMOVE PACKAGE_LIST_DESKTOP_BOARD_REMOVE PACKAGE_LIST_DESKTOP_FAMILY_REMOVE BOOTCONFIG_DEV
 }
 
 pack_upload ()
@@ -213,16 +213,15 @@ function check_hash()
 	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin)
 
 	case $ref_type in
-		branch) hash=$(git ls-remote "${KERNELSOURCE}" refs/heads/"${ref_name}" | awk '{print $1}') ;;
-		tag) hash=$(git ls-remote "${KERNELSOURCE}" tags/"${ref_name}" | awk '{print $1}') ;;
-		head) hash=$(git ls-remote "${KERNELSOURCE}" HEAD | awk '{print $1}') ;;
+		branch) hash=$(git ls-remote "${KERNELSOURCE}" refs/heads/"${ref_name}" 2> /dev/null | awk '{print $1}') ;;
+		tag) hash=$(git ls-remote "${KERNELSOURCE}" tags/"${ref_name}" 2> /dev/null | awk '{print $1}') ;;
+		head) hash=$(git ls-remote "${KERNELSOURCE}" HEAD 2> /dev/null | awk '{print $1}') ;;
 		commit) hash=$ref_name ;;
 	esac
-	errorcode=$?
 	# ignore diff checking in case of network errrors
-	local kernel_hash="${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
+	local kernel_hash="${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 	if [[ -f ${kernel_hash} ]]; then
-		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" || $errorcode -ne 0 ]] && echo "idential"
+		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" || -z $hash ]] && echo "idential"
 	fi
 }
 
@@ -319,7 +318,6 @@ function build_all()
 
 		# create beta or stable
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
-
 			# check if currnt hash is the same as upstream
 			if [[ "$IGNORE_HASH" != yes ]]; then
 				local store_hash

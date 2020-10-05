@@ -1,0 +1,158 @@
+From fe6dc940b5306c9503d9dc18e7a3fd4a841d37d6 Mon Sep 17 00:00:00 2001
+From: Aditya Prayoga <aditya@kobol.io>
+Date: Fri, 18 Sep 2020 09:05:53 +0700
+Subject: [PATCH] port pcie changes from ayufan rockchip64
+
+Signed-off-by: Aditya Prayoga <aditya@kobol.io>
+---
+ Documentation/kernel-parameters.txt |  8 ++++++
+ drivers/pci/host/pcie-rockchip.c    | 44 ++++++++++++++++++++++++++---
+ 2 files changed, 48 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 7f4b9aa01..284c97c76 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -3043,6 +3043,14 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 		nomsi	Do not use MSI for native PCIe PME signaling (this makes
+ 			all PCIe root ports use INTx for all services).
+ 
++	pcie_rk_bus_scan_delay=	[PCIE] Delay in ms before
++			scanning PCIe bus in Rockchip PCIe host driver. Some PCIe
++			cards seem to need delays that can be several hundred ms.
++			If set to greater than or equal to 0 this parameter will
++			override delay that can be set in device tree.
++			Values less than 0 mean that this parameter is ignored.
++			default=-1
++
+ 	pcmv=		[HW,PCMCIA] BadgePAD 4
+ 
+ 	pd_ignore_unused
+diff --git a/drivers/pci/host/pcie-rockchip.c b/drivers/pci/host/pcie-rockchip.c
+index 350c8f0df..913362cf7 100644
+--- a/drivers/pci/host/pcie-rockchip.c
++++ b/drivers/pci/host/pcie-rockchip.c
+@@ -26,6 +26,7 @@
+ #include <linux/irqdomain.h>
+ #include <linux/kernel.h>
+ #include <linux/mfd/syscon.h>
++#include <linux/moduleparam.h>
+ #include <linux/of_address.h>
+ #include <linux/of_device.h>
+ #include <linux/of_pci.h>
+@@ -153,6 +154,7 @@
+ 		 PCIE_CORE_INT_CT | PCIE_CORE_INT_UTC | \
+ 		 PCIE_CORE_INT_MMVC)
+ 
++#define PCIE_RC_CONFIG_NORMAL_BASE	0x800000
+ #define PCIE_RC_CONFIG_BASE		0xa00000
+ #define PCIE_RC_CONFIG_RID_CCR		(PCIE_RC_CONFIG_BASE + 0x08)
+ #define   PCIE_RC_CONFIG_SCC_SHIFT		16
+@@ -255,8 +257,12 @@ struct rockchip_pcie {
+ 	int wait_ep;
+ 	struct dma_trx_obj *dma_obj;
+ 	struct list_head resources;
++	u32	bus_scan_delay;
+ };
+ 
++static int bus_scan_delay = -1;
++core_param(pcie_rk_bus_scan_delay, bus_scan_delay, int, S_IRUGO);
++
+ static u32 rockchip_pcie_read(struct rockchip_pcie *rockchip, u32 reg)
+ {
+ 	return readl(rockchip->apb_base + reg);
+@@ -355,7 +361,9 @@ static int rockchip_pcie_valid_device(struct rockchip_pcie *rockchip,
+ static int rockchip_pcie_rd_own_conf(struct rockchip_pcie *rockchip,
+ 				     int where, int size, u32 *val)
+ {
+-	void __iomem *addr = rockchip->apb_base + PCIE_RC_CONFIG_BASE + where;
++	void __iomem *addr;
++
++	addr = rockchip->apb_base + PCIE_RC_CONFIG_NORMAL_BASE + where;
+ 
+ 	if (!IS_ALIGNED((uintptr_t)addr, size)) {
+ 		*val = 0;
+@@ -379,11 +387,13 @@ static int rockchip_pcie_wr_own_conf(struct rockchip_pcie *rockchip,
+ 				     int where, int size, u32 val)
+ {
+ 	u32 mask, tmp, offset;
++	void __iomem *addr;
+ 
+ 	offset = where & ~0x3;
++	addr = rockchip->apb_base + PCIE_RC_CONFIG_NORMAL_BASE + offset;
+ 
+ 	if (size == 4) {
+-		writel(val, rockchip->apb_base + PCIE_RC_CONFIG_BASE + offset);
++		writel(val, addr);
+ 		return PCIBIOS_SUCCESSFUL;
+ 	}
+ 
+@@ -394,9 +404,9 @@ static int rockchip_pcie_wr_own_conf(struct rockchip_pcie *rockchip,
+ 	 * corrupt RW1C bits in adjacent registers.  But the hardware
+ 	 * doesn't support smaller writes.
+ 	 */
+-	tmp = readl(rockchip->apb_base + PCIE_RC_CONFIG_BASE + offset) & mask;
++	tmp = readl(addr) & mask;
+ 	tmp |= val << ((where & 0x3) * 8);
+-	writel(tmp, rockchip->apb_base + PCIE_RC_CONFIG_BASE + offset);
++	writel(tmp, addr);
+ 
+ 	return PCIBIOS_SUCCESSFUL;
+ }
+@@ -677,6 +687,11 @@ static int rockchip_pcie_init_port(struct rockchip_pcie *rockchip)
+ 	status |= PCI_EXP_LNKCTL_CCC;
+ 	rockchip_pcie_write(rockchip, status, PCIE_RC_CONFIG_LCS);
+ 
++	/* Set RC's RCB to 128 */
++	status = rockchip_pcie_read(rockchip, PCIE_RC_CONFIG_LCS);
++	status |= PCI_EXP_LNKCTL_RCB;
++	rockchip_pcie_write(rockchip, status, PCIE_RC_CONFIG_LCS);
++
+ 	/* Enable Gen1 training */
+ 	rockchip_pcie_write(rockchip, PCIE_CLIENT_LINK_TRAIN_ENABLE,
+ 			    PCIE_CLIENT_CONFIG);
+@@ -1103,6 +1118,14 @@ static int rockchip_pcie_parse_dt(struct rockchip_pcie *rockchip)
+ 		dev_info(dev, "no vpcie0v9 regulator found\n");
+ 	}
+ 
++	err = of_property_read_u32(node, "bus-scan-delay-ms", &rockchip->bus_scan_delay);
++	if (err) {
++		dev_info(dev, "no bus-scan-delay-ms in device tree, default 0 ms\n");
++		rockchip->bus_scan_delay = 0;
++	} else {
++		dev_info(dev, "bus-scan-delay-ms in device tree is %u ms\n", rockchip->bus_scan_delay);
++	}
++
+ 	mem = of_parse_phandle(node, "memory-region", 0);
+ 	if (!mem) {
+ 		dev_warn(dev, "missing \"memory-region\" property\n");
+@@ -1432,6 +1455,7 @@ static int rockchip_pcie_really_probe(struct rockchip_pcie *rockchip)
+ 	int err;
+ 	struct pci_bus *bus, *child;
+ 	struct	device *dev = rockchip->dev;
++	u32 delay = 0;
+ 
+ 	err = rockchip_pcie_init_port(rockchip);
+ 	if (err)
+@@ -1443,6 +1467,18 @@ static int rockchip_pcie_really_probe(struct rockchip_pcie *rockchip)
+ 	if (err)
+ 		return err;
+ 
++	/* Prefer command-line param over device tree */
++	if (bus_scan_delay > 0) {
++		delay = bus_scan_delay;
++		dev_info(dev, "wait %u ms (from command-line) before bus scan\n", delay);
++	} else if (rockchip->bus_scan_delay > 0 && bus_scan_delay < 0) {
++		delay = rockchip->bus_scan_delay;
++		dev_info(dev, "wait %u ms (from device tree) before bus scan\n", delay);
++	}
++	if (delay > 0) {
++		msleep(delay);
++	}
++
+ 	bus = pci_scan_root_bus(dev, 0, &rockchip_pcie_ops,
+ 				rockchip, &rockchip->resources);
+ 	if (!bus)
+-- 
+Created with Armbian build tools https://github.com/armbian/build
+
