@@ -31,7 +31,7 @@ if [[ $BOARD == nanopi-r2s || $BOARD == rockpi-e || $BOARD == nanopineo3 || $BOA
 	BOOT_SOC=rk3328
 	DDR_BLOB='rk33/rk3328_ddr_333MHz_v1.16.bin'
 	MINILOADER_BLOB='rk33/rk322xh_miniloader_v2.50.bin'
-	BL31_BLOB='rk33/rk322xh_bl31_v1.42.elf'
+	BL31_BLOB='rk33/rk322xh_bl31_v1.44.elf'
 
 elif [[ $BOARD == rock64 ]]; then
 
