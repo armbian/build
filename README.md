@@ -38,6 +38,18 @@ can be present :
   package.  
   Any variable recognized and function defined by the build script,
   at that point, can be used.
+* `sources/apt`  
+  If present, the directory will be scanned for `.source` files,
+  which should contain APT URL, in a form that `add-apt-repository`
+  understand.  
+  The system is restricted to ONLY ONE APT URL per file, since it's
+  basically calling :  
+  `add-apt-repository $(cat "/that/apt/file.source")`  
+  For each `.source` file parsed, if there's a corresponding
+  `.source.gpg` file, the file will be considered as a package
+  signing key and will be passed to `apt-key`.  
+  For this one, the file is copied into `${SDCARD}/tmp` and then
+  **apt-key** is called like this : `apt-key "/tmp/file.source.gpg"`.
 
 Then in each directory representing a desktop environment, a desktop
 environment configuration or an appgroup, you can add :
