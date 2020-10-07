@@ -167,7 +167,7 @@ uboot_custom_postprocess()
 
 		if [[ $BOOT_SUPPORT_SPI == yes ]]; then
 			tools/mkimage -n rk3399 -T rkspi -d tpl/u-boot-tpl.bin:spl/u-boot-spl.bin rkspi_tpl_spl.img
-			dd if=/dev/zero of=rkspi_loader.img count=8192 status=none
+			dd if=/dev/zero of=rkspi_loader.img count=8128 status=none
 			dd if=rkspi_tpl_spl.img of=rkspi_loader.img conv=notrunc status=none
 			dd if=u-boot.itb of=rkspi_loader.img seek=768 conv=notrunc status=none
 		fi
