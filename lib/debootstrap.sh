@@ -247,7 +247,7 @@ create_rootfs_cache()
 
 		display_alert "Installing the desktop packages for" "Armbian" "info"
 		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -y -q \
-			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_LIST_DEKSTOP"' \
+			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_LIST_DESKTOP"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}

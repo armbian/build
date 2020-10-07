@@ -21,14 +21,14 @@ create_desktop_package ()
 
 	# Remove leading and trailing spaces with some bash monstruosity
 	# https://stackoverflow.com/questions/369758/how-to-trim-whitespace-from-a-bash-variable#12973694
-	PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
-	PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP%"${PACKAGE_LIST_DESKTOP##*[![:space:]]}"}"
+	DEBIAN_RECOMMENDS="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
+	DEBIAN_RECOMMENDS="${DEBIAN_RECOMMENDS%"${DEBIAN_RECOMMENDS##*[![:space:]]}"}"
 	# Replace whitespace characters by commas
-	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP// /,};
+	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS// /,};
 	# Remove others 'spacing characters' (like tabs)
-	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP//[[:space:]]/}
+	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS//[[:space:]]/}
 
-	echo "PACKAGE_LIST_DESKTOP : ${PACKAGE_LIST_DESKTOP}"
+	echo "DEBIAN_RECOMMENDS : ${DEBIAN_RECOMMENDS}"
 
 	# Replace whitespace characters by commas
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,};
@@ -50,7 +50,7 @@ create_desktop_package ()
 	Installed-Size: 1
 	Section: xorg
 	Priority: optional
-	Recommends: ${PACKAGE_LIST_DESKTOP//[:space:]+/,}
+	Recommends: ${DEBIAN_RECOMMENDS//[:space:]+/,}
 	Provides: ${CHOSEN_DESKTOP}
 	Pre-Depends: ${PACKAGE_LIST_PREDEPENDS//[:space:]+/,}
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
@@ -145,6 +145,7 @@ add_apt_sources() {
 				# add a GPG key, since trusting the wrong keys could lead to
 				# serious issues.
 				if [[ -f "${apt_source_gpg_filepath}" ]]; then
+					display_alert "Adding GPG Key ${apt_source_gpg_filepath}"
 					local apt_source_gpg_filename="$(basename ${apt_source_gpg_filepath})"
 					cp "${apt_source_gpg_filepath}" "${SDCARD}/tmp/${apt_source_gpg_filename}"
 					run_on_sdcard "apt-key add \"/tmp/${apt_source_gpg_filename}\""
@@ -158,13 +159,11 @@ add_apt_sources() {
 add_desktop_package_sources() {
 	# Myy : I see Snap and Flatpak coming up in the next releases
 	# so... let's prepare for that
-	display_alert "/!\ MEOW MEOW /!\ "
-	# install_ppa_prerequisites
+	# install_ppa_prerequisites # Myy : I'm currently trying to avoid adding "hidden" packages
 	add_apt_sources
 	run_on_sdcard "apt -y -q update"
 	ls -l "${SDCARD}/etc/apt/sources.list.d"
 	cat "${SDCARD}/etc/apt/sources.list"
-	display_alert "/!\ ____ ____ /!\ "
 }
 
 desktop_postinstall ()
