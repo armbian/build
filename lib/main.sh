@@ -383,7 +383,7 @@ DESKTOP_APPGROUPS_DIR="${SRC}/config/desktop/${RELEASE}/appgroups"
 # Myy : FIXME Rename CONFIG to PACKAGE_LIST
 DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH=""
 
-if [[ $BUILD_DESKTOP != no && -z $DESKTOP_ENVIRONMENT ]]; then
+if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
 	options=()
 	for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
 		desktop_env_name=$(basename $desktop_env_dir)
@@ -404,7 +404,7 @@ fi
 
 DESKTOP_ENVIRONMENT_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
 
-if [[ $BUILD_DESKTOP != no && -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
+if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
 	# FIXME Check for empty folders, just in case the current maintainer
 	# messed up
 	# Note, we could also ignore it and don't show anything in the previous
@@ -433,7 +433,7 @@ DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DI
 # "-z ${VAR+x}" allows to check for unset variable
 # Technically, someone might want to build a desktop with no additional
 # appgroups.
-if [[ $BUILD_DESKTOP != no && -z ${DESKTOP_APPGROUPS_SELECTED+x} ]]; then
+if [[ $BUILD_DESKTOP == "yes" && -z ${DESKTOP_APPGROUPS_SELECTED+x} ]]; then
 
 	options=()
 	for appgroup_path in "${DESKTOP_APPGROUPS_DIR}/"*; do
