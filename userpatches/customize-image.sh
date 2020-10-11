@@ -23,6 +23,9 @@ source /tmp/overlay/image_env.sh
 # Import InternetCube functions
 source /tmp/overlay/internetcube/yunocube.sh
 
+# Disable core dumps because hostname keep crashing in qemu static
+ulimit -c 0
+
 echo "auto eth0" > /etc/network/interfaces.d/eth0.conf
 echo "allow-hotplug eth0" >> /etc/network/interfaces.d/eth0.conf
 echo "iface eth0 inet dhcp" >> /etc/network/interfaces.d/eth0.conf
