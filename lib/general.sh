@@ -289,7 +289,7 @@ fetch_from_repo()
 	# when we work offline we simply return the sources to their original state
 	if ! $offline; then
 		local local_hash
-		local_hash=$(improved_git rev-parse @ 2>/dev/null)
+		local_hash=$(git rev-parse @ 2>/dev/null)
 
 		case $ref_type in
 			branch)
