@@ -129,12 +129,12 @@ compilation_prepare()
 		if linux-version compare "${version}" ge 5.4.3 && linux-version compare "${version}" le 5.5 ; then aufstag="5.4.3"; fi
 
 		# check if Mr. Okajima already made a branch for this version
-		git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufstag}" >/dev/null
+		improved_git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufstag}" >/dev/null
 
 		if [ "$?" -ne "0" ]; then
 			# then use rc branch
 			aufstag="5.x-rcN"
-			git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufstag}" >/dev/null
+			improved_git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufstag}" >/dev/null
 		fi
 
 		if [ "$?" -eq "0" ]; then
