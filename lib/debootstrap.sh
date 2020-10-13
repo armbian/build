@@ -518,7 +518,9 @@ prepare_partitions()
 		else
 			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
 		fi
-		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
+		if [[  $LINUXFAMILY != meson64 ]]; then
+			[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
+		fi
 	fi
 
 	# if we have a headless device, set console to DEFAULT_CONSOLE
