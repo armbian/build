@@ -292,8 +292,8 @@ distro_name['bionic']="Ubuntu Bionic 18.04 LTS"
 distro_support['bionic']="supported"
 distro_name['focal']="Ubuntu Focal 20.04 LTS"
 distro_support['focal']="supported"
-#distro_name['eoan']="Ubuntu Eoan 19.10"
-#distro_support['eoan']="csc"
+distro_name['groovy']="Ubuntu Groovy 20.10"
+distro_support['groovy']="csc"
 
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
@@ -303,11 +303,11 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 		distro_menu "buster"
 		distro_menu "bionic"
 		distro_menu "bullseye"
+		distro_menu "groovy"
 		distro_menu "stretch"
 		distro_menu "xenial"
 
-
-		RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" \
+		RELEASE=$(dialog --stdout --title "Choose a release package base" --backtitle "$backtitle" \
 		--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 		[[ -z $RELEASE ]] && exit_with_error "No release selected"
 
