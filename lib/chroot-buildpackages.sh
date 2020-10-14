@@ -98,7 +98,7 @@ chroot_prepare_distccd()
 	gcc_version['xenial']='5.4'
 	gcc_version['bionic']='5.4'
 	gcc_version['focal']='9.2'
-	gcc_version['groovy']='9.2'
+	gcc_version['groovy']='10.2'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
 	gcc_type['arm64']='aarch64-linux-gnu-'
 	rm -f "${dest}"/cmdlist
