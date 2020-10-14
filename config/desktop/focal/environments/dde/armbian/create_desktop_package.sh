@@ -11,7 +11,7 @@ cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/
 # install wallpapers
 mkdir -p "${destination}"/usr/share/backgrounds/deepin/
 cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/deepin/
-ln -s "${destination}"/usr/share/backgrounds/deepin/armbian03-Dre0x-Minum-dark-3840x2160 "${destination}"/usr/share/backgrounds/deepin/desktop.jpg
+ln -s "${destination}"/usr/share/backgrounds/deepin/armbian03-Dre0x-Minum-dark-3840x2160.jpg "${destination}"/usr/share/backgrounds/deepin/desktop.jpg
 
 # add loading desktop splash service
 mkdir -p "${destination}"/etc/systemd/system/
