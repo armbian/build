@@ -9,7 +9,7 @@ cp -R "${SRC}"/packages/blobs/desktop/skel_dde/. "${destination}"/etc/skel
 cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps
 
 # install wallpapers
-mkdir -p "${destination}"/usr/share/backgrounds/armbian/
+mkdir -p "${destination}"/usr/share/wallpapers/armbian/
 cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/wallpapers/armbian/
 
 # add loading desktop splash service
