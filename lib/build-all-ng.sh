@@ -417,7 +417,7 @@ fi
 sleep 5
 while :
 do
-		if [[ $(df | grep -c .tmp) -lt 1 ]]; then
+		if [[ $(df | grep -c /.tmp) -lt 1 ]]; then
 			break
 		fi
 	sleep 5
