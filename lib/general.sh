@@ -15,6 +15,7 @@
 # get_package_list_hash
 # create_sources_list
 # fetch_from_repo
+# improved_git
 # display_alert
 # fingerprint_image
 # distro_menu
@@ -187,6 +188,31 @@ create_sources_list()
 	rm "${SDCARD}"/armbian.key
 }
 
+
+#
+# This function retries Git operations to avoid failure in case remote is borked
+#
+improved_git()
+{
+
+	local realgit=$(which git)
+	local retries=3
+	local delay=10
+	local count=1
+	while [ $count -lt $retries ]; do
+		$realgit $*
+		if [ $? -eq 0 ]; then
+			retries=0
+			break
+		fi
+	let count=$count+1
+	display_alert "Git not responding. Retrying in ${delay} seconds."
+	sleep $delay
+	done
+
+}
+
+
 # fetch_from_repo <url> <directory> <ref> <ref_subdir>
 # <url>: remote repository URL
 # <directory>: local directory; subdir for branch/tag will be created
@@ -244,16 +270,16 @@ fetch_from_repo()
 	#  Check the folder as a git repository.
 	#  Then the target URL matches the local URL.
 
-	if [[ "$(git rev-parse --git-dir 2>/dev/null)" == ".git" && \
-		  "$url" != "$(git remote get-url origin 2>/dev/null)" ]]; then
+	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" == ".git" && \
+		  "$url" != "$(improved_git remote get-url origin 2>/dev/null)" ]]; then
 		display_alert "Remote URL does not match, removing existing local copy"
 		rm -rf .git ./*
 	fi
 
-	if [[ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]]; then
+	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" != ".git" ]]; then
 		display_alert "Creating local copy"
-		git init -q .
-		git remote add origin "${url}"
+		improved_git init -q .
+		improved_git remote add origin "${url}"
 		# Here you need to upload from a new address
 		offline=false
 	fi
@@ -269,22 +295,22 @@ fetch_from_repo()
 			branch)
 			# TODO: grep refs/heads/$name
 			local remote_hash
-			remote_hash=$(git ls-remote -h "${url}" "$ref_name" | head -1 | cut -f1)
+			remote_hash=$(improved_git ls-remote -h "${url}" "$ref_name" | head -1 | cut -f1)
 			[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
 			;;
 
 			tag)
 			local remote_hash
-			remote_hash=$(git ls-remote -t "${url}" "$ref_name" | cut -f1)
+			remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name" | cut -f1)
 			if [[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]]; then
-				remote_hash=$(git ls-remote -t "${url}" "$ref_name^{}" | cut -f1)
+				remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name^{}" | cut -f1)
 				[[ -z $remote_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
 			fi
 			;;
 
 			head)
 			local remote_hash
-			remote_hash=$(git ls-remote "${url}" HEAD | cut -f1)
+			remote_hash=$(improved_git ls-remote "${url}" HEAD | cut -f1)
 			[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
 			;;
 
@@ -300,48 +326,48 @@ fetch_from_repo()
 		# remote was updated, fetch and check out updates
 		display_alert "Fetching updates"
 		case $ref_type in
-			branch) git fetch --depth 1 origin "${ref_name}" ;;
-			tag) git fetch --depth 1 origin tags/"${ref_name}" ;;
-			head) git fetch --depth 1 origin HEAD ;;
+			branch) improved_git fetch --depth 1 origin "${ref_name}" ;;
+			tag) improved_git fetch --depth 1 origin tags/"${ref_name}" ;;
+			head) improved_git fetch --depth 1 origin HEAD ;;
 		esac
 
 		# commit type needs support for older git servers that doesn't support fetching id directly
 		if [[ $ref_type == commit ]]; then
 
-			git fetch --depth 1 origin "${ref_name}"
+			improved_git fetch --depth 1 origin "${ref_name}"
 
 			# cover old type
 			if [[ $? -ne 0 ]]; then
 
 				display_alert "Commit checkout not supported on this repository. Doing full clone." "" "wrn"
-				git pull
-				git checkout -fq "${ref_name}"
-				display_alert "Checkout out to" "$(git --no-pager log -2 --pretty=format:"$ad%s [%an]" | head -1)" "info"
+				improved_git pull
+				improved_git checkout -fq "${ref_name}"
+				display_alert "Checkout out to" "$(improved_git --no-pager log -2 --pretty=format:"$ad%s [%an]" | head -1)" "info"
 
 			else
 
 				display_alert "Checking out"
-				git checkout -f -q FETCH_HEAD
-				git clean -qdf
+				improved_git checkout -f -q FETCH_HEAD
+				improved_git clean -qdf
 
 			fi
 		else
 
 			display_alert "Checking out"
-			git checkout -f -q FETCH_HEAD
-			git clean -qdf
+			improved_git checkout -f -q FETCH_HEAD
+			improved_git clean -qdf
 
 		fi
-	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
+	elif [[ -n $(improved_git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
-		display_alert " Cleaning .... " "$(git status -s | wc -l) files"
+		display_alert " Cleaning .... " "$(improved_git status -s | wc -l) files"
 
 		# Return the files that are tracked by git to the initial state.
-		git checkout -f -q HEAD
+		improved_git checkout -f -q HEAD
 
 		# Files that are not tracked by git and were added
 		# when the patch was applied must be removed.
-		git clean -qdf
+		improved_git clean -qdf
 	else
 		# working directory is clean, nothing to do
 		display_alert "Up to date"
@@ -350,11 +376,11 @@ fetch_from_repo()
 	if [[ -f .gitmodules ]]; then
 		display_alert "Updating submodules" "" "ext"
 		# FML: http://stackoverflow.com/a/17692710
-		for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
+		for i in $(improved_git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
 			cd "${SRC}/cache/sources/${workdir}" || exit
 			local surl sref
-			surl=$(git config -f .gitmodules --get "submodule.$i.url")
-			sref=$(git config -f .gitmodules --get "submodule.$i.branch")
+			surl=$(improved_git config -f .gitmodules --get "submodule.$i.url")
+			sref=$(improved_git config -f .gitmodules --get "submodule.$i.branch")
 			if [[ -n $sref ]]; then
 				sref="branch:$sref"
 			else
