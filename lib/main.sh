@@ -151,12 +151,15 @@ if [[ -z $KERNEL_CONFIGURE ]]; then
 
 	options+=("no" "Do not change the kernel configuration")
 	options+=("yes" "Show a kernel configuration menu before compilation")
+	options+=("prebuilt" "Use precompiled packages from Armbian repository")
 	KERNEL_CONFIGURE=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
 	--menu "Select the kernel configuration" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $KERNEL_CONFIGURE ]] && exit_with_error "No option selected"
 
 fi
+
+[[ ${KERNEL_CONFIGURE} == prebuilt ]] && REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-config,armbian-firmware"
 
 if [[ -z $BOARD ]]; then
 
