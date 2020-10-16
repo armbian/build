@@ -210,12 +210,12 @@ function check_hash()
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
 	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
-	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin)
+	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin)
 
 	case $ref_type in
-		branch) hash=$(git ls-remote "${KERNELSOURCE}" refs/heads/"${ref_name}" 2> /dev/null | awk '{print $1}') ;;
-		tag) hash=$(git ls-remote "${KERNELSOURCE}" tags/"${ref_name}" 2> /dev/null | awk '{print $1}') ;;
-		head) hash=$(git ls-remote "${KERNELSOURCE}" HEAD 2> /dev/null | awk '{print $1}') ;;
+		branch) hash=$(improved_git ls-remote "${KERNELSOURCE}" refs/heads/"${ref_name}" 2> /dev/null | awk '{print $1}') ;;
+		tag) hash=$(improved_git ls-remote "${KERNELSOURCE}" tags/"${ref_name}" 2> /dev/null | awk '{print $1}') ;;
+		head) hash=$(improved_git ls-remote "${KERNELSOURCE}" HEAD 2> /dev/null | awk '{print $1}') ;;
 		commit) hash=$ref_name ;;
 	esac
 	# ignore diff checking in case of network errrors
@@ -362,7 +362,7 @@ function build_all()
 					IFS=',' read -r -a RELBRANCH <<< "${KERNEL_TARGET}"
 					for BRANCH in "${RELBRANCH[@]}"
 					do
-					RELTARGETS=(xenial stretch buster bullseye bionic eoan focal)
+					RELTARGETS=(xenial stretch buster bullseye bionic groovy focal)
 					for RELEASE in "${RELTARGETS[@]}"
 					do
 						display_alert "BSP for ${BOARD} ${BRANCH} ${RELEASE}."
@@ -417,7 +417,7 @@ fi
 sleep 5
 while :
 do
-		if [[ $(df | grep -c .tmp) -lt 1 ]]; then
+		if [[ $(df | grep -c /.tmp) -lt 1 ]]; then
 			break
 		fi
 	sleep 5
@@ -444,9 +444,9 @@ if [[ $n -gt 0 && ${BUMP_VERSION} == yes ]]; then
 	fi
 
 	echo "${NEW_VERSION}" > VERSION
-	git add "${SRC}"/VERSION
-	git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
-	git push
+	improved_git add "${SRC}"/VERSION
+	improved_git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
+	improved_git push
 	display_alert "Bumping to new version" "${NEW_VERSION}" "info"
 
 fi
