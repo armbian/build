@@ -132,49 +132,99 @@ if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == focal || $RELEASE 
 		DISTRIBUTION="Debian"
 fi
 
+CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
+DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
+
+aggregate_all_debootstrap() {
+	local looked_up_subpath="${1}"
+	local potential_paths="${DEBOOTSTRAP_CONFIG_PATH}/${looked_up_subpath}"
+	potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/config/boards/${BOARD}/${looked_up_subpath}"
+	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
+		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/debootstrap/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/debootstrap/custom/boards/${BOARD}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+	fi
+
+	aggregate_content
+}
+
+aggregated_content=""
+aggregate_all_debootstrap "packages"
+DEBOOTSTRAP_LIST="${aggregated_content}"
+display_alert "DEBOOTSTRAP LIST : ${DEBOOTSTRAP_LIST}"
+unset aggregated_content
+
+aggregated_content=""
+aggregate_all_debootstrap "components"
+DEBOOTSTRAP_COMPONENTS="${aggregated_content}"
+display_alert "DEBOOTSTRAP_COMPONENTS : ${DEBOOTSTRAP_COMPONENTS}"
+unset aggregated_content
+
 # Base system dependencies. Since adding MINIMAL_IMAGE we rely on "variant=minbase" which has very basic package set
-DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certificates bzip2 console-setup cpio cron \
-	dbus init initramfs-tools iputils-ping isc-dhcp-client kmod less libpam-systemd \
-	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
-	wireless-regdb crda dmsetup rsync tzdata"
+#DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certificates bzip2 console-setup cpio cron \
+#	dbus init initramfs-tools iputils-ping isc-dhcp-client kmod less libpam-systemd \
+#	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
+#	wireless-regdb crda dmsetup rsync tzdata"
+
+display_alert "Debootstrap packages list : $DEBOOTSTRAP_LIST"
 
 # Myy : ???
-[[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
+# [[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
 
-# tab cleanup is mandatory
-DEBOOTSTRAP_LIST=$(echo $DEBOOTSTRAP_LIST | sed -e 's,\\[trn],,g')
+aggregate_all_cli() {
+	local looked_up_subpath="${1}"
+	local potential_paths="${CLI_CONFIG_PATH}/main/${looked_up_subpath}"
+	potential_paths+=" ${CLI_CONFIG_PATH}/main/custom/boards/${BOARD}/${looked_up_subpath}"
+	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
+		potential_paths+=" ${CLI_CONFIG_PATH}/main/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+		potential_paths+=" ${CLI_CONFIG_PATH}/main/custom/boards/${BOARD}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+	fi
+	
+	aggregate_content
+}
+
+aggregated_content=""
+aggregate_all_cli "packages"
+display_alert "Aggregated content : ${aggregated_content}"
+PACKAGE_LIST="${aggregated_content}"
+unset aggregated_content
+
+aggragted_content=""
+aggregate_all_cli "packages.additional"
+PACKAGE_LIST_ADDITIONAL="${aggregated_content}"
+unset aggregated_content
 
 # For minimal build different set of packages is needed
 # Essential packages for minimal build
-PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chrony parted dialog \
-		ncurses-term sysfsutils toilet figlet u-boot-tools usbutils openssh-server \
-		nocache debconf-utils python3-apt"
+# PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chrony parted dialog \
+# 		ncurses-term sysfsutils toilet figlet u-boot-tools usbutils openssh-server \
+# 		nocache debconf-utils python3-apt"
 
-# Non-essential packages for minimal build
-PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf iozone3 jq libcrack2 cracklib-runtime curl"
+# # Non-essential packages for minimal build
+# PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf iozone3 jq libcrack2 cracklib-runtime curl"
 
-if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
-	# Essential packages
-	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
-		iw wpasupplicant sudo linux-base crda \
-		wireless-regdb unattended-upgrades \
-		console-setup unicode-data initramfs-tools \
-		ca-certificates expect iptables automake html2text \
-		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
+# if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
+# 	# Essential packages
+# 	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
+# 		iw wpasupplicant sudo linux-base crda \
+# 		wireless-regdb unattended-upgrades \
+# 		console-setup unicode-data initramfs-tools \
+# 		ca-certificates expect iptables automake html2text \
+# 		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
 
 
-	# Non-essential packages
-	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL software-properties-common alsa-utils btrfs-progs dosfstools iotop stress screen \
-		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
-		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
-		hostapd git ethtool unzip ifenslave libpam-systemd iperf3 \
-		libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode sunxi-tools"
-fi
+# 	# Non-essential packages
+# 	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL software-properties-common alsa-utils btrfs-progs dosfstools iotop stress screen \
+# 		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
+# 		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
+# 		hostapd git ethtool unzip ifenslave libpam-systemd iperf3 \
+# 		libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode sunxi-tools"
+# fi
 
 
 # Dependent desktop packages
 # Myy : Sources packages from file here
 
+# Myy : FIXME Rename aggregate_all to aggregate_all_desktop
 aggregated_content=""
 aggregate_all "packages" " "
 
@@ -184,80 +234,100 @@ unset aggregated_content
 
 echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}"
 
-case $RELEASE in
+# Myy : Clean the Debootstrap lists. The packages list will be cleaned when necessary.
+# This horrendous cleanup syntax is used to remove trailing and leading spaces.
 
-	xenial)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" btrfs-tools"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db sysbench command-not-found selinux-policy-default"
-		#PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
-		#						pulseaudio-module-gconf onboard"
-		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common \
-		#						system-config-printer-gnome leafpad mirage"
-		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
+# Previous comment : tab cleanup is mandatory
 
-	stretch)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench command-not-found selinux-policy-default"
-		#PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
-		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad mirage"
-		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
+DEBOOTSTRAP_LIST="${DEBOOTSTRAP_LIST#"${DEBOOTSTRAP_LIST%%[![:space:]]*}"}"
+DEBOOTSTRAP_LIST="${DEBOOTSTRAP_LIST%"${DEBOOTSTRAP_LIST##*[![:space:]]}"}"
 
-	bionic)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-		#PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
-		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
-		#						language-selector-gnome leafpad mirage"
-		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
+DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS#"${DEBOOTSTRAP_COMPONENTS%%[![:space:]]*}"}"
+DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS%"${DEBOOTSTRAP_COMPONENTS##*[![:space:]]}"}"
+DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
 
-	buster)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-		#PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme onboard"
-		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
-		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
+display_alert "Deboostrap"
+display_alert "Components ${DEBOOTSTRAP_COMPONENTS}"
+display_alert "Packages ${DEBOOTSTRAP_LIST}"
+display_alert "----"
+display_alert "CLI packages"
+display_alert "Standard : ${PACKAGE_LIST}"
+display_alert "Additional : ${PACKAGE_LIST_ADDITIONAL}"
 
-	bullseye)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" haveged fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
-		#PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
-		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
-		#PACKAGE_LIST_DESKTOP_FULL+=""
-	;;
+# case $RELEASE in
+
+# 	xenial)
+# 		DEBOOTSTRAP_COMPONENTS="main"
+# 		DEBOOTSTRAP_LIST+=" btrfs-tools"
+# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db sysbench command-not-found selinux-policy-default"
+# 		#PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
+# 		#						pulseaudio-module-gconf onboard"
+# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common \
+# 		#						system-config-printer-gnome leafpad mirage"
+# 		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+# 	;;
+
+# 	stretch)
+# 		DEBOOTSTRAP_COMPONENTS="main"
+# 		DEBOOTSTRAP_LIST+=" rng-tools"
+# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench command-not-found selinux-policy-default"
+# 		#PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
+# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad mirage"
+# 		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+# 	;;
+
+# 	bionic)
+# 		DEBOOTSTRAP_COMPONENTS="main,universe"
+# 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
+# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
+# 		#PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
+# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
+# 		#						language-selector-gnome leafpad mirage"
+# 		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+# 	;;
+
+# 	buster)
+# 		DEBOOTSTRAP_COMPONENTS="main"
+# 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
+# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
+# 		#PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme onboard"
+# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
+# 		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+# 	;;
+
+# 	bullseye)
+# 		DEBOOTSTRAP_COMPONENTS="main"
+# 		DEBOOTSTRAP_LIST+=" haveged fdisk"
+# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
+# 		#PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
+# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
+# 		#PACKAGE_LIST_DESKTOP_FULL+=""
+# 	;;
 
 
-	focal)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-		#PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
-		#						language-selector-gnome viewnior"
-		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-		#PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
-	;;
+# 	focal)
+# 		DEBOOTSTRAP_COMPONENTS="main,universe"
+# 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
+# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
+# 		#PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
+# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
+# 		#						language-selector-gnome viewnior"
+# 		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+# 		#PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
+# 	;;
 
-	eoan)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-		#PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
-		#						language-selector-gnome mirage"
-		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-		#PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
-	;;
+# 	eoan)
+# 		DEBOOTSTRAP_COMPONENTS="main,universe"
+# 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
+# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
+# 		#PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
+# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
+# 		#						language-selector-gnome mirage"
+# 		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
+# 		#PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
+# 	;;
 
-esac
+# esac
 
 
 DEBIAN_MIRROR='deb.debian.org/debian'

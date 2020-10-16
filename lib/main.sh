@@ -329,7 +329,7 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
-	[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
+	[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no && SELECTED_CONFIGURATION="desktop"
 
 fi
 
@@ -342,6 +342,11 @@ if [[ $KERNEL_ONLY != yes && $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_MINIMAL ]] && exit_with_error "No option selected"
+	if [[ $BUILD_MINIMAL == "yes" ]]; then
+		SELECTED_CONFIGURATION="cli_minimal"
+	else
+		SELECTED_CONFIGURATION="cli_standard"
+	fi
 
 fi
 
@@ -496,18 +501,12 @@ get_all_potential_paths_for() {
 
 # Expected variables
 # - aggregated_content
-# - BOARD
-# - DESKTOP_ENVIRONMENT
-# - DESKTOP_APPGROUPS_SELECTED
-# - DESKTOP_APPGROUPS_DIR
-aggregate_all() {
-	looked_up_subpath="${1}"
-	separator="${2}"
-
-	local potential_paths=""
-	get_all_potential_paths_for "${looked_up_subpath}"
-
+# - potential_paths
+# Write to variables :
+# - aggregated_content
+aggregate_content() {
 	echo "Potential paths : ${potential_paths}"
+
 	for filepath in ${potential_paths}; do
 		echo "$filepath exist ?"
 		if [[ -f "${filepath}" ]]; then
@@ -519,8 +518,27 @@ aggregate_all() {
 		fi
 
 	done
+}
+
+# Expected variables
+# - aggregated_content
+# - BOARD
+# - DESKTOP_ENVIRONMENT
+# - DESKTOP_APPGROUPS_SELECTED
+# - DESKTOP_APPGROUPS_DIR
+# Write to variables :
+# - aggregated_content
+aggregate_all() {
+	looked_up_subpath="${1}"
+	separator="${2}"
+
+	local potential_paths=""
+	get_all_potential_paths_for "${looked_up_subpath}"
+
+	aggregate_content
 
 }
+
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
