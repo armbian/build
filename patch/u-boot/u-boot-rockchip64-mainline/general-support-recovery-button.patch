@@ -1,0 +1,224 @@
+From ff72515d3f6e65e22baa8cb1fbefe15540256310 Mon Sep 17 00:00:00 2001
+From: Piotr Szczepanik <piter75@gmail.com>
+Date: Sun, 4 Oct 2020 18:19:02 +0200
+Subject: [PATCH] Enabled advanced recovery button support for rockchip
+
+It allows to enter either ums, fastboot or rockusb based on the time the
+button is pressed.
+SD (mmc0) is preferred if present with eMMC (mmc1) set as fallback.
+
+Based on:
+  https://github.com/ayufan-rock64/linux-u-boot/commit/ea6efecdfecc57c853a6f32f78469d1b2417329b
+  https://github.com/ayufan-rock64/linux-u-boot/commit/1abc9ab51306200880c434c2069eceb4be7789e9
+
+Signed-off-by: Piotr Szczepanik <piter75@gmail.com>
+
+diff --git a/arch/arm/mach-rockchip/Kconfig b/arch/arm/mach-rockchip/Kconfig
+index 0cb1f23d..09807cdc 100644
+--- a/arch/arm/mach-rockchip/Kconfig
++++ b/arch/arm/mach-rockchip/Kconfig
+@@ -366,6 +366,31 @@ config TPL_ROCKCHIP_EARLYRETURN_TO_BROM
+ config SPL_MMC_SUPPORT
+ 	default y if !SPL_ROCKCHIP_BACK_TO_BROM
+ 
++config ROCKCHIP_ADVANCED_RECOVERY
++	bool "Advanced recovery button for Rockchip boards"
++	default n
++
++config ROCKCHIP_ADVANCED_RECOVERY_LED
++	string "Advanced recovery button for Rockchip boards - toggled led label"
++	depends on ROCKCHIP_ADVANCED_RECOVERY
++
++config ROCKCHIP_ADVANCED_RECOVERY_UMS
++	bool "Advanced recovery for Rockchip boards - UMS support"
++	depends on ROCKCHIP_ADVANCED_RECOVERY
++	depends on CMD_USB_MASS_STORAGE
++	default y if ROCKCHIP_ADVANCED_RECOVERY
++
++config ROCKCHIP_ADVANCED_RECOVERY_ROCKUSB
++	bool "Advanced recovery for Rockchip boards - ROCKUSB support"
++	depends on ROCKCHIP_ADVANCED_RECOVERY
++	depends on CMD_ROCKUSB
++	default y if ROCKCHIP_ADVANCED_RECOVERY
++
++config ROCKCHIP_ADVANCED_RECOVERY_MASKROM
++	bool "Advanced recovery for Rockchip boards - MASKROM support"
++	depends on ROCKCHIP_ADVANCED_RECOVERY
++	default y if ROCKCHIP_ADVANCED_RECOVERY
++
+ source "arch/arm/mach-rockchip/px30/Kconfig"
+ source "arch/arm/mach-rockchip/rk3036/Kconfig"
+ source "arch/arm/mach-rockchip/rk3128/Kconfig"
+diff --git a/arch/arm/mach-rockchip/boot_mode.c b/arch/arm/mach-rockchip/boot_mode.c
+index 21589341..c4dcb15e 100644
+--- a/arch/arm/mach-rockchip/boot_mode.c
++++ b/arch/arm/mach-rockchip/boot_mode.c
+@@ -8,6 +8,9 @@
+ #include <command.h>
+ #include <env.h>
++#include <led.h>
+ #include <log.h>
++#include <mmc.h>
++#include <linux/delay.h>
+ #include <asm/io.h>
+ #include <asm/arch-rockchip/boot_mode.h>
+ #include <dm/device.h>
+@@ -70,13 +71,158 @@ __weak int rockchip_dnl_key_pressed(void)
+ 		return false;
+ }
+ 
++#if defined(CONFIG_ROCKCHIP_ADVANCED_RECOVERY)
++#define RECOVERY_LED_BY_LABEL(dev) led_get_by_label(CONFIG_ROCKCHIP_ADVANCED_RECOVERY_LED, dev)
++void rockchip_blink_recovery_led(int times)
++{
++	struct udevice *dev;
++	RECOVERY_LED_BY_LABEL(&dev);
++	for (int i = 0; i < times; ++i) {
++		led_set_state(dev, LEDST_ON);
++		mdelay(100);
++		led_set_state(dev, LEDST_OFF);
++		mdelay(100);
++	}
++}
++
++int rockchip_dnl_mode(int num_modes)
++{
++	int mode = 0;
++	const char *mode_names[5] = {
++		"none",
++		"ums",
++		"rockusb",
++		"fastboot",
++		"maskrom"
++	};
++
++	const int modes_enabled[5] = {
++		1,
++#if defined(CONFIG_ROCKCHIP_ADVANCED_RECOVERY_UMS)
++		1,
++#else
++		0,
++#endif
++#if defined(CONFIG_ROCKCHIP_ADVANCED_RECOVERY_ROCKUSB)
++		1,
++#else
++		0,
++#endif
++#if defined(CONFIG_ROCKCHIP_ADVANCED_RECOVERY_FASTBOOT)
++		1,
++#else
++		0,
++#endif
++#if defined(CONFIG_ROCKCHIP_ADVANCED_RECOVERY_MASKROM)
++		1,
++#else
++		0,
++#endif
++	};
++
++	while(mode < num_modes) {
++		++mode;
++
++		if (modes_enabled[mode]) {
++			printf("rockchip_dnl_mode = %s mode\n", mode_names[mode]);
++			rockchip_blink_recovery_led(mode);
++
++			// return early
++	 		if (mode == num_modes) {
++	 			goto end;
++	 		}
++
++			// wait 2 seconds
++			for (int i = 0; i < 100; ++i) {
++				if (!rockchip_dnl_key_pressed()) {
++					goto end;
++				}
++				mdelay(20);
++			}
++		}
++	}
++
++end:
++	return mode;
++}
++
++__weak void rockchip_prepare_download_mode(void)
++{
++}
++
++int rockchip_has_mmc_device(int devnum)
++{
++	struct mmc *mmc;
++	mmc = find_mmc_device(devnum);
++	if (!mmc || mmc_init(mmc))
++		return 0;
++	else
++		return 1;
++}
++#endif
++
+ void rockchip_dnl_mode_check(void)
+ {
++#if defined(CONFIG_ROCKCHIP_ADVANCED_RECOVERY)
++	int mmc_device = 0;
++	int ret = 0;
++	char cmd[32];
++
++	if (!rockchip_dnl_key_pressed()) {
++		return 0;
++	}
++
++	if (rockchip_has_mmc_device(0)) {
++		mmc_device = 0;
++	} else if (rockchip_has_mmc_device(1)) {
++		mmc_device = 1;
++	} else {
++		printf("no mmc device suitable for download mode!\n");
++		return 0;
++	}
++
++	printf("using mmc%d device for download mode\n", mmc_device);
++
++	switch(rockchip_dnl_mode(4)) {
++	case 0:
++		return;
++
++	case 1:
++		printf("entering ums mode...\n");
++		rockchip_prepare_download_mode();
++		sprintf(cmd, "ums 0 mmc %d", mmc_device);
++		cli_simple_run_command(cmd, 0);
++		break;
++
++	case 2:
++		printf("entering rockusb mode...\n");
++		rockchip_prepare_download_mode();
++		sprintf(cmd, "rockusb 0 mmc %d", mmc_device);
++		cli_simple_run_command(cmd, 0);
++		break;
++
++	case 3:
++		printf("entering fastboot mode...\n");
++		rockchip_prepare_download_mode();
++		sprintf(cmd, "mmc dev %d; fastboot usb 0", mmc_device);
++		cli_simple_run_command(cmd, 0);
++		break;
++
++	case 4:
++		printf("entering maskrom mode...\n");
++		rockchip_prepare_download_mode();
++		break;
++	}
++
++	set_back_to_bootrom_dnl_flag();
++	do_reset(NULL, 0, 0, NULL);
++#else
+ 	if (rockchip_dnl_key_pressed()) {
+ 		printf("download key pressed, entering download mode...");
+ 		set_back_to_bootrom_dnl_flag();
+ 		do_reset(NULL, 0, 0, NULL);
+ 	}
++#endif
+ }
+ 
+ int setup_boot_mode(void)

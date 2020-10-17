@@ -51,6 +51,7 @@ elif [[ $BOARD == pinebook-pro ]]; then
 elif [[ $BOARD == rockpi-4* || $BOARD == rockpro64 ]]; then
 
 	BOOT_USE_TPL_SPL_BLOB=yes
+	BOOT_SUPPORT_SPI=yes
 	BOOT_SOC=rk3399
 	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
 
@@ -137,6 +138,12 @@ prepare_boot_configuration()
 		legacy_uboot_locations
 
 	fi
+
+	if [[ $BOOT_SUPPORT_SPI == yes ]]; then
+
+		UBOOT_TARGET_MAP+=" rkspi_loader.img"
+
+	fi
 }
 
 legacy_uboot_locations()
@@ -158,7 +165,12 @@ uboot_custom_postprocess()
 {
 	if [[ $BOOT_USE_MAINLINE_ATF == yes || $BOOT_USE_TPL_SPL_BLOB == yes ]]; then
 
-		:
+		if [[ $BOOT_SUPPORT_SPI == yes ]]; then
+			tools/mkimage -n rk3399 -T rkspi -d tpl/u-boot-tpl.bin:spl/u-boot-spl.bin rkspi_tpl_spl.img
+			dd if=/dev/zero of=rkspi_loader.img count=8128 status=none
+			dd if=rkspi_tpl_spl.img of=rkspi_loader.img conv=notrunc status=none
+			dd if=u-boot.itb of=rkspi_loader.img seek=768 conv=notrunc status=none
+		fi
 
 	elif [[ $BOOT_USE_BLOBS == yes ]]; then
 
@@ -219,6 +231,19 @@ write_uboot_platform()
 	fi
 }
 
+write_uboot_platform_mtd()
+{
+	if [[ -f $1/rkspi_loader.img ]]; then
+
+		dd if=$1/rkspi_loader.img of=$2 conv=notrunc status=none >/dev/null 2>&1
+	
+	else
+
+		echo "SPI u-boot image not found!"
+		exit 1
+
+	fi
+}
 
 setup_write_uboot_platform()
 {
