@@ -200,7 +200,7 @@ improved_git()
 	local delay=10
 	local count=1
 	while [ $count -lt $retries ]; do
-		$realgit $*
+		$realgit "$@"
 		if [ $? -eq 0 ]; then
 			retries=0
 			break
