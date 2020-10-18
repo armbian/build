@@ -6,8 +6,12 @@ name: default
 trigger:
   event:
   - tag
+  - promote
 
 steps:
+
+# BUILD
+
 - name: build docker armbian builder
   image: docker
   volumes:
@@ -100,7 +104,7 @@ steps:
   when:
     event: tag
 
-- name: publish
+- name: publish pre-release on github
   image: plugins/github-release:1
   volumes:
   - name: output
@@ -118,17 +122,109 @@ steps:
   when:
     event: tag
 
-- name: archive img
-  image: armbian-builder
-  pull: never
+# DEPLOY
+
+# This is not working because this plugin doesn't handle promote event
+#- name: tag as official release on github
+#  image: plugins/github-release:1
+#  volumes:
+#  - name: output
+#    path: /drone/src/output
+#  settings:
+#    log_level: debug
+#    api_key:
+#      from_secret: GITHUB_API_KEY
+#    files:
+#      - output/images/*.img.gz
+#    checksum:
+#      - sha256
+#    draft: false
+#    prerelease: false
+#  when:
+#    event: promote
+
+- name: upload images on yunohost.org
+  image: appleboy/drone-scp
   volumes:
   - name: output
     path: /drone/src/output
-  commands:
-  - mkdir -p output/images/archives
-  - mv output/images/*.img.gz output/images/archives/ || true
+  settings:
+    host:
+      - samurai.yunohost.org
+    user: yunohost
+    port: 2209
+    key:
+      from_secret: SSH_YUNOHOST_PRIVATE_KEY
+    target: /var/www/build
+    source:
+      - output/images/yunohost_*_${DRONE_TAG}_*.img.gz
+    strip_components: 2
   when:
-    event: tag
+    event: promote
+    target: yunohost.org
+
+- name: publish image on yunohost.org
+  image: appleboy/drone-ssh
+  settings:
+    host:
+      - samurai.yunohost.org
+    username: yunohost
+    port: 2209
+    key:
+      from_secret: SSH_YUNOHOST_PRIVATE_KEY
+    script:
+    - cd /var/www/build
+    - export YUNOHOST_PUBLISH_VERSION=$(ls 'yunohost_'*'_'"${DRONE_TAG}"'_lime.img.gz' | sed -rn 's/^yunohost_([^_]+)_.*/\1/p')
+    - ./update-images.py lime1 $YUNOHOST_PUBLISH_VERSION 'yunohost_'*'_'"${DRONE_TAG}"'_lime.img.gz'
+    - export YUNOHOST_PUBLISH_VERSION=$(ls 'yunohost_'*'_'"${DRONE_TAG}"'_lime2.img.gz' | sed -rn 's/^yunohost_([^_]+)_.*/\1/p')
+    - ./update-images.py lime2 $YUNOHOST_PUBLISH_VERSION 'yunohost_'*'_'"${DRONE_TAG}"'_lime2.img.gz'
+    - export YUNOHOST_PUBLISH_VERSION=$(ls 'yunohost_'*'_'"${DRONE_TAG}"'_orangepipcplus.img.gz' | sed -rn 's/^yunohost_([^_]+)_.*/\1/p')
+    - ./update-images.py orangepipcplus $YUNOHOST_PUBLISH_VERSION 'yunohost_'*'_'"${DRONE_TAG}"'_orangepipcplus.img.gz'
+  when:
+    event: promote
+    target: yunohost.org
+
+- name: upload images on repo.labriqueinter.net
+  image: appleboy/drone-scp
+  volumes:
+  - name: output
+    path: /drone/src/output
+  settings:
+    host:
+      - brique.ldn-fai.net
+    user: droneci
+    port: 2222
+    key:
+      from_secret: REPOBRIQUE_SSH_PRIV_KEY
+    target: /var/www/repo.labriqueinter.net/images
+    source:
+      - output/images/internetcube_*_${DRONE_TAG}_*.img.gz
+    strip_components: 2
+  when:
+    event: promote
+    target: repo.labriqueinter.net
+
+- name: publish image on repo.labriqueinter.net
+  image: appleboy/drone-ssh
+  environment:
+    GPG_SIGNING_KEY: "0xCD8F4D648AC0ECC1"
+  settings:
+    host:
+      - brique.ldn-fai.net
+    username: droneci
+    port: 2222
+    key:
+      from_secret: REPOBRIQUE_SSH_PRIV_KEY
+    script:
+    - cd /var/www/repo.labriqueinter.net/images
+    - find . -name "internetcube_*_${DRONE_TAG}_*.img.gz" -type f -exec sh -c 'sha256sum $0 > $0.sha256' {} \\;
+    - find . -name "internetcube_*_${DRONE_TAG}_*.img.gz" -type f -exec gpg -a -b -s --default-key "${GPG_SIGNING_KEY}" {} \\;
+    - find . -name "internetcube_*_${DRONE_TAG}_*.img.gz" -type f -exec btmakemetafile "udp://tracker.torrent.eu.org:451" {} --announce_list "udp://tracker.torrent.eu.org:451" --comment "La Brique Internet https://labriqueinter.net/" --httpseeds "https://repo.labriqueinter.net" \\;
+    - cd /var/www/repo.labriqueinter.net
+    - find images -name "internetcube_*_${DRONE_TAG}_*" -type f -exec sh -c 'ln -s $0 `echo "$0" | sed -rn "s/.+_([^_]+)$/internetcube_latest_\1/p"`' {} \\;
+  when:
+    event: promote
+    target: repo.labriqueinter.net
 
 volumes:
 - name: output
