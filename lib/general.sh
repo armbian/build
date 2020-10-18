@@ -205,8 +205,7 @@ improved_git()
 			retries=0
 			break
 		fi
-	let count=$count+1
-	display_alert "Git not responding. Retrying in ${delay} seconds."
+	let count=$count+1	
 	sleep $delay
 	done
 
