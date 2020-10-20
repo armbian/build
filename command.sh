@@ -1,2 +1,0 @@
-sudo bash ./compile.sh docker USE_CACHE=no ROOT_FS_CREATE_ONLY=force SHELL_ONLY=yes REPOSITORY_INSTALL="u-boot,kernel,armbian-config,armbian-firmware" KERNEL_ONLY=no KERNEL_CONFIGURE=no BOARD=nanopct4 KERNEL_TARGET=current BRANCH=current RELEASE=focal BUILD_DESKTOP=yes DESKTOP_ENVIRONMENT=xfce DESKTOP_ENVIRONMENT_CONFIG_NAME=config_full DESKTOP_APPGROUPS_SELECTED="browsers editors programming 3dsupport docker"
-
