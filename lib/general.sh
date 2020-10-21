@@ -201,7 +201,7 @@ improved_git()
 	local count=1
 	while [ $count -lt $retries ]; do
 		$realgit "$@"
-		if [ $? -eq 0 ]; then
+		if [[ $? -eq 0 || -f .git/index.lock ]]; then
 			retries=0
 			break
 		fi

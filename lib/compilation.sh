@@ -79,8 +79,7 @@ compile_atf()
 
 	[[ $(type -t atf_custom_postprocess) == function ]] && atf_custom_postprocess
 
-	local atftempdir=$SRC/.tmp/atf-${LINUXFAMILY}-${BOARD}-${BRANCH}
-	mkdir -p "${atftempdir}"
+	atftempdir=$(mktemp -d)
 
 	# copy files to temp directory
 	for f in $target_files; do
@@ -144,9 +143,10 @@ compile_uboot()
 	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${toolchain2_type}gcc" -dumpversion)" "info"
 
 	# create directory structure for the .deb package
+	uboottempdir=$(mktemp -d)
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
-	rm -rf $SRC/.tmp/$uboot_name
-	mkdir -p $SRC/.tmp/$uboot_name/usr/lib/{u-boot,$uboot_name} $SRC/.tmp/$uboot_name/DEBIAN
+	rm -rf $uboottempdir/$uboot_name
+	mkdir -p $uboottempdir/$uboot_name/usr/lib/{u-boot,$uboot_name} $uboottempdir/$uboot_name/DEBIAN
 
 	# process compilation for one or multiple targets
 	while read -r target; do
@@ -169,9 +169,9 @@ compile_uboot()
 		# create patch for manual source changes
 		[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
 
-		if [[ -n $ATFSOURCE ]]; then
-			local atftempdir=$SRC/.tmp/atf-${LINUXFAMILY}-${BOARD}-${BRANCH}
+		if [[ -n $ATFSOURCE ]]; then			
 			cp -Rv "${atftempdir}"/*.bin .
+			rm -rf "${atftempdir}"
 		fi
 
 		echo -e "\n\t== u-boot ==\n" >> "${DEST}"/debug/compilation.log
@@ -233,12 +233,12 @@ compile_uboot()
 				f_dst=$(basename "${f_src}")
 			fi
 			[[ ! -f $f_src ]] && exit_with_error "U-boot file not found" "$(basename "${f_src}")"
-			cp "${f_src}" "${SRC}/.tmp/${uboot_name}/usr/lib/${uboot_name}/${f_dst}"
+			cp "${f_src}" "$uboottempdir/${uboot_name}/usr/lib/${uboot_name}/${f_dst}"
 		done
 	done <<< "$UBOOT_TARGET_MAP"
 
 	# declare -f on non-defined function does not do anything
-	cat <<-EOF > "${SRC}/.tmp/${uboot_name}/usr/lib/u-boot/platform_install.sh"
+	cat <<-EOF > "$uboottempdir/${uboot_name}/usr/lib/u-boot/platform_install.sh"
 	DIR=/usr/lib/$uboot_name
 	$(declare -f write_uboot_platform)
 	$(declare -f write_uboot_platform_mtd)
@@ -246,7 +246,7 @@ compile_uboot()
 	EOF
 
 	# set up control file
-	cat <<-EOF > "${SRC}/.tmp/${uboot_name}/DEBIAN/control"
+	cat <<-EOF > "$uboottempdir/${uboot_name}/DEBIAN/control"
 	Package: linux-u-boot-${BOARD}-${BRANCH}
 	Version: $REVISION
 	Architecture: $ARCH
@@ -262,24 +262,20 @@ compile_uboot()
 
 	# copy config file to the package
 	# useful for FEL boot with overlayfs_wrapper
-	[[ -f .config && -n $BOOTCONFIG ]] && cp .config "${SRC}/.tmp/${uboot_name}/usr/lib/u-boot/${BOOTCONFIG}"
+	[[ -f .config && -n $BOOTCONFIG ]] && cp .config "$uboottempdir/${uboot_name}/usr/lib/u-boot/${BOOTCONFIG}"
 	# copy license files from typical locations
-	[[ -f COPYING ]] && cp COPYING "${SRC}/.tmp/${uboot_name}/usr/lib/u-boot/LICENSE"
-	[[ -f Licenses/README ]] && cp Licenses/README "${SRC}/.tmp/${uboot_name}/usr/lib/u-boot/LICENSE"
-	[[ -n $atftempdir && -f $atftempdir/license.md ]] && cp "${atftempdir}/license.md" "${SRC}/.tmp/${uboot_name}/usr/lib/u-boot/LICENSE.atf"
+	[[ -f COPYING ]] && cp COPYING "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE"
+	[[ -f Licenses/README ]] && cp Licenses/README "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE"
+	[[ -n $atftempdir && -f $atftempdir/license.md ]] && cp "${atftempdir}/license.md" "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE.atf"
 
 	display_alert "Building deb" "${uboot_name}.deb" "info"
-	fakeroot dpkg-deb -b "${SRC}/.tmp/${uboot_name}" "${SRC}/.tmp/${uboot_name}.deb" >> "${DEST}"/debug/output.log 2>&1
-	rm -rf "${SRC}/.tmp/${uboot_name}"
+	fakeroot dpkg-deb -b "$uboottempdir/${uboot_name}" "$uboottempdir/${uboot_name}.deb" >> "${DEST}"/debug/output.log 2>&1
+	rm -rf "$uboottempdir/${uboot_name}"
 	[[ -n $atftempdir ]] && rm -rf "${atftempdir}"
 
-	[[ ! -f $SRC/.tmp/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
+	[[ ! -f $uboottempdir/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
-	mv "${SRC}/.tmp/${uboot_name}.deb" "${DEB_STORAGE}/"
-
-	# store git hash to the file
-#	echo $hash > ${SRC}/cache/hash/${CHOSEN_UBOOT}.githash
-#	find "${SRC}/patch/u-boot/${BOOTPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | improved_git hash-object --stdin >> "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/${CHOSEN_UBOOT}.githash"
+	mv "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
 }
 
 compile_kernel()
@@ -322,7 +318,7 @@ compile_kernel()
         version=$(grab_version "$kerneldir")
 
 	# create linux-source package - with already patched sources
-	local sources_pkg_dir=$SRC/.tmp/${CHOSEN_KSRC}_${REVISION}_all
+	local sources_pkg_dir=$(mktemp -d)/${CHOSEN_KSRC}_${REVISION}_all
 	rm -rf "${sources_pkg_dir}"
 	mkdir -p "${sources_pkg_dir}"/usr/src/ "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}" "${sources_pkg_dir}"/DEBIAN
 
@@ -358,8 +354,8 @@ compile_kernel()
 
 	# hack for OdroidXU4. Copy firmare files
 	if [[ $BOARD == odroidxu4 ]]; then
-		mkdir -p "${SRC}/cache/sources/${LINUXSOURCEDIR}/firmware/edid"
-		cp "${SRC}"/packages/blobs/odroidxu4/*.bin "${SRC}/cache/sources/${LINUXSOURCEDIR}/firmware/edid"
+		mkdir -p "${kerneldir}/firmware/edid"
+		cp "${SRC}"/packages/blobs/odroidxu4/*.bin "${kerneldir}/firmware/edid"
 	fi
 
 	# hack for deb builder. To pack what's missing in headers pack.
@@ -458,7 +454,7 @@ compile_kernel()
 	cd .. || exit
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
-	mv ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
+	cp ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
 
 	# store git hash to the file
 	echo "${hash}" > "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
@@ -475,28 +471,31 @@ compile_kernel()
 compile_firmware()
 {
 	display_alert "Merging and packaging linux firmware" "@host" "info"
+
 	if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
 		plugin_repo="https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
 	else
 		plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
 	fi
+
+	firmwaretempdir=$(mktemp -d)
+
 	local plugin_dir="armbian-firmware${FULL}"
-	[[ -d "${SRC}/cache/sources/${plugin_dir}" ]] && rm -rf "${SRC}/cache/sources/${plugin_dir}"
-	mkdir -p "${SRC}/cache/sources/${plugin_dir}/lib/firmware"
+	mkdir -p "${firmwaretempdir}/${plugin_dir}/lib/firmware"
 
 	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
 	if [[ -n $FULL ]]; then
 		fetch_from_repo "$plugin_repo" "linux-firmware-git" "branch:master"
 		# cp : create hardlinks
-		cp -alf "${SRC}"/cache/sources/linux-firmware-git/* "${SRC}/cache/sources/${plugin_dir}/lib/firmware/"
+		cp -alf "${SRC}"/cache/sources/linux-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 	fi
 	# overlay our firmware
 	# cp : create hardlinks
-	cp -alf "${SRC}"/cache/sources/armbian-firmware-git/* "${SRC}/cache/sources/${plugin_dir}/lib/firmware/"
+	cp -alf "${SRC}"/cache/sources/armbian-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 
 	# cleanup what's not needed for sure
-	rm -rf "${SRC}/cache/sources/${plugin_dir}"/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
-	cd "${SRC}/cache/sources/${plugin_dir}" || exit
+	rm -rf "${firmwaretempdir}/${plugin_dir}"/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
+	cd "${firmwaretempdir}/${plugin_dir}" || exit
 
 	# set up control file
 	mkdir -p DEBIAN
@@ -512,12 +511,15 @@ compile_firmware()
 	Description: Linux firmware${FULL}
 	END
 
-	cd "${SRC}"/cache/sources || exit
+	cd "${firmwaretempdir}" || exit
 	# pack
 	mv "armbian-firmware${FULL}" "armbian-firmware${FULL}_${REVISION}_all"
 	fakeroot dpkg -b "armbian-firmware${FULL}_${REVISION}_all" >> "${DEST}"/debug/install.log 2>&1
 	mv "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
 	mv "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
+
+	# remove temp directory
+	rm -rf "${firmwaretempdir}"
 }
 
 
@@ -525,7 +527,8 @@ compile_firmware()
 
 compile_armbian-config()
 {
-	local tmpdir=$SRC/.tmp/armbian-config_${REVISION}_all
+
+	local tmpdir=$(mktemp -d)/armbian-config_${REVISION}_all
 
 	display_alert "Building deb" "armbian-config" "info"
 
@@ -563,6 +566,7 @@ compile_armbian-config()
 	fakeroot dpkg -b "${tmpdir}" >/dev/null
 	mv "${tmpdir}.deb" "${DEB_STORAGE}/"
 	rm -rf "${tmpdir}"
+
 }
 
 
