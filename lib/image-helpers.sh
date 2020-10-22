@@ -152,6 +152,6 @@ install_deb_chroot_desktop()
 	[[ ! -f "${SDCARD}/root/${name}" ]] && cp "${package}" "${SDCARD}/root/${name}"
 	display_alert "Installing" "$name"
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
-	LC_ALL=C LANG=C chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq \
+	LC_ALL=C LANG=C chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
 		$apt_extra install ${apt_install_flags} ./root/$name" >> "${DEST}"/debug/install.log 2>&1
 }
