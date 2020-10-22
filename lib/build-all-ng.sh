@@ -59,8 +59,8 @@ unset	LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSO
 		DEB_STORAGE REPO_STORAGE REPO_CONFIG REPOSITORY_UPDATE PACKAGE_LIST_RELEASE LOCAL_MIRROR COMPILE_ATF \
 		PACKAGE_LIST_BOARD PACKAGE_LIST_FAMILY PACKAGE_LIST_DESKTOP_BOARD PACKAGE_LIST_DESKTOP_FAMILY ATF_COMPILE ATFPATCHDIR OFFSET BOOTSOURCEDIR BOOT_USE_BLOBS \
 		BOOT_SOC DDR_BLOB MINILOADER_BLOB BL31_BLOB BOOT_RK3328_USE_AYUFAN_ATF BOOT_USE_BLOBS BOOT_RK3399_LEGACY_HYBRID \
-		BOOT_USE_MAINLINE_ATF BOOT_USE_TPL_SPL_BLOB OFFLINE_WORK IMAGE_PARTITION_TABLE BOOT_LOGO UPSTREM_VER \
-		PACKAGE_LIST_BOARD_REMOVE PACKAGE_LIST_FAMILY_REMOVE PACKAGE_LIST_DESKTOP_BOARD_REMOVE PACKAGE_LIST_DESKTOP_FAMILY_REMOVE
+		BOOT_USE_MAINLINE_ATF BOOT_USE_TPL_SPL_BLOB BOOT_SUPPORT_SPI OFFLINE_WORK IMAGE_PARTITION_TABLE BOOT_LOGO UPSTREM_VER FORCED_MONTH_OFFSET \
+		PACKAGE_LIST_BOARD_REMOVE PACKAGE_LIST_FAMILY_REMOVE PACKAGE_LIST_DESKTOP_BOARD_REMOVE PACKAGE_LIST_DESKTOP_FAMILY_REMOVE BOOTCONFIG_DEV
 }
 
 pack_upload ()
@@ -69,7 +69,7 @@ pack_upload ()
 	# pack and upload to server or just pack
 
 	display_alert "Signing" "Please wait!" "info"
-	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
+	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}_${DESKTOP_ENVIRONMENT}"
 	local subdir="archive"
 	compression_type=""
 
@@ -145,7 +145,7 @@ build_main ()
 	[[ $BUILD_MINIMAL == yes ]] && upload_image=${upload_image}_minimal
 	[[ $BETA == yes ]] && local upload_subdir=nightly
 
-	touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
+	touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
 
 	if [[ $KERNEL_ONLY != yes ]]; then
 		#if ssh ${SEND_TO_SERVER} stat ${SEND_TO_LOCATION}${BOARD}/${upload_subdir}/${upload_image}* \> /dev/null 2\>\&1; then
@@ -162,7 +162,7 @@ build_main ()
 
 	fi
 
-	rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
+	rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
 }
 
 
@@ -210,19 +210,18 @@ function check_hash()
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
 	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
-	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin)
+	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin)
 
 	case $ref_type in
-		branch) hash=$(git ls-remote "${KERNELSOURCE}" refs/heads/"${ref_name}" | awk '{print $1}') ;;
-		tag) hash=$(git ls-remote "${KERNELSOURCE}" tags/"${ref_name}" | awk '{print $1}') ;;
-		head) hash=$(git ls-remote "${KERNELSOURCE}" HEAD | awk '{print $1}') ;;
+		branch) hash=$(improved_git ls-remote "${KERNELSOURCE}" refs/heads/"${ref_name}" 2> /dev/null | awk '{print $1}') ;;
+		tag) hash=$(improved_git ls-remote "${KERNELSOURCE}" tags/"${ref_name}" 2> /dev/null | awk '{print $1}') ;;
+		head) hash=$(improved_git ls-remote "${KERNELSOURCE}" HEAD 2> /dev/null | awk '{print $1}') ;;
 		commit) hash=$ref_name ;;
 	esac
-	errorcode=$?
 	# ignore diff checking in case of network errrors
-	local kernel_hash="${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
+	local kernel_hash="${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 	if [[ -f ${kernel_hash} ]]; then
-		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" || $errorcode -ne 0 ]] && echo "idential"
+		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" || -z $hash ]] && echo "idential"
 	fi
 }
 
@@ -319,7 +318,6 @@ function build_all()
 
 		# create beta or stable
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
-
 			# check if currnt hash is the same as upstream
 			if [[ "$IGNORE_HASH" != yes ]]; then
 				local store_hash
@@ -364,7 +362,7 @@ function build_all()
 					IFS=',' read -r -a RELBRANCH <<< "${KERNEL_TARGET}"
 					for BRANCH in "${RELBRANCH[@]}"
 					do
-					RELTARGETS=(xenial stretch buster bullseye bionic eoan focal)
+					RELTARGETS=(xenial stretch buster bullseye bionic groovy focal)
 					for RELEASE in "${RELTARGETS[@]}"
 					do
 						display_alert "BSP for ${BOARD} ${BRANCH} ${RELEASE}."
@@ -384,7 +382,7 @@ function build_all()
 			else
 				# In dryrun it only prints out what will be build
                                 printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." \
-                                "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
+                                "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${DESKTOP_ENVIRONMENT}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
 			fi
 
 fi
@@ -419,7 +417,7 @@ fi
 sleep 5
 while :
 do
-		if [[ $(df | grep -c .tmp) -lt 1 ]]; then
+		if [[ $(df | grep -c /.tmp) -lt 1 ]]; then
 			break
 		fi
 	sleep 5
@@ -446,9 +444,9 @@ if [[ $n -gt 0 && ${BUMP_VERSION} == yes ]]; then
 	fi
 
 	echo "${NEW_VERSION}" > VERSION
-	git add "${SRC}"/VERSION
-	git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
-	git push
+	improved_git add "${SRC}"/VERSION
+	improved_git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
+	improved_git push
 	display_alert "Bumping to new version" "${NEW_VERSION}" "info"
 
 fi

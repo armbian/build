@@ -123,7 +123,7 @@ compile_uboot()
 	# read uboot version
 	local version hash
 	version=$(grab_version "$ubootdir")
-	hash=$(git --git-dir="$ubootdir"/.git rev-parse HEAD)
+	hash=$(improved_git --git-dir="$ubootdir"/.git rev-parse HEAD)
 
 	display_alert "Compiling u-boot" "$version" "info"
 
@@ -157,7 +157,7 @@ compile_uboot()
 
 		# needed for multiple targets and for calling compile_uboot directly
 		display_alert "Checking out to clean sources"
-		git checkout -f -q HEAD
+		improved_git checkout -f -q HEAD
 
 		if [[ $CLEAN_LEVEL == *make* ]]; then
 			display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
@@ -279,7 +279,7 @@ compile_uboot()
 
 	# store git hash to the file
 #	echo $hash > ${SRC}/cache/hash/${CHOSEN_UBOOT}.githash
-#	find "${SRC}/patch/u-boot/${BOOTPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | git hash-object --stdin >> "${SRC}/cache/hash/${CHOSEN_UBOOT}.githash"
+#	find "${SRC}/patch/u-boot/${BOOTPATCHDIR}" -maxdepth 1 -printf '%s %P\n' | improved_git hash-object --stdin >> "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/${CHOSEN_UBOOT}.githash"
 }
 
 compile_kernel()
@@ -307,7 +307,7 @@ compile_kernel()
 	version=$(grab_version "$kerneldir")
 
 	# read kernel git hash
-	hash=$(git --git-dir="$kerneldir"/.git rev-parse HEAD)
+	hash=$(improved_git --git-dir="$kerneldir"/.git rev-parse HEAD)
 
 	# build 3rd party drivers
 	compilation_prepare
@@ -461,12 +461,12 @@ compile_kernel()
 	mv ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
 
 	# store git hash to the file
-	echo "${hash}" > "${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
+	echo "${hash}" > "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
 	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
-	echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin >> "${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
+	echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin >> "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 }
 
 
@@ -573,13 +573,13 @@ compile_sunxi_tools()
 	# Compile and install only if git commit hash changed
 	cd "${SRC}"/cache/sources/sunxi-tools || exit
 	# need to check if /usr/local/bin/sunxi-fexc to detect new Docker containers with old cached sources
-	if [[ ! -f .commit_id || $(git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/sunxi-fexc ]]; then
+	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/sunxi-fexc ]]; then
 		display_alert "Compiling" "sunxi-tools" "info"
 		make -s clean >/dev/null
 		make -s tools >/dev/null
 		mkdir -p /usr/local/bin/
 		make install-tools >/dev/null 2>&1
-		git rev-parse @ 2>/dev/null > .commit_id
+		improved_git rev-parse @ 2>/dev/null > .commit_id
 	fi
 }
 
@@ -588,12 +588,12 @@ install_rkbin_tools()
 	# install only if git commit hash changed
 	cd "${SRC}"/cache/sources/rkbin-tools || exit
 	# need to check if /usr/local/bin/sunxi-fexc to detect new Docker containers with old cached sources
-	if [[ ! -f .commit_id || $(git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/loaderimage ]]; then
+	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/loaderimage ]]; then
 		display_alert "Installing" "rkbin-tools" "info"
 		mkdir -p /usr/local/bin/
 		install -m 755 tools/loaderimage /usr/local/bin/
 		install -m 755 tools/trust_merger /usr/local/bin/
-		git rev-parse @ 2>/dev/null > .commit_id
+		improved_git rev-parse @ 2>/dev/null > .commit_id
 	fi
 }
 
@@ -756,8 +756,8 @@ process_patch_file()
 userpatch_create()
 {
 	# create commit to start from clean source
-	git add .
-	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
+	improved_git add .
+	improved_git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
 
 	local patch="$DEST/patch/$1-$LINUXFAMILY-$BRANCH.patch"
 
@@ -765,7 +765,7 @@ userpatch_create()
 	if [[ -f $patch ]]; then
 		display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < "${patch}"
 		# read title of a patch in case Git is configured
-		if [[ -n $(git config user.email) ]]; then
+		if [[ -n $(improved_git config user.email) ]]; then
 			COMMIT_MESSAGE=$(cat "${patch}" | grep Subject | sed -n -e '0,/PATCH/s/.*PATCH]//p' | xargs)
 			display_alert "Patch name extracted" "$COMMIT_MESSAGE" "wrn"
 		fi
@@ -776,29 +776,29 @@ userpatch_create()
 	display_alert "Press <Enter> after you are done" "waiting" "wrn"
 	read -r </dev/tty
 	tput cuu1
-	git add .
+	improved_git add .
 	# create patch out of changes
-	if ! git diff-index --quiet --cached HEAD; then
+	if ! improved_git diff-index --quiet --cached HEAD; then
 		# If Git is configured, create proper patch and ask for a name
-		if [[ -n $(git config user.email) ]]; then
+		if [[ -n $(improved_git config user.email) ]]; then
 			display_alert "Add / change patch name" "$COMMIT_MESSAGE" "wrn"
 			read -e -p "Patch description: " -i "$COMMIT_MESSAGE" COMMIT_MESSAGE
 			[[ -z "$COMMIT_MESSAGE" ]] && COMMIT_MESSAGE="Patching something"
-			git commit -s -m "$COMMIT_MESSAGE"
-			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com/armbian/build" > "${patch}"
-			PATCHFILE=$(git format-patch -1 HEAD)
+			improved_git commit -s -m "$COMMIT_MESSAGE"
+			improved_git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com/armbian/build" > "${patch}"
+			PATCHFILE=$(improved_git format-patch -1 HEAD)
 			rm $PATCHFILE # delete the actual file
 			# create a symlink to have a nice name ready
 			find $DEST/patch/ -type l -delete # delete any existing
 			ln -sf $patch $DEST/patch/$PATCHFILE
 		else
-			git diff --staged > "${patch}"
+			improved_git diff --staged > "${patch}"
 		fi
 		display_alert "You will find your patch here:" "$patch" "info"
 	else
 		display_alert "No changes found, skipping patch creation" "" "wrn"
 	fi
-	git reset --soft HEAD~
+	improved_git reset --soft HEAD~
 	for i in {3..1..1}; do echo -n "$i." && sleep 1; done
 }
 

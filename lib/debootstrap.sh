@@ -211,7 +211,7 @@ create_rootfs_cache()
 
 		# stage: update packages list
 		display_alert "Updating package list" "$RELEASE" "info"
-		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "apt -q -y $apt_extra update"' \
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "apt-get -q -y $apt_extra update"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Updating package lists..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -220,7 +220,7 @@ create_rootfs_cache()
 
 		# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
 		display_alert "Upgrading base packages" "Armbian" "info"
-		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -y -q \
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
 			$apt_extra $apt_extra_progress upgrade"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Upgrading base packages..." $TTY_Y $TTY_X'} \
@@ -228,9 +228,13 @@ create_rootfs_cache()
 
 		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Upgrading base packages failed"
 
+		# Myy: TODO Divide this step into multiple steps, installing the "ADDITIONAL_PACKAGES"
+		# before, which will trigger software-common-properties installation.
+		# THEN add the APT sources and install the Desktop packages.
+
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
-		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -y -q \
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
 			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_LIST"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." $TTY_Y $TTY_X'} \
@@ -238,8 +242,19 @@ create_rootfs_cache()
 
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian packages failed"
 
+		display_alert "Adding apt sources for Desktop packages"
+		add_desktop_package_sources
+
+		display_alert "Installing the desktop packages for" "Armbian" "info"
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_LIST_DESKTOP"' \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." $TTY_Y $TTY_X'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian packages failed"
 		# stage: remove downloaded packages
-		chroot $SDCARD /bin/bash -c "apt clean"
+		chroot $SDCARD /bin/bash -c "apt-get clean"
 
 		# DEBUG: print free space
 		echo -e "\nFree space:"
@@ -316,7 +331,7 @@ prepare_partitions()
 	# parttype[nfs] is empty
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	if [[ $(lsb_release -sc) =~ bionic|buster|bullseye|cosmic|eoan|focal ]]; then
+	if [[ $(lsb_release -sc) =~ bionic|buster|bullseye|cosmic|groovy|focal ]]; then
 		mkopts[ext4]='-q -m 2 -O ^64bit,^metadata_csum'
 	elif [[ $(lsb_release -sc) == xenial ]]; then
 		mkopts[ext4]='-q -m 2'
@@ -518,7 +533,9 @@ prepare_partitions()
 		else
 			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
 		fi
-		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
+		if [[  $LINUXFAMILY != meson64 ]]; then
+			[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
+		fi
 	fi
 
 	# if we have a headless device, set console to DEFAULT_CONSOLE
@@ -573,7 +590,7 @@ update_initramfs()
 create_image()
 {
 	# stage: create file name
-	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
+	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}_${DESKTOP_ENVIRONMENT}"
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
