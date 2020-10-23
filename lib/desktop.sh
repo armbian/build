@@ -170,6 +170,8 @@ desktop_postinstall ()
 {
 	# disable display manager for first run
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
+	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable gdm3.service >/dev/null 2>&1"
+
 	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get update" >> "${DEST}"/debug/install.log
 
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
