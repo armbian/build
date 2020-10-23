@@ -19,7 +19,7 @@ create_desktop_package ()
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,};
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS//[[:space:]]/}
 
-	local destination=${SRC}/.tmp/${RELEASE}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
+	local destination=$(mktemp -d)${RELEASE}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
 
@@ -114,9 +114,10 @@ create_desktop_package ()
 
 	# create board DEB file
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
-	fakeroot dpkg-deb -b "${destination}" "${destination}.deb" >/dev/null
+
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
-	mv "${destination}.deb" "${DEB_STORAGE}/${RELEASE}"
+	cd "${destination}"; cd ..
+	fakeroot dpkg-deb -b "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"  >/dev/null
 	# cleanup
 	rm -rf "${destination}"
 }
