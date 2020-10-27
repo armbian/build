@@ -454,21 +454,21 @@ if [[ $BUILD_DESKTOP == "yes" && -z ${DESKTOP_APPGROUPS_SELECTED+x} ]]; then
 	unset options
 fi
 
-if [[ -z ${DESKTOP_APT_FLAGS_SELECTED+x} ]]; then
- 
-	options=()
-	options+=("recommends" "Install packages recommended by selected desktop packages" off)
-	options+=("suggests" "Install packages suggested by selected desktop packages" off)
-
-	DESKTOP_APT_FLAGS_SELECTED=$(\
-		show_select_menu \
-		"Choose Apt Additional FLags" \
-		"$backtitle" \
-		"Select to enable additional install flags for builds" \
-		"${options[@]}")
- 
-	unset options
-fi
+#if [[ -z ${DESKTOP_APT_FLAGS_SELECTED+x} ]]; then
+# 
+#	options=()
+#	options+=("recommends" "Install packages recommended by selected desktop packages" off)
+#	options+=("suggests" "Install packages suggested by selected desktop packages" off)
+#
+#	DESKTOP_APT_FLAGS_SELECTED=$(\
+#		show_select_menu \
+#		"Choose Apt Additional FLags" \
+#		"$backtitle" \
+#		"Select to enable additional install flags for builds" \
+#		"${options[@]}")
+# 
+#	unset options
+#fi
 #exit_with_error 'Testing'
 
 # Expected variables :

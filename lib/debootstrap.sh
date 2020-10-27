@@ -271,7 +271,7 @@ create_rootfs_cache()
 		# creating xapian index that synaptic runs faster
 		if [[ $BUILD_DESKTOP == yes ]]; then
 			display_alert "Recreating Synaptic search index" "Please wait" "info"
-			chroot $SDCARD /bin/bash -c "/usr/sbin/update-apt-xapian-index -u"
+			chroot $SDCARD /bin/bash -c "[[ -f /usr/sbin/update-apt-xapian-index ]] && /usr/sbin/update-apt-xapian-index -u"
 		fi
 
 		# this is needed for the build process later since resolvconf generated file in /run is not saved
@@ -455,7 +455,7 @@ prepare_partitions()
 
 	# stage: mount image
 	# lock access to loop devices
-	exec {FD}>/var/lock/armbian-debootstrap-losetup
+	exec {FD}>/var/lock/${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${BUILD_MINIMAL}-armbian-debootstrap-losetup
 	flock -x $FD
 
 	LOOP=$(losetup -f)
