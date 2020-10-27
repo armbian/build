@@ -23,7 +23,7 @@ EXIT_PATCHING_ERROR="" # exit patching if failed
 cd "${SRC}" || exit
 ROOTFSCACHE_VERSION=1
 CHROOT_CACHE_VERSION=7
-BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2>/dev/null) 2>/dev/null)
+BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2>/dev/null | grep origin) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
 ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
 
