@@ -769,7 +769,7 @@ userpatch_create()
 	if [[ -f $patch ]]; then
 		display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < "${patch}"
 		# read title of a patch in case Git is configured
-		if [[ -n $(improved_git config user.email) ]]; then
+		if [[ -n $(git config user.email) ]]; then
 			COMMIT_MESSAGE=$(cat "${patch}" | grep Subject | sed -n -e '0,/PATCH/s/.*PATCH]//p' | xargs)
 			display_alert "Patch name extracted" "$COMMIT_MESSAGE" "wrn"
 		fi
@@ -784,7 +784,7 @@ userpatch_create()
 	# create patch out of changes
 	if ! git diff-index --quiet --cached HEAD; then
 		# If Git is configured, create proper patch and ask for a name
-		if [[ -n $(improved_git config user.email) ]]; then
+		if [[ -n $(git config user.email) ]]; then
 			display_alert "Add / change patch name" "$COMMIT_MESSAGE" "wrn"
 			read -e -p "Patch description: " -i "$COMMIT_MESSAGE" COMMIT_MESSAGE
 			[[ -z "$COMMIT_MESSAGE" ]] && COMMIT_MESSAGE="Patching something"
