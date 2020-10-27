@@ -487,11 +487,11 @@ compile_firmware()
 	if [[ -n $FULL ]]; then
 		fetch_from_repo "$plugin_repo" "linux-firmware-git" "branch:master"
 		# cp : create hardlinks
-		cp -alf "${SRC}"/cache/sources/linux-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
+		cp -af --reflink=auto "${SRC}"/cache/sources/linux-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 	fi
 	# overlay our firmware
 	# cp : create hardlinks
-	cp -alf "${SRC}"/cache/sources/armbian-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
+	cp -af --reflink=auto "${SRC}"/cache/sources/armbian-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 
 	# cleanup what's not needed for sure
 	rm -rf "${firmwaretempdir}/${plugin_dir}"/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
