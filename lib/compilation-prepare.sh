@@ -87,7 +87,11 @@ compilation_prepare()
 
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.8.10-0001-Revert-vgacon-remove-software-scrollback-support.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.8.10-0002-Revert-fbcon-remove-now-unusued-softback_lines-curso.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.8.10-0003-Revert-fbcon-remove-soft-scrollback-code.patch" "applying"
+		if linux-version compare "${version}" ge 5.10; then
+			process_patch_file "${SRC}/patch/misc/bootsplash-5.10.y-0003-Revert-fbcon-remove-soft-scrollback-code.patch" "applying"
+		else
+			process_patch_file "${SRC}/patch/misc/bootsplash-5.8.10-0003-Revert-fbcon-remove-soft-scrollback-code.patch" "applying"
+		fi
 
 		process_patch_file "${SRC}/patch/misc/0001-bootsplash.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/0002-bootsplash.patch" "applying"
