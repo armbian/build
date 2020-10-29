@@ -365,29 +365,54 @@ fi
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
-PACKAGE_MAIN_LIST="${PACKAGE_LIST}"
+
+# Clean up the list
 # Myy : Replace any single or multiple instance of 'space' characters
 # (spaces, tabs, newlines) by a single space character
 # DO NOT PUT quotes after 'echo', else the trick won't work.
+PACKAGE_LIST="${PACKAGE_LIST#"${PACKAGE_LIST%%[![:space:]]*}"}"
+PACKAGE_LIST="${PACKAGE_LIST%"${PACKAGE_LIST##*[![:space:]]}"}"
+PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
 
-# Clean up the main list
-PACKAGE_MAIN_LIST="${PACKAGE_MAIN_LIST#"${PACKAGE_MAIN_LIST%%[![:space:]]*}"}"
-PACKAGE_MAIN_LIST="${PACKAGE_MAIN_LIST%"${PACKAGE_MAIN_LIST##*[![:space:]]}"}"
-PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
-
-display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}"
+PACKAGE_MAIN_LIST="${PACKAGE_LIST}"
 
 [[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
 aggregated_content=""
 aggregate_all_cli "packages.remove" " "
+aggregate_all "packages.remove" " "
 PACKAGE_LIST_RM="${PACKAGE_LIST_RM} ${aggregated_content}"
 unset aggregated_content
 
+PACKAGE_LIST_RM="${PACKAGE_LIST_RM#"${PACKAGE_LIST_RM%%[![:space:]]*}"}"
+PACKAGE_LIST_RM="${PACKAGE_LIST_RM%"${PACKAGE_LIST_RM##*[![:space:]]}"}"
+PACKAGE_LIST_RM="$(echo ${PACKAGE_LIST_RM})"
+
+display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}"
+display_alert "PACKAGE_LIST : ${PACKAGE_LIST}"
+display_alert "PACKAGE_LIST_RM : ${PACKAGE_LIST_RM}"
+
 if [[ -n $PACKAGE_LIST_RM ]]; then
-	PACKAGE_LIST=$(sed -r "s/\b($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\b//g" <<< "${PACKAGE_LIST}")
+	display_alert "Remove filter : $(tr ' ' '|' <<< ${PACKAGE_LIST_RM})"
+	# Turns out that \b can be tricked by dashes.
+	# So if you remove mesa-utils but still want to install "mesa-utils-extra"
+	# a "\b(mesa-utils)\b" filter will convert "mesa-utils-extra" to "-extra".
+	# \W is not tricked by this but consumes the surrounding spaces, so we
+	# replace the occurence by one space, to avoid sticking the next word to
+	# the previous one after consuming the spaces.
+	PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< "${PACKAGE_LIST}")
+	PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< "${PACKAGE_MAIN_LIST}")
 fi
+
+# Removing double spaces
+# Do not quote the variables. This would defeat the trick.
+PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
+PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
+
+display_alert "After removal of packages.remove packages"
+display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}"
+display_alert "PACKAGE_LIST : ${PACKAGE_LIST}"
 
 # Give the option to configure DNS server used in the chroot during the build process
 [[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
