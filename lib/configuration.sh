@@ -376,6 +376,11 @@ PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
 
 PACKAGE_MAIN_LIST="${PACKAGE_LIST}"
 
+# FIXME Myy: Factorize this...
+PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
+PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP%"${PACKAGE_LIST_DESKTOP##*[![:space:]]}"}"
+PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+
 [[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
@@ -401,18 +406,20 @@ if [[ -n $PACKAGE_LIST_RM ]]; then
 	# \W is not tricked by this but consumes the surrounding spaces, so we
 	# replace the occurence by one space, to avoid sticking the next word to
 	# the previous one after consuming the spaces.
-	PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< "${PACKAGE_LIST}")
-	PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< "${PACKAGE_MAIN_LIST}")
+	PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST} ")
+	PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_MAIN_LIST} ")
+	PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
 fi
 
 # Removing double spaces
 # Do not quote the variables. This would defeat the trick.
 PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
 PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
+PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
 
 display_alert "After removal of packages.remove packages"
-display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}"
-display_alert "PACKAGE_LIST : ${PACKAGE_LIST}"
+display_alert "PACKAGE_MAIN_LIST : \"${PACKAGE_MAIN_LIST}\""
+display_alert "PACKAGE_LIST : \"${PACKAGE_LIST}\""
 
 # Give the option to configure DNS server used in the chroot during the build process
 [[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
