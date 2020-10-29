@@ -1,15 +1,35 @@
-From e5467fb60570c9c300e9d412b9d5386cbb9951ba Mon Sep 17 00:00:00 2001
+From fe6dc940b5306c9503d9dc18e7a3fd4a841d37d6 Mon Sep 17 00:00:00 2001
 From: Aditya Prayoga <aditya@kobol.io>
-Date: Mon, 18 May 2020 09:42:14 +0700
+Date: Fri, 18 Sep 2020 09:05:53 +0700
 Subject: [PATCH] port pcie changes from ayufan rockchip64
 
 Signed-off-by: Aditya Prayoga <aditya@kobol.io>
 ---
- drivers/pci/host/pcie-rockchip.c | 119 +++++++++++++++++++++++++------
- 1 file changed, 96 insertions(+), 23 deletions(-)
+ Documentation/kernel-parameters.txt |  8 ++++++
+ drivers/pci/host/pcie-rockchip.c    | 44 ++++++++++++++++++++++++++---
+ 2 files changed, 48 insertions(+), 4 deletions(-)
 
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 7f4b9aa01..284c97c76 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -3043,6 +3043,14 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 		nomsi	Do not use MSI for native PCIe PME signaling (this makes
+ 			all PCIe root ports use INTx for all services).
+ 
++	pcie_rk_bus_scan_delay=	[PCIE] Delay in ms before
++			scanning PCIe bus in Rockchip PCIe host driver. Some PCIe
++			cards seem to need delays that can be several hundred ms.
++			If set to greater than or equal to 0 this parameter will
++			override delay that can be set in device tree.
++			Values less than 0 mean that this parameter is ignored.
++			default=-1
++
+ 	pcmv=		[HW,PCMCIA] BadgePAD 4
+ 
+ 	pd_ignore_unused
 diff --git a/drivers/pci/host/pcie-rockchip.c b/drivers/pci/host/pcie-rockchip.c
-index 87291016d..1823323f8 100644
+index 350c8f0df..913362cf7 100644
 --- a/drivers/pci/host/pcie-rockchip.c
 +++ b/drivers/pci/host/pcie-rockchip.c
 @@ -26,6 +26,7 @@
@@ -28,24 +48,7 @@ index 87291016d..1823323f8 100644
  #define PCIE_RC_CONFIG_BASE		0xa00000
  #define PCIE_RC_CONFIG_RID_CCR		(PCIE_RC_CONFIG_BASE + 0x08)
  #define   PCIE_RC_CONFIG_SCC_SHIFT		16
-@@ -189,6 +191,8 @@
- #define IB_ROOT_PORT_REG_SIZE_SHIFT		3
- #define AXI_WRAPPER_IO_WRITE			0x6
- #define AXI_WRAPPER_MEM_WRITE			0x2
-+#define AXI_WRAPPER_TYPE0_CFG			0xa
-+#define AXI_WRAPPER_TYPE1_CFG			0xb
- #define AXI_WRAPPER_CFG0			0xa
- #define AXI_WRAPPER_NOR_MSG			0xc
- 
-@@ -213,6 +217,7 @@
- #define RC_REGION_0_ADDR_TRANS_H		0x00000000
- #define RC_REGION_0_ADDR_TRANS_L		0x00000000
- #define RC_REGION_0_PASS_BITS			(25 - 1)
-+#define RC_REGION_0_TYPE_MASK			GENMASK(3, 0)
- #define MAX_AXI_WRAPPER_REGION_NUM		33
- 
- struct rockchip_pcie {
-@@ -253,8 +258,12 @@ struct rockchip_pcie {
+@@ -255,8 +257,12 @@ struct rockchip_pcie {
  	int wait_ep;
  	struct dma_trx_obj *dma_obj;
  	struct list_head resources;
@@ -58,7 +61,7 @@ index 87291016d..1823323f8 100644
  static u32 rockchip_pcie_read(struct rockchip_pcie *rockchip, u32 reg)
  {
  	return readl(rockchip->apb_base + reg);
-@@ -330,7 +339,9 @@ static int rockchip_pcie_valid_device(struct rockchip_pcie *rockchip,
+@@ -355,7 +361,9 @@ static int rockchip_pcie_valid_device(struct rockchip_pcie *rockchip,
  static int rockchip_pcie_rd_own_conf(struct rockchip_pcie *rockchip,
  				     int where, int size, u32 *val)
  {
@@ -69,7 +72,7 @@ index 87291016d..1823323f8 100644
  
  	if (!IS_ALIGNED((uintptr_t)addr, size)) {
  		*val = 0;
-@@ -354,11 +365,13 @@ static int rockchip_pcie_wr_own_conf(struct rockchip_pcie *rockchip,
+@@ -379,11 +387,13 @@ static int rockchip_pcie_wr_own_conf(struct rockchip_pcie *rockchip,
  				     int where, int size, u32 val)
  {
  	u32 mask, tmp, offset;
@@ -84,7 +87,7 @@ index 87291016d..1823323f8 100644
  		return PCIBIOS_SUCCESSFUL;
  	}
  
-@@ -369,13 +382,33 @@ static int rockchip_pcie_wr_own_conf(struct rockchip_pcie *rockchip,
+@@ -394,9 +404,9 @@ static int rockchip_pcie_wr_own_conf(struct rockchip_pcie *rockchip,
  	 * corrupt RW1C bits in adjacent registers.  But the hardware
  	 * doesn't support smaller writes.
  	 */
@@ -96,75 +99,7 @@ index 87291016d..1823323f8 100644
  
  	return PCIBIOS_SUCCESSFUL;
  }
- 
-+static void rockchip_pcie_cfg_configuration_accesses(
-+		struct rockchip_pcie *rockchip, u32 type)
-+{
-+	u32 ob_desc_0;
-+
-+	/* Configuration Accesses for region 0 */
-+	rockchip_pcie_write(rockchip, 0x0, PCIE_RC_BAR_CONF);
-+
-+	rockchip_pcie_write(rockchip,
-+			    (RC_REGION_0_ADDR_TRANS_L + RC_REGION_0_PASS_BITS),
-+			    PCIE_CORE_OB_REGION_ADDR0);
-+	rockchip_pcie_write(rockchip, RC_REGION_0_ADDR_TRANS_H,
-+			    PCIE_CORE_OB_REGION_ADDR1);
-+	ob_desc_0 = rockchip_pcie_read(rockchip, PCIE_CORE_OB_REGION_DESC0);
-+	ob_desc_0 &= ~(RC_REGION_0_TYPE_MASK);
-+	ob_desc_0 |= (type | (0x1 << 23));
-+	rockchip_pcie_write(rockchip, ob_desc_0, PCIE_CORE_OB_REGION_DESC0);
-+	rockchip_pcie_write(rockchip, 0x0, PCIE_CORE_OB_REGION_DESC1);
-+}
-+
- static int rockchip_pcie_rd_other_conf(struct rockchip_pcie *rockchip,
- 				       struct pci_bus *bus, u32 devfn,
- 				       int where, int size, u32 *val)
-@@ -385,11 +418,23 @@ static int rockchip_pcie_rd_other_conf(struct rockchip_pcie *rockchip,
- 	busdev = PCIE_ECAM_ADDR(bus->number, PCI_SLOT(devfn),
- 				PCI_FUNC(devfn), where);
- 
-+	if (bus->number > 0x1f) {
-+		*val = 0;
-+		return PCIBIOS_DEVICE_NOT_FOUND;
-+	}
-+
- 	if (!IS_ALIGNED(busdev, size)) {
- 		*val = 0;
- 		return PCIBIOS_BAD_REGISTER_NUMBER;
- 	}
- 
-+	if (bus->parent->number == rockchip->root_bus_nr)
-+		rockchip_pcie_cfg_configuration_accesses(rockchip,
-+						AXI_WRAPPER_TYPE0_CFG);
-+	else
-+		rockchip_pcie_cfg_configuration_accesses(rockchip,
-+						AXI_WRAPPER_TYPE1_CFG);
-+
- 	if (size == 4) {
- 		*val = readl(rockchip->reg_base + busdev);
- 	} else if (size == 2) {
-@@ -411,9 +456,19 @@ static int rockchip_pcie_wr_other_conf(struct rockchip_pcie *rockchip,
- 
- 	busdev = PCIE_ECAM_ADDR(bus->number, PCI_SLOT(devfn),
- 				PCI_FUNC(devfn), where);
-+
-+	if (bus->number > 0x1f)
-+		return PCIBIOS_DEVICE_NOT_FOUND;
- 	if (!IS_ALIGNED(busdev, size))
- 		return PCIBIOS_BAD_REGISTER_NUMBER;
- 
-+	if (bus->parent->number == rockchip->root_bus_nr)
-+		rockchip_pcie_cfg_configuration_accesses(rockchip,
-+						AXI_WRAPPER_TYPE0_CFG);
-+	else
-+		rockchip_pcie_cfg_configuration_accesses(rockchip,
-+						AXI_WRAPPER_TYPE1_CFG);
-+
- 	if (size == 4)
- 		writel(val, rockchip->reg_base + busdev);
- 	else if (size == 2)
-@@ -638,6 +693,11 @@ static int rockchip_pcie_init_port(struct rockchip_pcie *rockchip)
+@@ -677,6 +687,11 @@ static int rockchip_pcie_init_port(struct rockchip_pcie *rockchip)
  	status |= PCI_EXP_LNKCTL_CCC;
  	rockchip_pcie_write(rockchip, status, PCIE_RC_CONFIG_LCS);
  
@@ -176,25 +111,7 @@ index 87291016d..1823323f8 100644
  	/* Enable Gen1 training */
  	rockchip_pcie_write(rockchip, PCIE_CLIENT_LINK_TRAIN_ENABLE,
  			    PCIE_CLIENT_CONFIG);
-@@ -696,15 +756,8 @@ static int rockchip_pcie_init_port(struct rockchip_pcie *rockchip)
- 		rockchip_pcie_write(rockchip, status, PCIE_RC_CONFIG_LINK_CAP);
- 	}
- 
--	rockchip_pcie_write(rockchip, 0x0, PCIE_RC_BAR_CONF);
--
--	rockchip_pcie_write(rockchip,
--			    (RC_REGION_0_ADDR_TRANS_L + RC_REGION_0_PASS_BITS),
--			    PCIE_CORE_OB_REGION_ADDR0);
--	rockchip_pcie_write(rockchip, RC_REGION_0_ADDR_TRANS_H,
--			    PCIE_CORE_OB_REGION_ADDR1);
--	rockchip_pcie_write(rockchip, 0x0080000a, PCIE_CORE_OB_REGION_DESC0);
--	rockchip_pcie_write(rockchip, 0x0, PCIE_CORE_OB_REGION_DESC1);
-+	rockchip_pcie_cfg_configuration_accesses(rockchip,
-+					AXI_WRAPPER_TYPE0_CFG);
- 
- 	return 0;
- }
-@@ -1067,6 +1120,14 @@ static int rockchip_pcie_parse_dt(struct rockchip_pcie *rockchip)
+@@ -1103,6 +1118,14 @@ static int rockchip_pcie_parse_dt(struct rockchip_pcie *rockchip)
  		dev_info(dev, "no vpcie0v9 regulator found\n");
  	}
  
@@ -209,7 +126,7 @@ index 87291016d..1823323f8 100644
  	mem = of_parse_phandle(node, "memory-region", 0);
  	if (!mem) {
  		dev_warn(dev, "missing \"memory-region\" property\n");
-@@ -1396,6 +1457,7 @@ static int rockchip_pcie_really_probe(struct rockchip_pcie *rockchip)
+@@ -1432,6 +1455,7 @@ static int rockchip_pcie_really_probe(struct rockchip_pcie *rockchip)
  	int err;
  	struct pci_bus *bus, *child;
  	struct	device *dev = rockchip->dev;
@@ -217,7 +134,7 @@ index 87291016d..1823323f8 100644
  
  	err = rockchip_pcie_init_port(rockchip);
  	if (err)
-@@ -1407,6 +1469,18 @@ static int rockchip_pcie_really_probe(struct rockchip_pcie *rockchip)
+@@ -1443,6 +1467,18 @@ static int rockchip_pcie_really_probe(struct rockchip_pcie *rockchip)
  	if (err)
  		return err;
  

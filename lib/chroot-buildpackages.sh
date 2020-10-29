@@ -32,18 +32,18 @@ create_chroot()
 	apt_mirror['xenial']="$UBUNTU_MIRROR"
 	apt_mirror['bionic']="$UBUNTU_MIRROR"
 	apt_mirror['focal']="$UBUNTU_MIRROR"
-	apt_mirror['eoan']="$UBUNTU_MIRROR"
+	apt_mirror['groovy']="$UBUNTU_MIRROR"
 	components['stretch']='main,contrib'
 	components['buster']='main,contrib'
 	components['bullseye']='main,contrib'
 	components['xenial']='main,universe,multiverse'
 	components['bionic']='main,universe,multiverse'
 	components['focal']='main,universe,multiverse'
-	components['eoan']='main,universe,multiverse'
+	components['groovy']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc"
 	# perhaps a temporally workaround
-	[[ $release == buster || $release == bullseye || $release == focal || $release == eoan ]] && includes=${includes}",perl-openssl-defaults,libnet-ssleay-perl"
+	[[ $release == buster || $release == bullseye || $release == focal || $release == groovy ]] && includes=${includes}",perl-openssl-defaults,libnet-ssleay-perl"
 	if [[ $NO_APT_CACHER != yes ]]; then
 		local mirror_addr="http://localhost:3142/${apt_mirror[${release}]}"
 	else
@@ -98,7 +98,7 @@ chroot_prepare_distccd()
 	gcc_version['xenial']='5.4'
 	gcc_version['bionic']='5.4'
 	gcc_version['focal']='9.2'
-	gcc_version['eoan']='9.2'
+	gcc_version['groovy']='10.2'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
 	gcc_type['arm64']='aarch64-linux-gnu-'
 	rm -f "${dest}"/cmdlist
@@ -132,7 +132,7 @@ chroot_build_packages()
 		target_arch="${ARCH}"
 	else
 		# only make packages for recent releases. There are no changes on older
-		target_release="stretch bionic buster bullseye eoan focal"
+		target_release="stretch bionic buster bullseye groovy focal"
 		target_arch="armhf arm64"
 	fi
 
@@ -336,7 +336,7 @@ chroot_installpackages()
 	cat <<-EOF > "${SDCARD}"/tmp/install.sh
 	#!/bin/bash
 	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
-	apt-get "${apt_extra}" -q update
+	apt-get ${apt_extra} -q update
 	# uncomment to debug
 	# /bin/bash
 	# TODO: check if package exists in case new config was added
@@ -345,7 +345,7 @@ chroot_installpackages()
 	#		if grep -qE "apt.armbian.com|localhost" <(apt-cache madison \$p); then
 	#		if apt-get -s -qq install \$p; then
 	#fi
-	apt-get -q "${apt_extra}" --show-progress -o DPKG::Progress-Fancy=1 install -y ${install_list}
+	apt-get -q ${apt_extra} --show-progress -o DPKG::Progress-Fancy=1 install -y ${install_list}
 	apt-get clean
 	[[ "${remote_only}" != yes ]] && apt-key del "925644A6"
 	rm /etc/apt/sources.list.d/armbian-temp.list 2>/dev/null

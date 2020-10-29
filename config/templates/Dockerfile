@@ -68,6 +68,7 @@ RUN apt-get update \
        ncurses-term \
        nfs-kernel-server \
        ntpdate \
+       openssh-client \
        p7zip-full \
        parted \
        patchutils \

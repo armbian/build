@@ -10,9 +10,6 @@ setenv rootfstype "ext4"
 setenv fdt_name_a dtb/marvell/armada-3720-community.dtb
 setenv fdt_name_b dtb/marvell/armada-3720-espressobin.dtb
 
-# additional values
-setenv ethaddr "F0:AD:4E:03:64:7F"
-
 load ${boot_interface} ${devnum}:1 ${scriptaddr} ${prefix}armbianEnv.txt
 env import -t ${scriptaddr} ${filesize}
 

@@ -21,10 +21,10 @@ USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
-ROOTFSCACHE_VERSION=38
+ROOTFSCACHE_VERSION=1
 CHROOT_CACHE_VERSION=7
-BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
-BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
+BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2>/dev/null | grep origin) 2>/dev/null)
+BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
 ROOTFS_CACHE_MAX=42 # max number of rootfs cache, older ones will be cleaned up
 
 if [[ $BETA == yes ]]; then
@@ -83,6 +83,11 @@ CAN_BUILD_STRETCH=yes
 ATF_COMPILE=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
+# Default to pdkdf2, this used to be the default with cryptroot <= 2.0, however
+# cryptroot 2.1 changed that to Argon2i. Argon2i is a memory intensive
+# algorithm which doesn't play well with SBCs (need 1GiB RAM by default !)
+# https://gitlab.com/cryptsetup/cryptsetup/-/issues/372
+[[ -z $CRYPTROOT_PARAMETERS ]] && CRYPTROOT_PARAMETERS="--pbkdf pbkdf2"
 [[ -z $WIREGUARD ]] && WIREGUARD="yes"
 [[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 [[ -z $AUFS ]] && AUFS="yes"
@@ -256,82 +261,6 @@ display_alert "----"
 display_alert "CLI packages"
 display_alert "Standard : ${PACKAGE_LIST}"
 display_alert "Additional : ${PACKAGE_LIST_ADDITIONAL}"
-
-# case $RELEASE in
-
-# 	xenial)
-# 		DEBOOTSTRAP_COMPONENTS="main"
-# 		DEBOOTSTRAP_LIST+=" btrfs-tools"
-# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db sysbench command-not-found selinux-policy-default"
-# 		#PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
-# 		#						pulseaudio-module-gconf onboard"
-# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common \
-# 		#						system-config-printer-gnome leafpad mirage"
-# 		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-# 	;;
-
-# 	stretch)
-# 		DEBOOTSTRAP_COMPONENTS="main"
-# 		DEBOOTSTRAP_LIST+=" rng-tools"
-# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench command-not-found selinux-policy-default"
-# 		#PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
-# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad mirage"
-# 		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-# 	;;
-
-# 	bionic)
-# 		DEBOOTSTRAP_COMPONENTS="main,universe"
-# 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-# 		#PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
-# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
-# 		#						language-selector-gnome leafpad mirage"
-# 		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-# 	;;
-
-# 	buster)
-# 		DEBOOTSTRAP_COMPONENTS="main"
-# 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-# 		#PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme onboard"
-# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
-# 		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-# 	;;
-
-# 	bullseye)
-# 		DEBOOTSTRAP_COMPONENTS="main"
-# 		DEBOOTSTRAP_LIST+=" haveged fdisk"
-# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
-# 		#PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
-# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
-# 		#PACKAGE_LIST_DESKTOP_FULL+=""
-# 	;;
-
-
-# 	focal)
-# 		DEBOOTSTRAP_COMPONENTS="main,universe"
-# 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-# 		#PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
-# 		#						language-selector-gnome viewnior"
-# 		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-# 		#PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
-# 	;;
-
-# 	eoan)
-# 		DEBOOTSTRAP_COMPONENTS="main,universe"
-# 		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-# 		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-# 		#PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-# 		#PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
-# 		#						language-selector-gnome mirage"
-# 		#PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-# 		#PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
-# 	;;
-
-# esac
-
 
 DEBIAN_MIRROR='deb.debian.org/debian'
 DEBIAN_SECURTY='security.debian.org/'
