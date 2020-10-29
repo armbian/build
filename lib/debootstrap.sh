@@ -245,9 +245,20 @@ create_rootfs_cache()
 		display_alert "Adding apt sources for Desktop packages"
 		add_desktop_package_sources
 
+		local apt_desktop_install_flags=""
+		if [[ ! -z ${DESKTOP_APT_FLAGS_SELECTED+x} ]]; then
+			for flag in ${DESKTOP_APT_FLAGS_SELECTED}; do
+				apt_desktop_install_flags+=" --install-${flag}"
+			done
+		else
+			# Myy : Using the previous default option, if the variable isn't defined
+			# And ONLY if it's not defined !
+			apt_desktop_install_flags+=" --no-install-recommends"
+		fi
+
 		display_alert "Installing the desktop packages for" "Armbian" "info"
 		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -y -q \
-			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_LIST_DESKTOP"' \
+			$apt_extra $apt_extra_progress install ${apt_desktop_install_flags} $PACKAGE_LIST_DESKTOP"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}

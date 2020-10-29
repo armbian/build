@@ -137,8 +137,10 @@ DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
 
 aggregate_all_debootstrap() {
 	local looked_up_subpath="${1}"
+	local separator="${2}"
 	local potential_paths="${DEBOOTSTRAP_CONFIG_PATH}/${looked_up_subpath}"
-	potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/config/boards/${BOARD}/${looked_up_subpath}"
+	potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/custom/boards/${BOARD}/${looked_up_subpath}"
+	display_alert "SELECTED_CONFIGURATION : ${SELECTED_CONFIGURATION}"
 	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
 		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/debootstrap/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
 		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/debootstrap/custom/boards/${BOARD}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
@@ -172,6 +174,7 @@ display_alert "Debootstrap packages list : $DEBOOTSTRAP_LIST"
 
 aggregate_all_cli() {
 	local looked_up_subpath="${1}"
+	local separator="${2}"
 	local potential_paths="${CLI_CONFIG_PATH}/main/${looked_up_subpath}"
 	potential_paths+=" ${CLI_CONFIG_PATH}/main/custom/boards/${BOARD}/${looked_up_subpath}"
 	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
@@ -183,13 +186,13 @@ aggregate_all_cli() {
 }
 
 aggregated_content=""
-aggregate_all_cli "packages"
+aggregate_all_cli "packages" " "
 display_alert "Aggregated content : ${aggregated_content}"
 PACKAGE_LIST="${aggregated_content}"
 unset aggregated_content
 
-aggragted_content=""
-aggregate_all_cli "packages.additional"
+aggregated_content=""
+aggregate_all_cli "packages.additional" " "
 PACKAGE_LIST_ADDITIONAL="${aggregated_content}"
 unset aggregated_content
 
@@ -363,9 +366,25 @@ fi
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 PACKAGE_MAIN_LIST="${PACKAGE_LIST}"
+# Myy : Replace any single or multiple instance of 'space' characters
+# (spaces, tabs, newlines) by a single space character
+# DO NOT PUT quotes after 'echo', else the trick won't work.
+
+# Clean up the main list
+PACKAGE_MAIN_LIST="${PACKAGE_MAIN_LIST#"${PACKAGE_MAIN_LIST%%[![:space:]]*}"}"
+PACKAGE_MAIN_LIST="${PACKAGE_MAIN_LIST%"${PACKAGE_MAIN_LIST##*[![:space:]]}"}"
+PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
+
+display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}"
+
 [[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
+aggregated_content=""
+aggregate_all_cli "packages.remove" " "
+PACKAGE_LIST_RM="${PACKAGE_LIST_RM} ${aggregated_content}"
+unset aggregated_content
+
 if [[ -n $PACKAGE_LIST_RM ]]; then
 	PACKAGE_LIST=$(sed -r "s/\b($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\b//g" <<< "${PACKAGE_LIST}")
 fi
