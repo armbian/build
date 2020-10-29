@@ -487,11 +487,11 @@ compile_firmware()
 	if [[ -n $FULL ]]; then
 		fetch_from_repo "$plugin_repo" "linux-firmware-git" "branch:master"
 		# cp : create hardlinks
-		cp -alf "${SRC}"/cache/sources/linux-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
+		cp -af --reflink=auto "${SRC}"/cache/sources/linux-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 	fi
 	# overlay our firmware
 	# cp : create hardlinks
-	cp -alf "${SRC}"/cache/sources/armbian-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
+	cp -af --reflink=auto "${SRC}"/cache/sources/armbian-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 
 	# cleanup what's not needed for sure
 	rm -rf "${firmwaretempdir}/${plugin_dir}"/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
@@ -760,8 +760,8 @@ process_patch_file()
 userpatch_create()
 {
 	# create commit to start from clean source
-	improved_git add .
-	improved_git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
+	git add .
+	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
 
 	local patch="$DEST/patch/$1-$LINUXFAMILY-$BRANCH.patch"
 
@@ -769,7 +769,7 @@ userpatch_create()
 	if [[ -f $patch ]]; then
 		display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < "${patch}"
 		# read title of a patch in case Git is configured
-		if [[ -n $(improved_git config user.email) ]]; then
+		if [[ -n $(git config user.email) ]]; then
 			COMMIT_MESSAGE=$(cat "${patch}" | grep Subject | sed -n -e '0,/PATCH/s/.*PATCH]//p' | xargs)
 			display_alert "Patch name extracted" "$COMMIT_MESSAGE" "wrn"
 		fi
@@ -780,29 +780,29 @@ userpatch_create()
 	display_alert "Press <Enter> after you are done" "waiting" "wrn"
 	read -r </dev/tty
 	tput cuu1
-	improved_git add .
+	git add .
 	# create patch out of changes
-	if ! improved_git diff-index --quiet --cached HEAD; then
+	if ! git diff-index --quiet --cached HEAD; then
 		# If Git is configured, create proper patch and ask for a name
-		if [[ -n $(improved_git config user.email) ]]; then
+		if [[ -n $(git config user.email) ]]; then
 			display_alert "Add / change patch name" "$COMMIT_MESSAGE" "wrn"
 			read -e -p "Patch description: " -i "$COMMIT_MESSAGE" COMMIT_MESSAGE
 			[[ -z "$COMMIT_MESSAGE" ]] && COMMIT_MESSAGE="Patching something"
-			improved_git commit -s -m "$COMMIT_MESSAGE"
-			improved_git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com/armbian/build" > "${patch}"
-			PATCHFILE=$(improved_git format-patch -1 HEAD)
+			git commit -s -m "$COMMIT_MESSAGE"
+			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com/armbian/build" > "${patch}"
+			PATCHFILE=$(git format-patch -1 HEAD)
 			rm $PATCHFILE # delete the actual file
 			# create a symlink to have a nice name ready
 			find $DEST/patch/ -type l -delete # delete any existing
 			ln -sf $patch $DEST/patch/$PATCHFILE
 		else
-			improved_git diff --staged > "${patch}"
+			git diff --staged > "${patch}"
 		fi
 		display_alert "You will find your patch here:" "$patch" "info"
 	else
 		display_alert "No changes found, skipping patch creation" "" "wrn"
 	fi
-	improved_git reset --soft HEAD~
+	git reset --soft HEAD~
 	for i in {3..1..1}; do echo -n "$i." && sleep 1; done
 }
 
