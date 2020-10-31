@@ -565,6 +565,9 @@ update_initramfs()
 	chroot $chroot_target /bin/bash -c "$update_initramfs_cmd" >> $DEST/debug/install.log 2>&1
 	display_alert "Updated initramfs." "for details see: $DEST/debug/install.log" "ext"
 
+	display_alert "Re-enabling" "initramfs-tools hook for kernel"
+	chroot "${SDCARD}" /bin/bash -c "chmod +x /etc/kernel/postinst.d/initramfs-tools" "${DEST}"/debug/install.log 2>&1
+
 	umount_chroot "$chroot_target/"
 	rm $chroot_target/usr/bin/$QEMU_BINARY
 
