@@ -140,6 +140,12 @@ fi
 CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
 DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
 
+desktop_element_available_for_arch "${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}" "${ARCH}"
+
+if [[ $? != 0 ]]; then
+	exit_with_error "The desktop environment ${DESKTOP_ENVIRONMENT} is not available for your architecture ${ARCH}"
+fi
+
 aggregate_all_debootstrap() {
 	local looked_up_subpath="${1}"
 	local separator="${2}"

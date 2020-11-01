@@ -398,9 +398,25 @@ show_select_menu() {
 
 # Myy : Once we got a list of selected groups, parse the PACKAGE_LIST inside configuration.sh
 
-DESKTOP_CONFIGS_DIR="${SRC}/config/desktop/${RELEASE}/environments"
+DESKTOP_ELEMENTS_DIR="${SRC}/config/desktop/${RELEASE}"
+DESKTOP_CONFIGS_DIR="${DESKTOP_ELEMENTS_DIR}/environments"
 DESKTOP_CONFIG_PREFIX="config_"
-DESKTOP_APPGROUPS_DIR="${SRC}/config/desktop/${RELEASE}/appgroups"
+DESKTOP_APPGROUPS_DIR="${DESKTOP_ELEMENTS_DIR}/appgroups"
+
+desktop_element_available_for_arch() {
+	local desktop_element_path="${1}"
+	local targeted_arch="${2}"
+
+	local arch_limitation_file="${1}/only_for"
+
+	display_alert "Checking if ${desktop_element_path} is available for ${targeted_arch} in ${arch_limitation_file}"
+	if [[ -f "${arch_limitation_file}" ]]; then
+		grep -- "${targeted_arch}" "${arch_limitation_file}"
+		return $?
+	else
+		return 0
+	fi
+}
 
 # Myy : FIXME Rename CONFIG to PACKAGE_LIST
 DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH=""
@@ -408,7 +424,7 @@ DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH=""
 if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
 	options=()
 	for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
-		desktop_env_name=$(basename $desktop_env_dir)
+		desktop_env_name=$(basename ${desktop_env_dir})
 		options+=("${desktop_env_name}" "${desktop_env_name^} desktop environment")
 	done
 
@@ -419,7 +435,7 @@ if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
 	echo "You have chosen $DESKTOP_ENVIRONMENT as your default desktop environment !? WHY !?"
 	unset options
 
-	if [[ -z $DESKTOP_ENVIRONMENT ]]; then
+	if [[ -z "${DESKTOP_ENVIRONMENT}" ]]; then
 		exit_with_error "No desktop environment selected..."
 	fi
 fi
