@@ -315,6 +315,7 @@ prepare_partitions()
 	parttype[fat]=fat16
 	parttype[f2fs]=ext4 # not a copy-paste error
 	parttype[btrfs]=btrfs
+	parttype[xfs]=xfs
 	# parttype[nfs] is empty
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
@@ -327,6 +328,7 @@ prepare_partitions()
 	mkopts[ext2]='-q'
 	# mkopts[f2fs] is empty
 	mkopts[btrfs]='-m dup'
+	# mkopts[xfs] is empty
 	# mkopts[nfs] is empty
 
 	mkfs[ext4]=ext4
@@ -334,6 +336,7 @@ prepare_partitions()
 	mkfs[fat]=vfat
 	mkfs[f2fs]=f2fs
 	mkfs[btrfs]=btrfs
+	mkfs[xfs]=xfs
 	# mkfs[nfs] is empty
 
 	mountopts[ext4]=',commit=600,errors=remount-ro'
@@ -341,6 +344,7 @@ prepare_partitions()
 	# mountopts[fat] is empty
 	# mountopts[f2fs] is empty
 	mountopts[btrfs]=',commit=600'
+	# mountopts[xfs] is empty
 	# mountopts[nfs] is empty
 
 	# default BOOTSIZE to use if not specified
