@@ -20,16 +20,24 @@ compilation_prepare()
 	# Maintaining one from central location starting with 5.3+
 	# Temporally set for new "default->legacy,next->current" family naming
 
-	if linux-version compare "${version}" ge 5.6; then
+	if linux-version compare "${version}" ge 5.10; then
+		display_alert "Adjusting" "packaging" "info"
+		cd "$kerneldir" || exit
+		process_patch_file "${SRC}/patch/misc/general-packaging-5.10.y.patch" "applying"
+	elif linux-version compare "${version}" ge 5.8.17 \
+		&& linux-version compare "${version}" le 5.9 \
+		|| linux-version compare "${version}" ge 5.9.2; then
+			display_alert "Adjusting" "packaging" "info"
+			cd "$kerneldir" || exit
+			process_patch_file "${SRC}/patch/misc/general-packaging-5.8-9.y.patch" "applying"
+	elif linux-version compare "${version}" ge 5.6; then
 		display_alert "Adjusting" "packaging" "info"
 		cd "$kerneldir" || exit
 		process_patch_file "${SRC}/patch/misc/general-packaging-5.6.y.patch" "applying"
-	else
-		if linux-version compare "${version}" ge 5.3; then
-			display_alert "Adjusting" "packaging" "info"
-			cd "$kerneldir" || exit
-			process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch" "applying"
-		fi
+	elif linux-version compare "${version}" ge 5.3; then
+		display_alert "Adjusting" "packaging" "info"
+		cd "$kerneldir" || exit
+		process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch" "applying"
 	fi
 
 	if [[ "${version}" == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 || \
@@ -81,7 +89,11 @@ compilation_prepare()
 
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.8.10-0001-Revert-vgacon-remove-software-scrollback-support.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.8.10-0002-Revert-fbcon-remove-now-unusued-softback_lines-curso.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.8.10-0003-Revert-fbcon-remove-soft-scrollback-code.patch" "applying"
+		if linux-version compare "${version}" ge 5.10; then
+			process_patch_file "${SRC}/patch/misc/bootsplash-5.10.y-0003-Revert-fbcon-remove-soft-scrollback-code.patch" "applying"
+		else
+			process_patch_file "${SRC}/patch/misc/bootsplash-5.8.10-0003-Revert-fbcon-remove-soft-scrollback-code.patch" "applying"
+		fi
 
 		process_patch_file "${SRC}/patch/misc/0001-bootsplash.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/0002-bootsplash.patch" "applying"
