@@ -51,6 +51,8 @@ cd build
 ./compile.sh
 ```
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
+- The script will take care about preparing the workspace like installing necessary dependencies and downloading sources and tools.
+- It guides through the process until either a kernel package set or a readyo-to-image for a sdcard is created.
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
