@@ -307,8 +307,8 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 		distro_menu "bionic"
 		distro_menu "bullseye"
 		distro_menu "groovy"
-		distro_menu "stretch"
-		distro_menu "xenial"
+#		distro_menu "stretch"
+#		distro_menu "xenial"
 
 		RELEASE=$(dialog --stdout --title "Choose a release package base" --backtitle "$backtitle" \
 		--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
