@@ -332,7 +332,10 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
-	[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
+	if [[ ${BUILD_DESKTOP} == "yes" ]]; then
+		BUILD_MINIMAL=no
+		SELECTED_CONFIGURATION="desktop"
+	fi
 
 fi
 
@@ -345,11 +348,27 @@ if [[ $KERNEL_ONLY != yes && $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_MINIMAL ]] && exit_with_error "No option selected"
+	if [[ $BUILD_MINIMAL == "yes" ]]; then
+		SELECTED_CONFIGURATION="cli_minimal"
+	else
+		SELECTED_CONFIGURATION="cli_standard"
+	fi
 
 fi
 
 #prevent conflicting setup
-[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	BUILD_MINIMAL=no
+	SELECTED_CONFIGURATION="desktop"
+elif [[ $BUILD_MINIMAL != "yes" || ! -z "${BUILD_MINIMAL+x}" ]]; then
+	BUILD_MINIMAL=no # Just in case BUILD_MINIMAL is not defined
+	BUILD_DESKTOP=no
+	SELECTED_CONFIGURATION="cli_standard"
+elif [[ $BUILD_MINIMAL == "yes" ]]; then
+	BUILD_DESKTOP=no
+	SELECTED_CONFIGURATION="cli_minimal"
+fi
+
 [[ $BUILD_MINIMAL == yes ]] && EXTERNAL=no
 
 # Myy : Menu configuration for choosing desktop configurations
@@ -454,21 +473,6 @@ if [[ $BUILD_DESKTOP == "yes" && -z ${DESKTOP_APPGROUPS_SELECTED+x} ]]; then
 	unset options
 fi
 
-#if [[ -z ${DESKTOP_APT_FLAGS_SELECTED+x} ]]; then
-# 
-#	options=()
-#	options+=("recommends" "Install packages recommended by selected desktop packages" off)
-#	options+=("suggests" "Install packages suggested by selected desktop packages" off)
-#
-#	DESKTOP_APT_FLAGS_SELECTED=$(\
-#		show_select_menu \
-#		"Choose Apt Additional FLags" \
-#		"$backtitle" \
-#		"Select to enable additional install flags for builds" \
-#		"${options[@]}")
-# 
-#	unset options
-#fi
 #exit_with_error 'Testing'
 
 # Expected variables :
@@ -499,18 +503,13 @@ get_all_potential_paths_for() {
 
 # Expected variables
 # - aggregated_content
-# - BOARD
-# - DESKTOP_ENVIRONMENT
-# - DESKTOP_APPGROUPS_SELECTED
-# - DESKTOP_APPGROUPS_DIR
-aggregate_all() {
-	looked_up_subpath="${1}"
-	separator="${2}"
-
-	local potential_paths=""
-	get_all_potential_paths_for "${looked_up_subpath}"
-
+# - potential_paths
+# - separator
+# Write to variables :
+# - aggregated_content
+aggregate_content() {
 	echo "Potential paths : ${potential_paths}"
+
 	for filepath in ${potential_paths}; do
 		echo "$filepath exist ?"
 		if [[ -f "${filepath}" ]]; then
@@ -522,8 +521,27 @@ aggregate_all() {
 		fi
 
 	done
+}
+
+# Expected variables
+# - aggregated_content
+# - BOARD
+# - DESKTOP_ENVIRONMENT
+# - DESKTOP_APPGROUPS_SELECTED
+# - DESKTOP_APPGROUPS_DIR
+# Write to variables :
+# - aggregated_content
+aggregate_all() {
+	looked_up_subpath="${1}"
+	separator="${2}"
+
+	local potential_paths=""
+	get_all_potential_paths_for "${looked_up_subpath}"
+
+	aggregate_content
 
 }
+
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh

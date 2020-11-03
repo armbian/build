@@ -130,20 +130,23 @@ install_deb_chroot()
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
 	LC_ALL=C LANG=C chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq \
 		$apt_extra --no-install-recommends install ./root/$name" >> "${DEST}"/debug/install.log 2>&1
-} #############################################################################
+}
 
+# this function can probably be replaced with previous since we removed DESKTOP_APT_FLAGS_SELECTED
 install_deb_chroot_desktop()
 {
 	local package=$1
 	local name
 	name=$(basename "${package}")
+
 	local apt_install_flags=""
 	for flag in ${DESKTOP_APT_FLAGS_SELECTED}; do
 		apt_install_flags+=" --install-${flag}"
 	done
+
 	[[ ! -f "${SDCARD}/root/${name}" ]] && cp "${package}" "${SDCARD}/root/${name}"
 	display_alert "Installing" "$name"
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
 	LC_ALL=C LANG=C chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -yqq \
 		$apt_extra install ${apt_install_flags} ./root/$name" >> "${DEST}"/debug/install.log 2>&1
-} #############################################################################
+}

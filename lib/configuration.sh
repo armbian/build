@@ -132,57 +132,108 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == focal || $RELEASE == groovy ]]; then
+if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == focal || $RELEASE == eoan ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
 fi
 
+CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
+DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
+
+aggregate_all_debootstrap() {
+	local looked_up_subpath="${1}"
+	local separator="${2}"
+	local potential_paths="${DEBOOTSTRAP_CONFIG_PATH}/${looked_up_subpath}"
+	potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/custom/boards/${BOARD}/${looked_up_subpath}"
+	display_alert "SELECTED_CONFIGURATION : ${SELECTED_CONFIGURATION}"
+	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
+		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/debootstrap/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/debootstrap/custom/boards/${BOARD}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+	fi
+
+	aggregate_content
+}
+
+aggregated_content=""
+aggregate_all_debootstrap "packages"
+DEBOOTSTRAP_LIST="${aggregated_content}"
+display_alert "DEBOOTSTRAP LIST : ${DEBOOTSTRAP_LIST}"
+unset aggregated_content
+
+aggregated_content=""
+aggregate_all_debootstrap "components"
+DEBOOTSTRAP_COMPONENTS="${aggregated_content}"
+display_alert "DEBOOTSTRAP_COMPONENTS : ${DEBOOTSTRAP_COMPONENTS}"
+unset aggregated_content
+
 # Base system dependencies. Since adding MINIMAL_IMAGE we rely on "variant=minbase" which has very basic package set
-DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certificates bzip2 console-setup cpio cron \
-	dbus init initramfs-tools iputils-ping isc-dhcp-client kmod less libpam-systemd \
-	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
-	wireless-regdb crda dmsetup rsync tzdata"
+#DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certificates bzip2 console-setup cpio cron \
+#	dbus init initramfs-tools iputils-ping isc-dhcp-client kmod less libpam-systemd \
+#	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
+#	wireless-regdb crda dmsetup rsync tzdata"
+
+display_alert "Debootstrap packages list : $DEBOOTSTRAP_LIST"
 
 # Myy : ???
-[[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
+# [[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
 
-# tab cleanup is mandatory
-DEBOOTSTRAP_LIST=$(echo $DEBOOTSTRAP_LIST | sed -e 's,\\[trn],,g')
+aggregate_all_cli() {
+	local looked_up_subpath="${1}"
+	local separator="${2}"
+	local potential_paths="${CLI_CONFIG_PATH}/main/${looked_up_subpath}"
+	potential_paths+=" ${CLI_CONFIG_PATH}/main/custom/boards/${BOARD}/${looked_up_subpath}"
+	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
+		potential_paths+=" ${CLI_CONFIG_PATH}/main/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+		potential_paths+=" ${CLI_CONFIG_PATH}/main/custom/boards/${BOARD}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+	fi
+	
+	aggregate_content
+}
+
+aggregated_content=""
+aggregate_all_cli "packages" " "
+display_alert "Aggregated content : ${aggregated_content}"
+PACKAGE_LIST="${aggregated_content}"
+unset aggregated_content
+
+aggregated_content=""
+aggregate_all_cli "packages.additional" " "
+PACKAGE_LIST_ADDITIONAL="${aggregated_content}"
+unset aggregated_content
 
 # For minimal build different set of packages is needed
 # Essential packages for minimal build
-PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chrony parted dialog \
-		ncurses-term sysfsutils toilet figlet u-boot-tools usbutils openssh-server \
-		nocache debconf-utils python3-apt"
+# PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chrony parted dialog \
+# 		ncurses-term sysfsutils toilet figlet u-boot-tools usbutils openssh-server \
+# 		nocache debconf-utils python3-apt"
 
-[[ $ROOTFS_TYPE == xfs ]] && PACKAGE_LIST="$PACKAGE_LIST xfsprogs"
+# # Non-essential packages for minimal build
+# PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf iozone3 jq libcrack2 cracklib-runtime curl"
 
-# Non-essential packages for minimal build
-PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf iozone3 jq libcrack2 cracklib-runtime curl"
-
-if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
-	# Essential packages
-	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
-		iw wpasupplicant sudo linux-base crda \
-		wireless-regdb unattended-upgrades \
-		console-setup unicode-data initramfs-tools \
-		ca-certificates expect iptables automake html2text \
-		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
+# if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
+# 	# Essential packages
+# 	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
+# 		iw wpasupplicant sudo linux-base crda \
+# 		wireless-regdb unattended-upgrades \
+# 		console-setup unicode-data initramfs-tools \
+# 		ca-certificates expect iptables automake html2text \
+# 		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
 
 
-	# Non-essential packages
-	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils btrfs-progs dosfstools iotop stress screen \
-		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
-		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
-		hostapd git ethtool unzip ifenslave libpam-systemd iperf3 \
-		software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode sunxi-tools"
-fi
+# 	# Non-essential packages
+# 	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL software-properties-common alsa-utils btrfs-progs dosfstools iotop stress screen \
+# 		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
+# 		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
+# 		hostapd git ethtool unzip ifenslave libpam-systemd iperf3 \
+# 		libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode sunxi-tools"
+# fi
 
 
 # Dependent desktop packages
 # Myy : Sources packages from file here
 
+# Myy : FIXME Rename aggregate_all to aggregate_all_desktop
 aggregated_content=""
 aggregate_all "packages" " "
 
@@ -192,53 +243,25 @@ unset aggregated_content
 
 echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}"
 
-case $RELEASE in
+# Myy : Clean the Debootstrap lists. The packages list will be cleaned when necessary.
+# This horrendous cleanup syntax is used to remove trailing and leading spaces.
 
-	xenial)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" btrfs-tools"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db sysbench command-not-found selinux-policy-default"
-	;;
+# Previous comment : tab cleanup is mandatory
 
-	stretch)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench command-not-found selinux-policy-default"
-	;;
+DEBOOTSTRAP_LIST="${DEBOOTSTRAP_LIST#"${DEBOOTSTRAP_LIST%%[![:space:]]*}"}"
+DEBOOTSTRAP_LIST="${DEBOOTSTRAP_LIST%"${DEBOOTSTRAP_LIST##*[![:space:]]}"}"
 
-	bionic)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-	;;
+DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS#"${DEBOOTSTRAP_COMPONENTS%%[![:space:]]*}"}"
+DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS%"${DEBOOTSTRAP_COMPONENTS##*[![:space:]]}"}"
+DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
 
-	buster)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-	;;
-
-	bullseye)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" haveged fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
-	;;
-
-
-	focal)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-	;;
-
-	groovy)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-	;;
-
-esac
-
+display_alert "Deboostrap"
+display_alert "Components ${DEBOOTSTRAP_COMPONENTS}"
+display_alert "Packages ${DEBOOTSTRAP_LIST}"
+display_alert "----"
+display_alert "CLI packages"
+display_alert "Standard : ${PACKAGE_LIST}"
+display_alert "Additional : ${PACKAGE_LIST_ADDITIONAL}"
 
 DEBIAN_MIRROR='deb.debian.org/debian'
 DEBIAN_SECURTY='security.debian.org/'
@@ -272,13 +295,61 @@ fi
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
+
+# Clean up the list
+# Myy : Replace any single or multiple instance of 'space' characters
+# (spaces, tabs, newlines) by a single space character
+# DO NOT PUT quotes after 'echo', else the trick won't work.
+PACKAGE_LIST="${PACKAGE_LIST#"${PACKAGE_LIST%%[![:space:]]*}"}"
+PACKAGE_LIST="${PACKAGE_LIST%"${PACKAGE_LIST##*[![:space:]]}"}"
+PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
+
 PACKAGE_MAIN_LIST="${PACKAGE_LIST}"
-[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP $PACKAGE_LIST_DESKTOP_RECOMMENDS"
+
+# FIXME Myy: Factorize this...
+PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
+PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP%"${PACKAGE_LIST_DESKTOP##*[![:space:]]}"}"
+PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+
+[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
+aggregated_content=""
+aggregate_all_cli "packages.remove" " "
+aggregate_all "packages.remove" " "
+PACKAGE_LIST_RM="${PACKAGE_LIST_RM} ${aggregated_content}"
+unset aggregated_content
+
+PACKAGE_LIST_RM="${PACKAGE_LIST_RM#"${PACKAGE_LIST_RM%%[![:space:]]*}"}"
+PACKAGE_LIST_RM="${PACKAGE_LIST_RM%"${PACKAGE_LIST_RM##*[![:space:]]}"}"
+PACKAGE_LIST_RM="$(echo ${PACKAGE_LIST_RM})"
+
+display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}"
+display_alert "PACKAGE_LIST : ${PACKAGE_LIST}"
+display_alert "PACKAGE_LIST_RM : ${PACKAGE_LIST_RM}"
+
 if [[ -n $PACKAGE_LIST_RM ]]; then
-	PACKAGE_LIST=$(sed -r "s/\b($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\b//g" <<< "${PACKAGE_LIST}")
+	display_alert "Remove filter : $(tr ' ' '|' <<< ${PACKAGE_LIST_RM})"
+	# Turns out that \b can be tricked by dashes.
+	# So if you remove mesa-utils but still want to install "mesa-utils-extra"
+	# a "\b(mesa-utils)\b" filter will convert "mesa-utils-extra" to "-extra".
+	# \W is not tricked by this but consumes the surrounding spaces, so we
+	# replace the occurence by one space, to avoid sticking the next word to
+	# the previous one after consuming the spaces.
+	PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST} ")
+	PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_MAIN_LIST} ")
+	PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
 fi
+
+# Removing double spaces
+# Do not quote the variables. This would defeat the trick.
+PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
+PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
+PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+
+display_alert "After removal of packages.remove packages"
+display_alert "PACKAGE_MAIN_LIST : \"${PACKAGE_MAIN_LIST}\""
+display_alert "PACKAGE_LIST : \"${PACKAGE_LIST}\""
 
 # Give the option to configure DNS server used in the chroot during the build process
 [[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate

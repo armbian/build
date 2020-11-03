@@ -78,6 +78,7 @@ create_desktop_package ()
 
 	unset aggregated_content
 
+	# Myy : I'm preparing the common armbian folders, in advance, since the scripts are now splitted
 	mkdir -p "${destination}"/etc/armbian
 
 	local aggregated_content=""
@@ -171,11 +172,10 @@ desktop_postinstall ()
 	# disable display manager for first run
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable gdm3.service >/dev/null 2>&1"
-
 	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get update" >> "${DEST}"/debug/install.log
 
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" >> "${DEST}"/debug/install.log
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" >> "${DEST}"/debug/install.log
 	fi
 
 	if [[ -n ${PACKAGE_LIST_DESKTOP_FAMILY} ]]; then
