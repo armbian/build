@@ -123,7 +123,7 @@ exit_with_error()
 
 get_package_list_hash()
 {
-	( printf '%s\n' "${PACKAGE_LIST}" | sort -u; printf '%s\n' "${PACKAGE_LIST_EXCLUDE}" | sort -u; echo "${1}" ) \
+	( printf '%s\n' "${PACKAGE_MAIN_LIST}" | sort -u; printf '%s\n' "${PACKAGE_LIST}" | sort -u; printf '%s\n' "${PACKAGE_LIST_EXCLUDE}" | sort -u; echo "${1}" ) \
 		| md5sum | cut -d' ' -f 1
 }
 

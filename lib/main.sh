@@ -360,7 +360,7 @@ fi
 if [[ $BUILD_DESKTOP == "yes" ]]; then
 	BUILD_MINIMAL=no
 	SELECTED_CONFIGURATION="desktop"
-elif [[ $BUILD_MINIMAL != "yes" || ! -z "${BUILD_MINIMAL+x}" ]]; then
+elif [[ $BUILD_MINIMAL != "yes" || -z "${BUILD_MINIMAL}" ]]; then
 	BUILD_MINIMAL=no # Just in case BUILD_MINIMAL is not defined
 	BUILD_DESKTOP=no
 	SELECTED_CONFIGURATION="cli_standard"
@@ -415,7 +415,7 @@ if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
 	#DESKTOP_ENVIRONMENT=$(dialog --stdout --title "Choose a desktop environment" --backtitle "$backtitle" --menu "Select the default desktop environment to bundle with this image" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 
 	DESKTOP_ENVIRONMENT=$(show_menu "Choose a desktop environment" "$backtitle" "Select the default desktop environment to bundle with this image" "${options[@]}")
-	
+
 	echo "You have chosen $DESKTOP_ENVIRONMENT as your default desktop environment !? WHY !?"
 	unset options
 
