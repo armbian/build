@@ -1231,7 +1231,7 @@ download_and_verify()
 	local torrent=${server}$remotedir/${filename}.torrent
 	aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
 	--continue=false --allow-overwrite=true --dir="${localdir}" "${fromwho}" -o "${filename}.asc"
-	[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
+	[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn" &&  rm ${filename}.asc && return
 
 	# download torrent first
 	if [[ ${USE_TORRENT} == "yes" ]]; then
