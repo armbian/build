@@ -123,7 +123,7 @@ exit_with_error()
 
 get_package_list_hash()
 {
-	( printf '%s\n' "${PACKAGE_MAIN_LIST}" | sort -u; printf '%s\n' "${PACKAGE_LIST}" | sort -u; printf '%s\n' "${PACKAGE_LIST_EXCLUDE}" | sort -u; echo "${1}" ) \
+	( printf '%s\n' "${PACKAGE_LIST}" | sort -u; printf '%s\n' "${PACKAGE_LIST_EXCLUDE}" | sort -u; echo "${1}" ) \
 		| md5sum | cut -d' ' -f 1
 }
 
@@ -1172,8 +1172,8 @@ WEBSEED=(
 	)
 	if [[ -z $DOWNLOAD_MIRROR ]]; then
 		WEBSEED=(
-				"https://dl.armbian.com/"
-				)
+                "https://dl.armbian.com/"
+                )
 	fi
 	# aria2 simply split chunks based on sources count not depending on download speed
 	# when selecting china mirrors, use only China mirror, others are very slow there
@@ -1184,7 +1184,7 @@ WEBSEED=(
 	fi
 	for toolchain in ${WEBSEED[@]}; do
 		# use only live
-		if [[ -n $(wget -S --spider "${toolchain}${1}" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') ]]; then
+		if [[ $(wget -S --spider "${toolchain}${1}" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') ]]; then
 			text="${text} ${toolchain}${1}"
 		fi
 	done
@@ -1219,19 +1219,15 @@ download_and_verify()
 	if [[ -f "${SRC}"/config/torrents/${filename}.asc ]]; then
 		local torrent="${SRC}"/config/torrents/${filename}.torrent
 		ln -s "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
+	elif [[ ! $(wget -S --spider "${server}${remotedir}/${filename}.asc" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') ]]; then
+		return
+	else
+		# download control file
+		local torrent=${server}$remotedir/${filename}.torrent
+		aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
+		--continue=false --allow-overwrite=true --dir="${localdir}" "$(webseed "$remotedir/${filename}.asc")" -o "${filename}.asc"
+		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
 	fi
-
-	local fromwho=$(webseed "$remotedir/${filename}.asc")
-	[[ -z ${fromwho} ]] && return
-
-	wget -S --spider "${fromwho}" &>/dev/null
-	[[ $? -ne 0 ]] && return
-
-	# download control file
-	local torrent=${server}$remotedir/${filename}.torrent
-	aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
-	--continue=false --allow-overwrite=true --dir="${localdir}" "${fromwho}" -o "${filename}.asc"
-	[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn" &&  rm ${filename}.asc && return
 
 	# download torrent first
 	if [[ ${USE_TORRENT} == "yes" ]]; then
@@ -1262,7 +1258,7 @@ download_and_verify()
 			| grep 'HTTP/1.1 200 OK') ]]; then
 			display_alert "downloading using http(s) network" "$filename"
 			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
-			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" "${fromwho}" -o "${filename}"
+			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" "$(webseed "${remotedir}/${filename}")" -o "${filename}"
 			# mark complete
 			[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete" && echo ""
 
