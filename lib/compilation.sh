@@ -419,7 +419,7 @@ compile_kernel()
 	# produce deb packages: image, headers, firmware, dtb
 	echo -e "\n\t== deb packages: image, headers, firmware, dtb ==\n" >> "${DEST}"/debug/compilation.log
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
-		'make -j1 $kernel_packing \
+		'make $CTHREADS $kernel_packing \
 		KDEB_PKGVERSION=$REVISION \
 		BRANCH=$BRANCH \
 		LOCALVERSION="-${LINUXFAMILY}" \
@@ -454,7 +454,7 @@ compile_kernel()
 	cd .. || exit
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
-	cp ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
+	mv ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
 
 	# store git hash to the file
 	echo "${hash}" > "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
