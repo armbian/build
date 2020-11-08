@@ -419,7 +419,7 @@ compile_kernel()
 	# produce deb packages: image, headers, firmware, dtb
 	echo -e "\n\t== deb packages: image, headers, firmware, dtb ==\n" >> "${DEST}"/debug/compilation.log
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
-		'make -j1 $kernel_packing \
+		'make $CTHREADS $kernel_packing \
 		KDEB_PKGVERSION=$REVISION \
 		BRANCH=$BRANCH \
 		LOCALVERSION="-${LINUXFAMILY}" \
