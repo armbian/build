@@ -1,6 +1,9 @@
 # install lightdm greeter
 cp -R "${SRC}"/packages/blobs/desktop/lightdm "${destination}"/etc/armbian
 
+#fixed missing cacerts dir for java
+mkdir -p "${destination}"/etc/ssl/certs/java/cacerts
+
 # install default desktop settings
 mkdir -p "${destination}"/etc/skel
 cp -R "${SRC}"/packages/blobs/desktop/skel/. "${destination}"/etc/skel
@@ -20,3 +23,4 @@ cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/
 # install wallpapers
 mkdir -p "${destination}"/usr/share/backgrounds/xfce/
 cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/xfce/
+
