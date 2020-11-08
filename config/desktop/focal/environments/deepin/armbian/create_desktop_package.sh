@@ -12,3 +12,6 @@ cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/
 # install wallpapers
 mkdir -p "${destination}"/usr/share/wallpapers/armbian/
 cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/wallpapers/armbian/
+
+#make java cacerts dir
+mkdir -p "${destination}"/etc/ssl/certs/java/cacerts
