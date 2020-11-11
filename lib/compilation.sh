@@ -275,7 +275,8 @@ compile_uboot()
 
 	[[ ! -f $uboottempdir/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
-	mv "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
+	rsync -rq "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
+
 }
 
 compile_kernel()
@@ -447,14 +448,14 @@ compile_kernel()
 
 	if [[ $BUILD_KSRC != no ]]; then
 		fakeroot dpkg-deb -z0 -b "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
-		mv "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
+		rsync -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
 	fi
 	rm -rf "${sources_pkg_dir}"
 
 	cd .. || exit
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
-	mv ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
+	rsync -rq ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
 
 	# store git hash to the file
 	echo "${hash}" > "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
@@ -513,10 +514,10 @@ compile_firmware()
 
 	cd "${firmwaretempdir}" || exit
 	# pack
-	mv "armbian-firmware${FULL}" "armbian-firmware${FULL}_${REVISION}_all"
+	rsync -rq "armbian-firmware${FULL}" "armbian-firmware${FULL}_${REVISION}_all"
 	fakeroot dpkg -b "armbian-firmware${FULL}_${REVISION}_all" >> "${DEST}"/debug/install.log 2>&1
-	mv "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
-	mv "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
+	rsync -rq "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
+	rsync -rq "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
 
 	# remove temp directory
 	rm -rf "${firmwaretempdir}"
@@ -564,7 +565,7 @@ compile_armbian-config()
 	ln -sf /usr/sbin/softy "${tmpdir}"/usr/bin/softy
 
 	fakeroot dpkg -b "${tmpdir}" >/dev/null
-	mv "${tmpdir}.deb" "${DEB_STORAGE}/"
+	rsync -rq "${tmpdir}.deb" "${DEB_STORAGE}/"
 	rm -rf "${tmpdir}"
 
 }

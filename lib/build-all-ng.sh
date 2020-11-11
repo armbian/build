@@ -338,7 +338,7 @@ function build_all()
 							done
 
 					display_alert "Building ${n}."
-					if [[ "$KERNEL_ONLY" == "no" ]]; then
+					if [[ "$KERNEL_ONLY" == "no" && "${MULTITHREAD}" -gt 0 ]]; then
 						build_main &
 					else
 						build_main
