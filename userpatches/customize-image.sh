@@ -20,8 +20,6 @@ set -e
 
 # Import variable from env file
 source /tmp/overlay/image_env.sh
-# Import InternetCube functions
-source /tmp/overlay/internetcube/yunocube.sh
 
 # Disable core dumps because hostname keep crashing in qemu static
 ulimit -c 0
@@ -54,12 +52,17 @@ sed -i '/backport/ s/^deb/#deb/' /etc/apt/sources.list
 chage -d 99999999 root
 
 # Run the install script
-curl https://install.yunohost.org/buster | bash -s -- -a -d $YNH_BUILDER_BRANCH
-rm /var/log/yunohost-installation*
+wget https://install.yunohost.org/buster -O /tmp/yunohost_install_script
+bash /tmp/yunohost_install_script -a -d $YNH_BUILDER_BRANCH
+[[ -e /etc/yunohost ]] || exit 1
+rm -f /var/log/yunohost-installation*
 
 if [[ $YNH_BUILDER_INSTALL_INTERNETCUBE == "yes" ]]
 then
-  InstallInternetCubeServices
+    cp -r /tmp/overlay/install_internetcube /var/www/install_internetcube
+    pushd /var/www/install_internetcube/
+    source deploy/deploy.sh
+    popd
 fi
 
 # Override the first login script with our own (we don't care about desktop
