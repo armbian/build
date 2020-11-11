@@ -346,7 +346,7 @@ chroot_installpackages()
 	#		if apt-get -s -qq install \$p; then
 	#fi
 	apt-get -q ${apt_extra} --show-progress -o DPKG::Progress-Fancy=1 install -y ${install_list}
-	apt-get clean >> "${DEST}"/debug/install.log 2>&1
+	apt-get clean
 	[[ "${remote_only}" != yes ]] && apt-key del "925644A6"
 	rm /etc/apt/sources.list.d/armbian-temp.list 2>/dev/null
 	rm /etc/apt/preferences.d/90-armbian-temp.pref 2>/dev/null
