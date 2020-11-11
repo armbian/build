@@ -246,7 +246,7 @@ install_common()
 		chroot "${SDCARD}" /bin/bash -c "apt-get -qq -y install linux-u-boot-${BOARD}-${BRANCH}" >> "${DEST}"/debug/install.log 2>&1
 		# we need package later, move to output, apt-get must be here, apt deletes file
 		UPSTREM_VER=$(dpkg-deb -I "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb | grep Version | awk '{print $(NF)}')
-		rsync -qr "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb ${DEB_STORAGE}/${CHOSEN_UBOOT}_${UPSTREM_VER}_${ARCH}.deb
+		rsync -rq --delete-after "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb ${DEB_STORAGE}/${CHOSEN_UBOOT}_${UPSTREM_VER}_${ARCH}.deb
 	fi
 
 	# install kernel
