@@ -276,7 +276,6 @@ compile_uboot()
 	[[ ! -f $uboottempdir/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
 	rsync -rq --delete-after "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
-
 }
 
 compile_kernel()
