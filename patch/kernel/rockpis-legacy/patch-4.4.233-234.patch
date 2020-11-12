@@ -1,0 +1,934 @@
+diff --git a/Makefile b/Makefile
+index 8f363a3bcaf81..573b646a19936 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 233
++SUBLEVEL = 234
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/alpha/include/asm/io.h b/arch/alpha/include/asm/io.h
+index ff4049155c840..355aec0867f4d 100644
+--- a/arch/alpha/include/asm/io.h
++++ b/arch/alpha/include/asm/io.h
+@@ -491,10 +491,10 @@ extern inline void writeq(u64 b, volatile void __iomem *addr)
+ }
+ #endif
+ 
+-#define ioread16be(p) be16_to_cpu(ioread16(p))
+-#define ioread32be(p) be32_to_cpu(ioread32(p))
+-#define iowrite16be(v,p) iowrite16(cpu_to_be16(v), (p))
+-#define iowrite32be(v,p) iowrite32(cpu_to_be32(v), (p))
++#define ioread16be(p) swab16(ioread16(p))
++#define ioread32be(p) swab32(ioread32(p))
++#define iowrite16be(v,p) iowrite16(swab16(v), (p))
++#define iowrite32be(v,p) iowrite32(swab32(v), (p))
+ 
+ #define inb_p		inb
+ #define inw_p		inw
+diff --git a/arch/arm/kvm/mmu.c b/arch/arm/kvm/mmu.c
+index e0267532bd4e0..edd392fdc14bb 100644
+--- a/arch/arm/kvm/mmu.c
++++ b/arch/arm/kvm/mmu.c
+@@ -300,14 +300,6 @@ static void unmap_range(struct kvm *kvm, pgd_t *pgdp,
+ 		next = kvm_pgd_addr_end(addr, end);
+ 		if (!pgd_none(*pgd))
+ 			unmap_puds(kvm, pgd, addr, next);
+-		/*
+-		 * If we are dealing with a large range in
+-		 * stage2 table, release the kvm->mmu_lock
+-		 * to prevent starvation and lockup detector
+-		 * warnings.
+-		 */
+-		if (kvm && (next != end))
+-			cond_resched_lock(&kvm->mmu_lock);
+ 	} while (pgd++, addr = next, addr != end);
+ }
+ 
+diff --git a/arch/m68k/include/asm/m53xxacr.h b/arch/m68k/include/asm/m53xxacr.h
+index 3177ce8331d69..baee0c77b9818 100644
+--- a/arch/m68k/include/asm/m53xxacr.h
++++ b/arch/m68k/include/asm/m53xxacr.h
+@@ -88,9 +88,9 @@
+  * coherency though in all cases. And for copyback caches we will need
+  * to push cached data as well.
+  */
+-#define CACHE_INIT	  CACR_CINVA
+-#define CACHE_INVALIDATE  CACR_CINVA
+-#define CACHE_INVALIDATED CACR_CINVA
++#define CACHE_INIT        (CACHE_MODE + CACR_CINVA - CACR_EC)
++#define CACHE_INVALIDATE  (CACHE_MODE + CACR_CINVA)
++#define CACHE_INVALIDATED (CACHE_MODE + CACR_CINVA)
+ 
+ #define ACR0_MODE	((CONFIG_RAMBASE & 0xff000000) + \
+ 			 (0x000f0000) + \
+diff --git a/arch/powerpc/mm/fault.c b/arch/powerpc/mm/fault.c
+index d1f860ca03ade..101c202c813c8 100644
+--- a/arch/powerpc/mm/fault.c
++++ b/arch/powerpc/mm/fault.c
+@@ -192,6 +192,9 @@ static int mm_fault_error(struct pt_regs *regs, unsigned long addr, int fault)
+ 	return MM_FAULT_CONTINUE;
+ }
+ 
++// This comes from 64-bit struct rt_sigframe + __SIGNAL_FRAMESIZE
++#define SIGFRAME_MAX_SIZE	(4096 + 128)
++
+ /*
+  * For 600- and 800-family processors, the error_code parameter is DSISR
+  * for a data fault, SRR1 for an instruction fault. For 400-family processors
+@@ -341,7 +344,7 @@ retry:
+ 	/*
+ 	 * N.B. The POWER/Open ABI allows programs to access up to
+ 	 * 288 bytes below the stack pointer.
+-	 * The kernel signal delivery code writes up to about 1.5kB
++	 * The kernel signal delivery code writes up to about 4kB
+ 	 * below the stack pointer (r1) before decrementing it.
+ 	 * The exec code can write slightly over 640kB to the stack
+ 	 * before setting the user r1.  Thus we allow the stack to
+@@ -365,7 +368,7 @@ retry:
+ 		 * between the last mapped region and the stack will
+ 		 * expand the stack rather than segfaulting.
+ 		 */
+-		if (address + 2048 < uregs->gpr[1] && !store_update_sp)
++		if (address + SIGFRAME_MAX_SIZE < uregs->gpr[1] && !store_update_sp)
+ 			goto bad_area;
+ 	}
+ 	if (expand_stack(vma, address))
+diff --git a/drivers/gpu/drm/imx/imx-ldb.c b/drivers/gpu/drm/imx/imx-ldb.c
+index 31ca56e593f58..b9dc2ef64ed88 100644
+--- a/drivers/gpu/drm/imx/imx-ldb.c
++++ b/drivers/gpu/drm/imx/imx-ldb.c
+@@ -305,6 +305,7 @@ static void imx_ldb_encoder_disable(struct drm_encoder *encoder)
+ {
+ 	struct imx_ldb_channel *imx_ldb_ch = enc_to_imx_ldb_ch(encoder);
+ 	struct imx_ldb *ldb = imx_ldb_ch->ldb;
++	int dual = ldb->ldb_ctrl & LDB_SPLIT_MODE_EN;
+ 	int mux, ret;
+ 
+ 	/*
+@@ -321,14 +322,14 @@ static void imx_ldb_encoder_disable(struct drm_encoder *encoder)
+ 
+ 	drm_panel_disable(imx_ldb_ch->panel);
+ 
+-	if (imx_ldb_ch == &ldb->channel[0])
++	if (imx_ldb_ch == &ldb->channel[0] || dual)
+ 		ldb->ldb_ctrl &= ~LDB_CH0_MODE_EN_MASK;
+-	else if (imx_ldb_ch == &ldb->channel[1])
++	if (imx_ldb_ch == &ldb->channel[1] || dual)
+ 		ldb->ldb_ctrl &= ~LDB_CH1_MODE_EN_MASK;
+ 
+ 	regmap_write(ldb->regmap, IOMUXC_GPR2, ldb->ldb_ctrl);
+ 
+-	if (ldb->ldb_ctrl & LDB_SPLIT_MODE_EN) {
++	if (dual) {
+ 		clk_disable_unprepare(ldb->clk[0]);
+ 		clk_disable_unprepare(ldb->clk[1]);
+ 	}
+diff --git a/drivers/input/mouse/psmouse-base.c b/drivers/input/mouse/psmouse-base.c
+index ad18dab0ac476..5bd9633541b07 100644
+--- a/drivers/input/mouse/psmouse-base.c
++++ b/drivers/input/mouse/psmouse-base.c
+@@ -1911,7 +1911,7 @@ static int psmouse_get_maxproto(char *buffer, const struct kernel_param *kp)
+ {
+ 	int type = *((unsigned int *)kp->arg);
+ 
+-	return sprintf(buffer, "%s", psmouse_protocol_by_type(type)->name);
++	return sprintf(buffer, "%s\n", psmouse_protocol_by_type(type)->name);
+ }
+ 
+ static int __init psmouse_init(void)
+diff --git a/drivers/media/pci/ttpci/budget-core.c b/drivers/media/pci/ttpci/budget-core.c
+index e9674b40007c1..6107c469efa07 100644
+--- a/drivers/media/pci/ttpci/budget-core.c
++++ b/drivers/media/pci/ttpci/budget-core.c
+@@ -386,20 +386,25 @@ static int budget_register(struct budget *budget)
+ 	ret = dvbdemux->dmx.add_frontend(&dvbdemux->dmx, &budget->hw_frontend);
+ 
+ 	if (ret < 0)
+-		return ret;
++		goto err_release_dmx;
+ 
+ 	budget->mem_frontend.source = DMX_MEMORY_FE;
+ 	ret = dvbdemux->dmx.add_frontend(&dvbdemux->dmx, &budget->mem_frontend);
+ 	if (ret < 0)
+-		return ret;
++		goto err_release_dmx;
+ 
+ 	ret = dvbdemux->dmx.connect_frontend(&dvbdemux->dmx, &budget->hw_frontend);
+ 	if (ret < 0)
+-		return ret;
++		goto err_release_dmx;
+ 
+ 	dvb_net_init(&budget->dvb_adapter, &budget->dvb_net, &dvbdemux->dmx);
+ 
+ 	return 0;
++
++err_release_dmx:
++	dvb_dmxdev_release(&budget->dmxdev);
++	dvb_dmx_release(&budget->demux);
++	return ret;
+ }
+ 
+ static void budget_unregister(struct budget *budget)
+diff --git a/drivers/media/platform/davinci/vpss.c b/drivers/media/platform/davinci/vpss.c
+index c2c68988e38ac..9884b34d6f406 100644
+--- a/drivers/media/platform/davinci/vpss.c
++++ b/drivers/media/platform/davinci/vpss.c
+@@ -519,19 +519,31 @@ static void vpss_exit(void)
+ 
+ static int __init vpss_init(void)
+ {
++	int ret;
++
+ 	if (!request_mem_region(VPSS_CLK_CTRL, 4, "vpss_clock_control"))
+ 		return -EBUSY;
+ 
+ 	oper_cfg.vpss_regs_base2 = ioremap(VPSS_CLK_CTRL, 4);
+ 	if (unlikely(!oper_cfg.vpss_regs_base2)) {
+-		release_mem_region(VPSS_CLK_CTRL, 4);
+-		return -ENOMEM;
++		ret = -ENOMEM;
++		goto err_ioremap;
+ 	}
+ 
+ 	writel(VPSS_CLK_CTRL_VENCCLKEN |
+-		     VPSS_CLK_CTRL_DACCLKEN, oper_cfg.vpss_regs_base2);
++	       VPSS_CLK_CTRL_DACCLKEN, oper_cfg.vpss_regs_base2);
++
++	ret = platform_driver_register(&vpss_driver);
++	if (ret)
++		goto err_pd_register;
++
++	return 0;
+ 
+-	return platform_driver_register(&vpss_driver);
++err_pd_register:
++	iounmap(oper_cfg.vpss_regs_base2);
++err_ioremap:
++	release_mem_region(VPSS_CLK_CTRL, 4);
++	return ret;
+ }
+ subsys_initcall(vpss_init);
+ module_exit(vpss_exit);
+diff --git a/drivers/scsi/libfc/fc_disc.c b/drivers/scsi/libfc/fc_disc.c
+index 880a9068ca126..ef06af4e3611d 100644
+--- a/drivers/scsi/libfc/fc_disc.c
++++ b/drivers/scsi/libfc/fc_disc.c
+@@ -595,8 +595,12 @@ static void fc_disc_gpn_id_resp(struct fc_seq *sp, struct fc_frame *fp,
+ 	mutex_lock(&disc->disc_mutex);
+ 	if (PTR_ERR(fp) == -FC_EX_CLOSED)
+ 		goto out;
+-	if (IS_ERR(fp))
+-		goto redisc;
++	if (IS_ERR(fp)) {
++		mutex_lock(&disc->disc_mutex);
++		fc_disc_restart(disc);
++		mutex_unlock(&disc->disc_mutex);
++		goto out;
++	}
+ 
+ 	cp = fc_frame_payload_get(fp, sizeof(*cp));
+ 	if (!cp)
+@@ -621,7 +625,7 @@ static void fc_disc_gpn_id_resp(struct fc_seq *sp, struct fc_frame *fp,
+ 				new_rdata->disc_id = disc->disc_id;
+ 				lport->tt.rport_login(new_rdata);
+ 			}
+-			goto out;
++			goto free_fp;
+ 		}
+ 		rdata->disc_id = disc->disc_id;
+ 		lport->tt.rport_login(rdata);
+@@ -635,6 +639,8 @@ static void fc_disc_gpn_id_resp(struct fc_seq *sp, struct fc_frame *fp,
+ redisc:
+ 		fc_disc_restart(disc);
+ 	}
++free_fp:
++	fc_frame_free(fp);
+ out:
+ 	mutex_unlock(&disc->disc_mutex);
+ 	kref_put(&rdata->kref, lport->tt.rport_destroy);
+diff --git a/drivers/video/fbdev/omap2/dss/dss.c b/drivers/video/fbdev/omap2/dss/dss.c
+index 9200a8668b498..a57c3a5f4bf8b 100644
+--- a/drivers/video/fbdev/omap2/dss/dss.c
++++ b/drivers/video/fbdev/omap2/dss/dss.c
+@@ -843,7 +843,7 @@ static const struct dss_features omap34xx_dss_feats = {
+ };
+ 
+ static const struct dss_features omap3630_dss_feats = {
+-	.fck_div_max		=	32,
++	.fck_div_max		=	31,
+ 	.dss_fck_multiplier	=	1,
+ 	.parent_clk_name	=	"dpll4_ck",
+ 	.dpi_select_source	=	&dss_dpi_select_source_omap2_omap3,
+diff --git a/drivers/virtio/virtio_ring.c b/drivers/virtio/virtio_ring.c
+index a01a41a412693..6b3565feddb21 100644
+--- a/drivers/virtio/virtio_ring.c
++++ b/drivers/virtio/virtio_ring.c
+@@ -603,6 +603,9 @@ bool virtqueue_poll(struct virtqueue *_vq, unsigned last_used_idx)
+ {
+ 	struct vring_virtqueue *vq = to_vvq(_vq);
+ 
++	if (unlikely(vq->broken))
++		return false;
++
+ 	virtio_mb(vq->weak_barriers);
+ 	return (u16)last_used_idx != virtio16_to_cpu(_vq->vdev, vq->vring.used->idx);
+ }
+diff --git a/drivers/watchdog/f71808e_wdt.c b/drivers/watchdog/f71808e_wdt.c
+index 2048aad91add8..2b12ef019ae02 100644
+--- a/drivers/watchdog/f71808e_wdt.c
++++ b/drivers/watchdog/f71808e_wdt.c
+@@ -642,9 +642,9 @@ static int __init watchdog_init(int sioaddr)
+ 	 * into the module have been registered yet.
+ 	 */
+ 	watchdog.sioaddr = sioaddr;
+-	watchdog.ident.options = WDIOC_SETTIMEOUT
+-				| WDIOF_MAGICCLOSE
+-				| WDIOF_KEEPALIVEPING;
++	watchdog.ident.options = WDIOF_MAGICCLOSE
++				| WDIOF_KEEPALIVEPING
++				| WDIOF_CARDRESET;
+ 
+ 	snprintf(watchdog.ident.identity,
+ 		sizeof(watchdog.ident.identity), "%s watchdog",
+diff --git a/drivers/xen/preempt.c b/drivers/xen/preempt.c
+index 5f6b77ea34fb5..128375ff80b8c 100644
+--- a/drivers/xen/preempt.c
++++ b/drivers/xen/preempt.c
+@@ -31,7 +31,7 @@ EXPORT_SYMBOL_GPL(xen_in_preemptible_hcall);
+ asmlinkage __visible void xen_maybe_preempt_hcall(void)
+ {
+ 	if (unlikely(__this_cpu_read(xen_in_preemptible_hcall)
+-		     && need_resched())) {
++		     && need_resched() && !preempt_count())) {
+ 		/*
+ 		 * Clear flag as we may be rescheduled on a different
+ 		 * cpu.
+diff --git a/fs/btrfs/ctree.h b/fs/btrfs/ctree.h
+index 0b06d4942da77..8fb9a1e0048be 100644
+--- a/fs/btrfs/ctree.h
++++ b/fs/btrfs/ctree.h
+@@ -4096,6 +4096,8 @@ ssize_t btrfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
+ /* super.c */
+ int btrfs_parse_options(struct btrfs_root *root, char *options);
+ int btrfs_sync_fs(struct super_block *sb, int wait);
++char *btrfs_get_subvol_name_from_objectid(struct btrfs_fs_info *fs_info,
++					  u64 subvol_objectid);
+ 
+ #ifdef CONFIG_PRINTK
+ __printf(2, 3)
+diff --git a/fs/btrfs/export.c b/fs/btrfs/export.c
+index 2513a7f533342..92f80ed642194 100644
+--- a/fs/btrfs/export.c
++++ b/fs/btrfs/export.c
+@@ -55,9 +55,9 @@ static int btrfs_encode_fh(struct inode *inode, u32 *fh, int *max_len,
+ 	return type;
+ }
+ 
+-static struct dentry *btrfs_get_dentry(struct super_block *sb, u64 objectid,
+-				       u64 root_objectid, u32 generation,
+-				       int check_generation)
++struct dentry *btrfs_get_dentry(struct super_block *sb, u64 objectid,
++				u64 root_objectid, u32 generation,
++				int check_generation)
+ {
+ 	struct btrfs_fs_info *fs_info = btrfs_sb(sb);
+ 	struct btrfs_root *root;
+@@ -150,7 +150,7 @@ static struct dentry *btrfs_fh_to_dentry(struct super_block *sb, struct fid *fh,
+ 	return btrfs_get_dentry(sb, objectid, root_objectid, generation, 1);
+ }
+ 
+-static struct dentry *btrfs_get_parent(struct dentry *child)
++struct dentry *btrfs_get_parent(struct dentry *child)
+ {
+ 	struct inode *dir = d_inode(child);
+ 	struct btrfs_root *root = BTRFS_I(dir)->root;
+diff --git a/fs/btrfs/export.h b/fs/btrfs/export.h
+index 074348a95841f..7a305e5549991 100644
+--- a/fs/btrfs/export.h
++++ b/fs/btrfs/export.h
+@@ -16,4 +16,9 @@ struct btrfs_fid {
+ 	u64 parent_root_objectid;
+ } __attribute__ ((packed));
+ 
++struct dentry *btrfs_get_dentry(struct super_block *sb, u64 objectid,
++				u64 root_objectid, u32 generation,
++				int check_generation);
++struct dentry *btrfs_get_parent(struct dentry *child);
++
+ #endif
+diff --git a/fs/btrfs/super.c b/fs/btrfs/super.c
+index 404051bf5cba9..77e6ce0e1e351 100644
+--- a/fs/btrfs/super.c
++++ b/fs/btrfs/super.c
+@@ -843,8 +843,8 @@ out:
+ 	return error;
+ }
+ 
+-static char *get_subvol_name_from_objectid(struct btrfs_fs_info *fs_info,
+-					   u64 subvol_objectid)
++char *btrfs_get_subvol_name_from_objectid(struct btrfs_fs_info *fs_info,
++					  u64 subvol_objectid)
+ {
+ 	struct btrfs_root *root = fs_info->tree_root;
+ 	struct btrfs_root *fs_root;
+@@ -1120,6 +1120,7 @@ static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
+ 	struct btrfs_fs_info *info = btrfs_sb(dentry->d_sb);
+ 	struct btrfs_root *root = info->tree_root;
+ 	char *compress_type;
++	const char *subvol_name;
+ 
+ 	if (btrfs_test_opt(root, DEGRADED))
+ 		seq_puts(seq, ",degraded");
+@@ -1204,8 +1205,13 @@ static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
+ #endif
+ 	seq_printf(seq, ",subvolid=%llu",
+ 		  BTRFS_I(d_inode(dentry))->root->root_key.objectid);
+-	seq_puts(seq, ",subvol=");
+-	seq_dentry(seq, dentry, " \t\n\\");
++	subvol_name = btrfs_get_subvol_name_from_objectid(info,
++			BTRFS_I(d_inode(dentry))->root->root_key.objectid);
++	if (!IS_ERR(subvol_name)) {
++		seq_puts(seq, ",subvol=");
++		seq_escape(seq, subvol_name, " \t\n\\");
++		kfree(subvol_name);
++	}
+ 	return 0;
+ }
+ 
+@@ -1323,8 +1329,8 @@ static struct dentry *mount_subvol(const char *subvol_name, u64 subvol_objectid,
+ 				goto out;
+ 			}
+ 		}
+-		subvol_name = get_subvol_name_from_objectid(btrfs_sb(mnt->mnt_sb),
+-							    subvol_objectid);
++		subvol_name = btrfs_get_subvol_name_from_objectid(
++					btrfs_sb(mnt->mnt_sb), subvol_objectid);
+ 		if (IS_ERR(subvol_name)) {
+ 			root = ERR_CAST(subvol_name);
+ 			subvol_name = NULL;
+diff --git a/fs/eventpoll.c b/fs/eventpoll.c
+index 240d9ceb8d0c6..b8959d0d4c723 100644
+--- a/fs/eventpoll.c
++++ b/fs/eventpoll.c
+@@ -1719,9 +1719,11 @@ static int ep_loop_check_proc(void *priv, void *cookie, int call_nests)
+ 			 * not already there, and calling reverse_path_check()
+ 			 * during ep_insert().
+ 			 */
+-			if (list_empty(&epi->ffd.file->f_tfile_llink))
++			if (list_empty(&epi->ffd.file->f_tfile_llink)) {
++				get_file(epi->ffd.file);
+ 				list_add(&epi->ffd.file->f_tfile_llink,
+ 					 &tfile_check_list);
++			}
+ 		}
+ 	}
+ 	mutex_unlock(&ep->mtx);
+@@ -1765,6 +1767,7 @@ static void clear_tfile_check_list(void)
+ 		file = list_first_entry(&tfile_check_list, struct file,
+ 					f_tfile_llink);
+ 		list_del_init(&file->f_tfile_llink);
++		fput(file);
+ 	}
+ 	INIT_LIST_HEAD(&tfile_check_list);
+ }
+@@ -1902,13 +1905,13 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
+ 			mutex_lock(&epmutex);
+ 			if (is_file_epoll(tf.file)) {
+ 				error = -ELOOP;
+-				if (ep_loop_check(ep, tf.file) != 0) {
+-					clear_tfile_check_list();
++				if (ep_loop_check(ep, tf.file) != 0)
+ 					goto error_tgt_fput;
+-				}
+-			} else
++			} else {
++				get_file(tf.file);
+ 				list_add(&tf.file->f_tfile_llink,
+ 							&tfile_check_list);
++			}
+ 			mutex_lock_nested(&ep->mtx, 0);
+ 			if (is_file_epoll(tf.file)) {
+ 				tep = tf.file->private_data;
+@@ -1932,8 +1935,6 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
+ 			error = ep_insert(ep, &epds, tf.file, fd, full_check);
+ 		} else
+ 			error = -EEXIST;
+-		if (full_check)
+-			clear_tfile_check_list();
+ 		break;
+ 	case EPOLL_CTL_DEL:
+ 		if (epi)
+@@ -1954,8 +1955,10 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
+ 	mutex_unlock(&ep->mtx);
+ 
+ error_tgt_fput:
+-	if (full_check)
++	if (full_check) {
++		clear_tfile_check_list();
+ 		mutex_unlock(&epmutex);
++	}
+ 
+ 	fdput(tf);
+ error_fput:
+diff --git a/fs/ext4/namei.c b/fs/ext4/namei.c
+index 566a8b08ccdd6..061b026e464c5 100644
+--- a/fs/ext4/namei.c
++++ b/fs/ext4/namei.c
+@@ -1226,19 +1226,18 @@ static void dx_insert_block(struct dx_frame *frame, u32 hash, ext4_lblk_t block)
+ }
+ 
+ /*
+- * NOTE! unlike strncmp, ext4_match returns 1 for success, 0 for failure.
++ * Test whether a directory entry matches the filename being searched for.
+  *
+- * `len <= EXT4_NAME_LEN' is guaranteed by caller.
+- * `de != NULL' is guaranteed by caller.
++ * Return: %true if the directory entry matches, otherwise %false.
+  */
+-static inline int ext4_match(struct ext4_filename *fname,
+-			     struct ext4_dir_entry_2 *de)
++static inline bool ext4_match(const struct ext4_filename *fname,
++			      const struct ext4_dir_entry_2 *de)
+ {
+ 	const void *name = fname_name(fname);
+ 	u32 len = fname_len(fname);
+ 
+ 	if (!de->inode)
+-		return 0;
++		return false;
+ 
+ #ifdef CONFIG_EXT4_FS_ENCRYPTION
+ 	if (unlikely(!name)) {
+@@ -1270,48 +1269,31 @@ int ext4_search_dir(struct buffer_head *bh, char *search_buf, int buf_size,
+ 	struct ext4_dir_entry_2 * de;
+ 	char * dlimit;
+ 	int de_len;
+-	int res;
+ 
+ 	de = (struct ext4_dir_entry_2 *)search_buf;
+ 	dlimit = search_buf + buf_size;
+ 	while ((char *) de < dlimit) {
+ 		/* this code is executed quadratically often */
+ 		/* do minimal checking `by hand' */
+-		if ((char *) de + de->name_len <= dlimit) {
+-			res = ext4_match(fname, de);
+-			if (res < 0) {
+-				res = -1;
+-				goto return_result;
+-			}
+-			if (res > 0) {
+-				/* found a match - just to be sure, do
+-				 * a full check */
+-				if (ext4_check_dir_entry(dir, NULL, de, bh,
+-						bh->b_data,
+-						 bh->b_size, offset)) {
+-					res = -1;
+-					goto return_result;
+-				}
+-				*res_dir = de;
+-				res = 1;
+-				goto return_result;
+-			}
+-
++		if ((char *) de + de->name_len <= dlimit &&
++		    ext4_match(fname, de)) {
++			/* found a match - just to be sure, do
++			 * a full check */
++			if (ext4_check_dir_entry(dir, NULL, de, bh, search_buf,
++						 buf_size, offset))
++				return -1;
++			*res_dir = de;
++			return 1;
+ 		}
+ 		/* prevent looping on a bad block */
+ 		de_len = ext4_rec_len_from_disk(de->rec_len,
+ 						dir->i_sb->s_blocksize);
+-		if (de_len <= 0) {
+-			res = -1;
+-			goto return_result;
+-		}
++		if (de_len <= 0)
++			return -1;
+ 		offset += de_len;
+ 		de = (struct ext4_dir_entry_2 *) ((char *) de + de_len);
+ 	}
+-
+-	res = 0;
+-return_result:
+-	return res;
++	return 0;
+ }
+ 
+ static int is_dx_internal_node(struct inode *dir, ext4_lblk_t block,
+@@ -1748,7 +1730,7 @@ static struct ext4_dir_entry_2 *do_split(handle_t *handle, struct inode *dir,
+ 			     blocksize, hinfo, map);
+ 	map -= count;
+ 	dx_sort_map(map, count);
+-	/* Split the existing block in the middle, size-wise */
++	/* Ensure that neither split block is over half full */
+ 	size = 0;
+ 	move = 0;
+ 	for (i = count-1; i >= 0; i--) {
+@@ -1758,8 +1740,18 @@ static struct ext4_dir_entry_2 *do_split(handle_t *handle, struct inode *dir,
+ 		size += map[i].size;
+ 		move++;
+ 	}
+-	/* map index at which we will split */
+-	split = count - move;
++	/*
++	 * map index at which we will split
++	 *
++	 * If the sum of active entries didn't exceed half the block size, just
++	 * split it in half by count; each resulting block will have at least
++	 * half the space free.
++	 */
++	if (i > 0)
++		split = count - move;
++	else
++		split = count/2;
++
+ 	hash2 = map[split].hash;
+ 	continued = hash2 == map[split - 1].hash;
+ 	dxtrace(printk(KERN_INFO "Split block %lu at %x, %i/%i\n",
+@@ -1824,24 +1816,15 @@ int ext4_find_dest_de(struct inode *dir, struct inode *inode,
+ 	int nlen, rlen;
+ 	unsigned int offset = 0;
+ 	char *top;
+-	int res;
+ 
+ 	de = (struct ext4_dir_entry_2 *)buf;
+ 	top = buf + buf_size - reclen;
+ 	while ((char *) de <= top) {
+ 		if (ext4_check_dir_entry(dir, NULL, de, bh,
+-					 buf, buf_size, offset)) {
+-			res = -EFSCORRUPTED;
+-			goto return_result;
+-		}
+-		/* Provide crypto context and crypto buffer to ext4 match */
+-		res = ext4_match(fname, de);
+-		if (res < 0)
+-			goto return_result;
+-		if (res > 0) {
+-			res = -EEXIST;
+-			goto return_result;
+-		}
++					 buf, buf_size, offset))
++			return -EFSCORRUPTED;
++		if (ext4_match(fname, de))
++			return -EEXIST;
+ 		nlen = EXT4_DIR_REC_LEN(de->name_len);
+ 		rlen = ext4_rec_len_from_disk(de->rec_len, buf_size);
+ 		if ((de->inode ? rlen - nlen : rlen) >= reclen)
+@@ -1849,15 +1832,11 @@ int ext4_find_dest_de(struct inode *dir, struct inode *inode,
+ 		de = (struct ext4_dir_entry_2 *)((char *)de + rlen);
+ 		offset += rlen;
+ 	}
+-
+ 	if ((char *) de > top)
+-		res = -ENOSPC;
+-	else {
+-		*dest_de = de;
+-		res = 0;
+-	}
+-return_result:
+-	return res;
++		return -ENOSPC;
++
++	*dest_de = de;
++	return 0;
+ }
+ 
+ int ext4_insert_dentry(struct inode *dir,
+@@ -2343,7 +2322,7 @@ int ext4_generic_delete_entry(handle_t *handle,
+ 	de = (struct ext4_dir_entry_2 *)entry_buf;
+ 	while (i < buf_size - csum_size) {
+ 		if (ext4_check_dir_entry(dir, NULL, de, bh,
+-					 bh->b_data, bh->b_size, i))
++					 entry_buf, buf_size, i))
+ 			return -EFSCORRUPTED;
+ 		if (de == de_del)  {
+ 			if (pde)
+diff --git a/fs/jffs2/dir.c b/fs/jffs2/dir.c
+index e273171696972..7a3368929245d 100644
+--- a/fs/jffs2/dir.c
++++ b/fs/jffs2/dir.c
+@@ -588,10 +588,14 @@ static int jffs2_rmdir (struct inode *dir_i, struct dentry *dentry)
+ 	int ret;
+ 	uint32_t now = get_seconds();
+ 
++	mutex_lock(&f->sem);
+ 	for (fd = f->dents ; fd; fd = fd->next) {
+-		if (fd->ino)
++		if (fd->ino) {
++			mutex_unlock(&f->sem);
+ 			return -ENOTEMPTY;
++		}
+ 	}
++	mutex_unlock(&f->sem);
+ 
+ 	ret = jffs2_do_unlink(c, dir_f, dentry->d_name.name,
+ 			      dentry->d_name.len, f, now);
+diff --git a/fs/romfs/storage.c b/fs/romfs/storage.c
+index f86f51f99aceb..1dcadd22b440d 100644
+--- a/fs/romfs/storage.c
++++ b/fs/romfs/storage.c
+@@ -221,10 +221,8 @@ int romfs_dev_read(struct super_block *sb, unsigned long pos,
+ 	size_t limit;
+ 
+ 	limit = romfs_maxsize(sb);
+-	if (pos >= limit)
++	if (pos >= limit || buflen > limit - pos)
+ 		return -EIO;
+-	if (buflen > limit - pos)
+-		buflen = limit - pos;
+ 
+ #ifdef CONFIG_ROMFS_ON_MTD
+ 	if (sb->s_mtd)
+diff --git a/fs/xfs/xfs_sysfs.h b/fs/xfs/xfs_sysfs.h
+index be692e59938db..c457b010c623d 100644
+--- a/fs/xfs/xfs_sysfs.h
++++ b/fs/xfs/xfs_sysfs.h
+@@ -44,9 +44,11 @@ xfs_sysfs_init(
+ 	struct xfs_kobj		*parent_kobj,
+ 	const char		*name)
+ {
++	struct kobject		*parent;
++
++	parent = parent_kobj ? &parent_kobj->kobject : NULL;
+ 	init_completion(&kobj->complete);
+-	return kobject_init_and_add(&kobj->kobject, ktype,
+-				    &parent_kobj->kobject, "%s", name);
++	return kobject_init_and_add(&kobj->kobject, ktype, parent, "%s", name);
+ }
+ 
+ static inline void
+diff --git a/fs/xfs/xfs_trans_dquot.c b/fs/xfs/xfs_trans_dquot.c
+index ce78534a047ee..bb8de2dddabe2 100644
+--- a/fs/xfs/xfs_trans_dquot.c
++++ b/fs/xfs/xfs_trans_dquot.c
+@@ -662,7 +662,7 @@ xfs_trans_dqresv(
+ 			}
+ 		}
+ 		if (ninos > 0) {
+-			total_count = be64_to_cpu(dqp->q_core.d_icount) + ninos;
++			total_count = dqp->q_res_icount + ninos;
+ 			timer = be32_to_cpu(dqp->q_core.d_itimer);
+ 			warns = be16_to_cpu(dqp->q_core.d_iwarns);
+ 			warnlimit = dqp->q_mount->m_quotainfo->qi_iwarnlimit;
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index 03cf5526e4456..2b17d2fca4299 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -1123,6 +1123,10 @@ void unmap_vmas(struct mmu_gather *tlb, struct vm_area_struct *start_vma,
+  * followed by taking the mmap_sem for writing before modifying the
+  * vmas or anything the coredump pretends not to change from under it.
+  *
++ * It also has to be called when mmgrab() is used in the context of
++ * the process, but then the mm_count refcount is transferred outside
++ * the context of the process to run down_write() on that pinned mm.
++ *
+  * NOTE: find_extend_vma() called from GUP context is the only place
+  * that can modify the "mm" (notably the vm_start/end) under mmap_sem
+  * for reading and outside the context of the process, so it is also
+diff --git a/include/net/sock.h b/include/net/sock.h
+index 426a57874964c..31198b32d9122 100644
+--- a/include/net/sock.h
++++ b/include/net/sock.h
+@@ -779,6 +779,8 @@ static inline int sk_memalloc_socks(void)
+ {
+ 	return static_key_false(&memalloc_socks);
+ }
++
++void __receive_sock(struct file *file);
+ #else
+ 
+ static inline int sk_memalloc_socks(void)
+@@ -786,6 +788,8 @@ static inline int sk_memalloc_socks(void)
+ 	return 0;
+ }
+ 
++static inline void __receive_sock(struct file *file)
++{ }
+ #endif
+ 
+ static inline gfp_t sk_gfp_atomic(const struct sock *sk, gfp_t gfp_mask)
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index 465786cd6490e..f38d24bb8a1bc 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -2136,7 +2136,7 @@ static void insert_to_mm_slots_hash(struct mm_struct *mm,
+ 
+ static inline int khugepaged_test_exit(struct mm_struct *mm)
+ {
+-	return atomic_read(&mm->mm_users) == 0;
++	return atomic_read(&mm->mm_users) == 0 || !mmget_still_valid(mm);
+ }
+ 
+ int __khugepaged_enter(struct mm_struct *mm)
+@@ -2149,7 +2149,7 @@ int __khugepaged_enter(struct mm_struct *mm)
+ 		return -ENOMEM;
+ 
+ 	/* __khugepaged_exit() must not run from under us */
+-	VM_BUG_ON_MM(khugepaged_test_exit(mm), mm);
++	VM_BUG_ON_MM(atomic_read(&mm->mm_users) == 0, mm);
+ 	if (unlikely(test_and_set_bit(MMF_VM_HUGEPAGE, &mm->flags))) {
+ 		free_mm_slot(mm_slot);
+ 		return 0;
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index 3a1501e854832..baac9a09ec0a1 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -4257,6 +4257,7 @@ static bool vma_shareable(struct vm_area_struct *vma, unsigned long addr)
+ 	return false;
+ }
+ 
++#define ALIGN_DOWN(x, a)	__ALIGN_KERNEL((x) - ((a) - 1), (a))
+ /*
+  * Determine if start,end range within vma could be mapped by shared pmd.
+  * If yes, adjust start and end to cover range associated with possible
+@@ -4265,25 +4266,21 @@ static bool vma_shareable(struct vm_area_struct *vma, unsigned long addr)
+ void adjust_range_if_pmd_sharing_possible(struct vm_area_struct *vma,
+ 				unsigned long *start, unsigned long *end)
+ {
+-	unsigned long check_addr = *start;
++	unsigned long a_start, a_end;
+ 
+ 	if (!(vma->vm_flags & VM_MAYSHARE))
+ 		return;
+ 
+-	for (check_addr = *start; check_addr < *end; check_addr += PUD_SIZE) {
+-		unsigned long a_start = check_addr & PUD_MASK;
+-		unsigned long a_end = a_start + PUD_SIZE;
++	/* Extend the range to be PUD aligned for a worst case scenario */
++	a_start = ALIGN_DOWN(*start, PUD_SIZE);
++	a_end = ALIGN(*end, PUD_SIZE);
+ 
+-		/*
+-		 * If sharing is possible, adjust start/end if necessary.
+-		 */
+-		if (range_in_vma(vma, a_start, a_end)) {
+-			if (a_start < *start)
+-				*start = a_start;
+-			if (a_end > *end)
+-				*end = a_end;
+-		}
+-	}
++	/*
++	 * Intersect the range with the vma range, since pmd sharing won't be
++	 * across vma after all
++	 */
++	*start = max(vma->vm_start, a_start);
++	*end = min(vma->vm_end, a_end);
+ }
+ 
+ /*
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index df589416ace6c..14bab5fa1b656 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -843,6 +843,11 @@ static void free_pcppages_bulk(struct zone *zone, int count,
+ 	if (nr_scanned)
+ 		__mod_zone_page_state(zone, NR_PAGES_SCANNED, -nr_scanned);
+ 
++	/*
++	 * Ensure proper count is passed which otherwise would stuck in the
++	 * below while (list_empty(list)) loop.
++	 */
++	count = min(pcp->count, count);
+ 	while (to_free) {
+ 		struct page *page;
+ 		struct list_head *list;
+@@ -6285,7 +6290,7 @@ int __meminit init_per_zone_wmark_min(void)
+ 	setup_per_zone_inactive_ratio();
+ 	return 0;
+ }
+-core_initcall(init_per_zone_wmark_min)
++postcore_initcall(init_per_zone_wmark_min)
+ 
+ /*
+  * min_free_kbytes_sysctl_handler - just a wrapper around proc_dointvec() so
+diff --git a/net/compat.c b/net/compat.c
+index d676840104556..20c5e5f215f23 100644
+--- a/net/compat.c
++++ b/net/compat.c
+@@ -284,6 +284,7 @@ void scm_detach_fds_compat(struct msghdr *kmsg, struct scm_cookie *scm)
+ 			break;
+ 		}
+ 		/* Bump the usage count and install the file. */
++		__receive_sock(fp[i]);
+ 		fd_install(new_fd, get_file(fp[i]));
+ 	}
+ 
+diff --git a/net/core/sock.c b/net/core/sock.c
+index 120d5058d81ae..82f9a7dbea6fe 100644
+--- a/net/core/sock.c
++++ b/net/core/sock.c
+@@ -2275,6 +2275,27 @@ int sock_no_mmap(struct file *file, struct socket *sock, struct vm_area_struct *
+ }
+ EXPORT_SYMBOL(sock_no_mmap);
+ 
++/*
++ * When a file is received (via SCM_RIGHTS, etc), we must bump the
++ * various sock-based usage counts.
++ */
++void __receive_sock(struct file *file)
++{
++	struct socket *sock;
++	int error;
++
++	/*
++	 * The resulting value of "error" is ignored here since we only
++	 * need to take action when the file is a socket and testing
++	 * "sock" for NULL is sufficient.
++	 */
++	sock = sock_from_file(file, &error);
++	if (sock) {
++		sock_update_netprioidx(sock->sk);
++		sock_update_classid(sock->sk);
++	}
++}
++
+ ssize_t sock_no_sendpage(struct socket *sock, struct page *page, int offset, size_t size, int flags)
+ {
+ 	ssize_t res;
+diff --git a/sound/soc/intel/atom/sst-mfld-platform-pcm.c b/sound/soc/intel/atom/sst-mfld-platform-pcm.c
+index 1d9dfb92b3b48..edb244331e6e9 100644
+--- a/sound/soc/intel/atom/sst-mfld-platform-pcm.c
++++ b/sound/soc/intel/atom/sst-mfld-platform-pcm.c
+@@ -338,7 +338,7 @@ static int sst_media_open(struct snd_pcm_substream *substream,
+ 
+ 	ret_val = power_up_sst(stream);
+ 	if (ret_val < 0)
+-		return ret_val;
++		goto out_power_up;
+ 
+ 	/* Make sure, that the period size is always even */
+ 	snd_pcm_hw_constraint_step(substream->runtime, 0,
+@@ -347,8 +347,9 @@ static int sst_media_open(struct snd_pcm_substream *substream,
+ 	return snd_pcm_hw_constraint_integer(runtime,
+ 			 SNDRV_PCM_HW_PARAM_PERIODS);
+ out_ops:
+-	kfree(stream);
+ 	mutex_unlock(&sst_lock);
++out_power_up:
++	kfree(stream);
+ 	return ret_val;
+ }
+ 
+diff --git a/tools/perf/util/probe-finder.c b/tools/perf/util/probe-finder.c
+index c694f10d004cc..1b73537af91db 100644
+--- a/tools/perf/util/probe-finder.c
++++ b/tools/perf/util/probe-finder.c
+@@ -1274,7 +1274,7 @@ int debuginfo__find_trace_events(struct debuginfo *dbg,
+ 	tf.ntevs = 0;
+ 
+ 	ret = debuginfo__find_probes(dbg, &tf.pf);
+-	if (ret < 0) {
++	if (ret < 0 || tf.ntevs == 0) {
+ 		for (i = 0; i < tf.ntevs; i++)
+ 			clear_probe_trace_event(&tf.tevs[i]);
+ 		zfree(tevs);
