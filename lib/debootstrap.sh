@@ -53,10 +53,10 @@ debootstrap_ng()
 	install_common
 
 	# install locally built packages
-	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
+	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local >> "${DEST}"/debug/install.log 2>&1
 
 	# install from apt.armbian.com
-	[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes"
+	[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes" >> "${DEST}"/debug/install.log 2>&1
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
@@ -273,8 +273,10 @@ create_rootfs_cache()
 		chroot $SDCARD /bin/bash -c "apt-get clean"
 
 		# DEBUG: print free space
-		echo -e "\nFree space:"
-		eval 'df -h' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
+		local freespace=$(LC_ALL=C df -h)
+		echo $freespace >> $DEST/debug/debootstrap.log
+		display_alert "SD" "$(echo -e "$freespace" | grep $SDCARD | awk '{print $5}')" "info"
+		display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | awk '{print $5}')" "info"
 
 		# create list of installed packages for debug purposes
 		chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > ${cache_fname}.list 2>&1
@@ -619,9 +621,9 @@ create_image()
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
-		display_alert "Copying files to root directory"
+		display_alert "Copying files to" "/"
 		rsync -aHWXh --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
-			--exclude="/sys/*" --info=progress2,stats1 $SDCARD/ $MOUNT/
+			--exclude="/sys/*" --info=progress2,stats1 $SDCARD/ $MOUNT/ >> "${DEST}"/debug/install.log 2>&1
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
@@ -629,21 +631,23 @@ create_image()
 	fi
 
 	# stage: rsync /boot
-	display_alert "Copying files to /boot directory"
+	display_alert "Copying files to" "/boot"
 	if [[ $(findmnt --target $MOUNT/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
-		rsync -rLtWh --info=progress2,stats1 $SDCARD/boot $MOUNT
+		rsync -rLtWh --info=progress2,stats1 $SDCARD/boot $MOUNT >> "${DEST}"/debug/install.log 2>&1
 	else
 		# ext4
-		rsync -aHWXh --info=progress2,stats1 $SDCARD/boot $MOUNT
+		rsync -aHWXh --info=progress2,stats1 $SDCARD/boot $MOUNT >> "${DEST}"/debug/install.log 2>&1
 	fi
 
 	# stage: create final initramfs
 	update_initramfs $MOUNT
 
 	# DEBUG: print free space
-	display_alert "Free space:" "SD card" "info"
-	eval 'df -h' ${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'}
+	local freespace=$(LC_ALL=C df -h)
+	echo $freespace >> $DEST/debug/debootstrap.log
+	display_alert "SD" "$(echo -e "$freespace" | grep $SDCARD | awk '{print $5}')" "info"
+	display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | awk '{print $5}')" "info"
 
 	# stage: write u-boot
 	write_uboot $LOOP

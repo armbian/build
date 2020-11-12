@@ -37,7 +37,7 @@ build tools</h3>
 ## What do you need to get started?
     
 - x64 machine with at least 2GB of memory and ~35GB of disk space for the VM, container or native OS,
-- Ubuntu Bionic 18.04 / Focal 20.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised,
+- Ubuntu Focal 20.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised,
 - superuser rights (configured sudo or root access).
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
