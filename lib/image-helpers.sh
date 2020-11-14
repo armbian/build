@@ -94,8 +94,13 @@ write_uboot()
 	TEMP_DIR=$(mktemp -d || exit 1)
 	chmod 700 ${TEMP_DIR}
 	revision=${REVISION}
-	[[ -n $UPSTREM_VER ]] && revision=${UPSTREM_VER}
-	dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
+	if [[ -n $UPSTREM_VER ]]; then
+		DEB_BRANCH=${DEB_BRANCH/-/}
+		revision=${UPSTREM_VER}
+		dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${DEB_BRANCH/-/}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
+	else
+		dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
+	fi
 	write_uboot_platform "${TEMP_DIR}/usr/lib/${CHOSEN_UBOOT}_${revision}_${ARCH}" "$loop"
 	[[ $? -ne 0 ]] && exit_with_error "U-boot bootloader failed to install" "@host"
 	rm -rf ${TEMP_DIR}
@@ -123,11 +128,21 @@ customize_image()
 install_deb_chroot()
 {
 	local package=$1
+	local variant=$2
 	local name
-	name=$(basename "${package}")
-	[[ ! -f "${SDCARD}/root/${name}" ]] && cp "${package}" "${SDCARD}/root/${name}"
-	display_alert "Installing" "$name"
+	local desc
+	if [[ ${variant} != remote ]]; then
+		name="/root/"$(basename "${package}")
+		[[ ! -f "${SDCARD}${name}" ]] && cp "${package}" "${SDCARD}${name}"
+		desc=""
+	else
+		name=$1
+		desc=" from repository"
+	fi
+
+	display_alert "Installing${desc}" "${name/\/root\//}"
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
 	LC_ALL=C LANG=C chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq \
-		$apt_extra --no-install-recommends install ./root/$name" >> "${DEST}"/debug/install.log 2>&1
+		$apt_extra --no-install-recommends install $name" >> "${DEST}"/debug/install.log 2>&1
+	[[ ${variant} == remote ]] && rsync -rq "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb ${DEB_STORAGE}/
 }
