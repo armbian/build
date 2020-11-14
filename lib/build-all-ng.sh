@@ -165,6 +165,7 @@ build_main ()
 
 	fi
 
+	cd "${SRC}"
 	rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
 }
 
