@@ -210,8 +210,6 @@ install_common()
 	ff02::2     ip6-allrouters
 	EOF
 
-	cd $SRC
-
 	display_alert "Updating" "package lists"
 	chroot "${SDCARD}" /bin/bash -c "apt-get update" >> "${DEST}"/debug/install.log 2>&1
 
@@ -243,8 +241,13 @@ install_common()
 		UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
 	else
-		install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote"
-		UPSTREM_VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb Version)
+		UBOOT_VER=$(chroot "${SDCARD}" /bin/bash -c "apt-cache --names-only search ^linux-u-boot-${BOARD}-${BRANCH} | awk '{print \$(NF)}'")
+		display_alert "Installing from repository" "linux-u-boot-${BOARD}-${BRANCH} $UBOOT_VER"
+		chroot "${SDCARD}" /bin/bash -c "apt-get -qq -y install linux-u-boot-${BOARD}-${BRANCH}" >> "${DEST}"/debug/install.log 2>&1
+		# we need package later, move to output, apt-get must be here, apt deletes file
+		UPSTREM_VER=$(dpkg-deb -I "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb | grep Version | awk '{print $(NF)}')
+		rsync -rq "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb ${DEB_STORAGE}/${CHOSEN_UBOOT}_${UPSTREM_VER}_${ARCH}.deb
+		[[ $? -ne 0 ]] && exit_with_error "U-boot linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb download failed"
 	fi
 
 	# install kernel
@@ -259,19 +262,24 @@ install_common()
 			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
 		fi
 	else
-		install_deb_chroot "linux-image-${BRANCH}-${LINUXFAMILY}" "remote"
-		VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-image-${BRANCH}-${LINUXFAMILY}*_${ARCH}.deb Source)
+		VER=$(chroot "${SDCARD}" /bin/bash -c "apt-cache --names-only search ^linux-image-${BRANCH}-${LINUXFAMILY} | awk '{print \$(NF)}'")
 		VER="${VER/-$LINUXFAMILY/}"
-		VER="${VER/linux-/}"
-		install_deb_chroot "linux-dtb-${BRANCH}-${LINUXFAMILY}" "remote"
-		[[ $INSTALL_HEADERS == yes ]] && install_deb_chroot "linux-headers-${BRANCH}-${LINUXFAMILY}" "remote"
+		display_alert "Installing from repository" "linux-image-${BRANCH}-${LINUXFAMILY} $VER"
+		chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install linux-image-${BRANCH}-${LINUXFAMILY}" >> "${DEST}"/debug/install.log 2>&1
+		display_alert "Installing from repository" "linux-dtb-${BRANCH}-${LINUXFAMILY}"
+		chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install linux-dtb-${BRANCH}-${LINUXFAMILY}" >> "${DEST}"/debug/install.log 2>&1
+		if [[ $INSTALL_HEADERS == yes ]]; then
+			display_alert "Installing from repository" "armbian-headers"
+			chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install linux-headers-${BRANCH}-${LINUXFAMILY}" >> "${DEST}"/debug/install.log 2>&1
+		fi
 	fi
 
 	# install board support packages
 	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
 		install_deb_chroot "${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> "${DEST}"/debug/install.log 2>&1
 	else
-		install_deb_chroot "${CHOSEN_ROOTFS}" "remote"
+		display_alert "Installing from repository" "${CHOSEN_ROOTFS}"
+		chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install ${CHOSEN_ROOTFS}" >> "${DEST}"/debug/install.log 2>&1
 	fi
 
 	# install armbian-desktop
@@ -283,7 +291,8 @@ install_common()
 		fi
 	else
 		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "armbian-${RELEASE}-desktop" "remote"
+			display_alert "Installing from repository" "armbian-${RELEASE}-desktop"
+			chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install armbian-${RELEASE}-desktop" >> "${DEST}"/debug/install.log 2>&1
 			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 			desktop_postinstall
 		fi
@@ -295,7 +304,8 @@ install_common()
 			install_deb_chroot "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb"
 		fi
 	else
-		install_deb_chroot "armbian-firmware" "remote"
+		display_alert "Installing from repository" "armbian-firmware"
+		chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install armbian-firmware" >> "${DEST}"/debug/install.log 2>&1
 	fi
 
 	# install armbian-config
@@ -305,7 +315,8 @@ install_common()
 		fi
 	else
 		if [[ $BUILD_MINIMAL != yes ]]; then
-			install_deb_chroot "armbian-config" "remote"
+			display_alert "Installing from repository" "armbian-config"
+			chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install armbian-config" >> "${DEST}"/debug/install.log 2>&1
 		fi
 	fi
 
@@ -316,7 +327,7 @@ install_common()
 
 	# install wireguard tools
 	if [[ $WIREGUARD == yes ]]; then
-		install_deb_chroot "wireguard-tools --no-install-recommends" "remote"
+		chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install wireguard-tools --no-install-recommends" >> "${DEST}"/debug/install.log 2>&1
 	fi
 
 	# freeze armbian packages
