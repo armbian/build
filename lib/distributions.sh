@@ -243,7 +243,7 @@ install_common()
 		UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
 	else
-		install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote"
+		install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote" "yes"
 		UPSTREM_VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb Version)
 	fi
 
