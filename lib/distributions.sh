@@ -83,7 +83,7 @@ install_common()
 	fi
 
 	# configure MIN / MAX speed for cpufrequtils
-	cat <<-EOF > "${SDCARD}"/etc/default/cpufrequtils	
+	cat <<-EOF > "${SDCARD}"/etc/default/cpufrequtils
 	ENABLE=true
 	MIN_SPEED=$CPUMIN
 	MAX_SPEED=$CPUMAX
@@ -216,7 +216,7 @@ install_common()
 	chroot "${SDCARD}" /bin/bash -c "apt-get update" >> "${DEST}"/debug/install.log 2>&1
 
 	display_alert "Temporarily disabling" "initramfs-tools hook for kernel"
-	chroot "${SDCARD}" /bin/bash -c "chmod -x /etc/kernel/postinst.d/initramfs-tools" >> "${DEST}"/debug/install.log 2>&1
+	chroot "${SDCARD}" /bin/bash -c "chmod -v -x /etc/kernel/postinst.d/initramfs-tools" >> "${DEST}"/debug/install.log 2>&1
 
 	# install family packages
 	if [[ -n ${PACKAGE_LIST_FAMILY} ]]; then
@@ -243,7 +243,7 @@ install_common()
 		UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
 	else
-		install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote"
+		install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote" "yes"
 		UPSTREM_VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb Version)
 	fi
 
