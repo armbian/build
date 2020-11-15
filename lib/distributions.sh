@@ -83,7 +83,7 @@ install_common()
 	fi
 
 	# configure MIN / MAX speed for cpufrequtils
-	cat <<-EOF > "${SDCARD}"/etc/default/cpufrequtils	
+	cat <<-EOF > "${SDCARD}"/etc/default/cpufrequtils
 	ENABLE=true
 	MIN_SPEED=$CPUMIN
 	MAX_SPEED=$CPUMAX
@@ -215,8 +215,8 @@ install_common()
 	display_alert "Updating" "package lists"
 	chroot "${SDCARD}" /bin/bash -c "apt-get update" >> "${DEST}"/debug/install.log 2>&1
 
-#	display_alert "Temporarily disabling" "initramfs-tools hook for kernel"
-#	chroot "${SDCARD}" /bin/bash -c "chmod -x /etc/kernel/postinst.d/initramfs-tools" >> "${DEST}"/debug/install.log 2>&1
+	display_alert "Temporarily disabling" "initramfs-tools hook for kernel"
+	chroot "${SDCARD}" /bin/bash -c "chmod -v -x /etc/kernel/postinst.d/initramfs-tools" >> "${DEST}"/debug/install.log 2>&1
 
 	# install family packages
 	if [[ -n ${PACKAGE_LIST_FAMILY} ]]; then
