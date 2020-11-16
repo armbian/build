@@ -75,7 +75,7 @@ update_src() {
 				fi
 			done
 		else
-			git checkout "${LIB_TAG:-master}"
+			git checkout "${LIB_TAG:-native}"
 			git pull
 		fi
 	fi

@@ -41,6 +41,9 @@ compile_atf()
 
 	display_alert "Compiling ATF" "" "info"
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	local toolchain
 	toolchain=$(find_toolchain "$ATF_COMPILER" "$ATF_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${ATF_COMPILER}gcc $ATF_USE_GCC"
@@ -52,6 +55,9 @@ compile_atf()
 		toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
 		[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
 	fi
+
+# build aarch64
+  fi
 
 	display_alert "Compiler version" "${ATF_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${ATF_COMPILER}gcc" -dumpversion)" "info"
 
@@ -126,6 +132,9 @@ compile_uboot()
 
 	display_alert "Compiling u-boot" "$version" "info"
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	local toolchain
 	toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER}gcc $UBOOT_USE_GCC"
@@ -138,6 +147,8 @@ compile_uboot()
 		[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
 	fi
 
+# build aarch64
+  fi
 
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${UBOOT_COMPILER}gcc" -dumpversion)" "info"
 	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${toolchain2_type}gcc" -dumpversion)" "info"
@@ -169,7 +180,7 @@ compile_uboot()
 		# create patch for manual source changes
 		[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
 
-		if [[ -n $ATFSOURCE ]]; then			
+		if [[ -n $ATFSOURCE ]]; then
 			cp -Rv "${atftempdir}"/*.bin .
 			rm -rf "${atftempdir}"
 		fi
@@ -275,7 +286,7 @@ compile_uboot()
 
 	[[ ! -f $uboottempdir/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
-	mv "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
+	rsync -rq "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
 }
 
 compile_kernel()
@@ -332,9 +343,15 @@ compile_kernel()
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	local toolchain
 	toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
+
+# build aarch64
+  fi
 
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER}gcc" -dumpversion)" "info"
 
@@ -447,14 +464,14 @@ compile_kernel()
 
 	if [[ $BUILD_KSRC != no ]]; then
 		fakeroot dpkg-deb -z0 -b "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
-		mv "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
+		rsync -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
 	fi
 	rm -rf "${sources_pkg_dir}"
 
 	cd .. || exit
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
-	mv ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
+	rsync -rq ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
 
 	# store git hash to the file
 	echo "${hash}" > "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
@@ -516,7 +533,7 @@ compile_firmware()
 	mv "armbian-firmware${FULL}" "armbian-firmware${FULL}_${REVISION}_all"
 	fakeroot dpkg -b "armbian-firmware${FULL}_${REVISION}_all" >> "${DEST}"/debug/install.log 2>&1
 	mv "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
-	mv "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
+	rsync -rq "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
 
 	# remove temp directory
 	rm -rf "${firmwaretempdir}"
@@ -564,7 +581,7 @@ compile_armbian-config()
 	ln -sf /usr/sbin/softy "${tmpdir}"/usr/bin/softy
 
 	fakeroot dpkg -b "${tmpdir}" >/dev/null
-	mv "${tmpdir}.deb" "${DEB_STORAGE}/"
+	rsync -rq "${tmpdir}.deb" "${DEB_STORAGE}/"
 	rm -rf "${tmpdir}"
 
 }
