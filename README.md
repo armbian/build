@@ -1,114 +1,6 @@
 <h3 align=center><a href="#armbian-build-tools"><img src=".github/armbian-logo.png" alt="Armbian logo" width="144"></a><br>
 build tools</h3>
 
-## THIS BRANCH IS IN ALPHA STATE. DON'T RELY ON IT !
-
-This branch is focused on making adding new desktop environments and application groups easy.
-
-If you're using that branch, it is assumed that you are familiar with
-Armbian build scripts !
-
-### The architecture added to the build system
-
-```
-├── config                                                Packages repository configurations
-│   ├──desktop                                            Desktop environment and appgroups packages lists and scripts
-│   │   ├──${RELEASE}                                     The name of the targeted distribution in lowercase (focal, buster, ...)
-│   │   │   ├──environments                               Desktop environments packages lists and scripts
-│   │   │   │   ├──${DESKTOP_ENVIRONMENT}                 The name of the desktop environment (or window manager), in lowercase (xfce, gnome, kde, ...)
-│   │   │   │   │   |──${DESKTOP_ENVIRONMENT_CONFIG_NAME} Different configuration name, in lowercase, prefixed with "config_" (config_basic, config_full, ...)
-│   │   │   │──appgroups                                  Application groups packages lists and scripts
-│   │   │   │   ├──${DESKTOP_APPGROUPS_SELECTED}          Appgroups names (editors, programming, ...)
-```
-
-In each directory representing a desktop environment, a desktop
-environment configuration or an appgroup, the following files
-can be present :
-
-* `packages`  
-  If present, the content of the file will be added to the list
-  of packages 'required' by the Armbian desktop package.
-* `debian/postinst`  
-  If present, the content of the file will be added to the `postinst`
-  script of the Armbian desktop package, which will be executed after
-  installing it.
-* `armbian/create_desktop_package.sh`  
-  If present the content of this script will be executed, by the build
-  script, just before actually creating the Armbian Desktop `.deb`
-  package.  
-  Any variable recognized and function defined by the build script,
-  at that point, can be used.
-* `sources/apt`  
-  If present, the directory will be scanned for `.source` files,
-  which should contain APT URL, in a form that `add-apt-repository`
-  understand.  
-  The system is restricted to ONLY ONE APT URL per file, since it's
-  basically calling :  
-  `add-apt-repository $(cat "/that/apt/file.source")`  
-  For each `.source` file parsed, if there's a corresponding
-  `.source.gpg` file, the file will be considered as a package
-  signing key and will be passed to `apt-key`.  
-  For this one, the file is copied into `${SDCARD}/tmp` and then
-  **apt-key** is called like this : `apt-key "/tmp/file.source.gpg"`.
-
-Then in each directory representing a desktop environment, a desktop
-environment configuration or an appgroup, you can add :
-
-* `custom/boards/${BOARD}/`  
-  For example `custom/orangepipc`.  
-  A Board (odroidc4, tinkerboard, bananapi, ...) specific directory
-  where you can provide additional`packages`, `debian/postinst` and
-  `armbian/create_desktop_package.sh`. 
-  The files, if present, will be parsed accordingly when building
-  for that specific board, if the element (desktop environment,
-  appgroup, ...) is selected.
-
-Then in each appgroup, you can add :
-
-* `custom/desktops/${DESTKOP_ENVIRONMENT}/`  
-  For example `custom/desktops/xfce`.  
-  A desktop environment specific directory where you can provide
-  additional `packages`, `debian/postinst` and
-  `armbian/create_desktop_package.sh`.  
-  The files, if present, will be parsed accordingly if the appgroup
-  AND that desktop environment are both selected during a build.
-* `custom/boards/${BOARD}/custom/desktops/${DESTKOP_ENVIRONMENT}/`  
-  For example `custom/boards/tinkerboard/custom/desktops/kde`.  
-  A Board AND desktop environment specific directory where you can
-  provided additional `packages`, `debian/postinst` and
-  `armbian/create_desktop_package.sh`.  
-  The files, if present, will be parsed accordingly if the appgroup,
-  that specific board and that specific desktop environments are
-  all selected during a build.
-
-### Adding a desktop environment
-
-> Currently, only official repositories are supported.
-
-Let's say that you want to add that new desktop environment
-"superduperde", that is now available on official on Debian/Ubuntu
-repositories.
-
-First, focus on one specific distribution like `focal` (Ubuntu)
-or `buster` (Debian). In our example, will take `focal`.  
-We'll create our first configuration 'full', which should provide the
-DE along with all its specific apps, widgets and the kitchen sink.
-
-* Create the directory
-  `config/desktop/focal/environments/superduperde/config_full`
-* Create the file 
-  `config/desktop/focal/environments/superduperde/config_full/packages`
-* Open the `packages` file, add the list of packages for `apt`.
-
-Then select it in the configuration menu, or pass the following
-variables to `./compile.sh` :
-
-```bash
-BUILD_DESKTOP="yes" RELEASE="focal" DESKTOP_ENVIRONMENT="superduperde" DESKTOP_ENVIRONMENT_CONFIG_NAME="config_full"
-```
-
-Then test the resulting image !
-
 <p align=right>&nbsp;</p>
 
 [![Build](https://github.com/armbian/build/workflows/Build/badge.svg)](https://github.com/armbian/build/actions?query=workflow%3ABuild)
@@ -145,7 +37,7 @@ Then test the resulting image !
 ## What do you need to get started?
     
 - x64 machine with at least 2GB of memory and ~35GB of disk space for the VM, container or native OS,
-- Ubuntu Bionic 18.04 / Focal 20.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised,
+- Ubuntu Focal 20.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised,
 - superuser rights (configured sudo or root access).
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
@@ -159,6 +51,8 @@ cd build
 ./compile.sh
 ```
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
+- The script will take care about preparing the workspace like installing necessary dependencies and downloading sources and tools.
+- It guides through the process until either a kernel package set or a readyo-to-image for a sdcard is created.
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
@@ -328,6 +222,5 @@ Most of the project is sponsored with a work done by volunteer collaborators, wh
 
 [Do you want to see yourself below?](https://www.armbian.com/#contact)
 
-<a href="https://www.armbian.com/download/?tx_maker=xunlong" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/03/orangepi-logo-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=friendlyelec" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/02/friendlyelec-logo-150x150.png" width="122" height="122"></a><a href="https://k-space.ee" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/03/kspace-150x150.png" width="122" height="122"></a><a href="https://www.innoscale.net" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/07/innoscale-2-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=olimex" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/02/olimex-logo-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=kobol" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/06/Kobol_logo-150x150.png" width="122" height="122"></a>
-
+<a href="https://www.armbian.com/download/?tx_maker=xunlong" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/03/orangepi-logo-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=friendlyelec" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/02/friendlyelec-logo-150x150.png" width="122" height="122"></a><a href="https://k-space.ee" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/03/kspace-150x150.png" width="122" height="122"></a><a href="https://www.innoscale.net" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/07/innoscale-2-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=olimex" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/02/olimex-logo-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=kobol" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/06/Kobol_logo-150x150.png" width="122" height="122"></a><a href="https://github.com/WorksOnArm/cluster/issues/223" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/11/work-on-arm-150x150.png" width="122" height="122"></a><a href="https://fosshost.org/" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/11/foss-host-150x150.png" width="122" height="122"></a>
 <p align=right><a href=#table-of-contents>⇧</a></p>

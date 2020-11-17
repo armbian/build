@@ -24,18 +24,20 @@ compilation_prepare()
 		display_alert "Adjusting" "packaging" "info"
 		cd "$kerneldir" || exit
 		process_patch_file "${SRC}/patch/misc/general-packaging-5.10.y.patch" "applying"
-	else
-		if linux-version compare "${version}" ge 5.6; then
+	elif linux-version compare "${version}" ge 5.8.17 \
+		&& linux-version compare "${version}" le 5.9 \
+		|| linux-version compare "${version}" ge 5.9.2; then
 			display_alert "Adjusting" "packaging" "info"
 			cd "$kerneldir" || exit
-			process_patch_file "${SRC}/patch/misc/general-packaging-5.6.y.patch" "applying"
-		else
-			if linux-version compare "${version}" ge 5.3; then
-				display_alert "Adjusting" "packaging" "info"
-				cd "$kerneldir" || exit
-				process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch" "applying"
-			fi
-		fi
+			process_patch_file "${SRC}/patch/misc/general-packaging-5.8-9.y.patch" "applying"
+	elif linux-version compare "${version}" ge 5.6; then
+		display_alert "Adjusting" "packaging" "info"
+		cd "$kerneldir" || exit
+		process_patch_file "${SRC}/patch/misc/general-packaging-5.6.y.patch" "applying"
+	elif linux-version compare "${version}" ge 5.3; then
+		display_alert "Adjusting" "packaging" "info"
+		cd "$kerneldir" || exit
+		process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch" "applying"
 	fi
 
 	if [[ "${version}" == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 || \

@@ -9,6 +9,8 @@
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
+
+
 create_desktop_package ()
 {
 	# join and cleanup package list
@@ -169,10 +171,8 @@ desktop_postinstall ()
 {
 	# disable display manager for first run
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt update" >> "${DEST}"/debug/install.log
-	#if [[ ${FULL_DESKTOP} == yes ]]; then
-	#	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FULL" >> "${DEST}"/debug/install.log
-	#fi
+	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable gdm3.service >/dev/null 2>&1"
+	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get update" >> "${DEST}"/debug/install.log
 
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
 		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" >> "${DEST}"/debug/install.log
@@ -182,12 +182,4 @@ desktop_postinstall ()
 		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY" >> "${DEST}"/debug/install.log
 	fi
 
-	# Compile Turbo Frame buffer for sunxi
-	if [[ $LINUXFAMILY == sun* && $BRANCH == default ]]; then
-		sed 's/name="use_compositing" type="bool" value="true"/name="use_compositing" type="bool" value="false"/' -i "${SDCARD}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
-
-		# enable memory reservations
-		echo "disp_mem_reserves=on" >> "${SDCARD}"/boot/armbianEnv.txt
-		echo "extraargs=cma=96M" >> "${SDCARD}"/boot/armbianEnv.txt
-	fi
 }
