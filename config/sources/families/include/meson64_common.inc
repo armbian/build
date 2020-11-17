@@ -178,7 +178,7 @@ family_tweaks_bsp()
 	EOF
 	else
 	if [[ $BOARD == odroidn2 || $BOARD == odroidc4 || $BOARD == vim2 ]]; then
-	cat <<-EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
+	cat <<-EOF > "$destination"/etc/X11/xorg.conf
 	Section "Device"
             Identifier  "Armsoc Graphics"
        
@@ -200,7 +200,6 @@ family_tweaks_bsp()
             Identifier "Default Screen"
             SubSection "Display"
                 Depth 24
-                Modes "1920x1080" "1280x1024" "1024x768" "800x600"
             EndSubSection
         EndSection
 		EOF
