@@ -168,6 +168,7 @@ family_tweaks_bsp()
 	install -m 755 $SRC/packages/bsp/rockchip/hdmi-hotplug $destination/usr/local/bin
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
+	if [[ "$BOARD" == "odroidc2" || "nanopik2" || "lepatato" || "lafrite" || "vim1" ]]; then 
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 	# set fbdev as default driver.
 	Section "Device"
@@ -175,4 +176,32 @@ family_tweaks_bsp()
          Driver "fbdev"
 	EndSection
 	EOF
+	elif [[ "$BOARD" == "odroidn2" || "odroidc4" || "vim2" ]]; then
+	cat <<-EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
+	Section "Device"
+            Identifier  "Armsoc Graphics"
+       
+        ## Use armsoc driver
+        #   Driver          "armsoc"
+        ## End armsoc configuration
+       
+        ## Use modesetting and glamor
+            Driver      "modesetting"
+            Option      "AccelMethod"    "glamor"     ### "glamor" to enable 3D acceleration, "none" to disable.
+            Option      "DRI"            "2"
+            Option      "Dri2Vsync"      "true"
+            Option  "TripleBuffer"    "True"
+        ## End glamor configuration
+       
+        EndSection
+       
+        Section "Screen"
+            Identifier "Default Screen"
+            SubSection "Display"
+                Depth 24
+                Modes "1920x1080" "1280x1024" "1024x768" "800x600"
+            EndSubSection
+        EndSection
+		EOF
+		fi
 }
