@@ -38,7 +38,7 @@ elif [[ $BOARD == rock64 ]]; then
 	BOOT_USE_MAINLINE_ATF=yes
 	BOOT_SOC=rk3328
 
-elif [[ $BOOTCONFIG == *3328* ]]; then
+elif [[ $BOOTCONFIG == *3328* || $BOARD == station-m1 ]]; then
 
 	BOOT_RK3328_USE_AYUFAN_ATF=yes
 
