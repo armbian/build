@@ -325,6 +325,12 @@ aggregate_all "packages.remove" " "
 PACKAGE_LIST_RM="${PACKAGE_LIST_RM} ${aggregated_content}"
 unset aggregated_content
 
+aggregated_content=""
+aggregate_all_cli "packages.uninstall" " "
+aggregate_all "packages.uninstall" " "
+PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
+unset aggregated_content
+
 PACKAGE_LIST_RM="${PACKAGE_LIST_RM#"${PACKAGE_LIST_RM%%[![:space:]]*}"}"
 PACKAGE_LIST_RM="${PACKAGE_LIST_RM%"${PACKAGE_LIST_RM##*[![:space:]]}"}"
 PACKAGE_LIST_RM="$(echo ${PACKAGE_LIST_RM})"
@@ -332,6 +338,7 @@ PACKAGE_LIST_RM="$(echo ${PACKAGE_LIST_RM})"
 display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}"
 display_alert "PACKAGE_LIST : ${PACKAGE_LIST}"
 display_alert "PACKAGE_LIST_RM : ${PACKAGE_LIST_RM}"
+display_alert "PACKAGE_LIST_UNINSTALL : ${PACKAGE_LIST_UNINSTALL}"
 
 if [[ -n $PACKAGE_LIST_RM ]]; then
 	display_alert "Remove filter : $(tr ' ' '|' <<< ${PACKAGE_LIST_RM})"

@@ -12,6 +12,14 @@
 # Main program
 #
 
+cleanup_list() {
+    local varname="${1}"
+    local list_to_clean="${!varname}"
+    list_to_clean="${list_to_clean#"${list_to_clean%%[![:space:]]*}"}"
+    list_to_clean="${list_to_clean%"${list_to_clean##*[![:space:]]}"}"
+    echo ${list_to_clean}
+}
+
 if [[ $(basename "$0") == main.sh ]]; then
 
 	echo "Please use compile.sh to start the build process"
