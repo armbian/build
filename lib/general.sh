@@ -979,7 +979,7 @@ prepare_host()
 	local codename=$(lsb_release -sc)
 
 	# Getting ready for Ubuntu 20.04
-	if [[ $codename == focal || $codename == ulyana ]]; then
+	if [[ $codename == focal || $codename == groovy || $codename == ulyana ]]; then
 		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
