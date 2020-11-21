@@ -340,6 +340,10 @@ function build_all()
 					display_alert "Building ${n}."
 					if [[ "$KERNEL_ONLY" == "no" && "${MULTITHREAD}" -gt 0 ]]; then
 						build_main &
+						sleep $((RANDOM % 5))
+					elif [[ "${MULTITHREAD}" -gt 0 ]]; then
+						build_main &
+						sleep $((RANDOM % 5))
 					else
 						build_main
 					fi
@@ -369,7 +373,9 @@ function build_all()
 						if [[ "$IGNORE_HASH" == yes && "$KERNEL_ONLY" != "yes" && "${MULTITHREAD}" -gt 0 ]]; then
 							build_main &
 							sleep 0.5
-							else
+						elif [[ "${MULTITHREAD}" -gt 0 ]]; then
+							build_main &
+						else
 							build_main
 						fi
 						# unset non board related stuff
