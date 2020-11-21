@@ -20,7 +20,7 @@ create_board_package()
 	bsptempdir=$(mktemp -d)
 	chmod 700 ${bsptempdir}
 	trap "rm -rf \"${bsptempdir}\" ; exit 0" 0 1 2 3 15
-	local destination=${bsptempdir}${RELEASE}/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
+	local destination=${bsptempdir}/${RELEASE}/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
 	mkdir -p "${destination}"/DEBIAN
 	cd $destination
 
@@ -311,5 +311,5 @@ fi
 	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
 	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"
 	# cleanup
-	rm -rf "${bsptempdir}"
+	rm -rf ${bsptempdir}
 }
