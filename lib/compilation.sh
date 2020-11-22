@@ -80,6 +80,8 @@ compile_atf()
 	[[ $(type -t atf_custom_postprocess) == function ]] && atf_custom_postprocess
 
 	atftempdir=$(mktemp -d)
+	chmod 700 ${atftempdir}
+	trap "rm -rf \"${atftempdir}\" ; exit 0" 0 1 2 3 15
 
 	# copy files to temp directory
 	for f in $target_files; do
@@ -144,6 +146,8 @@ compile_uboot()
 
 	# create directory structure for the .deb package
 	uboottempdir=$(mktemp -d)
+	chmod 700 ${uboottempdir}
+	trap "rm -rf \"${uboottempdir}\" ; exit 0" 0 1 2 3 15
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
 	rm -rf $uboottempdir/$uboot_name
 	mkdir -p $uboottempdir/$uboot_name/usr/lib/{u-boot,$uboot_name} $uboottempdir/$uboot_name/DEBIAN
@@ -275,7 +279,7 @@ compile_uboot()
 
 	[[ ! -f $uboottempdir/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
-	rsync -rq "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
+	rsync --remove-source-files -rq "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
 }
 
 compile_kernel()
@@ -319,8 +323,8 @@ compile_kernel()
 
 	# create linux-source package - with already patched sources
 	local sources_pkg_dir=$(mktemp -d)/${CHOSEN_KSRC}_${REVISION}_all
-	rm -rf "${sources_pkg_dir}"
-	mkdir -p "${sources_pkg_dir}"/usr/src/ "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}" "${sources_pkg_dir}"/DEBIAN
+	trap "rm -rf \"${sources_pkg_dir}\" ; exit 0" 0 1 2 3 15
+	mkdir -p "${sources_pkg_dir}"/usr/src/ "${sources_pkg_dir}"/usr/share/doc/linux-source-${version}-${LINUXFAMILY} "${sources_pkg_dir}"/DEBIAN
 
 	if [[ $BUILD_KSRC != no ]]; then
 		display_alert "Compressing sources for the linux-source package"
@@ -329,7 +333,6 @@ compile_kernel()
 			| pixz -4 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz"
 		cp COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
 	fi
-
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
 	local toolchain
@@ -447,14 +450,15 @@ compile_kernel()
 
 	if [[ $BUILD_KSRC != no ]]; then
 		fakeroot dpkg-deb -z0 -b "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
-		rsync -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
+		rsync --remove-source-files -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
 	fi
 	rm -rf "${sources_pkg_dir}"
 
 	cd .. || exit
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
-	rsync -rq ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
+
+	rsync --remove-source-files -rq ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
 
 	# store git hash to the file
 	echo "${hash}" > "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
@@ -479,7 +483,8 @@ compile_firmware()
 	fi
 
 	firmwaretempdir=$(mktemp -d)
-
+	chmod 700 ${firmwaretempdir}
+	trap "rm -rf \"${firmwaretempdir}\" ; exit 0" 0 1 2 3 15
 	local plugin_dir="armbian-firmware${FULL}"
 	mkdir -p "${firmwaretempdir}/${plugin_dir}/lib/firmware"
 
@@ -529,7 +534,8 @@ compile_armbian-config()
 {
 
 	local tmpdir=$(mktemp -d)/armbian-config_${REVISION}_all
-
+	chmod 700 ${tmpdir}
+	trap "rm -rf \"${tmpdir}\" ; exit 0" 0 1 2 3 15
 	display_alert "Building deb" "armbian-config" "info"
 
 	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
