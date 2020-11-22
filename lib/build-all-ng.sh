@@ -460,4 +460,4 @@ fi
 buildall_end=$(date +%s)
 buildall_runtime=$(((buildall_end - buildall_start) / 60))
 display_alert "Runtime in total" "${buildall_runtime} min" "info"
-export n=${n}
+echo "${n}" > "${SRC}"/.tmp/n
