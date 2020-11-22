@@ -17,8 +17,10 @@ create_board_package()
 {
 	display_alert "Creating board support package" "$BOARD $BRANCH" "info"
 
-	local destination=$(mktemp -d)/${RELEASE}/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
-	rm -rf "${destination}"
+	bsptempdir=$(mktemp -d)
+	chmod 700 ${bsptempdir}
+	trap "rm -rf \"${bsptempdir}\" ; exit 0" 0 1 2 3 15
+	local destination=${bsptempdir}/${RELEASE}/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
 	mkdir -p "${destination}"/DEBIAN
 	cd $destination
 
@@ -307,7 +309,7 @@ fi
 	display_alert "Building package" "$CHOSEN_ROOTFS" "info"
 	fakeroot dpkg-deb -b "${destination}" "${destination}.deb" >> "${DEST}"/debug/install.log 2>&1
 	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
-	rsync -rq --delete-after "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"
+	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"
 	# cleanup
-	rm -rf "${destination}"
+	rm -rf ${bsptempdir}
 }
