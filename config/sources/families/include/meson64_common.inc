@@ -172,8 +172,8 @@ family_tweaks_bsp()
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 	# set fbdev as default driver.
 	Section "Device"
-		Identifier "NOGPU"
-		Driver "fbdev"
+	        Identifier "NOGPU"
+	        Driver "fbdev"
 	    EndSection
 	EOF
 	elif [[ $BOARD == odroidn2 || $BOARD == odroidc4 || $BOARD == vim2 ]]; then
@@ -197,10 +197,10 @@ family_tweaks_bsp()
        
         Section "Screen"
             Identifier "Default Screen"
-            SubSection "Display"
-                Depth 24
-            EndSubSection
-        EndSection
-		EOF
+               SubSection "Display"
+                  Depth 24
+               EndSubSection
+           EndSection
+	EOF
 	fi
 }
