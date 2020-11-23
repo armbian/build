@@ -174,7 +174,7 @@ family_tweaks_bsp()
 	Section "Device"
                 Identifier "NOGPU"
                 Driver "fbdev"
-           EndSection
+            EndSection
 	EOF
 	elif [[ $BOARD == odroidn2 || $BOARD == odroidc4 || $BOARD == vim2 ]]; then
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf
