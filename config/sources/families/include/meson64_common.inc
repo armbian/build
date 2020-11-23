@@ -172,9 +172,9 @@ family_tweaks_bsp()
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 	# set fbdev as default driver.
 	Section "Device"
-			Identifier "NOGPU"
-			Driver "fbdev"
-		EndSection
+		Identifier "NOGPU"
+		Driver "fbdev"
+	    EndSection
 	EOF
 	elif [[ $BOARD == odroidn2 || $BOARD == odroidc4 || $BOARD == vim2 ]]; then
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf
@@ -190,7 +190,7 @@ family_tweaks_bsp()
             Option      "AccelMethod"    "glamor"     ### "glamor" to enable 3D acceleration, "none" to disable.
             Option      "DRI"            "2"
             Option      "Dri2Vsync"      "true"
-            Option  "TripleBuffer"    "True"
+            Option      "TripleBuffer"   "True"
         ## End glamor configuration
        
         EndSection
