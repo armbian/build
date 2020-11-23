@@ -176,8 +176,7 @@ family_tweaks_bsp()
 			Driver "fbdev"
 		EndSection
 	EOF
-	else
-	if [[ $BOARD == odroidn2 || $BOARD == odroidc4 || $BOARD == vim2 ]]; then
+	elif [[ $BOARD == odroidn2 || $BOARD == odroidc4 || $BOARD == vim2 ]]; then
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf
 	Section "Device"
             Identifier  "Armsoc Graphics"
@@ -203,6 +202,5 @@ family_tweaks_bsp()
             EndSubSection
         EndSection
 		EOF
-	fi
 	fi
 }
