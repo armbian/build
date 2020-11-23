@@ -201,6 +201,6 @@ family_tweaks_bsp()
                   Depth 24
                EndSubSection
            EndSection
-	EOF
-	fi
+        EOF
+        fi
 }
