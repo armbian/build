@@ -380,7 +380,11 @@ family_tweaks_bsp()
 		install -m 644 $SRC/packages/bsp/helios64/fancontrol.conf $destination/etc/fancontrol
 
 		# LED tweak
-		cp $SRC/packages/bsp/helios64/helios64-heartbeat-led.service $destination/etc/systemd/system/
+		if [[ $BRANCH == legacy ]]; then
+			install -m 644 $SRC/packages/bsp/helios64/helios64-heartbeat-led-legacy.service $destination/etc/systemd/system/helios64-heartbeat-led.service
+		else
+			install -m 644 $SRC/packages/bsp/helios64/helios64-heartbeat-led.service $destination/etc/systemd/system/
+		fi
 
 		# UPS service
 		cp $SRC/packages/bsp/helios64/helios64-ups.service $destination/lib/systemd/system/
