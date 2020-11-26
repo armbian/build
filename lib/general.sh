@@ -957,7 +957,7 @@ prepare_host()
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "http://www.armbian.com/using-armbian-tools/"
-		exit_with_error "Running this tool on non x86-x64 build host in not supported"
+		exit_with_error "Running this tool on non x86-x64 build host is not supported"
 	fi
 
 	# wait until package manager finishes possible system maintanace
