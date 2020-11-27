@@ -274,6 +274,7 @@ create_rootfs_cache()
 
 		# Remove packages from packages.uninstall
 
+		display_alert "Removing packages.uninstall packages for" "Armbian" "info"
 		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
 			$apt_extra $apt_extra_progress purge $PACKAGE_LIST_UNINSTALL"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
