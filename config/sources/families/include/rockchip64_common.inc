@@ -82,8 +82,9 @@ case $BRANCH in
 
 	dev)
 
+		MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable-rc.git'
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="branch:linux-5.9.y"
+		KERNELBRANCH="tag:v5.10-rc5"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
@@ -358,9 +359,11 @@ family_tweaks_bsp()
 
 		mkdir -p $destination/etc/udev/rules.d/
 		mkdir -p $destination/etc/systemd/system/fancontrol.service.d/
+		mkdir -p $destination/lib/systemd/system/
 		mkdir -p $destination/lib/systemd/system-shutdown/
 		cp $SRC/packages/bsp/helios64/50-usb-realtek-net.rules $destination/etc/udev/rules.d/
 		cp $SRC/packages/bsp/helios64/70-keep-usb-lan-as-eth1.rules $destination/etc/udev/rules.d/
+		cp $SRC/packages/bsp/helios64/90-helios64-ups.rules $destination/etc/udev/rules.d/
 		cp $SRC/packages/bsp/helios64/asound.conf $destination/etc/
 		install -m 755 $SRC/packages/bsp/helios64/disable_auto_poweron $destination/lib/systemd/system-shutdown/
 
@@ -378,7 +381,15 @@ family_tweaks_bsp()
 		install -m 644 $SRC/packages/bsp/helios64/fancontrol.conf $destination/etc/fancontrol
 
 		# LED tweak
-		cp $SRC/packages/bsp/helios64/helios64-heartbeat-led.service $destination/etc/systemd/system/
+		if [[ $BRANCH == legacy ]]; then
+			install -m 644 $SRC/packages/bsp/helios64/helios64-heartbeat-led-legacy.service $destination/etc/systemd/system/helios64-heartbeat-led.service
+		else
+			install -m 644 $SRC/packages/bsp/helios64/helios64-heartbeat-led.service $destination/etc/systemd/system/
+		fi
+
+		# UPS service
+		cp $SRC/packages/bsp/helios64/helios64-ups.service $destination/lib/systemd/system/
+		cp $SRC/packages/bsp/helios64/helios64-ups.timer $destination/lib/systemd/system/
 
 	fi
 
