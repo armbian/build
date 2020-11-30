@@ -1,6 +1,6 @@
 case $BRANCH in
 
-	legacy|current)
+	legacy|current|dev)
 
 		BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 		BOOTBRANCH='tag:v2019.04'
@@ -14,11 +14,6 @@ case $BRANCH in
 
 		UBOOT_USE_GCC='> 7.0'
 
-		OVERLAY_PREFIX='armada-388-helios4'
-
-	;;
-
-	dev)
 		OVERLAY_PREFIX='armada-388-helios4'
 	;;
 
