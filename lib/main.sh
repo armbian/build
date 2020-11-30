@@ -12,6 +12,14 @@
 # Main program
 #
 
+cleanup_list() {
+    local varname="${1}"
+    local list_to_clean="${!varname}"
+    list_to_clean="${list_to_clean#"${list_to_clean%%[![:space:]]*}"}"
+    list_to_clean="${list_to_clean%"${list_to_clean##*[![:space:]]}"}"
+    echo ${list_to_clean}
+}
+
 if [[ $(basename "$0") == main.sh ]]; then
 
 	echo "Please use compile.sh to start the build process"
@@ -281,44 +289,22 @@ else
 
 fi
 
-# define distribution support status
-declare -A distro_name distro_support
-distro_name['stretch']="Debian 9 Stretch"
-distro_support['stretch']="eos"
-distro_name['buster']="Debian 10 Buster"
-distro_support['buster']="supported"
-distro_name['bullseye']="Debian 11 Bullseye"
-distro_support['bullseye']="csc"
-distro_name['xenial']="Ubuntu Xenial 16.04 LTS"
-distro_support['xenial']="eos"
-distro_name['bionic']="Ubuntu Bionic 18.04 LTS"
-distro_support['bionic']="supported"
-distro_name['focal']="Ubuntu Focal 20.04 LTS"
-distro_support['focal']="supported"
-distro_name['groovy']="Ubuntu Groovy 20.10"
-distro_support['groovy']="csc"
-
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
 	options=()
 
-		distro_menu "focal"
-		distro_menu "buster"
-		distro_menu "bionic"
-		distro_menu "bullseye"
-		distro_menu "groovy"
-#		distro_menu "stretch"
-#		distro_menu "xenial"
+	distros_options
 
-		RELEASE=$(dialog --stdout --title "Choose a release package base" --backtitle "$backtitle" \
-		--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
-		[[ -z $RELEASE ]] && exit_with_error "No release selected"
+	RELEASE=$(dialog --stdout --title "Choose a release package base" --backtitle "$backtitle" \
+	--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+	echo "options : ${options}"
+	[[ -z $RELEASE ]] && exit_with_error "No release selected"
 
+	unset options
 fi
 
 # read distribution support status which is written to the armbian-release file
-distro_menu "$RELEASE"
-unset options
+set_distribution_status
 
 # don't show desktop option if we choose minimal build
 [[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no
@@ -398,9 +384,25 @@ show_select_menu() {
 
 # Myy : Once we got a list of selected groups, parse the PACKAGE_LIST inside configuration.sh
 
-DESKTOP_CONFIGS_DIR="${SRC}/config/desktop/${RELEASE}/environments"
+DESKTOP_ELEMENTS_DIR="${SRC}/config/desktop/${RELEASE}"
+DESKTOP_CONFIGS_DIR="${DESKTOP_ELEMENTS_DIR}/environments"
 DESKTOP_CONFIG_PREFIX="config_"
-DESKTOP_APPGROUPS_DIR="${SRC}/config/desktop/${RELEASE}/appgroups"
+DESKTOP_APPGROUPS_DIR="${DESKTOP_ELEMENTS_DIR}/appgroups"
+
+desktop_element_available_for_arch() {
+	local desktop_element_path="${1}"
+	local targeted_arch="${2}"
+
+	local arch_limitation_file="${1}/only_for"
+
+	display_alert "Checking if ${desktop_element_path} is available for ${targeted_arch} in ${arch_limitation_file}"
+	if [[ -f "${arch_limitation_file}" ]]; then
+		grep -- "${targeted_arch}" "${arch_limitation_file}"
+		return $?
+	else
+		return 0
+	fi
+}
 
 # Myy : FIXME Rename CONFIG to PACKAGE_LIST
 DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH=""
@@ -408,7 +410,7 @@ DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH=""
 if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
 	options=()
 	for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
-		desktop_env_name=$(basename $desktop_env_dir)
+		desktop_env_name=$(basename ${desktop_env_dir})
 		options+=("${desktop_env_name}" "${desktop_env_name^} desktop environment")
 	done
 
@@ -419,7 +421,7 @@ if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
 	echo "You have chosen $DESKTOP_ENVIRONMENT as your default desktop environment !? WHY !?"
 	unset options
 
-	if [[ -z $DESKTOP_ENVIRONMENT ]]; then
+	if [[ -z "${DESKTOP_ENVIRONMENT}" ]]; then
 		exit_with_error "No desktop environment selected..."
 	fi
 fi
