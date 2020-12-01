@@ -15,6 +15,7 @@
 # get_package_list_hash
 # create_sources_list
 # fetch_from_repo
+# improved_git
 # display_alert
 # fingerprint_image
 # distro_menu
@@ -128,7 +129,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: stretch|buster|bullseye|xenial|bionic|eoan|focal
+# <release>: stretch|buster|bullseye|xenial|bionic|groovy|focal
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -154,7 +155,7 @@ create_sources_list()
 	EOF
 	;;
 
-	xenial|bionic|eoan|focal)
+	xenial|bionic|groovy|focal)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -178,14 +179,38 @@ create_sources_list()
 		echo "deb http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt" )".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 	fi
 
-	# add local package server if defined. Suitable for development
-	[[ -n $LOCAL_MIRROR ]] && echo "deb http://$LOCAL_MIRROR $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" >> "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+	# replace local package server if defined. Suitable for development
+	[[ -n $LOCAL_MIRROR ]] && echo "deb http://$LOCAL_MIRROR $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 
 	display_alert "Adding Armbian repository and authentication key" "/etc/apt/sources.list.d/armbian.list" "info"
 	cp "${SRC}"/config/armbian.key "${SDCARD}"
 	chroot "${SDCARD}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
 	rm "${SDCARD}"/armbian.key
 }
+
+
+#
+# This function retries Git operations to avoid failure in case remote is borked
+#
+improved_git()
+{
+
+	local realgit=$(which git)
+	local retries=3
+	local delay=10
+	local count=1
+	while [ $count -lt $retries ]; do
+		$realgit "$@"
+		if [[ $? -eq 0 || -f .git/index.lock ]]; then
+			retries=0
+			break
+		fi
+	let count=$count+1	
+	sleep $delay
+	done
+
+}
+
 
 # fetch_from_repo <url> <directory> <ref> <ref_subdir>
 # <url>: remote repository URL
@@ -244,16 +269,16 @@ fetch_from_repo()
 	#  Check the folder as a git repository.
 	#  Then the target URL matches the local URL.
 
-	if [[ "$(git rev-parse --git-dir 2>/dev/null)" == ".git" && \
-		  "$url" != "$(git remote get-url origin 2>/dev/null)" ]]; then
+	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" == ".git" && \
+		  "$url" != "$(improved_git remote get-url origin 2>/dev/null)" ]]; then
 		display_alert "Remote URL does not match, removing existing local copy"
 		rm -rf .git ./*
 	fi
 
-	if [[ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]]; then
+	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" != ".git" ]]; then
 		display_alert "Creating local copy"
-		git init -q .
-		git remote add origin "${url}"
+		improved_git init -q .
+		improved_git remote add origin "${url}"
 		# Here you need to upload from a new address
 		offline=false
 	fi
@@ -269,22 +294,22 @@ fetch_from_repo()
 			branch)
 			# TODO: grep refs/heads/$name
 			local remote_hash
-			remote_hash=$(git ls-remote -h "${url}" "$ref_name" | head -1 | cut -f1)
+			remote_hash=$(improved_git ls-remote -h "${url}" "$ref_name" | head -1 | cut -f1)
 			[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
 			;;
 
 			tag)
 			local remote_hash
-			remote_hash=$(git ls-remote -t "${url}" "$ref_name" | cut -f1)
+			remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name" | cut -f1)
 			if [[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]]; then
-				remote_hash=$(git ls-remote -t "${url}" "$ref_name^{}" | cut -f1)
+				remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name^{}" | cut -f1)
 				[[ -z $remote_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
 			fi
 			;;
 
 			head)
 			local remote_hash
-			remote_hash=$(git ls-remote "${url}" HEAD | cut -f1)
+			remote_hash=$(improved_git ls-remote "${url}" HEAD | cut -f1)
 			[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
 			;;
 
@@ -300,48 +325,48 @@ fetch_from_repo()
 		# remote was updated, fetch and check out updates
 		display_alert "Fetching updates"
 		case $ref_type in
-			branch) git fetch --depth 1 origin "${ref_name}" ;;
-			tag) git fetch --depth 1 origin tags/"${ref_name}" ;;
-			head) git fetch --depth 1 origin HEAD ;;
+			branch) improved_git fetch --depth 1 origin "${ref_name}" ;;
+			tag) improved_git fetch --depth 1 origin tags/"${ref_name}" ;;
+			head) improved_git fetch --depth 1 origin HEAD ;;
 		esac
 
 		# commit type needs support for older git servers that doesn't support fetching id directly
 		if [[ $ref_type == commit ]]; then
 
-			git fetch --depth 1 origin "${ref_name}"
+			improved_git fetch --depth 1 origin "${ref_name}"
 
 			# cover old type
 			if [[ $? -ne 0 ]]; then
 
 				display_alert "Commit checkout not supported on this repository. Doing full clone." "" "wrn"
-				git pull
-				git checkout -fq "${ref_name}"
-				display_alert "Checkout out to" "$(git --no-pager log -2 --pretty=format:"$ad%s [%an]" | head -1)" "info"
+				improved_git pull
+				improved_git checkout -fq "${ref_name}"
+				display_alert "Checkout out to" "$(improved_git --no-pager log -2 --pretty=format:"$ad%s [%an]" | head -1)" "info"
 
 			else
 
 				display_alert "Checking out"
-				git checkout -f -q FETCH_HEAD
-				git clean -qdf
+				improved_git checkout -f -q FETCH_HEAD
+				improved_git clean -qdf
 
 			fi
 		else
 
 			display_alert "Checking out"
-			git checkout -f -q FETCH_HEAD
-			git clean -qdf
+			improved_git checkout -f -q FETCH_HEAD
+			improved_git clean -qdf
 
 		fi
-	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
+	elif [[ -n $(improved_git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
-		display_alert " Cleaning .... " "$(git status -s | wc -l) files"
+		display_alert " Cleaning .... " "$(improved_git status -s | wc -l) files"
 
 		# Return the files that are tracked by git to the initial state.
-		git checkout -f -q HEAD
+		improved_git checkout -f -q HEAD
 
 		# Files that are not tracked by git and were added
 		# when the patch was applied must be removed.
-		git clean -qdf
+		improved_git clean -qdf
 	else
 		# working directory is clean, nothing to do
 		display_alert "Up to date"
@@ -350,11 +375,11 @@ fetch_from_repo()
 	if [[ -f .gitmodules ]]; then
 		display_alert "Updating submodules" "" "ext"
 		# FML: http://stackoverflow.com/a/17692710
-		for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
+		for i in $(improved_git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
 			cd "${SRC}/cache/sources/${workdir}" || exit
 			local surl sref
-			surl=$(git config -f .gitmodules --get "submodule.$i.url")
-			sref=$(git config -f .gitmodules --get "submodule.$i.branch")
+			surl=$(improved_git config -f .gitmodules --get "submodule.$i.url")
+			sref=$(improved_git config -f .gitmodules --get "submodule.$i.branch")
 			if [[ -n $sref ]]; then
 				sref="branch:$sref"
 			else
@@ -573,29 +598,48 @@ display_alert "Building kernel splash logo" "$RELEASE" "info"
 
 
 
+DISTRIBUTIONS_DESC_DIR="config/distributions"
+
 function distro_menu ()
 {
 # create a select menu for choosing a distribution based EXPERT status
-# also sets DISTRIBUTION_STATUS which goes to BSP package / armbian-release
 
-	for i in "${!distro_name[@]}"
-	do
-		if [[ "${i}" == "${1}" ]]; then
-			if [[ "${distro_support[$i]}" != "supported" && $EXPERT != "yes" ]]; then
-				:
-			else
-				local text=""
-				[[ $EXPERT == "yes" ]] && local text="(${distro_support[$i]})"
-				options+=("$i" "${distro_name[$i]} $text")
-			fi
-			DISTRIBUTION_STATUS=${distro_support[$i]}
-			break
+	local distrib_dir="${1}"
+
+	if [[ -d "${distrib_dir}" && -f "${distrib_dir}/support" ]]; then
+		local support_level="$(cat "${distrib_dir}/support")"
+		if [[ "${support_level}" != "supported" && $EXPERT != "yes" ]]; then
+			:
+		else
+			local distro_codename="$(basename "${distrib_dir}")"
+			local distro_fullname="$(cat "${distrib_dir}/name")"
+			local expert_infos=""
+			[[ $EXPERT == "yes" ]] && expert_infos="(${support_level})"
+			options+=("${distro_codename}" "${distro_fullname} ${expert_infos}")
 		fi
-	done
+	fi
 
 }
 
 
+function distros_options() {
+	for distrib_dir in "${DISTRIBUTIONS_DESC_DIR}/"*; do
+		distro_menu "${distrib_dir}"
+	done
+}
+
+function set_distribution_status() {
+
+	local distro_support_desc_filepath="${DISTRIBUTIONS_DESC_DIR}/${RELEASE}/support"
+	if [[ ! -f "${distro_support_desc_filepath}" ]]; then
+		exit_with_error "Distribution ${distribution_name} does not exist"
+	else
+		DISTRIBUTION_STATUS="$(cat "${distro_support_desc_filepath}")"
+	fi
+	
+	[[ "${DISTRIBUTION_STATUS}" != "supported" ]] && [[ "${EXPERT}" != "yes" ]] && exit_with_error "Armbian ${RELEASE} is unsupported and, therefore, only available to experts (EXPERT=yes)"
+	 
+}
 
 
 adding_packages()
@@ -629,7 +673,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "eoan" "focal")
+	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -741,12 +785,12 @@ addtorepo()
 
 
 repo-manipulate() {
-	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "eoan" "focal")
+	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal")
 	case $@ in
 		serve)
 			# display repository content
 			display_alert "Serving content" "common utils" "ext"
-			aptly serve -listen=$(ip -f inet addr | grep -Po 'inet \K[\d.]+' | grep -v 127.0.0.1 | head -1):8080 -config="${SCRIPTPATH}config/${REPO_CONFIG}"
+			aptly serve -listen=$(ip -f inet addr | grep -Po 'inet \K[\d.]+' | grep -v 127.0.0.1 | head -1):80 -config="${SCRIPTPATH}config/${REPO_CONFIG}"
 			exit 0
 			;;
 		show)
@@ -965,12 +1009,12 @@ prepare_host()
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
 
 	# Ubuntu Focal x86_64 is the only fully supported host OS release
-	# Ubuntu Bionic x86_64 support is legacy until it breaks
+	# Ubuntu Bionic x86_64 support is no longer supported
 	# Using Docker/VirtualBox/Vagrant is the only supported way to run the build script on other Linux distributions
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
-	if [[ -z $codename || "bionic buster eoan focal debbie tricia ulyana" != *"$codename"* ]]; then
+	if [[ -z $codename || "buster groovy focal debbie tricia ulyana" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -983,7 +1027,7 @@ prepare_host()
 		exit_with_error "Windows subsystem for Linux is not a supported build environment"
 	fi
 
-	if [[ -z $codename || "focal" == "$codename" || "eoan" == "$codename"  || "debbie" == "$codename"  || "buster" == "$codename" || "ulyana" == "$codename" ]]; then
+	if [[ -z $codename || "focal" == "$codename" || "groovy" == "$codename"  || "debbie" == "$codename"  || "buster" == "$codename" || "ulyana" == "$codename" ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 
@@ -1061,27 +1105,30 @@ prepare_host()
 		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 	fi
-	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,toolchains,utility,rootfs} "${SRC}"/.tmp
+	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
 	local toolchains=(
-		"https://dl.armbian.com/_toolchains/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchains/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
+		"https://dl.armbian.com/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
 		)
 
+	USE_TORRENT_STATUS=${USE_TORRENT}
+	USE_TORRENT="no"
 	for toolchain in ${toolchains[@]}; do
-		download_and_verify "_toolchains" "${toolchain##*/}"
+		download_and_verify "_toolchain" "${toolchain##*/}"
 	done
+	USE_TORRENT=${USE_TORRENT_STATUS}
 
-	rm -rf "${SRC}"/cache/toolchains/*.tar.xz*
-	local existing_dirs=( $(ls -1 "${SRC}"/cache/toolchains) )
+	rm -rf "${SRC}"/cache/toolchain/*.tar.xz*
+	local existing_dirs=( $(ls -1 "${SRC}"/cache/toolchain) )
 	for dir in ${existing_dirs[@]}; do
 		local found=no
 		for toolchain in ${toolchains[@]}; do
@@ -1091,7 +1138,7 @@ prepare_host()
 		done
 		if [[ $found == no ]]; then
 			display_alert "Removing obsolete toolchain" "$dir"
-			rm -rf "${SRC}/cache/toolchains/${dir}"
+			rm -rf "${SRC}/cache/toolchain/${dir}"
 		fi
 	done
 
@@ -1135,9 +1182,12 @@ function webseed ()
 unset text
 WEBSEED=(
 	"https://dl.armbian.com/"
-	"https://imola.armbian.com/"
+	"https://imola.armbian.com/dl/"
 	"https://mirrors.netix.net/armbian/dl/"
 	"https://mirrors.dotsrc.org/armbian-dl/"
+	"https://us.mirrors.fossho.st/armbian/dl/"
+	"https://uk.mirrors.fossho.st/armbian/dl/"
+	"https://armbian.systemonachip.net/dl/"
 	)
 	if [[ -z $DOWNLOAD_MIRROR ]]; then
 		WEBSEED=(
@@ -1192,7 +1242,7 @@ download_and_verify()
 		return
 	else
 		# download control file
-		local torrent=${server}torrent/${filename}.torrent
+		local torrent=${server}$remotedir/${filename}.torrent
 		aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
 		--continue=false --allow-overwrite=true --dir="${localdir}" "$(webseed "$remotedir/${filename}.asc")" -o "${filename}.asc"
 		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"

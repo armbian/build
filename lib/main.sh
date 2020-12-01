@@ -12,6 +12,14 @@
 # Main program
 #
 
+cleanup_list() {
+    local varname="${1}"
+    local list_to_clean="${!varname}"
+    list_to_clean="${list_to_clean#"${list_to_clean%%[![:space:]]*}"}"
+    list_to_clean="${list_to_clean%"${list_to_clean##*[![:space:]]}"}"
+    echo ${list_to_clean}
+}
+
 if [[ $(basename "$0") == main.sh ]]; then
 
 	echo "Please use compile.sh to start the build process"
@@ -151,12 +159,15 @@ if [[ -z $KERNEL_CONFIGURE ]]; then
 
 	options+=("no" "Do not change the kernel configuration")
 	options+=("yes" "Show a kernel configuration menu before compilation")
+	options+=("prebuilt" "Use precompiled packages from Armbian repository")
 	KERNEL_CONFIGURE=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
 	--menu "Select the kernel configuration" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $KERNEL_CONFIGURE ]] && exit_with_error "No option selected"
 
 fi
+
+[[ ${KERNEL_CONFIGURE} == prebuilt ]] && REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-config,armbian-firmware"
 
 if [[ -z $BOARD ]]; then
 
@@ -278,44 +289,22 @@ else
 
 fi
 
-# define distribution support status
-declare -A distro_name distro_support
-distro_name['stretch']="Debian 9 Stretch"
-distro_support['stretch']="eos"
-distro_name['buster']="Debian 10 Buster"
-distro_support['buster']="supported"
-distro_name['bullseye']="Debian 11 Bullseye"
-distro_support['bullseye']="csc"
-distro_name['xenial']="Ubuntu Xenial 16.04 LTS"
-distro_support['xenial']="eos"
-distro_name['bionic']="Ubuntu Bionic 18.04 LTS"
-distro_support['bionic']="supported"
-distro_name['focal']="Ubuntu Focal 20.04 LTS"
-distro_support['focal']="supported"
-distro_name['eoan']="Ubuntu Eoan 19.10"
-distro_support['eoan']="csc"
-
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
 	options=()
 
-		distro_menu "stretch"
-		distro_menu "buster"
-		distro_menu "bullseye"
-		distro_menu "xenial"
-		distro_menu "bionic"
-		distro_menu "eoan"
-		distro_menu "focal"
+	distros_options
 
-		RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" \
-		--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
-		[[ -z $RELEASE ]] && exit_with_error "No release selected"
+	RELEASE=$(dialog --stdout --title "Choose a release package base" --backtitle "$backtitle" \
+	--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+	echo "options : ${options}"
+	[[ -z $RELEASE ]] && exit_with_error "No release selected"
 
+	unset options
 fi
 
 # read distribution support status which is written to the armbian-release file
-distro_menu "$RELEASE"
-unset options
+set_distribution_status
 
 # don't show desktop option if we choose minimal build
 [[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no
@@ -329,7 +318,10 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
-	[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
+	if [[ ${BUILD_DESKTOP} == "yes" ]]; then
+		BUILD_MINIMAL=no
+		SELECTED_CONFIGURATION="desktop"
+	fi
 
 fi
 
@@ -342,12 +334,216 @@ if [[ $KERNEL_ONLY != yes && $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_MINIMAL ]] && exit_with_error "No option selected"
+	if [[ $BUILD_MINIMAL == "yes" ]]; then
+		SELECTED_CONFIGURATION="cli_minimal"
+	else
+		SELECTED_CONFIGURATION="cli_standard"
+	fi
 
 fi
 
 #prevent conflicting setup
-[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	BUILD_MINIMAL=no
+	SELECTED_CONFIGURATION="desktop"
+elif [[ $BUILD_MINIMAL != "yes" || -z "${BUILD_MINIMAL}" ]]; then
+	BUILD_MINIMAL=no # Just in case BUILD_MINIMAL is not defined
+	BUILD_DESKTOP=no
+	SELECTED_CONFIGURATION="cli_standard"
+elif [[ $BUILD_MINIMAL == "yes" ]]; then
+	BUILD_DESKTOP=no
+	SELECTED_CONFIGURATION="cli_minimal"
+fi
+
 [[ $BUILD_MINIMAL == yes ]] && EXTERNAL=no
+
+# Myy : Menu configuration for choosing desktop configurations
+
+show_menu() {
+	provided_title=$1
+	provided_backtitle=$2
+	provided_menuname=$3
+	# Myy : I don't know why there's a TTY_Y - 8... 
+	#echo "Provided title : $provided_title"
+	#echo "Provided backtitle : $provided_backtitle"
+	#echo "Provided menuname : $provided_menuname"
+	#echo "Provided options : " "${@:4}"
+	#echo "TTY X: $TTY_X Y: $TTY_Y"
+	dialog --stdout --title "$provided_title" --backtitle "${provided_backtitle}" \
+	--menu "$provided_menuname" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+}
+
+# Myy : FIXME Factorize
+show_select_menu() {
+	provided_title=$1
+	provided_backtitle=$2
+	provided_menuname=$3
+	dialog --stdout --title "${provided_title}" --backtitle "${provided_backtitle}" \
+	--checklist "${provided_menuname}" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+}
+
+# Myy : Once we got a list of selected groups, parse the PACKAGE_LIST inside configuration.sh
+
+DESKTOP_ELEMENTS_DIR="${SRC}/config/desktop/${RELEASE}"
+DESKTOP_CONFIGS_DIR="${DESKTOP_ELEMENTS_DIR}/environments"
+DESKTOP_CONFIG_PREFIX="config_"
+DESKTOP_APPGROUPS_DIR="${DESKTOP_ELEMENTS_DIR}/appgroups"
+
+desktop_element_available_for_arch() {
+	local desktop_element_path="${1}"
+	local targeted_arch="${2}"
+
+	local arch_limitation_file="${1}/only_for"
+
+	display_alert "Checking if ${desktop_element_path} is available for ${targeted_arch} in ${arch_limitation_file}"
+	if [[ -f "${arch_limitation_file}" ]]; then
+		grep -- "${targeted_arch}" "${arch_limitation_file}"
+		return $?
+	else
+		return 0
+	fi
+}
+
+# Myy : FIXME Rename CONFIG to PACKAGE_LIST
+DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH=""
+
+if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
+	options=()
+	for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
+		desktop_env_name=$(basename ${desktop_env_dir})
+		options+=("${desktop_env_name}" "${desktop_env_name^} desktop environment")
+	done
+
+	#DESKTOP_ENVIRONMENT=$(dialog --stdout --title "Choose a desktop environment" --backtitle "$backtitle" --menu "Select the default desktop environment to bundle with this image" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+
+	DESKTOP_ENVIRONMENT=$(show_menu "Choose a desktop environment" "$backtitle" "Select the default desktop environment to bundle with this image" "${options[@]}")
+
+	echo "You have chosen $DESKTOP_ENVIRONMENT as your default desktop environment !? WHY !?"
+	unset options
+
+	if [[ -z "${DESKTOP_ENVIRONMENT}" ]]; then
+		exit_with_error "No desktop environment selected..."
+	fi
+fi
+
+DESKTOP_ENVIRONMENT_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
+
+if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
+	# FIXME Check for empty folders, just in case the current maintainer
+	# messed up
+	# Note, we could also ignore it and don't show anything in the previous
+	# menu, but that hides information and make debugging harder, which I
+	# don't like. Adding desktop environments as a maintainer is not a
+	# trivial nor common task.
+
+	options=()
+	for configuration in "${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_CONFIG_PREFIX}"*; do
+		config_filename=$(basename ${configuration})
+		config_name=${config_filename#"${DESKTOP_CONFIG_PREFIX}"}
+		options+=("${config_filename}" "${config_name} configuration")
+	done
+
+	DESKTOP_ENVIRONMENT_CONFIG_NAME=$(show_menu "Choose the desktop environment config" "$backtitle" "Select the configuration for this environment.\nThese are sourced from ${desktop_environment_config_dir}" "${options[@]}")
+	unset options
+
+	if [[ -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
+		exit_with_error "No desktop configuration selected... Do you really want a desktop environment ?"
+	fi
+fi
+
+DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
+DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/packages"
+
+# "-z ${VAR+x}" allows to check for unset variable
+# Technically, someone might want to build a desktop with no additional
+# appgroups.
+if [[ $BUILD_DESKTOP == "yes" && -z ${DESKTOP_APPGROUPS_SELECTED+x} ]]; then
+
+	options=()
+	for appgroup_path in "${DESKTOP_APPGROUPS_DIR}/"*; do
+		appgroup="$(basename "${appgroup_path}")"
+		options+=("${appgroup}" "${appgroup^}" off)
+	done
+
+	DESKTOP_APPGROUPS_SELECTED=$(\
+		show_select_menu \
+		"Choose desktop softwares to add" \
+		"$backtitle" \
+		"Select which kind of softwares you'd like to add to your build" \
+		"${options[@]}")
+
+	unset options
+fi
+
+#exit_with_error 'Testing'
+
+# Expected variables :
+# - potential_paths
+# - BOARD
+# - DESKTOP_ENVIRONMENT
+# - DESKTOP_APPGROUPS_SELECTED
+# - DESKTOP_APPGROUPS_DIR
+# Example usage :
+# local potential_paths=""
+# get_all_potential_paths_for debian/postinst
+# echo $potential_paths
+
+get_all_potential_paths_for() {
+	looked_up_subpath="${1}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/${looked_up_subpath}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/${looked_up_subpath}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/custom/boards/${BOARD}/${looked_up_subpath}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/custom/boards/${BOARD}/${looked_up_subpath}"
+	for appgroup in ${DESKTOP_APPGROUPS_SELECTED}; do
+		appgroup_dirpath="${DESKTOP_APPGROUPS_DIR}/${appgroup}"
+		potential_paths+=" ${appgroup_dirpath}/${looked_up_subpath}"
+		potential_paths+=" ${appgroup_dirpath}/custom/desktops/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
+		potential_paths+=" ${appgroup_dirpath}/custom/boards/${BOARD}/${looked_up_subpath}"
+		potential_paths+=" ${appgroup_dirpath}/custom/boards/${BOARD}/custom/desktops/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
+	done
+}
+
+# Expected variables
+# - aggregated_content
+# - potential_paths
+# - separator
+# Write to variables :
+# - aggregated_content
+aggregate_content() {
+	echo "Potential paths : ${potential_paths}"
+
+	for filepath in ${potential_paths}; do
+		echo "$filepath exist ?"
+		if [[ -f "${filepath}" ]]; then
+			echo "Yes !"
+			aggregated_content+=$(cat "${filepath}")
+			aggregated_content+="${separator}"
+		else
+			echo "Nope :C"
+		fi
+
+	done
+}
+
+# Expected variables
+# - aggregated_content
+# - BOARD
+# - DESKTOP_ENVIRONMENT
+# - DESKTOP_APPGROUPS_SELECTED
+# - DESKTOP_APPGROUPS_DIR
+# Write to variables :
+# - aggregated_content
+aggregate_all() {
+	looked_up_subpath="${1}"
+	separator="${2}"
+
+	local potential_paths=""
+	get_all_potential_paths_for "${looked_up_subpath}"
+
+	aggregate_content
+
+}
+
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
@@ -387,7 +583,7 @@ DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
 CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
 CHOSEN_KERNEL=linux-image-${DEB_BRANCH}${LINUXFAMILY}
 CHOSEN_ROOTFS=linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
-CHOSEN_DESKTOP=armbian-${RELEASE}-desktop
+CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}
 CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
 
 do_default() {
@@ -418,7 +614,7 @@ fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git
 fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" "marvell-binaries" "branch:binaries-marvell-armada-18.12"
 fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
 fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
-fetch_from_repo "https://gitlab.com/superna9999/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
+fetch_from_repo "https://github.com/LibreELEC/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
 
 compile_sunxi_tools
 install_rkbin_tools
@@ -505,8 +701,12 @@ $([[ -n $BUILD_MINIMAL ]] && echo "BUILD_MINIMAL=${BUILD_MINIMAL} ")\
 $([[ -n $BUILD_DESKTOP ]] && echo "BUILD_DESKTOP=${BUILD_DESKTOP} ")\
 $([[ -n $KERNEL_ONLY ]] && echo "KERNEL_ONLY=${KERNEL_ONLY} ")\
 $([[ -n $KERNEL_CONFIGURE ]] && echo "KERNEL_CONFIGURE=${KERNEL_CONFIGURE} ")\
+$([[ -n $DESKTOP_ENVIRONMENT ]] && echo "DESKTOP_ENVIRONMENT=${DESKTOP_ENVIRONMENT} ")\
+$([[ -n $DESKTOP_ENVIRONMENT_CONFIG_NAME  ]] && echo "DESKTOP_ENVIRONMENT_CONFIG_NAME=${DESKTOP_ENVIRONMENT_CONFIG_NAME} ")\
+$([[ -n $DESKTOP_APPGROUPS_SELECTED ]] && echo "DESKTOP_APPGROUPS_SELECTED=${DESKTOP_APPGROUPS_SELECTED} ")\
+$([[ -n $DESKTOP_APT_FLAGS_SELECTED ]] && echo "DESKTOP_APT_FLAGS_SELECTED=${DESKTOP_APT_FLAGS_SELECTED} ")\
 $([[ -n $COMPRESS_OUTPUTIMAGE ]] && echo "COMPRESS_OUTPUTIMAGE=${COMPRESS_OUTPUTIMAGE} ")\
-" "info"
+" "ext"
 
 } # end of do_default()
 

@@ -18,7 +18,7 @@
 # write_uboot
 # customize_image
 # install_deb_chroot
-
+# install_deb_chroot_desktop
 
 # mount_chroot <target>
 #
@@ -91,14 +91,19 @@ write_uboot()
 {
 	local loop=$1 revision
 	display_alert "Writing U-boot bootloader" "$loop" "info"
-	mkdir -p /tmp/u-boot/
+	TEMP_DIR=$(mktemp -d || exit 1)
+	chmod 700 ${TEMP_DIR}
 	revision=${REVISION}
-	[[ -n $UPSTREM_VER ]] && revision=${UPSTREM_VER}
-	dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" /tmp/u-boot/
-	write_uboot_platform "/tmp/u-boot/usr/lib/${CHOSEN_UBOOT}_${revision}_${ARCH}" "$loop"
+	if [[ -n $UPSTREM_VER ]]; then
+		DEB_BRANCH=${DEB_BRANCH/-/}
+		revision=${UPSTREM_VER}
+		dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${DEB_BRANCH/-/}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
+	else
+		dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
+	fi
+	write_uboot_platform "${TEMP_DIR}/usr/lib/${CHOSEN_UBOOT}_${revision}_${ARCH}" "$loop"
 	[[ $? -ne 0 ]] && exit_with_error "U-boot bootloader failed to install" "@host"
-	rm -r /tmp/u-boot/
-	sync
+	rm -rf ${TEMP_DIR}
 } #############################################################################
 
 customize_image()
@@ -111,7 +116,7 @@ customize_image()
 	# util-linux >= 2.27 required
 	mount -o bind,ro "$USERPATCHES_PATH"/overlay "${SDCARD}"/tmp/overlay
 	display_alert "Calling image customization script" "customize-image.sh" "info"
-	chroot "${SDCARD}" /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
+	chroot "${SDCARD}" /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP $ARCH"
 	CUSTOMIZE_IMAGE_RC=$?
 	umount -i "${SDCARD}"/tmp/overlay >/dev/null 2>&1
 	mountpoint -q "${SDCARD}"/tmp/overlay || rm -r "${SDCARD}"/tmp/overlay
@@ -123,13 +128,40 @@ customize_image()
 install_deb_chroot()
 {
 	local package=$1
+	local variant=$2
+	local name
+	local desc
+	if [[ ${variant} != remote ]]; then
+		name="/root/"$(basename "${package}")
+		[[ ! -f "${SDCARD}${name}" ]] && cp "${package}" "${SDCARD}${name}"
+		desc=""
+	else
+		name=$1
+		desc=" from repository"
+	fi
+
+	display_alert "Installing${desc}" "${name/\/root\//}"
+	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
+	LC_ALL=C LANG=C chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq \
+		$apt_extra --no-install-recommends install $name" >> "${DEST}"/debug/install.log 2>&1
+	[[ ${variant} == remote ]] && rsync -rq "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb ${DEB_STORAGE}/
+}
+
+# this function can probably be replaced with previous since we removed DESKTOP_APT_FLAGS_SELECTED
+install_deb_chroot_desktop()
+{
+	local package=$1
 	local name
 	name=$(basename "${package}")
-	cp "${package}" "${SDCARD}/root/${name}"
+
+	local apt_install_flags=""
+	for flag in ${DESKTOP_APT_FLAGS_SELECTED}; do
+		apt_install_flags+=" --install-${flag}"
+	done
+
+	[[ ! -f "${SDCARD}/root/${name}" ]] && cp "${package}" "${SDCARD}/root/${name}"
 	display_alert "Installing" "$name"
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
 	LC_ALL=C LANG=C chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -yqq \
-		$apt_extra --no-install-recommends install ./root/$name" >> "${DEST}"/debug/install.log 2>&1
-
-	rm -f "${SDCARD}/root/${name}"
+		$apt_extra install ${apt_install_flags} ./root/$name" >> "${DEST}"/debug/install.log 2>&1
 }

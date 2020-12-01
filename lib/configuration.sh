@@ -21,11 +21,11 @@ USEALLCORES=yes # Use all CPU cores for compiling
 EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
-ROOTFSCACHE_VERSION=34
+ROOTFSCACHE_VERSION=1
 CHROOT_CACHE_VERSION=7
-BUILD_REPOSITORY_URL=$(git remote get-url $(git remote 2>/dev/null) 2>/dev/null)
-BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
-ROOTFS_CACHE_MAX=42 # max number of rootfs cache, older ones will be cleaned up
+BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2>/dev/null | grep origin) 2>/dev/null)
+BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
+ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
 
 if [[ $BETA == yes ]]; then
 	DEB_STORAGE=$DEST/debs-beta
@@ -41,7 +41,10 @@ fi
 ROOT_MAPPER="armbian-root"
 
 [[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
-[[ "ext4 f2fs btrfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
+[[ "ext4 f2fs btrfs xfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
+
+[[ -z $BTRFS_COMPRESSION ]] && BTRFS_COMPRESSION=zlib # default btrfs filesystem compression method is zlib
+[[ ! $BTRFS_COMPRESSION =~ zlib|lzo|zstd|none ]] && exit_with_error "Unknown btrfs compression method" "$BTRFS_COMPRESSION"
 
 # Fixed image size is in 1M dd blocks (MiB)
 # to get size of block device /dev/sdX execute as root:
@@ -80,6 +83,11 @@ CAN_BUILD_STRETCH=yes
 ATF_COMPILE=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
 [[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
+# Default to pdkdf2, this used to be the default with cryptroot <= 2.0, however
+# cryptroot 2.1 changed that to Argon2i. Argon2i is a memory intensive
+# algorithm which doesn't play well with SBCs (need 1GiB RAM by default !)
+# https://gitlab.com/cryptsetup/cryptsetup/-/issues/372
+[[ -z $CRYPTROOT_PARAMETERS ]] && CRYPTROOT_PARAMETERS="--pbkdf pbkdf2"
 [[ -z $WIREGUARD ]] && WIREGUARD="yes"
 [[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 [[ -z $AUFS ]] && AUFS="yes"
@@ -89,9 +97,9 @@ ATF_COMPILE=yes
 #BOOTFS_TYPE=''
 
 # set unique mounting directory
-SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
-MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
-DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
+SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${SELECTED_CONFIGURATION}"
+MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${SELECTED_CONFIGURATION}"
+DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${SELECTED_CONFIGURATION}"
 
 [[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] && \
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
@@ -123,145 +131,142 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == focal || $RELEASE == eoan ]]; then
+if [[ "$RELEASE" =~ ^(xenial|bionic|focal|groovy)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
 fi
 
+CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
+DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
+
+desktop_element_available_for_arch "${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}" "${ARCH}"
+
+if [[ $? != 0 ]]; then
+	exit_with_error "The desktop environment ${DESKTOP_ENVIRONMENT} is not available for your architecture ${ARCH}"
+fi
+
+aggregate_all_debootstrap() {
+	local looked_up_subpath="${1}"
+	local separator="${2}"
+	local potential_paths="${DEBOOTSTRAP_CONFIG_PATH}/${looked_up_subpath}"
+	potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/custom/boards/${BOARD}/${looked_up_subpath}"
+	display_alert "SELECTED_CONFIGURATION : ${SELECTED_CONFIGURATION}"
+	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
+		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/debootstrap/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/debootstrap/custom/boards/${BOARD}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+	fi
+
+	aggregate_content
+}
+
+aggregated_content=""
+aggregate_all_debootstrap "packages"
+DEBOOTSTRAP_LIST="${aggregated_content}"
+display_alert "DEBOOTSTRAP LIST : ${DEBOOTSTRAP_LIST}"
+unset aggregated_content
+
+aggregated_content=""
+aggregate_all_debootstrap "components"
+DEBOOTSTRAP_COMPONENTS="${aggregated_content}"
+display_alert "DEBOOTSTRAP_COMPONENTS : ${DEBOOTSTRAP_COMPONENTS}"
+unset aggregated_content
+
 # Base system dependencies. Since adding MINIMAL_IMAGE we rely on "variant=minbase" which has very basic package set
-DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certificates bzip2 console-setup cpio cron \
-	dbus init initramfs-tools iputils-ping isc-dhcp-client kmod less libpam-systemd \
-	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
-	wireless-regdb crda dmsetup rsync tzdata"
+#DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certificates bzip2 console-setup cpio cron \
+#	dbus init initramfs-tools iputils-ping isc-dhcp-client kmod less libpam-systemd \
+#	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
+#	wireless-regdb crda dmsetup rsync tzdata"
 
-[[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
+display_alert "Debootstrap packages list : $DEBOOTSTRAP_LIST"
 
-# tab cleanup is mandatory
-DEBOOTSTRAP_LIST=$(echo $DEBOOTSTRAP_LIST | sed -e 's,\\[trn],,g')
+# Myy : ???
+# [[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
+
+aggregate_all_cli() {
+	local looked_up_subpath="${1}"
+	local separator="${2}"
+	local potential_paths="${CLI_CONFIG_PATH}/main/${looked_up_subpath}"
+	potential_paths+=" ${CLI_CONFIG_PATH}/main/custom/boards/${BOARD}/${looked_up_subpath}"
+	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
+		potential_paths+=" ${CLI_CONFIG_PATH}/main/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+		potential_paths+=" ${CLI_CONFIG_PATH}/main/custom/boards/${BOARD}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+	fi
+	
+	aggregate_content
+}
+
+aggregated_content=""
+aggregate_all_cli "packages" " "
+display_alert "Aggregated content : ${aggregated_content}"
+PACKAGE_LIST="${aggregated_content}"
+unset aggregated_content
+
+aggregated_content=""
+aggregate_all_cli "packages.additional" " "
+PACKAGE_LIST_ADDITIONAL="${aggregated_content}"
+unset aggregated_content
 
 # For minimal build different set of packages is needed
 # Essential packages for minimal build
-PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chrony parted dialog \
-		ncurses-term sysfsutils toilet figlet u-boot-tools usbutils openssh-server \
-		nocache debconf-utils python3-apt"
+# PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chrony parted dialog \
+# 		ncurses-term sysfsutils toilet figlet u-boot-tools usbutils openssh-server \
+# 		nocache debconf-utils python3-apt"
 
-# Non-essential packages for minimal build
-PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf iozone3 jq libcrack2 cracklib-runtime curl"
+# # Non-essential packages for minimal build
+# PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf iozone3 jq libcrack2 cracklib-runtime curl"
 
-if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
-	# Essential packages
-	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
-		iw wpasupplicant sudo linux-base crda \
-		wireless-regdb unattended-upgrades \
-		console-setup unicode-data initramfs-tools \
-		ca-certificates expect iptables automake html2text \
-		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
+# if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
+# 	# Essential packages
+# 	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
+# 		iw wpasupplicant sudo linux-base crda \
+# 		wireless-regdb unattended-upgrades \
+# 		console-setup unicode-data initramfs-tools \
+# 		ca-certificates expect iptables automake html2text \
+# 		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
 
 
-	# Non-essential packages
-	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils btrfs-progs dosfstools iotop stress screen \
-		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
-		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
-		hostapd git ethtool unzip ifenslave libpam-systemd iperf3 \
-		software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode sunxi-tools"
-fi
+# 	# Non-essential packages
+# 	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL software-properties-common alsa-utils btrfs-progs dosfstools iotop stress screen \
+# 		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
+# 		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
+# 		hostapd git ethtool unzip ifenslave libpam-systemd iperf3 \
+# 		libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode sunxi-tools"
+# fi
 
 
 # Dependent desktop packages
-PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit \
-	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
-	libgtk2.0-bin network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
-	pulseaudio pavumeter bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
-	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic apt-xapian-index lightdm lightdm-gtk-greeter"
+# Myy : Sources packages from file here
 
+# Myy : FIXME Rename aggregate_all to aggregate_all_desktop
+aggregated_content=""
+aggregate_all "packages" " "
 
-# Recommended desktop packages
-PACKAGE_LIST_DESKTOP_RECOMMENDS="galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
-	cups-pk-helper cups geany atril xarchiver"
+PACKAGE_LIST_DESKTOP+="${aggregated_content}"
 
-# Full desktop packages
-PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-tango meld remmina kazam avahi-daemon transmission"
+unset aggregated_content
 
-# Packages installed before desktop.
-PACKAGE_LIST_PREDEPENDS=""
+echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}"
 
-# Release specific packages
-case $RELEASE in
+# Myy : Clean the Debootstrap lists. The packages list will be cleaned when necessary.
+# This horrendous cleanup syntax is used to remove trailing and leading spaces.
 
-	xenial)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" btrfs-tools"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db sysbench command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
-								pulseaudio-module-gconf onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common \
-								system-config-printer-gnome leafpad mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
+# Previous comment : tab cleanup is mandatory
 
-	stretch)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
+DEBOOTSTRAP_LIST="${DEBOOTSTRAP_LIST#"${DEBOOTSTRAP_LIST%%[![:space:]]*}"}"
+DEBOOTSTRAP_LIST="${DEBOOTSTRAP_LIST%"${DEBOOTSTRAP_LIST##*[![:space:]]}"}"
 
-	bionic)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
-								language-selector-gnome leafpad mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
+DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS#"${DEBOOTSTRAP_COMPONENTS%%[![:space:]]*}"}"
+DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS%"${DEBOOTSTRAP_COMPONENTS##*[![:space:]]}"}"
+DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
 
-	buster)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
-
-	bullseye)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" haveged fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
-		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
-		PACKAGE_LIST_DESKTOP_FULL+=""
-	;;
-
-
-	focal)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
-								language-selector-gnome viewnior"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-		PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
-	;;
-
-	eoan)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
-								language-selector-gnome mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-		PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
-	;;
-
-esac
-
+display_alert "Deboostrap"
+display_alert "Components ${DEBOOTSTRAP_COMPONENTS}"
+display_alert "Packages ${DEBOOTSTRAP_LIST}"
+display_alert "----"
+display_alert "CLI packages"
+display_alert "Standard : ${PACKAGE_LIST}"
+display_alert "Additional : ${PACKAGE_LIST_ADDITIONAL}"
 
 DEBIAN_MIRROR='deb.debian.org/debian'
 DEBIAN_SECURTY='security.debian.org/'
@@ -295,12 +300,68 @@ fi
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
-[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP $PACKAGE_LIST_DESKTOP_RECOMMENDS"
+
+# Clean up the list
+# Myy : Replace any single or multiple instance of 'space' characters
+# (spaces, tabs, newlines) by a single space character
+# DO NOT PUT quotes after 'echo', else the trick won't work.
+PACKAGE_LIST="${PACKAGE_LIST#"${PACKAGE_LIST%%[![:space:]]*}"}"
+PACKAGE_LIST="${PACKAGE_LIST%"${PACKAGE_LIST##*[![:space:]]}"}"
+PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
+
+PACKAGE_MAIN_LIST="${PACKAGE_LIST}"
+
+# FIXME Myy: Factorize this...
+PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
+PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP%"${PACKAGE_LIST_DESKTOP##*[![:space:]]}"}"
+PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+
+[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
+aggregated_content=""
+aggregate_all_cli "packages.remove" " "
+aggregate_all "packages.remove" " "
+PACKAGE_LIST_RM="${PACKAGE_LIST_RM} ${aggregated_content}"
+unset aggregated_content
+
+aggregated_content=""
+aggregate_all_cli "packages.uninstall" " "
+aggregate_all "packages.uninstall" " "
+PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
+unset aggregated_content
+
+PACKAGE_LIST_RM="${PACKAGE_LIST_RM#"${PACKAGE_LIST_RM%%[![:space:]]*}"}"
+PACKAGE_LIST_RM="${PACKAGE_LIST_RM%"${PACKAGE_LIST_RM##*[![:space:]]}"}"
+PACKAGE_LIST_RM="$(echo ${PACKAGE_LIST_RM})"
+
+display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}"
+display_alert "PACKAGE_LIST : ${PACKAGE_LIST}"
+display_alert "PACKAGE_LIST_RM : ${PACKAGE_LIST_RM}"
+display_alert "PACKAGE_LIST_UNINSTALL : ${PACKAGE_LIST_UNINSTALL}"
+
 if [[ -n $PACKAGE_LIST_RM ]]; then
-	PACKAGE_LIST=$(sed -r "s/\b($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\b//g" <<< "${PACKAGE_LIST}")
+	display_alert "Remove filter : $(tr ' ' '|' <<< ${PACKAGE_LIST_RM})"
+	# Turns out that \b can be tricked by dashes.
+	# So if you remove mesa-utils but still want to install "mesa-utils-extra"
+	# a "\b(mesa-utils)\b" filter will convert "mesa-utils-extra" to "-extra".
+	# \W is not tricked by this but consumes the surrounding spaces, so we
+	# replace the occurence by one space, to avoid sticking the next word to
+	# the previous one after consuming the spaces.
+	PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST} ")
+	PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_MAIN_LIST} ")
+	PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
 fi
+
+# Removing double spaces
+# Do not quote the variables. This would defeat the trick.
+PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
+PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
+PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+
+display_alert "After removal of packages.remove packages"
+display_alert "PACKAGE_MAIN_LIST : \"${PACKAGE_MAIN_LIST}\""
+display_alert "PACKAGE_LIST : \"${PACKAGE_LIST}\""
 
 # Give the option to configure DNS server used in the chroot during the build process
 [[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
@@ -335,6 +396,8 @@ Board: $BOARD
 Branch: $BRANCH
 Minimal: $BUILD_MINIMAL
 Desktop: $BUILD_DESKTOP
+Desktop Environment: $DESKTOP_ENVIRONMENT
+Software groups: $DESKTOP_APPGROUPS_SELECTED
 
 Kernel configuration:
 Repository: $KERNELSOURCE

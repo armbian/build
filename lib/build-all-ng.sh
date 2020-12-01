@@ -50,7 +50,7 @@ unset	LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSO
 		KERNEL_USE_GCC CPUMIN CPUMAX UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE BOOTFS_TYPE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN \
 		DEBOOTSTRAP_LIST PACKAGE_LIST_EXCLUDE KERNEL_IMAGE_TYPE write_uboot_platform family_tweaks family_tweaks_bsp \
 		setup_write_uboot_platform uboot_custom_postprocess atf_custom_postprocess family_tweaks_s BOOTSCRIPT \
-		UBOOT_TARGET_MAP LOCALVERSION UBOOT_COMPILER KERNEL_COMPILER BOOTCONFIG_VAR_NAME INITRD_ARCH BOOTENV_FILE BOOTDELAY \
+		UBOOT_TARGET_MAP LOCALVERSION UBOOT_COMPILER KERNEL_COMPILER BOOTCONFIG BOOTCONFIG_VAR_NAME INITRD_ARCH BOOTENV_FILE BOOTDELAY \
 		ATF_TOOLCHAIN2 MOUNT SDCARD BOOTPATCHDIR KERNELPATCHDIR RELEASE IMAGE_TYPE OVERLAY_PREFIX ASOUND_STATE ATF_COMPILER \
 		ATF_USE_GCC ATFSOURCE ATFDIR ATFBRANCH ATFSOURCEDIR PACKAGE_LIST_RM NM_IGNORE_DEVICES DISPLAY_MANAGER \
 		family_tweaks_bsp_s CRYPTROOT_ENABLE CRYPTROOT_PASSPHRASE CRYPTROOT_SSH_UNLOCK CRYPTROOT_SSH_UNLOCK_PORT \
@@ -59,8 +59,11 @@ unset	LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSO
 		DEB_STORAGE REPO_STORAGE REPO_CONFIG REPOSITORY_UPDATE PACKAGE_LIST_RELEASE LOCAL_MIRROR COMPILE_ATF \
 		PACKAGE_LIST_BOARD PACKAGE_LIST_FAMILY PACKAGE_LIST_DESKTOP_BOARD PACKAGE_LIST_DESKTOP_FAMILY ATF_COMPILE ATFPATCHDIR OFFSET BOOTSOURCEDIR BOOT_USE_BLOBS \
 		BOOT_SOC DDR_BLOB MINILOADER_BLOB BL31_BLOB BOOT_RK3328_USE_AYUFAN_ATF BOOT_USE_BLOBS BOOT_RK3399_LEGACY_HYBRID \
-		BOOT_USE_MAINLINE_ATF BOOT_USE_TPL_SPL_BLOB OFFLINE_WORK IMAGE_PARTITION_TABLE BOOT_LOGO UPSTREM_VER \
-		PACKAGE_LIST_BOARD_REMOVE PACKAGE_LIST_FAMILY_REMOVE PACKAGE_LIST_DESKTOP_BOARD_REMOVE PACKAGE_LIST_DESKTOP_FAMILY_REMOVE
+		BOOT_USE_MAINLINE_ATF BOOT_USE_TPL_SPL_BLOB BOOT_SUPPORT_SPI OFFLINE_WORK IMAGE_PARTITION_TABLE BOOT_LOGO UPSTREM_VER FORCED_MONTH_OFFSET \
+		PACKAGE_LIST_BOARD_REMOVE PACKAGE_LIST_FAMILY_REMOVE PACKAGE_LIST_DESKTOP_BOARD_REMOVE PACKAGE_LIST_DESKTOP_FAMILY_REMOVE BOOTCONFIG_DEV \
+		DESKTOP_ENVIRONMENT DESKTOP_ENVIRONMENT_CONFIG_NAME DESKTOP_APPGROUPS_SELECTED DESKTOP_APT_FLAGS_SELECTED \
+		DESKTOP_ENVIRONMENT_DIRPATH DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH DESKTOP_ENVIRONMENT_DIRPATH DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH \
+		DESKTOP_CONFIG_PREFIX DESKTOP_CONFIGS_DIR DESKTOP_APPGROUPS_DIR DEBIAN_RECOMMENDS USE_OVERLAYFS
 }
 
 pack_upload ()
@@ -69,7 +72,7 @@ pack_upload ()
 	# pack and upload to server or just pack
 
 	display_alert "Signing" "Please wait!" "info"
-	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
+	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}_${DESKTOP_ENVIRONMENT}"
 	local subdir="archive"
 	compression_type=""
 
@@ -145,7 +148,7 @@ build_main ()
 	[[ $BUILD_MINIMAL == yes ]] && upload_image=${upload_image}_minimal
 	[[ $BETA == yes ]] && local upload_subdir=nightly
 
-	touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
+	touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
 
 	if [[ $KERNEL_ONLY != yes ]]; then
 		#if ssh ${SEND_TO_SERVER} stat ${SEND_TO_LOCATION}${BOARD}/${upload_subdir}/${upload_image}* \> /dev/null 2\>\&1; then
@@ -153,7 +156,7 @@ build_main ()
 		#else
 			#shellcheck source=lib/main.sh
 			source "${SRC}"/lib/main.sh
-			[[ $BSP_BUILD != yes ]] && pack_upload
+			[[ "$BSP_BUILD" != yes && -n "${SEND_TO_SERVER}" ]] && pack_upload
 		#fi
 
 	else
@@ -162,7 +165,8 @@ build_main ()
 
 	fi
 
-	rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
+	cd "${SRC}"
+	rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
 }
 
 
@@ -208,21 +212,20 @@ function check_hash()
 	[[ -z $LINUXFAMILY ]] && LINUXFAMILY=$BOARDFAMILY
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
-	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n')
+	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
-	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin)
+	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin)
 
 	case $ref_type in
-		branch) hash=$(git ls-remote "${KERNELSOURCE}" refs/heads/"${ref_name}" | awk '{print $1}') ;;
-		tag) hash=$(git ls-remote "${KERNELSOURCE}" tags/"${ref_name}" | awk '{print $1}') ;;
-		head) hash=$(git ls-remote "${KERNELSOURCE}" HEAD | awk '{print $1}') ;;
+		branch) hash=$(improved_git ls-remote "${KERNELSOURCE}" refs/heads/"${ref_name}" 2> /dev/null | awk '{print $1}') ;;
+		tag) hash=$(improved_git ls-remote "${KERNELSOURCE}" tags/"${ref_name}" 2> /dev/null | awk '{print $1}') ;;
+		head) hash=$(improved_git ls-remote "${KERNELSOURCE}" HEAD 2> /dev/null | awk '{print $1}') ;;
 		commit) hash=$ref_name ;;
 	esac
-	errorcode=$?
 	# ignore diff checking in case of network errrors
-	local kernel_hash="${SRC}/cache/hash/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
+	local kernel_hash="${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 	if [[ -f ${kernel_hash} ]]; then
-		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" || $errorcode -ne 0 ]] && echo "idential"
+		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" || -z $hash ]] && echo "idential"
 	fi
 }
 
@@ -266,11 +269,11 @@ function build_all()
 
 		unset_all
 		# unset also board related variables
-		unset BOARDFAMILY DESKTOP_AUTOLOGIN DEFAULT_CONSOLE FULL_DESKTOP MODULES_CURRENT MODULES_LEGACY MODULES_DEV \
-		BOOTCONFIG MODULES_BLACKLIST_LEGACY MODULES_BLACKLIST_CURRENT MODULES_BLACKLIST_DEV DEFAULT_OVERLAYS SERIALCON \
-		BUILD_MINIMAL RELEASE ATFBRANCH BOOT_FDT_FILE BOOTCONFIG_DEV
+		unset BOARDFAMILY DESKTOP_AUTOLOGIN DEFAULT_CONSOLE FULL_DESKTOP MODULES MODULES_CURRENT MODULES_LEGACY MODULES_DEV \
+		BOOTCONFIG MODULES_BLACKLIST MODULES_BLACKLIST_LEGACY MODULES_BLACKLIST_CURRENT MODULES_BLACKLIST_DEV DEFAULT_OVERLAYS SERIALCON \
+		BUILD_MINIMAL RELEASE ATFBRANCH BOOT_FDT_FILE BOOTCONFIG_DEV BOOTSOURCEDIR
 
-		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE <<< "${line}"
+		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE DESKTOP_ENVIRONMENT DESKTOP_ENVIRONMENT_CONFIG_NAME<<< "${line}"
 
 		# read all possible configurations
 		# shellcheck source=/dev/null
@@ -292,6 +295,8 @@ function build_all()
 				continue
 			fi
 		fi
+
+		[[ -n $DESKTOP_ENVIRONMENT ]] && DESKTOP_APPGROUPS_SELECTED="3dsupport browsers chat desktop_tools dev-tools editors email internet internet-tools languages multimedia office programming remote_desktop"
 
 		# exceptions handling
 		[[ ${BOARDFAMILY} == sun*i ]] && BOARDFAMILY=sunxi
@@ -319,7 +324,6 @@ function build_all()
 
 		# create beta or stable
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
-
 			# check if currnt hash is the same as upstream
 			if [[ "$IGNORE_HASH" != yes ]]; then
 				local store_hash
@@ -340,7 +344,7 @@ function build_all()
 							done
 
 					display_alert "Building ${n}."
-					if [[ "$KERNEL_ONLY" == "no" ]]; then
+					if [[ "$KERNEL_ONLY" == "no" && "${MULTITHREAD}" -gt 0 ]]; then
 						build_main &
 					else
 						build_main
@@ -364,7 +368,7 @@ function build_all()
 					IFS=',' read -r -a RELBRANCH <<< "${KERNEL_TARGET}"
 					for BRANCH in "${RELBRANCH[@]}"
 					do
-					RELTARGETS=(xenial stretch buster bullseye bionic eoan focal)
+					RELTARGETS=(xenial stretch buster bullseye bionic groovy focal)
 					for RELEASE in "${RELTARGETS[@]}"
 					do
 						display_alert "BSP for ${BOARD} ${BRANCH} ${RELEASE}."
@@ -384,13 +388,15 @@ function build_all()
 			else
 				# In dryrun it only prints out what will be build
                                 printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." \
-                                "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
+                                "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${DESKTOP_ENVIRONMENT}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
 			fi
 
 fi
 
 		fi
 
+	# at which image to stop
+	[[ "$STOP" == "$n" ]] && [[ $1 != "dryrun" ]] && exit
 	done < "${BUILD_TARGETS}"
 
 }
@@ -400,7 +406,7 @@ echo ""
 display_alert "Building all targets" "$STABILITY $(if [[ $KERNEL_ONLY == "yes" ]] ; then echo "kernels"; \
 else echo "images"; fi)" "info"
 
-printf "\n%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n\n" "" "board" "branch" "release" "XFCE" "minimal"
+printf "\n%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n\n" "" "board" "branch" "release" "DE" "desktop" "minimal"
 
 # display what we will build
 build_all "dryrun"
@@ -417,7 +423,7 @@ fi
 sleep 5
 while :
 do
-		if [[ $(df | grep -c .tmp) -lt 1 ]]; then
+		if [[ $(df | grep -c /.tmp) -lt 1 ]]; then
 			break
 		fi
 	sleep 5
@@ -432,7 +438,7 @@ do
 done
 
 # bump version in case there was a change
-if [[ $n -gt 0 && -n ${SEND_TO_SERVER} && -z ${REBUILD_IMAGES} ]]; then
+if [[ $n -gt 0 && ${BUMP_VERSION} == yes ]]; then
 
 	cd "${SRC}" || exit
 	CURRENT_VERSION=$(cat VERSION)
@@ -444,9 +450,9 @@ if [[ $n -gt 0 && -n ${SEND_TO_SERVER} && -z ${REBUILD_IMAGES} ]]; then
 	fi
 
 	echo "${NEW_VERSION}" > VERSION
-	git add "${SRC}"/VERSION
-	git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
-	git push
+	improved_git add "${SRC}"/VERSION
+	improved_git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
+	improved_git push
 	display_alert "Bumping to new version" "${NEW_VERSION}" "info"
 
 fi

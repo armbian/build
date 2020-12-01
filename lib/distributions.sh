@@ -8,7 +8,6 @@
 
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
-
 # Functions:
 # install_common
 # install_rclocal
@@ -22,11 +21,11 @@ install_common()
 	# install rootfs encryption related packages separate to not break packages cache
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
 		display_alert "Installing rootfs encryption related packages" "cryptsetup" "info"
-		chroot "${SDCARD}" /bin/bash -c "apt -y -qq --no-install-recommends install cryptsetup" \
+		chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq --no-install-recommends install cryptsetup" \
 		>> "${DEST}"/debug/install.log 2>&1
 		if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then
 			display_alert "Installing rootfs encryption related packages" "dropbear-initramfs" "info"
-			chroot "${SDCARD}" /bin/bash -c "apt -y -qq --no-install-recommends install dropbear-initramfs cryptsetup-initramfs" \
+			chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq --no-install-recommends install dropbear-initramfs cryptsetup-initramfs" \
 			>> "${DEST}"/debug/install.log 2>&1
 		fi
 
@@ -59,7 +58,7 @@ install_common()
 			# /usr/share/initramfs-tools/hooks/dropbear will automatically add 'id_ecdsa.pub' to authorized_keys file
 			# during mkinitramfs of update-initramfs
 			#cat "${SDCARD}"/etc/dropbear-initramfs/id_ecdsa.pub > "${SDCARD}"/etc/dropbear-initramfs/authorized_keys
-			CRYPTROOT_SSH_UNLOCK_KEY_NAME="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}".key
+			CRYPTROOT_SSH_UNLOCK_KEY_NAME="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}_${DESKTOP_ENVIRONMENT}".key
 			# copy dropbear ssh key to image output dir for convenience
 			cp "${SDCARD}"/etc/dropbear-initramfs/id_ecdsa "${DEST}/images/${CRYPTROOT_SSH_UNLOCK_KEY_NAME}"
 			display_alert "SSH private key for dropbear (initramfs) has been copied to:" \
@@ -84,7 +83,7 @@ install_common()
 	fi
 
 	# configure MIN / MAX speed for cpufrequtils
-	cat <<-EOF > "${SDCARD}"/etc/default/cpufrequtils	
+	cat <<-EOF > "${SDCARD}"/etc/default/cpufrequtils
 	ENABLE=true
 	MIN_SPEED=$CPUMIN
 	MAX_SPEED=$CPUMAX
@@ -211,28 +210,32 @@ install_common()
 	ff02::2     ip6-allrouters
 	EOF
 
-	if [[ -n "${REPOSITORY_INSTALL}" ]]; then
-		chroot "${SDCARD}" /bin/bash -c "apt-get update"
-	fi
+	cd $SRC
+
+	display_alert "Updating" "package lists"
+	chroot "${SDCARD}" /bin/bash -c "apt-get update" >> "${DEST}"/debug/install.log 2>&1
+
+	display_alert "Temporarily disabling" "initramfs-tools hook for kernel"
+	chroot "${SDCARD}" /bin/bash -c "chmod -x /etc/kernel/postinst.d/initramfs-tools" >> "${DEST}"/debug/install.log 2>&1
 
 	# install family packages
 	if [[ -n ${PACKAGE_LIST_FAMILY} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_FAMILY" >> "${DEST}"/debug/install.log
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_FAMILY" >> "${DEST}"/debug/install.log
 	fi
 
 	# install board packages
 	if [[ -n ${PACKAGE_LIST_BOARD} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_BOARD" >> "${DEST}"/debug/install.log
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_BOARD" >> "${DEST}"/debug/install.log
 	fi
 
 	# remove family packages
 	if [[ -n ${PACKAGE_LIST_FAMILY_REMOVE} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq remove --auto-remove $PACKAGE_LIST_FAMILY_REMOVE" >> "${DEST}"/debug/install.log
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get -yqq remove --auto-remove $PACKAGE_LIST_FAMILY_REMOVE" >> "${DEST}"/debug/install.log
 	fi
 
 	# remove board packages
 	if [[ -n ${PACKAGE_LIST_BOARD_REMOVE} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq remove --auto-remove $PACKAGE_LIST_BOARD_REMOVE" >> "${DEST}"/debug/install.log
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get -yqq remove --auto-remove $PACKAGE_LIST_BOARD_REMOVE" >> "${DEST}"/debug/install.log
 	fi
 
 	# install u-boot
@@ -240,12 +243,8 @@ install_common()
 		UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
 	else
-		UBOOT_VER=$(chroot "${SDCARD}" /bin/bash -c "apt-cache --names-only search ^linux-u-boot-${BOARD}-${BRANCH} | awk '{print \$(NF)}'")
-		display_alert "Installing from repository" "linux-u-boot-${BOARD}-${BRANCH} $UBOOT_VER"
-		chroot "${SDCARD}" /bin/bash -c "apt-get -qq -y install linux-u-boot-${BOARD}-${BRANCH}" >> "${DEST}"/debug/install.log 2>&1
-		# we need package later, move to output, apt-get must be here, apt deletes file
-		UPSTREM_VER=$(dpkg-deb -I "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb | grep Version | awk '{print $(NF)}')
-		mv "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb ${DEB_STORAGE}/${CHOSEN_UBOOT}_${UPSTREM_VER}_${ARCH}.deb
+		install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote"
+		UPSTREM_VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb Version)
 	fi
 
 	# install kernel
@@ -260,37 +259,31 @@ install_common()
 			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
 		fi
 	else
-		VER=$(chroot "${SDCARD}" /bin/bash -c "apt-cache --names-only search ^linux-image-${BRANCH}-${LINUXFAMILY} | awk '{print \$(NF)}'")
+		install_deb_chroot "linux-image-${BRANCH}-${LINUXFAMILY}" "remote"
+		VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-image-${BRANCH}-${LINUXFAMILY}*_${ARCH}.deb Source)
 		VER="${VER/-$LINUXFAMILY/}"
-		display_alert "Installing from repository" "linux-image-${BRANCH}-${LINUXFAMILY} $VER"
-		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install linux-image-${BRANCH}-${LINUXFAMILY}" >> "${DEST}"/debug/install.log 2>&1
-		display_alert "Installing from repository" "linux-dtb-${BRANCH}-${LINUXFAMILY}"
-		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install linux-dtb-${BRANCH}-${LINUXFAMILY}" >> "${DEST}"/debug/install.log 2>&1
-		if [[ $INSTALL_HEADERS == yes ]]; then
-			display_alert "Installing from repository" "armbian-headers"
-			chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install linux-headers-${BRANCH}-${LINUXFAMILY}" >> "${DEST}"/debug/install.log 2>&1
-		fi
+		VER="${VER/linux-/}"
+		install_deb_chroot "linux-dtb-${BRANCH}-${LINUXFAMILY}" "remote"
+		[[ $INSTALL_HEADERS == yes ]] && install_deb_chroot "linux-headers-${BRANCH}-${LINUXFAMILY}" "remote"
 	fi
 
 	# install board support packages
 	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
 		install_deb_chroot "${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb" >> "${DEST}"/debug/install.log 2>&1
 	else
-		display_alert "Installing from repository" "${CHOSEN_ROOTFS}"
-		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install ${CHOSEN_ROOTFS}" >> "${DEST}"/debug/install.log 2>&1
+		install_deb_chroot "${CHOSEN_ROOTFS}" "remote"
 	fi
 
 	# install armbian-desktop
 	if [[ "${REPOSITORY_INSTALL}" != *armbian-desktop* ]]; then
 		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/$RELEASE/armbian-${RELEASE}-desktop_${REVISION}_all.deb"
+			install_deb_chroot_desktop "${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
 			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 			desktop_postinstall
 		fi
 	else
 		if [[ $BUILD_DESKTOP == yes ]]; then
-			display_alert "Installing from repository" "armbian-${RELEASE}-desktop"
-			chroot "${SDCARD}" /bin/bash -c "apt-get -y -qq install armbian-${RELEASE}-desktop" >> "${DEST}"/debug/install.log 2>&1
+			install_deb_chroot "${CHOSEN_DESKTOP}" "remote"
 			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 			desktop_postinstall
 		fi
@@ -302,8 +295,7 @@ install_common()
 			install_deb_chroot "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb"
 		fi
 	else
-		display_alert "Installing from repository" "armbian-firmware"
-		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install armbian-firmware" >> "${DEST}"/debug/install.log 2>&1
+		install_deb_chroot "armbian-firmware" "remote"
 	fi
 
 	# install armbian-config
@@ -313,8 +305,7 @@ install_common()
 		fi
 	else
 		if [[ $BUILD_MINIMAL != yes ]]; then
-			display_alert "Installing from repository" "armbian-config"
-			chroot "${SDCARD}" /bin/bash -c "apt -y -qq install armbian-config" >> "${DEST}"/debug/install.log 2>&1
+			install_deb_chroot "armbian-config" "remote"
 		fi
 	fi
 
@@ -325,7 +316,7 @@ install_common()
 
 	# install wireguard tools
 	if [[ $WIREGUARD == yes ]]; then
-		chroot "${SDCARD}" /bin/bash -c "apt -y -qq install wireguard-tools --no-install-recommends" >> "${DEST}"/debug/install.log 2>&1
+		install_deb_chroot "wireguard-tools --no-install-recommends" "remote"
 	fi
 
 	# freeze armbian packages
@@ -334,6 +325,9 @@ install_common()
 		chroot "${SDCARD}" /bin/bash -c "apt-mark hold ${CHOSEN_KERNEL} ${CHOSEN_KERNEL/image/headers} \
 			linux-u-boot-${BOARD}-${BRANCH} ${CHOSEN_KERNEL/image/dtb}" >> "${DEST}"/debug/install.log 2>&1
 	fi
+
+	# remove deb files
+	rm -f "${SDCARD}"/root/*.deb
 
 	# copy boot splash images
 	cp "${SRC}"/packages/blobs/splash/armbian-u-boot.bmp "${SDCARD}"/boot/boot.bmp
@@ -473,9 +467,6 @@ install_common()
 
 }
 
-
-
-
 install_rclocal()
 {
 
@@ -498,9 +489,6 @@ install_rclocal()
 		chmod +x "${SDCARD}"/etc/rc.local
 
 }
-
-
-
 
 install_distribution_specific()
 {
@@ -545,7 +533,7 @@ install_distribution_specific()
 			sed '/security/ d' -i "${SDCARD}"/etc/apt/sources.list
 
 		;;
-	bionic|eoan|focal)
+	bionic|groovy|focal)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf

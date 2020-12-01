@@ -10,9 +10,11 @@
 | BOOTFS_TYPE | boot partition type: ext4, fat |
 | DEFAULT_OVERLAYS | usbhost1 usbhost2 ... |
 | DEFAULT_CONSOLE | serial = change default boot output |
+| MODULES | space delimited modules for all branches |
 | MODULES_LEGACY | space delimited modules for legacy branch |
 | MODULES_CURRENT | space delimited modules for current branch |
 | MODULES_DEV | space delimited modules for dev branch |
+| MODULES_BLACKLIST | space delimited modules blacklist for all branches |
 | MODULES_BLACKLIST_LEGACY | space delimited modules blacklist for legacy branch |
 | MODULES_BLACKLIST_CURRENT | space delimited modules blacklist for current branch |
 | MODULES_BLACKLIST_DEV | space delimited modules blacklist for dev branch |
