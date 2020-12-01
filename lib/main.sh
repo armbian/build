@@ -357,6 +357,19 @@ fi
 
 [[ $BUILD_MINIMAL == yes ]] && EXTERNAL=no
 
+[[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] && \
+	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
+
+source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
+
+if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
+	display_alert "Adding user provided $LINUXFAMILY overrides"
+	source "$USERPATCHES_PATH/sources/families/${LINUXFAMILY}.conf"
+fi
+
+# load architecture defaults
+source "${SRC}/config/sources/${ARCH}.conf"
+
 # Myy : Menu configuration for choosing desktop configurations
 
 show_menu() {
@@ -404,21 +417,54 @@ desktop_element_available_for_arch() {
 	fi
 }
 
-# Myy : FIXME Rename CONFIG to PACKAGE_LIST
-DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH=""
+desktop_element_supported() {
+	local desktop_element_path="${1}"
+	
+	local support_level_filepath="${desktop_element_path}/support"
+	if [[ -f "${support_level_filepath}" ]]; then
+		local support_level="$(cat "${support_level_filepath}")"
+		if [[ "${support_level}" != "supported" && "${EXPERT}" != "yes" ]]; then
+			echo "ret 65"
+			return 65
+		fi
+
+		desktop_element_available_for_arch "${desktop_element_path}" "${ARCH}"
+		if [[ $? -ne 0 ]]; then
+			echo "ret 66"
+			return 66
+		fi
+	else
+		echo "ret 64 for ${desktop_element_path}"
+		return 64
+	fi
+
+	echo "ret 0 for ${desktop_element_path}"
+
+	return 0
+}
+
+# Expected environment variables :
+# - options
+# - ARCH
+prepare_desktop_environments_menu() {
+	for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
+		local desktop_env_name=$(basename ${desktop_env_dir})
+		local expert_infos=""
+		[[ "${EXPERT}" == "yes" ]] && expert_infos="[$(cat "${desktop_env_dir}/support")]"
+		desktop_element_supported "${desktop_env_dir}" "${ARCH}" && options+=("${desktop_env_name}" "${desktop_env_name^} desktop environment ${expert_infos}")
+	done
+}
 
 if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
 	options=()
-	for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
-		desktop_env_name=$(basename ${desktop_env_dir})
-		options+=("${desktop_env_name}" "${desktop_env_name^} desktop environment")
-	done
+	prepare_desktop_environments_menu
 
-	#DESKTOP_ENVIRONMENT=$(dialog --stdout --title "Choose a desktop environment" --backtitle "$backtitle" --menu "Select the default desktop environment to bundle with this image" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+	if [[ "${options[0]}" == "" ]]; then
+		exit_with_error "No desktop environment seems to be available for your board ${BOARD} (ARCH : ${ARCH} - EXPERT : ${EXPERT})"
+	fi
 
 	DESKTOP_ENVIRONMENT=$(show_menu "Choose a desktop environment" "$backtitle" "Select the default desktop environment to bundle with this image" "${options[@]}")
 
-	echo "You have chosen $DESKTOP_ENVIRONMENT as your default desktop environment !? WHY !?"
 	unset options
 
 	if [[ -z "${DESKTOP_ENVIRONMENT}" ]]; then

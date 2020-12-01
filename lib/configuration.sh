@@ -101,19 +101,6 @@ SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+
 MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${SELECTED_CONFIGURATION}"
 DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${SELECTED_CONFIGURATION}"
 
-[[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] && \
-	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
-
-source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
-
-if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
-	display_alert "Adding user provided $LINUXFAMILY overrides"
-	source "$USERPATCHES_PATH/sources/families/${LINUXFAMILY}.conf"
-fi
-
-# load architecture defaults
-source "${SRC}/config/sources/${ARCH}.conf"
-
 # dropbear needs to be configured differently
 [[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
 [[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
