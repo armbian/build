@@ -975,7 +975,7 @@ prepare_host()
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "http://www.armbian.com/using-armbian-tools/"
-		exit_with_error "Running this tool on non x86-x64 build host in not supported"
+		exit_with_error "Running this tool on non x86-x64 build host is not supported"
 	fi
 
 	# wait until package manager finishes possible system maintanace
@@ -997,7 +997,7 @@ prepare_host()
 	local codename=$(lsb_release -sc)
 
 	# Getting ready for Ubuntu 20.04
-	if [[ $codename == focal || $codename == ulyana ]]; then
+	if [[ $codename == focal || $codename == groovy || $codename == ulyana ]]; then
 		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
