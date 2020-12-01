@@ -283,6 +283,8 @@ if [[ $DOWNLOAD_MIRROR == china ]] ; then
 	UBUNTU_MIRROR='mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/'
 fi
 
+ARMBIAN_MIRROR='https://redirect.armbian.com'
+
 # For user override
 if [[ -f $USERPATCHES_PATH/lib.config ]]; then
 	display_alert "Using user configuration override" "$USERPATCHES_PATH/lib.config" "info"

@@ -974,7 +974,7 @@ prepare_host()
 	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
 	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
-	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils"
+	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils jq"
 
 	local codename=$(lsb_release -sc)
 
@@ -1088,17 +1088,18 @@ prepare_host()
 	fi
 	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
+	display_alert "Armbian mirror" "${ARMBIAN_MIRROR}" "info"
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
 	local toolchains=(
-		"https://dl.armbian.com/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
 		)
 
 	USE_TORRENT_STATUS=${USE_TORRENT}
@@ -1161,18 +1162,10 @@ function webseed ()
 {
 # list of mirrors that host our files
 unset text
-WEBSEED=(
-	"https://dl.armbian.com/"
-	"https://imola.armbian.com/dl/"
-	"https://mirrors.netix.net/armbian/dl/"
-	"https://mirrors.dotsrc.org/armbian-dl/"
-	"https://us.mirrors.fossho.st/armbian/dl/"
-	"https://uk.mirrors.fossho.st/armbian/dl/"
-	"https://armbian.systemonachip.net/dl/"
-	)
+WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq '.[] |.[] | values' | grep https | awk '!a[$0]++'))
 	if [[ -z $DOWNLOAD_MIRROR ]]; then
 		WEBSEED=(
-                "https://dl.armbian.com/"
+                "${ARMBIAN_MIRROR}/"
                 )
 	fi
 	# aria2 simply split chunks based on sources count not depending on download speed
@@ -1206,7 +1199,7 @@ download_and_verify()
         if [[ $DOWNLOAD_MIRROR == china ]]; then
 		local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 			else
-		local server="https://dl.armbian.com/"
+		local server="${ARMBIAN_MIRROR}/"
         fi
 
 	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then

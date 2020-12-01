@@ -45,6 +45,7 @@ RUN apt-get update \
        gcc-arm-linux-gnueabihf \
        git \
        imagemagick \
+       jq \
        kmod \
        lib32ncurses6 \
        lib32stdc++6 \
