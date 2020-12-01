@@ -1088,7 +1088,6 @@ prepare_host()
 	fi
 	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
-	display_alert "Armbian mirror" "${ARMBIAN_MIRROR}" "info"
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
@@ -1160,9 +1159,9 @@ prepare_host()
 
 function webseed ()
 {
-# list of mirrors that host our files
-unset text
-WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq '.[] |.[] | values' | grep https | awk '!a[$0]++'))
+	# list of mirrors that host our files
+	unset text
+	WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq '.[] |.[] | values' | grep https | awk '!a[$0]++'))
 	if [[ -z $DOWNLOAD_MIRROR ]]; then
 		WEBSEED=(
                 "${ARMBIAN_MIRROR}/"
@@ -1249,7 +1248,7 @@ download_and_verify()
 	if [[ ! -f "${localdir}/${filename}.complete" ]]; then
 		if [[ $(wget -S --spider "${server}${remotedir}/${filename}" 2>&1 >/dev/null \
 			| grep 'HTTP/1.1 200 OK') ]]; then
-			display_alert "downloading using http(s) network" "$filename"
+			display_alert "downloading from $(echo $server | cut -d'/' -f3 | cut -d':' -f1) using http(s) network" "$filename"
 			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
 			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" "$(webseed "${remotedir}/${filename}")" -o "${filename}"
 			# mark complete
