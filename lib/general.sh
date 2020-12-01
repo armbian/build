@@ -1210,7 +1210,7 @@ download_and_verify()
 	# use local control file
 	if [[ -f "${SRC}"/config/torrents/${filename}.asc ]]; then
 		local torrent="${SRC}"/config/torrents/${filename}.torrent
-		ln -s "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
+		ln -sf "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
 	elif [[ ! $(wget -S --spider "${server}${remotedir}/${filename}.asc" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') ]]; then
 		return
 	else
