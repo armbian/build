@@ -82,9 +82,9 @@ case $BRANCH in
 
 	dev)
 
-		MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable-rc.git'
+		MAINLINE_KERNEL_SOURCE='https://github.com/torvalds/linux.git'
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="tag:v5.10-rc5"
+		KERNELBRANCH="tag:v5.10-rc6"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
