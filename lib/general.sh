@@ -1162,11 +1162,6 @@ function webseed ()
 	# list of mirrors that host our files
 	unset text
 	WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq '.[] |.[] | values' | grep https | awk '!a[$0]++'))
-	if [[ -z $DOWNLOAD_MIRROR ]]; then
-		WEBSEED=(
-                "${ARMBIAN_MIRROR}/"
-                )
-	fi
 	# aria2 simply split chunks based on sources count not depending on download speed
 	# when selecting china mirrors, use only China mirror, others are very slow there
 	if [[ $DOWNLOAD_MIRROR == china ]]; then
@@ -1175,8 +1170,8 @@ function webseed ()
 		)
 	fi
 	for toolchain in ${WEBSEED[@]}; do
-		# use only live
-		if [[ $(wget -S --spider "${toolchain}${1}" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') ]]; then
+		# use only live, tnahosting return ok also when file is absent
+		if [[ $(wget -S --spider "${toolchain}${1}" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') && ${toolchain} != *tnahosting* ]]; then
 			text="${text} ${toolchain}${1}"
 		fi
 	done
@@ -1217,7 +1212,7 @@ download_and_verify()
 		# download control file
 		local torrent=${server}$remotedir/${filename}.torrent
 		aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
-		--continue=false --allow-overwrite=true --dir="${localdir}" "$(webseed "$remotedir/${filename}.asc")" -o "${filename}.asc"
+		--continue=false --allow-overwrite=true --dir="${localdir}" ${server}${remotedir}/${filename}.asc $(webseed "$remotedir/${filename}.asc") -o "${filename}.asc"
 		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
 	fi
 
@@ -1250,7 +1245,7 @@ download_and_verify()
 			| grep 'HTTP/1.1 200 OK') ]]; then
 			display_alert "downloading from $(echo $server | cut -d'/' -f3 | cut -d':' -f1) using http(s) network" "$filename"
 			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
-			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" "$(webseed "${remotedir}/${filename}")" -o "${filename}"
+			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" ${server}${remotedir}/${filename} $(webseed "${remotedir}/${filename}") -o "${filename}"
 			# mark complete
 			[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete" && echo ""
 
