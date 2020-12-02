@@ -71,7 +71,7 @@ MAINLINE_KERNEL_DIR='linux-mainline'
 if [[ $USE_GITHUB_UBOOT_MIRROR == yes ]]; then
 	MAINLINE_UBOOT_SOURCE='https://github.com/RobertCNelson/u-boot'
 else
-	MAINLINE_UBOOT_SOURCE='git://git.denx.de/u-boot.git'
+	MAINLINE_UBOOT_SOURCE='https://gitlab.denx.de/u-boot/u-boot.git'
 fi
 MAINLINE_UBOOT_DIR='u-boot'
 
