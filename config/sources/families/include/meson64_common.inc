@@ -38,6 +38,16 @@ case $BRANCH in
 
 esac
 
+if [ "$(uname -m)" = "aarch64" ]; then
+	if [ "$(lsb_release -sc)" = "focal" ]; then
+		PKG_PREFIX="qemu-x86_64-static "
+	else
+		PKG_PREFIX="qemu-x86_64 "
+	fi
+else
+	PKG_PREFIX=""
+fi
+
 # this helper function includes postprocess for p212 and its variants.
 # $1 PATH for uboot blob repo
 # $2 dir name in uboot blob repo
@@ -63,14 +73,14 @@ uboot_gxl_postprocess()
 			$1/$2/bl21_zero.bin \
 			$1/$2/bl2_new.bin bl2
 
-	$1/$2/aml_encrypt_gxl 	--bl3enc --input $1/$2/bl30_new.bin
-	$1/$2/aml_encrypt_gxl 	--bl3enc --input $1/$2/bl31.img
-	$1/$2/aml_encrypt_gxl 	--bl3enc --input bl33.bin
+	$PKG_PREFIX$1/$2/aml_encrypt_gxl 	--bl3enc --input $1/$2/bl30_new.bin
+	$PKG_PREFIX$1/$2/aml_encrypt_gxl 	--bl3enc --input $1/$2/bl31.img
+	$PKG_PREFIX$1/$2/aml_encrypt_gxl 	--bl3enc --input bl33.bin
 
-	$1/$2/aml_encrypt_gxl 	--bl2sig --input $1/$2/bl2_new.bin \
+	$PKG_PREFIX$1/$2/aml_encrypt_gxl 	--bl2sig --input $1/$2/bl2_new.bin \
 				--output bl2.n.bin.sig
 
-	$1/$2/aml_encrypt_gxl 	--bootmk \
+	$PKG_PREFIX$1/$2/aml_encrypt_gxl 	--bootmk \
 				--output u-boot.bin \
 				--bl2 bl2.n.bin.sig \
 				--bl30 $1/$2/bl30_new.bin.enc \
@@ -99,29 +109,29 @@ uboot_g12_postprocess()
 		      bl21_zero.bin \
 		      bl2_new.bin bl2
 
-	$1/aml_encrypt_$2 --bl30sig \
+	$PKG_PREFIX$1/aml_encrypt_$2 --bl30sig \
 			    --input bl30_new.bin \
 			    --output bl30_new.bin.g12.enc \
 			    --level v3
-	$1/aml_encrypt_$2 --bl3sig \
+	$PKG_PREFIX$1/aml_encrypt_$2 --bl3sig \
 			    --input bl30_new.bin.g12.enc \
 			    --output bl30_new.bin.enc \
 			    --level v3 --type bl30
-	$1/aml_encrypt_$2 --bl3sig \
+	$PKG_PREFIX$1/aml_encrypt_$2 --bl3sig \
 			    --input $1/bl31.img \
 			    --output bl31.img.enc \
 			    --level v3 --type bl31
-	$1/aml_encrypt_$2 --bl3sig \
+	$PKG_PREFIX$1/aml_encrypt_$2 --bl3sig \
 			    --input bl33.bin \
 			    --compress lz4 \
 			    --output bl33.bin.enc \
 			    --level v3 --type bl33
-	$1/aml_encrypt_$2 --bl2sig \
+	$PKG_PREFIX$1/aml_encrypt_$2 --bl2sig \
 			    --input bl2_new.bin \
 			    --output bl2.n.bin.sig
 	if [ -e $1/lpddr3_1d.fw ]
 		then
-			$1/aml_encrypt_$2 --bootmk --output u-boot.bin \
+			$PKG_PREFIX$1/aml_encrypt_$2 --bootmk --output u-boot.bin \
 			--bl2 bl2.n.bin.sig \
 			--bl30 bl30_new.bin.enc \
 			--bl31 bl31.img.enc \
@@ -137,7 +147,7 @@ uboot_g12_postprocess()
 			--ddrfw9 $1/lpddr3_1d.fw \
 			--level v3
 	else
-		$1/aml_encrypt_$2 --bootmk  --output u-boot.bin \
+		$PKG_PREFIX$1/aml_encrypt_$2 --bootmk  --output u-boot.bin \
 			--bl2 bl2.n.bin.sig \
 			--bl30 bl30_new.bin.enc \
 			--bl31 bl31.img.enc \
