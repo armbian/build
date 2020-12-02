@@ -129,7 +129,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: stretch|buster|bullseye|xenial|bionic|groovy|focal
+# <release>: stretch|buster|bullseye|xenial|bionic|groovy|focal|groovy|hirsute
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -155,7 +155,7 @@ create_sources_list()
 	EOF
 	;;
 
-	xenial|bionic|groovy|focal)
+	xenial|bionic|groovy|focal|groovy|hirsute)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -673,7 +673,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal")
+	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal" "hirsute")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -785,7 +785,7 @@ addtorepo()
 
 
 repo-manipulate() {
-	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal")
+	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal" "hirsute")
 	case $@ in
 		serve)
 			# display repository content
