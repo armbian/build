@@ -974,7 +974,7 @@ prepare_host()
 	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
 	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
-	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils"
+	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils jq"
 
 	local codename=$(lsb_release -sc)
 
@@ -1092,13 +1092,13 @@ prepare_host()
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
 	local toolchains=(
-		"https://dl.armbian.com/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
 		)
 
 	USE_TORRENT_STATUS=${USE_TORRENT}
@@ -1159,22 +1159,9 @@ prepare_host()
 
 function webseed ()
 {
-# list of mirrors that host our files
-unset text
-WEBSEED=(
-	"https://dl.armbian.com/"
-	"https://imola.armbian.com/dl/"
-	"https://mirrors.netix.net/armbian/dl/"
-	"https://mirrors.dotsrc.org/armbian-dl/"
-	"https://us.mirrors.fossho.st/armbian/dl/"
-	"https://uk.mirrors.fossho.st/armbian/dl/"
-	"https://armbian.systemonachip.net/dl/"
-	)
-	if [[ -z $DOWNLOAD_MIRROR ]]; then
-		WEBSEED=(
-                "https://dl.armbian.com/"
-                )
-	fi
+	# list of mirrors that host our files
+	unset text
+	WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq '.[] |.[] | values' | grep https | awk '!a[$0]++'))
 	# aria2 simply split chunks based on sources count not depending on download speed
 	# when selecting china mirrors, use only China mirror, others are very slow there
 	if [[ $DOWNLOAD_MIRROR == china ]]; then
@@ -1183,8 +1170,8 @@ WEBSEED=(
 		)
 	fi
 	for toolchain in ${WEBSEED[@]}; do
-		# use only live
-		if [[ $(wget -S --spider "${toolchain}${1}" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') ]]; then
+		# use only live, tnahosting return ok also when file is absent
+		if [[ $(wget -S --spider "${toolchain}${1}" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') && ${toolchain} != *tnahosting* ]]; then
 			text="${text} ${toolchain}${1}"
 		fi
 	done
@@ -1206,7 +1193,7 @@ download_and_verify()
         if [[ $DOWNLOAD_MIRROR == china ]]; then
 		local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 			else
-		local server="https://dl.armbian.com/"
+		local server="${ARMBIAN_MIRROR}/"
         fi
 
 	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then
@@ -1218,14 +1205,14 @@ download_and_verify()
 	# use local control file
 	if [[ -f "${SRC}"/config/torrents/${filename}.asc ]]; then
 		local torrent="${SRC}"/config/torrents/${filename}.torrent
-		ln -s "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
+		ln -sf "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
 	elif [[ ! $(wget -S --spider "${server}${remotedir}/${filename}.asc" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') ]]; then
 		return
 	else
 		# download control file
 		local torrent=${server}$remotedir/${filename}.torrent
 		aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
-		--continue=false --allow-overwrite=true --dir="${localdir}" "$(webseed "$remotedir/${filename}.asc")" -o "${filename}.asc"
+		--continue=false --allow-overwrite=true --dir="${localdir}" ${server}${remotedir}/${filename}.asc $(webseed "$remotedir/${filename}.asc") -o "${filename}.asc"
 		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
 	fi
 
@@ -1256,9 +1243,9 @@ download_and_verify()
 	if [[ ! -f "${localdir}/${filename}.complete" ]]; then
 		if [[ $(wget -S --spider "${server}${remotedir}/${filename}" 2>&1 >/dev/null \
 			| grep 'HTTP/1.1 200 OK') ]]; then
-			display_alert "downloading using http(s) network" "$filename"
+			display_alert "downloading from $(echo $server | cut -d'/' -f3 | cut -d':' -f1) using http(s) network" "$filename"
 			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
-			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" "$(webseed "${remotedir}/${filename}")" -o "${filename}"
+			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" ${server}${remotedir}/${filename} $(webseed "${remotedir}/${filename}") -o "${filename}"
 			# mark complete
 			[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete" && echo ""
 
