@@ -166,7 +166,21 @@ compilation_prepare()
 	fi
 
 
+	# ZFS
+	if linux-version compare "${version}" ge 3.10; then
 
+		# attach to specifics tag or branch
+		local zfsver="tag:zfs-0.8.5"
+		display_alert "Adding" "ZFS for Linux ${wirever} " "info"
+		fetch_from_repo "https://github.com/zfsonlinux/zfs.git" "zfs" "${zfsver}" "yes"
+		cd "${SRC}/cache/sources/zfs/${zfsver#*:}"
+		sh autogen.sh
+		./configure --prefix=/ --libdir=/lib --includedir=/usr/include --datarootdir=/usr/share --enable-linux-builtin=yes --with-linux="${kerneldir}" --with-linux-obj="${kerneldir}"
+		./copy-builtin "${kerneldir}"
+		sudo make -j"$CTHREADS"
+		sudo make install
+
+	fi
 
 	# WireGuard VPN for Linux 3.10 - 5.5
 	if linux-version compare "${version}" ge 3.10 && linux-version compare "${version}" le 5.5 && [ "${WIREGUARD}" == yes ]; then
