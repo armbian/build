@@ -972,12 +972,17 @@ prepare_host()
 	else
 		local offline=false
 	fi
+# build aarch64
+  if [[ $(dpkg --print-architecture) != arm64 ]]; then
 
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "http://www.armbian.com/using-armbian-tools/"
 		exit_with_error "Running this tool on non x86-x64 build host is not supported"
 	fi
+
+# build aarch64
+  fi
 
 	# wait until package manager finishes possible system maintanace
 	wait_for_package_manager
@@ -987,6 +992,10 @@ prepare_host()
 
 	# packages list for host
 	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
+
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
@@ -994,6 +1003,20 @@ prepare_host()
 	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
 	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils jq"
+
+# build aarch64
+  else
+
+	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
+	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
+	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
+	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
+	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
+	locales ncurses-base pixz dialog systemd-container udev libc6 qemu\
+	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils"
+
+# build aarch64
+  fi
 
 	local codename=$(lsb_release -sc)
 
@@ -1027,6 +1050,9 @@ prepare_host()
 		exit_with_error "Windows subsystem for Linux is not a supported build environment"
 	fi
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	if [[ -z $codename || "focal" == "$codename" || "groovy" == "$codename"  || "debbie" == "$codename"  || "buster" == "$codename" || "ulyana" == "$codename" ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
@@ -1048,6 +1074,9 @@ prepare_host()
 		SYNC_CLOCK=no
 	fi
 
+# build aarch64
+  fi
+
 	# Skip verification if you are working offline
 	if ! $offline; then
 
@@ -1063,6 +1092,10 @@ prepare_host()
 	done
 
 	# distribution packages are buggy, download from author
+
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
 		display_alert "Updating from external repository" "aptly" "info"
 		if [ x"" != x"${http_proxy}" ]; then
@@ -1076,6 +1109,9 @@ prepare_host()
 	else
 		sed "s/squeeze/nightly/" -i /etc/apt/sources.list.d/aptly.list
 	fi
+
+# build aarch64
+  fi
 
 	if [[ ${#deps[@]} -gt 0 ]]; then
 		display_alert "Installing build dependencies"
@@ -1091,9 +1127,15 @@ prepare_host()
 		ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
 	fi
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
 		apt-get install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
 	fi
+
+# build aarch64
+  fi
 
 	# create directory structure
 	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
@@ -1106,6 +1148,9 @@ prepare_host()
 		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 	fi
 	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
+
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
@@ -1151,6 +1196,9 @@ prepare_host()
 		test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
 		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
 	fi
+
+# build aarch64
+  fi
 
 	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
 

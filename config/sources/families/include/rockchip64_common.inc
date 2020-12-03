@@ -164,6 +164,18 @@ legacy_uboot_locations()
 
 uboot_custom_postprocess()
 {
+	if [ "$(uname -m)" = "aarch64" ]; then
+		if [ "$(lsb_release -sc)" = "focal" ]; then
+			PKG_PREFIX="qemu-x86_64-static "
+		else
+			PKG_PREFIX="qemu-x86_64 "
+		fi
+	else
+		PKG_PREFIX=""
+	fi
+
+	RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
+
 	if [[ $BOOT_USE_MAINLINE_ATF == yes || $BOOT_USE_TPL_SPL_BLOB == yes ]]; then
 
 		if [[ $BOOT_SUPPORT_SPI == yes ]]; then
@@ -178,8 +190,8 @@ uboot_custom_postprocess()
 		local tempfile=$(mktemp)
 		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
 		cat $RKBIN_DIR/$MINILOADER_BLOB >> idbloader.bin
-		loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
-		trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
+		$PKG_PREFIX$RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
+		$PKG_PREFIX$RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
 
 	elif [[ $BOOT_RK3399_LEGACY_HYBRID == yes ]]; then
 
@@ -200,7 +212,7 @@ uboot_custom_postprocess()
 		# 3328
 		tools/mkimage -n rk3328 -T rksd -d $SRC/cache/sources/rkbin-tools/rk33/rk3328_ddr_786MHz_v1.13.bin idbloader.bin
 		cat $SRC/cache/sources/rkbin-tools/rk33/rk3328_miniloader_v2.46.bin >> idbloader.bin
-		loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
+		$PKG_PREFIX$RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
 
 	else
 		echo "Unsupported u-boot processing configuration!"
@@ -269,7 +281,7 @@ atf_custom_postprocess()
 	# remove bl31.bin which can be 4+GiB in size and thus may fill the tmpfs mount
 	rm -f build/rk322xh/debug/bl31.bin
 	# ATF
-	trust_merger trust.ini
+	$PKG_PREFIX$RKBIN_DIR/tools/trust_merger trust.ini
 
 }
 
