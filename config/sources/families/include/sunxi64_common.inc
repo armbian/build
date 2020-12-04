@@ -4,7 +4,7 @@ BOOTDELAY=1
 BOOTBRANCH='tag:v2020.10'
 BOOTPATCHDIR='u-boot-sunxi'
 BOOTENV_FILE='sunxi.txt'
-UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
+UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
 BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 LINUXFAMILY=sunxi64
 
