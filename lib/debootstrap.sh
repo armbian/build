@@ -706,7 +706,7 @@ create_image()
 	display_alert "Done building" "$DEST/images/${version}.img" "info"
 
 	if [[ $BUILD_ALL == yes ]]; then
-		install -d -o igorp -g igorp -m 775 $DEST/images/${BOARD}/{archive,nightly}
+		install -d -o nobody -g nogroup -m 775 $DEST/images/${BOARD}/{archive,nightly}
 		if [[ "$BETA" == yes ]]; then
 			install ${INSTALL_PARA} $DEST/images/"${version}"* $DEST/images/"${BOARD}"/nightly
 			rm $DEST/images/"${version}"*
