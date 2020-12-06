@@ -322,6 +322,7 @@ install_common()
 	# install ZFS tools and build module with dkms
 	if [[ $INCLUDE_ZFS == yes ]]; then
 		install_deb_chroot "zfsutils-linux zfs-dkms" "remote"
+		[[ $? -ne 0 ]] && exit_with_error "ZFS module build failed."
 	fi
 
 	# freeze armbian packages
