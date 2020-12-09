@@ -2,6 +2,9 @@
 mkdir -p "${destination}"/etc/skel
 cp -R "${SRC}"/packages/blobs/desktop/skel/. "${destination}"/etc/skel
 
+#mkdir for cacertificates
+mkdir "${destination}"/etc/ssl/certs/java/cacerts
+
 # install wallpapers
 mkdir -p "${destination}"/usr/share/backgrounds/gnome/
 cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/gnome/

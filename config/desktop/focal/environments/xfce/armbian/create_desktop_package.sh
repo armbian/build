@@ -20,3 +20,6 @@ cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/
 # install wallpapers
 mkdir -p "${destination}"/usr/share/backgrounds/xfce/
 cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/xfce/
+
+#mkdir for cacertificates
+mkdir "${destination}"/etc/ssl/certs/java/cacerts
