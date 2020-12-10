@@ -363,7 +363,7 @@ prepare_partitions()
 	# parttype[nfs] is empty
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	if [[ $(lsb_release -sc) =~ bionic|buster|bullseye|cosmic|groovy|focal ]]; then
+	if [[ $(lsb_release -sc) =~ bionic|buster|bullseye|cosmic|groovy|focal|hirsute|sid ]]; then
 		mkopts[ext4]='-q -m 2 -O ^64bit,^metadata_csum'
 	elif [[ $(lsb_release -sc) == xenial ]]; then
 		mkopts[ext4]='-q -m 2'
@@ -748,7 +748,7 @@ create_image()
 	display_alert "Done building" "$DEST/images/${version}.img" "info"
 
 	if [[ $BUILD_ALL == yes ]]; then
-		install -d -o igorp -g igorp -m 775 $DEST/images/${BOARD}/{archive,nightly}
+		install -d -o nobody -g nogroup -m 775 $DEST/images/${BOARD}/{archive,nightly}
 		if [[ "$BETA" == yes ]]; then
 			install ${INSTALL_PARA} $DEST/images/"${version}"* $DEST/images/"${BOARD}"/nightly
 			rm $DEST/images/"${version}"*

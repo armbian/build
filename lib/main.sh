@@ -357,8 +357,6 @@ fi
 
 [[ $BUILD_MINIMAL == yes ]] && EXTERNAL=no
 
-
-
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
 
@@ -423,8 +421,8 @@ if [[ -n $ATFSOURCE ]]; then
 fi
 fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
 fetch_from_repo "https://github.com/armbian/rkbin" "rkbin-tools" "branch:master"
-fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-18.12-fixed"
-fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git" "marvell-ddr" "branch:mv-ddr-devel"
+fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-18.12"
+fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git" "marvell-ddr" "branch:mv_ddr-armada-18.12"
 fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" "marvell-binaries" "branch:binaries-marvell-armada-18.12"
 fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
 fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
