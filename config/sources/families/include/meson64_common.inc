@@ -32,8 +32,8 @@ case $BRANCH in
         ;;
 
         dev)
-                KERNELBRANCH='branch:linux-5.9.y'
-                KERNELPATCHDIR='meson64-dev'
+		KERNELBRANCH='tag:v5.10-rc7'
+		KERNELPATCHDIR='meson64-dev'
         ;;
 
 esac
