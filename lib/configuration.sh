@@ -156,8 +156,9 @@ desktop_element_available_for_arch() {
 }
 
 desktop_element_supported() {
+
 	local desktop_element_path="${1}"
-	
+
 	local support_level_filepath="${desktop_element_path}/support"
 	if [[ -f "${support_level_filepath}" ]]; then
 		local support_level="$(cat "${support_level_filepath}")"
@@ -174,21 +175,20 @@ desktop_element_supported() {
 	fi
 
 	return 0
-}
 
-# Expected environment variables :
-# - options
-# - ARCH
-desktop_environments_prepare_menu() {
-	for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
-		local desktop_env_name=$(basename ${desktop_env_dir})
-		local expert_infos=""
-		[[ "${EXPERT}" == "yes" ]] && expert_infos="[$(cat "${desktop_env_dir}/support")]"
-		desktop_element_supported "${desktop_env_dir}" "${ARCH}" && options+=("${desktop_env_name}" "${desktop_env_name^} desktop environment ${expert_infos}")
-	done
 }
 
 if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
+
+	desktop_environments_prepare_menu() {
+		for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
+			local desktop_env_name=$(basename ${desktop_env_dir})
+			local expert_infos=""
+			[[ "${EXPERT}" == "yes" ]] && expert_infos="[$(cat "${desktop_env_dir}/support")]"
+			desktop_element_supported "${desktop_env_dir}" "${ARCH}" && options+=("${desktop_env_name}" "${desktop_env_name^} desktop environment ${expert_infos}")
+		done
+	}
+
 	options=()
 	desktop_environments_prepare_menu
 
@@ -203,32 +203,39 @@ if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
 	if [[ -z "${DESKTOP_ENVIRONMENT}" ]]; then
 		exit_with_error "No desktop environment selected..."
 	fi
+
+
+	# Expected environment variables :
+	# - options
+	# - ARCH
+
+	desktop_environment_check_if_valid() {
+
+		local error_msg=""
+		desktop_element_supported "${DESKTOP_ENVIRONMENT_DIRPATH}" "${ARCH}"
+		local retval=$?
+
+		if [[ ${retval} == 0 ]]; then
+			return
+		elif [[ ${retval} == 64 ]]; then
+			error_msg+="Either the desktop environment ${DESKTOP_ENVIRONMENT} does not exist "
+			error_msg+="or the file ${DESKTOP_ENVIRONMENT_DIRPATH}/support is missing"
+		elif [[ ${retval} == 65 ]]; then
+			error_msg+="Only experts can build an image with the desktop environment \"${DESKTOP_ENVIRONMENT}\", since the Armbian team won't offer any support for it (EXPERT=${EXPERT})"
+		elif [[ ${retval} == 66 ]]; then
+			error_msg+="The desktop environment \"${DESKTOP_ENVIRONMENT}\" has no packages for your targeted board architecture (BOARD=${BOARD} ARCH=${ARCH}). "
+			error_msg+="The supported boards architectures are : "
+			error_msg+="$(cat "${DESKTOP_ENVIRONMENT_DIRPATH}/only_for")"
+		fi
+
+		exit_with_error "${error_msg}"
+	}
+
+	DESKTOP_ENVIRONMENT_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
+
+	desktop_environment_check_if_valid
+
 fi
-
-desktop_environment_check_if_valid() {
-	local error_msg=""
-	desktop_element_supported "${DESKTOP_ENVIRONMENT_DIRPATH}" "${ARCH}"
-	local retval=$?
-	
-	if [[ ${retval} == 0 ]]; then
-		return
-	elif [[ ${retval} == 64 ]]; then
-		error_msg+="Either the desktop environment ${DESKTOP_ENVIRONMENT} does not exist "
-		error_msg+="or the file ${DESKTOP_ENVIRONMENT_DIRPATH}/support is missing"
-	elif [[ ${retval} == 65 ]]; then
-		error_msg+="Only experts can build an image with the desktop environment \"${DESKTOP_ENVIRONMENT}\", since the Armbian team won't offer any support for it (EXPERT=${EXPERT})"
-	elif [[ ${retval} == 66 ]]; then
-		error_msg+="The desktop environment \"${DESKTOP_ENVIRONMENT}\" has no packages for your targeted board architecture (BOARD=${BOARD} ARCH=${ARCH}). "
-		error_msg+="The supported boards architectures are : "
-		error_msg+="$(cat "${DESKTOP_ENVIRONMENT_DIRPATH}/only_for")"
-	fi
-
-	exit_with_error "${error_msg}"
-}
-
-DESKTOP_ENVIRONMENT_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
-
-desktop_environment_check_if_valid
 
 if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
 	# FIXME Check for empty folders, just in case the current maintainer
