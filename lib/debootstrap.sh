@@ -199,7 +199,7 @@ create_rootfs_cache()
 		if [[ -f $SDCARD/etc/default/console-setup ]]; then
 			sed -e 's/CHARMAP=.*/CHARMAP="UTF-8"/' -e 's/FONTSIZE=.*/FONTSIZE="8x16"/' \
 				-e 's/CODESET=.*/CODESET="guess"/' -i $SDCARD/etc/default/console-setup
-			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "setupcon --save"'
+			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "setupcon --save --force"'
 		fi
 
 		# stage: create apt-get sources list
