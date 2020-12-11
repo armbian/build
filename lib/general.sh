@@ -1268,6 +1268,9 @@ download_and_verify()
 		return
 	fi
 
+	# check if file exists on remote server before running aria2 downloader
+	[[ ! `wget -S --spider ${server}${remotedir}/${filename}  2>&1 | grep 'HTTP/1.1 200 OK'` ]] && return
+
 	cd "${localdir}" || exit
 
 	# use local control file

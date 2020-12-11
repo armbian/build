@@ -202,7 +202,7 @@ create_rootfs_cache()
 		if [[ -f $SDCARD/etc/default/console-setup ]]; then
 			sed -e 's/CHARMAP=.*/CHARMAP="UTF-8"/' -e 's/FONTSIZE=.*/FONTSIZE="8x16"/' \
 				-e 's/CODESET=.*/CODESET="guess"/' -i $SDCARD/etc/default/console-setup
-			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "setupcon --save"'
+			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "setupcon --save --force"'
 		fi
 
 		# stage: create apt-get sources list
@@ -221,7 +221,7 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Updating package lists..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Updating package lists failed"
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && display_alert "Updating package lists" "failed" "wrn"
 
 		# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
 		display_alert "Upgrading base packages" "Armbian" "info"
@@ -231,13 +231,13 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Upgrading base packages..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Upgrading base packages failed"
-
 		# Myy: Dividing the desktop packages installation steps into multiple
 		# ones. We first install the "ADDITIONAL_PACKAGES" in order to get
 		# access to software-common-properties installation.
 		# THEN we add the APT sources and install the Desktop packages.
 		# TODO : Find a way to add APT sources WITHOUT software-common-properties
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && display_alert "Upgrading base packages" "failed" "wrn"
 
 		# stage: install additional packages
 		display_alert "Installing the main packages for" "Armbian" "info"
@@ -392,7 +392,7 @@ prepare_partitions()
 	# mountopts[nfs] is empty
 
 	# default BOOTSIZE to use if not specified
-	DEFAULT_BOOTSIZE=96	# MiB
+	DEFAULT_BOOTSIZE=256	# MiB
 
 	# stage: determine partition configuration
 	if [[ -n $BOOTFS_TYPE ]]; then
