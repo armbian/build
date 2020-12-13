@@ -114,7 +114,7 @@ show_menu() {
 	provided_title=$1
 	provided_backtitle=$2
 	provided_menuname=$3
-	# Myy : I don't know why there's a TTY_Y - 8... 
+	# Myy : I don't know why there's a TTY_Y - 8...
 	#echo "Provided title : $provided_title"
 	#echo "Provided backtitle : $provided_backtitle"
 	#echo "Provided menuname : $provided_menuname"
@@ -204,7 +204,9 @@ if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
 		exit_with_error "No desktop environment selected..."
 	fi
 
+fi
 
+if [[ $BUILD_DESKTOP == "yes" ]]; then
 	# Expected environment variables :
 	# - options
 	# - ARCH
@@ -234,7 +236,6 @@ if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
 	DESKTOP_ENVIRONMENT_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
 
 	desktop_environment_check_if_valid
-
 fi
 
 if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
@@ -260,8 +261,10 @@ if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
 	fi
 fi
 
-DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
-DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/packages"
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
+	DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/packages"
+fi
 
 # "-z ${VAR+x}" allows to check for unset variable
 # Technically, someone might want to build a desktop with no additional
@@ -434,7 +437,7 @@ aggregate_all_cli() {
 		potential_paths+=" ${CLI_CONFIG_PATH}/main/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
 		potential_paths+=" ${CLI_CONFIG_PATH}/main/custom/boards/${BOARD}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
 	fi
-	
+
 	aggregate_content
 }
 
@@ -481,14 +484,16 @@ unset aggregated_content
 # Myy : Sources packages from file here
 
 # Myy : FIXME Rename aggregate_all to aggregate_all_desktop
-aggregated_content=""
-aggregate_all "packages" " "
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	aggregated_content=""
+	aggregate_all "packages" " "
 
-PACKAGE_LIST_DESKTOP+="${aggregated_content}"
+	PACKAGE_LIST_DESKTOP+="${aggregated_content}"
 
-unset aggregated_content
+	unset aggregated_content
 
-echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}"
+	echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}"
+fi
 
 # Myy : Clean the Debootstrap lists. The packages list will be cleaned when necessary.
 # This horrendous cleanup syntax is used to remove trailing and leading spaces.
@@ -594,14 +599,19 @@ if [[ -n $PACKAGE_LIST_RM ]]; then
 	# the previous one after consuming the spaces.
 	PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST} ")
 	PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_MAIN_LIST} ")
-	PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
+	if [[ $BUILD_DESKTOP == "yes" ]]; then
+		PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
+	fi
 fi
 
 # Removing double spaces
 # Do not quote the variables. This would defeat the trick.
 PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
 PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
-PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+fi
 
 display_alert "After removal of packages.remove packages"
 display_alert "PACKAGE_MAIN_LIST : \"${PACKAGE_MAIN_LIST}\""

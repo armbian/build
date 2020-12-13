@@ -249,28 +249,34 @@ create_rootfs_cache()
 
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian main packages failed"
 
-		display_alert "Adding apt sources for Desktop packages"
-		add_desktop_package_sources
+		if [[ $BUILD_DESKTOP == "yes" ]]; then
+			# FIXME Myy : Are we keeping this only for Desktop users,
+			# or should we extend this to CLI users too ?
+			# There might be some clunky boards that require Debian packages from
+			# specific repos...
+			display_alert "Adding apt sources for Desktop packages"
+			add_desktop_package_sources
 
-		local apt_desktop_install_flags=""
-		if [[ ! -z ${DESKTOP_APT_FLAGS_SELECTED+x} ]]; then
-			for flag in ${DESKTOP_APT_FLAGS_SELECTED}; do
-				apt_desktop_install_flags+=" --install-${flag}"
-			done
-		else
-			# Myy : Using the previous default option, if the variable isn't defined
-			# And ONLY if it's not defined !
-			apt_desktop_install_flags+=" --no-install-recommends"
+			local apt_desktop_install_flags=""
+			if [[ ! -z ${DESKTOP_APT_FLAGS_SELECTED+x} ]]; then
+				for flag in ${DESKTOP_APT_FLAGS_SELECTED}; do
+					apt_desktop_install_flags+=" --install-${flag}"
+				done
+			else
+				# Myy : Using the previous default option, if the variable isn't defined
+				# And ONLY if it's not defined !
+				apt_desktop_install_flags+=" --no-install-recommends"
+			fi
+
+			display_alert "Installing the desktop packages for" "Armbian" "info"
+			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+				$apt_extra $apt_extra_progress install ${apt_desktop_install_flags} $PACKAGE_LIST_DESKTOP"' \
+				${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
+				${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian desktop packages..." $TTY_Y $TTY_X'} \
+				${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+			[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian desktop packages failed"
 		fi
-
-		display_alert "Installing the desktop packages for" "Armbian" "info"
-		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
-			$apt_extra $apt_extra_progress install ${apt_desktop_install_flags} $PACKAGE_LIST_DESKTOP"' \
-			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
-			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian desktop packages..." $TTY_Y $TTY_X'} \
-			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-
-		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian desktop packages failed"
 
 		# Remove packages from packages.uninstall
 
