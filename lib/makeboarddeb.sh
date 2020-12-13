@@ -284,6 +284,12 @@ fi
 	KERNEL_IMAGE_TYPE=$KERNEL_IMAGE_TYPE
 	EOF
 
+	if [[ $BUILD_DESKTOP == yes ]]; then
+	cat <<-EOF >> "${destination}"/etc/armbian-release
+	DESKTOP=$DESKTOP_ENVIRONMENT
+	EOF
+	fi
+	
 	# this is required for NFS boot to prevent deconfiguring the network on shutdown
 	sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
 
