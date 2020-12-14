@@ -357,9 +357,10 @@ aggregate_all() {
 }
 
 # set unique mounting directory
-SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${SELECTED_CONFIGURATION}"
-MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${SELECTED_CONFIGURATION}"
-DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${SELECTED_CONFIGURATION}"
+MOUNT_UUID=$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_DESKTOP} ${BUILD_MINIMAL}" | md5sum | cut -d" " -f1)
+SDCARD="${SRC}/.tmp/rootfs-${MOUNT_UUID}"
+MOUNT="${SRC}/.tmp/mount-${MOUNT_UUID}"
+DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}"
 
 # dropbear needs to be configured differently
 [[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
