@@ -32,7 +32,7 @@ case $BRANCH in
         ;;
 
         dev)
-		KERNELBRANCH='tag:v5.10-rc7'
+		KERNELBRANCH='branch:linux-5.10.y'
 		KERNELPATCHDIR='meson64-dev'
         ;;
 
