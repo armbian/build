@@ -303,13 +303,13 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 	unset options
 fi
 
-# read distribution support status which is written to the armbian-release file
-set_distribution_status
-
 # don't show desktop option if we choose minimal build
 [[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no
 
 if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
+
+	# read distribution support status which is written to the armbian-release file
+	set_distribution_status
 
 	options=()
 	options+=("no" "Image with console interface (server)")
