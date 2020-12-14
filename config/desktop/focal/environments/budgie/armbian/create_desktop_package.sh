@@ -35,7 +35,8 @@ cat <<-EOF > "${destination}"/usr/share/gnome-background-properties/armbian.xml
 </wallpapers>
 EOF
 
-cat <<_EOF > "${destination}"/usr/share/glib-2.0/schemas/org.gnome.desktop.background.gschema.override
+mkdir -p "${destination}"/usr/share/glib-2.0/schemas
+cat <<-EOF > "${destination}"/usr/share/glib-2.0/schemas/org.gnome.desktop.background.gschema.override
 [org.gnome.desktop.background]
 picture-uri='file:///usr/share/backgrounds/armbian/armbian03-Dre0x-Minum-dark-3840x2160.jpg'
 show-desktop-icons=true
