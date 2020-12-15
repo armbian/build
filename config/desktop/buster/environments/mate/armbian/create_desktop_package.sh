@@ -10,8 +10,8 @@ mkdir -p "${destination}"/usr/share/pixmaps/armbian
 cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps/armbian
 
 # install wallpapers
-mkdir -p "${destination}"/usr/share/backgrounds/xfce/
-cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/xfce/
+mkdir -p "${destination}"/usr/share/backgrounds/armbian/
+cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/armbian/
 
 # add loading desktop splash service
 mkdir -p "${destination}"/etc/systemd/system/
