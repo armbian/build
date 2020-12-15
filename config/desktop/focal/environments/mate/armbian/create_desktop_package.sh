@@ -41,7 +41,3 @@ cat <<-EOF > "${destination}"/usr/share/glib-2.0/schemas/org.gnome.desktop.backg
 picture-uri='file:///usr/share/backgrounds/armbian/armbian03-Dre0x-Minum-dark-3840x2160.jpg'
 show-desktop-icons=true
 EOF
-
-# add loading desktop splash service
-mkdir -p "${destination}"/etc/systemd/system/
-cp "${SRC}"/packages/blobs/desktop/desktop-splash/desktop-splash.service "${destination}"/etc/systemd/system/desktop-splash.service
