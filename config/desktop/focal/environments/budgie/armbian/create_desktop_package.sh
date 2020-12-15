@@ -20,14 +20,14 @@ cat <<-EOF > "${destination}"/usr/share/gnome-background-properties/armbian.xml
 <wallpapers>
   <wallpaper deleted="false">
     <name>Armbian light</name>
-    <filename>/usr/share/backgrounds/gnome/armbian18-Dre0x-Minum-light-3840x2160.jpg</filename>
+    <filename>/usr/share/backgrounds/armbian/armbian18-Dre0x-Minum-light-3840x2160.jpg</filename>
     <options>zoom</options>
     <pcolor>#ffffff</pcolor>
     <scolor>#000000</scolor>
   </wallpaper>
   <wallpaper deleted="false">
     <name>Armbian dark</name>
-    <filename>/usr/share/backgrounds/gnome/armbian03-Dre0x-Minum-dark-3840x2160.jpg</filename>
+    <filename>/usr/share/backgrounds/armbian/armbian03-Dre0x-Minum-dark-3840x2160.jpg</filename>
     <options>zoom</options>
     <pcolor>#ffffff</pcolor>
     <scolor>#000000</scolor>
