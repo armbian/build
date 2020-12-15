@@ -13,10 +13,6 @@ cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/
 mkdir -p "${destination}"/usr/share/backgrounds/armbian/
 cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/armbian/
 
-# add loading desktop splash service
-mkdir -p "${destination}"/etc/systemd/system/
-cp "${SRC}"/packages/blobs/desktop/desktop-splash/desktop-splash.service "${destination}"/etc/systemd/system/desktop-splash.service
-
 mkdir -p "${destination}"/usr/share/mate-background-properties
 cat <<-EOF > "${destination}"/usr/share/mate-background-properties/armbian.xml
 <?xml version="1.0"?>
