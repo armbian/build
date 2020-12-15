@@ -170,6 +170,16 @@ compilation_prepare()
 	if linux-version compare "${version}" ge 3.10; then
 
 		# attach to specifics tag or branch
+
+
+		# prepare kernel
+		cd "$kerneldir" || exit
+		local toolchain
+		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
+		make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" mrproper
+		cp "${DEST}/config/${LINUXCONFIG}.config" .config
+		make ARCH=$ARCHITECTURE CROSS_COMPILE="$KERNEL_COMPILER" prepare
+		make ARCH=$ARCHITECTURE CROSS_COMPILE="$KERNEL_COMPILER" scripts
 		local zfsver="tag:zfs-0.8.5"
 		display_alert "Adding" "ZFS for Linux ${wirever} " "info"
 		fetch_from_repo "https://github.com/zfsonlinux/zfs.git" "zfs" "${zfsver}" "yes"
@@ -177,7 +187,7 @@ compilation_prepare()
 		sh autogen.sh
 		./configure --prefix=/ --libdir=/lib --includedir=/usr/include --datarootdir=/usr/share --enable-linux-builtin=yes --with-linux="${kerneldir}" --with-linux-obj="${kerneldir}"
 		./copy-builtin "${kerneldir}"
-		sudo make -j"$CTHREADS"
+		sudo make "$CTHREADS"
 		sudo make install
 
 	fi
