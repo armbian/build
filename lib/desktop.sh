@@ -19,9 +19,7 @@ create_desktop_package ()
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,};
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS//[[:space:]]/}
 
-	local destination tmp_dir
-	tmp_dir=$(mktemp -d)
-	destination=${tmp_dir}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
+	local destination=$(mktemp -d)${RELEASE}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
 
@@ -121,7 +119,7 @@ create_desktop_package ()
 	cd "${destination}"; cd ..
 	fakeroot dpkg-deb -b "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"  >/dev/null
 	# cleanup
-	rm -rf "${tmp_dir}"
+	rm -rf "${destination}"
 }
 
 desktop_postinstall ()
