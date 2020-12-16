@@ -178,6 +178,7 @@ compilation_prepare()
 		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
 		make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" mrproper
 		cp "${DEST}/config/${LINUXCONFIG}.config" .config
+		yes "" | make ARCH=$ARCHITECTURE CROSS_COMPILE="$KERNEL_COMPILER" oldconfig
 		make ARCH=$ARCHITECTURE CROSS_COMPILE="$KERNEL_COMPILER" prepare
 		make ARCH=$ARCHITECTURE CROSS_COMPILE="$KERNEL_COMPILER" scripts
 		local zfsver="tag:zfs-0.8.5"
