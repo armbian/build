@@ -310,6 +310,13 @@ install_common()
 		fi
 	fi
 
+	# install ZSH if selected
+	if [[ ${ADVANCED_SHELL} == "yes" && ${BUILD_MINIMAL} != yes ]]; then
+		display_alert "Installing advanced shell functions" "ZSH, oh-my-zsh, Tmux" "info"
+		chroot "${SDCARD}" /bin/bash -c "armbian-config main=System selection=ZSH" > /dev/null 2>&1
+		[[ $? -ne 0 ]] && exit_with_error "ZSH install failed"
+	fi
+
 	# install kernel sources
 	if [[ -f ${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb && $INSTALL_KSRC == yes ]]; then
 		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb"
@@ -324,7 +331,7 @@ install_common()
 	if [[ $BSPFREEZE == yes ]]; then
 		display_alert "Freezing Armbian packages" "$BOARD" "info"
 		chroot "${SDCARD}" /bin/bash -c "apt-mark hold ${CHOSEN_KERNEL} ${CHOSEN_KERNEL/image/headers} \
-			linux-u-boot-${BOARD}-${BRANCH} ${CHOSEN_KERNEL/image/dtb}" >> "${DEST}"/debug/install.log 2>&1
+		linux-u-boot-${BOARD}-${BRANCH} ${CHOSEN_KERNEL/image/dtb}" >> "${DEST}"/debug/install.log 2>&1
 	fi
 
 	# remove deb files
