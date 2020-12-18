@@ -310,8 +310,8 @@ install_common()
 		fi
 	fi
 
-	# install ZSH if selected
-	if [[ ${ADVANCED_SHELL} == "yes" && ${BUILD_MINIMAL} != yes ]]; then
+	# install ZSH
+	if [[  && ${BUILD_MINIMAL} != yes ]]; then
 		display_alert "Installing advanced shell functions" "ZSH, oh-my-zsh, Tmux" "info"
 		chroot "${SDCARD}" /bin/bash -c "armbian-config main=System selection=ZSH" > /dev/null 2>&1
 		[[ $? -ne 0 ]] && exit_with_error "ZSH install failed"
