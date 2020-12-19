@@ -538,23 +538,20 @@ compile_firmware()
 compile_armbian-zsh()
 {
 
-
-	fetch_from_repo "https://github.com/robbyrussell/oh-my-zsh" "oh-my-zsh" "branch:master"
-	fetch_from_repo "https://github.com/mroth/evalcache" "oh-my-zsh-evalcache" "branch:master"
-
-	local tmpdir=$(mktemp -d)/armbian-zsh_${REVISION}_all
-	chmod 700 ${tmpdir}
-	trap "rm -rf \"${tmpdir}\" ; exit 0" 0 1 2 3 15
+	local tmp_dir armbian_zsh_dir
+	tmp_dir=$(mktemp -d)
+	chmod 700 ${tmp_dir}
+	trap "rm -rf \"${tmp_dir}\" ; exit 0" 0 1 2 3 15
+	armbian_zsh_dir=armbian-zsh_${REVISION}_all
 	display_alert "Building deb" "armbian-zsh" "info"
 
+	fetch_from_repo "https://github.com/robbyrussell/oh-my-zsh" "oh-my-zsh" "branch:master"
+	fetch_from_repo "https://github.com/mroth/evalcache" "evalcache" "branch:master"
 
-	mkdir -p "${tmpdir}"/{DEBIAN,etc/skel/,etc/oh-my-zsh/,/etc/skel/.oh-my-zsh/cache}
-
-echo $tmpdir
-read
+	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"/{DEBIAN,etc/skel/,etc/oh-my-zsh/,/etc/skel/.oh-my-zsh/cache}
 
 	# set up control file
-	cat <<-END > "${tmpdir}"/DEBIAN/control
+	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/control
 	Package: armbian-zsh
 	Version: $REVISION
 	Architecture: all
@@ -566,7 +563,7 @@ read
 	END
 
 	# set up post install script
-	cat <<-END > "${tmpdir}"/DEBIAN/postinst
+	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 	#!/bin/sh
 	# change shell for future users
 	sed -i "s/^SHELL=.*/SHELL=\/usr\/bin\/zsh/" /etc/default/useradd
@@ -578,38 +575,48 @@ read
 	[ ! -f $HOME/.zshrc ] && cp /etc/skel/.zshrc $HOME/.zshrc
 	# fix permisssion
 	chown -R ${USER}:${USER} $HOME/{.zshrc,.oh-my-zsh}
+	exit 0
 	END
 
 	# set up post install script
-	cat <<-END > "${tmpdir}"/DEBIAN/postrm
+	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postrm
 	#!/bin/sh
 	# change shell for future users
 	sed -i "s/^SHELL=.*/SHELL=\/usr\/bin\/bash/" /etc/default/useradd
 	sed -i "s/^DSHELL=.*/DSHELL=\/usr\/bin\/bash/" /etc/adduser.conf
 	# change shell for active user
 	chsh -s $(grep /bash$ /etc/shells | tail -1) $USER
+	# add support for bash profile
+	! grep emulate /etc/zsh/zprofile  >/dev/null && echo "emulate sh -c 'source /etc/profile'" >> /etc/zsh/zprofile
+	exit 0
 	END
 
-	cp "${SRC}"/cache/sources/oh-my-zsh "${tmpdir}"/etc/oh-my-zsh
-	cp "${SRC}"/cache/sources/oh-my-zsh-evalcache "${tmpdir}"/etc/oh-my-zsh/plugins
-	cp "${tmpdir}"/etc/oh-my-zsh/templates/zshrc.zsh-template "${tmpdir}"/etc/skel/.zshrc
-	chmod -R g-w,o-w "${tmpdir}"/etc/oh-my-zsh/
-	# add support for bash profile
-	echo "emulate sh -c 'source /etc/profile'" >> "${tmpdir}"/etc/zsh/zprofile
-	# we have common settings
-	sed -i "s/^export ZSH=.*/export ZSH=\/etc\/oh-my-zsh/" "${tmpdir}"/etc/skel/.zshrc
-	# user cache
-	sed -i "/^export ZSH=.*/a export ZSH_CACHE_DIR=~\/.oh-my-zsh\/cache" "${tmpdir}"/etc/skel/.zshrc
-	# define theme
-	sed -i 's/^ZSH_THEME=.*/ZSH_THEME="mrtazz"/' "${tmpdir}"/etc/skel/.zshrc
-	# disable prompt while update
-	sed -i 's/# DISABLE_UPDATE_PROMPT="true"/DISABLE_UPDATE_PROMPT="true"/g' "${tmpdir}"/etc/skel/.zshrc
-	# define default plugins
-	sed -i 's/^plugins=.*/plugins=(evalcache git git-extras debian tmux screen history extract colorize web-search docker)/' "${tmpdir}"/etc/skel/.zshrc
+	cp -R "${SRC}"/cache/sources/oh-my-zsh "${tmp_dir}/${armbian_zsh_dir}"/etc/
+	cp -R "${SRC}"/cache/sources/evalcache "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/plugins
+	cp "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/templates/zshrc.zsh-template "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
-	fakeroot dpkg -b "${tmpdir}" >/dev/null
-	rsync -rq "${tmpdir}.deb" "${DEB_STORAGE}/"
-	rm -rf "${tmpdir}"
+	chmod -R g-w,o-w "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/
+
+	# we have common settings
+	sed -i "s/^export ZSH=.*/export ZSH=\/etc\/oh-my-zsh/" "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+
+	# user cache
+	sed -i "/^export ZSH=.*/a export ZSH_CACHE_DIR=~\/.oh-my-zsh\/cache" "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+
+	# define theme
+	sed -i 's/^ZSH_THEME=.*/ZSH_THEME="mrtazz"/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+
+	# disable prompt while update
+	sed -i 's/# DISABLE_UPDATE_PROMPT="true"/DISABLE_UPDATE_PROMPT="true"/g' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+
+	# define default plugins
+	sed -i 's/^plugins=.*/plugins=(evalcache git git-extras debian tmux screen history extract colorize web-search docker)/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+
+	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/{postrm,postinst}
+
+	fakeroot dpkg -b "${tmp_dir}/${armbian_zsh_dir}" >/dev/null
+	rsync --remove-source-files -rq "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
+	rm -rf "${tmp_dir}"
 
 }
 
