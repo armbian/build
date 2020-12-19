@@ -186,7 +186,7 @@ compilation_prepare()
 		fetch_from_repo "https://github.com/zfsonlinux/zfs.git" "zfs" "${zfsver}" "yes"
 		cd "${SRC}/cache/sources/zfs/${zfsver#*:}"
 		sh autogen.sh
-		./configure --prefix=/ --libdir=/lib --includedir=/usr/include --datarootdir=/usr/share --enable-linux-builtin=yes --with-linux="${kerneldir}" --with-linux-obj="${kerneldir}"
+		./configure --prefix=/ --libdir=/lib --includedir=/usr/include --with-config=kernel --datarootdir=/usr/share --enable-linux-builtin=yes --with-linux="${kerneldir}" --with-linux-obj="${kerneldir}"
 		./copy-builtin "${kerneldir}"
 		sudo make "$CTHREADS"
 		sudo make install
