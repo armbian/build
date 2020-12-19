@@ -311,13 +311,13 @@ install_common()
 	fi
 
 	# install ZSH
-	if [[  && ${BUILD_MINIMAL} != yes ]]; then
-		display_alert "Installing advanced shell functions" "ZSH, oh-my-zsh, Tmux" "info"
-		chroot "${SDCARD}" /bin/bash -c "armbian-config main=System selection=ZSH" > /dev/null 2>&1
-		[[ $? -ne 0 ]] && exit_with_error "ZSH install failed"
-		# set default to bash and ask user at first login
-		chroot "${SDCARD}" /bin/bash -c "chsh -s $(grep /bash$ /etc/shells | tail -1)"
-	fi
+#	if [[ ${BUILD_MINIMAL} != yes ]]; then
+#		display_alert "Installing advanced shell functions" "ZSH, oh-my-zsh, Tmux" "info"
+		#chroot "${SDCARD}" /bin/bash -c "armbian-config main=System selection=ZSH" > /dev/null 2>&1
+#		[[ $? -ne 0 ]] && exit_with_error "ZSH install failed"
+#		# set default to bash and ask user at first login
+#		chroot "${SDCARD}" /bin/bash -c "chsh -s $(grep /bash$ /etc/shells | tail -1)"
+	#fi
 
 	# install kernel sources
 	if [[ -f ${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb && $INSTALL_KSRC == yes ]]; then
