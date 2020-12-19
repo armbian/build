@@ -565,29 +565,24 @@ compile_armbian-zsh()
 	# set up post install script
 	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 	#!/bin/sh
-	# change shell for future users
-	sed -i "s/^SHELL=.*/SHELL=\/usr\/bin\/zsh/" /etc/default/useradd
-	sed -i "s/^DSHELL=.*/DSHELL=\/usr\/bin\/zsh/" /etc/adduser.conf
-	# change shell for active user
-	chsh -s $(grep /zsh$ /etc/shells | tail -1) $USER
 	# copy cache directory if not there yet
-	[ ! -f $HOME/.oh-my-zsh ] && cp -R --attributes-only /etc/skel/.oh-my-zsh $HOME/.oh-my-zsh
-	[ ! -f $HOME/.zshrc ] && cp /etc/skel/.zshrc $HOME/.zshrc
+	[ ! -f "${HOME}"/.oh-my-zsh ] && cp -R --attributes-only /etc/skel/.oh-my-zsh "${HOME}"/.oh-my-zsh
+	[ ! -f "${HOME}"/.zshrc ] && cp /etc/skel/.zshrc "${HOME}"/.zshrc
 	# fix permisssion
-	chown -R ${USER}:${USER} $HOME/{.zshrc,.oh-my-zsh}
+	chown -R "${USER}":"${USER}" "${HOME}"/{.zshrc,.oh-my-zsh}
+	# add support for bash profile
+	! grep emulate /etc/zsh/zprofile  >/dev/null && echo "emulate sh -c 'source /etc/profile'" >> /etc/zsh/zprofile
 	exit 0
 	END
 
-	# set up post install script
+	# set up post remove script
 	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postrm
 	#!/bin/sh
-	# change shell for future users
+	# change shell back to bash for future users
 	sed -i "s/^SHELL=.*/SHELL=\/usr\/bin\/bash/" /etc/default/useradd
 	sed -i "s/^DSHELL=.*/DSHELL=\/usr\/bin\/bash/" /etc/adduser.conf
 	# change shell for active user
-	chsh -s $(grep /bash$ /etc/shells | tail -1) $USER
-	# add support for bash profile
-	! grep emulate /etc/zsh/zprofile  >/dev/null && echo "emulate sh -c 'source /etc/profile'" >> /etc/zsh/zprofile
+	chsh -s $(grep /bash$ /etc/shells | tail -1) ${USER}
 	exit 0
 	END
 
