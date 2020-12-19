@@ -14,7 +14,7 @@
 # compile_uboot
 # compile_kernel
 # compile_firmware
-# compile_ambian-config
+# compile_armbian-config
 # compile_sunxi_tools
 # install_rkbin_tools
 # grab_version
@@ -280,6 +280,7 @@ compile_uboot()
 	[[ ! -f $uboottempdir/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
 	rsync --remove-source-files -rq "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
+	rm -rf "$uboottempdir"
 }
 
 compile_kernel()
@@ -322,8 +323,10 @@ compile_kernel()
         version=$(grab_version "$kerneldir")
 
 	# create linux-source package - with already patched sources
-	local sources_pkg_dir=$(mktemp -d)/${CHOSEN_KSRC}_${REVISION}_all
-	trap "rm -rf \"${sources_pkg_dir}\" ; exit 0" 0 1 2 3 15
+	local sources_pkg_dir tmp_src_dir
+	tmp_src_dir=$(mktemp -d)
+	trap "rm -rf \"${tmp_src_dir}\" ; exit 0" 0 1 2 3 15
+	sources_pkg_dir=${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all
 	mkdir -p "${sources_pkg_dir}"/usr/src/ "${sources_pkg_dir}"/usr/share/doc/linux-source-${version}-${LINUXFAMILY} "${sources_pkg_dir}"/DEBIAN
 
 	if [[ $BUILD_KSRC != no ]]; then
@@ -452,7 +455,7 @@ compile_kernel()
 		fakeroot dpkg-deb -z0 -b "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
 		rsync --remove-source-files -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
 	fi
-	rm -rf "${sources_pkg_dir}"
+	rm -rf "${tmp_src_dir}"
 
 	cd .. || exit
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
@@ -482,10 +485,12 @@ compile_firmware()
 		plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
 	fi
 
+	local firmwaretempdir plugin_dir
+
 	firmwaretempdir=$(mktemp -d)
 	chmod 700 ${firmwaretempdir}
 	trap "rm -rf \"${firmwaretempdir}\" ; exit 0" 0 1 2 3 15
-	local plugin_dir="armbian-firmware${FULL}"
+	plugin_dir="armbian-firmware${FULL}"
 	mkdir -p "${firmwaretempdir}/${plugin_dir}/lib/firmware"
 
 	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
@@ -614,17 +619,19 @@ read
 compile_armbian-config()
 {
 
-	local tmpdir=$(mktemp -d)/armbian-config_${REVISION}_all
-	chmod 700 ${tmpdir}
-	trap "rm -rf \"${tmpdir}\" ; exit 0" 0 1 2 3 15
+	local tmp_dir armbian_config_dir
+	tmp_dir=$(mktemp -d)
+	chmod 700 ${tmp_dir}
+	trap "rm -rf \"${tmp_dir}\" ; exit 0" 0 1 2 3 15
+	armbian_config_dir=armbian-config_${REVISION}_all
 	display_alert "Building deb" "armbian-config" "info"
 
 	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
 
-	mkdir -p "${tmpdir}"/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
+	mkdir -p "${tmp_dir}/${armbian_config_dir}"/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
 
 	# set up control file
-	cat <<-END > "${tmpdir}"/DEBIAN/control
+	cat <<-END > "${tmp_dir}/${armbian_config_dir}"/DEBIAN/control
 	Package: armbian-config
 	Version: $REVISION
 	Architecture: all
@@ -639,21 +646,20 @@ compile_armbian-config()
 	Description: Armbian configuration utility
 	END
 
-	install -m 755 "${SRC}"/cache/sources/armbian-config/scripts/tv_grab_file "${tmpdir}"/usr/bin/tv_grab_file
-	install -m 755 "${SRC}"/cache/sources/armbian-config/debian-config "${tmpdir}"/usr/sbin/armbian-config
-	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-jobs "${tmpdir}"/usr/lib/armbian-config/jobs.sh
-	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-submenu "${tmpdir}"/usr/lib/armbian-config/submenu.sh
-	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-functions "${tmpdir}"/usr/lib/armbian-config/functions.sh
-	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-functions-network "${tmpdir}"/usr/lib/armbian-config/functions-network.sh
-	install -m 755 "${SRC}"/cache/sources/armbian-config/softy "${tmpdir}"/usr/sbin/softy
+	install -m 755 "${SRC}"/cache/sources/armbian-config/scripts/tv_grab_file "${tmp_dir}/${armbian_config_dir}"/usr/bin/tv_grab_file
+	install -m 755 "${SRC}"/cache/sources/armbian-config/debian-config "${tmp_dir}/${armbian_config_dir}"/usr/sbin/armbian-config
+	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-jobs "${tmp_dir}/${armbian_config_dir}"/usr/lib/armbian-config/jobs.sh
+	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-submenu "${tmp_dir}/${armbian_config_dir}"/usr/lib/armbian-config/submenu.sh
+	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-functions "${tmp_dir}/${armbian_config_dir}"/usr/lib/armbian-config/functions.sh
+	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-functions-network "${tmp_dir}/${armbian_config_dir}"/usr/lib/armbian-config/functions-network.sh
+	install -m 755 "${SRC}"/cache/sources/armbian-config/softy "${tmp_dir}/${armbian_config_dir}"/usr/sbin/softy
 	# fallback to replace armbian-config in BSP
-	ln -sf /usr/sbin/armbian-config "${tmpdir}"/usr/bin/armbian-config
-	ln -sf /usr/sbin/softy "${tmpdir}"/usr/bin/softy
+	ln -sf /usr/sbin/armbian-config "${tmp_dir}/${armbian_config_dir}"/usr/bin/armbian-config
+	ln -sf /usr/sbin/softy "${tmp_dir}/${armbian_config_dir}"/usr/bin/softy
 
-	fakeroot dpkg -b "${tmpdir}" >/dev/null
-	rsync -rq "${tmpdir}.deb" "${DEB_STORAGE}/"
-	rm -rf "${tmpdir}"
-
+	fakeroot dpkg -b "${tmp_dir}/${armbian_config_dir}" >/dev/null
+	rsync --remove-source-files -rq "${tmp_dir}/${armbian_config_dir}.deb" "${DEB_STORAGE}/"
+	rm -rf "${tmp_dir}"
 }
 
 
