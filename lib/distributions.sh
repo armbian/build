@@ -130,8 +130,6 @@ install_common()
 	mkdir -p "${SDCARD}"/etc/systemd/system/getty@.service.d/
 	mkdir -p "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/
 	cat <<-EOF > "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf
-	[Unit]
-	After=graphical.target
 	[Service]
 	ExecStartPre=/bin/sh -c 'exec /bin/sleep 10'
 	ExecStart=
