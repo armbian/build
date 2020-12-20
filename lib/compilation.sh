@@ -582,7 +582,7 @@ compile_armbian-zsh()
 	sed -i "s/^SHELL=.*/SHELL=\/usr\/bin\/bash/" /etc/default/useradd
 	sed -i "s/^DSHELL=.*/DSHELL=\/usr\/bin\/bash/" /etc/adduser.conf
 	# change to BASH shell for root and all normal users
-	awk -F'[/:]' '{if ($3 >= 1000 && $3 != 65534 || $3 == 0) print $1}' /etc/passwd | xargs -L1 chsh -s $(grep /bash$ /etc/shells | tail -1)
+	awk -F'[/:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print \$1}' /etc/passwd | xargs -L1 chsh -s \$(grep /bash\$ /etc/shells | tail -1)
 	exit 0
 	END
 
