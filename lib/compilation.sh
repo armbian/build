@@ -565,12 +565,15 @@ compile_armbian-zsh()
 	# set up post install script
 	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 	#!/bin/sh
+
 	# copy cache directory if not there yet
-	[ ! -d "\${HOME}"/.oh-my-zsh ] && cp -R --attributes-only /etc/skel/.oh-my-zsh "\${HOME}"/.oh-my-zsh
-	[ ! -f "\${HOME}"/.zshrc ] && cp /etc/skel/.zshrc "\${HOME}"/.zshrc
-	# fix permisssion
-	chown -R "\${USER}":"\${USER}" "\${HOME}"/.zshrc
-	chown -R "\${USER}":"\${USER}" "\${HOME}"/.oh-my-zsh
+	awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$6"/.oh-my-zsh"}' /etc/passwd | xargs -i sh -c 'test ! -d {} && cp -R --attributes-only /etc/skel/.oh-my-zsh {}'
+	awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$6"/.zshrc"}' /etc/passwd | xargs -i sh -c 'test ! -f {} && cp -R /etc/skel/.zshrc {}'
+
+	# fix owner permissions in home directory
+	awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$1":"\$3" "\$6"/.oh-my-zsh"}' /etc/passwd | xargs -n2 chown -R
+	awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$1":"\$3" "\$6"/.zshrc"}' /etc/passwd | xargs -n2 chown -R
+
 	# add support for bash profile
 	! grep emulate /etc/zsh/zprofile  >/dev/null && echo "emulate sh -c 'source /etc/profile'" >> /etc/zsh/zprofile
 	exit 0
