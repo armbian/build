@@ -457,6 +457,13 @@ if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
 
 fi
 
+# Compile armbian-zsh if packed .deb does not exist or use the one from repository
+if [[ ! -f ${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb ]]; then
+
+        [[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]] && compile_armbian-zsh
+
+fi
+
 # Compile armbian-firmware if packed .deb does not exist or use the one from repository
 if ! ls "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb" 1> /dev/null 2>&1 || ! ls "${DEB_STORAGE}/armbian-firmware-full_${REVISION}_all.deb" 1> /dev/null 2>&1; then
 
