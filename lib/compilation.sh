@@ -566,10 +566,11 @@ compile_armbian-zsh()
 	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 	#!/bin/sh
 	# copy cache directory if not there yet
-	[ ! -f "${HOME}"/.oh-my-zsh ] && cp -R --attributes-only /etc/skel/.oh-my-zsh "${HOME}"/.oh-my-zsh
-	[ ! -f "${HOME}"/.zshrc ] && cp /etc/skel/.zshrc "${HOME}"/.zshrc
+	[ ! -d "\${HOME}"/.oh-my-zsh ] && cp -R --attributes-only /etc/skel/.oh-my-zsh "\${HOME}"/.oh-my-zsh
+	[ ! -f "\${HOME}"/.zshrc ] && cp /etc/skel/.zshrc "\${HOME}"/.zshrc
 	# fix permisssion
-	chown -R "${USER}":"${USER}" "${HOME}"/{.zshrc,.oh-my-zsh}
+	chown -R "\${USER}":"\${USER}" "\${HOME}"/.zshrc
+	chown -R "\${USER}":"\${USER}" "\${HOME}"/.oh-my-zsh
 	# add support for bash profile
 	! grep emulate /etc/zsh/zprofile  >/dev/null && echo "emulate sh -c 'source /etc/profile'" >> /etc/zsh/zprofile
 	exit 0
