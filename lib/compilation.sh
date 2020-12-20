@@ -535,6 +535,93 @@ compile_firmware()
 
 
 
+compile_armbian-zsh()
+{
+
+	local tmp_dir armbian_zsh_dir
+	tmp_dir=$(mktemp -d)
+	chmod 700 ${tmp_dir}
+	trap "rm -rf \"${tmp_dir}\" ; exit 0" 0 1 2 3 15
+	armbian_zsh_dir=armbian-zsh_${REVISION}_all
+	display_alert "Building deb" "armbian-zsh" "info"
+
+	fetch_from_repo "https://github.com/robbyrussell/oh-my-zsh" "oh-my-zsh" "branch:master"
+	fetch_from_repo "https://github.com/mroth/evalcache" "evalcache" "branch:master"
+
+	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"/{DEBIAN,etc/skel/,etc/oh-my-zsh/,/etc/skel/.oh-my-zsh/cache}
+
+	# set up control file
+	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/control
+	Package: armbian-zsh
+	Version: $REVISION
+	Architecture: all
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Depends: zsh, tmux
+	Section: utils
+	Priority: optional
+	Description: Armbian improved ZShell
+	END
+
+	# set up post install script
+	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
+	#!/bin/sh
+
+	# copy cache directory if not there yet
+	awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$6"/.oh-my-zsh"}' /etc/passwd | xargs -i sh -c 'test ! -d {} && cp -R --attributes-only /etc/skel/.oh-my-zsh {}'
+	awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$6"/.zshrc"}' /etc/passwd | xargs -i sh -c 'test ! -f {} && cp -R /etc/skel/.zshrc {}'
+
+	# fix owner permissions in home directory
+	awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$1":"\$3" "\$6"/.oh-my-zsh"}' /etc/passwd | xargs -n2 chown -R
+	awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$1":"\$3" "\$6"/.zshrc"}' /etc/passwd | xargs -n2 chown -R
+
+	# add support for bash profile
+	! grep emulate /etc/zsh/zprofile  >/dev/null && echo "emulate sh -c 'source /etc/profile'" >> /etc/zsh/zprofile
+	exit 0
+	END
+
+	# set up post remove script
+	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postrm
+	#!/bin/sh
+	# change shell back to bash for future users
+	sed -i "s/^SHELL=.*/SHELL=\/usr\/bin\/bash/" /etc/default/useradd
+	sed -i "s/^DSHELL=.*/DSHELL=\/usr\/bin\/bash/" /etc/adduser.conf
+	# change to BASH shell for root and all normal users
+	awk -F'[/:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print \$1}' /etc/passwd | xargs -L1 chsh -s \$(grep /bash\$ /etc/shells | tail -1)
+	exit 0
+	END
+
+	cp -R "${SRC}"/cache/sources/oh-my-zsh "${tmp_dir}/${armbian_zsh_dir}"/etc/
+	cp -R "${SRC}"/cache/sources/evalcache "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/plugins
+	cp "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/templates/zshrc.zsh-template "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+
+	chmod -R g-w,o-w "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/
+
+	# we have common settings
+	sed -i "s/^export ZSH=.*/export ZSH=\/etc\/oh-my-zsh/" "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+
+	# user cache
+	sed -i "/^export ZSH=.*/a export ZSH_CACHE_DIR=~\/.oh-my-zsh\/cache" "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+
+	# define theme
+	sed -i 's/^ZSH_THEME=.*/ZSH_THEME="mrtazz"/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+
+	# disable prompt while update
+	sed -i 's/# DISABLE_UPDATE_PROMPT="true"/DISABLE_UPDATE_PROMPT="true"/g' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+
+	# define default plugins
+	sed -i 's/^plugins=.*/plugins=(evalcache git git-extras debian tmux screen history extract colorize web-search docker)/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+
+	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/{postrm,postinst}
+
+	fakeroot dpkg -b "${tmp_dir}/${armbian_zsh_dir}" >/dev/null
+	rsync --remove-source-files -rq "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
+	rm -rf "${tmp_dir}"
+
+}
+
+
+
+
 compile_armbian-config()
 {
 
