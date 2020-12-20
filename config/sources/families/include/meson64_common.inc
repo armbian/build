@@ -32,8 +32,8 @@ case $BRANCH in
         ;;
 
         dev)
-                KERNELBRANCH='branch:linux-5.9.y'
-                KERNELPATCHDIR='meson64-dev'
+		KERNELBRANCH='branch:linux-5.10.y'
+		KERNELPATCHDIR='meson64-dev'
         ;;
 
 esac
@@ -216,38 +216,42 @@ family_tweaks_bsp()
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
 	if [[ $BOARD == odroidc2 || $BOARD == nanopik2 || $BOARD == lepatato || $BOARD == lafrite || $BOARD == vim1 ]]; then 
+
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 	# set fbdev as default driver.
 	Section "Device"
-           Identifier "NOGPU"
-           Driver "fbdev"
-        EndSection
-        EOF
+	    Identifier "NOGPU"
+	    Driver "fbdev"
+	    EndSection
+	EOF
+
 	elif [[ $BOARD == odroidn2 || $BOARD == odroidc4 || $BOARD == vim2 ]]; then
+
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf
 	Section "Device"
-            Identifier  "Armsoc Graphics"
+	    Identifier  "Armsoc Graphics"
+	    
+	    ## Use armsoc driver
+	    #   Driver          "armsoc"
+	    ## End armsoc configuration
+	    
+	    ## Use modesetting and glamor
+	        Driver      "modesetting"
+	        Option      "AccelMethod"    "glamor"     ### "glamor" to enable 3D acceleration, "none" to disable.
+	        Option      "DRI"            "2"
+	        Option      "Dri2Vsync"      "true"
+	        Option      "TripleBuffer"   "True"
+	    ## End glamor configuration
+	    
+	    EndSection
        
-        ## Use armsoc driver
-        #   Driver          "armsoc"
-        ## End armsoc configuration
-       
-        ## Use modesetting and glamor
-            Driver      "modesetting"
-            Option      "AccelMethod"    "glamor"     ### "glamor" to enable 3D acceleration, "none" to disable.
-            Option      "DRI"            "2"
-            Option      "Dri2Vsync"      "true"
-            Option      "TripleBuffer"   "True"
-        ## End glamor configuration
-       
-        EndSection
-       
-        Section "Screen"
-            Identifier "Default Screen"
-               SubSection "Display"
-                  Depth 24
-               EndSubSection
-           EndSection
-        EOF
-        fi
+	    Section "Screen"
+	        Identifier "Default Screen"
+	            SubSection "Display"
+	                Depth 24
+	            EndSubSection
+	        EndSection
+	EOF
+
+	fi
 }

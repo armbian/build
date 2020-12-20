@@ -106,7 +106,6 @@ create_board_package()
 	[ -f "/etc/update-motd.d/99-point-to-faq" ] && rm /etc/update-motd.d/99-point-to-faq
 	[ -f "/etc/update-motd.d/80-esm" ] && rm /etc/update-motd.d/80-esm
 	[ -f "/etc/update-motd.d/80-livepatch" ] && rm /etc/update-motd.d/80-livepatch
-	[ -f "/etc/apt/apt.conf.d/50unattended-upgrades" ] && rm /etc/apt/apt.conf.d/50unattended-upgrades
 	[ -f "/etc/apt/apt.conf.d/02compress-indexes" ] && rm /etc/apt/apt.conf.d/02compress-indexes
 	[ -f "/etc/apt/apt.conf.d/02periodic" ] && rm /etc/apt/apt.conf.d/02periodic
 	[ -f "/etc/apt/apt.conf.d/no-languages" ] && rm /etc/apt/apt.conf.d/no-languages
@@ -285,6 +284,12 @@ fi
 	KERNEL_IMAGE_TYPE=$KERNEL_IMAGE_TYPE
 	EOF
 
+	if [[ $BUILD_DESKTOP == yes ]]; then
+	cat <<-EOF >> "${destination}"/etc/armbian-release
+	DESKTOP=$DESKTOP_ENVIRONMENT
+	EOF
+	fi
+	
 	# this is required for NFS boot to prevent deconfiguring the network on shutdown
 	sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
 

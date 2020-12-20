@@ -6,8 +6,8 @@ mkdir -p "${destination}"/etc/skel
 cp -R "${SRC}"/packages/blobs/desktop/skel_dde/. "${destination}"/etc/skel
 
 # install logo for login screen
-mkdir -p "${destination}"/usr/share/pixmaps
-cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps
+mkdir -p "${destination}"/usr/share/pixmaps/armbian
+cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps/armbian
 
 # install wallpapers
 mkdir -p "${destination}"/usr/share/wallpapers/armbian/

@@ -95,12 +95,6 @@ ATF_COMPILE=yes
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
-
-# set unique mounting directory
-SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${SELECTED_CONFIGURATION}"
-MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${SELECTED_CONFIGURATION}"
-DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${SELECTED_CONFIGURATION}"
-
 [[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] && \
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 
@@ -113,6 +107,260 @@ fi
 
 # load architecture defaults
 source "${SRC}/config/sources/${ARCH}.conf"
+
+# Myy : Menu configuration for choosing desktop configurations
+
+show_menu() {
+	provided_title=$1
+	provided_backtitle=$2
+	provided_menuname=$3
+	# Myy : I don't know why there's a TTY_Y - 8...
+	#echo "Provided title : $provided_title"
+	#echo "Provided backtitle : $provided_backtitle"
+	#echo "Provided menuname : $provided_menuname"
+	#echo "Provided options : " "${@:4}"
+	#echo "TTY X: $TTY_X Y: $TTY_Y"
+	dialog --stdout --title "$provided_title" --backtitle "${provided_backtitle}" \
+	--menu "$provided_menuname" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+}
+
+# Myy : FIXME Factorize
+show_select_menu() {
+	provided_title=$1
+	provided_backtitle=$2
+	provided_menuname=$3
+	dialog --stdout --title "${provided_title}" --backtitle "${provided_backtitle}" \
+	--checklist "${provided_menuname}" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+}
+
+# Myy : Once we got a list of selected groups, parse the PACKAGE_LIST inside configuration.sh
+
+DESKTOP_ELEMENTS_DIR="${SRC}/config/desktop/${RELEASE}"
+DESKTOP_CONFIGS_DIR="${DESKTOP_ELEMENTS_DIR}/environments"
+DESKTOP_CONFIG_PREFIX="config_"
+DESKTOP_APPGROUPS_DIR="${DESKTOP_ELEMENTS_DIR}/appgroups"
+
+desktop_element_available_for_arch() {
+	local desktop_element_path="${1}"
+	local targeted_arch="${2}"
+
+	local arch_limitation_file="${1}/only_for"
+
+	display_alert "Checking if ${desktop_element_path} is available for ${targeted_arch} in ${arch_limitation_file}"
+	if [[ -f "${arch_limitation_file}" ]]; then
+		grep -- "${targeted_arch}" "${arch_limitation_file}"
+		return $?
+	else
+		return 0
+	fi
+}
+
+desktop_element_supported() {
+
+	local desktop_element_path="${1}"
+
+	local support_level_filepath="${desktop_element_path}/support"
+	if [[ -f "${support_level_filepath}" ]]; then
+		local support_level="$(cat "${support_level_filepath}")"
+		if [[ "${support_level}" != "supported" && "${EXPERT}" != "yes" ]]; then
+			return 65
+		fi
+
+		desktop_element_available_for_arch "${desktop_element_path}" "${ARCH}"
+		if [[ $? -ne 0 ]]; then
+			return 66
+		fi
+	else
+		return 64
+	fi
+
+	return 0
+
+}
+
+if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
+
+	desktop_environments_prepare_menu() {
+		for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
+			local desktop_env_name=$(basename ${desktop_env_dir})
+			local expert_infos=""
+			[[ "${EXPERT}" == "yes" ]] && expert_infos="[$(cat "${desktop_env_dir}/support")]"
+			desktop_element_supported "${desktop_env_dir}" "${ARCH}" && options+=("${desktop_env_name}" "${desktop_env_name^} desktop environment ${expert_infos}")
+		done
+	}
+
+	options=()
+	desktop_environments_prepare_menu
+
+	if [[ "${options[0]}" == "" ]]; then
+		exit_with_error "No desktop environment seems to be available for your board ${BOARD} (ARCH : ${ARCH} - EXPERT : ${EXPERT})"
+	fi
+
+	DESKTOP_ENVIRONMENT=$(show_menu "Choose a desktop environment" "$backtitle" "Select the default desktop environment to bundle with this image" "${options[@]}")
+
+	unset options
+
+	if [[ -z "${DESKTOP_ENVIRONMENT}" ]]; then
+		exit_with_error "No desktop environment selected..."
+	fi
+
+fi
+
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	# Expected environment variables :
+	# - options
+	# - ARCH
+
+	desktop_environment_check_if_valid() {
+
+		local error_msg=""
+		desktop_element_supported "${DESKTOP_ENVIRONMENT_DIRPATH}" "${ARCH}"
+		local retval=$?
+
+		if [[ ${retval} == 0 ]]; then
+			return
+		elif [[ ${retval} == 64 ]]; then
+			error_msg+="Either the desktop environment ${DESKTOP_ENVIRONMENT} does not exist "
+			error_msg+="or the file ${DESKTOP_ENVIRONMENT_DIRPATH}/support is missing"
+		elif [[ ${retval} == 65 ]]; then
+			error_msg+="Only experts can build an image with the desktop environment \"${DESKTOP_ENVIRONMENT}\", since the Armbian team won't offer any support for it (EXPERT=${EXPERT})"
+		elif [[ ${retval} == 66 ]]; then
+			error_msg+="The desktop environment \"${DESKTOP_ENVIRONMENT}\" has no packages for your targeted board architecture (BOARD=${BOARD} ARCH=${ARCH}). "
+			error_msg+="The supported boards architectures are : "
+			error_msg+="$(cat "${DESKTOP_ENVIRONMENT_DIRPATH}/only_for")"
+		fi
+
+		exit_with_error "${error_msg}"
+	}
+
+	DESKTOP_ENVIRONMENT_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
+
+	desktop_environment_check_if_valid
+fi
+
+if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
+	# FIXME Check for empty folders, just in case the current maintainer
+	# messed up
+	# Note, we could also ignore it and don't show anything in the previous
+	# menu, but that hides information and make debugging harder, which I
+	# don't like. Adding desktop environments as a maintainer is not a
+	# trivial nor common task.
+
+	options=()
+	for configuration in "${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_CONFIG_PREFIX}"*; do
+		config_filename=$(basename ${configuration})
+		config_name=${config_filename#"${DESKTOP_CONFIG_PREFIX}"}
+		options+=("${config_filename}" "${config_name} configuration")
+	done
+
+	DESKTOP_ENVIRONMENT_CONFIG_NAME=$(show_menu "Choose the desktop environment config" "$backtitle" "Select the configuration for this environment.\nThese are sourced from ${desktop_environment_config_dir}" "${options[@]}")
+	unset options
+
+	if [[ -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
+		exit_with_error "No desktop configuration selected... Do you really want a desktop environment ?"
+	fi
+fi
+
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
+	DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/packages"
+fi
+
+# "-z ${VAR+x}" allows to check for unset variable
+# Technically, someone might want to build a desktop with no additional
+# appgroups.
+if [[ $BUILD_DESKTOP == "yes" && -z ${DESKTOP_APPGROUPS_SELECTED+x} ]]; then
+
+	options=()
+	for appgroup_path in "${DESKTOP_APPGROUPS_DIR}/"*; do
+		appgroup="$(basename "${appgroup_path}")"
+		options+=("${appgroup}" "${appgroup^}" off)
+	done
+
+	DESKTOP_APPGROUPS_SELECTED=$(\
+		show_select_menu \
+		"Choose desktop softwares to add" \
+		"$backtitle" \
+		"Select which kind of softwares you'd like to add to your build" \
+		"${options[@]}")
+
+	unset options
+fi
+
+#exit_with_error 'Testing'
+
+# Expected variables :
+# - potential_paths
+# - BOARD
+# - DESKTOP_ENVIRONMENT
+# - DESKTOP_APPGROUPS_SELECTED
+# - DESKTOP_APPGROUPS_DIR
+# Example usage :
+# local potential_paths=""
+# get_all_potential_paths_for debian/postinst
+# echo $potential_paths
+
+get_all_potential_paths_for() {
+	looked_up_subpath="${1}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/${looked_up_subpath}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/${looked_up_subpath}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/custom/boards/${BOARD}/${looked_up_subpath}"
+	potential_paths+=" ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/custom/boards/${BOARD}/${looked_up_subpath}"
+	for appgroup in ${DESKTOP_APPGROUPS_SELECTED}; do
+		appgroup_dirpath="${DESKTOP_APPGROUPS_DIR}/${appgroup}"
+		potential_paths+=" ${appgroup_dirpath}/${looked_up_subpath}"
+		potential_paths+=" ${appgroup_dirpath}/custom/desktops/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
+		potential_paths+=" ${appgroup_dirpath}/custom/boards/${BOARD}/${looked_up_subpath}"
+		potential_paths+=" ${appgroup_dirpath}/custom/boards/${BOARD}/custom/desktops/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
+	done
+}
+
+# Expected variables
+# - aggregated_content
+# - potential_paths
+# - separator
+# Write to variables :
+# - aggregated_content
+aggregate_content() {
+	echo "Potential paths : ${potential_paths}"
+
+	for filepath in ${potential_paths}; do
+		echo "$filepath exist ?"
+		if [[ -f "${filepath}" ]]; then
+			echo "Yes !"
+			aggregated_content+=$(cat "${filepath}")
+			aggregated_content+="${separator}"
+		else
+			echo "Nope :C"
+		fi
+
+	done
+}
+
+# Expected variables
+# - aggregated_content
+# - BOARD
+# - DESKTOP_ENVIRONMENT
+# - DESKTOP_APPGROUPS_SELECTED
+# - DESKTOP_APPGROUPS_DIR
+# Write to variables :
+# - aggregated_content
+aggregate_all() {
+	looked_up_subpath="${1}"
+	separator="${2}"
+
+	local potential_paths=""
+	get_all_potential_paths_for "${looked_up_subpath}"
+
+	aggregate_content
+
+}
+
+# set unique mounting directory
+MOUNT_UUID=$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_DESKTOP} ${BUILD_MINIMAL}" | md5sum | cut -d" " -f1)
+SDCARD="${SRC}/.tmp/rootfs-${MOUNT_UUID}"
+MOUNT="${SRC}/.tmp/mount-${MOUNT_UUID}"
+DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}"
 
 # dropbear needs to be configured differently
 [[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
@@ -139,8 +387,6 @@ fi
 
 CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
 DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
-
-desktop_element_available_for_arch "${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}" "${ARCH}"
 
 if [[ $? != 0 ]]; then
 	exit_with_error "The desktop environment ${DESKTOP_ENVIRONMENT} is not available for your architecture ${ARCH}"
@@ -192,7 +438,7 @@ aggregate_all_cli() {
 		potential_paths+=" ${CLI_CONFIG_PATH}/main/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
 		potential_paths+=" ${CLI_CONFIG_PATH}/main/custom/boards/${BOARD}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
 	fi
-	
+
 	aggregate_content
 }
 
@@ -239,14 +485,16 @@ unset aggregated_content
 # Myy : Sources packages from file here
 
 # Myy : FIXME Rename aggregate_all to aggregate_all_desktop
-aggregated_content=""
-aggregate_all "packages" " "
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	aggregated_content=""
+	aggregate_all "packages" " "
 
-PACKAGE_LIST_DESKTOP+="${aggregated_content}"
+	PACKAGE_LIST_DESKTOP+="${aggregated_content}"
 
-unset aggregated_content
+	unset aggregated_content
 
-echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}"
+	echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}"
+fi
 
 # Myy : Clean the Debootstrap lists. The packages list will be cleaned when necessary.
 # This horrendous cleanup syntax is used to remove trailing and leading spaces.
@@ -352,14 +600,19 @@ if [[ -n $PACKAGE_LIST_RM ]]; then
 	# the previous one after consuming the spaces.
 	PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST} ")
 	PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_MAIN_LIST} ")
-	PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
+	if [[ $BUILD_DESKTOP == "yes" ]]; then
+		PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
+	fi
 fi
 
 # Removing double spaces
 # Do not quote the variables. This would defeat the trick.
 PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
 PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
-PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+fi
 
 display_alert "After removal of packages.remove packages"
 display_alert "PACKAGE_MAIN_LIST : \"${PACKAGE_MAIN_LIST}\""

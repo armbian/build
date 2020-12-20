@@ -370,7 +370,7 @@ function build_all()
 					IFS=',' read -r -a RELBRANCH <<< "${KERNEL_TARGET}"
 					for BRANCH in "${RELBRANCH[@]}"
 					do
-					RELTARGETS=(xenial stretch buster bullseye bionic groovy focal hirsute)
+					RELTARGETS=(xenial stretch buster bullseye bionic groovy focal hirsute sid)
 					for RELEASE in "${RELTARGETS[@]}"
 					do
 						display_alert "BSP for ${BOARD} ${BRANCH} ${RELEASE}."

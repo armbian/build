@@ -1,4 +1,4 @@
-# Rockchip RK3399 hexa core 2GB-4GB DDR4 SoC eMMC GBE USB3
+# Rockchip RK3399 hexa core 4GB LPDDR4 SoC eMMC GBE USB3
 BOARD_NAME="Station P1"
 BOARDFAMILY="rk3399"
 BOOTCONFIG="roc-pc-mezzanine-rk3399_defconfig"

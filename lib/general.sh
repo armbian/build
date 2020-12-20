@@ -129,7 +129,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: stretch|buster|bullseye|xenial|bionic|groovy|focal|groovy|hirsute
+# <release>: stretch|buster|bullseye|xenial|bionic|groovy|focal|groovy|hirsute|sid
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -139,7 +139,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	stretch|buster|bullseye)
+	stretch|buster|bullseye|sid)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -630,7 +630,7 @@ function distros_options() {
 
 function set_distribution_status() {
 
-	local distro_support_desc_filepath="${DISTRIBUTIONS_DESC_DIR}/${RELEASE}/support"
+  local distro_support_desc_filepath="${DISTRIBUTIONS_DESC_DIR}/${RELEASE}/support"
 	if [[ ! -f "${distro_support_desc_filepath}" ]]; then
 		exit_with_error "Distribution ${distribution_name} does not exist"
 	else
@@ -640,7 +640,6 @@ function set_distribution_status() {
 	[[ "${DISTRIBUTION_STATUS}" != "supported" ]] && [[ "${EXPERT}" != "yes" ]] && exit_with_error "Armbian ${RELEASE} is unsupported and, therefore, only available to experts (EXPERT=yes)"
 	 
 }
-
 
 adding_packages()
 {
@@ -673,7 +672,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal" "hirsute")
+	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal" "hirsute" "sid")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -785,7 +784,7 @@ addtorepo()
 
 
 repo-manipulate() {
-	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal" "hirsute")
+	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal" "hirsute" "sid")
 	case $@ in
 		serve)
 			# display repository content
@@ -1161,6 +1160,8 @@ prepare_host()
 		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
 		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
 		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
 		"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
 		"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
 		)
@@ -1266,6 +1267,9 @@ download_and_verify()
 	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then
 		return
 	fi
+
+	# check if file exists on remote server before running aria2 downloader
+	[[ ! `wget -S --spider ${server}${remotedir}/${filename}  2>&1 | grep 'HTTP/1.1 200 OK'` ]] && return
 
 	cd "${localdir}" || exit
 
