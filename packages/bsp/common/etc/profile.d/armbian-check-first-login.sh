@@ -8,5 +8,5 @@
 
 # First login as root?
 if [ -w /root/ -a -f /root/.not_logged_in_yet ]; then
-	/usr/lib/armbian/armbian-firstlogin
+	bash /usr/lib/armbian/armbian-firstlogin
 fi
