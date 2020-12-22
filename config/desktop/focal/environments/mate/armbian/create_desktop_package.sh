@@ -13,10 +13,10 @@ cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/
 mkdir -p "${destination}"/usr/share/backgrounds/armbian/
 cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/armbian/
 
-mkdir -p "${destination}"/usr/share/gnome-background-properties
-cat <<-EOF > "${destination}"/usr/share/gnome-background-properties/armbian.xml
+mkdir -p "${destination}"/usr/share/mate-background-properties
+cat <<-EOF > "${destination}"/usr/share/mate-background-properties/armbian.xml
 <?xml version="1.0"?>
-<!DOCTYPE wallpapers SYSTEM "gnome-wp-list.dtd">
+<!DOCTYPE wallpapers SYSTEM "mate-wp-list.dtd">
 <wallpapers>
   <wallpaper deleted="false">
     <name>Armbian light</name>
@@ -36,8 +36,8 @@ cat <<-EOF > "${destination}"/usr/share/gnome-background-properties/armbian.xml
 EOF
 
 mkdir -p "${destination}"/usr/share/glib-2.0/schemas
-cat <<-EOF > "${destination}"/usr/share/glib-2.0/schemas/org.gnome.desktop.background.gschema.override
-[org.gnome.desktop.background]
+cat <<-EOF > "${destination}"/usr/share/glib-2.0/schemas/org.mate.desktop.background.gschema.override
+[org.mate.desktop.background]
 picture-uri='file:///usr/share/backgrounds/armbian/armbian03-Dre0x-Minum-dark-3840x2160.jpg'
 show-desktop-icons=true
 EOF
