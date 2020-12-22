@@ -713,7 +713,7 @@ create_image()
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
 			display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
-			pixz -3 < $DESTIMG/${version}.img > $DEST/images/${version}.img.xz
+			pixz -9 < $DESTIMG/${version}.img > $DEST/images/${version}.img.xz
 			compression_type=".xz"
 		fi
 

@@ -95,7 +95,7 @@ pack_upload ()
 
 	if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
 		display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
-		pixz -3 < "$DESTIMG/${version}.img" > "${DESTIMG}/${version}.img.xz"
+		pixz -9 < "$DESTIMG/${version}.img" > "${DESTIMG}/${version}.img.xz"
 		rm "${DESTIMG}/${version}.img"
 		compression_type=".xz"
 	fi
