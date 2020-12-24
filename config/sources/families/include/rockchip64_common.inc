@@ -91,9 +91,8 @@ case $BRANCH in
 
 	dev)
 
-		MAINLINE_KERNEL_SOURCE='https://github.com/torvalds/linux.git'
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="tag:v5.10-rc6"
+		KERNELBRANCH="branch:linux-5.10.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
@@ -346,6 +345,9 @@ family_tweaks_bsp()
 		install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
 		cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/
 
+		if [[ $BOARD == nanop*4* || $BOARD == firefly* ]]; then
+			sed -i s%BCM4345C5%BCM4356A2%g $destination/lib/systemd/system/rk3399-bluetooth.service
+		fi
 	fi
 
 	if [[ $BOARD == pinebook-pro ]]; then

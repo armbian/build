@@ -199,7 +199,7 @@ create_rootfs_cache()
 		if [[ -f $SDCARD/etc/default/console-setup ]]; then
 			sed -e 's/CHARMAP=.*/CHARMAP="UTF-8"/' -e 's/FONTSIZE=.*/FONTSIZE="8x16"/' \
 				-e 's/CODESET=.*/CODESET="guess"/' -i $SDCARD/etc/default/console-setup
-			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "setupcon --save"'
+			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "setupcon --save --force"'
 		fi
 
 		# stage: create apt-get sources list
@@ -218,7 +218,7 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Updating package lists..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Updating package lists failed"
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && display_alert "Updating package lists" "failed" "wrn"
 
 		# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
 		display_alert "Upgrading base packages" "Armbian" "info"
@@ -228,7 +228,7 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Upgrading base packages..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Upgrading base packages failed"
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && display_alert "Upgrading base packages" "failed" "wrn"
 
 		# stage: install additional packages
 		display_alert "Installing packages for" "Armbian" "info"
@@ -350,7 +350,7 @@ prepare_partitions()
 	# mountopts[nfs] is empty
 
 	# default BOOTSIZE to use if not specified
-	DEFAULT_BOOTSIZE=96	# MiB
+	DEFAULT_BOOTSIZE=256	# MiB
 
 	# stage: determine partition configuration
 	if [[ -n $BOOTFS_TYPE ]]; then
@@ -649,6 +649,18 @@ create_image()
 	mkdir -p $DESTIMG
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
+	FINALDEST=$DEST/images
+
+	if [[ $BUILD_ALL == yes ]]; then
+		if [[ "$BETA" == yes ]]; then
+			FINALDEST=$DEST/images/"${BOARD}"/nightly
+			else
+			FINALDEST=$DEST/images/"${BOARD}"/archive
+		fi
+		install -d -o nobody -g nogroup -m 775 ${FINALDEST}
+	fi
+
+
 	if [[ -z $SEND_TO_SERVER ]]; then
 
 		if [[ $COMPRESS_OUTPUTIMAGE == "" || $COMPRESS_OUTPUTIMAGE == no ]]; then
@@ -658,85 +670,74 @@ create_image()
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
-			display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
-			pigz -3 < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
+			display_alert "Compressing" "${FINALDEST}/${version}.img.gz" "info"
+			pigz -3 < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.gz
 			compression_type=".gz"
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
-			display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
-			pixz -3 < $DESTIMG/${version}.img > $DEST/images/${version}.img.xz
+			display_alert "Compressing" "${FINALDEST}/${version}.img.xz" "info"
+			pixz -9 < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.xz
 			compression_type=".xz"
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *img* || $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
-			mv $DESTIMG/${version}.img $DEST/images/${version}.img || exit 1
+			mv $DESTIMG/${version}.img ${FINALDEST}/${version}.img || exit 1
 			compression_type=""
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
-			cd $DEST/images
+			cd ${FINALDEST}
 			display_alert "SHA256 calculating" "${version}.img${compression_type}" "info"
 			sha256sum -b ${version}.img${compression_type} > ${version}.img${compression_type}.sha
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *gpg* ]]; then
-			cd $DEST/images
+			cd ${FINALDEST}
 			if [[ -n $GPG_PASS ]]; then
 				display_alert "GPG signing" "${version}.img${compression_type}" "info"
-				echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes $DEST/images/${version}.img${compression_type} || exit 1
+				echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${FINALDEST}/${version}.img${compression_type} || exit 1
 			else
 				display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 			fi
 		fi
 
-		fingerprint_image "$DEST/images/${version}.img${compression_type}.txt" "${version}"
+		fingerprint_image "${FINALDEST}/${version}.img${compression_type}.txt" "${version}"
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
-			display_alert "Compressing" "$DEST/images/${version}.7z" "info"
+			display_alert "Compressing" "${FINALDEST}/${version}.7z" "info"
 			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on \
-			$DEST/images/${version}.7z ${version}.key ${version}.img* >/dev/null 2>&1
-			find $DEST/images/ -type \
+			${FINALDEST}/${version}.7z ${version}.key ${version}.img* >/dev/null 2>&1
+			find ${FINALDEST}/ -type \
 			f \( -name "${version}.img" -o -name "${version}.img.asc" -o -name "${version}.img.txt" -o -name "${version}.img.sha" \) -print0 \
 			| xargs -0 rm >/dev/null 2>&1
 		fi
 
 		rm -rf $DESTIMG
 	fi
-	display_alert "Done building" "$DEST/images/${version}.img" "info"
-
-	if [[ $BUILD_ALL == yes ]]; then
-		install -d -o nobody -g nogroup -m 775 $DEST/images/${BOARD}/{archive,nightly}
-		if [[ "$BETA" == yes ]]; then
-			install ${INSTALL_PARA} $DEST/images/"${version}"* $DEST/images/"${BOARD}"/nightly
-			rm $DEST/images/"${version}"*
-		else
-			install ${INSTALL_PARA} $DEST/images/"${version}"* $DEST/images/"${BOARD}"/archive
-			rm $DEST/images/"${version}"*
-		fi
-	fi
+	display_alert "Done building" "${FINALDEST}/${version}.img" "info"
 
 	# call custom post build hook
-	[[ $(type -t post_build_image) == function ]] && post_build_image "$DEST/images/${version}.img"
+	[[ $(type -t post_build_image) == function ]] && post_build_image "${FINALDEST}/${version}.img"
 
 	# write image to SD card
-	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f $DEST/images/${version}.img ]]; then
+	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f ${FINALDEST}/${version}.img ]]; then
 
 		# make sha256sum if it does not exists. we need it for comparisson
-		if [[ -f "$DEST/images/${version}".img.sha ]]; then
-			local ifsha=$(cat $DEST/images/${version}.img.sha | awk '{print $1}')
+		if [[ -f "${FINALDEST}/${version}".img.sha ]]; then
+			local ifsha=$(cat ${FINALDEST}/${version}.img.sha | awk '{print $1}')
 		else
-			local ifsha=$(sha256sum -b "$DEST/images/${version}".img | awk '{print $1}')
+			local ifsha=$(sha256sum -b "${FINALDEST}/${version}".img | awk '{print $1}')
 		fi
 
 		display_alert "Writing image" "$CARD_DEVICE ${readsha}" "info"
 
 		# write to SD card
-		pv -p -b -r -c -N "[ .... ] dd" $DEST/images/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
+		pv -p -b -r -c -N "[ .... ] dd" ${FINALDEST}/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
 
 		# read and compare
 		display_alert "Verifying. Please wait!"
-		local ofsha=$(dd if=$CARD_DEVICE count=$(du -b $DEST/images/${version}.img | cut -f1) status=none iflag=count_bytes oflag=direct | sha256sum | awk '{print $1}')
+		local ofsha=$(dd if=$CARD_DEVICE count=$(du -b ${FINALDEST}/${version}.img | cut -f1) status=none iflag=count_bytes oflag=direct | sha256sum | awk '{print $1}')
 		if [[ $ifsha == $ofsha ]]; then
 			display_alert "Writing verified" "${version}.img" "info"
 		else

@@ -134,7 +134,6 @@ install_common()
 	ExecStartPre=/bin/sh -c 'exec /bin/sleep 10'
 	ExecStart=
 	ExecStart=-/sbin/agetty --noissue --autologin root %I $TERM
-	After=graphical.target
 	Type=idle
 	EOF
 	cp "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf "${SDCARD}"/etc/systemd/system/getty@.service.d/override.conf
@@ -157,7 +156,7 @@ install_common()
 	# display welcome message at first root login
 	touch "${SDCARD}"/root/.not_logged_in_yet
 
-	if [[ ${DESKTOP_AUTOLOGIN} != no ]]; then
+	if [[ ${DESKTOP_AUTOLOGIN} == yes ]]; then
 		# set desktop autologin
 		touch "${SDCARD}"/root/.desktop_autologin
 	fi
@@ -202,7 +201,8 @@ install_common()
 
 	# set hostname in hosts file
 	cat <<-EOF > "${SDCARD}"/etc/hosts
-	127.0.0.1   localhost $HOST
+	127.0.0.1   localhost
+	127.0.1.1   $HOST
 	::1         localhost $HOST ip6-localhost ip6-loopback
 	fe00::0     ip6-localnet
 	ff00::0     ip6-mcastprefix
@@ -309,6 +309,20 @@ install_common()
 		fi
 	fi
 
+	# install armbian-zsh
+	if [[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]]; then
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			install_deb_chroot "${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb"
+		fi
+	else
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			install_deb_chroot "armbian-zsh" "remote"
+		fi
+	fi
+
+	#  set default shell back to BASH and prompt for selection at first login
+	chroot "${SDCARD}" /bin/bash -c "chsh -s $(grep /bash$ /etc/shells | tail -1)"
+
 	# install kernel sources
 	if [[ -f ${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb && $INSTALL_KSRC == yes ]]; then
 		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb"
@@ -323,7 +337,7 @@ install_common()
 	if [[ $BSPFREEZE == yes ]]; then
 		display_alert "Freezing Armbian packages" "$BOARD" "info"
 		chroot "${SDCARD}" /bin/bash -c "apt-mark hold ${CHOSEN_KERNEL} ${CHOSEN_KERNEL/image/headers} \
-			linux-u-boot-${BOARD}-${BRANCH} ${CHOSEN_KERNEL/image/dtb}" >> "${DEST}"/debug/install.log 2>&1
+		linux-u-boot-${BOARD}-${BRANCH} ${CHOSEN_KERNEL/image/dtb}" >> "${DEST}"/debug/install.log 2>&1
 	fi
 
 	# remove deb files
@@ -544,8 +558,15 @@ install_distribution_specific()
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 
-			# remove doubled uname from motd
-			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
+			# cleanup motd services and related files
+			chroot "${SDCARD}" /bin/bash -c "systemctl disable  motd-news.service >/dev/null 2>&1"
+			chroot "${SDCARD}" /bin/bash -c "systemctl disable  motd-news.timer >/dev/null 2>&1"
+
+			rm -f "${SDCARD}"/etc/update-motd.d/10-uname
+			rm -f "${SDCARD}"/etc/update-motd.d/10-help-text
+			rm -f "${SDCARD}"/etc/update-motd.d/50-motd-news
+			rm -f "${SDCARD}"/etc/update-motd.d/80-esm
+			rm -f "${SDCARD}"/etc/update-motd.d/80-livepatch
 
 			# remove motd news from motd.ubuntu.com
 			[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news
