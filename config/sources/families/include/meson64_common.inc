@@ -5,6 +5,7 @@ LINUXFAMILY=meson64
 ARCH=arm64
 SERIALCON=ttyAML0
 SRC_LOADADDR='LOADADDR=0x1080000'
+BOOTBRANCH="tag:v2020.10"
 OVERLAY_PREFIX='meson'
 
 # this family does not need it
