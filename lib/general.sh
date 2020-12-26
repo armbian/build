@@ -205,7 +205,7 @@ improved_git()
 			retries=0
 			break
 		fi
-	let count=$count+1	
+	let count=$count+1
 	sleep $delay
 	done
 
@@ -884,25 +884,23 @@ repo-manipulate() {
 # $2: Architecture
 # $3: Amount of packages to keep
 repo-remove-old-packages() {
-    local repo=$1
-    local arch=$2
-    local keep=$3
-
-    for pkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Architecture ($arch)" | grep -v "ERROR: no results" | sort -rV); do
-        local pkg_name
-        pkg_name=$(echo "${pkg}" | cut -d_ -f1)
-        if [ "$pkg_name" != "$cur_pkg" ]; then
-            local count=0
-            local deleted=""
-            local cur_pkg="$pkg_name"
-        fi
-        test -n "$deleted" && continue
-        ((count+=1))
-        if [[ $count -gt $keep ]]; then
-            pkg_version=$(echo "${pkg}" | cut -d_ -f2)
-            aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name), Version (<= $pkg_version)"
-            deleted='yes'
-        fi
+	local repo=$1
+	local arch=$2
+	local keep=$3
+	for pkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Architecture ($arch)" | grep -v "ERROR: no results" | sort -t '.' -nk4); do
+		local pkg_name
+		count=0
+		pkg_name=$(echo "${pkg}" | cut -d_ -f1)
+		for subpkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name)"  | grep -v "ERROR: no results" | sort -rt '.' -nk4); do
+			((count+=1))
+#			echo $subpkg
+			if [[ $count -gt $keep ]]; then
+			#echo "rem"
+			pkg_version=$(echo "${subpkg}" | cut -d_ -f2)
+			#echo $pkg_version
+			aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name), Version (= $pkg_version)"
+			fi
+		done
     done
 }
 
