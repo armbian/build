@@ -705,7 +705,7 @@ create_image()
 			else
 			FINALDEST=$DEST/images/"${BOARD}"/archive
 		fi
-		install -d -o nobody -g nogroup -m 775 ${FINALDEST}/${BOARD}/{archive,nightly}
+		install -d -o nobody -g nogroup -m 775 ${FINALDEST}
 	fi
 
 
