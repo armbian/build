@@ -428,7 +428,7 @@ compilation_prepare()
 
 	# Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets
 
-	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" le 5.9 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8188euver="branch:v5.7.6.1"
