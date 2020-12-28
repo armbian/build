@@ -48,7 +48,7 @@ elif [[ $BOARD == pinebook-pro ]]; then
 	BOOT_SOC=rk3399
 	ATFPATCHDIR='atf-rk3399'
 
-elif [[ $BOARD == rockpi-4* ]]; then
+elif [[ $BOARD == rockpi-4* || $BOARD == station-p1 ]]; then
 
 	BOOT_USE_BLOBS=yes
 	BOOT_SUPPORT_SPI=yes
