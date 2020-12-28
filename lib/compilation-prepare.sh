@@ -460,9 +460,6 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8188eu\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
-		# kernel 5.6 ->
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu.patch" "applying"
-
 	fi
 
 
