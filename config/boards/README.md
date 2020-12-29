@@ -4,9 +4,7 @@
 | BOARD_NAME | welcome text and hostname |
 | BOARDFAMILY | [sun8i, sun7i, rockchip64](../sources) |
 | BOOTCONFIG | name of u-boot config |
-| BOOTCONFIG_DEFAULT | name of u-boot config for default branch |
 | BOOTCONFIG_DEV | name of u-boot config for dev branch |
-| BOOTCONFIG_NEXT | name of u-boot config for next branch (deprecated) |
 | BOOTSIZE | size of a separate boot partition in Mib |
 | BOOT_LOGO | yes/desktop enable armbian boot logo during booting |
 | IMAGE_PARTITION_TABLE | "msdos" (default) or "gpt" (boot loader must supports it) |
@@ -17,7 +15,6 @@
 | MODULES_LEGACY | space delimited modules for legacy branch |
 | MODULES_CURRENT | space delimited modules for current branch |
 | MODULES_DEV | space delimited modules for dev branch |
-| MODULES_NEXT | space delimited modules for next branch (deprecated) |
 | MODULES_BLACKLIST | space delimited modules blacklist for all branches |
 | MODULES_BLACKLIST_LEGACY | space delimited modules blacklist for legacy branch |
 | MODULES_BLACKLIST_CURRENT | space delimited modules blacklist for current branch |
@@ -31,9 +28,7 @@
 | PACKAGE_LIST_BOARD_REMOVE | space delimited packages to be removed |
 | PACKAGE_LIST_DESKTOP_BOARD | space delimited packages to be installed on this boards desktop build |
 | PACKAGE_LIST_DESKTOP_BOARD_REMOVE | space delimited packages to be removed |
-| ASOUND_STATE | ALSA sound settings |
-| ATFBRANCH | custom ARM Trusted Firmware branch |
-| BOOT_FDT_FILE | u-boot "fdtfile" environment value  |
+| BOOT_FDT_FILE | Forcing loading specific device tree configuration - if its different than the one defined by u-boot |
 | CPUMIN | Minimum CPU frequency to scale (Hz) |
 | CPUMAX | Maximum CPU frequency to scale (Hz) |
 | FORCE_BOOTSCRIPT_UPDATE | install bootscripts if they are not present |
