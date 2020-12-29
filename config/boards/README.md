@@ -4,6 +4,8 @@
 | BOARD_NAME | welcome text and hostname |
 | BOARDFAMILY | [sun8i, sun7i, rockchip64](../sources) |
 | BOOTCONFIG | name of u-boot config |
+| BOOTCONFIG_LEGACY | name of u-boot config for legacy branch |
+| BOOTCONFIG_CURRENT | name of u-boot config for current branch |
 | BOOTCONFIG_DEV | name of u-boot config for dev branch |
 | BOOTSIZE | size of a separate boot partition in Mib |
 | BOOT_LOGO | yes/desktop enable armbian boot logo during booting |
