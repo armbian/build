@@ -162,7 +162,7 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 	echo "deb [arch=amd64] https://download.docker.com/linux/${codeid} ${codename} edge" > /etc/apt/sources.list.d/docker.list
 
 	# minimal set of utilities that are needed for prep
-	packages=("curl" "gnupg" "apt-transport-https")
+	packages=("curl" "gnupg")
 	for i in "${packages[@]}"
 	do
 	[[ ! $(command -v "${i}") ]] && install_packages+=${i}" "

@@ -138,7 +138,7 @@ if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == focal || $RELEASE 
 fi
 
 # Base system dependencies. Since adding MINIMAL_IMAGE we rely on "variant=minbase" which has very basic package set
-DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certificates bzip2 console-setup cpio cron \
+DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils ca-certificates bzip2 console-setup cpio cron \
 	dbus init initramfs-tools iputils-ping isc-dhcp-client kmod less libpam-systemd \
 	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
 	wireless-regdb crda dmsetup rsync tzdata"
