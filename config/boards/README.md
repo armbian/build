@@ -4,6 +4,9 @@
 | BOARD_NAME | welcome text and hostname |
 | BOARDFAMILY | [sun8i, sun7i, rockchip64](../sources) |
 | BOOTCONFIG | name of u-boot config |
+| BOOTCONFIG_LEGACY | name of u-boot config for legacy branch |
+| BOOTCONFIG_CURRENT | name of u-boot config for current branch |
+| BOOTCONFIG_DEV | name of u-boot config for dev branch |
 | BOOTSIZE | size of a separate boot partition in Mib |
 | BOOT_LOGO | yes/desktop enable armbian boot logo during booting |
 | IMAGE_PARTITION_TABLE | "msdos" (default) or "gpt" (boot loader must supports it) |
@@ -27,6 +30,11 @@
 | PACKAGE_LIST_BOARD_REMOVE | space delimited packages to be removed |
 | PACKAGE_LIST_DESKTOP_BOARD | space delimited packages to be installed on this boards desktop build |
 | PACKAGE_LIST_DESKTOP_BOARD_REMOVE | space delimited packages to be removed |
+| BOOT_FDT_FILE | Forcing loading specific device tree configuration - if its different than the one defined by u-boot |
+| CPUMIN | Minimum CPU frequency to scale (Hz) |
+| CPUMAX | Maximum CPU frequency to scale (Hz) |
+| FORCE_BOOTSCRIPT_UPDATE | install bootscripts if they are not present |
+| OVERLAY_PREFIX | prefix for DT and overlay file paths which will be set while creating image |
 
 
 Statuses displayed at the login prompt:
