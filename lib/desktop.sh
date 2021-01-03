@@ -9,15 +9,24 @@
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
+# Functions:
+# create_desktop_package
+# run_on_sdcard
+# install_ppa_prerequisites
+# add_apt_sources
+# add_desktop_package_sources
+# desktop_postinstall
+
+
 
 
 create_desktop_package ()
 {
 	# join and cleanup package list
 	# Remove leading and trailing whitespaces
-	display_alert "Showing PACKAGE_LIST_DESKTOP before postprocessing"
+	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/debug/output.log
 	# Use quotes to show leading and trailing spaces
-	echo "\"$PACKAGE_LIST_DESKTOP\""
+	echo "\"$PACKAGE_LIST_DESKTOP\"" >> "${DEST}"/debug/output.log
 
 	# Remove leading and trailing spaces with some bash monstruosity
 	# https://stackoverflow.com/questions/369758/how-to-trim-whitespace-from-a-bash-variable#12973694
@@ -28,7 +37,7 @@ create_desktop_package ()
 	# Remove others 'spacing characters' (like tabs)
 	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS//[[:space:]]/}
 
-	echo "DEBIAN_RECOMMENDS : ${DEBIAN_RECOMMENDS}"
+	echo "DEBIAN_RECOMMENDS : ${DEBIAN_RECOMMENDS}" >> "${DEST}"/debug/output.log
 
 	# Replace whitespace characters by commas
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,};
@@ -41,7 +50,7 @@ create_desktop_package ()
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
 
-	echo "${PACKAGE_LIST_PREDEPENDS}"
+	echo "${PACKAGE_LIST_PREDEPENDS}" >> "${DEST}"/debug/output.log
 
 	# set up control file
 	cat <<-EOF > "${destination}"/DEBIAN/control
@@ -58,9 +67,8 @@ create_desktop_package ()
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
 
-	display_alert "Showing ${destination}/DEBIAN/control" 
-
-	cat "${destination}"/DEBIAN/control
+	#display_alert "Showing ${destination}/DEBIAN/control"
+	cat "${destination}"/DEBIAN/control >> "${DEST}"/debug/install.log
 
 	# Recreating the DEBIAN/postinst file
 	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
@@ -73,8 +81,8 @@ create_desktop_package ()
 
 	chmod 755 "${destination}"/DEBIAN/postinst
 
-	display_alert "Showing ${destination}/DEBIAN/postinst"
-	cat "${destination}/DEBIAN/postinst"
+	#display_alert "Showing ${destination}/DEBIAN/postinst"
+	cat "${destination}/DEBIAN/postinst" >> "${DEST}"/debug/install.log
 
 	# Armbian create_desktop_package scripts
 
@@ -87,8 +95,8 @@ create_desktop_package ()
 
 	aggregate_all "armbian/create_desktop_package.sh" $'\n'
 
-	display_alert "Showing the user scripts executed in create_desktop_package"
-	echo "${aggregated_content}"
+#	display_alert "Showing the user scripts executed in create_desktop_package"
+	echo "${aggregated_content}" >> "${DEST}"/debug/install.log
 	eval "${aggregated_content}"
 
 	# create board DEB file
@@ -104,11 +112,17 @@ create_desktop_package ()
 
 }
 
+
+
+
 run_on_sdcard() {
 	# Myy : The lack of quotes is deliberate here
 	# This allows for redirections and pipes easily.
 	chroot "${SDCARD}" /bin/bash -c "${@}"
 }
+
+
+
 
 install_ppa_prerequisites() {
 	# Myy : So... The whole idea is that, a good bunch of external sources
@@ -122,6 +136,9 @@ install_ppa_prerequisites() {
 	# we encounter a PPA.
 	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt install -yqq software-properties-common"
 }
+
+
+
 
 add_apt_sources() {
 	local potential_paths=""
@@ -159,15 +176,21 @@ add_apt_sources() {
 	done
 }
 
+
+
+
 add_desktop_package_sources() {
 	# Myy : I see Snap and Flatpak coming up in the next releases
 	# so... let's prepare for that
 	# install_ppa_prerequisites # Myy : I'm currently trying to avoid adding "hidden" packages
 	add_apt_sources
 	run_on_sdcard "apt -y -q update"
-	ls -l "${SDCARD}/etc/apt/sources.list.d"
-	cat "${SDCARD}/etc/apt/sources.list"
+	ls -l "${SDCARD}/etc/apt/sources.list.d" >> "${DEST}"/debug/install.log
+	cat "${SDCARD}/etc/apt/sources.list" >> "${DEST}"/debug/install.log
 }
+
+
+
 
 desktop_postinstall ()
 {
