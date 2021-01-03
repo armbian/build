@@ -322,16 +322,14 @@ get_all_potential_paths_for() {
 # Write to variables :
 # - aggregated_content
 aggregate_content() {
-	echo "Potential paths : ${potential_paths}"
-
+	echo -e "Potential paths : ${potential_paths}\n" >> "${DEST}"/debug/output.log
 	for filepath in ${potential_paths}; do
-		echo "$filepath exist ?"
 		if [[ -f "${filepath}" ]]; then
-			echo "Yes !"
+			echo -e "${filepath/"$SRC"\//} yes\n" >> "${DEST}"/debug/output.log
 			aggregated_content+=$(cat "${filepath}")
 			aggregated_content+="${separator}"
 		else
-			echo "Nope :C"
+			echo -e "${filepath/"$SRC"\//} no\n" >> "${DEST}"/debug/output.log
 		fi
 
 	done
@@ -397,7 +395,7 @@ aggregate_all_debootstrap() {
 	local separator="${2}"
 	local potential_paths="${DEBOOTSTRAP_CONFIG_PATH}/${looked_up_subpath}"
 	potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/custom/boards/${BOARD}/${looked_up_subpath}"
-	display_alert "SELECTED_CONFIGURATION : ${SELECTED_CONFIGURATION}"
+	echo "SELECTED_CONFIGURATION : ${SELECTED_CONFIGURATION}" >> "${DEST}"/debug/output.log
 	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
 		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/debootstrap/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
 		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/debootstrap/custom/boards/${BOARD}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
@@ -409,13 +407,13 @@ aggregate_all_debootstrap() {
 aggregated_content=""
 aggregate_all_debootstrap "packages"
 DEBOOTSTRAP_LIST="${aggregated_content}"
-display_alert "DEBOOTSTRAP LIST : ${DEBOOTSTRAP_LIST}"
+echo "DEBOOTSTRAP LIST : ${DEBOOTSTRAP_LIST}" >> "${DEST}"/debug/output.log
 unset aggregated_content
 
 aggregated_content=""
 aggregate_all_debootstrap "components"
 DEBOOTSTRAP_COMPONENTS="${aggregated_content}"
-display_alert "DEBOOTSTRAP_COMPONENTS : ${DEBOOTSTRAP_COMPONENTS}"
+echo "DEBOOTSTRAP_COMPONENTS : ${DEBOOTSTRAP_COMPONENTS}" >> "${DEST}"/debug/output.log
 unset aggregated_content
 
 # Base system dependencies. Since adding MINIMAL_IMAGE we rely on "variant=minbase" which has very basic package set
@@ -424,7 +422,7 @@ unset aggregated_content
 #	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
 #	wireless-regdb crda dmsetup rsync tzdata"
 
-display_alert "Debootstrap packages list : $DEBOOTSTRAP_LIST"
+echo "Debootstrap packages list : $DEBOOTSTRAP_LIST" >> "${DEST}"/debug/output.log
 
 # Myy : ???
 # [[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
@@ -444,7 +442,7 @@ aggregate_all_cli() {
 
 aggregated_content=""
 aggregate_all_cli "packages" " "
-display_alert "Aggregated content : ${aggregated_content}"
+echo "Aggregated content : ${aggregated_content}" >> "${DEST}"/debug/output.log
 PACKAGE_LIST="${aggregated_content}"
 unset aggregated_content
 
@@ -493,7 +491,7 @@ if [[ $BUILD_DESKTOP == "yes" ]]; then
 
 	unset aggregated_content
 
-	echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}"
+	echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}" >> "${DEST}"/debug/output.log
 fi
 
 # Myy : Clean the Debootstrap lists. The packages list will be cleaned when necessary.
@@ -508,13 +506,13 @@ DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS#"${DEBOOTSTRAP_COMPONENTS%%[![:
 DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS%"${DEBOOTSTRAP_COMPONENTS##*[![:space:]]}"}"
 DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
 
-display_alert "Deboostrap"
-display_alert "Components ${DEBOOTSTRAP_COMPONENTS}"
-display_alert "Packages ${DEBOOTSTRAP_LIST}"
-display_alert "----"
-display_alert "CLI packages"
-display_alert "Standard : ${PACKAGE_LIST}"
-display_alert "Additional : ${PACKAGE_LIST_ADDITIONAL}"
+display_alert "Deboostrap" >> "${DEST}"/debug/output.log
+display_alert "Components ${DEBOOTSTRAP_COMPONENTS}" >> "${DEST}"/debug/output.log
+display_alert "Packages ${DEBOOTSTRAP_LIST}" >> "${DEST}"/debug/output.log
+display_alert "----" >> "${DEST}"/debug/output.log
+display_alert "CLI packages" >> "${DEST}"/debug/output.log
+display_alert "Standard : ${PACKAGE_LIST}" >> "${DEST}"/debug/output.log
+display_alert "Additional : ${PACKAGE_LIST_ADDITIONAL}" >> "${DEST}"/debug/output.log
 
 DEBIAN_MIRROR='deb.debian.org/debian'
 DEBIAN_SECURTY='security.debian.org/'
@@ -585,10 +583,10 @@ PACKAGE_LIST_RM="${PACKAGE_LIST_RM#"${PACKAGE_LIST_RM%%[![:space:]]*}"}"
 PACKAGE_LIST_RM="${PACKAGE_LIST_RM%"${PACKAGE_LIST_RM##*[![:space:]]}"}"
 PACKAGE_LIST_RM="$(echo ${PACKAGE_LIST_RM})"
 
-display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}"
-display_alert "PACKAGE_LIST : ${PACKAGE_LIST}"
-display_alert "PACKAGE_LIST_RM : ${PACKAGE_LIST_RM}"
-display_alert "PACKAGE_LIST_UNINSTALL : ${PACKAGE_LIST_UNINSTALL}"
+display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}" >> "${DEST}"/debug/output.log
+display_alert "PACKAGE_LIST : ${PACKAGE_LIST}" >> "${DEST}"/debug/output.log
+display_alert "PACKAGE_LIST_RM : ${PACKAGE_LIST_RM}" >> "${DEST}"/debug/output.log
+display_alert "PACKAGE_LIST_UNINSTALL : ${PACKAGE_LIST_UNINSTALL}" >> "${DEST}"/debug/output.log
 
 if [[ -n $PACKAGE_LIST_RM ]]; then
 	display_alert "Remove filter : $(tr ' ' '|' <<< ${PACKAGE_LIST_RM})"
@@ -614,9 +612,9 @@ if [[ $BUILD_DESKTOP == "yes" ]]; then
 	PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
 fi
 
-display_alert "After removal of packages.remove packages"
-display_alert "PACKAGE_MAIN_LIST : \"${PACKAGE_MAIN_LIST}\""
-display_alert "PACKAGE_LIST : \"${PACKAGE_LIST}\""
+display_alert "After removal of packages.remove packages" >> "${DEST}"/debug/output.log
+display_alert "PACKAGE_MAIN_LIST : \"${PACKAGE_MAIN_LIST}\"" >> "${DEST}"/debug/output.log
+display_alert "PACKAGE_LIST : \"${PACKAGE_LIST}\"" >> "${DEST}"/debug/output.log
 
 # Give the option to configure DNS server used in the chroot during the build process
 [[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
