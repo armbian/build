@@ -146,7 +146,7 @@ desktop_element_available_for_arch() {
 
 	local arch_limitation_file="${1}/only_for"
 
-	display_alert "Checking if ${desktop_element_path} is available for ${targeted_arch} in ${arch_limitation_file}"
+	echo "Checking if ${desktop_element_path} is available for ${targeted_arch} in ${arch_limitation_file}" >> "${DEST}"/debug/output.log
 	if [[ -f "${arch_limitation_file}" ]]; then
 		grep -- "${targeted_arch}" "${arch_limitation_file}"
 		return $?
