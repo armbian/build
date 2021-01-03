@@ -9,6 +9,15 @@
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
+# Functions:
+# create_desktop_package
+# run_on_sdcard
+# install_ppa_prerequisites
+# add_apt_sources
+# add_desktop_package_sources
+# desktop_postinstall
+
+
 
 
 create_desktop_package ()
@@ -58,8 +67,8 @@ create_desktop_package ()
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
 
-#	display_alert "Showing ${destination}/DEBIAN/control"
-#	cat "${destination}"/DEBIAN/control
+	#display_alert "Showing ${destination}/DEBIAN/control"
+	cat "${destination}"/DEBIAN/control >> "${DEST}"/debug/install.log
 
 	# Recreating the DEBIAN/postinst file
 	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
@@ -72,8 +81,8 @@ create_desktop_package ()
 
 	chmod 755 "${destination}"/DEBIAN/postinst
 
-#	display_alert "Showing ${destination}/DEBIAN/postinst"
-#	cat "${destination}/DEBIAN/postinst"
+	#display_alert "Showing ${destination}/DEBIAN/postinst"
+	cat "${destination}/DEBIAN/postinst" >> "${DEST}"/debug/install.log
 
 	# Armbian create_desktop_package scripts
 
@@ -82,13 +91,13 @@ create_desktop_package ()
 	# Myy : I'm preparing the common armbian folders, in advance, since the scripts are now splitted
 	mkdir -p "${destination}"/etc/armbian
 
-#	local aggregated_content=""
-#
-#	aggregate_all "armbian/create_desktop_package.sh" $'\n'
-#
+	local aggregated_content=""
+
+	aggregate_all "armbian/create_desktop_package.sh" $'\n'
+
 #	display_alert "Showing the user scripts executed in create_desktop_package"
-#	echo "${aggregated_content}"
-#	eval "${aggregated_content}"
+	echo "${aggregated_content}" >> "${DEST}"/debug/install.log
+	eval "${aggregated_content}"
 
 	# create board DEB file
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
@@ -103,11 +112,17 @@ create_desktop_package ()
 
 }
 
+
+
+
 run_on_sdcard() {
 	# Myy : The lack of quotes is deliberate here
 	# This allows for redirections and pipes easily.
 	chroot "${SDCARD}" /bin/bash -c "${@}"
 }
+
+
+
 
 install_ppa_prerequisites() {
 	# Myy : So... The whole idea is that, a good bunch of external sources
@@ -121,6 +136,9 @@ install_ppa_prerequisites() {
 	# we encounter a PPA.
 	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt install -yqq software-properties-common"
 }
+
+
+
 
 add_apt_sources() {
 	local potential_paths=""
@@ -158,15 +176,21 @@ add_apt_sources() {
 	done
 }
 
+
+
+
 add_desktop_package_sources() {
 	# Myy : I see Snap and Flatpak coming up in the next releases
 	# so... let's prepare for that
 	# install_ppa_prerequisites # Myy : I'm currently trying to avoid adding "hidden" packages
 	add_apt_sources
 	run_on_sdcard "apt -y -q update"
-	ls -l "${SDCARD}/etc/apt/sources.list.d"
-	cat "${SDCARD}/etc/apt/sources.list"
+	ls -l "${SDCARD}/etc/apt/sources.list.d" >> "${DEST}"/debug/install.log
+	cat "${SDCARD}/etc/apt/sources.list" >> "${DEST}"/debug/install.log
 }
+
+
+
 
 desktop_postinstall ()
 {
