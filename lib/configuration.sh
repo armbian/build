@@ -355,7 +355,7 @@ aggregate_all() {
 }
 
 # set unique mounting directory
-MOUNT_UUID=$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_DESKTOP} ${BUILD_MINIMAL}" | md5sum | cut -d" " -f1)
+MOUNT_UUID=$(uuidgen)
 SDCARD="${SRC}/.tmp/rootfs-${MOUNT_UUID}"
 MOUNT="${SRC}/.tmp/mount-${MOUNT_UUID}"
 DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}"
