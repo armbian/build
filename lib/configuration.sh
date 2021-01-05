@@ -406,13 +406,13 @@ aggregate_all_debootstrap() {
 
 aggregated_content=""
 aggregate_all_debootstrap "packages"
-DEBOOTSTRAP_LIST="${aggregated_content}"
+DEBOOTSTRAP_LIST="$(cleanup_list aggregated_content)"
 echo "DEBOOTSTRAP LIST : ${DEBOOTSTRAP_LIST}" >> "${DEST}"/debug/output.log
 unset aggregated_content
 
 aggregated_content=""
 aggregate_all_debootstrap "components"
-DEBOOTSTRAP_COMPONENTS="${aggregated_content}"
+DEBOOTSTRAP_COMPONENTS="$(cleanup_list aggregated_content)"
 echo "DEBOOTSTRAP_COMPONENTS : ${DEBOOTSTRAP_COMPONENTS}" >> "${DEST}"/debug/output.log
 unset aggregated_content
 
@@ -443,12 +443,12 @@ aggregate_all_cli() {
 aggregated_content=""
 aggregate_all_cli "packages" " "
 echo "Aggregated content : ${aggregated_content}" >> "${DEST}"/debug/output.log
-PACKAGE_LIST="${aggregated_content}"
+PACKAGE_LIST="$(cleanup_list aggregated_content)"
 unset aggregated_content
 
 aggregated_content=""
 aggregate_all_cli "packages.additional" " "
-PACKAGE_LIST_ADDITIONAL="${aggregated_content}"
+PACKAGE_LIST_ADDITIONAL="$(cleanup_list aggregated_content)"
 unset aggregated_content
 
 # For minimal build different set of packages is needed
@@ -499,11 +499,13 @@ fi
 
 # Previous comment : tab cleanup is mandatory
 
-DEBOOTSTRAP_LIST="${DEBOOTSTRAP_LIST#"${DEBOOTSTRAP_LIST%%[![:space:]]*}"}"
-DEBOOTSTRAP_LIST="${DEBOOTSTRAP_LIST%"${DEBOOTSTRAP_LIST##*[![:space:]]}"}"
+#DEBOOTSTRAP_LIST="${DEBOOTSTRAP_LIST#"${DEBOOTSTRAP_LIST%%[![:space:]]*}"}"
+#DEBOOTSTRAP_LIST="${DEBOOTSTRAP_LIST%"${DEBOOTSTRAP_LIST##*[![:space:]]}"}"
+#DEBOOTSTRAP_LIST="$(cleanup_list DEBOOTSTRAP_LIST)"
 
-DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS#"${DEBOOTSTRAP_COMPONENTS%%[![:space:]]*}"}"
-DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS%"${DEBOOTSTRAP_COMPONENTS##*[![:space:]]}"}"
+#DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS#"${DEBOOTSTRAP_COMPONENTS%%[![:space:]]*}"}"
+#DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS%"${DEBOOTSTRAP_COMPONENTS##*[![:space:]]}"}"
+#DEBOOTSTRAP_COMPONENTS="$(cleanup_list DEBOOTSTRAP_COMPONENTS)"
 DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
 
 display_alert "Deboostrap" >> "${DEST}"/debug/output.log
@@ -553,16 +555,18 @@ PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 # Myy : Replace any single or multiple instance of 'space' characters
 # (spaces, tabs, newlines) by a single space character
 # DO NOT PUT quotes after 'echo', else the trick won't work.
-PACKAGE_LIST="${PACKAGE_LIST#"${PACKAGE_LIST%%[![:space:]]*}"}"
-PACKAGE_LIST="${PACKAGE_LIST%"${PACKAGE_LIST##*[![:space:]]}"}"
-PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
+#PACKAGE_LIST="${PACKAGE_LIST#"${PACKAGE_LIST%%[![:space:]]*}"}"
+#PACKAGE_LIST="${PACKAGE_LIST%"${PACKAGE_LIST##*[![:space:]]}"}"
+#PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
+#PACKAGE_LIST="$(cleanup_list PACKAGE_LIST)"
 
 PACKAGE_MAIN_LIST="${PACKAGE_LIST}"
 
 # FIXME Myy: Factorize this...
-PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
-PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP%"${PACKAGE_LIST_DESKTOP##*[![:space:]]}"}"
-PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+#PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
+#PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP%"${PACKAGE_LIST_DESKTOP##*[![:space:]]}"}"
+#PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+PACKAGE_LIST_DESKTOP="$(cleanup_list PACKAGE_LIST_DESKTOP)"
 
 [[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
 
@@ -570,7 +574,7 @@ PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
 aggregated_content=""
 aggregate_all_cli "packages.remove" " "
 aggregate_all "packages.remove" " "
-PACKAGE_LIST_RM="${PACKAGE_LIST_RM} ${aggregated_content}"
+PACKAGE_LIST_RM="$(cleanup_list aggregated_content)"
 unset aggregated_content
 
 aggregated_content=""
@@ -578,10 +582,6 @@ aggregate_all_cli "packages.uninstall" " "
 aggregate_all "packages.uninstall" " "
 PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
 unset aggregated_content
-
-PACKAGE_LIST_RM="${PACKAGE_LIST_RM#"${PACKAGE_LIST_RM%%[![:space:]]*}"}"
-PACKAGE_LIST_RM="${PACKAGE_LIST_RM%"${PACKAGE_LIST_RM##*[![:space:]]}"}"
-PACKAGE_LIST_RM="$(echo ${PACKAGE_LIST_RM})"
 
 display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}" >> "${DEST}"/debug/output.log
 display_alert "PACKAGE_LIST : ${PACKAGE_LIST}" >> "${DEST}"/debug/output.log
