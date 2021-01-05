@@ -212,9 +212,6 @@ install_common()
 
 	cd $SRC
 
-	# remove cached index file prior to update.
-	# To mitigate sum mismatch problem https://askubuntu.com/questions/41605/trouble-downloading-packages-list-due-to-a-hash-sum-mismatch-error
-	chroot "${SDCARD}" /bin/bash -c "sudo rm -rf /var/lib/apt/lists/*" >> "${DEST}"/debug/install.log 2>&1
 	display_alert "Updating" "package lists"
 	chroot "${SDCARD}" /bin/bash -c "apt-get update" >> "${DEST}"/debug/install.log 2>&1
 
