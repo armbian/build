@@ -72,7 +72,7 @@ pack_upload ()
 	# pack and upload to server or just pack
 
 	display_alert "Signing" "Please wait!" "info"
-	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}_${DESKTOP_ENVIRONMENT}"
+	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
 	local subdir="archive"
 	compression_type=""
 
@@ -273,7 +273,8 @@ function build_all()
 		BOOTCONFIG MODULES_BLACKLIST MODULES_BLACKLIST_LEGACY MODULES_BLACKLIST_CURRENT MODULES_BLACKLIST_DEV DEFAULT_OVERLAYS SERIALCON \
 		BUILD_MINIMAL RELEASE ATFBRANCH BOOT_FDT_FILE BOOTCONFIG_DEV BOOTSOURCEDIR
 
-		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE DESKTOP_ENVIRONMENT DESKTOP_ENVIRONMENT_CONFIG_NAME<<< "${line}"
+		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE DESKTOP_ENVIRONMENT DESKTOP_ENVIRONMENT_CONFIG_NAME DESKTOP_APPGROUPS_SELECTED<<< "${line}"
+		DESKTOP_APPGROUPS_SELECTED=${DESKTOP_APPGROUPS_SELECTED/,/ }
 
 		# read all possible configurations
 		# shellcheck source=/dev/null
@@ -295,8 +296,6 @@ function build_all()
 				continue
 			fi
 		fi
-
-		[[ -n $DESKTOP_ENVIRONMENT ]] && DESKTOP_APPGROUPS_SELECTED="3dsupport browsers chat desktop_tools dev-tools editors email internet internet-tools languages multimedia office programming remote_desktop"
 
 		# exceptions handling
 		[[ ${BOARDFAMILY} == sun*i ]] && BOARDFAMILY=sunxi
@@ -393,8 +392,8 @@ function build_all()
 			else
 				((n+=1))
 				# In dryrun it only prints out what will be build
-                                printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." \
-                                "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${DESKTOP_ENVIRONMENT}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
+                                printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\t%-6s\n" "${n}." \
+                                "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${DESKTOP_ENVIRONMENT}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}" "${DESKTOP_APPGROUPS_SELECTED}"
 			fi
 
 fi
@@ -412,7 +411,7 @@ echo ""
 display_alert "Building all targets" "$STABILITY $(if [[ $KERNEL_ONLY == "yes" ]] ; then echo "kernels"; \
 else echo "images"; fi)" "info"
 
-printf "\n%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n\n" "" "board" "branch" "release" "DE" "desktop" "minimal"
+printf "\n%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\t%-6s\n\n" "" "board" "branch" "release" "DE" "desktop" "minimal" "DE app groups"
 
 # display what we will build
 build_all "dryrun"
