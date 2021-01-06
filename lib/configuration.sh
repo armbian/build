@@ -404,29 +404,6 @@ aggregate_all_debootstrap() {
 	aggregate_content
 }
 
-aggregated_content=""
-aggregate_all_debootstrap "packages"
-DEBOOTSTRAP_LIST="$(cleanup_list aggregated_content)"
-echo "DEBOOTSTRAP LIST : ${DEBOOTSTRAP_LIST}" >> "${DEST}"/debug/output.log
-unset aggregated_content
-
-aggregated_content=""
-aggregate_all_debootstrap "components"
-DEBOOTSTRAP_COMPONENTS="$(cleanup_list aggregated_content)"
-echo "DEBOOTSTRAP_COMPONENTS : ${DEBOOTSTRAP_COMPONENTS}" >> "${DEST}"/debug/output.log
-unset aggregated_content
-
-# Base system dependencies. Since adding MINIMAL_IMAGE we rely on "variant=minbase" which has very basic package set
-#DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certificates bzip2 console-setup cpio cron \
-#	dbus init initramfs-tools iputils-ping isc-dhcp-client kmod less libpam-systemd \
-#	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
-#	wireless-regdb crda dmsetup rsync tzdata"
-
-echo "Debootstrap packages list : $DEBOOTSTRAP_LIST" >> "${DEST}"/debug/output.log
-
-# Myy : ???
-# [[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
-
 aggregate_all_cli() {
 	local looked_up_subpath="${1}"
 	local separator="${2}"
@@ -440,73 +417,33 @@ aggregate_all_cli() {
 	aggregate_content
 }
 
-aggregated_content=""
-aggregate_all_cli "packages" " "
-echo "Aggregated content : ${aggregated_content}" >> "${DEST}"/debug/output.log
-PACKAGE_LIST="$(cleanup_list aggregated_content)"
-unset aggregated_content
+one_line() {
+	local aggregate_func_name="${1}"
+	local aggregated_content=""
+	shift 1
+	$aggregate_func_name "${@}"
+	cleanup_list aggregated_content
+}
 
-aggregated_content=""
-aggregate_all_cli "packages.additional" " "
-PACKAGE_LIST_ADDITIONAL="$(cleanup_list aggregated_content)"
-unset aggregated_content
+DEBOOTSTRAP_LIST="$(one_line aggregate_all_debootstrap "packages")"
+DEBOOTSTRAP_COMPONENTS="$(one_line aggregate_all_debootstrap "components")"
+DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
+PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
+PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
 
-# For minimal build different set of packages is needed
-# Essential packages for minimal build
-# PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chrony parted dialog \
-# 		ncurses-term sysfsutils toilet figlet u-boot-tools usbutils openssh-server \
-# 		nocache debconf-utils python3-apt"
-
-# # Non-essential packages for minimal build
-# PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf iozone3 jq libcrack2 cracklib-runtime curl"
-
-# if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
-# 	# Essential packages
-# 	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
-# 		iw wpasupplicant sudo linux-base crda \
-# 		wireless-regdb unattended-upgrades \
-# 		console-setup unicode-data initramfs-tools \
-# 		ca-certificates expect iptables automake html2text \
-# 		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
-
-
-# 	# Non-essential packages
-# 	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL software-properties-common alsa-utils btrfs-progs dosfstools iotop stress screen \
-# 		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
-# 		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
-# 		hostapd git ethtool unzip ifenslave libpam-systemd iperf3 \
-# 		libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode sunxi-tools"
-# fi
-
+echo "DEBOOTSTRAP LIST : ${DEBOOTSTRAP_LIST}" >> "${DEST}"/debug/output.log
+echo "DEBOOTSTRAP_COMPONENTS : ${DEBOOTSTRAP_COMPONENTS}" >> "${DEST}"/debug/output.log
+echo "CLI PACKAGE_LIST : ${PACKAGE_LIST}" >> "${DEST}"/debug/output.log
+echo "CLI PACKAGE_LIST_ADDITIONAL : ${PACKAGE_LIST_ADDITIONAL}" >> "${DEST}"/debug/output.log
 
 # Dependent desktop packages
 # Myy : Sources packages from file here
 
 # Myy : FIXME Rename aggregate_all to aggregate_all_desktop
 if [[ $BUILD_DESKTOP == "yes" ]]; then
-	aggregated_content=""
-	aggregate_all "packages" " "
-
-	PACKAGE_LIST_DESKTOP+="${aggregated_content}"
-
-	unset aggregated_content
-
+	PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all "packages" " ")"
 	echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}" >> "${DEST}"/debug/output.log
 fi
-
-# Myy : Clean the Debootstrap lists. The packages list will be cleaned when necessary.
-# This horrendous cleanup syntax is used to remove trailing and leading spaces.
-
-# Previous comment : tab cleanup is mandatory
-
-#DEBOOTSTRAP_LIST="${DEBOOTSTRAP_LIST#"${DEBOOTSTRAP_LIST%%[![:space:]]*}"}"
-#DEBOOTSTRAP_LIST="${DEBOOTSTRAP_LIST%"${DEBOOTSTRAP_LIST##*[![:space:]]}"}"
-#DEBOOTSTRAP_LIST="$(cleanup_list DEBOOTSTRAP_LIST)"
-
-#DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS#"${DEBOOTSTRAP_COMPONENTS%%[![:space:]]*}"}"
-#DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS%"${DEBOOTSTRAP_COMPONENTS##*[![:space:]]}"}"
-#DEBOOTSTRAP_COMPONENTS="$(cleanup_list DEBOOTSTRAP_COMPONENTS)"
-DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
 
 display_alert "Deboostrap" >> "${DEST}"/debug/output.log
 display_alert "Components ${DEBOOTSTRAP_COMPONENTS}" >> "${DEST}"/debug/output.log
@@ -550,27 +487,15 @@ fi
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
-
-# Clean up the list
-# Myy : Replace any single or multiple instance of 'space' characters
-# (spaces, tabs, newlines) by a single space character
-# DO NOT PUT quotes after 'echo', else the trick won't work.
-#PACKAGE_LIST="${PACKAGE_LIST#"${PACKAGE_LIST%%[![:space:]]*}"}"
-#PACKAGE_LIST="${PACKAGE_LIST%"${PACKAGE_LIST##*[![:space:]]}"}"
-#PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
-#PACKAGE_LIST="$(cleanup_list PACKAGE_LIST)"
-
-PACKAGE_MAIN_LIST="${PACKAGE_LIST}"
-
-# FIXME Myy: Factorize this...
-#PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
-#PACKAGE_LIST_DESKTOP="${PACKAGE_LIST_DESKTOP%"${PACKAGE_LIST_DESKTOP##*[![:space:]]}"}"
-#PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
-PACKAGE_LIST_DESKTOP="$(cleanup_list PACKAGE_LIST_DESKTOP)"
+PACKAGE_MAIN_LIST="$(cleanup_list PACKAGE_LIST)"
 
 [[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
+PACKAGE_LIST="$(cleanup_list PACKAGE_LIST)"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
+# FIXME : This actually nuke any content set to PACKAGE_LIST_RM
+# if present !
+# - Myy
 aggregated_content=""
 aggregate_all_cli "packages.remove" " "
 aggregate_all "packages.remove" " "
@@ -600,16 +525,15 @@ if [[ -n $PACKAGE_LIST_RM ]]; then
 	PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_MAIN_LIST} ")
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
+		# Removing double spaces... AGAIN, since we might have used a sed on them
+		# Do not quote the variables. This would defeat the trick.
+		PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
 	fi
-fi
 
-# Removing double spaces
-# Do not quote the variables. This would defeat the trick.
-PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
-PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
-
-if [[ $BUILD_DESKTOP == "yes" ]]; then
-	PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+	# Removing double spaces... AGAIN, since we might have used a sed on them
+	# Do not quote the variables. This would defeat the trick.
+	PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
+	PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
 fi
 
 display_alert "After removal of packages.remove packages" >> "${DEST}"/debug/output.log
