@@ -2,9 +2,10 @@
 #
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
-setenv load_addr "0x34000000"
-setenv initrd_high "0xffffffff"
-setenv fdt_high "0xffffffff"
+
+setenv load_addr "0x32000000"
+setenv kernel_addr_r "0x34000000"
+setenv fdt_addr_r "0x4080000"
 setenv overlay_error "false"
 # default values
 setenv rootdev "/dev/mmcblk1p1"
