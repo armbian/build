@@ -96,7 +96,7 @@ if test -e ${devtype} ${devnum} ${prefix}zImage; then
 	if test "${console}" = "serial"; then setenv consoleargs "console=ttyS0,115200"; fi
 	if test "${bootlogo}" = "true"; then setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"; fi
 
-	setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 coherent_pool=2M loglevel=${verbosity} ${amlogic} no_console_suspend fsck.repair=yes net.ifnames=0 elevator=noop hdmimode=${hdmimode} cvbsmode=576cvbs max_freq_a55=${max_freq_a55} maxcpus=${maxcpus} voutmode=${voutmode} ${cmode} disablehpd=${disablehpd} cvbscable=${cvbscable} overscan=${overscan} ${hid_quirks} monitor_onoff=${monitor_onoff} ${cec_enable} sdrmode=${sdrmode} consoleblank=0"
+	setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 coherent_pool=2M loglevel=${verbosity} ${amlogic} no_console_suspend fsck.repair=yes net.ifnames=0 elevator=noop hdmimode=${hdmimode} cvbsmode=576cvbs max_freq_a55=${max_freq_a55} maxcpus=${maxcpus} voutmode=${voutmode} ${cmode} disablehpd=${disablehpd} cvbscable=${cvbscable} overscan=${overscan} ${hid_quirks} monitor_onoff=${monitor_onoff} ${cec_enable} sdrmode=${sdrmode}"
 
 	load ${devtype} ${devnum} ${k_addr} boot/zImage
 	load ${devtype} ${devnum} ${dtb_loadaddr} boot/dtb/amlogic/meson64_odroidc4.dtb
@@ -105,7 +105,7 @@ if test -e ${devtype} ${devnum} ${prefix}zImage; then
 	unzip ${k_addr} ${loadaddr}
 	booti ${loadaddr} ${initrd_loadaddr} ${dtb_loadaddr}
 else
-	# moder kernel boot
+	# modern kernel boot
 
 	if test "${console}" = "serial"; then setenv consoleargs "console=ttyAML0,115200"; fi
 	if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=ttyAML0,115200 console=tty1"; fi
