@@ -91,6 +91,7 @@ RUN apt-get update \
        udev \
        unzip \
        uuid-dev \
+       uuid-runtime \
        wget \
        whiptail \
        xxd \
