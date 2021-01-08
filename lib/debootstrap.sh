@@ -495,7 +495,7 @@ prepare_partitions()
 
 	# stage: mount image
 	# lock access to loop devices
-	exec {FD}>/var/lock/${BRANCH}-${BOARD}-${RELEASE}-${DESKTOP_ENVIRONMENT:+"$DESKTOP_ENVIRONMENT-"}${BUILD_DESKTOP}-${BUILD_MINIMAL}-armbian-debootstrap-losetup
+	exec {FD}>/var/lock/armbian-debootstrap-losetup
 	flock -x $FD
 
 	LOOP=$(losetup -f)
@@ -503,7 +503,6 @@ prepare_partitions()
 
 	check_loop_device "$LOOP"
 
-	# NOTE: losetup -P option is not available in Trusty
 	losetup $LOOP ${SDCARD}.raw
 
 	# loop device was grabbed here, unlock
