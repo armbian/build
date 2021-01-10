@@ -1,0 +1,1736 @@
+diff --git a/Documentation/devicetree/bindings/rtc/rtc.yaml b/Documentation/devicetree/bindings/rtc/rtc.yaml
+index 8acd2de3de3ad..d30dc045aac64 100644
+--- a/Documentation/devicetree/bindings/rtc/rtc.yaml
++++ b/Documentation/devicetree/bindings/rtc/rtc.yaml
+@@ -63,6 +63,11 @@ properties:
+     description:
+       Enables wake up of host system on alarm.
+ 
++  reset-source:
++    $ref: /schemas/types.yaml#/definitions/flag
++    description:
++      The RTC is able to reset the machine.
++
+ additionalProperties: true
+ 
+ ...
+diff --git a/Makefile b/Makefile
+index bb431fd473d2c..2b3f0d06b0054 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 5
+ PATCHLEVEL = 10
+-SUBLEVEL = 5
++SUBLEVEL = 6
+ EXTRAVERSION =
+ NAME = Kleptomaniac Octopus
+ 
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+index 30c6b9edddb50..0f7749e9424d4 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -2278,8 +2278,7 @@ void amdgpu_dm_update_connector_after_detect(
+ 
+ 			drm_connector_update_edid_property(connector,
+ 							   aconnector->edid);
+-			aconnector->num_modes = drm_add_edid_modes(connector, aconnector->edid);
+-			drm_connector_list_update(connector);
++			drm_add_edid_modes(connector, aconnector->edid);
+ 
+ 			if (aconnector->dc_link->aux_mode)
+ 				drm_dp_cec_set_edid(&aconnector->dm_dp_aux.aux,
+diff --git a/drivers/gpu/drm/i915/display/intel_dpll_mgr.c b/drivers/gpu/drm/i915/display/intel_dpll_mgr.c
+index e08684e34078a..91b37b76618d2 100644
+--- a/drivers/gpu/drm/i915/display/intel_dpll_mgr.c
++++ b/drivers/gpu/drm/i915/display/intel_dpll_mgr.c
+@@ -2622,11 +2622,22 @@ static bool cnl_ddi_hdmi_pll_dividers(struct intel_crtc_state *crtc_state)
+ 	return true;
+ }
+ 
++/*
++ * Display WA #22010492432: tgl
++ * Program half of the nominal DCO divider fraction value.
++ */
++static bool
++tgl_combo_pll_div_frac_wa_needed(struct drm_i915_private *i915)
++{
++	return IS_TIGERLAKE(i915) && i915->dpll.ref_clks.nssc == 38400;
++}
++
+ static int __cnl_ddi_wrpll_get_freq(struct drm_i915_private *dev_priv,
+ 				    const struct intel_shared_dpll *pll,
+ 				    int ref_clock)
+ {
+ 	const struct intel_dpll_hw_state *pll_state = &pll->state.hw_state;
++	u32 dco_fraction;
+ 	u32 p0, p1, p2, dco_freq;
+ 
+ 	p0 = pll_state->cfgcr1 & DPLL_CFGCR1_PDIV_MASK;
+@@ -2669,8 +2680,13 @@ static int __cnl_ddi_wrpll_get_freq(struct drm_i915_private *dev_priv,
+ 	dco_freq = (pll_state->cfgcr0 & DPLL_CFGCR0_DCO_INTEGER_MASK) *
+ 		   ref_clock;
+ 
+-	dco_freq += (((pll_state->cfgcr0 & DPLL_CFGCR0_DCO_FRACTION_MASK) >>
+-		      DPLL_CFGCR0_DCO_FRACTION_SHIFT) * ref_clock) / 0x8000;
++	dco_fraction = (pll_state->cfgcr0 & DPLL_CFGCR0_DCO_FRACTION_MASK) >>
++		       DPLL_CFGCR0_DCO_FRACTION_SHIFT;
++
++	if (tgl_combo_pll_div_frac_wa_needed(dev_priv))
++		dco_fraction *= 2;
++
++	dco_freq += (dco_fraction * ref_clock) / 0x8000;
+ 
+ 	if (drm_WARN_ON(&dev_priv->drm, p0 == 0 || p1 == 0 || p2 == 0))
+ 		return 0;
+@@ -2948,16 +2964,6 @@ static const struct skl_wrpll_params tgl_tbt_pll_24MHz_values = {
+ 	/* the following params are unused */
+ };
+ 
+-/*
+- * Display WA #22010492432: tgl
+- * Divide the nominal .dco_fraction value by 2.
+- */
+-static const struct skl_wrpll_params tgl_tbt_pll_38_4MHz_values = {
+-	.dco_integer = 0x54, .dco_fraction = 0x1800,
+-	/* the following params are unused */
+-	.pdiv = 0, .kdiv = 0, .qdiv_mode = 0, .qdiv_ratio = 0,
+-};
+-
+ static bool icl_calc_dp_combo_pll(struct intel_crtc_state *crtc_state,
+ 				  struct skl_wrpll_params *pll_params)
+ {
+@@ -2991,14 +2997,12 @@ static bool icl_calc_tbt_pll(struct intel_crtc_state *crtc_state,
+ 			MISSING_CASE(dev_priv->dpll.ref_clks.nssc);
+ 			fallthrough;
+ 		case 19200:
++		case 38400:
+ 			*pll_params = tgl_tbt_pll_19_2MHz_values;
+ 			break;
+ 		case 24000:
+ 			*pll_params = tgl_tbt_pll_24MHz_values;
+ 			break;
+-		case 38400:
+-			*pll_params = tgl_tbt_pll_38_4MHz_values;
+-			break;
+ 		}
+ 	} else {
+ 		switch (dev_priv->dpll.ref_clks.nssc) {
+@@ -3065,9 +3069,14 @@ static void icl_calc_dpll_state(struct drm_i915_private *i915,
+ 				const struct skl_wrpll_params *pll_params,
+ 				struct intel_dpll_hw_state *pll_state)
+ {
++	u32 dco_fraction = pll_params->dco_fraction;
++
+ 	memset(pll_state, 0, sizeof(*pll_state));
+ 
+-	pll_state->cfgcr0 = DPLL_CFGCR0_DCO_FRACTION(pll_params->dco_fraction) |
++	if (tgl_combo_pll_div_frac_wa_needed(i915))
++		dco_fraction = DIV_ROUND_CLOSEST(dco_fraction, 2);
++
++	pll_state->cfgcr0 = DPLL_CFGCR0_DCO_FRACTION(dco_fraction) |
+ 			    pll_params->dco_integer;
+ 
+ 	pll_state->cfgcr1 = DPLL_CFGCR1_QDIV_RATIO(pll_params->qdiv_ratio) |
+diff --git a/drivers/infiniband/core/device.c b/drivers/infiniband/core/device.c
+index 4a041511b70ec..76b9c436edcd2 100644
+--- a/drivers/infiniband/core/device.c
++++ b/drivers/infiniband/core/device.c
+@@ -1177,25 +1177,6 @@ out:
+ 	return ret;
+ }
+ 
+-static void setup_dma_device(struct ib_device *device,
+-			     struct device *dma_device)
+-{
+-	/*
+-	 * If the caller does not provide a DMA capable device then the IB
+-	 * device will be used. In this case the caller should fully setup the
+-	 * ibdev for DMA. This usually means using dma_virt_ops.
+-	 */
+-#ifdef CONFIG_DMA_VIRT_OPS
+-	if (!dma_device) {
+-		device->dev.dma_ops = &dma_virt_ops;
+-		dma_device = &device->dev;
+-	}
+-#endif
+-	WARN_ON(!dma_device);
+-	device->dma_device = dma_device;
+-	WARN_ON(!device->dma_device->dma_parms);
+-}
+-
+ /*
+  * setup_device() allocates memory and sets up data that requires calling the
+  * device ops, this is the only reason these actions are not done during
+@@ -1341,7 +1322,14 @@ int ib_register_device(struct ib_device *device, const char *name,
+ 	if (ret)
+ 		return ret;
+ 
+-	setup_dma_device(device, dma_device);
++	/*
++	 * If the caller does not provide a DMA capable device then the IB core
++	 * will set up ib_sge and scatterlist structures that stash the kernel
++	 * virtual address into the address field.
++	 */
++	WARN_ON(dma_device && !dma_device->dma_parms);
++	device->dma_device = dma_device;
++
+ 	ret = setup_device(device);
+ 	if (ret)
+ 		return ret;
+@@ -2676,6 +2664,21 @@ void ib_set_device_ops(struct ib_device *dev, const struct ib_device_ops *ops)
+ }
+ EXPORT_SYMBOL(ib_set_device_ops);
+ 
++#ifdef CONFIG_INFINIBAND_VIRT_DMA
++int ib_dma_virt_map_sg(struct ib_device *dev, struct scatterlist *sg, int nents)
++{
++	struct scatterlist *s;
++	int i;
++
++	for_each_sg(sg, s, nents, i) {
++		sg_dma_address(s) = (uintptr_t)sg_virt(s);
++		sg_dma_len(s) = s->length;
++	}
++	return nents;
++}
++EXPORT_SYMBOL(ib_dma_virt_map_sg);
++#endif /* CONFIG_INFINIBAND_VIRT_DMA */
++
+ static const struct rdma_nl_cbs ibnl_ls_cb_table[RDMA_NL_LS_NUM_OPS] = {
+ 	[RDMA_NL_LS_OP_RESOLVE] = {
+ 		.doit = ib_nl_handle_resolve_resp,
+diff --git a/drivers/infiniband/core/rw.c b/drivers/infiniband/core/rw.c
+index 13f43ab7220b0..a96030b784eb2 100644
+--- a/drivers/infiniband/core/rw.c
++++ b/drivers/infiniband/core/rw.c
+@@ -285,8 +285,11 @@ static void rdma_rw_unmap_sg(struct ib_device *dev, struct scatterlist *sg,
+ static int rdma_rw_map_sg(struct ib_device *dev, struct scatterlist *sg,
+ 			  u32 sg_cnt, enum dma_data_direction dir)
+ {
+-	if (is_pci_p2pdma_page(sg_page(sg)))
++	if (is_pci_p2pdma_page(sg_page(sg))) {
++		if (WARN_ON_ONCE(ib_uses_virt_dma(dev)))
++			return 0;
+ 		return pci_p2pdma_map_sg(dev->dma_device, sg, sg_cnt, dir);
++	}
+ 	return ib_dma_map_sg(dev, sg, sg_cnt, dir);
+ }
+ 
+diff --git a/drivers/infiniband/sw/rdmavt/Kconfig b/drivers/infiniband/sw/rdmavt/Kconfig
+index c8e268082952b..0df48b3a6b56c 100644
+--- a/drivers/infiniband/sw/rdmavt/Kconfig
++++ b/drivers/infiniband/sw/rdmavt/Kconfig
+@@ -4,6 +4,5 @@ config INFINIBAND_RDMAVT
+ 	depends on INFINIBAND_VIRT_DMA
+ 	depends on X86_64
+ 	depends on PCI
+-	select DMA_VIRT_OPS
+ 	help
+ 	This is a common software verbs provider for RDMA networks.
+diff --git a/drivers/infiniband/sw/rdmavt/mr.c b/drivers/infiniband/sw/rdmavt/mr.c
+index 8490fdb9c91e5..90fc234f489ac 100644
+--- a/drivers/infiniband/sw/rdmavt/mr.c
++++ b/drivers/infiniband/sw/rdmavt/mr.c
+@@ -324,8 +324,6 @@ static void __rvt_free_mr(struct rvt_mr *mr)
+  * @acc: access flags
+  *
+  * Return: the memory region on success, otherwise returns an errno.
+- * Note that all DMA addresses should be created via the functions in
+- * struct dma_virt_ops.
+  */
+ struct ib_mr *rvt_get_dma_mr(struct ib_pd *pd, int acc)
+ {
+@@ -766,7 +764,7 @@ int rvt_lkey_ok(struct rvt_lkey_table *rkt, struct rvt_pd *pd,
+ 
+ 	/*
+ 	 * We use LKEY == zero for kernel virtual addresses
+-	 * (see rvt_get_dma_mr() and dma_virt_ops).
++	 * (see rvt_get_dma_mr()).
+ 	 */
+ 	if (sge->lkey == 0) {
+ 		struct rvt_dev_info *dev = ib_to_rvt(pd->ibpd.device);
+@@ -877,7 +875,7 @@ int rvt_rkey_ok(struct rvt_qp *qp, struct rvt_sge *sge,
+ 
+ 	/*
+ 	 * We use RKEY == zero for kernel virtual addresses
+-	 * (see rvt_get_dma_mr() and dma_virt_ops).
++	 * (see rvt_get_dma_mr()).
+ 	 */
+ 	rcu_read_lock();
+ 	if (rkey == 0) {
+diff --git a/drivers/infiniband/sw/rdmavt/vt.c b/drivers/infiniband/sw/rdmavt/vt.c
+index 670a9623b46e1..d1bbe66610cfe 100644
+--- a/drivers/infiniband/sw/rdmavt/vt.c
++++ b/drivers/infiniband/sw/rdmavt/vt.c
+@@ -524,7 +524,6 @@ static noinline int check_support(struct rvt_dev_info *rdi, int verb)
+ int rvt_register_device(struct rvt_dev_info *rdi)
+ {
+ 	int ret = 0, i;
+-	u64 dma_mask;
+ 
+ 	if (!rdi)
+ 		return -EINVAL;
+@@ -579,13 +578,6 @@ int rvt_register_device(struct rvt_dev_info *rdi)
+ 	/* Completion queues */
+ 	spin_lock_init(&rdi->n_cqs_lock);
+ 
+-	/* DMA Operations */
+-	rdi->ibdev.dev.dma_parms = rdi->ibdev.dev.parent->dma_parms;
+-	dma_mask = IS_ENABLED(CONFIG_64BIT) ? DMA_BIT_MASK(64) : DMA_BIT_MASK(32);
+-	ret = dma_coerce_mask_and_coherent(&rdi->ibdev.dev, dma_mask);
+-	if (ret)
+-		goto bail_wss;
+-
+ 	/* Protection Domain */
+ 	spin_lock_init(&rdi->n_pds_lock);
+ 	rdi->n_pds_allocated = 0;
+diff --git a/drivers/infiniband/sw/rxe/Kconfig b/drivers/infiniband/sw/rxe/Kconfig
+index 8810bfa680495..4521490667925 100644
+--- a/drivers/infiniband/sw/rxe/Kconfig
++++ b/drivers/infiniband/sw/rxe/Kconfig
+@@ -5,7 +5,6 @@ config RDMA_RXE
+ 	depends on INFINIBAND_VIRT_DMA
+ 	select NET_UDP_TUNNEL
+ 	select CRYPTO_CRC32
+-	select DMA_VIRT_OPS
+ 	help
+ 	This driver implements the InfiniBand RDMA transport over
+ 	the Linux network stack. It enables a system with a
+diff --git a/drivers/infiniband/sw/rxe/rxe_net.c b/drivers/infiniband/sw/rxe/rxe_net.c
+index 34bef7d8e6b41..943914c2a50c7 100644
+--- a/drivers/infiniband/sw/rxe/rxe_net.c
++++ b/drivers/infiniband/sw/rxe/rxe_net.c
+@@ -20,18 +20,6 @@
+ 
+ static struct rxe_recv_sockets recv_sockets;
+ 
+-struct device *rxe_dma_device(struct rxe_dev *rxe)
+-{
+-	struct net_device *ndev;
+-
+-	ndev = rxe->ndev;
+-
+-	if (is_vlan_dev(ndev))
+-		ndev = vlan_dev_real_dev(ndev);
+-
+-	return ndev->dev.parent;
+-}
+-
+ int rxe_mcast_add(struct rxe_dev *rxe, union ib_gid *mgid)
+ {
+ 	int err;
+diff --git a/drivers/infiniband/sw/rxe/rxe_verbs.c b/drivers/infiniband/sw/rxe/rxe_verbs.c
+index f9c832e82552f..512868c230238 100644
+--- a/drivers/infiniband/sw/rxe/rxe_verbs.c
++++ b/drivers/infiniband/sw/rxe/rxe_verbs.c
+@@ -1118,23 +1118,15 @@ int rxe_register_device(struct rxe_dev *rxe, const char *ibdev_name)
+ 	int err;
+ 	struct ib_device *dev = &rxe->ib_dev;
+ 	struct crypto_shash *tfm;
+-	u64 dma_mask;
+ 
+ 	strlcpy(dev->node_desc, "rxe", sizeof(dev->node_desc));
+ 
+ 	dev->node_type = RDMA_NODE_IB_CA;
+ 	dev->phys_port_cnt = 1;
+ 	dev->num_comp_vectors = num_possible_cpus();
+-	dev->dev.parent = rxe_dma_device(rxe);
+ 	dev->local_dma_lkey = 0;
+ 	addrconf_addr_eui48((unsigned char *)&dev->node_guid,
+ 			    rxe->ndev->dev_addr);
+-	dev->dev.dma_parms = &rxe->dma_parms;
+-	dma_set_max_seg_size(&dev->dev, UINT_MAX);
+-	dma_mask = IS_ENABLED(CONFIG_64BIT) ? DMA_BIT_MASK(64) : DMA_BIT_MASK(32);
+-	err = dma_coerce_mask_and_coherent(&dev->dev, dma_mask);
+-	if (err)
+-		return err;
+ 
+ 	dev->uverbs_cmd_mask = BIT_ULL(IB_USER_VERBS_CMD_GET_CONTEXT)
+ 	    | BIT_ULL(IB_USER_VERBS_CMD_CREATE_COMP_CHANNEL)
+diff --git a/drivers/infiniband/sw/rxe/rxe_verbs.h b/drivers/infiniband/sw/rxe/rxe_verbs.h
+index 3414b341b7091..4bf5d85a1ab3c 100644
+--- a/drivers/infiniband/sw/rxe/rxe_verbs.h
++++ b/drivers/infiniband/sw/rxe/rxe_verbs.h
+@@ -352,7 +352,6 @@ struct rxe_port {
+ struct rxe_dev {
+ 	struct ib_device	ib_dev;
+ 	struct ib_device_attr	attr;
+-	struct device_dma_parameters dma_parms;
+ 	int			max_ucontext;
+ 	int			max_inline_data;
+ 	struct mutex	usdev_lock;
+diff --git a/drivers/infiniband/sw/siw/Kconfig b/drivers/infiniband/sw/siw/Kconfig
+index 3450ba5081df5..1b5105cbabaee 100644
+--- a/drivers/infiniband/sw/siw/Kconfig
++++ b/drivers/infiniband/sw/siw/Kconfig
+@@ -2,7 +2,6 @@ config RDMA_SIW
+ 	tristate "Software RDMA over TCP/IP (iWARP) driver"
+ 	depends on INET && INFINIBAND && LIBCRC32C
+ 	depends on INFINIBAND_VIRT_DMA
+-	select DMA_VIRT_OPS
+ 	help
+ 	This driver implements the iWARP RDMA transport over
+ 	the Linux TCP/IP network stack. It enables a system with a
+diff --git a/drivers/infiniband/sw/siw/siw.h b/drivers/infiniband/sw/siw/siw.h
+index e9753831ac3f3..adda789962196 100644
+--- a/drivers/infiniband/sw/siw/siw.h
++++ b/drivers/infiniband/sw/siw/siw.h
+@@ -69,7 +69,6 @@ struct siw_pd {
+ 
+ struct siw_device {
+ 	struct ib_device base_dev;
+-	struct device_dma_parameters dma_parms;
+ 	struct net_device *netdev;
+ 	struct siw_dev_cap attrs;
+ 
+diff --git a/drivers/infiniband/sw/siw/siw_main.c b/drivers/infiniband/sw/siw/siw_main.c
+index 181e06c1c43d7..9d152e198a59b 100644
+--- a/drivers/infiniband/sw/siw/siw_main.c
++++ b/drivers/infiniband/sw/siw/siw_main.c
+@@ -305,25 +305,8 @@ static struct siw_device *siw_device_create(struct net_device *netdev)
+ {
+ 	struct siw_device *sdev = NULL;
+ 	struct ib_device *base_dev;
+-	struct device *parent = netdev->dev.parent;
+-	u64 dma_mask;
+ 	int rv;
+ 
+-	if (!parent) {
+-		/*
+-		 * The loopback device has no parent device,
+-		 * so it appears as a top-level device. To support
+-		 * loopback device connectivity, take this device
+-		 * as the parent device. Skip all other devices
+-		 * w/o parent device.
+-		 */
+-		if (netdev->type != ARPHRD_LOOPBACK) {
+-			pr_warn("siw: device %s error: no parent device\n",
+-				netdev->name);
+-			return NULL;
+-		}
+-		parent = &netdev->dev;
+-	}
+ 	sdev = ib_alloc_device(siw_device, base_dev);
+ 	if (!sdev)
+ 		return NULL;
+@@ -382,13 +365,6 @@ static struct siw_device *siw_device_create(struct net_device *netdev)
+ 	 * per physical port.
+ 	 */
+ 	base_dev->phys_port_cnt = 1;
+-	base_dev->dev.parent = parent;
+-	base_dev->dev.dma_parms = &sdev->dma_parms;
+-	dma_set_max_seg_size(&base_dev->dev, UINT_MAX);
+-	dma_mask = IS_ENABLED(CONFIG_64BIT) ? DMA_BIT_MASK(64) : DMA_BIT_MASK(32);
+-	if (dma_coerce_mask_and_coherent(&base_dev->dev, dma_mask))
+-		goto error;
+-
+ 	base_dev->num_comp_vectors = num_possible_cpus();
+ 
+ 	xa_init_flags(&sdev->qp_xa, XA_FLAGS_ALLOC1);
+@@ -430,7 +406,7 @@ static struct siw_device *siw_device_create(struct net_device *netdev)
+ 	atomic_set(&sdev->num_mr, 0);
+ 	atomic_set(&sdev->num_pd, 0);
+ 
+-	sdev->numa_node = dev_to_node(parent);
++	sdev->numa_node = dev_to_node(&netdev->dev);
+ 	spin_lock_init(&sdev->lock);
+ 
+ 	return sdev;
+diff --git a/drivers/mtd/nand/spi/core.c b/drivers/mtd/nand/spi/core.c
+index 7900571fc85b3..c352217946455 100644
+--- a/drivers/mtd/nand/spi/core.c
++++ b/drivers/mtd/nand/spi/core.c
+@@ -318,10 +318,6 @@ static int spinand_write_to_cache_op(struct spinand_device *spinand,
+ 		buf += ret;
+ 	}
+ 
+-	if (req->ooblen)
+-		memcpy(req->oobbuf.in, spinand->oobbuf + req->ooboffs,
+-		       req->ooblen);
+-
+ 	return 0;
+ }
+ 
+diff --git a/drivers/net/wireless/marvell/mwifiex/join.c b/drivers/net/wireless/marvell/mwifiex/join.c
+index 5934f71475477..173ccf79cbfcc 100644
+--- a/drivers/net/wireless/marvell/mwifiex/join.c
++++ b/drivers/net/wireless/marvell/mwifiex/join.c
+@@ -877,6 +877,8 @@ mwifiex_cmd_802_11_ad_hoc_start(struct mwifiex_private *priv,
+ 
+ 	memset(adhoc_start->ssid, 0, IEEE80211_MAX_SSID_LEN);
+ 
++	if (req_ssid->ssid_len > IEEE80211_MAX_SSID_LEN)
++		req_ssid->ssid_len = IEEE80211_MAX_SSID_LEN;
+ 	memcpy(adhoc_start->ssid, req_ssid->ssid, req_ssid->ssid_len);
+ 
+ 	mwifiex_dbg(adapter, INFO, "info: ADHOC_S_CMD: SSID = %s\n",
+diff --git a/drivers/nvme/target/rdma.c b/drivers/nvme/target/rdma.c
+index ae6620489457d..5c1e7cb7fe0de 100644
+--- a/drivers/nvme/target/rdma.c
++++ b/drivers/nvme/target/rdma.c
+@@ -414,7 +414,8 @@ static int nvmet_rdma_alloc_rsp(struct nvmet_rdma_device *ndev,
+ 	if (ib_dma_mapping_error(ndev->device, r->send_sge.addr))
+ 		goto out_free_rsp;
+ 
+-	r->req.p2p_client = &ndev->device->dev;
++	if (!ib_uses_virt_dma(ndev->device))
++		r->req.p2p_client = &ndev->device->dev;
+ 	r->send_sge.length = sizeof(*r->req.cqe);
+ 	r->send_sge.lkey = ndev->pd->local_dma_lkey;
+ 
+diff --git a/drivers/rtc/rtc-pcf2127.c b/drivers/rtc/rtc-pcf2127.c
+index 4d9711d51f8f3..f0a6861ff3aef 100644
+--- a/drivers/rtc/rtc-pcf2127.c
++++ b/drivers/rtc/rtc-pcf2127.c
+@@ -331,6 +331,37 @@ static const struct watchdog_ops pcf2127_watchdog_ops = {
+ 	.set_timeout = pcf2127_wdt_set_timeout,
+ };
+ 
++static int pcf2127_watchdog_init(struct device *dev, struct pcf2127 *pcf2127)
++{
++	u32 wdd_timeout;
++	int ret;
++
++	if (!IS_ENABLED(CONFIG_WATCHDOG) ||
++	    !device_property_read_bool(dev, "reset-source"))
++		return 0;
++
++	pcf2127->wdd.parent = dev;
++	pcf2127->wdd.info = &pcf2127_wdt_info;
++	pcf2127->wdd.ops = &pcf2127_watchdog_ops;
++	pcf2127->wdd.min_timeout = PCF2127_WD_VAL_MIN;
++	pcf2127->wdd.max_timeout = PCF2127_WD_VAL_MAX;
++	pcf2127->wdd.timeout = PCF2127_WD_VAL_DEFAULT;
++	pcf2127->wdd.min_hw_heartbeat_ms = 500;
++	pcf2127->wdd.status = WATCHDOG_NOWAYOUT_INIT_STATUS;
++
++	watchdog_set_drvdata(&pcf2127->wdd, pcf2127);
++
++	/* Test if watchdog timer is started by bootloader */
++	ret = regmap_read(pcf2127->regmap, PCF2127_REG_WD_VAL, &wdd_timeout);
++	if (ret)
++		return ret;
++
++	if (wdd_timeout)
++		set_bit(WDOG_HW_RUNNING, &pcf2127->wdd.status);
++
++	return devm_watchdog_register_device(dev, &pcf2127->wdd);
++}
++
+ /* Alarm */
+ static int pcf2127_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
+ {
+@@ -532,7 +563,6 @@ static int pcf2127_probe(struct device *dev, struct regmap *regmap,
+ 			 int alarm_irq, const char *name, bool has_nvmem)
+ {
+ 	struct pcf2127 *pcf2127;
+-	u32 wdd_timeout;
+ 	int ret = 0;
+ 
+ 	dev_dbg(dev, "%s\n", __func__);
+@@ -571,17 +601,6 @@ static int pcf2127_probe(struct device *dev, struct regmap *regmap,
+ 		pcf2127->rtc->ops = &pcf2127_rtc_alrm_ops;
+ 	}
+ 
+-	pcf2127->wdd.parent = dev;
+-	pcf2127->wdd.info = &pcf2127_wdt_info;
+-	pcf2127->wdd.ops = &pcf2127_watchdog_ops;
+-	pcf2127->wdd.min_timeout = PCF2127_WD_VAL_MIN;
+-	pcf2127->wdd.max_timeout = PCF2127_WD_VAL_MAX;
+-	pcf2127->wdd.timeout = PCF2127_WD_VAL_DEFAULT;
+-	pcf2127->wdd.min_hw_heartbeat_ms = 500;
+-	pcf2127->wdd.status = WATCHDOG_NOWAYOUT_INIT_STATUS;
+-
+-	watchdog_set_drvdata(&pcf2127->wdd, pcf2127);
+-
+ 	if (has_nvmem) {
+ 		struct nvmem_config nvmem_cfg = {
+ 			.priv = pcf2127,
+@@ -611,19 +630,7 @@ static int pcf2127_probe(struct device *dev, struct regmap *regmap,
+ 		return ret;
+ 	}
+ 
+-	/* Test if watchdog timer is started by bootloader */
+-	ret = regmap_read(pcf2127->regmap, PCF2127_REG_WD_VAL, &wdd_timeout);
+-	if (ret)
+-		return ret;
+-
+-	if (wdd_timeout)
+-		set_bit(WDOG_HW_RUNNING, &pcf2127->wdd.status);
+-
+-#ifdef CONFIG_WATCHDOG
+-	ret = devm_watchdog_register_device(dev, &pcf2127->wdd);
+-	if (ret)
+-		return ret;
+-#endif /* CONFIG_WATCHDOG */
++	pcf2127_watchdog_init(dev, pcf2127);
+ 
+ 	/*
+ 	 * Disable battery low/switch-over timestamp and interrupts.
+diff --git a/drivers/scsi/ufs/ufs-mediatek.c b/drivers/scsi/ufs/ufs-mediatek.c
+index 8df73bc2f8cb2..914a827a93ee8 100644
+--- a/drivers/scsi/ufs/ufs-mediatek.c
++++ b/drivers/scsi/ufs/ufs-mediatek.c
+@@ -743,7 +743,7 @@ static int ufs_mtk_link_startup_notify(struct ufs_hba *hba,
+ 	return ret;
+ }
+ 
+-static void ufs_mtk_device_reset(struct ufs_hba *hba)
++static int ufs_mtk_device_reset(struct ufs_hba *hba)
+ {
+ 	struct arm_smccc_res res;
+ 
+@@ -764,6 +764,8 @@ static void ufs_mtk_device_reset(struct ufs_hba *hba)
+ 	usleep_range(10000, 15000);
+ 
+ 	dev_info(hba->dev, "device reset done\n");
++
++	return 0;
+ }
+ 
+ static int ufs_mtk_link_set_hpm(struct ufs_hba *hba)
+diff --git a/drivers/scsi/ufs/ufs-qcom.c b/drivers/scsi/ufs/ufs-qcom.c
+index f9d6ef3565407..a244c8ae1b4eb 100644
+--- a/drivers/scsi/ufs/ufs-qcom.c
++++ b/drivers/scsi/ufs/ufs-qcom.c
+@@ -1421,13 +1421,13 @@ static void ufs_qcom_dump_dbg_regs(struct ufs_hba *hba)
+  *
+  * Toggles the (optional) reset line to reset the attached device.
+  */
+-static void ufs_qcom_device_reset(struct ufs_hba *hba)
++static int ufs_qcom_device_reset(struct ufs_hba *hba)
+ {
+ 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+ 
+ 	/* reset gpio is optional */
+ 	if (!host->device_reset)
+-		return;
++		return -EOPNOTSUPP;
+ 
+ 	/*
+ 	 * The UFS device shall detect reset pulses of 1us, sleep for 10us to
+@@ -1438,6 +1438,8 @@ static void ufs_qcom_device_reset(struct ufs_hba *hba)
+ 
+ 	gpiod_set_value_cansleep(host->device_reset, 0);
+ 	usleep_range(10, 15);
++
++	return 0;
+ }
+ 
+ #if IS_ENABLED(CONFIG_DEVFREQ_GOV_SIMPLE_ONDEMAND)
+diff --git a/drivers/scsi/ufs/ufshcd.h b/drivers/scsi/ufs/ufshcd.h
+index e0f00a42371c5..cd51553e522da 100644
+--- a/drivers/scsi/ufs/ufshcd.h
++++ b/drivers/scsi/ufs/ufshcd.h
+@@ -318,7 +318,7 @@ struct ufs_hba_variant_ops {
+ 	int     (*resume)(struct ufs_hba *, enum ufs_pm_op);
+ 	void	(*dbg_register_dump)(struct ufs_hba *hba);
+ 	int	(*phy_initialization)(struct ufs_hba *);
+-	void	(*device_reset)(struct ufs_hba *hba);
++	int	(*device_reset)(struct ufs_hba *hba);
+ 	void	(*config_scaling_param)(struct ufs_hba *hba,
+ 					struct devfreq_dev_profile *profile,
+ 					void *data);
+@@ -1181,9 +1181,17 @@ static inline void ufshcd_vops_dbg_register_dump(struct ufs_hba *hba)
+ static inline void ufshcd_vops_device_reset(struct ufs_hba *hba)
+ {
+ 	if (hba->vops && hba->vops->device_reset) {
+-		hba->vops->device_reset(hba);
+-		ufshcd_set_ufs_dev_active(hba);
+-		ufshcd_update_reg_hist(&hba->ufs_stats.dev_reset, 0);
++		int err = hba->vops->device_reset(hba);
++
++		if (!err) {
++			ufshcd_set_ufs_dev_active(hba);
++			if (ufshcd_is_wb_allowed(hba)) {
++				hba->wb_enabled = false;
++				hba->wb_buf_flush_enabled = false;
++			}
++		}
++		if (err != -EOPNOTSUPP)
++			ufshcd_update_reg_hist(&hba->ufs_stats.dev_reset, err);
+ 	}
+ }
+ 
+diff --git a/fs/exec.c b/fs/exec.c
+index 547a2390baf54..ca89e0e3ef10f 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -965,8 +965,8 @@ EXPORT_SYMBOL(read_code);
+ 
+ /*
+  * Maps the mm_struct mm into the current task struct.
+- * On success, this function returns with the mutex
+- * exec_update_mutex locked.
++ * On success, this function returns with exec_update_lock
++ * held for writing.
+  */
+ static int exec_mmap(struct mm_struct *mm)
+ {
+@@ -981,7 +981,7 @@ static int exec_mmap(struct mm_struct *mm)
+ 	if (old_mm)
+ 		sync_mm_rss(old_mm);
+ 
+-	ret = mutex_lock_killable(&tsk->signal->exec_update_mutex);
++	ret = down_write_killable(&tsk->signal->exec_update_lock);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -995,7 +995,7 @@ static int exec_mmap(struct mm_struct *mm)
+ 		mmap_read_lock(old_mm);
+ 		if (unlikely(old_mm->core_state)) {
+ 			mmap_read_unlock(old_mm);
+-			mutex_unlock(&tsk->signal->exec_update_mutex);
++			up_write(&tsk->signal->exec_update_lock);
+ 			return -EINTR;
+ 		}
+ 	}
+@@ -1382,7 +1382,7 @@ int begin_new_exec(struct linux_binprm * bprm)
+ 	return 0;
+ 
+ out_unlock:
+-	mutex_unlock(&me->signal->exec_update_mutex);
++	up_write(&me->signal->exec_update_lock);
+ out:
+ 	return retval;
+ }
+@@ -1423,7 +1423,7 @@ void setup_new_exec(struct linux_binprm * bprm)
+ 	 * some architectures like powerpc
+ 	 */
+ 	me->mm->task_size = TASK_SIZE;
+-	mutex_unlock(&me->signal->exec_update_mutex);
++	up_write(&me->signal->exec_update_lock);
+ 	mutex_unlock(&me->signal->cred_guard_mutex);
+ }
+ EXPORT_SYMBOL(setup_new_exec);
+diff --git a/fs/fuse/acl.c b/fs/fuse/acl.c
+index 5a48cee6d7d33..f529075a2ce87 100644
+--- a/fs/fuse/acl.c
++++ b/fs/fuse/acl.c
+@@ -19,6 +19,9 @@ struct posix_acl *fuse_get_acl(struct inode *inode, int type)
+ 	void *value = NULL;
+ 	struct posix_acl *acl;
+ 
++	if (fuse_is_bad(inode))
++		return ERR_PTR(-EIO);
++
+ 	if (!fc->posix_acl || fc->no_getxattr)
+ 		return NULL;
+ 
+@@ -53,6 +56,9 @@ int fuse_set_acl(struct inode *inode, struct posix_acl *acl, int type)
+ 	const char *name;
+ 	int ret;
+ 
++	if (fuse_is_bad(inode))
++		return -EIO;
++
+ 	if (!fc->posix_acl || fc->no_setxattr)
+ 		return -EOPNOTSUPP;
+ 
+diff --git a/fs/fuse/dir.c b/fs/fuse/dir.c
+index ff7dbeb16f88d..ffa031fe52933 100644
+--- a/fs/fuse/dir.c
++++ b/fs/fuse/dir.c
+@@ -202,7 +202,7 @@ static int fuse_dentry_revalidate(struct dentry *entry, unsigned int flags)
+ 	int ret;
+ 
+ 	inode = d_inode_rcu(entry);
+-	if (inode && is_bad_inode(inode))
++	if (inode && fuse_is_bad(inode))
+ 		goto invalid;
+ 	else if (time_before64(fuse_dentry_time(entry), get_jiffies_64()) ||
+ 		 (flags & LOOKUP_REVAL)) {
+@@ -463,6 +463,9 @@ static struct dentry *fuse_lookup(struct inode *dir, struct dentry *entry,
+ 	bool outarg_valid = true;
+ 	bool locked;
+ 
++	if (fuse_is_bad(dir))
++		return ERR_PTR(-EIO);
++
+ 	locked = fuse_lock_inode(dir);
+ 	err = fuse_lookup_name(dir->i_sb, get_node_id(dir), &entry->d_name,
+ 			       &outarg, &inode);
+@@ -606,6 +609,9 @@ static int fuse_atomic_open(struct inode *dir, struct dentry *entry,
+ 	struct fuse_conn *fc = get_fuse_conn(dir);
+ 	struct dentry *res = NULL;
+ 
++	if (fuse_is_bad(dir))
++		return -EIO;
++
+ 	if (d_in_lookup(entry)) {
+ 		res = fuse_lookup(dir, entry, 0);
+ 		if (IS_ERR(res))
+@@ -654,6 +660,9 @@ static int create_new_entry(struct fuse_mount *fm, struct fuse_args *args,
+ 	int err;
+ 	struct fuse_forget_link *forget;
+ 
++	if (fuse_is_bad(dir))
++		return -EIO;
++
+ 	forget = fuse_alloc_forget();
+ 	if (!forget)
+ 		return -ENOMEM;
+@@ -781,6 +790,9 @@ static int fuse_unlink(struct inode *dir, struct dentry *entry)
+ 	struct fuse_mount *fm = get_fuse_mount(dir);
+ 	FUSE_ARGS(args);
+ 
++	if (fuse_is_bad(dir))
++		return -EIO;
++
+ 	args.opcode = FUSE_UNLINK;
+ 	args.nodeid = get_node_id(dir);
+ 	args.in_numargs = 1;
+@@ -817,6 +829,9 @@ static int fuse_rmdir(struct inode *dir, struct dentry *entry)
+ 	struct fuse_mount *fm = get_fuse_mount(dir);
+ 	FUSE_ARGS(args);
+ 
++	if (fuse_is_bad(dir))
++		return -EIO;
++
+ 	args.opcode = FUSE_RMDIR;
+ 	args.nodeid = get_node_id(dir);
+ 	args.in_numargs = 1;
+@@ -895,6 +910,9 @@ static int fuse_rename2(struct inode *olddir, struct dentry *oldent,
+ 	struct fuse_conn *fc = get_fuse_conn(olddir);
+ 	int err;
+ 
++	if (fuse_is_bad(olddir))
++		return -EIO;
++
+ 	if (flags & ~(RENAME_NOREPLACE | RENAME_EXCHANGE | RENAME_WHITEOUT))
+ 		return -EINVAL;
+ 
+@@ -1030,7 +1048,7 @@ static int fuse_do_getattr(struct inode *inode, struct kstat *stat,
+ 	if (!err) {
+ 		if (fuse_invalid_attr(&outarg.attr) ||
+ 		    (inode->i_mode ^ outarg.attr.mode) & S_IFMT) {
+-			make_bad_inode(inode);
++			fuse_make_bad(inode);
+ 			err = -EIO;
+ 		} else {
+ 			fuse_change_attributes(inode, &outarg.attr,
+@@ -1232,6 +1250,9 @@ static int fuse_permission(struct inode *inode, int mask)
+ 	bool refreshed = false;
+ 	int err = 0;
+ 
++	if (fuse_is_bad(inode))
++		return -EIO;
++
+ 	if (!fuse_allow_current_process(fc))
+ 		return -EACCES;
+ 
+@@ -1327,7 +1348,7 @@ static const char *fuse_get_link(struct dentry *dentry, struct inode *inode,
+ 	int err;
+ 
+ 	err = -EIO;
+-	if (is_bad_inode(inode))
++	if (fuse_is_bad(inode))
+ 		goto out_err;
+ 
+ 	if (fc->cache_symlinks)
+@@ -1375,7 +1396,7 @@ static int fuse_dir_fsync(struct file *file, loff_t start, loff_t end,
+ 	struct fuse_conn *fc = get_fuse_conn(inode);
+ 	int err;
+ 
+-	if (is_bad_inode(inode))
++	if (fuse_is_bad(inode))
+ 		return -EIO;
+ 
+ 	if (fc->no_fsyncdir)
+@@ -1664,7 +1685,7 @@ int fuse_do_setattr(struct dentry *dentry, struct iattr *attr,
+ 
+ 	if (fuse_invalid_attr(&outarg.attr) ||
+ 	    (inode->i_mode ^ outarg.attr.mode) & S_IFMT) {
+-		make_bad_inode(inode);
++		fuse_make_bad(inode);
+ 		err = -EIO;
+ 		goto error;
+ 	}
+@@ -1727,6 +1748,9 @@ static int fuse_setattr(struct dentry *entry, struct iattr *attr)
+ 	struct file *file = (attr->ia_valid & ATTR_FILE) ? attr->ia_file : NULL;
+ 	int ret;
+ 
++	if (fuse_is_bad(inode))
++		return -EIO;
++
+ 	if (!fuse_allow_current_process(get_fuse_conn(inode)))
+ 		return -EACCES;
+ 
+@@ -1785,6 +1809,9 @@ static int fuse_getattr(const struct path *path, struct kstat *stat,
+ 	struct inode *inode = d_inode(path->dentry);
+ 	struct fuse_conn *fc = get_fuse_conn(inode);
+ 
++	if (fuse_is_bad(inode))
++		return -EIO;
++
+ 	if (!fuse_allow_current_process(fc)) {
+ 		if (!request_mask) {
+ 			/*
+diff --git a/fs/fuse/file.c b/fs/fuse/file.c
+index c03034e8c1529..8b306005453cc 100644
+--- a/fs/fuse/file.c
++++ b/fs/fuse/file.c
+@@ -226,6 +226,9 @@ int fuse_open_common(struct inode *inode, struct file *file, bool isdir)
+ 	bool dax_truncate = (file->f_flags & O_TRUNC) &&
+ 			  fc->atomic_o_trunc && FUSE_IS_DAX(inode);
+ 
++	if (fuse_is_bad(inode))
++		return -EIO;
++
+ 	err = generic_file_open(inode, file);
+ 	if (err)
+ 		return err;
+@@ -463,7 +466,7 @@ static int fuse_flush(struct file *file, fl_owner_t id)
+ 	FUSE_ARGS(args);
+ 	int err;
+ 
+-	if (is_bad_inode(inode))
++	if (fuse_is_bad(inode))
+ 		return -EIO;
+ 
+ 	err = write_inode_now(inode, 1);
+@@ -535,7 +538,7 @@ static int fuse_fsync(struct file *file, loff_t start, loff_t end,
+ 	struct fuse_conn *fc = get_fuse_conn(inode);
+ 	int err;
+ 
+-	if (is_bad_inode(inode))
++	if (fuse_is_bad(inode))
+ 		return -EIO;
+ 
+ 	inode_lock(inode);
+@@ -859,7 +862,7 @@ static int fuse_readpage(struct file *file, struct page *page)
+ 	int err;
+ 
+ 	err = -EIO;
+-	if (is_bad_inode(inode))
++	if (fuse_is_bad(inode))
+ 		goto out;
+ 
+ 	err = fuse_do_readpage(file, page);
+@@ -952,7 +955,7 @@ static void fuse_readahead(struct readahead_control *rac)
+ 	struct fuse_conn *fc = get_fuse_conn(inode);
+ 	unsigned int i, max_pages, nr_pages = 0;
+ 
+-	if (is_bad_inode(inode))
++	if (fuse_is_bad(inode))
+ 		return;
+ 
+ 	max_pages = min_t(unsigned int, fc->max_pages,
+@@ -1555,7 +1558,7 @@ static ssize_t fuse_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
+ 	struct fuse_file *ff = file->private_data;
+ 	struct inode *inode = file_inode(file);
+ 
+-	if (is_bad_inode(inode))
++	if (fuse_is_bad(inode))
+ 		return -EIO;
+ 
+ 	if (FUSE_IS_DAX(inode))
+@@ -1573,7 +1576,7 @@ static ssize_t fuse_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+ 	struct fuse_file *ff = file->private_data;
+ 	struct inode *inode = file_inode(file);
+ 
+-	if (is_bad_inode(inode))
++	if (fuse_is_bad(inode))
+ 		return -EIO;
+ 
+ 	if (FUSE_IS_DAX(inode))
+@@ -2172,7 +2175,7 @@ static int fuse_writepages(struct address_space *mapping,
+ 	int err;
+ 
+ 	err = -EIO;
+-	if (is_bad_inode(inode))
++	if (fuse_is_bad(inode))
+ 		goto out;
+ 
+ 	data.inode = inode;
+@@ -2954,7 +2957,7 @@ long fuse_ioctl_common(struct file *file, unsigned int cmd,
+ 	if (!fuse_allow_current_process(fc))
+ 		return -EACCES;
+ 
+-	if (is_bad_inode(inode))
++	if (fuse_is_bad(inode))
+ 		return -EIO;
+ 
+ 	return fuse_do_ioctl(file, cmd, arg, flags);
+diff --git a/fs/fuse/fuse_i.h b/fs/fuse/fuse_i.h
+index d51598017d133..404d66f01e8d7 100644
+--- a/fs/fuse/fuse_i.h
++++ b/fs/fuse/fuse_i.h
+@@ -172,6 +172,8 @@ enum {
+ 	FUSE_I_INIT_RDPLUS,
+ 	/** An operation changing file size is in progress  */
+ 	FUSE_I_SIZE_UNSTABLE,
++	/* Bad inode */
++	FUSE_I_BAD,
+ };
+ 
+ struct fuse_conn;
+@@ -858,6 +860,16 @@ static inline u64 fuse_get_attr_version(struct fuse_conn *fc)
+ 	return atomic64_read(&fc->attr_version);
+ }
+ 
++static inline void fuse_make_bad(struct inode *inode)
++{
++	set_bit(FUSE_I_BAD, &get_fuse_inode(inode)->state);
++}
++
++static inline bool fuse_is_bad(struct inode *inode)
++{
++	return unlikely(test_bit(FUSE_I_BAD, &get_fuse_inode(inode)->state));
++}
++
+ /** Device operations */
+ extern const struct file_operations fuse_dev_operations;
+ 
+diff --git a/fs/fuse/inode.c b/fs/fuse/inode.c
+index 1a47afc95f800..f94b0bb57619c 100644
+--- a/fs/fuse/inode.c
++++ b/fs/fuse/inode.c
+@@ -132,7 +132,7 @@ static void fuse_evict_inode(struct inode *inode)
+ 			fi->forget = NULL;
+ 		}
+ 	}
+-	if (S_ISREG(inode->i_mode) && !is_bad_inode(inode)) {
++	if (S_ISREG(inode->i_mode) && !fuse_is_bad(inode)) {
+ 		WARN_ON(!list_empty(&fi->write_files));
+ 		WARN_ON(!list_empty(&fi->queued_writes));
+ 	}
+@@ -342,7 +342,7 @@ retry:
+ 		unlock_new_inode(inode);
+ 	} else if ((inode->i_mode ^ attr->mode) & S_IFMT) {
+ 		/* Inode has changed type, any I/O on the old should fail */
+-		make_bad_inode(inode);
++		fuse_make_bad(inode);
+ 		iput(inode);
+ 		goto retry;
+ 	}
+diff --git a/fs/fuse/readdir.c b/fs/fuse/readdir.c
+index 3b5e91045871a..3441ffa740f3d 100644
+--- a/fs/fuse/readdir.c
++++ b/fs/fuse/readdir.c
+@@ -207,7 +207,7 @@ retry:
+ 			dput(dentry);
+ 			goto retry;
+ 		}
+-		if (is_bad_inode(inode)) {
++		if (fuse_is_bad(inode)) {
+ 			dput(dentry);
+ 			return -EIO;
+ 		}
+@@ -568,7 +568,7 @@ int fuse_readdir(struct file *file, struct dir_context *ctx)
+ 	struct inode *inode = file_inode(file);
+ 	int err;
+ 
+-	if (is_bad_inode(inode))
++	if (fuse_is_bad(inode))
+ 		return -EIO;
+ 
+ 	mutex_lock(&ff->readdir.lock);
+diff --git a/fs/fuse/xattr.c b/fs/fuse/xattr.c
+index 371bdcbc72337..cdea18de94f7e 100644
+--- a/fs/fuse/xattr.c
++++ b/fs/fuse/xattr.c
+@@ -113,6 +113,9 @@ ssize_t fuse_listxattr(struct dentry *entry, char *list, size_t size)
+ 	struct fuse_getxattr_out outarg;
+ 	ssize_t ret;
+ 
++	if (fuse_is_bad(inode))
++		return -EIO;
++
+ 	if (!fuse_allow_current_process(fm->fc))
+ 		return -EACCES;
+ 
+@@ -178,6 +181,9 @@ static int fuse_xattr_get(const struct xattr_handler *handler,
+ 			 struct dentry *dentry, struct inode *inode,
+ 			 const char *name, void *value, size_t size)
+ {
++	if (fuse_is_bad(inode))
++		return -EIO;
++
+ 	return fuse_getxattr(inode, name, value, size);
+ }
+ 
+@@ -186,6 +192,9 @@ static int fuse_xattr_set(const struct xattr_handler *handler,
+ 			  const char *name, const void *value, size_t size,
+ 			  int flags)
+ {
++	if (fuse_is_bad(inode))
++		return -EIO;
++
+ 	if (!value)
+ 		return fuse_removexattr(inode, name);
+ 
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index b362523a9829a..55ce0ee9c5c73 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -405,11 +405,11 @@ print0:
+ 
+ static int lock_trace(struct task_struct *task)
+ {
+-	int err = mutex_lock_killable(&task->signal->exec_update_mutex);
++	int err = down_read_killable(&task->signal->exec_update_lock);
+ 	if (err)
+ 		return err;
+ 	if (!ptrace_may_access(task, PTRACE_MODE_ATTACH_FSCREDS)) {
+-		mutex_unlock(&task->signal->exec_update_mutex);
++		up_read(&task->signal->exec_update_lock);
+ 		return -EPERM;
+ 	}
+ 	return 0;
+@@ -417,7 +417,7 @@ static int lock_trace(struct task_struct *task)
+ 
+ static void unlock_trace(struct task_struct *task)
+ {
+-	mutex_unlock(&task->signal->exec_update_mutex);
++	up_read(&task->signal->exec_update_lock);
+ }
+ 
+ #ifdef CONFIG_STACKTRACE
+@@ -2930,7 +2930,7 @@ static int do_io_accounting(struct task_struct *task, struct seq_file *m, int wh
+ 	unsigned long flags;
+ 	int result;
+ 
+-	result = mutex_lock_killable(&task->signal->exec_update_mutex);
++	result = down_read_killable(&task->signal->exec_update_lock);
+ 	if (result)
+ 		return result;
+ 
+@@ -2966,7 +2966,7 @@ static int do_io_accounting(struct task_struct *task, struct seq_file *m, int wh
+ 	result = 0;
+ 
+ out_unlock:
+-	mutex_unlock(&task->signal->exec_update_mutex);
++	up_read(&task->signal->exec_update_lock);
+ 	return result;
+ }
+ 
+diff --git a/include/linux/kdev_t.h b/include/linux/kdev_t.h
+index 85b5151911cfd..4856706fbfeb4 100644
+--- a/include/linux/kdev_t.h
++++ b/include/linux/kdev_t.h
+@@ -21,61 +21,61 @@
+ 	})
+ 
+ /* acceptable for old filesystems */
+-static inline bool old_valid_dev(dev_t dev)
++static __always_inline bool old_valid_dev(dev_t dev)
+ {
+ 	return MAJOR(dev) < 256 && MINOR(dev) < 256;
+ }
+ 
+-static inline u16 old_encode_dev(dev_t dev)
++static __always_inline u16 old_encode_dev(dev_t dev)
+ {
+ 	return (MAJOR(dev) << 8) | MINOR(dev);
+ }
+ 
+-static inline dev_t old_decode_dev(u16 val)
++static __always_inline dev_t old_decode_dev(u16 val)
+ {
+ 	return MKDEV((val >> 8) & 255, val & 255);
+ }
+ 
+-static inline u32 new_encode_dev(dev_t dev)
++static __always_inline u32 new_encode_dev(dev_t dev)
+ {
+ 	unsigned major = MAJOR(dev);
+ 	unsigned minor = MINOR(dev);
+ 	return (minor & 0xff) | (major << 8) | ((minor & ~0xff) << 12);
+ }
+ 
+-static inline dev_t new_decode_dev(u32 dev)
++static __always_inline dev_t new_decode_dev(u32 dev)
+ {
+ 	unsigned major = (dev & 0xfff00) >> 8;
+ 	unsigned minor = (dev & 0xff) | ((dev >> 12) & 0xfff00);
+ 	return MKDEV(major, minor);
+ }
+ 
+-static inline u64 huge_encode_dev(dev_t dev)
++static __always_inline u64 huge_encode_dev(dev_t dev)
+ {
+ 	return new_encode_dev(dev);
+ }
+ 
+-static inline dev_t huge_decode_dev(u64 dev)
++static __always_inline dev_t huge_decode_dev(u64 dev)
+ {
+ 	return new_decode_dev(dev);
+ }
+ 
+-static inline int sysv_valid_dev(dev_t dev)
++static __always_inline int sysv_valid_dev(dev_t dev)
+ {
+ 	return MAJOR(dev) < (1<<14) && MINOR(dev) < (1<<18);
+ }
+ 
+-static inline u32 sysv_encode_dev(dev_t dev)
++static __always_inline u32 sysv_encode_dev(dev_t dev)
+ {
+ 	return MINOR(dev) | (MAJOR(dev) << 18);
+ }
+ 
+-static inline unsigned sysv_major(u32 dev)
++static __always_inline unsigned sysv_major(u32 dev)
+ {
+ 	return (dev >> 18) & 0x3fff;
+ }
+ 
+-static inline unsigned sysv_minor(u32 dev)
++static __always_inline unsigned sysv_minor(u32 dev)
+ {
+ 	return dev & 0x3ffff;
+ }
+diff --git a/include/linux/rwsem.h b/include/linux/rwsem.h
+index 25e3fde856178..4c715be487171 100644
+--- a/include/linux/rwsem.h
++++ b/include/linux/rwsem.h
+@@ -123,6 +123,7 @@ static inline int rwsem_is_contended(struct rw_semaphore *sem)
+  * lock for reading
+  */
+ extern void down_read(struct rw_semaphore *sem);
++extern int __must_check down_read_interruptible(struct rw_semaphore *sem);
+ extern int __must_check down_read_killable(struct rw_semaphore *sem);
+ 
+ /*
+@@ -171,6 +172,7 @@ extern void downgrade_write(struct rw_semaphore *sem);
+  * See Documentation/locking/lockdep-design.rst for more details.)
+  */
+ extern void down_read_nested(struct rw_semaphore *sem, int subclass);
++extern int __must_check down_read_killable_nested(struct rw_semaphore *sem, int subclass);
+ extern void down_write_nested(struct rw_semaphore *sem, int subclass);
+ extern int down_write_killable_nested(struct rw_semaphore *sem, int subclass);
+ extern void _down_write_nest_lock(struct rw_semaphore *sem, struct lockdep_map *nest_lock);
+@@ -191,6 +193,7 @@ extern void down_read_non_owner(struct rw_semaphore *sem);
+ extern void up_read_non_owner(struct rw_semaphore *sem);
+ #else
+ # define down_read_nested(sem, subclass)		down_read(sem)
++# define down_read_killable_nested(sem, subclass)	down_read_killable(sem)
+ # define down_write_nest_lock(sem, nest_lock)	down_write(sem)
+ # define down_write_nested(sem, subclass)	down_write(sem)
+ # define down_write_killable_nested(sem, subclass)	down_write_killable(sem)
+diff --git a/include/linux/sched/signal.h b/include/linux/sched/signal.h
+index 1bad18a1d8ba7..4b6a8234d7fc2 100644
+--- a/include/linux/sched/signal.h
++++ b/include/linux/sched/signal.h
+@@ -228,12 +228,13 @@ struct signal_struct {
+ 					 * credential calculations
+ 					 * (notably. ptrace)
+ 					 * Deprecated do not use in new code.
+-					 * Use exec_update_mutex instead.
+-					 */
+-	struct mutex exec_update_mutex;	/* Held while task_struct is being
+-					 * updated during exec, and may have
+-					 * inconsistent permissions.
++					 * Use exec_update_lock instead.
+ 					 */
++	struct rw_semaphore exec_update_lock;	/* Held while task_struct is
++						 * being updated during exec,
++						 * and may have inconsistent
++						 * permissions.
++						 */
+ } __randomize_layout;
+ 
+ /*
+diff --git a/include/rdma/ib_verbs.h b/include/rdma/ib_verbs.h
+index 9bf6c319a670e..65771bef5e654 100644
+--- a/include/rdma/ib_verbs.h
++++ b/include/rdma/ib_verbs.h
+@@ -3943,6 +3943,16 @@ static inline int ib_req_ncomp_notif(struct ib_cq *cq, int wc_cnt)
+ 		-ENOSYS;
+ }
+ 
++/*
++ * Drivers that don't need a DMA mapping at the RDMA layer, set dma_device to
++ * NULL. This causes the ib_dma* helpers to just stash the kernel virtual
++ * address into the dma address.
++ */
++static inline bool ib_uses_virt_dma(struct ib_device *dev)
++{
++	return IS_ENABLED(CONFIG_INFINIBAND_VIRT_DMA) && !dev->dma_device;
++}
++
+ /**
+  * ib_dma_mapping_error - check a DMA addr for error
+  * @dev: The device for which the dma_addr was created
+@@ -3950,6 +3960,8 @@ static inline int ib_req_ncomp_notif(struct ib_cq *cq, int wc_cnt)
+  */
+ static inline int ib_dma_mapping_error(struct ib_device *dev, u64 dma_addr)
+ {
++	if (ib_uses_virt_dma(dev))
++		return 0;
+ 	return dma_mapping_error(dev->dma_device, dma_addr);
+ }
+ 
+@@ -3964,6 +3976,8 @@ static inline u64 ib_dma_map_single(struct ib_device *dev,
+ 				    void *cpu_addr, size_t size,
+ 				    enum dma_data_direction direction)
+ {
++	if (ib_uses_virt_dma(dev))
++		return (uintptr_t)cpu_addr;
+ 	return dma_map_single(dev->dma_device, cpu_addr, size, direction);
+ }
+ 
+@@ -3978,7 +3992,8 @@ static inline void ib_dma_unmap_single(struct ib_device *dev,
+ 				       u64 addr, size_t size,
+ 				       enum dma_data_direction direction)
+ {
+-	dma_unmap_single(dev->dma_device, addr, size, direction);
++	if (!ib_uses_virt_dma(dev))
++		dma_unmap_single(dev->dma_device, addr, size, direction);
+ }
+ 
+ /**
+@@ -3995,6 +4010,8 @@ static inline u64 ib_dma_map_page(struct ib_device *dev,
+ 				  size_t size,
+ 					 enum dma_data_direction direction)
+ {
++	if (ib_uses_virt_dma(dev))
++		return (uintptr_t)(page_address(page) + offset);
+ 	return dma_map_page(dev->dma_device, page, offset, size, direction);
+ }
+ 
+@@ -4009,7 +4026,30 @@ static inline void ib_dma_unmap_page(struct ib_device *dev,
+ 				     u64 addr, size_t size,
+ 				     enum dma_data_direction direction)
+ {
+-	dma_unmap_page(dev->dma_device, addr, size, direction);
++	if (!ib_uses_virt_dma(dev))
++		dma_unmap_page(dev->dma_device, addr, size, direction);
++}
++
++int ib_dma_virt_map_sg(struct ib_device *dev, struct scatterlist *sg, int nents);
++static inline int ib_dma_map_sg_attrs(struct ib_device *dev,
++				      struct scatterlist *sg, int nents,
++				      enum dma_data_direction direction,
++				      unsigned long dma_attrs)
++{
++	if (ib_uses_virt_dma(dev))
++		return ib_dma_virt_map_sg(dev, sg, nents);
++	return dma_map_sg_attrs(dev->dma_device, sg, nents, direction,
++				dma_attrs);
++}
++
++static inline void ib_dma_unmap_sg_attrs(struct ib_device *dev,
++					 struct scatterlist *sg, int nents,
++					 enum dma_data_direction direction,
++					 unsigned long dma_attrs)
++{
++	if (!ib_uses_virt_dma(dev))
++		dma_unmap_sg_attrs(dev->dma_device, sg, nents, direction,
++				   dma_attrs);
+ }
+ 
+ /**
+@@ -4023,7 +4063,7 @@ static inline int ib_dma_map_sg(struct ib_device *dev,
+ 				struct scatterlist *sg, int nents,
+ 				enum dma_data_direction direction)
+ {
+-	return dma_map_sg(dev->dma_device, sg, nents, direction);
++	return ib_dma_map_sg_attrs(dev, sg, nents, direction, 0);
+ }
+ 
+ /**
+@@ -4037,24 +4077,7 @@ static inline void ib_dma_unmap_sg(struct ib_device *dev,
+ 				   struct scatterlist *sg, int nents,
+ 				   enum dma_data_direction direction)
+ {
+-	dma_unmap_sg(dev->dma_device, sg, nents, direction);
+-}
+-
+-static inline int ib_dma_map_sg_attrs(struct ib_device *dev,
+-				      struct scatterlist *sg, int nents,
+-				      enum dma_data_direction direction,
+-				      unsigned long dma_attrs)
+-{
+-	return dma_map_sg_attrs(dev->dma_device, sg, nents, direction,
+-				dma_attrs);
+-}
+-
+-static inline void ib_dma_unmap_sg_attrs(struct ib_device *dev,
+-					 struct scatterlist *sg, int nents,
+-					 enum dma_data_direction direction,
+-					 unsigned long dma_attrs)
+-{
+-	dma_unmap_sg_attrs(dev->dma_device, sg, nents, direction, dma_attrs);
++	ib_dma_unmap_sg_attrs(dev, sg, nents, direction, 0);
+ }
+ 
+ /**
+@@ -4065,6 +4088,8 @@ static inline void ib_dma_unmap_sg_attrs(struct ib_device *dev,
+  */
+ static inline unsigned int ib_dma_max_seg_size(struct ib_device *dev)
+ {
++	if (ib_uses_virt_dma(dev))
++		return UINT_MAX;
+ 	return dma_get_max_seg_size(dev->dma_device);
+ }
+ 
+@@ -4080,7 +4105,8 @@ static inline void ib_dma_sync_single_for_cpu(struct ib_device *dev,
+ 					      size_t size,
+ 					      enum dma_data_direction dir)
+ {
+-	dma_sync_single_for_cpu(dev->dma_device, addr, size, dir);
++	if (!ib_uses_virt_dma(dev))
++		dma_sync_single_for_cpu(dev->dma_device, addr, size, dir);
+ }
+ 
+ /**
+@@ -4095,7 +4121,8 @@ static inline void ib_dma_sync_single_for_device(struct ib_device *dev,
+ 						 size_t size,
+ 						 enum dma_data_direction dir)
+ {
+-	dma_sync_single_for_device(dev->dma_device, addr, size, dir);
++	if (!ib_uses_virt_dma(dev))
++		dma_sync_single_for_device(dev->dma_device, addr, size, dir);
+ }
+ 
+ /**
+diff --git a/init/init_task.c b/init/init_task.c
+index a56f0abb63e93..15f6eb93a04fa 100644
+--- a/init/init_task.c
++++ b/init/init_task.c
+@@ -26,7 +26,7 @@ static struct signal_struct init_signals = {
+ 	.multiprocess	= HLIST_HEAD_INIT,
+ 	.rlim		= INIT_RLIMITS,
+ 	.cred_guard_mutex = __MUTEX_INITIALIZER(init_signals.cred_guard_mutex),
+-	.exec_update_mutex = __MUTEX_INITIALIZER(init_signals.exec_update_mutex),
++	.exec_update_lock = __RWSEM_INITIALIZER(init_signals.exec_update_lock),
+ #ifdef CONFIG_POSIX_TIMERS
+ 	.posix_timers = LIST_HEAD_INIT(init_signals.posix_timers),
+ 	.cputimer	= {
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index dc568ca295bdc..c3ba29d058b73 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -1325,7 +1325,7 @@ static void put_ctx(struct perf_event_context *ctx)
+  * function.
+  *
+  * Lock order:
+- *    exec_update_mutex
++ *    exec_update_lock
+  *	task_struct::perf_event_mutex
+  *	  perf_event_context::mutex
+  *	    perf_event::child_mutex;
+@@ -11720,24 +11720,6 @@ SYSCALL_DEFINE5(perf_event_open,
+ 		goto err_task;
+ 	}
+ 
+-	if (task) {
+-		err = mutex_lock_interruptible(&task->signal->exec_update_mutex);
+-		if (err)
+-			goto err_task;
+-
+-		/*
+-		 * Preserve ptrace permission check for backwards compatibility.
+-		 *
+-		 * We must hold exec_update_mutex across this and any potential
+-		 * perf_install_in_context() call for this new event to
+-		 * serialize against exec() altering our credentials (and the
+-		 * perf_event_exit_task() that could imply).
+-		 */
+-		err = -EACCES;
+-		if (!perfmon_capable() && !ptrace_may_access(task, PTRACE_MODE_READ_REALCREDS))
+-			goto err_cred;
+-	}
+-
+ 	if (flags & PERF_FLAG_PID_CGROUP)
+ 		cgroup_fd = pid;
+ 
+@@ -11745,7 +11727,7 @@ SYSCALL_DEFINE5(perf_event_open,
+ 				 NULL, NULL, cgroup_fd);
+ 	if (IS_ERR(event)) {
+ 		err = PTR_ERR(event);
+-		goto err_cred;
++		goto err_task;
+ 	}
+ 
+ 	if (is_sampling_event(event)) {
+@@ -11864,6 +11846,24 @@ SYSCALL_DEFINE5(perf_event_open,
+ 		goto err_context;
+ 	}
+ 
++	if (task) {
++		err = down_read_interruptible(&task->signal->exec_update_lock);
++		if (err)
++			goto err_file;
++
++		/*
++		 * Preserve ptrace permission check for backwards compatibility.
++		 *
++		 * We must hold exec_update_lock across this and any potential
++		 * perf_install_in_context() call for this new event to
++		 * serialize against exec() altering our credentials (and the
++		 * perf_event_exit_task() that could imply).
++		 */
++		err = -EACCES;
++		if (!perfmon_capable() && !ptrace_may_access(task, PTRACE_MODE_READ_REALCREDS))
++			goto err_cred;
++	}
++
+ 	if (move_group) {
+ 		gctx = __perf_event_ctx_lock_double(group_leader, ctx);
+ 
+@@ -12017,7 +12017,7 @@ SYSCALL_DEFINE5(perf_event_open,
+ 	mutex_unlock(&ctx->mutex);
+ 
+ 	if (task) {
+-		mutex_unlock(&task->signal->exec_update_mutex);
++		up_read(&task->signal->exec_update_lock);
+ 		put_task_struct(task);
+ 	}
+ 
+@@ -12039,7 +12039,10 @@ err_locked:
+ 	if (move_group)
+ 		perf_event_ctx_unlock(group_leader, gctx);
+ 	mutex_unlock(&ctx->mutex);
+-/* err_file: */
++err_cred:
++	if (task)
++		up_read(&task->signal->exec_update_lock);
++err_file:
+ 	fput(event_file);
+ err_context:
+ 	perf_unpin_context(ctx);
+@@ -12051,9 +12054,6 @@ err_alloc:
+ 	 */
+ 	if (!event_file)
+ 		free_event(event);
+-err_cred:
+-	if (task)
+-		mutex_unlock(&task->signal->exec_update_mutex);
+ err_task:
+ 	if (task)
+ 		put_task_struct(task);
+@@ -12358,7 +12358,7 @@ static void perf_event_exit_task_context(struct task_struct *child, int ctxn)
+ /*
+  * When a child task exits, feed back event values to parent events.
+  *
+- * Can be called with exec_update_mutex held when called from
++ * Can be called with exec_update_lock held when called from
+  * setup_new_exec().
+  */
+ void perf_event_exit_task(struct task_struct *child)
+diff --git a/kernel/fork.c b/kernel/fork.c
+index dc55f68a6ee36..c675fdbd3dce1 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -1222,7 +1222,7 @@ struct mm_struct *mm_access(struct task_struct *task, unsigned int mode)
+ 	struct mm_struct *mm;
+ 	int err;
+ 
+-	err =  mutex_lock_killable(&task->signal->exec_update_mutex);
++	err =  down_read_killable(&task->signal->exec_update_lock);
+ 	if (err)
+ 		return ERR_PTR(err);
+ 
+@@ -1232,7 +1232,7 @@ struct mm_struct *mm_access(struct task_struct *task, unsigned int mode)
+ 		mmput(mm);
+ 		mm = ERR_PTR(-EACCES);
+ 	}
+-	mutex_unlock(&task->signal->exec_update_mutex);
++	up_read(&task->signal->exec_update_lock);
+ 
+ 	return mm;
+ }
+@@ -1592,7 +1592,7 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
+ 	sig->oom_score_adj_min = current->signal->oom_score_adj_min;
+ 
+ 	mutex_init(&sig->cred_guard_mutex);
+-	mutex_init(&sig->exec_update_mutex);
++	init_rwsem(&sig->exec_update_lock);
+ 
+ 	return 0;
+ }
+diff --git a/kernel/kcmp.c b/kernel/kcmp.c
+index b3ff9288c6cc9..c0d2ad9b4705d 100644
+--- a/kernel/kcmp.c
++++ b/kernel/kcmp.c
+@@ -75,25 +75,25 @@ get_file_raw_ptr(struct task_struct *task, unsigned int idx)
+ 	return file;
+ }
+ 
+-static void kcmp_unlock(struct mutex *m1, struct mutex *m2)
++static void kcmp_unlock(struct rw_semaphore *l1, struct rw_semaphore *l2)
+ {
+-	if (likely(m2 != m1))
+-		mutex_unlock(m2);
+-	mutex_unlock(m1);
++	if (likely(l2 != l1))
++		up_read(l2);
++	up_read(l1);
+ }
+ 
+-static int kcmp_lock(struct mutex *m1, struct mutex *m2)
++static int kcmp_lock(struct rw_semaphore *l1, struct rw_semaphore *l2)
+ {
+ 	int err;
+ 
+-	if (m2 > m1)
+-		swap(m1, m2);
++	if (l2 > l1)
++		swap(l1, l2);
+ 
+-	err = mutex_lock_killable(m1);
+-	if (!err && likely(m1 != m2)) {
+-		err = mutex_lock_killable_nested(m2, SINGLE_DEPTH_NESTING);
++	err = down_read_killable(l1);
++	if (!err && likely(l1 != l2)) {
++		err = down_read_killable_nested(l2, SINGLE_DEPTH_NESTING);
+ 		if (err)
+-			mutex_unlock(m1);
++			up_read(l1);
+ 	}
+ 
+ 	return err;
+@@ -173,8 +173,8 @@ SYSCALL_DEFINE5(kcmp, pid_t, pid1, pid_t, pid2, int, type,
+ 	/*
+ 	 * One should have enough rights to inspect task details.
+ 	 */
+-	ret = kcmp_lock(&task1->signal->exec_update_mutex,
+-			&task2->signal->exec_update_mutex);
++	ret = kcmp_lock(&task1->signal->exec_update_lock,
++			&task2->signal->exec_update_lock);
+ 	if (ret)
+ 		goto err;
+ 	if (!ptrace_may_access(task1, PTRACE_MODE_READ_REALCREDS) ||
+@@ -229,8 +229,8 @@ SYSCALL_DEFINE5(kcmp, pid_t, pid1, pid_t, pid2, int, type,
+ 	}
+ 
+ err_unlock:
+-	kcmp_unlock(&task1->signal->exec_update_mutex,
+-		    &task2->signal->exec_update_mutex);
++	kcmp_unlock(&task1->signal->exec_update_lock,
++		    &task2->signal->exec_update_lock);
+ err:
+ 	put_task_struct(task1);
+ 	put_task_struct(task2);
+diff --git a/kernel/locking/rwsem.c b/kernel/locking/rwsem.c
+index f11b9bd3431d2..a163542d178ee 100644
+--- a/kernel/locking/rwsem.c
++++ b/kernel/locking/rwsem.c
+@@ -1345,6 +1345,18 @@ static inline void __down_read(struct rw_semaphore *sem)
+ 	}
+ }
+ 
++static inline int __down_read_interruptible(struct rw_semaphore *sem)
++{
++	if (!rwsem_read_trylock(sem)) {
++		if (IS_ERR(rwsem_down_read_slowpath(sem, TASK_INTERRUPTIBLE)))
++			return -EINTR;
++		DEBUG_RWSEMS_WARN_ON(!is_rwsem_reader_owned(sem), sem);
++	} else {
++		rwsem_set_reader_owned(sem);
++	}
++	return 0;
++}
++
+ static inline int __down_read_killable(struct rw_semaphore *sem)
+ {
+ 	if (!rwsem_read_trylock(sem)) {
+@@ -1495,6 +1507,20 @@ void __sched down_read(struct rw_semaphore *sem)
+ }
+ EXPORT_SYMBOL(down_read);
+ 
++int __sched down_read_interruptible(struct rw_semaphore *sem)
++{
++	might_sleep();
++	rwsem_acquire_read(&sem->dep_map, 0, 0, _RET_IP_);
++
++	if (LOCK_CONTENDED_RETURN(sem, __down_read_trylock, __down_read_interruptible)) {
++		rwsem_release(&sem->dep_map, _RET_IP_);
++		return -EINTR;
++	}
++
++	return 0;
++}
++EXPORT_SYMBOL(down_read_interruptible);
++
+ int __sched down_read_killable(struct rw_semaphore *sem)
+ {
+ 	might_sleep();
+@@ -1605,6 +1631,20 @@ void down_read_nested(struct rw_semaphore *sem, int subclass)
+ }
+ EXPORT_SYMBOL(down_read_nested);
+ 
++int down_read_killable_nested(struct rw_semaphore *sem, int subclass)
++{
++	might_sleep();
++	rwsem_acquire_read(&sem->dep_map, subclass, 0, _RET_IP_);
++
++	if (LOCK_CONTENDED_RETURN(sem, __down_read_trylock, __down_read_killable)) {
++		rwsem_release(&sem->dep_map, _RET_IP_);
++		return -EINTR;
++	}
++
++	return 0;
++}
++EXPORT_SYMBOL(down_read_killable_nested);
++
+ void _down_write_nest_lock(struct rw_semaphore *sem, struct lockdep_map *nest)
+ {
+ 	might_sleep();
+diff --git a/kernel/pid.c b/kernel/pid.c
+index a96bc4bf4f869..4856818c9de1a 100644
+--- a/kernel/pid.c
++++ b/kernel/pid.c
+@@ -628,7 +628,7 @@ static struct file *__pidfd_fget(struct task_struct *task, int fd)
+ 	struct file *file;
+ 	int ret;
+ 
+-	ret = mutex_lock_killable(&task->signal->exec_update_mutex);
++	ret = down_read_killable(&task->signal->exec_update_lock);
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
+@@ -637,7 +637,7 @@ static struct file *__pidfd_fget(struct task_struct *task, int fd)
+ 	else
+ 		file = ERR_PTR(-EPERM);
+ 
+-	mutex_unlock(&task->signal->exec_update_mutex);
++	up_read(&task->signal->exec_update_lock);
+ 
+ 	return file ?: ERR_PTR(-EBADF);
+ }
+diff --git a/net/bluetooth/hci_core.c b/net/bluetooth/hci_core.c
+index 502552d6e9aff..c4aa2cbb92697 100644
+--- a/net/bluetooth/hci_core.c
++++ b/net/bluetooth/hci_core.c
+@@ -763,7 +763,7 @@ static int hci_init3_req(struct hci_request *req, unsigned long opt)
+ 			hci_req_add(req, HCI_OP_LE_CLEAR_RESOLV_LIST, 0, NULL);
+ 		}
+ 
+-		if (hdev->commands[35] & 0x40) {
++		if (hdev->commands[35] & 0x04) {
+ 			__le16 rpa_timeout = cpu_to_le16(hdev->rpa_timeout);
+ 
+ 			/* Set RPA timeout */
+diff --git a/sound/pci/hda/patch_hdmi.c b/sound/pci/hda/patch_hdmi.c
+index 2ddc27db8c012..d12b4799c3cb7 100644
+--- a/sound/pci/hda/patch_hdmi.c
++++ b/sound/pci/hda/patch_hdmi.c
+@@ -1736,7 +1736,7 @@ static void silent_stream_disable(struct hda_codec *codec,
+ 	per_pin->silent_stream = false;
+ 
+  unlock_out:
+-	mutex_unlock(&spec->pcm_lock);
++	mutex_unlock(&per_pin->lock);
+ }
+ 
+ /* update ELD and jack state via audio component */
+diff --git a/sound/pci/hda/patch_realtek.c b/sound/pci/hda/patch_realtek.c
+index dde5ba2095415..006af6541dada 100644
+--- a/sound/pci/hda/patch_realtek.c
++++ b/sound/pci/hda/patch_realtek.c
+@@ -7885,7 +7885,7 @@ static const struct snd_pci_quirk alc269_fixup_tbl[] = {
+ 	SND_PCI_QUIRK(0x1028, 0x09bf, "Dell Precision", ALC233_FIXUP_ASUS_MIC_NO_PRESENCE),
+ 	SND_PCI_QUIRK(0x1028, 0x0a2e, "Dell", ALC236_FIXUP_DELL_AIO_HEADSET_MIC),
+ 	SND_PCI_QUIRK(0x1028, 0x0a30, "Dell", ALC236_FIXUP_DELL_AIO_HEADSET_MIC),
+-	SND_PCI_QUIRK(0x1028, 0x0a58, "Dell Precision 3650 Tower", ALC255_FIXUP_DELL_HEADSET_MIC),
++	SND_PCI_QUIRK(0x1028, 0x0a58, "Dell", ALC255_FIXUP_DELL_HEADSET_MIC),
+ 	SND_PCI_QUIRK(0x1028, 0x164a, "Dell", ALC293_FIXUP_DELL1_MIC_NO_PRESENCE),
+ 	SND_PCI_QUIRK(0x1028, 0x164b, "Dell", ALC293_FIXUP_DELL1_MIC_NO_PRESENCE),
+ 	SND_PCI_QUIRK(0x103c, 0x1586, "HP", ALC269_FIXUP_HP_MUTE_LED_MIC2),
