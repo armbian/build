@@ -397,8 +397,8 @@ aggregate_all_debootstrap() {
 	potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/custom/boards/${BOARD}/${looked_up_subpath}"
 	echo "SELECTED_CONFIGURATION : ${SELECTED_CONFIGURATION}" >> "${DEST}"/debug/output.log
 	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
-		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/debootstrap/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
-		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/debootstrap/custom/boards/${BOARD}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/config_${SELECTED_CONFIGURATION}/custom/boards/${BOARD}/${looked_up_subpath}"
 	fi
 
 	aggregate_content
@@ -411,7 +411,7 @@ aggregate_all_cli() {
 	potential_paths+=" ${CLI_CONFIG_PATH}/main/custom/boards/${BOARD}/${looked_up_subpath}"
 	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
 		potential_paths+=" ${CLI_CONFIG_PATH}/main/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
-		potential_paths+=" ${CLI_CONFIG_PATH}/main/custom/boards/${BOARD}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
+		potential_paths+=" ${CLI_CONFIG_PATH}/main/config_${SELECTED_CONFIGURATION}/custom/boards/${BOARD}/${looked_up_subpath}"
 	fi
 
 	aggregate_content
