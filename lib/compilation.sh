@@ -583,8 +583,9 @@ compile_armbian-zsh()
 	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postrm
 	#!/bin/sh
 	# change shell back to bash for future users
-	sed -i "s/^SHELL=.*/SHELL=\/usr\/bin\/bash/" /etc/default/useradd
-	sed -i "s/^DSHELL=.*/DSHELL=\/usr\/bin\/bash/" /etc/adduser.conf
+	BASHLOCATION=\$(grep /bash\$ /etc/shells | tail -1)
+	sed -i "s|^SHELL=.*|SHELL=\${BASHLOCATION}|" /etc/default/useradd
+	sed -i "s|^DSHELL=.*|DSHELL=\${BASHLOCATION}|" /etc/adduser.conf
 	# change to BASH shell for root and all normal users
 	awk -F'[/:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print \$1}' /etc/passwd | xargs -L1 chsh -s \$(grep /bash\$ /etc/shells | tail -1)
 	exit 0
