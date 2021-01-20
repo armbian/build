@@ -561,6 +561,9 @@ install_distribution_specific()
 			rm -f "${SDCARD}"/etc/update-motd.d/50-motd-news
 			rm -f "${SDCARD}"/etc/update-motd.d/80-esm
 			rm -f "${SDCARD}"/etc/update-motd.d/80-livepatch
+			rm -f "${SDCARD}"/etc/update-motd.d/90-updates-available
+			rm -f "${SDCARD}"/etc/update-motd.d/91-release-upgrade
+			rm -f "${SDCARD}"/etc/update-motd.d/95-hwe-eol
 
 			# remove motd news from motd.ubuntu.com
 			[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news
