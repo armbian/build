@@ -425,8 +425,8 @@ one_line() {
 	cleanup_list aggregated_content
 }
 
-DEBOOTSTRAP_LIST="$(one_line aggregate_all_debootstrap "packages")"
-DEBOOTSTRAP_COMPONENTS="$(one_line aggregate_all_debootstrap "components")"
+DEBOOTSTRAP_LIST="$(one_line aggregate_all_debootstrap "packages" " ")"
+DEBOOTSTRAP_COMPONENTS="$(one_line aggregate_all_debootstrap "components" " ")"
 DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
 PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
 PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
@@ -493,10 +493,7 @@ PACKAGE_MAIN_LIST="$(cleanup_list PACKAGE_LIST)"
 PACKAGE_LIST="$(cleanup_list PACKAGE_LIST)"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
-# FIXME : This actually nuke any content set to PACKAGE_LIST_RM
-# if present !
-# - Myy
-aggregated_content=""
+aggregated_content="${PACKAGE_LIST_RM} "
 aggregate_all_cli "packages.remove" " "
 aggregate_all "packages.remove" " "
 PACKAGE_LIST_RM="$(cleanup_list aggregated_content)"
