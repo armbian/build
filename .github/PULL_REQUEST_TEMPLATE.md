@@ -1,10 +1,21 @@
-Please use the "Preview" tab above to view this message if you are seeing this in the new pull request text box.
+# Description
 
-Please make sure that:
+Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context. List any dependencies that are required for this change.
 
- - pull request is opened to the `master` branch unless you are working on a specfic feature which is developed in a separate branch
- - any changes to kernel configuration files were made by Kconfig menu (build script option `KERNEL_CONFIGURE=yes`) and not by editing configuration files by hand,
- - patch file names don't contain spaces and have less than 40 characters (not counting the `.patch` extension),
- - changes are properly described - what was done exactly and why.
+Jira reference number [AR-9999]
 
-Thanks for contributing! Please remove the text above before opening a pull request.
+# How Has This Been Tested?
+
+Please describe the tests that you ran to verify your changes. Please also note any relevant details for your test configuration.
+
+- [ ] Test A
+- [ ] Test B
+
+# Checklist:
+
+- [ ] My code follows the style guidelines of this project
+- [ ] I have performed a self-review of my own code
+- [ ] I have commented my code, particularly in hard-to-understand areas
+- [ ] I have made corresponding changes to the documentation
+- [ ] My changes generate no new warnings
+- [ ] Any dependent changes have been merged and published in downstream modules

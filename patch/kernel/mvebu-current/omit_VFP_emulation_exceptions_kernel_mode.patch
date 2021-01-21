@@ -1,0 +1,158 @@
+From: "Ard Biesheuvel" <(address hidden)>
+Subject: entry: omit FP emulation for UND exceptions taken in kernel mode
+
+There are a couple of problems with the exception entry code that deals
+with FP exceptions (which are reported as UND exceptions) when building
+the kernel in Thumb2 mode:
+- the conditional branch to vfp_kmode_exception in vfp_support_entry()
+  may be out of range for its target, depending on how the linker decides
+  to arrange the sections;
+- when the UND exception is taken in kernel mode, the emulation handling
+  logic is entered via the 'call_fpe' label, which means we end up using
+  the wrong value/mask pairs to match and detect the NEON opcodes.
+
+Since UND exceptions in kernel mode are unlikely to occur on a hot path
+(as opposed to the user mode version which is invoked for VFP support
+code and lazy restore), we can use the existing undef hook machinery for
+any kernel mode instruction emulation that is needed, including calling
+the existing vfp_kmode_exception() routine for unexpected cases. So drop
+the call to call_fpe, and instead, install an undef hook that will get
+called for NEON and VFP instructions that trigger an UND exception in
+kernel mode.
+
+While at it, make sure that the PC correction is accurate for the
+execution mode where the exception was taken, by checking the PSR
+Thumb bit.
+
+Cc: Dmitry Osipenko <(address hidden)>
+Cc: Kees Cook <(address hidden)>
+Fixes: eff8728fe698 ("vmlinux.lds.h: Add PGO and AutoFDO input sections")
+Signed-off-by: Ard Biesheuvel <(address hidden)>
+Reviewed-by: Linus Walleij <(address hidden)>
+Reviewed-by: Nick Desaulniers <(address hidden)>
+---
+
+--- a/arch/arm/kernel/entry-armv.S
++++ b/arch/arm/kernel/entry-armv.S
+@@ -252,31 +252,10 @@ __und_svc:
+ #else
+ 	svc_entry
+ #endif
+-	@
+-	@ call emulation code, which returns using r9 if it has emulated
+-	@ the instruction, or the more conventional lr if we are to treat
+-	@ this as a real undefined instruction
+-	@
+-	@  r0 - instruction
+-	@
+-#ifndef CONFIG_THUMB2_KERNEL
+-	ldr	r0, [r4, #-4]
+-#else
+-	mov	r1, #2
+-	ldrh	r0, [r4, #-2]			@ Thumb instruction at LR - 2
+-	cmp	r0, #0xe800			@ 32-bit instruction if xx >= 0
+-	blo	__und_svc_fault
+-	ldrh	r9, [r4]			@ bottom 16 bits
+-	add	r4, r4, #2
+-	str	r4, [sp, #S_PC]
+-	orr	r0, r9, r0, lsl #16
+-#endif
+-	badr	r9, __und_svc_finish
+-	mov	r2, r4
+-	bl	call_fpe
+ 
+ 	mov	r1, #4				@ PC correction to apply
+-__und_svc_fault:
++ THUMB(	tst	r5, #PSR_T_BIT		)	@ exception taken in Thumb mode?
++ THUMB(	movne	r1, #2			)	@ if so, fix up PC correction
+ 	mov	r0, sp				@ struct pt_regs *regs
+ 	bl	__und_fault
+ 
+--- a/arch/arm/vfp/vfphw.S
++++ b/arch/arm/vfp/vfphw.S
+@@ -79,11 +79,6 @@ ENTRY(vfp_support_entry)
+ 	DBGSTR3	"instr %08x pc %08x state %p", r0, r2, r10
+ 
+ 	.fpu	vfpv2
+-	ldr	r3, [sp, #S_PSR]	@ Neither lazy restore nor FP exceptions
+-	and	r3, r3, #MODE_MASK	@ are supported in kernel mode
+-	teq	r3, #USR_MODE
+-	bne	vfp_kmode_exception	@ Returns through lr
+-
+ 	VFPFMRX	r1, FPEXC		@ Is the VFP enabled?
+ 	DBGSTR1	"fpexc %08x", r1
+ 	tst	r1, #FPEXC_EN
+--- a/arch/arm/vfp/vfpmodule.c
++++ b/arch/arm/vfp/vfpmodule.c
+@@ -23,6 +23,7 @@
+ #include <asm/cputype.h>
+ #include <asm/system_info.h>
+ #include <asm/thread_notify.h>
++#include <asm/traps.h>
+ #include <asm/vfp.h>
+ 
+ #include "vfpinstr.h"
+@@ -642,7 +643,9 @@ static int vfp_starting_cpu(unsigned int
+ 	return 0;
+ }
+ 
+-void vfp_kmode_exception(void)
++#ifdef CONFIG_KERNEL_MODE_NEON
++
++static int vfp_kmode_exception(struct pt_regs *regs, unsigned int instr)
+ {
+ 	/*
+ 	 * If we reach this point, a floating point exception has been raised
+@@ -660,9 +663,51 @@ void vfp_kmode_exception(void)
+ 		pr_crit("BUG: unsupported FP instruction in kernel mode\n");
+ 	else
+ 		pr_crit("BUG: FP instruction issued in kernel mode with FP unit disabled\n");
++	pr_crit("FPEXC == 0x%08x\n", fmrx(FPEXC));
++	return 1;
+ }
+ 
+-#ifdef CONFIG_KERNEL_MODE_NEON
++static struct undef_hook vfp_kmode_exception_hook[] = {{
++	.instr_mask	= 0xfe000000,
++	.instr_val	= 0xf2000000,
++	.cpsr_mask	= MODE_MASK | PSR_T_BIT,
++	.cpsr_val	= SVC_MODE,
++	.fn		= vfp_kmode_exception,
++}, {
++	.instr_mask	= 0xff100000,
++	.instr_val	= 0xf4000000,
++	.cpsr_mask	= MODE_MASK | PSR_T_BIT,
++	.cpsr_val	= SVC_MODE,
++	.fn		= vfp_kmode_exception,
++}, {
++	.instr_mask	= 0xef000000,
++	.instr_val	= 0xef000000,
++	.cpsr_mask	= MODE_MASK | PSR_T_BIT,
++	.cpsr_val	= SVC_MODE | PSR_T_BIT,
++	.fn		= vfp_kmode_exception,
++}, {
++	.instr_mask	= 0xff100000,
++	.instr_val	= 0xf9000000,
++	.cpsr_mask	= MODE_MASK | PSR_T_BIT,
++	.cpsr_val	= SVC_MODE | PSR_T_BIT,
++	.fn		= vfp_kmode_exception,
++}, {
++	.instr_mask	= 0x0c000e00,
++	.instr_val	= 0x0c000a00,
++	.cpsr_mask	= MODE_MASK,
++	.cpsr_val	= SVC_MODE,
++	.fn		= vfp_kmode_exception,
++}};
++
++static int __init vfp_kmode_exception_hook_init(void)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(vfp_kmode_exception_hook); i++)
++		register_undef_hook(&vfp_kmode_exception_hook[i]);
++	return 0;
++}
++core_initcall(vfp_kmode_exception_hook_init);
+ 
+ /*
+  * Kernel-side NEON support functions
