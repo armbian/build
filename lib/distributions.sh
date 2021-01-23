@@ -320,9 +320,6 @@ install_common()
 		fi
 	fi
 
-	#  set default shell back to BASH and prompt for selection at first login
-	chroot "${SDCARD}" /bin/bash -c "chsh -s $(grep /bash$ /etc/shells | tail -1)"
-
 	# install kernel sources
 	if [[ -f ${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb && $INSTALL_KSRC == yes ]]; then
 		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb"
