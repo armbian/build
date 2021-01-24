@@ -61,7 +61,8 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rk3399.patch" "applying"
 	fi
 
-	if [[ "${version}" == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip64 ]]; then
+	if [[ "${version}" == "4.4."* ]] && \
+	[[ "$LINUXFAMILY" == rockchip64 ]] || [[ "$LINUXFAMILY" == station* ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd "$kerneldir" || exit
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rockchip64.patch" "applying"
@@ -131,7 +132,7 @@ compilation_prepare()
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" le 5.8 && [ "$AUFS" == yes ]; then
+	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" le 5.11 && [ "$AUFS" == yes ]; then
 
 		# attach to specifics tag or branch
 		local aufstag
