@@ -159,7 +159,7 @@ if [[ -z $KERNEL_CONFIGURE ]]; then
 
 fi
 
-[[ ${KERNEL_CONFIGURE} == prebuilt ]] && REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-config,armbian-firmware"
+[[ ${KERNEL_CONFIGURE} == prebuilt ]] && REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-firmware"
 
 if [[ -z $BOARD ]]; then
 
