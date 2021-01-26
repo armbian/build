@@ -319,6 +319,7 @@ function build_all()
 
 		[[ ${BUILD_TARGET} == "desktop" ]] && BUILD_DESKTOP="yes"
 		[[ ${BUILD_TARGET} == "minimal" ]] && BUILD_MINIMAL="yes"
+		[[ ${BSP_BUILD} == yes ]] && BUILD_STABILITY=$STABILITY
 
 		# create beta or stable
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
