@@ -213,7 +213,7 @@ function check_hash()
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
 	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort)
-	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
+	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config" 2> /dev/null)
 	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin)
 
 	case $ref_type in
