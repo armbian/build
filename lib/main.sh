@@ -167,8 +167,6 @@ if [[ -z $KERNEL_CONFIGURE ]]; then
 
 fi
 
-[[ ${KERNEL_CONFIGURE} == prebuilt ]] && REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-firmware"
-
 if [[ -z $BOARD ]]; then
 
 	WIP_STATE=supported
@@ -356,6 +354,8 @@ elif [[ $BUILD_MINIMAL == "yes" ]]; then
 fi
 
 [[ $BUILD_MINIMAL == yes ]] && EXTERNAL=no
+
+[[ ${KERNEL_CONFIGURE} == prebuilt ]] && REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop}"
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
