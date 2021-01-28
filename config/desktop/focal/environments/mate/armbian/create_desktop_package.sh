@@ -8,11 +8,11 @@ cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/
 
 # install wallpapers
 mkdir -p "${destination}"/usr/share/backgrounds/armbian/
-cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/armbian/
-mkdir -p "${destination}"/usr/share/gnome-background-properties
-cat <<-EOF > "${destination}"/usr/share/gnome-background-properties/armbian.xml
+cp "${SRC}"/packages/blobs/desktop/wallpapers/*.jpg "${destination}"/usr/share/backgrounds/armbian/
+mkdir -p "${destination}"/usr/share/mate-background-properties
+cat <<-EOF > "${destination}"/usr/share/mate-background-properties/armbian.xml
 <?xml version="1.0"?>
-<!DOCTYPE wallpapers SYSTEM "gnome-wp-list.dtd">
+<!DOCTYPE wallpapers SYSTEM "mate-wp-list.dtd">
 <wallpapers>
   <wallpaper deleted="false">
     <name>Armbian light</name>
