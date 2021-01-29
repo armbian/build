@@ -460,6 +460,8 @@ done
 
 fi
 
+[[ $n -eq 0 ]] && display_alert "No changes in upstream sources, patches or configs found. Exiting." "info"
+
 buildall_end=$(date +%s)
 buildall_runtime=$(((buildall_end - buildall_start) / 60))
 display_alert "Runtime in total" "${buildall_runtime} min" "info"
