@@ -401,6 +401,26 @@ fi
 
 }
 
+# bump version in case there was a change
+if [[ ${BUMP_VERSION} == yes ]]; then
+
+        cd "${SRC}" || exit
+        CURRENT_VERSION=$(cat VERSION)
+        NEW_VERSION="${CURRENT_VERSION%%-trunk}"
+        if [[ $CURRENT_VERSION == *trunk* ]]; then
+                NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-3)"."$((${NEW_VERSION##*.} + 1))
+        else
+                NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-2)"."$((${NEW_VERSION##*.} + 1))
+        fi
+
+        echo "${NEW_VERSION}" > VERSION
+        improved_git add "${SRC}"/VERSION
+        improved_git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs-beta/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
+        improved_git push
+        display_alert "Bumping to new version" "${NEW_VERSION}" "info"
+
+else
+
 # display what will be build
 echo ""
 display_alert "Building all targets" "$STABILITY $(if [[ $KERNEL_ONLY == "yes" ]] ; then echo "kernels"; \
@@ -437,23 +457,6 @@ do
 	sleep 5
 done
 
-# bump version in case there was a change
-if [[ $n -gt 0 && ${BUMP_VERSION} == yes ]]; then
-
-	cd "${SRC}" || exit
-	CURRENT_VERSION=$(cat VERSION)
-	NEW_VERSION="${CURRENT_VERSION%%-trunk}"
-	if [[ $CURRENT_VERSION == *trunk* ]]; then
-		NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-3)"."$((${NEW_VERSION##*.} + 1))
-	else
-		NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-2)"."$((${NEW_VERSION##*.} + 1))
-	fi
-
-	echo "${NEW_VERSION}" > VERSION
-	improved_git add "${SRC}"/VERSION
-	improved_git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
-	improved_git push
-	display_alert "Bumping to new version" "${NEW_VERSION}" "info"
 
 fi
 
