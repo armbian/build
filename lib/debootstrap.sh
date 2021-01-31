@@ -725,7 +725,7 @@ create_image()
 		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
 			display_alert "Compressing" "${FINALDEST}/${version}.img.xz" "info"
 			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
-			[[ ${BUILD_ALL} == yes ]] && while [[ $(ps -uax | grep "pixz" | wc -l) -gt 3 ]]; do echo -en "#"; sleep 2; done
+			[[ ${BUILD_ALL} == yes && $(free | grep Mem | awk '{print $4/$2 * 100}' | awk '{print int($1+0.5)}') -lt 50 ]] && while [[ $(ps -uax | grep "pixz" | wc -l) -gt 5 ]]; do echo -en "#"; sleep 2; done
 			pixz -9 < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.xz
 			compression_type=".xz"
 		fi
