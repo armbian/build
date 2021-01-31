@@ -355,7 +355,7 @@ fi
 
 [[ $BUILD_MINIMAL == yes ]] && EXTERNAL=no
 
-[[ ${KERNEL_CONFIGURE} == prebuilt ]] && REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop}"
+[[ ${KERNEL_CONFIGURE} == prebuilt ]] && [[ -z ${REPOSITORY_INSTALL} ]] && REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop}"
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
