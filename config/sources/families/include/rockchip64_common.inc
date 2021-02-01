@@ -410,6 +410,7 @@ family_tweaks_bsp()
 		# UPS service
 		cp $SRC/packages/bsp/helios64/helios64-ups.service $destination/lib/systemd/system/
 		cp $SRC/packages/bsp/helios64/helios64-ups.timer $destination/lib/systemd/system/
+		install -m 755 $SRC/packages/bsp/helios64/helios64-ups.sh $destination/usr/bin/helios64-ups.sh
 
 	fi
 
