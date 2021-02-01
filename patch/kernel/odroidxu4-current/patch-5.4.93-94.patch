@@ -1,0 +1,1065 @@
+diff --git a/Documentation/admin-guide/device-mapper/dm-integrity.rst b/Documentation/admin-guide/device-mapper/dm-integrity.rst
+index a30aa91b5fbe9..3463883844c0b 100644
+--- a/Documentation/admin-guide/device-mapper/dm-integrity.rst
++++ b/Documentation/admin-guide/device-mapper/dm-integrity.rst
+@@ -177,6 +177,12 @@ bitmap_flush_interval:number
+ 	The bitmap flush interval in milliseconds. The metadata buffers
+ 	are synchronized when this interval expires.
+ 
++legacy_recalculate
++	Allow recalculating of volumes with HMAC keys. This is disabled by
++	default for security reasons - an attacker could modify the volume,
++	set recalc_sector to zero, and the kernel would not detect the
++	modification.
++
+ 
+ The journal mode (D/J), buffer_sectors, journal_watermark, commit_time can
+ be changed when reloading the target (load an inactive table and swap the
+diff --git a/Makefile b/Makefile
+index f8462f8d8a151..ad1b8dc6e462a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 5
+ PATCHLEVEL = 4
+-SUBLEVEL = 93
++SUBLEVEL = 94
+ EXTRAVERSION =
+ NAME = Kleptomaniac Octopus
+ 
+diff --git a/arch/arm64/include/asm/memory.h b/arch/arm64/include/asm/memory.h
+index 08df42e4db96c..51d867cf146c1 100644
+--- a/arch/arm64/include/asm/memory.h
++++ b/arch/arm64/include/asm/memory.h
+@@ -178,7 +178,6 @@ extern u64			vabits_actual;
+ #include <linux/bitops.h>
+ #include <linux/mmdebug.h>
+ 
+-extern s64			physvirt_offset;
+ extern s64			memstart_addr;
+ /* PHYS_OFFSET - the physical address of the start of memory. */
+ #define PHYS_OFFSET		({ VM_BUG_ON(memstart_addr & 1); memstart_addr; })
+@@ -254,7 +253,7 @@ static inline const void *__tag_set(const void *addr, u8 tag)
+  */
+ #define __is_lm_address(addr)	(!(((u64)addr) & BIT(vabits_actual - 1)))
+ 
+-#define __lm_to_phys(addr)	(((addr) + physvirt_offset))
++#define __lm_to_phys(addr)	(((addr) & ~PAGE_OFFSET) + PHYS_OFFSET)
+ #define __kimg_to_phys(addr)	((addr) - kimage_voffset)
+ 
+ #define __virt_to_phys_nodebug(x) ({					\
+@@ -272,7 +271,7 @@ extern phys_addr_t __phys_addr_symbol(unsigned long x);
+ #define __phys_addr_symbol(x)	__pa_symbol_nodebug(x)
+ #endif /* CONFIG_DEBUG_VIRTUAL */
+ 
+-#define __phys_to_virt(x)	((unsigned long)((x) - physvirt_offset))
++#define __phys_to_virt(x)	((unsigned long)((x) - PHYS_OFFSET) | PAGE_OFFSET)
+ #define __phys_to_kimg(x)	((unsigned long)((x) + kimage_voffset))
+ 
+ /*
+diff --git a/arch/arm64/include/asm/pgtable.h b/arch/arm64/include/asm/pgtable.h
+index 69dfc340e71b1..8c420f916fe2e 100644
+--- a/arch/arm64/include/asm/pgtable.h
++++ b/arch/arm64/include/asm/pgtable.h
+@@ -23,6 +23,8 @@
+ #define VMALLOC_START		(MODULES_END)
+ #define VMALLOC_END		(- PUD_SIZE - VMEMMAP_SIZE - SZ_64K)
+ 
++#define vmemmap			((struct page *)VMEMMAP_START - (memstart_addr >> PAGE_SHIFT))
++
+ #define FIRST_USER_ADDRESS	0UL
+ 
+ #ifndef __ASSEMBLY__
+@@ -33,8 +35,6 @@
+ #include <linux/mm_types.h>
+ #include <linux/sched.h>
+ 
+-extern struct page *vmemmap;
+-
+ extern void __pte_error(const char *file, int line, unsigned long val);
+ extern void __pmd_error(const char *file, int line, unsigned long val);
+ extern void __pud_error(const char *file, int line, unsigned long val);
+diff --git a/arch/arm64/mm/init.c b/arch/arm64/mm/init.c
+index 45c00a54909c9..602bd19630ff8 100644
+--- a/arch/arm64/mm/init.c
++++ b/arch/arm64/mm/init.c
+@@ -50,12 +50,6 @@
+ s64 memstart_addr __ro_after_init = -1;
+ EXPORT_SYMBOL(memstart_addr);
+ 
+-s64 physvirt_offset __ro_after_init;
+-EXPORT_SYMBOL(physvirt_offset);
+-
+-struct page *vmemmap __ro_after_init;
+-EXPORT_SYMBOL(vmemmap);
+-
+ phys_addr_t arm64_dma_phys_limit __ro_after_init;
+ 
+ #ifdef CONFIG_KEXEC_CORE
+@@ -321,20 +315,6 @@ void __init arm64_memblock_init(void)
+ 	memstart_addr = round_down(memblock_start_of_DRAM(),
+ 				   ARM64_MEMSTART_ALIGN);
+ 
+-	physvirt_offset = PHYS_OFFSET - PAGE_OFFSET;
+-
+-	vmemmap = ((struct page *)VMEMMAP_START - (memstart_addr >> PAGE_SHIFT));
+-
+-	/*
+-	 * If we are running with a 52-bit kernel VA config on a system that
+-	 * does not support it, we have to offset our vmemmap and physvirt_offset
+-	 * s.t. we avoid the 52-bit portion of the direct linear map
+-	 */
+-	if (IS_ENABLED(CONFIG_ARM64_VA_BITS_52) && (vabits_actual != 52)) {
+-		vmemmap += (_PAGE_OFFSET(48) - _PAGE_OFFSET(52)) >> PAGE_SHIFT;
+-		physvirt_offset = PHYS_OFFSET - _PAGE_OFFSET(48);
+-	}
+-
+ 	/*
+ 	 * Remove the memory that we will not be able to cover with the
+ 	 * linear mapping. Take care not to clip the kernel which may be
+@@ -349,6 +329,16 @@ void __init arm64_memblock_init(void)
+ 		memblock_remove(0, memstart_addr);
+ 	}
+ 
++	/*
++	 * If we are running with a 52-bit kernel VA config on a system that
++	 * does not support it, we have to place the available physical
++	 * memory in the 48-bit addressable part of the linear region, i.e.,
++	 * we have to move it upward. Since memstart_addr represents the
++	 * physical address of PAGE_OFFSET, we have to *subtract* from it.
++	 */
++	if (IS_ENABLED(CONFIG_ARM64_VA_BITS_52) && (vabits_actual != 52))
++		memstart_addr -= _PAGE_OFFSET(48) - _PAGE_OFFSET(52);
++
+ 	/*
+ 	 * Apply the memory limit if it was set. Since the kernel may be loaded
+ 	 * high up in memory, add back the kernel region that must be accessible
+diff --git a/drivers/gpio/gpio-mvebu.c b/drivers/gpio/gpio-mvebu.c
+index 3985d6e1c17dc..89a053b1d2799 100644
+--- a/drivers/gpio/gpio-mvebu.c
++++ b/drivers/gpio/gpio-mvebu.c
+@@ -657,9 +657,8 @@ static void mvebu_pwm_get_state(struct pwm_chip *chip,
+ 
+ 	spin_lock_irqsave(&mvpwm->lock, flags);
+ 
+-	val = (unsigned long long)
+-		readl_relaxed(mvebu_pwmreg_blink_on_duration(mvpwm));
+-	val *= NSEC_PER_SEC;
++	u = readl_relaxed(mvebu_pwmreg_blink_on_duration(mvpwm));
++	val = (unsigned long long) u * NSEC_PER_SEC;
+ 	do_div(val, mvpwm->clk_rate);
+ 	if (val > UINT_MAX)
+ 		state->duty_cycle = UINT_MAX;
+@@ -668,21 +667,17 @@ static void mvebu_pwm_get_state(struct pwm_chip *chip,
+ 	else
+ 		state->duty_cycle = 1;
+ 
+-	val = (unsigned long long)
+-		readl_relaxed(mvebu_pwmreg_blink_off_duration(mvpwm));
++	val = (unsigned long long) u; /* on duration */
++	/* period = on + off duration */
++	val += readl_relaxed(mvebu_pwmreg_blink_off_duration(mvpwm));
+ 	val *= NSEC_PER_SEC;
+ 	do_div(val, mvpwm->clk_rate);
+-	if (val < state->duty_cycle) {
++	if (val > UINT_MAX)
++		state->period = UINT_MAX;
++	else if (val)
++		state->period = val;
++	else
+ 		state->period = 1;
+-	} else {
+-		val -= state->duty_cycle;
+-		if (val > UINT_MAX)
+-			state->period = UINT_MAX;
+-		else if (val)
+-			state->period = val;
+-		else
+-			state->period = 1;
+-	}
+ 
+ 	regmap_read(mvchip->regs, GPIO_BLINK_EN_OFF + mvchip->offset, &u);
+ 	if (u)
+diff --git a/drivers/hid/wacom_sys.c b/drivers/hid/wacom_sys.c
+index 9e852b4bbf92b..73dafa60080f1 100644
+--- a/drivers/hid/wacom_sys.c
++++ b/drivers/hid/wacom_sys.c
+@@ -147,9 +147,9 @@ static int wacom_wac_pen_serial_enforce(struct hid_device *hdev,
+ 	}
+ 
+ 	if (flush)
+-		wacom_wac_queue_flush(hdev, &wacom_wac->pen_fifo);
++		wacom_wac_queue_flush(hdev, wacom_wac->pen_fifo);
+ 	else if (insert)
+-		wacom_wac_queue_insert(hdev, &wacom_wac->pen_fifo,
++		wacom_wac_queue_insert(hdev, wacom_wac->pen_fifo,
+ 				       raw_data, report_size);
+ 
+ 	return insert && !flush;
+@@ -1280,7 +1280,7 @@ static void wacom_devm_kfifo_release(struct device *dev, void *res)
+ static int wacom_devm_kfifo_alloc(struct wacom *wacom)
+ {
+ 	struct wacom_wac *wacom_wac = &wacom->wacom_wac;
+-	struct kfifo_rec_ptr_2 *pen_fifo = &wacom_wac->pen_fifo;
++	struct kfifo_rec_ptr_2 *pen_fifo;
+ 	int error;
+ 
+ 	pen_fifo = devres_alloc(wacom_devm_kfifo_release,
+@@ -1297,6 +1297,7 @@ static int wacom_devm_kfifo_alloc(struct wacom *wacom)
+ 	}
+ 
+ 	devres_add(&wacom->hdev->dev, pen_fifo);
++	wacom_wac->pen_fifo = pen_fifo;
+ 
+ 	return 0;
+ }
+diff --git a/drivers/hid/wacom_wac.h b/drivers/hid/wacom_wac.h
+index da612b6e9c779..195910dd2154e 100644
+--- a/drivers/hid/wacom_wac.h
++++ b/drivers/hid/wacom_wac.h
+@@ -342,7 +342,7 @@ struct wacom_wac {
+ 	struct input_dev *pen_input;
+ 	struct input_dev *touch_input;
+ 	struct input_dev *pad_input;
+-	struct kfifo_rec_ptr_2 pen_fifo;
++	struct kfifo_rec_ptr_2 *pen_fifo;
+ 	int pid;
+ 	int num_contacts_left;
+ 	u8 bt_features;
+diff --git a/drivers/md/dm-integrity.c b/drivers/md/dm-integrity.c
+index 57f66f2ad98dc..c967c2cdba870 100644
+--- a/drivers/md/dm-integrity.c
++++ b/drivers/md/dm-integrity.c
+@@ -254,6 +254,7 @@ struct dm_integrity_c {
+ 	bool journal_uptodate;
+ 	bool just_formatted;
+ 	bool recalculate_flag;
++	bool legacy_recalculate;
+ 
+ 	struct alg_spec internal_hash_alg;
+ 	struct alg_spec journal_crypt_alg;
+@@ -381,6 +382,14 @@ static int dm_integrity_failed(struct dm_integrity_c *ic)
+ 	return READ_ONCE(ic->failed);
+ }
+ 
++static bool dm_integrity_disable_recalculate(struct dm_integrity_c *ic)
++{
++	if ((ic->internal_hash_alg.key || ic->journal_mac_alg.key) &&
++	    !ic->legacy_recalculate)
++		return true;
++	return false;
++}
++
+ static commit_id_t dm_integrity_commit_id(struct dm_integrity_c *ic, unsigned i,
+ 					  unsigned j, unsigned char seq)
+ {
+@@ -2998,6 +3007,7 @@ static void dm_integrity_status(struct dm_target *ti, status_type_t type,
+ 		arg_count += !!ic->internal_hash_alg.alg_string;
+ 		arg_count += !!ic->journal_crypt_alg.alg_string;
+ 		arg_count += !!ic->journal_mac_alg.alg_string;
++		arg_count += ic->legacy_recalculate;
+ 		DMEMIT("%s %llu %u %c %u", ic->dev->name, (unsigned long long)ic->start,
+ 		       ic->tag_size, ic->mode, arg_count);
+ 		if (ic->meta_dev)
+@@ -3017,6 +3027,8 @@ static void dm_integrity_status(struct dm_target *ti, status_type_t type,
+ 			DMEMIT(" sectors_per_bit:%llu", (unsigned long long)ic->sectors_per_block << ic->log2_blocks_per_bitmap_bit);
+ 			DMEMIT(" bitmap_flush_interval:%u", jiffies_to_msecs(ic->bitmap_flush_interval));
+ 		}
++		if (ic->legacy_recalculate)
++			DMEMIT(" legacy_recalculate");
+ 
+ #define EMIT_ALG(a, n)							\
+ 		do {							\
+@@ -3625,7 +3637,7 @@ static int dm_integrity_ctr(struct dm_target *ti, unsigned argc, char **argv)
+ 	unsigned extra_args;
+ 	struct dm_arg_set as;
+ 	static const struct dm_arg _args[] = {
+-		{0, 15, "Invalid number of feature args"},
++		{0, 14, "Invalid number of feature args"},
+ 	};
+ 	unsigned journal_sectors, interleave_sectors, buffer_sectors, journal_watermark, sync_msec;
+ 	bool should_write_sb;
+@@ -3769,6 +3781,8 @@ static int dm_integrity_ctr(struct dm_target *ti, unsigned argc, char **argv)
+ 				goto bad;
+ 		} else if (!strcmp(opt_string, "recalculate")) {
+ 			ic->recalculate_flag = true;
++		} else if (!strcmp(opt_string, "legacy_recalculate")) {
++			ic->legacy_recalculate = true;
+ 		} else {
+ 			r = -EINVAL;
+ 			ti->error = "Invalid argument";
+@@ -4067,6 +4081,14 @@ try_smaller_buffer:
+ 		}
+ 	}
+ 
++	if (ic->sb->flags & cpu_to_le32(SB_FLAG_RECALCULATING) &&
++	    le64_to_cpu(ic->sb->recalc_sector) < ic->provided_data_sectors &&
++	    dm_integrity_disable_recalculate(ic)) {
++		ti->error = "Recalculating with HMAC is disabled for security reasons - if you really need it, use the argument \"legacy_recalculate\"";
++		r = -EOPNOTSUPP;
++		goto bad;
++	}
++
+ 	ic->bufio = dm_bufio_client_create(ic->meta_dev ? ic->meta_dev->bdev : ic->dev->bdev,
+ 			1U << (SECTOR_SHIFT + ic->log2_buffer_sectors), 1, 0, NULL, NULL);
+ 	if (IS_ERR(ic->bufio)) {
+diff --git a/fs/cifs/smb2pdu.c b/fs/cifs/smb2pdu.c
+index be06b26d6ca03..7adecfd0c1e99 100644
+--- a/fs/cifs/smb2pdu.c
++++ b/fs/cifs/smb2pdu.c
+@@ -490,8 +490,8 @@ build_preauth_ctxt(struct smb2_preauth_neg_context *pneg_ctxt)
+ 	pneg_ctxt->ContextType = SMB2_PREAUTH_INTEGRITY_CAPABILITIES;
+ 	pneg_ctxt->DataLength = cpu_to_le16(38);
+ 	pneg_ctxt->HashAlgorithmCount = cpu_to_le16(1);
+-	pneg_ctxt->SaltLength = cpu_to_le16(SMB311_SALT_SIZE);
+-	get_random_bytes(pneg_ctxt->Salt, SMB311_SALT_SIZE);
++	pneg_ctxt->SaltLength = cpu_to_le16(SMB311_LINUX_CLIENT_SALT_SIZE);
++	get_random_bytes(pneg_ctxt->Salt, SMB311_LINUX_CLIENT_SALT_SIZE);
+ 	pneg_ctxt->HashAlgorithms = SMB2_PREAUTH_INTEGRITY_SHA512;
+ }
+ 
+@@ -617,6 +617,9 @@ static void decode_preauth_context(struct smb2_preauth_neg_context *ctxt)
+ 	if (len < MIN_PREAUTH_CTXT_DATA_LEN) {
+ 		printk_once(KERN_WARNING "server sent bad preauth context\n");
+ 		return;
++	} else if (len < MIN_PREAUTH_CTXT_DATA_LEN + le16_to_cpu(ctxt->SaltLength)) {
++		pr_warn_once("server sent invalid SaltLength\n");
++		return;
+ 	}
+ 	if (le16_to_cpu(ctxt->HashAlgorithmCount) != 1)
+ 		printk_once(KERN_WARNING "illegal SMB3 hash algorithm count\n");
+diff --git a/fs/cifs/smb2pdu.h b/fs/cifs/smb2pdu.h
+index f264e1d36fe16..2482978f09486 100644
+--- a/fs/cifs/smb2pdu.h
++++ b/fs/cifs/smb2pdu.h
+@@ -271,12 +271,20 @@ struct smb2_neg_context {
+ 	/* Followed by array of data */
+ } __packed;
+ 
+-#define SMB311_SALT_SIZE			32
++#define SMB311_LINUX_CLIENT_SALT_SIZE			32
+ /* Hash Algorithm Types */
+ #define SMB2_PREAUTH_INTEGRITY_SHA512	cpu_to_le16(0x0001)
+ #define SMB2_PREAUTH_HASH_SIZE 64
+ 
+-#define MIN_PREAUTH_CTXT_DATA_LEN	(SMB311_SALT_SIZE + 6)
++/*
++ * SaltLength that the server send can be zero, so the only three required
++ * fields (all __le16) end up six bytes total, so the minimum context data len
++ * in the response is six bytes which accounts for
++ *
++ *      HashAlgorithmCount, SaltLength, and 1 HashAlgorithm.
++ */
++#define MIN_PREAUTH_CTXT_DATA_LEN 6
++
+ struct smb2_preauth_neg_context {
+ 	__le16	ContextType; /* 1 */
+ 	__le16	DataLength;
+@@ -284,7 +292,7 @@ struct smb2_preauth_neg_context {
+ 	__le16	HashAlgorithmCount; /* 1 */
+ 	__le16	SaltLength;
+ 	__le16	HashAlgorithms; /* HashAlgorithms[0] since only one defined */
+-	__u8	Salt[SMB311_SALT_SIZE];
++	__u8	Salt[SMB311_LINUX_CLIENT_SALT_SIZE];
+ } __packed;
+ 
+ /* Encryption Algorithms Ciphers */
+diff --git a/fs/ext4/inode.c b/fs/ext4/inode.c
+index 3bac525f0439d..539d95bd364d4 100644
+--- a/fs/ext4/inode.c
++++ b/fs/ext4/inode.c
+@@ -5209,7 +5209,7 @@ static int other_inode_match(struct inode * inode, unsigned long ino,
+ 	    (inode->i_state & I_DIRTY_TIME)) {
+ 		struct ext4_inode_info	*ei = EXT4_I(inode);
+ 
+-		inode->i_state &= ~(I_DIRTY_TIME | I_DIRTY_TIME_EXPIRED);
++		inode->i_state &= ~I_DIRTY_TIME;
+ 		spin_unlock(&inode->i_lock);
+ 
+ 		spin_lock(&ei->i_raw_lock);
+diff --git a/fs/fs-writeback.c b/fs/fs-writeback.c
+index 5f6400ba82c00..a2cf2db0d3def 100644
+--- a/fs/fs-writeback.c
++++ b/fs/fs-writeback.c
+@@ -1238,7 +1238,7 @@ static bool inode_dirtied_after(struct inode *inode, unsigned long t)
+  */
+ static int move_expired_inodes(struct list_head *delaying_queue,
+ 			       struct list_head *dispatch_queue,
+-			       int flags, unsigned long dirtied_before)
++			       unsigned long dirtied_before)
+ {
+ 	LIST_HEAD(tmp);
+ 	struct list_head *pos, *node;
+@@ -1254,8 +1254,6 @@ static int move_expired_inodes(struct list_head *delaying_queue,
+ 		list_move(&inode->i_io_list, &tmp);
+ 		moved++;
+ 		spin_lock(&inode->i_lock);
+-		if (flags & EXPIRE_DIRTY_ATIME)
+-			inode->i_state |= I_DIRTY_TIME_EXPIRED;
+ 		inode->i_state |= I_SYNC_QUEUED;
+ 		spin_unlock(&inode->i_lock);
+ 		if (sb_is_blkdev_sb(inode->i_sb))
+@@ -1303,11 +1301,11 @@ static void queue_io(struct bdi_writeback *wb, struct wb_writeback_work *work,
+ 
+ 	assert_spin_locked(&wb->list_lock);
+ 	list_splice_init(&wb->b_more_io, &wb->b_io);
+-	moved = move_expired_inodes(&wb->b_dirty, &wb->b_io, 0, dirtied_before);
++	moved = move_expired_inodes(&wb->b_dirty, &wb->b_io, dirtied_before);
+ 	if (!work->for_sync)
+ 		time_expire_jif = jiffies - dirtytime_expire_interval * HZ;
+ 	moved += move_expired_inodes(&wb->b_dirty_time, &wb->b_io,
+-				     EXPIRE_DIRTY_ATIME, time_expire_jif);
++				     time_expire_jif);
+ 	if (moved)
+ 		wb_io_lists_populated(wb);
+ 	trace_writeback_queue_io(wb, work, dirtied_before, moved);
+@@ -1475,26 +1473,26 @@ __writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
+ 			ret = err;
+ 	}
+ 
++	/*
++	 * If the inode has dirty timestamps and we need to write them, call
++	 * mark_inode_dirty_sync() to notify the filesystem about it and to
++	 * change I_DIRTY_TIME into I_DIRTY_SYNC.
++	 */
++	if ((inode->i_state & I_DIRTY_TIME) &&
++	    (wbc->sync_mode == WB_SYNC_ALL || wbc->for_sync ||
++	     time_after(jiffies, inode->dirtied_time_when +
++			dirtytime_expire_interval * HZ))) {
++		trace_writeback_lazytime(inode);
++		mark_inode_dirty_sync(inode);
++	}
++
+ 	/*
+ 	 * Some filesystems may redirty the inode during the writeback
+ 	 * due to delalloc, clear dirty metadata flags right before
+ 	 * write_inode()
+ 	 */
+ 	spin_lock(&inode->i_lock);
+-
+ 	dirty = inode->i_state & I_DIRTY;
+-	if (inode->i_state & I_DIRTY_TIME) {
+-		if ((dirty & I_DIRTY_INODE) ||
+-		    wbc->sync_mode == WB_SYNC_ALL ||
+-		    unlikely(inode->i_state & I_DIRTY_TIME_EXPIRED) ||
+-		    unlikely(time_after(jiffies,
+-					(inode->dirtied_time_when +
+-					 dirtytime_expire_interval * HZ)))) {
+-			dirty |= I_DIRTY_TIME | I_DIRTY_TIME_EXPIRED;
+-			trace_writeback_lazytime(inode);
+-		}
+-	} else
+-		inode->i_state &= ~I_DIRTY_TIME_EXPIRED;
+ 	inode->i_state &= ~dirty;
+ 
+ 	/*
+@@ -1515,8 +1513,6 @@ __writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
+ 
+ 	spin_unlock(&inode->i_lock);
+ 
+-	if (dirty & I_DIRTY_TIME)
+-		mark_inode_dirty_sync(inode);
+ 	/* Don't write the inode if only I_DIRTY_PAGES was set */
+ 	if (dirty & ~I_DIRTY_PAGES) {
+ 		int err = write_inode(inode, wbc);
+diff --git a/fs/io_uring.c b/fs/io_uring.c
+index 4127ea027a14d..478df7e10767a 100644
+--- a/fs/io_uring.c
++++ b/fs/io_uring.c
+@@ -2226,7 +2226,8 @@ restart:
+ 		/* Ensure we clear previously set non-block flag */
+ 		req->rw.ki_flags &= ~IOCB_NOWAIT;
+ 
+-		if (req->fs != current->fs && current->fs != old_fs_struct) {
++		if ((req->fs && req->fs != current->fs) ||
++		    (!req->fs && current->fs != old_fs_struct)) {
+ 			task_lock(current);
+ 			if (req->fs)
+ 				current->fs = req->fs;
+@@ -2351,7 +2352,7 @@ out:
+ 		mmput(cur_mm);
+ 	}
+ 	revert_creds(old_cred);
+-	if (old_fs_struct) {
++	if (old_fs_struct != current->fs) {
+ 		task_lock(current);
+ 		current->fs = old_fs_struct;
+ 		task_unlock(current);
+diff --git a/fs/xfs/libxfs/xfs_trans_inode.c b/fs/xfs/libxfs/xfs_trans_inode.c
+index 6c7354abd0aea..0ba7368b9a5f0 100644
+--- a/fs/xfs/libxfs/xfs_trans_inode.c
++++ b/fs/xfs/libxfs/xfs_trans_inode.c
+@@ -100,9 +100,9 @@ xfs_trans_log_inode(
+ 	 * to log the timestamps, or will clear already cleared fields in the
+ 	 * worst case.
+ 	 */
+-	if (inode->i_state & (I_DIRTY_TIME | I_DIRTY_TIME_EXPIRED)) {
++	if (inode->i_state & I_DIRTY_TIME) {
+ 		spin_lock(&inode->i_lock);
+-		inode->i_state &= ~(I_DIRTY_TIME | I_DIRTY_TIME_EXPIRED);
++		inode->i_state &= ~I_DIRTY_TIME;
+ 		spin_unlock(&inode->i_lock);
+ 	}
+ 
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index 4c82683e034a7..ef118b8ba6993 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -2161,7 +2161,6 @@ static inline void init_sync_kiocb(struct kiocb *kiocb, struct file *filp)
+ #define I_DIO_WAKEUP		(1 << __I_DIO_WAKEUP)
+ #define I_LINKABLE		(1 << 10)
+ #define I_DIRTY_TIME		(1 << 11)
+-#define I_DIRTY_TIME_EXPIRED	(1 << 12)
+ #define I_WB_SWITCH		(1 << 13)
+ #define I_OVL_INUSE		(1 << 14)
+ #define I_CREATING		(1 << 15)
+diff --git a/include/trace/events/writeback.h b/include/trace/events/writeback.h
+index a8af22e469ce5..011e8faa608b9 100644
+--- a/include/trace/events/writeback.h
++++ b/include/trace/events/writeback.h
+@@ -20,7 +20,6 @@
+ 		{I_CLEAR,		"I_CLEAR"},		\
+ 		{I_SYNC,		"I_SYNC"},		\
+ 		{I_DIRTY_TIME,		"I_DIRTY_TIME"},	\
+-		{I_DIRTY_TIME_EXPIRED,	"I_DIRTY_TIME_EXPIRED"}, \
+ 		{I_REFERENCED,		"I_REFERENCED"}		\
+ 	)
+ 
+diff --git a/kernel/futex.c b/kernel/futex.c
+index b6dec5f79370c..042c2707e9131 100644
+--- a/kernel/futex.c
++++ b/kernel/futex.c
+@@ -857,6 +857,29 @@ static struct futex_pi_state *alloc_pi_state(void)
+ 	return pi_state;
+ }
+ 
++static void pi_state_update_owner(struct futex_pi_state *pi_state,
++				  struct task_struct *new_owner)
++{
++	struct task_struct *old_owner = pi_state->owner;
++
++	lockdep_assert_held(&pi_state->pi_mutex.wait_lock);
++
++	if (old_owner) {
++		raw_spin_lock(&old_owner->pi_lock);
++		WARN_ON(list_empty(&pi_state->list));
++		list_del_init(&pi_state->list);
++		raw_spin_unlock(&old_owner->pi_lock);
++	}
++
++	if (new_owner) {
++		raw_spin_lock(&new_owner->pi_lock);
++		WARN_ON(!list_empty(&pi_state->list));
++		list_add(&pi_state->list, &new_owner->pi_state_list);
++		pi_state->owner = new_owner;
++		raw_spin_unlock(&new_owner->pi_lock);
++	}
++}
++
+ static void get_pi_state(struct futex_pi_state *pi_state)
+ {
+ 	WARN_ON_ONCE(!refcount_inc_not_zero(&pi_state->refcount));
+@@ -879,17 +902,11 @@ static void put_pi_state(struct futex_pi_state *pi_state)
+ 	 * and has cleaned up the pi_state already
+ 	 */
+ 	if (pi_state->owner) {
+-		struct task_struct *owner;
+ 		unsigned long flags;
+ 
+ 		raw_spin_lock_irqsave(&pi_state->pi_mutex.wait_lock, flags);
+-		owner = pi_state->owner;
+-		if (owner) {
+-			raw_spin_lock(&owner->pi_lock);
+-			list_del_init(&pi_state->list);
+-			raw_spin_unlock(&owner->pi_lock);
+-		}
+-		rt_mutex_proxy_unlock(&pi_state->pi_mutex, owner);
++		pi_state_update_owner(pi_state, NULL);
++		rt_mutex_proxy_unlock(&pi_state->pi_mutex);
+ 		raw_spin_unlock_irqrestore(&pi_state->pi_mutex.wait_lock, flags);
+ 	}
+ 
+@@ -1035,7 +1052,8 @@ static inline void exit_pi_state_list(struct task_struct *curr) { }
+  *	FUTEX_OWNER_DIED bit. See [4]
+  *
+  * [10] There is no transient state which leaves owner and user space
+- *	TID out of sync.
++ *	TID out of sync. Except one error case where the kernel is denied
++ *	write access to the user address, see fixup_pi_state_owner().
+  *
+  *
+  * Serialization and lifetime rules:
+@@ -1614,26 +1632,15 @@ static int wake_futex_pi(u32 __user *uaddr, u32 uval, struct futex_pi_state *pi_
+ 			ret = -EINVAL;
+ 	}
+ 
+-	if (ret)
+-		goto out_unlock;
+-
+-	/*
+-	 * This is a point of no return; once we modify the uval there is no
+-	 * going back and subsequent operations must not fail.
+-	 */
+-
+-	raw_spin_lock(&pi_state->owner->pi_lock);
+-	WARN_ON(list_empty(&pi_state->list));
+-	list_del_init(&pi_state->list);
+-	raw_spin_unlock(&pi_state->owner->pi_lock);
+-
+-	raw_spin_lock(&new_owner->pi_lock);
+-	WARN_ON(!list_empty(&pi_state->list));
+-	list_add(&pi_state->list, &new_owner->pi_state_list);
+-	pi_state->owner = new_owner;
+-	raw_spin_unlock(&new_owner->pi_lock);
+-
+-	postunlock = __rt_mutex_futex_unlock(&pi_state->pi_mutex, &wake_q);
++	if (!ret) {
++		/*
++		 * This is a point of no return; once we modified the uval
++		 * there is no going back and subsequent operations must
++		 * not fail.
++		 */
++		pi_state_update_owner(pi_state, new_owner);
++		postunlock = __rt_mutex_futex_unlock(&pi_state->pi_mutex, &wake_q);
++	}
+ 
+ out_unlock:
+ 	raw_spin_unlock_irq(&pi_state->pi_mutex.wait_lock);
+@@ -2456,18 +2463,13 @@ static void unqueue_me_pi(struct futex_q *q)
+ 	spin_unlock(q->lock_ptr);
+ }
+ 
+-static int fixup_pi_state_owner(u32 __user *uaddr, struct futex_q *q,
+-				struct task_struct *argowner)
++static int __fixup_pi_state_owner(u32 __user *uaddr, struct futex_q *q,
++				  struct task_struct *argowner)
+ {
++	u32 uval, uninitialized_var(curval), newval, newtid;
+ 	struct futex_pi_state *pi_state = q->pi_state;
+-	u32 uval, uninitialized_var(curval), newval;
+ 	struct task_struct *oldowner, *newowner;
+-	u32 newtid;
+-	int ret, err = 0;
+-
+-	lockdep_assert_held(q->lock_ptr);
+-
+-	raw_spin_lock_irq(&pi_state->pi_mutex.wait_lock);
++	int err = 0;
+ 
+ 	oldowner = pi_state->owner;
+ 
+@@ -2501,14 +2503,12 @@ retry:
+ 			 * We raced against a concurrent self; things are
+ 			 * already fixed up. Nothing to do.
+ 			 */
+-			ret = 0;
+-			goto out_unlock;
++			return 0;
+ 		}
+ 
+ 		if (__rt_mutex_futex_trylock(&pi_state->pi_mutex)) {
+-			/* We got the lock after all, nothing to fix. */
+-			ret = 0;
+-			goto out_unlock;
++			/* We got the lock. pi_state is correct. Tell caller. */
++			return 1;
+ 		}
+ 
+ 		/*
+@@ -2535,8 +2535,7 @@ retry:
+ 			 * We raced against a concurrent self; things are
+ 			 * already fixed up. Nothing to do.
+ 			 */
+-			ret = 0;
+-			goto out_unlock;
++			return 1;
+ 		}
+ 		newowner = argowner;
+ 	}
+@@ -2566,22 +2565,9 @@ retry:
+ 	 * We fixed up user space. Now we need to fix the pi_state
+ 	 * itself.
+ 	 */
+-	if (pi_state->owner != NULL) {
+-		raw_spin_lock(&pi_state->owner->pi_lock);
+-		WARN_ON(list_empty(&pi_state->list));
+-		list_del_init(&pi_state->list);
+-		raw_spin_unlock(&pi_state->owner->pi_lock);
+-	}
++	pi_state_update_owner(pi_state, newowner);
+ 
+-	pi_state->owner = newowner;
+-
+-	raw_spin_lock(&newowner->pi_lock);
+-	WARN_ON(!list_empty(&pi_state->list));
+-	list_add(&pi_state->list, &newowner->pi_state_list);
+-	raw_spin_unlock(&newowner->pi_lock);
+-	raw_spin_unlock_irq(&pi_state->pi_mutex.wait_lock);
+-
+-	return 0;
++	return argowner == current;
+ 
+ 	/*
+ 	 * In order to reschedule or handle a page fault, we need to drop the
+@@ -2602,17 +2588,16 @@ handle_err:
+ 
+ 	switch (err) {
+ 	case -EFAULT:
+-		ret = fault_in_user_writeable(uaddr);
++		err = fault_in_user_writeable(uaddr);
+ 		break;
+ 
+ 	case -EAGAIN:
+ 		cond_resched();
+-		ret = 0;
++		err = 0;
+ 		break;
+ 
+ 	default:
+ 		WARN_ON_ONCE(1);
+-		ret = err;
+ 		break;
+ 	}
+ 
+@@ -2622,17 +2607,44 @@ handle_err:
+ 	/*
+ 	 * Check if someone else fixed it for us:
+ 	 */
+-	if (pi_state->owner != oldowner) {
+-		ret = 0;
+-		goto out_unlock;
+-	}
++	if (pi_state->owner != oldowner)
++		return argowner == current;
+ 
+-	if (ret)
+-		goto out_unlock;
++	/* Retry if err was -EAGAIN or the fault in succeeded */
++	if (!err)
++		goto retry;
+ 
+-	goto retry;
++	/*
++	 * fault_in_user_writeable() failed so user state is immutable. At
++	 * best we can make the kernel state consistent but user state will
++	 * be most likely hosed and any subsequent unlock operation will be
++	 * rejected due to PI futex rule [10].
++	 *
++	 * Ensure that the rtmutex owner is also the pi_state owner despite
++	 * the user space value claiming something different. There is no
++	 * point in unlocking the rtmutex if current is the owner as it
++	 * would need to wait until the next waiter has taken the rtmutex
++	 * to guarantee consistent state. Keep it simple. Userspace asked
++	 * for this wreckaged state.
++	 *
++	 * The rtmutex has an owner - either current or some other
++	 * task. See the EAGAIN loop above.
++	 */
++	pi_state_update_owner(pi_state, rt_mutex_owner(&pi_state->pi_mutex));
+ 
+-out_unlock:
++	return err;
++}
++
++static int fixup_pi_state_owner(u32 __user *uaddr, struct futex_q *q,
++				struct task_struct *argowner)
++{
++	struct futex_pi_state *pi_state = q->pi_state;
++	int ret;
++
++	lockdep_assert_held(q->lock_ptr);
++
++	raw_spin_lock_irq(&pi_state->pi_mutex.wait_lock);
++	ret = __fixup_pi_state_owner(uaddr, q, argowner);
+ 	raw_spin_unlock_irq(&pi_state->pi_mutex.wait_lock);
+ 	return ret;
+ }
+@@ -2656,8 +2668,6 @@ static long futex_wait_restart(struct restart_block *restart);
+  */
+ static int fixup_owner(u32 __user *uaddr, struct futex_q *q, int locked)
+ {
+-	int ret = 0;
+-
+ 	if (locked) {
+ 		/*
+ 		 * Got the lock. We might not be the anticipated owner if we
+@@ -2668,8 +2678,8 @@ static int fixup_owner(u32 __user *uaddr, struct futex_q *q, int locked)
+ 		 * stable state, anything else needs more attention.
+ 		 */
+ 		if (q->pi_state->owner != current)
+-			ret = fixup_pi_state_owner(uaddr, q, current);
+-		goto out;
++			return fixup_pi_state_owner(uaddr, q, current);
++		return 1;
+ 	}
+ 
+ 	/*
+@@ -2680,24 +2690,17 @@ static int fixup_owner(u32 __user *uaddr, struct futex_q *q, int locked)
+ 	 * Another speculative read; pi_state->owner == current is unstable
+ 	 * but needs our attention.
+ 	 */
+-	if (q->pi_state->owner == current) {
+-		ret = fixup_pi_state_owner(uaddr, q, NULL);
+-		goto out;
+-	}
++	if (q->pi_state->owner == current)
++		return fixup_pi_state_owner(uaddr, q, NULL);
+ 
+ 	/*
+ 	 * Paranoia check. If we did not take the lock, then we should not be
+-	 * the owner of the rt_mutex.
++	 * the owner of the rt_mutex. Warn and establish consistent state.
+ 	 */
+-	if (rt_mutex_owner(&q->pi_state->pi_mutex) == current) {
+-		printk(KERN_ERR "fixup_owner: ret = %d pi-mutex: %p "
+-				"pi-state %p\n", ret,
+-				q->pi_state->pi_mutex.owner,
+-				q->pi_state->owner);
+-	}
++	if (WARN_ON_ONCE(rt_mutex_owner(&q->pi_state->pi_mutex) == current))
++		return fixup_pi_state_owner(uaddr, q, current);
+ 
+-out:
+-	return ret ? ret : locked;
++	return 0;
+ }
+ 
+ /**
+@@ -2909,7 +2912,6 @@ static int futex_lock_pi(u32 __user *uaddr, unsigned int flags,
+ 			 ktime_t *time, int trylock)
+ {
+ 	struct hrtimer_sleeper timeout, *to;
+-	struct futex_pi_state *pi_state = NULL;
+ 	struct task_struct *exiting = NULL;
+ 	struct rt_mutex_waiter rt_waiter;
+ 	struct futex_hash_bucket *hb;
+@@ -3046,23 +3048,9 @@ no_block:
+ 	if (res)
+ 		ret = (res < 0) ? res : 0;
+ 
+-	/*
+-	 * If fixup_owner() faulted and was unable to handle the fault, unlock
+-	 * it and return the fault to userspace.
+-	 */
+-	if (ret && (rt_mutex_owner(&q.pi_state->pi_mutex) == current)) {
+-		pi_state = q.pi_state;
+-		get_pi_state(pi_state);
+-	}
+-
+ 	/* Unqueue and drop the lock */
+ 	unqueue_me_pi(&q);
+ 
+-	if (pi_state) {
+-		rt_mutex_futex_unlock(&pi_state->pi_mutex);
+-		put_pi_state(pi_state);
+-	}
+-
+ 	goto out_put_key;
+ 
+ out_unlock_put_key:
+@@ -3328,7 +3316,6 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
+ 				 u32 __user *uaddr2)
+ {
+ 	struct hrtimer_sleeper timeout, *to;
+-	struct futex_pi_state *pi_state = NULL;
+ 	struct rt_mutex_waiter rt_waiter;
+ 	struct futex_hash_bucket *hb;
+ 	union futex_key key2 = FUTEX_KEY_INIT;
+@@ -3406,16 +3393,17 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
+ 		if (q.pi_state && (q.pi_state->owner != current)) {
+ 			spin_lock(q.lock_ptr);
+ 			ret = fixup_pi_state_owner(uaddr2, &q, current);
+-			if (ret && rt_mutex_owner(&q.pi_state->pi_mutex) == current) {
+-				pi_state = q.pi_state;
+-				get_pi_state(pi_state);
+-			}
+ 			/*
+ 			 * Drop the reference to the pi state which
+ 			 * the requeue_pi() code acquired for us.
+ 			 */
+ 			put_pi_state(q.pi_state);
+ 			spin_unlock(q.lock_ptr);
++			/*
++			 * Adjust the return value. It's either -EFAULT or
++			 * success (1) but the caller expects 0 for success.
++			 */
++			ret = ret < 0 ? ret : 0;
+ 		}
+ 	} else {
+ 		struct rt_mutex *pi_mutex;
+@@ -3446,25 +3434,10 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
+ 		if (res)
+ 			ret = (res < 0) ? res : 0;
+ 
+-		/*
+-		 * If fixup_pi_state_owner() faulted and was unable to handle
+-		 * the fault, unlock the rt_mutex and return the fault to
+-		 * userspace.
+-		 */
+-		if (ret && rt_mutex_owner(&q.pi_state->pi_mutex) == current) {
+-			pi_state = q.pi_state;
+-			get_pi_state(pi_state);
+-		}
+-
+ 		/* Unqueue and drop the lock. */
+ 		unqueue_me_pi(&q);
+ 	}
+ 
+-	if (pi_state) {
+-		rt_mutex_futex_unlock(&pi_state->pi_mutex);
+-		put_pi_state(pi_state);
+-	}
+-
+ 	if (ret == -EINTR) {
+ 		/*
+ 		 * We've already been requeued, but cannot restart by calling
+diff --git a/kernel/locking/rtmutex.c b/kernel/locking/rtmutex.c
+index 2874bf5561620..734698aec5f9e 100644
+--- a/kernel/locking/rtmutex.c
++++ b/kernel/locking/rtmutex.c
+@@ -1718,8 +1718,7 @@ void rt_mutex_init_proxy_locked(struct rt_mutex *lock,
+  * possible because it belongs to the pi_state which is about to be freed
+  * and it is not longer visible to other tasks.
+  */
+-void rt_mutex_proxy_unlock(struct rt_mutex *lock,
+-			   struct task_struct *proxy_owner)
++void rt_mutex_proxy_unlock(struct rt_mutex *lock)
+ {
+ 	debug_rt_mutex_proxy_unlock(lock);
+ 	rt_mutex_set_owner(lock, NULL);
+diff --git a/kernel/locking/rtmutex_common.h b/kernel/locking/rtmutex_common.h
+index d1d62f942be22..ca6fb489007b6 100644
+--- a/kernel/locking/rtmutex_common.h
++++ b/kernel/locking/rtmutex_common.h
+@@ -133,8 +133,7 @@ enum rtmutex_chainwalk {
+ extern struct task_struct *rt_mutex_next_owner(struct rt_mutex *lock);
+ extern void rt_mutex_init_proxy_locked(struct rt_mutex *lock,
+ 				       struct task_struct *proxy_owner);
+-extern void rt_mutex_proxy_unlock(struct rt_mutex *lock,
+-				  struct task_struct *proxy_owner);
++extern void rt_mutex_proxy_unlock(struct rt_mutex *lock);
+ extern void rt_mutex_init_waiter(struct rt_mutex_waiter *waiter);
+ extern int __rt_mutex_start_proxy_lock(struct rt_mutex *lock,
+ 				     struct rt_mutex_waiter *waiter,
+diff --git a/kernel/trace/ring_buffer.c b/kernel/trace/ring_buffer.c
+index 077877ed54f73..7283741666538 100644
+--- a/kernel/trace/ring_buffer.c
++++ b/kernel/trace/ring_buffer.c
+@@ -4448,6 +4448,8 @@ void ring_buffer_reset_cpu(struct ring_buffer *buffer, int cpu)
+ 
+ 	if (!cpumask_test_cpu(cpu, buffer->cpumask))
+ 		return;
++	/* prevent another thread from changing buffer sizes */
++	mutex_lock(&buffer->mutex);
+ 
+ 	atomic_inc(&buffer->resize_disabled);
+ 	atomic_inc(&cpu_buffer->record_disabled);
+@@ -4471,6 +4473,8 @@ void ring_buffer_reset_cpu(struct ring_buffer *buffer, int cpu)
+ 
+ 	atomic_dec(&cpu_buffer->record_disabled);
+ 	atomic_dec(&buffer->resize_disabled);
++
++	mutex_unlock(&buffer->mutex);
+ }
+ EXPORT_SYMBOL_GPL(ring_buffer_reset_cpu);
+ 
+diff --git a/mm/slub.c b/mm/slub.c
+index 8b3ef45a0f103..e622e8f4c2ac4 100644
+--- a/mm/slub.c
++++ b/mm/slub.c
+@@ -5819,10 +5819,8 @@ static int sysfs_slab_add(struct kmem_cache *s)
+ 
+ 	s->kobj.kset = kset;
+ 	err = kobject_init_and_add(&s->kobj, &slab_ktype, NULL, "%s", name);
+-	if (err) {
+-		kobject_put(&s->kobj);
++	if (err)
+ 		goto out;
+-	}
+ 
+ 	err = sysfs_create_group(&s->kobj, &slab_attr_group);
+ 	if (err)
+diff --git a/tools/build/Makefile b/tools/build/Makefile
+index 727050c40f096..8a55378e8b7ce 100644
+--- a/tools/build/Makefile
++++ b/tools/build/Makefile
+@@ -15,10 +15,6 @@ endef
+ $(call allow-override,CC,$(CROSS_COMPILE)gcc)
+ $(call allow-override,LD,$(CROSS_COMPILE)ld)
+ 
+-HOSTCC ?= gcc
+-HOSTLD ?= ld
+-HOSTAR ?= ar
+-
+ export HOSTCC HOSTLD HOSTAR
+ 
+ ifeq ($(V),1)
+diff --git a/tools/objtool/Makefile b/tools/objtool/Makefile
+index f591c4d1b6fe2..9ae4a10438ee3 100644
+--- a/tools/objtool/Makefile
++++ b/tools/objtool/Makefile
+@@ -3,15 +3,6 @@ include ../scripts/Makefile.include
+ include ../scripts/Makefile.arch
+ 
+ # always use the host compiler
+-ifneq ($(LLVM),)
+-HOSTAR	?= llvm-ar
+-HOSTCC	?= clang
+-HOSTLD	?= ld.lld
+-else
+-HOSTAR	?= ar
+-HOSTCC	?= gcc
+-HOSTLD	?= ld
+-endif
+ AR	 = $(HOSTAR)
+ CC	 = $(HOSTCC)
+ LD	 = $(HOSTLD)
+diff --git a/tools/perf/Makefile.perf b/tools/perf/Makefile.perf
+index 902c792f326a5..961f5e4fd6566 100644
+--- a/tools/perf/Makefile.perf
++++ b/tools/perf/Makefile.perf
+@@ -163,10 +163,6 @@ endef
+ 
+ LD += $(EXTRA_LDFLAGS)
+ 
+-HOSTCC  ?= gcc
+-HOSTLD  ?= ld
+-HOSTAR  ?= ar
+-
+ PKG_CONFIG = $(CROSS_COMPILE)pkg-config
+ LLVM_CONFIG ?= llvm-config
+ 
+diff --git a/tools/power/acpi/Makefile.config b/tools/power/acpi/Makefile.config
+index 54a2857c2510a..331f6d30f4726 100644
+--- a/tools/power/acpi/Makefile.config
++++ b/tools/power/acpi/Makefile.config
+@@ -54,7 +54,6 @@ INSTALL_SCRIPT = ${INSTALL_PROGRAM}
+ CROSS = #/usr/i386-linux-uclibc/usr/bin/i386-uclibc-
+ CROSS_COMPILE ?= $(CROSS)
+ LD = $(CC)
+-HOSTCC = gcc
+ 
+ # check if compiler option is supported
+ cc-supports = ${shell if $(CC) ${1} -S -o /dev/null -x c /dev/null > /dev/null 2>&1; then echo "$(1)"; fi;}
+diff --git a/tools/scripts/Makefile.include b/tools/scripts/Makefile.include
+index 6d2f3a1b22493..812fc97bb1a97 100644
+--- a/tools/scripts/Makefile.include
++++ b/tools/scripts/Makefile.include
+@@ -59,6 +59,16 @@ $(call allow-override,LD,$(CROSS_COMPILE)ld)
+ $(call allow-override,CXX,$(CROSS_COMPILE)g++)
+ $(call allow-override,STRIP,$(CROSS_COMPILE)strip)
+ 
++ifneq ($(LLVM),)
++HOSTAR  ?= llvm-ar
++HOSTCC  ?= clang
++HOSTLD  ?= ld.lld
++else
++HOSTAR  ?= ar
++HOSTCC  ?= gcc
++HOSTLD  ?= ld
++endif
++
+ ifeq ($(CC_NO_CLANG), 1)
+ EXTRA_WARNINGS += -Wstrict-aliasing=3
+ endif
