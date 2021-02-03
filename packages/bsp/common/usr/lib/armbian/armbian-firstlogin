@@ -75,65 +75,77 @@ set_timezone_and_locales()
 	# Grab this machine's public IP address
 	PUBLIC_IP=`curl --max-time 5 -s https://ipinfo.io/ip`
 	if [ $? -eq 0 ]; then
+
+		# Call the geolocation API and capture the output
+		RES=$(
+				curl --max-time 5 -s http://ipwhois.app/json/${PUBLIC_IP} | \
+				jq '.timezone, .country, .country_code' | \
+				while read -r TIMEZONE; do
+					read -r COUNTRY
+					echo "${TIMEZONE},${COUNTRY},${COUNTRYCODE}" | tr --delete \"
+				done
+			)
+
+		TZDATA=$(echo ${RES} | cut -d"," -f1)
+		STATE=$(echo ${RES} | cut -d"," -f2)
+		CCODE=$(echo ${RES} | cut -d"," -f3 | xargs)
+		KEYBOARD="${CCODE,,}"
+		LOCALES=$(grep territory /usr/share/i18n/locales/* | grep "$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  xargs -I{} grep {} /usr/share/i18n/SUPPORTED | grep "\.UTF-8" | cut -d " " -f 1)
+		# UTF8 is not present everywhere so check again in case it returns empty value
+		[[ -z "$LOCALES" ]] && LOCALES=$(grep territory /usr/share/i18n/locales/* | grep "$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  xargs -I{} grep {} /usr/share/i18n/SUPPORTED | cut -d " " -f 1)
+		echo -e "Detected timezone: \x1B[92m$TZDATA\x1B[0m"
+		echo ""
 		read -n1 -s -r -p "Set user language based on your location? [Y/n] " response
 		echo ""
-		if [[ "${response}" =~ ^(Y|y|"")$ ]]; then
+		# change it only if we have a match and if we agree
+		if [[ -n "$LOCALES" && "${response}" =~ ^(Y|y|"")$ ]]; then
 
-			# Call the geolocation API and capture the output
-			RES=$(
-					curl --max-time 5 -s http://ipwhois.app/json/${PUBLIC_IP} | \
-					jq '.timezone, .country, .country_code' | \
-					while read -r TIMEZONE; do
-						read -r COUNTRY
-						echo "${TIMEZONE},${COUNTRY},${COUNTRYCODE}" | tr --delete \"
-					done
-				)
+			options=(`echo ${LOCALES}`);
 
-			TZDATA=$(echo ${RES} | cut -d"," -f1)
-			STATE=$(echo ${RES} | cut -d"," -f2)
-			CCODE=$(echo ${RES} | cut -d"," -f3 | xargs)
-			KEYBOARD="${CCODE,,}"
-			LOCALES=$(grep territory /usr/share/i18n/locales/* | grep "$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  xargs -I{} grep {} /usr/share/i18n/SUPPORTED | grep "\.UTF-8" | cut -d " " -f 1)
-			# UTF8 is not present everywhere so check again in case it returns empty value
-			[[ -z "$LOCALES" ]] && LOCALES=$(grep territory /usr/share/i18n/locales/* | grep "$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  xargs -I{} grep {} /usr/share/i18n/SUPPORTED | cut -d " " -f 1)
+			# when having more locales, prompt for choosing one
+			if [[ "${#options[@]}" -gt 1 ]]; then
 
-			# change it only if we have a match
-			if [[ -n "$LOCALES" ]]; then
+				options+=("Skip generating locales")
+				echo -e "\nAt your location, more locales are possible:\n"
+				PS3='Please enter your choice:'
+				select opt in "${options[@]}"
+				do
+					if [[ " ${options[@]} " =~ " ${opt} " ]]; then
+						LOCALES=${opt}
+						break
+					fi
+				done
 
-				options=(`echo ${LOCALES}`);
+			fi
+
+			if [[ "${LOCALES}" != *Skip* ]]; then
 
 				# reconfigure tzdata
 				timedatectl set-timezone "${TZDATA}"
 				dpkg-reconfigure --frontend=noninteractive tzdata > /dev/null 2>&1
 
-				echo -e "Detected timezone: \x1B[92m$(LC_ALL=C timedatectl | grep "Time zone" | cut -d":" -f2 | xargs)\x1B[0m"
-
-				# when having more locales, prompt for choosing one
-				if [[ "${#options[@]}" -gt 1 ]]; then
-					echo ""
-					echo -e "\nAt your location, more locales are possible:\n"
-					PS3='Please enter your choice:'
-					select opt in "${options[@]}"
-					do
-						if [[ " ${options[@]} " =~ " ${opt} " ]]; then
-							LOCALES=${opt}
-							break
-						fi
-					done
-				fi
-
 				# generate locales
+				echo ""
 				sed -i 's/# '"${LOCALES}"'/'"${LOCALES}"'/' /etc/locale.gen
 				echo -e "Generating locales: \x1B[92m${LOCALES}\x1B[0m"
 				locale-gen $LOCALES > /dev/null 2>&1
 
+				# setting detected locales only for user
+				echo "export LC_ALL=$LOCALES" >> /home/$RealUserName/.bashrc
+				echo "export LANG=$LOCALES" >> /home/$RealUserName/.bashrc
+				echo "export LANGUAGE=$LOCALES" >> /home/$RealUserName/.bashrc
+				echo "export LC_ALL=$LOCALES" >> /home/$RealUserName/.xsessionrc
+				echo "export LANG=$LOCALES" >> /home/$RealUserName/.xsessionrc
+				echo "export LANGUAGE=$LOCALES" >> /home/$RealUserName/.xsessionrc
+
 				# adding another keyboard layout
-				if grep -q " $CCODE " /usr/share/X11/xkb/rules/base.lst ; then
+				if grep -q " ${CCODE,,} " /usr/share/X11/xkb/rules/base.lst ; then
 					echo -e "Adding console keyboard layout: \x1B[92m$CCODE\x1B[0m"
 					CCODE=$(cat /etc/default/keyboard | grep XKBLAYOUT | awk -F'"' '$0=$2')",$CCODE"
 					sed -i "s/XKBLAYOUT=.*/XKBLAYOUT=\"$KEYBOARD\"/" /etc/default/keyboard
 					setupcon -k --force
 				fi
+
 			fi
 		fi
 	fi
@@ -197,16 +209,6 @@ add_user()
 				for additionalgroup in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh; do
 					usermod -aG ${additionalgroup} ${RealUserName} 2>/dev/null
 				done
-
-				# setting detected locales only for user
-				if [[ -n $LOCALES ]]; then
-					echo "export LC_ALL=$LOCALES" >> /home/$RealUserName/.bashrc
-					echo "export LANG=$LOCALES" >> /home/$RealUserName/.bashrc
-					echo "export LANGUAGE=$LOCALES" >> /home/$RealUserName/.bashrc
-					echo "export LC_ALL=$LOCALES" >> /home/$RealUserName/.xsessionrc
-					echo "export LANG=$LOCALES" >> /home/$RealUserName/.xsessionrc
-					echo "export LANGUAGE=$LOCALES" >> /home/$RealUserName/.xsessionrc
-				fi
 
 				# fix for gksu in Xenial
 				touch /home/$RealUserName/.Xauthority
