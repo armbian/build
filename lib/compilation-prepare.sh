@@ -574,6 +574,39 @@ compilation_prepare()
 		$kerneldir/drivers/net/wireless/Kconfig
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du.patch" "applying"
+
+	elif linux-version compare $version ge 3.14 && [ "$EXTRAWIFI" == yes ] && [ "$BRANCH" == legacy ]; then
+
+		# attach to specifics tag or branch
+		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
+
+		local rtl8723duver="branch:local_rtl8723du-rk"
+		fetch_from_repo "https://github.com/150balbes/wifi" "rtl8723du" "${rtl8723duver}" "yes"
+
+		cd "$kerneldir" || exit
+		rm -rf $kerneldir/drivers/net/wireless/rtl8723du
+		mkdir -p $kerneldir/drivers/net/wireless/rtl8723du/
+		cp -R ${SRC}/cache/sources/rtl8723du/${rtl8723duver#*:}/{core,hal,include,os_dep,platform} \
+		$kerneldir/drivers/net/wireless/rtl8723du
+
+		# Makefile
+		cp ${SRC}/cache/sources/rtl8723du/${rtl8723duver#*:}/Makefile \
+		$kerneldir/drivers/net/wireless/rtl8723du/Makefile
+
+		# Disable debug
+		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
+		$kerneldir/drivers/net/wireless/rtl8723du/Makefile
+
+		# Add to section Makefile
+		echo "obj-\$(CONFIG_RTL8723DU) += rtl8723du/" >> $kerneldir/drivers/net/wireless/Makefile
+		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723du\/Kconfig"' \
+		$kerneldir/drivers/net/wireless/Kconfig
+
+		# Kconfig
+		sed -i 's/---help---/help/g' "${SRC}/cache/sources/rtl8723du/${rtl8723duver#*:}/Kconfig"
+		cp "${SRC}/cache/sources/rtl8723du/${rtl8723duver#*:}/Kconfig" \
+		"$kerneldir/drivers/net/wireless/rtl8723du/Kconfig"
+
 	fi
 
 
