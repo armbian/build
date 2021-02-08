@@ -25,7 +25,7 @@ else # rk3308, rk3328
 
 fi
 
-if [[ $BOARD == nanopi-r2s || $BOARD == rockpi-e || $BOARD == nanopineo3 || $BOARD == renegade || $BOARD == station-m1 || $BOARD == z28pro ]]; then
+if [[ $BOARD == nanopi-r2s || $BOARD == rockpi-e || $BOARD == nanopineo3 || $BOARD == renegade || $BOARD == station-m1 || $BOARD == z28pro || $BOARD == orangepi-r1plus ]]; then
 
 	BOOT_USE_BLOBS=yes
 	BOOT_SOC=rk3328
