@@ -120,6 +120,9 @@ compile_uboot()
 		local ubootdir="$SRC/cache/sources/$BOOTSOURCEDIR"
 	fi
 	cd "${ubootdir}" || exit
+	
+	# write toradex .config file
+	make colibri_imx7_defconfig
 
 	# read uboot version
 	local version hash
