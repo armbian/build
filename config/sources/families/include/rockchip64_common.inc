@@ -25,7 +25,7 @@ else # rk3308, rk3328
 
 fi
 
-if [[ $BOARD == nanopi-r2s || $BOARD == rockpi-e || $BOARD == nanopineo3 || $BOARD == renegade || $BOARD == station-m1 ]]; then
+if [[ $BOARD == nanopi-r2s || $BOARD == rockpi-e || $BOARD == nanopineo3 || $BOARD == renegade || $BOARD == station-m1 || $BOARD == z28pro ]]; then
 
 	BOOT_USE_BLOBS=yes
 	BOOT_SOC=rk3328
@@ -410,6 +410,7 @@ family_tweaks_bsp()
 		# UPS service
 		cp $SRC/packages/bsp/helios64/helios64-ups.service $destination/lib/systemd/system/
 		cp $SRC/packages/bsp/helios64/helios64-ups.timer $destination/lib/systemd/system/
+		install -m 755 $SRC/packages/bsp/helios64/helios64-ups.sh $destination/usr/bin/helios64-ups.sh
 
 	fi
 
