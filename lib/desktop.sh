@@ -63,7 +63,7 @@ create_desktop_package ()
 	Section: xorg
 	Priority: optional
 	Recommends: ${DEBIAN_RECOMMENDS//[:space:]+/,}
-	Provides: ${CHOSEN_DESKTOP}
+	Provides: ${CHOSEN_DESKTOP}, armbian-${RELEASE}-desktop
 	Pre-Depends: ${PACKAGE_LIST_PREDEPENDS//[:space:]+/,}
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
