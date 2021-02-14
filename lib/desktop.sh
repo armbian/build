@@ -22,6 +22,7 @@
 
 create_desktop_package ()
 {
+
 	# join and cleanup package list
 	# Remove leading and trailing whitespaces
 	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/debug/output.log
@@ -62,7 +63,7 @@ create_desktop_package ()
 	Section: xorg
 	Priority: optional
 	Recommends: ${DEBIAN_RECOMMENDS//[:space:]+/,}
-	Provides: ${CHOSEN_DESKTOP}
+	Provides: ${CHOSEN_DESKTOP}, armbian-${RELEASE}-desktop
 	Pre-Depends: ${PACKAGE_LIST_PREDEPENDS//[:space:]+/,}
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
@@ -95,7 +96,7 @@ create_desktop_package ()
 
 	aggregate_all "armbian/create_desktop_package.sh" $'\n'
 
-#	display_alert "Showing the user scripts executed in create_desktop_package"
+	# display_alert "Showing the user scripts executed in create_desktop_package"
 	echo "${aggregated_content}" >> "${DEST}"/debug/install.log
 	eval "${aggregated_content}"
 
@@ -105,6 +106,7 @@ create_desktop_package ()
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
 	cd "${destination}"; cd ..
 	fakeroot dpkg-deb -b "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"  >/dev/null
+
 	# cleanup
 	rm -rf "${tmp_dir}"
 
@@ -116,15 +118,18 @@ create_desktop_package ()
 
 
 run_on_sdcard() {
+
 	# Myy : The lack of quotes is deliberate here
 	# This allows for redirections and pipes easily.
-	chroot "${SDCARD}" /bin/bash -c "${@}"
+	chroot "${SDCARD}" /bin/bash -c "${@}" >> "${DEST}"/debug/install.log
+
 }
 
 
 
 
 install_ppa_prerequisites() {
+
 	# Myy : So... The whole idea is that, a good bunch of external sources
 	# are PPA.
 	# Adding PPA without add-apt-repository is poorly conveninent since
@@ -135,12 +140,14 @@ install_ppa_prerequisites() {
 	# Myy : TODO Try to find a way to install this package only when
 	# we encounter a PPA.
 	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt install -yqq software-properties-common"
+
 }
 
 
 
 
 add_apt_sources() {
+
 	local potential_paths=""
 	get_all_potential_paths_for "sources/apt"
 
@@ -174,12 +181,14 @@ add_apt_sources() {
 			done
 		fi
 	done
+
 }
 
 
 
 
 add_desktop_package_sources() {
+
 	# Myy : I see Snap and Flatpak coming up in the next releases
 	# so... let's prepare for that
 	# install_ppa_prerequisites # Myy : I'm currently trying to avoid adding "hidden" packages
@@ -187,6 +196,7 @@ add_desktop_package_sources() {
 	run_on_sdcard "apt -y -q update"
 	ls -l "${SDCARD}/etc/apt/sources.list.d" >> "${DEST}"/debug/install.log
 	cat "${SDCARD}/etc/apt/sources.list" >> "${DEST}"/debug/install.log
+
 }
 
 
@@ -194,17 +204,18 @@ add_desktop_package_sources() {
 
 desktop_postinstall ()
 {
-	# disable display manager for first run
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable gdm3.service >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get update" >> "${DEST}"/debug/install.log
+
+	# disable display manager for the first run
+	run_on_sdcard "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
+	run_on_sdcard "systemctl --no-reload disable gdm3.service >/dev/null 2>&1"
+	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get update" >> "${DEST}"/debug/install.log
 
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" >> "${DEST}"/debug/install.log
+		run_on_sdcard "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" 
 	fi
 
 	if [[ -n ${PACKAGE_LIST_DESKTOP_FAMILY} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY" >> "${DEST}"/debug/install.log
+		run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY"
 	fi
 
 }

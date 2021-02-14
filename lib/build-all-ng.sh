@@ -63,7 +63,7 @@ unset	LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSO
 		PACKAGE_LIST_BOARD_REMOVE PACKAGE_LIST_FAMILY_REMOVE PACKAGE_LIST_DESKTOP_BOARD_REMOVE PACKAGE_LIST_DESKTOP_FAMILY_REMOVE BOOTCONFIG_DEV \
 		DESKTOP_ENVIRONMENT DESKTOP_ENVIRONMENT_CONFIG_NAME DESKTOP_APPGROUPS_SELECTED DESKTOP_APT_FLAGS_SELECTED \
 		DESKTOP_ENVIRONMENT_DIRPATH DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH DESKTOP_ENVIRONMENT_DIRPATH DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH \
-		DESKTOP_CONFIG_PREFIX DESKTOP_CONFIGS_DIR DESKTOP_APPGROUPS_DIR DEBIAN_RECOMMENDS USE_OVERLAYFS
+		DESKTOP_CONFIG_PREFIX DESKTOP_CONFIGS_DIR DESKTOP_APPGROUPS_DIR DEBIAN_RECOMMENDS USE_OVERLAYFS aggregated_content DEBOOTSTRAP_COMPONENTS
 }
 
 pack_upload ()
@@ -72,7 +72,7 @@ pack_upload ()
 	# pack and upload to server or just pack
 
 	display_alert "Signing" "Please wait!" "info"
-	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}_${DESKTOP_ENVIRONMENT}"
+	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
 	local subdir="archive"
 	compression_type=""
 
@@ -213,7 +213,7 @@ function check_hash()
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
 	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort)
-	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
+	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config" 2> /dev/null)
 	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin)
 
 	case $ref_type in
@@ -273,8 +273,8 @@ function build_all()
 		BOOTCONFIG MODULES_BLACKLIST MODULES_BLACKLIST_LEGACY MODULES_BLACKLIST_CURRENT MODULES_BLACKLIST_DEV DEFAULT_OVERLAYS SERIALCON \
 		BUILD_MINIMAL RELEASE ATFBRANCH BOOT_FDT_FILE BOOTCONFIG_DEV BOOTSOURCEDIR
 
-		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE DESKTOP_ENVIRONMENT DESKTOP_ENVIRONMENT_CONFIG_NAME<<< "${line}"
-
+		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE DESKTOP_ENVIRONMENT DESKTOP_ENVIRONMENT_CONFIG_NAME DESKTOP_APPGROUPS_SELECTED<<< "${line}"
+		DESKTOP_APPGROUPS_SELECTED="${DESKTOP_APPGROUPS_SELECTED//,/ }"
 		# read all possible configurations
 		# shellcheck source=/dev/null
 		source "${SRC}/config/boards/${BOARD}".eos 2> /dev/null
@@ -295,8 +295,6 @@ function build_all()
 				continue
 			fi
 		fi
-
-		[[ -n $DESKTOP_ENVIRONMENT ]] && DESKTOP_APPGROUPS_SELECTED="3dsupport browsers chat desktop_tools dev-tools editors email internet internet-tools languages multimedia office programming remote_desktop"
 
 		# exceptions handling
 		[[ ${BOARDFAMILY} == sun*i ]] && BOARDFAMILY=sunxi
@@ -321,6 +319,7 @@ function build_all()
 
 		[[ ${BUILD_TARGET} == "desktop" ]] && BUILD_DESKTOP="yes"
 		[[ ${BUILD_TARGET} == "minimal" ]] && BUILD_MINIMAL="yes"
+		[[ ${BSP_BUILD} == yes ]] && BUILD_STABILITY=$STABILITY
 
 		# create beta or stable
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
@@ -393,8 +392,8 @@ function build_all()
 			else
 				((n+=1))
 				# In dryrun it only prints out what will be build
-                                printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n" "${n}." \
-                                "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${DESKTOP_ENVIRONMENT}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}"
+                                printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\t%-6s\n" "${n}." \
+                                "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${DESKTOP_ENVIRONMENT}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}" "${DESKTOP_APPGROUPS_SELECTED}"
 			fi
 
 fi
@@ -407,12 +406,32 @@ fi
 
 }
 
+# bump version in case there was a change
+if [[ ${BUMP_VERSION} == yes ]]; then
+
+        cd "${SRC}" || exit
+        CURRENT_VERSION=$(cat VERSION)
+        NEW_VERSION="${CURRENT_VERSION%%-trunk}"
+        if [[ $CURRENT_VERSION == *trunk* ]]; then
+                NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-3)"."$((${NEW_VERSION##*.} + 1))
+        else
+                NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-2)"."$((${NEW_VERSION##*.} + 1))
+        fi
+
+        echo "${NEW_VERSION}" > VERSION
+        improved_git add "${SRC}"/VERSION
+        improved_git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs-beta/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
+        improved_git push
+        display_alert "Bumping to new version" "${NEW_VERSION}" "info"
+
+else
+
 # display what will be build
 echo ""
 display_alert "Building all targets" "$STABILITY $(if [[ $KERNEL_ONLY == "yes" ]] ; then echo "kernels"; \
 else echo "images"; fi)" "info"
 
-printf "\n%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\n\n" "" "board" "branch" "release" "DE" "desktop" "minimal"
+printf "\n%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\t%-6s\n\n" "" "board" "branch" "release" "DE" "desktop" "minimal" "DE app groups"
 
 # display what we will build
 build_all "dryrun"
@@ -443,25 +462,10 @@ do
 	sleep 5
 done
 
-# bump version in case there was a change
-if [[ $n -gt 0 && ${BUMP_VERSION} == yes ]]; then
-
-	cd "${SRC}" || exit
-	CURRENT_VERSION=$(cat VERSION)
-	NEW_VERSION="${CURRENT_VERSION%%-trunk}"
-	if [[ $CURRENT_VERSION == *trunk* ]]; then
-		NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-3)"."$((${NEW_VERSION##*.} + 1))
-	else
-		NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-2)"."$((${NEW_VERSION##*.} + 1))
-	fi
-
-	echo "${NEW_VERSION}" > VERSION
-	improved_git add "${SRC}"/VERSION
-	improved_git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
-	improved_git push
-	display_alert "Bumping to new version" "${NEW_VERSION}" "info"
 
 fi
+
+[[ $n -eq 0 ]] && display_alert "No changes in upstream sources, patches or configs found. Exiting." "info"
 
 buildall_end=$(date +%s)
 buildall_runtime=$(((buildall_end - buildall_start) / 60))

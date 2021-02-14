@@ -5,7 +5,7 @@ LINUXFAMILY=meson64
 ARCH=arm64
 SERIALCON=ttyAML0
 SRC_LOADADDR='LOADADDR=0x1080000'
-BOOTBRANCH="tag:v2020.10"
+BOOTBRANCH="tag:v2021.01"
 OVERLAY_PREFIX='meson'
 
 # this family does not need it
@@ -28,7 +28,7 @@ case $BRANCH in
 	;;
 
         current)
-                KERNELBRANCH='branch:linux-5.9.y'
+                KERNELBRANCH='branch:linux-5.10.y'
                 KERNELPATCHDIR='meson64-current'
         ;;
 
