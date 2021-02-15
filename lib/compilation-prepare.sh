@@ -323,7 +323,7 @@ compilation_prepare()
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8812auver="commit:ad351bd0afeb47d2fb197aff8cde4d7fb5fead9e"
+		local rtl8812auver="branch:v5.6.4.2"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
