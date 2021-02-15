@@ -1,0 +1,123 @@
+--- a/drivers/gpio/gpio-mvebu.c
++++ b/drivers/gpio/gpio-mvebu.c
+@@ -641,39 +641,81 @@ static int mvebu_pwm_request(struct pwm_
+ 	struct mvebu_pwm *mvpwm = to_mvebu_pwm(chip);
+ 	struct mvebu_gpio_chip *mvchip = mvpwm->mvchip;
+ 	struct gpio_desc *desc;
++    enum mvebu_pwm_ctrl id;
+ 	unsigned long flags;
+ 	int ret = 0;
++    struct mvebu_pwm_chip_drv *chip_data;
+ 
+-	spin_lock_irqsave(&mvpwm->lock, flags);
++	spin_lock_irqsave(&mvpwm->controller.lock, flags);
+ 
+-	if (mvpwm->gpiod) {
+-		ret = -EBUSY;
+-	} else {
+-		desc = gpiochip_request_own_desc(&mvchip->chip,
++	regmap_read(mvchip->regs, GPIO_BLINK_EN_OFF + mvchip->offset,
++		    &mvchip->blink_en_reg);
++
++	if (pwm->chip_data || (mvchip->blink_en_reg & BIT(pwm->hwpwm)))
++		return -EBUSY;
++
++	desc = gpiochip_request_own_desc(&mvchip->chip,
+ 						 pwm->hwpwm, "mvebu-pwm",
+ 						 GPIO_ACTIVE_HIGH,
+ 						 GPIOD_OUT_LOW);
+-		if (IS_ERR(desc)) {
+-			ret = PTR_ERR(desc);
+-			goto out;
+-		}
++	if (IS_ERR(desc)) {
++		ret = PTR_ERR(desc);
++		goto out;
++    }
++
++    ret = gpiod_direction_output(desc, 0);
++	if (ret) {
++		gpiochip_free_own_desc(desc);
++		goto out;
++	}
+ 
+-		mvpwm->gpiod = desc;
++    chip_data = kzalloc(sizeof(struct mvebu_pwm_chip_drv), GFP_KERNEL);
++	if (!chip_data) {
++		gpiochip_free_own_desc(desc);
++		ret = -ENOMEM;
++		goto out;
+ 	}
++
++	for (id = MVEBU_PWM_CTRL_SET_A;id < MVEBU_PWM_CTRL_MAX; id++) {
++		if (!mvebu_pwm_list[id]->in_use) {
++			chip_data->ctrl   = id;
++			chip_data->master = true;
++			mvebu_pwm_list[id]->in_use = true;
++			break;
++		}
++ 	}	
++
++    if (!chip_data->master)
++		chip_data->ctrl = mvpwm->default_counter;
++
++	regmap_update_bits(mvchip->regs, GPIO_BLINK_CNT_SELECT_OFF + mvchip->offset,
++				BIT(pwm->hwpwm), chip_data->ctrl ? BIT(pwm->hwpwm) : 0);
++
++	chip_data->gpiod = desc;
++	pwm->chip_data = chip_data;
++
++	regmap_read(mvchip->regs, GPIO_BLINK_CNT_SELECT_OFF + mvchip->offset,
++		    &mvpwm->blink_select);
++    
+ out:
+-	spin_unlock_irqrestore(&mvpwm->lock, flags);
++	spin_unlock_irqrestore(&mvpwm->controller.lock, flags);
+ 	return ret;
+ }
+ 
+ static void mvebu_pwm_free(struct pwm_chip *chip, struct pwm_device *pwm)
+ {
+ 	struct mvebu_pwm *mvpwm = to_mvebu_pwm(chip);
++    struct mvebu_pwm_chip_drv *chip_data = (struct mvebu_pwm_chip_drv*) pwm->chip_data;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&mvpwm->lock, flags);
+-	gpiochip_free_own_desc(mvpwm->gpiod);
+-	mvpwm->gpiod = NULL;
+-	spin_unlock_irqrestore(&mvpwm->lock, flags);
++    spin_lock_irqsave(&mvpwm->controller.lock, flags);
++    if (chip_data->master)
++	    mvebu_pwm_list[chip_data->ctrl]->in_use = false;
++    
++    gpiochip_free_own_desc(chip_data->gpiod);
++    kfree(chip_data);
++    pwm->chip_data = NULL;
++    spin_unlock_irqrestore(&mvpwm->controller.lock, flags);
+ }
+ 
+ static void mvebu_pwm_get_state(struct pwm_chip *chip,
+@@ -721,19 +763,21 @@ static void mvebu_pwm_get_state(struct p
+ 	else
+ 		state->enabled = false;
+ 
+-	spin_unlock_irqrestore(&mvpwm->lock, flags);
++	spin_unlock_irqrestore(&controller->lock, flags);
+ }
+ 
+ static int mvebu_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
+ 			   const struct pwm_state *state)
+ {
+ 	struct mvebu_pwm *mvpwm = to_mvebu_pwm(chip);
++    struct mvebu_pwm_chip_drv *chip_data = (struct mvebu_pwm_chip_drv*) pwm->chip_data;
++    struct mvebu_pwmchip *controller = mvebu_pwm_list[chip_data->ctrl];
+ 	struct mvebu_gpio_chip *mvchip = mvpwm->mvchip;
+ 	unsigned long long val;
+ 	unsigned long flags;
+ 	unsigned int on, off;
+ 
+-	val = (unsigned long long) mvpwm->clk_rate * state->duty_cycle;
++	val = (unsigned long long) controller->clk_rate * state->duty_cycle;
+ 	do_div(val, NSEC_PER_SEC);
+ 	if (val > UINT_MAX)
+ 		return -EINVAL;
