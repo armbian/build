@@ -1,0 +1,223 @@
+--- a/drivers/gpio/gpio-mvebu.c
++++ b/drivers/gpio/gpio-mvebu.c
+@@ -93,20 +93,41 @@
+ 
+ #define MVEBU_MAX_GPIO_PER_BANK		32
+ 
+-struct mvebu_pwm {
++enum mvebu_pwm_ctrl {
++	MVEBU_PWM_CTRL_SET_A = 0,
++	MVEBU_PWM_CTRL_SET_B,
++	MVEBU_PWM_CTRL_MAX
++};
++
++struct mvebu_pwmchip {
+ 	void __iomem		*membase;
+ 	unsigned long		 clk_rate;
++	spinlock_t		 lock;
++	bool			 in_use;
++
++	/* Used to preserve GPIO/PWM registers across suspend/resume */
++	u32			 blink_on_duration;
++	u32			 blink_off_duration;
++};
++
++struct mvebu_pwm_chip_drv {
++	enum mvebu_pwm_ctrl	ctrl;
+ 	struct gpio_desc	*gpiod;
++	bool			master;
++};
++
++struct mvebu_pwm {
+ 	struct pwm_chip		 chip;
+-	spinlock_t		 lock;
+ 	struct mvebu_gpio_chip	*mvchip;
++	struct mvebu_pwmchip     controller;
++	enum mvebu_pwm_ctrl	 default_counter;
+ 
+ 	/* Used to preserve GPIO/PWM registers across suspend/resume */
+ 	u32			 blink_select;
+-	u32			 blink_on_duration;
+-	u32			 blink_off_duration;
+ };
+ 
++static struct mvebu_pwmchip	*mvebu_pwm_list[MVEBU_PWM_CTRL_MAX];
++
+ struct mvebu_gpio_chip {
+ 	struct gpio_chip   chip;
+ 	struct regmap     *regs;
+@@ -283,12 +304,12 @@ mvebu_gpio_write_level_mask(struct mvebu
+  * Functions returning addresses of individual registers for a given
+  * PWM controller.
+  */
+-static void __iomem *mvebu_pwmreg_blink_on_duration(struct mvebu_pwm *mvpwm)
++static void __iomem *mvebu_pwmreg_blink_on_duration(struct mvebu_pwmchip *mvpwm)
+ {
+ 	return mvpwm->membase + PWM_BLINK_ON_DURATION_OFF;
+ }
+ 
+-static void __iomem *mvebu_pwmreg_blink_off_duration(struct mvebu_pwm *mvpwm)
++static void __iomem *mvebu_pwmreg_blink_off_duration(struct mvebu_pwmchip *mvpwm)
+ {
+ 	return mvpwm->membase + PWM_BLINK_OFF_DURATION_OFF;
+ }
+@@ -723,17 +744,24 @@ static void mvebu_pwm_get_state(struct p
+ 				struct pwm_state *state) {
+ 
+ 	struct mvebu_pwm *mvpwm = to_mvebu_pwm(chip);
++	struct mvebu_pwm_chip_drv *chip_data = (struct mvebu_pwm_chip_drv*) pwm->chip_data;
++	struct mvebu_pwmchip *controller;
+ 	struct mvebu_gpio_chip *mvchip = mvpwm->mvchip;
+ 	unsigned long long val;
+ 	unsigned long flags;
+ 	u32 u;
+ 
+-	spin_lock_irqsave(&mvpwm->lock, flags);
++	if (chip_data)
++		controller = mvebu_pwm_list[chip_data->ctrl];
++	else
++		controller = &mvpwm->controller;
++
++	spin_lock_irqsave(&controller->lock, flags);
+ 
+ 	val = (unsigned long long)
+-		readl_relaxed(mvebu_pwmreg_blink_on_duration(mvpwm));
++		readl_relaxed(mvebu_pwmreg_blink_on_duration(controller));
+ 	val *= NSEC_PER_SEC;
+-	do_div(val, mvpwm->clk_rate);
++	do_div(val, controller->clk_rate);
+ 	if (val > UINT_MAX)
+ 		state->duty_cycle = UINT_MAX;
+ 	else if (val)
+@@ -742,9 +770,9 @@ static void mvebu_pwm_get_state(struct p
+ 		state->duty_cycle = 1;
+ 
+ 	val = (unsigned long long)
+-		readl_relaxed(mvebu_pwmreg_blink_off_duration(mvpwm));
++		readl_relaxed(mvebu_pwmreg_blink_off_duration(controller));
+ 	val *= NSEC_PER_SEC;
+-	do_div(val, mvpwm->clk_rate);
++	do_div(val, controller->clk_rate);
+ 	if (val < state->duty_cycle) {
+ 		state->period = 1;
+ 	} else {
+@@ -786,7 +814,7 @@ static int mvebu_pwm_apply(struct pwm_ch
+ 	else
+ 		on = 1;
+ 
+-	val = (unsigned long long) mvpwm->clk_rate *
++	val = (unsigned long long) controller->clk_rate *
+ 		(state->period - state->duty_cycle);
+ 	do_div(val, NSEC_PER_SEC);
+ 	if (val > UINT_MAX)
+@@ -796,16 +824,16 @@ static int mvebu_pwm_apply(struct pwm_ch
+ 	else
+ 		off = 1;
+ 
+-	spin_lock_irqsave(&mvpwm->lock, flags);
++	spin_lock_irqsave(&controller->lock, flags);
+ 
+-	writel_relaxed(on, mvebu_pwmreg_blink_on_duration(mvpwm));
+-	writel_relaxed(off, mvebu_pwmreg_blink_off_duration(mvpwm));
++	writel_relaxed(on, mvebu_pwmreg_blink_on_duration(controller));
++	writel_relaxed(off, mvebu_pwmreg_blink_off_duration(controller));
+ 	if (state->enabled)
+ 		mvebu_gpio_blink(&mvchip->chip, pwm->hwpwm, 1);
+ 	else
+ 		mvebu_gpio_blink(&mvchip->chip, pwm->hwpwm, 0);
+ 
+-	spin_unlock_irqrestore(&mvpwm->lock, flags);
++	spin_unlock_irqrestore(&controller->lock, flags);
+ 
+ 	return 0;
+ }
+@@ -824,10 +852,10 @@ static void __maybe_unused mvebu_pwm_sus
+ 
+ 	regmap_read(mvchip->regs, GPIO_BLINK_CNT_SELECT_OFF + mvchip->offset,
+ 		    &mvpwm->blink_select);
+-	mvpwm->blink_on_duration =
+-		readl_relaxed(mvebu_pwmreg_blink_on_duration(mvpwm));
+-	mvpwm->blink_off_duration =
+-		readl_relaxed(mvebu_pwmreg_blink_off_duration(mvpwm));
++	mvpwm->controller.blink_on_duration =
++		readl_relaxed(mvebu_pwmreg_blink_on_duration(&mvpwm->controller));
++	mvpwm->controller.blink_off_duration =
++		readl_relaxed(mvebu_pwmreg_blink_off_duration(&mvpwm->controller));
+ }
+ 
+ static void __maybe_unused mvebu_pwm_resume(struct mvebu_gpio_chip *mvchip)
+@@ -836,10 +864,10 @@ static void __maybe_unused mvebu_pwm_res
+ 
+ 	regmap_write(mvchip->regs, GPIO_BLINK_CNT_SELECT_OFF + mvchip->offset,
+ 		     mvpwm->blink_select);
+-	writel_relaxed(mvpwm->blink_on_duration,
+-		       mvebu_pwmreg_blink_on_duration(mvpwm));
+-	writel_relaxed(mvpwm->blink_off_duration,
+-		       mvebu_pwmreg_blink_off_duration(mvpwm));
++	writel_relaxed(mvpwm->controller.blink_on_duration,
++		       mvebu_pwmreg_blink_on_duration(&mvpwm->controller));
++	writel_relaxed(mvpwm->controller.blink_off_duration,
++		       mvebu_pwmreg_blink_off_duration(&mvpwm->controller));
+ }
+ 
+ static int mvebu_pwm_probe(struct platform_device *pdev,
+@@ -849,6 +877,7 @@ static int mvebu_pwm_probe(struct platfo
+ 	struct device *dev = &pdev->dev;
+ 	struct mvebu_pwm *mvpwm;
+ 	u32 set;
++	enum mvebu_pwm_ctrl ctrl_set;
+ 
+ 	if (!of_device_is_compatible(mvchip->chip.of_node,
+ 				     "marvell,armada-370-gpio"))
+@@ -870,12 +899,15 @@ static int mvebu_pwm_probe(struct platfo
+ 	 * Use set A for lines of GPIO chip with id 0, B for GPIO chip
+ 	 * with id 1. Don't allow further GPIO chips to be used for PWM.
+ 	 */
+-	if (id == 0)
++	if (id == 0) {
+ 		set = 0;
+-	else if (id == 1)
++		ctrl_set = MVEBU_PWM_CTRL_SET_A;
++	} else if (id == 1) {
+ 		set = U32_MAX;
+-	else
++		ctrl_set = MVEBU_PWM_CTRL_SET_B;
++	} else {
+ 		return -EINVAL;
++	}
+ 	regmap_write(mvchip->regs,
+ 		     GPIO_BLINK_CNT_SELECT_OFF + mvchip->offset, set);
+ 
+@@ -885,15 +917,13 @@ static int mvebu_pwm_probe(struct platfo
+ 	mvchip->mvpwm = mvpwm;
+ 	mvpwm->mvchip = mvchip;
+ 
+-	mvpwm->membase = devm_platform_ioremap_resource_byname(pdev, "pwm");
+-	if (IS_ERR(mvpwm->membase))
+-		return PTR_ERR(mvpwm->membase);
+-
+-	mvpwm->clk_rate = clk_get_rate(mvchip->clk);
+-	if (!mvpwm->clk_rate) {
+-		dev_err(dev, "failed to get clock rate\n");
++	mvpwm->controller.membase = devm_platform_ioremap_resource_byname(pdev, "pwm");
++	if (IS_ERR(mvpwm->controller.membase))
++		return PTR_ERR(mvpwm->controller.membase);
++
++	mvpwm->controller.clk_rate = clk_get_rate(mvchip->clk);
++	if (!mvpwm->controller.clk_rate)
+ 		return -EINVAL;
+-	}
+ 
+ 	mvpwm->chip.dev = dev;
+ 	mvpwm->chip.ops = &mvebu_pwm_ops;
+@@ -906,7 +936,9 @@ static int mvebu_pwm_probe(struct platfo
+ 	 */
+ 	mvpwm->chip.base = -1;
+ 
+-	spin_lock_init(&mvpwm->lock);
++	spin_lock_init(&mvpwm->controller.lock);
++	mvpwm->default_counter = ctrl_set;
++	mvebu_pwm_list[ctrl_set] = &mvpwm->controller;
+ 
+ 	return pwmchip_add(&mvpwm->chip);
+ }
