@@ -240,6 +240,16 @@ create_rootfs_cache()
 
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian packages failed"
 
+		# stage: purge residual packages
+		display_alert "Purging residual packages for" "Armbian" "info"
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+			$apt_extra $apt_extra_progress remove --purge $(dpkg -l | grep \"^rc\" | awk \"{print $2}\")"' \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Purging residual Armbian packages..." $TTY_Y $TTY_X'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Purging of residual Armbian packages failed"
+
 		# stage: remove downloaded packages
 		chroot $SDCARD /bin/bash -c "apt-get clean"
 
