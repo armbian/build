@@ -26,7 +26,7 @@ umask 002
 # destination
 DEST="${SRC}"/output
 
-if [[ $BUILD_ALL != "yes" ]]; then
+if [[ $BUILD_ALL != "yes" && -z $ROOT_FS_CREATE_ONLY ]]; then
 	# override stty size
 	[[ -n $COLUMNS ]] && stty cols $COLUMNS
 	[[ -n $LINES ]] && stty rows $LINES
