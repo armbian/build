@@ -364,20 +364,26 @@ cli/${RELEASE}/main
 "
 
 DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS="
-desktop/_all_distributions/environments
-desktop/${RELEASE}/environments
+desktop/_all_distributions/environments/_all_environments
+desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}
+desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
+desktop/${RELEASE}/environments/_all_environments
+desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}
+desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
 "
 
 DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS="
 desktop/_all_distributions/appgroups
+desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/appgroups
 desktop/${RELEASE}/appgroups
+desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 "
 
 get_all_potential_paths() {
-	local root_dirs="${1}"
-	local rel_dirs="${2}"
-	local sub_dirs="${3}"
-	local looked_up_subpath="${4}"
+	local root_dirs="${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}"
+	local rel_dirs="${1}"
+	local sub_dirs="${2}"
+	local looked_up_subpath="${3}"
 	for root_dir in ${root_dirs}; do
 		for rel_dir in ${rel_dirs}; do
 			for sub_dir in ${sub_dirs}; do
@@ -400,23 +406,18 @@ get_all_potential_paths() {
 # Arguments :
 # 1. File to look up in each directory
 # 2. The separator to add between each concatenated file
-# 3. Absolute root dirpaths
-# 4. Relative directories paths added to ${3}
-# 5. Relative directories paths added to ${4}
+# 3. Relative directories paths added to ${3}
+# 4. Relative directories paths added to ${4}
 #
 # The function will basically generate a list of potential paths by
 # generating all the potential paths combinations leading to the
 # looked up file
-# ${3}/${4}/${5}/${1}
+# ${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}/${3}/${4}/${1}
 # Then it will concatenate the content of all the available files
 # into ${aggregated_content}
 #
 # TODO :
-# 3 and 4 are generated through static global variables.
-# However 5 is dynamic, most of the time, since depends on
-# selected options.
-# 3 could be removed since it's always the same roots
-# 5 could be removed by just adding the appropriate paths to ${4}
+# ${4} could be removed by just adding the appropriate paths to ${3}
 # dynamically for each case
 # (debootstrap, cli, desktop environments, desktop appgroups, ...)
 
@@ -424,7 +425,7 @@ aggregate_all_root_rel_sub() {
 	local separator="${2}"
 
 	local potential_paths=""
-	get_all_potential_paths "${3}" "${4}" "${5}" "${1}"
+	get_all_potential_paths "${3}" "${4}" "${1}"
 
 	aggregate_content
 }
@@ -434,7 +435,7 @@ aggregate_all_debootstrap() {
 	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
 		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
 	fi
-	aggregate_all_root_rel_sub "${1}" "${2}" "${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}" "${DEBOOTSTRAP_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}"
+	aggregate_all_root_rel_sub "${1}" "${2}" "${DEBOOTSTRAP_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}"
 }
 
 aggregate_all_cli() {
@@ -442,12 +443,12 @@ aggregate_all_cli() {
 	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
 		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
 	fi
-	aggregate_all_root_rel_sub "${1}" "${2}" "${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}" "${CLI_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}"
+	aggregate_all_root_rel_sub "${1}" "${2}" "${CLI_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}"
 }
 
 aggregate_all_desktop() {
-	aggregate_all_root_rel_sub "${1}" "${2}" "${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}" "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "_all_environments ${DESKTOP_ENVIRONMENT} ${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
-	aggregate_all_root_rel_sub "${1}" "${2}" "${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}" "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}"
+	aggregate_all_root_rel_sub "${1}" "${2}" "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "."
+	aggregate_all_root_rel_sub "${1}" "${2}" "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}"
 }
 
 one_line() {

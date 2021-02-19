@@ -150,13 +150,12 @@ add_apt_sources() {
 	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
 		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
 	fi
-	get_all_potential_paths "${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}" "${DEBOOTSTRAP_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
-	get_all_potential_paths "${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}" "${CLI_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
-	get_all_potential_paths "${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}" "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "_all_environments ${DESKTOP_ENVIRONMENT} ${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}" "sources/apt"
-	get_all_potential_paths "${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}" "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}" "sources/apt"
+	get_all_potential_paths "${DEBOOTSTRAP_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
+	get_all_potential_paths "${CLI_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
+	get_all_potential_paths "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "." "sources/apt"
+	get_all_potential_paths "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}" "sources/apt"
 
 	display_alert "ADDING ADDITIONAL APT SOURCES"
-	echo ${potential_paths}
 
 	for apt_sources_dirpath in ${potential_paths}; do
 		if [[ -d "${apt_sources_dirpath}" ]]; then
