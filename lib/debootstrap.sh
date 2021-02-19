@@ -242,8 +242,9 @@ create_rootfs_cache()
 
 		# stage: purge residual packages
 		display_alert "Purging residual packages for" "Armbian" "info"
+		PURGINGPACKAGES=$(chroot $SDCARD /bin/bash -c "dpkg -l | grep \"^rc\" | awk '{print \$2}' | tr \"\n\" \" \"")
 		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
-			$apt_extra $apt_extra_progress remove --purge $(dpkg -l | grep \"^rc\" | awk \"{print $2}\")"' \
+			$apt_extra $apt_extra_progress remove --purge $PURGINGPACKAGES"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Purging residual Armbian packages..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
