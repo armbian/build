@@ -133,15 +133,6 @@ create_rootfs_cache()
 
 	done
 
-	# used for internal purposes. Faster rootfs cache rebuilding
-	if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
-		[[ $use_tmpfs = yes ]] && umount $SDCARD
-		rm -rf $SDCARD
-		# remove exit trap
-		trap - INT TERM EXIT
-		exit
-	fi
-
 	if [[ -f $cache_fname && "$ROOT_FS_CREATE_ONLY" != "force" ]]; then
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
@@ -348,6 +339,15 @@ create_rootfs_cache()
 
 	fi
 
+	# used for internal purposes. Faster rootfs cache rebuilding
+	if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
+		[[ $use_tmpfs = yes ]] && umount $SDCARD
+		rm -rf $SDCARD
+		# remove exit trap
+		trap - INT TERM EXIT
+        exit
+	fi
+
 	mount_chroot "$SDCARD"
 } #############################################################################
 
@@ -552,7 +552,7 @@ prepare_partitions()
 		else
 			local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		fi
-		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs on ${LOOP}p${bootpart}"
