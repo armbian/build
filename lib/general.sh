@@ -1028,12 +1028,11 @@ prepare_host()
 
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
 
-	# Ubuntu Focal x86_64 is the only fully supported host OS release
-	# Ubuntu Bionic x86_64 support is no longer supported
+	# Ubuntu 20.04.x (Focal) x86_64 is the only fully supported host OS release
 	# Using Docker/VirtualBox/Vagrant is the only supported way to run the build script on other Linux distributions
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
-	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
+	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
 	if [[ -z $codename || "buster groovy focal hirsute debbie tricia ulyana" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
