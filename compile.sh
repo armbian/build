@@ -126,6 +126,10 @@ if [[ -z "$(command -v getfacl)" ]]; then
 	sudo apt-get update
 	sudo apt-get install -y acl
 fi
+if [[ -z "$(command -v uuidgen)" ]]; then
+	sudo apt-get update
+	sudo apt-get install -y uuid-runtime
+fi
 
 # Check for Vagrant
 if [[ "${1}" == vagrant && -z "$(command -v vagrant)" ]]; then

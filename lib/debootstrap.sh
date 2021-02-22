@@ -133,6 +133,15 @@ create_rootfs_cache()
 
 	done
 
+	# used for internal purposes. Faster rootfs cache rebuilding
+	if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
+		[[ $use_tmpfs = yes ]] && umount $SDCARD
+		rm -rf $SDCARD
+		# remove exit trap
+		trap - INT TERM EXIT
+		exit
+	fi
+
 	if [[ -f $cache_fname && "$ROOT_FS_CREATE_ONLY" != "force" ]]; then
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
@@ -288,6 +297,18 @@ create_rootfs_cache()
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian packages failed"
+
+		# stage: purge residual packages
+		display_alert "Purging residual packages for" "Armbian" "info"
+		PURGINGPACKAGES=$(chroot $SDCARD /bin/bash -c "dpkg -l | grep \"^rc\" | awk '{print \$2}' | tr \"\n\" \" \"")
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+			$apt_extra $apt_extra_progress remove --purge $PURGINGPACKAGES"' \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Purging residual Armbian packages..." $TTY_Y $TTY_X'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Purging of residual Armbian packages failed"
+
 		# stage: remove downloaded packages
 		chroot $SDCARD /bin/bash -c "apt-get clean"
 
@@ -325,15 +346,6 @@ create_rootfs_cache()
 			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes $cache_fname
 		fi
 
-	fi
-
-	# used for internal purposes. Faster rootfs cache rebuilding
-	if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
-		[[ $use_tmpfs = yes ]] && umount $SDCARD
-		rm -rf $SDCARD
-		# remove exit trap
-		trap - INT TERM EXIT
-        exit
 	fi
 
 	mount_chroot "$SDCARD"
