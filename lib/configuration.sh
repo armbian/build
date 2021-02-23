@@ -18,7 +18,7 @@ REVISION=$(cat "${SRC}"/VERSION)"$SUBREVISION" # all boards have same revision
 [[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
 TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
-EXIT_PATCHING_ERROR="" # exit patching if failed
+[[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
 ROOTFSCACHE_VERSION=3
@@ -289,32 +289,6 @@ fi
 
 #exit_with_error 'Testing'
 
-# Expected variables :
-# - potential_paths
-# - BOARD
-# - DESKTOP_ENVIRONMENT
-# - DESKTOP_APPGROUPS_SELECTED
-# - DESKTOP_APPGROUPS_DIR
-# Example usage :
-# local potential_paths=""
-# get_all_potential_paths_for debian/postinst
-# echo $potential_paths
-
-get_all_potential_paths_for() {
-	looked_up_subpath="${1}"
-	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/${looked_up_subpath}"
-	potential_paths+=" ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/${looked_up_subpath}"
-	potential_paths+=" ${DESKTOP_ENVIRONMENT_DIRPATH}/custom/boards/${BOARD}/${looked_up_subpath}"
-	potential_paths+=" ${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/custom/boards/${BOARD}/${looked_up_subpath}"
-	for appgroup in ${DESKTOP_APPGROUPS_SELECTED}; do
-		appgroup_dirpath="${DESKTOP_APPGROUPS_DIR}/${appgroup}"
-		potential_paths+=" ${appgroup_dirpath}/${looked_up_subpath}"
-		potential_paths+=" ${appgroup_dirpath}/custom/desktops/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
-		potential_paths+=" ${appgroup_dirpath}/custom/boards/${BOARD}/${looked_up_subpath}"
-		potential_paths+=" ${appgroup_dirpath}/custom/boards/${BOARD}/custom/desktops/${DESKTOP_ENVIRONMENT}/${looked_up_subpath}"
-	done
-}
-
 # Expected variables
 # - aggregated_content
 # - potential_paths
@@ -333,25 +307,6 @@ aggregate_content() {
 		fi
 
 	done
-}
-
-# Expected variables
-# - aggregated_content
-# - BOARD
-# - DESKTOP_ENVIRONMENT
-# - DESKTOP_APPGROUPS_SELECTED
-# - DESKTOP_APPGROUPS_DIR
-# Write to variables :
-# - aggregated_content
-aggregate_all() {
-	looked_up_subpath="${1}"
-	separator="${2}"
-
-	local potential_paths=""
-	get_all_potential_paths_for "${looked_up_subpath}"
-
-	aggregate_content
-
 }
 
 # set unique mounting directory
@@ -390,31 +345,110 @@ if [[ $? != 0 ]]; then
 	exit_with_error "The desktop environment ${DESKTOP_ENVIRONMENT} is not available for your architecture ${ARCH}"
 fi
 
-aggregate_all_debootstrap() {
-	local looked_up_subpath="${1}"
+AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS="
+${SRC}/config
+${SRC}/config/optional/_any_board/_configs
+${SRC}/config/optional/architectures/${ARCH}/_config
+${SRC}/config/optional/families/${LINUXFAMILY}/_config
+${SRC}/config/optional/boards/${BOARD}/_config
+"
+
+DEBOOTSTRAP_SEARCH_RELATIVE_DIRS="
+cli/_all_distributions/debootstrap
+cli/${RELEASE}/debootstrap
+"
+
+CLI_SEARCH_RELATIVE_DIRS="
+cli/_all_distributions/main
+cli/${RELEASE}/main
+"
+
+DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS="
+desktop/_all_distributions/environments/_all_environments
+desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}
+desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
+desktop/${RELEASE}/environments/_all_environments
+desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}
+desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
+"
+
+DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS="
+desktop/_all_distributions/appgroups
+desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/appgroups
+desktop/${RELEASE}/appgroups
+desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
+"
+
+get_all_potential_paths() {
+	local root_dirs="${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}"
+	local rel_dirs="${1}"
+	local sub_dirs="${2}"
+	local looked_up_subpath="${3}"
+	for root_dir in ${root_dirs}; do
+		for rel_dir in ${rel_dirs}; do
+			for sub_dir in ${sub_dirs}; do
+				potential_paths+="${root_dir}/${rel_dir}/${sub_dir}/${looked_up_subpath} "
+			done
+		done
+	done
+	# for ppath in ${potential_paths}; do
+	#  	echo "Checking for ${ppath}"
+	#  	if [[ -f "${ppath}" ]]; then
+	#  		echo "OK !|"
+	#  	else
+	#  		echo "Nope|"
+	#  	fi
+	# done
+}
+
+# Environment variables expected :
+# - aggregated_content
+# Arguments :
+# 1. File to look up in each directory
+# 2. The separator to add between each concatenated file
+# 3. Relative directories paths added to ${3}
+# 4. Relative directories paths added to ${4}
+#
+# The function will basically generate a list of potential paths by
+# generating all the potential paths combinations leading to the
+# looked up file
+# ${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}/${3}/${4}/${1}
+# Then it will concatenate the content of all the available files
+# into ${aggregated_content}
+#
+# TODO :
+# ${4} could be removed by just adding the appropriate paths to ${3}
+# dynamically for each case
+# (debootstrap, cli, desktop environments, desktop appgroups, ...)
+
+aggregate_all_root_rel_sub() {
 	local separator="${2}"
-	local potential_paths="${DEBOOTSTRAP_CONFIG_PATH}/${looked_up_subpath}"
-	potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/custom/boards/${BOARD}/${looked_up_subpath}"
-	echo "SELECTED_CONFIGURATION : ${SELECTED_CONFIGURATION}" >> "${DEST}"/debug/output.log
-	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
-		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
-		potential_paths+=" ${DEBOOTSTRAP_CONFIG_PATH}/config_${SELECTED_CONFIGURATION}/custom/boards/${BOARD}/${looked_up_subpath}"
-	fi
+
+	local potential_paths=""
+	get_all_potential_paths "${3}" "${4}" "${1}"
 
 	aggregate_content
 }
 
-aggregate_all_cli() {
-	local looked_up_subpath="${1}"
-	local separator="${2}"
-	local potential_paths="${CLI_CONFIG_PATH}/main/${looked_up_subpath}"
-	potential_paths+=" ${CLI_CONFIG_PATH}/main/custom/boards/${BOARD}/${looked_up_subpath}"
+aggregate_all_debootstrap() {
+	local sub_dirs_to_check=". "
 	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
-		potential_paths+=" ${CLI_CONFIG_PATH}/main/config_${SELECTED_CONFIGURATION}/${looked_up_subpath}"
-		potential_paths+=" ${CLI_CONFIG_PATH}/main/config_${SELECTED_CONFIGURATION}/custom/boards/${BOARD}/${looked_up_subpath}"
+		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
 	fi
+	aggregate_all_root_rel_sub "${1}" "${2}" "${DEBOOTSTRAP_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}"
+}
 
-	aggregate_content
+aggregate_all_cli() {
+	local sub_dirs_to_check=". "
+	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
+		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
+	fi
+	aggregate_all_root_rel_sub "${1}" "${2}" "${CLI_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}"
+}
+
+aggregate_all_desktop() {
+	aggregate_all_root_rel_sub "${1}" "${2}" "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "."
+	aggregate_all_root_rel_sub "${1}" "${2}" "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}"
 }
 
 one_line() {
@@ -441,7 +475,7 @@ echo "CLI PACKAGE_LIST_ADDITIONAL : ${PACKAGE_LIST_ADDITIONAL}" >> "${DEST}"/deb
 
 # Myy : FIXME Rename aggregate_all to aggregate_all_desktop
 if [[ $BUILD_DESKTOP == "yes" ]]; then
-	PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all "packages" " ")"
+	PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
 	echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}" >> "${DEST}"/debug/output.log
 fi
 
@@ -495,13 +529,13 @@ PACKAGE_LIST="$(cleanup_list PACKAGE_LIST)"
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
 aggregated_content="${PACKAGE_LIST_RM} "
 aggregate_all_cli "packages.remove" " "
-aggregate_all "packages.remove" " "
+aggregate_all_desktop "packages.remove" " "
 PACKAGE_LIST_RM="$(cleanup_list aggregated_content)"
 unset aggregated_content
 
 aggregated_content=""
 aggregate_all_cli "packages.uninstall" " "
-aggregate_all "packages.uninstall" " "
+aggregate_all_desktop "packages.uninstall" " "
 PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
 unset aggregated_content
 

@@ -75,7 +75,7 @@ create_desktop_package ()
 	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
 
 	local aggregated_content=""
-	aggregate_all "debian/postinst" $'\n'
+	aggregate_all_desktop "debian/postinst" $'\n'
 
 	echo "${aggregated_content}" >> "${destination}/DEBIAN/postinst"
 	echo "exit 0" >> "${destination}/DEBIAN/postinst"
@@ -94,7 +94,7 @@ create_desktop_package ()
 
 	local aggregated_content=""
 
-	aggregate_all "armbian/create_desktop_package.sh" $'\n'
+	aggregate_all_desktop "armbian/create_desktop_package.sh" $'\n'
 
 	# display_alert "Showing the user scripts executed in create_desktop_package"
 	echo "${aggregated_content}" >> "${DEST}"/debug/install.log
@@ -143,13 +143,17 @@ install_ppa_prerequisites() {
 
 }
 
-
-
-
 add_apt_sources() {
 
 	local potential_paths=""
-	get_all_potential_paths_for "sources/apt"
+	local sub_dirs_to_check=". "
+	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
+		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
+	fi
+	get_all_potential_paths "${DEBOOTSTRAP_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
+	get_all_potential_paths "${CLI_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
+	get_all_potential_paths "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "." "sources/apt"
+	get_all_potential_paths "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}" "sources/apt"
 
 	display_alert "ADDING ADDITIONAL APT SOURCES"
 
@@ -161,7 +165,7 @@ add_apt_sources() {
 				# -y -> Assumes yes to all queries
 				# -n -> Do not update package cache after adding
 				run_on_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
-				display_alert "Return code : $?" # (´・ω・｀)
+				display_alert "Return code : $?"
 
 				local apt_source_gpg_filepath="${apt_source_filepath}.gpg"
 
@@ -191,7 +195,6 @@ add_desktop_package_sources() {
 
 	# Myy : I see Snap and Flatpak coming up in the next releases
 	# so... let's prepare for that
-	# install_ppa_prerequisites # Myy : I'm currently trying to avoid adding "hidden" packages
 	add_apt_sources
 	run_on_sdcard "apt -y -q update"
 	ls -l "${SDCARD}/etc/apt/sources.list.d" >> "${DEST}"/debug/install.log
