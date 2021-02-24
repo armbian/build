@@ -129,7 +129,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: stretch|buster|bullseye|xenial|bionic|groovy|focal
+# <release>: stretch|buster|bullseye|xenial|bionic|groovy|focal|groovy|hirsute|sid
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -139,7 +139,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	stretch|buster|bullseye)
+	stretch|buster|bullseye|sid)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -155,7 +155,7 @@ create_sources_list()
 	EOF
 	;;
 
-	xenial|bionic|groovy|focal)
+	xenial|bionic|groovy|focal|groovy|hirsute)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -598,30 +598,48 @@ display_alert "Building kernel splash logo" "$RELEASE" "info"
 
 
 
+DISTRIBUTIONS_DESC_DIR="config/distributions"
+
 function distro_menu ()
 {
 # create a select menu for choosing a distribution based EXPERT status
-# also sets DISTRIBUTION_STATUS which goes to BSP package / armbian-release
 
-	for i in "${!distro_name[@]}"
-	do
-		if [[ "${i}" == "${1}" ]]; then
-			if [[ "${distro_support[$i]}" != "supported" && $EXPERT != "yes" ]]; then
-				:
-			else
-				local text=""
-				[[ $EXPERT == "yes" ]] && local text="(${distro_support[$i]})"
-				options+=("$i" "${distro_name[$i]} $text")
-			fi
-			DISTRIBUTION_STATUS=${distro_support[$i]}
-			break
+	local distrib_dir="${1}"
+
+	if [[ -d "${distrib_dir}" && -f "${distrib_dir}/support" ]]; then
+		local support_level="$(cat "${distrib_dir}/support")"
+		if [[ "${support_level}" != "supported" && $EXPERT != "yes" ]]; then
+			:
+		else
+			local distro_codename="$(basename "${distrib_dir}")"
+			local distro_fullname="$(cat "${distrib_dir}/name")"
+			local expert_infos=""
+			[[ $EXPERT == "yes" ]] && expert_infos="(${support_level})"
+			options+=("${distro_codename}" "${distro_fullname} ${expert_infos}")
 		fi
-	done
+	fi
 
 }
 
 
+function distros_options() {
+	for distrib_dir in "${DISTRIBUTIONS_DESC_DIR}/"*; do
+		distro_menu "${distrib_dir}"
+	done
+}
 
+function set_distribution_status() {
+
+  local distro_support_desc_filepath="${DISTRIBUTIONS_DESC_DIR}/${RELEASE}/support"
+	if [[ ! -f "${distro_support_desc_filepath}" ]]; then
+		exit_with_error "Distribution ${distribution_name} does not exist"
+	else
+		DISTRIBUTION_STATUS="$(cat "${distro_support_desc_filepath}")"
+	fi
+	
+	[[ "${DISTRIBUTION_STATUS}" != "supported" ]] && [[ "${EXPERT}" != "yes" ]] && exit_with_error "Armbian ${RELEASE} is unsupported and, therefore, only available to experts (EXPERT=yes)"
+	 
+}
 
 adding_packages()
 {
@@ -654,7 +672,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal")
+	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal" "hirsute" "sid")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -766,7 +784,7 @@ addtorepo()
 
 
 repo-manipulate() {
-	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal")
+	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal" "hirsute" "sid")
 	case $@ in
 		serve)
 			# display repository content
@@ -951,12 +969,17 @@ prepare_host()
 	else
 		local offline=false
 	fi
+# build aarch64
+  if [[ $(dpkg --print-architecture) != arm64 ]]; then
 
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "http://www.armbian.com/using-armbian-tools/"
 		exit_with_error "Running this tool on non x86-x64 build host is not supported"
 	fi
+
+# build aarch64
+  fi
 
 	# wait until package manager finishes possible system maintanace
 	wait_for_package_manager
@@ -966,6 +989,10 @@ prepare_host()
 
 	# packages list for host
 	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
+
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
@@ -973,6 +1000,20 @@ prepare_host()
 	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
 	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils jq"
+
+# build aarch64
+  else
+
+	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
+	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
+	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
+	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
+	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
+	locales ncurses-base pixz dialog systemd-container udev libc6 qemu\
+	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils"
+
+# build aarch64
+  fi
 
 	local codename=$(lsb_release -sc)
 
@@ -987,12 +1028,11 @@ prepare_host()
 
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
 
-	# Ubuntu Focal x86_64 is the only fully supported host OS release
-	# Ubuntu Bionic x86_64 support is no longer supported
+	# Ubuntu 20.04.x (Focal) x86_64 is the only fully supported host OS release
 	# Using Docker/VirtualBox/Vagrant is the only supported way to run the build script on other Linux distributions
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
-	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
+	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
 	if [[ -z $codename || "buster groovy focal hirsute debbie tricia ulyana" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
@@ -1006,6 +1046,8 @@ prepare_host()
 		exit_with_error "Windows subsystem for Linux is not a supported build environment"
 	fi
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
 	if [[ -z $codename || $codename =~ ^(focal|groovy|debbie|buster|hirsute|ulyana)$ ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
@@ -1028,6 +1070,9 @@ prepare_host()
 		SYNC_CLOCK=no
 	fi
 
+# build aarch64
+  fi
+
 	# Skip verification if you are working offline
 	if ! $offline; then
 
@@ -1043,6 +1088,10 @@ prepare_host()
 	done
 
 	# distribution packages are buggy, download from author
+
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
 		display_alert "Updating from external repository" "aptly" "info"
 		if [ x"" != x"${http_proxy}" ]; then
@@ -1056,6 +1105,9 @@ prepare_host()
 	else
 		sed "s/squeeze/nightly/" -i /etc/apt/sources.list.d/aptly.list
 	fi
+
+# build aarch64
+  fi
 
 	if [[ ${#deps[@]} -gt 0 ]]; then
 		display_alert "Installing build dependencies"
@@ -1071,9 +1123,15 @@ prepare_host()
 		ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
 	fi
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
 		apt-get install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
 	fi
+
+# build aarch64
+  fi
 
 	# create directory structure
 	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
@@ -1086,6 +1144,9 @@ prepare_host()
 		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 	fi
 	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
+
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
@@ -1133,6 +1194,9 @@ prepare_host()
 		test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
 		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
 	fi
+
+# build aarch64
+  fi
 
 	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
 
