@@ -21,11 +21,11 @@ USEALLCORES=yes # Use all CPU cores for compiling
 [[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
-ROOTFSCACHE_VERSION=2
+ROOTFSCACHE_VERSION=3
 CHROOT_CACHE_VERSION=7
 BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2>/dev/null | grep origin) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
-ROOTFS_CACHE_MAX=42 # max number of rootfs cache, older ones will be cleaned up
+ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
 
 if [[ $BETA == yes ]]; then
 	DEB_STORAGE=$DEST/debs-beta
@@ -95,12 +95,6 @@ ATF_COMPILE=yes
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
-
-# set unique mounting directory
-SDCARD="${SRC}/.tmp/rootfs-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
-MOUNT="${SRC}/.tmp/mount-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
-DESTIMG="${SRC}/.tmp/image-${BRANCH}-${BOARD}-${RELEASE}-${BUILD_DESKTOP}-${BUILD_MINIMAL}"
-
 [[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] && \
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 
@@ -113,6 +107,213 @@ fi
 
 # load architecture defaults
 source "${SRC}/config/sources/${ARCH}.conf"
+
+# Myy : Menu configuration for choosing desktop configurations
+
+show_menu() {
+	provided_title=$1
+	provided_backtitle=$2
+	provided_menuname=$3
+	# Myy : I don't know why there's a TTY_Y - 8...
+	#echo "Provided title : $provided_title"
+	#echo "Provided backtitle : $provided_backtitle"
+	#echo "Provided menuname : $provided_menuname"
+	#echo "Provided options : " "${@:4}"
+	#echo "TTY X: $TTY_X Y: $TTY_Y"
+	dialog --stdout --title "$provided_title" --backtitle "${provided_backtitle}" \
+	--menu "$provided_menuname" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+}
+
+# Myy : FIXME Factorize
+show_select_menu() {
+	provided_title=$1
+	provided_backtitle=$2
+	provided_menuname=$3
+	dialog --stdout --title "${provided_title}" --backtitle "${provided_backtitle}" \
+	--checklist "${provided_menuname}" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+}
+
+# Myy : Once we got a list of selected groups, parse the PACKAGE_LIST inside configuration.sh
+
+DESKTOP_ELEMENTS_DIR="${SRC}/config/desktop/${RELEASE}"
+DESKTOP_CONFIGS_DIR="${DESKTOP_ELEMENTS_DIR}/environments"
+DESKTOP_CONFIG_PREFIX="config_"
+DESKTOP_APPGROUPS_DIR="${DESKTOP_ELEMENTS_DIR}/appgroups"
+
+desktop_element_available_for_arch() {
+	local desktop_element_path="${1}"
+	local targeted_arch="${2}"
+
+	local arch_limitation_file="${1}/only_for"
+
+	echo "Checking if ${desktop_element_path} is available for ${targeted_arch} in ${arch_limitation_file}" >> "${DEST}"/debug/output.log
+	if [[ -f "${arch_limitation_file}" ]]; then
+		grep -- "${targeted_arch}" "${arch_limitation_file}"
+		return $?
+	else
+		return 0
+	fi
+}
+
+desktop_element_supported() {
+
+	local desktop_element_path="${1}"
+
+	local support_level_filepath="${desktop_element_path}/support"
+	if [[ -f "${support_level_filepath}" ]]; then
+		local support_level="$(cat "${support_level_filepath}")"
+		if [[ "${support_level}" != "supported" && "${EXPERT}" != "yes" ]]; then
+			return 65
+		fi
+
+		desktop_element_available_for_arch "${desktop_element_path}" "${ARCH}"
+		if [[ $? -ne 0 ]]; then
+			return 66
+		fi
+	else
+		return 64
+	fi
+
+	return 0
+
+}
+
+if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT ]]; then
+
+	desktop_environments_prepare_menu() {
+		for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
+			local desktop_env_name=$(basename ${desktop_env_dir})
+			local expert_infos=""
+			[[ "${EXPERT}" == "yes" ]] && expert_infos="[$(cat "${desktop_env_dir}/support" 2> /dev/null)]"
+			desktop_element_supported "${desktop_env_dir}" "${ARCH}" && options+=("${desktop_env_name}" "${desktop_env_name^} desktop environment ${expert_infos}")
+		done
+	}
+
+	options=()
+	desktop_environments_prepare_menu
+
+	if [[ "${options[0]}" == "" ]]; then
+		exit_with_error "No desktop environment seems to be available for your board ${BOARD} (ARCH : ${ARCH} - EXPERT : ${EXPERT})"
+	fi
+
+	DESKTOP_ENVIRONMENT=$(show_menu "Choose a desktop environment" "$backtitle" "Select the default desktop environment to bundle with this image" "${options[@]}")
+
+	unset options
+
+	if [[ -z "${DESKTOP_ENVIRONMENT}" ]]; then
+		exit_with_error "No desktop environment selected..."
+	fi
+
+fi
+
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	# Expected environment variables :
+	# - options
+	# - ARCH
+
+	desktop_environment_check_if_valid() {
+
+		local error_msg=""
+		desktop_element_supported "${DESKTOP_ENVIRONMENT_DIRPATH}" "${ARCH}"
+		local retval=$?
+
+		if [[ ${retval} == 0 ]]; then
+			return
+		elif [[ ${retval} == 64 ]]; then
+			error_msg+="Either the desktop environment ${DESKTOP_ENVIRONMENT} does not exist "
+			error_msg+="or the file ${DESKTOP_ENVIRONMENT_DIRPATH}/support is missing"
+		elif [[ ${retval} == 65 ]]; then
+			error_msg+="Only experts can build an image with the desktop environment \"${DESKTOP_ENVIRONMENT}\", since the Armbian team won't offer any support for it (EXPERT=${EXPERT})"
+		elif [[ ${retval} == 66 ]]; then
+			error_msg+="The desktop environment \"${DESKTOP_ENVIRONMENT}\" has no packages for your targeted board architecture (BOARD=${BOARD} ARCH=${ARCH}). "
+			error_msg+="The supported boards architectures are : "
+			error_msg+="$(cat "${DESKTOP_ENVIRONMENT_DIRPATH}/only_for")"
+		fi
+
+		exit_with_error "${error_msg}"
+	}
+
+	DESKTOP_ENVIRONMENT_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
+
+	desktop_environment_check_if_valid
+fi
+
+if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
+	# FIXME Check for empty folders, just in case the current maintainer
+	# messed up
+	# Note, we could also ignore it and don't show anything in the previous
+	# menu, but that hides information and make debugging harder, which I
+	# don't like. Adding desktop environments as a maintainer is not a
+	# trivial nor common task.
+
+	options=()
+	for configuration in "${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_CONFIG_PREFIX}"*; do
+		config_filename=$(basename ${configuration})
+		config_name=${config_filename#"${DESKTOP_CONFIG_PREFIX}"}
+		options+=("${config_filename}" "${config_name} configuration")
+	done
+
+	DESKTOP_ENVIRONMENT_CONFIG_NAME=$(show_menu "Choose the desktop environment config" "$backtitle" "Select the configuration for this environment.\nThese are sourced from ${desktop_environment_config_dir}" "${options[@]}")
+	unset options
+
+	if [[ -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
+		exit_with_error "No desktop configuration selected... Do you really want a desktop environment ?"
+	fi
+fi
+
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
+	DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/packages"
+fi
+
+# "-z ${VAR+x}" allows to check for unset variable
+# Technically, someone might want to build a desktop with no additional
+# appgroups.
+if [[ $BUILD_DESKTOP == "yes" && -z ${DESKTOP_APPGROUPS_SELECTED+x} ]]; then
+
+	options=()
+	for appgroup_path in "${DESKTOP_APPGROUPS_DIR}/"*; do
+		appgroup="$(basename "${appgroup_path}")"
+		options+=("${appgroup}" "${appgroup^}" off)
+	done
+
+	DESKTOP_APPGROUPS_SELECTED=$(\
+		show_select_menu \
+		"Choose desktop softwares to add" \
+		"$backtitle" \
+		"Select which kind of softwares you'd like to add to your build" \
+		"${options[@]}")
+
+	unset options
+fi
+
+#exit_with_error 'Testing'
+
+# Expected variables
+# - aggregated_content
+# - potential_paths
+# - separator
+# Write to variables :
+# - aggregated_content
+aggregate_content() {
+	echo -e "Potential paths : ${potential_paths}\n" >> "${DEST}"/debug/output.log
+	for filepath in ${potential_paths}; do
+		if [[ -f "${filepath}" ]]; then
+			echo -e "${filepath/"$SRC"\//} yes\n" >> "${DEST}"/debug/output.log
+			aggregated_content+=$(cat "${filepath}")
+			aggregated_content+="${separator}"
+		else
+			echo -e "${filepath/"$SRC"\//} no\n" >> "${DEST}"/debug/output.log
+		fi
+
+	done
+}
+
+# set unique mounting directory
+MOUNT_UUID=$(uuidgen)
+SDCARD="${SRC}/.tmp/rootfs-${MOUNT_UUID}"
+MOUNT="${SRC}/.tmp/mount-${MOUNT_UUID}"
+DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}"
 
 # dropbear needs to be configured differently
 [[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
@@ -131,147 +332,160 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-if [[ $RELEASE == xenial || $RELEASE == bionic || $RELEASE == focal || $RELEASE == groovy ]]; then
+if [[ "$RELEASE" =~ ^(xenial|bionic|focal|groovy|hirsute)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
 fi
 
-# Base system dependencies. Since adding MINIMAL_IMAGE we rely on "variant=minbase" which has very basic package set
-DEBOOTSTRAP_LIST="locales gnupg ifupdown apt-utils apt-transport-https ca-certificates bzip2 console-setup cpio cron \
-	dbus init initramfs-tools iputils-ping isc-dhcp-client kmod less libpam-systemd \
-	linux-base logrotate netbase netcat-openbsd rsyslog systemd sudo ucf udev whiptail \
-	wireless-regdb crda dmsetup rsync tzdata"
+CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
+DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
 
-[[ $BUILD_DESKTOP == yes ]] && DEBOOTSTRAP_LIST+=" libgtk2.0-bin"
-
-# tab cleanup is mandatory
-DEBOOTSTRAP_LIST=$(echo $DEBOOTSTRAP_LIST | sed -e 's,\\[trn],,g')
-
-# For minimal build different set of packages is needed
-# Essential packages for minimal build
-PACKAGE_LIST="bc cpufrequtils device-tree-compiler fping fake-hwclock psmisc chrony parted dialog \
-		ncurses-term sysfsutils toilet figlet u-boot-tools usbutils openssh-server \
-		nocache debconf-utils python3-apt"
-
-[[ $ROOTFS_TYPE == xfs ]] && PACKAGE_LIST="$PACKAGE_LIST xfsprogs"
-
-# Non-essential packages for minimal build
-PACKAGE_LIST_ADDITIONAL="network-manager wireless-tools lsof htop mmc-utils wget nano sysstat net-tools resolvconf iozone3 jq libcrack2 cracklib-runtime curl"
-
-if [[ "$BUILD_MINIMAL" != "yes"  ]]; then
-	# Essential packages
-	PACKAGE_LIST="$PACKAGE_LIST bridge-utils build-essential fbset \
-		iw wpasupplicant sudo linux-base crda \
-		wireless-regdb unattended-upgrades \
-		console-setup unicode-data initramfs-tools \
-		ca-certificates expect iptables automake html2text \
-		bison flex libwrap0-dev libssl-dev libnl-3-dev libnl-genl-3-dev keyboard-configuration"
-
-
-	# Non-essential packages
-	PACKAGE_LIST_ADDITIONAL="$PACKAGE_LIST_ADDITIONAL alsa-utils btrfs-progs dosfstools iotop stress screen \
-		ntfs-3g vim pciutils evtest pv libfuse2 libdigest-sha-perl \
-		libproc-processtable-perl aptitude dnsutils f3 haveged hdparm rfkill vlan bash-completion \
-		hostapd git ethtool unzip ifenslave libpam-systemd iperf3 \
-		software-properties-common libnss-myhostname f2fs-tools avahi-autoipd iputils-arping qrencode sunxi-tools"
+if [[ $? != 0 ]]; then
+	exit_with_error "The desktop environment ${DESKTOP_ENVIRONMENT} is not available for your architecture ${ARCH}"
 fi
 
+AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS="
+${SRC}/config
+${SRC}/config/optional/_any_board/_configs
+${SRC}/config/optional/architectures/${ARCH}/_config
+${SRC}/config/optional/families/${LINUXFAMILY}/_config
+${SRC}/config/optional/boards/${BOARD}/_config
+"
+
+DEBOOTSTRAP_SEARCH_RELATIVE_DIRS="
+cli/_all_distributions/debootstrap
+cli/${RELEASE}/debootstrap
+"
+
+CLI_SEARCH_RELATIVE_DIRS="
+cli/_all_distributions/main
+cli/${RELEASE}/main
+"
+
+DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS="
+desktop/_all_distributions/environments/_all_environments
+desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}
+desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
+desktop/${RELEASE}/environments/_all_environments
+desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}
+desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
+"
+
+DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS="
+desktop/_all_distributions/appgroups
+desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/appgroups
+desktop/${RELEASE}/appgroups
+desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
+"
+
+get_all_potential_paths() {
+	local root_dirs="${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}"
+	local rel_dirs="${1}"
+	local sub_dirs="${2}"
+	local looked_up_subpath="${3}"
+	for root_dir in ${root_dirs}; do
+		for rel_dir in ${rel_dirs}; do
+			for sub_dir in ${sub_dirs}; do
+				potential_paths+="${root_dir}/${rel_dir}/${sub_dir}/${looked_up_subpath} "
+			done
+		done
+	done
+	# for ppath in ${potential_paths}; do
+	#  	echo "Checking for ${ppath}"
+	#  	if [[ -f "${ppath}" ]]; then
+	#  		echo "OK !|"
+	#  	else
+	#  		echo "Nope|"
+	#  	fi
+	# done
+}
+
+# Environment variables expected :
+# - aggregated_content
+# Arguments :
+# 1. File to look up in each directory
+# 2. The separator to add between each concatenated file
+# 3. Relative directories paths added to ${3}
+# 4. Relative directories paths added to ${4}
+#
+# The function will basically generate a list of potential paths by
+# generating all the potential paths combinations leading to the
+# looked up file
+# ${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}/${3}/${4}/${1}
+# Then it will concatenate the content of all the available files
+# into ${aggregated_content}
+#
+# TODO :
+# ${4} could be removed by just adding the appropriate paths to ${3}
+# dynamically for each case
+# (debootstrap, cli, desktop environments, desktop appgroups, ...)
+
+aggregate_all_root_rel_sub() {
+	local separator="${2}"
+
+	local potential_paths=""
+	get_all_potential_paths "${3}" "${4}" "${1}"
+
+	aggregate_content
+}
+
+aggregate_all_debootstrap() {
+	local sub_dirs_to_check=". "
+	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
+		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
+	fi
+	aggregate_all_root_rel_sub "${1}" "${2}" "${DEBOOTSTRAP_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}"
+}
+
+aggregate_all_cli() {
+	local sub_dirs_to_check=". "
+	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
+		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
+	fi
+	aggregate_all_root_rel_sub "${1}" "${2}" "${CLI_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}"
+}
+
+aggregate_all_desktop() {
+	aggregate_all_root_rel_sub "${1}" "${2}" "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "."
+	aggregate_all_root_rel_sub "${1}" "${2}" "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}"
+}
+
+one_line() {
+	local aggregate_func_name="${1}"
+	local aggregated_content=""
+	shift 1
+	$aggregate_func_name "${@}"
+	cleanup_list aggregated_content
+}
+
+DEBOOTSTRAP_LIST="$(one_line aggregate_all_debootstrap "packages" " ")"
+DEBOOTSTRAP_COMPONENTS="$(one_line aggregate_all_debootstrap "components" " ")"
+DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
+PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
+PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
+
+echo "DEBOOTSTRAP LIST : ${DEBOOTSTRAP_LIST}" >> "${DEST}"/debug/output.log
+echo "DEBOOTSTRAP_COMPONENTS : ${DEBOOTSTRAP_COMPONENTS}" >> "${DEST}"/debug/output.log
+echo "CLI PACKAGE_LIST : ${PACKAGE_LIST}" >> "${DEST}"/debug/output.log
+echo "CLI PACKAGE_LIST_ADDITIONAL : ${PACKAGE_LIST_ADDITIONAL}" >> "${DEST}"/debug/output.log
 
 # Dependent desktop packages
-PACKAGE_LIST_DESKTOP="xserver-xorg xserver-xorg-video-fbdev gvfs-backends gvfs-fuse xfonts-base xinit \
-	x11-xserver-utils xfce4 lxtask xfce4-terminal thunar-volman gtk2-engines gtk2-engines-murrine gtk2-engines-pixbuf \
-	libgtk2.0-bin network-manager-gnome xfce4-notifyd gnome-keyring gcr libgck-1-0 p11-kit pasystray pavucontrol \
-	pulseaudio pavumeter bluez bluez-tools pulseaudio-module-bluetooth blueman libpam-gnome-keyring \
-	libgl1-mesa-dri policykit-1 profile-sync-daemon gnome-orca numix-gtk-theme synaptic apt-xapian-index lightdm lightdm-gtk-greeter"
+# Myy : Sources packages from file here
 
+# Myy : FIXME Rename aggregate_all to aggregate_all_desktop
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
+	echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}" >> "${DEST}"/debug/output.log
+fi
 
-# Recommended desktop packages
-PACKAGE_LIST_DESKTOP_RECOMMENDS="galculator hexchat xfce4-screenshooter network-manager-openvpn-gnome mpv fbi \
-	cups-pk-helper cups geany atril xarchiver"
-
-# Full desktop packages
-PACKAGE_LIST_DESKTOP_FULL="libreoffice libreoffice-style-breeze meld remmina kazam avahi-daemon transmission"
-
-# Packages installed before desktop.
-PACKAGE_LIST_PREDEPENDS=""
-
-# Release specific packages
-case $RELEASE in
-
-	xenial)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" btrfs-tools"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db sysbench command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs numix-icon-theme libgnome2-perl \
-								pulseaudio-module-gconf onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser language-selector-gnome system-config-printer-common \
-								system-config-printer-gnome leafpad mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
-
-	stretch)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr sysbench command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" paman libgcr-3-common gcj-jre-headless paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer leafpad mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
-
-	bionic)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 libgnome2-perl pulseaudio-module-gconf onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium-browser system-config-printer-common system-config-printer \
-								language-selector-gnome leafpad mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
-
-	buster)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" chromium system-config-printer-common system-config-printer mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-	;;
-
-	bullseye)
-		DEBOOTSTRAP_COMPONENTS="main"
-		DEBOOTSTRAP_LIST+=" haveged fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher command-not-found"
-		PACKAGE_LIST_DESKTOP+=" paprefs dbus-x11 numix-icon-theme"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox-esr system-config-printer-common system-config-printer"
-		PACKAGE_LIST_DESKTOP_FULL+=""
-	;;
-
-
-	focal)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
-								language-selector-gnome viewnior"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-		PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
-	;;
-
-	groovy)
-		DEBOOTSTRAP_COMPONENTS="main,universe"
-		DEBOOTSTRAP_LIST+=" rng-tools fdisk"
-		[[ -z $BUILD_MINIMAL || $BUILD_MINIMAL == no ]] && PACKAGE_LIST_RELEASE="man-db kbd net-tools gnupg2 dirmngr networkd-dispatcher selinux-policy-default"
-		PACKAGE_LIST_DESKTOP+=" xserver-xorg-input-all paprefs dbus-x11 pulseaudio-module-gsettings onboard"
-		PACKAGE_LIST_DESKTOP_RECOMMENDS+=" firefox system-config-printer-common system-config-printer \
-								language-selector-gnome mirage"
-		PACKAGE_LIST_DESKTOP_FULL+=" thunderbird"
-		PACKAGE_LIST_PREDEPENDS="policykit-1-gnome notification-daemon"
-	;;
-
-esac
-
+display_alert "Deboostrap" >> "${DEST}"/debug/output.log
+display_alert "Components ${DEBOOTSTRAP_COMPONENTS}" >> "${DEST}"/debug/output.log
+display_alert "Packages ${DEBOOTSTRAP_LIST}" >> "${DEST}"/debug/output.log
+display_alert "----" >> "${DEST}"/debug/output.log
+display_alert "CLI packages" >> "${DEST}"/debug/output.log
+display_alert "Standard : ${PACKAGE_LIST}" >> "${DEST}"/debug/output.log
+display_alert "Additional : ${PACKAGE_LIST_ADDITIONAL}" >> "${DEST}"/debug/output.log
 
 DEBIAN_MIRROR='deb.debian.org/debian'
 DEBIAN_SECURTY='security.debian.org/'
@@ -307,12 +521,55 @@ fi
 
 # Build final package list after possible override
 PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
-[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP $PACKAGE_LIST_DESKTOP_RECOMMENDS"
+PACKAGE_MAIN_LIST="$(cleanup_list PACKAGE_LIST)"
+
+[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
+PACKAGE_LIST="$(cleanup_list PACKAGE_LIST)"
 
 # remove any packages defined in PACKAGE_LIST_RM in lib.config
+aggregated_content="${PACKAGE_LIST_RM} "
+aggregate_all_cli "packages.remove" " "
+aggregate_all_desktop "packages.remove" " "
+PACKAGE_LIST_RM="$(cleanup_list aggregated_content)"
+unset aggregated_content
+
+aggregated_content=""
+aggregate_all_cli "packages.uninstall" " "
+aggregate_all_desktop "packages.uninstall" " "
+PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
+unset aggregated_content
+
+display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}" >> "${DEST}"/debug/output.log
+display_alert "PACKAGE_LIST : ${PACKAGE_LIST}" >> "${DEST}"/debug/output.log
+display_alert "PACKAGE_LIST_RM : ${PACKAGE_LIST_RM}" >> "${DEST}"/debug/output.log
+display_alert "PACKAGE_LIST_UNINSTALL : ${PACKAGE_LIST_UNINSTALL}" >> "${DEST}"/debug/output.log
+
 if [[ -n $PACKAGE_LIST_RM ]]; then
-	PACKAGE_LIST=$(sed -r "s/\b($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\b//g" <<< "${PACKAGE_LIST}")
+	display_alert "Remove filter : $(tr ' ' '|' <<< ${PACKAGE_LIST_RM})"
+	# Turns out that \b can be tricked by dashes.
+	# So if you remove mesa-utils but still want to install "mesa-utils-extra"
+	# a "\b(mesa-utils)\b" filter will convert "mesa-utils-extra" to "-extra".
+	# \W is not tricked by this but consumes the surrounding spaces, so we
+	# replace the occurence by one space, to avoid sticking the next word to
+	# the previous one after consuming the spaces.
+	PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST} ")
+	PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_MAIN_LIST} ")
+	if [[ $BUILD_DESKTOP == "yes" ]]; then
+		PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
+		# Removing double spaces... AGAIN, since we might have used a sed on them
+		# Do not quote the variables. This would defeat the trick.
+		PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+	fi
+
+	# Removing double spaces... AGAIN, since we might have used a sed on them
+	# Do not quote the variables. This would defeat the trick.
+	PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
+	PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
 fi
+
+display_alert "After removal of packages.remove packages" >> "${DEST}"/debug/output.log
+display_alert "PACKAGE_MAIN_LIST : \"${PACKAGE_MAIN_LIST}\"" >> "${DEST}"/debug/output.log
+display_alert "PACKAGE_LIST : \"${PACKAGE_LIST}\"" >> "${DEST}"/debug/output.log
 
 # Give the option to configure DNS server used in the chroot during the build process
 [[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
@@ -347,6 +604,8 @@ Board: $BOARD
 Branch: $BRANCH
 Minimal: $BUILD_MINIMAL
 Desktop: $BUILD_DESKTOP
+Desktop Environment: $DESKTOP_ENVIRONMENT
+Software groups: $DESKTOP_APPGROUPS_SELECTED
 
 Kernel configuration:
 Repository: $KERNELSOURCE

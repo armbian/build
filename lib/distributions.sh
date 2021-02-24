@@ -58,7 +58,7 @@ install_common()
 			# /usr/share/initramfs-tools/hooks/dropbear will automatically add 'id_ecdsa.pub' to authorized_keys file
 			# during mkinitramfs of update-initramfs
 			#cat "${SDCARD}"/etc/dropbear-initramfs/id_ecdsa.pub > "${SDCARD}"/etc/dropbear-initramfs/authorized_keys
-			CRYPTROOT_SSH_UNLOCK_KEY_NAME="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}".key
+			CRYPTROOT_SSH_UNLOCK_KEY_NAME="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}_${DESKTOP_ENVIRONMENT}".key
 			# copy dropbear ssh key to image output dir for convenience
 			cp "${SDCARD}"/etc/dropbear-initramfs/id_ecdsa "${DEST}/images/${CRYPTROOT_SSH_UNLOCK_KEY_NAME}"
 			display_alert "SSH private key for dropbear (initramfs) has been copied to:" \
@@ -277,13 +277,13 @@ install_common()
 	# install armbian-desktop
 	if [[ "${REPOSITORY_INSTALL}" != *armbian-desktop* ]]; then
 		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/$RELEASE/armbian-${RELEASE}-desktop_${REVISION}_all.deb"
+			install_deb_chroot "${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
 			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 			desktop_postinstall
 		fi
 	else
 		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "armbian-${RELEASE}-desktop" "remote"
+			install_deb_chroot "${CHOSEN_DESKTOP}" "remote"
 			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 			desktop_postinstall
 		fi
@@ -478,9 +478,6 @@ install_common()
 
 }
 
-
-
-
 install_rclocal()
 {
 
@@ -504,9 +501,6 @@ install_rclocal()
 
 }
 
-
-
-
 install_distribution_specific()
 {
 
@@ -527,7 +521,7 @@ install_distribution_specific()
 
 		;;
 
-	stretch|buster)
+	stretch|buster|sid)
 
 			# remove doubled uname from motd
 			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
@@ -550,7 +544,7 @@ install_distribution_specific()
 			sed '/security/ d' -i "${SDCARD}"/etc/apt/sources.list
 
 		;;
-	bionic|groovy|focal)
+	bionic|groovy|focal|hirsute)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
