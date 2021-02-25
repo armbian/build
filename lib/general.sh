@@ -1256,9 +1256,9 @@ download_and_verify()
 	local dirname=${filename//.tar.xz}
 
         if [[ $DOWNLOAD_MIRROR == china ]]; then
-		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+		local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 	else
-		server=${ARMBIAN_MIRROR}
+		local server=${ARMBIAN_MIRROR}
         fi
 
 	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then

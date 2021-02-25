@@ -125,15 +125,15 @@ create_rootfs_cache()
 			download_and_verify "_rootfs" "$cache_name"
 		fi
 
-                if [[ -f $cache_fname && -f $cache_fname.aria2 && $USE_TORRENT="no" && -z "$ROOT_FS_CREATE_ONLY" ]]; then
+		if [[ -f $cache_fname && -f $cache_fname.aria2 && $USE_TORRENT="no" && -z "$ROOT_FS_CREATE_ONLY" ]]; then
 			rm ${cache_fname}*
-                        download_and_verify "_rootfs" "$cache_name"
-                fi
+			download_and_verify "_rootfs" "$cache_name"
+		fi
 
-                if [[ -f $cache_fname.aria2 && -z "$ROOT_FS_CREATE_ONLY" ]]; then
-                        display_alert "resuming"
-                        download_and_verify "_rootfs" "$cache_name"
-                fi
+		if [[ -f $cache_fname.aria2 && -z "$ROOT_FS_CREATE_ONLY" ]]; then
+			display_alert "resuming"
+			download_and_verify "_rootfs" "$cache_name"
+		fi
 
 		if [[ -f $cache_fname ]]; then
 			break

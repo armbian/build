@@ -499,8 +499,10 @@ fi
 
 # don't use mirrors that throws garbage on 404
 while true; do
+
 	ARMBIAN_MIRROR=$(wget -SO- -T 1 -t 1 https://redirect.armbian.com 2>&1 | egrep -i "Location" | awk '{print $2}')
 	[[ ${ARMBIAN_MIRROR} != *armbian.hosthatch* ]] && break
+
 done
 
 # For user override
