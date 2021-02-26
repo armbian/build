@@ -125,6 +125,16 @@ create_rootfs_cache()
 			download_and_verify "_rootfs" "$cache_name"
 		fi
 
+		if [[ -f $cache_fname && -f $cache_fname.aria2 && $USE_TORRENT="no" && -z "$ROOT_FS_CREATE_ONLY" ]]; then
+			rm ${cache_fname}*
+			download_and_verify "_rootfs" "$cache_name"
+		fi
+
+		if [[ -f $cache_fname.aria2 && -z "$ROOT_FS_CREATE_ONLY" ]]; then
+			display_alert "resuming"
+			download_and_verify "_rootfs" "$cache_name"
+		fi
+
 		if [[ -f $cache_fname ]]; then
 			break
 		else
@@ -133,7 +143,7 @@ create_rootfs_cache()
 
 	done
 
-	if [[ -f $cache_fname && "$ROOT_FS_CREATE_ONLY" != "force" ]]; then
+	if [[ -f $cache_fname && ! -f $cache_fname.aria2 && "$ROOT_FS_CREATE_ONLY" != "force" ]]; then
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
 		pv -p -b -r -c -N "[ .... ] $display_name" "$cache_fname" | lz4 -dc | tar xp --xattrs -C $SDCARD/
