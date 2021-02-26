@@ -1257,16 +1257,23 @@ download_and_verify()
 
         if [[ $DOWNLOAD_MIRROR == china ]]; then
 		local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
-			else
-		local server="${ARMBIAN_MIRROR}/"
+	else
+		local server=${ARMBIAN_MIRROR}
         fi
 
 	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then
 		return
 	fi
 
+	# switch to china mirror if US timeouts
+	timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
+	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
+		display_alert "Timeout from $server" "retrying" "info"
+		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+	fi
+
 	# check if file exists on remote server before running aria2 downloader
-	[[ ! `wget -S --spider ${server}${remotedir}/${filename}  2>&1 | grep 'HTTP/1.1 200 OK'` ]] && return
+	[[ ! `timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}` ]] && return
 
 	cd "${localdir}" || exit
 
@@ -1274,7 +1281,7 @@ download_and_verify()
 	if [[ -f "${SRC}"/config/torrents/${filename}.asc ]]; then
 		local torrent="${SRC}"/config/torrents/${filename}.torrent
 		ln -sf "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
-	elif [[ ! $(wget -S --spider "${server}${remotedir}/${filename}.asc" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') ]]; then
+	elif [[ ! `timeout 10 curl --head --fail --silent "${server}${remotedir}/${filename}.asc"` ]]; then
 		return
 	else
 		# download control file
@@ -1288,7 +1295,7 @@ download_and_verify()
 	if [[ ${USE_TORRENT} == "yes" ]]; then
 
 		display_alert "downloading using torrent network" "$filename"
-		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=15 --console-log-level=error \
+		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=120 --console-log-level=error \
 		--allow-overwrite=true --download-result=hide --rpc-save-upload-metadata=false --auto-file-renaming=false \
 		--file-allocation=trunc --continue=true ${torrent} \
 		--dht-file-path=${SRC}/cache/.aria2/dht.dat --disable-ipv6=true --stderr --follow-torrent=mem --dir=$localdir"
@@ -1309,8 +1316,7 @@ download_and_verify()
 
 	# direct download if torrent fails
 	if [[ ! -f "${localdir}/${filename}.complete" ]]; then
-		if [[ $(wget -S --spider "${server}${remotedir}/${filename}" 2>&1 >/dev/null \
-			| grep 'HTTP/1.1 200 OK') ]]; then
+		if [[ ! `timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null` ]]; then
 			display_alert "downloading from $(echo $server | cut -d'/' -f3 | cut -d':' -f1) using http(s) network" "$filename"
 			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
 			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" ${server}${remotedir}/${filename} $(webseed "${remotedir}/${filename}") -o "${filename}"
