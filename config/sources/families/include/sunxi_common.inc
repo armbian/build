@@ -22,7 +22,7 @@ case $BRANCH in
 	current)
 
 		KERNELSOURCE="https://github.com/megous/linux"
-		KERNELBRANCH="branch:orange-pi-5.9"
+		KERNELBRANCH="branch:orange-pi-5.10"
 		KERNELPATCHDIR='sunxi-'$BRANCH
 
 	;;
@@ -30,7 +30,7 @@ case $BRANCH in
 	dev)
 
 		KERNELSOURCE="https://github.com/megous/linux"
-		KERNELBRANCH="branch:orange-pi-5.10"
+		KERNELBRANCH="branch:orange-pi-5.11"
 		KERNELPATCHDIR='sunxi-'$BRANCH
 
 	;;

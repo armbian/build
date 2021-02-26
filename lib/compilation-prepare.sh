@@ -61,7 +61,8 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rk3399.patch" "applying"
 	fi
 
-	if [[ "${version}" == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip64 ]]; then
+	if [[ "${version}" == "4.4."* ]] && \
+	[[ "$LINUXFAMILY" == rockchip64 ]] || [[ "$LINUXFAMILY" == station* ]]; then
 		display_alert "Adjustin" "packaging" "info"
 		cd "$kerneldir" || exit
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rockchip64.patch" "applying"
@@ -131,7 +132,7 @@ compilation_prepare()
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" le 5.8 && [ "$AUFS" == yes ]; then
+	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" le 5.11 && [ "$AUFS" == yes ]; then
 
 		# attach to specifics tag or branch
 		local aufstag
@@ -421,6 +422,9 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8811cu\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
+		# add support for K5.11+
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu.patch" "applying"
+
 	fi
 
 
@@ -460,7 +464,6 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8188eu\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
-		# kernel 5.6 ->
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu.patch" "applying"
 
 	fi
@@ -540,6 +543,9 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8723DS) += rtl8723ds/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723ds\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
+
+                # add support for K5.11+
+                process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds.patch" "applying"
 
 	fi
 

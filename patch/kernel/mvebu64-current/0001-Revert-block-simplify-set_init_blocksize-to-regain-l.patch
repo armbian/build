@@ -1,0 +1,71 @@
+From b2b8b700c7be053eeadc0b3e172e18a0d148fa5e Mon Sep 17 00:00:00 2001
+From: Maxim Mikityanskiy <maxtram95@gmail.com>
+Date: Tue, 26 Jan 2021 21:46:47 +0200
+Subject: [PATCH] Revert "block: simplify set_init_blocksize" to regain lost
+ performance
+
+The cited commit introduced a serious regression with SATA write speed,
+as found by bisecting. This patch reverts this commit, which restores
+write speed back to the values observed before this commit.
+
+The performance tests were done on a Helios4 NAS (2nd batch) with 4 HDDs
+(WD8003FFBX) using dd (bs=1M count=2000). "Direct" is a test with a
+single HDD, the rest are different RAID levels built over the first
+partitions of 4 HDDs. Test results are in MB/s, R is read, W is write.
+
+                | Direct | RAID0 | RAID10 f2 | RAID10 n2 | RAID6
+----------------+--------+-------+-----------+-----------+--------
+9011495c9466    | R:256  | R:313 | R:276     | R:313     | R:323
+(before faulty) | W:254  | W:253 | W:195     | W:204     | W:117
+----------------+--------+-------+-----------+-----------+--------
+5ff9f19231a0    | R:257  | R:398 | R:312     | R:344     | R:391
+(faulty commit) | W:154  | W:122 | W:67.7    | W:66.6    | W:67.2
+----------------+--------+-------+-----------+-----------+--------
+5.10.10         | R:256  | R:401 | R:312     | R:356     | R:375
+unpatched       | W:149  | W:123 | W:64      | W:64.1    | W:61.5
+----------------+--------+-------+-----------+-----------+--------
+5.10.10         | R:255  | R:396 | R:312     | R:340     | R:393
+patched         | W:247  | W:274 | W:220     | W:225     | W:121
+
+Applying this patch doesn't hurt read performance, while improves the
+write speed by 1.5x - 3.5x (more impact on RAID tests). The write speed
+is restored back to the state before the faulty commit, and even a bit
+higher in RAID tests (which aren't HDD-bound on this device) - that is
+likely related to other optimizations done between the faulty commit and
+5.10.10 which also improved the read speed.
+
+Upstream status: accepted to 5.11.
+https://www.spinics.net/lists/linux-block/msg64471.html
+
+Signed-off-by: Maxim Mikityanskiy <maxtram95@gmail.com>
+Fixes: 5ff9f19231a0 ("block: simplify set_init_blocksize")
+Cc: Christoph Hellwig <hch@lst.de>
+Cc: Jens Axboe <axboe@kernel.dk>
+---
+ fs/block_dev.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/fs/block_dev.c b/fs/block_dev.c
+index 3b8963e228a1..235b5042672e 100644
+--- a/fs/block_dev.c
++++ b/fs/block_dev.c
+@@ -130,7 +130,15 @@ EXPORT_SYMBOL(truncate_bdev_range);
+
+ static void set_init_blocksize(struct block_device *bdev)
+ {
+-	bdev->bd_inode->i_blkbits = blksize_bits(bdev_logical_block_size(bdev));
++	unsigned int bsize = bdev_logical_block_size(bdev);
++	loff_t size = i_size_read(bdev->bd_inode);
++
++	while (bsize < PAGE_SIZE) {
++		if (size & bsize)
++			break;
++		bsize <<= 1;
++	}
++	bdev->bd_inode->i_blkbits = blksize_bits(bsize);
+ }
+
+ int set_blocksize(struct block_device *bdev, int size)
+--
+2.30.0
+

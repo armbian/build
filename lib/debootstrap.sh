@@ -18,7 +18,7 @@
 #
 debootstrap_ng()
 {
-	display_alert "Starting rootfs and image building process for" "$BOARD $RELEASE" "info"
+	display_alert "Starting rootfs and image building process for" "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" "info"
 
 	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming $BOARD $BRANCH kernel supports $ROOTFS_TYPE" "" "wrn"
 
@@ -110,7 +110,10 @@ create_rootfs_cache()
 		local packages_hash=$(get_package_list_hash "$(($ROOTFSCACHE_VERSION - $n))")
 		[[ -z ${FORCED_MONTH_OFFSET} ]] && FORCED_MONTH_OFFSET=${n}
 		local packages_hash=$(get_package_list_hash "$(date -d "$D +${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//')")
-		local cache_type=$(if [[ ${BUILD_DESKTOP} == yes  ]]; then echo "xfce-desktop"; elif [[ ${BUILD_MINIMAL} == yes  ]]; then echo "minimal"; else echo "cli";fi)
+		local cache_type="cli"
+		[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
+		[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
+		[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
 		local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.lz4
 		local cache_fname=${SRC}/cache/rootfs/${cache_name}
 		local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
@@ -122,6 +125,16 @@ create_rootfs_cache()
 			download_and_verify "_rootfs" "$cache_name"
 		fi
 
+		if [[ -f $cache_fname && -f $cache_fname.aria2 && $USE_TORRENT="no" && -z "$ROOT_FS_CREATE_ONLY" ]]; then
+			rm ${cache_fname}*
+			download_and_verify "_rootfs" "$cache_name"
+		fi
+
+		if [[ -f $cache_fname.aria2 && -z "$ROOT_FS_CREATE_ONLY" ]]; then
+			display_alert "resuming"
+			download_and_verify "_rootfs" "$cache_name"
+		fi
+
 		if [[ -f $cache_fname ]]; then
 			break
 		else
@@ -130,7 +143,7 @@ create_rootfs_cache()
 
 	done
 
-	if [[ -f $cache_fname && "$ROOT_FS_CREATE_ONLY" != "force" ]]; then
+	if [[ -f $cache_fname && ! -f $cache_fname.aria2 && "$ROOT_FS_CREATE_ONLY" != "force" ]]; then
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
 		pv -p -b -r -c -N "[ .... ] $display_name" "$cache_fname" | lz4 -dc | tar xp --xattrs -C $SDCARD/
@@ -161,7 +174,7 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $SDCARD/debootstrap/debootstrap ]] && exit_with_error "Debootstrap base system first stage failed"
+		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $SDCARD/debootstrap/debootstrap ]] && exit_with_error "Debootstrap base system for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} first stage failed"
 
 		cp /usr/bin/$QEMU_BINARY $SDCARD/usr/bin/
 
@@ -174,7 +187,7 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 2/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $SDCARD/bin/bash ]] && exit_with_error "Debootstrap base system second stage failed"
+		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $SDCARD/bin/bash ]] && exit_with_error "Debootstrap base system for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} second stage failed"
 
 		mount_chroot "$SDCARD"
 
@@ -199,7 +212,7 @@ create_rootfs_cache()
 		if [[ -f $SDCARD/etc/default/console-setup ]]; then
 			sed -e 's/CHARMAP=.*/CHARMAP="UTF-8"/' -e 's/FONTSIZE=.*/FONTSIZE="8x16"/' \
 				-e 's/CODESET=.*/CODESET="guess"/' -i $SDCARD/etc/default/console-setup
-			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "setupcon --save"'
+			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "setupcon --save --force"'
 		fi
 
 		# stage: create apt-get sources list
@@ -218,7 +231,7 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Updating package lists..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Updating package lists failed"
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && display_alert "Updating package lists" "failed" "wrn"
 
 		# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
 		display_alert "Upgrading base packages" "Armbian" "info"
@@ -228,17 +241,74 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Upgrading base packages..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Upgrading base packages failed"
+		# Myy: Dividing the desktop packages installation steps into multiple
+		# ones. We first install the "ADDITIONAL_PACKAGES" in order to get
+		# access to software-common-properties installation.
+		# THEN we add the APT sources and install the Desktop packages.
+		# TODO : Find a way to add APT sources WITHOUT software-common-properties
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && display_alert "Upgrading base packages" "failed" "wrn"
 
 		# stage: install additional packages
-		display_alert "Installing packages for" "Armbian" "info"
+		display_alert "Installing the main packages for" "Armbian" "info"
 		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
-			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_LIST"' \
+			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_MAIN_LIST"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
-			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." $TTY_Y $TTY_X'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian main packages..." $TTY_Y $TTY_X'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian main packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+
+		if [[ $BUILD_DESKTOP == "yes" ]]; then
+			# FIXME Myy : Are we keeping this only for Desktop users,
+			# or should we extend this to CLI users too ?
+			# There might be some clunky boards that require Debian packages from
+			# specific repos...
+			display_alert "Adding apt sources for Desktop packages"
+			add_desktop_package_sources
+
+			local apt_desktop_install_flags=""
+			if [[ ! -z ${DESKTOP_APT_FLAGS_SELECTED+x} ]]; then
+				for flag in ${DESKTOP_APT_FLAGS_SELECTED}; do
+					apt_desktop_install_flags+=" --install-${flag}"
+				done
+			else
+				# Myy : Using the previous default option, if the variable isn't defined
+				# And ONLY if it's not defined !
+				apt_desktop_install_flags+=" --no-install-recommends"
+			fi
+
+			display_alert "Installing the desktop packages for" "Armbian" "info"
+			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+				$apt_extra $apt_extra_progress install ${apt_desktop_install_flags} $PACKAGE_LIST_DESKTOP"' \
+				${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
+				${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian desktop packages..." $TTY_Y $TTY_X'} \
+				${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+			[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian desktop packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+		fi
+
+		# Remove packages from packages.uninstall
+
+		display_alert "Uninstall packages" "$PACKAGE_LIST_UNINSTALL" "info"
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -qq \
+			$apt_extra $apt_extra_progress purge $PACKAGE_LIST_UNINSTALL"' \
+			${PROGRESS_LOG_TO_FILE:+' >> $DEST/debug/debootstrap.log'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Removing packages.uninstall packages..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian packages failed"
+
+		# stage: purge residual packages
+		display_alert "Purging residual packages for" "Armbian" "info"
+		PURGINGPACKAGES=$(chroot $SDCARD /bin/bash -c "dpkg -l | grep \"^rc\" | awk '{print \$2}' | tr \"\n\" \" \"")
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+			$apt_extra $apt_extra_progress remove --purge $PURGINGPACKAGES"' \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Purging residual Armbian packages..." $TTY_Y $TTY_X'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Purging of residual Armbian packages failed"
 
 		# stage: remove downloaded packages
 		chroot $SDCARD /bin/bash -c "apt-get clean"
@@ -255,7 +325,7 @@ create_rootfs_cache()
 		# creating xapian index that synaptic runs faster
 		if [[ $BUILD_DESKTOP == yes ]]; then
 			display_alert "Recreating Synaptic search index" "Please wait" "info"
-			chroot $SDCARD /bin/bash -c "/usr/sbin/update-apt-xapian-index -u"
+			chroot $SDCARD /bin/bash -c "[[ -f /usr/sbin/update-apt-xapian-index ]] && /usr/sbin/update-apt-xapian-index -u"
 		fi
 
 		# this is needed for the build process later since resolvconf generated file in /run is not saved
@@ -270,7 +340,7 @@ create_rootfs_cache()
 		umount_chroot "$SDCARD"
 
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -c > $cache_fname
+			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -5 -c > $cache_fname
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 		if [[ -n $GPG_PASS ]]; then
@@ -321,7 +391,7 @@ prepare_partitions()
 	# parttype[nfs] is empty
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	if [[ $(lsb_release -sc) =~ bionic|buster|bullseye|cosmic|groovy|focal ]]; then
+	if [[ $(lsb_release -sc) =~ bionic|buster|bullseye|cosmic|groovy|focal|hirsute|sid ]]; then
 		mkopts[ext4]='-q -m 2 -O ^64bit,^metadata_csum'
 	elif [[ $(lsb_release -sc) == xenial ]]; then
 		mkopts[ext4]='-q -m 2'
@@ -350,7 +420,7 @@ prepare_partitions()
 	# mountopts[nfs] is empty
 
 	# default BOOTSIZE to use if not specified
-	DEFAULT_BOOTSIZE=96	# MiB
+	DEFAULT_BOOTSIZE=256	# MiB
 
 	# stage: determine partition configuration
 	if [[ -n $BOOTFS_TYPE ]]; then
@@ -418,8 +488,12 @@ prepare_partitions()
 
 	# stage: create blank image
 	display_alert "Creating blank image for rootfs" "$sdsize MiB" "info"
-	# truncate --size=${sdsize}M ${SDCARD}.raw # sometimes results in fs corruption, revert to previous know to work solution
-	dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) -N "[ .... ] dd" | dd status=none of=${SDCARD}.raw
+	if [[ $FAST_CREATE_IMAGE == yes ]]; then
+		truncate --size=${sdsize}M ${SDCARD}.raw # sometimes results in fs corruption, revert to previous know to work solution
+		sync
+	else
+		dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) -N "[ .... ] dd" | dd status=none of=${SDCARD}.raw
+	fi
 
 	# stage: calculate boot partition size
 	local bootstart=$(($OFFSET * 2048))
@@ -451,7 +525,6 @@ prepare_partitions()
 
 	check_loop_device "$LOOP"
 
-	# NOTE: losetup -P option is not available in Trusty
 	losetup $LOOP ${SDCARD}.raw
 
 	# loop device was grabbed here, unlock
@@ -489,7 +562,7 @@ prepare_partitions()
 		else
 			local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		fi
-		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs on ${LOOP}p${bootpart}"
@@ -586,7 +659,7 @@ update_initramfs()
 create_image()
 {
 	# stage: create file name
-	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
+	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
@@ -645,6 +718,18 @@ create_image()
 	mkdir -p $DESTIMG
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
+	FINALDEST=$DEST/images
+
+	if [[ $BUILD_ALL == yes ]]; then
+		if [[ "$BETA" == yes ]]; then
+			FINALDEST=$DEST/images/"${BOARD}"/nightly
+			else
+			FINALDEST=$DEST/images/"${BOARD}"/archive
+		fi
+		install -d -o nobody -g nogroup -m 775 ${FINALDEST}
+	fi
+
+
 	if [[ -z $SEND_TO_SERVER ]]; then
 
 		if [[ $COMPRESS_OUTPUTIMAGE == "" || $COMPRESS_OUTPUTIMAGE == no ]]; then
@@ -654,85 +739,76 @@ create_image()
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
-			display_alert "Compressing" "$DEST/images/${version}.img.gz" "info"
-			pigz -3 < $DESTIMG/${version}.img > $DEST/images/${version}.img.gz
+			display_alert "Compressing" "${FINALDEST}/${version}.img.gz" "info"
+			pigz -3 < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.gz
 			compression_type=".gz"
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
-			display_alert "Compressing" "$DEST/images/${version}.img.xz" "info"
-			pixz -3 < $DESTIMG/${version}.img > $DEST/images/${version}.img.xz
+			display_alert "Compressing" "${FINALDEST}/${version}.img.xz" "info"
+			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
+			[[ ${BUILD_ALL} == yes && $(free | grep Mem | awk '{print $4/$2 * 100}' | awk '{print int($1+0.5)}') -lt 50 ]] && while [[ $(ps -uax | grep "pixz" | wc -l) -gt 5 ]]; do echo -en "#"; sleep 2; done
+			pixz -9 < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.xz
 			compression_type=".xz"
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *img* || $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
-			mv $DESTIMG/${version}.img $DEST/images/${version}.img || exit 1
+			mv $DESTIMG/${version}.img ${FINALDEST}/${version}.img || exit 1
 			compression_type=""
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
-			cd $DEST/images
+			cd ${FINALDEST}
 			display_alert "SHA256 calculating" "${version}.img${compression_type}" "info"
 			sha256sum -b ${version}.img${compression_type} > ${version}.img${compression_type}.sha
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *gpg* ]]; then
-			cd $DEST/images
+			cd ${FINALDEST}
 			if [[ -n $GPG_PASS ]]; then
 				display_alert "GPG signing" "${version}.img${compression_type}" "info"
-				echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes $DEST/images/${version}.img${compression_type} || exit 1
+				echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${FINALDEST}/${version}.img${compression_type} || exit 1
 			else
 				display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 			fi
 		fi
 
-		fingerprint_image "$DEST/images/${version}.img${compression_type}.txt" "${version}"
+		fingerprint_image "${FINALDEST}/${version}.img${compression_type}.txt" "${version}"
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
-			display_alert "Compressing" "$DEST/images/${version}.7z" "info"
+			display_alert "Compressing" "${FINALDEST}/${version}.7z" "info"
 			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on \
-			$DEST/images/${version}.7z ${version}.key ${version}.img* >/dev/null 2>&1
-			find $DEST/images/ -type \
+			${FINALDEST}/${version}.7z ${version}.key ${version}.img* >/dev/null 2>&1
+			find ${FINALDEST}/ -type \
 			f \( -name "${version}.img" -o -name "${version}.img.asc" -o -name "${version}.img.txt" -o -name "${version}.img.sha" \) -print0 \
 			| xargs -0 rm >/dev/null 2>&1
 		fi
 
 		rm -rf $DESTIMG
 	fi
-	display_alert "Done building" "$DEST/images/${version}.img" "info"
-
-	if [[ $BUILD_ALL == yes ]]; then
-		install -d -o igorp -g igorp -m 775 $DEST/images/${BOARD}/{archive,nightly}
-		if [[ "$BETA" == yes ]]; then
-			install ${INSTALL_PARA} $DEST/images/"${version}"* $DEST/images/"${BOARD}"/nightly
-			rm $DEST/images/"${version}"*
-		else
-			install ${INSTALL_PARA} $DEST/images/"${version}"* $DEST/images/"${BOARD}"/archive
-			rm $DEST/images/"${version}"*
-		fi
-	fi
+	display_alert "Done building" "${FINALDEST}/${version}.img" "info"
 
 	# call custom post build hook
-	[[ $(type -t post_build_image) == function ]] && post_build_image "$DEST/images/${version}.img"
+	[[ $(type -t post_build_image) == function ]] && post_build_image "${FINALDEST}/${version}.img"
 
 	# write image to SD card
-	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f $DEST/images/${version}.img ]]; then
+	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f ${FINALDEST}/${version}.img ]]; then
 
 		# make sha256sum if it does not exists. we need it for comparisson
-		if [[ -f "$DEST/images/${version}".img.sha ]]; then
-			local ifsha=$(cat $DEST/images/${version}.img.sha | awk '{print $1}')
+		if [[ -f "${FINALDEST}/${version}".img.sha ]]; then
+			local ifsha=$(cat ${FINALDEST}/${version}.img.sha | awk '{print $1}')
 		else
-			local ifsha=$(sha256sum -b "$DEST/images/${version}".img | awk '{print $1}')
+			local ifsha=$(sha256sum -b "${FINALDEST}/${version}".img | awk '{print $1}')
 		fi
 
 		display_alert "Writing image" "$CARD_DEVICE ${readsha}" "info"
 
 		# write to SD card
-		pv -p -b -r -c -N "[ .... ] dd" $DEST/images/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
+		pv -p -b -r -c -N "[ .... ] dd" ${FINALDEST}/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
 
 		# read and compare
 		display_alert "Verifying. Please wait!"
-		local ofsha=$(dd if=$CARD_DEVICE count=$(du -b $DEST/images/${version}.img | cut -f1) status=none iflag=count_bytes oflag=direct | sha256sum | awk '{print $1}')
+		local ofsha=$(dd if=$CARD_DEVICE count=$(du -b ${FINALDEST}/${version}.img | cut -f1) status=none iflag=count_bytes oflag=direct | sha256sum | awk '{print $1}')
 		if [[ $ifsha == $ofsha ]]; then
 			display_alert "Writing verified" "${version}.img" "info"
 		else

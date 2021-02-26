@@ -129,7 +129,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: stretch|buster|bullseye|xenial|bionic|groovy|focal
+# <release>: stretch|buster|bullseye|xenial|bionic|groovy|focal|groovy|hirsute|sid
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -139,7 +139,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	stretch|buster|bullseye)
+	stretch|buster|bullseye|sid)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -155,7 +155,7 @@ create_sources_list()
 	EOF
 	;;
 
-	xenial|bionic|groovy|focal)
+	xenial|bionic|groovy|focal|groovy|hirsute)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -205,7 +205,7 @@ improved_git()
 			retries=0
 			break
 		fi
-	let count=$count+1	
+	let count=$count+1
 	sleep $delay
 	done
 
@@ -598,30 +598,48 @@ display_alert "Building kernel splash logo" "$RELEASE" "info"
 
 
 
+DISTRIBUTIONS_DESC_DIR="config/distributions"
+
 function distro_menu ()
 {
 # create a select menu for choosing a distribution based EXPERT status
-# also sets DISTRIBUTION_STATUS which goes to BSP package / armbian-release
 
-	for i in "${!distro_name[@]}"
-	do
-		if [[ "${i}" == "${1}" ]]; then
-			if [[ "${distro_support[$i]}" != "supported" && $EXPERT != "yes" ]]; then
-				:
-			else
-				local text=""
-				[[ $EXPERT == "yes" ]] && local text="(${distro_support[$i]})"
-				options+=("$i" "${distro_name[$i]} $text")
-			fi
-			DISTRIBUTION_STATUS=${distro_support[$i]}
-			break
+	local distrib_dir="${1}"
+
+	if [[ -d "${distrib_dir}" && -f "${distrib_dir}/support" ]]; then
+		local support_level="$(cat "${distrib_dir}/support")"
+		if [[ "${support_level}" != "supported" && $EXPERT != "yes" ]]; then
+			:
+		else
+			local distro_codename="$(basename "${distrib_dir}")"
+			local distro_fullname="$(cat "${distrib_dir}/name")"
+			local expert_infos=""
+			[[ $EXPERT == "yes" ]] && expert_infos="(${support_level})"
+			options+=("${distro_codename}" "${distro_fullname} ${expert_infos}")
 		fi
-	done
+	fi
 
 }
 
 
+function distros_options() {
+	for distrib_dir in "${DISTRIBUTIONS_DESC_DIR}/"*; do
+		distro_menu "${distrib_dir}"
+	done
+}
 
+function set_distribution_status() {
+
+  local distro_support_desc_filepath="${DISTRIBUTIONS_DESC_DIR}/${RELEASE}/support"
+	if [[ ! -f "${distro_support_desc_filepath}" ]]; then
+		exit_with_error "Distribution ${distribution_name} does not exist"
+	else
+		DISTRIBUTION_STATUS="$(cat "${distro_support_desc_filepath}")"
+	fi
+	
+	[[ "${DISTRIBUTION_STATUS}" != "supported" ]] && [[ "${EXPERT}" != "yes" ]] && exit_with_error "Armbian ${RELEASE} is unsupported and, therefore, only available to experts (EXPERT=yes)"
+	 
+}
 
 adding_packages()
 {
@@ -654,7 +672,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal")
+	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal" "hirsute" "sid")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -766,7 +784,7 @@ addtorepo()
 
 
 repo-manipulate() {
-	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal")
+	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal" "hirsute" "sid")
 	case $@ in
 		serve)
 			# display repository content
@@ -866,25 +884,23 @@ repo-manipulate() {
 # $2: Architecture
 # $3: Amount of packages to keep
 repo-remove-old-packages() {
-    local repo=$1
-    local arch=$2
-    local keep=$3
-
-    for pkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Architecture ($arch)" | grep -v "ERROR: no results" | sort -rV); do
-        local pkg_name
-        pkg_name=$(echo "${pkg}" | cut -d_ -f1)
-        if [ "$pkg_name" != "$cur_pkg" ]; then
-            local count=0
-            local deleted=""
-            local cur_pkg="$pkg_name"
-        fi
-        test -n "$deleted" && continue
-        ((count+=1))
-        if [[ $count -gt $keep ]]; then
-            pkg_version=$(echo "${pkg}" | cut -d_ -f2)
-            aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name), Version (<= $pkg_version)"
-            deleted='yes'
-        fi
+	local repo=$1
+	local arch=$2
+	local keep=$3
+	for pkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Architecture ($arch)" | grep -v "ERROR: no results" | sort -t '.' -nk4); do
+		local pkg_name
+		count=0
+		pkg_name=$(echo "${pkg}" | cut -d_ -f1)
+		for subpkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name)"  | grep -v "ERROR: no results" | sort -rt '.' -nk4); do
+			((count+=1))
+#			echo $subpkg
+			if [[ $count -gt $keep ]]; then
+			#echo "rem"
+			pkg_version=$(echo "${subpkg}" | cut -d_ -f2)
+			#echo $pkg_version
+			aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name), Version (= $pkg_version)"
+			fi
+		done
     done
 }
 
@@ -953,12 +969,17 @@ prepare_host()
 	else
 		local offline=false
 	fi
+# build aarch64
+  if [[ $(dpkg --print-architecture) != arm64 ]]; then
 
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "http://www.armbian.com/using-armbian-tools/"
-		exit_with_error "Running this tool on non x86-x64 build host in not supported"
+		exit_with_error "Running this tool on non x86-x64 build host is not supported"
 	fi
+
+# build aarch64
+  fi
 
 	# wait until package manager finishes possible system maintanace
 	wait_for_package_manager
@@ -968,18 +989,36 @@ prepare_host()
 
 	# packages list for host
 	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
+
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
 	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
 	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
+	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils jq"
+
+# build aarch64
+  else
+
+	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
+	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
+	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
+	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
+	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
+	locales ncurses-base pixz dialog systemd-container udev libc6 qemu\
 	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils"
+
+# build aarch64
+  fi
 
 	local codename=$(lsb_release -sc)
 
-	# Getting ready for Ubuntu 20.04
-	if [[ $codename == focal || $codename == groovy || $codename == ulyana ]]; then
+	# Add support for Ubuntu 20.04, 21.04 and Mint Ulyana
+	if [[ $codename =~ ^(focal|groovy|hirsute|ulyana)$ ]]; then
 		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
@@ -989,13 +1028,12 @@ prepare_host()
 
 	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
 
-	# Ubuntu Focal x86_64 is the only fully supported host OS release
-	# Ubuntu Bionic x86_64 support is no longer supported
+	# Ubuntu 20.04.x (Focal) x86_64 is the only fully supported host OS release
 	# Using Docker/VirtualBox/Vagrant is the only supported way to run the build script on other Linux distributions
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
-	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
-	if [[ -z $codename || "buster groovy focal debbie tricia ulyana" != *"$codename"* ]]; then
+	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
+	if [[ -z $codename || "buster groovy focal hirsute debbie tricia ulyana" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -1008,7 +1046,10 @@ prepare_host()
 		exit_with_error "Windows subsystem for Linux is not a supported build environment"
 	fi
 
-	if [[ -z $codename || "focal" == "$codename" || "groovy" == "$codename"  || "debbie" == "$codename"  || "buster" == "$codename" || "ulyana" == "$codename" ]]; then
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
+	if [[ -z $codename || $codename =~ ^(focal|groovy|debbie|buster|hirsute|ulyana)$ ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 
@@ -1029,6 +1070,9 @@ prepare_host()
 		SYNC_CLOCK=no
 	fi
 
+# build aarch64
+  fi
+
 	# Skip verification if you are working offline
 	if ! $offline; then
 
@@ -1044,6 +1088,10 @@ prepare_host()
 	done
 
 	# distribution packages are buggy, download from author
+
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
 		display_alert "Updating from external repository" "aptly" "info"
 		if [ x"" != x"${http_proxy}" ]; then
@@ -1057,6 +1105,9 @@ prepare_host()
 	else
 		sed "s/squeeze/nightly/" -i /etc/apt/sources.list.d/aptly.list
 	fi
+
+# build aarch64
+  fi
 
 	if [[ ${#deps[@]} -gt 0 ]]; then
 		display_alert "Installing build dependencies"
@@ -1072,9 +1123,15 @@ prepare_host()
 		ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
 	fi
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
 		apt-get install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
 	fi
+
+# build aarch64
+  fi
 
 	# create directory structure
 	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
@@ -1088,17 +1145,22 @@ prepare_host()
 	fi
 	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
 	local toolchains=(
-		"https://dl.armbian.com/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
-		"https://dl.armbian.com/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
+		"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
 		)
 
 	USE_TORRENT_STATUS=${USE_TORRENT}
@@ -1133,6 +1195,9 @@ prepare_host()
 		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
 	fi
 
+# build aarch64
+  fi
+
 	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
 
 	if [[ ! -f "${USERPATCHES_PATH}"/README ]]; then
@@ -1159,22 +1224,9 @@ prepare_host()
 
 function webseed ()
 {
-# list of mirrors that host our files
-unset text
-WEBSEED=(
-	"https://dl.armbian.com/"
-	"https://imola.armbian.com/dl/"
-	"https://mirrors.netix.net/armbian/dl/"
-	"https://mirrors.dotsrc.org/armbian-dl/"
-	"https://us.mirrors.fossho.st/armbian/dl/"
-	"https://uk.mirrors.fossho.st/armbian/dl/"
-	"https://armbian.systemonachip.net/dl/"
-	)
-	if [[ -z $DOWNLOAD_MIRROR ]]; then
-		WEBSEED=(
-                "https://dl.armbian.com/"
-                )
-	fi
+	# list of mirrors that host our files
+	unset text
+	WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq '.[] |.[] | values' | grep https | awk '!a[$0]++'))
 	# aria2 simply split chunks based on sources count not depending on download speed
 	# when selecting china mirrors, use only China mirror, others are very slow there
 	if [[ $DOWNLOAD_MIRROR == china ]]; then
@@ -1183,8 +1235,8 @@ WEBSEED=(
 		)
 	fi
 	for toolchain in ${WEBSEED[@]}; do
-		# use only live
-		if [[ $(wget -S --spider "${toolchain}${1}" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') ]]; then
+		# use only live, tnahosting return ok also when file is absent
+		if [[ $(wget -S --spider "${toolchain}${1}" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') && ${toolchain} != *tnahosting* ]]; then
 			text="${text} ${toolchain}${1}"
 		fi
 	done
@@ -1205,27 +1257,37 @@ download_and_verify()
 
         if [[ $DOWNLOAD_MIRROR == china ]]; then
 		local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
-			else
-		local server="https://dl.armbian.com/"
+	else
+		local server=${ARMBIAN_MIRROR}
         fi
 
 	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then
 		return
 	fi
 
+	# switch to china mirror if US timeouts
+	timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
+	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
+		display_alert "Timeout from $server" "retrying" "info"
+		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+	fi
+
+	# check if file exists on remote server before running aria2 downloader
+	[[ ! `timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}` ]] && return
+
 	cd "${localdir}" || exit
 
 	# use local control file
 	if [[ -f "${SRC}"/config/torrents/${filename}.asc ]]; then
 		local torrent="${SRC}"/config/torrents/${filename}.torrent
-		ln -s "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
-	elif [[ ! $(wget -S --spider "${server}${remotedir}/${filename}.asc" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') ]]; then
+		ln -sf "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
+	elif [[ ! `timeout 10 curl --head --fail --silent "${server}${remotedir}/${filename}.asc"` ]]; then
 		return
 	else
 		# download control file
 		local torrent=${server}$remotedir/${filename}.torrent
 		aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
-		--continue=false --allow-overwrite=true --dir="${localdir}" "$(webseed "$remotedir/${filename}.asc")" -o "${filename}.asc"
+		--continue=false --allow-overwrite=true --dir="${localdir}" ${server}${remotedir}/${filename}.asc $(webseed "$remotedir/${filename}.asc") -o "${filename}.asc"
 		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
 	fi
 
@@ -1233,7 +1295,7 @@ download_and_verify()
 	if [[ ${USE_TORRENT} == "yes" ]]; then
 
 		display_alert "downloading using torrent network" "$filename"
-		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=15 --console-log-level=error \
+		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=120 --console-log-level=error \
 		--allow-overwrite=true --download-result=hide --rpc-save-upload-metadata=false --auto-file-renaming=false \
 		--file-allocation=trunc --continue=true ${torrent} \
 		--dht-file-path=${SRC}/cache/.aria2/dht.dat --disable-ipv6=true --stderr --follow-torrent=mem --dir=$localdir"
@@ -1254,11 +1316,10 @@ download_and_verify()
 
 	# direct download if torrent fails
 	if [[ ! -f "${localdir}/${filename}.complete" ]]; then
-		if [[ $(wget -S --spider "${server}${remotedir}/${filename}" 2>&1 >/dev/null \
-			| grep 'HTTP/1.1 200 OK') ]]; then
-			display_alert "downloading using http(s) network" "$filename"
+		if [[ ! `timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null` ]]; then
+			display_alert "downloading from $(echo $server | cut -d'/' -f3 | cut -d':' -f1) using http(s) network" "$filename"
 			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
-			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" "$(webseed "${remotedir}/${filename}")" -o "${filename}"
+			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" ${server}${remotedir}/${filename} $(webseed "${remotedir}/${filename}") -o "${filename}"
 			# mark complete
 			[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete" && echo ""
 

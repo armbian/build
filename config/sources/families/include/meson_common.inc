@@ -23,14 +23,14 @@ case $BRANCH in
         ;;
 	current)
 
-		KERNELBRANCH="branch:linux-5.9.y"
+		KERNELBRANCH="branch:linux-5.10.y"
 		KERNELPATCHDIR='meson-current'
 
 	;;
 	dev)
 
-		KERNELSOURCE="https://github.com/xdarklight/linux"
-		KERNELBRANCH="commit:15faa34a0d22dcd15a6f6984a865895110c2f81b"
+		KERNELBRANCH="branch:linux-5.11.y"
+		KERNELPATCHDIR='meson-current'
 
 	;;
 esac

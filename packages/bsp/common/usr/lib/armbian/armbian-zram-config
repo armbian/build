@@ -8,6 +8,7 @@
 
 # Functions:
 #
+# activate_zram
 # activate_zram_swap
 # activate_ramlog_partition
 # activate_compressed_tmp
@@ -18,16 +19,17 @@
 # and script configuration
 . /usr/lib/armbian/armbian-common
 
-# It's possible to override ZRAM_PERCENTAGE, ZRAM_MAX_DEVICES, SWAP_ALGORITHM,
-# RAMLOG_ALGORITHM and TMP_ALGORITHM here:
+# It's possible to override SWAP, ZRAM_PERCENTAGE, MEM_LIMIT_PERCENTAGE, ZRAM_MAX_DEVICES,
+# SWAP_ALGORITHM, RAMLOG_ALGORITHM, TMP_ALGORITHM and TMP_SIZE here:
+ENABLED=false
 [ -f /etc/default/armbian-zram-config ] && . /etc/default/armbian-zram-config
+# Exit if not Enabled
+[[ "$ENABLED" != "true" ]] && exit 0
 
-activate_zram_swap() {
-	# Do not interfere with already present config-zram package
-	dpkg -l | grep -q 'zram-config' && exit 0
+# Do not interfere with already present zram-config package
+dpkg -l | grep -q 'zram-config' && exit 0
 
-	[[ "$ENABLED" != "true" ]] && exit 0
-
+activate_zram() {
 	# Load zram module with n instances for swap: one per CPU core, $ZRAM_MAX_DEVICES
 	# defines the maximum, on modern kernels we overwrite this with 1 and rely on
 	# max_comp_streams being set to count of CPU cores or $ZRAM_MAX_DEVICES
@@ -37,6 +39,7 @@ activate_zram_swap() {
 	module_args="$(modinfo zram | awk -F" " '/num_devices/ {print $2}' | cut -f1 -d:)"
 	[[ -n ${module_args} ]] && modprobe zram ${module_args}=$(( ${zram_devices} + 2 )) || return
 
+	swap_algo=${SWAP_ALGORITHM:=lzo}
 	# Expose 50% of real memory as swap space by default
 	zram_percent=${ZRAM_PERCENTAGE:=50}
 	mem_info=$(LC_ALL=C free -w 2>/dev/null | grep "^Mem" || LC_ALL=C free | grep "^Mem")
@@ -47,27 +50,39 @@ activate_zram_swap() {
 	# Limit memory available to zram to 50% by default
 	mem_limit_percent=${MEM_LIMIT_PERCENTAGE:=50}
 	mem_limit_per_zram_device=$(( ${memory_total} / ${zram_devices} * ${mem_limit_percent} / 100 ))
+}
+
+activate_zram_swap() {
+	# Return is SWAP is disabled (enabled by default)
+	[[ -n "$SWAP" && "$SWAP" != "true" ]] && return;
+
+	# Disable zswap if zram should be used. To make use of zswap instead a
+	# swap file or partition on *capable* storage needs to be chosen and
+	# defined as swap and also in /etc/default/armbian-zram-config SWAP=false
+	# needs to be set.
+	echo 0 >/sys/module/zswap/parameters/enabled 2>/dev/null
 
 	# Limit Journal size to 20Mb
 	sed -i "s/.*SystemMaxUse=$/SystemMaxUse=20M/" /etc/systemd/journald.conf
 
-	swap_algo=${SWAP_ALGORITHM:=lzo}
 	for (( i=1; i<=zram_devices; i++ )); do
-		if [ -f /sys/block/zram${i}/comp_algorithm ]; then
+		swap_device=$(zramctl -f |sed 's/\/dev\///')
+		[[ ! ${swap_device} =~ ^zram ]] && echo -e "\n### No more available zram devices (${swap_device})\n" >>${Log} && exit 1;
+		if [ -f /sys/block/${swap_device}/comp_algorithm ]; then
 			# set compression algorithm, if defined as lzo choose lzo-rle if available
 			# https://www.phoronix.com/scan.php?page=news_item&px=ZRAM-Linux-5.1-Better-Perform
-			grep -q 'lzo-rle' /sys/block/zram${i}/comp_algorithm && \
+			grep -q 'lzo-rle' /sys/block/${swap_device}/comp_algorithm && \
 				[[ "X${swap_algo}" = "Xlzo" ]] && swap_algo="lzo-rle"
-			echo ${swap_algo} >/sys/block/zram${i}/comp_algorithm 2>/dev/null
+			echo ${swap_algo} >/sys/block/${swap_device}/comp_algorithm 2>/dev/null
 		fi
 		if [ "X${ZRAM_BACKING_DEV}" != "X" ]; then
-			echo ${ZRAM_BACKING_DEV} >/sys/block/zram${i}/backing_dev
+			echo ${ZRAM_BACKING_DEV} >/sys/block/${swap_device}/backing_dev
 		fi
-		echo -n ${ZRAM_MAX_DEVICES:=4} > /sys/block/zram${i}/max_comp_streams
-		echo -n ${mem_per_zram_device} > /sys/block/zram${i}/disksize
-		echo -n ${mem_limit_per_zram_device} > /sys/block/zram${i}/mem_limit
-		mkswap /dev/zram${i}
-		swapon -p 5 /dev/zram${i}
+		echo -n ${ZRAM_MAX_DEVICES:=4} > /sys/block/${swap_device}/max_comp_streams
+		echo -n ${mem_per_zram_device} > /sys/block/${swap_device}/disksize
+		echo -n ${mem_limit_per_zram_device} > /sys/block/${swap_device}/mem_limit
+		mkswap /dev/${swap_device}
+		swapon -p 5 /dev/${swap_device}
 	done
 
 	# Swapping to HDDs is stupid so switch to settings made for flash memory and zram/zswap
@@ -81,7 +96,9 @@ activate_ramlog_partition() {
 	# ENABLED=true in /etc/default/armbian-ramlog is set
 	ENABLED=$(awk -F"=" '/^ENABLED/ {print $2}' /etc/default/armbian-ramlog)
 	[[ "$ENABLED" != "true" ]] && return
-	
+	log_device=$(zramctl -f |sed 's/\/dev\///')
+	[[ ! ${log_device} =~ ^zram ]] && echo -e "\n### No more available zram devices (${log_device})\n" >>${Log} && exit 1;
+
 	# read size also from /etc/default/armbian-ramlog
 	ramlogsize=$(awk -F"=" '/^SIZE/ {print $2}' /etc/default/armbian-ramlog)
 	disksize=$(sed -e 's/M$/*1048576/' -e 's/K$/*1024/' <<<${ramlogsize:=50M} | bc)
@@ -91,46 +108,48 @@ activate_ramlog_partition() {
 	# See https://patchwork.kernel.org/patch/9918897/
 	if [ "X${RAMLOG_ALGORITHM}" = "X" ]; then
 		for algo in lz4 lz4hc quicklz zlib brotli zstd ; do
-			echo ${algo} >/sys/block/zram0/comp_algorithm 2>/dev/null
+			echo ${algo} >/sys/block/${log_device}/comp_algorithm 2>/dev/null
 		done
 	else
-		echo ${RAMLOG_ALGORITHM} >/sys/block/zram0/comp_algorithm 2>/dev/null
+		echo ${RAMLOG_ALGORITHM} >/sys/block/${log_device}/comp_algorithm 2>/dev/null
 	fi
-	echo -n ${disksize} > /sys/block/zram0/disksize
+	echo -n ${disksize} > /sys/block/${log_device}/disksize
 
 	# if it fails, select $swap_algo. Workaround for some older kernels
 	if [[ $? == 1 ]]; then
-		echo ${swap_algo} > /sys/block/zram0/comp_algorithm 2>/dev/null
-		echo -n ${disksize} > /sys/block/zram0/disksize
+		echo ${swap_algo} > /sys/block/${log_device}/comp_algorithm 2>/dev/null
+		echo -n ${disksize} > /sys/block/${log_device}/disksize
 	fi
 
-	mkfs.ext4 -O ^has_journal -s 1024 -L log2ram /dev/zram0
-	algo=$(sed 's/.*\[\([^]]*\)\].*/\1/g' </sys/block/zram0/comp_algorithm)
+	mkfs.ext4 -O ^has_journal -s 1024 -L log2ram /dev/${log_device}
+	algo=$(sed 's/.*\[\([^]]*\)\].*/\1/g' </sys/block/${log_device}/comp_algorithm)
 	echo -e "### Activated Armbian ramlog partition with ${algo} compression" >>${Log}
 } # activate_ramlog_partition
 
 activate_compressed_tmp() {
 	# create /tmp not as tmpfs but zram compressed if no fstab entry exists
 	grep -q '^tmpfs /tmp' /etc/mtab && return
+	tmp_device=$(zramctl -f |sed 's/\/dev\///')
+	[[ ! ${tmp_device} =~ ^zram ]] && echo -e "\n### No more available zram devices (${tmp_device})\n" >>${Log} && exit 1;
 
-	tmp_device=$(( ${zram_devices} + 1 ))
-	if [[ -f /sys/block/zram${tmp_device}/comp_algorithm ]]; then
+	if [[ -f /sys/block/${tmp_device}/comp_algorithm ]]; then
 		if [ "X${TMP_ALGORITHM}" = "X" ]; then
-			echo ${swap_algo} >/sys/block/zram${tmp_device}/comp_algorithm 2>/dev/null
+			echo ${swap_algo} >/sys/block/${tmp_device}/comp_algorithm 2>/dev/null
 		else
-			echo ${TMP_ALGORITHM} >/sys/block/zram${tmp_device}/comp_algorithm 2>/dev/null
+			echo ${TMP_ALGORITHM} >/sys/block/${tmp_device}/comp_algorithm 2>/dev/null
 		fi
 	fi
-	echo -n $(( ${memory_total} / 2 )) > /sys/block/zram${tmp_device}/disksize
-	mkfs.ext4 -O ^has_journal -s 1024 -L tmp /dev/zram${tmp_device}
-	mount -o nosuid,discard /dev/zram${tmp_device} /tmp
-	chmod 777 /tmp
-	algo=$(sed 's/.*\[\([^]]*\)\].*/\1/g' </sys/block/zram${tmp_device}/comp_algorithm)
+	[[ -z ${TMP_SIZE} ]] && echo -n $(( ${memory_total} / 2 )) > /sys/block/${tmp_device}/disksize || echo -n ${TMP_SIZE} > /sys/block/${tmp_device}/disksize
+	mkfs.ext4 -O ^has_journal -s 1024 -L tmp /dev/${tmp_device}
+	mount -o nosuid,discard /dev/${tmp_device} /tmp
+	chmod 1777 /tmp
+	algo=$(sed 's/.*\[\([^]]*\)\].*/\1/g' </sys/block/${tmp_device}/comp_algorithm)
 	echo -e "\n### Activated ${algo} compressed /tmp" >>${Log}
 } # activate_compressed_tmp
 
 case $1 in
 	*start*)
+		activate_zram
 		activate_zram_swap
 		activate_ramlog_partition
 		activate_compressed_tmp

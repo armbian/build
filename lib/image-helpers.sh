@@ -19,7 +19,6 @@
 # customize_image
 # install_deb_chroot
 
-
 # mount_chroot <target>
 #
 # helper to reduce code duplication
@@ -116,7 +115,7 @@ customize_image()
 	# util-linux >= 2.27 required
 	mount -o bind,ro "$USERPATCHES_PATH"/overlay "${SDCARD}"/tmp/overlay
 	display_alert "Calling image customization script" "customize-image.sh" "info"
-	chroot "${SDCARD}" /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP"
+	chroot "${SDCARD}" /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP $ARCH"
 	CUSTOMIZE_IMAGE_RC=$?
 	umount -i "${SDCARD}"/tmp/overlay >/dev/null 2>&1
 	mountpoint -q "${SDCARD}"/tmp/overlay || rm -r "${SDCARD}"/tmp/overlay
@@ -143,7 +142,9 @@ install_deb_chroot()
 
 	display_alert "Installing${desc}" "${name/\/root\//}"
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
-	LC_ALL=C LANG=C chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq \
-		$apt_extra --no-install-recommends install $name" >> "${DEST}"/debug/install.log 2>&1
+	# when building in bulk from remote, lets make sure we have up2date index
+	[[ $BUILD_ALL == yes && ${variant} == remote ]] && chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get $apt_extra -yqq update"
+	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq $apt_extra --no-install-recommends install $name" >> "${DEST}"/debug/install.log 2>&1
+	[[ $? -ne 0 ]] && exit_with_error "Installation of $name failed" "${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
 	[[ ${variant} == remote && ${transfer} == yes ]] && rsync -rq "${SDCARD}"/var/cache/apt/archives/*.deb ${DEB_STORAGE}/
 }

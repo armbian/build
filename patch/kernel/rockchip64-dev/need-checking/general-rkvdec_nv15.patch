@@ -1,0 +1,1319 @@
+From 974229575250290e49d004933cb0aade87fa4566 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:33 +0000
+Subject: [PATCH 04/18] media: rkvdec: h264: Fix reference frame_num wrap for
+ second field
+
+When decoding the second field in a complementary field pair the second
+field is sharing the same frame_num with the first field.
+
+Currently the frame_num for the first field is wrapped when it matches the
+field being decoded, this cause issues to decode the second field in a
+complementary field pair.
+
+Fix this by using inclusive comparison, less than or equal.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+Reviewed-by: Ezequiel Garcia <ezequiel@collabora.com>
+---
+ drivers/staging/media/rkvdec/rkvdec-h264.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec-h264.c b/drivers/staging/media/rkvdec/rkvdec-h264.c
+index 7b66e2743a4f..f0cfed84d60d 100644
+--- a/drivers/staging/media/rkvdec/rkvdec-h264.c
++++ b/drivers/staging/media/rkvdec/rkvdec-h264.c
+@@ -754,7 +754,7 @@ static void assemble_hw_rps(struct rkvdec_ctx *ctx,
+ 			continue;
+ 
+ 		if (dpb[i].flags & V4L2_H264_DPB_ENTRY_FLAG_LONG_TERM ||
+-		    dpb[i].frame_num < dec_params->frame_num) {
++		    dpb[i].frame_num <= dec_params->frame_num) {
+ 			p[i] = dpb[i].frame_num;
+ 			continue;
+ 		}
+-- 
+2.25.1
+
+
+From 031ff8b97b208e20b49554c657e8ca9c79a079db Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:34 +0000
+Subject: [PATCH 05/18] media: rkvdec: Ensure decoded resolution fit coded
+ resolution
+
+Ensure decoded CAPTURE buffer resolution is larger or equal to the coded
+OPTUPT buffer resolution.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/staging/media/rkvdec/rkvdec.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
+index 55dc27171ce4..4ab8f7e0566b 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.c
++++ b/drivers/staging/media/rkvdec/rkvdec.c
+@@ -235,6 +235,8 @@ static int rkvdec_try_capture_fmt(struct file *file, void *priv,
+ 		pix_mp->pixelformat = coded_desc->decoded_fmts[0];
+ 
+ 	/* Always apply the frmsize constraint of the coded end. */
++	pix_mp->width = max(pix_mp->width, ctx->coded_fmt.fmt.pix_mp.width);
++	pix_mp->height = max(pix_mp->height, ctx->coded_fmt.fmt.pix_mp.height);
+ 	v4l2_apply_frmsize_constraints(&pix_mp->width,
+ 				       &pix_mp->height,
+ 				       &coded_desc->frmsize);
+-- 
+2.25.1
+
+
+From 4c7271baa21e2e508593c8e87d77febff68afb6a Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:34 +0000
+Subject: [PATCH 06/18] media: rkvdec: h264: Validate and use pic width and
+ height in mbs
+
+The width and height in mbs is currently configured based on OUTPUT buffer
+resolution, this works for frame pictures but can cause issues for field
+pictures.
+
+When frame_mbs_only_flag is 0 the height in mbs should be height of
+the field instead of height of frame.
+
+Validate pic_width_in_mbs_minus1 and pic_height_in_map_units_minus1
+against OUTPUT buffer resolution and use these values to configure HW.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/staging/media/rkvdec/rkvdec-h264.c |  4 ++--
+ drivers/staging/media/rkvdec/rkvdec.c      | 10 ++++++++++
+ 2 files changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec-h264.c b/drivers/staging/media/rkvdec/rkvdec-h264.c
+index f0cfed84d60d..3498e9eec3d8 100644
+--- a/drivers/staging/media/rkvdec/rkvdec-h264.c
++++ b/drivers/staging/media/rkvdec/rkvdec-h264.c
+@@ -672,8 +672,8 @@ static void assemble_hw_pps(struct rkvdec_ctx *ctx,
+ 		  LOG2_MAX_PIC_ORDER_CNT_LSB_MINUS4);
+ 	WRITE_PPS(!!(sps->flags & V4L2_H264_SPS_FLAG_DELTA_PIC_ORDER_ALWAYS_ZERO),
+ 		  DELTA_PIC_ORDER_ALWAYS_ZERO_FLAG);
+-	WRITE_PPS(DIV_ROUND_UP(ctx->coded_fmt.fmt.pix_mp.width, 16), PIC_WIDTH_IN_MBS);
+-	WRITE_PPS(DIV_ROUND_UP(ctx->coded_fmt.fmt.pix_mp.height, 16), PIC_HEIGHT_IN_MBS);
++	WRITE_PPS(sps->pic_width_in_mbs_minus1 + 1, PIC_WIDTH_IN_MBS);
++	WRITE_PPS(sps->pic_height_in_map_units_minus1 + 1, PIC_HEIGHT_IN_MBS);
+ 	WRITE_PPS(!!(sps->flags & V4L2_H264_SPS_FLAG_FRAME_MBS_ONLY),
+ 		  FRAME_MBS_ONLY_FLAG);
+ 	WRITE_PPS(!!(sps->flags & V4L2_H264_SPS_FLAG_MB_ADAPTIVE_FRAME_FIELD),
+diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
+index 4ab8f7e0566b..7a9f78bc0a55 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.c
++++ b/drivers/staging/media/rkvdec/rkvdec.c
+@@ -29,8 +29,11 @@
+ 
+ static int rkvdec_try_ctrl(struct v4l2_ctrl *ctrl)
+ {
++	struct rkvdec_ctx *ctx = container_of(ctrl->handler, struct rkvdec_ctx, ctrl_hdl);
++
+ 	if (ctrl->id == V4L2_CID_MPEG_VIDEO_H264_SPS) {
+ 		const struct v4l2_ctrl_h264_sps *sps = ctrl->p_new.p_h264_sps;
++		unsigned int width, height;
+ 		/*
+ 		 * TODO: The hardware supports 10-bit and 4:2:2 profiles,
+ 		 * but it's currently broken in the driver.
+@@ -45,6 +48,13 @@ static int rkvdec_try_ctrl(struct v4l2_ctrl *ctrl)
+ 		if (sps->bit_depth_luma_minus8 != 0)
+ 			/* Only 8-bit is supported */
+ 			return -EINVAL;
++
++		width = (sps->pic_width_in_mbs_minus1 + 1) * 16;
++		height = (sps->pic_height_in_map_units_minus1 + 1) * 16;
++
++		if (width > ctx->coded_fmt.fmt.pix_mp.width ||
++		    height > ctx->coded_fmt.fmt.pix_mp.height)
++			return -EINVAL;
+ 	}
+ 	return 0;
+ }
+-- 
+2.25.1
+
+
+From d0673c50f58c79198b3c2958beaa8b88e2bdfaef Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:35 +0000
+Subject: [PATCH 07/18] media: rkvdec: h264: Fix bit depth wrap in pps packet
+
+The luma and chroma bit depth fields in the pps packet is 3 bits wide.
+8 is wrongly added to the bit depth value written to these 3-bit fields.
+Because only the 3 LSB is written the hardware is configured correctly.
+
+Correct this by not adding 8 to the luma and chroma bit depth value.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+Reviewed-by: Ezequiel Garcia <ezequiel@collabora.com>
+---
+ drivers/staging/media/rkvdec/rkvdec-h264.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec-h264.c b/drivers/staging/media/rkvdec/rkvdec-h264.c
+index 3498e9eec3d8..6576b4a101ae 100644
+--- a/drivers/staging/media/rkvdec/rkvdec-h264.c
++++ b/drivers/staging/media/rkvdec/rkvdec-h264.c
+@@ -662,8 +662,8 @@ static void assemble_hw_pps(struct rkvdec_ctx *ctx,
+ 	WRITE_PPS(0xff, PROFILE_IDC);
+ 	WRITE_PPS(1, CONSTRAINT_SET3_FLAG);
+ 	WRITE_PPS(sps->chroma_format_idc, CHROMA_FORMAT_IDC);
+-	WRITE_PPS(sps->bit_depth_luma_minus8 + 8, BIT_DEPTH_LUMA);
+-	WRITE_PPS(sps->bit_depth_chroma_minus8 + 8, BIT_DEPTH_CHROMA);
++	WRITE_PPS(sps->bit_depth_luma_minus8, BIT_DEPTH_LUMA);
++	WRITE_PPS(sps->bit_depth_chroma_minus8, BIT_DEPTH_CHROMA);
+ 	WRITE_PPS(0, QPPRIME_Y_ZERO_TRANSFORM_BYPASS_FLAG);
+ 	WRITE_PPS(sps->log2_max_frame_num_minus4, LOG2_MAX_FRAME_NUM_MINUS4);
+ 	WRITE_PPS(sps->max_num_ref_frames, MAX_NUM_REF_FRAMES);
+-- 
+2.25.1
+
+
+From c1cb24d82d654583f9b716f8385254d61223aa03 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:35 +0000
+Subject: [PATCH 08/18] media: rkvdec: h264: Do not override output buffer
+ sizeimage
+
+The output buffer sizeimage is currently forced to 2 bytes per pixel, this
+can lead to high memory usage for 4K content when multiple output buffers
+is created by userspace.
+
+Do not override output buffer sizeimage and let userspace have control of
+output buffer sizeimage by only setting sizeimage if none is provided.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/staging/media/rkvdec/rkvdec-h264.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec-h264.c b/drivers/staging/media/rkvdec/rkvdec-h264.c
+index 6576b4a101ae..3a85545bcb38 100644
+--- a/drivers/staging/media/rkvdec/rkvdec-h264.c
++++ b/drivers/staging/media/rkvdec/rkvdec-h264.c
+@@ -1012,8 +1012,9 @@ static int rkvdec_h264_adjust_fmt(struct rkvdec_ctx *ctx,
+ 	struct v4l2_pix_format_mplane *fmt = &f->fmt.pix_mp;
+ 
+ 	fmt->num_planes = 1;
+-	fmt->plane_fmt[0].sizeimage = fmt->width * fmt->height *
+-				      RKVDEC_H264_MAX_DEPTH_IN_BYTES;
++	if (!fmt->plane_fmt[0].sizeimage)
++		fmt->plane_fmt[0].sizeimage = fmt->width * fmt->height *
++					      RKVDEC_H264_MAX_DEPTH_IN_BYTES;
+ 	return 0;
+ }
+ 
+-- 
+2.25.1
+
+
+From 1f381d3ddd88174c12846ba93ddd7deb47089a8e Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:35 +0000
+Subject: [PATCH 09/18] media: v4l2-common: Add helpers to calculate
+ bytesperline and sizeimage
+
+Add helper functions to calculate plane bytesperline and sizeimage, these
+new helpers consider block width and height when calculating plane
+bytesperline and sizeimage.
+
+This prepare support for new pixel formats added in next patch that make
+use of block width and height.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/media/v4l2-core/v4l2-common.c | 77 +++++++++++++--------------
+ 1 file changed, 38 insertions(+), 39 deletions(-)
+
+diff --git a/drivers/media/v4l2-core/v4l2-common.c b/drivers/media/v4l2-core/v4l2-common.c
+index 3dc17ebe14fa..4102c373b48a 100644
+--- a/drivers/media/v4l2-core/v4l2-common.c
++++ b/drivers/media/v4l2-core/v4l2-common.c
+@@ -333,6 +333,33 @@ static inline unsigned int v4l2_format_block_height(const struct v4l2_format_inf
+ 	return info->block_h[plane];
+ }
+ 
++static inline unsigned int v4l2_format_plane_width(const struct v4l2_format_info *info, int plane,
++						   unsigned int width)
++{
++	unsigned int hdiv = plane ? info->hdiv : 1;
++	unsigned int bytes = DIV_ROUND_UP(width * info->bpp[plane],
++				v4l2_format_block_width(info, plane) *
++				v4l2_format_block_height(info, plane));
++
++	return DIV_ROUND_UP(bytes, hdiv);
++}
++
++static inline unsigned int v4l2_format_plane_height(const struct v4l2_format_info *info, int plane,
++						    unsigned int height)
++{
++	unsigned int vdiv = plane ? info->vdiv : 1;
++	unsigned int lines = ALIGN(height, v4l2_format_block_height(info, plane));
++
++	return DIV_ROUND_UP(lines, vdiv);
++}
++
++static inline unsigned int v4l2_format_plane_size(const struct v4l2_format_info *info, int plane,
++						  unsigned int width, unsigned int height)
++{
++	return v4l2_format_plane_width(info, plane, width) *
++	       v4l2_format_plane_height(info, plane, height);
++}
++
+ void v4l2_apply_frmsize_constraints(u32 *width, u32 *height,
+ 				    const struct v4l2_frmsize_stepwise *frmsize)
+ {
+@@ -368,37 +395,19 @@ int v4l2_fill_pixfmt_mp(struct v4l2_pix_format_mplane *pixfmt,
+ 
+ 	if (info->mem_planes == 1) {
+ 		plane = &pixfmt->plane_fmt[0];
+-		plane->bytesperline = ALIGN(width, v4l2_format_block_width(info, 0)) * info->bpp[0];
++		plane->bytesperline = v4l2_format_plane_width(info, 0, width);
+ 		plane->sizeimage = 0;
+ 
+-		for (i = 0; i < info->comp_planes; i++) {
+-			unsigned int hdiv = (i == 0) ? 1 : info->hdiv;
+-			unsigned int vdiv = (i == 0) ? 1 : info->vdiv;
+-			unsigned int aligned_width;
+-			unsigned int aligned_height;
+-
+-			aligned_width = ALIGN(width, v4l2_format_block_width(info, i));
+-			aligned_height = ALIGN(height, v4l2_format_block_height(info, i));
+-
+-			plane->sizeimage += info->bpp[i] *
+-				DIV_ROUND_UP(aligned_width, hdiv) *
+-				DIV_ROUND_UP(aligned_height, vdiv);
+-		}
++		for (i = 0; i < info->comp_planes; i++)
++			plane->sizeimage +=
++				v4l2_format_plane_size(info, i, width, height);
+ 	} else {
+ 		for (i = 0; i < info->comp_planes; i++) {
+-			unsigned int hdiv = (i == 0) ? 1 : info->hdiv;
+-			unsigned int vdiv = (i == 0) ? 1 : info->vdiv;
+-			unsigned int aligned_width;
+-			unsigned int aligned_height;
+-
+-			aligned_width = ALIGN(width, v4l2_format_block_width(info, i));
+-			aligned_height = ALIGN(height, v4l2_format_block_height(info, i));
+-
+ 			plane = &pixfmt->plane_fmt[i];
+ 			plane->bytesperline =
+-				info->bpp[i] * DIV_ROUND_UP(aligned_width, hdiv);
+-			plane->sizeimage =
+-				plane->bytesperline * DIV_ROUND_UP(aligned_height, vdiv);
++				v4l2_format_plane_width(info, i, width);
++			plane->sizeimage = plane->bytesperline *
++				v4l2_format_plane_height(info, i, height);
+ 		}
+ 	}
+ 	return 0;
+@@ -422,22 +431,12 @@ int v4l2_fill_pixfmt(struct v4l2_pix_format *pixfmt, u32 pixelformat,
+ 	pixfmt->width = width;
+ 	pixfmt->height = height;
+ 	pixfmt->pixelformat = pixelformat;
+-	pixfmt->bytesperline = ALIGN(width, v4l2_format_block_width(info, 0)) * info->bpp[0];
++	pixfmt->bytesperline = v4l2_format_plane_width(info, 0, width);
+ 	pixfmt->sizeimage = 0;
+ 
+-	for (i = 0; i < info->comp_planes; i++) {
+-		unsigned int hdiv = (i == 0) ? 1 : info->hdiv;
+-		unsigned int vdiv = (i == 0) ? 1 : info->vdiv;
+-		unsigned int aligned_width;
+-		unsigned int aligned_height;
+-
+-		aligned_width = ALIGN(width, v4l2_format_block_width(info, i));
+-		aligned_height = ALIGN(height, v4l2_format_block_height(info, i));
+-
+-		pixfmt->sizeimage += info->bpp[i] *
+-			DIV_ROUND_UP(aligned_width, hdiv) *
+-			DIV_ROUND_UP(aligned_height, vdiv);
+-	}
++	for (i = 0; i < info->comp_planes; i++)
++		pixfmt->sizeimage +=
++			v4l2_format_plane_size(info, i, width, height);
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(v4l2_fill_pixfmt);
+-- 
+2.25.1
+
+
+From 778ba4f6cb10b7e4ae2dd71c35dcdd2363d43b21 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:36 +0000
+Subject: [PATCH 10/18] media: v4l2: Add NV15 and NV20 pixel formats
+
+Add NV15 and NV20 pixel formats used by the Rockchip Video Decoder for
+10-bit buffers.
+
+NV15 and NV20 is a packed 10-bit 4:2:0/4:2:2 semi-planar Y/CbCr format
+similar to P010 and P210 but has no padding between components. Instead,
+luminance and chrominance samples are grouped into 4s so that each group is
+packed into an integer number of bytes:
+
+YYYY = UVUV = 4 * 10 bits = 40 bits = 5 bytes
+
+The '15' and '20' suffix refers to the optimum effective bits per pixel
+which is achieved when the total number of luminance samples is a multiple
+of 8 for NV15 and 4 for NV20.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ .../userspace-api/media/v4l/pixfmt-nv15.rst   | 101 ++++++++++++++++++
+ .../userspace-api/media/v4l/pixfmt-nv20.rst   |  99 +++++++++++++++++
+ .../userspace-api/media/v4l/yuv-formats.rst   |   2 +
+ drivers/media/v4l2-core/v4l2-common.c         |   3 +
+ drivers/media/v4l2-core/v4l2-ioctl.c          |   2 +
+ include/uapi/linux/videodev2.h                |   3 +
+ 6 files changed, 210 insertions(+)
+ create mode 100644 Documentation/userspace-api/media/v4l/pixfmt-nv15.rst
+ create mode 100644 Documentation/userspace-api/media/v4l/pixfmt-nv20.rst
+
+diff --git a/Documentation/userspace-api/media/v4l/pixfmt-nv15.rst b/Documentation/userspace-api/media/v4l/pixfmt-nv15.rst
+new file mode 100644
+index 000000000000..d059db58c6e0
+--- /dev/null
++++ b/Documentation/userspace-api/media/v4l/pixfmt-nv15.rst
+@@ -0,0 +1,101 @@
++.. Permission is granted to copy, distribute and/or modify this
++.. document under the terms of the GNU Free Documentation License,
++.. Version 1.1 or any later version published by the Free Software
++.. Foundation, with no Invariant Sections, no Front-Cover Texts
++.. and no Back-Cover Texts. A copy of the license is included at
++.. Documentation/userspace-api/media/fdl-appendix.rst.
++..
++.. TODO: replace it to GFDL-1.1-or-later WITH no-invariant-sections
++
++.. _V4L2-PIX-FMT-NV15:
++
++**************************
++V4L2_PIX_FMT_NV15 ('NV15')
++**************************
++
++Format with ½ horizontal and vertical chroma resolution, also known as
++YUV 4:2:0. One luminance and one chrominance plane with alternating
++chroma samples similar to ``V4L2_PIX_FMT_NV12`` but with 10-bit samples
++that are grouped into four and packed into five bytes.
++
++The '15' suffix refers to the optimum effective bits per pixel which is
++achieved when the total number of luminance samples is a multiple of 8.
++
++
++Description
++===========
++
++This is a packed 10-bit two-plane version of the YUV 4:2:0 format. The
++three components are separated into two sub-images or planes. The Y plane
++is first. The Y plane has five bytes per each group of four pixels. A
++combined CbCr plane immediately follows the Y plane in memory. The CbCr
++plane is the same width, in bytes, as the Y plane (and of the image), but
++is half as tall in pixels. Each CbCr pair belongs to four pixels. For
++example, Cb\ :sub:`00`/Cr\ :sub:`00` belongs to Y'\ :sub:`00`,
++Y'\ :sub:`01`, Y'\ :sub:`10`, Y'\ :sub:`11`.
++
++If the Y plane has pad bytes after each row, then the CbCr plane has as
++many pad bytes after its rows.
++
++**Byte Order.**
++Little endian. Each cell is one byte. Pixels cross the byte boundary.
++
++
++.. flat-table::
++    :header-rows:  0
++    :stub-columns: 0
++
++    * - start + 0:
++      - Y'\ :sub:`00[7:0]`
++      - Y'\ :sub:`01[5:0]`\ Y'\ :sub:`00[9:8]`
++      - Y'\ :sub:`02[3:0]`\ Y'\ :sub:`01[9:6]`
++      - Y'\ :sub:`03[1:0]`\ Y'\ :sub:`02[9:4]`
++      - Y'\ :sub:`03[9:2]`
++    * - start + 5:
++      - Y'\ :sub:`10[7:0]`
++      - Y'\ :sub:`11[5:0]`\ Y'\ :sub:`10[9:8]`
++      - Y'\ :sub:`12[3:0]`\ Y'\ :sub:`11[9:6]`
++      - Y'\ :sub:`13[1:0]`\ Y'\ :sub:`12[9:4]`
++      - Y'\ :sub:`13[9:2]`
++    * - start + 10:
++      - Cb'\ :sub:`00[7:0]`
++      - Cr'\ :sub:`00[5:0]`\ Cb'\ :sub:`00[9:8]`
++      - Cb'\ :sub:`01[3:0]`\ Cr'\ :sub:`00[9:6]`
++      - Cr'\ :sub:`01[1:0]`\ Cb'\ :sub:`01[9:4]`
++      - Cr'\ :sub:`01[9:2]`
++
++
++**Color Sample Location:**
++
++.. flat-table::
++    :header-rows:  0
++    :stub-columns: 0
++
++    * -
++      - 0
++      -
++      - 1
++      - 2
++      -
++      - 3
++    * - 0
++      - Y
++      -
++      - Y
++      - Y
++      -
++      - Y
++    * -
++      -
++      - C
++      -
++      -
++      - C
++      -
++    * - 1
++      - Y
++      -
++      - Y
++      - Y
++      -
++      - Y
+diff --git a/Documentation/userspace-api/media/v4l/pixfmt-nv20.rst b/Documentation/userspace-api/media/v4l/pixfmt-nv20.rst
+new file mode 100644
+index 000000000000..a8123be0baa3
+--- /dev/null
++++ b/Documentation/userspace-api/media/v4l/pixfmt-nv20.rst
+@@ -0,0 +1,99 @@
++.. Permission is granted to copy, distribute and/or modify this
++.. document under the terms of the GNU Free Documentation License,
++.. Version 1.1 or any later version published by the Free Software
++.. Foundation, with no Invariant Sections, no Front-Cover Texts
++.. and no Back-Cover Texts. A copy of the license is included at
++.. Documentation/userspace-api/media/fdl-appendix.rst.
++..
++.. TODO: replace it to GFDL-1.1-or-later WITH no-invariant-sections
++
++.. _V4L2-PIX-FMT-NV20:
++
++**************************
++V4L2_PIX_FMT_NV20 ('NV20')
++**************************
++
++Format with ½ horizontal chroma resolution, also known as YUV 4:2:2.
++One luminance and one chrominance plane with alternating chroma samples
++similar to ``V4L2_PIX_FMT_NV16`` but with 10-bit samples
++that are grouped into four and packed into five bytes.
++
++The '20' suffix refers to the optimum effective bits per pixel which is
++achieved when the total number of luminance samples is a multiple of 4.
++
++
++Description
++===========
++
++This is a packed 10-bit two-plane version of the YUV 4:2:2 format. The
++three components are separated into two sub-images or planes. The Y plane
++is first. The Y plane has five bytes per each group of four pixels. A
++combined CbCr plane immediately follows the Y plane in memory. The CbCr
++plane is the same width and height, in bytes, as the Y plane (and of the
++image). Each CbCr pair belongs to two pixels. For example,
++Cb\ :sub:`00`/Cr\ :sub:`00` belongs to Y'\ :sub:`00`, Y'\ :sub:`01`.
++
++If the Y plane has pad bytes after each row, then the CbCr plane has as
++many pad bytes after its rows.
++
++**Byte Order.**
++Little endian. Each cell is one byte. Pixels cross the byte boundary.
++
++
++.. flat-table::
++    :header-rows:  0
++    :stub-columns: 0
++
++    * - start + 0:
++      - Y'\ :sub:`00[7:0]`
++      - Y'\ :sub:`01[5:0]`\ Y'\ :sub:`00[9:8]`
++      - Y'\ :sub:`02[3:0]`\ Y'\ :sub:`01[9:6]`
++      - Y'\ :sub:`03[1:0]`\ Y'\ :sub:`02[9:4]`
++      - Y'\ :sub:`03[9:2]`
++    * - start + 5:
++      - Y'\ :sub:`10[7:0]`
++      - Y'\ :sub:`11[5:0]`\ Y'\ :sub:`10[9:8]`
++      - Y'\ :sub:`12[3:0]`\ Y'\ :sub:`11[9:6]`
++      - Y'\ :sub:`13[1:0]`\ Y'\ :sub:`12[9:4]`
++      - Y'\ :sub:`13[9:2]`
++    * - start + 10:
++      - Cb'\ :sub:`00[7:0]`
++      - Cr'\ :sub:`00[5:0]`\ Cb'\ :sub:`00[9:8]`
++      - Cb'\ :sub:`01[3:0]`\ Cr'\ :sub:`00[9:6]`
++      - Cr'\ :sub:`01[1:0]`\ Cb'\ :sub:`01[9:4]`
++      - Cr'\ :sub:`01[9:2]`
++    * - start + 15:
++      - Cb'\ :sub:`10[7:0]`
++      - Cr'\ :sub:`10[5:0]`\ Cb'\ :sub:`10[9:8]`
++      - Cb'\ :sub:`11[3:0]`\ Cr'\ :sub:`10[9:6]`
++      - Cr'\ :sub:`11[1:0]`\ Cb'\ :sub:`11[9:4]`
++      - Cr'\ :sub:`11[9:2]`
++
++
++**Color Sample Location:**
++
++.. flat-table::
++    :header-rows:  0
++    :stub-columns: 0
++
++    * -
++      - 0
++      -
++      - 1
++      - 2
++      -
++      - 3
++    * - 0
++      - Y
++      - C
++      - Y
++      - Y
++      - C
++      - Y
++    * - 1
++      - Y
++      - C
++      - Y
++      - Y
++      - C
++      - Y
+diff --git a/Documentation/userspace-api/media/v4l/yuv-formats.rst b/Documentation/userspace-api/media/v4l/yuv-formats.rst
+index 8ee92d0cd769..7cca883f178a 100644
+--- a/Documentation/userspace-api/media/v4l/yuv-formats.rst
++++ b/Documentation/userspace-api/media/v4l/yuv-formats.rst
+@@ -61,4 +61,6 @@ to brightness information.
+     pixfmt-nv16
+     pixfmt-nv16m
+     pixfmt-nv24
++    pixfmt-nv15
++    pixfmt-nv20
+     pixfmt-m420
+diff --git a/drivers/media/v4l2-core/v4l2-common.c b/drivers/media/v4l2-core/v4l2-common.c
+index 4102c373b48a..0caac755d303 100644
+--- a/drivers/media/v4l2-core/v4l2-common.c
++++ b/drivers/media/v4l2-core/v4l2-common.c
+@@ -267,6 +267,9 @@ const struct v4l2_format_info *v4l2_format_info(u32 format)
+ 		{ .format = V4L2_PIX_FMT_NV24,    .pixel_enc = V4L2_PIXEL_ENC_YUV, .mem_planes = 1, .comp_planes = 2, .bpp = { 1, 2, 0, 0 }, .hdiv = 1, .vdiv = 1 },
+ 		{ .format = V4L2_PIX_FMT_NV42,    .pixel_enc = V4L2_PIXEL_ENC_YUV, .mem_planes = 1, .comp_planes = 2, .bpp = { 1, 2, 0, 0 }, .hdiv = 1, .vdiv = 1 },
+ 
++		{ .format = V4L2_PIX_FMT_NV15,    .pixel_enc = V4L2_PIXEL_ENC_YUV, .mem_planes = 1, .comp_planes = 2, .bpp = { 5, 5, 0, 0 }, .hdiv = 2, .vdiv = 2, .block_w = { 4, 2, 0, 0 }, .block_h = { 1, 1, 0, 0 } },
++		{ .format = V4L2_PIX_FMT_NV20,    .pixel_enc = V4L2_PIXEL_ENC_YUV, .mem_planes = 1, .comp_planes = 2, .bpp = { 5, 5, 0, 0 }, .hdiv = 2, .vdiv = 1, .block_w = { 4, 2, 0, 0 }, .block_h = { 1, 1, 0, 0 } },
++
+ 		{ .format = V4L2_PIX_FMT_YUV410,  .pixel_enc = V4L2_PIXEL_ENC_YUV, .mem_planes = 1, .comp_planes = 3, .bpp = { 1, 1, 1, 0 }, .hdiv = 4, .vdiv = 4 },
+ 		{ .format = V4L2_PIX_FMT_YVU410,  .pixel_enc = V4L2_PIXEL_ENC_YUV, .mem_planes = 1, .comp_planes = 3, .bpp = { 1, 1, 1, 0 }, .hdiv = 4, .vdiv = 4 },
+ 		{ .format = V4L2_PIX_FMT_YUV411P, .pixel_enc = V4L2_PIXEL_ENC_YUV, .mem_planes = 1, .comp_planes = 3, .bpp = { 1, 1, 1, 0 }, .hdiv = 4, .vdiv = 1 },
+diff --git a/drivers/media/v4l2-core/v4l2-ioctl.c b/drivers/media/v4l2-core/v4l2-ioctl.c
+index 02bfef0da76d..4657274bb37a 100644
+--- a/drivers/media/v4l2-core/v4l2-ioctl.c
++++ b/drivers/media/v4l2-core/v4l2-ioctl.c
+@@ -1315,6 +1315,8 @@ static void v4l_fill_fmtdesc(struct v4l2_fmtdesc *fmt)
+ 	case V4L2_PIX_FMT_NV61:		descr = "Y/CrCb 4:2:2"; break;
+ 	case V4L2_PIX_FMT_NV24:		descr = "Y/CbCr 4:4:4"; break;
+ 	case V4L2_PIX_FMT_NV42:		descr = "Y/CrCb 4:4:4"; break;
++	case V4L2_PIX_FMT_NV15:		descr = "10-bit Y/CbCr 4:2:0 (Packed)"; break;
++	case V4L2_PIX_FMT_NV20:		descr = "10-bit Y/CbCr 4:2:2 (Packed)"; break;
+ 	case V4L2_PIX_FMT_NV12M:	descr = "Y/CbCr 4:2:0 (N-C)"; break;
+ 	case V4L2_PIX_FMT_NV21M:	descr = "Y/CrCb 4:2:0 (N-C)"; break;
+ 	case V4L2_PIX_FMT_NV16M:	descr = "Y/CbCr 4:2:2 (N-C)"; break;
+diff --git a/include/uapi/linux/videodev2.h b/include/uapi/linux/videodev2.h
+index 303805438814..bd23aeaf0706 100644
+--- a/include/uapi/linux/videodev2.h
++++ b/include/uapi/linux/videodev2.h
+@@ -610,6 +610,9 @@ struct v4l2_pix_format {
+ #define V4L2_PIX_FMT_NV24    v4l2_fourcc('N', 'V', '2', '4') /* 24  Y/CbCr 4:4:4  */
+ #define V4L2_PIX_FMT_NV42    v4l2_fourcc('N', 'V', '4', '2') /* 24  Y/CrCb 4:4:4  */
+ 
++#define V4L2_PIX_FMT_NV15    v4l2_fourcc('N', 'V', '1', '5') /* 15  Y/CbCr 4:2:0 10-bit packed */
++#define V4L2_PIX_FMT_NV20    v4l2_fourcc('N', 'V', '2', '0') /* 20  Y/CbCr 4:2:2 10-bit packed */
++
+ /* two non contiguous planes - one Y, one Cr + Cb interleaved  */
+ #define V4L2_PIX_FMT_NV12M   v4l2_fourcc('N', 'M', '1', '2') /* 12  Y/CbCr 4:2:0  */
+ #define V4L2_PIX_FMT_NV21M   v4l2_fourcc('N', 'M', '2', '1') /* 21  Y/CrCb 4:2:0  */
+-- 
+2.25.1
+
+
+From ac18ccac6e1a05ecdffd1eb5e8017d92a5eb6c0f Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:36 +0000
+Subject: [PATCH 11/18] media: rkvdec: h264: Use bytesperline and buffer height
+ to calculate stride
+
+Use bytesperline and buffer height to calculate the strides configured.
+
+This does not really change anything other than ensuring the bytesperline
+that is signaled to userspace matches what is configured in HW.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/staging/media/rkvdec/rkvdec-h264.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec-h264.c b/drivers/staging/media/rkvdec/rkvdec-h264.c
+index 3a85545bcb38..10756b9d6118 100644
+--- a/drivers/staging/media/rkvdec/rkvdec-h264.c
++++ b/drivers/staging/media/rkvdec/rkvdec-h264.c
+@@ -891,9 +891,9 @@ static void config_registers(struct rkvdec_ctx *ctx,
+ 	dma_addr_t rlc_addr;
+ 	dma_addr_t refer_addr;
+ 	u32 rlc_len;
+-	u32 hor_virstride = 0;
+-	u32 ver_virstride = 0;
+-	u32 y_virstride = 0;
++	u32 hor_virstride;
++	u32 ver_virstride;
++	u32 y_virstride;
+ 	u32 yuv_virstride = 0;
+ 	u32 offset;
+ 	dma_addr_t dst_addr;
+@@ -904,8 +904,8 @@ static void config_registers(struct rkvdec_ctx *ctx,
+ 
+ 	f = &ctx->decoded_fmt;
+ 	dst_fmt = &f->fmt.pix_mp;
+-	hor_virstride = (sps->bit_depth_luma_minus8 + 8) * dst_fmt->width / 8;
+-	ver_virstride = round_up(dst_fmt->height, 16);
++	hor_virstride = dst_fmt->plane_fmt[0].bytesperline;
++	ver_virstride = dst_fmt->height;
+ 	y_virstride = hor_virstride * ver_virstride;
+ 
+ 	if (sps->chroma_format_idc == 0)
+-- 
+2.25.1
+
+
+From 62e313c4f82da894647a166a923c32746c2715ad Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:37 +0000
+Subject: [PATCH 12/18] media: rkvdec: Extract rkvdec_fill_decoded_pixfmt
+ helper method
+
+This extract setting decoded pixfmt into a helper method, current code is
+replaced with a call to the new helper method.
+
+The helper method is also called from a new function in next patch.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/staging/media/rkvdec/rkvdec.c | 29 ++++++++++++++-------------
+ 1 file changed, 15 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
+index 7a9f78bc0a55..911132be6d50 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.c
++++ b/drivers/staging/media/rkvdec/rkvdec.c
+@@ -27,6 +27,17 @@
+ #include "rkvdec.h"
+ #include "rkvdec-regs.h"
+ 
++static void rkvdec_fill_decoded_pixfmt(struct rkvdec_ctx *ctx,
++				       struct v4l2_pix_format_mplane *pix_mp)
++{
++	v4l2_fill_pixfmt_mp(pix_mp, pix_mp->pixelformat,
++			    pix_mp->width, pix_mp->height);
++	pix_mp->plane_fmt[0].sizeimage += 128 *
++		DIV_ROUND_UP(pix_mp->width, 16) *
++		DIV_ROUND_UP(pix_mp->height, 16);
++	pix_mp->field = V4L2_FIELD_NONE;
++}
++
+ static int rkvdec_try_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct rkvdec_ctx *ctx = container_of(ctrl->handler, struct rkvdec_ctx, ctrl_hdl);
+@@ -179,13 +190,9 @@ static void rkvdec_reset_decoded_fmt(struct rkvdec_ctx *ctx)
+ 
+ 	rkvdec_reset_fmt(ctx, f, ctx->coded_fmt_desc->decoded_fmts[0]);
+ 	f->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+-	v4l2_fill_pixfmt_mp(&f->fmt.pix_mp,
+-			    ctx->coded_fmt_desc->decoded_fmts[0],
+-			    ctx->coded_fmt.fmt.pix_mp.width,
+-			    ctx->coded_fmt.fmt.pix_mp.height);
+-	f->fmt.pix_mp.plane_fmt[0].sizeimage += 128 *
+-		DIV_ROUND_UP(f->fmt.pix_mp.width, 16) *
+-		DIV_ROUND_UP(f->fmt.pix_mp.height, 16);
++	f->fmt.pix_mp.width = ctx->coded_fmt.fmt.pix_mp.width;
++	f->fmt.pix_mp.height = ctx->coded_fmt.fmt.pix_mp.height;
++	rkvdec_fill_decoded_pixfmt(ctx, &f->fmt.pix_mp);
+ }
+ 
+ static int rkvdec_enum_framesizes(struct file *file, void *priv,
+@@ -251,13 +258,7 @@ static int rkvdec_try_capture_fmt(struct file *file, void *priv,
+ 				       &pix_mp->height,
+ 				       &coded_desc->frmsize);
+ 
+-	v4l2_fill_pixfmt_mp(pix_mp, pix_mp->pixelformat,
+-			    pix_mp->width, pix_mp->height);
+-	pix_mp->plane_fmt[0].sizeimage +=
+-		128 *
+-		DIV_ROUND_UP(pix_mp->width, 16) *
+-		DIV_ROUND_UP(pix_mp->height, 16);
+-	pix_mp->field = V4L2_FIELD_NONE;
++	rkvdec_fill_decoded_pixfmt(ctx, pix_mp);
+ 
+ 	return 0;
+ }
+-- 
+2.25.1
+
+
+From ce2a49e0b4908dbc148df81a053bb3eaf8c28048 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:37 +0000
+Subject: [PATCH 13/18] media: rkvdec: Lock capture pixel format in s_ctrl and
+ s_fmt
+
+Add an optional valid_fmt operation that should return the valid
+pixelformat of CAPTURE buffers.
+
+This is used in next patch to ensure correct pixelformat is used for 10-bit
+and 4:2:2 content.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/staging/media/rkvdec/rkvdec.c | 59 ++++++++++++++++++++++++---
+ drivers/staging/media/rkvdec/rkvdec.h |  2 +
+ 2 files changed, 55 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
+index 911132be6d50..11a88cb6407d 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.c
++++ b/drivers/staging/media/rkvdec/rkvdec.c
+@@ -38,6 +38,16 @@ static void rkvdec_fill_decoded_pixfmt(struct rkvdec_ctx *ctx,
+ 	pix_mp->field = V4L2_FIELD_NONE;
+ }
+ 
++static u32 rkvdec_valid_fmt(struct rkvdec_ctx *ctx, struct v4l2_ctrl *ctrl)
++{
++	const struct rkvdec_coded_fmt_desc *coded_desc = ctx->coded_fmt_desc;
++
++	if (coded_desc->ops->valid_fmt)
++		return coded_desc->ops->valid_fmt(ctx, ctrl);
++
++	return ctx->valid_fmt;
++}
++
+ static int rkvdec_try_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct rkvdec_ctx *ctx = container_of(ctrl->handler, struct rkvdec_ctx, ctrl_hdl);
+@@ -60,6 +70,10 @@ static int rkvdec_try_ctrl(struct v4l2_ctrl *ctrl)
+ 			/* Only 8-bit is supported */
+ 			return -EINVAL;
+ 
++		if (ctx->valid_fmt && ctx->valid_fmt != rkvdec_valid_fmt(ctx, ctrl))
++			/* Only current valid format */
++			return -EINVAL;
++
+ 		width = (sps->pic_width_in_mbs_minus1 + 1) * 16;
+ 		height = (sps->pic_height_in_map_units_minus1 + 1) * 16;
+ 
+@@ -70,8 +84,27 @@ static int rkvdec_try_ctrl(struct v4l2_ctrl *ctrl)
+ 	return 0;
+ }
+ 
++static int rkvdec_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct rkvdec_ctx *ctx = container_of(ctrl->handler, struct rkvdec_ctx, ctrl_hdl);
++
++	if (ctrl->id == V4L2_CID_MPEG_VIDEO_H264_SPS && !ctx->valid_fmt) {
++		ctx->valid_fmt = rkvdec_valid_fmt(ctx, ctrl);
++		if (ctx->valid_fmt) {
++			struct v4l2_pix_format_mplane *pix_mp;
++
++			pix_mp = &ctx->decoded_fmt.fmt.pix_mp;
++			pix_mp->pixelformat = ctx->valid_fmt;
++			rkvdec_fill_decoded_pixfmt(ctx, pix_mp);
++		}
++	}
++
++	return 0;
++}
++
+ static const struct v4l2_ctrl_ops rkvdec_ctrl_ops = {
+ 	.try_ctrl = rkvdec_try_ctrl,
++	.s_ctrl = rkvdec_s_ctrl,
+ };
+ 
+ static const struct rkvdec_ctrl_desc rkvdec_h264_ctrl_descs[] = {
+@@ -188,6 +221,7 @@ static void rkvdec_reset_decoded_fmt(struct rkvdec_ctx *ctx)
+ {
+ 	struct v4l2_format *f = &ctx->decoded_fmt;
+ 
++	ctx->valid_fmt = 0;
+ 	rkvdec_reset_fmt(ctx, f, ctx->coded_fmt_desc->decoded_fmts[0]);
+ 	f->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+ 	f->fmt.pix_mp.width = ctx->coded_fmt.fmt.pix_mp.width;
+@@ -243,13 +277,17 @@ static int rkvdec_try_capture_fmt(struct file *file, void *priv,
+ 	if (WARN_ON(!coded_desc))
+ 		return -EINVAL;
+ 
+-	for (i = 0; i < coded_desc->num_decoded_fmts; i++) {
+-		if (coded_desc->decoded_fmts[i] == pix_mp->pixelformat)
+-			break;
+-	}
++	if (ctx->valid_fmt) {
++		pix_mp->pixelformat = ctx->valid_fmt;
++	} else {
++		for (i = 0; i < coded_desc->num_decoded_fmts; i++) {
++			if (coded_desc->decoded_fmts[i] == pix_mp->pixelformat)
++				break;
++		}
+ 
+-	if (i == coded_desc->num_decoded_fmts)
+-		pix_mp->pixelformat = coded_desc->decoded_fmts[0];
++		if (i == coded_desc->num_decoded_fmts)
++			pix_mp->pixelformat = coded_desc->decoded_fmts[0];
++	}
+ 
+ 	/* Always apply the frmsize constraint of the coded end. */
+ 	pix_mp->width = max(pix_mp->width, ctx->coded_fmt.fmt.pix_mp.width);
+@@ -324,6 +362,7 @@ static int rkvdec_s_capture_fmt(struct file *file, void *priv,
+ 		return ret;
+ 
+ 	ctx->decoded_fmt = *f;
++	ctx->valid_fmt = f->fmt.pix_mp.pixelformat;
+ 	return 0;
+ }
+ 
+@@ -413,6 +452,14 @@ static int rkvdec_enum_capture_fmt(struct file *file, void *priv,
+ 	if (WARN_ON(!ctx->coded_fmt_desc))
+ 		return -EINVAL;
+ 
++	if (ctx->valid_fmt) {
++		if (f->index)
++			return -EINVAL;
++
++		f->pixelformat = ctx->valid_fmt;
++		return 0;
++	}
++
+ 	if (f->index >= ctx->coded_fmt_desc->num_decoded_fmts)
+ 		return -EINVAL;
+ 
+diff --git a/drivers/staging/media/rkvdec/rkvdec.h b/drivers/staging/media/rkvdec/rkvdec.h
+index 2fc9f46b6910..50e67401fdbe 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.h
++++ b/drivers/staging/media/rkvdec/rkvdec.h
+@@ -64,6 +64,7 @@ vb2_to_rkvdec_decoded_buf(struct vb2_buffer *buf)
+ struct rkvdec_coded_fmt_ops {
+ 	int (*adjust_fmt)(struct rkvdec_ctx *ctx,
+ 			  struct v4l2_format *f);
++	u32 (*valid_fmt)(struct rkvdec_ctx *ctx, struct v4l2_ctrl *ctrl);
+ 	int (*start)(struct rkvdec_ctx *ctx);
+ 	void (*stop)(struct rkvdec_ctx *ctx);
+ 	int (*run)(struct rkvdec_ctx *ctx);
+@@ -97,6 +98,7 @@ struct rkvdec_ctx {
+ 	struct v4l2_fh fh;
+ 	struct v4l2_format coded_fmt;
+ 	struct v4l2_format decoded_fmt;
++	u32 valid_fmt;
+ 	const struct rkvdec_coded_fmt_desc *coded_fmt_desc;
+ 	struct v4l2_ctrl_handler ctrl_hdl;
+ 	struct rkvdec_dev *dev;
+-- 
+2.25.1
+
+
+From 4a5ebc230d6f6ad93699631f2f55abb6d7bff43f Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:37 +0000
+Subject: [PATCH 14/18] media: rkvdec: h264: Support High 10 and 4:2:2 profiles
+
+Add support and enable decoding of H264 High 10 and 4:2:2 profiles.
+
+Decoded CAPTURE buffer width is aligned to 64 pixels to accommodate HW
+requirement on 10-bit format buffers.
+
+The new valid_fmt operation is implemented and return a valid pixelformat
+for the provided SPS control.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/staging/media/rkvdec/rkvdec-h264.c | 20 ++++++++++++++++++++
+ drivers/staging/media/rkvdec/rkvdec.c      | 19 +++++++++----------
+ 2 files changed, 29 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec-h264.c b/drivers/staging/media/rkvdec/rkvdec-h264.c
+index 10756b9d6118..0757fc97d1ff 100644
+--- a/drivers/staging/media/rkvdec/rkvdec-h264.c
++++ b/drivers/staging/media/rkvdec/rkvdec-h264.c
+@@ -1018,6 +1018,25 @@ static int rkvdec_h264_adjust_fmt(struct rkvdec_ctx *ctx,
+ 	return 0;
+ }
+ 
++static u32 rkvdec_h264_valid_fmt(struct rkvdec_ctx *ctx, struct v4l2_ctrl *ctrl)
++{
++	const struct v4l2_ctrl_h264_sps *sps = ctrl->p_new.p;
++
++	if (sps->bit_depth_luma_minus8 == 0) {
++		if (sps->chroma_format_idc == 2)
++			return V4L2_PIX_FMT_NV16;
++		else
++			return V4L2_PIX_FMT_NV12;
++	} else if (sps->bit_depth_luma_minus8 == 2) {
++		if (sps->chroma_format_idc == 2)
++			return V4L2_PIX_FMT_NV20;
++		else
++			return V4L2_PIX_FMT_NV15;
++	}
++
++	return 0;
++}
++
+ static int rkvdec_h264_start(struct rkvdec_ctx *ctx)
+ {
+ 	struct rkvdec_dev *rkvdec = ctx->dev;
+@@ -1125,6 +1144,7 @@ static int rkvdec_h264_run(struct rkvdec_ctx *ctx)
+ 
+ const struct rkvdec_coded_fmt_ops rkvdec_h264_fmt_ops = {
+ 	.adjust_fmt = rkvdec_h264_adjust_fmt,
++	.valid_fmt = rkvdec_h264_valid_fmt,
+ 	.start = rkvdec_h264_start,
+ 	.stop = rkvdec_h264_stop,
+ 	.run = rkvdec_h264_run,
+diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
+index 11a88cb6407d..4faee9262392 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.c
++++ b/drivers/staging/media/rkvdec/rkvdec.c
+@@ -31,7 +31,7 @@ static void rkvdec_fill_decoded_pixfmt(struct rkvdec_ctx *ctx,
+ 				       struct v4l2_pix_format_mplane *pix_mp)
+ {
+ 	v4l2_fill_pixfmt_mp(pix_mp, pix_mp->pixelformat,
+-			    pix_mp->width, pix_mp->height);
++			    ALIGN(pix_mp->width, 64), pix_mp->height);
+ 	pix_mp->plane_fmt[0].sizeimage += 128 *
+ 		DIV_ROUND_UP(pix_mp->width, 16) *
+ 		DIV_ROUND_UP(pix_mp->height, 16);
+@@ -55,19 +55,15 @@ static int rkvdec_try_ctrl(struct v4l2_ctrl *ctrl)
+ 	if (ctrl->id == V4L2_CID_MPEG_VIDEO_H264_SPS) {
+ 		const struct v4l2_ctrl_h264_sps *sps = ctrl->p_new.p;
+ 		unsigned int width, height;
+-		/*
+-		 * TODO: The hardware supports 10-bit and 4:2:2 profiles,
+-		 * but it's currently broken in the driver.
+-		 * Reject them for now, until it's fixed.
+-		 */
+-		if (sps->chroma_format_idc > 1)
+-			/* Only 4:0:0 and 4:2:0 are supported */
++
++		if (sps->chroma_format_idc > 2)
++			/* Only 4:0:0, 4:2:0 and 4:2:2 are supported */
+ 			return -EINVAL;
+ 		if (sps->bit_depth_luma_minus8 != sps->bit_depth_chroma_minus8)
+ 			/* Luma and chroma bit depth mismatch */
+ 			return -EINVAL;
+-		if (sps->bit_depth_luma_minus8 != 0)
+-			/* Only 8-bit is supported */
++		if (sps->bit_depth_luma_minus8 != 0 && sps->bit_depth_luma_minus8 != 2)
++			/* Only 8-bit and 10-bit is supported */
+ 			return -EINVAL;
+ 
+ 		if (ctx->valid_fmt && ctx->valid_fmt != rkvdec_valid_fmt(ctx, ctrl))
+@@ -157,6 +153,9 @@ static const struct rkvdec_ctrls rkvdec_h264_ctrls = {
+ 
+ static const u32 rkvdec_h264_decoded_fmts[] = {
+ 	V4L2_PIX_FMT_NV12,
++	V4L2_PIX_FMT_NV15,
++	V4L2_PIX_FMT_NV16,
++	V4L2_PIX_FMT_NV20,
+ };
+ 
+ static const struct rkvdec_coded_fmt_desc rkvdec_coded_fmts[] = {
+-- 
+2.25.1
+
+
+From 4dc94c5df4663d2120faaddfe1c581b4c3f347b9 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:38 +0000
+Subject: [PATCH 15/18] media: rkvdec: h264: Support profile and level controls
+
+The Rockchip Video Decoder used in RK3399 supports H.264 profiles from
+Baseline to High 4:2:2 up to Level 5.1, except for the Extended profile.
+
+Expose the V4L2_CID_MPEG_VIDEO_H264_PROFILE and the
+V4L2_CID_MPEG_VIDEO_H264_LEVEL control, so that userspace can query the
+driver for the list of supported profiles and level.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+Reviewed-by: Ezequiel Garcia <ezequiel@collabora.com>
+---
+ drivers/staging/media/rkvdec/rkvdec.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
+index 4faee9262392..b21031535330 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.c
++++ b/drivers/staging/media/rkvdec/rkvdec.c
+@@ -144,6 +144,19 @@ static const struct rkvdec_ctrl_desc rkvdec_h264_ctrl_descs[] = {
+ 		.cfg.def = V4L2_MPEG_VIDEO_H264_START_CODE_ANNEX_B,
+ 		.cfg.max = V4L2_MPEG_VIDEO_H264_START_CODE_ANNEX_B,
+ 	},
++	{
++		.cfg.id = V4L2_CID_MPEG_VIDEO_H264_PROFILE,
++		.cfg.min = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE,
++		.cfg.max = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_422,
++		.cfg.menu_skip_mask =
++			BIT(V4L2_MPEG_VIDEO_H264_PROFILE_EXTENDED),
++		.cfg.def = V4L2_MPEG_VIDEO_H264_PROFILE_MAIN,
++	},
++	{
++		.cfg.id = V4L2_CID_MPEG_VIDEO_H264_LEVEL,
++		.cfg.min = V4L2_MPEG_VIDEO_H264_LEVEL_1_0,
++		.cfg.max = V4L2_MPEG_VIDEO_H264_LEVEL_5_1,
++	},
+ };
+ 
+ static const struct rkvdec_ctrls rkvdec_h264_ctrls = {
+-- 
+2.25.1
+
+
+From 588b8545dda3cd0ef8f066dcafff3fa7a93e4056 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 22:30:13 +0000
+Subject: [PATCH 17/18] drm: drm_fourcc: add NV20 and NV30 YUV formats
+
+DRM_FORMAT_NV20 and DRM_FORMAT_NV30 formats is the 2x1 and non-subsampled
+variant of NV15, a 10-bit 2-plane YUV format that has no padding between
+components. Instead, luminance and chrominance samples are grouped into 4s
+so that each group is packed into an integer number of bytes:
+
+YYYY = UVUV = 4 * 10 bits = 40 bits = 5 bytes
+
+The '20' and '30' suffix refers to the optimum effective bits per pixel
+which is achieved when the total number of luminance samples is a multiple
+of 4.
+
+V2: Added NV30 format
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+Reviewed-by: Sandy Huang <hjc@rock-chips.com>
+---
+ drivers/gpu/drm/drm_fourcc.c  | 8 ++++++++
+ include/uapi/drm/drm_fourcc.h | 2 ++
+ 2 files changed, 10 insertions(+)
+
+diff --git a/drivers/gpu/drm/drm_fourcc.c b/drivers/gpu/drm/drm_fourcc.c
+index 722c7ebe4e88..2daf8a304b53 100644
+--- a/drivers/gpu/drm/drm_fourcc.c
++++ b/drivers/gpu/drm/drm_fourcc.c
+@@ -278,6 +278,14 @@ const struct drm_format_info *__drm_format_info(u32 format)
+ 		  .num_planes = 2, .char_per_block = { 5, 5, 0 },
+ 		  .block_w = { 4, 2, 0 }, .block_h = { 1, 1, 0 }, .hsub = 2,
+ 		  .vsub = 2, .is_yuv = true },
++		{ .format = DRM_FORMAT_NV20,		.depth = 0,
++		  .num_planes = 2, .char_per_block = { 5, 5, 0 },
++		  .block_w = { 4, 2, 0 }, .block_h = { 1, 1, 0 }, .hsub = 2,
++		  .vsub = 1, .is_yuv = true },
++		{ .format = DRM_FORMAT_NV30,		.depth = 0,
++		  .num_planes = 2, .char_per_block = { 5, 5, 0 },
++		  .block_w = { 4, 2, 0 }, .block_h = { 1, 1, 0 }, .hsub = 1,
++		  .vsub = 1, .is_yuv = true },
+ 		{ .format = DRM_FORMAT_Q410,		.depth = 0,
+ 		  .num_planes = 3, .char_per_block = { 2, 2, 2 },
+ 		  .block_w = { 1, 1, 1 }, .block_h = { 1, 1, 1 }, .hsub = 0,
+diff --git a/include/uapi/drm/drm_fourcc.h b/include/uapi/drm/drm_fourcc.h
+index 8ba2d9153a94..c3024c82a3e3 100644
+--- a/include/uapi/drm/drm_fourcc.h
++++ b/include/uapi/drm/drm_fourcc.h
+@@ -242,6 +242,8 @@ extern "C" {
+  * index 1 = Cr:Cb plane, [39:0] Cr1:Cb1:Cr0:Cb0 little endian
+  */
+ #define DRM_FORMAT_NV15		fourcc_code('N', 'V', '1', '5') /* 2x2 subsampled Cr:Cb plane */
++#define DRM_FORMAT_NV20		fourcc_code('N', 'V', '2', '0') /* 2x1 subsampled Cr:Cb plane */
++#define DRM_FORMAT_NV30		fourcc_code('N', 'V', '3', '0') /* non-subsampled Cr:Cb plane */
+ 
+ /*
+  * 2 plane YCbCr MSB aligned
+-- 
+2.25.1
+
+
+From 5e09593745d332f82471e1a763e9b9b2632543eb Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 22:30:13 +0000
+Subject: [PATCH 18/18] drm: rockchip: add NV15, NV20 and NV30 support
+
+Add support for displaying 10-bit 4:2:0 and 4:2:2 formats produced by the
+Rockchip Video Decoder on RK322X, RK3288, RK3328, RK3368 and RK3399.
+Also add support for 10-bit 4:4:4 format while at it.
+
+V2: Added NV30 support
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+Reviewed-by: Sandy Huang <hjc@rock-chips.com>
+---
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.c | 29 +++++++++++++++++--
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.h |  1 +
+ drivers/gpu/drm/rockchip/rockchip_vop_reg.c | 32 +++++++++++++++++----
+ 3 files changed, 54 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+index 33463b79a37b..dc2667cfb575 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+@@ -261,6 +261,18 @@ static bool has_rb_swapped(uint32_t format)
+ 	}
+ }
+ 
++static bool is_fmt_10(uint32_t format)
++{
++	switch (format) {
++	case DRM_FORMAT_NV15:
++	case DRM_FORMAT_NV20:
++	case DRM_FORMAT_NV30:
++		return true;
++	default:
++		return false;
++	}
++}
++
+ static enum vop_data_format vop_convert_format(uint32_t format)
+ {
+ 	switch (format) {
+@@ -276,10 +288,13 @@ static enum vop_data_format vop_convert_format(uint32_t format)
+ 	case DRM_FORMAT_BGR565:
+ 		return VOP_FMT_RGB565;
+ 	case DRM_FORMAT_NV12:
++	case DRM_FORMAT_NV15:
+ 		return VOP_FMT_YUV420SP;
+ 	case DRM_FORMAT_NV16:
++	case DRM_FORMAT_NV20:
+ 		return VOP_FMT_YUV422SP;
+ 	case DRM_FORMAT_NV24:
++	case DRM_FORMAT_NV30:
+ 		return VOP_FMT_YUV444SP;
+ 	default:
+ 		DRM_ERROR("unsupported format[%08x]\n", format);
+@@ -922,7 +937,12 @@ static void vop_plane_atomic_update(struct drm_plane *plane,
+ 	dsp_sty = dest->y1 + crtc->mode.vtotal - crtc->mode.vsync_start;
+ 	dsp_st = dsp_sty << 16 | (dsp_stx & 0xffff);
+ 
+-	offset = (src->x1 >> 16) * fb->format->cpp[0];
++	if (fb->format->block_w[0])
++		offset = (src->x1 >> 16) * fb->format->char_per_block[0] /
++			 fb->format->block_w[0];
++	else
++		offset = (src->x1 >> 16) * fb->format->cpp[0];
++
+ 	offset += (src->y1 >> 16) * fb->pitches[0];
+ 	dma_addr = rk_obj->dma_addr + offset + fb->offsets[0];
+ 
+@@ -948,6 +968,7 @@ static void vop_plane_atomic_update(struct drm_plane *plane,
+ 	}
+ 
+ 	VOP_WIN_SET(vop, win, format, format);
++	VOP_WIN_SET(vop, win, fmt_10, is_fmt_10(fb->format->format));
+ 	VOP_WIN_SET(vop, win, yrgb_vir, DIV_ROUND_UP(fb->pitches[0], 4));
+ 	VOP_WIN_SET(vop, win, yrgb_mst, dma_addr);
+ 	VOP_WIN_YUV2YUV_SET(vop, win_yuv2yuv, y2r_en, is_yuv);
+@@ -964,7 +985,11 @@ static void vop_plane_atomic_update(struct drm_plane *plane,
+ 		uv_obj = fb->obj[1];
+ 		rk_uv_obj = to_rockchip_obj(uv_obj);
+ 
+-		offset = (src->x1 >> 16) * bpp / hsub;
++		if (fb->format->block_w[1])
++			offset = (src->x1 >> 16) * bpp /
++				 fb->format->block_w[1] / hsub;
++		else
++			offset = (src->x1 >> 16) * bpp / hsub;
+ 		offset += (src->y1 >> 16) * fb->pitches[1] / vsub;
+ 
+ 		dma_addr = rk_uv_obj->dma_addr + offset + fb->offsets[1];
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.h b/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
+index d03bdb531ef2..db1138da2bd4 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
+@@ -154,6 +154,7 @@ struct vop_win_phy {
+ 	struct vop_reg enable;
+ 	struct vop_reg gate;
+ 	struct vop_reg format;
++	struct vop_reg fmt_10;
+ 	struct vop_reg rb_swap;
+ 	struct vop_reg act_info;
+ 	struct vop_reg dsp_info;
+diff --git a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+index 2413deded22c..475c435d659b 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+@@ -50,6 +50,23 @@ static const uint32_t formats_win_full[] = {
+ 	DRM_FORMAT_NV24,
+ };
+ 
++static const uint32_t formats_win_full_10[] = {
++	DRM_FORMAT_XRGB8888,
++	DRM_FORMAT_ARGB8888,
++	DRM_FORMAT_XBGR8888,
++	DRM_FORMAT_ABGR8888,
++	DRM_FORMAT_RGB888,
++	DRM_FORMAT_BGR888,
++	DRM_FORMAT_RGB565,
++	DRM_FORMAT_BGR565,
++	DRM_FORMAT_NV12,
++	DRM_FORMAT_NV16,
++	DRM_FORMAT_NV24,
++	DRM_FORMAT_NV15,
++	DRM_FORMAT_NV20,
++	DRM_FORMAT_NV30,
++};
++
+ static const uint64_t format_modifiers_win_full[] = {
+ 	DRM_FORMAT_MOD_LINEAR,
+ 	DRM_FORMAT_MOD_INVALID,
+@@ -570,11 +587,12 @@ static const struct vop_scl_regs rk3288_win_full_scl = {
+ 
+ static const struct vop_win_phy rk3288_win01_data = {
+ 	.scl = &rk3288_win_full_scl,
+-	.data_formats = formats_win_full,
+-	.nformats = ARRAY_SIZE(formats_win_full),
++	.data_formats = formats_win_full_10,
++	.nformats = ARRAY_SIZE(formats_win_full_10),
+ 	.format_modifiers = format_modifiers_win_full,
+ 	.enable = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 0),
+ 	.format = VOP_REG(RK3288_WIN0_CTRL0, 0x7, 1),
++	.fmt_10 = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 4),
+ 	.rb_swap = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 12),
+ 	.act_info = VOP_REG(RK3288_WIN0_ACT_INFO, 0x1fff1fff, 0),
+ 	.dsp_info = VOP_REG(RK3288_WIN0_DSP_INFO, 0x0fff0fff, 0),
+@@ -704,11 +722,12 @@ static const struct vop_intr rk3368_vop_intr = {
+ 
+ static const struct vop_win_phy rk3368_win01_data = {
+ 	.scl = &rk3288_win_full_scl,
+-	.data_formats = formats_win_full,
+-	.nformats = ARRAY_SIZE(formats_win_full),
++	.data_formats = formats_win_full_10,
++	.nformats = ARRAY_SIZE(formats_win_full_10),
+ 	.format_modifiers = format_modifiers_win_full,
+ 	.enable = VOP_REG(RK3368_WIN0_CTRL0, 0x1, 0),
+ 	.format = VOP_REG(RK3368_WIN0_CTRL0, 0x7, 1),
++	.fmt_10 = VOP_REG(RK3368_WIN0_CTRL0, 0x1, 4),
+ 	.rb_swap = VOP_REG(RK3368_WIN0_CTRL0, 0x1, 12),
+ 	.x_mir_en = VOP_REG(RK3368_WIN0_CTRL0, 0x1, 21),
+ 	.y_mir_en = VOP_REG(RK3368_WIN0_CTRL0, 0x1, 22),
+@@ -853,11 +872,12 @@ static const struct vop_win_yuv2yuv_data rk3399_vop_big_win_yuv2yuv_data[] = {
+ 
+ static const struct vop_win_phy rk3399_win01_data = {
+ 	.scl = &rk3288_win_full_scl,
+-	.data_formats = formats_win_full,
+-	.nformats = ARRAY_SIZE(formats_win_full),
++	.data_formats = formats_win_full_10,
++	.nformats = ARRAY_SIZE(formats_win_full_10),
+ 	.format_modifiers = format_modifiers_win_full_afbc,
+ 	.enable = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 0),
+ 	.format = VOP_REG(RK3288_WIN0_CTRL0, 0x7, 1),
++	.fmt_10 = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 4),
+ 	.rb_swap = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 12),
+ 	.y_mir_en = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 22),
+ 	.act_info = VOP_REG(RK3288_WIN0_ACT_INFO, 0x1fff1fff, 0),
+-- 
+2.25.1
+
