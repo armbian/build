@@ -1000,7 +1000,7 @@ prepare_host()
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
 	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
-	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
+	locales ncurses-base pixz dialog systemd-container udev libfdt-dev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
 	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils jq"
 
 # build aarch64
@@ -1020,7 +1020,7 @@ prepare_host()
 	local codename=$(lsb_release -sc)
 
 	# Add support for Ubuntu 20.04, 21.04 and Mint Ulyana
-	if [[ $codename =~ ^(focal|groovy|hirsute|ulyana)$ ]]; then
+	if [[ $codename =~ ^(focal|groovy|hirsute|ulyana|bullseye)$ ]]; then
 		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
@@ -1035,7 +1035,7 @@ prepare_host()
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
-	if [[ -z $codename || "buster groovy focal hirsute debbie tricia ulyana" != *"$codename"* ]]; then
+	if [[ -z $codename || "buster bullseye groovy focal hirsute debbie tricia ulyana" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -1051,7 +1051,7 @@ prepare_host()
 # build aarch64
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-	if [[ -z $codename || $codename =~ ^(focal|groovy|debbie|buster|hirsute|ulyana)$ ]]; then
+	if [[ -z $codename || $codename =~ ^(focal|groovy|debbie|buster|bullseye|hirsute|ulyana)$ ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 

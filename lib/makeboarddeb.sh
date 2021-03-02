@@ -28,7 +28,11 @@ create_board_package()
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
 	mkdir -p "${destination}"/usr/share/armbian/
-	cp "${SRC}/config/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+	if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
+	  cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+	else
+	  cp "${SRC}/config/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+	fi
 	[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
 		cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${destination}"/usr/share/armbian/armbianEnv.txt
 
@@ -294,7 +298,7 @@ fi
 	DESKTOP=$DESKTOP_ENVIRONMENT
 	EOF
 	fi
-	
+
 	# this is required for NFS boot to prevent deconfiguring the network on shutdown
 	sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
 
