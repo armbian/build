@@ -272,7 +272,7 @@ fetch_from_repo()
 	#  Then the target URL matches the local URL.
 
 	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" == ".git" && \
-		  "$url" != "$(improved_git remote get-url origin 2>/dev/null)" ]]; then
+		  "$url" != *"$(improved_git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///' 2>/dev/null)" ]]; then
 		display_alert "Remote URL does not match, removing existing local copy"
 		rm -rf .git ./*
 	fi
