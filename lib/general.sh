@@ -1235,6 +1235,10 @@ function webseed ()
 		WEBSEED=(
 		"https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 		)
+	elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
+		WEBSEED=(
+		"https://mirrors.bfsu.edu.cn/armbian-releases/"
+		)
 	fi
 	for toolchain in ${WEBSEED[@]}; do
 		# use only live, tnahosting return ok also when file is absent
@@ -1258,9 +1262,11 @@ download_and_verify()
 	local dirname=${filename//.tar.xz}
 
         if [[ $DOWNLOAD_MIRROR == china ]]; then
-		local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
-	else
-		local server=${ARMBIAN_MIRROR}
+			local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+		elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
+			local server="https://mirrors.bfsu.edu.cn/armbian-releases/"
+		else
+			local server=${ARMBIAN_MIRROR}
         fi
 
 	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then
@@ -1272,6 +1278,13 @@ download_and_verify()
 	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
 		display_alert "Timeout from $server" "retrying" "info"
 		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+	fi
+	
+	# switch to another china mirror if US timeouts
+	timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
+	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
+		display_alert "Timeout from $server" "retrying" "info"
+		server="https://mirrors.bfsu.edu.cn/armbian-releases/"
 	fi
 
 	# check if file exists on remote server before running aria2 downloader
