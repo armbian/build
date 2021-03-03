@@ -42,7 +42,7 @@ elif [[ $BOOTCONFIG == *3328* ]]; then
 
 	BOOT_RK3328_USE_AYUFAN_ATF=yes
 
-elif [[ $BOARD == pinebook-pro ]]; then
+elif [[ $BOARD == pinebook-pro || $BOARD == tinkerboard-2 ]]; then
 
 	BOOT_USE_MAINLINE_ATF=yes
 	BOOT_SOC=rk3399
