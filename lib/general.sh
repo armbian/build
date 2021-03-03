@@ -175,6 +175,8 @@ create_sources_list()
 	# stage: add armbian repository and install key
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
 		echo "deb http://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
+	    echo "deb http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 	else
 		echo "deb http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt" )".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 	fi
