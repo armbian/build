@@ -391,10 +391,11 @@ prepare_partitions()
 	# parttype[nfs] is empty
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
+	# add -N number of inodes to keep mount from running out
 	if [[ $(lsb_release -sc) =~ bionic|buster|bullseye|cosmic|groovy|focal|hirsute|sid ]]; then
-		mkopts[ext4]='-q -m 2 -O ^64bit,^metadata_csum'
+		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128*1024))"
 	elif [[ $(lsb_release -sc) == xenial ]]; then
-		mkopts[ext4]='-q -m 2'
+		mkopts[ext4]="-q -m 2 -N $((128*1024))"
 	fi
 	mkopts[fat]='-n BOOT'
 	mkopts[ext2]='-q'
