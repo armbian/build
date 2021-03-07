@@ -39,7 +39,7 @@ install_common()
 	# adjust initramfs dropbear configuration
 	# needs to be done before kernel installation, else it won't be in the initrd image
 	if [[ $CRYPTROOT_ENABLE == yes && $CRYPTROOT_SSH_UNLOCK == yes ]]; then
-		# Set the port of the dropbear ssh deamon in the initramfs to a different one if configured
+		# Set the port of the dropbear ssh daemon in the initramfs to a different one if configured
 		# this avoids the typical 'host key changed warning' - `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!`
 		[[ -f "${SDCARD}"/etc/dropbear-initramfs/config ]] && \
 		sed -i 's/^#DROPBEAR_OPTIONS=/DROPBEAR_OPTIONS="-p '"${CRYPTROOT_SSH_UNLOCK_PORT}"'"/' \
