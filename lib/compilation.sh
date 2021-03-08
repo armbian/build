@@ -596,18 +596,6 @@ compile_armbian-zsh()
 	exit 0
 	END
 
-	# set up post remove script
-	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postrm
-	#!/bin/sh
-	# change shell back to bash for future users
-	BASHLOCATION=\$(grep /bash\$ /etc/shells | tail -1)
-	sed -i "s|^SHELL=.*|SHELL=\${BASHLOCATION}|" /etc/default/useradd
-	sed -i "s|^DSHELL=.*|DSHELL=\${BASHLOCATION}|" /etc/adduser.conf
-	# change to BASH shell for root and all normal users
-	awk -F'[/:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print \$1}' /etc/passwd | xargs -L1 chsh -s \$(grep /bash\$ /etc/shells | tail -1)
-	exit 0
-	END
-
 	cp -R "${SRC}"/cache/sources/oh-my-zsh "${tmp_dir}/${armbian_zsh_dir}"/etc/
 	cp -R "${SRC}"/cache/sources/evalcache "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/plugins
 	cp "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/templates/zshrc.zsh-template "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
@@ -632,7 +620,7 @@ compile_armbian-zsh()
 	# define default plugins
 	sed -i 's/^plugins=.*/plugins=(evalcache git git-extras debian tmux screen history extract colorize web-search docker)/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
-	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/{postrm,postinst}
+	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 
 	fakeroot dpkg -b "${tmp_dir}/${armbian_zsh_dir}" >/dev/null
 	rsync --remove-source-files -rq "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
@@ -665,7 +653,7 @@ compile_armbian-config()
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Replaces: armbian-bsp
 	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, pv, \
-	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common
+	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common, debconf
 	Recommends: armbian-bsp
 	Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
 	Section: utils
