@@ -1,4 +1,5 @@
 # install custom xorg for pinebook-pro
+mkdir -p "${destination}"/etc/X11/xorg.conf.d/
 cp -R "${SRC}"/packages/bsp/pinebook-pro/xorg.conf "${destination}"/etc/X11/xorg.conf.d/
 
 # install custom asound state for pinebook-pro
