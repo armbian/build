@@ -27,7 +27,7 @@ case $BRANCH in
 		KERNELPATCHDIR='meson-current'
 
 	;;
-	dev)
+	edge)
 
 		KERNELBRANCH="branch:linux-5.11.y"
 		KERNELPATCHDIR='meson-current'

@@ -2,7 +2,7 @@
 BOARD_NAME="Station M1"
 BOARDFAMILY="rockchip64"
 BOOTCONFIG="rock64-rk3328_defconfig"
-KERNEL_TARGET="legacy,current,dev"
+KERNEL_TARGET="legacy,current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3328-roc-pc.dtb"

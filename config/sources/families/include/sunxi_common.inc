@@ -27,7 +27,7 @@ case $BRANCH in
 
 	;;
 
-	dev)
+	edge)
 
 		KERNELSOURCE="https://github.com/megous/linux"
 		KERNELBRANCH="branch:orange-pi-5.11"

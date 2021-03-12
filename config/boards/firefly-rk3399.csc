@@ -2,6 +2,6 @@
 BOARD_NAME="Firefly RK3399"
 BOARDFAMILY="rk3399"
 BOOTCONFIG="firefly-rk3399_defconfig"
-KERNEL_TARGET="legacy,current,dev"
+KERNEL_TARGET="legacy,current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
