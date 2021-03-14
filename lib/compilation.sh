@@ -620,7 +620,7 @@ compile_armbian-zsh()
 	# define default plugins
 	sed -i 's/^plugins=.*/plugins=(evalcache git git-extras debian tmux screen history extract colorize web-search docker)/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
-	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/{postinst}
+	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 
 	fakeroot dpkg -b "${tmp_dir}/${armbian_zsh_dir}" >/dev/null
 	rsync --remove-source-files -rq "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
@@ -653,7 +653,7 @@ compile_armbian-config()
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Replaces: armbian-bsp
 	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, pv, \
-	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common, debconf
+	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common, debconf, jq
 	Recommends: armbian-bsp
 	Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
 	Section: utils
