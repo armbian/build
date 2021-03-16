@@ -164,6 +164,19 @@ install_common()
 	# NOTE: this needs to be executed before family_tweaks
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
+
+	if [[ $SRC_EXTLINUX == yes ]]; then
+		mkdir -p $SDCARD/boot/extlinux
+
+		cat << EOF > "$SDCARD/boot/extlinux/extlinux.conf"
+LABEL Armbian
+  LINUX /boot/$NAME_KERNEL
+  INITRD /boot/$NAME_INITRD
+  FDT /boot/dtb/$BOOT_FDT_FILE
+EOF
+
+	else
+
 	cp "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
 
 	if [[ -n $BOOTENV_FILE ]]; then
@@ -193,6 +206,8 @@ install_common()
 
 	[[ -n $BOOT_FDT_FILE && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
 		echo "fdtfile=${BOOT_FDT_FILE}" >> "${SDCARD}/boot/armbianEnv.txt"
+
+	fi
 
 	# initial date for fake-hwclock
 	date -u '+%Y-%m-%d %H:%M:%S' > "${SDCARD}"/etc/fake-hwclock.data
