@@ -1,24 +1,3 @@
-From df70311e9ceb74ced1d16f58d26b1b0939878cd3 Mon Sep 17 00:00:00 2001
-From: Jonas Karlman <jonas@kwiboo.se>
-Date: Mon, 6 Jul 2020 21:54:33 +0000
-Subject: [PATCH] media: rkvdec: h264: Fix reference frame_num wrap for second
- field
-
-When decoding the second field in a complementary field pair the second
-field is sharing the same frame_num with the first field.
-
-Currently the frame_num for the first field is wrapped when it matches the
-field being decoded, this cause issues to decode the second field in a
-complementary field pair.
-
-Fix this by using inclusive comparison, less than or equal.
-
-Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
-Reviewed-by: Ezequiel Garcia <ezequiel@collabora.com>
----
- drivers/staging/media/rkvdec/rkvdec-h264.c | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
 diff --git a/drivers/staging/media/rkvdec/rkvdec-h264.c b/drivers/staging/media/rkvdec/rkvdec-h264.c
 index 7cc3b478a5f4..054d2e3eed67 100644
 --- a/drivers/staging/media/rkvdec/rkvdec-h264.c
@@ -97,54 +76,6 @@ index 054d2e3eed67..d46424ba88e8 100644
  	WRITE_PPS(!!(sps->flags & V4L2_H264_SPS_FLAG_FRAME_MBS_ONLY),
  		  FRAME_MBS_ONLY_FLAG);
  	WRITE_PPS(!!(sps->flags & V4L2_H264_SPS_FLAG_MB_ADAPTIVE_FRAME_FIELD),
-diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
-index b3e067031c83..06fc58440cd3 100644
---- a/drivers/staging/media/rkvdec/rkvdec.c
-+++ b/drivers/staging/media/rkvdec/rkvdec.c
-@@ -29,8 +29,11 @@
- 
- static int rkvdec_try_ctrl(struct v4l2_ctrl *ctrl)
- {
-+	struct rkvdec_ctx *ctx = container_of(ctrl->handler, struct rkvdec_ctx, ctrl_hdl);
-+
- 	if (ctrl->id == V4L2_CID_MPEG_VIDEO_H264_SPS) {
- 		const struct v4l2_ctrl_h264_sps *sps = ctrl->p_new.p_h264_sps;
-+		unsigned int width, height;
- 		/*
- 		 * TODO: The hardware supports 10-bit and 4:2:2 profiles,
- 		 * but it's currently broken in the driver.
-@@ -45,6 +48,13 @@ static int rkvdec_try_ctrl(struct v4l2_ctrl *ctrl)
- 		if (sps->bit_depth_luma_minus8 != 0)
- 			/* Only 8-bit is supported */
- 			return -EINVAL;
-+
-+		width = (sps->pic_width_in_mbs_minus1 + 1) * 16;
-+		height = (sps->pic_height_in_map_units_minus1 + 1) * 16;
-+
-+		if (width > ctx->coded_fmt.fmt.pix_mp.width ||
-+		    height > ctx->coded_fmt.fmt.pix_mp.height)
-+			return -EINVAL;
- 	}
- 	return 0;
- }
-
-From e97a5b83858e9e23d9c507c23fd79bbb139a33a1 Mon Sep 17 00:00:00 2001
-From: Jonas Karlman <jonas@kwiboo.se>
-Date: Mon, 6 Jul 2020 21:54:35 +0000
-Subject: [PATCH] media: rkvdec: h264: Fix bit depth wrap in pps packet
-
-The luma and chroma bit depth fields in the pps packet is 3 bits wide.
-8 is wrongly added to the bit depth value written to these 3-bit fields.
-Because only the 3 LSB is written the hardware is configured correctly.
-
-Correct this by not adding 8 to the luma and chroma bit depth value.
-
-Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
-Reviewed-by: Ezequiel Garcia <ezequiel@collabora.com>
----
- drivers/staging/media/rkvdec/rkvdec-h264.c | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
-
 diff --git a/drivers/staging/media/rkvdec/rkvdec-h264.c b/drivers/staging/media/rkvdec/rkvdec-h264.c
 index d46424ba88e8..6536cf0d6054 100644
 --- a/drivers/staging/media/rkvdec/rkvdec-h264.c
@@ -567,17 +498,6 @@ index 000000000000..a8123be0baa3
 +      - Y
 +      - C
 +      - Y
-diff --git a/Documentation/userspace-api/media/v4l/yuv-formats.rst b/Documentation/userspace-api/media/v4l/yuv-formats.rst
-index 4a05a105a9e6..e08e5dbdacea 100644
---- a/Documentation/userspace-api/media/v4l/yuv-formats.rst
-+++ b/Documentation/userspace-api/media/v4l/yuv-formats.rst
-@@ -54,4 +54,6 @@ to brightness information.
-     pixfmt-nv16
-     pixfmt-nv16m
-     pixfmt-nv24
-+    pixfmt-nv15
-+    pixfmt-nv20
-     pixfmt-m420
 diff --git a/drivers/media/v4l2-core/v4l2-common.c b/drivers/media/v4l2-core/v4l2-common.c
 index 4102c373b48a..0caac755d303 100644
 --- a/drivers/media/v4l2-core/v4l2-common.c
@@ -946,73 +866,6 @@ index 6f2d41b2e076..c115cd362a7f 100644
  	.start = rkvdec_h264_start,
  	.stop = rkvdec_h264_stop,
  	.run = rkvdec_h264_run,
-diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
-index 6b2a2f4164b2..bd8ec2915fe9 100644
---- a/drivers/staging/media/rkvdec/rkvdec.c
-+++ b/drivers/staging/media/rkvdec/rkvdec.c
-@@ -31,7 +31,7 @@ static void rkvdec_fill_decoded_pixfmt(struct rkvdec_ctx *ctx,
- 				       struct v4l2_pix_format_mplane *pix_mp)
- {
- 	v4l2_fill_pixfmt_mp(pix_mp, pix_mp->pixelformat,
--			    pix_mp->width, pix_mp->height);
-+			    ALIGN(pix_mp->width, 64), pix_mp->height);
- 	pix_mp->plane_fmt[0].sizeimage += 128 *
- 		DIV_ROUND_UP(pix_mp->width, 16) *
- 		DIV_ROUND_UP(pix_mp->height, 16);
-@@ -55,19 +55,15 @@ static int rkvdec_try_ctrl(struct v4l2_ctrl *ctrl)
- 	if (ctrl->id == V4L2_CID_MPEG_VIDEO_H264_SPS) {
- 		const struct v4l2_ctrl_h264_sps *sps = ctrl->p_new.p_h264_sps;
- 		unsigned int width, height;
--		/*
--		 * TODO: The hardware supports 10-bit and 4:2:2 profiles,
--		 * but it's currently broken in the driver.
--		 * Reject them for now, until it's fixed.
--		 */
--		if (sps->chroma_format_idc > 1)
--			/* Only 4:0:0 and 4:2:0 are supported */
-+
-+		if (sps->chroma_format_idc > 2)
-+			/* Only 4:0:0, 4:2:0 and 4:2:2 are supported */
- 			return -EINVAL;
- 		if (sps->bit_depth_luma_minus8 != sps->bit_depth_chroma_minus8)
- 			/* Luma and chroma bit depth mismatch */
- 			return -EINVAL;
--		if (sps->bit_depth_luma_minus8 != 0)
--			/* Only 8-bit is supported */
-+		if (sps->bit_depth_luma_minus8 != 0 && sps->bit_depth_luma_minus8 != 2)
-+			/* Only 8-bit and 10-bit is supported */
- 			return -EINVAL;
- 
- 		if (ctx->valid_fmt && ctx->valid_fmt != rkvdec_valid_fmt(ctx, ctrl))
-@@ -145,6 +141,9 @@ static const struct rkvdec_ctrls rkvdec_h264_ctrls = {
- 
- static const u32 rkvdec_h264_decoded_fmts[] = {
- 	V4L2_PIX_FMT_NV12,
-+	V4L2_PIX_FMT_NV15,
-+	V4L2_PIX_FMT_NV16,
-+	V4L2_PIX_FMT_NV20,
- };
- 
- static const struct rkvdec_coded_fmt_desc rkvdec_coded_fmts[] = {
-
-From bc3510d94b7f2ccaa8152e8d08522fb166583806 Mon Sep 17 00:00:00 2001
-From: Jonas Karlman <jonas@kwiboo.se>
-Date: Mon, 6 Jul 2020 21:54:38 +0000
-Subject: [PATCH] media: rkvdec: h264: Support profile and level controls
-
-The Rockchip Video Decoder used in RK3399 supports H.264 profiles from
-Baseline to High 4:2:2 up to Level 5.1, except for the Extended profile.
-
-Expose the V4L2_CID_MPEG_VIDEO_H264_PROFILE and the
-V4L2_CID_MPEG_VIDEO_H264_LEVEL control, so that userspace can query the
-driver for the list of supported profiles and level.
-
-Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
-Reviewed-by: Ezequiel Garcia <ezequiel@collabora.com>
----
- drivers/staging/media/rkvdec/rkvdec.c | 13 +++++++++++++
- 1 file changed, 13 insertions(+)
-
 diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
 index bd8ec2915fe9..87987a782d75 100644
 --- a/drivers/staging/media/rkvdec/rkvdec.c
