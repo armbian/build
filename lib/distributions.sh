@@ -165,47 +165,48 @@ install_common()
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
 
+	# create extlinux config file
 	if [[ $SRC_EXTLINUX == yes ]]; then
-		mkdir -p $SDCARD/boot/extlinux
 
-		cat << EOF > "$SDCARD/boot/extlinux/extlinux.conf"
-LABEL Armbian
-  LINUX /boot/$NAME_KERNEL
-  INITRD /boot/$NAME_INITRD
-  FDT /boot/dtb/$BOOT_FDT_FILE
-EOF
+		mkdir -p $SDCARD/boot/extlinux
+		cat <<-EOF > "$SDCARD/boot/extlinux/extlinux.conf"
+		LABEL Armbian
+		  LINUX /boot/Image
+		  INITRD /boot/uInitrd
+		  FDT /boot/dtb/$BOOT_FDT_FILE
+	EOF
 
 	else
 
-	cp "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
+		cp "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
 
-	if [[ -n $BOOTENV_FILE ]]; then
-		if [[ -f $USERPATCHES_PATH/bootenv/$BOOTENV_FILE ]]; then
-			cp "$USERPATCHES_PATH/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
-		elif [[ -f $SRC/config/bootenv/$BOOTENV_FILE ]]; then
-			cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+		if [[ -n $BOOTENV_FILE ]]; then
+			if [[ -f $USERPATCHES_PATH/bootenv/$BOOTENV_FILE ]]; then
+				cp "$USERPATCHES_PATH/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+			elif [[ -f $SRC/config/bootenv/$BOOTENV_FILE ]]; then
+				cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+			fi
 		fi
-	fi
 
-	# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
-	# instead of copying sunxi-specific template
-	if [[ $ROOTFS_TYPE == nfs ]]; then
-		display_alert "Copying NFS boot script template"
-		if [[ -f $USERPATCHES_PATH/nfs-boot.cmd ]]; then
-			cp "$USERPATCHES_PATH"/nfs-boot.cmd "${SDCARD}"/boot/boot.cmd
-		else
-			cp "${SRC}"/config/templates/nfs-boot.cmd.template "${SDCARD}"/boot/boot.cmd
+		# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
+		# instead of copying sunxi-specific template
+		if [[ $ROOTFS_TYPE == nfs ]]; then
+			display_alert "Copying NFS boot script template"
+			if [[ -f $USERPATCHES_PATH/nfs-boot.cmd ]]; then
+				cp "$USERPATCHES_PATH"/nfs-boot.cmd "${SDCARD}"/boot/boot.cmd
+			else
+				cp "${SRC}"/config/templates/nfs-boot.cmd.template "${SDCARD}"/boot/boot.cmd
+			fi
 		fi
-	fi
 
-	[[ -n $OVERLAY_PREFIX && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
-		echo "overlay_prefix=$OVERLAY_PREFIX" >> "${SDCARD}"/boot/armbianEnv.txt
+		[[ -n $OVERLAY_PREFIX && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
+			echo "overlay_prefix=$OVERLAY_PREFIX" >> "${SDCARD}"/boot/armbianEnv.txt
 
-	[[ -n $DEFAULT_OVERLAYS && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
-		echo "overlays=${DEFAULT_OVERLAYS//,/ }" >> "${SDCARD}"/boot/armbianEnv.txt
+		[[ -n $DEFAULT_OVERLAYS && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
+			echo "overlays=${DEFAULT_OVERLAYS//,/ }" >> "${SDCARD}"/boot/armbianEnv.txt
 
-	[[ -n $BOOT_FDT_FILE && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
-		echo "fdtfile=${BOOT_FDT_FILE}" >> "${SDCARD}/boot/armbianEnv.txt"
+		[[ -n $BOOT_FDT_FILE && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
+			echo "fdtfile=${BOOT_FDT_FILE}" >> "${SDCARD}/boot/armbianEnv.txt"
 
 	fi
 
