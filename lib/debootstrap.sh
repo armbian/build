@@ -613,7 +613,7 @@ prepare_partitions()
 			sed -i "s/console=.*/console=$DEFAULT_CONSOLE/" $SDCARD/boot/armbianEnv.txt
 		else
 			echo "console=$DEFAULT_CONSOLE" >> $SDCARD/boot/armbianEnv.txt
-        fi
+	        fi
 	fi
 
 	if [[ $SRC_EXTLINUX == yes ]]; then
@@ -634,6 +634,12 @@ EOF
 	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $SDCARD/boot/boot.cmd ]] && \
 		mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/boot.scr > /dev/null 2>&1
+
+	# create extlinux config
+	if [[ -f $SDCARD/boot/extlinux/extlinux.conf ]]; then
+		echo "  APPEND root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> $SDCARD/boot/extlinux/extlinux.conf
+		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
+	fi
 
 } #############################################################################
 
