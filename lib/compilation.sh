@@ -496,12 +496,6 @@ compile_firmware()
 {
 	display_alert "Merging and packaging linux firmware" "@host" "info"
 
-	if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
-		plugin_repo="https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
-	else
-		plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
-	fi
-
 	local firmwaretempdir plugin_dir
 
 	firmwaretempdir=$(mktemp -d)
@@ -512,7 +506,7 @@ compile_firmware()
 
 	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
 	if [[ -n $FULL ]]; then
-		fetch_from_repo "$plugin_repo" "linux-firmware-git" "branch:master"
+		fetch_from_repo "$MAINLINE_FIRMWARE_SOURCE" "linux-firmware-git" "branch:master"
 		# cp : create hardlinks
 		cp -af --reflink=auto "${SRC}"/cache/sources/linux-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 	fi
