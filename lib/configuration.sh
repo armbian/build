@@ -18,7 +18,7 @@ REVISION=$(cat "${SRC}"/VERSION)"$SUBREVISION" # all boards have same revision
 [[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
 TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
-EXIT_PATCHING_ERROR="" # exit patching if failed
+[[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
 ROOTFSCACHE_VERSION=3
