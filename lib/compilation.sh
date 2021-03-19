@@ -41,6 +41,9 @@ compile_atf()
 
 	display_alert "Compiling ATF" "" "info"
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	local toolchain
 	toolchain=$(find_toolchain "$ATF_COMPILER" "$ATF_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${ATF_COMPILER}gcc $ATF_USE_GCC"
@@ -52,6 +55,9 @@ compile_atf()
 		toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
 		[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
 	fi
+
+# build aarch64
+  fi
 
 	display_alert "Compiler version" "${ATF_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${ATF_COMPILER}gcc" -dumpversion)" "info"
 
@@ -128,6 +134,9 @@ compile_uboot()
 
 	display_alert "Compiling u-boot" "$version" "info"
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	local toolchain
 	toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER}gcc $UBOOT_USE_GCC"
@@ -140,6 +149,8 @@ compile_uboot()
 		[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
 	fi
 
+# build aarch64
+  fi
 
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${UBOOT_COMPILER}gcc" -dumpversion)" "info"
 	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${toolchain2_type}gcc" -dumpversion)" "info"
@@ -338,9 +349,15 @@ compile_kernel()
 	fi
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	local toolchain
 	toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
+
+# build aarch64
+  fi
 
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER}gcc" -dumpversion)" "info"
 
@@ -479,12 +496,6 @@ compile_firmware()
 {
 	display_alert "Merging and packaging linux firmware" "@host" "info"
 
-	if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
-		plugin_repo="https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
-	else
-		plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
-	fi
-
 	local firmwaretempdir plugin_dir
 
 	firmwaretempdir=$(mktemp -d)
@@ -495,7 +506,7 @@ compile_firmware()
 
 	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
 	if [[ -n $FULL ]]; then
-		fetch_from_repo "$plugin_repo" "linux-firmware-git" "branch:master"
+		fetch_from_repo "$MAINLINE_FIRMWARE_SOURCE" "linux-firmware-git" "branch:master"
 		# cp : create hardlinks
 		cp -af --reflink=auto "${SRC}"/cache/sources/linux-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 	fi
@@ -579,18 +590,6 @@ compile_armbian-zsh()
 	exit 0
 	END
 
-	# set up post remove script
-	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postrm
-	#!/bin/sh
-	# change shell back to bash for future users
-	BASHLOCATION=\$(grep /bash\$ /etc/shells | tail -1)
-	sed -i "s|^SHELL=.*|SHELL=\${BASHLOCATION}|" /etc/default/useradd
-	sed -i "s|^DSHELL=.*|DSHELL=\${BASHLOCATION}|" /etc/adduser.conf
-	# change to BASH shell for root and all normal users
-	awk -F'[/:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print \$1}' /etc/passwd | xargs -L1 chsh -s \$(grep /bash\$ /etc/shells | tail -1)
-	exit 0
-	END
-
 	cp -R "${SRC}"/cache/sources/oh-my-zsh "${tmp_dir}/${armbian_zsh_dir}"/etc/
 	cp -R "${SRC}"/cache/sources/evalcache "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/plugins
 	cp "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/templates/zshrc.zsh-template "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
@@ -615,7 +614,7 @@ compile_armbian-zsh()
 	# define default plugins
 	sed -i 's/^plugins=.*/plugins=(evalcache git git-extras debian tmux screen history extract colorize web-search docker)/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
-	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/{postrm,postinst}
+	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 
 	fakeroot dpkg -b "${tmp_dir}/${armbian_zsh_dir}" >/dev/null
 	rsync --remove-source-files -rq "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
@@ -648,7 +647,7 @@ compile_armbian-config()
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Replaces: armbian-bsp
 	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, pv, \
-	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common
+	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common, debconf, jq
 	Recommends: armbian-bsp
 	Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
 	Section: utils

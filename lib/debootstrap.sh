@@ -18,7 +18,7 @@
 #
 debootstrap_ng()
 {
-	display_alert "Starting rootfs and image building process for" "$BOARD $RELEASE" "info"
+	display_alert "Starting rootfs and image building process for" "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" "info"
 
 	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming $BOARD $BRANCH kernel supports $ROOTFS_TYPE" "" "wrn"
 
@@ -110,7 +110,10 @@ create_rootfs_cache()
 		local packages_hash=$(get_package_list_hash "$(($ROOTFSCACHE_VERSION - $n))")
 		[[ -z ${FORCED_MONTH_OFFSET} ]] && FORCED_MONTH_OFFSET=${n}
 		local packages_hash=$(get_package_list_hash "$(date -d "$D +${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//')")
-		local cache_type=$(if [[ ${BUILD_DESKTOP} == yes  ]]; then echo "xfce-desktop"; elif [[ ${BUILD_MINIMAL} == yes  ]]; then echo "minimal"; else echo "cli";fi)
+		local cache_type="cli"
+		[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
+		[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
+		[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
 		local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.lz4
 		local cache_fname=${SRC}/cache/rootfs/${cache_name}
 		local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
@@ -122,6 +125,16 @@ create_rootfs_cache()
 			download_and_verify "_rootfs" "$cache_name"
 		fi
 
+		if [[ -f $cache_fname && -f $cache_fname.aria2 && $USE_TORRENT="no" && -z "$ROOT_FS_CREATE_ONLY" ]]; then
+			rm ${cache_fname}*
+			download_and_verify "_rootfs" "$cache_name"
+		fi
+
+		if [[ -f $cache_fname.aria2 && -z "$ROOT_FS_CREATE_ONLY" ]]; then
+			display_alert "resuming"
+			download_and_verify "_rootfs" "$cache_name"
+		fi
+
 		if [[ -f $cache_fname ]]; then
 			break
 		else
@@ -130,7 +143,7 @@ create_rootfs_cache()
 
 	done
 
-	if [[ -f $cache_fname && "$ROOT_FS_CREATE_ONLY" != "force" ]]; then
+	if [[ -f $cache_fname && ! -f $cache_fname.aria2 && "$ROOT_FS_CREATE_ONLY" != "force" ]]; then
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
 		pv -p -b -r -c -N "[ .... ] $display_name" "$cache_fname" | lz4 -dc | tar xp --xattrs -C $SDCARD/
@@ -161,7 +174,7 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $SDCARD/debootstrap/debootstrap ]] && exit_with_error "Debootstrap base system first stage failed"
+		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $SDCARD/debootstrap/debootstrap ]] && exit_with_error "Debootstrap base system for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} first stage failed"
 
 		cp /usr/bin/$QEMU_BINARY $SDCARD/usr/bin/
 
@@ -174,7 +187,7 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 2/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $SDCARD/bin/bash ]] && exit_with_error "Debootstrap base system second stage failed"
+		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $SDCARD/bin/bash ]] && exit_with_error "Debootstrap base system for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} second stage failed"
 
 		mount_chroot "$SDCARD"
 
@@ -228,17 +241,74 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Upgrading base packages..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
+		# Myy: Dividing the desktop packages installation steps into multiple
+		# ones. We first install the "ADDITIONAL_PACKAGES" in order to get
+		# access to software-common-properties installation.
+		# THEN we add the APT sources and install the Desktop packages.
+		# TODO : Find a way to add APT sources WITHOUT software-common-properties
+
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && display_alert "Upgrading base packages" "failed" "wrn"
 
 		# stage: install additional packages
-		display_alert "Installing packages for" "Armbian" "info"
+		display_alert "Installing the main packages for" "Armbian" "info"
 		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
-			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_LIST"' \
+			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_MAIN_LIST"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
-			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian system..." $TTY_Y $TTY_X'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian main packages..." $TTY_Y $TTY_X'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian main packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+
+		if [[ $BUILD_DESKTOP == "yes" ]]; then
+			# FIXME Myy : Are we keeping this only for Desktop users,
+			# or should we extend this to CLI users too ?
+			# There might be some clunky boards that require Debian packages from
+			# specific repos...
+			display_alert "Adding apt sources for Desktop packages"
+			add_desktop_package_sources
+
+			local apt_desktop_install_flags=""
+			if [[ ! -z ${DESKTOP_APT_FLAGS_SELECTED+x} ]]; then
+				for flag in ${DESKTOP_APT_FLAGS_SELECTED}; do
+					apt_desktop_install_flags+=" --install-${flag}"
+				done
+			else
+				# Myy : Using the previous default option, if the variable isn't defined
+				# And ONLY if it's not defined !
+				apt_desktop_install_flags+=" --no-install-recommends"
+			fi
+
+			display_alert "Installing the desktop packages for" "Armbian" "info"
+			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+				$apt_extra $apt_extra_progress install ${apt_desktop_install_flags} $PACKAGE_LIST_DESKTOP"' \
+				${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
+				${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian desktop packages..." $TTY_Y $TTY_X'} \
+				${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+			[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian desktop packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+		fi
+
+		# Remove packages from packages.uninstall
+
+		display_alert "Uninstall packages" "$PACKAGE_LIST_UNINSTALL" "info"
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -qq \
+			$apt_extra $apt_extra_progress purge $PACKAGE_LIST_UNINSTALL"' \
+			${PROGRESS_LOG_TO_FILE:+' >> $DEST/debug/debootstrap.log'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Removing packages.uninstall packages..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of Armbian packages failed"
+
+		# stage: purge residual packages
+		display_alert "Purging residual packages for" "Armbian" "info"
+		PURGINGPACKAGES=$(chroot $SDCARD /bin/bash -c "dpkg -l | grep \"^rc\" | awk '{print \$2}' | tr \"\n\" \" \"")
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+			$apt_extra $apt_extra_progress remove --purge $PURGINGPACKAGES"' \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/debootstrap.log'} \
+			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Purging residual Armbian packages..." $TTY_Y $TTY_X'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Purging of residual Armbian packages failed"
 
 		# stage: remove downloaded packages
 		chroot $SDCARD /bin/bash -c "apt-get clean"
@@ -255,7 +325,7 @@ create_rootfs_cache()
 		# creating xapian index that synaptic runs faster
 		if [[ $BUILD_DESKTOP == yes ]]; then
 			display_alert "Recreating Synaptic search index" "Please wait" "info"
-			chroot $SDCARD /bin/bash -c "/usr/sbin/update-apt-xapian-index -u"
+			chroot $SDCARD /bin/bash -c "[[ -f /usr/sbin/update-apt-xapian-index ]] && /usr/sbin/update-apt-xapian-index -u"
 		fi
 
 		# this is needed for the build process later since resolvconf generated file in /run is not saved
@@ -270,7 +340,7 @@ create_rootfs_cache()
 		umount_chroot "$SDCARD"
 
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -c > $cache_fname
+			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -5 -c > $cache_fname
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 		if [[ -n $GPG_PASS ]]; then
@@ -321,10 +391,13 @@ prepare_partitions()
 	# parttype[nfs] is empty
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	if [[ $(lsb_release -sc) =~ bionic|buster|bullseye|cosmic|groovy|focal ]]; then
-		mkopts[ext4]='-q -m 2 -O ^64bit,^metadata_csum'
+	# add -N number of inodes to keep mount from running out
+	# create bigger number for desktop builds
+	if [[ $BUILD_DESKTOP == yes ]]; then local node_number=4096; else local node_number=1024; fi
+	if [[ $(lsb_release -sc) =~ bionic|buster|bullseye|cosmic|groovy|focal|hirsute|sid ]]; then
+		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128*${node_number}))"
 	elif [[ $(lsb_release -sc) == xenial ]]; then
-		mkopts[ext4]='-q -m 2'
+		mkopts[ext4]="-q -m 2 -N $((128*${node_number}))"
 	fi
 	mkopts[fat]='-n BOOT'
 	mkopts[ext2]='-q'
@@ -455,7 +528,6 @@ prepare_partitions()
 
 	check_loop_device "$LOOP"
 
-	# NOTE: losetup -P option is not available in Trusty
 	losetup $LOOP ${SDCARD}.raw
 
 	# loop device was grabbed here, unlock
@@ -493,7 +565,7 @@ prepare_partitions()
 		else
 			local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		fi
-		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime,nodiratime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs on ${LOOP}p${bootpart}"
@@ -541,12 +613,18 @@ prepare_partitions()
 			sed -i "s/console=.*/console=$DEFAULT_CONSOLE/" $SDCARD/boot/armbianEnv.txt
 		else
 			echo "console=$DEFAULT_CONSOLE" >> $SDCARD/boot/armbianEnv.txt
-        fi
+	        fi
 	fi
 
 	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $SDCARD/boot/boot.cmd ]] && \
 		mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/boot.scr > /dev/null 2>&1
+
+	# create extlinux config
+	if [[ -f $SDCARD/boot/extlinux/extlinux.conf ]]; then
+		echo "  APPEND root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> $SDCARD/boot/extlinux/extlinux.conf
+		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
+	fi
 
 } #############################################################################
 
@@ -590,7 +668,7 @@ update_initramfs()
 create_image()
 {
 	# stage: create file name
-	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}"
+	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
@@ -678,8 +756,8 @@ create_image()
 		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
 			display_alert "Compressing" "${FINALDEST}/${version}.img.xz" "info"
 			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
-			[[ ${BUILD_ALL} == yes ]] && while [[ $(ps -uax | grep "pixz" | wc -l) -gt 3 ]]; do echo -en "#"; sleep 2; done
-			pixz -9 < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.xz
+			[[ ${BUILD_ALL} == yes && $(free | grep Mem | awk '{print $4/$2 * 100.0}' | awk '{print int($1)}') -lt 5 ]] && while [[ $(ps -uax | grep "pixz" | wc -l) -gt 4 ]]; do echo -en "#"; sleep 20; done
+			pixz -8 -p 12 < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.xz
 			compression_type=".xz"
 		fi
 

@@ -39,7 +39,7 @@ install_common()
 	# adjust initramfs dropbear configuration
 	# needs to be done before kernel installation, else it won't be in the initrd image
 	if [[ $CRYPTROOT_ENABLE == yes && $CRYPTROOT_SSH_UNLOCK == yes ]]; then
-		# Set the port of the dropbear ssh deamon in the initramfs to a different one if configured
+		# Set the port of the dropbear ssh daemon in the initramfs to a different one if configured
 		# this avoids the typical 'host key changed warning' - `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!`
 		[[ -f "${SDCARD}"/etc/dropbear-initramfs/config ]] && \
 		sed -i 's/^#DROPBEAR_OPTIONS=/DROPBEAR_OPTIONS="-p '"${CRYPTROOT_SSH_UNLOCK_PORT}"'"/' \
@@ -58,7 +58,7 @@ install_common()
 			# /usr/share/initramfs-tools/hooks/dropbear will automatically add 'id_ecdsa.pub' to authorized_keys file
 			# during mkinitramfs of update-initramfs
 			#cat "${SDCARD}"/etc/dropbear-initramfs/id_ecdsa.pub > "${SDCARD}"/etc/dropbear-initramfs/authorized_keys
-			CRYPTROOT_SSH_UNLOCK_KEY_NAME="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}".key
+			CRYPTROOT_SSH_UNLOCK_KEY_NAME="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}_${DESKTOP_ENVIRONMENT}".key
 			# copy dropbear ssh key to image output dir for convenience
 			cp "${SDCARD}"/etc/dropbear-initramfs/id_ecdsa "${DEST}/images/${CRYPTROOT_SSH_UNLOCK_KEY_NAME}"
 			display_alert "SSH private key for dropbear (initramfs) has been copied to:" \
@@ -164,35 +164,51 @@ install_common()
 	# NOTE: this needs to be executed before family_tweaks
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
-	cp "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
 
-	if [[ -n $BOOTENV_FILE ]]; then
-		if [[ -f $USERPATCHES_PATH/bootenv/$BOOTENV_FILE ]]; then
-			cp "$USERPATCHES_PATH/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
-		elif [[ -f $SRC/config/bootenv/$BOOTENV_FILE ]]; then
-			cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+	# create extlinux config file
+	if [[ $SRC_EXTLINUX == yes ]]; then
+
+		mkdir -p $SDCARD/boot/extlinux
+		cat <<-EOF > "$SDCARD/boot/extlinux/extlinux.conf"
+		LABEL Armbian
+		  LINUX /boot/Image
+		  INITRD /boot/uInitrd
+		  FDT /boot/dtb/$BOOT_FDT_FILE
+	EOF
+
+	else
+
+		cp "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
+
+		if [[ -n $BOOTENV_FILE ]]; then
+			if [[ -f $USERPATCHES_PATH/bootenv/$BOOTENV_FILE ]]; then
+				cp "$USERPATCHES_PATH/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+			elif [[ -f $SRC/config/bootenv/$BOOTENV_FILE ]]; then
+				cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+			fi
 		fi
-	fi
 
-	# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
-	# instead of copying sunxi-specific template
-	if [[ $ROOTFS_TYPE == nfs ]]; then
-		display_alert "Copying NFS boot script template"
-		if [[ -f $USERPATCHES_PATH/nfs-boot.cmd ]]; then
-			cp "$USERPATCHES_PATH"/nfs-boot.cmd "${SDCARD}"/boot/boot.cmd
-		else
-			cp "${SRC}"/config/templates/nfs-boot.cmd.template "${SDCARD}"/boot/boot.cmd
+		# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
+		# instead of copying sunxi-specific template
+		if [[ $ROOTFS_TYPE == nfs ]]; then
+			display_alert "Copying NFS boot script template"
+			if [[ -f $USERPATCHES_PATH/nfs-boot.cmd ]]; then
+				cp "$USERPATCHES_PATH"/nfs-boot.cmd "${SDCARD}"/boot/boot.cmd
+			else
+				cp "${SRC}"/config/templates/nfs-boot.cmd.template "${SDCARD}"/boot/boot.cmd
+			fi
 		fi
+
+		[[ -n $OVERLAY_PREFIX && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
+			echo "overlay_prefix=$OVERLAY_PREFIX" >> "${SDCARD}"/boot/armbianEnv.txt
+
+		[[ -n $DEFAULT_OVERLAYS && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
+			echo "overlays=${DEFAULT_OVERLAYS//,/ }" >> "${SDCARD}"/boot/armbianEnv.txt
+
+		[[ -n $BOOT_FDT_FILE && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
+			echo "fdtfile=${BOOT_FDT_FILE}" >> "${SDCARD}/boot/armbianEnv.txt"
+
 	fi
-
-	[[ -n $OVERLAY_PREFIX && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
-		echo "overlay_prefix=$OVERLAY_PREFIX" >> "${SDCARD}"/boot/armbianEnv.txt
-
-	[[ -n $DEFAULT_OVERLAYS && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
-		echo "overlays=${DEFAULT_OVERLAYS//,/ }" >> "${SDCARD}"/boot/armbianEnv.txt
-
-	[[ -n $BOOT_FDT_FILE && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
-		echo "fdtfile=${BOOT_FDT_FILE}" >> "${SDCARD}/boot/armbianEnv.txt"
 
 	# initial date for fake-hwclock
 	date -u '+%Y-%m-%d %H:%M:%S' > "${SDCARD}"/etc/fake-hwclock.data
@@ -277,13 +293,13 @@ install_common()
 	# install armbian-desktop
 	if [[ "${REPOSITORY_INSTALL}" != *armbian-desktop* ]]; then
 		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/$RELEASE/armbian-${RELEASE}-desktop_${REVISION}_all.deb"
+			install_deb_chroot "${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
 			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 			desktop_postinstall
 		fi
 	else
 		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "armbian-${RELEASE}-desktop" "remote"
+			install_deb_chroot "${CHOSEN_DESKTOP}" "remote"
 			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 			desktop_postinstall
 		fi
@@ -478,9 +494,6 @@ install_common()
 
 }
 
-
-
-
 install_rclocal()
 {
 
@@ -504,9 +517,6 @@ install_rclocal()
 
 }
 
-
-
-
 install_distribution_specific()
 {
 
@@ -527,7 +537,7 @@ install_distribution_specific()
 
 		;;
 
-	stretch|buster)
+	stretch|buster|sid)
 
 			# remove doubled uname from motd
 			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
@@ -550,7 +560,7 @@ install_distribution_specific()
 			sed '/security/ d' -i "${SDCARD}"/etc/apt/sources.list
 
 		;;
-	bionic|groovy|focal)
+	bionic|groovy|focal|hirsute)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf

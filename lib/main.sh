@@ -12,6 +12,14 @@
 # Main program
 #
 
+cleanup_list() {
+    local varname="${1}"
+    local list_to_clean="${!varname}"
+    list_to_clean="${list_to_clean#"${list_to_clean%%[![:space:]]*}"}"
+    list_to_clean="${list_to_clean%"${list_to_clean##*[![:space:]]}"}"
+    echo ${list_to_clean}
+}
+
 if [[ $(basename "$0") == main.sh ]]; then
 
 	echo "Please use compile.sh to start the build process"
@@ -26,7 +34,7 @@ umask 002
 # destination
 DEST="${SRC}"/output
 
-if [[ $BUILD_ALL != "yes" ]]; then
+if [[ $BUILD_ALL != "yes" && -z $ROOT_FS_CREATE_ONLY ]]; then
 	# override stty size
 	[[ -n $COLUMNS ]] && stty cols $COLUMNS
 	[[ -n $LINES ]] && stty rows $LINES
@@ -159,8 +167,6 @@ if [[ -z $KERNEL_CONFIGURE ]]; then
 
 fi
 
-[[ ${KERNEL_CONFIGURE} == prebuilt ]] && REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-firmware"
-
 if [[ -z $BOARD ]]; then
 
 	WIP_STATE=supported
@@ -281,49 +287,27 @@ else
 
 fi
 
-# define distribution support status
-declare -A distro_name distro_support
-distro_name['stretch']="Debian 9 Stretch"
-distro_support['stretch']="eos"
-distro_name['buster']="Debian 10 Buster"
-distro_support['buster']="supported"
-distro_name['bullseye']="Debian 11 Bullseye"
-distro_support['bullseye']="csc"
-distro_name['xenial']="Ubuntu Xenial 16.04 LTS"
-distro_support['xenial']="eos"
-distro_name['bionic']="Ubuntu Bionic 18.04 LTS"
-distro_support['bionic']="supported"
-distro_name['focal']="Ubuntu Focal 20.04 LTS"
-distro_support['focal']="supported"
-distro_name['groovy']="Ubuntu Groovy 20.10"
-distro_support['groovy']="csc"
-
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
 	options=()
 
-		distro_menu "focal"
-		distro_menu "buster"
-		distro_menu "bionic"
-		distro_menu "bullseye"
-		distro_menu "groovy"
-		distro_menu "stretch"
-		distro_menu "xenial"
+	distros_options
 
-		RELEASE=$(dialog --stdout --title "Choose a release package base" --backtitle "$backtitle" \
-		--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
-		[[ -z $RELEASE ]] && exit_with_error "No release selected"
+	RELEASE=$(dialog --stdout --title "Choose a release package base" --backtitle "$backtitle" \
+	--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+	echo "options : ${options}"
+	[[ -z $RELEASE ]] && exit_with_error "No release selected"
 
+	unset options
 fi
-
-# read distribution support status which is written to the armbian-release file
-distro_menu "$RELEASE"
-unset options
 
 # don't show desktop option if we choose minimal build
 [[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no
 
 if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
+
+	# read distribution support status which is written to the armbian-release file
+	set_distribution_status
 
 	options=()
 	options+=("no" "Image with console interface (server)")
@@ -332,7 +316,10 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
-	[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
+	if [[ ${BUILD_DESKTOP} == "yes" ]]; then
+		BUILD_MINIMAL=no
+		SELECTED_CONFIGURATION="desktop"
+	fi
 
 fi
 
@@ -345,12 +332,30 @@ if [[ $KERNEL_ONLY != yes && $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_MINIMAL ]] && exit_with_error "No option selected"
+	if [[ $BUILD_MINIMAL == "yes" ]]; then
+		SELECTED_CONFIGURATION="cli_minimal"
+	else
+		SELECTED_CONFIGURATION="cli_standard"
+	fi
 
 fi
 
 #prevent conflicting setup
-[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	BUILD_MINIMAL=no
+	SELECTED_CONFIGURATION="desktop"
+elif [[ $BUILD_MINIMAL != "yes" || -z "${BUILD_MINIMAL}" ]]; then
+	BUILD_MINIMAL=no # Just in case BUILD_MINIMAL is not defined
+	BUILD_DESKTOP=no
+	SELECTED_CONFIGURATION="cli_standard"
+elif [[ $BUILD_MINIMAL == "yes" ]]; then
+	BUILD_DESKTOP=no
+	SELECTED_CONFIGURATION="cli_minimal"
+fi
+
 [[ $BUILD_MINIMAL == yes ]] && EXTERNAL=no
+
+[[ ${KERNEL_CONFIGURE} == prebuilt ]] && [[ -z ${REPOSITORY_INSTALL} ]] && REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop}"
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
@@ -390,7 +395,7 @@ DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
 CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
 CHOSEN_KERNEL=linux-image-${DEB_BRANCH}${LINUXFAMILY}
 CHOSEN_ROOTFS=linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
-CHOSEN_DESKTOP=armbian-${RELEASE}-desktop
+CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}
 CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
 
 do_default() {
@@ -486,7 +491,7 @@ overlayfs_wrapper "cleanup"
 [[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
 
 # create desktop package
-[[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
+[[ -n $RELEASE && $DESKTOP_ENVIRONMENT && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
 
 # build additional packages
 [[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
@@ -515,6 +520,10 @@ $([[ -n $BUILD_MINIMAL ]] && echo "BUILD_MINIMAL=${BUILD_MINIMAL} ")\
 $([[ -n $BUILD_DESKTOP ]] && echo "BUILD_DESKTOP=${BUILD_DESKTOP} ")\
 $([[ -n $KERNEL_ONLY ]] && echo "KERNEL_ONLY=${KERNEL_ONLY} ")\
 $([[ -n $KERNEL_CONFIGURE ]] && echo "KERNEL_CONFIGURE=${KERNEL_CONFIGURE} ")\
+$([[ -n $DESKTOP_ENVIRONMENT ]] && echo "DESKTOP_ENVIRONMENT=${DESKTOP_ENVIRONMENT} ")\
+$([[ -n $DESKTOP_ENVIRONMENT_CONFIG_NAME  ]] && echo "DESKTOP_ENVIRONMENT_CONFIG_NAME=${DESKTOP_ENVIRONMENT_CONFIG_NAME} ")\
+$([[ -n $DESKTOP_APPGROUPS_SELECTED ]] && echo "DESKTOP_APPGROUPS_SELECTED=\"${DESKTOP_APPGROUPS_SELECTED}\" ")\
+$([[ -n $DESKTOP_APT_FLAGS_SELECTED ]] && echo "DESKTOP_APT_FLAGS_SELECTED=\"${DESKTOP_APT_FLAGS_SELECTED}\" ")\
 $([[ -n $COMPRESS_OUTPUTIMAGE ]] && echo "COMPRESS_OUTPUTIMAGE=${COMPRESS_OUTPUTIMAGE} ")\
 " "ext"
 
