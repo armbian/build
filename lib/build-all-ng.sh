@@ -343,7 +343,7 @@ function build_all()
 					display_alert "Building ${n}."
 					if [[ "$KERNEL_ONLY" == "no" && "${MULTITHREAD}" -gt 0 ]]; then
 						build_main &
-						sleep $((RANDOM % 5))
+						sleep $((RANDOM % 25))
 					elif [[ "${MULTITHREAD}" -gt 0 ]]; then
 						build_main &
 						sleep $((RANDOM % 5))

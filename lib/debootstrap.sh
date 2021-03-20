@@ -392,10 +392,12 @@ prepare_partitions()
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
 	# add -N number of inodes to keep mount from running out
+	# create bigger number for desktop builds
+	if [[ $BUILD_DESKTOP == yes ]]; then local node_number=4096; else local node_number=1024; fi
 	if [[ $(lsb_release -sc) =~ bionic|buster|bullseye|cosmic|groovy|focal|hirsute|sid ]]; then
-		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128*1024))"
+		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128*${node_number}))"
 	elif [[ $(lsb_release -sc) == xenial ]]; then
-		mkopts[ext4]="-q -m 2 -N $((128*1024))"
+		mkopts[ext4]="-q -m 2 -N $((128*${node_number}))"
 	fi
 	mkopts[fat]='-n BOOT'
 	mkopts[ext2]='-q'
@@ -611,12 +613,18 @@ prepare_partitions()
 			sed -i "s/console=.*/console=$DEFAULT_CONSOLE/" $SDCARD/boot/armbianEnv.txt
 		else
 			echo "console=$DEFAULT_CONSOLE" >> $SDCARD/boot/armbianEnv.txt
-        fi
+	        fi
 	fi
 
 	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $SDCARD/boot/boot.cmd ]] && \
 		mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/boot.scr > /dev/null 2>&1
+
+	# create extlinux config
+	if [[ -f $SDCARD/boot/extlinux/extlinux.conf ]]; then
+		echo "  APPEND root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> $SDCARD/boot/extlinux/extlinux.conf
+		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
+	fi
 
 } #############################################################################
 
@@ -748,8 +756,8 @@ create_image()
 		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
 			display_alert "Compressing" "${FINALDEST}/${version}.img.xz" "info"
 			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
-			[[ ${BUILD_ALL} == yes && $(free | grep Mem | awk '{print $4/$2 * 100}' | awk '{print int($1+0.5)}') -lt 50 ]] && while [[ $(ps -uax | grep "pixz" | wc -l) -gt 5 ]]; do echo -en "#"; sleep 2; done
-			pixz -9 < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.xz
+			[[ ${BUILD_ALL} == yes && $(free | grep Mem | awk '{print $4/$2 * 100.0}' | awk '{print int($1)}') -lt 5 ]] && while [[ $(ps -uax | grep "pixz" | wc -l) -gt 4 ]]; do echo -en "#"; sleep 20; done
+			pixz -8 -p 12 < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.xz
 			compression_type=".xz"
 		fi
 
