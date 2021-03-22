@@ -17,7 +17,7 @@ fi
 
 CPUMIN=500000
 CPUMAX=1536000
-GOVERNOR=conservative
+GOVERNOR=ondemand
 
 case $BRANCH in
 	
