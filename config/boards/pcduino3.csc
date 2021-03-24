@@ -2,4 +2,4 @@
 BOARD_NAME="pcDuino3"
 BOARDFAMILY="sun7i"
 BOOTCONFIG="Linksprite_pcDuino3_defconfig"
-KERNEL_TARGET="current,dev"
+KERNEL_TARGET="current,edge"

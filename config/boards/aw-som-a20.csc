@@ -2,4 +2,4 @@
 BOARD_NAME="AW-SoM"
 BOARDFAMILY=sun7i
 BOOTCONFIG=Awsom_defconfig
-KERNEL_TARGET="current,dev"
+KERNEL_TARGET="current,edge"

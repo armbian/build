@@ -6,7 +6,7 @@
 | BOOTCONFIG | name of u-boot config |
 | BOOTCONFIG_LEGACY | name of u-boot config for legacy branch |
 | BOOTCONFIG_CURRENT | name of u-boot config for current branch |
-| BOOTCONFIG_DEV | name of u-boot config for dev branch |
+| BOOTCONFIG_EDGE | name of u-boot config for edge branch |
 | BOOTSIZE | size of a separate boot partition in Mib |
 | BOOT_LOGO | yes/desktop enable armbian boot logo during booting |
 | IMAGE_PARTITION_TABLE | "msdos" (default) or "gpt" (boot loader must supports it) |
@@ -16,14 +16,14 @@
 | MODULES | space delimited modules for all branches |
 | MODULES_LEGACY | space delimited modules for legacy branch |
 | MODULES_CURRENT | space delimited modules for current branch |
-| MODULES_DEV | space delimited modules for dev branch |
+| MODULES_EDGE | space delimited modules for edge branch |
 | MODULES_BLACKLIST | space delimited modules blacklist for all branches |
 | MODULES_BLACKLIST_LEGACY | space delimited modules blacklist for legacy branch |
 | MODULES_BLACKLIST_CURRENT | space delimited modules blacklist for current branch |
-| MODULES_BLACKLIST_DEV | space delimited modules blacklist for dev branch |
+| MODULES_BLACKLIST_EDGE | space delimited modules blacklist for edge branch |
 | SERIALCON | ttyS0,ttyS1, ... |
 | BUILD_DESKTOP | yes/no |
-| KERNEL_TARGET | legacy,current,dev |
+| KERNEL_TARGET | legacy,current,edge |
 | FULL_DESKTOP | yes/no = install Office, Thunderbird, ... |
 | DESKTOP_AUTOLOGIN | yes/no |
 | PACKAGE_LIST_BOARD | space delimited packages to be installed on this boards |
