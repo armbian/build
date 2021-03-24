@@ -98,7 +98,7 @@ case $BRANCH in
 
 	;;
 
-	dev)
+	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
 		KERNELBRANCH="branch:linux-5.11.y"

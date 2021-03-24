@@ -2,5 +2,5 @@
 BOARD_NAME="Rock 64"
 BOARDFAMILY="rockchip64"
 BOOTCONFIG="rock64-rk3328_defconfig"
-KERNEL_TARGET="legacy,current,dev"
+KERNEL_TARGET="legacy,current,edge"
 FULL_DESKTOP="yes"
