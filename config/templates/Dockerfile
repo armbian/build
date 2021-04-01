@@ -54,7 +54,6 @@ RUN apt-get update \
        libc6-dev-armhf-cross \
        libc6-i386 \
        libfile-fcntllock-perl \
-       libfdt-dev \
        libfl-dev \
        liblz4-tool \
        libncurses5-dev \
