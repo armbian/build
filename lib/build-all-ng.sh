@@ -317,7 +317,7 @@ function build_all()
 		BUILD_DESKTOP="no"
 		BUILD_MINIMAL="no"
 
-		[[ ${BUILD_TARGET} == "desktop" ]] && BUILD_DESKTOP="yes"
+		[[ ${BUILD_TARGET} == "desktop" && ${BSP_BUILD} != "yes" ]] && BUILD_DESKTOP="yes"
 		[[ ${BUILD_TARGET} == "minimal" ]] && BUILD_MINIMAL="yes"
 		[[ ${BSP_BUILD} == yes ]] && BUILD_STABILITY=$STABILITY
 
