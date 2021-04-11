@@ -427,9 +427,12 @@ fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" 
 fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
 fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
 fetch_from_repo "https://github.com/LibreELEC/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
+fetch_from_repo "https://github.com/Xilinx/bootgen.git" "xilinx-bootgen" "branch:master"
+fetch_from_repo "https://github.com/tparys/xilinx-fsbl-blobs" "xilinx-fsbl" "branch:master"
 
 compile_sunxi_tools
 install_rkbin_tools
+compile_xilinx_bootgen
 
 for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
