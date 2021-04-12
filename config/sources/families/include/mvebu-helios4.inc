@@ -84,7 +84,7 @@ family_tweaks_bsp()
 		fi
 
 		# Fix for "mdadm: initramfs boot message: /scripts/local-bottom/mdadm: rm: not found"
-		# Refer to https://wiki.kobol.io/mdadm/#fix-mdadm
+		# Refer to https://wiki.kobol.io/helios4/mdadm/#fix-mdadm
 		grep -q "^[[:blank:]]*copy_exec /bin/rm /bin" $MDADM_HOOK
 		if [ "$?" -ne 0 ]; then
 			sed -i '/copy_exec \/sbin\/mdmon \/sbin/ a\copy_exec /bin/rm /bin' $MDADM_HOOK

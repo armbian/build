@@ -301,13 +301,13 @@ chroot_installpackages_local()
 	local conf="${SRC}"/config/aptly-temp.conf
 	rm -rf /tmp/aptly-temp/
 	mkdir -p /tmp/aptly-temp/
-	aptly -config="${conf}" repo create temp
+	aptly -config="${conf}" repo create temp >> "${DEST}"/debug/install.log
 	# NOTE: this works recursively
-	aptly -config="${conf}" repo add temp "${DEB_STORAGE}/extra/${RELEASE}-desktop/"
-	aptly -config="${conf}" repo add temp "${DEB_STORAGE}/extra/${RELEASE}-utils/"
+	aptly -config="${conf}" repo add temp "${DEB_STORAGE}/extra/${RELEASE}-desktop/" >> "${DEST}"/debug/install.log
+	aptly -config="${conf}" repo add temp "${DEB_STORAGE}/extra/${RELEASE}-utils/" >> "${DEST}"/debug/install.log
 	# -gpg-key="925644A6"
 	aptly -keyring="${SRC}/packages/extras-buildpkgs/buildpkg-public.gpg" -secret-keyring="${SRC}/packages/extras-buildpkgs/buildpkg.gpg" -batch=true -config="${conf}" \
-		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution="${RELEASE}" publish repo temp
+		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution="${RELEASE}" publish repo temp >> "${DEST}"/debug/install.log
 	aptly -config="${conf}" -listen=":8189" serve &
 	local aptly_pid=$!
 	cp "${SRC}"/packages/extras-buildpkgs/buildpkg.key "${SDCARD}"/tmp/buildpkg.key
@@ -329,7 +329,6 @@ chroot_installpackages()
 {
 	local remote_only=$1
 	local install_list=""
-	display_alert "Installing additional packages" "EXTERNAL_NEW"
 	for plugin in "${SRC}"/packages/extras-buildpkgs/*.conf; do
 		source "${plugin}"
 		if [[ $(type -t package_checkinstall) == function ]] && package_checkinstall; then
@@ -337,6 +336,12 @@ chroot_installpackages()
 		fi
 		unset package_install_target package_checkinstall
 	done
+	if [[ -n $PACKAGE_LIST_RM ]]; then
+        install_list=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${install_list} ")
+        install_list="$(echo ${install_list})"
+	fi
+	display_alert "Installing extras-buildpkgs" "$install_list"
+
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
 	cat <<-EOF > "${SDCARD}"/tmp/install.sh
 	#!/bin/bash
@@ -359,5 +364,5 @@ chroot_installpackages()
 	rm -- "\$0"
 	EOF
 	chmod +x "${SDCARD}"/tmp/install.sh
-	chroot "${SDCARD}" /bin/bash -c "/tmp/install.sh"
+	chroot "${SDCARD}" /bin/bash -c "/tmp/install.sh" >> "${DEST}"/debug/install.log 2>&1
 } #############################################################################
