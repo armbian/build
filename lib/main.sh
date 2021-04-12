@@ -32,7 +32,11 @@ fi
 umask 002
 
 # destination
-DEST="${SRC}"/output
+if [ -d "$CONFIG_PATH/output" ]; then
+	DEST="${CONFIG_PATH}"/output
+else
+	DEST="${SRC}"/output
+fi
 
 if [[ $BUILD_ALL != "yes" && -z $ROOT_FS_CREATE_ONLY ]]; then
 	# override stty size
