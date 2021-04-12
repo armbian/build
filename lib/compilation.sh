@@ -189,7 +189,7 @@ compile_uboot()
 			rm -rf "${atftempdir}"
 		fi
 
-		echo -e "\n\t== u-boot ==\n" >> "${DEST}"/debug/compilation.log
+		echo -e "\n\t== u-boot make $BOOTCONFIG ==\n" >> "${DEST}"/debug/compilation.log
 		eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
 			'make $CTHREADS $BOOTCONFIG \
 			CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>> "${DEST}"/debug/compilation.log \
@@ -225,6 +225,7 @@ compile_uboot()
 		cross_compile="CROSS_COMPILE=$CCACHE $UBOOT_COMPILER";
 		[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe"; # empty parameter is not allowed
 
+		echo -e "\n\t== u-boot make $target_make ==\n" >> "${DEST}"/debug/compilation.log
 		eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
 			'make $target_make $CTHREADS \
 			"${cross_compile}"' 2>>"${DEST}"/debug/compilation.log \

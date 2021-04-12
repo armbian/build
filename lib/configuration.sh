@@ -311,17 +311,18 @@ fi
 # Write to variables :
 # - aggregated_content
 aggregate_content() {
-	echo -e "Potential paths : ${potential_paths}\n" >> "${DEST}"/debug/output.log
+	echo -e "Potential paths : ${potential_paths}" >> "${DEST}"/debug/output.log
 	for filepath in ${potential_paths}; do
 		if [[ -f "${filepath}" ]]; then
-			echo -e "${filepath/"$SRC"\//} yes\n" >> "${DEST}"/debug/output.log
+			echo -e "${filepath/"$SRC"\//} yes" >> "${DEST}"/debug/output.log
 			aggregated_content+=$(cat "${filepath}")
 			aggregated_content+="${separator}"
-		else
-			echo -e "${filepath/"$SRC"\//} no\n" >> "${DEST}"/debug/output.log
+#		else
+#			echo -e "${filepath/"$SRC"\//} no\n" >> "${DEST}"/debug/output.log
 		fi
 
 	done
+	echo "" >> "${DEST}"/debug/output.log
 }
 
 # set unique mounting directory
@@ -366,6 +367,7 @@ ${SRC}/config/optional/_any_board/_configs
 ${SRC}/config/optional/architectures/${ARCH}/_config
 ${SRC}/config/optional/families/${LINUXFAMILY}/_config
 ${SRC}/config/optional/boards/${BOARD}/_config
+${USERPATCHES_PATH}
 "
 
 DEBOOTSTRAP_SEARCH_RELATIVE_DIRS="
