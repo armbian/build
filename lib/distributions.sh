@@ -171,11 +171,14 @@ install_common()
 		mkdir -p $SDCARD/boot/extlinux
 		cat <<-EOF > "$SDCARD/boot/extlinux/extlinux.conf"
 		LABEL Armbian
-		  LINUX /boot/Image
-		  INITRD /boot/uInitrd
-		  FDT /boot/dtb/$BOOT_FDT_FILE
+		  LINUX /boot/$NAME_KERNEL
+		  INITRD /boot/$NAME_INITRD
 	EOF
-
+		if [[ -n $BOOT_FDT_FILE ]]; then
+			echo "  FDT /boot/dtb/$BOOT_FDT_FILE" >> "$SDCARD/boot/extlinux/extlinux.conf"
+		else
+			echo "  FDTDIR /boot/dtb/" >> "$SDCARD/boot/extlinux/extlinux.conf"
+		fi
 	else
 
 		if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
