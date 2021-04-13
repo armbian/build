@@ -25,7 +25,7 @@ else # rk3308, rk3328
 
 fi
 
-if [[ $BOARD == nanopi-r2s || $BOARD == rockpi-e || $BOARD == nanopineo3 || $BOARD == renegade || $BOARD == station-m1 || $BOARD == z28pro ]]; then
+if [[ $BOARD == nanopi-r2s || $BOARD == nanopineo3 || $BOARD == orangepi-r1plus || $BOARD == renegade || $BOARD == rockpi-e || $BOARD == station-m1 || $BOARD == z28pro ]]; then
 
 	BOOT_USE_BLOBS=yes
 	BOOT_SOC=rk3328
@@ -310,7 +310,7 @@ family_tweaks()
 
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable z28pro-bluetooth.service >/dev/null 2>&1"
 
-	elif [[ $BOARD == nanopi-r2s ]]; then
+	elif [[ $BOARD == nanopi-r2s || $BOARD == orangepi-r1plus ]]; then
 
 		# rename USB based network to lan0
 		mkdir -p $SDCARD/etc/udev/rules.d/
