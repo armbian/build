@@ -5,7 +5,7 @@ LINUXFAMILY=meson64
 ARCH=arm64
 SERIALCON=ttyAML0
 SRC_LOADADDR='LOADADDR=0x1080000'
-BOOTBRANCH="tag:v2021.01"
+BOOTBRANCH="tag:v2021.04"
 OVERLAY_PREFIX='meson'
 
 # this family does not need it
@@ -17,7 +17,7 @@ fi
 
 CPUMIN=500000
 CPUMAX=1536000
-GOVERNOR=conservative
+GOVERNOR=ondemand
 
 case $BRANCH in
 	
@@ -32,9 +32,9 @@ case $BRANCH in
                 KERNELPATCHDIR='meson64-current'
         ;;
 
-        dev)
-		KERNELBRANCH='branch:linux-5.10.y'
-		KERNELPATCHDIR='meson64-dev'
+        edge)
+		KERNELBRANCH='branch:linux-5.11.y'
+		KERNELPATCHDIR='meson64-edge'
         ;;
 
 esac

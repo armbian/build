@@ -21,7 +21,7 @@ USEALLCORES=yes # Use all CPU cores for compiling
 [[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
-ROOTFSCACHE_VERSION=3
+ROOTFSCACHE_VERSION=4
 CHROOT_CACHE_VERSION=7
 BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2>/dev/null | grep origin) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
@@ -61,17 +61,32 @@ fi
 
 # used by multiple sources - reduce code duplication
 [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
+
 case $MAINLINE_MIRROR in
-	google) MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable' ;;
-	tuna) MAINLINE_KERNEL_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git' ;;
-	*) MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git' ;;
+	google)
+		MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
+		MAINLINE_FIRMWARE_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
+		;;
+	tuna)
+		MAINLINE_KERNEL_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git'
+		MAINLINE_FIRMWARE_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-firmware.git'
+		;;
+	bfsu)
+		MAINLINE_KERNEL_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-stable.git'
+		MAINLINE_FIRMWARE_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-firmware.git'
+		;;
+	*)
+		MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
+		MAINLINE_FIRMWARE_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
+		;;
 esac
+
 MAINLINE_KERNEL_DIR='linux-mainline'
 
 if [[ $USE_GITHUB_UBOOT_MIRROR == yes ]]; then
 	MAINLINE_UBOOT_SOURCE='https://github.com/RobertCNelson/u-boot'
 else
-	MAINLINE_UBOOT_SOURCE='https://gitlab.denx.de/u-boot/u-boot.git'
+	MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
 fi
 MAINLINE_UBOOT_DIR='u-boot'
 
@@ -296,17 +311,18 @@ fi
 # Write to variables :
 # - aggregated_content
 aggregate_content() {
-	echo -e "Potential paths : ${potential_paths}\n" >> "${DEST}"/debug/output.log
+	echo -e "Potential paths : ${potential_paths}" >> "${DEST}"/debug/output.log
 	for filepath in ${potential_paths}; do
 		if [[ -f "${filepath}" ]]; then
-			echo -e "${filepath/"$SRC"\//} yes\n" >> "${DEST}"/debug/output.log
+			echo -e "${filepath/"$SRC"\//} yes" >> "${DEST}"/debug/output.log
 			aggregated_content+=$(cat "${filepath}")
 			aggregated_content+="${separator}"
-		else
-			echo -e "${filepath/"$SRC"\//} no\n" >> "${DEST}"/debug/output.log
+#		else
+#			echo -e "${filepath/"$SRC"\//} no\n" >> "${DEST}"/debug/output.log
 		fi
 
 	done
+	echo "" >> "${DEST}"/debug/output.log
 }
 
 # set unique mounting directory
@@ -351,6 +367,7 @@ ${SRC}/config/optional/_any_board/_configs
 ${SRC}/config/optional/architectures/${ARCH}/_config
 ${SRC}/config/optional/families/${LINUXFAMILY}/_config
 ${SRC}/config/optional/boards/${BOARD}/_config
+${USERPATCHES_PATH}
 "
 
 DEBOOTSTRAP_SEARCH_RELATIVE_DIRS="
@@ -491,10 +508,16 @@ DEBIAN_MIRROR='deb.debian.org/debian'
 DEBIAN_SECURTY='security.debian.org/'
 UBUNTU_MIRROR='ports.ubuntu.com/'
 
-if [[ $DOWNLOAD_MIRROR == china ]] ; then
+if [[ $DOWNLOAD_MIRROR == "china" ]] ; then
 	DEBIAN_MIRROR='mirrors.tuna.tsinghua.edu.cn/debian'
 	DEBIAN_SECURTY='mirrors.tuna.tsinghua.edu.cn/debian-security'
 	UBUNTU_MIRROR='mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/'
+fi
+
+if [[ $DOWNLOAD_MIRROR == "bfsu" ]] ; then
+	DEBIAN_MIRROR='mirrors.bfsu.edu.cn/debian'
+	DEBIAN_SECURTY='mirrors.bfsu.edu.cn/debian-security'
+	UBUNTU_MIRROR='mirrors.bfsu.edu.cn/ubuntu-ports/'
 fi
 
 # don't use mirrors that throws garbage on 404

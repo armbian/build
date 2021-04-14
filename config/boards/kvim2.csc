@@ -2,6 +2,6 @@
 BOARD_NAME="Khadas VIM2"
 BOARDFAMILY="meson-gxl"
 BOOTCONFIG="khadas-vim2_defconfig"
-KERNEL_TARGET="current,dev"
+KERNEL_TARGET="current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"

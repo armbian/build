@@ -39,7 +39,7 @@ install_common()
 	# adjust initramfs dropbear configuration
 	# needs to be done before kernel installation, else it won't be in the initrd image
 	if [[ $CRYPTROOT_ENABLE == yes && $CRYPTROOT_SSH_UNLOCK == yes ]]; then
-		# Set the port of the dropbear ssh deamon in the initramfs to a different one if configured
+		# Set the port of the dropbear ssh daemon in the initramfs to a different one if configured
 		# this avoids the typical 'host key changed warning' - `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!`
 		[[ -f "${SDCARD}"/etc/dropbear-initramfs/config ]] && \
 		sed -i 's/^#DROPBEAR_OPTIONS=/DROPBEAR_OPTIONS="-p '"${CRYPTROOT_SSH_UNLOCK_PORT}"'"/' \
@@ -164,35 +164,58 @@ install_common()
 	# NOTE: this needs to be executed before family_tweaks
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
-	cp "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
 
-	if [[ -n $BOOTENV_FILE ]]; then
-		if [[ -f $USERPATCHES_PATH/bootenv/$BOOTENV_FILE ]]; then
-			cp "$USERPATCHES_PATH/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
-		elif [[ -f $SRC/config/bootenv/$BOOTENV_FILE ]]; then
-			cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
-		fi
-	fi
+	# create extlinux config file
+	if [[ $SRC_EXTLINUX == yes ]]; then
 
-	# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
-	# instead of copying sunxi-specific template
-	if [[ $ROOTFS_TYPE == nfs ]]; then
-		display_alert "Copying NFS boot script template"
-		if [[ -f $USERPATCHES_PATH/nfs-boot.cmd ]]; then
-			cp "$USERPATCHES_PATH"/nfs-boot.cmd "${SDCARD}"/boot/boot.cmd
+		mkdir -p $SDCARD/boot/extlinux
+		cat <<-EOF > "$SDCARD/boot/extlinux/extlinux.conf"
+		LABEL Armbian
+		  LINUX /boot/$NAME_KERNEL
+		  INITRD /boot/$NAME_INITRD
+	EOF
+		if [[ -n $BOOT_FDT_FILE ]]; then
+			echo "  FDT /boot/dtb/$BOOT_FDT_FILE" >> "$SDCARD/boot/extlinux/extlinux.conf"
 		else
-			cp "${SRC}"/config/templates/nfs-boot.cmd.template "${SDCARD}"/boot/boot.cmd
+			echo "  FDTDIR /boot/dtb/" >> "$SDCARD/boot/extlinux/extlinux.conf"
 		fi
+	else
+
+		if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
+			cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
+		else
+			cp "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
+		fi
+
+		if [[ -n $BOOTENV_FILE ]]; then
+			if [[ -f $USERPATCHES_PATH/bootenv/$BOOTENV_FILE ]]; then
+				cp "$USERPATCHES_PATH/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+			elif [[ -f $SRC/config/bootenv/$BOOTENV_FILE ]]; then
+				cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+			fi
+		fi
+
+		# TODO: modify $bootscript_dst or armbianEnv.txt to make NFS boot universal
+		# instead of copying sunxi-specific template
+		if [[ $ROOTFS_TYPE == nfs ]]; then
+			display_alert "Copying NFS boot script template"
+			if [[ -f $USERPATCHES_PATH/nfs-boot.cmd ]]; then
+				cp "$USERPATCHES_PATH"/nfs-boot.cmd "${SDCARD}"/boot/boot.cmd
+			else
+				cp "${SRC}"/config/templates/nfs-boot.cmd.template "${SDCARD}"/boot/boot.cmd
+			fi
+		fi
+
+		[[ -n $OVERLAY_PREFIX && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
+			echo "overlay_prefix=$OVERLAY_PREFIX" >> "${SDCARD}"/boot/armbianEnv.txt
+
+		[[ -n $DEFAULT_OVERLAYS && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
+			echo "overlays=${DEFAULT_OVERLAYS//,/ }" >> "${SDCARD}"/boot/armbianEnv.txt
+
+		[[ -n $BOOT_FDT_FILE && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
+			echo "fdtfile=${BOOT_FDT_FILE}" >> "${SDCARD}/boot/armbianEnv.txt"
+
 	fi
-
-	[[ -n $OVERLAY_PREFIX && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
-		echo "overlay_prefix=$OVERLAY_PREFIX" >> "${SDCARD}"/boot/armbianEnv.txt
-
-	[[ -n $DEFAULT_OVERLAYS && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
-		echo "overlays=${DEFAULT_OVERLAYS//,/ }" >> "${SDCARD}"/boot/armbianEnv.txt
-
-	[[ -n $BOOT_FDT_FILE && -f "${SDCARD}"/boot/armbianEnv.txt ]] && \
-		echo "fdtfile=${BOOT_FDT_FILE}" >> "${SDCARD}/boot/armbianEnv.txt"
 
 	# initial date for fake-hwclock
 	date -u '+%Y-%m-%d %H:%M:%S' > "${SDCARD}"/etc/fake-hwclock.data
@@ -434,7 +457,7 @@ install_common()
 	cp "${SDCARD}"/etc/armbian-release "${SDCARD}"/etc/armbian-image-release
 
 	# DNS fix. package resolvconf is not available everywhere
-	if [ -d /etc/resolvconf/resolv.conf.d ]; then
+	if [ -d /etc/resolvconf/resolv.conf.d ] && [ -n "$NAMESERVER" ]; then
 		echo "nameserver $NAMESERVER" > "${SDCARD}"/etc/resolvconf/resolv.conf.d/head
 	fi
 
@@ -444,31 +467,60 @@ install_common()
 	# enable PubkeyAuthentication
 	sed -i 's/#\?PubkeyAuthentication .*/PubkeyAuthentication yes/' "${SDCARD}"/etc/ssh/sshd_config
 
-	# configure network manager
-	sed "s/managed=\(.*\)/managed=true/g" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
+	if [ -f "${SDCARD}"/etc/NetworkManager/NetworkManager.conf ]; then
+		# configure network manager
+		sed "s/managed=\(.*\)/managed=true/g" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
 
-	# remove network manager defaults to handle eth by default
-	rm -f "${SDCARD}"/usr/lib/NetworkManager/conf.d/10-globally-managed-devices.conf
+		# remove network manager defaults to handle eth by default
+		rm -f "${SDCARD}"/usr/lib/NetworkManager/conf.d/10-globally-managed-devices.conf
 
-	# most likely we don't need to wait for nm to get online
-	chroot "${SDCARD}" /bin/bash -c "systemctl disable NetworkManager-wait-online.service" >> "${DEST}"/debug/install.log 2>&1
+		# most likely we don't need to wait for nm to get online
+		chroot "${SDCARD}" /bin/bash -c "systemctl disable NetworkManager-wait-online.service" >> "${DEST}"/debug/install.log 2>&1
+
+		# Just regular DNS and maintain /etc/resolv.conf as a file
+		sed "/dns/d" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
+		sed "s/\[main\]/\[main\]\ndns=default\nrc-manager=file/g" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
+		if [[ -n $NM_IGNORE_DEVICES ]]; then
+			mkdir -p "${SDCARD}"/etc/NetworkManager/conf.d/
+			cat <<-EOF > "${SDCARD}"/etc/NetworkManager/conf.d/10-ignore-interfaces.conf
+			[keyfile]
+			unmanaged-devices=$NM_IGNORE_DEVICES
+			EOF
+		fi
+
+	elif [ -d "${SDCARD}"/etc/systemd/network ]; then
+		# configure networkd
+		rm "${SDCARD}"/etc/resolv.conf
+		ln -s /run/systemd/resolve/resolv.conf "${SDCARD}"/etc/resolv.conf
+
+		# enable services
+		chroot "${SDCARD}" /bin/bash -c "systemctl enable systemd-networkd.service systemd-resolved.service" >> "${DEST}"/debug/install.log 2>&1
+
+		if  [ -e /etc/systemd/timesyncd.conf ]; then
+			chroot "${SDCARD}" /bin/bash -c "systemctl enable systemd-timesyncd.service" >> "${DEST}"/debug/install.log 2>&1
+		fi
+		umask 022
+		cat > "${SDCARD}"/etc/systemd/network/eth0.network <<- __EOF__
+		[Match]
+		Name=eth0
+
+		[Network]
+		DHCP=ipv4
+		LinkLocalAddressing=ipv4
+		#Address=192.168.1.100/24
+		#Gateway=192.168.1.1
+		#DNS=192.168.1.1
+		#Domains=example.com
+		NTP=0.pool.ntp.org 1.pool.ntp.org
+		__EOF__
+
+	fi
 
 	# avahi daemon defaults if exists
 	[[ -f "${SDCARD}"/usr/share/doc/avahi-daemon/examples/sftp-ssh.service ]] && \
 	cp "${SDCARD}"/usr/share/doc/avahi-daemon/examples/sftp-ssh.service "${SDCARD}"/etc/avahi/services/
 	[[ -f "${SDCARD}"/usr/share/doc/avahi-daemon/examples/ssh.service ]] && \
 	cp "${SDCARD}"/usr/share/doc/avahi-daemon/examples/ssh.service "${SDCARD}"/etc/avahi/services/
-
-	# Just regular DNS and maintain /etc/resolv.conf as a file
-	sed "/dns/d" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
-	sed "s/\[main\]/\[main\]\ndns=default\nrc-manager=file/g" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
-	if [[ -n $NM_IGNORE_DEVICES ]]; then
-		mkdir -p "${SDCARD}"/etc/NetworkManager/conf.d/
-		cat <<-EOF > "${SDCARD}"/etc/NetworkManager/conf.d/10-ignore-interfaces.conf
-		[keyfile]
-		unmanaged-devices=$NM_IGNORE_DEVICES
-		EOF
-	fi
 
 	# nsswitch settings for sane DNS behavior: remove resolve, assure libnss-myhostname support
 	sed "s/hosts\:.*/hosts:          files mymachines dns myhostname/g" -i "${SDCARD}"/etc/nsswitch.conf
@@ -568,15 +620,23 @@ install_distribution_specific()
 			# rc.local is not existing but one might need it
 			install_rclocal
 
-			# Basic Netplan config. Let NetworkManager manage all devices on this system
+			if [ -d "${SDCARD}"/etc/NetworkManager ]; then
+				local RENDERER=NetworkManager
+			else
+				local RENDERER=networkd
+			fi
+
+			# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
 			[[ -d "${SDCARD}"/etc/netplan ]] && cat <<-EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
 			network:
 			  version: 2
-			  renderer: NetworkManager
+			  renderer: $RENDERER
 			EOF
 
 			# DNS fix
-			sed -i "s/#DNS=.*/DNS=$NAMESERVER/g" "${SDCARD}"/etc/systemd/resolved.conf
+			if [ -n "$NAMESERVER" ]; then
+				sed -i "s/#DNS=.*/DNS=$NAMESERVER/g" "${SDCARD}"/etc/systemd/resolved.conf
+			fi
 
 			# Journal service adjustements
 			sed -i "s/#Storage=.*/Storage=volatile/g" "${SDCARD}"/etc/systemd/journald.conf

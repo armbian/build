@@ -2,4 +2,4 @@
 BOARD_NAME="Cubieboard 4"
 BOARDFAMILY=sun9i
 BOOTCONFIG=Cubieboard4_defconfig
-KERNEL_TARGET="current,dev"
+KERNEL_TARGET="current,edge"

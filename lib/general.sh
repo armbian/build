@@ -175,6 +175,8 @@ create_sources_list()
 	# stage: add armbian repository and install key
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
 		echo "deb http://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
+	    echo "deb http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 	else
 		echo "deb http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt" )".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 	fi
@@ -270,7 +272,7 @@ fetch_from_repo()
 	#  Then the target URL matches the local URL.
 
 	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" == ".git" && \
-		  "$url" != "$(improved_git remote get-url origin 2>/dev/null)" ]]; then
+		  "$url" != *"$(improved_git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///' 2>/dev/null)" ]]; then
 		display_alert "Remote URL does not match, removing existing local copy"
 		rm -rf .git ./*
 	fi
@@ -630,15 +632,15 @@ function distros_options() {
 
 function set_distribution_status() {
 
-  local distro_support_desc_filepath="${DISTRIBUTIONS_DESC_DIR}/${RELEASE}/support"
+	local distro_support_desc_filepath="${SRC}/${DISTRIBUTIONS_DESC_DIR}/${RELEASE}/support"
 	if [[ ! -f "${distro_support_desc_filepath}" ]]; then
 		exit_with_error "Distribution ${distribution_name} does not exist"
 	else
 		DISTRIBUTION_STATUS="$(cat "${distro_support_desc_filepath}")"
 	fi
-	
+
 	[[ "${DISTRIBUTION_STATUS}" != "supported" ]] && [[ "${EXPERT}" != "yes" ]] && exit_with_error "Armbian ${RELEASE} is unsupported and, therefore, only available to experts (EXPERT=yes)"
-	 
+
 }
 
 adding_packages()
@@ -998,7 +1000,7 @@ prepare_host()
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
 	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
-	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
+	locales ncurses-base pixz dialog systemd-container udev libfdt-dev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
 	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils jq"
 
 # build aarch64
@@ -1018,7 +1020,7 @@ prepare_host()
 	local codename=$(lsb_release -sc)
 
 	# Add support for Ubuntu 20.04, 21.04 and Mint Ulyana
-	if [[ $codename =~ ^(focal|groovy|hirsute|ulyana)$ ]]; then
+	if [[ $codename =~ ^(focal|groovy|hirsute|ulyana|ulyssa|bullseye)$ ]]; then
 		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
@@ -1033,7 +1035,7 @@ prepare_host()
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
-	if [[ -z $codename || "buster groovy focal hirsute debbie tricia ulyana" != *"$codename"* ]]; then
+	if [[ -z $codename || "buster bullseye groovy focal hirsute debbie tricia ulyana ulyssa" != *"$codename"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -1049,7 +1051,7 @@ prepare_host()
 # build aarch64
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-	if [[ -z $codename || $codename =~ ^(focal|groovy|debbie|buster|hirsute|ulyana)$ ]]; then
+	if [[ -z $codename || $codename =~ ^(focal|groovy|debbie|buster|bullseye|hirsute|ulyana|ulyssa)$ ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 
@@ -1233,6 +1235,10 @@ function webseed ()
 		WEBSEED=(
 		"https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 		)
+	elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
+		WEBSEED=(
+		"https://mirrors.bfsu.edu.cn/armbian-releases/"
+		)
 	fi
 	for toolchain in ${WEBSEED[@]}; do
 		# use only live, tnahosting return ok also when file is absent
@@ -1256,9 +1262,11 @@ download_and_verify()
 	local dirname=${filename//.tar.xz}
 
         if [[ $DOWNLOAD_MIRROR == china ]]; then
-		local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
-	else
-		local server=${ARMBIAN_MIRROR}
+			local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+		elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
+			local server="https://mirrors.bfsu.edu.cn/armbian-releases/"
+		else
+			local server=${ARMBIAN_MIRROR}
         fi
 
 	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then
@@ -1270,7 +1278,15 @@ download_and_verify()
 	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
 		display_alert "Timeout from $server" "retrying" "info"
 		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+		
+		# switch to another china mirror if tuna timeouts
+		timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
+		if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
+			display_alert "Timeout from $server" "retrying" "info"
+			server="https://mirrors.bfsu.edu.cn/armbian-releases/"
+		fi
 	fi
+	
 
 	# check if file exists on remote server before running aria2 downloader
 	[[ ! `timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}` ]] && return
