@@ -114,6 +114,31 @@ create_desktop_package ()
 
 }
 
+# FIXME Factorize this
+PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS="
+${SRC}/packages
+${SRC}/config/optional/_any_board/_packages
+${SRC}/config/optional/architectures/${ARCH}/_packages
+${SRC}/config/optional/families/${LINUXFAMILY}/_packages
+${SRC}/config/optional/boards/${BOARD}/_packages
+"
+
+
+copy_all_packages_files_for()
+{
+	local package_name="${1}"
+	for package_src_dir in ${PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS};
+	do
+		local package_dirpath="${package_src_dir}/${package_name}"
+		if [ -d "${package_dirpath}" ];
+		then
+			cp -r "${package_dirpath}/"* "${destination}/"
+			echo "${package_dirpath}"
+			echo ${package_dirpath} >> "${DEST}"/debug/copy.log
+		fi
+	done
+}
+
 create_bsp_desktop_package ()
 {
 
@@ -124,6 +149,8 @@ create_bsp_desktop_package ()
 	destination=${tmp_dir}/${BOARD}/${BSP_DESKTOP_PACKAGE_FULLNAME}
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
+
+	copy_all_packages_files_for "bsp-desktop"
 
 	# set up control file
 	cat <<-EOF > "${destination}"/DEBIAN/control
