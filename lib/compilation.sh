@@ -17,6 +17,7 @@
 # compile_armbian-config
 # compile_sunxi_tools
 # install_rkbin_tools
+# compile_xilinx_bootgen
 # grab_version
 # find_toolchain
 # advanced_patch
@@ -705,8 +706,12 @@ install_rkbin_tools()
 
 compile_xilinx_bootgen()
 {
+	# Source code checkout
+	(fetch_from_repo "https://github.com/Xilinx/bootgen.git" "xilinx-bootgen" "branch:master")
+
+	pushd "${SRC}"/cache/sources/xilinx-bootgen || exit
+
 	# Compile and install only if git commit hash changed
-	cd "${SRC}"/cache/sources/xilinx-bootgen || exit
 	# need to check if /usr/local/bin/bootgen to detect new Docker containers with old cached sources
 	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/bootgen ]]; then
 		display_alert "Compiling" "xilinx-bootgen" "info"
@@ -716,6 +721,8 @@ compile_xilinx_bootgen()
 		install bootgen /usr/local/bin >/dev/null 2>&1
 		improved_git rev-parse @ 2>/dev/null > .commit_id
 	fi
+
+	popd
 }
 
 grab_version()
