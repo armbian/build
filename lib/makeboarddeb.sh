@@ -20,7 +20,7 @@ create_board_package()
 	bsptempdir=$(mktemp -d)
 	chmod 700 ${bsptempdir}
 	trap "rm -rf \"${bsptempdir}\" ; exit 0" 0 1 2 3 15
-	local destination=${bsptempdir}/${RELEASE}/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
+	local destination=${bsptempdir}/${RELEASE}/${BSP_CLI_PACKAGE_FULLNAME}
 	mkdir -p "${destination}"/DEBIAN
 	cd $destination
 
@@ -50,7 +50,7 @@ create_board_package()
 	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
 	# Depends: fping is needed for armbianmonitor to upload armbian-hardware-monitor.log
 	cat <<-EOF > "${destination}"/DEBIAN/control
-	Package: linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
+	Package: ${BSP_CLI_PACKAGE_NAME}
 	Version: $REVISION
 	Architecture: $ARCH
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
@@ -61,9 +61,16 @@ create_board_package()
 	Provides: armbian-bsp
 	Conflicts: armbian-bsp
 	Suggests: armbian-config
-	Replaces: zram-config, base-files, armbian-tools-$RELEASE
+	Replaces: zram-config, base-files, armbian-tools-$RELEASE, \
+	linux-xenial-root-legacy-$BOARD, linux-xenial-root-current-$BOARD, linux-xenial-root-edge-$BOARD, \
+	linux-bionic-root-legacy-$BOARD, linux-bionic-root-current-$BOARD, linux-bionic-root-edge-$BOARD, \
+	linux-focal-root-legacy-$BOARD, linux-focal-root-current-$BOARD, linux-focal-root-edge-$BOARD, \
+	linux-stretch-root-legacy-$BOARD, linux-stretch-root-current-$BOARD, linux-stretch-root-edge-$BOARD, \
+	linux-buster-root-legacy-$BOARD, linux-buster-root-current-$BOARD, linux-buster-root-edge-$BOARD, \
+	linux-bullseye-root-legacy-$BOARD, linux-bullseye-root-current-$BOARD, linux-bullseye-root-edge-$BOARD, \
+	linux-hirsute-root-legacy-$BOARD, linux-hirsute-root-current-$BOARD, linux-hirsute-root-edge-$BOARD
 	Recommends: bsdutils, parted, util-linux, toilet
-	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
+	Description: Armbian tweaks for $BOARD
 	EOF
 
 	# set up pre install script
@@ -124,7 +131,7 @@ create_board_package()
 	[ -f "/usr/lib/armbian/firstrun-config.sh" ] && rm /usr/lib/armbian/firstrun-config.sh
 	# fix for https://bugs.launchpad.net/ubuntu/+source/lightdm-gtk-greeter/+bug/1897491
 	[ -d "/var/lib/lightdm" ] && (chown -R lightdm:lightdm /var/lib/lightdm ; chmod 0750 /var/lib/lightdm)
-	dpkg-divert --quiet --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename --divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
+	dpkg-divert --quiet --package ${BSP_CLI_PACKAGE_NAME} --add --rename --divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 	exit 0
 	EOF
 
@@ -135,7 +142,7 @@ create_board_package()
 	#!/bin/sh
 	if [ remove = "\$1" ] || [ abort-install = "\$1" ]; then
 
-	    dpkg-divert --quiet --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename	--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
+	    dpkg-divert --quiet --package ${BSP_CLI_PACKAGE_NAME} --remove --rename	--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 	    systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service >/dev/null 2>&1
 	    systemctl disable armbian-zram-config.service armbian-ramlog.service >/dev/null 2>&1
 
