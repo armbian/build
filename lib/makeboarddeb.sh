@@ -70,7 +70,7 @@ create_board_package()
 	linux-bullseye-root-legacy-$BOARD, linux-bullseye-root-current-$BOARD, linux-bullseye-root-edge-$BOARD, \
 	linux-hirsute-root-legacy-$BOARD, linux-hirsute-root-current-$BOARD, linux-hirsute-root-edge-$BOARD
 	Recommends: bsdutils, parted, util-linux, toilet
-	Description: Armbian tweaks for $BOARD
+	Description: Tweaks for Armbian $RELEASE on $BOARD
 	EOF
 
 	# set up pre install script
