@@ -373,13 +373,6 @@ compile_kernel()
 		else
 			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
 			cp "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
-
-			# append generic kernel config
-			KERNEL_GENERIC_CONFIG="config/kernel/linux-generic.config"
-			if [[ -f "${SRC}/$KERNEL_GENERIC_CONFIG" ]]; then
-				display_alert "Appending generic kernel config" "$KERNEL_GENERIC_CONFIG" "info"
-				cat "${SRC}/$KERNEL_GENERIC_CONFIG" >> .config
-			fi
 		fi
 	fi
 
