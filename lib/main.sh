@@ -393,7 +393,7 @@ LINUXSOURCEDIR="${KERNELDIR}/$(branch2dir "${KERNELBRANCH}")"
 [[ -n $ATFSOURCE ]] && ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
 
 BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}"
-BSP_CLI_PACKAGE_FULLNAME="${BSP_CLI_PACKAGE_NAME}_${ARCH}"
+BSP_CLI_PACKAGE_FULLNAME="${BSP_CLI_PACKAGE_NAME}_${REVISION}_${ARCH}"
 # define package names
 DEB_BRANCH=${BRANCH//default}
 # if not empty, append hyphen
