@@ -20,7 +20,7 @@ create_board_package()
 	bsptempdir=$(mktemp -d)
 	chmod 700 ${bsptempdir}
 	trap "rm -rf \"${bsptempdir}\" ; exit 0" 0 1 2 3 15
-	local destination=${bsptempdir}/${RELEASE}/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
+	local destination=${bsptempdir}/${RELEASE}/${BSP_CLI_PACKAGE_FULLNAME}
 	mkdir -p "${destination}"/DEBIAN
 	cd $destination
 
@@ -50,7 +50,7 @@ create_board_package()
 	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
 	# Depends: fping is needed for armbianmonitor to upload armbian-hardware-monitor.log
 	cat <<-EOF > "${destination}"/DEBIAN/control
-	Package: linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
+	Package: ${BSP_CLI_PACKAGE_NAME}
 	Version: $REVISION
 	Architecture: $ARCH
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
@@ -63,7 +63,7 @@ create_board_package()
 	Suggests: armbian-config
 	Replaces: zram-config, base-files, armbian-tools-$RELEASE
 	Recommends: bsdutils, parted, util-linux, toilet
-	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
+	Description: Tweaks for Armbian $RELEASE on $BOARD
 	EOF
 
 	# set up pre install script
@@ -122,9 +122,6 @@ create_board_package()
 	[ -f "/lib/systemd/system/resize2fs.service" ] && rm /lib/systemd/system/resize2fs.service
 	[ -f "/usr/lib/armbian/apt-updates" ] && rm /usr/lib/armbian/apt-updates
 	[ -f "/usr/lib/armbian/firstrun-config.sh" ] && rm /usr/lib/armbian/firstrun-config.sh
-	# fix for https://bugs.launchpad.net/ubuntu/+source/lightdm-gtk-greeter/+bug/1897491
-	[ -d "/var/lib/lightdm" ] && (chown -R lightdm:lightdm /var/lib/lightdm ; chmod 0750 /var/lib/lightdm)
-	dpkg-divert --quiet --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename --divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 	exit 0
 	EOF
 
@@ -135,7 +132,6 @@ create_board_package()
 	#!/bin/sh
 	if [ remove = "\$1" ] || [ abort-install = "\$1" ]; then
 
-	    dpkg-divert --quiet --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename	--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 	    systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service >/dev/null 2>&1
 	    systemctl disable armbian-zram-config.service armbian-ramlog.service >/dev/null 2>&1
 
@@ -324,6 +320,25 @@ fi
 	fakeroot dpkg-deb -b "${destination}" "${destination}.deb" >> "${DEST}"/debug/install.log 2>&1
 	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
 	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"
+
+	# Can be removed after 21.05
+	# create meta package for upgrade
+	local destination=${bsptempdir}/${RELEASE}/linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}_${REVISION}_${ARCH}
+	mkdir -p "${destination}"/DEBIAN
+	cat <<-EOF > "${destination}"/DEBIAN/control
+	Package: linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
+	Version: $REVISION
+	Architecture: $ARCH
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Pre-Depends: ${BSP_CLI_PACKAGE_NAME}
+	Description: Meta package that upgrades to ${BSP_CLI_PACKAGE_NAME}
+	EOF
+	display_alert "Building meta  package" "$CHOSEN_ROOTFS" "info"
+	fakeroot dpkg-deb -b "${destination}" "${destination}.deb" >> "${DEST}"/debug/install.log 2>&1
+	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
+	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"
+	# Can be removed after 21.05
+
 	# cleanup
 	rm -rf ${bsptempdir}
 }
