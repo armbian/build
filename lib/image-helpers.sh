@@ -94,9 +94,8 @@ write_uboot()
 	chmod 700 ${TEMP_DIR}
 	revision=${REVISION}
 	if [[ -n $UPSTREM_VER ]]; then
-		DEB_BRANCH=${DEB_BRANCH/-/}
 		revision=${UPSTREM_VER}
-		dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${DEB_BRANCH/-/}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
+		dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
 	else
 		dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
 	fi
