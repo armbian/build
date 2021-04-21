@@ -370,6 +370,8 @@ function build_all()
 					for BRANCH in "${RELBRANCH[@]}"
 					do
 					RELTARGETS=(xenial stretch buster bullseye bionic focal hirsute sid)
+					# we don't need to cycle all distributions when making u-boot package
+					[[ $BOOTONLY == "yes" ]] && RELTARGETS=(focal)
 					for RELEASE in "${RELTARGETS[@]}"
 					do
 						display_alert "BSP for ${BOARD} ${BRANCH} ${RELEASE}."

@@ -20,7 +20,7 @@ create_board_package()
 	bsptempdir=$(mktemp -d)
 	chmod 700 ${bsptempdir}
 	trap "rm -rf \"${bsptempdir}\" ; exit 0" 0 1 2 3 15
-	local destination=${bsptempdir}/${RELEASE}/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}
+	local destination=${bsptempdir}/${RELEASE}/${BSP_CLI_PACKAGE_FULLNAME}
 	mkdir -p "${destination}"/DEBIAN
 	cd $destination
 
@@ -50,7 +50,7 @@ create_board_package()
 	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
 	# Depends: fping is needed for armbianmonitor to upload armbian-hardware-monitor.log
 	cat <<-EOF > "${destination}"/DEBIAN/control
-	Package: linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
+	Package: ${BSP_CLI_PACKAGE_NAME}
 	Version: $REVISION
 	Architecture: $ARCH
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
@@ -58,12 +58,12 @@ create_board_package()
 	Section: kernel
 	Priority: optional
 	Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping
-	Provides: armbian-bsp
-	Conflicts: armbian-bsp
+	Provides: linux-${RELEASE}-root-legacy-$BOARD, linux-${RELEASE}-root-current-$BOARD, linux-${RELEASE}-root-edge-$BOARD
 	Suggests: armbian-config
-	Replaces: zram-config, base-files, armbian-tools-$RELEASE
+	Replaces: zram-config, base-files, armbian-tools-$RELEASE, linux-${RELEASE}-root-legacy-$BOARD (<< $REVISION~), linux-${RELEASE}-root-current-$BOARD (<< $REVISION~), linux-${RELEASE}-root-edge-$BOARD (<< $REVISION~)
+	Breaks: linux-${RELEASE}-root-legacy-$BOARD (<< $REVISION~), linux-${RELEASE}-root-current-$BOARD (<< $REVISION~), linux-${RELEASE}-root-edge-$BOARD (<< $REVISION~)
 	Recommends: bsdutils, parted, util-linux, toilet
-	Description: Armbian tweaks for $RELEASE on $BOARD ($BRANCH branch)
+	Description: Tweaks for Armbian $RELEASE on $BOARD
 	EOF
 
 	# set up pre install script
@@ -122,9 +122,6 @@ create_board_package()
 	[ -f "/lib/systemd/system/resize2fs.service" ] && rm /lib/systemd/system/resize2fs.service
 	[ -f "/usr/lib/armbian/apt-updates" ] && rm /usr/lib/armbian/apt-updates
 	[ -f "/usr/lib/armbian/firstrun-config.sh" ] && rm /usr/lib/armbian/firstrun-config.sh
-	# fix for https://bugs.launchpad.net/ubuntu/+source/lightdm-gtk-greeter/+bug/1897491
-	[ -d "/var/lib/lightdm" ] && (chown -R lightdm:lightdm /var/lib/lightdm ; chmod 0750 /var/lib/lightdm)
-	dpkg-divert --quiet --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --add --rename --divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 	exit 0
 	EOF
 
@@ -135,7 +132,6 @@ create_board_package()
 	#!/bin/sh
 	if [ remove = "\$1" ] || [ abort-install = "\$1" ]; then
 
-	    dpkg-divert --quiet --package linux-${RELEASE}-root-${DEB_BRANCH}${BOARD} --remove --rename	--divert /etc/mpv/mpv-dist.conf /etc/mpv/mpv.conf
 	    systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service >/dev/null 2>&1
 	    systemctl disable armbian-zram-config.service armbian-ramlog.service >/dev/null 2>&1
 
@@ -285,7 +281,6 @@ fi
 	DISTRIBUTION_STATUS=${DISTRIBUTION_STATUS}
 	VERSION=$REVISION
 	LINUXFAMILY=$LINUXFAMILY
-	BRANCH=$BRANCH
 	ARCH=$ARCHITECTURE
 	IMAGE_TYPE=$IMAGE_TYPE
 	BOARD_TYPE=$BOARD_TYPE
@@ -324,6 +319,31 @@ fi
 	fakeroot dpkg-deb -b "${destination}" "${destination}.deb" >> "${DEST}"/debug/install.log 2>&1
 	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
 	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"
+
+	# Can be removed after 21.05
+	# create meta package for upgrade
+	local DEB_BRANCH=("legacy" "current" "edge")
+	for deb_branch in "${DEB_BRANCH[@]}"; do
+
+	local destination=${bsptempdir}/${RELEASE}/linux-${RELEASE}-root-${deb_branch}-${BOARD}_${REVISION}_${ARCH}
+	mkdir -p "${destination}"/DEBIAN
+	cat <<-EOF > "${destination}"/DEBIAN/control
+	Package: linux-${RELEASE}-root-${deb_branch}-${BOARD}
+	Version: $REVISION
+	Architecture: all
+	Priority: optional
+	Section: oldlibs
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Depends: ${BSP_CLI_PACKAGE_NAME}
+	Description: This is a transitional package. It can safely be removed.
+	EOF
+	display_alert "Building meta  package" "$CHOSEN_ROOTFS" "info"
+	fakeroot dpkg-deb -b "${destination}" "${destination}.deb" >> "${DEST}"/debug/install.log 2>&1
+	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
+	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"
+	done
+	# Can be removed after 21.05
+
 	# cleanup
 	rm -rf ${bsptempdir}
 }

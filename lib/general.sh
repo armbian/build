@@ -657,7 +657,7 @@ adding_packages()
 		# add if not already there
 		aptly repo search -architectures="${arch}" -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${1}" 'Name (% '${name}'), $Version (='${version}'), $Architecture (='${arch}')' &>/dev/null
 		if [[ $? -ne 0 ]]; then
-			display_alert "Adding" "$name" "info"
+			display_alert "Adding ${1}" "$name" "info"
 			aptly repo add -force-replace=true -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${1}" "${f}" &>/dev/null
 		fi
 	done
@@ -674,7 +674,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal" "hirsute" "sid")
+	local distributions=("bionic" "buster" "bullseye" "focal" "hirsute" "sid")
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -688,10 +688,11 @@ addtorepo()
 
 		# create local repository if not exist
 		if [[ -z $(aptly repo list -config="${SCRIPTPATH}config/${REPO_CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}") ]]; then
-			display_alert "Creating section" "$release" "info"
+			display_alert "Creating section" "main" "info"
 			aptly repo create -config="${SCRIPTPATH}config/${REPO_CONFIG}" -distribution="${release}" -component="main" \
 			-comment="Armbian main repository" "${release}" >/dev/null
 		fi
+
 		if [[ -z $(aptly repo list -config="${SCRIPTPATH}config/${REPO_CONFIG}" -raw | awk '{print $(NF)}' | grep "^utils") ]]; then
 			aptly repo create -config="${SCRIPTPATH}config/${REPO_CONFIG}" -distribution="${release}" -component="utils" \
 			-comment="Armbian utilities (backwards compatibility)" utils >/dev/null
@@ -717,7 +718,7 @@ addtorepo()
 
 		# adding main distribution packages
 		if find "${DEB_STORAGE}/${release}" -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
-			adding_packages "$release" "/${release}" "release"
+			adding_packages "${release}-utils" "/${release}" "release packages"
 		else
 			# workaround - add dummy package to not trigger error
 			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" "${SCRIPTPATH}config/templates/example.deb" >/dev/null
@@ -746,9 +747,17 @@ addtorepo()
 		desknum=$(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-utils" | grep "Number of packages" | awk '{print $NF}')
 
 		if [ $mainnum -gt 0 ] && [ $utilnum -gt 0 ] && [ $desknum -gt 0 ]; then
+
 			# publish
-			aptly publish -force-overwrite -passphrase="${GPG_PASS}" -origin=Armbian -label=Armbian -config="${SCRIPTPATH}config/${REPO_CONFIG}" -component="${COMPONENTS// /,}" \
-				--distribution="${release}" repo "${release}" ${COMPONENTS//main/} >/dev/null
+			aptly publish \
+			-acquire-by-hash \
+			-passphrase="${GPG_PASS}" \
+			-origin="Armbian" \
+			-label="Armbian" \
+			-config="${SCRIPTPATH}config/${REPO_CONFIG}" \
+			-component="${COMPONENTS// /,}" \
+			-distribution="${release}" repo "${release}" ${COMPONENTS//main/} >/dev/null
+
 			if [[ $? -ne 0 ]]; then
 				display_alert "Publishing failed" "${release}" "err"
 				errors=$((errors+1))
