@@ -39,7 +39,10 @@ build tools</h3>
     
 - x64 machine with at least 2GB of memory and ~35GB of disk space for a VM, container or native OS,
 - Ubuntu Hirsute 21.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised,
+  - Hirsuite is required for newer non-LTS releases.. ex: Bullseye, Sid, Groovy, Hirsuite
+  - If building for LTS releases.. ex: focal, bionic, buster, It is possible to use Ubuntu 20.04 Focal, but is not supported.
 - superuser rights (configured sudo or root access).
+
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
