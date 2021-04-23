@@ -1,8 +1,9 @@
 # install custom xorg for pinebook-pro
-cp -R "${SRC}"/packages/bsp/pinebook-pro/xorg.conf "${destination}"/etc/X11/xorg.conf.d/
+cp -R "${SRC}"/packages/bsp/pinebook-pro/xorg.conf "${destination}"/etc/X11/
+
 
 # install custom asound state for pinebook-pro
-cp -R "${SRC}"/packages/asound.state/ "${destination}"/etc/
+cp -R "${SRC}"/packages/blobs/asound.state/asound.state.pinebook-pro "${destination}"/etc/
 
 ## touchpad and keyboard tweaks
 # from https://github.com/ayufan-rock64/linux-package/tree/master/root-pinebookpro
