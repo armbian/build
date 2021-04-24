@@ -42,40 +42,40 @@ compilation_prepare()
 
 	if [[ "${version}" == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 || \
 	"$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == mt7623 || "$LINUXFAMILY" == mvebu ]]; then
-		display_alert "Adjustin" "packaging" "info"
+		display_alert "Adjusting" "packaging" "info"
 		cd "$kerneldir" || exit
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y.patch" "applying"
 	fi
 
 	if [[ "${version}" == "4.14."* ]] && [[ "$LINUXFAMILY" == s5p6818 || "$LINUXFAMILY" == mvebu64 || \
 	"$LINUXFAMILY" == imx7d || "$LINUXFAMILY" == odroidxu4 || "$LINUXFAMILY" == mvebu ]]; then
-		display_alert "Adjustin" "packaging" "info"
+		display_alert "Adjusting" "packaging" "info"
 		cd "$kerneldir" || exit
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.14.y.patch" "applying"
 	fi
 
 	if [[ "${version}" == "4.4."* || "${version}" == "4.9."* ]] && \
 	[[ "$LINUXFAMILY" == rockpis || "$LINUXFAMILY" == rk3399 ]]; then
-		display_alert "Adjustin" "packaging" "info"
+		display_alert "Adjusting" "packaging" "info"
 		cd "$kerneldir" || exit
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rk3399.patch" "applying"
 	fi
 
 	if [[ "${version}" == "4.4."* ]] && \
 	[[ "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == station* ]]; then
-		display_alert "Adjustin" "packaging" "info"
+		display_alert "Adjusting" "packaging" "info"
 		cd "$kerneldir" || exit
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rockchip64.patch" "applying"
 	fi
 
 	if [[ "${version}" == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip || "$LINUXFAMILY" == rk322x ]]; then
-                display_alert "Adjustin" "packaging" "info"
+                display_alert "Adjusting" "packaging" "info"
                 cd "$kerneldir" || exit
                 process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y.patch" "applying"
         fi
 
 	if [[ "${version}" == "4.9."* ]] && [[ "$LINUXFAMILY" == meson64 || "$LINUXFAMILY" == odroidc4 ]]; then
-		display_alert "Adjustin" "packaging" "info"
+		display_alert "Adjusting" "packaging" "info"
 		cd "$kerneldir" || exit
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.9.y.patch" "applying"
 	fi
@@ -586,7 +586,7 @@ compilation_prepare()
 
 
 	if linux-version compare $version ge 4.4 && linux-version compare $version lt 5.8; then
-		display_alert "Adjustin" "Framebuffer driver for ST7789 IPS display" "info"
+		display_alert "Adjusting" "Framebuffer driver for ST7789 IPS display" "info"
 		process_patch_file "${SRC}/patch/misc/fbtft-st7789v-invert-color.patch" "applying"
 	fi
 
