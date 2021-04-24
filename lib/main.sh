@@ -376,6 +376,9 @@ else
 
 fi
 
+# give config a chance modify CTHREADS programatically. A build server may work beter with hyperthreads-1 for example.
+[[ $(type -t config_post_determine_cthreads) == function ]] && config_post_determine_cthreads
+
 if [[ $BETA == yes ]]; then
 	IMAGE_TYPE=nightly
 elif [[ $BETA != "yes" && $BUILD_ALL == yes && -n $GPG_PASS ]]; then

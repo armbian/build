@@ -289,6 +289,9 @@ install_common()
 		install_deb_chroot "linux-dtb-${BRANCH}-${LINUXFAMILY}" "remote"
 		[[ $INSTALL_HEADERS == yes ]] && install_deb_chroot "linux-headers-${BRANCH}-${LINUXFAMILY}" "remote"
 	fi
+	
+	# hook, allow config to do more with the installed kernel/headers
+	[[ $(type -t config_post_install_kernel_debs) == function ]] && config_post_install_kernel_debs
 
 	# install board support packages
 	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
@@ -667,5 +670,8 @@ post_debootstrap_tweaks()
 	chroot "${SDCARD}" /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/initctl"
 	chroot "${SDCARD}" /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon"
 	rm -f "${SDCARD}"/usr/sbin/policy-rc.d "${SDCARD}/usr/bin/${QEMU_BINARY}"
+
+	# delegate back to config
+	[[ $(type -t config_post_debootstrap_tweaks) == function ]] && config_post_debootstrap_tweaks
 
 }

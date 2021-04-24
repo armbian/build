@@ -307,6 +307,9 @@ fi
 	# execute $LINUXFAMILY-specific tweaks
 	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp
 
+	# family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks
+	[[ $(type -t config_tweaks_bsp) == function ]] && config_tweaks_bsp
+
 	# add some summary to the image
 	fingerprint_image "${destination}/etc/armbian.txt"
 

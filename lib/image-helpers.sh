@@ -108,6 +108,10 @@ customize_image()
 {
 	# for users that need to prepare files at host
 	[[ -f $USERPATCHES_PATH/customize-image-host.sh ]] && source "$USERPATCHES_PATH"/customize-image-host.sh
+
+	# let user customize further via function
+	[[ $(type -t image_tweaks_pre_customize) == function ]] && image_tweaks_pre_customize
+
 	cp "$USERPATCHES_PATH"/customize-image.sh "${SDCARD}"/tmp/customize-image.sh
 	chmod +x "${SDCARD}"/tmp/customize-image.sh
 	mkdir -p "${SDCARD}"/tmp/overlay
@@ -121,6 +125,10 @@ customize_image()
 	if [[ $CUSTOMIZE_IMAGE_RC != 0 ]]; then
 		exit_with_error "customize-image.sh exited with error (rc: $CUSTOMIZE_IMAGE_RC)"
 	fi
+
+	# let user customize further, out of the chroot.
+	[[ $(type -t image_tweaks_post_customize) == function ]] && image_tweaks_post_customize
+
 } #############################################################################
 
 install_deb_chroot()

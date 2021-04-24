@@ -123,6 +123,9 @@ fi
 # load architecture defaults
 source "${SRC}/config/sources/${ARCH}.conf"
 
+# give the config a chance to override the family/arch defaults
+[[ $(type -t config_tweaks_post_family_config) == function ]] && config_tweaks_post_family_config
+
 # Myy : Menu configuration for choosing desktop configurations
 
 show_menu() {
@@ -534,6 +537,7 @@ if [[ -f $USERPATCHES_PATH/lib.config ]]; then
 	source "$USERPATCHES_PATH"/lib.config
 fi
 
+# For user override, using a function.
 if [[ "$(type -t user_config)" == "function" ]]; then
 	display_alert "Invoke function with user override" "user_config" "info"
 	user_config
@@ -602,6 +606,12 @@ display_alert "PACKAGE_LIST : \"${PACKAGE_LIST}\"" >> "${DEST}"/debug/output.log
 
 # Give the option to configure DNS server used in the chroot during the build process
 [[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
+
+# For final user override, using a function, after all aggregations are done.
+if [[ "$(type -t user_config_post_aggregate_packages)" == "function" ]]; then
+	display_alert "Invoke function with user override" "user_config_post_aggregate_packages" "info"
+	user_config_post_aggregate_packages
+fi
 
 # debug
 cat <<-EOF >> "${DEST}"/debug/output.log
