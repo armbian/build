@@ -185,8 +185,10 @@ fi
 # check if Docker version is high enough
 [[ $(systemd-detect-virt) == 'none' ]] && dockerversion=$(docker version | grep runc -A1 | tail -n 1 | awk '{print $2}')
 if [[ "${1}" == docker && -n ${dockerversion} ]] && linux-version compare "${dockerversion}" lt 1.0.0-rc93; then
-	display_alert "Your Docker engine is too old!" "Required > 1.0.0-rc92" "err"
-	exit 1
+	display_alert "Your Docker engine is too old - using Docker from nigtly builds" "Required > 1.0.0-rc92" "wrn"
+	sed -i "s/edge/nightly/" /etc/apt/sources.list.d/docker.list
+	apt-get update
+	apt-get upgrade -y -qq
 fi
 
 # Create userpatches directory if not exists
