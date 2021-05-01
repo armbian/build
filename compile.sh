@@ -171,7 +171,7 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 	do
 	[[ ! $(command -v "${i}") ]] && install_packages+=${i}" "
 	done
-	[[ -z "${install_packages}" ]] && apt-get update;apt-get install -y -qq --no-install-recommends "${install_packages}"
+	[[ -z "${install_packages}" ]] && apt-get update;apt-get install -y -qq --no-install-recommends ${install_packages}
 
 	curl -fsSL "https://download.docker.com/linux/${codeid}/gpg" | apt-key add -qq - > /dev/null 2>&1
 	export DEBIAN_FRONTEND=noninteractive
