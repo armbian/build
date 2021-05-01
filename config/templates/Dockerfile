@@ -1,7 +1,5 @@
 FROM ubuntu:21.04
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get -y install joe software-properties-common
-RUN add-apt-repository "deb http://archive.ubuntu.com/ubuntu hirsute main universe restricted multiverse"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        gnupg \
