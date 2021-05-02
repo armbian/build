@@ -1,7 +1,7 @@
 FROM ubuntu:21.04
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get -y install joe software-properties-common
+RUN apt-get install -y --no-install-recommends \
        gnupg \
        gnupg1 \
        gpgv1 \
