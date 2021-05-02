@@ -158,7 +158,7 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 
 	# add exception for Ubuntu Focal until Docker provides dedicated binary
 	codename=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
-	codeid=$(cat /etc/os-release | grep ^NAME | cut -d"=" -f2 | awk '{print tolower($0)}' | tr -d '"')
+	codeid=$(cat /etc/os-release | grep ^NAME | cut -d"=" -f2 | awk '{print tolower($0)}' | tr -d '"' | awk '{print $1}')
 	[[ "${codename}" == "debbie" ]] && codename="buster" && codeid="debian"
 	[[ "${codename}" == "ulyana" ]] && codename="focal" && codeid="ubuntu"
 
