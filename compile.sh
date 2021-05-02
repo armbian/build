@@ -157,10 +157,10 @@ fi
 if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]; then
 
 	# add exception for Ubuntu Focal until Docker provides dedicated binary
-	codename=$(lsb_release -sc)
-	codeid=$(lsb_release -is | awk '{print tolower($0)}')
-	[[ "${codeid}" == "linuxmint" && "${codename}" == "debbie" ]] && codename="buster" && codeid="debian"
-	[[ "${codename}" == "focal" || "${codename}" == "ulyana" ]] && codename="bionic" && codeid="ubuntu"
+	codename=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
+	codeid=$(cat /etc/os-release | grep ^NAME | cut -d"=" -f2 | awk '{print tolower($0)}' | tr -d '"' | awk '{print $1}')
+	[[ "${codename}" == "debbie" ]] && codename="buster" && codeid="debian"
+	[[ "${codename}" == "ulyana" ]] && codename="focal" && codeid="ubuntu"
 
 	display_alert "Docker not installed." "Installing" "Info"
 	echo "deb [arch=amd64] https://download.docker.com/linux/${codeid} ${codename} edge" > /etc/apt/sources.list.d/docker.list
@@ -171,7 +171,7 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 	do
 	[[ ! $(command -v "${i}") ]] && install_packages+=${i}" "
 	done
-	[[ -z "${install_packages}" ]] && apt-get update;apt-get install -y -qq --no-install-recommends "${install_packages}"
+	[[ -z "${install_packages}" ]] && apt-get update;apt-get install -y -qq --no-install-recommends ${install_packages}
 
 	curl -fsSL "https://download.docker.com/linux/${codeid}/gpg" | apt-key add -qq - > /dev/null 2>&1
 	export DEBIAN_FRONTEND=noninteractive
@@ -180,6 +180,15 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 	display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
 	"${SRC}/compile.sh" "$@"
 	exit $?
+fi
+
+# check if Docker version is high enough
+[[ $(systemd-detect-virt) == 'none' ]] && dockerversion=$(docker version | grep runc -A1 | tail -n 1 | awk '{print $2}')
+if [[ "${1}" == docker && -n ${dockerversion} ]] && linux-version compare "${dockerversion}" lt 1.0.0-rc93; then
+	display_alert "Your Docker engine is too old - using Docker from nigtly builds" "Required > 1.0.0-rc92" "wrn"
+	sed -i "s/edge/nightly/" /etc/apt/sources.list.d/docker.list
+	apt-get update
+	apt-get upgrade -y -qq
 fi
 
 # Create userpatches directory if not exists
