@@ -1,0 +1,592 @@
+diff --git a/Makefile b/Makefile
+index 355e05ba065cb..f473f4fe5a0c3 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 5
+ PATCHLEVEL = 4
+-SUBLEVEL = 114
++SUBLEVEL = 115
+ EXTRAVERSION =
+ NAME = Kleptomaniac Octopus
+ 
+diff --git a/arch/arm/boot/dts/omap3.dtsi b/arch/arm/boot/dts/omap3.dtsi
+index 4043ecb380168..0c8fcfb292bf9 100644
+--- a/arch/arm/boot/dts/omap3.dtsi
++++ b/arch/arm/boot/dts/omap3.dtsi
+@@ -23,6 +23,9 @@
+ 		i2c0 = &i2c1;
+ 		i2c1 = &i2c2;
+ 		i2c2 = &i2c3;
++		mmc0 = &mmc1;
++		mmc1 = &mmc2;
++		mmc2 = &mmc3;
+ 		serial0 = &uart1;
+ 		serial1 = &uart2;
+ 		serial2 = &uart3;
+diff --git a/arch/arm64/boot/dts/allwinner/sun50i-a64-pine64-lts.dts b/arch/arm64/boot/dts/allwinner/sun50i-a64-pine64-lts.dts
+index 8d15164f2a3c6..7eb252adf9f03 100644
+--- a/arch/arm64/boot/dts/allwinner/sun50i-a64-pine64-lts.dts
++++ b/arch/arm64/boot/dts/allwinner/sun50i-a64-pine64-lts.dts
+@@ -13,5 +13,5 @@
+ };
+ 
+ &mmc0 {
+-	cd-gpios = <&pio 5 6 GPIO_ACTIVE_LOW>; /* PF6 push-push switch */
++	broken-cd;		/* card detect is broken on *some* boards */
+ };
+diff --git a/arch/csky/Kconfig b/arch/csky/Kconfig
+index 48b2e1b591193..4f48a2f0513b7 100644
+--- a/arch/csky/Kconfig
++++ b/arch/csky/Kconfig
+@@ -220,7 +220,7 @@ config FORCE_MAX_ZONEORDER
+ 	int "Maximum zone order"
+ 	default "11"
+ 
+-config RAM_BASE
++config DRAM_BASE
+ 	hex "DRAM start addr (the same with memory-section in dts)"
+ 	default 0x0
+ 
+diff --git a/arch/csky/include/asm/page.h b/arch/csky/include/asm/page.h
+index 9738eacefdc7e..62bb307459caf 100644
+--- a/arch/csky/include/asm/page.h
++++ b/arch/csky/include/asm/page.h
+@@ -28,7 +28,7 @@
+ #define SSEG_SIZE	0x20000000
+ #define LOWMEM_LIMIT	(SSEG_SIZE * 2)
+ 
+-#define PHYS_OFFSET_OFFSET (CONFIG_RAM_BASE & (SSEG_SIZE - 1))
++#define PHYS_OFFSET_OFFSET (CONFIG_DRAM_BASE & (SSEG_SIZE - 1))
+ 
+ #ifndef __ASSEMBLY__
+ 
+diff --git a/arch/ia64/mm/discontig.c b/arch/ia64/mm/discontig.c
+index 4f33f6e7e2065..41d243c0c6267 100644
+--- a/arch/ia64/mm/discontig.c
++++ b/arch/ia64/mm/discontig.c
+@@ -95,7 +95,7 @@ static int __init build_node_maps(unsigned long start, unsigned long len,
+  * acpi_boot_init() (which builds the node_to_cpu_mask array) hasn't been
+  * called yet.  Note that node 0 will also count all non-existent cpus.
+  */
+-static int __meminit early_nr_cpus_node(int node)
++static int early_nr_cpus_node(int node)
+ {
+ 	int cpu, n = 0;
+ 
+@@ -110,7 +110,7 @@ static int __meminit early_nr_cpus_node(int node)
+  * compute_pernodesize - compute size of pernode data
+  * @node: the node id.
+  */
+-static unsigned long __meminit compute_pernodesize(int node)
++static unsigned long compute_pernodesize(int node)
+ {
+ 	unsigned long pernodesize = 0, cpus;
+ 
+@@ -367,7 +367,7 @@ static void __init reserve_pernode_space(void)
+ 	}
+ }
+ 
+-static void __meminit scatter_node_data(void)
++static void scatter_node_data(void)
+ {
+ 	pg_data_t **dst;
+ 	int node;
+diff --git a/arch/s390/kernel/entry.S b/arch/s390/kernel/entry.S
+index c544b7a11ebb3..5cba1815b8f8f 100644
+--- a/arch/s390/kernel/entry.S
++++ b/arch/s390/kernel/entry.S
+@@ -993,6 +993,7 @@ ENDPROC(ext_int_handler)
+  * Load idle PSW. The second "half" of this function is in .Lcleanup_idle.
+  */
+ ENTRY(psw_idle)
++	stg	%r14,(__SF_GPRS+8*8)(%r15)
+ 	stg	%r3,__SF_EMPTY(%r15)
+ 	larl	%r1,.Lpsw_idle_lpsw+4
+ 	stg	%r1,__SF_EMPTY+8(%r15)
+diff --git a/arch/s390/kernel/ptrace.c b/arch/s390/kernel/ptrace.c
+index c6aef2ecf2890..ad74472ce967e 100644
+--- a/arch/s390/kernel/ptrace.c
++++ b/arch/s390/kernel/ptrace.c
+@@ -867,6 +867,7 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
+ asmlinkage long do_syscall_trace_enter(struct pt_regs *regs)
+ {
+ 	unsigned long mask = -1UL;
++	long ret = -1;
+ 
+ 	/*
+ 	 * The sysc_tracesys code in entry.S stored the system
+@@ -878,27 +879,33 @@ asmlinkage long do_syscall_trace_enter(struct pt_regs *regs)
+ 		 * Tracing decided this syscall should not happen. Skip
+ 		 * the system call and the system call restart handling.
+ 		 */
+-		clear_pt_regs_flag(regs, PIF_SYSCALL);
+-		return -1;
++		goto skip;
+ 	}
+ 
+ 	/* Do the secure computing check after ptrace. */
+ 	if (secure_computing(NULL)) {
+ 		/* seccomp failures shouldn't expose any additional code. */
+-		return -1;
++		goto skip;
+ 	}
+ 
+ 	if (unlikely(test_thread_flag(TIF_SYSCALL_TRACEPOINT)))
+-		trace_sys_enter(regs, regs->gprs[2]);
++		trace_sys_enter(regs, regs->int_code & 0xffff);
+ 
+ 	if (is_compat_task())
+ 		mask = 0xffffffff;
+ 
+-	audit_syscall_entry(regs->gprs[2], regs->orig_gpr2 & mask,
++	audit_syscall_entry(regs->int_code & 0xffff, regs->orig_gpr2 & mask,
+ 			    regs->gprs[3] &mask, regs->gprs[4] &mask,
+ 			    regs->gprs[5] &mask);
+ 
++	if ((signed long)regs->gprs[2] >= NR_syscalls) {
++		regs->gprs[2] = -ENOSYS;
++		ret = -ENOSYS;
++	}
+ 	return regs->gprs[2];
++skip:
++	clear_pt_regs_flag(regs, PIF_SYSCALL);
++	return ret;
+ }
+ 
+ asmlinkage void do_syscall_trace_exit(struct pt_regs *regs)
+diff --git a/arch/x86/events/intel/core.c b/arch/x86/events/intel/core.c
+index 90760393a9643..9cb3266e148dc 100644
+--- a/arch/x86/events/intel/core.c
++++ b/arch/x86/events/intel/core.c
+@@ -3999,7 +3999,7 @@ static const struct x86_cpu_desc isolation_ucodes[] = {
+ 	INTEL_CPU_DESC(INTEL_FAM6_BROADWELL_D,		 3, 0x07000009),
+ 	INTEL_CPU_DESC(INTEL_FAM6_BROADWELL_D,		 4, 0x0f000009),
+ 	INTEL_CPU_DESC(INTEL_FAM6_BROADWELL_D,		 5, 0x0e000002),
+-	INTEL_CPU_DESC(INTEL_FAM6_BROADWELL_X,		 2, 0x0b000014),
++	INTEL_CPU_DESC(INTEL_FAM6_BROADWELL_X,		 1, 0x0b000014),
+ 	INTEL_CPU_DESC(INTEL_FAM6_SKYLAKE_X,		 3, 0x00000021),
+ 	INTEL_CPU_DESC(INTEL_FAM6_SKYLAKE_X,		 4, 0x00000000),
+ 	INTEL_CPU_DESC(INTEL_FAM6_SKYLAKE_X,		 5, 0x00000000),
+diff --git a/arch/x86/events/intel/uncore_snbep.c b/arch/x86/events/intel/uncore_snbep.c
+index ad20220af303a..40751af62dd3d 100644
+--- a/arch/x86/events/intel/uncore_snbep.c
++++ b/arch/x86/events/intel/uncore_snbep.c
+@@ -1093,7 +1093,6 @@ enum {
+ 	SNBEP_PCI_QPI_PORT0_FILTER,
+ 	SNBEP_PCI_QPI_PORT1_FILTER,
+ 	BDX_PCI_QPI_PORT2_FILTER,
+-	HSWEP_PCI_PCU_3,
+ };
+ 
+ static int snbep_qpi_hw_config(struct intel_uncore_box *box, struct perf_event *event)
+@@ -2750,22 +2749,33 @@ static struct intel_uncore_type *hswep_msr_uncores[] = {
+ 	NULL,
+ };
+ 
+-void hswep_uncore_cpu_init(void)
++#define HSWEP_PCU_DID			0x2fc0
++#define HSWEP_PCU_CAPID4_OFFET		0x94
++#define hswep_get_chop(_cap)		(((_cap) >> 6) & 0x3)
++
++static bool hswep_has_limit_sbox(unsigned int device)
+ {
+-	int pkg = boot_cpu_data.logical_proc_id;
++	struct pci_dev *dev = pci_get_device(PCI_VENDOR_ID_INTEL, device, NULL);
++	u32 capid4;
++
++	if (!dev)
++		return false;
++
++	pci_read_config_dword(dev, HSWEP_PCU_CAPID4_OFFET, &capid4);
++	if (!hswep_get_chop(capid4))
++		return true;
+ 
++	return false;
++}
++
++void hswep_uncore_cpu_init(void)
++{
+ 	if (hswep_uncore_cbox.num_boxes > boot_cpu_data.x86_max_cores)
+ 		hswep_uncore_cbox.num_boxes = boot_cpu_data.x86_max_cores;
+ 
+ 	/* Detect 6-8 core systems with only two SBOXes */
+-	if (uncore_extra_pci_dev[pkg].dev[HSWEP_PCI_PCU_3]) {
+-		u32 capid4;
+-
+-		pci_read_config_dword(uncore_extra_pci_dev[pkg].dev[HSWEP_PCI_PCU_3],
+-				      0x94, &capid4);
+-		if (((capid4 >> 6) & 0x3) == 0)
+-			hswep_uncore_sbox.num_boxes = 2;
+-	}
++	if (hswep_has_limit_sbox(HSWEP_PCU_DID))
++		hswep_uncore_sbox.num_boxes = 2;
+ 
+ 	uncore_msr_uncores = hswep_msr_uncores;
+ }
+@@ -3028,11 +3038,6 @@ static const struct pci_device_id hswep_uncore_pci_ids[] = {
+ 		.driver_data = UNCORE_PCI_DEV_DATA(UNCORE_EXTRA_PCI_DEV,
+ 						   SNBEP_PCI_QPI_PORT1_FILTER),
+ 	},
+-	{ /* PCU.3 (for Capability registers) */
+-		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x2fc0),
+-		.driver_data = UNCORE_PCI_DEV_DATA(UNCORE_EXTRA_PCI_DEV,
+-						   HSWEP_PCI_PCU_3),
+-	},
+ 	{ /* end: all zeroes */ }
+ };
+ 
+@@ -3124,27 +3129,18 @@ static struct event_constraint bdx_uncore_pcu_constraints[] = {
+ 	EVENT_CONSTRAINT_END
+ };
+ 
++#define BDX_PCU_DID			0x6fc0
++
+ void bdx_uncore_cpu_init(void)
+ {
+-	int pkg = topology_phys_to_logical_pkg(boot_cpu_data.phys_proc_id);
+-
+ 	if (bdx_uncore_cbox.num_boxes > boot_cpu_data.x86_max_cores)
+ 		bdx_uncore_cbox.num_boxes = boot_cpu_data.x86_max_cores;
+ 	uncore_msr_uncores = bdx_msr_uncores;
+ 
+-	/* BDX-DE doesn't have SBOX */
+-	if (boot_cpu_data.x86_model == 86) {
+-		uncore_msr_uncores[BDX_MSR_UNCORE_SBOX] = NULL;
+ 	/* Detect systems with no SBOXes */
+-	} else if (uncore_extra_pci_dev[pkg].dev[HSWEP_PCI_PCU_3]) {
+-		struct pci_dev *pdev;
+-		u32 capid4;
+-
+-		pdev = uncore_extra_pci_dev[pkg].dev[HSWEP_PCI_PCU_3];
+-		pci_read_config_dword(pdev, 0x94, &capid4);
+-		if (((capid4 >> 6) & 0x3) == 0)
+-			bdx_msr_uncores[BDX_MSR_UNCORE_SBOX] = NULL;
+-	}
++	if ((boot_cpu_data.x86_model == 86) || hswep_has_limit_sbox(BDX_PCU_DID))
++		uncore_msr_uncores[BDX_MSR_UNCORE_SBOX] = NULL;
++
+ 	hswep_uncore_pcu.constraints = bdx_uncore_pcu_constraints;
+ }
+ 
+@@ -3365,11 +3361,6 @@ static const struct pci_device_id bdx_uncore_pci_ids[] = {
+ 		.driver_data = UNCORE_PCI_DEV_DATA(UNCORE_EXTRA_PCI_DEV,
+ 						   BDX_PCI_QPI_PORT2_FILTER),
+ 	},
+-	{ /* PCU.3 (for Capability registers) */
+-		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x6fc0),
+-		.driver_data = UNCORE_PCI_DEV_DATA(UNCORE_EXTRA_PCI_DEV,
+-						   HSWEP_PCI_PCU_3),
+-	},
+ 	{ /* end: all zeroes */ }
+ };
+ 
+diff --git a/arch/x86/kernel/crash.c b/arch/x86/kernel/crash.c
+index ff25a2ea271cf..0c319d09378dd 100644
+--- a/arch/x86/kernel/crash.c
++++ b/arch/x86/kernel/crash.c
+@@ -364,7 +364,7 @@ int crash_setup_memmap_entries(struct kimage *image, struct boot_params *params)
+ 	struct crash_memmap_data cmd;
+ 	struct crash_mem *cmem;
+ 
+-	cmem = vzalloc(sizeof(struct crash_mem));
++	cmem = vzalloc(struct_size(cmem, ranges, 1));
+ 	if (!cmem)
+ 		return -ENOMEM;
+ 
+diff --git a/drivers/gpio/gpio-omap.c b/drivers/gpio/gpio-omap.c
+index d0f27084a9420..ce6954390cfd4 100644
+--- a/drivers/gpio/gpio-omap.c
++++ b/drivers/gpio/gpio-omap.c
+@@ -29,6 +29,7 @@
+ #define OMAP4_GPIO_DEBOUNCINGTIME_MASK 0xFF
+ 
+ struct gpio_regs {
++	u32 sysconfig;
+ 	u32 irqenable1;
+ 	u32 irqenable2;
+ 	u32 wake_en;
+@@ -1058,6 +1059,7 @@ static void omap_gpio_init_context(struct gpio_bank *p)
+ 	const struct omap_gpio_reg_offs *regs = p->regs;
+ 	void __iomem *base = p->base;
+ 
++	p->context.sysconfig	= readl_relaxed(base + regs->sysconfig);
+ 	p->context.ctrl		= readl_relaxed(base + regs->ctrl);
+ 	p->context.oe		= readl_relaxed(base + regs->direction);
+ 	p->context.wake_en	= readl_relaxed(base + regs->wkup_en);
+@@ -1077,6 +1079,7 @@ static void omap_gpio_restore_context(struct gpio_bank *bank)
+ 	const struct omap_gpio_reg_offs *regs = bank->regs;
+ 	void __iomem *base = bank->base;
+ 
++	writel_relaxed(bank->context.sysconfig, base + regs->sysconfig);
+ 	writel_relaxed(bank->context.wake_en, base + regs->wkup_en);
+ 	writel_relaxed(bank->context.ctrl, base + regs->ctrl);
+ 	writel_relaxed(bank->context.leveldetect0, base + regs->leveldetect0);
+@@ -1104,6 +1107,10 @@ static void omap_gpio_idle(struct gpio_bank *bank, bool may_lose_context)
+ 
+ 	bank->saved_datain = readl_relaxed(base + bank->regs->datain);
+ 
++	/* Save syconfig, it's runtime value can be different from init value */
++	if (bank->loses_context)
++		bank->context.sysconfig = readl_relaxed(base + bank->regs->sysconfig);
++
+ 	if (!bank->enabled_non_wakeup_gpios)
+ 		goto update_gpio_context_count;
+ 
+@@ -1259,6 +1266,7 @@ static int gpio_omap_cpu_notifier(struct notifier_block *nb,
+ 
+ static const struct omap_gpio_reg_offs omap2_gpio_regs = {
+ 	.revision =		OMAP24XX_GPIO_REVISION,
++	.sysconfig =		OMAP24XX_GPIO_SYSCONFIG,
+ 	.direction =		OMAP24XX_GPIO_OE,
+ 	.datain =		OMAP24XX_GPIO_DATAIN,
+ 	.dataout =		OMAP24XX_GPIO_DATAOUT,
+@@ -1282,6 +1290,7 @@ static const struct omap_gpio_reg_offs omap2_gpio_regs = {
+ 
+ static const struct omap_gpio_reg_offs omap4_gpio_regs = {
+ 	.revision =		OMAP4_GPIO_REVISION,
++	.sysconfig =		OMAP4_GPIO_SYSCONFIG,
+ 	.direction =		OMAP4_GPIO_OE,
+ 	.datain =		OMAP4_GPIO_DATAIN,
+ 	.dataout =		OMAP4_GPIO_DATAOUT,
+diff --git a/drivers/hid/hid-alps.c b/drivers/hid/hid-alps.c
+index d33f5abc8f64d..2477b2a3f7c3a 100644
+--- a/drivers/hid/hid-alps.c
++++ b/drivers/hid/hid-alps.c
+@@ -762,6 +762,7 @@ static int alps_input_configured(struct hid_device *hdev, struct hid_input *hi)
+ 
+ 		if (input_register_device(data->input2)) {
+ 			input_free_device(input2);
++			ret = -ENOENT;
+ 			goto exit;
+ 		}
+ 	}
+diff --git a/drivers/hid/hid-google-hammer.c b/drivers/hid/hid-google-hammer.c
+index aeb351658ad34..505ed76a830e8 100644
+--- a/drivers/hid/hid-google-hammer.c
++++ b/drivers/hid/hid-google-hammer.c
+@@ -467,6 +467,8 @@ static int hammer_probe(struct hid_device *hdev,
+ 
+ 
+ static const struct hid_device_id hammer_devices[] = {
++	{ HID_DEVICE(BUS_USB, HID_GROUP_GENERIC,
++		     USB_VENDOR_ID_GOOGLE, USB_DEVICE_ID_GOOGLE_DON) },
+ 	{ HID_DEVICE(BUS_USB, HID_GROUP_GENERIC,
+ 		     USB_VENDOR_ID_GOOGLE, USB_DEVICE_ID_GOOGLE_HAMMER) },
+ 	{ HID_DEVICE(BUS_USB, HID_GROUP_GENERIC,
+diff --git a/drivers/hid/hid-ids.h b/drivers/hid/hid-ids.h
+index d004f5645b30c..d9e8105045a6d 100644
+--- a/drivers/hid/hid-ids.h
++++ b/drivers/hid/hid-ids.h
+@@ -488,6 +488,7 @@
+ #define USB_DEVICE_ID_GOOGLE_MASTERBALL	0x503c
+ #define USB_DEVICE_ID_GOOGLE_MAGNEMITE	0x503d
+ #define USB_DEVICE_ID_GOOGLE_MOONBALL	0x5044
++#define USB_DEVICE_ID_GOOGLE_DON	0x5050
+ 
+ #define USB_VENDOR_ID_GOTOP		0x08f2
+ #define USB_DEVICE_ID_SUPER_Q2		0x007f
+diff --git a/drivers/hid/wacom_wac.c b/drivers/hid/wacom_wac.c
+index bf0621e446199..b21cf764afc0d 100644
+--- a/drivers/hid/wacom_wac.c
++++ b/drivers/hid/wacom_wac.c
+@@ -2533,7 +2533,7 @@ static void wacom_wac_finger_slot(struct wacom_wac *wacom_wac,
+ 	    !wacom_wac->shared->is_touch_on) {
+ 		if (!wacom_wac->shared->touch_down)
+ 			return;
+-		prox = 0;
++		prox = false;
+ 	}
+ 
+ 	wacom_wac->hid_data.num_received++;
+diff --git a/drivers/net/ethernet/cavium/liquidio/cn66xx_regs.h b/drivers/net/ethernet/cavium/liquidio/cn66xx_regs.h
+index b248966837b4c..7aad40b2aa736 100644
+--- a/drivers/net/ethernet/cavium/liquidio/cn66xx_regs.h
++++ b/drivers/net/ethernet/cavium/liquidio/cn66xx_regs.h
+@@ -412,7 +412,7 @@
+ 	   | CN6XXX_INTR_M0UNWI_ERR             \
+ 	   | CN6XXX_INTR_M1UPB0_ERR             \
+ 	   | CN6XXX_INTR_M1UPWI_ERR             \
+-	   | CN6XXX_INTR_M1UPB0_ERR             \
++	   | CN6XXX_INTR_M1UNB0_ERR             \
+ 	   | CN6XXX_INTR_M1UNWI_ERR             \
+ 	   | CN6XXX_INTR_INSTR_DB_OF_ERR        \
+ 	   | CN6XXX_INTR_SLIST_DB_OF_ERR        \
+diff --git a/drivers/net/geneve.c b/drivers/net/geneve.c
+index c7ec3d24eabc8..c33a08d65208c 100644
+--- a/drivers/net/geneve.c
++++ b/drivers/net/geneve.c
+@@ -891,6 +891,9 @@ static int geneve_xmit_skb(struct sk_buff *skb, struct net_device *dev,
+ 	__be16 sport;
+ 	int err;
+ 
++	if (!pskb_network_may_pull(skb, sizeof(struct iphdr)))
++		return -EINVAL;
++
+ 	sport = udp_flow_src_port(geneve->net, skb, 1, USHRT_MAX, true);
+ 	rt = geneve_get_v4_rt(skb, dev, gs4, &fl4, info,
+ 			      geneve->info.key.tp_dst, sport);
+@@ -954,6 +957,9 @@ static int geneve6_xmit_skb(struct sk_buff *skb, struct net_device *dev,
+ 	__be16 sport;
+ 	int err;
+ 
++	if (!pskb_network_may_pull(skb, sizeof(struct ipv6hdr)))
++		return -EINVAL;
++
+ 	sport = udp_flow_src_port(geneve->net, skb, 1, USHRT_MAX, true);
+ 	dst = geneve_get_v6_dst(skb, dev, gs6, &fl6, info,
+ 				geneve->info.key.tp_dst, sport);
+diff --git a/drivers/net/usb/hso.c b/drivers/net/usb/hso.c
+index 38f39154a6433..02de9480d3f06 100644
+--- a/drivers/net/usb/hso.c
++++ b/drivers/net/usb/hso.c
+@@ -3105,7 +3105,7 @@ static void hso_free_interface(struct usb_interface *interface)
+ 			cancel_work_sync(&serial_table[i]->async_put_intf);
+ 			cancel_work_sync(&serial_table[i]->async_get_intf);
+ 			hso_serial_tty_unregister(serial);
+-			kref_put(&serial_table[i]->ref, hso_serial_ref_free);
++			kref_put(&serial->parent->ref, hso_serial_ref_free);
+ 		}
+ 	}
+ 
+diff --git a/drivers/net/xen-netback/xenbus.c b/drivers/net/xen-netback/xenbus.c
+index 9e61a6f294641..416305e6d0932 100644
+--- a/drivers/net/xen-netback/xenbus.c
++++ b/drivers/net/xen-netback/xenbus.c
+@@ -979,11 +979,15 @@ static void connect(struct backend_info *be)
+ 	xenvif_carrier_on(be->vif);
+ 
+ 	unregister_hotplug_status_watch(be);
+-	err = xenbus_watch_pathfmt(dev, &be->hotplug_status_watch, NULL,
+-				   hotplug_status_changed,
+-				   "%s/%s", dev->nodename, "hotplug-status");
+-	if (!err)
++	if (xenbus_exists(XBT_NIL, dev->nodename, "hotplug-status")) {
++		err = xenbus_watch_pathfmt(dev, &be->hotplug_status_watch,
++					   NULL, hotplug_status_changed,
++					   "%s/%s", dev->nodename,
++					   "hotplug-status");
++		if (err)
++			goto err;
+ 		be->have_hotplug_status_watch = 1;
++	}
+ 
+ 	netif_tx_wake_all_queues(be->vif->dev);
+ 
+diff --git a/drivers/pinctrl/intel/pinctrl-lewisburg.c b/drivers/pinctrl/intel/pinctrl-lewisburg.c
+index 7fdf4257df1ed..ad4b446d588e6 100644
+--- a/drivers/pinctrl/intel/pinctrl-lewisburg.c
++++ b/drivers/pinctrl/intel/pinctrl-lewisburg.c
+@@ -299,9 +299,9 @@ static const struct pinctrl_pin_desc lbg_pins[] = {
+ static const struct intel_community lbg_communities[] = {
+ 	LBG_COMMUNITY(0, 0, 71),
+ 	LBG_COMMUNITY(1, 72, 132),
+-	LBG_COMMUNITY(3, 133, 144),
+-	LBG_COMMUNITY(4, 145, 180),
+-	LBG_COMMUNITY(5, 181, 246),
++	LBG_COMMUNITY(3, 133, 143),
++	LBG_COMMUNITY(4, 144, 178),
++	LBG_COMMUNITY(5, 179, 246),
+ };
+ 
+ static const struct intel_pinctrl_soc_data lbg_soc_data = {
+diff --git a/drivers/usb/class/cdc-acm.c b/drivers/usb/class/cdc-acm.c
+index 2b672840dfd9a..68d57b45273aa 100644
+--- a/drivers/usb/class/cdc-acm.c
++++ b/drivers/usb/class/cdc-acm.c
+@@ -1650,12 +1650,13 @@ static int acm_resume(struct usb_interface *intf)
+ 	struct urb *urb;
+ 	int rv = 0;
+ 
+-	acm_unpoison_urbs(acm);
+ 	spin_lock_irq(&acm->write_lock);
+ 
+ 	if (--acm->susp_count)
+ 		goto out;
+ 
++	acm_unpoison_urbs(acm);
++
+ 	if (tty_port_initialized(&acm->port)) {
+ 		rv = usb_submit_urb(acm->ctrlurb, GFP_ATOMIC);
+ 
+diff --git a/include/linux/platform_data/gpio-omap.h b/include/linux/platform_data/gpio-omap.h
+index 8b30b14b47d3f..f377817ce75c1 100644
+--- a/include/linux/platform_data/gpio-omap.h
++++ b/include/linux/platform_data/gpio-omap.h
+@@ -85,6 +85,7 @@
+  * omap2+ specific GPIO registers
+  */
+ #define OMAP24XX_GPIO_REVISION		0x0000
++#define OMAP24XX_GPIO_SYSCONFIG		0x0010
+ #define OMAP24XX_GPIO_IRQSTATUS1	0x0018
+ #define OMAP24XX_GPIO_IRQSTATUS2	0x0028
+ #define OMAP24XX_GPIO_IRQENABLE2	0x002c
+@@ -108,6 +109,7 @@
+ #define OMAP24XX_GPIO_SETDATAOUT	0x0094
+ 
+ #define OMAP4_GPIO_REVISION		0x0000
++#define OMAP4_GPIO_SYSCONFIG		0x0010
+ #define OMAP4_GPIO_EOI			0x0020
+ #define OMAP4_GPIO_IRQSTATUSRAW0	0x0024
+ #define OMAP4_GPIO_IRQSTATUSRAW1	0x0028
+@@ -148,6 +150,7 @@
+ #ifndef __ASSEMBLER__
+ struct omap_gpio_reg_offs {
+ 	u16 revision;
++	u16 sysconfig;
+ 	u16 direction;
+ 	u16 datain;
+ 	u16 dataout;
+diff --git a/kernel/locking/qrwlock.c b/kernel/locking/qrwlock.c
+index fe9ca92faa2a7..909b0bf22a1ec 100644
+--- a/kernel/locking/qrwlock.c
++++ b/kernel/locking/qrwlock.c
+@@ -61,6 +61,8 @@ EXPORT_SYMBOL(queued_read_lock_slowpath);
+  */
+ void queued_write_lock_slowpath(struct qrwlock *lock)
+ {
++	int cnts;
++
+ 	/* Put the writer into the wait queue */
+ 	arch_spin_lock(&lock->wait_lock);
+ 
+@@ -74,9 +76,8 @@ void queued_write_lock_slowpath(struct qrwlock *lock)
+ 
+ 	/* When no more readers or writers, set the locked flag */
+ 	do {
+-		atomic_cond_read_acquire(&lock->cnts, VAL == _QW_WAITING);
+-	} while (atomic_cmpxchg_relaxed(&lock->cnts, _QW_WAITING,
+-					_QW_LOCKED) != _QW_WAITING);
++		cnts = atomic_cond_read_relaxed(&lock->cnts, VAL == _QW_WAITING);
++	} while (!atomic_try_cmpxchg_acquire(&lock->cnts, &cnts, _QW_LOCKED));
+ unlock:
+ 	arch_spin_unlock(&lock->wait_lock);
+ }
+diff --git a/tools/arch/ia64/include/asm/barrier.h b/tools/arch/ia64/include/asm/barrier.h
+index 4d471d9511a54..6fffe56827134 100644
+--- a/tools/arch/ia64/include/asm/barrier.h
++++ b/tools/arch/ia64/include/asm/barrier.h
+@@ -39,9 +39,6 @@
+  * sequential memory pages only.
+  */
+ 
+-/* XXX From arch/ia64/include/uapi/asm/gcc_intrin.h */
+-#define ia64_mf()       asm volatile ("mf" ::: "memory")
+-
+ #define mb()		ia64_mf()
+ #define rmb()		mb()
+ #define wmb()		mb()
+diff --git a/tools/perf/util/auxtrace.c b/tools/perf/util/auxtrace.c
+index 61b8dc45428ff..ae5b97427192f 100644
+--- a/tools/perf/util/auxtrace.c
++++ b/tools/perf/util/auxtrace.c
+@@ -586,7 +586,7 @@ int auxtrace_parse_snapshot_options(struct auxtrace_record *itr,
+ 		break;
+ 	}
+ 
+-	if (itr)
++	if (itr && itr->parse_snapshot_options)
+ 		return itr->parse_snapshot_options(itr, opts, str);
+ 
+ 	pr_err("No AUX area tracing to snapshot\n");
