@@ -246,6 +246,9 @@ if [[ $BUILD_DESKTOP == "yes" ]]; then
 			error_msg+="$(cat "${DESKTOP_ENVIRONMENT_DIRPATH}/only_for")"
 		fi
 
+		# supress error when cache is rebuilding
+		[[ -n "$ROOT_FS_CREATE_ONLY" ]] && exit 0
+
 		exit_with_error "${error_msg}"
 	}
 
