@@ -394,9 +394,9 @@ prepare_partitions()
 	# add -N number of inodes to keep mount from running out
 	# create bigger number for desktop builds
 	if [[ $BUILD_DESKTOP == yes ]]; then local node_number=4096; else local node_number=1024; fi
-	if [[ $(lsb_release -sc) =~ bionic|buster|bullseye|cosmic|groovy|focal|hirsute|sid ]]; then
+	if [[ $HOSTRELEASE =~ bionic|buster|bullseye|cosmic|groovy|focal|hirsute|sid ]]; then
 		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128*${node_number}))"
-	elif [[ $(lsb_release -sc) == xenial ]]; then
+	elif [[ $HOSTRELEASE == xenial ]]; then
 		mkopts[ext4]="-q -m 2 -N $((128*${node_number}))"
 	fi
 	mkopts[fat]='-n BOOT'

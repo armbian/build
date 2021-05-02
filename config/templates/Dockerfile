@@ -1,7 +1,7 @@
 FROM ubuntu:21.04
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get -y install joe software-properties-common
+RUN apt-get install -y --no-install-recommends \
        gnupg \
        gnupg1 \
        gpgv1 \
@@ -82,6 +82,8 @@ RUN apt-get update \
        python3 \
        python3-dev \
        python3-distutils \
+       python3-pkg-resources \
+       python3-setuptools \
        qemu-user-static \
        rsync \
        swig \

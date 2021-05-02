@@ -18,6 +18,7 @@ REVISION=$(cat "${SRC}"/VERSION)"$SUBREVISION" # all boards have same revision
 [[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
 TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
+HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
 [[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
@@ -335,7 +336,7 @@ DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}"
 [[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
 [[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
 [[ $RELEASE == bionic && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Ubuntu Bionic images with selected kernel is not supported"
-[[ $RELEASE == bionic && $(lsb_release -sc) == xenial ]] && exit_with_error "Building Ubuntu Bionic images requires a Bionic build host. Please upgrade your host or select a different target OS"
+[[ $RELEASE == hirsute && $HOSTRELEASE == focal ]] && exit_with_error "Building Ubuntu Hirsute images requires Hirsute build host. Please upgrade your host or select a different target OS"
 
 [[ -n $ATFSOURCE && -z $ATF_USE_GCC ]] && exit_with_error "Error in configuration: ATF_USE_GCC is unset"
 [[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
@@ -611,7 +612,7 @@ cat <<-EOF >> "${DEST}"/debug/output.log
 Repository: $REPOSITORY_URL
 Version: $REPOSITORY_COMMIT
 
-Host OS: $(lsb_release -sc)
+Host OS: $HOSTRELEASE
 Host arch: $(dpkg --print-architecture)
 Host system: $(uname -a)
 Virtualization type: $(systemd-detect-virt)
