@@ -122,6 +122,8 @@ create_board_package()
 	[ -f "/lib/systemd/system/resize2fs.service" ] && rm /lib/systemd/system/resize2fs.service
 	[ -f "/usr/lib/armbian/apt-updates" ] && rm /usr/lib/armbian/apt-updates
 	[ -f "/usr/lib/armbian/firstrun-config.sh" ] && rm /usr/lib/armbian/firstrun-config.sh
+	# fix for https://bugs.launchpad.net/ubuntu/+source/lightdm-gtk-greeter/+bug/1897491
+	[ -d "/var/lib/lightdm" ] && (chown -R lightdm:lightdm /var/lib/lightdm ; chmod 0750 /var/lib/lightdm)
 	exit 0
 	EOF
 
@@ -296,13 +298,6 @@ fi
 
 	# this is required for NFS boot to prevent deconfiguring the network on shutdown
 	sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
-
-	if [[ $LINUXFAMILY == sunxi* ]]; then
-		# add mpv config for x11 output - slow, but it works compared to no config at all
-		# TODO: Test which output driver is better with DRM
-		mkdir -p "${destination}"/etc/mpv/
-		cp "${SRC}"/packages/bsp/mpv/mpv_mainline.conf "${destination}"/etc/mpv/mpv.conf
-	fi
 
 	# execute $LINUXFAMILY-specific tweaks
 	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp
