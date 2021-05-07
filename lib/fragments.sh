@@ -5,7 +5,8 @@ declare -A defined_hook_point_functions          # keeps a map of hook point fun
 declare -A hook_point_function_trace_sources     # keeps a map of hook point functions that were actually called and their source
 declare -A hook_point_function_trace_lines       # keeps a map of hook point functions that were actually called and their source
 # configuration.
-export DEBUG_HOOKS=no # set to yes to log every hook function called to the main build log
+export DEBUG_HOOKS=no       # set to yes to log every hook function called to the main build log
+export LOG_ADD_FRAGMENT=yes # colorful logs with stacktrace when add_fragment is called.
 
 # This is a helper function for calling hooks.
 # It follows the pattern long used in the codebase for hook-like behaviour:
@@ -176,7 +177,7 @@ FUNCTION_DEFINITION_HEADER
 			hook_point_function_variables="${hook_point_function_variables} HOOK_ORDER=\"${hook_point_functions_loop_counter}\""
 
 			# add it to our (not the call site!) environment. if we export those in the call site, the stack is corrupted.
-			local "${hook_point_function_variables}"
+			eval "${hook_point_function_variables}"
 
 			# output the call, passing arguments, and also logging the output to the fragments log.
 			# attention: don't pipe here (eg, capture output), otherwise hook function cant modify the environment (which is mostly the point)
@@ -301,8 +302,8 @@ add_fragment() {
 	# capture the stack leading to this, possibly with a hint in front.
 	stacktrace="${ADD_FRAGMENT_TRACE_HINT}$(get_fragment_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
 
-	# if DEBUG_HOOKS, output useful stack, so user can figure out which fragments are being added where
-	[[ "${DEBUG_HOOKS}" == "yes" ]] &&
+	# if LOG_ADD_FRAGMENT, output useful stack, so user can figure out which fragments are being added where
+	[[ "${LOG_ADD_FRAGMENT}" == "yes" ]] &&
 		display_alert "Fragment being added" "${fragment_name} :: added by ${stacktrace}" ""
 
 	# first a check, has the fragment manager already initialized? then it is too late to add_fragment(). bail.
