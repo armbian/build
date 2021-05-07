@@ -295,6 +295,7 @@ get_fragment_hook_stracktrace() {
 # will look for it in /userpatches/fragments first.
 # if not found there will look in /fragments
 # if not found will throw and abort compilation (or will it? no set -e no this codebase in general)
+declare -i add_fragment_recurse_counter=0
 add_fragment() {
 	local fragment_name="$1"
 	local fragment_dir fragment_file fragment_file_in_dir fragment_floating_file stacktrace
@@ -308,8 +309,16 @@ add_fragment() {
 
 	# first a check, has the fragment manager already initialized? then it is too late to add_fragment(). bail.
 	if [[ ${initialize_fragment_manager_counter} -gt 0 ]]; then
-		echo "ERR: Fragment problem -- already initialized -- too late to add '${fragment_name}' (trace: ${stacktrace})" | tee -a "${FRAGMENT_MANAGER_LOG_FILE}"
+		display_alert "Fragment problem" "already initialized -- too late to add '${fragment_name}' (trace: ${stacktrace})" "err" | tee -a "${FRAGMENT_MANAGER_LOG_FILE}"
 		exit 2
+	fi
+
+	add_fragment_recurse_counter=$((add_fragment_recurse_counter + 1))
+	# for now we block reentrant add_fragment() as to maintain the stack traces readable.
+	# in the future we could just push it onto a stack and process it at the end.
+	if [[ $add_fragment_recurse_counter -gt 1 ]]; then
+		display_alert "Fragment problem" "call to add_fragment() inside a fragment detected (trace: ${stacktrace})" "err" | tee -a "${FRAGMENT_MANAGER_LOG_FILE}"
+		exit 3
 	fi
 
 	# there are many opportunities here. too many, actually. let userpatches override just some functions, etc.
@@ -339,11 +348,28 @@ add_fragment() {
 	# store a list of existing functions at this point, before sourcing the fragment.
 	before_function_list="$(compgen -A function)"
 
+	# error handling during a 'source' call is quite insane in bash after 4.3.
+	# to be able to catch errors in sourced scripts the only way is to trap
+	declare -i fragment_source_generated_error=0
+	trap 'fragment_source_generated_error=1;' ERR
+
 	# source the file. fragments are not supposed to do anything except export variables and define functions, so nothing should happen here.
-	# there is no way to enforce it though.
+	# there is no way to enforce it though, short of static analysis.
 	# we could punish the fragment authors who violate it by removing some essential variables temporarily from the environment during this source, and restore them later.
 	# shellcheck disable=SC1090
-	. "${fragment_file}"
+	source "${fragment_file}"
+
+	# remove the trap we set.
+	trap - ERR
+
+	# decrement the recurse counter, so calls to this method are allowed again.
+	add_fragment_recurse_counter=$((add_fragment_recurse_counter - 1))
+
+	# test if it fell into the trap, and abort immediately with an error.
+	if [[ $fragment_source_generated_error != 0 ]]; then
+		display_alert "Fragment failed to load" "${fragment_file}" "err"
+		exit 4
+	fi
 
 	# get a new list of functions after sourcing the fragment
 	after_function_list="$(compgen -A function)"
