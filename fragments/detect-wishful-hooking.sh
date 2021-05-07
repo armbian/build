@@ -1,3 +1,6 @@
+## Configuration
+export LOG_ALL_HOOK_TRACES=no # Should we log all hook function traces to stdout? (no, or level: wrn info)
+
 ## Hooks
 
 # A honeypot wishful hooking. To make sure the whole thing works.
@@ -24,8 +27,8 @@ function fragment_metadata_ready__999_detect_wishful_hooking() {
 		if [[ "$source_info" != "" ]]; then
 			# log to debug log. it's reassuring.
 			echo "\$\$\$ Hook function stacktrace for '${one_defined_function}': '${stack}' (${defined_info})" >>"${FRAGMENT_MANAGER_LOG_FILE}"
-			if [[ "${DEBUG_HOOKS}" == "yes" ]]; then
-				display_alert "Hook function stacktrace for '${one_defined_function}'" "${stack}" "wrn"
+			if [[ "${LOG_ALL_HOOK_TRACES}" != "no" ]]; then
+				display_alert "Hook function stacktrace for '${one_defined_function}'" "${stack}" "${LOG_ALL_HOOK_TRACES}"
 			fi
 			continue # found a caller, move on.
 		fi
