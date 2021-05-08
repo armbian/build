@@ -448,9 +448,6 @@ if [[ $BUILD_ALL != demo ]] ; then
 
 fi
 
-# display what we will build
-build_all "dryrun"
-
 # wait until they are not finshed
 sleep 5
 while :
@@ -469,6 +466,8 @@ do
 	sleep 5
 done
 
+# display what we will build
+build_all "dryrun"
 
 fi
 
