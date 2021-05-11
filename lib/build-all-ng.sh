@@ -17,7 +17,7 @@
 
 
 
-
+if [[ -z $VENDOR ]]; then VENDOR="Armbian"; fi
 if [[ $BETA == "yes" ]];  then STABILITY="beta";	else STABILITY="stable"; fi
 if [[ $BETA == "yes" ]]; then upload_subdir=nightly; else upload_subdir="archive"; fi
 if [[ $MAKE_ALL_BETA == "yes" ]]; then STABILITY="stable"; fi
@@ -64,7 +64,8 @@ unset	LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSO
 		PACKAGE_LIST_BOARD_REMOVE PACKAGE_LIST_FAMILY_REMOVE PACKAGE_LIST_DESKTOP_BOARD_REMOVE PACKAGE_LIST_DESKTOP_FAMILY_REMOVE BOOTCONFIG_EDGE \
 		DESKTOP_ENVIRONMENT DESKTOP_ENVIRONMENT_CONFIG_NAME DESKTOP_APPGROUPS_SELECTED DESKTOP_APT_FLAGS_SELECTED \
 		DESKTOP_ENVIRONMENT_DIRPATH DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH DESKTOP_ENVIRONMENT_DIRPATH DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH \
-		DESKTOP_CONFIG_PREFIX DESKTOP_CONFIGS_DIR DESKTOP_APPGROUPS_DIR DEBIAN_RECOMMENDS USE_OVERLAYFS aggregated_content DEBOOTSTRAP_COMPONENTS
+		DESKTOP_CONFIG_PREFIX DESKTOP_CONFIGS_DIR DESKTOP_APPGROUPS_DIR DEBIAN_RECOMMENDS USE_OVERLAYFS aggregated_content DEBOOTSTRAP_COMPONENTS \
+		DEBOOTSTRAP_OPTION MAINTAINER MAINTAINERMAIL
 }
 
 pack_upload ()
@@ -73,7 +74,7 @@ pack_upload ()
 	# pack and upload to server or just pack
 
 	display_alert "Signing" "Please wait!" "info"
-	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
+	local version="${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
 	compression_type=""
 
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
@@ -141,12 +142,12 @@ build_main ()
 	source "$USERPATCHES_PATH"/lib.config
 	# build images which we do pack or kernel
 	local upload_image
-	upload_image="Armbian_$(cat "${SRC}"/VERSION)_${BOARD^}_${RELEASE}_${BRANCH}_*${VER/-$LINUXFAMILY/}"
+	upload_image="${VENDOR}_$(cat "${SRC}"/VERSION)_${BOARD^}_${RELEASE}_${BRANCH}_*${VER/-$LINUXFAMILY/}"
 
 	[[ $BUILD_DESKTOP == yes ]] && upload_image=${upload_image}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && upload_image=${upload_image}_minimal
 
-	touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
+	touch "/run/armbian/${VENDOR}_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
 
 	if [[ $KERNEL_ONLY != yes ]]; then
 		#if ssh ${SEND_TO_SERVER} stat ${SEND_TO_LOCATION}${BOARD}/${upload_subdir}/${upload_image}* \> /dev/null 2\>\&1; then
@@ -164,7 +165,7 @@ build_main ()
 	fi
 
 	cd "${SRC}"
-	rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
+	rm "/run/armbian/${VENDOR}_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
 }
 
 
