@@ -86,9 +86,15 @@ elif [[ $BOARD == rockpi-s ]]; then
 
 	BOOT_USE_BLOBS=yes
 	BOOT_SOC=rk3308
-	DDR_BLOB='rk33/rk3308_ddr_589MHz_uart0_m0_v1.26.bin'
-	MINILOADER_BLOB='rk33/rk3308_miniloader_sd_nand_v1.13.bin'
-	BL31_BLOB='rk33/rk3308_bl31_v2.10.elf'
+	DDR_BLOB='rk33/rk3308_ddr_589MHz_uart2_m1_v1.30.bin'
+	MINILOADER_BLOB='rk33/rk3308_miniloader_v1.22.bin'
+	BL31_BLOB='rk33/rk3308_bl31_v2.22.elf'
+
+	if [[ ${BRANCH} == legacy ]]; then
+		DDR_BLOB='rk33/rk3308_ddr_589MHz_uart2_m0_v1.26.bin'
+		MINILOADER_BLOB='rk33/rk3308_miniloader_sd_nand_v1.13.bin'
+		BL31_BLOB='rk33/rk3308_bl31_v2.10.elf'
+	fi
 
 else
 
