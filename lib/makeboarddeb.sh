@@ -28,13 +28,17 @@ create_board_package()
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
 	mkdir -p "${destination}"/usr/share/armbian/
-	if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
-	  cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
-	else
-	  cp "${SRC}/config/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+
+	# create extlinux config file
+	if [[ $SRC_EXTLINUX != yes ]]; then
+		if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
+		  cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+		else
+		  cp "${SRC}/config/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+		fi
+		[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
+			cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${destination}"/usr/share/armbian/armbianEnv.txt
 	fi
-	[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
-		cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${destination}"/usr/share/armbian/armbianEnv.txt
 
 	# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
 	if [[ -n $UBOOT_FW_ENV ]]; then
