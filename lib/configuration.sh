@@ -91,7 +91,7 @@ esac
 MAINLINE_KERNEL_DIR='linux-mainline'
 
 if [[ $USE_GITHUB_UBOOT_MIRROR == yes ]]; then
-	MAINLINE_UBOOT_SOURCE='https://github.com/RobertCNelson/u-boot'
+	MAINLINE_UBOOT_SOURCE='https://github.com/u-boot/u-boot'
 else
 	MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
 fi
