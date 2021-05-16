@@ -425,6 +425,9 @@ compilation_prepare()
 		# add support for K5.11+
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu.patch" "applying"
 
+		# add support for K5.12+
+		process_patch_file "${SRC}/patch/misc/wireless-realtek-8811cu-5.12.patch" "applying"
+
 	fi
 
 
@@ -466,6 +469,9 @@ compilation_prepare()
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu.patch" "applying"
 
+		# add support for K5.12+
+		process_patch_file "${SRC}/patch/misc/wireless-realtek-8188eu-5.12.patch" "applying"
+
 	fi
 
 
@@ -504,6 +510,9 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8822BU) += rtl88x2bu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl88x2bu\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
+
+		# add support for K5.12+
+		process_patch_file "${SRC}/patch/misc/wireless-realtek-88x2bu-5.12.patch" "applying"
 
 	fi
 
