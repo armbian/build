@@ -28,7 +28,7 @@ HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
 [[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
-ROOTFSCACHE_VERSION=5
+ROOTFSCACHE_VERSION=6
 CHROOT_CACHE_VERSION=7
 BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2>/dev/null | grep origin) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
@@ -91,7 +91,7 @@ esac
 MAINLINE_KERNEL_DIR='linux-mainline'
 
 if [[ $USE_GITHUB_UBOOT_MIRROR == yes ]]; then
-	MAINLINE_UBOOT_SOURCE='https://github.com/RobertCNelson/u-boot'
+	MAINLINE_UBOOT_SOURCE='https://github.com/u-boot/u-boot'
 else
 	MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
 fi
