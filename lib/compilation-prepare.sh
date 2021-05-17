@@ -15,12 +15,29 @@
 compilation_prepare()
 {
 
-	# Packaging patch for modern kernels should be one for all. 
+	# Packaging patch for modern kernels should be one for all.
 	# Currently we have it per kernel family since we can't have one
 	# Maintaining one from central location starting with 5.3+
 	# Temporally set for new "default->legacy,next->current" family naming
 
-	if linux-version compare "${version}" ge 5.10; then
+	if linux-version compare "${version}" ge 5.12; then
+
+		if test -d ${kerneldir}/debian
+		then
+			rm -rf ${kerneldir}/debian/*
+		fi
+		sed -i -e '
+			s/^KBUILD_IMAGE	:= \$(boot)\/Image\.gz$/KBUILD_IMAGE	:= \$(boot)\/Image/
+		' ${kerneldir}/arch/arm64/Makefile
+
+		rm -f ${kerneldir}/scripts/package/{builddeb,mkdebian}
+
+		cp ${SRC}/packages/armbian/builddeb ${kerneldir}/scripts/package/builddeb
+		cp ${SRC}/packages/armbian/mkdebian ${kerneldir}/scripts/package/mkdebian
+
+		chmod 755 ${kerneldir}/scripts/package/{builddeb,mkdebian}
+
+	elif linux-version compare "${version}" ge 5.10; then
 		display_alert "Adjusting" "packaging" "info"
 		cd "$kerneldir" || exit
 		process_patch_file "${SRC}/patch/misc/general-packaging-5.10.y.patch" "applying"
