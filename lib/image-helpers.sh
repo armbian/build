@@ -99,7 +99,10 @@ write_uboot()
 	else
 		dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
 	fi
-	write_uboot_platform "${TEMP_DIR}/usr/lib/${CHOSEN_UBOOT}_${revision}_${ARCH}" "$loop"
+
+	# source platform install to read $DIR
+	source ${TEMP_DIR}/usr/lib/u-boot/platform_install.sh
+	write_uboot_platform "${TEMP_DIR}${DIR}" "$loop"
 	[[ $? -ne 0 ]] && exit_with_error "U-boot bootloader failed to install" "@host"
 	rm -rf ${TEMP_DIR}
 } #############################################################################
