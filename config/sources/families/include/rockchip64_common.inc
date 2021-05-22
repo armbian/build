@@ -339,7 +339,7 @@ family_tweaks()
 
 	if [[ $BOARD == pinebook-pro ]]; then
 
-                chroot $SDCARD /bin/bash -c "echo SuspandState=freeze >> /etc/systemd/sleep.conf"
+                chroot $SDCARD /bin/bash -c "echo SuspendState=freeze >> /etc/systemd/sleep.conf"
                 chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
 	fi
 
