@@ -15,12 +15,29 @@
 compilation_prepare()
 {
 
-	# Packaging patch for modern kernels should be one for all. 
+	# Packaging patch for modern kernels should be one for all.
 	# Currently we have it per kernel family since we can't have one
 	# Maintaining one from central location starting with 5.3+
 	# Temporally set for new "default->legacy,next->current" family naming
 
-	if linux-version compare "${version}" ge 5.10; then
+	if linux-version compare "${version}" ge 5.12; then
+
+		if test -d ${kerneldir}/debian
+		then
+			rm -rf ${kerneldir}/debian/*
+		fi
+		sed -i -e '
+			s/^KBUILD_IMAGE	:= \$(boot)\/Image\.gz$/KBUILD_IMAGE	:= \$(boot)\/Image/
+		' ${kerneldir}/arch/arm64/Makefile
+
+		rm -f ${kerneldir}/scripts/package/{builddeb,mkdebian}
+
+		cp ${SRC}/packages/armbian/builddeb ${kerneldir}/scripts/package/builddeb
+		cp ${SRC}/packages/armbian/mkdebian ${kerneldir}/scripts/package/mkdebian
+
+		chmod 755 ${kerneldir}/scripts/package/{builddeb,mkdebian}
+
+	elif linux-version compare "${version}" ge 5.10; then
 		display_alert "Adjusting" "packaging" "info"
 		cd "$kerneldir" || exit
 		process_patch_file "${SRC}/patch/misc/general-packaging-5.10.y.patch" "applying"
@@ -425,6 +442,9 @@ compilation_prepare()
 		# add support for K5.11+
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu.patch" "applying"
 
+		# add support for K5.12+
+		process_patch_file "${SRC}/patch/misc/wireless-realtek-8811cu-5.12.patch" "applying"
+
 	fi
 
 
@@ -466,6 +486,9 @@ compilation_prepare()
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu.patch" "applying"
 
+		# add support for K5.12+
+		process_patch_file "${SRC}/patch/misc/wireless-realtek-8188eu-5.12.patch" "applying"
+
 	fi
 
 
@@ -504,6 +527,9 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8822BU) += rtl88x2bu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl88x2bu\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
+
+		# add support for K5.12+
+		process_patch_file "${SRC}/patch/misc/wireless-realtek-88x2bu-5.12.patch" "applying"
 
 	fi
 
@@ -546,6 +572,9 @@ compilation_prepare()
 
                 # add support for K5.11+
                 process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds.patch" "applying"
+
+		# add support for K5.12+
+		process_patch_file "${SRC}/patch/misc/wireless-realtek-8723ds.patch" "applying"
 
 	fi
 
