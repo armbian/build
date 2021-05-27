@@ -1027,7 +1027,7 @@ prepare_host()
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
 	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
-	locales ncurses-base pixz dialog systemd-container udev libc6 qemu\
+	locales ncurses-base pixz dialog systemd-container udev libfdt-dev libc6 qemu \
 	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils"
 
 # build aarch64
@@ -1070,6 +1070,8 @@ prepare_host()
 	fi
 
 	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
+  fi
+  
 	if systemd-detect-virt -q -c; then
 		display_alert "Running in container" "$(systemd-detect-virt)" "info"
 		# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
@@ -1087,7 +1089,7 @@ prepare_host()
 	fi
 
 # build aarch64
-  fi
+
 
 	# Skip verification if you are working offline
 	if ! $offline; then
