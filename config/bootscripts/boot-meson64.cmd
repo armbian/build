@@ -140,13 +140,13 @@ else
 		load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 	else
 		if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-fixup.scr; then
-				echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
-				source ${load_addr}
+			echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
+			source ${load_addr}
 		fi
 		if test -e ${devtype} ${devnum} ${prefix}fixup.scr; then
-				load ${devtype} ${devnum} ${load_addr} ${prefix}fixup.scr
-				echo "Applying user provided fixup script (fixup.scr)"
-				source ${load_addr}
+			load ${devtype} ${devnum} ${load_addr} ${prefix}fixup.scr
+			echo "Applying user provided fixup script (fixup.scr)"
+			source ${load_addr}
 		fi
 	fi
 
