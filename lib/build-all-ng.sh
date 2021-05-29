@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 #
 # Copyright (c) Authors: http://www.armbian.com/authors
 #
