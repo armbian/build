@@ -1,0 +1,342 @@
+From 4b9a12b4634223a342348c67c03894db900908a7 Mon Sep 17 00:00:00 2001
+From: Luben Tuikov <luben.tuikov@amd.com>
+Date: Wed, 20 Jan 2021 15:09:59 -0500
+Subject: [PATCH 099/109] ODROID-BACKPORT: drm/scheduler: Job timeout handler
+ returns status (v3)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This patch does not change current behaviour.
+
+The driver's job timeout handler now returns
+status indicating back to the DRM layer whether
+the device (GPU) is no longer available, such as
+after it's been unplugged, or whether all is
+normal, i.e. current behaviour.
+
+All drivers which make use of the
+drm_sched_backend_ops' .timedout_job() callback
+have been accordingly renamed and return the
+would've-been default value of
+DRM_GPU_SCHED_STAT_NOMINAL to restart the task's
+timeout timer--this is the old behaviour, and is
+preserved by this patch.
+
+v2: Use enum as the status of a driver's job
+    timeout callback method.
+
+v3: Return scheduler/device information, rather
+    than task information.
+
+Cc: Alexander Deucher <Alexander.Deucher@amd.com>
+Cc: Andrey Grodzovsky <Andrey.Grodzovsky@amd.com>
+Cc: Christian König <christian.koenig@amd.com>
+Cc: Daniel Vetter <daniel.vetter@ffwll.ch>
+Cc: Lucas Stach <l.stach@pengutronix.de>
+Cc: Russell King <linux+etnaviv@armlinux.org.uk>
+Cc: Christian Gmeiner <christian.gmeiner@gmail.com>
+Cc: Qiang Yu <yuq825@gmail.com>
+Cc: Rob Herring <robh@kernel.org>
+Cc: Tomeu Vizoso <tomeu.vizoso@collabora.com>
+Cc: Steven Price <steven.price@arm.com>
+Cc: Alyssa Rosenzweig <alyssa.rosenzweig@collabora.com>
+Cc: Eric Anholt <eric@anholt.net>
+Reported-by: kernel test robot <lkp@intel.com>
+Signed-off-by: Luben Tuikov <luben.tuikov@amd.com>
+Acked-by: Alyssa Rosenzweig <alyssa.rosenzweig@collabora.com>
+Acked-by: Christian König <christian.koenig@amd.com>
+Acked-by: Steven Price <steven.price@arm.com>
+Signed-off-by: Christian König <christian.koenig@amd.com>
+Link: https://patchwork.freedesktop.org/patch/415095/
+Change-Id: I9adc003c8fc5863af748bbd027f4571a6c885647
+---
+ drivers/gpu/drm/amd/amdgpu/amdgpu_job.c |  6 +++--
+ drivers/gpu/drm/etnaviv/etnaviv_sched.c |  7 +++++-
+ drivers/gpu/drm/lima/lima_sched.c       |  4 +++-
+ drivers/gpu/drm/panfrost/panfrost_job.c |  9 ++++---
+ drivers/gpu/drm/scheduler/sched_main.c  |  4 +---
+ drivers/gpu/drm/v3d/v3d_sched.c         | 32 +++++++++++++------------
+ include/drm/gpu_scheduler.h             | 18 +++++++++++---
+ 7 files changed, 52 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_job.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_job.c
+index ff48101bab55..759b34799221 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_job.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_job.c
+@@ -28,7 +28,7 @@
+ #include "amdgpu.h"
+ #include "amdgpu_trace.h"
+ 
+-static void amdgpu_job_timedout(struct drm_sched_job *s_job)
++static enum drm_gpu_sched_stat amdgpu_job_timedout(struct drm_sched_job *s_job)
+ {
+ 	struct amdgpu_ring *ring = to_amdgpu_ring(s_job->sched);
+ 	struct amdgpu_job *job = to_amdgpu_job(s_job);
+@@ -41,7 +41,7 @@ static void amdgpu_job_timedout(struct drm_sched_job *s_job)
+ 	    amdgpu_ring_soft_recovery(ring, job->vmid, s_job->s_fence->parent)) {
+ 		DRM_ERROR("ring %s timeout, but soft recovered\n",
+ 			  s_job->sched->name);
+-		return;
++		return DRM_GPU_SCHED_STAT_NOMINAL;
+ 	}
+ 
+ 	amdgpu_vm_get_task_info(ring->adev, job->pasid, &ti);
+@@ -53,10 +53,12 @@ static void amdgpu_job_timedout(struct drm_sched_job *s_job)
+ 
+ 	if (amdgpu_device_should_recover_gpu(ring->adev)) {
+ 		amdgpu_device_gpu_recover(ring->adev, job);
++		return DRM_GPU_SCHED_STAT_NOMINAL;
+ 	} else {
+ 		drm_sched_suspend_timeout(&ring->sched);
+ 		if (amdgpu_sriov_vf(adev))
+ 			adev->virt.tdr_debug = true;
++		return DRM_GPU_SCHED_STAT_NOMINAL;
+ 	}
+ }
+ 
+diff --git a/drivers/gpu/drm/etnaviv/etnaviv_sched.c b/drivers/gpu/drm/etnaviv/etnaviv_sched.c
+index cd46c882269c..2a9439cbb0fb 100644
+--- a/drivers/gpu/drm/etnaviv/etnaviv_sched.c
++++ b/drivers/gpu/drm/etnaviv/etnaviv_sched.c
+@@ -82,7 +82,8 @@ static struct dma_fence *etnaviv_sched_run_job(struct drm_sched_job *sched_job)
+ 	return fence;
+ }
+ 
+-static void etnaviv_sched_timedout_job(struct drm_sched_job *sched_job)
++static enum drm_gpu_sched_stat etnaviv_sched_timedout_job(struct drm_sched_job
++							  *sched_job)
+ {
+ 	struct etnaviv_gem_submit *submit = to_etnaviv_submit(sched_job);
+ 	struct etnaviv_gpu *gpu = submit->gpu;
+@@ -120,9 +121,13 @@ static void etnaviv_sched_timedout_job(struct drm_sched_job *sched_job)
+ 
+ 	drm_sched_resubmit_jobs(&gpu->sched);
+ 
++	drm_sched_start(&gpu->sched, true);
++	return DRM_GPU_SCHED_STAT_NOMINAL;
++
+ out_no_timeout:
+ 	/* restart scheduler after GPU is usable again */
+ 	drm_sched_start(&gpu->sched, true);
++	return DRM_GPU_SCHED_STAT_NOMINAL;
+ }
+ 
+ static void etnaviv_sched_free_job(struct drm_sched_job *sched_job)
+diff --git a/drivers/gpu/drm/lima/lima_sched.c b/drivers/gpu/drm/lima/lima_sched.c
+index 5cc20b403a25..20dafa62980f 100644
+--- a/drivers/gpu/drm/lima/lima_sched.c
++++ b/drivers/gpu/drm/lima/lima_sched.c
+@@ -415,7 +415,7 @@ static void lima_sched_build_error_task_list(struct lima_sched_task *task)
+ 	mutex_unlock(&dev->error_task_list_lock);
+ }
+ 
+-static void lima_sched_timedout_job(struct drm_sched_job *job)
++static enum drm_gpu_sched_stat lima_sched_timedout_job(struct drm_sched_job *job)
+ {
+ 	struct lima_sched_pipe *pipe = to_lima_pipe(job->sched);
+ 	struct lima_sched_task *task = to_lima_task(job);
+@@ -449,6 +449,8 @@ static void lima_sched_timedout_job(struct drm_sched_job *job)
+ 
+ 	drm_sched_resubmit_jobs(&pipe->base);
+ 	drm_sched_start(&pipe->base, true);
++
++	return DRM_GPU_SCHED_STAT_NOMINAL;
+ }
+ 
+ static void lima_sched_free_job(struct drm_sched_job *job)
+diff --git a/drivers/gpu/drm/panfrost/panfrost_job.c b/drivers/gpu/drm/panfrost/panfrost_job.c
+index 04e6f6f9b742..0a83eefa49c4 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_job.c
++++ b/drivers/gpu/drm/panfrost/panfrost_job.c
+@@ -432,7 +432,8 @@ static void panfrost_scheduler_start(struct panfrost_queue_state *queue)
+ 	mutex_unlock(&queue->lock);
+ }
+ 
+-static void panfrost_job_timedout(struct drm_sched_job *sched_job)
++static enum drm_gpu_sched_stat panfrost_job_timedout(struct drm_sched_job
++						     *sched_job)
+ {
+ 	struct panfrost_job *job = to_panfrost_job(sched_job);
+ 	struct panfrost_device *pfdev = job->pfdev;
+@@ -443,7 +444,7 @@ static void panfrost_job_timedout(struct drm_sched_job *sched_job)
+ 	 * spurious. Bail out.
+ 	 */
+ 	if (dma_fence_is_signaled(job->done_fence))
+-		return;
++		return DRM_GPU_SCHED_STAT_NOMINAL;
+ 
+ 	dev_err(pfdev->dev, "gpu sched timeout, js=%d, config=0x%x, status=0x%x, head=0x%x, tail=0x%x, sched_job=%p",
+ 		js,
+@@ -455,11 +456,13 @@ static void panfrost_job_timedout(struct drm_sched_job *sched_job)
+ 
+ 	/* Scheduler is already stopped, nothing to do. */
+ 	if (!panfrost_scheduler_stop(&pfdev->js->queue[js], sched_job))
+-		return;
++		return DRM_GPU_SCHED_STAT_NOMINAL;
+ 
+ 	/* Schedule a reset if there's no reset in progress. */
+ 	if (!atomic_xchg(&pfdev->reset.pending, 1))
+ 		schedule_work(&pfdev->reset.work);
++
++	return DRM_GPU_SCHED_STAT_NOMINAL;
+ }
+ 
+ static const struct drm_sched_backend_ops panfrost_sched_ops = {
+diff --git a/drivers/gpu/drm/scheduler/sched_main.c b/drivers/gpu/drm/scheduler/sched_main.c
+index 92637b70c9bf..73fccc54268b 100644
+--- a/drivers/gpu/drm/scheduler/sched_main.c
++++ b/drivers/gpu/drm/scheduler/sched_main.c
+@@ -527,7 +527,7 @@ void drm_sched_start(struct drm_gpu_scheduler *sched, bool full_recovery)
+ EXPORT_SYMBOL(drm_sched_start);
+ 
+ /**
+- * drm_sched_resubmit_jobs - helper to relunch job from pending ring list
++ * drm_sched_resubmit_jobs - helper to relaunch jobs from the pending list
+  *
+  * @sched: scheduler instance
+  *
+@@ -561,8 +561,6 @@ void drm_sched_resubmit_jobs(struct drm_gpu_scheduler *sched)
+ 		} else {
+ 			s_job->s_fence->parent = fence;
+ 		}
+-
+-
+ 	}
+ }
+ EXPORT_SYMBOL(drm_sched_resubmit_jobs);
+diff --git a/drivers/gpu/drm/v3d/v3d_sched.c b/drivers/gpu/drm/v3d/v3d_sched.c
+index 452682e2209f..ef2338a294ca 100644
+--- a/drivers/gpu/drm/v3d/v3d_sched.c
++++ b/drivers/gpu/drm/v3d/v3d_sched.c
+@@ -259,7 +259,7 @@ v3d_cache_clean_job_run(struct drm_sched_job *sched_job)
+ 	return NULL;
+ }
+ 
+-static void
++static enum drm_gpu_sched_status
+ v3d_gpu_reset_for_timeout(struct v3d_dev *v3d, struct drm_sched_job *sched_job)
+ {
+ 	enum v3d_queue q;
+@@ -285,6 +285,8 @@ v3d_gpu_reset_for_timeout(struct v3d_dev *v3d, struct drm_sched_job *sched_job)
+ 	}
+ 
+ 	mutex_unlock(&v3d->reset_lock);
++
++	return DRM_GPU_SCHED_STAT_NOMINAL;
+ }
+ 
+ /* If the current address or return address have changed, then the GPU
+@@ -292,7 +294,7 @@ v3d_gpu_reset_for_timeout(struct v3d_dev *v3d, struct drm_sched_job *sched_job)
+  * could fail if the GPU got in an infinite loop in the CL, but that
+  * is pretty unlikely outside of an i-g-t testcase.
+  */
+-static void
++static enum drm_task_status
+ v3d_cl_job_timedout(struct drm_sched_job *sched_job, enum v3d_queue q,
+ 		    u32 *timedout_ctca, u32 *timedout_ctra)
+ {
+@@ -304,39 +306,39 @@ v3d_cl_job_timedout(struct drm_sched_job *sched_job, enum v3d_queue q,
+ 	if (*timedout_ctca != ctca || *timedout_ctra != ctra) {
+ 		*timedout_ctca = ctca;
+ 		*timedout_ctra = ctra;
+-		return;
++		return DRM_GPU_SCHED_STAT_NOMINAL;
+ 	}
+ 
+-	v3d_gpu_reset_for_timeout(v3d, sched_job);
++	return v3d_gpu_reset_for_timeout(v3d, sched_job);
+ }
+ 
+-static void
++static enum drm_task_status
+ v3d_bin_job_timedout(struct drm_sched_job *sched_job)
+ {
+ 	struct v3d_bin_job *job = to_bin_job(sched_job);
+ 
+-	v3d_cl_job_timedout(sched_job, V3D_BIN,
+-			    &job->timedout_ctca, &job->timedout_ctra);
++	return v3d_cl_job_timedout(sched_job, V3D_BIN,
++				   &job->timedout_ctca, &job->timedout_ctra);
+ }
+ 
+-static void
++static enum drm_task_status
+ v3d_render_job_timedout(struct drm_sched_job *sched_job)
+ {
+ 	struct v3d_render_job *job = to_render_job(sched_job);
+ 
+-	v3d_cl_job_timedout(sched_job, V3D_RENDER,
+-			    &job->timedout_ctca, &job->timedout_ctra);
++	return v3d_cl_job_timedout(sched_job, V3D_RENDER,
++				   &job->timedout_ctca, &job->timedout_ctra);
+ }
+ 
+-static void
++static enum drm_task_status
+ v3d_generic_job_timedout(struct drm_sched_job *sched_job)
+ {
+ 	struct v3d_job *job = to_v3d_job(sched_job);
+ 
+-	v3d_gpu_reset_for_timeout(job->v3d, sched_job);
++	return v3d_gpu_reset_for_timeout(job->v3d, sched_job);
+ }
+ 
+-static void
++static enum drm_task_status
+ v3d_csd_job_timedout(struct drm_sched_job *sched_job)
+ {
+ 	struct v3d_csd_job *job = to_csd_job(sched_job);
+@@ -348,10 +350,10 @@ v3d_csd_job_timedout(struct drm_sched_job *sched_job)
+ 	 */
+ 	if (job->timedout_batches != batches) {
+ 		job->timedout_batches = batches;
+-		return;
++		return DRM_GPU_SCHED_STAT_NOMINAL;
+ 	}
+ 
+-	v3d_gpu_reset_for_timeout(v3d, sched_job);
++	return v3d_gpu_reset_for_timeout(v3d, sched_job);
+ }
+ 
+ static const struct drm_sched_backend_ops v3d_bin_sched_ops = {
+diff --git a/include/drm/gpu_scheduler.h b/include/drm/gpu_scheduler.h
+index 975e8a67947f..ce6a383ed99f 100644
+--- a/include/drm/gpu_scheduler.h
++++ b/include/drm/gpu_scheduler.h
+@@ -206,6 +206,12 @@ static inline bool drm_sched_invalidate_job(struct drm_sched_job *s_job,
+ 	return s_job && atomic_inc_return(&s_job->karma) > threshold;
+ }
+ 
++enum drm_gpu_sched_stat {
++	DRM_GPU_SCHED_STAT_NONE, /* Reserve 0 */
++	DRM_GPU_SCHED_STAT_NOMINAL,
++	DRM_GPU_SCHED_STAT_ENODEV,
++};
++
+ /**
+  * struct drm_sched_backend_ops
+  *
+@@ -230,10 +236,16 @@ struct drm_sched_backend_ops {
+ 	struct dma_fence *(*run_job)(struct drm_sched_job *sched_job);
+ 
+ 	/**
+-         * @timedout_job: Called when a job has taken too long to execute,
+-         * to trigger GPU recovery.
++	 * @timedout_job: Called when a job has taken too long to execute,
++	 * to trigger GPU recovery.
++	 *
++	 * Return DRM_GPU_SCHED_STAT_NOMINAL, when all is normal,
++	 * and the underlying driver has started or completed recovery.
++	 *
++	 * Return DRM_GPU_SCHED_STAT_ENODEV, if the device is no longer
++	 * available, i.e. has been unplugged.
+ 	 */
+-	void (*timedout_job)(struct drm_sched_job *sched_job);
++	enum drm_gpu_sched_stat (*timedout_job)(struct drm_sched_job *sched_job);
+ 
+ 	/**
+          * @free_job: Called once the job's finished fence has been signaled
+-- 
+2.25.1
+
