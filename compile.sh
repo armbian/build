@@ -156,11 +156,16 @@ fi
 # Install Docker if not there but wanted. We cover only Debian based distro install. Else, manual Docker install is needed
 if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]; then
 
+	DOCKER_BINARY="docker-ce"
+
 	# add exception for Ubuntu Focal until Docker provides dedicated binary
 	codename=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
 	codeid=$(cat /etc/os-release | grep ^NAME | cut -d"=" -f2 | awk '{print tolower($0)}' | tr -d '"' | awk '{print $1}')
 	[[ "${codename}" == "debbie" ]] && codename="buster" && codeid="debian"
 	[[ "${codename}" == "ulyana" ]] && codename="focal" && codeid="ubuntu"
+
+	# different binnaries for Hirsute
+	[[ "${codename}" == "hirsute" ]] && DOCKER_BINARY="docker containerd docker.io"
 
 	display_alert "Docker not installed." "Installing" "Info"
 	echo "deb [arch=amd64] https://download.docker.com/linux/${codeid} ${codename} edge" > /etc/apt/sources.list.d/docker.list
@@ -176,7 +181,7 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 	curl -fsSL "https://download.docker.com/linux/${codeid}/gpg" | apt-key add -qq - > /dev/null 2>&1
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update
-	apt-get install -y -qq --no-install-recommends docker-ce
+	apt-get install -y -qq --no-install-recommends ${DOCKER_BINARY}
 	display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
 	"${SRC}/compile.sh" "$@"
 	exit $?
