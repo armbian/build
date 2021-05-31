@@ -33,7 +33,7 @@ case $BRANCH in
         ;;
 
         edge)
-		KERNELBRANCH='branch:linux-5.11.y'
+		KERNELBRANCH='branch:linux-5.12.y'
 		KERNELPATCHDIR='meson64-edge'
         ;;
 
@@ -216,7 +216,7 @@ family_tweaks_bsp()
 	install -m 755 $SRC/packages/bsp/rockchip/hdmi-hotplug $destination/usr/local/bin
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
-	if [[ $BOARD == odroidc2 || $BOARD == nanopik2 || $BOARD == lepatato || $BOARD == lafrite || $BOARD == vim1 ]]; then 
+	if [[ $BOARD == odroidc2 || $BOARD == nanopik2 || $BOARD == lepotato || $BOARD == lafrite || $BOARD == vim1 ]]; then 
 
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 	# set fbdev as default driver.

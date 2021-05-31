@@ -353,27 +353,13 @@ compile_kernel()
 
 	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
 
-        # create patch for manual source changes in debug mode
-        [[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
+	# create patch for manual source changes in debug mode
+	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
 
-        # re-read kernel version after patching
-        local version
-        version=$(grab_version "$kerneldir")
+	# re-read kernel version after patching
+	local version
+	version=$(grab_version "$kerneldir")
 
-	# create linux-source package - with already patched sources
-	local sources_pkg_dir tmp_src_dir
-	tmp_src_dir=$(mktemp -d)
-	trap "rm -rf \"${tmp_src_dir}\" ; exit 0" 0 1 2 3 15
-	sources_pkg_dir=${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all
-	mkdir -p "${sources_pkg_dir}"/usr/src/ "${sources_pkg_dir}"/usr/share/doc/linux-source-${version}-${LINUXFAMILY} "${sources_pkg_dir}"/DEBIAN
-
-	if [[ $BUILD_KSRC != no ]]; then
-		display_alert "Compressing sources for the linux-source package"
-		tar cp --directory="$kerneldir" --exclude='./.git/' --owner=root . \
-			 | pv -p -b -r -s "$(du -sb "$kerneldir" --exclude=='./.git/' | cut -f1)" \
-			| pixz -4 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz"
-		cp COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
-	fi
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
 # build aarch64
@@ -439,7 +425,47 @@ compile_kernel()
 		fi
 	fi
 
-	xz < .config > "${sources_pkg_dir}/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz"
+	# create linux-source package - with already patched sources
+	# We will build this package first and clear the memory.
+	if [[ $BUILD_KSRC != no ]]; then
+		ts=$(date +%s)
+		local sources_pkg_dir tmp_src_dir
+		tmp_src_dir=$(mktemp -d)
+		trap "rm -rf \"${tmp_src_dir}\" ; exit 0" 0 1 2 3 15
+		sources_pkg_dir=${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all
+		mkdir -p "${sources_pkg_dir}"/usr/src/ \
+			"${sources_pkg_dir}"/usr/share/doc/linux-source-${version}-${LINUXFAMILY} \
+			"${sources_pkg_dir}"/DEBIAN
+
+		cp "${SRC}/config/kernel/${LINUXCONFIG}.config" "default_${LINUXCONFIG}.config"
+		xz < .config > "${sources_pkg_dir}/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz"
+
+		display_alert "Compressing sources for the linux-source package"
+		tar cp --directory="$kerneldir" --exclude='.git' --owner=root . \
+			| pv -p -b -r -s "$(du -sb "$kerneldir" --exclude=='.git' | cut -f1)" \
+			| pixz -4 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz"
+		cp COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
+
+	cat <<-EOF > "${sources_pkg_dir}"/DEBIAN/control
+	Package: linux-source-${version}-${BRANCH}-${LINUXFAMILY}
+	Version: ${version}-${BRANCH}-${LINUXFAMILY}+${REVISION}
+	Architecture: all
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Section: kernel
+	Priority: optional
+	Depends: binutils, coreutils
+	Provides: linux-source, linux-source-${version}-${LINUXFAMILY}
+	Recommends: gcc, make
+	Description: This package provides the source code for the Linux kernel $version
+	EOF
+
+		fakeroot dpkg-deb -z0 -b "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
+		rsync --remove-source-files -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
+
+		te=$(date +%s)
+		display_alert "Make the linux-source package" "$(($te - $ts)) sec." "info"
+		rm -rf "${tmp_src_dir}"
+	fi
 
 	echo -e "\n\t== kernel ==\n" >> "${DEST}"/debug/compilation.log
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
@@ -481,25 +507,6 @@ compile_kernel()
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-
-	cat <<-EOF > "${sources_pkg_dir}"/DEBIAN/control
-	Package: linux-source-${version}-${BRANCH}-${LINUXFAMILY}
-	Version: ${version}-${BRANCH}-${LINUXFAMILY}+${REVISION}
-	Architecture: all
-	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-	Section: kernel
-	Priority: optional
-	Depends: binutils, coreutils
-	Provides: linux-source, linux-source-${version}-${LINUXFAMILY}
-	Recommends: gcc, make
-	Description: This package provides the source code for the Linux kernel $version
-	EOF
-
-	if [[ $BUILD_KSRC != no ]]; then
-		fakeroot dpkg-deb -z0 -b "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
-		rsync --remove-source-files -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
-	fi
-	rm -rf "${tmp_src_dir}"
 
 	cd .. || exit
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
