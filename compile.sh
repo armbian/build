@@ -168,7 +168,7 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 	[[ "${codename}" == "hirsute" ]] && DOCKER_BINARY="docker containerd docker.io"
 
 	display_alert "Docker not installed." "Installing" "Info"
-	echo "deb [arch=amd64] https://download.docker.com/linux/${codeid} ${codename} edge" > /etc/apt/sources.list.d/docker.list
+	echo "deb https://download.docker.com/linux/${codeid} ${codename} stable" > /etc/apt/sources.list.d/docker.list
 
 	# minimal set of utilities that are needed for prep
 	packages=("curl" "gnupg" "apt-transport-https")
