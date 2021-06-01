@@ -1,18 +1,28 @@
 FROM ubuntu:21.04
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get -y install joe software-properties-common
-RUN apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get -y install \
+       joe \
+       software-properties-common \
        gnupg \
        gnupg1 \
        gpgv1 \
     && rm -rf /var/lib/apt/lists/*
 RUN sh -c  "if [ x"" != x$http_proxy ]; then \
-			    apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --keyserver-options http-proxy=$http_proxy --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
-		    else \
-			    apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
-		    fi"
+                apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --keyserver-options http-proxy=$http_proxy --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
+            else \
+                apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
+            fi"
 RUN echo "deb http://repo.aptly.info/ nightly main" > /etc/apt/sources.list.d/aptly.list
-RUN dpkg --add-architecture i386
+RUN sh -c  "if [ $(dpkg --print-architecture) = amd64 ]; then \
+    dpkg --add-architecture i386 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       lib32ncurses6 \
+       lib32stdc++6 \
+       lib32tinfo6 \
+       libc6-i386 \
+       zlib1g:i386; \
+    fi"
 RUN apt-get update \
     && apt-get -y upgrade \
     && apt-get install -y --no-install-recommends \
@@ -47,12 +57,9 @@ RUN apt-get update \
        imagemagick \
        jq \
        kmod \
-       lib32ncurses6 \
-       lib32stdc++6 \
-       lib32tinfo6 \
        libbison-dev \
        libc6-dev-armhf-cross \
-       libc6-i386 \
+       libfdt-dev \
        libfile-fcntllock-perl \
        libfl-dev \
        liblz4-tool \
@@ -96,10 +103,10 @@ RUN apt-get update \
        uuid-runtime \
        wget \
        whiptail \
+       xfsprogs \
        xxd \
        zip \
        zlib1g-dev \
-       zlib1g:i386 \
     && rm -rf /var/lib/apt/lists/*
 RUN locale-gen en_US.UTF-8
 
