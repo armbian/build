@@ -96,6 +96,7 @@ RUN apt-get update \
        uuid-runtime \
        wget \
        whiptail \
+       xfsprogs \
        xxd \
        zip \
        zlib1g-dev \
