@@ -992,7 +992,7 @@ prepare_host()
 
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
-		display_alert "http://www.armbian.com/using-armbian-tools/"
+		display_alert "https://www.armbian.com/using-armbian-tools/"
 		exit_with_error "Running this tool on non x86-x64 build host is not supported"
 	fi
 
@@ -1221,7 +1221,7 @@ prepare_host()
 	if [[ ! -f "${USERPATCHES_PATH}"/README ]]; then
 		rm -f "${USERPATCHES_PATH}"/readme.txt
 		echo 'Please read documentation about customizing build configuration' > "${USERPATCHES_PATH}"/README
-		echo 'http://www.armbian.com/using-armbian-tools/' >> "${USERPATCHES_PATH}"/README
+		echo 'https://www.armbian.com/using-armbian-tools/' >> "${USERPATCHES_PATH}"/README
 
 		# create patches directory structure under USERPATCHES_PATH
 		find "${SRC}"/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
