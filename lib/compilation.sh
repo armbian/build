@@ -518,7 +518,7 @@ compile_kernel()
 	echo "${hash}" > "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
-	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}/" -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort)
+	hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort -n)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
 	echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin >> "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 }
