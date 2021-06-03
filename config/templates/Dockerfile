@@ -7,21 +7,25 @@ RUN apt-get update && apt-get -y install \
        gnupg1 \
        gpgv1 \
     && rm -rf /var/lib/apt/lists/*
-RUN sh -c  "if [ x"" != x$http_proxy ]; then \
-                apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --keyserver-options http-proxy=$http_proxy --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
-            else \
-                apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
-            fi"
-RUN echo "deb http://repo.aptly.info/ nightly main" > /etc/apt/sources.list.d/aptly.list
-RUN sh -c  "if [ $(dpkg --print-architecture) = amd64 ]; then \
-    dpkg --add-architecture i386 \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-       lib32ncurses6 \
-       lib32stdc++6 \
-       lib32tinfo6 \
-       libc6-i386 \
-       zlib1g:i386; \
+RUN sh -c " \
+    if [ $(dpkg --print-architecture) = amd64 ]; then \
+        if [ x'' != x$http_proxy ]; then \
+            apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 \
+			    --keyserver-options http-proxy=$http_proxy \
+				--recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
+        else \
+            apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 \
+			    --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
+        fi; \
+        echo \"deb http://repo.aptly.info/ nightly main\" > /etc/apt/sources.list.d/aptly.list; \
+        dpkg --add-architecture i386 \
+        && apt-get update \
+        && apt-get install -y --no-install-recommends \
+        lib32ncurses6 \
+        lib32stdc++6 \
+        lib32tinfo6 \
+        libc6-i386 \
+        zlib1g:i386; \
     fi"
 RUN apt-get update \
     && apt-get -y upgrade \
