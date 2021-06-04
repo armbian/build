@@ -164,7 +164,7 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 	[[ "${codename}" == "debbie" ]] && codename="buster" && codeid="debian"
 	[[ "${codename}" == "ulyana" ]] && codename="focal" && codeid="ubuntu"
 
-	# different binnaries for some. TBD. Need to check for all others
+	# different binaries for some. TBD. Need to check for all others
 	[[ "${codename}" =~ focal|hirsute ]] && DOCKER_BINARY="docker containerd docker.io"
 
 	display_alert "Docker not installed." "Installing" "Info"
