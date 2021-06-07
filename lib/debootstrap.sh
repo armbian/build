@@ -357,7 +357,7 @@ create_rootfs_cache()
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 		if [[ -n $GPG_PASS ]]; then
-			echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes $cache_fname
+			echo $GPG_PASS | sudo gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes $cache_fname
 		fi
 
 		# needed for backend to keep current only
