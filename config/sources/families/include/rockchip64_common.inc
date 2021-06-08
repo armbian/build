@@ -12,6 +12,19 @@ BOOTBRANCH="tag:v2020.10"
 PACKAGE_LIST_FAMILY="ethtool"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
+if [ "$(uname -m)" = "aarch64" ]; then
+	case "$(lsb_release -sc)" in
+		"focal"|"hirsute")
+			PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
+		;;
+	*)
+		PKG_PREFIX="qemu-x86_64 -L /usr/x86_64-linux-gnu "
+		;;
+	esac
+else
+	PKG_PREFIX=""
+fi
+
 
 if [[ $BOOTCONFIG == *3399* ]]; then
 
@@ -190,17 +203,6 @@ legacy_uboot_locations()
 
 uboot_custom_postprocess()
 {
-	if [ "$(uname -m)" = "aarch64" ]; then
-		if [ "$(lsb_release -sc)" = "focal" ]; then
-			PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
-		else
-			PKG_PREFIX="qemu-x86_64 -L /usr/x86_64-linux-gnu "
-		fi
-	else
-		PKG_PREFIX=""
-	fi
-
-	RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 
 	if [[ $BOOT_USE_MAINLINE_ATF == yes || $BOOT_USE_TPL_SPL_BLOB == yes ]]; then
 		:
