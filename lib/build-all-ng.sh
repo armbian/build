@@ -401,6 +401,8 @@ function build_all()
 				fi
 				printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\t%-6s\n" "${n}." \
 				"$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${DESKTOP_ENVIRONMENT}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}" "${DESKTOP_APPGROUPS_SELECTED}"
+LC_COLLATE=C find -L "${SRC}patch/kernel/sunxi-current"/ -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort -n
+
 			fi
 		fi
 		fi
