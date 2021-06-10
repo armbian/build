@@ -188,7 +188,7 @@ create_sources_list()
 
 	# stage: add armbian repository and install key
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
-		echo "deb http://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+		echo "deb https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
 	    echo "deb http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 	else
@@ -992,7 +992,7 @@ prepare_host()
 
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
-		display_alert "http://www.armbian.com/using-armbian-tools/"
+		display_alert "https://www.armbian.com/using-armbian-tools/"
 		exit_with_error "Running this tool on non x86-x64 build host is not supported"
 	fi
 
@@ -1070,6 +1070,7 @@ prepare_host()
 	fi
 
 	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
+# build aarch64
   fi
   
 	if systemd-detect-virt -q -c; then
@@ -1087,8 +1088,6 @@ prepare_host()
 		fi
 		SYNC_CLOCK=no
 	fi
-
-# build aarch64
 
 
 	# Skip verification if you are working offline
@@ -1221,7 +1220,7 @@ prepare_host()
 	if [[ ! -f "${USERPATCHES_PATH}"/README ]]; then
 		rm -f "${USERPATCHES_PATH}"/readme.txt
 		echo 'Please read documentation about customizing build configuration' > "${USERPATCHES_PATH}"/README
-		echo 'http://www.armbian.com/using-armbian-tools/' >> "${USERPATCHES_PATH}"/README
+		echo 'https://www.armbian.com/using-armbian-tools/' >> "${USERPATCHES_PATH}"/README
 
 		# create patches directory structure under USERPATCHES_PATH
 		find "${SRC}"/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
