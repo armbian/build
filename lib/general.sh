@@ -1070,6 +1070,7 @@ prepare_host()
 	fi
 
 	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
+# build aarch64
   fi
   
 	if systemd-detect-virt -q -c; then
@@ -1087,8 +1088,6 @@ prepare_host()
 		fi
 		SYNC_CLOCK=no
 	fi
-
-# build aarch64
 
 
 	# Skip verification if you are working offline
