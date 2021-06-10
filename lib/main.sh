@@ -47,7 +47,7 @@ if [[ $BUILD_ALL != "yes" && -z $ROOT_FS_CREATE_ONLY ]]; then
 fi
 
 # We'll use this title on all menus
-backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
+backtitle="Armbian building script, https://www.armbian.com | Author: Igor Pecovnik"
 
 # if language not set, set to english
 [[ -z $LANGUAGE ]] && export LANGUAGE="en_US:en"
