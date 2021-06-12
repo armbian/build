@@ -357,7 +357,7 @@ create_rootfs_cache()
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 		if [[ -n $GPG_PASS ]]; then
-			echo $GPG_PASS | sudo gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes $cache_fname
+			echo "${GPG_PASS}" | sudo -H -i ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 		fi
 
 		# needed for backend to keep current only
@@ -792,7 +792,7 @@ create_image()
 			cd ${FINALDEST}
 			if [[ -n $GPG_PASS ]]; then
 				display_alert "GPG signing" "${version}.img${compression_type}" "info"
-				echo $GPG_PASS | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${FINALDEST}/${version}.img${compression_type} || exit 1
+				echo "${GPG_PASS}" | sudo -H -i ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${FINALDEST}/${version}.img${compression_type}" || exit 1
 			else
 				display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 			fi
