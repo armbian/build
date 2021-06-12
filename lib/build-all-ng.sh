@@ -107,9 +107,10 @@ pack_upload ()
 	fi
 
 	if [[ $COMPRESS_OUTPUTIMAGE == *gpg* ]]; then
-		if [[ -n $GPG_PASS ]]; then
+		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
 			display_alert "GPG signing" "${version}.img" "info"
-			echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes "${version}.img${compression_type}" || exit 1
+			[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
+			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img${compression_type}" || exit 1
 		else
 			display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 		fi
