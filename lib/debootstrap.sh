@@ -778,7 +778,7 @@ create_image()
 			[[ ${available_cpu} -gt 8 ]] && available_cpu=8 # using more cpu cores for compressing is pointless
 			available_mem=$(LC_ALL=c free | grep Mem | awk '{print $4/$2 * 100.0}' | awk '{print int($1)}') # in percentage
 			# build optimisations when memory drops below 5%
-			if [[ ${BUILD_ALL} == yes && ${available_mem} -lt 15 ]]; then
+			if [[ ${BUILD_ALL} == yes && ( ${available_mem} -lt 15 || $(ps -uax | grep "pixz" | wc -l) -gt 4 )]]; then
 				while [[ $(ps -uax | grep "pixz" | wc -l) -gt 2 ]]
 					do echo -en "#"
 					sleep 20
