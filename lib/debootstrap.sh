@@ -784,7 +784,7 @@ create_image()
 					sleep 20
 				done
 			fi
-			pixz -8 -p ${available_cpu} < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.xz
+			pixz -7 -p ${available_cpu} -f $(expr ${available_cpu} + 2) < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.xz
 			compression_type=".xz"
 		fi
 
