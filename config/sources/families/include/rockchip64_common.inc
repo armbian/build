@@ -14,7 +14,7 @@ PACKAGE_LIST_FAMILY="ethtool"
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 if [ "$(uname -m)" = "aarch64" ]; then
 	case "$(lsb_release -sc)" in
-		"focal"|"hirsute")
+	"focal"|"hirsute")
 			PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
 		;;
 	*)
@@ -349,6 +349,12 @@ family_tweaks()
 
                 chroot $SDCARD /bin/bash -c "echo SuspendState=freeze >> /etc/systemd/sleep.conf"
                 chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
+	fi
+
+	if [[ $BOARD == station* ]]; then
+
+		cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
+
 	fi
 
 }
