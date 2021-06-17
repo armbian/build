@@ -61,6 +61,15 @@ elif [[ $BOARD == pinebook-pro ]]; then
 	BOOT_SOC=rk3399
 	ATFPATCHDIR='atf-rk3399'
 
+elif [[ $BOARD == khadas-edge ]]; then
+
+	BOOT_USE_BLOBS=yes
+	BOOT_SUPPORT_SPI=yes
+	BOOT_SOC=rk3399
+	DDR_BLOB='rk33/rk3399_ddr_800MHz_v1.25.bin'
+	MINILOADER_BLOB='rk33/rk3399_miniloader_v1.26.bin'
+	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
+
 elif [[ $BOARD == rockpi-4* ]]; then
 
 	BOOT_USE_BLOBS=yes
