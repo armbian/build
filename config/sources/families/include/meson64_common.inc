@@ -226,7 +226,7 @@ family_tweaks_bsp()
 	    EndSection
 	EOF
 
-	elif [[ $BOARD == odroidn2 || $BOARD == odroidc4 || $BOARD == vim2 ]]; then
+	elif [[ $BOARD == odroidn2 || $BOARD == odroidc4 || $BOARD == vim2 || $BOARD == odroidhc4 || $BOARD == khadas-vim3 || $BOARD == khadas-vim3l ]]; then
 
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf
 	Section "Device"
