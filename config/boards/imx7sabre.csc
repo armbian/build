@@ -2,4 +2,4 @@
 BOARD_NAME="MCIMX7SABRE"
 BOARDFAMILY="imx7d"
 BOOTCONFIG="imx_v7_defconfig"
-KERNEL_TARGET="legacy"
+KERNEL_TARGET="legacy,current"
