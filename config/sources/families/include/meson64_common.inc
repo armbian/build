@@ -216,25 +216,21 @@ family_tweaks_bsp()
 	install -m 755 $SRC/packages/bsp/rockchip/hdmi-hotplug $destination/usr/local/bin
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
-	if [[ $BOARD == odroidc2 || $BOARD == nanopik2 || $BOARD == lepotato || $BOARD == lafrite || $BOARD == vim1 ]]; then 
-
+	case "${BOARD}" in
+		"odroidc2" | "nanopik2" | "lepotato" | "lafrite" | "vim1" )
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 	# set fbdev as default driver.
 	Section "Device"
-	    Identifier "NOGPU"
-	    Driver "fbdev"
-	    EndSection
+	    Identifier "DRM Graphics"
+	    Driver "modesetting"
+            AccelMethod "none"
+	EndSection
 	EOF
-
-	elif [[ $BOARD == odroidn2 || $BOARD == odroidc4 || $BOARD == vim2 || $BOARD == odroidhc4 || $BOARD == khadas-vim3 || $BOARD == khadas-vim3l ]]; then
-
+        ;;
+		"odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" )
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf
 	Section "Device"
-	    Identifier  "Armsoc Graphics"
-	    
-	    ## Use armsoc driver
-	    #   Driver          "armsoc"
-	    ## End armsoc configuration
+	    Identifier  "DRM Graphics Acclerated"
 	    
 	    ## Use modesetting and glamor
 	        Driver      "modesetting"
@@ -253,6 +249,6 @@ family_tweaks_bsp()
 	            EndSubSection
 	        EndSection
 	EOF
-
-	fi
+        ;;
+        esac
 }
