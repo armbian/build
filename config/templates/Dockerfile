@@ -11,11 +11,11 @@ RUN sh -c " \
     if [ $(dpkg --print-architecture) = amd64 ]; then \
         if [ x'' != x$http_proxy ]; then \
             apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 \
-			    --keyserver-options http-proxy=$http_proxy \
-				--recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
+                --keyserver-options http-proxy=$http_proxy \
+                --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
         else \
             apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 \
-			    --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
+                --recv-keys ED75B5A4483DA07C >/dev/null 2>&1; \
         fi; \
         echo \"deb http://repo.aptly.info/ nightly main\" > /etc/apt/sources.list.d/aptly.list; \
         dpkg --add-architecture i386 \
@@ -57,11 +57,14 @@ RUN apt-get update \
        g++-8-arm-linux-gnueabihf \
        gawk \
        gcc-arm-linux-gnueabihf \
+       gcc-arm-linux-gnueabi \
+       gcc-arm-none-eabi \
        git \
        imagemagick \
        jq \
        kmod \
        libbison-dev \
+       libc6-amd64-cross \
        libc6-dev-armhf-cross \
        libfdt-dev \
        libfile-fcntllock-perl \
@@ -95,6 +98,7 @@ RUN apt-get update \
        python3-distutils \
        python3-pkg-resources \
        python3-setuptools \
+       qemu \
        qemu-user-static \
        rsync \
        swig \
