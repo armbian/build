@@ -807,15 +807,26 @@ addtorepo()
 
 
 
-repo-manipulate() {
-	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal" "hirsute" "sid")
+repo-manipulate()
+{
+# repository manipulation
+# "show" displays packages in each repository
+# "server" serve repository - useful for local diagnostics
+# "unique" manually select which package should be removed from all repositories
+# "update" search for new files in output/debs* to add them to repository
+# "purge" leave only last 5 versions
+
+	local DISTROS=($(grep -rw config/distributions/* -e 'supported' | cut -d"/" -f3))
+
 	case $@ in
+
 		serve)
 			# display repository content
 			display_alert "Serving content" "common utils" "ext"
 			aptly serve -listen=$(ip -f inet addr | grep -Po 'inet \K[\d.]+' | grep -v 127.0.0.1 | head -1):80 -config="${SCRIPTPATH}config/${REPO_CONFIG}"
 			exit 0
 			;;
+
 		show)
 			# display repository content
 			for release in "${DISTROS[@]}"; do
@@ -830,6 +841,7 @@ repo-manipulate() {
 			;;
 
 		unique)
+			# which package should be removed from all repositories
 			IFS=$'\n'
 			while true; do
 				LIST=()
@@ -849,7 +861,7 @@ repo-manipulate() {
 				LIST=("${new_list[@]}")
 				LIST_LENGTH=$((${#LIST[@]}/2));
 				exec 3>&1
-				TARGET_VERSION=$(dialog --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Switch from and reboot" --clear --menu "Delete" $((9+${LIST_LENGTH})) 82 65 "${LIST[@]}" 2>&1 1>&3)
+				TARGET_VERSION=$(dialog --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Remove packages from repositories" --clear --menu "Delete" $((9+${LIST_LENGTH})) 82 65 "${LIST[@]}" 2>&1 1>&3)
 				exitstatus=$?;
 				exec 3>&-
 				if [[ $exitstatus -eq 0 ]]; then
@@ -861,8 +873,10 @@ repo-manipulate() {
 				else
 					exit 1
 				fi
+				aptly db cleanup -config="${SCRIPTPATH}config/${REPO_CONFIG}" > /dev/null 2>&1
 			done
 			;;
+
 		update)
 			# display full help test
 			# run repository update
@@ -871,6 +885,7 @@ repo-manipulate() {
 			cp "${SCRIPTPATH}"config/armbian.key "${REPO_STORAGE}"/public/
 			exit 0
 			;;
+
 		purge)
 			for release in "${DISTROS[@]}"; do
 				repo-remove-old-packages "$release" "armhf" "5"
@@ -880,6 +895,7 @@ repo-manipulate() {
 			done
 			exit 0
 			;;
+
 		purgesource)
 			for release in "${DISTROS[@]}"; do
 				aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" 'Name (% *-source*)'
@@ -889,15 +905,20 @@ repo-manipulate() {
 			exit 0
 			;;
 		*)
-			echo -e "Usage: repository show | serve | create | update | purge\n"
-			echo -e "\n show   = display repository content"
-			echo -e "\n serve  = publish your repositories on current server over HTTP"
-			echo -e "\n update = updating repository"
-			echo -e "\n purge  = removes all but last 5 versions\n\n"
+
+			echo -e "Usage: repository show | serve | unique | create | update | purge | purgesource\n"
+			echo -e "\n show           = display repository content"
+			echo -e "\n serve          = publish your repositories on current server over HTTP"
+			echo -e "\n unique         = manually select which package should be removed from all repositories"
+			echo -e "\n update         = updating repository"
+			echo -e "\n purge          = removes all but last 5 versions"
+			echo -e "\n purgesource    = removes all sources\n\n"
 			exit 0
 			;;
+
 	esac
-} # ParseOptions
+
+}
 
 
 
