@@ -169,7 +169,7 @@ create_sources_list()
 	EOF
 	;;
 
-	xenial|bionic|groovy|focal|groovy|hirsute)
+	xenial|bionic|focal|hirsute)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -938,11 +938,8 @@ repo-remove-old-packages() {
 		pkg_name=$(echo "${pkg}" | cut -d_ -f1)
 		for subpkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name)"  | grep -v "ERROR: no results" | sort -rt '.' -nk4); do
 			((count+=1))
-#			echo $subpkg
 			if [[ $count -gt $keep ]]; then
-			#echo "rem"
 			pkg_version=$(echo "${subpkg}" | cut -d_ -f2)
-			#echo $pkg_version
 			aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name), Version (= $pkg_version)"
 			fi
 		done
