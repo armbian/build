@@ -74,7 +74,7 @@ update_src() {
 					echo "Unknown command!"
 				fi
 			done
-		elif [[ $(git branch | grep "*" | awk '{print $2}') != "${LIB_TAG}" ]]; then
+		elif [[ $(git branch | grep "*" | awk '{print $2}') != "${LIB_TAG}" && -n "${LIB_TAG}" ]]; then
 			git checkout "${LIB_TAG:-master}"
 			git pull
 		fi
