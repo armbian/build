@@ -1,4 +1,6 @@
-Supported Debian and Ubuntu upstream distributions / packages base
+## Upstream distributions status
+
+Supported Debian and Ubuntu upstream distributions / packages base. Here we define their status:
 
 |support|description|
 |:--|:--|
