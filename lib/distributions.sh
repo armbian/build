@@ -610,14 +610,7 @@ install_distribution_specific()
 			chroot "${SDCARD}" /bin/bash -c "systemctl disable  motd-news.service >/dev/null 2>&1"
 			chroot "${SDCARD}" /bin/bash -c "systemctl disable  motd-news.timer >/dev/null 2>&1"
 
-			rm -f "${SDCARD}"/etc/update-motd.d/10-uname
-			rm -f "${SDCARD}"/etc/update-motd.d/10-help-text
-			rm -f "${SDCARD}"/etc/update-motd.d/50-motd-news
-			rm -f "${SDCARD}"/etc/update-motd.d/80-esm
-			rm -f "${SDCARD}"/etc/update-motd.d/80-livepatch
-			rm -f "${SDCARD}"/etc/update-motd.d/90-updates-available
-			rm -f "${SDCARD}"/etc/update-motd.d/91-release-upgrade
-			rm -f "${SDCARD}"/etc/update-motd.d/95-hwe-eol
+			rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
 
 			# remove motd news from motd.ubuntu.com
 			[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news

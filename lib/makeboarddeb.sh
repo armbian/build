@@ -319,30 +319,6 @@ fi
 	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
 	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"
 
-	# Can be removed after 21.05
-	# create meta package for upgrade
-	local DEB_BRANCH=("legacy" "current" "edge")
-	for deb_branch in "${DEB_BRANCH[@]}"; do
-
-	local destination=${bsptempdir}/${RELEASE}/linux-${RELEASE}-root-${deb_branch}-${BOARD}_${REVISION}_${ARCH}
-	mkdir -p "${destination}"/DEBIAN
-	cat <<-EOF > "${destination}"/DEBIAN/control
-	Package: linux-${RELEASE}-root-${deb_branch}-${BOARD}
-	Version: $REVISION
-	Architecture: all
-	Priority: optional
-	Section: oldlibs
-	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-	Depends: ${BSP_CLI_PACKAGE_NAME}
-	Description: This is a transitional package. It can safely be removed.
-	EOF
-	display_alert "Building meta  package" "$CHOSEN_ROOTFS" "info"
-	fakeroot dpkg-deb -b "${destination}" "${destination}.deb" >> "${DEST}"/debug/install.log 2>&1
-	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
-	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"
-	done
-	# Can be removed after 21.05
-
 	# cleanup
 	rm -rf ${bsptempdir}
 }
