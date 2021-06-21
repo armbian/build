@@ -13,3 +13,5 @@
 | Allwinner sun7i : sunxi | sun50iw2 : sunxi64 |
 | Allwinner sun8i : sunxi | sun50iw6 : sunxi64 |
 | Allwinner sun9i : sunxi &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; | virtual : qemu-virtual  &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; |
+|| zynq : zynq |
+|| jetson-nano : jetson-nano |
