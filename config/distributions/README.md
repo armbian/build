@@ -1,4 +1,4 @@
-Debian and Ubuntu packages base
+Supported Debian and Ubuntu upstream distributions / packages base
 
 |support|description|
 |:--|:--|
