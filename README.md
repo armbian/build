@@ -160,14 +160,15 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 │   └── u-boot                           Universal boot loader patches
 |       ├── u-boot-board                 For specific board
 |       └── u-boot-family                For entire kernel family
-└── userpatches                          User: configuration patching area
+└── user                                 User: configuration and patching area
     ├── lib.config                       User: tools common config/override file
     ├── config-default.conf              User: default user config file
     ├── customize-image.sh               User: script will execute just before closing the image
-    ├── atf                              User: ARM trusted firmware
-    ├── kernel                           User: Linux kernel per kernel family
-    ├── misc                             User: various
-    └── u-boot                           User: universal boot loader patches
+    └── patch                            User: patch directory
+        ├── atf                          User: ARM trusted firmware
+        ├── kernel                       User: Linux kernel per kernel family
+        ├── misc                         User: various
+        └── u-boot                       User: universal boot loader patches
 ```
 
 <p align=right><a href=#table-of-contents>⇧</a></p>

@@ -187,58 +187,58 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 	exit $?
 fi
 
-# Create userpatches directory if not exists
-mkdir -p "${SRC}"/userpatches
+# Create user directory if it does not exist
+mkdir -p "${SRC}"/user/patches
 
-# Create example configs if none found in userpatches
-if ! ls "${SRC}"/userpatches/{config-example.conf,config-docker.conf,config-vagrant.conf} 1> /dev/null 2>&1; then
+# Create example configs if none found in /user
+if ! ls "${SRC}"/user/{config-example.conf,config-docker.conf,config-vagrant.conf} 1> /dev/null 2>&1; then
 
 	# Migrate old configs
 	if ls "${SRC}"/*.conf 1> /dev/null 2>&1; then
-		display_alert "Migrate config files to userpatches directory" "all *.conf" "info"
-                cp "${SRC}"/*.conf "${SRC}"/userpatches  || exit 1
+		display_alert "Migrate config files to user directory" "all *.conf" "info"
+                cp "${SRC}"/*.conf "${SRC}"/user  || exit 1
 		rm "${SRC}"/*.conf
-		[[ ! -L "${SRC}"/userpatches/config-example.conf ]] && ln -fs config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
+		[[ ! -L "${SRC}"/user/config-example.conf ]] && ln -fs config-example.conf "${SRC}"/user/config-default.conf || exit 1
 	fi
 
 	display_alert "Create example config file using template" "config-default.conf" "info"
 
 	# Create example config
-	if [[ ! -f "${SRC}"/userpatches/config-example.conf ]]; then
-		cp "${SRC}"/config/templates/config-example.conf "${SRC}"/userpatches/config-example.conf || exit 1
-                ln -fs config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
+	if [[ ! -f "${SRC}"/user/config-example.conf ]]; then
+		cp "${SRC}"/config/templates/config-example.conf "${SRC}"/user/config-example.conf || exit 1
+                ln -fs config-example.conf "${SRC}"/user/config-default.conf || exit 1
 	fi
 
 	# Create Docker config
-	if [[ ! -f "${SRC}"/userpatches/config-docker.conf ]]; then
-		cp "${SRC}"/config/templates/config-docker.conf "${SRC}"/userpatches/config-docker.conf || exit 1
+	if [[ ! -f "${SRC}"/user/config-docker.conf ]]; then
+		cp "${SRC}"/config/templates/config-docker.conf "${SRC}"/user/config-docker.conf || exit 1
 	fi
 
 	# Create Docker file
-        if [[ ! -f "${SRC}"/userpatches/Dockerfile ]]; then
-                cp "${SRC}"/config/templates/Dockerfile "${SRC}"/userpatches/Dockerfile || exit 1
+        if [[ ! -f "${SRC}"/user/Dockerfile ]]; then
+                cp "${SRC}"/config/templates/Dockerfile "${SRC}"/user/Dockerfile || exit 1
         fi
 
 	# Create Vagrant config
-	if [[ ! -f "${SRC}"/userpatches/config-vagrant.conf ]]; then
-	        cp "${SRC}"/config/templates/config-vagrant.conf "${SRC}"/userpatches/config-vagrant.conf || exit 1
+	if [[ ! -f "${SRC}"/user/config-vagrant.conf ]]; then
+	        cp "${SRC}"/config/templates/config-vagrant.conf "${SRC}"/user/config-vagrant.conf || exit 1
 	fi
 
 	# Create Vagrant file
-	if [[ ! -f "${SRC}"/userpatches/Vagrantfile ]]; then
-		cp "${SRC}"/config/templates/Vagrantfile "${SRC}"/userpatches/Vagrantfile || exit 1
+	if [[ ! -f "${SRC}"/user/Vagrantfile ]]; then
+		cp "${SRC}"/config/templates/Vagrantfile "${SRC}"/user/Vagrantfile || exit 1
 	fi
 
 fi
 
-if [[ -z "${CONFIG}" && -n "$1" && -f "${SRC}/userpatches/config-$1.conf" ]]; then
-	CONFIG="userpatches/config-$1.conf"
+if [[ -z "${CONFIG}" && -n "$1" && -f "${SRC}/user/config-$1.conf" ]]; then
+	CONFIG="user/config-$1.conf"
 	shift
 fi
 
 # usind default if custom not found
-if [[ -z "${CONFIG}" && -f "${SRC}/userpatches/config-default.conf" ]]; then
-	CONFIG="userpatches/config-default.conf"
+if [[ -z "${CONFIG}" && -f "${SRC}/user/config-default.conf" ]]; then
+	CONFIG="user/config-default.conf"
 fi
 
 # source build configuration file
@@ -257,7 +257,7 @@ pushd "${CONFIG_PATH}" > /dev/null || exit
 source "${CONFIG_FILE}"
 popd > /dev/null || exit
 
-[[ -z "${USERPATCHES_PATH}" ]] && USERPATCHES_PATH="${CONFIG_PATH}"
+[[ -z "${USERPATCHES_PATH}" ]] && USERPATCHES_PATH="${CONFIG_PATH}"/patches
 
 # Script parameters handling
 while [[ "${1}" == *=* ]]; do
