@@ -1,1 +1,1 @@
-firefox
+chromium-browser
