@@ -217,7 +217,7 @@ family_tweaks_bsp()
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
 	case "${BOARD}" in
-		"odroidc2" | "nanopik2" | "lepotato" | "lafrite" | "vim1" )
+		"odroidc2" | "nanopik2" | "lepotato" | "lafrite" | "khadas-vim1" )
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 	# set fbdev as default driver.
 	Section "Device"
