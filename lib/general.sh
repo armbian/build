@@ -1048,7 +1048,7 @@ prepare_host()
 	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
 	locales ncurses-base pixz dialog systemd-container udev libfdt-dev libc6 qemu \
 	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz \
-	dirmngr python3-distutils "
+	dirmngr python3-distutils jq "
 
 # build aarch64
   fi
