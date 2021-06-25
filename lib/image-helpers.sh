@@ -18,6 +18,7 @@
 # write_uboot
 # customize_image
 # install_deb_chroot
+# run_on_sdcard
 
 # mount_chroot <target>
 #
@@ -149,4 +150,13 @@ install_deb_chroot()
 	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq $apt_extra --no-install-recommends install $name" >> "${DEST}"/debug/install.log 2>&1
 	[[ $? -ne 0 ]] && exit_with_error "Installation of $name failed" "${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
 	[[ ${variant} == remote && ${transfer} == yes ]] && rsync -rq "${SDCARD}"/var/cache/apt/archives/*.deb ${DEB_STORAGE}/
+}
+
+
+run_on_sdcard()
+{
+
+	# Lack of quotes allows for redirections and pipes easily.
+	chroot "${SDCARD}" /bin/bash -c "${@}" >> "${DEST}"/debug/install.log
+
 }

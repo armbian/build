@@ -11,7 +11,6 @@
 
 # Functions:
 # create_desktop_package
-# run_on_sdcard
 # install_ppa_prerequisites
 # add_apt_sources
 # add_desktop_package_sources
@@ -117,17 +116,6 @@ create_desktop_package ()
 
 
 
-run_on_sdcard() {
-
-	# Myy : The lack of quotes is deliberate here
-	# This allows for redirections and pipes easily.
-	chroot "${SDCARD}" /bin/bash -c "${@}" >> "${DEST}"/debug/install.log
-
-}
-
-
-
-
 install_ppa_prerequisites() {
 
 	# Myy : So... The whole idea is that, a good bunch of external sources
@@ -142,6 +130,9 @@ install_ppa_prerequisites() {
 	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt install -yqq software-properties-common"
 
 }
+
+
+
 
 add_apt_sources() {
 
@@ -211,12 +202,16 @@ desktop_postinstall ()
 	# disable display manager for the first run
 	run_on_sdcard "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
 	run_on_sdcard "systemctl --no-reload disable gdm3.service >/dev/null 2>&1"
-	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get update" >> "${DEST}"/debug/install.log
 
+	# update packages index
+	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1"
+
+	# install per board packages
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
 		run_on_sdcard "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" 
 	fi
 
+	# install per family packages
 	if [[ -n ${PACKAGE_LIST_DESKTOP_FAMILY} ]]; then
 		run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY"
 	fi
