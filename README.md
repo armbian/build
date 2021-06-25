@@ -1,4 +1,4 @@
-<h3 align=center><a href="#armbian-build-tools"><img src=".github/armbian-logo.png" alt="Armbian logo" width="144"></a><br>
+<h3 align=center><a href="#build-tools"><img src=".github/armbian-logo.png" alt="Armbian logo" width="144"></a><br>
 build tools</h3>
 
 <p align=right>&nbsp;</p>
@@ -36,7 +36,7 @@ build tools</h3>
 <p align=right>&nbsp;</p>
 
 ## What do you need to get started?
-    
+
 - x64 machine with at least 2GB of memory and ~35GB of disk space for a VM, container or native OS,
 - Ubuntu Hirsute 21.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised,
   - Hirsute is required for newer non-LTS releases.. ex: Bullseye, Sid, Groovy, Hirsute
@@ -91,9 +91,9 @@ Check similarity, advantages and disadvantages compared with leading industry st
 
 Function | Armbian | Yocto | Buildroot |
 |:--|:--|:--|:--|
-| Target | general purpose | embedded | embedded / IOT | 
+| Target | general purpose | embedded | embedded / IOT |
 | U-boot and kernel | compiled from sources | compiled from sources | compiled from sources |
-| Board support maintenance &nbsp; | complete | outside | outside | 
+| Board support maintenance &nbsp; | complete | outside | outside |
 | Root file system | Debian or Ubuntu based| custom | custom |
 | Package manager | APT | any | none |
 | Configurability | limited | large | large |
@@ -177,9 +177,9 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 - Have you found a bug in the **build tools**? 
 
     Try to recreate it with a clean build tools clone. Then search for [existing and closed issues](https://github.com/armbian/build/issues). If you don't find it there, [open a new issue](https://github.com/armbian/build/issues/new).
-    
+
 - Do you have troubles **elsewhere**? 
-    
+
     Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). If you can't find answer there and/or with help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com), consider [hiring an expert](https://www.debian.org/consultants/).
 
 - Personalised support?
