@@ -21,18 +21,23 @@ grep -q "[[:space:]]" <<<"${SRC}" && { echo "\"${SRC}\" contains whitespace. Not
 cd "${SRC}" || exit
 
 if [[ -f "${SRC}"/lib/general.sh ]]; then
+
 	# shellcheck source=lib/general.sh
 	source "${SRC}"/lib/general.sh
+
 else
+
 	echo "Error: missing build directory structure"
 	echo "Please clone the full repository https://github.com/armbian/build/"
 	exit 255
+
 fi
 
 #  Add the variables needed at the beginning of the path
 check_args ()
 {
-  for p in "$@"; do
+
+for p in "$@"; do
 
 	case "${p%=*}" in
 		LIB_TAG)
@@ -48,12 +53,16 @@ check_args ()
 			;;
 	esac
 
-  done
+done
+
 }
+
 
 check_args "$@"
 
+
 update_src() {
+
 	cd "${SRC}" || exit
 	if [[ ! -f "${SRC}"/.ignore_changes ]]; then
 		echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
@@ -62,7 +71,8 @@ update_src() {
 		if [[ -n "${CHANGED_FILES}" ]]; then
 			echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
 			while true; do
-				echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m or \e[0;33mexit\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue, \e[0;33mdiff\x1B[0m to display changes"
+				echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m or \e[0;33mexit\x1B[0m to abort compilation"\
+				", \e[0;33m<Enter>\x1B[0m to ignore and continue, \e[0;33mdiff\x1B[0m to display changes"
 				read -r
 				if [[ "${REPLY}" == "diff" ]]; then
 					git diff
@@ -79,11 +89,14 @@ update_src() {
 			git pull
 		fi
 	fi
+
 }
+
 
 TMPFILE=$(mktemp)
 chmod 644 "${TMPFILE}"
 {
+
 	echo SRC="$SRC"
 	echo LIB_TAG="$LIB_TAG"
 	declare -f update_src
@@ -94,14 +107,18 @@ chmod 644 "${TMPFILE}"
 #do not update/checkout git with root privileges to messup files onwership.
 #due to in docker/VM, we can't su to a normal user, so do not update/checkout git.
 if [[ $(systemd-detect-virt) == 'none' ]]; then
+
 	if [[ "${EUID}" == "0" ]]; then
 		su "$(stat --format=%U "${SRC}"/.git)" -c "bash ${TMPFILE}"
 	else
 		bash "${TMPFILE}"
 	fi
+
 fi
 
+
 rm "${TMPFILE}"
+
 
 if [[ "${EUID}" == "0" ]] || [[ "${1}" == "vagrant" ]]; then
 	:
@@ -113,19 +130,23 @@ else
 	exit $?
 fi
 
-# Check for required packages for compiling
+
+# Check for required packages
 if [[ -z "$(command -v dialog)" ]]; then
 	sudo apt-get update
 	sudo apt-get install -y dialog
 fi
+
 if [[ -z "$(command -v fuser)" ]]; then
 	sudo apt-get update
 	sudo apt-get install -y psmisc
 fi
+
 if [[ -z "$(command -v getfacl)" ]]; then
 	sudo apt-get update
 	sudo apt-get install -y acl
 fi
+
 if [[ -z "$(command -v uuidgen)" ]]; then
 	sudo apt-get update
 	sudo apt-get install -y uuid-runtime
@@ -138,6 +159,7 @@ if [[ "${1}" == vagrant && -z "$(command -v vagrant)" ]]; then
 	sudo apt-get install -y vagrant virtualbox
 fi
 
+# Purge Armbian Docker images
 if [[ "${1}" == dockerpurge && -f /etc/debian_version ]]; then
 	display_alert "Purging Armbian Docker containers" "" "wrn"
 	docker container ls -a | grep armbian | awk '{print $1}' | xargs docker container rm &> /dev/null
@@ -146,6 +168,7 @@ if [[ "${1}" == dockerpurge && -f /etc/debian_version ]]; then
 	set -- "docker" "$@"
 fi
 
+# Docker shell
 if [[ "${1}" == docker-shell ]]; then
 	shift
 	#shellcheck disable=SC2034
@@ -153,7 +176,7 @@ if [[ "${1}" == docker-shell ]]; then
 	set -- "docker" "$@"
 fi
 
-# Install Docker if not there but wanted. We cover only Debian based distro install. Else, manual Docker install is needed
+# Install Docker if not there but wanted. We cover only Debian based distro install. On other distros, manual Docker install is needed
 if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]; then
 
 	DOCKER_BINARY="docker-ce"
@@ -185,10 +208,13 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 	display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
 	"${SRC}/compile.sh" "$@"
 	exit $?
+
 fi
+
 
 # Create userpatches directory if not exists
 mkdir -p "${SRC}"/userpatches
+
 
 # Create example configs if none found in userpatches
 if ! ls "${SRC}"/userpatches/{config-example.conf,config-docker.conf,config-vagrant.conf} 1> /dev/null 2>&1; then
@@ -261,17 +287,23 @@ popd > /dev/null || exit
 
 # Script parameters handling
 while [[ "${1}" == *=* ]]; do
-    parameter=${1%%=*}
-    value=${1##*=}
-    shift
-    display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
-    eval "$parameter=\"$value\""
+
+	parameter=${1%%=*}
+	value=${1##*=}
+	shift
+	display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
+	eval "$parameter=\"$value\""
+
 done
 
 if [[ "${BUILD_ALL}" == "yes" || "${BUILD_ALL}" == "demo" ]]; then
+
 	# shellcheck source=lib/build-all-ng.sh
 	source "${SRC}"/lib/build-all-ng.sh
+
 else
+
 	# shellcheck source=lib/main.sh
 	source "${SRC}"/lib/main.sh
+
 fi
