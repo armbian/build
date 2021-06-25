@@ -586,7 +586,11 @@ compilation_prepare()
 	if linux-version compare $version ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8723duver="branch:master"
+		if linux-version compare $version ge 5.12 ; then
+			local rtl8723duver="branch:v5.13.4"
+		else
+			local rtl8723duver="branch:master"
+		fi
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
 
