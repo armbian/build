@@ -534,9 +534,9 @@ if [[ -z ${ARMBIAN_MIRROR} ]]; then
 fi
 
 # For user override
-if [[ -f $USERPATCHES_PATH/lib.config ]]; then
-	display_alert "Using user configuration override" "$USERPATCHES_PATH/lib.config" "info"
-	source "$USERPATCHES_PATH"/lib.config
+if [[ -f ${CONFIG_PATH}/lib.config ]]; then
+	display_alert "Using user configuration override" "${CONFIG_PATH}/lib.config" "info"
+	source "${CONFIG_PATH}"/lib.config
 fi
 
 if [[ "$(type -t user_config)" == "function" ]]; then

@@ -140,7 +140,7 @@ pack_upload ()
 build_main ()
 {
 	# shellcheck source=/dev/null
-	source "$USERPATCHES_PATH"/lib.config
+	source "${CONFIG_PATH}"/lib.config
 	# build images which we do pack or kernel
 	local upload_image
 	upload_image="${VENDOR}_$(cat "${SRC}"/VERSION)_${BOARD^}_${RELEASE}_${BRANCH}_*${VER/-$LINUXFAMILY/}"
