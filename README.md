@@ -74,11 +74,18 @@ Run build tools inside Docker container:
 ./compile.sh docker
 ```
 
-Build minimal CLI Debian buster based image for Odroid XU4. Use modern kernel and write image to the SD card:
+Build minimal CLI Armbian Focal image for Orangepi Zero. Use modern kernel and write image to the SD card:
 
 ```text
-./compile.sh BOARD="odroidxu4" BRANCH="current" RELEASE="buster" CARD_DEVICE="/dev/sda" \
-KERNEL_ONLY="no" KERNEL_CONFIGURE="no" BUILD_DESKTOP="yes" RELEASE="focal" BUILD_DESKTOP="yes" DESKTOP_ENVIRONMENT="xfce" DESKTOP_ENVIRONMENT_CONFIG_NAME="config_full" DESKTOP_APPGROUPS_SELECTED="browsers editors programming"
+./compile.sh \
+BOARD=orangepizero \
+BRANCH=current \
+RELEASE=focal \
+BUILD_MINIMAL=yes \
+BUILD_DESKTOP=no \
+KERNEL_ONLY=no \
+KERNEL_CONFIGURE=no \
+CARD_DEVICE="/dev/sda"
 ```
 
 [Build parameters, advanced build options, user defined configuration, build with Docker?](#additional-information)
@@ -137,6 +144,9 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 │   ├── boards                           Board configurations
 │   ├── bootenv                          Initial boot loaders environments per family
 │   ├── bootscripts                      Initial Boot loaders scripts per family
+│   ├── cli                              CLI packages configurations per distribution
+│   ├── desktop                          Desktop packages configurations per distribution
+│   ├── distributions                    Distributions settings
 │   ├── kernel                           Kernel build configurations per family
 │   ├── sources                          Kernel and u-boot sources locations and scripts
 │   ├── templates                        User configuration templates which populate userpatches
