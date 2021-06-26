@@ -1235,12 +1235,12 @@ prepare_host()
 # build aarch64
   fi
 
-	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
+	[[ ! -f "${CONFIG_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${CONFIG_PATH}"/customize-image.sh
 
-	if [[ ! -f "${USERPATCHES_PATH}"/README ]]; then
-		rm -f "${USERPATCHES_PATH}"/readme.txt
-		echo 'Please read documentation about customizing build configuration' > "${USERPATCHES_PATH}"/README
-		echo 'https://www.armbian.com/using-armbian-tools/' >> "${USERPATCHES_PATH}"/README
+	if [[ ! -f "${CONFIG_PATH}"/README ]]; then
+		rm -f "${CONFIG_PATH}"/readme.txt
+		echo 'Please read documentation about customizing build configuration' > "${CONFIG_PATH}"/README
+		echo 'https://www.armbian.com/using-armbian-tools/' >> "${CONFIG_PATH}"/README
 
 		# create patches directory structure under USERPATCHES_PATH
 		find "${SRC}"/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
