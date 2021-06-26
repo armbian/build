@@ -164,6 +164,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
     ├── lib.config                       User: tools common config/override file
     ├── config-default.conf              User: default user config file
     ├── customize-image.sh               User: script will execute just before closing the image
+    |---overlay/                         User: path temporaily mounted to /tmp/overlay during customize-image stage
     └── patch                            User: patch directory
         ├── atf                          User: ARM trusted firmware
         ├── kernel                       User: Linux kernel per kernel family
