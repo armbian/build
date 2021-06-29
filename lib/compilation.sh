@@ -381,9 +381,6 @@ compile_kernel()
 	fi
 	cd "${kerneldir}" || exit
 
-	if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
-		sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
-	fi
 	rm -f localversion
 
 	# read kernel version
