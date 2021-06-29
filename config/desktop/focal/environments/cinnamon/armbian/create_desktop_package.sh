@@ -9,9 +9,14 @@ cp -R "${SRC}"/packages/blobs/desktop/skel/. "${destination}"/etc/skel
 mkdir -p "${destination}"/usr/share/pixmaps/armbian
 cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps/armbian
 
+i#install cinnamon desktop bar icons
+mkdir -p "${destination}"/usr/share/icons/armbian
+cp "${SRC}"/packages/blobs/desktop/desktop-icons/*.png "${destination}"/usr/share/icons/armbian
+
 # install wallpapers
 mkdir -p "${destination}"/usr/share/backgrounds/armbian/
 cp "${SRC}"/packages/blobs/desktop/wallpapers/*.jpg "${destination}"/usr/share/backgrounds/armbian/
+
 mkdir -p "${destination}"/usr/share/cinnamon-background-properties
 cat <<-EOF > "${destination}"/usr/share/cinnamon-background-properties/armbian.xml
 <?xml version="1.0"?>
@@ -44,6 +49,41 @@ cat <<-EOF > "${destination}"/usr/share/cinnamon-background-properties/armbian.x
     <options>zoom</options>
     <pcolor>#ffffff</pcolor>
     <scolor>#000000</scolor>
+   </wallpaper>
+  <wallpaper deleted="false">
+    <name>Armbian black_pyscho</name>
+    <filename>/usr/share/backgrounds/armbian/armbian_4k_black_psycho.jpg</filename>
+    <options>zoom</options>
+    <pcolor>#ffffff</pcolor>
+    <scolor>#000000</scolor>
+  </wallpaper>
+    <wallpaper deleted="false">
+    <name>Armbian bluie_monday</name>
+    <filename>/usr/share/backgrounds/armbian/armbian_4k_bluie_monday.jpg</filename>
+    <options>zoom</options>
+    <pcolor>#ffffff</pcolor>
+    <scolor>#000000</scolor>
+  </wallpaper>
+    <wallpaper deleted="false">
+    <name>Armbian grey</name>
+    <filename>/usr/share/backgrounds/armbian/armbian_4k_gray.jpg</filename>
+    <options>zoom</options>
+    <pcolor>#ffffff</pcolor>
+    <scolor>#000000</scolor>
+  </wallpaper>  
+    <wallpaper deleted="false">
+    <name>Armbian green</name>
+    <filename>/usr/share/backgrounds/armbian/armbian_4k_green.jpg</filename>
+    <options>zoom</options>
+    <pcolor>#ffffff</pcolor>
+    <scolor>#000000</scolor>
+  </wallpaper>
+      <wallpaper deleted="false">
+    <name>Armbian purplepunk</name>
+    <filename>/usr/share/backgrounds/armbian/armbian_4k_purplepunk.jpg</filename>
+    <options>zoom</options>
+    <pcolor>#ffffff</pcolor>
+    <scolor>#000000</scolor>
   </wallpaper>
 </wallpapers>
-EOF
+   EOF
