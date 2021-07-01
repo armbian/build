@@ -68,6 +68,10 @@ debootstrap_ng()
 	# NOTE: installing too many packages may fill tmpfs mount
 	customize_image
 
+	# remove packages that are no longer needed. Since we have intrudoced uninstall feature, we might want to clean things that are no longer needed
+	display_alert "No longer needed packages" "purge" "info"
+	chroot $SDCARD /bin/bash -c "apt-get autoremove -y"  >/dev/null 2>&1
+
 	# create list of installed packages for debug purposes
 	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > $DEST/debug/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] && echo "-minimal")$([[ ${BUILD_DESKTOP} == yes  ]] && echo "-desktop").list 2>&1
 
