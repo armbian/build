@@ -9,7 +9,7 @@ cp -R "${SRC}"/packages/blobs/desktop/skel/. "${destination}"/etc/skel
 mkdir -p "${destination}"/usr/share/pixmaps/armbian
 cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps/armbian
 
-i#install cinnamon desktop bar icons
+#install cinnamon desktop bar icons
 mkdir -p "${destination}"/usr/share/icons/armbian
 cp "${SRC}"/packages/blobs/desktop/desktop-icons/*.png "${destination}"/usr/share/icons/armbian
 
@@ -70,7 +70,7 @@ cat <<-EOF > "${destination}"/usr/share/cinnamon-background-properties/armbian.x
     <options>zoom</options>
     <pcolor>#ffffff</pcolor>
     <scolor>#000000</scolor>
-  </wallpaper>  
+  </wallpaper>
     <wallpaper deleted="false">
     <name>Armbian green</name>
     <filename>/usr/share/backgrounds/armbian/armbian_4k_green.jpg</filename>
@@ -86,4 +86,4 @@ cat <<-EOF > "${destination}"/usr/share/cinnamon-background-properties/armbian.x
     <scolor>#000000</scolor>
   </wallpaper>
 </wallpapers>
-   EOF
+EOF
