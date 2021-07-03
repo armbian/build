@@ -143,7 +143,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: stretch|buster|bullseye|xenial|bionic|groovy|focal|groovy|hirsute|sid
+# <release>: buster|bullseye|bionic|focal|hirsute|sid
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -1054,7 +1054,7 @@ prepare_host()
   fi
 
 	# Add support for Ubuntu 20.04, 21.04 and Mint Ulyana
-	if [[ $HOSTRELEASE =~ ^(focal|groovy|hirsute|ulyana|ulyssa|bullseye)$ ]]; then
+	if [[ $HOSTRELEASE =~ ^(focal|hirsute|ulyana|ulyssa|bullseye)$ ]]; then
 		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
@@ -1069,7 +1069,7 @@ prepare_host()
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
-	if [[ -z $HOSTRELEASE || "buster bullseye groovy focal hirsute debbie tricia ulyana ulyssa" != *"$HOSTRELEASE"* ]]; then
+	if [[ -z $HOSTRELEASE || "buster bullseye focal hirsute debbie tricia ulyana ulyssa" != *"$HOSTRELEASE"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${HOSTRELEASE:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -1085,7 +1085,7 @@ prepare_host()
 # build aarch64
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-	if [[ -z $HOSTRELEASE || $HOSTRELEASE =~ ^(focal|groovy|debbie|buster|bullseye|hirsute|ulyana|ulyssa)$ ]]; then
+	if [[ -z $HOSTRELEASE || $HOSTRELEASE =~ ^(focal|debbie|buster|bullseye|hirsute|ulyana|ulyssa)$ ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 
