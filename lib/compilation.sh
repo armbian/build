@@ -1,15 +1,16 @@
 #!/bin/bash
 #
-# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-
+#
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
 # Functions:
+
 # compile_atf
 # compile_uboot
 # compile_kernel
@@ -24,6 +25,9 @@
 # process_patch_file
 # userpatch_create
 # overlayfs_wrapper
+
+
+
 
 compile_atf()
 {
@@ -377,9 +381,6 @@ compile_kernel()
 	fi
 	cd "${kerneldir}" || exit
 
-	if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
-		sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
-	fi
 	rm -f localversion
 
 	# read kernel version
@@ -676,7 +677,7 @@ compile_armbian-config()
 
 	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
 	fetch_from_repo "https://github.com/dylanaraps/neofetch" "neofetch" "tag:7.1.0"
-	fetch_from_repo "https://github.com/complexorganizations/wireguard-manager" "wireguard-manager" "tag:1.0.11"
+	fetch_from_repo "https://github.com/complexorganizations/wireguard-manager" "wireguard-manager" "tag:v1.0.0.06-20-2021"
 
 	mkdir -p "${tmp_dir}/${armbian_config_dir}"/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
 

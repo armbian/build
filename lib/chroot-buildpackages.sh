@@ -1,20 +1,24 @@
 #!/bin/bash
 #
-# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-
+#
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
 # Functions:
+
 # create_chroot
 # chroot_prepare_distccd
 # chroot_build_packages
 # chroot_installpackages_local
 # chroot_installpackages
+
+
+
 
 # create_chroot <target_dir> <release> <arch>
 #
@@ -32,7 +36,6 @@ create_chroot()
 	apt_mirror['xenial']="$UBUNTU_MIRROR"
 	apt_mirror['bionic']="$UBUNTU_MIRROR"
 	apt_mirror['focal']="$UBUNTU_MIRROR"
-	apt_mirror['groovy']="$UBUNTU_MIRROR"
 	apt_mirror['hirsute']="$UBUNTU_MIRROR"
 	components['stretch']='main,contrib'
 	components['buster']='main,contrib'
@@ -41,12 +44,11 @@ create_chroot()
 	components['xenial']='main,universe,multiverse'
 	components['bionic']='main,universe,multiverse'
 	components['focal']='main,universe,multiverse'
-	components['groovy']='main,universe,multiverse'
 	components['hirsute']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc"
 	# perhaps a temporally workaround
-	[[ $release == buster || $release == bullseye || $release == focal || $release == groovy || $release == hirsute || $release == sid ]] && includes=${includes}",perl-openssl-defaults,libnet-ssleay-perl"
+	[[ $release == buster || $release == bullseye || $release == focal || $release == hirsute || $release == sid ]] && includes=${includes}",perl-openssl-defaults,libnet-ssleay-perl"
 	if [[ $NO_APT_CACHER != yes ]]; then
 		local mirror_addr="http://localhost:3142/${apt_mirror[${release}]}"
 	else
@@ -81,7 +83,7 @@ create_chroot()
 		mkdir -p "${target_dir}"/var/lock
 	fi
 	chroot "${target_dir}" /bin/bash -c "/usr/sbin/update-ccache-symlinks"
-	[[ $release == bullseye || $release == focal || $release == groovy || $release == hirsute || $release == sid ]] && chroot "${target_dir}" /bin/bash -c "ln -s /usr/bin/python3 /usr/bin/python"
+	[[ $release == bullseye || $release == focal || $release == hirsute || $release == sid ]] && chroot "${target_dir}" /bin/bash -c "ln -s /usr/bin/python3 /usr/bin/python"
 	touch "${target_dir}"/root/.debootstrap-complete
 	display_alert "Debootstrap complete" "${release}/${arch}" "info"
 } #############################################################################
@@ -101,7 +103,6 @@ chroot_prepare_distccd()
 	gcc_version['xenial']='5.4'
 	gcc_version['bionic']='5.4'
 	gcc_version['focal']='9.2'
-	gcc_version['groovy']='10.2'
 	gcc_version['hirsute']='10.2'
 	gcc_version['sid']='10.2'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
@@ -137,7 +138,7 @@ chroot_build_packages()
 		target_arch="${ARCH}"
 	else
 		# only make packages for recent releases. There are no changes on older
-		target_release="stretch bionic buster bullseye groovy focal hirsute sid"
+		target_release="stretch bionic buster bullseye focal hirsute sid"
 		target_arch="armhf arm64"
 	fi
 
