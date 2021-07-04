@@ -130,28 +130,6 @@ else
 	exit $?
 fi
 
-
-# Check for required packages
-if [[ -z "$(command -v dialog)" ]]; then
-	sudo apt-get update
-	sudo apt-get install -y dialog
-fi
-
-if [[ -z "$(command -v fuser)" ]]; then
-	sudo apt-get update
-	sudo apt-get install -y psmisc
-fi
-
-if [[ -z "$(command -v getfacl)" ]]; then
-	sudo apt-get update
-	sudo apt-get install -y acl
-fi
-
-if [[ -z "$(command -v uuidgen)" ]]; then
-	sudo apt-get update
-	sudo apt-get install -y uuid-runtime
-fi
-
 # Check for Vagrant
 if [[ "${1}" == vagrant && -z "$(command -v vagrant)" ]]; then
 	display_alert "Vagrant not installed." "Installing"
@@ -192,14 +170,6 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 
 	display_alert "Docker not installed." "Installing" "Info"
 	echo "deb [arch=$(dpkg --print-architecture)] https://download.docker.com/linux/${codeid} ${codename} stable" > /etc/apt/sources.list.d/docker.list
-
-	# minimal set of utilities that are needed for prep
-	packages=("curl" "gnupg")
-	for i in "${packages[@]}"
-	do
-	[[ ! $(command -v "${i}") ]] && install_packages+=${i}" "
-	done
-	[[ -z "${install_packages}" ]] && apt-get update;apt-get install -y -qq --no-install-recommends ${install_packages}
 
 	curl -fsSL "https://download.docker.com/linux/${codeid}/gpg" | apt-key add -qq - > /dev/null 2>&1
 	export DEBIAN_FRONTEND=noninteractive
