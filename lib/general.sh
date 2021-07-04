@@ -816,7 +816,7 @@ repo-manipulate()
 # "update" search for new files in output/debs* to add them to repository
 # "purge" leave only last 5 versions
 
-	local DISTROS=($(grep -rw config/distributions/* -e 'supported' | cut -d"/" -f3))
+	local DISTROS=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
 
 	case $@ in
 
