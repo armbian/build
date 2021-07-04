@@ -130,6 +130,21 @@ else
 	exit $?
 fi
 
+if [ "$OFFLINE_WORK" == "yes" ]; then
+
+	echo -e "\n"
+	display_alert "* " "You are working offline."
+	display_alert "* " "Sources, time and host will not be checked"
+	echo -e "\n"
+	sleep 3s
+
+else
+
+	# check and install the basic utilities here
+	prepare_host_basic
+
+fi
+
 # Check for Vagrant
 if [[ "${1}" == vagrant && -z "$(command -v vagrant)" ]]; then
 	display_alert "Vagrant not installed." "Installing"
