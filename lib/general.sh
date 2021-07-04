@@ -986,8 +986,7 @@ prepare_host_basic()
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
 		display_alert "Installing basic packages" "$checklist"
 		apt-get -qq update && \
-		apt-get install -qq -y --no-install-recommends $checklist |& \
-		tee -a "${SRC}"/output/debug/hostdeps.log
+		apt-get install -qq -y --no-install-recommends $checklist
 	fi
 }
 
