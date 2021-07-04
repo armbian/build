@@ -968,22 +968,26 @@ wait_for_package_manager()
 
 
 
-
 # prepare_host_basic
 #
 # * installs only basic packages
 #
 prepare_host_basic()
 {
-	# wait until package manager finishes possible system maintanace
-	wait_for_package_manager
+	# the checklist includes a list of package names separated by a space
+	local checklist="dialog psmisc acl uuid-runtime curl gnupg gawk"
 
-	# need to install dialog if person is starting with a interactive mode
+	# Don't use this function here.
+	# wait_for_package_manager
+	#
+	# The `psmisk` package is not installed yet.
+
+	# We will check one package and install the entire list.
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "dialog"
-		apt-get -q update && apt-get install -q -y --no-install-recommends dialog
+		display_alert "Installing basic packages" "$checklist"
+		apt-get -qq update && \
+		apt-get install -qq -y --no-install-recommends $checklist
 	fi
-
 }
 
 
@@ -1092,7 +1096,7 @@ prepare_host()
 	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
 # build aarch64
   fi
-  
+
 	if systemd-detect-virt -q -c; then
 		display_alert "Running in container" "$(systemd-detect-virt)" "info"
 		# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
