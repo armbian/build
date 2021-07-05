@@ -23,8 +23,6 @@
 create_desktop_package ()
 {
 
-	# join and cleanup package list
-	# Remove leading and trailing whitespaces
 	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/debug/output.log
 	# Use quotes to show leading and trailing spaces
 	echo "\"$PACKAGE_LIST_DESKTOP\"" >> "${DEST}"/debug/output.log
@@ -68,9 +66,6 @@ create_desktop_package ()
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
 
-	#display_alert "Showing ${destination}/DEBIAN/control"
-	cat "${destination}"/DEBIAN/control >> "${DEST}"/debug/install.log
-
 	# Recreating the DEBIAN/postinst file
 	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
 
@@ -89,16 +84,12 @@ create_desktop_package ()
 
 	unset aggregated_content
 
-	# Myy : I'm preparing the common armbian folders, in advance, since the scripts are now splitted
 	mkdir -p "${destination}"/etc/armbian
 
 	local aggregated_content=""
-
 	aggregate_all_desktop "armbian/create_desktop_package.sh" $'\n'
-
-	# display_alert "Showing the user scripts executed in create_desktop_package"
-	echo "${aggregated_content}" >> "${DEST}"/debug/install.log
 	eval "${aggregated_content}"
+	[[ $? -ne 0 ]] && display_alert "create_desktop_package.sh exec error" "" "wrn"
 
 	# create board DEB file
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
@@ -126,11 +117,13 @@ copy_all_packages_files_for()
 		if [ -d "${package_dirpath}" ];
 		then
 			cp -r "${package_dirpath}/"* "${destination}/"
-			echo "${package_dirpath}"
-			echo ${package_dirpath} >> "${DEST}"/debug/copy.log
+			display_alert ">>> adding files from" "${package_dirpath}"
 		fi
 	done
 }
+
+
+
 
 create_bsp_desktop_package ()
 {
@@ -158,14 +151,10 @@ create_bsp_desktop_package ()
 	Description: Armbian Board Specific Packages for desktop users using ${BOARD} machines
 	EOF
 
-	#display_alert "Showing ${destination}/DEBIAN/control"
-	cat "${destination}"/DEBIAN/control >> "${DEST}"/debug/install.log
-
 	# Recreating the DEBIAN/postinst file
 	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
 
 	local aggregated_content=""
-
 	aggregate_all_desktop "debian/armbian-bsp-desktop/postinst" $'\n'
 
 	echo "${aggregated_content}" >> "${destination}/DEBIAN/postinst"
@@ -173,23 +162,16 @@ create_bsp_desktop_package ()
 
 	chmod 755 "${destination}"/DEBIAN/postinst
 
-	#display_alert "Showing ${destination}/DEBIAN/postinst"
-	cat "${destination}/DEBIAN/postinst" >> "${DEST}"/debug/install.log
-
 	# Armbian create_desktop_package scripts
 
 	unset aggregated_content
 
-	# Myy : I'm preparing the common armbian folders, in advance, since the scripts are now splitted
 	mkdir -p "${destination}"/etc/armbian
 
 	local aggregated_content=""
-
 	aggregate_all_desktop "debian/armbian-bsp-desktop/prepare.sh" $'\n'
-
-	# display_alert "Showing the user scripts executed in create_desktop_package"
-	echo "${aggregated_content}" >> "${DEST}"/debug/install.log
 	eval "${aggregated_content}"
+	[[ $? -ne 0 ]] && display_alert "prepare.sh exec error" "" "wrn"
 
 	# create board DEB file
 	display_alert "Building desktop package" "${package_name}" "info"
