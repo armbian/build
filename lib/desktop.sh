@@ -142,13 +142,13 @@ create_bsp_desktop_package ()
 	cat <<-EOF > "${destination}"/DEBIAN/control
 	Package: armbian-bsp-desktop-${BOARD}
 	Version: $REVISION
-	Architecture: all
+	Architecture: $ARCH
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Installed-Size: 1
 	Section: xorg
 	Priority: optional
 	Provides: armbian-bsp-desktop, armbian-bsp-desktop-${BOARD}
-	Description: Armbian Board Specific Packages for desktop users using ${BOARD} machines
+	Description: Armbian Board Specific Packages for desktop users using $ARCH ${BOARD} machines
 	EOF
 
 	# Recreating the DEBIAN/postinst file
