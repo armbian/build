@@ -24,6 +24,7 @@
 # addtorepo
 # repo-remove-old-packages
 # wait_for_package_manager
+# install_pkg_deb
 # prepare_host_basic
 # prepare_host
 # webseed
@@ -1169,6 +1170,61 @@ wait_for_package_manager()
 				break
 		fi
 	done
+}
+
+
+
+# Installing debian packages in the armbian build system.
+#
+# list="pkg1 pkg2 pkg3 pkgbadname"
+# install_pkg_deb $list
+#
+# If the package has a bad name, we will see it in the log file.
+# If there is an PKG_INSTALLATION_LOG variable and it has a value as
+# the full real path to the log file, then all the information will be there.
+# The PKG_INSTALLATION_LOG variable must be defined in the calling function
+# before calling the install_pkg_deb function and unset after.
+#
+install_pkg_deb ()
+{
+	local list=$*
+	local log_file
+	local _line=${BASH_LINENO[0]}
+	local _function=${FUNCNAME[1]}
+	local _file=$(basename "${BASH_SOURCE[1]}")
+	local tmp_file=$(mktemp /tmp/install_log_XXXXX)
+
+	if [ -d $(dirname $PKG_INSTALLATION_LOG) ]; then
+		log_file=${PKG_INSTALLATION_LOG}
+	else
+		log_file="${SRC}/output/debug/install.log"
+	fi
+
+	local for_install="$(
+		dpkg-query -W -f '${db:Status-Abbrev} ${binary:Package}\n' $list 2>$tmp_file | \
+		gawk -v tmp_file=$tmp_file '!/^ii/{print $2} !/^ii|^un/{print $0 >>tmp_file}'
+		)"
+
+	# This information should be logged.
+	if [ -s $tmp_file ]; then
+		echo -e "\nInstalling packages in function: $_function" "[$_file:$_line]" >>$log_file
+		cat $tmp_file >>$log_file
+	fi
+
+	if [ -n "$for_install" ]; then
+
+		export DEBIAN_FRONTEND=noninteractive
+		apt-get -qq update && \
+		apt-get install -qq -y --no-install-recommends $for_install 2>>$log_file
+
+		# We will show the status after installation
+		echo -e "\nstatus after installation:" >>$log_file
+		dpkg-query -W \
+		  -f '${binary:Package;-20} ${Version;-17} [ ${Status} ]\n' \
+		  $for_install >>$log_file
+	fi
+
+	rm $tmp_file
 }
 
 
