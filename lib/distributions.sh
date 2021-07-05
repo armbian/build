@@ -305,7 +305,8 @@ install_common()
 	# install armbian-desktop
 	if [[ "${REPOSITORY_INSTALL}" != *armbian-desktop* ]]; then
 		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
+			install_deb_chroot "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
+			install_deb_chroot "${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb"
 			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 			desktop_postinstall
 		fi
