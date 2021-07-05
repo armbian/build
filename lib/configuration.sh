@@ -373,7 +373,7 @@ fi
 
 AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS="
 ${SRC}/config
-${SRC}/config/optional/_any_board/_configs
+${SRC}/config/optional/_any_board/_config
 ${SRC}/config/optional/architectures/${ARCH}/_config
 ${SRC}/config/optional/families/${LINUXFAMILY}/_config
 ${SRC}/config/optional/boards/${BOARD}/_config
@@ -388,6 +388,14 @@ cli/${RELEASE}/debootstrap
 CLI_SEARCH_RELATIVE_DIRS="
 cli/_all_distributions/main
 cli/${RELEASE}/main
+"
+
+PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS="
+${SRC}/packages
+${SRC}/config/optional/_any_board/_packages
+${SRC}/config/optional/architectures/${ARCH}/_packages
+${SRC}/config/optional/families/${LINUXFAMILY}/_packages
+${SRC}/config/optional/boards/${BOARD}/_packages
 "
 
 DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS="

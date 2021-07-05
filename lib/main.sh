@@ -410,6 +410,8 @@ LINUXSOURCEDIR="${KERNELDIR}/$(branch2dir "${KERNELBRANCH}")"
 
 BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}"
 BSP_CLI_PACKAGE_FULLNAME="${BSP_CLI_PACKAGE_NAME}_${REVISION}_${ARCH}"
+BSP_DESKTOP_PACKAGE_NAME="armbian-bsp-desktop-${BOARD}"
+BSP_DESKTOP_PACKAGE_FULLNAME="${BSP_DESKTOP_PACKAGE_NAME}_${REVISION}_${ARCH}"
 
 CHOSEN_UBOOT=linux-u-boot-${BOARD}-${BRANCH}
 CHOSEN_KERNEL=linux-image-${BRANCH}-${LINUXFAMILY}
@@ -516,7 +518,7 @@ overlayfs_wrapper "cleanup"
 
 # create desktop package
 [[ -n $RELEASE && $DESKTOP_ENVIRONMENT && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
-
+[[ -n $RELEASE && $DESKTOP_ENVIRONMENT && ! -f ${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb ]] && create_bsp_desktop_package
 
 
 
