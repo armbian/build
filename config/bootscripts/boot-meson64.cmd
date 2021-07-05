@@ -100,7 +100,7 @@ if test -e ${devtype} ${devnum} ${prefix}zImage; then
 	setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 coherent_pool=2M loglevel=${verbosity} ${amlogic} no_console_suspend fsck.repair=yes net.ifnames=0 elevator=noop hdmimode=${hdmimode} cvbsmode=576cvbs max_freq_a55=${max_freq_a55} maxcpus=${maxcpus} voutmode=${voutmode} ${cmode} disablehpd=${disablehpd} cvbscable=${cvbscable} overscan=${overscan} ${hid_quirks} monitor_onoff=${monitor_onoff} ${cec_enable} sdrmode=${sdrmode}"
 
 	load ${devtype} ${devnum} ${k_addr} boot/zImage
-	load ${devtype} ${devnum} ${dtb_loadaddr} boot/dtb/amlogic/meson64_odroidc4.dtb
+	load ${devtype} ${devnum} ${dtb_loadaddr} boot/dtb/${fdtfile}
 	load ${devtype} ${devnum} ${initrd_loadaddr} boot/uInitrd
 	fdt addr ${dtb_loadaddr}
 	unzip ${k_addr} ${loadaddr}
