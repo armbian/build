@@ -27,6 +27,9 @@ create_board_package()
 	mkdir -p "${destination}"/DEBIAN
 	cd $destination
 
+	# copy general overlay from packages/bsp-cli
+	copy_all_packages_files_for "bsp-cli"
+
 	# install copy of boot script & environment file
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
