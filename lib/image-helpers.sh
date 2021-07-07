@@ -145,7 +145,7 @@ copy_all_packages_files_for()
 		if [ -d "${package_dirpath}" ];
 		then
 			cp -r "${package_dirpath}/"* "${destination}/" 2> /dev/null
-			display_alert ">>> adding files from" "${package_dirpath}"
+			display_alert "Adding files from" "${package_dirpath}"
 		fi
 	done
 }

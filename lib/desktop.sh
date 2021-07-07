@@ -91,7 +91,6 @@ create_desktop_package ()
 	eval "${aggregated_content}"
 	[[ $? -ne 0 ]] && display_alert "create_desktop_package.sh exec error" "" "wrn"
 
-	# create board DEB file
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
@@ -110,6 +109,8 @@ create_desktop_package ()
 
 create_bsp_desktop_package ()
 {
+
+	display_alert "Creating board support package for desktop" "${package_name}" "info"
 
 	local package_name="${BSP_DESKTOP_PACKAGE_FULLNAME}"
 
@@ -155,9 +156,6 @@ create_bsp_desktop_package ()
 	aggregate_all_desktop "debian/armbian-bsp-desktop/prepare.sh" $'\n'
 	eval "${aggregated_content}"
 	[[ $? -ne 0 ]] && display_alert "prepare.sh exec error" "" "wrn"
-
-	# create board DEB file
-	display_alert "Building desktop package" "${package_name}" "info"
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
 	cd "${destination}"; cd ..
