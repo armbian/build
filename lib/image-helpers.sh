@@ -17,6 +17,7 @@
 # check_loop_device
 # install_external_applications
 # write_uboot
+# copy_all_packages_files_for
 # customize_image
 # install_deb_chroot
 # run_on_sdcard
@@ -128,6 +129,25 @@ write_uboot()
 	[[ $? -ne 0 ]] && exit_with_error "U-boot bootloader failed to install" "@host"
 	rm -rf ${TEMP_DIR}
 
+}
+
+
+
+
+# copy_all_packages_files_for <folder> to package
+#
+copy_all_packages_files_for()
+{
+	local package_name="${1}"
+	for package_src_dir in ${PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS};
+	do
+		local package_dirpath="${package_src_dir}/${package_name}"
+		if [ -d "${package_dirpath}" ];
+		then
+			cp -r "${package_dirpath}/"* "${destination}/" 2> /dev/null
+			display_alert "Adding files from" "${package_dirpath}"
+		fi
+	done
 }
 
 

@@ -160,6 +160,8 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 │   └── patch                            Created patches location
 ├── packages                             Support scripts, binary blobs, packages
 │   ├── blobs                            Wallpapers, various configs, closed source bootloaders
+│   ├── bsp-cli                          Automatically added to armbian-bsp-cli package 
+│   ├── bsp-desktop                      Automatically added to armbian-bsp-desktopo package
 │   ├── bsp                              Scripts and configs overlay for rootfs
 │   └── extras-buildpkgs                 Optional compilation and packaging engine
 ├── patch                                Collection of patches

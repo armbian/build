@@ -18,7 +18,7 @@
 
 create_board_package()
 {
-	display_alert "Creating board support package" "$BOARD $BRANCH" "info"
+	display_alert "Creating board support package for CLI" "$CHOSEN_ROOTFS" "info"
 
 	bsptempdir=$(mktemp -d)
 	chmod 700 ${bsptempdir}
@@ -26,6 +26,9 @@ create_board_package()
 	local destination=${bsptempdir}/${RELEASE}/${BSP_CLI_PACKAGE_FULLNAME}
 	mkdir -p "${destination}"/DEBIAN
 	cd $destination
+
+	# copy general overlay from packages/bsp-cli
+	copy_all_packages_files_for "bsp-cli"
 
 	# install copy of boot script & environment file
 	local bootscript_src=${BOOTSCRIPT%%:*}
@@ -317,7 +320,6 @@ fi
 	find "${destination}" ! -type l -print0 2>/dev/null | xargs -0r chmod 'go=rX,u+rw,a-s'
 
 	# create board DEB file
-	display_alert "Building package" "$CHOSEN_ROOTFS" "info"
 	fakeroot dpkg-deb -b "${destination}" "${destination}.deb" >> "${DEST}"/debug/install.log 2>&1
 	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
 	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"

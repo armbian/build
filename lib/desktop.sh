@@ -91,7 +91,6 @@ create_desktop_package ()
 	eval "${aggregated_content}"
 	[[ $? -ne 0 ]] && display_alert "create_desktop_package.sh exec error" "" "wrn"
 
-	# create board DEB file
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
@@ -108,25 +107,10 @@ create_desktop_package ()
 
 
 
-copy_all_packages_files_for()
-{
-	local package_name="${1}"
-	for package_src_dir in ${PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS};
-	do
-		local package_dirpath="${package_src_dir}/${package_name}"
-		if [ -d "${package_dirpath}" ];
-		then
-			cp -r "${package_dirpath}/"* "${destination}/" 2> /dev/null
-			display_alert ">>> adding files from" "${package_dirpath}"
-		fi
-	done
-}
-
-
-
-
 create_bsp_desktop_package ()
 {
+
+	display_alert "Creating board support package for desktop" "${package_name}" "info"
 
 	local package_name="${BSP_DESKTOP_PACKAGE_FULLNAME}"
 
@@ -172,9 +156,6 @@ create_bsp_desktop_package ()
 	aggregate_all_desktop "debian/armbian-bsp-desktop/prepare.sh" $'\n'
 	eval "${aggregated_content}"
 	[[ $? -ne 0 ]] && display_alert "prepare.sh exec error" "" "wrn"
-
-	# create board DEB file
-	display_alert "Building desktop package" "${package_name}" "info"
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
 	cd "${destination}"; cd ..
