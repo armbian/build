@@ -599,7 +599,7 @@ compilation_prepare()
 		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
 
 		fetch_from_repo "https://github.com/lwfinger/rtl8723du" "rtl8723du" "${rtl8723duver}" "yes"
-		cd $kerneldir
+		cd "$kerneldir" || exit
 		rm -rf $kerneldir/drivers/net/wireless/rtl8723du
 		mkdir -p $kerneldir/drivers/net/wireless/rtl8723du/
 		cp -R ${SRC}/cache/sources/rtl8723du/${rtl8723duver#*:}/{core,hal,include,os_dep,platform} \
@@ -620,6 +620,39 @@ compilation_prepare()
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du.patch" "applying"
 	fi
+
+
+	# Wireless drivers for Realtek 8822BS chipsets
+
+	if linux-version compare "${version}" ge 4.4 && [ "$EXTRAWIFI" == yes ]; then
+
+		# attach to specifics tag or branch
+		display_alert "Adding" "Wireless drivers for Realtek 8822BS chipsets ${rtl8822bsver}" "info"
+
+		local rtl8822bsver="branch:local_rtl8822bs"
+		fetch_from_repo "https://github.com/150balbes/wifi" "rtl8822bs" "${rtl8822bsver}" "yes"
+		cd "$kerneldir" || exit
+		rm -rf "$kerneldir/drivers/net/wireless/rtl8822bs"
+		mkdir -p $kerneldir/drivers/net/wireless/rtl8822bs/
+		cp -R "${SRC}/cache/sources/rtl8822bs/${rtl8822bsver#*:}"/{core,hal,include,os_dep,platform,bluetooth,getAP,rtl8822b.mk} \
+		$kerneldir/drivers/net/wireless/rtl8822bs
+
+		# Makefile
+		cp "${SRC}/cache/sources/rtl8822bs/${rtl8822bsver#*:}/Makefile" \
+		$kerneldir/drivers/net/wireless/rtl8822bs/Makefile
+
+		# Kconfig
+		sed -i 's/---help---/help/g' "${SRC}/cache/sources/rtl8822bs/${rtl8822bsver#*:}/Kconfig"
+		cp "${SRC}/cache/sources/rtl8822bs/${rtl8822bsver#*:}/Kconfig" \
+		"$kerneldir/drivers/net/wireless/rtl8822bs/Kconfig"
+
+		# Add to section Makefile
+		echo "obj-\$(CONFIG_RTL8822BS) += rtl8822bs/" >> $kerneldir/drivers/net/wireless/Makefile
+		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8822bs\/Kconfig"' \
+		$kerneldir/drivers/net/wireless/Kconfig
+
+	fi
+
 
 
 	if linux-version compare $version ge 4.4 && linux-version compare $version lt 5.8; then
