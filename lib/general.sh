@@ -1067,7 +1067,7 @@ prepare_host()
 
 	display_alert "Build host OS release" "${HOSTRELEASE:-(unknown)}" "info"
 
-	# Ubuntu 20.04.x (Focal), Ubuntu 21.04.x and Linux Mint 20.x x86_64 are the only fully supported host OS releases
+	# Ubuntu 21.04.x (Hirsute) x86_64 is the only fully supported host OS release
 	# Using Docker/VirtualBox/Vagrant is the only supported way to run the build script on other Linux distributions
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
