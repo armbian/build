@@ -15,9 +15,10 @@ if [[ $BOARD == lafrite ]]; then
 		UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin:u-boot.bin u-boot-dtb.img"
 fi
 
-CPUMIN=500000
-CPUMAX=1536000
-GOVERNOR=ondemand
+# Set CPUMIN et al if not already set in the board config.
+CPUMIN=${CPUMIN:-500000}
+CPUMAX=${CPUMAX:-1536000}
+GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
 	
