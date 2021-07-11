@@ -1,18 +1,23 @@
 #!/bin/bash
 #
-# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-
+#
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
+
 # Functions:
+
 # install_common
 # install_rclocal
 # install_distribution_specific
 # post_debootstrap_tweaks
+
+
+
 
 install_common()
 {
@@ -58,7 +63,7 @@ install_common()
 			# /usr/share/initramfs-tools/hooks/dropbear will automatically add 'id_ecdsa.pub' to authorized_keys file
 			# during mkinitramfs of update-initramfs
 			#cat "${SDCARD}"/etc/dropbear-initramfs/id_ecdsa.pub > "${SDCARD}"/etc/dropbear-initramfs/authorized_keys
-			CRYPTROOT_SSH_UNLOCK_KEY_NAME="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}_${DESKTOP_ENVIRONMENT}".key
+			CRYPTROOT_SSH_UNLOCK_KEY_NAME="${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}_${DESKTOP_ENVIRONMENT}".key
 			# copy dropbear ssh key to image output dir for convenience
 			cp "${SDCARD}"/etc/dropbear-initramfs/id_ecdsa "${DEST}/images/${CRYPTROOT_SSH_UNLOCK_KEY_NAME}"
 			display_alert "SSH private key for dropbear (initramfs) has been copied to:" \
@@ -142,9 +147,9 @@ install_common()
 	#chroot "${SDCARD}" /bin/bash -c "chage -d 0 root"
 
 	# change console welcome text
-	echo -e "Armbian ${REVISION} ${RELEASE^} \\l \n" > "${SDCARD}"/etc/issue
-	echo "Armbian ${REVISION} ${RELEASE^}" > "${SDCARD}"/etc/issue.net
-	sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"Armbian $REVISION "${RELEASE^}"\"/" "${SDCARD}"/etc/os-release
+	echo -e "${VENDOR} ${REVISION} ${RELEASE^} \\l \n" > "${SDCARD}"/etc/issue
+	echo "${VENDOR} ${REVISION} ${RELEASE^}" > "${SDCARD}"/etc/issue.net
+	sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION "${RELEASE^}"\"/" "${SDCARD}"/etc/os-release
 
 	# enable few bash aliases enabled in Ubuntu by default to make it even
 	sed "s/#alias ll='ls -l'/alias ll='ls -l'/" -i "${SDCARD}"/etc/skel/.bashrc
@@ -170,7 +175,7 @@ install_common()
 
 		mkdir -p $SDCARD/boot/extlinux
 		cat <<-EOF > "$SDCARD/boot/extlinux/extlinux.conf"
-		LABEL Armbian
+		LABEL ${VENDOR}
 		  LINUX /boot/$NAME_KERNEL
 		  INITRD /boot/$NAME_INITRD
 	EOF
@@ -272,8 +277,8 @@ install_common()
 
 	# install kernel
 	if [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
-		VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
-		VER="${VER/-$LINUXFAMILY/}"
+		VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | awk -F"-" '/Source:/{print $2}')
+
 		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
 		if [[ -f ${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
 			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb"
@@ -292,7 +297,7 @@ install_common()
 
 	# install board support packages
 	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
-		install_deb_chroot "${DEB_STORAGE}/$RELEASE/${BSP_CLI_PACKAGE_FULLNAME}.deb" >> "${DEST}"/debug/install.log 2>&1
+		install_deb_chroot "${DEB_STORAGE}/$RELEASE/${BSP_CLI_PACKAGE_FULLNAME}.deb" | tee "${DEST}"/debug/install.log 2>&1
 	else
 		install_deb_chroot "${CHOSEN_ROOTFS}" "remote"
 	fi
@@ -300,7 +305,8 @@ install_common()
 	# install armbian-desktop
 	if [[ "${REPOSITORY_INSTALL}" != *armbian-desktop* ]]; then
 		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
+			install_deb_chroot "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
+			install_deb_chroot "${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb"
 			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 			desktop_postinstall
 		fi
@@ -322,24 +328,28 @@ install_common()
 	fi
 
 	# install armbian-config
-	if [[ "${REPOSITORY_INSTALL}" != *armbian-config* ]]; then
-		if [[ $BUILD_MINIMAL != yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/armbian-config_${REVISION}_all.deb"
-		fi
-	else
-		if [[ $BUILD_MINIMAL != yes ]]; then
-			install_deb_chroot "armbian-config" "remote"
+	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
+		if [[ "${REPOSITORY_INSTALL}" != *armbian-config* ]]; then
+			if [[ $BUILD_MINIMAL != yes ]]; then
+				install_deb_chroot "${DEB_STORAGE}/armbian-config_${REVISION}_all.deb"
+			fi
+		else
+			if [[ $BUILD_MINIMAL != yes ]]; then
+				install_deb_chroot "armbian-config" "remote"
+			fi
 		fi
 	fi
 
 	# install armbian-zsh
-	if [[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]]; then
-		if [[ $BUILD_MINIMAL != yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb"
-		fi
-	else
-		if [[ $BUILD_MINIMAL != yes ]]; then
-			install_deb_chroot "armbian-zsh" "remote"
+	if [[ "${PACKAGE_LIST_RM}" != *armbian-zsh* ]]; then
+		if [[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]]; then
+			if [[ $BUILD_MINIMAL != yes ]]; then
+				install_deb_chroot "${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb"
+			fi
+		else
+			if [[ $BUILD_MINIMAL != yes ]]; then
+				install_deb_chroot "armbian-zsh" "remote"
+			fi
 		fi
 	fi
 
@@ -383,7 +393,7 @@ install_common()
 
 	# switch to beta repository at this stage if building nightly images
 	[[ $IMAGE_TYPE == nightly ]] \
-	&& echo "deb http://beta.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" \
+	&& echo "deb https://beta.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" \
 	> "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 
 	# Cosmetic fix [FAILED] Failed to start Set console font and keymap at first boot
@@ -505,6 +515,7 @@ install_common()
 		Name=eth0
 
 		[Network]
+		#MACAddress=
 		DHCP=ipv4
 		LinkLocalAddressing=ipv4
 		#Address=192.168.1.100/24
@@ -596,7 +607,7 @@ install_distribution_specific()
 			sed '/security/ d' -i "${SDCARD}"/etc/apt/sources.list
 
 		;;
-	bionic|groovy|focal|hirsute)
+	bionic|focal|hirsute)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
@@ -605,14 +616,7 @@ install_distribution_specific()
 			chroot "${SDCARD}" /bin/bash -c "systemctl disable  motd-news.service >/dev/null 2>&1"
 			chroot "${SDCARD}" /bin/bash -c "systemctl disable  motd-news.timer >/dev/null 2>&1"
 
-			rm -f "${SDCARD}"/etc/update-motd.d/10-uname
-			rm -f "${SDCARD}"/etc/update-motd.d/10-help-text
-			rm -f "${SDCARD}"/etc/update-motd.d/50-motd-news
-			rm -f "${SDCARD}"/etc/update-motd.d/80-esm
-			rm -f "${SDCARD}"/etc/update-motd.d/80-livepatch
-			rm -f "${SDCARD}"/etc/update-motd.d/90-updates-available
-			rm -f "${SDCARD}"/etc/update-motd.d/91-release-upgrade
-			rm -f "${SDCARD}"/etc/update-motd.d/95-hwe-eol
+			rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
 
 			# remove motd news from motd.ubuntu.com
 			[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news

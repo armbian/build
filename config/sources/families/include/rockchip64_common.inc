@@ -12,6 +12,19 @@ BOOTBRANCH="tag:v2020.10"
 PACKAGE_LIST_FAMILY="ethtool"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
+if [ "$(uname -m)" = "aarch64" ]; then
+	case "$(lsb_release -sc)" in
+	"focal"|"hirsute")
+			PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
+		;;
+	*)
+		PKG_PREFIX="qemu-x86_64 -L /usr/x86_64-linux-gnu "
+		;;
+	esac
+else
+	PKG_PREFIX=""
+fi
+
 
 if [[ $BOOTCONFIG == *3399* ]]; then
 
@@ -48,6 +61,15 @@ elif [[ $BOARD == pinebook-pro || $BOARD == tinkerboard-2 ]]; then
 	BOOT_SOC=rk3399
 	ATFPATCHDIR='atf-rk3399'
 
+elif [[ $BOARD == khadas-edge ]]; then
+
+	BOOT_USE_BLOBS=yes
+	BOOT_SUPPORT_SPI=yes
+	BOOT_SOC=rk3399
+	DDR_BLOB='rk33/rk3399_ddr_800MHz_v1.25.bin'
+	MINILOADER_BLOB='rk33/rk3399_miniloader_v1.26.bin'
+	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
+
 elif [[ $BOARD == rockpi-4* ]]; then
 
 	BOOT_USE_BLOBS=yes
@@ -66,6 +88,15 @@ elif [[ $BOARD == station-p1 ]]; then
 	MINILOADER_BLOB='rk33/rk3399_miniloader_v1.19.bin'
 	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
 
+elif [[ $BOARD == rockpi-n10* ]]; then
+
+	BOOT_USE_BLOBS=yes
+	BOOT_SUPPORT_SPI=yes
+	BOOT_SOC=rk3399pro
+	DDR_BLOB='rk33/rk3399pro_npu_ddr_933MHz_v1.02.bin'
+	MINILOADER_BLOB='rk33/rk3399pro_miniloader_v1.26.bin'
+	BL31_BLOB='rk33/rk3399pro_bl31_v1.35.elf'
+
 elif [[ $BOARD == rockpro64 ]]; then
 
 	BOOT_USE_TPL_SPL_BLOB=yes
@@ -77,9 +108,15 @@ elif [[ $BOARD == rockpi-s ]]; then
 
 	BOOT_USE_BLOBS=yes
 	BOOT_SOC=rk3308
-	DDR_BLOB='rk33/rk3308_ddr_589MHz_uart0_m0_v1.26.bin'
-	MINILOADER_BLOB='rk33/rk3308_miniloader_sd_nand_v1.13.bin'
-	BL31_BLOB='rk33/rk3308_bl31_v2.10.elf'
+	DDR_BLOB='rk33/rk3308_ddr_589MHz_uart2_m1_v1.30.bin'
+	MINILOADER_BLOB='rk33/rk3308_miniloader_v1.22.bin'
+	BL31_BLOB='rk33/rk3308_bl31_v2.22.elf'
+
+	if [[ ${BRANCH} == legacy ]]; then
+		DDR_BLOB='rk33/rk3308_ddr_589MHz_uart2_m0_v1.26.bin'
+		MINILOADER_BLOB='rk33/rk3308_miniloader_sd_nand_v1.13.bin'
+		BL31_BLOB='rk33/rk3308_bl31_v2.10.elf'
+	fi
 
 else
 
@@ -91,17 +128,22 @@ case $BRANCH in
 
 	current)
 
-		KERNELPATCHDIR='rockchip64-'$BRANCH
 		KERNELBRANCH="branch:linux-5.10.y"
-		LINUXFAMILY=rockchip64
-		LINUXCONFIG='linux-rockchip64-'$BRANCH
-
+		if [[ $BOARD == station* || $BOARD == renegade ]]; then
+			KERNELPATCHDIR='station-'$BRANCH
+			LINUXFAMILY=station
+			LINUXCONFIG='linux-station-'$BRANCH
+		else
+			KERNELPATCHDIR='rockchip64-'$BRANCH
+			LINUXFAMILY=rockchip64
+			LINUXCONFIG='linux-rockchip64-'$BRANCH
+		fi
 	;;
 
 	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="branch:linux-5.11.y"
+		KERNELBRANCH="branch:linux-5.12.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
@@ -181,17 +223,6 @@ legacy_uboot_locations()
 
 uboot_custom_postprocess()
 {
-	if [ "$(uname -m)" = "aarch64" ]; then
-		if [ "$(lsb_release -sc)" = "focal" ]; then
-			PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
-		else
-			PKG_PREFIX="qemu-x86_64 -L /usr/x86_64-linux-gnu "
-		fi
-	else
-		PKG_PREFIX=""
-	fi
-
-	RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 
 	if [[ $BOOT_USE_MAINLINE_ATF == yes || $BOOT_USE_TPL_SPL_BLOB == yes ]]; then
 		:
@@ -330,8 +361,14 @@ family_tweaks()
 
 	if [[ $BOARD == pinebook-pro ]]; then
 
-                chroot $SDCARD /bin/bash -c "echo SuspandState=freeze >> /etc/systemd/sleep.conf"
+                chroot $SDCARD /bin/bash -c "echo SuspendState=freeze >> /etc/systemd/sleep.conf"
                 chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
+	fi
+
+	if [[ $BOARD == station* ]]; then
+
+		cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
+
 	fi
 
 }

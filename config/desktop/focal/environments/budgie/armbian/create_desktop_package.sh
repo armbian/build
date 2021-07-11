@@ -9,14 +9,18 @@ cp -R "${SRC}"/packages/blobs/desktop/skel/. "${destination}"/etc/skel
 mkdir -p "${destination}"/usr/share/pixmaps/armbian
 cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps/armbian
 
+#install desktop bar icons
+mkdir -p "${destination}"/usr/share/icons/armbian
+cp "${SRC}"/packages/blobs/desktop/desktop-icons/*.png "${destination}"/usr/share/icons/armbian
+
 # install wallpapers
 mkdir -p "${destination}"/usr/share/backgrounds/armbian/
-cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/armbian/
+cp "${SRC}"/packages/blobs/desktop/wallpapers/*.jpg "${destination}"/usr/share/backgrounds/armbian/
 
-mkdir -p "${destination}"/usr/share/gnome-background-properties
-cat <<-EOF > "${destination}"/usr/share/gnome-background-properties/armbian.xml
+mkdir -p "${destination}"/usr/share/cinnamon-background-properties
+cat <<EOF > "${destination}"/usr/share/cinnamon-background-properties/armbian.xml
 <?xml version="1.0"?>
-<!DOCTYPE wallpapers SYSTEM "gnome-wp-list.dtd">
+<!DOCTYPE wallpapers SYSTEM "cinnamon-wp-list.dtd">
 <wallpapers>
   <wallpaper deleted="false">
     <name>Armbian light</name>
@@ -32,12 +36,54 @@ cat <<-EOF > "${destination}"/usr/share/gnome-background-properties/armbian.xml
     <pcolor>#ffffff</pcolor>
     <scolor>#000000</scolor>
   </wallpaper>
+  <wallpaper deleted="false">
+    <name>Armbian uc</name>
+    <filename>/usr/share/backgrounds/armbian/armbian-full-undeer-construction-3840-2160.jpg</filename>
+    <options>zoom</options>
+    <pcolor>#ffffff</pcolor>
+    <scolor>#000000</scolor>
+  </wallpaper>
+  <wallpaper deleted="false">
+    <name>Armbian clear</name>
+    <filename>/usr/share/backgrounds/armbian/Armbian-clear-rounded-bakcground-3840-2160.jpg</filename>
+    <options>zoom</options>
+    <pcolor>#ffffff</pcolor>
+    <scolor>#000000</scolor>
+  </wallpaper>
+  <wallpaper deleted="false">
+    <name>Armbian black_pyscho</name>
+    <filename>/usr/share/backgrounds/armbian/armbian_4k_black_psycho.jpg</filename>
+    <options>zoom</options>
+    <pcolor>#ffffff</pcolor>
+    <scolor>#000000</scolor>
+  </wallpaper>
+  <wallpaper deleted="false">
+    <name>Armbian bluie_monday</name>
+    <filename>/usr/share/backgrounds/armbian/armbian_4k_bluie_monday.jpg</filename>
+    <options>zoom</options>
+    <pcolor>#ffffff</pcolor>
+    <scolor>#000000</scolor>
+  </wallpaper>
+  <wallpaper deleted="false">
+    <name>Armbian grey</name>
+    <filename>/usr/share/backgrounds/armbian/armbian_4k_gray.jpg</filename>
+    <options>zoom</options>
+    <pcolor>#ffffff</pcolor>
+    <scolor>#000000</scolor>
+  </wallpaper>
+  <wallpaper deleted="false">
+    <name>Armbian green</name>
+    <filename>/usr/share/backgrounds/armbian/armbian_4k_green.jpg</filename>
+    <options>zoom</options>
+    <pcolor>#ffffff</pcolor>
+    <scolor>#000000</scolor>
+  </wallpaper>
+  <wallpaper deleted="false">
+    <name>Armbian purplepunk</name>
+    <filename>/usr/share/backgrounds/armbian/armbian_4k_purplepunk.jpg</filename>
+    <options>zoom</options>
+    <pcolor>#ffffff</pcolor>
+    <scolor>#000000</scolor>
+  </wallpaper>
 </wallpapers>
-EOF
-
-mkdir -p "${destination}"/usr/share/glib-2.0/schemas
-cat <<-EOF > "${destination}"/usr/share/glib-2.0/schemas/org.gnome.desktop.background.gschema.override
-[org.gnome.desktop.background]
-picture-uri='file:///usr/share/backgrounds/armbian/armbian03-Dre0x-Minum-dark-3840x2160.jpg'
-show-desktop-icons=true
 EOF

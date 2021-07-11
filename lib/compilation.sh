@@ -1,15 +1,16 @@
 #!/bin/bash
 #
-# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-
+#
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
 # Functions:
+
 # compile_atf
 # compile_uboot
 # compile_kernel
@@ -17,12 +18,16 @@
 # compile_armbian-config
 # compile_sunxi_tools
 # install_rkbin_tools
+# compile_xilinx_bootgen
 # grab_version
 # find_toolchain
 # advanced_patch
 # process_patch_file
 # userpatch_create
 # overlayfs_wrapper
+
+
+
 
 compile_atf()
 {
@@ -253,6 +258,31 @@ compile_uboot()
 		done
 	done <<< "$UBOOT_TARGET_MAP"
 
+	# set up postinstall script
+	if [[ $BOARD == tinkerboard ]]; then
+		cat <<-EOF > "$uboottempdir/${uboot_name}/DEBIAN/postinst"
+		#!/bin/bash
+		source /usr/lib/u-boot/platform_install.sh
+		[[ \$DEVICE == /dev/null ]] && exit 0
+		if [[ -z \$DEVICE ]]; then
+			DEVICE="/dev/mmcblk0"
+			# proceed to other options.
+			[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk1"
+			[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk2"
+		fi
+		[[ \$(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
+		if [[ -b \$DEVICE ]]; then
+			echo "Updating u-boot on \$DEVICE" >&2
+			write_uboot_platform \$DIR \$DEVICE
+			sync
+		else
+			echo "Device \$DEVICE does not exist, skipping" >&2
+		fi
+		exit 0
+		EOF
+		chmod 755 "$uboottempdir/${uboot_name}/DEBIAN/postinst"
+	fi
+
 	# declare -f on non-defined function does not do anything
 	cat <<-EOF > "$uboottempdir/${uboot_name}/usr/lib/u-boot/platform_install.sh"
 	DIR=/usr/lib/$uboot_name
@@ -295,6 +325,47 @@ compile_uboot()
 	rm -rf "$uboottempdir"
 }
 
+create_linux-source_package ()
+{
+	ts=$(date +%s)
+	local sources_pkg_dir tmp_src_dir
+	tmp_src_dir=$(mktemp -d)
+	trap "rm -rf \"${tmp_src_dir}\" ; exit 0" 0 1 2 3 15
+	sources_pkg_dir=${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all
+	mkdir -p "${sources_pkg_dir}"/usr/src/ \
+		"${sources_pkg_dir}"/usr/share/doc/linux-source-${version}-${LINUXFAMILY} \
+		"${sources_pkg_dir}"/DEBIAN
+
+	cp "${SRC}/config/kernel/${LINUXCONFIG}.config" "default_${LINUXCONFIG}.config"
+	xz < .config > "${sources_pkg_dir}/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz"
+
+	display_alert "Compressing sources for the linux-source package"
+	tar cp --directory="$kerneldir" --exclude='.git' --owner=root . \
+		| pv -p -b -r -s "$(du -sb "$kerneldir" --exclude=='.git' | cut -f1)" \
+		| pixz -4 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz"
+	cp COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
+
+	cat <<-EOF > "${sources_pkg_dir}"/DEBIAN/control
+	Package: linux-source-${version}-${BRANCH}-${LINUXFAMILY}
+	Version: ${version}-${BRANCH}-${LINUXFAMILY}+${REVISION}
+	Architecture: all
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Section: kernel
+	Priority: optional
+	Depends: binutils, coreutils
+	Provides: linux-source, linux-source-${version}-${LINUXFAMILY}
+	Recommends: gcc, make
+	Description: This package provides the source code for the Linux kernel $version
+	EOF
+
+	fakeroot dpkg-deb -z0 -b "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
+	rsync --remove-source-files -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
+
+	te=$(date +%s)
+	display_alert "Make the linux-source package" "$(($te - $ts)) sec." "info"
+	rm -rf "${tmp_src_dir}"
+}
+
 compile_kernel()
 {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
@@ -310,9 +381,6 @@ compile_kernel()
 	fi
 	cd "${kerneldir}" || exit
 
-	if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
-		sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
-	fi
 	rm -f localversion
 
 	# read kernel version
@@ -327,27 +395,13 @@ compile_kernel()
 
 	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
 
-        # create patch for manual source changes in debug mode
-        [[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
+	# create patch for manual source changes in debug mode
+	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
 
-        # re-read kernel version after patching
-        local version
-        version=$(grab_version "$kerneldir")
+	# re-read kernel version after patching
+	local version
+	version=$(grab_version "$kerneldir")
 
-	# create linux-source package - with already patched sources
-	local sources_pkg_dir tmp_src_dir
-	tmp_src_dir=$(mktemp -d)
-	trap "rm -rf \"${tmp_src_dir}\" ; exit 0" 0 1 2 3 15
-	sources_pkg_dir=${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all
-	mkdir -p "${sources_pkg_dir}"/usr/src/ "${sources_pkg_dir}"/usr/share/doc/linux-source-${version}-${LINUXFAMILY} "${sources_pkg_dir}"/DEBIAN
-
-	if [[ $BUILD_KSRC != no ]]; then
-		display_alert "Compressing sources for the linux-source package"
-		tar cp --directory="$kerneldir" --exclude='./.git/' --owner=root . \
-			 | pv -p -b -r -s "$(du -sb "$kerneldir" --exclude=='./.git/' | cut -f1)" \
-			| pixz -4 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz"
-		cp COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
-	fi
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
 # build aarch64
@@ -413,7 +467,11 @@ compile_kernel()
 		fi
 	fi
 
-	xz < .config > "${sources_pkg_dir}/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz"
+	# create linux-source package - with already patched sources
+	# We will build this package first and clear the memory.
+	if [[ $BUILD_KSRC != no ]]; then
+		create_linux-source_package
+	fi
 
 	echo -e "\n\t== kernel ==\n" >> "${DEST}"/debug/compilation.log
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
@@ -456,25 +514,6 @@ compile_kernel()
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
-	cat <<-EOF > "${sources_pkg_dir}"/DEBIAN/control
-	Package: linux-source-${version}-${BRANCH}-${LINUXFAMILY}
-	Version: ${version}-${BRANCH}-${LINUXFAMILY}+${REVISION}
-	Architecture: all
-	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-	Section: kernel
-	Priority: optional
-	Depends: binutils, coreutils
-	Provides: linux-source, linux-source-${version}-${LINUXFAMILY}
-	Recommends: gcc, make
-	Description: This package provides the source code for the Linux kernel $version
-	EOF
-
-	if [[ $BUILD_KSRC != no ]]; then
-		fakeroot dpkg-deb -z0 -b "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
-		rsync --remove-source-files -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
-	fi
-	rm -rf "${tmp_src_dir}"
-
 	cd .. || exit
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
@@ -485,7 +524,7 @@ compile_kernel()
 	echo "${hash}" > "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
-	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}/" -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort)
+	hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort -n)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
 	echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin >> "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 }
@@ -638,7 +677,7 @@ compile_armbian-config()
 
 	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
 	fetch_from_repo "https://github.com/dylanaraps/neofetch" "neofetch" "tag:7.1.0"
-	fetch_from_repo "https://github.com/complexorganizations/wireguard-manager" "wireguard-manager" "tag:1.0.11"
+	fetch_from_repo "https://github.com/complexorganizations/wireguard-manager" "wireguard-manager" "tag:v1.0.0.06-20-2021"
 
 	mkdir -p "${tmp_dir}/${armbian_config_dir}"/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
 
@@ -650,7 +689,7 @@ compile_armbian-config()
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 	Replaces: armbian-bsp, neofetch
 	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, pv, zip, \
-	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common, debconf, jq
+	debconf-utils, unzip, build-essential, html2text, html2text, dirmngr, software-properties-common, debconf, jq
 	Recommends: armbian-bsp
 	Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
 	Section: utils
@@ -709,6 +748,27 @@ install_rkbin_tools()
 		install -m 755 tools/trust_merger /usr/local/bin/
 		improved_git rev-parse @ 2>/dev/null > .commit_id
 	fi
+}
+
+compile_xilinx_bootgen()
+{
+	# Source code checkout
+	(fetch_from_repo "https://github.com/Xilinx/bootgen.git" "xilinx-bootgen" "branch:master")
+
+	pushd "${SRC}"/cache/sources/xilinx-bootgen || exit
+
+	# Compile and install only if git commit hash changed
+	# need to check if /usr/local/bin/bootgen to detect new Docker containers with old cached sources
+	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/bootgen ]]; then
+		display_alert "Compiling" "xilinx-bootgen" "info"
+		make -s clean >/dev/null
+		make -s -j$(nproc) bootgen >/dev/null
+		mkdir -p /usr/local/bin/
+		install bootgen /usr/local/bin >/dev/null 2>&1
+		improved_git rev-parse @ 2>/dev/null > .commit_id
+	fi
+
+	popd
 }
 
 grab_version()

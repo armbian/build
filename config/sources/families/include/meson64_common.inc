@@ -15,9 +15,10 @@ if [[ $BOARD == lafrite ]]; then
 		UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin:u-boot.bin u-boot-dtb.img"
 fi
 
-CPUMIN=500000
-CPUMAX=1536000
-GOVERNOR=ondemand
+# Set CPUMIN et al if not already set in the board config.
+CPUMIN=${CPUMIN:-500000}
+CPUMAX=${CPUMAX:-1536000}
+GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
 	
@@ -33,15 +34,15 @@ case $BRANCH in
         ;;
 
         edge)
-		KERNELBRANCH='branch:linux-5.11.y'
+		KERNELBRANCH='branch:linux-5.12.y'
 		KERNELPATCHDIR='meson64-edge'
         ;;
 
 esac
 
 if [ "$(uname -m)" = "aarch64" ]; then
-	if [ "$(lsb_release -sc)" = "focal" ]; then
-		PKG_PREFIX="qemu-x86_64-static "
+	if [[ "$(lsb_release -sc)" == "focal" || "$(lsb_release -sc)" == "hirsute" ]]; then
+		PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
 	else
 		PKG_PREFIX="qemu-x86_64 "
 	fi
@@ -216,25 +217,21 @@ family_tweaks_bsp()
 	install -m 755 $SRC/packages/bsp/rockchip/hdmi-hotplug $destination/usr/local/bin
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
-	if [[ $BOARD == odroidc2 || $BOARD == nanopik2 || $BOARD == lepatato || $BOARD == lafrite || $BOARD == vim1 ]]; then 
-
+	case "${BOARD}" in
+		"odroidc2" | "nanopik2-s905" | "lepotato" | "lafrite" | "khadas-vim1" )
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 	# set fbdev as default driver.
 	Section "Device"
-	    Identifier "NOGPU"
-	    Driver "fbdev"
-	    EndSection
+	    Identifier "DRM Graphics"
+	    Driver "modesetting"
+            AccelMethod "none"
+	EndSection
 	EOF
-
-	elif [[ $BOARD == odroidn2 || $BOARD == odroidc4 || $BOARD == vim2 ]]; then
-
+        ;;
+		"odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" )
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf
 	Section "Device"
-	    Identifier  "Armsoc Graphics"
-	    
-	    ## Use armsoc driver
-	    #   Driver          "armsoc"
-	    ## End armsoc configuration
+	    Identifier  "DRM Graphics Acclerated"
 	    
 	    ## Use modesetting and glamor
 	        Driver      "modesetting"
@@ -253,6 +250,6 @@ family_tweaks_bsp()
 	            EndSubSection
 	        EndSection
 	EOF
-
-	fi
+        ;;
+        esac
 }

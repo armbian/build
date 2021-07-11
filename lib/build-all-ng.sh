@@ -1,24 +1,27 @@
 #!/bin/bash
 #
-# Copyright (c) Authors: http://www.armbian.com/authors
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-
+#
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
 # Functions:
+# unset_all
 # pack_upload
 # build_main
 # array_contains
+# check_hash
 # build_all
 
 
 
-
+if [[ -z $VENDOR ]]; then VENDOR="Armbian"; fi
 if [[ $BETA == "yes" ]];  then STABILITY="beta";	else STABILITY="stable"; fi
+if [[ $BETA == "yes" ]]; then upload_subdir=nightly; else upload_subdir="archive"; fi
 if [[ $MAKE_ALL_BETA == "yes" ]]; then STABILITY="stable"; fi
 if [[ -z $KERNEL_ONLY ]]; then KERNEL_ONLY="yes"; fi
 if [[ -z $MULTITHREAD ]]; then MULTITHREAD=0; fi
@@ -46,24 +49,22 @@ fi
 
 unset_all ()
 {
-unset	LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSOURCE BOOTBRANCH ARCH UBOOT_USE_GCC \
-		KERNEL_USE_GCC CPUMIN CPUMAX UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE BOOTFS_TYPE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN \
-		DEBOOTSTRAP_LIST PACKAGE_LIST_EXCLUDE KERNEL_IMAGE_TYPE write_uboot_platform family_tweaks family_tweaks_bsp \
-		setup_write_uboot_platform uboot_custom_postprocess atf_custom_postprocess family_tweaks_s BOOTSCRIPT \
-		UBOOT_TARGET_MAP LOCALVERSION UBOOT_COMPILER KERNEL_COMPILER BOOTCONFIG BOOTCONFIG_VAR_NAME INITRD_ARCH BOOTENV_FILE BOOTDELAY \
-		ATF_TOOLCHAIN2 MOUNT SDCARD BOOTPATCHDIR KERNELPATCHDIR RELEASE IMAGE_TYPE OVERLAY_PREFIX ASOUND_STATE ATF_COMPILER \
-		ATF_USE_GCC ATFSOURCE ATFDIR ATFBRANCH ATFSOURCEDIR PACKAGE_LIST_RM NM_IGNORE_DEVICES DISPLAY_MANAGER \
-		family_tweaks_bsp_s CRYPTROOT_ENABLE CRYPTROOT_PASSPHRASE CRYPTROOT_SSH_UNLOCK CRYPTROOT_SSH_UNLOCK_PORT \
-		CRYPTROOT_SSH_UNLOCK_KEY_NAME ROOT_MAPPER NETWORK HDMI USB WIRELESS ARMBIANMONITOR FORCE_BOOTSCRIPT_UPDATE \
-		UBOOT_TOOLCHAIN2 toolchain2 BUILD_REPOSITORY_URL BUILD_REPOSITORY_COMMIT BUILD_TARGET HOST BUILD_IMAGE \
-		DEB_STORAGE REPO_STORAGE REPO_CONFIG REPOSITORY_UPDATE PACKAGE_LIST_RELEASE LOCAL_MIRROR COMPILE_ATF \
-		PACKAGE_LIST_BOARD PACKAGE_LIST_FAMILY PACKAGE_LIST_DESKTOP_BOARD PACKAGE_LIST_DESKTOP_FAMILY ATF_COMPILE ATFPATCHDIR OFFSET BOOTSOURCEDIR BOOT_USE_BLOBS \
-		BOOT_SOC DDR_BLOB MINILOADER_BLOB BL31_BLOB BOOT_RK3328_USE_AYUFAN_ATF BOOT_USE_BLOBS BOOT_RK3399_LEGACY_HYBRID \
-		BOOT_USE_MAINLINE_ATF BOOT_USE_TPL_SPL_BLOB BOOT_SUPPORT_SPI OFFLINE_WORK IMAGE_PARTITION_TABLE BOOT_LOGO UPSTREM_VER FORCED_MONTH_OFFSET \
-		PACKAGE_LIST_BOARD_REMOVE PACKAGE_LIST_FAMILY_REMOVE PACKAGE_LIST_DESKTOP_BOARD_REMOVE PACKAGE_LIST_DESKTOP_FAMILY_REMOVE BOOTCONFIG_EDGE \
-		DESKTOP_ENVIRONMENT DESKTOP_ENVIRONMENT_CONFIG_NAME DESKTOP_APPGROUPS_SELECTED DESKTOP_APT_FLAGS_SELECTED \
-		DESKTOP_ENVIRONMENT_DIRPATH DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH DESKTOP_ENVIRONMENT_DIRPATH DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH \
-		DESKTOP_CONFIG_PREFIX DESKTOP_CONFIGS_DIR DESKTOP_APPGROUPS_DIR DEBIAN_RECOMMENDS USE_OVERLAYFS aggregated_content DEBOOTSTRAP_COMPONENTS
+unset	LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSOURCE BOOTBRANCH ARCH UBOOT_USE_GCC KERNEL_USE_GCC CPUMIN CPUMAX \
+		UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE BOOTFS_TYPE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN DEBOOTSTRAP_LIST PACKAGE_LIST_EXCLUDE KERNEL_IMAGE_TYPE \
+		write_uboot_platform family_tweaks family_tweaks_bsp setup_write_uboot_platform uboot_custom_postprocess atf_custom_postprocess family_tweaks_s \
+		LOCALVERSION UBOOT_COMPILER KERNEL_COMPILER BOOTCONFIG BOOTCONFIG_VAR_NAME INITRD_ARCH BOOTENV_FILE BOOTDELAY ATF_TOOLCHAIN2 MOUNT SDCARD \
+		BOOTPATCHDIR KERNELPATCHDIR RELEASE IMAGE_TYPE OVERLAY_PREFIX ASOUND_STATE ATF_COMPILER ATF_USE_GCC ATFSOURCE ATFDIR ATFBRANCH ATFSOURCEDIR \
+		PACKAGE_LIST_RM NM_IGNORE_DEVICES DISPLAY_MANAGER family_tweaks_bsp_s CRYPTROOT_ENABLE CRYPTROOT_PASSPHRASE CRYPTROOT_SSH_UNLOCK \
+		CRYPTROOT_SSH_UNLOCK_PORT CRYPTROOT_SSH_UNLOCK_KEY_NAME ROOT_MAPPER NETWORK HDMI USB WIRELESS ARMBIANMONITOR FORCE_BOOTSCRIPT_UPDATE \
+		UBOOT_TOOLCHAIN2 toolchain2 BUILD_REPOSITORY_URL BUILD_REPOSITORY_COMMIT BUILD_TARGET HOST BUILD_IMAGE DEB_STORAGE REPO_STORAGE REPO_CONFIG \
+		REPOSITORY_UPDATE PACKAGE_LIST_RELEASE LOCAL_MIRROR COMPILE_ATF PACKAGE_LIST_BOARD PACKAGE_LIST_FAMILY PACKAGE_LIST_DESKTOP_BOARD \
+		PACKAGE_LIST_DESKTOP_FAMILY ATF_COMPILE ATFPATCHDIR OFFSET BOOTSOURCEDIR BOOT_USE_BLOBS BOOT_SOC DDR_BLOB MINILOADER_BLOB BL31_BLOB \
+		BOOT_RK3328_USE_AYUFAN_ATF BOOT_USE_BLOBS BOOT_RK3399_LEGACY_HYBRID BOOT_USE_MAINLINE_ATF BOOT_USE_TPL_SPL_BLOB BOOT_SUPPORT_SPI OFFLINE_WORK \
+		IMAGE_PARTITION_TABLE BOOT_LOGO UPSTREM_VER FORCED_MONTH_OFFSET PACKAGE_LIST_BOARD_REMOVE PACKAGE_LIST_FAMILY_REMOVE \
+		PACKAGE_LIST_DESKTOP_BOARD_REMOVE PACKAGE_LIST_DESKTOP_FAMILY_REMOVE BOOTCONFIG_EDGE DESKTOP_ENVIRONMENT DESKTOP_ENVIRONMENT_CONFIG_NAME \
+		DESKTOP_APPGROUPS_SELECTED DESKTOP_APT_FLAGS_SELECTED DESKTOP_ENVIRONMENT_DIRPATH DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH UBOOT_TARGET_MAP \
+		DESKTOP_ENVIRONMENT_DIRPATH DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH DESKTOP_CONFIG_PREFIX DESKTOP_CONFIGS_DIR DESKTOP_APPGROUPS_DIR \
+		DEBIAN_RECOMMENDS USE_OVERLAYFS aggregated_content DEBOOTSTRAP_COMPONENTS DEBOOTSTRAP_OPTION MAINTAINER MAINTAINERMAIL EXTRAWIFI BOOTSCRIPT 
 }
 
 pack_upload ()
@@ -72,8 +73,7 @@ pack_upload ()
 	# pack and upload to server or just pack
 
 	display_alert "Signing" "Please wait!" "info"
-	local version="Armbian_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
-	local subdir="archive"
+	local version="${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
 	compression_type=""
 
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
@@ -106,9 +106,10 @@ pack_upload ()
 	fi
 
 	if [[ $COMPRESS_OUTPUTIMAGE == *gpg* ]]; then
-		if [[ -n $GPG_PASS ]]; then
+		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
 			display_alert "GPG signing" "${version}.img" "info"
-			echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes "${version}.img${compression_type}" || exit 1
+			[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
+			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${version}.img${compression_type}" || exit 1
 		else
 			display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 		fi
@@ -140,15 +141,13 @@ build_main ()
 	# shellcheck source=/dev/null
 	source "$USERPATCHES_PATH"/lib.config
 	# build images which we do pack or kernel
-	local upload_image upload_subdir
-	upload_image="Armbian_$(cat "${SRC}"/VERSION)_${BOARD^}_${RELEASE}_${BRANCH}_*${VER/-$LINUXFAMILY/}"
-	upload_subdir="archive"
+	local upload_image
+	upload_image="${VENDOR}_$(cat "${SRC}"/VERSION)_${BOARD^}_${RELEASE}_${BRANCH}_*${VER/-$LINUXFAMILY/}"
 
 	[[ $BUILD_DESKTOP == yes ]] && upload_image=${upload_image}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && upload_image=${upload_image}_minimal
-	[[ $BETA == yes ]] && local upload_subdir=nightly
 
-	touch "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
+	touch "/run/armbian/${VENDOR}_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
 
 	if [[ $KERNEL_ONLY != yes ]]; then
 		#if ssh ${SEND_TO_SERVER} stat ${SEND_TO_LOCATION}${BOARD}/${upload_subdir}/${upload_image}* \> /dev/null 2\>\&1; then
@@ -166,7 +165,7 @@ build_main ()
 	fi
 
 	cd "${SRC}"
-	rm "/run/armbian/Armbian_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
+	rm "/run/armbian/${VENDOR}_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid"
 }
 
 
@@ -212,7 +211,7 @@ function check_hash()
 	[[ -z $LINUXFAMILY ]] && LINUXFAMILY=$BOARDFAMILY
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
-	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort)
+	hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort -n)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config" 2> /dev/null)
 	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin)
 
@@ -393,13 +392,17 @@ function build_all()
 				exit
 			else
 				((n+=1))
-				# In dryrun it only prints out what will be build
-                                printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\t%-6s\n" "${n}." \
-                                "$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${DESKTOP_ENVIRONMENT}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}" "${DESKTOP_APPGROUPS_SELECTED}"
+				# In dryrun it only prints out what will be build but also color green if file already exists
+				FIND="$SRC/output/images/$BOARD/$upload_subdir/Armbian_$(cat "${SRC}"/VERSION)_${BOARD^}_${RELEASE}_${BRANCH}"
+				if ls $FIND* 1> /dev/null 2>&1; then
+					echo -ne "\e[0;92m"
+				else
+					echo -ne "\x1B[0m"
+				fi
+				printf "%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\t%-6s\n" "${n}." \
+				"$BOARD (${BOARDFAMILY})" "${BRANCH}" "${RELEASE}" "${DESKTOP_ENVIRONMENT}" "${BUILD_DESKTOP}" "${BUILD_MINIMAL}" "${DESKTOP_APPGROUPS_SELECTED}"
 			fi
-
-fi
-
+		fi
 		fi
 
 	# at which image to stop
@@ -464,7 +467,6 @@ do
 	sleep 5
 done
 
-
 fi
 
 [[ $n -eq 0 ]] && display_alert "No changes in upstream sources, patches or configs found. Exiting." "info"
@@ -472,4 +474,9 @@ fi
 buildall_end=$(date +%s)
 buildall_runtime=$(((buildall_end - buildall_start) / 60))
 display_alert "Runtime in total" "${buildall_runtime} min" "info"
+mkdir -p .tmp
 echo "${n}" > "${SRC}"/.tmp/n
+
+# display what we will build
+build_all "dryrun"
+display_alert "Done"
