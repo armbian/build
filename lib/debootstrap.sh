@@ -774,7 +774,9 @@ create_image()
 
 
 	if [[ -z $SEND_TO_SERVER ]]; then
-
+		# custom post_build_image_modify hook to run before fingerprinting and compression
+		[[ $(type -t post_build_image_modify) == function ]] && display_alert "Custom Hook Detected" "post_build_image_modify" "info" && post_build_image_modify "${DESTIMG}/${version}.img"
+	
 		if [[ $COMPRESS_OUTPUTIMAGE == "" || $COMPRESS_OUTPUTIMAGE == no ]]; then
 			COMPRESS_OUTPUTIMAGE="sha,gpg,img"
 		elif [[ $COMPRESS_OUTPUTIMAGE == yes ]]; then
