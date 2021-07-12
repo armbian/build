@@ -222,7 +222,14 @@ family_tweaks_bsp()
 	# set fbdev as default driver.
 	Section "Device"
 	    Identifier "DRM Graphics"
-	    Driver "fbdev"
+	    Driver "modesetting"
+            AccelMethod "none"
+	EndSection
+	Section "OutputClass"
+	    Identifier "Amlogic"
+	    MatchDriver "meson"
+	    Driver "modesetting"
+	    Option "PrimaryGPU" "true"
 	EndSection
 	EOF
         ;;
