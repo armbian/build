@@ -17,6 +17,9 @@ cp "${SRC}"/packages/blobs/desktop/wallpapers/*.jpg "${destination}"/usr/share/b
 mkdir -p "${destination}"/usr/share/backgrounds/armbian-lightdm/
 cp "${SRC}"/packages/blobs/desktop/lightdm-wallpapers/*.jpg "${destination}"/usr/share/backgrounds/armbian-lightdm
 
+# install logo for login screen
+cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps/armbian
+
 #generate wallpaper list for background changer
 mkdir -p "${destination}"/usr/share/cinnamon-background-properties
 cat <<EOF > "${destination}"/usr/share/cinnamon-background-properties/armbian.xml
