@@ -1,0 +1,158 @@
+diff --git a/Makefile b/Makefile
+index 4256dd594d18c..5e8716dbbadca 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 5
+ PATCHLEVEL = 4
+-SUBLEVEL = 130
++SUBLEVEL = 131
+ EXTRAVERSION =
+ NAME = Kleptomaniac Octopus
+ 
+diff --git a/arch/s390/include/asm/stacktrace.h b/arch/s390/include/asm/stacktrace.h
+index 3679d224fd3c5..6836532f8d1a6 100644
+--- a/arch/s390/include/asm/stacktrace.h
++++ b/arch/s390/include/asm/stacktrace.h
+@@ -79,12 +79,16 @@ struct stack_frame {
+ 	CALL_ARGS_4(arg1, arg2, arg3, arg4);				\
+ 	register unsigned long r4 asm("6") = (unsigned long)(arg5)
+ 
+-#define CALL_FMT_0 "=&d" (r2) :
+-#define CALL_FMT_1 "+&d" (r2) :
+-#define CALL_FMT_2 CALL_FMT_1 "d" (r3),
+-#define CALL_FMT_3 CALL_FMT_2 "d" (r4),
+-#define CALL_FMT_4 CALL_FMT_3 "d" (r5),
+-#define CALL_FMT_5 CALL_FMT_4 "d" (r6),
++/*
++ * To keep this simple mark register 2-6 as being changed (volatile)
++ * by the called function, even though register 6 is saved/nonvolatile.
++ */
++#define CALL_FMT_0 "=&d" (r2)
++#define CALL_FMT_1 "+&d" (r2)
++#define CALL_FMT_2 CALL_FMT_1, "+&d" (r3)
++#define CALL_FMT_3 CALL_FMT_2, "+&d" (r4)
++#define CALL_FMT_4 CALL_FMT_3, "+&d" (r5)
++#define CALL_FMT_5 CALL_FMT_4, "+&d" (r6)
+ 
+ #define CALL_CLOBBER_5 "0", "1", "14", "cc", "memory"
+ #define CALL_CLOBBER_4 CALL_CLOBBER_5
+@@ -105,7 +109,7 @@ struct stack_frame {
+ 		"	brasl	14,%[_fn]\n"				\
+ 		"	la	15,0(%[_prev])\n"			\
+ 		: [_prev] "=&a" (prev), CALL_FMT_##nr			\
+-		  [_stack] "a" (stack),					\
++		: [_stack] "a" (stack),					\
+ 		  [_bc] "i" (offsetof(struct stack_frame, back_chain)),	\
+ 		  [_fn] "X" (fn) : CALL_CLOBBER_##nr);			\
+ 	r2;								\
+diff --git a/arch/x86/kvm/svm.c b/arch/x86/kvm/svm.c
+index 074cd170912aa..7341d22ed04f1 100644
+--- a/arch/x86/kvm/svm.c
++++ b/arch/x86/kvm/svm.c
+@@ -1794,9 +1794,25 @@ static void sev_asid_free(struct kvm *kvm)
+ 	__sev_asid_free(sev->asid);
+ }
+ 
+-static void sev_unbind_asid(struct kvm *kvm, unsigned int handle)
++static void sev_decommission(unsigned int handle)
+ {
+ 	struct sev_data_decommission *decommission;
++
++	if (!handle)
++		return;
++
++	decommission = kzalloc(sizeof(*decommission), GFP_KERNEL);
++	if (!decommission)
++		return;
++
++	decommission->handle = handle;
++	sev_guest_decommission(decommission, NULL);
++
++	kfree(decommission);
++}
++
++static void sev_unbind_asid(struct kvm *kvm, unsigned int handle)
++{
+ 	struct sev_data_deactivate *data;
+ 
+ 	if (!handle)
+@@ -1814,15 +1830,7 @@ static void sev_unbind_asid(struct kvm *kvm, unsigned int handle)
+ 	sev_guest_df_flush(NULL);
+ 	kfree(data);
+ 
+-	decommission = kzalloc(sizeof(*decommission), GFP_KERNEL);
+-	if (!decommission)
+-		return;
+-
+-	/* decommission handle */
+-	decommission->handle = handle;
+-	sev_guest_decommission(decommission, NULL);
+-
+-	kfree(decommission);
++	sev_decommission(handle);
+ }
+ 
+ static struct page **sev_pin_memory(struct kvm *kvm, unsigned long uaddr,
+@@ -1960,6 +1968,7 @@ static void sev_vm_destroy(struct kvm *kvm)
+ 		list_for_each_safe(pos, q, head) {
+ 			__unregister_enc_region_locked(kvm,
+ 				list_entry(pos, struct enc_region, list));
++			cond_resched();
+ 		}
+ 	}
+ 
+@@ -6475,8 +6484,10 @@ static int sev_launch_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
+ 
+ 	/* Bind ASID to this guest */
+ 	ret = sev_bind_asid(kvm, start->handle, error);
+-	if (ret)
++	if (ret) {
++		sev_decommission(start->handle);
+ 		goto e_free_session;
++	}
+ 
+ 	/* return handle to userspace */
+ 	params.handle = start->handle;
+diff --git a/drivers/xen/events/events_base.c b/drivers/xen/events/events_base.c
+index 9cc77f0397797..de825df4abf6a 100644
+--- a/drivers/xen/events/events_base.c
++++ b/drivers/xen/events/events_base.c
+@@ -525,6 +525,9 @@ static void xen_irq_lateeoi_locked(struct irq_info *info, bool spurious)
+ 	}
+ 
+ 	info->eoi_time = 0;
++
++	/* is_active hasn't been reset yet, do it now. */
++	smp_store_release(&info->is_active, 0);
+ 	do_unmask(info, EVT_MASK_REASON_EOI_PENDING);
+ }
+ 
+@@ -1781,10 +1784,22 @@ static void lateeoi_ack_dynirq(struct irq_data *data)
+ 	struct irq_info *info = info_for_irq(data->irq);
+ 	evtchn_port_t evtchn = info ? info->evtchn : 0;
+ 
+-	if (VALID_EVTCHN(evtchn)) {
+-		do_mask(info, EVT_MASK_REASON_EOI_PENDING);
+-		ack_dynirq(data);
+-	}
++	if (!VALID_EVTCHN(evtchn))
++		return;
++
++	do_mask(info, EVT_MASK_REASON_EOI_PENDING);
++
++	if (unlikely(irqd_is_setaffinity_pending(data)) &&
++	    likely(!irqd_irq_disabled(data))) {
++		do_mask(info, EVT_MASK_REASON_TEMPORARY);
++
++		clear_evtchn(evtchn);
++
++		irq_move_masked_irq(data);
++
++		do_unmask(info, EVT_MASK_REASON_TEMPORARY);
++	} else
++		clear_evtchn(evtchn);
+ }
+ 
+ static void lateeoi_mask_ack_dynirq(struct irq_data *data)
