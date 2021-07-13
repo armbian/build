@@ -218,13 +218,23 @@ family_tweaks_bsp()
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
 	case "${BOARD}" in
-		"odroidc2" | "nanopik2-s905" | "lepotato" | "lafrite" | "khadas-vim1" )
+		"odroidc2" | "nanopik2-s905" | "lepotato" | "lafrite" | "khadas-vim1" | "khadas-vim2" )
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
-	# set fbdev as default driver.
-	Section "Device"
-	    Identifier "DRM Graphics"
+	Section "OutputClass"
+	    Identifier "Amlogic"
+	    MatchDriver "meson"
 	    Driver "modesetting"
-            AccelMethod "none"
+	    Option "PrimaryGPU" "true"
+	EndSection
+	Section "Screen"
+	    Identifier      "Default Screen"
+	    Device          "Meson"
+	    Monitor         "foo"
+	    DefaultDepth  24
+	    SubSection "Display"
+	       Depth    24
+	       Modes    "1920x1080" "1440x900" "1280x720" "1280x1024" "1280x960" "1024x768" "800x600" "640x480" "720x400"
+	    EndSubSection
 	EndSection
 	EOF
         ;;
