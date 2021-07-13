@@ -1466,3 +1466,31 @@ show_developer_warning()
 	[[ $? -ne 0 ]] && exit_with_error "Error switching to the expert mode"
 	SHOW_WARNING=no
 }
+
+# is a formatted output of the values of variables
+# from the list at the place of the function call.
+#
+# The LOG_OUTPUT_FILE variable must be defined in the calling function
+# before calling the `show_checklist_variables` function and unset after.
+#
+show_checklist_variables ()
+{
+	local checklist=$*
+	local var pval
+	local log_file=${LOG_OUTPUT_FILE:-"${SRC}"/output/debug/trash.log}
+	local _line=${BASH_LINENO[0]}
+	local _function=${FUNCNAME[1]}
+	local _file=$(basename "${BASH_SOURCE[1]}")
+
+	echo -e "Show variables in function: $_function" "[$_file:$_line]\n" >>$log_file
+
+	for var in $checklist;do
+		eval pval=\$$var
+		echo -e "\n$var =:" >>$log_file
+		if [ $(echo "$pval" | gawk -F"/" '{print NF}') -ge 4 ];then
+			printf "%s\n" $pval >>$log_file
+		else
+			printf "%-30s %-30s %-30s %-30s\n" $pval >>$log_file
+		fi
+	done
+}

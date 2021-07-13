@@ -370,9 +370,6 @@ elif [[ $BUILD_MINIMAL == "yes" ]]; then
 	SELECTED_CONFIGURATION="cli_minimal"
 fi
 
-[[ $BUILD_MINIMAL == yes ]] && EXTERNAL=no
-
-
 [[ ${KERNEL_CONFIGURE} == prebuilt ]] && [[ -z ${REPOSITORY_INSTALL} ]] && \
 REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop}"
 
