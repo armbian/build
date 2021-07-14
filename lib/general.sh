@@ -29,6 +29,8 @@
 # prepare_host
 # webseed
 # download_and_verify
+# show_developer_warning
+# show_checklist_variables
 
 
 # cleaning <target>
@@ -1180,9 +1182,10 @@ wait_for_package_manager()
 # install_pkg_deb $list
 #
 # If the package has a bad name, we will see it in the log file.
-# If there is an PKG_INSTALLATION_LOG variable and it has a value as
+# If there is an LOG_OUTPUT_FILE variable and it has a value as
 # the full real path to the log file, then all the information will be there.
-# The PKG_INSTALLATION_LOG variable must be defined in the calling function
+#
+# The LOG_OUTPUT_FILE variable must be defined in the calling function
 # before calling the install_pkg_deb function and unset after.
 #
 install_pkg_deb ()
@@ -1194,8 +1197,8 @@ install_pkg_deb ()
 	local _file=$(basename "${BASH_SOURCE[1]}")
 	local tmp_file=$(mktemp /tmp/install_log_XXXXX)
 
-	if [ -d $(dirname $PKG_INSTALLATION_LOG) ]; then
-		log_file=${PKG_INSTALLATION_LOG}
+	if [ -d $(dirname $LOG_OUTPUT_FILE) ]; then
+		log_file=${LOG_OUTPUT_FILE}
 	else
 		log_file="${SRC}/output/debug/install.log"
 	fi
