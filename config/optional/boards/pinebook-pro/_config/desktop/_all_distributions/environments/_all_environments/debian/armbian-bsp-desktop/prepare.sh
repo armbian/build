@@ -3,6 +3,7 @@ mkdir -p "${destination}"/etc/X11/
 cp -R "${SRC}"/packages/bsp/pinebook-pro/xorg.conf "${destination}"/etc/X11/
 
 # install custom asound state for pinebook-pro
+mkdir -p "${destination}"/etc/
 cp -R "${SRC}"/packages/blobs/asound.state/asound.state.pinebook-pro "${destination}"/etc/
 
 ## touchpad and keyboard tweaks
