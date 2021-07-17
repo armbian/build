@@ -11,7 +11,7 @@ OVERLAY_PREFIX='meson'
 # this family does not need it
 ATF_COMPILE="no"
 
-if [[ $BOARD == lafrite ]]; then
+if [[ $BOARD == lafrite || $BOARD == odroid*c4 ]]; then
 		UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin:u-boot.bin u-boot-dtb.img"
 fi
 
