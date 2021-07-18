@@ -179,7 +179,7 @@ create_board_package()
 	fi
 
 	EOF
-
+	##FIXME this is probably tech debt
 	if [[ $RELEASE == bionic ]] || [[ $RELEASE == focal && $BOARDFAMILY == sun50iw6 ]]; then
 		cat <<-EOF >> "${destination}"/DEBIAN/postinst
 		# temporally disable acceleration on some arch in Bionic due to broken mesa packages

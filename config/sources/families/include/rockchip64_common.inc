@@ -359,17 +359,6 @@ family_tweaks()
 
 	fi
 
-	if [[ $BOARD == pinebook-pro ]]; then
-
-                chroot $SDCARD /bin/bash -c "echo SuspendState=freeze >> /etc/systemd/sleep.conf"
-                chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
-	fi
-
-	if [[ $BOARD == station* ]]; then
-
-		cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
-
-	fi
 
 }
 
@@ -444,6 +433,26 @@ family_tweaks_bsp()
 		cp $SRC/packages/bsp/helios64/helios64-ups.service $destination/lib/systemd/system/
 		cp $SRC/packages/bsp/helios64/helios64-ups.timer $destination/lib/systemd/system/
 		install -m 755 $SRC/packages/bsp/helios64/helios64-ups.sh $destination/usr/bin/helios64-ups.sh
+
+	fi
+
+	if [[ $BOARD == pinebook-pro ]]; then
+
+                chroot $SDCARD /bin/bash -c "echo SuspendState=freeze >> /etc/systemd/sleep.conf"
+                chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
+		## touchpad and keyboard tweaks
+		mkdir -p "${SDCARD}"/etc/X11/xorg.conf.d/
+		# from https://github.com/ayufan-rock64/linux-package/tree/master/root-pinebookpro
+		cp "${SRC}"/packages/bsp/pinebook-pro/40-pinebookpro-touchpad.conf "${SDCARD}"/etc/X11/xorg.conf.d/
+
+		#keyboard hwdb
+		mkdir -p "${SDCARD}"/etc/udev/hwdb.d/
+		cp "${SRC}"/packages/bsp/pinebook-pro/10-usb-kbd.hwdb "${SDCARD}"/etc/udev/hwdb.d/
+	fi
+
+	if [[ $BOARD == station* ]]; then
+
+		cp -R "{$SRC}/packages/blobs/rtl8723bt_fw/*" "${SDCARD}/lib/firmware/rtl_bt/"
 
 	fi
 
