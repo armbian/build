@@ -20,11 +20,30 @@ set -e
 
 # Import variable from env file
 source /tmp/overlay/image_env.sh
-# Import InternetCube functions
-source /tmp/overlay/internetcube/yunocube.sh
 
 # Disable core dumps because hostname keep crashing in qemu static
 ulimit -c 0
+
+if [[ $BOARD == "lime2" ]]
+then
+    # Freeze armbian/kernel version
+    # because current version break dhcp on eth0
+    # (since around ~November 2020 ?)
+
+    apt install -y --allow-downgrades \
+        armbian-firmware=20.08.17 \
+        linux-buster-root-current-lime2=20.08.17 \
+        linux-dtb-current-sunxi=20.08.14 \
+        linux-image-current-sunxi=20.08.14 \
+        linux-u-boot-lime2-current=20.08.13 \
+    || exit 1
+
+    apt-mark hold armbian-firmware
+    apt-mark hold linux-buster-root-current-lime2
+    apt-mark hold linux-dtb-current-sunxi
+    apt-mark hold linux-image-current-sunxi
+    apt-mark hold linux-u-boot-lime2-current
+fi
 
 echo "auto eth0" > /etc/network/interfaces.d/eth0.conf
 echo "allow-hotplug eth0" >> /etc/network/interfaces.d/eth0.conf
@@ -54,12 +73,17 @@ sed -i '/backport/ s/^deb/#deb/' /etc/apt/sources.list
 chage -d 99999999 root
 
 # Run the install script
-curl https://install.yunohost.org/buster | bash -s -- -a -d $YNH_BUILDER_BRANCH
-rm /var/log/yunohost-installation*
+wget https://install.yunohost.org/buster -O /tmp/yunohost_install_script
+bash /tmp/yunohost_install_script -a -d $YNH_BUILDER_BRANCH
+[[ -e /etc/yunohost ]] || exit 1
+rm -f /var/log/yunohost-installation*
 
 if [[ $YNH_BUILDER_INSTALL_INTERNETCUBE == "yes" ]]
 then
-  InstallInternetCubeServices
+    cp -r /tmp/overlay/install_internetcube /var/www/install_internetcube
+    pushd /var/www/install_internetcube/
+    source deploy/deploy.sh
+    popd
 fi
 
 # Override the first login script with our own (we don't care about desktop
