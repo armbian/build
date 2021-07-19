@@ -441,18 +441,18 @@ family_tweaks_bsp()
                 chroot $SDCARD /bin/bash -c "echo SuspendState=freeze >> /etc/systemd/sleep.conf"
                 chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
 		## touchpad and keyboard tweaks
-		mkdir -p "${SDCARD}"/etc/X11/xorg.conf.d/
+		mkdir -p "${destination}"/etc/X11/xorg.conf.d/
 		# from https://github.com/ayufan-rock64/linux-package/tree/master/root-pinebookpro
-		cp "${SRC}"/packages/bsp/pinebook-pro/40-pinebookpro-touchpad.conf "${SDCARD}"/etc/X11/xorg.conf.d/
+		cp "${SRC}"/packages/bsp/pinebook-pro/40-pinebookpro-touchpad.conf "${destination}"/etc/X11/xorg.conf.d/
 
 		#keyboard hwdb
-		mkdir -p "${SDCARD}"/etc/udev/hwdb.d/
-		cp "${SRC}"/packages/bsp/pinebook-pro/10-usb-kbd.hwdb "${SDCARD}"/etc/udev/hwdb.d/
+		mkdir -p "${destination}"/etc/udev/hwdb.d/
+		cp "${SRC}"/packages/bsp/pinebook-pro/10-usb-kbd.hwdb "${destination}"/etc/udev/hwdb.d/
 	fi
 
 	if [[ $BOARD == station* ]]; then
 
-		cp -R "{$SRC}/packages/blobs/rtl8723bt_fw/*" "${SDCARD}/lib/firmware/rtl_bt/"
+		cp -R "${SRC}/packages/blobs/rtl8723bt_fw/*" "${destination}/lib/firmware/rtl_bt/"
 
 	fi
 
