@@ -179,17 +179,6 @@ create_board_package()
 	fi
 
 	EOF
-	##FIXME this is probably tech debt
-	if [[ $RELEASE == bionic ]] || [[ $RELEASE == focal && $BOARDFAMILY == sun50iw6 ]]; then
-		cat <<-EOF >> "${destination}"/DEBIAN/postinst
-		# temporally disable acceleration on some arch in Bionic due to broken mesa packages
-		echo 'Section "Device"
-		\tIdentifier \t"Default Device"
-		\tOption \t"AccelMethod" "none"
-		EndSection' >> /etc/X11/xorg.conf.d/01-armbian-defaults.conf
-		EOF
-	fi
-
 	# install bootscripts if they are not present. Fix upgrades from old images
 	if [[ $FORCE_BOOTSCRIPT_UPDATE == yes ]]; then
 	    cat <<-EOF >> "${destination}"/DEBIAN/postinst
