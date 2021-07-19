@@ -438,14 +438,19 @@ family_tweaks_bsp()
 
 	if [[ $BOARD == pinebook-pro ]]; then
 
-                chroot $SDCARD /bin/bash -c "echo SuspendState=freeze >> /etc/systemd/sleep.conf"
-                chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
-		## touchpad and keyboard tweaks
+		chroot $SDCARD /bin/bash -c "echo SuspendState=freeze >> /etc/systemd/sleep.conf"
+		chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
+
+		# special keys
+		mkdir -p "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+		cp $SRC/packages/bsp/pinebook-pro/pointers.xml  "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+		
+		# touchpad and keyboard tweaks
 		mkdir -p "${destination}"/etc/X11/xorg.conf.d/
 		# from https://github.com/ayufan-rock64/linux-package/tree/master/root-pinebookpro
 		cp "${SRC}"/packages/bsp/pinebook-pro/40-pinebookpro-touchpad.conf "${destination}"/etc/X11/xorg.conf.d/
 
-		#keyboard hwdb
+		# keyboard hwdb
 		mkdir -p "${destination}"/etc/udev/hwdb.d/
 		cp "${SRC}"/packages/bsp/pinebook-pro/10-usb-kbd.hwdb "${destination}"/etc/udev/hwdb.d/
 	fi
