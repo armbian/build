@@ -359,6 +359,7 @@ family_tweaks()
 
 	fi
 
+
 	if [[ $BOARD == pinebook-pro ]]; then
 
                 chroot $SDCARD /bin/bash -c "echo SuspendState=freeze >> /etc/systemd/sleep.conf"
@@ -445,6 +446,22 @@ family_tweaks_bsp()
 		cp $SRC/packages/bsp/helios64/helios64-ups.timer $destination/lib/systemd/system/
 		install -m 755 $SRC/packages/bsp/helios64/helios64-ups.sh $destination/usr/bin/helios64-ups.sh
 
+	fi
+
+	if [[ $BOARD == pinebook-pro ]]; then
+
+		# special keys
+		mkdir -p "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+		cp $SRC/packages/bsp/pinebook-pro/pointers.xml  "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+		
+		# touchpad and keyboard tweaks
+		mkdir -p "${destination}"/etc/X11/xorg.conf.d/
+		# from https://github.com/ayufan-rock64/linux-package/tree/master/root-pinebookpro
+		cp "${SRC}"/packages/bsp/pinebook-pro/40-pinebookpro-touchpad.conf "${destination}"/etc/X11/xorg.conf.d/
+
+		# keyboard hwdb
+		mkdir -p "${destination}"/etc/udev/hwdb.d/
+		cp "${SRC}"/packages/bsp/pinebook-pro/10-usb-kbd.hwdb "${destination}"/etc/udev/hwdb.d/
 	fi
 
 	# Graphics and media
