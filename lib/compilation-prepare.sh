@@ -109,6 +109,10 @@ compilation_prepare()
 
 		display_alert "Adding" "Kernel splash file" "info"
 
+                if linux-version compare "${version}" ge 5.13; then
+                        process_patch_file "${SRC}/patch/misc/bootsplash-5.10.y-0001-Revert-vgacon-drop-unused-vga_init_done.patch" "applying"
+                fi
+
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.8.10-0001-Revert-vgacon-remove-software-scrollback-support.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.8.10-0002-Revert-fbcon-remove-now-unusued-softback_lines-curso.patch" "applying"
 		if linux-version compare "${version}" ge 5.10; then
@@ -399,6 +403,9 @@ compilation_prepare()
 		>> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/xradio\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
+
+		# add support for K5.13+
+                process_patch_file "${SRC}/patch/misc/wireless-xradio-5.13.patch" "applying"
 
 	fi
 
