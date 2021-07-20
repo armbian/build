@@ -764,9 +764,11 @@ create_image()
 	FINALDEST=$DEST/images
 
 	if [[ $BUILD_ALL == yes ]]; then
-		if [[ "$BETA" == yes ]]; then
+		if [[ "$BETA" == yes && "$RC" == yes ]]; then
+			FINALDEST=$DEST/images/"${BOARD}"/RC
+		elif [["$BETA" == yes ]]; then
 			FINALDEST=$DEST/images/"${BOARD}"/nightly
-			else
+		else
 			FINALDEST=$DEST/images/"${BOARD}"/archive
 		fi
 		install -d -o nobody -g nogroup -m 775 ${FINALDEST}
