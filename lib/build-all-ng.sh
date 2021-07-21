@@ -79,6 +79,7 @@ pack_upload ()
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
 	[[ $BETA == yes ]] && local subdir=nightly
+	[[ $RC == yes ]] && local subdir=rc
 
 	cd "${DESTIMG}" || exit
 

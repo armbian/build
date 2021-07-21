@@ -132,6 +132,7 @@ create_bsp_desktop_package ()
 	Section: xorg
 	Priority: optional
 	Provides: armbian-bsp-desktop, armbian-bsp-desktop-${BOARD}
+	Depends: ${BSP_CLI_PACKAGE_NAME}
 	Description: Armbian Board Specific Packages for desktop users using $ARCH ${BOARD} machines
 	EOF
 
