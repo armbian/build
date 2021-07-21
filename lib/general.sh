@@ -1192,6 +1192,7 @@ install_pkg_deb ()
 {
 	local list=$*
 	local log_file
+	local for_install
 	local _line=${BASH_LINENO[0]}
 	local _function=${FUNCNAME[1]}
 	local _file=$(basename "${BASH_SOURCE[1]}")
@@ -1203,10 +1204,18 @@ install_pkg_deb ()
 		log_file="${SRC}/output/debug/install.log"
 	fi
 
-	local for_install="$(
-		dpkg-query -W -f '${db:Status-Abbrev} ${binary:Package}\n' $list 2>$tmp_file | \
-		gawk -v tmp_file=$tmp_file '!/^ii/{print $2} !/^ii|^un/{print $0 >>tmp_file}'
-		)"
+	# If the package is not installed, check the latest
+	# up-to-date version in the apt cache.
+	# Exclude bad package names and send a message to the log.
+	for_install=$(
+	for p in $list;do
+	  if $(dpkg-query -W -f '${db:Status-Abbrev}' $p |& awk '/ii/{exit 1}');then
+		apt-cache  show $p -o APT::Cache::AllVersions=no |& \
+		awk -v p=$p -v tmp_file=$tmp_file \
+		'/^Package:/{print $2} /^E:/{print "Bad package name: ",p >>tmp_file}'
+	  fi
+	done
+	)
 
 	# This information should be logged.
 	if [ -s $tmp_file ]; then
@@ -1223,7 +1232,7 @@ install_pkg_deb ()
 		# We will show the status after installation
 		echo -e "\nstatus after installation:" >>$log_file
 		dpkg-query -W \
-		  -f '${binary:Package;-20} ${Version;-17} [ ${Status} ]\n' \
+		  -f '${binary:Package;-27} ${Version;-23} [ ${Status} ]\n' \
 		  $for_install >>$log_file
 	fi
 
