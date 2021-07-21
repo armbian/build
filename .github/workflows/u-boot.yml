@@ -1,0 +1,124 @@
+name: Rebuild u-boots
+
+on:
+
+  workflow_dispatch:
+
+    inputs:
+
+      beta:
+        description: 'Build u-boot for beta repository'
+        required: true
+        default: 'yes'
+
+jobs:
+
+    prepare:
+
+      name: Build image(s) for download section
+      runs-on: [self-hosted, Linux, X64, cache]
+      if: ${{ github.repository_owner == 'Armbian' }}
+      steps:
+
+        - name: Fix permissions
+          run: |
+
+            # make sure no temporally dirs are mounted from previous runs
+            while :
+            do
+                sudo pkill compile.sh || true
+                sudo pkill arm-binfmt-P || true
+                sudo pkill aarch64-binfmt-P || true
+                sudo pkill pixz || true
+                [[ "$(df | grep "/.tmp" | wc -l)" -eq 0 ]] && sudo rm -rf build/.tmp && break
+                echo "Mounted temp directories. Trying to unmount."
+                df | grep ".tmp" | awk '{print $6}' | xargs sudo umount 2>/dev/null || true
+                sleep 10
+            done
+
+            sudo chown -R $USER:$USER .
+
+        - name: Checkout Armbian build script
+
+          uses: actions/checkout@v2
+          with:
+            fetch-depth: 0
+            repository: armbian/build
+            path: build
+            ref: master
+            clean: false
+
+        - name: Checkout Armbian support scripts
+
+          uses: actions/checkout@v2
+          with:
+            fetch-depth: 0
+            repository: armbian/scripts
+            token: ${{ secrets.SCRIPTS_ACCESS_TOKEN }}
+            path: scripts
+            clean: true
+
+        - name: Build u-boot packages
+          env:
+
+            GPG_PASS:        ${{ secrets.GPG_PASSPHRASE1 }}
+            BETA:             ${{ github.event.inputs.beta }}
+
+          run: |
+
+            cd build
+            [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes
+
+            # prepare host
+            ./compile.sh KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" REPOSITORY_INSTALL="u-boot,kernel" 'prepare_host'
+
+            # use prepared configs
+            sudo cp ../scripts/configs/* userpatches/
+
+            # cleaning leftovers if any
+            rm -rf output/images/* output/debs/* output/debs-beta/*
+            rm -f userpatches/targets.conf
+
+            # build u-boots
+            ./compile.sh EXPERT="yes" IGNORE_HASH="yes" REPOSITORY_INSTALL="kernel,bsp,armbian-config,armbian-firmware" KERNEL_ONLY="yes" BETA="$BETA" BUILD_ALL="yes" BSP_BUILD="yes" MAKE_ALL_BETA="yes" BOOTONLY="yes"
+
+        - name: Install SSH key for storage
+          uses: shimataro/ssh-key-action@v2
+          with:
+
+            key: ${{ secrets.KEY_TORRENTS }}
+            known_hosts: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
+            if_key_exists: replace
+
+        - name: Deploy packages to server
+          if: ${{ success() && github.event.inputs.repository != 'yes' }}
+
+          run: |
+
+            lftp -u upload, -e "set net:timeout 4;set net:max-retries 6;mirror --Remove-source-files -R --no-empty-dirs --parallel=8 --no-perms $(pwd)/build/output/debs/ debs/ ;bye" sftp://users.armbian.com
+            lftp -u upload, -e "set net:timeout 4;set net:max-retries 6;mirror --Remove-source-files -R --no-empty-dirs --parallel=8 --no-perms $(pwd)/build/output/debs-beta/ debs-beta/ ;bye" sftp://users.armbian.com
+
+    repository:
+
+      #
+      # Rebuilds package repository
+      #
+
+      name: Update package repository
+      needs: [prepare]
+      if: ${{ github.event.inputs.repository != 'yes' && github.repository_owner == 'Armbian' }}
+      runs-on: [self-hosted, Linux, local]
+      steps:
+
+        - name: Install SSH key for repository
+
+          uses: shimataro/ssh-key-action@v2
+          with:
+            key: ${{ secrets.KEY_REPOSITORY }}
+            name: id_repository # optional
+            known_hosts: ${{ secrets.KNOWN_HOSTS_REPOSITORY }}
+            if_key_exists: replace
+
+        - name: Update repository
+
+          run: ssh -T -i ~/.ssh/id_repository ${{ secrets.USER_REPOSITORY }}@${{ secrets.HOST_REPOSITORY }}
