@@ -764,9 +764,9 @@ create_image()
 	FINALDEST=$DEST/images
 
 	if [[ $BUILD_ALL == yes ]]; then
-		if [[ "$BETA" == yes && "$RC" == yes ]]; then
+		if [[ "$RC" == yes ]]; then
 			FINALDEST=$DEST/images/"${BOARD}"/RC
-		elif [["$BETA" == yes ]]; then
+		elif [[ "$BETA" == yes ]]; then
 			FINALDEST=$DEST/images/"${BOARD}"/nightly
 		else
 			FINALDEST=$DEST/images/"${BOARD}"/archive
