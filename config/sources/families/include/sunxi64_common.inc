@@ -1,7 +1,8 @@
 ARCH=arm64
 ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 BOOTDELAY=1
-BOOTBRANCH='tag:v2021.04'
+##https://armbian.atlassian.net/browse/AR-867
+BOOTBRANCH='tag:v2020.10'
 BOOTPATCHDIR='u-boot-sunxi'
 BOOTENV_FILE='sunxi.txt'
 UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
