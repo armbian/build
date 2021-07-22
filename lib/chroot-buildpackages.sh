@@ -205,7 +205,9 @@ chroot_build_packages()
 				[[ -v $dist_builddeps_name ]] && package_builddeps="${package_builddeps} ${!dist_builddeps_name}"
 
 				# create build script
+				LOG_OUTPUT_FILE=/root/build-"${package_name}".log
 				create_build_script
+				unset LOG_OUTPUT_FILE
 
 				fetch_from_repo "$package_repo" "extra/$package_name" "$package_ref"
 
@@ -223,6 +225,7 @@ chroot_build_packages()
 					built_ok+=("$package_name:$release/$arch")
 				fi
 				mv "${target_dir}"/root/*.deb "${plugin_target_dir}" 2>/dev/null
+				mv "${target_dir}"/root/*.log "$DEST/debug/"
 			done
 			# cleanup for distcc
 			kill $(</var/run/distcc/${release}-${arch}.pid)
@@ -263,38 +266,20 @@ create_build_script ()
 	export DEBEMAIL="$MAINTAINERMAIL"
 	$(declare -f display_alert)
 
+	LOG_OUTPUT_FILE=$LOG_OUTPUT_FILE
+	$(declare -f install_pkg_deb)
+
 	cd /root/build
-	if [[ -n "${package_builddeps}" ]]; then
-		# can be replaced with mk-build-deps
-		deps=()
-		installed=\$(
-			dpkg-query -W -f '\${db:Status-Abbrev}|\${binary:Package}\n' '*' 2>/dev/null | \
-			grep '^ii' | \
-			awk -F '|' '{print \$2}' | \
-			cut -d ':' -f 1
-		)
-
-		for packet in $package_builddeps
-		do
-			grep -q -x -e "\$packet" <<< "\$installed" || deps+=("\$packet")
-		done
-
-		if [[ \${#deps[@]} -gt 0 ]]; then
-			display_alert "Installing build dependencies"
-			apt-get -y -q update
-			apt-get -y -q \
-					--no-install-recommends \
-					--show-progress \
-					-o DPKG::Progress-Fancy=1 install "\${deps[@]}"
-		fi
-	fi
-
 	display_alert "Copying sources"
 	rsync -aq /root/sources/"${package_name}" /root/build/
 
 	cd /root/build/"${package_name}"
 	# copy overlay / "debianization" files
 	[[ -d "/root/overlay/${package_name}/" ]] && rsync -aq /root/overlay/"${package_name}" /root/build/
+
+	if [[ -n "${package_builddeps}" ]]; then
+		install_pkg_deb ${package_builddeps}
+	fi
 
 	# set upstream version
 	[[ -n "${package_upstream_version}" ]] && debchange --preserve --newversion "${package_upstream_version}" "Import from upstream"
@@ -304,7 +289,7 @@ create_build_script ()
 	debchange -l~armbian"${REVISION}"+ "Custom $VENDOR release"
 
 	display_alert "Building package"
-	dpkg-buildpackage -b -us -j2
+	dpkg-buildpackage -b -us -j${NCPU_CHROOT:-2} 2>>\$LOG_OUTPUT_FILE
 
 	if [[ \$? -eq 0 ]]; then
 		cd /root/build
