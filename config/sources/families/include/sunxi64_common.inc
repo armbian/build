@@ -22,6 +22,9 @@ case $BRANCH in
 		KERNELSOURCE="https://github.com/megous/linux"
 		KERNELBRANCH="branch:orange-pi-5.10"
 		KERNELPATCHDIR='sunxi-'$BRANCH
+		##fixme workaround do to instability in recent uboot. 
+		##https://armbian.atlassian.net/browse/AR-867
+		BOOTBRANCH='tag:v2020.10'
 
 	;;
 
