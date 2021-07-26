@@ -549,7 +549,7 @@ compilation_prepare()
 
 	# Wireless drivers for Realtek 8723DS chipsets
 
-	if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" lt 5.12 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" lt 5.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8723dsver="branch:master"
@@ -580,12 +580,6 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8723DS) += rtl8723ds/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723ds\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
-
-                # add support for K5.11+
-                process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds.patch" "applying"
-
-		# add support for K5.12+
-		process_patch_file "${SRC}/patch/misc/wireless-realtek-8723ds.patch" "applying"
 
 	fi
 
