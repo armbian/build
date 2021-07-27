@@ -129,7 +129,7 @@ case $BRANCH in
 	current)
 
 		KERNELBRANCH="branch:linux-5.10.y"
-		if [[ $BOARD == station* || $BOARD == renegade ]]; then
+		if [[ $BOARD == station* ]]; then
 			KERNELPATCHDIR='station-'$BRANCH
 			LINUXFAMILY=station
 			LINUXCONFIG='linux-station-'$BRANCH
