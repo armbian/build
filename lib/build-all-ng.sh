@@ -149,7 +149,7 @@ build_main ()
 	[[ $BUILD_MINIMAL == yes ]] && upload_image=${upload_image}_minimal
 
 	touch "/run/armbian/${VENDOR}_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
-    LOG_SUBPATH="debug/${VENDOR}/${BOARD^}_/${BRANCH}/${RELEASE}/${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}"
+    LOG_SUBPATH="debug/${VENDOR}/${BOARD^}/${BRANCH}/${RELEASE}/${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}"
 
 
 	if [[ $KERNEL_ONLY != yes ]]; then
