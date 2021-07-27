@@ -216,7 +216,7 @@ chroot_build_packages()
 					--tmpfs=/tmp:mode=777 \
 					--bind-ro "${SRC}"/packages/extras-buildpkgs/:/root/overlay \
 					--bind-ro "${SRC}"/cache/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 \
-					${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/buildpkg.log'}
+					${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/buildpkg.log'}
 
 				if [[ ${PIPESTATUS[0]} -eq 2 ]]; then
 					failed+=("$package_name:$release/$arch")
@@ -336,13 +336,13 @@ chroot_installpackages_local()
 	local conf="${SRC}"/config/aptly-temp.conf
 	rm -rf /tmp/aptly-temp/
 	mkdir -p /tmp/aptly-temp/
-	aptly -config="${conf}" repo create temp >> "${DEST}"/debug/install.log
+	aptly -config="${conf}" repo create temp >> "${DEST}"/${LOG_SUBPATH}/install.log
 	# NOTE: this works recursively
-	aptly -config="${conf}" repo add temp "${DEB_STORAGE}/extra/${RELEASE}-desktop/" >> "${DEST}"/debug/install.log
-	aptly -config="${conf}" repo add temp "${DEB_STORAGE}/extra/${RELEASE}-utils/" >> "${DEST}"/debug/install.log
+	aptly -config="${conf}" repo add temp "${DEB_STORAGE}/extra/${RELEASE}-desktop/" >> "${DEST}"/${LOG_SUBPATH}/install.log
+	aptly -config="${conf}" repo add temp "${DEB_STORAGE}/extra/${RELEASE}-utils/" >> "${DEST}"/${LOG_SUBPATH}/install.log
 	# -gpg-key="925644A6"
 	aptly -keyring="${SRC}/packages/extras-buildpkgs/buildpkg-public.gpg" -secret-keyring="${SRC}/packages/extras-buildpkgs/buildpkg.gpg" -batch=true -config="${conf}" \
-		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution="${RELEASE}" publish repo temp >> "${DEST}"/debug/install.log
+		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution="${RELEASE}" publish repo temp >> "${DEST}"/${LOG_SUBPATH}/install.log
 	aptly -config="${conf}" -listen=":8189" serve &
 	local aptly_pid=$!
 	cp "${SRC}"/packages/extras-buildpkgs/buildpkg.key "${SDCARD}"/tmp/buildpkg.key
@@ -399,5 +399,5 @@ chroot_installpackages()
 	rm -- "\$0"
 	EOF
 	chmod +x "${SDCARD}"/tmp/install.sh
-	chroot "${SDCARD}" /bin/bash -c "/tmp/install.sh" >> "${DEST}"/debug/install.log 2>&1
+	chroot "${SDCARD}" /bin/bash -c "/tmp/install.sh" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 } #############################################################################

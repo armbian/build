@@ -23,9 +23,9 @@
 create_desktop_package ()
 {
 
-	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/debug/output.log
+	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/${LOG_SUBPATH}/output.log
 	# Use quotes to show leading and trailing spaces
-	echo "\"$PACKAGE_LIST_DESKTOP\"" >> "${DEST}"/debug/output.log
+	echo "\"$PACKAGE_LIST_DESKTOP\"" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 	# Remove leading and trailing spaces with some bash monstruosity
 	# https://stackoverflow.com/questions/369758/how-to-trim-whitespace-from-a-bash-variable#12973694
@@ -36,7 +36,7 @@ create_desktop_package ()
 	# Remove others 'spacing characters' (like tabs)
 	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS//[[:space:]]/}
 
-	echo "DEBIAN_RECOMMENDS : ${DEBIAN_RECOMMENDS}" >> "${DEST}"/debug/output.log
+	echo "DEBIAN_RECOMMENDS : ${DEBIAN_RECOMMENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 	# Replace whitespace characters by commas
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,};
@@ -49,7 +49,7 @@ create_desktop_package ()
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
 
-	echo "${PACKAGE_LIST_PREDEPENDS}" >> "${DEST}"/debug/output.log
+	echo "${PACKAGE_LIST_PREDEPENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 	# set up control file
 	cat <<-EOF > "${destination}"/DEBIAN/control
@@ -78,7 +78,7 @@ create_desktop_package ()
 	chmod 755 "${destination}"/DEBIAN/postinst
 
 	#display_alert "Showing ${destination}/DEBIAN/postinst"
-	cat "${destination}/DEBIAN/postinst" >> "${DEST}"/debug/install.log
+	cat "${destination}/DEBIAN/postinst" >> "${DEST}"/${LOG_SUBPATH}/install.log
 
 	# Armbian create_desktop_package scripts
 
@@ -244,8 +244,8 @@ add_desktop_package_sources() {
 	# so... let's prepare for that
 	add_apt_sources
 	run_on_sdcard "apt -y -q update"
-	ls -l "${SDCARD}/etc/apt/sources.list.d" >> "${DEST}"/debug/install.log
-	cat "${SDCARD}/etc/apt/sources.list" >> "${DEST}"/debug/install.log
+	ls -l "${SDCARD}/etc/apt/sources.list.d" >> "${DEST}"/${LOG_SUBPATH}/install.log
+	cat "${SDCARD}/etc/apt/sources.list" >> "${DEST}"/${LOG_SUBPATH}/install.log
 
 }
 
