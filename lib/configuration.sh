@@ -168,7 +168,7 @@ desktop_element_available_for_arch() {
 
 	local arch_limitation_file="${1}/only_for"
 
-	echo "Checking if ${desktop_element_path} is available for ${targeted_arch} in ${arch_limitation_file}" >> "${DEST}"/$(get_log_path)/output.log
+	echo "Checking if ${desktop_element_path} is available for ${targeted_arch} in ${arch_limitation_file}" >> "${DEST}"/${LOG_SUBPATH}/output.log
 	if [[ -f "${arch_limitation_file}" ]]; then
 		grep -- "${targeted_arch}" "${arch_limitation_file}"
 		return $?
@@ -321,7 +321,7 @@ fi
 # Write to variables :
 # - aggregated_content
 aggregate_content() {
-	LOG_OUTPUT_FILE="$SRC/output/$(get_log_path)/potential-paths.log"
+	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/potential-paths.log"
 	echo -e "Potential paths :" >> "${LOG_OUTPUT_FILE}"
 	show_checklist_variables potential_paths
 	for filepath in ${potential_paths}; do
@@ -503,7 +503,7 @@ DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
 PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
 PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
 
-LOG_OUTPUT_FILE="$SRC/output/$(get_log_path)/debootstrap-list.log"
+LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
 show_checklist_variables "DEBOOTSTRAP_LIST DEBOOTSTRAP_COMPONENTS PACKAGE_LIST PACKAGE_LIST_ADDITIONAL PACKAGE_LIST_UNINSTALL"
 
 # Dependent desktop packages
@@ -610,7 +610,7 @@ if [[ -n $PACKAGE_LIST_RM ]]; then
 fi
 
 
-LOG_OUTPUT_FILE="$SRC/output/$(get_log_path)/debootstrap-list.log"
+LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
 echo -e "\nVariables after manual configuration" >>$LOG_OUTPUT_FILE
 show_checklist_variables "DEBOOTSTRAP_COMPONENTS DEBOOTSTRAP_LIST PACKAGE_LIST PACKAGE_MAIN_LIST"
 unset LOG_OUTPUT_FILE
@@ -619,7 +619,7 @@ unset LOG_OUTPUT_FILE
 [[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
 
 # debug
-cat <<-EOF >> "${DEST}"/$(get_log_path)/output.log
+cat <<-EOF >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 ## BUILD SCRIPT ENVIRONMENT
 
