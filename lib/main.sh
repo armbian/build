@@ -82,13 +82,15 @@ source "${SRC}"/lib/general.sh                              # general functions
 source "${SRC}"/lib/chroot-buildpackages.sh                 # chroot packages building
 
 # compress and remove old logs
-mkdir -p "${DEST}"/debug
+mkdir -p "${DEST}"/$(get_log_path)
 (cd "${DEST}"/debug && tar -czf logs-"$(<timestamp)".tgz ./*.log) > /dev/null 2>&1
 rm -f "${DEST}"/$(get_log_path)/*.log > /dev/null 2>&1
 date +"%d_%m_%Y-%H_%M_%S" > "${DEST}"/$(get_log_path)/timestamp
 
 # delete compressed logs older than 7 days
-(cd "${DEST}"/debug && find . -name '*.tgz' -mtime +7 -delete) > /dev/null
+if [ -z ${FANCY_LOG} ]; then
+	(cd "${DEST}"/debug && find . -name '*.tgz' -mtime +7 -delete) > /dev/null
+fi
 
 if [[ $PROGRESS_DISPLAY == none ]]; then
 

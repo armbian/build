@@ -10,6 +10,7 @@
 # https://github.com/armbian/build/
 
 # Functions:
+# get_log_path
 # cleaning
 # exit_with_error
 # get_package_list_hash
@@ -26,7 +27,23 @@
 # prepare_host
 # webseed
 # download_and_verify
-# get_log_path
+
+
+
+# best effort rending of custom log path
+# only use when all build options are set at runtime. do not use with interactive
+get_log_path()
+{
+	local LOG_DEST=debug
+
+	if [[ ${FANCY_LOG} == "yes" ]]; then
+		LOG_DEST=debug-${BOARD}-${BRANCH}-${RELEASE}-${DESKTOP_ENVIRONMENT}
+	else
+		LOG_DEST=debug
+	fi
+	
+        printf "${LOG_DEST}"	
+}
 
 # cleaning <target>
 #
@@ -40,6 +57,7 @@
 # "images" - delete output/images
 # "sources" - delete output/sources
 #
+
 cleaning()
 {
 	case $1 in
@@ -1496,17 +1514,4 @@ show_checklist_variables ()
 	done
 }
 
-# best effort rending of custom log path
-get_log_path()
-{
-	local LOG_DEST=debug
-
-	if [[ ${FANCY_LOG} == "yes" ]]; then
-		LOG_DEST=debug-${BOARD}-${BRANCH}-${RELEASE}-${DESKTOP_ENVIRONMENT}
-	else
-		LOG_DEST=debug
-	fi
-	
-        echo "${LOG_DEST}"	
-}
 
