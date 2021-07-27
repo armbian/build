@@ -5,5 +5,5 @@ Supported Debian and Ubuntu upstream distributions / packages base. Here we defi
 |support|description|
 |:--|:--|
 |supported|current package base|
-|csc           |unstable, work in progress|
+|csc           |unstable, work in progress, old-stable|
 |eos           |former stable, end of life|
