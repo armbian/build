@@ -27,6 +27,7 @@
 # webseed
 # download_and_verify
 
+
 # cleaning <target>
 #
 # target: what to clean
@@ -39,6 +40,7 @@
 # "images" - delete output/images
 # "sources" - delete output/sources
 #
+
 cleaning()
 {
 	case $1 in
@@ -412,7 +414,7 @@ fetch_from_repo()
 display_alert()
 {
 	# log function parameters to install.log
-	[[ -n "${DEST}" ]] && echo "Displaying message: $@" >> "${DEST}"/debug/output.log
+	[[ -n "${DEST}" ]] && echo "Displaying message: $@" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 	local tmp=""
 	[[ -n $2 ]] && tmp="[\e[0;33m $2 \x1B[0m]"
@@ -1153,7 +1155,7 @@ prepare_host()
 		display_alert "Installing build dependencies"
 		apt-get -q update
 		apt-get -y upgrade
-		apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a "${DEST}"/debug/hostdeps.log
+		apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a "${DEST}"/${LOG_SUBPATH}/hostdeps.log
 		update-ccache-symlinks
 	fi
 
@@ -1360,7 +1362,7 @@ download_and_verify()
 			aria2c ${ariatorrent}
 		else
 			# shellcheck disable=SC2035
-			aria2c ${ariatorrent} &> "${DEST}"/debug/torrent.log
+			aria2c ${ariatorrent} &> "${DEST}"/${LOG_SUBPATH}/torrent.log
 		fi
 		# mark complete
 		[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete"
@@ -1394,29 +1396,29 @@ download_and_verify()
 			# Verify archives with Linaro and Armbian GPG keys
 
 			if [ x"" != x"${http_proxy}" ]; then
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/debug/output.log 2>&1\
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
 				 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
 				--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
-				--recv-keys 8F427EAF >> "${DEST}"/debug/output.log 2>&1)
+				--recv-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
 
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/debug/output.log 2>&1\
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
 				|| gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
 				--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
-				--recv-keys 9F0E78D5 >> "${DEST}"/debug/output.log 2>&1)
+				--recv-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
 			else
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/debug/output.log 2>&1\
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
 				 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
 				--keyserver hkp://keyserver.ubuntu.com:80 \
-				--recv-keys 8F427EAF >> "${DEST}"/debug/output.log 2>&1)
+				--recv-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
 
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/debug/output.log 2>&1\
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
 				|| gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
 				--keyserver hkp://keyserver.ubuntu.com:80 \
-				--recv-keys 9F0E78D5 >> "${DEST}"/debug/output.log 2>&1)
+				--recv-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
 			fi
 
 			gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --verify \
-			--trust-model always -q "${localdir}/${filename}.asc" >> "${DEST}"/debug/output.log 2>&1
+			--trust-model always -q "${localdir}/${filename}.asc" >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1
 			[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true && display_alert "Verified" "PGP" "info"
 
 		else
@@ -1477,7 +1479,7 @@ show_checklist_variables ()
 {
 	local checklist=$*
 	local var pval
-	local log_file=${LOG_OUTPUT_FILE:-"${SRC}"/output/debug/trash.log}
+	local log_file=${LOG_OUTPUT_FILE:-"${SRC}"/output/${LOG_SUBPATH}/trash.log}
 	local _line=${BASH_LINENO[0]}
 	local _function=${FUNCNAME[1]}
 	local _file=$(basename "${BASH_SOURCE[1]}")
@@ -1494,3 +1496,5 @@ show_checklist_variables ()
 		fi
 	done
 }
+
+

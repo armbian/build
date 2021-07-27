@@ -76,13 +76,13 @@ compile_atf()
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
 
-	echo -e "\n\t==  atf  ==\n" >> "${DEST}"/debug/compilation.log
+	echo -e "\n\t==  atf  ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 	# ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF.
 	# Check: https://github.com/armbian/build/issues/1157
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
 		'make ENABLE_BACKTRACE="0" $target_make $CTHREADS \
-		CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>> "${DEST}"/debug/compilation.log \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>> "${DEST}"/${LOG_SUBPATH}/compilation.log \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling ATF..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
@@ -194,11 +194,11 @@ compile_uboot()
 			rm -rf "${atftempdir}"
 		fi
 
-		echo -e "\n\t== u-boot make $BOOTCONFIG ==\n" >> "${DEST}"/debug/compilation.log
+		echo -e "\n\t== u-boot make $BOOTCONFIG ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 		eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
 			'make $CTHREADS $BOOTCONFIG \
-			CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>> "${DEST}"/debug/compilation.log \
-			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+			CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>> "${DEST}"/${LOG_SUBPATH}/compilation.log \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		# armbian specifics u-boot settings
@@ -230,11 +230,11 @@ compile_uboot()
 		cross_compile="CROSS_COMPILE=$CCACHE $UBOOT_COMPILER";
 		[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe"; # empty parameter is not allowed
 
-		echo -e "\n\t== u-boot make $target_make ==\n" >> "${DEST}"/debug/compilation.log
+		echo -e "\n\t== u-boot make $target_make ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 		eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
 			'make $target_make $CTHREADS \
-			"${cross_compile}"' 2>>"${DEST}"/debug/compilation.log \
-			${PROGRESS_LOG_TO_FILE:+' | tee -a "${DEST}"/debug/compilation.log'} \
+			"${cross_compile}"' 2>>"${DEST}"/${LOG_SUBPATH}/compilation.log \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a "${DEST}"/${LOG_SUBPATH}/compilation.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
@@ -315,7 +315,7 @@ compile_uboot()
 	[[ -n $atftempdir && -f $atftempdir/license.md ]] && cp "${atftempdir}/license.md" "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE.atf"
 
 	display_alert "Building deb" "${uboot_name}.deb" "info"
-	fakeroot dpkg-deb -b "$uboottempdir/${uboot_name}" "$uboottempdir/${uboot_name}.deb" >> "${DEST}"/debug/output.log 2>&1
+	fakeroot dpkg-deb -b "$uboottempdir/${uboot_name}" "$uboottempdir/${uboot_name}.deb" >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1
 	rm -rf "$uboottempdir/${uboot_name}"
 	[[ -n $atftempdir ]] && rm -rf "${atftempdir}"
 
@@ -473,14 +473,14 @@ compile_kernel()
 		create_linux-source_package
 	fi
 
-	echo -e "\n\t== kernel ==\n" >> "${DEST}"/debug/compilation.log
+	echo -e "\n\t== kernel ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 		'make $CTHREADS ARCH=$ARCHITECTURE \
 		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" \
 		$SRC_LOADADDR \
 		LOCALVERSION="-$LINUXFAMILY" \
-		$KERNEL_IMAGE_TYPE modules dtbs 2>>$DEST/debug/compilation.log' \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		$KERNEL_IMAGE_TYPE modules dtbs 2>>$DEST/${LOG_SUBPATH}/compilation.log' \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" \
 		--progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -499,7 +499,7 @@ compile_kernel()
 	display_alert "Creating packages"
 
 	# produce deb packages: image, headers, firmware, dtb
-	echo -e "\n\t== deb packages: image, headers, firmware, dtb ==\n" >> "${DEST}"/debug/compilation.log
+	echo -e "\n\t== deb packages: image, headers, firmware, dtb ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 		'make $CTHREADS $kernel_packing \
 		KDEB_PKGVERSION=$REVISION \
@@ -509,8 +509,8 @@ compile_kernel()
 		ARCH=$ARCHITECTURE \
 		DEBFULLNAME="$MAINTAINER" \
 		DEBEMAIL="$MAINTAINERMAIL" \
-		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" 2>>$DEST/debug/compilation.log' \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" 2>>$DEST/${LOG_SUBPATH}/compilation.log' \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
@@ -575,7 +575,7 @@ compile_firmware()
 	cd "${firmwaretempdir}" || exit
 	# pack
 	mv "armbian-firmware${FULL}" "armbian-firmware${FULL}_${REVISION}_all"
-	fakeroot dpkg -b "armbian-firmware${FULL}_${REVISION}_all" >> "${DEST}"/debug/install.log 2>&1
+	fakeroot dpkg -b "armbian-firmware${FULL}_${REVISION}_all" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 	mv "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
 	rsync -rq "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
 
@@ -815,12 +815,12 @@ find_toolchain()
 	done
 	echo "$toolchain"
 	# logging a stack of used compilers.
-	if [[ -f "${DEST}"/debug/compiler.log ]]; then
-		if ! grep -q "$toolchain" "${DEST}"/debug/compiler.log; then
-			echo "$toolchain" >> "${DEST}"/debug/compiler.log;
+	if [[ -f "${DEST}"/${LOG_SUBPATH}/compiler.log ]]; then
+		if ! grep -q "$toolchain" "${DEST}"/${LOG_SUBPATH}/compiler.log; then
+			echo "$toolchain" >> "${DEST}"/${LOG_SUBPATH}/compiler.log;
 		fi
 	else
-			echo "$toolchain" >> "${DEST}"/debug/compiler.log;
+			echo "$toolchain" >> "${DEST}"/${LOG_SUBPATH}/compiler.log;
 	fi
 }
 
@@ -915,8 +915,8 @@ process_patch_file()
 	# detect and remove files which patch will create
 	lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
 
-	echo "Processing file $patch" >> "${DEST}"/debug/patching.log
-	patch --batch --silent -p1 -N < "${patch}" >> "${DEST}"/debug/patching.log 2>&1
+	echo "Processing file $patch" >> "${DEST}"/${LOG_SUBPATH}/patching.log
+	patch --batch --silent -p1 -N < "${patch}" >> "${DEST}"/${LOG_SUBPATH}/patching.log 2>&1
 
 	if [[ $? -ne 0 ]]; then
 		display_alert "* $status $(basename "${patch}")" "failed" "wrn"
@@ -924,7 +924,7 @@ process_patch_file()
 	else
 		display_alert "* $status $(basename "${patch}")" "" "info"
 	fi
-	echo >> "${DEST}"/debug/patching.log
+	echo >> "${DEST}"/${LOG_SUBPATH}/patching.log
 }
 
 userpatch_create()
