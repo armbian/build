@@ -11,8 +11,8 @@ OVERLAY_PREFIX='meson'
 # this family does not need it
 ATF_COMPILE="no"
 
-if [[ $BOARD == lafrite || $BOARD == odroid*c4 ]]; then
-		UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin:u-boot.bin u-boot-dtb.img"
+if [[ $BOARD == lafrite ]]; then
+	UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin:u-boot.bin u-boot-dtb.img"
 fi
 
 # Set CPUMIN et al if not already set in the board config.
