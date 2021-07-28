@@ -225,7 +225,7 @@ chroot_build_packages()
 					built_ok+=("$package_name:$release/$arch")
 				fi
 				mv "${target_dir}"/root/*.deb "${plugin_target_dir}" 2>/dev/null
-				mv "${target_dir}"/root/*.log "$DEST/debug/"
+				mv "${target_dir}"/root/*.log "$DEST/${LOG_SUBPATH}/"
 			done
 			# cleanup for distcc
 			kill $(</var/run/distcc/${release}-${arch}.pid)

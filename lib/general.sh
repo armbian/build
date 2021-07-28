@@ -1201,7 +1201,7 @@ install_pkg_deb ()
 	if [ -d $(dirname $LOG_OUTPUT_FILE) ]; then
 		log_file=${LOG_OUTPUT_FILE}
 	else
-		log_file="${SRC}/output/debug/install.log"
+		log_file="${SRC}/output/${LOG_SUBPATH}/install.log"
 	fi
 
 	# If the package is not installed, check the latest
