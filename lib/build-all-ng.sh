@@ -149,6 +149,8 @@ build_main ()
 	[[ $BUILD_MINIMAL == yes ]] && upload_image=${upload_image}_minimal
 
 	touch "/run/armbian/${VENDOR}_${BOARD^}_${BRANCH}_${RELEASE}_${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}.pid";
+    LOG_SUBPATH="debug/${VENDOR}/${BOARD^}/${BRANCH}/${RELEASE}/${DESKTOP_ENVIRONMENT}_${BUILD_DESKTOP}_${BUILD_MINIMAL}"
+
 
 	if [[ $KERNEL_ONLY != yes ]]; then
 		#if ssh ${SEND_TO_SERVER} stat ${SEND_TO_LOCATION}${BOARD}/${upload_subdir}/${upload_image}* \> /dev/null 2\>\&1; then
