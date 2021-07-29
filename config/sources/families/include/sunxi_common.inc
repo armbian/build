@@ -1,5 +1,6 @@
 ARCH=armhf
 BOOTDELAY=1
+##https://armbian.atlassian.net/browse/AR-867
 BOOTBRANCH='tag:v2020.10'
 BOOTPATCHDIR='u-boot-sunxi'
 UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
@@ -27,10 +28,10 @@ case $BRANCH in
 
 	;;
 
-	dev)
+	edge)
 
 		KERNELSOURCE="https://github.com/megous/linux"
-		KERNELBRANCH="branch:orange-pi-5.10"
+		KERNELBRANCH="branch:orange-pi-5.13"
 		KERNELPATCHDIR='sunxi-'$BRANCH
 
 	;;

@@ -16,7 +16,7 @@ case $BRANCH in
 						  ;uart;u-boot-spl-uart.kwb:u-boot.uart"
 
 	;;
-	dev)
+	edge)
 	    # Check https://developer.solid-run.com/knowledge-base/a388-u-boot
 		# for advanced config options
 		BOOTSOURCE='https://github.com/SolidRun/u-boot'

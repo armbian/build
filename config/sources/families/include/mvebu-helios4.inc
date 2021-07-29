@@ -1,6 +1,6 @@
 case $BRANCH in
 
-	legacy|current|dev)
+	legacy|current|edge)
 
 		BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 		BOOTBRANCH='tag:v2019.04'
@@ -59,7 +59,7 @@ family_tweaks_bsp()
         install -m 644 $SRC/packages/bsp/mvebu/helios4/armbian-motd $destination/etc/default/
 
     # create modules file
-	if [[ $BRANCH == dev && -n $MODULES_DEV ]]; then
+	if [[ $BRANCH == dev && -n $MODULES_EDGE ]]; then
 		tr ' ' '\n' <<< "$MODULES_DEV" > "${destination}"/etc/modules
 	elif [[ $BRANCH == current || $BRANCH == dev ]]; then
 		tr ' ' '\n' <<< "$MODULES_CURRENT" > "${destination}"/etc/modules
@@ -84,7 +84,7 @@ family_tweaks_bsp()
 		fi
 
 		# Fix for "mdadm: initramfs boot message: /scripts/local-bottom/mdadm: rm: not found"
-		# Refer to https://wiki.kobol.io/mdadm/#fix-mdadm
+		# Refer to https://wiki.kobol.io/helios4/mdadm/#fix-mdadm
 		grep -q "^[[:blank:]]*copy_exec /bin/rm /bin" $MDADM_HOOK
 		if [ "$?" -ne 0 ]; then
 			sed -i '/copy_exec \/sbin\/mdmon \/sbin/ a\copy_exec /bin/rm /bin' $MDADM_HOOK

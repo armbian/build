@@ -2,4 +2,4 @@
 BOARD_NAME="Cubieboard 2"
 BOARDFAMILY="sun7i"
 BOOTCONFIG="Cubieboard2_config"
-KERNEL_TARGET="legacy,current,dev"
+KERNEL_TARGET="legacy,current,edge"

@@ -1,15 +1,16 @@
 #!/bin/bash
 #
-# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-
+#
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
 # Functions:
+
 # compile_atf
 # compile_uboot
 # compile_kernel
@@ -17,12 +18,16 @@
 # compile_armbian-config
 # compile_sunxi_tools
 # install_rkbin_tools
+# compile_xilinx_bootgen
 # grab_version
 # find_toolchain
 # advanced_patch
 # process_patch_file
 # userpatch_create
 # overlayfs_wrapper
+
+
+
 
 compile_atf()
 {
@@ -41,6 +46,9 @@ compile_atf()
 
 	display_alert "Compiling ATF" "" "info"
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	local toolchain
 	toolchain=$(find_toolchain "$ATF_COMPILER" "$ATF_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${ATF_COMPILER}gcc $ATF_USE_GCC"
@@ -52,6 +60,9 @@ compile_atf()
 		toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
 		[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
 	fi
+
+# build aarch64
+  fi
 
 	display_alert "Compiler version" "${ATF_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${ATF_COMPILER}gcc" -dumpversion)" "info"
 
@@ -65,13 +76,13 @@ compile_atf()
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
 
-	echo -e "\n\t==  atf  ==\n" >> "${DEST}"/debug/compilation.log
+	echo -e "\n\t==  atf  ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 	# ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF.
 	# Check: https://github.com/armbian/build/issues/1157
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
 		'make ENABLE_BACKTRACE="0" $target_make $CTHREADS \
-		CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>> "${DEST}"/debug/compilation.log \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>> "${DEST}"/${LOG_SUBPATH}/compilation.log \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling ATF..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
@@ -128,6 +139,9 @@ compile_uboot()
 
 	display_alert "Compiling u-boot" "$version" "info"
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	local toolchain
 	toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER}gcc $UBOOT_USE_GCC"
@@ -140,6 +154,8 @@ compile_uboot()
 		[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
 	fi
 
+# build aarch64
+  fi
 
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${UBOOT_COMPILER}gcc" -dumpversion)" "info"
 	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${toolchain2_type}gcc" -dumpversion)" "info"
@@ -178,11 +194,11 @@ compile_uboot()
 			rm -rf "${atftempdir}"
 		fi
 
-		echo -e "\n\t== u-boot ==\n" >> "${DEST}"/debug/compilation.log
+		echo -e "\n\t== u-boot make $BOOTCONFIG ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 		eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
 			'make $CTHREADS $BOOTCONFIG \
-			CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>> "${DEST}"/debug/compilation.log \
-			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+			CROSS_COMPILE="$CCACHE $UBOOT_COMPILER"' 2>> "${DEST}"/${LOG_SUBPATH}/compilation.log \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		# armbian specifics u-boot settings
@@ -214,10 +230,11 @@ compile_uboot()
 		cross_compile="CROSS_COMPILE=$CCACHE $UBOOT_COMPILER";
 		[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe"; # empty parameter is not allowed
 
+		echo -e "\n\t== u-boot make $target_make ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 		eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
 			'make $target_make $CTHREADS \
-			"${cross_compile}"' 2>>"${DEST}"/debug/compilation.log \
-			${PROGRESS_LOG_TO_FILE:+' | tee -a "${DEST}"/debug/compilation.log'} \
+			"${cross_compile}"' 2>>"${DEST}"/${LOG_SUBPATH}/compilation.log \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a "${DEST}"/${LOG_SUBPATH}/compilation.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
@@ -240,6 +257,31 @@ compile_uboot()
 			cp "${f_src}" "$uboottempdir/${uboot_name}/usr/lib/${uboot_name}/${f_dst}"
 		done
 	done <<< "$UBOOT_TARGET_MAP"
+
+	# set up postinstall script
+	if [[ $BOARD == tinkerboard ]]; then
+		cat <<-EOF > "$uboottempdir/${uboot_name}/DEBIAN/postinst"
+		#!/bin/bash
+		source /usr/lib/u-boot/platform_install.sh
+		[[ \$DEVICE == /dev/null ]] && exit 0
+		if [[ -z \$DEVICE ]]; then
+			DEVICE="/dev/mmcblk0"
+			# proceed to other options.
+			[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk1"
+			[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk2"
+		fi
+		[[ \$(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
+		if [[ -b \$DEVICE ]]; then
+			echo "Updating u-boot on \$DEVICE" >&2
+			write_uboot_platform \$DIR \$DEVICE
+			sync
+		else
+			echo "Device \$DEVICE does not exist, skipping" >&2
+		fi
+		exit 0
+		EOF
+		chmod 755 "$uboottempdir/${uboot_name}/DEBIAN/postinst"
+	fi
 
 	# declare -f on non-defined function does not do anything
 	cat <<-EOF > "$uboottempdir/${uboot_name}/usr/lib/u-boot/platform_install.sh"
@@ -273,7 +315,7 @@ compile_uboot()
 	[[ -n $atftempdir && -f $atftempdir/license.md ]] && cp "${atftempdir}/license.md" "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE.atf"
 
 	display_alert "Building deb" "${uboot_name}.deb" "info"
-	fakeroot dpkg-deb -b "$uboottempdir/${uboot_name}" "$uboottempdir/${uboot_name}.deb" >> "${DEST}"/debug/output.log 2>&1
+	fakeroot dpkg-deb -b "$uboottempdir/${uboot_name}" "$uboottempdir/${uboot_name}.deb" >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1
 	rm -rf "$uboottempdir/${uboot_name}"
 	[[ -n $atftempdir ]] && rm -rf "${atftempdir}"
 
@@ -281,6 +323,47 @@ compile_uboot()
 
 	rsync --remove-source-files -rq "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
 	rm -rf "$uboottempdir"
+}
+
+create_linux-source_package ()
+{
+	ts=$(date +%s)
+	local sources_pkg_dir tmp_src_dir
+	tmp_src_dir=$(mktemp -d)
+	trap "rm -rf \"${tmp_src_dir}\" ; exit 0" 0 1 2 3 15
+	sources_pkg_dir=${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all
+	mkdir -p "${sources_pkg_dir}"/usr/src/ \
+		"${sources_pkg_dir}"/usr/share/doc/linux-source-${version}-${LINUXFAMILY} \
+		"${sources_pkg_dir}"/DEBIAN
+
+	cp "${SRC}/config/kernel/${LINUXCONFIG}.config" "default_${LINUXCONFIG}.config"
+	xz < .config > "${sources_pkg_dir}/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz"
+
+	display_alert "Compressing sources for the linux-source package"
+	tar cp --directory="$kerneldir" --exclude='.git' --owner=root . \
+		| pv -p -b -r -s "$(du -sb "$kerneldir" --exclude=='.git' | cut -f1)" \
+		| pixz -4 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz"
+	cp COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
+
+	cat <<-EOF > "${sources_pkg_dir}"/DEBIAN/control
+	Package: linux-source-${version}-${BRANCH}-${LINUXFAMILY}
+	Version: ${version}-${BRANCH}-${LINUXFAMILY}+${REVISION}
+	Architecture: all
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Section: kernel
+	Priority: optional
+	Depends: binutils, coreutils
+	Provides: linux-source, linux-source-${version}-${LINUXFAMILY}
+	Recommends: gcc, make
+	Description: This package provides the source code for the Linux kernel $version
+	EOF
+
+	fakeroot dpkg-deb -z0 -b "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
+	rsync --remove-source-files -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
+
+	te=$(date +%s)
+	display_alert "Make the linux-source package" "$(($te - $ts)) sec." "info"
+	rm -rf "${tmp_src_dir}"
 }
 
 compile_kernel()
@@ -298,9 +381,6 @@ compile_kernel()
 	fi
 	cd "${kerneldir}" || exit
 
-	if ! grep -qoE '^-rc[[:digit:]]+' <(grep "^EXTRAVERSION" Makefile | head -1 | awk '{print $(NF)}'); then
-		sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = /' Makefile
-	fi
 	rm -f localversion
 
 	# read kernel version
@@ -315,32 +395,24 @@ compile_kernel()
 
 	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
 
-        # create patch for manual source changes in debug mode
-        [[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
+	# create patch for manual source changes in debug mode
+	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
 
-        # re-read kernel version after patching
-        local version
-        version=$(grab_version "$kerneldir")
+	# re-read kernel version after patching
+	local version
+	version=$(grab_version "$kerneldir")
 
-	# create linux-source package - with already patched sources
-	local sources_pkg_dir tmp_src_dir
-	tmp_src_dir=$(mktemp -d)
-	trap "rm -rf \"${tmp_src_dir}\" ; exit 0" 0 1 2 3 15
-	sources_pkg_dir=${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all
-	mkdir -p "${sources_pkg_dir}"/usr/src/ "${sources_pkg_dir}"/usr/share/doc/linux-source-${version}-${LINUXFAMILY} "${sources_pkg_dir}"/DEBIAN
-
-	if [[ $BUILD_KSRC != no ]]; then
-		display_alert "Compressing sources for the linux-source package"
-		tar cp --directory="$kerneldir" --exclude='./.git/' --owner=root . \
-			 | pv -p -b -r -s "$(du -sb "$kerneldir" --exclude=='./.git/' | cut -f1)" \
-			| pixz -4 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz"
-		cp COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
-	fi
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
+
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
 	local toolchain
 	toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
 	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
+
+# build aarch64
+  fi
 
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER}gcc" -dumpversion)" "info"
 
@@ -395,16 +467,20 @@ compile_kernel()
 		fi
 	fi
 
-	xz < .config > "${sources_pkg_dir}/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz"
+	# create linux-source package - with already patched sources
+	# We will build this package first and clear the memory.
+	if [[ $BUILD_KSRC != no ]]; then
+		create_linux-source_package
+	fi
 
-	echo -e "\n\t== kernel ==\n" >> "${DEST}"/debug/compilation.log
+	echo -e "\n\t== kernel ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 		'make $CTHREADS ARCH=$ARCHITECTURE \
 		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" \
 		$SRC_LOADADDR \
 		LOCALVERSION="-$LINUXFAMILY" \
-		$KERNEL_IMAGE_TYPE modules dtbs 2>>$DEST/debug/compilation.log' \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		$KERNEL_IMAGE_TYPE modules dtbs 2>>$DEST/${LOG_SUBPATH}/compilation.log' \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" \
 		--progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -423,7 +499,7 @@ compile_kernel()
 	display_alert "Creating packages"
 
 	# produce deb packages: image, headers, firmware, dtb
-	echo -e "\n\t== deb packages: image, headers, firmware, dtb ==\n" >> "${DEST}"/debug/compilation.log
+	echo -e "\n\t== deb packages: image, headers, firmware, dtb ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 		'make $CTHREADS $kernel_packing \
 		KDEB_PKGVERSION=$REVISION \
@@ -433,29 +509,10 @@ compile_kernel()
 		ARCH=$ARCHITECTURE \
 		DEBFULLNAME="$MAINTAINER" \
 		DEBEMAIL="$MAINTAINERMAIL" \
-		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" 2>>$DEST/debug/compilation.log' \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/debug/compilation.log'} \
+		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" 2>>$DEST/${LOG_SUBPATH}/compilation.log' \
+		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-
-	cat <<-EOF > "${sources_pkg_dir}"/DEBIAN/control
-	Package: linux-source-${version}-${BRANCH}-${LINUXFAMILY}
-	Version: ${version}-${BRANCH}-${LINUXFAMILY}+${REVISION}
-	Architecture: all
-	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-	Section: kernel
-	Priority: optional
-	Depends: binutils, coreutils
-	Provides: linux-source, linux-source-${version}-${LINUXFAMILY}
-	Recommends: gcc, make
-	Description: This package provides the source code for the Linux kernel $version
-	EOF
-
-	if [[ $BUILD_KSRC != no ]]; then
-		fakeroot dpkg-deb -z0 -b "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
-		rsync --remove-source-files -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
-	fi
-	rm -rf "${tmp_src_dir}"
 
 	cd .. || exit
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
@@ -467,7 +524,7 @@ compile_kernel()
 	echo "${hash}" > "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
-	hash_watch_1=$(find "${SRC}/patch/kernel/${KERNELPATCHDIR}" -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort)
+	hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort -n)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
 	echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin >> "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 }
@@ -479,12 +536,6 @@ compile_firmware()
 {
 	display_alert "Merging and packaging linux firmware" "@host" "info"
 
-	if [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]]; then
-		plugin_repo="https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
-	else
-		plugin_repo="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
-	fi
-
 	local firmwaretempdir plugin_dir
 
 	firmwaretempdir=$(mktemp -d)
@@ -495,7 +546,7 @@ compile_firmware()
 
 	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
 	if [[ -n $FULL ]]; then
-		fetch_from_repo "$plugin_repo" "linux-firmware-git" "branch:master"
+		fetch_from_repo "$MAINLINE_FIRMWARE_SOURCE" "linux-firmware-git" "branch:master"
 		# cp : create hardlinks
 		cp -af --reflink=auto "${SRC}"/cache/sources/linux-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 	fi
@@ -524,7 +575,7 @@ compile_firmware()
 	cd "${firmwaretempdir}" || exit
 	# pack
 	mv "armbian-firmware${FULL}" "armbian-firmware${FULL}_${REVISION}_all"
-	fakeroot dpkg -b "armbian-firmware${FULL}_${REVISION}_all" >> "${DEST}"/debug/install.log 2>&1
+	fakeroot dpkg -b "armbian-firmware${FULL}_${REVISION}_all" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 	mv "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
 	rsync -rq "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
 
@@ -579,18 +630,6 @@ compile_armbian-zsh()
 	exit 0
 	END
 
-	# set up post remove script
-	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postrm
-	#!/bin/sh
-	# change shell back to bash for future users
-	BASHLOCATION=\$(grep /bash\$ /etc/shells | tail -1)
-	sed -i "s|^SHELL=.*|SHELL=\${BASHLOCATION}|" /etc/default/useradd
-	sed -i "s|^DSHELL=.*|DSHELL=\${BASHLOCATION}|" /etc/adduser.conf
-	# change to BASH shell for root and all normal users
-	awk -F'[/:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print \$1}' /etc/passwd | xargs -L1 chsh -s \$(grep /bash\$ /etc/shells | tail -1)
-	exit 0
-	END
-
 	cp -R "${SRC}"/cache/sources/oh-my-zsh "${tmp_dir}/${armbian_zsh_dir}"/etc/
 	cp -R "${SRC}"/cache/sources/evalcache "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/plugins
 	cp "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/templates/zshrc.zsh-template "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
@@ -615,7 +654,7 @@ compile_armbian-zsh()
 	# define default plugins
 	sed -i 's/^plugins=.*/plugins=(evalcache git git-extras debian tmux screen history extract colorize web-search docker)/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
-	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/{postrm,postinst}
+	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 
 	fakeroot dpkg -b "${tmp_dir}/${armbian_zsh_dir}" >/dev/null
 	rsync --remove-source-files -rq "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
@@ -637,6 +676,8 @@ compile_armbian-config()
 	display_alert "Building deb" "armbian-config" "info"
 
 	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
+	fetch_from_repo "https://github.com/dylanaraps/neofetch" "neofetch" "tag:7.1.0"
+	fetch_from_repo "https://github.com/complexorganizations/wireguard-manager" "wireguard-manager" "tag:v1.0.0.06-20-2021"
 
 	mkdir -p "${tmp_dir}/${armbian_config_dir}"/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
 
@@ -646,9 +687,9 @@ compile_armbian-config()
 	Version: $REVISION
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-	Replaces: armbian-bsp
-	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, pv, \
-	debconf-utils, unzip, build-essential, html2text, apt-transport-https, html2text, dirmngr, software-properties-common
+	Replaces: armbian-bsp, neofetch
+	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, pv, zip, \
+	debconf-utils, unzip, build-essential, html2text, html2text, dirmngr, software-properties-common, debconf, jq
 	Recommends: armbian-bsp
 	Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
 	Section: utils
@@ -656,6 +697,11 @@ compile_armbian-config()
 	Description: Armbian configuration utility
 	END
 
+	install -m 755 "${SRC}"/cache/sources/neofetch/neofetch "${tmp_dir}/${armbian_config_dir}"/usr/bin/neofetch
+	cd "${tmp_dir}/${armbian_config_dir}"/usr/bin/
+	process_patch_file "${SRC}/patch/misc/add-armbian-neofetch.patch" "applying"
+
+	install -m 755 "${SRC}"/cache/sources/wireguard-manager/wireguard-manager.sh "${tmp_dir}/${armbian_config_dir}"/usr/bin/wireguard-manager
 	install -m 755 "${SRC}"/cache/sources/armbian-config/scripts/tv_grab_file "${tmp_dir}/${armbian_config_dir}"/usr/bin/tv_grab_file
 	install -m 755 "${SRC}"/cache/sources/armbian-config/debian-config "${tmp_dir}/${armbian_config_dir}"/usr/sbin/armbian-config
 	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-jobs "${tmp_dir}/${armbian_config_dir}"/usr/lib/armbian-config/jobs.sh
@@ -704,6 +750,27 @@ install_rkbin_tools()
 	fi
 }
 
+compile_xilinx_bootgen()
+{
+	# Source code checkout
+	(fetch_from_repo "https://github.com/Xilinx/bootgen.git" "xilinx-bootgen" "branch:master")
+
+	pushd "${SRC}"/cache/sources/xilinx-bootgen || exit
+
+	# Compile and install only if git commit hash changed
+	# need to check if /usr/local/bin/bootgen to detect new Docker containers with old cached sources
+	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/bootgen ]]; then
+		display_alert "Compiling" "xilinx-bootgen" "info"
+		make -s clean >/dev/null
+		make -s -j$(nproc) bootgen >/dev/null
+		mkdir -p /usr/local/bin/
+		install bootgen /usr/local/bin >/dev/null 2>&1
+		improved_git rev-parse @ 2>/dev/null > .commit_id
+	fi
+
+	popd
+}
+
 grab_version()
 {
 	local ver=()
@@ -748,12 +815,12 @@ find_toolchain()
 	done
 	echo "$toolchain"
 	# logging a stack of used compilers.
-	if [[ -f "${DEST}"/debug/compiler.log ]]; then
-		if ! grep -q "$toolchain" "${DEST}"/debug/compiler.log; then
-			echo "$toolchain" >> "${DEST}"/debug/compiler.log;
+	if [[ -f "${DEST}"/${LOG_SUBPATH}/compiler.log ]]; then
+		if ! grep -q "$toolchain" "${DEST}"/${LOG_SUBPATH}/compiler.log; then
+			echo "$toolchain" >> "${DEST}"/${LOG_SUBPATH}/compiler.log;
 		fi
 	else
-			echo "$toolchain" >> "${DEST}"/debug/compiler.log;
+			echo "$toolchain" >> "${DEST}"/${LOG_SUBPATH}/compiler.log;
 	fi
 }
 
@@ -848,8 +915,8 @@ process_patch_file()
 	# detect and remove files which patch will create
 	lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
 
-	echo "Processing file $patch" >> "${DEST}"/debug/patching.log
-	patch --batch --silent -p1 -N < "${patch}" >> "${DEST}"/debug/patching.log 2>&1
+	echo "Processing file $patch" >> "${DEST}"/${LOG_SUBPATH}/patching.log
+	patch --batch --silent -p1 -N < "${patch}" >> "${DEST}"/${LOG_SUBPATH}/patching.log 2>&1
 
 	if [[ $? -ne 0 ]]; then
 		display_alert "* $status $(basename "${patch}")" "failed" "wrn"
@@ -857,7 +924,7 @@ process_patch_file()
 	else
 		display_alert "* $status $(basename "${patch}")" "" "info"
 	fi
-	echo >> "${DEST}"/debug/patching.log
+	echo >> "${DEST}"/${LOG_SUBPATH}/patching.log
 }
 
 userpatch_create()
