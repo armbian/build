@@ -775,9 +775,10 @@ create_image()
 	fi
 
 
+	# custom post_build_image_modify hook to run before fingerprinting and compression
+	[[ $(type -t post_build_image_modify) == function ]] && display_alert "Custom Hook Detected" "post_build_image_modify" "info" && post_build_image_modify "${DESTIMG}/${version}.img"
+
 	if [[ -z $SEND_TO_SERVER ]]; then
-		# custom post_build_image_modify hook to run before fingerprinting and compression
-		[[ $(type -t post_build_image_modify) == function ]] && display_alert "Custom Hook Detected" "post_build_image_modify" "info" && post_build_image_modify "${DESTIMG}/${version}.img"
 	
 		if [[ $COMPRESS_OUTPUTIMAGE == "" || $COMPRESS_OUTPUTIMAGE == no ]]; then
 			COMPRESS_OUTPUTIMAGE="sha,gpg,img"
@@ -786,13 +787,13 @@ create_image()
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
-			display_alert "Compressing" "${FINALDEST}/${version}.img.gz" "info"
-			pigz -3 < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.gz
+			display_alert "Compressing" "${DESTIMG}/${version}.img.gz" "info"
+			pigz -3 < $DESTIMG/${version}.img > $DESTIMG/${version}.img.gz
 			compression_type=".gz"
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
-			display_alert "Compressing" "${FINALDEST}/${version}.img.xz" "info"
+			display_alert "Compressing" "${DESTIMG}/${version}.img.xz" "info"
 			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
 			available_cpu=$(grep -c 'processor' /proc/cpuinfo)
 			[[ ${BUILD_ALL} == yes ]] && available_cpu=$(( $available_cpu * 30 / 100 )) # lets use 20% of resources in case of build-all
@@ -805,49 +806,53 @@ create_image()
 					sleep 20
 				done
 			fi
-			pixz -7 -p ${available_cpu} -f $(expr ${available_cpu} + 2) < $DESTIMG/${version}.img > ${FINALDEST}/${version}.img.xz
+			pixz -7 -p ${available_cpu} -f $(expr ${available_cpu} + 2) < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.xz
 			compression_type=".xz"
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *img* || $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
-			mv $DESTIMG/${version}.img ${FINALDEST}/${version}.img || exit 1
+#			mv $DESTIMG/${version}.img ${FINALDEST}/${version}.img || exit 1
 			compression_type=""
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
-			cd ${FINALDEST}
+			cd ${DESTIMG}
 			display_alert "SHA256 calculating" "${version}.img${compression_type}" "info"
 			sha256sum -b ${version}.img${compression_type} > ${version}.img${compression_type}.sha
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *gpg* ]]; then
-			cd ${FINALDEST}
+			cd ${DESTIMG}
 			if [[ -n $GPG_PASS ]]; then
 				display_alert "GPG signing" "${version}.img${compression_type}" "info"
-				[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${FINALDEST}"/
-				echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${FINALDEST}/${version}.img${compression_type}" || exit 1
+				[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DESTIMG}"/
+				echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${DESTIMG}/${version}.img${compression_type}" || exit 1
 			else
 				display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 			fi
 		fi
 
-		fingerprint_image "${FINALDEST}/${version}.img${compression_type}.txt" "${version}"
+		fingerprint_image "${DESTIMG}/${version}.img${compression_type}.txt" "${version}"
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
-			display_alert "Compressing" "${FINALDEST}/${version}.7z" "info"
+			display_alert "Compressing" "${DESTIMG}/${version}.7z" "info"
 			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on \
-			${FINALDEST}/${version}.7z ${version}.key ${version}.img* >/dev/null 2>&1
-			find ${FINALDEST}/ -type \
+			${DESTIMG}/${version}.7z ${version}.key ${version}.img* >/dev/null 2>&1
+			find ${DESTIMG}/ -type \
 			f \( -name "${version}.img" -o -name "${version}.img.asc" -o -name "${version}.img.txt" -o -name "${version}.img.sha" \) -print0 \
 			| xargs -0 rm >/dev/null 2>&1
 		fi
 
-		rm -rf $DESTIMG
 	fi
-	display_alert "Done building" "${FINALDEST}/${version}.img" "info"
+	display_alert "Done building" "${DESTIMG}/${version}.img" "info"
 
 	# call custom post build hook
-	[[ $(type -t post_build_image) == function ]] && post_build_image "${FINALDEST}/${version}.img"
+	[[ $(type -t post_build_image) == function ]] && post_build_image "${DESTIMG}/${version}.img"
+
+	# move artefacts from temporally directory to its final destination
+	[[ -n $compression_type ]] && rm $DESTIMG/${version}.img
+	mv $DESTIMG/${version}* ${FINALDEST}
+	rm -rf $DESTIMG
 
 	# write image to SD card
 	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f ${FINALDEST}/${version}.img ]]; then
