@@ -507,7 +507,7 @@ compilation_prepare()
 
 	# Wireless drivers for Realtek 88x2bu chipsets
 
-	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare "${version}" ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl88x2buver="branch:5.8.7.1_35809.20191129_COEX20191120-7777"
