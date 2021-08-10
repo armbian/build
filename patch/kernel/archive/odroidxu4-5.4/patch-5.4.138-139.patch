@@ -1,0 +1,1230 @@
+diff --git a/Makefile b/Makefile
+index 5a9d6caef82a0..1174536034b38 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 5
+ PATCHLEVEL = 4
+-SUBLEVEL = 138
++SUBLEVEL = 139
+ EXTRAVERSION =
+ NAME = Kleptomaniac Octopus
+ 
+diff --git a/drivers/firmware/arm_scmi/bus.c b/drivers/firmware/arm_scmi/bus.c
+index 7a30952b463d5..66d445b14e513 100644
+--- a/drivers/firmware/arm_scmi/bus.c
++++ b/drivers/firmware/arm_scmi/bus.c
+@@ -100,6 +100,9 @@ int scmi_driver_register(struct scmi_driver *driver, struct module *owner,
+ {
+ 	int retval;
+ 
++	if (!driver->probe)
++		return -EINVAL;
++
+ 	driver->driver.bus = &scmi_bus_type;
+ 	driver->driver.name = driver->name;
+ 	driver->driver.owner = owner;
+diff --git a/drivers/firmware/arm_scmi/driver.c b/drivers/firmware/arm_scmi/driver.c
+index 48e6e2b489241..4e43bdfa041f5 100644
+--- a/drivers/firmware/arm_scmi/driver.c
++++ b/drivers/firmware/arm_scmi/driver.c
+@@ -515,8 +515,12 @@ int scmi_do_xfer_with_response(const struct scmi_handle *handle,
+ 	xfer->async_done = &async_response;
+ 
+ 	ret = scmi_do_xfer(handle, xfer);
+-	if (!ret && !wait_for_completion_timeout(xfer->async_done, timeout))
+-		ret = -ETIMEDOUT;
++	if (!ret) {
++		if (!wait_for_completion_timeout(xfer->async_done, timeout))
++			ret = -ETIMEDOUT;
++		else if (xfer->hdr.status)
++			ret = scmi_to_linux_errno(xfer->hdr.status);
++	}
+ 
+ 	xfer->async_done = NULL;
+ 	return ret;
+diff --git a/drivers/net/ethernet/qlogic/qed/qed_mcp.c b/drivers/net/ethernet/qlogic/qed/qed_mcp.c
+index 9401b49275f0a..5d85ae59bc51e 100644
+--- a/drivers/net/ethernet/qlogic/qed/qed_mcp.c
++++ b/drivers/net/ethernet/qlogic/qed/qed_mcp.c
+@@ -498,14 +498,18 @@ _qed_mcp_cmd_and_union(struct qed_hwfn *p_hwfn,
+ 
+ 		spin_lock_bh(&p_hwfn->mcp_info->cmd_lock);
+ 
+-		if (!qed_mcp_has_pending_cmd(p_hwfn))
++		if (!qed_mcp_has_pending_cmd(p_hwfn)) {
++			spin_unlock_bh(&p_hwfn->mcp_info->cmd_lock);
+ 			break;
++		}
+ 
+ 		rc = qed_mcp_update_pending_cmd(p_hwfn, p_ptt);
+-		if (!rc)
++		if (!rc) {
++			spin_unlock_bh(&p_hwfn->mcp_info->cmd_lock);
+ 			break;
+-		else if (rc != -EAGAIN)
++		} else if (rc != -EAGAIN) {
+ 			goto err;
++		}
+ 
+ 		spin_unlock_bh(&p_hwfn->mcp_info->cmd_lock);
+ 
+@@ -522,6 +526,8 @@ _qed_mcp_cmd_and_union(struct qed_hwfn *p_hwfn,
+ 		return -EAGAIN;
+ 	}
+ 
++	spin_lock_bh(&p_hwfn->mcp_info->cmd_lock);
++
+ 	/* Send the mailbox command */
+ 	qed_mcp_reread_offsets(p_hwfn, p_ptt);
+ 	seq_num = ++p_hwfn->mcp_info->drv_mb_seq;
+@@ -548,14 +554,18 @@ _qed_mcp_cmd_and_union(struct qed_hwfn *p_hwfn,
+ 
+ 		spin_lock_bh(&p_hwfn->mcp_info->cmd_lock);
+ 
+-		if (p_cmd_elem->b_is_completed)
++		if (p_cmd_elem->b_is_completed) {
++			spin_unlock_bh(&p_hwfn->mcp_info->cmd_lock);
+ 			break;
++		}
+ 
+ 		rc = qed_mcp_update_pending_cmd(p_hwfn, p_ptt);
+-		if (!rc)
++		if (!rc) {
++			spin_unlock_bh(&p_hwfn->mcp_info->cmd_lock);
+ 			break;
+-		else if (rc != -EAGAIN)
++		} else if (rc != -EAGAIN) {
+ 			goto err;
++		}
+ 
+ 		spin_unlock_bh(&p_hwfn->mcp_info->cmd_lock);
+ 	} while (++cnt < max_retries);
+@@ -576,6 +586,7 @@ _qed_mcp_cmd_and_union(struct qed_hwfn *p_hwfn,
+ 		return -EAGAIN;
+ 	}
+ 
++	spin_lock_bh(&p_hwfn->mcp_info->cmd_lock);
+ 	qed_mcp_cmd_del_elem(p_hwfn, p_cmd_elem);
+ 	spin_unlock_bh(&p_hwfn->mcp_info->cmd_lock);
+ 
+diff --git a/drivers/net/usb/r8152.c b/drivers/net/usb/r8152.c
+index 24d1246330375..873f288e7ceca 100644
+--- a/drivers/net/usb/r8152.c
++++ b/drivers/net/usb/r8152.c
+@@ -4317,9 +4317,10 @@ static int rtl8152_close(struct net_device *netdev)
+ 		tp->rtl_ops.down(tp);
+ 
+ 		mutex_unlock(&tp->control);
++	}
+ 
++	if (!res)
+ 		usb_autopm_put_interface(tp->intf);
+-	}
+ 
+ 	free_all_mem(tp);
+ 
+diff --git a/drivers/nvme/host/trace.h b/drivers/nvme/host/trace.h
+index daaf700eae799..35bac7a254227 100644
+--- a/drivers/nvme/host/trace.h
++++ b/drivers/nvme/host/trace.h
+@@ -56,7 +56,7 @@ TRACE_EVENT(nvme_setup_cmd,
+ 		__field(u8, fctype)
+ 		__field(u16, cid)
+ 		__field(u32, nsid)
+-		__field(u64, metadata)
++		__field(bool, metadata)
+ 		__array(u8, cdw10, 24)
+ 	    ),
+ 	    TP_fast_assign(
+@@ -66,13 +66,13 @@ TRACE_EVENT(nvme_setup_cmd,
+ 		__entry->flags = cmd->common.flags;
+ 		__entry->cid = cmd->common.command_id;
+ 		__entry->nsid = le32_to_cpu(cmd->common.nsid);
+-		__entry->metadata = le64_to_cpu(cmd->common.metadata);
++		__entry->metadata = !!blk_integrity_rq(req);
+ 		__entry->fctype = cmd->fabrics.fctype;
+ 		__assign_disk_name(__entry->disk, req->rq_disk);
+ 		memcpy(__entry->cdw10, &cmd->common.cdw10,
+ 			sizeof(__entry->cdw10));
+ 	    ),
+-	    TP_printk("nvme%d: %sqid=%d, cmdid=%u, nsid=%u, flags=0x%x, meta=0x%llx, cmd=(%s %s)",
++	    TP_printk("nvme%d: %sqid=%d, cmdid=%u, nsid=%u, flags=0x%x, meta=0x%x, cmd=(%s %s)",
+ 		      __entry->ctrl_id, __print_disk_name(__entry->disk),
+ 		      __entry->qid, __entry->cid, __entry->nsid,
+ 		      __entry->flags, __entry->metadata,
+diff --git a/drivers/spi/spi-mt65xx.c b/drivers/spi/spi-mt65xx.c
+index 81eac9fbd08cb..cafb773f78616 100644
+--- a/drivers/spi/spi-mt65xx.c
++++ b/drivers/spi/spi-mt65xx.c
+@@ -426,24 +426,15 @@ static int mtk_spi_fifo_transfer(struct spi_master *master,
+ 	mtk_spi_prepare_transfer(master, xfer);
+ 	mtk_spi_setup_packet(master);
+ 
+-	cnt = xfer->len / 4;
+-	if (xfer->tx_buf)
++	if (xfer->tx_buf) {
++		cnt = xfer->len / 4;
+ 		iowrite32_rep(mdata->base + SPI_TX_DATA_REG, xfer->tx_buf, cnt);
+-
+-	if (xfer->rx_buf)
+-		ioread32_rep(mdata->base + SPI_RX_DATA_REG, xfer->rx_buf, cnt);
+-
+-	remainder = xfer->len % 4;
+-	if (remainder > 0) {
+-		reg_val = 0;
+-		if (xfer->tx_buf) {
++		remainder = xfer->len % 4;
++		if (remainder > 0) {
++			reg_val = 0;
+ 			memcpy(&reg_val, xfer->tx_buf + (cnt * 4), remainder);
+ 			writel(reg_val, mdata->base + SPI_TX_DATA_REG);
+ 		}
+-		if (xfer->rx_buf) {
+-			reg_val = readl(mdata->base + SPI_RX_DATA_REG);
+-			memcpy(xfer->rx_buf + (cnt * 4), &reg_val, remainder);
+-		}
+ 	}
+ 
+ 	mtk_spi_enable_transfer(master);
+diff --git a/drivers/spi/spi-stm32.c b/drivers/spi/spi-stm32.c
+index e9d48e94f5edb..9ae16092206df 100644
+--- a/drivers/spi/spi-stm32.c
++++ b/drivers/spi/spi-stm32.c
+@@ -913,15 +913,18 @@ static irqreturn_t stm32h7_spi_irq_thread(int irq, void *dev_id)
+ 	ier = readl_relaxed(spi->base + STM32H7_SPI_IER);
+ 
+ 	mask = ier;
+-	/* EOTIE is triggered on EOT, SUSP and TXC events. */
++	/*
++	 * EOTIE enables irq from EOT, SUSP and TXC events. We need to set
++	 * SUSP to acknowledge it later. TXC is automatically cleared
++	 */
++
+ 	mask |= STM32H7_SPI_SR_SUSP;
+ 	/*
+-	 * When TXTF is set, DXPIE and TXPIE are cleared. So in case of
+-	 * Full-Duplex, need to poll RXP event to know if there are remaining
+-	 * data, before disabling SPI.
++	 * DXPIE is set in Full-Duplex, one IT will be raised if TXP and RXP
++	 * are set. So in case of Full-Duplex, need to poll TXP and RXP event.
+ 	 */
+-	if (spi->rx_buf && !spi->cur_usedma)
+-		mask |= STM32H7_SPI_SR_RXP;
++	if ((spi->cur_comm == SPI_FULL_DUPLEX) && !spi->cur_usedma)
++		mask |= STM32H7_SPI_SR_TXP | STM32H7_SPI_SR_RXP;
+ 
+ 	if (!(sr & mask)) {
+ 		dev_warn(spi->dev, "spurious IT (sr=0x%08x, ier=0x%08x)\n",
+diff --git a/drivers/watchdog/iTCO_wdt.c b/drivers/watchdog/iTCO_wdt.c
+index 08e534fba1bf0..e707c4797f76e 100644
+--- a/drivers/watchdog/iTCO_wdt.c
++++ b/drivers/watchdog/iTCO_wdt.c
+@@ -72,8 +72,6 @@
+ #define TCOBASE(p)	((p)->tco_res->start)
+ /* SMI Control and Enable Register */
+ #define SMI_EN(p)	((p)->smi_res->start)
+-#define TCO_EN		(1 << 13)
+-#define GBL_SMI_EN	(1 << 0)
+ 
+ #define TCO_RLD(p)	(TCOBASE(p) + 0x00) /* TCO Timer Reload/Curr. Value */
+ #define TCOv1_TMR(p)	(TCOBASE(p) + 0x01) /* TCOv1 Timer Initial Value*/
+@@ -346,12 +344,8 @@ static int iTCO_wdt_set_timeout(struct watchdog_device *wd_dev, unsigned int t)
+ 
+ 	tmrval = seconds_to_ticks(p, t);
+ 
+-	/*
+-	 * If TCO SMIs are off, the timer counts down twice before rebooting.
+-	 * Otherwise, the BIOS generally reboots when the SMI triggers.
+-	 */
+-	if (p->smi_res &&
+-	    (SMI_EN(p) & (TCO_EN | GBL_SMI_EN)) != (TCO_EN | GBL_SMI_EN))
++	/* For TCO v1 the timer counts down twice before rebooting */
++	if (p->iTCO_version == 1)
+ 		tmrval /= 2;
+ 
+ 	/* from the specs: */
+@@ -516,7 +510,7 @@ static int iTCO_wdt_probe(struct platform_device *pdev)
+ 		 * Disables TCO logic generating an SMI#
+ 		 */
+ 		val32 = inl(SMI_EN(p));
+-		val32 &= ~TCO_EN;	/* Turn off SMI clearing watchdog */
++		val32 &= 0xffffdfff;	/* Turn off SMI clearing watchdog */
+ 		outl(val32, SMI_EN(p));
+ 	}
+ 
+diff --git a/fs/btrfs/block-group.c b/fs/btrfs/block-group.c
+index a352c1704042d..e98d6ea35ea80 100644
+--- a/fs/btrfs/block-group.c
++++ b/fs/btrfs/block-group.c
+@@ -2637,7 +2637,7 @@ int btrfs_write_dirty_block_groups(struct btrfs_trans_handle *trans)
+ 			 * finished yet (no block group item in the extent tree
+ 			 * yet, etc). If this is the case, wait for all free
+ 			 * space endio workers to finish and retry. This is a
+-			 * a very rare case so no need for a more efficient and
++			 * very rare case so no need for a more efficient and
+ 			 * complex approach.
+ 			 */
+ 			if (ret == -ENOENT) {
+diff --git a/fs/btrfs/ctree.c b/fs/btrfs/ctree.c
+index ab69e3563b125..dac30b00d14b7 100644
+--- a/fs/btrfs/ctree.c
++++ b/fs/btrfs/ctree.c
+@@ -5232,7 +5232,7 @@ again:
+ 			slot--;
+ 		/*
+ 		 * check this node pointer against the min_trans parameters.
+-		 * If it is too old, old, skip to the next one.
++		 * If it is too old, skip to the next one.
+ 		 */
+ 		while (slot < nritems) {
+ 			u64 gen;
+diff --git a/fs/btrfs/disk-io.c b/fs/btrfs/disk-io.c
+index e6aa94a583e92..1d28333bb798c 100644
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -2816,7 +2816,7 @@ int open_ctree(struct super_block *sb,
+ 	}
+ 
+ 	/*
+-	 * Verify the type first, if that or the the checksum value are
++	 * Verify the type first, if that or the checksum value are
+ 	 * corrupted, we'll find out
+ 	 */
+ 	csum_type = btrfs_super_csum_type((struct btrfs_super_block *)bh->b_data);
+diff --git a/fs/btrfs/extent_io.c b/fs/btrfs/extent_io.c
+index eca3abc1a7cd9..9108a73423f70 100644
+--- a/fs/btrfs/extent_io.c
++++ b/fs/btrfs/extent_io.c
+@@ -3152,7 +3152,7 @@ static int __do_readpage(struct extent_io_tree *tree,
+ 
+ 		/*
+ 		 * If we have a file range that points to a compressed extent
+-		 * and it's followed by a consecutive file range that points to
++		 * and it's followed by a consecutive file range that points
+ 		 * to the same compressed extent (possibly with a different
+ 		 * offset and/or length, so it either points to the whole extent
+ 		 * or only part of it), we must make sure we do not submit a
+diff --git a/fs/btrfs/free-space-cache.c b/fs/btrfs/free-space-cache.c
+index 23f59d463e24e..d2d32fed8f2e9 100644
+--- a/fs/btrfs/free-space-cache.c
++++ b/fs/btrfs/free-space-cache.c
+@@ -1339,7 +1339,7 @@ static int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
+ 
+ 	/*
+ 	 * at this point the pages are under IO and we're happy,
+-	 * The caller is responsible for waiting on them and updating the
++	 * The caller is responsible for waiting on them and updating
+ 	 * the cache and the inode
+ 	 */
+ 	io_ctl->entries = entries;
+diff --git a/fs/btrfs/inode.c b/fs/btrfs/inode.c
+index 025b02e9799ff..8959d011aafa8 100644
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -6992,7 +6992,6 @@ static int btrfs_link(struct dentry *old_dentry, struct inode *dir,
+ 		drop_inode = 1;
+ 	} else {
+ 		struct dentry *parent = dentry->d_parent;
+-		int ret;
+ 
+ 		err = btrfs_update_inode(trans, root, inode);
+ 		if (err)
+@@ -7007,12 +7006,7 @@ static int btrfs_link(struct dentry *old_dentry, struct inode *dir,
+ 				goto fail;
+ 		}
+ 		d_instantiate(dentry, inode);
+-		ret = btrfs_log_new_name(trans, BTRFS_I(inode), NULL, parent,
+-					 true, NULL);
+-		if (ret == BTRFS_NEED_TRANS_COMMIT) {
+-			err = btrfs_commit_transaction(trans);
+-			trans = NULL;
+-		}
++		btrfs_log_new_name(trans, BTRFS_I(inode), NULL, parent);
+ 	}
+ 
+ fail:
+@@ -9699,27 +9693,19 @@ static int btrfs_rename_exchange(struct inode *old_dir,
+ 	struct inode *new_inode = new_dentry->d_inode;
+ 	struct inode *old_inode = old_dentry->d_inode;
+ 	struct timespec64 ctime = current_time(old_inode);
+-	struct dentry *parent;
+ 	u64 old_ino = btrfs_ino(BTRFS_I(old_inode));
+ 	u64 new_ino = btrfs_ino(BTRFS_I(new_inode));
+ 	u64 old_idx = 0;
+ 	u64 new_idx = 0;
+ 	int ret;
++	int ret2;
+ 	bool root_log_pinned = false;
+ 	bool dest_log_pinned = false;
+-	struct btrfs_log_ctx ctx_root;
+-	struct btrfs_log_ctx ctx_dest;
+-	bool sync_log_root = false;
+-	bool sync_log_dest = false;
+-	bool commit_transaction = false;
+ 
+ 	/* we only allow rename subvolume link between subvolumes */
+ 	if (old_ino != BTRFS_FIRST_FREE_OBJECTID && root != dest)
+ 		return -EXDEV;
+ 
+-	btrfs_init_log_ctx(&ctx_root, old_inode);
+-	btrfs_init_log_ctx(&ctx_dest, new_inode);
+-
+ 	/* close the race window with snapshot create/destroy ioctl */
+ 	if (old_ino == BTRFS_FIRST_FREE_OBJECTID ||
+ 	    new_ino == BTRFS_FIRST_FREE_OBJECTID)
+@@ -9861,30 +9847,14 @@ static int btrfs_rename_exchange(struct inode *old_dir,
+ 		BTRFS_I(new_inode)->dir_index = new_idx;
+ 
+ 	if (root_log_pinned) {
+-		parent = new_dentry->d_parent;
+-		ret = btrfs_log_new_name(trans, BTRFS_I(old_inode),
+-					 BTRFS_I(old_dir), parent,
+-					 false, &ctx_root);
+-		if (ret == BTRFS_NEED_LOG_SYNC)
+-			sync_log_root = true;
+-		else if (ret == BTRFS_NEED_TRANS_COMMIT)
+-			commit_transaction = true;
+-		ret = 0;
++		btrfs_log_new_name(trans, BTRFS_I(old_inode), BTRFS_I(old_dir),
++				   new_dentry->d_parent);
+ 		btrfs_end_log_trans(root);
+ 		root_log_pinned = false;
+ 	}
+ 	if (dest_log_pinned) {
+-		if (!commit_transaction) {
+-			parent = old_dentry->d_parent;
+-			ret = btrfs_log_new_name(trans, BTRFS_I(new_inode),
+-						 BTRFS_I(new_dir), parent,
+-						 false, &ctx_dest);
+-			if (ret == BTRFS_NEED_LOG_SYNC)
+-				sync_log_dest = true;
+-			else if (ret == BTRFS_NEED_TRANS_COMMIT)
+-				commit_transaction = true;
+-			ret = 0;
+-		}
++		btrfs_log_new_name(trans, BTRFS_I(new_inode), BTRFS_I(new_dir),
++				   old_dentry->d_parent);
+ 		btrfs_end_log_trans(dest);
+ 		dest_log_pinned = false;
+ 	}
+@@ -9917,46 +9887,13 @@ out_fail:
+ 			dest_log_pinned = false;
+ 		}
+ 	}
+-	if (!ret && sync_log_root && !commit_transaction) {
+-		ret = btrfs_sync_log(trans, BTRFS_I(old_inode)->root,
+-				     &ctx_root);
+-		if (ret)
+-			commit_transaction = true;
+-	}
+-	if (!ret && sync_log_dest && !commit_transaction) {
+-		ret = btrfs_sync_log(trans, BTRFS_I(new_inode)->root,
+-				     &ctx_dest);
+-		if (ret)
+-			commit_transaction = true;
+-	}
+-	if (commit_transaction) {
+-		/*
+-		 * We may have set commit_transaction when logging the new name
+-		 * in the destination root, in which case we left the source
+-		 * root context in the list of log contextes. So make sure we
+-		 * remove it to avoid invalid memory accesses, since the context
+-		 * was allocated in our stack frame.
+-		 */
+-		if (sync_log_root) {
+-			mutex_lock(&root->log_mutex);
+-			list_del_init(&ctx_root.list);
+-			mutex_unlock(&root->log_mutex);
+-		}
+-		ret = btrfs_commit_transaction(trans);
+-	} else {
+-		int ret2;
+-
+-		ret2 = btrfs_end_transaction(trans);
+-		ret = ret ? ret : ret2;
+-	}
++	ret2 = btrfs_end_transaction(trans);
++	ret = ret ? ret : ret2;
+ out_notrans:
+ 	if (new_ino == BTRFS_FIRST_FREE_OBJECTID ||
+ 	    old_ino == BTRFS_FIRST_FREE_OBJECTID)
+ 		up_read(&fs_info->subvol_sem);
+ 
+-	ASSERT(list_empty(&ctx_root.list));
+-	ASSERT(list_empty(&ctx_dest.list));
+-
+ 	return ret;
+ }
+ 
+@@ -10024,11 +9961,9 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
+ 	struct inode *old_inode = d_inode(old_dentry);
+ 	u64 index = 0;
+ 	int ret;
++	int ret2;
+ 	u64 old_ino = btrfs_ino(BTRFS_I(old_inode));
+ 	bool log_pinned = false;
+-	struct btrfs_log_ctx ctx;
+-	bool sync_log = false;
+-	bool commit_transaction = false;
+ 
+ 	if (btrfs_ino(BTRFS_I(new_dir)) == BTRFS_EMPTY_SUBVOL_DIR_OBJECTID)
+ 		return -EPERM;
+@@ -10178,17 +10113,8 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
+ 		BTRFS_I(old_inode)->dir_index = index;
+ 
+ 	if (log_pinned) {
+-		struct dentry *parent = new_dentry->d_parent;
+-
+-		btrfs_init_log_ctx(&ctx, old_inode);
+-		ret = btrfs_log_new_name(trans, BTRFS_I(old_inode),
+-					 BTRFS_I(old_dir), parent,
+-					 false, &ctx);
+-		if (ret == BTRFS_NEED_LOG_SYNC)
+-			sync_log = true;
+-		else if (ret == BTRFS_NEED_TRANS_COMMIT)
+-			commit_transaction = true;
+-		ret = 0;
++		btrfs_log_new_name(trans, BTRFS_I(old_inode), BTRFS_I(old_dir),
++				   new_dentry->d_parent);
+ 		btrfs_end_log_trans(root);
+ 		log_pinned = false;
+ 	}
+@@ -10225,23 +10151,8 @@ out_fail:
+ 		btrfs_end_log_trans(root);
+ 		log_pinned = false;
+ 	}
+-	if (!ret && sync_log) {
+-		ret = btrfs_sync_log(trans, BTRFS_I(old_inode)->root, &ctx);
+-		if (ret)
+-			commit_transaction = true;
+-	} else if (sync_log) {
+-		mutex_lock(&root->log_mutex);
+-		list_del(&ctx.list);
+-		mutex_unlock(&root->log_mutex);
+-	}
+-	if (commit_transaction) {
+-		ret = btrfs_commit_transaction(trans);
+-	} else {
+-		int ret2;
+-
+-		ret2 = btrfs_end_transaction(trans);
+-		ret = ret ? ret : ret2;
+-	}
++	ret2 = btrfs_end_transaction(trans);
++	ret = ret ? ret : ret2;
+ out_notrans:
+ 	if (old_ino == BTRFS_FIRST_FREE_OBJECTID)
+ 		up_read(&fs_info->subvol_sem);
+diff --git a/fs/btrfs/qgroup.c b/fs/btrfs/qgroup.c
+index cd8e81c02f63f..837bd5e29c8a0 100644
+--- a/fs/btrfs/qgroup.c
++++ b/fs/btrfs/qgroup.c
+@@ -2262,7 +2262,7 @@ static int qgroup_update_refcnt(struct btrfs_fs_info *fs_info,
+  * Update qgroup rfer/excl counters.
+  * Rfer update is easy, codes can explain themselves.
+  *
+- * Excl update is tricky, the update is split into 2 part.
++ * Excl update is tricky, the update is split into 2 parts.
+  * Part 1: Possible exclusive <-> sharing detect:
+  *	|	A	|	!A	|
+  *  -------------------------------------
+diff --git a/fs/btrfs/tree-log.c b/fs/btrfs/tree-log.c
+index afc6731bb692c..5412361d0c270 100644
+--- a/fs/btrfs/tree-log.c
++++ b/fs/btrfs/tree-log.c
+@@ -174,7 +174,7 @@ static int start_log_trans(struct btrfs_trans_handle *trans,
+ 
+ 	atomic_inc(&root->log_batch);
+ 	atomic_inc(&root->log_writers);
+-	if (ctx) {
++	if (ctx && !ctx->logging_new_name) {
+ 		int index = root->log_transid % 2;
+ 		list_add_tail(&ctx->list, &root->log_ctxs[index]);
+ 		ctx->log_transid = root->log_transid;
+@@ -4923,7 +4923,7 @@ static int log_conflicting_inodes(struct btrfs_trans_handle *trans,
+ 		 * Check the inode's logged_trans only instead of
+ 		 * btrfs_inode_in_log(). This is because the last_log_commit of
+ 		 * the inode is not updated when we only log that it exists and
+-		 * and it has the full sync bit set (see btrfs_log_inode()).
++		 * it has the full sync bit set (see btrfs_log_inode()).
+ 		 */
+ 		if (BTRFS_I(inode)->logged_trans == trans->transid) {
+ 			spin_unlock(&BTRFS_I(inode)->lock);
+@@ -5379,19 +5379,34 @@ log_extents:
+ 	}
+ 
+ 	/*
+-	 * Don't update last_log_commit if we logged that an inode exists after
+-	 * it was loaded to memory (full_sync bit set).
+-	 * This is to prevent data loss when we do a write to the inode, then
+-	 * the inode gets evicted after all delalloc was flushed, then we log
+-	 * it exists (due to a rename for example) and then fsync it. This last
+-	 * fsync would do nothing (not logging the extents previously written).
++	 * If we are logging that an ancestor inode exists as part of logging a
++	 * new name from a link or rename operation, don't mark the inode as
++	 * logged - otherwise if an explicit fsync is made against an ancestor,
++	 * the fsync considers the inode in the log and doesn't sync the log,
++	 * resulting in the ancestor missing after a power failure unless the
++	 * log was synced as part of an fsync against any other unrelated inode.
++	 * So keep it simple for this case and just don't flag the ancestors as
++	 * logged.
+ 	 */
+-	spin_lock(&inode->lock);
+-	inode->logged_trans = trans->transid;
+-	if (inode_only != LOG_INODE_EXISTS ||
+-	    !test_bit(BTRFS_INODE_NEEDS_FULL_SYNC, &inode->runtime_flags))
+-		inode->last_log_commit = inode->last_sub_trans;
+-	spin_unlock(&inode->lock);
++	if (!ctx ||
++	    !(S_ISDIR(inode->vfs_inode.i_mode) && ctx->logging_new_name &&
++	      &inode->vfs_inode != ctx->inode)) {
++		spin_lock(&inode->lock);
++		inode->logged_trans = trans->transid;
++		/*
++		 * Don't update last_log_commit if we logged that an inode exists
++		 * after it was loaded to memory (full_sync bit set).
++		 * This is to prevent data loss when we do a write to the inode,
++		 * then the inode gets evicted after all delalloc was flushed,
++		 * then we log it exists (due to a rename for example) and then
++		 * fsync it. This last fsync would do nothing (not logging the
++		 * extents previously written).
++		 */
++		if (inode_only != LOG_INODE_EXISTS ||
++		    !test_bit(BTRFS_INODE_NEEDS_FULL_SYNC, &inode->runtime_flags))
++			inode->last_log_commit = inode->last_sub_trans;
++		spin_unlock(&inode->lock);
++	}
+ out_unlock:
+ 	mutex_unlock(&inode->log_mutex);
+ 
+@@ -6417,26 +6432,12 @@ void btrfs_record_snapshot_destroy(struct btrfs_trans_handle *trans,
+ /*
+  * Call this after adding a new name for a file and it will properly
+  * update the log to reflect the new name.
+- *
+- * @ctx can not be NULL when @sync_log is false, and should be NULL when it's
+- * true (because it's not used).
+- *
+- * Return value depends on whether @sync_log is true or false.
+- * When true: returns BTRFS_NEED_TRANS_COMMIT if the transaction needs to be
+- *            committed by the caller, and BTRFS_DONT_NEED_TRANS_COMMIT
+- *            otherwise.
+- * When false: returns BTRFS_DONT_NEED_LOG_SYNC if the caller does not need to
+- *             to sync the log, BTRFS_NEED_LOG_SYNC if it needs to sync the log,
+- *             or BTRFS_NEED_TRANS_COMMIT if the transaction needs to be
+- *             committed (without attempting to sync the log).
+  */
+-int btrfs_log_new_name(struct btrfs_trans_handle *trans,
++void btrfs_log_new_name(struct btrfs_trans_handle *trans,
+ 			struct btrfs_inode *inode, struct btrfs_inode *old_dir,
+-			struct dentry *parent,
+-			bool sync_log, struct btrfs_log_ctx *ctx)
++			struct dentry *parent)
+ {
+-	struct btrfs_fs_info *fs_info = trans->fs_info;
+-	int ret;
++	struct btrfs_log_ctx ctx;
+ 
+ 	/*
+ 	 * this will force the logging code to walk the dentry chain
+@@ -6449,36 +6450,20 @@ int btrfs_log_new_name(struct btrfs_trans_handle *trans,
+ 	 * if this inode hasn't been logged and directory we're renaming it
+ 	 * from hasn't been logged, we don't need to log it
+ 	 */
+-	if (inode->logged_trans <= fs_info->last_trans_committed &&
+-	    (!old_dir || old_dir->logged_trans <= fs_info->last_trans_committed))
+-		return sync_log ? BTRFS_DONT_NEED_TRANS_COMMIT :
+-			BTRFS_DONT_NEED_LOG_SYNC;
+-
+-	if (sync_log) {
+-		struct btrfs_log_ctx ctx2;
+-
+-		btrfs_init_log_ctx(&ctx2, &inode->vfs_inode);
+-		ret = btrfs_log_inode_parent(trans, inode, parent, 0, LLONG_MAX,
+-					     LOG_INODE_EXISTS, &ctx2);
+-		if (ret == BTRFS_NO_LOG_SYNC)
+-			return BTRFS_DONT_NEED_TRANS_COMMIT;
+-		else if (ret)
+-			return BTRFS_NEED_TRANS_COMMIT;
+-
+-		ret = btrfs_sync_log(trans, inode->root, &ctx2);
+-		if (ret)
+-			return BTRFS_NEED_TRANS_COMMIT;
+-		return BTRFS_DONT_NEED_TRANS_COMMIT;
+-	}
+-
+-	ASSERT(ctx);
+-	ret = btrfs_log_inode_parent(trans, inode, parent, 0, LLONG_MAX,
+-				     LOG_INODE_EXISTS, ctx);
+-	if (ret == BTRFS_NO_LOG_SYNC)
+-		return BTRFS_DONT_NEED_LOG_SYNC;
+-	else if (ret)
+-		return BTRFS_NEED_TRANS_COMMIT;
++	if (!inode_logged(trans, inode) &&
++	    (!old_dir || !inode_logged(trans, old_dir)))
++		return;
+ 
+-	return BTRFS_NEED_LOG_SYNC;
++	btrfs_init_log_ctx(&ctx, &inode->vfs_inode);
++	ctx.logging_new_name = true;
++	/*
++	 * We don't care about the return value. If we fail to log the new name
++	 * then we know the next attempt to sync the log will fallback to a full
++	 * transaction commit (due to a call to btrfs_set_log_full_commit()), so
++	 * we don't need to worry about getting a log committed that has an
++	 * inconsistent state after a rename operation.
++	 */
++	btrfs_log_inode_parent(trans, inode, parent, 0, LLONG_MAX,
++			       LOG_INODE_EXISTS, &ctx);
+ }
+ 
+diff --git a/fs/btrfs/tree-log.h b/fs/btrfs/tree-log.h
+index 132e43d29034e..ddfc6789d9bf5 100644
+--- a/fs/btrfs/tree-log.h
++++ b/fs/btrfs/tree-log.h
+@@ -16,6 +16,7 @@ struct btrfs_log_ctx {
+ 	int log_ret;
+ 	int log_transid;
+ 	bool log_new_dentries;
++	bool logging_new_name;
+ 	struct inode *inode;
+ 	struct list_head list;
+ };
+@@ -26,6 +27,7 @@ static inline void btrfs_init_log_ctx(struct btrfs_log_ctx *ctx,
+ 	ctx->log_ret = 0;
+ 	ctx->log_transid = 0;
+ 	ctx->log_new_dentries = false;
++	ctx->logging_new_name = false;
+ 	ctx->inode = inode;
+ 	INIT_LIST_HEAD(&ctx->list);
+ }
+@@ -67,16 +69,8 @@ void btrfs_record_unlink_dir(struct btrfs_trans_handle *trans,
+ 			     int for_rename);
+ void btrfs_record_snapshot_destroy(struct btrfs_trans_handle *trans,
+ 				   struct btrfs_inode *dir);
+-/* Return values for btrfs_log_new_name() */
+-enum {
+-	BTRFS_DONT_NEED_TRANS_COMMIT,
+-	BTRFS_NEED_TRANS_COMMIT,
+-	BTRFS_DONT_NEED_LOG_SYNC,
+-	BTRFS_NEED_LOG_SYNC,
+-};
+-int btrfs_log_new_name(struct btrfs_trans_handle *trans,
++void btrfs_log_new_name(struct btrfs_trans_handle *trans,
+ 			struct btrfs_inode *inode, struct btrfs_inode *old_dir,
+-			struct dentry *parent,
+-			bool sync_log, struct btrfs_log_ctx *ctx);
++			struct dentry *parent);
+ 
+ #endif
+diff --git a/include/acpi/acpi_bus.h b/include/acpi/acpi_bus.h
+index 4d67a67964fa3..1e5ae3b01eb2b 100644
+--- a/include/acpi/acpi_bus.h
++++ b/include/acpi/acpi_bus.h
+@@ -681,7 +681,8 @@ acpi_dev_get_first_match_dev(const char *hid, const char *uid, s64 hrv);
+ 
+ static inline void acpi_dev_put(struct acpi_device *adev)
+ {
+-	put_device(&adev->dev);
++	if (adev)
++		put_device(&adev->dev);
+ }
+ #else	/* CONFIG_ACPI */
+ 
+diff --git a/include/linux/mfd/rt5033-private.h b/include/linux/mfd/rt5033-private.h
+index f812105c538c8..f2271bfb3273f 100644
+--- a/include/linux/mfd/rt5033-private.h
++++ b/include/linux/mfd/rt5033-private.h
+@@ -200,13 +200,13 @@ enum rt5033_reg {
+ #define RT5033_REGULATOR_BUCK_VOLTAGE_MIN		1000000U
+ #define RT5033_REGULATOR_BUCK_VOLTAGE_MAX		3000000U
+ #define RT5033_REGULATOR_BUCK_VOLTAGE_STEP		100000U
+-#define RT5033_REGULATOR_BUCK_VOLTAGE_STEP_NUM		32
++#define RT5033_REGULATOR_BUCK_VOLTAGE_STEP_NUM		21
+ 
+ /* RT5033 regulator LDO output voltage uV */
+ #define RT5033_REGULATOR_LDO_VOLTAGE_MIN		1200000U
+ #define RT5033_REGULATOR_LDO_VOLTAGE_MAX		3000000U
+ #define RT5033_REGULATOR_LDO_VOLTAGE_STEP		100000U
+-#define RT5033_REGULATOR_LDO_VOLTAGE_STEP_NUM		32
++#define RT5033_REGULATOR_LDO_VOLTAGE_STEP_NUM		19
+ 
+ /* RT5033 regulator SAFE LDO output voltage uV */
+ #define RT5033_REGULATOR_SAFE_LDO_VOLTAGE		4900000U
+diff --git a/kernel/bpf/verifier.c b/kernel/bpf/verifier.c
+index aefd947947968..52c2b11a0b471 100644
+--- a/kernel/bpf/verifier.c
++++ b/kernel/bpf/verifier.c
+@@ -4346,6 +4346,27 @@ struct bpf_sanitize_info {
+ 	bool mask_to_left;
+ };
+ 
++static struct bpf_verifier_state *
++sanitize_speculative_path(struct bpf_verifier_env *env,
++			  const struct bpf_insn *insn,
++			  u32 next_idx, u32 curr_idx)
++{
++	struct bpf_verifier_state *branch;
++	struct bpf_reg_state *regs;
++
++	branch = push_stack(env, next_idx, curr_idx, true);
++	if (branch && insn) {
++		regs = branch->frame[branch->curframe]->regs;
++		if (BPF_SRC(insn->code) == BPF_K) {
++			mark_reg_unknown(env, regs, insn->dst_reg);
++		} else if (BPF_SRC(insn->code) == BPF_X) {
++			mark_reg_unknown(env, regs, insn->dst_reg);
++			mark_reg_unknown(env, regs, insn->src_reg);
++		}
++	}
++	return branch;
++}
++
+ static int sanitize_ptr_alu(struct bpf_verifier_env *env,
+ 			    struct bpf_insn *insn,
+ 			    const struct bpf_reg_state *ptr_reg,
+@@ -4429,12 +4450,26 @@ do_sim:
+ 		tmp = *dst_reg;
+ 		*dst_reg = *ptr_reg;
+ 	}
+-	ret = push_stack(env, env->insn_idx + 1, env->insn_idx, true);
++	ret = sanitize_speculative_path(env, NULL, env->insn_idx + 1,
++					env->insn_idx);
+ 	if (!ptr_is_dst_reg && ret)
+ 		*dst_reg = tmp;
+ 	return !ret ? REASON_STACK : 0;
+ }
+ 
++static void sanitize_mark_insn_seen(struct bpf_verifier_env *env)
++{
++	struct bpf_verifier_state *vstate = env->cur_state;
++
++	/* If we simulate paths under speculation, we don't update the
++	 * insn as 'seen' such that when we verify unreachable paths in
++	 * the non-speculative domain, sanitize_dead_code() can still
++	 * rewrite/sanitize them.
++	 */
++	if (!vstate->speculative)
++		env->insn_aux_data[env->insn_idx].seen = true;
++}
++
+ static int sanitize_err(struct bpf_verifier_env *env,
+ 			const struct bpf_insn *insn, int reason,
+ 			const struct bpf_reg_state *off_reg,
+@@ -6066,14 +6101,28 @@ static int check_cond_jmp_op(struct bpf_verifier_env *env,
+ 		if (err)
+ 			return err;
+ 	}
++
+ 	if (pred == 1) {
+-		/* only follow the goto, ignore fall-through */
++		/* Only follow the goto, ignore fall-through. If needed, push
++		 * the fall-through branch for simulation under speculative
++		 * execution.
++		 */
++		if (!env->allow_ptr_leaks &&
++		    !sanitize_speculative_path(env, insn, *insn_idx + 1,
++					       *insn_idx))
++			return -EFAULT;
+ 		*insn_idx += insn->off;
+ 		return 0;
+ 	} else if (pred == 0) {
+-		/* only follow fall-through branch, since
+-		 * that's where the program will go
++		/* Only follow the fall-through branch, since that's where the
++		 * program will go. If needed, push the goto branch for
++		 * simulation under speculative execution.
+ 		 */
++		if (!env->allow_ptr_leaks &&
++		    !sanitize_speculative_path(env, insn,
++					       *insn_idx + insn->off + 1,
++					       *insn_idx))
++			return -EFAULT;
+ 		return 0;
+ 	}
+ 
+@@ -7790,7 +7839,7 @@ static int do_check(struct bpf_verifier_env *env)
+ 		}
+ 
+ 		regs = cur_regs(env);
+-		env->insn_aux_data[env->insn_idx].seen = true;
++		sanitize_mark_insn_seen(env);
+ 		prev_insn_idx = env->insn_idx;
+ 
+ 		if (class == BPF_ALU || class == BPF_ALU64) {
+@@ -8025,7 +8074,7 @@ process_bpf_exit:
+ 					return err;
+ 
+ 				env->insn_idx++;
+-				env->insn_aux_data[env->insn_idx].seen = true;
++				sanitize_mark_insn_seen(env);
+ 			} else {
+ 				verbose(env, "invalid BPF_LD mode\n");
+ 				return -EINVAL;
+@@ -8304,6 +8353,7 @@ static int adjust_insn_aux_data(struct bpf_verifier_env *env,
+ {
+ 	struct bpf_insn_aux_data *new_data, *old_data = env->insn_aux_data;
+ 	struct bpf_insn *insn = new_prog->insnsi;
++	bool old_seen = old_data[off].seen;
+ 	u32 prog_len;
+ 	int i;
+ 
+@@ -8324,7 +8374,8 @@ static int adjust_insn_aux_data(struct bpf_verifier_env *env,
+ 	memcpy(new_data + off + cnt - 1, old_data + off,
+ 	       sizeof(struct bpf_insn_aux_data) * (prog_len - off - cnt + 1));
+ 	for (i = off; i < off + cnt - 1; i++) {
+-		new_data[i].seen = true;
++		/* Expand insni[off]'s seen count to the patched range. */
++		new_data[i].seen = old_seen;
+ 		new_data[i].zext_dst = insn_has_def32(env, insn + i);
+ 	}
+ 	env->insn_aux_data = new_data;
+diff --git a/net/bluetooth/hci_core.c b/net/bluetooth/hci_core.c
+index 37b585c9e857f..21a7ea9b70c8a 100644
+--- a/net/bluetooth/hci_core.c
++++ b/net/bluetooth/hci_core.c
+@@ -1672,6 +1672,14 @@ int hci_dev_do_close(struct hci_dev *hdev)
+ 
+ 	BT_DBG("%s %p", hdev->name, hdev);
+ 
++	if (!hci_dev_test_flag(hdev, HCI_UNREGISTER) &&
++	    !hci_dev_test_flag(hdev, HCI_USER_CHANNEL) &&
++	    test_bit(HCI_UP, &hdev->flags)) {
++		/* Execute vendor specific shutdown routine */
++		if (hdev->shutdown)
++			hdev->shutdown(hdev);
++	}
++
+ 	cancel_delayed_work(&hdev->power_off);
+ 
+ 	hci_request_cancel_all(hdev);
+@@ -1745,14 +1753,6 @@ int hci_dev_do_close(struct hci_dev *hdev)
+ 		clear_bit(HCI_INIT, &hdev->flags);
+ 	}
+ 
+-	if (!hci_dev_test_flag(hdev, HCI_UNREGISTER) &&
+-	    !hci_dev_test_flag(hdev, HCI_USER_CHANNEL) &&
+-	    test_bit(HCI_UP, &hdev->flags)) {
+-		/* Execute vendor specific shutdown routine */
+-		if (hdev->shutdown)
+-			hdev->shutdown(hdev);
+-	}
+-
+ 	/* flush cmd  work */
+ 	flush_work(&hdev->cmd_work);
+ 
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 99d6f4d1297ca..7dba091bc8617 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -2921,8 +2921,11 @@ skb_zerocopy_headlen(const struct sk_buff *from)
+ 
+ 	if (!from->head_frag ||
+ 	    skb_headlen(from) < L1_CACHE_BYTES ||
+-	    skb_shinfo(from)->nr_frags >= MAX_SKB_FRAGS)
++	    skb_shinfo(from)->nr_frags >= MAX_SKB_FRAGS) {
+ 		hlen = skb_headlen(from);
++		if (!hlen)
++			hlen = from->len;
++	}
+ 
+ 	if (skb_has_frag_list(from))
+ 		hlen = from->len;
+diff --git a/sound/soc/codecs/tlv320aic31xx.h b/sound/soc/codecs/tlv320aic31xx.h
+index cb024955c9784..73c5f6c8ed690 100644
+--- a/sound/soc/codecs/tlv320aic31xx.h
++++ b/sound/soc/codecs/tlv320aic31xx.h
+@@ -151,8 +151,8 @@ struct aic31xx_pdata {
+ #define AIC31XX_WORD_LEN_24BITS		0x02
+ #define AIC31XX_WORD_LEN_32BITS		0x03
+ #define AIC31XX_IFACE1_MASTER_MASK	GENMASK(3, 2)
+-#define AIC31XX_BCLK_MASTER		BIT(2)
+-#define AIC31XX_WCLK_MASTER		BIT(3)
++#define AIC31XX_BCLK_MASTER		BIT(3)
++#define AIC31XX_WCLK_MASTER		BIT(2)
+ 
+ /* AIC31XX_DATA_OFFSET */
+ #define AIC31XX_DATA_OFFSET_MASK	GENMASK(7, 0)
+diff --git a/tools/testing/selftests/bpf/test_verifier.c b/tools/testing/selftests/bpf/test_verifier.c
+index d27fd929abb90..43224c5ec1e9b 100644
+--- a/tools/testing/selftests/bpf/test_verifier.c
++++ b/tools/testing/selftests/bpf/test_verifier.c
+@@ -980,7 +980,7 @@ static void do_test_single(struct bpf_test *test, bool unpriv,
+ 		}
+ 	}
+ 
+-	if (test->insn_processed) {
++	if (!unpriv && test->insn_processed) {
+ 		uint32_t insn_processed;
+ 		char *proc;
+ 
+diff --git a/tools/testing/selftests/bpf/verifier/bounds.c b/tools/testing/selftests/bpf/verifier/bounds.c
+index d55f476f2237d..92c02e4a1b626 100644
+--- a/tools/testing/selftests/bpf/verifier/bounds.c
++++ b/tools/testing/selftests/bpf/verifier/bounds.c
+@@ -506,3 +506,68 @@
+ 	.errstr = "map_value pointer and 1000000000000",
+ 	.result = REJECT
+ },
++{
++	"bounds check mixed 32bit and 64bit arithmatic. test1",
++	.insns = {
++	BPF_MOV64_IMM(BPF_REG_0, 0),
++	BPF_MOV64_IMM(BPF_REG_1, -1),
++	BPF_ALU64_IMM(BPF_LSH, BPF_REG_1, 32),
++	BPF_ALU64_IMM(BPF_ADD, BPF_REG_1, 1),
++	/* r1 = 0xffffFFFF00000001 */
++	BPF_JMP32_IMM(BPF_JGT, BPF_REG_1, 1, 3),
++	/* check ALU64 op keeps 32bit bounds */
++	BPF_ALU64_IMM(BPF_ADD, BPF_REG_1, 1),
++	BPF_JMP32_IMM(BPF_JGT, BPF_REG_1, 2, 1),
++	BPF_JMP_A(1),
++	/* invalid ldx if bounds are lost above */
++	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_0, -1),
++	BPF_EXIT_INSN(),
++	},
++	.errstr_unpriv = "R0 invalid mem access 'inv'",
++	.result_unpriv = REJECT,
++	.result = ACCEPT
++},
++{
++	"bounds check mixed 32bit and 64bit arithmatic. test2",
++	.insns = {
++	BPF_MOV64_IMM(BPF_REG_0, 0),
++	BPF_MOV64_IMM(BPF_REG_1, -1),
++	BPF_ALU64_IMM(BPF_LSH, BPF_REG_1, 32),
++	BPF_ALU64_IMM(BPF_ADD, BPF_REG_1, 1),
++	/* r1 = 0xffffFFFF00000001 */
++	BPF_MOV64_IMM(BPF_REG_2, 3),
++	/* r1 = 0x2 */
++	BPF_ALU32_IMM(BPF_ADD, BPF_REG_1, 1),
++	/* check ALU32 op zero extends 64bit bounds */
++	BPF_JMP_REG(BPF_JGT, BPF_REG_1, BPF_REG_2, 1),
++	BPF_JMP_A(1),
++	/* invalid ldx if bounds are lost above */
++	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_0, -1),
++	BPF_EXIT_INSN(),
++	},
++	.errstr_unpriv = "R0 invalid mem access 'inv'",
++	.result_unpriv = REJECT,
++	.result = ACCEPT
++},
++{
++	"assigning 32bit bounds to 64bit for wA = 0, wB = wA",
++	.insns = {
++	BPF_LDX_MEM(BPF_W, BPF_REG_8, BPF_REG_1,
++		    offsetof(struct __sk_buff, data_end)),
++	BPF_LDX_MEM(BPF_W, BPF_REG_7, BPF_REG_1,
++		    offsetof(struct __sk_buff, data)),
++	BPF_MOV32_IMM(BPF_REG_9, 0),
++	BPF_MOV32_REG(BPF_REG_2, BPF_REG_9),
++	BPF_MOV64_REG(BPF_REG_6, BPF_REG_7),
++	BPF_ALU64_REG(BPF_ADD, BPF_REG_6, BPF_REG_2),
++	BPF_MOV64_REG(BPF_REG_3, BPF_REG_6),
++	BPF_ALU64_IMM(BPF_ADD, BPF_REG_3, 8),
++	BPF_JMP_REG(BPF_JGT, BPF_REG_3, BPF_REG_8, 1),
++	BPF_LDX_MEM(BPF_W, BPF_REG_5, BPF_REG_6, 0),
++	BPF_MOV64_IMM(BPF_REG_0, 0),
++	BPF_EXIT_INSN(),
++	},
++	.prog_type = BPF_PROG_TYPE_SCHED_CLS,
++	.result = ACCEPT,
++	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
++},
+diff --git a/tools/testing/selftests/bpf/verifier/dead_code.c b/tools/testing/selftests/bpf/verifier/dead_code.c
+index 50a8a63be4ac9..a7e60a773da60 100644
+--- a/tools/testing/selftests/bpf/verifier/dead_code.c
++++ b/tools/testing/selftests/bpf/verifier/dead_code.c
+@@ -8,6 +8,8 @@
+ 	BPF_JMP_IMM(BPF_JGE, BPF_REG_0, 10, -4),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R9 !read_ok",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ 	.retval = 7,
+ },
+diff --git a/tools/testing/selftests/bpf/verifier/jmp32.c b/tools/testing/selftests/bpf/verifier/jmp32.c
+index f0961c58581ea..f2fabf6ebc61c 100644
+--- a/tools/testing/selftests/bpf/verifier/jmp32.c
++++ b/tools/testing/selftests/bpf/verifier/jmp32.c
+@@ -72,6 +72,8 @@
+ 	BPF_LDX_MEM(BPF_B, BPF_REG_8, BPF_REG_9, 0),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R9 !read_ok",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ },
+ {
+@@ -135,6 +137,8 @@
+ 	BPF_LDX_MEM(BPF_B, BPF_REG_8, BPF_REG_9, 0),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R9 !read_ok",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ },
+ {
+@@ -198,6 +202,8 @@
+ 	BPF_LDX_MEM(BPF_B, BPF_REG_8, BPF_REG_9, 0),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R9 !read_ok",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ },
+ {
+@@ -265,6 +271,8 @@
+ 	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_0, 0),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R0 invalid mem access 'inv'",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ 	.retval = 2,
+ },
+@@ -333,6 +341,8 @@
+ 	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_0, 0),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R0 invalid mem access 'inv'",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ 	.retval = 2,
+ },
+@@ -401,6 +411,8 @@
+ 	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_0, 0),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R0 invalid mem access 'inv'",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ 	.retval = 2,
+ },
+@@ -469,6 +481,8 @@
+ 	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_0, 0),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R0 invalid mem access 'inv'",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ 	.retval = 2,
+ },
+@@ -537,6 +551,8 @@
+ 	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_0, 0),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R0 invalid mem access 'inv'",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ 	.retval = 2,
+ },
+@@ -605,6 +621,8 @@
+ 	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_0, 0),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R0 invalid mem access 'inv'",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ 	.retval = 2,
+ },
+@@ -673,6 +691,8 @@
+ 	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_0, 0),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R0 invalid mem access 'inv'",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ 	.retval = 2,
+ },
+@@ -741,6 +761,8 @@
+ 	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_0, 0),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R0 invalid mem access 'inv'",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ 	.retval = 2,
+ },
+diff --git a/tools/testing/selftests/bpf/verifier/jset.c b/tools/testing/selftests/bpf/verifier/jset.c
+index 8dcd4e0383d57..11fc68da735ea 100644
+--- a/tools/testing/selftests/bpf/verifier/jset.c
++++ b/tools/testing/selftests/bpf/verifier/jset.c
+@@ -82,8 +82,8 @@
+ 	BPF_EXIT_INSN(),
+ 	},
+ 	.prog_type = BPF_PROG_TYPE_SOCKET_FILTER,
+-	.retval_unpriv = 1,
+-	.result_unpriv = ACCEPT,
++	.errstr_unpriv = "R9 !read_ok",
++	.result_unpriv = REJECT,
+ 	.retval = 1,
+ 	.result = ACCEPT,
+ },
+@@ -141,7 +141,8 @@
+ 	BPF_EXIT_INSN(),
+ 	},
+ 	.prog_type = BPF_PROG_TYPE_SOCKET_FILTER,
+-	.result_unpriv = ACCEPT,
++	.errstr_unpriv = "R9 !read_ok",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ },
+ {
+@@ -162,6 +163,7 @@
+ 	BPF_EXIT_INSN(),
+ 	},
+ 	.prog_type = BPF_PROG_TYPE_SOCKET_FILTER,
+-	.result_unpriv = ACCEPT,
++	.errstr_unpriv = "R9 !read_ok",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ },
+diff --git a/tools/testing/selftests/bpf/verifier/unpriv.c b/tools/testing/selftests/bpf/verifier/unpriv.c
+index c3f6f650deb76..593f5b586e872 100644
+--- a/tools/testing/selftests/bpf/verifier/unpriv.c
++++ b/tools/testing/selftests/bpf/verifier/unpriv.c
+@@ -418,6 +418,8 @@
+ 	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_7, 0),
+ 	BPF_EXIT_INSN(),
+ 	},
++	.errstr_unpriv = "R7 invalid mem access 'inv'",
++	.result_unpriv = REJECT,
+ 	.result = ACCEPT,
+ 	.retval = 0,
+ },
+diff --git a/tools/testing/selftests/bpf/verifier/value_ptr_arith.c b/tools/testing/selftests/bpf/verifier/value_ptr_arith.c
+index 28d44e6aa0b7e..a8dab0f58462e 100644
+--- a/tools/testing/selftests/bpf/verifier/value_ptr_arith.c
++++ b/tools/testing/selftests/bpf/verifier/value_ptr_arith.c
+@@ -120,7 +120,7 @@
+ 	.fixup_map_array_48b = { 1 },
+ 	.result = ACCEPT,
+ 	.result_unpriv = REJECT,
+-	.errstr_unpriv = "R2 tried to add from different maps, paths or scalars",
++	.errstr_unpriv = "R2 pointer comparison prohibited",
+ 	.retval = 0,
+ },
+ {
+@@ -159,7 +159,8 @@
+ 	BPF_MOV64_IMM(BPF_REG_0, 0),
+ 	BPF_EXIT_INSN(),
+ 	// fake-dead code; targeted from branch A to
+-	// prevent dead code sanitization
++	// prevent dead code sanitization, rejected
++	// via branch B however
+ 	BPF_LDX_MEM(BPF_B, BPF_REG_0, BPF_REG_0, 0),
+ 	BPF_MOV64_IMM(BPF_REG_0, 0),
+ 	BPF_EXIT_INSN(),
+@@ -167,7 +168,7 @@
+ 	.fixup_map_array_48b = { 1 },
+ 	.result = ACCEPT,
+ 	.result_unpriv = REJECT,
+-	.errstr_unpriv = "R2 tried to add from different maps, paths or scalars",
++	.errstr_unpriv = "R0 invalid mem access 'inv'",
+ 	.retval = 0,
+ },
+ {
