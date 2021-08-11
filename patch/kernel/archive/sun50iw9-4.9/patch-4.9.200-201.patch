@@ -1,0 +1,3576 @@
+diff --git a/Makefile b/Makefile
+index 84410351b27c..4741bbdfaa10 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 200
++SUBLEVEL = 201
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/arch/x86/events/amd/ibs.c b/arch/x86/events/amd/ibs.c
+index 112e3c4636b4..5f72b473f3ed 100644
+--- a/arch/x86/events/amd/ibs.c
++++ b/arch/x86/events/amd/ibs.c
+@@ -388,7 +388,8 @@ static inline void perf_ibs_disable_event(struct perf_ibs *perf_ibs,
+ 					  struct hw_perf_event *hwc, u64 config)
+ {
+ 	config &= ~perf_ibs->cnt_mask;
+-	wrmsrl(hwc->config_base, config);
++	if (boot_cpu_data.x86 == 0x10)
++		wrmsrl(hwc->config_base, config);
+ 	config &= ~perf_ibs->enable_mask;
+ 	wrmsrl(hwc->config_base, config);
+ }
+@@ -563,7 +564,8 @@ static struct perf_ibs perf_ibs_op = {
+ 	},
+ 	.msr			= MSR_AMD64_IBSOPCTL,
+ 	.config_mask		= IBS_OP_CONFIG_MASK,
+-	.cnt_mask		= IBS_OP_MAX_CNT,
++	.cnt_mask		= IBS_OP_MAX_CNT | IBS_OP_CUR_CNT |
++				  IBS_OP_CUR_CNT_RAND,
+ 	.enable_mask		= IBS_OP_ENABLE,
+ 	.valid_mask		= IBS_OP_VAL,
+ 	.max_period		= IBS_OP_MAX_CNT << 4,
+@@ -624,7 +626,7 @@ fail:
+ 	if (event->attr.sample_type & PERF_SAMPLE_RAW)
+ 		offset_max = perf_ibs->offset_max;
+ 	else if (check_rip)
+-		offset_max = 2;
++		offset_max = 3;
+ 	else
+ 		offset_max = 1;
+ 	do {
+diff --git a/arch/x86/include/asm/smp.h b/arch/x86/include/asm/smp.h
+index d25fb6beb2f0..dcaf7100b69c 100644
+--- a/arch/x86/include/asm/smp.h
++++ b/arch/x86/include/asm/smp.h
+@@ -177,16 +177,6 @@ extern int safe_smp_processor_id(void);
+ #endif
+ 
+ #ifdef CONFIG_X86_LOCAL_APIC
+-
+-#ifndef CONFIG_X86_64
+-static inline int logical_smp_processor_id(void)
+-{
+-	/* we don't want to mark this access volatile - bad code generation */
+-	return GET_APIC_LOGICAL_ID(apic_read(APIC_LDR));
+-}
+-
+-#endif
+-
+ extern int hard_smp_processor_id(void);
+ 
+ #else /* CONFIG_X86_LOCAL_APIC */
+diff --git a/arch/x86/kernel/apic/apic.c b/arch/x86/kernel/apic/apic.c
+index 232350519062..722a76b88bcc 100644
+--- a/arch/x86/kernel/apic/apic.c
++++ b/arch/x86/kernel/apic/apic.c
+@@ -1281,6 +1281,56 @@ static void lapic_setup_esr(void)
+ 			oldvalue, value);
+ }
+ 
++static void apic_pending_intr_clear(void)
++{
++	long long max_loops = cpu_khz ? cpu_khz : 1000000;
++	unsigned long long tsc = 0, ntsc;
++	unsigned int value, queued;
++	int i, j, acked = 0;
++
++	if (boot_cpu_has(X86_FEATURE_TSC))
++		tsc = rdtsc();
++	/*
++	 * After a crash, we no longer service the interrupts and a pending
++	 * interrupt from previous kernel might still have ISR bit set.
++	 *
++	 * Most probably by now CPU has serviced that pending interrupt and
++	 * it might not have done the ack_APIC_irq() because it thought,
++	 * interrupt came from i8259 as ExtInt. LAPIC did not get EOI so it
++	 * does not clear the ISR bit and cpu thinks it has already serivced
++	 * the interrupt. Hence a vector might get locked. It was noticed
++	 * for timer irq (vector 0x31). Issue an extra EOI to clear ISR.
++	 */
++	do {
++		queued = 0;
++		for (i = APIC_ISR_NR - 1; i >= 0; i--)
++			queued |= apic_read(APIC_IRR + i*0x10);
++
++		for (i = APIC_ISR_NR - 1; i >= 0; i--) {
++			value = apic_read(APIC_ISR + i*0x10);
++			for (j = 31; j >= 0; j--) {
++				if (value & (1<<j)) {
++					ack_APIC_irq();
++					acked++;
++				}
++			}
++		}
++		if (acked > 256) {
++			printk(KERN_ERR "LAPIC pending interrupts after %d EOI\n",
++			       acked);
++			break;
++		}
++		if (queued) {
++			if (boot_cpu_has(X86_FEATURE_TSC) && cpu_khz) {
++				ntsc = rdtsc();
++				max_loops = (cpu_khz << 10) - (ntsc - tsc);
++			} else
++				max_loops--;
++		}
++	} while (queued && max_loops > 0);
++	WARN_ON(max_loops <= 0);
++}
++
+ /**
+  * setup_local_APIC - setup the local APIC
+  *
+@@ -1290,13 +1340,8 @@ static void lapic_setup_esr(void)
+ void setup_local_APIC(void)
+ {
+ 	int cpu = smp_processor_id();
+-	unsigned int value, queued;
+-	int i, j, acked = 0;
+-	unsigned long long tsc = 0, ntsc;
+-	long long max_loops = cpu_khz ? cpu_khz : 1000000;
++	unsigned int value;
+ 
+-	if (boot_cpu_has(X86_FEATURE_TSC))
+-		tsc = rdtsc();
+ 
+ 	if (disable_apic) {
+ 		disable_ioapic_support();
+@@ -1336,16 +1381,21 @@ void setup_local_APIC(void)
+ 	apic->init_apic_ldr();
+ 
+ #ifdef CONFIG_X86_32
+-	/*
+-	 * APIC LDR is initialized.  If logical_apicid mapping was
+-	 * initialized during get_smp_config(), make sure it matches the
+-	 * actual value.
+-	 */
+-	i = early_per_cpu(x86_cpu_to_logical_apicid, cpu);
+-	WARN_ON(i != BAD_APICID && i != logical_smp_processor_id());
+-	/* always use the value from LDR */
+-	early_per_cpu(x86_cpu_to_logical_apicid, cpu) =
+-		logical_smp_processor_id();
++	if (apic->dest_logical) {
++		int logical_apicid, ldr_apicid;
++
++		/*
++		 * APIC LDR is initialized.  If logical_apicid mapping was
++		 * initialized during get_smp_config(), make sure it matches
++		 * the actual value.
++		 */
++		logical_apicid = early_per_cpu(x86_cpu_to_logical_apicid, cpu);
++		ldr_apicid = GET_APIC_LOGICAL_ID(apic_read(APIC_LDR));
++		if (logical_apicid != BAD_APICID)
++			WARN_ON(logical_apicid != ldr_apicid);
++		/* Always use the value from LDR. */
++		early_per_cpu(x86_cpu_to_logical_apicid, cpu) = ldr_apicid;
++	}
+ #endif
+ 
+ 	/*
+@@ -1356,45 +1406,7 @@ void setup_local_APIC(void)
+ 	value &= ~APIC_TPRI_MASK;
+ 	apic_write(APIC_TASKPRI, value);
+ 
+-	/*
+-	 * After a crash, we no longer service the interrupts and a pending
+-	 * interrupt from previous kernel might still have ISR bit set.
+-	 *
+-	 * Most probably by now CPU has serviced that pending interrupt and
+-	 * it might not have done the ack_APIC_irq() because it thought,
+-	 * interrupt came from i8259 as ExtInt. LAPIC did not get EOI so it
+-	 * does not clear the ISR bit and cpu thinks it has already serivced
+-	 * the interrupt. Hence a vector might get locked. It was noticed
+-	 * for timer irq (vector 0x31). Issue an extra EOI to clear ISR.
+-	 */
+-	do {
+-		queued = 0;
+-		for (i = APIC_ISR_NR - 1; i >= 0; i--)
+-			queued |= apic_read(APIC_IRR + i*0x10);
+-
+-		for (i = APIC_ISR_NR - 1; i >= 0; i--) {
+-			value = apic_read(APIC_ISR + i*0x10);
+-			for (j = 31; j >= 0; j--) {
+-				if (value & (1<<j)) {
+-					ack_APIC_irq();
+-					acked++;
+-				}
+-			}
+-		}
+-		if (acked > 256) {
+-			printk(KERN_ERR "LAPIC pending interrupts after %d EOI\n",
+-			       acked);
+-			break;
+-		}
+-		if (queued) {
+-			if (boot_cpu_has(X86_FEATURE_TSC) && cpu_khz) {
+-				ntsc = rdtsc();
+-				max_loops = (cpu_khz << 10) - (ntsc - tsc);
+-			} else
+-				max_loops--;
+-		}
+-	} while (queued && max_loops > 0);
+-	WARN_ON(max_loops <= 0);
++	apic_pending_intr_clear();
+ 
+ 	/*
+ 	 * Now that we are all set up, enable the APIC
+diff --git a/drivers/dma/xilinx/xilinx_dma.c b/drivers/dma/xilinx/xilinx_dma.c
+index 8288fe4d17c3..cd271f782605 100644
+--- a/drivers/dma/xilinx/xilinx_dma.c
++++ b/drivers/dma/xilinx/xilinx_dma.c
+@@ -72,6 +72,9 @@
+ #define XILINX_DMA_DMACR_CIRC_EN		BIT(1)
+ #define XILINX_DMA_DMACR_RUNSTOP		BIT(0)
+ #define XILINX_DMA_DMACR_FSYNCSRC_MASK		GENMASK(6, 5)
++#define XILINX_DMA_DMACR_DELAY_MASK		GENMASK(31, 24)
++#define XILINX_DMA_DMACR_FRAME_COUNT_MASK	GENMASK(23, 16)
++#define XILINX_DMA_DMACR_MASTER_MASK		GENMASK(11, 8)
+ 
+ #define XILINX_DMA_REG_DMASR			0x0004
+ #define XILINX_DMA_DMASR_EOL_LATE_ERR		BIT(15)
+@@ -2054,8 +2057,10 @@ int xilinx_vdma_channel_set_config(struct dma_chan *dchan,
+ 	chan->config.gen_lock = cfg->gen_lock;
+ 	chan->config.master = cfg->master;
+ 
++	dmacr &= ~XILINX_DMA_DMACR_GENLOCK_EN;
+ 	if (cfg->gen_lock && chan->genlock) {
+ 		dmacr |= XILINX_DMA_DMACR_GENLOCK_EN;
++		dmacr &= ~XILINX_DMA_DMACR_MASTER_MASK;
+ 		dmacr |= cfg->master << XILINX_DMA_DMACR_MASTER_SHIFT;
+ 	}
+ 
+@@ -2069,11 +2074,13 @@ int xilinx_vdma_channel_set_config(struct dma_chan *dchan,
+ 	chan->config.delay = cfg->delay;
+ 
+ 	if (cfg->coalesc <= XILINX_DMA_DMACR_FRAME_COUNT_MAX) {
++		dmacr &= ~XILINX_DMA_DMACR_FRAME_COUNT_MASK;
+ 		dmacr |= cfg->coalesc << XILINX_DMA_DMACR_FRAME_COUNT_SHIFT;
+ 		chan->config.coalesc = cfg->coalesc;
+ 	}
+ 
+ 	if (cfg->delay <= XILINX_DMA_DMACR_DELAY_MAX) {
++		dmacr &= ~XILINX_DMA_DMACR_DELAY_MASK;
+ 		dmacr |= cfg->delay << XILINX_DMA_DMACR_DELAY_SHIFT;
+ 		chan->config.delay = cfg->delay;
+ 	}
+diff --git a/drivers/gpu/drm/drm_gem.c b/drivers/gpu/drm/drm_gem.c
+index 48e99ab525c3..ae5c0952a7a3 100644
+--- a/drivers/gpu/drm/drm_gem.c
++++ b/drivers/gpu/drm/drm_gem.c
+@@ -996,6 +996,15 @@ int drm_gem_mmap(struct file *filp, struct vm_area_struct *vma)
+ 		return -EACCES;
+ 	}
+ 
++	if (node->readonly) {
++		if (vma->vm_flags & VM_WRITE) {
++			drm_gem_object_unreference_unlocked(obj);
++			return -EINVAL;
++		}
++
++		vma->vm_flags &= ~VM_MAYWRITE;
++	}
++
+ 	ret = drm_gem_mmap_obj(obj, drm_vma_node_size(node) << PAGE_SHIFT,
+ 			       vma);
+ 
+diff --git a/drivers/gpu/drm/i915/i915_cmd_parser.c b/drivers/gpu/drm/i915/i915_cmd_parser.c
+index 70980f82a15b..1e104518192d 100644
+--- a/drivers/gpu/drm/i915/i915_cmd_parser.c
++++ b/drivers/gpu/drm/i915/i915_cmd_parser.c
+@@ -26,6 +26,7 @@
+  */
+ 
+ #include "i915_drv.h"
++#include "intel_ringbuffer.h"
+ 
+ /**
+  * DOC: batch buffer command parser
+@@ -50,13 +51,11 @@
+  * granting userspace undue privileges. There are three categories of privilege.
+  *
+  * First, commands which are explicitly defined as privileged or which should
+- * only be used by the kernel driver. The parser generally rejects such
+- * commands, though it may allow some from the drm master process.
++ * only be used by the kernel driver. The parser rejects such commands
+  *
+  * Second, commands which access registers. To support correct/enhanced
+  * userspace functionality, particularly certain OpenGL extensions, the parser
+- * provides a whitelist of registers which userspace may safely access (for both
+- * normal and drm master processes).
++ * provides a whitelist of registers which userspace may safely access
+  *
+  * Third, commands which access privileged memory (i.e. GGTT, HWS page, etc).
+  * The parser always rejects such commands.
+@@ -81,11 +80,104 @@
+  * in the per-engine command tables.
+  *
+  * Other command table entries map fairly directly to high level categories
+- * mentioned above: rejected, master-only, register whitelist. The parser
+- * implements a number of checks, including the privileged memory checks, via a
+- * general bitmasking mechanism.
++ * mentioned above: rejected, register whitelist. The parser implements a number
++ * of checks, including the privileged memory checks, via a general bitmasking
++ * mechanism.
+  */
+ 
++/*
++ * A command that requires special handling by the command parser.
++ */
++struct drm_i915_cmd_descriptor {
++	/*
++	 * Flags describing how the command parser processes the command.
++	 *
++	 * CMD_DESC_FIXED: The command has a fixed length if this is set,
++	 *                 a length mask if not set
++	 * CMD_DESC_SKIP: The command is allowed but does not follow the
++	 *                standard length encoding for the opcode range in
++	 *                which it falls
++	 * CMD_DESC_REJECT: The command is never allowed
++	 * CMD_DESC_REGISTER: The command should be checked against the
++	 *                    register whitelist for the appropriate ring
++	 */
++	u32 flags;
++#define CMD_DESC_FIXED    (1<<0)
++#define CMD_DESC_SKIP     (1<<1)
++#define CMD_DESC_REJECT   (1<<2)
++#define CMD_DESC_REGISTER (1<<3)
++#define CMD_DESC_BITMASK  (1<<4)
++
++	/*
++	 * The command's unique identification bits and the bitmask to get them.
++	 * This isn't strictly the opcode field as defined in the spec and may
++	 * also include type, subtype, and/or subop fields.
++	 */
++	struct {
++		u32 value;
++		u32 mask;
++	} cmd;
++
++	/*
++	 * The command's length. The command is either fixed length (i.e. does
++	 * not include a length field) or has a length field mask. The flag
++	 * CMD_DESC_FIXED indicates a fixed length. Otherwise, the command has
++	 * a length mask. All command entries in a command table must include
++	 * length information.
++	 */
++	union {
++		u32 fixed;
++		u32 mask;
++	} length;
++
++	/*
++	 * Describes where to find a register address in the command to check
++	 * against the ring's register whitelist. Only valid if flags has the
++	 * CMD_DESC_REGISTER bit set.
++	 *
++	 * A non-zero step value implies that the command may access multiple
++	 * registers in sequence (e.g. LRI), in that case step gives the
++	 * distance in dwords between individual offset fields.
++	 */
++	struct {
++		u32 offset;
++		u32 mask;
++		u32 step;
++	} reg;
++
++#define MAX_CMD_DESC_BITMASKS 3
++	/*
++	 * Describes command checks where a particular dword is masked and
++	 * compared against an expected value. If the command does not match
++	 * the expected value, the parser rejects it. Only valid if flags has
++	 * the CMD_DESC_BITMASK bit set. Only entries where mask is non-zero
++	 * are valid.
++	 *
++	 * If the check specifies a non-zero condition_mask then the parser
++	 * only performs the check when the bits specified by condition_mask
++	 * are non-zero.
++	 */
++	struct {
++		u32 offset;
++		u32 mask;
++		u32 expected;
++		u32 condition_offset;
++		u32 condition_mask;
++	} bits[MAX_CMD_DESC_BITMASKS];
++};
++
++/*
++ * A table of commands requiring special handling by the command parser.
++ *
++ * Each engine has an array of tables. Each table consists of an array of
++ * command descriptors, which must be sorted with command opcodes in
++ * ascending order.
++ */
++struct drm_i915_cmd_table {
++	const struct drm_i915_cmd_descriptor *table;
++	int count;
++};
++
+ #define STD_MI_OPCODE_SHIFT  (32 - 9)
+ #define STD_3D_OPCODE_SHIFT  (32 - 16)
+ #define STD_2D_OPCODE_SHIFT  (32 - 10)
+@@ -95,7 +187,7 @@
+ #define CMD(op, opm, f, lm, fl, ...)				\
+ 	{							\
+ 		.flags = (fl) | ((f) ? CMD_DESC_FIXED : 0),	\
+-		.cmd = { (op), ~0u << (opm) },			\
++		.cmd = { (op & ~0u << (opm)), ~0u << (opm) },	\
+ 		.length = { (lm) },				\
+ 		__VA_ARGS__					\
+ 	}
+@@ -110,14 +202,13 @@
+ #define R CMD_DESC_REJECT
+ #define W CMD_DESC_REGISTER
+ #define B CMD_DESC_BITMASK
+-#define M CMD_DESC_MASTER
+ 
+ /*            Command                          Mask   Fixed Len   Action
+ 	      ---------------------------------------------------------- */
+-static const struct drm_i915_cmd_descriptor common_cmds[] = {
++static const struct drm_i915_cmd_descriptor gen7_common_cmds[] = {
+ 	CMD(  MI_NOOP,                          SMI,    F,  1,      S  ),
+ 	CMD(  MI_USER_INTERRUPT,                SMI,    F,  1,      R  ),
+-	CMD(  MI_WAIT_FOR_EVENT,                SMI,    F,  1,      M  ),
++	CMD(  MI_WAIT_FOR_EVENT,                SMI,    F,  1,      R  ),
+ 	CMD(  MI_ARB_CHECK,                     SMI,    F,  1,      S  ),
+ 	CMD(  MI_REPORT_HEAD,                   SMI,    F,  1,      S  ),
+ 	CMD(  MI_SUSPEND_FLUSH,                 SMI,    F,  1,      S  ),
+@@ -147,7 +238,7 @@ static const struct drm_i915_cmd_descriptor common_cmds[] = {
+ 	CMD(  MI_BATCH_BUFFER_START,            SMI,   !F,  0xFF,   S  ),
+ };
+ 
+-static const struct drm_i915_cmd_descriptor render_cmds[] = {
++static const struct drm_i915_cmd_descriptor gen7_render_cmds[] = {
+ 	CMD(  MI_FLUSH,                         SMI,    F,  1,      S  ),
+ 	CMD(  MI_ARB_ON_OFF,                    SMI,    F,  1,      R  ),
+ 	CMD(  MI_PREDICATE,                     SMI,    F,  1,      S  ),
+@@ -214,7 +305,7 @@ static const struct drm_i915_cmd_descriptor hsw_render_cmds[] = {
+ 	CMD(  MI_URB_ATOMIC_ALLOC,              SMI,    F,  1,      S  ),
+ 	CMD(  MI_SET_APPID,                     SMI,    F,  1,      S  ),
+ 	CMD(  MI_RS_CONTEXT,                    SMI,    F,  1,      S  ),
+-	CMD(  MI_LOAD_SCAN_LINES_INCL,          SMI,   !F,  0x3F,   M  ),
++	CMD(  MI_LOAD_SCAN_LINES_INCL,          SMI,   !F,  0x3F,   R  ),
+ 	CMD(  MI_LOAD_SCAN_LINES_EXCL,          SMI,   !F,  0x3F,   R  ),
+ 	CMD(  MI_LOAD_REGISTER_REG,             SMI,   !F,  0xFF,   W,
+ 	      .reg = { .offset = 1, .mask = 0x007FFFFC, .step = 1 }    ),
+@@ -231,7 +322,7 @@ static const struct drm_i915_cmd_descriptor hsw_render_cmds[] = {
+ 	CMD(  GFX_OP_3DSTATE_BINDING_TABLE_EDIT_PS,  S3D,   !F,  0x1FF,  S  ),
+ };
+ 
+-static const struct drm_i915_cmd_descriptor video_cmds[] = {
++static const struct drm_i915_cmd_descriptor gen7_video_cmds[] = {
+ 	CMD(  MI_ARB_ON_OFF,                    SMI,    F,  1,      R  ),
+ 	CMD(  MI_SET_APPID,                     SMI,    F,  1,      S  ),
+ 	CMD(  MI_STORE_DWORD_IMM,               SMI,   !F,  0xFF,   B,
+@@ -275,7 +366,7 @@ static const struct drm_i915_cmd_descriptor video_cmds[] = {
+ 	CMD(  MFX_WAIT,                         SMFX,   F,  1,      S  ),
+ };
+ 
+-static const struct drm_i915_cmd_descriptor vecs_cmds[] = {
++static const struct drm_i915_cmd_descriptor gen7_vecs_cmds[] = {
+ 	CMD(  MI_ARB_ON_OFF,                    SMI,    F,  1,      R  ),
+ 	CMD(  MI_SET_APPID,                     SMI,    F,  1,      S  ),
+ 	CMD(  MI_STORE_DWORD_IMM,               SMI,   !F,  0xFF,   B,
+@@ -313,7 +404,7 @@ static const struct drm_i915_cmd_descriptor vecs_cmds[] = {
+ 	      }},						       ),
+ };
+ 
+-static const struct drm_i915_cmd_descriptor blt_cmds[] = {
++static const struct drm_i915_cmd_descriptor gen7_blt_cmds[] = {
+ 	CMD(  MI_DISPLAY_FLIP,                  SMI,   !F,  0xFF,   R  ),
+ 	CMD(  MI_STORE_DWORD_IMM,               SMI,   !F,  0x3FF,  B,
+ 	      .bits = {{
+@@ -347,10 +438,64 @@ static const struct drm_i915_cmd_descriptor blt_cmds[] = {
+ };
+ 
+ static const struct drm_i915_cmd_descriptor hsw_blt_cmds[] = {
+-	CMD(  MI_LOAD_SCAN_LINES_INCL,          SMI,   !F,  0x3F,   M  ),
++	CMD(  MI_LOAD_SCAN_LINES_INCL,          SMI,   !F,  0x3F,   R  ),
+ 	CMD(  MI_LOAD_SCAN_LINES_EXCL,          SMI,   !F,  0x3F,   R  ),
+ };
+ 
++/*
++ * For Gen9 we can still rely on the h/w to enforce cmd security, and only
++ * need to re-enforce the register access checks. We therefore only need to
++ * teach the cmdparser how to find the end of each command, and identify
++ * register accesses. The table doesn't need to reject any commands, and so
++ * the only commands listed here are:
++ *   1) Those that touch registers
++ *   2) Those that do not have the default 8-bit length
++ *
++ * Note that the default MI length mask chosen for this table is 0xFF, not
++ * the 0x3F used on older devices. This is because the vast majority of MI
++ * cmds on Gen9 use a standard 8-bit Length field.
++ * All the Gen9 blitter instructions are standard 0xFF length mask, and
++ * none allow access to non-general registers, so in fact no BLT cmds are
++ * included in the table at all.
++ *
++ */
++static const struct drm_i915_cmd_descriptor gen9_blt_cmds[] = {
++	CMD(  MI_NOOP,                          SMI,    F,  1,      S  ),
++	CMD(  MI_USER_INTERRUPT,                SMI,    F,  1,      S  ),
++	CMD(  MI_WAIT_FOR_EVENT,                SMI,    F,  1,      S  ),
++	CMD(  MI_FLUSH,                         SMI,    F,  1,      S  ),
++	CMD(  MI_ARB_CHECK,                     SMI,    F,  1,      S  ),
++	CMD(  MI_REPORT_HEAD,                   SMI,    F,  1,      S  ),
++	CMD(  MI_ARB_ON_OFF,                    SMI,    F,  1,      S  ),
++	CMD(  MI_SUSPEND_FLUSH,                 SMI,    F,  1,      S  ),
++	CMD(  MI_LOAD_SCAN_LINES_INCL,          SMI,   !F,  0x3F,   S  ),
++	CMD(  MI_LOAD_SCAN_LINES_EXCL,          SMI,   !F,  0x3F,   S  ),
++	CMD(  MI_STORE_DWORD_IMM,               SMI,   !F,  0x3FF,  S  ),
++	CMD(  MI_LOAD_REGISTER_IMM(1),          SMI,   !F,  0xFF,   W,
++	      .reg = { .offset = 1, .mask = 0x007FFFFC, .step = 2 }    ),
++	CMD(  MI_UPDATE_GTT,                    SMI,   !F,  0x3FF,  S  ),
++	CMD(  MI_STORE_REGISTER_MEM_GEN8,       SMI,    F,  4,      W,
++	      .reg = { .offset = 1, .mask = 0x007FFFFC }               ),
++	CMD(  MI_FLUSH_DW,                      SMI,   !F,  0x3F,   S  ),
++	CMD(  MI_LOAD_REGISTER_MEM_GEN8,        SMI,    F,  4,      W,
++	      .reg = { .offset = 1, .mask = 0x007FFFFC }               ),
++	CMD(  MI_LOAD_REGISTER_REG,             SMI,    !F,  0xFF,  W,
++	      .reg = { .offset = 1, .mask = 0x007FFFFC, .step = 1 }    ),
++
++	/*
++	 * We allow BB_START but apply further checks. We just sanitize the
++	 * basic fields here.
++	 */
++#define MI_BB_START_OPERAND_MASK   GENMASK(SMI-1, 0)
++#define MI_BB_START_OPERAND_EXPECT (MI_BATCH_PPGTT_HSW | 1)
++	CMD(  MI_BATCH_BUFFER_START_GEN8,       SMI,    !F,  0xFF,  B,
++	      .bits = {{
++			.offset = 0,
++			.mask = MI_BB_START_OPERAND_MASK,
++			.expected = MI_BB_START_OPERAND_EXPECT,
++	      }},						       ),
++};
++
+ static const struct drm_i915_cmd_descriptor noop_desc =
+ 	CMD(MI_NOOP, SMI, F, 1, S);
+ 
+@@ -364,40 +509,44 @@ static const struct drm_i915_cmd_descriptor noop_desc =
+ #undef R
+ #undef W
+ #undef B
+-#undef M
+ 
+-static const struct drm_i915_cmd_table gen7_render_cmds[] = {
+-	{ common_cmds, ARRAY_SIZE(common_cmds) },
+-	{ render_cmds, ARRAY_SIZE(render_cmds) },
++static const struct drm_i915_cmd_table gen7_render_cmd_table[] = {
++	{ gen7_common_cmds, ARRAY_SIZE(gen7_common_cmds) },
++	{ gen7_render_cmds, ARRAY_SIZE(gen7_render_cmds) },
+ };
+ 
+-static const struct drm_i915_cmd_table hsw_render_ring_cmds[] = {
+-	{ common_cmds, ARRAY_SIZE(common_cmds) },
+-	{ render_cmds, ARRAY_SIZE(render_cmds) },
++static const struct drm_i915_cmd_table hsw_render_ring_cmd_table[] = {
++	{ gen7_common_cmds, ARRAY_SIZE(gen7_common_cmds) },
++	{ gen7_render_cmds, ARRAY_SIZE(gen7_render_cmds) },
+ 	{ hsw_render_cmds, ARRAY_SIZE(hsw_render_cmds) },
+ };
+ 
+-static const struct drm_i915_cmd_table gen7_video_cmds[] = {
+-	{ common_cmds, ARRAY_SIZE(common_cmds) },
+-	{ video_cmds, ARRAY_SIZE(video_cmds) },
++static const struct drm_i915_cmd_table gen7_video_cmd_table[] = {
++	{ gen7_common_cmds, ARRAY_SIZE(gen7_common_cmds) },
++	{ gen7_video_cmds, ARRAY_SIZE(gen7_video_cmds) },
+ };
+ 
+-static const struct drm_i915_cmd_table hsw_vebox_cmds[] = {
+-	{ common_cmds, ARRAY_SIZE(common_cmds) },
+-	{ vecs_cmds, ARRAY_SIZE(vecs_cmds) },
++static const struct drm_i915_cmd_table hsw_vebox_cmd_table[] = {
++	{ gen7_common_cmds, ARRAY_SIZE(gen7_common_cmds) },
++	{ gen7_vecs_cmds, ARRAY_SIZE(gen7_vecs_cmds) },
+ };
+ 
+-static const struct drm_i915_cmd_table gen7_blt_cmds[] = {
+-	{ common_cmds, ARRAY_SIZE(common_cmds) },
+-	{ blt_cmds, ARRAY_SIZE(blt_cmds) },
++static const struct drm_i915_cmd_table gen7_blt_cmd_table[] = {
++	{ gen7_common_cmds, ARRAY_SIZE(gen7_common_cmds) },
++	{ gen7_blt_cmds, ARRAY_SIZE(gen7_blt_cmds) },
+ };
+ 
+-static const struct drm_i915_cmd_table hsw_blt_ring_cmds[] = {
+-	{ common_cmds, ARRAY_SIZE(common_cmds) },
+-	{ blt_cmds, ARRAY_SIZE(blt_cmds) },
++static const struct drm_i915_cmd_table hsw_blt_ring_cmd_table[] = {
++	{ gen7_common_cmds, ARRAY_SIZE(gen7_common_cmds) },
++	{ gen7_blt_cmds, ARRAY_SIZE(gen7_blt_cmds) },
+ 	{ hsw_blt_cmds, ARRAY_SIZE(hsw_blt_cmds) },
+ };
+ 
++static const struct drm_i915_cmd_table gen9_blt_cmd_table[] = {
++	{ gen9_blt_cmds, ARRAY_SIZE(gen9_blt_cmds) },
++};
++
++
+ /*
+  * Register whitelists, sorted by increasing register offset.
+  */
+@@ -450,7 +599,6 @@ static const struct drm_i915_reg_descriptor gen7_render_regs[] = {
+ 	REG64(PS_INVOCATION_COUNT),
+ 	REG64(PS_DEPTH_COUNT),
+ 	REG64_IDX(RING_TIMESTAMP, RENDER_RING_BASE),
+-	REG32(OACONTROL), /* Only allowed for LRI and SRM. See below. */
+ 	REG64(MI_PREDICATE_SRC0),
+ 	REG64(MI_PREDICATE_SRC1),
+ 	REG32(GEN7_3DPRIM_END_OFFSET),
+@@ -514,17 +662,27 @@ static const struct drm_i915_reg_descriptor gen7_blt_regs[] = {
+ 	REG64_IDX(RING_TIMESTAMP, BLT_RING_BASE),
+ };
+ 
+-static const struct drm_i915_reg_descriptor ivb_master_regs[] = {
+-	REG32(FORCEWAKE_MT),
+-	REG32(DERRMR),
+-	REG32(GEN7_PIPE_DE_LOAD_SL(PIPE_A)),
+-	REG32(GEN7_PIPE_DE_LOAD_SL(PIPE_B)),
+-	REG32(GEN7_PIPE_DE_LOAD_SL(PIPE_C)),
+-};
+-
+-static const struct drm_i915_reg_descriptor hsw_master_regs[] = {
+-	REG32(FORCEWAKE_MT),
+-	REG32(DERRMR),
++static const struct drm_i915_reg_descriptor gen9_blt_regs[] = {
++	REG64_IDX(RING_TIMESTAMP, RENDER_RING_BASE),
++	REG64_IDX(RING_TIMESTAMP, BSD_RING_BASE),
++	REG32(BCS_SWCTRL),
++	REG64_IDX(RING_TIMESTAMP, BLT_RING_BASE),
++	REG64_IDX(BCS_GPR, 0),
++	REG64_IDX(BCS_GPR, 1),
++	REG64_IDX(BCS_GPR, 2),
++	REG64_IDX(BCS_GPR, 3),
++	REG64_IDX(BCS_GPR, 4),
++	REG64_IDX(BCS_GPR, 5),
++	REG64_IDX(BCS_GPR, 6),
++	REG64_IDX(BCS_GPR, 7),
++	REG64_IDX(BCS_GPR, 8),
++	REG64_IDX(BCS_GPR, 9),
++	REG64_IDX(BCS_GPR, 10),
++	REG64_IDX(BCS_GPR, 11),
++	REG64_IDX(BCS_GPR, 12),
++	REG64_IDX(BCS_GPR, 13),
++	REG64_IDX(BCS_GPR, 14),
++	REG64_IDX(BCS_GPR, 15),
+ };
+ 
+ #undef REG64
+@@ -533,33 +691,32 @@ static const struct drm_i915_reg_descriptor hsw_master_regs[] = {
+ struct drm_i915_reg_table {
+ 	const struct drm_i915_reg_descriptor *regs;
+ 	int num_regs;
+-	bool master;
+ };
+ 
+ static const struct drm_i915_reg_table ivb_render_reg_tables[] = {
+-	{ gen7_render_regs, ARRAY_SIZE(gen7_render_regs), false },
+-	{ ivb_master_regs, ARRAY_SIZE(ivb_master_regs), true },
++	{ gen7_render_regs, ARRAY_SIZE(gen7_render_regs) },
+ };
+ 
+ static const struct drm_i915_reg_table ivb_blt_reg_tables[] = {
+-	{ gen7_blt_regs, ARRAY_SIZE(gen7_blt_regs), false },
+-	{ ivb_master_regs, ARRAY_SIZE(ivb_master_regs), true },
++	{ gen7_blt_regs, ARRAY_SIZE(gen7_blt_regs) },
+ };
+ 
+ static const struct drm_i915_reg_table hsw_render_reg_tables[] = {
+-	{ gen7_render_regs, ARRAY_SIZE(gen7_render_regs), false },
+-	{ hsw_render_regs, ARRAY_SIZE(hsw_render_regs), false },
+-	{ hsw_master_regs, ARRAY_SIZE(hsw_master_regs), true },
++	{ gen7_render_regs, ARRAY_SIZE(gen7_render_regs) },
++	{ hsw_render_regs, ARRAY_SIZE(hsw_render_regs) },
+ };
+ 
+ static const struct drm_i915_reg_table hsw_blt_reg_tables[] = {
+-	{ gen7_blt_regs, ARRAY_SIZE(gen7_blt_regs), false },
+-	{ hsw_master_regs, ARRAY_SIZE(hsw_master_regs), true },
++	{ gen7_blt_regs, ARRAY_SIZE(gen7_blt_regs) },
++};
++
++static const struct drm_i915_reg_table gen9_blt_reg_tables[] = {
++	{ gen9_blt_regs, ARRAY_SIZE(gen9_blt_regs) },
+ };
+ 
+ static u32 gen7_render_get_cmd_length_mask(u32 cmd_header)
+ {
+-	u32 client = (cmd_header & INSTR_CLIENT_MASK) >> INSTR_CLIENT_SHIFT;
++	u32 client = cmd_header >> INSTR_CLIENT_SHIFT;
+ 	u32 subclient =
+ 		(cmd_header & INSTR_SUBCLIENT_MASK) >> INSTR_SUBCLIENT_SHIFT;
+ 
+@@ -578,7 +735,7 @@ static u32 gen7_render_get_cmd_length_mask(u32 cmd_header)
+ 
+ static u32 gen7_bsd_get_cmd_length_mask(u32 cmd_header)
+ {
+-	u32 client = (cmd_header & INSTR_CLIENT_MASK) >> INSTR_CLIENT_SHIFT;
++	u32 client = cmd_header >> INSTR_CLIENT_SHIFT;
+ 	u32 subclient =
+ 		(cmd_header & INSTR_SUBCLIENT_MASK) >> INSTR_SUBCLIENT_SHIFT;
+ 	u32 op = (cmd_header & INSTR_26_TO_24_MASK) >> INSTR_26_TO_24_SHIFT;
+@@ -601,7 +758,7 @@ static u32 gen7_bsd_get_cmd_length_mask(u32 cmd_header)
+ 
+ static u32 gen7_blt_get_cmd_length_mask(u32 cmd_header)
+ {
+-	u32 client = (cmd_header & INSTR_CLIENT_MASK) >> INSTR_CLIENT_SHIFT;
++	u32 client = cmd_header >> INSTR_CLIENT_SHIFT;
+ 
+ 	if (client == INSTR_MI_CLIENT)
+ 		return 0x3F;
+@@ -612,6 +769,17 @@ static u32 gen7_blt_get_cmd_length_mask(u32 cmd_header)
+ 	return 0;
+ }
+ 
++static u32 gen9_blt_get_cmd_length_mask(u32 cmd_header)
++{
++	u32 client = cmd_header >> INSTR_CLIENT_SHIFT;
++
++	if (client == INSTR_MI_CLIENT || client == INSTR_BC_CLIENT)
++		return 0xFF;
++
++	DRM_DEBUG_DRIVER("CMD: Abnormal blt cmd length! 0x%08X\n", cmd_header);
++	return 0;
++}
++
+ static bool validate_cmds_sorted(const struct intel_engine_cs *engine,
+ 				 const struct drm_i915_cmd_table *cmd_tables,
+ 				 int cmd_table_count)
+@@ -703,22 +871,15 @@ struct cmd_node {
+  */
+ static inline u32 cmd_header_key(u32 x)
+ {
+-	u32 shift;
+-
+ 	switch (x >> INSTR_CLIENT_SHIFT) {
+ 	default:
+ 	case INSTR_MI_CLIENT:
+-		shift = STD_MI_OPCODE_SHIFT;
+-		break;
++		return x >> STD_MI_OPCODE_SHIFT;
+ 	case INSTR_RC_CLIENT:
+-		shift = STD_3D_OPCODE_SHIFT;
+-		break;
++		return x >> STD_3D_OPCODE_SHIFT;
+ 	case INSTR_BC_CLIENT:
+-		shift = STD_2D_OPCODE_SHIFT;
+-		break;
++		return x >> STD_2D_OPCODE_SHIFT;
+ 	}
+-
+-	return x >> shift;
+ }
+ 
+ static int init_hash_table(struct intel_engine_cs *engine,
+@@ -776,18 +937,19 @@ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine)
+ 	int cmd_table_count;
+ 	int ret;
+ 
+-	if (!IS_GEN7(engine->i915))
++	if (!IS_GEN7(engine->i915) && !(IS_GEN9(engine->i915) &&
++					engine->id == BCS))
+ 		return;
+ 
+ 	switch (engine->id) {
+ 	case RCS:
+ 		if (IS_HASWELL(engine->i915)) {
+-			cmd_tables = hsw_render_ring_cmds;
++			cmd_tables = hsw_render_ring_cmd_table;
+ 			cmd_table_count =
+-				ARRAY_SIZE(hsw_render_ring_cmds);
++				ARRAY_SIZE(hsw_render_ring_cmd_table);
+ 		} else {
+-			cmd_tables = gen7_render_cmds;
+-			cmd_table_count = ARRAY_SIZE(gen7_render_cmds);
++			cmd_tables = gen7_render_cmd_table;
++			cmd_table_count = ARRAY_SIZE(gen7_render_cmd_table);
+ 		}
+ 
+ 		if (IS_HASWELL(engine->i915)) {
+@@ -797,36 +959,46 @@ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine)
+ 			engine->reg_tables = ivb_render_reg_tables;
+ 			engine->reg_table_count = ARRAY_SIZE(ivb_render_reg_tables);
+ 		}
+-
+ 		engine->get_cmd_length_mask = gen7_render_get_cmd_length_mask;
+ 		break;
+ 	case VCS:
+-		cmd_tables = gen7_video_cmds;
+-		cmd_table_count = ARRAY_SIZE(gen7_video_cmds);
++		cmd_tables = gen7_video_cmd_table;
++		cmd_table_count = ARRAY_SIZE(gen7_video_cmd_table);
+ 		engine->get_cmd_length_mask = gen7_bsd_get_cmd_length_mask;
+ 		break;
+ 	case BCS:
+-		if (IS_HASWELL(engine->i915)) {
+-			cmd_tables = hsw_blt_ring_cmds;
+-			cmd_table_count = ARRAY_SIZE(hsw_blt_ring_cmds);
++		engine->get_cmd_length_mask = gen7_blt_get_cmd_length_mask;
++		if (IS_GEN9(engine->i915)) {
++			cmd_tables = gen9_blt_cmd_table;
++			cmd_table_count = ARRAY_SIZE(gen9_blt_cmd_table);
++			engine->get_cmd_length_mask =
++				gen9_blt_get_cmd_length_mask;
++
++			/* BCS Engine unsafe without parser */
++			engine->flags |= I915_ENGINE_REQUIRES_CMD_PARSER;
++		} else if (IS_HASWELL(engine->i915)) {
++			cmd_tables = hsw_blt_ring_cmd_table;
++			cmd_table_count = ARRAY_SIZE(hsw_blt_ring_cmd_table);
+ 		} else {
+-			cmd_tables = gen7_blt_cmds;
+-			cmd_table_count = ARRAY_SIZE(gen7_blt_cmds);
++			cmd_tables = gen7_blt_cmd_table;
++			cmd_table_count = ARRAY_SIZE(gen7_blt_cmd_table);
+ 		}
+ 
+-		if (IS_HASWELL(engine->i915)) {
++		if (IS_GEN9(engine->i915)) {
++			engine->reg_tables = gen9_blt_reg_tables;
++			engine->reg_table_count =
++				ARRAY_SIZE(gen9_blt_reg_tables);
++		} else if (IS_HASWELL(engine->i915)) {
+ 			engine->reg_tables = hsw_blt_reg_tables;
+ 			engine->reg_table_count = ARRAY_SIZE(hsw_blt_reg_tables);
+ 		} else {
+ 			engine->reg_tables = ivb_blt_reg_tables;
+ 			engine->reg_table_count = ARRAY_SIZE(ivb_blt_reg_tables);
+ 		}
+-
+-		engine->get_cmd_length_mask = gen7_blt_get_cmd_length_mask;
+ 		break;
+ 	case VECS:
+-		cmd_tables = hsw_vebox_cmds;
+-		cmd_table_count = ARRAY_SIZE(hsw_vebox_cmds);
++		cmd_tables = hsw_vebox_cmd_table;
++		cmd_table_count = ARRAY_SIZE(hsw_vebox_cmd_table);
+ 		/* VECS can use the same length_mask function as VCS */
+ 		engine->get_cmd_length_mask = gen7_bsd_get_cmd_length_mask;
+ 		break;
+@@ -852,7 +1024,7 @@ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine)
+ 		return;
+ 	}
+ 
+-	engine->needs_cmd_parser = true;
++	engine->flags |= I915_ENGINE_USING_CMD_PARSER;
+ }
+ 
+ /**
+@@ -864,7 +1036,7 @@ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine)
+  */
+ void intel_engine_cleanup_cmd_parser(struct intel_engine_cs *engine)
+ {
+-	if (!engine->needs_cmd_parser)
++	if (!intel_engine_using_cmd_parser(engine))
+ 		return;
+ 
+ 	fini_hash_table(engine);
+@@ -938,22 +1110,16 @@ __find_reg(const struct drm_i915_reg_descriptor *table, int count, u32 addr)
+ }
+ 
+ static const struct drm_i915_reg_descriptor *
+-find_reg(const struct intel_engine_cs *engine, bool is_master, u32 addr)
++find_reg(const struct intel_engine_cs *engine, u32 addr)
+ {
+ 	const struct drm_i915_reg_table *table = engine->reg_tables;
++	const struct drm_i915_reg_descriptor *reg = NULL;
+ 	int count = engine->reg_table_count;
+ 
+-	do {
+-		if (!table->master || is_master) {
+-			const struct drm_i915_reg_descriptor *reg;
+-
+-			reg = __find_reg(table->regs, table->num_regs, addr);
+-			if (reg != NULL)
+-				return reg;
+-		}
+-	} while (table++, --count);
++	for (; !reg && (count > 0); ++table, --count)
++		reg = __find_reg(table->regs, table->num_regs, addr);
+ 
+-	return NULL;
++	return reg;
+ }
+ 
+ /* Returns a vmap'd pointer to dst_obj, which the caller must unmap */
+@@ -1036,32 +1202,9 @@ unpin_src:
+ 	return dst;
+ }
+ 
+-/**
+- * intel_engine_needs_cmd_parser() - should a given engine use software
+- *                                   command parsing?
+- * @engine: the engine in question
+- *
+- * Only certain platforms require software batch buffer command parsing, and
+- * only when enabled via module parameter.
+- *
+- * Return: true if the engine requires software command parsing
+- */
+-bool intel_engine_needs_cmd_parser(struct intel_engine_cs *engine)
+-{
+-	if (!engine->needs_cmd_parser)
+-		return false;
+-
+-	if (!USES_PPGTT(engine->i915))
+-		return false;
+-
+-	return (i915.enable_cmd_parser == 1);
+-}
+-
+ static bool check_cmd(const struct intel_engine_cs *engine,
+ 		      const struct drm_i915_cmd_descriptor *desc,
+-		      const u32 *cmd, u32 length,
+-		      const bool is_master,
+-		      bool *oacontrol_set)
++		      const u32 *cmd, u32 length)
+ {
+ 	if (desc->flags & CMD_DESC_SKIP)
+ 		return true;
+@@ -1071,12 +1214,6 @@ static bool check_cmd(const struct intel_engine_cs *engine,
+ 		return false;
+ 	}
+ 
+-	if ((desc->flags & CMD_DESC_MASTER) && !is_master) {
+-		DRM_DEBUG_DRIVER("CMD: Rejected master-only command: 0x%08X\n",
+-				 *cmd);
+-		return false;
+-	}
+-
+ 	if (desc->flags & CMD_DESC_REGISTER) {
+ 		/*
+ 		 * Get the distance between individual register offset
+@@ -1090,7 +1227,7 @@ static bool check_cmd(const struct intel_engine_cs *engine,
+ 		     offset += step) {
+ 			const u32 reg_addr = cmd[offset] & desc->reg.mask;
+ 			const struct drm_i915_reg_descriptor *reg =
+-				find_reg(engine, is_master, reg_addr);
++				find_reg(engine, reg_addr);
+ 
+ 			if (!reg) {
+ 				DRM_DEBUG_DRIVER("CMD: Rejected register 0x%08X in command: 0x%08X (exec_id=%d)\n",
+@@ -1098,31 +1235,6 @@ static bool check_cmd(const struct intel_engine_cs *engine,
+ 				return false;
+ 			}
+ 
+-			/*
+-			 * OACONTROL requires some special handling for
+-			 * writes. We want to make sure that any batch which
+-			 * enables OA also disables it before the end of the
+-			 * batch. The goal is to prevent one process from
+-			 * snooping on the perf data from another process. To do
+-			 * that, we need to check the value that will be written
+-			 * to the register. Hence, limit OACONTROL writes to
+-			 * only MI_LOAD_REGISTER_IMM commands.
+-			 */
+-			if (reg_addr == i915_mmio_reg_offset(OACONTROL)) {
+-				if (desc->cmd.value == MI_LOAD_REGISTER_MEM) {
+-					DRM_DEBUG_DRIVER("CMD: Rejected LRM to OACONTROL\n");
+-					return false;
+-				}
+-
+-				if (desc->cmd.value == MI_LOAD_REGISTER_REG) {
+-					DRM_DEBUG_DRIVER("CMD: Rejected LRR to OACONTROL\n");
+-					return false;
+-				}
+-
+-				if (desc->cmd.value == MI_LOAD_REGISTER_IMM(1))
+-					*oacontrol_set = (cmd[offset + 1] != 0);
+-			}
+-
+ 			/*
+ 			 * Check the value written to the register against the
+ 			 * allowed mask/value pair given in the whitelist entry.
+@@ -1170,6 +1282,12 @@ static bool check_cmd(const struct intel_engine_cs *engine,
+ 					continue;
+ 			}
+ 
++			if (desc->bits[i].offset >= length) {
++				DRM_DEBUG_DRIVER("CMD: Rejected command 0x%08X, too short to check bitmask (%s)\n",
++						 *cmd, engine->name);
++				return false;
++			}
++
+ 			dword = cmd[desc->bits[i].offset] &
+ 				desc->bits[i].mask;
+ 
+@@ -1187,16 +1305,112 @@ static bool check_cmd(const struct intel_engine_cs *engine,
+ 	return true;
+ }
+ 
++static int check_bbstart(const struct i915_gem_context *ctx,
++			 u32 *cmd, u32 offset, u32 length,
++			 u32 batch_len,
++			 u64 batch_start,
++			 u64 shadow_batch_start)
++{
++	u64 jump_offset, jump_target;
++	u32 target_cmd_offset, target_cmd_index;
++
++	/* For igt compatibility on older platforms */
++	if (CMDPARSER_USES_GGTT(ctx->i915)) {
++		DRM_DEBUG("CMD: Rejecting BB_START for ggtt based submission\n");
++		return -EACCES;
++	}
++
++	if (length != 3) {
++		DRM_DEBUG("CMD: Recursive BB_START with bad length(%u)\n",
++			  length);
++		return -EINVAL;
++	}
++
++	jump_target = *(u64*)(cmd+1);
++	jump_offset = jump_target - batch_start;
++
++	/*
++	 * Any underflow of jump_target is guaranteed to be outside the range
++	 * of a u32, so >= test catches both too large and too small
++	 */
++	if (jump_offset >= batch_len) {
++		DRM_DEBUG("CMD: BB_START to 0x%llx jumps out of BB\n",
++			  jump_target);
++		return -EINVAL;
++	}
++
++	/*
++	 * This cannot overflow a u32 because we already checked jump_offset
++	 * is within the BB, and the batch_len is a u32
++	 */
++	target_cmd_offset = lower_32_bits(jump_offset);
++	target_cmd_index = target_cmd_offset / sizeof(u32);
++
++	*(u64*)(cmd + 1) = shadow_batch_start + target_cmd_offset;
++
++	if (target_cmd_index == offset)
++		return 0;
++
++	if (ctx->jump_whitelist_cmds <= target_cmd_index) {
++		DRM_DEBUG("CMD: Rejecting BB_START - truncated whitelist array\n");
++		return -EINVAL;
++	} else if (!test_bit(target_cmd_index, ctx->jump_whitelist)) {
++		DRM_DEBUG("CMD: BB_START to 0x%llx not a previously executed cmd\n",
++			  jump_target);
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static void init_whitelist(struct i915_gem_context *ctx, u32 batch_len)
++{
++	const u32 batch_cmds = DIV_ROUND_UP(batch_len, sizeof(u32));
++	const u32 exact_size = BITS_TO_LONGS(batch_cmds);
++	u32 next_size = BITS_TO_LONGS(roundup_pow_of_two(batch_cmds));
++	unsigned long *next_whitelist;
++
++	if (CMDPARSER_USES_GGTT(ctx->i915))
++		return;
++
++	if (batch_cmds <= ctx->jump_whitelist_cmds) {
++		bitmap_zero(ctx->jump_whitelist, batch_cmds);
++		return;
++	}
++
++again:
++	next_whitelist = kcalloc(next_size, sizeof(long), GFP_KERNEL);
++	if (next_whitelist) {
++		kfree(ctx->jump_whitelist);
++		ctx->jump_whitelist = next_whitelist;
++		ctx->jump_whitelist_cmds =
++			next_size * BITS_PER_BYTE * sizeof(long);
++		return;
++	}
++
++	if (next_size > exact_size) {
++		next_size = exact_size;
++		goto again;
++	}
++
++	DRM_DEBUG("CMD: Failed to extend whitelist. BB_START may be disallowed\n");
++	bitmap_zero(ctx->jump_whitelist, ctx->jump_whitelist_cmds);
++
++	return;
++}
++
+ #define LENGTH_BIAS 2
+ 
+ /**
+  * i915_parse_cmds() - parse a submitted batch buffer for privilege violations
++ * @ctx: the context in which the batch is to execute
+  * @engine: the engine on which the batch is to execute
+  * @batch_obj: the batch buffer in question
+- * @shadow_batch_obj: copy of the batch buffer in question
++ * @batch_start: Canonical base address of batch
+  * @batch_start_offset: byte offset in the batch at which execution starts
+  * @batch_len: length of the commands in batch_obj
+- * @is_master: is the submitting process the drm master?
++ * @shadow_batch_obj: copy of the batch buffer in question
++ * @shadow_batch_start: Canonical base address of shadow_batch_obj
+  *
+  * Parses the specified batch buffer looking for privilege violations as
+  * described in the overview.
+@@ -1204,17 +1418,19 @@ static bool check_cmd(const struct intel_engine_cs *engine,
+  * Return: non-zero if the parser finds violations or otherwise fails; -EACCES
+  * if the batch appears legal but should use hardware parsing
+  */
+-int intel_engine_cmd_parser(struct intel_engine_cs *engine,
++
++int intel_engine_cmd_parser(struct i915_gem_context *ctx,
++			    struct intel_engine_cs *engine,
+ 			    struct drm_i915_gem_object *batch_obj,
+-			    struct drm_i915_gem_object *shadow_batch_obj,
++			    u64 batch_start,
+ 			    u32 batch_start_offset,
+ 			    u32 batch_len,
+-			    bool is_master)
++			    struct drm_i915_gem_object *shadow_batch_obj,
++			    u64 shadow_batch_start)
+ {
+-	u32 *cmd, *batch_end;
++	u32 *cmd, *batch_end, offset = 0;
+ 	struct drm_i915_cmd_descriptor default_desc = noop_desc;
+ 	const struct drm_i915_cmd_descriptor *desc = &default_desc;
+-	bool oacontrol_set = false; /* OACONTROL tracking. See check_cmd() */
+ 	bool needs_clflush_after = false;
+ 	int ret = 0;
+ 
+@@ -1226,13 +1442,15 @@ int intel_engine_cmd_parser(struct intel_engine_cs *engine,
+ 		return PTR_ERR(cmd);
+ 	}
+ 
++	init_whitelist(ctx, batch_len);
++
+ 	/*
+ 	 * We use the batch length as size because the shadow object is as
+ 	 * large or larger and copy_batch() will write MI_NOPs to the extra
+ 	 * space. Parsing should be faster in some cases this way.
+ 	 */
+ 	batch_end = cmd + (batch_len / sizeof(*batch_end));
+-	while (cmd < batch_end) {
++	do {
+ 		u32 length;
+ 
+ 		if (*cmd == MI_BATCH_BUFFER_END)
+@@ -1243,17 +1461,7 @@ int intel_engine_cmd_parser(struct intel_engine_cs *engine,
+ 			DRM_DEBUG_DRIVER("CMD: Unrecognized command: 0x%08X\n",
+ 					 *cmd);
+ 			ret = -EINVAL;
+-			break;
+-		}
+-
+-		/*
+-		 * If the batch buffer contains a chained batch, return an
+-		 * error that tells the caller to abort and dispatch the
+-		 * workload as a non-secure batch.
+-		 */
+-		if (desc->cmd.value == MI_BATCH_BUFFER_START) {
+-			ret = -EACCES;
+-			break;
++			goto err;
+ 		}
+ 
+ 		if (desc->flags & CMD_DESC_FIXED)
+@@ -1267,32 +1475,44 @@ int intel_engine_cmd_parser(struct intel_engine_cs *engine,
+ 					 length,
+ 					 batch_end - cmd);
+ 			ret = -EINVAL;
+-			break;
++			goto err;
+ 		}
+ 
+-		if (!check_cmd(engine, desc, cmd, length, is_master,
+-			       &oacontrol_set)) {
+-			ret = -EINVAL;
++		if (!check_cmd(engine, desc, cmd, length)) {
++			ret = -EACCES;
++			goto err;
++		}
++
++		if (desc->cmd.value == MI_BATCH_BUFFER_START) {
++			ret = check_bbstart(ctx, cmd, offset, length,
++					    batch_len, batch_start,
++					    shadow_batch_start);
++
++			if (ret)
++				goto err;
+ 			break;
+ 		}
+ 
+-		cmd += length;
+-	}
++		if (ctx->jump_whitelist_cmds > offset)
++			set_bit(offset, ctx->jump_whitelist);
+ 
+-	if (oacontrol_set) {
+-		DRM_DEBUG_DRIVER("CMD: batch set OACONTROL but did not clear it\n");
+-		ret = -EINVAL;
+-	}
++		cmd += length;
++		offset += length;
++		if  (cmd >= batch_end) {
++			DRM_DEBUG_DRIVER("CMD: Got to the end of the buffer w/o a BBE cmd!\n");
++			ret = -EINVAL;
++			goto err;
++		}
++	} while (1);
+ 
+-	if (cmd >= batch_end) {
+-		DRM_DEBUG_DRIVER("CMD: Got to the end of the buffer w/o a BBE cmd!\n");
+-		ret = -EINVAL;
++	if (needs_clflush_after) {
++		void *ptr = ptr_mask_bits(shadow_batch_obj->mapping);
++		drm_clflush_virt_range(ptr,
++				       (void *)(cmd + 1) - ptr);
+ 	}
+ 
+-	if (ret == 0 && needs_clflush_after)
+-		drm_clflush_virt_range(shadow_batch_obj->mapping, batch_len);
++err:
+ 	i915_gem_object_unpin_map(shadow_batch_obj);
+-
+ 	return ret;
+ }
+ 
+@@ -1312,7 +1532,7 @@ int i915_cmd_parser_get_version(struct drm_i915_private *dev_priv)
+ 
+ 	/* If the command parser is not enabled, report 0 - unsupported */
+ 	for_each_engine(engine, dev_priv) {
+-		if (intel_engine_needs_cmd_parser(engine)) {
++		if (intel_engine_using_cmd_parser(engine)) {
+ 			active = true;
+ 			break;
+ 		}
+@@ -1332,6 +1552,12 @@ int i915_cmd_parser_get_version(struct drm_i915_private *dev_priv)
+ 	 * 5. GPGPU dispatch compute indirect registers.
+ 	 * 6. TIMESTAMP register and Haswell CS GPR registers
+ 	 * 7. Allow MI_LOAD_REGISTER_REG between whitelisted registers.
++	 * 8. Don't report cmd_check() failures as EINVAL errors to userspace;
++	 *    rely on the HW to NOOP disallowed commands as it would without
++	 *    the parser enabled.
++	 * 9. Don't whitelist or handle oacontrol specially, as ownership
++	 *    for oacontrol state is moving to i915-perf.
++	 * 10. Support for Gen9 BCS Parsing
+ 	 */
+-	return 7;
++	return 10;
+ }
+diff --git a/drivers/gpu/drm/i915/i915_drv.c b/drivers/gpu/drm/i915/i915_drv.c
+index bae62cf934cf..ff61229d963b 100644
+--- a/drivers/gpu/drm/i915/i915_drv.c
++++ b/drivers/gpu/drm/i915/i915_drv.c
+@@ -280,7 +280,7 @@ static int i915_getparam(struct drm_device *dev, void *data,
+ 		value = i915.semaphores;
+ 		break;
+ 	case I915_PARAM_HAS_SECURE_BATCHES:
+-		value = capable(CAP_SYS_ADMIN);
++		value = HAS_SECURE_BATCHES(dev_priv) && capable(CAP_SYS_ADMIN);
+ 		break;
+ 	case I915_PARAM_CMD_PARSER_VERSION:
+ 		value = i915_cmd_parser_get_version(dev_priv);
+@@ -1470,6 +1470,7 @@ static int i915_drm_suspend_late(struct drm_device *dev, bool hibernation)
+ 	disable_rpm_wakeref_asserts(dev_priv);
+ 
+ 	intel_display_set_init_power(dev_priv, false);
++	i915_rc6_ctx_wa_suspend(dev_priv);
+ 
+ 	fw_csr = !IS_BROXTON(dev_priv) &&
+ 		suspend_to_idle(dev_priv) && dev_priv->csr.dmc_payload;
+@@ -1706,6 +1707,8 @@ static int i915_drm_resume_early(struct drm_device *dev)
+ 	else
+ 		intel_display_set_init_power(dev_priv, true);
+ 
++	i915_rc6_ctx_wa_resume(dev_priv);
++
+ 	enable_rpm_wakeref_asserts(dev_priv);
+ 
+ out:
+diff --git a/drivers/gpu/drm/i915/i915_drv.h b/drivers/gpu/drm/i915/i915_drv.h
+index e23748cca0c0..c4f155663ca9 100644
+--- a/drivers/gpu/drm/i915/i915_drv.h
++++ b/drivers/gpu/drm/i915/i915_drv.h
+@@ -943,6 +943,13 @@ struct i915_gem_context {
+ 	struct list_head link;
+ 
+ 	u8 remap_slice;
++
++	/** jump_whitelist: Bit array for tracking cmds during cmdparsing */
++	unsigned long *jump_whitelist;
++
++	/** jump_whitelist_cmds: No of cmd slots available */
++	u32 jump_whitelist_cmds;
++
+ 	bool closed:1;
+ };
+ 
+@@ -1221,6 +1228,7 @@ struct intel_gen6_power_mgmt {
+ 	bool client_boost;
+ 
+ 	bool enabled;
++	bool ctx_corrupted;
+ 	struct delayed_work autoenable_work;
+ 	unsigned boosts;
+ 
+@@ -2339,6 +2347,18 @@ i915_gem_object_put_unlocked(struct drm_i915_gem_object *obj)
+ __deprecated
+ extern void drm_gem_object_unreference_unlocked(struct drm_gem_object *);
+ 
++static inline void
++i915_gem_object_set_readonly(struct drm_i915_gem_object *obj)
++{
++	obj->base.vma_node.readonly = true;
++}
++
++static inline bool
++i915_gem_object_is_readonly(const struct drm_i915_gem_object *obj)
++{
++	return obj->base.vma_node.readonly;
++}
++
+ static inline bool
+ i915_gem_object_has_struct_page(const struct drm_i915_gem_object *obj)
+ {
+@@ -2476,102 +2496,6 @@ static inline struct scatterlist *__sg_next(struct scatterlist *sg)
+ 	     (((__iter).curr += PAGE_SIZE) < (__iter).max) ||		\
+ 	     ((__iter) = __sgt_iter(__sg_next((__iter).sgp), false), 0))
+ 
+-/*
+- * A command that requires special handling by the command parser.
+- */
+-struct drm_i915_cmd_descriptor {
+-	/*
+-	 * Flags describing how the command parser processes the command.
+-	 *
+-	 * CMD_DESC_FIXED: The command has a fixed length if this is set,
+-	 *                 a length mask if not set
+-	 * CMD_DESC_SKIP: The command is allowed but does not follow the
+-	 *                standard length encoding for the opcode range in
+-	 *                which it falls
+-	 * CMD_DESC_REJECT: The command is never allowed
+-	 * CMD_DESC_REGISTER: The command should be checked against the
+-	 *                    register whitelist for the appropriate ring
+-	 * CMD_DESC_MASTER: The command is allowed if the submitting process
+-	 *                  is the DRM master
+-	 */
+-	u32 flags;
+-#define CMD_DESC_FIXED    (1<<0)
+-#define CMD_DESC_SKIP     (1<<1)
+-#define CMD_DESC_REJECT   (1<<2)
+-#define CMD_DESC_REGISTER (1<<3)
+-#define CMD_DESC_BITMASK  (1<<4)
+-#define CMD_DESC_MASTER   (1<<5)
+-
+-	/*
+-	 * The command's unique identification bits and the bitmask to get them.
+-	 * This isn't strictly the opcode field as defined in the spec and may
+-	 * also include type, subtype, and/or subop fields.
+-	 */
+-	struct {
+-		u32 value;
+-		u32 mask;
+-	} cmd;
+-
+-	/*
+-	 * The command's length. The command is either fixed length (i.e. does
+-	 * not include a length field) or has a length field mask. The flag
+-	 * CMD_DESC_FIXED indicates a fixed length. Otherwise, the command has
+-	 * a length mask. All command entries in a command table must include
+-	 * length information.
+-	 */
+-	union {
+-		u32 fixed;
+-		u32 mask;
+-	} length;
+-
+-	/*
+-	 * Describes where to find a register address in the command to check
+-	 * against the ring's register whitelist. Only valid if flags has the
+-	 * CMD_DESC_REGISTER bit set.
+-	 *
+-	 * A non-zero step value implies that the command may access multiple
+-	 * registers in sequence (e.g. LRI), in that case step gives the
+-	 * distance in dwords between individual offset fields.
+-	 */
+-	struct {
+-		u32 offset;
+-		u32 mask;
+-		u32 step;
+-	} reg;
+-
+-#define MAX_CMD_DESC_BITMASKS 3
+-	/*
+-	 * Describes command checks where a particular dword is masked and
+-	 * compared against an expected value. If the command does not match
+-	 * the expected value, the parser rejects it. Only valid if flags has
+-	 * the CMD_DESC_BITMASK bit set. Only entries where mask is non-zero
+-	 * are valid.
+-	 *
+-	 * If the check specifies a non-zero condition_mask then the parser
+-	 * only performs the check when the bits specified by condition_mask
+-	 * are non-zero.
+-	 */
+-	struct {
+-		u32 offset;
+-		u32 mask;
+-		u32 expected;
+-		u32 condition_offset;
+-		u32 condition_mask;
+-	} bits[MAX_CMD_DESC_BITMASKS];
+-};
+-
+-/*
+- * A table of commands requiring special handling by the command parser.
+- *
+- * Each engine has an array of tables. Each table consists of an array of
+- * command descriptors, which must be sorted with command opcodes in
+- * ascending order.
+- */
+-struct drm_i915_cmd_table {
+-	const struct drm_i915_cmd_descriptor *table;
+-	int count;
+-};
+-
+ /* Note that the (struct drm_i915_private *) cast is just to shut up gcc. */
+ #define __I915__(p) ({ \
+ 	struct drm_i915_private *__p; \
+@@ -2729,6 +2653,12 @@ struct drm_i915_cmd_table {
+ #define IS_GEN8(dev)	(!!(INTEL_INFO(dev)->gen_mask & BIT(7)))
+ #define IS_GEN9(dev)	(!!(INTEL_INFO(dev)->gen_mask & BIT(8)))
+ 
++/*
++ * The Gen7 cmdparser copies the scanned buffer to the ggtt for execution
++ * All later gens can run the final buffer from the ppgtt
++ */
++#define CMDPARSER_USES_GGTT(dev_priv) IS_GEN7(dev_priv)
++
+ #define ENGINE_MASK(id)	BIT(id)
+ #define RENDER_RING	ENGINE_MASK(RCS)
+ #define BSD_RING	ENGINE_MASK(VCS)
+@@ -2745,6 +2675,8 @@ struct drm_i915_cmd_table {
+ #define HAS_BLT(dev_priv)	HAS_ENGINE(dev_priv, BCS)
+ #define HAS_VEBOX(dev_priv)	HAS_ENGINE(dev_priv, VECS)
+ 
++#define HAS_SECURE_BATCHES(dev_priv) (INTEL_GEN(dev_priv) < 6)
++
+ #define HAS_LLC(dev)		(INTEL_INFO(dev)->has_llc)
+ #define HAS_SNOOP(dev)		(INTEL_INFO(dev)->has_snoop)
+ #define HAS_EDRAM(dev)		(!!(__I915__(dev)->edram_cap & EDRAM_ENABLED))
+@@ -2764,11 +2696,13 @@ struct drm_i915_cmd_table {
+ /* Early gen2 have a totally busted CS tlb and require pinned batches. */
+ #define HAS_BROKEN_CS_TLB(dev)		(IS_I830(dev) || IS_845G(dev))
+ 
++#define NEEDS_RC6_CTX_CORRUPTION_WA(dev_priv)	\
++	(IS_BROADWELL(dev_priv) || INTEL_GEN(dev_priv) == 9)
++
+ /* WaRsDisableCoarsePowerGating:skl,bxt */
+ #define NEEDS_WaRsDisableCoarsePowerGating(dev_priv) \
+ 	(IS_BXT_REVID(dev_priv, 0, BXT_REVID_A1) || \
+-	 IS_SKL_GT3(dev_priv) || \
+-	 IS_SKL_GT4(dev_priv))
++	 (INTEL_GEN(dev_priv) == 9))
+ 
+ /*
+  * dp aux and gmbus irq on gen4 seems to be able to generate legacy interrupts
+@@ -3098,6 +3032,14 @@ i915_gem_object_ggtt_pin(struct drm_i915_gem_object *obj,
+ 			 u64 alignment,
+ 			 u64 flags);
+ 
++struct i915_vma * __must_check
++i915_gem_object_pin(struct drm_i915_gem_object *obj,
++		    struct i915_address_space *vm,
++		    const struct i915_ggtt_view *view,
++		    u64 size,
++		    u64 alignment,
++		    u64 flags);
++
+ int i915_vma_bind(struct i915_vma *vma, enum i915_cache_level cache_level,
+ 		  u32 flags);
+ void __i915_vma_set_map_and_fenceable(struct i915_vma *vma);
+@@ -3551,13 +3493,14 @@ const char *i915_cache_level_str(struct drm_i915_private *i915, int type);
+ int i915_cmd_parser_get_version(struct drm_i915_private *dev_priv);
+ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine);
+ void intel_engine_cleanup_cmd_parser(struct intel_engine_cs *engine);
+-bool intel_engine_needs_cmd_parser(struct intel_engine_cs *engine);
+-int intel_engine_cmd_parser(struct intel_engine_cs *engine,
++int intel_engine_cmd_parser(struct i915_gem_context *cxt,
++			    struct intel_engine_cs *engine,
+ 			    struct drm_i915_gem_object *batch_obj,
+-			    struct drm_i915_gem_object *shadow_batch_obj,
++			    u64 user_batch_start,
+ 			    u32 batch_start_offset,
+ 			    u32 batch_len,
+-			    bool is_master);
++			    struct drm_i915_gem_object *shadow_batch_obj,
++			    u64 shadow_batch_start);
+ 
+ /* i915_suspend.c */
+ extern int i915_save_state(struct drm_device *dev);
+diff --git a/drivers/gpu/drm/i915/i915_gem.c b/drivers/gpu/drm/i915/i915_gem.c
+index 26c4befcd234..3fb4f9acacba 100644
+--- a/drivers/gpu/drm/i915/i915_gem.c
++++ b/drivers/gpu/drm/i915/i915_gem.c
+@@ -1773,6 +1773,10 @@ int i915_gem_fault(struct vm_area_struct *area, struct vm_fault *vmf)
+ 	unsigned int flags;
+ 	int ret;
+ 
++	/* Sanity check that we allow writing into this object */
++	if (i915_gem_object_is_readonly(obj) && write)
++		return VM_FAULT_SIGBUS;
++
+ 	/* We don't use vmf->pgoff since that has the fake offset */
+ 	page_offset = ((unsigned long)vmf->virtual_address - area->vm_start) >>
+ 		PAGE_SHIFT;
+@@ -2759,6 +2763,12 @@ i915_gem_idle_work_handler(struct work_struct *work)
+ 
+ 	if (INTEL_GEN(dev_priv) >= 6)
+ 		gen6_rps_idle(dev_priv);
++
++	if (NEEDS_RC6_CTX_CORRUPTION_WA(dev_priv)) {
++		i915_rc6_ctx_wa_check(dev_priv);
++		intel_uncore_forcewake_put(dev_priv, FORCEWAKE_ALL);
++	}
++
+ 	intel_runtime_pm_put(dev_priv);
+ out_unlock:
+ 	mutex_unlock(&dev->struct_mutex);
+@@ -3822,6 +3832,19 @@ i915_gem_object_ggtt_pin(struct drm_i915_gem_object *obj,
+ 			 u64 flags)
+ {
+ 	struct i915_address_space *vm = &to_i915(obj->base.dev)->ggtt.base;
++
++	return i915_gem_object_pin(obj, vm, view, size, alignment,
++				   flags | PIN_GLOBAL);
++}
++
++struct i915_vma *
++i915_gem_object_pin(struct drm_i915_gem_object *obj,
++		    struct i915_address_space *vm,
++		    const struct i915_ggtt_view *view,
++		    u64 size,
++		    u64 alignment,
++		    u64 flags)
++{
+ 	struct i915_vma *vma;
+ 	int ret;
+ 
+@@ -3846,7 +3869,7 @@ i915_gem_object_ggtt_pin(struct drm_i915_gem_object *obj,
+ 			return ERR_PTR(ret);
+ 	}
+ 
+-	ret = i915_vma_pin(vma, size, alignment, flags | PIN_GLOBAL);
++	ret = i915_vma_pin(vma, size, alignment, flags);
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
+diff --git a/drivers/gpu/drm/i915/i915_gem_context.c b/drivers/gpu/drm/i915/i915_gem_context.c
+index df10f4e95736..5d55cd159e89 100644
+--- a/drivers/gpu/drm/i915/i915_gem_context.c
++++ b/drivers/gpu/drm/i915/i915_gem_context.c
+@@ -158,6 +158,8 @@ void i915_gem_context_free(struct kref *ctx_ref)
+ 		i915_vma_put(ce->state);
+ 	}
+ 
++	kfree(ctx->jump_whitelist);
++
+ 	put_pid(ctx->pid);
+ 	list_del(&ctx->link);
+ 
+@@ -327,6 +329,9 @@ __create_hw_context(struct drm_device *dev,
+ 			     GEN8_CTX_ADDRESSING_MODE_SHIFT;
+ 	ATOMIC_INIT_NOTIFIER_HEAD(&ctx->status_notifier);
+ 
++	ctx->jump_whitelist = NULL;
++	ctx->jump_whitelist_cmds = 0;
++
+ 	return ctx;
+ 
+ err_out:
+diff --git a/drivers/gpu/drm/i915/i915_gem_execbuffer.c b/drivers/gpu/drm/i915/i915_gem_execbuffer.c
+index 2117f172d7a2..4548d89abcdc 100644
+--- a/drivers/gpu/drm/i915/i915_gem_execbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_execbuffer.c
+@@ -55,6 +55,7 @@ struct i915_execbuffer_params {
+ 	struct i915_vma			*batch;
+ 	u32				dispatch_flags;
+ 	u32				args_batch_start_offset;
++	u64				args_batch_len;
+ 	struct intel_engine_cs          *engine;
+ 	struct i915_gem_context         *ctx;
+ 	struct drm_i915_gem_request     *request;
+@@ -1401,41 +1402,85 @@ i915_reset_gen7_sol_offsets(struct drm_i915_gem_request *req)
+ 	return 0;
+ }
+ 
++static struct i915_vma*
++shadow_batch_pin(struct drm_i915_gem_object *obj, struct i915_address_space *vm)
++{
++	struct drm_i915_private *dev_priv = to_i915(obj->base.dev);
++	u64 flags;
++
++	/*
++	 * PPGTT backed shadow buffers must be mapped RO, to prevent
++	 * post-scan tampering
++	 */
++	if (CMDPARSER_USES_GGTT(dev_priv)) {
++		flags = PIN_GLOBAL;
++		vm = &dev_priv->ggtt.base;
++	} else if (vm->has_read_only) {
++		flags = PIN_USER;
++		i915_gem_object_set_readonly(obj);
++	} else {
++		DRM_DEBUG("Cannot prevent post-scan tampering without RO capable vm\n");
++		return ERR_PTR(-EINVAL);
++	}
++
++	return i915_gem_object_pin(obj, vm, NULL, 0, 0, flags);
++}
++
+ static struct i915_vma *
+ i915_gem_execbuffer_parse(struct intel_engine_cs *engine,
+ 			  struct drm_i915_gem_exec_object2 *shadow_exec_entry,
+-			  struct drm_i915_gem_object *batch_obj,
++			  struct i915_execbuffer_params *params,
+ 			  struct eb_vmas *eb,
+-			  u32 batch_start_offset,
+-			  u32 batch_len,
+-			  bool is_master)
++			  struct i915_address_space *vm)
+ {
++	struct drm_i915_gem_object *batch_obj = params->batch->obj;
+ 	struct drm_i915_gem_object *shadow_batch_obj;
+ 	struct i915_vma *vma;
++	u64 batch_start;
++	u32 batch_start_offset = params->args_batch_start_offset;
++	u32 batch_len = params->args_batch_len;
++	u64 shadow_batch_start;
+ 	int ret;
+ 
++
+ 	shadow_batch_obj = i915_gem_batch_pool_get(&engine->batch_pool,
+ 						   PAGE_ALIGN(batch_len));
+ 	if (IS_ERR(shadow_batch_obj))
+ 		return ERR_CAST(shadow_batch_obj);
+ 
+-	ret = intel_engine_cmd_parser(engine,
++	vma = shadow_batch_pin(shadow_batch_obj, vm);
++	if (IS_ERR(vma))
++		goto out;
++
++	batch_start = gen8_canonical_addr(params->batch->node.start) +
++		      batch_start_offset;
++	shadow_batch_start = gen8_canonical_addr(vma->node.start);
++
++	ret = intel_engine_cmd_parser(params->ctx,
++				      engine,
+ 				      batch_obj,
+-				      shadow_batch_obj,
++				      batch_start,
+ 				      batch_start_offset,
+ 				      batch_len,
+-				      is_master);
++				      shadow_batch_obj,
++				      shadow_batch_start);
+ 	if (ret) {
+-		if (ret == -EACCES) /* unhandled chained batch */
++		i915_vma_unpin(vma);
++
++		/*
++		 * Unsafe GGTT-backed buffers can still be submitted safely
++		 * as non-secure.
++		 * For PPGTT backing however, we have no choice but to forcibly
++		 * reject unsafe buffers
++		 */
++		if (CMDPARSER_USES_GGTT(eb->i915) && (ret == -EACCES))
++			/* Execute original buffer non-secure */
+ 			vma = NULL;
+ 		else
+ 			vma = ERR_PTR(ret);
+-		goto out;
+-	}
+ 
+-	vma = i915_gem_object_ggtt_pin(shadow_batch_obj, NULL, 0, 0, 0);
+-	if (IS_ERR(vma))
+ 		goto out;
++	}
+ 
+ 	memset(shadow_exec_entry, 0, sizeof(*shadow_exec_entry));
+ 
+@@ -1476,13 +1521,10 @@ execbuf_submit(struct i915_execbuffer_params *params,
+ 			return ret;
+ 	}
+ 
+-	exec_len   = args->batch_len;
++	exec_len   = params->args_batch_len;
+ 	exec_start = params->batch->node.start +
+ 		     params->args_batch_start_offset;
+ 
+-	if (exec_len == 0)
+-		exec_len = params->batch->size - params->args_batch_start_offset;
+-
+ 	ret = params->engine->emit_bb_start(params->request,
+ 					    exec_start, exec_len,
+ 					    params->dispatch_flags);
+@@ -1601,8 +1643,15 @@ i915_gem_do_execbuffer(struct drm_device *dev, void *data,
+ 
+ 	dispatch_flags = 0;
+ 	if (args->flags & I915_EXEC_SECURE) {
++		if (INTEL_GEN(dev_priv) >= 11)
++			return -ENODEV;
++
++		/* Return -EPERM to trigger fallback code on old binaries. */
++		if (!HAS_SECURE_BATCHES(dev_priv))
++			return -EPERM;
++
+ 		if (!drm_is_current_master(file) || !capable(CAP_SYS_ADMIN))
+-		    return -EPERM;
++			return -EPERM;
+ 
+ 		dispatch_flags |= I915_DISPATCH_SECURE;
+ 	}
+@@ -1710,32 +1759,26 @@ i915_gem_do_execbuffer(struct drm_device *dev, void *data,
+ 		goto err;
+ 	}
+ 
++	params->ctx = ctx;
+ 	params->args_batch_start_offset = args->batch_start_offset;
+-	if (intel_engine_needs_cmd_parser(engine) && args->batch_len) {
++	params->args_batch_len = args->batch_len;
++	if (args->batch_len == 0)
++		params->args_batch_len = params->batch->size - params->args_batch_start_offset;
++
++	if (intel_engine_requires_cmd_parser(engine) ||
++	    (intel_engine_using_cmd_parser(engine) && args->batch_len)) {
+ 		struct i915_vma *vma;
+ 
+ 		vma = i915_gem_execbuffer_parse(engine, &shadow_exec_entry,
+-						params->batch->obj,
+-						eb,
+-						args->batch_start_offset,
+-						args->batch_len,
+-						drm_is_current_master(file));
++						params, eb, vm);
+ 		if (IS_ERR(vma)) {
+ 			ret = PTR_ERR(vma);
+ 			goto err;
+ 		}
+ 
+ 		if (vma) {
+-			/*
+-			 * Batch parsed and accepted:
+-			 *
+-			 * Set the DISPATCH_SECURE bit to remove the NON_SECURE
+-			 * bit from MI_BATCH_BUFFER_START commands issued in
+-			 * the dispatch_execbuffer implementations. We
+-			 * specifically don't want that set on batches the
+-			 * command parser has accepted.
+-			 */
+-			dispatch_flags |= I915_DISPATCH_SECURE;
++			if (CMDPARSER_USES_GGTT(dev_priv))
++				dispatch_flags |= I915_DISPATCH_SECURE;
+ 			params->args_batch_start_offset = 0;
+ 			params->batch = vma;
+ 		}
+@@ -1798,7 +1841,6 @@ i915_gem_do_execbuffer(struct drm_device *dev, void *data,
+ 	params->file                    = file;
+ 	params->engine                    = engine;
+ 	params->dispatch_flags          = dispatch_flags;
+-	params->ctx                     = ctx;
+ 
+ 	ret = execbuf_submit(params, args, &eb->vmas);
+ err_request:
+diff --git a/drivers/gpu/drm/i915/i915_gem_gtt.c b/drivers/gpu/drm/i915/i915_gem_gtt.c
+index 0bb4232f66bc..16f56f14f4d0 100644
+--- a/drivers/gpu/drm/i915/i915_gem_gtt.c
++++ b/drivers/gpu/drm/i915/i915_gem_gtt.c
+@@ -140,7 +140,8 @@ int intel_sanitize_enable_ppgtt(struct drm_i915_private *dev_priv,
+ 	if (enable_ppgtt == 0 && INTEL_GEN(dev_priv) < 9)
+ 		return 0;
+ 
+-	if (enable_ppgtt == 1)
++	/* Full PPGTT is required by the Gen9 cmdparser */
++	if (enable_ppgtt == 1 && INTEL_GEN(dev_priv) != 9)
+ 		return 1;
+ 
+ 	if (enable_ppgtt == 2 && has_full_ppgtt)
+@@ -177,8 +178,8 @@ static int ppgtt_bind_vma(struct i915_vma *vma,
+ 
+ 	vma->pages = vma->obj->pages;
+ 
+-	/* Currently applicable only to VLV */
+-	if (vma->obj->gt_ro)
++	/* Applicable to VLV, and gen8+ */
++	if (i915_gem_object_is_readonly(vma->obj))
+ 		pte_flags |= PTE_READ_ONLY;
+ 
+ 	vma->vm->insert_entries(vma->vm, vma->pages, vma->node.start,
+@@ -197,11 +198,14 @@ static void ppgtt_unbind_vma(struct i915_vma *vma)
+ 
+ static gen8_pte_t gen8_pte_encode(dma_addr_t addr,
+ 				  enum i915_cache_level level,
+-				  bool valid)
++				  bool valid, u32 flags)
+ {
+ 	gen8_pte_t pte = valid ? _PAGE_PRESENT | _PAGE_RW : 0;
+ 	pte |= addr;
+ 
++	if (unlikely(flags & PTE_READ_ONLY))
++		pte &= ~_PAGE_RW;
++
+ 	switch (level) {
+ 	case I915_CACHE_NONE:
+ 		pte |= PPAT_UNCACHED_INDEX;
+@@ -472,7 +476,7 @@ static void gen8_initialize_pt(struct i915_address_space *vm,
+ 	gen8_pte_t scratch_pte;
+ 
+ 	scratch_pte = gen8_pte_encode(vm->scratch_page.daddr,
+-				      I915_CACHE_LLC, true);
++				      I915_CACHE_LLC, true, 0);
+ 
+ 	fill_px(vm->dev, pt, scratch_pte);
+ }
+@@ -769,7 +773,7 @@ static void gen8_ppgtt_clear_range(struct i915_address_space *vm,
+ {
+ 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
+ 	gen8_pte_t scratch_pte = gen8_pte_encode(vm->scratch_page.daddr,
+-						 I915_CACHE_LLC, use_scratch);
++						 I915_CACHE_LLC, use_scratch, 0);
+ 
+ 	if (!USES_FULL_48BIT_PPGTT(vm->dev)) {
+ 		gen8_ppgtt_clear_pte_range(vm, &ppgtt->pdp, start, length,
+@@ -790,7 +794,8 @@ gen8_ppgtt_insert_pte_entries(struct i915_address_space *vm,
+ 			      struct i915_page_directory_pointer *pdp,
+ 			      struct sg_page_iter *sg_iter,
+ 			      uint64_t start,
+-			      enum i915_cache_level cache_level)
++			      enum i915_cache_level cache_level,
++			      u32 flags)
+ {
+ 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
+ 	gen8_pte_t *pt_vaddr;
+@@ -809,7 +814,7 @@ gen8_ppgtt_insert_pte_entries(struct i915_address_space *vm,
+ 
+ 		pt_vaddr[pte] =
+ 			gen8_pte_encode(sg_page_iter_dma_address(sg_iter),
+-					cache_level, true);
++					cache_level, true, flags);
+ 		if (++pte == GEN8_PTES) {
+ 			kunmap_px(ppgtt, pt_vaddr);
+ 			pt_vaddr = NULL;
+@@ -830,7 +835,7 @@ static void gen8_ppgtt_insert_entries(struct i915_address_space *vm,
+ 				      struct sg_table *pages,
+ 				      uint64_t start,
+ 				      enum i915_cache_level cache_level,
+-				      u32 unused)
++				      u32 flags)
+ {
+ 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
+ 	struct sg_page_iter sg_iter;
+@@ -839,7 +844,7 @@ static void gen8_ppgtt_insert_entries(struct i915_address_space *vm,
+ 
+ 	if (!USES_FULL_48BIT_PPGTT(vm->dev)) {
+ 		gen8_ppgtt_insert_pte_entries(vm, &ppgtt->pdp, &sg_iter, start,
+-					      cache_level);
++					      cache_level, flags);
+ 	} else {
+ 		struct i915_page_directory_pointer *pdp;
+ 		uint64_t pml4e;
+@@ -847,7 +852,7 @@ static void gen8_ppgtt_insert_entries(struct i915_address_space *vm,
+ 
+ 		gen8_for_each_pml4e(pdp, &ppgtt->pml4, start, length, pml4e) {
+ 			gen8_ppgtt_insert_pte_entries(vm, pdp, &sg_iter,
+-						      start, cache_level);
++						      start, cache_level, flags);
+ 		}
+ 	}
+ }
+@@ -1452,7 +1457,7 @@ static void gen8_dump_ppgtt(struct i915_hw_ppgtt *ppgtt, struct seq_file *m)
+ 	uint64_t start = ppgtt->base.start;
+ 	uint64_t length = ppgtt->base.total;
+ 	gen8_pte_t scratch_pte = gen8_pte_encode(vm->scratch_page.daddr,
+-						 I915_CACHE_LLC, true);
++						 I915_CACHE_LLC, true, 0);
+ 
+ 	if (!USES_FULL_48BIT_PPGTT(vm->dev)) {
+ 		gen8_dump_pdp(&ppgtt->pdp, start, length, scratch_pte, m);
+@@ -1520,6 +1525,14 @@ static int gen8_ppgtt_init(struct i915_hw_ppgtt *ppgtt)
+ 	ppgtt->base.clear_range = gen8_ppgtt_clear_range;
+ 	ppgtt->base.unbind_vma = ppgtt_unbind_vma;
+ 	ppgtt->base.bind_vma = ppgtt_bind_vma;
++
++	/*
++	 * From bdw, there is support for read-only pages in the PPGTT.
++	 *
++	 * XXX GVT is not honouring the lack of RW in the PTE bits.
++	 */
++	ppgtt->base.has_read_only = !intel_vgpu_active(to_i915(ppgtt->base.dev));
++
+ 	ppgtt->debug_dump = gen8_dump_ppgtt;
+ 
+ 	if (USES_FULL_48BIT_PPGTT(ppgtt->base.dev)) {
+@@ -2321,7 +2334,7 @@ static void gen8_ggtt_insert_page(struct i915_address_space *vm,
+ 
+ 	rpm_atomic_seq = assert_rpm_atomic_begin(dev_priv);
+ 
+-	gen8_set_pte(pte, gen8_pte_encode(addr, level, true));
++	gen8_set_pte(pte, gen8_pte_encode(addr, level, true, 0));
+ 
+ 	I915_WRITE(GFX_FLSH_CNTL_GEN6, GFX_FLSH_CNTL_EN);
+ 	POSTING_READ(GFX_FLSH_CNTL_GEN6);
+@@ -2332,7 +2345,7 @@ static void gen8_ggtt_insert_page(struct i915_address_space *vm,
+ static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
+ 				     struct sg_table *st,
+ 				     uint64_t start,
+-				     enum i915_cache_level level, u32 unused)
++				     enum i915_cache_level level, u32 flags)
+ {
+ 	struct drm_i915_private *dev_priv = to_i915(vm->dev);
+ 	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
+@@ -2343,12 +2356,20 @@ static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
+ 	int rpm_atomic_seq;
+ 	int i = 0;
+ 
++	/* The GTT does not support read-only mappings */
++	GEM_BUG_ON(flags & PTE_READ_ONLY);
++
+ 	rpm_atomic_seq = assert_rpm_atomic_begin(dev_priv);
+ 
++	/*
++	 * Note that we ignore PTE_READ_ONLY here. The caller must be careful
++	 * not to allow the user to override access to a read only page.
++	 */
++
+ 	gtt_entries = (gen8_pte_t __iomem *)ggtt->gsm + (start >> PAGE_SHIFT);
+ 
+ 	for_each_sgt_dma(addr, sgt_iter, st) {
+-		gtt_entry = gen8_pte_encode(addr, level, true);
++		gtt_entry = gen8_pte_encode(addr, level, true, 0);
+ 		gen8_set_pte(&gtt_entries[i++], gtt_entry);
+ 	}
+ 
+@@ -2499,7 +2520,7 @@ static void gen8_ggtt_clear_range(struct i915_address_space *vm,
+ 
+ 	scratch_pte = gen8_pte_encode(vm->scratch_page.daddr,
+ 				      I915_CACHE_LLC,
+-				      use_scratch);
++				      use_scratch, 0);
+ 	for (i = 0; i < num_entries; i++)
+ 		gen8_set_pte(&gtt_base[i], scratch_pte);
+ 	readl(gtt_base);
+@@ -2604,8 +2625,8 @@ static int ggtt_bind_vma(struct i915_vma *vma,
+ 	if (ret)
+ 		return ret;
+ 
+-	/* Currently applicable only to VLV */
+-	if (obj->gt_ro)
++	/* Applicable to VLV (gen8+ do not support RO in the GGTT) */
++	if (i915_gem_object_is_readonly(obj))
+ 		pte_flags |= PTE_READ_ONLY;
+ 
+ 	vma->vm->insert_entries(vma->vm, vma->pages, vma->node.start,
+@@ -2634,7 +2655,7 @@ static int aliasing_gtt_bind_vma(struct i915_vma *vma,
+ 
+ 	/* Currently applicable only to VLV */
+ 	pte_flags = 0;
+-	if (vma->obj->gt_ro)
++	if (i915_gem_object_is_readonly(vma->obj))
+ 		pte_flags |= PTE_READ_ONLY;
+ 
+ 
+@@ -3193,6 +3214,10 @@ int i915_ggtt_init_hw(struct drm_i915_private *dev_priv)
+ 	ggtt->base.total -= PAGE_SIZE;
+ 	i915_address_space_init(&ggtt->base, dev_priv);
+ 	ggtt->base.total += PAGE_SIZE;
++
++	/* Only VLV supports read-only GGTT mappings */
++	ggtt->base.has_read_only = IS_VALLEYVIEW(dev_priv);
++
+ 	if (!HAS_LLC(dev_priv))
+ 		ggtt->base.mm.color_adjust = i915_gtt_color_adjust;
+ 
+diff --git a/drivers/gpu/drm/i915/i915_gem_gtt.h b/drivers/gpu/drm/i915/i915_gem_gtt.h
+index ec78be2f8c77..43a0192242eb 100644
+--- a/drivers/gpu/drm/i915/i915_gem_gtt.h
++++ b/drivers/gpu/drm/i915/i915_gem_gtt.h
+@@ -392,6 +392,9 @@ struct i915_address_space {
+ 	 */
+ 	struct list_head unbound_list;
+ 
++	/* Some systems support read-only mappings for GGTT and/or PPGTT */
++	bool has_read_only:1;
++
+ 	/* FIXME: Need a more generic return type */
+ 	gen6_pte_t (*pte_encode)(dma_addr_t addr,
+ 				 enum i915_cache_level level,
+diff --git a/drivers/gpu/drm/i915/i915_gem_request.c b/drivers/gpu/drm/i915/i915_gem_request.c
+index 8832f8ec1583..f597261c264f 100644
+--- a/drivers/gpu/drm/i915/i915_gem_request.c
++++ b/drivers/gpu/drm/i915/i915_gem_request.c
+@@ -558,6 +558,10 @@ static void i915_gem_mark_busy(const struct intel_engine_cs *engine)
+ 		return;
+ 
+ 	intel_runtime_pm_get_noresume(dev_priv);
++
++	if (NEEDS_RC6_CTX_CORRUPTION_WA(dev_priv))
++		intel_uncore_forcewake_get(dev_priv, FORCEWAKE_ALL);
++
+ 	dev_priv->gt.awake = true;
+ 
+ 	intel_enable_gt_powersave(dev_priv);
+diff --git a/drivers/gpu/drm/i915/i915_params.c b/drivers/gpu/drm/i915/i915_params.c
+index 768ad89d9cd4..9d9dfe194b9b 100644
+--- a/drivers/gpu/drm/i915/i915_params.c
++++ b/drivers/gpu/drm/i915/i915_params.c
+@@ -49,7 +49,7 @@ struct i915_params i915 __read_mostly = {
+ 	.reset = true,
+ 	.invert_brightness = 0,
+ 	.disable_display = 0,
+-	.enable_cmd_parser = 1,
++	.enable_cmd_parser = true,
+ 	.use_mmio_flip = 0,
+ 	.mmio_debug = 0,
+ 	.verbose_state_checks = 1,
+@@ -178,9 +178,9 @@ MODULE_PARM_DESC(invert_brightness,
+ module_param_named(disable_display, i915.disable_display, bool, 0400);
+ MODULE_PARM_DESC(disable_display, "Disable display (default: false)");
+ 
+-module_param_named_unsafe(enable_cmd_parser, i915.enable_cmd_parser, int, 0600);
++module_param_named_unsafe(enable_cmd_parser, i915.enable_cmd_parser, bool, 0400);
+ MODULE_PARM_DESC(enable_cmd_parser,
+-		 "Enable command parsing (1=enabled [default], 0=disabled)");
++		 "Enable command parsing (true=enabled [default], false=disabled)");
+ 
+ module_param_named_unsafe(use_mmio_flip, i915.use_mmio_flip, int, 0600);
+ MODULE_PARM_DESC(use_mmio_flip,
+diff --git a/drivers/gpu/drm/i915/i915_params.h b/drivers/gpu/drm/i915/i915_params.h
+index 3a0dd78ddb38..82ac6e886eed 100644
+--- a/drivers/gpu/drm/i915/i915_params.h
++++ b/drivers/gpu/drm/i915/i915_params.h
+@@ -44,7 +44,6 @@ struct i915_params {
+ 	int disable_power_well;
+ 	int enable_ips;
+ 	int invert_brightness;
+-	int enable_cmd_parser;
+ 	int enable_guc_loading;
+ 	int enable_guc_submission;
+ 	int guc_log_level;
+@@ -53,6 +52,7 @@ struct i915_params {
+ 	int edp_vswing;
+ 	unsigned int inject_load_failure;
+ 	/* leave bools at the end to not create holes */
++	bool enable_cmd_parser;
+ 	bool enable_hangcheck;
+ 	bool fastboot;
+ 	bool prefault_disable;
+diff --git a/drivers/gpu/drm/i915/i915_reg.h b/drivers/gpu/drm/i915/i915_reg.h
+index 70d96162def6..5468e69bf520 100644
+--- a/drivers/gpu/drm/i915/i915_reg.h
++++ b/drivers/gpu/drm/i915/i915_reg.h
+@@ -223,6 +223,8 @@ static inline bool i915_mmio_reg_valid(i915_reg_t reg)
+ #define GEN8_CONFIG0			_MMIO(0xD00)
+ #define  GEN9_DEFAULT_FIXES		(1 << 3 | 1 << 2 | 1 << 1)
+ 
++#define GEN8_RC6_CTX_INFO		_MMIO(0x8504)
++
+ #define GAC_ECO_BITS			_MMIO(0x14090)
+ #define   ECOBITS_SNB_BIT		(1<<13)
+ #define   ECOBITS_PPGTT_CACHE64B	(3<<8)
+@@ -295,7 +297,6 @@ static inline bool i915_mmio_reg_valid(i915_reg_t reg)
+  * Instruction field definitions used by the command parser
+  */
+ #define INSTR_CLIENT_SHIFT      29
+-#define INSTR_CLIENT_MASK       0xE0000000
+ #define   INSTR_MI_CLIENT       0x0
+ #define   INSTR_BC_CLIENT       0x2
+ #define   INSTR_RC_CLIENT       0x3
+@@ -569,6 +570,10 @@ static inline bool i915_mmio_reg_valid(i915_reg_t reg)
+  */
+ #define BCS_SWCTRL _MMIO(0x22200)
+ 
++/* There are 16 GPR registers */
++#define BCS_GPR(n)	_MMIO(0x22600 + (n) * 8)
++#define BCS_GPR_UDW(n)	_MMIO(0x22600 + (n) * 8 + 4)
++
+ #define GPGPU_THREADS_DISPATCHED        _MMIO(0x2290)
+ #define GPGPU_THREADS_DISPATCHED_UDW	_MMIO(0x2290 + 4)
+ #define HS_INVOCATION_COUNT             _MMIO(0x2300)
+@@ -5936,6 +5941,10 @@ enum {
+ #define SKL_CSR_DC5_DC6_COUNT	_MMIO(0x8002C)
+ #define BXT_CSR_DC3_DC5_COUNT	_MMIO(0x80038)
+ 
++/* Display Internal Timeout Register */
++#define RM_TIMEOUT		_MMIO(0x42060)
++#define  MMIO_TIMEOUT_US(us)	((us) << 0)
++
+ /* interrupts */
+ #define DE_MASTER_IRQ_CONTROL   (1 << 31)
+ #define DE_SPRITEB_FLIP_DONE    (1 << 29)
+diff --git a/drivers/gpu/drm/i915/intel_drv.h b/drivers/gpu/drm/i915/intel_drv.h
+index 8aafb9601540..b3af565b7027 100644
+--- a/drivers/gpu/drm/i915/intel_drv.h
++++ b/drivers/gpu/drm/i915/intel_drv.h
+@@ -1730,6 +1730,9 @@ void intel_enable_gt_powersave(struct drm_i915_private *dev_priv);
+ void intel_autoenable_gt_powersave(struct drm_i915_private *dev_priv);
+ void intel_disable_gt_powersave(struct drm_i915_private *dev_priv);
+ void intel_suspend_gt_powersave(struct drm_i915_private *dev_priv);
++bool i915_rc6_ctx_wa_check(struct drm_i915_private *i915);
++void i915_rc6_ctx_wa_suspend(struct drm_i915_private *i915);
++void i915_rc6_ctx_wa_resume(struct drm_i915_private *i915);
+ void gen6_rps_busy(struct drm_i915_private *dev_priv);
+ void gen6_rps_reset_ei(struct drm_i915_private *dev_priv);
+ void gen6_rps_idle(struct drm_i915_private *dev_priv);
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index 05427d292457..07d2a8e7f78c 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -105,6 +105,13 @@ static void bxt_init_clock_gating(struct drm_device *dev)
+ 	if (IS_BXT_REVID(dev_priv, BXT_REVID_B0, REVID_FOREVER))
+ 		I915_WRITE(GEN9_CLKGATE_DIS_0, I915_READ(GEN9_CLKGATE_DIS_0) |
+ 			   PWM1_GATING_DIS | PWM2_GATING_DIS);
++	/*
++	 * Lower the display internal timeout.
++	 * This is needed to avoid any hard hangs when DSI port PLL
++	 * is off and a MMIO access is attempted by any privilege
++	 * application, using batch buffers or any other means.
++	 */
++	I915_WRITE(RM_TIMEOUT, MMIO_TIMEOUT_US(950));
+ }
+ 
+ static void i915_pineview_get_mem_freq(struct drm_device *dev)
+@@ -5149,19 +5156,23 @@ static void gen9_disable_rps(struct drm_i915_private *dev_priv)
+ 	I915_WRITE(GEN6_RP_CONTROL, 0);
+ }
+ 
+-static void gen6_disable_rps(struct drm_i915_private *dev_priv)
++static void gen6_disable_rc6(struct drm_i915_private *dev_priv)
+ {
+ 	I915_WRITE(GEN6_RC_CONTROL, 0);
++}
++
++static void gen6_disable_rps(struct drm_i915_private *dev_priv)
++{
+ 	I915_WRITE(GEN6_RPNSWREQ, 1 << 31);
+ 	I915_WRITE(GEN6_RP_CONTROL, 0);
+ }
+ 
+-static void cherryview_disable_rps(struct drm_i915_private *dev_priv)
++static void cherryview_disable_rc6(struct drm_i915_private *dev_priv)
+ {
+ 	I915_WRITE(GEN6_RC_CONTROL, 0);
+ }
+ 
+-static void valleyview_disable_rps(struct drm_i915_private *dev_priv)
++static void valleyview_disable_rc6(struct drm_i915_private *dev_priv)
+ {
+ 	/* we're doing forcewake before Disabling RC6,
+ 	 * This what the BIOS expects when going into suspend */
+@@ -5426,7 +5437,8 @@ static void gen9_enable_rc6(struct drm_i915_private *dev_priv)
+ 	I915_WRITE(GEN9_RENDER_PG_IDLE_HYSTERESIS, 25);
+ 
+ 	/* 3a: Enable RC6 */
+-	if (intel_enable_rc6() & INTEL_RC6_ENABLE)
++	if (!dev_priv->rps.ctx_corrupted &&
++	    intel_enable_rc6() & INTEL_RC6_ENABLE)
+ 		rc6_mask = GEN6_RC_CTL_RC6_ENABLE;
+ 	DRM_INFO("RC6 %s\n", onoff(rc6_mask & GEN6_RC_CTL_RC6_ENABLE));
+ 	/* WaRsUseTimeoutMode */
+@@ -5484,7 +5496,8 @@ static void gen8_enable_rps(struct drm_i915_private *dev_priv)
+ 		I915_WRITE(GEN6_RC6_THRESHOLD, 50000); /* 50/125ms per EI */
+ 
+ 	/* 3: Enable RC6 */
+-	if (intel_enable_rc6() & INTEL_RC6_ENABLE)
++	if (!dev_priv->rps.ctx_corrupted &&
++	    intel_enable_rc6() & INTEL_RC6_ENABLE)
+ 		rc6_mask = GEN6_RC_CTL_RC6_ENABLE;
+ 	intel_print_rc6_info(dev_priv, rc6_mask);
+ 	if (IS_BROADWELL(dev_priv))
+@@ -6655,6 +6668,95 @@ static void intel_init_emon(struct drm_i915_private *dev_priv)
+ 	dev_priv->ips.corr = (lcfuse & LCFUSE_HIV_MASK);
+ }
+ 
++static bool i915_rc6_ctx_corrupted(struct drm_i915_private *dev_priv)
++{
++	return !I915_READ(GEN8_RC6_CTX_INFO);
++}
++
++static void i915_rc6_ctx_wa_init(struct drm_i915_private *i915)
++{
++	if (!NEEDS_RC6_CTX_CORRUPTION_WA(i915))
++		return;
++
++	if (i915_rc6_ctx_corrupted(i915)) {
++		DRM_INFO("RC6 context corrupted, disabling runtime power management\n");
++		i915->rps.ctx_corrupted = true;
++		intel_runtime_pm_get(i915);
++	}
++}
++
++static void i915_rc6_ctx_wa_cleanup(struct drm_i915_private *i915)
++{
++	if (i915->rps.ctx_corrupted) {
++		intel_runtime_pm_put(i915);
++		i915->rps.ctx_corrupted = false;
++	}
++}
++
++/**
++ * i915_rc6_ctx_wa_suspend - system suspend sequence for the RC6 CTX WA
++ * @i915: i915 device
++ *
++ * Perform any steps needed to clean up the RC6 CTX WA before system suspend.
++ */
++void i915_rc6_ctx_wa_suspend(struct drm_i915_private *i915)
++{
++	if (i915->rps.ctx_corrupted)
++		intel_runtime_pm_put(i915);
++}
++
++/**
++ * i915_rc6_ctx_wa_resume - system resume sequence for the RC6 CTX WA
++ * @i915: i915 device
++ *
++ * Perform any steps needed to re-init the RC6 CTX WA after system resume.
++ */
++void i915_rc6_ctx_wa_resume(struct drm_i915_private *i915)
++{
++	if (!i915->rps.ctx_corrupted)
++		return;
++
++	if (i915_rc6_ctx_corrupted(i915)) {
++		intel_runtime_pm_get(i915);
++		return;
++	}
++
++	DRM_INFO("RC6 context restored, re-enabling runtime power management\n");
++	i915->rps.ctx_corrupted = false;
++}
++
++static void intel_disable_rc6(struct drm_i915_private *dev_priv);
++
++/**
++ * i915_rc6_ctx_wa_check - check for a new RC6 CTX corruption
++ * @i915: i915 device
++ *
++ * Check if an RC6 CTX corruption has happened since the last check and if so
++ * disable RC6 and runtime power management.
++ *
++ * Return false if no context corruption has happened since the last call of
++ * this function, true otherwise.
++*/
++bool i915_rc6_ctx_wa_check(struct drm_i915_private *i915)
++{
++	if (!NEEDS_RC6_CTX_CORRUPTION_WA(i915))
++		return false;
++
++	if (i915->rps.ctx_corrupted)
++		return false;
++
++	if (!i915_rc6_ctx_corrupted(i915))
++		return false;
++
++	DRM_NOTE("RC6 context corruption, disabling runtime power management\n");
++
++	intel_disable_rc6(i915);
++	i915->rps.ctx_corrupted = true;
++	intel_runtime_pm_get_noresume(i915);
++
++	return true;
++}
++
+ void intel_init_gt_powersave(struct drm_i915_private *dev_priv)
+ {
+ 	/*
+@@ -6669,6 +6771,8 @@ void intel_init_gt_powersave(struct drm_i915_private *dev_priv)
+ 	mutex_lock(&dev_priv->drm.struct_mutex);
+ 	mutex_lock(&dev_priv->rps.hw_lock);
+ 
++	i915_rc6_ctx_wa_init(dev_priv);
++
+ 	/* Initialize RPS limits (for userspace) */
+ 	if (IS_CHERRYVIEW(dev_priv))
+ 		cherryview_init_gt_powersave(dev_priv);
+@@ -6718,6 +6822,8 @@ void intel_cleanup_gt_powersave(struct drm_i915_private *dev_priv)
+ 	if (IS_VALLEYVIEW(dev_priv))
+ 		valleyview_cleanup_gt_powersave(dev_priv);
+ 
++	i915_rc6_ctx_wa_cleanup(dev_priv);
++
+ 	if (!i915.enable_rc6)
+ 		intel_runtime_pm_put(dev_priv);
+ }
+@@ -6749,27 +6855,47 @@ void intel_sanitize_gt_powersave(struct drm_i915_private *dev_priv)
+ 	gen6_reset_rps_interrupts(dev_priv);
+ }
+ 
+-void intel_disable_gt_powersave(struct drm_i915_private *dev_priv)
++static void __intel_disable_rc6(struct drm_i915_private *dev_priv)
+ {
+-	if (!READ_ONCE(dev_priv->rps.enabled))
+-		return;
++	if (INTEL_GEN(dev_priv) >= 9)
++		gen9_disable_rc6(dev_priv);
++	else if (IS_CHERRYVIEW(dev_priv))
++		cherryview_disable_rc6(dev_priv);
++	else if (IS_VALLEYVIEW(dev_priv))
++		valleyview_disable_rc6(dev_priv);
++	else if (INTEL_GEN(dev_priv) >= 6)
++		gen6_disable_rc6(dev_priv);
++}
+ 
++static void intel_disable_rc6(struct drm_i915_private *dev_priv)
++{
+ 	mutex_lock(&dev_priv->rps.hw_lock);
++	__intel_disable_rc6(dev_priv);
++	mutex_unlock(&dev_priv->rps.hw_lock);
++}
+ 
+-	if (INTEL_GEN(dev_priv) >= 9) {
+-		gen9_disable_rc6(dev_priv);
++static void intel_disable_rps(struct drm_i915_private *dev_priv)
++{
++	if (INTEL_GEN(dev_priv) >= 9)
+ 		gen9_disable_rps(dev_priv);
+-	} else if (IS_CHERRYVIEW(dev_priv)) {
+-		cherryview_disable_rps(dev_priv);
+-	} else if (IS_VALLEYVIEW(dev_priv)) {
+-		valleyview_disable_rps(dev_priv);
+-	} else if (INTEL_GEN(dev_priv) >= 6) {
++	else if (INTEL_GEN(dev_priv) >= 6)
+ 		gen6_disable_rps(dev_priv);
+-	}  else if (IS_IRONLAKE_M(dev_priv)) {
++	else if (IS_IRONLAKE_M(dev_priv))
+ 		ironlake_disable_drps(dev_priv);
+-	}
++}
++
++void intel_disable_gt_powersave(struct drm_i915_private *dev_priv)
++{
++	if (!READ_ONCE(dev_priv->rps.enabled))
++		return;
++
++	mutex_lock(&dev_priv->rps.hw_lock);
++
++	__intel_disable_rc6(dev_priv);
++	intel_disable_rps(dev_priv);
+ 
+ 	dev_priv->rps.enabled = false;
++
+ 	mutex_unlock(&dev_priv->rps.hw_lock);
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/intel_ringbuffer.c b/drivers/gpu/drm/i915/intel_ringbuffer.c
+index 8babfe0ce4e3..29c3123840ae 100644
+--- a/drivers/gpu/drm/i915/intel_ringbuffer.c
++++ b/drivers/gpu/drm/i915/intel_ringbuffer.c
+@@ -1951,6 +1951,7 @@ void intel_ring_unpin(struct intel_ring *ring)
+ static struct i915_vma *
+ intel_ring_create_vma(struct drm_i915_private *dev_priv, int size)
+ {
++	struct i915_address_space *vm = &dev_priv->ggtt.base;
+ 	struct drm_i915_gem_object *obj;
+ 	struct i915_vma *vma;
+ 
+@@ -1960,10 +1961,14 @@ intel_ring_create_vma(struct drm_i915_private *dev_priv, int size)
+ 	if (IS_ERR(obj))
+ 		return ERR_CAST(obj);
+ 
+-	/* mark ring buffers as read-only from GPU side by default */
+-	obj->gt_ro = 1;
++	/*
++	 * Mark ring buffers as read-only from GPU side (so no stray overwrites)
++	 * if supported by the platform's GGTT.
++	 */
++	if (vm->has_read_only)
++		i915_gem_object_set_readonly(obj);
+ 
+-	vma = i915_vma_create(obj, &dev_priv->ggtt.base, NULL);
++	vma = i915_vma_create(obj, vm, NULL);
+ 	if (IS_ERR(vma))
+ 		goto err;
+ 
+diff --git a/drivers/gpu/drm/i915/intel_ringbuffer.h b/drivers/gpu/drm/i915/intel_ringbuffer.h
+index ec0b4a0c605d..ce14cd8495e8 100644
+--- a/drivers/gpu/drm/i915/intel_ringbuffer.h
++++ b/drivers/gpu/drm/i915/intel_ringbuffer.h
+@@ -341,7 +341,9 @@ struct intel_engine_cs {
+ 
+ 	struct intel_engine_hangcheck hangcheck;
+ 
+-	bool needs_cmd_parser;
++#define I915_ENGINE_USING_CMD_PARSER	BIT(0)
++#define I915_ENGINE_REQUIRES_CMD_PARSER	BIT(3)
++	unsigned int flags;
+ 
+ 	/*
+ 	 * Table of commands the command parser needs to know about
+@@ -374,7 +376,19 @@ intel_engine_initialized(const struct intel_engine_cs *engine)
+ 	return engine->i915 != NULL;
+ }
+ 
+-static inline unsigned
++static inline bool
++intel_engine_using_cmd_parser(const struct intel_engine_cs *engine)
++{
++	return engine->flags & I915_ENGINE_USING_CMD_PARSER;
++}
++
++static inline bool
++intel_engine_requires_cmd_parser(const struct intel_engine_cs *engine)
++{
++	return engine->flags & I915_ENGINE_REQUIRES_CMD_PARSER;
++}
++
++static inline unsigned int
+ intel_engine_flag(const struct intel_engine_cs *engine)
+ {
+ 	return 1 << engine->id;
+diff --git a/drivers/gpu/drm/radeon/si_dpm.c b/drivers/gpu/drm/radeon/si_dpm.c
+index b82ef5ed727c..ac7ae206f2e7 100644
+--- a/drivers/gpu/drm/radeon/si_dpm.c
++++ b/drivers/gpu/drm/radeon/si_dpm.c
+@@ -1956,6 +1956,7 @@ static void si_initialize_powertune_defaults(struct radeon_device *rdev)
+ 		case 0x682C:
+ 			si_pi->cac_weights = cac_weights_cape_verde_pro;
+ 			si_pi->dte_data = dte_data_sun_xt;
++			update_dte_from_pl2 = true;
+ 			break;
+ 		case 0x6825:
+ 		case 0x6827:
+diff --git a/drivers/hid/intel-ish-hid/ishtp/client-buffers.c b/drivers/hid/intel-ish-hid/ishtp/client-buffers.c
+index b9b917d2d50d..c41dbb167c91 100644
+--- a/drivers/hid/intel-ish-hid/ishtp/client-buffers.c
++++ b/drivers/hid/intel-ish-hid/ishtp/client-buffers.c
+@@ -90,7 +90,7 @@ int ishtp_cl_alloc_tx_ring(struct ishtp_cl *cl)
+ 	return	0;
+ out:
+ 	dev_err(&cl->device->dev, "error in allocating Tx pool\n");
+-	ishtp_cl_free_rx_ring(cl);
++	ishtp_cl_free_tx_ring(cl);
+ 	return	-ENOMEM;
+ }
+ 
+diff --git a/drivers/iio/imu/adis16480.c b/drivers/iio/imu/adis16480.c
+index 12898424d838..6f975538996c 100644
+--- a/drivers/iio/imu/adis16480.c
++++ b/drivers/iio/imu/adis16480.c
+@@ -266,8 +266,11 @@ static int adis16480_set_freq(struct iio_dev *indio_dev, int val, int val2)
+ 	struct adis16480 *st = iio_priv(indio_dev);
+ 	unsigned int t;
+ 
++	if (val < 0 || val2 < 0)
++		return -EINVAL;
++
+ 	t =  val * 1000 + val2 / 1000;
+-	if (t <= 0)
++	if (t == 0)
+ 		return -EINVAL;
+ 
+ 	t = 2460000 / t;
+diff --git a/drivers/infiniband/hw/cxgb4/cm.c b/drivers/infiniband/hw/cxgb4/cm.c
+index e5752352e0fb..605d50ad123c 100644
+--- a/drivers/infiniband/hw/cxgb4/cm.c
++++ b/drivers/infiniband/hw/cxgb4/cm.c
+@@ -490,7 +490,6 @@ static int _put_ep_safe(struct c4iw_dev *dev, struct sk_buff *skb)
+ 
+ 	ep = *((struct c4iw_ep **)(skb->cb + 2 * sizeof(void *)));
+ 	release_ep_resources(ep);
+-	kfree_skb(skb);
+ 	return 0;
+ }
+ 
+@@ -501,7 +500,6 @@ static int _put_pass_ep_safe(struct c4iw_dev *dev, struct sk_buff *skb)
+ 	ep = *((struct c4iw_ep **)(skb->cb + 2 * sizeof(void *)));
+ 	c4iw_put_ep(&ep->parent_ep->com);
+ 	release_ep_resources(ep);
+-	kfree_skb(skb);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index c1971bca62fb..d52fd842ef1f 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -1759,7 +1759,8 @@ err_detach:
+ 	slave_disable_netpoll(new_slave);
+ 
+ err_close:
+-	slave_dev->priv_flags &= ~IFF_BONDING;
++	if (!netif_is_bond_master(slave_dev))
++		slave_dev->priv_flags &= ~IFF_BONDING;
+ 	dev_close(slave_dev);
+ 
+ err_restore_mac:
+@@ -1960,7 +1961,8 @@ static int __bond_release_one(struct net_device *bond_dev,
+ 
+ 	dev_set_mtu(slave_dev, slave->original_mtu);
+ 
+-	slave_dev->priv_flags &= ~IFF_BONDING;
++	if (!netif_is_bond_master(slave_dev))
++		slave_dev->priv_flags &= ~IFF_BONDING;
+ 
+ 	bond_free_slave(slave);
+ 
+diff --git a/drivers/net/can/c_can/c_can.c b/drivers/net/can/c_can/c_can.c
+index e3dccd3200d5..7d35f6737499 100644
+--- a/drivers/net/can/c_can/c_can.c
++++ b/drivers/net/can/c_can/c_can.c
+@@ -97,6 +97,9 @@
+ #define BTR_TSEG2_SHIFT		12
+ #define BTR_TSEG2_MASK		(0x7 << BTR_TSEG2_SHIFT)
+ 
++/* interrupt register */
++#define INT_STS_PENDING		0x8000
++
+ /* brp extension register */
+ #define BRP_EXT_BRPE_MASK	0x0f
+ #define BRP_EXT_BRPE_SHIFT	0
+@@ -1029,10 +1032,16 @@ static int c_can_poll(struct napi_struct *napi, int quota)
+ 	u16 curr, last = priv->last_status;
+ 	int work_done = 0;
+ 
+-	priv->last_status = curr = priv->read_reg(priv, C_CAN_STS_REG);
+-	/* Ack status on C_CAN. D_CAN is self clearing */
+-	if (priv->type != BOSCH_D_CAN)
+-		priv->write_reg(priv, C_CAN_STS_REG, LEC_UNUSED);
++	/* Only read the status register if a status interrupt was pending */
++	if (atomic_xchg(&priv->sie_pending, 0)) {
++		priv->last_status = curr = priv->read_reg(priv, C_CAN_STS_REG);
++		/* Ack status on C_CAN. D_CAN is self clearing */
++		if (priv->type != BOSCH_D_CAN)
++			priv->write_reg(priv, C_CAN_STS_REG, LEC_UNUSED);
++	} else {
++		/* no change detected ... */
++		curr = last;
++	}
+ 
+ 	/* handle state changes */
+ 	if ((curr & STATUS_EWARN) && (!(last & STATUS_EWARN))) {
+@@ -1083,10 +1092,16 @@ static irqreturn_t c_can_isr(int irq, void *dev_id)
+ {
+ 	struct net_device *dev = (struct net_device *)dev_id;
+ 	struct c_can_priv *priv = netdev_priv(dev);
++	int reg_int;
+ 
+-	if (!priv->read_reg(priv, C_CAN_INT_REG))
++	reg_int = priv->read_reg(priv, C_CAN_INT_REG);
++	if (!reg_int)
+ 		return IRQ_NONE;
+ 
++	/* save for later use */
++	if (reg_int & INT_STS_PENDING)
++		atomic_set(&priv->sie_pending, 1);
++
+ 	/* disable all interrupts and schedule the NAPI */
+ 	c_can_irq_control(priv, false);
+ 	napi_schedule(&priv->napi);
+diff --git a/drivers/net/can/c_can/c_can.h b/drivers/net/can/c_can/c_can.h
+index 8acdc7fa4792..d5567a7c1c6d 100644
+--- a/drivers/net/can/c_can/c_can.h
++++ b/drivers/net/can/c_can/c_can.h
+@@ -198,6 +198,7 @@ struct c_can_priv {
+ 	struct net_device *dev;
+ 	struct device *device;
+ 	atomic_t tx_active;
++	atomic_t sie_pending;
+ 	unsigned long tx_dir;
+ 	int last_status;
+ 	u16 (*read_reg) (const struct c_can_priv *priv, enum reg index);
+diff --git a/drivers/net/can/flexcan.c b/drivers/net/can/flexcan.c
+index baef09b9449f..6b866d0451b2 100644
+--- a/drivers/net/can/flexcan.c
++++ b/drivers/net/can/flexcan.c
+@@ -923,6 +923,7 @@ static int flexcan_chip_start(struct net_device *dev)
+ 		reg_mecr = flexcan_read(&regs->mecr);
+ 		reg_mecr &= ~FLEXCAN_MECR_ECRWRDIS;
+ 		flexcan_write(reg_mecr, &regs->mecr);
++		reg_mecr |= FLEXCAN_MECR_ECCDIS;
+ 		reg_mecr &= ~(FLEXCAN_MECR_NCEFAFRZ | FLEXCAN_MECR_HANCEI_MSK |
+ 			      FLEXCAN_MECR_FANCEI_MSK);
+ 		flexcan_write(reg_mecr, &regs->mecr);
+diff --git a/drivers/net/can/usb/gs_usb.c b/drivers/net/can/usb/gs_usb.c
+index 5d5012337d9e..014b9ae3dc17 100644
+--- a/drivers/net/can/usb/gs_usb.c
++++ b/drivers/net/can/usb/gs_usb.c
+@@ -632,6 +632,7 @@ static int gs_can_open(struct net_device *netdev)
+ 					   rc);
+ 
+ 				usb_unanchor_urb(urb);
++				usb_free_urb(urb);
+ 				break;
+ 			}
+ 
+diff --git a/drivers/net/can/usb/peak_usb/pcan_usb.c b/drivers/net/can/usb/peak_usb/pcan_usb.c
+index 838545ce468d..e626c2afbbb1 100644
+--- a/drivers/net/can/usb/peak_usb/pcan_usb.c
++++ b/drivers/net/can/usb/peak_usb/pcan_usb.c
+@@ -108,7 +108,7 @@ struct pcan_usb_msg_context {
+ 	u8 *end;
+ 	u8 rec_cnt;
+ 	u8 rec_idx;
+-	u8 rec_data_idx;
++	u8 rec_ts_idx;
+ 	struct net_device *netdev;
+ 	struct pcan_usb *pdev;
+ };
+@@ -552,10 +552,15 @@ static int pcan_usb_decode_status(struct pcan_usb_msg_context *mc,
+ 	mc->ptr += PCAN_USB_CMD_ARGS;
+ 
+ 	if (status_len & PCAN_USB_STATUSLEN_TIMESTAMP) {
+-		int err = pcan_usb_decode_ts(mc, !mc->rec_idx);
++		int err = pcan_usb_decode_ts(mc, !mc->rec_ts_idx);
+ 
+ 		if (err)
+ 			return err;
++
++		/* Next packet in the buffer will have a timestamp on a single
++		 * byte
++		 */
++		mc->rec_ts_idx++;
+ 	}
+ 
+ 	switch (f) {
+@@ -638,10 +643,13 @@ static int pcan_usb_decode_data(struct pcan_usb_msg_context *mc, u8 status_len)
+ 
+ 	cf->can_dlc = get_can_dlc(rec_len);
+ 
+-	/* first data packet timestamp is a word */
+-	if (pcan_usb_decode_ts(mc, !mc->rec_data_idx))
++	/* Only first packet timestamp is a word */
++	if (pcan_usb_decode_ts(mc, !mc->rec_ts_idx))
+ 		goto decode_failed;
+ 
++	/* Next packet in the buffer will have a timestamp on a single byte */
++	mc->rec_ts_idx++;
++
+ 	/* read data */
+ 	memset(cf->data, 0x0, sizeof(cf->data));
+ 	if (status_len & PCAN_USB_STATUSLEN_RTR) {
+@@ -695,7 +703,6 @@ static int pcan_usb_decode_msg(struct peak_usb_device *dev, u8 *ibuf, u32 lbuf)
+ 		/* handle normal can frames here */
+ 		} else {
+ 			err = pcan_usb_decode_data(&mc, sl);
+-			mc.rec_data_idx++;
+ 		}
+ 	}
+ 
+diff --git a/drivers/net/can/usb/peak_usb/pcan_usb_core.c b/drivers/net/can/usb/peak_usb/pcan_usb_core.c
+index ce0a352a5eaa..6cd4317fe94d 100644
+--- a/drivers/net/can/usb/peak_usb/pcan_usb_core.c
++++ b/drivers/net/can/usb/peak_usb/pcan_usb_core.c
+@@ -774,7 +774,7 @@ static int peak_usb_create_dev(const struct peak_usb_adapter *peak_usb_adapter,
+ 	dev = netdev_priv(netdev);
+ 
+ 	/* allocate a buffer large enough to send commands */
+-	dev->cmd_buf = kmalloc(PCAN_USB_MAX_CMD_LEN, GFP_KERNEL);
++	dev->cmd_buf = kzalloc(PCAN_USB_MAX_CMD_LEN, GFP_KERNEL);
+ 	if (!dev->cmd_buf) {
+ 		err = -ENOMEM;
+ 		goto lbl_free_candev;
+diff --git a/drivers/net/can/usb/usb_8dev.c b/drivers/net/can/usb/usb_8dev.c
+index 27861c417c94..3e4416473607 100644
+--- a/drivers/net/can/usb/usb_8dev.c
++++ b/drivers/net/can/usb/usb_8dev.c
+@@ -1007,9 +1007,8 @@ static void usb_8dev_disconnect(struct usb_interface *intf)
+ 		netdev_info(priv->netdev, "device disconnected\n");
+ 
+ 		unregister_netdev(priv->netdev);
+-		free_candev(priv->netdev);
+-
+ 		unlink_all_urbs(priv);
++		free_candev(priv->netdev);
+ 	}
+ 
+ }
+diff --git a/drivers/net/ethernet/arc/emac_rockchip.c b/drivers/net/ethernet/arc/emac_rockchip.c
+index c770ca37c9b2..a7d30731d376 100644
+--- a/drivers/net/ethernet/arc/emac_rockchip.c
++++ b/drivers/net/ethernet/arc/emac_rockchip.c
+@@ -261,6 +261,9 @@ static int emac_rockchip_remove(struct platform_device *pdev)
+ 	if (priv->regulator)
+ 		regulator_disable(priv->regulator);
+ 
++	if (priv->soc_data->need_div_macclk)
++		clk_disable_unprepare(priv->macclk);
++
+ 	free_netdev(ndev);
+ 	return err;
+ }
+diff --git a/drivers/net/ethernet/hisilicon/hip04_eth.c b/drivers/net/ethernet/hisilicon/hip04_eth.c
+index 407e1177d9d1..4436a0307f32 100644
+--- a/drivers/net/ethernet/hisilicon/hip04_eth.c
++++ b/drivers/net/ethernet/hisilicon/hip04_eth.c
+@@ -953,7 +953,6 @@ static int hip04_remove(struct platform_device *pdev)
+ 
+ 	hip04_free_ring(ndev, d);
+ 	unregister_netdev(ndev);
+-	free_irq(ndev->irq, ndev);
+ 	of_node_put(priv->phy_node);
+ 	cancel_work_sync(&priv->tx_timeout_task);
+ 	free_netdev(ndev);
+diff --git a/drivers/net/ethernet/intel/e1000/e1000_ethtool.c b/drivers/net/ethernet/intel/e1000/e1000_ethtool.c
+index 2a81f6d72140..8936f19e9325 100644
+--- a/drivers/net/ethernet/intel/e1000/e1000_ethtool.c
++++ b/drivers/net/ethernet/intel/e1000/e1000_ethtool.c
+@@ -628,6 +628,7 @@ static int e1000_set_ringparam(struct net_device *netdev,
+ 	for (i = 0; i < adapter->num_rx_queues; i++)
+ 		rxdr[i].count = rxdr->count;
+ 
++	err = 0;
+ 	if (netif_running(adapter->netdev)) {
+ 		/* Try to get new resources before deleting old */
+ 		err = e1000_setup_all_rx_resources(adapter);
+@@ -648,14 +649,13 @@ static int e1000_set_ringparam(struct net_device *netdev,
+ 		adapter->rx_ring = rxdr;
+ 		adapter->tx_ring = txdr;
+ 		err = e1000_up(adapter);
+-		if (err)
+-			goto err_setup;
+ 	}
+ 	kfree(tx_old);
+ 	kfree(rx_old);
+ 
+ 	clear_bit(__E1000_RESETTING, &adapter->flags);
+-	return 0;
++	return err;
++
+ err_setup_tx:
+ 	e1000_free_all_rx_resources(adapter);
+ err_setup_rx:
+@@ -667,7 +667,6 @@ err_alloc_rx:
+ err_alloc_tx:
+ 	if (netif_running(adapter->netdev))
+ 		e1000_up(adapter);
+-err_setup:
+ 	clear_bit(__E1000_RESETTING, &adapter->flags);
+ 	return err;
+ }
+diff --git a/drivers/net/ethernet/intel/igb/igb_main.c b/drivers/net/ethernet/intel/igb/igb_main.c
+index 7956176c2c73..7e35bd665630 100644
+--- a/drivers/net/ethernet/intel/igb/igb_main.c
++++ b/drivers/net/ethernet/intel/igb/igb_main.c
+@@ -1677,7 +1677,8 @@ static void igb_check_swap_media(struct igb_adapter *adapter)
+ 	if ((hw->phy.media_type == e1000_media_type_copper) &&
+ 	    (!(connsw & E1000_CONNSW_AUTOSENSE_EN))) {
+ 		swap_now = true;
+-	} else if (!(connsw & E1000_CONNSW_SERDESD)) {
++	} else if ((hw->phy.media_type != e1000_media_type_copper) &&
++		   !(connsw & E1000_CONNSW_SERDESD)) {
+ 		/* copper signal takes time to appear */
+ 		if (adapter->copper_tries < 4) {
+ 			adapter->copper_tries++;
+diff --git a/drivers/net/ethernet/qlogic/qede/qede_main.c b/drivers/net/ethernet/qlogic/qede/qede_main.c
+index 85f46dbecd5b..9b1920b58594 100644
+--- a/drivers/net/ethernet/qlogic/qede/qede_main.c
++++ b/drivers/net/ethernet/qlogic/qede/qede_main.c
+@@ -2619,8 +2619,16 @@ enum qede_remove_mode {
+ static void __qede_remove(struct pci_dev *pdev, enum qede_remove_mode mode)
+ {
+ 	struct net_device *ndev = pci_get_drvdata(pdev);
+-	struct qede_dev *edev = netdev_priv(ndev);
+-	struct qed_dev *cdev = edev->cdev;
++	struct qede_dev *edev;
++	struct qed_dev *cdev;
++
++	if (!ndev) {
++		dev_info(&pdev->dev, "Device has already been removed\n");
++		return;
++	}
++
++	edev = netdev_priv(ndev);
++	cdev = edev->cdev;
+ 
+ 	DP_INFO(edev, "Starting qede_remove\n");
+ 
+diff --git a/drivers/net/fjes/fjes_main.c b/drivers/net/fjes/fjes_main.c
+index 7ea8ead4fd1c..bbc983b04561 100644
+--- a/drivers/net/fjes/fjes_main.c
++++ b/drivers/net/fjes/fjes_main.c
+@@ -1187,8 +1187,17 @@ static int fjes_probe(struct platform_device *plat_dev)
+ 	adapter->open_guard = false;
+ 
+ 	adapter->txrx_wq = alloc_workqueue(DRV_NAME "/txrx", WQ_MEM_RECLAIM, 0);
++	if (unlikely(!adapter->txrx_wq)) {
++		err = -ENOMEM;
++		goto err_free_netdev;
++	}
++
+ 	adapter->control_wq = alloc_workqueue(DRV_NAME "/control",
+ 					      WQ_MEM_RECLAIM, 0);
++	if (unlikely(!adapter->control_wq)) {
++		err = -ENOMEM;
++		goto err_free_txrx_wq;
++	}
+ 
+ 	INIT_WORK(&adapter->tx_stall_task, fjes_tx_stall_task);
+ 	INIT_WORK(&adapter->raise_intr_rxdata_task,
+@@ -1205,7 +1214,7 @@ static int fjes_probe(struct platform_device *plat_dev)
+ 	hw->hw_res.irq = platform_get_irq(plat_dev, 0);
+ 	err = fjes_hw_init(&adapter->hw);
+ 	if (err)
+-		goto err_free_netdev;
++		goto err_free_control_wq;
+ 
+ 	/* setup MAC address (02:00:00:00:00:[epid])*/
+ 	netdev->dev_addr[0] = 2;
+@@ -1225,6 +1234,10 @@ static int fjes_probe(struct platform_device *plat_dev)
+ 
+ err_hw_exit:
+ 	fjes_hw_exit(&adapter->hw);
++err_free_control_wq:
++	destroy_workqueue(adapter->control_wq);
++err_free_txrx_wq:
++	destroy_workqueue(adapter->txrx_wq);
+ err_free_netdev:
+ 	free_netdev(netdev);
+ err_out:
+diff --git a/drivers/net/usb/cdc_ncm.c b/drivers/net/usb/cdc_ncm.c
+index 43e28d2b0de7..cbb9b4343d1e 100644
+--- a/drivers/net/usb/cdc_ncm.c
++++ b/drivers/net/usb/cdc_ncm.c
+@@ -576,8 +576,8 @@ static void cdc_ncm_set_dgram_size(struct usbnet *dev, int new_size)
+ 	/* read current mtu value from device */
+ 	err = usbnet_read_cmd(dev, USB_CDC_GET_MAX_DATAGRAM_SIZE,
+ 			      USB_TYPE_CLASS | USB_DIR_IN | USB_RECIP_INTERFACE,
+-			      0, iface_no, &max_datagram_size, 2);
+-	if (err < 0) {
++			      0, iface_no, &max_datagram_size, sizeof(max_datagram_size));
++	if (err < sizeof(max_datagram_size)) {
+ 		dev_dbg(&dev->intf->dev, "GET_MAX_DATAGRAM_SIZE failed\n");
+ 		goto out;
+ 	}
+@@ -588,7 +588,7 @@ static void cdc_ncm_set_dgram_size(struct usbnet *dev, int new_size)
+ 	max_datagram_size = cpu_to_le16(ctx->max_datagram_size);
+ 	err = usbnet_write_cmd(dev, USB_CDC_SET_MAX_DATAGRAM_SIZE,
+ 			       USB_TYPE_CLASS | USB_DIR_OUT | USB_RECIP_INTERFACE,
+-			       0, iface_no, &max_datagram_size, 2);
++			       0, iface_no, &max_datagram_size, sizeof(max_datagram_size));
+ 	if (err < 0)
+ 		dev_dbg(&dev->intf->dev, "SET_MAX_DATAGRAM_SIZE failed\n");
+ 
+diff --git a/drivers/net/usb/qmi_wwan.c b/drivers/net/usb/qmi_wwan.c
+index 0d48714c3f28..de7b431fdd6b 100644
+--- a/drivers/net/usb/qmi_wwan.c
++++ b/drivers/net/usb/qmi_wwan.c
+@@ -951,6 +951,7 @@ static const struct usb_device_id products[] = {
+ 	{QMI_FIXED_INTF(0x413c, 0x81b6, 8)},	/* Dell Wireless 5811e */
+ 	{QMI_FIXED_INTF(0x413c, 0x81b6, 10)},	/* Dell Wireless 5811e */
+ 	{QMI_FIXED_INTF(0x413c, 0x81d7, 0)},	/* Dell Wireless 5821e */
++	{QMI_FIXED_INTF(0x413c, 0x81e0, 0)},	/* Dell Wireless 5821e with eSIM support*/
+ 	{QMI_FIXED_INTF(0x03f0, 0x4e1d, 8)},	/* HP lt4111 LTE/EV-DO/HSPA+ Gobi 4G Module */
+ 	{QMI_FIXED_INTF(0x03f0, 0x9d1d, 1)},	/* HP lt4120 Snapdragon X5 LTE */
+ 	{QMI_FIXED_INTF(0x22de, 0x9061, 3)},	/* WeTelecom WPD-600N */
+diff --git a/drivers/nfc/fdp/i2c.c b/drivers/nfc/fdp/i2c.c
+index 712936f5d2d6..f1addfd7b31a 100644
+--- a/drivers/nfc/fdp/i2c.c
++++ b/drivers/nfc/fdp/i2c.c
+@@ -268,7 +268,7 @@ static void fdp_nci_i2c_read_device_properties(struct device *dev,
+ 						  *fw_vsc_cfg, len);
+ 
+ 		if (r) {
+-			devm_kfree(dev, fw_vsc_cfg);
++			devm_kfree(dev, *fw_vsc_cfg);
+ 			goto vsc_read_err;
+ 		}
+ 	} else {
+diff --git a/drivers/nfc/st21nfca/core.c b/drivers/nfc/st21nfca/core.c
+index dacb9166081b..2f08e16ba566 100644
+--- a/drivers/nfc/st21nfca/core.c
++++ b/drivers/nfc/st21nfca/core.c
+@@ -719,6 +719,7 @@ static int st21nfca_hci_complete_target_discovered(struct nfc_hci_dev *hdev,
+ 							NFC_PROTO_FELICA_MASK;
+ 		} else {
+ 			kfree_skb(nfcid_skb);
++			nfcid_skb = NULL;
+ 			/* P2P in type A */
+ 			r = nfc_hci_get_param(hdev, ST21NFCA_RF_READER_F_GATE,
+ 					ST21NFCA_RF_READER_F_NFCID1,
+diff --git a/drivers/pci/host/pci-tegra.c b/drivers/pci/host/pci-tegra.c
+index 8e101b19c4d6..90be00c1bab9 100644
+--- a/drivers/pci/host/pci-tegra.c
++++ b/drivers/pci/host/pci-tegra.c
+@@ -603,12 +603,15 @@ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_NVIDIA, 0x0bf1, tegra_pcie_fixup_class);
+ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_NVIDIA, 0x0e1c, tegra_pcie_fixup_class);
+ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_NVIDIA, 0x0e1d, tegra_pcie_fixup_class);
+ 
+-/* Tegra PCIE requires relaxed ordering */
++/* Tegra20 and Tegra30 PCIE requires relaxed ordering */
+ static void tegra_pcie_relax_enable(struct pci_dev *dev)
+ {
+ 	pcie_capability_set_word(dev, PCI_EXP_DEVCTL, PCI_EXP_DEVCTL_RELAX_EN);
+ }
+-DECLARE_PCI_FIXUP_FINAL(PCI_ANY_ID, PCI_ANY_ID, tegra_pcie_relax_enable);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_NVIDIA, 0x0bf0, tegra_pcie_relax_enable);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_NVIDIA, 0x0bf1, tegra_pcie_relax_enable);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_NVIDIA, 0x0e1c, tegra_pcie_relax_enable);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_NVIDIA, 0x0e1d, tegra_pcie_relax_enable);
+ 
+ static int tegra_pcie_setup(int nr, struct pci_sys_data *sys)
+ {
+diff --git a/drivers/scsi/lpfc/lpfc_nportdisc.c b/drivers/scsi/lpfc/lpfc_nportdisc.c
+index 56a3df4fddb0..21ec7b5b6c85 100644
+--- a/drivers/scsi/lpfc/lpfc_nportdisc.c
++++ b/drivers/scsi/lpfc/lpfc_nportdisc.c
+@@ -759,9 +759,9 @@ lpfc_disc_set_adisc(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
+ 
+ 	if (!(vport->fc_flag & FC_PT2PT)) {
+ 		/* Check config parameter use-adisc or FCP-2 */
+-		if ((vport->cfg_use_adisc && (vport->fc_flag & FC_RSCN_MODE)) ||
++		if (vport->cfg_use_adisc && ((vport->fc_flag & FC_RSCN_MODE) ||
+ 		    ((ndlp->nlp_fcp_info & NLP_FCP_2_DEVICE) &&
+-		     (ndlp->nlp_type & NLP_FCP_TARGET))) {
++		     (ndlp->nlp_type & NLP_FCP_TARGET)))) {
+ 			spin_lock_irq(shost->host_lock);
+ 			ndlp->nlp_flag |= NLP_NPR_ADISC;
+ 			spin_unlock_irq(shost->host_lock);
+diff --git a/drivers/scsi/qla2xxx/qla_bsg.c b/drivers/scsi/qla2xxx/qla_bsg.c
+index 4a6e086279f9..33e4dceb895f 100644
+--- a/drivers/scsi/qla2xxx/qla_bsg.c
++++ b/drivers/scsi/qla2xxx/qla_bsg.c
+@@ -252,7 +252,7 @@ qla2x00_process_els(struct fc_bsg_job *bsg_job)
+ 	srb_t *sp;
+ 	const char *type;
+ 	int req_sg_cnt, rsp_sg_cnt;
+-	int rval =  (DRIVER_ERROR << 16);
++	int rval =  (DID_ERROR << 16);
+ 	uint16_t nextlid = 0;
+ 
+ 	if (bsg_job->request->msgcode == FC_BSG_RPT_ELS) {
+@@ -426,7 +426,7 @@ qla2x00_process_ct(struct fc_bsg_job *bsg_job)
+ 	struct Scsi_Host *host = bsg_job->shost;
+ 	scsi_qla_host_t *vha = shost_priv(host);
+ 	struct qla_hw_data *ha = vha->hw;
+-	int rval = (DRIVER_ERROR << 16);
++	int rval = (DID_ERROR << 16);
+ 	int req_sg_cnt, rsp_sg_cnt;
+ 	uint16_t loop_id;
+ 	struct fc_port *fcport;
+@@ -1911,7 +1911,7 @@ qlafx00_mgmt_cmd(struct fc_bsg_job *bsg_job)
+ 	struct Scsi_Host *host = bsg_job->shost;
+ 	scsi_qla_host_t *vha = shost_priv(host);
+ 	struct qla_hw_data *ha = vha->hw;
+-	int rval = (DRIVER_ERROR << 16);
++	int rval = (DID_ERROR << 16);
+ 	struct qla_mt_iocb_rqst_fx00 *piocb_rqst;
+ 	srb_t *sp;
+ 	int req_sg_cnt = 0, rsp_sg_cnt = 0;
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index c813c9b75a10..3bae56b202f8 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -3077,6 +3077,10 @@ qla2x00_shutdown(struct pci_dev *pdev)
+ 	/* Stop currently executing firmware. */
+ 	qla2x00_try_to_stop_firmware(vha);
+ 
++	/* Disable timer */
++	if (vha->timer_active)
++		qla2x00_stop_timer(vha);
++
+ 	/* Turn adapter off line */
+ 	vha->flags.online = 0;
+ 
+diff --git a/drivers/usb/core/config.c b/drivers/usb/core/config.c
+index 94ec2dc27748..e8061b02b7e3 100644
+--- a/drivers/usb/core/config.c
++++ b/drivers/usb/core/config.c
+@@ -343,6 +343,11 @@ static int usb_parse_endpoint(struct device *ddev, int cfgno, int inum,
+ 
+ 	/* Validate the wMaxPacketSize field */
+ 	maxp = usb_endpoint_maxp(&endpoint->desc);
++	if (maxp == 0) {
++		dev_warn(ddev, "config %d interface %d altsetting %d endpoint 0x%X has wMaxPacketSize 0, skipping\n",
++		    cfgno, inum, asnum, d->bEndpointAddress);
++		goto skip_to_next_endpoint_or_interface_descriptor;
++	}
+ 
+ 	/* Find the highest legal maxpacket size for this endpoint */
+ 	i = 0;		/* additional transactions per microframe */
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index 73dc5a6c6108..7154a93f0114 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -227,8 +227,7 @@ static void dwc3_frame_length_adjustment(struct dwc3 *dwc)
+ 
+ 	reg = dwc3_readl(dwc->regs, DWC3_GFLADJ);
+ 	dft = reg & DWC3_GFLADJ_30MHZ_MASK;
+-	if (!dev_WARN_ONCE(dwc->dev, dft == dwc->fladj,
+-	    "request value same as default, ignoring\n")) {
++	if (dft != dwc->fladj) {
+ 		reg &= ~DWC3_GFLADJ_30MHZ_MASK;
+ 		reg |= DWC3_GFLADJ_30MHZ_SDBND_SEL | dwc->fladj;
+ 		dwc3_writel(dwc->regs, DWC3_GFLADJ, reg);
+diff --git a/drivers/usb/gadget/udc/fsl_udc_core.c b/drivers/usb/gadget/udc/fsl_udc_core.c
+index 8991a4070792..bd98557caa28 100644
+--- a/drivers/usb/gadget/udc/fsl_udc_core.c
++++ b/drivers/usb/gadget/udc/fsl_udc_core.c
+@@ -2570,7 +2570,7 @@ static int fsl_udc_remove(struct platform_device *pdev)
+ 	dma_pool_destroy(udc_controller->td_pool);
+ 	free_irq(udc_controller->irq, udc_controller);
+ 	iounmap(dr_regs);
+-	if (pdata->operating_mode == FSL_USB2_DR_DEVICE)
++	if (res && (pdata->operating_mode == FSL_USB2_DR_DEVICE))
+ 		release_mem_region(res->start, resource_size(res));
+ 
+ 	/* free udc --wait for the release() finished */
+diff --git a/drivers/usb/usbip/stub_rx.c b/drivers/usb/usbip/stub_rx.c
+index 777a4058c407..d47176f9c310 100644
+--- a/drivers/usb/usbip/stub_rx.c
++++ b/drivers/usb/usbip/stub_rx.c
+@@ -353,14 +353,6 @@ static int get_pipe(struct stub_device *sdev, struct usbip_header *pdu)
+ 
+ 	epd = &ep->desc;
+ 
+-	/* validate transfer_buffer_length */
+-	if (pdu->u.cmd_submit.transfer_buffer_length > INT_MAX) {
+-		dev_err(&sdev->udev->dev,
+-			"CMD_SUBMIT: -EMSGSIZE transfer_buffer_length %d\n",
+-			pdu->u.cmd_submit.transfer_buffer_length);
+-		return -1;
+-	}
+-
+ 	if (usb_endpoint_xfer_control(epd)) {
+ 		if (dir == USBIP_DIR_OUT)
+ 			return usb_sndctrlpipe(udev, epnum);
+@@ -487,8 +479,7 @@ static void stub_recv_cmd_submit(struct stub_device *sdev,
+ 	}
+ 
+ 	/* allocate urb transfer buffer, if needed */
+-	if (pdu->u.cmd_submit.transfer_buffer_length > 0 &&
+-	    pdu->u.cmd_submit.transfer_buffer_length <= INT_MAX) {
++	if (pdu->u.cmd_submit.transfer_buffer_length > 0) {
+ 		priv->urb->transfer_buffer =
+ 			kzalloc(pdu->u.cmd_submit.transfer_buffer_length,
+ 				GFP_KERNEL);
+diff --git a/drivers/usb/usbip/vhci_hcd.c b/drivers/usb/usbip/vhci_hcd.c
+index 9936a2f199b1..8bda6455dfcb 100644
+--- a/drivers/usb/usbip/vhci_hcd.c
++++ b/drivers/usb/usbip/vhci_hcd.c
+@@ -318,6 +318,7 @@ static int vhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
+ 			default:
+ 				break;
+ 			}
++			break;
+ 		default:
+ 			usbip_dbg_vhci_rh(" ClearPortFeature: default %x\n",
+ 					  wValue);
+@@ -465,13 +466,14 @@ static void vhci_tx_urb(struct urb *urb)
+ {
+ 	struct vhci_device *vdev = get_vdev(urb->dev);
+ 	struct vhci_priv *priv;
+-	struct vhci_hcd *vhci = vdev_to_vhci(vdev);
++	struct vhci_hcd *vhci;
+ 	unsigned long flags;
+ 
+ 	if (!vdev) {
+ 		pr_err("could not get virtual device");
+ 		return;
+ 	}
++	vhci = vdev_to_vhci(vdev);
+ 
+ 	priv = kzalloc(sizeof(struct vhci_priv), GFP_ATOMIC);
+ 	if (!priv) {
+@@ -512,8 +514,10 @@ static int vhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb,
+ 	}
+ 	vdev = &vhci->vdev[portnum-1];
+ 
+-	/* patch to usb_sg_init() is in 2.5.60 */
+-	BUG_ON(!urb->transfer_buffer && urb->transfer_buffer_length);
++	if (!urb->transfer_buffer && urb->transfer_buffer_length) {
++		dev_dbg(dev, "Null URB transfer buffer\n");
++		return -EINVAL;
++	}
+ 
+ 	spin_lock_irqsave(&vhci->lock, flags);
+ 
+diff --git a/fs/ceph/caps.c b/fs/ceph/caps.c
+index 82df349b84f7..f5d9835264aa 100644
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -933,6 +933,11 @@ void __ceph_remove_cap(struct ceph_cap *cap, bool queue_release)
+ 
+ 	dout("__ceph_remove_cap %p from %p\n", cap, &ci->vfs_inode);
+ 
++	/* remove from inode's cap rbtree, and clear auth cap */
++	rb_erase(&cap->ci_node, &ci->i_caps);
++	if (ci->i_auth_cap == cap)
++		ci->i_auth_cap = NULL;
++
+ 	/* remove from session list */
+ 	spin_lock(&session->s_cap_lock);
+ 	if (session->s_cap_iterator == cap) {
+@@ -968,11 +973,6 @@ void __ceph_remove_cap(struct ceph_cap *cap, bool queue_release)
+ 
+ 	spin_unlock(&session->s_cap_lock);
+ 
+-	/* remove from inode list */
+-	rb_erase(&cap->ci_node, &ci->i_caps);
+-	if (ci->i_auth_cap == cap)
+-		ci->i_auth_cap = NULL;
+-
+ 	if (removed)
+ 		ceph_put_cap(mdsc, cap);
+ 
+diff --git a/fs/fs-writeback.c b/fs/fs-writeback.c
+index baaed9369ab4..882e9d6830df 100644
+--- a/fs/fs-writeback.c
++++ b/fs/fs-writeback.c
+@@ -582,10 +582,13 @@ void wbc_attach_and_unlock_inode(struct writeback_control *wbc,
+ 	spin_unlock(&inode->i_lock);
+ 
+ 	/*
+-	 * A dying wb indicates that the memcg-blkcg mapping has changed
+-	 * and a new wb is already serving the memcg.  Switch immediately.
++	 * A dying wb indicates that either the blkcg associated with the
++	 * memcg changed or the associated memcg is dying.  In the first
++	 * case, a replacement wb should already be available and we should
++	 * refresh the wb immediately.  In the second case, trying to
++	 * refresh will keep failing.
+ 	 */
+-	if (unlikely(wb_dying(wbc->wb)))
++	if (unlikely(wb_dying(wbc->wb) && !css_is_dying(wbc->wb->memcg_css)))
+ 		inode_switch_wbs(inode, wbc->wb_id);
+ }
+ 
+diff --git a/fs/nfs/delegation.c b/fs/nfs/delegation.c
+index dff600ae0d74..46afd7cdcc37 100644
+--- a/fs/nfs/delegation.c
++++ b/fs/nfs/delegation.c
+@@ -52,6 +52,16 @@ nfs4_is_valid_delegation(const struct nfs_delegation *delegation,
+ 	return false;
+ }
+ 
++struct nfs_delegation *nfs4_get_valid_delegation(const struct inode *inode)
++{
++	struct nfs_delegation *delegation;
++
++	delegation = rcu_dereference(NFS_I(inode)->delegation);
++	if (nfs4_is_valid_delegation(delegation, 0))
++		return delegation;
++	return NULL;
++}
++
+ static int
+ nfs4_do_check_delegation(struct inode *inode, fmode_t flags, bool mark)
+ {
+diff --git a/fs/nfs/delegation.h b/fs/nfs/delegation.h
+index e9d555796873..2c6cb7fb7d5e 100644
+--- a/fs/nfs/delegation.h
++++ b/fs/nfs/delegation.h
+@@ -62,6 +62,7 @@ int nfs4_open_delegation_recall(struct nfs_open_context *ctx, struct nfs4_state
+ int nfs4_lock_delegation_recall(struct file_lock *fl, struct nfs4_state *state, const nfs4_stateid *stateid);
+ bool nfs4_copy_delegation_stateid(struct inode *inode, fmode_t flags, nfs4_stateid *dst, struct rpc_cred **cred);
+ 
++struct nfs_delegation *nfs4_get_valid_delegation(const struct inode *inode);
+ void nfs_mark_delegation_referenced(struct nfs_delegation *delegation);
+ int nfs4_have_delegation(struct inode *inode, fmode_t flags);
+ int nfs4_check_delegation(struct inode *inode, fmode_t flags);
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index 8354dfae7038..ca4249ae644f 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -1368,8 +1368,6 @@ static int can_open_delegated(struct nfs_delegation *delegation, fmode_t fmode,
+ 		return 0;
+ 	if ((delegation->type & fmode) != fmode)
+ 		return 0;
+-	if (test_bit(NFS_DELEGATION_RETURNING, &delegation->flags))
+-		return 0;
+ 	switch (claim) {
+ 	case NFS4_OPEN_CLAIM_NULL:
+ 	case NFS4_OPEN_CLAIM_FH:
+@@ -1628,7 +1626,6 @@ static void nfs4_return_incompatible_delegation(struct inode *inode, fmode_t fmo
+ static struct nfs4_state *nfs4_try_open_cached(struct nfs4_opendata *opendata)
+ {
+ 	struct nfs4_state *state = opendata->state;
+-	struct nfs_inode *nfsi = NFS_I(state->inode);
+ 	struct nfs_delegation *delegation;
+ 	int open_mode = opendata->o_arg.open_flags;
+ 	fmode_t fmode = opendata->o_arg.fmode;
+@@ -1645,7 +1642,7 @@ static struct nfs4_state *nfs4_try_open_cached(struct nfs4_opendata *opendata)
+ 		}
+ 		spin_unlock(&state->owner->so_lock);
+ 		rcu_read_lock();
+-		delegation = rcu_dereference(nfsi->delegation);
++		delegation = nfs4_get_valid_delegation(state->inode);
+ 		if (!can_open_delegated(delegation, fmode, claim)) {
+ 			rcu_read_unlock();
+ 			break;
+@@ -2142,7 +2139,7 @@ static void nfs4_open_prepare(struct rpc_task *task, void *calldata)
+ 		if (can_open_cached(data->state, data->o_arg.fmode, data->o_arg.open_flags))
+ 			goto out_no_action;
+ 		rcu_read_lock();
+-		delegation = rcu_dereference(NFS_I(data->state->inode)->delegation);
++		delegation = nfs4_get_valid_delegation(data->state->inode);
+ 		if (can_open_delegated(delegation, data->o_arg.fmode, claim))
+ 			goto unlock_no_action;
+ 		rcu_read_unlock();
+diff --git a/include/drm/drm_vma_manager.h b/include/drm/drm_vma_manager.h
+index 9c03895dc479..72bf408f887f 100644
+--- a/include/drm/drm_vma_manager.h
++++ b/include/drm/drm_vma_manager.h
+@@ -42,6 +42,7 @@ struct drm_vma_offset_node {
+ 	rwlock_t vm_lock;
+ 	struct drm_mm_node vm_node;
+ 	struct rb_root vm_files;
++	bool readonly:1;
+ };
+ 
+ struct drm_vma_offset_manager {
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index ade072a6fd24..ca6f213fa4f0 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -504,11 +504,6 @@ static inline int is_vmalloc_or_module_addr(const void *x)
+ 
+ extern void kvfree(const void *addr);
+ 
+-static inline atomic_t *compound_mapcount_ptr(struct page *page)
+-{
+-	return &page[1].compound_mapcount;
+-}
+-
+ static inline int compound_mapcount(struct page *page)
+ {
+ 	VM_BUG_ON_PAGE(!PageCompound(page), page);
+diff --git a/include/linux/mm_types.h b/include/linux/mm_types.h
+index 8d6decd50220..21b18b755c0e 100644
+--- a/include/linux/mm_types.h
++++ b/include/linux/mm_types.h
+@@ -262,6 +262,11 @@ struct page_frag_cache {
+ 
+ typedef unsigned long vm_flags_t;
+ 
++static inline atomic_t *compound_mapcount_ptr(struct page *page)
++{
++	return &page[1].compound_mapcount;
++}
++
+ /*
+  * A region containing a mapping of a non-memory backed file under NOMMU
+  * conditions.  These are held in a global tree and are pinned by the VMAs that
+diff --git a/include/linux/page-flags.h b/include/linux/page-flags.h
+index 74e4dda91238..896e4199623a 100644
+--- a/include/linux/page-flags.h
++++ b/include/linux/page-flags.h
+@@ -545,12 +545,28 @@ static inline int PageTransCompound(struct page *page)
+  *
+  * Unlike PageTransCompound, this is safe to be called only while
+  * split_huge_pmd() cannot run from under us, like if protected by the
+- * MMU notifier, otherwise it may result in page->_mapcount < 0 false
++ * MMU notifier, otherwise it may result in page->_mapcount check false
+  * positives.
++ *
++ * We have to treat page cache THP differently since every subpage of it
++ * would get _mapcount inc'ed once it is PMD mapped.  But, it may be PTE
++ * mapped in the current process so comparing subpage's _mapcount to
++ * compound_mapcount to filter out PTE mapped case.
+  */
+ static inline int PageTransCompoundMap(struct page *page)
+ {
+-	return PageTransCompound(page) && atomic_read(&page->_mapcount) < 0;
++	struct page *head;
++
++	if (!PageTransCompound(page))
++		return 0;
++
++	if (PageAnon(page))
++		return atomic_read(&page->_mapcount) < 0;
++
++	head = compound_head(page);
++	/* File THP is PMD mapped and not PTE mapped */
++	return atomic_read(&page->_mapcount) ==
++	       atomic_read(compound_mapcount_ptr(head));
+ }
+ 
+ /*
+diff --git a/include/net/ip_vs.h b/include/net/ip_vs.h
+index cd6018a9ee24..a26165744d98 100644
+--- a/include/net/ip_vs.h
++++ b/include/net/ip_vs.h
+@@ -887,6 +887,7 @@ struct netns_ipvs {
+ 	struct delayed_work	defense_work;   /* Work handler */
+ 	int			drop_rate;
+ 	int			drop_counter;
++	int			old_secure_tcp;
+ 	atomic_t		dropentry;
+ 	/* locks in ctl.c */
+ 	spinlock_t		dropentry_lock;  /* drop entry handling */
+diff --git a/include/net/neighbour.h b/include/net/neighbour.h
+index f6017ddc4ded..1c0d07376125 100644
+--- a/include/net/neighbour.h
++++ b/include/net/neighbour.h
+@@ -425,8 +425,8 @@ static inline int neigh_event_send(struct neighbour *neigh, struct sk_buff *skb)
+ {
+ 	unsigned long now = jiffies;
+ 	
+-	if (neigh->used != now)
+-		neigh->used = now;
++	if (READ_ONCE(neigh->used) != now)
++		WRITE_ONCE(neigh->used, now);
+ 	if (!(neigh->nud_state&(NUD_CONNECTED|NUD_DELAY|NUD_PROBE)))
+ 		return __neigh_event_send(neigh, skb);
+ 	return 0;
+diff --git a/include/net/netfilter/nf_tables.h b/include/net/netfilter/nf_tables.h
+index 66f6b84df287..7ba9a624090f 100644
+--- a/include/net/netfilter/nf_tables.h
++++ b/include/net/netfilter/nf_tables.h
+@@ -705,7 +705,8 @@ struct nft_expr_ops {
+  */
+ struct nft_expr {
+ 	const struct nft_expr_ops	*ops;
+-	unsigned char			data[];
++	unsigned char			data[]
++		__attribute__((aligned(__alignof__(u64))));
+ };
+ 
+ static inline void *nft_expr_priv(const struct nft_expr *expr)
+diff --git a/include/net/sock.h b/include/net/sock.h
+index 469c012a6d01..d8d14ae8892a 100644
+--- a/include/net/sock.h
++++ b/include/net/sock.h
+@@ -2142,7 +2142,7 @@ static inline ktime_t sock_read_timestamp(struct sock *sk)
+ 
+ 	return kt;
+ #else
+-	return sk->sk_stamp;
++	return READ_ONCE(sk->sk_stamp);
+ #endif
+ }
+ 
+@@ -2153,7 +2153,7 @@ static inline void sock_write_timestamp(struct sock *sk, ktime_t kt)
+ 	sk->sk_stamp = kt;
+ 	write_sequnlock(&sk->sk_stamp_seq);
+ #else
+-	sk->sk_stamp = kt;
++	WRITE_ONCE(sk->sk_stamp, kt);
+ #endif
+ }
+ 
+diff --git a/lib/dump_stack.c b/lib/dump_stack.c
+index c30d07e99dba..72de6444934d 100644
+--- a/lib/dump_stack.c
++++ b/lib/dump_stack.c
+@@ -44,7 +44,12 @@ retry:
+ 		was_locked = 1;
+ 	} else {
+ 		local_irq_restore(flags);
+-		cpu_relax();
++		/*
++		 * Wait for the lock to release before jumping to
++		 * atomic_cmpxchg() in order to mitigate the thundering herd
++		 * problem.
++		 */
++		do { cpu_relax(); } while (atomic_read(&dump_lock) != -1);
+ 		goto retry;
+ 	}
+ 
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 6d2f561d517c..b046d8f147e2 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -383,7 +383,8 @@ int __filemap_fdatawrite_range(struct address_space *mapping, loff_t start,
+ 		.range_end = end,
+ 	};
+ 
+-	if (!mapping_cap_writeback_dirty(mapping))
++	if (!mapping_cap_writeback_dirty(mapping) ||
++	    !mapping_tagged(mapping, PAGECACHE_TAG_DIRTY))
+ 		return 0;
+ 
+ 	wbc_attach_fdatawrite_inode(&wbc, mapping->host);
+diff --git a/mm/vmstat.c b/mm/vmstat.c
+index 9af8d369e112..e60435d556e3 100644
+--- a/mm/vmstat.c
++++ b/mm/vmstat.c
+@@ -1794,7 +1794,7 @@ static int __init setup_vmstat(void)
+ #endif
+ #ifdef CONFIG_PROC_FS
+ 	proc_create("buddyinfo", S_IRUGO, NULL, &fragmentation_file_operations);
+-	proc_create("pagetypeinfo", S_IRUGO, NULL, &pagetypeinfo_file_ops);
++	proc_create("pagetypeinfo", 0400, NULL, &pagetypeinfo_file_ops);
+ 	proc_create("vmstat", S_IRUGO, NULL, &proc_vmstat_file_operations);
+ 	proc_create("zoneinfo", S_IRUGO, NULL, &proc_zoneinfo_file_operations);
+ #endif
+diff --git a/net/ipv4/fib_semantics.c b/net/ipv4/fib_semantics.c
+index 90c654012510..6aec95e1fc13 100644
+--- a/net/ipv4/fib_semantics.c
++++ b/net/ipv4/fib_semantics.c
+@@ -1358,8 +1358,8 @@ int fib_sync_down_addr(struct net_device *dev, __be32 local)
+ 	int ret = 0;
+ 	unsigned int hash = fib_laddr_hashfn(local);
+ 	struct hlist_head *head = &fib_info_laddrhash[hash];
++	int tb_id = l3mdev_fib_table(dev) ? : RT_TABLE_MAIN;
+ 	struct net *net = dev_net(dev);
+-	int tb_id = l3mdev_fib_table(dev);
+ 	struct fib_info *fi;
+ 
+ 	if (!fib_info_laddrhash || local == 0)
+diff --git a/net/netfilter/ipset/ip_set_core.c b/net/netfilter/ipset/ip_set_core.c
+index a748b0c2c981..fa5229fd3703 100644
+--- a/net/netfilter/ipset/ip_set_core.c
++++ b/net/netfilter/ipset/ip_set_core.c
+@@ -1942,8 +1942,9 @@ ip_set_sockfn_get(struct sock *sk, int optval, void __user *user, int *len)
+ 		}
+ 
+ 		req_version->version = IPSET_PROTOCOL;
+-		ret = copy_to_user(user, req_version,
+-				   sizeof(struct ip_set_req_version));
++		if (copy_to_user(user, req_version,
++				 sizeof(struct ip_set_req_version)))
++			ret = -EFAULT;
+ 		goto done;
+ 	}
+ 	case IP_SET_OP_GET_BYNAME: {
+@@ -2000,7 +2001,8 @@ ip_set_sockfn_get(struct sock *sk, int optval, void __user *user, int *len)
+ 	}	/* end of switch(op) */
+ 
+ copy:
+-	ret = copy_to_user(user, data, copylen);
++	if (copy_to_user(user, data, copylen))
++		ret = -EFAULT;
+ 
+ done:
+ 	vfree(data);
+diff --git a/net/netfilter/ipvs/ip_vs_ctl.c b/net/netfilter/ipvs/ip_vs_ctl.c
+index 8037b25ddb76..33125fc009cf 100644
+--- a/net/netfilter/ipvs/ip_vs_ctl.c
++++ b/net/netfilter/ipvs/ip_vs_ctl.c
+@@ -97,7 +97,6 @@ static bool __ip_vs_addr_is_local_v6(struct net *net,
+ static void update_defense_level(struct netns_ipvs *ipvs)
+ {
+ 	struct sysinfo i;
+-	static int old_secure_tcp = 0;
+ 	int availmem;
+ 	int nomem;
+ 	int to_change = -1;
+@@ -178,35 +177,35 @@ static void update_defense_level(struct netns_ipvs *ipvs)
+ 	spin_lock(&ipvs->securetcp_lock);
+ 	switch (ipvs->sysctl_secure_tcp) {
+ 	case 0:
+-		if (old_secure_tcp >= 2)
++		if (ipvs->old_secure_tcp >= 2)
+ 			to_change = 0;
+ 		break;
+ 	case 1:
+ 		if (nomem) {
+-			if (old_secure_tcp < 2)
++			if (ipvs->old_secure_tcp < 2)
+ 				to_change = 1;
+ 			ipvs->sysctl_secure_tcp = 2;
+ 		} else {
+-			if (old_secure_tcp >= 2)
++			if (ipvs->old_secure_tcp >= 2)
+ 				to_change = 0;
+ 		}
+ 		break;
+ 	case 2:
+ 		if (nomem) {
+-			if (old_secure_tcp < 2)
++			if (ipvs->old_secure_tcp < 2)
+ 				to_change = 1;
+ 		} else {
+-			if (old_secure_tcp >= 2)
++			if (ipvs->old_secure_tcp >= 2)
+ 				to_change = 0;
+ 			ipvs->sysctl_secure_tcp = 1;
+ 		}
+ 		break;
+ 	case 3:
+-		if (old_secure_tcp < 2)
++		if (ipvs->old_secure_tcp < 2)
+ 			to_change = 1;
+ 		break;
+ 	}
+-	old_secure_tcp = ipvs->sysctl_secure_tcp;
++	ipvs->old_secure_tcp = ipvs->sysctl_secure_tcp;
+ 	if (to_change >= 0)
+ 		ip_vs_protocol_timeout_change(ipvs,
+ 					      ipvs->sysctl_secure_tcp > 1);
+diff --git a/net/nfc/netlink.c b/net/nfc/netlink.c
+index ad878302924f..d3c8dd5dc817 100644
+--- a/net/nfc/netlink.c
++++ b/net/nfc/netlink.c
+@@ -1103,7 +1103,6 @@ static int nfc_genl_llc_set_params(struct sk_buff *skb, struct genl_info *info)
+ 
+ 	local = nfc_llcp_find_local(dev);
+ 	if (!local) {
+-		nfc_put_device(dev);
+ 		rc = -ENODEV;
+ 		goto exit;
+ 	}
+@@ -1163,7 +1162,6 @@ static int nfc_genl_llc_sdreq(struct sk_buff *skb, struct genl_info *info)
+ 
+ 	local = nfc_llcp_find_local(dev);
+ 	if (!local) {
+-		nfc_put_device(dev);
+ 		rc = -ENODEV;
+ 		goto exit;
+ 	}
+diff --git a/sound/core/timer.c b/sound/core/timer.c
+index 19d90aa08218..e944d27f79c3 100644
+--- a/sound/core/timer.c
++++ b/sound/core/timer.c
+@@ -297,11 +297,11 @@ int snd_timer_open(struct snd_timer_instance **ti,
+ 		goto unlock;
+ 	}
+ 	if (!list_empty(&timer->open_list_head)) {
+-		timeri = list_entry(timer->open_list_head.next,
++		struct snd_timer_instance *t =
++			list_entry(timer->open_list_head.next,
+ 				    struct snd_timer_instance, open_list);
+-		if (timeri->flags & SNDRV_TIMER_IFLG_EXCLUSIVE) {
++		if (t->flags & SNDRV_TIMER_IFLG_EXCLUSIVE) {
+ 			err = -EBUSY;
+-			timeri = NULL;
+ 			goto unlock;
+ 		}
+ 	}
+diff --git a/sound/firewire/bebob/bebob_focusrite.c b/sound/firewire/bebob/bebob_focusrite.c
+index f11090057949..d0a8736613a1 100644
+--- a/sound/firewire/bebob/bebob_focusrite.c
++++ b/sound/firewire/bebob/bebob_focusrite.c
+@@ -28,6 +28,8 @@
+ #define SAFFIRE_CLOCK_SOURCE_SPDIF		1
+ 
+ /* clock sources as returned from register of Saffire Pro 10 and 26 */
++#define SAFFIREPRO_CLOCK_SOURCE_SELECT_MASK	0x000000ff
++#define SAFFIREPRO_CLOCK_SOURCE_DETECT_MASK	0x0000ff00
+ #define SAFFIREPRO_CLOCK_SOURCE_INTERNAL	0
+ #define SAFFIREPRO_CLOCK_SOURCE_SKIP		1 /* never used on hardware */
+ #define SAFFIREPRO_CLOCK_SOURCE_SPDIF		2
+@@ -190,6 +192,7 @@ saffirepro_both_clk_src_get(struct snd_bebob *bebob, unsigned int *id)
+ 		map = saffirepro_clk_maps[1];
+ 
+ 	/* In a case that this driver cannot handle the value of register. */
++	value &= SAFFIREPRO_CLOCK_SOURCE_SELECT_MASK;
+ 	if (value >= SAFFIREPRO_CLOCK_SOURCE_COUNT || map[value] < 0) {
+ 		err = -EIO;
+ 		goto end;
+diff --git a/sound/pci/hda/patch_ca0132.c b/sound/pci/hda/patch_ca0132.c
+index 280999961226..475b2c6c43d6 100644
+--- a/sound/pci/hda/patch_ca0132.c
++++ b/sound/pci/hda/patch_ca0132.c
+@@ -4440,7 +4440,7 @@ static void hp_callback(struct hda_codec *codec, struct hda_jack_callback *cb)
+ 	/* Delay enabling the HP amp, to let the mic-detection
+ 	 * state machine run.
+ 	 */
+-	cancel_delayed_work_sync(&spec->unsol_hp_work);
++	cancel_delayed_work(&spec->unsol_hp_work);
+ 	schedule_delayed_work(&spec->unsol_hp_work, msecs_to_jiffies(500));
+ 	tbl = snd_hda_jack_tbl_get(codec, cb->nid);
+ 	if (tbl)
+diff --git a/tools/perf/util/hist.c b/tools/perf/util/hist.c
+index 82833ceba339..32f991d28497 100644
+--- a/tools/perf/util/hist.c
++++ b/tools/perf/util/hist.c
+@@ -1485,7 +1485,7 @@ int hists__collapse_resort(struct hists *hists, struct ui_progress *prog)
+ 	return 0;
+ }
+ 
+-static int hist_entry__sort(struct hist_entry *a, struct hist_entry *b)
++static int64_t hist_entry__sort(struct hist_entry *a, struct hist_entry *b)
+ {
+ 	struct hists *hists = a->hists;
+ 	struct perf_hpp_fmt *fmt;
