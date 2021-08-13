@@ -688,7 +688,8 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("bionic" "buster" "bullseye" "focal" "hirsute" "sid")
+	local distributions=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "sid")
+	#local distributions=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -817,7 +818,8 @@ repo-manipulate()
 # "update" search for new files in output/debs* to add them to repository
 # "purge" leave only last 5 versions
 
-	local DISTROS=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
+	local DISTROS=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "sid")
+	#local DISTROS=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
 
 	case $@ in
 
