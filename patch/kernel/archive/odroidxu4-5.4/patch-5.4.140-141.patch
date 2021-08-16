@@ -1,0 +1,1429 @@
+diff --git a/Documentation/virt/kvm/mmu.txt b/Documentation/virt/kvm/mmu.txt
+index ec072c6bc03f8..da1ac6a6398f6 100644
+--- a/Documentation/virt/kvm/mmu.txt
++++ b/Documentation/virt/kvm/mmu.txt
+@@ -152,8 +152,8 @@ Shadow pages contain the following information:
+     shadow pages) so role.quadrant takes values in the range 0..3.  Each
+     quadrant maps 1GB virtual address space.
+   role.access:
+-    Inherited guest access permissions in the form uwx.  Note execute
+-    permission is positive, not negative.
++    Inherited guest access permissions from the parent ptes in the form uwx.
++    Note execute permission is positive, not negative.
+   role.invalid:
+     The page is invalid and should not be used.  It is a root page that is
+     currently pinned (by a cpu hardware register pointing to it); once it is
+diff --git a/Makefile b/Makefile
+index 1cb8f72d4dcea..2bfa11d0aab36 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 5
+ PATCHLEVEL = 4
+-SUBLEVEL = 140
++SUBLEVEL = 141
+ EXTRAVERSION =
+ NAME = Kleptomaniac Octopus
+ 
+diff --git a/arch/x86/kvm/paging_tmpl.h b/arch/x86/kvm/paging_tmpl.h
+index a20fc1ba607f3..d4a8ad6c6a4bb 100644
+--- a/arch/x86/kvm/paging_tmpl.h
++++ b/arch/x86/kvm/paging_tmpl.h
+@@ -90,8 +90,8 @@ struct guest_walker {
+ 	gpa_t pte_gpa[PT_MAX_FULL_LEVELS];
+ 	pt_element_t __user *ptep_user[PT_MAX_FULL_LEVELS];
+ 	bool pte_writable[PT_MAX_FULL_LEVELS];
+-	unsigned pt_access;
+-	unsigned pte_access;
++	unsigned int pt_access[PT_MAX_FULL_LEVELS];
++	unsigned int pte_access;
+ 	gfn_t gfn;
+ 	struct x86_exception fault;
+ };
+@@ -406,13 +406,15 @@ retry_walk:
+ 		}
+ 
+ 		walker->ptes[walker->level - 1] = pte;
++
++		/* Convert to ACC_*_MASK flags for struct guest_walker.  */
++		walker->pt_access[walker->level - 1] = FNAME(gpte_access)(pt_access ^ walk_nx_mask);
+ 	} while (!is_last_gpte(mmu, walker->level, pte));
+ 
+ 	pte_pkey = FNAME(gpte_pkeys)(vcpu, pte);
+ 	accessed_dirty = have_ad ? pte_access & PT_GUEST_ACCESSED_MASK : 0;
+ 
+ 	/* Convert to ACC_*_MASK flags for struct guest_walker.  */
+-	walker->pt_access = FNAME(gpte_access)(pt_access ^ walk_nx_mask);
+ 	walker->pte_access = FNAME(gpte_access)(pte_access ^ walk_nx_mask);
+ 	errcode = permission_fault(vcpu, mmu, walker->pte_access, pte_pkey, access);
+ 	if (unlikely(errcode))
+@@ -451,7 +453,8 @@ retry_walk:
+ 	}
+ 
+ 	pgprintk("%s: pte %llx pte_access %x pt_access %x\n",
+-		 __func__, (u64)pte, walker->pte_access, walker->pt_access);
++		 __func__, (u64)pte, walker->pte_access,
++		 walker->pt_access[walker->level - 1]);
+ 	return 1;
+ 
+ error:
+@@ -620,7 +623,7 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, gpa_t addr,
+ {
+ 	struct kvm_mmu_page *sp = NULL;
+ 	struct kvm_shadow_walk_iterator it;
+-	unsigned direct_access, access = gw->pt_access;
++	unsigned int direct_access, access;
+ 	int top_level, ret;
+ 	gfn_t gfn, base_gfn;
+ 
+@@ -652,6 +655,7 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, gpa_t addr,
+ 		sp = NULL;
+ 		if (!is_shadow_present_pte(*it.sptep)) {
+ 			table_gfn = gw->table_gfn[it.level - 2];
++			access = gw->pt_access[it.level - 2];
+ 			sp = kvm_mmu_get_page(vcpu, table_gfn, addr, it.level-1,
+ 					      false, access);
+ 		}
+diff --git a/arch/x86/kvm/svm.c b/arch/x86/kvm/svm.c
+index 7341d22ed04f1..2a958dcc80f21 100644
+--- a/arch/x86/kvm/svm.c
++++ b/arch/x86/kvm/svm.c
+@@ -1783,7 +1783,7 @@ static void __sev_asid_free(int asid)
+ 
+ 	for_each_possible_cpu(cpu) {
+ 		sd = per_cpu(svm_data, cpu);
+-		sd->sev_vmcbs[pos] = NULL;
++		sd->sev_vmcbs[asid] = NULL;
+ 	}
+ }
+ 
+diff --git a/drivers/media/v4l2-core/v4l2-mem2mem.c b/drivers/media/v4l2-core/v4l2-mem2mem.c
+index 3d6a6306cec77..639dc8d45e603 100644
+--- a/drivers/media/v4l2-core/v4l2-mem2mem.c
++++ b/drivers/media/v4l2-core/v4l2-mem2mem.c
+@@ -635,10 +635,8 @@ static __poll_t v4l2_m2m_poll_for_data(struct file *file,
+ 		 * If the last buffer was dequeued from the capture queue,
+ 		 * return immediately. DQBUF will return -EPIPE.
+ 		 */
+-		if (dst_q->last_buffer_dequeued) {
+-			spin_unlock_irqrestore(&dst_q->done_lock, flags);
+-			return EPOLLIN | EPOLLRDNORM;
+-		}
++		if (dst_q->last_buffer_dequeued)
++			rc |= EPOLLIN | EPOLLRDNORM;
+ 	}
+ 	spin_unlock_irqrestore(&dst_q->done_lock, flags);
+ 
+diff --git a/drivers/net/ethernet/xilinx/xilinx_emaclite.c b/drivers/net/ethernet/xilinx/xilinx_emaclite.c
+index 0de52e70abcca..53dbf3e28f1ef 100644
+--- a/drivers/net/ethernet/xilinx/xilinx_emaclite.c
++++ b/drivers/net/ethernet/xilinx/xilinx_emaclite.c
+@@ -1191,9 +1191,8 @@ static int xemaclite_of_probe(struct platform_device *ofdev)
+ 	}
+ 
+ 	dev_info(dev,
+-		 "Xilinx EmacLite at 0x%08X mapped to 0x%08X, irq=%d\n",
+-		 (unsigned int __force)ndev->mem_start,
+-		 (unsigned int __force)lp->base_addr, ndev->irq);
++		 "Xilinx EmacLite at 0x%08X mapped to 0x%p, irq=%d\n",
++		 (unsigned int __force)ndev->mem_start, lp->base_addr, ndev->irq);
+ 	return 0;
+ 
+ error:
+diff --git a/drivers/net/ppp/ppp_generic.c b/drivers/net/ppp/ppp_generic.c
+index 61824bbb55887..b7e2b4a0f3c66 100644
+--- a/drivers/net/ppp/ppp_generic.c
++++ b/drivers/net/ppp/ppp_generic.c
+@@ -283,7 +283,7 @@ static struct channel *ppp_find_channel(struct ppp_net *pn, int unit);
+ static int ppp_connect_channel(struct channel *pch, int unit);
+ static int ppp_disconnect_channel(struct channel *pch);
+ static void ppp_destroy_channel(struct channel *pch);
+-static int unit_get(struct idr *p, void *ptr);
++static int unit_get(struct idr *p, void *ptr, int min);
+ static int unit_set(struct idr *p, void *ptr, int n);
+ static void unit_put(struct idr *p, int n);
+ static void *unit_find(struct idr *p, int n);
+@@ -959,9 +959,20 @@ static int ppp_unit_register(struct ppp *ppp, int unit, bool ifname_is_set)
+ 	mutex_lock(&pn->all_ppp_mutex);
+ 
+ 	if (unit < 0) {
+-		ret = unit_get(&pn->units_idr, ppp);
++		ret = unit_get(&pn->units_idr, ppp, 0);
+ 		if (ret < 0)
+ 			goto err;
++		if (!ifname_is_set) {
++			while (1) {
++				snprintf(ppp->dev->name, IFNAMSIZ, "ppp%i", ret);
++				if (!__dev_get_by_name(ppp->ppp_net, ppp->dev->name))
++					break;
++				unit_put(&pn->units_idr, ret);
++				ret = unit_get(&pn->units_idr, ppp, ret + 1);
++				if (ret < 0)
++					goto err;
++			}
++		}
+ 	} else {
+ 		/* Caller asked for a specific unit number. Fail with -EEXIST
+ 		 * if unavailable. For backward compatibility, return -EEXIST
+@@ -3294,9 +3305,9 @@ static int unit_set(struct idr *p, void *ptr, int n)
+ }
+ 
+ /* get new free unit number and associate pointer with it */
+-static int unit_get(struct idr *p, void *ptr)
++static int unit_get(struct idr *p, void *ptr, int min)
+ {
+-	return idr_alloc(p, ptr, 0, 0, GFP_KERNEL);
++	return idr_alloc(p, ptr, min, 0, GFP_KERNEL);
+ }
+ 
+ /* put unit number back to a pool */
+diff --git a/drivers/tee/optee/call.c b/drivers/tee/optee/call.c
+index 4b5069f88d786..3a54455d9ddff 100644
+--- a/drivers/tee/optee/call.c
++++ b/drivers/tee/optee/call.c
+@@ -181,7 +181,7 @@ static struct tee_shm *get_msg_arg(struct tee_context *ctx, size_t num_params,
+ 	struct optee_msg_arg *ma;
+ 
+ 	shm = tee_shm_alloc(ctx, OPTEE_MSG_GET_ARG_SIZE(num_params),
+-			    TEE_SHM_MAPPED);
++			    TEE_SHM_MAPPED | TEE_SHM_PRIV);
+ 	if (IS_ERR(shm))
+ 		return shm;
+ 
+diff --git a/drivers/tee/optee/core.c b/drivers/tee/optee/core.c
+index 432dd38921dd9..4bb4c8f28cbd7 100644
+--- a/drivers/tee/optee/core.c
++++ b/drivers/tee/optee/core.c
+@@ -254,7 +254,8 @@ static void optee_release(struct tee_context *ctx)
+ 	if (!ctxdata)
+ 		return;
+ 
+-	shm = tee_shm_alloc(ctx, sizeof(struct optee_msg_arg), TEE_SHM_MAPPED);
++	shm = tee_shm_alloc(ctx, sizeof(struct optee_msg_arg),
++			    TEE_SHM_MAPPED | TEE_SHM_PRIV);
+ 	if (!IS_ERR(shm)) {
+ 		arg = tee_shm_get_va(shm, 0);
+ 		/*
+diff --git a/drivers/tee/optee/rpc.c b/drivers/tee/optee/rpc.c
+index b4ade54d1f280..aecf62016e7b8 100644
+--- a/drivers/tee/optee/rpc.c
++++ b/drivers/tee/optee/rpc.c
+@@ -220,7 +220,7 @@ static void handle_rpc_func_cmd_shm_alloc(struct tee_context *ctx,
+ 		shm = cmd_alloc_suppl(ctx, sz);
+ 		break;
+ 	case OPTEE_MSG_RPC_SHM_TYPE_KERNEL:
+-		shm = tee_shm_alloc(ctx, sz, TEE_SHM_MAPPED);
++		shm = tee_shm_alloc(ctx, sz, TEE_SHM_MAPPED | TEE_SHM_PRIV);
+ 		break;
+ 	default:
+ 		arg->ret = TEEC_ERROR_BAD_PARAMETERS;
+@@ -405,7 +405,8 @@ void optee_handle_rpc(struct tee_context *ctx, struct optee_rpc_param *param,
+ 
+ 	switch (OPTEE_SMC_RETURN_GET_RPC_FUNC(param->a0)) {
+ 	case OPTEE_SMC_RPC_FUNC_ALLOC:
+-		shm = tee_shm_alloc(ctx, param->a1, TEE_SHM_MAPPED);
++		shm = tee_shm_alloc(ctx, param->a1,
++				    TEE_SHM_MAPPED | TEE_SHM_PRIV);
+ 		if (!IS_ERR(shm) && !tee_shm_get_pa(shm, 0, &pa)) {
+ 			reg_pair_from_64(&param->a1, &param->a2, pa);
+ 			reg_pair_from_64(&param->a4, &param->a5,
+diff --git a/drivers/tee/optee/shm_pool.c b/drivers/tee/optee/shm_pool.c
+index da06ce9b9313e..c41a9a501a6e9 100644
+--- a/drivers/tee/optee/shm_pool.c
++++ b/drivers/tee/optee/shm_pool.c
+@@ -27,7 +27,11 @@ static int pool_op_alloc(struct tee_shm_pool_mgr *poolm,
+ 	shm->paddr = page_to_phys(page);
+ 	shm->size = PAGE_SIZE << order;
+ 
+-	if (shm->flags & TEE_SHM_DMA_BUF) {
++	/*
++	 * Shared memory private to the OP-TEE driver doesn't need
++	 * to be registered with OP-TEE.
++	 */
++	if (!(shm->flags & TEE_SHM_PRIV)) {
+ 		unsigned int nr_pages = 1 << order, i;
+ 		struct page **pages;
+ 
+@@ -60,7 +64,7 @@ err:
+ static void pool_op_free(struct tee_shm_pool_mgr *poolm,
+ 			 struct tee_shm *shm)
+ {
+-	if (shm->flags & TEE_SHM_DMA_BUF)
++	if (!(shm->flags & TEE_SHM_PRIV))
+ 		optee_shm_unregister(shm->ctx, shm);
+ 
+ 	free_pages((unsigned long)shm->kaddr, get_order(shm->size));
+diff --git a/drivers/tee/tee_shm.c b/drivers/tee/tee_shm.c
+index 1b4b4a1ba91d9..d6491e973fa4c 100644
+--- a/drivers/tee/tee_shm.c
++++ b/drivers/tee/tee_shm.c
+@@ -117,7 +117,7 @@ static struct tee_shm *__tee_shm_alloc(struct tee_context *ctx,
+ 		return ERR_PTR(-EINVAL);
+ 	}
+ 
+-	if ((flags & ~(TEE_SHM_MAPPED | TEE_SHM_DMA_BUF))) {
++	if ((flags & ~(TEE_SHM_MAPPED | TEE_SHM_DMA_BUF | TEE_SHM_PRIV))) {
+ 		dev_err(teedev->dev.parent, "invalid shm flags 0x%x", flags);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+@@ -233,7 +233,7 @@ EXPORT_SYMBOL_GPL(tee_shm_priv_alloc);
+  */
+ struct tee_shm *tee_shm_alloc_kernel_buf(struct tee_context *ctx, size_t size)
+ {
+-	return tee_shm_alloc(ctx, size, TEE_SHM_MAPPED | TEE_SHM_DMA_BUF);
++	return tee_shm_alloc(ctx, size, TEE_SHM_MAPPED);
+ }
+ EXPORT_SYMBOL_GPL(tee_shm_alloc_kernel_buf);
+ 
+diff --git a/drivers/usb/dwc3/ep0.c b/drivers/usb/dwc3/ep0.c
+index 03b444f753aa2..4f28122f1bb83 100644
+--- a/drivers/usb/dwc3/ep0.c
++++ b/drivers/usb/dwc3/ep0.c
+@@ -197,7 +197,7 @@ int dwc3_gadget_ep0_queue(struct usb_ep *ep, struct usb_request *request,
+ 	int				ret;
+ 
+ 	spin_lock_irqsave(&dwc->lock, flags);
+-	if (!dep->endpoint.desc) {
++	if (!dep->endpoint.desc || !dwc->pullups_connected) {
+ 		dev_err(dwc->dev, "%s: can't queue to disabled endpoint\n",
+ 				dep->name);
+ 		ret = -ESHUTDOWN;
+diff --git a/drivers/usb/dwc3/gadget.c b/drivers/usb/dwc3/gadget.c
+index 9cf66636b19d5..8a3752fcf7b46 100644
+--- a/drivers/usb/dwc3/gadget.c
++++ b/drivers/usb/dwc3/gadget.c
+@@ -746,8 +746,6 @@ static int __dwc3_gadget_ep_disable(struct dwc3_ep *dep)
+ 
+ 	trace_dwc3_gadget_ep_disable(dep);
+ 
+-	dwc3_remove_requests(dwc, dep);
+-
+ 	/* make sure HW endpoint isn't stalled */
+ 	if (dep->flags & DWC3_EP_STALL)
+ 		__dwc3_gadget_ep_set_halt(dep, 0, false);
+@@ -756,16 +754,18 @@ static int __dwc3_gadget_ep_disable(struct dwc3_ep *dep)
+ 	reg &= ~DWC3_DALEPENA_EP(dep->number);
+ 	dwc3_writel(dwc->regs, DWC3_DALEPENA, reg);
+ 
+-	dep->stream_capable = false;
+-	dep->type = 0;
+-	dep->flags = 0;
+-
+ 	/* Clear out the ep descriptors for non-ep0 */
+ 	if (dep->number > 1) {
+ 		dep->endpoint.comp_desc = NULL;
+ 		dep->endpoint.desc = NULL;
+ 	}
+ 
++	dwc3_remove_requests(dwc, dep);
++
++	dep->stream_capable = false;
++	dep->type = 0;
++	dep->flags = 0;
++
+ 	return 0;
+ }
+ 
+@@ -1511,7 +1511,7 @@ static int __dwc3_gadget_ep_queue(struct dwc3_ep *dep, struct dwc3_request *req)
+ {
+ 	struct dwc3		*dwc = dep->dwc;
+ 
+-	if (!dep->endpoint.desc) {
++	if (!dep->endpoint.desc || !dwc->pullups_connected || !dwc->connected) {
+ 		dev_err(dwc->dev, "%s: can't queue to disabled endpoint\n",
+ 				dep->name);
+ 		return -ESHUTDOWN;
+@@ -1931,6 +1931,21 @@ static int dwc3_gadget_set_selfpowered(struct usb_gadget *g,
+ 	return 0;
+ }
+ 
++static void dwc3_stop_active_transfers(struct dwc3 *dwc)
++{
++	u32 epnum;
++
++	for (epnum = 2; epnum < dwc->num_eps; epnum++) {
++		struct dwc3_ep *dep;
++
++		dep = dwc->eps[epnum];
++		if (!dep)
++			continue;
++
++		dwc3_remove_requests(dwc, dep);
++	}
++}
++
+ static int dwc3_gadget_run_stop(struct dwc3 *dwc, int is_on, int suspend)
+ {
+ 	u32			reg;
+@@ -1976,6 +1991,10 @@ static int dwc3_gadget_run_stop(struct dwc3 *dwc, int is_on, int suspend)
+ 	return 0;
+ }
+ 
++static void dwc3_gadget_disable_irq(struct dwc3 *dwc);
++static void __dwc3_gadget_stop(struct dwc3 *dwc);
++static int __dwc3_gadget_start(struct dwc3 *dwc);
++
+ static int dwc3_gadget_pullup(struct usb_gadget *g, int is_on)
+ {
+ 	struct dwc3		*dwc = gadget_to_dwc(g);
+@@ -1999,9 +2018,73 @@ static int dwc3_gadget_pullup(struct usb_gadget *g, int is_on)
+ 		}
+ 	}
+ 
++	/*
++	 * Avoid issuing a runtime resume if the device is already in the
++	 * suspended state during gadget disconnect.  DWC3 gadget was already
++	 * halted/stopped during runtime suspend.
++	 */
++	if (!is_on) {
++		pm_runtime_barrier(dwc->dev);
++		if (pm_runtime_suspended(dwc->dev))
++			return 0;
++	}
++
++	/*
++	 * Check the return value for successful resume, or error.  For a
++	 * successful resume, the DWC3 runtime PM resume routine will handle
++	 * the run stop sequence, so avoid duplicate operations here.
++	 */
++	ret = pm_runtime_get_sync(dwc->dev);
++	if (!ret || ret < 0) {
++		pm_runtime_put(dwc->dev);
++		return 0;
++	}
++
++	/*
++	 * Synchronize and disable any further event handling while controller
++	 * is being enabled/disabled.
++	 */
++	disable_irq(dwc->irq_gadget);
++
+ 	spin_lock_irqsave(&dwc->lock, flags);
++
++	if (!is_on) {
++		u32 count;
++
++		dwc->connected = false;
++		/*
++		 * In the Synopsis DesignWare Cores USB3 Databook Rev. 3.30a
++		 * Section 4.1.8 Table 4-7, it states that for a device-initiated
++		 * disconnect, the SW needs to ensure that it sends "a DEPENDXFER
++		 * command for any active transfers" before clearing the RunStop
++		 * bit.
++		 */
++		dwc3_stop_active_transfers(dwc);
++		__dwc3_gadget_stop(dwc);
++
++		/*
++		 * In the Synopsis DesignWare Cores USB3 Databook Rev. 3.30a
++		 * Section 1.3.4, it mentions that for the DEVCTRLHLT bit, the
++		 * "software needs to acknowledge the events that are generated
++		 * (by writing to GEVNTCOUNTn) while it is waiting for this bit
++		 * to be set to '1'."
++		 */
++		count = dwc3_readl(dwc->regs, DWC3_GEVNTCOUNT(0));
++		count &= DWC3_GEVNTCOUNT_MASK;
++		if (count > 0) {
++			dwc3_writel(dwc->regs, DWC3_GEVNTCOUNT(0), count);
++			dwc->ev_buf->lpos = (dwc->ev_buf->lpos + count) %
++						dwc->ev_buf->length;
++		}
++	} else {
++		__dwc3_gadget_start(dwc);
++	}
++
+ 	ret = dwc3_gadget_run_stop(dwc, is_on, false);
+ 	spin_unlock_irqrestore(&dwc->lock, flags);
++	enable_irq(dwc->irq_gadget);
++
++	pm_runtime_put(dwc->dev);
+ 
+ 	return ret;
+ }
+@@ -2174,10 +2257,6 @@ static int dwc3_gadget_start(struct usb_gadget *g,
+ 	}
+ 
+ 	dwc->gadget_driver	= driver;
+-
+-	if (pm_runtime_active(dwc->dev))
+-		__dwc3_gadget_start(dwc);
+-
+ 	spin_unlock_irqrestore(&dwc->lock, flags);
+ 
+ 	return 0;
+@@ -2203,13 +2282,6 @@ static int dwc3_gadget_stop(struct usb_gadget *g)
+ 	unsigned long		flags;
+ 
+ 	spin_lock_irqsave(&dwc->lock, flags);
+-
+-	if (pm_runtime_suspended(dwc->dev))
+-		goto out;
+-
+-	__dwc3_gadget_stop(dwc);
+-
+-out:
+ 	dwc->gadget_driver	= NULL;
+ 	spin_unlock_irqrestore(&dwc->lock, flags);
+ 
+@@ -2995,8 +3067,6 @@ static void dwc3_gadget_reset_interrupt(struct dwc3 *dwc)
+ {
+ 	u32			reg;
+ 
+-	dwc->connected = true;
+-
+ 	/*
+ 	 * Ideally, dwc3_reset_gadget() would trigger the function
+ 	 * drivers to stop any active transfers through ep disable.
+@@ -3038,6 +3108,14 @@ static void dwc3_gadget_reset_interrupt(struct dwc3 *dwc)
+ 	}
+ 
+ 	dwc3_reset_gadget(dwc);
++	/*
++	 * In the Synopsis DesignWare Cores USB3 Databook Rev. 3.30a
++	 * Section 4.1.2 Table 4-2, it states that during a USB reset, the SW
++	 * needs to ensure that it sends "a DEPENDXFER command for any active
++	 * transfers."
++	 */
++	dwc3_stop_active_transfers(dwc);
++	dwc->connected = true;
+ 
+ 	reg = dwc3_readl(dwc->regs, DWC3_DCTL);
+ 	reg &= ~DWC3_DCTL_TSTCTRL_MASK;
+diff --git a/drivers/usb/host/ehci-pci.c b/drivers/usb/host/ehci-pci.c
+index 66713c2537653..774ccaa5aceea 100644
+--- a/drivers/usb/host/ehci-pci.c
++++ b/drivers/usb/host/ehci-pci.c
+@@ -298,6 +298,9 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
+ 	if (pdev->vendor == PCI_VENDOR_ID_STMICRO
+ 	    && pdev->device == PCI_DEVICE_ID_STMICRO_USB_HOST)
+ 		;	/* ConneXT has no sbrn register */
++	else if (pdev->vendor == PCI_VENDOR_ID_HUAWEI
++			 && pdev->device == 0xa239)
++		;	/* HUAWEI Kunpeng920 USB EHCI has no sbrn register */
+ 	else
+ 		pci_read_config_byte(pdev, 0x60, &ehci->sbrn);
+ 
+diff --git a/fs/btrfs/ctree.h b/fs/btrfs/ctree.h
+index 7960359dbc700..cd77c0621a555 100644
+--- a/fs/btrfs/ctree.h
++++ b/fs/btrfs/ctree.h
+@@ -504,11 +504,6 @@ enum {
+ 	 * (device replace, resize, device add/delete, balance)
+ 	 */
+ 	BTRFS_FS_EXCL_OP,
+-	/*
+-	 * To info transaction_kthread we need an immediate commit so it
+-	 * doesn't need to wait for commit_interval
+-	 */
+-	BTRFS_FS_NEED_ASYNC_COMMIT,
+ 	/*
+ 	 * Indicate that balance has been set up from the ioctl and is in the
+ 	 * main phase. The fs_info::balance_ctl is initialized.
+@@ -832,7 +827,10 @@ struct btrfs_fs_info {
+ 	 */
+ 	struct ulist *qgroup_ulist;
+ 
+-	/* protect user change for quota operations */
++	/*
++	 * Protect user change for quota operations. If a transaction is needed,
++	 * it must be started before locking this lock.
++	 */
+ 	struct mutex qgroup_ioctl_lock;
+ 
+ 	/* list of dirty qgroups to be written at next commit */
+@@ -945,6 +943,8 @@ enum {
+ 	BTRFS_ROOT_DEAD_TREE,
+ 	/* The root has a log tree. Used only for subvolume roots. */
+ 	BTRFS_ROOT_HAS_LOG_TREE,
++	/* Qgroup flushing is in progress */
++	BTRFS_ROOT_QGROUP_FLUSHING,
+ };
+ 
+ /*
+@@ -1097,6 +1097,7 @@ struct btrfs_root {
+ 	spinlock_t qgroup_meta_rsv_lock;
+ 	u64 qgroup_meta_rsv_pertrans;
+ 	u64 qgroup_meta_rsv_prealloc;
++	wait_queue_head_t qgroup_flush_wait;
+ 
+ 	/* Number of active swapfiles */
+ 	atomic_t nr_swapfiles;
+diff --git a/fs/btrfs/delalloc-space.c b/fs/btrfs/delalloc-space.c
+index db9f2c58eb4af..f4f531c4aa960 100644
+--- a/fs/btrfs/delalloc-space.c
++++ b/fs/btrfs/delalloc-space.c
+@@ -151,7 +151,7 @@ int btrfs_check_data_free_space(struct inode *inode,
+ 		return ret;
+ 
+ 	/* Use new btrfs_qgroup_reserve_data to reserve precious data space. */
+-	ret = btrfs_qgroup_reserve_data(inode, reserved, start, len);
++	ret = btrfs_qgroup_reserve_data(BTRFS_I(inode), reserved, start, len);
+ 	if (ret < 0)
+ 		btrfs_free_reserved_data_space_noquota(inode, start, len);
+ 	else
+diff --git a/fs/btrfs/delayed-inode.c b/fs/btrfs/delayed-inode.c
+index 3dccbbe4a6585..e96890475bac7 100644
+--- a/fs/btrfs/delayed-inode.c
++++ b/fs/btrfs/delayed-inode.c
+@@ -627,7 +627,8 @@ static int btrfs_delayed_inode_reserve_metadata(
+ 	 */
+ 	if (!src_rsv || (!trans->bytes_reserved &&
+ 			 src_rsv->type != BTRFS_BLOCK_RSV_DELALLOC)) {
+-		ret = btrfs_qgroup_reserve_meta_prealloc(root, num_bytes, true);
++		ret = btrfs_qgroup_reserve_meta(root, num_bytes,
++					  BTRFS_QGROUP_RSV_META_PREALLOC, true);
+ 		if (ret < 0)
+ 			return ret;
+ 		ret = btrfs_block_rsv_add(root, dst_rsv, num_bytes,
+diff --git a/fs/btrfs/disk-io.c b/fs/btrfs/disk-io.c
+index 1d28333bb798c..dacd67dca43fe 100644
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -1154,6 +1154,7 @@ static void __setup_root(struct btrfs_root *root, struct btrfs_fs_info *fs_info,
+ 	mutex_init(&root->log_mutex);
+ 	mutex_init(&root->ordered_extent_mutex);
+ 	mutex_init(&root->delalloc_mutex);
++	init_waitqueue_head(&root->qgroup_flush_wait);
+ 	init_waitqueue_head(&root->log_writer_wait);
+ 	init_waitqueue_head(&root->log_commit_wait[0]);
+ 	init_waitqueue_head(&root->log_commit_wait[1]);
+@@ -1747,8 +1748,7 @@ static int transaction_kthread(void *arg)
+ 		}
+ 
+ 		now = ktime_get_seconds();
+-		if (cur->state < TRANS_STATE_BLOCKED &&
+-		    !test_bit(BTRFS_FS_NEED_ASYNC_COMMIT, &fs_info->flags) &&
++		if (cur->state < TRANS_STATE_COMMIT_START &&
+ 		    (now < cur->start_time ||
+ 		     now - cur->start_time < fs_info->commit_interval)) {
+ 			spin_unlock(&fs_info->trans_lock);
+diff --git a/fs/btrfs/file.c b/fs/btrfs/file.c
+index f6308a7b761db..400b0717b9d44 100644
+--- a/fs/btrfs/file.c
++++ b/fs/btrfs/file.c
+@@ -3149,7 +3149,7 @@ reserve_space:
+ 						  &cached_state);
+ 		if (ret)
+ 			goto out;
+-		ret = btrfs_qgroup_reserve_data(inode, &data_reserved,
++		ret = btrfs_qgroup_reserve_data(BTRFS_I(inode), &data_reserved,
+ 						alloc_start, bytes_to_reserve);
+ 		if (ret) {
+ 			unlock_extent_cached(&BTRFS_I(inode)->io_tree, lockstart,
+@@ -3322,8 +3322,9 @@ static long btrfs_fallocate(struct file *file, int mode,
+ 				free_extent_map(em);
+ 				break;
+ 			}
+-			ret = btrfs_qgroup_reserve_data(inode, &data_reserved,
+-					cur_offset, last_byte - cur_offset);
++			ret = btrfs_qgroup_reserve_data(BTRFS_I(inode),
++					&data_reserved, cur_offset,
++					last_byte - cur_offset);
+ 			if (ret < 0) {
+ 				cur_offset = last_byte;
+ 				free_extent_map(em);
+diff --git a/fs/btrfs/inode.c b/fs/btrfs/inode.c
+index 8959d011aafa8..b044b1d910dec 100644
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -6375,7 +6375,7 @@ static int btrfs_dirty_inode(struct inode *inode)
+ 		return PTR_ERR(trans);
+ 
+ 	ret = btrfs_update_inode(trans, root, inode);
+-	if (ret && ret == -ENOSPC) {
++	if (ret && (ret == -ENOSPC || ret == -EDQUOT)) {
+ 		/* whoops, lets try again with the full transaction */
+ 		btrfs_end_transaction(trans);
+ 		trans = btrfs_start_transaction(root, 1);
+diff --git a/fs/btrfs/qgroup.c b/fs/btrfs/qgroup.c
+index 837bd5e29c8a0..bb034e19a2a8a 100644
+--- a/fs/btrfs/qgroup.c
++++ b/fs/btrfs/qgroup.c
+@@ -11,7 +11,6 @@
+ #include <linux/slab.h>
+ #include <linux/workqueue.h>
+ #include <linux/btrfs.h>
+-#include <linux/sizes.h>
+ 
+ #include "ctree.h"
+ #include "transaction.h"
+@@ -887,6 +886,7 @@ int btrfs_quota_enable(struct btrfs_fs_info *fs_info)
+ 	struct btrfs_key found_key;
+ 	struct btrfs_qgroup *qgroup = NULL;
+ 	struct btrfs_trans_handle *trans = NULL;
++	struct ulist *ulist = NULL;
+ 	int ret = 0;
+ 	int slot;
+ 
+@@ -894,12 +894,27 @@ int btrfs_quota_enable(struct btrfs_fs_info *fs_info)
+ 	if (fs_info->quota_root)
+ 		goto out;
+ 
+-	fs_info->qgroup_ulist = ulist_alloc(GFP_KERNEL);
+-	if (!fs_info->qgroup_ulist) {
++	ulist = ulist_alloc(GFP_KERNEL);
++	if (!ulist) {
+ 		ret = -ENOMEM;
+ 		goto out;
+ 	}
+ 
++	/*
++	 * Unlock qgroup_ioctl_lock before starting the transaction. This is to
++	 * avoid lock acquisition inversion problems (reported by lockdep) between
++	 * qgroup_ioctl_lock and the vfs freeze semaphores, acquired when we
++	 * start a transaction.
++	 * After we started the transaction lock qgroup_ioctl_lock again and
++	 * check if someone else created the quota root in the meanwhile. If so,
++	 * just return success and release the transaction handle.
++	 *
++	 * Also we don't need to worry about someone else calling
++	 * btrfs_sysfs_add_qgroups() after we unlock and getting an error because
++	 * that function returns 0 (success) when the sysfs entries already exist.
++	 */
++	mutex_unlock(&fs_info->qgroup_ioctl_lock);
++
+ 	/*
+ 	 * 1 for quota root item
+ 	 * 1 for BTRFS_QGROUP_STATUS item
+@@ -909,12 +924,20 @@ int btrfs_quota_enable(struct btrfs_fs_info *fs_info)
+ 	 * would be a lot of overkill.
+ 	 */
+ 	trans = btrfs_start_transaction(tree_root, 2);
++
++	mutex_lock(&fs_info->qgroup_ioctl_lock);
+ 	if (IS_ERR(trans)) {
+ 		ret = PTR_ERR(trans);
+ 		trans = NULL;
+ 		goto out;
+ 	}
+ 
++	if (fs_info->quota_root)
++		goto out;
++
++	fs_info->qgroup_ulist = ulist;
++	ulist = NULL;
++
+ 	/*
+ 	 * initially create the quota tree
+ 	 */
+@@ -1047,10 +1070,13 @@ out:
+ 	if (ret) {
+ 		ulist_free(fs_info->qgroup_ulist);
+ 		fs_info->qgroup_ulist = NULL;
+-		if (trans)
+-			btrfs_end_transaction(trans);
+ 	}
+ 	mutex_unlock(&fs_info->qgroup_ioctl_lock);
++	if (ret && trans)
++		btrfs_end_transaction(trans);
++	else if (trans)
++		ret = btrfs_end_transaction(trans);
++	ulist_free(ulist);
+ 	return ret;
+ }
+ 
+@@ -1063,19 +1089,29 @@ int btrfs_quota_disable(struct btrfs_fs_info *fs_info)
+ 	mutex_lock(&fs_info->qgroup_ioctl_lock);
+ 	if (!fs_info->quota_root)
+ 		goto out;
++	mutex_unlock(&fs_info->qgroup_ioctl_lock);
+ 
+ 	/*
+ 	 * 1 For the root item
+ 	 *
+ 	 * We should also reserve enough items for the quota tree deletion in
+ 	 * btrfs_clean_quota_tree but this is not done.
++	 *
++	 * Also, we must always start a transaction without holding the mutex
++	 * qgroup_ioctl_lock, see btrfs_quota_enable().
+ 	 */
+ 	trans = btrfs_start_transaction(fs_info->tree_root, 1);
++
++	mutex_lock(&fs_info->qgroup_ioctl_lock);
+ 	if (IS_ERR(trans)) {
+ 		ret = PTR_ERR(trans);
++		trans = NULL;
+ 		goto out;
+ 	}
+ 
++	if (!fs_info->quota_root)
++		goto out;
++
+ 	clear_bit(BTRFS_FS_QUOTA_ENABLED, &fs_info->flags);
+ 	btrfs_qgroup_wait_for_completion(fs_info, false);
+ 	spin_lock(&fs_info->qgroup_lock);
+@@ -1089,13 +1125,13 @@ int btrfs_quota_disable(struct btrfs_fs_info *fs_info)
+ 	ret = btrfs_clean_quota_tree(trans, quota_root);
+ 	if (ret) {
+ 		btrfs_abort_transaction(trans, ret);
+-		goto end_trans;
++		goto out;
+ 	}
+ 
+ 	ret = btrfs_del_root(trans, &quota_root->root_key);
+ 	if (ret) {
+ 		btrfs_abort_transaction(trans, ret);
+-		goto end_trans;
++		goto out;
+ 	}
+ 
+ 	list_del(&quota_root->dirty_list);
+@@ -1109,10 +1145,13 @@ int btrfs_quota_disable(struct btrfs_fs_info *fs_info)
+ 	free_extent_buffer(quota_root->commit_root);
+ 	kfree(quota_root);
+ 
+-end_trans:
+-	ret = btrfs_end_transaction(trans);
+ out:
+ 	mutex_unlock(&fs_info->qgroup_ioctl_lock);
++	if (ret && trans)
++		btrfs_end_transaction(trans);
++	else if (trans)
++		ret = btrfs_end_transaction(trans);
++
+ 	return ret;
+ }
+ 
+@@ -2840,20 +2879,8 @@ out:
+ 	return ret;
+ }
+ 
+-/*
+- * Two limits to commit transaction in advance.
+- *
+- * For RATIO, it will be 1/RATIO of the remaining limit as threshold.
+- * For SIZE, it will be in byte unit as threshold.
+- */
+-#define QGROUP_FREE_RATIO		32
+-#define QGROUP_FREE_SIZE		SZ_32M
+-static bool qgroup_check_limits(struct btrfs_fs_info *fs_info,
+-				const struct btrfs_qgroup *qg, u64 num_bytes)
++static bool qgroup_check_limits(const struct btrfs_qgroup *qg, u64 num_bytes)
+ {
+-	u64 free;
+-	u64 threshold;
+-
+ 	if ((qg->lim_flags & BTRFS_QGROUP_LIMIT_MAX_RFER) &&
+ 	    qgroup_rsv_total(qg) + (s64)qg->rfer + num_bytes > qg->max_rfer)
+ 		return false;
+@@ -2862,32 +2889,6 @@ static bool qgroup_check_limits(struct btrfs_fs_info *fs_info,
+ 	    qgroup_rsv_total(qg) + (s64)qg->excl + num_bytes > qg->max_excl)
+ 		return false;
+ 
+-	/*
+-	 * Even if we passed the check, it's better to check if reservation
+-	 * for meta_pertrans is pushing us near limit.
+-	 * If there is too much pertrans reservation or it's near the limit,
+-	 * let's try commit transaction to free some, using transaction_kthread
+-	 */
+-	if ((qg->lim_flags & (BTRFS_QGROUP_LIMIT_MAX_RFER |
+-			      BTRFS_QGROUP_LIMIT_MAX_EXCL))) {
+-		if (qg->lim_flags & BTRFS_QGROUP_LIMIT_MAX_EXCL) {
+-			free = qg->max_excl - qgroup_rsv_total(qg) - qg->excl;
+-			threshold = min_t(u64, qg->max_excl / QGROUP_FREE_RATIO,
+-					  QGROUP_FREE_SIZE);
+-		} else {
+-			free = qg->max_rfer - qgroup_rsv_total(qg) - qg->rfer;
+-			threshold = min_t(u64, qg->max_rfer / QGROUP_FREE_RATIO,
+-					  QGROUP_FREE_SIZE);
+-		}
+-
+-		/*
+-		 * Use transaction_kthread to commit transaction, so we no
+-		 * longer need to bother nested transaction nor lock context.
+-		 */
+-		if (free < threshold)
+-			btrfs_commit_transaction_locksafe(fs_info);
+-	}
+-
+ 	return true;
+ }
+ 
+@@ -2937,7 +2938,7 @@ static int qgroup_reserve(struct btrfs_root *root, u64 num_bytes, bool enforce,
+ 
+ 		qg = unode_aux_to_qgroup(unode);
+ 
+-		if (enforce && !qgroup_check_limits(fs_info, qg, num_bytes)) {
++		if (enforce && !qgroup_check_limits(qg, num_bytes)) {
+ 			ret = -EDQUOT;
+ 			goto out;
+ 		}
+@@ -3411,28 +3412,150 @@ btrfs_qgroup_rescan_resume(struct btrfs_fs_info *fs_info)
+ 	}
+ }
+ 
++#define rbtree_iterate_from_safe(node, next, start)				\
++       for (node = start; node && ({ next = rb_next(node); 1;}); node = next)
++
++static int qgroup_unreserve_range(struct btrfs_inode *inode,
++				  struct extent_changeset *reserved, u64 start,
++				  u64 len)
++{
++	struct rb_node *node;
++	struct rb_node *next;
++	struct ulist_node *entry = NULL;
++	int ret = 0;
++
++	node = reserved->range_changed.root.rb_node;
++	while (node) {
++		entry = rb_entry(node, struct ulist_node, rb_node);
++		if (entry->val < start)
++			node = node->rb_right;
++		else if (entry)
++			node = node->rb_left;
++		else
++			break;
++	}
++
++	/* Empty changeset */
++	if (!entry)
++		return 0;
++
++	if (entry->val > start && rb_prev(&entry->rb_node))
++		entry = rb_entry(rb_prev(&entry->rb_node), struct ulist_node,
++				 rb_node);
++
++	rbtree_iterate_from_safe(node, next, &entry->rb_node) {
++		u64 entry_start;
++		u64 entry_end;
++		u64 entry_len;
++		int clear_ret;
++
++		entry = rb_entry(node, struct ulist_node, rb_node);
++		entry_start = entry->val;
++		entry_end = entry->aux;
++		entry_len = entry_end - entry_start + 1;
++
++		if (entry_start >= start + len)
++			break;
++		if (entry_start + entry_len <= start)
++			continue;
++		/*
++		 * Now the entry is in [start, start + len), revert the
++		 * EXTENT_QGROUP_RESERVED bit.
++		 */
++		clear_ret = clear_extent_bits(&inode->io_tree, entry_start,
++					      entry_end, EXTENT_QGROUP_RESERVED);
++		if (!ret && clear_ret < 0)
++			ret = clear_ret;
++
++		ulist_del(&reserved->range_changed, entry->val, entry->aux);
++		if (likely(reserved->bytes_changed >= entry_len)) {
++			reserved->bytes_changed -= entry_len;
++		} else {
++			WARN_ON(1);
++			reserved->bytes_changed = 0;
++		}
++	}
++
++	return ret;
++}
++
+ /*
+- * Reserve qgroup space for range [start, start + len).
++ * Try to free some space for qgroup.
+  *
+- * This function will either reserve space from related qgroups or doing
+- * nothing if the range is already reserved.
++ * For qgroup, there are only 3 ways to free qgroup space:
++ * - Flush nodatacow write
++ *   Any nodatacow write will free its reserved data space at run_delalloc_range().
++ *   In theory, we should only flush nodatacow inodes, but it's not yet
++ *   possible, so we need to flush the whole root.
+  *
+- * Return 0 for successful reserve
+- * Return <0 for error (including -EQUOT)
++ * - Wait for ordered extents
++ *   When ordered extents are finished, their reserved metadata is finally
++ *   converted to per_trans status, which can be freed by later commit
++ *   transaction.
+  *
+- * NOTE: this function may sleep for memory allocation.
+- *       if btrfs_qgroup_reserve_data() is called multiple times with
+- *       same @reserved, caller must ensure when error happens it's OK
+- *       to free *ALL* reserved space.
++ * - Commit transaction
++ *   This would free the meta_per_trans space.
++ *   In theory this shouldn't provide much space, but any more qgroup space
++ *   is needed.
+  */
+-int btrfs_qgroup_reserve_data(struct inode *inode,
++static int try_flush_qgroup(struct btrfs_root *root)
++{
++	struct btrfs_trans_handle *trans;
++	int ret;
++	bool can_commit = true;
++
++	/*
++	 * We don't want to run flush again and again, so if there is a running
++	 * one, we won't try to start a new flush, but exit directly.
++	 */
++	if (test_and_set_bit(BTRFS_ROOT_QGROUP_FLUSHING, &root->state)) {
++		wait_event(root->qgroup_flush_wait,
++			!test_bit(BTRFS_ROOT_QGROUP_FLUSHING, &root->state));
++		return 0;
++	}
++
++	/*
++	 * If current process holds a transaction, we shouldn't flush, as we
++	 * assume all space reservation happens before a transaction handle is
++	 * held.
++	 *
++	 * But there are cases like btrfs_delayed_item_reserve_metadata() where
++	 * we try to reserve space with one transction handle already held.
++	 * In that case we can't commit transaction, but at least try to end it
++	 * and hope the started data writes can free some space.
++	 */
++	if (current->journal_info &&
++	    current->journal_info != BTRFS_SEND_TRANS_STUB)
++		can_commit = false;
++
++	ret = btrfs_start_delalloc_snapshot(root);
++	if (ret < 0)
++		goto out;
++	btrfs_wait_ordered_extents(root, U64_MAX, 0, (u64)-1);
++
++	trans = btrfs_join_transaction(root);
++	if (IS_ERR(trans)) {
++		ret = PTR_ERR(trans);
++		goto out;
++	}
++
++	if (can_commit)
++		ret = btrfs_commit_transaction(trans);
++	else
++		ret = btrfs_end_transaction(trans);
++out:
++	clear_bit(BTRFS_ROOT_QGROUP_FLUSHING, &root->state);
++	wake_up(&root->qgroup_flush_wait);
++	return ret;
++}
++
++static int qgroup_reserve_data(struct btrfs_inode *inode,
+ 			struct extent_changeset **reserved_ret, u64 start,
+ 			u64 len)
+ {
+-	struct btrfs_root *root = BTRFS_I(inode)->root;
+-	struct ulist_node *unode;
+-	struct ulist_iterator uiter;
++	struct btrfs_root *root = inode->root;
+ 	struct extent_changeset *reserved;
++	bool new_reserved = false;
+ 	u64 orig_reserved;
+ 	u64 to_reserve;
+ 	int ret;
+@@ -3445,6 +3568,7 @@ int btrfs_qgroup_reserve_data(struct inode *inode,
+ 	if (WARN_ON(!reserved_ret))
+ 		return -EINVAL;
+ 	if (!*reserved_ret) {
++		new_reserved = true;
+ 		*reserved_ret = extent_changeset_alloc();
+ 		if (!*reserved_ret)
+ 			return -ENOMEM;
+@@ -3452,15 +3576,15 @@ int btrfs_qgroup_reserve_data(struct inode *inode,
+ 	reserved = *reserved_ret;
+ 	/* Record already reserved space */
+ 	orig_reserved = reserved->bytes_changed;
+-	ret = set_record_extent_bits(&BTRFS_I(inode)->io_tree, start,
++	ret = set_record_extent_bits(&inode->io_tree, start,
+ 			start + len -1, EXTENT_QGROUP_RESERVED, reserved);
+ 
+ 	/* Newly reserved space */
+ 	to_reserve = reserved->bytes_changed - orig_reserved;
+-	trace_btrfs_qgroup_reserve_data(inode, start, len,
++	trace_btrfs_qgroup_reserve_data(&inode->vfs_inode, start, len,
+ 					to_reserve, QGROUP_RESERVE);
+ 	if (ret < 0)
+-		goto cleanup;
++		goto out;
+ 	ret = qgroup_reserve(root, to_reserve, true, BTRFS_QGROUP_RSV_DATA);
+ 	if (ret < 0)
+ 		goto cleanup;
+@@ -3468,23 +3592,49 @@ int btrfs_qgroup_reserve_data(struct inode *inode,
+ 	return ret;
+ 
+ cleanup:
+-	/* cleanup *ALL* already reserved ranges */
+-	ULIST_ITER_INIT(&uiter);
+-	while ((unode = ulist_next(&reserved->range_changed, &uiter)))
+-		clear_extent_bit(&BTRFS_I(inode)->io_tree, unode->val,
+-				 unode->aux, EXTENT_QGROUP_RESERVED, 0, 0, NULL);
+-	/* Also free data bytes of already reserved one */
+-	btrfs_qgroup_free_refroot(root->fs_info, root->root_key.objectid,
+-				  orig_reserved, BTRFS_QGROUP_RSV_DATA);
+-	extent_changeset_release(reserved);
++	qgroup_unreserve_range(inode, reserved, start, len);
++out:
++	if (new_reserved) {
++		extent_changeset_release(reserved);
++		kfree(reserved);
++		*reserved_ret = NULL;
++	}
+ 	return ret;
+ }
+ 
++/*
++ * Reserve qgroup space for range [start, start + len).
++ *
++ * This function will either reserve space from related qgroups or do nothing
++ * if the range is already reserved.
++ *
++ * Return 0 for successful reservation
++ * Return <0 for error (including -EQUOT)
++ *
++ * NOTE: This function may sleep for memory allocation, dirty page flushing and
++ *	 commit transaction. So caller should not hold any dirty page locked.
++ */
++int btrfs_qgroup_reserve_data(struct btrfs_inode *inode,
++			struct extent_changeset **reserved_ret, u64 start,
++			u64 len)
++{
++	int ret;
++
++	ret = qgroup_reserve_data(inode, reserved_ret, start, len);
++	if (ret <= 0 && ret != -EDQUOT)
++		return ret;
++
++	ret = try_flush_qgroup(inode->root);
++	if (ret < 0)
++		return ret;
++	return qgroup_reserve_data(inode, reserved_ret, start, len);
++}
++
+ /* Free ranges specified by @reserved, normally in error path */
+-static int qgroup_free_reserved_data(struct inode *inode,
++static int qgroup_free_reserved_data(struct btrfs_inode *inode,
+ 			struct extent_changeset *reserved, u64 start, u64 len)
+ {
+-	struct btrfs_root *root = BTRFS_I(inode)->root;
++	struct btrfs_root *root = inode->root;
+ 	struct ulist_node *unode;
+ 	struct ulist_iterator uiter;
+ 	struct extent_changeset changeset;
+@@ -3520,8 +3670,8 @@ static int qgroup_free_reserved_data(struct inode *inode,
+ 		 * EXTENT_QGROUP_RESERVED, we won't double free.
+ 		 * So not need to rush.
+ 		 */
+-		ret = clear_record_extent_bits(&BTRFS_I(inode)->io_tree,
+-				free_start, free_start + free_len - 1,
++		ret = clear_record_extent_bits(&inode->io_tree, free_start,
++				free_start + free_len - 1,
+ 				EXTENT_QGROUP_RESERVED, &changeset);
+ 		if (ret < 0)
+ 			goto out;
+@@ -3550,7 +3700,8 @@ static int __btrfs_qgroup_release_data(struct inode *inode,
+ 	/* In release case, we shouldn't have @reserved */
+ 	WARN_ON(!free && reserved);
+ 	if (free && reserved)
+-		return qgroup_free_reserved_data(inode, reserved, start, len);
++		return qgroup_free_reserved_data(BTRFS_I(inode), reserved,
++						 start, len);
+ 	extent_changeset_init(&changeset);
+ 	ret = clear_record_extent_bits(&BTRFS_I(inode)->io_tree, start, 
+ 			start + len -1, EXTENT_QGROUP_RESERVED, &changeset);
+@@ -3649,8 +3800,8 @@ static int sub_root_meta_rsv(struct btrfs_root *root, int num_bytes,
+ 	return num_bytes;
+ }
+ 
+-int __btrfs_qgroup_reserve_meta(struct btrfs_root *root, int num_bytes,
+-				enum btrfs_qgroup_rsv_type type, bool enforce)
++int btrfs_qgroup_reserve_meta(struct btrfs_root *root, int num_bytes,
++			      enum btrfs_qgroup_rsv_type type, bool enforce)
+ {
+ 	struct btrfs_fs_info *fs_info = root->fs_info;
+ 	int ret;
+@@ -3676,6 +3827,21 @@ int __btrfs_qgroup_reserve_meta(struct btrfs_root *root, int num_bytes,
+ 	return ret;
+ }
+ 
++int __btrfs_qgroup_reserve_meta(struct btrfs_root *root, int num_bytes,
++				enum btrfs_qgroup_rsv_type type, bool enforce)
++{
++	int ret;
++
++	ret = btrfs_qgroup_reserve_meta(root, num_bytes, type, enforce);
++	if (ret <= 0 && ret != -EDQUOT)
++		return ret;
++
++	ret = try_flush_qgroup(root);
++	if (ret < 0)
++		return ret;
++	return btrfs_qgroup_reserve_meta(root, num_bytes, type, enforce);
++}
++
+ void btrfs_qgroup_free_meta_all_pertrans(struct btrfs_root *root)
+ {
+ 	struct btrfs_fs_info *fs_info = root->fs_info;
+diff --git a/fs/btrfs/qgroup.h b/fs/btrfs/qgroup.h
+index b0420c4f5d0ef..0a2659685ad65 100644
+--- a/fs/btrfs/qgroup.h
++++ b/fs/btrfs/qgroup.h
+@@ -344,12 +344,13 @@ int btrfs_verify_qgroup_counts(struct btrfs_fs_info *fs_info, u64 qgroupid,
+ #endif
+ 
+ /* New io_tree based accurate qgroup reserve API */
+-int btrfs_qgroup_reserve_data(struct inode *inode,
++int btrfs_qgroup_reserve_data(struct btrfs_inode *inode,
+ 			struct extent_changeset **reserved, u64 start, u64 len);
+ int btrfs_qgroup_release_data(struct inode *inode, u64 start, u64 len);
+ int btrfs_qgroup_free_data(struct inode *inode,
+ 			struct extent_changeset *reserved, u64 start, u64 len);
+-
++int btrfs_qgroup_reserve_meta(struct btrfs_root *root, int num_bytes,
++			      enum btrfs_qgroup_rsv_type type, bool enforce);
+ int __btrfs_qgroup_reserve_meta(struct btrfs_root *root, int num_bytes,
+ 				enum btrfs_qgroup_rsv_type type, bool enforce);
+ /* Reserve metadata space for pertrans and prealloc type */
+diff --git a/fs/btrfs/transaction.c b/fs/btrfs/transaction.c
+index d8e4e0bf3fc2d..e6cb95b81787f 100644
+--- a/fs/btrfs/transaction.c
++++ b/fs/btrfs/transaction.c
+@@ -27,7 +27,6 @@
+ 
+ static const unsigned int btrfs_blocked_trans_types[TRANS_STATE_MAX] = {
+ 	[TRANS_STATE_RUNNING]		= 0U,
+-	[TRANS_STATE_BLOCKED]		=  __TRANS_START,
+ 	[TRANS_STATE_COMMIT_START]	= (__TRANS_START | __TRANS_ATTACH),
+ 	[TRANS_STATE_COMMIT_DOING]	= (__TRANS_START |
+ 					   __TRANS_ATTACH |
+@@ -388,7 +387,7 @@ int btrfs_record_root_in_trans(struct btrfs_trans_handle *trans,
+ 
+ static inline int is_transaction_blocked(struct btrfs_transaction *trans)
+ {
+-	return (trans->state >= TRANS_STATE_BLOCKED &&
++	return (trans->state >= TRANS_STATE_COMMIT_START &&
+ 		trans->state < TRANS_STATE_UNBLOCKED &&
+ 		!TRANS_ABORTED(trans));
+ }
+@@ -580,7 +579,7 @@ again:
+ 	INIT_LIST_HEAD(&h->new_bgs);
+ 
+ 	smp_mb();
+-	if (cur_trans->state >= TRANS_STATE_BLOCKED &&
++	if (cur_trans->state >= TRANS_STATE_COMMIT_START &&
+ 	    may_wait_transaction(fs_info, type)) {
+ 		current->journal_info = h;
+ 		btrfs_commit_transaction(h);
+@@ -797,7 +796,7 @@ int btrfs_should_end_transaction(struct btrfs_trans_handle *trans)
+ 	struct btrfs_transaction *cur_trans = trans->transaction;
+ 
+ 	smp_mb();
+-	if (cur_trans->state >= TRANS_STATE_BLOCKED ||
++	if (cur_trans->state >= TRANS_STATE_COMMIT_START ||
+ 	    cur_trans->delayed_refs.flushing)
+ 		return 1;
+ 
+@@ -830,7 +829,6 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
+ {
+ 	struct btrfs_fs_info *info = trans->fs_info;
+ 	struct btrfs_transaction *cur_trans = trans->transaction;
+-	int lock = (trans->type != TRANS_JOIN_NOLOCK);
+ 	int err = 0;
+ 
+ 	if (refcount_read(&trans->use_count) > 1) {
+@@ -846,13 +844,6 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
+ 
+ 	btrfs_trans_release_chunk_metadata(trans);
+ 
+-	if (lock && READ_ONCE(cur_trans->state) == TRANS_STATE_BLOCKED) {
+-		if (throttle)
+-			return btrfs_commit_transaction(trans);
+-		else
+-			wake_up_process(info->transaction_kthread);
+-	}
+-
+ 	if (trans->type & __TRANS_FREEZABLE)
+ 		sb_end_intwrite(info->sb);
+ 
+@@ -2306,7 +2297,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
+ 	 */
+ 	cur_trans->state = TRANS_STATE_COMPLETED;
+ 	wake_up(&cur_trans->commit_wait);
+-	clear_bit(BTRFS_FS_NEED_ASYNC_COMMIT, &fs_info->flags);
+ 
+ 	spin_lock(&fs_info->trans_lock);
+ 	list_del_init(&cur_trans->list);
+diff --git a/fs/btrfs/transaction.h b/fs/btrfs/transaction.h
+index 7291a2a930751..d8a7d460e436a 100644
+--- a/fs/btrfs/transaction.h
++++ b/fs/btrfs/transaction.h
+@@ -13,7 +13,6 @@
+ 
+ enum btrfs_trans_state {
+ 	TRANS_STATE_RUNNING,
+-	TRANS_STATE_BLOCKED,
+ 	TRANS_STATE_COMMIT_START,
+ 	TRANS_STATE_COMMIT_DOING,
+ 	TRANS_STATE_UNBLOCKED,
+@@ -208,20 +207,6 @@ int btrfs_clean_one_deleted_snapshot(struct btrfs_root *root);
+ int btrfs_commit_transaction(struct btrfs_trans_handle *trans);
+ int btrfs_commit_transaction_async(struct btrfs_trans_handle *trans,
+ 				   int wait_for_unblock);
+-
+-/*
+- * Try to commit transaction asynchronously, so this is safe to call
+- * even holding a spinlock.
+- *
+- * It's done by informing transaction_kthread to commit transaction without
+- * waiting for commit interval.
+- */
+-static inline void btrfs_commit_transaction_locksafe(
+-		struct btrfs_fs_info *fs_info)
+-{
+-	set_bit(BTRFS_FS_NEED_ASYNC_COMMIT, &fs_info->flags);
+-	wake_up_process(fs_info->transaction_kthread);
+-}
+ int btrfs_end_transaction_throttle(struct btrfs_trans_handle *trans);
+ int btrfs_should_end_transaction(struct btrfs_trans_handle *trans);
+ void btrfs_throttle(struct btrfs_fs_info *fs_info);
+diff --git a/fs/namespace.c b/fs/namespace.c
+index 76ea92994d26d..a092611d89e77 100644
+--- a/fs/namespace.c
++++ b/fs/namespace.c
+@@ -1861,6 +1861,20 @@ void drop_collected_mounts(struct vfsmount *mnt)
+ 	namespace_unlock();
+ }
+ 
++static bool has_locked_children(struct mount *mnt, struct dentry *dentry)
++{
++	struct mount *child;
++
++	list_for_each_entry(child, &mnt->mnt_mounts, mnt_child) {
++		if (!is_subdir(child->mnt_mountpoint, dentry))
++			continue;
++
++		if (child->mnt.mnt_flags & MNT_LOCKED)
++			return true;
++	}
++	return false;
++}
++
+ /**
+  * clone_private_mount - create a private clone of a path
+  *
+@@ -1875,14 +1889,27 @@ struct vfsmount *clone_private_mount(const struct path *path)
+ 	struct mount *old_mnt = real_mount(path->mnt);
+ 	struct mount *new_mnt;
+ 
++	down_read(&namespace_sem);
+ 	if (IS_MNT_UNBINDABLE(old_mnt))
+-		return ERR_PTR(-EINVAL);
++		goto invalid;
++
++	if (!check_mnt(old_mnt))
++		goto invalid;
++
++	if (has_locked_children(old_mnt, path->dentry))
++		goto invalid;
+ 
+ 	new_mnt = clone_mnt(old_mnt, path->dentry, CL_PRIVATE);
++	up_read(&namespace_sem);
++
+ 	if (IS_ERR(new_mnt))
+ 		return ERR_CAST(new_mnt);
+ 
+ 	return &new_mnt->mnt;
++
++invalid:
++	up_read(&namespace_sem);
++	return ERR_PTR(-EINVAL);
+ }
+ EXPORT_SYMBOL_GPL(clone_private_mount);
+ 
+@@ -2234,19 +2261,6 @@ static int do_change_type(struct path *path, int ms_flags)
+ 	return err;
+ }
+ 
+-static bool has_locked_children(struct mount *mnt, struct dentry *dentry)
+-{
+-	struct mount *child;
+-	list_for_each_entry(child, &mnt->mnt_mounts, mnt_child) {
+-		if (!is_subdir(child->mnt_mountpoint, dentry))
+-			continue;
+-
+-		if (child->mnt.mnt_flags & MNT_LOCKED)
+-			return true;
+-	}
+-	return false;
+-}
+-
+ static struct mount *__do_loopback(struct path *old_path, int recurse)
+ {
+ 	struct mount *mnt = ERR_PTR(-EINVAL), *old = real_mount(old_path->mnt);
+diff --git a/include/linux/tee_drv.h b/include/linux/tee_drv.h
+index 91677f2fa2e8b..cd15c1b7fae06 100644
+--- a/include/linux/tee_drv.h
++++ b/include/linux/tee_drv.h
+@@ -26,6 +26,7 @@
+ #define TEE_SHM_REGISTER	BIT(3)  /* Memory registered in secure world */
+ #define TEE_SHM_USER_MAPPED	BIT(4)  /* Memory mapped in user space */
+ #define TEE_SHM_POOL		BIT(5)  /* Memory allocated from pool */
++#define TEE_SHM_PRIV		BIT(7)  /* Memory private to TEE driver */
+ 
+ struct device;
+ struct tee_device;
+diff --git a/kernel/trace/trace_events_hist.c b/kernel/trace/trace_events_hist.c
+index db2b10c718ba2..e40712abe089e 100644
+--- a/kernel/trace/trace_events_hist.c
++++ b/kernel/trace/trace_events_hist.c
+@@ -66,7 +66,8 @@
+ 	C(INVALID_SUBSYS_EVENT,	"Invalid subsystem or event name"),	\
+ 	C(INVALID_REF_KEY,	"Using variable references in keys not supported"), \
+ 	C(VAR_NOT_FOUND,	"Couldn't find variable"),		\
+-	C(FIELD_NOT_FOUND,	"Couldn't find field"),
++	C(FIELD_NOT_FOUND,	"Couldn't find field"),			\
++	C(INVALID_STR_OPERAND,	"String type can not be an operand in expression"),
+ 
+ #undef C
+ #define C(a, b)		HIST_ERR_##a
+@@ -3038,6 +3039,13 @@ static struct hist_field *parse_unary(struct hist_trigger_data *hist_data,
+ 		ret = PTR_ERR(operand1);
+ 		goto free;
+ 	}
++	if (operand1->flags & HIST_FIELD_FL_STRING) {
++		/* String type can not be the operand of unary operator. */
++		hist_err(file->tr, HIST_ERR_INVALID_STR_OPERAND, errpos(str));
++		destroy_hist_field(operand1, 0);
++		ret = -EINVAL;
++		goto free;
++	}
+ 
+ 	expr->flags |= operand1->flags &
+ 		(HIST_FIELD_FL_TIMESTAMP | HIST_FIELD_FL_TIMESTAMP_USECS);
+@@ -3139,6 +3147,11 @@ static struct hist_field *parse_expr(struct hist_trigger_data *hist_data,
+ 		operand1 = NULL;
+ 		goto free;
+ 	}
++	if (operand1->flags & HIST_FIELD_FL_STRING) {
++		hist_err(file->tr, HIST_ERR_INVALID_STR_OPERAND, errpos(operand1_str));
++		ret = -EINVAL;
++		goto free;
++	}
+ 
+ 	/* rest of string could be another expression e.g. b+c in a+b+c */
+ 	operand_flags = 0;
+@@ -3148,6 +3161,11 @@ static struct hist_field *parse_expr(struct hist_trigger_data *hist_data,
+ 		operand2 = NULL;
+ 		goto free;
+ 	}
++	if (operand2->flags & HIST_FIELD_FL_STRING) {
++		hist_err(file->tr, HIST_ERR_INVALID_STR_OPERAND, errpos(str));
++		ret = -EINVAL;
++		goto free;
++	}
+ 
+ 	ret = check_expr_operands(file->tr, operand1, operand2);
+ 	if (ret)
+diff --git a/sound/pci/hda/patch_realtek.c b/sound/pci/hda/patch_realtek.c
+index a0d1561eeb532..f486e680aed1d 100644
+--- a/sound/pci/hda/patch_realtek.c
++++ b/sound/pci/hda/patch_realtek.c
+@@ -8122,6 +8122,7 @@ static const struct snd_pci_quirk alc269_fixup_tbl[] = {
+ 	SND_PCI_QUIRK(0x1043, 0x16e3, "ASUS UX50", ALC269_FIXUP_STEREO_DMIC),
+ 	SND_PCI_QUIRK(0x1043, 0x1740, "ASUS UX430UA", ALC295_FIXUP_ASUS_DACS),
+ 	SND_PCI_QUIRK(0x1043, 0x17d1, "ASUS UX431FL", ALC294_FIXUP_ASUS_DUAL_SPK),
++	SND_PCI_QUIRK(0x1043, 0x1662, "ASUS GV301QH", ALC294_FIXUP_ASUS_DUAL_SPK),
+ 	SND_PCI_QUIRK(0x1043, 0x1881, "ASUS Zephyrus S/M", ALC294_FIXUP_ASUS_GX502_PINS),
+ 	SND_PCI_QUIRK(0x1043, 0x18b1, "Asus MJ401TA", ALC256_FIXUP_ASUS_HEADSET_MIC),
+ 	SND_PCI_QUIRK(0x1043, 0x18f1, "Asus FX505DT", ALC256_FIXUP_ASUS_HEADSET_MIC),
