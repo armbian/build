@@ -1,0 +1,118 @@
+From 03ea01cff249ec4204507e0252464de385fde4a0 Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sat, 30 May 2020 02:57:04 -0500
+Subject: [PATCH 3/4] usb: xhci-dwc3: Add support for clocks/resets
+
+Some platforms, like the Allwinner H6, do not have a separate glue layer
+around the dwc3. Instead, they rely on the clocks/resets/phys referenced
+from the dwc3 DT node itself. Add support for enabling the clocks/resets
+referenced from the dwc3 DT node.
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ drivers/usb/host/xhci-dwc3.c | 56 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 56 insertions(+)
+
+diff --git a/drivers/usb/host/xhci-dwc3.c b/drivers/usb/host/xhci-dwc3.c
+index 3e0ae80cec..5b12d1358e 100644
+--- a/drivers/usb/host/xhci-dwc3.c
++++ b/drivers/usb/host/xhci-dwc3.c
+@@ -7,10 +7,12 @@
+  * Author: Ramneek Mehresh<ramneek.mehresh@freescale.com>
+  */
+ 
++#include <clk.h>
+ #include <common.h>
+ #include <dm.h>
+ #include <generic-phy.h>
+ #include <log.h>
++#include <reset.h>
+ #include <usb.h>
+ #include <dwc3-uboot.h>
+ #include <linux/delay.h>
+@@ -21,7 +23,9 @@
+ #include <linux/usb/otg.h>
+ 
+ struct xhci_dwc3_plat {
++	struct clk_bulk clks;
+ 	struct phy_bulk phys;
++	struct reset_ctl_bulk resets;
+ };
+ 
+ void dwc3_set_mode(struct dwc3 *dwc3_reg, u32 mode)
+@@ -111,6 +115,46 @@ void dwc3_set_fladj(struct dwc3 *dwc3_reg, u32 val)
+ }
+ 
+ #if CONFIG_IS_ENABLED(DM_USB)
++static int xhci_dwc3_reset_init(struct udevice *dev,
++				struct xhci_dwc3_plat *plat)
++{
++	int ret;
++
++	ret = reset_get_bulk(dev, &plat->resets);
++	if (ret == -ENOTSUPP || ret == -ENOENT)
++		return 0;
++	else if (ret)
++		return ret;
++
++	ret = reset_deassert_bulk(&plat->resets);
++	if (ret) {
++		reset_release_bulk(&plat->resets);
++		return ret;
++	}
++
++	return 0;
++}
++
++static int xhci_dwc3_clk_init(struct udevice *dev,
++			      struct xhci_dwc3_plat *plat)
++{
++	int ret;
++
++	ret = clk_get_bulk(dev, &plat->clks);
++	if (ret == -ENOSYS || ret == -ENOENT)
++		return 0;
++	if (ret)
++		return ret;
++
++	ret = clk_enable_bulk(&plat->clks);
++	if (ret) {
++		clk_release_bulk(&plat->clks);
++		return ret;
++	}
++
++	return 0;
++}
++
+ static int xhci_dwc3_probe(struct udevice *dev)
+ {
+ 	struct xhci_hcor *hcor;
+@@ -122,6 +166,14 @@ static int xhci_dwc3_probe(struct udevice *dev)
+ 	u32 reg;
+ 	int ret;
+ 
++	ret = xhci_dwc3_reset_init(dev, plat);
++	if (ret)
++		return ret;
++
++	ret = xhci_dwc3_clk_init(dev, plat);
++	if (ret)
++		return ret;
++
+ 	hccr = (struct xhci_hccr *)((uintptr_t)dev_remap_addr(dev));
+ 	hcor = (struct xhci_hcor *)((uintptr_t)hccr +
+ 			HC_LENGTH(xhci_readl(&(hccr)->cr_capbase)));
+@@ -171,6 +223,10 @@ static int xhci_dwc3_remove(struct udevice *dev)
+ 
+ 	dwc3_shutdown_phy(dev, &plat->phys);
+ 
++	clk_release_bulk(&plat->clks);
++
++	reset_release_bulk(&plat->resets);
++
+ 	return xhci_deregister(dev);
+ }
+ 
+-- 
+2.25.1
+

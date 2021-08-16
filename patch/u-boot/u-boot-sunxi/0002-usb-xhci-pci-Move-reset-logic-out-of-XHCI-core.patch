@@ -1,0 +1,206 @@
+From 1453bfc951cd05cfee6293b139f8bbefa7c42cb9 Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sun, 7 Feb 2021 23:21:26 -0600
+Subject: [PATCH 2/4] usb: xhci-pci: Move reset logic out of XHCI core
+
+Resetting an XHCI controller inside xhci_register undoes any register
+setup performed by the platform driver. And at least on the Allwinner
+H6, resetting the XHCI controller also resets the PHY, which prevents
+the controller from working. That means the controller must be taken out
+of reset before initializing the PHY, which must be done before calling
+xhci_register.
+
+The logic in the XHCI core was added to support the Raspberry Pi 4
+(although this was not mentioned in the commit log!), which uses the
+xhci-pci platform driver. Move the reset logic to the platform driver,
+where it belongs, and where it cannot interfere with other platform
+drivers.
+
+This also fixes a failure to call reset_free if xhci_register failed.
+
+Fixes: 0b80371b350e ("usb: xhci: Add reset controller support")
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ drivers/usb/host/xhci-mem.c |  2 --
+ drivers/usb/host/xhci-pci.c | 51 ++++++++++++++++++++++++++++++++++---
+ drivers/usb/host/xhci.c     | 35 -------------------------
+ include/usb/xhci.h          |  2 --
+ 4 files changed, 47 insertions(+), 43 deletions(-)
+
+diff --git a/drivers/usb/host/xhci-mem.c b/drivers/usb/host/xhci-mem.c
+index 1c11c2e7e0..0d9da62bab 100644
+--- a/drivers/usb/host/xhci-mem.c
++++ b/drivers/usb/host/xhci-mem.c
+@@ -180,8 +180,6 @@ void xhci_cleanup(struct xhci_ctrl *ctrl)
+ 	xhci_free_virt_devices(ctrl);
+ 	free(ctrl->erst.entries);
+ 	free(ctrl->dcbaa);
+-	if (reset_valid(&ctrl->reset))
+-		reset_free(&ctrl->reset);
+ 	memset(ctrl, '\0', sizeof(struct xhci_ctrl));
+ }
+ 
+diff --git a/drivers/usb/host/xhci-pci.c b/drivers/usb/host/xhci-pci.c
+index aaa243f291..ea8e8f3211 100644
+--- a/drivers/usb/host/xhci-pci.c
++++ b/drivers/usb/host/xhci-pci.c
+@@ -10,9 +10,14 @@
+ #include <init.h>
+ #include <log.h>
+ #include <pci.h>
++#include <reset.h>
+ #include <usb.h>
+ #include <usb/xhci.h>
+ 
++struct xhci_pci_plat {
++	struct reset_ctl reset;
++};
++
+ static int xhci_pci_init(struct udevice *dev, struct xhci_hccr **ret_hccr,
+ 			 struct xhci_hcor **ret_hcor)
+ {
+@@ -45,15 +50,53 @@ static int xhci_pci_init(struct udevice *dev, struct xhci_hccr **ret_hccr,
+ 
+ static int xhci_pci_probe(struct udevice *dev)
+ {
++	struct xhci_pci_plat = dev_get_plat(dev);
+ 	struct xhci_hccr *hccr;
+ 	struct xhci_hcor *hcor;
+ 	int ret;
+ 
++	ret = reset_get_by_index(dev, 0, &plat->reset);
++	if (ret && ret != -ENOENT && ret != -ENOTSUPP) {
++		dev_err(dev, "failed to get reset\n");
++		return ret;
++	}
++
++	if (reset_valid(&plat->reset)) {
++		ret = reset_assert(&plat->reset);
++		if (ret)
++			goto err_reset;
++
++		ret = reset_deassert(&plat->reset);
++		if (ret)
++			goto err_reset;
++	}
++
+ 	ret = xhci_pci_init(dev, &hccr, &hcor);
+ 	if (ret)
+-		return ret;
++		goto err_reset;
++
++	ret = xhci_register(dev, hccr, hcor);
++	if (ret)
++		goto err_reset;
++
++	return 0;
++
++err_reset:
++	if (reset_valid(&plat->reset))
++		reset_free(&plat->reset);
++
++	return ret;
++}
++
++static int xhci_pci_remove(struct udevice *dev)
++{
++	struct xhci_pci_plat = dev_get_plat(dev);
+ 
+-	return xhci_register(dev, hccr, hcor);
++	xhci_deregister(dev);
++	if (reset_valid(&plat->reset))
++		reset_free(&plat->reset);
++
++	return 0;
+ }
+ 
+ static const struct udevice_id xhci_pci_ids[] = {
+@@ -65,10 +108,10 @@ U_BOOT_DRIVER(xhci_pci) = {
+ 	.name	= "xhci_pci",
+ 	.id	= UCLASS_USB,
+ 	.probe = xhci_pci_probe,
+-	.remove = xhci_deregister,
++	.remove	= xhci_pci_remove,
+ 	.of_match = xhci_pci_ids,
+ 	.ops	= &xhci_usb_ops,
+-	.plat_auto	= sizeof(struct usb_plat),
++	.plat_auto	= sizeof(struct xhci_pci_plat),
+ 	.priv_auto	= sizeof(struct xhci_ctrl),
+ 	.flags	= DM_FLAG_OS_PREPARE | DM_FLAG_ALLOC_PRIV_DMA,
+ };
+diff --git a/drivers/usb/host/xhci.c b/drivers/usb/host/xhci.c
+index d27ac01c83..452dacc0af 100644
+--- a/drivers/usb/host/xhci.c
++++ b/drivers/usb/host/xhci.c
+@@ -188,37 +188,6 @@ static int xhci_start(struct xhci_hcor *hcor)
+ 	return ret;
+ }
+ 
+-#if CONFIG_IS_ENABLED(DM_USB)
+-/**
+- * Resets XHCI Hardware
+- *
+- * @param ctrl	pointer to host controller
+- * @return 0 if OK, or a negative error code.
+- */
+-static int xhci_reset_hw(struct xhci_ctrl *ctrl)
+-{
+-	int ret;
+-
+-	ret = reset_get_by_index(ctrl->dev, 0, &ctrl->reset);
+-	if (ret && ret != -ENOENT && ret != -ENOTSUPP) {
+-		dev_err(ctrl->dev, "failed to get reset\n");
+-		return ret;
+-	}
+-
+-	if (reset_valid(&ctrl->reset)) {
+-		ret = reset_assert(&ctrl->reset);
+-		if (ret)
+-			return ret;
+-
+-		ret = reset_deassert(&ctrl->reset);
+-		if (ret)
+-			return ret;
+-	}
+-
+-	return 0;
+-}
+-#endif
+-
+ /**
+  * Resets the XHCI Controller
+  *
+@@ -1534,10 +1503,6 @@ int xhci_register(struct udevice *dev, struct xhci_hccr *hccr,
+ 
+ 	ctrl->dev = dev;
+ 
+-	ret = xhci_reset_hw(ctrl);
+-	if (ret)
+-		goto err;
+-
+ 	/*
+ 	 * XHCI needs to issue a Address device command to setup
+ 	 * proper device context structures, before it can interact
+diff --git a/include/usb/xhci.h b/include/usb/xhci.h
+index 8d95e213b0..01e63cf0fc 100644
+--- a/include/usb/xhci.h
++++ b/include/usb/xhci.h
+@@ -17,7 +17,6 @@
+ #define HOST_XHCI_H_
+ 
+ #include <phys2bus.h>
+-#include <reset.h>
+ #include <asm/types.h>
+ #include <asm/cache.h>
+ #include <asm/io.h>
+@@ -1200,7 +1199,6 @@ struct xhci_ctrl {
+ #if CONFIG_IS_ENABLED(DM_USB)
+ 	struct udevice *dev;
+ #endif
+-	struct reset_ctl reset;
+ 	struct xhci_hccr *hccr;	/* R/O registers, not need for volatile */
+ 	struct xhci_hcor *hcor;
+ 	struct xhci_doorbell_array *dba;
+-- 
+2.25.1
+
