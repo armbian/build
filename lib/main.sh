@@ -449,6 +449,7 @@ fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" 
 fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
 fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
 fetch_from_repo "https://github.com/LibreELEC/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
+fetch_from_repo "https://github.com/jethome-ru/jethub-aml-tools.git" "jethub-aml-tools" "branch:main"
 
 compile_sunxi_tools
 install_rkbin_tools
