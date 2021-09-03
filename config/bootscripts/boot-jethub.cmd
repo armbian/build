@@ -11,7 +11,7 @@ setenv overlay_error "false"
 # default values
 setenv rootdev "/dev/mmcblk0p1"
 setenv verbosity "1"
-setenv console "both"
+setenv console "serial"
 setenv rootfstype "ext4"
 setenv docker_optimizations "on"
 
