@@ -24,7 +24,7 @@ compilation_prepare()
 	# Maintaining one from central location starting with 5.3+
 	# Temporally set for new "default->legacy,next->current" family naming
 
-	if linux-version compare "${version}" ge 5.10.10; then
+	if linux-version compare "${version}" ge 5.12; then
 
 		if test -d ${kerneldir}/debian
 		then
