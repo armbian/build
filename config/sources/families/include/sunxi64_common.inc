@@ -32,7 +32,7 @@ case $BRANCH in
 	edge)
 
 		KERNELSOURCE="https://github.com/megous/linux"
-		KERNELBRANCH="branch:orange-pi-5.13"
+		KERNELBRANCH="branch:orange-pi-5.14"
 		KERNELPATCHDIR='sunxi-'$BRANCH
 
 	;;
