@@ -129,15 +129,9 @@ case $BRANCH in
 	current)
 
 		KERNELBRANCH="branch:linux-5.10.y"
-		if [[ $BOARD == station* ]]; then
-			KERNELPATCHDIR='station-'$BRANCH
-			LINUXFAMILY=station
-			LINUXCONFIG='linux-station-'$BRANCH
-		else
-			KERNELPATCHDIR='rockchip64-'$BRANCH
-			LINUXFAMILY=rockchip64
-			LINUXCONFIG='linux-rockchip64-'$BRANCH
-		fi
+		KERNELPATCHDIR='rockchip64-'$BRANCH
+		LINUXFAMILY=rockchip64
+		LINUXCONFIG='linux-rockchip64-'$BRANCH
 	;;
 
 	edge)
