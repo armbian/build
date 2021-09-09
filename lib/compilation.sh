@@ -522,7 +522,17 @@ compile_kernel()
 	rsync --remove-source-files -rq ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
 
 	# store git hash to the file
-	echo "${hash}" > "${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
+	HASHTARGET="${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}"
+	OLDHASHTARGET=$(head -1 "${HASHTARGET}.githash" 2>/dev/null)
+
+	# create change log
+	if [[ -f "${HASHTARGET}.githash" ]]; then
+		git -C ${kerneldir} log --abbrev-commit --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | '${KERNELSOURCE}'/commit/%h' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
+		else
+		truncate "${HASHTARGET}.gitlog" --size 0
+	fi
+
+	echo "${hash}" > "${HASHTARGET}.githash"
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
 	hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort -n)
