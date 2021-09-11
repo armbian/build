@@ -34,7 +34,7 @@ case $BRANCH in
         ;;
 
         edge)
-		KERNELBRANCH='branch:linux-5.13.y'
+		KERNELBRANCH='branch:linux-5.14.y'
 		KERNELPATCHDIR='meson64-edge'
         ;;
 
@@ -238,7 +238,7 @@ family_tweaks_bsp()
 	EndSection
 	EOF
         ;;
-		"odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" )
+		"odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | "radxa-zero" )
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf
 	Section "Device"
 	    Identifier  "DRM Graphics Acclerated"
