@@ -1,0 +1,124 @@
+From 8a63de9e2aef4e073d91385c5992886e0ea6368e Mon Sep 17 00:00:00 2001
+From: Dongjin Kim <tobetter@gmail.com>
+Date: Wed, 25 Nov 2020 05:01:49 +0900
+Subject: [PATCH] hwmon: (pwm-fan) add fan pwm1_enable attribute
+
+This patch adds to new attribute 'pwm1_enable' to change the fan speed
+control method as documented in 'Documentation/hwmon/sysfs-interface'.
+
+Signed-off-by: Dongjin Kim <tobetter@gmail.com>
+Change-Id: I19094d60e928d6c3ce226d319e75a35ecbd3ae52
+---
+ drivers/hwmon/pwm-fan.c | 52 ++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 46 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/hwmon/pwm-fan.c b/drivers/hwmon/pwm-fan.c
+index 1f63807c0399e..834275309421d 100644
+--- a/drivers/hwmon/pwm-fan.c
++++ b/drivers/hwmon/pwm-fan.c
+@@ -39,6 +39,7 @@ struct pwm_fan_ctx {
+ 	unsigned int pwm_fan_max_state;
+ 	unsigned int *pwm_fan_cooling_levels;
+ 	struct thermal_cooling_device *cdev;
++	int enable;
+ };
+
+ /* This handler assumes self resetting edge triggered interrupt. */
+@@ -76,6 +77,10 @@ static int  __set_pwm(struct pwm_fan_ctx *ctx, unsigned long pwm)
+ 	struct pwm_state state = { };
+
+ 	mutex_lock(&ctx->lock);
++
++	if (ctx->enable == 0)
++		pwm = MAX_PWM;
++
+ 	if (ctx->pwm_value == pwm)
+ 		goto exit_set_pwm_err;
+
+@@ -137,11 +142,42 @@ static ssize_t rpm_show(struct device *dev,
+ 	return sprintf(buf, "%u\n", ctx->rpm);
+ }
+
++static ssize_t enable_store(struct device *dev,
++		struct device_attribute *attr,
++		const char *buf, size_t count)
++{
++	struct pwm_fan_ctx *ctx = dev_get_drvdata(dev);
++	int err;
++	unsigned long val;
++
++	err = kstrtoul(buf, 10, &val);
++	if (err)
++		return err;
++
++	mutex_lock(&ctx->lock);
++	ctx->enable = val;
++	mutex_unlock(&ctx->lock);
++
++	err = __set_pwm(ctx, ctx->pwm_fan_cooling_levels[ctx->pwm_fan_state]);
++
++	return err ? err : count;
++}
++
++static ssize_t enable_show(struct device *dev, struct device_attribute *attr,
++			   char *buf)
++{
++	struct pwm_fan_ctx *ctx = dev_get_drvdata(dev);
++
++	return sprintf(buf, "%u\n", ctx->enable);
++}
++
+ static SENSOR_DEVICE_ATTR_RW(pwm1, pwm, 0);
++static SENSOR_DEVICE_ATTR_RW(pwm1_enable, enable, 0);
+ static SENSOR_DEVICE_ATTR_RO(fan1_input, rpm, 0);
+
+ static struct attribute *pwm_fan_attrs[] = {
+ 	&sensor_dev_attr_pwm1.dev_attr.attr,
++	&sensor_dev_attr_pwm1_enable.dev_attr.attr,
+ 	&sensor_dev_attr_fan1_input.dev_attr.attr,
+ 	NULL,
+ };
+@@ -153,7 +189,7 @@ static umode_t pwm_fan_attrs_visible(struct kobject *kobj, struct attribute *a,
+ 	struct pwm_fan_ctx *ctx = dev_get_drvdata(dev);
+
+ 	/* Hide fan_input in case no interrupt is available  */
+-	if (n == 1 && ctx->irq <= 0)
++	if (n == 2 && ctx->irq <= 0)
+ 		return 0;
+
+ 	return a->mode;
+@@ -200,7 +236,7 @@ static int
+ pwm_fan_set_cur_state(struct thermal_cooling_device *cdev, unsigned long state)
+ {
+ 	struct pwm_fan_ctx *ctx = cdev->devdata;
+-	int ret;
++	int ret = 0;
+
+ 	if (!ctx || (state > ctx->pwm_fan_max_state))
+ 		return -EINVAL;
+@@ -208,10 +244,12 @@ pwm_fan_set_cur_state(struct thermal_cooling_device *cdev, unsigned long state)
+ 	if (state == ctx->pwm_fan_state)
+ 		return 0;
+
+-	ret = __set_pwm(ctx, ctx->pwm_fan_cooling_levels[state]);
+-	if (ret) {
+-		dev_err(&cdev->device, "Cannot set pwm!\n");
+-		return ret;
++	if (ctx->enable >= 2) {
++		ret = __set_pwm(ctx, ctx->pwm_fan_cooling_levels[state]);
++		if (ret) {
++			dev_err(&cdev->device, "Cannot set pwm!\n");
++			return ret;
++		}
+ 	}
+
+ 	ctx->pwm_fan_state = state;
+@@ -298,6 +336,8 @@ static int pwm_fan_probe(struct platform_device *pdev)
+ 	if (IS_ERR(ctx->pwm))
+ 		return dev_err_probe(dev, PTR_ERR(ctx->pwm), "Could not get PWM\n");
+
++	ctx->enable = 2;
++
+ 	platform_set_drvdata(pdev, ctx);
+
+ 	ctx->irq = platform_get_irq_optional(pdev, 0);

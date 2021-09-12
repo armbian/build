@@ -1,24 +1,55 @@
 #!/bin/bash
-
-# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
+#
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-
+#
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
+# Functions:
+
+# create_desktop_package
+# install_ppa_prerequisites
+# add_apt_sources
+# add_desktop_package_sources
+# desktop_postinstall
+
+
+
+
 create_desktop_package ()
 {
-	# join and cleanup package list
-	PACKAGE_LIST_DESKTOP+=" "${PACKAGE_LIST_DESKTOP_RECOMMENDS}
-	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP// /,};
-	PACKAGE_LIST_DESKTOP=${PACKAGE_LIST_DESKTOP//[[:space:]]/}
 
-	local destination=${SRC}/.tmp/${RELEASE}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
+	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/${LOG_SUBPATH}/output.log
+	# Use quotes to show leading and trailing spaces
+	echo "\"$PACKAGE_LIST_DESKTOP\"" >> "${DEST}"/${LOG_SUBPATH}/output.log
+
+	# Remove leading and trailing spaces with some bash monstruosity
+	# https://stackoverflow.com/questions/369758/how-to-trim-whitespace-from-a-bash-variable#12973694
+	DEBIAN_RECOMMENDS="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
+	DEBIAN_RECOMMENDS="${DEBIAN_RECOMMENDS%"${DEBIAN_RECOMMENDS##*[![:space:]]}"}"
+	# Replace whitespace characters by commas
+	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS// /,};
+	# Remove others 'spacing characters' (like tabs)
+	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS//[[:space:]]/}
+
+	echo "DEBIAN_RECOMMENDS : ${DEBIAN_RECOMMENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
+
+	# Replace whitespace characters by commas
+	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,};
+	# Remove others 'spacing characters' (like tabs)
+	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS//[[:space:]]/}
+
+	local destination tmp_dir
+	tmp_dir=$(mktemp -d)
+	destination=${tmp_dir}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
+
+	echo "${PACKAGE_LIST_PREDEPENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 	# set up control file
 	cat <<-EOF > "${destination}"/DEBIAN/control
@@ -29,116 +60,216 @@ create_desktop_package ()
 	Installed-Size: 1
 	Section: xorg
 	Priority: optional
-	Recommends: ${PACKAGE_LIST_DESKTOP//[:space:]+/,}
-	Provides: ${CHOSEN_DESKTOP}
+	Recommends: ${DEBIAN_RECOMMENDS//[:space:]+/,}, armbian-bsp-desktop
+	Provides: ${CHOSEN_DESKTOP}, armbian-${RELEASE}-desktop
+	Pre-Depends: ${PACKAGE_LIST_PREDEPENDS//[:space:]+/,}
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
 
-	cat <<-EOF > "${destination}"/DEBIAN/postinst
-	#!/bin/sh -e
+	# Recreating the DEBIAN/postinst file
+	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
 
-		# overwrite stock chromium and firefox configuration
-		if [ -d /etc/chromium-browser/ ]; then ln -sf /etc/armbian/chromium.conf /etc/chromium-browser/default; fi
-		if [ -d /etc/chromium.d/ ]; then ln -sf /etc/armbian/chromium.conf /etc/chromium.d/chromium.conf; fi
-		cp -R /etc/armbian/chromium /usr/share
-		# overwrite stock lightdm greeter configuration
-		if [ -d /etc/armbian/lightdm ]; then cp -R /etc/armbian/lightdm /etc/; fi
+	local aggregated_content=""
+	aggregate_all_desktop "debian/postinst" $'\n'
 
+	echo "${aggregated_content}" >> "${destination}/DEBIAN/postinst"
+	echo "exit 0" >> "${destination}/DEBIAN/postinst"
 
-		if [ -d /usr/lib/firefox-esr/ ]; then
-			ln -sf /etc/armbian/firefox.conf /usr/lib/firefox-esr/mozilla.cfg
-			echo 'pref("general.config.obscure_value", 0);' > /usr/lib/firefox-esr/defaults/pref/local-settings.js
-			echo 'pref("general.config.filename", "mozilla.cfg");' >> /usr/lib/firefox-esr/defaults/pref/local-settings.js
-		fi
-
-		# Adjust menu
-		if [ -f /etc/xdg/menus/xfce-applications.menu ]; then
-		sed -i -n '/<Menuname>Settings<\/Menuname>/{p;:a;N;/<Filename>xfce4-session-logout.desktop<\/Filename>/!ba;s/.*\n/\
-		\t<Separator\/>\n\t<Merge type="all"\/>\n        <Separator\/>\n        <Filename>armbian-donate.desktop<\/Filename>\
-		\n        <Filename>armbian-support.desktop<\/Filename>\n/};p' /etc/xdg/menus/xfce-applications.menu
-		fi
-
-		# Hide few items
-		if [ -f /usr/share/applications/display-im6.q16.desktop ]; then mv /usr/share/applications/display-im6.q16.desktop /usr/share/applications/display-im6.q16.desktop.hidden; fi
-		if [ -f /usr/share/applications/display-im6.desktop ]]; then  mv /usr/share/applications/display-im6.desktop /usr/share/applications/display-im6.desktop.hidden; fi
-		if [ -f /usr/share/applications/vim.desktop ]]; then  mv /usr/share/applications/vim.desktop /usr/share/applications/vim.desktop.hidden; fi
-		if [ -f /usr/share/applications/libreoffice-startcenter.desktop ]]; then mv /usr/share/applications/libreoffice-startcenter.desktop /usr/share/applications/libreoffice-startcenter.desktop.hidden; fi
-
-		# Disable Pulseaudio timer scheduling which does not work with sndhdmi driver
-		if [ -f /etc/pulse/default.pa ]; then sed "s/load-module module-udev-detect$/& tsched=0/g" -i  /etc/pulse/default.pa; fi
-
-	exit 0
-	EOF
 	chmod 755 "${destination}"/DEBIAN/postinst
 
-	# add loading desktop splash service
-	mkdir -p "${destination}"/etc/systemd/system/
-	cp "${SRC}"/packages/blobs/desktop/desktop-splash/desktop-splash.service "${destination}"/etc/systemd/system/desktop-splash.service
+	#display_alert "Showing ${destination}/DEBIAN/postinst"
+	cat "${destination}/DEBIAN/postinst" >> "${DEST}"/${LOG_SUBPATH}/install.log
 
-	# install optimized browser configurations
+	# Armbian create_desktop_package scripts
+
+	unset aggregated_content
+
 	mkdir -p "${destination}"/etc/armbian
-	cp "${SRC}"/packages/blobs/desktop/chromium.conf "${destination}"/etc/armbian
-	cp "${SRC}"/packages/blobs/desktop/firefox.conf  "${destination}"/etc/armbian
-	cp -R "${SRC}"/packages/blobs/desktop/chromium "${destination}"/etc/armbian
 
-	# install lightdm greeter
-	cp -R "${SRC}"/packages/blobs/desktop/lightdm "${destination}"/etc/armbian
+	local aggregated_content=""
+	aggregate_all_desktop "armbian/create_desktop_package.sh" $'\n'
+	eval "${aggregated_content}"
+	[[ $? -ne 0 ]] && display_alert "create_desktop_package.sh exec error" "" "wrn"
 
-	# install default desktop settings
-	mkdir -p "${destination}"/etc/skel
-	cp -R "${SRC}"/packages/blobs/desktop/skel/. "${destination}"/etc/skel
-
-
-	# using different icon pack. Workaround due to this bug https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=867779
-	if [[ ${RELEASE} == bionic || ${RELEASE} == stretch || ${RELEASE} == buster || ${RELEASE} == bullseye || ${RELEASE} == focal || ${RELEASE} == eoan ]]; then
-	sed -i 's/<property name="IconThemeName" type="string" value=".*$/<property name="IconThemeName" type="string" value="Humanity-Dark"\/>/g' \
-	"${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
-	fi
-
-	# install dedicated startup icons
-	mkdir -p "${destination}"/usr/share/pixmaps "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
-	cp "${SRC}/packages/blobs/desktop/icons/${DISTRIBUTION,,}.png" "${destination}"/usr/share/pixmaps
-	sed 's/xenial.png/'"${DISTRIBUTION,,}"'.png/' -i "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
-
-	# install logo for login screen
-	cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps
-
-	# install wallpapers
-	mkdir -p "${destination}"/usr/share/backgrounds/xfce/
-	cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/xfce/
-
-	# create board DEB file
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
-	fakeroot dpkg-deb -b "${destination}" "${destination}.deb" >/dev/null
+
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
-	mv "${destination}.deb" "${DEB_STORAGE}/${RELEASE}"
+	cd "${destination}"; cd ..
+	fakeroot dpkg-deb -b "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"  >/dev/null
+
 	# cleanup
-	rm -rf "${destination}"
+	rm -rf "${tmp_dir}"
+
+	unset aggregated_content
+
 }
+
+
+
+
+create_bsp_desktop_package ()
+{
+
+	display_alert "Creating board support package for desktop" "${package_name}" "info"
+
+	local package_name="${BSP_DESKTOP_PACKAGE_FULLNAME}"
+
+	local destination tmp_dir
+	tmp_dir=$(mktemp -d)
+	destination=${tmp_dir}/${BOARD}/${BSP_DESKTOP_PACKAGE_FULLNAME}
+	rm -rf "${destination}"
+	mkdir -p "${destination}"/DEBIAN
+
+	copy_all_packages_files_for "bsp-desktop"
+
+	# set up control file
+	cat <<-EOF > "${destination}"/DEBIAN/control
+	Package: armbian-bsp-desktop-${BOARD}
+	Version: $REVISION
+	Architecture: $ARCH
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Installed-Size: 1
+	Section: xorg
+	Priority: optional
+	Provides: armbian-bsp-desktop, armbian-bsp-desktop-${BOARD}
+	Depends: ${BSP_CLI_PACKAGE_NAME}
+	Description: Armbian Board Specific Packages for desktop users using $ARCH ${BOARD} machines
+	EOF
+
+	# Recreating the DEBIAN/postinst file
+	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
+
+	local aggregated_content=""
+	aggregate_all_desktop "debian/armbian-bsp-desktop/postinst" $'\n'
+
+	echo "${aggregated_content}" >> "${destination}/DEBIAN/postinst"
+	echo "exit 0" >> "${destination}/DEBIAN/postinst"
+
+	chmod 755 "${destination}"/DEBIAN/postinst
+
+	# Armbian create_desktop_package scripts
+
+	unset aggregated_content
+
+	mkdir -p "${destination}"/etc/armbian
+
+	local aggregated_content=""
+	aggregate_all_desktop "debian/armbian-bsp-desktop/prepare.sh" $'\n'
+	eval "${aggregated_content}"
+	[[ $? -ne 0 ]] && display_alert "prepare.sh exec error" "" "wrn"
+
+	mkdir -p "${DEB_STORAGE}/${RELEASE}"
+	cd "${destination}"; cd ..
+	fakeroot dpkg-deb -b "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb"  >/dev/null
+
+	# cleanup
+	rm -rf "${tmp_dir}"
+
+	unset aggregated_content
+
+}
+
+
+
+
+install_ppa_prerequisites() {
+
+	# Myy : So... The whole idea is that, a good bunch of external sources
+	# are PPA.
+	# Adding PPA without add-apt-repository is poorly conveninent since
+	# you need to reconstruct the URL by hand, and find the GPG key yourself.
+	# add-apt-repository does that automatically, and in a way that allows you
+	# to remove it cleanly through the same tool.
+
+	# Myy : TODO Try to find a way to install this package only when
+	# we encounter a PPA.
+	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt install -yqq software-properties-common"
+
+}
+
+
+
+
+add_apt_sources() {
+
+	local potential_paths=""
+	local sub_dirs_to_check=". "
+	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
+		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
+	fi
+	get_all_potential_paths "${DEBOOTSTRAP_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
+	get_all_potential_paths "${CLI_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
+	get_all_potential_paths "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "." "sources/apt"
+	get_all_potential_paths "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}" "sources/apt"
+
+	display_alert "ADDING ADDITIONAL APT SOURCES"
+
+	for apt_sources_dirpath in ${potential_paths}; do
+		if [[ -d "${apt_sources_dirpath}" ]]; then
+			for apt_source_filepath in "${apt_sources_dirpath}/"*.source; do
+				local new_apt_source="$(cat "${apt_source_filepath}")"
+				display_alert "Adding APT Source ${new_apt_source}"
+				# -y -> Assumes yes to all queries
+				# -n -> Do not update package cache after adding
+				run_on_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
+				display_alert "Return code : $?"
+
+				local apt_source_gpg_filepath="${apt_source_filepath}.gpg"
+
+				# PPA provide GPG keys automatically, it seems.
+				# But other repositories (Docker for example) require the
+				# user to import GPG keys manually
+				# Myy : FIXME We need some automatic Git warnings when someone
+				# add a GPG key, since trusting the wrong keys could lead to
+				# serious issues.
+				if [[ -f "${apt_source_gpg_filepath}" ]]; then
+					display_alert "Adding GPG Key ${apt_source_gpg_filepath}"
+					local apt_source_gpg_filename="$(basename ${apt_source_gpg_filepath})"
+					cp "${apt_source_gpg_filepath}" "${SDCARD}/tmp/${apt_source_gpg_filename}"
+					run_on_sdcard "apt-key add \"/tmp/${apt_source_gpg_filename}\""
+					echo "APT Key returned : $?"
+				fi
+			done
+		fi
+	done
+
+}
+
+
+
+
+add_desktop_package_sources() {
+
+	# Myy : I see Snap and Flatpak coming up in the next releases
+	# so... let's prepare for that
+	add_apt_sources
+	run_on_sdcard "apt -y -q update"
+	ls -l "${SDCARD}/etc/apt/sources.list.d" >> "${DEST}"/${LOG_SUBPATH}/install.log
+	cat "${SDCARD}/etc/apt/sources.list" >> "${DEST}"/${LOG_SUBPATH}/install.log
+
+}
+
+
+
 
 desktop_postinstall ()
 {
-	# disable display manager for first run
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt update" >> "${DEST}"/debug/install.log
-	if [[ ${FULL_DESKTOP} == yes ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FULL" >> "${DEST}"/debug/install.log
-	fi
 
+	# disable display manager for the first run
+	run_on_sdcard "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
+	run_on_sdcard "systemctl --no-reload disable gdm3.service >/dev/null 2>&1"
+
+	# update packages index
+	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1"
+
+	# install per board packages
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" >> "${DEST}"/debug/install.log
+		run_on_sdcard "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" 
 	fi
 
+	# install per family packages
 	if [[ -n ${PACKAGE_LIST_DESKTOP_FAMILY} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY" >> "${DEST}"/debug/install.log
+		run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY"
 	fi
 
-	# Compile Turbo Frame buffer for sunxi
-	if [[ $LINUXFAMILY == sun* && $BRANCH == default ]]; then
-		sed 's/name="use_compositing" type="bool" value="true"/name="use_compositing" type="bool" value="false"/' -i "${SDCARD}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
-
-		# enable memory reservations
-		echo "disp_mem_reserves=on" >> "${SDCARD}"/boot/armbianEnv.txt
-		echo "extraargs=cma=96M" >> "${SDCARD}"/boot/armbianEnv.txt
-	fi
 }

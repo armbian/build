@@ -1,0 +1,8 @@
+# Nexell S5P6818 octa core 1GB RAM SoC GBE WiFi/BT eMMC
+BOARD_NAME="NanoPC T3"
+BOARDFAMILY="s5p6818"
+BOOTCONFIG="nanopim3_defconfig"
+MODULES_LEGACY="g_serial"
+KERNEL_TARGET="legacy"
+SERIALCON="ttySAC0,ttyGS0"
+FULL_DESKTOP="yes"

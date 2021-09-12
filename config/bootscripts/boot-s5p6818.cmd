@@ -7,6 +7,7 @@
 setenv rootdev "/dev/mmcblk2p1"
 setenv rootfstype "ext4"
 setenv verbosity "1"
+setenv bootlogo "false"
 setenv fdt_addr "0x48000000"
 setenv ramdisk_addr_r "0x49000000"
 setenv kernel_addr_r "0x4a000000"
@@ -22,7 +23,9 @@ if ext4load mmc ${devnum}:1 ${kernel_addr_r} ${prefix}/armbianEnv.txt; then
 	env import -t ${kernel_addr_r} ${filesize}
 fi
 
-setenv bootargs "console=ttySAC0,115200n8 console=tty1 root=${rootdev} rootwait rootfstype=${rootfstype} loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
+if test "${bootlogo}" = "true"; then setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"; fi
+
+setenv bootargs "console=ttySAC0,115200n8 console=tty1 ${consoleargs}  root=${rootdev} rootwait rootfstype=${rootfstype} loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 
 if ext4load mmc ${devnum}:1 ${fdt_addr} ${prefix}dtb/nexell/${fdtfile} || ext4load mmc 1:1 ${fdt_addr} ${prefix}dtb/nexell/s5p6818-nanopi3-rev07.dtb; then echo "Loading DTB"; fi
 ext4load mmc ${devnum}:1 ${ramdisk_addr_r} ${prefix}uInitrd

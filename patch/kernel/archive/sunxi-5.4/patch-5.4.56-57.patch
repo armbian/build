@@ -1,0 +1,494 @@
+diff --git a/Makefile b/Makefile
+index c33fb4eebd4d..dd753ef637fd 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 5
+ PATCHLEVEL = 4
+-SUBLEVEL = 56
++SUBLEVEL = 57
+ EXTRAVERSION =
+ NAME = Kleptomaniac Octopus
+ 
+diff --git a/arch/arm/include/asm/percpu.h b/arch/arm/include/asm/percpu.h
+index f44f448537f2..1a3eedbac4a2 100644
+--- a/arch/arm/include/asm/percpu.h
++++ b/arch/arm/include/asm/percpu.h
+@@ -5,6 +5,8 @@
+ #ifndef _ASM_ARM_PERCPU_H_
+ #define _ASM_ARM_PERCPU_H_
+ 
++#include <asm/thread_info.h>
++
+ /*
+  * Same as asm-generic/percpu.h, except that we store the per cpu offset
+  * in the TPIDRPRW. TPIDRPRW only exists on V6K and V7
+diff --git a/arch/arm64/include/asm/pointer_auth.h b/arch/arm64/include/asm/pointer_auth.h
+index 7a24bad1a58b..076a4157a74f 100644
+--- a/arch/arm64/include/asm/pointer_auth.h
++++ b/arch/arm64/include/asm/pointer_auth.h
+@@ -3,7 +3,6 @@
+ #define __ASM_POINTER_AUTH_H
+ 
+ #include <linux/bitops.h>
+-#include <linux/random.h>
+ 
+ #include <asm/cpufeature.h>
+ #include <asm/memory.h>
+@@ -30,6 +29,13 @@ struct ptrauth_keys {
+ 	struct ptrauth_key apga;
+ };
+ 
++/*
++ * Only include random.h once ptrauth_keys_* structures are defined
++ * to avoid yet another circular include hell (random.h * ends up
++ * including asm/smp.h, which requires ptrauth_keys_kernel).
++ */
++#include <linux/random.h>
++
+ static inline void ptrauth_keys_init(struct ptrauth_keys *keys)
+ {
+ 	if (system_supports_address_auth()) {
+diff --git a/drivers/char/random.c b/drivers/char/random.c
+index 8ff28c14af7e..e877c20e0ee0 100644
+--- a/drivers/char/random.c
++++ b/drivers/char/random.c
+@@ -1330,6 +1330,7 @@ void add_interrupt_randomness(int irq, int irq_flags)
+ 
+ 	fast_mix(fast_pool);
+ 	add_interrupt_bench(cycles);
++	this_cpu_add(net_rand_state.s1, fast_pool->pool[cycles & 3]);
+ 
+ 	if (unlikely(crng_init == 0)) {
+ 		if ((fast_pool->count >= 64) &&
+diff --git a/fs/ext4/inode.c b/fs/ext4/inode.c
+index 7e0c77de551b..a284d99a1ee5 100644
+--- a/fs/ext4/inode.c
++++ b/fs/ext4/inode.c
+@@ -3836,6 +3836,11 @@ static ssize_t ext4_direct_IO_read(struct kiocb *iocb, struct iov_iter *iter)
+ 	struct inode *inode = mapping->host;
+ 	size_t count = iov_iter_count(iter);
+ 	ssize_t ret;
++	loff_t offset = iocb->ki_pos;
++	loff_t size = i_size_read(inode);
++
++	if (offset >= size)
++		return 0;
+ 
+ 	/*
+ 	 * Shared inode_lock is enough for us - it protects against concurrent
+diff --git a/include/linux/bpf.h b/include/linux/bpf.h
+index 3bf3835d0e86..7aa0d8b5aaf0 100644
+--- a/include/linux/bpf.h
++++ b/include/linux/bpf.h
+@@ -956,11 +956,14 @@ static inline void bpf_map_offload_map_free(struct bpf_map *map)
+ #endif /* CONFIG_NET && CONFIG_BPF_SYSCALL */
+ 
+ #if defined(CONFIG_BPF_STREAM_PARSER)
+-int sock_map_prog_update(struct bpf_map *map, struct bpf_prog *prog, u32 which);
++int sock_map_prog_update(struct bpf_map *map, struct bpf_prog *prog,
++			 struct bpf_prog *old, u32 which);
+ int sock_map_get_from_fd(const union bpf_attr *attr, struct bpf_prog *prog);
++int sock_map_prog_detach(const union bpf_attr *attr, enum bpf_prog_type ptype);
+ #else
+ static inline int sock_map_prog_update(struct bpf_map *map,
+-				       struct bpf_prog *prog, u32 which)
++				       struct bpf_prog *prog,
++				       struct bpf_prog *old, u32 which)
+ {
+ 	return -EOPNOTSUPP;
+ }
+@@ -970,6 +973,12 @@ static inline int sock_map_get_from_fd(const union bpf_attr *attr,
+ {
+ 	return -EINVAL;
+ }
++
++static inline int sock_map_prog_detach(const union bpf_attr *attr,
++				       enum bpf_prog_type ptype)
++{
++	return -EOPNOTSUPP;
++}
+ #endif
+ 
+ #if defined(CONFIG_XDP_SOCKETS)
+diff --git a/include/linux/prandom.h b/include/linux/prandom.h
+new file mode 100644
+index 000000000000..aa16e6468f91
+--- /dev/null
++++ b/include/linux/prandom.h
+@@ -0,0 +1,78 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * include/linux/prandom.h
++ *
++ * Include file for the fast pseudo-random 32-bit
++ * generation.
++ */
++#ifndef _LINUX_PRANDOM_H
++#define _LINUX_PRANDOM_H
++
++#include <linux/types.h>
++#include <linux/percpu.h>
++
++u32 prandom_u32(void);
++void prandom_bytes(void *buf, size_t nbytes);
++void prandom_seed(u32 seed);
++void prandom_reseed_late(void);
++
++struct rnd_state {
++	__u32 s1, s2, s3, s4;
++};
++
++DECLARE_PER_CPU(struct rnd_state, net_rand_state);
++
++u32 prandom_u32_state(struct rnd_state *state);
++void prandom_bytes_state(struct rnd_state *state, void *buf, size_t nbytes);
++void prandom_seed_full_state(struct rnd_state __percpu *pcpu_state);
++
++#define prandom_init_once(pcpu_state)			\
++	DO_ONCE(prandom_seed_full_state, (pcpu_state))
++
++/**
++ * prandom_u32_max - returns a pseudo-random number in interval [0, ep_ro)
++ * @ep_ro: right open interval endpoint
++ *
++ * Returns a pseudo-random number that is in interval [0, ep_ro). Note
++ * that the result depends on PRNG being well distributed in [0, ~0U]
++ * u32 space. Here we use maximally equidistributed combined Tausworthe
++ * generator, that is, prandom_u32(). This is useful when requesting a
++ * random index of an array containing ep_ro elements, for example.
++ *
++ * Returns: pseudo-random number in interval [0, ep_ro)
++ */
++static inline u32 prandom_u32_max(u32 ep_ro)
++{
++	return (u32)(((u64) prandom_u32() * ep_ro) >> 32);
++}
++
++/*
++ * Handle minimum values for seeds
++ */
++static inline u32 __seed(u32 x, u32 m)
++{
++	return (x < m) ? x + m : x;
++}
++
++/**
++ * prandom_seed_state - set seed for prandom_u32_state().
++ * @state: pointer to state structure to receive the seed.
++ * @seed: arbitrary 64-bit value to use as a seed.
++ */
++static inline void prandom_seed_state(struct rnd_state *state, u64 seed)
++{
++	u32 i = (seed >> 32) ^ (seed << 10) ^ seed;
++
++	state->s1 = __seed(i,   2U);
++	state->s2 = __seed(i,   8U);
++	state->s3 = __seed(i,  16U);
++	state->s4 = __seed(i, 128U);
++}
++
++/* Pseudo random number generator from numerical recipes. */
++static inline u32 next_pseudo_random32(u32 seed)
++{
++	return seed * 1664525 + 1013904223;
++}
++
++#endif
+diff --git a/include/linux/random.h b/include/linux/random.h
+index f189c927fdea..5b3ec7d2791f 100644
+--- a/include/linux/random.h
++++ b/include/linux/random.h
+@@ -108,61 +108,12 @@ declare_get_random_var_wait(long)
+ 
+ unsigned long randomize_page(unsigned long start, unsigned long range);
+ 
+-u32 prandom_u32(void);
+-void prandom_bytes(void *buf, size_t nbytes);
+-void prandom_seed(u32 seed);
+-void prandom_reseed_late(void);
+-
+-struct rnd_state {
+-	__u32 s1, s2, s3, s4;
+-};
+-
+-u32 prandom_u32_state(struct rnd_state *state);
+-void prandom_bytes_state(struct rnd_state *state, void *buf, size_t nbytes);
+-void prandom_seed_full_state(struct rnd_state __percpu *pcpu_state);
+-
+-#define prandom_init_once(pcpu_state)			\
+-	DO_ONCE(prandom_seed_full_state, (pcpu_state))
+-
+-/**
+- * prandom_u32_max - returns a pseudo-random number in interval [0, ep_ro)
+- * @ep_ro: right open interval endpoint
+- *
+- * Returns a pseudo-random number that is in interval [0, ep_ro). Note
+- * that the result depends on PRNG being well distributed in [0, ~0U]
+- * u32 space. Here we use maximally equidistributed combined Tausworthe
+- * generator, that is, prandom_u32(). This is useful when requesting a
+- * random index of an array containing ep_ro elements, for example.
+- *
+- * Returns: pseudo-random number in interval [0, ep_ro)
+- */
+-static inline u32 prandom_u32_max(u32 ep_ro)
+-{
+-	return (u32)(((u64) prandom_u32() * ep_ro) >> 32);
+-}
+-
+ /*
+- * Handle minimum values for seeds
++ * This is designed to be standalone for just prandom
++ * users, but for now we include it from <linux/random.h>
++ * for legacy reasons.
+  */
+-static inline u32 __seed(u32 x, u32 m)
+-{
+-	return (x < m) ? x + m : x;
+-}
+-
+-/**
+- * prandom_seed_state - set seed for prandom_u32_state().
+- * @state: pointer to state structure to receive the seed.
+- * @seed: arbitrary 64-bit value to use as a seed.
+- */
+-static inline void prandom_seed_state(struct rnd_state *state, u64 seed)
+-{
+-	u32 i = (seed >> 32) ^ (seed << 10) ^ seed;
+-
+-	state->s1 = __seed(i,   2U);
+-	state->s2 = __seed(i,   8U);
+-	state->s3 = __seed(i,  16U);
+-	state->s4 = __seed(i, 128U);
+-}
++#include <linux/prandom.h>
+ 
+ #ifdef CONFIG_ARCH_RANDOM
+ # include <asm/archrandom.h>
+@@ -193,10 +144,4 @@ static inline bool arch_has_random_seed(void)
+ }
+ #endif
+ 
+-/* Pseudo random number generator from numerical recipes. */
+-static inline u32 next_pseudo_random32(u32 seed)
+-{
+-	return seed * 1664525 + 1013904223;
+-}
+-
+ #endif /* _LINUX_RANDOM_H */
+diff --git a/include/linux/skmsg.h b/include/linux/skmsg.h
+index 4bdb5e4bbd6a..20f3550b0b11 100644
+--- a/include/linux/skmsg.h
++++ b/include/linux/skmsg.h
+@@ -450,6 +450,19 @@ static inline void psock_set_prog(struct bpf_prog **pprog,
+ 		bpf_prog_put(prog);
+ }
+ 
++static inline int psock_replace_prog(struct bpf_prog **pprog,
++				     struct bpf_prog *prog,
++				     struct bpf_prog *old)
++{
++	if (cmpxchg(pprog, old, prog) != old)
++		return -ENOENT;
++
++	if (old)
++		bpf_prog_put(old);
++
++	return 0;
++}
++
+ static inline void psock_progs_drop(struct sk_psock_progs *progs)
+ {
+ 	psock_set_prog(&progs->msg_parser, NULL);
+diff --git a/kernel/bpf/syscall.c b/kernel/bpf/syscall.c
+index 8bc904f9badb..bf03d04a9e2f 100644
+--- a/kernel/bpf/syscall.c
++++ b/kernel/bpf/syscall.c
+@@ -2029,10 +2029,10 @@ static int bpf_prog_detach(const union bpf_attr *attr)
+ 		ptype = BPF_PROG_TYPE_CGROUP_DEVICE;
+ 		break;
+ 	case BPF_SK_MSG_VERDICT:
+-		return sock_map_get_from_fd(attr, NULL);
++		return sock_map_prog_detach(attr, BPF_PROG_TYPE_SK_MSG);
+ 	case BPF_SK_SKB_STREAM_PARSER:
+ 	case BPF_SK_SKB_STREAM_VERDICT:
+-		return sock_map_get_from_fd(attr, NULL);
++		return sock_map_prog_detach(attr, BPF_PROG_TYPE_SK_SKB);
+ 	case BPF_LIRC_MODE2:
+ 		return lirc_prog_detach(attr);
+ 	case BPF_FLOW_DISSECTOR:
+diff --git a/kernel/time/timer.c b/kernel/time/timer.c
+index 1e9b81a930c0..a3ae244b1bcd 100644
+--- a/kernel/time/timer.c
++++ b/kernel/time/timer.c
+@@ -43,6 +43,7 @@
+ #include <linux/sched/debug.h>
+ #include <linux/slab.h>
+ #include <linux/compat.h>
++#include <linux/random.h>
+ 
+ #include <linux/uaccess.h>
+ #include <asm/unistd.h>
+@@ -1742,6 +1743,13 @@ void update_process_times(int user_tick)
+ 	scheduler_tick();
+ 	if (IS_ENABLED(CONFIG_POSIX_TIMERS))
+ 		run_posix_cpu_timers();
++
++	/* The current CPU might make use of net randoms without receiving IRQs
++	 * to renew them often enough. Let's update the net_rand_state from a
++	 * non-constant value that's not affine to the number of calls to make
++	 * sure it's updated when there's some activity (we don't care in idle).
++	 */
++	this_cpu_add(net_rand_state.s1, rol32(jiffies, 24) + user_tick);
+ }
+ 
+ /**
+diff --git a/lib/random32.c b/lib/random32.c
+index 763b920a6206..3d749abb9e80 100644
+--- a/lib/random32.c
++++ b/lib/random32.c
+@@ -48,7 +48,7 @@ static inline void prandom_state_selftest(void)
+ }
+ #endif
+ 
+-static DEFINE_PER_CPU(struct rnd_state, net_rand_state) __latent_entropy;
++DEFINE_PER_CPU(struct rnd_state, net_rand_state);
+ 
+ /**
+  *	prandom_u32_state - seeded pseudo-random number generator.
+diff --git a/net/core/sock_map.c b/net/core/sock_map.c
+index 6bbc118bf00e..df52061f99f7 100644
+--- a/net/core/sock_map.c
++++ b/net/core/sock_map.c
+@@ -71,7 +71,42 @@ int sock_map_get_from_fd(const union bpf_attr *attr, struct bpf_prog *prog)
+ 	map = __bpf_map_get(f);
+ 	if (IS_ERR(map))
+ 		return PTR_ERR(map);
+-	ret = sock_map_prog_update(map, prog, attr->attach_type);
++	ret = sock_map_prog_update(map, prog, NULL, attr->attach_type);
++	fdput(f);
++	return ret;
++}
++
++int sock_map_prog_detach(const union bpf_attr *attr, enum bpf_prog_type ptype)
++{
++	u32 ufd = attr->target_fd;
++	struct bpf_prog *prog;
++	struct bpf_map *map;
++	struct fd f;
++	int ret;
++
++	if (attr->attach_flags)
++		return -EINVAL;
++
++	f = fdget(ufd);
++	map = __bpf_map_get(f);
++	if (IS_ERR(map))
++		return PTR_ERR(map);
++
++	prog = bpf_prog_get(attr->attach_bpf_fd);
++	if (IS_ERR(prog)) {
++		ret = PTR_ERR(prog);
++		goto put_map;
++	}
++
++	if (prog->type != ptype) {
++		ret = -EINVAL;
++		goto put_prog;
++	}
++
++	ret = sock_map_prog_update(map, NULL, prog, attr->attach_type);
++put_prog:
++	bpf_prog_put(prog);
++put_map:
+ 	fdput(f);
+ 	return ret;
+ }
+@@ -1015,27 +1050,32 @@ static struct sk_psock_progs *sock_map_progs(struct bpf_map *map)
+ }
+ 
+ int sock_map_prog_update(struct bpf_map *map, struct bpf_prog *prog,
+-			 u32 which)
++			 struct bpf_prog *old, u32 which)
+ {
+ 	struct sk_psock_progs *progs = sock_map_progs(map);
++	struct bpf_prog **pprog;
+ 
+ 	if (!progs)
+ 		return -EOPNOTSUPP;
+ 
+ 	switch (which) {
+ 	case BPF_SK_MSG_VERDICT:
+-		psock_set_prog(&progs->msg_parser, prog);
++		pprog = &progs->msg_parser;
+ 		break;
+ 	case BPF_SK_SKB_STREAM_PARSER:
+-		psock_set_prog(&progs->skb_parser, prog);
++		pprog = &progs->skb_parser;
+ 		break;
+ 	case BPF_SK_SKB_STREAM_VERDICT:
+-		psock_set_prog(&progs->skb_verdict, prog);
++		pprog = &progs->skb_verdict;
+ 		break;
+ 	default:
+ 		return -EOPNOTSUPP;
+ 	}
+ 
++	if (old)
++		return psock_replace_prog(pprog, prog, old);
++
++	psock_set_prog(pprog, prog);
+ 	return 0;
+ }
+ 
+diff --git a/tools/testing/selftests/bpf/test_maps.c b/tools/testing/selftests/bpf/test_maps.c
+index e1f1becda529..c812f0178b64 100644
+--- a/tools/testing/selftests/bpf/test_maps.c
++++ b/tools/testing/selftests/bpf/test_maps.c
+@@ -793,19 +793,19 @@ static void test_sockmap(unsigned int tasks, void *data)
+ 	}
+ 
+ 	err = bpf_prog_detach(fd, BPF_SK_SKB_STREAM_PARSER);
+-	if (err) {
++	if (!err) {
+ 		printf("Failed empty parser prog detach\n");
+ 		goto out_sockmap;
+ 	}
+ 
+ 	err = bpf_prog_detach(fd, BPF_SK_SKB_STREAM_VERDICT);
+-	if (err) {
++	if (!err) {
+ 		printf("Failed empty verdict prog detach\n");
+ 		goto out_sockmap;
+ 	}
+ 
+ 	err = bpf_prog_detach(fd, BPF_SK_MSG_VERDICT);
+-	if (err) {
++	if (!err) {
+ 		printf("Failed empty msg verdict prog detach\n");
+ 		goto out_sockmap;
+ 	}
+@@ -1094,19 +1094,19 @@ static void test_sockmap(unsigned int tasks, void *data)
+ 		assert(status == 0);
+ 	}
+ 
+-	err = bpf_prog_detach(map_fd_rx, __MAX_BPF_ATTACH_TYPE);
++	err = bpf_prog_detach2(parse_prog, map_fd_rx, __MAX_BPF_ATTACH_TYPE);
+ 	if (!err) {
+ 		printf("Detached an invalid prog type.\n");
+ 		goto out_sockmap;
+ 	}
+ 
+-	err = bpf_prog_detach(map_fd_rx, BPF_SK_SKB_STREAM_PARSER);
++	err = bpf_prog_detach2(parse_prog, map_fd_rx, BPF_SK_SKB_STREAM_PARSER);
+ 	if (err) {
+ 		printf("Failed parser prog detach\n");
+ 		goto out_sockmap;
+ 	}
+ 
+-	err = bpf_prog_detach(map_fd_rx, BPF_SK_SKB_STREAM_VERDICT);
++	err = bpf_prog_detach2(verdict_prog, map_fd_rx, BPF_SK_SKB_STREAM_VERDICT);
+ 	if (err) {
+ 		printf("Failed parser prog detach\n");
+ 		goto out_sockmap;

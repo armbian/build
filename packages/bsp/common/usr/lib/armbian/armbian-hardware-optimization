@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright (c) Authors: http://www.armbian.com/authors
+# Copyright (c) Authors: https://www.armbian.com/authors
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
@@ -15,8 +15,12 @@
 
 # Read in basic OS image information
 . /etc/armbian-release
+
 # and script configuration
 . /usr/lib/armbian/armbian-common
+
+# set audio
+. /usr/lib/armbian/armbian-audio-config
 
 set_io_scheduler() {
 
@@ -48,12 +52,12 @@ prepare_board() {
 
 	CheckDevice=$(for i in /var/log /var / ; do findmnt -n -o SOURCE $i && break ; done)
 	# adjust logrotate configs
-	if [[ "${CheckDevice}" == "/dev/zram0" || "${CheckDevice}" == "armbian-ramlog" ]]; then
-		for ConfigFile in /etc/logrotate.d/* ; do sed -i -e "s/\/log\//\/log.hdd\//g" "${ConfigFile}"; done
-		sed -i "s/\/log\//\/log.hdd\//g" /etc/logrotate.conf
+	if [[ "${CheckDevice}" == *"/dev/zram"* || "${CheckDevice}" == "armbian-ramlog" ]]; then
+		for ConfigFile in /etc/logrotate.d/* ; do sed -i -e "s/\/var\/log\//\/var\/log.hdd\//g" "${ConfigFile}"; done
+		sed -i "s/\/var\/log\//\/var\/log.hdd\//g" /etc/logrotate.conf
 	else
-		for ConfigFile in /etc/logrotate.d/* ; do sed -i -e "s/\/log.hdd\//\/log\//g" "${ConfigFile}"; done
-		sed -i "s/\/log.hdd\//\/log\//g" /etc/logrotate.conf
+		for ConfigFile in /etc/logrotate.d/* ; do sed -i -e "s/\/var\/log.hdd\//\/var\/log\//g" "${ConfigFile}"; done
+		sed -i "s/\/var\/log.hdd\//\/var\/log\//g" /etc/logrotate.conf
 	fi
 
 	# unlock cpuinfo_cur_freq to be accesible by a normal user
@@ -67,7 +71,7 @@ prepare_board() {
 	[[ -f $prefix/cpuinfo_cur_freq ]] && chmod +r $prefix/cpuinfo_cur_freq 2> /dev/null
 
 	# enable compression where not exists
-	find /etc/logrotate.d/. -type f | xargs grep -H -c 'compress' | grep 0$ | cut -d':' -f1 | xargs -L1 sed -i '/{/ a compress'
+	find /etc/logrotate.d/. -type f | xargs grep -H -c 'compress' | grep 0$ | cut -d':' -f1 | xargs -r -L1 sed -i '/{/ a compress'
 	sed -i "s/#compress/compress/" /etc/logrotate.conf
 
 	# tweak ondemand cpufreq governor settings to increase cpufreq with IO load
@@ -86,8 +90,8 @@ prepare_board() {
 	fi
 
 	# IRQ distribution based on $BOARDFAMILY and/or $BOARD_NAME
-	case ${BOARD_NAME} in
-		rockpro64|renegade-elite)
+	case ${BOARD} in
+		rockpro64|renegade-elite|pinebook-pro|station-p1)
 			BOARDFAMILY=rk3399
 			;;
 	esac
@@ -97,6 +101,25 @@ prepare_board() {
 			echo 4 >/proc/irq/$(awk -F":" "/mmc1/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -1)/smp_affinity 2>/dev/null
 			echo 8 >/proc/irq/$(awk -F":" "/ethernet/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -1)/smp_affinity 2>/dev/null
 			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+			;;
+		meson-g12b) # S922X/A311D: ODROID N2, possibly VIM3, cpu0/cpu1 are the little ones
+			# MMC on cpu1, USB3 on cpu2, Ethernet on cpu3, rdma on cpu4, vsync on cpu5
+			for i in $(awk -F':' '/mmc/{print $1}' </proc/interrupts | sed 's/\ //g'); do
+				echo 1 >/proc/irq/$i/smp_affinity_list
+			done
+			echo 2 >/proc/irq/$(awk -F":" "/xhci-hcd/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			echo 3 >/proc/irq/$(awk -F":" "/eth0/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			# mainline kernel might lack those
+			[[ -n $(cat /proc/interrupts | grep "rdma") ]] && echo 4 >/proc/irq/$(awk -F":" "/rdma/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+			[[ -n $(cat /proc/interrupts | grep "osd-vsync") ]] && echo 5 >/proc/irq/$(awk -F":" "/ osd-vsync/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity_list
+
+                        # test fan on Odroid N2 plus - spin it up shortly
+                        if [[ -f /sys/devices/virtual/thermal/thermal_zone0/trip_point_4_temp ]]; then
+                                echo 20000 > /sys/devices/virtual/thermal/thermal_zone0/trip_point_4_temp
+                                sleep 1
+                                echo 65000 > /sys/devices/virtual/thermal/thermal_zone0/trip_point_4_temp
+                        fi
+
 			;;
 		mvebu*) # Clearfog/Turris/Helios4/Espressobin: Send network IRQs to cpu1 on both kernels
 			for i in $(awk -F':' '/mwlwifi|mvneta|eth0/{print $1}' /proc/interrupts | sed 's/\ //g'); do
@@ -139,18 +162,51 @@ prepare_board() {
 				echo 8 >/proc/irq/$i/smp_affinity
 			done
 			;;
+		rk322x) # RK322x: usb otg on cpu1, usb2,3,4 (EHCI), usb5,6,7 (OHCI) on cpu2, eth and GPU on cpu3
+			echo 2 >/proc/irq/$(awk -F":" "/:usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" "/:usb2/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" "/:usb3/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" "/:usb4/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" "/:usb5/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" "/:usb6/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 4 >/proc/irq/$(awk -F":" "/:usb7/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 8 >/proc/irq/$(awk -F":" "/eth0/ {print \$1}" </proc/interrupts | sed 's/\ //g' | head -n1)/smp_affinity
+			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
+
+			# Mali in 4.4 kernel
+			for i in $(awk -F':' '/Mali_/{print $1}' /proc/interrupts | sed 's/\ //g'); do
+				echo 8 >/proc/irq/$i/smp_affinity
+			done
+
+			# Lima in mainline kernel
+			echo 8 >/proc/irq/$(awk -F':' '/gp$/{print $1}' /proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 8 >/proc/irq/$(awk -F':' '/gpmmu/{print $1}' /proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 8 >/proc/irq/$(awk -F':' '/pp0/{print $1}' /proc/interrupts | sed 's/\ //g')/smp_affinity
+			;;
 		rockchip64) # Rock64 and Renegade: GPU on cpu1, USB3 on cpu2, Ethernet on cpu3
 			for i in $(awk -F':' '/Mali/{print $1}' </proc/interrupts | sed 's/\ //g'); do
 				echo 2 >/proc/irq/$i/smp_affinity
 			done
-			echo 2 >/proc/irq/$(awk -F":" "/ehci/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
-			echo 2 >/proc/irq/$(awk -F":" "/ohci/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
-			echo 4 >/proc/irq/$(awk -F":" "/xhci/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			for i in $(awk -F":" "/ehci/ {print \$1}" </proc/interrupts | sed 's/\ //g'); do
+				echo 2 >/proc/irq/$i/smp_affinity
+			done
+			for i in $(awk -F":" "/ohci/ {print \$1}" </proc/interrupts | sed 's/\ //g'); do
+				echo 2 >/proc/irq/$i/smp_affinity
+			done
+			for i in $(awk -F":" "/xhci/ {print \$1}" </proc/interrupts | sed 's/\ //g'); do
+				echo 4 >/proc/irq/$i/smp_affinity
+			done
+
+			# Wait (up to 5s) until eth0 brought up
+			for i in {1..5}; do
+				grep -q "eth0" /proc/interrupts && break
+				sleep 1
+			done
+
 			echo 8 >/proc/irq/$(awk -F":" "/eth0/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
 			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
 			echo 32768 >/proc/sys/net/core/rps_sock_flow_entries
 			echo 32768 >/sys/class/net/eth0/queues/rx-0/rps_flow_cnt
-			/sbin/ethtool -K eth0 rx off tx off
 			;;
 		rk3399)
 			for i in $(awk -F':' '/gpu/{print $1}' </proc/interrupts | sed 's/\ //g'); do
@@ -159,9 +215,22 @@ prepare_board() {
 			for i in $(awk -F':' '/dw-mci/{print $1}' </proc/interrupts | sed 's/\ //g'); do
 				echo 2 >/proc/irq/$i/smp_affinity
 			done
-			echo 2 >/proc/irq/$(awk -F":" "/ehci/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
-			echo 2 >/proc/irq/$(awk -F":" "/ohci/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
-			echo 4 >/proc/irq/$(awk -F":" "/xhci/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
+			for i in $(awk -F":" "/ehci/ {print \$1}" </proc/interrupts | sed 's/\ //g'); do
+				echo 2 >/proc/irq/$i/smp_affinity
+			done
+			for i in $(awk -F":" "/ohci/ {print \$1}" </proc/interrupts | sed 's/\ //g'); do
+				echo 2 >/proc/irq/$i/smp_affinity
+			done
+			for i in $(awk -F":" "/xhci/ {print \$1}" </proc/interrupts | sed 's/\ //g'); do
+				echo 4 >/proc/irq/$i/smp_affinity
+			done
+
+			# Wait (up to 5s) until eth0 brought up
+			for i in {1..5}; do
+				grep -q "eth0" /proc/interrupts && break
+				sleep 1
+			done
+
 			echo 8 >/proc/irq/$(awk -F":" "/eth0/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
 			echo 7 >/sys/class/net/eth0/queues/rx-0/rps_cpus
 			echo 32768 >/proc/sys/net/core/rps_sock_flow_entries
@@ -173,6 +242,19 @@ prepare_board() {
 			if [ -f /sys/bus/platform/drivers/rockchip-dmc/dmc/devfreq/dmc/governor ]; then
 				echo performance > /sys/bus/platform/drivers/rockchip-dmc/dmc/devfreq/dmc/governor
 			fi
+			case ${BOARD_NAME} in
+				"Helios64")
+					for i in $(awk -F":" "/xhci/ {print \$1}" </proc/interrupts | sed 's/\ //g'); do
+						echo 10 >/proc/irq/$i/smp_affinity
+					done
+					for i in $(awk -F":" "/ahci/ {print \$1}" </proc/interrupts | sed 's/\ //g'); do
+						echo 30 >/proc/irq/$i/smp_affinity
+					done
+					;;
+				"Pinebook Pro")
+					echo s2idle >/sys/power/mem_sleep
+					;;
+			esac
 			;;
 		s500) # Roseapple Pi/LeMaker Guitar: send USB IRQs to cpu1/cpu2, DMA0 to cpu2 and Ethernet + SD card to cpu3
 			echo 2 >/proc/irq/$(awk -F":" "/usb1/ {print \$1}" </proc/interrupts | sed 's/\ //g')/smp_affinity
@@ -251,9 +333,9 @@ prepare_board() {
 						echo 8 >/proc/irq/$i/smp_affinity
 					done
 					;;
-				"Beelink X2"|"Orange Pi R1")
+				"Beelink X2"|"Orange Pi R1"|"ZeroPi")
 					# Wifi module reload workaround / fix
-					[[ -n $(lsmod | grep 8189es) ]] && rmmod 8189es && modprobe 8189es
+					[[ -n $(lsmod | grep 8189es) && "${BOARD_NAME}" != "ZeroPi" ]] && rmmod 8189es && modprobe 8189es
 					# Send SDIO to cpu1, USB to cpu2, Ethernet to cpu3
 					for i in $(awk -F':' '/sunxi-mmc/{print $1}' </proc/interrupts | sed 's/\ //g'); do
 						echo 2 >/proc/irq/$i/smp_affinity
@@ -317,6 +399,19 @@ add_usb_storage_quirks() {
 
 } # add_usb_storage_quirks
 
+
+branch_naming_workaround()
+# https://armbian.atlassian.net/browse/AR-748
+# Once we rework kernel packages, this can be done better
+{
+
+	if [[ -z $(cat /etc/armbian-release | grep BRANCH) ]]; then
+		BRANCH=$(dpkg -l | egrep "linux-image" | egrep "current|legacy|edge" | awk '{print $2}' | cut -d"-" -f3 | head -1)
+		[[ -n ${BRANCH} ]] && echo "BRANCH=$BRANCH" >> /etc/armbian-release
+	fi
+}
+
+
 case $1 in
 	*start*)
 		# set optimal disk scheduler settings
@@ -327,5 +422,8 @@ case $1 in
 
 		# add usb quirks
 		add_usb_storage_quirks &
+
+		# branch naming workaround
+		branch_naming_workaround &
 		;;
 esac

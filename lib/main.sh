@@ -1,16 +1,27 @@
 #!/bin/bash
-
-# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
+#
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-
+#
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
-# Main program
-#
+
+
+
+cleanup_list() {
+	local varname="${1}"
+	local list_to_clean="${!varname}"
+	list_to_clean="${list_to_clean#"${list_to_clean%%[![:space:]]*}"}"
+	list_to_clean="${list_to_clean%"${list_to_clean##*[![:space:]]}"}"
+	echo ${list_to_clean}
+}
+
+
+
 
 if [[ $(basename "$0") == main.sh ]]; then
 
@@ -19,60 +30,69 @@ if [[ $(basename "$0") == main.sh ]]; then
 
 fi
 
+
+
+
 # default umask for root is 022 so parent directories won't be group writeable without this
 # this is used instead of making the chmod in prepare_host() recursive
 umask 002
 
 # destination
-DEST=$SRC/output
+if [ -d "$CONFIG_PATH/output" ]; then
+	DEST="${CONFIG_PATH}"/output
+else
+	DEST="${SRC}"/output
+fi
 
-# override stty size
-[[ -n $COLUMNS ]] && stty cols $COLUMNS
-[[ -n $LINES ]] && stty rows $LINES
-
-if [[ $BUILD_ALL != "yes" ]]; then
+if [[ $BUILD_ALL != "yes" && -z $ROOT_FS_CREATE_ONLY ]]; then
+	# override stty size
+	[[ -n $COLUMNS ]] && stty cols $COLUMNS
+	[[ -n $LINES ]] && stty rows $LINES
 	TTY_X=$(($(stty size | awk '{print $2}')-6)) 			# determine terminal width
 	TTY_Y=$(($(stty size | awk '{print $1}')-6)) 			# determine terminal height
 fi
 
 # We'll use this title on all menus
-backtitle="Armbian building script, http://www.armbian.com | Author: Igor Pecovnik"
+backtitle="Armbian building script, https://www.armbian.com | https://docs.armbian.com | (c) 2013-2021 Igor Pecovnik "
 
-# if language not set, set to english
-[[ -z $LANGUAGE ]] && export LANGUAGE="en_US:en"
 
-# default console if not set
-[[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8"
+# Warnings mitigation
+[[ -z $LANGUAGE ]] && export LANGUAGE="en_US:en"            # set to english if not set
+[[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8"       # set console to UTF-8 if not set
 
-[[ -z $FORCE_CHECKOUT ]] && FORCE_CHECKOUT=yes
+# Libraries include
 
-# Load libraries
 # shellcheck source=debootstrap.sh
-source "${SRC}"/lib/debootstrap.sh 						# system specific install
+source "${SRC}"/lib/debootstrap.sh                          # system specific install
 # shellcheck source=image-helpers.sh
-source "${SRC}"/lib/image-helpers.sh						# helpers for OS image building
+source "${SRC}"/lib/image-helpers.sh                        # helpers for OS image building
 # shellcheck source=distributions.sh
-source "${SRC}"/lib/distributions.sh						# system specific install
+source "${SRC}"/lib/distributions.sh                        # system specific install
 # shellcheck source=desktop.sh
-source "${SRC}"/lib/desktop.sh							# desktop specific install
+source "${SRC}"/lib/desktop.sh                              # desktop specific install
 # shellcheck source=compilation.sh
-source "${SRC}"/lib/compilation.sh						# patching and compilation of kernel, uboot, ATF
+source "${SRC}"/lib/compilation.sh                          # patching and compilation of kernel, uboot, ATF
 # shellcheck source=compilation-prepare.sh
-source "${SRC}"/lib/compilation-prepare.sh					# kernel plugins - 3rd party drivers that are not upstreamed. Like WG, AUFS, various Wifi
+source "${SRC}"/lib/compilation-prepare.sh                  # drivers that are not upstreamed
 # shellcheck source=makeboarddeb.sh
-source "${SRC}"/lib/makeboarddeb.sh						# create board support package
+source "${SRC}"/lib/makeboarddeb.sh                         # board support package
 # shellcheck source=general.sh
-source "${SRC}"/lib/general.sh							# general functions
+source "${SRC}"/lib/general.sh                              # general functions
 # shellcheck source=chroot-buildpackages.sh
-source "${SRC}"/lib/chroot-buildpackages.sh					# building packages in chroot
+source "${SRC}"/lib/chroot-buildpackages.sh                 # chroot packages building
+
+
+# set log path
+LOG_SUBPATH=${LOG_SUBPATH:=debug}
 
 # compress and remove old logs
-mkdir -p "${DEST}"/debug
-(cd "${DEST}"/debug && tar -czf logs-"$(<timestamp)".tgz ./*.log) > /dev/null 2>&1
-rm -f "${DEST}"/debug/*.log > /dev/null 2>&1
-date +"%d_%m_%Y-%H_%M_%S" > "${DEST}"/debug/timestamp
+mkdir -p "${DEST}"/${LOG_SUBPATH}
+(cd "${DEST}"/${LOG_SUBPATH} && tar -czf logs-"$(<timestamp)".tgz ./*.log) > /dev/null 2>&1
+rm -f "${DEST}"/${LOG_SUBPATH}/*.log > /dev/null 2>&1
+date +"%d_%m_%Y-%H_%M_%S" > "${DEST}"/${LOG_SUBPATH}/timestamp
+
 # delete compressed logs older than 7 days
-(cd "${DEST}"/debug && find . -name '*.tgz' -mtime +7 -delete) > /dev/null
+(cd "${DEST}"/${LOG_SUBPATH} && find . -name '*.tgz' -mtime +7 -delete) > /dev/null
 
 if [[ $PROGRESS_DISPLAY == none ]]; then
 
@@ -86,7 +106,11 @@ fi
 
 if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
 
+
+
 SHOW_WARNING=yes
+
+
 
 if [[ $USE_CCACHE != no ]]; then
 
@@ -102,35 +126,36 @@ else
 
 fi
 
+
+
+
 if [[ -n $REPOSITORY_UPDATE ]]; then
 
-        # select stable/beta configuration
-        if [[ $BETA == yes ]]; then
-                DEB_STORAGE=$DEST/debs-beta
-                REPO_STORAGE=$DEST/repository-beta
-                REPO_CONFIG="aptly-beta.conf"
-        else
-                DEB_STORAGE=$DEST/debs
-                REPO_STORAGE=$DEST/repository
-                REPO_CONFIG="aptly.conf"
-        fi
+		# select stable/beta configuration
+		if [[ $BETA == yes ]]; then
+				DEB_STORAGE=$DEST/debs-beta
+				REPO_STORAGE=$DEST/repository-beta
+				REPO_CONFIG="aptly-beta.conf"
+		else
+				DEB_STORAGE=$DEST/debs
+				REPO_STORAGE=$DEST/repository
+				REPO_CONFIG="aptly.conf"
+		fi
 
-        # For user override
-        if [[ -f $USERPATCHES_PATH/lib.config ]]; then
-                display_alert "Using user configuration override" "userpatches/lib.config" "info"
-            source "$USERPATCHES_PATH"/lib.config
-        fi
+		# For user override
+		if [[ -f "${USERPATCHES_PATH}"/lib.config ]]; then
+				display_alert "Using user configuration override" "userpatches/lib.config" "info"
+			source "${USERPATCHES_PATH}"/lib.config
+		fi
 
-        repo-manipulate "$REPOSITORY_UPDATE"
-        exit
+		repo-manipulate "$REPOSITORY_UPDATE"
+		exit
 
 fi
 
-# we need dialog to display the menu in case not installed. Other stuff gets installed later
-prepare_host_basic
+
 
 # if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
-
 if [[ -z $KERNEL_ONLY ]]; then
 
 	options+=("yes" "U-boot and kernel packages")
@@ -146,6 +171,7 @@ if [[ -z $KERNEL_CONFIGURE ]]; then
 
 	options+=("no" "Do not change the kernel configuration")
 	options+=("yes" "Show a kernel configuration menu before compilation")
+	options+=("prebuilt" "Use precompiled packages from Armbian repository")
 	KERNEL_CONFIGURE=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
 	--menu "Select the kernel configuration" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
@@ -205,7 +231,7 @@ if [[ -z $BOARD ]]; then
 			if [[ $WIP_STATE == supported ]]; then
 
 				[[ $SHOW_WARNING == yes ]] && show_developer_warning
-				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress 
+				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress
 				\n - \Z1(EOS)\Zn - End Of Support\n - \Z1(TVB)\Zn - TV boxes'
 				WIP_STATE=unsupported
 				WIP_BUTTON='matured'
@@ -228,6 +254,9 @@ if [[ -z $BOARD ]]; then
 	done
 fi
 
+
+
+
 if [[ -f $SRC/config/boards/${BOARD}.conf ]]; then
 	BOARD_TYPE='conf'
 elif [[ -f $SRC/config/boards/${BOARD}.csc ]]; then
@@ -240,6 +269,9 @@ elif [[ -f $SRC/config/boards/${BOARD}.tvb ]]; then
 	BOARD_TYPE='tvb'
 fi
 
+
+
+
 # shellcheck source=/dev/null
 source "${SRC}/config/boards/${BOARD}.${BOARD_TYPE}"
 LINUXFAMILY="${BOARDFAMILY}"
@@ -249,9 +281,9 @@ LINUXFAMILY="${BOARDFAMILY}"
 if [[ -z $BRANCH ]]; then
 
 	options=()
-	[[ $KERNEL_TARGET == *legacy* ]] && options+=("legacy" "Old stable / Legacy")
 	[[ $KERNEL_TARGET == *current* ]] && options+=("current" "Recommended. Come with best support")
-	[[ $KERNEL_TARGET == *dev* && $EXPERT = yes ]] && options+=("dev" "\Z1Development version (@kernel.org)\Zn")
+	[[ $KERNEL_TARGET == *legacy* ]] && options+=("legacy" "Old stable / Legacy")
+	[[ $KERNEL_TARGET == *edge* && $EXPERT = yes ]] && options+=("edge" "\Z1Bleeding edge from @kernel.org\Zn")
 
 	# do not display selection dialog if only one kernel branch is available
 	if [[ "${#options[@]}" == 2 ]]; then
@@ -266,56 +298,37 @@ if [[ -z $BRANCH ]]; then
 	[[ $BRANCH == dev && $SHOW_WARNING == yes ]] && show_developer_warning
 
 else
-	[[ $BRANCH == next ]] && KERNEL_TARGET="next" 
+
+	[[ $BRANCH == next ]] && KERNEL_TARGET="next"
 	# next = new legacy. Should stay for backward compatibility, but be removed from menu above
 	# or we left definitions in board configs and only remove menu
 	[[ $KERNEL_TARGET != *$BRANCH* ]] && exit_with_error "Kernel branch not defined for this board" "$BRANCH"
 
 fi
 
-# define distribution support status
-declare -A distro_name distro_support
-distro_name['stretch']="Debian 9 Stretch"
-distro_support['stretch']="eos"
-distro_name['buster']="Debian 10 Buster"
-distro_support['buster']="supported"
-distro_name['bullseye']="Debian 11 Bullseye"
-distro_support['bullseye']="csc"
-distro_name['xenial']="Ubuntu Xenial 16.04 LTS"
-distro_support['xenial']="eos"
-distro_name['bionic']="Ubuntu Bionic 18.04 LTS"
-distro_support['bionic']="supported"
-distro_name['focal']="Ubuntu Focal 20.04 LTS"
-distro_support['focal']="csc"
-distro_name['eoan']="Ubuntu Eoan 19.10"
-distro_support['eoan']="csc"
+
 
 if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
 	options=()
 
-		distro_menu "stretch"
-		distro_menu "buster"
-		distro_menu "bullseye"
-		distro_menu "xenial"
-		distro_menu "bionic"
-		distro_menu "eoan"
-		distro_menu "focal"
+	distros_options
 
-		RELEASE=$(dialog --stdout --title "Choose a release" --backtitle "$backtitle" \
-		--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
-		[[ -z $RELEASE ]] && exit_with_error "No release selected"
+	RELEASE=$(dialog --stdout --title "Choose a release package base" --backtitle "$backtitle" \
+	--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
+	echo "options : ${options}"
+	[[ -z $RELEASE ]] && exit_with_error "No release selected"
 
+	unset options
 fi
-
-# read distribution support status which is written to the armbian-release file
-distro_menu "$RELEASE"
-unset options
 
 # don't show desktop option if we choose minimal build
 [[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no
 
 if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
+
+	# read distribution support status which is written to the armbian-release file
+	set_distribution_status
 
 	options=()
 	options+=("no" "Image with console interface (server)")
@@ -324,7 +337,10 @@ if [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
-	[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
+	if [[ ${BUILD_DESKTOP} == "yes" ]]; then
+		BUILD_MINIMAL=no
+		SELECTED_CONFIGURATION="desktop"
+	fi
 
 fi
 
@@ -337,12 +353,30 @@ if [[ $KERNEL_ONLY != yes && $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
 	--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 	unset options
 	[[ -z $BUILD_MINIMAL ]] && exit_with_error "No option selected"
+	if [[ $BUILD_MINIMAL == "yes" ]]; then
+		SELECTED_CONFIGURATION="cli_minimal"
+	else
+		SELECTED_CONFIGURATION="cli_standard"
+	fi
 
 fi
 
 #prevent conflicting setup
-[[ $BUILD_DESKTOP == yes ]] && BUILD_MINIMAL=no
-[[ $BUILD_MINIMAL == yes ]] && EXTERNAL=no
+if [[ $BUILD_DESKTOP == "yes" ]]; then
+	BUILD_MINIMAL=no
+	SELECTED_CONFIGURATION="desktop"
+elif [[ $BUILD_MINIMAL != "yes" || -z "${BUILD_MINIMAL}" ]]; then
+	BUILD_MINIMAL=no # Just in case BUILD_MINIMAL is not defined
+	BUILD_DESKTOP=no
+	SELECTED_CONFIGURATION="cli_standard"
+elif [[ $BUILD_MINIMAL == "yes" ]]; then
+	BUILD_DESKTOP=no
+	SELECTED_CONFIGURATION="cli_minimal"
+fi
+
+[[ ${KERNEL_CONFIGURE} == prebuilt ]] && [[ -z ${REPOSITORY_INSTALL} ]] && \
+REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop}"
+
 
 #shellcheck source=configuration.sh
 source "${SRC}"/lib/configuration.sh
@@ -368,21 +402,22 @@ else
 fi
 
 branch2dir() {
-	[[ $1 == head ]] && echo HEAD || echo ${1##*:}
+	[[ "${1}" == "head" ]] && echo "HEAD" || echo "${1##*:}"
 }
 
-BOOTSOURCEDIR=$BOOTDIR/$(branch2dir ${BOOTBRANCH})
-LINUXSOURCEDIR=$KERNELDIR/$(branch2dir ${KERNELBRANCH})
-[[ -n $ATFSOURCE ]] && ATFSOURCEDIR=$ATFDIR/$(branch2dir ${ATFBRANCH})
+BOOTSOURCEDIR="${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
+LINUXSOURCEDIR="${KERNELDIR}/$(branch2dir "${KERNELBRANCH}")"
+[[ -n $ATFSOURCE ]] && ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
 
-# define package names
-DEB_BRANCH=${BRANCH//default}
-# if not empty, append hyphen
-DEB_BRANCH=${DEB_BRANCH:+${DEB_BRANCH}-}
-CHOSEN_UBOOT=linux-u-boot-${DEB_BRANCH}${BOARD}
-CHOSEN_KERNEL=linux-image-${DEB_BRANCH}${LINUXFAMILY}
-CHOSEN_ROOTFS=linux-${RELEASE}-root-${DEB_BRANCH}${BOARD}
-CHOSEN_DESKTOP=armbian-${RELEASE}-desktop
+BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}"
+BSP_CLI_PACKAGE_FULLNAME="${BSP_CLI_PACKAGE_NAME}_${REVISION}_${ARCH}"
+BSP_DESKTOP_PACKAGE_NAME="armbian-bsp-desktop-${BOARD}"
+BSP_DESKTOP_PACKAGE_FULLNAME="${BSP_DESKTOP_PACKAGE_NAME}_${REVISION}_${ARCH}"
+
+CHOSEN_UBOOT=linux-u-boot-${BRANCH}-${BOARD}
+CHOSEN_KERNEL=linux-image-${BRANCH}-${LINUXFAMILY}
+CHOSEN_ROOTFS=${BSP_CLI_PACKAGE_NAME}
+CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}
 CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
 
 do_default() {
@@ -390,27 +425,30 @@ do_default() {
 start=$(date +%s)
 
 # Check and install dependencies, directory structure and settings
+# The OFFLINE_WORK variable inside the function
 prepare_host
 
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 
-# ignore updates help on building all images - for internal purposes
 # fetch_from_repo <url> <dir> <ref> <subdir_flag>
+
+# ignore updates help on building all images - for internal purposes
 if [[ $IGNORE_UPDATES != yes ]]; then
-	display_alert "Downloading sources" "" "info"
-	fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
-	fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
-	if [[ -n $ATFSOURCE ]]; then
-		fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
-	fi
-	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
-	fetch_from_repo "https://github.com/armbian/rkbin" "rkbin-tools" "branch:master"
-	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-18.12"
-	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git" "marvell-ddr" "branch:mv_ddr-armada-18.12"
-	fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" "marvell-binaries" "branch:binaries-marvell-armada-18.12"
-	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
-	fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
+display_alert "Downloading sources" "" "info"
+
+fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
+fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
+if [[ -n $ATFSOURCE ]]; then
+	fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
 fi
+fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
+fetch_from_repo "https://github.com/armbian/rkbin" "rkbin-tools" "branch:master"
+fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-18.12"
+fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git" "marvell-ddr" "branch:mv_ddr-armada-18.12"
+fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" "marvell-binaries" "branch:binaries-marvell-armada-18.12"
+fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
+fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
+fetch_from_repo "https://github.com/LibreELEC/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
 
 compile_sunxi_tools
 install_rkbin_tools
@@ -419,55 +457,85 @@ for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 	[[ $option != sources ]] && cleaning "$option"
 done
 
-# Compile u-boot if packed .deb does not exist
-if [[ ! -f ${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-	if [[ -n $ATFSOURCE ]]; then
+fi
+
+# Compile u-boot if packed .deb does not exist or use the one from repository
+if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+
+	if [[ -n "${ATFSOURCE}" && "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
 		compile_atf
 	fi
-	compile_uboot
+	[[ "${REPOSITORY_INSTALL}" != *u-boot* ]] && compile_uboot
+
 fi
 
-# Compile kernel if packed .deb does not exist
+# Compile kernel if packed .deb does not exist or use the one from repository
 if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+
 	KDEB_CHANGELOG_DIST=$RELEASE
-	compile_kernel
+	[[ "${REPOSITORY_INSTALL}" != *kernel* ]] && compile_kernel
+
 fi
 
-# Pack armbian-config and armbian-firmware
+# Compile armbian-config if packed .deb does not exist or use the one from repository
 if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
-	compile_armbian-config
 
-	FULL=""
-	REPLACE="-full"
-	[[ ! -f $DEST/debs/armbian-firmware_${REVISION}_all.deb ]] && compile_firmware
-	FULL="-full"
-	REPLACE=""
-	[[ ! -f $DEST/debs/armbian-firmware${FULL}_${REVISION}_all.deb ]] && compile_firmware
+	[[ "${REPOSITORY_INSTALL}" != *armbian-config* ]] && compile_armbian-config
+
+fi
+
+# Compile armbian-zsh if packed .deb does not exist or use the one from repository
+if [[ ! -f ${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb ]]; then
+
+        [[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]] && compile_armbian-zsh
+
+fi
+
+# Compile armbian-firmware if packed .deb does not exist or use the one from repository
+if ! ls "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb" 1> /dev/null 2>&1 || ! ls "${DEB_STORAGE}/armbian-firmware-full_${REVISION}_all.deb" 1> /dev/null 2>&1; then
+
+	if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
+
+		FULL=""
+		REPLACE="-full"
+		compile_firmware
+		FULL="-full"
+		REPLACE=""
+		compile_firmware
+
+	fi
+
 fi
 
 overlayfs_wrapper "cleanup"
 
-# extract kernel version from .deb package
-VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
-VER="${VER/-$LINUXFAMILY/}"
 
-UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
+
 
 # create board support package
-[[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_ROOTFS}_${REVISION}_${ARCH}.deb ]] && create_board_package
+[[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${BSP_CLI_PACKAGE_FULLNAME}.deb ]] && create_board_package
+
+
 
 # create desktop package
-[[ -n $RELEASE && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
+[[ -n $RELEASE && $DESKTOP_ENVIRONMENT && ! -f ${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb ]] && create_desktop_package
+[[ -n $RELEASE && $DESKTOP_ENVIRONMENT && ! -f ${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb ]] && create_bsp_desktop_package
+
+
 
 # build additional packages
 [[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
 
 if [[ $KERNEL_ONLY != yes ]]; then
+
 	[[ $BSP_BUILD != yes ]] && debootstrap_ng
+
 else
+
 	display_alert "Kernel build done" "@host" "info"
 	display_alert "Target directory" "${DEB_STORAGE}/" "info"
 	display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
+
 fi
 
 # hook for function to run after build, i.e. to change owner of $SRC
@@ -479,15 +547,19 @@ runtime=$(((end-start)/60))
 display_alert "Runtime" "$runtime min" "info"
 
 # Make it easy to repeat build by displaying build options used
-[ `systemd-detect-virt` == 'docker' ] && BUILD_CONFIG='docker'
+[ "$(systemd-detect-virt)" == 'docker' ] && BUILD_CONFIG='docker'
 display_alert "Repeat Build Options" "./compile.sh ${BUILD_CONFIG} BOARD=${BOARD} BRANCH=${BRANCH} \
 $([[ -n $RELEASE ]] && echo "RELEASE=${RELEASE} ")\
 $([[ -n $BUILD_MINIMAL ]] && echo "BUILD_MINIMAL=${BUILD_MINIMAL} ")\
 $([[ -n $BUILD_DESKTOP ]] && echo "BUILD_DESKTOP=${BUILD_DESKTOP} ")\
 $([[ -n $KERNEL_ONLY ]] && echo "KERNEL_ONLY=${KERNEL_ONLY} ")\
 $([[ -n $KERNEL_CONFIGURE ]] && echo "KERNEL_CONFIGURE=${KERNEL_CONFIGURE} ")\
+$([[ -n $DESKTOP_ENVIRONMENT ]] && echo "DESKTOP_ENVIRONMENT=${DESKTOP_ENVIRONMENT} ")\
+$([[ -n $DESKTOP_ENVIRONMENT_CONFIG_NAME  ]] && echo "DESKTOP_ENVIRONMENT_CONFIG_NAME=${DESKTOP_ENVIRONMENT_CONFIG_NAME} ")\
+$([[ -n $DESKTOP_APPGROUPS_SELECTED ]] && echo "DESKTOP_APPGROUPS_SELECTED=\"${DESKTOP_APPGROUPS_SELECTED}\" ")\
+$([[ -n $DESKTOP_APT_FLAGS_SELECTED ]] && echo "DESKTOP_APT_FLAGS_SELECTED=\"${DESKTOP_APT_FLAGS_SELECTED}\" ")\
 $([[ -n $COMPRESS_OUTPUTIMAGE ]] && echo "COMPRESS_OUTPUTIMAGE=${COMPRESS_OUTPUTIMAGE} ")\
-" "info"
+" "ext"
 
 } # end of do_default()
 

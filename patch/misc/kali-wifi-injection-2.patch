@@ -1,59 +1,66 @@
-From c46a994dd78befbe94e66771db41c18351be2aae Mon Sep 17 00:00:00 2001
-From: Steve deRosier <derosier@cal-sierra.com>
-Date: Fri, 29 Sep 2017 10:48:19 -0700
-Subject: [PATCH] wireless: carl9170: Enable sniffer mode promisc flag to fix
- injection
-
-The removal of the AR9170_MAC_SNIFFER_ENABLE_PROMISC flag to fix an issue
-many years ago caused the AR9170 to not be able to pass probe response
-packets with different MAC addresses back up to the driver. In general
-operation, this doesn't matter, but in the case of packet injection with
-aireplay-ng it is important. aireplay-ng specifically injects packets with
-spoofed MAC addresses on the probe requests and looks for probe responses
-back to those addresses. No other combination of filter flags seem to fix
-this issue and so AR9170_MAC_SNIFFER_ENABLE is required to get these packets.
-
-This was originally caused by commit e0509d3bdd7365d06c9bf570bf9f11 which
-removed this flag in order to avoid spurious ack noise from the hardware.
-In testing for this issue, keeping this flag but not restoring the
-AR9170_MAC_RX_CTRL_ACK_IN_SNIFFER flag on the rc_ctrl seems to solve this
-issue, at least with the most current firmware v1.9.9.
-
-Signed-off-by: Steve deRosier <derosier@cal-sierra.com>
----
- drivers/net/wireless/ath/carl9170/mac.c | 5 +++++
- 1 file changed, 5 insertions(+)
-
-diff --git a/drivers/net/wireless/ath/carl9170/mac.c b/drivers/net/wireless/ath/carl9170/mac.c
-index 7d4a72dc98db..c617e883f47a 100644
---- a/drivers/net/wireless/ath/carl9170/mac.c
-+++ b/drivers/net/wireless/ath/carl9170/mac.c
-@@ -309,6 +309,7 @@ int carl9170_set_operating_mode(struct ar9170 *ar)
- 	u32 rx_ctrl = AR9170_MAC_RX_CTRL_DEAGG |
- 		      AR9170_MAC_RX_CTRL_SHORT_FILTER;
- 	u32 sniffer = AR9170_MAC_SNIFFER_DEFAULTS;
-+	u32 mac_ftf = AR9170_MAC_FTF_DEFAULTS;
- 	int err = 0;
+--- a/drivers/net/wireless/zydas/zd1211rw/zd_mac.c
++++ b/drivers/net/wireless/zydas/zd1211rw/zd_mac.c
+@@ -229,14 +229,19 @@ void zd_mac_clear(struct zd_mac *mac)
+ static int set_rx_filter(struct zd_mac *mac)
+ {
+ 	unsigned long flags;
+-	u32 filter = STA_RX_FILTER;
++	struct zd_ioreq32 ioreqs[] = {
++		{CR_RX_FILTER, STA_RX_FILTER},
++		{ CR_SNIFFER_ON, 0U },
++	};
  
- 	rcu_read_lock();
-@@ -373,6 +374,9 @@ int carl9170_set_operating_mode(struct ar9170 *ar)
+ 	spin_lock_irqsave(&mac->lock, flags);
+-	if (mac->pass_ctrl)
+-		filter |= RX_FILTER_CTRL;
++	if (mac->pass_ctrl) {
++		ioreqs[0].value |= 0xFFFFFFFF;
++		ioreqs[1].value = 0x1;
++	}
+ 	spin_unlock_irqrestore(&mac->lock, flags);
  
- 	if (ar->sniffer_enabled) {
- 		enc_mode |= AR9170_MAC_ENCRYPTION_RX_SOFTWARE;
-+		mac_ftf = AR9170_MAC_FTF_MONITOR;
-+		sniffer |= AR9170_MAC_SNIFFER_ENABLE_PROMISC;
-+		mac_addr = NULL;
- 	}
+-	return zd_iowrite32(&mac->chip, CR_RX_FILTER, filter);
++	return zd_iowrite32a(&mac->chip, ioreqs, ARRAY_SIZE(ioreqs));
+ }
  
- 	err = carl9170_set_mac_reg(ar, AR9170_MAC_REG_MAC_ADDR_L, mac_addr);
-@@ -384,6 +388,7 @@ int carl9170_set_operating_mode(struct ar9170 *ar)
- 		return err;
+ static int set_mac_and_bssid(struct zd_mac *mac)
+@@ -1043,7 +1048,8 @@ int zd_mac_rx(struct ieee80211_hw *hw, c
+ 	/* Caller has to ensure that length >= sizeof(struct rx_status). */
+ 	status = (struct rx_status *)
+ 		(buffer + (length - sizeof(struct rx_status)));
+-	if (status->frame_status & ZD_RX_ERROR) {
++	if ((status->frame_status & ZD_RX_ERROR) ||
++		(status->frame_status & ~0x21)) {
+ 		if (mac->pass_failed_fcs &&
+ 				(status->frame_status & ZD_RX_CRC32_ERROR)) {
+ 			stats.flag |= RX_FLAG_FAILED_FCS_CRC;
+@@ -1386,7 +1392,7 @@ struct ieee80211_hw *zd_mac_alloc_hw(str
+ 	ieee80211_hw_set(hw, MFP_CAPABLE);
+ 	ieee80211_hw_set(hw, HOST_BROADCAST_PS_BUFFERING);
+ 	ieee80211_hw_set(hw, RX_INCLUDES_FCS);
+-	ieee80211_hw_set(hw, SIGNAL_UNSPEC);
++	ieee80211_hw_set(hw, SIGNAL_DBM);
  
- 	carl9170_regwrite_begin(ar);
-+	carl9170_regwrite(AR9170_MAC_REG_FRAMETYPE_FILTER, mac_ftf);
- 	carl9170_regwrite(AR9170_MAC_REG_SNIFFER, sniffer);
- 	carl9170_regwrite(AR9170_MAC_REG_CAM_MODE, cam_mode);
- 	carl9170_regwrite(AR9170_MAC_REG_ENCRYPTION, enc_mode);
--- 
-2.14.1
-
+ 	hw->wiphy->interface_modes =
+ 		BIT(NL80211_IFTYPE_MESH_POINT) |
+--- a/drivers/net/wireless/realtek/rtl818x/rtl8187/dev.c
++++ b/drivers/net/wireless/realtek/rtl818x/rtl8187/dev.c
+@@ -248,8 +248,17 @@ static void rtl8187_tx(struct ieee80211_
+ 	flags |= RTL818X_TX_DESC_FLAG_NO_ENC;
+ 
+ 	flags |= ieee80211_get_tx_rate(dev, info)->hw_value << 24;
++
++	// When this flag is set the firmware waits untill ALL fragments have
++	// reached the USB device. Then it sends the first fragment and waits
++	// for ACKS's. Of course in monitor mode it won't detect these ACK's.
+ 	if (ieee80211_has_morefrags(tx_hdr->frame_control))
+-		flags |= RTL818X_TX_DESC_FLAG_MOREFRAG;
++	{
++		// If info->control.vif is NULL it's most likely in monitor mode
++		if (likely(info->control.vif != NULL && info->control.vif->type != NL80211_IFTYPE_MONITOR)) {
++			flags |= RTL818X_TX_DESC_FLAG_MOREFRAG;
++		}
++	}
+ 
+ 	/* HW will perform RTS-CTS when only RTS flags is set.
+ 	 * HW will perform CTS-to-self when both RTS and CTS flags are set.

@@ -1,0 +1,64 @@
+--- a/net/mac80211/cfg.c
++++ b/net/mac80211/cfg.c
+@@ -784,7 +784,8 @@ static int ieee80211_set_monitor_channel
+ 			ret = ieee80211_vif_use_channel(sdata, chandef,
+ 					IEEE80211_CHANCTX_EXCLUSIVE);
+ 		}
+-	} else if (local->open_count == local->monitors) {
++       // Patch: Always allow channel change, even if a normal virtual interface is present
++       } else /*if (local->open_count == local->monitors)*/ {
+ 		local->_oper_chandef = *chandef;
+ 		ieee80211_hw_config(local, 0);
+ 	}
+--- a/net/mac80211/tx.c
++++ b/net/mac80211/tx.c
+@@ -803,11 +803,19 @@ ieee80211_tx_h_sequence(struct ieee80211
+ 
+ 	/*
+ 	 * Packet injection may want to control the sequence
+-	 * number, if we have no matching interface then we
+-	 * neither assign one ourselves nor ask the driver to.
++	 * number, so if an injected packet is found, skip
++	 * renumbering it. Also make the packet NO_ACK to avoid
++	 * excessive retries (ACKing and retrying should be
++	 * handled by the injecting application).
++	 * FIXME This may break hostapd and some other injectors.
++	 * This should be done using a radiotap flag.
+ 	 */
+-	if (unlikely(info->control.vif->type == NL80211_IFTYPE_MONITOR))
++	if (unlikely((info->flags & IEEE80211_TX_CTL_INJECTED) &&
++	   !(tx->sdata->u.mntr.flags & MONITOR_FLAG_COOK_FRAMES))) {
++		if (!ieee80211_has_morefrags(hdr->frame_control))
++			info->flags |= IEEE80211_TX_CTL_NO_ACK;
+ 		return TX_CONTINUE;
++	}
+ 
+ 	if (unlikely(ieee80211_is_ctl(hdr->frame_control)))
+ 		return TX_CONTINUE;
+@@ -2012,7 +2020,10 @@ void ieee80211_xmit(struct ieee80211_sub
+ 		}
+ 	}
+ 
+-	ieee80211_set_qos_hdr(sdata, skb);
++	// Don't overwrite QoS header in monitor mode
++	if (likely(info->control.vif->type != NL80211_IFTYPE_MONITOR)) {
++		ieee80211_set_qos_hdr(sdata, skb);
++	}
+ 	ieee80211_tx(sdata, sta, skb, false, txdata_flags);
+ }
+ 
+--- a/net/wireless/chan.c
++++ b/net/wireless/chan.c
+@@ -1148,8 +1148,10 @@ int cfg80211_set_monitor_channel(struct
+ {
+ 	if (!rdev->ops->set_monitor_channel)
+ 		return -EOPNOTSUPP;
+-	if (!cfg80211_has_monitors_only(rdev))
+-		return -EBUSY;
++	// Always allow user to change channel, even if there is another normal
++	// virtual interface using the device.
++	//if (!cfg80211_has_monitors_only(rdev))
++	//	return -EBUSY;
+ 
+ 	return rdev_set_monitor_channel(rdev, chandef);
+ }

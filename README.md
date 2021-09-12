@@ -1,9 +1,11 @@
-<h3 align=center><a href="#armbian-build-tools"><img src=".github/armbian-logo.png" alt="Armbian logo" width="144"></a><br>
+<h3 align=center><a href="#build-tools"><img src=".github/armbian-logo.png" alt="Armbian logo" width="144"></a><br>
 build tools</h3>
 
 <p align=right>&nbsp;</p>
 
-[![Build Status](https://armbian.lane-fu.com/jenkins/buildStatus/icon?job=test-full)](https://armbian.lane-fu.com/jenkins/job/test-full/)
+[![GitHub last commit (branch)](https://img.shields.io/github/last-commit/armbian/build/master)](https://github.com/armbian/build/commits)
+[![GitHub Workflow Status](https://img.shields.io/github/workflow/status/armbian/build/Build)](https://github.com/armbian/build/actions?query=workflow%3ABuild)
+[![Twitter Follow](https://img.shields.io/twitter/follow/armbian?style=flat-square)](https://twitter.com/intent/follow?screen_name=armbian)
 
 ## Table of contents
 
@@ -23,9 +25,10 @@ build tools</h3>
 
 <p align=right>&nbsp;</p>
 
+
 ## What this project does?
 
-- builds custom Debian based Linux system optimised for [supported single board computers](https://www.armbian.com/download/),
+- builds custom Debian based Linux system optimized for [supported single board computers](https://www.armbian.com/download/),
 - covers root filesystem generation, kernel image compilation and bootloader compilation,
 - maintains low-level control software for a [selection of hardware](https://www.armbian.com/download/),
 - provides a consistent user experience by keeping system standards across different SBC platforms.
@@ -33,22 +36,27 @@ build tools</h3>
 <p align=right>&nbsp;</p>
 
 ## What do you need to get started?
-    
-- x64 machine with at least 2GB of memory and ~30GB of disk space for the VM, container or native OS,
-- Ubuntu Bionic 18.04 / Focal 20.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised,
+
+- x64 machine with at least 2GB of memory and ~35GB of disk space for a VM, container or native OS,
+- Ubuntu Hirsute 21.04 x64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 Linux for containerised,
+  - Hirsute is required for newer non-LTS releases.. ex: Bullseye, Sid, Groovy, Hirsute
+  - If building for LTS releases.. ex: Focal, Bionic, Buster, it is possible to use Ubuntu 20.04 Focal, but it is not supported
 - superuser rights (configured sudo or root access).
+
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
 ## How to build an image or a kernel?
 
 ```text
-apt -y install git
+apt-get -y install git
 git clone https://github.com/armbian/build
 cd build
 ./compile.sh
 ```
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
+- The script will take care about preparing the workspace like installing necessary dependencies and downloading sources and tools
+- It guides through the process until either a kernel package set or a ready-to-use image for a SDcard is created
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
@@ -66,11 +74,18 @@ Run build tools inside Docker container:
 ./compile.sh docker
 ```
 
-Build minimal CLI Debian buster based image for Odroid XU4. Use modern kernel and write image to the SD card:
+Build minimal CLI Armbian Focal image for Orangepi Zero. Use modern kernel and write image to the SD card:
 
 ```text
-./compile.sh BOARD="odroidxu4" BRANCH="current" RELEASE="buster" CARD_DEVICE="/dev/sda" \
-KERNEL_ONLY="no" KERNEL_CONFIGURE="no" INSTALL_HEADERS="yes" BUILD_DESKTOP="no" BUILD_MINIMAL="yes"
+./compile.sh \
+BOARD=orangepizero \
+BRANCH=current \
+RELEASE=focal \
+BUILD_MINIMAL=yes \
+BUILD_DESKTOP=no \
+KERNEL_ONLY=no \
+KERNEL_CONFIGURE=no \
+CARD_DEVICE="/dev/sda"
 ```
 
 [Build parameters, advanced build options, user defined configuration, build with Docker?](#additional-information)
@@ -83,9 +98,9 @@ Check similarity, advantages and disadvantages compared with leading industry st
 
 Function | Armbian | Yocto | Buildroot |
 |:--|:--|:--|:--|
-| Target | general purpose | embedded | embedded / IOT | 
+| Target | general purpose | embedded | embedded / IOT |
 | U-boot and kernel | compiled from sources | compiled from sources | compiled from sources |
-| Hardware support maintenance &nbsp;&nbsp; &nbsp; &nbsp;| complete | outside | outside | 
+| Board support maintenance &nbsp; | complete | outside | outside |
 | Root file system | Debian or Ubuntu based| custom | custom |
 | Package manager | APT | any | none |
 | Configurability | limited | large | large |
@@ -113,53 +128,58 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 - Engage in [Armbian build framework forums](https://forum.armbian.com/forum/4-development/),
 - Check [Jira project management application](https://armbian.atlassian.net/browse/AR) status,
 - Make use of [central project search engine](https://www.armbian.com/search),
-- Browse [IRC channel logs](http://irc.armbian.com) or interact at #armbian on [freenode](https://freenode.net/).
+- Browse [IRC channel logs](http://irc.armbian.com) or interact at #armbian on [Libera](https://libera.chat/).
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
 ## Build tools overview
 
 ```text
-├── cache                                    Work / cache directory
-│   ├── rootfs                               Compressed vanilla Debian and Ubuntu rootfilesystem cache
-│   ├── sources                              Kernel, u-boot and various drivers sources. Mainly C code
-│   ├── toolchains                           External cross compilers from Linaro™ or ARM™
-├── config                                   Packages repository configurations
-│   ├── targets.conf                         Board build target configuration
-│   ├── boards                               Board configurations
-│   ├── bootenv                              Initial boot loaders environments per family
-│   ├── bootscripts                          Initial Boot loaders scripts per family
-│   ├── kernel                               Kernel build configurations per family
-│   ├── sources                              Kernel and u-boot sources locations and scripts
-│   ├── templates                            User configuration templates which populate userpatches
-│   └── torrents                             External compiler and rootfs cache torrents
-├── lib                                      Main build tools libraries
-├── output                                   Build artifact
-│   └── deb                                  Deb packages
-│   └── images                               Bootable images - RAW or compressed
-│   └── debug                                Patch and build logs
-│   └── config                               Kernel configuration export location
-│   └── patch                                Created patches location
-├── packages                                 Support scripts, binary blobs, packages
-│   ├── blobs                                Wallpapers, various configs, closed source bootloaders
-│   ├── bsp                                  Scripts and configs overlay for rootfs
-│   └── extras-buildpkgs                     Optional compilation and packaging engine
-├── patch                                    Collection of patches
-│   ├── atf                                  ARM trusted firmware
-│   ├── kernel                               Linux kernel patches
-|   |   └── family-branch                    Per kernel family and branch
-│   ├── misc                                 Linux kernel packaging patches
-│   └── u-boot                               Universal boot loader patches
-|       ├── u-boot-board                     For specific board
-|       └── u-boot-family                    For entire kernel family
-└── userpatches                              User: configuration patching area
-    ├── lib.config                           User: tools common config/override file
-    ├── config-default.conf                  User: default user config file
-    ├── customize-image.sh                   User: script will execute just before closing the image
-    ├── atf                                  User: ARM trusted firmware
-    ├── kernel                               User: Linux kernel per kernel family
-    ├── misc                                 User: various
-    └── u-boot                               User: universal boot loader patches
+├── cache                                Work / cache directory
+│   ├── rootfs                           Compressed vanilla Debian and Ubuntu rootfilesystem cache
+│   ├── sources                          Kernel, u-boot and various drivers sources. Mainly C code
+│   ├── toolchains                       External cross compilers from Linaro™ or ARM™
+├── config                               Packages repository configurations
+│   ├── targets.conf                     Board build target configuration
+│   ├── boards                           Board configurations
+│   ├── bootenv                          Initial boot loaders environments per family
+│   ├── bootscripts                      Initial Boot loaders scripts per family
+│   ├── cli                              CLI packages configurations per distribution
+│   ├── desktop                          Desktop packages configurations per distribution
+│   ├── distributions                    Distributions settings
+│   ├── kernel                           Kernel build configurations per family
+│   ├── sources                          Kernel and u-boot sources locations and scripts
+│   ├── templates                        User configuration templates which populate userpatches
+│   └── torrents                         External compiler and rootfs cache torrents
+├── lib                                  Main build tools libraries
+├── output                               Build artifact
+│   └── deb                              Deb packages
+│   └── images                           Bootable images - RAW or compressed
+│   └── debug                            Patch and build logs
+│   └── config                           Kernel configuration export location
+│   └── patch                            Created patches location
+├── packages                             Support scripts, binary blobs, packages
+│   ├── blobs                            Wallpapers, various configs, closed source bootloaders
+│   ├── bsp-cli                          Automatically added to armbian-bsp-cli package 
+│   ├── bsp-desktop                      Automatically added to armbian-bsp-desktopo package
+│   ├── bsp                              Scripts and configs overlay for rootfs
+│   └── extras-buildpkgs                 Optional compilation and packaging engine
+├── patch                                Collection of patches
+│   ├── atf                              ARM trusted firmware
+│   ├── kernel                           Linux kernel patches
+|   |   └── family-branch                Per kernel family and branch
+│   ├── misc                             Linux kernel packaging patches
+│   └── u-boot                           Universal boot loader patches
+|       ├── u-boot-board                 For specific board
+|       └── u-boot-family                For entire kernel family
+└── userpatches                          User: configuration patching area
+    ├── lib.config                       User: tools common config/override file
+    ├── config-default.conf              User: default user config file
+    ├── customize-image.sh               User: script will execute just before closing the image
+    ├── atf                              User: ARM trusted firmware
+    ├── kernel                           User: Linux kernel per kernel family
+    ├── misc                             User: various
+    └── u-boot                           User: universal boot loader patches
 ```
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
@@ -169,10 +189,10 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 - Have you found a bug in the **build tools**? 
 
     Try to recreate it with a clean build tools clone. Then search for [existing and closed issues](https://github.com/armbian/build/issues). If you don't find it there, [open a new issue](https://github.com/armbian/build/issues/new).
-    
+
 - Do you have troubles **elsewhere**? 
-    
-    Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). If you can't find answer there and/or with help of [general project search](https://www.armbian.com/search) engine, consider [hiring an expert](https://www.debian.org/consultants/).
+
+    Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). If you can't find answer there and/or with help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com), consider [hiring an expert](https://www.debian.org/consultants/).
 
 - Personalised support?
 
@@ -199,7 +219,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 ## Social
 
 - [Participate in Armbian forums](https://forum.armbian.com),
-- Chat with fellow users on IRC [#armbian](https://webchat.freenode.net/?channels=armbian) on Freenode,
+- Chat with fellow users on IRC #armbian on Libera.chat,
 - Follow [@armbian on Twitter](https://twitter.com/armbian) or [LinkedIN](https://www.linkedin.com/company/armbian).
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
@@ -218,9 +238,5 @@ Most of the project is sponsored with a work done by volunteer collaborators, wh
 
 [Do you want to see yourself below?](https://www.armbian.com/#contact)
 
-<img src="https://www.armbian.com/wp-content/uploads/2018/03/orangepi-logo-150x150.png" alt="Armbian logo" width="144" height="144"><img src="https://www.armbian.com/wp-content/uploads/2018/02/friendlyelec-logo-150x150.png" alt="Armbian logo" width="144" height="144">
-<img src="https://www.armbian.com/wp-content/uploads/2018/03/kspace-150x150.png" width="144" height="144">
-<img src="https://www.armbian.com/wp-content/uploads/2018/02/olimex-logo-150x150.png" width="144" height="144">
-<img src="https://www.armbian.com/wp-content/uploads/2018/03/helios4_logo-150x150.png" width="144" height="144">
-
+<a href="https://www.armbian.com/download/?tx_maker=xunlong" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/03/orangepi-logo-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=friendlyelec" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/02/friendlyelec-logo-150x150.png" width="122" height="122"></a><a href="https://k-space.ee" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/03/kspace-150x150.png" width="122" height="122"></a><a href="https://www.innoscale.net" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/07/innoscale-2-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=olimex" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/02/olimex-logo-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=kobol" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/06/Kobol_logo-150x150.png" width="122" height="122"></a><a href="https://github.com/WorksOnArm/cluster/issues/223" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/11/work-on-arm-150x150.png" width="122" height="122"></a><a href="https://fosshost.org/" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/11/foss-host-150x150.png" width="122" height="122"></a>
 <p align=right><a href=#table-of-contents>⇧</a></p>

@@ -1,30 +1,38 @@
 ARCH=arm64
 ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 BOOTDELAY=1
+##https://armbian.atlassian.net/browse/AR-867
+BOOTBRANCH='tag:v2020.10'
+
+[[ $BOARD == pineh64* ]] && BOOTBRANCH='tag:v2021.07'
+
 BOOTPATCHDIR='u-boot-sunxi'
-UBOOT_TARGET_MAP=';;spl/sunxi-spl.bin u-boot.itb'
+BOOTENV_FILE='sunxi.txt'
+UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
 BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 LINUXFAMILY=sunxi64
 
 case $BRANCH in
 	legacy)
 		
-		KERNELBRANCH='branch:linux-4.19.y'
-		KERNELPATCHDIR='sunxi-'$BRANCH
-	;;
-
-	current)
-
 		KERNELSOURCE="https://github.com/megous/linux"
 		KERNELBRANCH="branch:orange-pi-5.4"
 		KERNELPATCHDIR='sunxi-'$BRANCH
 
 	;;
 
-	dev)
+	current)
 
 		KERNELSOURCE="https://github.com/megous/linux"
-		KERNELBRANCH="branch:orange-pi-5.6"
+		KERNELBRANCH="branch:orange-pi-5.10"
+		KERNELPATCHDIR='sunxi-'$BRANCH
+
+	;;
+
+	edge)
+
+		KERNELSOURCE="https://github.com/megous/linux"
+		KERNELBRANCH="branch:orange-pi-5.14"
 		KERNELPATCHDIR='sunxi-'$BRANCH
 
 	;;
@@ -39,8 +47,8 @@ family_tweaks()
 
 write_uboot_platform()
 {
-	[[ -f $1/sunxi-spl.bin ]] && dd if=$1/sunxi-spl.bin of=$2 bs=8k seek=1 conv=fsync > /dev/null 2>&1
-	[[ -f $1/u-boot.itb ]] && dd if=$1/u-boot.itb of=$2 bs=8k seek=5 conv=fsync > /dev/null 2>&1 || true
+	dd if=/dev/zero of=$2 bs=1k count=1023 seek=1 status=noxfer > /dev/null 2>&1
+	dd if=$1/u-boot-sunxi-with-spl.bin of=$2 bs=1024 seek=8 status=noxfer > /dev/null 2>&1
 }
 
 setup_write_uboot_platform()

@@ -1,0 +1,1668 @@
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 17747dcd0e779..a8ceef14e7818 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -2196,6 +2196,8 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 					       spec_store_bypass_disable=off [X86]
+ 					       mds=off [X86]
+ 					       tsx_async_abort=off [X86]
++					       no_entry_flush [PPC]
++					       no_uaccess_flush [PPC]
+ 
+ 			auto (default)
+ 				Mitigate all CPU vulnerabilities, but leave SMT
+@@ -2476,6 +2478,8 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 
+ 	noefi		Disable EFI runtime services support.
+ 
++	no_entry_flush	[PPC] Don't flush the L1-D cache when entering the kernel.
++
+ 	noexec		[IA-64]
+ 
+ 	noexec		[X86]
+@@ -2518,6 +2522,9 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 	nospec_store_bypass_disable
+ 			[HW] Disable all mitigations for the Speculative Store Bypass vulnerability
+ 
++	no_uaccess_flush
++			[PPC] Don't flush the L1-D cache after accessing user data.
++
+ 	noxsave		[BUGS=X86] Disables x86 extended register state save
+ 			and restore using xsave. The kernel will fallback to
+ 			enabling legacy floating-point and sse state.
+diff --git a/Makefile b/Makefile
+index f8b9fd688781c..2d9e5c4688a49 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+-SUBLEVEL = 244
++SUBLEVEL = 245
+ EXTRAVERSION =
+ NAME = Blurry Fish Butt
+ 
+diff --git a/arch/powerpc/include/asm/book3s/64/kup-radix.h b/arch/powerpc/include/asm/book3s/64/kup-radix.h
+new file mode 100644
+index 0000000000000..cce8e7497d72b
+--- /dev/null
++++ b/arch/powerpc/include/asm/book3s/64/kup-radix.h
+@@ -0,0 +1,23 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _ASM_POWERPC_BOOK3S_64_KUP_RADIX_H
++#define _ASM_POWERPC_BOOK3S_64_KUP_RADIX_H
++#include <linux/jump_label.h>
++
++DECLARE_STATIC_KEY_FALSE(uaccess_flush_key);
++
++/* Prototype for function defined in exceptions-64s.S */
++void do_uaccess_flush(void);
++
++static __always_inline void allow_user_access(void __user *to, const void __user *from,
++					      unsigned long size)
++{
++}
++
++static inline void prevent_user_access(void __user *to, const void __user *from,
++				       unsigned long size)
++{
++	if (static_branch_unlikely(&uaccess_flush_key))
++		do_uaccess_flush();
++}
++
++#endif /* _ASM_POWERPC_BOOK3S_64_KUP_RADIX_H */
+diff --git a/arch/powerpc/include/asm/exception-64s.h b/arch/powerpc/include/asm/exception-64s.h
+index 3ed536bec462d..fbcfc722d109c 100644
+--- a/arch/powerpc/include/asm/exception-64s.h
++++ b/arch/powerpc/include/asm/exception-64s.h
+@@ -65,11 +65,18 @@
+ 	nop;								\
+ 	nop
+ 
++#define ENTRY_FLUSH_SLOT						\
++	ENTRY_FLUSH_FIXUP_SECTION;					\
++	nop;								\
++	nop;								\
++	nop;
++
+ /*
+  * r10 must be free to use, r13 must be paca
+  */
+ #define INTERRUPT_TO_KERNEL						\
+-	STF_ENTRY_BARRIER_SLOT
++	STF_ENTRY_BARRIER_SLOT;						\
++	ENTRY_FLUSH_SLOT
+ 
+ /*
+  * Macros for annotating the expected destination of (h)rfid
+@@ -597,6 +604,12 @@ label##_relon_hv:							\
+ 	EXCEPTION_PROLOG_1(PACA_EXGEN, SOFTEN_NOTEST_HV, vec);		\
+ 	EXCEPTION_PROLOG_PSERIES_1(label##_common, EXC_HV);
+ 
++#define MASKABLE_RELON_EXCEPTION_PSERIES_OOL(vec, label)               \
++       .globl label##_relon_pSeries;                                   \
++label##_relon_pSeries:                                                 \
++       EXCEPTION_PROLOG_1(PACA_EXGEN, SOFTEN_NOTEST_PR, vec);          \
++       EXCEPTION_PROLOG_PSERIES_1(label##_common, EXC_STD)
++
+ /*
+  * Our exception common code can be passed various "additions"
+  * to specify the behaviour of interrupts, whether to kick the
+diff --git a/arch/powerpc/include/asm/feature-fixups.h b/arch/powerpc/include/asm/feature-fixups.h
+index 145a37ab2d3ea..83219710e9043 100644
+--- a/arch/powerpc/include/asm/feature-fixups.h
++++ b/arch/powerpc/include/asm/feature-fixups.h
+@@ -200,6 +200,22 @@ label##3:					       	\
+ 	FTR_ENTRY_OFFSET 955b-956b;			\
+ 	.popsection;
+ 
++#define UACCESS_FLUSH_FIXUP_SECTION			\
++959:							\
++	.pushsection __uaccess_flush_fixup,"a";		\
++	.align 2;					\
++960:							\
++	FTR_ENTRY_OFFSET 959b-960b;			\
++	.popsection;
++
++#define ENTRY_FLUSH_FIXUP_SECTION			\
++957:							\
++	.pushsection __entry_flush_fixup,"a";		\
++	.align 2;					\
++958:							\
++	FTR_ENTRY_OFFSET 957b-958b;			\
++	.popsection;
++
+ #define RFI_FLUSH_FIXUP_SECTION				\
+ 951:							\
+ 	.pushsection __rfi_flush_fixup,"a";		\
+@@ -231,8 +247,11 @@ label##3:					       	\
+ #ifndef __ASSEMBLY__
+ 
+ extern long stf_barrier_fallback;
++extern long entry_flush_fallback;
+ extern long __start___stf_entry_barrier_fixup, __stop___stf_entry_barrier_fixup;
+ extern long __start___stf_exit_barrier_fixup, __stop___stf_exit_barrier_fixup;
++extern long __start___uaccess_flush_fixup, __stop___uaccess_flush_fixup;
++extern long __start___entry_flush_fixup, __stop___entry_flush_fixup;
+ extern long __start___rfi_flush_fixup, __stop___rfi_flush_fixup;
+ extern long __start___barrier_nospec_fixup, __stop___barrier_nospec_fixup;
+ extern long __start__btb_flush_fixup, __stop__btb_flush_fixup;
+diff --git a/arch/powerpc/include/asm/futex.h b/arch/powerpc/include/asm/futex.h
+index b73ab8a7ebc3f..10746519b351b 100644
+--- a/arch/powerpc/include/asm/futex.h
++++ b/arch/powerpc/include/asm/futex.h
+@@ -36,6 +36,7 @@ static inline int arch_futex_atomic_op_inuser(int op, int oparg, int *oval,
+ {
+ 	int oldval = 0, ret;
+ 
++	allow_write_to_user(uaddr, sizeof(*uaddr));
+ 	pagefault_disable();
+ 
+ 	switch (op) {
+@@ -62,6 +63,7 @@ static inline int arch_futex_atomic_op_inuser(int op, int oparg, int *oval,
+ 
+ 	*oval = oldval;
+ 
++	prevent_write_to_user(uaddr, sizeof(*uaddr));
+ 	return ret;
+ }
+ 
+@@ -75,6 +77,7 @@ futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+ 	if (!access_ok(VERIFY_WRITE, uaddr, sizeof(u32)))
+ 		return -EFAULT;
+ 
++	allow_write_to_user(uaddr, sizeof(*uaddr));
+         __asm__ __volatile__ (
+         PPC_ATOMIC_ENTRY_BARRIER
+ "1:     lwarx   %1,0,%3         # futex_atomic_cmpxchg_inatomic\n\
+@@ -97,6 +100,7 @@ futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+         : "cc", "memory");
+ 
+ 	*uval = prev;
++	prevent_write_to_user(uaddr, sizeof(*uaddr));
+         return ret;
+ }
+ 
+diff --git a/arch/powerpc/include/asm/kup.h b/arch/powerpc/include/asm/kup.h
+new file mode 100644
+index 0000000000000..f0f8e36ad71f5
+--- /dev/null
++++ b/arch/powerpc/include/asm/kup.h
+@@ -0,0 +1,40 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _ASM_POWERPC_KUP_H_
++#define _ASM_POWERPC_KUP_H_
++
++#ifndef __ASSEMBLY__
++
++#include <asm/pgtable.h>
++
++#ifdef CONFIG_PPC_BOOK3S_64
++#include <asm/book3s/64/kup-radix.h>
++#else
++static inline void allow_user_access(void __user *to, const void __user *from,
++				     unsigned long size) { }
++static inline void prevent_user_access(void __user *to, const void __user *from,
++				       unsigned long size) { }
++#endif /* CONFIG_PPC_BOOK3S_64 */
++
++static inline void allow_read_from_user(const void __user *from, unsigned long size)
++{
++	allow_user_access(NULL, from, size);
++}
++
++static inline void allow_write_to_user(void __user *to, unsigned long size)
++{
++	allow_user_access(to, NULL, size);
++}
++
++static inline void prevent_read_from_user(const void __user *from, unsigned long size)
++{
++	prevent_user_access(NULL, from, size);
++}
++
++static inline void prevent_write_to_user(void __user *to, unsigned long size)
++{
++	prevent_user_access(to, NULL, size);
++}
++
++#endif /* !__ASSEMBLY__ */
++
++#endif /* _ASM_POWERPC_KUP_H_ */
+diff --git a/arch/powerpc/include/asm/security_features.h b/arch/powerpc/include/asm/security_features.h
+index ccf44c135389a..3b45a64e491e5 100644
+--- a/arch/powerpc/include/asm/security_features.h
++++ b/arch/powerpc/include/asm/security_features.h
+@@ -84,12 +84,19 @@ static inline bool security_ftr_enabled(unsigned long feature)
+ // Software required to flush link stack on context switch
+ #define SEC_FTR_FLUSH_LINK_STACK	0x0000000000001000ull
+ 
++// The L1-D cache should be flushed when entering the kernel
++#define SEC_FTR_L1D_FLUSH_ENTRY		0x0000000000004000ull
++
++// The L1-D cache should be flushed after user accesses from the kernel
++#define SEC_FTR_L1D_FLUSH_UACCESS	0x0000000000008000ull
+ 
+ // Features enabled by default
+ #define SEC_FTR_DEFAULT \
+ 	(SEC_FTR_L1D_FLUSH_HV | \
+ 	 SEC_FTR_L1D_FLUSH_PR | \
+ 	 SEC_FTR_BNDS_CHK_SPEC_BAR | \
++	 SEC_FTR_L1D_FLUSH_ENTRY | \
++	 SEC_FTR_L1D_FLUSH_UACCESS | \
+ 	 SEC_FTR_FAVOUR_SECURITY)
+ 
+ #endif /* _ASM_POWERPC_SECURITY_FEATURES_H */
+diff --git a/arch/powerpc/include/asm/setup.h b/arch/powerpc/include/asm/setup.h
+index d299479c770b4..1ccf474f08ab7 100644
+--- a/arch/powerpc/include/asm/setup.h
++++ b/arch/powerpc/include/asm/setup.h
+@@ -38,12 +38,16 @@ enum l1d_flush_type {
+ };
+ 
+ void setup_rfi_flush(enum l1d_flush_type, bool enable);
++void setup_entry_flush(bool enable);
++void setup_uaccess_flush(bool enable);
+ void do_rfi_flush_fixups(enum l1d_flush_type types);
+ #ifdef CONFIG_PPC_BARRIER_NOSPEC
+ void setup_barrier_nospec(void);
+ #else
+ static inline void setup_barrier_nospec(void) { };
+ #endif
++void do_uaccess_flush_fixups(enum l1d_flush_type types);
++void do_entry_flush_fixups(enum l1d_flush_type types);
+ void do_barrier_nospec_fixups(bool enable);
+ extern bool barrier_nospec_enabled;
+ 
+diff --git a/arch/powerpc/include/asm/uaccess.h b/arch/powerpc/include/asm/uaccess.h
+index e51ce5a0e2214..eb4b060efd95e 100644
+--- a/arch/powerpc/include/asm/uaccess.h
++++ b/arch/powerpc/include/asm/uaccess.h
+@@ -9,6 +9,7 @@
+ #include <asm/asm-compat.h>
+ #include <asm/processor.h>
+ #include <asm/page.h>
++#include <asm/kup.h>
+ 
+ #define VERIFY_READ	0
+ #define VERIFY_WRITE	1
+@@ -105,9 +106,14 @@ struct exception_table_entry {
+ 	__put_user_check((__typeof__(*(ptr)))(x), (ptr), sizeof(*(ptr)))
+ 
+ #define __get_user(x, ptr) \
+-	__get_user_nocheck((x), (ptr), sizeof(*(ptr)))
++	__get_user_nocheck((x), (ptr), sizeof(*(ptr)), true)
+ #define __put_user(x, ptr) \
+-	__put_user_nocheck((__typeof__(*(ptr)))(x), (ptr), sizeof(*(ptr)))
++	__put_user_nocheck((__typeof__(*(ptr)))(x), (ptr), sizeof(*(ptr)), true)
++
++#define __get_user_allowed(x, ptr) \
++	__get_user_nocheck((x), (ptr), sizeof(*(ptr)), false)
++#define __put_user_allowed(x, ptr) \
++	__put_user_nocheck((__typeof__(*(ptr)))(x), (ptr), sizeof(*(ptr)), false)
+ 
+ #define __get_user_inatomic(x, ptr) \
+ 	__get_user_nosleep((x), (ptr), sizeof(*(ptr)))
+@@ -161,7 +167,7 @@ extern long __put_user_bad(void);
+ 		: "r" (x), "b" (addr), "i" (-EFAULT), "0" (err))
+ #endif /* __powerpc64__ */
+ 
+-#define __put_user_size(x, ptr, size, retval)			\
++#define __put_user_size_allowed(x, ptr, size, retval)		\
+ do {								\
+ 	retval = 0;						\
+ 	switch (size) {						\
+@@ -173,14 +179,28 @@ do {								\
+ 	}							\
+ } while (0)
+ 
+-#define __put_user_nocheck(x, ptr, size)			\
++#define __put_user_size(x, ptr, size, retval)			\
++do {								\
++	allow_write_to_user(ptr, size);				\
++	__put_user_size_allowed(x, ptr, size, retval);		\
++	prevent_write_to_user(ptr, size);			\
++} while (0)
++
++#define __put_user_nocheck(x, ptr, size, do_allow)			\
+ ({								\
+ 	long __pu_err;						\
+ 	__typeof__(*(ptr)) __user *__pu_addr = (ptr);		\
++	__typeof__(*(ptr)) __pu_val = (x);			\
++	__typeof__(size) __pu_size = (size);			\
++								\
+ 	if (!is_kernel_addr((unsigned long)__pu_addr))		\
+ 		might_fault();					\
+-	__chk_user_ptr(ptr);					\
+-	__put_user_size((x), __pu_addr, (size), __pu_err);	\
++	__chk_user_ptr(__pu_addr);				\
++	if (do_allow)								\
++		__put_user_size(__pu_val, __pu_addr, __pu_size, __pu_err);	\
++	else									\
++		__put_user_size_allowed(__pu_val, __pu_addr, __pu_size, __pu_err); \
++								\
+ 	__pu_err;						\
+ })
+ 
+@@ -188,9 +208,13 @@ do {								\
+ ({									\
+ 	long __pu_err = -EFAULT;					\
+ 	__typeof__(*(ptr)) __user *__pu_addr = (ptr);			\
++	__typeof__(*(ptr)) __pu_val = (x);				\
++	__typeof__(size) __pu_size = (size);				\
++									\
+ 	might_fault();							\
+-	if (access_ok(VERIFY_WRITE, __pu_addr, size))			\
+-		__put_user_size((x), __pu_addr, (size), __pu_err);	\
++	if (access_ok(VERIFY_WRITE, __pu_addr, __pu_size))			\
++		__put_user_size(__pu_val, __pu_addr, __pu_size, __pu_err); \
++									\
+ 	__pu_err;							\
+ })
+ 
+@@ -198,8 +222,12 @@ do {								\
+ ({								\
+ 	long __pu_err;						\
+ 	__typeof__(*(ptr)) __user *__pu_addr = (ptr);		\
+-	__chk_user_ptr(ptr);					\
+-	__put_user_size((x), __pu_addr, (size), __pu_err);	\
++	__typeof__(*(ptr)) __pu_val = (x);			\
++	__typeof__(size) __pu_size = (size);			\
++								\
++	__chk_user_ptr(__pu_addr);				\
++	__put_user_size(__pu_val, __pu_addr, __pu_size, __pu_err); \
++								\
+ 	__pu_err;						\
+ })
+ 
+@@ -246,7 +274,7 @@ extern long __get_user_bad(void);
+ 		: "b" (addr), "i" (-EFAULT), "0" (err))
+ #endif /* __powerpc64__ */
+ 
+-#define __get_user_size(x, ptr, size, retval)			\
++#define __get_user_size_allowed(x, ptr, size, retval)		\
+ do {								\
+ 	retval = 0;						\
+ 	__chk_user_ptr(ptr);					\
+@@ -261,17 +289,30 @@ do {								\
+ 	}							\
+ } while (0)
+ 
+-#define __get_user_nocheck(x, ptr, size)			\
++#define __get_user_size(x, ptr, size, retval)			\
++do {								\
++	allow_read_from_user(ptr, size);			\
++	__get_user_size_allowed(x, ptr, size, retval);		\
++	prevent_read_from_user(ptr, size);			\
++} while (0)
++
++#define __get_user_nocheck(x, ptr, size, do_allow)			\
+ ({								\
+ 	long __gu_err;						\
+ 	unsigned long __gu_val;					\
+ 	__typeof__(*(ptr)) __user *__gu_addr = (ptr);	\
+-	__chk_user_ptr(ptr);					\
++	__typeof__(size) __gu_size = (size);			\
++								\
++	__chk_user_ptr(__gu_addr);				\
+ 	if (!is_kernel_addr((unsigned long)__gu_addr))		\
+ 		might_fault();					\
+ 	barrier_nospec();					\
+-	__get_user_size(__gu_val, __gu_addr, (size), __gu_err);	\
++	if (do_allow)								\
++		__get_user_size(__gu_val, __gu_addr, __gu_size, __gu_err);	\
++	else									\
++		__get_user_size_allowed(__gu_val, __gu_addr, __gu_size, __gu_err); \
+ 	(x) = (__typeof__(*(ptr)))__gu_val;			\
++								\
+ 	__gu_err;						\
+ })
+ 
+@@ -296,12 +337,15 @@ do {								\
+ 	long __gu_err = -EFAULT;					\
+ 	unsigned long  __gu_val = 0;					\
+ 	__typeof__(*(ptr)) __user *__gu_addr = (ptr);		\
++	__typeof__(size) __gu_size = (size);				\
++									\
+ 	might_fault();							\
+-	if (access_ok(VERIFY_READ, __gu_addr, (size))) {		\
++	if (access_ok(VERIFY_READ, __gu_addr, __gu_size)) {		\
+ 		barrier_nospec();					\
+-		__get_user_size(__gu_val, __gu_addr, (size), __gu_err);	\
++		__get_user_size(__gu_val, __gu_addr, __gu_size, __gu_err); \
+ 	}								\
+ 	(x) = (__force __typeof__(*(ptr)))__gu_val;				\
++									\
+ 	__gu_err;							\
+ })
+ 
+@@ -310,10 +354,13 @@ do {								\
+ 	long __gu_err;						\
+ 	unsigned long __gu_val;					\
+ 	__typeof__(*(ptr)) __user *__gu_addr = (ptr);	\
+-	__chk_user_ptr(ptr);					\
++	__typeof__(size) __gu_size = (size);			\
++								\
++	__chk_user_ptr(__gu_addr);				\
+ 	barrier_nospec();					\
+-	__get_user_size(__gu_val, __gu_addr, (size), __gu_err);	\
++	__get_user_size(__gu_val, __gu_addr, __gu_size, __gu_err); \
+ 	(x) = (__force __typeof__(*(ptr)))__gu_val;			\
++								\
+ 	__gu_err;						\
+ })
+ 
+@@ -328,9 +375,14 @@ extern unsigned long __copy_tofrom_user(void __user *to,
+ static inline unsigned long copy_from_user(void *to,
+ 		const void __user *from, unsigned long n)
+ {
++	unsigned long ret;
++
+ 	if (likely(access_ok(VERIFY_READ, from, n))) {
++		allow_user_access(to, from, n);
+ 		barrier_nospec();
+-		return __copy_tofrom_user((__force void __user *)to, from, n);
++		ret = __copy_tofrom_user((__force void __user *)to, from, n);
++		prevent_user_access(to, from, n);
++		return ret;
+ 	}
+ 	memset(to, 0, n);
+ 	return n;
+@@ -361,8 +413,9 @@ extern unsigned long copy_in_user(void __user *to, const void __user *from,
+ static inline unsigned long __copy_from_user_inatomic(void *to,
+ 		const void __user *from, unsigned long n)
+ {
++	unsigned long ret;
+ 	if (__builtin_constant_p(n) && (n <= 8)) {
+-		unsigned long ret = 1;
++		ret = 1;
+ 
+ 		switch (n) {
+ 		case 1:
+@@ -387,34 +440,42 @@ static inline unsigned long __copy_from_user_inatomic(void *to,
+ 	}
+ 
+ 	barrier_nospec();
+-	return __copy_tofrom_user((__force void __user *)to, from, n);
++	allow_read_from_user(from, n);
++	ret = __copy_tofrom_user((__force void __user *)to, from, n);
++	prevent_read_from_user(from, n);
++	return ret;
+ }
+ 
+ static inline unsigned long __copy_to_user_inatomic(void __user *to,
+ 		const void *from, unsigned long n)
+ {
++	unsigned long ret;
++
+ 	if (__builtin_constant_p(n) && (n <= 8)) {
+-		unsigned long ret = 1;
++		ret = 1;
+ 
+ 		switch (n) {
+ 		case 1:
+-			__put_user_size(*(u8 *)from, (u8 __user *)to, 1, ret);
++			__put_user_size_allowed(*(u8 *)from, (u8 __user *)to, 1, ret);
+ 			break;
+ 		case 2:
+-			__put_user_size(*(u16 *)from, (u16 __user *)to, 2, ret);
++			__put_user_size_allowed(*(u16 *)from, (u16 __user *)to, 2, ret);
+ 			break;
+ 		case 4:
+-			__put_user_size(*(u32 *)from, (u32 __user *)to, 4, ret);
++			__put_user_size_allowed(*(u32 *)from, (u32 __user *)to, 4, ret);
+ 			break;
+ 		case 8:
+-			__put_user_size(*(u64 *)from, (u64 __user *)to, 8, ret);
++			__put_user_size_allowed(*(u64 *)from, (u64 __user *)to, 8, ret);
+ 			break;
+ 		}
+ 		if (ret == 0)
+ 			return 0;
+ 	}
+ 
+-	return __copy_tofrom_user(to, (__force const void __user *)from, n);
++	allow_write_to_user(to, n);
++	ret = __copy_tofrom_user(to, (__force const void __user *)from, n);
++	prevent_write_to_user(to, n);
++	return ret;
+ }
+ 
+ static inline unsigned long __copy_from_user(void *to,
+@@ -431,20 +492,39 @@ static inline unsigned long __copy_to_user(void __user *to,
+ 	return __copy_to_user_inatomic(to, from, size);
+ }
+ 
+-extern unsigned long __clear_user(void __user *addr, unsigned long size);
++unsigned long __arch_clear_user(void __user *addr, unsigned long size);
+ 
+ static inline unsigned long clear_user(void __user *addr, unsigned long size)
+ {
++	unsigned long ret = size;
+ 	might_fault();
+-	if (likely(access_ok(VERIFY_WRITE, addr, size)))
+-		return __clear_user(addr, size);
+-	return size;
++	if (likely(access_ok(VERIFY_WRITE, addr, size))) {
++		allow_write_to_user(addr, size);
++		ret = __arch_clear_user(addr, size);
++		prevent_write_to_user(addr, size);
++	}
++	return ret;
++}
++
++static inline unsigned long __clear_user(void __user *addr, unsigned long size)
++{
++	return clear_user(addr, size);
+ }
+ 
+ extern long strncpy_from_user(char *dst, const char __user *src, long count);
+ extern __must_check long strlen_user(const char __user *str);
+ extern __must_check long strnlen_user(const char __user *str, long n);
+ 
++
++#define user_access_begin()	do { } while (0)
++#define user_access_end()	prevent_user_access(NULL, NULL, ~0ul)
++
++#define unsafe_op_wrap(op, err) do { if (unlikely(op)) goto err; } while (0)
++#define unsafe_get_user(x, p, e) unsafe_op_wrap(__get_user_allowed(x, p), e)
++#define unsafe_put_user(x, p, e) unsafe_op_wrap(__put_user_allowed(x, p), e)
++#define unsafe_copy_to_user(d, s, l, e) \
++	unsafe_op_wrap(__copy_to_user_inatomic(d, s, l), e)
++
+ #endif  /* __ASSEMBLY__ */
+ #endif /* __KERNEL__ */
+ 
+diff --git a/arch/powerpc/kernel/exceptions-64s.S b/arch/powerpc/kernel/exceptions-64s.S
+index 536718ed033fc..7f8e1bdbe3e20 100644
+--- a/arch/powerpc/kernel/exceptions-64s.S
++++ b/arch/powerpc/kernel/exceptions-64s.S
+@@ -202,8 +202,8 @@ ALT_FTR_SECTION_END_IFSET(CPU_FTR_HVMODE)
+ data_access_pSeries:
+ 	HMT_MEDIUM_PPR_DISCARD
+ 	SET_SCRATCH0(r13)
+-	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, data_access_common, EXC_STD,
+-				 KVMTEST, 0x300)
++	EXCEPTION_PROLOG_0(PACA_EXGEN)
++	b data_access_pSeries_ool
+ 
+ 	. = 0x380
+ 	.globl data_access_slb_pSeries
+@@ -211,31 +211,15 @@ data_access_slb_pSeries:
+ 	HMT_MEDIUM_PPR_DISCARD
+ 	SET_SCRATCH0(r13)
+ 	EXCEPTION_PROLOG_0(PACA_EXSLB)
+-	EXCEPTION_PROLOG_1(PACA_EXSLB, KVMTEST, 0x380)
+-	std	r3,PACA_EXSLB+EX_R3(r13)
+-	mfspr	r3,SPRN_DAR
+-#ifdef __DISABLED__
+-	/* Keep that around for when we re-implement dynamic VSIDs */
+-	cmpdi	r3,0
+-	bge	slb_miss_user_pseries
+-#endif /* __DISABLED__ */
+-	mfspr	r12,SPRN_SRR1
+-#ifndef CONFIG_RELOCATABLE
+-	b	slb_miss_realmode
+-#else
+-	/*
+-	 * We can't just use a direct branch to slb_miss_realmode
+-	 * because the distance from here to there depends on where
+-	 * the kernel ends up being put.
+-	 */
+-	mfctr	r11
+-	ld	r10,PACAKBASE(r13)
+-	LOAD_HANDLER(r10, slb_miss_realmode)
+-	mtctr	r10
+-	bctr
+-#endif
++	b data_access_slb_pSeries_ool
+ 
+-	STD_EXCEPTION_PSERIES(0x400, 0x400, instruction_access)
++	. = 0x400
++	.globl instruction_access_pSeries
++instruction_access_pSeries:
++	HMT_MEDIUM_PPR_DISCARD
++	SET_SCRATCH0(r13)
++	EXCEPTION_PROLOG_0(PACA_EXGEN)
++	b instruction_access_pSeries_ool
+ 
+ 	. = 0x480
+ 	.globl instruction_access_slb_pSeries
+@@ -243,24 +227,7 @@ instruction_access_slb_pSeries:
+ 	HMT_MEDIUM_PPR_DISCARD
+ 	SET_SCRATCH0(r13)
+ 	EXCEPTION_PROLOG_0(PACA_EXSLB)
+-	EXCEPTION_PROLOG_1(PACA_EXSLB, KVMTEST_PR, 0x480)
+-	std	r3,PACA_EXSLB+EX_R3(r13)
+-	mfspr	r3,SPRN_SRR0		/* SRR0 is faulting address */
+-#ifdef __DISABLED__
+-	/* Keep that around for when we re-implement dynamic VSIDs */
+-	cmpdi	r3,0
+-	bge	slb_miss_user_pseries
+-#endif /* __DISABLED__ */
+-	mfspr	r12,SPRN_SRR1
+-#ifndef CONFIG_RELOCATABLE
+-	b	slb_miss_realmode
+-#else
+-	mfctr	r11
+-	ld	r10,PACAKBASE(r13)
+-	LOAD_HANDLER(r10, slb_miss_realmode)
+-	mtctr	r10
+-	bctr
+-#endif
++	b instruction_access_slb_pSeries_ool
+ 
+ 	/* We open code these as we can't have a ". = x" (even with
+ 	 * x = "." within a feature section
+@@ -291,13 +258,19 @@ hardware_interrupt_hv:
+ 	KVM_HANDLER_PR(PACA_EXGEN, EXC_STD, 0x800)
+ 
+ 	. = 0x900
+-	.globl decrementer_pSeries
+-decrementer_pSeries:
++	.globl decrementer_trampoline
++decrementer_trampoline:
+ 	SET_SCRATCH0(r13)
+ 	EXCEPTION_PROLOG_0(PACA_EXGEN)
+ 	b	decrementer_ool
+ 
+-	STD_EXCEPTION_HV(0x980, 0x982, hdecrementer)
++	. = 0x980
++	.globl hdecrementer_trampoline
++hdecrementer_trampoline:
++	HMT_MEDIUM_PPR_DISCARD;
++	SET_SCRATCH0(r13);
++	EXCEPTION_PROLOG_0(PACA_EXGEN)
++	b hdecrementer_hv
+ 
+ 	MASKABLE_EXCEPTION_PSERIES(0xa00, 0xa00, doorbell_super)
+ 	KVM_HANDLER_PR(PACA_EXGEN, EXC_STD, 0xa00)
+@@ -545,6 +518,64 @@ machine_check_pSeries_0:
+ 	KVM_HANDLER_PR(PACA_EXGEN, EXC_STD, 0x900)
+ 	KVM_HANDLER(PACA_EXGEN, EXC_HV, 0x982)
+ 
++/* moved from 0x300 */
++	.globl data_access_pSeries_ool
++data_access_pSeries_ool:
++	EXCEPTION_PROLOG_1(PACA_EXGEN, KVMTEST, 0x300)
++	EXCEPTION_PROLOG_PSERIES_1(data_access_common, EXC_STD)
++
++	.globl data_access_slb_pSeries_ool
++data_access_slb_pSeries_ool:
++	EXCEPTION_PROLOG_1(PACA_EXSLB, KVMTEST, 0x380)
++	std	r3,PACA_EXSLB+EX_R3(r13)
++	mfspr	r3,SPRN_DAR
++#ifdef __DISABLED__
++	/* Keep that around for when we re-implement dynamic VSIDs */
++	cmpdi	r3,0
++	bge	slb_miss_user_pseries
++#endif /* __DISABLED__ */
++	mfspr	r12,SPRN_SRR1
++#ifndef CONFIG_RELOCATABLE
++	b	slb_miss_realmode
++#else
++	/*
++	 * We can't just use a direct branch to slb_miss_realmode
++	 * because the distance from here to there depends on where
++	 * the kernel ends up being put.
++	 */
++	mfctr	r11
++	ld	r10,PACAKBASE(r13)
++	LOAD_HANDLER(r10, slb_miss_realmode)
++	mtctr	r10
++	bctr
++#endif
++
++	.globl instruction_access_pSeries_ool
++instruction_access_pSeries_ool:
++	EXCEPTION_PROLOG_1(PACA_EXGEN, KVMTEST_PR, 0x400)
++	EXCEPTION_PROLOG_PSERIES_1(instruction_access_common, EXC_STD)
++
++	.globl instruction_access_slb_pSeries_ool
++instruction_access_slb_pSeries_ool:
++	EXCEPTION_PROLOG_1(PACA_EXSLB, KVMTEST_PR, 0x480)
++	std	r3,PACA_EXSLB+EX_R3(r13)
++	mfspr	r3,SPRN_SRR0		/* SRR0 is faulting address */
++#ifdef __DISABLED__
++	/* Keep that around for when we re-implement dynamic VSIDs */
++	cmpdi	r3,0
++	bge	slb_miss_user_pseries
++#endif /* __DISABLED__ */
++	mfspr	r12,SPRN_SRR1
++#ifndef CONFIG_RELOCATABLE
++	b	slb_miss_realmode
++#else
++	mfctr	r11
++	ld	r10,PACAKBASE(r13)
++	LOAD_HANDLER(r10, slb_miss_realmode)
++	mtctr	r10
++	bctr
++#endif
++
+ #ifdef CONFIG_PPC_DENORMALISATION
+ denorm_assist:
+ BEGIN_FTR_SECTION
+@@ -612,6 +643,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_CFAR)
+ 	.align	7
+ 	/* moved from 0xe00 */
+ 	MASKABLE_EXCEPTION_OOL(0x900, decrementer)
++	STD_EXCEPTION_HV_OOL(0x982, hdecrementer)
+ 	STD_EXCEPTION_HV_OOL(0xe02, h_data_storage)
+ 	KVM_HANDLER_SKIP(PACA_EXGEN, EXC_HV, 0xe02)
+ 	STD_EXCEPTION_HV_OOL(0xe22, h_instr_storage)
+@@ -894,7 +926,15 @@ hardware_interrupt_relon_hv:
+ 	STD_RELON_EXCEPTION_PSERIES(0x4600, 0x600, alignment)
+ 	STD_RELON_EXCEPTION_PSERIES(0x4700, 0x700, program_check)
+ 	STD_RELON_EXCEPTION_PSERIES(0x4800, 0x800, fp_unavailable)
+-	MASKABLE_RELON_EXCEPTION_PSERIES(0x4900, 0x900, decrementer)
++
++	. = 0x4900
++	.globl decrementer_relon_trampoline
++decrementer_relon_trampoline:
++	HMT_MEDIUM_PPR_DISCARD
++	SET_SCRATCH0(r13)
++	EXCEPTION_PROLOG_0(PACA_EXGEN)
++	b decrementer_relon_pSeries
++
+ 	STD_RELON_EXCEPTION_HV(0x4980, 0x982, hdecrementer)
+ 	MASKABLE_RELON_EXCEPTION_PSERIES(0x4a00, 0xa00, doorbell_super)
+ 	STD_RELON_EXCEPTION_PSERIES(0x4b00, 0xb00, trap_0b)
+@@ -1244,6 +1284,8 @@ END_FTR_SECTION_IFSET(CPU_FTR_VSX)
+ __end_handlers:
+ 
+ 	/* Equivalents to the above handlers for relocation-on interrupt vectors */
++	MASKABLE_RELON_EXCEPTION_PSERIES_OOL(0x900, decrementer)
++
+ 	STD_RELON_EXCEPTION_HV_OOL(0xe40, emulation_assist)
+ 	MASKABLE_RELON_EXCEPTION_HV_OOL(0xe80, h_doorbell)
+ 
+@@ -1588,14 +1630,9 @@ stf_barrier_fallback:
+ 	.endr
+ 	blr
+ 
+-	.globl rfi_flush_fallback
+-rfi_flush_fallback:
+-	SET_SCRATCH0(r13);
+-	GET_PACA(r13);
+-	std	r9,PACA_EXRFI+EX_R9(r13)
+-	std	r10,PACA_EXRFI+EX_R10(r13)
+-	std	r11,PACA_EXRFI+EX_R11(r13)
+-	mfctr	r9
++
++/* Clobbers r10, r11, ctr */
++.macro L1D_DISPLACEMENT_FLUSH
+ 	ld	r10,PACA_RFI_FLUSH_FALLBACK_AREA(r13)
+ 	ld	r11,PACA_L1D_FLUSH_SIZE(r13)
+ 	srdi	r11,r11,(7 + 3) /* 128 byte lines, unrolled 8x */
+@@ -1621,7 +1658,18 @@ rfi_flush_fallback:
+ 	ld	r11,(0x80 + 8)*7(r10)
+ 	addi	r10,r10,0x80*8
+ 	bdnz	1b
++.endm
++
+ 
++	.globl rfi_flush_fallback
++rfi_flush_fallback:
++	SET_SCRATCH0(r13);
++	GET_PACA(r13);
++	std	r9,PACA_EXRFI+EX_R9(r13)
++	std	r10,PACA_EXRFI+EX_R10(r13)
++	std	r11,PACA_EXRFI+EX_R11(r13)
++	mfctr	r9
++	L1D_DISPLACEMENT_FLUSH
+ 	mtctr	r9
+ 	ld	r9,PACA_EXRFI+EX_R9(r13)
+ 	ld	r10,PACA_EXRFI+EX_R10(r13)
+@@ -1637,32 +1685,7 @@ hrfi_flush_fallback:
+ 	std	r10,PACA_EXRFI+EX_R10(r13)
+ 	std	r11,PACA_EXRFI+EX_R11(r13)
+ 	mfctr	r9
+-	ld	r10,PACA_RFI_FLUSH_FALLBACK_AREA(r13)
+-	ld	r11,PACA_L1D_FLUSH_SIZE(r13)
+-	srdi	r11,r11,(7 + 3) /* 128 byte lines, unrolled 8x */
+-	mtctr	r11
+-	DCBT_STOP_ALL_STREAM_IDS(r11) /* Stop prefetch streams */
+-
+-	/* order ld/st prior to dcbt stop all streams with flushing */
+-	sync
+-
+-	/*
+-	 * The load adresses are at staggered offsets within cachelines,
+-	 * which suits some pipelines better (on others it should not
+-	 * hurt).
+-	 */
+-1:
+-	ld	r11,(0x80 + 8)*0(r10)
+-	ld	r11,(0x80 + 8)*1(r10)
+-	ld	r11,(0x80 + 8)*2(r10)
+-	ld	r11,(0x80 + 8)*3(r10)
+-	ld	r11,(0x80 + 8)*4(r10)
+-	ld	r11,(0x80 + 8)*5(r10)
+-	ld	r11,(0x80 + 8)*6(r10)
+-	ld	r11,(0x80 + 8)*7(r10)
+-	addi	r10,r10,0x80*8
+-	bdnz	1b
+-
++	L1D_DISPLACEMENT_FLUSH
+ 	mtctr	r9
+ 	ld	r9,PACA_EXRFI+EX_R9(r13)
+ 	ld	r10,PACA_EXRFI+EX_R10(r13)
+@@ -1670,6 +1693,20 @@ hrfi_flush_fallback:
+ 	GET_SCRATCH0(r13);
+ 	hrfid
+ 
++	.globl entry_flush_fallback
++entry_flush_fallback:
++	std	r9,PACA_EXRFI+EX_R9(r13)
++	std	r10,PACA_EXRFI+EX_R10(r13)
++	std	r11,PACA_EXRFI+EX_R11(r13)
++	mfctr	r9
++	L1D_DISPLACEMENT_FLUSH
++	mtctr	r9
++	ld	r9,PACA_EXRFI+EX_R9(r13)
++	ld	r10,PACA_EXRFI+EX_R10(r13)
++	ld	r11,PACA_EXRFI+EX_R11(r13)
++	blr
++
++
+ /*
+  * Hash table stuff
+  */
+@@ -1829,3 +1866,12 @@ END_FTR_SECTION_IFSET(CPU_FTR_CFAR)
+ 1:	addi	r3,r1,STACK_FRAME_OVERHEAD
+ 	bl	kernel_bad_stack
+ 	b	1b
++
++_KPROBE(do_uaccess_flush)
++	UACCESS_FLUSH_FIXUP_SECTION
++	nop
++	nop
++	nop
++	blr
++	L1D_DISPLACEMENT_FLUSH
++	blr
+diff --git a/arch/powerpc/kernel/head_8xx.S b/arch/powerpc/kernel/head_8xx.S
+index 01e274e6907b1..3d7512e729005 100644
+--- a/arch/powerpc/kernel/head_8xx.S
++++ b/arch/powerpc/kernel/head_8xx.S
+@@ -361,11 +361,9 @@ InstructionTLBMiss:
+ 	/* Load the MI_TWC with the attributes for this "segment." */
+ 	MTSPR_CPU6(SPRN_MI_TWC, r11, r3)	/* Set segment attributes */
+ 
+-#ifdef CONFIG_SWAP
+-	rlwinm	r11, r10, 32-5, _PAGE_PRESENT
++	rlwinm	r11, r10, 32-11, _PAGE_PRESENT
+ 	and	r11, r11, r10
+ 	rlwimi	r10, r11, 0, _PAGE_PRESENT
+-#endif
+ 	li	r11, RPN_PATTERN
+ 	/* The Linux PTE won't go exactly into the MMU TLB.
+ 	 * Software indicator bits 20-23 and 28 must be clear.
+@@ -436,11 +434,9 @@ DataStoreTLBMiss:
+ 	 * r11 = ((r10 & PRESENT) & ((r10 & ACCESSED) >> 5));
+ 	 * r10 = (r10 & ~PRESENT) | r11;
+ 	 */
+-#ifdef CONFIG_SWAP
+-	rlwinm	r11, r10, 32-5, _PAGE_PRESENT
++	rlwinm	r11, r10, 32-11, _PAGE_PRESENT
+ 	and	r11, r11, r10
+ 	rlwimi	r10, r11, 0, _PAGE_PRESENT
+-#endif
+ 	/* The Linux PTE won't go exactly into the MMU TLB.
+ 	 * Software indicator bits 22 and 28 must be clear.
+ 	 * Software indicator bits 24, 25, 26, and 27 must be
+diff --git a/arch/powerpc/kernel/ppc_ksyms.c b/arch/powerpc/kernel/ppc_ksyms.c
+index 202963ee013a8..80eb47113d5dc 100644
+--- a/arch/powerpc/kernel/ppc_ksyms.c
++++ b/arch/powerpc/kernel/ppc_ksyms.c
+@@ -5,6 +5,10 @@
+ #include <asm/switch_to.h>
+ #include <asm/cacheflush.h>
+ #include <asm/epapr_hcalls.h>
++#include <asm/uaccess.h>
++#ifdef CONFIG_PPC64
++#include <asm/book3s/64/kup-radix.h>
++#endif
+ 
+ EXPORT_SYMBOL(flush_dcache_range);
+ EXPORT_SYMBOL(flush_icache_range);
+@@ -43,3 +47,9 @@ EXPORT_SYMBOL(epapr_hypercall_start);
+ #endif
+ 
+ EXPORT_SYMBOL(current_stack_pointer);
++
++EXPORT_SYMBOL(__arch_clear_user);
++
++#ifdef CONFIG_PPC64
++EXPORT_SYMBOL(do_uaccess_flush);
++#endif
+diff --git a/arch/powerpc/kernel/setup_64.c b/arch/powerpc/kernel/setup_64.c
+index 11590f6cb2f9d..3c67175693609 100644
+--- a/arch/powerpc/kernel/setup_64.c
++++ b/arch/powerpc/kernel/setup_64.c
+@@ -844,7 +844,13 @@ early_initcall(disable_hardlockup_detector);
+ static enum l1d_flush_type enabled_flush_types;
+ static void *l1d_flush_fallback_area;
+ static bool no_rfi_flush;
++static bool no_entry_flush;
++static bool no_uaccess_flush;
+ bool rfi_flush;
++bool entry_flush;
++bool uaccess_flush;
++DEFINE_STATIC_KEY_FALSE(uaccess_flush_key);
++EXPORT_SYMBOL(uaccess_flush_key);
+ 
+ static int __init handle_no_rfi_flush(char *p)
+ {
+@@ -854,6 +860,22 @@ static int __init handle_no_rfi_flush(char *p)
+ }
+ early_param("no_rfi_flush", handle_no_rfi_flush);
+ 
++static int __init handle_no_entry_flush(char *p)
++{
++	pr_info("entry-flush: disabled on command line.");
++	no_entry_flush = true;
++	return 0;
++}
++early_param("no_entry_flush", handle_no_entry_flush);
++
++static int __init handle_no_uaccess_flush(char *p)
++{
++	pr_info("uaccess-flush: disabled on command line.");
++	no_uaccess_flush = true;
++	return 0;
++}
++early_param("no_uaccess_flush", handle_no_uaccess_flush);
++
+ /*
+  * The RFI flush is not KPTI, but because users will see doco that says to use
+  * nopti we hijack that option here to also disable the RFI flush.
+@@ -885,6 +907,35 @@ void rfi_flush_enable(bool enable)
+ 	rfi_flush = enable;
+ }
+ 
++void entry_flush_enable(bool enable)
++{
++	if (enable) {
++		do_entry_flush_fixups(enabled_flush_types);
++		on_each_cpu(do_nothing, NULL, 1);
++	} else {
++		do_entry_flush_fixups(L1D_FLUSH_NONE);
++	}
++
++	entry_flush = enable;
++}
++
++void uaccess_flush_enable(bool enable)
++{
++	if (enable) {
++		do_uaccess_flush_fixups(enabled_flush_types);
++		if (static_key_initialized)
++			static_branch_enable(&uaccess_flush_key);
++		else
++			printk(KERN_DEBUG "uaccess-flush: deferring static key until after static key initialization\n");
++		on_each_cpu(do_nothing, NULL, 1);
++	} else {
++		static_branch_disable(&uaccess_flush_key);
++		do_uaccess_flush_fixups(L1D_FLUSH_NONE);
++	}
++
++	uaccess_flush = enable;
++}
++
+ static void __ref init_fallback_flush(void)
+ {
+ 	u64 l1d_size, limit;
+@@ -930,6 +981,24 @@ void setup_rfi_flush(enum l1d_flush_type types, bool enable)
+ 		rfi_flush_enable(enable);
+ }
+ 
++void setup_entry_flush(bool enable)
++{
++	if (cpu_mitigations_off())
++		return;
++
++	if (!no_entry_flush)
++		entry_flush_enable(enable);
++}
++
++void setup_uaccess_flush(bool enable)
++{
++	if (cpu_mitigations_off())
++		return;
++
++	if (!no_uaccess_flush)
++		uaccess_flush_enable(enable);
++}
++
+ #ifdef CONFIG_DEBUG_FS
+ static int rfi_flush_set(void *data, u64 val)
+ {
+@@ -957,11 +1026,80 @@ static int rfi_flush_get(void *data, u64 *val)
+ 
+ DEFINE_SIMPLE_ATTRIBUTE(fops_rfi_flush, rfi_flush_get, rfi_flush_set, "%llu\n");
+ 
++static int entry_flush_set(void *data, u64 val)
++{
++	bool enable;
++
++	if (val == 1)
++		enable = true;
++	else if (val == 0)
++		enable = false;
++	else
++		return -EINVAL;
++
++	/* Only do anything if we're changing state */
++	if (enable != entry_flush)
++		entry_flush_enable(enable);
++
++	return 0;
++}
++
++static int entry_flush_get(void *data, u64 *val)
++{
++	*val = entry_flush ? 1 : 0;
++	return 0;
++}
++
++DEFINE_SIMPLE_ATTRIBUTE(fops_entry_flush, entry_flush_get, entry_flush_set, "%llu\n");
++
++static int uaccess_flush_set(void *data, u64 val)
++{
++	bool enable;
++
++	if (val == 1)
++		enable = true;
++	else if (val == 0)
++		enable = false;
++	else
++		return -EINVAL;
++
++	/* Only do anything if we're changing state */
++	if (enable != uaccess_flush)
++		uaccess_flush_enable(enable);
++
++	return 0;
++}
++
++static int uaccess_flush_get(void *data, u64 *val)
++{
++	*val = uaccess_flush ? 1 : 0;
++	return 0;
++}
++
++DEFINE_SIMPLE_ATTRIBUTE(fops_uaccess_flush, uaccess_flush_get, uaccess_flush_set, "%llu\n");
++
++
+ static __init int rfi_flush_debugfs_init(void)
+ {
+ 	debugfs_create_file("rfi_flush", 0600, powerpc_debugfs_root, NULL, &fops_rfi_flush);
++	debugfs_create_file("entry_flush", 0600, powerpc_debugfs_root, NULL, &fops_entry_flush);
++	debugfs_create_file("uaccess_flush", 0600, powerpc_debugfs_root, NULL, &fops_uaccess_flush);
+ 	return 0;
+ }
+ device_initcall(rfi_flush_debugfs_init);
+ #endif
++
++/*
++ * setup_uaccess_flush runs before jump_label_init, so we can't do the setup
++ * there. Do it now instead.
++ */
++static __init int uaccess_flush_static_key_init(void)
++{
++	if (uaccess_flush) {
++		printk(KERN_DEBUG "uaccess-flush: switching on static key\n");
++		static_branch_enable(&uaccess_flush_key);
++	}
++	return 0;
++}
++early_initcall(uaccess_flush_static_key_init);
+ #endif /* CONFIG_PPC_BOOK3S_64 */
+diff --git a/arch/powerpc/kernel/vmlinux.lds.S b/arch/powerpc/kernel/vmlinux.lds.S
+index 9b1e297be6730..f820d03335eb6 100644
+--- a/arch/powerpc/kernel/vmlinux.lds.S
++++ b/arch/powerpc/kernel/vmlinux.lds.S
+@@ -80,6 +80,20 @@ SECTIONS
+ 		__stop___stf_entry_barrier_fixup = .;
+ 	}
+ 
++	. = ALIGN(8);
++	__uaccess_flush_fixup : AT(ADDR(__uaccess_flush_fixup) - LOAD_OFFSET) {
++		__start___uaccess_flush_fixup = .;
++		*(__uaccess_flush_fixup)
++		__stop___uaccess_flush_fixup = .;
++	}
++
++	. = ALIGN(8);
++	__entry_flush_fixup : AT(ADDR(__entry_flush_fixup) - LOAD_OFFSET) {
++		__start___entry_flush_fixup = .;
++		*(__entry_flush_fixup)
++		__stop___entry_flush_fixup = .;
++	}
++
+ 	. = ALIGN(8);
+ 	__stf_exit_barrier_fixup : AT(ADDR(__stf_exit_barrier_fixup) - LOAD_OFFSET) {
+ 		__start___stf_exit_barrier_fixup = .;
+diff --git a/arch/powerpc/lib/checksum_wrappers_64.c b/arch/powerpc/lib/checksum_wrappers_64.c
+index 08e3a3356c402..11b58949eb628 100644
+--- a/arch/powerpc/lib/checksum_wrappers_64.c
++++ b/arch/powerpc/lib/checksum_wrappers_64.c
+@@ -29,6 +29,7 @@ __wsum csum_and_copy_from_user(const void __user *src, void *dst,
+ 	unsigned int csum;
+ 
+ 	might_sleep();
++	allow_read_from_user(src, len);
+ 
+ 	*err_ptr = 0;
+ 
+@@ -60,6 +61,7 @@ __wsum csum_and_copy_from_user(const void __user *src, void *dst,
+ 	}
+ 
+ out:
++	prevent_read_from_user(src, len);
+ 	return (__force __wsum)csum;
+ }
+ EXPORT_SYMBOL(csum_and_copy_from_user);
+@@ -70,6 +72,7 @@ __wsum csum_and_copy_to_user(const void *src, void __user *dst, int len,
+ 	unsigned int csum;
+ 
+ 	might_sleep();
++	allow_write_to_user(dst, len);
+ 
+ 	*err_ptr = 0;
+ 
+@@ -97,6 +100,7 @@ __wsum csum_and_copy_to_user(const void *src, void __user *dst, int len,
+ 	}
+ 
+ out:
++	prevent_write_to_user(dst, len);
+ 	return (__force __wsum)csum;
+ }
+ EXPORT_SYMBOL(csum_and_copy_to_user);
+diff --git a/arch/powerpc/lib/feature-fixups.c b/arch/powerpc/lib/feature-fixups.c
+index 7bdfc19a491d5..40b134bf5a680 100644
+--- a/arch/powerpc/lib/feature-fixups.c
++++ b/arch/powerpc/lib/feature-fixups.c
+@@ -229,6 +229,110 @@ void do_stf_barrier_fixups(enum stf_barrier_type types)
+ 	do_stf_exit_barrier_fixups(types);
+ }
+ 
++void do_uaccess_flush_fixups(enum l1d_flush_type types)
++{
++	unsigned int instrs[4], *dest;
++	long *start, *end;
++	int i;
++
++	start = PTRRELOC(&__start___uaccess_flush_fixup);
++	end = PTRRELOC(&__stop___uaccess_flush_fixup);
++
++	instrs[0] = 0x60000000; /* nop */
++	instrs[1] = 0x60000000; /* nop */
++	instrs[2] = 0x60000000; /* nop */
++	instrs[3] = 0x4e800020; /* blr */
++
++	i = 0;
++	if (types == L1D_FLUSH_FALLBACK) {
++		instrs[3] = 0x60000000; /* nop */
++		/* fallthrough to fallback flush */
++	}
++
++	if (types & L1D_FLUSH_ORI) {
++		instrs[i++] = 0x63ff0000; /* ori 31,31,0 speculation barrier */
++		instrs[i++] = 0x63de0000; /* ori 30,30,0 L1d flush*/
++	}
++
++	if (types & L1D_FLUSH_MTTRIG)
++		instrs[i++] = 0x7c12dba6; /* mtspr TRIG2,r0 (SPR #882) */
++
++	for (i = 0; start < end; start++, i++) {
++		dest = (void *)start + *start;
++
++		pr_devel("patching dest %lx\n", (unsigned long)dest);
++
++		patch_instruction(dest, instrs[0]);
++
++		patch_instruction((dest + 1), instrs[1]);
++		patch_instruction((dest + 2), instrs[2]);
++		patch_instruction((dest + 3), instrs[3]);
++	}
++
++	printk(KERN_DEBUG "uaccess-flush: patched %d locations (%s flush)\n", i,
++		(types == L1D_FLUSH_NONE)       ? "no" :
++		(types == L1D_FLUSH_FALLBACK)   ? "fallback displacement" :
++		(types &  L1D_FLUSH_ORI)        ? (types & L1D_FLUSH_MTTRIG)
++							? "ori+mttrig type"
++							: "ori type" :
++		(types &  L1D_FLUSH_MTTRIG)     ? "mttrig type"
++						: "unknown");
++}
++
++void do_entry_flush_fixups(enum l1d_flush_type types)
++{
++	unsigned int instrs[3], *dest;
++	long *start, *end;
++	int i;
++
++	start = PTRRELOC(&__start___entry_flush_fixup);
++	end = PTRRELOC(&__stop___entry_flush_fixup);
++
++	instrs[0] = 0x60000000; /* nop */
++	instrs[1] = 0x60000000; /* nop */
++	instrs[2] = 0x60000000; /* nop */
++
++	i = 0;
++	if (types == L1D_FLUSH_FALLBACK) {
++		instrs[i++] = 0x7d4802a6; /* mflr r10		*/
++		instrs[i++] = 0x60000000; /* branch patched below */
++		instrs[i++] = 0x7d4803a6; /* mtlr r10		*/
++	}
++
++	if (types & L1D_FLUSH_ORI) {
++		instrs[i++] = 0x63ff0000; /* ori 31,31,0 speculation barrier */
++		instrs[i++] = 0x63de0000; /* ori 30,30,0 L1d flush*/
++	}
++
++	if (types & L1D_FLUSH_MTTRIG)
++		instrs[i++] = 0x7c12dba6; /* mtspr TRIG2,r0 (SPR #882) */
++
++	for (i = 0; start < end; start++, i++) {
++		dest = (void *)start + *start;
++
++		pr_devel("patching dest %lx\n", (unsigned long)dest);
++
++		patch_instruction(dest, instrs[0]);
++
++		if (types == L1D_FLUSH_FALLBACK)
++			patch_branch((dest + 1), (unsigned long)&entry_flush_fallback,
++				     BRANCH_SET_LINK);
++		else
++			patch_instruction((dest + 1), instrs[1]);
++
++		patch_instruction((dest + 2), instrs[2]);
++	}
++
++	printk(KERN_DEBUG "entry-flush: patched %d locations (%s flush)\n", i,
++		(types == L1D_FLUSH_NONE)       ? "no" :
++		(types == L1D_FLUSH_FALLBACK)   ? "fallback displacement" :
++		(types &  L1D_FLUSH_ORI)        ? (types & L1D_FLUSH_MTTRIG)
++							? "ori+mttrig type"
++							: "ori type" :
++		(types &  L1D_FLUSH_MTTRIG)     ? "mttrig type"
++						: "unknown");
++}
++
+ void do_rfi_flush_fixups(enum l1d_flush_type types)
+ {
+ 	unsigned int instrs[3], *dest;
+diff --git a/arch/powerpc/lib/string.S b/arch/powerpc/lib/string.S
+index c80fb49ce607f..93c4c34ad0910 100644
+--- a/arch/powerpc/lib/string.S
++++ b/arch/powerpc/lib/string.S
+@@ -122,7 +122,7 @@ _GLOBAL(memchr)
+ 	blr
+ 
+ #ifdef CONFIG_PPC32
+-_GLOBAL(__clear_user)
++_GLOBAL(__arch_clear_user)
+ 	addi	r6,r3,-4
+ 	li	r3,0
+ 	li	r5,0
+diff --git a/arch/powerpc/lib/string_64.S b/arch/powerpc/lib/string_64.S
+index 7bd9549a90a23..14d26ad2cd69e 100644
+--- a/arch/powerpc/lib/string_64.S
++++ b/arch/powerpc/lib/string_64.S
+@@ -27,7 +27,7 @@ PPC64_CACHES:
+ 	.section	".text"
+ 
+ /**
+- * __clear_user: - Zero a block of memory in user space, with less checking.
++ * __arch_clear_user: - Zero a block of memory in user space, with less checking.
+  * @to:   Destination address, in user space.
+  * @n:    Number of bytes to zero.
+  *
+@@ -77,7 +77,7 @@ err3;	stb	r0,0(r3)
+ 	mr	r3,r4
+ 	blr
+ 
+-_GLOBAL_TOC(__clear_user)
++_GLOBAL_TOC(__arch_clear_user)
+ 	cmpdi	r4,32
+ 	neg	r6,r3
+ 	li	r0,0
+diff --git a/arch/powerpc/platforms/powernv/setup.c b/arch/powerpc/platforms/powernv/setup.c
+index e14b52c7ebd83..6259228a0e18c 100644
+--- a/arch/powerpc/platforms/powernv/setup.c
++++ b/arch/powerpc/platforms/powernv/setup.c
+@@ -124,12 +124,27 @@ static void pnv_setup_rfi_flush(void)
+ 			type = L1D_FLUSH_ORI;
+ 	}
+ 
++	/*
++	 * 4.4 doesn't support Power9 bare metal, so we don't need to flush
++	 * here - the flushes fix a P9 specific vulnerability.
++	 */
++	security_ftr_clear(SEC_FTR_L1D_FLUSH_ENTRY);
++	security_ftr_clear(SEC_FTR_L1D_FLUSH_UACCESS);
++
+ 	enable = security_ftr_enabled(SEC_FTR_FAVOUR_SECURITY) && \
+ 		 (security_ftr_enabled(SEC_FTR_L1D_FLUSH_PR)   || \
+ 		  security_ftr_enabled(SEC_FTR_L1D_FLUSH_HV));
+ 
+ 	setup_rfi_flush(type, enable);
+ 	setup_count_cache_flush();
++
++	enable = security_ftr_enabled(SEC_FTR_FAVOUR_SECURITY) &&
++		 security_ftr_enabled(SEC_FTR_L1D_FLUSH_ENTRY);
++	setup_entry_flush(enable);
++
++	enable = security_ftr_enabled(SEC_FTR_FAVOUR_SECURITY) &&
++		 security_ftr_enabled(SEC_FTR_L1D_FLUSH_UACCESS);
++	setup_uaccess_flush(enable);
+ }
+ 
+ static void __init pnv_setup_arch(void)
+diff --git a/arch/powerpc/platforms/pseries/setup.c b/arch/powerpc/platforms/pseries/setup.c
+index 88fcf6a95fa67..498c5092bd23a 100644
+--- a/arch/powerpc/platforms/pseries/setup.c
++++ b/arch/powerpc/platforms/pseries/setup.c
+@@ -584,6 +584,14 @@ void pseries_setup_rfi_flush(void)
+ 
+ 	setup_rfi_flush(types, enable);
+ 	setup_count_cache_flush();
++
++	enable = security_ftr_enabled(SEC_FTR_FAVOUR_SECURITY) &&
++		 security_ftr_enabled(SEC_FTR_L1D_FLUSH_ENTRY);
++	setup_entry_flush(enable);
++
++	enable = security_ftr_enabled(SEC_FTR_FAVOUR_SECURITY) &&
++		 security_ftr_enabled(SEC_FTR_L1D_FLUSH_UACCESS);
++	setup_uaccess_flush(enable);
+ }
+ 
+ static void __init pSeries_setup_arch(void)
+diff --git a/arch/x86/kvm/emulate.c b/arch/x86/kvm/emulate.c
+index 0c1e249a7ab69..827d54a5126e8 100644
+--- a/arch/x86/kvm/emulate.c
++++ b/arch/x86/kvm/emulate.c
+@@ -3922,6 +3922,12 @@ static int em_clflush(struct x86_emulate_ctxt *ctxt)
+ 	return X86EMUL_CONTINUE;
+ }
+ 
++static int em_clflushopt(struct x86_emulate_ctxt *ctxt)
++{
++	/* emulating clflushopt regardless of cpuid */
++	return X86EMUL_CONTINUE;
++}
++
+ static int em_movsxd(struct x86_emulate_ctxt *ctxt)
+ {
+ 	ctxt->dst.val = (s32) ctxt->src.val;
+@@ -4411,7 +4417,7 @@ static const struct opcode group11[] = {
+ };
+ 
+ static const struct gprefix pfx_0f_ae_7 = {
+-	I(SrcMem | ByteOp, em_clflush), N, N, N,
++	I(SrcMem | ByteOp, em_clflush), I(SrcMem | ByteOp, em_clflushopt), N, N,
+ };
+ 
+ static const struct group_dual group15 = { {
+diff --git a/drivers/i2c/busses/i2c-imx.c b/drivers/i2c/busses/i2c-imx.c
+index d121c5732d7db..37303a7a2e737 100644
+--- a/drivers/i2c/busses/i2c-imx.c
++++ b/drivers/i2c/busses/i2c-imx.c
+@@ -1093,20 +1093,20 @@ static int i2c_imx_probe(struct platform_device *pdev)
+ 		goto clk_disable;
+ 	}
+ 
+-	/* Request IRQ */
+-	ret = devm_request_irq(&pdev->dev, irq, i2c_imx_isr, 0,
+-				pdev->name, i2c_imx);
+-	if (ret) {
+-		dev_err(&pdev->dev, "can't claim irq %d\n", irq);
+-		goto clk_disable;
+-	}
+-
+ 	/* Init queue */
+ 	init_waitqueue_head(&i2c_imx->queue);
+ 
+ 	/* Set up adapter data */
+ 	i2c_set_adapdata(&i2c_imx->adapter, i2c_imx);
+ 
++	/* Request IRQ */
++	ret = request_threaded_irq(irq, i2c_imx_isr, NULL, 0,
++				   pdev->name, i2c_imx);
++	if (ret) {
++		dev_err(&pdev->dev, "can't claim irq %d\n", irq);
++		goto clk_disable;
++	}
++
+ 	/* Set up clock divider */
+ 	i2c_imx->bitrate = IMX_I2C_BIT_RATE;
+ 	ret = of_property_read_u32(pdev->dev.of_node,
+@@ -1125,7 +1125,7 @@ static int i2c_imx_probe(struct platform_device *pdev)
+ 	ret = i2c_add_numbered_adapter(&i2c_imx->adapter);
+ 	if (ret < 0) {
+ 		dev_err(&pdev->dev, "registration failed\n");
+-		goto clk_disable;
++		goto clk_free_irq;
+ 	}
+ 
+ 	/* Set up platform driver data */
+@@ -1143,6 +1143,8 @@ static int i2c_imx_probe(struct platform_device *pdev)
+ 
+ 	return 0;   /* Return OK */
+ 
++clk_free_irq:
++	free_irq(irq, i2c_imx);
+ clk_disable:
+ 	clk_disable_unprepare(i2c_imx->clk);
+ 	return ret;
+@@ -1151,6 +1153,7 @@ clk_disable:
+ static int i2c_imx_remove(struct platform_device *pdev)
+ {
+ 	struct imx_i2c_struct *i2c_imx = platform_get_drvdata(pdev);
++	int irq;
+ 
+ 	/* remove adapter */
+ 	dev_dbg(&i2c_imx->adapter.dev, "adapter removed\n");
+@@ -1165,6 +1168,10 @@ static int i2c_imx_remove(struct platform_device *pdev)
+ 	imx_i2c_write_reg(0, i2c_imx, IMX_I2C_I2CR);
+ 	imx_i2c_write_reg(0, i2c_imx, IMX_I2C_I2SR);
+ 
++	irq = platform_get_irq(pdev, 0);
++	if (irq >= 0)
++		free_irq(irq, i2c_imx);
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/input/keyboard/sunkbd.c b/drivers/input/keyboard/sunkbd.c
+index dc6bb9d5b4f02..191c27dda3860 100644
+--- a/drivers/input/keyboard/sunkbd.c
++++ b/drivers/input/keyboard/sunkbd.c
+@@ -115,7 +115,8 @@ static irqreturn_t sunkbd_interrupt(struct serio *serio,
+ 	switch (data) {
+ 
+ 	case SUNKBD_RET_RESET:
+-		schedule_work(&sunkbd->tq);
++		if (sunkbd->enabled)
++			schedule_work(&sunkbd->tq);
+ 		sunkbd->reset = -1;
+ 		break;
+ 
+@@ -216,16 +217,12 @@ static int sunkbd_initialize(struct sunkbd *sunkbd)
+ }
+ 
+ /*
+- * sunkbd_reinit() sets leds and beeps to a state the computer remembers they
+- * were in.
++ * sunkbd_set_leds_beeps() sets leds and beeps to a state the computer remembers
++ * they were in.
+  */
+ 
+-static void sunkbd_reinit(struct work_struct *work)
++static void sunkbd_set_leds_beeps(struct sunkbd *sunkbd)
+ {
+-	struct sunkbd *sunkbd = container_of(work, struct sunkbd, tq);
+-
+-	wait_event_interruptible_timeout(sunkbd->wait, sunkbd->reset >= 0, HZ);
+-
+ 	serio_write(sunkbd->serio, SUNKBD_CMD_SETLED);
+ 	serio_write(sunkbd->serio,
+ 		(!!test_bit(LED_CAPSL,   sunkbd->dev->led) << 3) |
+@@ -238,11 +235,39 @@ static void sunkbd_reinit(struct work_struct *work)
+ 		SUNKBD_CMD_BELLOFF - !!test_bit(SND_BELL, sunkbd->dev->snd));
+ }
+ 
++
++/*
++ * sunkbd_reinit() wait for the keyboard reset to complete and restores state
++ * of leds and beeps.
++ */
++
++static void sunkbd_reinit(struct work_struct *work)
++{
++	struct sunkbd *sunkbd = container_of(work, struct sunkbd, tq);
++
++	/*
++	 * It is OK that we check sunkbd->enabled without pausing serio,
++	 * as we only want to catch true->false transition that will
++	 * happen once and we will be woken up for it.
++	 */
++	wait_event_interruptible_timeout(sunkbd->wait,
++					 sunkbd->reset >= 0 || !sunkbd->enabled,
++					 HZ);
++
++	if (sunkbd->reset >= 0 && sunkbd->enabled)
++		sunkbd_set_leds_beeps(sunkbd);
++}
++
+ static void sunkbd_enable(struct sunkbd *sunkbd, bool enable)
+ {
+ 	serio_pause_rx(sunkbd->serio);
+ 	sunkbd->enabled = enable;
+ 	serio_continue_rx(sunkbd->serio);
++
++	if (!enable) {
++		wake_up_interruptible(&sunkbd->wait);
++		cancel_work_sync(&sunkbd->tq);
++	}
+ }
+ 
+ /*
+diff --git a/fs/xfs/xfs_icache.c b/fs/xfs/xfs_icache.c
+index adbc1f59969a5..d8cdab4bfd30d 100644
+--- a/fs/xfs/xfs_icache.c
++++ b/fs/xfs/xfs_icache.c
+@@ -134,6 +134,46 @@ xfs_inode_free(
+ 	call_rcu(&VFS_I(ip)->i_rcu, xfs_inode_free_callback);
+ }
+ 
++/*
++ * If we are allocating a new inode, then check what was returned is
++ * actually a free, empty inode. If we are not allocating an inode,
++ * then check we didn't find a free inode.
++ *
++ * Returns:
++ *	0		if the inode free state matches the lookup context
++ *	-ENOENT		if the inode is free and we are not allocating
++ *	-EFSCORRUPTED	if there is any state mismatch at all
++ */
++static int
++xfs_iget_check_free_state(
++	struct xfs_inode	*ip,
++	int			flags)
++{
++	if (flags & XFS_IGET_CREATE) {
++		/* should be a free inode */
++		if (ip->i_d.di_mode != 0) {
++			xfs_warn(ip->i_mount,
++"Corruption detected! Free inode 0x%llx not marked free! (mode 0x%x)",
++				ip->i_ino, ip->i_d.di_mode);
++			return -EFSCORRUPTED;
++		}
++
++		if (ip->i_d.di_nblocks != 0) {
++			xfs_warn(ip->i_mount,
++"Corruption detected! Free inode 0x%llx has blocks allocated!",
++				ip->i_ino);
++			return -EFSCORRUPTED;
++		}
++		return 0;
++	}
++
++	/* should be an allocated inode */
++	if (ip->i_d.di_mode == 0)
++		return -ENOENT;
++
++	return 0;
++}
++
+ /*
+  * Check the validity of the inode we just found it the cache
+  */
+@@ -183,12 +223,12 @@ xfs_iget_cache_hit(
+ 	}
+ 
+ 	/*
+-	 * If lookup is racing with unlink return an error immediately.
++	 * Check the inode free state is valid. This also detects lookup
++	 * racing with unlinks.
+ 	 */
+-	if (ip->i_d.di_mode == 0 && !(flags & XFS_IGET_CREATE)) {
+-		error = -ENOENT;
++	error = xfs_iget_check_free_state(ip, flags);
++	if (error)
+ 		goto out_error;
+-	}
+ 
+ 	/*
+ 	 * If IRECLAIMABLE is set, we've torn down the VFS inode already.
+@@ -298,10 +338,14 @@ xfs_iget_cache_miss(
+ 
+ 	trace_xfs_iget_miss(ip);
+ 
+-	if ((ip->i_d.di_mode == 0) && !(flags & XFS_IGET_CREATE)) {
+-		error = -ENOENT;
++
++	/*
++	 * Check the inode free state is valid. This also detects lookup
++	 * racing with unlinks.
++	 */
++	error = xfs_iget_check_free_state(ip, flags);
++	if (error)
+ 		goto out_destroy;
+-	}
+ 
+ 	/*
+ 	 * Preload the radix tree so we can insert safely under the
+diff --git a/net/mac80211/sta_info.c b/net/mac80211/sta_info.c
+index bbddab248c489..6f7c3f6a5027b 100644
+--- a/net/mac80211/sta_info.c
++++ b/net/mac80211/sta_info.c
+@@ -242,6 +242,24 @@ struct sta_info *sta_info_get_by_idx(struct ieee80211_sub_if_data *sdata,
+  */
+ void sta_info_free(struct ieee80211_local *local, struct sta_info *sta)
+ {
++	/*
++	 * If we had used sta_info_pre_move_state() then we might not
++	 * have gone through the state transitions down again, so do
++	 * it here now (and warn if it's inserted).
++	 *
++	 * This will clear state such as fast TX/RX that may have been
++	 * allocated during state transitions.
++	 */
++	while (sta->sta_state > IEEE80211_STA_NONE) {
++		int ret;
++
++		WARN_ON_ONCE(test_sta_flag(sta, WLAN_STA_INSERTED));
++
++		ret = sta_info_move_state(sta, sta->sta_state - 1);
++		if (WARN_ONCE(ret, "sta_info_move_state() returned %d\n", ret))
++			break;
++	}
++
+ 	if (sta->rate_ctrl)
+ 		rate_control_free_sta(sta);
+ 
