@@ -526,9 +526,19 @@ compile_kernel()
 	OLDHASHTARGET=$(head -1 "${HASHTARGET}.githash" 2>/dev/null)
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
+
+	# calculate URL
+	if [[ "$KERNELSOURCE" == *"github.com"* ]]; then
+		URL="${KERNELSOURCE/git:/https:}/commit/${HASH}"
+	elif [[ "$KERNELSOURCE" == *"kernel.org"* ]]; then
+		URL="${KERNELSOURCE/git:/https:}/commit/?h=$(echo $KERNELBRANCH | cut -d":" -f2)&id=${HASH}"
+	else
+		URL="${KERNELSOURCE}/+/$HASH"
+	fi
+
 	if [[ -f "${HASHTARGET}.githash" ]]; then
 		# create change log
-		git -C ${kerneldir} log --abbrev-commit --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | '${KERNELSOURCE}'/commit/%h' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
+		git -C ${kerneldir} log --abbrev-commit --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | '${URL}'' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
 	else
 		truncate "${HASHTARGET}.gitlog" --size 0
 	fi
