@@ -538,7 +538,7 @@ compile_kernel()
 
 	if [[ -f "${HASHTARGET}.githash" ]]; then
 		# create change log
-		git -C ${kerneldir} log --abbrev-commit --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | '${URL}'' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
+		git -C ${kerneldir} log --abbrev-commit --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | <a href='$URL'>%H</a>' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
 	else
 		truncate "${HASHTARGET}.gitlog" --size 0
 	fi
