@@ -1,27 +1,34 @@
 #!/bin/bash
 #
-# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-
+#
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
 # common options
 # daily beta build contains date in subrevision
 #if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%j"); fi
-REVISION=$(cat "${SRC}"/VERSION)"$SUBREVISION" # all boards have same revision
+if [ -f $USERPATCHES_PATH/VERSION ]; then
+  REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)"$SUBREVISION" # all boards have same revision
+else
+  REVISION=$(cat "${SRC}"/VERSION)"$SUBREVISION" # all boards have same revision
+fi
+[[ -z $VENDOR ]] && VENDOR="Armbian"
 [[ -z $ROOTPWD ]] && ROOTPWD="1234" # Must be changed @first login
 [[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik" # deb signature
 [[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
 TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
+HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
+[[ -z $HOSTRELEASE ]] && HOSTRELEASE=$(cut -d'/' -f1 /etc/debian_version)
 [[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
-ROOTFSCACHE_VERSION=4
+ROOTFSCACHE_VERSION=8
 CHROOT_CACHE_VERSION=7
 BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2>/dev/null | grep origin) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
@@ -61,16 +68,30 @@ fi
 
 # used by multiple sources - reduce code duplication
 [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
+
 case $MAINLINE_MIRROR in
-	google) MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable' ;;
-	tuna) MAINLINE_KERNEL_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git' ;;
-	bfsu) MAINLINE_KERNEL_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-stable.git' ;;
-	*) MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git' ;;
+	google)
+		MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
+		MAINLINE_FIRMWARE_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
+		;;
+	tuna)
+		MAINLINE_KERNEL_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git'
+		MAINLINE_FIRMWARE_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-firmware.git'
+		;;
+	bfsu)
+		MAINLINE_KERNEL_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-stable.git'
+		MAINLINE_FIRMWARE_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-firmware.git'
+		;;
+	*)
+		MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git'
+		MAINLINE_FIRMWARE_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
+		;;
 esac
+
 MAINLINE_KERNEL_DIR='linux-mainline'
 
 if [[ $USE_GITHUB_UBOOT_MIRROR == yes ]]; then
-	MAINLINE_UBOOT_SOURCE='https://github.com/RobertCNelson/u-boot'
+	MAINLINE_UBOOT_SOURCE='https://github.com/u-boot/u-boot'
 else
 	MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
 fi
@@ -147,7 +168,7 @@ desktop_element_available_for_arch() {
 
 	local arch_limitation_file="${1}/only_for"
 
-	echo "Checking if ${desktop_element_path} is available for ${targeted_arch} in ${arch_limitation_file}" >> "${DEST}"/debug/output.log
+	echo "Checking if ${desktop_element_path} is available for ${targeted_arch} in ${arch_limitation_file}" >> "${DEST}"/${LOG_SUBPATH}/output.log
 	if [[ -f "${arch_limitation_file}" ]]; then
 		grep -- "${targeted_arch}" "${arch_limitation_file}"
 		return $?
@@ -231,6 +252,9 @@ if [[ $BUILD_DESKTOP == "yes" ]]; then
 			error_msg+="$(cat "${DESKTOP_ENVIRONMENT_DIRPATH}/only_for")"
 		fi
 
+		# supress error when cache is rebuilding
+		[[ -n "$ROOT_FS_CREATE_ONLY" ]] && exit 0
+
 		exit_with_error "${error_msg}"
 	}
 
@@ -297,17 +321,21 @@ fi
 # Write to variables :
 # - aggregated_content
 aggregate_content() {
-	echo -e "Potential paths : ${potential_paths}\n" >> "${DEST}"/debug/output.log
+	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/potential-paths.log"
+	echo -e "Potential paths :" >> "${LOG_OUTPUT_FILE}"
+	show_checklist_variables potential_paths
 	for filepath in ${potential_paths}; do
 		if [[ -f "${filepath}" ]]; then
-			echo -e "${filepath/"$SRC"\//} yes\n" >> "${DEST}"/debug/output.log
+			echo -e "${filepath/"$SRC"\//} yes" >> "${LOG_OUTPUT_FILE}"
 			aggregated_content+=$(cat "${filepath}")
 			aggregated_content+="${separator}"
-		else
-			echo -e "${filepath/"$SRC"\//} no\n" >> "${DEST}"/debug/output.log
+#		else
+#			echo -e "${filepath/"$SRC"\//} no\n" >> "${LOG_OUTPUT_FILE}"
 		fi
 
 	done
+	echo "" >> "${LOG_OUTPUT_FILE}"
+	unset LOG_OUTPUT_FILE
 }
 
 # set unique mounting directory
@@ -320,7 +348,7 @@ DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}"
 [[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
 [[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
 [[ $RELEASE == bionic && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Ubuntu Bionic images with selected kernel is not supported"
-[[ $RELEASE == bionic && $(lsb_release -sc) == xenial ]] && exit_with_error "Building Ubuntu Bionic images requires a Bionic build host. Please upgrade your host or select a different target OS"
+[[ $RELEASE == hirsute && $HOSTRELEASE == focal ]] && exit_with_error "Building Ubuntu Hirsute images requires Hirsute build host. Please upgrade your host or select a different target OS"
 
 [[ -n $ATFSOURCE && -z $ATF_USE_GCC ]] && exit_with_error "Error in configuration: ATF_USE_GCC is unset"
 [[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
@@ -333,7 +361,7 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-if [[ "$RELEASE" =~ ^(xenial|bionic|focal|groovy|hirsute)$ ]]; then
+if [[ "$RELEASE" =~ ^(xenial|bionic|focal|hirsute|impish)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
@@ -348,10 +376,11 @@ fi
 
 AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS="
 ${SRC}/config
-${SRC}/config/optional/_any_board/_configs
+${SRC}/config/optional/_any_board/_config
 ${SRC}/config/optional/architectures/${ARCH}/_config
 ${SRC}/config/optional/families/${LINUXFAMILY}/_config
 ${SRC}/config/optional/boards/${BOARD}/_config
+${USERPATCHES_PATH}
 "
 
 DEBOOTSTRAP_SEARCH_RELATIVE_DIRS="
@@ -362,6 +391,14 @@ cli/${RELEASE}/debootstrap
 CLI_SEARCH_RELATIVE_DIRS="
 cli/_all_distributions/main
 cli/${RELEASE}/main
+"
+
+PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS="
+${SRC}/packages
+${SRC}/config/optional/_any_board/_packages
+${SRC}/config/optional/architectures/${ARCH}/_packages
+${SRC}/config/optional/families/${LINUXFAMILY}/_packages
+${SRC}/config/optional/boards/${BOARD}/_packages
 "
 
 DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS="
@@ -466,10 +503,8 @@ DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
 PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
 PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
 
-echo "DEBOOTSTRAP LIST : ${DEBOOTSTRAP_LIST}" >> "${DEST}"/debug/output.log
-echo "DEBOOTSTRAP_COMPONENTS : ${DEBOOTSTRAP_COMPONENTS}" >> "${DEST}"/debug/output.log
-echo "CLI PACKAGE_LIST : ${PACKAGE_LIST}" >> "${DEST}"/debug/output.log
-echo "CLI PACKAGE_LIST_ADDITIONAL : ${PACKAGE_LIST_ADDITIONAL}" >> "${DEST}"/debug/output.log
+LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
+show_checklist_variables "DEBOOTSTRAP_LIST DEBOOTSTRAP_COMPONENTS PACKAGE_LIST PACKAGE_LIST_ADDITIONAL PACKAGE_LIST_UNINSTALL"
 
 # Dependent desktop packages
 # Myy : Sources packages from file here
@@ -477,16 +512,10 @@ echo "CLI PACKAGE_LIST_ADDITIONAL : ${PACKAGE_LIST_ADDITIONAL}" >> "${DEST}"/deb
 # Myy : FIXME Rename aggregate_all to aggregate_all_desktop
 if [[ $BUILD_DESKTOP == "yes" ]]; then
 	PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
-	echo "Groups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES : ${PACKAGE_LIST_DESKTOP}" >> "${DEST}"/debug/output.log
+	echo -e "\nGroups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES :" >> "${LOG_OUTPUT_FILE}"
+	show_checklist_variables PACKAGE_LIST_DESKTOP
 fi
-
-display_alert "Deboostrap" >> "${DEST}"/debug/output.log
-display_alert "Components ${DEBOOTSTRAP_COMPONENTS}" >> "${DEST}"/debug/output.log
-display_alert "Packages ${DEBOOTSTRAP_LIST}" >> "${DEST}"/debug/output.log
-display_alert "----" >> "${DEST}"/debug/output.log
-display_alert "CLI packages" >> "${DEST}"/debug/output.log
-display_alert "Standard : ${PACKAGE_LIST}" >> "${DEST}"/debug/output.log
-display_alert "Additional : ${PACKAGE_LIST_ADDITIONAL}" >> "${DEST}"/debug/output.log
+unset LOG_OUTPUT_FILE
 
 DEBIAN_MIRROR='deb.debian.org/debian'
 DEBIAN_SECURTY='security.debian.org/'
@@ -505,12 +534,14 @@ if [[ $DOWNLOAD_MIRROR == "bfsu" ]] ; then
 fi
 
 # don't use mirrors that throws garbage on 404
-while true; do
+if [[ -z ${ARMBIAN_MIRROR} ]]; then
+	while true; do
 
-	ARMBIAN_MIRROR=$(wget -SO- -T 1 -t 1 https://redirect.armbian.com 2>&1 | egrep -i "Location" | awk '{print $2}' | head -1)
-	[[ ${ARMBIAN_MIRROR} != *armbian.hosthatch* ]] && break
+		ARMBIAN_MIRROR=$(wget -SO- -T 1 -t 1 https://redirect.armbian.com 2>&1 | egrep -i "Location" | awk '{print $2}' | head -1)
+		[[ ${ARMBIAN_MIRROR} != *armbian.hosthatch* ]] && break
 
-done
+	done
+fi
 
 # For user override
 if [[ -f $USERPATCHES_PATH/lib.config ]]; then
@@ -552,19 +583,16 @@ aggregate_all_desktop "packages.uninstall" " "
 PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
 unset aggregated_content
 
-display_alert "PACKAGE_MAIN_LIST : ${PACKAGE_MAIN_LIST}" >> "${DEST}"/debug/output.log
-display_alert "PACKAGE_LIST : ${PACKAGE_LIST}" >> "${DEST}"/debug/output.log
-display_alert "PACKAGE_LIST_RM : ${PACKAGE_LIST_RM}" >> "${DEST}"/debug/output.log
-display_alert "PACKAGE_LIST_UNINSTALL : ${PACKAGE_LIST_UNINSTALL}" >> "${DEST}"/debug/output.log
 
 if [[ -n $PACKAGE_LIST_RM ]]; then
-	display_alert "Remove filter : $(tr ' ' '|' <<< ${PACKAGE_LIST_RM})"
+	display_alert "Package remove list ${PACKAGE_LIST_RM}"
 	# Turns out that \b can be tricked by dashes.
 	# So if you remove mesa-utils but still want to install "mesa-utils-extra"
 	# a "\b(mesa-utils)\b" filter will convert "mesa-utils-extra" to "-extra".
 	# \W is not tricked by this but consumes the surrounding spaces, so we
 	# replace the occurence by one space, to avoid sticking the next word to
 	# the previous one after consuming the spaces.
+	DEBOOTSTRAP_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${DEBOOTSTRAP_LIST} ")
 	PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST} ")
 	PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_MAIN_LIST} ")
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
@@ -576,26 +604,29 @@ if [[ -n $PACKAGE_LIST_RM ]]; then
 
 	# Removing double spaces... AGAIN, since we might have used a sed on them
 	# Do not quote the variables. This would defeat the trick.
+	DEBOOTSTRAP_LIST="$(echo ${DEBOOTSTRAP_LIST})"
 	PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
 	PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
 fi
 
-display_alert "After removal of packages.remove packages" >> "${DEST}"/debug/output.log
-display_alert "PACKAGE_MAIN_LIST : \"${PACKAGE_MAIN_LIST}\"" >> "${DEST}"/debug/output.log
-display_alert "PACKAGE_LIST : \"${PACKAGE_LIST}\"" >> "${DEST}"/debug/output.log
+
+LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
+echo -e "\nVariables after manual configuration" >>$LOG_OUTPUT_FILE
+show_checklist_variables "DEBOOTSTRAP_COMPONENTS DEBOOTSTRAP_LIST PACKAGE_LIST PACKAGE_MAIN_LIST"
+unset LOG_OUTPUT_FILE
 
 # Give the option to configure DNS server used in the chroot during the build process
 [[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
 
 # debug
-cat <<-EOF >> "${DEST}"/debug/output.log
+cat <<-EOF >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 ## BUILD SCRIPT ENVIRONMENT
 
 Repository: $REPOSITORY_URL
 Version: $REPOSITORY_COMMIT
 
-Host OS: $(lsb_release -sc)
+Host OS: $HOSTRELEASE
 Host arch: $(dpkg --print-architecture)
 Host system: $(uname -a)
 Virtualization type: $(systemd-detect-virt)
@@ -630,12 +661,9 @@ Repository: $BOOTSOURCE
 Branch: $BOOTBRANCH
 Config file: $BOOTCONFIG
 
-Partitioning configuration:
-Root partition type: $ROOTFS_TYPE
-Boot partition type: ${BOOTFS_TYPE:-(none)}
-User provided boot partition size: ${BOOTSIZE:-0}
-Offset: $OFFSET
+Partitioning configuration: $IMAGE_PARTITION_TABLE offset: $OFFSET
+Boot partition type: ${BOOTFS_TYPE:-(none)} ${BOOTSIZE:+"(${BOOTSIZE} MB)"}
+Root partition type: $ROOTFS_TYPE ${FIXED_IMAGE_SIZE:+"(${FIXED_IMAGE_SIZE} MB)"}
 
-CPU configuration:
-$CPUMIN - $CPUMAX with $GOVERNOR
+CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
 EOF

@@ -1,23 +1,29 @@
 #!/bin/bash
 #
-# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-
+#
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
 # Functions:
+
 # mount_chroot
 # umount_chroot
 # unmount_on_exit
 # check_loop_device
 # install_external_applications
 # write_uboot
+# copy_all_packages_files_for
 # customize_image
 # install_deb_chroot
+# run_on_sdcard
+
+
+
 
 # mount_chroot <target>
 #
@@ -25,12 +31,17 @@
 #
 mount_chroot()
 {
+
 	local target=$1
 	mount -t proc chproc "${target}"/proc
 	mount -t sysfs chsys "${target}"/sys
 	mount -t devtmpfs chdev "${target}"/dev || mount --bind /dev "${target}"/dev
 	mount -t devpts chpts "${target}"/dev/pts
-} #############################################################################
+
+}
+
+
+
 
 # umount_chroot <target>
 #
@@ -38,6 +49,7 @@ mount_chroot()
 #
 umount_chroot()
 {
+
 	local target=$1
 	display_alert "Unmounting" "$target" "info"
 	while grep -Eq "${target}.*(dev|proc|sys)" /proc/mounts
@@ -47,12 +59,17 @@ umount_chroot()
 		umount -l "${target}"/sys >/dev/null 2>&1
 		sleep 5
 	done
-} #############################################################################
+
+}
+
+
+
 
 # unmount_on_exit
 #
 unmount_on_exit()
 {
+
 	trap - INT TERM EXIT
 	umount_chroot "${SDCARD}/"
 	umount -l "${SDCARD}"/tmp >/dev/null 2>&1
@@ -63,12 +80,17 @@ unmount_on_exit()
 	losetup -d "${LOOP}" >/dev/null 2>&1
 	rm -rf --one-file-system "${SDCARD}"
 	exit_with_error "debootstrap-ng was interrupted"
-} #############################################################################
+
+}
+
+
+
 
 # check_loop_device <device_node>
 #
 check_loop_device()
 {
+
 	local device=$1
 	if [[ ! -b $device ]]; then
 		if [[ $CONTAINER_COMPAT == yes && -b /tmp/$device ]]; then
@@ -78,35 +100,62 @@ check_loop_device()
 			exit_with_error "Device node $device does not exist"
 		fi
 	fi
-} #############################################################################
+
+}
+
+
+
 
 # write_uboot <loopdev>
 #
-# writes u-boot to loop device
-# Parameters:
-# loopdev: loop device with mounted rootfs image
-#
 write_uboot()
 {
+
 	local loop=$1 revision
 	display_alert "Writing U-boot bootloader" "$loop" "info"
 	TEMP_DIR=$(mktemp -d || exit 1)
 	chmod 700 ${TEMP_DIR}
 	revision=${REVISION}
 	if [[ -n $UPSTREM_VER ]]; then
-		DEB_BRANCH=${DEB_BRANCH/-/}
 		revision=${UPSTREM_VER}
-		dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${DEB_BRANCH/-/}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
+		dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
 	else
 		dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
 	fi
-	write_uboot_platform "${TEMP_DIR}/usr/lib/${CHOSEN_UBOOT}_${revision}_${ARCH}" "$loop"
+
+	# source platform install to read $DIR
+	source ${TEMP_DIR}/usr/lib/u-boot/platform_install.sh
+	write_uboot_platform "${TEMP_DIR}${DIR}" "$loop"
 	[[ $? -ne 0 ]] && exit_with_error "U-boot bootloader failed to install" "@host"
 	rm -rf ${TEMP_DIR}
-} #############################################################################
+
+}
+
+
+
+
+# copy_all_packages_files_for <folder> to package
+#
+copy_all_packages_files_for()
+{
+	local package_name="${1}"
+	for package_src_dir in ${PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS};
+	do
+		local package_dirpath="${package_src_dir}/${package_name}"
+		if [ -d "${package_dirpath}" ];
+		then
+			cp -r "${package_dirpath}/"* "${destination}/" 2> /dev/null
+			display_alert "Adding files from" "${package_dirpath}"
+		fi
+	done
+}
+
+
+
 
 customize_image()
 {
+
 	# for users that need to prepare files at host
 	[[ -f $USERPATCHES_PATH/customize-image-host.sh ]] && source "$USERPATCHES_PATH"/customize-image-host.sh
 	cp "$USERPATCHES_PATH"/customize-image.sh "${SDCARD}"/tmp/customize-image.sh
@@ -122,10 +171,15 @@ customize_image()
 	if [[ $CUSTOMIZE_IMAGE_RC != 0 ]]; then
 		exit_with_error "customize-image.sh exited with error (rc: $CUSTOMIZE_IMAGE_RC)"
 	fi
-} #############################################################################
+
+}
+
+
+
 
 install_deb_chroot()
 {
+
 	local package=$1
 	local variant=$2
 	local transfer=$3
@@ -144,7 +198,17 @@ install_deb_chroot()
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
 	# when building in bulk from remote, lets make sure we have up2date index
 	[[ $BUILD_ALL == yes && ${variant} == remote ]] && chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get $apt_extra -yqq update"
-	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq $apt_extra --no-install-recommends install $name" >> "${DEST}"/debug/install.log 2>&1
+	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq $apt_extra --no-install-recommends install $name" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 	[[ $? -ne 0 ]] && exit_with_error "Installation of $name failed" "${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
 	[[ ${variant} == remote && ${transfer} == yes ]] && rsync -rq "${SDCARD}"/var/cache/apt/archives/*.deb ${DEB_STORAGE}/
+
+}
+
+
+run_on_sdcard()
+{
+
+	# Lack of quotes allows for redirections and pipes easily.
+	chroot "${SDCARD}" /bin/bash -c "${@}" >> "${DEST}"/${LOG_SUBPATH}/install.log
+
 }

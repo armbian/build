@@ -12,6 +12,19 @@ BOOTBRANCH="tag:v2020.10"
 PACKAGE_LIST_FAMILY="ethtool"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
+if [ "$(uname -m)" = "aarch64" ]; then
+	case "$(lsb_release -sc)" in
+	"focal"|"hirsute")
+			PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
+		;;
+	*)
+		PKG_PREFIX="qemu-x86_64 -L /usr/x86_64-linux-gnu "
+		;;
+	esac
+else
+	PKG_PREFIX=""
+fi
+
 
 if [[ $BOOTCONFIG == *3399* ]]; then
 
@@ -25,7 +38,7 @@ else # rk3308, rk3328
 
 fi
 
-if [[ $BOARD == nanopi-r2s || $BOARD == rockpi-e || $BOARD == nanopineo3 || $BOARD == renegade || $BOARD == station-m1 || $BOARD == z28pro ]]; then
+if [[ $BOARD == nanopi-r2s || $BOARD == nanopi-r2c || $BOARD == nanopineo3 || $BOARD == orangepi-r1plus || $BOARD == renegade || $BOARD == rockpi-e || $BOARD == station-m1 || $BOARD == z28pro ]]; then
 
 	BOOT_USE_BLOBS=yes
 	BOOT_SOC=rk3328
@@ -42,11 +55,20 @@ elif [[ $BOOTCONFIG == *3328* ]]; then
 
 	BOOT_RK3328_USE_AYUFAN_ATF=yes
 
-elif [[ $BOARD == pinebook-pro ]]; then
+elif [[ $BOARD == pinebook-pro || $BOARD == tinkerboard-2 ]]; then
 
 	BOOT_USE_MAINLINE_ATF=yes
 	BOOT_SOC=rk3399
 	ATFPATCHDIR='atf-rk3399'
+
+elif [[ $BOARD == khadas-edge ]]; then
+
+	BOOT_USE_BLOBS=yes
+	BOOT_SUPPORT_SPI=yes
+	BOOT_SOC=rk3399
+	DDR_BLOB='rk33/rk3399_ddr_800MHz_v1.25.bin'
+	MINILOADER_BLOB='rk33/rk3399_miniloader_v1.26.bin'
+	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
 
 elif [[ $BOARD == rockpi-4* ]]; then
 
@@ -66,6 +88,15 @@ elif [[ $BOARD == station-p1 ]]; then
 	MINILOADER_BLOB='rk33/rk3399_miniloader_v1.19.bin'
 	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
 
+elif [[ $BOARD == rockpi-n10* ]]; then
+
+	BOOT_USE_BLOBS=yes
+	BOOT_SUPPORT_SPI=yes
+	BOOT_SOC=rk3399pro
+	DDR_BLOB='rk33/rk3399pro_npu_ddr_933MHz_v1.02.bin'
+	MINILOADER_BLOB='rk33/rk3399pro_miniloader_v1.26.bin'
+	BL31_BLOB='rk33/rk3399pro_bl31_v1.35.elf'
+
 elif [[ $BOARD == rockpro64 ]]; then
 
 	BOOT_USE_TPL_SPL_BLOB=yes
@@ -77,9 +108,15 @@ elif [[ $BOARD == rockpi-s ]]; then
 
 	BOOT_USE_BLOBS=yes
 	BOOT_SOC=rk3308
-	DDR_BLOB='rk33/rk3308_ddr_589MHz_uart0_m0_v1.26.bin'
-	MINILOADER_BLOB='rk33/rk3308_miniloader_sd_nand_v1.13.bin'
-	BL31_BLOB='rk33/rk3308_bl31_v2.10.elf'
+	DDR_BLOB='rk33/rk3308_ddr_589MHz_uart2_m1_v1.30.bin'
+	MINILOADER_BLOB='rk33/rk3308_miniloader_v1.22.bin'
+	BL31_BLOB='rk33/rk3308_bl31_v2.22.elf'
+
+	if [[ ${BRANCH} == legacy ]]; then
+		DDR_BLOB='rk33/rk3308_ddr_589MHz_uart2_m0_v1.26.bin'
+		MINILOADER_BLOB='rk33/rk3308_miniloader_sd_nand_v1.13.bin'
+		BL31_BLOB='rk33/rk3308_bl31_v2.10.elf'
+	fi
 
 else
 
@@ -91,17 +128,16 @@ case $BRANCH in
 
 	current)
 
-		KERNELPATCHDIR='rockchip64-'$BRANCH
 		KERNELBRANCH="branch:linux-5.10.y"
+		KERNELPATCHDIR='rockchip64-'$BRANCH
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
-
 	;;
 
-	dev)
+	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="branch:linux-5.11.y"
+		KERNELBRANCH="branch:linux-5.14.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
@@ -117,7 +153,7 @@ prepare_boot_configuration()
 		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 		ATF_COMPILER='aarch64-linux-gnu-'
 		ATFDIR='arm-trusted-firmware'
-		ATFBRANCH='tag:v2.2'
+		ATFBRANCH='tag:v2.5'
 		ATF_USE_GCC='> 6.3'
 		ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.bin"
 		ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
@@ -125,6 +161,12 @@ prepare_boot_configuration()
 	elif [[ $BOOT_USE_TPL_SPL_BLOB == yes ]]; then
 
 		UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
+		ATFSOURCE=''
+		ATF_COMPILE='no'
+
+	elif [[ $BOOT_USE_SPL_BLOBS == yes ]]; then
+
+		UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb"
 		ATFSOURCE=''
 		ATF_COMPILE='no'
 
@@ -181,20 +223,13 @@ legacy_uboot_locations()
 
 uboot_custom_postprocess()
 {
-	if [ "$(uname -m)" = "aarch64" ]; then
-		if [ "$(lsb_release -sc)" = "focal" ]; then
-			PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
-		else
-			PKG_PREFIX="qemu-x86_64 -L /usr/x86_64-linux-gnu "
-		fi
-	else
-		PKG_PREFIX=""
-	fi
-
-	RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 
 	if [[ $BOOT_USE_MAINLINE_ATF == yes || $BOOT_USE_TPL_SPL_BLOB == yes ]]; then
 		:
+	elif [[ $BOOT_USE_SPL_BLOBS == yes ]]; then
+
+		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB:spl/u-boot-spl.bin idbloader.img
+
 	elif [[ $BOOT_USE_BLOBS == yes ]]; then
 
 		local tempfile=$(mktemp)
@@ -310,7 +345,7 @@ family_tweaks()
 
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable z28pro-bluetooth.service >/dev/null 2>&1"
 
-	elif [[ $BOARD == nanopi-r2s ]]; then
+	elif [[ $BOARD == nanopi-r2s || $BOARD == nanopi-r2c || $BOARD == orangepi-r1plus ]]; then
 
 		# rename USB based network to lan0
 		mkdir -p $SDCARD/etc/udev/rules.d/
@@ -328,10 +363,17 @@ family_tweaks()
 
 	fi
 
+
 	if [[ $BOARD == pinebook-pro ]]; then
 
-                chroot $SDCARD /bin/bash -c "echo SuspandState=freeze >> /etc/systemd/sleep.conf"
+                chroot $SDCARD /bin/bash -c "echo SuspendState=freeze >> /etc/systemd/sleep.conf"
                 chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
+	fi
+
+	if [[ $BOARD == station* ]]; then
+
+		cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
+
 	fi
 
 }
@@ -371,22 +413,6 @@ family_tweaks_bsp()
 		fi
 	fi
 
-	if [[ $BOARD == pinebook-pro ]]; then
-
-		## accelerated X
-		cp $SRC/packages/bsp/pinebook-pro/xorg.conf $destination/etc/X11/
-		## touchpad and keyboard tweaks
-		# from https://github.com/ayufan-rock64/linux-package/tree/master/root-pinebookpro
-		cp $SRC/packages/bsp/pinebook-pro/40-pinebookpro-touchpad.conf $destination/etc/X11/xorg.conf.d/
-		mkdir -p $destination/etc/udev/hwdb.d/
-		cp $SRC/packages/bsp/pinebook-pro/10-usb-kbd.hwdb $destination/etc/udev/hwdb.d/
-		## brightness and power management defaults
-		mkdir -p $destination/usr/local/share/xdg/xfce4/xfconf/xfce-perchannel-xml/
-		cp $SRC/packages/bsp/pinebook-pro/xfce4-power-manager.xml $destination/usr/local/share/xdg/xfce4/xfconf/xfce-perchannel-xml/
-		## additional keyboard configs in lib/desktop.sh
-
-	fi
-
 	if [[ $BOARD == helios64 ]]; then
 
 		mkdir -p $destination/etc/udev/rules.d/
@@ -401,11 +427,8 @@ family_tweaks_bsp()
 
 		### Fancontrol tweaks
 		# copy hwmon rules to fix device mapping
-		if [[ $BRANCH == legacy ]]; then
-			install -m 644 $SRC/packages/bsp/helios64/90-helios64-hwmon-legacy.rules $destination/etc/udev/rules.d/
-		else
-			install -m 644 $SRC/packages/bsp/helios64/90-helios64-hwmon.rules $destination/etc/udev/rules.d/
-		fi
+		# changed to only use one file regardless of branch
+		install -m 644 $SRC/packages/bsp/helios64/90-helios64-hwmon.rules $destination/etc/udev/rules.d/
 
 		install -m 644 $SRC/packages/bsp/helios64/fancontrol.service.pid-override $destination/etc/systemd/system/fancontrol.service.d/pid.conf
 
@@ -424,6 +447,22 @@ family_tweaks_bsp()
 		cp $SRC/packages/bsp/helios64/helios64-ups.timer $destination/lib/systemd/system/
 		install -m 755 $SRC/packages/bsp/helios64/helios64-ups.sh $destination/usr/bin/helios64-ups.sh
 
+	fi
+
+	if [[ $BOARD == pinebook-pro ]]; then
+
+		# special keys
+		mkdir -p "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+		cp $SRC/packages/bsp/pinebook-pro/pointers.xml  "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+
+		# touchpad and keyboard tweaks
+		mkdir -p "${destination}"/etc/X11/xorg.conf.d/
+		# from https://github.com/ayufan-rock64/linux-package/tree/master/root-pinebookpro
+		cp "${SRC}"/packages/bsp/pinebook-pro/40-pinebookpro-touchpad.conf "${destination}"/etc/X11/xorg.conf.d/
+
+		# keyboard hwdb
+		mkdir -p "${destination}"/etc/udev/hwdb.d/
+		cp "${SRC}"/packages/bsp/pinebook-pro/10-usb-kbd.hwdb "${destination}"/etc/udev/hwdb.d/
 	fi
 
 	# Graphics and media

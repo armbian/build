@@ -1,17 +1,17 @@
 #!/bin/bash
-
-# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
+#
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
 #
 # This file is licensed under the terms of the GNU General Public
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
-
+#
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
 # Functions:
+
 # create_desktop_package
-# run_on_sdcard
 # install_ppa_prerequisites
 # add_apt_sources
 # add_desktop_package_sources
@@ -23,11 +23,9 @@
 create_desktop_package ()
 {
 
-	# join and cleanup package list
-	# Remove leading and trailing whitespaces
-	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/debug/output.log
+	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/${LOG_SUBPATH}/output.log
 	# Use quotes to show leading and trailing spaces
-	echo "\"$PACKAGE_LIST_DESKTOP\"" >> "${DEST}"/debug/output.log
+	echo "\"$PACKAGE_LIST_DESKTOP\"" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 	# Remove leading and trailing spaces with some bash monstruosity
 	# https://stackoverflow.com/questions/369758/how-to-trim-whitespace-from-a-bash-variable#12973694
@@ -38,7 +36,7 @@ create_desktop_package ()
 	# Remove others 'spacing characters' (like tabs)
 	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS//[[:space:]]/}
 
-	echo "DEBIAN_RECOMMENDS : ${DEBIAN_RECOMMENDS}" >> "${DEST}"/debug/output.log
+	echo "DEBIAN_RECOMMENDS : ${DEBIAN_RECOMMENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 	# Replace whitespace characters by commas
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,};
@@ -51,7 +49,7 @@ create_desktop_package ()
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
 
-	echo "${PACKAGE_LIST_PREDEPENDS}" >> "${DEST}"/debug/output.log
+	echo "${PACKAGE_LIST_PREDEPENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 	# set up control file
 	cat <<-EOF > "${destination}"/DEBIAN/control
@@ -62,14 +60,11 @@ create_desktop_package ()
 	Installed-Size: 1
 	Section: xorg
 	Priority: optional
-	Recommends: ${DEBIAN_RECOMMENDS//[:space:]+/,}
+	Recommends: ${DEBIAN_RECOMMENDS//[:space:]+/,}, armbian-bsp-desktop
 	Provides: ${CHOSEN_DESKTOP}, armbian-${RELEASE}-desktop
 	Pre-Depends: ${PACKAGE_LIST_PREDEPENDS//[:space:]+/,}
 	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
-
-	#display_alert "Showing ${destination}/DEBIAN/control"
-	cat "${destination}"/DEBIAN/control >> "${DEST}"/debug/install.log
 
 	# Recreating the DEBIAN/postinst file
 	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
@@ -83,24 +78,19 @@ create_desktop_package ()
 	chmod 755 "${destination}"/DEBIAN/postinst
 
 	#display_alert "Showing ${destination}/DEBIAN/postinst"
-	cat "${destination}/DEBIAN/postinst" >> "${DEST}"/debug/install.log
+	cat "${destination}/DEBIAN/postinst" >> "${DEST}"/${LOG_SUBPATH}/install.log
 
 	# Armbian create_desktop_package scripts
 
 	unset aggregated_content
 
-	# Myy : I'm preparing the common armbian folders, in advance, since the scripts are now splitted
 	mkdir -p "${destination}"/etc/armbian
 
 	local aggregated_content=""
-
 	aggregate_all_desktop "armbian/create_desktop_package.sh" $'\n'
-
-	# display_alert "Showing the user scripts executed in create_desktop_package"
-	echo "${aggregated_content}" >> "${DEST}"/debug/install.log
 	eval "${aggregated_content}"
+	[[ $? -ne 0 ]] && display_alert "create_desktop_package.sh exec error" "" "wrn"
 
-	# create board DEB file
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
@@ -117,11 +107,65 @@ create_desktop_package ()
 
 
 
-run_on_sdcard() {
+create_bsp_desktop_package ()
+{
 
-	# Myy : The lack of quotes is deliberate here
-	# This allows for redirections and pipes easily.
-	chroot "${SDCARD}" /bin/bash -c "${@}" >> "${DEST}"/debug/install.log
+	display_alert "Creating board support package for desktop" "${package_name}" "info"
+
+	local package_name="${BSP_DESKTOP_PACKAGE_FULLNAME}"
+
+	local destination tmp_dir
+	tmp_dir=$(mktemp -d)
+	destination=${tmp_dir}/${BOARD}/${BSP_DESKTOP_PACKAGE_FULLNAME}
+	rm -rf "${destination}"
+	mkdir -p "${destination}"/DEBIAN
+
+	copy_all_packages_files_for "bsp-desktop"
+
+	# set up control file
+	cat <<-EOF > "${destination}"/DEBIAN/control
+	Package: armbian-bsp-desktop-${BOARD}
+	Version: $REVISION
+	Architecture: $ARCH
+	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+	Installed-Size: 1
+	Section: xorg
+	Priority: optional
+	Provides: armbian-bsp-desktop, armbian-bsp-desktop-${BOARD}
+	Depends: ${BSP_CLI_PACKAGE_NAME}
+	Description: Armbian Board Specific Packages for desktop users using $ARCH ${BOARD} machines
+	EOF
+
+	# Recreating the DEBIAN/postinst file
+	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
+
+	local aggregated_content=""
+	aggregate_all_desktop "debian/armbian-bsp-desktop/postinst" $'\n'
+
+	echo "${aggregated_content}" >> "${destination}/DEBIAN/postinst"
+	echo "exit 0" >> "${destination}/DEBIAN/postinst"
+
+	chmod 755 "${destination}"/DEBIAN/postinst
+
+	# Armbian create_desktop_package scripts
+
+	unset aggregated_content
+
+	mkdir -p "${destination}"/etc/armbian
+
+	local aggregated_content=""
+	aggregate_all_desktop "debian/armbian-bsp-desktop/prepare.sh" $'\n'
+	eval "${aggregated_content}"
+	[[ $? -ne 0 ]] && display_alert "prepare.sh exec error" "" "wrn"
+
+	mkdir -p "${DEB_STORAGE}/${RELEASE}"
+	cd "${destination}"; cd ..
+	fakeroot dpkg-deb -b "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb"  >/dev/null
+
+	# cleanup
+	rm -rf "${tmp_dir}"
+
+	unset aggregated_content
 
 }
 
@@ -142,6 +186,9 @@ install_ppa_prerequisites() {
 	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt install -yqq software-properties-common"
 
 }
+
+
+
 
 add_apt_sources() {
 
@@ -197,8 +244,8 @@ add_desktop_package_sources() {
 	# so... let's prepare for that
 	add_apt_sources
 	run_on_sdcard "apt -y -q update"
-	ls -l "${SDCARD}/etc/apt/sources.list.d" >> "${DEST}"/debug/install.log
-	cat "${SDCARD}/etc/apt/sources.list" >> "${DEST}"/debug/install.log
+	ls -l "${SDCARD}/etc/apt/sources.list.d" >> "${DEST}"/${LOG_SUBPATH}/install.log
+	cat "${SDCARD}/etc/apt/sources.list" >> "${DEST}"/${LOG_SUBPATH}/install.log
 
 }
 
@@ -211,12 +258,16 @@ desktop_postinstall ()
 	# disable display manager for the first run
 	run_on_sdcard "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
 	run_on_sdcard "systemctl --no-reload disable gdm3.service >/dev/null 2>&1"
-	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get update" >> "${DEST}"/debug/install.log
 
+	# update packages index
+	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1"
+
+	# install per board packages
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
 		run_on_sdcard "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" 
 	fi
 
+	# install per family packages
 	if [[ -n ${PACKAGE_LIST_DESKTOP_FAMILY} ]]; then
 		run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY"
 	fi

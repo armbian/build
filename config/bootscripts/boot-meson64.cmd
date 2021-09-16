@@ -76,6 +76,21 @@ setenv max_freq_a55 "1908"
 #setenv max_freq_a55 "2100"
 setenv maxcpus "4"
 
+# Show what uboot default fdtfile is
+echo "U-boot default fdtfile: ${fdtfile}"
+echo "Current variant: ${variant}"
+# there is a mismatch between u-boot and kernel in the n2-plus/n2_plus DTB filename.
+# Also u-boot can't seem to decide between having, or not, 'amlogic/' in there.
+if test "${variant}" = "n2_plus"; then
+	setenv fdtfile "amlogic/meson-g12b-odroid-n2-plus.dtb"
+	echo "For variant ${variant}, set default fdtfile: ${fdtfile}"
+fi
+
+if test "${variant}" = "n2-plus"; then
+	setenv fdtfile "amlogic/meson-g12b-odroid-n2-plus.dtb"
+	echo "For variant ${variant} (dash version, 2021.07 or up), set default fdtfile: ${fdtfile}"
+fi
+
 # legacy kernel values from boot.ini
 
 if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
@@ -88,6 +103,7 @@ fi
 if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:1 partuuid; fi
 if test "${console}" = "display"; then setenv consoleargs "console=tty1"; fi
 
+echo "Current fdtfile after armbianEnv: ${fdtfile}"
 
 if test -e ${devtype} ${devnum} ${prefix}zImage; then
 	# legacy kernel boot
@@ -98,9 +114,10 @@ if test -e ${devtype} ${devnum} ${prefix}zImage; then
 	if test "${bootlogo}" = "true"; then setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"; fi
 
 	setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 coherent_pool=2M loglevel=${verbosity} ${amlogic} no_console_suspend fsck.repair=yes net.ifnames=0 elevator=noop hdmimode=${hdmimode} cvbsmode=576cvbs max_freq_a55=${max_freq_a55} maxcpus=${maxcpus} voutmode=${voutmode} ${cmode} disablehpd=${disablehpd} cvbscable=${cvbscable} overscan=${overscan} ${hid_quirks} monitor_onoff=${monitor_onoff} ${cec_enable} sdrmode=${sdrmode}"
+	echo "Legacy bootargs: ${bootargs}"
 
 	load ${devtype} ${devnum} ${k_addr} boot/zImage
-	load ${devtype} ${devnum} ${dtb_loadaddr} boot/dtb/amlogic/meson64_odroidc4.dtb
+	load ${devtype} ${devnum} ${dtb_loadaddr} boot/dtb/${fdtfile}
 	load ${devtype} ${devnum} ${initrd_loadaddr} boot/uInitrd
 	fdt addr ${dtb_loadaddr}
 	unzip ${k_addr} ${loadaddr}
@@ -112,9 +129,10 @@ else
 	if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=ttyAML0,115200 console=tty1"; fi
 	if test "${console}" = "serial"; then setenv consoleargs "console=ttyAML0,115200"; fi
 	if test "${bootlogo}" = "true"; then setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"; fi
-	setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 coherent_pool=2M loglevel=${verbosity} ubootpart=${partuuid} libata.force=noncq usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
+	setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 coherent_pool=2M loglevel=${verbosity} ubootpart=${partuuid} libata.force=noncq usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 	if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"; fi
+	echo "Mainline bootargs: ${bootargs}"
 
 	load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
 	load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image
@@ -140,13 +158,13 @@ else
 		load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 	else
 		if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-fixup.scr; then
-				echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
-				source ${load_addr}
+			echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
+			source ${load_addr}
 		fi
 		if test -e ${devtype} ${devnum} ${prefix}fixup.scr; then
-				load ${devtype} ${devnum} ${load_addr} ${prefix}fixup.scr
-				echo "Applying user provided fixup script (fixup.scr)"
-				source ${load_addr}
+			load ${devtype} ${devnum} ${load_addr} ${prefix}fixup.scr
+			echo "Applying user provided fixup script (fixup.scr)"
+			source ${load_addr}
 		fi
 	fi
 
