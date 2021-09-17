@@ -7,4 +7,5 @@ KERNEL_TARGET="legacy,current,edge"
 FULL_DESKTOP="yes"
 PACKAGE_LIST_DESKTOP_BOARD="xfce4-power-manager"
 BOOT_LOGO="desktop"
+BOOT_USE_MAINLINE_ATF=yes
 ASOUND_STATE="asound.state.pinebook-pro"
