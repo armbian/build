@@ -43,14 +43,14 @@ fi
 
 if [[ $BOOT_SOC == rk3328 ]]; then
 
-	BOOT_USE_BLOBS=yes
+	BOOT_SCENARIO="${BOOT_SCENARIO:=only-blobs}"
 	DDR_BLOB='rk33/rk3328_ddr_333MHz_v1.16.bin'
 	MINILOADER_BLOB='rk33/rk322xh_miniloader_v2.50.bin'
 	BL31_BLOB='rk33/rk322xh_bl31_v1.44.elf'
 
 elif [[ $BOOT_SOC == rk3399 ]]; then
 
-	BOOT_USE_BLOBS=yes
+	BOOT_SCENARIO="${BOOT_SCENARIO:=only-blobs}"
 	DDR_BLOB='rk33/rk3399_ddr_933MHz_v1.25.bin'
 	MINILOADER_BLOB='rk33/rk3399_miniloader_v1.26.bin'
 	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
@@ -58,14 +58,14 @@ elif [[ $BOOT_SOC == rk3399 ]]; then
 
 elif [[ $BOOT_SOC == rk3399pro ]]; then
 
-	BOOT_USE_BLOBS=yes
+	BOOT_SCENARIO="${BOOT_SCENARIO:=only-blobs}"
 	DDR_BLOB='rk33/rk3399pro_npu_ddr_933MHz_v1.02.bin'
 	MINILOADER_BLOB='rk33/rk3399pro_miniloader_v1.26.bin'
 	BL31_BLOB='rk33/rk3399pro_bl31_v1.35.elf'
 
 elif [[ $BOARD == rockpi-s ]]; then
 
-	BOOT_USE_BLOBS=yes
+	BOOT_SCENARIO="${BOOT_SCENARIO:=only-blobs}"
 	BOOT_SOC=rk3308
 	DDR_BLOB='rk33/rk3308_ddr_589MHz_uart2_m1_v1.30.bin'
 	MINILOADER_BLOB='rk33/rk3308_miniloader_v1.22.bin'
@@ -101,7 +101,7 @@ esac
 
 prepare_boot_configuration()
 {
-	if [[ $BOOT_USE_MAINLINE_ATF == yes ]]; then
+	if [[ $BOOT_SCENARIO == "blobless" ]]; then
 
 		UBOOT_TARGET_MAP="BL31=bl31.bin idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
 		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
@@ -112,19 +112,19 @@ prepare_boot_configuration()
 		ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.bin"
 		ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
 
-	elif [[ $BOOT_USE_TPL_SPL_BLOB == yes ]]; then
+	elif [[ $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
 
 		UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
 		ATFSOURCE=''
 		ATF_COMPILE='no'
 
-	elif [[ $BOOT_USE_SPL_BLOBS == yes ]]; then
+	elif [[ $BOOT_SCENARIO == "spl-blobs" ]]; then
 
 		UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb"
 		ATFSOURCE=''
 		ATF_COMPILE='no'
 
-	elif [[ $BOOT_USE_BLOBS == yes ]]; then
+	elif [[ $BOOT_SCENARIO == "only-blobs" ]]; then
 
 		UBOOT_TARGET_MAP="u-boot-dtb.bin;;idbloader.bin uboot.img trust.bin"
 		ATFSOURCE=''
@@ -142,13 +142,13 @@ prepare_boot_configuration()
 uboot_custom_postprocess()
 {
 
-	if [[ $BOOT_USE_MAINLINE_ATF == yes || $BOOT_USE_TPL_SPL_BLOB == yes ]]; then
+	if [[ $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
 		:
-	elif [[ $BOOT_USE_SPL_BLOBS == yes ]]; then
+	elif [[ $BOOT_SCENARIO == "spl-blobs" ]]; then
 
 		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB:spl/u-boot-spl.bin idbloader.img
 
-	elif [[ $BOOT_USE_BLOBS == yes ]]; then
+	elif [[ $BOOT_SCENARIO == "only-blobs" ]]; then
 
 		local tempfile=$(mktemp)
 		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
@@ -175,12 +175,12 @@ write_uboot_platform()
 
 		dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none >/dev/null 2>&1
 
-	elif [[ -f $1/u-boot.itb ]]; then # $BOOT_USE_MAINLINE_ATF == yes || $BOOT_USE_TPL_SPL_BLOB == yes
+	elif [[ -f $1/u-boot.itb ]]; then # $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob"
 
 		dd if=$1/idbloader.img of=$2 seek=64 conv=notrunc status=none >/dev/null 2>&1
 		dd if=$1/u-boot.itb of=$2 seek=16384 conv=notrunc status=none >/dev/null 2>&1
 
-	elif [[ -f $1/uboot.img ]]; then # $BOOT_USE_BLOBS == yes
+	elif [[ -f $1/uboot.img ]]; then # $BOOT_SCENARIO == "only-blobs"
 
 		dd if=$1/idbloader.bin of=$2 seek=64 conv=notrunc status=none >/dev/null 2>&1
 		dd if=$1/uboot.img of=$2 seek=16384 conv=notrunc status=none >/dev/null 2>&1

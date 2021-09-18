@@ -4,4 +4,4 @@ BOARDFAMILY="rockchip64"
 BOOTCONFIG="rock64-rk3328_defconfig"
 KERNEL_TARGET="legacy,current,edge"
 FULL_DESKTOP="yes"
-BOOT_USE_MAINLINE_ATF=yes
+BOOT_SCENARIO="blobless"
