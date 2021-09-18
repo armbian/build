@@ -1,0 +1,11 @@
+# Rockchip RK3328 quad core 1GB 2 x GBE USB2
+BOARD_NAME="Nanopi R2C"
+BOARDFAMILY="rockchip64"
+BOOTCONFIG="nanopi-r2s-rk3328_defconfig"
+KERNEL_TARGET="current,edge"
+DEFAULT_CONSOLE="serial"
+MODULES="g_serial"
+MODULES_BLACKLIST="rockchipdrm analogix_dp dw_mipi_dsi dw_hdmi gpu_sched lima hantro_vpu"
+SERIALCON="ttyS2:1500000,ttyGS0"
+BUILD_DESKTOP="no"
+BOOT_FDT_FILE="rockchip/rk3328-nanopi-r2-rev06.dtb"
