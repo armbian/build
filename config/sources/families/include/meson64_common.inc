@@ -1,4 +1,4 @@
-UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin.sd.bin:u-boot.bin u-boot-dtb.img"
+UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-u-boot-dtb.img;;u-boot.bin.sd.bin:u-boot.bin u-boot-dtb.img}"
 BOOTSCRIPT="boot-meson64.cmd:boot.cmd"
 BOOTENV_FILE='meson.txt'
 LINUXFAMILY=meson64
