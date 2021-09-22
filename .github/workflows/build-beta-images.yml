@@ -96,6 +96,7 @@ jobs:
               sudo pkill arm-binfmt-P || true
               sudo pkill aarch64-binfmt-P || true
               sudo pkill pixz || true
+              sudo mountpoint -q build/output/images && sudo fusermount -u build/output/images
               [[ "$(df | grep "/.tmp" | wc -l)" -eq 0 ]] && sudo rm -rf build/.tmp && break
               echo "Mounted temp directories. Trying to unmount."
               df | grep ".tmp" | awk '{print $6}' | xargs sudo umount 2>/dev/null || true
@@ -132,6 +133,14 @@ jobs:
           git-user-signingkey: true
           git-commit-gpgsign: true
 
+      - name: Install SSH key for storage
+
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.KEY_TORRENTS }}
+          known_hosts: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
+          if_key_exists: replace
+
       - name: Build beta images
         env:
           GPG_PASS: ${{ secrets.GPG_PASSPHRASE1 }}
@@ -153,35 +162,42 @@ jobs:
           PARALLEL_BUILDS=$(awk '{printf("%d",$1/5000)}' <<<$(($(LC_ALL=C free -w 2>/dev/null | grep "^Mem" | awk '{print $2}' || LC_ALL=C free | grep "^Mem"| awk '{print $2}')/1024)))
           # cleaning leftovers if any
           rm -rf output/images/* output/debs-beta/* output/debs/*
+          # mount deploy target
+          sudo sshfs sftp@users.armbian.com:/images build/output/images/
+          # link build targets
           sudo ln -sf ../../temp/split-${CHUNK}.conf userpatches/targets.conf
           ls -l userpatches/
           cat userpatches/targets.conf
-          ./compile.sh all-new-beta-images MULTITHREAD="${PARALLEL_BUILDS}" GPG_PASS="${GPG_PASS}"
+#          ./compile.sh all-new-beta-images MULTITHREAD="${PARALLEL_BUILDS}" GPG_PASS="${GPG_PASS}"
+          echo "test $CHUNK" > output/images
+          # umount
+          sudo fusermount -u build/output/images
+#      - name: Deploy to server
+#
+#        if: ${{ success() }}
+#
+#        run: |
+#          sudo apt-get -y -qq install lftp
+#          sudo chown -R $USER:$USER $(pwd)/build/output/images/
+#          lftp -u upload, -e "set net:timeout 4;set net:max-retries 6;mirror --Remove-source-files -R --no-empty-dirs --parallel=8 --no-perms $(pwd)/build/output/images/ images/ ;bye" sftp://users.armbian.com
 
-      - name: Install SSH key for storage
-
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.KEY_TORRENTS }}
-          known_hosts: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
-          if_key_exists: replace
-
-      - name: Deploy to server
-
-        if: ${{ success() }}
-
-        run: |
-          sudo apt-get -y -qq install lftp
-          sudo chown -R $USER:$USER $(pwd)/build/output/images/
-          lftp -u upload, -e "set net:timeout 4;set net:max-retries 6;mirror --Remove-source-files -R --no-empty-dirs --parallel=8 --no-perms $(pwd)/build/output/images/ images/ ;bye" sftp://users.armbian.com
-
-  torrents:
+  Deploy:
 
     name: Update download infrastructure
     needs: [Runner]
     runs-on: [self-hosted, Linux, local]
     if: ${{ github.repository_owner == 'Armbian' }}
     steps:
+      - name: Cache Gradle packages
+        uses: actions/cache@v2
+        env:
+          cache-name: cache-build
+        with:
+          path: temp
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+
       - name: Install SSH key for torrent
         uses: shimataro/ssh-key-action@v2
         with:
@@ -190,4 +206,6 @@ jobs:
           known_hosts: ${{ secrets.KNOWN_HOSTS_TORRENTS }}
           if_key_exists: replace
       - name: Create torrents
-        run: ssh -T -i ~/.ssh/id_torrent ${{ secrets.USER_TORRENTS }}@${{ secrets.HOST_TORRENTS }}
+         run: |
+           ls -l temp/
+#        run: ssh -T -i ~/.ssh/id_torrent ${{ secrets.USER_TORRENTS }}@${{ secrets.HOST_TORRENTS }}
