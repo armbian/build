@@ -771,7 +771,7 @@ create_image()
 		else
 			FINALDEST=$DEST/images/"${BOARD}"/archive
 		fi
-		install -d -o nobody -g nogroup -m 775 ${FINALDEST}
+		install -d -m 775 ${FINALDEST}
 	fi
 
 
@@ -856,7 +856,7 @@ create_image()
 
 	# move artefacts from temporally directory to its final destination
 	[[ -n $compression_type ]] && rm $DESTIMG/${version}.img
-	mv $DESTIMG/${version}* ${FINALDEST}
+	rsync -a --no-owner --no-group --remove-source-files $DESTIMG/${version}* ${FINALDEST}
 	rm -rf $DESTIMG
 
 	# write image to SD card
