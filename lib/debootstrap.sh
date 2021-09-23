@@ -771,7 +771,7 @@ create_image()
 		else
 			FINALDEST=$DEST/images/"${BOARD}"/archive
 		fi
-		install -d -m 775 ${FINALDEST}
+		install -d ${FINALDEST}
 	fi
 
 
