@@ -1027,7 +1027,12 @@ prepare_host()
 	# wait until package manager finishes possible system maintanace
 	wait_for_package_manager
 
-	# temporally fix for Locales settings
+	# fix for Locales settings
+	if ! grep -q "^en_US.UTF-8 UTF-8" /etc/locale.gen; then
+		sudo sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+		sudo locale-gen
+	fi
+
 	export LC_ALL="en_US.UTF-8"
 
 	# packages list for host
