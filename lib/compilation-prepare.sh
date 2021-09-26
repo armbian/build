@@ -455,6 +455,7 @@ compilation_prepare()
 
 		# add support for K5.12+
 		process_patch_file "${SRC}/patch/misc/wireless-realtek-8811cu-5.12.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-realtek-8811cu-xxx.patch" "applying"
 
 	fi
 
