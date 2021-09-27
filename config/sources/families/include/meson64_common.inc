@@ -1,11 +1,11 @@
-UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin.sd.bin:u-boot.bin u-boot-dtb.img"
+UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-u-boot-dtb.img;;u-boot.bin.sd.bin:u-boot.bin u-boot-dtb.img}"
 BOOTSCRIPT="boot-meson64.cmd:boot.cmd"
 BOOTENV_FILE='meson.txt'
 LINUXFAMILY=meson64
 ARCH=arm64
 SERIALCON=ttyAML0
 SRC_LOADADDR='LOADADDR=0x1080000'
-BOOTBRANCH="tag:v2021.04"
+BOOTBRANCH="tag:v2021.07"
 OVERLAY_PREFIX='meson'
 
 # this family does not need it
@@ -34,7 +34,7 @@ case $BRANCH in
         ;;
 
         edge)
-		KERNELBRANCH='branch:linux-5.13.y'
+		KERNELBRANCH='branch:linux-5.14.y'
 		KERNELPATCHDIR='meson64-edge'
         ;;
 
@@ -238,7 +238,7 @@ family_tweaks_bsp()
 	EndSection
 	EOF
         ;;
-		"odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" )
+		"odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | "radxa-zero" )
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf
 	Section "Device"
 	    Identifier  "DRM Graphics Acclerated"

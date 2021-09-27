@@ -1,0 +1,3013 @@
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index c708a50b060e..a1472b48ee22 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -2758,6 +2758,10 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 
+ 	nohugeiomap	[KNL,x86] Disable kernel huge I/O mappings.
+ 
++	nospectre_v1	[PPC] Disable mitigations for Spectre Variant 1 (bounds
++			check bypass). With this option data leaks are possible
++			in the system.
++
+ 	nosmt		[KNL,S390] Disable symmetric multithreading (SMT).
+ 			Equivalent to smt=1.
+ 
+@@ -2765,7 +2769,7 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 			nosmt=force: Force disable SMT, cannot be undone
+ 				     via the sysfs control file.
+ 
+-	nospectre_v2	[X86] Disable all mitigations for the Spectre variant 2
++	nospectre_v2	[X86,PPC_FSL_BOOK3E] Disable all mitigations for the Spectre variant 2
+ 			(indirect branch prediction) vulnerability. System may
+ 			allow data leaks with this option, which is equivalent
+ 			to spectre_v2=off.
+diff --git a/Documentation/networking/ip-sysctl.txt b/Documentation/networking/ip-sysctl.txt
+index dbdc4130e149..0335285f3918 100644
+--- a/Documentation/networking/ip-sysctl.txt
++++ b/Documentation/networking/ip-sysctl.txt
+@@ -405,6 +405,7 @@ tcp_min_rtt_wlen - INTEGER
+ 	minimum RTT when it is moved to a longer path (e.g., due to traffic
+ 	engineering). A longer window makes the filter more resistant to RTT
+ 	inflations such as transient congestion. The unit is seconds.
++	Possible values: 0 - 86400 (1 day)
+ 	Default: 300
+ 
+ tcp_moderate_rcvbuf - BOOLEAN
+diff --git a/Makefile b/Makefile
+index dbdef749e1c8..75cba5fbdb46 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 171
++SUBLEVEL = 172
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/arch/arm/boot/compressed/head.S b/arch/arm/boot/compressed/head.S
+index 2d7f2bb0d66a..a67ed746b0e3 100644
+--- a/arch/arm/boot/compressed/head.S
++++ b/arch/arm/boot/compressed/head.S
+@@ -1383,7 +1383,21 @@ ENTRY(efi_stub_entry)
+ 
+ 		@ Preserve return value of efi_entry() in r4
+ 		mov	r4, r0
+-		bl	cache_clean_flush
++
++		@ our cache maintenance code relies on CP15 barrier instructions
++		@ but since we arrived here with the MMU and caches configured
++		@ by UEFI, we must check that the CP15BEN bit is set in SCTLR.
++		@ Note that this bit is RAO/WI on v6 and earlier, so the ISB in
++		@ the enable path will be executed on v7+ only.
++		mrc	p15, 0, r1, c1, c0, 0	@ read SCTLR
++		tst	r1, #(1 << 5)		@ CP15BEN bit set?
++		bne	0f
++		orr	r1, r1, #(1 << 5)	@ CP15 barrier instructions
++		mcr	p15, 0, r1, c1, c0, 0	@ write SCTLR
++ ARM(		.inst	0xf57ff06f		@ v7+ isb	)
++ THUMB(		isb						)
++
++0:		bl	cache_clean_flush
+ 		bl	cache_off
+ 
+ 		@ Set parameters for booting zImage according to boot protocol
+diff --git a/arch/mips/kernel/scall64-o32.S b/arch/mips/kernel/scall64-o32.S
+index 7913a5cf6806..b9c788790c0f 100644
+--- a/arch/mips/kernel/scall64-o32.S
++++ b/arch/mips/kernel/scall64-o32.S
+@@ -125,7 +125,7 @@ trace_a_syscall:
+ 	subu	t1, v0,  __NR_O32_Linux
+ 	move	a1, v0
+ 	bnez	t1, 1f /* __NR_syscall at offset 0 */
+-	lw	a1, PT_R4(sp) /* Arg1 for __NR_syscall case */
++	ld	a1, PT_R4(sp) /* Arg1 for __NR_syscall case */
+ 	.set	pop
+ 
+ 1:	jal	syscall_trace_enter
+diff --git a/drivers/block/loop.c b/drivers/block/loop.c
+index 28ce17405aab..9f840d9fdfcb 100644
+--- a/drivers/block/loop.c
++++ b/drivers/block/loop.c
+@@ -82,7 +82,6 @@
+ 
+ static DEFINE_IDR(loop_index_idr);
+ static DEFINE_MUTEX(loop_index_mutex);
+-static DEFINE_MUTEX(loop_ctl_mutex);
+ 
+ static int max_part;
+ static int part_shift;
+@@ -1034,7 +1033,7 @@ static int loop_clr_fd(struct loop_device *lo)
+ 	 */
+ 	if (atomic_read(&lo->lo_refcnt) > 1) {
+ 		lo->lo_flags |= LO_FLAGS_AUTOCLEAR;
+-		mutex_unlock(&loop_ctl_mutex);
++		mutex_unlock(&lo->lo_ctl_mutex);
+ 		return 0;
+ 	}
+ 
+@@ -1083,12 +1082,12 @@ static int loop_clr_fd(struct loop_device *lo)
+ 	if (!part_shift)
+ 		lo->lo_disk->flags |= GENHD_FL_NO_PART_SCAN;
+ 	loop_unprepare_queue(lo);
+-	mutex_unlock(&loop_ctl_mutex);
++	mutex_unlock(&lo->lo_ctl_mutex);
+ 	/*
+-	 * Need not hold loop_ctl_mutex to fput backing file.
+-	 * Calling fput holding loop_ctl_mutex triggers a circular
++	 * Need not hold lo_ctl_mutex to fput backing file.
++	 * Calling fput holding lo_ctl_mutex triggers a circular
+ 	 * lock dependency possibility warning as fput can take
+-	 * bd_mutex which is usually taken before loop_ctl_mutex.
++	 * bd_mutex which is usually taken before lo_ctl_mutex.
+ 	 */
+ 	fput(filp);
+ 	return 0;
+@@ -1351,7 +1350,7 @@ static int lo_ioctl(struct block_device *bdev, fmode_t mode,
+ 	struct loop_device *lo = bdev->bd_disk->private_data;
+ 	int err;
+ 
+-	mutex_lock_nested(&loop_ctl_mutex, 1);
++	mutex_lock_nested(&lo->lo_ctl_mutex, 1);
+ 	switch (cmd) {
+ 	case LOOP_SET_FD:
+ 		err = loop_set_fd(lo, mode, bdev, arg);
+@@ -1360,7 +1359,7 @@ static int lo_ioctl(struct block_device *bdev, fmode_t mode,
+ 		err = loop_change_fd(lo, bdev, arg);
+ 		break;
+ 	case LOOP_CLR_FD:
+-		/* loop_clr_fd would have unlocked loop_ctl_mutex on success */
++		/* loop_clr_fd would have unlocked lo_ctl_mutex on success */
+ 		err = loop_clr_fd(lo);
+ 		if (!err)
+ 			goto out_unlocked;
+@@ -1396,7 +1395,7 @@ static int lo_ioctl(struct block_device *bdev, fmode_t mode,
+ 	default:
+ 		err = lo->ioctl ? lo->ioctl(lo, cmd, arg) : -EINVAL;
+ 	}
+-	mutex_unlock(&loop_ctl_mutex);
++	mutex_unlock(&lo->lo_ctl_mutex);
+ 
+ out_unlocked:
+ 	return err;
+@@ -1529,16 +1528,16 @@ static int lo_compat_ioctl(struct block_device *bdev, fmode_t mode,
+ 
+ 	switch(cmd) {
+ 	case LOOP_SET_STATUS:
+-		mutex_lock(&loop_ctl_mutex);
++		mutex_lock(&lo->lo_ctl_mutex);
+ 		err = loop_set_status_compat(
+ 			lo, (const struct compat_loop_info __user *) arg);
+-		mutex_unlock(&loop_ctl_mutex);
++		mutex_unlock(&lo->lo_ctl_mutex);
+ 		break;
+ 	case LOOP_GET_STATUS:
+-		mutex_lock(&loop_ctl_mutex);
++		mutex_lock(&lo->lo_ctl_mutex);
+ 		err = loop_get_status_compat(
+ 			lo, (struct compat_loop_info __user *) arg);
+-		mutex_unlock(&loop_ctl_mutex);
++		mutex_unlock(&lo->lo_ctl_mutex);
+ 		break;
+ 	case LOOP_SET_CAPACITY:
+ 	case LOOP_CLR_FD:
+@@ -1582,7 +1581,7 @@ static void __lo_release(struct loop_device *lo)
+ 	if (atomic_dec_return(&lo->lo_refcnt))
+ 		return;
+ 
+-	mutex_lock(&loop_ctl_mutex);
++	mutex_lock(&lo->lo_ctl_mutex);
+ 	if (lo->lo_flags & LO_FLAGS_AUTOCLEAR) {
+ 		/*
+ 		 * In autoclear mode, stop the loop thread
+@@ -1599,7 +1598,7 @@ static void __lo_release(struct loop_device *lo)
+ 		loop_flush(lo);
+ 	}
+ 
+-	mutex_unlock(&loop_ctl_mutex);
++	mutex_unlock(&lo->lo_ctl_mutex);
+ }
+ 
+ static void lo_release(struct gendisk *disk, fmode_t mode)
+@@ -1645,10 +1644,10 @@ static int unregister_transfer_cb(int id, void *ptr, void *data)
+ 	struct loop_device *lo = ptr;
+ 	struct loop_func_table *xfer = data;
+ 
+-	mutex_lock(&loop_ctl_mutex);
++	mutex_lock(&lo->lo_ctl_mutex);
+ 	if (lo->lo_encryption == xfer)
+ 		loop_release_xfer(lo);
+-	mutex_unlock(&loop_ctl_mutex);
++	mutex_unlock(&lo->lo_ctl_mutex);
+ 	return 0;
+ }
+ 
+@@ -1814,6 +1813,7 @@ static int loop_add(struct loop_device **l, int i)
+ 	if (!part_shift)
+ 		disk->flags |= GENHD_FL_NO_PART_SCAN;
+ 	disk->flags |= GENHD_FL_EXT_DEVT;
++	mutex_init(&lo->lo_ctl_mutex);
+ 	atomic_set(&lo->lo_refcnt, 0);
+ 	lo->lo_number		= i;
+ 	spin_lock_init(&lo->lo_lock);
+@@ -1926,19 +1926,19 @@ static long loop_control_ioctl(struct file *file, unsigned int cmd,
+ 		ret = loop_lookup(&lo, parm);
+ 		if (ret < 0)
+ 			break;
+-		mutex_lock(&loop_ctl_mutex);
++		mutex_lock(&lo->lo_ctl_mutex);
+ 		if (lo->lo_state != Lo_unbound) {
+ 			ret = -EBUSY;
+-			mutex_unlock(&loop_ctl_mutex);
++			mutex_unlock(&lo->lo_ctl_mutex);
+ 			break;
+ 		}
+ 		if (atomic_read(&lo->lo_refcnt) > 0) {
+ 			ret = -EBUSY;
+-			mutex_unlock(&loop_ctl_mutex);
++			mutex_unlock(&lo->lo_ctl_mutex);
+ 			break;
+ 		}
+ 		lo->lo_disk->private_data = NULL;
+-		mutex_unlock(&loop_ctl_mutex);
++		mutex_unlock(&lo->lo_ctl_mutex);
+ 		idr_remove(&loop_index_idr, lo->lo_number);
+ 		loop_remove(lo);
+ 		break;
+diff --git a/drivers/block/loop.h b/drivers/block/loop.h
+index a923e74495ce..60f0fd2c0c65 100644
+--- a/drivers/block/loop.h
++++ b/drivers/block/loop.h
+@@ -55,6 +55,7 @@ struct loop_device {
+ 
+ 	spinlock_t		lo_lock;
+ 	int			lo_state;
++	struct mutex		lo_ctl_mutex;
+ 	struct kthread_worker	worker;
+ 	struct task_struct	*worker_task;
+ 	bool			use_dio;
+diff --git a/drivers/dma/sh/rcar-dmac.c b/drivers/dma/sh/rcar-dmac.c
+index d032032337e7..f37a6ef4f544 100644
+--- a/drivers/dma/sh/rcar-dmac.c
++++ b/drivers/dma/sh/rcar-dmac.c
+@@ -1311,6 +1311,7 @@ static enum dma_status rcar_dmac_tx_status(struct dma_chan *chan,
+ 	enum dma_status status;
+ 	unsigned long flags;
+ 	unsigned int residue;
++	bool cyclic;
+ 
+ 	status = dma_cookie_status(chan, cookie, txstate);
+ 	if (status == DMA_COMPLETE || !txstate)
+@@ -1318,10 +1319,11 @@ static enum dma_status rcar_dmac_tx_status(struct dma_chan *chan,
+ 
+ 	spin_lock_irqsave(&rchan->lock, flags);
+ 	residue = rcar_dmac_chan_get_residue(rchan, cookie);
++	cyclic = rchan->desc.running ? rchan->desc.running->cyclic : false;
+ 	spin_unlock_irqrestore(&rchan->lock, flags);
+ 
+ 	/* if there's no residue, the cookie is complete */
+-	if (!residue)
++	if (!residue && !cyclic)
+ 		return DMA_COMPLETE;
+ 
+ 	dma_set_residue(txstate, residue);
+diff --git a/drivers/gpu/drm/vc4/vc4_crtc.c b/drivers/gpu/drm/vc4/vc4_crtc.c
+index c7e6c9839c9a..51d34e7275ab 100644
+--- a/drivers/gpu/drm/vc4/vc4_crtc.c
++++ b/drivers/gpu/drm/vc4/vc4_crtc.c
+@@ -846,7 +846,7 @@ static void
+ vc4_crtc_reset(struct drm_crtc *crtc)
+ {
+ 	if (crtc->state)
+-		__drm_atomic_helper_crtc_destroy_state(crtc->state);
++		vc4_crtc_destroy_state(crtc, crtc->state);
+ 
+ 	crtc->state = kzalloc(sizeof(struct vc4_crtc_state), GFP_KERNEL);
+ 	if (crtc->state)
+diff --git a/drivers/hwtracing/intel_th/gth.c b/drivers/hwtracing/intel_th/gth.c
+index b0502e2782c1..98a4cb5d4993 100644
+--- a/drivers/hwtracing/intel_th/gth.c
++++ b/drivers/hwtracing/intel_th/gth.c
+@@ -605,7 +605,7 @@ static void intel_th_gth_unassign(struct intel_th_device *thdev,
+ 	othdev->output.port = -1;
+ 	othdev->output.active = false;
+ 	gth->output[port].output = NULL;
+-	for (master = 0; master < TH_CONFIGURABLE_MASTERS; master++)
++	for (master = 0; master <= TH_CONFIGURABLE_MASTERS; master++)
+ 		if (gth->master[master] == port)
+ 			gth->master[master] = -1;
+ 	spin_unlock(&gth->gth_lock);
+diff --git a/drivers/infiniband/sw/rdmavt/mr.c b/drivers/infiniband/sw/rdmavt/mr.c
+index 46b64970058e..49d55a0322f6 100644
+--- a/drivers/infiniband/sw/rdmavt/mr.c
++++ b/drivers/infiniband/sw/rdmavt/mr.c
+@@ -497,11 +497,6 @@ static int rvt_set_page(struct ib_mr *ibmr, u64 addr)
+ 	if (unlikely(mapped_segs == mr->mr.max_segs))
+ 		return -ENOMEM;
+ 
+-	if (mr->mr.length == 0) {
+-		mr->mr.user_base = addr;
+-		mr->mr.iova = addr;
+-	}
+-
+ 	m = mapped_segs / RVT_SEGSZ;
+ 	n = mapped_segs % RVT_SEGSZ;
+ 	mr->mr.map[m]->segs[n].vaddr = (void *)addr;
+@@ -518,17 +513,24 @@ static int rvt_set_page(struct ib_mr *ibmr, u64 addr)
+  * @sg_nents: number of entries in sg
+  * @sg_offset: offset in bytes into sg
+  *
++ * Overwrite rvt_mr length with mr length calculated by ib_sg_to_pages.
++ *
+  * Return: number of sg elements mapped to the memory region
+  */
+ int rvt_map_mr_sg(struct ib_mr *ibmr, struct scatterlist *sg,
+ 		  int sg_nents, unsigned int *sg_offset)
+ {
+ 	struct rvt_mr *mr = to_imr(ibmr);
++	int ret;
+ 
+ 	mr->mr.length = 0;
+ 	mr->mr.page_shift = PAGE_SHIFT;
+-	return ib_sg_to_pages(ibmr, sg, sg_nents, sg_offset,
+-			      rvt_set_page);
++	ret = ib_sg_to_pages(ibmr, sg, sg_nents, sg_offset, rvt_set_page);
++	mr->mr.user_base = ibmr->iova;
++	mr->mr.iova = ibmr->iova;
++	mr->mr.offset = ibmr->iova - (u64)mr->mr.map[0]->segs[0].vaddr;
++	mr->mr.length = (size_t)ibmr->length;
++	return ret;
+ }
+ 
+ /**
+@@ -559,6 +561,7 @@ int rvt_fast_reg_mr(struct rvt_qp *qp, struct ib_mr *ibmr, u32 key,
+ 	ibmr->rkey = key;
+ 	mr->mr.lkey = key;
+ 	mr->mr.access_flags = access;
++	mr->mr.iova = ibmr->iova;
+ 	atomic_set(&mr->mr.lkey_invalid, 0);
+ 
+ 	return 0;
+diff --git a/drivers/input/rmi4/rmi_f11.c b/drivers/input/rmi4/rmi_f11.c
+index f798f427a46f..275f957604f7 100644
+--- a/drivers/input/rmi4/rmi_f11.c
++++ b/drivers/input/rmi4/rmi_f11.c
+@@ -1198,7 +1198,7 @@ static int rmi_f11_initialize(struct rmi_function *fn)
+ 		ctrl->ctrl0_11[11] = ctrl->ctrl0_11[11] & ~BIT(0);
+ 
+ 	rc = f11_write_control_regs(fn, &f11->sens_query,
+-			   &f11->dev_controls, fn->fd.query_base_addr);
++			   &f11->dev_controls, fn->fd.control_base_addr);
+ 	if (rc)
+ 		dev_warn(&fn->dev, "Failed to write control registers\n");
+ 
+diff --git a/drivers/net/ethernet/intel/fm10k/fm10k_main.c b/drivers/net/ethernet/intel/fm10k/fm10k_main.c
+index 2aae6f88dca0..a52663745051 100644
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_main.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_main.c
+@@ -58,6 +58,8 @@ static int __init fm10k_init_module(void)
+ 	/* create driver workqueue */
+ 	fm10k_workqueue = alloc_workqueue("%s", WQ_MEM_RECLAIM, 0,
+ 					  fm10k_driver_name);
++	if (!fm10k_workqueue)
++		return -ENOMEM;
+ 
+ 	fm10k_dbg_init();
+ 
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/en_ethtool.c b/drivers/net/ethernet/mellanox/mlx5/core/en_ethtool.c
+index d5e8ac86c195..54872f8f2f7d 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_ethtool.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_ethtool.c
+@@ -1365,7 +1365,7 @@ static int mlx5e_get_module_info(struct net_device *netdev,
+ 		break;
+ 	case MLX5_MODULE_ID_SFP:
+ 		modinfo->type       = ETH_MODULE_SFF_8472;
+-		modinfo->eeprom_len = ETH_MODULE_SFF_8472_LEN;
++		modinfo->eeprom_len = MLX5_EEPROM_PAGE_LENGTH;
+ 		break;
+ 	default:
+ 		netdev_err(priv->netdev, "%s: cable type not recognized:0x%x\n",
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/port.c b/drivers/net/ethernet/mellanox/mlx5/core/port.c
+index 43d7c8378fb4..0bad09d06206 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/port.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/port.c
+@@ -368,10 +368,6 @@ int mlx5_query_module_eeprom(struct mlx5_core_dev *dev,
+ 		size -= offset + size - MLX5_EEPROM_PAGE_LENGTH;
+ 
+ 	i2c_addr = MLX5_I2C_ADDR_LOW;
+-	if (offset >= MLX5_EEPROM_PAGE_LENGTH) {
+-		i2c_addr = MLX5_I2C_ADDR_HIGH;
+-		offset -= MLX5_EEPROM_PAGE_LENGTH;
+-	}
+ 
+ 	MLX5_SET(mcia_reg, in, l, 0);
+ 	MLX5_SET(mcia_reg, in, module, module_num);
+diff --git a/drivers/net/ethernet/mellanox/mlxsw/spectrum.c b/drivers/net/ethernet/mellanox/mlxsw/spectrum.c
+index cc847e0cac2d..e3ed70a24029 100644
+--- a/drivers/net/ethernet/mellanox/mlxsw/spectrum.c
++++ b/drivers/net/ethernet/mellanox/mlxsw/spectrum.c
+@@ -2059,11 +2059,11 @@ mlxsw_sp_port_set_link_ksettings(struct net_device *dev,
+ 	if (err)
+ 		return err;
+ 
++	mlxsw_sp_port->link.autoneg = autoneg;
++
+ 	if (!netif_running(dev))
+ 		return 0;
+ 
+-	mlxsw_sp_port->link.autoneg = autoneg;
+-
+ 	mlxsw_sp_port_admin_status_set(mlxsw_sp_port, false);
+ 	mlxsw_sp_port_admin_status_set(mlxsw_sp_port, true);
+ 
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+index b46b56ad7517..2c04a0739fd6 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -1796,8 +1796,6 @@ static int stmmac_open(struct net_device *dev)
+ 	struct stmmac_priv *priv = netdev_priv(dev);
+ 	int ret;
+ 
+-	stmmac_check_ether_addr(priv);
+-
+ 	if (priv->hw->pcs != STMMAC_PCS_RGMII &&
+ 	    priv->hw->pcs != STMMAC_PCS_TBI &&
+ 	    priv->hw->pcs != STMMAC_PCS_RTBI) {
+@@ -3355,6 +3353,8 @@ int stmmac_dvr_probe(struct device *device,
+ 	if (ret)
+ 		goto error_hw_init;
+ 
++	stmmac_check_ether_addr(priv);
++
+ 	ndev->netdev_ops = &stmmac_netdev_ops;
+ 
+ 	ndev->hw_features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
+diff --git a/drivers/net/slip/slhc.c b/drivers/net/slip/slhc.c
+index cfd81eb1b532..ddceed3c5a4a 100644
+--- a/drivers/net/slip/slhc.c
++++ b/drivers/net/slip/slhc.c
+@@ -153,7 +153,7 @@ out_fail:
+ void
+ slhc_free(struct slcompress *comp)
+ {
+-	if ( comp == NULLSLCOMPR )
++	if ( IS_ERR_OR_NULL(comp) )
+ 		return;
+ 
+ 	if ( comp->tstate != NULLSLSTATE )
+diff --git a/drivers/net/team/team.c b/drivers/net/team/team.c
+index b8874faaa813..3eb6d48c3148 100644
+--- a/drivers/net/team/team.c
++++ b/drivers/net/team/team.c
+@@ -1163,6 +1163,12 @@ static int team_port_add(struct team *team, struct net_device *port_dev)
+ 		return -EINVAL;
+ 	}
+ 
++	if (netdev_has_upper_dev(dev, port_dev)) {
++		netdev_err(dev, "Device %s is already an upper device of the team interface\n",
++			   portname);
++		return -EBUSY;
++	}
++
+ 	if (port_dev->features & NETIF_F_VLAN_CHALLENGED &&
+ 	    vlan_uses_dev(dev)) {
+ 		netdev_err(dev, "Device %s is VLAN challenged and team device has VLAN set up\n",
+diff --git a/drivers/usb/core/driver.c b/drivers/usb/core/driver.c
+index e9d6cf146fcc..c17b254e4f64 100644
+--- a/drivers/usb/core/driver.c
++++ b/drivers/usb/core/driver.c
+@@ -1888,14 +1888,11 @@ int usb_runtime_idle(struct device *dev)
+ 	return -EBUSY;
+ }
+ 
+-int usb_set_usb2_hardware_lpm(struct usb_device *udev, int enable)
++static int usb_set_usb2_hardware_lpm(struct usb_device *udev, int enable)
+ {
+ 	struct usb_hcd *hcd = bus_to_hcd(udev->bus);
+ 	int ret = -EPERM;
+ 
+-	if (enable && !udev->usb2_hw_lpm_allowed)
+-		return 0;
+-
+ 	if (hcd->driver->set_usb2_hw_lpm) {
+ 		ret = hcd->driver->set_usb2_hw_lpm(hcd, udev, enable);
+ 		if (!ret)
+@@ -1905,6 +1902,24 @@ int usb_set_usb2_hardware_lpm(struct usb_device *udev, int enable)
+ 	return ret;
+ }
+ 
++int usb_enable_usb2_hardware_lpm(struct usb_device *udev)
++{
++	if (!udev->usb2_hw_lpm_capable ||
++	    !udev->usb2_hw_lpm_allowed ||
++	    udev->usb2_hw_lpm_enabled)
++		return 0;
++
++	return usb_set_usb2_hardware_lpm(udev, 1);
++}
++
++int usb_disable_usb2_hardware_lpm(struct usb_device *udev)
++{
++	if (!udev->usb2_hw_lpm_enabled)
++		return 0;
++
++	return usb_set_usb2_hardware_lpm(udev, 0);
++}
++
+ #endif /* CONFIG_PM */
+ 
+ struct bus_type usb_bus_type = {
+diff --git a/drivers/usb/core/hub.c b/drivers/usb/core/hub.c
+index 7b6919086539..8fddb94f1874 100644
+--- a/drivers/usb/core/hub.c
++++ b/drivers/usb/core/hub.c
+@@ -3168,8 +3168,7 @@ int usb_port_suspend(struct usb_device *udev, pm_message_t msg)
+ 	}
+ 
+ 	/* disable USB2 hardware LPM */
+-	if (udev->usb2_hw_lpm_enabled == 1)
+-		usb_set_usb2_hardware_lpm(udev, 0);
++	usb_disable_usb2_hardware_lpm(udev);
+ 
+ 	if (usb_disable_ltm(udev)) {
+ 		dev_err(&udev->dev, "Failed to disable LTM before suspend\n.");
+@@ -3215,8 +3214,7 @@ int usb_port_suspend(struct usb_device *udev, pm_message_t msg)
+ 		usb_enable_ltm(udev);
+  err_ltm:
+ 		/* Try to enable USB2 hardware LPM again */
+-		if (udev->usb2_hw_lpm_capable == 1)
+-			usb_set_usb2_hardware_lpm(udev, 1);
++		usb_enable_usb2_hardware_lpm(udev);
+ 
+ 		if (udev->do_remote_wakeup)
+ 			(void) usb_disable_remote_wakeup(udev);
+@@ -3499,8 +3497,7 @@ int usb_port_resume(struct usb_device *udev, pm_message_t msg)
+ 		hub_port_logical_disconnect(hub, port1);
+ 	} else  {
+ 		/* Try to enable USB2 hardware LPM */
+-		if (udev->usb2_hw_lpm_capable == 1)
+-			usb_set_usb2_hardware_lpm(udev, 1);
++		usb_enable_usb2_hardware_lpm(udev);
+ 
+ 		/* Try to enable USB3 LTM and LPM */
+ 		usb_enable_ltm(udev);
+@@ -4337,7 +4334,7 @@ static void hub_set_initial_usb2_lpm_policy(struct usb_device *udev)
+ 	if ((udev->bos->ext_cap->bmAttributes & cpu_to_le32(USB_BESL_SUPPORT)) ||
+ 			connect_type == USB_PORT_CONNECT_TYPE_HARD_WIRED) {
+ 		udev->usb2_hw_lpm_allowed = 1;
+-		usb_set_usb2_hardware_lpm(udev, 1);
++		usb_enable_usb2_hardware_lpm(udev);
+ 	}
+ }
+ 
+@@ -5481,8 +5478,7 @@ static int usb_reset_and_verify_device(struct usb_device *udev)
+ 	/* Disable USB2 hardware LPM.
+ 	 * It will be re-enabled by the enumeration process.
+ 	 */
+-	if (udev->usb2_hw_lpm_enabled == 1)
+-		usb_set_usb2_hardware_lpm(udev, 0);
++	usb_disable_usb2_hardware_lpm(udev);
+ 
+ 	/* Disable LPM and LTM while we reset the device and reinstall the alt
+ 	 * settings.  Device-initiated LPM settings, and system exit latency
+@@ -5592,7 +5588,7 @@ static int usb_reset_and_verify_device(struct usb_device *udev)
+ 
+ done:
+ 	/* Now that the alt settings are re-installed, enable LTM and LPM. */
+-	usb_set_usb2_hardware_lpm(udev, 1);
++	usb_enable_usb2_hardware_lpm(udev);
+ 	usb_unlocked_enable_lpm(udev);
+ 	usb_enable_ltm(udev);
+ 	usb_release_bos_descriptor(udev);
+diff --git a/drivers/usb/core/message.c b/drivers/usb/core/message.c
+index c0c5d5b3ec40..0e6ab0a17c08 100644
+--- a/drivers/usb/core/message.c
++++ b/drivers/usb/core/message.c
+@@ -1181,8 +1181,7 @@ void usb_disable_device(struct usb_device *dev, int skip_ep0)
+ 			dev->actconfig->interface[i] = NULL;
+ 		}
+ 
+-		if (dev->usb2_hw_lpm_enabled == 1)
+-			usb_set_usb2_hardware_lpm(dev, 0);
++		usb_disable_usb2_hardware_lpm(dev);
+ 		usb_unlocked_disable_lpm(dev);
+ 		usb_disable_ltm(dev);
+ 
+diff --git a/drivers/usb/core/sysfs.c b/drivers/usb/core/sysfs.c
+index c953a0f1c695..1a232b4ffe71 100644
+--- a/drivers/usb/core/sysfs.c
++++ b/drivers/usb/core/sysfs.c
+@@ -494,7 +494,10 @@ static ssize_t usb2_hardware_lpm_store(struct device *dev,
+ 
+ 	if (!ret) {
+ 		udev->usb2_hw_lpm_allowed = value;
+-		ret = usb_set_usb2_hardware_lpm(udev, value);
++		if (value)
++			ret = usb_enable_usb2_hardware_lpm(udev);
++		else
++			ret = usb_disable_usb2_hardware_lpm(udev);
+ 	}
+ 
+ 	usb_unlock_device(udev);
+diff --git a/drivers/usb/core/usb.h b/drivers/usb/core/usb.h
+index 53318126ed91..6b2f11544283 100644
+--- a/drivers/usb/core/usb.h
++++ b/drivers/usb/core/usb.h
+@@ -84,7 +84,8 @@ extern int usb_remote_wakeup(struct usb_device *dev);
+ extern int usb_runtime_suspend(struct device *dev);
+ extern int usb_runtime_resume(struct device *dev);
+ extern int usb_runtime_idle(struct device *dev);
+-extern int usb_set_usb2_hardware_lpm(struct usb_device *udev, int enable);
++extern int usb_enable_usb2_hardware_lpm(struct usb_device *udev);
++extern int usb_disable_usb2_hardware_lpm(struct usb_device *udev);
+ 
+ #else
+ 
+@@ -104,7 +105,12 @@ static inline int usb_autoresume_device(struct usb_device *udev)
+ 	return 0;
+ }
+ 
+-static inline int usb_set_usb2_hardware_lpm(struct usb_device *udev, int enable)
++static inline int usb_enable_usb2_hardware_lpm(struct usb_device *udev)
++{
++	return 0;
++}
++
++static inline int usb_disable_usb2_hardware_lpm(struct usb_device *udev)
+ {
+ 	return 0;
+ }
+diff --git a/fs/ceph/dir.c b/fs/ceph/dir.c
+index cec25691cbae..2ffc7fe8da52 100644
+--- a/fs/ceph/dir.c
++++ b/fs/ceph/dir.c
+@@ -1471,6 +1471,7 @@ void ceph_dentry_lru_del(struct dentry *dn)
+ unsigned ceph_dentry_hash(struct inode *dir, struct dentry *dn)
+ {
+ 	struct ceph_inode_info *dci = ceph_inode(dir);
++	unsigned hash;
+ 
+ 	switch (dci->i_dir_layout.dl_dir_hash) {
+ 	case 0:	/* for backward compat */
+@@ -1478,8 +1479,11 @@ unsigned ceph_dentry_hash(struct inode *dir, struct dentry *dn)
+ 		return dn->d_name.hash;
+ 
+ 	default:
+-		return ceph_str_hash(dci->i_dir_layout.dl_dir_hash,
++		spin_lock(&dn->d_lock);
++		hash = ceph_str_hash(dci->i_dir_layout.dl_dir_hash,
+ 				     dn->d_name.name, dn->d_name.len);
++		spin_unlock(&dn->d_lock);
++		return hash;
+ 	}
+ }
+ 
+diff --git a/fs/ceph/mds_client.c b/fs/ceph/mds_client.c
+index 6cbd0d805c9d..67cb9d078bfa 100644
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -1187,6 +1187,15 @@ static int remove_session_caps_cb(struct inode *inode, struct ceph_cap *cap,
+ 			list_add(&ci->i_prealloc_cap_flush->i_list, &to_remove);
+ 			ci->i_prealloc_cap_flush = NULL;
+ 		}
++
++               if (drop &&
++                  ci->i_wrbuffer_ref_head == 0 &&
++                  ci->i_wr_ref == 0 &&
++                  ci->i_dirty_caps == 0 &&
++                  ci->i_flushing_caps == 0) {
++                      ceph_put_snap_context(ci->i_head_snapc);
++                      ci->i_head_snapc = NULL;
++               }
+ 	}
+ 	spin_unlock(&ci->i_ceph_lock);
+ 	while (!list_empty(&to_remove)) {
+diff --git a/fs/ceph/snap.c b/fs/ceph/snap.c
+index 411e9df0d40e..3a76ae001360 100644
+--- a/fs/ceph/snap.c
++++ b/fs/ceph/snap.c
+@@ -563,7 +563,12 @@ void ceph_queue_cap_snap(struct ceph_inode_info *ci)
+ 	old_snapc = NULL;
+ 
+ update_snapc:
+-	if (ci->i_head_snapc) {
++       if (ci->i_wrbuffer_ref_head == 0 &&
++           ci->i_wr_ref == 0 &&
++           ci->i_dirty_caps == 0 &&
++           ci->i_flushing_caps == 0) {
++               ci->i_head_snapc = NULL;
++       } else {
+ 		ci->i_head_snapc = ceph_get_snap_context(new_snapc);
+ 		dout(" new snapc is %p\n", new_snapc);
+ 	}
+diff --git a/fs/cifs/inode.c b/fs/cifs/inode.c
+index a8a2fc9ae056..786f67bee43a 100644
+--- a/fs/cifs/inode.c
++++ b/fs/cifs/inode.c
+@@ -1722,6 +1722,10 @@ cifs_do_rename(const unsigned int xid, struct dentry *from_dentry,
+ 	if (rc == 0 || rc != -EBUSY)
+ 		goto do_rename_exit;
+ 
++	/* Don't fall back to using SMB on SMB 2+ mount */
++	if (server->vals->protocol_id != 0)
++		goto do_rename_exit;
++
+ 	/* open-file renames don't work across directories */
+ 	if (to_dentry->d_parent != from_dentry->d_parent)
+ 		goto do_rename_exit;
+diff --git a/fs/nfs/super.c b/fs/nfs/super.c
+index 659ad12e33ba..42c31587a936 100644
+--- a/fs/nfs/super.c
++++ b/fs/nfs/super.c
+@@ -2047,7 +2047,8 @@ static int nfs23_validate_mount_data(void *options,
+ 		memcpy(sap, &data->addr, sizeof(data->addr));
+ 		args->nfs_server.addrlen = sizeof(data->addr);
+ 		args->nfs_server.port = ntohs(data->addr.sin_port);
+-		if (!nfs_verify_server_address(sap))
++		if (sap->sa_family != AF_INET ||
++		    !nfs_verify_server_address(sap))
+ 			goto out_no_address;
+ 
+ 		if (!(data->flags & NFS_MOUNT_TCP))
+diff --git a/fs/nfsd/nfs4callback.c b/fs/nfsd/nfs4callback.c
+index 3069cd46ea66..8d842282111b 100644
+--- a/fs/nfsd/nfs4callback.c
++++ b/fs/nfsd/nfs4callback.c
+@@ -934,8 +934,9 @@ static void nfsd4_cb_prepare(struct rpc_task *task, void *calldata)
+ 	cb->cb_seq_status = 1;
+ 	cb->cb_status = 0;
+ 	if (minorversion) {
+-		if (!nfsd41_cb_get_slot(clp, task))
++		if (!cb->cb_holds_slot && !nfsd41_cb_get_slot(clp, task))
+ 			return;
++		cb->cb_holds_slot = true;
+ 	}
+ 	rpc_call_start(task);
+ }
+@@ -962,6 +963,9 @@ static bool nfsd4_cb_sequence_done(struct rpc_task *task, struct nfsd4_callback
+ 		return true;
+ 	}
+ 
++	if (!cb->cb_holds_slot)
++		goto need_restart;
++
+ 	switch (cb->cb_seq_status) {
+ 	case 0:
+ 		/*
+@@ -999,6 +1003,7 @@ static bool nfsd4_cb_sequence_done(struct rpc_task *task, struct nfsd4_callback
+ 			cb->cb_seq_status);
+ 	}
+ 
++	cb->cb_holds_slot = false;
+ 	clear_bit(0, &clp->cl_cb_slot_busy);
+ 	rpc_wake_up_next(&clp->cl_cb_waitq);
+ 	dprintk("%s: freed slot, new seqid=%d\n", __func__,
+@@ -1206,6 +1211,7 @@ void nfsd4_init_cb(struct nfsd4_callback *cb, struct nfs4_client *clp,
+ 	cb->cb_seq_status = 1;
+ 	cb->cb_status = 0;
+ 	cb->cb_need_restart = false;
++	cb->cb_holds_slot = false;
+ }
+ 
+ void nfsd4_run_cb(struct nfsd4_callback *cb)
+diff --git a/fs/nfsd/state.h b/fs/nfsd/state.h
+index 86aa92d200e1..133d8bf62a5c 100644
+--- a/fs/nfsd/state.h
++++ b/fs/nfsd/state.h
+@@ -69,6 +69,7 @@ struct nfsd4_callback {
+ 	int cb_seq_status;
+ 	int cb_status;
+ 	bool cb_need_restart;
++	bool cb_holds_slot;
+ };
+ 
+ struct nfsd4_callback_ops {
+diff --git a/fs/proc/proc_sysctl.c b/fs/proc/proc_sysctl.c
+index 6f30cf8ef7a1..5b32c054df71 100644
+--- a/fs/proc/proc_sysctl.c
++++ b/fs/proc/proc_sysctl.c
+@@ -1604,9 +1604,11 @@ static void drop_sysctl_table(struct ctl_table_header *header)
+ 	if (--header->nreg)
+ 		return;
+ 
+-	if (parent)
++	if (parent) {
+ 		put_links(header);
+-	start_unregistering(header);
++		start_unregistering(header);
++	}
++
+ 	if (!--header->count)
+ 		kfree_rcu(header, rcu);
+ 
+diff --git a/include/net/inet_frag.h b/include/net/inet_frag.h
+index a3812e9c8fee..c2c724abde57 100644
+--- a/include/net/inet_frag.h
++++ b/include/net/inet_frag.h
+@@ -76,8 +76,8 @@ struct inet_frag_queue {
+ 	struct timer_list	timer;
+ 	spinlock_t		lock;
+ 	atomic_t		refcnt;
+-	struct sk_buff		*fragments;  /* Used in IPv6. */
+-	struct rb_root		rb_fragments; /* Used in IPv4. */
++	struct sk_buff		*fragments;  /* used in 6lopwpan IPv6. */
++	struct rb_root		rb_fragments; /* Used in IPv4/IPv6. */
+ 	struct sk_buff		*fragments_tail;
+ 	struct sk_buff		*last_run_head;
+ 	ktime_t			stamp;
+@@ -152,4 +152,16 @@ static inline void add_frag_mem_limit(struct netns_frags *nf, long val)
+ 
+ extern const u8 ip_frag_ecn_table[16];
+ 
++/* Return values of inet_frag_queue_insert() */
++#define IPFRAG_OK	0
++#define IPFRAG_DUP	1
++#define IPFRAG_OVERLAP	2
++int inet_frag_queue_insert(struct inet_frag_queue *q, struct sk_buff *skb,
++			   int offset, int end);
++void *inet_frag_reasm_prepare(struct inet_frag_queue *q, struct sk_buff *skb,
++			      struct sk_buff *parent);
++void inet_frag_reasm_finish(struct inet_frag_queue *q, struct sk_buff *head,
++			    void *reasm_data);
++struct sk_buff *inet_frag_pull_head(struct inet_frag_queue *q);
++
+ #endif
+diff --git a/include/net/ipv6.h b/include/net/ipv6.h
+index 7cb100d25bb5..168009eef5e4 100644
+--- a/include/net/ipv6.h
++++ b/include/net/ipv6.h
+@@ -511,35 +511,6 @@ static inline bool ipv6_prefix_equal(const struct in6_addr *addr1,
+ }
+ #endif
+ 
+-struct inet_frag_queue;
+-
+-enum ip6_defrag_users {
+-	IP6_DEFRAG_LOCAL_DELIVER,
+-	IP6_DEFRAG_CONNTRACK_IN,
+-	__IP6_DEFRAG_CONNTRACK_IN	= IP6_DEFRAG_CONNTRACK_IN + USHRT_MAX,
+-	IP6_DEFRAG_CONNTRACK_OUT,
+-	__IP6_DEFRAG_CONNTRACK_OUT	= IP6_DEFRAG_CONNTRACK_OUT + USHRT_MAX,
+-	IP6_DEFRAG_CONNTRACK_BRIDGE_IN,
+-	__IP6_DEFRAG_CONNTRACK_BRIDGE_IN = IP6_DEFRAG_CONNTRACK_BRIDGE_IN + USHRT_MAX,
+-};
+-
+-void ip6_frag_init(struct inet_frag_queue *q, const void *a);
+-extern const struct rhashtable_params ip6_rhash_params;
+-
+-/*
+- *	Equivalent of ipv4 struct ip
+- */
+-struct frag_queue {
+-	struct inet_frag_queue	q;
+-
+-	int			iif;
+-	unsigned int		csum;
+-	__u16			nhoffset;
+-	u8			ecn;
+-};
+-
+-void ip6_expire_frag_queue(struct net *net, struct frag_queue *fq);
+-
+ static inline bool ipv6_addr_any(const struct in6_addr *a)
+ {
+ #if defined(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS) && BITS_PER_LONG == 64
+diff --git a/include/net/ipv6_frag.h b/include/net/ipv6_frag.h
+new file mode 100644
+index 000000000000..28aa9b30aece
+--- /dev/null
++++ b/include/net/ipv6_frag.h
+@@ -0,0 +1,111 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _IPV6_FRAG_H
++#define _IPV6_FRAG_H
++#include <linux/kernel.h>
++#include <net/addrconf.h>
++#include <net/ipv6.h>
++#include <net/inet_frag.h>
++
++enum ip6_defrag_users {
++	IP6_DEFRAG_LOCAL_DELIVER,
++	IP6_DEFRAG_CONNTRACK_IN,
++	__IP6_DEFRAG_CONNTRACK_IN	= IP6_DEFRAG_CONNTRACK_IN + USHRT_MAX,
++	IP6_DEFRAG_CONNTRACK_OUT,
++	__IP6_DEFRAG_CONNTRACK_OUT	= IP6_DEFRAG_CONNTRACK_OUT + USHRT_MAX,
++	IP6_DEFRAG_CONNTRACK_BRIDGE_IN,
++	__IP6_DEFRAG_CONNTRACK_BRIDGE_IN = IP6_DEFRAG_CONNTRACK_BRIDGE_IN + USHRT_MAX,
++};
++
++/*
++ *	Equivalent of ipv4 struct ip
++ */
++struct frag_queue {
++	struct inet_frag_queue	q;
++
++	int			iif;
++	__u16			nhoffset;
++	u8			ecn;
++};
++
++#if IS_ENABLED(CONFIG_IPV6)
++static inline void ip6frag_init(struct inet_frag_queue *q, const void *a)
++{
++	struct frag_queue *fq = container_of(q, struct frag_queue, q);
++	const struct frag_v6_compare_key *key = a;
++
++	q->key.v6 = *key;
++	fq->ecn = 0;
++}
++
++static inline u32 ip6frag_key_hashfn(const void *data, u32 len, u32 seed)
++{
++	return jhash2(data,
++		      sizeof(struct frag_v6_compare_key) / sizeof(u32), seed);
++}
++
++static inline u32 ip6frag_obj_hashfn(const void *data, u32 len, u32 seed)
++{
++	const struct inet_frag_queue *fq = data;
++
++	return jhash2((const u32 *)&fq->key.v6,
++		      sizeof(struct frag_v6_compare_key) / sizeof(u32), seed);
++}
++
++static inline int
++ip6frag_obj_cmpfn(struct rhashtable_compare_arg *arg, const void *ptr)
++{
++	const struct frag_v6_compare_key *key = arg->key;
++	const struct inet_frag_queue *fq = ptr;
++
++	return !!memcmp(&fq->key, key, sizeof(*key));
++}
++
++static inline void
++ip6frag_expire_frag_queue(struct net *net, struct frag_queue *fq)
++{
++	struct net_device *dev = NULL;
++	struct sk_buff *head;
++
++	rcu_read_lock();
++	spin_lock(&fq->q.lock);
++
++	if (fq->q.flags & INET_FRAG_COMPLETE)
++		goto out;
++
++	inet_frag_kill(&fq->q);
++
++	dev = dev_get_by_index_rcu(net, fq->iif);
++	if (!dev)
++		goto out;
++
++	__IP6_INC_STATS(net, __in6_dev_get(dev), IPSTATS_MIB_REASMFAILS);
++	__IP6_INC_STATS(net, __in6_dev_get(dev), IPSTATS_MIB_REASMTIMEOUT);
++
++	/* Don't send error if the first segment did not arrive. */
++	if (!(fq->q.flags & INET_FRAG_FIRST_IN))
++		goto out;
++
++	/* sk_buff::dev and sk_buff::rbnode are unionized. So we
++	 * pull the head out of the tree in order to be able to
++	 * deal with head->dev.
++	 */
++	head = inet_frag_pull_head(&fq->q);
++	if (!head)
++		goto out;
++
++	head->dev = dev;
++	skb_get(head);
++	spin_unlock(&fq->q.lock);
++
++	icmpv6_send(head, ICMPV6_TIME_EXCEED, ICMPV6_EXC_FRAGTIME, 0);
++	kfree_skb(head);
++	goto out_rcu_unlock;
++
++out:
++	spin_unlock(&fq->q.lock);
++out_rcu_unlock:
++	rcu_read_unlock();
++	inet_frag_put(&fq->q);
++}
++#endif
++#endif
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 4b1e0669740c..f0c9b6925687 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1925,6 +1925,10 @@ static u64 numa_get_avg_runtime(struct task_struct *p, u64 *period)
+ 	if (p->last_task_numa_placement) {
+ 		delta = runtime - p->last_sum_exec_runtime;
+ 		*period = now - p->last_task_numa_placement;
++
++		/* Avoid time going backwards, prevent potential divide error: */
++		if (unlikely((s64)*period < 0))
++			*period = 0;
+ 	} else {
+ 		delta = p->se.avg.load_sum / p->se.load.weight;
+ 		*period = LOAD_AVG_MAX;
+diff --git a/kernel/trace/ring_buffer.c b/kernel/trace/ring_buffer.c
+index 5473dcaaca8d..2cfe11e1190b 100644
+--- a/kernel/trace/ring_buffer.c
++++ b/kernel/trace/ring_buffer.c
+@@ -701,7 +701,7 @@ u64 ring_buffer_time_stamp(struct ring_buffer *buffer, int cpu)
+ 
+ 	preempt_disable_notrace();
+ 	time = rb_time_stamp(buffer);
+-	preempt_enable_no_resched_notrace();
++	preempt_enable_notrace();
+ 
+ 	return time;
+ }
+diff --git a/kernel/trace/trace.c b/kernel/trace/trace.c
+index d4773939c054..a2d8bd68c16e 100644
+--- a/kernel/trace/trace.c
++++ b/kernel/trace/trace.c
+@@ -500,8 +500,10 @@ int trace_pid_write(struct trace_pid_list *filtered_pids,
+ 	 * not modified.
+ 	 */
+ 	pid_list = kmalloc(sizeof(*pid_list), GFP_KERNEL);
+-	if (!pid_list)
++	if (!pid_list) {
++		trace_parser_put(&parser);
+ 		return -ENOMEM;
++	}
+ 
+ 	pid_list->pid_max = READ_ONCE(pid_max);
+ 
+@@ -511,6 +513,7 @@ int trace_pid_write(struct trace_pid_list *filtered_pids,
+ 
+ 	pid_list->pids = vzalloc((pid_list->pid_max + 7) >> 3);
+ 	if (!pid_list->pids) {
++		trace_parser_put(&parser);
+ 		kfree(pid_list);
+ 		return -ENOMEM;
+ 	}
+diff --git a/net/bridge/netfilter/ebtables.c b/net/bridge/netfilter/ebtables.c
+index c7e5aaf2eeb8..142ccaae9c7b 100644
+--- a/net/bridge/netfilter/ebtables.c
++++ b/net/bridge/netfilter/ebtables.c
+@@ -2056,7 +2056,8 @@ static int ebt_size_mwt(struct compat_ebt_entry_mwt *match32,
+ 		if (match_kern)
+ 			match_kern->match_size = ret;
+ 
+-		if (WARN_ON(type == EBT_COMPAT_TARGET && size_left))
++		/* rule should have no remaining data after target */
++		if (type == EBT_COMPAT_TARGET && size_left)
+ 			return -EINVAL;
+ 
+ 		match32 = (struct compat_ebt_entry_mwt *) buf;
+diff --git a/net/ieee802154/6lowpan/reassembly.c b/net/ieee802154/6lowpan/reassembly.c
+index aab1e2dfdfca..c01df341b5f6 100644
+--- a/net/ieee802154/6lowpan/reassembly.c
++++ b/net/ieee802154/6lowpan/reassembly.c
+@@ -25,7 +25,7 @@
+ 
+ #include <net/ieee802154_netdev.h>
+ #include <net/6lowpan.h>
+-#include <net/ipv6.h>
++#include <net/ipv6_frag.h>
+ #include <net/inet_frag.h>
+ 
+ #include "6lowpan_i.h"
+diff --git a/net/ipv4/inet_fragment.c b/net/ipv4/inet_fragment.c
+index 0fb49dedc9fb..2325cd3454a6 100644
+--- a/net/ipv4/inet_fragment.c
++++ b/net/ipv4/inet_fragment.c
+@@ -24,6 +24,62 @@
+ #include <net/sock.h>
+ #include <net/inet_frag.h>
+ #include <net/inet_ecn.h>
++#include <net/ip.h>
++#include <net/ipv6.h>
++
++/* Use skb->cb to track consecutive/adjacent fragments coming at
++ * the end of the queue. Nodes in the rb-tree queue will
++ * contain "runs" of one or more adjacent fragments.
++ *
++ * Invariants:
++ * - next_frag is NULL at the tail of a "run";
++ * - the head of a "run" has the sum of all fragment lengths in frag_run_len.
++ */
++struct ipfrag_skb_cb {
++	union {
++		struct inet_skb_parm	h4;
++		struct inet6_skb_parm	h6;
++	};
++	struct sk_buff		*next_frag;
++	int			frag_run_len;
++};
++
++#define FRAG_CB(skb)		((struct ipfrag_skb_cb *)((skb)->cb))
++
++static void fragcb_clear(struct sk_buff *skb)
++{
++	RB_CLEAR_NODE(&skb->rbnode);
++	FRAG_CB(skb)->next_frag = NULL;
++	FRAG_CB(skb)->frag_run_len = skb->len;
++}
++
++/* Append skb to the last "run". */
++static void fragrun_append_to_last(struct inet_frag_queue *q,
++				   struct sk_buff *skb)
++{
++	fragcb_clear(skb);
++
++	FRAG_CB(q->last_run_head)->frag_run_len += skb->len;
++	FRAG_CB(q->fragments_tail)->next_frag = skb;
++	q->fragments_tail = skb;
++}
++
++/* Create a new "run" with the skb. */
++static void fragrun_create(struct inet_frag_queue *q, struct sk_buff *skb)
++{
++	BUILD_BUG_ON(sizeof(struct ipfrag_skb_cb) > sizeof(skb->cb));
++	fragcb_clear(skb);
++
++	if (q->last_run_head)
++		rb_link_node(&skb->rbnode, &q->last_run_head->rbnode,
++			     &q->last_run_head->rbnode.rb_right);
++	else
++		rb_link_node(&skb->rbnode, NULL, &q->rb_fragments.rb_node);
++	rb_insert_color(&skb->rbnode, &q->rb_fragments);
++
++	q->fragments_tail = skb;
++	q->last_run_head = skb;
++}
+ 
+ /* Given the OR values of all fragments, apply RFC 3168 5.3 requirements
+  * Value : 0xff if frame should be dropped.
+@@ -122,6 +178,28 @@ static void inet_frag_destroy_rcu(struct rcu_head *head)
+ 	kmem_cache_free(f->frags_cachep, q);
+ }
+ 
++unsigned int inet_frag_rbtree_purge(struct rb_root *root)
++{
++	struct rb_node *p = rb_first(root);
++	unsigned int sum = 0;
++
++	while (p) {
++		struct sk_buff *skb = rb_entry(p, struct sk_buff, rbnode);
++
++		p = rb_next(p);
++		rb_erase(&skb->rbnode, root);
++		while (skb) {
++			struct sk_buff *next = FRAG_CB(skb)->next_frag;
++
++			sum += skb->truesize;
++			kfree_skb(skb);
++			skb = next;
++		}
++	}
++	return sum;
++}
++EXPORT_SYMBOL(inet_frag_rbtree_purge);
++
+ void inet_frag_destroy(struct inet_frag_queue *q)
+ {
+ 	struct sk_buff *fp;
+@@ -223,3 +301,218 @@ struct inet_frag_queue *inet_frag_find(struct netns_frags *nf, void *key)
+ 	return fq;
+ }
+ EXPORT_SYMBOL(inet_frag_find);
++
++int inet_frag_queue_insert(struct inet_frag_queue *q, struct sk_buff *skb,
++			   int offset, int end)
++{
++	struct sk_buff *last = q->fragments_tail;
++
++	/* RFC5722, Section 4, amended by Errata ID : 3089
++	 *                          When reassembling an IPv6 datagram, if
++	 *   one or more its constituent fragments is determined to be an
++	 *   overlapping fragment, the entire datagram (and any constituent
++	 *   fragments) MUST be silently discarded.
++	 *
++	 * Duplicates, however, should be ignored (i.e. skb dropped, but the
++	 * queue/fragments kept for later reassembly).
++	 */
++	if (!last)
++		fragrun_create(q, skb);  /* First fragment. */
++	else if (last->ip_defrag_offset + last->len < end) {
++		/* This is the common case: skb goes to the end. */
++		/* Detect and discard overlaps. */
++		if (offset < last->ip_defrag_offset + last->len)
++			return IPFRAG_OVERLAP;
++		if (offset == last->ip_defrag_offset + last->len)
++			fragrun_append_to_last(q, skb);
++		else
++			fragrun_create(q, skb);
++	} else {
++		/* Binary search. Note that skb can become the first fragment,
++		 * but not the last (covered above).
++		 */
++		struct rb_node **rbn, *parent;
++
++		rbn = &q->rb_fragments.rb_node;
++		do {
++			struct sk_buff *curr;
++			int curr_run_end;
++
++			parent = *rbn;
++			curr = rb_to_skb(parent);
++			curr_run_end = curr->ip_defrag_offset +
++					FRAG_CB(curr)->frag_run_len;
++			if (end <= curr->ip_defrag_offset)
++				rbn = &parent->rb_left;
++			else if (offset >= curr_run_end)
++				rbn = &parent->rb_right;
++			else if (offset >= curr->ip_defrag_offset &&
++				 end <= curr_run_end)
++				return IPFRAG_DUP;
++			else
++				return IPFRAG_OVERLAP;
++		} while (*rbn);
++		/* Here we have parent properly set, and rbn pointing to
++		 * one of its NULL left/right children. Insert skb.
++		 */
++		fragcb_clear(skb);
++		rb_link_node(&skb->rbnode, parent, rbn);
++		rb_insert_color(&skb->rbnode, &q->rb_fragments);
++	}
++
++	skb->ip_defrag_offset = offset;
++
++	return IPFRAG_OK;
++}
++EXPORT_SYMBOL(inet_frag_queue_insert);
++
++void *inet_frag_reasm_prepare(struct inet_frag_queue *q, struct sk_buff *skb,
++			      struct sk_buff *parent)
++{
++	struct sk_buff *fp, *head = skb_rb_first(&q->rb_fragments);
++	struct sk_buff **nextp;
++	int delta;
++
++	if (head != skb) {
++		fp = skb_clone(skb, GFP_ATOMIC);
++		if (!fp)
++			return NULL;
++		FRAG_CB(fp)->next_frag = FRAG_CB(skb)->next_frag;
++		if (RB_EMPTY_NODE(&skb->rbnode))
++			FRAG_CB(parent)->next_frag = fp;
++		else
++			rb_replace_node(&skb->rbnode, &fp->rbnode,
++					&q->rb_fragments);
++		if (q->fragments_tail == skb)
++			q->fragments_tail = fp;
++		skb_morph(skb, head);
++		FRAG_CB(skb)->next_frag = FRAG_CB(head)->next_frag;
++		rb_replace_node(&head->rbnode, &skb->rbnode,
++				&q->rb_fragments);
++		consume_skb(head);
++		head = skb;
++	}
++	WARN_ON(head->ip_defrag_offset != 0);
++
++	delta = -head->truesize;
++
++	/* Head of list must not be cloned. */
++	if (skb_unclone(head, GFP_ATOMIC))
++		return NULL;
++
++	delta += head->truesize;
++	if (delta)
++		add_frag_mem_limit(q->net, delta);
++
++	/* If the first fragment is fragmented itself, we split
++	 * it to two chunks: the first with data and paged part
++	 * and the second, holding only fragments.
++	 */
++	if (skb_has_frag_list(head)) {
++		struct sk_buff *clone;
++		int i, plen = 0;
++
++		clone = alloc_skb(0, GFP_ATOMIC);
++		if (!clone)
++			return NULL;
++		skb_shinfo(clone)->frag_list = skb_shinfo(head)->frag_list;
++		skb_frag_list_init(head);
++		for (i = 0; i < skb_shinfo(head)->nr_frags; i++)
++			plen += skb_frag_size(&skb_shinfo(head)->frags[i]);
++		clone->data_len = head->data_len - plen;
++		clone->len = clone->data_len;
++		head->truesize += clone->truesize;
++		clone->csum = 0;
++		clone->ip_summed = head->ip_summed;
++		add_frag_mem_limit(q->net, clone->truesize);
++		skb_shinfo(head)->frag_list = clone;
++		nextp = &clone->next;
++	} else {
++		nextp = &skb_shinfo(head)->frag_list;
++	}
++
++	return nextp;
++}
++EXPORT_SYMBOL(inet_frag_reasm_prepare);
++
++void inet_frag_reasm_finish(struct inet_frag_queue *q, struct sk_buff *head,
++			    void *reasm_data)
++{
++	struct sk_buff **nextp = (struct sk_buff **)reasm_data;
++	struct rb_node *rbn;
++	struct sk_buff *fp;
++
++	skb_push(head, head->data - skb_network_header(head));
++
++	/* Traverse the tree in order, to build frag_list. */
++	fp = FRAG_CB(head)->next_frag;
++	rbn = rb_next(&head->rbnode);
++	rb_erase(&head->rbnode, &q->rb_fragments);
++	while (rbn || fp) {
++		/* fp points to the next sk_buff in the current run;
++		 * rbn points to the next run.
++		 */
++		/* Go through the current run. */
++		while (fp) {
++			*nextp = fp;
++			nextp = &fp->next;
++			fp->prev = NULL;
++			memset(&fp->rbnode, 0, sizeof(fp->rbnode));
++			fp->sk = NULL;
++			head->data_len += fp->len;
++			head->len += fp->len;
++			if (head->ip_summed != fp->ip_summed)
++				head->ip_summed = CHECKSUM_NONE;
++			else if (head->ip_summed == CHECKSUM_COMPLETE)
++				head->csum = csum_add(head->csum, fp->csum);
++			head->truesize += fp->truesize;
++			fp = FRAG_CB(fp)->next_frag;
++		}
++		/* Move to the next run. */
++		if (rbn) {
++			struct rb_node *rbnext = rb_next(rbn);
++
++			fp = rb_to_skb(rbn);
++			rb_erase(rbn, &q->rb_fragments);
++			rbn = rbnext;
++		}
++	}
++	sub_frag_mem_limit(q->net, head->truesize);
++
++	*nextp = NULL;
++	head->next = NULL;
++	head->prev = NULL;
++	head->tstamp = q->stamp;
++}
++EXPORT_SYMBOL(inet_frag_reasm_finish);
++
++struct sk_buff *inet_frag_pull_head(struct inet_frag_queue *q)
++{
++	struct sk_buff *head;
++
++	if (q->fragments) {
++		head = q->fragments;
++		q->fragments = head->next;
++	} else {
++		struct sk_buff *skb;
++
++		head = skb_rb_first(&q->rb_fragments);
++		if (!head)
++			return NULL;
++		skb = FRAG_CB(head)->next_frag;
++		if (skb)
++			rb_replace_node(&head->rbnode, &skb->rbnode,
++					&q->rb_fragments);
++		else
++			rb_erase(&head->rbnode, &q->rb_fragments);
++		memset(&head->rbnode, 0, sizeof(head->rbnode));
++		barrier();
++	}
++	if (head == q->fragments_tail)
++		q->fragments_tail = NULL;
++
++	sub_frag_mem_limit(q->net, head->truesize);
++
++	return head;
++}
++EXPORT_SYMBOL(inet_frag_pull_head);
+diff --git a/net/ipv4/ip_fragment.c b/net/ipv4/ip_fragment.c
+index c7334d1e392a..6e9ba9dfb5b2 100644
+--- a/net/ipv4/ip_fragment.c
++++ b/net/ipv4/ip_fragment.c
+@@ -56,57 +56,6 @@
+  */
+ static const char ip_frag_cache_name[] = "ip4-frags";
+ 
+-/* Use skb->cb to track consecutive/adjacent fragments coming at
+- * the end of the queue. Nodes in the rb-tree queue will
+- * contain "runs" of one or more adjacent fragments.
+- *
+- * Invariants:
+- * - next_frag is NULL at the tail of a "run";
+- * - the head of a "run" has the sum of all fragment lengths in frag_run_len.
+- */
+-struct ipfrag_skb_cb {
+-	struct inet_skb_parm	h;
+-	struct sk_buff		*next_frag;
+-	int			frag_run_len;
+-};
+-
+-#define FRAG_CB(skb)		((struct ipfrag_skb_cb *)((skb)->cb))
+-
+-static void ip4_frag_init_run(struct sk_buff *skb)
+-{
+-	BUILD_BUG_ON(sizeof(struct ipfrag_skb_cb) > sizeof(skb->cb));
+-
+-	FRAG_CB(skb)->next_frag = NULL;
+-	FRAG_CB(skb)->frag_run_len = skb->len;
+-}
+-
+-/* Append skb to the last "run". */
+-static void ip4_frag_append_to_last_run(struct inet_frag_queue *q,
+-					struct sk_buff *skb)
+-{
+-	RB_CLEAR_NODE(&skb->rbnode);
+-	FRAG_CB(skb)->next_frag = NULL;
+-
+-	FRAG_CB(q->last_run_head)->frag_run_len += skb->len;
+-	FRAG_CB(q->fragments_tail)->next_frag = skb;
+-	q->fragments_tail = skb;
+-}
+-
+-/* Create a new "run" with the skb. */
+-static void ip4_frag_create_run(struct inet_frag_queue *q, struct sk_buff *skb)
+-{
+-	if (q->last_run_head)
+-		rb_link_node(&skb->rbnode, &q->last_run_head->rbnode,
+-			     &q->last_run_head->rbnode.rb_right);
+-	else
+-		rb_link_node(&skb->rbnode, NULL, &q->rb_fragments.rb_node);
+-	rb_insert_color(&skb->rbnode, &q->rb_fragments);
+-
+-	ip4_frag_init_run(skb);
+-	q->fragments_tail = skb;
+-	q->last_run_head = skb;
+-}
+-
+ /* Describe an entry in the "incomplete datagrams" queue. */
+ struct ipq {
+ 	struct inet_frag_queue q;
+@@ -210,27 +159,9 @@ static void ip_expire(unsigned long arg)
+ 	 * pull the head out of the tree in order to be able to
+ 	 * deal with head->dev.
+ 	 */
+-	if (qp->q.fragments) {
+-		head = qp->q.fragments;
+-		qp->q.fragments = head->next;
+-	} else {
+-		head = skb_rb_first(&qp->q.rb_fragments);
+-		if (!head)
+-			goto out;
+-		if (FRAG_CB(head)->next_frag)
+-			rb_replace_node(&head->rbnode,
+-					&FRAG_CB(head)->next_frag->rbnode,
+-					&qp->q.rb_fragments);
+-		else
+-			rb_erase(&head->rbnode, &qp->q.rb_fragments);
+-		memset(&head->rbnode, 0, sizeof(head->rbnode));
+-		barrier();
+-	}
+-	if (head == qp->q.fragments_tail)
+-		qp->q.fragments_tail = NULL;
+-
+-	sub_frag_mem_limit(qp->q.net, head->truesize);
+-
++	head = inet_frag_pull_head(&qp->q);
++	if (!head)
++		goto out;
+ 	head->dev = dev_get_by_index_rcu(net, qp->iif);
+ 	if (!head->dev)
+ 		goto out;
+@@ -343,12 +274,10 @@ static int ip_frag_reinit(struct ipq *qp)
+ static int ip_frag_queue(struct ipq *qp, struct sk_buff *skb)
+ {
+ 	struct net *net = container_of(qp->q.net, struct net, ipv4.frags);
+-	struct rb_node **rbn, *parent;
+-	struct sk_buff *skb1, *prev_tail;
+-	int ihl, end, skb1_run_end;
++	int ihl, end, flags, offset;
++	struct sk_buff *prev_tail;
+ 	struct net_device *dev;
+ 	unsigned int fragsize;
+-	int flags, offset;
+ 	int err = -ENOENT;
+ 	u8 ecn;
+ 
+@@ -380,7 +309,7 @@ static int ip_frag_queue(struct ipq *qp, struct sk_buff *skb)
+ 		 */
+ 		if (end < qp->q.len ||
+ 		    ((qp->q.flags & INET_FRAG_LAST_IN) && end != qp->q.len))
+-			goto err;
++			goto discard_qp;
+ 		qp->q.flags |= INET_FRAG_LAST_IN;
+ 		qp->q.len = end;
+ 	} else {
+@@ -392,82 +321,33 @@ static int ip_frag_queue(struct ipq *qp, struct sk_buff *skb)
+ 		if (end > qp->q.len) {
+ 			/* Some bits beyond end -> corruption. */
+ 			if (qp->q.flags & INET_FRAG_LAST_IN)
+-				goto err;
++				goto discard_qp;
+ 			qp->q.len = end;
+ 		}
+ 	}
+ 	if (end == offset)
+-		goto err;
++		goto discard_qp;
+ 
+ 	err = -ENOMEM;
+ 	if (!pskb_pull(skb, skb_network_offset(skb) + ihl))
+-		goto err;
++		goto discard_qp;
+ 
+ 	err = pskb_trim_rcsum(skb, end - offset);
+ 	if (err)
+-		goto err;
++		goto discard_qp;
+ 
+ 	/* Note : skb->rbnode and skb->dev share the same location. */
+ 	dev = skb->dev;
+ 	/* Makes sure compiler wont do silly aliasing games */
+ 	barrier();
+ 
+-	/* RFC5722, Section 4, amended by Errata ID : 3089
+-	 *                          When reassembling an IPv6 datagram, if
+-	 *   one or more its constituent fragments is determined to be an
+-	 *   overlapping fragment, the entire datagram (and any constituent
+-	 *   fragments) MUST be silently discarded.
+-	 *
+-	 * We do the same here for IPv4 (and increment an snmp counter) but
+-	 * we do not want to drop the whole queue in response to a duplicate
+-	 * fragment.
+-	 */
+-
+-	err = -EINVAL;
+-	/* Find out where to put this fragment.  */
+ 	prev_tail = qp->q.fragments_tail;
+-	if (!prev_tail)
+-		ip4_frag_create_run(&qp->q, skb);  /* First fragment. */
+-	else if (prev_tail->ip_defrag_offset + prev_tail->len < end) {
+-		/* This is the common case: skb goes to the end. */
+-		/* Detect and discard overlaps. */
+-		if (offset < prev_tail->ip_defrag_offset + prev_tail->len)
+-			goto discard_qp;
+-		if (offset == prev_tail->ip_defrag_offset + prev_tail->len)
+-			ip4_frag_append_to_last_run(&qp->q, skb);
+-		else
+-			ip4_frag_create_run(&qp->q, skb);
+-	} else {
+-		/* Binary search. Note that skb can become the first fragment,
+-		 * but not the last (covered above).
+-		 */
+-		rbn = &qp->q.rb_fragments.rb_node;
+-		do {
+-			parent = *rbn;
+-			skb1 = rb_to_skb(parent);
+-			skb1_run_end = skb1->ip_defrag_offset +
+-				       FRAG_CB(skb1)->frag_run_len;
+-			if (end <= skb1->ip_defrag_offset)
+-				rbn = &parent->rb_left;
+-			else if (offset >= skb1_run_end)
+-				rbn = &parent->rb_right;
+-			else if (offset >= skb1->ip_defrag_offset &&
+-				 end <= skb1_run_end)
+-				goto err; /* No new data, potential duplicate */
+-			else
+-				goto discard_qp; /* Found an overlap */
+-		} while (*rbn);
+-		/* Here we have parent properly set, and rbn pointing to
+-		 * one of its NULL left/right children. Insert skb.
+-		 */
+-		ip4_frag_init_run(skb);
+-		rb_link_node(&skb->rbnode, parent, rbn);
+-		rb_insert_color(&skb->rbnode, &qp->q.rb_fragments);
+-	}
++	err = inet_frag_queue_insert(&qp->q, skb, offset, end);
++	if (err)
++		goto insert_error;
+ 
+ 	if (dev)
+ 		qp->iif = dev->ifindex;
+-	skb->ip_defrag_offset = offset;
+ 
+ 	qp->q.stamp = skb->tstamp;
+ 	qp->q.meat += skb->len;
+@@ -492,15 +372,24 @@ static int ip_frag_queue(struct ipq *qp, struct sk_buff *skb)
+ 		skb->_skb_refdst = 0UL;
+ 		err = ip_frag_reasm(qp, skb, prev_tail, dev);
+ 		skb->_skb_refdst = orefdst;
++		if (err)
++			inet_frag_kill(&qp->q);
+ 		return err;
+ 	}
+ 
+ 	skb_dst_drop(skb);
+ 	return -EINPROGRESS;
+ 
++insert_error:
++	if (err == IPFRAG_DUP) {
++		kfree_skb(skb);
++		return -EINVAL;
++	}
++	err = -EINVAL;
++	__IP_INC_STATS(net, IPSTATS_MIB_REASM_OVERLAPS);
+ discard_qp:
+ 	inet_frag_kill(&qp->q);
+-	__IP_INC_STATS(net, IPSTATS_MIB_REASM_OVERLAPS);
++	__IP_INC_STATS(net, IPSTATS_MIB_REASMFAILS);
+ err:
+ 	kfree_skb(skb);
+ 	return err;
+@@ -512,12 +401,8 @@ static int ip_frag_reasm(struct ipq *qp, struct sk_buff *skb,
+ {
+ 	struct net *net = container_of(qp->q.net, struct net, ipv4.frags);
+ 	struct iphdr *iph;
+-	struct sk_buff *fp, *head = skb_rb_first(&qp->q.rb_fragments);
+-	struct sk_buff **nextp; /* To build frag_list. */
+-	struct rb_node *rbn;
+-	int len;
+-	int ihlen;
+-	int err;
++	void *reasm_data;
++	int len, err;
+ 	u8 ecn;
+ 
+ 	ipq_kill(qp);
+@@ -527,111 +412,23 @@ static int ip_frag_reasm(struct ipq *qp, struct sk_buff *skb,
+ 		err = -EINVAL;
+ 		goto out_fail;
+ 	}
+-	/* Make the one we just received the head. */
+-	if (head != skb) {
+-		fp = skb_clone(skb, GFP_ATOMIC);
+-		if (!fp)
+-			goto out_nomem;
+-		FRAG_CB(fp)->next_frag = FRAG_CB(skb)->next_frag;
+-		if (RB_EMPTY_NODE(&skb->rbnode))
+-			FRAG_CB(prev_tail)->next_frag = fp;
+-		else
+-			rb_replace_node(&skb->rbnode, &fp->rbnode,
+-					&qp->q.rb_fragments);
+-		if (qp->q.fragments_tail == skb)
+-			qp->q.fragments_tail = fp;
+-		skb_morph(skb, head);
+-		FRAG_CB(skb)->next_frag = FRAG_CB(head)->next_frag;
+-		rb_replace_node(&head->rbnode, &skb->rbnode,
+-				&qp->q.rb_fragments);
+-		consume_skb(head);
+-		head = skb;
+-	}
+-
+-	WARN_ON(head->ip_defrag_offset != 0);
+ 
+-	/* Allocate a new buffer for the datagram. */
+-	ihlen = ip_hdrlen(head);
+-	len = ihlen + qp->q.len;
++	/* Make the one we just received the head. */
++	reasm_data = inet_frag_reasm_prepare(&qp->q, skb, prev_tail);
++	if (!reasm_data)
++		goto out_nomem;
+ 
++	len = ip_hdrlen(skb) + qp->q.len;
+ 	err = -E2BIG;
+ 	if (len > 65535)
+ 		goto out_oversize;
+ 
+-	/* Head of list must not be cloned. */
+-	if (skb_unclone(head, GFP_ATOMIC))
+-		goto out_nomem;
+-
+-	/* If the first fragment is fragmented itself, we split
+-	 * it to two chunks: the first with data and paged part
+-	 * and the second, holding only fragments. */
+-	if (skb_has_frag_list(head)) {
+-		struct sk_buff *clone;
+-		int i, plen = 0;
+-
+-		clone = alloc_skb(0, GFP_ATOMIC);
+-		if (!clone)
+-			goto out_nomem;
+-		skb_shinfo(clone)->frag_list = skb_shinfo(head)->frag_list;
+-		skb_frag_list_init(head);
+-		for (i = 0; i < skb_shinfo(head)->nr_frags; i++)
+-			plen += skb_frag_size(&skb_shinfo(head)->frags[i]);
+-		clone->len = clone->data_len = head->data_len - plen;
+-		head->truesize += clone->truesize;
+-		clone->csum = 0;
+-		clone->ip_summed = head->ip_summed;
+-		add_frag_mem_limit(qp->q.net, clone->truesize);
+-		skb_shinfo(head)->frag_list = clone;
+-		nextp = &clone->next;
+-	} else {
+-		nextp = &skb_shinfo(head)->frag_list;
+-	}
++	inet_frag_reasm_finish(&qp->q, skb, reasm_data);
+ 
+-	skb_push(head, head->data - skb_network_header(head));
++	skb->dev = dev;
++	IPCB(skb)->frag_max_size = max(qp->max_df_size, qp->q.max_size);
+ 
+-	/* Traverse the tree in order, to build frag_list. */
+-	fp = FRAG_CB(head)->next_frag;
+-	rbn = rb_next(&head->rbnode);
+-	rb_erase(&head->rbnode, &qp->q.rb_fragments);
+-	while (rbn || fp) {
+-		/* fp points to the next sk_buff in the current run;
+-		 * rbn points to the next run.
+-		 */
+-		/* Go through the current run. */
+-		while (fp) {
+-			*nextp = fp;
+-			nextp = &fp->next;
+-			fp->prev = NULL;
+-			memset(&fp->rbnode, 0, sizeof(fp->rbnode));
+-			fp->sk = NULL;
+-			head->data_len += fp->len;
+-			head->len += fp->len;
+-			if (head->ip_summed != fp->ip_summed)
+-				head->ip_summed = CHECKSUM_NONE;
+-			else if (head->ip_summed == CHECKSUM_COMPLETE)
+-				head->csum = csum_add(head->csum, fp->csum);
+-			head->truesize += fp->truesize;
+-			fp = FRAG_CB(fp)->next_frag;
+-		}
+-		/* Move to the next run. */
+-		if (rbn) {
+-			struct rb_node *rbnext = rb_next(rbn);
+-
+-			fp = rb_to_skb(rbn);
+-			rb_erase(rbn, &qp->q.rb_fragments);
+-			rbn = rbnext;
+-		}
+-	}
+-	sub_frag_mem_limit(qp->q.net, head->truesize);
+-
+-	*nextp = NULL;
+-	head->next = NULL;
+-	head->prev = NULL;
+-	head->dev = dev;
+-	head->tstamp = qp->q.stamp;
+-	IPCB(head)->frag_max_size = max(qp->max_df_size, qp->q.max_size);
+-
+-	iph = ip_hdr(head);
++	iph = ip_hdr(skb);
+ 	iph->tot_len = htons(len);
+ 	iph->tos |= ecn;
+ 
+@@ -644,7 +441,7 @@ static int ip_frag_reasm(struct ipq *qp, struct sk_buff *skb,
+ 	 * from one very small df-fragment and one large non-df frag.
+ 	 */
+ 	if (qp->max_df_size == qp->q.max_size) {
+-		IPCB(head)->flags |= IPSKB_FRAG_PMTU;
++		IPCB(skb)->flags |= IPSKB_FRAG_PMTU;
+ 		iph->frag_off = htons(IP_DF);
+ 	} else {
+ 		iph->frag_off = 0;
+@@ -742,28 +539,6 @@ struct sk_buff *ip_check_defrag(struct net *net, struct sk_buff *skb, u32 user)
+ }
+ EXPORT_SYMBOL(ip_check_defrag);
+ 
+-unsigned int inet_frag_rbtree_purge(struct rb_root *root)
+-{
+-	struct rb_node *p = rb_first(root);
+-	unsigned int sum = 0;
+-
+-	while (p) {
+-		struct sk_buff *skb = rb_entry(p, struct sk_buff, rbnode);
+-
+-		p = rb_next(p);
+-		rb_erase(&skb->rbnode, root);
+-		while (skb) {
+-			struct sk_buff *next = FRAG_CB(skb)->next_frag;
+-
+-			sum += skb->truesize;
+-			kfree_skb(skb);
+-			skb = next;
+-		}
+-	}
+-	return sum;
+-}
+-EXPORT_SYMBOL(inet_frag_rbtree_purge);
+-
+ #ifdef CONFIG_SYSCTL
+ static int dist_min;
+ 
+diff --git a/net/ipv4/route.c b/net/ipv4/route.c
+index 0e2cf9634541..02c49857b5a7 100644
+--- a/net/ipv4/route.c
++++ b/net/ipv4/route.c
+@@ -1168,25 +1168,39 @@ static struct dst_entry *ipv4_dst_check(struct dst_entry *dst, u32 cookie)
+ 	return dst;
+ }
+ 
+-static void ipv4_link_failure(struct sk_buff *skb)
++static void ipv4_send_dest_unreach(struct sk_buff *skb)
+ {
+ 	struct ip_options opt;
+-	struct rtable *rt;
+ 	int res;
+ 
+ 	/* Recompile ip options since IPCB may not be valid anymore.
++	 * Also check we have a reasonable ipv4 header.
+ 	 */
+-	memset(&opt, 0, sizeof(opt));
+-	opt.optlen = ip_hdr(skb)->ihl*4 - sizeof(struct iphdr);
++	if (!pskb_network_may_pull(skb, sizeof(struct iphdr)) ||
++	    ip_hdr(skb)->version != 4 || ip_hdr(skb)->ihl < 5)
++		return;
+ 
+-	rcu_read_lock();
+-	res = __ip_options_compile(dev_net(skb->dev), &opt, skb, NULL);
+-	rcu_read_unlock();
++	memset(&opt, 0, sizeof(opt));
++	if (ip_hdr(skb)->ihl > 5) {
++		if (!pskb_network_may_pull(skb, ip_hdr(skb)->ihl * 4))
++			return;
++		opt.optlen = ip_hdr(skb)->ihl * 4 - sizeof(struct iphdr);
+ 
+-	if (res)
+-		return;
++		rcu_read_lock();
++		res = __ip_options_compile(dev_net(skb->dev), &opt, skb, NULL);
++		rcu_read_unlock();
+ 
++		if (res)
++			return;
++	}
+ 	__icmp_send(skb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH, 0, &opt);
++}
++
++static void ipv4_link_failure(struct sk_buff *skb)
++{
++	struct rtable *rt;
++
++	ipv4_send_dest_unreach(skb);
+ 
+ 	rt = skb_rtable(skb);
+ 	if (rt)
+diff --git a/net/ipv4/sysctl_net_ipv4.c b/net/ipv4/sysctl_net_ipv4.c
+index 024ab833557d..85713adf2770 100644
+--- a/net/ipv4/sysctl_net_ipv4.c
++++ b/net/ipv4/sysctl_net_ipv4.c
+@@ -41,6 +41,7 @@ static int tcp_syn_retries_min = 1;
+ static int tcp_syn_retries_max = MAX_TCP_SYNCNT;
+ static int ip_ping_group_range_min[] = { 0, 0 };
+ static int ip_ping_group_range_max[] = { GID_T_MAX, GID_T_MAX };
++static int one_day_secs = 24 * 3600;
+ 
+ /* Update system visible IP port range */
+ static void set_local_port_range(struct net *net, int range[2])
+@@ -460,7 +461,9 @@ static struct ctl_table ipv4_table[] = {
+ 		.data		= &sysctl_tcp_min_rtt_wlen,
+ 		.maxlen		= sizeof(int),
+ 		.mode		= 0644,
+-		.proc_handler	= proc_dointvec
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= &zero,
++		.extra2		= &one_day_secs
+ 	},
+ 	{
+ 		.procname	= "tcp_low_latency",
+diff --git a/net/ipv6/netfilter/nf_conntrack_reasm.c b/net/ipv6/netfilter/nf_conntrack_reasm.c
+index e46185377981..1e1fa99b3243 100644
+--- a/net/ipv6/netfilter/nf_conntrack_reasm.c
++++ b/net/ipv6/netfilter/nf_conntrack_reasm.c
+@@ -33,9 +33,8 @@
+ 
+ #include <net/sock.h>
+ #include <net/snmp.h>
+-#include <net/inet_frag.h>
++#include <net/ipv6_frag.h>
+ 
+-#include <net/ipv6.h>
+ #include <net/protocol.h>
+ #include <net/transp_v6.h>
+ #include <net/rawv6.h>
+@@ -52,14 +51,6 @@
+ 
+ static const char nf_frags_cache_name[] = "nf-frags";
+ 
+-struct nf_ct_frag6_skb_cb
+-{
+-	struct inet6_skb_parm	h;
+-	int			offset;
+-};
+-
+-#define NFCT_FRAG6_CB(skb)	((struct nf_ct_frag6_skb_cb *)((skb)->cb))
+-
+ static struct inet_frags nf_frags;
+ 
+ #ifdef CONFIG_SYSCTL
+@@ -145,6 +136,9 @@ static void __net_exit nf_ct_frags6_sysctl_unregister(struct net *net)
+ }
+ #endif
+ 
++static int nf_ct_frag6_reasm(struct frag_queue *fq, struct sk_buff *skb,
++			     struct sk_buff *prev_tail, struct net_device *dev);
++
+ static inline u8 ip6_frag_ecn(const struct ipv6hdr *ipv6h)
+ {
+ 	return 1 << (ipv6_get_dsfield(ipv6h) & INET_ECN_MASK);
+@@ -158,7 +152,7 @@ static void nf_ct_frag6_expire(unsigned long data)
+ 	fq = container_of((struct inet_frag_queue *)data, struct frag_queue, q);
+ 	net = container_of(fq->q.net, struct net, nf_frag.frags);
+ 
+-	ip6_expire_frag_queue(net, fq);
++	ip6frag_expire_frag_queue(net, fq);
+ }
+ 
+ /* Creation primitives. */
+@@ -185,9 +179,10 @@ static struct frag_queue *fq_find(struct net *net, __be32 id, u32 user,
+ static int nf_ct_frag6_queue(struct frag_queue *fq, struct sk_buff *skb,
+ 			     const struct frag_hdr *fhdr, int nhoff)
+ {
+-	struct sk_buff *prev, *next;
+ 	unsigned int payload_len;
+-	int offset, end;
++	struct net_device *dev;
++	struct sk_buff *prev;
++	int offset, end, err;
+ 	u8 ecn;
+ 
+ 	if (fq->q.flags & INET_FRAG_COMPLETE) {
+@@ -262,55 +257,19 @@ static int nf_ct_frag6_queue(struct frag_queue *fq, struct sk_buff *skb,
+ 		goto err;
+ 	}
+ 
+-	/* Find out which fragments are in front and at the back of us
+-	 * in the chain of fragments so far.  We must know where to put
+-	 * this fragment, right?
+-	 */
++	/* Note : skb->rbnode and skb->dev share the same location. */
++	dev = skb->dev;
++	/* Makes sure compiler wont do silly aliasing games */
++	barrier();
++
+ 	prev = fq->q.fragments_tail;
+-	if (!prev || NFCT_FRAG6_CB(prev)->offset < offset) {
+-		next = NULL;
+-		goto found;
+-	}
+-	prev = NULL;
+-	for (next = fq->q.fragments; next != NULL; next = next->next) {
+-		if (NFCT_FRAG6_CB(next)->offset >= offset)
+-			break;	/* bingo! */
+-		prev = next;
+-	}
++	err = inet_frag_queue_insert(&fq->q, skb, offset, end);
++	if (err)
++		goto insert_error;
+ 
+-found:
+-	/* RFC5722, Section 4:
+-	 *                                  When reassembling an IPv6 datagram, if
+-	 *   one or more its constituent fragments is determined to be an
+-	 *   overlapping fragment, the entire datagram (and any constituent
+-	 *   fragments, including those not yet received) MUST be silently
+-	 *   discarded.
+-	 */
++	if (dev)
++		fq->iif = dev->ifindex;
+ 
+-	/* Check for overlap with preceding fragment. */
+-	if (prev &&
+-	    (NFCT_FRAG6_CB(prev)->offset + prev->len) > offset)
+-		goto discard_fq;
+-
+-	/* Look for overlap with succeeding segment. */
+-	if (next && NFCT_FRAG6_CB(next)->offset < end)
+-		goto discard_fq;
+-
+-	NFCT_FRAG6_CB(skb)->offset = offset;
+-
+-	/* Insert this fragment in the chain of fragments. */
+-	skb->next = next;
+-	if (!next)
+-		fq->q.fragments_tail = skb;
+-	if (prev)
+-		prev->next = skb;
+-	else
+-		fq->q.fragments = skb;
+-
+-	if (skb->dev) {
+-		fq->iif = skb->dev->ifindex;
+-		skb->dev = NULL;
+-	}
+ 	fq->q.stamp = skb->tstamp;
+ 	fq->q.meat += skb->len;
+ 	fq->ecn |= ecn;
+@@ -326,11 +285,25 @@ found:
+ 		fq->q.flags |= INET_FRAG_FIRST_IN;
+ 	}
+ 
+-	return 0;
++	if (fq->q.flags == (INET_FRAG_FIRST_IN | INET_FRAG_LAST_IN) &&
++	    fq->q.meat == fq->q.len) {
++		unsigned long orefdst = skb->_skb_refdst;
+ 
+-discard_fq:
++		skb->_skb_refdst = 0UL;
++		err = nf_ct_frag6_reasm(fq, skb, prev, dev);
++		skb->_skb_refdst = orefdst;
++		return err;
++	}
++
++	skb_dst_drop(skb);
++	return -EINPROGRESS;
++
++insert_error:
++	if (err == IPFRAG_DUP)
++		goto err;
+ 	inet_frag_kill(&fq->q);
+ err:
++	skb_dst_drop(skb);
+ 	return -EINVAL;
+ }
+ 
+@@ -340,141 +313,67 @@ err:
+  *	It is called with locked fq, and caller must check that
+  *	queue is eligible for reassembly i.e. it is not COMPLETE,
+  *	the last and the first frames arrived and all the bits are here.
+- *
+- *	returns true if *prev skb has been transformed into the reassembled
+- *	skb, false otherwise.
+  */
+-static bool
+-nf_ct_frag6_reasm(struct frag_queue *fq, struct sk_buff *prev,  struct net_device *dev)
++static int nf_ct_frag6_reasm(struct frag_queue *fq, struct sk_buff *skb,
++			     struct sk_buff *prev_tail, struct net_device *dev)
+ {
+-	struct sk_buff *fp, *head = fq->q.fragments;
+-	int    payload_len;
++	void *reasm_data;
++	int payload_len;
+ 	u8 ecn;
+ 
+ 	inet_frag_kill(&fq->q);
+ 
+-	WARN_ON(head == NULL);
+-	WARN_ON(NFCT_FRAG6_CB(head)->offset != 0);
+-
+ 	ecn = ip_frag_ecn_table[fq->ecn];
+ 	if (unlikely(ecn == 0xff))
+-		return false;
++		goto err;
+ 
+-	/* Unfragmented part is taken from the first segment. */
+-	payload_len = ((head->data - skb_network_header(head)) -
++	reasm_data = inet_frag_reasm_prepare(&fq->q, skb, prev_tail);
++	if (!reasm_data)
++		goto err;
++
++	payload_len = ((skb->data - skb_network_header(skb)) -
+ 		       sizeof(struct ipv6hdr) + fq->q.len -
+ 		       sizeof(struct frag_hdr));
+ 	if (payload_len > IPV6_MAXPLEN) {
+ 		net_dbg_ratelimited("nf_ct_frag6_reasm: payload len = %d\n",
+ 				    payload_len);
+-		return false;
+-	}
+-
+-	/* Head of list must not be cloned. */
+-	if (skb_unclone(head, GFP_ATOMIC))
+-		return false;
+-
+-	/* If the first fragment is fragmented itself, we split
+-	 * it to two chunks: the first with data and paged part
+-	 * and the second, holding only fragments. */
+-	if (skb_has_frag_list(head)) {
+-		struct sk_buff *clone;
+-		int i, plen = 0;
+-
+-		clone = alloc_skb(0, GFP_ATOMIC);
+-		if (clone == NULL)
+-			return false;
+-
+-		clone->next = head->next;
+-		head->next = clone;
+-		skb_shinfo(clone)->frag_list = skb_shinfo(head)->frag_list;
+-		skb_frag_list_init(head);
+-		for (i = 0; i < skb_shinfo(head)->nr_frags; i++)
+-			plen += skb_frag_size(&skb_shinfo(head)->frags[i]);
+-		clone->len = clone->data_len = head->data_len - plen;
+-		head->data_len -= clone->len;
+-		head->len -= clone->len;
+-		clone->csum = 0;
+-		clone->ip_summed = head->ip_summed;
+-
+-		add_frag_mem_limit(fq->q.net, clone->truesize);
+-	}
+-
+-	/* morph head into last received skb: prev.
+-	 *
+-	 * This allows callers of ipv6 conntrack defrag to continue
+-	 * to use the last skb(frag) passed into the reasm engine.
+-	 * The last skb frag 'silently' turns into the full reassembled skb.
+-	 *
+-	 * Since prev is also part of q->fragments we have to clone it first.
+-	 */
+-	if (head != prev) {
+-		struct sk_buff *iter;
+-
+-		fp = skb_clone(prev, GFP_ATOMIC);
+-		if (!fp)
+-			return false;
+-
+-		fp->next = prev->next;
+-
+-		iter = head;
+-		while (iter) {
+-			if (iter->next == prev) {
+-				iter->next = fp;
+-				break;
+-			}
+-			iter = iter->next;
+-		}
+-
+-		skb_morph(prev, head);
+-		prev->next = head->next;
+-		consume_skb(head);
+-		head = prev;
++		goto err;
+ 	}
+ 
+ 	/* We have to remove fragment header from datagram and to relocate
+ 	 * header in order to calculate ICV correctly. */
+-	skb_network_header(head)[fq->nhoffset] = skb_transport_header(head)[0];
+-	memmove(head->head + sizeof(struct frag_hdr), head->head,
+-		(head->data - head->head) - sizeof(struct frag_hdr));
+-	head->mac_header += sizeof(struct frag_hdr);
+-	head->network_header += sizeof(struct frag_hdr);
+-
+-	skb_shinfo(head)->frag_list = head->next;
+-	skb_reset_transport_header(head);
+-	skb_push(head, head->data - skb_network_header(head));
+-
+-	for (fp = head->next; fp; fp = fp->next) {
+-		head->data_len += fp->len;
+-		head->len += fp->len;
+-		if (head->ip_summed != fp->ip_summed)
+-			head->ip_summed = CHECKSUM_NONE;
+-		else if (head->ip_summed == CHECKSUM_COMPLETE)
+-			head->csum = csum_add(head->csum, fp->csum);
+-		head->truesize += fp->truesize;
+-		fp->sk = NULL;
+-	}
+-	sub_frag_mem_limit(fq->q.net, head->truesize);
++	skb_network_header(skb)[fq->nhoffset] = skb_transport_header(skb)[0];
++	memmove(skb->head + sizeof(struct frag_hdr), skb->head,
++		(skb->data - skb->head) - sizeof(struct frag_hdr));
++	skb->mac_header += sizeof(struct frag_hdr);
++	skb->network_header += sizeof(struct frag_hdr);
++
++	skb_reset_transport_header(skb);
+ 
+-	head->ignore_df = 1;
+-	head->next = NULL;
+-	head->dev = dev;
+-	head->tstamp = fq->q.stamp;
+-	ipv6_hdr(head)->payload_len = htons(payload_len);
+-	ipv6_change_dsfield(ipv6_hdr(head), 0xff, ecn);
+-	IP6CB(head)->frag_max_size = sizeof(struct ipv6hdr) + fq->q.max_size;
++	inet_frag_reasm_finish(&fq->q, skb, reasm_data);
++
++	skb->ignore_df = 1;
++	skb->dev = dev;
++	ipv6_hdr(skb)->payload_len = htons(payload_len);
++	ipv6_change_dsfield(ipv6_hdr(skb), 0xff, ecn);
++	IP6CB(skb)->frag_max_size = sizeof(struct ipv6hdr) + fq->q.max_size;
+ 
+ 	/* Yes, and fold redundant checksum back. 8) */
+-	if (head->ip_summed == CHECKSUM_COMPLETE)
+-		head->csum = csum_partial(skb_network_header(head),
+-					  skb_network_header_len(head),
+-					  head->csum);
++	if (skb->ip_summed == CHECKSUM_COMPLETE)
++		skb->csum = csum_partial(skb_network_header(skb),
++					 skb_network_header_len(skb),
++					 skb->csum);
+ 
+ 	fq->q.fragments = NULL;
+ 	fq->q.rb_fragments = RB_ROOT;
+ 	fq->q.fragments_tail = NULL;
++	fq->q.last_run_head = NULL;
++
++	return 0;
+ 
+-	return true;
++err:
++	inet_frag_kill(&fq->q);
++	return -EINVAL;
+ }
+ 
+ /*
+@@ -543,7 +442,6 @@ find_prev_fhdr(struct sk_buff *skb, u8 *prevhdrp, int *prevhoff, int *fhoff)
+ int nf_ct_frag6_gather(struct net *net, struct sk_buff *skb, u32 user)
+ {
+ 	u16 savethdr = skb->transport_header;
+-	struct net_device *dev = skb->dev;
+ 	int fhoff, nhoff, ret;
+ 	struct frag_hdr *fhdr;
+ 	struct frag_queue *fq;
+@@ -566,10 +464,6 @@ int nf_ct_frag6_gather(struct net *net, struct sk_buff *skb, u32 user)
+ 	hdr = ipv6_hdr(skb);
+ 	fhdr = (struct frag_hdr *)skb_transport_header(skb);
+ 
+-	if (skb->len - skb_network_offset(skb) < IPV6_MIN_MTU &&
+-	    fhdr->frag_off & htons(IP6_MF))
+-		return -EINVAL;
+-
+ 	skb_orphan(skb);
+ 	fq = fq_find(net, fhdr->identification, user, hdr,
+ 		     skb->dev ? skb->dev->ifindex : 0);
+@@ -581,24 +475,17 @@ int nf_ct_frag6_gather(struct net *net, struct sk_buff *skb, u32 user)
+ 	spin_lock_bh(&fq->q.lock);
+ 
+ 	ret = nf_ct_frag6_queue(fq, skb, fhdr, nhoff);
+-	if (ret < 0) {
+-		if (ret == -EPROTO) {
+-			skb->transport_header = savethdr;
+-			ret = 0;
+-		}
+-		goto out_unlock;
++	if (ret == -EPROTO) {
++		skb->transport_header = savethdr;
++		ret = 0;
+ 	}
+ 
+ 	/* after queue has assumed skb ownership, only 0 or -EINPROGRESS
+ 	 * must be returned.
+ 	 */
+-	ret = -EINPROGRESS;
+-	if (fq->q.flags == (INET_FRAG_FIRST_IN | INET_FRAG_LAST_IN) &&
+-	    fq->q.meat == fq->q.len &&
+-	    nf_ct_frag6_reasm(fq, skb, dev))
+-		ret = 0;
++	if (ret)
++		ret = -EINPROGRESS;
+ 
+-out_unlock:
+ 	spin_unlock_bh(&fq->q.lock);
+ 	inet_frag_put(&fq->q);
+ 	return ret;
+@@ -634,16 +521,24 @@ static struct pernet_operations nf_ct_net_ops = {
+ 	.exit = nf_ct_net_exit,
+ };
+ 
++static const struct rhashtable_params nfct_rhash_params = {
++	.head_offset		= offsetof(struct inet_frag_queue, node),
++	.hashfn			= ip6frag_key_hashfn,
++	.obj_hashfn		= ip6frag_obj_hashfn,
++	.obj_cmpfn		= ip6frag_obj_cmpfn,
++	.automatic_shrinking	= true,
++};
++
+ int nf_ct_frag6_init(void)
+ {
+ 	int ret = 0;
+ 
+-	nf_frags.constructor = ip6_frag_init;
++	nf_frags.constructor = ip6frag_init;
+ 	nf_frags.destructor = NULL;
+ 	nf_frags.qsize = sizeof(struct frag_queue);
+ 	nf_frags.frag_expire = nf_ct_frag6_expire;
+ 	nf_frags.frags_cache_name = nf_frags_cache_name;
+-	nf_frags.rhash_params = ip6_rhash_params;
++	nf_frags.rhash_params = nfct_rhash_params;
+ 	ret = inet_frags_init(&nf_frags);
+ 	if (ret)
+ 		goto out;
+diff --git a/net/ipv6/netfilter/nf_defrag_ipv6_hooks.c b/net/ipv6/netfilter/nf_defrag_ipv6_hooks.c
+index f06b0471f39f..c4070e9c4260 100644
+--- a/net/ipv6/netfilter/nf_defrag_ipv6_hooks.c
++++ b/net/ipv6/netfilter/nf_defrag_ipv6_hooks.c
+@@ -14,8 +14,7 @@
+ #include <linux/skbuff.h>
+ #include <linux/icmp.h>
+ #include <linux/sysctl.h>
+-#include <net/ipv6.h>
+-#include <net/inet_frag.h>
++#include <net/ipv6_frag.h>
+ 
+ #include <linux/netfilter_ipv6.h>
+ #include <linux/netfilter_bridge.h>
+diff --git a/net/ipv6/reassembly.c b/net/ipv6/reassembly.c
+index 74ffbcb306a6..4aed9c45a91a 100644
+--- a/net/ipv6/reassembly.c
++++ b/net/ipv6/reassembly.c
+@@ -57,18 +57,11 @@
+ #include <net/rawv6.h>
+ #include <net/ndisc.h>
+ #include <net/addrconf.h>
+-#include <net/inet_frag.h>
++#include <net/ipv6_frag.h>
+ #include <net/inet_ecn.h>
+ 
+ static const char ip6_frag_cache_name[] = "ip6-frags";
+ 
+-struct ip6frag_skb_cb {
+-	struct inet6_skb_parm	h;
+-	int			offset;
+-};
+-
+-#define FRAG6_CB(skb)	((struct ip6frag_skb_cb *)((skb)->cb))
+-
+ static u8 ip6_frag_ecn(const struct ipv6hdr *ipv6h)
+ {
+ 	return 1 << (ipv6_get_dsfield(ipv6h) & INET_ECN_MASK);
+@@ -76,63 +69,8 @@ static u8 ip6_frag_ecn(const struct ipv6hdr *ipv6h)
+ 
+ static struct inet_frags ip6_frags;
+ 
+-static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *prev,
+-			  struct net_device *dev);
+-
+-void ip6_frag_init(struct inet_frag_queue *q, const void *a)
+-{
+-	struct frag_queue *fq = container_of(q, struct frag_queue, q);
+-	const struct frag_v6_compare_key *key = a;
+-
+-	q->key.v6 = *key;
+-	fq->ecn = 0;
+-}
+-EXPORT_SYMBOL(ip6_frag_init);
+-
+-void ip6_expire_frag_queue(struct net *net, struct frag_queue *fq)
+-{
+-	struct net_device *dev = NULL;
+-	struct sk_buff *head;
+-
+-	rcu_read_lock();
+-	spin_lock(&fq->q.lock);
+-
+-	if (fq->q.flags & INET_FRAG_COMPLETE)
+-		goto out;
+-
+-	inet_frag_kill(&fq->q);
+-
+-	dev = dev_get_by_index_rcu(net, fq->iif);
+-	if (!dev)
+-		goto out;
+-
+-	__IP6_INC_STATS(net, __in6_dev_get(dev), IPSTATS_MIB_REASMFAILS);
+-	__IP6_INC_STATS(net, __in6_dev_get(dev), IPSTATS_MIB_REASMTIMEOUT);
+-
+-	/* Don't send error if the first segment did not arrive. */
+-	head = fq->q.fragments;
+-	if (!(fq->q.flags & INET_FRAG_FIRST_IN) || !head)
+-		goto out;
+-
+-	/* But use as source device on which LAST ARRIVED
+-	 * segment was received. And do not use fq->dev
+-	 * pointer directly, device might already disappeared.
+-	 */
+-	head->dev = dev;
+-	skb_get(head);
+-	spin_unlock(&fq->q.lock);
+-
+-	icmpv6_send(head, ICMPV6_TIME_EXCEED, ICMPV6_EXC_FRAGTIME, 0);
+-	kfree_skb(head);
+-	goto out_rcu_unlock;
+-
+-out:
+-	spin_unlock(&fq->q.lock);
+-out_rcu_unlock:
+-	rcu_read_unlock();
+-	inet_frag_put(&fq->q);
+-}
+-EXPORT_SYMBOL(ip6_expire_frag_queue);
++static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *skb,
++			  struct sk_buff *prev_tail, struct net_device *dev);
+ 
+ static void ip6_frag_expire(unsigned long data)
+ {
+@@ -142,7 +80,7 @@ static void ip6_frag_expire(unsigned long data)
+ 	fq = container_of((struct inet_frag_queue *)data, struct frag_queue, q);
+ 	net = container_of(fq->q.net, struct net, ipv6.frags);
+ 
+-	ip6_expire_frag_queue(net, fq);
++	ip6frag_expire_frag_queue(net, fq);
+ }
+ 
+ static struct frag_queue *
+@@ -169,27 +107,29 @@ fq_find(struct net *net, __be32 id, const struct ipv6hdr *hdr, int iif)
+ }
+ 
+ static int ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
+-			   struct frag_hdr *fhdr, int nhoff)
++			  struct frag_hdr *fhdr, int nhoff,
++			  u32 *prob_offset)
+ {
+-	struct sk_buff *prev, *next;
+-	struct net_device *dev;
+-	int offset, end;
+ 	struct net *net = dev_net(skb_dst(skb)->dev);
++	int offset, end, fragsize;
++	struct sk_buff *prev_tail;
++	struct net_device *dev;
++	int err = -ENOENT;
+ 	u8 ecn;
+ 
+ 	if (fq->q.flags & INET_FRAG_COMPLETE)
+ 		goto err;
+ 
++	err = -EINVAL;
+ 	offset = ntohs(fhdr->frag_off) & ~0x7;
+ 	end = offset + (ntohs(ipv6_hdr(skb)->payload_len) -
+ 			((u8 *)(fhdr + 1) - (u8 *)(ipv6_hdr(skb) + 1)));
+ 
+ 	if ((unsigned int)end > IPV6_MAXPLEN) {
+-		__IP6_INC_STATS(net, ip6_dst_idev(skb_dst(skb)),
+-				IPSTATS_MIB_INHDRERRORS);
+-		icmpv6_param_prob(skb, ICMPV6_HDR_FIELD,
+-				  ((u8 *)&fhdr->frag_off -
+-				   skb_network_header(skb)));
++		*prob_offset = (u8 *)&fhdr->frag_off - skb_network_header(skb);
++		/* note that if prob_offset is set, the skb is freed elsewhere,
++		 * we do not free it here.
++		 */
+ 		return -1;
+ 	}
+ 
+@@ -209,7 +149,7 @@ static int ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
+ 		 */
+ 		if (end < fq->q.len ||
+ 		    ((fq->q.flags & INET_FRAG_LAST_IN) && end != fq->q.len))
+-			goto err;
++			goto discard_fq;
+ 		fq->q.flags |= INET_FRAG_LAST_IN;
+ 		fq->q.len = end;
+ 	} else {
+@@ -220,84 +160,51 @@ static int ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
+ 			/* RFC2460 says always send parameter problem in
+ 			 * this case. -DaveM
+ 			 */
+-			__IP6_INC_STATS(net, ip6_dst_idev(skb_dst(skb)),
+-					IPSTATS_MIB_INHDRERRORS);
+-			icmpv6_param_prob(skb, ICMPV6_HDR_FIELD,
+-					  offsetof(struct ipv6hdr, payload_len));
++			*prob_offset = offsetof(struct ipv6hdr, payload_len);
+ 			return -1;
+ 		}
+ 		if (end > fq->q.len) {
+ 			/* Some bits beyond end -> corruption. */
+ 			if (fq->q.flags & INET_FRAG_LAST_IN)
+-				goto err;
++				goto discard_fq;
+ 			fq->q.len = end;
+ 		}
+ 	}
+ 
+ 	if (end == offset)
+-		goto err;
++		goto discard_fq;
+ 
++	err = -ENOMEM;
+ 	/* Point into the IP datagram 'data' part. */
+ 	if (!pskb_pull(skb, (u8 *) (fhdr + 1) - skb->data))
+-		goto err;
+-
+-	if (pskb_trim_rcsum(skb, end - offset))
+-		goto err;
+-
+-	/* Find out which fragments are in front and at the back of us
+-	 * in the chain of fragments so far.  We must know where to put
+-	 * this fragment, right?
+-	 */
+-	prev = fq->q.fragments_tail;
+-	if (!prev || FRAG6_CB(prev)->offset < offset) {
+-		next = NULL;
+-		goto found;
+-	}
+-	prev = NULL;
+-	for (next = fq->q.fragments; next != NULL; next = next->next) {
+-		if (FRAG6_CB(next)->offset >= offset)
+-			break;	/* bingo! */
+-		prev = next;
+-	}
+-
+-found:
+-	/* RFC5722, Section 4, amended by Errata ID : 3089
+-	 *                          When reassembling an IPv6 datagram, if
+-	 *   one or more its constituent fragments is determined to be an
+-	 *   overlapping fragment, the entire datagram (and any constituent
+-	 *   fragments) MUST be silently discarded.
+-	 */
+-
+-	/* Check for overlap with preceding fragment. */
+-	if (prev &&
+-	    (FRAG6_CB(prev)->offset + prev->len) > offset)
+ 		goto discard_fq;
+ 
+-	/* Look for overlap with succeeding segment. */
+-	if (next && FRAG6_CB(next)->offset < end)
++	err = pskb_trim_rcsum(skb, end - offset);
++	if (err)
+ 		goto discard_fq;
+ 
+-	FRAG6_CB(skb)->offset = offset;
++	/* Note : skb->rbnode and skb->dev share the same location. */
++	dev = skb->dev;
++	/* Makes sure compiler wont do silly aliasing games */
++	barrier();
+ 
+-	/* Insert this fragment in the chain of fragments. */
+-	skb->next = next;
+-	if (!next)
+-		fq->q.fragments_tail = skb;
+-	if (prev)
+-		prev->next = skb;
+-	else
+-		fq->q.fragments = skb;
++	prev_tail = fq->q.fragments_tail;
++	err = inet_frag_queue_insert(&fq->q, skb, offset, end);
++	if (err)
++		goto insert_error;
+ 
+-	dev = skb->dev;
+-	if (dev) {
++	if (dev)
+ 		fq->iif = dev->ifindex;
+-		skb->dev = NULL;
+-	}
++
+ 	fq->q.stamp = skb->tstamp;
+ 	fq->q.meat += skb->len;
+ 	fq->ecn |= ecn;
+ 	add_frag_mem_limit(fq->q.net, skb->truesize);
+ 
++	fragsize = -skb_network_offset(skb) + skb->len;
++	if (fragsize > fq->q.max_size)
++		fq->q.max_size = fragsize;
++
+ 	/* The first fragment.
+ 	 * nhoffset is obtained from the first fragment, of course.
+ 	 */
+@@ -308,44 +215,48 @@ found:
+ 
+ 	if (fq->q.flags == (INET_FRAG_FIRST_IN | INET_FRAG_LAST_IN) &&
+ 	    fq->q.meat == fq->q.len) {
+-		int res;
+ 		unsigned long orefdst = skb->_skb_refdst;
+ 
+ 		skb->_skb_refdst = 0UL;
+-		res = ip6_frag_reasm(fq, prev, dev);
++		err = ip6_frag_reasm(fq, skb, prev_tail, dev);
+ 		skb->_skb_refdst = orefdst;
+-		return res;
++		return err;
+ 	}
+ 
+ 	skb_dst_drop(skb);
+-	return -1;
++	return -EINPROGRESS;
+ 
++insert_error:
++	if (err == IPFRAG_DUP) {
++		kfree_skb(skb);
++		return -EINVAL;
++	}
++	err = -EINVAL;
++	__IP6_INC_STATS(net, ip6_dst_idev(skb_dst(skb)),
++			IPSTATS_MIB_REASM_OVERLAPS);
+ discard_fq:
+ 	inet_frag_kill(&fq->q);
+-err:
+ 	__IP6_INC_STATS(net, ip6_dst_idev(skb_dst(skb)),
+ 			IPSTATS_MIB_REASMFAILS);
++err:
+ 	kfree_skb(skb);
+-	return -1;
++	return err;
+ }
+ 
+ /*
+  *	Check if this packet is complete.
+- *	Returns NULL on failure by any reason, and pointer
+- *	to current nexthdr field in reassembled frame.
+  *
+  *	It is called with locked fq, and caller must check that
+  *	queue is eligible for reassembly i.e. it is not COMPLETE,
+  *	the last and the first frames arrived and all the bits are here.
+  */
+-static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *prev,
+-			  struct net_device *dev)
++static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *skb,
++			  struct sk_buff *prev_tail, struct net_device *dev)
+ {
+ 	struct net *net = container_of(fq->q.net, struct net, ipv6.frags);
+-	struct sk_buff *fp, *head = fq->q.fragments;
+-	int    payload_len;
+ 	unsigned int nhoff;
+-	int sum_truesize;
++	void *reasm_data;
++	int payload_len;
+ 	u8 ecn;
+ 
+ 	inet_frag_kill(&fq->q);
+@@ -354,113 +265,40 @@ static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *prev,
+ 	if (unlikely(ecn == 0xff))
+ 		goto out_fail;
+ 
+-	/* Make the one we just received the head. */
+-	if (prev) {
+-		head = prev->next;
+-		fp = skb_clone(head, GFP_ATOMIC);
+-
+-		if (!fp)
+-			goto out_oom;
+-
+-		fp->next = head->next;
+-		if (!fp->next)
+-			fq->q.fragments_tail = fp;
+-		prev->next = fp;
+-
+-		skb_morph(head, fq->q.fragments);
+-		head->next = fq->q.fragments->next;
+-
+-		consume_skb(fq->q.fragments);
+-		fq->q.fragments = head;
+-	}
+-
+-	WARN_ON(head == NULL);
+-	WARN_ON(FRAG6_CB(head)->offset != 0);
++	reasm_data = inet_frag_reasm_prepare(&fq->q, skb, prev_tail);
++	if (!reasm_data)
++		goto out_oom;
+ 
+-	/* Unfragmented part is taken from the first segment. */
+-	payload_len = ((head->data - skb_network_header(head)) -
++	payload_len = ((skb->data - skb_network_header(skb)) -
+ 		       sizeof(struct ipv6hdr) + fq->q.len -
+ 		       sizeof(struct frag_hdr));
+ 	if (payload_len > IPV6_MAXPLEN)
+ 		goto out_oversize;
+ 
+-	/* Head of list must not be cloned. */
+-	if (skb_unclone(head, GFP_ATOMIC))
+-		goto out_oom;
+-
+-	/* If the first fragment is fragmented itself, we split
+-	 * it to two chunks: the first with data and paged part
+-	 * and the second, holding only fragments. */
+-	if (skb_has_frag_list(head)) {
+-		struct sk_buff *clone;
+-		int i, plen = 0;
+-
+-		clone = alloc_skb(0, GFP_ATOMIC);
+-		if (!clone)
+-			goto out_oom;
+-		clone->next = head->next;
+-		head->next = clone;
+-		skb_shinfo(clone)->frag_list = skb_shinfo(head)->frag_list;
+-		skb_frag_list_init(head);
+-		for (i = 0; i < skb_shinfo(head)->nr_frags; i++)
+-			plen += skb_frag_size(&skb_shinfo(head)->frags[i]);
+-		clone->len = clone->data_len = head->data_len - plen;
+-		head->data_len -= clone->len;
+-		head->len -= clone->len;
+-		clone->csum = 0;
+-		clone->ip_summed = head->ip_summed;
+-		add_frag_mem_limit(fq->q.net, clone->truesize);
+-	}
+-
+ 	/* We have to remove fragment header from datagram and to relocate
+ 	 * header in order to calculate ICV correctly. */
+ 	nhoff = fq->nhoffset;
+-	skb_network_header(head)[nhoff] = skb_transport_header(head)[0];
+-	memmove(head->head + sizeof(struct frag_hdr), head->head,
+-		(head->data - head->head) - sizeof(struct frag_hdr));
+-	if (skb_mac_header_was_set(head))
+-		head->mac_header += sizeof(struct frag_hdr);
+-	head->network_header += sizeof(struct frag_hdr);
+-
+-	skb_reset_transport_header(head);
+-	skb_push(head, head->data - skb_network_header(head));
+-
+-	sum_truesize = head->truesize;
+-	for (fp = head->next; fp;) {
+-		bool headstolen;
+-		int delta;
+-		struct sk_buff *next = fp->next;
+-
+-		sum_truesize += fp->truesize;
+-		if (head->ip_summed != fp->ip_summed)
+-			head->ip_summed = CHECKSUM_NONE;
+-		else if (head->ip_summed == CHECKSUM_COMPLETE)
+-			head->csum = csum_add(head->csum, fp->csum);
+-
+-		if (skb_try_coalesce(head, fp, &headstolen, &delta)) {
+-			kfree_skb_partial(fp, headstolen);
+-		} else {
+-			if (!skb_shinfo(head)->frag_list)
+-				skb_shinfo(head)->frag_list = fp;
+-			head->data_len += fp->len;
+-			head->len += fp->len;
+-			head->truesize += fp->truesize;
+-		}
+-		fp = next;
+-	}
+-	sub_frag_mem_limit(fq->q.net, sum_truesize);
++	skb_network_header(skb)[nhoff] = skb_transport_header(skb)[0];
++	memmove(skb->head + sizeof(struct frag_hdr), skb->head,
++		(skb->data - skb->head) - sizeof(struct frag_hdr));
++	if (skb_mac_header_was_set(skb))
++		skb->mac_header += sizeof(struct frag_hdr);
++	skb->network_header += sizeof(struct frag_hdr);
+ 
+-	head->next = NULL;
+-	head->dev = dev;
+-	head->tstamp = fq->q.stamp;
+-	ipv6_hdr(head)->payload_len = htons(payload_len);
+-	ipv6_change_dsfield(ipv6_hdr(head), 0xff, ecn);
+-	IP6CB(head)->nhoff = nhoff;
+-	IP6CB(head)->flags |= IP6SKB_FRAGMENTED;
++	skb_reset_transport_header(skb);
++
++	inet_frag_reasm_finish(&fq->q, skb, reasm_data);
++
++	skb->dev = dev;
++	ipv6_hdr(skb)->payload_len = htons(payload_len);
++	ipv6_change_dsfield(ipv6_hdr(skb), 0xff, ecn);
++	IP6CB(skb)->nhoff = nhoff;
++	IP6CB(skb)->flags |= IP6SKB_FRAGMENTED;
++	IP6CB(skb)->frag_max_size = fq->q.max_size;
+ 
+ 	/* Yes, and fold redundant checksum back. 8) */
+-	skb_postpush_rcsum(head, skb_network_header(head),
+-			   skb_network_header_len(head));
++	skb_postpush_rcsum(skb, skb_network_header(skb),
++			   skb_network_header_len(skb));
+ 
+ 	rcu_read_lock();
+ 	__IP6_INC_STATS(net, __in6_dev_get(dev), IPSTATS_MIB_REASMOKS);
+@@ -468,6 +306,7 @@ static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *prev,
+ 	fq->q.fragments = NULL;
+ 	fq->q.rb_fragments = RB_ROOT;
+ 	fq->q.fragments_tail = NULL;
++	fq->q.last_run_head = NULL;
+ 	return 1;
+ 
+ out_oversize:
+@@ -479,6 +318,7 @@ out_fail:
+ 	rcu_read_lock();
+ 	__IP6_INC_STATS(net, __in6_dev_get(dev), IPSTATS_MIB_REASMFAILS);
+ 	rcu_read_unlock();
++	inet_frag_kill(&fq->q);
+ 	return -1;
+ }
+ 
+@@ -517,22 +357,26 @@ static int ipv6_frag_rcv(struct sk_buff *skb)
+ 		return 1;
+ 	}
+ 
+-	if (skb->len - skb_network_offset(skb) < IPV6_MIN_MTU &&
+-	    fhdr->frag_off & htons(IP6_MF))
+-		goto fail_hdr;
+-
+ 	iif = skb->dev ? skb->dev->ifindex : 0;
+ 	fq = fq_find(net, fhdr->identification, hdr, iif);
+ 	if (fq) {
++		u32 prob_offset = 0;
+ 		int ret;
+ 
+ 		spin_lock(&fq->q.lock);
+ 
+ 		fq->iif = iif;
+-		ret = ip6_frag_queue(fq, skb, fhdr, IP6CB(skb)->nhoff);
++		ret = ip6_frag_queue(fq, skb, fhdr, IP6CB(skb)->nhoff,
++				     &prob_offset);
+ 
+ 		spin_unlock(&fq->q.lock);
+ 		inet_frag_put(&fq->q);
++		if (prob_offset) {
++			__IP6_INC_STATS(net, ip6_dst_idev(skb_dst(skb)),
++					IPSTATS_MIB_INHDRERRORS);
++			/* icmpv6_param_prob() calls kfree_skb(skb) */
++			icmpv6_param_prob(skb, ICMPV6_HDR_FIELD, prob_offset);
++		}
+ 		return ret;
+ 	}
+ 
+@@ -700,42 +544,19 @@ static struct pernet_operations ip6_frags_ops = {
+ 	.exit = ipv6_frags_exit_net,
+ };
+ 
+-static u32 ip6_key_hashfn(const void *data, u32 len, u32 seed)
+-{
+-	return jhash2(data,
+-		      sizeof(struct frag_v6_compare_key) / sizeof(u32), seed);
+-}
+-
+-static u32 ip6_obj_hashfn(const void *data, u32 len, u32 seed)
+-{
+-	const struct inet_frag_queue *fq = data;
+-
+-	return jhash2((const u32 *)&fq->key.v6,
+-		      sizeof(struct frag_v6_compare_key) / sizeof(u32), seed);
+-}
+-
+-static int ip6_obj_cmpfn(struct rhashtable_compare_arg *arg, const void *ptr)
+-{
+-	const struct frag_v6_compare_key *key = arg->key;
+-	const struct inet_frag_queue *fq = ptr;
+-
+-	return !!memcmp(&fq->key, key, sizeof(*key));
+-}
+-
+-const struct rhashtable_params ip6_rhash_params = {
++static const struct rhashtable_params ip6_rhash_params = {
+ 	.head_offset		= offsetof(struct inet_frag_queue, node),
+-	.hashfn			= ip6_key_hashfn,
+-	.obj_hashfn		= ip6_obj_hashfn,
+-	.obj_cmpfn		= ip6_obj_cmpfn,
++	.hashfn			= ip6frag_key_hashfn,
++	.obj_hashfn		= ip6frag_obj_hashfn,
++	.obj_cmpfn		= ip6frag_obj_cmpfn,
+ 	.automatic_shrinking	= true,
+ };
+-EXPORT_SYMBOL(ip6_rhash_params);
+ 
+ int __init ipv6_frag_init(void)
+ {
+ 	int ret;
+ 
+-	ip6_frags.constructor = ip6_frag_init;
++	ip6_frags.constructor = ip6frag_init;
+ 	ip6_frags.destructor = NULL;
+ 	ip6_frags.qsize = sizeof(struct frag_queue);
+ 	ip6_frags.frag_expire = ip6_frag_expire;
+diff --git a/net/openvswitch/conntrack.c b/net/openvswitch/conntrack.c
+index f135814c34ad..02d6f38f7869 100644
+--- a/net/openvswitch/conntrack.c
++++ b/net/openvswitch/conntrack.c
+@@ -23,6 +23,7 @@
+ #include <net/netfilter/nf_conntrack_seqadj.h>
+ #include <net/netfilter/nf_conntrack_zones.h>
+ #include <net/netfilter/ipv6/nf_defrag_ipv6.h>
++#include <net/ipv6_frag.h>
+ 
+ #ifdef CONFIG_NF_NAT_NEEDED
+ #include <linux/netfilter/nf_nat.h>
+diff --git a/net/rds/ib_fmr.c b/net/rds/ib_fmr.c
+index 4fe8f4fec4ee..da84d6b2f72c 100644
+--- a/net/rds/ib_fmr.c
++++ b/net/rds/ib_fmr.c
+@@ -44,6 +44,17 @@ struct rds_ib_mr *rds_ib_alloc_fmr(struct rds_ib_device *rds_ibdev, int npages)
+ 	else
+ 		pool = rds_ibdev->mr_1m_pool;
+ 
++	if (atomic_read(&pool->dirty_count) >= pool->max_items / 10)
++		queue_delayed_work(rds_ib_mr_wq, &pool->flush_worker, 10);
++
++	/* Switch pools if one of the pool is reaching upper limit */
++	if (atomic_read(&pool->dirty_count) >=  pool->max_items * 9 / 10) {
++		if (pool->pool_type == RDS_IB_MR_8K_POOL)
++			pool = rds_ibdev->mr_1m_pool;
++		else
++			pool = rds_ibdev->mr_8k_pool;
++	}
++
+ 	ibmr = rds_ib_try_reuse_ibmr(pool);
+ 	if (ibmr)
+ 		return ibmr;
+diff --git a/net/rds/ib_rdma.c b/net/rds/ib_rdma.c
+index 977f69886c00..91b53d462fc0 100644
+--- a/net/rds/ib_rdma.c
++++ b/net/rds/ib_rdma.c
+@@ -442,9 +442,6 @@ struct rds_ib_mr *rds_ib_try_reuse_ibmr(struct rds_ib_mr_pool *pool)
+ 	struct rds_ib_mr *ibmr = NULL;
+ 	int iter = 0;
+ 
+-	if (atomic_read(&pool->dirty_count) >= pool->max_items_soft / 10)
+-		queue_delayed_work(rds_ib_mr_wq, &pool->flush_worker, 10);
+-
+ 	while (1) {
+ 		ibmr = rds_ib_reuse_mr(pool);
+ 		if (ibmr)
+diff --git a/net/sunrpc/cache.c b/net/sunrpc/cache.c
+index cab50ece6f3d..cdcc0fea9f5a 100644
+--- a/net/sunrpc/cache.c
++++ b/net/sunrpc/cache.c
+@@ -54,6 +54,7 @@ static void cache_init(struct cache_head *h, struct cache_detail *detail)
+ 	h->last_refresh = now;
+ }
+ 
++static inline int cache_is_valid(struct cache_head *h);
+ static void cache_fresh_locked(struct cache_head *head, time_t expiry,
+ 				struct cache_detail *detail);
+ static void cache_fresh_unlocked(struct cache_head *head,
+@@ -100,6 +101,8 @@ struct cache_head *sunrpc_cache_lookup(struct cache_detail *detail,
+ 			if (cache_is_expired(detail, tmp)) {
+ 				hlist_del_init(&tmp->cache_list);
+ 				detail->entries --;
++				if (cache_is_valid(tmp) == -EAGAIN)
++					set_bit(CACHE_NEGATIVE, &tmp->flags);
+ 				cache_fresh_locked(tmp, 0, detail);
+ 				freeme = tmp;
+ 				break;
+diff --git a/net/tipc/netlink_compat.c b/net/tipc/netlink_compat.c
+index d947b8210399..0cf9403b4c44 100644
+--- a/net/tipc/netlink_compat.c
++++ b/net/tipc/netlink_compat.c
+@@ -262,8 +262,14 @@ static int tipc_nl_compat_dumpit(struct tipc_nl_compat_cmd_dump *cmd,
+ 	if (msg->rep_type)
+ 		tipc_tlv_init(msg->rep, msg->rep_type);
+ 
+-	if (cmd->header)
+-		(*cmd->header)(msg);
++	if (cmd->header) {
++		err = (*cmd->header)(msg);
++		if (err) {
++			kfree_skb(msg->rep);
++			msg->rep = NULL;
++			return err;
++		}
++	}
+ 
+ 	arg = nlmsg_new(0, GFP_KERNEL);
+ 	if (!arg) {
+@@ -388,7 +394,12 @@ static int tipc_nl_compat_bearer_enable(struct tipc_nl_compat_cmd_doit *cmd,
+ 	if (!bearer)
+ 		return -EMSGSIZE;
+ 
+-	len = min_t(int, TLV_GET_DATA_LEN(msg->req), TIPC_MAX_BEARER_NAME);
++	len = TLV_GET_DATA_LEN(msg->req);
++	len -= offsetof(struct tipc_bearer_config, name);
++	if (len <= 0)
++		return -EINVAL;
++
++	len = min_t(int, len, TIPC_MAX_BEARER_NAME);
+ 	if (!string_is_valid(b->name, len))
+ 		return -EINVAL;
+ 
+@@ -757,7 +768,12 @@ static int tipc_nl_compat_link_set(struct tipc_nl_compat_cmd_doit *cmd,
+ 
+ 	lc = (struct tipc_link_config *)TLV_DATA(msg->req);
+ 
+-	len = min_t(int, TLV_GET_DATA_LEN(msg->req), TIPC_MAX_LINK_NAME);
++	len = TLV_GET_DATA_LEN(msg->req);
++	len -= offsetof(struct tipc_link_config, name);
++	if (len <= 0)
++		return -EINVAL;
++
++	len = min_t(int, len, TIPC_MAX_LINK_NAME);
+ 	if (!string_is_valid(lc->name, len))
+ 		return -EINVAL;
+ 
+diff --git a/net/vmw_vsock/virtio_transport_common.c b/net/vmw_vsock/virtio_transport_common.c
+index 9c07c76c504d..cc4b4abb2759 100644
+--- a/net/vmw_vsock/virtio_transport_common.c
++++ b/net/vmw_vsock/virtio_transport_common.c
+@@ -601,6 +601,8 @@ static int virtio_transport_reset(struct vsock_sock *vsk,
+  */
+ static int virtio_transport_reset_no_sock(struct virtio_vsock_pkt *pkt)
+ {
++	const struct virtio_transport *t;
++	struct virtio_vsock_pkt *reply;
+ 	struct virtio_vsock_pkt_info info = {
+ 		.op = VIRTIO_VSOCK_OP_RST,
+ 		.type = le16_to_cpu(pkt->hdr.type),
+@@ -611,15 +613,21 @@ static int virtio_transport_reset_no_sock(struct virtio_vsock_pkt *pkt)
+ 	if (le16_to_cpu(pkt->hdr.op) == VIRTIO_VSOCK_OP_RST)
+ 		return 0;
+ 
+-	pkt = virtio_transport_alloc_pkt(&info, 0,
+-					 le64_to_cpu(pkt->hdr.dst_cid),
+-					 le32_to_cpu(pkt->hdr.dst_port),
+-					 le64_to_cpu(pkt->hdr.src_cid),
+-					 le32_to_cpu(pkt->hdr.src_port));
+-	if (!pkt)
++	reply = virtio_transport_alloc_pkt(&info, 0,
++					   le64_to_cpu(pkt->hdr.dst_cid),
++					   le32_to_cpu(pkt->hdr.dst_port),
++					   le64_to_cpu(pkt->hdr.src_cid),
++					   le32_to_cpu(pkt->hdr.src_port));
++	if (!reply)
+ 		return -ENOMEM;
+ 
+-	return virtio_transport_get_ops()->send_pkt(pkt);
++	t = virtio_transport_get_ops();
++	if (!t) {
++		virtio_transport_free_pkt(reply);
++		return -ENOTCONN;
++	}
++
++	return t->send_pkt(reply);
+ }
+ 
+ static void virtio_transport_wait_close(struct sock *sk, long timeout)
+diff --git a/scripts/Kbuild.include b/scripts/Kbuild.include
+index 7f430778f418..558dea61db11 100644
+--- a/scripts/Kbuild.include
++++ b/scripts/Kbuild.include
+@@ -166,9 +166,7 @@ cc-ldoption = $(call try-run,\
+ 
+ # ld-option
+ # Usage: LDFLAGS += $(call ld-option, -X)
+-ld-option = $(call try-run,\
+-	$(CC) $(KBUILD_CPPFLAGS) $(CC_OPTION_CFLAGS) -x c /dev/null -c -o "$$TMPO"; \
+-	$(LD) $(LDFLAGS) $(1) "$$TMPO" -o "$$TMP",$(1),$(2))
++ld-option = $(call try-run, $(LD) $(LDFLAGS) $(1) -v,$(1),$(2))
+ 
+ # ar-option
+ # Usage: KBUILD_ARFLAGS := $(call ar-option,D)

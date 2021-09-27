@@ -771,7 +771,7 @@ create_image()
 		else
 			FINALDEST=$DEST/images/"${BOARD}"/archive
 		fi
-		install -d -o nobody -g nogroup -m 775 ${FINALDEST}
+		install -d ${FINALDEST}
 	fi
 
 
@@ -825,8 +825,13 @@ create_image()
 			cd ${DESTIMG}
 			if [[ -n $GPG_PASS ]]; then
 				display_alert "GPG signing" "${version}.img${compression_type}" "info"
-				[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DESTIMG}"/
-				echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${DESTIMG}/${version}.img${compression_type}" || exit 1
+				if [[ -n $SUDO_USER ]]; then
+					sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DESTIMG}"/
+					SUDO_PREFIX="sudo -H -u ${SUDO_USER}"
+				else
+					SUDO_PREFIX=""
+				fi
+				echo "${GPG_PASS}" | $SUDO_PREFIX bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${DESTIMG}/${version}.img${compression_type}" || exit 1
 			else
 				display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 			fi
@@ -851,7 +856,7 @@ create_image()
 
 	# move artefacts from temporally directory to its final destination
 	[[ -n $compression_type ]] && rm $DESTIMG/${version}.img
-	mv $DESTIMG/${version}* ${FINALDEST}
+	rsync -a --no-owner --no-group --remove-source-files $DESTIMG/${version}* ${FINALDEST}
 	rm -rf $DESTIMG
 
 	# write image to SD card
