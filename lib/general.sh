@@ -229,6 +229,17 @@ improved_git()
 
 }
 
+clean_up_repo ()
+{
+	local target_dir=$1
+
+	# Files that are not tracked by git and were added
+	# when the patch was applied must be removed.
+	improved_git -C $target_dir clean -qdf
+
+	# Return the files that are tracked by git to the initial state.
+	improved_git -C $target_dir checkout -qf HEAD
+}
 
 # fetch_from_repo <url> <directory> <ref> <ref_subdir>
 # <url>: remote repository URL
