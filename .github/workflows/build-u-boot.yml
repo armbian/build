@@ -1,0 +1,97 @@
+name: Build beta u-boot packages
+
+on:
+  workflow_dispatch:
+
+jobs:
+
+  Prepare:
+    runs-on: ubuntu-20.04
+    outputs:
+      matrix: ${{steps.list_dirs.outputs.matrix}}
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: nightly
+          clean: false
+
+      - name: Prepare matrix
+        id: list_dirs
+        run:
+          echo ::set-output name=matrix::$(for x in $(cat build/config/target*.conf | grep -v "^$" | grep -v "^#" | awk '{print $1":"$2}' | sort | uniq); do echo $x; done|jq -cnR '[inputs | select(length>0)]' | jq)
+
+      - name: Cache build configurations
+        uses: actions/cache@v2
+        env:
+          cache-name: cache-build
+        with:
+          path: temp
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+
+  U-boot: # short name because Github will expand with the matrix values
+
+    needs: [ Prepare ]
+    runs-on: ubuntu-20.04
+    timeout-minutes: 480
+    strategy:
+      fail-fast: false
+      matrix: 
+        node: ${{fromJson(needs.Prepare.outputs.matrix)}}
+
+    steps:
+ 
+      - name: Cache Gradle packages
+        uses: actions/cache@v2
+        env:
+          cache-name: cache-build
+        with:
+          path: temp
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+
+      - name: Install SSH key for storage
+
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.KEY_TORRENTS }}
+          known_hosts: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
+          if_key_exists: replace
+
+      - name: Checkout Armbian build script
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: nightly
+          clean: false
+
+      - name: Build
+        run: |
+          CHUNK="${{ matrix.node }}"
+          BOARD=$(echo $CHUNK | cut -d":" -f1)
+          BRANCH=$(echo $CHUNK | cut -d":" -f2)
+          cd build
+          [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes
+          ./compile.sh KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" REPOSITORY_INSTALL="u-boot,kernel" 'prepare_host'
+          ./compile.sh BOARD="$BOARD" KERNEL_ONLY="yes" BRANCH="$BRANCH" KERNEL_CONFIGURE="no" OFFLINE="no" 'fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"' 
+          # mount deploy target
+          sudo apt-get -y -qq install sshfs
+          sudo mkdir -p /root/.ssh/
+          sudo cp ~/.ssh/known_hosts /root/.ssh/
+          sudo mkdir -p output/debs-beta || true
+          sudo sshfs upload@users.armbian.com:/debs-beta output/debs-beta -o IdentityFile=~/.ssh/id_rsa
+          ./compile.sh BOARD="$BOARD" BETA="yes" KERNEL_ONLY="yes" BRANCH="$BRANCH" KERNEL_CONFIGURE="no" OFFLINE="no" compile_uboot
+          # umount
+          while mountpoint output/images -q
+          do
+              sudo umount output/images || true
+              echo "Trying to unmount ..."
+              sleep 10
+          done
