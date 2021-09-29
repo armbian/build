@@ -52,7 +52,7 @@ elif [[ $BOOT_SOC == rk3399 ]]; then
 	BOOT_SCENARIO="${BOOT_SCENARIO:=only-blobs}"
 	DDR_BLOB='rk33/rk3399_ddr_933MHz_v1.25.bin'
 	MINILOADER_BLOB='rk33/rk3399_miniloader_v1.26.bin'
-	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
+	BL31_BLOB='rk33/rk3399_bl31_v1.35.elf'
 	ATFPATCHDIR='atf-rk3399'
 
 elif [[ $BOOT_SOC == rk3399pro ]]; then
