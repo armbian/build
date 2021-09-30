@@ -1,0 +1,73 @@
+name: Maintain runners
+
+on:
+  workflow_dispatch:
+
+jobs:
+
+  Prepare:
+
+    runs-on: [self-hosted, Linux, images]
+    if: ${{ github.repository_owner == 'armbian' }}
+    outputs:
+      matrix: ${{steps.list_dirs.outputs.matrix}}
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: nightly
+          clean: false
+
+      - name: Clean upload folder
+
+        run: |
+          cd build
+          while sudo mountpoint output/images -q
+          do
+              sudo umount output/images || true
+              echo "Trying to unmount ..."
+              sleep 10
+          done
+          sudo apt-get -y -qq update
+          sudo apt-get -y -qq upgrade
+          sudo mkdir -p /root/.ssh/
+          sudo rm -rf output/images/*
+          sudo mkdir -p output/images
+
+      - name: Prepare matrix
+        id: list_dirs
+        run:
+          echo ::set-output name=matrix::$(for x in $(seq -w 01 50); do echo $x; done|jq -cnR '[inputs | select(length>0)]' | jq)
+
+  Maint:
+  
+    needs: [ Prepare ]
+    runs-on: [self-hosted, Linux, images]
+    if: ${{ github.repository_owner == 'armbian' }}
+    timeout-minutes: 480
+    strategy:
+      fail-fast: false
+      matrix: 
+        node: ${{fromJson(needs.Prepare.outputs.matrix)}}
+    steps:
+      - name: Fix permissions
+        run: |
+          # make sure no temporally dirs are mounted from previous runs
+          while :
+          do
+              sudo pkill compile.sh || true
+              sudo pkill arm-binfmt-P || true
+              sudo pkill aarch64-binfmt-P || true
+              sudo pkill pixz || true
+              sudo mountpoint -q build/output/images && sudo fusermount -u build/output/images || true
+              [[ "$(df | grep "/.tmp" | wc -l)" -eq 0 && $(sudo mountpoint -q build/output/images; echo $?) -eq 1 ]] && sudo rm -rf build/.tmp && break
+              echo "Mounted temp directories. Trying to unmount."
+              df | grep ".tmp" | awk '{print $6}' | xargs sudo umount 2>/dev/null || true
+              sleep 10
+          done
+          [[ -d build/.git ]] && sudo chown -R $USER:$USER build/.git || true
+          [[ -d build/output/images ]] && sudo rm -rf build/output/images/* || true
