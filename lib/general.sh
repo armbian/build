@@ -241,6 +241,109 @@ clean_up_repo ()
 	improved_git -C $target_dir checkout -qf HEAD
 }
 
+# used : waiter_local_repo arg1='value' arg2:'value'
+#		 waiter_local_repo \
+#			url='https://github.com/megous/linux' \
+#			name='megous' \
+#			branch='orange-pi-5.14' \
+#			obj=<tag|commit> or tag:$tag ...
+waiter_local_repo ()
+{
+	for arg in $@;do
+
+		case $arg in
+			url=*|https://*|git://*)	eval "local url=${arg/url=/}"
+				;;
+			dir=*|/*/*/*)	eval "local dir=${arg/dir=/}"
+				;;
+			*=*|*:*)	eval "local ${arg/:/=}"
+				;;
+		esac
+
+	done
+	local reachability
+
+	# The 'offline' variable must always be set to 'true' or 'false'
+	if [ "$OFFLINE_WORK" == "yes" ]; then
+		local offline=true
+	else
+		local offline=false
+	fi
+
+	local work_dir="$(realpath ${SRC}/cache/sources)/$dir"
+	mkdir -p $work_dir
+	cd $work_dir || exit_with_error
+
+	if [ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]; then
+		git init -q .
+
+		# Run in the sub shell to avoid mixing environment variables.
+		if [ -n "$VAR_SHALLOW_ORIGINAL" ]; then
+			(
+			$VAR_SHALLOW_ORIGINAL
+
+			if [ "$(git ls-remote -h $url $branch | \
+				awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ];then
+				display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"
+				exit 177
+			fi
+
+			git remote add -t $branch $name $url
+			git fetch --shallow-exclude=$start_tag $name
+			git fetch --deepen=1 $name
+			)
+
+			[ "$?" == "177" ] && exit
+		fi
+	fi
+
+	files_for_clean="$(git status -s | wc -l)"
+	if [ "$files_for_clean" != "0" ];then
+		display_alert " Cleaning .... " "$files_for_clean files"
+		clean_up_repo $work_dir
+	fi
+
+	if [ "$name" != "$(git remote show | grep $name)" ];then
+		git remote add -t $branch $name $url
+	fi
+
+	if ! $offline; then
+		for t_name in $(git remote show);do
+			git fetch $t_name
+		done
+	fi
+
+	# When switching, we use the concept of only "detached branch". Therefore,
+	# we extract the hash from the tag, the branch name, or from the hash itself.
+	# This serves as a check of the reachability of the extraction.
+	# We do not use variables that characterize the current state of the git,
+	# such as `HEAD` and `FETCH_HEAD`.
+	reachability=false
+	for var in obj tag commit branch;do
+		eval pval=\$$var
+
+		if [ -n "$pval" ] && [ "$pval" != *HEAD ]; then
+			case $var in
+				obj|tag|commit) obj=$pval ;;
+				branch) obj=${name}/$branch ;;
+			esac
+
+			if  t_hash=$(git rev-parse $obj 2>/dev/null);then
+				reachability=true
+				break
+			else
+				display_alert "Variable $var=$obj unreachable for extraction"
+			fi
+		fi
+	done
+
+	if $reachability && [ "$t_hash" != "$(git rev-parse @ 2>/dev/null)" ];then
+		# Switch "detached branch" as hash
+		display_alert "Switch $obj = $t_hash"
+		git checkout -qf $t_hash
+	fi
+}
+
 # fetch_from_repo <url> <directory> <ref> <ref_subdir>
 # <url>: remote repository URL
 # <directory>: local directory; subdir for branch/tag will be created
