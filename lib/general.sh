@@ -364,6 +364,15 @@ fetch_from_repo()
 	local ref=$3
 	local ref_subdir=$4
 
+	if [ "${url#*megous/}" == linux ]; then
+		unset LINUXSOURCEDIR
+		LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
+		VAR_SHALLOW_ORIGINAL=var_origin_kernel
+		waiter_local_repo "url=$url $KERNELSOURCENAME $KERNELBRANCH dir=$LINUXSOURCEDIR $KERNELSWITCHOBJ"
+		unset VAR_SHALLOW_ORIGINAL
+		return
+	fi
+
 	# The 'offline' variable must always be set to 'true' or 'false'
 	if [ "$OFFLINE_WORK" == "yes" ]; then
 		local offline=true
