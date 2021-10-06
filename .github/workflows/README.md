@@ -6,10 +6,12 @@ Common tags:
 - Linux
 - X64
 - ARM64
+- public (isolated runners for merge reqeusts)
 - local (local network)
 - cache (mounted cache)
-- big (16+ cores and 64Gb+ memory)
-- small (< 16 cores and 64Gb+ memory)
+- images (present cache, good enough for making images)
+- big (16-128 cores, 64Gb SSD, 20Gb+ memory)
+- small (< 16 cores, 32Gb SSD, 4Gb memory)
 
 # Preparing GPG
 
