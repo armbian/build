@@ -1,10 +1,5 @@
 ARCH=armhf
 BOOTDELAY=1
-##https://armbian.atlassian.net/browse/AR-867
-BOOTBRANCH='tag:v2020.10'
-
-[[ $LINUXFAMILY == sun8i-v3s ]] && BOOTBRANCH='tag:v2021.07'
-
 BOOTPATCHDIR='u-boot-sunxi'
 UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
 BOOTSCRIPT="boot-sunxi.cmd:boot.cmd"
