@@ -14,6 +14,8 @@
 # exit_with_error
 # get_package_list_hash
 # create_sources_list
+# clean_up_repo
+# waiter_local_repo
 # fetch_from_repo
 # improved_git
 # display_alert
@@ -245,6 +247,7 @@ clean_up_repo ()
 #		 waiter_local_repo \
 #			url='https://github.com/megous/linux' \
 #			name='megous' \
+#			dir='linux-mainline/5.14' \
 #			branch='orange-pi-5.14' \
 #			obj=<tag|commit> or tag:$tag ...
 waiter_local_repo ()
@@ -261,6 +264,12 @@ waiter_local_repo ()
 		esac
 
 	done
+
+	# Required variables cannot be empty.
+	for var in url name dir branch; do
+		[ "${var#*=}" == "" ] && exit_with_error "Error in configuration"
+	done
+
 	local reachability
 
 	# The 'offline' variable must always be set to 'true' or 'false'
