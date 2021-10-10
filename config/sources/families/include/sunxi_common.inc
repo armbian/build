@@ -19,7 +19,7 @@ case $BRANCH in
 esac
 
 KERNELSOURCE="https://github.com/megous/linux"
-KERNELSOURCENAME='megous'
+KERNELSOURCENAME='name=megous'
 KERNELBRANCH="branch:orange-pi-$KERNEL_VERSION_LEVEL"
 KERNELPATCHDIR='sunxi-'$BRANCH
 
